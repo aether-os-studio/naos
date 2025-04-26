@@ -1,19 +1,13 @@
 #pragma once
 
+#include "settings.h"
+
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
 #include <limine.h>
 
-typedef int8_t NA_int8;
-typedef int16_t NA_int16;
-typedef int32_t NA_int32;
-typedef int64_t NA_int64;
-
-typedef uint8_t NA_uint8;
-typedef uint16_t NA_uint16;
-typedef uint32_t NA_uint32;
-typedef uint64_t NA_uint64;
+typedef int64_t NA_err_t;
 
 #define ABS(x) ((x) > 0 ? (x) : -(x)) // 绝对值
 // 最大最小值

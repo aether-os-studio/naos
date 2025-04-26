@@ -31,12 +31,14 @@ void kmain(void)
         hcf();
     }
 
-    NA_printk("NAOS starting...\n");
+    NA_printk("Next Aether-OS starting...\n");
 
     NA_frame_init();
     NA_heap_init();
 
     NA_arch_early_init();
+
+    NA_arch_init();
 
     hcf();
 }
