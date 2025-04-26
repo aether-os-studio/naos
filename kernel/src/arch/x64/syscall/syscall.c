@@ -1,5 +1,6 @@
 #include <arch/arch.h>
 #include <task/task.h>
+#include <fs/syscall.h>
 
 uint64_t switch_to_kernel_stack()
 {
@@ -50,45 +51,6 @@ void syscall_init()
     wrmsr(MSR_SYSCALL_MASK, (1 << 9));
 }
 
-uint64_t sys_open(const char *name, uint64_t mode, uint64_t flags)
-{
-    uint64_t i;
-    for (i = 0; i < MAX_FD_NUM; i++)
-    {
-        if (current_task->fds[i] == NULL)
-        {
-            break;
-        }
-    }
-
-    if (i == MAX_FD_NUM)
-    {
-        return (uint64_t)-EBADFD;
-    }
-
-    vfs_node_t node = vfs_open(name);
-    if (!node)
-    {
-        return (uint64_t)-ENOENT;
-    }
-
-    current_task->fds[i] = node;
-
-    return i;
-}
-
-uint64_t sys_close(uint64_t fd)
-{
-    if (fd >= MAX_FD_NUM)
-    {
-        return (uint64_t)-EBADFD;
-    }
-
-    current_task->fds[fd] = NULL;
-
-    return 0;
-}
-
 void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
 {
     regs->rip = regs->rcx;
@@ -114,8 +76,51 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_CLOSE:
         regs->rax = sys_close(arg1);
         break;
+    case SYS_LSEEK:
+        regs->rax = sys_lseek(arg1, arg2, arg3);
+        break;
+    case SYS_READ:
+        regs->rax = sys_read(arg1, (void *)arg2, arg3);
+        break;
+    case SYS_WRITE:
+        regs->rax = sys_write(arg1, (const void *)arg2, arg3);
+        break;
+    case SYS_IOCTL:
+        regs->rax = sys_ioctl(arg1, arg2, arg3);
+        break;
+    case SYS_READV:
+        regs->rax = sys_readv(arg1, (struct iovec *)arg2, arg3);
+        break;
+    case SYS_WRITEV:
+        regs->rax = sys_writev(arg1, (struct iovec *)arg2, arg3);
+        break;
+    case SYS_FORK:
+        regs->rax = task_fork(regs);
+        break;
+    case SYS_EXECVE:
+        regs->rax = task_execve((const char *)arg1, (char *const *)arg2, (char *const *)arg3);
+        break;
+    case SYS_EXIT:
+        regs->rax = task_exit((int64_t)arg1);
+        break;
+    case SYS_EXIT_GROUP:
+        regs->rax = task_exit((int64_t)arg1);
+        break;
+    case SYS_GETPID:
+        regs->rax = current_task->pid;
+        break;
+    case SYS_GETPPID:
+        regs->rax = current_task->ppid;
+        break;
+    case SYS_ARCH_PRCTL:
+        regs->rax = sys_arch_prctl(arg1, arg2);
+        break;
+    case SYS_BRK:
+        regs->rax = sys_brk(arg1);
+        break;
 
     default:
+        regs->rax = (uint64_t)-ENOSYS;
         break;
     }
 }

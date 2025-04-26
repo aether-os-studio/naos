@@ -4,3 +4,6 @@
 /ovmf
 *.iso
 *.hdd
+*.exec
+*.o
+*.txt

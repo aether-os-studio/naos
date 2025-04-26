@@ -3,7 +3,13 @@ MAKEFLAGS += -rR
 .SUFFIXES:
 
 # Target architecture to build for. Default to x86_64.
-ARCH := x86_64
+export ARCH := x86_64
+
+ifeq ($(ARCH), x86_64)
+ARCH_DIR := x64
+else
+ARCH_DIR := $(ARCH)
+endif
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
 QEMUFLAGS := -m 4G -serial stdio
@@ -159,12 +165,20 @@ kernel-deps:
 kernel: kernel-deps
 	$(MAKE) -C kernel
 
-$(IMAGE_NAME).iso: limine/limine kernel
+.PHONY: user
+user:
+	rm -rf user/aelibc/include/nr.h
+	cp kernel/src/arch/$(ARCH_DIR)/syscall/nr.h user/aelibc/include/
+	$(MAKE) -C user all
+
+$(IMAGE_NAME).iso: limine/limine kernel user
 	rm -rf iso_root
 	mkdir -p iso_root/boot
 	cp -v kernel/bin-$(ARCH)/kernel iso_root/boot/
 	mkdir -p iso_root/boot/limine
 	cp -v limine.conf iso_root/boot/limine/
+	mkdir -p iso_root/usr/bin
+	cp -v user/init/init.exec iso_root/usr/bin
 	mkdir -p iso_root/EFI/BOOT
 ifeq ($(ARCH),x86_64)
 	cp -v limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin iso_root/boot/limine/
@@ -206,7 +220,7 @@ ifeq ($(ARCH),loongarch64)
 endif
 	rm -rf iso_root
 
-$(IMAGE_NAME).hdd: limine/limine kernel
+$(IMAGE_NAME).hdd: limine/limine kernel user
 	rm -f $(IMAGE_NAME).hdd
 	dd if=/dev/zero bs=1M count=0 seek=64 of=$(IMAGE_NAME).hdd
 ifeq ($(ARCH),x86_64)
@@ -216,9 +230,10 @@ else
 	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00
 endif
 	mformat -i $(IMAGE_NAME).hdd@@1M
-	mmd -i $(IMAGE_NAME).hdd@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
+	mmd -i $(IMAGE_NAME).hdd@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine ::/usr ::/usr/bin
 	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(ARCH)/kernel ::/boot
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf ::/boot/limine
+	mcopy -i $(IMAGE_NAME).hdd@@1M user/init/init.exec ::/usr/bin
 ifeq ($(ARCH),x86_64)
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/limine-bios.sys ::/boot/limine
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTX64.EFI ::/EFI/BOOT
@@ -237,9 +252,11 @@ endif
 .PHONY: clean
 clean:
 	$(MAKE) -C kernel clean
+	$(MAKE) -C user clean
 	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).hdd
 
 .PHONY: distclean
 distclean:
 	$(MAKE) -C kernel distclean
+	$(MAKE) -C user distclean
 	rm -rf iso_root *.iso *.hdd kernel-deps limine ovmf

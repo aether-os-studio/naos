@@ -1,3 +1,6 @@
+#pragma once
+
+#include <libs/klibc.h>
 
 #if defined(__x86_64__)
 #include <arch/x64/x64.h>

@@ -19,7 +19,7 @@ bool printk_initialized = false;
 
 char buf[4096];
 
-__attribute__((used, section(".limine_requests"))) static volatile struct limine_framebuffer_request framebuffer_request = {
+__attribute__((used, section(".limine_requests"))) volatile struct limine_framebuffer_request framebuffer_request = {
     .id = LIMINE_FRAMEBUFFER_REQUEST,
     .revision = 0};
 
@@ -163,7 +163,7 @@ int vsprintf(char *buf, const char *fmt, va_list args)
             ++fmt;
         }
         // 为了支持lld
-        if (qualifier == 'l' && *fmt == 'l', *(fmt + 1) == 'd')
+        if (qualifier == 'l' && *fmt == 'l' || *(fmt + 1) == 'd')
             ++fmt;
 
         // 转化成字符串
@@ -357,7 +357,7 @@ char *write_num(char *str, uint64_t num, int base, int field_width, int precisio
     pad = (flags & PAD_ZERO) ? '0' : ' ';
 
     sign = 0;
-    if (flags & SIGN && num < 0)
+    if (flags & SIGN && (int64_t)num < 0)
     {
         sign = '-';
         num = -num;

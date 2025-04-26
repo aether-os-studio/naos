@@ -13,6 +13,7 @@
 #include "drivers/apic_timer.h"
 #include "task/arch_context.h"
 #include "task/fsgsbase.h"
+#include "task/elf.h"
 #include "syscall/syscall.h"
 
 void arch_early_init();

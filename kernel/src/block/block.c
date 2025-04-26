@@ -27,6 +27,8 @@ uint64_t blkdev_ioctl(uint64_t drive, uint64_t cmd, uint64_t arg)
     default:
         break;
     }
+
+    return 0;
 }
 
 uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len)

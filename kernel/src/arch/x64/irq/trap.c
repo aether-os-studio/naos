@@ -208,7 +208,7 @@ void do_page_fault(struct pt_regs *regs, uint64_t error_code)
 
     if (regs->rsp <= get_physical_memory_offset())
     {
-        // task_exit(-EFAULT);
+        task_exit(-EFAULT);
         return;
     }
 

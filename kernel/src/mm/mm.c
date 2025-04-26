@@ -14,7 +14,7 @@ void frame_init()
 
     struct limine_memmap_response *memory_map = memmap_request.response;
 
-    for (uint64_t i = memory_map->entry_count - 1; i >= 0; i--)
+    for (uint64_t i = memory_map->entry_count - 1; i != 0; i--)
     {
         struct limine_memmap_entry *region = memory_map->entries[i];
         if (region->type == LIMINE_MEMMAP_USABLE)

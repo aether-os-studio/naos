@@ -20,11 +20,15 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64
     if (user_mode)
     {
         context->ctx->cs = SELECTOR_USER_CS;
+        context->ctx->ds = SELECTOR_USER_DS;
+        context->ctx->es = SELECTOR_USER_DS;
         context->ctx->ss = SELECTOR_USER_DS;
     }
     else
     {
         context->ctx->cs = SELECTOR_KERNEL_CS;
+        context->ctx->ds = SELECTOR_KERNEL_DS;
+        context->ctx->es = SELECTOR_KERNEL_DS;
         context->ctx->ss = SELECTOR_KERNEL_DS;
     }
 }
@@ -34,6 +38,14 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src)
     dst->cr3 = clone_page_table(src->cr3, USER_STACK_START, USER_STACK_END);
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
     memcpy(dst->fpu_ctx, src->fpu_ctx, sizeof(fpu_context_t));
+}
+
+void arch_context_free(arch_context_t *context)
+{
+    if (context->fpu_ctx)
+    {
+        free_frames(virt_to_phys((uint64_t)context->fpu_ctx), 1);
+    }
 }
 
 task_t *arch_get_current()
@@ -82,12 +94,65 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
     {
         return;
     }
-    arch_set_current(next);
 
     prev->arch_context->ctx = ctx;
-
     prev->state = TASK_READY;
+
     next->state = TASK_RUNNING;
 
+    arch_set_current(next);
+
     arch_switch_with_context(prev->arch_context, next->arch_context, next->kernel_stack);
+}
+
+void arch_context_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
+{
+    context->ctx->rip = entry;
+    context->ctx->rsp = stack;
+    context->ctx->rbp = stack;
+    context->ctx->cs = SELECTOR_USER_CS;
+    context->ctx->ds = SELECTOR_USER_DS;
+    context->ctx->es = SELECTOR_USER_DS;
+    context->ctx->ss = SELECTOR_USER_DS;
+    context->ctx->rflags = (0UL << 12) | (0b10) | (1UL << 9);
+}
+
+void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
+{
+    arch_context_to_user_mode(context, entry, stack);
+
+    __asm__ __volatile__(
+        "movq %0, %%rsp\n\t"
+        "jmp ret_from_exception" ::"r"(context->ctx));
+}
+
+void arch_yield()
+{
+    __asm__ __volatile__("int %0" ::"i"(APIC_TIMER_INTERRUPT_VECTOR));
+}
+
+#define ARCH_SET_GS 0x1001
+#define ARCH_SET_FS 0x1002
+#define ARCH_GET_FS 0x1003
+#define ARCH_GET_GS 0x1004
+
+uint64_t sys_arch_prctl(uint64_t cmd, uint64_t arg)
+{
+    switch (cmd)
+    {
+    case ARCH_SET_FS:
+        current_task->arch_context->fsbase = arg;
+        write_fsbase(current_task->arch_context->fsbase);
+        return 0;
+    case ARCH_SET_GS:
+        current_task->arch_context->gsbase = arg;
+        write_gsbase(current_task->arch_context->gsbase);
+        return 0;
+    case ARCH_GET_FS:
+        return current_task->arch_context->fsbase;
+    case ARCH_GET_GS:
+        return current_task->arch_context->gsbase;
+    default:
+        return (uint64_t)(-ENOSYS);
+    }
 }

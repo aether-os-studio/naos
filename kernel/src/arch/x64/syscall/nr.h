@@ -22,6 +22,9 @@
 #define SYS_MPROTECT 10 // mprotect(void *addr, size_t len, int prot)
 #define SYS_MUNMAP 11   // munmap(void *addr, size_t length)
 #define SYS_BRK 12      // brk(void *addr)
+#define SYS_READV 19
+#define SYS_WRITEV 20
+#define SYS_IOCTL 16 // ioctl(int fd, sint cmd, int arg)
 
 /* 进程管理相关 */
 #define SYS_FORK 57     // fork()
@@ -32,6 +35,7 @@
 #define SYS_KILL 62     // kill(pid_t pid, int sig)
 #define SYS_GETPID 39   // getpid()
 #define SYS_GETPPID 110 // getppid()
+#define SYS_EXIT_GROUP 231
 
 /* 内存管理相关 */
 #define SYS_MREMAP 25  // mremap(void *old_address, size_t old_size, size_t new_size, int flags, ...)
@@ -40,3 +44,5 @@
 /* 信号处理相关 */
 #define SYS_SIGACTION 13   // sigaction(int sig, const struct sigaction *act, struct sigaction *oact)
 #define SYS_SIGPROCMASK 14 // sigprocmask(int how, const sigset_t *set, sigset_t *oset)
+
+#define SYS_ARCH_PRCTL 158
