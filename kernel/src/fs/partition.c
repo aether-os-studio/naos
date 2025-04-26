@@ -1,4 +1,5 @@
 #include "fs/vfs/vfs.h"
+#include "fs/vfs/dev.h"
 #include "fs/partition.h"
 #include "block/block.h"
 #include "drivers/kernel_logger.h"
@@ -8,15 +9,15 @@ partition_t partitions[MAX_PARTITIONS_NUM];
 struct GPT_DPTE dpte[MAX_PARTITIONS_NUM];
 uint64_t partition_num;
 
-uint64_t partition_read(uint64_t part_id, uint64_t offset, void *buf, uint64_t len)
+ssize_t partition_read(void *data, uint64_t offset, void *buf, uint64_t len)
 {
-    partition_t *part = &partitions[part_id];
+    partition_t *part = (partition_t *)data;
     return blkdev_read(part->blkdev_id, part->starting_lba * 512 + offset, buf, len);
 }
 
-uint64_t partition_write(uint64_t part_id, uint64_t offset, void *buf, uint64_t len)
+ssize_t partition_write(void *data, uint64_t offset, const void *buf, uint64_t len)
 {
-    partition_t *part = &partitions[part_id];
+    partition_t *part = (partition_t *)data;
     return blkdev_write(part->blkdev_id, part->starting_lba * 512 + offset, buf, len);
 }
 
@@ -93,7 +94,13 @@ void partition_init()
         free(boot_sector);
     }
 
-    printk("Found %d partitions", partition_num);
+    printk("Found %d partitions\n", partition_num);
+    for (uint64_t i = 0; i < partition_num; i++)
+    {
+        char name[MAX_DEV_NAME_LEN];
+        sprintf(name, "part%d", i);
+        regist_dev(name, partition_read, partition_write, &partitions[i]);
+    }
 }
 
 void mount_root()

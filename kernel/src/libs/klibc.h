@@ -7,6 +7,8 @@
 #include <stdbool.h>
 #include <limine.h>
 
+#include <libs/errno.h>
+
 typedef int64_t err_t;
 
 #define ABS(x) ((x) > 0 ? (x) : -(x)) // 绝对值

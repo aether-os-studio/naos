@@ -114,7 +114,6 @@ struct vfs_node
     uint32_t permissions; // 权限
     uint32_t type;        // 类型
     uint32_t fsid;        // 文件系统的 id
-    uint32_t devid;       // 分区设备的 id
     void *handle;         // 操作文件的句柄
     list_t child;         // 子目录和子文件
     vfs_node_t root;      // 根目录

@@ -1,4 +1,5 @@
 #include "fs/vfs/vfs.h"
+#include "arch/arch.h"
 
 vfs_node_t rootdir = NULL;
 
@@ -147,15 +148,15 @@ int vfs_mkfile(const char *name)
 {
     vfs_node_t current = rootdir;
     char *path;
-    // if (name[0] != '/' && current_task->cwd)
-    // {
-    //     current = current_task->cwd;
-    //     path = strdup(name);
-    // }
-    // else
-    // {
-    path = strdup(name + 1);
-    // }
+    if (name[0] != '/' && current_task->cwd)
+    {
+        current = current_task->cwd;
+        path = strdup(name);
+    }
+    else
+    {
+        path = strdup(name + 1);
+    }
 
     char *save_ptr = path;
     char *filename = path + strlen(path);
@@ -238,8 +239,8 @@ vfs_node_t vfs_open(const char *_path)
     else
     {
         path = strdup(_path);
-        // if (current_task->cwd)
-        //     current = current_task->cwd;
+        if (current_task->cwd)
+            current = current_task->cwd;
     }
     if (path == NULL)
         return NULL;

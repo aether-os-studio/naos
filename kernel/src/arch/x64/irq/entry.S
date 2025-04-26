@@ -1,4 +1,4 @@
-#include "arch/x64/irq/asm.h"
+#include "arch/x64/asm.h"
 #include "settings.h"
 
 .section .data

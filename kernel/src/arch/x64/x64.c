@@ -20,5 +20,7 @@ void arch_early_init()
 
 void arch_init()
 {
+    syscall_init();
+
     open_interrupt;
 }

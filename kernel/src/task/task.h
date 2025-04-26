@@ -31,6 +31,7 @@ typedef struct task
     uint64_t jiffies;
     task_state_t state;
     uint64_t kernel_stack;
+    uint64_t syscall_stack;
     arch_context_t *arch_context;
     uint64_t signal;
     vfs_node_t cwd;

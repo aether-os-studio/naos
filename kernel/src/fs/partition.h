@@ -1,6 +1,7 @@
 #pragma once
 
 #include <libs/klibc.h>
+#include <fs/vfs/vfs.h>
 
 #define MAX_PARTITIONS_NUM 128
 
@@ -74,7 +75,7 @@ typedef struct partition
 extern partition_t partitions[MAX_PARTITIONS_NUM];
 extern uint64_t partition_num;
 
-uint64_t partition_read(uint64_t part_id, uint64_t offset, void *buf, uint64_t len);
-uint64_t partition_write(uint64_t part_id, uint64_t offset, void *buf, uint64_t len);
+ssize_t partition_read(void *data, uint64_t offset, void *buf, uint64_t len);
+ssize_t partition_write(void *data, uint64_t offset, const void *buf, uint64_t len);
 
 void partition_init();

@@ -40,6 +40,7 @@ task_t *task_create(const char *name, void (*entry)())
     task->waitpid = 0;
     task->state = TASK_READY;
     task->kernel_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE));
+    task->syscall_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE));
     task->arch_context = malloc(sizeof(arch_context_t));
     arch_context_init(task->arch_context, virt_to_phys((uint64_t)get_current_page_dir()), (uint64_t)entry, task->kernel_stack + STACK_SIZE, false);
     task->signal = 0;
@@ -98,7 +99,7 @@ extern void mount_root();
 
 void init_thread()
 {
-    printk("NAOS init thread is running...");
+    printk("NAOS init thread is running...\n");
 
     pci_init();
     ahci_init();
@@ -108,9 +109,9 @@ void init_thread()
 
     fatfs_init();
 
-    partition_init();
-
     dev_init();
+
+    partition_init();
 
     mount_root();
 
