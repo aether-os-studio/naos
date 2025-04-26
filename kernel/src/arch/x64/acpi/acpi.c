@@ -1,4 +1,5 @@
 #include <drivers/kernel_logger.h>
+#include <drivers/bus/pci.h>
 #include <mm/mm.h>
 #include <arch/x64/acpi/acpi.h>
 
@@ -70,6 +71,6 @@ void acpi_init()
 
     load_table(HPET, hpet_setup);
     load_table(APIC, apic_setup);
-    // load_table(MCFG, pcie_setup);
+    load_table(MCFG, pcie_setup);
     // load_table(FACP, facp_setup);
 }

@@ -8,7 +8,7 @@ ARCH := x86_64
 # Default user QEMU flags. These are appended to the QEMU command calls.
 QEMUFLAGS := -m 4G -serial stdio
 
-override IMAGE_NAME := template-$(ARCH)
+override IMAGE_NAME := naos-$(ARCH)
 
 # Toolchain for building the 'limine' executable for the host.
 HOST_CC := cc

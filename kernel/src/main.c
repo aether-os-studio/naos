@@ -1,5 +1,6 @@
 #include <libs/klibc.h>
 #include <drivers/kernel_logger.h>
+#include <drivers/bus/pci.h>
 #include <mm/mm.h>
 #include <arch/arch.h>
 
@@ -37,6 +38,8 @@ void kmain(void)
     NA_heap_init();
 
     NA_arch_early_init();
+
+    NA_pci_init();
 
     NA_arch_init();
 
