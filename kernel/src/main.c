@@ -1,5 +1,6 @@
 #include <libs/klibc.h>
 #include <drivers/kernel_logger.h>
+#include <mm/mm.h>
 
 __attribute__((used, section(".limine_requests"))) static volatile LIMINE_BASE_REVISION(3);
 
@@ -30,6 +31,9 @@ void kmain(void)
     }
 
     NA_printk("NAOS starting...\n");
+
+    NA_frame_init();
+    NA_heap_init();
 
     hcf();
 }
