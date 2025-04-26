@@ -1,4 +1,4 @@
-# Limine C Template
+# Next Aether-OS
 
 This repository will demonstrate how to set up a basic kernel in C using Limine.
 

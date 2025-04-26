@@ -9,6 +9,19 @@ override OUTPUT := kernel
 # Target architecture to build for. Default to x86_64.
 ARCH := x86_64
 
+ifeq ($(ARCH), x86_64)
+ARCH_DIR := src/arch/x64
+endif
+ifeq ($(ARCH), aarch64)
+ARCH_DIR := src/arch/aarch64
+endif
+ifeq ($(ARCH), riscv64)
+ARCH_DIR := src/arch/riscv64
+endif
+ifeq ($(ARCH), loongarch64)
+ARCH_DIR := src/arch/loongarch64
+endif
+
 # Install prefix; /usr/local is a good, standard default pick.
 PREFIX := /usr/local
 
@@ -18,7 +31,18 @@ ifeq ($(filter $(ARCH),aarch64 loongarch64 riscv64 x86_64),)
 endif
 
 # User controllable C compiler command.
-CC := clang
+ifeq ($(ARCH), x86_64)
+CC := $(ARCH)-linux-gnu-gcc
+endif
+ifeq ($(ARCH), aarch64)
+CC := $(ARCH)-linux-gnu-gcc
+endif
+ifeq ($(ARCH), riscv64)
+CC := $(ARCH)-linux-gnu-gcc
+endif
+ifeq ($(ARCH), loongarch64)
+CC := $(ARCH)-linux-gnu-gcc
+endif
 
 # User controllable C flags.
 CFLAGS := -g -O0
@@ -81,7 +105,8 @@ ifeq ($(ARCH),x86_64)
         -m64 \
         -march=x86-64 \
         -mno-red-zone \
-        -mcmodel=kernel
+        -mcmodel=kernel \
+        -D__x86_64__
     override LDFLAGS += \
         -Wl,-m,elf_x86_64
     override NASMFLAGS += \
@@ -93,7 +118,7 @@ ifeq ($(ARCH),aarch64)
             -target aarch64-unknown-none
     endif
     override CFLAGS += \
-        -mgeneral-regs-only
+        -D__aarch64__
     override LDFLAGS += \
         -Wl,-m,aarch64elf
 endif
@@ -102,14 +127,16 @@ ifeq ($(ARCH),riscv64)
         override CC += \
             -target riscv64-unknown-none
         override CFLAGS += \
-            -march=rv64imac
+            -march=rv64imac \
+            -D__riscv64__
     else
         override CFLAGS += \
             -march=rv64imac_zicsr_zifencei
     endif
     override CFLAGS += \
         -mabi=lp64 \
-        -mno-relax
+        -mno-relax \
+        -D__riscv64__
     override LDFLAGS += \
         -Wl,-m,elf64lriscv \
         -Wl,--no-relax
@@ -121,7 +148,8 @@ ifeq ($(ARCH),loongarch64)
     endif
     override CFLAGS += \
         -march=loongarch64 \
-        -mabi=lp64s
+        -mabi=lp64s \
+        -D__loongarch64__
     override LDFLAGS += \
         -Wl,-m,elf64loongarch \
         -Wl,--no-relax
@@ -138,16 +166,18 @@ override LDFLAGS += \
 
 # Use "find" to glob all *.c, *.S, and *.asm files in the tree and obtain the
 # object and header dependency file names.
-override SRCFILES := $(shell cd src && find -L * -type f | LC_ALL=C sort)
+override SRCFILES := $(shell find $(ARCH_DIR) -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/drivers -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/fs -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/interrupt -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/libs -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/mm -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/init -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/task -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/block -name "*.[Sc]" | LC_ALL=C sort)
 override CFILES := $(filter %.c,$(SRCFILES))
 override ASFILES := $(filter %.S,$(SRCFILES))
-ifeq ($(ARCH),x86_64)
-override NASMFILES := $(filter %.asm,$(SRCFILES))
-endif
 override OBJ := $(addprefix obj-$(ARCH)/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o))
-ifeq ($(ARCH),x86_64)
-override OBJ += $(addprefix obj-$(ARCH)/,$(NASMFILES:.asm=.asm.o))
-endif
 override HEADER_DEPS := $(addprefix obj-$(ARCH)/,$(CFILES:.c=.c.d) $(ASFILES:.S=.S.d))
 
 # Default target. This must come first, before header dependencies.
@@ -163,21 +193,14 @@ bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH).ld $(OBJ)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) -o $@
 
 # Compilation rules for *.c files.
-obj-$(ARCH)/%.c.o: src/%.c GNUmakefile
+obj-$(ARCH)/src/%.c.o: src/%.c GNUmakefile
 	mkdir -p "$$(dirname $@)"
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
 # Compilation rules for *.S files.
-obj-$(ARCH)/%.S.o: src/%.S GNUmakefile
+obj-$(ARCH)/src/%.S.o: src/%.S GNUmakefile
 	mkdir -p "$$(dirname $@)"
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
-
-ifeq ($(ARCH),x86_64)
-# Compilation rules for *.asm (nasm) files.
-obj-$(ARCH)/%.asm.o: src/%.asm GNUmakefile
-	mkdir -p "$$(dirname $@)"
-	nasm $(NASMFLAGS) $< -o $@
-endif
 
 # Remove object files and the final executable.
 .PHONY: clean

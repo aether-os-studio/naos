@@ -68,7 +68,6 @@ int NVMEWaitingRDY(NVME_CONTROLLER *ctrl, uint32_t rdy)
     uint32_t csts;
     while (rdy != ((csts = ctrl->CAP->CST) & NVME_CSTS_RDY))
     {
-        __asm__ __volatile__("pause");
     }
     return 0;
 }
@@ -97,7 +96,6 @@ NVME_COMPLETION_QUEUE_ENTRY NVMEWaitingCMD(NVME_SUBMISSION_QUEUE *sq, NVME_SUBMI
     NVME_COMPLETION_QUEUE *cq = sq->ICQ;
     while ((cq->CQE[cq->COM.HAD].STS & 0x1) != cq->COM.PHA)
     {
-        __asm__ __volatile__("pause");
     }
 
     // Consume CQE

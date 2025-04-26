@@ -2,6 +2,7 @@
 #include "fs/partition.h"
 #include "block/block.h"
 #include "drivers/kernel_logger.h"
+#include "arch/arch.h"
 
 partition_t partitions[MAX_PARTITIONS_NUM];
 struct GPT_DPTE dpte[MAX_PARTITIONS_NUM];
@@ -88,7 +89,7 @@ void partition_init()
             partition_num++;
         }
 
-    // ok:
+        // ok:
         free(boot_sector);
     }
 
@@ -97,6 +98,8 @@ void partition_init()
 
 void mount_root()
 {
+    bool err = true;
+
     for (uint64_t i = 0; i < partition_num; i++)
     {
         char buf[11];
@@ -104,7 +107,17 @@ void mount_root()
 
         if (!vfs_mount((const char *)buf, rootdir))
         {
+            err = false;
             break;
+        }
+    }
+
+    if (err)
+    {
+        printk("Mount root failed\n");
+        while (1)
+        {
+            arch_pause();
         }
     }
 }

@@ -3,19 +3,19 @@
 #include <mm/mm.h>
 #include <arch/x64/acpi/acpi.h>
 
-#define load_table(name, func)                                \
-    do                                                        \
-    {                                                         \
-        void *name = find_table(#name);                       \
-        if (name == NULL)                                     \
-        {                                                     \
+#define load_table(name, func)                             \
+    do                                                     \
+    {                                                      \
+        void *name = find_table(#name);                    \
+        if (name == NULL)                                  \
+        {                                                  \
             printk("Cannot find acpi " #name " table.\n"); \
-            return;                                           \
-        }                                                     \
-        else                                                  \
-        {                                                     \
-            func(name);                                       \
-        }                                                     \
+            return;                                        \
+        }                                                  \
+        else                                               \
+        {                                                  \
+            func(name);                                    \
+        }                                                  \
     } while (0);
 
 uint64_t rsdp_paddr;

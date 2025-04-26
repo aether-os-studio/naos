@@ -2,17 +2,19 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <libs/klibc.h>
 #if defined(__x86_64__)
+
 #include <arch/x64/acpi/acpi.h>
 
 #define PCI_COMMAND_PORT 0xCF8
 #define PCI_DATA_PORT 0xCFC
 
 #define PCI_MCFG_MAX_ENTRIES_LEN 1024
-#define PCI_DEVICE_MAX 256
 
 void mcfg_addr_to_entries(MCFG *mcfg, MCFG_ENTRY **entries, uint64_t *len);
 uint64_t get_mmio_address(uint32_t pci_address, uint16_t offset);
+
 #endif
 
 #define PCI_CONF_VENDOR 0X0   // Vendor ID
@@ -20,6 +22,8 @@ uint64_t get_mmio_address(uint32_t pci_address, uint16_t offset);
 #define PCI_CONF_COMMAND 0x4  // Command
 #define PCI_CONF_STATUS 0x6   // Status
 #define PCI_CONF_REVISION 0x8 // Revision ID
+
+#define PCI_DEVICE_MAX 256
 
 uint32_t segment_bus_device_functon_to_pci_address(uint16_t segment, uint8_t bus, uint8_t device, uint8_t function);
 uint32_t pci_read(uint32_t b, uint32_t d, uint32_t f, uint32_t s, uint32_t offset);

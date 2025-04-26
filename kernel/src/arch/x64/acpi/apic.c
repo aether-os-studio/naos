@@ -219,10 +219,10 @@ void sse_init()
                          "movq %rax, %cr4\n\t");
 }
 
+extern bool task_initialized;
+
 void ap_entry(struct limine_mp_info *cpu)
 {
-    (void)cpu;
-
     close_interrupt;
 
     uint64_t cr3 = (uint64_t)virt_to_phys(get_current_page_dir());
@@ -236,10 +236,17 @@ void ap_entry(struct limine_mp_info *cpu)
 
     fsgsbase_init();
 
+    while (!task_initialized)
+    {
+        arch_pause();
+    }
+
+    arch_set_current(idle_tasks[cpu->processor_id]);
+
     while (1)
     {
         open_interrupt;
-        asm volatile("hlt");
+        arch_pause();
     }
 }
 

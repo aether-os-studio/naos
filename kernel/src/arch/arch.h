@@ -8,3 +8,5 @@
 #elif defined(__loongarch64)
 #include <arch/loongarch64/loongarch64.h>
 #endif
+
+extern uint64_t cpu_count;

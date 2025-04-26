@@ -16,7 +16,6 @@ void mcfg_addr_to_entries(MCFG *mcfg, MCFG_ENTRY **entries, uint64_t *num)
         entries[i] = entry + i;
     }
 }
-#endif
 
 uint64_t get_device_mmio_physical_address(uint16_t segment_group, uint8_t bus, uint8_t device, uint8_t function)
 {
@@ -47,6 +46,8 @@ uint64_t get_mmio_address(uint32_t pci_address, uint16_t offset)
 
     return virt + offset;
 }
+
+#endif
 
 uint32_t segment_bus_device_functon_to_pci_address(uint16_t segment, uint8_t bus, uint8_t device, uint8_t function)
 {
@@ -115,6 +116,8 @@ pci_device_op_t pcie_device_op = {
     .write = pci_write,
 };
 
+#if defined(__x86_64__)
+
 uint32_t pci_read0(uint32_t b, uint32_t d, uint32_t f, uint32_t arg, uint32_t registeroffset)
 {
     uint32_t id = (1U << 31) | ((b & 0xff) << 16) | ((d & 0x1f) << 11) |
@@ -137,6 +140,8 @@ pci_device_op_t pci_device_op = {
     .read = pci_read0,
     .write = pci_write0,
 };
+
+#endif
 
 struct
 {
@@ -493,6 +498,8 @@ void pci_scan_segment(uint16_t segment_group)
     }
 }
 
+#if defined(__x86_64__)
+
 void pci_scan_device_legacy(uint32_t bus, uint32_t equipment, uint32_t f)
 {
     pci_device_t *device = (pci_device_t *)malloc(sizeof(pci_device_t));
@@ -598,8 +605,6 @@ static void pci_config0(uint32_t bus, uint32_t f, uint32_t equipment, uint32_t a
           ((uint32_t)bus << 16);
     io_out32(PCI_COMMAND_PORT, cmd);
 }
-
-#if defined(__x86_64__)
 
 MCFG *mcfg_buffer = NULL;
 

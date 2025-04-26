@@ -11,7 +11,13 @@
 #include "irq/irq.h"
 #include "drivers/serial.h"
 #include "drivers/apic_timer.h"
+#include "task/arch_context.h"
 #include "task/fsgsbase.h"
 
 void arch_early_init();
 void arch_init();
+
+static inline void arch_pause()
+{
+    __asm__ __volatile__("pause");
+}
