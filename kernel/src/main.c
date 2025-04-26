@@ -1,6 +1,7 @@
 #include <libs/klibc.h>
 #include <drivers/kernel_logger.h>
 #include <mm/mm.h>
+#include <arch/arch.h>
 
 __attribute__((used, section(".limine_requests"))) static volatile LIMINE_BASE_REVISION(3);
 
@@ -34,6 +35,8 @@ void kmain(void)
 
     NA_frame_init();
     NA_heap_init();
+
+    NA_arch_early_init();
 
     hcf();
 }
