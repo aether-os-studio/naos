@@ -30,29 +30,29 @@ void irq_init()
     set_trap_gate(20, 0, virtualization_exception);
 }
 
-extern int NA_vsprintf(char *buf, const char *fmt, va_list args);
+extern int vsprintf(char *buf, const char *fmt, va_list args);
 
 void dump_regs(struct pt_regs *regs, const char *error_str, ...)
 {
     char buf[512];
     va_list args;
     va_start(args, error_str);
-    NA_vsprintf(buf, error_str, args);
+    vsprintf(buf, error_str, args);
     va_end(args);
 
-    // NA_printk("\033[0;0H");
-    // NA_printk("\033[2J");
-    NA_printk("%s\n", buf);
+    // printk("\033[0;0H");
+    // printk("\033[2J");
+    printk("%s\n", buf);
 
-    NA_printk("RIP = %#018lx, RSP = %#018lx\n", regs->rip, regs->rsp);
-    NA_printk("RAX = %#018lx, RBX = %#018lx\n", regs->rax, regs->rbx);
-    NA_printk("RCX = %#018lx, RDX = %#018lx\n", regs->rcx, regs->rdx);
-    NA_printk("RDI = %#018lx, RSI = %#018lx\n", regs->rdi, regs->rsi);
-    NA_printk("RSP = %#018lx, RBP = %#018lx\n", regs->rsp, regs->rbp);
-    NA_printk("R08 = %#018lx, R09 = %#018lx\n", regs->r8, regs->r9);
-    NA_printk("R10 = %#018lx, R11 = %#018lx\n", regs->r10, regs->r11);
-    NA_printk("R12 = %#018lx, R13 = %#018lx\n", regs->r12, regs->r13);
-    NA_printk("R14 = %#018lx, R15 = %#018lx\n", regs->r14, regs->r15);
+    printk("RIP = %#018lx, RSP = %#018lx\n", regs->rip, regs->rsp);
+    printk("RAX = %#018lx, RBX = %#018lx\n", regs->rax, regs->rbx);
+    printk("RCX = %#018lx, RDX = %#018lx\n", regs->rcx, regs->rdx);
+    printk("RDI = %#018lx, RSI = %#018lx\n", regs->rdi, regs->rsi);
+    printk("RSP = %#018lx, RBP = %#018lx\n", regs->rsp, regs->rbp);
+    printk("R08 = %#018lx, R09 = %#018lx\n", regs->r8, regs->r9);
+    printk("R10 = %#018lx, R11 = %#018lx\n", regs->r10, regs->r11);
+    printk("R12 = %#018lx, R13 = %#018lx\n", regs->r12, regs->r13);
+    printk("R14 = %#018lx, R15 = %#018lx\n", regs->r14, regs->r15);
 }
 
 // 0 #DE 除法错误
@@ -206,7 +206,7 @@ void do_page_fault(struct pt_regs *regs, uint64_t error_code)
     (void)error_code;
     dump_regs(regs, "do_page_fault(14) cr2 = %#018lx", cr2);
 
-    if (regs->rsp <= NA_get_physical_memory_offset())
+    if (regs->rsp <= get_physical_memory_offset())
     {
         // task_exit(-EFAULT);
         return;

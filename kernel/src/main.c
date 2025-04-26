@@ -34,18 +34,18 @@ void kmain(void)
         hcf();
     }
 
-    NA_frame_init();
-    NA_printk("Next Aether-OS starting...\n");
+    frame_init();
+    printk("Next Aether-OS starting...\n");
 
-    NA_heap_init();
+    heap_init();
 
-    NA_arch_early_init();
+    arch_early_init();
 
-    NA_pci_init();
-    NA_ahci_init();
-    NA_nvme_init();
+    pci_init();
+    ahci_init();
+    nvme_init();
 
-    NA_arch_init();
+    arch_init();
 
     hcf();
 }

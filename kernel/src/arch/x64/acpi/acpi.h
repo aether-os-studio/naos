@@ -247,8 +247,8 @@ uint32_t get_cpuid_by_lapic_id(uint32_t lapic_id);
 void ioapic_enable(uint8_t vector);
 void ioapic_add(uint8_t vector, uint32_t irq);
 
-struct NA_irq_controller;
-extern struct NA_irq_controller apic_controller;
+struct irq_controller;
+extern struct irq_controller apic_controller;
 
 #define current_cpu_id get_cpuid_by_lapic_id(lapic_id())
 

@@ -38,7 +38,7 @@ void write_serial(char a)
     io_out8(SERIAL_PORT, a);
 }
 
-void NA_serial_printk(char *buf, int len)
+void serial_printk(char *buf, int len)
 {
     for (int i = 0; i < len; i++)
     {

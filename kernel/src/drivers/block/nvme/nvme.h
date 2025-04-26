@@ -228,4 +228,4 @@ uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba, uint32_t coun
 
 void nvme_driver_init(uint64_t bar0, uint64_t bar_size);
 
-void NA_nvme_init();
+void nvme_init();

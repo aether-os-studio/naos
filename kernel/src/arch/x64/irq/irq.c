@@ -47,7 +47,7 @@
     "leaq ret_from_intr(%rip), %rax\n\t"                                       \
     "pushq %rax \n\t"                                                          \
     "movq	$" #number ", %rsi\n\t"                                            \
-    "jmp NA_do_irq\n\t");
+    "jmp do_irq\n\t");
 
 // 构造中断入口
 Build_IRQ(0x20);

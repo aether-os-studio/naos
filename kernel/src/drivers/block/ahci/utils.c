@@ -59,7 +59,7 @@ void ahci_post(struct hba_port *port, struct hba_cmd_state *state, int slot)
     uint64_t counter = wait_until_expire(!(port->regs[HBA_RPxTFD] & (HBA_PxTFD_BSY | HBA_PxTFD_DRQ)), 10000000000);
     if (!counter)
     {
-        NA_printk("AHCI wait timeout\n");
+        printk("AHCI wait timeout\n");
         return;
     }
 
@@ -82,7 +82,7 @@ void ahci_post(struct hba_port *port, struct hba_cmd_state *state, int slot)
     if (port->regs[HBA_RPxIS] & HBA_PxINTR_TFE)
     {
     err:
-        NA_printk("AHCI task file error\n");
+        printk("AHCI task file error\n");
 
         port->regs[HBA_RPxCI] &= ~bitmask;
 

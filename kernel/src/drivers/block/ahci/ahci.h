@@ -30,4 +30,4 @@ int hba_prepare_cmd(struct hba_port *port,
                     struct hba_cmdh **cmdh);
 int hba_bind_sbuf(struct hba_cmdh *cmdh, struct hba_cmdt *cmdt, void *buf, uint32_t len);
 
-uint64_t NA_ahci_init();
+uint64_t ahci_init();

@@ -12,7 +12,7 @@ tss_t tss[MAX_CPU_NUM];
 
 void tss_init()
 {
-    uint64_t sp = NA_phys_to_virt(NA_alloc_frames(STACK_SIZE / NA_DEFAULT_PAGE_SIZE)) + STACK_SIZE;
+    uint64_t sp = phys_to_virt(alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE)) + STACK_SIZE;
     uint64_t offset = 10 + current_cpu_id * 2;
     set_tss64((uint32_t *)&tss[current_cpu_id], sp, sp, sp, sp, sp, sp, sp, sp, sp, sp);
     set_tss_descriptor(offset, &tss[current_cpu_id]);
@@ -32,7 +32,7 @@ void disable_pic()
     io_out8(0x20, 0x20);
     io_out8(0xa0, 0x20);
 
-    NA_printk("8259A Masked\n");
+    printk("8259A Masked\n");
 
     io_out8(0x22, 0x70);
     io_out8(0x23, 0x01);
@@ -113,13 +113,13 @@ void local_apic_init(bool is_print)
     calibrated_timer_initial = (uint64_t)((uint64_t)(lapic_timer * 1000) / 250);
     if (is_print)
     {
-        NA_printk("Calibrated LAPIC timer: %d ticks per second\n", calibrated_timer_initial);
+        printk("Calibrated LAPIC timer: %d ticks per second\n", calibrated_timer_initial);
     }
     lapic_write(LAPIC_REG_TIMER, lapic_read(LAPIC_REG_TIMER) | (1 << 17));
     lapic_write(LAPIC_REG_TIMER_INITCNT, calibrated_timer_initial);
     if (is_print)
     {
-        NA_printk("Setup local %s\n", x2apic_mode ? "x2APIC" : "xAPIC");
+        printk("Setup local %s\n", x2apic_mode ? "x2APIC" : "xAPIC");
     }
 }
 
@@ -143,10 +143,10 @@ void local_apic_ap_init()
 
 void io_apic_init()
 {
-    NA_map_page_range(get_current_page_dir(), NA_phys_to_virt(ioapic_address), ioapic_address, NA_DEFAULT_PAGE_SIZE, NA_PT_FLAG_R | NA_PT_FLAG_W);
-    ioapic_address = (uint64_t)NA_phys_to_virt(ioapic_address);
+    map_page_range(get_current_page_dir(), phys_to_virt(ioapic_address), ioapic_address, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
+    ioapic_address = (uint64_t)phys_to_virt(ioapic_address);
 
-    NA_printk("Setup I/O apic: %#018lx\n", ioapic_address);
+    printk("Setup I/O apic: %#018lx\n", ioapic_address);
 }
 
 void ioapic_enable(uint8_t vector)
@@ -181,10 +181,10 @@ void lapic_timer_stop()
 
 void apic_setup(MADT *madt)
 {
-    lapic_address = NA_phys_to_virt((uint64_t)madt->local_apic_address);
-    NA_map_page_range(get_current_page_dir(), lapic_address, madt->local_apic_address, NA_DEFAULT_PAGE_SIZE, NA_PT_FLAG_R | NA_PT_FLAG_W);
+    lapic_address = phys_to_virt((uint64_t)madt->local_apic_address);
+    map_page_range(get_current_page_dir(), lapic_address, madt->local_apic_address, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
 
-    NA_printk("Setup Local apic: %#018lx\n", lapic_address);
+    printk("Setup Local apic: %#018lx\n", lapic_address);
 
     uint64_t current = 0;
     for (;;)
@@ -225,7 +225,7 @@ void ap_entry(struct limine_mp_info *cpu)
 
     close_interrupt;
 
-    uint64_t cr3 = (uint64_t)NA_virt_to_phys(get_current_page_dir());
+    uint64_t cr3 = (uint64_t)virt_to_phys(get_current_page_dir());
     __asm__ __volatile__("movq %0, %%cr3" ::"r"(cr3) : "memory");
 
     sse_init();
@@ -233,6 +233,8 @@ void ap_entry(struct limine_mp_info *cpu)
     gdtidt_setup();
 
     tss_init();
+
+    fsgsbase_init();
 
     while (1)
     {
@@ -255,7 +257,7 @@ uint32_t get_cpuid_by_lapic_id(uint32_t lapic_id)
         }
     }
 
-    NA_printk("Cannot get cpu id, lapic id = %d\n", lapic_id);
+    printk("Cannot get cpu id, lapic id = %d\n", lapic_id);
 
     return 0;
 }
@@ -281,7 +283,7 @@ void smp_init()
     apu_startup(mp_request.response);
 }
 
-NA_err_t apic_mask(uint64_t irq)
+err_t apic_mask(uint64_t irq)
 {
     ioapic_add((uint8_t)irq, irq - 0x20);
     ioapic_enable((uint8_t)irq);
@@ -289,20 +291,20 @@ NA_err_t apic_mask(uint64_t irq)
     return 0;
 }
 
-NA_err_t apic_unmask(uint64_t irq)
+err_t apic_unmask(uint64_t irq)
 {
     ioapic_disable((uint8_t)irq);
 
     return 0;
 }
 
-NA_err_t apic_ack(uint64_t irq)
+err_t apic_ack(uint64_t irq)
 {
     send_eoi((uint32_t)irq);
     return 0;
 }
 
-NA_irq_controller_t apic_controller = {
+irq_controller_t apic_controller = {
     .mask = apic_mask,
     .unmask = apic_unmask,
     .ack = apic_ack,

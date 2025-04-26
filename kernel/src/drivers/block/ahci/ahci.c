@@ -88,12 +88,12 @@ int hba_prepare_cmd(struct hba_port *port,
     int slot = __get_free_slot(port);
 
     // 构建命令头（Command Header）和命令表（Command Table）
-    struct hba_cmdh *cmd_header = NA_phys_to_virt(&port->cmdlst[slot]);
-    NA_memset(cmd_header, 0, sizeof(struct hba_cmdh));
-    uint64_t phys = NA_alloc_frames(1);
-    struct hba_cmdt *cmd_table = (struct hba_cmdt *)NA_phys_to_virt(phys);
+    struct hba_cmdh *cmd_header = phys_to_virt(&port->cmdlst[slot]);
+    memset(cmd_header, 0, sizeof(struct hba_cmdh));
+    uint64_t phys = alloc_frames(1);
+    struct hba_cmdt *cmd_table = (struct hba_cmdt *)phys_to_virt(phys);
 
-    NA_memset(cmd_header, 0, sizeof(struct hba_cmdh));
+    memset(cmd_header, 0, sizeof(struct hba_cmdh));
 
     // 将命令表挂到命令头上
     cmd_header->cmd_table_base = (uint32_t)(phys & 0xFFFFFFFF);
@@ -127,14 +127,14 @@ int hba_bind_sbuf(struct hba_cmdh *cmdh, struct hba_cmdt *cmdt, void *buf, uint3
 {
     if (len > 0x400000UL)
     {
-        NA_printk("AHCI buffer too large\n");
+        printk("AHCI buffer too large\n");
         return -1;
     }
 
-    uint64_t buf_phys = NA_virt_to_phys((uint64_t)buf);
+    uint64_t buf_phys = virt_to_phys((uint64_t)buf);
     if (buf_phys == 0)
     {
-        NA_printk("AHCI buffer not mapped\n");
+        printk("AHCI buffer not mapped\n");
         return -1;
     }
 
@@ -151,7 +151,7 @@ void sata_create_fis(struct sata_reg_fis *cmd_fis,
                      uint64_t lba,
                      uint16_t sector_count)
 {
-    NA_memset(cmd_fis, 0, sizeof(struct sata_reg_fis));
+    memset(cmd_fis, 0, sizeof(struct sata_reg_fis));
 
     cmd_fis->head.type = SATA_REG_FIS_H2D;
     cmd_fis->head.options = SATA_REG_FIS_COMMAND;
@@ -174,14 +174,14 @@ int ahci_init_device(struct hba_port *port)
     struct hba_cmdt *cmd_table;
     struct hba_cmdh *cmd_header;
 
-    uint16_t *data_in = (uint16_t *)NA_alloc_frames(1);
-    uint16_t *data = NA_phys_to_virt(data_in);
+    uint16_t *data_in = (uint16_t *)alloc_frames(1);
+    uint16_t *data = phys_to_virt(data_in);
 
     int slot = hba_prepare_cmd(port, &cmd_table, &cmd_header);
     hba_bind_sbuf(cmd_header, cmd_table, data, 512);
 
     port->device = malloc(sizeof(struct hba_device));
-    NA_memset(port->device, 0, sizeof(struct hba_device));
+    memset(port->device, 0, sizeof(struct hba_device));
     port->device->port = port;
     port->device->hba = port->hba;
 
@@ -243,13 +243,13 @@ int ahci_init_device(struct hba_port *port)
 done:
     achi_register_ops(port);
 
-    NA_free_frames((uint64_t)data_in, 1);
-    NA_free_frames(NA_virt_to_phys((uint64_t)cmd_table), 1);
+    free_frames((uint64_t)data_in, 1);
+    free_frames(virt_to_phys((uint64_t)cmd_table), 1);
     return 1;
 
 fail:
-    NA_free_frames((uint64_t)data_in, 1);
-    NA_free_frames(NA_virt_to_phys((uint64_t)cmd_table), 1);
+    free_frames((uint64_t)data_in, 1);
+    free_frames(virt_to_phys((uint64_t)cmd_table), 1);
 
     return 0;
 }
@@ -276,14 +276,14 @@ uint64_t ahci_write(void *data, uint64_t lba, void *buffer, uint64_t size)
 struct ahci_driver *ahci_driver_init(pci_bar_t *bar5)
 {
     struct ahci_driver *ahci_drv = malloc(sizeof(struct ahci_driver));
-    NA_memset(ahci_drv, 0, sizeof(struct ahci_driver));
+    memset(ahci_drv, 0, sizeof(struct ahci_driver));
     struct ahci_hba *hba = &ahci_drv->hba;
 
-    hba->base = (hba_reg_t *)NA_phys_to_virt(bar5->address);
-    NA_map_page_range(get_current_page_dir(), (uint64_t)hba->base, bar5->address, bar5->size, NA_PT_FLAG_R | NA_PT_FLAG_W);
+    hba->base = (hba_reg_t *)phys_to_virt(bar5->address);
+    map_page_range(get_current_page_dir(), (uint64_t)hba->base, bar5->address, bar5->size, PT_FLAG_R | PT_FLAG_W);
     if (hba->base == NULL)
     {
-        NA_printk("ahci driver init failed\n");
+        printk("ahci driver init failed\n");
         free(ahci_drv);
         return NULL;
     }
@@ -310,7 +310,7 @@ struct ahci_driver *ahci_driver_init(pci_bar_t *bar5)
             continue;
 
         struct hba_port *port = malloc(sizeof(struct hba_port));
-        NA_memset(port, 0, sizeof(struct hba_port));
+        memset(port, 0, sizeof(struct hba_port));
 
         hba_reg_t *port_regs = (hba_reg_t *)(&hba->base[HBA_RPBASE + i * HBA_RPSIZE]);
 
@@ -318,13 +318,13 @@ struct ahci_driver *ahci_driver_init(pci_bar_t *bar5)
 
         if (!clbp)
         {
-            clb_pa = NA_alloc_frames(1);
-            NA_memset((void *)NA_phys_to_virt(clb_pa), 0, 0x1000);
+            clb_pa = alloc_frames(1);
+            memset((void *)phys_to_virt(clb_pa), 0, 0x1000);
         }
         if (!fisp)
         {
-            fis_pa = NA_alloc_frames(1);
-            NA_memset((void *)NA_phys_to_virt(fis_pa), 0, 0x1000);
+            fis_pa = alloc_frames(1);
+            memset((void *)phys_to_virt(fis_pa), 0, 0x1000);
         }
 
         uint64_t addr = clb_pa + clbp * HBA_CLB_SIZE;
@@ -358,7 +358,7 @@ struct ahci_driver *ahci_driver_init(pci_bar_t *bar5)
 
         if (!ahci_init_device(port))
         {
-            NA_printk("ahci device init failed\n");
+            printk("ahci device init failed\n");
             continue;
         }
 
@@ -366,7 +366,7 @@ struct ahci_driver *ahci_driver_init(pci_bar_t *bar5)
 
         regist_blkdev("ahci", hbadev, hbadev->block_size, hbadev->max_lba * hbadev->block_size, ahci_read, ahci_write);
 
-        NA_printk("sata%d: %s, blk_size=%d, blk=0..%d\n",
+        printk("sata%d: %s, blk_size=%d, blk=0..%d\n",
                   i,
                   hbadev->model,
                   hbadev->block_size,
@@ -378,23 +378,23 @@ struct ahci_driver *ahci_driver_init(pci_bar_t *bar5)
 
 struct ahci_driver *drv;
 
-uint64_t NA_ahci_init()
+uint64_t ahci_init()
 {
     pci_device_t *device = pci_find_class(0x010601);
     if (!device)
     {
-        NA_printk("No AHCI controller found\n");
+        printk("No AHCI controller found\n");
         return (uint64_t)-1;
     }
 
     pci_bar_t *bar5 = &device->bars[5];
     if (bar5->address == 0 || bar5->size == 0)
     {
-        NA_printk("ahci device has no bar5\n");
+        printk("ahci device has no bar5\n");
         return (uint64_t)-1;
     }
 
-    op_buffer = (void *)NA_alloc_frames(0x400000UL / NA_DEFAULT_PAGE_SIZE);
+    op_buffer = (void *)alloc_frames(0x400000UL / DEFAULT_PAGE_SIZE);
 
     drv = ahci_driver_init(bar5);
 }

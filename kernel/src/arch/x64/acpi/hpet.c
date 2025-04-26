@@ -43,11 +43,11 @@ uint64_t nanoTime()
 
 void hpet_setup(Hpet *hpet)
 {
-    hpet_addr = (HpetInfo *)NA_phys_to_virt(hpet->base_address.address);
-    NA_map_page_range(get_current_page_dir(), (uint64_t)hpet_addr, hpet->base_address.address, NA_DEFAULT_PAGE_SIZE, NA_PT_FLAG_R | NA_PT_FLAG_W);
+    hpet_addr = (HpetInfo *)phys_to_virt(hpet->base_address.address);
+    map_page_range(get_current_page_dir(), (uint64_t)hpet_addr, hpet->base_address.address, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
     uint32_t counterClockPeriod = hpet_addr->generalCapabilities >> 32;
     hpetPeriod = counterClockPeriod / 1000000;
     hpet_addr->generalConfiguration |= 1;
     *(volatile uint64_t *)((uint64_t)hpet_addr + 0xf0) = 0;
-    NA_printk("Setup acpi hpet table (nano_time: %#ld).", (uint64_t)nanoTime());
+    printk("Setup acpi hpet table (nano_time: %#ld).", (uint64_t)nanoTime());
 }

@@ -1083,7 +1083,7 @@ struct flanterm_context *flanterm_fb_init(
     }
 
     struct flanterm_context *_ctx = (void *)ctx;
-    NA_memset(ctx, 0, sizeof(struct flanterm_fb_context));
+    memset(ctx, 0, sizeof(struct flanterm_fb_context));
 
     ctx->red_mask_size = red_mask_size;
     ctx->red_mask_shift = red_mask_shift + (red_mask_size - 8);
@@ -1186,7 +1186,7 @@ struct flanterm_context *flanterm_fb_init(
         {
             goto fail;
         }
-        NA_memcpy(ctx->font_bits, font, ctx->font_bits_size);
+        memcpy(ctx->font_bits, font, ctx->font_bits_size);
     }
     else
     {
@@ -1199,7 +1199,7 @@ struct flanterm_context *flanterm_fb_init(
         {
             goto fail;
         }
-        NA_memcpy(ctx->font_bits, builtin_font, ctx->font_bits_size);
+        memcpy(ctx->font_bits, builtin_font, ctx->font_bits_size);
     }
 
 #undef FONT_BYTES
@@ -1284,7 +1284,7 @@ struct flanterm_context *flanterm_fb_init(
         goto fail;
     }
     ctx->queue_i = 0;
-    NA_memset(ctx->queue, 0, ctx->queue_size);
+    memset(ctx->queue, 0, ctx->queue_size);
 
     ctx->map_size = _ctx->rows * _ctx->cols * sizeof(struct flanterm_fb_queue_item *);
     ctx->map = _malloc(ctx->map_size);
@@ -1292,7 +1292,7 @@ struct flanterm_context *flanterm_fb_init(
     {
         goto fail;
     }
-    NA_memset(ctx->map, 0, ctx->map_size);
+    memset(ctx->map, 0, ctx->map_size);
 
     if (canvas != NULL)
     {

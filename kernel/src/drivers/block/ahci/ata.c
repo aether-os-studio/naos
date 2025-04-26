@@ -5,7 +5,7 @@
 
 void sata_read_error(struct hba_port *port)
 {
-    NA_printk("SATA read error\n");
+    printk("SATA read error\n");
     uint32_t tfd = port->regs[HBA_RPxTFD];
     port->device->last_result.sense_key = (tfd & 0xf000) >> 12;
     port->device->last_result.error = (tfd & 0x0f00) >> 8;
@@ -48,5 +48,5 @@ void sata_submit(struct hba_device *dev, struct blkio_req *io_req)
     ahci_post(port, cmds, slot);
 
     free(cmds);
-    NA_free_frames(NA_virt_to_phys((uint64_t)table), 1);
+    free_frames(virt_to_phys((uint64_t)table), 1);
 }

@@ -7,7 +7,7 @@ void scsi_create_packet12(struct scsi_cdb12 *cdb,
                           uint32_t lba,
                           uint32_t alloc_size)
 {
-    NA_memset(cdb, 0, sizeof(struct scsi_cdb12));
+    memset(cdb, 0, sizeof(struct scsi_cdb12));
     cdb->opcode = opcode;
     cdb->lba_be = SCSI_FLIP(lba);
     cdb->length = SCSI_FLIP(alloc_size);
@@ -18,7 +18,7 @@ void scsi_create_packet16(struct scsi_cdb16 *cdb,
                           uint64_t lba,
                           uint32_t alloc_size)
 {
-    NA_memset(cdb, 0, sizeof(struct scsi_cdb16));
+    memset(cdb, 0, sizeof(struct scsi_cdb16));
     cdb->opcode = opcode;
     cdb->lba_be_hi = SCSI_FLIP((uint32_t)(lba >> 32));
     cdb->lba_be_lo = SCSI_FLIP((uint32_t)lba);
@@ -85,5 +85,5 @@ void scsi_submit(struct hba_device *dev, struct blkio_req *io_req)
     ahci_post(port, cmds, slot);
 
     free(cmds);
-    NA_free_frames(NA_virt_to_phys((uint64_t)table), 1);
+    free_frames(virt_to_phys((uint64_t)table), 1);
 }

@@ -4,9 +4,9 @@ static uint32_t overhead = sizeof(footer_t) + sizeof(node_t);
 
 heap_t kheap;
 
-void NA_heap_init()
+void heap_init()
 {
-    NA_map_page_range(get_current_page_dir(), KERNEL_HEAP_START, 0, KERNEL_HEAP_SIZE, NA_PT_FLAG_R | NA_PT_FLAG_W);
+    map_page_range(get_current_page_dir(), KERNEL_HEAP_START, 0, KERNEL_HEAP_SIZE, PT_FLAG_R | PT_FLAG_W);
 
     init_heap(&kheap, KERNEL_HEAP_START, KERNEL_HEAP_SIZE);
 }
@@ -15,13 +15,13 @@ uint32_t offset = 8;
 
 void init_heap(heap_t *heap, uint64_t start, uint64_t size)
 {
-    NA_memset(heap, 0, sizeof(heap_t));
+    memset(heap, 0, sizeof(heap_t));
 
     uint64_t addition_len = 0;
     for (int i = 0; i < BIN_COUNT; i++)
     {
         heap->bins[i] = (bin_t *)start;
-        NA_memset(heap->bins[i], 0, sizeof(bin_t));
+        memset(heap->bins[i], 0, sizeof(bin_t));
         start += sizeof(bin_t);
         addition_len += sizeof(bin_t);
     }
@@ -207,7 +207,7 @@ void *realloc(void *ptr, size_t size)
     size_t len = (size_t)node->size;
 
     void *new_ptr = malloc(len);
-    NA_memcpy(new_ptr, ptr, len);
+    memcpy(new_ptr, ptr, len);
     free(ptr);
 
     return new_ptr;

@@ -1,20 +1,20 @@
 #include <mm/bitmap.h>
 
-void NA_bitmap_init(NA_Bitmap *bitmap, uint8_t *buffer, size_t size)
+void bitmap_init(Bitmap *bitmap, uint8_t *buffer, size_t size)
 {
     bitmap->buffer = buffer;
     bitmap->length = size * 8;
-    NA_memset(buffer, 0, size);
+    memset(buffer, 0, size);
 }
 
-bool NA_bitmap_get(const NA_Bitmap *bitmap, size_t index)
+bool bitmap_get(const Bitmap *bitmap, size_t index)
 {
     size_t word_index = index / 8;
     size_t bit_index = index % 8;
     return (bitmap->buffer[word_index] >> bit_index) & 1;
 }
 
-void NA_bitmap_set(NA_Bitmap *bitmap, size_t index, bool value)
+void bitmap_set(Bitmap *bitmap, size_t index, bool value)
 {
     size_t word_index = index / 8;
     size_t bit_index = index % 8;
@@ -28,7 +28,7 @@ void NA_bitmap_set(NA_Bitmap *bitmap, size_t index, bool value)
     }
 }
 
-void NA_bitmap_set_range(NA_Bitmap *bitmap, size_t start, size_t end, bool value)
+void bitmap_set_range(Bitmap *bitmap, size_t start, size_t end, bool value)
 {
     if (start >= end || start >= bitmap->length)
     {
@@ -40,7 +40,7 @@ void NA_bitmap_set_range(NA_Bitmap *bitmap, size_t start, size_t end, bool value
 
     for (size_t i = start; i < start_word * 8 && i < end; i++)
     {
-        NA_bitmap_set(bitmap, i, value);
+        bitmap_set(bitmap, i, value);
     }
 
     if (start_word > end_word)
@@ -59,11 +59,11 @@ void NA_bitmap_set_range(NA_Bitmap *bitmap, size_t start, size_t end, bool value
 
     for (size_t i = end_word * 8; i < end; i++)
     {
-        NA_bitmap_set(bitmap, i, value);
+        bitmap_set(bitmap, i, value);
     }
 }
 
-size_t NA_bitmap_find_range(const NA_Bitmap *bitmap, size_t length, bool value)
+size_t bitmap_find_range(const Bitmap *bitmap, size_t length, bool value)
 {
     size_t count = 0, start_index = 0;
     uint8_t byte_match = value ? (uint8_t)-1 : 0;

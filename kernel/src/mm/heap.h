@@ -40,7 +40,7 @@ typedef struct
     bin_t *bins[BIN_COUNT];
 } heap_t;
 
-void NA_heap_init();
+void heap_init();
 
 void init_heap(heap_t *heap, uint64_t start, uint64_t size);
 
@@ -65,3 +65,4 @@ void remove_node(bin_t *bin, node_t *node);
 
 node_t *get_best_fit(bin_t *list, size_t size);
 node_t *get_last_node(bin_t *list);
+node_t *prev(node_t *current);

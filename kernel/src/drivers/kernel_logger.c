@@ -40,7 +40,7 @@ int skip_and_atoi(const char **s)
     return ans;
 }
 
-int NA_vsprintf(char *buf, const char *fmt, va_list args)
+int vsprintf(char *buf, const char *fmt, va_list args)
 {
     /**
      * 将字符串按照fmt和args中的内容进行格式化，然后保存到buf中
@@ -201,7 +201,7 @@ int NA_vsprintf(char *buf, const char *fmt, va_list args)
             s = va_arg(args, char *);
             if (!s)
                 s = "\0";
-            len = NA_strlen(s);
+            len = strlen(s);
             if (precision < 0)
             {
                 // 未指定精度
@@ -467,9 +467,9 @@ char *write_float_point_num(char *str, double num, int field_width, int precisio
     if (sign)
         --field_width;
 
-    int js_num_z = 0, js_num_d = 0;                                         // 临时数字字符串tmp_num_z tmp_num_d的长度
-    uint64_t num_z = (uint64_t)(num);                                       // 获取整数部分
-    uint64_t num_decimal = (uint64_t)(NA_round((num - num_z) * precision)); // 获取小数部分
+    int js_num_z = 0, js_num_d = 0;                                      // 临时数字字符串tmp_num_z tmp_num_d的长度
+    uint64_t num_z = (uint64_t)(num);                                    // 获取整数部分
+    uint64_t num_decimal = (uint64_t)(round((num - num_z) * precision)); // 获取小数部分
 
     if (num == 0)
         tmp_num_z[js_num_z++] = '0';
@@ -521,7 +521,7 @@ char *write_float_point_num(char *str, double num, int field_width, int precisio
     return str;
 }
 
-int NA_printk(const char *fmt, ...)
+int printk(const char *fmt, ...)
 {
 
     struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];
@@ -531,8 +531,8 @@ int NA_printk(const char *fmt, ...)
         init_serial();
 
         ft_ctx = flanterm_fb_init(
-            NA_alloc_frames_bytes,
-            NA_free_frames_bytes,
+            alloc_frames_bytes,
+            free_frames_bytes,
             (uint32_t *)framebuffer->address, framebuffer->width, framebuffer->height, framebuffer->pitch,
             framebuffer->red_mask_size, framebuffer->red_mask_shift,
             framebuffer->green_mask_size, framebuffer->green_mask_shift,
@@ -551,11 +551,11 @@ int NA_printk(const char *fmt, ...)
     va_list args;
     va_start(args, fmt);
 
-    int len = NA_vsprintf(buf, fmt, args);
+    int len = vsprintf(buf, fmt, args);
 
     va_end(args);
 
-    NA_serial_printk(buf, len);
+    serial_printk(buf, len);
 
     if (!framebuffer_request.response->framebuffer_count)
         return len;
@@ -563,12 +563,12 @@ int NA_printk(const char *fmt, ...)
     flanterm_write(ft_ctx, buf, len);
 }
 
-int NA_sprintf(char *buf, const char *fmt, ...)
+int sprintf(char *buf, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
 
-    int len = NA_vsprintf(buf, fmt, args);
+    int len = vsprintf(buf, fmt, args);
 
     va_end(args);
 

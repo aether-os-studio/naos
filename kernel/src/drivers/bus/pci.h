@@ -68,4 +68,4 @@ void pcie_setup(MCFG *mcfg);
 const char *pci_classname(uint32_t classcode);
 pci_device_t *pci_find_vid_did(uint16_t vendor_id, uint16_t device_id); // 根据供应商ID和设备ID寻找PCI设备
 pci_device_t *pci_find_class(uint32_t class_code);                      // 根据指定class_code寻找PCI设备 (找不到返回NULL)
-void NA_pci_init();
+void pci_init();

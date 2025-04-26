@@ -2,7 +2,7 @@
 
 extern void sse_init();
 
-void NA_arch_early_init()
+void arch_early_init()
 {
     close_interrupt;
 
@@ -14,9 +14,11 @@ void NA_arch_early_init()
     tss_init();
 
     apic_timer_init();
+
+    fsgsbase_init();
 }
 
-void NA_arch_init()
+void arch_init()
 {
     open_interrupt;
 }

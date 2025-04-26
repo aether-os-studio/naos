@@ -9,7 +9,7 @@
         void *name = find_table(#name);                       \
         if (name == NULL)                                     \
         {                                                     \
-            NA_printk("Cannot find acpi " #name " table.\n"); \
+            printk("Cannot find acpi " #name " table.\n"); \
             return;                                           \
         }                                                     \
         else                                                  \
@@ -31,11 +31,11 @@ void *find_table(const char *name)
     for (uint64_t i = 0; i < entry_count; i++)
     {
         uint64_t phys = (uint64_t)(*(t + i));
-        uint64_t ptr = NA_phys_to_virt(phys);
-        NA_map_page_range(get_current_page_dir(), ptr, phys, NA_DEFAULT_PAGE_SIZE, NA_PT_FLAG_R | NA_PT_FLAG_W);
+        uint64_t ptr = phys_to_virt(phys);
+        map_page_range(get_current_page_dir(), ptr, phys, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
         uint8_t signa[5] = {0};
-        NA_memcpy(signa, ((struct ACPISDTHeader *)ptr)->Signature, 4);
-        if (NA_memcmp(signa, name, 4) == 0)
+        memcpy(signa, ((struct ACPISDTHeader *)ptr)->Signature, 4);
+        if (memcmp(signa, name, 4) == 0)
         {
             return (void *)ptr;
         }
@@ -52,22 +52,22 @@ void acpi_init()
     RSDP *rsdp = (RSDP *)rsdp_paddr;
     if (rsdp == NULL)
     {
-        NA_printk("Cannot find acpi RSDP table.\n");
+        printk("Cannot find acpi RSDP table.\n");
         return;
     }
-    rsdp = NA_phys_to_virt(rsdp);
-    NA_map_page_range(get_current_page_dir(), (uint64_t)rsdp, rsdp_paddr, NA_DEFAULT_PAGE_SIZE, NA_PT_FLAG_R | NA_PT_FLAG_W);
+    rsdp = phys_to_virt(rsdp);
+    map_page_range(get_current_page_dir(), (uint64_t)rsdp, rsdp_paddr, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
 
     uint64_t xsdt_paddr = rsdp->xsdt_address;
 
     xsdt = (XSDT *)xsdt_paddr;
     if (xsdt == NULL)
     {
-        NA_printk("Cannot find acpi XSDT table.\n");
+        printk("Cannot find acpi XSDT table.\n");
         return;
     }
-    xsdt = NA_phys_to_virt(xsdt);
-    NA_map_page_range(get_current_page_dir(), (uint64_t)xsdt, xsdt_paddr, NA_DEFAULT_PAGE_SIZE, NA_PT_FLAG_R | NA_PT_FLAG_W);
+    xsdt = phys_to_virt(xsdt);
+    map_page_range(get_current_page_dir(), (uint64_t)xsdt, xsdt_paddr, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
 
     load_table(HPET, hpet_setup);
     load_table(APIC, apic_setup);

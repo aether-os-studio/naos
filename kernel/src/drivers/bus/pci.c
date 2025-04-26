@@ -42,8 +42,8 @@ uint64_t get_mmio_address(uint32_t pci_address, uint16_t offset)
     {
         return 0;
     }
-    uint64_t virt = NA_phys_to_virt(phys);
-    NA_map_page_range(get_current_page_dir(), virt, phys, NA_DEFAULT_PAGE_SIZE, NA_PT_FLAG_R | NA_PT_FLAG_W);
+    uint64_t virt = phys_to_virt(phys);
+    map_page_range(get_current_page_dir(), virt, phys, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
 
     return virt + offset;
 }
@@ -59,7 +59,7 @@ uint32_t pci_read(uint32_t b, uint32_t d, uint32_t f, uint32_t s, uint32_t offse
     uint64_t mmio_address = get_mmio_address(pci_address, offset);
     if (mmio_address == 0)
     {
-        NA_printk("Cannot read pci: failed to get mmio address\n");
+        printk("Cannot read pci: failed to get mmio address\n");
     }
     return *(uint32_t *)mmio_address;
 }
@@ -70,7 +70,7 @@ void pci_write(uint32_t b, uint32_t d, uint32_t f, uint32_t s, uint32_t offset, 
     uint64_t mmio_address = get_mmio_address(pci_address, offset);
     if (mmio_address == 0)
     {
-        NA_printk("Cannot write pci: failed to get mmio address\n");
+        printk("Cannot write pci: failed to get mmio address\n");
     }
     *(uint32_t *)mmio_address = value;
 }
@@ -343,7 +343,7 @@ void pci_scan_function(uint16_t segment_group, uint8_t bus, uint8_t device, uint
     uint8_t header_type = (*((uint8_t *)header_type_mmio_addr + 2)) & 0x7F;
 
     pci_device_t *pci_device = (pci_device_t *)malloc(sizeof(pci_device_t));
-    NA_memset(pci_device, 0, sizeof(pci_device_t));
+    memset(pci_device, 0, sizeof(pci_device_t));
     pci_device->header_type = header_type;
     pci_device->op = &pcie_device_op;
 
@@ -363,7 +363,7 @@ void pci_scan_function(uint16_t segment_group, uint8_t bus, uint8_t device, uint
         pci_device->vendor_id = vendor_id;
         pci_device->device_id = device_id;
 
-        NA_printk("Found PCIe device: %#08lx name: %s\n", pci_device->class_code, pci_device->name);
+        printk("Found PCIe device: %#08lx name: %s\n", pci_device->class_code, pci_device->name);
 
         uint32_t capability_point = pci_device->op->read(pci_device->bus, pci_device->slot, pci_device->func, pci_device->segment, 0x34) & 0xff;
         pci_device->capability_point = capability_point;
@@ -458,7 +458,7 @@ void pci_scan_function(uint16_t segment_group, uint8_t bus, uint8_t device, uint
         // Ignore
         break;
     default:
-        NA_printk("Failed to parse header type, header type = %#04x\n", header_type);
+        printk("Failed to parse header type, header type = %#04x\n", header_type);
     }
 }
 
@@ -496,7 +496,7 @@ void pci_scan_segment(uint16_t segment_group)
 void pci_scan_device_legacy(uint32_t bus, uint32_t equipment, uint32_t f)
 {
     pci_device_t *device = (pci_device_t *)malloc(sizeof(pci_device_t));
-    NA_memset(device, 0, sizeof(pci_device_t));
+    memset(device, 0, sizeof(pci_device_t));
     device->op = &pci_device_op;
 
     uint32_t value_c = device->op->read(bus, equipment, f, 0, PCI_CONF_REVISION);
@@ -516,7 +516,7 @@ void pci_scan_device_legacy(uint32_t bus, uint32_t equipment, uint32_t f)
     device->slot = equipment;
     device->func = f;
 
-    NA_printk("Found PCI device: %#08lx name: %s\n", device->class_code, device->name);
+    printk("Found PCI device: %#08lx name: %s\n", device->class_code, device->name);
 
     for (int i = 0; i < 6; i++)
     {
@@ -556,7 +556,7 @@ void pci_scan_device_legacy(uint32_t bus, uint32_t equipment, uint32_t f)
             {
                 if (i >= 5)
                 {
-                    NA_printk("Error: 64-bit BAR at position overflow\n");
+                    printk("Error: 64-bit BAR at position overflow\n");
                     continue;
                 }
 
@@ -608,11 +608,11 @@ void pcie_setup(MCFG *mcfg)
     mcfg_buffer = mcfg;
 }
 
-void NA_pci_init()
+void pci_init()
 {
     if (mcfg_buffer)
     {
-        NA_printk("Scanning PCIe bus\n");
+        printk("Scanning PCIe bus\n");
         // Scan PCIe bus
         mcfg_addr_to_entries(mcfg_buffer, mcfg_entries, &mcfg_entries_len);
 
@@ -624,7 +624,7 @@ void NA_pci_init()
     }
     else
     {
-        NA_printk("Scanning PCI bus\n");
+        printk("Scanning PCI bus\n");
 
         // Scan PCI bus
         uint32_t BUS, Equipment, F;
@@ -645,7 +645,7 @@ void NA_pci_init()
     }
 }
 #else
-void NA_pci_init()
+void pci_init()
 {
 }
 #endif
