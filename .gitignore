@@ -1,0 +1,6 @@
+/.vscode
+/kernel-deps
+/limine
+/ovmf
+*.iso
+*.hdd
