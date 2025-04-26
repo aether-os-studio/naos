@@ -20,7 +20,7 @@ void mcfg_addr_to_entries(MCFG *mcfg, MCFG_ENTRY **entries, uint64_t *num)
 
 uint64_t get_device_mmio_physical_address(uint16_t segment_group, uint8_t bus, uint8_t device, uint8_t function)
 {
-    for (int i = 0; i < mcfg_entries_len; i++)
+    for (uint64_t i = 0; i < mcfg_entries_len; i++)
     {
         if (mcfg_entries[i]->pci_segment_group == segment_group)
         {
@@ -305,7 +305,7 @@ pci_device_t *pci_find_vid_did(uint16_t vendor_id, uint16_t device_id)
 
 pci_device_t *pci_find_class(uint32_t class_code)
 {
-    for (int i = 0; i < device_number; i++)
+    for (uint32_t i = 0; i < device_number; i++)
     {
         if (pci_devices[i]->class_code == class_code)
         {
@@ -616,7 +616,7 @@ void NA_pci_init()
         // Scan PCIe bus
         mcfg_addr_to_entries(mcfg_buffer, mcfg_entries, &mcfg_entries_len);
 
-        for (int i = 0; i < mcfg_entries_len; i++)
+        for (uint64_t i = 0; i < mcfg_entries_len; i++)
         {
             uint16_t segment_group = mcfg_entries[i]->pci_segment_group;
             pci_scan_segment(segment_group);

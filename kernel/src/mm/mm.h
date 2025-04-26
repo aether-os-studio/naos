@@ -27,3 +27,13 @@ uint64_t NA_alloc_frames(size_t count);
 
 void NA_map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t size, uint64_t flags);
 void NA_unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size);
+
+static inline void *NA_alloc_frames_bytes(uint64_t bytes)
+{
+    return NA_phys_to_virt((void *)NA_alloc_frames((bytes + NA_DEFAULT_PAGE_SIZE - 1) / NA_DEFAULT_PAGE_SIZE));
+}
+
+static inline void NA_free_frames_bytes(void *ptr, uint64_t bytes)
+{
+    NA_free_frames(NA_virt_to_phys((uint64_t)ptr), (bytes + NA_DEFAULT_PAGE_SIZE - 1) / NA_DEFAULT_PAGE_SIZE);
+}

@@ -88,7 +88,7 @@ void *heap_alloc(heap_t *heap, size_t size)
 
     found->prev = NULL;
     found->next = NULL;
-    return &found->next;
+    return (void *)&found->next;
 }
 
 void heap_free(heap_t *heap, void *p)

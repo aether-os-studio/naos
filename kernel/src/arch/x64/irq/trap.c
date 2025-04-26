@@ -40,8 +40,8 @@ void dump_regs(struct pt_regs *regs, const char *error_str, ...)
     NA_vsprintf(buf, error_str, args);
     va_end(args);
 
-    NA_printk("\033[0;0H");
-    NA_printk("\033[2J");
+    // NA_printk("\033[0;0H");
+    // NA_printk("\033[2J");
     NA_printk("%s\n", buf);
 
     NA_printk("RIP = %#018lx, RSP = %#018lx\n", regs->rip, regs->rsp);

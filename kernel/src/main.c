@@ -3,6 +3,8 @@
 #include <drivers/bus/pci.h>
 #include <mm/mm.h>
 #include <arch/arch.h>
+#include <drivers/block/ahci/ahci.h>
+#include <drivers/block/nvme/nvme.h>
 
 __attribute__((used, section(".limine_requests"))) static volatile LIMINE_BASE_REVISION(3);
 
@@ -32,14 +34,16 @@ void kmain(void)
         hcf();
     }
 
+    NA_frame_init();
     NA_printk("Next Aether-OS starting...\n");
 
-    NA_frame_init();
     NA_heap_init();
 
     NA_arch_early_init();
 
     NA_pci_init();
+    NA_ahci_init();
+    NA_nvme_init();
 
     NA_arch_init();
 

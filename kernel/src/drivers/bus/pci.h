@@ -30,7 +30,7 @@ typedef struct
     uint64_t address;
     uint64_t size;
     bool mmio;
-} pci_bar_base_address;
+} pci_bar_t;
 
 typedef struct
 {
@@ -50,7 +50,7 @@ typedef struct
     uint8_t bus;
     uint8_t slot;
     uint8_t func;
-    pci_bar_base_address bars[6];
+    pci_bar_t bars[6];
 
     uint32_t capability_point;
 

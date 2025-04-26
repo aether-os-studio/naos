@@ -531,8 +531,8 @@ int NA_printk(const char *fmt, ...)
         init_serial();
 
         ft_ctx = flanterm_fb_init(
-            NULL,
-            NULL,
+            NA_alloc_frames_bytes,
+            NA_free_frames_bytes,
             (uint32_t *)framebuffer->address, framebuffer->width, framebuffer->height, framebuffer->pitch,
             framebuffer->red_mask_size, framebuffer->red_mask_shift,
             framebuffer->green_mask_size, framebuffer->green_mask_shift,
