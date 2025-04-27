@@ -7,7 +7,7 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num)
 {
     irq_action_t *action = &actions[irq_num];
 
-    if (action->handler != NULL)
+    if (action->handler)
     {
         action->handler(irq_num, action->data, regs);
     }
@@ -16,17 +16,17 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num)
         printk("Intr vector [%d] does not have a handler\n", irq_num);
     }
 
-    if (action->irq_controller != NULL && action->irq_controller->ack != NULL)
+    if (action->irq_controller && action->irq_controller->ack)
     {
         action->irq_controller->ack(irq_num);
     }
     else
     {
-        printk("Intr vector [%d] does not have a ack\n", irq_num);
+        printk("Intr vector [%d] does not have an ack\n", irq_num);
     }
 }
 
-void irq_regist_irq(uint64_t irq_num, void (*handler)(uint64_t irq_num, void *data, struct pt_regs *regs), void *data, irq_controller_t *controller, char *name)
+void irq_regist_irq(uint64_t irq_num, void (*handler)(uint64_t irq_num, void *data, struct pt_regs *regs), uint64_t arg, void *data, irq_controller_t *controller, char *name)
 {
     irq_action_t *action = &actions[irq_num];
 
@@ -34,4 +34,14 @@ void irq_regist_irq(uint64_t irq_num, void (*handler)(uint64_t irq_num, void *da
     action->data = data;
     action->irq_controller = controller;
     action->name = name;
+
+    if (action->irq_controller && action->irq_controller->install)
+    {
+        action->irq_controller->install(irq_num, arg);
+    }
+
+    if (action->irq_controller && action->irq_controller->unmask)
+    {
+        action->irq_controller->unmask(irq_num);
+    }
 }

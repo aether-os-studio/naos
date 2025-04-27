@@ -47,7 +47,9 @@ typedef struct task
 task_t *task_create(const char *name, void (*entry)());
 void task_init();
 
-uint64_t task_fork();
+struct pt_regs;
+
+uint64_t task_fork(struct pt_regs *regs);
 uint64_t task_execve(const char *path, char *const *argv, char *const *envp);
 uint64_t task_exit(int64_t code);
 

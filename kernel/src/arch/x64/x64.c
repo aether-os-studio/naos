@@ -16,6 +16,8 @@ void arch_early_init()
     apic_timer_init();
 
     fsgsbase_init();
+
+    arch_input_dev_init();
 }
 
 void arch_init()
@@ -23,4 +25,10 @@ void arch_init()
     syscall_init();
 
     open_interrupt;
+}
+
+void arch_input_dev_init()
+{
+    kbd_init();
+    mouse_init();
 }

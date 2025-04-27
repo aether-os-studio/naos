@@ -1,7 +1,7 @@
 #include <task/task.h>
-#include <arch/arch.h>
 #include <drivers/kernel_logger.h>
 #include <fs/vfs/vfs.h>
+#include <arch/arch.h>
 
 task_t *tasks[MAX_TASK_NUM];
 task_t *idle_tasks[MAX_CPU_NUM];
@@ -14,8 +14,8 @@ task_t *get_free_task()
     {
         if (tasks[i] == NULL)
         {
-            tasks[i] = (task_t *)malloc(sizeof(task_t));
-            memset(tasks[i], 0, sizeof(task_t));
+            tasks[i] = (task_t *)phys_to_virt(alloc_frames(1));
+            memset(tasks[i], 0, DEFAULT_PAGE_SIZE);
             tasks[i]->pid = i;
             return tasks[i];
         }
@@ -24,7 +24,7 @@ task_t *get_free_task()
     return NULL;
 }
 
-uint32_t cpu_idx;
+uint32_t cpu_idx = 0;
 
 uint32_t alloc_cpu_id()
 {
@@ -40,10 +40,11 @@ task_t *task_create(const char *name, void (*entry)())
     task->ppid = task->pid;
     task->waitpid = 0;
     task->state = TASK_READY;
+    task->jiffies = 0;
     task->kernel_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE));
     task->syscall_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE));
     task->arch_context = malloc(sizeof(arch_context_t));
-    arch_context_init(task->arch_context, virt_to_phys((uint64_t)get_current_page_dir()), (uint64_t)entry, task->kernel_stack + STACK_SIZE, false);
+    arch_context_init(task->arch_context, virt_to_phys((uint64_t)get_kernel_page_dir()), (uint64_t)entry, task->kernel_stack + STACK_SIZE, false);
     task->signal = 0;
     task->status = 0;
     task->cwd = rootdir;
@@ -130,9 +131,12 @@ void init_thread()
     }
 }
 
+extern void windowmanager_thread();
+
 void task_init()
 {
     memset(tasks, 0, sizeof(tasks));
+    memset(idle_tasks, 0, sizeof(idle_tasks));
 
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++)
     {
@@ -140,6 +144,7 @@ void task_init()
     }
     arch_set_current(idle_tasks[0]);
     task_create("init", init_thread);
+    task_create("windowmanager", windowmanager_thread);
 
     task_initialized = true;
 }
@@ -213,7 +218,7 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], char *en
     return tmp_stack;
 }
 
-uint64_t task_fork()
+uint64_t task_fork(struct pt_regs *regs)
 {
     task_t *child = get_free_task();
     if (child == NULL)
@@ -221,16 +226,29 @@ uint64_t task_fork()
         return (uint64_t)-ENOMEM;
     }
 
+    child->state = TASK_READY;
+
+    child->cpu_id = current_task->cpu_id;
+
+    child->kernel_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE));
+    child->syscall_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE));
+
     child->arch_context = malloc(sizeof(arch_context_t));
-    arch_context_copy(child->arch_context, current_task->arch_context);
+    memset(child->arch_context, 0, sizeof(arch_context_t));
+    memcpy(current_task->arch_context->ctx, regs, sizeof(struct pt_regs));
+    arch_context_copy(child->arch_context, current_task->arch_context, child->kernel_stack);
     child->ppid = current_task->pid;
+
+    child->jiffies = current_task->jiffies;
+
+    child->cwd = current_task->cwd;
 
     return child->pid;
 }
 
 uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
 {
-    close_interrupt;
+    arch_disable_interrupt();
 
     vfs_node_t node = vfs_open(path);
     if (!node)
@@ -296,9 +314,13 @@ uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
         return (uint64_t)-ENOMEM;
     }
 
+#if defined(__x86_64__)
     current_task->arch_context->cr3 = clone_page_table(virt_to_phys((uint64_t)get_current_page_dir()), USER_STACK_START, USER_STACK_END);
-
     __asm__ __volatile__("movq %0, %%cr3\n\t" ::"r"(current_task->arch_context->cr3) : "memory");
+#elif defined(__aarch64__)
+#elif defined(__riscv)
+#elif defined(__loongarch64)
+#endif
 
     uint64_t load_start = UINT64_MAX;
     uint64_t load_end = 0;
@@ -368,6 +390,8 @@ void sys_yield()
 
 uint64_t task_exit(int64_t code)
 {
+    arch_disable_interrupt();
+
     task_t *task = current_task;
 
     arch_context_free(task->arch_context);
@@ -377,13 +401,15 @@ uint64_t task_exit(int64_t code)
 
     free(task->arch_context);
 
-    tasks[task->pid] = NULL;
-
     task->state = TASK_DIED;
 
     task->status = (uint64_t)code;
 
-    sys_yield();
+    task_t *next = task_search(TASK_READY, task->cpu_id);
+
+    arch_set_current(next);
+
+    arch_switch_with_context(NULL, next->arch_context, next->kernel_stack);
 
     return (uint64_t)-EAGAIN;
 }

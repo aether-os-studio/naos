@@ -117,3 +117,13 @@ void generic_interrupt_table_init()
         set_intr_gate(i, 0, interrupt_table[i - 0x20]);
     }
 }
+
+void arch_enable_interrupt()
+{
+    open_interrupt;
+}
+
+void arch_disable_interrupt()
+{
+    close_interrupt;
+}

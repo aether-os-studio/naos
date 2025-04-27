@@ -12,7 +12,7 @@ ARCH_DIR := $(ARCH)
 endif
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
-QEMUFLAGS := -m 4G -serial stdio
+QEMUFLAGS := -m 4G -serial stdio -smp 4
 
 DEBUG ?= 0
 

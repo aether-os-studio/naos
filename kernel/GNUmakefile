@@ -45,7 +45,7 @@ CC := $(ARCH)-linux-gnu-gcc
 endif
 
 # User controllable C flags.
-CFLAGS := -g -O0
+CFLAGS := -g3 -O0
 
 # User controllable C preprocessor flags. We set none by default.
 CPPFLAGS :=

@@ -14,5 +14,6 @@
 uint64_t get_arch_page_table_flags(uint64_t flags);
 void map_page(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t arch_flags);
 void unmap_page(uint64_t *pml4, uint64_t vaddr);
+uint64_t *get_kernel_page_dir();
 uint64_t *get_current_page_dir();
 uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t user_stack_end);

@@ -4,6 +4,7 @@
 /ovmf
 *.iso
 *.hdd
+*.vmdk
 *.exec
 *.o
 *.txt

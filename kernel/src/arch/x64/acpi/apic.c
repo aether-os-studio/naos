@@ -241,7 +241,9 @@ void ap_entry(struct limine_mp_info *cpu)
         arch_pause();
     }
 
-    arch_set_current(idle_tasks[cpu->processor_id]);
+    local_apic_ap_init();
+
+    arch_set_current(idle_tasks[current_cpu_id]);
 
     while (1)
     {
@@ -292,16 +294,21 @@ void smp_init()
 
 err_t apic_mask(uint64_t irq)
 {
-    ioapic_add((uint8_t)irq, irq - 0x20);
-    ioapic_enable((uint8_t)irq);
+    ioapic_disable((uint8_t)irq);
 
     return 0;
 }
 
 err_t apic_unmask(uint64_t irq)
 {
-    ioapic_disable((uint8_t)irq);
+    ioapic_enable((uint8_t)irq);
 
+    return 0;
+}
+
+err_t apic_install(uint64_t irq, uint64_t arg)
+{
+    ioapic_add(irq, arg);
     return 0;
 }
 
@@ -314,5 +321,6 @@ err_t apic_ack(uint64_t irq)
 irq_controller_t apic_controller = {
     .mask = apic_mask,
     .unmask = apic_unmask,
+    .install = apic_install,
     .ack = apic_ack,
 };

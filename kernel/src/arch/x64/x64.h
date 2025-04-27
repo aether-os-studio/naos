@@ -11,6 +11,8 @@
 #include "irq/irq.h"
 #include "drivers/serial.h"
 #include "drivers/apic_timer.h"
+#include "drivers/chars/ps2_kbd.h"
+#include "drivers/chars/ps2_mouse.h"
 #include "task/arch_context.h"
 #include "task/fsgsbase.h"
 #include "task/elf.h"
@@ -18,6 +20,7 @@
 
 void arch_early_init();
 void arch_init();
+void arch_input_dev_init();
 
 static inline void arch_pause()
 {

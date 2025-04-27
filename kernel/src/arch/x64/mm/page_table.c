@@ -23,9 +23,21 @@ uint64_t get_arch_page_table_flags(uint64_t flags)
     return result;
 }
 
+uint64_t *kernel_page_dir = NULL;
+
+uint64_t *get_kernel_page_dir()
+{
+    return kernel_page_dir;
+}
+
 // 映射虚拟地址到物理地址
 void map_page(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t flags)
 {
+    if (kernel_page_dir == NULL)
+    {
+        kernel_page_dir = pml4;
+    }
+
     uint64_t indices[] = {
         (vaddr >> 39) & 0x1FF, // PML4索引
         (vaddr >> 30) & 0x1FF, // PDPT索引
@@ -156,22 +168,20 @@ uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t 
     // 具体要怎么写，你自己看吧
     uint64_t *pml4_old = (uint64_t *)phys_to_virt(cr3_old & ARCH_ADDR_MASK);
     uint64_t *pml4_new = (uint64_t *)phys_to_virt(cr3_new & ARCH_ADDR_MASK);
-    memset(pml4_new, 0, DEFAULT_PAGE_SIZE);
+    memset(pml4_new, 0, DEFAULT_PAGE_SIZE / 2);
 
     // 2048，半个页，后半个页，是内核空间，内核空间直接指针指过去就好，注意释放页表的时候不要给内核空间的页表也释放了
     memcpy(pml4_new + 256, pml4_old + 256, DEFAULT_PAGE_SIZE / 2); // 我就在代码里面假设是4k的页了，如果你认为这不妥，那就自己给这些常量换成宏定义
 
-    // for(size_t pml4_idx = 0; pml4_idx < 512; ++pml4_idx) {
     for (size_t pml4_idx = 0; pml4_idx < 256; ++pml4_idx)
     { // 256 没问题，这里只复制用户空间
         uint64_t pml4e_old = pml4_old[pml4_idx];
         bool pml4e_old_valid = pml4e_old & ARCH_PT_FLAG_VALID;
         bool pml4e_old_write = pml4e_old & ARCH_PT_FLAG_WRITEABLE;
         bool pml4e_old_user = pml4e_old & ARCH_PT_FLAG_USER;
-        // bool pml4e_old_large = pml4e_old & PT_FLAG_LARGE;
+
         if (!pml4e_old_valid)
             continue; // 这里给你挖上一个坑，不知道你未来会不会掉进去，^_^
-        // if(pml4e_old_large) cpu_halt();
 
         uint64_t pml4e_new = alloc_frames(1);
         pml4e_new |= ARCH_PT_FLAG_VALID;
@@ -192,6 +202,12 @@ uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t 
             if (!pdpte_old_valid)
                 continue;
 
+            if (pdpte_old_large)
+            {
+                pdpt_new[pdpt_idx] = pdpte_old;
+                continue;
+            }
+
             uint64_t pdpte_new = alloc_frames(1);
             pdpte_new |= ARCH_PT_FLAG_VALID;
             pdpte_new |= pdpte_old_write ? ARCH_PT_FLAG_WRITEABLE : 0;
@@ -210,6 +226,12 @@ uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t 
                 bool pde_old_large = pde_old & ARCH_PT_FLAG_HUGE;
                 if (!pde_old_valid)
                     continue;
+
+                if (pdpte_old_large)
+                {
+                    pd_new[pd_idx] = pde_old;
+                    continue;
+                }
 
                 uint64_t pde_new = alloc_frames(1);
                 pde_new |= ARCH_PT_FLAG_VALID;

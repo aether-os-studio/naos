@@ -33,7 +33,7 @@ typedef struct arch_context
 } arch_context_t;
 
 void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64_t entry, uint64_t stack, bool user_mode);
-void arch_context_copy(arch_context_t *dst, arch_context_t *src);
+void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack);
 void arch_context_free(arch_context_t *context);
 task_t *arch_get_current();
 void arch_set_current(task_t *current);
