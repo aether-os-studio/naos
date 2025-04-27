@@ -32,6 +32,27 @@ typedef struct arch_context
     fpu_context_t *fpu_ctx;
 } arch_context_t;
 
+typedef struct arch_signal_frame
+{
+
+    uint64_t r15;
+    uint64_t r14;
+    uint64_t r13;
+    uint64_t r12;
+    uint64_t r11;
+    uint64_t r10;
+    uint64_t r9;
+    uint64_t r8;
+    uint64_t rbx;
+    uint64_t rcx;
+    uint64_t rdx;
+    uint64_t rsi;
+    uint64_t rdi;
+    uint64_t rbp;
+    uint64_t rax;
+    uint64_t rip;
+} arch_signal_frame_t;
+
 void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64_t entry, uint64_t stack, bool user_mode);
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack);
 void arch_context_free(arch_context_t *context);

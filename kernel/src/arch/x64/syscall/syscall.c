@@ -1,6 +1,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <fs/syscall.h>
+#include <mm/syscall.h>
 
 uint64_t switch_to_kernel_stack()
 {
@@ -57,6 +58,8 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     regs->rflags = regs->r11;
     regs->cs = SELECTOR_USER_CS;
     regs->ss = SELECTOR_USER_DS;
+    regs->ds = SELECTOR_USER_DS;
+    regs->es = SELECTOR_USER_DS;
     regs->rsp = (uint64_t)(user_regs + 1);
 
     uint64_t idx = regs->rax;
@@ -66,7 +69,6 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     uint64_t arg3 = regs->rdx;
     uint64_t arg4 = regs->r10;
     uint64_t arg5 = regs->r8;
-    uint64_t arg6 = regs->r9;
 
     switch (idx)
     {
@@ -112,11 +114,41 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_GETPPID:
         regs->rax = current_task->ppid;
         break;
+    case SYS_WAIT4:
+        regs->rax = sys_waitpid(arg1, (int *)arg2);
+        break;
     case SYS_ARCH_PRCTL:
         regs->rax = sys_arch_prctl(arg1, arg2);
         break;
     case SYS_BRK:
         regs->rax = sys_brk(arg1);
+        break;
+    case SYS_CREATE_WINDOW:
+        regs->rax = sys_create_window((const char *)arg1);
+        break;
+    case SYS_DESTROY_WINDOW:
+        regs->rax = sys_destroy_window();
+        break;
+    case SYS_GET_WINDOW_INFO:
+        regs->rax = sys_get_window_info((window_info_t *)arg1);
+        break;
+    case SYS_WRITE_WINDOW:
+        regs->rax = sys_write_window(arg1, arg2, arg3, arg4, (uint32_t *)arg5);
+        break;
+    case SYS_SIGNAL:
+        regs->rax = sys_signal(arg1, arg2, arg3);
+        break;
+    case SYS_SETMASK:
+        regs->rax = sys_ssetmask(arg1);
+        break;
+    case SYS_GETDENTS:
+        regs->rax = sys_getdents(arg1, arg2, arg3);
+        break;
+    case SYS_CHDIR:
+        regs->rax = sys_chdir((const char *)arg1);
+        break;
+    case SYS_GETCWD:
+        regs->rax = sys_getcwd((char *)arg1);
         break;
 
     default:

@@ -1,5 +1,6 @@
 #include <arch/x64/drivers/chars/ps2_kbd.h>
 #include <arch/x64/drivers/chars/ps2_mouse.h>
+#include <drivers/window_manager/window_manager.h>
 #include <interrupt/irq_manager.h>
 #include <arch/x64/io.h>
 #include <task/task.h>
@@ -7,6 +8,10 @@
 mouse_dec ms_dec;
 int32_t mouse_x = 0;
 int32_t mouse_y = 0;
+int32_t old_x = 0;
+int32_t old_y = 0;
+int32_t delta_x = 0;
+int32_t delta_y = 0;
 
 extern struct limine_framebuffer *fb;
 
@@ -75,6 +80,11 @@ void mouse_handler(uint8_t irq, uint64_t param, struct pt_regs *regs)
 
     if (mousedecode(data))
     {
+        restore_background(mouse_x, mouse_y);
+
+        old_x = mouse_x;
+        old_y = mouse_y;
+
         mouse_x += ms_dec.x;
         mouse_y += ms_dec.y;
 
@@ -82,10 +92,17 @@ void mouse_handler(uint8_t irq, uint64_t param, struct pt_regs *regs)
             mouse_x = 0;
         if (mouse_y < 0)
             mouse_y = 0;
-        if (mouse_x > (int32_t)fb->width - 1)
-            mouse_x = (int32_t)fb->width - 1;
-        if (mouse_y > (int32_t)fb->height - 1)
-            mouse_y = (int32_t)fb->height - 1;
+        if (fb && mouse_x > (int32_t)fb->width - CURSOR_WIDTH)
+            mouse_x = (int32_t)fb->width - CURSOR_WIDTH;
+        if (fb && mouse_y > (int32_t)fb->height - CURSOR_HEIGHT)
+            mouse_y = (int32_t)fb->height - CURSOR_HEIGHT;
+
+        save_background(mouse_x, mouse_y);
+
+        draw_mouse(mouse_x, mouse_y);
+
+        delta_x = mouse_x - old_x;
+        delta_y = mouse_y - old_y;
 
         if (ms_dec.btn & 0x01)
         {
@@ -118,8 +135,8 @@ void mouse_handler(uint8_t irq, uint64_t param, struct pt_regs *regs)
 
 void get_mouse_xy(int32_t *x, int32_t *y)
 {
-    *x = (int32_t)mouse_x;
-    *y = (int32_t)mouse_y;
+    *x = mouse_x;
+    *y = mouse_y;
 }
 
 bool mouse_click_left()

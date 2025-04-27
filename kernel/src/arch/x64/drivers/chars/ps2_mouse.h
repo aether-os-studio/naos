@@ -2,6 +2,9 @@
 
 #include <libs/klibc.h>
 
+struct kui_window;
+typedef struct kui_window kui_window_t;
+
 typedef struct
 {
     uint8_t buf[3], phase;
@@ -10,6 +13,7 @@ typedef struct
     bool left;
     bool center;
     bool right;
+    kui_window_t *current_moving_window;
 } mouse_dec;
 
 void get_mouse_xy(int32_t *x, int32_t *y);

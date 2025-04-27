@@ -1,6 +1,7 @@
 #pragma once
 
 #include <fs/vfs/vfs.h>
+#include <task/signal.h>
 
 #define USER_BRK_START 0x0000700000000000
 #define USER_BRK_END 0x00007fffffffffff
@@ -24,6 +25,9 @@ typedef enum task_state
 struct arch_context;
 typedef struct arch_context arch_context_t;
 
+struct Container;
+typedef struct Container Container;
+
 typedef struct task
 {
     uint64_t pid;
@@ -39,9 +43,12 @@ typedef struct task
     uint64_t brk_start;
     uint64_t brk_end;
     arch_context_t *arch_context;
+    sigaction_t actions[MAXSIG];
     uint64_t signal;
+    uint64_t blocked;
     vfs_node_t cwd;
     vfs_node_t fds[MAX_FD_NUM];
+    Container *current_container;
 } task_t;
 
 task_t *task_create(const char *name, void (*entry)());
@@ -52,6 +59,7 @@ struct pt_regs;
 uint64_t task_fork(struct pt_regs *regs);
 uint64_t task_execve(const char *path, char *const *argv, char *const *envp);
 uint64_t task_exit(int64_t code);
+uint64_t sys_waitpid(uint64_t pid, int *status);
 
 task_t *task_search(task_state_t state, uint32_t cpu_id);
 

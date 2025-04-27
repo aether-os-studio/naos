@@ -13,8 +13,8 @@ typedef int64_t err_t;
 
 #define ABS(x) ((x) > 0 ? (x) : -(x)) // 绝对值
 // 最大最小值
-#define max(x, y) ((x > y) ? (x) : (y))
-#define min(x, y) ((x < y) ? (x) : (y))
+#define MAX(x, y) ((x > y) ? (x) : (y))
+#define MIN(x, y) ((x < y) ? (x) : (y))
 
 // 四舍五入成整数
 static inline uint64_t round(double x)

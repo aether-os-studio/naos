@@ -27,3 +27,10 @@ bool have_proc(int pid);
 
 void srand(unsigned long seed);
 int rand(void);
+
+static inline void pause()
+{
+#if defined(__x86_64__)
+    __asm__ __volatile__("pause");
+#endif
+}

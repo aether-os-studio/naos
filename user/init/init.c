@@ -1,17 +1,23 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
+#include <signal.h>
+#include <aether/window.h>
 
 int main()
 {
-    printf("Hello world!!!\n");
-
     int pid = fork();
     if (pid == 0)
     {
-        printf("is child process\n");
+        execve("/usr/bin/shell.exec", NULL, NULL);
+        exit(-1);
     }
     else
     {
-        printf("is parent process\n");
+        int status;
+        waitpid(pid, &status);
     }
+
+    return 0;
 }

@@ -16,8 +16,6 @@ void arch_early_init()
     apic_timer_init();
 
     fsgsbase_init();
-
-    arch_input_dev_init();
 }
 
 void arch_init()

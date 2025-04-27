@@ -1,13 +1,18 @@
 #include <sys/types.h>
 #include <stdlib.h>
+#include <aether/window.h>
 
-extern void init_heap();
+extern void heap_init();
 
 extern int main(int argc, char **argv, char **envp);
 
 void aelibc_start(int argc, char **argv, char **envp)
 {
-    init_heap();
+    heap_init();
 
-    exit(main(argc, argv, envp));
+    int ret = main(argc, argv, envp);
+
+    destroy_window();
+
+    exit(ret);
 }

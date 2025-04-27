@@ -7,6 +7,7 @@ task_t *tasks[MAX_TASK_NUM];
 task_t *idle_tasks[MAX_CPU_NUM];
 
 bool task_initialized = false;
+bool can_schedule = false;
 
 task_t *get_free_task()
 {
@@ -41,15 +42,16 @@ task_t *task_create(const char *name, void (*entry)())
     task->waitpid = 0;
     task->state = TASK_READY;
     task->jiffies = 0;
-    task->kernel_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE));
-    task->syscall_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE));
+    task->kernel_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE)) + STACK_SIZE;
+    task->syscall_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE)) + STACK_SIZE;
     task->arch_context = malloc(sizeof(arch_context_t));
-    arch_context_init(task->arch_context, virt_to_phys((uint64_t)get_kernel_page_dir()), (uint64_t)entry, task->kernel_stack + STACK_SIZE, false);
+    arch_context_init(task->arch_context, virt_to_phys((uint64_t)get_kernel_page_dir()), (uint64_t)entry, task->kernel_stack, false);
     task->signal = 0;
     task->status = 0;
     task->cwd = rootdir;
     task->brk_start = USER_BRK_START;
     task->brk_end = USER_BRK_START;
+    task->current_container = NULL;
     strncpy(task->name, name, TASK_NAME_MAX);
 
     return task;
@@ -103,6 +105,8 @@ extern void fatfs_init();
 
 extern void mount_root();
 
+bool system_initialized = false;
+
 void init_thread()
 {
     printk("NAOS init thread is running...\n");
@@ -122,6 +126,8 @@ void init_thread()
     fbdev_init();
 
     mount_root();
+
+    system_initialized = true;
 
     task_execve("/usr/bin/init.exec", NULL, NULL);
 
@@ -147,6 +153,8 @@ void task_init()
     task_create("windowmanager", windowmanager_thread);
 
     task_initialized = true;
+
+    can_schedule = true;
 }
 
 uint64_t push_slice(uint64_t ustack, uint8_t *slice, uint64_t len)
@@ -220,6 +228,8 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], char *en
 
 uint64_t task_fork(struct pt_regs *regs)
 {
+    can_schedule = false;
+
     task_t *child = get_free_task();
     if (child == NULL)
     {
@@ -228,20 +238,28 @@ uint64_t task_fork(struct pt_regs *regs)
 
     child->state = TASK_READY;
 
-    child->cpu_id = current_task->cpu_id;
+    child->cpu_id = alloc_cpu_id();
 
-    child->kernel_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE));
-    child->syscall_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE));
+    child->kernel_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE)) + STACK_SIZE;
+    child->syscall_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE)) + STACK_SIZE;
 
     child->arch_context = malloc(sizeof(arch_context_t));
     memset(child->arch_context, 0, sizeof(arch_context_t));
-    memcpy(current_task->arch_context->ctx, regs, sizeof(struct pt_regs));
-    arch_context_copy(child->arch_context, current_task->arch_context, child->kernel_stack);
+    arch_context_t *tmp_context = malloc(sizeof(arch_context_t));
+    tmp_context->cr3 = current_task->arch_context->cr3;
+    tmp_context->ctx = regs;
+    tmp_context->fpu_ctx = NULL;
+    arch_context_copy(child->arch_context, tmp_context, child->kernel_stack);
+    free(tmp_context);
     child->ppid = current_task->pid;
 
     child->jiffies = current_task->jiffies;
 
     child->cwd = current_task->cwd;
+
+    child->current_container = current_task->current_container;
+
+    can_schedule = true;
 
     return child->pid;
 }
@@ -348,7 +366,8 @@ uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
         else if (aligned_addr + alloc_size > load_end)
             load_end = aligned_addr + alloc_size;
 
-        map_page_range(get_current_page_dir(), aligned_addr, 0, alloc_size, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U | PT_FLAG_X);
+        uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W;
+        map_page_range(get_current_page_dir(), aligned_addr, 0, alloc_size, flags);
 
         vfs_read(node, (void *)seg_addr, phdr[i].p_offset, file_size);
 
@@ -369,7 +388,8 @@ uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
 
     free(fullpath);
 
-    map_page_range(get_current_page_dir(), USER_STACK_START, 0, USER_STACK_END - USER_STACK_START, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+    map_page_range(get_current_page_dir(), USER_STACK_START, 0, USER_STACK_END - USER_STACK_START, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U | PT_FLAG_X);
+    memset((void *)USER_STACK_START, 0, USER_STACK_END - USER_STACK_START);
 
 #if defined(__x86_64__)
     current_task->arch_context->ctx->rsp = push_infos(current_task, USER_STACK_END, (char **)argv, (char **)envp);
@@ -388,6 +408,28 @@ void sys_yield()
     arch_yield();
 }
 
+int task_block(task_t *task, task_state_t state, int timeout_ms)
+{
+    (void)timeout_ms;
+
+    task->state = state;
+
+    if (current_task == task)
+    {
+        arch_yield();
+
+        arch_pause();
+    }
+
+    return task->status;
+}
+
+void task_unblock(task_t *task, int reason)
+{
+    task->status = reason;
+    task->state = TASK_READY;
+}
+
 uint64_t task_exit(int64_t code)
 {
     arch_disable_interrupt();
@@ -396,20 +438,80 @@ uint64_t task_exit(int64_t code)
 
     arch_context_free(task->arch_context);
 
-    free_frames(task->kernel_stack, STACK_SIZE / DEFAULT_PAGE_SIZE);
-    free_frames(task->syscall_stack, STACK_SIZE / DEFAULT_PAGE_SIZE);
-
     free(task->arch_context);
 
-    task->state = TASK_DIED;
+    free_frames(task->kernel_stack, STACK_SIZE / DEFAULT_PAGE_SIZE);
+    free_frames(task->syscall_stack, STACK_SIZE / DEFAULT_PAGE_SIZE);
 
     task->status = (uint64_t)code;
 
     task_t *next = task_search(TASK_READY, task->cpu_id);
+
+    task->state = TASK_DIED;
+
+    if (task->waitpid != 0)
+    {
+        task_unblock(tasks[task->waitpid], EOK);
+    }
 
     arch_set_current(next);
 
     arch_switch_with_context(NULL, next->arch_context, next->kernel_stack);
 
     return (uint64_t)-EAGAIN;
+}
+
+uint64_t sys_waitpid(uint64_t pid, int *status)
+{
+    task_t *child = NULL;
+
+    while (1)
+    {
+        bool has_child = false;
+
+        for (uint64_t i = cpu_count; i < MAX_TASK_NUM; i++)
+        {
+            task_t *ptr = tasks[i];
+            if (ptr == NULL)
+                continue;
+
+            if (ptr->ppid != current_task->pid)
+                continue;
+
+            if (pid != ptr->pid && pid != 0)
+                continue;
+
+            if (ptr->state == TASK_DIED)
+            {
+                child = ptr;
+                tasks[i] = NULL;
+                goto rollback;
+            }
+
+            has_child = true;
+
+            break;
+        }
+        if (has_child)
+        {
+            current_task->waitpid = pid;
+            task_block(current_task, TASK_BLOCKING, 0);
+
+            continue;
+        }
+
+        break;
+    }
+
+    return -1;
+
+rollback:
+    *status = (int)child->status;
+    uint32_t ret = child->pid;
+
+    current_task->waitpid = 0;
+
+    free_frames(virt_to_phys((uint64_t)child), 1);
+
+    return ret;
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stdint.h>
+#include <libs/klibc.h>
 
 enum SIGNAL
 {
@@ -30,5 +30,34 @@ enum SIGNAL
     SIGWRSZ       // 窗口大小变动
 };
 
-int ssetmask(int mask);
-int signal(int sig, uint64_t handler);
+#define MINSIG 1
+#define MAXSIG 63
+
+#define SIGMASK(sig) (1UL << ((sig) - 1))
+
+// 不阻止在指定的信号处理程序中再收到该信号
+#define SIG_NOMASK 0x40000000
+
+// 信号句柄一旦被调用过就恢复到默认处理句柄
+#define SIG_ONESHOT 0x80000000
+
+#define SIG_DFL ((void (*)(int))0) // 默认的信号处理程序（信号句柄）
+#define SIG_IGN ((void (*)(int))1) // 忽略信号的处理程序
+
+typedef uint64_t sigset_t;
+
+// 信号处理结构
+typedef struct sigaction_t
+{
+    void (*handler)(int); // 信号处理函数
+    sigset_t mask;        // 信号屏蔽码
+    uint64_t flags;
+    uint64_t arg;           // 传递给信号处理函数的参数
+    void (*restorer)(void); // 恢复函数指针
+} sigaction_t;
+
+int sys_sgetmask();
+int sys_ssetmask(int newmask);
+int sys_signal(int sig, uint64_t handler, uint64_t restorer);
+int sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction);
+int sys_kill(int pid, int sig);

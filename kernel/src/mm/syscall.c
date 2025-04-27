@@ -12,7 +12,7 @@ uint64_t sys_brk(uint64_t addr)
     uint64_t start = current_task->brk_end;
     uint64_t size = new_brk - current_task->brk_end;
 
-    map_page_range(get_current_page_dir(), start, 0, size + DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+    map_page_range(get_current_page_dir(), start, 0, size + DEFAULT_PAGE_SIZE * 4, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
     new_brk = start + size;
 

@@ -12,7 +12,7 @@ ARCH_DIR := $(ARCH)
 endif
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
-QEMUFLAGS := -m 4G -serial stdio -smp 4
+QEMUFLAGS := -cpu max -m 4G -serial stdio -smp 4
 
 DEBUG ?= 0
 
@@ -179,6 +179,7 @@ $(IMAGE_NAME).iso: limine/limine kernel user
 	cp -v limine.conf iso_root/boot/limine/
 	mkdir -p iso_root/usr/bin
 	cp -v user/init/init.exec iso_root/usr/bin
+	cp -v user/shell/shell.exec iso_root/usr/bin
 	mkdir -p iso_root/EFI/BOOT
 ifeq ($(ARCH),x86_64)
 	cp -v limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin iso_root/boot/limine/
@@ -234,6 +235,7 @@ endif
 	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(ARCH)/kernel ::/boot
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf ::/boot/limine
 	mcopy -i $(IMAGE_NAME).hdd@@1M user/init/init.exec ::/usr/bin
+	mcopy -i $(IMAGE_NAME).hdd@@1M user/shell/shell.exec ::/usr/bin
 ifeq ($(ARCH),x86_64)
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/limine-bios.sys ::/boot/limine
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTX64.EFI ::/EFI/BOOT

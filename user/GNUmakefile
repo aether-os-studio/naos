@@ -7,9 +7,11 @@ all:
 	$(MAKE) -C aelibc
 
 	$(MAKE) -C init
+	$(MAKE) -C shell
 
 .PHONY: clean
 clean:
+	rm -rf obj/
 
 .PHONY: distclean
 distclean:

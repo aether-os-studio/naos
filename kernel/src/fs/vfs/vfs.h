@@ -1,6 +1,7 @@
 #pragma once
 
 #include <libs/klibc.h>
+#include <fs/vfs/fcntl.h>
 
 #define ALL_IMPLEMENTATION
 #include "list.h"
@@ -14,10 +15,6 @@ typedef int64_t ssize_t;
 
 // 读写时请 padding 到 PAGE_SIZE 的整数倍
 #define FILE_BLKSIZE PAGE_SIZE
-
-#define SEEK_SET 0
-#define SEEK_CUR 1
-#define SEEK_END 2
 
 enum
 {

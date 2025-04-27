@@ -44,7 +44,7 @@ void dump_regs(struct pt_regs *regs, const char *error_str, ...)
     // printk("\033[2J");
     printk("%s\n", buf);
 
-    printk("RIP = %#018lx, RSP = %#018lx\n", regs->rip, regs->rsp);
+    printk("RIP = %#018lx\n", regs->rip);
     printk("RAX = %#018lx, RBX = %#018lx\n", regs->rax, regs->rbx);
     printk("RCX = %#018lx, RDX = %#018lx\n", regs->rcx, regs->rdx);
     printk("RDI = %#018lx, RSI = %#018lx\n", regs->rdi, regs->rsi);

@@ -44,3 +44,23 @@ int getppid()
 {
     return enter_syscall(0, 0, 0, 0, 0, SYS_GETPPID);
 }
+
+int getdents(int fd, dirent_t *dents, int max)
+{
+    return enter_syscall(fd, (uint64_t)dents, max, 0, 0, SYS_GETDENTS);
+}
+
+int getcwd(char *cwd)
+{
+    return enter_syscall((uint64_t)cwd, 0, 0, 0, 0, SYS_GETCWD);
+}
+
+int chdir(char *cwd)
+{
+    return enter_syscall((uint64_t)cwd, 0, 0, 0, 0, SYS_CHDIR);
+}
+
+int waitpid(int pid, int *status)
+{
+    return enter_syscall(pid, (uint64_t)status, 0, 0, 0, SYS_WAIT4);
+}

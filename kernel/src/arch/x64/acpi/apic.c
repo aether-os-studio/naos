@@ -236,12 +236,14 @@ void ap_entry(struct limine_mp_info *cpu)
 
     fsgsbase_init();
 
+    local_apic_ap_init();
+
+    syscall_init();
+
     while (!task_initialized)
     {
         arch_pause();
     }
-
-    local_apic_ap_init();
 
     arch_set_current(idle_tasks[current_cpu_id]);
 

@@ -1,33 +1,45 @@
 #pragma once
 
 #include <libs/klibc.h>
-#include <libs/ugui/ugui.h>
+#include <fs/vfs/list.h>
+#include <arch/arch.h>
 
-#define MAX_WINDOWS_NUM 32
-#define WINDOW_OBJLIST_NUM 8
+#define CURSOR_WIDTH 11
+#define CURSOR_HEIGHT 22
 
-#define BUTTON_SIZE 20
+#define GAP 4
 
-typedef struct kui_window
+#define BACKGROUND_COLOR 0x00000000
+
+typedef enum
 {
-    bool free;
-    const char *title;
-    uint64_t wid;
+    CT_ROOT,
+    CT_CON
+} ContainerType;
+
+typedef struct Container
+{
     uint64_t pid;
-    uint64_t width;
-    uint64_t height;
-    UG_OBJECT objlst[WINDOW_OBJLIST_NUM];
-    UG_WINDOW window;
-    UG_BUTTON minimal_btn;
-    UG_BUTTON close_btn;
-} kui_window_t;
+    int x, y, width, height;
+    uint32_t *buffer;
+    ContainerType type;
+    float split_ratio;
+    struct Container *next;
+    bool is_focused;
+    bool minimized;
+    bool dirty;
+} Container;
 
-kui_window_t *get_free_window();
-kui_window_t *create_window(const char *title, int x, int y, int w, int h, uint64_t pid);
-void close_window(kui_window_t *window);
+typedef struct
+{
+    Container *root;
+    Container *focused_container;
+    Container *minimized_list;
+    uint64_t container_count;
+} Workspace;
 
-void save_background(int x, int y);
-void restore_background(int x, int y);
-void draw_mouse(int sx, int sy);
-
-void window_init();
+Container *create_window_in_container(Workspace *ws, uint64_t pid);
+uint64_t sys_create_window(const char *title);
+uint64_t sys_destroy_window();
+uint64_t sys_get_window_info(window_info_t *info);
+uint64_t sys_write_window(uint64_t x1, uint64_t y1, uint64_t x2, uint64_t y2, uint32_t *color);

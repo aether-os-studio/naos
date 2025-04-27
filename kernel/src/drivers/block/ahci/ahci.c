@@ -397,4 +397,6 @@ uint64_t ahci_init()
     op_buffer = (void *)alloc_frames(0x400000UL / DEFAULT_PAGE_SIZE);
 
     drv = ahci_driver_init(bar5);
+
+    return 0;
 }

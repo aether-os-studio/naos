@@ -39,10 +39,15 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack)
     dst->cr3 = clone_page_table(src->cr3, USER_STACK_START, USER_STACK_END);
     dst->ctx = (struct pt_regs *)stack - 1;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
+    dst->ctx->ds = SELECTOR_USER_DS;
+    dst->ctx->es = SELECTOR_USER_DS;
     dst->ctx->rax = 0;
-    dst->fpu_ctx = (fpu_context_t *)phys_to_virt(alloc_frames(1));
-    memset(dst->fpu_ctx, 0, sizeof(fpu_context_t));
-    memcpy(dst->fpu_ctx, src->fpu_ctx, sizeof(fpu_context_t));
+    if (dst->fpu_ctx)
+    {
+        dst->fpu_ctx = (fpu_context_t *)phys_to_virt(alloc_frames(1));
+        memset(dst->fpu_ctx, 0, sizeof(fpu_context_t));
+        memcpy(dst->fpu_ctx, src->fpu_ctx, sizeof(fpu_context_t));
+    }
 }
 
 void arch_context_free(arch_context_t *context)
@@ -76,11 +81,17 @@ void arch_switch_with_context(arch_context_t *prev, arch_context_t *next, uint64
         prev->fsbase = read_fsbase();
         prev->gsbase = read_gsbase();
 
-        __asm__ __volatile__("fxsave (%0)" ::"r"(prev->fpu_ctx));
+        if (prev->fpu_ctx)
+        {
+            __asm__ __volatile__("fxsave (%0)" ::"r"(prev->fpu_ctx));
+        }
     }
 
     // Start to switch
-    __asm__ __volatile__("fxrstor (%0)" ::"r"(next->fpu_ctx));
+    if (next->fpu_ctx)
+    {
+        __asm__ __volatile__("fxrstor (%0)" ::"r"(next->fpu_ctx));
+    }
 
     __asm__ __volatile__("movq %0, %%cr3\n\t" ::"r"(next->cr3));
 
@@ -99,11 +110,6 @@ void arch_switch_with_context(arch_context_t *prev, arch_context_t *next, uint64
 
 void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
 {
-    if (prev == next)
-    {
-        return;
-    }
-
     prev->arch_context->ctx = ctx;
     prev->state = TASK_READY;
 
@@ -124,7 +130,6 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t
     context->ctx->es = SELECTOR_USER_DS;
     context->ctx->ss = SELECTOR_USER_DS;
     context->ctx->rflags = (0UL << 12) | (0b10) | (1UL << 9);
-    context->cr3 = clone_page_table(context->cr3, USER_BRK_START, USER_BRK_END);
 }
 
 void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
@@ -138,6 +143,7 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
 
 void arch_yield()
 {
+    arch_enable_interrupt();
     __asm__ __volatile__("int %0" ::"i"(APIC_TIMER_INTERRUPT_VECTOR));
 }
 

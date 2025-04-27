@@ -16,3 +16,7 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence);
 uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg);
 uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count);
 uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count);
+
+uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size);
+uint64_t sys_chdir(const char *dirname);
+uint64_t sys_getcwd(char *cwd);

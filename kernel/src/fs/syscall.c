@@ -45,7 +45,10 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len)
 {
     if (fd == 0)
     {
-        return len;
+        uint8_t scancode = get_keyboard_input();
+        *(uint8_t *)buf = scancode;
+
+        return 1;
     }
 
     if (fd >= MAX_FD_NUM || current_task->fds[fd] == NULL)
@@ -194,4 +197,48 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count)
     free(buf);
 
     return ret;
+}
+
+uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
+{
+    if (fd >= MAX_FD_NUM)
+        return (uint64_t)-EBADF;
+    if (!current_task->fds[fd])
+        return (uint64_t)-EBADF;
+    if (current_task->fds[fd]->type != file_dir)
+        return (uint64_t)-ENOTDIR;
+
+    dirent_t *dents = (dirent_t *)buf;
+    vfs_node_t node = current_task->fds[fd];
+    uint64_t len = 0;
+    list_foreach(node->child, i)
+    {
+        vfs_node_t node = (vfs_node_t)i->data;
+        strncpy(dents[len].name, node->name, 255);
+        dents[len].type = node->type;
+        len++;
+    }
+
+    return len;
+}
+
+uint64_t sys_chdir(const char *dirname)
+{
+    vfs_node_t new_cwd = vfs_open(dirname);
+    if (!new_cwd)
+        return (uint64_t)-ENOENT;
+    if (new_cwd->type != file_dir)
+        return (uint64_t)-ENOTDIR;
+
+    current_task->cwd = new_cwd;
+
+    return 0;
+}
+
+uint64_t sys_getcwd(char *cwd)
+{
+    char *str = vfs_get_fullpath(current_task->cwd);
+    strcpy(cwd, str);
+    free(str);
+    return 0;
 }

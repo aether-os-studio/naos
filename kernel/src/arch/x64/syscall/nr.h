@@ -25,6 +25,9 @@
 #define SYS_READV 19
 #define SYS_WRITEV 20
 #define SYS_IOCTL 16 // ioctl(int fd, sint cmd, int arg)
+#define SYS_GETDENTS 21
+#define SYS_CHDIR 22
+#define SYS_GETCWD 23
 
 /* 进程管理相关 */
 #define SYS_FORK 57     // fork()
@@ -46,3 +49,17 @@
 #define SYS_SIGPROCMASK 14 // sigprocmask(int how, const sigset_t *set, sigset_t *oset)
 
 #define SYS_ARCH_PRCTL 158
+
+#define SYS_CREATE_WINDOW 300
+#define SYS_DESTROY_WINDOW 301
+#define SYS_GET_WINDOW_INFO 302
+#define SYS_WRITE_WINDOW 303
+
+#define SYS_SIGNAL 350
+#define SYS_SETMASK 351
+
+typedef struct window_info
+{
+    uint64_t width;
+    uint64_t height;
+} window_info_t;

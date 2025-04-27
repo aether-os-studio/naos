@@ -15,10 +15,10 @@ uint64_t get_arch_page_table_flags(uint64_t flags)
         result |= ARCH_PT_FLAG_USER;
     }
 
-    if ((flags & PT_FLAG_X) == 0)
-    {
-        result |= ARCH_PT_FLAG_NX;
-    }
+    // if ((flags & PT_FLAG_X) == 0)
+    // {
+    //     result |= ARCH_PT_FLAG_NX;
+    // }
 
     return result;
 }
@@ -148,14 +148,23 @@ uint64_t *get_current_page_dir()
     return phys_to_virt(cr3);
 }
 
-bool stack_range(uint64_t pml4_idx, uint64_t pdpt_idx, uint64_t pd_idx, uint64_t pt_idx, uint64_t user_stack_start, uint64_t user_stack_end)
-{
-    uint64_t addr = pml4_idx << 39 | pdpt_idx << 30 | pd_idx << 21 | pt_idx << 12;
-    return user_stack_start <= addr && addr < user_stack_end;
-}
+// bool stack_range(uint64_t pml4_idx, uint64_t pdpt_idx, uint64_t pd_idx, uint64_t pt_idx, uint64_t user_stack_start, uint64_t user_stack_end)
+// {
+//     uint64_t addr = pml4_idx << 39 | pdpt_idx << 30 | pd_idx << 21 | pt_idx << 12;
+//     return user_stack_start <= addr && addr < user_stack_end;
+// }
+
+// bool heap_range(uint64_t pml4_idx, uint64_t pdpt_idx, uint64_t pd_idx, uint64_t pt_idx, uint64_t user_heap_start, uint64_t user_heap_end)
+// {
+//     uint64_t addr = pml4_idx << 39 | pdpt_idx << 30 | pd_idx << 21 | pt_idx << 12;
+//     return user_heap_start <= addr && addr < user_heap_end;
+// }
 
 uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t user_stack_end)
 {
+    (void)user_stack_start;
+    (void)user_stack_end;
+
     uint64_t cr3_new = alloc_frames(1); // 就不判断申请失败的情况了，不然有点麻烦，你自己加上吧
     if (cr3_new == 0)
     {
@@ -227,7 +236,7 @@ uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t 
                 if (!pde_old_valid)
                     continue;
 
-                if (pdpte_old_large)
+                if (pde_old_large)
                 {
                     pd_new[pd_idx] = pde_old;
                     continue;
@@ -248,25 +257,19 @@ uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t 
                     bool pte_old_valid = pte_old & ARCH_PT_FLAG_VALID;
                     bool pte_old_write = pte_old & ARCH_PT_FLAG_WRITEABLE;
                     bool pte_old_user = pte_old & ARCH_PT_FLAG_USER;
-                    bool pte_old_large = pte_old & ARCH_PT_FLAG_HUGE;
                     if (!pte_old_valid)
                         continue;
 
                     uint64_t *page_old = (uint64_t *)phys_to_virt(pte_old & ARCH_ADDR_MASK);
-                    if (stack_range(pml4_idx, pdpt_idx, pd_idx, pt_idx, user_stack_start, user_stack_end))
-                    {
-                        uint64_t pte_new = alloc_frames(1);
-                        pte_new |= ARCH_PT_FLAG_VALID;
-                        pte_new |= pte_old_write ? ARCH_PT_FLAG_WRITEABLE : 0;
-                        pte_new |= pte_old_user ? ARCH_PT_FLAG_USER : 0;
-                        pt_new[pt_idx] = pte_new;
 
-                        uint64_t *page_old = (uint64_t *)phys_to_virt(pte_old & ARCH_ADDR_MASK);
-                        uint64_t *page_new = (uint64_t *)phys_to_virt(pte_new & ARCH_ADDR_MASK);
-                        memcpy(page_new, page_old, DEFAULT_PAGE_SIZE);
-                    }
-                    else
-                        pt_new[pt_idx] = pte_old;
+                    uint64_t pte_new = alloc_frames(1);
+                    pte_new |= ARCH_PT_FLAG_VALID;
+                    pte_new |= pte_old_write ? ARCH_PT_FLAG_WRITEABLE : 0;
+                    pte_new |= pte_old_user ? ARCH_PT_FLAG_USER : 0;
+                    pt_new[pt_idx] = pte_new;
+
+                    uint64_t *page_new = (uint64_t *)phys_to_virt(pte_new & ARCH_ADDR_MASK);
+                    memcpy(page_new, page_old, DEFAULT_PAGE_SIZE);
                 }
             }
         }
