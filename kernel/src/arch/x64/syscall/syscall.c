@@ -2,6 +2,7 @@
 #include <task/task.h>
 #include <fs/syscall.h>
 #include <mm/syscall.h>
+#include <drivers/window_manager/window_manager.h>
 
 uint64_t switch_to_kernel_stack()
 {
@@ -122,18 +123,6 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_BRK:
         regs->rax = sys_brk(arg1);
-        break;
-    case SYS_CREATE_WINDOW:
-        regs->rax = sys_create_window((const char *)arg1);
-        break;
-    case SYS_DESTROY_WINDOW:
-        regs->rax = sys_destroy_window();
-        break;
-    case SYS_GET_WINDOW_INFO:
-        regs->rax = sys_get_window_info((window_info_t *)arg1);
-        break;
-    case SYS_WRITE_WINDOW:
-        regs->rax = sys_write_window(arg1, arg2, arg3, arg4, (uint32_t *)arg5);
         break;
     case SYS_SIGNAL:
         regs->rax = sys_signal(arg1, arg2, arg3);

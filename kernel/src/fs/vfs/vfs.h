@@ -6,7 +6,7 @@
 #define ALL_IMPLEMENTATION
 #include "list.h"
 
-#define streq(s1, s2) (!strncmp((char *)(s1), (char *)(s2), PATH_MAX))
+#define streq(s1, s2) (!strcmp((char *)(s1), (char *)(s2)))
 #define max(x, y) ((x > y) ? (x) : (y))
 
 typedef int64_t ssize_t;

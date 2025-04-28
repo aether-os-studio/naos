@@ -3,7 +3,6 @@
 #include <unistd.h>
 #include <string.h>
 #include <signal.h>
-#include <aether/window.h>
 
 int main()
 {

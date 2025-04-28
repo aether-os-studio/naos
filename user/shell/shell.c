@@ -6,31 +6,12 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <stdarg.h>
-#include <aether/window.h>
 #include "pl_readline.h"
+
+#define FONT_HEIGHT 20
 
 char *path = NULL;
 bool exited = false;
-
-uint32_t *color_map = NULL;
-uint64_t width = 0;
-uint64_t height = 0;
-
-void window_resize_handler()
-{
-    if (color_map)
-    {
-        free(color_map);
-    }
-
-    window_info_t info;
-    get_window_info(&info);
-
-    width = info.width;
-    height = info.height;
-
-    color_map = malloc(width * height * sizeof(uint32_t));
-}
 
 int getc()
 {
@@ -247,9 +228,13 @@ int run_exec(const char *name, char **argv, char **envp)
 
     int status = 0;
 
+    char buf[256];
+    getcwd(buf);
+
     int pid = fork();
     if (pid == 0)
     {
+        chdir(buf);
         execve(name, argv, envp);
         exit(-1);
     }
@@ -342,17 +327,6 @@ static int shell_exec(char *path, const char *command)
 int main()
 {
     signal(SIGQUIT, 0);
-    signal(SIGWRSZ, (uint64_t)window_resize_handler);
-
-    create_window("shell");
-
-    while (color_map == NULL || width == 0 || height == 0)
-    {
-        pause();
-    }
-    memset(color_map, 0xff, width * height * sizeof(uint32_t));
-
-    write_window(0, 0, width, height, color_map);
 
     path = malloc(1024);
     memset(path, 0, 1024);

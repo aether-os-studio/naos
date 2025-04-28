@@ -48,7 +48,6 @@ typedef struct task
     uint64_t blocked;
     vfs_node_t cwd;
     vfs_node_t fds[MAX_FD_NUM];
-    Container *current_container;
 } task_t;
 
 task_t *task_create(const char *name, void (*entry)());

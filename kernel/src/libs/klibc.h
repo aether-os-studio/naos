@@ -93,7 +93,7 @@ static inline void strcpy(char *dest, const char *src)
         return;
     }
 
-    while (*dest && *src)
+    while (*src)
     {
         *dest++ = *src++;
     }
@@ -162,24 +162,47 @@ static inline int strncmp(const char *s1, const char *s2, int size)
     return !((*s1 == '\0') || (*s2 == '\0') || (*s1 == *s2));
 }
 
-static inline char *strcat(char *dest, const char *source)
+static inline int strcmp(const char *str1, const char *str2)
 {
-    if (dest == NULL || source == NULL)
-    { // 合法性校验
-        return dest;
+    int ret = 0;
+    while (!(ret = *(unsigned char *)str1 - *(unsigned char *)str2) && *str1)
+    {
+        str1++;
+        str2++;
     }
-    char *p = dest; // 将目的数组赋给p
-    while (*p != '\0')
-    { // 循环看大小
-        p++;
+    if (ret < 0)
+    {
+        return -1;
     }
-    while (*source != '\0')
-    { // 注意指针的用法
-        *p = *source;
-        p++; // 依次加加进行连接
-        source++;
+    else if (ret > 0)
+    {
+        return 1;
     }
-    *p = '\0';
+    return 0;
+}
+
+static inline char *strcat(char *dest, const char *src)
+{
+    size_t dest_len = 0;
+
+    while (dest[dest_len] != '\0')
+    {
+
+        dest_len++;
+    }
+
+    size_t i = 0;
+
+    while (src[i] != '\0')
+    {
+
+        dest[dest_len + i] = src[i];
+
+        i++;
+    }
+
+    dest[dest_len + i] = '\0';
+
     return dest;
 }
 

@@ -55,7 +55,7 @@ int getcwd(char *cwd)
     return enter_syscall((uint64_t)cwd, 0, 0, 0, 0, SYS_GETCWD);
 }
 
-int chdir(char *cwd)
+int chdir(const char *cwd)
 {
     return enter_syscall((uint64_t)cwd, 0, 0, 0, 0, SYS_CHDIR);
 }

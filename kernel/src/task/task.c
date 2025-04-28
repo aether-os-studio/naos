@@ -51,7 +51,6 @@ task_t *task_create(const char *name, void (*entry)())
     task->cwd = rootdir;
     task->brk_start = USER_BRK_START;
     task->brk_end = USER_BRK_START;
-    task->current_container = NULL;
     strncpy(task->name, name, TASK_NAME_MAX);
 
     return task;
@@ -137,8 +136,6 @@ void init_thread()
     }
 }
 
-extern void windowmanager_thread();
-
 void task_init()
 {
     memset(tasks, 0, sizeof(tasks));
@@ -150,7 +147,6 @@ void task_init()
     }
     arch_set_current(idle_tasks[0]);
     task_create("init", init_thread);
-    task_create("windowmanager", windowmanager_thread);
 
     task_initialized = true;
 
@@ -254,8 +250,6 @@ uint64_t task_fork(struct pt_regs *regs)
     child->jiffies = current_task->jiffies;
 
     child->cwd = current_task->cwd;
-
-    child->current_container = current_task->current_container;
 
     can_schedule = true;
 
@@ -409,6 +403,8 @@ int task_block(task_t *task, task_state_t state, int timeout_ms)
 
     if (current_task == task)
     {
+        arch_enable_interrupt();
+
         arch_yield();
 
         arch_pause();

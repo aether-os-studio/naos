@@ -27,7 +27,6 @@ enum SIGNAL
     SIGTSTP,      // tty 发出停止进程，可忽略
     SIGTTIN,      // 后台进程请求输入
     SIGTTOU = 22, // 后台进程请求输出
-    SIGWRSZ       // 窗口大小变动
 };
 
 #define MINSIG 1

@@ -12,7 +12,7 @@ off_t lseek(int fd, off_t offset, int whence);
 
 int waitpid(int pid, int *status);
 int getcwd(char *cwd);
-int chdir(char *cwd);
+int chdir(const char *cwd);
 int fork();
 int execve(const char *name, char **argv, char **envp);
 int getdents(int fd, dirent_t *dents, int max);

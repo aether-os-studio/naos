@@ -11,6 +11,7 @@ else
 ARCH_DIR := $(ARCH)
 endif
 
+KVM ?= 0
 SMP ?= 4
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
@@ -22,6 +23,9 @@ ifeq ($(DEBUG), 1)
 override QEMUFLAGS := $(QEMUFLAGS) -s -S
 endif
 
+ifeq ($(KVM), 1)
+override QEMUFLAGS := $(QEMUFLAGS) --enable-kvm
+endif
 override IMAGE_NAME := naos-$(ARCH)
 
 # Toolchain for building the 'limine' executable for the host.

@@ -5,7 +5,7 @@
 uint64_t sys_open(const char *name, uint64_t mode, uint64_t flags)
 {
     uint64_t i;
-    for (i = 0; i < MAX_FD_NUM; i++)
+    for (i = 3; i < MAX_FD_NUM; i++)
     {
         if (current_task->fds[i] == NULL)
         {
@@ -63,7 +63,7 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len)
 {
     if (fd == 1 || fd == 2)
     {
-        printk("%s", buf);
+        serial_printk((char *)buf, len);
         return len;
     }
 
