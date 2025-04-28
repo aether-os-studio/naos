@@ -69,7 +69,10 @@ void map_page(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t flags)
     // 处理PTE
     uint64_t pt_index = indices[3];
     uint64_t *pte = &current_table[pt_index];
-    *pte = (paddr & ARCH_ADDR_MASK) | flags;
+    if (*pte == 0)
+    {
+        *pte = (paddr & ARCH_ADDR_MASK) | flags;
+    }
 
     // 刷新TLB
     asm volatile("invlpg (%0)" : : "r"(vaddr) : "memory");

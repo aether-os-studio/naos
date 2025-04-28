@@ -11,8 +11,10 @@ else
 ARCH_DIR := $(ARCH)
 endif
 
+SMP ?= 4
+
 # Default user QEMU flags. These are appended to the QEMU command calls.
-QEMUFLAGS := -cpu max -m 4G -serial stdio -smp 4
+QEMUFLAGS := -cpu max -m 4G -serial stdio -smp $(SMP)
 
 DEBUG ?= 0
 

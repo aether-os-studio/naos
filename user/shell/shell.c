@@ -9,11 +9,6 @@
 #include <aether/window.h>
 #include "pl_readline.h"
 
-#define SHELL_WINDOW_WIDTH 800
-#define SHELL_WINDOW_HEIGHT 600
-
-uint64_t window_buffer = 0;
-
 char *path = NULL;
 bool exited = false;
 

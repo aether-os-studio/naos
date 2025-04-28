@@ -42,10 +42,10 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack)
     dst->ctx->ds = SELECTOR_USER_DS;
     dst->ctx->es = SELECTOR_USER_DS;
     dst->ctx->rax = 0;
-    if (dst->fpu_ctx)
+    if (src->fpu_ctx)
     {
         dst->fpu_ctx = (fpu_context_t *)phys_to_virt(alloc_frames(1));
-        memset(dst->fpu_ctx, 0, sizeof(fpu_context_t));
+        memset(dst->fpu_ctx, 0, DEFAULT_PAGE_SIZE);
         memcpy(dst->fpu_ctx, src->fpu_ctx, sizeof(fpu_context_t));
     }
 }
@@ -129,6 +129,13 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t
     context->ctx->ds = SELECTOR_USER_DS;
     context->ctx->es = SELECTOR_USER_DS;
     context->ctx->ss = SELECTOR_USER_DS;
+    context->fs = SELECTOR_USER_DS;
+    context->gs = SELECTOR_USER_DS;
+
+    __asm__ __volatile__("movq %0, %%fs\n\t"
+                         "movq %0, %%gs\n\t" ::"r"(context->fs),
+                         "r"(context->gs));
+
     context->ctx->rflags = (0UL << 12) | (0b10) | (1UL << 9);
 }
 

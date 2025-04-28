@@ -236,6 +236,8 @@ uint64_t task_fork(struct pt_regs *regs)
         return (uint64_t)-ENOMEM;
     }
 
+    strncpy(child->name, current_task->name, TASK_NAME_MAX);
+
     child->state = TASK_READY;
 
     child->cpu_id = alloc_cpu_id();
@@ -245,12 +247,8 @@ uint64_t task_fork(struct pt_regs *regs)
 
     child->arch_context = malloc(sizeof(arch_context_t));
     memset(child->arch_context, 0, sizeof(arch_context_t));
-    arch_context_t *tmp_context = malloc(sizeof(arch_context_t));
-    tmp_context->cr3 = current_task->arch_context->cr3;
-    tmp_context->ctx = regs;
-    tmp_context->fpu_ctx = NULL;
-    arch_context_copy(child->arch_context, tmp_context, child->kernel_stack);
-    free(tmp_context);
+    memcpy(current_task->arch_context->ctx, regs, sizeof(struct pt_regs));
+    arch_context_copy(child->arch_context, current_task->arch_context, child->kernel_stack);
     child->ppid = current_task->pid;
 
     child->jiffies = current_task->jiffies;
@@ -366,8 +364,10 @@ uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
         else if (aligned_addr + alloc_size > load_end)
             load_end = aligned_addr + alloc_size;
 
-        uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W;
+        uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W | PT_FLAG_X;
         map_page_range(get_current_page_dir(), aligned_addr, 0, alloc_size, flags);
+
+        memset((void *)seg_addr, 0, file_size);
 
         vfs_read(node, (void *)seg_addr, phdr[i].p_offset, file_size);
 
@@ -391,14 +391,7 @@ uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
     map_page_range(get_current_page_dir(), USER_STACK_START, 0, USER_STACK_END - USER_STACK_START, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U | PT_FLAG_X);
     memset((void *)USER_STACK_START, 0, USER_STACK_END - USER_STACK_START);
 
-#if defined(__x86_64__)
-    current_task->arch_context->ctx->rsp = push_infos(current_task, USER_STACK_END, (char **)argv, (char **)envp);
-#elif defined(__aarch64__)
-#elif defined(__riscv)
-#elif defined(__loongarch64)
-#endif
-
-    arch_to_user_mode(current_task->arch_context, e_entry, current_task->arch_context->ctx->rsp);
+    arch_to_user_mode(current_task->arch_context, e_entry, push_infos(current_task, USER_STACK_END, (char **)argv, (char **)envp));
 
     return (uint64_t)-EAGAIN;
 }
