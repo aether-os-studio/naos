@@ -4,6 +4,9 @@
 
 uint64_t sys_open(const char *name, uint64_t mode, uint64_t flags)
 {
+    (void)mode;
+    (void)flags;
+
     uint64_t i;
     for (i = 3; i < MAX_FD_NUM; i++)
     {
@@ -36,6 +39,8 @@ uint64_t sys_close(uint64_t fd)
         return (uint64_t)-EBADFD;
     }
 
+    current_task->fds[fd]->offset = 0;
+    vfs_close(current_task->fds[fd]);
     current_task->fds[fd] = NULL;
 
     return 0;
@@ -43,13 +48,6 @@ uint64_t sys_close(uint64_t fd)
 
 uint64_t sys_read(uint64_t fd, void *buf, uint64_t len)
 {
-    if (fd == 0)
-    {
-        uint8_t scancode = get_keyboard_input();
-        *(uint8_t *)buf = scancode;
-
-        return 1;
-    }
 
     if (fd >= MAX_FD_NUM || current_task->fds[fd] == NULL)
     {
@@ -61,12 +59,6 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len)
 
 uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len)
 {
-    if (fd == 1 || fd == 2)
-    {
-        serial_printk((char *)buf, len);
-        return len;
-    }
-
     if (fd >= MAX_FD_NUM || current_task->fds[fd] == NULL)
     {
         return (uint64_t)-EBADFD;
@@ -108,12 +100,12 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence)
 
 uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg)
 {
-    if (fd >= MAX_FD_NUM)
+    if (fd >= MAX_FD_NUM || current_task->fds[fd] == NULL)
     {
         return (uint64_t)-EBADFD;
     }
 
-    return 0;
+    return vfs_ioctl(current_task->fds[fd], cmd, arg);
 }
 
 uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count)
@@ -208,18 +200,26 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
     if (current_task->fds[fd]->type != file_dir)
         return (uint64_t)-ENOTDIR;
 
-    dirent_t *dents = (dirent_t *)buf;
+    struct dirent *dents = (struct dirent *)buf;
     vfs_node_t node = current_task->fds[fd];
-    uint64_t len = 0;
-    list_foreach(node->child, i)
+
+    if (node->offset >= list_length(node->child))
     {
-        vfs_node_t node = (vfs_node_t)i->data;
-        strncpy(dents[len].name, node->name, 255);
-        dents[len].type = node->type;
-        len++;
+        return 0;
     }
 
-    return len;
+    list_foreach(node->child, i)
+    {
+        vfs_node_t child_node = (vfs_node_t)i->data;
+        dents[node->offset].d_ino = 0;
+        dents[node->offset].d_off = node->offset * sizeof(struct dirent);
+        dents[node->offset].d_reclen = sizeof(struct dirent);
+        dents[node->offset].d_type = (child_node->type == file_dir) ? DT_DIR : DT_REG;
+        strncpy(dents[node->offset].d_name, child_node->name, 1024);
+        node->offset++;
+    }
+
+    return node->offset * sizeof(struct dirent);
 }
 
 uint64_t sys_chdir(const char *dirname)
@@ -235,10 +235,10 @@ uint64_t sys_chdir(const char *dirname)
     return 0;
 }
 
-uint64_t sys_getcwd(char *cwd)
+uint64_t sys_getcwd(char *cwd, uint64_t size)
 {
     char *str = vfs_get_fullpath(current_task->cwd);
-    strcpy(cwd, str);
+    strncpy(cwd, str, size);
     free(str);
     return 0;
 }

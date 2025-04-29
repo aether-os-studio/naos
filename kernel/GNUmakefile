@@ -30,20 +30,6 @@ ifeq ($(filter $(ARCH),aarch64 loongarch64 riscv64 x86_64),)
     $(error Architecture $(ARCH) not supported)
 endif
 
-# User controllable C compiler command.
-ifeq ($(ARCH), x86_64)
-CC := $(ARCH)-linux-gnu-gcc
-endif
-ifeq ($(ARCH), aarch64)
-CC := $(ARCH)-linux-gnu-gcc
-endif
-ifeq ($(ARCH), riscv64)
-CC := $(ARCH)-linux-gnu-gcc
-endif
-ifeq ($(ARCH), loongarch64)
-CC := $(ARCH)-linux-gnu-gcc
-endif
-
 # User controllable C flags.
 CFLAGS := -g3 -O0
 

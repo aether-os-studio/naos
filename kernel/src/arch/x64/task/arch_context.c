@@ -48,11 +48,16 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack)
         memset(dst->fpu_ctx, 0, DEFAULT_PAGE_SIZE);
         memcpy(dst->fpu_ctx, src->fpu_ctx, sizeof(fpu_context_t));
     }
+    dst->fs = src->fs;
+    dst->gs = src->gs;
+    dst->fsbase = src->fsbase;
+    dst->gsbase = src->gsbase;
 }
 
 void arch_context_free(arch_context_t *context)
 {
-    // free_user_page_table(context->cr3);
+    free_page_table(context->cr3);
+
     if (context->fpu_ctx)
     {
         free_frames(virt_to_phys((uint64_t)context->fpu_ctx), 1);

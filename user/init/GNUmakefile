@@ -1,3 +1,3 @@
 all:
 	$(CC) $(GLOBAL_CFLAGS) -c init.c -o init.o
-	$(LD) init.o $(shell find $(CWD)/obj/ -name "*.o") -o init.exec
+	$(LD) init.o $(ROOT_DIR)/libc/lib/libc.a $(ROOT_DIR)/libc/lib/libm.a -o init.exec

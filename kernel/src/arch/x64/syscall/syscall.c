@@ -137,7 +137,10 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = sys_chdir((const char *)arg1);
         break;
     case SYS_GETCWD:
-        regs->rax = sys_getcwd((char *)arg1);
+        regs->rax = sys_getcwd((char *)arg1, arg2);
+        break;
+    case SYS_MMAP:
+        regs->rax = sys_mmap(arg1, arg2, arg3, arg4, arg5);
         break;
 
     default:

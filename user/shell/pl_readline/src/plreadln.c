@@ -56,7 +56,7 @@ pl_readline_t pl_readline_init(
     pl_readline_uninit(plreadln);
     return NULL;
   }
-  pl_readline_add_history(plreadln, "");
+  pl_readline_add_history(plreadln, " ");
   return plreadln;
 }
 

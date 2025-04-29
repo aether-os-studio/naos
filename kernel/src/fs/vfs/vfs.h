@@ -84,6 +84,9 @@ typedef int (*vfs_stat_t)(void *file, vfs_node_t node);
 // 创建一个文件或文件夹
 typedef int (*vfs_mk_t)(void *parent, const char *name, vfs_node_t node);
 
+// 创建一个文件或文件夹
+typedef int (*vfs_ioctl_t)(void *file, ssize_t cmd, ssize_t arg);
+
 // 映射文件从 offset 开始的 size 大小
 typedef void *(*vfs_mapfile_t)(void *file, size_t offset, size_t size);
 
@@ -98,6 +101,7 @@ typedef struct vfs_callback
     vfs_mk_t mkdir;
     vfs_mk_t mkfile;
     vfs_stat_t stat;
+    vfs_ioctl_t ioctl;
 } *vfs_callback_t;
 
 struct vfs_node
@@ -201,6 +205,16 @@ int vfs_unmount(const char *path);
  *\return 0 成功，-1 失败
  */
 int vfs_close(vfs_node_t node);
+
+/**
+ *\brief 控制文件
+ *
+ *\param node     文件节点
+ *\param cmd      命令
+ *\param arg      参数
+ *\return 0 成功，-1 失败
+ */
+int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg);
 
 /**
  *\brief 更新文件信息

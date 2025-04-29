@@ -11,6 +11,30 @@ else
 ARCH_DIR := $(ARCH)
 endif
 
+# User controllable C compiler command.
+ifeq ($(ARCH), x86_64)
+export CC := $(ARCH)-linux-gnu-gcc
+export MLIBC_ARCH_FLAGS := -m64 -mno-red-zone -march=x86-64
+endif
+ifeq ($(ARCH), aarch64)
+export CC := $(ARCH)-linux-gnu-gcc
+endif
+ifeq ($(ARCH), riscv64)
+export CC := $(ARCH)-linux-gnu-gcc
+endif
+ifeq ($(ARCH), loongarch64)
+export CC := $(ARCH)-linux-gnu-gcc
+endif
+
+export CXX := $(CC)
+
+MLIBC_SHARED_FLAGS := -D__thread='' -D_Thread_local='' -Dthread_local='' -D_GNU_SOURCE
+
+export CFLAGS := -g3 -O0 -fno-lto -ffunction-sections -fdata-sections -static -nostdlib -nostdinc -fno-builtin $(MLIBC_ARCH_FLAGS) $(MLIBC_SHARED_FLAGS)
+export CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions
+
+export ROOT_DIR := $(shell pwd)
+
 KVM ?= 0
 SMP ?= 4
 
@@ -171,10 +195,16 @@ kernel-deps:
 kernel: kernel-deps
 	$(MAKE) -C kernel
 
+libc:
+	rm -rf mlibc/sysdeps/aether/include/nr.h
+	cp kernel/src/arch/$(ARCH_DIR)/syscall/nr.h mlibc/sysdeps/aether/include/nr.h
+
+ifeq ($(ARCH), x86_64)
+	sh build_mlibc_x86_64.sh
+endif
+
 .PHONY: user
-user:
-	rm -rf user/aelibc/include/nr.h
-	cp kernel/src/arch/$(ARCH_DIR)/syscall/nr.h user/aelibc/include/
+user: libc
 	$(MAKE) -C user all
 
 $(IMAGE_NAME).iso: limine/limine kernel user
@@ -261,10 +291,10 @@ endif
 clean:
 	$(MAKE) -C kernel clean
 	$(MAKE) -C user clean
-	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).hdd
+	rm -rf libc iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).hdd
 
 .PHONY: distclean
 distclean:
 	$(MAKE) -C kernel distclean
 	$(MAKE) -C user distclean
-	rm -rf iso_root *.iso *.hdd kernel-deps limine ovmf
+	rm -rf libc iso_root *.iso *.hdd kernel-deps limine ovmf

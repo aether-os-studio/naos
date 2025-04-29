@@ -32,9 +32,13 @@ void irq_init()
 
 extern int vsprintf(char *buf, const char *fmt, va_list args);
 
+extern bool can_schedule;
+
 void dump_regs(struct pt_regs *regs, const char *error_str, ...)
 {
-    char buf[512];
+    can_schedule = false;
+
+    char buf[128];
     va_list args;
     va_start(args, error_str);
     vsprintf(buf, error_str, args);
@@ -210,6 +214,7 @@ void do_page_fault(struct pt_regs *regs, uint64_t error_code)
 
     if (regs->rsp <= get_physical_memory_offset())
     {
+        can_schedule = true;
         task_exit(-EFAULT);
         return;
     }

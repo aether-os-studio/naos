@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+
 /*
  * Linux x86_64系统调用号定义文件 (基于Linux 5.15内核)
  * 说明：
@@ -41,7 +43,6 @@
 #define SYS_EXIT_GROUP 231
 
 /* 内存管理相关 */
-#define SYS_MREMAP 25  // mremap(void *old_address, size_t old_size, size_t new_size, int flags, ...)
 #define SYS_MINCORE 27 // mincore(void *addr, size_t length, unsigned char *vec)
 
 /* 信号处理相关 */
@@ -53,8 +54,18 @@
 #define SYS_SIGNAL 350
 #define SYS_SETMASK 351
 
-typedef struct window_info
+typedef struct fb_info
 {
+    uint64_t fb_addr;
     uint64_t width;
     uint64_t height;
-} window_info_t;
+    uint16_t bpp;
+    uint64_t red_mask_size;
+    uint64_t red_mask_shift;
+    uint64_t blue_mask_size;
+    uint64_t blue_mask_shift;
+    uint64_t green_mask_size;
+    uint64_t green_mask_shift;
+} fb_info_t;
+
+#define FB_IOCTL_GETINFO 1

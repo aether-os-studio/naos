@@ -61,6 +61,8 @@ uint64_t task_exit(int64_t code);
 uint64_t sys_waitpid(uint64_t pid, int *status);
 
 task_t *task_search(task_state_t state, uint32_t cpu_id);
+int task_block(task_t *task, task_state_t state, int timeout_ms);
+void task_unblock(task_t *task, int reason);
 
 extern task_t *tasks[MAX_TASK_NUM];
 extern task_t *idle_tasks[MAX_CPU_NUM];

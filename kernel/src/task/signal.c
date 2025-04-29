@@ -80,7 +80,7 @@ int sys_kill(int pid, int sig)
         return 0;
     }
 
-    task_t *task = get_task(pid);
+    task_t *task = tasks[pid];
 
     if (!task)
     {
@@ -99,7 +99,7 @@ int sys_kill(int pid, int sig)
 
 void sys_sendsignal(uint64_t pid, int sig)
 {
-    task_t *task = get_task(pid);
+    task_t *task = tasks[pid];
     task->signal |= SIGMASK(sig);
 }
 

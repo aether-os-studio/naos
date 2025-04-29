@@ -216,6 +216,11 @@ int fatfs_stat(void *handle, vfs_node_t node)
     return 0;
 }
 
+int fatfs_ioctl(void *file, ssize_t cmd, ssize_t arg)
+{
+    return 0;
+}
+
 static struct vfs_callback callbacks = {
     .mount = fatfs_mount,
     .unmount = fatfs_unmount,
@@ -226,6 +231,7 @@ static struct vfs_callback callbacks = {
     .mkdir = fatfs_mkdir,
     .mkfile = fatfs_mkfile,
     .stat = fatfs_stat,
+    .ioctl = fatfs_ioctl,
 };
 
 void fatfs_init()

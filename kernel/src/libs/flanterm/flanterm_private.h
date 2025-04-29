@@ -34,6 +34,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#define DEFAULT_FONT_WIDTH 8
+#define DEFAULT_FONT_HEIGHT 16
+
 #ifdef __cplusplus
 extern "C"
 {

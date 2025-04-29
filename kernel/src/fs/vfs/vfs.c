@@ -210,6 +210,8 @@ err:
 
 int vfs_regist(const char *name, vfs_callback_t callback)
 {
+    (void)name;
+
     if (callback == NULL)
         return -1;
     for (size_t i = 0; i < sizeof(struct vfs_callback) / sizeof(void *); i++)
@@ -374,6 +376,14 @@ int vfs_unmount(const char *path)
         }
     }
     return -1;
+}
+
+int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg)
+{
+    do_update(node);
+    if (node->type == file_dir)
+        return -1;
+    return callbackof(node, ioctl)(node->handle, cmd, arg);
 }
 
 // 使用请记得free掉返回的buff

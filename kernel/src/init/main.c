@@ -3,6 +3,8 @@
 #include <mm/mm.h>
 #include <arch/arch.h>
 #include <task/task.h>
+#include <fs/vfs/vfs.h>
+#include <fs/vfs/dev.h>
 
 __attribute__((used, section(".limine_requests"))) static volatile LIMINE_BASE_REVISION(3);
 
@@ -26,6 +28,12 @@ void kmain(void)
     heap_init();
 
     arch_early_init();
+
+    vfs_init();
+
+    dev_init();
+
+    stdio_init();
 
     task_init();
 

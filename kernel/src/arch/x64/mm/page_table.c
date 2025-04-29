@@ -168,7 +168,7 @@ uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t 
     (void)user_stack_start;
     (void)user_stack_end;
 
-    uint64_t cr3_new = alloc_frames(1); // 就不判断申请失败的情况了，不然有点麻烦，你自己加上吧
+    uint64_t cr3_new = alloc_frames(1);
     if (cr3_new == 0)
     {
         printk("Cannot clone page table: no page can be allocated");
@@ -278,4 +278,43 @@ uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t 
         }
     }
     return cr3_new;
+}
+
+static void free_page_table_inner(uint64_t phys_addr, int level)
+{
+    uint64_t *table = (uint64_t *)phys_to_virt(phys_addr);
+
+    for (int i = 0; i < 512; i++)
+    {
+        uint64_t pte = table[i];
+        if (!(pte & ARCH_PT_FLAG_VALID))
+            continue;
+
+        if (level == 1)
+        {
+            free_frames(pte & ARCH_ADDR_MASK, 1);
+        }
+        else
+        {
+            free_page_table_inner(pte & ARCH_ADDR_MASK, level - 1); // 递归子页表
+        }
+    }
+
+    free_frames(phys_addr, 1);
+}
+
+void free_page_table(uint64_t directory)
+{
+    uint64_t *pml4 = phys_to_virt((uint64_t *)directory);
+
+    for (int i = 0; i < 256; i++)
+    {
+        if (pml4[i] & ARCH_PT_FLAG_VALID)
+        {
+            free_page_table_inner(pml4[i] & 0x00007FFFFFFFF000, 3);
+            pml4[i] = 0;
+        }
+    }
+
+    free_frames((uint64_t)directory, 1);
 }

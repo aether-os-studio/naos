@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <signal.h>
+#include <sys/wait.h>
 
 int main()
 {
@@ -14,8 +15,7 @@ int main()
     }
     else
     {
-        int status;
-        waitpid(pid, &status);
+        waitpid(pid, NULL, 0);
     }
 
     return 0;

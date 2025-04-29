@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <dirent.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <string.h>
@@ -6,6 +7,7 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <sys/wait.h>
 #include "pl_readline.h"
 
 #define FONT_HEIGHT 20
@@ -13,7 +15,7 @@
 char *path = NULL;
 bool exited = false;
 
-int getc()
+int readline_getc()
 {
     int ch;
     while ((ch = (int)getchar()) == 0)
@@ -41,13 +43,15 @@ int getc()
 
 char vsprintf_buf[4096];
 
-void putc(int ch)
+void readline_putc(int ch)
 {
-    printf("%c", ch);
+    putchar(ch);
+    fflush(stdout);
 }
 
-void flush()
+void readline_flush()
 {
+    fflush(stdout);
 }
 
 static void handle_tab(char *buf, pl_readline_words_t words)
@@ -62,25 +66,21 @@ static void handle_tab(char *buf, pl_readline_words_t words)
         return;
     }
 
-    int fd = open(buf, 0, 0);
-    dirent_t dents[128];
-    int num = getdents(fd, dents, 128);
-    if (num < 0)
-    {
-        close(fd);
-        return;
-    }
+    DIR *dir = opendir((const char *)buf);
 
-    for (int i = 0; i < num; i++)
+    struct dirent *dent = NULL;
+
+    while ((dent = readdir(dir)) != NULL)
     {
-        // char *new_path = pathacat(s, dents[i].name);
-        // pl_readline_word_maker_add(new_path, words, false, dents[i].type == file_dir ? '/' : ' ');
-        pl_readline_word_maker_add(dents[i].name, words, false, dents[i].type == file_dir ? '/' : ' ');
+        if (dent->d_type == DT_DIR)
+            pl_readline_word_maker_add(dent->d_name, words, false, '/');
+        else
+            pl_readline_word_maker_add(dent->d_name, words, false, ' ');
     }
 
     // free(s);
 
-    close(fd);
+    closedir(dir);
 }
 
 int list_files(char *path, int argc, char **argv)
@@ -90,25 +90,24 @@ int list_files(char *path, int argc, char **argv)
         path = argv[1];
     }
 
-    int fd = open((const char *)path, 0, 0);
-
-    dirent_t dents[128];
-    int num = getdents(fd, dents, 128);
-    if (num < 0)
+    DIR *dir = opendir((const char *)path);
+    if (!dir)
     {
-        return num;
+        return -ENOENT;
     }
 
-    for (int i = 0; i < num; i++)
+    struct dirent *dent = NULL;
+
+    while ((dent = readdir(dir)) != NULL)
     {
-        if (dents[i].type == file_dir)
-            printf("\033[1;34m%s\033[m ", dents[i].name);
+        if (dent->d_type == DT_DIR)
+            printf("\033[1;34m%s\033[0m ", dent->d_name);
         else
-            printf("%s ", dents[i].name);
+            printf("%s ", dent->d_name);
     }
     printf("\n");
 
-    close(fd);
+    closedir(dir);
 
     return 0;
 }
@@ -228,19 +227,15 @@ int run_exec(const char *name, char **argv, char **envp)
 
     int status = 0;
 
-    char buf[256];
-    getcwd(buf);
-
     int pid = fork();
     if (pid == 0)
     {
-        chdir(buf);
         execve(name, argv, envp);
         exit(-1);
     }
     else
     {
-        waitpid(pid, &status);
+        waitpid(pid, &status, 0);
     }
 
     if (status < 0)
@@ -306,7 +301,7 @@ static int shell_exec(char *path, const char *command)
     else if (!strcmp(argv[0], "pwd"))
     {
         char cwd[256];
-        getcwd(cwd);
+        getcwd(cwd, 256);
         printf("%s\n", cwd);
     }
     else
@@ -326,23 +321,20 @@ static int shell_exec(char *path, const char *command)
 
 int main()
 {
-    signal(SIGQUIT, 0);
-
     path = malloc(1024);
     memset(path, 0, 1024);
     sprintf(path, "/");
 
     chdir(path);
 
-    pl_readline_t readln = pl_readline_init(getc, putc, flush, handle_tab);
+    pl_readline_t readln = pl_readline_init(readline_getc, readline_putc, readline_flush, handle_tab);
 
     char prompt[256];
     while (true)
     {
-        getcwd(path);
-        sprintf(prompt, "\033[1;32mroot\033[m:\033[1;34m%s\033[m# ", path);
+        getcwd(path, 256);
+        sprintf(prompt, "\033[1;32mroot\033[0m:\033[1;34m%s\033[0m# ", path);
         const char *line = pl_readline(readln, prompt);
-        printf("\033[m");
         shell_exec(path, line);
         if (exited)
             break;

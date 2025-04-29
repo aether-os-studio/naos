@@ -1,0 +1,3 @@
+[submodule "mlibc"]
+	path = mlibc
+	url = git@github.com:aether-os-studio/mlibc.git

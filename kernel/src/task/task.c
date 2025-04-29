@@ -51,6 +51,10 @@ task_t *task_create(const char *name, void (*entry)())
     task->cwd = rootdir;
     task->brk_start = USER_BRK_START;
     task->brk_end = USER_BRK_START;
+    memset(task->actions, 0, sizeof(task->actions));
+    task->fds[0] = vfs_open("/dev/stdin");
+    task->fds[1] = vfs_open("/dev/stdout");
+    task->fds[2] = vfs_open("/dev/stderr");
     strncpy(task->name, name, TASK_NAME_MAX);
 
     return task;
@@ -97,8 +101,6 @@ void idle_entry()
 #include <drivers/block/nvme/nvme.h>
 #include <fs/partition.h>
 #include <drivers/fb.h>
-#include <fs/vfs/dev.h>
-#include <fs/vfs/vfs.h>
 
 extern void fatfs_init();
 
@@ -114,17 +116,14 @@ void init_thread()
     ahci_init();
     nvme_init();
 
-    vfs_init();
+    partition_init();
+    fbdev_init();
 
     fatfs_init();
 
-    dev_init();
-
-    partition_init();
-
-    fbdev_init();
-
     mount_root();
+
+    arch_input_dev_init();
 
     system_initialized = true;
 
@@ -201,6 +200,7 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], char *en
     uint8_t *tmp = (uint8_t *)malloc(2);
     memset(tmp, 0, 2);
     tmp_stack = push_slice(tmp_stack, tmp, 2);
+    free(tmp);
 
     // push envp
     tmp_stack = push_slice(tmp_stack, tmp, 1);
@@ -224,6 +224,8 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], char *en
 
 uint64_t task_fork(struct pt_regs *regs)
 {
+    arch_disable_interrupt();
+
     can_schedule = false;
 
     task_t *child = get_free_task();
@@ -251,7 +253,16 @@ uint64_t task_fork(struct pt_regs *regs)
 
     child->cwd = current_task->cwd;
 
+    child->brk_start = USER_BRK_START;
+    child->brk_end = USER_BRK_START;
+
+    child->fds[0] = vfs_open("/dev/stdin");
+    child->fds[1] = vfs_open("/dev/stdout");
+    child->fds[2] = vfs_open("/dev/stderr");
+
     can_schedule = true;
+
+    arch_enable_interrupt();
 
     return child->pid;
 }
@@ -324,14 +335,6 @@ uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
         return (uint64_t)-ENOMEM;
     }
 
-#if defined(__x86_64__)
-    current_task->arch_context->cr3 = clone_page_table(virt_to_phys((uint64_t)get_current_page_dir()), USER_STACK_START, USER_STACK_END);
-    __asm__ __volatile__("movq %0, %%cr3\n\t" ::"r"(current_task->arch_context->cr3) : "memory");
-#elif defined(__aarch64__)
-#elif defined(__riscv)
-#elif defined(__loongarch64)
-#endif
-
     uint64_t load_start = UINT64_MAX;
     uint64_t load_end = 0;
 
@@ -385,7 +388,8 @@ uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
     map_page_range(get_current_page_dir(), USER_STACK_START, 0, USER_STACK_END - USER_STACK_START, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U | PT_FLAG_X);
     memset((void *)USER_STACK_START, 0, USER_STACK_END - USER_STACK_START);
 
-    arch_to_user_mode(current_task->arch_context, e_entry, push_infos(current_task, USER_STACK_END, (char **)argv, (char **)envp));
+    uint64_t stack = push_infos(current_task, USER_STACK_END, (char **)argv, (char **)envp);
+    arch_to_user_mode(current_task->arch_context, e_entry, stack);
 
     return (uint64_t)-EAGAIN;
 }

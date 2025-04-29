@@ -11,6 +11,7 @@ typedef struct devfs_handle
     char name[MAX_DEV_NAME_LEN];
     ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len);
     ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len);
+    ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg);
     void *data;
 } *devfs_handle_t;
 
@@ -24,6 +25,8 @@ extern partition_node_t dev_nodes[MAX_PARTITIONS_NUM];
 void regist_dev(const char *name,
                 ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len),
                 ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len),
+                ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg),
                 void *data);
 
 void dev_init();
+void stdio_init();

@@ -94,13 +94,11 @@ void partition_init()
         free(boot_sector);
     }
 
-    // printk("Found %d partitions\n", partition_num);
-
     for (uint64_t i = 0; i < partition_num; i++)
     {
         char name[MAX_DEV_NAME_LEN];
         sprintf(name, "part%d", i);
-        regist_dev(name, partition_read, partition_write, &partitions[i]);
+        regist_dev(name, partition_read, partition_write, NULL, &partitions[i]);
     }
 }
 
