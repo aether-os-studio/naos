@@ -216,8 +216,7 @@ $(IMAGE_NAME).iso: limine/limine kernel user
 	mkdir -p iso_root/usr/bin
 	cp -v -r libc/* iso_root/usr/
 	cp -v -r libc/lib/crt0.o iso_root/usr/lib/crt1.o
-	cp -v user/init/init.exec iso_root/usr/bin
-	cp -v user/shell/shell.exec iso_root/usr/bin
+	cp -v -r user/usr iso_root/
 	mkdir -p iso_root/EFI/BOOT
 ifeq ($(ARCH),x86_64)
 	cp -v limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin iso_root/boot/limine/
@@ -272,10 +271,9 @@ endif
 	mmd -i $(IMAGE_NAME).hdd@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine ::/usr ::/usr/bin
 	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(ARCH)/kernel ::/boot
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf ::/boot/limine
+	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/usr ::/
 	mcopy -s -i $(IMAGE_NAME).hdd@@1M libc/* ::/usr/
 	mcopy -i $(IMAGE_NAME).hdd@@1M libc/lib/crt0.o ::/usr/lib/crt1.o
-	mcopy -i $(IMAGE_NAME).hdd@@1M user/init/init.exec ::/usr/bin
-	mcopy -i $(IMAGE_NAME).hdd@@1M user/shell/shell.exec ::/usr/bin
 ifeq ($(ARCH),x86_64)
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/limine-bios.sys ::/boot/limine
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTX64.EFI ::/EFI/BOOT
