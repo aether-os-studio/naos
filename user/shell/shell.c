@@ -214,6 +214,29 @@ char **parse_command(const char *input, int *argc)
     return argv;
 }
 
+int read_file(const char *name)
+{
+    FILE *fp = fopen(name, "r");
+    if (fp == NULL)
+    {
+        return -ENOENT;
+    }
+
+    fseek(fp, 0, SEEK_END);
+    int len = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    char *buf = malloc(len);
+
+    fread(buf, len, 1, fp);
+
+    printf("%s\n", buf);
+
+    free(buf);
+
+    return 0;
+}
+
 int run_exec(const char *name, char **argv, char **envp)
 {
     int fd = open(name, 0, 0);
@@ -303,6 +326,17 @@ static int shell_exec(char *path, const char *command)
         char cwd[256];
         getcwd(cwd, 256);
         printf("%s\n", cwd);
+    }
+    else if (!strcmp(argv[0], "cat"))
+    {
+        if (argc == 2)
+        {
+            retcode = read_file(argv[1]);
+        }
+        else
+        {
+            printf("%s: invalid arguments", argv[0]);
+        }
     }
     else
     {

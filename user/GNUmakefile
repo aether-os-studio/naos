@@ -1,7 +1,11 @@
 export CC := $(ARCH)-linux-gnu-gcc
+export CXX := $(CC)
 export LD := $(ARCH)-linux-gnu-ld
 export CWD = $(ROOT_DIR)/user
 export GLOBAL_CFLAGS = -static -nostdlib -mno-red-zone -fno-builtin -fno-stack-protector -g3 -O0 -I$(ROOT_DIR)/libc/include/
+export CFLAGS = $(GLOBAL_CFLAGS)
+
+export LDFLAGS = -static -nostdlib
 
 all:
 	$(MAKE) -C init

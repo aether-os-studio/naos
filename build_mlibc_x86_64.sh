@@ -9,14 +9,14 @@ mkdir build-$ARCH && cd build-$ARCH
 
 cat <<EOF >cc
 #! /bin/sh
-$CC $CFLAGS "\$@"
+$CC $MLIBC_CFLAGS "\$@"
 EOF
 chmod +x cc
 unset CC
 
 cat <<EOF >c++
 #! /bin/sh
-$CXX $CXXFLAGS "\$@"
+$CXX $MLIBC_CXXFLAGS "\$@"
 EOF
 chmod +x c++
 unset CXX

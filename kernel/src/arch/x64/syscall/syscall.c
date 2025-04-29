@@ -142,6 +142,13 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_MMAP:
         regs->rax = sys_mmap(arg1, arg2, arg3, arg4, arg5);
         break;
+    case SYS_CLOCK_GETTIME:
+        tm time;
+        time_read_bcd(&time);
+        *(int64_t *)arg1 = mktime(&time);
+        *(int64_t *)arg2 = 0;
+        regs->rax = 0;
+        break;
 
     default:
         regs->rax = (uint64_t)-ENOSYS;

@@ -28,10 +28,10 @@ endif
 
 export CXX := $(CC)
 
-MLIBC_SHARED_FLAGS := -D__thread='' -D_Thread_local='' -Dthread_local='' -D_GNU_SOURCE
+MLIBC_SHARED_FLAGS := -D_GNU_SOURCE
 
-export CFLAGS := -g3 -O0 -fno-lto -ffunction-sections -fdata-sections -static -nostdlib -nostdinc -fno-builtin $(MLIBC_ARCH_FLAGS) $(MLIBC_SHARED_FLAGS)
-export CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions
+export MLIBC_CFLAGS := -g3 -O0 -fno-lto -ffunction-sections -fdata-sections -static -nostdlib -nostdinc -fno-builtin $(MLIBC_ARCH_FLAGS) $(MLIBC_SHARED_FLAGS)
+export MLIBC_CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions
 
 export ROOT_DIR := $(shell pwd)
 
@@ -214,6 +214,8 @@ $(IMAGE_NAME).iso: limine/limine kernel user
 	mkdir -p iso_root/boot/limine
 	cp -v limine.conf iso_root/boot/limine/
 	mkdir -p iso_root/usr/bin
+	cp -v -r libc/* iso_root/usr/
+	cp -v -r libc/lib/crt0.o iso_root/usr/lib/crt1.o
 	cp -v user/init/init.exec iso_root/usr/bin
 	cp -v user/shell/shell.exec iso_root/usr/bin
 	mkdir -p iso_root/EFI/BOOT
@@ -270,6 +272,8 @@ endif
 	mmd -i $(IMAGE_NAME).hdd@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine ::/usr ::/usr/bin
 	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(ARCH)/kernel ::/boot
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf ::/boot/limine
+	mcopy -s -i $(IMAGE_NAME).hdd@@1M libc/* ::/usr/
+	mcopy -i $(IMAGE_NAME).hdd@@1M libc/lib/crt0.o ::/usr/lib/crt1.o
 	mcopy -i $(IMAGE_NAME).hdd@@1M user/init/init.exec ::/usr/bin
 	mcopy -i $(IMAGE_NAME).hdd@@1M user/shell/shell.exec ::/usr/bin
 ifeq ($(ARCH),x86_64)

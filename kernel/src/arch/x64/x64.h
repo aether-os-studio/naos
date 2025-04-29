@@ -17,6 +17,7 @@
 #include "task/fsgsbase.h"
 #include "task/elf.h"
 #include "syscall/syscall.h"
+#include "time/time.h"
 
 void arch_early_init();
 void arch_init();

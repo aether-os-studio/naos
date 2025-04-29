@@ -53,6 +53,7 @@
 
 #define SYS_SIGNAL 350
 #define SYS_SETMASK 351
+#define SYS_CLOCK_GETTIME 352
 
 typedef struct fb_info
 {
