@@ -47,6 +47,13 @@ uint64_t get_mmio_address(uint32_t pci_address, uint16_t offset)
     return virt + offset;
 }
 
+#else
+
+uint64_t get_mmio_address(uint32_t pci_address, uint16_t offset)
+{
+    return 0;
+}
+
 #endif
 
 uint32_t segment_bus_device_functon_to_pci_address(uint16_t segment, uint8_t bus, uint8_t device, uint8_t function)

@@ -2,6 +2,7 @@
 
 #define ARCH_MAX_IRQ_NUM 256
 
+#include "acpi/acpi.h"
 #include "mm/page_table.h"
 #include "irq/ptrace.h"
 #include "irq/irq.h"
