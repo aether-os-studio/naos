@@ -94,7 +94,7 @@ run-hdd-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 .PHONY: run-aarch64
 run-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).iso
 	qemu-system-$(ARCH) \
-		-M virt \
+		-M virt,gic-version=2 \
 		-cpu max \
 		-device ramfb \
 		-device qemu-xhci \
@@ -107,7 +107,7 @@ run-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).iso
 .PHONY: run-hdd-aarch64
 run-hdd-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 	qemu-system-$(ARCH) \
-		-M virt \
+		-M virt,gic-version=2 \
 		-cpu max \
 		-device ramfb \
 		-device qemu-xhci \

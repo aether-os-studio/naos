@@ -7,6 +7,7 @@
 #include "irq/irq.h"
 #include "mm/page_table.h"
 #include "task/arch_context.h"
+#include "smp/smp.h"
 #include "syscall/syscall.h"
 
 void arch_early_init();

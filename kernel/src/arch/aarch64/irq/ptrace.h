@@ -42,4 +42,4 @@ struct pt_regs
     uint64_t x1;
 
     uint64_t fpu[32];
-};
+} __attribute__((packed));
