@@ -6,9 +6,6 @@ MAKEFLAGS += -rR
 # Change as needed.
 override OUTPUT := kernel
 
-# Target architecture to build for. Default to x86_64.
-ARCH := x86_64
-
 ifeq ($(ARCH), x86_64)
 ARCH_DIR := src/arch/x64
 endif

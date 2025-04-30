@@ -143,7 +143,7 @@ void local_apic_ap_init()
 
 void io_apic_init()
 {
-    map_page_range(get_current_page_dir(), phys_to_virt(ioapic_address), ioapic_address, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
+    map_page_range(get_current_page_dir(false), phys_to_virt(ioapic_address), ioapic_address, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
     ioapic_address = (uint64_t)phys_to_virt(ioapic_address);
 
     printk("Setup I/O apic: %#018lx\n", ioapic_address);
@@ -182,7 +182,7 @@ void lapic_timer_stop()
 void apic_setup(MADT *madt)
 {
     lapic_address = phys_to_virt((uint64_t)madt->local_apic_address);
-    map_page_range(get_current_page_dir(), lapic_address, madt->local_apic_address, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
+    map_page_range(get_current_page_dir(false), lapic_address, madt->local_apic_address, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
 
     printk("Setup Local apic: %#018lx\n", lapic_address);
 
@@ -225,7 +225,7 @@ void ap_entry(struct limine_mp_info *cpu)
 {
     close_interrupt;
 
-    uint64_t cr3 = (uint64_t)virt_to_phys(get_current_page_dir());
+    uint64_t cr3 = (uint64_t)virt_to_phys(get_current_page_dir(false));
     __asm__ __volatile__("movq %0, %%cr3" ::"r"(cr3) : "memory");
 
     sse_init();

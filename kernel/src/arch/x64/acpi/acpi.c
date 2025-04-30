@@ -32,7 +32,7 @@ void *find_table(const char *name)
     {
         uint64_t phys = (uint64_t)(*(t + i));
         uint64_t ptr = phys_to_virt(phys);
-        map_page_range(get_current_page_dir(), ptr, phys, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
+        map_page_range(get_current_page_dir(false), ptr, phys, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
         uint8_t signa[5] = {0};
         memcpy(signa, ((struct ACPISDTHeader *)ptr)->Signature, 4);
         if (memcmp(signa, name, 4) == 0)
@@ -56,7 +56,7 @@ void acpi_init()
         return;
     }
     rsdp = phys_to_virt(rsdp);
-    map_page_range(get_current_page_dir(), (uint64_t)rsdp, rsdp_paddr, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
+    map_page_range(get_current_page_dir(false), (uint64_t)rsdp, rsdp_paddr, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
 
     uint64_t xsdt_paddr = rsdp->xsdt_address;
 
@@ -67,7 +67,7 @@ void acpi_init()
         return;
     }
     xsdt = phys_to_virt(xsdt);
-    map_page_range(get_current_page_dir(), (uint64_t)xsdt, xsdt_paddr, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
+    map_page_range(get_current_page_dir(false), (uint64_t)xsdt, xsdt_paddr, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
 
     load_table(HPET, hpet_setup);
     load_table(APIC, apic_setup);

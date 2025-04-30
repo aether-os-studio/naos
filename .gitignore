@@ -2,7 +2,7 @@
 /kernel-deps
 /limine
 /ovmf
-/libc
+/libc-*
 *.iso
 *.hdd
 *.vmdk

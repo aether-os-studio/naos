@@ -42,7 +42,7 @@ uint64_t get_mmio_address(uint32_t pci_address, uint16_t offset)
         return 0;
     }
     uint64_t virt = phys_to_virt(phys);
-    map_page_range(get_current_page_dir(), virt, phys, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
+    map_page_range(get_current_page_dir(false), virt, phys, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
 
     return virt + offset;
 }

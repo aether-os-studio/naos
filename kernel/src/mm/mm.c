@@ -1,3 +1,4 @@
+#include <arch/arch.h>
 #include <mm/mm.h>
 
 __attribute__((used, section(".limine_requests"))) static volatile struct limine_memmap_request memmap_request = {

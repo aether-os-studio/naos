@@ -1,7 +1,9 @@
+#include <arch/arch.h>
 #include <task/task.h>
 #include <drivers/kernel_logger.h>
 #include <fs/vfs/vfs.h>
 #include <arch/arch.h>
+#include <mm/mm.h>
 
 task_t *tasks[MAX_TASK_NUM];
 task_t *idle_tasks[MAX_CPU_NUM];
@@ -362,7 +364,7 @@ uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
             load_end = aligned_addr + alloc_size;
 
         uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W | PT_FLAG_X;
-        map_page_range(get_current_page_dir(), aligned_addr, 0, alloc_size, flags);
+        map_page_range(get_current_page_dir(true), aligned_addr, 0, alloc_size, flags);
 
         memset((void *)seg_addr, 0, file_size);
 
@@ -385,7 +387,7 @@ uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
 
     free(fullpath);
 
-    map_page_range(get_current_page_dir(), USER_STACK_START, 0, USER_STACK_END - USER_STACK_START, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U | PT_FLAG_X);
+    map_page_range(get_current_page_dir(true), USER_STACK_START, 0, USER_STACK_END - USER_STACK_START, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U | PT_FLAG_X);
     memset((void *)USER_STACK_START, 0, USER_STACK_END - USER_STACK_START);
 
     uint64_t stack = push_infos(current_task, USER_STACK_END, (char **)argv, (char **)envp);

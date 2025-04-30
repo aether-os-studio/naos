@@ -280,7 +280,7 @@ struct ahci_driver *ahci_driver_init(pci_bar_t *bar5)
     struct ahci_hba *hba = &ahci_drv->hba;
 
     hba->base = (hba_reg_t *)phys_to_virt(bar5->address);
-    map_page_range(get_current_page_dir(), (uint64_t)hba->base, bar5->address, bar5->size, PT_FLAG_R | PT_FLAG_W);
+    map_page_range(get_current_page_dir(false), (uint64_t)hba->base, bar5->address, bar5->size, PT_FLAG_R | PT_FLAG_W);
     if (hba->base == NULL)
     {
         printk("ahci driver init failed\n");

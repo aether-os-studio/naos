@@ -39,7 +39,7 @@ KVM ?= 0
 SMP ?= 4
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
-QEMUFLAGS := -cpu max -m 4G -serial stdio -smp $(SMP)
+QEMUFLAGS := -m 4G -serial stdio -smp $(SMP) -d cpu_reset
 
 DEBUG ?= 0
 
@@ -95,7 +95,7 @@ run-hdd-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 run-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).iso
 	qemu-system-$(ARCH) \
 		-M virt \
-		-cpu cortex-a72 \
+		-cpu max \
 		-device ramfb \
 		-device qemu-xhci \
 		-device usb-kbd \
@@ -108,7 +108,7 @@ run-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).iso
 run-hdd-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 	qemu-system-$(ARCH) \
 		-M virt \
-		-cpu cortex-a72 \
+		-cpu max \
 		-device ramfb \
 		-device qemu-xhci \
 		-device usb-kbd \
@@ -194,8 +194,11 @@ kernel-deps:
 .PHONY: kernel
 kernel: kernel-deps
 	$(MAKE) -C kernel
+ifeq ($(ARCH), x86_64)
+	$(MAKE) -C user
+endif
 
-libc:
+libc-$(ARCH):
 	rm -rf mlibc/sysdeps/aether/include/nr.h
 	cp kernel/src/arch/$(ARCH_DIR)/syscall/nr.h mlibc/sysdeps/aether/include/nr.h
 
@@ -204,21 +207,21 @@ ifeq ($(ARCH), x86_64)
 endif
 
 .PHONY: user
-user: libc
+user: libc-$(ARCH)
 	$(MAKE) -C user all
 
-$(IMAGE_NAME).iso: limine/limine kernel user
+$(IMAGE_NAME).iso: limine/limine kernel
 	rm -rf iso_root
 	mkdir -p iso_root/boot
 	cp -v kernel/bin-$(ARCH)/kernel iso_root/boot/
 	mkdir -p iso_root/boot/limine
 	cp -v limine.conf iso_root/boot/limine/
 	mkdir -p iso_root/usr/bin
-	cp -v -r libc/* iso_root/usr/
-	cp -v -r libc/lib/crt0.o iso_root/usr/lib/crt1.o
 	cp -v -r user/usr iso_root/
 	mkdir -p iso_root/EFI/BOOT
 ifeq ($(ARCH),x86_64)
+	cp -v -r libc-$(ARCH)/* iso_root/usr/
+	cp -v -r libc-$(ARCH)/lib/crt0.o iso_root/usr/lib/crt1.o
 	cp -v limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin iso_root/boot/limine/
 	cp -v limine/BOOTX64.EFI iso_root/EFI/BOOT/
 	cp -v limine/BOOTIA32.EFI iso_root/EFI/BOOT/
@@ -258,7 +261,7 @@ ifeq ($(ARCH),loongarch64)
 endif
 	rm -rf iso_root
 
-$(IMAGE_NAME).hdd: limine/limine kernel user
+$(IMAGE_NAME).hdd: limine/limine kernel
 	rm -f $(IMAGE_NAME).hdd
 	dd if=/dev/zero bs=1M count=0 seek=64 of=$(IMAGE_NAME).hdd
 ifeq ($(ARCH),x86_64)
@@ -272,9 +275,9 @@ endif
 	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(ARCH)/kernel ::/boot
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf ::/boot/limine
 	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/usr ::/
-	mcopy -s -i $(IMAGE_NAME).hdd@@1M libc/* ::/usr/
-	mcopy -i $(IMAGE_NAME).hdd@@1M libc/lib/crt0.o ::/usr/lib/crt1.o
 ifeq ($(ARCH),x86_64)
+	mcopy -s -i $(IMAGE_NAME).hdd@@1M libc-$(ARCH)/* ::/usr/
+	mcopy -i $(IMAGE_NAME).hdd@@1M libc-$(ARCH)/lib/crt0.o ::/usr/lib/crt1.o
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/limine-bios.sys ::/boot/limine
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTX64.EFI ::/EFI/BOOT
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTIA32.EFI ::/EFI/BOOT

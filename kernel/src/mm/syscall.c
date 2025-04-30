@@ -12,7 +12,7 @@ uint64_t sys_brk(uint64_t addr)
     uint64_t start = current_task->brk_end;
     uint64_t size = new_brk - current_task->brk_end;
 
-    map_page_range(get_current_page_dir(), start, 0, size + 0x100000, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+    map_page_range(get_current_page_dir(true), start, 0, size + 0x100000, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
     new_brk = start + size;
 
@@ -51,7 +51,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t fd, uint6
             flags |= PT_FLAG_X;
         }
 
-        map_page(get_current_page_dir(), page, 0, get_arch_page_table_flags(flags));
+        map_page(get_current_page_dir(true), page, 0, get_arch_page_table_flags(flags));
     }
 
     if (fd > 2 && fd < MAX_FD_NUM)

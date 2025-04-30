@@ -144,7 +144,7 @@ void unmap_page(uint64_t *pml4, uint64_t vaddr)
     asm volatile("invlpg (%0)" : : "r"(vaddr) : "memory");
 }
 
-uint64_t *get_current_page_dir()
+uint64_t *get_current_page_dir(bool user)
 {
     uint64_t *cr3 = NULL;
     asm volatile("movq %%cr3, %0" : "=r"(cr3));

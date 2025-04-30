@@ -12,4 +12,6 @@
 #include <arch/loongarch64/loongarch64.h>
 #endif
 
+#include <arch/elf.h>
+
 extern uint64_t cpu_count;

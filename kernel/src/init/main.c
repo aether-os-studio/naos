@@ -26,6 +26,7 @@ void kmain(void)
     printk("Next Aether-OS starting...\n");
 
     heap_init();
+    printk("NAOS heap initialized...\n");
 
     arch_early_init();
 

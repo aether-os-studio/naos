@@ -1,3 +1,4 @@
+#include <arch/arch.h>
 #include <mm/mm.h>
 
 static uint32_t overhead = sizeof(footer_t) + sizeof(node_t);
@@ -6,7 +7,7 @@ heap_t kheap;
 
 void heap_init()
 {
-    map_page_range(get_current_page_dir(), KERNEL_HEAP_START, 0, KERNEL_HEAP_SIZE, PT_FLAG_R | PT_FLAG_W);
+    map_page_range(get_current_page_dir(false), KERNEL_HEAP_START, 0, KERNEL_HEAP_SIZE, PT_FLAG_R | PT_FLAG_W);
 
     init_heap(&kheap, KERNEL_HEAP_START, KERNEL_HEAP_SIZE);
 }

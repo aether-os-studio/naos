@@ -199,7 +199,7 @@ uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t bytes)
 void nvme_driver_init(uint64_t bar0, uint64_t bar_size)
 {
     NVME_CAPABILITY *cap = (NVME_CAPABILITY *)phys_to_virt(bar0);
-    map_page_range(get_current_page_dir(), (uint64_t)cap, bar0, bar_size, PT_FLAG_R | PT_FLAG_W);
+    map_page_range(get_current_page_dir(false), (uint64_t)cap, bar0, bar_size, PT_FLAG_R | PT_FLAG_W);
 
     if (!((cap->CAP >> 37) & 1))
     {

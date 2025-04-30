@@ -35,14 +35,13 @@ cpu = '$ARCH'
 endian = 'little'
 EOF
 
-unset ARCH
 unset CFLAGS
 unset CXXFLAGS
 
 meson setup .. \
     --cross-file cross_file.txt \
     --buildtype=custom \
-    --prefix="${ROOT_DIR}"/libc \
+    --prefix="${ROOT_DIR}"/libc-$ARCH \
     -Ddefault_library=static
 
 ninja -v

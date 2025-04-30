@@ -169,6 +169,9 @@ void task_signal()
     iframe->rip = (uint64_t)ptr->handler;
     iframe->rdi = (uint64_t)ptr->arg;
 #elif defined(__aarch64__)
+    struct pt_regs *cframe = current_task->arch_context->ctx;
+
+    signal_frame_t *frame = (signal_frame_t *)cframe->sp_el0 - 1;
 #elif defined(__riscv)
 #elif defined(__loongarch64)
 #endif
