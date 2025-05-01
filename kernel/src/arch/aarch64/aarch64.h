@@ -1,8 +1,11 @@
 #pragma once
 
-#define ARCH_MAX_IRQ_NUM 256
+#define ARCH_MAX_IRQ_NUM 1020
 
 #include "acpi/acpi.h"
+#include "acpi/gic.h"
+#include "drivers/serial.h"
+#include "drivers/chars/keyboard.h"
 #include "mm/page_table.h"
 #include "irq/ptrace.h"
 #include "irq/irq.h"

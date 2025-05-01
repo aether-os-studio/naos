@@ -2,9 +2,11 @@
 
 #include <libs/klibc.h>
 #include <task/task.h>
+#include <arch/aarch64/irq/ptrace.h>
 
 typedef struct arch_context
 {
+    uint64_t page_table_addr;
     struct pt_regs *ctx;
 } arch_context_t;
 

@@ -57,8 +57,30 @@ typedef struct madt_header
     uint8_t length;
 } __attribute__((packed)) MadtHeader;
 
+#define ACPI_MADT_TYPE_GICC 0x0B
 #define ACPI_MADT_TYPE_GICD 0x0C
 #define ACPI_MADT_TYPE_GICR 0x0E
+
+typedef struct gicc_entry
+{
+    struct madt_header header;
+    uint8_t reserved1[2];
+    uint32_t iface_no;
+    uint32_t acpi_uid;
+    uint32_t flags;
+    uint32_t parking_ver;
+    uint32_t perf_gsiv;
+    uint64_t parking_addr;
+    uint64_t gicc_base_addr;
+    uint64_t gicv_base_addr;
+    uint64_t gich_base_addr;
+    uint32_t vgic_maint_gsiv;
+    uint64_t gicr_base_addr;
+    uint64_t mpidr;
+    uint8_t power_eff_class;
+    uint8_t reserved2;
+    uint16_t spe_overflow_gsiv;
+} __attribute__((packed)) GiccEntry;
 
 typedef struct gicd_entry
 {
@@ -69,6 +91,29 @@ typedef struct gicd_entry
     uint32_t gic_version;
     uint8_t reserved2[3];
 } __attribute__((packed)) GicdEntry;
+
+typedef struct gicr_entry
+{
+    struct madt_header h;
+    uint16_t _reserved;
+    uint64_t discovery_range_base_address;
+    uint32_t discovery_range_length;
+} __attribute__((packed)) GicrEntry;
+
+typedef struct
+{
+    struct ACPISDTHeader Header;
+    uint64_t Reserved;
+} __attribute__((packed)) MCFG;
+
+typedef struct
+{
+    uint64_t base_address;
+    uint16_t pci_segment_group;
+    uint8_t start_bus;
+    uint8_t end_bus;
+    uint32_t reserved;
+} __attribute__((packed)) MCFG_ENTRY;
 
 void acpi_init();
 

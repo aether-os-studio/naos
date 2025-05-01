@@ -2,7 +2,7 @@
 #include <drivers/kernel_logger.h>
 #include <drivers/bus/pci.h>
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__aarch64__)
 MCFG_ENTRY *mcfg_entries[PCI_MCFG_MAX_ENTRIES_LEN];
 uint64_t mcfg_entries_len = 0;
 
@@ -657,7 +657,28 @@ void pci_init()
     }
 }
 #else
+
+MCFG *mcfg_buffer = NULL;
+
+void pcie_setup(MCFG *mcfg)
+{
+    mcfg_buffer = mcfg;
+}
+
 void pci_init()
 {
+    printk("Scanning PCI bus\n");
+
+    if (mcfg_buffer)
+    {
+        // Scan PCIe bus
+        mcfg_addr_to_entries(mcfg_buffer, mcfg_entries, &mcfg_entries_len);
+
+        for (uint64_t i = 0; i < mcfg_entries_len; i++)
+        {
+            uint16_t segment_group = mcfg_entries[i]->pci_segment_group;
+            pci_scan_segment(segment_group);
+        }
+    }
 }
 #endif

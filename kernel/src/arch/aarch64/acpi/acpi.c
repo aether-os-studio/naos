@@ -1,4 +1,5 @@
 #include <arch/aarch64/acpi/acpi.h>
+#include <drivers/bus/pci.h>
 #include <mm/mm.h>
 
 __attribute__((used, section(".limine_requests"))) static volatile struct limine_rsdp_request rsdp_request = {.id = LIMINE_RSDP_REQUEST, .revision = 0, .response = NULL};
@@ -70,4 +71,5 @@ void acpi_init()
     map_page_range(get_current_page_dir(false), (uint64_t)xsdt, xsdt_paddr, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
 
     load_table(APIC, madt_setup);
+    load_table(MCFG, pcie_setup);
 }

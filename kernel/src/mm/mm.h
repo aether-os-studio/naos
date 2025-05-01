@@ -9,8 +9,6 @@
 
 #define MAX_USABLE_REGIONS_COUNT 128
 
-#define DEFAULT_PAGE_SIZE 4096UL
-
 #define PROT_NONE 0x00
 #define PROT_READ 0x01
 #define PROT_WRITE 0x02

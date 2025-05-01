@@ -236,7 +236,7 @@ arch_context_switch_exit:
 .align 3
 el0_irq:
 	SAVE_CONTEXT
-	bl aarch64_do_irq
+	BL aarch64_do_irq
 	B arch_context_switch_exit
 
 .align 3
@@ -251,18 +251,18 @@ el0_sync:
 .align 3
 el1_irq:
 	SAVE_CONTEXT
-	bl aarch64_do_irq
+	BL aarch64_do_irq
 	B arch_context_switch_exit
 
 .global setup_vectors
 setup_vectors:
     /* setup vectors */
-    ldr     x5, =vectors
-	msr     vbar_el1, x5
+    ldr     x0, =vectors
+	msr     vbar_el1, x0
 	isb
 
     /* Set CPACR_EL1 (Architecture Feature Access Control Register) to avoid trap from SIMD or float point instruction */
-    mov     x1, #0x00300000         /* Don't trap any SIMD/FP instructions in both EL0 and EL1 */
-    msr     cpacr_el1, x1
+    mov     x0, #0x00300000         /* Don't trap any SIMD/FP instructions in both EL0 and EL1 */
+    msr     cpacr_el1, x0
 
     ret

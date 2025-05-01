@@ -20,6 +20,8 @@ __attribute__((used, section(".limine_requests_end"))) static volatile LIMINE_RE
 
 void kmain(void)
 {
+    arch_disable_interrupt();
+
     if (LIMINE_BASE_REVISION_SUPPORTED == false)
     {
         while (1)

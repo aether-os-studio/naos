@@ -1,12 +1,20 @@
 #include <arch/aarch64/task/arch_context.h>
 
-void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64_t entry, uint64_t stack, bool user_mode) {}
+void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64_t entry, uint64_t stack, bool user_mode)
+{
+    context->ctx = (struct pt_regs *)stack - 1;
+    context->ctx->pc = entry;
+    context->ctx->sp_el0 = stack;
+    context->page_table_addr = page_table_addr;
+}
 
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack) {}
 
 void arch_context_free(arch_context_t *context) {}
 
-task_t *arch_get_current() {}
+task_t *arch_get_current()
+{
+}
 
 void arch_set_current(task_t *current)
 {

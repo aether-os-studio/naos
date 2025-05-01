@@ -39,7 +39,7 @@ KVM ?= 0
 SMP ?= 4
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
-QEMUFLAGS := -m 4G -serial stdio -smp $(SMP) -d cpu_reset
+QEMUFLAGS := -m 4G -serial stdio -smp $(SMP)
 
 DEBUG ?= 0
 
@@ -95,26 +95,28 @@ run-hdd-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 run-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).iso
 	qemu-system-$(ARCH) \
 		-M virt,gic-version=3 \
-		-cpu max \
+		-cpu cortex-a76 \
 		-device ramfb \
 		-device qemu-xhci \
 		-device usb-kbd \
 		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
 		-cdrom $(IMAGE_NAME).iso \
+		-d trace:gic* \
 		$(QEMUFLAGS)
 
 .PHONY: run-hdd-aarch64
 run-hdd-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 	qemu-system-$(ARCH) \
 		-M virt,gic-version=3 \
-		-cpu max \
+		-cpu cortex-a76 \
 		-device ramfb \
 		-device qemu-xhci \
 		-device usb-kbd \
 		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
 		-hda $(IMAGE_NAME).hdd \
+		-d trace:gic* \
 		$(QEMUFLAGS)
 
 .PHONY: run-riscv64

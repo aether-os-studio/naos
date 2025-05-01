@@ -10,10 +10,9 @@
 #define PCI_COMMAND_PORT 0xCF8
 #define PCI_DATA_PORT 0xCFC
 
-#define PCI_MCFG_MAX_ENTRIES_LEN 1024
+#elif defined(__aarch64__)
 
-void mcfg_addr_to_entries(MCFG *mcfg, MCFG_ENTRY **entries, uint64_t *len);
-uint64_t get_mmio_address(uint32_t pci_address, uint16_t offset);
+#include <arch/aarch64/acpi/acpi.h>
 
 #endif
 
@@ -65,8 +64,15 @@ extern pci_device_t *pci_devices[PCI_DEVICE_MAX];
 
 uint32_t pci_enumerate_capability_list(pci_device_t *pci_dev, uint32_t cap_type);
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__aarch64__)
+
+#define PCI_MCFG_MAX_ENTRIES_LEN 1024
+
+void mcfg_addr_to_entries(MCFG *mcfg, MCFG_ENTRY **entries, uint64_t *len);
+uint64_t get_mmio_address(uint32_t pci_address, uint16_t offset);
+
 void pcie_setup(MCFG *mcfg);
+
 #endif
 
 const char *pci_classname(uint32_t classcode);
