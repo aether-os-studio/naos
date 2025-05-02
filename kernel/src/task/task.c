@@ -48,10 +48,6 @@ task_t *task_create(const char *name, void (*entry)())
     task->syscall_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE)) + STACK_SIZE;
     task->arch_context = malloc(sizeof(arch_context_t));
     arch_context_init(task->arch_context, virt_to_phys((uint64_t)get_kernel_page_dir()), (uint64_t)entry, task->kernel_stack, false);
-#if defined(__aarch64__)
-    task->arch_context->ctx->sp_el0 = (uint64_t)task;
-#else
-#endif
     task->signal = 0;
     task->status = 0;
     task->cwd = rootdir;
@@ -167,7 +163,7 @@ uint64_t push_slice(uint64_t ustack, uint8_t *slice, uint64_t len)
 {
     uint64_t tmp_stack = ustack;
     tmp_stack -= len;
-    tmp_stack -= tmp_stack % 8;
+    tmp_stack -= tmp_stack % 0x10;
 
     memcpy((void *)tmp_stack, slice, len);
 
@@ -312,28 +308,12 @@ uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
         return -EINVAL;
     }
 
-    // 验证ELF魔数
-    if (memcmp((void *)ehdr->e_ident, "\x7F"
-                                      "ELF",
-               4) != 0)
+    if (!arch_check_elf(ehdr))
     {
-        printk("Invalid ELF magic\n");
         free(buffer);
         free(fullpath);
         vfs_close(node);
-        return -EINVAL;
-    }
-
-    // 检查架构和类型
-    if (ehdr->e_ident[4] != 2 || // 64-bit
-        ehdr->e_machine != 0x3E  // x86_64
-    )
-    {
-        printk("Unsupported ELF format\n");
-        free(buffer);
-        free(fullpath);
-        vfs_close(node);
-        return -EINVAL;
+        return (uint64_t)-EINVAL;
     }
 
     // 处理程序头

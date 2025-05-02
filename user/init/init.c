@@ -7,6 +7,8 @@
 
 int main()
 {
+    printf("init process is running...\n");
+
     int pid = fork();
     if (pid == 0)
     {

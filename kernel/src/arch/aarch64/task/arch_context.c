@@ -6,21 +6,18 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64
     context->ctx = (struct pt_regs *)((stack - sizeof(struct pt_regs)));
     memset(context->ctx, 0, sizeof(struct pt_regs));
     context->ctx->pc = entry;
+    context->ctx->sp_el0 = stack;
 
     uint32_t spsr = 0;
     if (user_mode)
     {
         // todo
-        spsr |= 0;
+        spsr = 0x800003c0;
     }
     else
     {
-        spsr |= 0x800003c5;
+        spsr = 0x800003c5;
     }
-    spsr |= (0UL << 9);  // D = 0，不屏蔽调试异常
-    spsr |= (0UL << 10); // A = 0，不屏蔽SError
-    spsr |= (0UL << 11); // I = 0，不屏蔽IRQ
-    spsr |= (0UL << 12); // F = 0，不屏蔽FIQ
 
     context->ctx->cpsr = spsr;
 
@@ -34,6 +31,7 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack)
 {
     dst->ttbr = clone_page_table(src->ttbr, USER_BRK_START, USER_BRK_END);
     dst->usermode = src->usermode;
+    dst->ctx = (struct pt_regs *)stack - 1;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
 }
 
@@ -41,14 +39,14 @@ void arch_context_free(arch_context_t *context) {}
 
 task_t *arch_get_current()
 {
-    uint64_t sp_el0;
-    asm volatile("mrs %0, SP_EL0" : "=r"(sp_el0));
-    return (task_t *)sp_el0;
+    uint64_t tpidr_el1;
+    asm volatile("mrs %0, TPIDR_EL1" : "=r"(tpidr_el1));
+    return (task_t *)tpidr_el1;
 }
 
 void arch_set_current(task_t *current)
 {
-    asm volatile("msr SP_EL0, %0" ::"r"(current));
+    asm volatile("msr TPIDR_EL1, %0" ::"r"(current));
 }
 
 extern void arch_context_switch_with_next(arch_context_t *next);
@@ -79,11 +77,10 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
         __asm__ __volatile__("msr TTBR0_EL1, %0" : : "r"(next->arch_context->ttbr));
 
         // 2. 刷新TLB
-        __asm__ __volatile__(
-            "tlbi alle1\n\t" // 刷新所有EL1 TLB条目
-            "dsb sy\n\t"     // 确保刷新完成
-            "isb\n\t"        // 刷新指令流水线
-        );
+        __asm__ __volatile__("dsb ishst\n\t"
+                             "tlbi vmalle1is\n\t"
+                             "dsb ish\n\t"
+                             "isb\n\t");
     }
 
     arch_set_current(next);
@@ -91,10 +88,57 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
     arch_switch_with_context(prev->arch_context, next->arch_context, next->kernel_stack);
 }
 
-void arch_context_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack) {}
+void arch_context_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
+{
+    context->ttbr = clone_page_table(context->ttbr, USER_BRK_START, USER_BRK_END);
+    context->usermode = true;
+    context->ctx->pc = entry;
+    context->ctx->sp_el0 = stack;
+    context->ctx->cpsr = 0x800003c0;
+}
 
-void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack) {}
+void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
+{
+    arch_disable_interrupt();
+
+    arch_context_to_user_mode(context, entry, stack);
+
+    // 1. 更新TTBR0_EL1
+    __asm__ __volatile__("msr TTBR0_EL1, %0" : : "r"(context->ttbr));
+
+    // 2. 刷新TLB
+    __asm__ __volatile__("dsb ishst\n\t"
+                         "tlbi vmalle1is\n\t"
+                         "dsb ish\n\t"
+                         "isb\n\t");
+
+    arch_context_switch_with_next(context);
+}
 
 void arch_yield()
 {
+    arch_enable_interrupt();
+}
+
+bool arch_check_elf(const Elf64_Ehdr *ehdr)
+{
+    // 验证ELF魔数
+    if (memcmp((void *)ehdr->e_ident, "\x7F"
+                                      "ELF",
+               4) != 0)
+    {
+        printk("Invalid ELF magic\n");
+        return false;
+    }
+
+    // 检查架构和类型
+    if (ehdr->e_ident[4] != 2 || // 64-bit
+        ehdr->e_machine != 0xB7  // aarch64
+    )
+    {
+        printk("Unsupported ELF format\n");
+        return false;
+    }
+
+    return true;
 }

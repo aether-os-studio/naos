@@ -259,12 +259,12 @@ void handle_exception(struct pt_regs *frame)
     asm volatile("mrs %0, esr_el1" : "=r"(esr));
     ec = (unsigned char)((esr >> 26) & 0x3fU);
 
-    // if (ec == ESR_ELx_EC_SVC64) /* is 64bit syscall ? */
-    // {
-    //     /* never return here */
-    //     process_syscall(frame);
-    //     return;
-    // }
+    if (ec == ESR_ELx_EC_SVC64) /* is 64bit syscall ? */
+    {
+        /* never return here */
+        aarch64_do_syscall(frame);
+        return;
+    }
 
     if (ec == ESR_ELx_EC_DABT_LOW || ec == ESR_ELx_EC_DABT_CUR)
     {

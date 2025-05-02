@@ -7,3 +7,5 @@
 extern void syscall_exception();
 
 void syscall_init();
+
+void aarch64_do_syscall(struct pt_regs *frame);

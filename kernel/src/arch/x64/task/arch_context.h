@@ -1,6 +1,7 @@
 #pragma once
 
 #include <arch/x64/irq/ptrace.h>
+#include <arch/elf.h>
 #include <task/task.h>
 
 #define USER_STACK_START 0x00006ffffff00000
@@ -66,3 +67,5 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack);
 
 void arch_yield();
 uint64_t sys_arch_prctl(uint64_t cmd, uint64_t arg);
+
+bool arch_check_elf(const Elf64_Ehdr *elf);

@@ -49,8 +49,6 @@
 #define SYS_SIGACTION 13   // sigaction(int sig, const struct sigaction *act, struct sigaction *oact)
 #define SYS_SIGPROCMASK 14 // sigprocmask(int how, const sigset_t *set, sigset_t *oset)
 
-#define SYS_ARCH_PRCTL 158
-
 #define SYS_SIGNAL 350
 #define SYS_SETMASK 351
 #define SYS_CLOCK_GETTIME 352

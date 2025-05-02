@@ -3,6 +3,7 @@
 #include <libs/klibc.h>
 #include <task/task.h>
 #include <arch/aarch64/irq/ptrace.h>
+#include <arch/elf.h>
 
 #define __sysop_encode(op1, crn, crm, op2) \
     "#" #op1 ",C" #crn ",C" #crm ",#" #op2
@@ -42,3 +43,5 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t
 void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack);
 
 void arch_yield();
+
+bool arch_check_elf(const Elf64_Ehdr *elf);

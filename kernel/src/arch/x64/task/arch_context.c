@@ -190,3 +190,26 @@ uint64_t sys_arch_prctl(uint64_t cmd, uint64_t arg)
         return (uint64_t)(-ENOSYS);
     }
 }
+
+bool arch_check_elf(const Elf64_Ehdr *ehdr)
+{
+    // 验证ELF魔数
+    if (memcmp((void *)ehdr->e_ident, "\x7F"
+                                      "ELF",
+               4) != 0)
+    {
+        printk("Invalid ELF magic\n");
+        return false;
+    }
+
+    // 检查架构和类型
+    if (ehdr->e_ident[4] != 2 || // 64-bit
+        ehdr->e_machine != 0x3E  // x86_64
+    )
+    {
+        printk("Unsupported ELF format\n");
+        return false;
+    }
+
+    return true;
+}
