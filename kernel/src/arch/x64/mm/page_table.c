@@ -146,6 +146,8 @@ void unmap_page(uint64_t *pml4, uint64_t vaddr)
 
 uint64_t *get_current_page_dir(bool user)
 {
+    (void)user;
+
     uint64_t *cr3 = NULL;
     asm volatile("movq %%cr3, %0" : "=r"(cr3));
     return phys_to_virt(cr3);
@@ -317,4 +319,35 @@ void free_page_table(uint64_t directory)
     }
 
     free_frames((uint64_t)directory, 1);
+}
+
+uint64_t translate_address(uint64_t *pml4, uint64_t vaddr)
+{
+    uint64_t offset = vaddr & 0xFFFUL;
+
+    uint64_t pml4_id = (vaddr >> 39) & 0x1FFUL;
+    if ((pml4[pml4_id] & (1 << 0)) == 0)
+    {
+        return 0;
+    }
+    uint64_t *pdpt = (uint64_t *)phys_to_virt(pml4[pml4_id] & ~(0xFFFUL));
+    uint64_t pdpt_id = (vaddr >> 30) & 0x1FFUL;
+    if ((pdpt[pdpt_id] & (1 << 0)) == 0)
+    {
+        return 0;
+    }
+    uint64_t *pd = (uint64_t *)phys_to_virt(pdpt[pdpt_id] & ~(0xFFFUL));
+    uint64_t pd_id = (vaddr >> 21) & 0x1FFUL;
+    if ((pd[pd_id] & (1 << 0)) == 0)
+    {
+        return 0;
+    }
+    uint64_t *pt = (uint64_t *)phys_to_virt(pd[pd_id] & ~(0xFFFUL));
+    uint64_t pt_id = (vaddr >> 12) & 0x1FFUL;
+    if ((pt[pt_id] & (1 << 0)) == 0)
+    {
+        return 0;
+    }
+
+    return (pt[pt_id] & 0x00007FFFFFFFF000) + offset;
 }

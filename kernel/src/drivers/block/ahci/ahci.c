@@ -378,16 +378,21 @@ struct ahci_driver *ahci_driver_init(pci_bar_t *bar5)
 
 struct ahci_driver *drv;
 
+#define MAX_AHCI_DEV_NUM 16
+
 uint64_t ahci_init()
 {
-    pci_device_t *device = pci_find_class(0x010601);
-    if (!device)
+    pci_device_t *devs[MAX_AHCI_DEV_NUM];
+    uint32_t ahci_dev_num;
+
+    pci_find_class(devs, &ahci_dev_num, 0x010601);
+    if (ahci_dev_num == 0)
     {
         printk("No AHCI controller found\n");
         return (uint64_t)-1;
     }
 
-    pci_bar_t *bar5 = &device->bars[5];
+    pci_bar_t *bar5 = &devs[0]->bars[5];
     if (bar5->address == 0 || bar5->size == 0)
     {
         printk("ahci device has no bar5\n");

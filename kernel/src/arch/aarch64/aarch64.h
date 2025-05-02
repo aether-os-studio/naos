@@ -20,5 +20,5 @@ void arch_input_dev_init();
 
 static inline void arch_pause()
 {
-    __asm__ __volatile__("wfi");
+    __asm__ __volatile__("nop");
 }

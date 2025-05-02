@@ -18,3 +18,4 @@ uint64_t *get_kernel_page_dir();
 uint64_t *get_current_page_dir(bool user);
 uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t user_stack_end);
 void free_page_table(uint64_t cr3);
+uint64_t translate_address(uint64_t *pml4, uint64_t vaddr);

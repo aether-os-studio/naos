@@ -51,10 +51,12 @@ export MLIBC_CXXFLAGS := $(MLIBC_CFLAGS) -fno-rtti -fno-exceptions
 export ROOT_DIR := $(shell pwd)
 
 KVM ?= 0
+HVF ?= 0
 SMP ?= 4
+MEM ?= 4G
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
-QEMUFLAGS := -m 4G -serial stdio -smp $(SMP)
+QEMUFLAGS := -m $(MEM) -serial stdio -smp $(SMP)
 
 DEBUG ?= 0
 
@@ -65,6 +67,12 @@ endif
 ifeq ($(KVM), 1)
 override QEMUFLAGS := $(QEMUFLAGS) --enable-kvm
 endif
+
+ifeq ($(HVF), 1)
+
+override QEMUFLAGS := $(QEMUFLAGS) --accel hvf
+endif
+
 override IMAGE_NAME := naos-$(ARCH)
 
 # Toolchain for building the 'limine' executable for the host.
@@ -93,6 +101,7 @@ run-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).iso
 		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).iso,format=raw,id=cdrom \
 		-device ahci,id=ahci \
+		-device qemu-xhci,id=xhci \
 		-device ide-cd,drive=cdrom,bus=ahci.0 \
 		$(QEMUFLAGS)
 
@@ -103,6 +112,7 @@ run-hdd-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).hdd,format=raw,id=harddisk \
 		-device ahci,id=ahci \
+		-device qemu-xhci,id=xhci \
 		-device nvme,drive=harddisk,serial=1234 \
 		$(QEMUFLAGS)
 
@@ -114,7 +124,6 @@ run-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).iso
 		-device ramfb \
 		-device qemu-xhci \
 		-device usb-kbd \
-		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
 		-cdrom $(IMAGE_NAME).iso
 		$(QEMUFLAGS)
@@ -125,9 +134,8 @@ run-hdd-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-M virt,gic-version=3 \
 		-cpu cortex-a76 \
 		-device ramfb \
-		-device qemu-xhci \
+		-device qemu-xhci,id=xhci \
 		-device usb-kbd \
-		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).hdd,format=raw,id=harddisk \
 		-device nvme,drive=harddisk,serial=1234 \
@@ -139,7 +147,7 @@ run-riscv64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).iso
 		-M virt \
 		-cpu rv64 \
 		-device ramfb \
-		-device qemu-xhci \
+		-device qemu-xhci,id=xhci \
 		-device usb-kbd \
 		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \

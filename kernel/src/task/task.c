@@ -101,6 +101,8 @@ void idle_entry()
 #include <drivers/bus/pci.h>
 #include <drivers/block/ahci/ahci.h>
 #include <drivers/block/nvme/nvme.h>
+#include <drivers/usb/xhci.h>
+#include <drivers/virtio/virtio.h>
 #include <fs/partition.h>
 #include <drivers/fb.h>
 
@@ -119,6 +121,10 @@ void init_thread()
     ahci_init();
 #endif
     nvme_init();
+
+    xhci_init();
+
+    virtio_init();
 
     partition_init();
     fbdev_init();
