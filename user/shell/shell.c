@@ -19,7 +19,7 @@ int readline_getc()
 {
     int ch;
     while ((ch = (int)getchar()) == 0)
-        __asm__ __volatile__("pause");
+        pause();
     switch (ch)
     {
     case '\b':

@@ -1,4 +1,3 @@
-CC := clang
 DEBUG_CFLAGS := $(GLOBAL_CFLAGS) -I./include/
 RELEASE_CFLAGS := $(GLOBAL_CFLAGS) -DNDEBUG
 
@@ -11,7 +10,7 @@ all: CFLAGS := $(DEBUG_CFLAGS)
 all: $(OBJS)
 
 lib: all
-	ar rv libplreadln.a $(OBJS)
+	$(AR) rv libplreadln.a $(OBJS)
 
 test: CFLAGS := $(DEBUG_CFLAGS)
 test: $(OBJS)

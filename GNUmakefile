@@ -16,23 +16,31 @@ ifeq ($(ARCH), x86_64)
 export CC := $(ARCH)-linux-gnu-gcc
 export CXX := $(ARCH)-linux-gnu-g++
 export LD := $(ARCH)-linux-gnu-ld
+export AR := $(ARCH)-linux-gnu-ar
+export RANLIB := $(ARCH)-linux-gnu-ranlib
 export MLIBC_ARCH_FLAGS := -m64 -mno-red-zone -march=x86-64
 endif
 ifeq ($(ARCH), aarch64)
 export CC := $(ARCH)-linux-gnu-gcc
 export CXX := $(ARCH)-linux-gnu-g++
 export LD := $(ARCH)-linux-gnu-ld
-export MLIBC_ARCH_FLAGS := 
+export AR := $(ARCH)-linux-gnu-ar
+export RANLIB := $(ARCH)-linux-gnu-ranlib
+export MLIBC_ARCH_FLAGS := -mno-outline-atomics -Wl,--export-dynamic
 endif
 ifeq ($(ARCH), riscv64)
 export CC := $(ARCH)-linux-gnu-gcc
 export CXX := $(ARCH)-linux-gnu-g++
 export LD := $(ARCH)-linux-gnu-ld
+export AR := $(ARCH)-linux-gnu-ar
+export RANLIB := $(ARCH)-linux-gnu-ranlib
 endif
 ifeq ($(ARCH), loongarch64)
 export CC := $(ARCH)-linux-gnu-gcc
 export CXX := $(ARCH)-linux-gnu-g++
 export LD := $(ARCH)-linux-gnu-ld
+export AR := $(ARCH)-linux-gnu-ar
+export RANLIB := $(ARCH)-linux-gnu-ranlib
 endif
 
 MLIBC_SHARED_FLAGS := -D_GNU_SOURCE
@@ -209,6 +217,13 @@ libc-$(ARCH):
 	cp -r kernel/src/arch/$(ARCH_DIR)/syscall/nr.h mlibc/sysdeps/aether/include/nr.h
 
 	sh build_mlibc_$(ARCH).sh
+ifeq ($(ARCH), aarch64)
+	$(AR) x libc-$(ARCH)/lib/libc.a
+	$(AR) x $(shell $(CC) -print-file-name=libgcc.a)
+	$(AR) rcs libc-$(ARCH)/lib/libc.a *.o
+	rm -rf *.o
+	$(RANLIB) libc-$(ARCH)/lib/libc.a
+endif
 
 .PHONY: user
 user: libc-$(ARCH)
