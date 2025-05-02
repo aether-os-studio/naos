@@ -1,4 +1,5 @@
 #include <arch/aarch64/mm/page_table.h>
+#include <mm/mm.h>
 
 // 合成页表项属性
 uint64_t get_arch_page_table_flags(uint64_t flags)
@@ -155,8 +156,42 @@ uint64_t *get_current_page_dir(bool user)
     return (uint64_t *)phys_to_virt(page_table_base);
 }
 
+static void copy_page_table_inner(uint64_t src_phys, uint64_t dst_phys, int level)
+{
+    void *src = (void *)phys_to_virt(src_phys);
+    void *dst = (void *)phys_to_virt(dst_phys);
+
+    // 复制当前页表内容
+    memcpy(dst, src, DEFAULT_PAGE_SIZE);
+
+    // 如果是中间层（非叶子节点），递归处理下一级
+    if (level > 0)
+    {
+        for (int i = 0; i < (1 << 9); i++)
+        {
+            uint64_t *entry = (uint64_t *)src + i;
+            if (*entry & ARCH_PT_FLAG_VALID)
+            {
+                // 提取下一级页表物理地址
+                uint64_t next_src_phys = *entry & ARCH_ADDR_MASK;
+
+                // 分配新物理帧并递归拷贝
+                uint64_t next_dst_phys = alloc_frames(1);
+                copy_page_table_inner(next_src_phys, next_dst_phys, level - 1);
+
+                // 更新目标页表项（保留原标志位）
+                uint64_t *dst_entry = (uint64_t *)dst + i;
+                *dst_entry = next_dst_phys | (*entry & ~ARCH_ADDR_MASK);
+            }
+        }
+    }
+}
+
 uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t user_stack_end)
 {
+    uint64_t new = alloc_frames(1);
+    copy_page_table_inner(cr3_old, new, 3);
+    return new;
 }
 
 void free_page_table(uint64_t directory)

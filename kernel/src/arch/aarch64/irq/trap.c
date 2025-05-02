@@ -289,6 +289,8 @@ void bad_mode(struct pt_regs *frame, int reason, unsigned int esr)
 {
     show_frame(frame);
 
+    arch_disable_interrupt();
+
     while (1)
     {
         arch_pause();
@@ -297,6 +299,8 @@ void bad_mode(struct pt_regs *frame, int reason, unsigned int esr)
 
 void trap_dispatch(struct pt_regs *frame)
 {
+    arch_disable_interrupt();
+
     handle_exception(frame);
     // IRQ_OverCheck(frame);
     // IRQ_OverCheck2(frame);

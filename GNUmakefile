@@ -14,24 +14,31 @@ endif
 # User controllable C compiler command.
 ifeq ($(ARCH), x86_64)
 export CC := $(ARCH)-linux-gnu-gcc
+export CXX := $(ARCH)-linux-gnu-g++
+export LD := $(ARCH)-linux-gnu-ld
 export MLIBC_ARCH_FLAGS := -m64 -mno-red-zone -march=x86-64
 endif
 ifeq ($(ARCH), aarch64)
 export CC := $(ARCH)-linux-gnu-gcc
+export CXX := $(ARCH)-linux-gnu-g++
+export LD := $(ARCH)-linux-gnu-ld
+export MLIBC_ARCH_FLAGS := 
 endif
 ifeq ($(ARCH), riscv64)
 export CC := $(ARCH)-linux-gnu-gcc
+export CXX := $(ARCH)-linux-gnu-g++
+export LD := $(ARCH)-linux-gnu-ld
 endif
 ifeq ($(ARCH), loongarch64)
 export CC := $(ARCH)-linux-gnu-gcc
+export CXX := $(ARCH)-linux-gnu-g++
+export LD := $(ARCH)-linux-gnu-ld
 endif
-
-export CXX := $(CC)
 
 MLIBC_SHARED_FLAGS := -D_GNU_SOURCE
 
 export MLIBC_CFLAGS := -g3 -O0 -fno-lto -ffunction-sections -fdata-sections -static -nostdlib -nostdinc -fno-builtin $(MLIBC_ARCH_FLAGS) $(MLIBC_SHARED_FLAGS)
-export MLIBC_CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions
+export MLIBC_CXXFLAGS := $(MLIBC_CFLAGS) -fno-rtti -fno-exceptions
 
 export ROOT_DIR := $(shell pwd)
 
@@ -101,8 +108,7 @@ run-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).iso
 		-device usb-kbd \
 		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
-		-cdrom $(IMAGE_NAME).iso \
-		-d trace:gic* \
+		-cdrom $(IMAGE_NAME).iso
 		$(QEMUFLAGS)
 
 .PHONY: run-hdd-aarch64
@@ -115,8 +121,8 @@ run-hdd-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-device usb-kbd \
 		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
-		-hda $(IMAGE_NAME).hdd \
-		-d trace:gic* \
+		-drive if=none,file=$(IMAGE_NAME).hdd,format=raw,id=harddisk \
+		-device nvme,drive=harddisk,serial=1234 \
 		$(QEMUFLAGS)
 
 .PHONY: run-riscv64
@@ -196,17 +202,13 @@ kernel-deps:
 .PHONY: kernel
 kernel: kernel-deps
 	$(MAKE) -C kernel
-ifeq ($(ARCH), x86_64)
 	$(MAKE) -C user
-endif
 
 libc-$(ARCH):
 	rm -rf mlibc/sysdeps/aether/include/nr.h
-	cp kernel/src/arch/$(ARCH_DIR)/syscall/nr.h mlibc/sysdeps/aether/include/nr.h
+	cp -r kernel/src/arch/$(ARCH_DIR)/syscall/nr.h mlibc/sysdeps/aether/include/nr.h
 
-ifeq ($(ARCH), x86_64)
-	sh build_mlibc_x86_64.sh
-endif
+	sh build_mlibc_$(ARCH).sh
 
 .PHONY: user
 user: libc-$(ARCH)
@@ -219,7 +221,7 @@ $(IMAGE_NAME).iso: limine/limine kernel
 	mkdir -p iso_root/boot/limine
 	cp -v limine.conf iso_root/boot/limine/
 	mkdir -p iso_root/usr/bin
-	cp -v -r user/usr iso_root/
+	cp -v -r user/usr-$(ARCH)/* iso_root/usr
 	mkdir -p iso_root/EFI/BOOT
 ifeq ($(ARCH),x86_64)
 	cp -v -r libc-$(ARCH)/* iso_root/usr/
@@ -273,10 +275,10 @@ else
 	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00
 endif
 	mformat -i $(IMAGE_NAME).hdd@@1M
-	mmd -i $(IMAGE_NAME).hdd@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine ::/usr ::/usr/bin
+	mmd -i $(IMAGE_NAME).hdd@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine ::/usr
 	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(ARCH)/kernel ::/boot
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf ::/boot/limine
-	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/usr ::/
+	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/usr-$(ARCH)/* ::/usr
 ifeq ($(ARCH),x86_64)
 	mcopy -s -i $(IMAGE_NAME).hdd@@1M libc-$(ARCH)/* ::/usr/
 	mcopy -i $(IMAGE_NAME).hdd@@1M libc-$(ARCH)/lib/crt0.o ::/usr/lib/crt1.o

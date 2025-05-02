@@ -22,14 +22,18 @@ chmod +x c++
 export PATH="$(pwd -P):$PATH"
 
 cat <<EOF >cross_file.txt
+[properties]
+skip_sanity_check = true
+
 [binaries]
 c = '$(pwd -P)/cc'
 cpp = '$(pwd -P)/c++'
+exe_wrapper = 'qemu-aarch64'
 
 [host_machine]
 system = 'aether'
 cpu_family = '$ARCH'
-cpu = '$ARCH'
+cpu = 'unknown'
 endian = 'little'
 EOF
 

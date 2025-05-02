@@ -3,6 +3,8 @@
 
 irq_action_t actions[ARCH_MAX_IRQ_NUM];
 
+extern bool can_schedule;
+
 void do_irq(struct pt_regs *regs, uint64_t irq_num)
 {
     irq_action_t *action = &actions[irq_num];
@@ -23,6 +25,11 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num)
     else
     {
         printk("Intr vector [%d] does not have an ack\n", irq_num);
+    }
+
+    if (can_schedule)
+    {
+        arch_task_switch_to(regs, current_task, task_search(TASK_READY, current_task->cpu_id));
     }
 }
 

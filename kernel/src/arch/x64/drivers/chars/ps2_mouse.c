@@ -74,7 +74,7 @@ bool mousedecode(uint8_t data)
     return false;
 }
 
-void mouse_handler(uint8_t irq, uint64_t param, struct pt_regs *regs)
+void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs)
 {
     uint8_t data = io_in8(PORT_KB_DATA);
 
@@ -149,7 +149,7 @@ bool mouse_click_right()
     return (ms_dec.right);
 }
 
-void mouse_install(uint64_t vector, uint64_t arg)
+err_t mouse_install(uint64_t vector, uint64_t arg)
 {
     ioapic_add(vector, 12);
 }

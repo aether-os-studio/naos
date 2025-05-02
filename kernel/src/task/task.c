@@ -48,6 +48,10 @@ task_t *task_create(const char *name, void (*entry)())
     task->syscall_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE)) + STACK_SIZE;
     task->arch_context = malloc(sizeof(arch_context_t));
     arch_context_init(task->arch_context, virt_to_phys((uint64_t)get_kernel_page_dir()), (uint64_t)entry, task->kernel_stack, false);
+#if defined(__aarch64__)
+    task->arch_context->ctx->sp_el0 = (uint64_t)task;
+#else
+#endif
     task->signal = 0;
     task->status = 0;
     task->cwd = rootdir;
@@ -115,7 +119,9 @@ void init_thread()
     printk("NAOS init thread is running...\n");
 
     pci_init();
+#if defined(__x86_64__)
     ahci_init();
+#endif
     nvme_init();
 
     partition_init();
@@ -131,6 +137,8 @@ void init_thread()
 
     task_execve("/usr/bin/init.exec", NULL, NULL);
 
+    printk("run /usr/bin/init.exec failed\n");
+
     while (1)
     {
         arch_pause();
@@ -145,6 +153,7 @@ void task_init()
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++)
     {
         idle_tasks[cpu] = task_create("idle", idle_entry);
+        idle_tasks[cpu]->state = TASK_RUNNING;
     }
     arch_set_current(idle_tasks[0]);
     task_create("init", init_thread);

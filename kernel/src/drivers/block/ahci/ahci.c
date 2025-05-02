@@ -367,10 +367,10 @@ struct ahci_driver *ahci_driver_init(pci_bar_t *bar5)
         regist_blkdev("ahci", hbadev, hbadev->block_size, hbadev->max_lba * hbadev->block_size, ahci_read, ahci_write);
 
         printk("sata%d: %s, blk_size=%d, blk=0..%d\n",
-                  i,
-                  hbadev->model,
-                  hbadev->block_size,
-                  hbadev->max_lba);
+               i,
+               hbadev->model,
+               hbadev->block_size,
+               hbadev->max_lba);
     }
 
     return ahci_drv;

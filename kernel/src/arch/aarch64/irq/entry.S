@@ -137,10 +137,10 @@
     ERET
 .endm
 
-#define BAD_SYNC        0
-#define BAD_IRQ         1
-#define BAD_FIQ         2
-#define BAD_ERROR       3
+#define BAD_SYNC 0
+#define BAD_IRQ 1
+#define BAD_FIQ 2
+#define BAD_ERROR 3
 
 /*
    vector table entry
@@ -227,10 +227,27 @@ el0_error_invalid:
 	inv_entry BAD_ERROR
 
 .align 3
+.globl arch_context_switch_with_next
+arch_context_switch_with_next:
+    LDR X0, [X0]
+    MOV SP, X0
+    B arch_context_switch_exit
+
+.align 3
+.globl arch_context_switch_with_prev_next
+arch_context_switch_with_prev_next:
+    SAVE_CONTEXT_FROM_EL1
+    MOV    X2, SP
+    STR    X2, [X0]
+    LDR    X0, [X1]
+    MOV    SP, X0
+    B arch_context_switch_exit
+
+.align 3
 .global arch_context_switch_exit
 arch_context_switch_exit:
+    MOV X0, SP
     CLREX
-    MOV     X0, SP
     RESTORE_CONTEXT
 
 .align 3
@@ -242,10 +259,10 @@ el0_irq:
 .align 3
 el0_sync:
 	SAVE_CONTEXT
-	STP     X0, X1, [SP, #-0x10]!
-    BL      trap_dispatch
-    LDP     X0, X1, [SP], #0x10
-    MOV     SP, X0
+	STP X0, X1, [SP, #-0x10]!
+    BL trap_dispatch
+    LDP X0, X1, [SP], #0x10
+    MOV SP, X0
 	B arch_context_switch_exit
 
 .align 3
@@ -257,12 +274,12 @@ el1_irq:
 .global setup_vectors
 setup_vectors:
     /* setup vectors */
-    ldr     x0, =vectors
-	msr     vbar_el1, x0
+    ldr x0, =vectors
+	msr vbar_el1, x0
 	isb
 
     /* Set CPACR_EL1 (Architecture Feature Access Control Register) to avoid trap from SIMD or float point instruction */
-    mov     x0, #0x00300000         /* Don't trap any SIMD/FP instructions in both EL0 and EL1 */
-    msr     cpacr_el1, x0
+    mov x0, #0x00300000         /* Don't trap any SIMD/FP instructions in both EL0 and EL1 */
+    msr cpacr_el1, x0
 
     ret

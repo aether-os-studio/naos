@@ -1,6 +1,7 @@
 #include <arch/arch.h>
 #include <arch/aarch64/acpi/gic.h>
 #include <drivers/kernel_logger.h>
+#include <task/task.h>
 
 uint64_t cpu_count = 0;
 
@@ -61,7 +62,10 @@ void ap_kmain(struct limine_mp_info *cpu)
 
     while (!task_initialized)
     {
+        asm volatile("nop");
     }
+
+    arch_set_current(idle_tasks[current_cpu_id]);
 
     gic_v3_init_percpu();
 

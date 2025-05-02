@@ -524,7 +524,6 @@ char *write_float_point_num(char *str, double num, int field_width, int precisio
 
 int printk(const char *fmt, ...)
 {
-
     struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];
 
     if (!printk_initialized)
@@ -562,6 +561,8 @@ int printk(const char *fmt, ...)
         return len;
 
     flanterm_write(ft_ctx, buf, len);
+
+    return len;
 }
 
 int sprintf(char *buf, const char *fmt, ...)

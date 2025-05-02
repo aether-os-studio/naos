@@ -27,3 +27,7 @@ struct fb_fix_screeninfo
     /*  specific chip/card we have	*/
     uint16_t reserved[3]; /* Reserved for future compatibility */
 };
+
+void save_background(int x, int y);
+void restore_background(int x, int y);
+void draw_mouse(int sx, int sy);

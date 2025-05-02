@@ -13,6 +13,8 @@ void arch_early_init()
 
 void arch_init()
 {
+    arch_set_current(idle_tasks[current_cpu_id]);
+
     arch_enable_interrupt();
 }
 

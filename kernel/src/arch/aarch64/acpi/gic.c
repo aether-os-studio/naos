@@ -169,11 +169,10 @@ void timer_init_percpu()
     uint64_t cntfrq;
     asm volatile("mrs %0, CNTFRQ_EL0" : "=r"(cntfrq));
 
-    // 计算精确的1ms间隔（四舍五入）
-    uint64_t interval = (cntfrq + 999999) / 1000000;
+    uint64_t ticks = cntfrq / 10; // 100ms
 
     // 2. 配置物理定时器（CNTP）
-    asm volatile("msr S3_3_C14_C2_0, %0" : : "r"(interval));
+    asm volatile("msr S3_3_C14_C2_0, %0" : : "r"(ticks));
 
     // 启用定时器（bit0:使能）
     asm volatile("msr S3_3_C14_C2_1, %0" : : "r"(0x1));

@@ -4,10 +4,23 @@
 #include <task/task.h>
 #include <arch/aarch64/irq/ptrace.h>
 
+#define __sysop_encode(op1, crn, crm, op2) \
+    "#" #op1 ",C" #crn ",C" #crm ",#" #op2
+
+#define tlbi_alle1 __sysop_encode(4, 8, 7, 4)
+#define tlbi_aside1 __sysop_encode(0, 8, 7, 2)
+#define tlbi_rvaae1 __sysop_encode(0, 8, 6, 3)
+#define tlbi_rvae1 __sysop_encode(0, 8, 6, 1)
+#define tlbi_vaae1 __sysop_encode(0, 8, 7, 3)
+#define tlbi_vae1 __sysop_encode(0, 8, 7, 1)
+
+#define sys_a0(op) asm volatile("sys " op)
+
 typedef struct arch_context
 {
-    uint64_t page_table_addr;
     struct pt_regs *ctx;
+    uint64_t ttbr;
+    bool usermode;
 } arch_context_t;
 
 typedef struct arch_signal_frame

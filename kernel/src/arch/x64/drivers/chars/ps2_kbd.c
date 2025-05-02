@@ -51,7 +51,7 @@ static char keyboard_code1[0x54] = { // 按下Shift
 
 struct keyboard_buf kb_fifo;
 
-void kbd_handler(uint8_t irq, uint64_t param, struct pt_regs *regs)
+void kbd_handler(uint64_t irq, void *param, struct pt_regs *regs)
 {
     uint8_t x = io_in8(PORT_KB_DATA);
     parse_scan_code(x);
