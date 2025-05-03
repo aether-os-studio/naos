@@ -17,8 +17,8 @@ bool exited = false;
 
 int readline_getc()
 {
-    int ch;
-    while ((ch = (int)getchar()) == 0)
+    char ch;
+    while ((ch = (char)getchar()) == 0)
         pause();
     switch (ch)
     {
@@ -28,13 +28,13 @@ int readline_getc()
         return PL_READLINE_KEY_TAB;
     case '\n':
         return PL_READLINE_KEY_ENTER;
-    case -1:
+    case (char)-1:
         return PL_READLINE_KEY_UP;
-    case -2:
+    case (char)-2:
         return PL_READLINE_KEY_DOWN;
-    case -3:
+    case (char)-3:
         return PL_READLINE_KEY_LEFT;
-    case -4:
+    case (char)-4:
         return PL_READLINE_KEY_RIGHT;
     default:
         return ch;

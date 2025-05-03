@@ -18,6 +18,48 @@ void serial_printk(char *str, int len)
     }
 }
 
+uint8_t serial_read()
+{
+    if (uart_base == 0)
+        return;
+
+    if (*(volatile uint32_t *)(uart_base + UART_FR) & (1 << 4))
+        return 0; // FIFO为空
+
+    uint32_t dr = *(volatile uint32_t *)(uart_base + UART_DR);
+    if (dr == (uint32_t)'\033')
+    {
+        uint32_t dr1 = *(volatile uint32_t *)(uart_base + UART_DR);
+        uint32_t dr2 = *(volatile uint32_t *)(uart_base + UART_DR);
+        if (dr1 != (uint32_t)'[')
+            return 0;
+
+        switch (dr2)
+        {
+        case 'a':
+        case 'A':
+            return (uint8_t)-1;
+        case 'b':
+        case 'B':
+            return (uint8_t)-2;
+        case 'd':
+        case 'D':
+            return (uint8_t)-3;
+        case 'c':
+        case 'C':
+            return (uint8_t)-4;
+        default:
+            return 0;
+        }
+    }
+    if (dr == (uint32_t)'\177')
+        return (uint8_t)'\b';
+    if (dr == (uint32_t)'\r')
+        return (uint8_t)'\n';
+
+    return (uint8_t)(dr & 0xFF);
+}
+
 void init_serial()
 {
 }
@@ -33,18 +75,11 @@ void uart_setup(SPCR *spcr)
     volatile uint32_t *uart = (volatile uint32_t *)uart_base;
 
     // 禁用UART
-    uart[UART_CR] = 0x00000000;
-
-    // 设置波特率（24MHz时钟，115200波特率）
-    float divisor = 24000000.0 / (16.0 * 115200);
-    uint16_t ibrd = (uint16_t)divisor;
-    uint16_t fbrd = (uint16_t)((divisor - ibrd) * 64 + 0.5);
-    uart[UART_IBRD] = ibrd;
-    uart[UART_FBRD] = fbrd;
+    uart[UART_CR / 4] = 0x00000000;
 
     // 配置数据格式：8N1，启用FIFO
-    uart[UART_LCR_H] = (1 << 5) | (1 << 6) | (1 << 4); // 0x70 (8N1 + FIFO)
+    uart[UART_LCR_H / 4] = (1 << 5) | (1 << 6) | (1 << 4); // 0x70 (8N1 + FIFO)
 
     // 启用UART，发送和接收
-    uart[UART_CR] = (1 << 0) | (1 << 8) | (1 << 9); // 0x301
+    uart[UART_CR / 4] = (1 << 0) | (1 << 8) | (1 << 9); // 0x301
 }

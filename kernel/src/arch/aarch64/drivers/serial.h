@@ -16,6 +16,7 @@ extern uint64_t uart_base;
 #define UART_IMSC 0x38  // 中断掩码寄存器
 
 void serial_printk(char *str, int len);
+uint8_t serial_read();
 
 void init_serial();
 
