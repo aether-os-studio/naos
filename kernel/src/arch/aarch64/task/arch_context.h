@@ -28,7 +28,7 @@ typedef struct arch_signal_frame
 {
 } arch_signal_frame_t;
 
-#define USER_STACK_START 0x00006ffffff00000
+#define USER_STACK_START 0x00006fffffff0000
 #define USER_STACK_END 0x0000700000000000
 
 void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64_t entry, uint64_t stack, bool user_mode);

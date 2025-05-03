@@ -14,6 +14,7 @@ all:
 
 	$(MAKE) -C init
 	$(MAKE) -C shell
+	$(MAKE) -C min0911
 
 .PHONY: clean
 clean:

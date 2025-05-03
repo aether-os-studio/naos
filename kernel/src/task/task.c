@@ -173,7 +173,7 @@ uint64_t push_slice(uint64_t ustack, uint8_t *slice, uint64_t len)
 {
     uint64_t tmp_stack = ustack;
     tmp_stack -= len;
-    tmp_stack -= tmp_stack % 0x10;
+    tmp_stack -= (tmp_stack % 0x08);
 
     memcpy((void *)tmp_stack, slice, len);
 
@@ -213,11 +213,13 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], char *en
         }
     }
 
+    uint64_t total_length = 2 + 1 + env_i * sizeof(uint64_t) + 1 + argv_i * sizeof(uint64_t) + sizeof(uint64_t);
+    tmp_stack -= (tmp_stack - total_length) % 0x10;
+
     // push auxv
     uint8_t *tmp = (uint8_t *)malloc(2);
     memset(tmp, 0, 2);
     tmp_stack = push_slice(tmp_stack, tmp, 2);
-    free(tmp);
 
     // push envp
     tmp_stack = push_slice(tmp_stack, tmp, 1);
@@ -232,6 +234,7 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], char *en
 
     tmp_stack = push_slice(tmp_stack, (uint8_t *)args_len, sizeof(uint64_t));
 
+    free(tmp);
     free(envps);
     free(argvps);
     free(args_len);
