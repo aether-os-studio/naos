@@ -7,6 +7,8 @@ void syscall_init()
 {
 }
 
+extern uint64_t time_read();
+
 void aarch64_do_syscall(struct pt_regs *frame)
 {
     uint64_t ret = 0;
@@ -86,13 +88,11 @@ void aarch64_do_syscall(struct pt_regs *frame)
     case SYS_MMAP:
         ret = sys_mmap(arg1, arg2, arg3, arg4, arg5);
         break;
-        // case SYS_CLOCK_GETTIME:
-        //     tm time;
-        //     time_read_bcd(&time);
-        //     *(int64_t *)arg1 = mktime(&time);
-        //     *(int64_t *)arg2 = 0;
-        //     ret = 0;
-        //     break;
+    case SYS_CLOCK_GETTIME:
+        *(int64_t *)arg1 = time_read();
+        *(int64_t *)arg2 = 0;
+        ret = 0;
+        break;
 
     default:
         ret = (uint64_t)-ENOSYS;

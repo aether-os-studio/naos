@@ -194,8 +194,32 @@ uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t 
     return new;
 }
 
+static void free_page_table_inner(uint64_t phys_addr, int level)
+{
+    uint64_t *table = (uint64_t *)phys_to_virt(phys_addr);
+
+    for (int i = 0; i < 512; i++)
+    {
+        uint64_t pte = table[i];
+        if (!(pte & ARCH_PT_FLAG_VALID))
+            continue;
+
+        if (level == 1)
+        {
+            free_frames(pte & ARCH_ADDR_MASK, 1);
+        }
+        else
+        {
+            free_page_table_inner(pte & ARCH_ADDR_MASK, level - 1); // 递归子页表
+        }
+    }
+
+    free_frames(phys_addr, 1);
+}
+
 void free_page_table(uint64_t directory)
 {
+    free_page_table_inner(directory, 4);
 }
 
 uint64_t translate_address(uint64_t *pml4, uint64_t vaddr)
