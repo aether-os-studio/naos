@@ -103,6 +103,7 @@ run-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).iso
 		-device ahci,id=ahci \
 		-device qemu-xhci,id=xhci \
 		-device ide-cd,drive=cdrom,bus=ahci.0 \
+		-rtc base=localtime \
 		$(QEMUFLAGS)
 
 .PHONY: run-hdd-x86_64
@@ -114,6 +115,7 @@ run-hdd-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-device ahci,id=ahci \
 		-device qemu-xhci,id=xhci \
 		-device nvme,drive=harddisk,serial=1234 \
+		-rtc base=localtime \
 		$(QEMUFLAGS)
 
 .PHONY: run-aarch64

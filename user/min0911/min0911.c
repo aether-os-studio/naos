@@ -25,8 +25,6 @@ int main()
     time_t now_time;
     time(&now_time);
 
-    struct tm *now_tm = gmtime(&now_time);
-
     time_t diff_secs = now_time - event_time;
     int64_t diff_mins = diff_secs / 60;
 

@@ -6,8 +6,6 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
         .revision = 0,
 };
 
-#define TIMESTAMP_OFFSET (((1970UL - 1900UL) * 365UL + 17UL) * 24UL * 60UL * 60UL)
-
 uint64_t get_counter()
 {
     uint64_t val;
@@ -27,5 +25,5 @@ uint64_t time_read()
     uint64_t counter = get_counter();
     uint32_t freq = get_freq();
     uint64_t elapsed_seconds = counter / (uint64_t)freq;
-    return TIMESTAMP_OFFSET + boot_time_request.response->timestamp + elapsed_seconds;
+    return boot_time_request.response->timestamp + elapsed_seconds;
 }
