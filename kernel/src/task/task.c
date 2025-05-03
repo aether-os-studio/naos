@@ -38,6 +38,8 @@ uint32_t alloc_cpu_id()
 
 task_t *task_create(const char *name, void (*entry)())
 {
+    can_schedule = false;
+
     task_t *task = get_free_task();
     task->cpu_id = alloc_cpu_id();
     task->ppid = task->pid;
@@ -58,6 +60,8 @@ task_t *task_create(const char *name, void (*entry)())
     task->fds[1] = vfs_open("/dev/stdout");
     task->fds[2] = vfs_open("/dev/stderr");
     strncpy(task->name, name, TASK_NAME_MAX);
+
+    can_schedule = true;
 
     return task;
 }

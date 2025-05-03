@@ -122,7 +122,7 @@ run-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).iso
 		-M virt,gic-version=3 \
 		-cpu cortex-a76 \
 		-device ramfb \
-		-device qemu-xhci \
+		-device qemu-xhci,id=xhci \
 		-device usb-kbd \
 		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
 		-cdrom $(IMAGE_NAME).iso

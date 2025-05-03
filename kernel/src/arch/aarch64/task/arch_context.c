@@ -71,17 +71,14 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
     // start to switch
     next->state = TASK_RUNNING;
 
-    if (prev->arch_context->ttbr != next->arch_context->ttbr)
-    {
-        // 1. 更新TTBR0_EL1
-        __asm__ __volatile__("msr TTBR0_EL1, %0" : : "r"(next->arch_context->ttbr));
+    // 1. 更新TTBR0_EL1
+    __asm__ __volatile__("msr TTBR0_EL1, %0" : : "r"(next->arch_context->ttbr));
 
-        // 2. 刷新TLB
-        __asm__ __volatile__("dsb ishst\n\t"
-                             "tlbi vmalle1is\n\t"
-                             "dsb ish\n\t"
-                             "isb\n\t");
-    }
+    // 2. 刷新TLB
+    __asm__ __volatile__("dsb ishst\n\t"
+                         "tlbi vmalle1is\n\t"
+                         "dsb ish\n\t"
+                         "isb\n\t");
 
     arch_set_current(next);
 

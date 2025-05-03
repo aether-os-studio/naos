@@ -1,4 +1,5 @@
 #include <arch/aarch64/acpi/acpi.h>
+#include <arch/aarch64/drivers/serial.h>
 #include <drivers/bus/pci.h>
 #include <mm/mm.h>
 
@@ -70,6 +71,7 @@ void acpi_init()
     xsdt = phys_to_virt(xsdt);
     map_page_range(get_current_page_dir(false), (uint64_t)xsdt, xsdt_paddr, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
 
+    load_table(SPCR, uart_setup);
     load_table(APIC, madt_setup);
     load_table(MCFG, pcie_setup);
 }

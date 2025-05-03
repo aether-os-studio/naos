@@ -115,6 +115,43 @@ typedef struct
     uint32_t reserved;
 } __attribute__((packed)) MCFG_ENTRY;
 
+struct generic_address
+{
+    uint8_t address_space;
+    uint8_t bit_width;
+    uint8_t bit_offset;
+    uint8_t access_size;
+    uint64_t address;
+} __attribute__((packed));
+
+typedef struct
+{
+    struct ACPISDTHeader Header;
+    uint8_t iface_type;
+    uint8_t reserved0[3];
+    struct generic_address address;
+    uint8_t interrupt_type;
+    uint8_t irq;
+    uint32_t global_system_interrupt;
+    uint8_t configured_baud_rate;
+    uint8_t parity;
+    uint8_t stop_bits;
+    uint8_t flow_control;
+    uint8_t terminal_type;
+    uint8_t language;
+    uint16_t pci_device_id;
+    uint16_t pci_vendor_id;
+    uint8_t pci_bus_num;
+    uint8_t pci_device_num;
+    uint8_t pci_function_num;
+    uint32_t pci_flags;
+    uint8_t pci_segment;
+    uint32_t uart_clock_freq;
+    uint32_t precise_baud_rate;
+    uint16_t namespace_string_length;
+    uint16_t namespace_string_offset;
+} __attribute__((packed)) SPCR;
+
 void acpi_init();
 
 void madt_setup(MADT *madt);
