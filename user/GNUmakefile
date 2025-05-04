@@ -10,6 +10,8 @@ export LDFLAGS = -static -nostdlib
 export SYSROOT = $(CWD)/usr-$(ARCH)
 
 all:
+	rm -rf $(SYSROOT)
+
 	mkdir -p $(SYSROOT)/bin
 
 	$(MAKE) -C init

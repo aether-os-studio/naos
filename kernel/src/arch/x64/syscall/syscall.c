@@ -2,6 +2,7 @@
 #include <task/task.h>
 #include <fs/syscall.h>
 #include <mm/syscall.h>
+#include <net/syscall.h>
 #include <drivers/window_manager/window_manager.h>
 
 uint64_t switch_to_kernel_stack()
@@ -164,6 +165,27 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_FCNTL:
         regs->rax = sys_fcntl(arg1, arg2, arg3);
+        break;
+    case SYS_SOCKET:
+        regs->rax = sys_socket(arg1, arg2, arg3);
+        break;
+    case SYS_BIND:
+        regs->rax = sys_bind(arg1, (const struct sockaddr *)arg2, arg3);
+        break;
+    case SYS_LISTEN:
+        regs->rax = sys_listen(arg1, arg2);
+        break;
+    case SYS_ACCEPT:
+        regs->rax = sys_accept(arg1, (struct sockaddr *)arg2, (socklen_t *)arg3);
+        break;
+    case SYS_CONNECT:
+        regs->rax = sys_connect(arg1, (const struct sockaddr *)arg2, arg3);
+        break;
+    case SYS_SENDTO:
+        regs->rax = sys_send(arg1, (const void *)arg2, arg3, arg4);
+        break;
+    case SYS_RECVFROM:
+        regs->rax = sys_recv(arg1, (void *)arg2, arg3, arg4);
         break;
 
     default:

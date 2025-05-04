@@ -1,6 +1,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <fs/syscall.h>
+#include <net/socket.h>
 
 uint64_t sys_open(const char *name, uint64_t mode, uint64_t flags)
 {
@@ -34,7 +35,12 @@ uint64_t sys_open(const char *name, uint64_t mode, uint64_t flags)
 
 uint64_t sys_close(uint64_t fd)
 {
-    if (fd >= MAX_FD_NUM || current_task->fds[fd] == NULL)
+    if (fd >= MAX_FD_NUM && fd <= MAX_SOCKETS)
+    {
+        sys_socket_close(fd);
+    }
+
+    if (fd >= MAX_SOCKETS || current_task->fds[fd] == NULL)
     {
         return (uint64_t)-EBADFD;
     }
