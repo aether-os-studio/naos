@@ -16,6 +16,10 @@ all:
 	$(MAKE) -C shell
 	$(MAKE) -C min0911
 
+ifeq ($(ARCH), x86_64)
+	$(MAKE) -C test_glibc
+endif
+
 .PHONY: clean
 clean:
 	rm -rf obj/

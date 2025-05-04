@@ -28,8 +28,21 @@
 #define SYS_WRITEV 20
 #define SYS_IOCTL 16 // ioctl(int fd, sint cmd, int arg)
 #define SYS_GETDENTS 21
-#define SYS_CHDIR 22
-#define SYS_GETCWD 23
+#define SYS_CHDIR 80
+#define SYS_GETCWD 79
+
+#define SYS_SOCKET 41
+#define SYS_CONNECT 42
+#define SYS_ACCEPT 43
+#define SYS_BIND 49
+#define SYS_LISTEN 50
+#define SYS_GETSOCKNAME 51
+#define SYS_GETPEERNAME 52
+#define SYS_SOCKETPAIR 53
+#define SYS_GETSOCKOPT 55
+#define SYS_SENDTO 44
+#define SYS_RECVFROM 45
+#define SYS_RECVMSG 47
 
 /* 进程管理相关 */
 #define SYS_FORK 57     // fork()
@@ -48,12 +61,13 @@
 /* 信号处理相关 */
 #define SYS_SIGACTION 13   // sigaction(int sig, const struct sigaction *act, struct sigaction *oact)
 #define SYS_SIGPROCMASK 14 // sigprocmask(int how, const sigset_t *set, sigset_t *oset)
+#define SYS_SIGRETURN 15
 
 #define SYS_ARCH_PRCTL 158
 
 #define SYS_SIGNAL 350
 #define SYS_SETMASK 351
-#define SYS_CLOCK_GETTIME 352
+#define SYS_CLOCK_GETTIME 228
 
 typedef struct fb_info
 {

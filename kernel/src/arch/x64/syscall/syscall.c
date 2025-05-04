@@ -128,7 +128,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = sys_signal(arg1, arg2, arg3);
         break;
     case SYS_SETMASK:
-        regs->rax = sys_ssetmask(arg1);
+        regs->rax = sys_ssetmask(arg1, (sigset_t *)arg2, (sigset_t *)arg3);
         break;
     case SYS_GETDENTS:
         regs->rax = sys_getdents(arg1, arg2, arg3);
@@ -147,6 +147,19 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         time_read_bcd(&time);
         *(int64_t *)arg1 = mktime(&time);
         *(int64_t *)arg2 = 0;
+        regs->rax = 0;
+        break;
+    case SYS_SIGACTION:
+        regs->rax = sys_sigaction(arg1, (sigaction_t *)arg2, (sigaction_t *)arg3);
+        break;
+    case SYS_SIGPROCMASK:
+        regs->rax = sys_ssetmask(arg1, (sigset_t *)arg2, (sigset_t *)arg3);
+        break;
+    case SYS_KILL:
+        regs->rax = sys_kill(arg1, arg2);
+        break;
+    case SYS_SIGRETURN:
+        sys_sigreturn();
         regs->rax = 0;
         break;
 

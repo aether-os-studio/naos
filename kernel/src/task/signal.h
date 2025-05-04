@@ -43,20 +43,23 @@ enum SIGNAL
 #define SIG_DFL ((void (*)(int))0) // 默认的信号处理程序（信号句柄）
 #define SIG_IGN ((void (*)(int))1) // 忽略信号的处理程序
 
+#define SIG_BLOCK 0   /* for blocking signals */
+#define SIG_UNBLOCK 1 /* for unblocking signals */
+#define SIG_SETMASK 2 /* for setting the signal mask */
+
 typedef uint64_t sigset_t;
 
-// 信号处理结构
-typedef struct sigaction_t
+typedef struct sigaction
 {
-    void (*handler)(int); // 信号处理函数
-    sigset_t mask;        // 信号屏蔽码
-    uint64_t flags;
-    uint64_t arg;           // 传递给信号处理函数的参数
-    void (*restorer)(void); // 恢复函数指针
+    void (*sa_handler)(int);
+    unsigned long sa_flags;
+    void (*sa_restorer)(void);
+    sigset_t sa_mask;
 } sigaction_t;
 
 int sys_sgetmask();
-int sys_ssetmask(int newmask);
+int sys_ssetmask(int how, sigset_t *nset, sigset_t *oset);
 int sys_signal(int sig, uint64_t handler, uint64_t restorer);
 int sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction);
+void sys_sigreturn();
 int sys_kill(int pid, int sig);

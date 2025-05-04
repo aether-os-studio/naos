@@ -18,17 +18,32 @@ int sys_sgetmask()
 }
 
 // 设置信号屏蔽位图
-int sys_ssetmask(int newmask)
+int sys_ssetmask(int how, sigset_t *nset, sigset_t *oset)
 {
-    if (newmask == 0)
+    if (oset)
+        *oset = current_task->blocked;
+    if (nset)
     {
-        return -1;
+        uint64_t safe = *nset;
+        safe &= ~(SIGKILL | SIGSTOP); // nuh uh!
+        switch (how)
+        {
+        case SIG_BLOCK:
+            current_task->blocked |= safe;
+            break;
+        case SIG_UNBLOCK:
+            current_task->blocked &= ~(safe);
+            break;
+        case SIG_SETMASK:
+            current_task->blocked = safe;
+            break;
+        default:
+            return -EINVAL;
+            break;
+        }
     }
 
-    int old = current_task->blocked;
-    current_task->blocked = newmask & ~SIGMASK(SIGKILL);
-
-    return old;
+    return 0;
 }
 
 int sys_signal(int sig, uint64_t handler, uint64_t restorer)
@@ -39,10 +54,10 @@ int sys_signal(int sig, uint64_t handler, uint64_t restorer)
     }
 
     sigaction_t *ptr = &current_task->actions[sig - 1];
-    ptr->mask = 0;
-    ptr->handler = (void (*)(int))handler;
-    ptr->flags = SIG_ONESHOT | SIG_NOMASK;
-    ptr->restorer = (void (*)(void))restorer;
+    ptr->sa_mask = 0;
+    ptr->sa_handler = (void (*)(void))handler;
+    ptr->sa_flags = SIG_ONESHOT | SIG_NOMASK;
+    ptr->sa_restorer = (void (*)(void))restorer;
     return handler;
 }
 
@@ -61,16 +76,32 @@ int sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction)
 
     *ptr = *action;
 
-    if (ptr->flags & SIG_NOMASK)
+    if (ptr->sa_flags & SIG_NOMASK)
     {
-        ptr->mask = 0;
+        ptr->sa_mask = 0;
     }
     else
     {
-        ptr->mask |= SIGMASK(sig);
+        ptr->sa_mask |= SIGMASK(sig);
     }
 
     return 0;
+}
+
+void sys_sigreturn()
+{
+#if defined(__x86_64__)
+    current_task->arch_context->ctx->cs = SELECTOR_USER_CS;
+    current_task->arch_context->ctx->ss = SELECTOR_USER_DS;
+    current_task->arch_context->ctx->ds = SELECTOR_USER_DS;
+    current_task->arch_context->ctx->es = SELECTOR_USER_DS;
+    struct pt_regs *ucontext = (struct pt_regs *)current_task->syscall_stack;
+    current_task->arch_context->ctx->rax = ucontext->rax;
+    current_task->arch_context->ctx->rflags = ucontext->r11;
+    current_task->arch_context->ctx->rip = ucontext->rcx;
+
+    arch_switch_with_context(NULL, current_task->arch_context, current_task->kernel_stack);
+#endif
 }
 
 int sys_kill(int pid, int sig)
@@ -129,12 +160,12 @@ void task_signal()
 
     sigaction_t *ptr = &current_task->actions[sig - 1];
 
-    if (ptr->handler == SIG_IGN)
+    if (ptr->sa_handler == SIG_IGN)
     {
         return;
     }
 
-    if (ptr->handler == SIG_DFL)
+    if (ptr->sa_handler == SIG_DFL)
     {
         return;
     }
@@ -166,8 +197,7 @@ void task_signal()
     frame->arch.rip = iframe->rip;
 
     iframe->rsp = (uint64_t)frame;
-    iframe->rip = (uint64_t)ptr->handler;
-    iframe->rdi = (uint64_t)ptr->arg;
+    iframe->rip = (uint64_t)ptr->sa_handler;
 #elif defined(__aarch64__)
     struct pt_regs *cframe = current_task->arch_context->ctx;
 
@@ -178,18 +208,18 @@ void task_signal()
 
     frame->blocked = 0;
 
-    if (ptr->flags & SIG_NOMASK)
+    if (ptr->sa_flags & SIG_NOMASK)
     {
         frame->blocked = current_task->blocked;
     }
 
     frame->sig = sig;
-    frame->restorer = (uint64_t)ptr->restorer;
+    frame->restorer = (uint64_t)ptr->sa_restorer;
 
-    if (ptr->flags & SIG_ONESHOT)
+    if (ptr->sa_flags & SIG_ONESHOT)
     {
-        ptr->handler = SIG_DFL;
+        ptr->sa_handler = SIG_DFL;
     }
 
-    current_task->blocked |= ptr->mask;
+    current_task->blocked |= ptr->sa_mask;
 }

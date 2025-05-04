@@ -126,6 +126,13 @@ void do_undefined_opcode(struct pt_regs *regs, uint64_t error_code)
     (void)error_code;
     dump_regs(regs, "do_undefined_opcode(6)");
 
+    if (regs->rsp <= get_physical_memory_offset())
+    {
+        can_schedule = true;
+        task_exit(-EFAULT);
+        return;
+    }
+
     while (1)
         asm volatile("hlt");
 }
@@ -166,6 +173,13 @@ void do_invalid_TSS(struct pt_regs *regs, uint64_t error_code)
     (void)error_code;
     dump_regs(regs, "do_invalid_TSS(10)");
 
+    if (regs->rsp <= get_physical_memory_offset())
+    {
+        can_schedule = true;
+        task_exit(-EFAULT);
+        return;
+    }
+
     while (1)
         asm volatile("hlt");
 }
@@ -175,6 +189,13 @@ void do_segment_not_exists(struct pt_regs *regs, uint64_t error_code)
 {
     (void)error_code;
     dump_regs(regs, "do_segment_not_exists(11");
+
+    if (regs->rsp <= get_physical_memory_offset())
+    {
+        can_schedule = true;
+        task_exit(-EFAULT);
+        return;
+    }
 
     while (1)
         asm volatile("hlt");
@@ -186,6 +207,13 @@ void do_stack_segment_fault(struct pt_regs *regs, uint64_t error_code)
     (void)error_code;
     dump_regs(regs, "do_stack_segment_fault(12)");
 
+    if (regs->rsp <= get_physical_memory_offset())
+    {
+        can_schedule = true;
+        task_exit(-EFAULT);
+        return;
+    }
+
     while (1)
         asm volatile("hlt");
 }
@@ -195,6 +223,13 @@ void do_general_protection(struct pt_regs *regs, uint64_t error_code)
 {
     (void)error_code;
     dump_regs(regs, "do_general_protection(13)");
+
+    if (regs->rsp <= get_physical_memory_offset())
+    {
+        can_schedule = true;
+        task_exit(-EFAULT);
+        return;
+    }
 
     while (1)
         asm volatile("hlt");
