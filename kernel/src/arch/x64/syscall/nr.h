@@ -30,6 +30,7 @@
 #define SYS_GETDENTS 21
 #define SYS_CHDIR 80
 #define SYS_GETCWD 79
+#define SYS_FCNTL 72
 
 #define SYS_SOCKET 41
 #define SYS_CONNECT 42

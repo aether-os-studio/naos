@@ -162,6 +162,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         sys_sigreturn();
         regs->rax = 0;
         break;
+    case SYS_FCNTL:
+        regs->rax = sys_fcntl(arg1, arg2, arg3);
+        break;
 
     default:
         regs->rax = (uint64_t)-ENOSYS;

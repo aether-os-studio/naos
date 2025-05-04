@@ -242,3 +242,16 @@ uint64_t sys_getcwd(char *cwd, uint64_t size)
     free(str);
     return 0;
 }
+
+uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
+{
+    switch (command)
+    {
+    case 1:
+        return 0;
+        break;
+
+    default:
+        break;
+    }
+}
