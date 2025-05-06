@@ -12,7 +12,7 @@ uint64_t sys_brk(uint64_t addr)
     uint64_t start = current_task->brk_end;
     uint64_t size = new_brk - current_task->brk_end;
 
-    map_page_range(get_current_page_dir(true), start, 0, size + 0x100000, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+    map_page_range(get_current_page_dir(true), start, 0, size, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
     new_brk = start + size;
 
@@ -21,11 +21,12 @@ uint64_t sys_brk(uint64_t addr)
     return new_brk;
 }
 
-uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t fd, uint64_t offset)
+uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t fd, uint64_t offset)
 {
     if (addr == 0)
     {
-        return current_task->brk_start;
+        addr = current_task->mmap_start;
+        current_task->mmap_start += (len + DEFAULT_PAGE_SIZE) & (~(DEFAULT_PAGE_SIZE - 1));
     }
 
     uint64_t count = (len + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE;
@@ -51,7 +52,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t fd, uint6
             flags |= PT_FLAG_X;
         }
 
-        map_page(get_current_page_dir(true), page, 0, get_arch_page_table_flags(flags));
+        map_page(get_current_page_dir(true), page, alloc_frames(1), get_arch_page_table_flags(flags));
     }
 
     if (fd > 2 && fd < MAX_FD_NUM)

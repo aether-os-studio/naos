@@ -3,10 +3,55 @@
 #include <libs/klibc.h>
 #include <fs/vfs/fcntl.h>
 
+static inline char toupper(char ch)
+{
+    if (ch >= 'a' && ch <= 'z')
+        ch -= 0x20;
+    return ch;
+}
+
+static inline char tolower(char ch)
+{
+    if (ch >= 'A' && ch <= 'Z')
+        ch += 0x20;
+    return ch;
+}
+
 #define ALL_IMPLEMENTATION
 #include "list.h"
 
-#define streq(s1, s2) (!strcmp((char *)(s1), (char *)(s2)))
+static inline bool streq(const char *str1, const char *str2)
+{
+    int ret = 0;
+    while (!(ret = tolower(*(unsigned char *)str1) - tolower(*(unsigned char *)str2)) && *str1)
+    {
+        str1++;
+        str2++;
+    }
+
+    return ret == 0;
+}
+
+static inline bool streqn(const char *a, const char *b, size_t max_size)
+{
+    size_t i = 0;
+    while (true)
+    {
+        if (!(i < max_size))
+            return true;
+        unsigned char a_byte = a[i];
+        unsigned char b_byte = b[i];
+        if (!a_byte && !b_byte)
+            return true;
+        // If only one char is null, one of the following cases applies.
+        if (tolower(a_byte) < tolower(b_byte))
+            return false;
+        if (tolower(a_byte) > tolower(b_byte))
+            return false;
+        i++;
+    }
+}
+
 #define max(x, y) ((x > y) ? (x) : (y))
 
 typedef int64_t ssize_t;

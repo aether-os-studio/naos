@@ -157,12 +157,18 @@ uint8_t get_keyboard_input()
             temp = (uint8_t)-3;
         else if (x == 0x4d)
             temp = (uint8_t)-4;
+        else if (x == 0x01)
+            temp = (uint8_t)-5;
         else
         {
             temp = keyboard_code[x];
             if (kb_fifo.shift == 1 || kb_fifo.caps == 1)
             {
                 temp = keyboard_code1[x];
+            }
+            if (kb_fifo.ctrl == 1)
+            {
+                temp &= 0x1f;
             }
         }
 

@@ -133,6 +133,10 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
 {
+    context->ctx = (struct pt_regs *)current_task->kernel_stack - 1;
+
+    memset(context->ctx, 0, sizeof(struct pt_regs));
+
     context->ctx->rip = entry;
     context->ctx->rsp = stack;
     context->ctx->rbp = stack;
@@ -153,6 +157,8 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t
 void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
 {
     arch_context_to_user_mode(context, entry, stack);
+
+    struct pt_regs *regs = context->ctx;
 
     __asm__ __volatile__(
         "movq %0, %%rsp\n\t"

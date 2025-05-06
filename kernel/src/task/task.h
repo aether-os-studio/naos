@@ -3,8 +3,43 @@
 #include <fs/vfs/vfs.h>
 #include <task/signal.h>
 
+#define AT_NULL 0
+#define AT_IGNORE 1
+#define AT_EXECFD 2
+#define AT_PHDR 3
+#define AT_PHENT 4
+#define AT_PHNUM 5
+#define AT_PAGESZ 6
+#define AT_BASE 7
+#define AT_FLAGS 8
+#define AT_ENTRY 9
+#define AT_NOTELF 10
+#define AT_UID 11
+#define AT_EUID 12
+#define AT_GID 13
+#define AT_EGID 14
+#define AT_CLKTCK 17
+#define AT_PLATFORM 15
+#define AT_HWCAP 16
+#define AT_FPUCW 18
+#define AT_DCACHEBSIZE 19
+#define AT_ICACHEBSIZE 20
+#define AT_UCACHEBSIZE 21
+#define AT_IGNOREPPC 22
+#define AT_SECURE 23
+#define AT_BASE_PLATFORM 24
+#define AT_RANDOM 25
+#define AT_HWCAP2 26
+#define AT_EXECFN 31
+#define AT_SYSINFO 32
+#define AT_SYSINFO_EHDR 33
+
+#define EHDR_START_ADDR 0x0000600000000000
+
 #define USER_BRK_START 0x0000700000000000
 #define USER_BRK_END 0x00007fffffffffff
+
+#define USER_MMAP_START 0x0000400000000000
 
 #define MAX_TASK_NUM 1024
 
@@ -40,6 +75,7 @@ typedef struct task
     task_state_t state;
     uint64_t kernel_stack;
     uint64_t syscall_stack;
+    uint64_t mmap_start;
     uint64_t brk_start;
     uint64_t brk_end;
     arch_context_t *arch_context;

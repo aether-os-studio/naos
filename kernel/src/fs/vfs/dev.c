@@ -1,6 +1,11 @@
 #include "fs/vfs/dev.h"
+#include <fs/syscall.h>
 #include <drivers/kernel_logger.h>
 #include <arch/arch.h>
+
+#define FLANTERM_IN_FLANTERM
+#include <libs/flanterm/flanterm_private.h>
+#include <libs/flanterm/backends/fb_private.h>
 
 static int devfs_id = 0;
 static vfs_node_t devfs_root = NULL;
@@ -114,20 +119,38 @@ ssize_t stdout_write(void *data, uint64_t offset, const void *buf, uint64_t len)
 {
     (void)data;
     (void)offset;
-    (void)len;
 
     for (uint64_t i = 0; i < len; i++)
     {
         printk("%c", ((const char *)buf)[i]);
     }
 
-    return strlen(buf);
+    return (ssize_t)len;
+}
+
+extern struct flanterm_context *ft_ctx;
+
+ssize_t stdout_ioctl(void *data, ssize_t cmd, ssize_t arg)
+{
+    switch (cmd)
+    {
+    case TIOCGWINSZ:
+        *(struct winsize *)arg = (struct winsize){
+            .ws_xpixel = ((struct flanterm_fb_context *)ft_ctx)->width,
+            .ws_ypixel = ((struct flanterm_fb_context *)ft_ctx)->height,
+            .ws_col = ft_ctx->cols,
+            .ws_row = ft_ctx->rows,
+        };
+        return 0;
+    default:
+        return (uint64_t)-ENOSYS;
+    }
 }
 
 void stdio_init()
 {
     regist_dev("stdin", stdin_read, NULL, NULL, NULL);
-    regist_dev("stdout", NULL, stdout_write, NULL, NULL);
+    regist_dev("stdout", NULL, stdout_write, stdout_ioctl, NULL);
     regist_dev("stderr", NULL, stdout_write, NULL, NULL);
 }
 

@@ -19,7 +19,7 @@ int readline_getc()
 {
     char ch;
     while ((ch = (char)getchar()) == 0)
-        pause();
+        ;
     switch (ch)
     {
     case '\b':

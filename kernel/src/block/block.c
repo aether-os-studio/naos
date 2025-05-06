@@ -48,7 +48,6 @@ uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len)
     uint64_t buffer_size = (end_sector_id - start_sector_id + 1) * dev->block_size;
 
     uint8_t *tmp = phys_to_virt((uint8_t *)alloc_frames((buffer_size + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE));
-    memset(tmp, 0, buffer_size);
 
     dev->read(dev->ptr, start_sector_id, tmp, buffer_size / dev->block_size);
 
@@ -76,7 +75,6 @@ uint64_t blkdev_write(uint64_t drive, uint64_t offset, void *buf, uint64_t len)
     uint64_t buffer_size = (end_sector_id - start_sector_id + 1) * dev->block_size;
 
     uint8_t *tmp = phys_to_virt((uint8_t *)alloc_frames((buffer_size + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE));
-    memset(tmp, 0, buffer_size);
 
     dev->read(dev->ptr, start_sector_id, tmp, buffer_size / dev->block_size);
 

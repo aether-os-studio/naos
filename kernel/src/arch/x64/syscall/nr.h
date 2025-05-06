@@ -28,6 +28,7 @@
 #define SYS_WRITEV 20
 #define SYS_IOCTL 16 // ioctl(int fd, sint cmd, int arg)
 #define SYS_GETDENTS 21
+#define SYS_GETDENTS64 217
 #define SYS_CHDIR 80
 #define SYS_GETCWD 79
 #define SYS_FCNTL 72
@@ -54,6 +55,7 @@
 #define SYS_KILL 62     // kill(pid_t pid, int sig)
 #define SYS_GETPID 39   // getpid()
 #define SYS_GETPPID 110 // getppid()
+#define SYS_GETTID 186
 #define SYS_EXIT_GROUP 231
 
 /* 内存管理相关 */
@@ -63,12 +65,15 @@
 #define SYS_SIGACTION 13   // sigaction(int sig, const struct sigaction *act, struct sigaction *oact)
 #define SYS_SIGPROCMASK 14 // sigprocmask(int how, const sigset_t *set, sigset_t *oset)
 #define SYS_SIGRETURN 15
+#define SYS_SIGALTSTACK 131
 
 #define SYS_ARCH_PRCTL 158
 
 #define SYS_SIGNAL 350
 #define SYS_SETMASK 351
 #define SYS_CLOCK_GETTIME 228
+
+#define SYS_SET_TID_ADDRESS 218
 
 typedef struct fb_info
 {

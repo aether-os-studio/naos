@@ -12,7 +12,7 @@ int main()
     int pid = fork();
     if (pid == 0)
     {
-        execve("/usr/bin/shell.exec", NULL, NULL);
+        execv("/usr/bin/shell.elf", NULL);
         exit(-1);
     }
     else

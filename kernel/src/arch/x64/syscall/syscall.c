@@ -71,6 +71,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     uint64_t arg3 = regs->rdx;
     uint64_t arg4 = regs->r10;
     uint64_t arg5 = regs->r8;
+    uint64_t arg6 = regs->r9;
 
     switch (idx)
     {
@@ -111,7 +112,10 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = task_exit((int64_t)arg1);
         break;
     case SYS_GETPID:
-        regs->rax = current_task->pid;
+        if (arg1 == UINT64_MAX && arg2 == UINT64_MAX && arg3 == UINT64_MAX && arg4 == UINT64_MAX && arg5 == UINT64_MAX)
+            regs->rax = 1;
+        else
+            regs->rax = current_task->pid;
         break;
     case SYS_GETPPID:
         regs->rax = current_task->ppid;
@@ -132,6 +136,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = sys_ssetmask(arg1, (sigset_t *)arg2, (sigset_t *)arg3);
         break;
     case SYS_GETDENTS:
+    case SYS_GETDENTS64:
         regs->rax = sys_getdents(arg1, arg2, arg3);
         break;
     case SYS_CHDIR:
@@ -141,7 +146,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = sys_getcwd((char *)arg1, arg2);
         break;
     case SYS_MMAP:
-        regs->rax = sys_mmap(arg1, arg2, arg3, arg4, arg5);
+        regs->rax = sys_mmap(arg1, arg2, arg3, arg4, arg5, arg6);
         break;
     case SYS_CLOCK_GETTIME:
         tm time;
@@ -186,6 +191,18 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_RECVFROM:
         regs->rax = sys_recv(arg1, (void *)arg2, arg3, arg4);
+        break;
+    case SYS_SET_TID_ADDRESS:
+        regs->rax = 0;
+        break;
+    case SYS_POLL:
+        regs->rax = 0;
+        break;
+    case SYS_SIGALTSTACK:
+        regs->rax = 0;
+        break;
+    case SYS_GETTID:
+        regs->rax = current_task->pid;
         break;
 
     default:

@@ -17,8 +17,6 @@
 #define NVME_ADMIN_IDENTIFY_CNS_ID_CTRL 0x01U
 #define NVME_ADMIN_IDENTIFY_CNS_ACT_NSL 0x02U
 
-void *NVME_DMA_MEMORY = 0;
-
 static inline char *LeadingWhitespace(char *beg, char *end)
 {
     while (end > beg && *--end <= 0x20)
@@ -127,9 +125,6 @@ uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba, uint32_t coun
         return 0;
 
     uint64_t bufAddr = (uint64_t)buf;
-    uint32_t maxCount = (0x1000 / ns->BSZ) - ((bufAddr & 0xFFF) / ns->BSZ);
-    if (count > maxCount)
-        count = maxCount;
     if (count > ns->MXRS)
         count = ns->MXRS;
 
@@ -253,7 +248,6 @@ void nvme_driver_init(uint64_t bar0, uint64_t bar_size)
        what namespaces we have. */
     // Identify Controller
     NVME_IDENTIFY_CONTROLLER *identify = 0;
-    uint64_t pagCont = 1;
     identify = (NVME_IDENTIFY_CONTROLLER *)alloc_frames(1);
     identify = (NVME_IDENTIFY_CONTROLLER *)phys_to_virt((uint64_t)identify);
     memset(identify, 0, 0x1000);
@@ -368,7 +362,6 @@ void nvme_driver_init(uint64_t bar0, uint64_t bar_size)
         uint32_t nsid = nsidx + 1;
 
         NVME_IDENTIFY_NAMESPACE *identifyNS = 0;
-        pagCont = 1;
         identifyNS = (NVME_IDENTIFY_NAMESPACE *)alloc_frames(1);
         identifyNS = (NVME_IDENTIFY_NAMESPACE *)phys_to_virt(identifyNS);
         memset(identifyNS, 0, 0x1000);
@@ -400,12 +393,6 @@ void nvme_driver_init(uint64_t bar0, uint64_t bar_size)
         {
             failed_namespace(identifyNS);
             return;
-        }
-
-        if (!NVME_DMA_MEMORY)
-        {
-            pagCont = 1;
-            NVME_DMA_MEMORY = (void *)alloc_frames(pagCont);
         }
 
         NVME_NAMESPACE *ns = (NVME_NAMESPACE *)malloc(sizeof(NVME_NAMESPACE));

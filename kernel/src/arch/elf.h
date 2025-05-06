@@ -34,5 +34,6 @@ typedef struct
 } Elf64_Phdr;
 
 #define PT_LOAD 1
+#define PT_TLS 7
 
 #define PF_EXEC 1

@@ -52,11 +52,12 @@ export ROOT_DIR := $(shell pwd)
 
 KVM ?= 0
 HVF ?= 0
-SMP ?= 4
+SMP ?= 2
 MEM ?= 4G
+SER ?= 1
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
-QEMUFLAGS := -m $(MEM) -serial stdio -smp $(SMP)
+QEMUFLAGS := -m $(MEM) -smp $(SMP)
 
 DEBUG ?= 0
 
@@ -68,8 +69,11 @@ ifeq ($(KVM), 1)
 override QEMUFLAGS := $(QEMUFLAGS) --enable-kvm
 endif
 
-ifeq ($(HVF), 1)
+ifeq ($(SER), 1)
+override QEMUFLAGS := $(QEMUFLAGS) -serial stdio
+endif
 
+ifeq ($(HVF), 1)
 override QEMUFLAGS := $(QEMUFLAGS) --accel hvf
 endif
 
@@ -114,7 +118,7 @@ run-hdd-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-drive if=none,file=$(IMAGE_NAME).hdd,format=raw,id=harddisk \
 		-device ahci,id=ahci \
 		-device qemu-xhci,id=xhci \
-		-device nvme,drive=harddisk,serial=1234 \
+		-device ide-hd,drive=harddisk,bus=ahci.0 \
 		-rtc base=localtime \
 		$(QEMUFLAGS)
 
@@ -223,17 +227,9 @@ kernel: kernel-deps
 	$(MAKE) -C user
 
 libc-$(ARCH):
-	rm -rf mlibc/sysdeps/aether/include/nr.h
-	cp -r kernel/src/arch/$(ARCH_DIR)/syscall/nr.h mlibc/sysdeps/aether/include/nr.h
+	make -C relibc install DESTDIR=$(ROOT_DIR)/libc-$(ARCH) PROFILE=debug
 
-	sh build_mlibc_$(ARCH).sh
-ifeq ($(ARCH), aarch64)
-	$(AR) x libc-$(ARCH)/lib/libc.a
-	$(AR) x $(shell $(CC) -print-file-name=libgcc.a)
-	$(AR) rcs libc-$(ARCH)/lib/libc.a *.o
-	rm -rf *.o
-	$(RANLIB) libc-$(ARCH)/lib/libc.a
-endif
+	sudo cp -r libc-$(ARCH) /usr/
 
 .PHONY: user
 user: libc-$(ARCH)
@@ -250,22 +246,20 @@ $(IMAGE_NAME).iso: limine/limine kernel
 	mkdir -p iso_root/EFI/BOOT
 ifeq ($(ARCH),x86_64)
 	cp -v -r libc-$(ARCH)/* iso_root/usr/
-	cp -v -r libc-$(ARCH)/lib/crt0.o iso_root/usr/lib/crt1.o
 	cp -v limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin iso_root/boot/limine/
 	cp -v limine/BOOTX64.EFI iso_root/EFI/BOOT/
 	cp -v limine/BOOTIA32.EFI iso_root/EFI/BOOT/
 	xorriso -as mkisofs -R -r -J -b boot/limine/limine-bios-cd.bin \
 		-no-emul-boot -boot-load-size 4 -boot-info-table -hfsplus \
 		-apm-block-size 2048 --efi-boot boot/limine/limine-uefi-cd.bin \
-		-efi-boot-part --efi-boot-image --protective-msdos-label \
+		--protective-msdos-label \
 		iso_root -o $(IMAGE_NAME).iso
-	./limine/limine bios-install $(IMAGE_NAME).iso
 endif
 ifeq ($(ARCH),aarch64)
 	cp -v limine/limine-uefi-cd.bin iso_root/boot/limine/
 	cp -v limine/BOOTAA64.EFI iso_root/EFI/BOOT/
 	xorriso -as mkisofs -R -r -J \
-		-hfsplus -apm-block-size 2048 \
+		-apm-block-size 2048 \
 		--efi-boot boot/limine/limine-uefi-cd.bin \
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
 		iso_root -o $(IMAGE_NAME).iso
@@ -292,10 +286,9 @@ endif
 
 $(IMAGE_NAME).hdd: limine/limine kernel
 	rm -f $(IMAGE_NAME).hdd
-	dd if=/dev/zero bs=1M count=0 seek=64 of=$(IMAGE_NAME).hdd
+	dd if=/dev/zero bs=1M count=0 seek=512 of=$(IMAGE_NAME).hdd
 ifeq ($(ARCH),x86_64)
 	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00 -m 1
-	./limine/limine bios-install $(IMAGE_NAME).hdd
 else
 	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00
 endif
@@ -306,7 +299,6 @@ endif
 	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/usr-$(ARCH)/* ::/usr
 ifeq ($(ARCH),x86_64)
 	mcopy -s -i $(IMAGE_NAME).hdd@@1M libc-$(ARCH)/* ::/usr/
-	mcopy -i $(IMAGE_NAME).hdd@@1M libc-$(ARCH)/lib/crt0.o ::/usr/lib/crt1.o
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/limine-bios.sys ::/boot/limine
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTX64.EFI ::/EFI/BOOT
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTIA32.EFI ::/EFI/BOOT
@@ -325,10 +317,11 @@ endif
 clean:
 	$(MAKE) -C kernel clean
 	$(MAKE) -C user clean
-	rm -rf libc iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).hdd
+	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).hdd
 
 .PHONY: distclean
 distclean:
 	$(MAKE) -C kernel distclean
 	$(MAKE) -C user distclean
-	rm -rf libc iso_root *.iso *.hdd kernel-deps limine ovmf
+	$(MAKE) -C relibc clean
+	rm -rf libc-$(ARCH) iso_root *.iso *.hdd kernel-deps limine ovmf
