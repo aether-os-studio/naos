@@ -18,7 +18,6 @@ export CXX := $(ARCH)-linux-gnu-g++
 export LD := $(ARCH)-linux-gnu-ld
 export AR := $(ARCH)-linux-gnu-ar
 export RANLIB := $(ARCH)-linux-gnu-ranlib
-export MLIBC_ARCH_FLAGS := -m64 -mno-red-zone -march=x86-64
 endif
 ifeq ($(ARCH), aarch64)
 export CC := $(ARCH)-linux-gnu-gcc
@@ -26,7 +25,6 @@ export CXX := $(ARCH)-linux-gnu-g++
 export LD := $(ARCH)-linux-gnu-ld
 export AR := $(ARCH)-linux-gnu-ar
 export RANLIB := $(ARCH)-linux-gnu-ranlib
-export MLIBC_ARCH_FLAGS := -mno-outline-atomics -Wl,--export-dynamic
 endif
 ifeq ($(ARCH), riscv64)
 export CC := $(ARCH)-linux-gnu-gcc
@@ -42,11 +40,6 @@ export LD := $(ARCH)-linux-gnu-ld
 export AR := $(ARCH)-linux-gnu-ar
 export RANLIB := $(ARCH)-linux-gnu-ranlib
 endif
-
-MLIBC_SHARED_FLAGS := -D_GNU_SOURCE
-
-export MLIBC_CFLAGS := -g3 -O0 -fPIC -fno-PIE -fno-lto -ffunction-sections -fdata-sections -static -nostdlib -nostdinc -fno-builtin $(MLIBC_ARCH_FLAGS) $(MLIBC_SHARED_FLAGS)
-export MLIBC_CXXFLAGS := $(MLIBC_CFLAGS) -fno-rtti -fno-exceptions
 
 export ROOT_DIR := $(shell pwd)
 
