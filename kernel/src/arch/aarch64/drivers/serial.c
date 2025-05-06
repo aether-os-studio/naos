@@ -27,31 +27,31 @@ uint8_t serial_read()
         return 0; // FIFO为空
 
     uint32_t dr = *(volatile uint32_t *)(uart_base + UART_DR);
-    if (dr == (uint32_t)'\033')
-    {
-        uint32_t dr1 = *(volatile uint32_t *)(uart_base + UART_DR);
-        uint32_t dr2 = *(volatile uint32_t *)(uart_base + UART_DR);
-        if (dr1 != (uint32_t)'[')
-            return 0;
+    // if (dr == (uint32_t)'\033')
+    // {
+    //     uint32_t dr1 = *(volatile uint32_t *)(uart_base + UART_DR);
+    //     uint32_t dr2 = *(volatile uint32_t *)(uart_base + UART_DR);
+    //     if (dr1 != (uint32_t)'[')
+    //         return 0;
 
-        switch (dr2)
-        {
-        case 'a':
-        case 'A':
-            return (uint8_t)-1;
-        case 'b':
-        case 'B':
-            return (uint8_t)-2;
-        case 'd':
-        case 'D':
-            return (uint8_t)-3;
-        case 'c':
-        case 'C':
-            return (uint8_t)-4;
-        default:
-            return 0;
-        }
-    }
+    //     switch (dr2)
+    //     {
+    //     case 'a':
+    //     case 'A':
+    //         return (uint8_t)-1;
+    //     case 'b':
+    //     case 'B':
+    //         return (uint8_t)-2;
+    //     case 'd':
+    //     case 'D':
+    //         return (uint8_t)-3;
+    //     case 'c':
+    //     case 'C':
+    //         return (uint8_t)-4;
+    //     default:
+    //         return 0;
+    //     }
+    // }
     if (dr == (uint32_t)'\177')
         return (uint8_t)'\b';
     if (dr == (uint32_t)'\r')

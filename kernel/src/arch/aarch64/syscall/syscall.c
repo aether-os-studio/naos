@@ -19,6 +19,7 @@ void aarch64_do_syscall(struct pt_regs *frame)
     uint64_t arg3 = frame->x2;
     uint64_t arg4 = frame->x3;
     uint64_t arg5 = frame->x4;
+    uint64_t arg6 = frame->x5;
 
     switch (idx)
     {
@@ -74,7 +75,7 @@ void aarch64_do_syscall(struct pt_regs *frame)
         ret = sys_signal(arg1, arg2, arg3);
         break;
     case SYS_SETMASK:
-        ret = sys_ssetmask(arg1);
+        ret = sys_ssetmask(arg1, (sigset_t *)arg2, (sigset_t *)arg3);
         break;
     case SYS_GETDENTS:
         ret = sys_getdents(arg1, arg2, arg3);
@@ -86,7 +87,7 @@ void aarch64_do_syscall(struct pt_regs *frame)
         ret = sys_getcwd((char *)arg1, arg2);
         break;
     case SYS_MMAP:
-        ret = sys_mmap(arg1, arg2, arg3, arg4, arg5);
+        ret = sys_mmap(arg1, arg2, arg3, arg4, arg5, arg6);
         break;
     case SYS_CLOCK_GETTIME:
         *(int64_t *)arg1 = time_read();

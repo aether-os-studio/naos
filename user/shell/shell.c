@@ -17,25 +17,39 @@ bool exited = false;
 
 int readline_getc()
 {
+retry:
     char ch;
     while ((ch = (char)getchar()) == 0)
         ;
     switch (ch)
     {
-    case '\b':
-        return PL_READLINE_KEY_BACKSPACE;
-    case '\t':
-        return PL_READLINE_KEY_TAB;
-    case '\n':
-        return PL_READLINE_KEY_ENTER;
-    case (char)-1:
-        return PL_READLINE_KEY_UP;
-    case (char)-2:
-        return PL_READLINE_KEY_DOWN;
-    case (char)-3:
-        return PL_READLINE_KEY_LEFT;
-    case (char)-4:
-        return PL_READLINE_KEY_RIGHT;
+    case '\x1b':
+    {
+        char ch1 = (char)getchar();
+        if (ch1 == '[')
+        {
+            switch ((char)getchar())
+            {
+            case 'a':
+            case 'A':
+                return PL_READLINE_KEY_UP;
+            case 'b':
+            case 'B':
+                return PL_READLINE_KEY_DOWN;
+            case 'c':
+            case 'C':
+                return PL_READLINE_KEY_RIGHT;
+            case 'd':
+            case 'D':
+                return PL_READLINE_KEY_LEFT;
+            case 0:
+                goto retry;
+            default:
+                goto retry;
+            }
+        }
+        goto retry;
+    }
     default:
         return ch;
     }

@@ -51,10 +51,15 @@ static char keyboard_code1[0x54] = { // 按下Shift
 
 struct keyboard_buf kb_fifo;
 
+bool can_handle_new_key = true;
+
 void kbd_handler(uint64_t irq, void *param, struct pt_regs *regs)
 {
-    uint8_t x = io_in8(PORT_KB_DATA);
-    parse_scan_code(x);
+    if (can_handle_new_key)
+    {
+        uint8_t x = io_in8(PORT_KB_DATA);
+        parse_scan_code(x);
+    }
 }
 
 void kbd_init()
@@ -141,8 +146,48 @@ void parse_scan_code(uint8_t x)
     }
 }
 
+static uint8_t special_status = 0;
+static uint8_t special_key = 0;
+
 uint8_t get_keyboard_input()
 {
+    if (special_status == 1)
+    {
+        special_status = 2;
+        return '\x1b';
+    }
+    else if (special_status == 2)
+    {
+        special_status = 3;
+        return '[';
+    }
+    else if (special_status == 3)
+    {
+        uint8_t result = 0;
+        switch (special_key)
+        {
+        case 0x48:
+            result = 'A';
+            break;
+        case 0x50:
+            result = 'B';
+            break;
+        case 0x4b:
+            result = 'D';
+            break;
+        case 0x4d:
+            result = 'C';
+            break;
+        case 0x01:
+            result = '\0';
+            break;
+        }
+        special_key = 0;
+        special_status = 0;
+        can_handle_new_key = true;
+        return result;
+    }
+
     if (kb_fifo.p_tail != kb_fifo.p_head)
     {
         uint8_t temp = 0;
@@ -150,15 +195,35 @@ uint8_t get_keyboard_input()
         uint8_t x = *kb_fifo.p_tail;
 
         if (x == 0x48)
-            temp = (uint8_t)-1;
+        {
+            can_handle_new_key = false;
+            special_status = 1;
+            special_key = x;
+        }
         else if (x == 0x50)
-            temp = (uint8_t)-2;
+        {
+            can_handle_new_key = false;
+            special_status = 1;
+            special_key = x;
+        }
         else if (x == 0x4b)
-            temp = (uint8_t)-3;
+        {
+            can_handle_new_key = false;
+            special_status = 1;
+            special_key = x;
+        }
         else if (x == 0x4d)
-            temp = (uint8_t)-4;
+        {
+            can_handle_new_key = false;
+            special_status = 1;
+            special_key = x;
+        }
         else if (x == 0x01)
-            temp = (uint8_t)-5;
+        {
+            can_handle_new_key = false;
+            special_status = 1;
+            special_key = x;
+        }
         else
         {
             temp = keyboard_code[x];
