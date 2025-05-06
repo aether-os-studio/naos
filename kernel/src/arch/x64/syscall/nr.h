@@ -56,6 +56,7 @@
 #define SYS_GETPID 39   // getpid()
 #define SYS_GETPPID 110 // getppid()
 #define SYS_GETTID 186
+#define SYS_FUTEX 202
 #define SYS_EXIT_GROUP 231
 
 /* 内存管理相关 */

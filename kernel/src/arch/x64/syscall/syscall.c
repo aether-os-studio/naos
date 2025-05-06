@@ -204,6 +204,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_GETTID:
         regs->rax = current_task->pid;
         break;
+    case SYS_FUTEX:
+        regs->rax = 0;
+        break;
 
     default:
         regs->rax = (uint64_t)-ENOSYS;

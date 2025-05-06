@@ -33,7 +33,25 @@ typedef struct
     uint64_t p_align;
 } Elf64_Phdr;
 
+#define PT_NULL 0
 #define PT_LOAD 1
+#define PT_DYNAMIC 2
+#define PT_INTERP 3
+#define PT_NOTE 4
+#define PT_SHLIB 5
+#define PT_PHDR 6
 #define PT_TLS 7
+#define PT_NUM 8
+#define PT_LOOS 1610612736
+#define PT_GNU_EH_FRAME 1685382480
+#define PT_GNU_STACK 1685382481
+#define PT_GNU_RELRO 1685382482
+#define PT_LOSUNW 1879048186
+#define PT_SUNWBSS 1879048186
+#define PT_SUNWSTACK 1879048187
+#define PT_HISUNW 1879048191
+#define PT_HIOS 1879048191
+#define PT_LOPROC 1879048192
+#define PT_HIPROC 2147483647
 
 #define PF_EXEC 1

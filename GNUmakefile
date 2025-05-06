@@ -227,7 +227,7 @@ kernel: kernel-deps
 	$(MAKE) -C user
 
 libc-$(ARCH):
-	make -C relibc install DESTDIR=$(ROOT_DIR)/libc-$(ARCH) PROFILE=debug
+	make -C relibc install DESTDIR=$(ROOT_DIR)/libc-$(ARCH) PROFILE=release
 
 	sudo cp -r libc-$(ARCH) /usr/
 

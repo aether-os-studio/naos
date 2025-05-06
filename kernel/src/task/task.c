@@ -357,7 +357,7 @@ uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
 
     for (int i = 0; i < ehdr->e_phnum; ++i)
     {
-        if ((phdr[i].p_type != PT_LOAD) && (phdr[i].p_type != PT_TLS))
+        if (phdr[i].p_type != PT_LOAD)
             continue;
 
         uint64_t seg_addr = phdr[i].p_vaddr;
@@ -384,7 +384,7 @@ uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
         // 清零剩余内存
         if (seg_size > file_size)
         {
-            memset((char *)aligned_addr + size_diff + file_size,
+            memset((char *)seg_addr + file_size,
                    0, seg_size - file_size);
         }
     }
