@@ -1,6 +1,7 @@
 #pragma once
 
 #include <fs/vfs/vfs.h>
+#include <fs/vfs/pipe.h>
 #include <task/signal.h>
 
 #define AT_NULL 0
@@ -45,7 +46,7 @@
 
 #define TASK_NAME_MAX 128
 
-#define MAX_FD_NUM 16
+#define MAX_FD_NUM 32
 
 #define current_task arch_get_current()
 

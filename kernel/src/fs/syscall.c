@@ -35,7 +35,7 @@ uint64_t sys_open(const char *name, uint64_t mode, uint64_t flags)
 
 uint64_t sys_close(uint64_t fd)
 {
-    if (fd >= MAX_FD_NUM && fd <= MAX_SOCKETS)
+    if (fd > MAX_FD_NUM && fd <= MAX_SOCKETS)
     {
         sys_socket_close(fd);
     }
@@ -46,6 +46,11 @@ uint64_t sys_close(uint64_t fd)
     }
 
     current_task->fds[fd]->offset = 0;
+    if (current_task->fds[fd]->type == file_pipe && current_task->fds[fd]->handle)
+    {
+        pipe_t *pipe = current_task->fds[fd]->handle;
+        pipe->reference_count--;
+    }
     vfs_close(current_task->fds[fd]);
     current_task->fds[fd] = NULL;
 
@@ -54,8 +59,7 @@ uint64_t sys_close(uint64_t fd)
 
 uint64_t sys_read(uint64_t fd, void *buf, uint64_t len)
 {
-
-    if (fd >= MAX_FD_NUM || current_task->fds[fd] == NULL)
+    if (fd > MAX_FD_NUM || current_task->fds[fd] == NULL)
     {
         return (uint64_t)-EBADFD;
     }
@@ -65,7 +69,7 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len)
 
 uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len)
 {
-    if (fd >= MAX_FD_NUM || current_task->fds[fd] == NULL)
+    if (fd > MAX_FD_NUM || current_task->fds[fd] == NULL)
     {
         return (uint64_t)-EBADFD;
     }
@@ -75,7 +79,7 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len)
 
 uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence)
 {
-    if (fd >= MAX_FD_NUM || current_task->fds[fd] == NULL)
+    if (fd > MAX_FD_NUM || current_task->fds[fd] == NULL)
     {
         return (uint64_t)-EBADFD;
     }
@@ -106,7 +110,7 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence)
 
 uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg)
 {
-    if (fd >= MAX_FD_NUM || current_task->fds[fd] == NULL)
+    if (fd > MAX_FD_NUM || current_task->fds[fd] == NULL)
     {
         return (uint64_t)-EBADFD;
     }
@@ -199,7 +203,7 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count)
 
 uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
 {
-    if (fd >= MAX_FD_NUM)
+    if (fd > MAX_FD_NUM)
         return (uint64_t)-EBADF;
     if (!current_task->fds[fd])
         return (uint64_t)-EBADF;

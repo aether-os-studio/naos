@@ -67,6 +67,7 @@ enum
     file_dir,    // 文件夹
     file_block,  // 块设备，如硬盘
     file_stream, // 流式设备，如终端
+    file_pipe,   // 管道设备
 };
 
 typedef struct vfs_node *vfs_node_t;
@@ -172,6 +173,7 @@ struct vfs_node
 extern vfs_node_t rootdir; // vfs 根目录
 
 vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name);
+void vfs_free(vfs_node_t vfs);
 // 一定要记得手动设置一下child的type
 vfs_node_t vfs_child_append(vfs_node_t parent, const char *name, void *handle);
 

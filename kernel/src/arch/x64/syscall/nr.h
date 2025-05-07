@@ -29,6 +29,7 @@
 #define SYS_IOCTL 16 // ioctl(int fd, sint cmd, int arg)
 #define SYS_GETDENTS 21
 #define SYS_GETDENTS64 217
+#define SYS_PIPE2 293
 #define SYS_CHDIR 80
 #define SYS_GETCWD 79
 #define SYS_FCNTL 72

@@ -158,8 +158,6 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
 {
     arch_context_to_user_mode(context, entry, stack);
 
-    struct pt_regs *regs = context->ctx;
-
     __asm__ __volatile__(
         "movq %0, %%rsp\n\t"
         "jmp ret_from_exception" ::"r"(context->ctx));

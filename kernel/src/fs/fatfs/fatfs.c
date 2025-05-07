@@ -140,6 +140,8 @@ void fatfs_close(file_t handle)
     {
         res = f_close(handle->handle);
     }
+    if (res != FR_OK)
+        return;
     free(handle->path);
     free(handle->handle);
     free(handle);

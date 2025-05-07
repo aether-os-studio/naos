@@ -32,7 +32,7 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name)
     return node;
 }
 
-static void vfs_free(vfs_node_t vfs)
+void vfs_free(vfs_node_t vfs)
 {
     if (vfs == NULL)
         return;
@@ -305,7 +305,8 @@ int vfs_close(vfs_node_t node)
     if (node->type == file_dir)
         return 0;
     callbackof(node, close)(node->handle);
-    node->handle = NULL;
+    if (node->type != file_pipe)
+        node->handle = NULL;
     return 0;
 }
 

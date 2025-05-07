@@ -112,6 +112,7 @@ void idle_entry()
 #include <drivers/fb.h>
 
 extern void fatfs_init();
+extern void pipefs_init();
 
 extern void mount_root();
 
@@ -135,6 +136,7 @@ void init_thread()
     fbdev_init();
 
     fatfs_init();
+    pipefs_init();
 
     mount_root();
 
@@ -302,9 +304,15 @@ uint64_t task_fork(struct pt_regs *regs)
     child->brk_start = USER_BRK_START;
     child->brk_end = USER_BRK_START;
 
-    child->fds[0] = vfs_open("/dev/stdin");
-    child->fds[1] = vfs_open("/dev/stdout");
-    child->fds[2] = vfs_open("/dev/stderr");
+    memcpy(child->fds, current_task->fds, sizeof(child->fds));
+    for (uint64_t i = 0; i < MAX_FD_NUM; i++)
+    {
+        if (child->fds[i] && child->fds[i]->type == file_pipe && child->fds[i]->handle)
+        {
+            pipe_t *pipe = child->fds[i]->handle;
+            pipe->reference_count++;
+        }
+    }
 
     can_schedule = true;
 

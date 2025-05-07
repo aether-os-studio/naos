@@ -19,7 +19,7 @@ struct sockaddr
     char sa_data[14];
 };
 
-#define MAX_SOCKETS (10 + MAX_FD_NUM)
+#define MAX_SOCKETS (16 + MAX_FD_NUM)
 #define SOCKET_NAME_LEN 32
 #define BUFFER_SIZE 4096
 

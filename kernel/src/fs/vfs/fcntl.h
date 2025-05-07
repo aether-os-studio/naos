@@ -6,6 +6,8 @@
 #define SEEK_CUR 1 /* Seek from current position.  */
 #define SEEK_END 2 /* Seek from end of file.  */
 
+#define FIOCLEX 0x5451
+
 #define DT_UNKNOWN 0
 #define DT_FIFO 1
 #define DT_CHR 2

@@ -32,3 +32,4 @@ uint64_t sys_chdir(const char *dirname);
 uint64_t sys_getcwd(char *cwd, uint64_t size);
 
 uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg);
+int sys_pipe(int fd[2]);
