@@ -144,9 +144,9 @@ void init_thread()
 
     system_initialized = true;
 
-    task_execve("/usr/bin/init.elf", NULL, NULL);
+    task_execve("/usr/bin/init", NULL, NULL);
 
-    printk("run /usr/bin/init.elf failed\n");
+    printk("run /usr/bin/init failed\n");
 
     while (1)
     {
@@ -456,6 +456,14 @@ uint64_t task_exit(int64_t code)
     task_t *next = task_search(TASK_READY, task->cpu_id);
 
     task->state = TASK_DIED;
+
+    for (uint64_t i = 0; i < MAX_FD_NUM; i++)
+    {
+        if (current_task->fds[i])
+        {
+            vfs_close(current_task->fds[i]);
+        }
+    }
 
     if (task->waitpid != 0)
     {

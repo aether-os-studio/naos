@@ -231,11 +231,11 @@ user: libc-$(ARCH)
 $(IMAGE_NAME).iso: limine/limine kernel
 	rm -rf iso_root
 	mkdir -p iso_root/boot
+	cp -v -r user/rootfs-$(ARCH)/* iso_root/
 	cp -v kernel/bin-$(ARCH)/kernel iso_root/boot/
 	mkdir -p iso_root/boot/limine
 	cp -v limine.conf iso_root/boot/limine/
 	mkdir -p iso_root/usr/bin
-	cp -v -r user/usr-$(ARCH)/* iso_root/usr
 	mkdir -p iso_root/EFI/BOOT
 ifeq ($(ARCH),x86_64)
 	cp -v -r libc-$(ARCH)/* iso_root/usr/
@@ -286,10 +286,10 @@ else
 	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00
 endif
 	mformat -i $(IMAGE_NAME).hdd@@1M
-	mmd -i $(IMAGE_NAME).hdd@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine ::/usr
+	mmd -i $(IMAGE_NAME).hdd@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
+	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/* ::/
 	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(ARCH)/kernel ::/boot
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf ::/boot/limine
-	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/usr-$(ARCH)/* ::/usr
 ifeq ($(ARCH),x86_64)
 	mcopy -s -i $(IMAGE_NAME).hdd@@1M libc-$(ARCH)/* ::/usr/
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/limine-bios.sys ::/boot/limine

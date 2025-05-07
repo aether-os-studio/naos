@@ -154,6 +154,19 @@ void stdio_init()
     regist_dev("stderr", NULL, stdout_write, NULL, NULL);
 }
 
+uint64_t next = 0;
+
+ssize_t random_dev_read(void *data, uint64_t offset, void *buf, uint64_t len)
+{
+#if defined(__x86_64__)
+    tm time;
+    time_read_bcd(&time);
+    next = mktime(&time);
+#endif
+    next = next * 1103515245 + 12345;
+    return ((unsigned)(next / 65536) % 32768);
+}
+
 void dev_init()
 {
     devfs_id = vfs_regist("devfs", &callbacks);
@@ -163,4 +176,6 @@ void dev_init()
     devfs_root->fsid = devfs_id;
 
     memset(devfs_handles, 0, sizeof(devfs_handles));
+
+    regist_dev("random", random_dev_read, NULL, NULL, NULL);
 }
