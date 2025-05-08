@@ -126,7 +126,7 @@ int sys_pipe(int pipefd[2])
 
     if (i == MAX_FD_NUM)
     {
-        return (uint64_t)-EBADFD;
+        return -EBADFD;
     }
 
     // 查找空闲的管道

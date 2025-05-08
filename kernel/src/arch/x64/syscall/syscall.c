@@ -1,7 +1,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
-#include <fs/syscall.h>
-#include <mm/syscall.h>
+#include <fs/fs_syscall.h>
+#include <mm/mm_syscall.h>
 #include <net/syscall.h>
 #include <drivers/window_manager/window_manager.h>
 
@@ -55,6 +55,13 @@ void syscall_init()
 }
 
 extern int sys_pipe(int pipefd[2]);
+
+// Beware the 65 character limit!
+char sysname[] = "Next Aether OS";
+char nodename[] = "Aether-OS";
+char release[] = "0.0.1";
+char version[] = "0.0.1";
+char machine[] = "x86_64";
 
 void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
 {
@@ -150,6 +157,12 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_MMAP:
         regs->rax = sys_mmap(arg1, arg2, arg3, arg4, arg5, arg6);
         break;
+    case SYS_MPROTECT:
+        regs->rax = 0;
+        break;
+    case SYS_MUNMAP:
+        regs->rax = 0;
+        break;
     case SYS_CLOCK_GETTIME:
         tm time;
         time_read_bcd(&time);
@@ -195,7 +208,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = sys_recv(arg1, (void *)arg2, arg3, arg4);
         break;
     case SYS_SET_TID_ADDRESS:
-        regs->rax = 0;
+        regs->rax = current_task->pid;
         break;
     case SYS_POLL:
         regs->rax = 0;
@@ -212,6 +225,61 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_PIPE2:
         // todo: support flags
         regs->rax = sys_pipe((int *)arg1);
+        break;
+    case SYS_FSTAT:
+        regs->rax = sys_fstat(arg1, (struct stat *)arg2);
+        break;
+    case SYS_UNAME:
+        struct utsname *utsname = (struct utsname *)arg1;
+        memcpy(utsname->sysname, sysname, sizeof(sysname));
+        memcpy(utsname->nodename, nodename, sizeof(nodename));
+        memcpy(utsname->release, release, sizeof(release));
+        memcpy(utsname->version, version, sizeof(version));
+        memcpy(utsname->machine, machine, sizeof(machine));
+        regs->rax = 0;
+        break;
+    case SYS_GETUID:
+        regs->rax = current_task->uid;
+        break;
+    case SYS_GETGID:
+        regs->rax = current_task->gid;
+        break;
+    case SYS_GETEUID:
+        regs->rax = current_task->euid;
+        break;
+    case SYS_GETEGID:
+        regs->rax = current_task->egid;
+        break;
+    case SYS_SETPGID:
+        if (!arg1)
+        {
+            current_task->pgid = (int64_t)arg2;
+        }
+        else
+        {
+            if (tasks[arg1] == NULL)
+            {
+                regs->rax = (uint64_t)-ENOENT;
+                break;
+            }
+            tasks[arg1]->pgid = arg2;
+        }
+        regs->rax = 0;
+        break;
+    case SYS_GETPGID:
+        regs->rax = current_task->pgid;
+        break;
+    case SYS_DUP:
+        regs->rax = 0;
+        break;
+    case SYS_DUP2:
+        regs->rax = 0;
+        break;
+    case SYS_GETRLIMIT:
+        regs->rax = sys_get_rlimit(arg1, (struct rlimit *)arg2);
+        break;
+    case SYS_PRLIMIT64:
+        regs->rax = 0;
         break;
 
     default:

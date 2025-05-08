@@ -31,58 +31,163 @@ uint64_t blkdev_ioctl(uint64_t drive, uint64_t cmd, uint64_t arg)
     return 0;
 }
 
+#define MAX_BLOCK_IO_SIZE (DEFAULT_PAGE_SIZE) // 限制单次I/O操作最大为4KB
+
 uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len)
 {
     blkdev_t *dev = &blk_devs[drive];
-    if (!dev)
+    if (!dev || !dev->read)
+    {
         return (uint64_t)-1;
+    }
 
-    uint64_t start = offset;
-    uint64_t end = offset + len;
+    uint64_t start_sector = offset / dev->block_size;
+    uint64_t end_sector = (offset + len - 1) / dev->block_size;
+    uint64_t sector_count = end_sector - start_sector + 1;
+    uint64_t offset_in_block = offset % dev->block_size;
 
-    uint64_t start_sector_read_start = offset % dev->block_size;
+    uint8_t *tmp = NULL;
+    uint64_t total_read = 0;
+    uint64_t remaining = len;
+    uint8_t *dest = (uint8_t *)buf;
 
-    uint64_t start_sector_id = start / dev->block_size;
-    uint64_t end_sector_id = (end - 1) / dev->block_size;
+    while (remaining > 0)
+    {
+        // 计算本次操作的扇区数和长度
+        uint64_t chunk_sectors = sector_count;
+        uint64_t chunk_size = remaining;
 
-    uint64_t buffer_size = (end_sector_id - start_sector_id + 1) * dev->block_size;
+        // 限制单次I/O大小
+        if (chunk_sectors * dev->block_size > MAX_BLOCK_IO_SIZE)
+        {
+            chunk_sectors = MAX_BLOCK_IO_SIZE / dev->block_size;
+            chunk_size = chunk_sectors * dev->block_size - offset_in_block;
+            if (chunk_size > remaining)
+            {
+                chunk_size = remaining;
+            }
+        }
 
-    uint8_t *tmp = phys_to_virt((uint8_t *)alloc_frames((buffer_size + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE));
+        // 分配临时缓冲区（仅第一次或需要调整大小时）
+        if (!tmp || chunk_sectors != sector_count)
+        {
+            if (tmp)
+                free_frames_bytes(tmp, sector_count * dev->block_size);
+            tmp = alloc_frames_bytes(chunk_sectors * dev->block_size);
+            if (!tmp)
+            {
+                return (uint64_t)-1;
+            }
+        }
 
-    dev->read(dev->ptr, start_sector_id, tmp, buffer_size / dev->block_size);
+        // 执行块设备读取
+        if (dev->read(dev->ptr, start_sector, tmp, chunk_sectors) != chunk_sectors)
+        {
+            if (tmp)
+                free_frames_bytes(tmp, chunk_sectors * dev->block_size);
+            return (uint64_t)-1;
+        }
 
-    memcpy(buf, tmp + start_sector_read_start, len);
+        // 复制数据到目标缓冲区
+        uint64_t copy_size = (chunk_size > remaining) ? remaining : chunk_size;
+        memcpy(dest, tmp + offset_in_block, copy_size);
 
-    free_frames(virt_to_phys((uint64_t)tmp), (buffer_size + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE);
+        // 更新状态
+        dest += copy_size;
+        remaining -= copy_size;
+        total_read += copy_size;
+        start_sector += chunk_sectors;
+        offset_in_block = 0; // 第一次之后不需要再处理块内偏移
+    }
 
-    return len;
+    if (tmp)
+    {
+        free_frames_bytes(tmp, sector_count * dev->block_size);
+    }
+    return total_read;
 }
 
-uint64_t blkdev_write(uint64_t drive, uint64_t offset, void *buf, uint64_t len)
+uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf, uint64_t len)
 {
     blkdev_t *dev = &blk_devs[drive];
-    if (!dev)
+    if (!dev || !dev->read || !dev->write)
+    {
         return (uint64_t)-1;
+    }
 
-    uint64_t start = offset;
-    uint64_t end = offset + len;
+    uint64_t start_sector = offset / dev->block_size;
+    uint64_t end_sector = (offset + len - 1) / dev->block_size;
+    uint64_t sector_count = end_sector - start_sector + 1;
+    uint64_t offset_in_block = offset % dev->block_size;
 
-    uint64_t start_sector_read_start = offset % dev->block_size;
+    uint8_t *tmp = NULL;
+    uint64_t total_written = 0;
+    uint64_t remaining = len;
+    const uint8_t *src = (const uint8_t *)buf;
 
-    uint64_t start_sector_id = start / dev->block_size;
-    uint64_t end_sector_id = (end - 1) / dev->block_size;
+    while (remaining > 0)
+    {
+        // 计算本次操作的扇区数和长度
+        uint64_t chunk_sectors = sector_count;
+        uint64_t chunk_size = remaining;
 
-    uint64_t buffer_size = (end_sector_id - start_sector_id + 1) * dev->block_size;
+        // 限制单次I/O大小
+        if (chunk_sectors * dev->block_size > MAX_BLOCK_IO_SIZE)
+        {
+            chunk_sectors = MAX_BLOCK_IO_SIZE / dev->block_size;
+            chunk_size = chunk_sectors * dev->block_size - offset_in_block;
+            if (chunk_size > remaining)
+            {
+                chunk_size = remaining;
+            }
+        }
 
-    uint8_t *tmp = phys_to_virt((uint8_t *)alloc_frames((buffer_size + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE));
+        // 分配临时缓冲区（仅第一次或需要调整大小时）
+        if (!tmp || chunk_sectors != sector_count)
+        {
+            if (tmp)
+                free_frames_bytes(tmp, sector_count * dev->block_size);
+            tmp = alloc_frames_bytes(chunk_sectors * dev->block_size);
+            if (!tmp)
+            {
+                return (uint64_t)-1;
+            }
+        }
 
-    dev->read(dev->ptr, start_sector_id, tmp, buffer_size / dev->block_size);
+        // 对于部分块写入，需要先读取原始数据
+        if (offset_in_block != 0 || chunk_size < chunk_sectors * dev->block_size)
+        {
+            if (dev->read(dev->ptr, start_sector, tmp, chunk_sectors) != chunk_sectors)
+            {
+                if (tmp)
+                    free_frames_bytes(tmp, chunk_sectors * dev->block_size);
+                return (uint64_t)-1;
+            }
+        }
 
-    memcpy(tmp + start_sector_read_start, buf, len);
+        // 复制数据到临时缓冲区
+        uint64_t copy_size = (chunk_size > remaining) ? remaining : chunk_size;
+        memcpy(tmp + offset_in_block, src, copy_size);
 
-    dev->write(dev->ptr, start_sector_id, tmp, buffer_size / dev->block_size);
+        // 执行块设备写入
+        if (dev->write(dev->ptr, start_sector, tmp, chunk_sectors) != chunk_sectors)
+        {
+            if (tmp)
+                free_frames_bytes(tmp, chunk_sectors * dev->block_size);
+            return (uint64_t)-1;
+        }
 
-    free_frames(virt_to_phys((uint64_t)tmp), (buffer_size + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE);
+        // 更新状态
+        src += copy_size;
+        remaining -= copy_size;
+        total_written += copy_size;
+        start_sector += chunk_sectors;
+        offset_in_block = 0; // 第一次之后不需要再处理块内偏移
+    }
 
-    return len;
+    if (tmp)
+    {
+        free_frames_bytes(tmp, sector_count * dev->block_size);
+    }
+    return total_written;
 }

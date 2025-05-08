@@ -111,7 +111,7 @@ run-hdd-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-drive if=none,file=$(IMAGE_NAME).hdd,format=raw,id=harddisk \
 		-device ahci,id=ahci \
 		-device qemu-xhci,id=xhci \
-		-device ide-hd,drive=harddisk,bus=ahci.0 \
+		-device nvme,drive=harddisk,serial=1234 \
 		-rtc base=localtime \
 		$(QEMUFLAGS)
 
@@ -219,11 +219,6 @@ kernel: kernel-deps
 	$(MAKE) -C kernel
 	$(MAKE) -C user
 
-libc-$(ARCH):
-	make -C relibc install DESTDIR=$(ROOT_DIR)/libc-$(ARCH) PROFILE=release
-
-	sudo cp -r libc-$(ARCH) /usr/
-
 .PHONY: user
 user: libc-$(ARCH)
 	$(MAKE) -C user all
@@ -231,19 +226,23 @@ user: libc-$(ARCH)
 $(IMAGE_NAME).iso: limine/limine kernel
 	rm -rf iso_root
 	mkdir -p iso_root/boot
-	cp -v -r user/rootfs-$(ARCH)/* iso_root/
+	cp -v -r user/rootfs-$(ARCH)/usr iso_root/
+	cp -v -r user/rootfs-$(ARCH)/lib iso_root/
+	cp -v -r user/rootfs-$(ARCH)/etc iso_root/
+	cp -v -r user/rootfs-$(ARCH)/bin iso_root/
+	cp -v -r user/rootfs-$(ARCH)/sbin iso_root/
+	cp -v -r user/rootfs-$(ARCH)/root iso_root/
 	cp -v kernel/bin-$(ARCH)/kernel iso_root/boot/
 	mkdir -p iso_root/boot/limine
 	cp -v limine.conf iso_root/boot/limine/
 	mkdir -p iso_root/usr/bin
 	mkdir -p iso_root/EFI/BOOT
 ifeq ($(ARCH),x86_64)
-	cp -v -r libc-$(ARCH)/* iso_root/usr/
 	cp -v limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin iso_root/boot/limine/
 	cp -v limine/BOOTX64.EFI iso_root/EFI/BOOT/
 	cp -v limine/BOOTIA32.EFI iso_root/EFI/BOOT/
-	xorriso -as mkisofs -R -r -J -b boot/limine/limine-bios-cd.bin \
-		-no-emul-boot -boot-load-size 4 -boot-info-table -hfsplus \
+	xorriso -as mkisofs -R -r -J -l -b boot/limine/limine-bios-cd.bin \
+		-no-emul-boot -boot-load-size 4 -boot-info-table \
 		-apm-block-size 2048 --efi-boot boot/limine/limine-uefi-cd.bin \
 		--protective-msdos-label \
 		iso_root -o $(IMAGE_NAME).iso
@@ -251,7 +250,7 @@ endif
 ifeq ($(ARCH),aarch64)
 	cp -v limine/limine-uefi-cd.bin iso_root/boot/limine/
 	cp -v limine/BOOTAA64.EFI iso_root/EFI/BOOT/
-	xorriso -as mkisofs -R -r -J \
+	xorriso -as mkisofs -R -r -J -l \
 		-apm-block-size 2048 \
 		--efi-boot boot/limine/limine-uefi-cd.bin \
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
@@ -260,8 +259,8 @@ endif
 ifeq ($(ARCH),riscv64)
 	cp -v limine/limine-uefi-cd.bin iso_root/boot/limine/
 	cp -v limine/BOOTRISCV64.EFI iso_root/EFI/BOOT/
-	xorriso -as mkisofs -R -r -J \
-		-hfsplus -apm-block-size 2048 \
+	xorriso -as mkisofs -R -r -J -l \
+		-apm-block-size 2048 \
 		--efi-boot boot/limine/limine-uefi-cd.bin \
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
 		iso_root -o $(IMAGE_NAME).iso
@@ -269,8 +268,8 @@ endif
 ifeq ($(ARCH),loongarch64)
 	cp -v limine/limine-uefi-cd.bin iso_root/boot/limine/
 	cp -v limine/BOOTLOONGARCH64.EFI iso_root/EFI/BOOT/
-	xorriso -as mkisofs -R -r -J \
-		-hfsplus -apm-block-size 2048 \
+	xorriso -as mkisofs -R -r -J -l \
+		-apm-block-size 2048 \
 		--efi-boot boot/limine/limine-uefi-cd.bin \
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
 		iso_root -o $(IMAGE_NAME).iso
@@ -279,7 +278,7 @@ endif
 
 $(IMAGE_NAME).hdd: limine/limine kernel
 	rm -f $(IMAGE_NAME).hdd
-	dd if=/dev/zero bs=1M count=0 seek=512 of=$(IMAGE_NAME).hdd
+	dd if=/dev/zero bs=1M count=0 seek=2048 of=$(IMAGE_NAME).hdd
 ifeq ($(ARCH),x86_64)
 	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00 -m 1
 else
@@ -287,11 +286,15 @@ else
 endif
 	mformat -i $(IMAGE_NAME).hdd@@1M
 	mmd -i $(IMAGE_NAME).hdd@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
-	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/* ::/
+	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/usr ::/
+	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/lib ::/
+	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/etc ::/
+	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/bin ::/
+	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/sbin ::/
+	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/root ::/
 	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(ARCH)/kernel ::/boot
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf ::/boot/limine
 ifeq ($(ARCH),x86_64)
-	mcopy -s -i $(IMAGE_NAME).hdd@@1M libc-$(ARCH)/* ::/usr/
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/limine-bios.sys ::/boot/limine
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTX64.EFI ::/EFI/BOOT
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTIA32.EFI ::/EFI/BOOT
@@ -317,4 +320,4 @@ distclean:
 	$(MAKE) -C kernel distclean
 	$(MAKE) -C user distclean
 	$(MAKE) -C relibc clean
-	rm -rf libc-$(ARCH) iso_root *.iso *.hdd kernel-deps limine ovmf
+	rm -rf iso_root *.iso *.hdd kernel-deps limine ovmf

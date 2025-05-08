@@ -1,5 +1,5 @@
 #include "fs/vfs/dev.h"
-#include <fs/syscall.h>
+#include <fs/fs_syscall.h>
 #include <drivers/kernel_logger.h>
 #include <arch/arch.h>
 
@@ -12,7 +12,10 @@ static vfs_node_t devfs_root = NULL;
 
 devfs_handle_t devfs_handles[MAX_DEV_NUM];
 
-static void dummy() {}
+static int dummy()
+{
+    return -1;
+}
 
 ssize_t devfs_read(void *file, void *addr, size_t offset, size_t size)
 {
@@ -97,7 +100,10 @@ void regist_dev(const char *name,
             devfs_handles[i]->write = write;
             devfs_handles[i]->ioctl = ioctl;
             devfs_handles[i]->data = data;
-            vfs_child_append(devfs_root, devfs_handles[i]->name, NULL);
+            vfs_node_t child = vfs_child_append(devfs_root, devfs_handles[i]->name, NULL);
+            child->type = file_block;
+            if (!strncmp(name, "std", 3))
+                child->type = file_stream;
             break;
         }
     }
@@ -130,7 +136,7 @@ ssize_t stdout_write(void *data, uint64_t offset, const void *buf, uint64_t len)
 
 extern struct flanterm_context *ft_ctx;
 
-ssize_t stdout_ioctl(void *data, ssize_t cmd, ssize_t arg)
+ssize_t stdio_ioctl(void *data, ssize_t cmd, ssize_t arg)
 {
     switch (cmd)
     {
@@ -142,16 +148,26 @@ ssize_t stdout_ioctl(void *data, ssize_t cmd, ssize_t arg)
             .ws_row = ft_ctx->rows,
         };
         return 0;
-    default:
-        return (uint64_t)-ENOSYS;
+    case TIOCSCTTY:
+        return 0;
+    case TIOCGPGRP:
+        int *pid = (int *)arg;
+        *pid = current_task->pid;
+        return 0;
+    case TIOCSPGRP:
+        return 0;
     }
+
+    return -ENOTTY;
 }
 
 void stdio_init()
 {
-    regist_dev("stdin", stdin_read, NULL, NULL, NULL);
-    regist_dev("stdout", NULL, stdout_write, stdout_ioctl, NULL);
-    regist_dev("stderr", NULL, stdout_write, NULL, NULL);
+    regist_dev("stdin", stdin_read, NULL, stdio_ioctl, NULL);
+    regist_dev("stdout", NULL, stdout_write, stdio_ioctl, NULL);
+    regist_dev("stderr", NULL, stdout_write, stdio_ioctl, NULL);
+
+    regist_dev("tty", stdin_read, stdout_write, stdio_ioctl, NULL);
 }
 
 uint64_t next = 0;

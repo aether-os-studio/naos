@@ -18,12 +18,16 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64
     context->ctx->rsp = stack;
     context->ctx->rbp = stack;
     context->ctx->rflags = (0UL << 12) | (0b10) | (1UL << 9);
+    context->fsbase = 0;
+    context->gsbase = 0;
     if (user_mode)
     {
         context->ctx->cs = SELECTOR_USER_CS;
         context->ctx->ds = SELECTOR_USER_DS;
         context->ctx->es = SELECTOR_USER_DS;
         context->ctx->ss = SELECTOR_USER_DS;
+        context->fs = SELECTOR_USER_DS;
+        context->gs = SELECTOR_USER_DS;
     }
     else
     {
@@ -31,6 +35,8 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64
         context->ctx->ds = SELECTOR_KERNEL_DS;
         context->ctx->es = SELECTOR_KERNEL_DS;
         context->ctx->ss = SELECTOR_KERNEL_DS;
+        context->fs = SELECTOR_KERNEL_DS;
+        context->gs = SELECTOR_KERNEL_DS;
     }
 }
 

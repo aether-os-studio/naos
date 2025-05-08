@@ -1,7 +1,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
-#include <fs/syscall.h>
-#include <mm/syscall.h>
+#include <fs/fs_syscall.h>
+#include <mm/mm_syscall.h>
 
 void syscall_init()
 {

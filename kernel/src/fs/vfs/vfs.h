@@ -28,28 +28,44 @@ static inline bool streq(const char *str1, const char *str2)
         str1++;
         str2++;
     }
-
-    return ret == 0;
+    if (ret < 0)
+    {
+        return false;
+    }
+    else if (ret > 0)
+    {
+        return false;
+    }
+    return true;
 }
 
-static inline bool streqn(const char *a, const char *b, size_t max_size)
+static inline bool streqn(const char *str1, const char *str2, size_t max_size)
 {
-    size_t i = 0;
-    while (true)
+    if (max_size == 0)
     {
-        if (!(i < max_size))
-            return true;
-        unsigned char a_byte = a[i];
-        unsigned char b_byte = b[i];
-        if (!a_byte && !b_byte)
-            return true;
-        // If only one char is null, one of the following cases applies.
-        if (tolower(a_byte) < tolower(b_byte))
-            return false;
-        if (tolower(a_byte) > tolower(b_byte))
-            return false;
-        i++;
+        return true;
     }
+
+    while (max_size-- > 0)
+    {
+        int c1 = tolower((unsigned char)*str1);
+        int c2 = tolower((unsigned char)*str2);
+
+        if (c1 != c2)
+        {
+            return false;
+        }
+
+        if (*str1 == '\0')
+        {
+            return true;
+        }
+
+        str1++;
+        str2++;
+    }
+
+    return true;
 }
 
 #define max(x, y) ((x > y) ? (x) : (y))

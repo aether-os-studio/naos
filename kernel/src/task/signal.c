@@ -38,7 +38,7 @@ int sys_ssetmask(int how, sigset_t *nset, sigset_t *oset)
             current_task->blocked = safe;
             break;
         default:
-            return -EINVAL;
+            return -ENOSYS;
             break;
         }
     }

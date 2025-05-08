@@ -73,6 +73,10 @@ void map_page(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t flags)
     {
         *pte = (paddr & ARCH_ADDR_MASK) | flags;
     }
+    else
+    {
+        *pte = (*pte & ARCH_ADDR_MASK) | flags;
+    }
 
     // 刷新TLB
     asm volatile("invlpg (%0)" : : "r"(vaddr) : "memory");

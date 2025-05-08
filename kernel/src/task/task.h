@@ -35,12 +35,14 @@
 #define AT_SYSINFO 32
 #define AT_SYSINFO_EHDR 33
 
-#define EHDR_START_ADDR 0x0000600000000000
+#define EHDR_START_ADDR 0x0000004000000000
+#define INTERPRETER_EHDR_ADDR 0x0000003000000000
+#define INTERPRETER_BASE_ADDR 0x0000002000000000
 
 #define USER_BRK_START 0x0000700000000000
 #define USER_BRK_END 0x00007fffffffffff
 
-#define USER_MMAP_START 0x0000400000000000
+#define USER_MMAP_START 0x0000006000000000
 
 #define MAX_TASK_NUM 1024
 
@@ -68,6 +70,11 @@ typedef struct task
 {
     uint64_t pid;
     uint64_t ppid;
+    int64_t uid;
+    int64_t gid;
+    int64_t euid;
+    int64_t egid;
+    int64_t pgid;
     uint64_t waitpid;
     uint64_t status;
     uint32_t cpu_id;

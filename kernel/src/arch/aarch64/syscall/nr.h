@@ -26,8 +26,12 @@
 #define SYS_BRK 12      // brk(void *addr)
 #define SYS_READV 19
 #define SYS_WRITEV 20
+#define SYS_DUP 32
+#define SYS_DUP2 33
 #define SYS_IOCTL 16 // ioctl(int fd, sint cmd, int arg)
 #define SYS_GETDENTS 21
+#define SYS_GETDENTS64 217
+#define SYS_PIPE2 293
 #define SYS_CHDIR 80
 #define SYS_GETCWD 79
 #define SYS_FCNTL 72
@@ -46,15 +50,26 @@
 #define SYS_RECVMSG 47
 
 /* 进程管理相关 */
-#define SYS_FORK 57     // fork()
-#define SYS_VFORK 58    // vfork()
-#define SYS_EXECVE 59   // execve(const char *pathname, char *const argv[], char *const envp[])
-#define SYS_EXIT 60     // exit(int status)
-#define SYS_WAIT4 61    // wait4(pid_t pid, int *wstatus, int options, struct rusage *rusage)
-#define SYS_KILL 62     // kill(pid_t pid, int sig)
+#define SYS_FORK 57   // fork()
+#define SYS_VFORK 58  // vfork()
+#define SYS_EXECVE 59 // execve(const char *pathname, char *const argv[], char *const envp[])
+#define SYS_EXIT 60   // exit(int status)
+#define SYS_WAIT4 61  // wait4(pid_t pid, int *wstatus, int options, struct rusage *rusage)
+#define SYS_KILL 62   // kill(pid_t pid, int sig)
+#define SYS_UNAME 63
 #define SYS_GETPID 39   // getpid()
+#define SYS_GETUID 102  // getuid()
+#define SYS_GETGID 104  // getgid()
+#define SYS_GETEUID 107 // geteuid()
+#define SYS_GETEGID 108 // getegid()
+#define SYS_SETPGID 109 // setpgid(int pid, int64_t pgid)
+#define SYS_GETPGID 121 // getpgid()
 #define SYS_GETPPID 110 // getppid()
+#define SYS_GETTID 186
+#define SYS_FUTEX 202
 #define SYS_EXIT_GROUP 231
+#define SYS_GETRLIMIT 97
+#define SYS_PRLIMIT64 302
 
 /* 内存管理相关 */
 #define SYS_MINCORE 27 // mincore(void *addr, size_t length, unsigned char *vec)
@@ -63,12 +78,15 @@
 #define SYS_SIGACTION 13   // sigaction(int sig, const struct sigaction *act, struct sigaction *oact)
 #define SYS_SIGPROCMASK 14 // sigprocmask(int how, const sigset_t *set, sigset_t *oset)
 #define SYS_SIGRETURN 15
+#define SYS_SIGALTSTACK 131
 
 #define SYS_ARCH_PRCTL 158
 
 #define SYS_SIGNAL 350
 #define SYS_SETMASK 351
 #define SYS_CLOCK_GETTIME 228
+
+#define SYS_SET_TID_ADDRESS 218
 
 typedef struct fb_info
 {
@@ -83,5 +101,11 @@ typedef struct fb_info
     uint64_t green_mask_size;
     uint64_t green_mask_shift;
 } fb_info_t;
+
+struct rlimit
+{
+    size_t rlim_cur;
+    size_t rlim_max;
+};
 
 #define FB_IOCTL_GETINFO 1

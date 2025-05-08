@@ -9,3 +9,5 @@
 *.vmdk
 *.exec
 *.o
+
+*.gz

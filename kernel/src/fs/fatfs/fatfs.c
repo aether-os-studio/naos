@@ -117,7 +117,7 @@ void fatfs_open(void *parent, const char *name, vfs_node_t node)
     }
     else
     {
-        node->type = file_block;
+        node->type = file_none;
         fp = malloc(sizeof(FIL));
         res = f_open(fp, new_path, FA_READ | FA_WRITE);
         node->size = f_size((FIL *)fp);
@@ -211,7 +211,7 @@ int fatfs_stat(void *handle, vfs_node_t node)
     }
     else
     {
-        node->type = file_block;
+        node->type = file_none;
         node->size = fno.fsize;
         // node->createtime = fno.ftime
     }

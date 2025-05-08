@@ -4,6 +4,7 @@
 #include <fs/vfs/vfs.h>
 #include <arch/arch.h>
 #include <mm/mm.h>
+#include <fs/fs_syscall.h>
 
 task_t *tasks[MAX_TASK_NUM];
 task_t *idle_tasks[MAX_CPU_NUM];
@@ -43,6 +44,11 @@ task_t *task_create(const char *name, void (*entry)())
     task_t *task = get_free_task();
     task->cpu_id = alloc_cpu_id();
     task->ppid = task->pid;
+    task->uid = 0;
+    task->gid = 0;
+    task->euid = 0;
+    task->egid = 0;
+    task->pgid = 0;
     task->waitpid = 0;
     task->state = TASK_READY;
     task->jiffies = 0;
@@ -112,6 +118,7 @@ void idle_entry()
 #include <drivers/fb.h>
 
 extern void fatfs_init();
+extern void iso9660_init();
 extern void pipefs_init();
 
 extern void mount_root();
@@ -135,8 +142,9 @@ void init_thread()
     partition_init();
     fbdev_init();
 
-    fatfs_init();
     pipefs_init();
+    iso9660_init();
+    fatfs_init();
 
     mount_root();
 
@@ -144,9 +152,13 @@ void init_thread()
 
     system_initialized = true;
 
-    task_execve("/usr/bin/init", NULL, NULL);
+    const char **argvs = (const char **)malloc(sizeof(char *) * 2);
+    memset(argvs, 0, sizeof(char *) * 2);
+    argvs[0] = "/bin/bash";
 
-    printk("run /usr/bin/init failed\n");
+    task_execve(argvs[0], (char *const *)argvs, NULL);
+
+    printk("run /bin/bash failed\n");
 
     while (1)
     {
@@ -183,7 +195,7 @@ uint64_t push_slice(uint64_t ustack, uint8_t *slice, uint64_t len)
     return tmp_stack;
 }
 
-uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], char *envp[], uint64_t e_entry, uint64_t phdr, uint64_t phnum)
+uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], char *envp[], uint64_t e_entry, uint64_t phdr, uint64_t phnum, uint64_t at_base)
 {
     uint64_t env_i = 0;
     uint64_t argv_i = 0;
@@ -218,7 +230,7 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], char *en
         }
     }
 
-    uint64_t total_length = 2 * sizeof(uint64_t) + 5 * 2 * sizeof(uint64_t) + env_i * sizeof(uint64_t) + sizeof(uint64_t) + argv_i * sizeof(uint64_t) + sizeof(uint64_t);
+    uint64_t total_length = 2 * sizeof(uint64_t) + 8 * 2 * sizeof(uint64_t) + env_i * sizeof(uint64_t) + sizeof(uint64_t) + argv_i * sizeof(uint64_t) + sizeof(uint64_t) + sizeof(uint64_t);
     tmp_stack -= (tmp_stack - total_length) % 0x10;
 
     // push auxv
@@ -244,6 +256,14 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], char *en
 
     ((uint64_t *)tmp)[0] = AT_EXECFN;
     ((uint64_t *)tmp)[1] = execfn_ptr;
+    tmp_stack = push_slice(tmp_stack, tmp, 2 * sizeof(uint64_t));
+
+    ((uint64_t *)tmp)[0] = AT_BASE;
+    ((uint64_t *)tmp)[1] = at_base;
+    tmp_stack = push_slice(tmp_stack, tmp, 2 * sizeof(uint64_t));
+
+    ((uint64_t *)tmp)[0] = AT_PAGESZ;
+    ((uint64_t *)tmp)[1] = DEFAULT_PAGE_SIZE;
     tmp_stack = push_slice(tmp_stack, tmp, 2 * sizeof(uint64_t));
 
     memset(tmp, 0, 2 * sizeof(uint64_t));
@@ -295,6 +315,11 @@ uint64_t task_fork(struct pt_regs *regs)
     memcpy(current_task->arch_context->ctx, regs, sizeof(struct pt_regs));
     arch_context_copy(child->arch_context, current_task->arch_context, child->kernel_stack);
     child->ppid = current_task->pid;
+    child->uid = current_task->uid;
+    child->gid = current_task->gid;
+    child->euid = current_task->euid;
+    child->egid = current_task->egid;
+    child->pgid = current_task->pgid;
 
     child->jiffies = current_task->jiffies;
 
@@ -325,35 +350,50 @@ uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
 {
     arch_disable_interrupt();
 
+    can_schedule = false;
+
+#if defined(__x86_64__)
+    current_task->arch_context->cr3 = clone_page_table(virt_to_phys((uint64_t)get_kernel_page_dir()), USER_STACK_START, USER_STACK_END);
+    __asm__ __volatile__("movq %0, %%cr3" ::"r"(current_task->arch_context->cr3));
+#endif
+
     vfs_node_t node = vfs_open(path);
     if (!node)
     {
+        can_schedule = true;
         return (uint64_t)-ENOENT;
     }
 
+    uint64_t buf_len = (node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
+
     uint8_t *buffer = (uint8_t *)EHDR_START_ADDR;
-    map_page_range(get_current_page_dir(true), EHDR_START_ADDR, 0, (node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+    map_page_range(get_current_page_dir(true), EHDR_START_ADDR, 0, buf_len, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
     vfs_read(node, buffer, 0, node->size);
+
+    memset(buffer + node->size, 0, buf_len - node->size);
 
     char *fullpath = vfs_get_fullpath(node);
 
     vfs_close(node);
 
-    Elf64_Ehdr *ehdr = (Elf64_Ehdr *)EHDR_START_ADDR;
+    const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)EHDR_START_ADDR;
 
     uint64_t e_entry = ehdr->e_entry;
 
+    uint64_t interpreter_entry = 0;
+
     if (e_entry == 0)
     {
-        printk("bad e_entry\n");
         free(fullpath);
+        can_schedule = true;
         return -EINVAL;
     }
 
     if (!arch_check_elf(ehdr))
     {
         free(fullpath);
+        can_schedule = true;
         return (uint64_t)-EINVAL;
     }
 
@@ -365,35 +405,88 @@ uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
 
     for (int i = 0; i < ehdr->e_phnum; ++i)
     {
-        if (phdr[i].p_type != PT_LOAD)
-            continue;
-
-        uint64_t seg_addr = phdr[i].p_vaddr;
-        uint64_t seg_size = phdr[i].p_memsz;
-        uint64_t file_size = phdr[i].p_filesz;
-        uint64_t page_size = DEFAULT_PAGE_SIZE;
-        uint64_t page_mask = page_size - 1;
-
-        // 计算对齐后的地址和大小
-        uint64_t aligned_addr = seg_addr & ~page_mask;
-        uint64_t size_diff = seg_addr - aligned_addr;
-        uint64_t alloc_size = (seg_size + size_diff + page_mask) & ~page_mask;
-
-        if (aligned_addr < load_start)
-            load_start = aligned_addr;
-        else if (aligned_addr + alloc_size > load_end)
-            load_end = aligned_addr + alloc_size;
-
-        uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W | PT_FLAG_X;
-        map_page_range(get_current_page_dir(true), aligned_addr, 0, alloc_size, flags);
-
-        memcpy((void *)seg_addr, (void *)(EHDR_START_ADDR + phdr[i].p_offset), file_size);
-
-        // 清零剩余内存
-        if (seg_size > file_size)
+        if (phdr[i].p_type == PT_INTERP)
         {
-            memset((char *)seg_addr + file_size,
-                   0, seg_size - file_size);
+            const char *interpreter_name = ((const char *)ehdr + phdr[i].p_offset);
+
+            vfs_node_t interpreter_node = vfs_open(interpreter_name);
+            if (!interpreter_node)
+            {
+                can_schedule = true;
+                return (uint64_t)-ENOENT;
+            }
+
+            uint8_t *interpreter_buffer = (uint8_t *)INTERPRETER_EHDR_ADDR;
+            map_page_range(get_current_page_dir(true), INTERPRETER_EHDR_ADDR, 0, (interpreter_node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+
+            vfs_read(interpreter_node, interpreter_buffer, 0, interpreter_node->size);
+
+            vfs_close(interpreter_node);
+
+            Elf64_Ehdr *interpreter_ehdr = (Elf64_Ehdr *)interpreter_buffer;
+            Elf64_Phdr *interpreter_phdr = (Elf64_Phdr *)(interpreter_buffer + interpreter_ehdr->e_phoff);
+
+            for (int j = 0; j < interpreter_ehdr->e_phnum; j++)
+            {
+                if (interpreter_phdr[j].p_type != PT_LOAD)
+                    continue;
+
+                uint64_t seg_addr = INTERPRETER_BASE_ADDR + interpreter_phdr[j].p_vaddr;
+                uint64_t seg_size = interpreter_phdr[j].p_memsz;
+                uint64_t file_size = interpreter_phdr[j].p_filesz;
+                uint64_t page_size = DEFAULT_PAGE_SIZE;
+                uint64_t page_mask = page_size - 1;
+
+                // 计算对齐后的地址和大小
+                uint64_t aligned_addr = seg_addr & ~page_mask;
+                uint64_t size_diff = seg_addr - aligned_addr;
+                uint64_t alloc_size = (seg_size + size_diff + page_mask) & ~page_mask;
+
+                uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W | PT_FLAG_X;
+                map_page_range(get_current_page_dir(true), aligned_addr, 0, alloc_size, flags);
+
+                memcpy((void *)seg_addr, (void *)(INTERPRETER_EHDR_ADDR + interpreter_phdr[j].p_offset), file_size);
+
+                if (seg_size > file_size)
+                {
+                    memset((char *)seg_addr + file_size,
+                           0, seg_size - file_size);
+                }
+            }
+
+            interpreter_entry = INTERPRETER_BASE_ADDR + interpreter_ehdr->e_entry;
+        }
+        else
+        {
+            if (phdr[i].p_type != PT_LOAD)
+                continue;
+
+            uint64_t seg_addr = phdr[i].p_vaddr;
+            uint64_t seg_size = phdr[i].p_memsz;
+            uint64_t file_size = phdr[i].p_filesz;
+            uint64_t page_size = DEFAULT_PAGE_SIZE;
+            uint64_t page_mask = page_size - 1;
+
+            // 计算对齐后的地址和大小
+            uint64_t aligned_addr = seg_addr & ~page_mask;
+            uint64_t size_diff = seg_addr - aligned_addr;
+            uint64_t alloc_size = (seg_size + size_diff + page_mask) & ~page_mask;
+
+            if (aligned_addr < load_start)
+                load_start = aligned_addr;
+            else if (aligned_addr + alloc_size > load_end)
+                load_end = aligned_addr + alloc_size;
+
+            uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W | PT_FLAG_X;
+            map_page_range(get_current_page_dir(true), aligned_addr, 0, alloc_size, flags);
+
+            memcpy((void *)seg_addr, (void *)(EHDR_START_ADDR + phdr[i].p_offset), file_size);
+
+            if (seg_size > file_size)
+            {
+                memset((char *)seg_addr + file_size,
+                       0, seg_size - file_size);
+            }
         }
     }
 
@@ -403,8 +496,9 @@ uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
     map_page_range(get_current_page_dir(true), USER_STACK_START, 0, USER_STACK_END - USER_STACK_START, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
     memset((void *)USER_STACK_START, 0, USER_STACK_END - USER_STACK_START);
 
-    uint64_t stack = push_infos(current_task, USER_STACK_END, (char **)argv, (char **)envp, e_entry, (uint64_t)phdr, ehdr->e_phnum);
-    arch_to_user_mode(current_task->arch_context, e_entry, stack);
+    uint64_t stack = push_infos(current_task, USER_STACK_END, (char **)argv, (char **)envp, e_entry, ehdr->e_phoff, ehdr->e_phnum, interpreter_entry ? INTERPRETER_BASE_ADDR : load_start);
+    can_schedule = true;
+    arch_to_user_mode(current_task->arch_context, interpreter_entry ? interpreter_entry : e_entry, stack);
 
     return (uint64_t)-EAGAIN;
 }

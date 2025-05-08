@@ -1,6 +1,6 @@
 #include <arch/arch.h>
 #include <task/task.h>
-#include <fs/syscall.h>
+#include <fs/fs_syscall.h>
 #include <net/socket.h>
 
 uint64_t sys_open(const char *name, uint64_t mode, uint64_t flags)
@@ -64,7 +64,9 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len)
         return (uint64_t)-EBADFD;
     }
 
-    return vfs_read(current_task->fds[fd], buf, current_task->fds[fd]->offset, len);
+    ssize_t ret = vfs_read(current_task->fds[fd], buf, current_task->fds[fd]->offset, len);
+    sys_lseek(fd, len, SEEK_CUR);
+    return ret;
 }
 
 uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len)
@@ -74,7 +76,9 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len)
         return (uint64_t)-EBADFD;
     }
 
-    return vfs_write(current_task->fds[fd], buf, current_task->fds[fd]->offset, len);
+    ssize_t ret = vfs_write(current_task->fds[fd], buf, current_task->fds[fd]->offset, len);
+    sys_lseek(fd, len, SEEK_CUR);
+    return ret;
 }
 
 uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence)
@@ -84,20 +88,29 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence)
         return (uint64_t)-EBADFD;
     }
 
+    int64_t real_offset = offset;
+    if (real_offset < 0 && current_task->fds[fd]->type == file_none && whence != SEEK_CUR)
+        return (uint64_t)-EBADF;
+
     switch (whence)
     {
     case SEEK_SET:
-        current_task->fds[fd]->offset = offset;
+        current_task->fds[fd]->offset = real_offset;
         break;
     case SEEK_CUR:
-        current_task->fds[fd]->offset += offset;
-        if (current_task->fds[fd]->offset > current_task->fds[fd]->size)
+        current_task->fds[fd]->offset += real_offset;
+        if ((int64_t)current_task->fds[fd]->offset < 0)
+        {
+            current_task->fds[fd]->offset = 0;
+        }
+        else if (current_task->fds[fd]->offset > current_task->fds[fd]->size)
         {
             current_task->fds[fd]->offset = current_task->fds[fd]->size;
         }
+
         break;
     case SEEK_END:
-        current_task->fds[fd]->offset = current_task->fds[fd]->size - offset;
+        current_task->fds[fd]->offset = current_task->fds[fd]->size - real_offset;
         break;
 
     default:
@@ -248,9 +261,13 @@ uint64_t sys_chdir(const char *dirname)
 uint64_t sys_getcwd(char *cwd, uint64_t size)
 {
     char *str = vfs_get_fullpath(current_task->cwd);
+    if (size < strlen(str))
+    {
+        return (uint64_t)-ERANGE;
+    }
     strncpy(cwd, str, size);
     free(str);
-    return 0;
+    return strlen(str);
 }
 
 uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
@@ -260,8 +277,48 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
     case 1:
         return 0;
         break;
+    case 2:
+        return 0;
+        break;
 
     default:
         break;
+    }
+
+    return (uint64_t)-ENOSYS;
+}
+
+uint64_t sys_fstat(uint64_t fd, struct stat *buf)
+{
+    static uint64_t i = 0;
+
+    if (fd > MAX_FD_NUM || current_task->fds[fd] == NULL)
+    {
+        return (uint64_t)-EBADFD;
+    }
+
+    buf->st_dev = 0;
+    buf->st_ino = i++;
+    buf->st_nlink = 1;
+    buf->st_uid = 0;
+    buf->st_gid = 0;
+    buf->st_rdev = 0;
+    buf->st_blksize = DEFAULT_PAGE_SIZE;
+    buf->st_size = current_task->fds[fd]->size;
+    buf->st_blocks = (buf->st_size + buf->st_blksize - 1) / buf->st_blksize;
+
+    return 0;
+}
+
+uint64_t sys_get_rlimit(uint64_t resource, struct rlimit *lim)
+{
+    switch (resource)
+    {
+    case 7: // max open fds
+        lim->rlim_cur = 1024;
+        lim->rlim_max = 1024;
+        return 0;
+    default:
+        return (uint64_t)-ENOSYS;
     }
 }

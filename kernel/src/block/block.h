@@ -28,4 +28,4 @@ enum
 uint64_t blkdev_ioctl(uint64_t drive, uint64_t cmd, uint64_t arg);
 
 uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len);
-uint64_t blkdev_write(uint64_t drive, uint64_t offset, void *buf, uint64_t len);
+uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf, uint64_t len);
