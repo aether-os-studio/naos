@@ -241,7 +241,7 @@ vfs_node_t vfs_open(const char *_path)
             return rootdir;
         path = strdup(_path + 1);
     }
-    else
+    else if (current_task->cwd)
     {
         path = strdup(_path);
         current = current_task->cwd;

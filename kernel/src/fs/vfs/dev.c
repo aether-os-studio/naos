@@ -115,10 +115,16 @@ ssize_t stdin_read(void *data, uint64_t offset, void *buf, uint64_t len)
     (void)offset;
     (void)len;
 
-    uint8_t scancode = get_keyboard_input();
-    *(uint8_t *)buf = scancode;
+    ssize_t read_len = 0;
 
-    return 1;
+    char scancode = (char)get_keyboard_input();
+    if (scancode != 0)
+    {
+        *((uint8_t *)buf + read_len) = scancode;
+        read_len++;
+    }
+
+    return read_len;
 }
 
 ssize_t stdout_write(void *data, uint64_t offset, const void *buf, uint64_t len)

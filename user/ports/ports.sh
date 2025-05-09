@@ -25,5 +25,6 @@ find $SYSROOT/../bin -type l -delete
 find $SYSROOT/../sbin -type l -delete
 
 cp -r $SCRIPTPATH/etc $SYSROOT/../
+cp -r $SCRIPTPATH/files $SYSROOT/../
 cp $SYSROOT/../usr/lib/libreadline.so.8.2 $SYSROOT/../usr/lib/libreadline.so.8
 cp $SYSROOT/../usr/lib/libncursesw.so.6.5 $SYSROOT/../usr/lib/libncursesw.so.6

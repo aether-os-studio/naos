@@ -2,6 +2,9 @@
 
 #include "ptrace.h"
 #include "esr.h"
+#include "arch/aarch64/acpi/gic.h"
+
+#define ARCH_TIMER_IRQ TIMER_IRQ
 
 void arch_enable_interrupt();
 void arch_disable_interrupt();

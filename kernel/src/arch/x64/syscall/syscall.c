@@ -144,7 +144,6 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_SETMASK:
         regs->rax = sys_ssetmask(arg1, (sigset_t *)arg2, (sigset_t *)arg3);
         break;
-    case SYS_GETDENTS:
     case SYS_GETDENTS64:
         regs->rax = sys_getdents(arg1, arg2, arg3);
         break;
@@ -166,8 +165,10 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_CLOCK_GETTIME:
         tm time;
         time_read_bcd(&time);
-        *(int64_t *)arg1 = mktime(&time);
-        *(int64_t *)arg2 = 0;
+        if (arg1)
+            *(int64_t *)arg1 = mktime(&time);
+        if (arg2)
+            *(int64_t *)arg2 = 0;
         regs->rax = 0;
         break;
     case SYS_SIGACTION:
@@ -222,9 +223,13 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_FUTEX:
         regs->rax = 0;
         break;
+    case SYS_PIPE:
     case SYS_PIPE2:
         // todo: support flags
         regs->rax = sys_pipe((int *)arg1);
+        break;
+    case SYS_STAT:
+        regs->rax = sys_stat((const char *)arg1, (struct stat *)arg2);
         break;
     case SYS_FSTAT:
         regs->rax = sys_fstat(arg1, (struct stat *)arg2);
@@ -280,6 +285,15 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_PRLIMIT64:
         regs->rax = 0;
+        break;
+    case SYS_ACCESS:
+        regs->rax = sys_access((char *)arg1, arg2);
+        break;
+    case SYS_FACCESSAT:
+        regs->rax = sys_faccessat(arg1, (const char *)arg2, arg3);
+        break;
+    case SYS_PSELECT6:
+        regs->rax = sys_pselect6(arg1, (fd_set *)arg2, (fd_set *)arg3, (fd_set *)arg4, (struct timespec *)arg5, (WeirdPselect6 *)arg6);
         break;
 
     default:

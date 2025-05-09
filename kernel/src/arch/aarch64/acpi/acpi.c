@@ -75,3 +75,8 @@ void acpi_init()
     load_table(APIC, madt_setup);
     load_table(MCFG, pcie_setup);
 }
+
+uint64_t nanoTime()
+{
+    return 0;
+}

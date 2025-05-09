@@ -1,6 +1,7 @@
 #pragma once
 
 #include <libs/klibc.h>
+#include <task/signal.h>
 
 struct iovec
 {
@@ -146,6 +147,42 @@ uint64_t sys_getcwd(char *cwd, uint64_t size);
 
 uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg);
 int sys_pipe(int fd[2]);
+uint64_t sys_stat(const char *fd, struct stat *buf);
 uint64_t sys_fstat(uint64_t fd, struct stat *buf);
 
 uint64_t sys_get_rlimit(uint64_t resource, struct rlimit *lim);
+
+#define FD_SETSIZE 1024
+
+typedef unsigned long fd_mask;
+
+typedef struct
+{
+    unsigned long fds_bits[FD_SETSIZE / 8 / sizeof(long)];
+} fd_set;
+
+typedef struct
+{
+    sigset_t *ss;
+    size_t ss_len;
+} WeirdPselect6;
+
+#define POLLIN 0x0001
+#define POLLPRI 0x0002
+#define POLLOUT 0x0004
+#define POLLERR 0x0008
+#define POLLHUP 0x0010
+#define POLLNVAL 0x0020
+
+struct pollfd
+{
+    int fd;
+    short events;
+    short revents;
+};
+
+size_t sys_poll(struct pollfd *fds, int nfds, int timeout);
+
+size_t sys_access(char *filename, int mode);
+uint64_t sys_faccessat(uint64_t dirfd, const char *pathname, uint64_t mode);
+uint64_t sys_pselect6(uint64_t nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timespec *timeout, WeirdPselect6 *weirdPselect6);

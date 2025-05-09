@@ -196,7 +196,7 @@ ovmf/ovmf-code-$(ARCH).fd:
 	mkdir -p ovmf
 	curl -Lo $@ https://github.com/osdev0/edk2-ovmf-nightly/releases/latest/download/ovmf-code-$(ARCH).fd
 	case "$(ARCH)" in \
-		aarch64) dd if=/dev/zero of=$@ bs=1 count=0 seek=67108864 2>/dev/null;; \
+		aarch64) dd if=/dev/zero of=$@ bs=1 count=0 seek=67108864;; \
 		riscv64) dd if=/dev/zero of=$@ bs=1 count=0 seek=33554432 2>/dev/null;; \
 	esac
 
@@ -226,21 +226,22 @@ user: libc-$(ARCH)
 $(IMAGE_NAME).iso: limine/limine kernel
 	rm -rf iso_root
 	mkdir -p iso_root/boot
-	cp -v -r user/rootfs-$(ARCH)/usr iso_root/
-	cp -v -r user/rootfs-$(ARCH)/lib iso_root/
-	cp -v -r user/rootfs-$(ARCH)/etc iso_root/
-	cp -v -r user/rootfs-$(ARCH)/bin iso_root/
-	cp -v -r user/rootfs-$(ARCH)/sbin iso_root/
-	cp -v -r user/rootfs-$(ARCH)/root iso_root/
-	cp -v kernel/bin-$(ARCH)/kernel iso_root/boot/
+	cp -r user/rootfs-$(ARCH)/usr iso_root/
+	cp -r user/rootfs-$(ARCH)/lib iso_root/
+	cp -r user/rootfs-$(ARCH)/etc iso_root/
+	cp -r user/rootfs-$(ARCH)/bin iso_root/
+	cp -r user/rootfs-$(ARCH)/sbin iso_root/
+	cp -r user/rootfs-$(ARCH)/files iso_root/
+	cp -r user/rootfs-$(ARCH)/root iso_root/
+	cp kernel/bin-$(ARCH)/kernel iso_root/boot/
 	mkdir -p iso_root/boot/limine
-	cp -v limine.conf iso_root/boot/limine/
+	cp limine.conf iso_root/boot/limine/
 	mkdir -p iso_root/usr/bin
 	mkdir -p iso_root/EFI/BOOT
 ifeq ($(ARCH),x86_64)
-	cp -v limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin iso_root/boot/limine/
-	cp -v limine/BOOTX64.EFI iso_root/EFI/BOOT/
-	cp -v limine/BOOTIA32.EFI iso_root/EFI/BOOT/
+	cp limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin iso_root/boot/limine/
+	cp limine/BOOTX64.EFI iso_root/EFI/BOOT/
+	cp limine/BOOTIA32.EFI iso_root/EFI/BOOT/
 	xorriso -as mkisofs -R -r -J -l -b boot/limine/limine-bios-cd.bin \
 		-no-emul-boot -boot-load-size 4 -boot-info-table \
 		-apm-block-size 2048 --efi-boot boot/limine/limine-uefi-cd.bin \
@@ -248,8 +249,8 @@ ifeq ($(ARCH),x86_64)
 		iso_root -o $(IMAGE_NAME).iso
 endif
 ifeq ($(ARCH),aarch64)
-	cp -v limine/limine-uefi-cd.bin iso_root/boot/limine/
-	cp -v limine/BOOTAA64.EFI iso_root/EFI/BOOT/
+	cp limine/limine-uefi-cd.bin iso_root/boot/limine/
+	cp limine/BOOTAA64.EFI iso_root/EFI/BOOT/
 	xorriso -as mkisofs -R -r -J -l \
 		-apm-block-size 2048 \
 		--efi-boot boot/limine/limine-uefi-cd.bin \
@@ -257,8 +258,8 @@ ifeq ($(ARCH),aarch64)
 		iso_root -o $(IMAGE_NAME).iso
 endif
 ifeq ($(ARCH),riscv64)
-	cp -v limine/limine-uefi-cd.bin iso_root/boot/limine/
-	cp -v limine/BOOTRISCV64.EFI iso_root/EFI/BOOT/
+	cp limine/limine-uefi-cd.bin iso_root/boot/limine/
+	cp limine/BOOTRISCV64.EFI iso_root/EFI/BOOT/
 	xorriso -as mkisofs -R -r -J -l \
 		-apm-block-size 2048 \
 		--efi-boot boot/limine/limine-uefi-cd.bin \
@@ -266,8 +267,8 @@ ifeq ($(ARCH),riscv64)
 		iso_root -o $(IMAGE_NAME).iso
 endif
 ifeq ($(ARCH),loongarch64)
-	cp -v limine/limine-uefi-cd.bin iso_root/boot/limine/
-	cp -v limine/BOOTLOONGARCH64.EFI iso_root/EFI/BOOT/
+	cp limine/limine-uefi-cd.bin iso_root/boot/limine/
+	cp limine/BOOTLOONGARCH64.EFI iso_root/EFI/BOOT/
 	xorriso -as mkisofs -R -r -J -l \
 		-apm-block-size 2048 \
 		--efi-boot boot/limine/limine-uefi-cd.bin \
@@ -292,6 +293,7 @@ endif
 	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/bin ::/
 	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/sbin ::/
 	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/root ::/
+	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/files ::/
 	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(ARCH)/kernel ::/boot
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf ::/boot/limine
 ifeq ($(ARCH),x86_64)

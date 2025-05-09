@@ -46,6 +46,9 @@ struct keyboard_buf
 
 extern struct keyboard_buf kb_fifo;
 
+extern char keyboard_code[];
+extern char keyboard_code1[];
+
 int wait_input_ready(void);
 int wait_output_ready(void);
 

@@ -29,12 +29,15 @@
 #define SYS_DUP 32
 #define SYS_DUP2 33
 #define SYS_IOCTL 16 // ioctl(int fd, sint cmd, int arg)
-#define SYS_GETDENTS 21
 #define SYS_GETDENTS64 217
+#define SYS_PIPE 22
 #define SYS_PIPE2 293
 #define SYS_CHDIR 80
 #define SYS_GETCWD 79
 #define SYS_FCNTL 72
+#define SYS_ACCESS 21
+#define SYS_FACCESSAT 269
+#define SYS_PSELECT6 270
 
 #define SYS_SOCKET 41
 #define SYS_CONNECT 42

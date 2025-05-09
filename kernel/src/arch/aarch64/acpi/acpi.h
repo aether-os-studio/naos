@@ -155,3 +155,5 @@ typedef struct
 void acpi_init();
 
 void madt_setup(MADT *madt);
+
+uint64_t nanoTime();

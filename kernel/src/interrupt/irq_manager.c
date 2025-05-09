@@ -27,7 +27,7 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num)
         printk("Intr vector [%d] does not have an ack\n", irq_num);
     }
 
-    if (can_schedule)
+    if (irq_num == ARCH_TIMER_IRQ && can_schedule)
     {
         arch_task_switch_to(regs, current_task, task_search(TASK_READY, current_task->cpu_id));
     }

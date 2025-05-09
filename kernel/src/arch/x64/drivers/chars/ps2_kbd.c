@@ -35,19 +35,291 @@ enum special_key_code
     KEY_RIGHT,
 };
 
-static char keyboard_code[0x54] = { // 未按下Shift
-    0, 0x01, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b', '\t', 'q',
-    'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', 10, 0, 'a', 's', 'd', 'f',
-    'g', 'h', 'j', 'k', 'l', ';', '\'', '`', 0, '\\', 'z', 'x', 'c', 'v', 'b', 'n', 'm',
-    ',', '.', '/', 0, '*', 0, ' ', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, '7', '8', '9', '-', '4', '5', '6', '+', '1', '2', '3', '0', '.'};
+char keyboard_code[] = {
+    0,
+    27,
+    '1',
+    '2',
+    '3',
+    '4',
+    '5',
+    '6',
+    '7',
+    '8',
+    '9',
+    '0',
+    '-',
+    '=',
+    '\b',
+    9,
+    'q',
+    'w',
+    'e',
+    'r',
+    't',
+    'y',
+    'u',
+    'i',
+    'o',
+    'p',
+    '[',
+    ']',
+    0,
+    0,
+    'a',
+    's',
+    'd',
+    'f',
+    'g',
+    'h',
+    'j',
+    'k',
+    'l',
+    ';',
+    '\'',
+    '`',
+    0,
+    '\\',
+    'z',
+    'x',
+    'c',
+    'v',
+    'b',
+    'n',
+    'm',
+    ',',
+    '.',
+    '/',
+    0,
+    '*',
+    0,
+    ' ',
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0x1B,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0x0E,
+    0x1C,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    '/',
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0x1E,
+    0x1F,
+    0x20,
+    0x21,
+    0x22,
+    0x23,
+    0x24,
+    0x25,
+    0x26,
+    0x27,
+    0x28,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0x2C,
+};
 
-static char keyboard_code1[0x54] = { // 按下Shift
-    0, 0x01, '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', '\b', '\t', 'Q',
-    'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', 10, 0, 'A', 'S', 'D', 'F',
-    'G', 'H', 'J', 'K', 'L', ':', '\"', '~', 0, '|', 'Z', 'X', 'C', 'V', 'B', 'N', 'M',
-    '<', '>', '?', 0, '*', 0, ' ', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, '7', 'D', '8', '-', '4', '5', '6', '+', '1', '2', '3', '0', '.'};
+char keyboard_code1[] = {
+    0,
+    27,
+    '!',
+    '@',
+    '#',
+    '$',
+    '%',
+    '^',
+    '&',
+    '*',
+    '(',
+    ')',
+    '_',
+    '+',
+    '\b',
+    9,
+    'Q',
+    'W',
+    'E',
+    'R',
+    'T',
+    'Y',
+    'U',
+    'I',
+    'O',
+    'P',
+    '{',
+    '}',
+    0,
+    0,
+    'A',
+    'S',
+    'D',
+    'F',
+    'G',
+    'H',
+    'J',
+    'K',
+    'L',
+    ':',
+    '"',
+    '~',
+    0,
+    '|',
+    'Z',
+    'X',
+    'C',
+    'V',
+    'B',
+    'N',
+    'M',
+    '<',
+    '>',
+    '?',
+    0,
+    '*',
+    0,
+    ' ',
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0x1B,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0x0E,
+    0x1C,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    '?',
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0x1E,
+    0x1F,
+    0x20,
+    0x21,
+    0x22,
+    0x23,
+    0x24,
+    0x25,
+    0x26,
+    0x27,
+    0x28,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0x2C,
+};
 
 struct keyboard_buf kb_fifo;
 
@@ -132,7 +404,7 @@ void parse_scan_code(uint8_t x)
     if (kb_fifo.ctrl && x == 0x2e && current_task)
     {
     }
-    else if (x < 0x80)
+    else if (x < 0x80 && !(x == 0x4b || x == 0x4d || x == 0x48 || x == 0x50) && x != 0x38)
     {
         *kb_fifo.p_head = x;
         kb_fifo.count++;
@@ -146,95 +418,22 @@ void parse_scan_code(uint8_t x)
     }
 }
 
-static uint8_t special_status = 0;
-static uint8_t special_key = 0;
-
 uint8_t get_keyboard_input()
 {
-    if (special_status == 1)
-    {
-        special_status = 2;
-        return '\x1b';
-    }
-    else if (special_status == 2)
-    {
-        special_status = 3;
-        return '[';
-    }
-    else if (special_status == 3)
-    {
-        uint8_t result = 0;
-        switch (special_key)
-        {
-        case 0x48:
-            result = 'A';
-            break;
-        case 0x50:
-            result = 'B';
-            break;
-        case 0x4b:
-            result = 'D';
-            break;
-        case 0x4d:
-            result = 'C';
-            break;
-        case 0x01:
-            result = '\0';
-            break;
-        }
-        special_key = 0;
-        special_status = 0;
-        can_handle_new_key = true;
-        return result;
-    }
-
     if (kb_fifo.p_tail != kb_fifo.p_head)
     {
         uint8_t temp = 0;
 
         uint8_t x = *kb_fifo.p_tail;
 
-        if (x == 0x48)
+        temp = keyboard_code[x];
+        if (kb_fifo.shift == 1 || kb_fifo.caps == 1)
         {
-            can_handle_new_key = false;
-            special_status = 1;
-            special_key = x;
+            temp = keyboard_code1[x];
         }
-        else if (x == 0x50)
+        if (kb_fifo.ctrl == 1)
         {
-            can_handle_new_key = false;
-            special_status = 1;
-            special_key = x;
-        }
-        else if (x == 0x4b)
-        {
-            can_handle_new_key = false;
-            special_status = 1;
-            special_key = x;
-        }
-        else if (x == 0x4d)
-        {
-            can_handle_new_key = false;
-            special_status = 1;
-            special_key = x;
-        }
-        else if (x == 0x01)
-        {
-            can_handle_new_key = false;
-            special_status = 1;
-            special_key = x;
-        }
-        else
-        {
-            temp = keyboard_code[x];
-            if (kb_fifo.shift == 1 || kb_fifo.caps == 1)
-            {
-                temp = keyboard_code1[x];
-            }
-            if (kb_fifo.ctrl == 1)
-            {
-                temp &= 0x1f;
-            }
+            temp &= 0x1f;
         }
 
         kb_fifo.p_tail++;
@@ -244,7 +443,20 @@ uint8_t get_keyboard_input()
             kb_fifo.p_tail = kb_fifo.buf;
         }
 
-        return temp;
+        if (temp != 0)
+        {
+            return temp;
+        }
+
+        switch (x)
+        {
+        case 28:
+            return (uint8_t)'\n';
+        case 15:
+            return (uint8_t)'\t';
+        default:
+            return 0;
+        }
     }
 
     return 0;
