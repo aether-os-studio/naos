@@ -68,6 +68,20 @@ static inline bool streqn(const char *str1, const char *str2, size_t max_size)
     return true;
 }
 
+// 从字符串中提取路径
+static inline char *pathtok(char **sp)
+{
+    char *s = *sp, *e = *sp;
+    if (*s == '\0')
+        return NULL;
+    for (; *e != '\0' && *e != '/'; e++)
+    {
+    }
+    *sp = e + (*e != '\0' ? 1 : 0);
+    *e = '\0';
+    return s;
+}
+
 #define max(x, y) ((x > y) ? (x) : (y))
 
 typedef int64_t ssize_t;
@@ -84,6 +98,7 @@ enum
     file_block,  // 块设备，如硬盘
     file_stream, // 流式设备，如终端
     file_pipe,   // 管道设备
+    file_socket, // 套接字设备
 };
 
 typedef struct vfs_node *vfs_node_t;

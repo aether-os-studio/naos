@@ -23,6 +23,18 @@ struct timespec
     long tv_nsec;
 };
 
+#define S_IFMT 00170000
+#define S_IFSOCK 0140000
+#define S_IFLNK 0120000
+#define S_IFREG 0100000
+#define S_IFBLK 0060000
+#define S_IFDIR 0040000
+#define S_IFCHR 0020000
+#define S_IFIFO 0010000
+#define S_ISUID 0004000
+#define S_ISGID 0002000
+#define S_ISVTX 0001000
+
 struct stat
 {
     long st_dev;
@@ -185,4 +197,70 @@ size_t sys_poll(struct pollfd *fds, int nfds, int timeout);
 
 size_t sys_access(char *filename, int mode);
 uint64_t sys_faccessat(uint64_t dirfd, const char *pathname, uint64_t mode);
+size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except, struct timeval *timeout);
 uint64_t sys_pselect6(uint64_t nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timespec *timeout, WeirdPselect6 *weirdPselect6);
+
+uint64_t sys_link(const char *old, const char *new);
+uint64_t sys_readlink(char *path, char *buf, uint64_t size);
+
+typedef union epoll_data
+{
+    void *ptr;
+    int fd;
+    uint32_t u32;
+    uint64_t u64;
+} epoll_data_t;
+
+struct epoll_event
+{
+    uint32_t events;
+    epoll_data_t data;
+};
+
+typedef struct epoll_watch
+{
+    struct EpollWatch *next;
+
+    vfs_node_t fd;
+    int watchEvents;
+
+    uint64_t userlandData; // pass it directly
+} epoll_watch_t;
+
+typedef struct epoll
+{
+    struct epoll *next;
+
+    int timesOpened;
+
+    epoll_watch_t *firstEpollWatch;
+} epoll_t;
+
+#define EPOLLIN 0x001
+#define EPOLLPRI 0x002
+#define EPOLLOUT 0x004
+#define EPOLLRDNORM 0x040
+#define EPOLLNVAL 0x020
+#define EPOLLRDBAND 0x080
+#define EPOLLWRNORM 0x100
+#define EPOLLWRBAND 0x200
+#define EPOLLMSG 0x400
+#define EPOLLERR 0x008
+#define EPOLLHUP 0x010
+#define EPOLLRDHUP 0x2000
+#define EPOLLEXCLUSIVE (1U << 28)
+#define EPOLLWAKEUP (1U << 29)
+#define EPOLLONESHOT (1U << 30)
+#define EPOLLET (1U << 31)
+
+#define EPOLL_CTL_ADD 1
+#define EPOLL_CTL_DEL 2
+#define EPOLL_CTL_MOD 3
+
+uint64_t sys_epoll_create(int size);
+uint64_t sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
+uint64_t sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
+uint64_t sys_epoll_pwait(int epfd, struct epoll_event *events,
+                         int maxevents, int timeout, sigset_t *sigmask,
+                         size_t sigsetsize);
+uint64_t sys_epoll_create1(int flags);

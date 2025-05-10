@@ -15,16 +15,26 @@ ${SCRIPTPATH}/pass_acq.sh "$APK_URI" "$APK_SHA512" "$APK_PATH"
 chmod +x "$APK_PATH"
 
 # bootstrap alpine userspace
-sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/latest-stable/main/ -U --allow-untrusted --root $SYSROOT/../ --initdb add alpine-base bash coreutils tzdata procps vim findutils diffutils patch grep sed gawk gzip xz make file tar nasm python3 gcc musl-dev pciutils
+sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/edge/main -U --allow-untrusted --root $SYSROOT/../ --initdb add alpine-base bash coreutils grep gcc mpc1 mpfr-dev gmp-dev isl-dev binutils musl-dev ncurses
+
+# Basic software
+# sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/edge/community -U --allow-untrusted --root $SYSROOT/../ --initdb add i3wm xvfb ffmpeg
 
 sudo chmod -R 777 $SYSROOT/../
 
-find $SYSROOT/../etc -type l -delete
-find $SYSROOT/../usr -type l -delete
-find $SYSROOT/../bin -type l -delete
-find $SYSROOT/../sbin -type l -delete
-
 cp -r $SCRIPTPATH/etc $SYSROOT/../
 cp -r $SCRIPTPATH/files $SYSROOT/../
-cp $SYSROOT/../usr/lib/libreadline.so.8.2 $SYSROOT/../usr/lib/libreadline.so.8
-cp $SYSROOT/../usr/lib/libncursesw.so.6.5 $SYSROOT/../usr/lib/libncursesw.so.6
+cp -r $SCRIPTPATH/root $SYSROOT/../
+
+cp -r /usr/share/zoneinfo/Asia/Shanghai $SYSROOT/../etc/localtime
+
+find $SYSROOT/../ -type l -exec bash -c '
+    lnk="{}";
+    target=$(readlink -f "$lnk");
+    if [ -f "$target" ]; then
+        rm "$lnk";
+        cp -- "$target" "$lnk"; 
+    else
+        rm "$lnk";
+    fi
+' \;

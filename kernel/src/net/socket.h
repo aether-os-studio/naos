@@ -49,4 +49,4 @@ int sys_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 int sys_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
 int64_t sys_send(int sockfd, const void *buf, size_t len, int flags);
 int64_t sys_recv(int sockfd, void *buf, size_t len, int flags);
-int sys_socket_close(int sockfd);
+int sys_socket_close(void *current);

@@ -404,12 +404,56 @@ void parse_scan_code(uint8_t x)
     if (kb_fifo.ctrl && x == 0x2e && current_task)
     {
     }
-    else if (x < 0x80 && !(x == 0x4b || x == 0x4d || x == 0x48 || x == 0x50) && x != 0x38)
+    else if (x < 0x80 && !(x == 0x4b || x == 0x4d || x == 0x48 || x == 0x50) && x != 0x38 && !(x == 0x2a || x == 0x36) && x != 0x76 && !(x == 0x1d || x == 0x9d))
     {
         *kb_fifo.p_head = x;
         kb_fifo.count++;
         kb_fifo.p_head++;
     }
+
+    // if (x == 0x4b || x == 0x4d || x == 0x48 || x == 0x50 || x == 0x76)
+    // {
+    //     switch (x)
+    //     {
+    //     case 0x4b:
+    //         *kb_fifo.p_head = '\x1b';
+    //         *(kb_fifo.p_head + 1) = 0x54;
+    //         *(kb_fifo.p_head + 1) = 0x23;
+    //         kb_fifo.count += 3;
+    //         kb_fifo.p_head += 3;
+    //         break;
+    //         break;
+    //     case 0x4d:
+    //         *kb_fifo.p_head = '\x1b';
+    //         *(kb_fifo.p_head + 1) = 0x54;
+    //         *(kb_fifo.p_head + 2) = 0x21;
+    //         kb_fifo.count += 3;
+    //         kb_fifo.p_head += 3;
+    //         break;
+    //     case 0x48:
+    //         *kb_fifo.p_head = '\x1b';
+    //         *(kb_fifo.p_head + 1) = 0x54;
+    //         *(kb_fifo.p_head + 2) = 0x1C;
+    //         kb_fifo.count += 3;
+    //         kb_fifo.p_head += 3;
+    //         break;
+    //     case 0x50:
+    //         *kb_fifo.p_head = '\x1b';
+    //         *(kb_fifo.p_head + 1) = 0x54;
+    //         *(kb_fifo.p_head + 2) = 0x32;
+    //         kb_fifo.count += 3;
+    //         kb_fifo.p_head += 3;
+    //         break;
+    //     case 0x76:
+    //         *kb_fifo.p_head = '\x1b';
+    //         kb_fifo.count += 1;
+    //         kb_fifo.p_head += 1;
+    //         break;
+
+    //     default:
+    //         break;
+    //     }
+    // }
 
     if (kb_fifo.p_head >= kb_fifo.buf + KB_BUF_SIZE)
     {
@@ -426,21 +470,28 @@ uint8_t get_keyboard_input()
 
         uint8_t x = *kb_fifo.p_tail;
 
-        temp = keyboard_code[x];
-        if (kb_fifo.shift == 1 || kb_fifo.caps == 1)
+        if (x == 0x1b)
         {
-            temp = keyboard_code1[x];
+            temp = 0x1b;
         }
-        if (kb_fifo.ctrl == 1)
+        else
         {
-            temp &= 0x1f;
-        }
+            temp = keyboard_code[x];
+            if (kb_fifo.shift == 1 || kb_fifo.caps == 1)
+            {
+                temp = keyboard_code1[x];
+            }
+            if (kb_fifo.ctrl == 1)
+            {
+                temp &= 0x1f;
+            }
 
-        kb_fifo.p_tail++;
+            kb_fifo.p_tail++;
 
-        if (kb_fifo.p_tail >= kb_fifo.buf + KB_BUF_SIZE)
-        {
-            kb_fifo.p_tail = kb_fifo.buf;
+            if (kb_fifo.p_tail >= kb_fifo.buf + KB_BUF_SIZE)
+            {
+                kb_fifo.p_tail = kb_fifo.buf;
+            }
         }
 
         if (temp != 0)

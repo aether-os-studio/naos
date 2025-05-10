@@ -45,13 +45,18 @@ char *at_resolve_pathname(int dirfd, char *pathname)
         }
     }
 
-    return 0;
+    return NULL;
 }
 
 uint64_t sys_open(const char *name, uint64_t mode, uint64_t flags)
 {
     (void)mode;
     (void)flags;
+
+    if (!name)
+    {
+        return (uint64_t)-EFAULT;
+    }
 
     uint64_t i;
     for (i = 3; i < MAX_FD_NUM; i++)
@@ -75,7 +80,15 @@ uint64_t sys_open(const char *name, uint64_t mode, uint64_t flags)
 
     if (!node)
     {
-        int ret = vfs_mkfile(name);
+        int ret;
+        if (mode & O_DIRECTORY)
+        {
+            ret = vfs_mkdir(name);
+        }
+        else
+        {
+            ret = vfs_mkfile(name);
+        }
         if (ret < 0)
             return (uint64_t)-ENOENT;
 
@@ -94,9 +107,9 @@ uint64_t sys_open(const char *name, uint64_t mode, uint64_t flags)
 
 uint64_t sys_close(uint64_t fd)
 {
-    if (fd > MAX_FD_NUM && fd <= MAX_SOCKETS)
+    if (fd >= MAX_FD_NUM && fd <= MAX_SOCKETS)
     {
-        sys_socket_close(fd);
+        return sys_socket_close(fd);
     }
 
     if (fd >= MAX_SOCKETS || current_task->fds[fd] == NULL)
@@ -118,7 +131,7 @@ uint64_t sys_close(uint64_t fd)
 
 uint64_t sys_read(uint64_t fd, void *buf, uint64_t len)
 {
-    if (fd > MAX_FD_NUM || current_task->fds[fd] == NULL)
+    if (fd >= MAX_FD_NUM || current_task->fds[fd] == NULL)
     {
         return (uint64_t)-EBADFD;
     }
@@ -130,7 +143,7 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len)
 
 uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len)
 {
-    if (fd > MAX_FD_NUM || current_task->fds[fd] == NULL)
+    if (fd >= MAX_FD_NUM || current_task->fds[fd] == NULL)
     {
         return (uint64_t)-EBADFD;
     }
@@ -142,7 +155,7 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len)
 
 uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence)
 {
-    if (fd > MAX_FD_NUM || current_task->fds[fd] == NULL)
+    if (fd >= MAX_FD_NUM || current_task->fds[fd] == NULL)
     {
         return (uint64_t)-EBADFD;
     }
@@ -182,7 +195,7 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence)
 
 uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg)
 {
-    if (fd > MAX_FD_NUM || current_task->fds[fd] == NULL)
+    if (fd >= MAX_FD_NUM || current_task->fds[fd] == NULL)
     {
         return (uint64_t)-EBADFD;
     }
@@ -275,7 +288,7 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count)
 
 uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
 {
-    if (fd > MAX_FD_NUM)
+    if (fd >= MAX_FD_NUM)
         return (uint64_t)-EBADF;
     if (!current_task->fds[fd])
         return (uint64_t)-EBADF;
@@ -284,11 +297,6 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
 
     struct dirent *dents = (struct dirent *)buf;
     vfs_node_t node = current_task->fds[fd];
-
-    if (node->type != file_dir)
-    {
-        return (uint64_t)-ENOTDIR;
-    }
 
     int64_t max_dents_num = size / sizeof(struct dirent);
 
@@ -383,12 +391,15 @@ uint64_t sys_stat(const char *fd, struct stat *buf)
     buf->st_dev = 0;
     buf->st_ino = i++;
     buf->st_nlink = 1;
+    buf->st_mode = 0700 | (node->type == file_dir ? S_IFDIR : S_IFREG);
     buf->st_uid = 0;
     buf->st_gid = 0;
     buf->st_rdev = 0;
     buf->st_blksize = DEFAULT_PAGE_SIZE;
     buf->st_size = node->size;
     buf->st_blocks = (buf->st_size + buf->st_blksize - 1) / buf->st_blksize;
+
+    vfs_close(node);
 
     return 0;
 }
@@ -397,7 +408,7 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
 {
     static uint64_t i = 0;
 
-    if (fd > MAX_FD_NUM || current_task->fds[fd] == NULL)
+    if (fd >= MAX_FD_NUM || current_task->fds[fd] == NULL)
     {
         return (uint64_t)-EBADFD;
     }
@@ -405,6 +416,7 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
     buf->st_dev = 0;
     buf->st_ino = i++;
     buf->st_nlink = 1;
+    buf->st_mode = 0700 | (current_task->fds[fd]->type == file_dir ? S_IFDIR : S_IFREG);
     buf->st_uid = 0;
     buf->st_gid = 0;
     buf->st_rdev = 0;
@@ -638,8 +650,8 @@ uint64_t sys_faccessat(uint64_t dirfd, const char *pathname, uint64_t mode)
         return 0;
     }
 
-    char *resolved = at_resolve_pathname(dirfd, pathname);
-    if ((size_t)resolved < 0)
+    char *resolved = at_resolve_pathname(dirfd, (char *)pathname);
+    if ((ssize_t)resolved < 0)
         return (uint64_t)resolved;
 
     size_t ret = sys_access(resolved, mode);
@@ -647,4 +659,271 @@ uint64_t sys_faccessat(uint64_t dirfd, const char *pathname, uint64_t mode)
     free(resolved);
 
     return ret;
+}
+
+uint64_t sys_link(const char *old, const char *new)
+{
+    vfs_node_t old_node = vfs_open(old);
+    if (!old_node)
+    {
+        return (uint64_t)-ENOENT;
+    }
+
+    int ret = 0;
+    if (old_node->type == file_dir)
+    {
+        ret = vfs_mkdir(new);
+        if (ret < 0)
+        {
+            return (uint64_t)-ENOENT;
+        }
+    }
+    else
+    {
+        ret = vfs_mkfile(new);
+        if (ret < 0)
+        {
+            return (uint64_t)-ENOENT;
+        }
+    }
+
+    return 0;
+}
+
+// todo
+uint64_t sys_readlink(char *path, char *buf, uint64_t size)
+{
+    return (uint64_t)-ENOLINK;
+}
+
+vfs_node_t epollfs_root;
+int epollfs_id;
+
+// epoll API
+size_t epoll_create1(int flags)
+{
+    int i = -1;
+    for (i = 3; i < MAX_FD_NUM; i++)
+    {
+        if (current_task->fds[i] == NULL)
+        {
+            break;
+        }
+    }
+
+    if (i == MAX_FD_NUM)
+    {
+        return -EBADFD;
+    }
+
+    epoll_t *epoll = malloc(sizeof(epoll_t));
+    epoll->timesOpened = 1;
+
+    vfs_node_t node = vfs_node_alloc(epollfs_root, "epoll");
+    node->type = file_none;
+    node->handle = epoll;
+    node->fsid = epollfs_id;
+
+    current_task->fds[i] = node;
+
+    return i;
+}
+
+uint64_t sys_epoll_create(int size)
+{
+    return epoll_create1(0);
+}
+
+// if this doesn't give you enough cues as to why you NEED to avoid the kernel
+// shell at all costs then idk what does. the reason this exists btw is for
+// bash's readline to not freak out over pselect6()
+bool ioSwitch = false;
+
+int internal_poll_handler(vfs_node_t fd, int events)
+{
+    int revents = 0;
+    if (events & EPOLLIN && ioSwitch)
+        revents |= EPOLLIN;
+    if (events & EPOLLOUT)
+        revents |= EPOLLOUT;
+    ioSwitch = !ioSwitch;
+    return revents;
+}
+
+uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events, int maxevents,
+                    int timeout)
+{
+    if (maxevents < 1)
+        return (uint64_t)-EINVAL;
+    epoll_t *epoll = epollFd->handle;
+
+    bool sigexit = false;
+
+    // hack'y way but until I implement wake queues, it is what it is
+    int ready = 0;
+    size_t target = nanoTime() + timeout;
+    do
+    {
+        epoll_watch_t *browse = epoll->firstEpollWatch;
+        while (browse && ready < maxevents)
+        {
+            int revents =
+                internal_poll_handler(browse->fd, browse->watchEvents);
+            if (revents != 0 && ready < maxevents)
+            {
+                events[ready].events = revents;
+                events[ready].data = (epoll_data_t)browse->userlandData;
+                ready++;
+            }
+            browse = browse->next;
+        }
+
+        arch_enable_interrupt();
+
+        arch_pause();
+    } while (timeout != 0 && (timeout == -1 || nanoTime() < target));
+
+    arch_disable_interrupt();
+
+    if (!ready && sigexit)
+        return (uint64_t)-EINTR;
+
+    return ready;
+}
+
+size_t epoll_ctl(vfs_node_t epollFd, int op, int fd, struct epoll_event *event)
+{
+    if (op != EPOLL_CTL_ADD && op != EPOLL_CTL_DEL && op != EPOLL_CTL_MOD)
+        return (uint64_t)(-EINVAL);
+    if (op & EPOLLET || op & EPOLLONESHOT || op & EPOLLEXCLUSIVE)
+    {
+        printk("bad opcode!\n"); // could atl do oneshot, but later
+        return (uint64_t)(-ENOSYS);
+    }
+
+    epoll_t *epoll = epollFd->handle;
+
+    size_t ret = 0;
+
+    vfs_node_t fdNode = epollFd;
+    if (!fdNode)
+    {
+        ret = (uint64_t)(-EBADF);
+        goto cleanup;
+    }
+
+    switch (op)
+    {
+    case EPOLL_CTL_ADD:
+    {
+        epoll_watch_t *epollWatch = malloc(sizeof(epoll_watch_t));
+        epollWatch->fd = fdNode;
+        epollWatch->watchEvents = event->events;
+        epollWatch->userlandData = (uint64_t)event->data.ptr;
+        break;
+    }
+    case EPOLL_CTL_MOD:
+    {
+        epoll_watch_t *browse = epoll->firstEpollWatch;
+        while (browse)
+        {
+            if (browse->fd == fdNode)
+                break;
+            browse = browse->next;
+        }
+        if (!browse)
+        {
+            ret = (uint64_t)(-ENOENT);
+            goto cleanup;
+        }
+        browse->watchEvents = event->events;
+        browse->userlandData = (uint64_t)event->data.ptr;
+        break;
+    }
+    case EPOLL_CTL_DEL:
+    {
+        epoll_watch_t *browse = epoll->firstEpollWatch;
+        while (browse)
+        {
+            if (browse->fd == fdNode)
+                break;
+            browse = browse->next;
+        }
+        if (!browse)
+        {
+            ret = (uint64_t)(-ENOENT);
+            goto cleanup;
+        }
+        break;
+    }
+    default:
+        printk("[epoll] Unhandled opcode %d\n", op);
+        break;
+    }
+
+cleanup:
+    return ret;
+}
+
+size_t epoll_pwait(vfs_node_t epollFd, struct epoll_event *events, int maxevents,
+                   int timeout, sigset_t *sigmask, size_t sigsetsize)
+{
+    if (sigsetsize < sizeof(sigset_t))
+    {
+        printk("weird sigset size\n");
+        return (uint64_t)(-EINVAL);
+    }
+
+    sigset_t origmask;
+    if (sigmask)
+        sys_ssetmask(SIG_SETMASK, sigmask, &origmask);
+    size_t epollRet = epoll_wait(epollFd, events, maxevents, timeout);
+    if (sigmask)
+        sys_ssetmask(SIG_SETMASK, &origmask, 0);
+
+    return epollRet;
+}
+
+uint64_t sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
+{
+    vfs_node_t node = current_task->fds[epfd];
+    return epoll_wait(node, events, maxevents, timeout);
+}
+
+uint64_t sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)
+{
+    vfs_node_t node = current_task->fds[epfd];
+    return epoll_ctl(node, op, fd, event);
+}
+
+uint64_t sys_epoll_pwait(int epfd, struct epoll_event *events,
+                         int maxevents, int timeout, sigset_t *sigmask,
+                         size_t sigsetsize)
+{
+    vfs_node_t node = current_task->fds[epfd];
+    return epoll_pwait(node, events, maxevents, timeout, sigmask, sigsetsize);
+}
+
+uint64_t sys_epoll_create1(int flags) { return epoll_create1(flags); }
+
+static void dummy() {}
+
+static struct vfs_callback callbacks = {
+    .mount = (vfs_mount_t)dummy,
+    .unmount = (vfs_unmount_t)dummy,
+    .open = (vfs_open_t)dummy,
+    .close = (vfs_close_t)dummy,
+    .read = dummy,
+    .write = dummy,
+    .mkdir = (vfs_mk_t)dummy,
+    .mkfile = (vfs_mk_t)dummy,
+    .stat = (vfs_stat_t)dummy,
+    .ioctl = (vfs_ioctl_t)dummy,
+};
+
+void epoll_init()
+{
+    epollfs_id = vfs_regist("epollfs", &callbacks);
+    epollfs_root = vfs_node_alloc(NULL, "epoll");
+    epollfs_root->type = file_dir;
 }

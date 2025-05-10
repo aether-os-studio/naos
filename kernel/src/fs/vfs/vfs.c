@@ -49,20 +49,6 @@ static void vfs_free_child(vfs_node_t vfs)
     list_free_with(vfs->child, (free_t)vfs_free);
 }
 
-// 从字符串中提取路径
-static inline char *pathtok(char **sp)
-{
-    char *s = *sp, *e = *sp;
-    if (*s == '\0')
-        return NULL;
-    for (; *e != '\0' && *e != '/'; e++)
-    {
-    }
-    *sp = e + (*e != '\0' ? 1 : 0);
-    *e = '\0';
-    return s;
-}
-
 static inline void do_open(vfs_node_t file)
 {
     if (file->handle != NULL)
@@ -191,13 +177,19 @@ int vfs_mkfile(const char *name)
             continue;
         }
         current = vfs_child_find(current, buf);
-        if (current == NULL || current->type != file_dir)
+        if (current == NULL)
+        {
+            current = vfs_node_alloc(current, buf);
+            current->type = file_dir;
+            callbackof(current, mkdir)(current->handle, buf, current);
+        }
+        if (current->type != file_dir)
             goto err;
     }
 
 create:
     vfs_node_t node = vfs_child_append(current, filename, NULL);
-    node->type = file_block;
+    node->type = file_none;
     callbackof(current, mkfile)(current->handle, filename, node);
 
     free(path);

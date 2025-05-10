@@ -69,6 +69,19 @@ int devfs_ioctl(devfs_handle_t handle, ssize_t cmd, ssize_t arg)
     return 0;
 }
 
+int devfs_mkdir(void *parent, const char *name, vfs_node_t node)
+{
+    vfs_node_t child = vfs_child_append(node, name, NULL);
+    child->type = file_dir;
+
+    return 0;
+}
+
+int devfs_mkfile(void *parent, const char *name, vfs_node_t node)
+{
+    return 0;
+}
+
 static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
@@ -76,8 +89,8 @@ static struct vfs_callback callbacks = {
     .close = devfs_close,
     .read = devfs_read,
     .write = devfs_write,
-    .mkdir = (vfs_mk_t)dummy,
-    .mkfile = (vfs_mk_t)dummy,
+    .mkdir = (vfs_mk_t)devfs_mkdir,
+    .mkfile = (vfs_mk_t)devfs_mkfile,
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)devfs_ioctl,
 };
@@ -90,19 +103,34 @@ void regist_dev(const char *name,
                 ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg),
                 void *data)
 {
+    const char *new_name = name;
+
+    vfs_node_t dev = devfs_root;
+
+    if (strstr(name, "/") != NULL)
+    {
+        new_name = strstr(name, "/") + 1;
+        const char *path_len = new_name - name;
+        char new_path[256];
+        strcpy(new_path, "/dev/");
+        strncpy(new_path + 5, name, path_len);
+        vfs_mkdir((const char *)new_path);
+        dev = vfs_open((const char *)new_path);
+    }
+
     for (uint64_t i = 0; i < MAX_DEV_NUM; i++)
     {
         if (devfs_handles[i] == NULL)
         {
             devfs_handles[i] = malloc(sizeof(struct devfs_handle));
-            strncpy(devfs_handles[i]->name, name, MAX_DEV_NAME_LEN);
+            strncpy(devfs_handles[i]->name, new_name, MAX_DEV_NAME_LEN);
             devfs_handles[i]->read = read;
             devfs_handles[i]->write = write;
             devfs_handles[i]->ioctl = ioctl;
             devfs_handles[i]->data = data;
-            vfs_node_t child = vfs_child_append(devfs_root, devfs_handles[i]->name, NULL);
+            vfs_node_t child = vfs_child_append(dev, devfs_handles[i]->name, NULL);
             child->type = file_block;
-            if (!strncmp(name, "std", 3))
+            if (!strncmp(devfs_handles[i]->name, "std", 3))
                 child->type = file_stream;
             break;
         }
@@ -189,6 +217,24 @@ ssize_t random_dev_read(void *data, uint64_t offset, void *buf, uint64_t len)
     return ((unsigned)(next / 65536) % 32768);
 }
 
+ssize_t null_dev_read(void *data, uint64_t offset, void *buf, uint64_t len)
+{
+    (void)data;
+    (void)offset;
+    (void)buf;
+    (void)len;
+    return 0;
+}
+
+ssize_t null_dev_write(void *data, uint64_t offset, void *buf, uint64_t len)
+{
+    (void)data;
+    (void)offset;
+    (void)buf;
+    (void)len;
+    return 0;
+}
+
 void dev_init()
 {
     devfs_id = vfs_regist("devfs", &callbacks);
@@ -199,5 +245,6 @@ void dev_init()
 
     memset(devfs_handles, 0, sizeof(devfs_handles));
 
+    regist_dev("null", null_dev_read, null_dev_write, NULL, NULL);
     regist_dev("random", random_dev_read, NULL, NULL, NULL);
 }

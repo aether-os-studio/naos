@@ -1,6 +1,5 @@
 #include <arch/x64/drivers/chars/ps2_kbd.h>
 #include <arch/x64/drivers/chars/ps2_mouse.h>
-#include <drivers/window_manager/window_manager.h>
 #include <interrupt/irq_manager.h>
 #include <arch/x64/io.h>
 #include <task/task.h>
@@ -80,8 +79,6 @@ void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs)
 
     if (mousedecode(data))
     {
-        restore_background(mouse_x, mouse_y);
-
         old_x = mouse_x;
         old_y = mouse_y;
 
@@ -92,14 +89,10 @@ void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs)
             mouse_x = 0;
         if (mouse_y < 0)
             mouse_y = 0;
-        if (fb && mouse_x > (int32_t)fb->width - CURSOR_WIDTH)
-            mouse_x = (int32_t)fb->width - CURSOR_WIDTH;
-        if (fb && mouse_y > (int32_t)fb->height - CURSOR_HEIGHT)
-            mouse_y = (int32_t)fb->height - CURSOR_HEIGHT;
-
-        save_background(mouse_x, mouse_y);
-
-        draw_mouse(mouse_x, mouse_y);
+        if (fb && mouse_x > (int32_t)fb->width)
+            mouse_x = (int32_t)fb->width;
+        if (fb && mouse_y > (int32_t)fb->height)
+            mouse_y = (int32_t)fb->height;
 
         delta_x = mouse_x - old_x;
         delta_y = mouse_y - old_y;

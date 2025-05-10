@@ -2,8 +2,7 @@
 #include <task/task.h>
 #include <fs/fs_syscall.h>
 #include <mm/mm_syscall.h>
-#include <net/syscall.h>
-#include <drivers/window_manager/window_manager.h>
+#include <net/net_syscall.h>
 
 uint64_t switch_to_kernel_stack()
 {
@@ -58,7 +57,7 @@ extern int sys_pipe(int pipefd[2]);
 
 // Beware the 65 character limit!
 char sysname[] = "Next Aether OS";
-char nodename[] = "Aether-OS";
+char nodename[] = "Aether";
 char release[] = "0.0.1";
 char version[] = "0.0.1";
 char machine[] = "x86_64";
@@ -108,11 +107,14 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_WRITEV:
         regs->rax = sys_writev(arg1, (struct iovec *)arg2, arg3);
         break;
+    case SYS_CLONE:
+        regs->rax = sys_clone(regs, arg1, arg2, (int *)arg3, (int *)arg4, arg5);
+        break;
     case SYS_FORK:
         regs->rax = task_fork(regs);
         break;
     case SYS_EXECVE:
-        regs->rax = task_execve((const char *)arg1, (char *const *)arg2, (char *const *)arg3);
+        regs->rax = task_execve((const char *)arg1, (const char **)arg2, (const char **)arg3);
         break;
     case SYS_EXIT:
         regs->rax = task_exit((int64_t)arg1);
@@ -169,6 +171,10 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
             *(int64_t *)arg1 = mktime(&time);
         if (arg2)
             *(int64_t *)arg2 = 0;
+        regs->rax = 0;
+        break;
+    case SYS_CLOCK_GETRES:
+        ((struct timespec *)arg2)->tv_nsec = 1000000;
         regs->rax = 0;
         break;
     case SYS_SIGACTION:
@@ -292,8 +298,35 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_FACCESSAT:
         regs->rax = sys_faccessat(arg1, (const char *)arg2, arg3);
         break;
+    case SYS_SELECT:
+        regs->rax = sys_select(arg1, (fd_set *)arg2, (fd_set *)arg3, (fd_set *)arg4, (struct timespec *)arg5);
+        break;
     case SYS_PSELECT6:
         regs->rax = sys_pselect6(arg1, (fd_set *)arg2, (fd_set *)arg3, (fd_set *)arg4, (struct timespec *)arg5, (WeirdPselect6 *)arg6);
+        break;
+    case SYS_READLINK:
+        regs->rax = sys_readlink((char *)arg1, (char *)arg2, arg3);
+        break;
+    case SYS_NANOSLEEP:
+        regs->rax = sys_nanosleep((struct timespec *)arg1, (struct timespec *)arg2);
+        break;
+    case SYS_EPOLL_CREATE1:
+        regs->rax = sys_epoll_create1(arg1);
+        break;
+    case SYS_EPOLL_CREATE:
+        regs->rax = sys_epoll_create(arg1);
+        break;
+    case SYS_EPOLL_CTL:
+        regs->rax = sys_epoll_ctl(arg1, arg2, arg3, (struct epoll_event *)arg4);
+        break;
+    case SYS_EPOLL_PWAIT:
+        regs->rax = sys_epoll_pwait(arg1, (struct epoll_event *)arg2, arg3, arg4, (sigset_t *)arg5, arg6);
+        break;
+    case SYS_EPOLL_WAIT:
+        regs->rax = sys_epoll_wait(arg1, (struct epoll_event *)arg2, arg3, arg4);
+        break;
+    case SYS_LINK:
+        regs->rax = sys_link((const char *)arg1, (const char *)arg2);
         break;
 
     default:

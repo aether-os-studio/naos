@@ -74,7 +74,10 @@ int sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction)
         *oldaction = *ptr;
     }
 
-    *ptr = *action;
+    if (action)
+    {
+        *ptr = *action;
+    }
 
     if (ptr->sa_flags & SIG_NOMASK)
     {
@@ -111,6 +114,19 @@ int sys_kill(int pid, int sig)
         return 0;
     }
 
+    if (pid < 0)
+    {
+        for (uint64_t i = cpu_count; i < MAX_TASK_NUM; i++)
+        {
+            if (tasks[i] && tasks[i]->ppid == current_task->pid)
+            {
+                tasks[i]->signal |= SIGMASK(sig);
+            }
+        }
+
+        return 0;
+    }
+
     task_t *task = tasks[pid];
 
     if (!task)
@@ -120,9 +136,9 @@ int sys_kill(int pid, int sig)
 
     task->signal |= SIGMASK(sig);
 
-    if (task->state == TASK_BLOCKING)
+    if (task->state == TASK_BLOCKING && task->pid != task->ppid && tasks[task->ppid])
     {
-        task_unblock(task, -EINTR);
+        task_unblock(tasks[task->ppid], -EINTR);
     }
 
     return 0;

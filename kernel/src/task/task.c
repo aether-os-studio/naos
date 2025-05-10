@@ -119,7 +119,9 @@ void idle_entry()
 
 extern void fatfs_init();
 extern void iso9660_init();
+extern void epoll_init();
 extern void pipefs_init();
+extern void socketfs_init();
 
 extern void mount_root();
 
@@ -142,7 +144,9 @@ void init_thread()
     partition_init();
     fbdev_init();
 
+    epoll_init();
     pipefs_init();
+    socketfs_init();
     iso9660_init();
     fatfs_init();
 
@@ -226,7 +230,7 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], char *en
         }
     }
 
-    uint64_t total_length = 2 * sizeof(uint64_t) + 8 * 2 * sizeof(uint64_t) + env_i * sizeof(uint64_t) + sizeof(uint64_t) + argv_i * sizeof(uint64_t) + sizeof(uint64_t) + sizeof(uint64_t);
+    uint64_t total_length = 2 * sizeof(uint64_t) + 7 * 2 * sizeof(uint64_t) + env_i * sizeof(uint64_t) + sizeof(uint64_t) + argv_i * sizeof(uint64_t) + sizeof(uint64_t) + sizeof(uint64_t);
     tmp_stack -= (tmp_stack - total_length) % 0x10;
 
     // push auxv
@@ -270,10 +274,8 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], char *en
 
     // push argvp
     tmp_stack = push_slice(tmp_stack, tmp, sizeof(uint64_t));
-    tmp_stack = push_slice(tmp_stack, (uint8_t *)&execfn_ptr, sizeof(uint64_t));
     tmp_stack = push_slice(tmp_stack, (uint8_t *)argvps, argv_i * sizeof(uint64_t));
 
-    argv_i++;
     tmp_stack = push_slice(tmp_stack, (uint8_t *)&argv_i, sizeof(uint64_t));
 
     free(tmp);
@@ -340,7 +342,7 @@ uint64_t task_fork(struct pt_regs *regs)
     return child->pid;
 }
 
-uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
+uint64_t task_execve(const char *path, const char **argv, const char **envp)
 {
     arch_disable_interrupt();
 
@@ -352,6 +354,9 @@ uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
         can_schedule = true;
         return (uint64_t)-ENOENT;
     }
+
+    char buf[32];
+    ssize_t max = vfs_read(node, buf, 0, sizeof(buf));
 
     uint64_t buf_len = (node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
 
@@ -378,6 +383,15 @@ uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
         }
     }
     new_envp[envp_count] = NULL;
+
+    // if (max > 2 && buf[0] == '#' && buf[1] == '!')
+    // {
+    //     vfs_close(node);
+    //     node = vfs_open("/bin/bash");
+    //     buf_len = (node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
+    //     memmove(new_argv + 1, new_argv, argv_count);
+    //     new_argv[0] = path;
+    // }
 
 #if defined(__x86_64__)
     uint64_t new_page_table = clone_page_table(virt_to_phys((uint64_t)get_kernel_page_dir()), USER_STACK_START, USER_STACK_END);
@@ -544,7 +558,21 @@ uint64_t task_execve(const char *path, char *const *argv, char *const *envp)
 #endif
 
     uint64_t stack = push_infos(current_task, USER_STACK_END, (char **)new_argv, (char **)new_envp, e_entry, (uint64_t)(load_start + ehdr->e_phoff), ehdr->e_phnum, interpreter_entry ? INTERPRETER_BASE_ADDR : load_start);
+    for (int i = 0; i < argv_count; i++)
+    {
+        if (new_argv[i])
+        {
+            free(new_argv[i]);
+        }
+    }
     free(new_argv);
+    for (int i = 0; i < envp_count; i++)
+    {
+        if (new_envp[i])
+        {
+            free(new_envp[i]);
+        }
+    }
     free(new_envp);
     can_schedule = true;
     arch_to_user_mode(current_task->arch_context, interpreter_entry ? interpreter_entry : e_entry, stack);
@@ -696,7 +724,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status)
         break;
     }
 
-    return -1;
+    return -ENOENT;
 
 rollback:
     *status = (int)child->status;
@@ -707,4 +735,101 @@ rollback:
     free_frames(virt_to_phys((uint64_t)child), 1);
 
     return ret;
+}
+
+uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *parent_tid, int *child_tid, uint64_t tls)
+{
+    arch_disable_interrupt();
+
+    can_schedule = false;
+
+    task_t *child = get_free_task();
+    if (child == NULL)
+    {
+        return (uint64_t)-ENOMEM;
+    }
+
+    strncpy(child->name, current_task->name, TASK_NAME_MAX);
+
+    child->state = TASK_READY;
+
+    child->cpu_id = alloc_cpu_id();
+
+    child->kernel_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE)) + STACK_SIZE;
+    child->syscall_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE)) + STACK_SIZE;
+
+    child->arch_context = malloc(sizeof(arch_context_t));
+    memset(child->arch_context, 0, sizeof(arch_context_t));
+    current_task->arch_context->ctx = regs;
+    arch_context_copy(child->arch_context, current_task->arch_context, child->kernel_stack);
+#if defined(__x86_64__)
+    if (newsp)
+        child->arch_context->ctx->rsp = newsp;
+#endif
+    child->ppid = current_task->pid;
+    child->uid = current_task->uid;
+    child->gid = current_task->gid;
+    child->euid = current_task->euid;
+    child->egid = current_task->egid;
+    child->pgid = current_task->pgid;
+
+    child->jiffies = current_task->jiffies;
+
+    child->cwd = current_task->cwd;
+
+    child->mmap_start = USER_MMAP_START;
+    child->brk_start = USER_BRK_START;
+    child->brk_end = USER_BRK_START;
+
+    memcpy(child->fds, current_task->fds, sizeof(child->fds));
+    for (uint64_t i = 3; i < MAX_FD_NUM; i++)
+    {
+        if (child->fds[i] && child->fds[i]->type == file_pipe && child->fds[i]->handle)
+        {
+            pipe_t *pipe = child->fds[i]->handle;
+            pipe->reference_count++;
+        }
+    }
+
+    if (flags & CLONE_SIGHAND)
+    {
+        memcpy(child->actions, current_task->actions, sizeof(child->actions));
+        child->signal = current_task->signal;
+        child->blocked = current_task->blocked;
+    }
+
+    if (flags & CLONE_SETTLS)
+#if defined(__x86_64__)
+        child->arch_context->fsbase = tls;
+#endif
+
+    if (flags & CLONE_PARENT_SETTID)
+        *parent_tid = (int)child->pid;
+
+    can_schedule = true;
+
+    arch_enable_interrupt();
+
+    return child->pid;
+}
+
+uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem)
+{
+    if (req->tv_sec < 0)
+        return (uint64_t)-EINVAL;
+
+    size_t ms = req->tv_sec * 1000 + req->tv_nsec / 1000000;
+
+    uint64_t target = nanoTime() + ms;
+
+    do
+    {
+        arch_enable_interrupt();
+
+        arch_yield();
+
+        arch_pause();
+    } while (target > nanoTime());
+
+    return 0;
 }

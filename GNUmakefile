@@ -196,7 +196,7 @@ ovmf/ovmf-code-$(ARCH).fd:
 	mkdir -p ovmf
 	curl -Lo $@ https://github.com/osdev0/edk2-ovmf-nightly/releases/latest/download/ovmf-code-$(ARCH).fd
 	case "$(ARCH)" in \
-		aarch64) dd if=/dev/zero of=$@ bs=1 count=0 seek=67108864;; \
+		aarch64) dd if=/dev/zero of=$@ bs=1 count=0 seek=67108864 2>/dev/null;; \
 		riscv64) dd if=/dev/zero of=$@ bs=1 count=0 seek=33554432 2>/dev/null;; \
 	esac
 
@@ -231,8 +231,10 @@ $(IMAGE_NAME).iso: limine/limine kernel
 	cp -r user/rootfs-$(ARCH)/etc iso_root/
 	cp -r user/rootfs-$(ARCH)/bin iso_root/
 	cp -r user/rootfs-$(ARCH)/sbin iso_root/
-	cp -r user/rootfs-$(ARCH)/files iso_root/
+	cp -r user/rootfs-$(ARCH)/tmp iso_root/
+	cp -r user/rootfs-$(ARCH)/var iso_root/
 	cp -r user/rootfs-$(ARCH)/root iso_root/
+	cp -r user/rootfs-$(ARCH)/files iso_root/
 	cp kernel/bin-$(ARCH)/kernel iso_root/boot/
 	mkdir -p iso_root/boot/limine
 	cp limine.conf iso_root/boot/limine/
@@ -278,8 +280,7 @@ endif
 	rm -rf iso_root
 
 $(IMAGE_NAME).hdd: limine/limine kernel
-	rm -f $(IMAGE_NAME).hdd
-	dd if=/dev/zero bs=1M count=0 seek=2048 of=$(IMAGE_NAME).hdd
+	dd if=/dev/zero bs=1M count=4096 of=$(IMAGE_NAME).hdd
 ifeq ($(ARCH),x86_64)
 	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00 -m 1
 else
@@ -292,7 +293,9 @@ endif
 	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/etc ::/
 	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/bin ::/
 	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/sbin ::/
+	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/var ::/
 	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/root ::/
+	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/tmp ::/
 	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/files ::/
 	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(ARCH)/kernel ::/boot
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf ::/boot/limine

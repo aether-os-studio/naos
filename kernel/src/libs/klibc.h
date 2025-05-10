@@ -206,6 +206,33 @@ static inline char *strcat(char *dest, const char *src)
     return dest;
 }
 
+static inline const char *strstr(const char *haystack, const char *needle)
+{
+    if (!*needle)
+        return (const char *)haystack;
+
+    size_t needle_len = strlen(needle);
+    size_t haystack_len = strlen(haystack);
+
+    for (size_t i = 0; i + needle_len <= haystack_len; i++)
+    {
+        if (haystack[i] != *needle)
+            continue;
+
+        size_t j;
+        for (j = 0; j < needle_len; j++)
+        {
+            if (haystack[i + j] != needle[j])
+                break;
+        }
+
+        if (j == needle_len)
+            return (const char *)(haystack + i);
+    }
+
+    return NULL;
+}
+
 extern void *malloc(size_t size);
 
 static inline char *strdup(const char *s)

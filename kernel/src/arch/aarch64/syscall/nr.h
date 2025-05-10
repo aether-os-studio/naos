@@ -34,10 +34,17 @@
 #define SYS_PIPE2 293
 #define SYS_CHDIR 80
 #define SYS_GETCWD 79
+#define SYS_LINK 86
+#define SYS_READLINK 89
 #define SYS_FCNTL 72
 #define SYS_ACCESS 21
 #define SYS_FACCESSAT 269
 #define SYS_PSELECT6 270
+#define SYS_EPOLL_CREATE1 291
+#define SYS_EPOLL_PWAIT 281
+#define SYS_EPOLL_CTL 233
+#define SYS_EPOLL_WAIT 232
+#define SYS_EPOLL_CREATE 213
 
 #define SYS_SOCKET 41
 #define SYS_CONNECT 42
@@ -53,6 +60,8 @@
 #define SYS_RECVMSG 47
 
 /* 进程管理相关 */
+#define SYS_NANOSLEEP 35
+#define SYS_CLONE 56
 #define SYS_FORK 57   // fork()
 #define SYS_VFORK 58  // vfork()
 #define SYS_EXECVE 59 // execve(const char *pathname, char *const argv[], char *const envp[])
@@ -89,6 +98,7 @@
 #define SYS_SETMASK 351
 #define SYS_CLOCK_GETTIME 228
 
+#define SYS_CLOCK_GETRES 229
 #define SYS_SET_TID_ADDRESS 218
 
 typedef struct fb_info

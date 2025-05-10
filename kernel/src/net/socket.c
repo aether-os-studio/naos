@@ -1,39 +1,64 @@
 #include <net/socket.h>
-
-// 简易的实现
-static socket_t sockets[MAX_SOCKETS];
-static int next_fd = 0;
+#include <arch/arch.h>
+#include <drivers/kernel_logger.h>
 
 // 互斥锁模拟（实际裸机环境需要原子操作实现）
 typedef volatile int spinlock_t;
 #define SPIN_LOCK(l) while (__sync_lock_test_and_set(&(l), 1))
 #define SPIN_UNLOCK(l) __sync_lock_release(&(l))
 
+socket_t sockets[MAX_SOCKETS * 4] = {0};
+
 static spinlock_t socket_lock = 0;
+
+static vfs_node_t socketfs_root = NULL;
+static int socketfs_id = 0;
 
 int sys_socket(int domain, int type, int protocol)
 {
     SPIN_LOCK(socket_lock);
 
-    // 查找空闲socket
-    for (int i = MAX_FD_NUM; i < MAX_SOCKETS; i++)
+    int i = -1;
+    for (i = 3; i < MAX_FD_NUM; i++)
     {
-        if (sockets[i].state == SOCKET_TYPE_UNUSED)
+        if (current_task->fds[i] == NULL)
         {
-            sockets[i].fd = next_fd++;
-            sockets[i].state = SOCKET_TYPE_UNCONNECTED;
-            sockets[i].peer_fd = -1;
-            sockets[i].buf_head = 0;
-            sockets[i].buf_tail = 0;
-            memset(sockets[i].name, 0, SOCKET_NAME_LEN);
-
-            SPIN_UNLOCK(socket_lock);
-            return sockets[i].fd;
+            break;
         }
     }
 
+    if (i == MAX_FD_NUM)
+    {
+        return -EBADFD;
+    }
+
+    int sock_id = -1;
+    for (int j = 0; j < MAX_PIPES; j++)
+    {
+        if (sockets[j].state == SOCKET_TYPE_UNUSED)
+        {
+            sock_id = j;
+            break;
+        }
+    }
+
+    char buf[256];
+    sprintf(buf, "sock%d", i);
+    vfs_node_t node = vfs_node_alloc(socketfs_root, strdup(buf));
+    node->type = file_socket;
+    node->handle = &sockets[sock_id];
+    memset(&sockets[sock_id], 0, sizeof(socket_t));
+    socket_t *socket = (socket_t *)node->handle;
+    strcpy(socket->name, buf);
+    socket->buf_head = NULL;
+    socket->buf_tail = NULL;
+    socket->state = SOCKET_TYPE_UNCONNECTED;
+    socket->fd = i;
+
+    current_task->fds[i] = node;
+
     SPIN_UNLOCK(socket_lock);
-    return -EMFILE; // EMFILE
+    return i;
 }
 
 int sys_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
@@ -41,15 +66,13 @@ int sys_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
     SPIN_LOCK(socket_lock);
 
     // 查找socket结构
-    socket_t *sock = NULL;
-    for (int i = 0; i < MAX_SOCKETS; i++)
+    vfs_node_t node = current_task->fds[sockfd];
+    if (!node)
     {
-        if (sockets[i].fd == sockfd)
-        {
-            sock = &sockets[i];
-            break;
-        }
+        return -EBADF;
     }
+
+    socket_t *sock = node->handle;
 
     if (!sock || sock->state != SOCKET_TYPE_UNCONNECTED)
     {
@@ -69,15 +92,14 @@ int sys_listen(int sockfd, int backlog)
 {
     SPIN_LOCK(socket_lock);
 
-    socket_t *sock = NULL;
-    for (int i = 0; i < MAX_SOCKETS; i++)
+    // 查找socket结构
+    vfs_node_t node = current_task->fds[sockfd];
+    if (!node)
     {
-        if (sockets[i].fd == sockfd)
-        {
-            sock = &sockets[i];
-            break;
-        }
+        return -EBADF;
     }
+
+    socket_t *sock = node->handle;
 
     if (!sock || sock->state != SOCKET_TYPE_UNCONNECTED || !sock->name[0])
     {
@@ -92,71 +114,79 @@ int sys_listen(int sockfd, int backlog)
 
 int sys_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
 {
-    // 简化实现：直接返回第一个连接请求
     SPIN_LOCK(socket_lock);
 
-    socket_t *listen_sock = NULL;
-    for (int i = 0; i < MAX_SOCKETS; i++)
+    // 查找socket结构
+    vfs_node_t node = current_task->fds[sockfd];
+    if (!node)
     {
-        if (sockets[i].fd == sockfd &&
-            sockets[i].state == SOCKET_TYPE_LISTENING)
+        return -EBADF;
+    }
+
+    socket_t *listen_sock = node->handle;
+
+    if (!listen_sock || listen_sock->state != SOCKET_TYPE_LISTENING)
+    {
+        SPIN_UNLOCK(socket_lock);
+        return -EINVAL; // EINVAL
+    }
+
+    // 查找连接请求并创建新socket
+    int i = -1;
+    for (i = 3; i < MAX_FD_NUM; i++)
+    {
+        if (current_task->fds[i] == NULL)
         {
-            listen_sock = &sockets[i];
             break;
         }
     }
 
-    if (!listen_sock)
+    if (i == MAX_FD_NUM)
     {
-        SPIN_UNLOCK(socket_lock);
-        return -1; // EINVAL
+        return -EBADFD;
     }
 
-    // 查找连接请求并创建新socket
-    for (int i = 0; i < MAX_SOCKETS; i++)
+    int sock_id = -1;
+    for (int j = 0; j < MAX_PIPES; j++)
     {
-        if (sockets[i].state == SOCKET_TYPE_CONNECTED &&
-            strcmp(sockets[i].name, listen_sock->name) == 0)
+        if (sockets[j].state == SOCKET_TYPE_UNUSED)
         {
-
-            // 创建新的accept socket
-            socket_t *new_sock = NULL;
-            for (int j = 0; j < MAX_SOCKETS; j++)
-            {
-                if (sockets[j].state == SOCKET_TYPE_UNUSED)
-                {
-                    new_sock = &sockets[j];
-                    new_sock->fd = next_fd++;
-                    new_sock->state = SOCKET_TYPE_CONNECTED;
-                    new_sock->peer_fd = sockets[i].fd;
-                    sockets[i].peer_fd = new_sock->fd;
-                    strcpy(new_sock->name, listen_sock->name);
-                    break;
-                }
-            }
-
-            SPIN_UNLOCK(socket_lock);
-            return new_sock ? new_sock->fd : -1;
+            sock_id = j;
+            break;
         }
     }
 
+    char buf[256];
+    sprintf(buf, "sock%d", i);
+    vfs_node_t new_node = vfs_node_alloc(socketfs_root, strdup(buf));
+    new_node->type = file_socket;
+    new_node->handle = &sockets[sock_id];
+    memset(&sockets[sock_id], 0, sizeof(socket_t));
+    socket_t *socket = (socket_t *)new_node->handle;
+    strcpy(socket->name, buf);
+    socket->buf_head = NULL;
+    socket->buf_tail = NULL;
+    socket->state = SOCKET_TYPE_UNCONNECTED;
+    socket->fd = i;
+
+    current_task->fds[i] = new_node;
+
     SPIN_UNLOCK(socket_lock);
-    return -1; // EWOULDBLOCK
+    return i;
 }
 
 int sys_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
     SPIN_LOCK(socket_lock);
 
-    socket_t *sock = NULL;
-    for (int i = 0; i < MAX_SOCKETS; i++)
+    // 查找socket结构
+    vfs_node_t node = current_task->fds[sockfd];
+    if (!node)
     {
-        if (sockets[i].fd == sockfd)
-        {
-            sock = &sockets[i];
-            break;
-        }
+        return -EBADF;
     }
+
+    socket_t *sock = node->handle;
 
     if (!sock || sock->state != SOCKET_TYPE_UNCONNECTED)
     {
@@ -166,7 +196,7 @@ int sys_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 
     // 查找目标socket
     const struct sockaddr_un *un = (struct sockaddr_un *)addr;
-    for (int i = 0; i < MAX_SOCKETS; i++)
+    for (int i = MAX_FD_NUM; i < MAX_SOCKETS; i++)
     {
         if (sockets[i].state == SOCKET_TYPE_LISTENING &&
             strcmp(sockets[i].name, un->sun_path) == 0)
@@ -187,18 +217,14 @@ int sys_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 
 int64_t sys_send(int sockfd, const void *buf, size_t len, int flags)
 {
-    socket_t *sock = NULL;
-    socket_t *peer = NULL;
-
-    SPIN_LOCK(socket_lock);
-    for (int i = 0; i < MAX_SOCKETS; i++)
+    // 查找socket结构
+    vfs_node_t node = current_task->fds[sockfd];
+    if (!node)
     {
-        if (sockets[i].fd == sockfd)
-        {
-            sock = &sockets[i];
-            break;
-        }
+        return -EBADF;
     }
+
+    socket_t *sock = node->handle;
 
     if (!sock || sock->state != SOCKET_TYPE_CONNECTED)
     {
@@ -206,14 +232,7 @@ int64_t sys_send(int sockfd, const void *buf, size_t len, int flags)
         return -ENOTCONN; // ENOTCONN
     }
 
-    for (int i = 0; i < MAX_SOCKETS; i++)
-    {
-        if (sockets[i].fd == sock->peer_fd)
-        {
-            peer = &sockets[i];
-            break;
-        }
-    }
+    socket_t *peer = current_task->fds[sock->peer_fd];
 
     if (!peer)
     {
@@ -237,17 +256,16 @@ int64_t sys_send(int sockfd, const void *buf, size_t len, int flags)
 
 int64_t sys_recv(int sockfd, void *buf, size_t len, int flags)
 {
-    socket_t *sock = NULL;
-
     SPIN_LOCK(socket_lock);
-    for (int i = 0; i < MAX_SOCKETS; i++)
+
+    // 查找socket结构
+    vfs_node_t node = current_task->fds[sockfd];
+    if (!node)
     {
-        if (sockets[i].fd == sockfd)
-        {
-            sock = &sockets[i];
-            break;
-        }
+        return -EBADF;
     }
+
+    socket_t *sock = node->handle;
 
     if (!sock || sock->state != SOCKET_TYPE_CONNECTED)
     {
@@ -268,20 +286,46 @@ int64_t sys_recv(int sockfd, void *buf, size_t len, int flags)
     return to_copy;
 }
 
-int sys_socket_close(int sockfd)
+int sys_socket_close(void *current)
 {
-    SPIN_LOCK(socket_lock);
+    // todo
+    return 0;
+}
 
-    for (int i = MAX_FD_NUM; i < MAX_SOCKETS; i++)
+static void dummy() {}
+
+static struct vfs_callback callback =
     {
-        if (sockets[i].fd == sockfd)
+        .mount = (vfs_mount_t)dummy,
+        .unmount = (vfs_unmount_t)dummy,
+        .open = (vfs_open_t)dummy,
+        .close = (vfs_close_t)sys_socket_close,
+        .read = dummy,
+        .write = dummy,
+        .mkdir = (vfs_mk_t)dummy,
+        .mkfile = (vfs_mk_t)dummy,
+        .stat = (vfs_stat_t)dummy,
+        .ioctl = (vfs_ioctl_t)dummy,
+};
+
+void socketfs_init()
+{
+    socketfs_id = vfs_regist("socketfs", &callback);
+    socketfs_root = vfs_node_alloc(rootdir, "sock");
+    socketfs_root->type = file_dir;
+    vfs_node_t node = vfs_child_append(socketfs_root, "sock0", NULL);
+    node->type = file_socket;
+
+    int sock_id = -1;
+    for (int j = 0; j < MAX_PIPES; j++)
+    {
+        if (sockets[j].state == SOCKET_TYPE_UNUSED)
         {
-            memset(&sockets[i], 0, sizeof(socket_t));
-            sockets[i].state = SOCKET_TYPE_UNUSED;
+            sock_id = j;
             break;
         }
     }
 
-    SPIN_UNLOCK(socket_lock);
-    return 0;
+    sockets[sock_id].state = SOCKET_TYPE_UNCONNECTED;
+    strcpy(sockets[sock_id].name, ":0");
 }

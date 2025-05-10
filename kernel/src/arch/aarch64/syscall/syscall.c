@@ -51,7 +51,7 @@ void aarch64_do_syscall(struct pt_regs *frame)
         ret = task_fork(frame);
         break;
     case SYS_EXECVE:
-        ret = task_execve((const char *)arg1, (char *const *)arg2, (char *const *)arg3);
+        ret = task_execve((const char *)arg1, (const char **)arg2, (const char **)arg3);
         break;
     case SYS_EXIT:
         ret = task_exit((int64_t)arg1);
