@@ -1,8 +1,8 @@
 #pragma once
 
-#include <fs/vfs/vfs.h>
 #include <fs/vfs/pipe.h>
 #include <task/signal.h>
+#include <fs/termios.h>
 
 #define AT_NULL 0
 #define AT_IGNORE 1
@@ -35,20 +35,21 @@
 #define AT_SYSINFO 32
 #define AT_SYSINFO_EHDR 33
 
-#define EHDR_START_ADDR 0x0000004000000000
-#define INTERPRETER_EHDR_ADDR 0x0000003000000000
-#define INTERPRETER_BASE_ADDR 0x0000002000000000
+#define EHDR_START_ADDR 0x0000003000000000
+#define INTERPRETER_EHDR_ADDR 0x0000002000000000
+#define INTERPRETER_BASE_ADDR 0x0000001000000000
 
 #define USER_BRK_START 0x0000700000000000
 #define USER_BRK_END 0x00007fffffffffff
 
 #define USER_MMAP_START 0x0000006000000000
+#define USER_MMAP_END USER_BRK_START
 
 #define MAX_TASK_NUM 1024
 
 #define TASK_NAME_MAX 128
 
-#define MAX_FD_NUM 32
+#define MAX_FD_NUM 128
 
 #define current_task arch_get_current()
 
@@ -88,8 +89,8 @@ typedef enum task_state
 struct arch_context;
 typedef struct arch_context arch_context_t;
 
-struct Container;
-typedef struct Container Container;
+struct vfs_node;
+typedef struct vfs_node *vfs_node_t;
 
 typedef struct task
 {
@@ -117,6 +118,8 @@ typedef struct task
     uint64_t blocked;
     vfs_node_t cwd;
     vfs_node_t fds[MAX_FD_NUM];
+    uint64_t timer_slack_ns;
+    termios term;
 } task_t;
 
 task_t *task_create(const char *name, void (*entry)());
@@ -135,6 +138,15 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem);
 task_t *task_search(task_state_t state, uint32_t cpu_id);
 int task_block(task_t *task, task_state_t state, int timeout_ms);
 void task_unblock(task_t *task, int reason);
+
+#define PR_SET_NAME 15
+#define PR_GET_NAME 16
+#define PR_SET_SECCOMP 22
+#define PR_GET_SECCOMP 21
+#define PR_SET_TIMERSLACK 23
+#define SECCOMP_MODE_STRICT 1
+
+uint64_t sys_prctl(uint64_t options, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5);
 
 extern task_t *tasks[MAX_TASK_NUM];
 extern task_t *idle_tasks[MAX_CPU_NUM];

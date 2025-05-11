@@ -21,5 +21,5 @@ typedef struct
     int tm_isdst; // 夏令时标志
 } tm;
 
-void time_read_bcd(tm *time);
+void time_read(tm *time);
 int64_t mktime(tm *time);

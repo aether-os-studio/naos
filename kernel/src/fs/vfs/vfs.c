@@ -1,4 +1,5 @@
 #include "fs/vfs/vfs.h"
+#include "fs/fs_syscall.h"
 #include "arch/arch.h"
 #include "mm/mm.h"
 
@@ -27,6 +28,8 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name)
     node->type = file_none;
     node->fsid = parent ? parent->fsid : 0;
     node->root = parent ? parent->root : node;
+    node->lock.l_pid = 0;
+    node->lock.l_type = F_UNLCK;
     if (parent)
         list_prepend(parent->child, node);
     return node;

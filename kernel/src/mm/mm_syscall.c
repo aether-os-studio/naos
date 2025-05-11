@@ -1,4 +1,6 @@
 #include <mm/mm_syscall.h>
+#include <fs/fs_syscall.h>
+#include <fs/vfs/vfs.h>
 
 uint64_t sys_brk(uint64_t addr)
 {
@@ -16,8 +18,6 @@ uint64_t sys_brk(uint64_t addr)
 
     memset((void *)start, 0, size);
 
-    new_brk = start + size;
-
     current_task->brk_end = new_brk;
 
     return new_brk;
@@ -25,28 +25,36 @@ uint64_t sys_brk(uint64_t addr)
 
 uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t fd, uint64_t offset)
 {
-    if ((flags & MAP_ANONYMOUS) && fd != (uint64_t)-1)
-    {
-        return MAP_FAILED;
-    }
-
-    if (!(flags & MAP_ANONYMOUS) && fd == (uint64_t)-1)
-    {
-        return MAP_FAILED;
-    }
-
     if ((offset & (DEFAULT_PAGE_SIZE - 1)) != 0)
     {
-        return MAP_FAILED;
+        return (uint64_t)-EINVAL;
     }
+
+    uint64_t aligned_len = (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
 
     if (addr == 0)
     {
         addr = current_task->mmap_start;
         flags &= (~MAP_FIXED);
+        current_task->mmap_start += aligned_len;
+        if (current_task->mmap_start > USER_MMAP_END)
+        {
+            current_task->mmap_start -= aligned_len;
+            return (uint64_t)-ENOMEM;
+        }
     }
 
-    current_task->mmap_start += (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
+    if (fd < MAX_FD_NUM && current_task->fds[fd] != NULL)
+    {
+        char *fullpath = vfs_get_fullpath(current_task->fds[fd]);
+        struct fb_fix_screeninfo screen_info;
+        if (!strncmp(fullpath, "/dev/fb", 7))
+        {
+            vfs_ioctl(current_task->fds[fd], FBIOGET_FSCREENINFO, (uint64_t)&screen_info);
+            addr = screen_info.smem_start;
+            flags | MAP_FIXED;
+        }
+    }
 
     uint64_t count = (len + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE;
     uint64_t vaddr = addr & ~(DEFAULT_PAGE_SIZE - 1);
@@ -84,7 +92,13 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
         {
             uint64_t phys = alloc_frames(1);
             if (phys == 0)
-                return MAP_FAILED;
+            {
+                if (flags & MAP_FIXED == 0)
+                {
+                    current_task->mmap_start -= aligned_len;
+                }
+                return -ENOMEM;
+            }
             map_page(get_current_page_dir(true), page, phys, get_arch_page_table_flags(flag));
         }
     }
@@ -93,7 +107,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
     {
         vfs_node_t file = current_task->fds[fd];
         if (!file)
-            return MAP_FAILED;
+            return -EBADFD;
         vfs_read(file, (void *)addr, offset, len);
     }
     else

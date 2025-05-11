@@ -10,7 +10,8 @@ endif
 
 .PHONY: clean
 clean:
-	rm -rf $(SYSROOT)/../
+	rm -rf $(CWD)/rootfs-$(ARCH)
 
 .PHONY: distclean
 distclean:
+	rm -rf $(CWD)/rootfs-$(ARCH)

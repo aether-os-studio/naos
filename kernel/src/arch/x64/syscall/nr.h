@@ -11,13 +11,14 @@
  */
 
 /* 文件操作相关 */
-#define SYS_READ 0      // read(int fd, void *buf, size_t count)
-#define SYS_WRITE 1     // write(int fd, const void *buf, size_t count)
-#define SYS_OPEN 2      // open(const char *pathname, int flags, mode_t mode)
-#define SYS_CLOSE 3     // close(int fd)
-#define SYS_STAT 4      // stat(const char *pathname, struct stat *statbuf)
-#define SYS_FSTAT 5     // fstat(int fd, struct stat *statbuf)
-#define SYS_LSTAT 6     // lstat(const char *pathname, struct stat *statbuf)
+#define SYS_READ 0  // read(int fd, void *buf, size_t count)
+#define SYS_WRITE 1 // write(int fd, const void *buf, size_t count)
+#define SYS_OPEN 2  // open(const char *pathname, int flags, mode_t mode)
+#define SYS_CLOSE 3 // close(int fd)
+#define SYS_STAT 4  // stat(const char *pathname, struct stat *statbuf)
+#define SYS_FSTAT 5 // fstat(int fd, struct stat *statbuf)
+#define SYS_LSTAT 6 // lstat(const char *pathname, struct stat *statbuf)
+#define SYS_STATFS 137
 #define SYS_POLL 7      // poll(struct pollfd *fds, nfds_t nfds, int timeout)
 #define SYS_LSEEK 8     // lseek(int fd, off_t offset, int whence)
 #define SYS_MMAP 9      // mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
@@ -35,6 +36,7 @@
 #define SYS_CHDIR 80
 #define SYS_GETCWD 79
 #define SYS_LINK 86
+#define SYS_UNLINK 87
 #define SYS_READLINK 89
 #define SYS_FCNTL 72
 #define SYS_ACCESS 21
@@ -46,6 +48,12 @@
 #define SYS_EPOLL_CTL 233
 #define SYS_EPOLL_WAIT 232
 #define SYS_EPOLL_CREATE 213
+#define SYS_EVENTFD2 290
+#define SYS_SIGNALFD 282
+#define SYS_TIMERFD_CREATE 283
+#define SYS_TIMERFD_SETTIME 286
+#define SYS_SIGNALFD4 289
+#define SYS_FLOCK 73
 
 #define SYS_SOCKET 41
 #define SYS_CONNECT 42
@@ -55,9 +63,11 @@
 #define SYS_GETSOCKNAME 51
 #define SYS_GETPEERNAME 52
 #define SYS_SOCKETPAIR 53
+#define SYS_SETSOCKOPT 54
 #define SYS_GETSOCKOPT 55
 #define SYS_SENDTO 44
 #define SYS_RECVFROM 45
+#define SYS_SENDMSG 46
 #define SYS_RECVMSG 47
 
 /* 进程管理相关 */
@@ -78,7 +88,11 @@
 #define SYS_SETPGID 109 // setpgid(int pid, int64_t pgid)
 #define SYS_GETPGID 121 // getpgid()
 #define SYS_GETPPID 110 // getppid()
+#define SYS_SETRESUID 117
+#define SYS_GETRESUID 118
 #define SYS_GETTID 186
+#define SYS_SETFSUID 122
+#define SYS_SETFSGID 123
 #define SYS_FUTEX 202
 #define SYS_EXIT_GROUP 231
 #define SYS_GETRLIMIT 97
@@ -93,6 +107,7 @@
 #define SYS_SIGRETURN 15
 #define SYS_SIGALTSTACK 131
 
+#define SYS_PRCTL 157
 #define SYS_ARCH_PRCTL 158
 
 #define SYS_SIGNAL 350

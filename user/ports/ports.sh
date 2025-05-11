@@ -16,9 +16,10 @@ chmod +x "$APK_PATH"
 
 # bootstrap alpine userspace
 sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/edge/main -U --allow-untrusted --root $SYSROOT/../ --initdb add alpine-base bash coreutils grep gcc mpc1 mpfr-dev gmp-dev isl-dev binutils musl-dev ncurses
+echo -e "http://mirrors.ustc.edu.cn/alpine/edge/main\nhttp://mirrors.ustc.edu.cn/alpine/edge/community" | sudo tee $SYSROOT/../etc/apk/repositories
 
 # Basic software
-# sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/edge/community -U --allow-untrusted --root $SYSROOT/../ --initdb add i3wm xvfb ffmpeg
+sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/v3.14/community -U --allow-untrusted --root $SYSROOT/../ --initdb add seatd weston weston-backend-fbdev weston-terminal weston-shell-desktop udev
 
 sudo chmod -R 777 $SYSROOT/../
 

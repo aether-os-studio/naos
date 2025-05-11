@@ -3,7 +3,7 @@
 #include <libs/klibc.h>
 #include <mm/bitmap.h>
 #include <mm/hhdm.h>
-#include <mm/heap.h>
+#include <mm/heap/heap.h>
 #include <mm/page_table_flags.h>
 #include <arch/arch.h>
 

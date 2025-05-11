@@ -4,30 +4,6 @@
 #define CMOS_ADDR 0x70 // CMOS 地址寄存器
 #define CMOS_DATA 0x71 // CMOS 数据寄存器
 
-#define CMOS_SECOND 0x01
-#define CMOS_MINUTE 0x03
-#define CMOS_HOUR 0x05
-
-#define CMOS_A 0x0a
-#define CMOS_B 0x0b
-#define CMOS_C 0x0c
-#define CMOS_D 0x0d
-#define CMOS_NMI 0x80
-
-// 读 cmos 寄存器的值
-uint8_t cmos_read(uint8_t addr)
-{
-    io_out8(CMOS_ADDR, CMOS_NMI | addr);
-    return io_in8(CMOS_DATA);
-};
-
-// 写 cmos 寄存器的值
-void cmos_write(uint8_t addr, uint8_t value)
-{
-    io_out8(CMOS_ADDR, CMOS_NMI | addr);
-    io_out8(CMOS_DATA, value);
-}
-
 // 下面是 CMOS 信息的寄存器索引
 #define CMOS_SECOND 0x00  // (0 ~ 59)
 #define CMOS_MINUTE 0x02  // (0 ~ 59)
@@ -43,6 +19,20 @@ void cmos_write(uint8_t addr, uint8_t value)
 #define HOUR (60 * MINUTE) // 每小时的秒数
 #define DAY (24 * HOUR)    // 每天的秒数
 #define YEAR (365 * DAY)   // 每年的秒数，以 365 天算
+
+// 读 cmos 寄存器的值
+uint8_t cmos_read(uint8_t addr)
+{
+    io_out8(CMOS_ADDR, CMOS_NMI | addr);
+    return io_in8(CMOS_DATA);
+};
+
+// 写 cmos 寄存器的值
+void cmos_write(uint8_t addr, uint8_t value)
+{
+    io_out8(CMOS_ADDR, CMOS_NMI | addr);
+    io_out8(CMOS_DATA, value);
+}
 
 // 每个月开始时的已经过去天数
 static int month[13] = {
@@ -60,6 +50,7 @@ static int month[13] = {
     (31 + 29 + 31 + 30 + 31 + 30 + 31 + 31 + 30 + 31),
     (31 + 29 + 31 + 30 + 31 + 30 + 31 + 31 + 30 + 31 + 30)};
 
+int64_t startup_time;
 int century;
 
 int elapsed_leap_years(int year)
@@ -77,22 +68,39 @@ bool is_leap_year(int year)
     return ((year % 4 == 0) && (year % 100 != 0)) || ((year + 1900) % 400 == 0);
 }
 
-void time_read_bcd(tm *time)
+void localtime(int64_t stamp, tm *time)
 {
-    // CMOS 的访问速度很慢。为了减小时间误差，在读取了下面循环中所有数值后，
-    // 若此时 CMOS 中秒值发生了变化，那么就重新读取所有值。
-    // 这样内核就能把与 CMOS 的时间误差控制在 1 秒之内。
-    do
+    time->tm_sec = stamp % 60;
+
+    int64_t remain = stamp / 60;
+
+    time->tm_min = remain % 60;
+    remain /= 60;
+
+    time->tm_hour = remain % 24;
+    int64_t days = remain / 24;
+
+    time->tm_wday = (days + 4) % 7; // 1970-01-01 是星期四
+
+    // 这里产生误差显然需要 365 个闰年，不管了
+    int years = days / 365 + 70;
+    time->tm_year = years;
+    int offset = 1;
+    if (is_leap_year(years))
+        offset = 0;
+
+    days -= elapsed_leap_years(years);
+    time->tm_yday = days % (366 - offset);
+
+    int mon = 1;
+    for (; mon < 13; mon++)
     {
-        time->tm_sec = cmos_read(CMOS_SECOND);
-        time->tm_min = cmos_read(CMOS_MINUTE);
-        time->tm_hour = cmos_read(CMOS_HOUR);
-        time->tm_wday = cmos_read(CMOS_WEEKDAY);
-        time->tm_mday = cmos_read(CMOS_DAY);
-        time->tm_mon = cmos_read(CMOS_MONTH);
-        time->tm_year = cmos_read(CMOS_YEAR);
-        century = cmos_read(CMOS_CENTURY);
-    } while (time->tm_sec != cmos_read(CMOS_SECOND));
+        if ((month[mon] - offset) > time->tm_yday)
+            break;
+    }
+
+    time->tm_mon = mon - 1;
+    time->tm_mday = time->tm_yday - month[time->tm_mon] + offset + 1;
 }
 
 int64_t mktime(tm *time)
@@ -131,4 +139,63 @@ int64_t mktime(tm *time)
     res += time->tm_sec;
 
     return res;
+}
+
+int get_yday(tm *time)
+{
+    int res = month[time->tm_mon]; // 已经过去的月的天数
+    res += time->tm_mday;          // 这个月过去的天数
+
+    int year;
+    if (time->tm_year >= 70)
+        year = time->tm_year - 70;
+    else
+        year = time->tm_year - 70 + 100;
+
+    // 如果不是闰年，并且 2 月已经过去了，则减去一天
+    // 注：1972 年是闰年，这样算不太精确，忽略了 100 年的平年
+    if ((year + 2) % 4 && time->tm_mon > 2)
+    {
+        res -= 1;
+    }
+
+    return res;
+}
+
+void time_read_bcd(tm *time)
+{
+    // CMOS 的访问速度很慢。为了减小时间误差，在读取了下面循环中所有数值后，
+    // 若此时 CMOS 中秒值发生了变化，那么就重新读取所有值。
+    // 这样内核就能把与 CMOS 的时间误差控制在 1 秒之内。
+    do
+    {
+        time->tm_sec = cmos_read(CMOS_SECOND);
+        time->tm_min = cmos_read(CMOS_MINUTE);
+        time->tm_hour = cmos_read(CMOS_HOUR);
+        time->tm_wday = cmos_read(CMOS_WEEKDAY);
+        time->tm_mday = cmos_read(CMOS_DAY);
+        time->tm_mon = cmos_read(CMOS_MONTH);
+        time->tm_year = cmos_read(CMOS_YEAR);
+        century = cmos_read(CMOS_CENTURY);
+    } while (time->tm_sec != cmos_read(CMOS_SECOND));
+}
+
+uint8_t bcd_to_bin(uint8_t value)
+{
+    return (value & 0xf) + (value >> 4) * 10;
+}
+
+void time_read(tm *time)
+{
+    time_read_bcd(time);
+    time->tm_sec = bcd_to_bin(time->tm_sec);
+    time->tm_min = bcd_to_bin(time->tm_min);
+    time->tm_hour = bcd_to_bin(time->tm_hour);
+    time->tm_wday = bcd_to_bin(time->tm_wday);
+    time->tm_mday = bcd_to_bin(time->tm_mday);
+    time->tm_mon = bcd_to_bin(time->tm_mon);
+    time->tm_year = bcd_to_bin(time->tm_year);
+    time->tm_yday = get_yday(time);
+    time->tm_isdst = -1;
+    century = bcd_to_bin(century);
 }

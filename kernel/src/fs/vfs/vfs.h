@@ -181,6 +181,13 @@ typedef struct vfs_callback
     vfs_ioctl_t ioctl;
 } *vfs_callback_t;
 
+typedef struct flock
+{
+    volatile uint64_t l_pid;
+    volatile uint64_t l_type;
+    volatile uint64_t lock;
+} flock_t;
+
 struct vfs_node
 {
     vfs_node_t parent;    // 父目录
@@ -197,6 +204,7 @@ struct vfs_node
     uint32_t type;        // 类型
     uint32_t fsid;        // 文件系统的 id
     void *handle;         // 操作文件的句柄
+    flock_t lock;         // 锁
     list_t child;         // 子目录和子文件
     vfs_node_t root;      // 根目录
 };

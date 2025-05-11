@@ -63,3 +63,35 @@ int sys_signal(int sig, uint64_t handler, uint64_t restorer);
 int sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction);
 void sys_sigreturn();
 int sys_kill(int pid, int sig);
+
+union sigval
+{
+    int sival_int;
+    void *sival_ptr;
+};
+
+struct sigevent
+{
+    union sigval sigev_value;
+    int sigev_signo;
+    int sigev_notify;
+    union
+    {
+        char __pad[64 - 2 * sizeof(int) - sizeof(union sigval)];
+        int sigev_notify_thread_id;
+        struct
+        {
+            void (*sigev_notify_function)(union sigval);
+            void *sigev_notify_attributes;
+        } __sev_thread;
+    } __sev_fields;
+};
+
+struct signalfd_ctx
+{
+    sigset_t sigmask;       // 监控的信号集合
+    struct sigevent *queue; // 信号事件队列
+    size_t queue_size;
+    size_t queue_head;
+    size_t queue_tail;
+};

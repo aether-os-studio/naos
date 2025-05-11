@@ -9,6 +9,8 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
 FrameAllocator frame_allocator;
 uint64_t memory_size = 0;
 
+bool frame_alloc_op_lock = false;
+
 void frame_init()
 {
     hhdm_init();
@@ -70,6 +72,14 @@ void frame_init()
 
 void free_frames(uint64_t addr, uint64_t size)
 {
+    while (frame_alloc_op_lock)
+    {
+        arch_enable_interrupt();
+        arch_pause();
+    }
+
+    frame_alloc_op_lock = true;
+
     if (addr == 0)
         return;
     size_t frame_index = addr / DEFAULT_PAGE_SIZE;
@@ -79,17 +89,32 @@ void free_frames(uint64_t addr, uint64_t size)
     Bitmap *bitmap = &frame_allocator.bitmap;
     bitmap_set_range(bitmap, frame_index, frame_index + frame_count, true);
     frame_allocator.usable_frames += frame_count;
+
+    frame_alloc_op_lock = false;
 }
 
 uint64_t alloc_frames(size_t count)
 {
+    while (frame_alloc_op_lock)
+    {
+        arch_enable_interrupt();
+        arch_pause();
+    }
+
+    frame_alloc_op_lock = true;
+
     Bitmap *bitmap = &frame_allocator.bitmap;
     size_t frame_index = bitmap_find_range(bitmap, count, true);
 
     if (frame_index == (size_t)-1)
+    {
+        frame_alloc_op_lock = false;
         return 0;
+    }
     bitmap_set_range(bitmap, frame_index, frame_index + count, false);
     frame_allocator.usable_frames -= count;
+
+    frame_alloc_op_lock = false;
 
     return frame_index * DEFAULT_PAGE_SIZE;
 }

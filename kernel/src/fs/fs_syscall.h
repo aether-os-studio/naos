@@ -2,6 +2,7 @@
 
 #include <libs/klibc.h>
 #include <task/signal.h>
+#include <fs/termios.h>
 
 struct iovec
 {
@@ -144,7 +145,7 @@ struct stat
 #define TIOCM_OUT2 0x4000
 #define TIOCM_LOOP 0x8000
 
-uint64_t sys_open(const char *name, uint64_t mode, uint64_t flags);
+uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode);
 uint64_t sys_close(uint64_t fd);
 uint64_t sys_read(uint64_t fd, void *buf, uint64_t len);
 uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len);
@@ -156,6 +157,20 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count);
 uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size);
 uint64_t sys_chdir(const char *dirname);
 uint64_t sys_getcwd(char *cwd, uint64_t size);
+
+uint64_t sys_dup(uint64_t fd);
+
+#define F_DUPFD 0
+#define F_GETFD 1
+#define F_SETFD 2
+#define F_GETFL 3
+#define F_SETFL 4
+#define F_SETOWN 8
+#define F_GETOWN 9
+#define F_SETSIG 10
+#define F_GETSIG 11
+
+#define F_DUPFD_CLOEXEC 1030
 
 uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg);
 int sys_pipe(int fd[2]);
@@ -264,3 +279,35 @@ uint64_t sys_epoll_pwait(int epfd, struct epoll_event *events,
                          int maxevents, int timeout, sigset_t *sigmask,
                          size_t sigsetsize);
 uint64_t sys_epoll_create1(int flags);
+
+#define EFD_CLOEXEC 02000000
+#define EFD_NONBLOCK 04000
+#define EFD_SEMAPHORE 00000001
+
+typedef struct eventfd
+{
+    uint64_t count;
+    int flags;
+} eventfd_t;
+
+uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags);
+
+#define SIGNALFD_IOC_MASK 0x53010008
+
+uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask, int flags);
+uint64_t sys_signalfd(int ufd, const sigset_t *mask, size_t sizemask);
+
+#define LOCK_SH 1
+#define LOCK_EX 2
+#define LOCK_NB 4
+#define LOCK_UN 8
+
+#define L_SET 0
+#define L_INCR 1
+#define L_XTND 2
+
+#define F_RDLCK 0
+#define F_WRLCK 1
+#define F_UNLCK 2
+
+uint64_t sys_flock(int fd, uint64_t cmd);

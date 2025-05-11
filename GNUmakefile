@@ -100,7 +100,6 @@ run-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).iso
 		-device ahci,id=ahci \
 		-device qemu-xhci,id=xhci \
 		-device ide-cd,drive=cdrom,bus=ahci.0 \
-		-rtc base=localtime \
 		$(QEMUFLAGS)
 
 .PHONY: run-hdd-x86_64
@@ -111,8 +110,7 @@ run-hdd-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-drive if=none,file=$(IMAGE_NAME).hdd,format=raw,id=harddisk \
 		-device ahci,id=ahci \
 		-device qemu-xhci,id=xhci \
-		-device nvme,drive=harddisk,serial=1234 \
-		-rtc base=localtime \
+		-device ide-hd,drive=harddisk,bus=ahci.0 \
 		$(QEMUFLAGS)
 
 .PHONY: run-aarch64
@@ -232,6 +230,7 @@ $(IMAGE_NAME).iso: limine/limine kernel
 	cp -r user/rootfs-$(ARCH)/bin iso_root/
 	cp -r user/rootfs-$(ARCH)/sbin iso_root/
 	cp -r user/rootfs-$(ARCH)/tmp iso_root/
+	cp -r user/rootfs-$(ARCH)/run iso_root/
 	cp -r user/rootfs-$(ARCH)/var iso_root/
 	cp -r user/rootfs-$(ARCH)/root iso_root/
 	cp -r user/rootfs-$(ARCH)/files iso_root/
@@ -280,7 +279,8 @@ endif
 	rm -rf iso_root
 
 $(IMAGE_NAME).hdd: limine/limine kernel
-	dd if=/dev/zero bs=1M count=4096 of=$(IMAGE_NAME).hdd
+	rm -rf $(IMAGE_NAME).hdd
+	dd if=/dev/zero bs=1M count=0 seek=2048 of=$(IMAGE_NAME).hdd
 ifeq ($(ARCH),x86_64)
 	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00 -m 1
 else
@@ -296,6 +296,7 @@ endif
 	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/var ::/
 	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/root ::/
 	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/tmp ::/
+	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/run ::/
 	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/files ::/
 	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(ARCH)/kernel ::/boot
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf ::/boot/limine
@@ -324,5 +325,4 @@ clean:
 distclean:
 	$(MAKE) -C kernel distclean
 	$(MAKE) -C user distclean
-	$(MAKE) -C relibc clean
 	rm -rf iso_root *.iso *.hdd kernel-deps limine ovmf

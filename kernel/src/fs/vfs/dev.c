@@ -7,8 +7,9 @@
 #include <libs/flanterm/flanterm_private.h>
 #include <libs/flanterm/backends/fb_private.h>
 
-static int devfs_id = 0;
-static vfs_node_t devfs_root = NULL;
+int devfs_id = 0;
+vfs_node_t devfs_root = NULL;
+vfs_node_t input_root = NULL;
 
 devfs_handle_t devfs_handles[MAX_DEV_NUM];
 
@@ -97,6 +98,21 @@ static struct vfs_callback callbacks = {
 
 #define MAX_FB_NUM 2
 
+ssize_t inputdev_event0_read(void *data, uint64_t offset, void *buf, uint64_t len)
+{
+    return 0;
+}
+
+ssize_t inputdev_event1_read(void *data, uint64_t offset, void *buf, uint64_t len)
+{
+    return 0;
+}
+
+ssize_t inputdev_ioctl(void *data, ssize_t cmd, ssize_t arg)
+{
+    return 0;
+}
+
 void regist_dev(const char *name,
                 ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len),
                 ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len),
@@ -130,7 +146,7 @@ void regist_dev(const char *name,
             devfs_handles[i]->data = data;
             vfs_node_t child = vfs_child_append(dev, devfs_handles[i]->name, NULL);
             child->type = file_block;
-            if (!strncmp(devfs_handles[i]->name, "std", 3))
+            if (!strncmp(devfs_handles[i]->name, "std", 3) || !strncmp(devfs_handles[i]->name, "tty", 3) || !strncmp(devfs_handles[i]->name, "fb", 2))
                 child->type = file_stream;
             break;
         }
@@ -172,6 +188,10 @@ extern struct flanterm_context *ft_ctx;
 
 ssize_t stdio_ioctl(void *data, ssize_t cmd, ssize_t arg)
 {
+    static int tty_mode = KD_TEXT;
+    static int tty_kbmode = K_XLATE;
+    struct vt_mode current_vt_mode = {0};
+
     switch (cmd)
     {
     case TIOCGWINSZ:
@@ -189,6 +209,38 @@ ssize_t stdio_ioctl(void *data, ssize_t cmd, ssize_t arg)
         *pid = current_task->pid;
         return 0;
     case TIOCSPGRP:
+        return 0;
+    case TCGETS:
+        memcpy((void *)arg, &current_task->term, sizeof(termios));
+        return 0;
+    case TCSETSW:
+        memcpy(&current_task->term, (void *)arg, sizeof(termios));
+        return 0;
+    case TIOCSWINSZ:
+        return 0;
+    case KDGETMODE:
+        *(int *)arg = tty_mode;
+        return 0;
+    case KDSETMODE:
+        tty_mode = *(int *)arg;
+        return 0;
+    case KDGKBMODE:
+        *(int *)arg = tty_kbmode;
+        return 0;
+    case KDSKBMODE:
+        tty_kbmode = *(int *)arg;
+        return 0;
+    case VT_SETMODE:
+        memcpy(&current_vt_mode, (void *)arg, sizeof(struct vt_mode));
+        return 0;
+    case VT_ACTIVATE:
+        return 0;
+    case VT_WAITACTIVE:
+        return 0;
+    case VT_GETSTAT:
+        struct vt_state *state = (struct vt_state *)arg;
+        state->v_active = 1; // 当前活动终端
+        state->v_state = 0;  // 状态标志
         return 0;
     }
 
@@ -210,7 +262,7 @@ ssize_t random_dev_read(void *data, uint64_t offset, void *buf, uint64_t len)
 {
 #if defined(__x86_64__)
     tm time;
-    time_read_bcd(&time);
+    time_read(&time);
     next = mktime(&time);
 #endif
     next = next * 1103515245 + 12345;
@@ -226,13 +278,47 @@ ssize_t null_dev_read(void *data, uint64_t offset, void *buf, uint64_t len)
     return 0;
 }
 
-ssize_t null_dev_write(void *data, uint64_t offset, void *buf, uint64_t len)
+ssize_t null_dev_write(void *data, uint64_t offset, const void *buf, uint64_t len)
 {
     (void)data;
     (void)offset;
     (void)buf;
     (void)len;
     return 0;
+}
+
+static uint32_t simple_rand()
+{
+    tm time;
+    time_read(&time);
+    uint32_t seed = mktime(&time);
+    seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
+    return seed;
+}
+
+ssize_t urandom_dev_read(void *data, uint64_t offset, void *buf, uint64_t len)
+{
+    for (uint64_t i = 0; i < len; i++)
+    {
+        ((uint8_t *)buf)[i] = (uint8_t)(simple_rand() & 0xFF);
+    }
+    return len;
+}
+
+ssize_t urandom_dev_write(void *data, uint64_t offset, const void *buf, uint64_t len)
+{
+    // 允许写入数据作为额外熵源
+    return len;
+}
+
+ssize_t urandom_dev_ioctl(void *data, ssize_t cmd, ssize_t arg)
+{
+    // 实现RNDADDENTROPY等命令
+    switch (cmd)
+    {
+    default:
+        return -ENOTTY;
+    }
 }
 
 void dev_init()
@@ -245,6 +331,10 @@ void dev_init()
 
     memset(devfs_handles, 0, sizeof(devfs_handles));
 
+    regist_dev("input/event0", inputdev_event0_read, NULL, inputdev_ioctl, NULL);
+    regist_dev("input/event1", inputdev_event1_read, NULL, inputdev_ioctl, NULL);
+
     regist_dev("null", null_dev_read, null_dev_write, NULL, NULL);
     regist_dev("random", random_dev_read, NULL, NULL, NULL);
+    regist_dev("urandom", urandom_dev_read, urandom_dev_write, urandom_dev_ioctl, NULL);
 }

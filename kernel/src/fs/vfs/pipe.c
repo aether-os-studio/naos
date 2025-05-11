@@ -1,5 +1,6 @@
 #include <arch/arch.h>
 #include <task/task.h>
+#include <fs/vfs/vfs.h>
 
 // 全局管道数组
 static pipe_t pipes[MAX_PIPES];
@@ -7,6 +8,7 @@ static int pipes_initialized = 0;
 
 vfs_node_t pipefs_root;
 int pipefs_id;
+static int pipefd_id = 0;
 
 static void dummy() {}
 
@@ -88,7 +90,7 @@ static struct vfs_callback callbacks = {
 void pipefs_init()
 {
     pipefs_id = vfs_regist("pipefs", &callbacks);
-    pipefs_root = vfs_node_alloc(NULL, "pipe");
+    pipefs_root = vfs_node_alloc(rootdir, "pipe");
     pipefs_root->type = file_dir;
 }
 
@@ -146,7 +148,7 @@ int sys_pipe(int pipefd[2])
     }
 
     char buf[16];
-    sprintf(buf, "pipe%d", pipe_idx + 1);
+    sprintf(buf, "pipe%d", pipefd_id++);
 
     vfs_node_t node_input = vfs_node_alloc(pipefs_root, buf);
     node_input->type = file_pipe;

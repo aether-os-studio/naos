@@ -1,7 +1,10 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <fs/fs_syscall.h>
+#include <fs/vfs/vfs.h>
 #include <net/socket.h>
+
+static int eventfd_id = 0;
 
 char *at_resolve_pathname(int dirfd, char *pathname)
 {
@@ -48,17 +51,14 @@ char *at_resolve_pathname(int dirfd, char *pathname)
     return NULL;
 }
 
-uint64_t sys_open(const char *name, uint64_t mode, uint64_t flags)
+uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode)
 {
-    (void)mode;
-    (void)flags;
-
     if (!name)
     {
         return (uint64_t)-EFAULT;
     }
 
-    uint64_t i;
+    uint64_t i = 0;
     for (i = 3; i < MAX_FD_NUM; i++)
     {
         if (current_task->fds[i] == NULL)
@@ -72,15 +72,30 @@ uint64_t sys_open(const char *name, uint64_t mode, uint64_t flags)
         return (uint64_t)-EBADFD;
     }
 
+    // 新增标志位检查
+    int create_mode = (flags & O_CREAT);
+    int excl_mode = (flags & O_EXCL);
+
+    // 处理 O_EXCL 标志
+    if (create_mode && excl_mode)
+    {
+        vfs_node_t exist_check = vfs_open(name);
+        if (exist_check)
+        {
+            vfs_close(exist_check);
+            return (uint64_t)-EEXIST;
+        }
+    }
+
     vfs_node_t node = vfs_open(name);
-    if (!node && !(mode & O_CREAT))
+    if (!node && !create_mode)
     {
         return (uint64_t)-ENOENT;
     }
 
     if (!node)
     {
-        int ret;
+        int ret = 0;
         if (mode & O_DIRECTORY)
         {
             ret = vfs_mkdir(name);
@@ -89,15 +104,13 @@ uint64_t sys_open(const char *name, uint64_t mode, uint64_t flags)
         {
             ret = vfs_mkfile(name);
         }
+        // 创建文件/目录的逻辑
         if (ret < 0)
             return (uint64_t)-ENOENT;
 
         node = vfs_open(name);
         if (!node)
-        {
-            printk("Cannot create file: %s\n", name);
             return (uint64_t)-ENOENT;
-        }
     }
 
     current_task->fds[i] = node;
@@ -107,12 +120,7 @@ uint64_t sys_open(const char *name, uint64_t mode, uint64_t flags)
 
 uint64_t sys_close(uint64_t fd)
 {
-    if (fd >= MAX_FD_NUM && fd <= MAX_SOCKETS)
-    {
-        return sys_socket_close(fd);
-    }
-
-    if (fd >= MAX_SOCKETS || current_task->fds[fd] == NULL)
+    if (fd >= MAX_FD_NUM || current_task->fds[fd] == NULL)
     {
         return (uint64_t)-EBADFD;
     }
@@ -123,7 +131,18 @@ uint64_t sys_close(uint64_t fd)
         pipe_t *pipe = current_task->fds[fd]->handle;
         pipe->reference_count--;
     }
-    vfs_close(current_task->fds[fd]);
+
+    if (current_task->fds[fd]->lock.l_pid == current_task->pid)
+    {
+        current_task->fds[fd]->lock.l_type = F_UNLCK;
+        current_task->fds[fd]->lock.l_pid = 0;
+    }
+
+    if (current_task->fds[fd]->type != file_socket)
+    {
+        vfs_close(current_task->fds[fd]);
+    }
+
     current_task->fds[fd] = NULL;
 
     return 0;
@@ -137,7 +156,7 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len)
     }
 
     ssize_t ret = vfs_read(current_task->fds[fd], buf, current_task->fds[fd]->offset, len);
-    sys_lseek(fd, len, SEEK_CUR);
+    sys_lseek(fd, ret, SEEK_CUR);
     return ret;
 }
 
@@ -149,7 +168,7 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len)
     }
 
     ssize_t ret = vfs_write(current_task->fds[fd], buf, current_task->fds[fd]->offset, len);
-    sys_lseek(fd, len, SEEK_CUR);
+    sys_lseek(fd, ret, SEEK_CUR);
     return ret;
 }
 
@@ -304,7 +323,7 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
 
     list_foreach(node->child, i)
     {
-        if (node->offset >= list_length(node->child))
+        if (node->offset >= ((uint64_t)list_length(node->child) * sizeof(struct dirent)))
             break;
         if (read_count >= max_dents_num)
             break;
@@ -357,21 +376,53 @@ uint64_t sys_getcwd(char *cwd, uint64_t size)
     return (uint64_t)strlen(str);
 }
 
+uint64_t sys_dup(uint64_t fd)
+{
+    vfs_node_t node = current_task->fds[fd];
+    if (!node)
+        return (uint64_t)-EBADF;
+
+    uint64_t i;
+    for (i = 3; i < MAX_FD_NUM; i++)
+    {
+        if (current_task->fds[i] == NULL)
+        {
+            break;
+        }
+    }
+
+    if (i == MAX_FD_NUM)
+    {
+        return (uint64_t)-EBADFD;
+    }
+
+    char *fullpath = vfs_get_fullpath(node);
+    vfs_node_t new = vfs_open(fullpath);
+    free(fullpath);
+
+    current_task->fds[i] = new;
+
+    return i;
+}
+
 uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
 {
-    (void)fd;
     (void)arg;
 
     switch (command)
     {
-    case 1:
+    case F_GETFD:
+        return 0;
+    case F_SETFD:
+        return 0;
+    case F_DUPFD_CLOEXEC:
+    case F_DUPFD:
+        return sys_dup(fd);
+    case F_GETFL:
         return 0;
         break;
-    case 2:
+    case F_SETFL:
         return 0;
-        break;
-
-    default:
         break;
     }
 
@@ -394,7 +445,7 @@ uint64_t sys_stat(const char *fd, struct stat *buf)
     buf->st_mode = 0700 | (node->type == file_dir ? S_IFDIR : S_IFREG);
     buf->st_uid = 0;
     buf->st_gid = 0;
-    buf->st_rdev = 0;
+    buf->st_rdev = (node->type == file_stream) ? ((4 << 8) | 1) : 0;
     buf->st_blksize = DEFAULT_PAGE_SIZE;
     buf->st_size = node->size;
     buf->st_blocks = (buf->st_size + buf->st_blksize - 1) / buf->st_blksize;
@@ -419,7 +470,7 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
     buf->st_mode = 0700 | (current_task->fds[fd]->type == file_dir ? S_IFDIR : S_IFREG);
     buf->st_uid = 0;
     buf->st_gid = 0;
-    buf->st_rdev = 0;
+    buf->st_rdev = (current_task->fds[fd]->type == file_stream) ? ((4 << 8) | 1) : 0;
     buf->st_blksize = DEFAULT_PAGE_SIZE;
     buf->st_size = current_task->fds[fd]->size;
     buf->st_blocks = (buf->st_size + buf->st_blksize - 1) / buf->st_blksize;
@@ -651,8 +702,8 @@ uint64_t sys_faccessat(uint64_t dirfd, const char *pathname, uint64_t mode)
     }
 
     char *resolved = at_resolve_pathname(dirfd, (char *)pathname);
-    if ((ssize_t)resolved < 0)
-        return (uint64_t)resolved;
+    if (resolved == NULL)
+        return (uint64_t)-ENOENT;
 
     size_t ret = sys_access(resolved, mode);
 
@@ -693,11 +744,31 @@ uint64_t sys_link(const char *old, const char *new)
 // todo
 uint64_t sys_readlink(char *path, char *buf, uint64_t size)
 {
-    return (uint64_t)-ENOLINK;
+    vfs_node_t node = vfs_open((const char *)path);
+    if (!node)
+        return (uint64_t)-ENOENT;
+
+    ssize_t len = 0;
+    if (node->type == file_dir)
+    {
+        strncpy(buf, (const char *)path, size);
+        len = size;
+        goto ok;
+    }
+    else
+    {
+        len = vfs_read(node, buf, 0, size);
+    }
+
+ok:
+    vfs_close(node);
+
+    return len;
 }
 
 vfs_node_t epollfs_root;
 int epollfs_id;
+int epollfd_id = 0;
 
 // epoll API
 size_t epoll_create1(int flags)
@@ -718,8 +789,11 @@ size_t epoll_create1(int flags)
 
     epoll_t *epoll = malloc(sizeof(epoll_t));
     epoll->timesOpened = 1;
+    epoll->firstEpollWatch = NULL;
 
-    vfs_node_t node = vfs_node_alloc(epollfs_root, "epoll");
+    char buf[256];
+    sprintf(buf, "epoll%d", epollfd_id++);
+    vfs_node_t node = vfs_node_alloc(epollfs_root, buf);
     node->type = file_none;
     node->handle = epoll;
     node->fsid = epollfs_id;
@@ -817,6 +891,8 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd, struct epoll_event *event)
     case EPOLL_CTL_ADD:
     {
         epoll_watch_t *epollWatch = malloc(sizeof(epoll_watch_t));
+        epollWatch->next = epoll->firstEpollWatch;
+        epoll->firstEpollWatch = epollWatch;
         epollWatch->fd = fdNode;
         epollWatch->watchEvents = event->events;
         epollWatch->userlandData = (uint64_t)event->data.ptr;
@@ -887,12 +963,16 @@ size_t epoll_pwait(vfs_node_t epollFd, struct epoll_event *events, int maxevents
 uint64_t sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
 {
     vfs_node_t node = current_task->fds[epfd];
+    if (!node)
+        return (uint64_t)-EBADF;
     return epoll_wait(node, events, maxevents, timeout);
 }
 
 uint64_t sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)
 {
     vfs_node_t node = current_task->fds[epfd];
+    if (!node)
+        return (uint64_t)-EBADF;
     return epoll_ctl(node, op, fd, event);
 }
 
@@ -901,14 +981,181 @@ uint64_t sys_epoll_pwait(int epfd, struct epoll_event *events,
                          size_t sigsetsize)
 {
     vfs_node_t node = current_task->fds[epfd];
+    if (!node)
+        return (uint64_t)-EBADF;
     return epoll_pwait(node, events, maxevents, timeout, sigmask, sigsetsize);
 }
 
 uint64_t sys_epoll_create1(int flags) { return epoll_create1(flags); }
 
+static vfs_node_t eventfdfs_root = NULL;
+static int eventfdfs_id = 0;
+
+uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags)
+{
+    // 参数校验
+    if (flags & ~(EFD_CLOEXEC | EFD_NONBLOCK | EFD_SEMAPHORE))
+        return (uint64_t)-EINVAL;
+
+    // 分配文件描述符
+    int fd = -1;
+    for (int i = 3; i < MAX_FD_NUM; i++)
+    {
+        if (!current_task->fds[i])
+        {
+            fd = i;
+            break;
+        }
+    }
+
+    if (fd == -1)
+    {
+        return (uint64_t)-EMFILE;
+    }
+
+    // 分配eventfd结构体
+    eventfd_t *efd = malloc(sizeof(eventfd_t));
+    if (!efd)
+        return (uint64_t)-ENOMEM;
+
+    efd->count = initial_val;
+    efd->flags = flags;
+
+    // 创建VFS节点
+    char buf[256];
+    sprintf(buf, "eventfd%d", eventfd_id++);
+    vfs_node_t node = vfs_node_alloc(eventfdfs_root, buf);
+    node->type = file_stream;
+    node->fsid = eventfdfs_id;
+    node->handle = efd;
+
+    current_task->fds[fd] = node;
+
+    return fd;
+}
+
+// 实现读写操作
+static ssize_t eventfd_read(vfs_node_t node, void *buf, size_t offset, size_t len)
+{
+    eventfd_t *efd = node->handle;
+    uint64_t value;
+
+    while (efd->count == 0)
+    {
+        if (efd->flags & EFD_NONBLOCK)
+            return -EAGAIN;
+
+        arch_enable_interrupt();
+
+        arch_pause();
+    }
+
+    value = (efd->flags & EFD_SEMAPHORE) ? 1 : efd->count;
+    memcpy(buf, &value, sizeof(uint64_t));
+
+    efd->count -= value;
+    return sizeof(uint64_t);
+}
+
+static ssize_t eventfd_write(vfs_node_t node, const void *buf, size_t offset, size_t len)
+{
+    eventfd_t *efd = node->handle;
+    uint64_t value;
+    memcpy(&value, buf, sizeof(uint64_t));
+
+    if (UINT64_MAX - efd->count < value)
+        return -EINVAL;
+
+    efd->count += value;
+
+    return sizeof(uint64_t);
+}
+
+static vfs_node_t signalfdfs_root = NULL;
+static int signalfdfs_id = 0;
+static int signalfd_id = 0;
+
+// 新增文件操作函数
+static ssize_t signalfd_read(void *data, uint64_t offset, void *buf, uint64_t len)
+{
+    struct signalfd_ctx *ctx = data;
+
+    while (ctx->queue_head == ctx->queue_tail)
+    {
+        arch_enable_interrupt();
+
+        arch_pause();
+    }
+
+    arch_disable_interrupt();
+
+    struct sigevent *ev = &ctx->queue[ctx->queue_tail];
+    size_t copy_len = len < sizeof(*ev) ? len : sizeof(*ev);
+    memcpy(buf, ev, copy_len);
+
+    ctx->queue_tail = (ctx->queue_tail + 1) % ctx->queue_size;
+    return copy_len;
+}
+
+static int signalfd_ioctl(void *data, ssize_t cmd, ssize_t arg)
+{
+    struct signalfd_ctx *ctx = data;
+    switch (cmd)
+    {
+    case SIGNALFD_IOC_MASK:
+        memcpy(&ctx->sigmask, (sigset_t *)arg, sizeof(sigset_t));
+        return 0;
+    default:
+        return -ENOTTY;
+    }
+}
+
+uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask, int flags)
+{
+    if (sizemask != sizeof(sigset_t))
+        return -EINVAL;
+
+    struct signalfd_ctx *ctx = malloc(sizeof(struct signalfd_ctx));
+    if (!ctx)
+        return -ENOMEM;
+
+    memcpy(&ctx->sigmask, mask, sizeof(sigset_t));
+
+    ctx->queue_size = 32;
+    ctx->queue = malloc(ctx->queue_size * sizeof(struct sigevent));
+    ctx->queue_head = ctx->queue_tail = 0;
+
+    // 分配文件描述符
+    int fd = -1;
+    for (int i = 3; i < MAX_FD_NUM; i++)
+    {
+        if (!current_task->fds[i])
+        {
+            fd = i;
+            break;
+        }
+    }
+
+    // 创建VFS节点
+    char buf[256];
+    sprintf(buf, "signalfd%d", signalfd_id++);
+    vfs_node_t node = vfs_node_alloc(signalfdfs_root, buf);
+    node->type = file_stream;
+    node->fsid = signalfdfs_id;
+    node->handle = ctx;
+    current_task->fds[fd] = node;
+
+    return fd;
+}
+
+uint64_t sys_signalfd(int ufd, const sigset_t *mask, size_t sizemask)
+{
+    return sys_signalfd4(ufd, mask, sizemask, 0);
+}
+
 static void dummy() {}
 
-static struct vfs_callback callbacks = {
+static struct vfs_callback epoll_callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
     .open = (vfs_open_t)dummy,
@@ -921,9 +1168,107 @@ static struct vfs_callback callbacks = {
     .ioctl = (vfs_ioctl_t)dummy,
 };
 
+static struct vfs_callback eventfd_callbacks = {
+    .mount = (vfs_mount_t)dummy,
+    .unmount = (vfs_unmount_t)dummy,
+    .open = (vfs_open_t)dummy,
+    .close = (vfs_close_t)dummy,
+    .read = eventfd_read,
+    .write = eventfd_write,
+    .mkdir = (vfs_mk_t)dummy,
+    .mkfile = (vfs_mk_t)dummy,
+    .stat = (vfs_stat_t)dummy,
+    .ioctl = (vfs_ioctl_t)dummy,
+};
+
+static struct vfs_callback signalfd_callbacks = {
+    .mount = (vfs_mount_t)dummy,
+    .unmount = (vfs_unmount_t)dummy,
+    .open = (vfs_open_t)dummy,
+    .close = (vfs_close_t)dummy,
+    .read = signalfd_read,
+    .write = (vfs_write_t)dummy,
+    .mkdir = (vfs_mk_t)dummy,
+    .mkfile = (vfs_mk_t)dummy,
+    .stat = (vfs_stat_t)dummy,
+    .ioctl = (vfs_ioctl_t)signalfd_ioctl,
+};
+
 void epoll_init()
 {
-    epollfs_id = vfs_regist("epollfs", &callbacks);
-    epollfs_root = vfs_node_alloc(NULL, "epoll");
+    epollfs_id = vfs_regist("epollfs", &epoll_callbacks);
+    epollfs_root = vfs_node_alloc(rootdir, "epoll");
     epollfs_root->type = file_dir;
+
+    eventfdfs_id = vfs_regist("eventfdfs", &eventfd_callbacks);
+    eventfdfs_root = vfs_node_alloc(rootdir, "eventfd");
+    eventfdfs_root->type = file_dir;
+
+    signalfdfs_id = vfs_regist("signalfdfs", &signalfd_callbacks);
+    signalfdfs_root = vfs_node_alloc(rootdir, "signalfd");
+    signalfdfs_root->type = file_dir;
+}
+
+uint64_t sys_flock(int fd, uint64_t operation)
+{
+    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fds[fd])
+        return -EBADF;
+
+    vfs_node_t node = current_task->fds[fd];
+    struct flock *lock = &node->lock;
+    uint64_t pid = current_task->pid;
+
+    // 提前检查参数有效性
+    switch (operation & ~LOCK_NB)
+    {
+    case LOCK_SH:
+    case LOCK_EX:
+    case LOCK_UN:
+        break;
+    default:
+        return -EINVAL;
+    }
+
+    // 非阻塞模式下立即检查冲突
+    if (operation & LOCK_NB)
+    {
+        if ((operation & LOCK_SH) && lock->l_type == F_WRLCK)
+            return -EWOULDBLOCK;
+        if ((operation & LOCK_EX) && lock->l_type != F_UNLCK)
+            return -EWOULDBLOCK;
+    }
+
+    // 实际加锁逻辑
+    switch (operation & ~LOCK_NB)
+    {
+    case LOCK_SH:
+    case LOCK_EX:
+        while (lock->l_type != F_UNLCK && lock->l_pid != pid)
+        {
+            if (operation & LOCK_NB)
+                return -EWOULDBLOCK;
+
+            while (lock->lock)
+            {
+                arch_enable_interrupt();
+
+                arch_pause();
+            }
+
+            arch_disable_interrupt();
+        }
+        lock->l_type = (operation & LOCK_EX) ? F_WRLCK : F_RDLCK;
+        lock->l_pid = pid;
+        break;
+
+    case LOCK_UN:
+        if (lock->l_pid != pid)
+            return -EACCES;
+        lock->l_type = F_UNLCK;
+        lock->l_pid = 0;
+        lock->lock = 1;
+        break;
+    }
+
+    return 0;
 }

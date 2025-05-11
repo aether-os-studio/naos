@@ -68,6 +68,31 @@ task_t *task_create(const char *name, void (*entry)())
     task->fds[2] = vfs_open("/dev/stderr");
     strncpy(task->name, name, TASK_NAME_MAX);
 
+    memset(&task->term, 0, sizeof(termios));
+    task->term.c_iflag = BRKINT | ICRNL | INPCK | ISTRIP | IXON;
+    task->term.c_oflag = OPOST;
+    task->term.c_cflag = CS8 | CREAD | CLOCAL;
+    task->term.c_lflag = ECHO | ICANON | IEXTEN | ISIG;
+    task->term.c_line = 0;
+    task->term.c_cc[VINTR] = 3;     // Ctrl-C
+    task->term.c_cc[VQUIT] = 28;    // Ctrl-task->term.c_cc[VERASE] = 127; // DEL
+    task->term.c_cc[VKILL] = 21;    // Ctrl-U
+    task->term.c_cc[VEOF] = 4;      // Ctrl-D
+    task->term.c_cc[VTIME] = 0;     // No timer
+    task->term.c_cc[VMIN] = 1;      // Return each byte
+    task->term.c_cc[VSTART] = 17;   // Ctrl-Q
+    task->term.c_cc[VSTOP] = 19;    // Ctrl-S
+    task->term.c_cc[VSUSP] = 26;    // Ctrl-Z
+    task->term.c_cc[VREPRINT] = 18; // Ctrl-R
+    task->term.c_cc[VDISCARD] = 15; // Ctrl-O
+    task->term.c_cc[VWERASE] = 23;  // Ctrl-W
+    task->term.c_cc[VLNEXT] = 22;   // Ctrl-V
+    // Initialize other control characters to 0
+    for (int i = 16; i < NCCS; i++)
+    {
+        task->term.c_cc[i] = 0;
+    }
+
     can_schedule = true;
 
     return task;
@@ -119,6 +144,7 @@ void idle_entry()
 
 extern void fatfs_init();
 extern void iso9660_init();
+extern void sysfs_init();
 extern void epoll_init();
 extern void pipefs_init();
 extern void socketfs_init();
@@ -143,6 +169,10 @@ void init_thread()
 
     partition_init();
     fbdev_init();
+
+    sysfs_init();
+
+    fbdev_init_sysfs();
 
     epoll_init();
     pipefs_init();
@@ -335,6 +365,8 @@ uint64_t task_fork(struct pt_regs *regs)
         }
     }
 
+    memcpy(&child->term, &current_task->term, sizeof(termios));
+
     can_schedule = true;
 
     arch_enable_interrupt();
@@ -342,31 +374,42 @@ uint64_t task_fork(struct pt_regs *regs)
     return child->pid;
 }
 
+bool execve_lock = 0;
+
 uint64_t task_execve(const char *path, const char **argv, const char **envp)
 {
     arch_disable_interrupt();
 
     can_schedule = false;
 
+    while (execve_lock)
+    {
+        arch_pause();
+
+        arch_yield();
+    }
+
+    execve_lock = 1;
+
     vfs_node_t node = vfs_open(path);
     if (!node)
     {
         can_schedule = true;
+        execve_lock = 0;
         return (uint64_t)-ENOENT;
     }
-
-    char buf[32];
-    ssize_t max = vfs_read(node, buf, 0, sizeof(buf));
 
     uint64_t buf_len = (node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
 
     char **new_argv = (char **)malloc(512);
+    memset(new_argv, 0, 512);
     char **new_envp = (char **)malloc(512);
+    memset(new_envp, 0, 512);
 
     int argv_count = 0;
     int envp_count = 0;
 
-    if (argv)
+    if (argv && (translate_address(get_current_page_dir(true), (uint64_t)argv) != 0))
     {
         for (argv_count = 0; argv[argv_count] != NULL; argv_count++)
         {
@@ -375,7 +418,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     }
     new_argv[argv_count] = NULL;
 
-    if (envp)
+    if (envp && (translate_address(get_current_page_dir(true), (uint64_t)envp) != 0))
     {
         for (envp_count = 0; envp[envp_count] != NULL; envp_count++)
         {
@@ -383,15 +426,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         }
     }
     new_envp[envp_count] = NULL;
-
-    // if (max > 2 && buf[0] == '#' && buf[1] == '!')
-    // {
-    //     vfs_close(node);
-    //     node = vfs_open("/bin/bash");
-    //     buf_len = (node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
-    //     memmove(new_argv + 1, new_argv, argv_count);
-    //     new_argv[0] = path;
-    // }
 
 #if defined(__x86_64__)
     uint64_t new_page_table = clone_page_table(virt_to_phys((uint64_t)get_kernel_page_dir()), USER_STACK_START, USER_STACK_END);
@@ -431,6 +465,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
                 free(new_envp[i]);
         free(new_envp);
         can_schedule = true;
+        execve_lock = 0;
         return -EINVAL;
     }
 
@@ -450,6 +485,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
                 free(new_envp[i]);
         free(new_envp);
         can_schedule = true;
+        execve_lock = 0;
         return (uint64_t)-EINVAL;
     }
 
@@ -549,7 +585,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     strncpy(current_task->name, fullpath, TASK_NAME_MAX);
     free(fullpath);
 
-    map_page_range(get_current_page_dir(true), USER_STACK_START, 0, USER_STACK_END - USER_STACK_START, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+    map_page_range((uint64_t *)get_current_page_dir(true), USER_STACK_START, 0, USER_STACK_END - USER_STACK_START + DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
     memset((void *)USER_STACK_START, 0, USER_STACK_END - USER_STACK_START);
 
 #if defined(__x86_64__)
@@ -575,6 +611,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     }
     free(new_envp);
     can_schedule = true;
+    execve_lock = 0;
     arch_to_user_mode(current_task->arch_context, interpreter_entry ? interpreter_entry : e_entry, stack);
 
     return (uint64_t)-EAGAIN;
@@ -832,4 +869,37 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem)
     } while (target > nanoTime());
 
     return 0;
+}
+
+uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5)
+{
+    switch (option)
+    {
+    case PR_SET_NAME: // 设置进程名 (PR_SET_NAME=15)
+        strncpy(current_task->name, (char *)arg2, TASK_NAME_MAX);
+        return 0;
+
+    case PR_GET_NAME: // 获取进程名 (PR_GET_NAME=16)
+        strncpy((char *)arg2, current_task->name, TASK_NAME_MAX);
+        return 0;
+
+    case PR_SET_SECCOMP: // 启用seccomp过滤
+        if (arg2 == SECCOMP_MODE_STRICT)
+        {
+            // current_task->seccomp_mode = SECCOMP_MODE_STRICT;
+            return 0;
+        }
+        return -EINVAL;
+
+    case PR_GET_SECCOMP: // 查询seccomp状态
+        // return current_task->seccomp_mode;
+        return 0;
+
+    case PR_SET_TIMERSLACK:
+        current_task->timer_slack_ns = arg2;
+        return 0;
+
+    default:
+        return -ENOSYS; // 未实现的功能返回不支持
+    }
 }

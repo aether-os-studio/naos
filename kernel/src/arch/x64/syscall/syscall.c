@@ -134,6 +134,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_WAIT4:
         regs->rax = sys_waitpid(arg1, (int *)arg2);
         break;
+    case SYS_PRCTL:
+        regs->rax = sys_prctl(arg1, arg2, arg3, arg4, arg5);
+        break;
     case SYS_ARCH_PRCTL:
         regs->rax = sys_arch_prctl(arg1, arg2);
         break;
@@ -166,11 +169,14 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_CLOCK_GETTIME:
         tm time;
-        time_read_bcd(&time);
-        if (arg1)
-            *(int64_t *)arg1 = mktime(&time);
+        time_read(&time);
+        uint64_t timestamp = mktime(&time);
         if (arg2)
-            *(int64_t *)arg2 = 0;
+        {
+            struct timespec *ts = (struct timespec *)arg2;
+            ts->tv_sec = timestamp;
+            ts->tv_nsec = 0;
+        }
         regs->rax = 0;
         break;
     case SYS_CLOCK_GETRES:
@@ -196,6 +202,12 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_SOCKET:
         regs->rax = sys_socket(arg1, arg2, arg3);
         break;
+    case SYS_SOCKETPAIR:
+        regs->rax = sys_socketpair(arg1, arg2, arg3, (void *)arg4);
+        break;
+    case SYS_GETSOCKNAME:
+        regs->rax = sys_getsockname(arg1, (struct sockaddr *)arg2, (socklen_t *)arg3);
+        break;
     case SYS_BIND:
         regs->rax = sys_bind(arg1, (const struct sockaddr *)arg2, arg3);
         break;
@@ -214,11 +226,17 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_RECVFROM:
         regs->rax = sys_recv(arg1, (void *)arg2, arg3, arg4);
         break;
+    case SYS_SENDMSG:
+        regs->rax = sys_sendmsg(arg1, (const struct msghdr *)arg2, arg3);
+        break;
+    case SYS_RECVMSG:
+        regs->rax = sys_recvmsg(arg1, (struct msghdr *)arg2, arg3);
+        break;
     case SYS_SET_TID_ADDRESS:
         regs->rax = current_task->pid;
         break;
     case SYS_POLL:
-        regs->rax = 0;
+        regs->rax = sys_poll((struct pollfd *)arg1, arg2, arg3);
         break;
     case SYS_SIGALTSTACK:
         regs->rax = 0;
@@ -236,6 +254,12 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_STAT:
         regs->rax = sys_stat((const char *)arg1, (struct stat *)arg2);
+        break;
+    case SYS_LSTAT:
+        regs->rax = sys_stat((const char *)arg1, (struct stat *)arg2);
+        break;
+    case SYS_STATFS:
+        regs->rax = 0;
         break;
     case SYS_FSTAT:
         regs->rax = sys_fstat(arg1, (struct stat *)arg2);
@@ -281,10 +305,11 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = current_task->pgid;
         break;
     case SYS_DUP:
-        regs->rax = 0;
+        regs->rax = sys_dup(arg1);
         break;
     case SYS_DUP2:
-        regs->rax = 0;
+        // todo: flags
+        regs->rax = sys_dup(arg1);
         break;
     case SYS_GETRLIMIT:
         regs->rax = sys_get_rlimit(arg1, (struct rlimit *)arg2);
@@ -307,6 +332,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_READLINK:
         regs->rax = sys_readlink((char *)arg1, (char *)arg2, arg3);
         break;
+    case SYS_UNLINK:
+        regs->rax = 0;
+        break;
     case SYS_NANOSLEEP:
         regs->rax = sys_nanosleep((struct timespec *)arg1, (struct timespec *)arg2);
         break;
@@ -328,8 +356,47 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_LINK:
         regs->rax = sys_link((const char *)arg1, (const char *)arg2);
         break;
+    case SYS_EVENTFD2:
+        regs->rax = sys_eventfd2(arg1, arg2);
+        break;
+    case SYS_SIGNALFD:
+        regs->rax = sys_signalfd(arg1, (const sigset_t *)arg2, arg3);
+        break;
+    case SYS_SIGNALFD4:
+        regs->rax = sys_signalfd4(arg1, (const sigset_t *)arg2, arg3, arg4);
+        break;
+    case SYS_TIMERFD_CREATE:
+        regs->rax = 0;
+        break;
+    case SYS_TIMERFD_SETTIME:
+        regs->rax = 0;
+        break;
+    case SYS_FLOCK:
+        regs->rax = sys_flock(arg1, arg2);
+        break;
+    case SYS_SETFSUID:
+        regs->rax = 0;
+        break;
+    case SYS_SETFSGID:
+        regs->rax = 0;
+        break;
+    case SYS_SETSOCKOPT:
+        regs->rax = sys_setsockopt(arg1, arg2, arg3, (const void *)arg4, arg5);
+        break;
+    case SYS_GETSOCKOPT:
+        regs->rax = sys_getsockopt(arg1, arg2, arg3, (void *)arg4, (socklen_t *)arg5);
+        break;
+    case SYS_SETRESUID:
+        regs->rax = 0;
+        break;
+    case SYS_GETRESUID:
+        regs->rax = 0;
+        break;
 
     default:
+        char buf[256];
+        int len = sprintf(buf, "syscall %d not implemented\n", idx);
+        serial_printk(buf, len);
         regs->rax = (uint64_t)-ENOSYS;
         break;
     }
