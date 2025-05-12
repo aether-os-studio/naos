@@ -43,9 +43,6 @@ void frame_init()
         }
     }
 
-    if (!bitmap_address)
-        return;
-
     Bitmap *bitmap = &frame_allocator.bitmap;
     bitmap_init(bitmap, (uint8_t *)phys_to_virt(bitmap_address), bitmap_size);
 

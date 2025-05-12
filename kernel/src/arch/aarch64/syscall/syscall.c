@@ -71,10 +71,7 @@ void aarch64_do_syscall(struct pt_regs *frame)
     case SYS_BRK:
         ret = sys_brk(arg1);
         break;
-    case SYS_SIGNAL:
-        ret = sys_signal(arg1, arg2, arg3);
-        break;
-    case SYS_SETMASK:
+    case SYS_RT_SIGPROCMASK:
         ret = sys_ssetmask(arg1, (sigset_t *)arg2, (sigset_t *)arg3);
         break;
     case SYS_GETDENTS:

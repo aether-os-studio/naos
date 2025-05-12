@@ -66,6 +66,7 @@ void sysfs_init()
     subsystem_root = vfs_child_append(graphics_root, "subsystem", NULL);
     subsystem_root->type = file_none;
     sysfs_handle_t *subsystem_handle = malloc(sizeof(sysfs_handle_t));
+    memset(subsystem_handle, 0, sizeof(sysfs_handle_t));
     sprintf(subsystem_handle->content, "/dev/fb0"); // 默认设备
     subsystem_root->handle = subsystem_handle;
 }

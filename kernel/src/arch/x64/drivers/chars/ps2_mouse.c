@@ -3,6 +3,8 @@
 #include <interrupt/irq_manager.h>
 #include <arch/x64/io.h>
 #include <task/task.h>
+#include <fs/vfs/dev.h>
+#include <drivers/fb.h>
 
 mouse_dec ms_dec;
 int32_t mouse_x = 0;
@@ -196,4 +198,83 @@ void mouse_init()
     }
 
     memset(&ms_dec, 0, sizeof(ms_dec));
+}
+
+size_t mouse_event_bit(void *data, uint64_t request, void *arg)
+{
+    size_t number = _IOC_NR(request);
+    size_t size = _IOC_SIZE(request);
+
+    size_t ret = (size_t)-ENOENT;
+    switch (number)
+    {
+    case 0x20:
+    {
+        size_t out = (1 << EV_SYN) | (1 << EV_KEY) | (1 << EV_REL);
+        ret = MIN(sizeof(size_t), size);
+        memcpy(arg, &out, ret);
+        break;
+    }
+    case (0x20 + EV_SW):
+    case (0x20 + EV_MSC):
+    case (0x20 + EV_SND):
+    case (0x20 + EV_LED):
+    case (0x20 + EV_ABS):
+    {
+        ret = MIN(sizeof(size_t), size);
+        break;
+    }
+    case (0x20 + EV_FF):
+    {
+        ret = MIN(16, size);
+        break;
+    }
+    case (0x20 + EV_REL):
+    {
+        size_t out = (1 << REL_X) | (1 << REL_Y);
+        ret = MIN(sizeof(size_t), size);
+        memcpy(arg, &out, ret);
+        break;
+    }
+    case (0x20 + EV_KEY):
+    {
+        uint8_t map[96] = {0};
+        map[BTN_RIGHT / 8] |= (1 << (BTN_RIGHT % 8));
+        map[BTN_LEFT / 8] |= (1 << (BTN_LEFT % 8));
+        ret = MIN(96, size);
+        memcpy(arg, map, ret);
+        break;
+    }
+    case (0x40 + ABS_X):
+    {
+        struct input_absinfo *target = (struct input_absinfo *)arg;
+        memset(target, 0, sizeof(struct input_absinfo));
+        target->value = 0; // todo
+        target->minimum = 0;
+        target->maximum = framebuffer_request.response->framebuffers[0]->width;
+        ret = 0;
+        break;
+    }
+    case (0x40 + ABS_Y):
+    {
+        struct input_absinfo *target = (struct input_absinfo *)arg;
+        memset(target, 0, sizeof(struct input_absinfo));
+        target->value = 0; // todo
+        target->minimum = 0;
+        target->maximum = framebuffer_request.response->framebuffers[0]->height;
+        ret = 0;
+        break;
+    }
+    case 0x18: // EVIOCGKEY()
+        ret = MIN(96, size);
+        break;
+    case 0x19: // EVIOCGLED()
+        ret = MIN(8, size);
+        break;
+    case 0x1b: // EVIOCGSW()
+        ret = MIN(8, size);
+        break;
+    }
+
+    return ret;
 }

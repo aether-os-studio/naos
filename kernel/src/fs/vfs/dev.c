@@ -100,6 +100,18 @@ static struct vfs_callback callbacks = {
 
 ssize_t inputdev_event0_read(void *data, uint64_t offset, void *buf, uint64_t len)
 {
+    dev_input_event_t *event = data;
+
+    while (true)
+    {
+        char data = (char)get_keyboard_input();
+        if (data != 0)
+        {
+            *((char *)buf) = data;
+            return 1;
+        }
+    }
+
     return 0;
 }
 
@@ -108,16 +120,88 @@ ssize_t inputdev_event1_read(void *data, uint64_t offset, void *buf, uint64_t le
     return 0;
 }
 
-ssize_t inputdev_ioctl(void *data, ssize_t cmd, ssize_t arg)
+ssize_t inputdev_ioctl(void *data, ssize_t request, ssize_t arg)
 {
-    return 0;
+    dev_input_event_t *event = data;
+    size_t type = _IOC_TYPE(request);
+    size_t dir = _IOC_DIR(request);
+    size_t number = _IOC_NR(request);
+    size_t size = _IOC_SIZE(request);
+
+    (void)type;
+    (void)dir;
+
+    ssize_t ret = -ENOTTY;
+
+    if (number >= 0x20 && number < (0x20 + EV_CNT))
+    {
+        // we are in EVIOCGBIT(event: 0x20 - x) territory, beware
+        return event->event_bit(data, request, (void *)arg);
+    }
+    else if (number >= 0x40 && number < (0x40 + ABS_CNT))
+    {
+        // we are in EVIOCGABS(event: 0x40 - x) territory, beware
+        return event->event_bit(data, request, (void *)arg);
+    }
+
+    if (request == 0x540b) // TCFLSH, idk why don't ask me!
+        return -EINVAL;
+
+    switch (number)
+    {
+    case 0x01: // EVIOCGVERSION idk, stolen from vmware
+        *((int *)arg) = 0x10001;
+        ret = 0;
+        break;
+    case 0x02: // EVIOCGID
+        memcpy((void *)arg, &event->inputid, sizeof(struct input_id));
+        ret = 0;
+        break;
+    case 0x06:
+    { // EVIOCGNAME(len)
+        int toCopy = MIN(size, strlen(event->devname) + 1);
+        memcpy((void *)arg, event->devname, toCopy);
+        ret = toCopy;
+        break;
+    }
+    case 0x07:
+    { // EVIOCGPHYS(len)
+        int toCopy = MIN(size, strlen(event->physloc) + 1);
+        memcpy((void *)arg, event->physloc, toCopy);
+        ret = toCopy;
+        break;
+    }
+    case 0x08: // EVIOCGUNIQ()
+        ret = -ENOENT;
+        break;
+    case 0x09: // EVIOCGPROP()
+        int toCopy = MIN(sizeof(size_t), size);
+        memcpy((void *)arg, &event->properties, toCopy);
+        ret = size;
+        break;
+    case 0x18: // EVIOCGKEY()
+        ret = event->event_bit(data, request, (void *)arg);
+        break;
+    case 0x19: // EVIOCGLED()
+        ret = event->event_bit(data, request, (void *)arg);
+        break;
+    case 0x1b: // EVIOCGSW()
+        ret = event->event_bit(data, request, (void *)arg);
+        break;
+    default:
+        printk("non-supported ioctl! %lx", number);
+        ret = -ENOTTY;
+        break;
+    }
+
+    return ret;
 }
 
-void regist_dev(const char *name,
-                ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len),
-                ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len),
-                ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg),
-                void *data)
+vfs_node_t regist_dev(const char *name,
+                      ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len),
+                      ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len),
+                      ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg),
+                      void *data)
 {
     const char *new_name = name;
 
@@ -148,7 +232,8 @@ void regist_dev(const char *name,
             child->type = file_block;
             if (!strncmp(devfs_handles[i]->name, "std", 3) || !strncmp(devfs_handles[i]->name, "tty", 3) || !strncmp(devfs_handles[i]->name, "fb", 2))
                 child->type = file_stream;
-            break;
+
+            return child;
         }
     }
 }
@@ -331,8 +416,22 @@ void dev_init()
 
     memset(devfs_handles, 0, sizeof(devfs_handles));
 
-    regist_dev("input/event0", inputdev_event0_read, NULL, inputdev_ioctl, NULL);
-    regist_dev("input/event1", inputdev_event1_read, NULL, inputdev_ioctl, NULL);
+    vfs_node_t kb_node = regist_dev("input/event0", inputdev_event0_read, NULL, inputdev_ioctl, NULL);
+    kb_node->handle = malloc(sizeof(dev_input_event_t));
+    dev_input_event_t *kb_input_event = kb_node->handle;
+    kb_input_event->inputid.bustype = 0x05;   // BUS_PS2
+    kb_input_event->inputid.vendor = 0x045e;  // Microsoft
+    kb_input_event->inputid.product = 0x0001; // Generic MS Keyboard
+    kb_input_event->inputid.version = 0x0100; // Basic MS Version
+    kb_input_event->event_bit = kb_event_bit;
+    vfs_node_t mouse_node = regist_dev("input/event1", inputdev_event1_read, NULL, inputdev_ioctl, NULL);
+    mouse_node->handle = malloc(sizeof(dev_input_event_t));
+    dev_input_event_t *mouse_input_event = mouse_node->handle;
+    mouse_input_event->inputid.bustype = 0x05;   // BUS_PS2
+    mouse_input_event->inputid.vendor = 0x045e;  // Microsoft
+    mouse_input_event->inputid.product = 0x00b4; // Generic MS Mouse
+    mouse_input_event->inputid.version = 0x0100; // Basic MS Version
+    mouse_input_event->event_bit = mouse_event_bit;
 
     regist_dev("null", null_dev_read, null_dev_write, NULL, NULL);
     regist_dev("random", random_dev_read, NULL, NULL, NULL);

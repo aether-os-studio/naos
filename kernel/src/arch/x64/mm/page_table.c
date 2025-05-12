@@ -68,11 +68,10 @@ void map_page(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t flags)
 
     uint64_t pt_index = indices[3];
     uint64_t *pte = &current_table[pt_index];
-    if (*pte != 0)
+    if (*pte == 0)
     {
-        // free_frames(*pte & ARCH_ADDR_MASK, 1);
+        *pte = (paddr & ARCH_ADDR_MASK) | flags;
     }
-    *pte = (paddr & ARCH_ADDR_MASK) | flags;
 
     // 刷新TLB
     asm volatile("invlpg (%0)" : : "r"(vaddr) : "memory");
@@ -301,7 +300,7 @@ void free_page_table(uint64_t directory)
     {
         if (pml4[i] & ARCH_PT_FLAG_VALID)
         {
-            free_page_table_inner(pml4[i] & 0x00007FFFFFFFF000, 3);
+            free_page_table_inner(pml4[i] & ARCH_ADDR_MASK, 3);
             pml4[i] = 0;
         }
     }

@@ -18,7 +18,7 @@ task_t *get_free_task()
     {
         if (tasks[i] == NULL)
         {
-            tasks[i] = (task_t *)phys_to_virt(alloc_frames(1));
+            tasks[i] = (task_t *)alloc_frames_bytes(sizeof(task_t));
             memset(tasks[i], 0, DEFAULT_PAGE_SIZE);
             tasks[i]->pid = i;
             return tasks[i];
@@ -54,7 +54,7 @@ task_t *task_create(const char *name, void (*entry)())
     task->jiffies = 0;
     task->kernel_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE)) + STACK_SIZE;
     task->syscall_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE)) + STACK_SIZE;
-    task->arch_context = malloc(sizeof(arch_context_t));
+    task->arch_context = alloc_frames_bytes(sizeof(arch_context_t));
     arch_context_init(task->arch_context, virt_to_phys((uint64_t)get_kernel_page_dir()), (uint64_t)entry, task->kernel_stack, false);
     task->signal = 0;
     task->status = 0;
@@ -153,26 +153,6 @@ extern void mount_root();
 
 bool system_initialized = false;
 
-void killer_thread()
-{
-    while (true)
-    {
-        for (uint64_t i = cpu_count; i < MAX_TASK_NUM; i++)
-        {
-            if (tasks[i] && tasks[i]->state == TASK_DIED)
-            {
-                free_page_table(tasks[i]->arch_context->cr3);
-                free_frames(virt_to_phys((uint64_t)tasks[i]), 1);
-                tasks[i] = NULL;
-            }
-        }
-
-        arch_yield();
-
-        arch_pause();
-    }
-}
-
 void init_thread()
 {
     printk("NAOS init thread is running...\n");
@@ -227,7 +207,6 @@ void task_init()
         idle_tasks[cpu]->state = TASK_RUNNING;
     }
     arch_set_current(idle_tasks[0]);
-    task_create("killer", killer_thread);
     task_create("init", init_thread);
 
     task_initialized = true;
@@ -345,6 +324,7 @@ uint64_t task_fork(struct pt_regs *regs)
     task_t *child = get_free_task();
     if (child == NULL)
     {
+        can_schedule = true;
         return (uint64_t)-ENOMEM;
     }
 
@@ -357,7 +337,7 @@ uint64_t task_fork(struct pt_regs *regs)
     child->kernel_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE)) + STACK_SIZE;
     child->syscall_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE)) + STACK_SIZE;
 
-    child->arch_context = malloc(sizeof(arch_context_t));
+    child->arch_context = alloc_frames_bytes(sizeof(arch_context_t));
     memset(child->arch_context, 0, sizeof(arch_context_t));
     current_task->arch_context->ctx = regs;
     arch_context_copy(child->arch_context, current_task->arch_context, child->kernel_stack);
@@ -391,8 +371,6 @@ uint64_t task_fork(struct pt_regs *regs)
     memcpy(&child->term, &current_task->term, sizeof(termios));
 
     can_schedule = true;
-
-    arch_enable_interrupt();
 
     return child->pid;
 }
@@ -463,16 +441,28 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     vfs_read(node, buffer, 0, node->size);
 
-    memset(buffer + node->size, 0, buf_len - node->size);
-
     char *fullpath = vfs_get_fullpath(node);
 
     vfs_close(node);
 
     if (buffer[0] == '#' && buffer[1] == '!')
     {
+        for (int i = 0; i < argv_count; i++)
+            if (new_argv[i])
+                free(new_argv[i]);
+        free(new_argv);
+        for (int i = 0; i < envp_count; i++)
+            if (new_envp[i])
+                free(new_envp[i]);
+        free(new_envp);
+
         execve_lock = false;
-        return task_execve("/bin/bash", argv, envp);
+        const char *argvs[256];
+        memset(argvs, 0, sizeof(argvs));
+        argvs[0] = path;
+        for (int i = 0; i < argv_count; i++)
+            argvs[i + 1] = argv[i];
+        return task_execve("/bin/bash", argvs, envp);
     }
 
     const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)EHDR_START_ADDR;
@@ -536,8 +526,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
             map_page_range(get_current_page_dir(true), INTERPRETER_EHDR_ADDR, 0, (interpreter_node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
             vfs_read(interpreter_node, interpreter_buffer, 0, interpreter_node->size);
-
-            memset(buffer + interpreter_node->size, 0, ((interpreter_node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1))) - interpreter_node->size);
 
             vfs_close(interpreter_node);
 
@@ -659,6 +647,8 @@ int task_block(task_t *task, task_state_t state, int timeout_ms)
         arch_pause();
     }
 
+    arch_disable_interrupt();
+
     return task->status;
 }
 
@@ -676,35 +666,40 @@ uint64_t task_exit(int64_t code)
 
     arch_context_free(task->arch_context);
 
-    free(task->arch_context);
+    free_frames_bytes(task->arch_context, sizeof(arch_context_t));
 
     free_frames(virt_to_phys(task->kernel_stack), STACK_SIZE / DEFAULT_PAGE_SIZE);
     free_frames(virt_to_phys(task->syscall_stack), STACK_SIZE / DEFAULT_PAGE_SIZE);
 
     task->status = (uint64_t)code;
 
-    task_t *next = task_search(TASK_READY, task->cpu_id);
-
     task->ppid = 0;
 
     for (uint64_t i = 0; i < MAX_FD_NUM; i++)
     {
-        if (current_task->fds[i])
+        if (task->fds[i])
         {
-            vfs_close(current_task->fds[i]);
+            vfs_close(task->fds[i]);
         }
     }
 
-    if (task->waitpid != 0)
+    if (task->waitpid != 0 && tasks[task->waitpid])
     {
         task_unblock(tasks[task->waitpid], EOK);
     }
 
+    free_page_table(task->arch_context->cr3);
+
     task->state = TASK_DIED;
 
-    arch_set_current(next);
+    task_t *next = task_search(TASK_READY, task->cpu_id);
+    if (next)
+    {
+        arch_set_current(next);
+        arch_switch_with_context(NULL, next->arch_context, next->kernel_stack);
+    }
 
-    arch_switch_with_context(NULL, next->arch_context, next->kernel_stack);
+    // never return !!!
 
     return (uint64_t)-EAGAIN;
 }
@@ -712,8 +707,6 @@ uint64_t task_exit(int64_t code)
 uint64_t sys_waitpid(uint64_t pid, int *status)
 {
     task_t *child = NULL;
-
-    uint64_t child_pid = 0;
 
     while (1)
     {
@@ -724,57 +717,52 @@ uint64_t sys_waitpid(uint64_t pid, int *status)
             for (uint64_t i = cpu_count; i < MAX_TASK_NUM; i++)
             {
                 task_t *ptr = tasks[i];
-                if (ptr && ptr->ppid != ptr->pid && ptr->ppid == current_task->pid)
+                if (ptr && ptr->ppid != ptr->pid && ptr->ppid == current_task->pid && ptr->state == TASK_DIED)
                 {
-                    child_pid = ptr->pid;
+                    child = ptr;
+                    tasks[i] = NULL;
+                    goto rollback;
+                }
+                if (ptr && ptr->ppid != ptr->pid && ptr->ppid == current_task->pid && ptr->state != TASK_DIED)
+                {
+                    child = ptr;
                     has_child = true;
                     break;
                 }
             }
 
-            if (has_child)
-            {
-                arch_enable_interrupt();
-
-                arch_yield();
-
-                arch_pause();
-            }
-            else
-            {
-                *status = 0;
-                return child_pid;
-            }
-
-            continue;
+            if (!has_child)
+                return (uint64_t)-ECHILD;
         }
-
-        for (uint64_t i = cpu_count; i < MAX_TASK_NUM; i++)
+        else
         {
-            task_t *ptr = tasks[i];
-            if (ptr == NULL)
-                continue;
-
-            if (ptr->ppid != current_task->pid)
-                continue;
-
-            if (pid != ptr->pid && pid != 0)
-                continue;
-
-            if (ptr->state == TASK_DIED)
+            for (uint64_t i = cpu_count; i < MAX_TASK_NUM; i++)
             {
-                child = ptr;
-                tasks[i] = NULL;
-                goto rollback;
+                task_t *ptr = tasks[i];
+                if (!ptr)
+                    continue;
+
+                if (ptr->ppid != current_task->pid)
+                    continue;
+
+                if (pid != ptr->pid && pid != 0)
+                    continue;
+
+                if (ptr->state == TASK_DIED)
+                {
+                    child = ptr;
+                    tasks[i] = NULL;
+                    goto rollback;
+                }
+
+                has_child = true;
+
+                break;
             }
-
-            has_child = true;
-
-            break;
         }
         if (has_child)
         {
-            current_task->waitpid = pid;
+            child->waitpid = current_task->pid;
             task_block(current_task, TASK_BLOCKING, 0);
 
             continue;
@@ -788,6 +776,8 @@ uint64_t sys_waitpid(uint64_t pid, int *status)
 rollback:
     *status = (int)child->status;
     uint32_t ret = child->pid;
+
+    free_frames_bytes(child, sizeof(task_t));
 
     current_task->waitpid = 0;
 
@@ -815,7 +805,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->kernel_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE)) + STACK_SIZE;
     child->syscall_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE)) + STACK_SIZE;
 
-    child->arch_context = malloc(sizeof(arch_context_t));
+    child->arch_context = alloc_frames_bytes(sizeof(arch_context_t));
     memset(child->arch_context, 0, sizeof(arch_context_t));
     current_task->arch_context->ctx = regs;
     arch_context_copy(child->arch_context, current_task->arch_context, child->kernel_stack);
@@ -889,6 +879,8 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem)
 
         arch_pause();
     } while (target > nanoTime());
+
+    arch_disable_interrupt();
 
     return 0;
 }

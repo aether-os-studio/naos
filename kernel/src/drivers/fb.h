@@ -10,6 +10,8 @@ ssize_t fb_ioctl(void *data, ssize_t cmd, ssize_t arg);
 void fbdev_init();
 void fbdev_init_sysfs();
 
+extern volatile struct limine_framebuffer_request framebuffer_request;
+
 #define FB_MAJOR 29
 
 #define TTY_CHARACTER_WIDTH 8

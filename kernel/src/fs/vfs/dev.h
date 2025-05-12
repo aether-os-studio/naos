@@ -22,11 +22,11 @@ typedef struct partition_node
 
 extern partition_node_t dev_nodes[MAX_PARTITIONS_NUM];
 
-void regist_dev(const char *name,
-                ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len),
-                ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len),
-                ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg),
-                void *data);
+vfs_node_t regist_dev(const char *name,
+                      ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len),
+                      ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len),
+                      ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg),
+                      void *data);
 
 void dev_init();
 
@@ -66,5 +66,88 @@ struct vt_mode
 };
 #define VT_AUTO 0x00    // 自动切换模式
 #define VT_PROCESS 0x01 // 进程控制模式
+
+#define _IOC_NRBITS 8
+#define _IOC_TYPEBITS 8
+
+/*
+ * Let any architecture override either of the following before
+ * including this file.
+ */
+
+#ifndef _IOC_SIZEBITS
+#define _IOC_SIZEBITS 14
+#endif
+
+#ifndef _IOC_DIRBITS
+#define _IOC_DIRBITS 2
+#endif
+
+#define _IOC_NRMASK ((1 << _IOC_NRBITS) - 1)
+#define _IOC_TYPEMASK ((1 << _IOC_TYPEBITS) - 1)
+#define _IOC_SIZEMASK ((1 << _IOC_SIZEBITS) - 1)
+#define _IOC_DIRMASK ((1 << _IOC_DIRBITS) - 1)
+
+#define _IOC_NRSHIFT 0
+#define _IOC_TYPESHIFT (_IOC_NRSHIFT + _IOC_NRBITS)
+#define _IOC_SIZESHIFT (_IOC_TYPESHIFT + _IOC_TYPEBITS)
+#define _IOC_DIRSHIFT (_IOC_SIZESHIFT + _IOC_SIZEBITS)
+
+#define _IOC_DIR(nr) (((nr) >> _IOC_DIRSHIFT) & _IOC_DIRMASK)
+#define _IOC_TYPE(nr) (((nr) >> _IOC_TYPESHIFT) & _IOC_TYPEMASK)
+#define _IOC_NR(nr) (((nr) >> _IOC_NRSHIFT) & _IOC_NRMASK)
+#define _IOC_SIZE(nr) (((nr) >> _IOC_SIZESHIFT) & _IOC_SIZEMASK)
+
+typedef size_t (*event_bit_t)(void *data, uint64_t request, void *arg);
+
+#define EV_SYN 0x00
+#define EV_KEY 0x01
+#define EV_REL 0x02
+#define EV_ABS 0x03
+#define EV_MSC 0x04
+#define EV_SW 0x05
+#define EV_LED 0x11
+#define EV_SND 0x12
+#define EV_REP 0x14
+#define EV_FF 0x15
+#define EV_PWR 0x16
+#define EV_FF_STATUS 0x17
+#define EV_MAX 0x1f
+#define EV_CNT (EV_MAX + 1)
+
+#define ABS_MAX 0x3f
+#define ABS_CNT (ABS_MAX + 1)
+
+struct input_id
+{
+    uint16_t bustype;
+    uint16_t vendor;
+    uint16_t product;
+    uint16_t version;
+};
+
+struct input_absinfo
+{
+    int32_t value;
+    int32_t minimum;
+    int32_t maximum;
+    int32_t fuzz;
+    int32_t flat;
+    int32_t resolution;
+};
+
+typedef struct dev_input_event
+{
+    char *devname;
+    char *physloc;
+
+    size_t timesOpened;
+
+    struct input_id inputid;
+
+    size_t properties;
+
+    event_bit_t event_bit;
+} dev_input_event_t;
 
 void stdio_init();

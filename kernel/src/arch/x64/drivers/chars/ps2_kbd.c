@@ -3,37 +3,7 @@
 #include <interrupt/irq_manager.h>
 #include <task/task.h>
 #include <arch/x64/io.h>
-
-enum special_key_code
-{
-    KEY_ESC = 128,
-    KEY_BACKSPACE,
-    KEY_TAB,
-    KEY_ENTER,
-    KEY_CAPS,
-    KEY_SHIFT,
-    KEY_CTRL,
-    KEY_ALT,
-    KEY_SPACE,
-    KEY_F1,
-    KEY_F2,
-    KEY_F3,
-    KEY_F4,
-    KEY_F5,
-    KEY_F6,
-    KEY_F7,
-    KEY_F8,
-    KEY_F9,
-    KEY_F10,
-    KEY_NUML,
-    KEY_SCROLL,
-    KEY_F11,
-    KEY_F12,
-    KEY_UP,
-    KEY_DOWN,
-    KEY_LEFT,
-    KEY_RIGHT,
-};
+#include <fs/vfs/dev.h>
 
 char keyboard_code[] = {
     0,
@@ -511,4 +481,63 @@ uint8_t get_keyboard_input()
     }
 
     return 0;
+}
+
+size_t kb_event_bit(void *data, uint64_t request, void *arg)
+{
+    size_t number = _IOC_NR(request);
+    size_t size = _IOC_SIZE(request);
+
+    size_t ret = (size_t)-ENOENT;
+    switch (number)
+    {
+    case 0x20:
+    {
+        size_t out = (1 << EV_SYN) | (1 << EV_KEY);
+        ret = MIN(sizeof(size_t), size);
+        memcpy(arg, &out, ret);
+        break;
+    }
+    case (0x20 + EV_SW):
+    case (0x20 + EV_MSC):
+    case (0x20 + EV_SND):
+    case (0x20 + EV_LED):
+    case (0x20 + EV_REL):
+    case (0x20 + EV_ABS):
+    {
+        ret = MIN(sizeof(size_t), size);
+        break;
+    }
+    case (0x20 + EV_FF):
+    {
+        ret = MIN(16, size);
+        break;
+    }
+    case (0x20 + EV_KEY):
+    {
+        uint8_t map[96] = {0};
+        for (int i = KEY_ESC; i <= KEY_MENU; i++)
+            map[i / 8] |= (1 << (i % 8));
+        ret = MIN(96, size);
+        memcpy(arg, map, ret);
+        break;
+    }
+    case 0x18:
+    {                          // EVIOCGKEY()
+        uint8_t map[96] = {0}; // NO idea what these do
+        // bitmapGenericSet(map, KEY_ENTER, true);
+        // bitmapGenericSet(map, KEY_RIGHTSHIFT, true);
+        ret = MIN(96, size);
+        memcpy(arg, map, ret);
+        break;
+    }
+    case 0x19: // EVIOCGLED()
+        ret = MIN(8, size);
+        break;
+    case 0x1b: // EVIOCGSW()
+        ret = MIN(8, size);
+        break;
+    }
+
+    return ret;
 }

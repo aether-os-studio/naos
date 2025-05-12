@@ -48,11 +48,13 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack)
     dst->ctx->ds = SELECTOR_USER_DS;
     dst->ctx->es = SELECTOR_USER_DS;
     dst->ctx->rax = 0;
+    dst->fpu_ctx = (fpu_context_t *)phys_to_virt(alloc_frames(1));
+    memset(dst->fpu_ctx, 0, DEFAULT_PAGE_SIZE);
     if (src->fpu_ctx)
     {
-        dst->fpu_ctx = (fpu_context_t *)phys_to_virt(alloc_frames(1));
-        memset(dst->fpu_ctx, 0, DEFAULT_PAGE_SIZE);
         memcpy(dst->fpu_ctx, src->fpu_ctx, sizeof(fpu_context_t));
+        dst->fpu_ctx->mxscr = 0x1f80;
+        dst->fpu_ctx->fcw = 0x037f;
     }
     dst->fs = src->fs;
     dst->gs = src->gs;

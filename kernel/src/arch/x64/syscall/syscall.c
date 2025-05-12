@@ -143,10 +143,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_BRK:
         regs->rax = sys_brk(arg1);
         break;
-    case SYS_SIGNAL:
-        regs->rax = sys_signal(arg1, arg2, arg3);
-        break;
-    case SYS_SETMASK:
+    case SYS_RT_SIGPROCMASK:
         regs->rax = sys_ssetmask(arg1, (sigset_t *)arg2, (sigset_t *)arg3);
         break;
     case SYS_GETDENTS64:
@@ -183,16 +180,13 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         ((struct timespec *)arg2)->tv_nsec = 1000000;
         regs->rax = 0;
         break;
-    case SYS_SIGACTION:
+    case SYS_RT_SIGACTION:
         regs->rax = sys_sigaction(arg1, (sigaction_t *)arg2, (sigaction_t *)arg3);
-        break;
-    case SYS_SIGPROCMASK:
-        regs->rax = sys_ssetmask(arg1, (sigset_t *)arg2, (sigset_t *)arg3);
         break;
     case SYS_KILL:
         regs->rax = sys_kill(arg1, arg2);
         break;
-    case SYS_SIGRETURN:
+    case SYS_RT_SIGRETURN:
         sys_sigreturn();
         regs->rax = 0;
         break;
@@ -231,6 +225,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_RECVMSG:
         regs->rax = sys_recvmsg(arg1, (struct msghdr *)arg2, arg3);
+        break;
+    case SYS_SHUTDOWN:
+        regs->rax = sys_shutdown(arg1, arg2);
         break;
     case SYS_SET_TID_ADDRESS:
         regs->rax = current_task->pid;
@@ -306,6 +303,12 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_GETPGID:
         regs->rax = current_task->pgid;
         break;
+    case SYS_SETUID:
+        current_task->uid = arg1;
+        break;
+    case SYS_SETGID:
+        current_task->gid = arg1;
+        break;
     case SYS_DUP:
         regs->rax = sys_dup(arg1);
         break;
@@ -317,13 +320,16 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = sys_get_rlimit(arg1, (struct rlimit *)arg2);
         break;
     case SYS_PRLIMIT64:
-        regs->rax = 0;
+        regs->rax = sys_prlimit64(arg1, arg2, (struct rlimit *)arg3, (struct rlimit *)arg4);
         break;
     case SYS_ACCESS:
         regs->rax = sys_access((char *)arg1, arg2);
         break;
     case SYS_FACCESSAT:
         regs->rax = sys_faccessat(arg1, (const char *)arg2, arg3);
+        break;
+    case SYS_FACCESSAT2:
+        regs->rax = sys_faccessat2(arg1, (const char *)arg2, arg3, arg4);
         break;
     case SYS_SELECT:
         regs->rax = sys_select(arg1, (uint8_t *)arg2, (uint8_t *)arg3, (uint8_t *)arg4, (struct timeval *)arg5);
@@ -400,15 +406,24 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_FCHOWN:
         regs->rax = 0;
         break;
+    case SYS_CHMOD:
+        regs->rax = 0;
+        break;
+    case SYS_FCHMOD:
+        regs->rax = 0;
+        break;
     case SYS_UMASK:
         regs->rax = 0;
         break;
     case SYS_MKDIR:
         regs->rax = sys_mkdir((const char *)arg1, arg2);
         break;
+    case SYS_MEMBARRIER:
+        regs->rax = 0;
+        break;
 
     default:
-        char buf[256];
+        char buf[32];
         int len = sprintf(buf, "syscall %d not implemented\n", idx);
         serial_printk(buf, len);
         regs->rax = (uint64_t)-ENOSYS;

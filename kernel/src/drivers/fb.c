@@ -5,8 +5,6 @@
 #include <fs/fs_syscall.h>
 #include <fs/vfs/sys.h>
 
-extern volatile struct limine_framebuffer_request framebuffer_request;
-
 ssize_t fb_read(void *data, uint64_t offset, void *buf, uint64_t len)
 {
     struct limine_framebuffer *fb = (struct limine_framebuffer *)data;
@@ -69,9 +67,6 @@ ssize_t fb_ioctl(void *data, ssize_t cmd, ssize_t arg)
 
         fb_var->bits_per_pixel = framebuffer->bpp;
         fb_var->grayscale = 0;
-        // fb->red = 0;
-        // fb->green = 0;
-        // fb->blue = 0;
         fb_var->nonstd = 0;
         fb_var->activate = 0;                     // idek
         fb_var->height = framebuffer->height / 4; // VERY approximate
@@ -119,15 +114,20 @@ void fbdev_init_sysfs()
         vfs_node_t node = vfs_child_append(graphics, name, NULL);
         node->type = file_dir;
 
-        vfs_node_t subsystem = vfs_child_append(node, "subsystem", NULL);
+        vfs_node_t device = vfs_child_append(node, "device", NULL);
+        device->type = file_dir;
+
+        vfs_node_t subsystem = vfs_child_append(device, "subsystem", NULL);
         subsystem->type = file_none;
         sysfs_handle_t *subsystem_handle = malloc(sizeof(sysfs_handle_t));
+        memset(subsystem_handle, 0, sizeof(sysfs_handle_t));
         subsystem->handle = subsystem_handle;
         sprintf(subsystem_handle->content, "/dev/fb%d", i);
         subsystem->size = strlen(subsystem_handle->content) + 1;
 
         vfs_node_t uevent = vfs_child_append(node, "uevent", NULL);
         sysfs_handle_t *uevent_handle = malloc(sizeof(sysfs_handle_t));
+        memset(subsystem_handle, 0, sizeof(sysfs_handle_t));
         sprintf(uevent_handle->content, "MAJOR=%d\nMINOR=%d\nDEVNAME=/dev/fb%d\n", FB_MAJOR, i, i);
         uevent->handle = uevent_handle;
         uevent->size = strlen(uevent_handle->content) + 1;

@@ -409,7 +409,7 @@ uint64_t sys_stat(const char *fd, struct stat *buf)
     buf->st_dev = 0;
     buf->st_ino = i++;
     buf->st_nlink = 1;
-    buf->st_mode = 0700 | (node->type == file_dir ? S_IFDIR : S_IFREG);
+    buf->st_mode = 01777 | (node->type == file_dir ? S_IFDIR : S_IFREG);
     buf->st_uid = 0;
     buf->st_gid = 0;
     buf->st_rdev = (node->type == file_stream) ? ((4 << 8) | 1) : 0;
@@ -434,7 +434,7 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
     buf->st_dev = 0;
     buf->st_ino = i++;
     buf->st_nlink = 1;
-    buf->st_mode = 0700 | (current_task->fds[fd]->type == file_dir ? S_IFDIR : S_IFREG);
+    buf->st_mode = 01777 | (current_task->fds[fd]->type == file_dir ? S_IFDIR : S_IFREG);
     buf->st_uid = 0;
     buf->st_gid = 0;
     buf->st_rdev = (current_task->fds[fd]->type == file_stream) ? ((4 << 8) | 1) : 0;
@@ -449,13 +449,46 @@ uint64_t sys_get_rlimit(uint64_t resource, struct rlimit *lim)
 {
     switch (resource)
     {
-    case 7: // max open fds
-        lim->rlim_cur = 1024;
-        lim->rlim_max = 1024;
+    case 7:
+        lim->rlim_cur = MAX_FD_NUM;
+        lim->rlim_max = MAX_FD_NUM;
         return 0;
     default:
         return (uint64_t)-ENOSYS;
     }
+}
+uint64_t sys_prlimit64(uint64_t pid, int resource, const struct rlimit *new_rlim, struct rlimit *old_rlim)
+{
+    if (pid != 0 && pid != current_task->pid)
+    {
+        return -EPERM;
+    }
+
+    if (old_rlim)
+    {
+        uint64_t ret = sys_get_rlimit(resource, old_rlim);
+        if (ret != 0)
+            return ret;
+    }
+
+    if (new_rlim)
+    {
+        switch (resource)
+        {
+        case 7:
+            if (new_rlim->rlim_cur > MAX_FD_NUM ||
+                new_rlim->rlim_max > MAX_FD_NUM)
+            {
+                return -EINVAL;
+            }
+            // current_task->rlim[resource] = *new_rlim;
+            break;
+        default:
+            return -ENOSYS;
+        }
+    }
+
+    return 0;
 }
 
 size_t sys_poll(struct pollfd *fds, int nfds, int timeout)
@@ -662,6 +695,24 @@ size_t sys_access(char *filename, int mode)
 }
 
 uint64_t sys_faccessat(uint64_t dirfd, const char *pathname, uint64_t mode)
+{
+    if (pathname[0] == '\0')
+    { // by fd
+        return 0;
+    }
+
+    char *resolved = at_resolve_pathname(dirfd, (char *)pathname);
+    if (resolved == NULL)
+        return (uint64_t)-ENOENT;
+
+    size_t ret = sys_access(resolved, mode);
+
+    free(resolved);
+
+    return ret;
+}
+
+uint64_t sys_faccessat2(uint64_t dirfd, const char *pathname, uint64_t mode, uint64_t flags)
 {
     if (pathname[0] == '\0')
     { // by fd

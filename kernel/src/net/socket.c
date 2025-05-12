@@ -58,8 +58,11 @@ int sys_socket(int domain, int type, int protocol)
     strcpy(socket->name, buf);
     socket->buf_head = 0;
     socket->buf_tail = 0;
+    socket->sndbuf_size = BUFFER_SIZE;
+    socket->rcvbuf_size = BUFFER_SIZE;
     socket->state = SOCKET_TYPE_UNCONNECTED;
     socket->fd = i;
+    memset(&socket->options, 0, sizeof(socket->options));
 
     current_task->fds[i] = node;
 
@@ -169,25 +172,24 @@ int sys_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
     if (!sock || sock->state != SOCKET_TYPE_UNCONNECTED)
     {
         SPIN_UNLOCK(socket_lock);
-        return -EBADF; // EBADF
+        return -EBADF;
     }
 
     // 复制socket名称
     const struct sockaddr_un *un = (struct sockaddr_un *)addr;
 
-    if (un->sun_path[0] == '\0' || strlen(un->sun_path) == 0)
+    const char *name = un->sun_path;
+    for (; *name == '\0'; name++)
     {
-        SPIN_UNLOCK(socket_lock);
-        return -EINVAL; // 空路径名
     }
 
-    if (strlen(un->sun_path) >= SOCKET_NAME_LEN)
+    if (strlen(name) >= SOCKET_NAME_LEN)
     {
         SPIN_UNLOCK(socket_lock);
         return -ENAMETOOLONG; // 路径过长
     }
 
-    strncpy(sock->name, un->sun_path, SOCKET_NAME_LEN - 1);
+    strncpy(sock->name, name, SOCKET_NAME_LEN - 1);
     sock->name[SOCKET_NAME_LEN - 1] = '\0';
 
     SPIN_UNLOCK(socket_lock);
@@ -208,10 +210,10 @@ int sys_listen(int sockfd, int backlog)
 
     socket_t *sock = node->handle;
 
-    if (!sock || sock->state != SOCKET_TYPE_UNCONNECTED || !sock->name[0])
+    if (!sock || sock->state != SOCKET_TYPE_UNCONNECTED)
     {
         SPIN_UNLOCK(socket_lock);
-        return -EINVAL; // EINVAL
+        return -EINVAL;
     }
 
     sock->state = SOCKET_TYPE_LISTENING;
@@ -236,7 +238,7 @@ int sys_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
     if (!listen_sock || listen_sock->state != SOCKET_TYPE_LISTENING)
     {
         SPIN_UNLOCK(socket_lock);
-        return -EINVAL; // EINVAL
+        return -EINVAL;
     }
 
     // 查找连接请求并创建新socket
@@ -301,7 +303,7 @@ int sys_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
     if (!sock || sock->state != SOCKET_TYPE_UNCONNECTED)
     {
         SPIN_UNLOCK(socket_lock);
-        return -EBADF; // EBADF
+        return -EBADF;
     }
 
     if (sock->state != SOCKET_TYPE_UNCONNECTED && sock->state != SOCKET_TYPE_LISTENING)
@@ -312,15 +314,21 @@ int sys_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 
     // 查找目标socket
     const struct sockaddr_un *un = (struct sockaddr_un *)addr;
-    for (int i = MAX_FD_NUM; i < MAX_SOCKETS; i++)
+
+    const char *name = un->sun_path;
+    for (; *name == '\0'; name++)
+    {
+    }
+
+    for (int i = 0; i < MAX_SOCKETS; i++)
     {
         if (sockets[i].state == SOCKET_TYPE_LISTENING &&
-            strcmp(sockets[i].name, un->sun_path) == 0)
+            strcmp(sockets[i].name, name) == 0)
         {
 
             sock->state = SOCKET_TYPE_CONNECTED;
             sock->peer_fd = sockets[i].fd;
-            strcpy(sock->name, un->sun_path);
+            strcpy(sock->name, name);
 
             SPIN_UNLOCK(socket_lock);
             return 0;
@@ -328,7 +336,7 @@ int sys_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
     }
 
     SPIN_UNLOCK(socket_lock);
-    return -ECONNREFUSED; // ECONNREFUSED
+    return -ECONNREFUSED;
 }
 
 int64_t sys_send(int sockfd, const void *buf, size_t len, int flags)
@@ -346,7 +354,7 @@ int64_t sys_send(int sockfd, const void *buf, size_t len, int flags)
     if (!sock || sock->state != SOCKET_TYPE_CONNECTED)
     {
         SPIN_UNLOCK(socket_lock);
-        return -ENOTCONN; // ENOTCONN
+        return -ENOTCONN;
     }
 
     socket_t *peer = &sockets[sock->peer_fd];
@@ -354,7 +362,7 @@ int64_t sys_send(int sockfd, const void *buf, size_t len, int flags)
     if (!peer)
     {
         SPIN_UNLOCK(socket_lock);
-        return -ENOTCONN; // ENOTCONN
+        return -ENOTCONN;
     }
 
     // 简化实现：直接拷贝数据到对方缓冲区
@@ -388,7 +396,7 @@ int64_t sys_recv(int sockfd, void *buf, size_t len, int flags)
     if (!sock || sock->state != SOCKET_TYPE_CONNECTED)
     {
         SPIN_UNLOCK(socket_lock);
-        return -ENOTCONN; // ENOTCONN
+        return -ENOTCONN;
     }
 
     size_t available = (sock->buf_tail - sock->buf_head + BUFFER_SIZE) % BUFFER_SIZE;
@@ -498,7 +506,8 @@ int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags)
 
 int sys_socket_close(void *current)
 {
-    // todo
+    socket_t *socket = current;
+    socket->state = SOCKET_TYPE_UNUSED;
     return 0;
 }
 
@@ -547,7 +556,8 @@ int sys_setsockopt(int sockfd, int level, int optname, const void *optval, sockl
         }
         sock->options.keepalive = *(int *)optval;
         break;
-    case SO_SNDTIMEO:
+    case SO_SNDTIMEO_OLD:
+    case SO_SNDTIMEO_NEW:
         if (optlen < sizeof(struct timeval))
         {
             SPIN_UNLOCK(socket_lock);
@@ -555,7 +565,8 @@ int sys_setsockopt(int sockfd, int level, int optname, const void *optval, sockl
         }
         memcpy(&sock->options.sndtimeo, optval, sizeof(struct timeval));
         break;
-    case SO_RCVTIMEO:
+    case SO_RCVTIMEO_OLD:
+    case SO_RCVTIMEO_NEW:
         if (optlen < sizeof(struct timeval))
         {
             SPIN_UNLOCK(socket_lock);
@@ -580,6 +591,59 @@ int sys_setsockopt(int sockfd, int level, int optname, const void *optval, sockl
         }
         memcpy(&sock->options.linger_opt, optval, sizeof(struct linger));
         break;
+    case SO_SNDBUF:
+        if (optlen < sizeof(int))
+        {
+            SPIN_UNLOCK(socket_lock);
+            return -EINVAL;
+        }
+        sock->sndbuf_size = *(int *)optval;
+        if (sock->sndbuf_size < BUFFER_SIZE)
+        {
+            sock->sndbuf_size = BUFFER_SIZE;
+        }
+        break;
+    case SO_RCVBUF:
+        if (optlen < sizeof(int))
+        {
+            SPIN_UNLOCK(socket_lock);
+            return -EINVAL;
+        }
+        sock->rcvbuf_size = *(int *)optval;
+        if (sock->rcvbuf_size < BUFFER_SIZE)
+        {
+            sock->rcvbuf_size = BUFFER_SIZE;
+        }
+        break;
+    case SO_PASSCRED:
+        if (optlen < sizeof(int))
+        {
+            SPIN_UNLOCK(socket_lock);
+            return -EINVAL;
+        }
+        sock->options.passcred = *(int *)optval;
+        break;
+    case SO_ATTACH_FILTER:
+    {
+        struct sock_fprog fprog;
+        if (optlen < sizeof(fprog))
+        {
+            SPIN_UNLOCK(socket_lock);
+            return -EINVAL;
+        }
+        memcpy(&fprog, optval, sizeof(fprog));
+        if (fprog.len > 64 || fprog.len == 0)
+        {
+            SPIN_UNLOCK(socket_lock);
+            return -EINVAL;
+        }
+
+        // 分配内存保存过滤器
+        sock->options.filter = malloc(sizeof(struct sock_filter) * fprog.len);
+        memcpy(sock->options.filter, fprog.filter, sizeof(struct sock_filter) * fprog.len);
+        sock->options.filter_len = fprog.len;
+        break;
+    }
     default:
         SPIN_UNLOCK(socket_lock);
         return -ENOPROTOOPT;
@@ -635,7 +699,8 @@ int sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t *
         *(int *)optval = sock->options.keepalive;
         *optlen = sizeof(int);
         break;
-    case SO_SNDTIMEO:
+    case SO_SNDTIMEO_OLD:
+    case SO_SNDTIMEO_NEW:
         if (*optlen < sizeof(struct timeval))
         {
             SPIN_UNLOCK(socket_lock);
@@ -644,7 +709,8 @@ int sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t *
         memcpy(optval, &sock->options.sndtimeo, sizeof(struct timeval));
         *optlen = sizeof(struct timeval);
         break;
-    case SO_RCVTIMEO:
+    case SO_RCVTIMEO_OLD:
+    case SO_RCVTIMEO_NEW:
         if (*optlen < sizeof(struct timeval))
         {
             SPIN_UNLOCK(socket_lock);
@@ -680,9 +746,81 @@ int sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t *
         memcpy(optval, &sock->options.linger_opt, sizeof(struct linger));
         *optlen = sizeof(struct linger);
         break;
+    case SO_SNDBUF:
+        if (*optlen < sizeof(int))
+        {
+            SPIN_UNLOCK(socket_lock);
+            return -EINVAL;
+        }
+        *(int *)optval = sock->sndbuf_size;
+        *optlen = sizeof(int);
+        break;
+    case SO_RCVBUF:
+        if (*optlen < sizeof(int))
+        {
+            SPIN_UNLOCK(socket_lock);
+            return -EINVAL;
+        }
+        *(int *)optval = sock->rcvbuf_size;
+        *optlen = sizeof(int);
+        break;
+    case SO_PASSCRED:
+        if (*optlen < sizeof(int))
+        {
+            SPIN_UNLOCK(socket_lock);
+            return -EINVAL;
+        }
+        *(int *)optval = sock->options.passcred;
+        *optlen = sizeof(int);
+        break;
+    case SO_ATTACH_FILTER:
+        if (*optlen < sizeof(struct sock_fprog))
+        {
+            SPIN_UNLOCK(socket_lock);
+            return -EINVAL;
+        }
+        struct sock_fprog fprog = {
+            .len = sock->options.filter_len,
+            .filter = sock->options.filter};
+        memcpy(optval, &fprog, sizeof(fprog));
+        *optlen = sizeof(fprog);
+        break;
     default:
         SPIN_UNLOCK(socket_lock);
         return -ENOPROTOOPT;
+    }
+
+    SPIN_UNLOCK(socket_lock);
+    return 0;
+}
+
+uint64_t sys_shutdown(uint64_t sockfd, uint64_t how)
+{
+    if (sockfd < 0 || sockfd >= MAX_FD_NUM || !current_task->fds[sockfd])
+    {
+        SPIN_UNLOCK(socket_lock);
+        return -EBADF;
+    }
+
+    vfs_node_t node = current_task->fds[sockfd];
+    socket_t *sock = node->handle;
+
+    if (!sock || node->type != file_socket)
+    {
+        SPIN_UNLOCK(socket_lock);
+        return -ENOTSOCK;
+    }
+
+    // 验证how参数
+    if (how < SHUT_RD || how > SHUT_RDWR)
+    {
+        SPIN_UNLOCK(socket_lock);
+        return -EINVAL;
+    }
+
+    if (how == SHUT_RDWR)
+    {
+        sock->state = SOCKET_TYPE_UNCONNECTED;
     }
 
     SPIN_UNLOCK(socket_lock);
