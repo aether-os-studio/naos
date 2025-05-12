@@ -126,7 +126,7 @@ void regist_dev(const char *name,
     if (strstr(name, "/") != NULL)
     {
         new_name = strstr(name, "/") + 1;
-        const char *path_len = new_name - name;
+        uint64_t path_len = new_name - name;
         char new_path[256];
         strcpy(new_path, "/dev/");
         strncpy(new_path + 5, name, path_len);

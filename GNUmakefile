@@ -17,6 +17,7 @@ export CC := $(ARCH)-linux-gnu-gcc
 export CXX := $(ARCH)-linux-gnu-g++
 export LD := $(ARCH)-linux-gnu-ld
 export AR := $(ARCH)-linux-gnu-ar
+export NM := $(ARCH)-linux-gnu-nm
 export RANLIB := $(ARCH)-linux-gnu-ranlib
 endif
 ifeq ($(ARCH), aarch64)
@@ -24,6 +25,7 @@ export CC := $(ARCH)-linux-gnu-gcc
 export CXX := $(ARCH)-linux-gnu-g++
 export LD := $(ARCH)-linux-gnu-ld
 export AR := $(ARCH)-linux-gnu-ar
+export NM := $(ARCH)-linux-gnu-nm
 export RANLIB := $(ARCH)-linux-gnu-ranlib
 endif
 ifeq ($(ARCH), riscv64)
@@ -31,6 +33,7 @@ export CC := $(ARCH)-linux-gnu-gcc
 export CXX := $(ARCH)-linux-gnu-g++
 export LD := $(ARCH)-linux-gnu-ld
 export AR := $(ARCH)-linux-gnu-ar
+export NM := $(ARCH)-linux-gnu-nm
 export RANLIB := $(ARCH)-linux-gnu-ranlib
 endif
 ifeq ($(ARCH), loongarch64)
@@ -38,6 +41,7 @@ export CC := $(ARCH)-linux-gnu-gcc
 export CXX := $(ARCH)-linux-gnu-g++
 export LD := $(ARCH)-linux-gnu-ld
 export AR := $(ARCH)-linux-gnu-ar
+export NM := $(ARCH)-linux-gnu-nm
 export RANLIB := $(ARCH)-linux-gnu-ranlib
 endif
 
@@ -47,7 +51,8 @@ KVM ?= 0
 HVF ?= 0
 SMP ?= 2
 MEM ?= 4G
-SER ?= 1
+SER ?= 0
+MON ?= 0
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
 QEMUFLAGS := -m $(MEM) -smp $(SMP)
@@ -64,6 +69,10 @@ endif
 
 ifeq ($(SER), 1)
 override QEMUFLAGS := $(QEMUFLAGS) -serial stdio
+endif
+
+ifeq ($(MON), 1)
+override QEMUFLAGS := $(QEMUFLAGS) -monitor stdio
 endif
 
 ifeq ($(HVF), 1)
@@ -110,7 +119,7 @@ run-hdd-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-drive if=none,file=$(IMAGE_NAME).hdd,format=raw,id=harddisk \
 		-device ahci,id=ahci \
 		-device qemu-xhci,id=xhci \
-		-device ide-hd,drive=harddisk,bus=ahci.0 \
+		-device nvme,drive=harddisk,serial=1234 \
 		$(QEMUFLAGS)
 
 .PHONY: run-aarch64

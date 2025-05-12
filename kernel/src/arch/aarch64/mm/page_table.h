@@ -27,6 +27,6 @@ uint64_t *get_current_page_dir(bool user);
 void map_page(uint64_t *pml4, uint64_t va, uint64_t pa, uint64_t flags);
 void unmap_page(uint64_t *pml4, uint64_t va);
 
-uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t user_stack_end);
+uint64_t clone_page_table(uint64_t cr3_old, uint64_t range_start, uint64_t range_end);
 void free_page_table(uint64_t directory);
 uint64_t translate_address(uint64_t *pml4, uint64_t vaddr);

@@ -62,8 +62,6 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack)
 
 void arch_context_free(arch_context_t *context)
 {
-    free_page_table(context->cr3);
-
     if (context->fpu_ctx)
     {
         free_frames(virt_to_phys((uint64_t)context->fpu_ctx), 1);
@@ -171,7 +169,6 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
 
 void arch_yield()
 {
-    arch_enable_interrupt();
     __asm__ __volatile__("int %0" ::"i"(APIC_TIMER_INTERRUPT_VECTOR));
 }
 

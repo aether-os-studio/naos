@@ -32,6 +32,11 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
 
     uint64_t aligned_len = (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
 
+    if (aligned_len == 0)
+    {
+        return (uint64_t)-EINVAL;
+    }
+
     if (addr == 0)
     {
         addr = current_task->mmap_start;
@@ -52,7 +57,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
         {
             vfs_ioctl(current_task->fds[fd], FBIOGET_FSCREENINFO, (uint64_t)&screen_info);
             addr = screen_info.smem_start;
-            flags | MAP_FIXED;
+            flags |= MAP_FIXED;
         }
     }
 
@@ -67,7 +72,11 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
     for (uint64_t i = 0; i < count; i++)
     {
         uint64_t page = vaddr + DEFAULT_PAGE_SIZE * i;
-        uint64_t flag = PT_FLAG_R | PT_FLAG_W | PT_FLAG_U;
+
+        if (translate_address(get_current_page_dir(true), page) != 0)
+            continue;
+
+        uint64_t flag = PT_FLAG_R | PT_FLAG_W | PT_FLAG_U | PT_FLAG_COW;
 
         if (prot & PROT_READ)
         {
@@ -84,7 +93,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
             flag |= PT_FLAG_X;
         }
 
-        if (flags & MAP_FIXED)
+        if (flags & MAP_FIXED && page < current_task->brk_start)
         {
             map_page(get_current_page_dir(true), page, page, get_arch_page_table_flags(flag));
         }
@@ -93,7 +102,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
             uint64_t phys = alloc_frames(1);
             if (phys == 0)
             {
-                if (flags & MAP_FIXED == 0)
+                if ((flags & MAP_FIXED) == 0)
                 {
                     current_task->mmap_start -= aligned_len;
                 }
@@ -107,7 +116,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
     {
         vfs_node_t file = current_task->fds[fd];
         if (!file)
-            return -EBADFD;
+            return -EBADF;
         vfs_read(file, (void *)addr, offset, len);
     }
     else

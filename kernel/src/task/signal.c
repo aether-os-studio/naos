@@ -55,7 +55,7 @@ int sys_signal(int sig, uint64_t handler, uint64_t restorer)
 
     sigaction_t *ptr = &current_task->actions[sig - 1];
     ptr->sa_mask = 0;
-    ptr->sa_handler = (void (*)(void))handler;
+    ptr->sa_handler = (void (*)(int))handler;
     ptr->sa_flags = SIG_ONESHOT | SIG_NOMASK;
     ptr->sa_restorer = (void (*)(void))restorer;
     return handler;

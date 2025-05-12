@@ -35,3 +35,5 @@ void alignment_check();
 void machine_check();
 void SIMD_exception();
 void virtualization_exception();
+
+void backtrace(struct pt_regs *regs);

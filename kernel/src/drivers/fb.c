@@ -33,7 +33,7 @@ ssize_t fb_ioctl(void *data, ssize_t cmd, ssize_t arg)
     case FBIOGET_FSCREENINFO:
         struct fb_fix_screeninfo *fb_fix = (struct fb_fix_screeninfo *)arg;
         memcpy(fb_fix->id, "BIOS", 5);
-        fb_fix->smem_start = virt_to_phys((uint64_t)framebuffer->address);
+        fb_fix->smem_start = translate_address(get_current_page_dir(false), (uint64_t)framebuffer->address);
         fb_fix->smem_len = framebuffer->width * framebuffer->height * 4;
         fb_fix->type = FB_TYPE_PACKED_PIXELS;
         fb_fix->type_aux = 0;
@@ -42,7 +42,7 @@ ssize_t fb_ioctl(void *data, ssize_t cmd, ssize_t arg)
         fb_fix->ypanstep = 0;
         fb_fix->ywrapstep = 0;
         fb_fix->line_length = framebuffer->width * 4;
-        fb_fix->mmio_start = virt_to_phys((size_t)framebuffer->address);
+        fb_fix->mmio_start = translate_address(get_current_page_dir(false), (size_t)framebuffer->address);
         fb_fix->mmio_len = framebuffer->width * framebuffer->height * 4;
         fb_fix->capabilities = 0;
         return 0;

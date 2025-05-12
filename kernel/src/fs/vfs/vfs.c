@@ -66,8 +66,7 @@ static inline void do_open(vfs_node_t file)
 
 static inline void do_update(vfs_node_t file)
 {
-    if (file->type == file_none || file->handle == NULL)
-        do_open(file);
+    do_open(file);
 }
 
 // 一定要记得手动设置一下child的type
@@ -300,7 +299,7 @@ int vfs_close(vfs_node_t node)
     if (node->type == file_dir)
         return 0;
     callbackof(node, close)(node->handle);
-    if (node->type != file_pipe)
+    if (node->type != file_pipe && node->type != file_socket)
         node->handle = NULL;
     return 0;
 }

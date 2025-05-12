@@ -114,7 +114,7 @@ static inline void *freelists_match(freelists_t lists, size_t size)
     return NULL;
 }
 
-#define PADDING_UP(a, align) (typeof(a))((((uint64_t)a) + align - 1) & ~((uint64_t)align - 1))
+#define PADDING_UP(a, align) ((((uint64_t)a) + align - 1) & ~((uint64_t)align - 1))
 
 #define aligned_size_of(ptr, align) ((ssize_t)blk_size(ptr) - (ssize_t)(PADDING_UP(ptr, align) - (size_t)(ptr)))
 

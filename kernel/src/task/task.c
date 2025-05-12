@@ -153,6 +153,26 @@ extern void mount_root();
 
 bool system_initialized = false;
 
+void killer_thread()
+{
+    while (true)
+    {
+        for (uint64_t i = cpu_count; i < MAX_TASK_NUM; i++)
+        {
+            if (tasks[i] && tasks[i]->state == TASK_DIED)
+            {
+                free_page_table(tasks[i]->arch_context->cr3);
+                free_frames(virt_to_phys((uint64_t)tasks[i]), 1);
+                tasks[i] = NULL;
+            }
+        }
+
+        arch_yield();
+
+        arch_pause();
+    }
+}
+
 void init_thread()
 {
     printk("NAOS init thread is running...\n");
@@ -207,6 +227,7 @@ void task_init()
         idle_tasks[cpu]->state = TASK_RUNNING;
     }
     arch_set_current(idle_tasks[0]);
+    task_create("killer", killer_thread);
     task_create("init", init_thread);
 
     task_initialized = true;
@@ -235,10 +256,10 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], char *en
 
     uint64_t execfn_ptr = tmp_stack;
 
-    uint64_t *envps = (uint64_t *)malloc(512);
-    memset(envps, 0, 512);
-    uint64_t *argvps = (uint64_t *)malloc(512);
-    memset(argvps, 0, 512);
+    uint64_t *envps = (uint64_t *)malloc(1024);
+    memset(envps, 0, 1024);
+    uint64_t *argvps = (uint64_t *)malloc(1024);
+    memset(argvps, 0, 1024);
 
     if (envp != NULL)
     {
@@ -354,6 +375,8 @@ uint64_t task_fork(struct pt_regs *regs)
     child->mmap_start = USER_MMAP_START;
     child->brk_start = USER_BRK_START;
     child->brk_end = USER_BRK_START;
+    child->load_start = current_task->load_start;
+    child->load_end = current_task->load_end;
 
     memcpy(child->fds, current_task->fds, sizeof(child->fds));
     for (uint64_t i = 3; i < MAX_FD_NUM; i++)
@@ -374,37 +397,37 @@ uint64_t task_fork(struct pt_regs *regs)
     return child->pid;
 }
 
-bool execve_lock = 0;
+bool execve_lock = false;
 
 uint64_t task_execve(const char *path, const char **argv, const char **envp)
 {
+    while (execve_lock)
+    {
+        arch_enable_interrupt();
+
+        arch_pause();
+    }
+
     arch_disable_interrupt();
 
     can_schedule = false;
 
-    while (execve_lock)
-    {
-        arch_pause();
-
-        arch_yield();
-    }
-
-    execve_lock = 1;
+    execve_lock = true;
 
     vfs_node_t node = vfs_open(path);
     if (!node)
     {
         can_schedule = true;
-        execve_lock = 0;
+        execve_lock = false;
         return (uint64_t)-ENOENT;
     }
 
     uint64_t buf_len = (node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
 
-    char **new_argv = (char **)malloc(512);
-    memset(new_argv, 0, 512);
-    char **new_envp = (char **)malloc(512);
-    memset(new_envp, 0, 512);
+    char **new_argv = (char **)malloc(1024);
+    memset(new_argv, 0, 1024);
+    char **new_envp = (char **)malloc(1024);
+    memset(new_envp, 0, 1024);
 
     int argv_count = 0;
     int envp_count = 0;
@@ -428,8 +451,11 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     new_envp[envp_count] = NULL;
 
 #if defined(__x86_64__)
-    uint64_t new_page_table = clone_page_table(virt_to_phys((uint64_t)get_kernel_page_dir()), USER_STACK_START, USER_STACK_END);
-    __asm__ __volatile__("movq %0, %%cr3" ::"r"(new_page_table));
+    if (current_task->arch_context->cr3 == (uint64_t)virt_to_phys(get_kernel_page_dir()))
+    {
+        current_task->arch_context->cr3 = clone_page_table(current_task->arch_context->cr3, USER_STACK_START, USER_STACK_END);
+        __asm__ __volatile__("movq %0, %%cr3" ::"r"(current_task->arch_context->cr3));
+    }
 #endif
 
     uint8_t *buffer = (uint8_t *)EHDR_START_ADDR;
@@ -443,6 +469,12 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     vfs_close(node);
 
+    if (buffer[0] == '#' && buffer[1] == '!')
+    {
+        execve_lock = false;
+        return task_execve("/bin/bash", argv, envp);
+    }
+
     const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)EHDR_START_ADDR;
 
     uint64_t e_entry = ehdr->e_entry;
@@ -452,10 +484,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     if (e_entry == 0)
     {
         free(fullpath);
-#if defined(__x86_64__)
-        __asm__ __volatile__("movq %0, %%cr3" ::"r"(current_task->arch_context->cr3));
-#endif
-        free_page_table(new_page_table);
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
                 free(new_argv[i]);
@@ -465,17 +493,13 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
                 free(new_envp[i]);
         free(new_envp);
         can_schedule = true;
-        execve_lock = 0;
-        return -EINVAL;
+        execve_lock = false;
+        return (uint64_t)-EINVAL;
     }
 
     if (!arch_check_elf(ehdr))
     {
         free(fullpath);
-#if defined(__x86_64__)
-        __asm__ __volatile__("movq %0, %%cr3" ::"r"(current_task->arch_context->cr3));
-#endif
-        free_page_table(new_page_table);
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
                 free(new_argv[i]);
@@ -485,7 +509,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
                 free(new_envp[i]);
         free(new_envp);
         can_schedule = true;
-        execve_lock = 0;
+        execve_lock = false;
         return (uint64_t)-EINVAL;
     }
 
@@ -512,6 +536,8 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
             map_page_range(get_current_page_dir(true), INTERPRETER_EHDR_ADDR, 0, (interpreter_node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
             vfs_read(interpreter_node, interpreter_buffer, 0, interpreter_node->size);
+
+            memset(buffer + interpreter_node->size, 0, ((interpreter_node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1))) - interpreter_node->size);
 
             vfs_close(interpreter_node);
 
@@ -585,13 +611,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     strncpy(current_task->name, fullpath, TASK_NAME_MAX);
     free(fullpath);
 
-    map_page_range((uint64_t *)get_current_page_dir(true), USER_STACK_START, 0, USER_STACK_END - USER_STACK_START + DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
-    memset((void *)USER_STACK_START, 0, USER_STACK_END - USER_STACK_START);
-
-#if defined(__x86_64__)
-    current_task->arch_context->cr3 = new_page_table;
-    __asm__ __volatile__("movq %0, %%cr3" ::"r"(current_task->arch_context->cr3));
-#endif
+    map_page_range(get_current_page_dir(true), USER_STACK_START, 0, USER_STACK_END - USER_STACK_START, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
     uint64_t stack = push_infos(current_task, USER_STACK_END, (char **)new_argv, (char **)new_envp, e_entry, (uint64_t)(load_start + ehdr->e_phoff), ehdr->e_phnum, interpreter_entry ? INTERPRETER_BASE_ADDR : load_start);
     for (int i = 0; i < argv_count; i++)
@@ -610,8 +630,10 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         }
     }
     free(new_envp);
+    current_task->load_start = load_start;
+    current_task->load_end = load_end;
+    execve_lock = false;
     can_schedule = true;
-    execve_lock = 0;
     arch_to_user_mode(current_task->arch_context, interpreter_entry ? interpreter_entry : e_entry, stack);
 
     return (uint64_t)-EAGAIN;
@@ -656,14 +678,12 @@ uint64_t task_exit(int64_t code)
 
     free(task->arch_context);
 
-    free_frames(task->kernel_stack, STACK_SIZE / DEFAULT_PAGE_SIZE);
-    free_frames(task->syscall_stack, STACK_SIZE / DEFAULT_PAGE_SIZE);
+    free_frames(virt_to_phys(task->kernel_stack), STACK_SIZE / DEFAULT_PAGE_SIZE);
+    free_frames(virt_to_phys(task->syscall_stack), STACK_SIZE / DEFAULT_PAGE_SIZE);
 
     task->status = (uint64_t)code;
 
     task_t *next = task_search(TASK_READY, task->cpu_id);
-
-    task->state = TASK_DIED;
 
     task->ppid = 0;
 
@@ -679,6 +699,8 @@ uint64_t task_exit(int64_t code)
     {
         task_unblock(tasks[task->waitpid], EOK);
     }
+
+    task->state = TASK_DIED;
 
     arch_set_current(next);
 
@@ -769,8 +791,6 @@ rollback:
 
     current_task->waitpid = 0;
 
-    free_frames(virt_to_phys((uint64_t)child), 1);
-
     return ret;
 }
 
@@ -817,6 +837,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->mmap_start = USER_MMAP_START;
     child->brk_start = USER_BRK_START;
     child->brk_end = USER_BRK_START;
+    child->load_start = current_task->load_start;
+    child->load_end = current_task->load_end;
 
     memcpy(child->fds, current_task->fds, sizeof(child->fds));
     for (uint64_t i = 3; i < MAX_FD_NUM; i++)
@@ -902,4 +924,9 @@ uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
     default:
         return -ENOSYS; // 未实现的功能返回不支持
     }
+}
+
+size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old)
+{
+    return 0;
 }

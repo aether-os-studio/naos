@@ -29,6 +29,7 @@
 #define SYS_WRITEV 20
 #define SYS_DUP 32
 #define SYS_DUP2 33
+#define SYS_SETITIMER 38
 #define SYS_IOCTL 16 // ioctl(int fd, sint cmd, int arg)
 #define SYS_GETDENTS64 217
 #define SYS_PIPE 22
@@ -36,6 +37,7 @@
 #define SYS_CHDIR 80
 #define SYS_GETCWD 79
 #define SYS_LINK 86
+#define SYS_UNLINK 87
 #define SYS_READLINK 89
 #define SYS_FCNTL 72
 #define SYS_ACCESS 21
@@ -50,6 +52,7 @@
 #define SYS_EVENTFD2 290
 #define SYS_SIGNALFD 282
 #define SYS_TIMERFD_CREATE 283
+#define SYS_TIMERFD_SETTIME 286
 #define SYS_SIGNALFD4 289
 #define SYS_FLOCK 73
 
@@ -65,6 +68,7 @@
 #define SYS_GETSOCKOPT 55
 #define SYS_SENDTO 44
 #define SYS_RECVFROM 45
+#define SYS_SENDMSG 46
 #define SYS_RECVMSG 47
 
 /* 进程管理相关 */

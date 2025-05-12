@@ -410,10 +410,10 @@ static void list_print(list_t list)
     list_t current = list;
     while (current != NULL)
     {
-        kdebug("%p -> ", current->data);
+        printk("%p -> ", current->data);
         current = current->next;
     }
-    kdebug("NULL");
+    printk("NULL");
 }
 
 #undef LIST_IMPLEMENTATION

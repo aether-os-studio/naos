@@ -268,7 +268,7 @@ uint32_t ConfigureXHCI(XHCI_CONTROLLER *controller)
     // while (!(controller->OR->STS & XHCI_STS_HCH))
     //     arch_pause();
 
-    free_frames(physicalAddress, 1);
+    free_frames(virt_to_phys(physicalAddress), 1);
     return 0;
 }
 

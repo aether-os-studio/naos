@@ -17,8 +17,6 @@ void pipefs_open(void *parent, const char *name, vfs_node_t node)
     (void)parent;
     (void)name;
     node->fsid = pipefs_id;
-
-    return 0;
 }
 
 ssize_t pipefs_read(void *file, void *addr, size_t offset, size_t size)
@@ -128,7 +126,7 @@ int sys_pipe(int pipefd[2])
 
     if (i == MAX_FD_NUM)
     {
-        return -EBADFD;
+        return -EBADF;
     }
 
     // 查找空闲的管道

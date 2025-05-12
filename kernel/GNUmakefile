@@ -174,7 +174,15 @@ all: bin-$(ARCH)/$(OUTPUT)
 # Link rules for the final executable.
 bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH).ld $(OBJ)
 	mkdir -p "$$(dirname $@)"
+ifeq ($(ARCH), x86_64)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) -o $@.tmp
+	gcc -o kallsyms kallsyms.c
+	$(NM) -n $@.tmp | ./kallsyms > kallsyms.S
+	$(CC) -c kallsyms.S -o kallsyms.o
+	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) kallsyms.o -o $@
+else
 	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) -o $@
+endif
 
 # Compilation rules for *.c files.
 obj-$(ARCH)/src/%.c.o: src/%.c GNUmakefile

@@ -248,6 +248,8 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = 0;
         break;
     case SYS_PIPE:
+        regs->rax = sys_pipe((int *)arg1);
+        break;
     case SYS_PIPE2:
         // todo: support flags
         regs->rax = sys_pipe((int *)arg1);
@@ -324,7 +326,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = sys_faccessat(arg1, (const char *)arg2, arg3);
         break;
     case SYS_SELECT:
-        regs->rax = sys_select(arg1, (fd_set *)arg2, (fd_set *)arg3, (fd_set *)arg4, (struct timespec *)arg5);
+        regs->rax = sys_select(arg1, (uint8_t *)arg2, (uint8_t *)arg3, (uint8_t *)arg4, (struct timeval *)arg5);
         break;
     case SYS_PSELECT6:
         regs->rax = sys_pselect6(arg1, (fd_set *)arg2, (fd_set *)arg3, (fd_set *)arg4, (struct timespec *)arg5, (WeirdPselect6 *)arg6);
@@ -391,6 +393,18 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_GETRESUID:
         regs->rax = 0;
+        break;
+    case SYS_SETITIMER:
+        regs->rax = sys_setitimer(arg1, (struct itimerval *)arg2, (struct itimerval *)arg3);
+        break;
+    case SYS_FCHOWN:
+        regs->rax = 0;
+        break;
+    case SYS_UMASK:
+        regs->rax = 0;
+        break;
+    case SYS_MKDIR:
+        regs->rax = sys_mkdir((const char *)arg1, arg2);
         break;
 
     default:

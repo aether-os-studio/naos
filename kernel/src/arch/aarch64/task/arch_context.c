@@ -29,7 +29,7 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64
 
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack)
 {
-    dst->ttbr = clone_page_table(src->ttbr, USER_BRK_START, USER_BRK_END);
+    dst->ttbr = clone_page_table(src->ttbr, USER_STACK_START, USER_STACK_END);
     dst->usermode = src->usermode;
     dst->ctx = (struct pt_regs *)stack - 1;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
@@ -87,7 +87,7 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
 {
-    context->ttbr = clone_page_table(context->ttbr, USER_BRK_START, USER_BRK_END);
+    context->ttbr = clone_page_table(context->ttbr, USER_STACK_START, USER_STACK_END);
     context->usermode = true;
     context->ctx->pc = entry;
     context->ctx->sp_el0 = stack;

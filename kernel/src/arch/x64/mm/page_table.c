@@ -66,17 +66,13 @@ void map_page(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t flags)
         current_table = phys_to_virt((uint64_t *)next_table_phys);
     }
 
-    // 处理PTE
     uint64_t pt_index = indices[3];
     uint64_t *pte = &current_table[pt_index];
-    if (*pte == 0)
+    if (*pte != 0)
     {
-        *pte = (paddr & ARCH_ADDR_MASK) | flags;
+        // free_frames(*pte & ARCH_ADDR_MASK, 1);
     }
-    else
-    {
-        *pte = (*pte & ARCH_ADDR_MASK) | flags;
-    }
+    *pte = (paddr & ARCH_ADDR_MASK) | flags;
 
     // 刷新TLB
     asm volatile("invlpg (%0)" : : "r"(vaddr) : "memory");
@@ -156,18 +152,6 @@ uint64_t *get_current_page_dir(bool user)
     asm volatile("movq %%cr3, %0" : "=r"(cr3));
     return phys_to_virt(cr3);
 }
-
-// bool stack_range(uint64_t pml4_idx, uint64_t pdpt_idx, uint64_t pd_idx, uint64_t pt_idx, uint64_t user_stack_start, uint64_t user_stack_end)
-// {
-//     uint64_t addr = pml4_idx << 39 | pdpt_idx << 30 | pd_idx << 21 | pt_idx << 12;
-//     return user_stack_start <= addr && addr < user_stack_end;
-// }
-
-// bool heap_range(uint64_t pml4_idx, uint64_t pdpt_idx, uint64_t pd_idx, uint64_t pt_idx, uint64_t user_heap_start, uint64_t user_heap_end)
-// {
-//     uint64_t addr = pml4_idx << 39 | pdpt_idx << 30 | pd_idx << 21 | pt_idx << 12;
-//     return user_heap_start <= addr && addr < user_heap_end;
-// }
 
 uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t user_stack_end)
 {
@@ -330,25 +314,29 @@ uint64_t translate_address(uint64_t *pml4, uint64_t vaddr)
     uint64_t offset = vaddr & 0xFFFUL;
 
     uint64_t pml4_id = (vaddr >> 39) & 0x1FFUL;
-    if ((pml4[pml4_id] & (1 << 0)) == 0)
+    if ((pml4[pml4_id] & ARCH_PT_FLAG_VALID) == 0)
     {
         return 0;
     }
     uint64_t *pdpt = (uint64_t *)phys_to_virt(pml4[pml4_id] & ~(0xFFFUL));
     uint64_t pdpt_id = (vaddr >> 30) & 0x1FFUL;
-    if ((pdpt[pdpt_id] & (1 << 0)) == 0)
+    if ((pdpt[pdpt_id] & ARCH_PT_FLAG_VALID) == 0)
     {
         return 0;
     }
     uint64_t *pd = (uint64_t *)phys_to_virt(pdpt[pdpt_id] & ~(0xFFFUL));
     uint64_t pd_id = (vaddr >> 21) & 0x1FFUL;
-    if ((pd[pd_id] & (1 << 0)) == 0)
+    if ((pd[pd_id] & ARCH_PT_FLAG_VALID) == 0)
     {
         return 0;
     }
+    if (pd[pd_id] & ARCH_PT_FLAG_HUGE)
+    {
+        return (pd[pd_id] & ~((1UL << 21) - 1)) + (vaddr & ((1UL << 21) - 1));
+    }
     uint64_t *pt = (uint64_t *)phys_to_virt(pd[pd_id] & ~(0xFFFUL));
     uint64_t pt_id = (vaddr >> 12) & 0x1FFUL;
-    if ((pt[pt_id] & (1 << 0)) == 0)
+    if ((pt[pt_id] & ARCH_PT_FLAG_VALID) == 0)
     {
         return 0;
     }

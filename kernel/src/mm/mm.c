@@ -10,6 +10,7 @@ FrameAllocator frame_allocator;
 uint64_t memory_size = 0;
 
 bool frame_alloc_op_lock = false;
+bool mem_map_op_lock = false;
 
 void frame_init()
 {
@@ -62,7 +63,7 @@ void frame_init()
     }
 
     size_t bitmap_frame_start = bitmap_address / DEFAULT_PAGE_SIZE;
-    size_t bitmap_frame_count = (bitmap_size + 4095) / DEFAULT_PAGE_SIZE;
+    size_t bitmap_frame_count = (bitmap_size + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE;
     size_t bitmap_frame_end = bitmap_frame_start + bitmap_frame_count;
     bitmap_set_range(bitmap, bitmap_frame_start, bitmap_frame_end, false);
 
@@ -74,18 +75,23 @@ void free_frames(uint64_t addr, uint64_t size)
 {
     while (frame_alloc_op_lock)
     {
-        arch_enable_interrupt();
         arch_pause();
     }
 
     frame_alloc_op_lock = true;
 
     if (addr == 0)
+    {
+        frame_alloc_op_lock = false;
         return;
+    }
     size_t frame_index = addr / DEFAULT_PAGE_SIZE;
     size_t frame_count = size;
     if (frame_index == 0)
+    {
+        frame_alloc_op_lock = false;
         return;
+    }
     Bitmap *bitmap = &frame_allocator.bitmap;
     bitmap_set_range(bitmap, frame_index, frame_index + frame_count, true);
     frame_allocator.usable_frames += frame_count;
@@ -97,7 +103,6 @@ uint64_t alloc_frames(size_t count)
 {
     while (frame_alloc_op_lock)
     {
-        arch_enable_interrupt();
         arch_pause();
     }
 
@@ -108,6 +113,7 @@ uint64_t alloc_frames(size_t count)
 
     if (frame_index == (size_t)-1)
     {
+        printk("Allocate frame failed!!!\n");
         frame_alloc_op_lock = false;
         return 0;
     }
@@ -121,13 +127,31 @@ uint64_t alloc_frames(size_t count)
 
 void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t size, uint64_t flags)
 {
+    while (mem_map_op_lock)
+    {
+        arch_pause();
+    }
+
+    mem_map_op_lock = true;
+
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE)
     {
         if (paddr == 0)
-            map_page(pml4, va, alloc_frames(1), get_arch_page_table_flags(flags));
+        {
+            uint64_t phys = alloc_frames(1);
+            if (phys == 0)
+            {
+                printk("Cannot allocate frame");
+                mem_map_op_lock = false;
+                return;
+            }
+            map_page(pml4, va, phys, get_arch_page_table_flags(flags));
+        }
         else
             map_page(pml4, va, paddr + (va - vaddr), get_arch_page_table_flags(flags));
     }
+
+    mem_map_op_lock = false;
 }
 
 void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size)

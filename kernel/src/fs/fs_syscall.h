@@ -234,7 +234,7 @@ struct epoll_event
 
 typedef struct epoll_watch
 {
-    struct EpollWatch *next;
+    struct epoll_watch *next;
 
     vfs_node_t fd;
     int watchEvents;
@@ -311,3 +311,5 @@ uint64_t sys_signalfd(int ufd, const sigset_t *mask, size_t sizemask);
 #define F_UNLCK 2
 
 uint64_t sys_flock(int fd, uint64_t cmd);
+
+uint64_t sys_mkdir(const char *name, uint64_t mode);

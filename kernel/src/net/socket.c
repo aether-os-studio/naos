@@ -33,7 +33,7 @@ int sys_socket(int domain, int type, int protocol)
     if (i == MAX_FD_NUM)
     {
         SPIN_UNLOCK(socket_lock);
-        return -EBADFD;
+        return -EBADF;
     }
 
     int sock_id = -1;
@@ -56,8 +56,8 @@ int sys_socket(int domain, int type, int protocol)
     socket->type = type;
     socket->protocol = protocol;
     strcpy(socket->name, buf);
-    socket->buf_head = NULL;
-    socket->buf_tail = NULL;
+    socket->buf_head = 0;
+    socket->buf_tail = 0;
     socket->state = SOCKET_TYPE_UNCONNECTED;
     socket->fd = i;
 
@@ -252,7 +252,7 @@ int sys_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
     if (i == MAX_FD_NUM)
     {
         SPIN_UNLOCK(socket_lock);
-        return -EBADFD;
+        return -EBADF;
     }
 
     int sock_id = -1;
@@ -273,8 +273,8 @@ int sys_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
     memset(&sockets[sock_id], 0, sizeof(socket_t));
     socket_t *socket = (socket_t *)new_node->handle;
     strcpy(socket->name, buf);
-    socket->buf_head = NULL;
-    socket->buf_tail = NULL;
+    socket->buf_head = 0;
+    socket->buf_tail = 0;
     socket->state = SOCKET_TYPE_UNCONNECTED;
     socket->fd = i;
 
@@ -697,8 +697,8 @@ static struct vfs_callback callback =
         .unmount = (vfs_unmount_t)dummy,
         .open = (vfs_open_t)dummy,
         .close = (vfs_close_t)sys_socket_close,
-        .read = dummy,
-        .write = dummy,
+        .read = (vfs_read_t)dummy,
+        .write = (vfs_write_t)dummy,
         .mkdir = (vfs_mk_t)dummy,
         .mkfile = (vfs_mk_t)dummy,
         .stat = (vfs_stat_t)dummy,

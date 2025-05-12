@@ -22,17 +22,13 @@ void *calloc(size_t n, size_t size)
 
 void *malloc(size_t size)
 {
-    arch_disable_interrupt();
     void *ptr = mpool_alloc(&pool, size);
-    arch_enable_interrupt();
     return ptr;
 }
 
 void free(void *ptr)
 {
-    arch_disable_interrupt();
     mpool_free(&pool, ptr);
-    arch_enable_interrupt();
 }
 
 void *xmalloc(size_t size)
@@ -43,9 +39,7 @@ void *xmalloc(size_t size)
 
 void *realloc(void *ptr, size_t newsize)
 {
-    arch_disable_interrupt();
     void *n_ptr = mpool_realloc(&pool, ptr, newsize);
-    arch_enable_interrupt();
     return n_ptr;
 }
 
@@ -56,33 +50,25 @@ void *reallocarray(void *ptr, size_t n, size_t size)
 
 void *aligned_alloc(size_t align, size_t size)
 {
-    arch_disable_interrupt();
     void *ptr = mpool_aligned_alloc(&pool, size, align);
-    arch_enable_interrupt();
     return ptr;
 }
 
 size_t malloc_usable_size(void *ptr)
 {
-    arch_disable_interrupt();
     size_t size = mpool_msize(&pool, ptr);
-    arch_enable_interrupt();
     return size;
 }
 
 void *memalign(size_t align, size_t size)
 {
-    arch_disable_interrupt();
     void *ptr = mpool_aligned_alloc(&pool, size, align);
-    arch_enable_interrupt();
     return ptr;
 }
 
 int posix_memalign(void **memptr, size_t alignment, size_t size)
 {
-    arch_disable_interrupt();
     void *ptr = mpool_aligned_alloc(&pool, size, alignment);
-    arch_enable_interrupt();
     if (ptr == NULL)
         return 1;
     *memptr = ptr;
@@ -91,17 +77,13 @@ int posix_memalign(void **memptr, size_t alignment, size_t size)
 
 void *valloc(size_t size)
 {
-    arch_disable_interrupt();
     void *ptr = mpool_aligned_alloc(&pool, size, PAGE_SIZE);
-    arch_enable_interrupt();
     return ptr;
 }
 
 void *pvalloc(size_t size)
 {
-    arch_disable_interrupt();
     void *ptr = mpool_aligned_alloc(&pool, size, PAGE_SIZE);
-    arch_enable_interrupt();
     return ptr;
 }
 

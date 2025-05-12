@@ -35,15 +35,15 @@
 #define AT_SYSINFO 32
 #define AT_SYSINFO_EHDR 33
 
-#define EHDR_START_ADDR 0x0000003000000000
-#define INTERPRETER_EHDR_ADDR 0x0000002000000000
-#define INTERPRETER_BASE_ADDR 0x0000001000000000
+#define EHDR_START_ADDR 0x0000500000000000
+#define INTERPRETER_EHDR_ADDR 0x0000400000000000
+#define INTERPRETER_BASE_ADDR 0x0000300000000000
+
+#define USER_MMAP_START 0x0000600000000000
+#define USER_MMAP_END 0x0000700000000000
 
 #define USER_BRK_START 0x0000700000000000
-#define USER_BRK_END 0x00007fffffffffff
-
-#define USER_MMAP_START 0x0000006000000000
-#define USER_MMAP_END USER_BRK_START
+#define USER_BRK_END 0x0000800000000000
 
 #define MAX_TASK_NUM 1024
 
@@ -112,6 +112,8 @@ typedef struct task
     uint64_t mmap_start;
     uint64_t brk_start;
     uint64_t brk_end;
+    uint64_t load_start;
+    uint64_t load_end;
     arch_context_t *arch_context;
     sigaction_t actions[MAXSIG];
     uint64_t signal;
@@ -134,6 +136,20 @@ uint64_t sys_waitpid(uint64_t pid, int *status);
 uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *parent_tid, int *child_tid, uint64_t tls);
 struct timespec;
 uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem);
+
+struct timeval
+{
+    int64_t tv_sec;  /* Seconds.  */
+    int64_t tv_usec; /* Microseconds.  */
+};
+
+struct itimerval
+{
+    struct timeval it_interval;
+    struct timeval it_value;
+};
+
+size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old);
 
 task_t *task_search(task_state_t state, uint32_t cpu_id);
 int task_block(task_t *task, task_state_t state, int timeout_ms);

@@ -2,12 +2,6 @@
 
 #include <libs/klibc.h>
 
-struct timeval
-{
-    int64_t tv_sec;  /* Seconds.  */
-    int64_t tv_usec; /* Microseconds.  */
-};
-
 typedef struct
 {
     int tm_sec;   // 秒数 [0，59]
