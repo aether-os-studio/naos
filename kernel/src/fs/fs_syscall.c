@@ -221,7 +221,7 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg)
 
 uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count)
 {
-    if ((uint64_t)iovec == NULL)
+    if ((uint64_t)iovec == 0)
     {
         return -EINVAL;
     }
@@ -409,7 +409,7 @@ uint64_t sys_stat(const char *fd, struct stat *buf)
     buf->st_dev = 0;
     buf->st_ino = i++;
     buf->st_nlink = 1;
-    buf->st_mode = 01777 | (node->type == file_dir ? S_IFDIR : S_IFREG);
+    buf->st_mode = 0777 | (node->type == file_dir ? S_IFDIR : S_IFREG);
     buf->st_uid = 0;
     buf->st_gid = 0;
     buf->st_rdev = (node->type == file_stream) ? ((4 << 8) | 1) : 0;
@@ -434,7 +434,7 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
     buf->st_dev = 0;
     buf->st_ino = i++;
     buf->st_nlink = 1;
-    buf->st_mode = 01777 | (current_task->fds[fd]->type == file_dir ? S_IFDIR : S_IFREG);
+    buf->st_mode = 0777 | (current_task->fds[fd]->type == file_dir ? S_IFDIR : S_IFREG);
     buf->st_uid = 0;
     buf->st_gid = 0;
     buf->st_rdev = (current_task->fds[fd]->type == file_stream) ? ((4 << 8) | 1) : 0;
@@ -759,29 +759,31 @@ uint64_t sys_link(const char *old, const char *new)
     return 0;
 }
 
-// todo
 uint64_t sys_readlink(char *path, char *buf, uint64_t size)
 {
     vfs_node_t node = vfs_open((const char *)path);
     if (!node)
         return (uint64_t)-ENOENT;
 
-    ssize_t len = 0;
-    if (node->type == file_dir)
+    if (node->type == file_dir && node->linkname != NULL)
     {
-        strncpy(buf, (const char *)path, size);
-        len = size;
-        goto ok;
+        if (size < strlen(node->linkname))
+        {
+            vfs_close(node);
+            return (uint64_t)-ERANGE;
+        }
+        strncpy(buf, node->linkname, size);
+
+        return size;
+    }
+    else if (node->type == file_none && node->linkname != NULL)
+    {
     }
     else
     {
-        len = vfs_read(node, buf, 0, size);
+        vfs_close(node);
+        return (uint64_t)-ENOLINK;
     }
-
-ok:
-    vfs_close(node);
-
-    return len;
 }
 
 vfs_node_t epollfs_root;

@@ -42,8 +42,12 @@ void dev_init();
 #define K_MEDIUMRAW 0x02 // 中等原始模式
 #define K_UNICODE 0x03   // Unicode模式
 
+#define VT_OPENQRY 0x5600 /* get next available vt */
 #define VT_GETMODE 0x5601 /* get mode of active vt */
 #define VT_SETMODE 0x5602
+
+#define VT_GETSTATE 0x5603
+#define VT_SENDSIG 0x5604
 
 #define VT_ACTIVATE 0x5606   /* make vt active */
 #define VT_WAITACTIVE 0x5607 /* wait for vt active */
@@ -54,8 +58,6 @@ struct vt_state
     uint16_t v_state;  // 终端状态标志
 };
 
-#define VT_GETSTAT 0x4b51
-
 struct vt_mode
 {
     char mode;    // 终端模式
@@ -64,6 +66,7 @@ struct vt_mode
     short acqsig; // 获取信号
     short frsig;  // 强制释放信号
 };
+
 #define VT_AUTO 0x00    // 自动切换模式
 #define VT_PROCESS 0x01 // 进程控制模式
 

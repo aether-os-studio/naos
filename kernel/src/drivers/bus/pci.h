@@ -24,6 +24,8 @@
 
 #define PCI_DEVICE_MAX 256
 
+#define EXPORT_BYTE(target, first) ((first) ? ((target) & ~0xFF00) : (((target) & ~0x00FF) >> 8))
+
 uint32_t segment_bus_device_functon_to_pci_address(uint16_t segment, uint8_t bus, uint8_t device, uint8_t function);
 uint32_t pci_read(uint32_t b, uint32_t d, uint32_t f, uint32_t s, uint32_t offset);
 void pci_write(uint32_t b, uint32_t d, uint32_t f, uint32_t s, uint32_t offset, uint32_t value);
@@ -49,6 +51,7 @@ typedef struct
 
     uint16_t vendor_id;
     uint16_t device_id;
+    uint8_t revision_id;
     uint16_t segment;
     uint8_t bus;
     uint8_t slot;

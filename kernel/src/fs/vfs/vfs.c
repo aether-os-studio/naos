@@ -25,6 +25,7 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name)
     node->parent = parent;
     node->offset = 0;
     node->name = name ? strdup(name) : NULL;
+    node->linkname = NULL;
     node->type = file_none;
     node->fsid = parent ? parent->fsid : 0;
     node->root = parent ? parent->root : node;
@@ -42,6 +43,8 @@ void vfs_free(vfs_node_t vfs)
     list_free_with(vfs->child, (free_t)vfs_free);
     vfs_close(vfs);
     free(vfs->name);
+    if (vfs->linkname)
+        free(vfs->linkname);
     free(vfs);
 }
 
@@ -181,11 +184,7 @@ int vfs_mkfile(const char *name)
         }
         current = vfs_child_find(current, buf);
         if (current == NULL)
-        {
-            current = vfs_node_alloc(current, buf);
-            current->type = file_dir;
-            callbackof(current, mkdir)(current->handle, buf, current);
-        }
+            goto err;
         if (current->type != file_dir)
             goto err;
     }

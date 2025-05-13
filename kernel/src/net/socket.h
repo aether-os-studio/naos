@@ -59,6 +59,8 @@ typedef struct
     char name[SOCKET_NAME_LEN];
     socket_state_t state;
     int peer_fd;
+    struct sockaddr *peer_addr; // 对端地址
+    socklen_t peer_addrlen;     // 地址长度
     char buffer[BUFFER_SIZE];
     uint32_t buf_head;
     uint32_t buf_tail;
@@ -245,3 +247,5 @@ int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags);
 #define SHUT_RDWR 2
 
 uint64_t sys_shutdown(uint64_t fd, uint64_t how);
+
+int sys_getpeername(int fd, struct sockaddr *addr, socklen_t *addrlen);

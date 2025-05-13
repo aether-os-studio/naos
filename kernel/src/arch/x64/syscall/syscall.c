@@ -1,6 +1,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <fs/fs_syscall.h>
+#include <fs/vfs/fcntl.h>
 #include <mm/mm_syscall.h>
 #include <net/net_syscall.h>
 
@@ -97,6 +98,14 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_WRITE:
         regs->rax = sys_write(arg1, (const void *)arg2, arg3);
+        break;
+    case SYS_PREAD64:
+        sys_lseek(arg1, arg4, SEEK_SET);
+        regs->rax = sys_read(arg1, (void *)arg2, arg3);
+        break;
+    case SYS_PWRITE64:
+        sys_lseek(arg1, arg4, SEEK_SET);
+        regs->rax = sys_write(arg1, (void *)arg2, arg3);
         break;
     case SYS_IOCTL:
         regs->rax = sys_ioctl(arg1, arg2, arg3);
@@ -202,6 +211,14 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_GETSOCKNAME:
         regs->rax = sys_getsockname(arg1, (struct sockaddr *)arg2, (socklen_t *)arg3);
         break;
+    case SYS_GETPEERNAME:
+    {
+        int fd = arg1;
+        struct sockaddr *addr = (struct sockaddr *)arg2;
+        socklen_t *addrlen = (socklen_t *)arg3;
+        regs->rax = sys_getpeername(fd, addr, addrlen);
+        break;
+    }
     case SYS_BIND:
         regs->rax = sys_bind(arg1, (const struct sockaddr *)arg2, arg3);
         break;
@@ -419,6 +436,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = sys_mkdir((const char *)arg1, arg2);
         break;
     case SYS_MEMBARRIER:
+        regs->rax = 0;
+        break;
+    case SYS_SETSID:
         regs->rax = 0;
         break;
 

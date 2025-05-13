@@ -12,6 +12,19 @@ void fbdev_init_sysfs();
 
 extern volatile struct limine_framebuffer_request framebuffer_request;
 
+struct drm_version
+{
+    int version_major;      /**< Major version */
+    int version_minor;      /**< Minor version */
+    int version_patchlevel; /**< Patch level */
+    size_t name_len;        /**< Length of name buffer */
+    char *name;             /**< Name of driver */
+    size_t date_len;        /**< Length of date buffer */
+    char *date;             /**< User-space buffer to hold date */
+    size_t desc_len;        /**< Length of desc buffer */
+    char *desc;             /**< User-space buffer to hold desc */
+};
+
 #define FB_MAJOR 29
 
 #define TTY_CHARACTER_WIDTH 8

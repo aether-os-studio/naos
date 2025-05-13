@@ -192,6 +192,7 @@ struct vfs_node
 {
     vfs_node_t parent;    // 父目录
     char *name;           // 名称
+    char *linkname;       // 符号链接名称
     uint64_t realsize;    // 项目真实占用的空间 (可选)
     uint64_t size;        // 文件大小或若是文件夹则填0
     uint64_t offset;      // 偏移

@@ -26,6 +26,8 @@ ssize_t fb_ioctl(void *data, ssize_t cmd, ssize_t arg)
 {
     struct limine_framebuffer *framebuffer = (struct limine_framebuffer *)data;
 
+    cmd = cmd & 0xFFFFFFFF;
+
     switch (cmd)
     {
     case FBIOGET_FSCREENINFO:
@@ -99,8 +101,6 @@ void fbdev_init()
         char name[MAX_DEV_NAME_LEN];
         sprintf(name, "fb%d", i);
         regist_dev(name, fb_read, fb_write, fb_ioctl, framebuffer_request.response->framebuffers[i]);
-        sprintf(name, "dri/card%d", i);
-        regist_dev(name, fb_read, fb_write, fb_ioctl, framebuffer_request.response->framebuffers[i]);
     }
 }
 
@@ -113,6 +113,9 @@ void fbdev_init_sysfs()
         sprintf(name, "fb%d", i);
         vfs_node_t node = vfs_child_append(graphics, name, NULL);
         node->type = file_dir;
+        char devname[MAX_DEV_NAME_LEN];
+        sprintf(devname, "/dev/%s", name);
+        node->linkname = strdup(devname);
 
         vfs_node_t device = vfs_child_append(node, "device", NULL);
         device->type = file_dir;
@@ -122,14 +125,7 @@ void fbdev_init_sysfs()
         sysfs_handle_t *subsystem_handle = malloc(sizeof(sysfs_handle_t));
         memset(subsystem_handle, 0, sizeof(sysfs_handle_t));
         subsystem->handle = subsystem_handle;
-        sprintf(subsystem_handle->content, "/dev/fb%d", i);
-        subsystem->size = strlen(subsystem_handle->content) + 1;
-
-        vfs_node_t uevent = vfs_child_append(node, "uevent", NULL);
-        sysfs_handle_t *uevent_handle = malloc(sizeof(sysfs_handle_t));
-        memset(subsystem_handle, 0, sizeof(sysfs_handle_t));
-        sprintf(uevent_handle->content, "MAJOR=%d\nMINOR=%d\nDEVNAME=/dev/fb%d\n", FB_MAJOR, i, i);
-        uevent->handle = uevent_handle;
-        uevent->size = strlen(uevent_handle->content) + 1;
+        subsystem_handle->node = subsystem;
+        subsystem_handle->private_data = NULL;
     }
 }

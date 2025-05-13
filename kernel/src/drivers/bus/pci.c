@@ -352,8 +352,8 @@ void pci_scan_function(uint16_t segment_group, uint8_t bus, uint8_t device, uint
     }
     uint16_t device_id = *(uint16_t *)(id_mmio_addr + 2);
 
-    uint64_t field_mmio_addr = get_mmio_address(pci_address, 0x08);
-    // uint8_t device_revision = *(uint8_t *)field_mmio_addr;
+    uint64_t field_mmio_addr = get_mmio_address(pci_address, PCI_CONF_REVISION);
+    uint8_t device_revision = EXPORT_BYTE(*(uint8_t *)field_mmio_addr, true);
     uint8_t device_class = *((uint8_t *)field_mmio_addr + 3);
     uint8_t device_subclass = *((uint8_t *)field_mmio_addr + 2);
     uint8_t device_interface = *((uint8_t *)field_mmio_addr + 1);
@@ -365,6 +365,8 @@ void pci_scan_function(uint16_t segment_group, uint8_t bus, uint8_t device, uint
     memset(pci_device, 0, sizeof(pci_device_t));
     pci_device->header_type = header_type;
     pci_device->op = &pcie_device_op;
+
+    pci_device->revision_id = device_revision;
 
     pci_device->segment = segment_group;
     pci_device->bus = bus;

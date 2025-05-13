@@ -325,6 +325,9 @@ int sys_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
         if (sockets[i].state == SOCKET_TYPE_LISTENING &&
             strcmp(sockets[i].name, name) == 0)
         {
+            sock->peer_addr = malloc(sizeof(struct sockaddr));
+            memcpy(sock->peer_addr, addr, addrlen);
+            sock->peer_addrlen = addrlen;
 
             sock->state = SOCKET_TYPE_CONNECTED;
             sock->peer_fd = sockets[i].fd;
@@ -824,6 +827,38 @@ uint64_t sys_shutdown(uint64_t sockfd, uint64_t how)
     }
 
     SPIN_UNLOCK(socket_lock);
+    return 0;
+}
+
+int sys_getpeername(int fd, struct sockaddr *addr, socklen_t *addrlen)
+{
+    // 验证文件描述符有效性
+    if (fd < 0 || fd >= MAX_FD_NUM || current_task->fds[fd] == NULL)
+    {
+        return -EBADF;
+    }
+
+    vfs_node_t sock = current_task->fds[fd];
+
+    // 验证是否为socket类型
+    if (sock->type != file_socket)
+    {
+        return -ENOTSOCK;
+    }
+
+    // 从socket结构体中获取对端地址
+    socket_t *s = sock->handle;
+    if (!s->peer_addr)
+    {
+        return -ENOTCONN;
+    }
+
+    // 复制地址到用户空间
+    socklen_t actual_len = MIN(*addrlen, s->peer_addrlen);
+    memcpy(addr, s->peer_addr, actual_len);
+
+    memcpy(addrlen, &actual_len, sizeof(socklen_t));
+
     return 0;
 }
 

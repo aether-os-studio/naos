@@ -33,7 +33,7 @@ void backtrace(struct pt_regs *regs)
     lookup_kallsyms(regs->rip);
     for (i = 0; i < 32; i++)
     {
-        if (!rbp || !*rbp || *rbp < get_physical_memory_offset())
+        if (!rbp || !*rbp || (uint64_t)rbp < get_physical_memory_offset() || *rbp < get_physical_memory_offset())
             break;
 
         if (lookup_kallsyms(ret_address))

@@ -13,10 +13,7 @@ vfs_node_t input_root = NULL;
 
 devfs_handle_t devfs_handles[MAX_DEV_NUM];
 
-static int dummy()
-{
-    return -1;
-}
+static void dummy() {}
 
 ssize_t devfs_read(void *file, void *addr, size_t offset, size_t size)
 {
@@ -298,6 +295,9 @@ ssize_t stdio_ioctl(void *data, ssize_t cmd, ssize_t arg)
     case TCGETS:
         memcpy((void *)arg, &current_task->term, sizeof(termios));
         return 0;
+    case TCSETS:
+        memcpy(&current_task->term, (void *)arg, sizeof(termios));
+        return 0;
     case TCSETSW:
         memcpy(&current_task->term, (void *)arg, sizeof(termios));
         return 0;
@@ -318,14 +318,20 @@ ssize_t stdio_ioctl(void *data, ssize_t cmd, ssize_t arg)
     case VT_SETMODE:
         memcpy(&current_vt_mode, (void *)arg, sizeof(struct vt_mode));
         return 0;
+    case VT_GETMODE:
+        memcpy((void *)arg, &current_vt_mode, sizeof(struct vt_mode));
+        return 0;
     case VT_ACTIVATE:
         return 0;
     case VT_WAITACTIVE:
         return 0;
-    case VT_GETSTAT:
+    case VT_GETSTATE:
         struct vt_state *state = (struct vt_state *)arg;
-        state->v_active = 1; // 当前活动终端
+        state->v_active = 0; // 当前活动终端
         state->v_state = 0;  // 状态标志
+        return 0;
+    case VT_OPENQRY:
+        *(int *)arg = 1;
         return 0;
     }
 

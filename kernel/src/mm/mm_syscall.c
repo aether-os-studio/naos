@@ -73,9 +73,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
     {
         uint64_t page = vaddr + DEFAULT_PAGE_SIZE * i;
 
-        if (translate_address(get_current_page_dir(true), page) != 0)
-            continue;
-
         uint64_t flag = PT_FLAG_R | PT_FLAG_W | PT_FLAG_U | PT_FLAG_COW;
 
         if (prot & PROT_READ)
