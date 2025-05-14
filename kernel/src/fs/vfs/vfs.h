@@ -99,6 +99,7 @@ enum
     file_stream, // 流式设备，如终端
     file_pipe,   // 管道设备
     file_socket, // 套接字设备
+    file_epoll,  // epoll 设备
 };
 
 typedef struct vfs_node *vfs_node_t;
@@ -167,6 +168,8 @@ typedef int (*vfs_ioctl_t)(void *file, ssize_t cmd, ssize_t arg);
 // 映射文件从 offset 开始的 size 大小
 typedef void *(*vfs_mapfile_t)(void *file, size_t offset, size_t size);
 
+typedef int (*vfs_poll_t)(void *file, size_t events);
+
 typedef struct vfs_callback
 {
     vfs_mount_t mount;
@@ -179,6 +182,7 @@ typedef struct vfs_callback
     vfs_mk_t mkfile;
     vfs_stat_t stat;
     vfs_ioctl_t ioctl;
+    vfs_poll_t poll;
 } *vfs_callback_t;
 
 typedef struct flock
@@ -316,3 +320,12 @@ void vfs_update(vfs_node_t node);
  *\param node     文件节点
  */
 char *vfs_get_fullpath(vfs_node_t node);
+
+/**
+ *\brief 轮询等待
+ *
+ *\param node     文件节点
+ */
+int vfs_poll(vfs_node_t node, size_t event);
+
+extern vfs_callback_t fs_callbacks[256];

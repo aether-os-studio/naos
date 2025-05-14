@@ -49,6 +49,7 @@ void kmain(void)
 
     while (1)
     {
+        arch_enable_interrupt();
         arch_pause();
     }
 }

@@ -223,6 +223,11 @@ int fatfs_ioctl(void *file, ssize_t cmd, ssize_t arg)
     return 0;
 }
 
+int fatfs_poll(void *file, size_t events)
+{
+    return -EOPNOTSUPP;
+}
+
 static struct vfs_callback callbacks = {
     .mount = fatfs_mount,
     .unmount = fatfs_unmount,
@@ -234,6 +239,7 @@ static struct vfs_callback callbacks = {
     .mkfile = fatfs_mkfile,
     .stat = fatfs_stat,
     .ioctl = fatfs_ioctl,
+    .poll = fatfs_poll,
 };
 
 void fatfs_init()

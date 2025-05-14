@@ -3,8 +3,7 @@
 #include <arch/x64/acpi/acpi.h>
 #include <arch/x64/irq/irq.h>
 #include <drivers/block/ahci/hba.h>
-
-#define KB_BUF_SIZE 64
+#include <task/task.h>
 
 #define PORT_KB_DATA 0x60
 #define PORT_KB_STATUS 0x64
@@ -23,33 +22,30 @@
 #define KBSTATUS_IBF 0x02
 #define KBSTATUS_OBF 0x01
 
-#define wait_KB_write() \
-    wait_until_expire(!(io_in8(PORT_KB_STATUS) & KBSTATUS_IBF), 10000)
+#define wait_KB_write() wait_until_expire(!(io_in8(PORT_KB_STATUS) & KBSTATUS_IBF), 1000000)
 
-#define wait_KB_read() \
-    wait_until_expire(!(io_in8(PORT_KB_STATUS) & KBSTATUS_OBF), 10000)
+#define wait_KB_read() wait_until_expire(!(io_in8(PORT_KB_STATUS) & KBSTATUS_OBF), 1000000)
 
-struct keyboard_buf
-{
-    uint8_t *p_head;
-    uint8_t *p_tail;
-    int32_t count;
-    bool ctrl;
-    bool shift;
-    bool alt;
-    bool caps;
-    uint8_t buf[KB_BUF_SIZE];
-};
+bool kb_is_ocupied();
 
-#define PS2_CMD_PORT 0x64
-#define PS2_DATA_PORT 0x60
+bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state);
 
-extern struct keyboard_buf kb_fifo;
+#define SYN_REPORT 0
+#define SYN_CONFIG 1
+#define SYN_MT_REPORT 2
+#define SYN_DROPPED 3
+#define SYN_MAX 0xf
+#define SYN_CNT (SYN_MAX + 1)
 
-extern char keyboard_code[];
-extern char keyboard_code1[];
+#define SCANCODE_ENTER 28
+#define SCANCODE_BACK 14
+#define SCANCODE_SHIFT 42
+#define SCANCODE_CAPS 58
+#define SCANCODE_UP 0x48
 
-void parse_scan_code(uint8_t x);
+#define CHARACTER_ENTER '\n'
+#define CHARACTER_BACK '\b'
+
 uint8_t get_keyboard_input();
 
 size_t kb_event_bit(void *data, uint64_t request, void *arg);

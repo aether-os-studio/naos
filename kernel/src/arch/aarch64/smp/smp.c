@@ -71,10 +71,9 @@ void ap_kmain(struct limine_mp_info *cpu)
 
     timer_init_percpu();
 
-    arch_enable_interrupt();
-
     while (1)
     {
+        arch_enable_interrupt();
         arch_pause();
     }
 }

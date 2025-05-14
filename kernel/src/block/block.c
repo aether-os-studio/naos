@@ -90,7 +90,11 @@ uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len)
 
         // 复制数据到目标缓冲区
         uint64_t copy_size = (chunk_size > remaining) ? remaining : chunk_size;
+#if defined(__x86_64__)
+        fast_memcpy(dest, tmp + offset_in_block, copy_size);
+#else
         memcpy(dest, tmp + offset_in_block, copy_size);
+#endif
 
         // 更新状态
         dest += copy_size;
@@ -167,7 +171,11 @@ uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf, uint64_t
 
         // 复制数据到临时缓冲区
         uint64_t copy_size = (chunk_size > remaining) ? remaining : chunk_size;
+#if defined(__x86_64__)
+        fast_memcpy(tmp + offset_in_block, src, copy_size);
+#else
         memcpy(tmp + offset_in_block, src, copy_size);
+#endif
 
         // 执行块设备写入
         if (dev->write(dev->ptr, start_sector, tmp, chunk_sectors) != chunk_sectors)

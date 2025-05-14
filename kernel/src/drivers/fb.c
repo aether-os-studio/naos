@@ -100,7 +100,7 @@ void fbdev_init()
     {
         char name[MAX_DEV_NAME_LEN];
         sprintf(name, "fb%d", i);
-        regist_dev(name, fb_read, fb_write, fb_ioctl, framebuffer_request.response->framebuffers[i]);
+        regist_dev(name, fb_read, fb_write, fb_ioctl, NULL, framebuffer_request.response->framebuffers[i]);
     }
 }
 

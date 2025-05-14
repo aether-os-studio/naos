@@ -66,10 +66,9 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
 
     prev->arch_context->ctx = ctx;
 
-    prev->state = TASK_READY;
+    prev->current_state = prev->state;
 
-    // start to switch
-    next->state = TASK_RUNNING;
+    next->current_state = TASK_RUNNING;
 
     // 1. 更新TTBR0_EL1
     __asm__ __volatile__("msr TTBR0_EL1, %0" : : "r"(next->arch_context->ttbr));

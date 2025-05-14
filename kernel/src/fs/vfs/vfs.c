@@ -9,7 +9,7 @@ static void empty_func() {}
 
 static struct vfs_callback vfs_empty_callback;
 
-static vfs_callback_t fs_callbacks[256] = {
+vfs_callback_t fs_callbacks[256] = {
     [0] = &vfs_empty_callback,
 };
 static int fs_nextid = 1;
@@ -299,7 +299,7 @@ int vfs_close(vfs_node_t node)
     if (node->type == file_dir)
         return 0;
     callbackof(node, close)(node->handle);
-    if (node->type != file_pipe && node->type != file_socket)
+    if (node->type != file_pipe && node->type != file_socket && node->type != file_epoll)
         node->handle = NULL;
     return 0;
 }
@@ -379,6 +379,14 @@ int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg)
     if (node->type == file_dir)
         return -1;
     return callbackof(node, ioctl)(node->handle, cmd, arg);
+}
+
+int vfs_poll(vfs_node_t node, size_t event)
+{
+    do_update(node);
+    if (node->type == file_dir)
+        return -1;
+    return callbackof(node, poll)(node->handle, event);
 }
 
 // 使用请记得free掉返回的buff

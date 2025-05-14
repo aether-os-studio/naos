@@ -5,7 +5,10 @@
 #include <arch/x64/io.h>
 #include <fs/vfs/dev.h>
 
-char keyboard_code[] = {
+// Very bare bones, and basic keyboard driver
+// Copyright (C) 2024 Panagiotis
+
+char character_table[] = {
     0,
     27,
     '1',
@@ -20,7 +23,7 @@ char keyboard_code[] = {
     '0',
     '-',
     '=',
-    '\b',
+    0,
     9,
     'q',
     'w',
@@ -148,7 +151,7 @@ char keyboard_code[] = {
     0x2C,
 };
 
-char keyboard_code1[] = {
+char shiftedCharacterTable[] = {
     0,
     27,
     '!',
@@ -163,7 +166,7 @@ char keyboard_code1[] = {
     ')',
     '_',
     '+',
-    '\b',
+    0,
     9,
     'Q',
     'W',
@@ -291,197 +294,352 @@ char keyboard_code1[] = {
     0x2C,
 };
 
-struct keyboard_buf kb_fifo;
+const uint8_t evdevTable[89] = {
+    0,
+    KEY_ESC,
+    KEY_1,
+    KEY_2,
+    KEY_3,
+    KEY_4,
+    KEY_5,
+    KEY_6,
+    KEY_7,
+    KEY_8,
+    KEY_9,
+    KEY_0,
+    KEY_MINUS,
+    KEY_EQUAL,
+    KEY_BACKSPACE,
+    KEY_TAB,
+    KEY_Q,
+    KEY_W,
+    KEY_E,
+    KEY_R,
+    KEY_T,
+    KEY_Y,
+    KEY_U,
+    KEY_I,
+    KEY_O,
+    KEY_P,
+    KEY_LEFTBRACE,
+    KEY_RIGHTBRACE,
+    KEY_ENTER,
+    KEY_LEFTCTRL,
+    KEY_A,
+    KEY_S,
+    KEY_D,
+    KEY_F,
+    KEY_G,
+    KEY_H,
+    KEY_J,
+    KEY_K,
+    KEY_L,
+    KEY_SEMICOLON,
+    KEY_APOSTROPHE,
+    KEY_GRAVE,
+    KEY_LEFTSHIFT,
+    KEY_BACKSLASH,
+    KEY_Z,
+    KEY_X,
+    KEY_C,
+    KEY_V,
+    KEY_B,
+    KEY_N,
+    KEY_M,
+    KEY_COMMA,
+    KEY_DOT,
+    KEY_SLASH,
+    KEY_RIGHTSHIFT,
+    KEY_KPASTERISK,
+    KEY_LEFTALT,
+    KEY_SPACE,
+    KEY_CAPSLOCK,
+    KEY_F1,
+    KEY_F2,
+    KEY_F3,
+    KEY_F4,
+    KEY_F5,
+    KEY_F6,
+    KEY_F7,
+    KEY_F8,
+    KEY_F9,
+    KEY_F10,
+    KEY_NUMLOCK,
+    KEY_SCROLLLOCK,
+    KEY_KP7,
+    KEY_UP, // KEY_KP8
+    KEY_KP9,
+    KEY_KPMINUS,
+    KEY_LEFT, // KEY_KP4
+    KEY_KP5,
+    KEY_RIGHT, // KEY_KP6
+    KEY_KPPLUS,
+    KEY_KP1,
+    KEY_DOWN, // KEY_KP2
+    KEY_KP3,
+    KEY_INSERT, // KEY_KP0
+    KEY_DELETE, // KEY_KPDOT
+    0,
+    0,
+    0,
+    KEY_F11,
+    KEY_F12,
+};
 
-bool can_handle_new_key = true;
+// it's just a bitmap to accurately track press/release/repeat ops
+#define EVDEV_INTERNAL_SIZE (((sizeof(evdevTable) / sizeof(evdevTable[0]) + 7) / 8))
 
-void kbd_handler(uint64_t irq, void *param, struct pt_regs *regs)
+uint8_t evdevInternal[EVDEV_INTERNAL_SIZE] = {0};
+
+uint8_t lastPressed = 0;
+
+dev_input_event_t *kb_event = NULL;
+
+void kb_evdev_generate(uint8_t raw)
 {
-    if (can_handle_new_key)
+    uint8_t index = 0;
+    bool clicked = false;
+    if (raw <= 0x58)
     {
-        uint8_t x = io_in8(PORT_KB_DATA);
-        parse_scan_code(x);
+        clicked = true;
+        index = raw;
     }
+    else if (raw <= 0xD8)
+    {
+        clicked = false;
+        index = raw - 0x80;
+    }
+    else
+        return;
+
+    if (index > 88)
+        return;
+    uint8_t evdevCode = evdevTable[index];
+    if (!evdevCode)
+        return;
+
+    bool oldstate = evdevInternal[index / 8];
+    if (!oldstate && clicked)
+    {
+        // was not clicked previously, now clicked (click)
+        input_generate_event(kb_event, EV_KEY, evdevCode, 1);
+        lastPressed = evdevCode;
+    }
+    else if (oldstate && clicked)
+    {
+        // was clicked previously, now clicked (repeat)
+        if (evdevCode != lastPressed)
+            return; // no need to re-set it on the bitmap
+        input_generate_event(kb_event, EV_KEY, evdevCode, 2);
+    }
+    else if (oldstate && !clicked)
+    {
+        // was clicked previously, now not clicked (release)
+        input_generate_event(kb_event, EV_KEY, evdevCode, 0);
+    }
+    input_generate_event(kb_event, EV_SYN, SYN_REPORT, 0);
+
+    evdevInternal[index / 8] |= (clicked << (index % 8));
 }
 
-void kbd_init()
+bool shifted = false;
+bool capsLocked = false;
+
+char *kbBuff = 0;
+uint32_t kbCurr = 0;
+uint32_t kbMax = 0;
+task_t *kb_task = NULL;
+
+char handle_kb_event()
 {
-    kb_fifo.p_head = kb_fifo.buf;
-    kb_fifo.p_tail = kb_fifo.buf;
-    kb_fifo.count = 0;
+    uint8_t scan_code = io_in8(PORT_KB_DATA);
+    kb_evdev_generate(scan_code);
 
-    irq_regist_irq(PS2_KBD_INTERRUPT_VECTOR, kbd_handler, PS2_KBD_INTERRUPT_VECTOR - 32, NULL, &apic_controller, "PS2 KBD");
+    /* No, I will not fix/improve the rest, idc about the kernel shell */
 
-    wait_KB_write();
-    io_out8(PORT_KB_CMD, 0xAD);
-
-    while (io_in8(PORT_KB_STATUS) & KBSTATUS_OBF)
+    // Shift checks
+    if (shifted == 1 && scan_code & 0x80)
     {
-        io_in8(PORT_KB_DATA);
-    }
-
-    wait_KB_write();
-    io_out8(PORT_KB_CMD, KBCMD_WRITE_CMD); // 0x60
-    wait_KB_write();
-    io_out8(PORT_KB_DATA, KB_INIT_MODE); // 0x03
-
-    wait_KB_write();
-    io_out8(PORT_KB_CMD, 0xAE);
-
-    wait_KB_write();
-    io_out8(PORT_KB_DATA, 0xFF); // 重置命令
-    wait_KB_read();
-    uint8_t response = io_in8(PORT_KB_DATA);
-    if (response != 0xAA)
-    {
-        printk("Keyboard reset failed: 0x%x\n", response);
-    }
-
-    wait_KB_write();
-    io_out8(PORT_KB_DATA, 0xF4); // 启用数据报告
-    wait_KB_read();
-    if (io_in8(PORT_KB_DATA) != 0xFA)
-    {
-        printk("Keyboard enable failed\n");
-    }
-}
-
-extern uint64_t cpu_count;
-
-void parse_scan_code(uint8_t x)
-{
-    if (x == 0x2a || x == 0x36)
-    {
-        kb_fifo.shift = 1;
-    }
-    else if (x == 0x1d)
-    {
-        kb_fifo.ctrl = 1;
-    }
-    else if (x == 0x3a)
-    {
-        kb_fifo.caps = kb_fifo.caps ^ 1;
-    }
-    else if (x == 0xaa || x == 0xb6)
-    {
-        kb_fifo.shift = 0;
-    }
-    else if (x == 0x9d)
-    {
-        kb_fifo.ctrl = 0;
-    }
-
-    if (kb_fifo.ctrl && x == 0x2e && current_task)
-    {
-    }
-    else if (x < 0x80 && !(x == 0x4b || x == 0x4d || x == 0x48 || x == 0x50) && x != 0x38 && !(x == 0x2a || x == 0x36) && x != 0x76 && !(x == 0x1d || x == 0x9d))
-    {
-        *kb_fifo.p_head = x;
-        kb_fifo.count++;
-        kb_fifo.p_head++;
-    }
-
-    // if (x == 0x4b || x == 0x4d || x == 0x48 || x == 0x50 || x == 0x76)
-    // {
-    //     switch (x)
-    //     {
-    //     case 0x4b:
-    //         *kb_fifo.p_head = '\x1b';
-    //         *(kb_fifo.p_head + 1) = 0x54;
-    //         *(kb_fifo.p_head + 1) = 0x23;
-    //         kb_fifo.count += 3;
-    //         kb_fifo.p_head += 3;
-    //         break;
-    //         break;
-    //     case 0x4d:
-    //         *kb_fifo.p_head = '\x1b';
-    //         *(kb_fifo.p_head + 1) = 0x54;
-    //         *(kb_fifo.p_head + 2) = 0x21;
-    //         kb_fifo.count += 3;
-    //         kb_fifo.p_head += 3;
-    //         break;
-    //     case 0x48:
-    //         *kb_fifo.p_head = '\x1b';
-    //         *(kb_fifo.p_head + 1) = 0x54;
-    //         *(kb_fifo.p_head + 2) = 0x1C;
-    //         kb_fifo.count += 3;
-    //         kb_fifo.p_head += 3;
-    //         break;
-    //     case 0x50:
-    //         *kb_fifo.p_head = '\x1b';
-    //         *(kb_fifo.p_head + 1) = 0x54;
-    //         *(kb_fifo.p_head + 2) = 0x32;
-    //         kb_fifo.count += 3;
-    //         kb_fifo.p_head += 3;
-    //         break;
-    //     case 0x76:
-    //         *kb_fifo.p_head = '\x1b';
-    //         kb_fifo.count += 1;
-    //         kb_fifo.p_head += 1;
-    //         break;
-
-    //     default:
-    //         break;
-    //     }
-    // }
-
-    if (kb_fifo.p_head >= kb_fifo.buf + KB_BUF_SIZE)
-    {
-        memset(kb_fifo.buf, 0, KB_BUF_SIZE - 1);
-        kb_fifo.p_head = kb_fifo.buf;
-    }
-}
-
-uint8_t get_keyboard_input()
-{
-    if (kb_fifo.p_tail != kb_fifo.p_head)
-    {
-        uint8_t temp = 0;
-
-        uint8_t x = *kb_fifo.p_tail;
-
-        if (x == 0x1b)
+        if ((scan_code & 0x7F) == 42) // & 0x7F clears the release
         {
-            temp = 0x1b;
-        }
-        else
-        {
-            temp = keyboard_code[x];
-            if (kb_fifo.shift == 1 || kb_fifo.caps == 1)
-            {
-                temp = keyboard_code1[x];
-            }
-            if (kb_fifo.ctrl == 1)
-            {
-                temp &= 0x1f;
-            }
-
-            kb_fifo.p_tail++;
-
-            if (kb_fifo.p_tail >= kb_fifo.buf + KB_BUF_SIZE)
-            {
-                kb_fifo.p_tail = kb_fifo.buf;
-            }
-        }
-
-        if (temp != 0)
-        {
-            return temp;
-        }
-
-        switch (x)
-        {
-        case 28:
-            return (uint8_t)'\n';
-        case 15:
-            return (uint8_t)'\t';
-        default:
+            shifted = 0;
             return 0;
+        }
+    }
+
+    if (scan_code < sizeof(character_table) && !(scan_code & 0x80))
+    {
+        char character = (shifted || capsLocked) ? shiftedCharacterTable[scan_code] : character_table[scan_code];
+
+        if (character != 0)
+        { // Normal char
+            return character;
+        }
+
+        switch (scan_code)
+        {
+        case SCANCODE_ENTER:
+            return CHARACTER_ENTER;
+            break;
+        case SCANCODE_BACK:
+            return CHARACTER_BACK;
+            break;
+        case SCANCODE_SHIFT:
+            shifted = 1;
+            break;
+        case SCANCODE_CAPS:
+            capsLocked = !capsLocked;
+            break;
         }
     }
 
     return 0;
 }
+
+// used by the kernel atm
+uint32_t read_str(char *buffstr)
+{
+    while (kb_is_ocupied())
+        arch_pause();
+
+    task_t *task = tasks[0];
+    if (!task)
+        return 0;
+
+    while (kbBuff)
+    {
+        arch_enable_interrupt();
+        arch_pause();
+    }
+    uint32_t ret = task->tmp_rec_v;
+    buffstr[ret] = '\0';
+    return ret;
+}
+
+bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state)
+{
+    while (kb_is_ocupied())
+    {
+        arch_enable_interrupt();
+        arch_pause();
+    }
+
+    kbBuff = buff;
+    kbCurr = 0;
+    kbMax = limit;
+    kb_task = task;
+
+    if (change_state)
+        task->state = TASK_BLOCKING;
+
+    return true;
+}
+
+void kb_reset()
+{
+    kbBuff = 0;
+    kbCurr = 0;
+    kbMax = 0;
+    kb_task = NULL;
+}
+
+void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs);
+
+void kbd_init()
+{
+    kb_reset();
+
+    irq_regist_irq(PS2_KBD_INTERRUPT_VECTOR, keyboard_handler, PS2_KBD_INTERRUPT_VECTOR - 32, NULL, &apic_controller, "PS2 KBD");
+
+    wait_KB_write();
+    io_out8(PORT_KB_CMD, KBCMD_WRITE_CMD);
+    wait_KB_read();
+    io_out8(PORT_KB_DATA, KB_INIT_MODE);
+
+    wait_KB_write();
+    io_out8(PORT_KB_DATA, 0xF0);
+    wait_KB_write();
+    io_out8(PORT_KB_DATA, 0x02);
+
+    wait_KB_read();
+
+    vfs_node_t node = vfs_open("/dev/input/event0");
+    if (!node)
+        return;
+    dev_input_event_t *input = node->handle;
+    vfs_close(node);
+    if (!input)
+        return;
+    kb_event = &input->device_events;
+    if (!kb_event)
+        return;
+}
+
+void kb_finalise_stream()
+{
+    task_t *task = kb_task;
+    if (task)
+    {
+        task->tmp_rec_v = kbCurr;
+        task_unblock(kb_task, EOK);
+    }
+    kb_reset();
+}
+
+void kb_char(task_t *task, char out)
+{
+    if (task->term.c_lflag & ECHO)
+        printk("%c", out);
+    if (kbCurr < kbMax)
+        kbBuff[kbCurr++] = out;
+    if (!(task->term.c_lflag & ICANON))
+        kb_finalise_stream();
+}
+
+void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
+{
+    (void)irq_num;
+    (void)data;
+    (void)regs;
+
+    char out = handle_kb_event();
+    if (!out)
+        return;
+
+    task_t *task = kb_task;
+
+    if (!task)
+        return;
+
+    if (task->state == TASK_BLOCKING)
+        task->state = TASK_READY;
+
+    switch (out)
+    {
+    case CHARACTER_ENTER:
+        // kbBuff[kbCurr] = '\0';
+        if (task->term.c_lflag & ICANON)
+            kb_finalise_stream();
+        else
+            kb_char(task, out);
+        break;
+    case CHARACTER_BACK:
+        if (task->term.c_lflag & ICANON && kbCurr > 0)
+        {
+            printk("%c", '\b');
+            kbCurr--;
+            kbBuff[kbCurr] = 0;
+        }
+        else if (!(task->term.c_lflag & ICANON))
+            kb_char(task, out);
+        break;
+    default:
+        kb_char(task, out);
+        break;
+    }
+}
+
+bool kb_is_ocupied() { return !!kbBuff; }
 
 size_t kb_event_bit(void *data, uint64_t request, void *arg)
 {

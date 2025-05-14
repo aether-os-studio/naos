@@ -876,6 +876,7 @@ static struct vfs_callback callback =
         .mkfile = (vfs_mk_t)dummy,
         .stat = (vfs_stat_t)dummy,
         .ioctl = (vfs_ioctl_t)dummy,
+        .poll = (vfs_poll_t)dummy,
 };
 
 void socketfs_init()

@@ -209,7 +209,7 @@ struct pollfd
     short revents;
 };
 
-size_t sys_poll(struct pollfd *fds, int nfds, int timeout);
+size_t sys_poll(struct pollfd *fds, int nfds, uint32_t timeout);
 
 size_t sys_access(char *filename, int mode);
 uint64_t sys_faccessat(uint64_t dirfd, const char *pathname, uint64_t mode);
@@ -248,9 +248,9 @@ typedef struct epoll
 {
     struct epoll *next;
 
-    int timesOpened;
-
     epoll_watch_t *firstEpollWatch;
+
+    uint64_t reference_count;
 } epoll_t;
 
 #define EPOLLIN 0x001

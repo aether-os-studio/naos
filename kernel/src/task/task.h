@@ -4,6 +4,8 @@
 #include <task/signal.h>
 #include <fs/termios.h>
 
+extern uint64_t jiffies;
+
 #define AT_NULL 0
 #define AT_IGNORE 1
 #define AT_EXECFD 2
@@ -107,6 +109,7 @@ typedef struct task
     char name[TASK_NAME_MAX];
     uint64_t jiffies;
     task_state_t state;
+    task_state_t current_state;
     uint64_t kernel_stack;
     uint64_t syscall_stack;
     uint64_t mmap_start;
@@ -122,6 +125,7 @@ typedef struct task
     vfs_node_t fds[MAX_FD_NUM];
     uint64_t timer_slack_ns;
     termios term;
+    uint32_t tmp_rec_v;
 } task_t;
 
 task_t *task_create(const char *name, void (*entry)());

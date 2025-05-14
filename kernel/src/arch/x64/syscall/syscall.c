@@ -73,7 +73,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     regs->es = SELECTOR_USER_DS;
     regs->rsp = (uint64_t)(user_regs + 1);
 
-    uint64_t idx = regs->rax;
+    uint64_t idx = regs->rax & 0xFFFFFFFF;
 
     uint64_t arg1 = regs->rdi;
     uint64_t arg2 = regs->rsi;
@@ -322,9 +322,11 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_SETUID:
         current_task->uid = arg1;
+        regs->rax = 0;
         break;
     case SYS_SETGID:
         current_task->gid = arg1;
+        regs->rax = 0;
         break;
     case SYS_DUP:
         regs->rax = sys_dup(arg1);

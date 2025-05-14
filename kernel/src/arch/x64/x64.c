@@ -28,5 +28,5 @@ void arch_init()
 void arch_input_dev_init()
 {
     kbd_init();
-    // mouse_init();
+    mouse_init();
 }

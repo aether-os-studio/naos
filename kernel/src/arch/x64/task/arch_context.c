@@ -128,9 +128,9 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
 
     prev->arch_context->ctx = ctx;
 
-    prev->state = TASK_READY;
+    prev->current_state = prev->state;
 
-    next->state = TASK_RUNNING;
+    next->current_state = TASK_RUNNING;
 
     arch_set_current(next);
 

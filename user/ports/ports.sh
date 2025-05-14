@@ -27,8 +27,6 @@ sudo chmod -R 777 $SYSROOT/../
 
 cp -r /usr/share/zoneinfo/Asia/Shanghai $SYSROOT/../etc/localtime
 
-cp -r $SYSROOT/../usr/lib/xorg/modules/libfbdevhw.so $SYSROOT/../usr/lib/xorg/modules/extensions/libfbdevhw.so
-
 find $SYSROOT/../ -type l -exec bash -c '
     lnk="{}";
     target=$(readlink -f "$lnk");
@@ -43,3 +41,7 @@ find $SYSROOT/../ -type l -exec bash -c '
 cp -r $SCRIPTPATH/etc $SYSROOT/../
 cp -r $SCRIPTPATH/root $SYSROOT/../
 cp -r $SCRIPTPATH/files $SYSROOT/../
+
+cp -r $SYSROOT/../bin/bash $SYSROOT/../bin/sh
+
+cp -r $SYSROOT/lib/xorg/modules/libfbdevhw.so $SYSROOT/lib/xorg/modules/extensions/libfbdevhw.so

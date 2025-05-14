@@ -2,6 +2,7 @@
 #include <fs/fs_syscall.h>
 #include <drivers/kernel_logger.h>
 #include <arch/arch.h>
+#include <task/task.h>
 
 #define FLANTERM_IN_FLANTERM
 #include <libs/flanterm/flanterm_private.h>
@@ -80,6 +81,16 @@ int devfs_mkfile(void *parent, const char *name, vfs_node_t node)
     return 0;
 }
 
+int devfs_poll(devfs_handle_t handle, size_t event)
+{
+    if (handle->poll)
+    {
+        return handle->poll(handle->data, event);
+    }
+
+    return 0;
+}
+
 static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
@@ -91,29 +102,26 @@ static struct vfs_callback callbacks = {
     .mkfile = (vfs_mk_t)devfs_mkfile,
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)devfs_ioctl,
+    .poll = (vfs_poll_t)devfs_poll,
 };
 
 #define MAX_FB_NUM 2
 
-ssize_t inputdev_event0_read(void *data, uint64_t offset, void *buf, uint64_t len)
+ssize_t inputdev_event_read(void *data, uint64_t offset, void *buf, uint64_t len)
 {
     dev_input_event_t *event = data;
 
     while (true)
     {
-        char data = (char)get_keyboard_input();
-        if (data != 0)
-        {
-            *((char *)buf) = data;
-            return 1;
-        }
+        size_t cnt = circular_int_read(&event->device_events, buf, len);
+        if (cnt > 0)
+            return cnt;
+        if (signals_pending_quick(current_task))
+            return -EINTR;
+
+        arch_pause();
     }
 
-    return 0;
-}
-
-ssize_t inputdev_event1_read(void *data, uint64_t offset, void *buf, uint64_t len)
-{
     return 0;
 }
 
@@ -156,14 +164,14 @@ ssize_t inputdev_ioctl(void *data, ssize_t request, ssize_t arg)
         break;
     case 0x06:
     { // EVIOCGNAME(len)
-        int toCopy = MIN(size, strlen(event->devname) + 1);
+        int toCopy = MIN(size, (size_t)strlen(event->devname) + 1);
         memcpy((void *)arg, event->devname, toCopy);
         ret = toCopy;
         break;
     }
     case 0x07:
     { // EVIOCGPHYS(len)
-        int toCopy = MIN(size, strlen(event->physloc) + 1);
+        int toCopy = MIN(size, (size_t)strlen(event->physloc) + 1);
         memcpy((void *)arg, event->physloc, toCopy);
         ret = toCopy;
         break;
@@ -186,7 +194,7 @@ ssize_t inputdev_ioctl(void *data, ssize_t request, ssize_t arg)
         ret = event->event_bit(data, request, (void *)arg);
         break;
     default:
-        printk("non-supported ioctl! %lx", number);
+        printk("unsupported ioctl! %lx", number);
         ret = -ENOTTY;
         break;
     }
@@ -194,10 +202,20 @@ ssize_t inputdev_ioctl(void *data, ssize_t request, ssize_t arg)
     return ret;
 }
 
+ssize_t inputdev_poll(void *data, size_t event)
+{
+    dev_input_event_t *e = data;
+    size_t cnt = circular_int_read_poll(&e->device_events);
+    if (cnt > 0 && event & EPOLLIN)
+        return EPOLLIN;
+    return 0;
+}
+
 vfs_node_t regist_dev(const char *name,
                       ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len),
                       ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len),
                       ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg),
+                      ssize_t (*poll)(void *data, size_t event),
                       void *data)
 {
     const char *new_name = name;
@@ -224,6 +242,7 @@ vfs_node_t regist_dev(const char *name,
             devfs_handles[i]->read = read;
             devfs_handles[i]->write = write;
             devfs_handles[i]->ioctl = ioctl;
+            devfs_handles[i]->poll = poll;
             devfs_handles[i]->data = data;
             vfs_node_t child = vfs_child_append(dev, devfs_handles[i]->name, NULL);
             child->type = file_block;
@@ -237,20 +256,28 @@ vfs_node_t regist_dev(const char *name,
 
 ssize_t stdin_read(void *data, uint64_t offset, void *buf, uint64_t len)
 {
-    (void)data;
-    (void)offset;
-    (void)len;
+    uint8_t *kernel_buff = malloc(len);
 
-    ssize_t read_len = 0;
+    task_read(current_task, (char *)kernel_buff, len, true);
 
-    char scancode = (char)get_keyboard_input();
-    if (scancode != 0)
+    arch_enable_interrupt();
+    while (current_task->state == TASK_BLOCKING)
     {
-        *((uint8_t *)buf + read_len) = scancode;
-        read_len++;
+        arch_pause();
     }
+    arch_disable_interrupt();
 
-    return read_len;
+    if (current_task->term.c_lflag & ICANON)
+        printk("\n");
+
+    uint32_t fr = current_task->tmp_rec_v;
+    memcpy(buf, kernel_buff, fr);
+    if (current_task->term.c_lflag & ICANON && fr < len)
+        ((char *)buf)[fr++] = '\n';
+
+    free(kernel_buff);
+
+    return fr;
 }
 
 ssize_t stdout_write(void *data, uint64_t offset, const void *buf, uint64_t len)
@@ -338,13 +365,26 @@ ssize_t stdio_ioctl(void *data, ssize_t cmd, ssize_t arg)
     return -ENOTTY;
 }
 
+bool ioSwitch = false;
+
+ssize_t stdio_poll(void *data, size_t events)
+{
+    ssize_t revents = 0;
+    if (events & EPOLLIN && ioSwitch)
+        revents |= EPOLLIN;
+    if (events & EPOLLOUT)
+        revents |= EPOLLOUT;
+    ioSwitch = !ioSwitch;
+    return revents;
+}
+
 void stdio_init()
 {
-    regist_dev("stdin", stdin_read, NULL, stdio_ioctl, NULL);
-    regist_dev("stdout", NULL, stdout_write, stdio_ioctl, NULL);
-    regist_dev("stderr", NULL, stdout_write, stdio_ioctl, NULL);
+    regist_dev("stdin", stdin_read, NULL, stdio_ioctl, stdio_poll, NULL);
+    regist_dev("stdout", NULL, stdout_write, stdio_ioctl, stdio_poll, NULL);
+    regist_dev("stderr", NULL, stdout_write, stdio_ioctl, stdio_poll, NULL);
 
-    regist_dev("tty", stdin_read, stdout_write, stdio_ioctl, NULL);
+    regist_dev("tty", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL);
 }
 
 uint64_t next = 0;
@@ -422,24 +462,119 @@ void dev_init()
 
     memset(devfs_handles, 0, sizeof(devfs_handles));
 
-    vfs_node_t kb_node = regist_dev("input/event0", inputdev_event0_read, NULL, inputdev_ioctl, NULL);
-    kb_node->handle = malloc(sizeof(dev_input_event_t));
-    dev_input_event_t *kb_input_event = kb_node->handle;
+    dev_input_event_t *kb_input_event = malloc(sizeof(dev_input_event_t));
     kb_input_event->inputid.bustype = 0x05;   // BUS_PS2
     kb_input_event->inputid.vendor = 0x045e;  // Microsoft
     kb_input_event->inputid.product = 0x0001; // Generic MS Keyboard
     kb_input_event->inputid.version = 0x0100; // Basic MS Version
     kb_input_event->event_bit = kb_event_bit;
-    vfs_node_t mouse_node = regist_dev("input/event1", inputdev_event1_read, NULL, inputdev_ioctl, NULL);
-    mouse_node->handle = malloc(sizeof(dev_input_event_t));
-    dev_input_event_t *mouse_input_event = mouse_node->handle;
+    circular_int_init(&kb_input_event->device_events, 16384);
+    vfs_node_t kb_node = regist_dev("input/event0", inputdev_event_read, NULL, inputdev_ioctl, inputdev_poll, kb_input_event);
+    dev_input_event_t *mouse_input_event = malloc(sizeof(dev_input_event_t));
     mouse_input_event->inputid.bustype = 0x05;   // BUS_PS2
     mouse_input_event->inputid.vendor = 0x045e;  // Microsoft
     mouse_input_event->inputid.product = 0x00b4; // Generic MS Mouse
     mouse_input_event->inputid.version = 0x0100; // Basic MS Version
     mouse_input_event->event_bit = mouse_event_bit;
+    circular_int_init(&mouse_input_event->device_events, 16384);
+    vfs_node_t mouse_node = regist_dev("input/event1", inputdev_event_read, NULL, inputdev_ioctl, inputdev_poll, mouse_input_event);
 
-    regist_dev("null", null_dev_read, null_dev_write, NULL, NULL);
-    regist_dev("random", random_dev_read, NULL, NULL, NULL);
-    regist_dev("urandom", urandom_dev_read, urandom_dev_write, urandom_dev_ioctl, NULL);
+    regist_dev("null", null_dev_read, null_dev_write, NULL, NULL, NULL);
+    regist_dev("random", random_dev_read, NULL, NULL, NULL, NULL);
+    regist_dev("urandom", urandom_dev_read, urandom_dev_write, urandom_dev_ioctl, NULL, NULL);
+}
+
+void circular_int_init(circular_int_t *circ, size_t size)
+{
+    circ->read_ptr = 0;
+    circ->write_ptr = 0;
+    circ->buff_size = size;
+    circ->buff = malloc(size);
+    circ->lock_read = false;
+    memset(circ->buff, 0, size);
+}
+
+size_t circular_int_read(circular_int_t *circ, uint8_t *buff, size_t length)
+{
+    while (circ->lock_read)
+    {
+        arch_pause();
+    }
+
+    circ->lock_read = true;
+    size_t write = circ->write_ptr;
+    size_t read = circ->read_ptr;
+    if (write == read)
+    {
+        circ->lock_read = false;
+        return 0;
+    }
+
+    size_t toCopy = MIN(CIRC_READABLE(write, read, circ->buff_size), length);
+    for (size_t i = 0; i < toCopy; i++)
+    {
+        // todo: could optimize this with edge memcpy() operations
+        buff[i] = circ->buff[read];
+        read = (read + 1) % circ->buff_size;
+    }
+
+    circ->read_ptr = read;
+    circ->lock_read = false;
+
+    return toCopy;
+}
+
+size_t circular_int_write(circular_int_t *circ, const uint8_t *buff, size_t length)
+{
+    size_t write = circ->write_ptr;
+    size_t read = circ->read_ptr;
+    size_t writable = CIRC_WRITABLE(write, read, circ->buff_size);
+    if (length > writable)
+    {
+        return 0; // cannot do this
+    }
+
+    for (size_t i = 0; i < length; i++)
+    {
+        // todo: could optimize this with edge memcpy() operations
+        circ->buff[write] = buff[i];
+        write = (write + 1) % circ->buff_size;
+    }
+
+    circ->write_ptr = write;
+    return length;
+}
+
+size_t circular_int_read_poll(circular_int_t *circ)
+{
+    size_t ret = 0;
+    while (circ->lock_read)
+    {
+        arch_pause();
+    }
+
+    circ->lock_read = true;
+    size_t write = circ->write_ptr;
+    size_t read = circ->read_ptr;
+    ret = CIRC_READABLE(write, read, circ->buff_size);
+    circ->lock_read = false;
+    return ret;
+}
+
+void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code, int32_t value)
+{
+    if (!item || item->timesOpened == 0)
+        return;
+
+    struct input_event *event = malloc(sizeof(struct input_event));
+    memset(event, 0, sizeof(struct input_event));
+    event->sec = jiffies / 1000;
+    event->usec = (jiffies % 1000) * 1000;
+    event->type = type;
+    event->code = code;
+    event->value = value;
+
+    circular_int_write(&item->device_events, (const void *)event, sizeof(struct input_event));
+
+    free(event);
 }

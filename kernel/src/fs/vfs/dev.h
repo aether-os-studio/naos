@@ -12,6 +12,7 @@ typedef struct devfs_handle
     ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len);
     ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len);
     ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg);
+    ssize_t (*poll)(void *data, size_t event);
     void *data;
 } *devfs_handle_t;
 
@@ -26,6 +27,7 @@ vfs_node_t regist_dev(const char *name,
                       ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len),
                       ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len),
                       ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg),
+                      ssize_t (*poll)(void *data, size_t event),
                       void *data);
 
 void dev_init();
@@ -139,12 +141,41 @@ struct input_absinfo
     int32_t resolution;
 };
 
+struct input_event
+{
+    uint64_t sec;
+    uint64_t usec;
+    uint16_t type;
+    uint16_t code;
+    int32_t value;
+};
+
+#define CIRC_READABLE(wr, rd, sz) ((wr - rd + sz) % sz)
+#define CIRC_WRITABLE(wr, rd, sz) ((rd - wr - 1 + sz) % sz)
+
+typedef struct circular_int
+{
+    uint8_t *buff;
+    size_t buff_size;
+
+    size_t read_ptr;
+    size_t write_ptr;
+
+    volatile bool lock_read;
+} circular_int_t;
+
+void circular_int_init(circular_int_t *circ, size_t size);
+size_t circular_int_read(circular_int_t *circ, uint8_t *buff, size_t length);
+size_t circular_int_write(circular_int_t *circ, const uint8_t *buff, size_t length);
+size_t circular_int_read_poll(circular_int_t *circ);
+
 typedef struct dev_input_event
 {
     char *devname;
     char *physloc;
 
     size_t timesOpened;
+    circular_int_t device_events;
 
     struct input_id inputid;
 
@@ -152,5 +183,7 @@ typedef struct dev_input_event
 
     event_bit_t event_bit;
 } dev_input_event_t;
+
+void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code, int32_t value);
 
 void stdio_init();

@@ -1,6 +1,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <fs/vfs/vfs.h>
+#include <fs/fs_syscall.h>
 
 // 全局管道数组
 static pipe_t pipes[MAX_PIPES];
@@ -58,7 +59,9 @@ int pipefs_ioctl(void *file, ssize_t cmd, ssize_t arg)
     {
     case FIOCLEX:
         return 0;
-
+    case TIOCGWINSZ:
+    case TIOCSWINSZ:
+        return -ENOTTY;
     default:
         return -ENOSYS;
     }
@@ -72,6 +75,11 @@ void pipefs_close(void *current)
         memset(pipe, 0, sizeof(pipe_t));
 }
 
+void pipefs_poll(void *file, size_t event)
+{
+    return -EOPNOTSUPP;
+}
+
 static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
@@ -83,6 +91,7 @@ static struct vfs_callback callbacks = {
     .mkfile = (vfs_mk_t)dummy,
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)pipefs_ioctl,
+    .poll = pipefs_poll,
 };
 
 void pipefs_init()

@@ -62,6 +62,11 @@ ssize_t sysfs_read(void *file, void *addr, size_t offset, size_t size)
     }
 }
 
+int sysfs_poll(void *file, size_t event)
+{
+    return -EOPNOTSUPP;
+}
+
 static struct vfs_callback callback = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
@@ -73,6 +78,7 @@ static struct vfs_callback callback = {
     .mkfile = (vfs_mk_t)dummy,
     .stat = sysfs_stat,
     .ioctl = (vfs_ioctl_t)dummy,
+    .poll = sysfs_poll,
 };
 
 extern uint32_t device_number;

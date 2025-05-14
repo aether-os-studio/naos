@@ -126,12 +126,6 @@ uint64_t sys_close(uint64_t fd)
     }
 
     current_task->fds[fd]->offset = 0;
-    if (current_task->fds[fd]->type == file_pipe && current_task->fds[fd]->handle)
-    {
-        pipe_t *pipe = current_task->fds[fd]->handle;
-        pipe->reference_count--;
-    }
-
     if (current_task->fds[fd]->lock.l_pid == current_task->pid)
     {
         current_task->fds[fd]->lock.l_type = F_UNLCK;
@@ -152,8 +146,28 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len)
         return (uint64_t)-EBADF;
     }
 
+    if (current_task->fds[fd]->type == file_dir)
+    {
+        return (uint64_t)-EISDIR; // 读取目录时返回正确错误码
+    }
+
+    if (!buf)
+    {
+        return (uint64_t)-EFAULT;
+    }
+
     ssize_t ret = vfs_read(current_task->fds[fd], buf, current_task->fds[fd]->offset, len);
-    sys_lseek(fd, ret, SEEK_CUR);
+
+    if (ret > 0)
+    {
+        current_task->fds[fd]->offset += ret;
+    }
+
+    if (ret == -EAGAIN)
+    {
+        return (uint64_t)-EAGAIN; // 保持非阻塞I/O语义
+    }
+
     return ret;
 }
 
@@ -164,8 +178,28 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len)
         return (uint64_t)-EBADF;
     }
 
+    if (current_task->fds[fd]->type == file_dir)
+    {
+        return (uint64_t)-EISDIR; // 读取目录时返回正确错误码
+    }
+
+    if (!buf)
+    {
+        return (uint64_t)-EFAULT;
+    }
+
     ssize_t ret = vfs_write(current_task->fds[fd], buf, current_task->fds[fd]->offset, len);
-    sys_lseek(fd, ret, SEEK_CUR);
+
+    if (ret > 0)
+    {
+        current_task->fds[fd]->offset += ret;
+    }
+
+    if (ret == -EAGAIN)
+    {
+        return (uint64_t)-EAGAIN; // 保持非阻塞I/O语义
+    }
+
     return ret;
 }
 
@@ -491,12 +525,50 @@ uint64_t sys_prlimit64(uint64_t pid, int resource, const struct rlimit *new_rlim
     return 0;
 }
 
-size_t sys_poll(struct pollfd *fds, int nfds, int timeout)
+uint32_t epoll_to_poll_comp(uint32_t epoll_events)
+{
+    uint32_t poll_events = 0;
+
+    if (epoll_events & EPOLLIN)
+        poll_events |= POLLIN;
+    if (epoll_events & EPOLLOUT)
+        poll_events |= POLLOUT;
+    if (epoll_events & EPOLLPRI)
+        poll_events |= POLLPRI;
+    if (epoll_events & EPOLLERR)
+        poll_events |= POLLERR;
+    if (epoll_events & EPOLLHUP)
+        poll_events |= POLLHUP;
+
+    return poll_events;
+}
+
+uint32_t poll_to_epoll_comp(uint32_t poll_events)
+{
+    uint32_t epoll_events = 0;
+
+    if (poll_events & POLLIN)
+        epoll_events |= EPOLLIN;
+    if (poll_events & POLLOUT)
+        epoll_events |= EPOLLOUT;
+    if (poll_events & POLLPRI)
+        epoll_events |= EPOLLPRI;
+    if (poll_events & POLLERR)
+        epoll_events |= EPOLLERR;
+    if (poll_events & POLLHUP)
+        epoll_events |= EPOLLHUP;
+
+    return epoll_events;
+}
+
+size_t sys_poll(struct pollfd *fds, int nfds, uint32_t timeout)
 {
     int ready = 0;
     uint32_t start_time = nanoTime();
 
-    while (1)
+    bool sigexit = false;
+
+    do
     {
         // 检查每个文件描述符
         for (int i = 0; i < nfds; i++)
@@ -505,45 +577,45 @@ size_t sys_poll(struct pollfd *fds, int nfds, int timeout)
 
             if (fds[i].fd == 0 && (fds[i].events & POLLIN))
             {
-#if defined(__x86_64__)
-                if (kb_fifo.p_head != kb_fifo.p_tail)
+                if (fds[i].fd > MAX_FD_NUM)
                 {
-                    uint8_t temp = 0;
-                    if (kb_fifo.shift)
-                        temp = keyboard_code1[*kb_fifo.p_tail];
-                    else
-                        temp = keyboard_code[*kb_fifo.p_tail];
-
-                    if (*kb_fifo.p_tail == 28 || *kb_fifo.p_tail == 15 || temp != 0)
+                    return (size_t)-EBADF;
+                }
+                vfs_node_t node = current_task->fds[fds[i].fd];
+                if (!node)
+                    continue;
+                if (!fs_callbacks[node->fsid]->poll)
+                {
+                    if (fds[i].events & POLLIN || fds[i].events & POLLOUT)
                     {
-                        fds[i].revents |= POLLIN;
+                        fds[i].revents = fds[i].events & POLLIN ? POLLIN : POLLOUT;
                         ready++;
                     }
+                    continue;
                 }
-#endif
+                int revents = epoll_to_poll_comp(vfs_poll(node, poll_to_epoll_comp(fds[i].events)));
+                if (revents != 0)
+                {
+                    fds[i].revents = revents;
+                    ready++;
+                }
             }
         }
 
-        if (ready > 0)
-        {
-            return ready;
-        }
+        sigexit = signals_pending_quick(current_task);
 
-        if (timeout >= 0)
-        {
-            uint32_t current_time = nanoTime();
-            if (current_time - start_time >= (uint32_t)timeout)
-            {
-                return 0; // 超时返回
-            }
-        }
+        if (ready > 0 || sigexit)
+            break;
 
         arch_enable_interrupt();
 
         arch_pause();
-    }
+    } while (timeout != 0 && (timeout == -1 || (nanoTime() - start_time) < timeout));
 
     arch_disable_interrupt();
+
+    if (!ready && sigexit)
+        return (size_t)-EINTR;
 
     return ready;
 }
@@ -618,10 +690,7 @@ size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except,
     if (except)
         memset(except, 0, toZero);
 
-    size_t res = sys_poll(
-        comp, compIndex,
-        timeout ? (timeout->tv_sec * 1000 + (timeout->tv_usec + 1000) / 1000)
-                : -1);
+    size_t res = sys_poll(comp, compIndex, timeout ? (timeout->tv_sec * 1000 + (timeout->tv_usec + 1000) / 1000) : -1);
 
     if ((int64_t)res < 0)
     {
@@ -652,10 +721,6 @@ size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except,
         }
     }
 
-    // nope, we need to report individual events!
-    // assert(verify == res);
-    // nope, POLLERR & POLLPRI don't need validation sooo yeah!
-    // assert(verify >= res);
     free(comp);
     return verify;
 }
@@ -778,6 +843,7 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
     }
     else if (node->type == file_none && node->linkname != NULL)
     {
+        return (uint64_t)-EOPNOTSUPP;
     }
     else
     {
@@ -807,14 +873,13 @@ size_t epoll_create1(int flags)
         return -EBADF;
     }
 
-    epoll_t *epoll = malloc(sizeof(epoll_t));
-    epoll->timesOpened = 1;
-    epoll->firstEpollWatch = NULL;
-
     char buf[256];
     sprintf(buf, "epoll%d", epollfd_id++);
     vfs_node_t node = vfs_node_alloc(epollfs_root, buf);
-    node->type = file_none;
+    node->type = file_epoll;
+    epoll_t *epoll = malloc(sizeof(epoll_t));
+    epoll->firstEpollWatch = NULL;
+    epoll->reference_count = 1;
     node->handle = epoll;
     node->fsid = epollfs_id;
 
@@ -826,22 +891,6 @@ size_t epoll_create1(int flags)
 uint64_t sys_epoll_create(int size)
 {
     return epoll_create1(0);
-}
-
-// if this doesn't give you enough cues as to why you NEED to avoid the kernel
-// shell at all costs then idk what does. the reason this exists btw is for
-// bash's readline to not freak out over pselect6()
-bool ioSwitch = false;
-
-int internal_poll_handler(vfs_node_t fd, int events)
-{
-    int revents = 0;
-    if (events & EPOLLIN && ioSwitch)
-        revents |= EPOLLIN;
-    if (events & EPOLLOUT)
-        revents |= EPOLLOUT;
-    ioSwitch = !ioSwitch;
-    return revents;
 }
 
 uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events, int maxevents,
@@ -861,8 +910,7 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events, int maxevent
         epoll_watch_t *browse = epoll->firstEpollWatch;
         while (browse && ready < maxevents)
         {
-            int revents =
-                internal_poll_handler(browse->fd, browse->watchEvents);
+            int revents = vfs_poll(browse->fd, browse->watchEvents);
             if (revents != 0 && ready < maxevents)
             {
                 events[ready].events = revents;
@@ -871,6 +919,10 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events, int maxevent
             }
             browse = browse->next;
         }
+
+        sigexit = signals_pending_quick(current_task);
+        if (ready > 0 || sigexit)
+            break;
 
         arch_enable_interrupt();
 
@@ -1008,6 +1060,25 @@ uint64_t sys_epoll_pwait(int epfd, struct epoll_event *events,
 
 uint64_t sys_epoll_create1(int flags) { return epoll_create1(flags); }
 
+void epollfs_close(void *current)
+{
+    epoll_t *epoll = current;
+    epoll->reference_count--;
+
+    // todo
+    // if (epoll->reference_count == 0)
+    // {
+    //     epoll_watch_t *browse = epoll->firstEpollWatch;
+    //     while (browse)
+    //     {
+    //         epoll_watch_t *next = browse->next;
+    //         free(browse);
+    //         browse = next;
+    //     }
+    //     free(epoll);
+    // }
+}
+
 static vfs_node_t eventfdfs_root = NULL;
 static int eventfdfs_id = 0;
 
@@ -1054,6 +1125,11 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags)
     return fd;
 }
 
+static int signalfd_poll(void *file, size_t event)
+{
+    return -EOPNOTSUPP;
+}
+
 // 实现读写操作
 static ssize_t eventfd_read(vfs_node_t node, void *buf, size_t offset, size_t len)
 {
@@ -1089,6 +1165,16 @@ static ssize_t eventfd_write(vfs_node_t node, const void *buf, size_t offset, si
     efd->count += value;
 
     return sizeof(uint64_t);
+}
+
+static int eventfd_poll(void *file, size_t event)
+{
+    return -EOPNOTSUPP;
+}
+
+static int epoll_poll(void *file, size_t event)
+{
+    return -EOPNOTSUPP;
 }
 
 static vfs_node_t signalfdfs_root = NULL;
@@ -1179,13 +1265,14 @@ static struct vfs_callback epoll_callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
     .open = (vfs_open_t)dummy,
-    .close = (vfs_close_t)dummy,
+    .close = epollfs_close,
     .read = (vfs_read_t)dummy,
     .write = (vfs_write_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)dummy,
+    .poll = epoll_poll,
 };
 
 static struct vfs_callback eventfd_callbacks = {
@@ -1199,6 +1286,7 @@ static struct vfs_callback eventfd_callbacks = {
     .mkfile = (vfs_mk_t)dummy,
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)dummy,
+    .poll = eventfd_poll,
 };
 
 static struct vfs_callback signalfd_callbacks = {
@@ -1212,6 +1300,7 @@ static struct vfs_callback signalfd_callbacks = {
     .mkfile = (vfs_mk_t)dummy,
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)signalfd_ioctl,
+    .poll = signalfd_poll,
 };
 
 void epoll_init()

@@ -250,7 +250,6 @@ void ap_entry(struct limine_mp_info *cpu)
     while (1)
     {
         arch_enable_interrupt();
-
         arch_pause();
     }
 }

@@ -12,6 +12,8 @@ task_t *idle_tasks[MAX_CPU_NUM];
 bool task_initialized = false;
 bool can_schedule = false;
 
+uint64_t jiffies = 0;
+
 task_t *get_free_task()
 {
     for (uint64_t i = 0; i < MAX_TASK_NUM; i++)
@@ -51,6 +53,7 @@ task_t *task_create(const char *name, void (*entry)())
     task->pgid = 0;
     task->waitpid = 0;
     task->state = TASK_READY;
+    task->current_state = TASK_READY;
     task->jiffies = 0;
     task->kernel_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE)) + STACK_SIZE;
     task->syscall_stack = phys_to_virt((uint64_t)alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE)) + STACK_SIZE;
@@ -93,6 +96,8 @@ task_t *task_create(const char *name, void (*entry)())
         task->term.c_cc[i] = 0;
     }
 
+    task->tmp_rec_v = 0;
+
     can_schedule = true;
 
     return task;
@@ -106,10 +111,10 @@ task_t *task_search(task_state_t state, uint32_t cpu_id)
     {
         task_t *ptr = tasks[i];
         if (ptr == NULL)
+            break;
+        if (ptr->state != state)
             continue;
         if (current_task == ptr)
-            continue;
-        if (ptr->state != state)
             continue;
         if (ptr->cpu_id != cpu_id)
             continue;
@@ -130,6 +135,7 @@ void idle_entry()
 {
     while (1)
     {
+        arch_enable_interrupt();
         arch_pause();
     }
 }
@@ -331,6 +337,7 @@ uint64_t task_fork(struct pt_regs *regs)
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
 
     child->state = TASK_READY;
+    child->current_state = TASK_READY;
 
     child->cpu_id = alloc_cpu_id();
 
@@ -366,9 +373,16 @@ uint64_t task_fork(struct pt_regs *regs)
             pipe_t *pipe = child->fds[i]->handle;
             pipe->reference_count++;
         }
+        else if (child->fds[i] && child->fds[i]->type == file_epoll && child->fds[i]->handle)
+        {
+            epoll_t *pipe = child->fds[i]->handle;
+            pipe->reference_count++;
+        }
     }
 
     memcpy(&child->term, &current_task->term, sizeof(termios));
+
+    child->tmp_rec_v = 0;
 
     can_schedule = true;
 
@@ -419,6 +433,9 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     }
     new_argv[argv_count] = NULL;
 
+    if ((uint64_t)argv >= KERNEL_HEAP_START && (uint64_t)argv < (KERNEL_HEAP_START + KERNEL_HEAP_SIZE))
+        free(argv);
+
     if (envp && (translate_address(get_current_page_dir(true), (uint64_t)envp) != 0))
     {
         for (envp_count = 0; envp[envp_count] != NULL; envp_count++)
@@ -457,8 +474,8 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         free(new_envp);
 
         execve_lock = false;
-        const char *argvs[256];
-        memset(argvs, 0, sizeof(argvs));
+        const char **argvs = (const char **)malloc(64 * sizeof(const char *));
+        memset(argvs, 0, 64 * sizeof(const char *));
         argvs[0] = path;
         for (int i = 0; i < argv_count; i++)
             argvs[i + 1] = argv[i];
@@ -519,6 +536,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
             if (!interpreter_node)
             {
                 can_schedule = true;
+                execve_lock = false;
                 return (uint64_t)-ENOENT;
             }
 
@@ -642,8 +660,6 @@ int task_block(task_t *task, task_state_t state, int timeout_ms)
     {
         arch_enable_interrupt();
 
-        arch_yield();
-
         arch_pause();
     }
 
@@ -672,8 +688,6 @@ uint64_t task_exit(int64_t code)
     free_frames(virt_to_phys(task->syscall_stack), STACK_SIZE / DEFAULT_PAGE_SIZE);
 
     task->status = (uint64_t)code;
-
-    task->ppid = 0;
 
     for (uint64_t i = 0; i < MAX_FD_NUM; i++)
     {
@@ -707,79 +721,80 @@ uint64_t task_exit(int64_t code)
 uint64_t sys_waitpid(uint64_t pid, int *status)
 {
     task_t *child = NULL;
+    int current_status = 0;
+    uint64_t ret = -ECHILD;
 
     while (1)
     {
         bool has_child = false;
 
-        if (pid == (uint64_t)-1)
+        // 遍历所有任务查找符合条件的子进程
+        for (uint64_t i = cpu_count; i < MAX_TASK_NUM; i++)
         {
-            for (uint64_t i = cpu_count; i < MAX_TASK_NUM; i++)
-            {
-                task_t *ptr = tasks[i];
-                if (ptr && ptr->ppid != ptr->pid && ptr->ppid == current_task->pid && ptr->state == TASK_DIED)
-                {
-                    child = ptr;
-                    tasks[i] = NULL;
-                    goto rollback;
-                }
-                if (ptr && ptr->ppid != ptr->pid && ptr->ppid == current_task->pid && ptr->state != TASK_DIED)
-                {
-                    child = ptr;
-                    has_child = true;
-                    break;
-                }
-            }
+            task_t *ptr = tasks[i];
+            if (!ptr || ptr->ppid != current_task->pid)
+                continue;
 
-            if (!has_child)
-                return (uint64_t)-ECHILD;
-        }
-        else
-        {
-            for (uint64_t i = cpu_count; i < MAX_TASK_NUM; i++)
-            {
-                task_t *ptr = tasks[i];
-                if (!ptr)
-                    continue;
-
-                if (ptr->ppid != current_task->pid)
-                    continue;
-
-                if (pid != ptr->pid && pid != 0)
-                    continue;
-
-                if (ptr->state == TASK_DIED)
-                {
-                    child = ptr;
-                    tasks[i] = NULL;
-                    goto rollback;
-                }
-
+            // 处理不同pid参数情况
+            if (pid == (uint64_t)-1)
+            { // 任意子进程
                 has_child = true;
+            }
+            else if (pid == 0)
+            { // 同进程组
+                if (ptr->pgid == current_task->pgid)
+                    has_child = true;
+            }
+            else if (pid > 0)
+            { // 指定PID
+                if (ptr->pid != pid)
+                    continue;
+            }
 
-                break;
+            // 检查进程状态
+            if (ptr->state == TASK_DIED)
+            {
+                child = ptr;
+                tasks[i] = NULL;
+                goto rollback;
+            }
+            else
+            {
+                has_child = true;
             }
         }
-        if (has_child)
+
+        if (!has_child)
+            break;
+
+        current_task->state = TASK_BLOCKING;
+
+        while (current_task->state == TASK_BLOCKING)
         {
-            child->waitpid = current_task->pid;
-            task_block(current_task, TASK_BLOCKING, 0);
-
-            continue;
+            arch_enable_interrupt();
+            arch_pause();
         }
-
-        break;
     }
 
-    return -ENOENT;
-
 rollback:
-    *status = (int)child->status;
-    uint32_t ret = child->pid;
+    if (child)
+    {
+        if (status)
+        {
+            if (child->status < 128)
+            {
+                *status = (child->status & 0xff) << 8;
+            }
+            else
+            {
+                int sig = child->status - 128;
+                *status = sig | (0x80 << 8);
+            }
+        }
 
-    free_frames_bytes(child, sizeof(task_t));
-
-    current_task->waitpid = 0;
+        ret = child->pid;
+        free_frames_bytes(child, sizeof(task_t));
+    }
 
     return ret;
 }
@@ -799,6 +814,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
 
     child->state = TASK_READY;
+    child->current_state = TASK_READY;
 
     child->cpu_id = alloc_cpu_id();
 
@@ -838,6 +854,11 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
             pipe_t *pipe = child->fds[i]->handle;
             pipe->reference_count++;
         }
+        else if (child->fds[i] && child->fds[i]->type == file_epoll && child->fds[i]->handle)
+        {
+            epoll_t *pipe = child->fds[i]->handle;
+            pipe->reference_count++;
+        }
     }
 
     if (flags & CLONE_SIGHAND)
@@ -848,12 +869,18 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     }
 
     if (flags & CLONE_SETTLS)
+    {
 #if defined(__x86_64__)
         child->arch_context->fsbase = tls;
 #endif
+    }
 
     if (flags & CLONE_PARENT_SETTID)
+    {
         *parent_tid = (int)child->pid;
+    }
+
+    child->tmp_rec_v = 0;
 
     can_schedule = true;
 

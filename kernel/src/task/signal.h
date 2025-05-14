@@ -2,37 +2,57 @@
 
 #include <libs/klibc.h>
 
-enum SIGNAL
-{
-    SIGHUP = 1,   // 挂断控制终端或进程
-    SIGINT,       // 来自键盘的中断
-    SIGQUIT,      // 来自键盘的退出
-    SIGILL,       // 非法指令
-    SIGTRAP,      // 跟踪断点
-    SIGABRT,      // 异常结束
-    SIGIOT = 6,   // 异常结束
-    SIGUNUSED,    // 没有使用
-    SIGFPE,       // 协处理器出错
-    SIGKILL = 9,  // 强迫进程终止
-    SIGUSR1,      // 用户信号 1，进程可使用
-    SIGSEGV,      // 无效内存引用
-    SIGUSR2,      // 用户信号 2，进程可使用
-    SIGPIPE,      // 管道写出错，无读者
-    SIGALRM,      // 实时定时器报警
-    SIGTERM = 15, // 进程终止
-    SIGSTKFLT,    // 栈出错（协处理器）
-    SIGCHLD,      // 子进程停止或被终止
-    SIGCONT,      // 恢复进程继续执行
-    SIGSTOP,      // 停止进程的执行
-    SIGTSTP,      // tty 发出停止进程，可忽略
-    SIGTTIN,      // 后台进程请求输入
-    SIGTTOU = 22, // 后台进程请求输出
-};
+#define SIGHUP 1
+#define SIGINT 2
+#define SIGQUIT 3
+#define SIGILL 4
+#define SIGTRAP 5
+#define SIGABRT 6
+#define SIGIOT 6
+#define SIGBUS 7
+#define SIGFPE 8
+#define SIGKILL 9
+#define SIGUSR1 10
+#define SIGSEGV 11
+#define SIGUSR2 12
+#define SIGPIPE 13
+#define SIGALRM 14
+#define SIGTERM 15
+#define SIGSTKFLT 16
+#define SIGCHLD 17
+#define SIGCONT 18
+#define SIGSTOP 19
+#define SIGTSTP 20
+#define SIGTTIN 21
+#define SIGTTOU 22
+#define SIGURG 23
+#define SIGXCPU 24
+#define SIGXFSZ 25
+#define SIGVTALRM 26
+#define SIGPROF 27
+#define SIGWINCH 28
+#define SIGIO 29
+#define SIGPOLL SIGIO
+/*
+#define SIGLOST		29
+*/
+#define SIGPWR 30
+#define SIGSYS 31
+#define SIGUNUSED 31
 
 #define MINSIG 1
-#define MAXSIG 63
+#define MAXSIG 32
 
 #define SIGMASK(sig) (1UL << ((sig) - 1))
+
+typedef enum signal_internal
+{
+    SIGNAL_INTERNAL_CORE = 0,
+    SIGNAL_INTERNAL_TERM,
+    SIGNAL_INTERNAL_IGN,
+    SIGNAL_INTERNAL_STOP,
+    SIGNAL_INTERNAL_CONT
+} signal_internal_t;
 
 // 不阻止在指定的信号处理程序中再收到该信号
 #define SIG_NOMASK 0x40000000
@@ -40,18 +60,24 @@ enum SIGNAL
 // 信号句柄一旦被调用过就恢复到默认处理句柄
 #define SIG_ONESHOT 0x80000000
 
-#define SIG_DFL ((void (*)(int))0) // 默认的信号处理程序（信号句柄）
-#define SIG_IGN ((void (*)(int))1) // 忽略信号的处理程序
+struct task;
+typedef struct task task_t;
+
+bool signals_pending_quick(task_t *task);
 
 #define SIG_BLOCK 0   /* for blocking signals */
 #define SIG_UNBLOCK 1 /* for unblocking signals */
 #define SIG_SETMASK 2 /* for setting the signal mask */
 
 typedef uint64_t sigset_t;
+typedef void (*sighandler_t)(void);
+
+#define SIG_DFL ((sighandler_t)0) // 默认的信号处理程序（信号句柄）
+#define SIG_IGN ((sighandler_t)1) // 忽略信号的处理程序
 
 typedef struct sigaction
 {
-    void (*sa_handler)(int);
+    sighandler_t sa_handler;
     unsigned long sa_flags;
     void (*sa_restorer)(void);
     sigset_t sa_mask;

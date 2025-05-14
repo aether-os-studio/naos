@@ -6,143 +6,9 @@
 #include <fs/vfs/dev.h>
 #include <drivers/fb.h>
 
-mouse_dec ms_dec;
-int32_t mouse_x = 0;
-int32_t mouse_y = 0;
-int32_t old_x = 0;
-int32_t old_y = 0;
-int32_t delta_x = 0;
-int32_t delta_y = 0;
-
-extern struct limine_framebuffer *fb;
-
-bool mousedecode(uint8_t data)
-{
-    close_interrupt;
-
-    if (ms_dec.phase == 0)
-    {
-        if (data == 0xfa)
-        {
-            ms_dec.phase = 1;
-        }
-
-        open_interrupt;
-
-        return false;
-    }
-    if (ms_dec.phase == 1)
-    {
-        if ((data & 0xc8) == 0x08)
-        {
-            ms_dec.buf[0] = data;
-            ms_dec.phase = 2;
-        }
-
-        open_interrupt;
-
-        return 0;
-    }
-    if (ms_dec.phase == 2)
-    {
-        ms_dec.buf[1] = data;
-        ms_dec.phase = 3;
-        return 0;
-    }
-    if (ms_dec.phase == 3)
-    {
-        ms_dec.buf[2] = data;
-        ms_dec.phase = 1;
-        ms_dec.btn = ms_dec.buf[0] & 0x07;
-        ms_dec.x = ms_dec.buf[1];
-        ms_dec.y = ms_dec.buf[2];
-
-        if ((ms_dec.buf[0] & 0x10) != 0)
-            ms_dec.x |= 0xffffff00;
-        if ((ms_dec.buf[0] & 0x20) != 0)
-            ms_dec.y |= 0xffffff00;
-        ms_dec.y = -ms_dec.y;
-
-        open_interrupt;
-
-        return true;
-    }
-
-    open_interrupt;
-
-    ms_dec.phase = 0;
-
-    return false;
-}
-
-void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs)
-{
-    uint8_t data = io_in8(PORT_KB_DATA);
-
-    if (mousedecode(data))
-    {
-        old_x = mouse_x;
-        old_y = mouse_y;
-
-        mouse_x += ms_dec.x;
-        mouse_y += ms_dec.y;
-
-        if (mouse_x < 0)
-            mouse_x = 0;
-        if (mouse_y < 0)
-            mouse_y = 0;
-        if (fb && mouse_x > (int32_t)fb->width)
-            mouse_x = (int32_t)fb->width;
-        if (fb && mouse_y > (int32_t)fb->height)
-            mouse_y = (int32_t)fb->height;
-
-        delta_x = mouse_x - old_x;
-        delta_y = mouse_y - old_y;
-
-        if (ms_dec.btn & 0x01)
-        {
-            ms_dec.left = true;
-        }
-        else
-        {
-            ms_dec.left = false;
-        }
-
-        if (ms_dec.btn & 0x02)
-        {
-            ms_dec.right = true;
-        }
-        else
-        {
-            ms_dec.right = false;
-        }
-
-        if (ms_dec.btn & 0x04)
-        {
-            ms_dec.center = true;
-        }
-        else
-        {
-            ms_dec.center = false;
-        }
-    }
-}
-
-void get_mouse_xy(int32_t *x, int32_t *y)
-{
-    *x = mouse_x;
-    *y = mouse_y;
-}
-
-bool mouse_click_left()
-{
-    return (ms_dec.left);
-}
-
-bool mouse_click_right()
-{
-    return (ms_dec.right);
-}
+#define FLANTERM_IN_FLANTERM
+#include <libs/flanterm/flanterm_private.h>
+#include <libs/flanterm/backends/fb_private.h>
 
 err_t mouse_install(uint64_t vector, uint64_t arg)
 {
@@ -157,47 +23,162 @@ irq_controller_t mouse_controller =
         .ack = apic_ack,
 };
 
+void mouse_wait(uint8_t a_type)
+{
+    uint32_t timeout = 1000;
+    if (!a_type)
+    {
+        while (--timeout)
+        {
+            if (io_in8(PORT_KB_STATUS) & MOUSE_BBIT)
+                break;
+        }
+    }
+    else
+    {
+        while (--timeout)
+        {
+            if (!((io_in8(PORT_KB_STATUS) & MOUSE_ABIT)))
+                break;
+        }
+    }
+}
+
+void mouse_write(uint8_t write)
+{
+    mouse_wait(1);
+    io_out8(PORT_KB_STATUS, KB_SEND2MOUSE);
+    mouse_wait(1);
+    io_out8(PORT_KB_DATA, write);
+}
+
+uint8_t mouse_read()
+{
+    mouse_wait(0);
+    char t = io_in8(PORT_KB_DATA);
+    return t;
+}
+
+int mouseCycle = 0;
+
+int mouse1 = 0;
+int mouse2 = 0;
+
+int gx = 0;
+int gy = 0;
+
+bool clickedLeft = false;
+bool clickedRight = true;
+
+dev_input_event_t *mouse_event = NULL;
+
+extern struct flanterm_context *ft_ctx;
+
+void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs)
+{
+    arch_disable_interrupt();
+
+    uint8_t byte = mouse_read();
+
+    // return;
+    // rest are just for demonstration
+
+    // debugf("%d %d %d\n", byte1, byte2, byte3);
+    if (mouseCycle == 0)
+        mouse1 = byte;
+    else if (mouseCycle == 1)
+        mouse2 = byte;
+    else
+    {
+        int mouse3 = byte;
+
+        do
+        {
+            int x = mouse2;
+            int y = mouse3;
+            if (x && mouse1 & (1 << 4))
+                x -= 0x100;
+            if (y && mouse1 & (1 << 5))
+                y -= 0x100;
+
+            gx += x;
+            gy += -y;
+            if (gx < 0)
+                gx = 0;
+            if (gy < 0)
+                gy = 0;
+            if (gx > ((struct flanterm_fb_context *)ft_ctx)->width)
+                gx = ((struct flanterm_fb_context *)ft_ctx)->width;
+            if (gy > ((struct flanterm_fb_context *)ft_ctx)->height)
+                gy = ((struct flanterm_fb_context *)ft_ctx)->height;
+
+            bool click = mouse1 & (1 << 0);
+            bool rclick = mouse1 & (1 << 1);
+
+            if (clickedLeft && !click)
+                input_generate_event(mouse_event, EV_KEY, BTN_LEFT, 0);
+            if (!clickedLeft && click)
+                input_generate_event(mouse_event, EV_KEY, BTN_LEFT, 1);
+
+            if (clickedRight && !rclick)
+                input_generate_event(mouse_event, EV_KEY, BTN_RIGHT, 0);
+            if (!clickedRight && rclick)
+                input_generate_event(mouse_event, EV_KEY, BTN_RIGHT, 1);
+
+            clickedRight = rclick;
+            clickedLeft = click;
+
+            input_generate_event(mouse_event, EV_REL, REL_X, x);
+            input_generate_event(mouse_event, EV_REL, REL_Y, -y);
+            input_generate_event(mouse_event, EV_SYN, SYN_REPORT, 0);
+
+            (void)mouse3;
+        } while (0);
+    }
+
+    mouseCycle++;
+    if (mouseCycle > 2)
+        mouseCycle = 0;
+
+    arch_enable_interrupt();
+}
+
 void mouse_init()
 {
     irq_regist_irq(PS2_MOUSE_INTERRUPT_VECTOR, mouse_handler, 12, NULL, &mouse_controller, "PS2 MOUSE");
 
-    // 启用鼠标端口
-    wait_KB_write();
-    io_out8(PORT_KB_CMD, KB_EN_MOUSE_INTFACE); // 0xA8
+    mouse_wait(1);
+    io_out8(0x64, 0xA8);
 
-    // 发送鼠标启用命令
-    wait_KB_write();
-    io_out8(PORT_KB_CMD, KB_SEND2MOUSE); // 0xD4
-    wait_KB_write();
-    io_out8(PORT_KB_DATA, MOUSE_EN); // 0xF4
+    // enable interrupts
+    mouse_wait(1);
+    io_out8(0x64, 0x20);
+    mouse_wait(0);
+    uint8_t status;
+    status = (io_in8(0x60) | 2);
+    mouse_wait(1);
+    io_out8(0x64, 0x60);
+    mouse_wait(1);
+    io_out8(0x60, status);
 
-    // 必须等待ACK
-    wait_KB_read();
-    if (io_in8(PORT_KB_DATA) != 0xFA)
-    {
-        printk("Mouse enable failed\n");
-    }
+    // default settings
+    mouse_write(0xF6);
+    mouse_read();
 
-    // 设置鼠标采样率为100 (可选，但推荐)
-    wait_KB_write();
-    io_out8(PORT_KB_CMD, KB_SEND2MOUSE);
-    wait_KB_write();
-    io_out8(PORT_KB_DATA, 0xF3); // 设置采样率
-    wait_KB_read();
-    if (io_in8(PORT_KB_DATA) != 0xFA)
-    {
-    }
+    // enable device
+    mouse_write(0xF4);
+    mouse_read();
 
-    wait_KB_write();
-    io_out8(PORT_KB_CMD, KB_SEND2MOUSE);
-    wait_KB_write();
-    io_out8(PORT_KB_DATA, 100); // 100 samples/s
-    wait_KB_read();
-    if (io_in8(PORT_KB_DATA) != 0xFA)
-    {
-    }
-
-    memset(&ms_dec, 0, sizeof(ms_dec));
+    vfs_node_t node = vfs_open("/dev/input/event0");
+    if (!node)
+        return;
+    dev_input_event_t *input = node->handle;
+    vfs_close(node);
+    if (!input)
+        return;
+    mouse_event = &input->device_events;
+    if (!mouse_event)
+        return;
 }
 
 size_t mouse_event_bit(void *data, uint64_t request, void *arg)

@@ -735,6 +735,11 @@ int iso9660_ioctl(void *file, ssize_t cmd, ssize_t arg)
     return 0;
 }
 
+int iso9660_poll(void *file, size_t events)
+{
+    return -EOPNOTSUPP;
+}
+
 static struct vfs_callback callbacks = {
     .mount = iso9660_mount,
     .unmount = iso9660_unmount,
@@ -746,6 +751,7 @@ static struct vfs_callback callbacks = {
     .mkfile = iso9660_mkfile,
     .stat = iso9660_stat,
     .ioctl = iso9660_ioctl,
+    .poll = iso9660_poll,
 };
 
 void iso9660_init()
