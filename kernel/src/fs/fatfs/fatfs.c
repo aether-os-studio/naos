@@ -220,7 +220,7 @@ int fatfs_stat(void *handle, vfs_node_t node)
 
 int fatfs_ioctl(void *file, ssize_t cmd, ssize_t arg)
 {
-    return 0;
+    return -ENOSYS;
 }
 
 int fatfs_poll(void *file, size_t events)

@@ -365,18 +365,24 @@ uint64_t task_fork(struct pt_regs *regs)
     child->load_start = current_task->load_start;
     child->load_end = current_task->load_end;
 
-    memcpy(child->fds, current_task->fds, sizeof(child->fds));
-    for (uint64_t i = 3; i < MAX_FD_NUM; i++)
+    for (uint64_t i = 0; i < MAX_FD_NUM; i++)
     {
-        if (child->fds[i] && child->fds[i]->type == file_pipe && child->fds[i]->handle)
+        vfs_node_t node = current_task->fds[i];
+        if (node)
         {
-            pipe_t *pipe = child->fds[i]->handle;
-            pipe->reference_count++;
-        }
-        else if (child->fds[i] && child->fds[i]->type == file_epoll && child->fds[i]->handle)
-        {
-            epoll_t *pipe = child->fds[i]->handle;
-            pipe->reference_count++;
+            if (node->type == file_pipe)
+            {
+                pipe_specific_t *spec = (pipe_specific_t *)node->handle;
+                pipe_info_t *pipe = spec->info;
+                if (spec->write)
+                    pipe->writeFds++;
+                else
+                    pipe->readFds++;
+            }
+            char *fullpath = vfs_get_fullpath(node);
+            vfs_node_t new = vfs_open(fullpath);
+            free(fullpath);
+            child->fds[i] = new;
         }
     }
 
@@ -701,6 +707,10 @@ uint64_t task_exit(int64_t code)
     {
         task_unblock(tasks[task->waitpid], EOK);
     }
+    if (task->ppid != task->pid && tasks[task->ppid] && tasks[task->ppid]->state == TASK_BLOCKING)
+    {
+        task_unblock(tasks[task->ppid], EOK);
+    }
 
     free_page_table(task->arch_context->cr3);
 
@@ -721,7 +731,6 @@ uint64_t task_exit(int64_t code)
 uint64_t sys_waitpid(uint64_t pid, int *status)
 {
     task_t *child = NULL;
-    int current_status = 0;
     uint64_t ret = -ECHILD;
 
     while (1)
@@ -766,6 +775,8 @@ uint64_t sys_waitpid(uint64_t pid, int *status)
 
         if (!has_child)
             break;
+
+        child->waitpid = current_task->pid;
 
         current_task->state = TASK_BLOCKING;
 
@@ -846,18 +857,24 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->load_start = current_task->load_start;
     child->load_end = current_task->load_end;
 
-    memcpy(child->fds, current_task->fds, sizeof(child->fds));
-    for (uint64_t i = 3; i < MAX_FD_NUM; i++)
+    for (uint64_t i = 0; i < MAX_FD_NUM; i++)
     {
-        if (child->fds[i] && child->fds[i]->type == file_pipe && child->fds[i]->handle)
+        vfs_node_t node = current_task->fds[i];
+        if (node)
         {
-            pipe_t *pipe = child->fds[i]->handle;
-            pipe->reference_count++;
-        }
-        else if (child->fds[i] && child->fds[i]->type == file_epoll && child->fds[i]->handle)
-        {
-            epoll_t *pipe = child->fds[i]->handle;
-            pipe->reference_count++;
+            if (node->type == file_pipe)
+            {
+                pipe_specific_t *spec = (pipe_specific_t *)node->handle;
+                pipe_info_t *pipe = spec->info;
+                if (spec->write)
+                    pipe->writeFds++;
+                else
+                    pipe->readFds++;
+            }
+            char *fullpath = vfs_get_fullpath(node);
+            vfs_node_t new = vfs_open(fullpath);
+            free(fullpath);
+            child->fds[i] = new;
         }
     }
 

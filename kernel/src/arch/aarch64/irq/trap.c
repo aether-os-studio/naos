@@ -269,10 +269,6 @@ void handle_exception(struct pt_regs *frame)
     if (ec == ESR_ELx_EC_DABT_LOW || ec == ESR_ELx_EC_DABT_CUR)
     {
         __asm__ volatile("mrs %0, far_el1" : "=r"(fault_addr));
-        // if (NX_HalHandlePageFault(NX_ThreadSelf(), frame, fault_addr) == NX_EOK)
-        // {
-        //     return;
-        // }
         printk("fault address = %#018lx", fault_addr);
     }
 

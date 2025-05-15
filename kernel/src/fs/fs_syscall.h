@@ -159,6 +159,7 @@ uint64_t sys_chdir(const char *dirname);
 uint64_t sys_getcwd(char *cwd, uint64_t size);
 
 uint64_t sys_dup(uint64_t fd);
+uint64_t sys_dup2(uint64_t fd, uint64_t newfd);
 
 #define F_DUPFD 0
 #define F_GETFD 1

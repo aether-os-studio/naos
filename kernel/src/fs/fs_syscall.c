@@ -74,18 +74,6 @@ uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode)
 
     // 新增标志位检查
     int create_mode = (flags & O_CREAT);
-    int excl_mode = (flags & O_EXCL);
-
-    // 处理 O_EXCL 标志
-    if (create_mode && excl_mode)
-    {
-        vfs_node_t exist_check = vfs_open(name);
-        if (exist_check)
-        {
-            vfs_close(exist_check);
-            return (uint64_t)-EEXIST;
-        }
-    }
 
     vfs_node_t node = vfs_open(name);
     if (!node && !create_mode)
@@ -397,6 +385,15 @@ uint64_t sys_dup(uint64_t fd)
         return (uint64_t)-EBADF;
     }
 
+    if (node->type == file_pipe)
+    {
+        pipe_specific_t *spec = (pipe_specific_t *)node->handle;
+        pipe_info_t *pipe = spec->info;
+        if (spec->write)
+            pipe->writeFds++;
+        else
+            pipe->readFds++;
+    }
     char *fullpath = vfs_get_fullpath(node);
     vfs_node_t new = vfs_open(fullpath);
     free(fullpath);
@@ -404,6 +401,34 @@ uint64_t sys_dup(uint64_t fd)
     current_task->fds[i] = new;
 
     return i;
+}
+
+uint64_t sys_dup2(uint64_t fd, uint64_t newfd)
+{
+    vfs_node_t node = current_task->fds[fd];
+    if (!node)
+        return (uint64_t)-EBADF;
+
+    if (node->type == file_pipe)
+    {
+        pipe_specific_t *spec = (pipe_specific_t *)node->handle;
+        pipe_info_t *pipe = spec->info;
+        if (spec->write)
+            pipe->writeFds++;
+        else
+            pipe->readFds++;
+    }
+    char *fullpath = vfs_get_fullpath(node);
+    vfs_node_t new = vfs_open(fullpath);
+    free(fullpath);
+
+    if (current_task->fds[newfd])
+    {
+        vfs_close(current_task->fds[newfd]);
+    }
+    current_task->fds[newfd] = new;
+
+    return newfd;
 }
 
 uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
@@ -610,7 +635,7 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint32_t timeout)
         arch_enable_interrupt();
 
         arch_pause();
-    } while (timeout != 0 && (timeout == -1 || (nanoTime() - start_time) < timeout));
+    } while (timeout != 0 && ((int)timeout == -1 || (nanoTime() - start_time) < timeout));
 
     arch_disable_interrupt();
 
