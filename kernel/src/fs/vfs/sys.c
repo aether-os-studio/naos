@@ -5,13 +5,17 @@
 static vfs_node_t sysfs_root = NULL;
 static int sysfs_id = 0;
 
+static vfs_node_t dev_root = NULL;
 static vfs_node_t bus_root = NULL;
 static vfs_node_t class_root = NULL;
 static vfs_node_t pci_root = NULL;
 static vfs_node_t pci_devices_root = NULL;
 static vfs_node_t graphics_root = NULL;
 
-static void dummy() {}
+static int dummy()
+{
+    return -ENOSYS;
+}
 
 void sysfs_open(void *parent, const char *name, vfs_node_t node)
 {
@@ -94,6 +98,8 @@ void sysfs_init()
     sysfs_root = vfs_node_alloc(rootdir, "sys");
     sysfs_root->type = file_dir;
     sysfs_root->fsid = sysfs_id;
+    dev_root = vfs_child_append(sysfs_root, "dev", NULL);
+    dev_root->type = file_dir;
     bus_root = vfs_child_append(sysfs_root, "bus", NULL);
     bus_root->type = file_dir;
     class_root = vfs_child_append(sysfs_root, "class", NULL);

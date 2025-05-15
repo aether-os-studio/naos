@@ -5,6 +5,7 @@
 #include <arch/arch.h>
 #include <mm/mm.h>
 #include <fs/fs_syscall.h>
+#include <fs/vfs/proc.h>
 
 task_t *tasks[MAX_TASK_NUM];
 task_t *idle_tasks[MAX_CPU_NUM];
@@ -97,6 +98,9 @@ task_t *task_create(const char *name, void (*entry)())
     }
 
     task->tmp_rec_v = 0;
+    task->cmdline = NULL;
+
+    procfs_regist_proc(task);
 
     can_schedule = true;
 
@@ -358,6 +362,7 @@ uint64_t task_fork(struct pt_regs *regs)
     child->jiffies = current_task->jiffies;
 
     child->cwd = current_task->cwd;
+    child->cmdline = current_task->cmdline;
 
     child->mmap_start = USER_MMAP_START;
     child->brk_start = USER_BRK_START;
@@ -389,6 +394,8 @@ uint64_t task_fork(struct pt_regs *regs)
     memcpy(&child->term, &current_task->term, sizeof(termios));
 
     child->tmp_rec_v = 0;
+
+    procfs_regist_proc(child);
 
     can_schedule = true;
 
@@ -626,6 +633,16 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     map_page_range(get_current_page_dir(true), USER_STACK_START, 0, USER_STACK_END - USER_STACK_START, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
     uint64_t stack = push_infos(current_task, USER_STACK_END, (char **)new_argv, (char **)new_envp, e_entry, (uint64_t)(load_start + ehdr->e_phoff), ehdr->e_phnum, interpreter_entry ? INTERPRETER_BASE_ADDR : load_start);
+
+    char cmdline[256];
+    char *cmdline_ptr = cmdline;
+    for (int i = 0; i < argv_count; i++)
+    {
+        int len = sprintf(cmdline_ptr, "%s ", new_argv[i]);
+        cmdline_ptr[len] = ' ';
+        cmdline_ptr += (len + 1);
+    }
+
     for (int i = 0; i < argv_count; i++)
     {
         if (new_argv[i])
@@ -642,8 +659,11 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         }
     }
     free(new_envp);
+
+    current_task->cmdline = strdup(cmdline);
     current_task->load_start = load_start;
     current_task->load_end = load_end;
+
     execve_lock = false;
     can_schedule = true;
     arch_to_user_mode(current_task->arch_context, interpreter_entry ? interpreter_entry : e_entry, stack);
@@ -713,6 +733,11 @@ uint64_t task_exit(int64_t code)
     }
 
     free_page_table(task->arch_context->cr3);
+
+    if (task->cmdline)
+        free(task->cmdline);
+
+    procfs_unregist_proc(task);
 
     task->state = TASK_DIED;
 
@@ -850,6 +875,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->jiffies = current_task->jiffies;
 
     child->cwd = current_task->cwd;
+    child->cmdline = current_task->cmdline;
 
     child->mmap_start = USER_MMAP_START;
     child->brk_start = USER_BRK_START;
@@ -898,6 +924,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     }
 
     child->tmp_rec_v = 0;
+
+    procfs_regist_proc(child);
 
     can_schedule = true;
 

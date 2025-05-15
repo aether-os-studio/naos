@@ -397,6 +397,9 @@ dev_input_event_t *kb_event = NULL;
 
 void kb_evdev_generate(uint8_t raw)
 {
+    if (!kb_event)
+        return;
+
     uint8_t index = 0;
     bool clicked = false;
     if (raw <= 0x58)
@@ -563,16 +566,20 @@ void kbd_init()
 
     wait_KB_read();
 
-    vfs_node_t node = vfs_open("/dev/input/event0");
-    if (!node)
-        return;
-    dev_input_event_t *input = node->handle;
-    vfs_close(node);
-    if (!input)
-        return;
-    kb_event = &input->device_events;
+    for (uint64_t i = 0; i < MAX_DEV_NUM; i++)
+    {
+        if (devfs_handles[i] != NULL && !strncmp(devfs_handles[i]->name, "event0", MAX_DEV_NAME_LEN))
+        {
+            devfs_handle_t handle = devfs_handles[i];
+            kb_event = (dev_input_event_t *)handle->data;
+            break;
+        }
+    }
+
     if (!kb_event)
         return;
+
+    strncpy(kb_event->uniq, "ps2kbd", sizeof(kb_event->uniq));
 }
 
 void kb_finalise_stream()
@@ -646,7 +653,7 @@ size_t kb_event_bit(void *data, uint64_t request, void *arg)
     size_t number = _IOC_NR(request);
     size_t size = _IOC_SIZE(request);
 
-    size_t ret = (size_t)-ENOENT;
+    size_t ret = (size_t)-ENOSYS;
     switch (number)
     {
     case 0x20:
@@ -680,11 +687,10 @@ size_t kb_event_bit(void *data, uint64_t request, void *arg)
         memcpy(arg, map, ret);
         break;
     }
-    case 0x18:
-    {                          // EVIOCGKEY()
-        uint8_t map[96] = {0}; // NO idea what these do
-        // bitmapGenericSet(map, KEY_ENTER, true);
-        // bitmapGenericSet(map, KEY_RIGHTSHIFT, true);
+    case 0x18: // EVIOCGKEY()
+    {
+        uint8_t map[96];
+        memset(map, 0, sizeof(map));
         ret = MIN(96, size);
         memcpy(arg, map, ret);
         break;
@@ -694,6 +700,8 @@ size_t kb_event_bit(void *data, uint64_t request, void *arg)
         break;
     case 0x1b: // EVIOCGSW()
         ret = MIN(8, size);
+        break;
+    default:
         break;
     }
 

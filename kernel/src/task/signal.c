@@ -57,7 +57,7 @@ void signal_init()
 bool signals_pending_quick(task_t *task)
 {
     sigset_t pending_list = task->signal;
-    sigset_t unblocked_list = pending_list & ~task->blocked;
+    sigset_t unblocked_list = pending_list & (~task->blocked);
     for (int i = 0; i < MAXSIG; i++)
     {
         if (unblocked_list & (1 << i))

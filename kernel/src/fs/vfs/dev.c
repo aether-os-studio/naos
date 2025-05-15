@@ -14,7 +14,10 @@ vfs_node_t input_root = NULL;
 
 devfs_handle_t devfs_handles[MAX_DEV_NUM];
 
-static void dummy() {}
+static int dummy()
+{
+    return -ENOSYS;
+}
 
 ssize_t devfs_read(void *file, void *addr, size_t offset, size_t size)
 {
@@ -48,6 +51,11 @@ void devfs_open(void *parent, const char *name, vfs_node_t node)
         {
             devfs_handle_t handle = devfs_handles[i];
             node->handle = handle;
+            if (!strncmp(handle->name, "event", 5))
+            {
+                dev_input_event_t *event = handle->data;
+                event->timesOpened++;
+            }
             break;
         }
     }
@@ -55,7 +63,12 @@ void devfs_open(void *parent, const char *name, vfs_node_t node)
 
 void devfs_close(void *current)
 {
-    (void)current;
+    devfs_handle_t handle = (devfs_handle_t)current;
+    if (!strncmp(handle, "event", 5))
+    {
+        dev_input_event_t *event = handle->data;
+        event->timesOpened--;
+    }
 }
 
 int devfs_ioctl(devfs_handle_t handle, ssize_t cmd, ssize_t arg)
@@ -116,13 +129,25 @@ ssize_t inputdev_event_read(void *data, uint64_t offset, void *buf, uint64_t len
         size_t cnt = circular_int_read(&event->device_events, buf, len);
         if (cnt > 0)
             return cnt;
-        if (signals_pending_quick(current_task))
-            return -EINTR;
+
+        arch_enable_interrupt();
 
         arch_pause();
+
+        // if (signals_pending_quick(current_task))
+        //     return -EINTR;
     }
 
     return 0;
+}
+
+ssize_t inputdev_event_write(void *data, uint64_t offset, const void *buf, uint64_t len)
+{
+    dev_input_event_t *event = data;
+
+    // todo
+
+    return len;
 }
 
 ssize_t inputdev_ioctl(void *data, ssize_t request, ssize_t arg)
@@ -150,7 +175,7 @@ ssize_t inputdev_ioctl(void *data, ssize_t request, ssize_t arg)
     }
 
     if (request == 0x540b) // TCFLSH, idk why don't ask me!
-        return -EINVAL;
+        return 0;
 
     switch (number)
     {
@@ -177,7 +202,16 @@ ssize_t inputdev_ioctl(void *data, ssize_t request, ssize_t arg)
         break;
     }
     case 0x08: // EVIOCGUNIQ()
-        ret = -ENOENT;
+        if (event->uniq[0])
+        {
+            int toCopy = MIN(size, (size_t)strlen(event->uniq) + 1);
+            memcpy((void *)arg, event->uniq, toCopy);
+            ret = toCopy;
+        }
+        else
+        {
+            ret = -ENODATA;
+        }
         break;
     case 0x09: // EVIOCGPROP()
         int toCopy = MIN(sizeof(size_t), size);
@@ -225,12 +259,16 @@ vfs_node_t regist_dev(const char *name,
     if (strstr(name, "/") != NULL)
     {
         new_name = strstr(name, "/") + 1;
-        uint64_t path_len = new_name - name;
-        char new_path[256];
+        uint64_t path_len = new_name - name - 1;
+        char new_path[32];
         strcpy(new_path, "/dev/");
         strncpy(new_path + 5, name, path_len);
-        vfs_mkdir((const char *)new_path);
         dev = vfs_open((const char *)new_path);
+        if (!dev)
+        {
+            vfs_mkdir((const char *)new_path);
+            dev = vfs_open((const char *)new_path);
+        }
     }
 
     for (uint64_t i = 0; i < MAX_DEV_NUM; i++)
@@ -248,6 +286,10 @@ vfs_node_t regist_dev(const char *name,
             child->type = file_block;
             if (!strncmp(devfs_handles[i]->name, "std", 3) || !strncmp(devfs_handles[i]->name, "tty", 3) || !strncmp(devfs_handles[i]->name, "fb", 2))
                 child->type = file_stream;
+            else if (!strncmp(devfs_handles[i]->name, "event0", 6))
+                child->type = file_keyboard;
+            else if (!strncmp(devfs_handles[i]->name, "event1", 6))
+                child->type = file_mouse;
 
             return child;
         }
@@ -438,13 +480,11 @@ ssize_t urandom_dev_read(void *data, uint64_t offset, void *buf, uint64_t len)
 
 ssize_t urandom_dev_write(void *data, uint64_t offset, const void *buf, uint64_t len)
 {
-    // 允许写入数据作为额外熵源
     return len;
 }
 
 ssize_t urandom_dev_ioctl(void *data, ssize_t cmd, ssize_t arg)
 {
-    // 实现RNDADDENTROPY等命令
     switch (cmd)
     {
     default:
@@ -468,16 +508,20 @@ void dev_init()
     kb_input_event->inputid.product = 0x0001; // Generic MS Keyboard
     kb_input_event->inputid.version = 0x0100; // Basic MS Version
     kb_input_event->event_bit = kb_event_bit;
+    kb_input_event->device_events.read_ptr = 0;
+    kb_input_event->device_events.write_ptr = 0;
     circular_int_init(&kb_input_event->device_events, 16384);
-    vfs_node_t kb_node = regist_dev("input/event0", inputdev_event_read, NULL, inputdev_ioctl, inputdev_poll, kb_input_event);
+    vfs_node_t kb_node = regist_dev("input/event0", inputdev_event_read, inputdev_event_write, inputdev_ioctl, inputdev_poll, kb_input_event);
     dev_input_event_t *mouse_input_event = malloc(sizeof(dev_input_event_t));
     mouse_input_event->inputid.bustype = 0x05;   // BUS_PS2
     mouse_input_event->inputid.vendor = 0x045e;  // Microsoft
     mouse_input_event->inputid.product = 0x00b4; // Generic MS Mouse
     mouse_input_event->inputid.version = 0x0100; // Basic MS Version
     mouse_input_event->event_bit = mouse_event_bit;
+    mouse_input_event->device_events.read_ptr = 0;
+    mouse_input_event->device_events.write_ptr = 0;
     circular_int_init(&mouse_input_event->device_events, 16384);
-    vfs_node_t mouse_node = regist_dev("input/event1", inputdev_event_read, NULL, inputdev_ioctl, inputdev_poll, mouse_input_event);
+    vfs_node_t mouse_node = regist_dev("input/event1", inputdev_event_read, inputdev_event_write, inputdev_ioctl, inputdev_poll, mouse_input_event);
 
     regist_dev("null", null_dev_read, null_dev_write, NULL, NULL, NULL);
     regist_dev("random", random_dev_read, NULL, NULL, NULL, NULL);

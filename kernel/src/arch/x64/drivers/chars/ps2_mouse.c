@@ -76,9 +76,10 @@ extern struct flanterm_context *ft_ctx;
 
 void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs)
 {
-    arch_disable_interrupt();
-
     uint8_t byte = mouse_read();
+
+    if (!mouse_event)
+        return;
 
     // return;
     // rest are just for demonstration
@@ -139,8 +140,6 @@ void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs)
     mouseCycle++;
     if (mouseCycle > 2)
         mouseCycle = 0;
-
-    arch_enable_interrupt();
 }
 
 void mouse_init()
@@ -169,16 +168,20 @@ void mouse_init()
     mouse_write(0xF4);
     mouse_read();
 
-    vfs_node_t node = vfs_open("/dev/input/event0");
-    if (!node)
-        return;
-    dev_input_event_t *input = node->handle;
-    vfs_close(node);
-    if (!input)
-        return;
-    mouse_event = &input->device_events;
+    for (uint64_t i = 0; i < MAX_DEV_NUM; i++)
+    {
+        if (devfs_handles[i] != NULL && !strncmp(devfs_handles[i]->name, "event1", MAX_DEV_NAME_LEN))
+        {
+            devfs_handle_t handle = devfs_handles[i];
+            mouse_event = (dev_input_event_t *)handle->data;
+            break;
+        }
+    }
+
     if (!mouse_event)
         return;
+
+    strncpy(mouse_event->uniq, "ps2mouse", sizeof(mouse_event->uniq));
 }
 
 size_t mouse_event_bit(void *data, uint64_t request, void *arg)
@@ -186,7 +189,7 @@ size_t mouse_event_bit(void *data, uint64_t request, void *arg)
     size_t number = _IOC_NR(request);
     size_t size = _IOC_SIZE(request);
 
-    size_t ret = (size_t)-ENOENT;
+    size_t ret = (size_t)-ENOSYS;
     switch (number)
     {
     case 0x20:
@@ -254,6 +257,8 @@ size_t mouse_event_bit(void *data, uint64_t request, void *arg)
         break;
     case 0x1b: // EVIOCGSW()
         ret = MIN(8, size);
+        break;
+    default:
         break;
     }
 

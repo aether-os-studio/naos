@@ -93,13 +93,15 @@ typedef int64_t ssize_t;
 
 enum
 {
-    file_none,   // 未获取信息
-    file_dir,    // 文件夹
-    file_block,  // 块设备，如硬盘
-    file_stream, // 流式设备，如终端
-    file_pipe,   // 管道设备
-    file_socket, // 套接字设备
-    file_epoll,  // epoll 设备
+    file_none,     // 未获取信息
+    file_dir,      // 文件夹
+    file_block,    // 块设备，如硬盘
+    file_stream,   // 流式设备，如终端
+    file_keyboard, // 键盘设备
+    file_mouse,    // 鼠标设备
+    file_pipe,     // 管道设备
+    file_socket,   // 套接字设备
+    file_epoll,    // epoll 设备
 };
 
 typedef struct vfs_node *vfs_node_t;

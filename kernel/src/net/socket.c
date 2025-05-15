@@ -862,7 +862,47 @@ int sys_getpeername(int fd, struct sockaddr *addr, socklen_t *addrlen)
     return 0;
 }
 
-static void dummy() {}
+int socket_poll(void *file, size_t events)
+{
+    socket_t *socket = file;
+    int revents = 0;
+
+    // if (socket->max > 0)
+    // {
+    //     // listen()
+    //     spinlockAcquire(&socket->LOCK_SOCK);
+    //     if (socket->connCurr < socket->connMax) // can connect()
+    //         revents |= (events & EPOLLOUT) ? EPOLLOUT : 0;
+    //     if (socket->connCurr > 0) // can accept()
+    //         revents |= (events & EPOLLIN) ? EPOLLIN : 0;
+    //     spinlockRelease(&socket->LOCK_SOCK);
+    // }
+    // else if (socket->pair)
+    // {
+    //     // connect()
+    //     UnixSocketPair *pair = socket->pair;
+    //     spinlockAcquire(&pair->LOCK_PAIR);
+    //     if (!pair->serverFds)
+    //         revents |= EPOLLHUP;
+
+    //     if (events & EPOLLOUT && pair->serverFds &&
+    //         pair->serverBuffPos < pair->serverBuffSize)
+    //         revents |= EPOLLOUT;
+
+    //     if (events & EPOLLIN && pair->clientBuffPos > 0)
+    //         revents |= EPOLLIN;
+    //     spinlockRelease(&pair->LOCK_PAIR);
+    // }
+    // else
+    revents |= EPOLLHUP;
+
+    return revents;
+}
+
+static int dummy()
+{
+    return -ENOSYS;
+}
 
 static struct vfs_callback callback =
     {
@@ -876,7 +916,7 @@ static struct vfs_callback callback =
         .mkfile = (vfs_mk_t)dummy,
         .stat = (vfs_stat_t)dummy,
         .ioctl = (vfs_ioctl_t)dummy,
-        .poll = (vfs_poll_t)dummy,
+        .poll = (vfs_poll_t)socket_poll,
 };
 
 void socketfs_init()

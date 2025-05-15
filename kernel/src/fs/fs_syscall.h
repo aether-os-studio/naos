@@ -233,7 +233,11 @@ struct epoll_event
 {
     uint32_t events;
     epoll_data_t data;
-};
+}
+#ifdef __x86_64__
+__attribute__((__packed__))
+#endif
+;
 
 typedef struct epoll_watch
 {
@@ -242,17 +246,22 @@ typedef struct epoll_watch
     vfs_node_t fd;
     int watchEvents;
 
-    uint64_t userlandData; // pass it directly
+    uint64_t userlandData;
 } epoll_watch_t;
 
 typedef struct epoll
 {
+    bool lock;
+
     struct epoll *next;
 
     epoll_watch_t *firstEpollWatch;
 
     uint64_t reference_count;
 } epoll_t;
+
+uint32_t poll_to_epoll_comp(uint32_t poll_events);
+uint32_t epoll_to_poll_comp(uint32_t epoll_events);
 
 #define EPOLLIN 0x001
 #define EPOLLPRI 0x002

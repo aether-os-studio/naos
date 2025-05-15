@@ -7,7 +7,10 @@ vfs_node_t pipefs_root;
 int pipefs_id = 0;
 static int pipefd_id = 0;
 
-static void dummy() {}
+static int dummy()
+{
+    return -ENOSYS;
+}
 
 void pipefs_open(void *parent, const char *name, vfs_node_t node)
 {
@@ -100,15 +103,14 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
     pipe_specific_t *spec = (pipe_specific_t *)file;
     pipe_info_t *pipe = spec->info;
 
-    arch_disable_interrupt();
     while (pipe->lock)
     {
         arch_enable_interrupt();
         arch_pause();
-        arch_disable_interrupt();
     }
+
+    arch_disable_interrupt();
     pipe->lock = true;
-    arch_enable_interrupt();
 
     while ((pipe->assigned + size) > PIPE_BUFF && pipe->readFds > 0)
     {

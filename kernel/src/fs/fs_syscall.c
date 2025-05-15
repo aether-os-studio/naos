@@ -72,8 +72,9 @@ uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode)
         return (uint64_t)-EBADF;
     }
 
-    // 新增标志位检查
     int create_mode = (flags & O_CREAT);
+
+    // printk("Opening file %s\n", name);
 
     vfs_node_t node = vfs_open(name);
     if (!node && !create_mode)
@@ -92,9 +93,6 @@ uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode)
         {
             ret = vfs_mkfile(name);
         }
-        // 创建文件/目录的逻辑
-        if (ret < 0)
-            return (uint64_t)-ENOENT;
 
         node = vfs_open(name);
         if (!node)
@@ -146,6 +144,11 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len)
 
     ssize_t ret = vfs_read(current_task->fds[fd], buf, current_task->fds[fd]->offset, len);
 
+    if (ret == (ssize_t)-ENOSYS)
+    {
+        ret = sys_recv(fd, buf, len, 0);
+    }
+
     if (ret > 0)
     {
         current_task->fds[fd]->offset += ret;
@@ -177,6 +180,11 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len)
     }
 
     ssize_t ret = vfs_write(current_task->fds[fd], buf, current_task->fds[fd]->offset, len);
+
+    if (ret == (ssize_t)-ENOSYS)
+    {
+        ret = sys_send(fd, buf, len, 0);
+    }
 
     if (ret > 0)
     {
@@ -471,7 +479,22 @@ uint64_t sys_stat(const char *fd, struct stat *buf)
     buf->st_mode = 0777 | (node->type == file_dir ? S_IFDIR : S_IFREG);
     buf->st_uid = 0;
     buf->st_gid = 0;
-    buf->st_rdev = (node->type == file_stream) ? ((4 << 8) | 1) : 0;
+    if (node->type == file_stream)
+    {
+        buf->st_rdev = (4 << 8) | 1;
+    }
+    else if (node->type == file_keyboard)
+    {
+        buf->st_rdev = (13 << 8) | 0;
+    }
+    else if (node->type == file_mouse)
+    {
+        buf->st_rdev = (13 << 8) | 1;
+    }
+    else
+    {
+        buf->st_rdev = 0;
+    }
     buf->st_blksize = DEFAULT_PAGE_SIZE;
     buf->st_size = node->size;
     buf->st_blocks = (buf->st_size + buf->st_blksize - 1) / buf->st_blksize;
@@ -496,7 +519,22 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
     buf->st_mode = 0777 | (current_task->fds[fd]->type == file_dir ? S_IFDIR : S_IFREG);
     buf->st_uid = 0;
     buf->st_gid = 0;
-    buf->st_rdev = (current_task->fds[fd]->type == file_stream) ? ((4 << 8) | 1) : 0;
+    if (current_task->fds[fd]->type == file_stream)
+    {
+        buf->st_rdev = (4 << 8) | 1;
+    }
+    else if (current_task->fds[fd]->type == file_keyboard)
+    {
+        buf->st_rdev = (13 << 8) | 0;
+    }
+    else if (current_task->fds[fd]->type == file_mouse)
+    {
+        buf->st_rdev = (13 << 8) | 1;
+    }
+    else
+    {
+        buf->st_rdev = 0;
+    }
     buf->st_blksize = DEFAULT_PAGE_SIZE;
     buf->st_size = current_task->fds[fd]->size;
     buf->st_blocks = (buf->st_size + buf->st_blksize - 1) / buf->st_blksize;
@@ -619,7 +657,7 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint32_t timeout)
                     continue;
                 }
                 int revents = epoll_to_poll_comp(vfs_poll(node, poll_to_epoll_comp(fds[i].events)));
-                if (revents != 0)
+                if (revents > 0)
                 {
                     fds[i].revents = revents;
                     ready++;
@@ -627,7 +665,7 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint32_t timeout)
             }
         }
 
-        sigexit = signals_pending_quick(current_task);
+        // sigexit = signals_pending_quick(current_task);
 
         if (ready > 0 || sigexit)
             break;
@@ -834,7 +872,7 @@ uint64_t sys_link(const char *old, const char *new)
         ret = vfs_mkdir(new);
         if (ret < 0)
         {
-            return (uint64_t)-ENOENT;
+            return (uint64_t)-EEXIST;
         }
     }
     else
@@ -842,7 +880,7 @@ uint64_t sys_link(const char *old, const char *new)
         ret = vfs_mkfile(new);
         if (ret < 0)
         {
-            return (uint64_t)-ENOENT;
+            return (uint64_t)-EEXIST;
         }
     }
 
@@ -903,6 +941,7 @@ size_t epoll_create1(int flags)
     vfs_node_t node = vfs_node_alloc(epollfs_root, buf);
     node->type = file_epoll;
     epoll_t *epoll = malloc(sizeof(epoll_t));
+    epoll->lock = false;
     epoll->firstEpollWatch = NULL;
     epoll->reference_count = 1;
     node->handle = epoll;
@@ -918,8 +957,7 @@ uint64_t sys_epoll_create(int size)
     return epoll_create1(0);
 }
 
-uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events, int maxevents,
-                    int timeout)
+uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events, int maxevents, int timeout)
 {
     if (maxevents < 1)
         return (uint64_t)-EINVAL;
@@ -927,25 +965,37 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events, int maxevent
 
     bool sigexit = false;
 
-    // hack'y way but until I implement wake queues, it is what it is
     int ready = 0;
     size_t target = nanoTime() + timeout;
     do
     {
+        while (epoll->lock)
+        {
+            arch_pause();
+        }
+
+        epoll->lock = true;
         epoll_watch_t *browse = epoll->firstEpollWatch;
+
         while (browse && ready < maxevents)
         {
-            int revents = vfs_poll(browse->fd, browse->watchEvents);
-            if (revents != 0 && ready < maxevents)
+            if (browse->fd->fsid != 0)
             {
-                events[ready].events = revents;
-                events[ready].data = (epoll_data_t)browse->userlandData;
-                ready++;
+                int revents = vfs_poll(browse->fd, browse->watchEvents);
+                if (revents > 0 && ready < maxevents)
+                {
+                    events[ready].events = revents;
+                    events[ready].data = (epoll_data_t)browse->userlandData;
+                    ready++;
+                }
             }
             browse = browse->next;
         }
 
-        sigexit = signals_pending_quick(current_task);
+        epoll->lock = false;
+
+        // sigexit = signals_pending_quick(current_task);
+
         if (ready > 0 || sigexit)
             break;
 
@@ -976,7 +1026,7 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd, struct epoll_event *event)
 
     size_t ret = 0;
 
-    vfs_node_t fdNode = epollFd;
+    vfs_node_t fdNode = current_task->fds[fd];
     if (!fdNode)
     {
         ret = (uint64_t)(-EBADF);
@@ -988,11 +1038,21 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd, struct epoll_event *event)
     case EPOLL_CTL_ADD:
     {
         epoll_watch_t *epollWatch = malloc(sizeof(epoll_watch_t));
-        epollWatch->next = epoll->firstEpollWatch;
-        epoll->firstEpollWatch = epollWatch;
         epollWatch->fd = fdNode;
         epollWatch->watchEvents = event->events;
         epollWatch->userlandData = (uint64_t)event->data.ptr;
+        epollWatch->next = NULL;
+        epoll_watch_t *current = epoll->firstEpollWatch;
+        if (current)
+        {
+            while (current->next)
+                current = current->next;
+            current->next = epollWatch;
+        }
+        else
+        {
+            epoll->firstEpollWatch = epollWatch;
+        }
         break;
     }
     case EPOLL_CTL_MOD:
@@ -1284,7 +1344,10 @@ uint64_t sys_signalfd(int ufd, const sigset_t *mask, size_t sizemask)
     return sys_signalfd4(ufd, mask, sizemask, 0);
 }
 
-static void dummy() {}
+static int dummy()
+{
+    return -ENOSYS;
+}
 
 static struct vfs_callback epoll_callbacks = {
     .mount = (vfs_mount_t)dummy,

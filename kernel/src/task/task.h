@@ -126,6 +126,7 @@ typedef struct task
     uint64_t timer_slack_ns;
     termios term;
     uint32_t tmp_rec_v;
+    char *cmdline;
 } task_t;
 
 task_t *task_create(const char *name, void (*entry)());
