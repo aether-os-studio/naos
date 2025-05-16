@@ -12,7 +12,11 @@ uint64_t switch_to_kernel_stack()
 
 void *real_memcpy(void *dst, const void *src, size_t len)
 {
+#if defined(__x86_64__)
+    return fast_memcpy(dst, src, len);
+#else
     return memcpy(dst, src, len);
+#endif
 }
 
 void syscall_init()
@@ -177,13 +181,27 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         tm time;
         time_read(&time);
         uint64_t timestamp = mktime(&time);
-        if (arg2)
+        switch (arg1)
         {
-            struct timespec *ts = (struct timespec *)arg2;
-            ts->tv_sec = timestamp;
-            ts->tv_nsec = 0;
+        case 1: // <- todo
+        case 6: // CLOCK_MONOTONIC_COARSE
+        case 4: // CLOCK_MONOTONIC_RAW
+        case 0:
+        {
+            if (arg2)
+            {
+                struct timespec *ts = (struct timespec *)arg2;
+                ts->tv_sec = timestamp;
+                ts->tv_nsec = 0;
+            }
+            regs->rax = 0;
+            break;
         }
-        regs->rax = 0;
+        default:
+            printk("clock not supported\n");
+            regs->rax = (uint64_t)-EINVAL;
+            break;
+        }
         break;
     case SYS_CLOCK_GETRES:
         ((struct timespec *)arg2)->tv_nsec = 1000000;
@@ -421,6 +439,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_SETITIMER:
         regs->rax = sys_setitimer(arg1, (struct itimerval *)arg2, (struct itimerval *)arg3);
+        break;
+    case SYS_CHOWN:
+        regs->rax = 0;
         break;
     case SYS_FCHOWN:
         regs->rax = 0;

@@ -94,6 +94,24 @@ typedef struct arch_context arch_context_t;
 struct vfs_node;
 typedef struct vfs_node *vfs_node_t;
 
+struct timeval
+{
+    long tv_sec;
+    long tv_usec;
+};
+
+struct itimerval
+{
+    struct timeval it_interval;
+    struct timeval it_value;
+};
+
+typedef struct int_timer_internal
+{
+    uint64_t at;
+    uint64_t reset;
+} int_timer_internal_t;
+
 typedef struct task
 {
     uint64_t pid;
@@ -127,7 +145,10 @@ typedef struct task
     termios term;
     uint32_t tmp_rec_v;
     char *cmdline;
+    int_timer_internal_t itimer_real;
 } task_t;
+
+void sched_update_itimer();
 
 task_t *task_create(const char *name, void (*entry)());
 void task_init();
@@ -141,18 +162,6 @@ uint64_t sys_waitpid(uint64_t pid, int *status);
 uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *parent_tid, int *child_tid, uint64_t tls);
 struct timespec;
 uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem);
-
-struct timeval
-{
-    int64_t tv_sec;  /* Seconds.  */
-    int64_t tv_usec; /* Microseconds.  */
-};
-
-struct itimerval
-{
-    struct timeval it_interval;
-    struct timeval it_value;
-};
 
 size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old);
 

@@ -93,6 +93,8 @@ uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode)
         {
             ret = vfs_mkfile(name);
         }
+        if (ret < 0)
+            return (uint64_t)-ENOENT;
 
         node = vfs_open(name);
         if (!node)
@@ -325,7 +327,7 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
         if (read_count >= max_dents_num)
             break;
         vfs_node_t child_node = (vfs_node_t)i->data;
-        dents[read_count].d_ino = 0;
+        dents[read_count].d_ino = node->inode;
         dents[read_count].d_off = node->offset;
         dents[read_count].d_reclen = sizeof(struct dirent);
         switch (child_node->type)
@@ -465,8 +467,6 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
 
 uint64_t sys_stat(const char *fd, struct stat *buf)
 {
-    static uint64_t i = 0;
-
     vfs_node_t node = vfs_open(fd);
     if (!node)
     {
@@ -474,7 +474,7 @@ uint64_t sys_stat(const char *fd, struct stat *buf)
     }
 
     buf->st_dev = 0;
-    buf->st_ino = i++;
+    buf->st_ino = node->inode;
     buf->st_nlink = 1;
     buf->st_mode = 0777 | (node->type == file_dir ? S_IFDIR : S_IFREG);
     buf->st_uid = 0;
@@ -482,6 +482,10 @@ uint64_t sys_stat(const char *fd, struct stat *buf)
     if (node->type == file_stream)
     {
         buf->st_rdev = (4 << 8) | 1;
+    }
+    else if (node->type == file_fbdev)
+    {
+        buf->st_rdev = (29 << 8) | 0;
     }
     else if (node->type == file_keyboard)
     {
@@ -506,15 +510,13 @@ uint64_t sys_stat(const char *fd, struct stat *buf)
 
 uint64_t sys_fstat(uint64_t fd, struct stat *buf)
 {
-    static uint64_t i = 0;
-
     if (fd >= MAX_FD_NUM || current_task->fds[fd] == NULL)
     {
         return (uint64_t)-EBADF;
     }
 
     buf->st_dev = 0;
-    buf->st_ino = i++;
+    buf->st_ino = current_task->fds[fd]->inode;
     buf->st_nlink = 1;
     buf->st_mode = 0777 | (current_task->fds[fd]->type == file_dir ? S_IFDIR : S_IFREG);
     buf->st_uid = 0;
@@ -522,6 +524,10 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
     if (current_task->fds[fd]->type == file_stream)
     {
         buf->st_rdev = (4 << 8) | 1;
+    }
+    else if (current_task->fds[fd]->type == file_fbdev)
+    {
+        buf->st_rdev = (29 << 8) | 0;
     }
     else if (current_task->fds[fd]->type == file_keyboard)
     {
@@ -624,10 +630,10 @@ uint32_t poll_to_epoll_comp(uint32_t poll_events)
     return epoll_events;
 }
 
-size_t sys_poll(struct pollfd *fds, int nfds, uint32_t timeout)
+size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout)
 {
     int ready = 0;
-    uint32_t start_time = nanoTime();
+    uint64_t start_time = nanoTime();
 
     bool sigexit = false;
 
@@ -638,34 +644,31 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint32_t timeout)
         {
             fds[i].revents = 0;
 
-            if (fds[i].fd == 0 && (fds[i].events & POLLIN))
+            if (fds[i].fd > MAX_FD_NUM)
             {
-                if (fds[i].fd > MAX_FD_NUM)
+                return (size_t)-EBADF;
+            }
+            vfs_node_t node = current_task->fds[fds[i].fd];
+            if (!node)
+                continue;
+            if (!fs_callbacks[node->fsid]->poll)
+            {
+                if (fds[i].events & POLLIN || fds[i].events & POLLOUT)
                 {
-                    return (size_t)-EBADF;
-                }
-                vfs_node_t node = current_task->fds[fds[i].fd];
-                if (!node)
-                    continue;
-                if (!fs_callbacks[node->fsid]->poll)
-                {
-                    if (fds[i].events & POLLIN || fds[i].events & POLLOUT)
-                    {
-                        fds[i].revents = fds[i].events & POLLIN ? POLLIN : POLLOUT;
-                        ready++;
-                    }
-                    continue;
-                }
-                int revents = epoll_to_poll_comp(vfs_poll(node, poll_to_epoll_comp(fds[i].events)));
-                if (revents > 0)
-                {
-                    fds[i].revents = revents;
+                    fds[i].revents = fds[i].events & POLLIN ? POLLIN : POLLOUT;
                     ready++;
                 }
+                continue;
+            }
+            int revents = epoll_to_poll_comp(vfs_poll(node, poll_to_epoll_comp(fds[i].events)));
+            if (revents > 0)
+            {
+                fds[i].revents = revents;
+                ready++;
             }
         }
 
-        // sigexit = signals_pending_quick(current_task);
+        sigexit = signals_pending_quick(current_task);
 
         if (ready > 0 || sigexit)
             break;
@@ -895,7 +898,7 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
 
     if (node->type == file_dir && node->linkname != NULL)
     {
-        if (size < strlen(node->linkname))
+        if (size < (uint64_t)strlen(node->linkname))
         {
             vfs_close(node);
             return (uint64_t)-ERANGE;
@@ -906,7 +909,14 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
     }
     else if (node->type == file_none && node->linkname != NULL)
     {
-        return (uint64_t)-EOPNOTSUPP;
+        if (size < (uint64_t)strlen(node->linkname))
+        {
+            vfs_close(node);
+            return (uint64_t)-ERANGE;
+        }
+        strncpy(buf, node->linkname, size);
+
+        return size;
     }
     else
     {
@@ -979,22 +989,19 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events, int maxevent
 
         while (browse && ready < maxevents)
         {
-            if (browse->fd->fsid != 0)
+            int revents = vfs_poll(browse->fd, browse->watchEvents);
+            if (revents > 0)
             {
-                int revents = vfs_poll(browse->fd, browse->watchEvents);
-                if (revents > 0 && ready < maxevents)
-                {
-                    events[ready].events = revents;
-                    events[ready].data = (epoll_data_t)browse->userlandData;
-                    ready++;
-                }
+                events[ready].events = revents;
+                events[ready].data = (epoll_data_t)browse->userlandData;
+                ready++;
             }
             browse = browse->next;
         }
 
         epoll->lock = false;
 
-        // sigexit = signals_pending_quick(current_task);
+        sigexit = signals_pending_quick(current_task);
 
         if (ready > 0 || sigexit)
             break;
@@ -1478,4 +1485,21 @@ uint64_t sys_mkdir(const char *name, uint64_t mode)
         return (uint64_t)-EEXIST;
     }
     return 0;
+}
+
+void wake_blocked_tasks(task_block_list_t *head)
+{
+    task_block_list_t *current = head->next;
+    head->next = NULL;
+
+    while (current)
+    {
+        task_block_list_t *next = current->next;
+        if (current->task)
+        {
+            task_unblock(current->task, EOK);
+        }
+        free(current);
+        current = next;
+    }
 }

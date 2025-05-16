@@ -468,7 +468,6 @@ static inline char *strcat(char *dest, const char *src)
 
     while (dest[dest_len] != '\0')
     {
-
         dest_len++;
     }
 
@@ -476,7 +475,6 @@ static inline char *strcat(char *dest, const char *src)
 
     while (src[i] != '\0')
     {
-
         dest[dest_len + i] = src[i];
 
         i++;

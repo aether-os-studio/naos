@@ -1,6 +1,0 @@
-[submodule "relibc"]
-	path = relibc
-	url = https://github.com/aether-os-studio/relibc
-[submodule "rust-std"]
-	path = rust-std
-	url = https://github.com/aether-os-studio/rust-std

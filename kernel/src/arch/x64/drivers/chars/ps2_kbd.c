@@ -633,7 +633,7 @@ void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
     case CHARACTER_BACK:
         if (task->term.c_lflag & ICANON && kbCurr > 0)
         {
-            printk("%c", '\b');
+            printk("\b");
             kbCurr--;
             kbBuff[kbCurr] = 0;
         }

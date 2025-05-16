@@ -13,6 +13,8 @@
 err_t mouse_install(uint64_t vector, uint64_t arg)
 {
     ioapic_add(vector, 12);
+
+    return 0;
 }
 
 irq_controller_t mouse_controller =

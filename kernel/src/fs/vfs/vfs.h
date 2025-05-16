@@ -97,6 +97,7 @@ enum
     file_dir,      // 文件夹
     file_block,    // 块设备，如硬盘
     file_stream,   // 流式设备，如终端
+    file_fbdev,    // 帧缓冲设备
     file_keyboard, // 键盘设备
     file_mouse,    // 鼠标设备
     file_pipe,     // 管道设备
@@ -199,6 +200,7 @@ struct vfs_node
     vfs_node_t parent;    // 父目录
     char *name;           // 名称
     char *linkname;       // 符号链接名称
+    uint64_t inode;       // 节点号
     uint64_t realsize;    // 项目真实占用的空间 (可选)
     uint64_t size;        // 文件大小或若是文件夹则填0
     uint64_t offset;      // 偏移

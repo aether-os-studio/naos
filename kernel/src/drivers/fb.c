@@ -127,5 +127,6 @@ void fbdev_init_sysfs()
         subsystem->handle = subsystem_handle;
         subsystem_handle->node = subsystem;
         subsystem_handle->private_data = NULL;
+        subsystem->linkname = strdup(devname);
     }
 }

@@ -18,23 +18,6 @@ void pipefs_open(void *parent, const char *name, vfs_node_t node)
     (void)name;
 }
 
-static void wake_blocked_tasks(task_block_list_t *head)
-{
-    task_block_list_t *current = head->next;
-    head->next = NULL;
-
-    while (current)
-    {
-        task_block_list_t *next = current->next;
-        if (current->task)
-        {
-            task_unblock(current->task, EOK);
-        }
-        free(current);
-        current = next;
-    }
-}
-
 ssize_t pipefs_read(void *file, void *addr, size_t offset, size_t size)
 {
     if (size > PIPE_BUFF)
@@ -43,18 +26,22 @@ ssize_t pipefs_read(void *file, void *addr, size_t offset, size_t size)
     pipe_specific_t *spec = (pipe_specific_t *)file;
     pipe_info_t *pipe = spec->info;
 
-    arch_disable_interrupt();
     while (pipe->lock)
     {
-        arch_enable_interrupt();
-        arch_pause();
         arch_disable_interrupt();
+        arch_pause();
     }
     pipe->lock = true;
     arch_enable_interrupt();
 
-    while (pipe->assigned == 0 && pipe->writeFds > 0)
+    uint32_t available = (pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF;
+    if (available == 0)
     {
+        if (pipe->writeFds == 0)
+        {
+            pipe->lock = false;
+            return -EPIPE;
+        }
         arch_disable_interrupt();
         task_block_list_t *new_block = malloc(sizeof(task_block_list_t));
         new_block->task = current_task;
@@ -64,6 +51,8 @@ ssize_t pipefs_read(void *file, void *addr, size_t offset, size_t size)
         while (browse->next)
             browse = browse->next;
         browse->next = new_block;
+
+        pipe->lock = false;
 
         task_block(current_task, TASK_BLOCKING, -1);
 
@@ -75,24 +64,31 @@ ssize_t pipefs_read(void *file, void *addr, size_t offset, size_t size)
         arch_disable_interrupt();
     }
 
-    if (pipe->assigned == 0)
+    pipe->lock = true;
+
+    // 实际读取量
+    uint32_t to_read = MIN(size, available);
+
+    // 分两种情况拷贝数据
+    if (pipe->read_ptr + to_read <= PIPE_BUFF)
     {
-        pipe->lock = false;
-        return 0;
+        memcpy(addr, &pipe->buf[pipe->read_ptr], to_read);
+    }
+    else
+    {
+        uint32_t first_chunk = PIPE_BUFF - pipe->read_ptr;
+        memcpy(addr, &pipe->buf[pipe->read_ptr], first_chunk);
+        memcpy(addr + first_chunk, pipe->buf, to_read - first_chunk);
     }
 
-    int to_copy = pipe->assigned;
-    if (to_copy > size)
-        to_copy = size;
-
-    memcpy(addr, pipe->buf, to_copy);
-    pipe->assigned -= to_copy;
-    memmove(pipe->buf, &pipe->buf[to_copy], PIPE_BUFF - to_copy);
-    pipe->lock = false;
+    // 更新读指针
+    pipe->read_ptr = (pipe->read_ptr + to_read) % PIPE_BUFF;
 
     wake_blocked_tasks(&pipe->blocking_write);
 
-    return to_copy;
+    pipe->lock = false;
+
+    return to_read;
 }
 
 ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
@@ -112,8 +108,14 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
     arch_disable_interrupt();
     pipe->lock = true;
 
-    while ((pipe->assigned + size) > PIPE_BUFF && pipe->readFds > 0)
+    uint32_t free_space = PIPE_BUFF - ((pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF);
+    if (free_space < size)
     {
+        if (pipe->readFds == 0)
+        {
+            pipe->lock = false;
+            return -EPIPE;
+        }
         task_block_list_t *new_block = malloc(sizeof(task_block_list_t));
         new_block->task = current_task;
         new_block->next = NULL;
@@ -123,6 +125,8 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
         while (browse->next)
             browse = browse->next;
         browse->next = new_block;
+
+        pipe->lock = false;
 
         task_block(current_task, TASK_BLOCKING, -1);
 
@@ -134,8 +138,20 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
         arch_disable_interrupt();
     }
 
-    memcpy(&pipe->buf[pipe->assigned], addr, size);
-    pipe->assigned += size;
+    pipe->lock = true;
+
+    if (pipe->write_ptr + size <= PIPE_BUFF)
+    {
+        memcpy(&pipe->buf[pipe->write_ptr], addr, size);
+    }
+    else
+    {
+        uint32_t first_chunk = PIPE_BUFF - pipe->write_ptr;
+        memcpy(&pipe->buf[pipe->write_ptr], addr, first_chunk);
+        memcpy(pipe->buf, addr + first_chunk, size - first_chunk);
+    }
+
+    pipe->write_ptr = (pipe->write_ptr + size) % PIPE_BUFF;
 
     wake_blocked_tasks(&pipe->blocking_read);
 
@@ -229,7 +245,7 @@ int pipefs_poll(void *file, size_t events)
     {
         if (!pipe->writeFds)
             out |= EPOLLHUP;
-        else if (pipe->assigned > 0)
+        else if (pipe->write_ptr != pipe->read_ptr)
             out |= EPOLLIN;
     }
 
@@ -238,7 +254,7 @@ int pipefs_poll(void *file, size_t events)
         if (!pipe->readFds)
             out |= EPOLLERR;
         else if (pipe->assigned < PIPE_BUFF)
-            out |= POLLOUT;
+            out |= EPOLLOUT;
     }
     pipe->lock = false;
     return out;
@@ -301,6 +317,9 @@ int sys_pipe(int pipefd[2])
     info->blocking_read.next = NULL;
     info->blocking_write.next = NULL;
     info->lock = false;
+    info->read_ptr = 0;
+    info->write_ptr = 0;
+    info->assigned = 0;
 
     pipe_specific_t *read_spec = (pipe_specific_t *)malloc(sizeof(pipe_specific_t));
     read_spec->write = false;

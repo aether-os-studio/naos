@@ -89,6 +89,8 @@ size_t fatfs_writefile(file_t file, const void *addr, size_t offset, size_t size
     return n;
 }
 
+static uint64_t ino = 1;
+
 void fatfs_open(void *parent, const char *name, vfs_node_t node)
 {
     file_t p = parent;
@@ -114,12 +116,14 @@ void fatfs_open(void *parent, const char *name, vfs_node_t node)
             vfs_node_t child_node = vfs_child_append(node, fno.fname, NULL);
             child_node->type = ((fno.fattrib & AM_DIR) != 0) ? file_dir : file_none;
         }
+        node->inode = ino++;
     }
     else
     {
         node->type = file_none;
         fp = malloc(sizeof(FIL));
         res = f_open(fp, new_path, FA_READ | FA_WRITE);
+        node->inode = ino++;
         node->size = f_size((FIL *)fp);
     }
 
@@ -182,6 +186,7 @@ int fatfs_mount(const char *src, vfs_node_t node)
         vfs_node_t child_node = vfs_child_append(node, (const char *)fno.fname, NULL);
         child_node->type = ((fno.fattrib & AM_DIR) != 0) ? file_dir : file_none;
     }
+    node->inode = ino++;
     node->handle = f;
     return 0;
 }

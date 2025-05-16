@@ -18,13 +18,15 @@ void frame_init()
 
     struct limine_memmap_response *memory_map = memmap_request.response;
 
-    for (uint64_t i = memory_map->entry_count - 1; i != 0; i--)
+    for (uint64_t i = 0; i < memory_map->entry_count; i++)
     {
         struct limine_memmap_entry *region = memory_map->entries[i];
         if (region->type == LIMINE_MEMMAP_USABLE)
         {
-            memory_size = region->base + region->length;
-            break;
+            if (region->base + region->length > memory_size)
+            {
+                memory_size = region->base + region->length;
+            }
         }
     }
 
@@ -36,10 +38,13 @@ void frame_init()
     for (uint64_t i = 0; i < memory_map->entry_count; i++)
     {
         struct limine_memmap_entry *region = memory_map->entries[i];
-        if (region->type == LIMINE_MEMMAP_USABLE && region->length >= bitmap_size && region->length < last_size)
+        if (region->type == LIMINE_MEMMAP_USABLE)
         {
-            last_size = region->length;
-            bitmap_address = region->base;
+            if (region->length >= bitmap_size)
+            {
+                bitmap_address = region->base;
+                break;
+            }
         }
     }
 

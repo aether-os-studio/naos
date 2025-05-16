@@ -182,7 +182,10 @@ uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t 
         bool pml4e_old_user = pml4e_old & ARCH_PT_FLAG_USER;
 
         if (!pml4e_old_valid)
+        {
+            pml4_new[pml4_idx] = 0;
             continue; // 这里给你挖上一个坑，不知道你未来会不会掉进去，^_^
+        }
 
         uint64_t pml4e_new = alloc_frames(1);
         pml4e_new |= ARCH_PT_FLAG_VALID;
@@ -201,7 +204,10 @@ uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t 
             bool pdpte_old_user = pdpte_old & ARCH_PT_FLAG_USER;
             bool pdpte_old_large = pdpte_old & ARCH_PT_FLAG_HUGE;
             if (!pdpte_old_valid)
+            {
+                pdpt_new[pdpt_idx] = 0;
                 continue;
+            }
 
             if (pdpte_old_large)
             {
@@ -226,7 +232,10 @@ uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t 
                 bool pde_old_user = pde_old & ARCH_PT_FLAG_USER;
                 bool pde_old_large = pde_old & ARCH_PT_FLAG_HUGE;
                 if (!pde_old_valid)
+                {
+                    pd_new[pd_idx] = 0;
                     continue;
+                }
 
                 if (pde_old_large)
                 {
@@ -250,7 +259,10 @@ uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t 
                     bool pte_old_write = pte_old & ARCH_PT_FLAG_WRITEABLE;
                     bool pte_old_user = pte_old & ARCH_PT_FLAG_USER;
                     if (!pte_old_valid)
+                    {
+                        pt_new[pt_idx] = 0;
                         continue;
+                    }
 
                     uint64_t *page_old = (uint64_t *)phys_to_virt(pte_old & ARCH_ADDR_MASK);
 

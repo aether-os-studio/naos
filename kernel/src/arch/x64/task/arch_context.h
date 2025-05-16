@@ -61,7 +61,7 @@ typedef struct arch_signal_frame
     uint64_t trapno;
     uint64_t oldmask;
     uint64_t cr2;
-    struct fpstate *fpstate; /* zero when no FPU context */
+    fpu_context_t *fpstate; /* zero when no FPU context */
     uint64_t reserved1[8];
 } arch_signal_frame_t;
 

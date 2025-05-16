@@ -8,7 +8,7 @@
 #define SIGILL 4
 #define SIGTRAP 5
 #define SIGABRT 6
-#define SIGIOT 6
+#define SIGIOT SIGABRT
 #define SIGBUS 7
 #define SIGFPE 8
 #define SIGKILL 9
@@ -32,13 +32,10 @@
 #define SIGPROF 27
 #define SIGWINCH 28
 #define SIGIO 29
-#define SIGPOLL SIGIO
-/*
-#define SIGLOST		29
-*/
+#define SIGPOLL 29
 #define SIGPWR 30
 #define SIGSYS 31
-#define SIGUNUSED 31
+#define SIGUNUSED SIGSYS
 
 #define MINSIG 1
 #define MAXSIG 32

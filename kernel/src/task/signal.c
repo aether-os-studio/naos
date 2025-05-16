@@ -58,11 +58,11 @@ bool signals_pending_quick(task_t *task)
 {
     sigset_t pending_list = task->signal;
     sigset_t unblocked_list = pending_list & (~task->blocked);
-    for (int i = 0; i < MAXSIG; i++)
+    for (int i = 1; i <= MAXSIG; i++)
     {
-        if (unblocked_list & (1 << i))
+        if (!(unblocked_list & SIGMASK(i)))
             continue;
-        sigaction_t *action = &task->actions[i];
+        sigaction_t *action = &task->actions[i - 1];
         sighandler_t user_handler = action->sa_handler;
         if (user_handler == SIG_IGN)
             continue;
@@ -95,7 +95,7 @@ int sys_ssetmask(int how, sigset_t *nset, sigset_t *oset)
             current_task->blocked |= safe;
             break;
         case SIG_UNBLOCK:
-            current_task->blocked &= ~(safe);
+            current_task->blocked &= ~safe;
             break;
         case SIG_SETMASK:
             current_task->blocked = safe;
@@ -197,11 +197,27 @@ int sys_kill(int pid, int sig)
         return 0;
     }
 
+    if (task->ppid != 0 && task->ppid != task->pid)
+    {
+        task_t *parent = tasks[task->ppid];
+        if (!parent)
+        {
+            return 0;
+        }
+
+        parent->signal |= SIGMASK(SIGCHLD);
+
+        if (parent->state == TASK_BLOCKING)
+        {
+            task_unblock(parent, -SIGCHLD);
+        }
+    }
+
     task->signal |= SIGMASK(sig);
 
-    if (task->state == TASK_BLOCKING && task->pid != task->ppid && tasks[task->ppid])
+    if (task->state == TASK_BLOCKING)
     {
-        task_unblock(tasks[task->ppid], -EINTR);
+        task_unblock(task, -SIGKILL);
     }
 
     return 0;

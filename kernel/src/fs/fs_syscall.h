@@ -210,7 +210,7 @@ struct pollfd
     short revents;
 };
 
-size_t sys_poll(struct pollfd *fds, int nfds, uint32_t timeout);
+size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout);
 
 size_t sys_access(char *filename, int mode);
 uint64_t sys_faccessat(uint64_t dirfd, const char *pathname, uint64_t mode);
@@ -325,3 +325,5 @@ uint64_t sys_signalfd(int ufd, const sigset_t *mask, size_t sizemask);
 uint64_t sys_flock(int fd, uint64_t cmd);
 
 uint64_t sys_mkdir(const char *name, uint64_t mode);
+
+void wake_blocked_tasks(task_block_list_t *head);

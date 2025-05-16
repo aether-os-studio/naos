@@ -64,7 +64,7 @@ void devfs_open(void *parent, const char *name, vfs_node_t node)
 void devfs_close(void *current)
 {
     devfs_handle_t handle = (devfs_handle_t)current;
-    if (!strncmp(handle, "event", 5))
+    if (!strncmp(handle->name, "event", 5))
     {
         dev_input_event_t *event = handle->data;
         event->timesOpened--;
@@ -118,27 +118,13 @@ static struct vfs_callback callbacks = {
     .poll = (vfs_poll_t)devfs_poll,
 };
 
-#define MAX_FB_NUM 2
-
 ssize_t inputdev_event_read(void *data, uint64_t offset, void *buf, uint64_t len)
 {
     dev_input_event_t *event = data;
 
-    while (true)
-    {
-        size_t cnt = circular_int_read(&event->device_events, buf, len);
-        if (cnt > 0)
-            return cnt;
+    ssize_t cnt = (ssize_t)circular_int_read(&event->device_events, buf, len);
 
-        arch_enable_interrupt();
-
-        arch_pause();
-
-        // if (signals_pending_quick(current_task))
-        //     return -EINTR;
-    }
-
-    return 0;
+    return cnt;
 }
 
 ssize_t inputdev_event_write(void *data, uint64_t offset, const void *buf, uint64_t len)
@@ -284,8 +270,10 @@ vfs_node_t regist_dev(const char *name,
             devfs_handles[i]->data = data;
             vfs_node_t child = vfs_child_append(dev, devfs_handles[i]->name, NULL);
             child->type = file_block;
-            if (!strncmp(devfs_handles[i]->name, "std", 3) || !strncmp(devfs_handles[i]->name, "tty", 3) || !strncmp(devfs_handles[i]->name, "fb", 2))
+            if (!strncmp(devfs_handles[i]->name, "std", 3) || !strncmp(devfs_handles[i]->name, "tty", 3))
                 child->type = file_stream;
+            else if (!strncmp(devfs_handles[i]->name, "fb", 2))
+                child->type = file_fbdev;
             else if (!strncmp(devfs_handles[i]->name, "event0", 6))
                 child->type = file_keyboard;
             else if (!strncmp(devfs_handles[i]->name, "event1", 6))
@@ -294,6 +282,8 @@ vfs_node_t regist_dev(const char *name,
             return child;
         }
     }
+
+    return NULL;
 }
 
 ssize_t stdin_read(void *data, uint64_t offset, void *buf, uint64_t len)

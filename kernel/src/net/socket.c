@@ -192,6 +192,8 @@ int sys_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
     strncpy(sock->name, name, SOCKET_NAME_LEN - 1);
     sock->name[SOCKET_NAME_LEN - 1] = '\0';
 
+    vfs_mkfile(sock->name);
+
     SPIN_UNLOCK(socket_lock);
     return 0;
 }
@@ -277,7 +279,7 @@ int sys_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
     strcpy(socket->name, buf);
     socket->buf_head = 0;
     socket->buf_tail = 0;
-    socket->state = SOCKET_TYPE_UNCONNECTED;
+    socket->state = SOCKET_TYPE_CONNECTED;
     socket->fd = i;
 
     current_task->fds[i] = new_node;
@@ -322,8 +324,7 @@ int sys_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 
     for (int i = 0; i < MAX_SOCKETS; i++)
     {
-        if (sockets[i].state == SOCKET_TYPE_LISTENING &&
-            strcmp(sockets[i].name, name) == 0)
+        if (sockets[i].state == SOCKET_TYPE_LISTENING && (strcmp(sockets[i].name, name) == 0 || vfs_open(name) != NULL))
         {
             sock->peer_addr = malloc(sizeof(struct sockaddr));
             memcpy(sock->peer_addr, addr, addrlen);

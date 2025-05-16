@@ -5,7 +5,10 @@
 
 vfs_node_t rootdir = NULL;
 
-static void empty_func() {}
+static int empty_func()
+{
+    return -ENOSYS;
+}
 
 static struct vfs_callback vfs_empty_callback;
 
@@ -182,9 +185,15 @@ int vfs_mkfile(const char *name)
             current = current->parent;
             continue;
         }
-        current = vfs_child_find(current, buf);
-        if (current == NULL)
-            goto err;
+        vfs_node_t new_current = vfs_child_find(current, buf);
+        if (new_current == NULL)
+        {
+            new_current = vfs_node_alloc(current, buf);
+            new_current->type = file_dir;
+            callbackof(current, mkdir)(current->handle, buf, new_current);
+            do_update(new_current);
+        }
+        current = new_current;
         if (current->type != file_dir)
             goto err;
     }
