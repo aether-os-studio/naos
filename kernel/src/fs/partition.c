@@ -106,6 +106,15 @@ void mount_root()
 {
     bool err = true;
 
+    vfs_node_t old_child_list[256];
+    uint64_t old_child_count = 0;
+    memset(old_child_list, 0, sizeof(old_child_list));
+    list_foreach(rootdir->child, i)
+    {
+        vfs_node_t node = (vfs_node_t)i->data;
+        old_child_list[old_child_count++] = node;
+    }
+
     for (uint64_t i = 0; i < partition_num; i++)
     {
         char buf[11];
@@ -126,4 +135,7 @@ void mount_root()
             arch_pause();
         }
     }
+
+    for (uint64_t i = 0; i < old_child_count; i++)
+        list_push(rootdir->child, old_child_list[i]);
 }

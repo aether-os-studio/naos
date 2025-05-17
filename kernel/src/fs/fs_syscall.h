@@ -177,6 +177,53 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg);
 int sys_pipe(int fd[2]);
 uint64_t sys_stat(const char *fd, struct stat *buf);
 uint64_t sys_fstat(uint64_t fd, struct stat *buf);
+uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname, struct stat *buf, uint64_t flags);
+
+struct statx_timestamp
+{
+    int64_t tv_sec;
+    uint32_t tv_nsec;
+    int32_t __reserved;
+};
+
+struct statx
+{
+    /* 0x00 */
+    uint32_t stx_mask;       /* What results were written [uncond] */
+    uint32_t stx_blksize;    /* Preferred general I/O size [uncond] */
+    uint64_t stx_attributes; /* Flags conveying information about the file [uncond] */
+    /* 0x10 */
+    uint32_t stx_nlink; /* Number of hard links */
+    uint32_t stx_uid;   /* User ID of owner */
+    uint32_t stx_gid;   /* Group ID of owner */
+    uint16_t stx_mode;  /* File mode */
+    uint16_t __spare0[1];
+    /* 0x20 */
+    uint64_t stx_ino;    /* Inode number */
+    uint64_t stx_size;   /* File size */
+    uint64_t stx_blocks; /* Number of 512-byte blocks allocated */
+    uint64_t
+        stx_attributes_mask; /* Mask to show what's supported in stx_attributes */
+    /* 0x40 */
+    struct statx_timestamp stx_atime; /* Last access time */
+    struct statx_timestamp stx_btime; /* File creation time */
+    struct statx_timestamp stx_ctime; /* Last attribute change time */
+    struct statx_timestamp stx_mtime; /* Last data modification time */
+    /* 0x80 */
+    uint32_t stx_rdev_major; /* Device ID of special file [if bdev/cdev] */
+    uint32_t stx_rdev_minor;
+    uint32_t stx_dev_major; /* ID of device containing file [uncond] */
+    uint32_t stx_dev_minor;
+    /* 0x90 */
+    uint64_t stx_mnt_id;
+    uint32_t stx_dio_mem_align;    /* Memory buffer alignment for direct I/O */
+    uint32_t stx_dio_offset_align; /* File offset alignment for direct I/O */
+    /* 0xa0 */
+    uint64_t __spare3[12]; /* Spare space for future expansion */
+                           /* 0x100 */
+};
+
+uint64_t sys_statx(uint64_t dirfd, const char *pathname, uint64_t flags, uint64_t mask, struct statx *buf);
 
 uint64_t sys_get_rlimit(uint64_t resource, struct rlimit *lim);
 uint64_t sys_prlimit64(uint64_t pid, int resource, const struct rlimit *new_rlim, struct rlimit *old_rlim);

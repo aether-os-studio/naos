@@ -301,6 +301,12 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_FSTAT:
         regs->rax = sys_fstat(arg1, (struct stat *)arg2);
         break;
+    case SYS_NEWFSTATAT:
+        regs->rax = sys_newfstatat(arg1, (const char *)arg2, (struct stat *)arg3, arg4);
+        break;
+    case SYS_STATX:
+        regs->rax = sys_statx(arg1, (const char *)arg2, arg3, arg4, (struct statx *)arg5);
+        break;
     case SYS_UNAME:
         struct utsname *utsname = (struct utsname *)arg1;
         memcpy(utsname->sysname, sysname, sizeof(sysname));

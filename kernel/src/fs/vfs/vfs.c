@@ -72,23 +72,26 @@ static inline void do_open(vfs_node_t file)
 
 static inline void do_update(vfs_node_t file)
 {
-    if (file->handle == NULL)
+    if (file->type == file_none || file->handle == NULL)
         do_open(file);
-}
-
-// 一定要记得手动设置一下child的type
-vfs_node_t vfs_child_append(vfs_node_t parent, const char *name, void *handle)
-{
-    vfs_node_t node = vfs_node_alloc(parent, name);
-    if (node == NULL)
-        return NULL;
-    node->handle = handle;
-    return node;
 }
 
 static vfs_node_t vfs_child_find(vfs_node_t parent, const char *name)
 {
     return list_first(parent->child, data, streq(name, ((vfs_node_t)data)->name));
+}
+
+// 一定要记得手动设置一下child的type
+vfs_node_t vfs_child_append(vfs_node_t parent, const char *name, void *handle)
+{
+    vfs_node_t node = vfs_child_find(parent, name);
+    if (node)
+        return node;
+    node = vfs_node_alloc(parent, name);
+    if (node == NULL)
+        return NULL;
+    node->handle = handle;
+    return node;
 }
 
 int vfs_mkdir(const char *name)

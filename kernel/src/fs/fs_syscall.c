@@ -316,18 +316,20 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
     struct dirent *dents = (struct dirent *)buf;
     vfs_node_t node = current_task->fds[fd];
 
+    uint64_t child_count = (uint64_t)list_length(node->child);
+
     int64_t max_dents_num = size / sizeof(struct dirent);
 
     int64_t read_count = 0;
 
     list_foreach(node->child, i)
     {
-        if (node->offset >= ((uint64_t)list_length(node->child) * sizeof(struct dirent)))
+        if (node->offset >= (child_count * sizeof(struct dirent)))
             break;
         if (read_count >= max_dents_num)
             break;
         vfs_node_t child_node = (vfs_node_t)i->data;
-        dents[read_count].d_ino = node->inode;
+        dents[read_count].d_ino = child_node->inode;
         dents[read_count].d_off = node->offset;
         dents[read_count].d_reclen = sizeof(struct dirent);
         switch (child_node->type)
@@ -544,6 +546,54 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
     buf->st_blksize = DEFAULT_PAGE_SIZE;
     buf->st_size = current_task->fds[fd]->size;
     buf->st_blocks = (buf->st_size + buf->st_blksize - 1) / buf->st_blksize;
+
+    return 0;
+}
+
+uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname, struct stat *buf, uint64_t flags)
+{
+    char *resolved = at_resolve_pathname(dirfd, pathname);
+
+    uint64_t ret = sys_stat(pathname, buf);
+
+    free(resolved);
+
+    return ret;
+}
+
+uint64_t sys_statx(uint64_t dirfd, const char *pathname, uint64_t flags, uint64_t mask, struct statx *buff)
+{
+    struct stat simple;
+    memset(&simple, 0, sizeof(struct stat));
+    uint64_t ret = sys_newfstatat(dirfd, pathname, &simple, flags);
+    if ((int64_t)ret < 0)
+        return ret;
+
+    buff->stx_mask = mask;
+    buff->stx_blksize = simple.st_blksize;
+    buff->stx_attributes = 0;
+    buff->stx_nlink = simple.st_nlink;
+    buff->stx_uid = simple.st_uid;
+    buff->stx_gid = simple.st_gid;
+    buff->stx_mode = simple.st_mode;
+    buff->stx_ino = simple.st_ino;
+    buff->stx_size = simple.st_size;
+    buff->stx_blocks = simple.st_blocks;
+    buff->stx_attributes_mask = 0;
+
+    buff->stx_atime.tv_sec = simple.st_atim.tv_sec;
+    buff->stx_atime.tv_nsec = simple.st_atim.tv_nsec;
+
+    buff->stx_btime.tv_sec = simple.st_ctim.tv_sec;
+    buff->stx_btime.tv_nsec = simple.st_ctim.tv_nsec;
+
+    buff->stx_ctime.tv_sec = simple.st_ctim.tv_sec;
+    buff->stx_ctime.tv_nsec = simple.st_ctim.tv_nsec;
+
+    buff->stx_mtime.tv_sec = simple.st_mtim.tv_sec;
+    buff->stx_mtime.tv_nsec = simple.st_mtim.tv_nsec;
+
+    // todo: special devices
 
     return 0;
 }
