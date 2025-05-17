@@ -3,15 +3,12 @@
 #include <interrupt/irq_manager.h>
 #include <task/task.h>
 
-extern void task_signal();
-
 void apic_timer_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
 {
     current_task->jiffies++;
 
-    jiffies += 100;
-
-    task_signal();
+    if (current_cpu_id == 0)
+        jiffies += 100;
 }
 
 void apic_timer_init()

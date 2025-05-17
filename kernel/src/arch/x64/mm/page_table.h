@@ -9,7 +9,7 @@
 #define ARCH_PT_FLAG_HUGE (0x1UL << 7)
 #define ARCH_PT_FLAG_NX (0x1UL << 63)
 
-#define ARCH_ADDR_MASK 0x000FFFFFFFFFF000
+#define ARCH_ADDR_MASK 0x00007FFFFFFFF000UL
 
 uint64_t get_arch_page_table_flags(uint64_t flags);
 void map_page(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t arch_flags);

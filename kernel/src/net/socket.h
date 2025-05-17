@@ -20,7 +20,7 @@ struct sockaddr
 };
 
 #define MAX_SOCKETS 64
-#define SOCKET_NAME_LEN 32
+#define SOCKET_NAME_LEN 108
 #define BUFFER_SIZE 65536
 
 typedef enum
@@ -55,15 +55,13 @@ struct sock_fprog
 
 typedef struct
 {
-    int fd;
     char name[SOCKET_NAME_LEN];
     socket_state_t state;
     int peer_fd;
-    struct sockaddr *peer_addr; // 对端地址
-    socklen_t peer_addrlen;     // 地址长度
     char buffer[BUFFER_SIZE];
     uint32_t buf_head;
     uint32_t buf_tail;
+    uint64_t domain;
     uint64_t type;
     int64_t protocol;
     int sndbuf_size;
@@ -84,15 +82,15 @@ typedef struct
 
 int sys_socket(int domain, int type, int protocol);
 int sys_socketpair(int family, int type, int protocol, int *sv);
-int sys_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+int sys_bind(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen);
 int sys_listen(int sockfd, int backlog);
-int sys_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
-int sys_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+int sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen);
+int sys_connect(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen);
 int64_t sys_send(int sockfd, const void *buf, size_t len, int flags);
 int64_t sys_recv(int sockfd, void *buf, size_t len, int flags);
 int sys_socket_close(void *current);
 
-int sys_getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+int sys_getsockname(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen);
 
 // 套接字层级
 #define SOL_SOCKET 1
@@ -248,4 +246,4 @@ int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags);
 
 uint64_t sys_shutdown(uint64_t fd, uint64_t how);
 
-int sys_getpeername(int fd, struct sockaddr *addr, socklen_t *addrlen);
+int sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen);

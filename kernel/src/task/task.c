@@ -596,8 +596,11 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
                 uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W | PT_FLAG_X;
                 map_page_range(get_current_page_dir(true), aligned_addr, 0, alloc_size, flags);
-
+#if defined(__x86_64__)
+                fast_memcpy((void *)seg_addr, (void *)(INTERPRETER_EHDR_ADDR + interpreter_phdr[j].p_offset), file_size);
+#else
                 memcpy((void *)seg_addr, (void *)(INTERPRETER_EHDR_ADDR + interpreter_phdr[j].p_offset), file_size);
+#endif
 
                 if (seg_size > file_size)
                 {
@@ -639,8 +642,11 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
             uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W | PT_FLAG_X;
             map_page_range(get_current_page_dir(true), aligned_addr, 0, alloc_size, flags);
-
+#if defined(__x86_64__)
+            fast_memcpy((void *)seg_addr, (void *)(EHDR_START_ADDR + phdr[i].p_offset), file_size);
+#else
             memcpy((void *)seg_addr, (void *)(EHDR_START_ADDR + phdr[i].p_offset), file_size);
+#endif
 
             if (seg_size > file_size)
             {
@@ -662,7 +668,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     free(fullpath);
 
     map_page_range(get_current_page_dir(true), USER_STACK_START, 0, USER_STACK_END - USER_STACK_START, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
-    memset((void *)USER_STACK_START, 0, USER_STACK_END - USER_STACK_START);
 
     uint64_t stack = push_infos(current_task, USER_STACK_END, (char **)new_argv, (char **)new_envp, e_entry, (uint64_t)(load_start + ehdr->e_phoff), ehdr->e_phnum, interpreter_entry ? INTERPRETER_BASE_ADDR : load_start);
 
@@ -698,6 +703,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     execve_lock = false;
     can_schedule = true;
+
     arch_to_user_mode(current_task->arch_context, interpreter_entry ? interpreter_entry : e_entry, stack);
 
     return (uint64_t)-EAGAIN;
@@ -757,10 +763,6 @@ uint64_t task_exit(int64_t code)
     {
         task_unblock(tasks[task->waitpid], EOK);
     }
-    if (task->ppid != task->pid && tasks[task->ppid] && tasks[task->ppid]->state == TASK_BLOCKING)
-    {
-        task_unblock(tasks[task->ppid], EOK);
-    }
 
     if (task->cmdline)
         free(task->cmdline);
@@ -782,7 +784,7 @@ uint64_t task_exit(int64_t code)
     return (uint64_t)-EAGAIN;
 }
 
-uint64_t sys_waitpid(uint64_t pid, int *status)
+uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
 {
     task_t *child = NULL;
     uint64_t ret = -ECHILD;
@@ -795,18 +797,28 @@ uint64_t sys_waitpid(uint64_t pid, int *status)
         for (uint64_t i = cpu_count; i < MAX_TASK_NUM; i++)
         {
             task_t *ptr = tasks[i];
-            if (!ptr || ptr->ppid != current_task->pid)
+            if (!ptr || ptr->pid == ptr->ppid || ptr->ppid != current_task->pid)
                 continue;
 
             // 处理不同pid参数情况
             if (pid == (uint64_t)-1)
             { // 任意子进程
+                child = ptr;
                 has_child = true;
+                if (child->state == TASK_DIED)
+                {
+                    goto rollback;
+                }
+                break;
             }
             else if (pid == 0)
             { // 同进程组
                 if (ptr->pgid == current_task->pgid)
+                {
+                    child = ptr;
                     has_child = true;
+                    break;
+                }
             }
             else if (pid > 0)
             { // 指定PID
@@ -823,20 +835,22 @@ uint64_t sys_waitpid(uint64_t pid, int *status)
             }
             else
             {
+                child = ptr;
                 has_child = true;
                 break;
             }
         }
 
-        if (!has_child)
+        if (!has_child || !child)
+        {
+            if (options & WNOHANG)
+            {
+                return 0;
+            }
             break;
+        }
 
         child->waitpid = current_task->pid;
-
-        if (signals_pending_quick(current_task))
-        {
-            return (uint64_t)-EINTR;
-        }
 
         current_task->state = TASK_BLOCKING;
 
@@ -874,6 +888,10 @@ rollback:
         free(child->arch_context);
 
         free(child);
+    }
+    else if (options & WNOHANG)
+    {
+        ret = 0;
     }
 
     return ret;
@@ -1071,17 +1089,30 @@ uint64_t timeval_to_ms(struct timeval tv)
 
 void sched_update_itimer()
 {
-    if (current_task != idle_tasks[current_cpu_id])
+    for (uint64_t i = cpu_count; i < MAX_TASK_NUM; i++)
     {
-        uint64_t rtAt = current_task->itimer_real.at;
-        uint64_t rtReset = current_task->itimer_real.reset;
+        task_t *ptr = tasks[i];
+
+        if (!ptr)
+            break;
+
+        uint64_t rtAt = ptr->itimer_real.at;
+        uint64_t rtReset = ptr->itimer_real.reset;
+
         if (rtAt && rtAt <= jiffies)
         {
-            current_task->signal |= SIGMASK(SIGALRM);
-            if (!rtReset)
-                current_task->itimer_real.at = 0;
+            ptr->signal |= SIGMASK(SIGALRM);
+            if (ptr->state == TASK_BLOCKING)
+                task_unblock(ptr, EOK);
+
+            if (rtReset)
+            {
+                ptr->itimer_real.at = jiffies + rtReset;
+            }
             else
-                current_task->itimer_real.at = jiffies + rtReset;
+            {
+                ptr->itimer_real.at = 0;
+            }
         }
     }
 }
@@ -1114,11 +1145,6 @@ size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old)
             current_task->itimer_real.at = 0ULL;
 
         current_task->itimer_real.reset = targInterval;
-    }
-
-    if (current_task->itimer_real.at && current_task->itimer_real.at <= jiffies)
-    {
-        current_task->signal |= SIGMASK(SIGALRM);
     }
 
     return 0;

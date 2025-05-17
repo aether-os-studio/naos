@@ -57,6 +57,8 @@ void arch_switch_with_context(arch_context_t *prev, arch_context_t *next, uint64
     arch_context_switch_with_next(next);
 }
 
+extern void task_signal();
+
 void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
 {
     if (prev == next)
@@ -78,6 +80,8 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
                          "tlbi vmalle1is\n\t"
                          "dsb ish\n\t"
                          "isb\n\t");
+
+    task_signal();
 
     arch_set_current(next);
 

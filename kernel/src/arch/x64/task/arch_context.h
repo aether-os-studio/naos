@@ -22,6 +22,21 @@ typedef struct fpu_context
     uint64_t rest[12];
 } __attribute__((aligned(16))) fpu_context_t;
 
+struct fpstate
+{
+    uint16_t cwd;
+    uint16_t swd;
+    uint16_t twd; /* Note this is not the same as the 32bit/x87/FSAVE twd */
+    uint16_t fop;
+    uint64_t rip;
+    uint64_t rdp;
+    uint32_t mxcsr;
+    uint32_t mxcsr_mask;
+    uint32_t st_space[32];  /* 8*16 bytes for each FP-reg */
+    uint32_t xmm_space[64]; /* 16*16 bytes for each XMM-reg  */
+    uint32_t reserved2[24];
+} __attribute__((packed));
+
 typedef struct arch_context
 {
     uint64_t fs;
@@ -61,9 +76,8 @@ typedef struct arch_signal_frame
     uint64_t trapno;
     uint64_t oldmask;
     uint64_t cr2;
-    fpu_context_t *fpstate; /* zero when no FPU context */
-    uint64_t reserved1[8];
-} arch_signal_frame_t;
+    struct fpstate *fpstate; /* zero when no FPU context */
+} __attribute__((packed)) arch_signal_frame_t;
 
 void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64_t entry, uint64_t stack, bool user_mode);
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack);

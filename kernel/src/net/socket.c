@@ -48,20 +48,19 @@ int sys_socket(int domain, int type, int protocol)
 
     char buf[256];
     sprintf(buf, "sock%d", sockfd_id++);
-    vfs_node_t node = vfs_node_alloc(socketfs_root, strdup(buf));
+    vfs_node_t node = vfs_node_alloc(socketfs_root, buf);
     node->type = file_socket;
     node->handle = &sockets[sock_id];
     memset(&sockets[sock_id], 0, sizeof(socket_t));
     socket_t *socket = (socket_t *)node->handle;
+    socket->domain = domain;
     socket->type = type;
     socket->protocol = protocol;
-    strcpy(socket->name, buf);
     socket->buf_head = 0;
     socket->buf_tail = 0;
     socket->sndbuf_size = BUFFER_SIZE;
     socket->rcvbuf_size = BUFFER_SIZE;
     socket->state = SOCKET_TYPE_UNCONNECTED;
-    socket->fd = i;
     memset(&socket->options, 0, sizeof(socket->options));
 
     current_task->fds[i] = node;
@@ -120,7 +119,7 @@ int sys_socketpair(int family, int type, int protocol, int *sv)
     return 0;
 }
 
-int sys_getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
+int sys_getsockname(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen)
 {
     SPIN_LOCK(socket_lock);
 
@@ -140,24 +139,27 @@ int sys_getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
         return -ENOTSOCK;
     }
 
-    // 准备sockaddr_un结构
     struct sockaddr_un *un = (struct sockaddr_un *)addr;
-    size_t max_len = *addrlen - offsetof(struct sockaddr_un, sun_path);
+    socklen_t len = MIN(*addrlen, sizeof(sock->name) + sizeof(un->sun_family));
 
-    un->sun_family = 1;
-    strncpy(un->sun_path, sock->name, max_len);
-    un->sun_path[max_len - 1] = '\0';
-
-    // 设置实际长度
-    *addrlen = strlen(un->sun_path) + sizeof(un->sun_family);
+    un->sun_family = sock->domain;
+    memcpy(un->sun_path, sock->name, len - sizeof(un->sun_family));
+    *addrlen = sizeof(struct sockaddr_un);
 
     SPIN_UNLOCK(socket_lock);
     return 0;
 }
 
-int sys_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
+int sys_bind(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen)
 {
     SPIN_LOCK(socket_lock);
+
+    // 参数校验增强
+    if (addrlen < sizeof(sa_family_t))
+    {
+        SPIN_UNLOCK(socket_lock);
+        return -EINVAL;
+    }
 
     // 查找socket结构
     vfs_node_t node = current_task->fds[sockfd];
@@ -175,24 +177,38 @@ int sys_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
         return -EBADF;
     }
 
-    // 复制socket名称
     const struct sockaddr_un *un = (struct sockaddr_un *)addr;
+    int is_abstract = (un->sun_path[0] == '\0');
 
-    const char *name = un->sun_path;
-    for (; *name == '\0'; name++)
+    if (is_abstract)
     {
+        size_t name_len = addrlen - offsetof(struct sockaddr_un, sun_path);
+        if (name_len > sizeof(un->sun_path))
+        {
+            SPIN_UNLOCK(socket_lock);
+            return -ENAMETOOLONG;
+        }
+        memcpy(sock->name, un->sun_path, sizeof(un->sun_path));
     }
-
-    if (strlen(name) >= SOCKET_NAME_LEN)
+    else
     {
-        SPIN_UNLOCK(socket_lock);
-        return -ENAMETOOLONG; // 路径过长
+        const char *name = un->sun_path;
+        while (*name == '\0' && name < un->sun_path + sizeof(un->sun_path))
+        {
+            name++;
+        }
+        size_t path_len = strlen(name);
+
+        if (path_len >= sizeof(un->sun_path))
+        {
+            SPIN_UNLOCK(socket_lock);
+            return -ENAMETOOLONG;
+        }
+        strncpy(sock->name, name, sizeof(sock->name) - 1);
+        sock->name[sizeof(sock->name) - 1] = '\0';
+
+        vfs_mkfile(name);
     }
-
-    strncpy(sock->name, name, SOCKET_NAME_LEN - 1);
-    sock->name[SOCKET_NAME_LEN - 1] = '\0';
-
-    vfs_mkfile(sock->name);
 
     SPIN_UNLOCK(socket_lock);
     return 0;
@@ -223,7 +239,7 @@ int sys_listen(int sockfd, int backlog)
     return 0;
 }
 
-int sys_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
+int sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen)
 {
     SPIN_LOCK(socket_lock);
 
@@ -280,7 +296,6 @@ int sys_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
     socket->buf_head = 0;
     socket->buf_tail = 0;
     socket->state = SOCKET_TYPE_CONNECTED;
-    socket->fd = i;
 
     current_task->fds[i] = new_node;
 
@@ -288,7 +303,7 @@ int sys_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
     return i;
 }
 
-int sys_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
+int sys_connect(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen)
 {
     SPIN_LOCK(socket_lock);
 
@@ -314,28 +329,48 @@ int sys_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
         return -EISCONN;
     }
 
-    // 查找目标socket
     const struct sockaddr_un *un = (struct sockaddr_un *)addr;
+    int is_abstract = (un->sun_path[0] == '\0');
+    size_t path_len = 0;
 
-    const char *name = un->sun_path;
-    for (; *name == '\0'; name++)
+    if (is_abstract)
     {
+        path_len = addrlen - offsetof(struct sockaddr_un, sun_path);
+    }
+    else
+    {
+        const char *p = un->sun_path;
+        while (p - un->sun_path < sizeof(un->sun_path) && *p)
+            p++;
+        path_len = p - un->sun_path;
     }
 
     for (int i = 0; i < MAX_SOCKETS; i++)
     {
-        if (sockets[i].state == SOCKET_TYPE_LISTENING && (strcmp(sockets[i].name, name) == 0 || vfs_open(name) != NULL))
+        if (sockets[i].state == SOCKET_TYPE_LISTENING)
         {
-            sock->peer_addr = malloc(sizeof(struct sockaddr));
-            memcpy(sock->peer_addr, addr, addrlen);
-            sock->peer_addrlen = addrlen;
+            if (memcmp(sockets[i].name, un->sun_path, path_len) == 0)
+            {
+                sock->state = SOCKET_TYPE_CONNECTED;
+                sock->peer_fd = &sockets[i] - sockets;
+                sockets[i].peer_fd = sock - sockets;
 
-            sock->state = SOCKET_TYPE_CONNECTED;
-            sock->peer_fd = sockets[i].fd;
-            strcpy(sock->name, name);
+                sockets[i].state = SOCKET_TYPE_CONNECTED;
 
-            SPIN_UNLOCK(socket_lock);
-            return 0;
+                SPIN_UNLOCK(socket_lock);
+                return 0;
+            }
+            else if (!is_abstract && vfs_open(un->sun_path) != NULL)
+            {
+                sock->state = SOCKET_TYPE_CONNECTED;
+                sock->peer_fd = &sockets[i] - sockets;
+                sockets[i].peer_fd = sock - sockets;
+
+                sockets[i].state = SOCKET_TYPE_CONNECTED;
+
+                SPIN_UNLOCK(socket_lock);
+                return 0;
+            }
         }
     }
 
@@ -369,7 +404,6 @@ int64_t sys_send(int sockfd, const void *buf, size_t len, int flags)
         return -ENOTCONN;
     }
 
-    // 简化实现：直接拷贝数据到对方缓冲区
     size_t to_copy = len;
     if (to_copy > BUFFER_SIZE - peer->buf_tail)
     {
@@ -519,7 +553,6 @@ int sys_setsockopt(int sockfd, int level, int optname, const void *optval, sockl
 {
     SPIN_LOCK(socket_lock);
 
-    // 参数校验
     if (sockfd < 0 || sockfd >= MAX_FD_NUM || !current_task->fds[sockfd])
     {
         SPIN_UNLOCK(socket_lock);
@@ -534,14 +567,12 @@ int sys_setsockopt(int sockfd, int level, int optname, const void *optval, sockl
         return -ENOTSOCK;
     }
 
-    // 仅支持SOL_SOCKET级别选项
     if (level != SOL_SOCKET)
     {
         SPIN_UNLOCK(socket_lock);
         return -ENOPROTOOPT;
     }
 
-    // 处理不同选项
     switch (optname)
     {
     case SO_REUSEADDR:
@@ -800,7 +831,7 @@ int sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t *
 
 uint64_t sys_shutdown(uint64_t sockfd, uint64_t how)
 {
-    if (sockfd < 0 || sockfd >= MAX_FD_NUM || !current_task->fds[sockfd])
+    if (sockfd >= MAX_FD_NUM || !current_task->fds[sockfd])
     {
         SPIN_UNLOCK(socket_lock);
         return -EBADF;
@@ -816,7 +847,7 @@ uint64_t sys_shutdown(uint64_t sockfd, uint64_t how)
     }
 
     // 验证how参数
-    if (how < SHUT_RD || how > SHUT_RDWR)
+    if (how > SHUT_RDWR)
     {
         SPIN_UNLOCK(socket_lock);
         return -EINVAL;
@@ -824,16 +855,15 @@ uint64_t sys_shutdown(uint64_t sockfd, uint64_t how)
 
     if (how == SHUT_RDWR)
     {
-        sock->state = SOCKET_TYPE_UNCONNECTED;
+        sys_socket_close(sock);
     }
 
     SPIN_UNLOCK(socket_lock);
     return 0;
 }
 
-int sys_getpeername(int fd, struct sockaddr *addr, socklen_t *addrlen)
+int sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen)
 {
-    // 验证文件描述符有效性
     if (fd < 0 || fd >= MAX_FD_NUM || current_task->fds[fd] == NULL)
     {
         return -EBADF;
@@ -841,24 +871,25 @@ int sys_getpeername(int fd, struct sockaddr *addr, socklen_t *addrlen)
 
     vfs_node_t sock = current_task->fds[fd];
 
-    // 验证是否为socket类型
     if (sock->type != file_socket)
     {
         return -ENOTSOCK;
     }
 
-    // 从socket结构体中获取对端地址
     socket_t *s = sock->handle;
-    if (!s->peer_addr)
+    if (!s)
     {
         return -ENOTCONN;
     }
 
-    // 复制地址到用户空间
-    socklen_t actual_len = MIN(*addrlen, s->peer_addrlen);
-    memcpy(addr, s->peer_addr, actual_len);
+    socket_t *socket = (socket_t *)&sockets[s->peer_fd];
 
-    memcpy(addrlen, &actual_len, sizeof(socklen_t));
+    struct sockaddr_un *un = (struct sockaddr_un *)addr;
+    socklen_t len = MIN(*addrlen, sizeof(socket->name) + sizeof(un->sun_family));
+
+    un->sun_family = socket->domain;
+    memcpy(un->sun_path, socket->name, len - sizeof(un->sun_family));
+    *addrlen = sizeof(struct sockaddr_un);
 
     return 0;
 }

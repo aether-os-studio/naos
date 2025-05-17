@@ -82,6 +82,8 @@ void arch_set_current(task_t *current)
 
 extern tss_t tss[MAX_CPU_NUM];
 
+extern void task_signal();
+
 void arch_switch_with_context(arch_context_t *prev, arch_context_t *next, uint64_t kernel_stack)
 {
     if (prev)
@@ -131,6 +133,8 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
     prev->current_state = prev->state;
 
     next->current_state = TASK_RUNNING;
+
+    task_signal();
 
     arch_set_current(next);
 

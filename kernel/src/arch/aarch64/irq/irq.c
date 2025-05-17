@@ -34,13 +34,9 @@ void aarch64_do_irq(struct pt_regs *regs)
 
 extern void gic_send_eoi(uint32_t irq);
 
-extern void task_signal();
-
 void timer_handler(uint64_t irq_num, void *parameter, struct pt_regs *regs)
 {
     current_task->jiffies++;
-
-    task_signal();
 
     uint64_t ctrl;
     asm volatile("mrs %0, cntp_ctl_el0" : "=r"(ctrl));

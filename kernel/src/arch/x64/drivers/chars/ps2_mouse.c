@@ -110,9 +110,9 @@ void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs)
                 gx = 0;
             if (gy < 0)
                 gy = 0;
-            if (gx > ((struct flanterm_fb_context *)ft_ctx)->width)
+            if ((size_t)gx > ((struct flanterm_fb_context *)ft_ctx)->width)
                 gx = ((struct flanterm_fb_context *)ft_ctx)->width;
-            if (gy > ((struct flanterm_fb_context *)ft_ctx)->height)
+            if ((size_t)gy > ((struct flanterm_fb_context *)ft_ctx)->height)
                 gy = ((struct flanterm_fb_context *)ft_ctx)->height;
 
             bool click = mouse1 & (1 << 0);

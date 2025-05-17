@@ -2,14 +2,80 @@
 #include <task/signal.h>
 #include <arch/arch.h>
 
-typedef struct signal_frame
-{
-    uint64_t restorer;
-    uint64_t sig;
-    uint64_t blocked;
+#define SI_MAX_SIZE 128
 
+typedef struct
+{
+    int32_t si_signo; // Signal number
+    int32_t si_errno; // Error number (if applicable)
+    int32_t si_code;  // Signal code
+
+    union
+    {
+        int32_t _pad[128 - 3 * sizeof(int32_t) / sizeof(int32_t)];
+
+        // Kill
+        struct
+        {
+            int32_t si_pid;  // Sending process ID
+            uint32_t si_uid; // Real user ID of sending process
+        } _kill;
+
+        // Timer
+        struct
+        {
+            int32_t si_tid;     // Timer ID
+            int32_t si_overrun; // Overrun count
+            int32_t si_sigval;  // Signal value
+        } _timer;
+
+        // POSIX.1b signals
+        struct
+        {
+            int32_t si_pid;    // Sending process ID
+            uint32_t si_uid;   // Real user ID of sending process
+            int32_t si_sigval; // Signal value
+        } _rt;
+
+        // SIGCHLD
+        struct
+        {
+            int32_t si_pid;    // Sending process ID
+            uint32_t si_uid;   // Real user ID of sending process
+            int32_t si_status; // Exit value or signal
+            int32_t si_utime;  // User time consumed
+            int32_t si_stime;  // System time consumed
+        } _sigchld;
+
+        // SIGILL, SIGFPE, SIGSEGV, SIGBUS
+        struct
+        {
+            uintptr_t si_addr;   // Faulting instruction or data address
+            int32_t si_addr_lsb; // LSB of the address (if applicable)
+        } _sigfault;
+
+        // SIGPOLL
+        struct
+        {
+            int32_t si_band; // Band event
+            int32_t si_fd;   // File descriptor
+        } _sigpoll;
+
+        // SIGSYS
+        struct
+        {
+            uintptr_t si_call_addr; // Calling user insn
+            int32_t si_syscall;     // Number of syscall
+            uint32_t si_arch;       // Architecture
+        } _sigsys;
+    } _sifields;
+} siginfo_t;
+
+struct sigcontext
+{
     arch_signal_frame_t arch;
-} __attribute__((packed)) signal_frame_t;
+    uint64_t reserved1[8];
+};
 
 signal_internal_t signal_internal_decisions[MAXSIG] = {0};
 
@@ -58,11 +124,11 @@ bool signals_pending_quick(task_t *task)
 {
     sigset_t pending_list = task->signal;
     sigset_t unblocked_list = pending_list & (~task->blocked);
-    for (int i = 1; i <= MAXSIG; i++)
+    for (int i = MINSIG; i <= MAXSIG; i++)
     {
         if (!(unblocked_list & SIGMASK(i)))
             continue;
-        sigaction_t *action = &task->actions[i - 1];
+        sigaction_t *action = &task->actions[i];
         sighandler_t user_handler = action->sa_handler;
         if (user_handler == SIG_IGN)
             continue;
@@ -88,7 +154,7 @@ int sys_ssetmask(int how, sigset_t *nset, sigset_t *oset)
     if (nset)
     {
         uint64_t safe = *nset;
-        safe &= ~(SIGKILL | SIGSTOP); // nuh uh!
+        safe &= ~(SIGMASK(SIGKILL) | SIGMASK(SIGSTOP)); // nuh uh!
         switch (how)
         {
         case SIG_BLOCK:
@@ -109,21 +175,6 @@ int sys_ssetmask(int how, sigset_t *nset, sigset_t *oset)
     return 0;
 }
 
-int sys_signal(int sig, uint64_t handler, uint64_t restorer)
-{
-    if (sig < MINSIG || sig > MAXSIG || sig == SIGKILL)
-    {
-        return 0;
-    }
-
-    sigaction_t *ptr = &current_task->actions[sig - 1];
-    ptr->sa_mask = 0;
-    ptr->sa_handler = (sighandler_t)handler;
-    ptr->sa_flags = SIG_ONESHOT | SIG_NOMASK;
-    ptr->sa_restorer = (void (*)(void))restorer;
-    return handler;
-}
-
 int sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction)
 {
     if (sig < MINSIG || sig > MAXSIG || sig == SIGKILL)
@@ -131,7 +182,7 @@ int sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction)
         return 0;
     }
 
-    sigaction_t *ptr = &current_task->actions[sig - 1];
+    sigaction_t *ptr = &current_task->actions[sig];
     if (oldaction)
     {
         *oldaction = *ptr;
@@ -157,17 +208,72 @@ int sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction)
 void sys_sigreturn()
 {
 #if defined(__x86_64__)
-    current_task->arch_context->ctx->cs = SELECTOR_USER_CS;
-    current_task->arch_context->ctx->ss = SELECTOR_USER_DS;
-    current_task->arch_context->ctx->ds = SELECTOR_USER_DS;
-    current_task->arch_context->ctx->es = SELECTOR_USER_DS;
-    struct pt_regs *ucontext = (struct pt_regs *)current_task->syscall_stack;
-    current_task->arch_context->ctx->rax = ucontext->rax;
-    current_task->arch_context->ctx->rflags = ucontext->r11;
-    current_task->arch_context->ctx->rip = ucontext->rcx;
+    arch_disable_interrupt();
+
+    struct sigcontext *ucontext = (struct sigcontext *)(((struct pt_regs *)current_task->syscall_stack - 1)->rsp);
+    int signal = ucontext->reserved1[0];
+    sigaction_t *action = &current_task->actions[signal];
+    int flags = action->sa_flags;
+
+    struct pt_regs *context = (struct pt_regs *)current_task->kernel_stack - 1;
+
+    context->r8 = ucontext->arch.r8;
+    context->r9 = ucontext->arch.r9;
+    context->r10 = ucontext->arch.r10;
+    context->r11 = ucontext->arch.r11;
+    context->r12 = ucontext->arch.r12;
+    context->r13 = ucontext->arch.r13;
+    context->r14 = ucontext->arch.r14;
+    context->r15 = ucontext->arch.r15;
+    context->rdi = ucontext->arch.rdi;
+    context->rsi = ucontext->arch.rsi;
+    context->rbp = ucontext->arch.rbp;
+    context->rbx = ucontext->arch.rbx;
+    context->rdx = ucontext->arch.rdx;
+    context->rcx = ucontext->arch.rcx;
+    // context->rax = ucontext->arch.rax;
+    context->rax = (uint64_t)-EINTR;
+    context->rsp = ucontext->arch.rsp;
+    context->rip = ucontext->arch.rip;
+    context->rflags = ucontext->arch.eflags;
+
+    context->cs = ucontext->arch.cs;
+    context->ss = ucontext->arch.ss;
+    current_task->arch_context->fs = ucontext->arch.fs;
+    current_task->arch_context->gs = ucontext->arch.gs;
+
+    current_task->arch_context->ctx = context;
+
+    if (ucontext->arch.fpstate)
+    {
+        memcpy(current_task->arch_context->fpu_ctx,
+               ucontext->arch.fpstate,
+               sizeof(struct fpstate));
+    }
 
     arch_switch_with_context(NULL, current_task->arch_context, current_task->kernel_stack);
+#else
+    // todo: other architectures
+    return NULL;
 #endif
+}
+
+int sys_sigsuspend(const sigset_t *mask)
+{
+    sigset_t old = current_task->blocked;
+
+    current_task->blocked = *mask;
+
+    while (!signals_pending_quick(current_task))
+    {
+        arch_enable_interrupt();
+        arch_pause();
+    }
+    arch_disable_interrupt();
+
+    current_task->blocked = old;
+
+    return -EINTR;
 }
 
 int sys_kill(int pid, int sig)
@@ -183,7 +289,7 @@ int sys_kill(int pid, int sig)
         {
             if (tasks[i] && tasks[i]->ppid == current_task->pid)
             {
-                tasks[i]->signal |= SIGMASK(sig);
+                sys_kill(tasks[i]->pid, sig);
             }
         }
 
@@ -217,16 +323,10 @@ int sys_kill(int pid, int sig)
 
     if (task->state == TASK_BLOCKING)
     {
-        task_unblock(task, -SIGKILL);
+        task_unblock(task, -sig);
     }
 
     return 0;
-}
-
-void sys_sendsignal(uint64_t pid, int sig)
-{
-    task_t *task = tasks[pid];
-    task->signal |= SIGMASK(sig);
 }
 
 void task_signal()
@@ -253,7 +353,7 @@ void task_signal()
         return;
     }
 
-    sigaction_t *ptr = &current_task->actions[sig - 1];
+    sigaction_t *ptr = &current_task->actions[sig];
 
     if (ptr->sa_handler == SIG_IGN)
     {
@@ -266,55 +366,75 @@ void task_signal()
     }
 
 #if defined(__x86_64__)
-    struct pt_regs *iframe = current_task->arch_context->ctx;
+    struct pt_regs *iframe = (struct pt_regs *)current_task->syscall_stack - 1;
 
-    signal_frame_t *frame = (signal_frame_t *)iframe->rsp - 1;
+    uint64_t sigrsp = iframe->rsp;
 
-    frame->arch.rax = iframe->rax;
+    sigrsp -= sizeof(struct fpstate);
+    struct fpstate *fpu = (struct fpstate *)sigrsp;
+    memcpy(fpu, current_task->arch_context->fpu_ctx, sizeof(struct fpstate));
 
-    frame->arch.rbp = iframe->rbp;
-    frame->arch.rdi = iframe->rdi;
-    frame->arch.rsi = iframe->rsi;
+    sigrsp -= sizeof(struct sigcontext);
+    struct sigcontext *ucontext = (struct sigcontext *)sigrsp;
 
-    frame->arch.rbx = iframe->rbx;
-    frame->arch.rcx = iframe->rcx;
-    frame->arch.rdx = iframe->rdx;
+    ucontext->arch.r8 = iframe->r8;
+    ucontext->arch.r9 = iframe->r9;
+    ucontext->arch.r10 = iframe->r10;
+    ucontext->arch.r11 = iframe->r11;
+    ucontext->arch.r12 = iframe->r12;
+    ucontext->arch.r13 = iframe->r13;
+    ucontext->arch.r14 = iframe->r14;
+    ucontext->arch.r15 = iframe->r15;
+    ucontext->arch.rdi = iframe->rdi;
+    ucontext->arch.rsi = iframe->rsi;
+    ucontext->arch.rbp = iframe->rbp;
+    ucontext->arch.rbx = iframe->rbx;
+    ucontext->arch.rdx = iframe->rdx;
+    ucontext->arch.rax = iframe->rax;
+    ucontext->arch.rcx = iframe->rcx;
+    ucontext->arch.rsp = iframe->rsp;
+    ucontext->arch.cs = iframe->cs;
+    ucontext->arch.ss = iframe->ss;
+    ucontext->arch.fs = current_task->arch_context->fs;
+    ucontext->arch.gs = current_task->arch_context->gs;
+    ucontext->arch.rip = iframe->rip;
+    ucontext->arch.eflags = iframe->rflags;
+    ucontext->arch.err = 0;
+    ucontext->arch.trapno = 0;
+    ucontext->arch.oldmask = 0;
+    ucontext->arch.cr2 = 0x1234567887654321;
+    ucontext->arch.fpstate = 0;
+    memset(ucontext->reserved1, 0, sizeof(ucontext->reserved1));
 
-    frame->arch.r8 = iframe->r8;
-    frame->arch.r9 = iframe->r9;
-    frame->arch.r10 = iframe->r10;
-    frame->arch.r11 = iframe->r11;
-    frame->arch.r12 = iframe->r12;
-    frame->arch.r13 = iframe->r13;
-    frame->arch.r14 = iframe->r14;
-    frame->arch.r15 = iframe->r15;
+    ucontext->arch.oldmask = current_task->blocked;
+    ucontext->arch.fpstate = fpu;
+    ucontext->reserved1[0] = sig;
 
-    frame->arch.rip = iframe->rip;
+    sigrsp -= sizeof(void *);
+    *((void **)sigrsp) = (void *)ptr->sa_restorer;
 
-    iframe->rsp = (uint64_t)frame;
-    iframe->rip = (uint64_t)ptr->sa_handler;
+    current_task->arch_context->ctx->rip = (uint64_t)ptr->sa_handler;
+    current_task->arch_context->ctx->rdi = sig;
+
+    current_task->arch_context->ctx->cs = SELECTOR_USER_CS;
+    current_task->arch_context->ctx->ss = SELECTOR_USER_DS;
+    current_task->arch_context->ctx->ds = SELECTOR_USER_DS;
+    current_task->arch_context->ctx->es = SELECTOR_USER_DS;
+    current_task->arch_context->fs = SELECTOR_USER_DS;
+    current_task->arch_context->gs = SELECTOR_USER_DS;
+
+    current_task->arch_context->ctx->rsp = sigrsp;
 #elif defined(__aarch64__)
-    struct pt_regs *cframe = current_task->arch_context->ctx;
-
-    signal_frame_t *frame = (signal_frame_t *)cframe - 1;
 #elif defined(__riscv)
 #elif defined(__loongarch64)
 #endif
-
-    frame->blocked = 0;
-
-    if (ptr->sa_flags & SIG_NOMASK)
-    {
-        frame->blocked = current_task->blocked;
-    }
-
-    frame->sig = sig;
-    frame->restorer = (uint64_t)ptr->sa_restorer;
 
     if (ptr->sa_flags & SIG_ONESHOT)
     {
         ptr->sa_handler = SIG_DFL;
     }
 
-    current_task->blocked |= ptr->sa_mask;
+    current_task->blocked |= (SIGMASK(sig) | ptr->sa_mask);
+
+    arch_switch_with_context(NULL, current_task->arch_context, current_task->kernel_stack);
 }

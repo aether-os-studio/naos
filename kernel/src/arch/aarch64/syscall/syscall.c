@@ -66,7 +66,7 @@ void aarch64_do_syscall(struct pt_regs *frame)
         ret = current_task->ppid;
         break;
     case SYS_WAIT4:
-        ret = sys_waitpid(arg1, (int *)arg2);
+        ret = sys_waitpid(arg1, (int *)arg2, arg3);
         break;
     case SYS_BRK:
         ret = sys_brk(arg1);

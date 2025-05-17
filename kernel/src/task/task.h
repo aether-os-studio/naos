@@ -158,7 +158,11 @@ struct pt_regs;
 uint64_t task_fork(struct pt_regs *regs);
 uint64_t task_execve(const char *path, const char **argv, const char **envp);
 uint64_t task_exit(int64_t code);
-uint64_t sys_waitpid(uint64_t pid, int *status);
+
+#define WNOHANG 1
+#define WUNTRACED 2
+
+uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options);
 uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *parent_tid, int *child_tid, uint64_t tls);
 struct timespec;
 uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem);

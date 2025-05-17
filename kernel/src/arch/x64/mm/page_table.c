@@ -285,19 +285,30 @@ static void free_page_table_inner(uint64_t phys_addr, int level)
 {
     uint64_t *table = (uint64_t *)phys_to_virt(phys_addr);
 
+    if (translate_address(get_current_page_dir(false), phys_to_virt(phys_addr)) == 0)
+        return;
+
     for (int i = 0; i < 512; i++)
     {
         uint64_t pte = table[i];
         if (!(pte & ARCH_PT_FLAG_VALID))
             continue;
 
-        if (level == 1)
+        if (level == 3 && (pte & ARCH_PT_FLAG_HUGE))
         {
-            free_frames(pte & ARCH_ADDR_MASK, 1);
+            free_frames(pte & ARCH_ADDR_MASK, 1 << 30);
+        }
+        else if (level == 2 && (pte & ARCH_PT_FLAG_HUGE))
+        {
+            free_frames(pte & ARCH_ADDR_MASK, 1 << 21);
+        }
+        else if (level > 1)
+        {
+            free_page_table_inner(pte & ARCH_ADDR_MASK, level - 1);
         }
         else
         {
-            free_page_table_inner(pte & ARCH_ADDR_MASK, level - 1); // 递归子页表
+            free_frames(pte & ARCH_ADDR_MASK, 1);
         }
     }
 
@@ -310,11 +321,14 @@ void free_page_table(uint64_t directory)
 
     for (int i = 0; i < 256; i++)
     {
-        if (pml4[i] & ARCH_PT_FLAG_VALID)
-        {
-            free_page_table_inner(pml4[i] & ARCH_ADDR_MASK, 3);
-            pml4[i] = 0;
-        }
+        if (!(pml4[i] & ARCH_PT_FLAG_VALID))
+            continue;
+
+        uint64_t pdpt_phys = pml4[i] & ARCH_ADDR_MASK;
+        if ((pdpt_phys & 0xFFFF800000000000) != 0)
+            continue;
+        free_page_table_inner(pdpt_phys, 3);
+        pml4[i] = 0; // 清除PML4条目
     }
 
     free_frames((uint64_t)directory, 1);

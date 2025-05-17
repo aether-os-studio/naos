@@ -191,9 +191,10 @@ int vfs_mkfile(const char *name)
             new_current = vfs_node_alloc(current, buf);
             new_current->type = file_dir;
             callbackof(current, mkdir)(current->handle, buf, new_current);
-            do_update(new_current);
         }
         current = new_current;
+        do_update(current);
+
         if (current->type != file_dir)
             goto err;
     }
@@ -204,6 +205,7 @@ create:
     callbackof(current, mkfile)(current->handle, filename, node);
 
     free(path);
+
     return 0;
 
 err:

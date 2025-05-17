@@ -145,7 +145,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = current_task->ppid;
         break;
     case SYS_WAIT4:
-        regs->rax = sys_waitpid(arg1, (int *)arg2);
+        regs->rax = sys_waitpid(arg1, (int *)arg2, arg3);
         break;
     case SYS_PRCTL:
         regs->rax = sys_prctl(arg1, arg2, arg3, arg4, arg5);
@@ -210,6 +210,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_RT_SIGACTION:
         regs->rax = sys_sigaction(arg1, (sigaction_t *)arg2, (sigaction_t *)arg3);
         break;
+    case SYS_RT_SIGSUSPEND:
+        regs->rax = sys_sigsuspend((const sigset_t *)arg1);
+        break;
     case SYS_KILL:
         regs->rax = sys_kill(arg1, arg2);
         break;
@@ -227,27 +230,27 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = sys_socketpair(arg1, arg2, arg3, (void *)arg4);
         break;
     case SYS_GETSOCKNAME:
-        regs->rax = sys_getsockname(arg1, (struct sockaddr *)arg2, (socklen_t *)arg3);
+        regs->rax = sys_getsockname(arg1, (struct sockaddr_un *)arg2, (socklen_t *)arg3);
         break;
     case SYS_GETPEERNAME:
     {
         int fd = arg1;
-        struct sockaddr *addr = (struct sockaddr *)arg2;
+        struct sockaddr_un *addr = (struct sockaddr_un *)arg2;
         socklen_t *addrlen = (socklen_t *)arg3;
         regs->rax = sys_getpeername(fd, addr, addrlen);
         break;
     }
     case SYS_BIND:
-        regs->rax = sys_bind(arg1, (const struct sockaddr *)arg2, arg3);
+        regs->rax = sys_bind(arg1, (const struct sockaddr_un *)arg2, arg3);
         break;
     case SYS_LISTEN:
         regs->rax = sys_listen(arg1, arg2);
         break;
     case SYS_ACCEPT:
-        regs->rax = sys_accept(arg1, (struct sockaddr *)arg2, (socklen_t *)arg3);
+        regs->rax = sys_accept(arg1, (struct sockaddr_un *)arg2, (socklen_t *)arg3);
         break;
     case SYS_CONNECT:
-        regs->rax = sys_connect(arg1, (const struct sockaddr *)arg2, arg3);
+        regs->rax = sys_connect(arg1, (const struct sockaddr_un *)arg2, arg3);
         break;
     case SYS_SENDTO:
         regs->rax = sys_send(arg1, (const void *)arg2, arg3, arg4);
