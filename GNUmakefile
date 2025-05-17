@@ -289,7 +289,7 @@ endif
 
 $(IMAGE_NAME).hdd: limine/limine kernel
 	rm -rf $(IMAGE_NAME).hdd
-	dd if=/dev/zero bs=1M count=0 seek=512 of=$(IMAGE_NAME).hdd
+	dd if=/dev/zero bs=1M count=0 seek=2048 of=$(IMAGE_NAME).hdd
 ifeq ($(ARCH),x86_64)
 	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00 -m 1
 else

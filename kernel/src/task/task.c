@@ -671,7 +671,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     uint64_t stack = push_infos(current_task, USER_STACK_END, (char **)new_argv, (char **)new_envp, e_entry, (uint64_t)(load_start + ehdr->e_phoff), ehdr->e_phnum, interpreter_entry ? INTERPRETER_BASE_ADDR : load_start);
 
-    char cmdline[256];
+    char cmdline[DEFAULT_PAGE_SIZE];
     memset(cmdline, 0, sizeof(cmdline));
     char *cmdline_ptr = cmdline;
     for (int i = 0; i < argv_count; i++)

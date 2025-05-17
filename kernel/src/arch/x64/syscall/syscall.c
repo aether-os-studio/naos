@@ -126,6 +126,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_FORK:
         regs->rax = task_fork(regs);
         break;
+    case SYS_VFORK:
+        regs->rax = task_fork(regs);
+        break;
     case SYS_EXECVE:
         regs->rax = task_execve((const char *)arg1, (const char **)arg2, (const char **)arg3);
         break;
@@ -306,6 +309,8 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_STATX:
         regs->rax = sys_statx(arg1, (const char *)arg2, arg3, arg4, (struct statx *)arg5);
+        break;
+    case SYS_SYSINFO:
         break;
     case SYS_UNAME:
         struct utsname *utsname = (struct utsname *)arg1;
