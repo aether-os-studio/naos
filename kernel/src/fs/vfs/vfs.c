@@ -434,3 +434,18 @@ char *vfs_get_fullpath(vfs_node_t node)
     free(nodes);
     return buff;
 }
+
+int vfs_delete(vfs_node_t node)
+{
+    int res = callbackof(node, delete)(node->handle);
+    if (res < 0)
+        return -1;
+    node->handle = NULL;
+    vfs_free(node);
+    return 0;
+}
+
+int vfs_rename(vfs_node_t node, const char *new)
+{
+    return callbackof(node, rename)(node->handle, new);
+}

@@ -730,6 +730,16 @@ int iso9660_stat(void *handle, vfs_node_t node)
     return 0;
 }
 
+int iso9660_delete(void *current)
+{
+    return -1;
+}
+
+int iso9660_rename(void *current, const char *new)
+{
+    return -1;
+}
+
 int iso9660_ioctl(void *file, ssize_t cmd, ssize_t arg)
 {
     return -ENOSYS;
@@ -749,6 +759,8 @@ static struct vfs_callback callbacks = {
     .write = (vfs_write_t)iso9660_writefile,
     .mkdir = iso9660_mkdir,
     .mkfile = iso9660_mkfile,
+    .delete = (vfs_del_t)iso9660_delete,
+    .rename = (vfs_rename_t)iso9660_rename,
     .stat = iso9660_stat,
     .ioctl = iso9660_ioctl,
     .poll = iso9660_poll,

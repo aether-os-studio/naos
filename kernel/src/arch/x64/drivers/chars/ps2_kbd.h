@@ -5,6 +5,14 @@
 #include <drivers/block/ahci/hba.h>
 #include <task/task.h>
 
+enum
+{
+    KEY_BUTTON_UP = 0x81,
+    KEY_BUTTON_DOWN = 0x82,
+    KEY_BUTTON_LEFT = 0x83,
+    KEY_BUTTON_RIGHT = 0x84,
+};
+
 #define PORT_KB_DATA 0x60
 #define PORT_KB_STATUS 0x64
 #define PORT_KB_CMD 0x64

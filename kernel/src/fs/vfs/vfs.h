@@ -165,6 +165,10 @@ typedef int (*vfs_stat_t)(void *file, vfs_node_t node);
 // 创建一个文件或文件夹
 typedef int (*vfs_mk_t)(void *parent, const char *name, vfs_node_t node);
 
+typedef int (*vfs_del_t)(void *current);
+
+typedef int (*vfs_rename_t)(void *current, const char *new);
+
 // 创建一个文件或文件夹
 typedef int (*vfs_ioctl_t)(void *file, ssize_t cmd, ssize_t arg);
 
@@ -183,6 +187,8 @@ typedef struct vfs_callback
     vfs_write_t write;
     vfs_mk_t mkdir;
     vfs_mk_t mkfile;
+    vfs_del_t delete;
+    vfs_rename_t rename;
     vfs_stat_t stat;
     vfs_ioctl_t ioctl;
     vfs_poll_t poll;
@@ -300,6 +306,23 @@ int vfs_unmount(const char *path);
  *\return 0 成功，-1 失败
  */
 int vfs_close(vfs_node_t node);
+
+/**
+ *\brief 删除文件
+ *
+ *\param node     文件节点
+ *\return 0 成功，-1 失败
+ */
+int vfs_delete(vfs_node_t node);
+
+/**
+ *\brief 重命名文件
+ *
+ *\param node     文件节点
+ *\param new      新路径
+ *\return 0 成功，-1 失败
+ */
+int vfs_rename(vfs_node_t node, const char *new);
 
 /**
  *\brief 控制文件

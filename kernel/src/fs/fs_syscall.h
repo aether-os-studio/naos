@@ -373,4 +373,8 @@ uint64_t sys_flock(int fd, uint64_t cmd);
 
 uint64_t sys_mkdir(const char *name, uint64_t mode);
 
+uint64_t sys_rename(const char *old, const char *new);
+
+uint64_t sys_fchdir(uint64_t fd);
+
 void wake_blocked_tasks(task_block_list_t *head);

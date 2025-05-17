@@ -445,6 +445,8 @@ void kb_evdev_generate(uint8_t raw)
     evdevInternal[index / 8] |= (clicked << (index % 8));
 }
 
+bool ctrled = false;
+
 bool shifted = false;
 bool capsLocked = false;
 
@@ -453,10 +455,47 @@ uint32_t kbCurr = 0;
 uint32_t kbMax = 0;
 task_t *kb_task = NULL;
 
+void kb_reset()
+{
+    kbBuff = 0;
+    kbCurr = 0;
+    kbMax = 0;
+    kb_task = NULL;
+}
+
+void kb_finalise_stream()
+{
+    task_t *task = kb_task;
+    if (task)
+    {
+        task->tmp_rec_v = kbCurr;
+        task_unblock(kb_task, EOK);
+    }
+    kb_reset();
+}
+
 char handle_kb_event()
 {
     uint8_t scan_code = io_in8(PORT_KB_DATA);
     kb_evdev_generate(scan_code);
+
+    if (scan_code == 0xE0)
+    {
+        uint8_t extended_code = io_in8(PORT_KB_DATA);
+        switch (extended_code)
+        {
+        case 0x48:
+            return KEY_BUTTON_UP;
+        case 0x50:
+            return KEY_BUTTON_DOWN;
+        case 0x4b:
+            return KEY_BUTTON_LEFT;
+        case 0x4d:
+            return KEY_BUTTON_RIGHT;
+        default:
+            return 0;
+        }
+    }
 
     /* No, I will not fix/improve the rest, idc about the kernel shell */
 
@@ -466,6 +505,15 @@ char handle_kb_event()
         if ((scan_code & 0x7F) == 42) // & 0x7F clears the release
         {
             shifted = 0;
+            return 0;
+        }
+    }
+
+    if (ctrled == 1 && scan_code & 0x80)
+    {
+        if ((scan_code & 0x7F) == 0x1d) // & 0x7F clears the release
+        {
+            ctrled = false;
             return 0;
         }
     }
@@ -488,7 +536,10 @@ char handle_kb_event()
             return CHARACTER_BACK;
             break;
         case SCANCODE_SHIFT:
-            shifted = 1;
+            shifted = true;
+            break;
+        case 0x1d:
+            ctrled = true;
             break;
         case SCANCODE_CAPS:
             capsLocked = !capsLocked;
@@ -519,6 +570,9 @@ uint32_t read_str(char *buffstr)
     return ret;
 }
 
+uint8_t kb_special_key_status = 0;
+char kb_special_key = 0;
+
 bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state)
 {
     while (kb_is_ocupied())
@@ -532,18 +586,26 @@ bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state)
     kbMax = limit;
     kb_task = task;
 
+    if (kb_special_key_status == 1) // 上下左右
+    {
+        kbBuff[kbCurr++] = '[';
+        kb_special_key_status = 2;
+        kb_finalise_stream();
+        return true;
+    }
+    else if (kb_special_key_status == 2) // 上下左右第二阶段
+    {
+        kbBuff[kbCurr++] = kb_special_key;
+        kb_special_key_status = 0;
+        kb_special_key = 0;
+        kb_finalise_stream();
+        return true;
+    }
+
     if (change_state)
         task->state = TASK_BLOCKING;
 
     return true;
-}
-
-void kb_reset()
-{
-    kbBuff = 0;
-    kbCurr = 0;
-    kbMax = 0;
-    kb_task = NULL;
 }
 
 void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs);
@@ -582,17 +644,6 @@ void kbd_init()
     strncpy(kb_event->uniq, "ps2kbd", sizeof(kb_event->uniq));
 }
 
-void kb_finalise_stream()
-{
-    task_t *task = kb_task;
-    if (task)
-    {
-        task->tmp_rec_v = kbCurr;
-        task_unblock(kb_task, EOK);
-    }
-    kb_reset();
-}
-
 void kb_char(task_t *task, char out)
 {
     if (task->term.c_lflag & ECHO)
@@ -618,10 +669,7 @@ void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
     if (!task)
         return;
 
-    if (task->state == TASK_BLOCKING)
-        task->state = TASK_READY;
-
-    switch (out)
+    switch ((uint8_t)out)
     {
     case CHARACTER_ENTER:
         // kbBuff[kbCurr] = '\0';
@@ -633,17 +681,48 @@ void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
     case CHARACTER_BACK:
         if (task->term.c_lflag & ICANON && kbCurr > 0)
         {
-            printk("\b");
-            kbCurr--;
-            kbBuff[kbCurr] = 0;
+            uint32_t back_steps = (kbCurr >= 3 &&
+                                   kbBuff[kbCurr - 3] == '\x1b' &&
+                                   kbBuff[kbCurr - 2] == '[')
+                                      ? 3
+                                      : 1;
+
+            kbCurr = (kbCurr >= back_steps) ? kbCurr - back_steps : 0;
+            memset(&kbBuff[kbCurr], 0, back_steps);
         }
+
         else if (!(task->term.c_lflag & ICANON))
             kb_char(task, out);
         break;
+    case KEY_BUTTON_UP:
+        kb_char(task, '\x1b');
+        kb_special_key_status = 1;
+        kb_special_key = 'A';
+        break;
+    case KEY_BUTTON_DOWN:
+        kb_char(task, '\x1b');
+        kb_special_key_status = 1;
+        kb_special_key = 'B';
+        break;
+    case KEY_BUTTON_LEFT:
+        kb_char(task, '\x1b');
+        kb_special_key_status = 1;
+        kb_special_key = 'D';
+        break;
+    case KEY_BUTTON_RIGHT:
+        kb_char(task, '\x1b');
+        kb_special_key_status = 1;
+        kb_special_key = 'C';
+        break;
     default:
+        if (ctrled)
+            out &= 0x1f;
         kb_char(task, out);
         break;
     }
+
+    if (task->state == TASK_BLOCKING)
+        task->state = TASK_READY;
 }
 
 bool kb_is_ocupied() { return !!kbBuff; }

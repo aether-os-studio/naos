@@ -21,7 +21,7 @@ sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/$ALPINE_VERSI
 echo -e "http://mirrors.ustc.edu.cn/alpine/$ALPINE_VERSION/main\nhttp://mirrors.ustc.edu.cn/alpine/$ALPINE_VERSION/community" | sudo tee $SYSROOT/../etc/apk/repositories
 
 # Basic software
-sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/$ALPINE_VERSION/community -U --allow-untrusted --root $SYSROOT/../ --initdb add gcc binutils musl-dev vim gzip xz make file tar fastfetch pciutils
+sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/$ALPINE_VERSION/community -U --allow-untrusted --root $SYSROOT/../ --initdb add gcc binutils musl-dev nano gzip xz make file tar fastfetch pciutils
 # sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/$ALPINE_VERSION/community -U --allow-untrusted --root $SYSROOT/../ --initdb add xorg-server xf86-video-fbdev xf86-input-evdev twm xterm xinit xsetroot xeyes xclock
 
 sudo cp -r /usr/share/zoneinfo/Asia/Shanghai $SYSROOT/../etc/localtime

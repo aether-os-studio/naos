@@ -168,6 +168,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_CHDIR:
         regs->rax = sys_chdir((const char *)arg1);
         break;
+    case SYS_FCHDIR:
+        regs->rax = sys_fchdir(arg1);
+        break;
     case SYS_GETCWD:
         regs->rax = sys_getcwd((char *)arg1, arg2);
         break;
@@ -391,6 +394,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_READLINK:
         regs->rax = sys_readlink((char *)arg1, (char *)arg2, arg3);
         break;
+    case SYS_RENAME:
+        regs->rax = sys_rename((const char *)arg1, (const char *)arg2);
+        break;
     case SYS_UNLINK:
         regs->rax = 0;
         break;
@@ -423,6 +429,12 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_SIGNALFD4:
         regs->rax = sys_signalfd4(arg1, (const sigset_t *)arg2, arg3, arg4);
+        break;
+    case SYS_TIMER_CREATE:
+        regs->rax = sys_timer_create((clockid_t)arg1, (struct sigevent *)arg2, (timer_t *)arg3);
+        break;
+    case SYS_TIMER_SETTIME:
+        regs->rax = sys_timer_settime((timer_t)arg1, (const struct itimerval *)arg2, (struct itimerval *)arg3);
         break;
     case SYS_TIMERFD_CREATE:
         regs->rax = 0;

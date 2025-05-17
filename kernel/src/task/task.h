@@ -112,6 +112,25 @@ typedef struct int_timer_internal
     uint64_t reset;
 } int_timer_internal_t;
 
+union sigval;
+
+#define SIGEV_SIGNAL 0    /* notify via signal */
+#define SIGEV_NONE 1      /* other notification: meaningless */
+#define SIGEV_THREAD 2    /* deliver via thread creation */
+#define SIGEV_THREAD_ID 4 /* deliver to thread */
+
+typedef struct kernel_timer
+{
+    clockid_t clock_type;
+    int sigev_signo;
+    union sigval sigev_value;
+    int sigev_notify;
+    uint64_t expires;
+    uint64_t interval;
+} kernel_timer_t;
+
+#define MAX_TIMERS_NUM 8
+
 typedef struct task
 {
     uint64_t pid;
@@ -146,6 +165,7 @@ typedef struct task
     uint32_t tmp_rec_v;
     char *cmdline;
     int_timer_internal_t itimer_real;
+    kernel_timer_t *timers[MAX_TIMERS_NUM];
 } task_t;
 
 void sched_update_itimer();
@@ -181,6 +201,9 @@ void task_unblock(task_t *task, int reason);
 #define SECCOMP_MODE_STRICT 1
 
 uint64_t sys_prctl(uint64_t options, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5);
+
+int sys_timer_create(clockid_t clockid, struct sigevent *sevp, timer_t *timerid);
+int sys_timer_settime(timer_t timerid, const struct itimerval *new_value, struct itimerval *old_value);
 
 extern task_t *tasks[MAX_TASK_NUM];
 extern task_t *idle_tasks[MAX_CPU_NUM];

@@ -72,6 +72,7 @@ task_t *task_create(const char *name, void (*entry)())
     task->brk_start = USER_BRK_START;
     task->brk_end = USER_BRK_START;
     memset(task->actions, 0, sizeof(task->actions));
+    memset(task->fds, 0, sizeof(task->fds));
     task->fds[0] = vfs_open("/dev/stdin");
     task->fds[1] = vfs_open("/dev/stdout");
     task->fds[2] = vfs_open("/dev/stderr");
@@ -381,7 +382,11 @@ uint64_t task_fork(struct pt_regs *regs)
     child->load_start = current_task->load_start;
     child->load_end = current_task->load_end;
 
-    for (uint64_t i = 0; i < MAX_FD_NUM; i++)
+    child->fds[0] = vfs_open("/dev/stdin");
+    child->fds[1] = vfs_open("/dev/stdout");
+    child->fds[2] = vfs_open("/dev/stderr");
+
+    for (uint64_t i = 3; i < MAX_FD_NUM; i++)
     {
         vfs_node_t node = current_task->fds[i];
         if (node)
@@ -399,6 +404,10 @@ uint64_t task_fork(struct pt_regs *regs)
             vfs_node_t new = vfs_open(fullpath);
             free(fullpath);
             child->fds[i] = new;
+        }
+        else
+        {
+            child->fds[i] = NULL;
         }
     }
 
@@ -947,7 +956,11 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->load_start = current_task->load_start;
     child->load_end = current_task->load_end;
 
-    for (uint64_t i = 0; i < MAX_FD_NUM; i++)
+    child->fds[0] = vfs_open("/dev/stdin");
+    child->fds[1] = vfs_open("/dev/stdout");
+    child->fds[2] = vfs_open("/dev/stderr");
+
+    for (uint64_t i = 3; i < MAX_FD_NUM; i++)
     {
         vfs_node_t node = current_task->fds[i];
         if (node)
@@ -965,6 +978,10 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
             vfs_node_t new = vfs_open(fullpath);
             free(fullpath);
             child->fds[i] = new;
+        }
+        else
+        {
+            child->fds[i] = NULL;
         }
     }
 
@@ -1114,6 +1131,22 @@ void sched_update_itimer()
                 ptr->itimer_real.at = 0;
             }
         }
+
+        for (int j = 0; j < MAX_TIMERS_NUM; j++)
+        {
+            if (ptr->timers[i] == NULL)
+                continue;
+            kernel_timer_t *kt = ptr->timers[j];
+            if (kt->expires && jiffies >= kt->expires)
+            {
+                ptr->signal |= SIGMASK(kt->sigev_signo);
+
+                if (kt->interval)
+                    kt->expires += kt->interval;
+                else
+                    kt->expires = 0;
+            }
+        }
     }
 }
 
@@ -1146,6 +1179,73 @@ size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old)
 
         current_task->itimer_real.reset = targInterval;
     }
+
+    return 0;
+}
+int sys_timer_create(clockid_t clockid, struct sigevent *sevp, timer_t *timerid)
+{
+    kernel_timer_t *kt = NULL;
+    uint64_t i;
+    for (i = 0; i < MAX_TIMERS_NUM; i++)
+    {
+        if (current_task->timers[i] == NULL)
+        {
+            kt = malloc(sizeof(kernel_timer_t));
+            current_task->timers[i] = kt;
+            break;
+        }
+    }
+
+    if (!kt)
+        return -ENOMEM;
+
+    memset(kt, 0, sizeof(kernel_timer_t));
+
+    kt->clock_type = clockid;
+    kt->sigev_notify = SIGEV_SIGNAL;
+
+    if (sevp)
+    {
+        struct sigevent ksev;
+        memcpy(&ksev, sevp, sizeof(struct sigevent));
+
+        kt->sigev_signo = ksev.sigev_signo;
+        kt->sigev_value = ksev.sigev_value;
+        kt->sigev_notify = ksev.sigev_notify;
+    }
+
+    *timerid = (timer_t)i;
+
+    return 0;
+}
+
+int sys_timer_settime(timer_t timerid, const struct itimerval *new_value, struct itimerval *old_value)
+{
+    uint64_t idx = (uint64_t)timerid;
+    if (idx >= MAX_TIMERS_NUM)
+        return -EINVAL;
+
+    kernel_timer_t *kt = current_task->timers[idx];
+
+    struct itimerval kts;
+    memcpy(&kts, new_value, sizeof(*new_value));
+
+    uint64_t now = jiffies;
+    uint64_t interval = kts.it_interval.tv_sec * 1000 + kts.it_interval.tv_usec / 1000000;
+    uint64_t expires = kts.it_value.tv_sec * 1000 + kts.it_value.tv_usec / 1000000;
+
+    if (old_value)
+    {
+        struct itimerval old;
+        old.it_interval.tv_sec = kt->interval / 1000;
+        old.it_interval.tv_usec = (kt->interval % 1000) * 1000000;
+        old.it_value.tv_sec = (kt->expires - now) / 1000;
+        old.it_value.tv_usec = ((kt->expires - now) % 1000) * 1000000;
+        memcpy(old_value, &old, sizeof(old));
+    }
+
+    kt->interval = interval;
+    kt->expires = now + expires;
 
     return 0;
 }

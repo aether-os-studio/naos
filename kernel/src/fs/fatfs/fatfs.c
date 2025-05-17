@@ -223,6 +223,22 @@ int fatfs_stat(void *handle, vfs_node_t node)
     return 0;
 }
 
+int fatfs_delete(file_t file)
+{
+    FRESULT res = f_unlink(file->path);
+    if (res != FR_OK)
+        return -1;
+    return 0;
+}
+
+int fatfs_rename(file_t file, const char *new)
+{
+    FRESULT res = f_rename((const char *)file->path, new);
+    if (res != FR_OK)
+        return -1;
+    return 0;
+}
+
 int fatfs_ioctl(void *file, ssize_t cmd, ssize_t arg)
 {
     return -ENOSYS;
@@ -242,6 +258,8 @@ static struct vfs_callback callbacks = {
     .write = (vfs_write_t)fatfs_writefile,
     .mkdir = fatfs_mkdir,
     .mkfile = fatfs_mkfile,
+    .delete = (vfs_del_t)fatfs_delete,
+    .rename = (vfs_rename_t)fatfs_rename,
     .stat = fatfs_stat,
     .ioctl = fatfs_ioctl,
     .poll = fatfs_poll,

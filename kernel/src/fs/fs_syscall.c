@@ -552,7 +552,7 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
 
 uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname, struct stat *buf, uint64_t flags)
 {
-    char *resolved = at_resolve_pathname(dirfd, pathname);
+    char *resolved = at_resolve_pathname(dirfd, (char *)pathname);
 
     uint64_t ret = sys_stat(pathname, buf);
 
@@ -1401,6 +1401,30 @@ uint64_t sys_signalfd(int ufd, const sigset_t *mask, size_t sizemask)
     return sys_signalfd4(ufd, mask, sizemask, 0);
 }
 
+uint64_t sys_rename(const char *old, const char *new)
+{
+    vfs_node_t node = vfs_open(old);
+    int ret = vfs_rename(node, new);
+    if (ret < 0)
+        return -ENOENT;
+
+    return 0;
+}
+
+uint64_t sys_fchdir(uint64_t fd)
+{
+    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fds[fd])
+        return -EBADF;
+
+    vfs_node_t node = current_task->fds[fd];
+    if (node->type != file_dir)
+        return -ENOTDIR;
+
+    current_task->cwd = node;
+
+    return 0;
+}
+
 static int dummy()
 {
     return -ENOSYS;
@@ -1415,6 +1439,8 @@ static struct vfs_callback epoll_callbacks = {
     .write = (vfs_write_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
+    .rename = (vfs_rename_t)dummy,
+    .delete = (vfs_del_t)dummy,
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = epoll_poll,
@@ -1429,6 +1455,8 @@ static struct vfs_callback eventfd_callbacks = {
     .write = (vfs_write_t)eventfd_write,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
+    .rename = (vfs_rename_t)dummy,
+    .delete = (vfs_del_t)dummy,
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = eventfd_poll,
@@ -1443,6 +1471,8 @@ static struct vfs_callback signalfd_callbacks = {
     .write = (vfs_write_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
+    .delete = (vfs_del_t)dummy,
+    .rename = (vfs_rename_t)dummy,
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)signalfd_ioctl,
     .poll = signalfd_poll,

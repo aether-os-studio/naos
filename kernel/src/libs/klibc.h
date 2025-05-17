@@ -11,6 +11,9 @@
 
 typedef int64_t err_t;
 
+typedef int clockid_t;
+typedef void *timer_t;
+
 #define ABS(x) ((x) > 0 ? (x) : -(x)) // 绝对值
 // 最大最小值
 #define MAX(x, y) ((x > y) ? (x) : (y))
