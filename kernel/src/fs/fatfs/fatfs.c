@@ -220,6 +220,7 @@ int fatfs_stat(void *handle, vfs_node_t node)
         node->size = fno.fsize;
         // node->createtime = fno.ftime
     }
+
     return 0;
 }
 

@@ -189,7 +189,7 @@ int sys_bind(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen)
             SPIN_UNLOCK(socket_lock);
             return -ENAMETOOLONG;
         }
-        memcpy(sock->name, un->sun_path, sizeof(un->sun_path));
+        memcpy(sock->name, un->sun_path, name_len);
     }
     else
     {

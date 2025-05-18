@@ -25,6 +25,19 @@ static inline uint64_t round(double x)
     return (uint64_t)(x + 0.5);
 }
 
+static inline void *memcpy(void *dest, const void *src, size_t n)
+{
+    uint8_t *pdest = (uint8_t *)dest;
+    const uint8_t *psrc = (const uint8_t *)src;
+
+    for (size_t i = 0; i < n; i++)
+    {
+        pdest[i] = psrc[i];
+    }
+
+    return dest;
+}
+
 #if defined(__x86_64__)
 
 /**
@@ -304,20 +317,12 @@ static inline void *fast_memcpy(void *s1, const void *s2, size_t n)
     }
     return s1;
 }
-#endif
-
-static inline void *memcpy(void *dest, const void *src, size_t n)
+#else
+static inline void *fast_memcpy(void *s1, const void *s2, size_t n)
 {
-    uint8_t *pdest = (uint8_t *)dest;
-    const uint8_t *psrc = (const uint8_t *)src;
-
-    for (size_t i = 0; i < n; i++)
-    {
-        pdest[i] = psrc[i];
-    }
-
-    return dest;
+    return memcpy(s1, s2, n);
 }
+#endif
 
 static inline void *memset(void *s, int c, size_t n)
 {

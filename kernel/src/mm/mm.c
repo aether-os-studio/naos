@@ -32,7 +32,7 @@ void frame_init()
 
     uint64_t last_size = UINT64_MAX;
 
-    size_t bitmap_size = (memory_size / DEFAULT_PAGE_SIZE + 7) / 8;
+    size_t bitmap_size = (memory_size / DEFAULT_PAGE_SIZE + 63) / 64;
     uint64_t bitmap_address = 0;
 
     for (uint64_t i = 0; i < memory_map->entry_count; i++)
@@ -49,7 +49,7 @@ void frame_init()
     }
 
     Bitmap *bitmap = &frame_allocator.bitmap;
-    bitmap_init(bitmap, (uint8_t *)phys_to_virt(bitmap_address), bitmap_size);
+    bitmap_init(bitmap, (uint64_t *)phys_to_virt(bitmap_address), bitmap_size);
 
     size_t origin_frames = 0;
     for (uint64_t i = 0; i < memory_map->entry_count; i++)
@@ -101,6 +101,8 @@ void free_frames(uint64_t addr, uint64_t size)
     frame_alloc_op_lock = false;
 }
 
+static uint64_t last_alloc_pos = 0;
+
 uint64_t alloc_frames(size_t count)
 {
     while (frame_alloc_op_lock)
@@ -111,14 +113,26 @@ uint64_t alloc_frames(size_t count)
     frame_alloc_op_lock = true;
 
     Bitmap *bitmap = &frame_allocator.bitmap;
-    size_t frame_index = bitmap_find_range(bitmap, count, true);
+retry:
+    size_t frame_index = bitmap_find_range_from(bitmap, count, true, last_alloc_pos);
 
     if (frame_index == (size_t)-1)
     {
+        if (last_alloc_pos != 0)
+        {
+            last_alloc_pos = 0;
+            goto retry;
+        }
+
         printk("Allocate frame failed!!!\n");
+
         frame_alloc_op_lock = false;
+
         return 0;
     }
+
+    last_alloc_pos = frame_index + count;
+
     bitmap_set_range(bitmap, frame_index, frame_index + count, false);
     frame_allocator.usable_frames -= count;
 
@@ -143,7 +157,7 @@ void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t siz
             uint64_t phys = alloc_frames(1);
             if (phys == 0)
             {
-                printk("Cannot allocate frame");
+                printk("Cannot allocate frame\n");
                 mem_map_op_lock = false;
                 return;
             }

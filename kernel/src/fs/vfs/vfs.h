@@ -222,6 +222,8 @@ struct vfs_node
     flock_t lock;         // 锁
     list_t child;         // 子目录和子文件
     vfs_node_t root;      // 根目录
+    uint16_t mode;        // 模式
+    uint64_t flags;       // 标志位
 };
 
 extern vfs_node_t rootdir; // vfs 根目录

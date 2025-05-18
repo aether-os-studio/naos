@@ -712,6 +712,18 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     }
     free(new_envp);
 
+    for (uint64_t i = 3; i < MAX_FD_NUM; i++)
+    {
+        if (!current_task->fds[i])
+            continue;
+
+        if (current_task->fds[i]->flags & O_CLOEXEC)
+        {
+            vfs_close(current_task->fds[i]);
+            current_task->fds[i] = NULL;
+        }
+    }
+
     current_task->cmdline = strdup(cmdline);
     current_task->load_start = load_start;
     current_task->load_end = load_end;
@@ -792,6 +804,11 @@ uint64_t task_exit(int64_t code)
     {
         arch_set_current(next);
         arch_switch_with_context(NULL, next->arch_context, next->kernel_stack);
+    }
+    else
+    {
+        arch_set_current(idle_tasks[current_cpu_id]);
+        arch_switch_with_context(NULL, idle_tasks[current_cpu_id]->arch_context, idle_tasks[current_cpu_id]->kernel_stack);
     }
 
     // never return !!!

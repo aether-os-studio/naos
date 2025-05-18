@@ -283,6 +283,7 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout);
 size_t sys_access(char *filename, int mode);
 uint64_t sys_faccessat(uint64_t dirfd, const char *pathname, uint64_t mode);
 uint64_t sys_faccessat2(uint64_t dirfd, const char *pathname, uint64_t mode, uint64_t flags);
+struct timeval;
 size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except, struct timeval *timeout);
 uint64_t sys_pselect6(uint64_t nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timespec *timeout, WeirdPselect6 *weirdPselect6);
 

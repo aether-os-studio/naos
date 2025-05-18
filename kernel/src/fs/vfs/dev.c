@@ -256,6 +256,7 @@ vfs_node_t regist_dev(const char *name,
         {
             vfs_mkdir((const char *)new_path);
             dev = vfs_open((const char *)new_path);
+            dev->mode = 0666;
         }
     }
 
@@ -280,6 +281,8 @@ vfs_node_t regist_dev(const char *name,
                 child->type = file_keyboard;
             else if (!strncmp(devfs_handles[i]->name, "event1", 6))
                 child->type = file_mouse;
+
+            child->mode = 0666;
 
             return child;
         }

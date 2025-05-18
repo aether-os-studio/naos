@@ -35,6 +35,8 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name)
     node->root = parent ? parent->root : node;
     node->lock.l_pid = 0;
     node->lock.l_type = F_UNLCK;
+    node->mode = 0777;
+    node->flags = 0;
     if (parent)
         list_prepend(parent->child, node);
     return node;

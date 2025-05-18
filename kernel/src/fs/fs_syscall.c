@@ -108,7 +108,7 @@ uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode)
 
 uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags, uint64_t mode)
 {
-    char *path = at_resolve_pathname(dirfd, name);
+    char *path = at_resolve_pathname(dirfd, (char *)name);
     if (!path)
         return (uint64_t)-ENOMEM;
 
@@ -463,9 +463,9 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
     switch (command)
     {
     case F_GETFD:
-        return 0;
+        return current_task->fds[fd]->flags;
     case F_SETFD:
-        return 0;
+        return current_task->fds[fd]->flags |= O_CLOEXEC;
     case F_DUPFD_CLOEXEC:
     case F_DUPFD:
         return sys_dup(fd);
@@ -491,7 +491,7 @@ uint64_t sys_stat(const char *fd, struct stat *buf)
     buf->st_dev = 0;
     buf->st_ino = node->inode;
     buf->st_nlink = 1;
-    buf->st_mode = 0777 | (node->type == file_dir ? S_IFDIR : S_IFREG);
+    buf->st_mode = node->mode | (node->type == file_dir ? S_IFDIR : S_IFREG);
     buf->st_uid = 0;
     buf->st_gid = 0;
     if (node->type == file_stream)
@@ -533,7 +533,7 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
     buf->st_dev = 0;
     buf->st_ino = current_task->fds[fd]->inode;
     buf->st_nlink = 1;
-    buf->st_mode = 0777 | (current_task->fds[fd]->type == file_dir ? S_IFDIR : S_IFREG);
+    buf->st_mode = current_task->fds[fd]->mode | (current_task->fds[fd]->type == file_dir ? S_IFDIR : S_IFREG);
     buf->st_uid = 0;
     buf->st_gid = 0;
     if (current_task->fds[fd]->type == file_stream)
@@ -617,11 +617,6 @@ uint64_t sys_get_rlimit(uint64_t resource, struct rlimit *lim)
 }
 uint64_t sys_prlimit64(uint64_t pid, int resource, const struct rlimit *new_rlim, struct rlimit *old_rlim)
 {
-    if (pid != 0 && pid != current_task->pid)
-    {
-        return -EPERM;
-    }
-
     if (old_rlim)
     {
         uint64_t ret = sys_get_rlimit(resource, old_rlim);
@@ -1126,10 +1121,12 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd, struct epoll_event *event)
     case EPOLL_CTL_DEL:
     {
         epoll_watch_t *browse = epoll->firstEpollWatch;
+        epoll_watch_t *prev = NULL;
         while (browse)
         {
             if (browse->fd == fdNode)
                 break;
+            prev = browse;
             browse = browse->next;
         }
         if (!browse)
@@ -1137,6 +1134,8 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd, struct epoll_event *event)
             ret = (uint64_t)(-ENOENT);
             goto cleanup;
         }
+        prev->next = browse->next;
+        free(browse);
         break;
     }
     default:
