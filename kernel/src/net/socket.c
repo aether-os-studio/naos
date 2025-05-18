@@ -3,6 +3,7 @@
 #include <drivers/kernel_logger.h>
 #include <fs/fs_syscall.h>
 #include <fs/vfs/vfs.h>
+#include <task/task.h>
 
 // 互斥锁模拟（实际裸机环境需要原子操作实现）
 typedef volatile int spinlock_t;

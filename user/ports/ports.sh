@@ -14,15 +14,14 @@ chmod +x "${SCRIPTPATH}/pass_acq.sh"
 ${SCRIPTPATH}/pass_acq.sh "$APK_URI" "$APK_SHA512" "$APK_PATH"
 chmod +x "$APK_PATH"
 
-ALPINE_VERSION=v3.20
-
 # bootstrap alpine userspace
-sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/$ALPINE_VERSION/main -U --allow-untrusted --root $SYSROOT/../ --initdb add alpine-base bash coreutils grep musl ncurses
-echo -e "http://mirrors.ustc.edu.cn/alpine/$ALPINE_VERSION/main\nhttp://mirrors.ustc.edu.cn/alpine/$ALPINE_VERSION/community" | sudo tee $SYSROOT/../etc/apk/repositories
+sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/edge/main -U --allow-untrusted --root $SYSROOT/../ --initdb add alpine-base bash coreutils grep musl ncurses
+echo -e "http://mirrors.ustc.edu.cn/alpine/edge/main\nhttp://mirrors.ustc.edu.cn/alpine/edge/community\nhttp://mirrors.ustc.edu.cn/alpine/edge/testing" | sudo tee $SYSROOT/../etc/apk/repositories
 
 # Basic software
-sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/$ALPINE_VERSION/community -U --allow-untrusted --root $SYSROOT/../ --initdb add gcc binutils musl-dev nano gzip xz make file tar fastfetch pciutils
-# sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/$ALPINE_VERSION/community -U --allow-untrusted --root $SYSROOT/../ --initdb add xorg-server xf86-video-fbdev xf86-input-evdev twm xterm xinit xsetroot xeyes xclock
+sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add musl-dev nano gzip xz make file tar fastfetch pciutils
+sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add nano
+sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add lua5.1 gcc binutils
 
 sudo cp -r /usr/share/zoneinfo/Asia/Shanghai $SYSROOT/../etc/localtime
 
@@ -44,5 +43,3 @@ cp -r $SCRIPTPATH/root $SYSROOT/../
 cp -r $SCRIPTPATH/files $SYSROOT/../
 
 cp -r $SYSROOT/../bin/bash $SYSROOT/../bin/sh
-
-# cp -r $SYSROOT/lib/xorg/modules/libfbdevhw.so $SYSROOT/lib/xorg/modules/extensions/libfbdevhw.so

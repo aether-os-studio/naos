@@ -2,6 +2,7 @@
 #include "fs/fs_syscall.h"
 #include "arch/arch.h"
 #include "mm/mm.h"
+#include "task/task.h"
 
 vfs_node_t rootdir = NULL;
 

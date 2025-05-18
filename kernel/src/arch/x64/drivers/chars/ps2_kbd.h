@@ -3,7 +3,6 @@
 #include <arch/x64/acpi/acpi.h>
 #include <arch/x64/irq/irq.h>
 #include <drivers/block/ahci/hba.h>
-#include <task/task.h>
 
 enum
 {
@@ -35,6 +34,9 @@ enum
 #define wait_KB_read() wait_until_expire(!(io_in8(PORT_KB_STATUS) & KBSTATUS_OBF), 1000000)
 
 bool kb_is_ocupied();
+
+struct task;
+typedef struct task task_t;
 
 bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state);
 

@@ -15,6 +15,7 @@
 #include "drivers/chars/ps2_mouse.h"
 #include "task/arch_context.h"
 #include "task/fsgsbase.h"
+#include "syscall/nr.h"
 #include "syscall/syscall.h"
 #include "time/time.h"
 

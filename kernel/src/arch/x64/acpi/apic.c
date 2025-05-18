@@ -3,6 +3,7 @@
 #include <mm/hhdm.h>
 #include <arch/arch.h>
 #include <interrupt/irq_manager.h>
+#include <task/task.h>
 
 bool x2apic_mode;
 uint64_t lapic_address;

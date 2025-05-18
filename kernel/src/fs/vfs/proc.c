@@ -1,4 +1,5 @@
 #include <fs/vfs/proc.h>
+#include <task/task.h>
 
 static vfs_node_t procfs_root = NULL;
 static int procfs_id = 0;

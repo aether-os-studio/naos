@@ -106,6 +106,19 @@ uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode)
     return i;
 }
 
+uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags, uint64_t mode)
+{
+    char *path = at_resolve_pathname(dirfd, name);
+    if (!path)
+        return (uint64_t)-ENOMEM;
+
+    uint64_t ret = sys_open(path, flags, mode);
+
+    free(path);
+
+    return ret;
+}
+
 uint64_t sys_close(uint64_t fd)
 {
     if (fd >= MAX_FD_NUM || current_task->fds[fd] == NULL)
@@ -600,15 +613,7 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname, uint64_t flags, uint64_
 
 uint64_t sys_get_rlimit(uint64_t resource, struct rlimit *lim)
 {
-    switch (resource)
-    {
-    case 7:
-        lim->rlim_cur = MAX_FD_NUM;
-        lim->rlim_max = MAX_FD_NUM;
-        return 0;
-    default:
-        return (uint64_t)-ENOSYS;
-    }
+    *lim = current_task->rlim[resource];
 }
 uint64_t sys_prlimit64(uint64_t pid, int resource, const struct rlimit *new_rlim, struct rlimit *old_rlim)
 {
@@ -626,19 +631,7 @@ uint64_t sys_prlimit64(uint64_t pid, int resource, const struct rlimit *new_rlim
 
     if (new_rlim)
     {
-        switch (resource)
-        {
-        case 7:
-            if (new_rlim->rlim_cur > MAX_FD_NUM ||
-                new_rlim->rlim_max > MAX_FD_NUM)
-            {
-                return -EINVAL;
-            }
-            // current_task->rlim[resource] = *new_rlim;
-            break;
-        default:
-            return -ENOSYS;
-        }
+        current_task->rlim[resource] = *new_rlim;
     }
 
     return 0;

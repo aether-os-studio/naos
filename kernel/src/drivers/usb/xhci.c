@@ -1,6 +1,7 @@
 #include <drivers/usb/xhci.h>
 #include <mm/mm.h>
 #include <arch/arch.h>
+#include <task/task.h>
 
 const char MSG0901[] = "ERROR:XHCI PAGE SIZE ";
 const char MSG0902[] = "ERROR:XHCI WAIT TIMEOUT\n";

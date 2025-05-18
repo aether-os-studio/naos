@@ -2,6 +2,7 @@
 #include <stdarg.h>
 #include <mm/mm.h>
 #include <drivers/kernel_logger.h>
+#include <task/task.h>
 
 extern uint64_t kallsyms_addresses[] __attribute__((weak));
 extern long kallsyms_syms_num __attribute__((weak));

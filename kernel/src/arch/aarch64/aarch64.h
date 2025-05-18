@@ -13,6 +13,7 @@
 #include "task/arch_context.h"
 #include "smp/smp.h"
 #include "syscall/syscall.h"
+#include "syscall/nr.h"
 
 void arch_early_init();
 void arch_init();

@@ -4,6 +4,7 @@
 #include <task/task.h>
 #include <arch/x64/io.h>
 #include <fs/vfs/dev.h>
+#include <task/task.h>
 
 // Very bare bones, and basic keyboard driver
 // Copyright (C) 2024 Panagiotis

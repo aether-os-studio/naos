@@ -91,6 +91,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_OPEN:
         regs->rax = sys_open((const char *)arg1, arg2, arg3);
         break;
+    case SYS_OPENAT:
+        regs->rax = sys_openat(arg1, (const char *)arg2, arg3, arg4);
+        break;
     case SYS_CLOSE:
         regs->rax = sys_close(arg1);
         break;

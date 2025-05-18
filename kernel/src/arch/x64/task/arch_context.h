@@ -2,10 +2,12 @@
 
 #include <arch/x64/irq/ptrace.h>
 #include <arch/elf.h>
-#include <task/task.h>
 
 #define USER_STACK_START 0x00006ffffff00000
 #define USER_STACK_END 0x0000700000000000
+
+struct task;
+typedef struct task task_t;
 
 typedef struct fpu_context
 {

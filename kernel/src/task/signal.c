@@ -1,6 +1,6 @@
-#include <task/task.h>
 #include <task/signal.h>
 #include <arch/arch.h>
+#include <task/task.h>
 
 #define SI_MAX_SIZE 128
 

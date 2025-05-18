@@ -131,6 +131,8 @@ typedef struct kernel_timer
 
 #define MAX_TIMERS_NUM 8
 
+struct rlimit;
+
 typedef struct task
 {
     uint64_t pid;
@@ -166,6 +168,7 @@ typedef struct task
     char *cmdline;
     int_timer_internal_t itimer_real;
     kernel_timer_t *timers[MAX_TIMERS_NUM];
+    struct rlimit rlim[16];
 } task_t;
 
 void sched_update_itimer();

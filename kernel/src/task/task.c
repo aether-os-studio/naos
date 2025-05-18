@@ -108,6 +108,10 @@ task_t *task_create(const char *name, void (*entry)())
 
     memset(task->actions, 0, sizeof(task->actions));
 
+    memset(task->rlim, 0, sizeof(task->rlim));
+    task->rlim[RLIMIT_NOFILE] = (struct rlimit){MAX_FD_NUM, MAX_FD_NUM};
+    task->rlim[RLIMIT_CORE] = (struct rlimit){0, 0};
+
     procfs_regist_proc(task);
 
     can_schedule = true;
@@ -418,6 +422,8 @@ uint64_t task_fork(struct pt_regs *regs)
     memcpy(&child->term, &current_task->term, sizeof(termios));
 
     child->tmp_rec_v = current_task->tmp_rec_v;
+
+    memcpy(child->rlim, current_task->rlim, sizeof(child->rlim));
 
     procfs_regist_proc(child);
 
@@ -1012,6 +1018,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     }
 
     child->tmp_rec_v = current_task->tmp_rec_v;
+
+    memcpy(child->rlim, current_task->rlim, sizeof(child->rlim));
 
     procfs_regist_proc(child);
 

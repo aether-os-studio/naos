@@ -3,6 +3,8 @@
 #include <libs/klibc.h>
 #include <task/signal.h>
 #include <fs/termios.h>
+#include <fs/vfs/pipe.h>
+#include <fs/vfs/vfs.h>
 
 struct iovec
 {
@@ -146,6 +148,7 @@ struct stat
 #define TIOCM_LOOP 0x8000
 
 uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode);
+uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags, uint64_t mode);
 uint64_t sys_close(uint64_t fd);
 uint64_t sys_read(uint64_t fd, void *buf, uint64_t len);
 uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len);
@@ -224,6 +227,24 @@ struct statx
 };
 
 uint64_t sys_statx(uint64_t dirfd, const char *pathname, uint64_t flags, uint64_t mask, struct statx *buf);
+
+#define RLIMIT_CPU 0
+#define RLIMIT_FSIZE 1
+#define RLIMIT_DATA 2
+#define RLIMIT_STACK 3
+#define RLIMIT_CORE 4
+#define RLIMIT_RSS 5
+#define RLIMIT_NPROC 6
+#define RLIMIT_NOFILE 7
+#define RLIMIT_MEMLOCK 8
+#define RLIMIT_AS 9
+#define RLIMIT_LOCKS 10
+#define RLIMIT_SIGPENDING 11
+#define RLIMIT_MSGQUEUE 12
+#define RLIMIT_NICE 13
+#define RLIMIT_RTPRIO 14
+#define RLIMIT_RTTIME 15
+#define RLIMIT_NLIMITS 16
 
 uint64_t sys_get_rlimit(uint64_t resource, struct rlimit *lim);
 uint64_t sys_prlimit64(uint64_t pid, int resource, const struct rlimit *new_rlim, struct rlimit *old_rlim);

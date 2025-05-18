@@ -1,6 +1,7 @@
 #include <mm/mm_syscall.h>
 #include <fs/fs_syscall.h>
 #include <fs/vfs/vfs.h>
+#include <task/task.h>
 
 uint64_t sys_brk(uint64_t addr)
 {
