@@ -166,6 +166,7 @@ void idle_entry()
 #include <fs/partition.h>
 #include <drivers/fb.h>
 
+extern void ext2_init();
 extern void fatfs_init();
 extern void iso9660_init();
 extern void sysfs_init();
@@ -201,6 +202,7 @@ void init_thread()
     epoll_init();
     pipefs_init();
     socketfs_init();
+    ext2_init();
     iso9660_init();
     fatfs_init();
 

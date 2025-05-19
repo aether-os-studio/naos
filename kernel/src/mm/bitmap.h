@@ -4,7 +4,7 @@
 
 typedef struct
 {
-    uint8_t *buffer;
+    uint64_t *buffer;
     size_t length;
 } Bitmap;
 

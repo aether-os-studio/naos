@@ -4,6 +4,7 @@
 /ovmf
 /tmp
 /libc-*
+/mnt
 *.iso
 *.hdd
 *.vmdk

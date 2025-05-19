@@ -5,6 +5,8 @@ export LIBGL_ALWAYS_SOFTWARE=1
 export SHELL=/bin/bash
 export HOME="/root"
 
+export XDG_RUNTIME_DIR=/tmp
+
 # if [ $EUID -eq 0 ]; then
 #   export PATH=/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin:/bin
 # fi

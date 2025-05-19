@@ -67,7 +67,7 @@ void partition_init()
             part->blkdev_id = i;
             part->starting_lba = 0;
             part->ending_lba = 0;
-            part->type = ISO9660;
+            part->type = RAW;
             partition_num++;
 
             free(iso9660_detect);
@@ -77,6 +77,16 @@ void partition_init()
 
         struct MBR_DPT *boot_sector = (struct MBR_DPT *)malloc(sizeof(struct MBR_DPT));
         blkdev_read(i, 0, boot_sector, sizeof(struct MBR_DPT));
+
+        if (boot_sector->BS_TrailSig != 0xAA55)
+        {
+            part->blkdev_id = i;
+            part->starting_lba = 0;
+            part->ending_lba = 0;
+            part->type = RAW;
+            partition_num++;
+            continue;
+        }
 
         for (int j = 0; j < MBR_MAX_PARTITION_NUM; j++)
         {
@@ -106,15 +116,6 @@ void mount_root()
 {
     bool err = true;
 
-    vfs_node_t old_child_list[256];
-    uint64_t old_child_count = 0;
-    memset(old_child_list, 0, sizeof(old_child_list));
-    list_foreach(rootdir->child, i)
-    {
-        vfs_node_t node = (vfs_node_t)i->data;
-        old_child_list[old_child_count++] = node;
-    }
-
     for (uint64_t i = 0; i < partition_num; i++)
     {
         char buf[11];
@@ -135,7 +136,4 @@ void mount_root()
             arch_pause();
         }
     }
-
-    for (uint64_t i = 0; i < old_child_count; i++)
-        list_push(rootdir->child, old_child_list[i]);
 }

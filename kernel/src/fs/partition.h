@@ -68,7 +68,7 @@ typedef struct partition
     {
         MBR = 1,
         GPT,
-        ISO9660,
+        RAW,
     } type;
 } partition_t;
 

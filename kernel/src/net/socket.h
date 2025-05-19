@@ -52,14 +52,19 @@ struct sock_fprog
     struct sock_filter *filter;
 };
 
+typedef struct socket_inner
+{
+    char buffer[BUFFER_SIZE];
+    uint32_t buf_head;
+    uint32_t buf_tail;
+} socket_inner_t;
+
 typedef struct
 {
     char name[SOCKET_NAME_LEN];
     socket_state_t state;
+    socket_inner_t *inner;
     int peer_fd;
-    char buffer[BUFFER_SIZE];
-    uint32_t buf_head;
-    uint32_t buf_tail;
     uint64_t domain;
     uint64_t type;
     int64_t protocol;

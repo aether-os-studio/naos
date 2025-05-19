@@ -95,6 +95,7 @@ enum
 {
     file_none,     // 未获取信息
     file_dir,      // 文件夹
+    file_symlink,  // 符号链接
     file_block,    // 块设备，如硬盘
     file_stream,   // 流式设备，如终端
     file_fbdev,    // 帧缓冲设备
@@ -203,27 +204,26 @@ typedef struct flock
 
 struct vfs_node
 {
-    vfs_node_t parent;    // 父目录
-    char *name;           // 名称
-    char *linkname;       // 符号链接名称
-    uint64_t inode;       // 节点号
-    uint64_t realsize;    // 项目真实占用的空间 (可选)
-    uint64_t size;        // 文件大小或若是文件夹则填0
-    uint64_t offset;      // 偏移
-    uint64_t createtime;  // 创建时间
-    uint64_t readtime;    // 最后读取时间
-    uint64_t writetime;   // 最后写入时间
-    uint32_t owner;       // 所有者
-    uint32_t group;       // 所有组
-    uint32_t permissions; // 权限
-    uint32_t type;        // 类型
-    uint32_t fsid;        // 文件系统的 id
-    void *handle;         // 操作文件的句柄
-    flock_t lock;         // 锁
-    list_t child;         // 子目录和子文件
-    vfs_node_t root;      // 根目录
-    uint16_t mode;        // 模式
-    uint64_t flags;       // 标志位
+    vfs_node_t parent;   // 父目录
+    char *name;          // 名称
+    char *linkname;      // 符号链接名称
+    uint64_t inode;      // 节点号
+    uint64_t realsize;   // 项目真实占用的空间 (可选)
+    uint64_t size;       // 文件大小或若是文件夹则填0
+    uint64_t offset;     // 偏移
+    uint64_t createtime; // 创建时间
+    uint64_t readtime;   // 最后读取时间
+    uint64_t writetime;  // 最后写入时间
+    uint32_t owner;      // 所有者
+    uint32_t group;      // 所有组
+    uint32_t type;       // 类型
+    uint32_t fsid;       // 文件系统的 id
+    void *handle;        // 操作文件的句柄
+    flock_t lock;        // 锁
+    list_t child;        // 子目录和子文件
+    vfs_node_t root;     // 根目录
+    uint16_t mode;       // 模式
+    uint64_t flags;      // 标志位
 };
 
 extern vfs_node_t rootdir; // vfs 根目录
@@ -246,6 +246,8 @@ int vfs_regist(const char *name, vfs_callback_t callback);
 
 #define PATH_MAX 4096    // 路径最大长度
 #define FILENAME_MAX 256 // 文件名最大长度
+
+vfs_node_t vfs_open_at(vfs_node_t start, const char *_path);
 
 vfs_node_t vfs_open(const char *_path);
 

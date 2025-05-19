@@ -6,6 +6,8 @@
 
 vfs_node_t rootdir = NULL;
 
+bool vfs_op_lock = false;
+
 static int empty_func()
 {
     return -ENOSYS;
@@ -240,25 +242,35 @@ static vfs_node_t vfs_do_search(vfs_node_t dir, const char *name)
     return list_first(dir->child, data, streq(name, ((vfs_node_t)data)->name));
 }
 
-vfs_node_t vfs_open(const char *_path)
+vfs_node_t vfs_open_at(vfs_node_t start, const char *_path)
 {
+    while (vfs_op_lock)
+    {
+        arch_pause();
+    }
+    vfs_op_lock = true;
+
+    if (!start)
+        return NULL;
+
     if (_path == NULL)
         return NULL;
-    vfs_node_t current = rootdir;
+    vfs_node_t current = start;
     char *path;
     if (_path[0] == '/')
     {
         if (_path[1] == '\0')
+        {
+            vfs_op_lock = false;
             return rootdir;
+        }
+        current = rootdir;
         path = strdup(_path + 1);
     }
-    else if (current_task->cwd)
+    else
     {
         path = strdup(_path);
-        current = current_task->cwd;
     }
-    if (path == NULL)
-        return NULL;
 
     char *save_ptr = path;
 
@@ -281,11 +293,21 @@ vfs_node_t vfs_open(const char *_path)
     }
 
     free(path);
+    vfs_op_lock = false;
     return current;
 
 err:
     free(path);
+    vfs_op_lock = false;
     return NULL;
+}
+
+vfs_node_t vfs_open(const char *_path)
+{
+    if (current_task && current_task->cwd)
+        return vfs_open_at(current_task->cwd, _path);
+    else
+        return vfs_open_at(rootdir, _path);
 }
 
 void vfs_update(vfs_node_t node)

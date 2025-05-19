@@ -57,7 +57,7 @@ void map_page(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t flags)
         {
             uint64_t new_phys = alloc_frames(1);
             uint64_t *new_table = phys_to_virt((uint64_t *)new_phys);
-            memset(new_table, 0, 4096);
+            memset(new_table, 0, DEFAULT_PAGE_SIZE);
             // 设置中间条目：Present, Writable, User标志继承
             *entry = new_phys | ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_WRITEABLE | (flags & ARCH_PT_FLAG_USER);
         }

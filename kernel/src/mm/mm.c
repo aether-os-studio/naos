@@ -113,32 +113,31 @@ uint64_t alloc_frames(size_t count)
     frame_alloc_op_lock = true;
 
     Bitmap *bitmap = &frame_allocator.bitmap;
+
+    if (frame_allocator.usable_frames < count)
+        return 0;
+
 retry:
     size_t frame_index = bitmap_find_range_from(bitmap, count, true, last_alloc_pos);
 
-    if (frame_index == (size_t)-1)
+    if (frame_index != (size_t)-1)
     {
-        if (last_alloc_pos != 0)
-        {
-            last_alloc_pos = 0;
-            goto retry;
-        }
-
-        printk("Allocate frame failed!!!\n");
-
+        last_alloc_pos = frame_index + count;
+        bitmap_set_range(bitmap, frame_index, frame_index + count, false);
+        frame_allocator.usable_frames -= count;
         frame_alloc_op_lock = false;
-
-        return 0;
+        return frame_index * DEFAULT_PAGE_SIZE;
     }
 
-    last_alloc_pos = frame_index + count;
+    if (last_alloc_pos != 0)
+    {
+        last_alloc_pos = 0;
+        goto retry;
+    }
 
-    bitmap_set_range(bitmap, frame_index, frame_index + count, false);
-    frame_allocator.usable_frames -= count;
+    printk("Allocate frame failed!!!\n");
 
-    frame_alloc_op_lock = false;
-
-    return frame_index * DEFAULT_PAGE_SIZE;
+    return 0;
 }
 
 void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t size, uint64_t flags)

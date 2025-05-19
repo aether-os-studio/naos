@@ -15,31 +15,34 @@ ${SCRIPTPATH}/pass_acq.sh "$APK_URI" "$APK_SHA512" "$APK_PATH"
 chmod +x "$APK_PATH"
 
 # bootstrap alpine userspace
-sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/edge/main -U --allow-untrusted --root $SYSROOT/../ --initdb add alpine-base bash coreutils grep musl ncurses
-echo -e "http://mirrors.ustc.edu.cn/alpine/edge/main\nhttp://mirrors.ustc.edu.cn/alpine/edge/community\nhttp://mirrors.ustc.edu.cn/alpine/edge/testing" | sudo tee $SYSROOT/../etc/apk/repositories
+sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/v3.14/main -U --allow-untrusted --root $SYSROOT/../ --initdb add alpine-base bash coreutils grep musl ncurses
+echo -e "http://mirrors.ustc.edu.cn/alpine/v3.14/main\nhttp://mirrors.ustc.edu.cn/alpine/v3.14/community\nhttp://mirrors.ustc.edu.cn/alpine/v3.14/testing" | sudo tee $SYSROOT/../etc/apk/repositories
 
 # Basic software
-sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add musl-dev nano gzip xz make file tar fastfetch pciutils
+sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add musl-dev nano gzip xz make file tar pciutils
 sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add nano
 sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add lua5.1 gcc binutils
+sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add weston weston-backend-fbdev weston-shell-desktop
+
+# if [ ! -f $SYSROOT/bin/weston ]; then
+#     sudo docker run -it --rm -v $ROOT_DIR:/docker alpine:latest /bin/sh -c "apk add gcc meson ninja-build samurai && sh /docker/user/ports/build_weston.sh"
+# fi
 
 sudo cp -r /usr/share/zoneinfo/Asia/Shanghai $SYSROOT/../etc/localtime
 
 sudo chmod -R 777 $SYSROOT/../
 
-find $SYSROOT/../ -type l -exec bash -c '
-    lnk="{}";
-    target=$(readlink -f "$lnk");
-    if [ -f "$target" ]; then
-        rm "$lnk";
-        cp -- "$target" "$lnk"; 
-    else
-        rm "$lnk";
-    fi
-' \;
+# find $SYSROOT/../ -type l -exec bash -c '
+#     lnk="{}";
+#     target=$(readlink -f "$lnk");
+#     if [ -f "$target" ]; then
+#         rm "$lnk";
+#         cp -- "$target" "$lnk";
+#     else
+#         rm "$lnk";
+#     fi
+# ' \;
 
 cp -r $SCRIPTPATH/etc $SYSROOT/../
 cp -r $SCRIPTPATH/root $SYSROOT/../
 cp -r $SCRIPTPATH/files $SYSROOT/../
-
-cp -r $SYSROOT/../bin/bash $SYSROOT/../bin/sh

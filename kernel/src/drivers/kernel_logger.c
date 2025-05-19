@@ -522,29 +522,39 @@ char *write_float_point_num(char *str, double num, int field_width, int precisio
     return str;
 }
 
+bool printk_lock = false;
+
 int printk(const char *fmt, ...)
 {
     struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];
+
+    while (printk_lock)
+    {
+        arch_pause();
+    }
+    printk_lock = true;
 
     if (!printk_initialized)
     {
         init_serial();
 
-        ft_ctx = flanterm_fb_init(
-            alloc_frames_bytes,
-            free_frames_bytes,
-            (uint32_t *)framebuffer->address, framebuffer->width, framebuffer->height, framebuffer->pitch,
-            framebuffer->red_mask_size, framebuffer->red_mask_shift,
-            framebuffer->green_mask_size, framebuffer->green_mask_shift,
-            framebuffer->blue_mask_size, framebuffer->blue_mask_shift,
-            NULL,
-            NULL, NULL,
-            NULL, NULL,
-            NULL, NULL,
-            NULL, 0, 0, 1,
-            0, 0,
-            0);
-
+        if (framebuffer)
+        {
+            ft_ctx = flanterm_fb_init(
+                alloc_frames_bytes,
+                free_frames_bytes,
+                (uint32_t *)framebuffer->address, framebuffer->width, framebuffer->height, framebuffer->pitch,
+                framebuffer->red_mask_size, framebuffer->red_mask_shift,
+                framebuffer->green_mask_size, framebuffer->green_mask_shift,
+                framebuffer->blue_mask_size, framebuffer->blue_mask_shift,
+                NULL,
+                NULL, NULL,
+                NULL, NULL,
+                NULL, NULL,
+                NULL, 0, 0, 1,
+                0, 0,
+                0);
+        }
         printk_initialized = true;
     }
 
@@ -558,9 +568,13 @@ int printk(const char *fmt, ...)
     serial_printk(buf, len);
 
     if (!framebuffer_request.response->framebuffer_count)
+    {
+        printk_lock = false;
         return len;
+    }
 
     flanterm_write(ft_ctx, buf, len);
+    printk_lock = false;
 
     return len;
 }

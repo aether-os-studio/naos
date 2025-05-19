@@ -153,6 +153,8 @@ void fatfs_close(file_t handle)
 
 int fatfs_mount(const char *src, vfs_node_t node)
 {
+    if (node == rootdir)
+        return -1; // 不支持fatfs作为rootfs
     if (!src)
         return -1;
     int drive = alloc_number();

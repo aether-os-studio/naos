@@ -95,21 +95,7 @@ all: $(IMAGE_NAME).iso
 all-hdd: $(IMAGE_NAME).hdd
 
 .PHONY: run
-run: run-$(ARCH)
-
-.PHONY: run-hdd
-run-hdd: run-hdd-$(ARCH)
-
-.PHONY: run-x86_64
-run-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).iso
-	qemu-system-$(ARCH) \
-		-M q35 \
-		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
-		-drive if=none,file=$(IMAGE_NAME).iso,format=raw,id=cdrom \
-		-device ahci,id=ahci \
-		-device qemu-xhci,id=xhci \
-		-device ide-cd,drive=cdrom,bus=ahci.0 \
-		$(QEMUFLAGS)
+run: run-hdd-$(ARCH)
 
 .PHONY: run-hdd-x86_64
 run-hdd-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
@@ -117,21 +103,11 @@ run-hdd-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-M q35 \
 		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).hdd,format=raw,id=harddisk \
+		-drive if=none,file=rootfs.hdd,format=raw,id=rootdisk \
 		-device ahci,id=ahci \
 		-device qemu-xhci,id=xhci \
 		-device nvme,drive=harddisk,serial=1234 \
-		$(QEMUFLAGS)
-
-.PHONY: run-aarch64
-run-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).iso
-	qemu-system-$(ARCH) \
-		-M virt,gic-version=3 \
-		-cpu cortex-a76 \
-		-device ramfb \
-		-device qemu-xhci,id=xhci \
-		-device usb-kbd \
-		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
-		-cdrom $(IMAGE_NAME).iso
+		-device nvme,drive=rootdisk,serial=1234 \
 		$(QEMUFLAGS)
 
 .PHONY: run-hdd-aarch64
@@ -147,19 +123,6 @@ run-hdd-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-device nvme,drive=harddisk,serial=1234 \
 		$(QEMUFLAGS)
 
-.PHONY: run-riscv64
-run-riscv64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).iso
-	qemu-system-$(ARCH) \
-		-M virt \
-		-cpu rv64 \
-		-device ramfb \
-		-device qemu-xhci,id=xhci \
-		-device usb-kbd \
-		-device usb-mouse \
-		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
-		-cdrom $(IMAGE_NAME).iso \
-		$(QEMUFLAGS)
-
 .PHONY: run-hdd-riscv64
 run-hdd-riscv64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 	qemu-system-$(ARCH) \
@@ -171,19 +134,6 @@ run-hdd-riscv64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
 		-hda $(IMAGE_NAME).hdd \
-		$(QEMUFLAGS)
-
-.PHONY: run-loongarch64
-run-loongarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).iso
-	qemu-system-$(ARCH) \
-		-M virt \
-		-cpu la464 \
-		-device ramfb \
-		-device qemu-xhci \
-		-device usb-kbd \
-		-device usb-mouse \
-		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
-		-cdrom $(IMAGE_NAME).iso \
 		$(QEMUFLAGS)
 
 .PHONY: run-hdd-loongarch64
@@ -230,66 +180,9 @@ kernel: kernel-deps
 user: libc-$(ARCH)
 	$(MAKE) -C user all
 
-$(IMAGE_NAME).iso: limine/limine kernel
-	rm -rf iso_root
-	mkdir -p iso_root/boot
-	cp -r user/rootfs-$(ARCH)/usr iso_root/
-	cp -r user/rootfs-$(ARCH)/lib iso_root/
-	cp -r user/rootfs-$(ARCH)/etc iso_root/
-	cp -r user/rootfs-$(ARCH)/bin iso_root/
-	cp -r user/rootfs-$(ARCH)/sbin iso_root/
-	cp -r user/rootfs-$(ARCH)/tmp iso_root/
-	cp -r user/rootfs-$(ARCH)/run iso_root/
-	cp -r user/rootfs-$(ARCH)/var iso_root/
-	cp -r user/rootfs-$(ARCH)/root iso_root/
-	cp -r user/rootfs-$(ARCH)/files iso_root/
-	cp kernel/bin-$(ARCH)/kernel iso_root/boot/
-	mkdir -p iso_root/boot/limine
-	cp limine.conf iso_root/boot/limine/
-	mkdir -p iso_root/usr/bin
-	mkdir -p iso_root/EFI/BOOT
-ifeq ($(ARCH),x86_64)
-	cp limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin iso_root/boot/limine/
-	cp limine/BOOTX64.EFI iso_root/EFI/BOOT/
-	cp limine/BOOTIA32.EFI iso_root/EFI/BOOT/
-	xorriso -as mkisofs -R -r -J -l -b boot/limine/limine-bios-cd.bin \
-		-no-emul-boot -boot-load-size 4 -boot-info-table \
-		-apm-block-size 2048 --efi-boot boot/limine/limine-uefi-cd.bin \
-		--protective-msdos-label \
-		iso_root -o $(IMAGE_NAME).iso
-endif
-ifeq ($(ARCH),aarch64)
-	cp limine/limine-uefi-cd.bin iso_root/boot/limine/
-	cp limine/BOOTAA64.EFI iso_root/EFI/BOOT/
-	xorriso -as mkisofs -R -r -J -l \
-		-apm-block-size 2048 \
-		--efi-boot boot/limine/limine-uefi-cd.bin \
-		-efi-boot-part --efi-boot-image --protective-msdos-label \
-		iso_root -o $(IMAGE_NAME).iso
-endif
-ifeq ($(ARCH),riscv64)
-	cp limine/limine-uefi-cd.bin iso_root/boot/limine/
-	cp limine/BOOTRISCV64.EFI iso_root/EFI/BOOT/
-	xorriso -as mkisofs -R -r -J -l \
-		-apm-block-size 2048 \
-		--efi-boot boot/limine/limine-uefi-cd.bin \
-		-efi-boot-part --efi-boot-image --protective-msdos-label \
-		iso_root -o $(IMAGE_NAME).iso
-endif
-ifeq ($(ARCH),loongarch64)
-	cp limine/limine-uefi-cd.bin iso_root/boot/limine/
-	cp limine/BOOTLOONGARCH64.EFI iso_root/EFI/BOOT/
-	xorriso -as mkisofs -R -r -J -l \
-		-apm-block-size 2048 \
-		--efi-boot boot/limine/limine-uefi-cd.bin \
-		-efi-boot-part --efi-boot-image --protective-msdos-label \
-		iso_root -o $(IMAGE_NAME).iso
-endif
-	rm -rf iso_root
-
 $(IMAGE_NAME).hdd: limine/limine kernel
 	rm -rf $(IMAGE_NAME).hdd
-	dd if=/dev/zero bs=1M count=0 seek=2048 of=$(IMAGE_NAME).hdd
+	dd if=/dev/zero bs=1M count=0 seek=128 of=$(IMAGE_NAME).hdd
 ifeq ($(ARCH),x86_64)
 	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00 -m 1
 else
@@ -297,16 +190,6 @@ else
 endif
 	mformat -i $(IMAGE_NAME).hdd@@1M
 	mmd -i $(IMAGE_NAME).hdd@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
-	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/usr ::/
-	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/lib ::/
-	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/etc ::/
-	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/bin ::/
-	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/sbin ::/
-	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/var ::/
-	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/root ::/
-	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/tmp ::/
-	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/run ::/
-	mcopy -s -i $(IMAGE_NAME).hdd@@1M user/rootfs-$(ARCH)/files ::/
 	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(ARCH)/kernel ::/boot
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf ::/boot/limine
 ifeq ($(ARCH),x86_64)
@@ -324,14 +207,22 @@ ifeq ($(ARCH),loongarch64)
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTLOONGARCH64.EFI ::/EFI/BOOT
 endif
 
+	dd if=/dev/zero bs=1M count=1024 of=rootfs.hdd
+	mkfs.ext2 rootfs.hdd
+	mkdir -p mnt
+	sudo mount rootfs.hdd mnt
+	sudo cp -r user/rootfs-$(ARCH)/* mnt/
+	sudo umount mnt
+	rm -rf mnt
+
 .PHONY: clean
 clean:
 	$(MAKE) -C kernel clean
 	$(MAKE) -C user clean
-	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).hdd
+	rm -rf $(IMAGE_NAME).hdd rootfs.hdd
 
 .PHONY: distclean
 distclean:
 	$(MAKE) -C kernel distclean
 	$(MAKE) -C user distclean
-	rm -rf iso_root *.iso *.hdd kernel-deps limine ovmf
+	rm -rf *.hdd kernel-deps limine ovmf

@@ -53,12 +53,16 @@ int sys_socket(int domain, int type, int protocol)
     node->type = file_socket;
     node->handle = &sockets[sock_id];
     memset(&sockets[sock_id], 0, sizeof(socket_t));
+    socket_inner_t *inner = malloc(sizeof(socket_inner_t));
+    inner->buf_head = 0;
+    inner->buf_tail = 0;
+    memset(inner->buffer, 0, BUFFER_SIZE);
+
     socket_t *socket = (socket_t *)node->handle;
     socket->domain = domain;
     socket->type = type;
     socket->protocol = protocol;
-    socket->buf_head = 0;
-    socket->buf_tail = 0;
+    socket->inner = inner;
     socket->sndbuf_size = BUFFER_SIZE;
     socket->rcvbuf_size = BUFFER_SIZE;
     socket->state = SOCKET_TYPE_UNCONNECTED;
@@ -294,8 +298,7 @@ int sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen)
     memset(&sockets[sock_id], 0, sizeof(socket_t));
     socket_t *socket = (socket_t *)new_node->handle;
     strcpy(socket->name, buf);
-    socket->buf_head = 0;
-    socket->buf_tail = 0;
+    socket->inner = listen_sock->inner;
     socket->state = SOCKET_TYPE_CONNECTED;
 
     current_task->fds[i] = new_node;
@@ -355,6 +358,7 @@ int sys_connect(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen)
                 sock->state = SOCKET_TYPE_CONNECTED;
                 sock->peer_fd = &sockets[i] - sockets;
                 sockets[i].peer_fd = sock - sockets;
+                sockets[i].inner = sock->inner;
 
                 sockets[i].state = SOCKET_TYPE_CONNECTED;
 
@@ -366,6 +370,7 @@ int sys_connect(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen)
                 sock->state = SOCKET_TYPE_CONNECTED;
                 sock->peer_fd = &sockets[i] - sockets;
                 sockets[i].peer_fd = sock - sockets;
+                sockets[i].inner = sock->inner;
 
                 sockets[i].state = SOCKET_TYPE_CONNECTED;
 
@@ -406,13 +411,13 @@ int64_t sys_send(int sockfd, const void *buf, size_t len, int flags)
     }
 
     size_t to_copy = len;
-    if (to_copy > BUFFER_SIZE - peer->buf_tail)
+    if (to_copy > BUFFER_SIZE - peer->inner->buf_tail)
     {
-        to_copy = BUFFER_SIZE - peer->buf_tail;
+        to_copy = BUFFER_SIZE - peer->inner->buf_tail;
     }
 
-    memcpy(&peer->buffer[peer->buf_tail], buf, to_copy);
-    peer->buf_tail = (peer->buf_tail + to_copy) % BUFFER_SIZE;
+    memcpy(&peer->inner->buffer[peer->inner->buf_tail], buf, to_copy);
+    peer->inner->buf_tail = (peer->inner->buf_tail + to_copy) % BUFFER_SIZE;
 
     SPIN_UNLOCK(socket_lock);
     return to_copy;
@@ -438,13 +443,13 @@ int64_t sys_recv(int sockfd, void *buf, size_t len, int flags)
         return -ENOTCONN;
     }
 
-    size_t available = (sock->buf_tail - sock->buf_head + BUFFER_SIZE) % BUFFER_SIZE;
+    size_t available = (sock->inner->buf_tail - sock->inner->buf_head + BUFFER_SIZE) % BUFFER_SIZE;
     size_t to_copy = available > len ? len : available;
 
     if (to_copy > 0)
     {
-        memcpy(buf, &sock->buffer[sock->buf_head], to_copy);
-        sock->buf_head = (sock->buf_head + to_copy) % BUFFER_SIZE;
+        memcpy(buf, &sock->inner->buffer[sock->inner->buf_head], to_copy);
+        sock->inner->buf_head = (sock->inner->buf_head + to_copy) % BUFFER_SIZE;
     }
 
     SPIN_UNLOCK(socket_lock);
@@ -490,13 +495,13 @@ int64_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags)
             continue;
 
         size_t to_copy = iov->len;
-        if (to_copy > BUFFER_SIZE - peer->buf_tail)
+        if (to_copy > BUFFER_SIZE - peer->inner->buf_tail)
         {
-            to_copy = BUFFER_SIZE - peer->buf_tail;
+            to_copy = BUFFER_SIZE - peer->inner->buf_tail;
         }
 
-        memcpy(&peer->buffer[peer->buf_tail], iov->iov_base, to_copy);
-        peer->buf_tail = (peer->buf_tail + to_copy) % BUFFER_SIZE;
+        memcpy(&peer->inner->buffer[peer->inner->buf_tail], iov->iov_base, to_copy);
+        peer->inner->buf_tail = (peer->inner->buf_tail + to_copy) % BUFFER_SIZE;
         total_sent += to_copy;
     }
 
@@ -523,7 +528,7 @@ int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags)
     }
 
     size_t total_recv = 0;
-    size_t available = (sock->buf_tail - sock->buf_head + BUFFER_SIZE) % BUFFER_SIZE;
+    size_t available = (sock->inner->buf_tail - sock->inner->buf_head + BUFFER_SIZE) % BUFFER_SIZE;
 
     for (int i = 0; i < msg->msg_iovlen && available > 0; i++)
     {
@@ -532,9 +537,9 @@ int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags)
             continue;
 
         size_t to_copy = MIN(available, iov->len);
-        memcpy(iov->iov_base, &sock->buffer[sock->buf_head], to_copy);
+        memcpy(iov->iov_base, &sock->inner->buffer[sock->inner->buf_head], to_copy);
 
-        sock->buf_head = (sock->buf_head + to_copy) % BUFFER_SIZE;
+        sock->inner->buf_head = (sock->inner->buf_head + to_copy) % BUFFER_SIZE;
         available -= to_copy;
         total_recv += to_copy;
     }
