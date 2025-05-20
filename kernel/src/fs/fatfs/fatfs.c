@@ -117,6 +117,7 @@ void fatfs_open(void *parent, const char *name, vfs_node_t node)
             child_node->type = ((fno.fattrib & AM_DIR) != 0) ? file_dir : file_none;
         }
         node->inode = ino++;
+        node->blksz = DEFAULT_PAGE_SIZE;
     }
     else
     {
@@ -125,6 +126,7 @@ void fatfs_open(void *parent, const char *name, vfs_node_t node)
         res = f_open(fp, new_path, FA_READ | FA_WRITE);
         node->inode = ino++;
         node->size = f_size((FIL *)fp);
+        node->blksz = DEFAULT_PAGE_SIZE;
     }
 
     new->handle = fp;
@@ -190,6 +192,7 @@ int fatfs_mount(const char *src, vfs_node_t node)
     }
     node->inode = ino++;
     node->handle = f;
+    node->blksz = DEFAULT_PAGE_SIZE;
     return 0;
 }
 

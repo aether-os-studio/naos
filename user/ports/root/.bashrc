@@ -13,7 +13,3 @@ source /etc/profile
 if [ -z "${TERM}" ] || [ "${TERM}" == "dumb" ]; then
 	export TERM=linux
 fi
-
-alias ls='ls --color=auto'
-alias grep='grep --color=auto'
-alias dir="dir --color=auto"

@@ -125,6 +125,7 @@ typedef struct ext2_file
     uint32_t inode_id;
     uint32_t inode_size;
     uint32_t inodes_per_group;
+    uint16_t block_groups_count;
     uint8_t file_type;
     vfs_node_t node;
     vfs_node_t device;

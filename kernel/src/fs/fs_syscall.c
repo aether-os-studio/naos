@@ -94,12 +94,14 @@ uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode)
             ret = vfs_mkfile(name);
         }
         if (ret < 0)
-            return (uint64_t)-ENOENT;
+            return (uint64_t)-ENOSPC;
 
         node = vfs_open(name);
         if (!node)
             return (uint64_t)-ENOENT;
     }
+
+    node->flags = flags;
 
     current_task->fds[i] = node;
 
@@ -271,14 +273,12 @@ uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count)
         return -EINVAL;
     }
 
-    // 删除大缓冲区的内存分配和整体读取
     ssize_t total_read = 0;
     for (uint64_t i = 0; i < count; i++)
     {
         if (iovec[i].len == 0)
             continue;
 
-        // 直接读取到用户提供的缓冲区
         ssize_t ret = sys_read(fd, iovec[i].iov_base, iovec[i].len);
         if (ret < 0)
         {
@@ -286,7 +286,7 @@ uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count)
         }
         total_read += ret;
         if ((size_t)ret < iovec[i].len)
-            break; // 提前结束
+            break;
     }
     return total_read;
 }
@@ -304,7 +304,6 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count)
         if (iovec[i].len == 0)
             continue;
 
-        // 直接写入用户提供的缓冲区
         ssize_t ret = sys_write(fd, iovec[i].iov_base, iovec[i].len);
         if (ret < 0)
         {
@@ -312,7 +311,7 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count)
         }
         total_written += ret;
         if ((size_t)ret < iovec[i].len)
-            break; // 提前结束
+            break;
     }
     return total_written;
 }
@@ -458,23 +457,25 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd)
 
 uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
 {
-    (void)arg;
+    if (!current_task->fds[fd])
+        return (uint64_t)-EBADF;
 
     switch (command)
     {
     case F_GETFD:
-        return current_task->fds[fd]->flags;
+        return !!(current_task->fds[fd]->flags & O_CLOEXEC);
     case F_SETFD:
         return current_task->fds[fd]->flags |= O_CLOEXEC;
     case F_DUPFD_CLOEXEC:
     case F_DUPFD:
         return sys_dup(fd);
     case F_GETFL:
-        return 0;
-        break;
+        return current_task->fds[fd]->flags;
     case F_SETFL:
+        uint32_t valid_flags = O_APPEND | O_DIRECT | O_NOATIME | O_NONBLOCK;
+        current_task->fds[fd]->flags &= ~valid_flags;
+        current_task->fds[fd]->flags |= arg & valid_flags;
         return 0;
-        break;
     }
 
     return (uint64_t)-ENOSYS;
@@ -491,7 +492,7 @@ uint64_t sys_stat(const char *fd, struct stat *buf)
     buf->st_dev = 0;
     buf->st_ino = node->inode;
     buf->st_nlink = 1;
-    buf->st_mode = node->mode | (node->type == file_dir ? S_IFDIR : S_IFREG);
+    buf->st_mode = node->mode | (node->type == file_dir ? S_IFDIR : (node->type == file_symlink ? S_IFLNK : S_IFREG));
     buf->st_uid = 0;
     buf->st_gid = 0;
     if (node->type == file_stream)
@@ -514,7 +515,7 @@ uint64_t sys_stat(const char *fd, struct stat *buf)
     {
         buf->st_rdev = 0;
     }
-    buf->st_blksize = DEFAULT_PAGE_SIZE;
+    buf->st_blksize = node->blksz;
     buf->st_size = node->size;
     buf->st_blocks = (buf->st_size + buf->st_blksize - 1) / buf->st_blksize;
 
@@ -533,7 +534,7 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
     buf->st_dev = 0;
     buf->st_ino = current_task->fds[fd]->inode;
     buf->st_nlink = 1;
-    buf->st_mode = current_task->fds[fd]->mode | (current_task->fds[fd]->type == file_dir ? S_IFDIR : S_IFREG);
+    buf->st_mode = current_task->fds[fd]->mode | (current_task->fds[fd]->type == file_dir ? S_IFDIR : (current_task->fds[fd]->type == file_symlink ? S_IFLNK : S_IFREG));
     buf->st_uid = 0;
     buf->st_gid = 0;
     if (current_task->fds[fd]->type == file_stream)
@@ -556,7 +557,7 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
     {
         buf->st_rdev = 0;
     }
-    buf->st_blksize = DEFAULT_PAGE_SIZE;
+    buf->st_blksize = current_task->fds[fd]->blksz;
     buf->st_size = current_task->fds[fd]->size;
     buf->st_blocks = (buf->st_size + buf->st_blksize - 1) / buf->st_blksize;
 
@@ -614,7 +615,9 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname, uint64_t flags, uint64_
 uint64_t sys_get_rlimit(uint64_t resource, struct rlimit *lim)
 {
     *lim = current_task->rlim[resource];
+    return 0;
 }
+
 uint64_t sys_prlimit64(uint64_t pid, int resource, const struct rlimit *new_rlim, struct rlimit *old_rlim)
 {
     if (old_rlim)
@@ -1405,7 +1408,7 @@ uint64_t sys_rename(const char *old, const char *new)
 
 uint64_t sys_fchdir(uint64_t fd)
 {
-    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fds[fd])
+    if (fd >= MAX_FD_NUM || !current_task->fds[fd])
         return -EBADF;
 
     vfs_node_t node = current_task->fds[fd];

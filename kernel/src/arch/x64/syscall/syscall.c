@@ -370,7 +370,6 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = sys_dup(arg1);
         break;
     case SYS_DUP2:
-        // todo: flags
         regs->rax = sys_dup2(arg1, arg2);
         break;
     case SYS_GETRLIMIT:

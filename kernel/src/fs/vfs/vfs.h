@@ -210,6 +210,7 @@ struct vfs_node
     uint64_t inode;      // 节点号
     uint64_t realsize;   // 项目真实占用的空间 (可选)
     uint64_t size;       // 文件大小或若是文件夹则填0
+    uint64_t blksz;      // 块大小
     uint64_t offset;     // 偏移
     uint64_t createtime; // 创建时间
     uint64_t readtime;   // 最后读取时间

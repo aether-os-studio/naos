@@ -109,6 +109,7 @@ task_t *task_create(const char *name, void (*entry)())
     memset(task->actions, 0, sizeof(task->actions));
 
     memset(task->rlim, 0, sizeof(task->rlim));
+    task->rlim[RLIMIT_NPROC] = (struct rlimit){0, MAX_TASK_NUM};
     task->rlim[RLIMIT_NOFILE] = (struct rlimit){MAX_FD_NUM, MAX_FD_NUM};
     task->rlim[RLIMIT_CORE] = (struct rlimit){0, 0};
 
