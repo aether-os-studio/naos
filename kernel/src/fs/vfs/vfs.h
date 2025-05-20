@@ -231,6 +231,7 @@ extern vfs_node_t rootdir; // vfs 根目录
 
 vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name);
 void vfs_free(vfs_node_t vfs);
+void vfs_free_child(vfs_node_t vfs);
 // 一定要记得手动设置一下child的type
 vfs_node_t vfs_child_append(vfs_node_t parent, const char *name, void *handle);
 

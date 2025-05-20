@@ -334,8 +334,11 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
 
     int64_t read_count = 0;
 
+    uint64_t offset = 0;
     list_foreach(node->child, i)
     {
+        if (offset < node->offset)
+            goto next;
         if (node->offset >= (child_count * sizeof(struct dirent)))
             break;
         if (read_count >= max_dents_num)
@@ -352,6 +355,9 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
         case file_none:
             dents[read_count].d_type = DT_REG;
             break;
+        case file_symlink:
+            dents[read_count].d_type = DT_LNK;
+            break;
         default:
             dents[read_count].d_type = DT_UNKNOWN;
             break;
@@ -359,6 +365,8 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
         strncpy(dents[read_count].d_name, child_node->name, 1024);
         node->offset += sizeof(struct dirent);
         read_count++;
+    next:
+        offset += sizeof(struct dirent);
     }
 
     return read_count * sizeof(struct dirent);
@@ -1032,6 +1040,7 @@ size_t epoll_create1(int flags)
     epoll->lock = false;
     epoll->firstEpollWatch = NULL;
     epoll->reference_count = 1;
+    node->mode = 0755;
     node->handle = epoll;
     node->fsid = epollfs_id;
 
@@ -1290,6 +1299,7 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags)
     char buf[256];
     sprintf(buf, "eventfd%d", eventfd_id++);
     vfs_node_t node = vfs_node_alloc(eventfdfs_root, buf);
+    node->mode = 0755;
     node->type = file_stream;
     node->fsid = eventfdfs_id;
     node->handle = efd;
@@ -1420,6 +1430,7 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask, int flags
     char buf[256];
     sprintf(buf, "signalfd%d", signalfd_id++);
     vfs_node_t node = vfs_node_alloc(signalfdfs_root, buf);
+    node->mode = 0755;
     node->type = file_stream;
     node->fsid = signalfdfs_id;
     node->handle = ctx;
@@ -1515,14 +1526,17 @@ void epoll_init()
     epollfs_id = vfs_regist("epollfs", &epoll_callbacks);
     epollfs_root = vfs_node_alloc(rootdir, "epoll");
     epollfs_root->type = file_dir;
+    epollfs_root->mode = 0644;
 
     eventfdfs_id = vfs_regist("eventfdfs", &eventfd_callbacks);
     eventfdfs_root = vfs_node_alloc(rootdir, "eventfd");
     eventfdfs_root->type = file_dir;
+    eventfdfs_root->mode = 0644;
 
     signalfdfs_id = vfs_regist("signalfdfs", &signalfd_callbacks);
     signalfdfs_root = vfs_node_alloc(rootdir, "signalfd");
     signalfdfs_root->type = file_dir;
+    signalfdfs_root->mode = 0644;
 }
 
 uint64_t sys_flock(int fd, uint64_t operation)

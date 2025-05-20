@@ -100,18 +100,25 @@ void sysfs_init()
     sysfs_root = vfs_node_alloc(rootdir, "sys");
     sysfs_root->type = file_dir;
     sysfs_root->fsid = sysfs_id;
+    sysfs_root->mode = 0644;
     dev_root = vfs_child_append(sysfs_root, "dev", NULL);
     dev_root->type = file_dir;
+    dev_root->mode = 0644;
     bus_root = vfs_child_append(sysfs_root, "bus", NULL);
     bus_root->type = file_dir;
+    bus_root->mode = 0644;
     class_root = vfs_child_append(sysfs_root, "class", NULL);
     class_root->type = file_dir;
+    class_root->mode = 0644;
     pci_root = vfs_child_append(bus_root, "pci", NULL);
     pci_root->type = file_dir;
+    pci_root->mode = 0644;
     graphics_root = vfs_child_append(class_root, "graphics", NULL);
     graphics_root->type = file_dir;
+    graphics_root->mode = 0644;
     pci_devices_root = vfs_child_append(pci_root, "devices", NULL);
     pci_devices_root->type = file_dir;
+    pci_devices_root->mode = 0644;
 
     for (uint32_t i = 0; i < device_number; i++)
     {
@@ -124,6 +131,7 @@ void sysfs_init()
 
         vfs_node_t pci_device_dir = vfs_child_append(pci_devices_root, dirname, dev);
         pci_device_dir->type = file_dir;
+        pci_device_dir->mode = 0644;
 
         vfs_node_t class_file = vfs_child_append(pci_device_dir, "class", NULL);
         class_file->type = file_none;

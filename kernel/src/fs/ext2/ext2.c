@@ -598,9 +598,9 @@ void ext2_update(vfs_node_t node)
     node->size = file_inode.i_size;
     node->blksz = file->block_size;
     node->mode = file_inode.i_mode;
-    node->readtime = file_inode.i_atime;
+    node->readtime = file_inode.i_mtime;
     node->createtime = file_inode.i_ctime;
-    node->writetime = file_inode.i_atime;
+    node->writetime = file_inode.i_mtime;
 }
 
 int ext2_fsid = 0;
@@ -757,6 +757,7 @@ void ext2_open(void *parent, const char *name, vfs_node_t node)
                     handle->file_type = dirent->type;
                     handle->node = node;
                     node->inode = handle->inode_id;
+                    node->blksz = handle->block_size;
                     node->handle = handle;
                     node->fsid = ext2_fsid;
                     if (node->type == file_dir)
@@ -1308,8 +1309,6 @@ int ext2_stat(void *file, vfs_node_t node)
         ext2_update(node);
     else if (node->type == file_symlink)
         ext2_read_linkname(file, node);
-    else if (node->type == file_dir)
-        ext2_readdir(file, node);
 
     return 0;
 }

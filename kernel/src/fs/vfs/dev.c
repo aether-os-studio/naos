@@ -494,6 +494,7 @@ void dev_init()
     devfs_root = vfs_node_alloc(rootdir, "dev");
     devfs_root->type = file_dir;
     devfs_root->fsid = devfs_id;
+    devfs_root->mode = 0644;
 
     memset(devfs_handles, 0, sizeof(devfs_handles));
 

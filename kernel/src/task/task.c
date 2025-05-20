@@ -5,7 +5,6 @@
 #include <arch/arch.h>
 #include <mm/mm.h>
 #include <fs/fs_syscall.h>
-#include <fs/vfs/proc.h>
 
 task_t *tasks[MAX_TASK_NUM];
 task_t *idle_tasks[MAX_CPU_NUM];
@@ -112,8 +111,6 @@ task_t *task_create(const char *name, void (*entry)())
     task->rlim[RLIMIT_NPROC] = (struct rlimit){0, MAX_TASK_NUM};
     task->rlim[RLIMIT_NOFILE] = (struct rlimit){MAX_FD_NUM, MAX_FD_NUM};
     task->rlim[RLIMIT_CORE] = (struct rlimit){0, 0};
-
-    procfs_regist_proc(task);
 
     can_schedule = true;
 
@@ -427,8 +424,6 @@ uint64_t task_fork(struct pt_regs *regs)
     child->tmp_rec_v = current_task->tmp_rec_v;
 
     memcpy(child->rlim, current_task->rlim, sizeof(child->rlim));
-
-    procfs_regist_proc(child);
 
     can_schedule = true;
 
@@ -796,8 +791,6 @@ uint64_t task_exit(int64_t code)
     if (task->cmdline)
         free(task->cmdline);
 
-    procfs_unregist_proc(task);
-
     task->state = TASK_DIED;
 
     task_t *next = task_search(TASK_READY, task->cpu_id);
@@ -1039,8 +1032,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->tmp_rec_v = current_task->tmp_rec_v;
 
     memcpy(child->rlim, current_task->rlim, sizeof(child->rlim));
-
-    procfs_regist_proc(child);
 
     can_schedule = true;
 

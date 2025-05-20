@@ -30,6 +30,7 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name)
     memset(node, 0, sizeof(struct vfs_node));
     node->parent = parent;
     node->offset = 0;
+    node->blksz = DEFAULT_PAGE_SIZE;
     node->name = name ? strdup(name) : NULL;
     node->linkname = NULL;
     node->type = file_none;
@@ -56,7 +57,7 @@ void vfs_free(vfs_node_t vfs)
     free(vfs);
 }
 
-static void vfs_free_child(vfs_node_t vfs)
+void vfs_free_child(vfs_node_t vfs)
 {
     if (vfs == NULL)
         return;
