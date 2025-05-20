@@ -647,8 +647,8 @@ void ext2_readdir(ext2_file_t *dir, vfs_node_t parent)
                     goto next;
 
                 vfs_node_t child = vfs_child_append(parent, entry_name, NULL);
-                child->type = (dirent->type == EXT2_FT_DIRECTORY) ? file_dir : (dirent->type == EXT2_FT_SYMLINK) ? file_symlink
-                                                                                                                 : file_none;
+                child->type = (dirent->type == EXT2_FT_SYMLINK) ? file_symlink : (dirent->type == EXT2_FT_DIRECTORY) ? file_dir
+                                                                                                                     : file_none;
                 child->fsid = ext2_fsid;
             }
             if (dirent->rec_len == 0)
@@ -744,8 +744,8 @@ void ext2_open(void *parent, const char *name, vfs_node_t node)
                 if (strcmp(entry_name, name) == 0)
                 {
                     // found
-                    node->type = (dirent->type == EXT2_FT_DIRECTORY) ? file_dir : (dirent->type == EXT2_FT_SYMLINK) ? file_symlink
-                                                                                                                    : file_none;
+                    node->type = (dirent->type == EXT2_FT_SYMLINK) ? file_symlink : (dirent->type == EXT2_FT_DIRECTORY) ? file_dir
+                                                                                                                        : file_none;
                     ext2_file_t *handle = malloc(sizeof(ext2_file_t));
                     handle->device = dir->device;
                     handle->inode_id = dirent->inode_id;
@@ -760,10 +760,10 @@ void ext2_open(void *parent, const char *name, vfs_node_t node)
                     node->blksz = handle->block_size;
                     node->handle = handle;
                     node->fsid = ext2_fsid;
-                    if (node->type == file_dir)
-                        ext2_readdir(handle, node);
-                    else if (node->type == file_symlink)
+                    if (node->type == file_symlink)
                         ext2_read_linkname(handle, node);
+                    else if (node->type == file_dir)
+                        ext2_readdir(handle, node);
                     ext2_update(node);
                     free(block);
                     return;

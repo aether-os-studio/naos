@@ -428,11 +428,9 @@ uint64_t next = 0;
 
 ssize_t random_dev_read(void *data, uint64_t offset, void *buf, uint64_t len)
 {
-#if defined(__x86_64__)
     tm time;
     time_read(&time);
     next = mktime(&time);
-#endif
     next = next * 1103515245 + 12345;
     return ((unsigned)(next / 65536) % 32768);
 }

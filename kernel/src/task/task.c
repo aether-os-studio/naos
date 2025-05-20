@@ -210,9 +210,9 @@ void init_thread()
 
     system_initialized = true;
 
-    task_execve("/bin/bash", NULL, NULL);
+    task_execve("/usr/bin/bash", NULL, NULL);
 
-    printk("run /bin/bash failed\n");
+    printk("run /usr/bin/bash failed\n");
 
     while (1)
     {
@@ -519,7 +519,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         for (i = 0; i < argv_count; i++)
             argvs[i + 1] = argv[i];
         argvs[i] = NULL;
-        return task_execve("/bin/bash", argvs, envp);
+        return task_execve("/usr/bin/bash", argvs, envp);
     }
 
     const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)EHDR_START_ADDR;

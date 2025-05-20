@@ -290,6 +290,15 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path)
         current = vfs_child_find(current, buf);
         if (current == NULL)
             goto err;
+        if (current->type == file_symlink)
+        {
+            do_update(current);
+            vfs_op_lock = false;
+            if (!current->parent || !current->linkname)
+                return NULL;
+            current = vfs_open_at(current->parent, current->linkname);
+            vfs_op_lock = true;
+        }
         do_update(current);
     }
 

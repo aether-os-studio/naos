@@ -212,6 +212,18 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
             break;
         }
         break;
+    case SYS_GETTIMEOFDAY:
+        tm time_day;
+        time_read(&time_day);
+        uint64_t timestamp_day = mktime(&time_day);
+        if (arg1)
+        {
+            struct timespec *ts = (struct timespec *)arg1;
+            ts->tv_sec = timestamp_day;
+            ts->tv_nsec = 0;
+        }
+        regs->rax = 0;
+        break;
     case SYS_CLOCK_GETRES:
         ((struct timespec *)arg2)->tv_nsec = 1000000;
         regs->rax = 0;
@@ -500,6 +512,35 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_SETSID:
         regs->rax = 0;
+        break;
+    case SYS_SET_ROBUST_LIST:
+        regs->rax = 0;
+        break;
+    case SYS_RSEQ:
+        regs->rax = 0;
+        break;
+    case SYS_GETRANDOM:
+        void *buffer = (void *)arg1;
+        size_t get_len = (size_t)arg2;
+        uint32_t flags = (uint32_t)arg3;
+
+        if (get_len == 0 || get_len > 1024 * 1024)
+        {
+            regs->rax = (uint64_t)-EINVAL;
+            break;
+        }
+
+        for (size_t i = 0; i < get_len; i++)
+        {
+            tm time;
+            time_read(&time);
+            uint64_t next = mktime(&time);
+            next = next * 1103515245 + 12345;
+            uint8_t rand_byte = ((uint8_t)(next / 65536) % 32768);
+            memcpy(buffer + i, &rand_byte, 1);
+        }
+
+        regs->rax = get_len;
         break;
 
     default:

@@ -207,7 +207,7 @@ ifeq ($(ARCH),loongarch64)
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTLOONGARCH64.EFI ::/EFI/BOOT
 endif
 
-	dd if=/dev/zero bs=1M count=1024 of=rootfs.hdd
+	dd if=/dev/zero bs=1M count=2048 of=rootfs.hdd
 	mkfs.ext2 rootfs.hdd
 	mkdir -p mnt
 	sudo mount rootfs.hdd mnt
