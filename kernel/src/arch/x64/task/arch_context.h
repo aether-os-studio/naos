@@ -3,7 +3,7 @@
 #include <arch/x64/irq/ptrace.h>
 #include <arch/elf.h>
 
-#define USER_STACK_START 0x00006ffffff00000
+#define USER_STACK_START 0x00006fffff000000
 #define USER_STACK_END 0x0000700000000000
 
 struct task;

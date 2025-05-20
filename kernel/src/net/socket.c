@@ -52,6 +52,7 @@ int sys_socket(int domain, int type, int protocol)
     vfs_node_t node = vfs_node_alloc(socketfs_root, buf);
     node->type = file_socket;
     node->handle = &sockets[sock_id];
+    node->mode = 0755;
     memset(&sockets[sock_id], 0, sizeof(socket_t));
     socket_inner_t *inner = malloc(sizeof(socket_inner_t));
     inner->buf_head = 0;
@@ -295,6 +296,7 @@ int sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen)
     vfs_node_t new_node = vfs_node_alloc(socketfs_root, strdup(buf));
     new_node->type = file_socket;
     new_node->handle = &sockets[sock_id];
+    new_node->mode = 0755;
     memset(&sockets[sock_id], 0, sizeof(socket_t));
     socket_t *socket = (socket_t *)new_node->handle;
     strcpy(socket->name, buf);
@@ -962,6 +964,7 @@ void socketfs_init()
     socketfs_id = vfs_regist("socketfs", &callback);
     socketfs_root = vfs_node_alloc(rootdir, "sock");
     socketfs_root->type = file_dir;
+    socketfs_root->mode = 0644;
     vfs_node_t node = vfs_child_append(socketfs_root, "sock0", NULL);
     node->type = file_socket;
 }

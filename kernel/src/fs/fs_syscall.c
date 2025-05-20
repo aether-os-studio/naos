@@ -967,6 +967,17 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
 
         return size;
     }
+    else if (node->type == file_symlink && node->linkname != NULL)
+    {
+        if (size < (uint64_t)strlen(node->linkname))
+        {
+            vfs_close(node);
+            return (uint64_t)-ERANGE;
+        }
+        strncpy(buf, node->linkname, size);
+
+        return size;
+    }
     else
     {
         vfs_close(node);
@@ -1000,7 +1011,7 @@ uint64_t sys_unlink(const char *name)
 
 uint64_t sys_unlinkat(uint64_t dirfd, const char *name, uint64_t flags)
 {
-    char *path = at_resolve_pathname(dirfd, name);
+    char *path = at_resolve_pathname(dirfd, (char *)name);
     if (!path)
         return -ENOENT;
 
@@ -1529,12 +1540,12 @@ void epoll_init()
     epollfs_root->mode = 0644;
 
     eventfdfs_id = vfs_regist("eventfdfs", &eventfd_callbacks);
-    eventfdfs_root = vfs_node_alloc(rootdir, "eventfd");
+    eventfdfs_root = vfs_node_alloc(rootdir, "event");
     eventfdfs_root->type = file_dir;
     eventfdfs_root->mode = 0644;
 
     signalfdfs_id = vfs_regist("signalfdfs", &signalfd_callbacks);
-    signalfdfs_root = vfs_node_alloc(rootdir, "signalfd");
+    signalfdfs_root = vfs_node_alloc(rootdir, "signal");
     signalfdfs_root->type = file_dir;
     signalfdfs_root->mode = 0644;
 }

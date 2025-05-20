@@ -492,6 +492,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_RMDIR:
         regs->rax = sys_unlink((const char *)arg1);
         break;
+    case SYS_SETPRIORITY:
+        regs->rax = 0;
+        break;
     case SYS_MEMBARRIER:
         regs->rax = 0;
         break;
