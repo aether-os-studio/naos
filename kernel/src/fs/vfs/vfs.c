@@ -462,7 +462,9 @@ char *vfs_get_fullpath(vfs_node_t node)
 
 int vfs_delete(vfs_node_t node)
 {
-    int res = callbackof(node, delete)(node->handle);
+    if (node == rootdir)
+        return -1;
+    int res = callbackof(node, delete)(node->parent->handle, node);
     if (res < 0)
         return -1;
     node->handle = NULL;

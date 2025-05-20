@@ -399,4 +399,8 @@ uint64_t sys_rename(const char *old, const char *new);
 
 uint64_t sys_fchdir(uint64_t fd);
 
+uint64_t sys_rmdir(const char *name);
+uint64_t sys_unlink(const char *name);
+uint64_t sys_unlinkat(uint64_t dirfd, const char *name, uint64_t flags);
+
 void wake_blocked_tasks(task_block_list_t *head);

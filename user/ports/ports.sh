@@ -15,8 +15,8 @@ ${SCRIPTPATH}/pass_acq.sh "$APK_URI" "$APK_SHA512" "$APK_PATH"
 chmod +x "$APK_PATH"
 
 # bootstrap alpine userspace
-sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/edge/main -U --allow-untrusted --root $SYSROOT/../ --initdb add alpine-base bash coreutils grep musl ncurses
-echo -e "http://mirrors.ustc.edu.cn/alpine/edge/main\nhttp://mirrors.ustc.edu.cn/alpine/edge/community\nhttp://mirrors.ustc.edu.cn/alpine/edge/testing" | sudo tee $SYSROOT/../etc/apk/repositories
+sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/latest-stable/main -U --allow-untrusted --root $SYSROOT/../ --initdb add alpine-base bash coreutils grep musl ncurses
+echo -e "http://mirrors.ustc.edu.cn/alpine/latest-stable/main\nhttp://mirrors.ustc.edu.cn/alpine/latest-stable/community" | sudo tee $SYSROOT/../etc/apk/repositories
 
 # Basic software
 sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add musl-dev nano gzip xz make file tar pciutils tzdata

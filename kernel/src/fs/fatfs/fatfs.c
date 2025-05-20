@@ -229,8 +229,10 @@ int fatfs_stat(void *handle, vfs_node_t node)
     return 0;
 }
 
-int fatfs_delete(file_t file)
+int fatfs_delete(file_t parent, vfs_node_t node)
 {
+    file_t file = node->handle;
+
     FRESULT res = f_unlink(file->path);
     if (res != FR_OK)
         return -1;

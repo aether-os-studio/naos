@@ -351,6 +351,228 @@ static int ext2_add_dir_entry(ext2_file_t *parent, const char *name, uint32_t in
     return -ENOSPC; // 无空间
 }
 
+static int ext2_remove_from_block(ext2_file_t *parent_dir, ext2_inode_t *parent_inode, uint32_t block_num, const char *name)
+{
+    uint32_t block_size = parent_dir->block_size;
+    uint8_t *block = malloc(block_size);
+    vfs_read(parent_dir->device, block, block_num * block_size, block_size);
+
+    ext2_dirent_t *dirent = (ext2_dirent_t *)block;
+    ext2_dirent_t *prev_dirent = NULL;
+
+    while ((uint8_t *)dirent < block + block_size)
+    {
+        if (dirent->inode_id == 0)
+            break; // 空目录项
+
+        char entry_name[256];
+        memcpy(entry_name, dirent->name, dirent->name_len);
+        entry_name[dirent->name_len] = '\0';
+
+        if (strcmp(entry_name, name) == 0)
+        {
+            if (prev_dirent)
+            {
+                prev_dirent->rec_len += dirent->rec_len;
+            }
+            else
+            {
+                dirent->rec_len = block_size - ((uint8_t *)dirent - block);
+            }
+
+            vfs_write(parent_dir->device, block, block_num * block_size, block_size);
+            free(block);
+            return 0;
+        }
+
+        prev_dirent = dirent;
+        dirent = (ext2_dirent_t *)((uint8_t *)dirent + dirent->rec_len);
+    }
+
+    free(block);
+    return -ENOENT;
+}
+
+static int ext2_remove_from_indirect_block(ext2_file_t *parent_dir, ext2_inode_t *parent_inode, uint32_t indirect_block_num, const char *name)
+{
+    uint32_t block_size = parent_dir->block_size;
+    uint32_t blocks_per_indirect = block_size / sizeof(uint32_t);
+
+    uint32_t *indirect_block = malloc(block_size);
+    vfs_read(parent_dir->device, indirect_block, indirect_block_num * block_size, block_size);
+
+    for (int i = 0; i < blocks_per_indirect; i++)
+    {
+        uint32_t data_block_num = indirect_block[i];
+        if (data_block_num == 0)
+            continue;
+
+        int ret = ext2_remove_from_block(parent_dir, parent_inode, data_block_num, name);
+        if (ret == 0)
+        {
+            free(indirect_block);
+            return 0;
+        }
+    }
+
+    free(indirect_block);
+    return -ENOENT;
+}
+
+static int ext2_remove_from_double_indirect_block(ext2_file_t *parent_dir, ext2_inode_t *parent_inode, uint32_t double_indirect_block_num, const char *name)
+{
+    uint32_t block_size = parent_dir->block_size;
+    uint32_t blocks_per_indirect = block_size / sizeof(uint32_t);
+
+    uint32_t *double_indirect_block = malloc(block_size);
+    vfs_read(parent_dir->device, double_indirect_block, double_indirect_block_num * block_size, block_size);
+
+    for (int i = 0; i < blocks_per_indirect; i++)
+    {
+        uint32_t indirect_block_num = double_indirect_block[i];
+        if (indirect_block_num == 0)
+            continue;
+
+        int ret = ext2_remove_from_indirect_block(parent_dir, parent_inode, indirect_block_num, name);
+        if (ret == 0)
+        {
+            free(double_indirect_block);
+            return 0;
+        }
+    }
+
+    free(double_indirect_block);
+    return -ENOENT;
+}
+
+static int ext2_remove_dir_entry(ext2_file_t *parent_dir, const char *name)
+{
+    ext2_inode_t parent_inode;
+    // 获取父目录 inode（与 ext2_update 逻辑一致）
+    uint32_t block_group = (parent_dir->inode_id - 1) / parent_dir->inodes_per_group;
+    uint32_t inode_index = (parent_dir->inode_id - 1) % parent_dir->inodes_per_group;
+    uint64_t bg_desc_block = 1 + (block_group * sizeof(ext2_block_group_desc_t)) / parent_dir->block_size;
+    uint64_t bg_desc_offset = (block_group * sizeof(ext2_block_group_desc_t)) % parent_dir->block_size;
+    uint8_t *bg_block = malloc(parent_dir->block_size);
+    vfs_read(parent_dir->device, bg_block, bg_desc_block * parent_dir->block_size, parent_dir->block_size);
+    ext2_block_group_desc_t bg_desc;
+    memcpy(&bg_desc, bg_block + bg_desc_offset, sizeof(ext2_block_group_desc_t));
+    free(bg_block);
+    uint64_t inode_table_offset = bg_desc.bg_inode_table * parent_dir->block_size;
+    uint64_t inode_offset = inode_table_offset + inode_index * parent_dir->inode_size;
+    vfs_read(parent_dir->device, &parent_inode, inode_offset, sizeof(ext2_inode_t));
+
+    // 1. 遍历直接块（i_block[0-11]）
+    for (int i = 0; i < 12; i++)
+    {
+        if (parent_inode.i_block[i] == 0)
+            break;
+        int ret = ext2_remove_from_block(parent_dir, &parent_inode, parent_inode.i_block[i], name);
+        if (ret == 0)
+            return 0;
+    }
+
+    // 2. 遍历一级间接块（i_block[12]）
+    if (parent_inode.i_block[12] != 0)
+    {
+        int ret = ext2_remove_from_indirect_block(parent_dir, &parent_inode, parent_inode.i_block[12], name);
+        if (ret == 0)
+            return 0;
+    }
+
+    // 3. 遍历二级间接块（i_block[13]）
+    if (parent_inode.i_block[13] != 0)
+    {
+        int ret = ext2_remove_from_double_indirect_block(parent_dir, &parent_inode, parent_inode.i_block[13], name);
+        if (ret == 0)
+            return 0;
+    }
+
+    return -ENOENT; // 未找到目标目录项
+}
+
+static void ext2_incr_block_group_free(ext2_file_t *file, uint32_t block_num)
+{
+    uint32_t block_group = block_num / file->blocks_per_group;
+
+    uint64_t bg_desc_block = 1 + (block_group * sizeof(ext2_block_group_desc_t)) / file->block_size;
+    uint64_t bg_desc_offset = (block_group * sizeof(ext2_block_group_desc_t)) % file->block_size;
+
+    uint8_t *bg_block = malloc(file->block_size);
+    vfs_read(file->device, bg_block, bg_desc_block * file->block_size, file->block_size);
+    ext2_block_group_desc_t bg_desc;
+    memcpy(&bg_desc, bg_block + bg_desc_offset, sizeof(ext2_block_group_desc_t));
+    free(bg_block);
+
+    bg_desc.bg_free_blocks_count++;
+
+    uint8_t *new_bg_block = malloc(file->block_size);
+    vfs_read(file->device, new_bg_block, bg_desc_block * file->block_size, file->block_size);
+    memcpy(new_bg_block + bg_desc_offset, &bg_desc, sizeof(ext2_block_group_desc_t));
+    vfs_write(file->device, new_bg_block, bg_desc_block * file->block_size, file->block_size);
+    free(new_bg_block);
+}
+
+static void ext2_free_inode_blocks(ext2_file_t *file, ext2_inode_t *inode)
+{
+    uint32_t block_size = file->block_size;
+    uint32_t blocks_per_indirect = block_size / sizeof(uint32_t);
+
+    for (int i = 0; i < 12; i++)
+    {
+        if (inode->i_block[i] != 0)
+        {
+            ext2_incr_block_group_free(file, inode->i_block[i]);
+            inode->i_block[i] = 0;
+        }
+    }
+
+    if (inode->i_block[12] != 0)
+    {
+        uint32_t *indirect = malloc(block_size);
+        vfs_read(file->device, indirect, inode->i_block[12] * block_size, block_size);
+        for (int i = 0; i < blocks_per_indirect; i++)
+        {
+            if (indirect[i] != 0)
+            {
+                ext2_incr_block_group_free(file, indirect[i]);
+                indirect[i] = 0;
+            }
+        }
+        vfs_write(file->device, indirect, inode->i_block[12] * block_size, block_size);
+        free(indirect);
+        inode->i_block[12] = 0;
+    }
+
+    if (inode->i_block[13] != 0)
+    {
+        uint32_t *double_indirect = malloc(block_size);
+        vfs_read(file->device, double_indirect, inode->i_block[13] * block_size, block_size);
+        for (int i = 0; i < blocks_per_indirect; i++)
+        {
+            if (double_indirect[i] != 0)
+            {
+                uint32_t *indirect = malloc(block_size);
+                vfs_read(file->device, indirect, double_indirect[i] * block_size, block_size);
+                for (int j = 0; j < blocks_per_indirect; j++)
+                {
+                    if (indirect[j] != 0)
+                    {
+                        ext2_incr_block_group_free(file, indirect[j]);
+                        indirect[j] = 0;
+                    }
+                }
+                vfs_write(file->device, indirect, double_indirect[i] * block_size, block_size);
+                free(indirect);
+                double_indirect[i] = 0;
+            }
+        }
+        vfs_write(file->device, double_indirect, inode->i_block[13] * block_size, block_size);
+        free(double_indirect);
+        inode->i_block[13] = 0;
+    }
+}
+
 void ext2_update(vfs_node_t node)
 {
     ext2_file_t *file = (ext2_file_t *)node->handle;
@@ -530,6 +752,7 @@ void ext2_open(void *parent, const char *name, vfs_node_t node)
                     handle->block_size = dir->block_size;
                     handle->inode_size = dir->inode_size;
                     handle->inodes_per_group = dir->inodes_per_group;
+                    handle->blocks_per_group = dir->blocks_per_group;
                     handle->block_groups_count = dir->block_groups_count;
                     handle->file_type = dirent->type;
                     handle->node = node;
@@ -584,6 +807,7 @@ int ext2_mount(const char *src, vfs_node_t node)
     file->block_size = 1024 << sb.s_log_block_size;
     file->inode_size = sb.e_s_inode_size;
     file->inodes_per_group = sb.s_inodes_per_group;
+    file->blocks_per_group = sb.s_blocks_per_group;
     file->block_groups_count = (sb.s_blocks_count + sb.s_blocks_per_group - 1) / sb.s_blocks_per_group;
     file->file_type = EXT2_FT_REGULAR;
     file->node = node;
@@ -954,9 +1178,123 @@ int ext2_mkdir(void *parent, const char *name, vfs_node_t node)
     return 0;
 }
 
-int ext2_delete(void *current)
+int ext2_delete(void *parent, vfs_node_t node)
 {
-    return 0;
+    ext2_file_t *parent_dir = (ext2_file_t *)parent;
+
+    ext2_file_t *file = (ext2_file_t *)node->handle;
+
+    uint32_t block_group = (parent_dir->inode_id - 1) / parent_dir->inodes_per_group;
+    uint32_t inode_index = (parent_dir->inode_id - 1) % parent_dir->inodes_per_group;
+
+    uint64_t bg_desc_block = 1 + (block_group * sizeof(ext2_block_group_desc_t)) / parent_dir->block_size;
+    uint64_t bg_desc_offset = (block_group * sizeof(ext2_block_group_desc_t)) % parent_dir->block_size;
+
+    uint8_t *bg_block = malloc(parent_dir->block_size);
+    vfs_read(parent_dir->device, bg_block, bg_desc_block * parent_dir->block_size, parent_dir->block_size);
+    ext2_block_group_desc_t bg_desc;
+    fast_memcpy(&bg_desc, bg_block + bg_desc_offset, sizeof(ext2_block_group_desc_t));
+    free(bg_block);
+
+    uint64_t inode_table_offset = bg_desc.bg_inode_table * parent_dir->block_size;
+    uint64_t inode_offset = inode_table_offset + inode_index * parent_dir->inode_size;
+
+    ext2_inode_t parent_inode;
+    vfs_read(parent_dir->device, &parent_inode, inode_offset, sizeof(ext2_inode_t));
+
+    for (int i = 0; i < 12; i++)
+    {
+        if (parent_inode.i_block[i] == 0)
+            break;
+
+        uint8_t *block = malloc(parent_dir->block_size);
+        vfs_read(parent_dir->device, block, parent_inode.i_block[i] * parent_dir->block_size, parent_dir->block_size);
+
+        ext2_dirent_t *dirent = (ext2_dirent_t *)block;
+        ext2_dirent_t *prev_dirent = NULL;
+        while ((uint8_t *)dirent < block + parent_dir->block_size)
+        {
+            if (dirent->inode_id == file->inode_id)
+            {
+                uint32_t block_group = (file->inode_id - 1) / file->inodes_per_group;
+                uint32_t inode_index = (file->inode_id - 1) % file->inodes_per_group;
+
+                uint64_t bg_desc_block = 1 + (block_group * sizeof(ext2_block_group_desc_t)) / file->block_size;
+                uint64_t bg_desc_offset = (block_group * sizeof(ext2_block_group_desc_t)) % file->block_size;
+
+                uint8_t *bg_block = malloc(file->block_size);
+                vfs_read(file->device, bg_block, bg_desc_block * file->block_size, file->block_size);
+                ext2_block_group_desc_t bg_desc;
+                fast_memcpy(&bg_desc, bg_block + bg_desc_offset, sizeof(ext2_block_group_desc_t));
+                free(bg_block);
+
+                uint64_t inode_table_offset = bg_desc.bg_inode_table * file->block_size;
+                uint64_t inode_offset = inode_table_offset + inode_index * file->inode_size;
+
+                ext2_inode_t target_inode;
+                vfs_read(file->device, &target_inode, inode_offset, sizeof(ext2_inode_t));
+
+                if (node->type == file_dir)
+                {
+                    if (list_length(node->child) > 0)
+                    {
+                        return -ENOTEMPTY;
+                    }
+
+                    ext2_free_inode_blocks(file, &target_inode);
+
+                    if (prev_dirent)
+                    {
+                        prev_dirent->rec_len += dirent->rec_len;
+                    }
+                    else
+                    {
+                        dirent->rec_len = 0;
+                    }
+
+                    vfs_write(parent_dir->device, block, parent_inode.i_block[i] * parent_dir->block_size, parent_dir->block_size);
+
+                    list_delete(parent_dir->node->child, node);
+
+                    free(block);
+
+                    ext2_remove_dir_entry(parent_dir, node->name);
+
+                    return 0;
+                }
+                else
+                {
+                    ext2_free_inode_blocks(file, &target_inode);
+
+                    if (prev_dirent)
+                    {
+                        prev_dirent->rec_len += dirent->rec_len;
+                    }
+                    else
+                    {
+                        dirent->rec_len = 0;
+                    }
+
+                    vfs_write(parent_dir->device, block, parent_inode.i_block[i] * parent_dir->block_size, parent_dir->block_size);
+
+                    list_delete(parent_dir->node->child, node);
+
+                    free(block);
+
+                    ext2_remove_dir_entry(parent_dir, node->name);
+
+                    return 0;
+                }
+            }
+
+            prev_dirent = dirent;
+            dirent = (ext2_dirent_t *)((uint8_t *)dirent + dirent->rec_len);
+        }
+
+        free(block);
+    }
+
+    return -ENOENT;
 }
 
 int ext2_rename(void *current, const char *new)

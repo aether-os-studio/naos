@@ -966,6 +966,43 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
     }
 }
 
+uint64_t sys_rmdir(const char *name)
+{
+    vfs_node_t node = vfs_open(name);
+    if (!node)
+        return -ENOENT;
+    if (node->type != file_dir)
+        return -EBADF;
+
+    uint64_t ret = vfs_delete(node);
+
+    return ret;
+}
+
+uint64_t sys_unlink(const char *name)
+{
+    vfs_node_t node = vfs_open(name);
+    if (!node)
+        return -ENOENT;
+
+    uint64_t ret = vfs_delete(node);
+
+    return ret;
+}
+
+uint64_t sys_unlinkat(uint64_t dirfd, const char *name, uint64_t flags)
+{
+    char *path = at_resolve_pathname(dirfd, name);
+    if (!path)
+        return -ENOENT;
+
+    uint64_t ret = sys_unlink((const char *)path);
+
+    free(path);
+
+    return ret;
+}
+
 vfs_node_t epollfs_root;
 int epollfs_id;
 int epollfd_id = 0;

@@ -125,6 +125,7 @@ typedef struct ext2_file
     uint32_t inode_id;
     uint32_t inode_size;
     uint32_t inodes_per_group;
+    uint32_t blocks_per_group;
     uint16_t block_groups_count;
     uint8_t file_type;
     vfs_node_t node;
@@ -139,7 +140,7 @@ ssize_t ext2_write(void *file, const void *addr, size_t offset, size_t size);
 ssize_t ext2_read(void *file, void *addr, size_t offset, size_t size);
 int ext2_mkfile(void *parent, const char *name, vfs_node_t node);
 int ext2_mkdir(void *parent, const char *name, vfs_node_t node);
-int ext2_delete(void *current);
+int ext2_delete(void *parent, vfs_node_t node);
 int ext2_rename(void *current, const char *new);
 int ext2_stat(void *file, vfs_node_t node);
 int ext2_ioctl(void *file, ssize_t cmd, ssize_t arg);

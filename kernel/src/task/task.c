@@ -287,7 +287,7 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], char *en
         }
     }
 
-    uint64_t total_length = 2 * sizeof(uint64_t) + 7 * 2 * sizeof(uint64_t) + env_i * sizeof(uint64_t) + sizeof(uint64_t) + argv_i * sizeof(uint64_t) + sizeof(uint64_t) + sizeof(uint64_t);
+    uint64_t total_length = 2 * sizeof(uint64_t) + 7 * 2 * sizeof(uint64_t) + (env_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) + (argv_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) + sizeof(uint64_t);
     tmp_stack -= (tmp_stack - total_length) % 0x10;
 
     // push auxv
@@ -479,9 +479,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     }
     new_argv[argv_count] = NULL;
 
-    if ((uint64_t)argv >= KERNEL_HEAP_START && (uint64_t)argv < (KERNEL_HEAP_START + KERNEL_HEAP_SIZE))
-        free(argv);
-
     if (envp && (translate_address(get_current_page_dir(true), (uint64_t)envp) != 0))
     {
         for (envp_count = 0; envp[envp_count] != NULL && (translate_address(get_current_page_dir(true), (uint64_t)envp[envp_count]) != 0); envp_count++)
@@ -520,11 +517,13 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         free(new_envp);
 
         execve_lock = false;
-        const char **argvs = (const char **)malloc(64 * sizeof(const char *));
+        const char *argvs[256];
         memset(argvs, 0, 64 * sizeof(const char *));
         argvs[0] = path;
-        for (int i = 0; i < argv_count; i++)
+        int i;
+        for (i = 0; i < argv_count; i++)
             argvs[i + 1] = argv[i];
+        argvs[i] = NULL;
         return task_execve("/bin/bash", argvs, envp);
     }
 

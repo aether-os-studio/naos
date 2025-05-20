@@ -166,7 +166,7 @@ typedef int (*vfs_stat_t)(void *file, vfs_node_t node);
 // 创建一个文件或文件夹
 typedef int (*vfs_mk_t)(void *parent, const char *name, vfs_node_t node);
 
-typedef int (*vfs_del_t)(void *current);
+typedef int (*vfs_del_t)(void *parent, vfs_node_t node);
 
 typedef int (*vfs_rename_t)(void *current, const char *new);
 

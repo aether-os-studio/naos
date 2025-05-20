@@ -400,7 +400,10 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = sys_rename((const char *)arg1, (const char *)arg2);
         break;
     case SYS_UNLINK:
-        regs->rax = 0;
+        regs->rax = sys_unlink((const char *)arg1);
+        break;
+    case SYS_UNLINKAT:
+        regs->rax = sys_unlinkat(arg1, (const char *)arg2, arg3);
         break;
     case SYS_NANOSLEEP:
         regs->rax = sys_nanosleep((struct timespec *)arg1, (struct timespec *)arg2);
@@ -485,6 +488,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_MKDIR:
         regs->rax = sys_mkdir((const char *)arg1, arg2);
+        break;
+    case SYS_RMDIR:
+        regs->rax = sys_unlink((const char *)arg1);
         break;
     case SYS_MEMBARRIER:
         regs->rax = 0;
