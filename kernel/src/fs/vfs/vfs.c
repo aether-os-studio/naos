@@ -297,6 +297,8 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path)
             if (!current->parent || !current->linkname)
                 return NULL;
             current = vfs_open_at(current->parent, current->linkname);
+            if (!current)
+                return NULL;
             vfs_op_lock = true;
         }
         do_update(current);
