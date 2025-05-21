@@ -967,6 +967,10 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
 
         return size;
     }
+    else if (node->type == file_none && node->linkname == NULL)
+    {
+        return vfs_read(node, buf, 0, size);
+    }
     else if (node->type == file_symlink && node->linkname != NULL)
     {
         if (size < (uint64_t)strlen(node->linkname))

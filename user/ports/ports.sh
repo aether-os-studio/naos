@@ -21,7 +21,7 @@ sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/${ALPINE_VERS
 echo -e "http://mirrors.ustc.edu.cn/alpine/${ALPINE_VERSION}/main\nhttp://mirrors.ustc.edu.cn/alpine/${ALPINE_VERSION}/community" | sudo tee $SYSROOT/../etc/apk/repositories
 
 # Basic software
-sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add musl-dev nano gzip xz make file tar pciutils tzdata
+sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add musl-dev gcompat gzip xz make file tar pciutils tzdata
 sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add nano
 sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add lua5.1 gcc binutils
 

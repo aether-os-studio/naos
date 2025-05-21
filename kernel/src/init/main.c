@@ -5,6 +5,7 @@
 #include <task/task.h>
 #include <fs/vfs/vfs.h>
 #include <fs/vfs/dev.h>
+#include <fs/vfs/proc.h>
 
 __attribute__((used, section(".limine_requests"))) static volatile LIMINE_BASE_REVISION(3);
 
@@ -42,6 +43,8 @@ void kmain(void)
     dev_init();
 
     stdio_init();
+
+    proc_init();
 
     task_init();
 
