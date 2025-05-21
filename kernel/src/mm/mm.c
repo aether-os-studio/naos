@@ -21,12 +21,9 @@ void frame_init()
     for (uint64_t i = 0; i < memory_map->entry_count; i++)
     {
         struct limine_memmap_entry *region = memory_map->entries[i];
-        if (region->type == LIMINE_MEMMAP_USABLE)
+        if (region->base + region->length > memory_size)
         {
-            if (region->base + region->length > memory_size)
-            {
-                memory_size = region->base + region->length;
-            }
+            memory_size = region->base + region->length;
         }
     }
 
@@ -171,8 +168,17 @@ void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t siz
 
 void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size)
 {
+    while (mem_map_op_lock)
+    {
+        arch_pause();
+    }
+
+    mem_map_op_lock = true;
+
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE)
     {
         unmap_page(pml4, va);
     }
+
+    mem_map_op_lock = false;
 }

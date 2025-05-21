@@ -544,7 +544,7 @@ int iso9660_mkfile(void *parent, const char *name, vfs_node_t node)
 
 size_t iso9660_readfile(file_t file, void *addr, size_t offset, size_t size)
 {
-    if (file->type == file_dir)
+    if (file->type & file_dir)
         return -1;
     l9660_file *fp = file->handle;
     l9660_status st;
@@ -716,7 +716,7 @@ void iso9660_unmount(void *root)
 int iso9660_stat(void *handle, vfs_node_t node)
 {
     file_t f = handle;
-    if (f->type == file_dir)
+    if (f->type & file_dir)
     {
         node->type = file_dir;
         return 0;

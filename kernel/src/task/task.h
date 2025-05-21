@@ -94,12 +94,6 @@ typedef struct arch_context arch_context_t;
 struct vfs_node;
 typedef struct vfs_node *vfs_node_t;
 
-struct timeval
-{
-    long tv_sec;
-    long tv_usec;
-};
-
 struct itimerval
 {
     struct timeval it_interval;

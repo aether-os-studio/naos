@@ -2,7 +2,7 @@
 #include <task/task.h>
 #include <fs/fs_syscall.h>
 #include <fs/vfs/vfs.h>
-#include <net/socket.h>
+#include <net/net_syscall.h>
 
 static int eventfd_id = 0;
 
@@ -149,7 +149,7 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len)
         return (uint64_t)-EBADF;
     }
 
-    if (current_task->fds[fd]->type == file_dir)
+    if (current_task->fds[fd]->type & file_dir)
     {
         return (uint64_t)-EISDIR; // 读取目录时返回正确错误码
     }
@@ -186,7 +186,7 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len)
         return (uint64_t)-EBADF;
     }
 
-    if (current_task->fds[fd]->type == file_dir)
+    if (current_task->fds[fd]->type & file_dir)
     {
         return (uint64_t)-EISDIR; // 读取目录时返回正确错误码
     }
@@ -224,7 +224,7 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence)
     }
 
     int64_t real_offset = offset;
-    if (real_offset < 0 && current_task->fds[fd]->type == file_none && whence != SEEK_CUR)
+    if (real_offset < 0 && current_task->fds[fd]->type & file_none && whence != SEEK_CUR)
         return (uint64_t)-EBADF;
 
     switch (whence)
@@ -417,7 +417,7 @@ uint64_t sys_dup(uint64_t fd)
         return (uint64_t)-EBADF;
     }
 
-    if (node->type == file_pipe)
+    if (node->type & file_pipe)
     {
         pipe_specific_t *spec = (pipe_specific_t *)node->handle;
         pipe_info_t *pipe = spec->info;
@@ -425,6 +425,11 @@ uint64_t sys_dup(uint64_t fd)
             pipe->writeFds++;
         else
             pipe->readFds++;
+    }
+    else if (node->type & file_socket)
+    {
+        socket_t *socket = (socket_t *)node->handle;
+        socket_ref(socket);
     }
     char *fullpath = vfs_get_fullpath(node);
     vfs_node_t new = vfs_open(fullpath);
@@ -441,7 +446,7 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd)
     if (!node)
         return (uint64_t)-EBADF;
 
-    if (node->type == file_pipe)
+    if (node->type & file_pipe)
     {
         pipe_specific_t *spec = (pipe_specific_t *)node->handle;
         pipe_info_t *pipe = spec->info;
@@ -449,6 +454,11 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd)
             pipe->writeFds++;
         else
             pipe->readFds++;
+    }
+    else if (node->type & file_socket)
+    {
+        socket_t *socket = (socket_t *)node->handle;
+        socket_ref(socket);
     }
     char *fullpath = vfs_get_fullpath(node);
     vfs_node_t new = vfs_open(fullpath);
@@ -500,22 +510,22 @@ uint64_t sys_stat(const char *fd, struct stat *buf)
     buf->st_dev = 0;
     buf->st_ino = node->inode;
     buf->st_nlink = 1;
-    buf->st_mode = node->mode | (node->type == file_dir ? S_IFDIR : (node->type == file_symlink ? S_IFLNK : S_IFREG));
+    buf->st_mode = node->mode | (node->type & file_dir ? S_IFDIR : (node->type & file_symlink ? S_IFLNK : S_IFREG));
     buf->st_uid = 0;
     buf->st_gid = 0;
-    if (node->type == file_stream)
+    if (node->type & file_stream)
     {
         buf->st_rdev = (4 << 8) | 1;
     }
-    else if (node->type == file_fbdev)
+    else if (node->type & file_fbdev)
     {
         buf->st_rdev = (29 << 8) | 0;
     }
-    else if (node->type == file_keyboard)
+    else if (node->type & file_keyboard)
     {
         buf->st_rdev = (13 << 8) | 0;
     }
-    else if (node->type == file_mouse)
+    else if (node->type & file_mouse)
     {
         buf->st_rdev = (13 << 8) | 1;
     }
@@ -542,22 +552,22 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
     buf->st_dev = 0;
     buf->st_ino = current_task->fds[fd]->inode;
     buf->st_nlink = 1;
-    buf->st_mode = current_task->fds[fd]->mode | (current_task->fds[fd]->type == file_dir ? S_IFDIR : (current_task->fds[fd]->type == file_symlink ? S_IFLNK : S_IFREG));
+    buf->st_mode = current_task->fds[fd]->mode | (current_task->fds[fd]->type & file_dir ? S_IFDIR : (current_task->fds[fd]->type & file_symlink ? S_IFLNK : S_IFREG));
     buf->st_uid = 0;
     buf->st_gid = 0;
-    if (current_task->fds[fd]->type == file_stream)
+    if (current_task->fds[fd]->type & file_stream)
     {
         buf->st_rdev = (4 << 8) | 1;
     }
-    else if (current_task->fds[fd]->type == file_fbdev)
+    else if (current_task->fds[fd]->type & file_fbdev)
     {
         buf->st_rdev = (29 << 8) | 0;
     }
-    else if (current_task->fds[fd]->type == file_keyboard)
+    else if (current_task->fds[fd]->type & file_keyboard)
     {
         buf->st_rdev = (13 << 8) | 0;
     }
-    else if (current_task->fds[fd]->type == file_mouse)
+    else if (current_task->fds[fd]->type & file_mouse)
     {
         buf->st_rdev = (13 << 8) | 1;
     }
@@ -919,7 +929,7 @@ uint64_t sys_link(const char *old, const char *new)
     }
 
     int ret = 0;
-    if (old_node->type == file_dir)
+    if (old_node->type & file_dir)
     {
         ret = vfs_mkdir(new);
         if (ret < 0)
@@ -941,52 +951,32 @@ uint64_t sys_link(const char *old, const char *new)
 
 uint64_t sys_readlink(char *path, char *buf, uint64_t size)
 {
-    vfs_node_t node = vfs_open((const char *)path);
-    if (!node)
+    if (path == NULL || buf == NULL || size == 0)
+    {
+        return (uint64_t)-EINVAL;
+    }
+
+    vfs_node_t node = vfs_open_at(current_task->cwd, path, true);
+    if (node == NULL)
+    {
         return (uint64_t)-ENOENT;
+    }
 
-    if (node->type == file_dir && node->linkname != NULL)
+    ssize_t result = vfs_readlink(node, buf, (size_t)size);
+    vfs_close(node);
+
+    if (result < 0)
     {
-        if (size < (uint64_t)strlen(node->linkname))
+        switch (-result)
         {
-            vfs_close(node);
-            return (uint64_t)-ERANGE;
+        case 1:
+            return (uint64_t)-ENOLINK;
+        default:
+            return (uint64_t)-EIO;
         }
-        strncpy(buf, node->linkname, size);
+    }
 
-        return size;
-    }
-    else if (node->type == file_none && node->linkname != NULL)
-    {
-        if (size < (uint64_t)strlen(node->linkname))
-        {
-            vfs_close(node);
-            return (uint64_t)-ERANGE;
-        }
-        strncpy(buf, node->linkname, size);
-
-        return size;
-    }
-    else if (node->type == file_none && node->linkname == NULL)
-    {
-        return vfs_read(node, buf, 0, size);
-    }
-    else if (node->type == file_symlink && node->linkname != NULL)
-    {
-        if (size < (uint64_t)strlen(node->linkname))
-        {
-            vfs_close(node);
-            return (uint64_t)-ERANGE;
-        }
-        strncpy(buf, node->linkname, size);
-
-        return size;
-    }
-    else
-    {
-        vfs_close(node);
-        return (uint64_t)-ENOLINK;
-    }
+    return (uint64_t)result;
 }
 
 uint64_t sys_rmdir(const char *name)
@@ -1536,22 +1526,25 @@ static struct vfs_callback signalfd_callbacks = {
     .poll = signalfd_poll,
 };
 
-void epoll_init()
+void fs_syscall_init()
 {
     epollfs_id = vfs_regist("epollfs", &epoll_callbacks);
     epollfs_root = vfs_node_alloc(rootdir, "epoll");
     epollfs_root->type = file_dir;
     epollfs_root->mode = 0644;
+    epollfs_root->fsid = epollfs_id;
 
     eventfdfs_id = vfs_regist("eventfdfs", &eventfd_callbacks);
     eventfdfs_root = vfs_node_alloc(rootdir, "event");
     eventfdfs_root->type = file_dir;
     eventfdfs_root->mode = 0644;
+    eventfdfs_root->fsid = eventfdfs_id;
 
     signalfdfs_id = vfs_regist("signalfdfs", &signalfd_callbacks);
     signalfdfs_root = vfs_node_alloc(rootdir, "signal");
     signalfdfs_root->type = file_dir;
     signalfdfs_root->mode = 0644;
+    signalfdfs_root->fsid = signalfdfs_id;
 }
 
 uint64_t sys_flock(int fd, uint64_t operation)

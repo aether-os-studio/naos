@@ -126,33 +126,43 @@ uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba, uint32_t coun
         return 0;
 
     uint64_t bufAddr = (uint64_t)buf;
-    if (count > ns->MXRS)
-        count = ns->MXRS;
+    uint32_t max_sectors_per_op = ns->MXRS;
+    uint32_t transferred = 0;
 
-    NVME_SUBMISSION_QUEUE_ENTRY sqe;
-    memset(&sqe, 0, sizeof(NVME_SUBMISSION_QUEUE_ENTRY));
-    sqe.CDW0 = write ? NVME_SQE_OPC_IO_WRITE : NVME_SQE_OPC_IO_READ;
-    sqe.META = 0;
-    sqe.DATA[0] = virt_to_phys(bufAddr);
-    sqe.DATA[1] = 0;
-    sqe.NSID = ns->NSID;
-    sqe.CDWA = (uint32_t)(lba & 0xFFFFFFFF);
-    sqe.CDWB = (uint32_t)(lba >> 32);
-    sqe.CDWC = (1UL << 31) | ((count - 1) & 0xFFFF);
-    NVME_COMPLETION_QUEUE_ENTRY cqe = NVMEWaitingCMD(&ns->CTRL->ISQ, &sqe);
-    if ((cqe.STS >> 1) & 0xFF)
+    while (count > 0)
     {
-        if (write)
-        {
-            printk("NVME CANNOT WRITE\n");
-        }
-        else
-            printk("NVME CANNOT READ\n");
+        uint32_t chunk = (count > max_sectors_per_op) ? max_sectors_per_op : count;
 
-        nvme_rwfail(cqe.STS);
-        return -1;
+        NVME_SUBMISSION_QUEUE_ENTRY sqe;
+        memset(&sqe, 0, sizeof(NVME_SUBMISSION_QUEUE_ENTRY));
+        sqe.CDW0 = write ? NVME_SQE_OPC_IO_WRITE : NVME_SQE_OPC_IO_READ;
+        sqe.META = 0;
+        sqe.DATA[0] = virt_to_phys(bufAddr + (transferred * ns->BSZ));
+        sqe.DATA[1] = 0;
+        sqe.NSID = ns->NSID;
+        sqe.CDWA = (uint32_t)((lba + transferred) & 0xFFFFFFFF);
+        sqe.CDWB = (uint32_t)((lba + transferred) >> 32);
+        sqe.CDWC = (1UL << 31) | ((chunk - 1) & 0xFFFF);
+
+        NVME_COMPLETION_QUEUE_ENTRY cqe = NVMEWaitingCMD(&ns->CTRL->ISQ, &sqe);
+        if ((cqe.STS >> 1) & 0xFF)
+        {
+            if (write)
+            {
+                printk("NVME WRITE FAILED\n");
+            }
+            else
+            {
+                printk("NVME READ FAILED\n");
+            }
+            nvme_rwfail(cqe.STS);
+            return -1;
+        }
+
+        transferred += chunk;
+        count -= chunk;
     }
-    return count;
+    return transferred;
 }
 
 void failed_nvme(NVME_CONTROLLER *ctrl)
@@ -425,7 +435,7 @@ void nvme_driver_init(uint64_t bar0, uint64_t bar_size)
 
         namespaces[nvme_device_num] = ns;
 
-        regist_blkdev("nvme", ns, 512, ns->NLBA * ns->BSZ, nvme_read, nvme_write);
+        regist_blkdev((char *)"nvme", ns, 512, ns->NLBA * ns->BSZ, nvme_read, nvme_write);
 
         nvme_device_num++;
     }

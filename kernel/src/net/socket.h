@@ -6,10 +6,14 @@ typedef uint32_t socklen_t;
 
 typedef unsigned short sa_family_t;
 
+#define MAX_SOCKETS 64
+#define BUFFER_SIZE 65536
+#define SOCKET_NAME_LEN 108
+
 struct sockaddr_un
 {
     sa_family_t sun_family;
-    char sun_path[108];
+    char sun_path[SOCKET_NAME_LEN];
 };
 
 struct sockaddr
@@ -17,10 +21,6 @@ struct sockaddr
     sa_family_t sa_family;
     char sa_data[14];
 };
-
-#define MAX_SOCKETS 64
-#define SOCKET_NAME_LEN 108
-#define BUFFER_SIZE 65536
 
 typedef enum
 {
@@ -54,47 +54,58 @@ struct sock_fprog
 
 typedef struct socket_inner
 {
-    char buffer[BUFFER_SIZE];
-    uint32_t buf_head;
-    uint32_t buf_tail;
+    bool is_active;
+    bool peer_closed;            // 新增：标记对端是否关闭
+    int peer_fd;                 // 对端socket索引
+    uint32_t buf_head;           // 环形缓冲区头
+    uint32_t buf_tail;           // 环形缓冲区尾
+    uint8_t buffer[BUFFER_SIZE]; // 数据缓冲区
 } socket_inner_t;
 
-typedef struct
+#define MAX_CONNECTIONS 16
+
+struct timeval;
+
+typedef struct socket
 {
-    char name[SOCKET_NAME_LEN];
+    int domain;
+    int type;
+    int protocol;
     socket_state_t state;
-    socket_inner_t *inner;
-    int peer_fd;
-    uint64_t domain;
-    uint64_t type;
-    int64_t protocol;
-    int sndbuf_size;
-    int rcvbuf_size;
+    char name[108]; // UNIX域socket路径
+
+    uint64_t ref_count;
+
+    // 多连接支持
+    socket_inner_t *inners[MAX_CONNECTIONS]; // 多连接数组
+    int conn_count;                          // 当前活跃连接数
+
+    // poll相关
+    int *pending_conns; // 等待连接队列
+    int max_pending;    // 最大等待连接数
+
+    // 缓冲区设置
+    size_t sndbuf_size; // 发送缓冲区大小
+    size_t rcvbuf_size; // 接收缓冲区大小
+
+    // socket选项
     struct
     {
-        int reuseaddr;              // SO_REUSEADDR
-        int keepalive;              // SO_KEEPALIVE
-        int sndtimeo;               // SO_SNDTIMEO
-        int rcvtimeo;               // SO_RCVTIMEO
-        struct linger linger_opt;   // SO_LINGER
-        char bind_to_dev[IFNAMSIZ]; // SO_BINDTODEVICE
-        struct sock_filter *filter; // 新增BPF过滤器指针
-        uint16_t filter_len;        // 过滤器指令数
-        int passcred;               // SO_PASSCRED
+        int reuseaddr;
+        int keepalive;
+        struct timeval sndtimeo;
+        struct timeval rcvtimeo;
+        char bind_to_dev[IFNAMSIZ];
+        struct linger linger_opt;
+        int passcred;
+        struct sock_filter *filter;
+        size_t filter_len;
     } options;
 } socket_t;
 
-int sys_socket(int domain, int type, int protocol);
-int sys_socketpair(int family, int type, int protocol, int *sv);
-int sys_bind(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen);
-int sys_listen(int sockfd, int backlog);
-int sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen);
-int sys_connect(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen);
-int64_t sys_send(int sockfd, const void *buf, size_t len, int flags);
-int64_t sys_recv(int sockfd, void *buf, size_t len, int flags);
 int sys_socket_close(void *current);
 
-int sys_getsockname(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen);
+int socket_getsockname(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen);
 
 // 套接字层级
 #define SOL_SOCKET 1
@@ -241,13 +252,18 @@ struct msghdr
     int msg_flags;            // 接收消息的标志
 };
 
-int64_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags);
-int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags);
+uint64_t socket_shutdown(uint64_t fd, uint64_t how);
+int socket_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen);
+int socket_socket(int domain, int type, int protocol);
+int socket_socketpair(int family, int type, int protocol, int *sv);
+int socket_bind(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen);
+int socket_listen(int sockfd, int backlog);
+int socket_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen);
+int socket_connect(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen);
+int64_t socket_send(int sockfd, const void *buf, size_t len, int flags);
+int64_t socket_recv(int sockfd, void *buf, size_t len, int flags);
+int64_t socket_sendmsg(int sockfd, const struct msghdr *msg, int flags);
+int64_t socket_recvmsg(int sockfd, struct msghdr *msg, int flags);
 
-#define SHUT_RD 0
-#define SHUT_WR 1
-#define SHUT_RDWR 2
-
-uint64_t sys_shutdown(uint64_t fd, uint64_t how);
-
-int sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen);
+void socket_ref(socket_t *socket);
+void socket_unref(socket_t *socket);

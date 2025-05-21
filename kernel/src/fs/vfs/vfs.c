@@ -78,7 +78,7 @@ static inline void do_open(vfs_node_t file)
 
 static inline void do_update(vfs_node_t file)
 {
-    if (file->type == file_none || file->handle == NULL)
+    if (file->type & file_none || file->handle == NULL)
         do_open(file);
 }
 
@@ -114,7 +114,7 @@ int vfs_mkdir(const char *name)
             continue;
         if (streq(buf, ".."))
         {
-            if (current->parent && current->type == file_dir)
+            if (current->parent && current->type & file_dir)
             {
                 current = current->parent;
                 goto upd;
@@ -243,7 +243,7 @@ static vfs_node_t vfs_do_search(vfs_node_t dir, const char *name)
     return list_first(dir->child, data, streq(name, ((vfs_node_t)data)->name));
 }
 
-vfs_node_t vfs_open_at(vfs_node_t start, const char *_path)
+vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, bool nosymlink)
 {
     while (vfs_op_lock)
     {
@@ -290,16 +290,16 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path)
         current = vfs_child_find(current, buf);
         if (current == NULL)
             goto err;
-        if (current->type == file_symlink)
+        if (!nosymlink && (current->type & file_symlink))
         {
             do_update(current);
-            vfs_op_lock = false;
             if (!current->parent || !current->linkname)
-                return NULL;
-            current = vfs_open_at(current->parent, current->linkname);
-            if (!current)
-                return NULL;
+                goto err;
+            vfs_op_lock = false;
+            current = vfs_open_at(current->parent, current->linkname, nosymlink);
             vfs_op_lock = true;
+            if (!current)
+                goto err;
         }
         do_update(current);
     }
@@ -317,9 +317,9 @@ err:
 vfs_node_t vfs_open(const char *_path)
 {
     if (current_task && current_task->cwd)
-        return vfs_open_at(current_task->cwd, _path);
+        return vfs_open_at(current_task->cwd, _path, false);
     else
-        return vfs_open_at(rootdir, _path);
+        return vfs_open_at(rootdir, _path, false);
 }
 
 void vfs_update(vfs_node_t node)
@@ -347,7 +347,7 @@ int vfs_close(vfs_node_t node)
         return 0;
     if (node == rootdir)
         return 0;
-    if (node->type == file_dir)
+    if (node->type & file_dir)
         return 0;
     callbackof(node, close)(node->handle);
     if (node->type != file_pipe && node->type != file_socket && node->type != file_epoll)
@@ -376,15 +376,38 @@ int vfs_mount(const char *src, vfs_node_t node)
 ssize_t vfs_read(vfs_node_t file, void *addr, size_t offset, size_t size)
 {
     do_update(file);
-    if (file->type == file_dir)
+    if (file->type & file_dir)
         return -1;
     return callbackof(file, read)(file->handle, addr, offset, size);
+}
+
+int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize)
+{
+    if (!(node->type & file_symlink) || node->linkname == NULL)
+    {
+        return -1;
+    }
+
+    while (vfs_op_lock)
+    {
+        arch_pause();
+    }
+    vfs_op_lock = true;
+
+    size_t link_len = strlen(node->linkname);
+    ssize_t copy_len = (link_len < bufsize) ? link_len : (bufsize - 1);
+
+    strncpy(buf, node->linkname, copy_len);
+    buf[copy_len] = '\0';
+
+    vfs_op_lock = false;
+    return copy_len;
 }
 
 ssize_t vfs_write(vfs_node_t file, const void *addr, size_t offset, size_t size)
 {
     do_update(file);
-    if (file->type == file_dir)
+    if (file->type & file_dir)
         return -1;
     ssize_t write_bytes = callbackof(file, write)(file->handle, addr, offset, size);
     if (write_bytes > 0)
@@ -427,7 +450,7 @@ int vfs_unmount(const char *path)
 int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg)
 {
     do_update(node);
-    if (node->type == file_dir)
+    if (node->type & file_dir)
         return -1;
     return callbackof(node, ioctl)(node->handle, cmd, arg);
 }
@@ -435,7 +458,7 @@ int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg)
 int vfs_poll(vfs_node_t node, size_t event)
 {
     do_update(node);
-    if (node->type == file_dir)
+    if (node->type & file_dir)
         return -1;
     return callbackof(node, poll)(node->handle, event);
 }

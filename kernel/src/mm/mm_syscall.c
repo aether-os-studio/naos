@@ -62,53 +62,19 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
         }
     }
 
-    uint64_t count = (len + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE;
-    uint64_t vaddr = addr & ~(DEFAULT_PAGE_SIZE - 1);
+    uint64_t pt_flags = PT_FLAG_U | PT_FLAG_W;
 
-    if (!count)
-    {
-        return 0;
-    }
+    if (prot & PROT_READ)
+        pt_flags |= PT_FLAG_R;
+    if (prot & PROT_WRITE)
+        pt_flags |= PT_FLAG_W;
+    if (prot & PROT_EXEC)
+        pt_flags |= PT_FLAG_X;
 
-    for (uint64_t i = 0; i < count; i++)
-    {
-        uint64_t page = vaddr + DEFAULT_PAGE_SIZE * i;
-
-        uint64_t flag = PT_FLAG_R | PT_FLAG_W | PT_FLAG_U | PT_FLAG_COW;
-
-        if (prot & PROT_READ)
-        {
-            flag |= PT_FLAG_R;
-        }
-
-        if (prot & PROT_WRITE)
-        {
-            flag |= PT_FLAG_W;
-        }
-
-        if (prot & PROT_EXEC)
-        {
-            flag |= PT_FLAG_X;
-        }
-
-        if (flags & MAP_FIXED && page < current_task->brk_start)
-        {
-            map_page(get_current_page_dir(true), page, page, get_arch_page_table_flags(flag));
-        }
-        else
-        {
-            uint64_t phys = alloc_frames(1);
-            if (phys == 0)
-            {
-                if ((flags & MAP_FIXED) == 0)
-                {
-                    current_task->mmap_start -= aligned_len;
-                }
-                return -ENOMEM;
-            }
-            map_page(get_current_page_dir(true), page, phys, get_arch_page_table_flags(flag));
-        }
-    }
+    if (flags & MAP_FIXED && addr < USER_BRK_START)
+        map_page_range(get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)), addr & (~(DEFAULT_PAGE_SIZE - 1)), (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
+    else
+        map_page_range(get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)), 0, (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
 
     if (fd > 2 && fd < MAX_FD_NUM)
     {

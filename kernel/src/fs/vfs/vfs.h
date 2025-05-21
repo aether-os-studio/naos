@@ -93,17 +93,17 @@ typedef int64_t ssize_t;
 
 enum
 {
-    file_none,     // 未获取信息
-    file_dir,      // 文件夹
-    file_symlink,  // 符号链接
-    file_block,    // 块设备，如硬盘
-    file_stream,   // 流式设备，如终端
-    file_fbdev,    // 帧缓冲设备
-    file_keyboard, // 键盘设备
-    file_mouse,    // 鼠标设备
-    file_pipe,     // 管道设备
-    file_socket,   // 套接字设备
-    file_epoll,    // epoll 设备
+    file_none = 0x0001UL,     // 未获取信息
+    file_dir = 0x0002UL,      // 文件夹
+    file_symlink = 0x0004UL,  // 符号链接
+    file_block = 0x0008UL,    // 块设备，如硬盘
+    file_stream = 0x0010UL,   // 流式设备，如终端
+    file_fbdev = 0x0020UL,    // 帧缓冲设备
+    file_keyboard = 0x0040UL, // 键盘设备
+    file_mouse = 0x0080UL,    // 鼠标设备
+    file_pipe = 0x0100UL,     // 管道设备
+    file_socket = 0x0200UL,   // 套接字设备
+    file_epoll = 0x0400UL,    // epoll 设备
 };
 
 typedef struct vfs_node *vfs_node_t;
@@ -249,7 +249,7 @@ int vfs_regist(const char *name, vfs_callback_t callback);
 #define PATH_MAX 4096    // 路径最大长度
 #define FILENAME_MAX 256 // 文件名最大长度
 
-vfs_node_t vfs_open_at(vfs_node_t start, const char *_path);
+vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, bool nosymlink);
 
 vfs_node_t vfs_open(const char *_path);
 
@@ -339,6 +339,15 @@ int vfs_rename(vfs_node_t node, const char *new);
  *\return 0 成功，-1 失败
  */
 int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg);
+
+/**
+ *\brief 读取链接
+ *
+ *\param path   目录
+ *\param node    节点
+ *\return 0 成功，-1 失败
+ */
+int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize);
 
 /**
  *\brief 更新文件信息

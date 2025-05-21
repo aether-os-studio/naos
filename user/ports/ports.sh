@@ -24,10 +24,7 @@ echo -e "http://mirrors.ustc.edu.cn/alpine/${ALPINE_VERSION}/main\nhttp://mirror
 sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add musl-dev gcompat gzip xz make file tar pciutils tzdata
 sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add nano
 sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add lua5.1 gcc binutils
-
-# if [ ! -f $SYSROOT/bin/weston ]; then
-#     sudo docker run -it --rm -v $ROOT_DIR:/docker alpine:latest /bin/sh -c "apk add gcc meson ninja-build samurai && sh /docker/user/ports/build_weston.sh"
-# fi
+sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add xorg-server xf86-video-fbdev xf86-input-evdev xsetroot xinit xterm mesa-gl mesa-utils mesa-vulkan-swrast mesa-dri-gallium twm
 
 sudo cp -r $SYSROOT/share/zoneinfo/Asia/Shanghai $SYSROOT/../etc/localtime
 

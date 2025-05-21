@@ -130,6 +130,10 @@ typedef struct ext2_file
     uint8_t file_type;
     vfs_node_t node;
     vfs_node_t device;
+    uint32_t prefetch_block;
+    uint8_t *prefetch_buffer;
+    uint32_t prefetch_offset;
+    bool prefetch_valid;
 } ext2_file_t;
 
 int ext2_mount(const char *src, vfs_node_t node);

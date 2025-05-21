@@ -519,6 +519,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_RSEQ:
         regs->rax = 0;
         break;
+    case SYS_SCHED_GETAFFINITY:
+        regs->rax = 0;
+        break;
     case SYS_GETRANDOM:
         void *buffer = (void *)arg1;
         size_t get_len = (size_t)arg2;

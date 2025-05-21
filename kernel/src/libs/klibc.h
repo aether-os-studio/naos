@@ -327,10 +327,27 @@ static inline void *fast_memcpy(void *s1, const void *s2, size_t n)
 static inline void *memset(void *s, int c, size_t n)
 {
     uint8_t *p = (uint8_t *)s;
+    uint8_t val = (uint8_t)c;
 
-    for (size_t i = 0; i < n; i++)
+    if (n >= 8)
     {
-        p[i] = (uint8_t)c;
+        uint64_t word = val;
+        word |= word << 8;
+        word |= word << 16;
+        word |= word << 32;
+
+        uint64_t *p64 = (uint64_t *)p;
+        while (n >= 8)
+        {
+            *p64++ = word;
+            n -= 8;
+        }
+        p = (uint8_t *)p64;
+    }
+
+    while (n--)
+    {
+        *p++ = val;
     }
 
     return s;
@@ -431,10 +448,22 @@ static inline int strlen(const char *str)
     return len;
 }
 
-/**
- * 比较两个字符串，最多比较size个字符
- * 如果某一字符串提前比较完成，也算相同
- */
+static inline size_t strnlen(const char *str, size_t maxlen)
+{
+    if (str == NULL)
+    {
+        return 0;
+    }
+
+    const char *p = str;
+    while (maxlen-- > 0 && *p)
+    {
+        p++;
+    }
+
+    return (size_t)(p - str);
+}
+
 static inline int strncmp(const char *s1, const char *s2, int size)
 {
     if (!s1 || !s2)

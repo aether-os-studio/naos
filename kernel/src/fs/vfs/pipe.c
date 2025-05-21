@@ -282,6 +282,7 @@ void pipefs_init()
     pipefs_root = vfs_node_alloc(rootdir, "pipe");
     pipefs_root->type = file_dir;
     pipefs_root->mode = 0644;
+    pipefs_root->fsid = pipefs_id;
 }
 
 // 创建一个新管道

@@ -5,6 +5,7 @@
 #include <arch/arch.h>
 #include <mm/mm.h>
 #include <fs/fs_syscall.h>
+#include <net/socket.h>
 
 task_t *tasks[MAX_TASK_NUM];
 task_t *idle_tasks[MAX_CPU_NUM];
@@ -168,7 +169,7 @@ extern void ext2_init();
 extern void fatfs_init();
 extern void iso9660_init();
 extern void sysfs_init();
-extern void epoll_init();
+extern void fs_syscall_init();
 extern void pipefs_init();
 extern void socketfs_init();
 
@@ -197,9 +198,9 @@ void init_thread()
 
     fbdev_init_sysfs();
 
-    epoll_init();
-    pipefs_init();
+    fs_syscall_init();
     socketfs_init();
+    pipefs_init();
     ext2_init();
     iso9660_init();
     fatfs_init();
@@ -395,7 +396,7 @@ uint64_t task_fork(struct pt_regs *regs)
         vfs_node_t node = current_task->fds[i];
         if (node)
         {
-            if (node->type == file_pipe)
+            if (node->type & file_pipe)
             {
                 pipe_specific_t *spec = (pipe_specific_t *)node->handle;
                 pipe_info_t *pipe = spec->info;
@@ -403,6 +404,11 @@ uint64_t task_fork(struct pt_regs *regs)
                     pipe->writeFds++;
                 else
                     pipe->readFds++;
+            }
+            else if (node->type & file_socket)
+            {
+                socket_t *socket = node->handle;
+                socket_ref(socket);
             }
             char *fullpath = vfs_get_fullpath(node);
             vfs_node_t new = vfs_open(fullpath);
@@ -779,7 +785,15 @@ uint64_t task_exit(int64_t code)
     {
         if (task->fds[i])
         {
+            if (task->fds[i]->type & file_socket)
+            {
+                socket_t *socket = task->fds[i]->handle;
+                socket_unref(socket);
+            }
+
             vfs_close(task->fds[i]);
+
+            current_task->fds[i] = NULL;
         }
     }
 
@@ -983,7 +997,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
         vfs_node_t node = current_task->fds[i];
         if (node)
         {
-            if (node->type == file_pipe)
+            if (node->type & file_pipe)
             {
                 pipe_specific_t *spec = (pipe_specific_t *)node->handle;
                 pipe_info_t *pipe = spec->info;
@@ -991,6 +1005,11 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
                     pipe->writeFds++;
                 else
                     pipe->readFds++;
+            }
+            else if (node->type & file_socket)
+            {
+                socket_t *socket = node->handle;
+                socket_ref(socket);
             }
             char *fullpath = vfs_get_fullpath(node);
             vfs_node_t new = vfs_open(fullpath);

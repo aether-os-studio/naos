@@ -113,22 +113,21 @@ void fbdev_init_sysfs()
         sprintf(name, "fb%d", i);
         vfs_node_t node = vfs_child_append(graphics, name, NULL);
         node->type = file_dir;
-        char devname[MAX_DEV_NAME_LEN];
-        sprintf(devname, "/dev/%s", name);
-        node->linkname = strdup(devname);
 
         vfs_node_t device = vfs_child_append(node, "device", NULL);
         device->type = file_dir;
         device->mode = 0644;
 
         vfs_node_t subsystem = vfs_child_append(device, "subsystem", NULL);
-        subsystem->type = file_none;
+        subsystem->type = file_symlink;
         subsystem->mode = 0755;
         sysfs_handle_t *subsystem_handle = malloc(sizeof(sysfs_handle_t));
         memset(subsystem_handle, 0, sizeof(sysfs_handle_t));
         subsystem->handle = subsystem_handle;
         subsystem_handle->node = subsystem;
         subsystem_handle->private_data = NULL;
+        char devname[MAX_DEV_NAME_LEN];
+        sprintf(devname, "/dev/%s", name);
         subsystem->linkname = strdup(devname);
 
         vfs_node_t uevent = vfs_child_append(node, "uevent", NULL);

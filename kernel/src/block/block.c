@@ -6,7 +6,7 @@ uint64_t blk_devnum = 0;
 
 void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size, uint64_t (*read)(void *data, uint64_t lba, void *buffer, uint64_t size), uint64_t (*write)(void *data, uint64_t lba, void *buffer, uint64_t size))
 {
-    blk_devs[blk_devnum].name = name;
+    blk_devs[blk_devnum].name = strdup((const char *)name);
     blk_devs[blk_devnum].ptr = ptr;
     blk_devs[blk_devnum].block_size = block_size;
     blk_devs[blk_devnum].size = size;
@@ -31,7 +31,7 @@ uint64_t blkdev_ioctl(uint64_t drive, uint64_t cmd, uint64_t arg)
     return 0;
 }
 
-#define MAX_BLOCK_IO_SIZE (DEFAULT_PAGE_SIZE) // 限制单次I/O操作最大为4KB
+#define MAX_BLOCK_IO_SIZE (DEFAULT_PAGE_SIZE * 256) // 限制单次I/O操作最大为1MB
 
 uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len)
 {
