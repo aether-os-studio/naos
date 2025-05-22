@@ -116,10 +116,20 @@ int64_t sys_recv(int sockfd, void *buf, size_t len, int flags, struct sockaddr_u
 
 int64_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags)
 {
-    return 0;
+    if (sockfd >= MAX_FD_NUM)
+        return -EBADF;
+    vfs_node_t node = current_task->fds[sockfd];
+
+    socket_handle_t *handle = node->handle;
+    return handle->op->sendmsg(node, msg, flags);
 }
 
 int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags)
 {
-    return 0;
+    if (sockfd >= MAX_FD_NUM)
+        return -EBADF;
+    vfs_node_t node = current_task->fds[sockfd];
+
+    socket_handle_t *handle = node->handle;
+    return handle->op->recvmsg(node, msg, flags);
 }

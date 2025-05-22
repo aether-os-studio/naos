@@ -64,7 +64,7 @@ void proc_init()
 
     vfs_node_t self_exe = vfs_node_alloc(procfs_self, "exe");
     self_exe->type = file_none;
-    self_exe->mode = 0755;
+    self_exe->mode = 0700;
     proc_handle_t *handle = malloc(sizeof(proc_handle_t));
     self_exe->handle = handle;
     handle->task = NULL;

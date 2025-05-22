@@ -308,13 +308,13 @@ int sys_pipe(int pipefd[2])
     vfs_node_t node_input = vfs_node_alloc(pipefs_root, buf);
     node_input->type = file_pipe;
     node_input->fsid = pipefs_id;
-    pipefs_root->mode = 0755;
+    pipefs_root->mode = 0700;
 
     sprintf(buf, "pipe%d", pipefd_id++);
     vfs_node_t node_output = vfs_node_alloc(pipefs_root, buf);
     node_output->type = file_pipe;
     node_output->fsid = pipefs_id;
-    pipefs_root->mode = 0755;
+    pipefs_root->mode = 0700;
 
     pipe_info_t *info = (pipe_info_t *)malloc(sizeof(pipe_info_t));
     memset(info, 0, sizeof(pipe_info_t));

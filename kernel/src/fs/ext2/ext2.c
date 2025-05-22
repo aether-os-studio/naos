@@ -1145,7 +1145,7 @@ int ext2_mkdir(void *parent, const char *name, vfs_node_t node)
     uint64_t now_time = mktime(&time);
 
     ext2_inode_t new_inode = {0};
-    new_inode.i_mode = S_IFDIR | 0755; // 目录类型 + 权限
+    new_inode.i_mode = S_IFDIR | 0700; // 目录类型 + 权限
     new_inode.i_uid = current_task->uid;
     new_inode.i_gid = current_task->gid;
     new_inode.i_atime = new_inode.i_ctime = new_inode.i_mtime = now_time;

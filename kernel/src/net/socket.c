@@ -59,7 +59,7 @@ vfs_node_t unix_socket_accept_create(unix_socket_pair_t *dir)
     sprintf(buf, "sock%d", sockfsfd_id++);
     vfs_node_t socknode = vfs_child_append(sockfs_root, buf, NULL);
     socknode->type = file_none;
-    socknode->type = 0755;
+    socknode->type = 0700;
 
     socket_handle_t *handle = malloc(sizeof(socket_handle_t));
     handle->op = &accept_ops;
@@ -234,7 +234,7 @@ int socket_socket(int domain, int type, int protocol)
     sprintf(buf, "sock%d", sockfsfd_id++);
     vfs_node_t socknode = vfs_node_alloc(rootdir, buf);
     socknode->type = file_none;
-    socknode->type = 0755;
+    socknode->type = 0700;
     socknode->fsid = unix_socket_fsid;
     socket_handle_t *handle = malloc(sizeof(socket_handle_t));
     memset(handle, 0, sizeof(socket_handle_t));
@@ -449,19 +449,19 @@ int socket_connect(socket_t *sock, const struct sockaddr_un *addr, socklen_t add
     pair->clientFds = 1;
     parent->backlog[parent->connCurr++] = pair;
 
-    // todo!
-    while (true)
-    {
-        if (pair->established)
-            break;
-        // wait for parent to accept this thing and have it's own fd on the side
+    // // todo!
+    // while (true)
+    // {
+    //     if (pair->established)
+    //         break;
+    //     // wait for parent to accept this thing and have it's own fd on the side
 
-        arch_enable_interrupt();
+    //     arch_enable_interrupt();
 
-        arch_pause();
-    }
+    //     arch_pause();
+    // }
 
-    arch_disable_interrupt();
+    // arch_disable_interrupt();
 
     return 0;
 }
@@ -598,6 +598,30 @@ size_t unix_socket_recv_msg(vfs_node_t fd, struct msghdr *msg, int flags)
         cnt += singleCnt;
     }
 
+    return cnt;
+}
+
+size_t unix_socket_send_msg(vfs_node_t fd, const struct msghdr *msg, int flags)
+{
+    if (msg->msg_name || msg->msg_namelen > 0)
+        return -(ENOSYS);
+
+    size_t cnt = 0;
+    bool noblock = flags & MSG_DONTWAIT;
+
+    for (int i = 0; i < msg->msg_iovlen; i++)
+    {
+        struct iovec *curr = (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
+
+        size_t singleCnt = unix_socket_send_to(
+            fd, curr->iov_base, curr->len,
+            noblock ? MSG_DONTWAIT : 0, NULL, 0);
+
+        if ((int64_t)singleCnt < 0)
+            return singleCnt;
+
+        cnt += singleCnt;
+    }
     return cnt;
 }
 
@@ -986,6 +1010,7 @@ socket_op_t socket_ops = {
     .connect = socket_connect,
     .sendto = unix_socket_send_to,
     .recvfrom = unix_socket_recv_from,
+    .sendmsg = unix_socket_send_msg,
     .recvmsg = unix_socket_recv_msg,
     .getpeername = unix_socket_getpeername,
 };
@@ -994,6 +1019,7 @@ socket_op_t accept_ops = {
     .connect = socket_connect,
     .sendto = unix_socket_accept_sendto,
     .recvfrom = unix_socket_accept_recv_from,
+    .sendmsg = unix_socket_send_msg,
     .recvmsg = unix_socket_accept_recv_msg,
     .getpeername = unix_socket_getpeername,
 };

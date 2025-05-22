@@ -967,7 +967,7 @@ uint64_t sys_rmdir(const char *name)
     vfs_node_t node = vfs_open(name);
     if (!node)
         return -ENOENT;
-    if (node->type != file_dir)
+    if (!(node->type & file_dir))
         return -EBADF;
 
     uint64_t ret = vfs_delete(node);
@@ -1028,7 +1028,7 @@ size_t epoll_create1(int flags)
     epoll->lock = false;
     epoll->firstEpollWatch = NULL;
     epoll->reference_count = 1;
-    node->mode = 0755;
+    node->mode = 0700;
     node->handle = epoll;
     node->fsid = epollfs_id;
 
@@ -1287,7 +1287,7 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags)
     char buf[256];
     sprintf(buf, "eventfd%d", eventfd_id++);
     vfs_node_t node = vfs_node_alloc(eventfdfs_root, buf);
-    node->mode = 0755;
+    node->mode = 0700;
     node->type = file_stream;
     node->fsid = eventfdfs_id;
     node->handle = efd;
@@ -1418,7 +1418,7 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask, int flags
     char buf[256];
     sprintf(buf, "signalfd%d", signalfd_id++);
     vfs_node_t node = vfs_node_alloc(signalfdfs_root, buf);
-    node->mode = 0755;
+    node->mode = 0700;
     node->type = file_stream;
     node->fsid = signalfdfs_id;
     node->handle = ctx;

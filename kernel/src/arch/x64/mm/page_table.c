@@ -172,7 +172,7 @@ uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t 
     memset(pml4_new, 0, DEFAULT_PAGE_SIZE / 2);
 
     // 2048，半个页，后半个页，是内核空间，内核空间直接指针指过去就好，注意释放页表的时候不要给内核空间的页表也释放了
-    memcpy(pml4_new + 256, pml4_old + 256, DEFAULT_PAGE_SIZE / 2); // 我就在代码里面假设是4k的页了，如果你认为这不妥，那就自己给这些常量换成宏定义
+    fast_memcpy(pml4_new + 256, pml4_old + 256, DEFAULT_PAGE_SIZE / 2); // 我就在代码里面假设是4k的页了，如果你认为这不妥，那就自己给这些常量换成宏定义
 
     for (size_t pml4_idx = 0; pml4_idx < 256; ++pml4_idx)
     { // 256 没问题，这里只复制用户空间
@@ -273,7 +273,7 @@ uint64_t clone_page_table(uint64_t cr3_old, uint64_t user_stack_start, uint64_t 
                     pt_new[pt_idx] = pte_new;
 
                     uint64_t *page_new = (uint64_t *)phys_to_virt(pte_new & ARCH_ADDR_MASK);
-                    memcpy(page_new, page_old, DEFAULT_PAGE_SIZE);
+                    fast_memcpy(page_new, page_old, DEFAULT_PAGE_SIZE);
                 }
             }
         }
