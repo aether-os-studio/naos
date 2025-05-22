@@ -1,6 +1,7 @@
 #pragma once
 
 #include <libs/klibc.h>
+#include <fs/fs_syscall.h>
 
 typedef uint32_t socklen_t;
 
@@ -52,15 +53,33 @@ struct sock_fprog
     struct sock_filter *filter;
 };
 
-typedef struct socket_inner
+struct ucred
 {
-    bool is_active;
-    bool peer_closed;            // 新增：标记对端是否关闭
-    int peer_fd;                 // 对端socket索引
-    uint32_t buf_head;           // 环形缓冲区头
-    uint32_t buf_tail;           // 环形缓冲区尾
-    uint8_t buffer[BUFFER_SIZE]; // 数据缓冲区
-} socket_inner_t;
+    int32_t pid;
+    uint32_t uid;
+    uint32_t gid;
+};
+
+typedef struct unix_socket_pair
+{
+    // accept()/server
+    bool established;
+    int serverFds;
+    uint8_t *serverBuff;
+    size_t serverBuffPos;
+    size_t serverBuffSize;
+
+    struct ucred server;
+    struct ucred client;
+
+    char *filename;
+
+    // connect()/client
+    int clientFds;
+    uint8_t *clientBuff;
+    int clientBuffPos;
+    int clientBuffSize;
+} unix_socket_pair_t;
 
 #define MAX_CONNECTIONS 16
 
@@ -68,25 +87,26 @@ struct timeval;
 
 typedef struct socket
 {
+    struct socket *next;
+
     int domain;
-    int type;
     int protocol;
-    socket_state_t state;
-    char name[108]; // UNIX域socket路径
 
-    uint64_t ref_count;
+    int timesOpened;
 
-    // 多连接支持
-    socket_inner_t *inners[MAX_CONNECTIONS]; // 多连接数组
-    int conn_count;                          // 当前活跃连接数
+    // accept()
+    bool acceptWouldBlock;
 
-    // poll相关
-    int *pending_conns; // 等待连接队列
-    int max_pending;    // 最大等待连接数
+    // bind()
+    char *bindAddr;
 
-    // 缓冲区设置
-    size_t sndbuf_size; // 发送缓冲区大小
-    size_t rcvbuf_size; // 接收缓冲区大小
+    // listen()
+    int connMax; // if 0, listen() hasn't ran
+    int connCurr;
+    unix_socket_pair_t **backlog;
+
+    // connect()
+    unix_socket_pair_t *pair;
 
     // socket选项
     struct
@@ -105,7 +125,7 @@ typedef struct socket
 
 int sys_socket_close(void *current);
 
-int socket_getsockname(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen);
+int socket_getsockname(socket_t *sock, struct sockaddr_un *addr, socklen_t *addrlen);
 
 // 套接字层级
 #define SOL_SOCKET 1
@@ -238,8 +258,27 @@ int socket_getsockname(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen)
 #define SCM_DEVMEM_DMABUF SO_DEVMEM_DMABUF
 #define SO_DEVMEM_DONTNEED 80
 
-int sys_setsockopt(int sockfd, int level, int optname, const void *optval, socklen_t optlen);
-int sys_getsockopt(int sockfd, int level, int optname, void *optval, socklen_t *optlen);
+#define MSG_OOB 0x0001
+#define MSG_PEEK 0x0002
+#define MSG_DONTROUTE 0x0004
+#define MSG_CTRUNC 0x0008
+#define MSG_PROXY 0x0010
+#define MSG_TRUNC 0x0020
+#define MSG_DONTWAIT 0x0040
+#define MSG_EOR 0x0080
+#define MSG_WAITALL 0x0100
+#define MSG_FIN 0x0200
+#define MSG_SYN 0x0400
+#define MSG_CONFIRM 0x0800
+#define MSG_RST 0x1000
+#define MSG_ERRQUEUE 0x2000
+#define MSG_NOSIGNAL 0x4000
+#define MSG_MORE 0x8000
+#define MSG_WAITFORONE 0x10000
+#define MSG_BATCH 0x40000
+#define MSG_ZEROCOPY 0x4000000
+#define MSG_FASTOPEN 0x20000000
+#define MSG_CMSG_CLOEXEC 0x40000000
 
 struct msghdr
 {
@@ -252,18 +291,34 @@ struct msghdr
     int msg_flags;            // 接收消息的标志
 };
 
-uint64_t socket_shutdown(uint64_t fd, uint64_t how);
-int socket_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen);
-int socket_socket(int domain, int type, int protocol);
-int socket_socketpair(int family, int type, int protocol, int *sv);
-int socket_bind(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen);
-int socket_listen(int sockfd, int backlog);
-int socket_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen);
-int socket_connect(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen);
-int64_t socket_send(int sockfd, const void *buf, size_t len, int flags);
-int64_t socket_recv(int sockfd, void *buf, size_t len, int flags);
-int64_t socket_sendmsg(int sockfd, const struct msghdr *msg, int flags);
-int64_t socket_recvmsg(int sockfd, struct msghdr *msg, int flags);
+typedef struct socket_op
+{
+    uint64_t (*shutdown)(uint64_t fd, uint64_t how);
+    size_t (*getpeername)(socket_t *sock, struct sockaddr_un *addr, socklen_t *addrlen);
+    int (*bind)(socket_t *sock, const struct sockaddr_un *addr, socklen_t addrlen);
+    int (*listen)(socket_t *sock, int backlog);
+    int (*accept)(socket_t *sock, struct sockaddr_un *addr, socklen_t *addrlen);
+    int (*connect)(socket_t *sock, const struct sockaddr_un *addr, socklen_t addrlen);
+    size_t (*sendto)(vfs_node_t fd, uint8_t *in, size_t limit, int flags, struct sockaddr_un *addr, uint32_t len);
+    size_t (*recvfrom)(vfs_node_t fd, uint8_t *out, size_t limit, int flags, struct sockaddr_un *addr, uint32_t *len);
+    size_t (*recvmsg)(vfs_node_t fd, struct msghdr *msg, int flags);
+} socket_op_t;
 
-void socket_ref(socket_t *socket);
-void socket_unref(socket_t *socket);
+typedef struct socket_handle
+{
+    void *sock;
+    socket_op_t *op;
+} socket_handle_t;
+
+uint64_t unix_socket_shutdown(uint64_t fd, uint64_t how);
+size_t unix_socket_getpeername(socket_t *sock, struct sockaddr_un *addr, uint32_t *len);
+int socket_socket(int domain, int type, int protocol);
+int unix_socket_pair(int type, int protocol, int *sv);
+int socket_bind(socket_t *sock, const struct sockaddr_un *addr, socklen_t addrlen);
+int socket_listen(socket_t *sock, int backlog);
+int socket_accept(socket_t *sock, struct sockaddr_un *addr, socklen_t *addrlen);
+int socket_connect(socket_t *sock, const struct sockaddr_un *addr, socklen_t addrlen);
+
+size_t unix_socket_getsockopt(socket_t *sock, int level, int optname, const void *optval, socklen_t *optlen);
+size_t unix_socket_setsockopt(socket_t *sock, int level, int optname, const void *optval, socklen_t optlen);
+size_t unix_socket_getpeername(socket_t *socket, struct sockaddr_un *addr, socklen_t *len);

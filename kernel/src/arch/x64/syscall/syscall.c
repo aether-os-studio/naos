@@ -274,10 +274,10 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = sys_connect(arg1, (const struct sockaddr_un *)arg2, arg3);
         break;
     case SYS_SENDTO:
-        regs->rax = sys_send(arg1, (const void *)arg2, arg3, arg4);
+        regs->rax = sys_send(arg1, (const void *)arg2, arg3, arg4, (struct sockaddr_un *)arg5, (socklen_t)arg6);
         break;
     case SYS_RECVFROM:
-        regs->rax = sys_recv(arg1, (void *)arg2, arg3, arg4);
+        regs->rax = sys_recv(arg1, (void *)arg2, arg3, arg4, (struct sockaddr_un *)arg5, (socklen_t *)arg6);
         break;
     case SYS_SENDMSG:
         regs->rax = sys_sendmsg(arg1, (const struct msghdr *)arg2, arg3);

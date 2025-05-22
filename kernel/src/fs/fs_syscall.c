@@ -161,11 +161,6 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len)
 
     ssize_t ret = vfs_read(current_task->fds[fd], buf, current_task->fds[fd]->offset, len);
 
-    if (ret == (ssize_t)-ENOSYS)
-    {
-        ret = sys_recv(fd, buf, len, 0);
-    }
-
     if (ret > 0)
     {
         current_task->fds[fd]->offset += ret;
@@ -197,11 +192,6 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len)
     }
 
     ssize_t ret = vfs_write(current_task->fds[fd], buf, current_task->fds[fd]->offset, len);
-
-    if (ret == (ssize_t)-ENOSYS)
-    {
-        ret = sys_send(fd, buf, len, 0);
-    }
 
     if (ret > 0)
     {
@@ -397,6 +387,9 @@ uint64_t sys_getcwd(char *cwd, uint64_t size)
     return (uint64_t)strlen(str);
 }
 
+extern int unix_socket_fsid;
+extern int unix_accept_fsid;
+
 uint64_t sys_dup(uint64_t fd)
 {
     vfs_node_t node = current_task->fds[fd];
@@ -429,11 +422,21 @@ uint64_t sys_dup(uint64_t fd)
     else if (node->type & file_socket)
     {
         socket_t *socket = (socket_t *)node->handle;
-        socket_ref(socket);
+        if (node->fsid == unix_accept_fsid)
+            socket->pair->serverFds++;
+        else if (node->fsid == unix_socket_fsid)
+        {
+            socket->timesOpened++;
+            if (socket->pair)
+            {
+                socket->pair->clientFds++;
+            }
+        }
     }
     char *fullpath = vfs_get_fullpath(node);
     vfs_node_t new = vfs_open(fullpath);
     free(fullpath);
+    new->handle = node->handle;
 
     current_task->fds[i] = new;
 
@@ -458,11 +461,21 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd)
     else if (node->type & file_socket)
     {
         socket_t *socket = (socket_t *)node->handle;
-        socket_ref(socket);
+        if (node->fsid == unix_accept_fsid)
+            socket->pair->serverFds++;
+        else if (node->fsid == unix_socket_fsid)
+        {
+            socket->timesOpened++;
+            if (socket->pair)
+            {
+                socket->pair->clientFds++;
+            }
+        }
     }
     char *fullpath = vfs_get_fullpath(node);
     vfs_node_t new = vfs_open(fullpath);
     free(fullpath);
+    new->handle = node->handle;
 
     if (current_task->fds[newfd])
     {

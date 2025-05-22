@@ -15,7 +15,10 @@ int sys_bind(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen);
 int sys_listen(int sockfd, int backlog);
 int sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen);
 int sys_connect(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen);
-int64_t sys_send(int sockfd, const void *buf, size_t len, int flags);
-int64_t sys_recv(int sockfd, void *buf, size_t len, int flags);
+int64_t sys_send(int sockfd, void *buff, size_t len, int flags, struct sockaddr_un *dest_addr, socklen_t addrlen);
+int64_t sys_recv(int sockfd, void *buff, size_t len, int flags, struct sockaddr_un *dest_addr, socklen_t *addrlen);
 int64_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags);
 int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags);
+
+int sys_setsockopt(int fd, int level, int optname, const void *optval, socklen_t optlen);
+int sys_getsockopt(int fd, int level, int optname, void *optval, socklen_t *optlen);

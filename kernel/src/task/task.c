@@ -15,6 +15,9 @@ bool can_schedule = false;
 
 uint64_t jiffies = 0;
 
+extern int unix_socket_fsid;
+extern int unix_accept_fsid;
+
 task_t *get_free_task()
 {
     for (uint64_t i = 0; i < MAX_TASK_NUM; i++)
@@ -408,7 +411,16 @@ uint64_t task_fork(struct pt_regs *regs)
             else if (node->type & file_socket)
             {
                 socket_t *socket = node->handle;
-                socket_ref(socket);
+                if (node->fsid == unix_accept_fsid)
+                    socket->pair->serverFds++;
+                else if (node->fsid == unix_socket_fsid)
+                {
+                    socket->timesOpened++;
+                    if (socket->pair)
+                    {
+                        socket->pair->clientFds++;
+                    }
+                }
             }
             char *fullpath = vfs_get_fullpath(node);
             vfs_node_t new = vfs_open(fullpath);
@@ -785,12 +797,6 @@ uint64_t task_exit(int64_t code)
     {
         if (task->fds[i])
         {
-            if (task->fds[i]->type & file_socket)
-            {
-                socket_t *socket = task->fds[i]->handle;
-                socket_unref(socket);
-            }
-
             vfs_close(task->fds[i]);
 
             current_task->fds[i] = NULL;
@@ -1009,7 +1015,16 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
             else if (node->type & file_socket)
             {
                 socket_t *socket = node->handle;
-                socket_ref(socket);
+                if (node->fsid == unix_accept_fsid)
+                    socket->pair->serverFds++;
+                else if (node->fsid == unix_socket_fsid)
+                {
+                    socket->timesOpened++;
+                    if (socket->pair)
+                    {
+                        socket->pair->clientFds++;
+                    }
+                }
             }
             char *fullpath = vfs_get_fullpath(node);
             vfs_node_t new = vfs_open(fullpath);
