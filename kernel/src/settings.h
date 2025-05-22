@@ -6,3 +6,5 @@
 
 #define MAX_CPU_NUM 64
 #define STACK_SIZE 32768UL
+
+#define BUILD_VERSION "0.0.2"

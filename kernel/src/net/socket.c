@@ -9,6 +9,10 @@
 extern socket_op_t socket_ops;
 extern socket_op_t accept_ops;
 
+vfs_node_t sockfs_root = NULL;
+
+static int sockfsfd_id = 0;
+
 socket_t first_unix_socket;
 
 socket_t sockets[MAX_SOCKETS];
@@ -51,10 +55,13 @@ char *unix_socket_addr_safe(const struct sockaddr_un *addr, size_t len)
 
 vfs_node_t unix_socket_accept_create(unix_socket_pair_t *dir)
 {
-    vfs_node_t socknode = vfs_open("/dev/null");
+    char buf[128];
+    sprintf(buf, "sock%d", sockfsfd_id++);
+    vfs_node_t socknode = vfs_child_append(sockfs_root, buf, NULL);
+    socknode->type = file_none;
+    socknode->type = 0755;
 
     socket_handle_t *handle = malloc(sizeof(socket_handle_t));
-    handle->sock = dir;
     handle->op = &accept_ops;
 
     socknode->handle = handle;
@@ -100,8 +107,9 @@ void socket_accept_close(void *current)
         unix_socket_free_pair(pair);
 }
 
-void socket_socket_close(socket_t *unixSocket)
+void socket_socket_close(socket_handle_t *socket_handle)
 {
+    socket_t *unixSocket = socket_handle->sock;
     unixSocket->timesOpened--;
     if (unixSocket->pair)
     {
@@ -222,9 +230,14 @@ int socket_socket(int domain, int type, int protocol)
         return -(ENOSYS);
     }
 
-    vfs_node_t socknode = vfs_open("/dev/null");
+    char buf[128];
+    sprintf(buf, "sock%d", sockfsfd_id++);
+    vfs_node_t socknode = vfs_node_alloc(rootdir, buf);
+    socknode->type = file_none;
+    socknode->type = 0755;
     socknode->fsid = unix_socket_fsid;
     socket_handle_t *handle = malloc(sizeof(socket_handle_t));
+    memset(handle, 0, sizeof(socket_handle_t));
     socket_t *unix_socket = malloc(sizeof(socket_t));
     memset(unix_socket, 0, sizeof(socket_t));
 
@@ -1024,4 +1037,7 @@ void socketfs_init()
     memset(sockets, 0, sizeof(sockets));
     unix_socket_fsid = vfs_regist("socketfs", &socket_callback);
     unix_accept_fsid = vfs_regist("socketfs", &accept_callback);
+    sockfs_root = vfs_node_alloc(rootdir, "sock");
+    sockfs_root->type = file_dir;
+    sockfs_root->mode = 0644;
 }

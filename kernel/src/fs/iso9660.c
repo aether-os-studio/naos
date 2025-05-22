@@ -687,7 +687,7 @@ void iso9660_close(file_t handle)
 int iso9660_mount(const char *src, vfs_node_t node)
 {
     vfs_node_t device = vfs_open(src);
-    if (device == NULL || device->type == file_dir)
+    if (device == NULL || (device->type & file_dir))
     {
         return -1;
     }

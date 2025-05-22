@@ -63,8 +63,8 @@ extern int sys_pipe(int pipefd[2]);
 // Beware the 65 character limit!
 char sysname[] = "Next Aether OS";
 char nodename[] = "Aether";
-char release[] = "0.0.1";
-char version[] = "0.0.1";
+char release[] = BUILD_VERSION;
+char version[] = BUILD_VERSION;
 char machine[] = "x86_64";
 
 void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
@@ -454,10 +454,10 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = sys_timer_settime((timer_t)arg1, (const struct itimerval *)arg2, (struct itimerval *)arg3);
         break;
     case SYS_TIMERFD_CREATE:
-        regs->rax = 0;
+        regs->rax = sys_timerfd_create(arg1, arg2);
         break;
     case SYS_TIMERFD_SETTIME:
-        regs->rax = 0;
+        regs->rax = sys_timerfd_settime(arg1, arg2, (const struct itimerval *)arg3, (struct itimerval *)arg4);
         break;
     case SYS_FLOCK:
         regs->rax = sys_flock(arg1, arg2);

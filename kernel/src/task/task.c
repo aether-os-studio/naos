@@ -1156,6 +1156,8 @@ uint64_t timeval_to_ms(struct timeval tv)
     return (uint64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
+extern int timerfdfs_id;
+
 void sched_update_itimer()
 {
     for (uint64_t i = cpu_count; i < MAX_TASK_NUM; i++)
@@ -1198,6 +1200,23 @@ void sched_update_itimer()
                 else
                     kt->expires = 0;
             }
+            if (current_task->fds[i] &&
+                current_task->fds[i]->fsid == timerfdfs_id)
+            {
+                timerfd_t *tfd = current_task->fds[i]->handle;
+                if (tfd->timer.expires && jiffies >= tfd->timer.expires)
+                {
+                    tfd->count++;
+                    if (tfd->timer.interval)
+                    {
+                        tfd->timer.expires += tfd->timer.interval;
+                    }
+                    else
+                    {
+                        tfd->timer.expires = 0;
+                    }
+                }
+            }
         }
     }
 }
@@ -1234,6 +1253,7 @@ size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old)
 
     return 0;
 }
+
 int sys_timer_create(clockid_t clockid, struct sigevent *sevp, timer_t *timerid)
 {
     kernel_timer_t *kt = NULL;

@@ -780,7 +780,7 @@ void ext2_open(void *parent, const char *name, vfs_node_t node)
                                 node->type |= file_none;
                         }
                     }
-                    else if (node->type & file_dir)
+                    if (node->type & file_dir)
                         ext2_readdir(handle, node);
                     ext2_update(node);
                     free(block);
@@ -825,6 +825,7 @@ int ext2_mount(const char *src, vfs_node_t node)
 
     if (sb.s_magic != EXT2_MAGIC)
     {
+        free(file);
         return -1;
     }
 
@@ -834,7 +835,7 @@ int ext2_mount(const char *src, vfs_node_t node)
     file->inodes_per_group = sb.s_inodes_per_group;
     file->blocks_per_group = sb.s_blocks_per_group;
     file->block_groups_count = (sb.s_blocks_count + sb.s_blocks_per_group - 1) / sb.s_blocks_per_group;
-    file->file_type = EXT2_FT_REGULAR;
+    file->file_type = EXT2_FT_DIRECTORY;
     file->node = node;
     file->prefetch_buffer = malloc(file->block_size);
     file->prefetch_block = 0;
@@ -1346,11 +1347,10 @@ int ext2_rename(void *current, const char *new)
 
 int ext2_stat(void *file, vfs_node_t node)
 {
-    if (node->type & file_none)
-        ext2_update(node);
-    else if (node->type & file_symlink)
+    if (node->type & file_symlink)
         ext2_read_linkname(file, node);
-
+    else if (node->type & file_none)
+        ext2_update(node);
     return 0;
 }
 

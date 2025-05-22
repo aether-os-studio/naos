@@ -93,7 +93,7 @@ typedef int64_t ssize_t;
 
 enum
 {
-    file_none = 0x0001UL,     // 未获取信息
+    file_none = 0x0001UL,     // 普通文件
     file_dir = 0x0002UL,      // 文件夹
     file_symlink = 0x0004UL,  // 符号链接
     file_block = 0x0008UL,    // 块设备，如硬盘

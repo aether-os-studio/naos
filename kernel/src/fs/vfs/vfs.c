@@ -78,7 +78,7 @@ static inline void do_open(vfs_node_t file)
 
 static inline void do_update(vfs_node_t file)
 {
-    if (file->type & file_none || file->handle == NULL)
+    if ((file->type & file_none) || file->handle == NULL)
         do_open(file);
 }
 
@@ -290,29 +290,29 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, bool nosymlink)
         current = vfs_child_find(current, buf);
         if (current == NULL)
             goto err;
+        do_update(current);
         if (!nosymlink && (current->type & (file_symlink | file_none)) == (file_symlink | file_none))
         {
-            do_update(current);
             if (!current->parent || !current->linkname)
                 goto err;
             vfs_op_lock = false;
             current = vfs_open_at(current->parent, current->linkname, nosymlink);
+            do_update(current);
             vfs_op_lock = true;
             if (!current)
                 goto err;
         }
         else if ((current->type & (file_symlink | file_dir)) == (file_symlink | file_dir))
         {
-            do_update(current);
             if (!current->parent || !current->linkname)
                 goto err;
             vfs_op_lock = false;
             current = vfs_open_at(current->parent, current->linkname, nosymlink);
+            do_update(current);
             vfs_op_lock = true;
             if (!current)
                 goto err;
         }
-        do_update(current);
     }
 
     free(path);
@@ -361,7 +361,7 @@ int vfs_close(vfs_node_t node)
     if (node->type & file_dir)
         return 0;
     callbackof(node, close)(node->handle);
-    if (node->type != file_pipe && node->type != file_socket && node->type != file_epoll)
+    if (!(node->type & file_pipe) && !(node->type & file_epoll))
         node->handle = NULL;
     return 0;
 }
@@ -394,15 +394,19 @@ ssize_t vfs_read(vfs_node_t file, void *addr, size_t offset, size_t size)
 
 int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize)
 {
-    if (!(node->type & file_symlink) || node->linkname == NULL)
+    if (node->linkname == NULL)
     {
-        return -1;
+        char *fullpath = vfs_get_fullpath(node);
+        strncpy(buf, fullpath, bufsize);
+        free(fullpath);
+        return 0;
     }
 
     while (vfs_op_lock)
     {
         arch_pause();
     }
+
     vfs_op_lock = true;
 
     size_t link_len = strlen(node->linkname);

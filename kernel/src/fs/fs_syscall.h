@@ -5,6 +5,7 @@
 #include <fs/termios.h>
 #include <fs/vfs/pipe.h>
 #include <fs/vfs/vfs.h>
+#include <task/task.h>
 
 struct iovec
 {
@@ -402,5 +403,28 @@ uint64_t sys_fchdir(uint64_t fd);
 uint64_t sys_rmdir(const char *name);
 uint64_t sys_unlink(const char *name);
 uint64_t sys_unlinkat(uint64_t dirfd, const char *name, uint64_t flags);
+
+#define CLOCK_REALTIME 0
+#define CLOCK_MONOTONIC 1
+#define CLOCK_PROCESS_CPUTIME_ID 2
+#define CLOCK_THREAD_CPUTIME_ID 3
+#define CLOCK_MONOTONIC_RAW 4
+#define CLOCK_REALTIME_COARSE 5
+#define CLOCK_MONOTONIC_COARSE 6
+#define CLOCK_BOOTTIME 7
+#define CLOCK_REALTIME_ALARM 8
+#define CLOCK_BOOTTIME_ALARM 9
+#define CLOCK_SGI_CYCLE 10
+#define CLOCK_TAI 11
+
+typedef struct
+{
+    kernel_timer_t timer;
+    uint64_t count;
+    int flags;
+} timerfd_t;
+
+int sys_timerfd_create(int clockid, int flags);
+int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, struct itimerval *old_v);
 
 void wake_blocked_tasks(task_block_list_t *head);

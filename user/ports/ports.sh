@@ -14,7 +14,7 @@ chmod +x "${SCRIPTPATH}/pass_acq.sh"
 ${SCRIPTPATH}/pass_acq.sh "$APK_URI" "$APK_SHA512" "$APK_PATH"
 chmod +x "$APK_PATH"
 
-ALPINE_VERSION=latest-stable
+ALPINE_VERSION=v3.20
 
 # bootstrap alpine userspace
 sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/${ALPINE_VERSION}/main -U --allow-untrusted --root $SYSROOT/../ --initdb add alpine-base bash coreutils grep musl ncurses
@@ -24,7 +24,7 @@ echo -e "http://mirrors.ustc.edu.cn/alpine/${ALPINE_VERSION}/main\nhttp://mirror
 sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add musl-dev gcompat gzip xz make file tar pciutils tzdata
 sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add nano
 sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add lua5.1 gcc binutils
-sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add xorg-server xf86-video-fbdev xf86-input-evdev xsetroot xinit xterm mesa-gl mesa-utils mesa-vulkan-swrast mesa-dri-gallium twm
+sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add xorg-server xf86-video-fbdev xf86-input-evdev xsetroot xinit xterm twm mesa-gl mesa-utils mesa-vulkan-swrast mesa-dri-gallium
 
 sudo cp -r $SYSROOT/share/zoneinfo/Asia/Shanghai $SYSROOT/../etc/localtime
 

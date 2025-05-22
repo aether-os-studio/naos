@@ -390,59 +390,6 @@ uint64_t sys_getcwd(char *cwd, uint64_t size)
 extern int unix_socket_fsid;
 extern int unix_accept_fsid;
 
-uint64_t sys_dup(uint64_t fd)
-{
-    vfs_node_t node = current_task->fds[fd];
-    if (!node)
-        return (uint64_t)-EBADF;
-
-    uint64_t i;
-    for (i = 3; i < MAX_FD_NUM; i++)
-    {
-        if (current_task->fds[i] == NULL)
-        {
-            break;
-        }
-    }
-
-    if (i == MAX_FD_NUM)
-    {
-        return (uint64_t)-EBADF;
-    }
-
-    if (node->type & file_pipe)
-    {
-        pipe_specific_t *spec = (pipe_specific_t *)node->handle;
-        pipe_info_t *pipe = spec->info;
-        if (spec->write)
-            pipe->writeFds++;
-        else
-            pipe->readFds++;
-    }
-    else if (node->type & file_socket)
-    {
-        socket_t *socket = (socket_t *)node->handle;
-        if (node->fsid == unix_accept_fsid)
-            socket->pair->serverFds++;
-        else if (node->fsid == unix_socket_fsid)
-        {
-            socket->timesOpened++;
-            if (socket->pair)
-            {
-                socket->pair->clientFds++;
-            }
-        }
-    }
-    char *fullpath = vfs_get_fullpath(node);
-    vfs_node_t new = vfs_open(fullpath);
-    free(fullpath);
-    new->handle = node->handle;
-
-    current_task->fds[i] = new;
-
-    return i;
-}
-
 uint64_t sys_dup2(uint64_t fd, uint64_t newfd)
 {
     vfs_node_t node = current_task->fds[fd];
@@ -484,6 +431,29 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd)
     current_task->fds[newfd] = new;
 
     return newfd;
+}
+
+uint64_t sys_dup(uint64_t fd)
+{
+    vfs_node_t node = current_task->fds[fd];
+    if (!node)
+        return (uint64_t)-EBADF;
+
+    uint64_t i;
+    for (i = 3; i < MAX_FD_NUM; i++)
+    {
+        if (current_task->fds[i] == NULL)
+        {
+            break;
+        }
+    }
+
+    if (i == MAX_FD_NUM)
+    {
+        return (uint64_t)-EBADF;
+    }
+
+    return sys_dup2(fd, i);
 }
 
 uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
@@ -1155,7 +1125,7 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd, struct epoll_event *event)
         epollWatch->userlandData = (uint64_t)event->data.ptr;
         epollWatch->next = NULL;
         epoll_watch_t *current = epoll->firstEpollWatch;
-        if (current)
+        if (current && current->next)
         {
             while (current->next)
                 current = current->next;
@@ -1486,6 +1456,82 @@ uint64_t sys_fchdir(uint64_t fd)
     return 0;
 }
 
+int timerfdfs_id = 0;
+static vfs_node_t timerfdfs_root = NULL;
+
+static int timerfd_id = 0;
+
+int sys_timerfd_create(int clockid, int flags)
+{
+    // 参数检查
+    if (clockid != CLOCK_REALTIME && clockid != CLOCK_MONOTONIC)
+        return -EINVAL;
+
+    // 分配文件描述符
+    int fd = -1;
+    for (int i = 3; i < MAX_FD_NUM; i++)
+    {
+        if (!current_task->fds[i])
+        {
+            fd = i;
+            break;
+        }
+    }
+    if (fd == -1)
+        return -EMFILE;
+
+    timerfd_t *tfd = malloc(sizeof(timerfd_t));
+    memset(tfd, 0, sizeof(timerfd_t));
+    tfd->timer.clock_type = clockid;
+    tfd->flags = flags;
+
+    char buf[32];
+    sprintf(buf, "timerfd%d", timerfd_id++);
+    vfs_node_t node = vfs_node_alloc(timerfdfs_root, buf);
+    node->type = file_stream;
+    node->fsid = timerfdfs_id;
+    node->handle = tfd;
+
+    current_task->fds[fd] = node;
+
+    return fd;
+}
+
+int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, struct itimerval *old_value)
+{
+    if (fd >= MAX_FD_NUM || !current_task->fds[fd])
+        return -EBADF;
+
+    vfs_node_t node = current_task->fds[fd];
+    timerfd_t *tfd = node->handle;
+
+    if (old_value)
+    {
+        uint64_t remaining = tfd->timer.expires > jiffies ? tfd->timer.expires - jiffies : 0;
+
+        old_value->it_interval.tv_sec = tfd->timer.interval / 1000;
+        old_value->it_interval.tv_usec = (tfd->timer.interval % 1000) * 1000;
+
+        old_value->it_value.tv_sec = remaining / 1000;
+        old_value->it_value.tv_usec = (remaining % 1000) * 1000;
+    }
+
+    uint64_t interval = new_value->it_interval.tv_sec * 1000 +
+                        new_value->it_interval.tv_usec / 1000000;
+    uint64_t expires = new_value->it_value.tv_sec * 1000 +
+                       new_value->it_value.tv_usec / 1000000;
+
+    tfd->timer.interval = interval;
+    tfd->timer.expires = jiffies + expires;
+
+    return 0;
+}
+
+void sys_timerfd_close(void *current)
+{
+    free(current);
+}
+
 static int dummy()
 {
     return -ENOSYS;
@@ -1539,6 +1585,22 @@ static struct vfs_callback signalfd_callbacks = {
     .poll = signalfd_poll,
 };
 
+static struct vfs_callback timerfd_callbacks = {
+    .mount = (vfs_mount_t)dummy,
+    .unmount = (vfs_unmount_t)dummy,
+    .open = (vfs_open_t)dummy,
+    .close = (vfs_close_t)sys_timerfd_close,
+    .read = (vfs_read_t)dummy,
+    .write = (vfs_write_t)dummy,
+    .mkdir = (vfs_mk_t)dummy,
+    .mkfile = (vfs_mk_t)dummy,
+    .delete = (vfs_del_t)dummy,
+    .rename = (vfs_rename_t)dummy,
+    .stat = (vfs_stat_t)dummy,
+    .ioctl = (vfs_ioctl_t)dummy,
+    .poll = dummy,
+};
+
 void fs_syscall_init()
 {
     epollfs_id = vfs_regist("epollfs", &epoll_callbacks);
@@ -1558,6 +1620,12 @@ void fs_syscall_init()
     signalfdfs_root->type = file_dir;
     signalfdfs_root->mode = 0644;
     signalfdfs_root->fsid = signalfdfs_id;
+
+    timerfdfs_id = vfs_regist("timerfd", &timerfd_callbacks);
+    timerfdfs_root = vfs_node_alloc(rootdir, "timer");
+    timerfdfs_root->type = file_dir;
+    timerfdfs_root->mode = 0644;
+    timerfdfs_root->fsid = timerfdfs_id;
 }
 
 uint64_t sys_flock(int fd, uint64_t operation)

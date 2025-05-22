@@ -112,7 +112,9 @@ void fbdev_init_sysfs()
         char name[MAX_DEV_NAME_LEN];
         sprintf(name, "fb%d", i);
         vfs_node_t node = vfs_child_append(graphics, name, NULL);
-        node->type = file_dir;
+        node->type = file_dir | file_symlink;
+        sprintf(name, "/dev/fb%d", i);
+        node->linkname = strdup(name);
 
         vfs_node_t device = vfs_child_append(node, "device", NULL);
         device->type = file_dir;
