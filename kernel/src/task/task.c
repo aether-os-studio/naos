@@ -777,8 +777,6 @@ uint64_t task_exit(int64_t code)
         {
             vfs_close(task->fds[i]);
 
-            task->fds[i]->refcount -= 1;
-
             task->fds[i] = NULL;
         }
     }

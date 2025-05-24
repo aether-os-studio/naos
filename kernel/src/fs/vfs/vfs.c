@@ -38,7 +38,6 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name)
     node->lock.l_type = F_UNLCK;
     node->mode = 0777;
     node->flags = 0;
-    node->refcount = 0;
     if (parent)
         list_prepend(parent->child, node);
     return node;
@@ -288,18 +287,18 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, bool nosymlink)
             if (!current->parent || !current->linkname)
                 goto err;
             current = vfs_open_at(current->parent, current->linkname, nosymlink);
-            do_update(current);
             if (!current)
                 goto err;
+            do_update(current);
         }
         else if ((current->type & (file_symlink | file_dir)) == (file_symlink | file_dir))
         {
             if (!current->parent || !current->linkname)
                 goto err;
             current = vfs_open_at(current->parent, current->linkname, nosymlink);
-            do_update(current);
             if (!current)
                 goto err;
+            do_update(current);
         }
     }
 

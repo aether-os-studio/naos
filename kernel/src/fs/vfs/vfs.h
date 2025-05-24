@@ -228,7 +228,6 @@ struct vfs_node
     vfs_node_t root;     // 根目录
     uint16_t mode;       // 模式
     uint64_t flags;      // 标志位
-    uint32_t refcount;   // 引用计数
 };
 
 extern vfs_node_t rootdir; // vfs 根目录

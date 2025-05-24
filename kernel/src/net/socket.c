@@ -267,8 +267,6 @@ int socket_socket(int domain, int type, int protocol)
     handle->op = &socket_ops;
     socknode->handle = handle;
 
-    socknode->refcount = 1;
-
     unix_socket->timesOpened = 1;
 
     uint64_t i = 0;

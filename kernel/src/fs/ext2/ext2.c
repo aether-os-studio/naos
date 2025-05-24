@@ -1589,10 +1589,6 @@ vfs_node_t ext2_dup(vfs_node_t node)
 
     // 复制节点属性
     memcpy(new_node, node, sizeof(struct vfs_node));
-    
-    // 增加引用计数
-    if (new_node->inode)
-        new_node->refcount++;
 
     return new_node;
 }

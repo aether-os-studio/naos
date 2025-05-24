@@ -103,8 +103,6 @@ uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode)
 
     node->flags = flags;
 
-    node->refcount++;
-
     current_task->fds[i] = node;
 
     return i;
@@ -137,15 +135,7 @@ uint64_t sys_close(uint64_t fd)
         current_task->fds[fd]->lock.l_pid = 0;
     }
 
-    if (current_task->fds[fd]->refcount >= 1)
-    {
-        current_task->fds[fd]->refcount--;
-
-        if (current_task->fds[fd]->refcount == 0)
-            vfs_close(current_task->fds[fd]);
-    }
-    else
-        vfs_close(current_task->fds[fd]);
+    vfs_close(current_task->fds[fd]);
 
     current_task->fds[fd] = NULL;
 
