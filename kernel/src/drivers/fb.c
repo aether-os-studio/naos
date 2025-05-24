@@ -107,30 +107,38 @@ void fbdev_init()
 void fbdev_init_sysfs()
 {
     vfs_node_t graphics = vfs_open("/sys/class/graphics");
+
     for (uint64_t i = 0; i < framebuffer_request.response->framebuffer_count; i++)
     {
         char name[MAX_DEV_NAME_LEN];
         sprintf(name, "fb%d", i);
         vfs_node_t node = vfs_child_append(graphics, name, NULL);
-        node->type = file_dir | file_symlink;
-        sprintf(name, "/dev/fb%d", i);
-        node->linkname = strdup(name);
+        node->type = file_dir;
+
+        vfs_node_t subsystem_link = vfs_child_append(node, "subsystem", NULL);
+        subsystem_link->type = file_symlink | file_dir;
+        subsystem_link->mode = 0644;
+        sprintf(name, "/sys/class/graphics/fb%d/device/subsystem");
+        subsystem_link->linkname = strdup(name);
+
+        vfs_node_t uevent_link = vfs_child_append(node, "uevent", NULL);
+        uevent_link->type = file_symlink | file_none;
+        uevent_link->mode = 0644;
+        sprintf(name, "/sys/class/graphics/fb%d/device/subsystem/uevent");
+        uevent_link->linkname = strdup(name);
 
         vfs_node_t device = vfs_child_append(node, "device", NULL);
         device->type = file_dir;
         device->mode = 0644;
 
         vfs_node_t subsystem = vfs_child_append(device, "subsystem", NULL);
-        subsystem->type = file_symlink | file_dir;
-        subsystem->mode = 0700;
+        subsystem->type = file_dir;
+        subsystem->mode = 0644;
         sysfs_handle_t *subsystem_handle = malloc(sizeof(sysfs_handle_t));
         memset(subsystem_handle, 0, sizeof(sysfs_handle_t));
         subsystem->handle = subsystem_handle;
         subsystem_handle->node = subsystem;
         subsystem_handle->private_data = NULL;
-        char devname[MAX_DEV_NAME_LEN];
-        sprintf(devname, "/dev/fb%d", i);
-        subsystem->linkname = strdup(devname);
 
         vfs_node_t uevent = vfs_child_append(subsystem, "uevent", NULL);
         uevent->type = file_none;

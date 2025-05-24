@@ -134,7 +134,7 @@ void fatfs_open(void *parent, const char *name, vfs_node_t node)
     node->handle = new;
 }
 
-void fatfs_close(file_t handle)
+bool fatfs_close(file_t handle)
 {
     FILINFO fno;
     FRESULT res = f_stat(handle->path, &fno);
@@ -147,10 +147,12 @@ void fatfs_close(file_t handle)
         res = f_close(handle->handle);
     }
     if (res != FR_OK)
-        return;
+        return false;
     free(handle->path);
     free(handle->handle);
     free(handle);
+
+    return true;
 }
 
 int fatfs_mount(const char *src, vfs_node_t node)
@@ -257,6 +259,25 @@ int fatfs_poll(void *file, size_t events)
     return -EOPNOTSUPP;
 }
 
+vfs_node_t fatfs_dup(vfs_node_t node)
+{
+    if (!node)
+        return NULL;
+
+    // 创建新的vfs节点
+    vfs_node_t new_node = vfs_node_alloc(node->parent, node->name);
+    if (!new_node)
+        return NULL;
+
+    // 复制节点属性
+    memcpy(new_node, node, sizeof(struct vfs_node));
+
+    // 增加引用计数
+    new_node->refcount++;
+
+    return new_node;
+}
+
 static struct vfs_callback callbacks = {
     .mount = fatfs_mount,
     .unmount = fatfs_unmount,
@@ -271,6 +292,7 @@ static struct vfs_callback callbacks = {
     .stat = fatfs_stat,
     .ioctl = fatfs_ioctl,
     .poll = fatfs_poll,
+    .dup = fatfs_dup,
 };
 
 void fatfs_init()

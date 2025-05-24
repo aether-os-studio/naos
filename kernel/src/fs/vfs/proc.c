@@ -23,6 +23,8 @@ ssize_t procfs_read(void *file, void *addr, size_t offset, size_t size)
         memcpy(addr, task->name, len + 1);
         return len + 1;
     }
+
+    return 0;
 }
 
 vfs_node_t procfs_root = NULL;
@@ -48,6 +50,7 @@ static struct vfs_callback callbacks =
         .poll = (vfs_poll_t)dummy,
         .mount = (vfs_mount_t)dummy,
         .unmount = (vfs_unmount_t)dummy,
+        .dup = (vfs_dup_t)dummy,
 };
 
 void proc_init()

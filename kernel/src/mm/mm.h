@@ -31,6 +31,9 @@ uint64_t alloc_frames(size_t count);
 void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t size, uint64_t flags);
 void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size);
 
+void inc_frame_ref(uint64_t addr);
+void dec_frame_ref(uint64_t addr);
+
 static inline void *alloc_frames_bytes(uint64_t bytes)
 {
     return phys_to_virt((void *)alloc_frames((bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE));

@@ -24,8 +24,8 @@ task_t *get_free_task()
     {
         if (tasks[i] == NULL)
         {
-            tasks[i] = (task_t *)malloc(sizeof(task_t));
-            memset(tasks[i], 0, sizeof(task_t));
+            tasks[i] = (task_t *)alloc_frames_bytes(sizeof(task_t));
+            memset(tasks[i], 0, DEFAULT_PAGE_SIZE);
             tasks[i]->pid = i;
             return tasks[i];
         }
@@ -400,35 +400,10 @@ uint64_t task_fork(struct pt_regs *regs)
     for (uint64_t i = 3; i < MAX_FD_NUM; i++)
     {
         vfs_node_t node = current_task->fds[i];
+
         if (node)
         {
-            if (node->type & file_pipe)
-            {
-                pipe_specific_t *spec = (pipe_specific_t *)node->handle;
-                pipe_info_t *pipe = spec->info;
-                if (spec->write)
-                    pipe->writeFds++;
-                else
-                    pipe->readFds++;
-            }
-            else if (node->type & file_socket)
-            {
-                socket_t *socket = node->handle;
-                if (node->fsid == unix_accept_fsid)
-                    socket->pair->serverFds++;
-                else if (node->fsid == unix_socket_fsid)
-                {
-                    socket->timesOpened++;
-                    if (socket->pair)
-                    {
-                        socket->pair->clientFds++;
-                    }
-                }
-            }
-            char *fullpath = vfs_get_fullpath(node);
-            vfs_node_t new = vfs_open(fullpath);
-            free(fullpath);
-            child->fds[i] = new;
+            child->fds[i] = vfs_dup(node);
         }
         else
         {
@@ -802,7 +777,9 @@ uint64_t task_exit(int64_t code)
         {
             vfs_close(task->fds[i]);
 
-            current_task->fds[i] = NULL;
+            task->fds[i]->refcount -= 1;
+
+            task->fds[i] = NULL;
         }
     }
 
@@ -937,7 +914,7 @@ rollback:
 
         free(child->arch_context);
 
-        free(child);
+        free_frames_bytes(child, sizeof(task_t));
     }
     else if (options & WNOHANG)
     {
@@ -1004,35 +981,10 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     for (uint64_t i = 3; i < MAX_FD_NUM; i++)
     {
         vfs_node_t node = current_task->fds[i];
+
         if (node)
         {
-            if (node->type & file_pipe)
-            {
-                pipe_specific_t *spec = (pipe_specific_t *)node->handle;
-                pipe_info_t *pipe = spec->info;
-                if (spec->write)
-                    pipe->writeFds++;
-                else
-                    pipe->readFds++;
-            }
-            else if (node->type & file_socket)
-            {
-                socket_t *socket = node->handle;
-                if (node->fsid == unix_accept_fsid)
-                    socket->pair->serverFds++;
-                else if (node->fsid == unix_socket_fsid)
-                {
-                    socket->timesOpened++;
-                    if (socket->pair)
-                    {
-                        socket->pair->clientFds++;
-                    }
-                }
-            }
-            char *fullpath = vfs_get_fullpath(node);
-            vfs_node_t new = vfs_open(fullpath);
-            free(fullpath);
-            child->fds[i] = new;
+            child->fds[i] = vfs_dup(node);
         }
         else
         {

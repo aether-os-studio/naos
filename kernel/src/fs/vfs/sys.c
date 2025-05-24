@@ -29,6 +29,9 @@ int sysfs_stat(void *file, vfs_node_t node)
 
 ssize_t sysfs_read(void *file, void *addr, size_t offset, size_t size)
 {
+    if (!file)
+        return 0;
+
     sysfs_handle_t *handle = file;
 
     if (handle->private_data != NULL)
@@ -71,6 +74,41 @@ int sysfs_poll(void *file, size_t event)
     return -EOPNOTSUPP;
 }
 
+vfs_node_t sysfs_dup(vfs_node_t node)
+{
+    if (!node || !node->handle)
+        return NULL;
+
+    sysfs_handle_t *handle = (sysfs_handle_t *)node->handle;
+
+    vfs_node_t new_node = vfs_node_alloc(node->parent, node->name);
+    if (!new_node)
+        return NULL;
+
+    memcpy(new_node, node, sizeof(struct vfs_node));
+
+    sysfs_handle_t *new_handle = malloc(sizeof(sysfs_handle_t));
+    if (!new_handle)
+    {
+        vfs_free(new_node);
+        return NULL;
+    }
+
+    memcpy(new_handle, handle, sizeof(sysfs_handle_t));
+    new_node->handle = new_handle;
+
+    if (handle->private_data)
+    {
+        new_handle->private_data = handle->private_data;
+    }
+    else
+    {
+        strncpy(new_handle->content, handle->content, sizeof(handle->content));
+    }
+
+    return new_node;
+}
+
 static struct vfs_callback callback = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
@@ -85,6 +123,7 @@ static struct vfs_callback callback = {
     .stat = sysfs_stat,
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = sysfs_poll,
+    .dup = (vfs_dup_t)sysfs_dup,
 };
 
 extern uint32_t device_number;

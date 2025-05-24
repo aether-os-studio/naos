@@ -125,7 +125,7 @@ typedef void (*vfs_open_t)(void *parent, const char *name, vfs_node_t node);
  *
  *\param current  当前文件句柄
  */
-typedef void (*vfs_close_t)(void *current);
+typedef bool (*vfs_close_t)(void *current);
 
 /**
  *\brief 重设文件大小
@@ -178,6 +178,8 @@ typedef void *(*vfs_mapfile_t)(void *file, size_t offset, size_t size);
 
 typedef int (*vfs_poll_t)(void *file, size_t events);
 
+typedef vfs_node_t (*vfs_dup_t)(vfs_node_t node);
+
 typedef struct vfs_callback
 {
     vfs_mount_t mount;
@@ -193,6 +195,7 @@ typedef struct vfs_callback
     vfs_stat_t stat;
     vfs_ioctl_t ioctl;
     vfs_poll_t poll;
+    vfs_dup_t dup;
 } *vfs_callback_t;
 
 typedef struct flock
@@ -225,6 +228,7 @@ struct vfs_node
     vfs_node_t root;     // 根目录
     uint16_t mode;       // 模式
     uint64_t flags;      // 标志位
+    uint32_t refcount;   // 引用计数
 };
 
 extern vfs_node_t rootdir; // vfs 根目录
@@ -369,5 +373,7 @@ char *vfs_get_fullpath(vfs_node_t node);
  *\param node     文件节点
  */
 int vfs_poll(vfs_node_t node, size_t event);
+
+vfs_node_t vfs_dup(vfs_node_t node);
 
 extern vfs_callback_t fs_callbacks[256];

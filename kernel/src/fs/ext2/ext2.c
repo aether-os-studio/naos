@@ -3,7 +3,7 @@
 #include <task/task.h>
 #include <fs/fs_syscall.h>
 
-extern bool vfs_op_lock;
+spinlock_t ext2_op_lock = {0};
 
 // 辅助函数
 
@@ -39,7 +39,15 @@ static uint32_t ext2_find_free_inode(ext2_file_t *parent)
         uint64_t bg_desc_offset = (bg * sizeof(ext2_block_group_desc_t)) % parent->block_size;
 
         uint8_t *bg_block = malloc(parent->block_size);
-        vfs_read(parent->device, bg_block, bg_desc_block * parent->block_size, parent->block_size);
+        if (!bg_block)
+            return 0;
+
+        if (vfs_read(parent->device, bg_block, bg_desc_block * parent->block_size, parent->block_size) <= 0)
+        {
+            free(bg_block);
+            continue;
+        }
+
         ext2_block_group_desc_t bg_desc;
         fast_memcpy(&bg_desc, bg_block + bg_desc_offset, sizeof(ext2_block_group_desc_t));
         free(bg_block);
@@ -47,35 +55,66 @@ static uint32_t ext2_find_free_inode(ext2_file_t *parent)
         if (bg_desc.bg_free_inodes_count == 0)
             continue;
 
-        // 读取inode位图
-        uint64_t inode_bitmap_block = bg_desc.bg_inode_bitmap * parent->block_size;
-        uint8_t *inode_bitmap = malloc(parent->block_size);
-        vfs_read(parent->device, inode_bitmap, inode_bitmap_block, parent->block_size);
+        uint32_t max_inodes_in_group = MIN(parent->inodes_per_group,
+                                           parent->block_size * 8);
 
-        // 在位图中查找第一个空闲位（0）
-        for (uint32_t i = 0; i < parent->block_size * 8; i++)
+        uint8_t *inode_bitmap = malloc(parent->block_size);
+        if (!inode_bitmap)
+            return 0;
+
+        if (vfs_read(parent->device, inode_bitmap, bg_desc.bg_inode_bitmap * parent->block_size, parent->block_size) != (ssize_t)parent->block_size)
+        {
+            free(inode_bitmap);
+            continue;
+        }
+
+        for (uint32_t i = 0; i < max_inodes_in_group; i++)
         {
             if (!(inode_bitmap[i / 8] & (1 << (i % 8))))
             {
-                // 标记该inode为已使用
                 inode_bitmap[i / 8] |= (1 << (i % 8));
-                vfs_write(parent->device, inode_bitmap, inode_bitmap_block, parent->block_size);
-                free(inode_bitmap);
 
-                // 更新块组描述符的空闲inode计数
+                if (vfs_write(parent->device, inode_bitmap, bg_desc.bg_inode_bitmap * parent->block_size, parent->block_size) != (ssize_t)parent->block_size)
+                {
+                    free(inode_bitmap);
+                    return 0;
+                }
+
+                // 更新块组描述符
                 bg_desc.bg_free_inodes_count--;
                 uint8_t *new_bg_block = malloc(parent->block_size);
-                vfs_read(parent->device, new_bg_block, bg_desc_block * parent->block_size, parent->block_size);
-                fast_memcpy(new_bg_block + bg_desc_offset, &bg_desc, sizeof(ext2_block_group_desc_t));
-                vfs_write(parent->device, new_bg_block, bg_desc_block * parent->block_size, parent->block_size);
-                free(new_bg_block);
+                if (!new_bg_block)
+                {
+                    free(inode_bitmap);
+                    return 0;
+                }
 
-                return bg * parent->inodes_per_group + i + 1; // inode号从1开始
+                if (vfs_read(parent->device, new_bg_block, bg_desc_block * parent->block_size,
+                             parent->block_size) <= 0)
+                {
+                    free(new_bg_block);
+                    free(inode_bitmap);
+                    return 0;
+                }
+
+                fast_memcpy(new_bg_block + bg_desc_offset, &bg_desc, sizeof(ext2_block_group_desc_t));
+
+                if (vfs_write(parent->device, new_bg_block, bg_desc_block * parent->block_size,
+                              parent->block_size) <= 0)
+                {
+                    free(new_bg_block);
+                    free(inode_bitmap);
+                    return 0;
+                }
+
+                free(new_bg_block);
+                free(inode_bitmap);
+                return bg * parent->inodes_per_group + i + 1;
             }
         }
         free(inode_bitmap);
     }
-    return 0; // 无空闲inode
+    return 0;
 }
 
 static uint32_t ext2_find_free_block(ext2_file_t *parent)
@@ -86,7 +125,15 @@ static uint32_t ext2_find_free_block(ext2_file_t *parent)
         uint64_t bg_desc_offset = (bg * sizeof(ext2_block_group_desc_t)) % parent->block_size;
 
         uint8_t *bg_block = malloc(parent->block_size);
-        vfs_read(parent->device, bg_block, bg_desc_block * parent->block_size, parent->block_size);
+        if (!bg_block)
+            return 0;
+
+        if (vfs_read(parent->device, bg_block, bg_desc_block * parent->block_size, parent->block_size) != (ssize_t)parent->block_size)
+        {
+            free(bg_block);
+            continue;
+        }
+
         ext2_block_group_desc_t bg_desc;
         fast_memcpy(&bg_desc, bg_block + bg_desc_offset, sizeof(ext2_block_group_desc_t));
         free(bg_block);
@@ -96,30 +143,63 @@ static uint32_t ext2_find_free_block(ext2_file_t *parent)
 
         uint64_t block_bitmap_block = bg_desc.bg_block_bitmap * parent->block_size;
         uint8_t *block_bitmap = malloc(parent->block_size);
-        vfs_read(parent->device, block_bitmap, block_bitmap_block, parent->block_size);
+        if (!block_bitmap)
+            return 0;
 
-        // 查找第一个空闲块（位为0）
-        for (uint32_t i = 0; i < parent->block_size * 8; i++)
+        if (vfs_read(parent->device, block_bitmap, block_bitmap_block, parent->block_size) != (ssize_t)parent->block_size)
+        {
+            free(block_bitmap);
+            continue;
+        }
+
+        uint32_t max_blocks_in_group = MIN(parent->blocks_per_group, parent->block_size * 8);
+
+        for (uint32_t i = 0; i < max_blocks_in_group; i++)
         {
             if (!(block_bitmap[i / 8] & (1 << (i % 8))))
             {
                 block_bitmap[i / 8] |= (1 << (i % 8));
-                vfs_write(parent->device, block_bitmap, block_bitmap_block, parent->block_size);
-                free(block_bitmap);
+
+                if (vfs_write(parent->device, block_bitmap, block_bitmap_block, parent->block_size) != (ssize_t)parent->block_size)
+                {
+                    free(block_bitmap);
+                    return 0;
+                }
 
                 bg_desc.bg_free_blocks_count--;
                 uint8_t *new_bg_block = malloc(parent->block_size);
-                vfs_read(parent->device, new_bg_block, bg_desc_block * parent->block_size, parent->block_size);
-                fast_memcpy(new_bg_block + bg_desc_offset, &bg_desc, sizeof(ext2_block_group_desc_t));
-                vfs_write(parent->device, new_bg_block, bg_desc_block * parent->block_size, parent->block_size);
-                free(new_bg_block);
+                if (!new_bg_block)
+                {
+                    free(block_bitmap);
+                    return 0;
+                }
 
-                return bg * (parent->block_size * 8) + i;
+                if (vfs_read(parent->device, new_bg_block, bg_desc_block * parent->block_size, parent->block_size) <= 0)
+                {
+                    free(new_bg_block);
+                    free(block_bitmap);
+                    return 0;
+                }
+
+                fast_memcpy(new_bg_block + bg_desc_offset, &bg_desc, sizeof(ext2_block_group_desc_t));
+
+                if (vfs_write(parent->device, new_bg_block, bg_desc_block * parent->block_size, parent->block_size) <= 0)
+                {
+                    free(new_bg_block);
+                    free(block_bitmap);
+                    return 0;
+                }
+
+                free(new_bg_block);
+                free(block_bitmap);
+
+                // 返回全局块号
+                return bg * parent->blocks_per_group + i;
             }
         }
         free(block_bitmap);
     }
-    return 0;
+    return 0; // 没有找到空闲块
 }
 
 static uint32_t ext2_get_physical_block(ext2_file_t *file, struct ext2_inode *inode, uint32_t logical_block)
@@ -225,35 +305,69 @@ static uint32_t ext2_get_or_alloc_block(ext2_file_t *f, ext2_inode_t *inode, uin
         if (inode->i_block[13] == 0)
         {
             inode->i_block[13] = ext2_find_free_block(f);
+            if (inode->i_block[13] == 0)
+                return 0;
+
             uint8_t *double_indirect_block = calloc(1, block_size);
+            if (!double_indirect_block)
+                return 0;
+
             vfs_write(f->device, double_indirect_block, inode->i_block[13] * block_size, block_size);
             free(double_indirect_block);
         }
 
         uint32_t *double_indirect = malloc(block_size);
-        vfs_read(f->device, double_indirect, inode->i_block[13] * block_size, block_size);
+        if (!double_indirect)
+            return 0;
+
+        if (vfs_read(f->device, double_indirect, inode->i_block[13] * block_size, block_size) < 0)
+        {
+            free(double_indirect);
+            return 0;
+        }
 
         uint32_t first_level = logical_block / blocks_per_indirect;
         if (double_indirect[first_level] == 0)
         {
             double_indirect[first_level] = ext2_find_free_block(f);
+            if (double_indirect[first_level] == 0)
+            {
+                free(double_indirect);
+                return 0;
+            }
             vfs_write(f->device, double_indirect, inode->i_block[13] * block_size, block_size);
         }
 
         uint32_t *indirect = malloc(block_size);
-        vfs_read(f->device, indirect, double_indirect[first_level] * block_size, block_size);
+        if (!indirect)
+        {
+            free(double_indirect);
+            return 0;
+        }
+
+        if (vfs_read(f->device, indirect, double_indirect[first_level] * block_size, block_size) < 0)
+        {
+            free(indirect);
+            free(double_indirect);
+            return 0;
+        }
 
         uint32_t second_level = logical_block % blocks_per_indirect;
         if (indirect[second_level] == 0)
         {
-            indirect[second_level] = ext2_find_free_block(f); // 分配数据块
+            indirect[second_level] = ext2_find_free_block(f);
+            if (indirect[second_level] == 0)
+            {
+                free(indirect);
+                free(double_indirect);
+                return 0;
+            }
             vfs_write(f->device, indirect, double_indirect[first_level] * block_size, block_size);
         }
 
         uint32_t result = indirect[second_level];
         free(indirect);
         free(double_indirect);
-
         return result;
     }
 
@@ -320,28 +434,29 @@ static int ext2_add_dir_entry(ext2_file_t *parent, const char *name, uint32_t in
 
         if (prev_dirent)
         {
-            uint8_t *prev_end = (uint8_t *)prev_dirent + (8 + prev_dirent->name_len + 1);
-            uint8_t *new_dirent_start = (uint8_t *)(((uintptr_t)prev_end + 3) & ~3);
-            uint16_t available = prev_dirent->rec_len;
+            uint16_t prev_used = offsetof(ext2_dirent_t, name) + prev_dirent->name_len;
+            prev_used = (prev_used + 3) & ~3;
+
+            uint16_t available = prev_dirent->rec_len - prev_used;
 
             if (available >= rec_len)
             {
-                prev_dirent->rec_len = new_dirent_start - (uint8_t *)prev_dirent;
-                ext2_dirent_t *new_dirent = (ext2_dirent_t *)new_dirent_start;
+                prev_dirent->rec_len = prev_used;
+                ext2_dirent_t *new_dirent = (ext2_dirent_t *)((uint8_t *)prev_dirent + prev_used);
                 new_dirent->inode_id = inode_id;
-                new_dirent->rec_len = (uint16_t)((uint64_t)block + parent->block_size - (uint64_t)new_dirent_start);
+                new_dirent->rec_len = available;
                 new_dirent->name_len = name_len;
                 new_dirent->type = type;
                 fast_memcpy(new_dirent->name, name, name_len);
-                new_dirent->name[name_len] = '\0'; // 确保文件名以空字符结尾
+                new_dirent->name[name_len] = '\0';
 
                 vfs_write(parent->device, block, block_num * parent->block_size, parent->block_size);
                 free(block);
 
                 tm time;
                 time_read(&time);
-                parent_inode.i_mtime = mktime(&time); // 更新修改时间
-                parent_inode.i_size += rec_len;       // 更新文件大小（可选，根据实际需求）
+                parent_inode.i_mtime = mktime(&time);
+                parent_inode.i_size += rec_len;
                 ext2_write_inode(parent, parent->inode_id, &parent_inode);
 
                 return 0;
@@ -575,6 +690,41 @@ static void ext2_free_inode_blocks(ext2_file_t *file, ext2_inode_t *inode)
     }
 }
 
+static int ext2_read_bg_desc(ext2_file_t *file, uint32_t bg, ext2_block_group_desc_t *bg_desc)
+{
+    uint64_t bg_desc_block = 1 + (bg * sizeof(ext2_block_group_desc_t)) / file->block_size;
+    uint64_t bg_desc_offset = (bg * sizeof(ext2_block_group_desc_t)) % file->block_size;
+
+    size_t bytes_remaining = sizeof(ext2_block_group_desc_t);
+    uint8_t *dest = (uint8_t *)bg_desc;
+
+    while (bytes_remaining > 0)
+    {
+        uint8_t *bg_block = alloc_frames_bytes(file->block_size);
+        if (!bg_block)
+            return -1;
+
+        if (vfs_read(file->device, bg_block, bg_desc_block * file->block_size, file->block_size) < 0)
+        {
+            free_frames_bytes(bg_block, file->block_size);
+            return -1;
+        }
+
+        size_t bytes_to_copy = MIN(bytes_remaining, file->block_size - bg_desc_offset);
+        fast_memcpy(dest, bg_block + bg_desc_offset, bytes_to_copy);
+
+        free_frames_bytes(bg_block, file->block_size);
+
+        dest += bytes_to_copy;
+        bytes_remaining -= bytes_to_copy;
+
+        bg_desc_block++;
+        bg_desc_offset = 0;
+    }
+
+    return 0;
+}
+
 void ext2_update(vfs_node_t node)
 {
     ext2_file_t *file = (ext2_file_t *)node->handle;
@@ -605,65 +755,6 @@ void ext2_update(vfs_node_t node)
     node->writetime = file_inode.i_mtime;
 }
 
-int ext2_fsid = 0;
-
-void ext2_readdir(ext2_file_t *dir, vfs_node_t parent)
-{
-    uint32_t block_group = (dir->inode_id - 1) / dir->inodes_per_group;
-    uint32_t inode_index = (dir->inode_id - 1) % dir->inodes_per_group;
-
-    uint64_t bg_desc_block = 1 + (block_group * sizeof(ext2_block_group_desc_t)) / dir->block_size;
-    uint64_t bg_desc_offset = (block_group * sizeof(ext2_block_group_desc_t)) % dir->block_size;
-
-    uint8_t *bg_block = malloc(dir->block_size);
-    vfs_read(dir->device, bg_block, bg_desc_block * dir->block_size, dir->block_size);
-    ext2_block_group_desc_t bg_desc;
-    fast_memcpy(&bg_desc, bg_block + bg_desc_offset, sizeof(ext2_block_group_desc_t));
-    free(bg_block);
-
-    uint64_t inode_table_offset = bg_desc.bg_inode_table * dir->block_size;
-    uint64_t inode_offset = inode_table_offset + inode_index * dir->inode_size;
-
-    ext2_inode_t dir_inode;
-    vfs_read(dir->device, &dir_inode, inode_offset, sizeof(ext2_inode_t));
-
-    for (int i = 0; i < 12; i++)
-    {
-        if (dir_inode.i_block[i] == 0)
-            break;
-
-        uint8_t *block = malloc(dir->block_size);
-        uint64_t block_offset = dir_inode.i_block[i] * dir->block_size;
-        vfs_read(dir->device, block, block_offset, dir->block_size);
-
-        ext2_dirent_t *dirent = (ext2_dirent_t *)block;
-        while ((uint8_t *)dirent < block + dir->block_size)
-        {
-            char entry_name[256];
-            fast_memcpy(entry_name, (char *)dirent->name, dirent->name_len);
-            entry_name[dirent->name_len] = 0;
-
-            if (dirent->inode_id != 0 && strlen(entry_name) != 0)
-            {
-                if (streq(entry_name, ".") || streq(entry_name, ".."))
-                    goto next;
-
-                vfs_node_t child = vfs_child_append(parent, entry_name, NULL);
-                child->type = (dirent->type == EXT2_FT_SYMLINK) ? file_symlink : (dirent->type == EXT2_FT_DIRECTORY) ? file_dir
-                                                                                                                     : file_none;
-                child->fsid = ext2_fsid;
-            }
-            if (dirent->rec_len == 0)
-                break;
-
-        next:
-            dirent = (ext2_dirent_t *)((uint8_t *)dirent + dirent->rec_len);
-        }
-
-        free(block);
-    }
-}
-
 void ext2_read_linkname(ext2_file_t *file, vfs_node_t node)
 {
     uint32_t block_group = (file->inode_id - 1) / file->inodes_per_group;
@@ -684,39 +775,61 @@ void ext2_read_linkname(ext2_file_t *file, vfs_node_t node)
     ext2_inode_t file_inode;
     vfs_read(file->device, &file_inode, inode_offset, sizeof(ext2_inode_t));
 
-    if (node->size <= sizeof(file_inode.i_block))
+    if (!node->linkname)
     {
-        const char *link_path = (const char *)file_inode.i_block;
-        node->linkname = strdup(link_path);
-    }
-    else
-    {
-        char *name = (char *)malloc(node->size);
-        ext2_read(file, name, 0, node->size);
-        node->linkname = strdup((const char *)name);
-        free(name);
+        if (node->size <= sizeof(file_inode.i_block))
+        {
+            const char *link_path = (const char *)file_inode.i_block;
+            node->linkname = strdup(link_path);
+        }
+        else
+        {
+            char *name = (char *)malloc(node->size);
+            ext2_read(file, name, 0, node->size);
+            node->linkname = strdup((const char *)name);
+            free(name);
+        }
     }
 }
 
-// 真正实现
+int ext2_fsid = 0;
 
-void ext2_open(void *parent, const char *name, vfs_node_t node)
+static void process_dir_block(ext2_file_t *dir, uint8_t *block, vfs_node_t parent)
 {
-    ext2_file_t *dir = (ext2_file_t *)parent;
+    ext2_dirent_t *dirent = (ext2_dirent_t *)block;
+    while ((uint8_t *)dirent < block + dir->block_size)
+    {
+        char entry_name[256];
+        fast_memcpy(entry_name, (char *)dirent->name, dirent->name_len);
+        entry_name[dirent->name_len] = 0;
 
+        if (dirent->inode_id != 0 && strlen(entry_name) != 0)
+        {
+            if (streq(entry_name, ".") || streq(entry_name, ".."))
+                goto next;
+
+            vfs_node_t child = vfs_child_append(parent, entry_name, NULL);
+            child->type = (dirent->type == EXT2_FT_SYMLINK) ? file_symlink : (dirent->type == EXT2_FT_DIRECTORY) ? file_dir
+                                                                                                                 : file_none;
+            child->fsid = ext2_fsid;
+        }
+    next:
+        if (dirent->rec_len == 0)
+            break;
+        dirent = (ext2_dirent_t *)((uint8_t *)dirent + dirent->rec_len);
+    }
+}
+
+void ext2_readdir(ext2_file_t *dir, vfs_node_t parent)
+{
     uint32_t block_group = (dir->inode_id - 1) / dir->inodes_per_group;
-    uint32_t inode_index = (dir->inode_id - 1) % dir->inodes_per_group;
 
-    uint64_t bg_desc_block = 1 + (block_group * sizeof(ext2_block_group_desc_t)) / dir->block_size;
-    uint64_t bg_desc_offset = (block_group * sizeof(ext2_block_group_desc_t)) % dir->block_size;
-
-    uint8_t *bg_block = malloc(dir->block_size);
-    vfs_read(dir->device, bg_block, bg_desc_block * dir->block_size, dir->block_size);
     ext2_block_group_desc_t bg_desc;
-    fast_memcpy(&bg_desc, bg_block + bg_desc_offset, sizeof(ext2_block_group_desc_t));
-    free(bg_block);
+    if (ext2_read_bg_desc(dir, block_group, &bg_desc) < 0)
+        return;
 
     uint64_t inode_table_offset = bg_desc.bg_inode_table * dir->block_size;
+    uint32_t inode_index = (dir->inode_id - 1) % dir->inodes_per_group;
     uint64_t inode_offset = inode_table_offset + inode_index * dir->inode_size;
 
     ext2_inode_t dir_inode;
@@ -727,88 +840,217 @@ void ext2_open(void *parent, const char *name, vfs_node_t node)
         if (dir_inode.i_block[i] == 0)
             break;
 
-        uint8_t *block = malloc(dir->block_size);
-        uint64_t block_offset = dir_inode.i_block[i] * dir->block_size;
-        vfs_read(dir->device, block, block_offset, dir->block_size);
+        uint8_t *block = alloc_frames_bytes(dir->block_size);
+        vfs_read(dir->device, block, dir_inode.i_block[i] * dir->block_size, dir->block_size);
+        process_dir_block(dir, block, parent);
+        free_frames_bytes(block, dir->block_size);
+    }
 
-        ext2_dirent_t *dirent = (ext2_dirent_t *)block;
-        while ((uint8_t *)dirent < block + dir->block_size)
+    // 处理一级间接块
+    if (dir_inode.i_block[12] != 0)
+    {
+        uint32_t *indirect = alloc_frames_bytes(dir->block_size);
+        vfs_read(dir->device, indirect, dir_inode.i_block[12] * dir->block_size, dir->block_size);
+
+        for (int i = 0; i < dir->block_size / sizeof(uint32_t); i++)
         {
-            char entry_name[256];
-            fast_memcpy(entry_name, (char *)dirent->name, dirent->name_len);
-            entry_name[dirent->name_len] = 0;
-
-            if (dirent->inode_id)
-            {
-                if (streq(entry_name, ".") || streq(entry_name, ".."))
-                    goto next;
-
-                if (strcmp(entry_name, name) == 0)
-                {
-                    // found
-                    node->type = (dirent->type == EXT2_FT_SYMLINK) ? file_symlink : (dirent->type == EXT2_FT_DIRECTORY) ? file_dir
-                                                                                                                        : file_none;
-                    ext2_file_t *handle = malloc(sizeof(ext2_file_t));
-                    handle->device = dir->device;
-                    handle->inode_id = dirent->inode_id;
-                    handle->block_size = dir->block_size;
-                    handle->inode_size = dir->inode_size;
-                    handle->inodes_per_group = dir->inodes_per_group;
-                    handle->blocks_per_group = dir->blocks_per_group;
-                    handle->block_groups_count = dir->block_groups_count;
-                    handle->file_type = dirent->type;
-                    handle->node = node;
-                    handle->prefetch_buffer = malloc(handle->block_size);
-                    handle->prefetch_block = 0;
-                    handle->prefetch_offset = 0;
-                    handle->prefetch_valid = false;
-                    node->inode = handle->inode_id;
-                    node->blksz = handle->block_size;
-                    node->handle = handle;
-                    node->fsid = ext2_fsid;
-                    if (node->type & file_symlink)
-                    {
-                        ext2_read_linkname(handle, node);
-                        vfs_op_lock = false;
-                        vfs_node_t target_node = vfs_open_at(node->parent ? node->parent : rootdir, (const char *)node->linkname, false);
-                        vfs_op_lock = true;
-                        if (target_node)
-                        {
-                            if (target_node->type == EXT2_FT_DIRECTORY)
-                                node->type |= file_dir;
-                            else if (target_node->type == EXT2_FT_REGULAR)
-                                node->type |= file_none;
-                        }
-                    }
-                    if (node->type & file_dir)
-                        ext2_readdir(handle, node);
-                    ext2_update(node);
-                    free(block);
-                    return;
-                }
-            }
-            if (dirent->rec_len == 0)
+            if (indirect[i] == 0)
                 break;
 
-        next:
-            dirent = (ext2_dirent_t *)((uint8_t *)dirent + dirent->rec_len);
+            uint8_t *block = alloc_frames_bytes(dir->block_size);
+            vfs_read(dir->device, block, indirect[i] * dir->block_size, dir->block_size);
+            process_dir_block(dir, block, parent);
+            free_frames_bytes(block, dir->block_size);
         }
+        free_frames_bytes(indirect, dir->block_size);
+    }
 
+    // 处理二级间接块
+    if (dir_inode.i_block[13] != 0)
+    {
+        uint32_t *double_indirect = alloc_frames_bytes(dir->block_size);
+        vfs_read(dir->device, double_indirect, dir_inode.i_block[13] * dir->block_size, dir->block_size);
+
+        for (int i = 0; i < dir->block_size / sizeof(uint32_t); i++)
+        {
+            if (double_indirect[i] == 0)
+                break;
+
+            uint32_t *indirect = alloc_frames_bytes(dir->block_size);
+            vfs_read(dir->device, indirect, double_indirect[i] * dir->block_size, dir->block_size);
+
+            for (int j = 0; j < dir->block_size / sizeof(uint32_t); j++)
+            {
+                if (indirect[j] == 0)
+                    break;
+
+                uint8_t *block = alloc_frames_bytes(dir->block_size);
+                vfs_read(dir->device, block, indirect[j] * dir->block_size, dir->block_size);
+                process_dir_block(dir, block, parent);
+                free_frames_bytes(block, dir->block_size);
+            }
+            free_frames_bytes(indirect, dir->block_size);
+        }
+        free_frames_bytes(double_indirect, dir->block_size);
+    }
+}
+
+static bool find_in_dir_block(ext2_file_t *dir, uint8_t *block, const char *name, vfs_node_t node)
+{
+    ext2_dirent_t *dirent = (ext2_dirent_t *)block;
+    while ((uint8_t *)dirent < block + dir->block_size)
+    {
+        char entry_name[256];
+        fast_memcpy(entry_name, (char *)dirent->name, dirent->name_len);
+        entry_name[dirent->name_len] = 0;
+
+        if (dirent->inode_id && strcmp(entry_name, name) == 0)
+        {
+            // found
+            node->type = (dirent->type == EXT2_FT_SYMLINK) ? file_symlink : (dirent->type == EXT2_FT_DIRECTORY) ? file_dir
+                                                                                                                : file_none;
+            ext2_file_t *handle = malloc(sizeof(ext2_file_t));
+            handle->device = dir->device;
+            handle->inode_id = dirent->inode_id;
+            handle->block_size = dir->block_size;
+            handle->inode_size = dir->inode_size;
+            handle->inodes_per_group = dir->inodes_per_group;
+            handle->blocks_per_group = dir->blocks_per_group;
+            handle->block_groups_count = dir->block_groups_count;
+            handle->file_type = dirent->type;
+            handle->node = node;
+            node->inode = handle->inode_id;
+            node->blksz = handle->block_size;
+            node->handle = handle;
+            node->fsid = ext2_fsid;
+            if (node->type & file_symlink)
+            {
+                ext2_read_linkname(handle, node);
+                vfs_node_t target_node = vfs_open_at(node->parent ? node->parent : rootdir, (const char *)node->linkname, false);
+                if (target_node)
+                {
+                    if (target_node->type == EXT2_FT_DIRECTORY)
+                        node->type |= file_dir;
+                    else if (target_node->type == EXT2_FT_REGULAR)
+                        node->type |= file_none;
+                }
+            }
+            if (node->type & file_dir)
+                ext2_readdir(handle, node);
+            ext2_update(node);
+            return true;
+        }
+        if (dirent->rec_len == 0)
+            break;
+
+        dirent = (ext2_dirent_t *)((uint8_t *)dirent + dirent->rec_len);
+    }
+    return false;
+}
+
+// 真正实现
+
+void ext2_open(void *parent, const char *name, vfs_node_t node)
+{
+    ext2_file_t *dir = (ext2_file_t *)parent;
+
+    if (!dir || !name || !node)
+        return;
+
+    uint32_t block_group = (dir->inode_id - 1) / dir->inodes_per_group;
+    ext2_block_group_desc_t bg_desc;
+
+    if (ext2_read_bg_desc(dir, block_group, &bg_desc) < 0)
+        return;
+
+    uint64_t inode_table_offset = bg_desc.bg_inode_table * dir->block_size;
+    uint32_t inode_index = (dir->inode_id - 1) % dir->inodes_per_group;
+    uint64_t inode_offset = inode_table_offset + inode_index * dir->inode_size;
+
+    ext2_inode_t dir_inode;
+    vfs_read(dir->device, &dir_inode, inode_offset, sizeof(ext2_inode_t));
+
+    // 处理直接块
+    for (int i = 0; i < 12; i++)
+    {
+        if (dir_inode.i_block[i] == 0)
+            break;
+
+        uint8_t *block = malloc(dir->block_size);
+        vfs_read(dir->device, block, dir_inode.i_block[i] * dir->block_size, dir->block_size);
+        if (find_in_dir_block(dir, block, name, node))
+        {
+            free(block);
+            return;
+        }
         free(block);
     }
 
-    node->handle = NULL;
+    // 处理一级间接块
+    if (dir_inode.i_block[12] != 0)
+    {
+        uint32_t *indirect = malloc(dir->block_size);
+        vfs_read(dir->device, indirect, dir_inode.i_block[12] * dir->block_size, dir->block_size);
+
+        for (int i = 0; i < dir->block_size / sizeof(uint32_t); i++)
+        {
+            if (indirect[i] == 0)
+                break;
+
+            uint8_t *block = malloc(dir->block_size);
+            vfs_read(dir->device, block, indirect[i] * dir->block_size, dir->block_size);
+            if (find_in_dir_block(dir, block, name, node))
+            {
+                free(block);
+                free(indirect);
+                return;
+            }
+            free(block);
+        }
+        free(indirect);
+    }
+
+    // 处理二级间接块
+    if (dir_inode.i_block[13] != 0)
+    {
+        uint32_t *double_indirect = malloc(dir->block_size);
+        vfs_read(dir->device, double_indirect, dir_inode.i_block[13] * dir->block_size, dir->block_size);
+
+        for (int i = 0; i < dir->block_size / sizeof(uint32_t); i++)
+        {
+            if (double_indirect[i] == 0)
+                break;
+
+            uint32_t *indirect = malloc(dir->block_size);
+            vfs_read(dir->device, indirect, double_indirect[i] * dir->block_size, dir->block_size);
+
+            for (int j = 0; j < dir->block_size / sizeof(uint32_t); j++)
+            {
+                if (indirect[j] == 0)
+                    break;
+
+                uint8_t *block = malloc(dir->block_size);
+                vfs_read(dir->device, block, indirect[j] * dir->block_size, dir->block_size);
+                if (find_in_dir_block(dir, block, name, node))
+                {
+                    free(block);
+                    free(indirect);
+                    free(double_indirect);
+                    return;
+                }
+                free(block);
+            }
+            free(indirect);
+        }
+        free(double_indirect);
+    }
 }
 
-void ext2_close(void *current)
+bool ext2_close(void *current)
 {
     ext2_file_t *f = (ext2_file_t *)current;
-    if (f->prefetch_buffer)
-    {
-        free_frames_bytes(f->prefetch_buffer, f->block_size);
-        f->prefetch_buffer = NULL;
-    }
     free(f);
+    return true;
 }
 
 int ext2_mount(const char *src, vfs_node_t node)
@@ -837,10 +1079,6 @@ int ext2_mount(const char *src, vfs_node_t node)
     file->block_groups_count = (sb.s_blocks_count + sb.s_blocks_per_group - 1) / sb.s_blocks_per_group;
     file->file_type = EXT2_FT_DIRECTORY;
     file->node = node;
-    file->prefetch_buffer = malloc(file->block_size);
-    file->prefetch_block = 0;
-    file->prefetch_offset = 0;
-    file->prefetch_valid = false;
 
     node->inode = file->inode_id;
     node->blksz = file->block_size;
@@ -865,54 +1103,24 @@ ssize_t ext2_write(void *file, const void *addr, size_t offset, size_t size)
     if (f->inode_id == 0)
         return -EINVAL;
 
+    spin_lock(&ext2_op_lock);
+
     ext2_inode_t f_inode;
 
-    if (f->node->type & file_symlink)
+    uint32_t block_group = (f->inode_id - 1) / f->inodes_per_group;
+    ext2_block_group_desc_t bg_desc;
+
+    if (ext2_read_bg_desc(f, block_group, &bg_desc) < 0)
     {
-        vfs_node_t node = vfs_open_at(f->node->parent, (const char *)f->node->linkname, false);
-        if (!node)
-            return -ENOENT;
-
-        ext2_file_t *link_f = node->handle;
-
-        uint32_t block_group = (link_f->inode_id - 1) / link_f->inodes_per_group;
-        uint32_t inode_index = (link_f->inode_id - 1) % link_f->inodes_per_group;
-
-        uint64_t bg_desc_block = 1 + (block_group * sizeof(ext2_block_group_desc_t)) / link_f->block_size;
-        uint64_t bg_desc_offset = (block_group * sizeof(ext2_block_group_desc_t)) % link_f->block_size;
-
-        uint8_t *bg_block = malloc(link_f->block_size);
-        vfs_read(link_f->device, bg_block, bg_desc_block * link_f->block_size, link_f->block_size);
-        ext2_block_group_desc_t bg_desc;
-        fast_memcpy(&bg_desc, bg_block + bg_desc_offset, sizeof(ext2_block_group_desc_t));
-        free(bg_block);
-
-        uint64_t inode_table_offset = bg_desc.bg_inode_table * link_f->block_size;
-        uint64_t inode_offset = inode_table_offset + inode_index * link_f->inode_size;
-
-        vfs_read(link_f->device, &f_inode, inode_offset, sizeof(ext2_inode_t));
-
-        vfs_close(node);
+        spin_unlock(&ext2_op_lock);
+        return 0;
     }
-    else
-    {
-        uint32_t block_group = (f->inode_id - 1) / f->inodes_per_group;
-        uint32_t inode_index = (f->inode_id - 1) % f->inodes_per_group;
 
-        uint64_t bg_desc_block = 1 + (block_group * sizeof(ext2_block_group_desc_t)) / f->block_size;
-        uint64_t bg_desc_offset = (block_group * sizeof(ext2_block_group_desc_t)) % f->block_size;
+    uint64_t inode_table_offset = bg_desc.bg_inode_table * f->block_size;
+    uint32_t inode_index = (f->inode_id - 1) % f->inodes_per_group;
+    uint64_t inode_offset = inode_table_offset + inode_index * f->inode_size;
 
-        uint8_t *bg_block = malloc(f->block_size);
-        vfs_read(f->device, bg_block, bg_desc_block * f->block_size, f->block_size);
-        ext2_block_group_desc_t bg_desc;
-        fast_memcpy(&bg_desc, bg_block + bg_desc_offset, sizeof(ext2_block_group_desc_t));
-        free(bg_block);
-
-        uint64_t inode_table_offset = bg_desc.bg_inode_table * f->block_size;
-        uint64_t inode_offset = inode_table_offset + inode_index * f->inode_size;
-
-        vfs_read(f->device, &f_inode, inode_offset, sizeof(ext2_inode_t));
-    }
+    vfs_read(f->device, &f_inode, inode_offset, sizeof(ext2_inode_t));
 
     const uint8_t *data = (const uint8_t *)addr;
     size_t remaining = size;
@@ -928,7 +1136,10 @@ ssize_t ext2_write(void *file, const void *addr, size_t offset, size_t size)
         // 获取或分配物理块
         uint32_t physical_block = ext2_get_or_alloc_block(f, &f_inode, logical_block);
         if (physical_block == 0)
+        {
+            spin_unlock(&ext2_op_lock);
             return -ENOSPC; // 无空闲块
+        }
 
         // 计算本次写入的字节数（不超过块剩余空间或剩余数据）
         size_t bytes_to_write = block_size - block_offset;
@@ -938,7 +1149,10 @@ ssize_t ext2_write(void *file, const void *addr, size_t offset, size_t size)
         // 读取现有块数据（若存在）或初始化新块
         uint8_t *block_data = malloc(block_size);
         if (!block_data)
+        {
+            spin_unlock(&ext2_op_lock);
             return -ENOMEM;
+        }
         vfs_read(f->device, block_data, physical_block * block_size, block_size);
 
         // 复制用户数据到块内指定位置
@@ -963,6 +1177,8 @@ ssize_t ext2_write(void *file, const void *addr, size_t offset, size_t size)
     f_inode.i_mtime = mktime(&time);
     ext2_write_inode(f, f->inode_id, &f_inode); // 写回inode
 
+    spin_unlock(&ext2_op_lock);
+
     return size - remaining;
 }
 
@@ -972,54 +1188,24 @@ ssize_t ext2_read(void *file, void *addr, size_t offset, size_t size)
     if (f->inode_id == 0)
         return -EINVAL;
 
+    spin_lock(&ext2_op_lock);
+
     ext2_inode_t f_inode;
 
-    if (f->node->type & file_symlink)
+    uint32_t block_group = (f->inode_id - 1) / f->inodes_per_group;
+    ext2_block_group_desc_t bg_desc;
+
+    if (ext2_read_bg_desc(f, block_group, &bg_desc) < 0)
     {
-        vfs_node_t node = vfs_open_at(f->node->parent, (const char *)f->node->linkname, false);
-        if (!node)
-            return -ENOENT;
-
-        ext2_file_t *link_f = node->handle;
-
-        uint32_t block_group = (link_f->inode_id - 1) / link_f->inodes_per_group;
-        uint32_t inode_index = (link_f->inode_id - 1) % link_f->inodes_per_group;
-
-        uint64_t bg_desc_block = 1 + (block_group * sizeof(ext2_block_group_desc_t)) / link_f->block_size;
-        uint64_t bg_desc_offset = (block_group * sizeof(ext2_block_group_desc_t)) % link_f->block_size;
-
-        uint8_t *bg_block = malloc(link_f->block_size);
-        vfs_read(link_f->device, bg_block, bg_desc_block * link_f->block_size, link_f->block_size);
-        ext2_block_group_desc_t bg_desc;
-        fast_memcpy(&bg_desc, bg_block + bg_desc_offset, sizeof(ext2_block_group_desc_t));
-        free(bg_block);
-
-        uint64_t inode_table_offset = bg_desc.bg_inode_table * link_f->block_size;
-        uint64_t inode_offset = inode_table_offset + inode_index * link_f->inode_size;
-
-        vfs_read(link_f->device, &f_inode, inode_offset, sizeof(ext2_inode_t));
-
-        vfs_close(node);
+        spin_unlock(&ext2_op_lock);
+        return 0;
     }
-    else
-    {
-        uint32_t block_group = (f->inode_id - 1) / f->inodes_per_group;
-        uint32_t inode_index = (f->inode_id - 1) % f->inodes_per_group;
 
-        uint64_t bg_desc_block = 1 + (block_group * sizeof(ext2_block_group_desc_t)) / f->block_size;
-        uint64_t bg_desc_offset = (block_group * sizeof(ext2_block_group_desc_t)) % f->block_size;
+    uint64_t inode_table_offset = bg_desc.bg_inode_table * f->block_size;
+    uint32_t inode_index = (f->inode_id - 1) % f->inodes_per_group;
+    uint64_t inode_offset = inode_table_offset + inode_index * f->inode_size;
 
-        uint8_t *bg_block = malloc(f->block_size);
-        vfs_read(f->device, bg_block, bg_desc_block * f->block_size, f->block_size);
-        ext2_block_group_desc_t bg_desc;
-        fast_memcpy(&bg_desc, bg_block + bg_desc_offset, sizeof(ext2_block_group_desc_t));
-        free(bg_block);
-
-        uint64_t inode_table_offset = bg_desc.bg_inode_table * f->block_size;
-        uint64_t inode_offset = inode_table_offset + inode_index * f->inode_size;
-
-        vfs_read(f->device, &f_inode, inode_offset, sizeof(ext2_inode_t));
-    }
+    vfs_read(f->device, &f_inode, inode_offset, sizeof(ext2_inode_t));
 
     uint8_t *buffer = (uint8_t *)addr;
     size_t remaining = size;
@@ -1041,35 +1227,17 @@ ssize_t ext2_read(void *file, void *addr, size_t offset, size_t size)
         size_t bytes_to_read = block_size - block_offset;
         bytes_to_read = MIN(bytes_to_read, MIN(file_remaining, remaining));
 
-        // 触发异步预读取下一个块
-        if (logical_block % 4 == 0)
-        { // 每4个块预读一次
-            uint32_t next_block = ext2_get_physical_block(f, &f_inode, logical_block + 1);
-            if (next_block)
-            {
-                vfs_read(f->device, f->prefetch_buffer, next_block * block_size, block_size);
-                f->prefetch_block = next_block;
-                f->prefetch_valid = true;
-            }
-        }
-
-        if (f->prefetch_valid && physical_block == f->prefetch_block)
-        {
-            fast_memcpy(buffer, f->prefetch_buffer + block_offset, bytes_to_read);
-            f->prefetch_valid = false;
-        }
-        else
-        {
-            uint8_t *block_data = malloc(block_size);
-            vfs_read(f->device, block_data, physical_block * block_size, block_size);
-            fast_memcpy(buffer, block_data + block_offset, bytes_to_read);
-            free(block_data);
-        }
+        uint8_t *block_data = malloc(block_size);
+        vfs_read(f->device, block_data, physical_block * block_size, block_size);
+        fast_memcpy(buffer, block_data + block_offset, bytes_to_read);
+        free(block_data);
 
         buffer += bytes_to_read;
         remaining -= bytes_to_read;
         current_offset += bytes_to_read;
     }
+
+    spin_unlock(&ext2_op_lock);
 
     return size - remaining;
 }
@@ -1079,6 +1247,16 @@ int ext2_mkfile(void *parent, const char *name, vfs_node_t node)
     ext2_file_t *parent_dir = (ext2_file_t *)parent;
     if (!parent_dir || !name || !node)
         return -EINVAL;
+
+    // 检查文件是否已存在
+    vfs_node_t existing = vfs_open_at(parent_dir->node, name, false);
+    if (existing && existing->handle)
+    {
+        vfs_close(existing);
+        return -EEXIST;
+    }
+    if (existing)
+        vfs_close(existing);
 
     uint32_t new_inode_id = ext2_find_free_inode(parent_dir);
     if (new_inode_id == 0)
@@ -1090,20 +1268,42 @@ int ext2_mkfile(void *parent, const char *name, vfs_node_t node)
 
     ext2_inode_t new_inode;
     memset(&new_inode, 0, sizeof(ext2_inode_t));
-    new_inode.i_mode = S_IFREG | 0644;                                    // 普通文件 + 权限0644（可调整）
-    new_inode.i_uid = current_task->uid;                                  // 假设current_task存储用户ID
-    new_inode.i_gid = current_task->gid;                                  // 假设current_task存储组ID
-    new_inode.i_atime = new_inode.i_ctime = new_inode.i_mtime = now_time; // 当前时间
-    new_inode.i_links_count = 1;                                          // 初始链接数（父目录引用）
-    new_inode.i_blocks = 0;                                               // 初始无数据块
-    new_inode.i_size = 0;                                                 // 初始文件大小为0
+    new_inode.i_mode = S_IFREG | 0644;
+    new_inode.i_uid = current_task->uid;
+    new_inode.i_gid = current_task->gid;
+    new_inode.i_atime = new_inode.i_ctime = new_inode.i_mtime = now_time;
+    new_inode.i_links_count = 1;
+    new_inode.i_blocks = 0;
+    new_inode.i_size = 0;
 
+    // 写回新inode
     ext2_write_inode(parent_dir, new_inode_id, &new_inode);
 
-    if (ext2_add_dir_entry(parent_dir, name, new_inode_id, EXT2_FT_REGULAR) < 0)
+    // 添加目录项
+    int ret = ext2_add_dir_entry(parent_dir, name, new_inode_id, EXT2_FT_REGULAR);
+    if (ret < 0)
     {
-        return -ENOSPC;
+        ext2_inode_t empty_inode;
+        memset(&empty_inode, 0, sizeof(ext2_inode_t));
+        ext2_write_inode(parent_dir, new_inode_id, &empty_inode);
+        return ret;
     }
+
+    ext2_inode_t parent_inode;
+    uint32_t parent_block_group = (parent_dir->inode_id - 1) / parent_dir->inodes_per_group;
+    uint32_t parent_inode_index = (parent_dir->inode_id - 1) % parent_dir->inodes_per_group;
+    uint64_t bg_desc_block = 1 + (parent_block_group * sizeof(ext2_block_group_desc_t)) / parent_dir->block_size;
+    uint64_t bg_desc_offset = (parent_block_group * sizeof(ext2_block_group_desc_t)) % parent_dir->block_size;
+    uint8_t *bg_block = malloc(parent_dir->block_size);
+    vfs_read(parent_dir->device, bg_block, bg_desc_block * parent_dir->block_size, parent_dir->block_size);
+    ext2_block_group_desc_t bg_desc;
+    fast_memcpy(&bg_desc, bg_block + bg_desc_offset, sizeof(ext2_block_group_desc_t));
+    free(bg_block);
+    uint64_t inode_table_offset = bg_desc.bg_inode_table * parent_dir->block_size;
+    uint64_t inode_offset = inode_table_offset + parent_inode_index * parent_dir->inode_size;
+    vfs_read(parent_dir->device, &parent_inode, inode_offset, sizeof(ext2_inode_t));
+    parent_inode.i_mtime = now_time;
+    ext2_write_inode(parent_dir, parent_dir->inode_id, &parent_inode);
 
     node->inode = new_inode_id;
     node->fsid = ext2_fsid;
@@ -1118,6 +1318,16 @@ int ext2_mkdir(void *parent, const char *name, vfs_node_t node)
     if (!parent_dir || !name)
         return -EFAULT;
 
+    // 检查目录是否已存在
+    vfs_node_t existing = vfs_open_at(parent_dir->node, name, false);
+    if (existing && existing->handle)
+    {
+        vfs_close(existing);
+        return -EEXIST;
+    }
+    if (existing)
+        vfs_close(existing);
+
     uint32_t parent_block_group = (parent_dir->inode_id - 1) / parent_dir->inodes_per_group;
     uint32_t parent_inode_index = (parent_dir->inode_id - 1) % parent_dir->inodes_per_group;
 
@@ -1125,7 +1335,14 @@ int ext2_mkdir(void *parent, const char *name, vfs_node_t node)
     uint64_t bg_desc_offset = (parent_block_group * sizeof(ext2_block_group_desc_t)) % parent_dir->block_size;
 
     uint8_t *bg_block = malloc(parent_dir->block_size);
-    vfs_read(parent_dir->device, bg_block, bg_desc_block * parent_dir->block_size, parent_dir->block_size);
+    if (!bg_block)
+        return -ENOMEM;
+    if (vfs_read(parent_dir->device, bg_block, bg_desc_block * parent_dir->block_size, parent_dir->block_size) < 0)
+    {
+        free(bg_block);
+        return -EIO;
+    }
+
     ext2_block_group_desc_t bg_desc;
     fast_memcpy(&bg_desc, bg_block + bg_desc_offset, sizeof(ext2_block_group_desc_t));
     free(bg_block);
@@ -1134,7 +1351,8 @@ int ext2_mkdir(void *parent, const char *name, vfs_node_t node)
     uint64_t parent_inode_offset = parent_inode_table_offset + parent_inode_index * parent_dir->inode_size;
 
     ext2_inode_t parent_inode;
-    vfs_read(parent_dir->device, &parent_inode, parent_inode_offset, sizeof(ext2_inode_t));
+    if (vfs_read(parent_dir->device, &parent_inode, parent_inode_offset, sizeof(ext2_inode_t)) < 0)
+        return -EIO;
 
     uint32_t new_inode_id = ext2_find_free_inode(parent_dir);
     if (new_inode_id == 0)
@@ -1145,23 +1363,28 @@ int ext2_mkdir(void *parent, const char *name, vfs_node_t node)
     uint64_t now_time = mktime(&time);
 
     ext2_inode_t new_inode = {0};
-    new_inode.i_mode = S_IFDIR | 0700; // 目录类型 + 权限
+    new_inode.i_mode = S_IFDIR | 0755; // 修改权限为755更合理
     new_inode.i_uid = current_task->uid;
     new_inode.i_gid = current_task->gid;
     new_inode.i_atime = new_inode.i_ctime = new_inode.i_mtime = now_time;
-    new_inode.i_links_count = 2;               // 初始链接数（. 和 ..）
-    new_inode.i_blocks = 2;                    // 初始占用 2 个块（假设块大小 1024）
-    new_inode.i_size = parent_dir->block_size; // 初始大小为一个块
+    new_inode.i_links_count = 2;
+    new_inode.i_blocks = 2;
+    new_inode.i_size = parent_dir->block_size;
 
-    ext2_write_inode(parent_dir, new_inode_id, &new_inode);
-
+    // 分配新块
     uint32_t new_block = ext2_find_free_block(parent_dir);
+    if (new_block == 0)
+    {
+        return -ENOSPC;
+    }
 
-    new_inode.i_block[0] = new_block;
-
+    // 初始化目录块
     uint8_t *dir_block = malloc(parent_dir->block_size);
+    if (!dir_block)
+        return -ENOMEM;
     memset(dir_block, 0, parent_dir->block_size);
 
+    // 设置.和..目录项
     ext2_dirent_t *dot = (ext2_dirent_t *)dir_block;
     dot->inode_id = new_inode_id;
     dot->rec_len = 24;
@@ -1176,43 +1399,31 @@ int ext2_mkdir(void *parent, const char *name, vfs_node_t node)
     dotdot->type = EXT2_FT_DIRECTORY;
     fast_memcpy(dotdot->name, "..", 2);
 
-    vfs_write(parent_dir->device, dir_block, new_block * parent_dir->block_size, parent_dir->block_size);
+    // 写入新目录块
+    if (vfs_write(parent_dir->device, dir_block, new_block * parent_dir->block_size, parent_dir->block_size) < 0)
+    {
+        free(dir_block);
+        return -EIO;
+    }
     free(dir_block);
 
-    uint8_t *parent_block = malloc(parent_dir->block_size);
-    vfs_read(parent_dir->device, parent_block, parent_inode.i_block[0] * parent_dir->block_size, parent_dir->block_size);
+    // 更新新目录inode
+    new_inode.i_block[0] = new_block;
+    ext2_write_inode(parent_dir, new_inode_id, &new_inode);
 
-    ext2_dirent_t *parent_dirent = (ext2_dirent_t *)parent_block;
-    while ((uint8_t *)parent_dirent < parent_block + parent_dir->block_size)
+    // 在父目录中添加目录项
+    int ret = ext2_add_dir_entry(parent_dir, name, new_inode_id, EXT2_FT_DIRECTORY);
+    if (ret < 0)
     {
-        if (parent_dirent->rec_len == 0)
-            break;
-        parent_dirent = (ext2_dirent_t *)((uint8_t *)parent_dirent + parent_dirent->rec_len);
+        // 失败时清理已分配的资源
+        ext2_inode_t empty_inode = {0};
+        ext2_write_inode(parent_dir, new_inode_id, &empty_inode);
+        return ret;
     }
 
-    uint16_t name_len = strlen(name);
-    uint16_t rec_len = ((offsetof(ext2_dirent_t, name) + name_len + 1 + 3) & ~3);
-    if ((uint8_t *)parent_dirent + rec_len > parent_block + parent_dir->block_size)
-    {
-        free(parent_block);
-        return -ENOSPC;
-    }
-
-    parent_dirent->inode_id = new_inode_id;
-    parent_dirent->rec_len = rec_len;
-    parent_dirent->name_len = name_len;
-    parent_dirent->type = EXT2_FT_DIRECTORY;
-    fast_memcpy(parent_dirent->name, name, name_len);
-    parent_dirent->name[name_len] = '\0';
-
-    vfs_write(parent_dir->device, parent_block, parent_inode.i_block[0] * parent_dir->block_size, parent_dir->block_size);
-    free(parent_block);
-
-    uint64_t new_inode_table_offset = bg_desc.bg_inode_table * parent_dir->block_size;
-    uint64_t new_inode_offset = new_inode_table_offset + (new_inode_id - 1) * parent_dir->inode_size;
-    vfs_write(parent_dir->device, &new_inode, new_inode_offset, sizeof(ext2_inode_t));
-
-    vfs_write(parent_dir->device, &bg_desc, bg_desc_block * parent_dir->block_size + bg_desc_offset, sizeof(ext2_block_group_desc_t));
+    // 更新父目录时间
+    parent_inode.i_mtime = now_time;
+    ext2_write_inode(parent_dir, parent_dir->inode_id, &parent_inode);
 
     node->inode = new_inode_id;
     node->type = file_dir;
@@ -1347,10 +1558,12 @@ int ext2_rename(void *current, const char *new)
 
 int ext2_stat(void *file, vfs_node_t node)
 {
+    ext2_file_t *f = file;
     if (node->type & file_symlink)
         ext2_read_linkname(file, node);
-    else if (node->type & file_none)
+    if (node->type & file_none)
         ext2_update(node);
+    f->node = node;
     return 0;
 }
 
@@ -1362,6 +1575,26 @@ int ext2_ioctl(void *file, ssize_t cmd, ssize_t arg)
 int ext2_poll(void *file, size_t events)
 {
     return -EOPNOTSUPP;
+}
+
+vfs_node_t ext2_dup(vfs_node_t node)
+{
+    if (!node)
+        return NULL;
+
+    // 创建新的vfs节点
+    vfs_node_t new_node = vfs_node_alloc(node->parent, node->name);
+    if (!new_node)
+        return NULL;
+
+    // 复制节点属性
+    memcpy(new_node, node, sizeof(struct vfs_node));
+    
+    // 增加引用计数
+    if (new_node->inode)
+        new_node->refcount++;
+
+    return new_node;
 }
 
 static struct vfs_callback callbacks = {
@@ -1378,6 +1611,7 @@ static struct vfs_callback callbacks = {
     .stat = ext2_stat,
     .ioctl = ext2_ioctl,
     .poll = ext2_poll,
+    .dup = ext2_dup,
 };
 
 void ext2_init()

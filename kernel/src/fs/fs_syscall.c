@@ -103,6 +103,8 @@ uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode)
 
     node->flags = flags;
 
+    node->refcount++;
+
     current_task->fds[i] = node;
 
     return i;
@@ -135,7 +137,15 @@ uint64_t sys_close(uint64_t fd)
         current_task->fds[fd]->lock.l_pid = 0;
     }
 
-    vfs_close(current_task->fds[fd]);
+    if (current_task->fds[fd]->refcount >= 1)
+    {
+        current_task->fds[fd]->refcount--;
+
+        if (current_task->fds[fd]->refcount == 0)
+            vfs_close(current_task->fds[fd]);
+    }
+    else
+        vfs_close(current_task->fds[fd]);
 
     current_task->fds[fd] = NULL;
 
@@ -396,33 +406,9 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd)
     if (!node)
         return (uint64_t)-EBADF;
 
-    if (node->type & file_pipe)
-    {
-        pipe_specific_t *spec = (pipe_specific_t *)node->handle;
-        pipe_info_t *pipe = spec->info;
-        if (spec->write)
-            pipe->writeFds++;
-        else
-            pipe->readFds++;
-    }
-    else if (node->type & file_socket)
-    {
-        socket_t *socket = (socket_t *)node->handle;
-        if (node->fsid == unix_accept_fsid)
-            socket->pair->serverFds++;
-        else if (node->fsid == unix_socket_fsid)
-        {
-            socket->timesOpened++;
-            if (socket->pair)
-            {
-                socket->pair->clientFds++;
-            }
-        }
-    }
-    char *fullpath = vfs_get_fullpath(node);
-    vfs_node_t new = vfs_open(fullpath);
-    free(fullpath);
-    new->handle = node->handle;
+    vfs_node_t new = vfs_dup(node);
+    if (!new)
+        return (uint64_t)-ENOSPC;
 
     if (current_task->fds[newfd])
     {
@@ -468,6 +454,9 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
     case F_SETFD:
         return current_task->fds[fd]->flags |= O_CLOEXEC;
     case F_DUPFD_CLOEXEC:
+        uint64_t newfd = sys_dup(fd);
+        current_task->fds[newfd]->flags |= O_CLOEXEC;
+        return newfd;
     case F_DUPFD:
         return sys_dup(fd);
     case F_GETFL:
@@ -493,7 +482,8 @@ uint64_t sys_stat(const char *fd, struct stat *buf)
     buf->st_dev = 0;
     buf->st_ino = node->inode;
     buf->st_nlink = 1;
-    buf->st_mode = node->mode | (node->type & file_dir ? S_IFDIR : (node->type & file_symlink ? S_IFLNK : S_IFREG));
+    buf->st_mode = node->mode | ((node->type & file_symlink) ? S_IFLNK : (node->type & file_dir ? S_IFDIR : S_IFREG));
+    buf->st_uid = 0;
     buf->st_uid = 0;
     buf->st_gid = 0;
     if (node->type & file_stream)
@@ -535,7 +525,7 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
     buf->st_dev = 0;
     buf->st_ino = current_task->fds[fd]->inode;
     buf->st_nlink = 1;
-    buf->st_mode = current_task->fds[fd]->mode | (current_task->fds[fd]->type & file_dir ? S_IFDIR : (current_task->fds[fd]->type & file_symlink ? S_IFLNK : S_IFREG));
+    buf->st_mode = current_task->fds[fd]->mode | ((current_task->fds[fd]->type & file_symlink) ? S_IFLNK : (current_task->fds[fd]->type & file_dir ? S_IFDIR : S_IFREG));
     buf->st_uid = 0;
     buf->st_gid = 0;
     if (current_task->fds[fd]->type & file_stream)
@@ -1065,7 +1055,7 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events, int maxevent
         while (browse && ready < maxevents)
         {
             int revents = vfs_poll(browse->fd, browse->watchEvents);
-            if (revents > 0)
+            if (revents != 0 && ready < maxevents)
             {
                 events[ready].events = revents;
                 events[ready].data = (epoll_data_t)browse->userlandData;
@@ -1105,6 +1095,8 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd, struct epoll_event *event)
     }
 
     epoll_t *epoll = epollFd->handle;
+    if (!epoll)
+        return -EINVAL;
 
     size_t ret = 0;
 
@@ -1125,7 +1117,7 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd, struct epoll_event *event)
         epollWatch->userlandData = (uint64_t)event->data.ptr;
         epollWatch->next = NULL;
         epoll_watch_t *current = epoll->firstEpollWatch;
-        if (current && current->next)
+        if (current)
         {
             while (current->next)
                 current = current->next;
@@ -1231,23 +1223,13 @@ uint64_t sys_epoll_pwait(int epfd, struct epoll_event *events,
 
 uint64_t sys_epoll_create1(int flags) { return epoll_create1(flags); }
 
-void epollfs_close(void *current)
+bool epollfs_close(void *current)
 {
     epoll_t *epoll = current;
     epoll->reference_count--;
-
-    // todo
-    // if (epoll->reference_count == 0)
-    // {
-    //     epoll_watch_t *browse = epoll->firstEpollWatch;
-    //     while (browse)
-    //     {
-    //         epoll_watch_t *next = browse->next;
-    //         free(browse);
-    //         browse = next;
-    //     }
-    //     free(epoll);
-    // }
+    // if (!epoll->reference_count)
+    //     return true;
+    return false;
 }
 
 static vfs_node_t eventfdfs_root = NULL;
@@ -1527,14 +1509,154 @@ int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, st
     return 0;
 }
 
-void sys_timerfd_close(void *current)
+bool sys_timerfd_close(void *current)
 {
     free(current);
+    return true;
 }
 
 static int dummy()
 {
     return -ENOSYS;
+}
+
+vfs_node_t signalfd_dup(vfs_node_t node)
+{
+    if (!node || !node->handle)
+        return NULL;
+
+    struct signalfd_ctx *ctx = node->handle;
+
+    // 创建新的vfs节点
+    vfs_node_t new_node = vfs_node_alloc(node->parent, node->name);
+    if (!new_node)
+        return NULL;
+
+    // 复制节点属性
+    memcpy(new_node, node, sizeof(struct vfs_node));
+
+    // 创建新的上下文
+    struct signalfd_ctx *new_ctx = malloc(sizeof(struct signalfd_ctx));
+    if (!new_ctx)
+    {
+        vfs_free(new_node);
+        return NULL;
+    }
+
+    // 复制上下文
+    memcpy(new_ctx, ctx, sizeof(struct signalfd_ctx));
+    new_node->handle = new_ctx;
+
+    // 复制信号队列
+    new_ctx->queue = malloc(new_ctx->queue_size * sizeof(struct sigevent));
+    memcpy(new_ctx->queue, ctx->queue, new_ctx->queue_size * sizeof(struct sigevent));
+
+    return new_node;
+}
+
+vfs_node_t epollfd_dup(vfs_node_t node)
+{
+    if (!node || !node->handle)
+        return NULL;
+
+    epoll_t *epoll = node->handle;
+
+    // 创建新的vfs节点
+    vfs_node_t new_node = vfs_node_alloc(node->parent, node->name);
+    if (!new_node)
+        return NULL;
+
+    // 复制节点属性
+    memcpy(new_node, node, sizeof(struct vfs_node));
+
+    // 创建新的epoll上下文
+    epoll_t *new_epoll = malloc(sizeof(epoll_t));
+    if (!new_epoll)
+    {
+        vfs_free(new_node);
+        return NULL;
+    }
+
+    // 初始化新epoll
+    new_epoll->lock = false;
+    new_epoll->reference_count = 1;
+    new_epoll->firstEpollWatch = NULL;
+    new_node->handle = new_epoll;
+
+    // 复制所有监视项
+    epoll_watch_t *current = epoll->firstEpollWatch;
+    epoll_watch_t **last = &new_epoll->firstEpollWatch;
+
+    while (current)
+    {
+        epoll_watch_t *new_watch = malloc(sizeof(epoll_watch_t));
+        memcpy(new_watch, current, sizeof(epoll_watch_t));
+        *last = new_watch;
+        last = &new_watch->next;
+        current = current->next;
+    }
+
+    return new_node;
+}
+
+vfs_node_t eventfd_dup(vfs_node_t node)
+{
+    if (!node || !node->handle)
+        return NULL;
+
+    eventfd_t *efd = node->handle;
+
+    // 创建新的vfs节点
+    vfs_node_t new_node = vfs_node_alloc(node->parent, node->name);
+    if (!new_node)
+        return NULL;
+
+    // 复制节点属性
+    memcpy(new_node, node, sizeof(struct vfs_node));
+
+    // 创建新的eventfd上下文
+    eventfd_t *new_efd = malloc(sizeof(eventfd_t));
+    if (!new_efd)
+    {
+        vfs_free(new_node);
+        return NULL;
+    }
+
+    // 复制上下文
+    memcpy(new_efd, efd, sizeof(eventfd_t));
+    new_node->handle = new_efd;
+
+    return new_node;
+}
+
+vfs_node_t timerfd_dup(vfs_node_t node)
+{
+    if (!node || !node->handle)
+        return NULL;
+
+    timerfd_t *tfd = node->handle;
+
+    // 创建新的vfs节点
+    vfs_node_t new_node = vfs_node_alloc(node->parent, node->name);
+    if (!new_node)
+        return NULL;
+
+    // 复制节点属性
+    memcpy(new_node, node, sizeof(struct vfs_node));
+
+    // 创建新的timerfd上下文
+    timerfd_t *new_tfd = malloc(sizeof(timerfd_t));
+    if (!new_tfd)
+    {
+        vfs_free(new_node);
+        return NULL;
+    }
+
+    // 复制上下文
+    memcpy(new_tfd, tfd, sizeof(timerfd_t));
+    new_node->handle = new_tfd;
+
+    return new_node;
 }
 
 static struct vfs_callback epoll_callbacks = {
@@ -1551,6 +1673,7 @@ static struct vfs_callback epoll_callbacks = {
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = epoll_poll,
+    .dup = (vfs_dup_t)epollfd_dup,
 };
 
 static struct vfs_callback eventfd_callbacks = {
@@ -1567,6 +1690,7 @@ static struct vfs_callback eventfd_callbacks = {
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = eventfd_poll,
+    .dup = (vfs_dup_t)eventfd_dup,
 };
 
 static struct vfs_callback signalfd_callbacks = {
@@ -1583,6 +1707,7 @@ static struct vfs_callback signalfd_callbacks = {
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)signalfd_ioctl,
     .poll = signalfd_poll,
+    .dup = (vfs_dup_t)eventfd_dup,
 };
 
 static struct vfs_callback timerfd_callbacks = {
@@ -1598,7 +1723,8 @@ static struct vfs_callback timerfd_callbacks = {
     .rename = (vfs_rename_t)dummy,
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)dummy,
-    .poll = dummy,
+    .poll = (vfs_poll_t)dummy,
+    .dup = (vfs_dup_t)timerfd_dup,
 };
 
 void fs_syscall_init()

@@ -49,14 +49,14 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         create->bpp = 32;
         create->size = create->height * create->width * 4;
         create->pitch = create->width * 4;
-        create->handle = 1; // 简单句柄管理
+        create->handle = 1;
         return 0;
     }
 
     case DRM_IOCTL_MODE_MAP_DUMB:
     {
         struct drm_mode_map_dumb *map = (struct drm_mode_map_dumb *)arg;
-        map->offset = (uint64_t)dev->vaddr; // 直接映射framebuffer地址
+        map->offset = (uint64_t)dev->paddr;
         return 0;
     }
 
@@ -67,6 +67,19 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         conn->count_modes = 1;
         conn->count_props = 0;
         conn->count_encoders = 1;
+        return 0;
+    }
+    case DRM_IOCTL_MODE_GETFB:
+    {
+        struct drm_mode_fb_cmd fb = {
+            .fb_id = 1,
+            .width = dev->width,
+            .height = dev->height,
+            .pitch = dev->pitch,
+            .bpp = dev->bpp,
+            .depth = 24,
+            .handle = (uint32_t)(uintptr_t)dev->paddr};
+        memcpy((void *)arg, &fb, sizeof(fb));
         return 0;
     }
 
@@ -82,10 +95,11 @@ void drm_init()
     {
         struct limine_framebuffer *fb = framebuffer_request.response->framebuffers[0];
 
+        primary_dev.flags = 0;
         primary_dev.width = fb->width;
         primary_dev.height = fb->height;
         primary_dev.pitch = fb->pitch;
-        primary_dev.vaddr = fb->address;
+        primary_dev.bpp = fb->bpp;
         primary_dev.paddr = (uint64_t)fb->address;
     }
 

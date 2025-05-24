@@ -24,22 +24,20 @@ ssize_t pipefs_read(void *file, void *addr, size_t offset, size_t size)
         size = PIPE_BUFF;
 
     pipe_specific_t *spec = (pipe_specific_t *)file;
+    if (!spec)
+        return -EINVAL;
     pipe_info_t *pipe = spec->info;
+    if (!pipe)
+        return -EINVAL;
 
-    while (pipe->lock)
-    {
-        arch_disable_interrupt();
-        arch_pause();
-    }
-    pipe->lock = true;
-    arch_enable_interrupt();
+    spin_lock(&pipe->lock);
 
     uint32_t available = (pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF;
     if (available == 0)
     {
         if (pipe->writeFds == 0)
         {
-            pipe->lock = false;
+            spin_unlock(&pipe->lock);
             return -EPIPE;
         }
         arch_disable_interrupt();
@@ -52,7 +50,7 @@ ssize_t pipefs_read(void *file, void *addr, size_t offset, size_t size)
             browse = browse->next;
         browse->next = new_block;
 
-        pipe->lock = false;
+        spin_unlock(&pipe->lock);
 
         task_block(current_task, TASK_BLOCKING, -1);
 
@@ -63,8 +61,7 @@ ssize_t pipefs_read(void *file, void *addr, size_t offset, size_t size)
         }
         arch_disable_interrupt();
     }
-
-    pipe->lock = true;
+    spin_unlock(&pipe->lock);
 
     // 实际读取量
     uint32_t to_read = MIN(size, available);
@@ -86,7 +83,7 @@ ssize_t pipefs_read(void *file, void *addr, size_t offset, size_t size)
 
     wake_blocked_tasks(&pipe->blocking_write);
 
-    pipe->lock = false;
+    spin_unlock(&pipe->lock);
 
     return to_read;
 }
@@ -99,21 +96,14 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
     pipe_specific_t *spec = (pipe_specific_t *)file;
     pipe_info_t *pipe = spec->info;
 
-    while (pipe->lock)
-    {
-        arch_enable_interrupt();
-        arch_pause();
-    }
-
-    arch_disable_interrupt();
-    pipe->lock = true;
+    spin_lock(&pipe->lock);
 
     uint32_t free_space = PIPE_BUFF - ((pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF);
     if (free_space < size)
     {
         if (pipe->readFds == 0)
         {
-            pipe->lock = false;
+            spin_unlock(&pipe->lock);
             return -EPIPE;
         }
         task_block_list_t *new_block = malloc(sizeof(task_block_list_t));
@@ -126,7 +116,7 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
             browse = browse->next;
         browse->next = new_block;
 
-        pipe->lock = false;
+        spin_unlock(&pipe->lock);
 
         task_block(current_task, TASK_BLOCKING, -1);
 
@@ -138,7 +128,7 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
         arch_disable_interrupt();
     }
 
-    pipe->lock = true;
+    spin_unlock(&pipe->lock);
 
     if (pipe->write_ptr + size <= PIPE_BUFF)
     {
@@ -155,7 +145,7 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
 
     wake_blocked_tasks(&pipe->blocking_read);
 
-    pipe->lock = false;
+    spin_unlock(&pipe->lock);
 
     return size;
 }
@@ -201,36 +191,35 @@ int pipefs_ioctl(void *file, ssize_t cmd, ssize_t arg)
     }
 }
 
-void pipefs_close(void *current)
+bool pipefs_close(void *current)
 {
     pipe_specific_t *spec = (pipe_specific_t *)current;
     pipe_info_t *pipe = spec->info;
 
+    spin_lock(&pipe->lock);
     if (spec->write)
     {
-        if (pipe->writeFds > 0)
-            pipe->writeFds--;
+        pipe->writeFds--;
     }
     else
     {
-        if (pipe->readFds > 0)
-            pipe->readFds--;
+        pipe->readFds--;
     }
 
-    if (pipe->writeFds == 0)
-    {
+    if (!pipe->writeFds)
         wake_blocked_tasks(&pipe->blocking_read);
-    }
-    if (pipe->readFds == 0)
-    {
+    if (!pipe->readFds)
         wake_blocked_tasks(&pipe->blocking_write);
-    }
 
-    if (!pipe->readFds && !pipe->writeFds)
+    if (pipe->writeFds == 0 && pipe->readFds == 0)
     {
-        pipe->lock = true;
         free(pipe);
     }
+    spin_unlock(&pipe->lock);
+
+    free(spec);
+
+    return true;
 }
 
 int pipefs_poll(void *file, size_t events)
@@ -240,7 +229,7 @@ int pipefs_poll(void *file, size_t events)
 
     int out = 0;
 
-    pipe->lock = true;
+    spin_lock(&pipe->lock);
     if (events & EPOLLIN)
     {
         if (!pipe->writeFds)
@@ -256,8 +245,33 @@ int pipefs_poll(void *file, size_t events)
         else if (pipe->assigned < PIPE_BUFF)
             out |= EPOLLOUT;
     }
-    pipe->lock = false;
+    spin_unlock(&pipe->lock);
     return out;
+}
+
+vfs_node_t pipefs_dup(vfs_node_t node)
+{
+    if (!node || !node->handle)
+        return NULL;
+
+    vfs_node_t new_node = vfs_node_alloc(node->parent, node->name);
+    if (!new_node)
+        return NULL;
+
+    memcpy(new_node, node, sizeof(struct vfs_node));
+
+    new_node->handle = malloc(sizeof(pipe_specific_t));
+    memcpy(new_node->handle, node->handle, sizeof(pipe_specific_t));
+
+    pipe_specific_t *spec = (pipe_specific_t *)new_node->handle;
+    pipe_info_t *pipe = spec->info;
+
+    if (spec->write)
+        pipe->writeFds++;
+    else
+        pipe->readFds++;
+
+    return new_node;
 }
 
 static struct vfs_callback callbacks = {
@@ -274,6 +288,7 @@ static struct vfs_callback callbacks = {
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)pipefs_ioctl,
     .poll = pipefs_poll,
+    .dup = pipefs_dup,
 };
 
 void pipefs_init()
@@ -308,12 +323,14 @@ int sys_pipe(int pipefd[2])
     vfs_node_t node_input = vfs_node_alloc(pipefs_root, buf);
     node_input->type = file_pipe;
     node_input->fsid = pipefs_id;
+    node_input->refcount = 1;
     pipefs_root->mode = 0700;
 
     sprintf(buf, "pipe%d", pipefd_id++);
     vfs_node_t node_output = vfs_node_alloc(pipefs_root, buf);
     node_output->type = file_pipe;
     node_output->fsid = pipefs_id;
+    node_output->refcount = 1;
     pipefs_root->mode = 0700;
 
     pipe_info_t *info = (pipe_info_t *)malloc(sizeof(pipe_info_t));
@@ -322,7 +339,7 @@ int sys_pipe(int pipefd[2])
     info->writeFds = 1;
     info->blocking_read.next = NULL;
     info->blocking_write.next = NULL;
-    info->lock = false;
+    info->lock.lock = 0;
     info->read_ptr = 0;
     info->write_ptr = 0;
     info->assigned = 0;

@@ -570,3 +570,146 @@ static inline char *strdup(const char *s)
     memcpy(ptr, (void *)s, len + 1);
     return ptr;
 }
+
+#if defined(__x86_64__)
+
+typedef struct
+{
+    volatile uint32_t lock;
+    uint64_t rflags;
+} spinlock_t;
+
+static inline void spin_lock(spinlock_t *lock)
+{
+    asm volatile(
+        "1: lock btsl $0, %0\n" // 测试并设置
+        "   jc 1b\n"            // 如果已锁定则重试s
+        : "+m"(lock->lock)
+        :
+        : "memory", "cc");
+}
+
+static inline void spin_unlock(spinlock_t *lock)
+{
+    asm volatile(
+        "lock btrl $0, %0\n" // 清除锁标志
+        : "+m"(lock->lock)
+        :
+        : "memory", "cc");
+}
+
+static inline void spin_lock_irqsave(spinlock_t *lock)
+{
+    uint64_t flags;
+    asm volatile(
+        "pushfq\n\t" // 保存RFLAGS
+        "pop %0\n\t" // 存储到flags变量
+        "cli\n\t"    // 禁用中断
+        : "=r"(flags)
+        :
+        : "memory");
+
+    asm volatile(
+        "1: lock btsl $0, %0\n\t" // 测试并设置
+        "   jc 1b\n\t"            // 如果已锁定则重试
+        : "+m"(lock->lock)
+        :
+        : "memory", "cc");
+
+    lock->rflags = flags; // 保存原始中断状态
+}
+
+static inline void spin_unlock_irqrestore(spinlock_t *lock)
+{
+    asm volatile(
+        "lock btrl $0, %0\n\t" // 清除锁标志
+        : "+m"(lock->lock)
+        :
+        : "memory", "cc");
+
+    uint64_t flags = lock->rflags;
+    asm volatile(
+        "push %0\n\t" // 恢复原始RFLAGS
+        "popfq"
+        :
+        : "r"(flags)
+        : "memory");
+}
+
+#elif defined(__aarch64__)
+
+typedef struct
+{
+    volatile uint32_t lock;
+    uint64_t daif;
+} spinlock_t;
+
+static inline void spin_lock(spinlock_t *lock)
+{
+    uint32_t tmp;
+    asm volatile(
+        "1: ldaxr %w0, [%1]\n"     // 加载独占
+        "   cbnz %w0, 1b\n"        // 检查是否已锁定
+        "   mov %w0, #1\n"         // 准备锁定值
+        "   stxr %w0, %w0, [%1]\n" // 尝试存储
+        "   cbnz %w0, 1b\n"        // 检查是否成功
+        : "=&r"(tmp)
+        : "r"(&lock->lock)
+        : "memory");
+}
+
+static inline void spin_unlock(spinlock_t *lock)
+{
+    asm volatile(
+        "stlr wzr, [%0]\n" // 释放锁
+        :
+        : "r"(&lock->lock)
+        : "memory");
+}
+
+static inline void spin_lock_irqsave(spinlock_irq_t *lock)
+{
+    uint32_t tmp, daif;
+
+    // 保存并禁用中断
+    asm volatile(
+        "mrs %0, daif\n\t"
+        "msr daifset, #2\n\t"
+        : "=r"(daif)
+        :
+        : "memory");
+
+    // 获取锁
+    asm volatile(
+        "1: ldaxr %w0, [%1]\n\t"
+        "   cbnz %w0, 1b\n\t"
+        "   mov %w0, #1\n\t"
+        "   stxr %w0, %w0, [%1]\n\t"
+        "   cbnz %w0, 1b\n\t"
+        : "=&r"(tmp)
+        : "r"(&lock->lock)
+        : "memory");
+
+    lock->daif = daif; // 保存原始DAIF状态
+}
+
+static inline void spin_unlock_irqrestore(spinlock_irq_t *lock)
+{
+    uint32_t daif = lock->daif;
+
+    // 释放锁
+    asm volatile(
+        "stlr wzr, [%0]\n\t"
+        :
+        : "r"(&lock->lock)
+        : "memory");
+
+    // 恢复中断状态
+    asm volatile(
+        "msr daif, %0\n\t"
+        :
+        : "r"(daif)
+        : "memory");
+}
+
+#endif

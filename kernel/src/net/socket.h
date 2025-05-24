@@ -120,10 +120,12 @@ typedef struct socket
         int passcred;
         struct sock_filter *filter;
         size_t filter_len;
+        struct ucred peercred;
+        bool has_peercred;
     } options;
 } socket_t;
 
-int sys_socket_close(void *current);
+bool sys_socket_close(void *current);
 
 int socket_getsockname(socket_t *sock, struct sockaddr_un *addr, socklen_t *addrlen);
 
@@ -323,3 +325,6 @@ int socket_connect(socket_t *sock, const struct sockaddr_un *addr, socklen_t add
 size_t unix_socket_getsockopt(socket_t *sock, int level, int optname, const void *optval, socklen_t *optlen);
 size_t unix_socket_setsockopt(socket_t *sock, int level, int optname, const void *optval, socklen_t optlen);
 size_t unix_socket_getpeername(socket_t *socket, struct sockaddr_un *addr, socklen_t *len);
+
+extern int unix_socket_fsid;
+extern int unix_accept_fsid;

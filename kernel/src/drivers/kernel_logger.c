@@ -522,17 +522,13 @@ char *write_float_point_num(char *str, double num, int field_width, int precisio
     return str;
 }
 
-bool printk_lock = false;
+spinlock_t printk_lock = {0};
 
 int printk(const char *fmt, ...)
 {
     struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];
 
-    while (printk_lock)
-    {
-        arch_pause();
-    }
-    printk_lock = true;
+    spin_lock_irqsave(&printk_lock);
 
     if (!printk_initialized)
     {
@@ -569,12 +565,12 @@ int printk(const char *fmt, ...)
 
     if (!framebuffer_request.response->framebuffer_count)
     {
-        printk_lock = false;
+        spin_unlock_irqrestore(&printk_lock);
         return len;
     }
 
     flanterm_write(ft_ctx, buf, len);
-    printk_lock = false;
+    spin_unlock_irqrestore(&printk_lock);
 
     return len;
 }

@@ -6,10 +6,11 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
     .revision = 0,
 };
 
+spinlock_t frame_op_lock = {0};
+
 FrameAllocator frame_allocator;
 uint64_t memory_size = 0;
 
-bool frame_alloc_op_lock = false;
 bool mem_map_op_lock = false;
 
 void frame_init()
@@ -72,47 +73,35 @@ void frame_init()
 
 void free_frames(uint64_t addr, uint64_t size)
 {
-    while (frame_alloc_op_lock)
-    {
-        arch_pause();
-    }
-
-    frame_alloc_op_lock = true;
+    spin_lock_irqsave(&frame_op_lock);
 
     if (addr == 0)
     {
-        frame_alloc_op_lock = false;
+        spin_unlock_irqrestore(&frame_op_lock);
         return;
     }
-    size_t frame_index = addr / DEFAULT_PAGE_SIZE;
-    size_t frame_count = size;
-    if (frame_index == 0)
-    {
-        frame_alloc_op_lock = false;
-        return;
-    }
-    Bitmap *bitmap = &frame_allocator.bitmap;
-    bitmap_set_range(bitmap, frame_index, frame_index + frame_count, true);
-    frame_allocator.usable_frames += frame_count;
 
-    frame_alloc_op_lock = false;
+    size_t frame_index = addr / DEFAULT_PAGE_SIZE;
+
+    bitmap_set_range(&frame_allocator.bitmap, frame_index, frame_index + size, true);
+    frame_allocator.usable_frames++;
+
+    spin_unlock_irqrestore(&frame_op_lock);
 }
 
 static uint64_t last_alloc_pos = 0;
 
 uint64_t alloc_frames(size_t count)
 {
-    while (frame_alloc_op_lock)
-    {
-        arch_pause();
-    }
-
-    frame_alloc_op_lock = true;
+    spin_lock_irqsave(&frame_op_lock);
 
     Bitmap *bitmap = &frame_allocator.bitmap;
 
     if (frame_allocator.usable_frames < count)
+    {
+        spin_unlock_irqrestore(&frame_op_lock);
         return 0;
+    }
 
 retry:
     size_t frame_index = bitmap_find_range_from(bitmap, count, true, last_alloc_pos);
@@ -122,7 +111,7 @@ retry:
         last_alloc_pos = frame_index + count;
         bitmap_set_range(bitmap, frame_index, frame_index + count, false);
         frame_allocator.usable_frames -= count;
-        frame_alloc_op_lock = false;
+        spin_unlock_irqrestore(&frame_op_lock);
         return frame_index * DEFAULT_PAGE_SIZE;
     }
 
@@ -133,6 +122,8 @@ retry:
     }
 
     printk("Allocate frame failed!!!\n");
+
+    spin_unlock_irqrestore(&frame_op_lock);
 
     return 0;
 }

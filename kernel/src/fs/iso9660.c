@@ -678,10 +678,12 @@ void iso9660_open(void *parent, const char *name, vfs_node_t node)
     return;
 }
 
-void iso9660_close(file_t handle)
+bool iso9660_close(file_t handle)
 {
     free(handle->handle);
     free(handle);
+
+    return true;
 }
 
 int iso9660_mount(const char *src, vfs_node_t node)
@@ -750,6 +752,25 @@ int iso9660_poll(void *file, size_t events)
     return -EOPNOTSUPP;
 }
 
+vfs_node_t iso9660_dup(vfs_node_t node)
+{
+    if (!node)
+        return NULL;
+
+    // 创建新的vfs节点
+    vfs_node_t new_node = vfs_node_alloc(node->parent, node->name);
+    if (!new_node)
+        return NULL;
+
+    // 复制节点属性
+    memcpy(new_node, node, sizeof(struct vfs_node));
+
+    // 增加引用计数
+    new_node->refcount++;
+
+    return new_node;
+}
+
 static struct vfs_callback callbacks = {
     .mount = iso9660_mount,
     .unmount = iso9660_unmount,
@@ -764,6 +785,7 @@ static struct vfs_callback callbacks = {
     .stat = iso9660_stat,
     .ioctl = iso9660_ioctl,
     .poll = iso9660_poll,
+    .dup = iso9660_dup,
 };
 
 void iso9660_init()

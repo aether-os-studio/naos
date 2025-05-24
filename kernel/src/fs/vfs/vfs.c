@@ -6,8 +6,6 @@
 
 vfs_node_t rootdir = NULL;
 
-bool vfs_op_lock = false;
-
 static int empty_func()
 {
     return -ENOSYS;
@@ -40,6 +38,7 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name)
     node->lock.l_type = F_UNLCK;
     node->mode = 0777;
     node->flags = 0;
+    node->refcount = 0;
     if (parent)
         list_prepend(parent->child, node);
     return node;
@@ -245,12 +244,6 @@ static vfs_node_t vfs_do_search(vfs_node_t dir, const char *name)
 
 vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, bool nosymlink)
 {
-    while (vfs_op_lock)
-    {
-        arch_pause();
-    }
-    vfs_op_lock = true;
-
     if (!start)
         return NULL;
 
@@ -262,7 +255,6 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, bool nosymlink)
     {
         if (_path[1] == '\0')
         {
-            vfs_op_lock = false;
             return rootdir;
         }
         current = rootdir;
@@ -295,10 +287,8 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, bool nosymlink)
         {
             if (!current->parent || !current->linkname)
                 goto err;
-            vfs_op_lock = false;
             current = vfs_open_at(current->parent, current->linkname, nosymlink);
             do_update(current);
-            vfs_op_lock = true;
             if (!current)
                 goto err;
         }
@@ -306,22 +296,18 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, bool nosymlink)
         {
             if (!current->parent || !current->linkname)
                 goto err;
-            vfs_op_lock = false;
             current = vfs_open_at(current->parent, current->linkname, nosymlink);
             do_update(current);
-            vfs_op_lock = true;
             if (!current)
                 goto err;
         }
     }
 
     free(path);
-    vfs_op_lock = false;
     return current;
 
 err:
     free(path);
-    vfs_op_lock = false;
     return NULL;
 }
 
@@ -347,6 +333,7 @@ bool vfs_init()
 
     rootdir = vfs_node_alloc(NULL, NULL);
     rootdir->type = file_dir;
+    rootdir->fsid = 0;
     return true;
 }
 
@@ -360,8 +347,8 @@ int vfs_close(vfs_node_t node)
         return 0;
     if (node->type & file_dir)
         return 0;
-    callbackof(node, close)(node->handle);
-    if (!(node->type & file_pipe) && !(node->type & file_epoll))
+    bool real_closed = callbackof(node, close)(node->handle);
+    if (real_closed)
         node->handle = NULL;
     return 0;
 }
@@ -402,20 +389,12 @@ int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize)
         return 0;
     }
 
-    while (vfs_op_lock)
-    {
-        arch_pause();
-    }
-
-    vfs_op_lock = true;
-
     size_t link_len = strlen(node->linkname);
     ssize_t copy_len = (link_len < bufsize) ? link_len : (bufsize - 1);
 
     strncpy(buf, node->linkname, copy_len);
     buf[copy_len] = '\0';
 
-    vfs_op_lock = false;
     return copy_len;
 }
 
@@ -525,4 +504,9 @@ int vfs_delete(vfs_node_t node)
 int vfs_rename(vfs_node_t node, const char *new)
 {
     return callbackof(node, rename)(node->handle, new);
+}
+
+vfs_node_t vfs_dup(vfs_node_t node)
+{
+    return callbackof(node, dup)(node);
 }

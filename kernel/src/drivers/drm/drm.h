@@ -9,6 +9,7 @@
 #define DRM_IOCTL_MODE_CREATE_DUMB _IOWR(DRM_IOCTL_BASE, 0xB2, struct drm_mode_create_dumb)
 #define DRM_IOCTL_MODE_MAP_DUMB _IOWR(DRM_IOCTL_BASE, 0xB3, struct drm_mode_map_dumb)
 #define DRM_IOCTL_MODE_GETCONNECTOR _IOWR(DRM_IOCTL_BASE, 0xB7, struct drm_mode_get_connector)
+#define DRM_IOCTL_MODE_GETFB _IOWR(DRM_IOCTL_BASE, 0x12, struct drm_mode_fb_cmd)
 
 #define DRM_CAP_DUMB_BUFFER 0x1
 #define DRM_MODE_CONNECTED 1
@@ -19,7 +20,7 @@ struct drm_device
     uint32_t width;  // 显示宽度(像素)
     uint32_t height; // 显示高度(像素)
     uint32_t pitch;  // 每行字节数
-    void *vaddr;     // 显存虚拟地址
+    uint32_t bpp;    // 一个像素占的比特
     uint64_t paddr;  // 显存物理地址
 };
 
@@ -78,6 +79,17 @@ struct drm_mode_get_connector
     uint32_t mm_width, mm_height;
     uint32_t subpixel;
     uint32_t pad;
+};
+
+struct drm_mode_fb_cmd
+{
+    uint32_t fb_id;
+    uint32_t width;
+    uint32_t height;
+    uint32_t pitch;
+    uint32_t bpp;
+    uint32_t depth;
+    uint32_t handle;
 };
 
 void drm_init();

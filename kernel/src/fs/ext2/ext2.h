@@ -130,16 +130,12 @@ typedef struct ext2_file
     uint8_t file_type;
     vfs_node_t node;
     vfs_node_t device;
-    uint32_t prefetch_block;
-    uint8_t *prefetch_buffer;
-    uint32_t prefetch_offset;
-    bool prefetch_valid;
 } ext2_file_t;
 
 int ext2_mount(const char *src, vfs_node_t node);
 void ext2_unmount(void *root);
 void ext2_open(void *parent, const char *name, vfs_node_t node);
-void ext2_close(void *current);
+bool ext2_close(void *current);
 ssize_t ext2_write(void *file, const void *addr, size_t offset, size_t size);
 ssize_t ext2_read(void *file, void *addr, size_t offset, size_t size);
 int ext2_mkfile(void *parent, const char *name, vfs_node_t node);

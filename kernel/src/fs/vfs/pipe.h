@@ -25,7 +25,7 @@ typedef struct pipe_info
     int writeFds;
     int readFds;
 
-    volatile bool lock;
+    spinlock_t lock;
 
     task_block_list_t blocking_read;
     task_block_list_t blocking_write;

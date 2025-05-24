@@ -66,6 +66,7 @@ int NVMEWaitingRDY(NVME_CONTROLLER *ctrl, uint32_t rdy)
     uint32_t csts;
     while (rdy != ((csts = ctrl->CAP->CST) & NVME_CSTS_RDY))
     {
+        arch_pause();
     }
     return 0;
 }
@@ -122,47 +123,54 @@ void nvme_rwfail(uint16_t status)
 
 uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba, uint32_t count, uint32_t write)
 {
-    if (!count)
+    if (!count || !ns || !buf)
         return 0;
 
-    uint64_t bufAddr = (uint64_t)buf;
-    uint32_t max_sectors_per_op = ns->MXRS;
-    uint32_t transferred = 0;
-
-    while (count > 0)
+    if (lba + count > ns->NLBA)
     {
-        uint32_t chunk = (count > max_sectors_per_op) ? max_sectors_per_op : count;
-
-        NVME_SUBMISSION_QUEUE_ENTRY sqe;
-        memset(&sqe, 0, sizeof(NVME_SUBMISSION_QUEUE_ENTRY));
-        sqe.CDW0 = write ? NVME_SQE_OPC_IO_WRITE : NVME_SQE_OPC_IO_READ;
-        sqe.META = 0;
-        sqe.DATA[0] = virt_to_phys(bufAddr + (transferred * ns->BSZ));
-        sqe.DATA[1] = 0;
-        sqe.NSID = ns->NSID;
-        sqe.CDWA = (uint32_t)((lba + transferred) & 0xFFFFFFFF);
-        sqe.CDWB = (uint32_t)((lba + transferred) >> 32);
-        sqe.CDWC = (1UL << 31) | ((chunk - 1) & 0xFFFF);
-
-        NVME_COMPLETION_QUEUE_ENTRY cqe = NVMEWaitingCMD(&ns->CTRL->ISQ, &sqe);
-        if ((cqe.STS >> 1) & 0xFF)
-        {
-            if (write)
-            {
-                printk("NVME WRITE FAILED\n");
-            }
-            else
-            {
-                printk("NVME READ FAILED\n");
-            }
-            nvme_rwfail(cqe.STS);
-            return -1;
-        }
-
-        transferred += chunk;
-        count -= chunk;
+        printk("NVME: LBA out of range (lba=%llu, count=%u, max=%llu)\n", lba, count, ns->NLBA);
+        return 0;
     }
-    return transferred;
+
+    uint64_t bufAddr = (uint64_t)buf;
+    uint32_t maxCount = (DEFAULT_PAGE_SIZE / ns->BSZ) - ((bufAddr & (DEFAULT_PAGE_SIZE - 1)) / ns->BSZ);
+    if (count > maxCount)
+    {
+        count = maxCount;
+    }
+    if (ns->MXRS != (uint32_t)-1 && count > ns->MXRS)
+    {
+        count = ns->MXRS;
+    }
+
+    uint64_t size = count * ns->BSZ;
+
+    uint64_t buffer_phys = translate_address(get_current_page_dir(false), bufAddr);
+    if (!buffer_phys)
+    {
+        printk("NVME: Invalid physical address\n");
+        return 0;
+    }
+
+    NVME_SUBMISSION_QUEUE_ENTRY sqe;
+    memset(&sqe, 0, sizeof(NVME_SUBMISSION_QUEUE_ENTRY));
+    sqe.CDW0 = write ? NVME_SQE_OPC_IO_WRITE : NVME_SQE_OPC_IO_READ;
+    sqe.META = 0;
+    sqe.DATA[0] = buffer_phys;
+    sqe.DATA[1] = 0;
+    sqe.NSID = ns->NSID;
+    sqe.CDWA = (uint32_t)(lba & 0xFFFFFFFF);
+    sqe.CDWB = (uint32_t)(lba >> 32);
+    sqe.CDWC = (1UL << 31) | ((count - 1) & 0xFFFF);
+
+    NVME_COMPLETION_QUEUE_ENTRY cqe = NVMEWaitingCMD(&ns->CTRL->ISQ, &sqe);
+    if ((cqe.STS >> 1) & 0xFF)
+    {
+        nvme_rwfail(cqe.STS);
+        return 0;
+    }
+
+    return count;
 }
 
 void failed_nvme(NVME_CONTROLLER *ctrl)

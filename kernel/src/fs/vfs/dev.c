@@ -45,6 +45,11 @@ void devfs_open(void *parent, const char *name, vfs_node_t node)
 {
     (void)parent;
 
+    if (node->type & file_dir)
+    {
+        return;
+    }
+
     for (uint64_t i = 0; i < MAX_DEV_NUM; i++)
     {
         if (devfs_handles[i] != NULL && !strncmp(devfs_handles[i]->name, name, MAX_DEV_NAME_LEN))
@@ -61,14 +66,17 @@ void devfs_open(void *parent, const char *name, vfs_node_t node)
     }
 }
 
-void devfs_close(void *current)
+bool devfs_close(void *current)
 {
     devfs_handle_t handle = (devfs_handle_t)current;
     if (!strncmp(handle->name, "event", 5))
     {
         dev_input_event_t *event = handle->data;
         event->timesOpened--;
+        if (event->timesOpened)
+            return false;
     }
+    return true;
 }
 
 int devfs_ioctl(devfs_handle_t handle, ssize_t cmd, ssize_t arg)
@@ -104,6 +112,38 @@ int devfs_poll(devfs_handle_t handle, size_t event)
     return 0;
 }
 
+vfs_node_t devfs_dup(vfs_node_t node)
+{
+    if (!node || !node->handle)
+        return NULL;
+
+    devfs_handle_t handle = (devfs_handle_t)node->handle;
+
+    vfs_node_t new_node = vfs_node_alloc(node->parent, node->name);
+    if (!new_node)
+        return NULL;
+
+    memcpy(new_node, node, sizeof(struct vfs_node));
+
+    devfs_handle_t new_handle = malloc(sizeof(struct devfs_handle));
+    if (!new_handle)
+    {
+        vfs_free(new_node);
+        return NULL;
+    }
+
+    memcpy(new_handle, handle, sizeof(struct devfs_handle));
+    new_node->handle = new_handle;
+
+    if (!strncmp(new_handle->name, "event", 5))
+    {
+        dev_input_event_t *event = new_handle->data;
+        event->timesOpened++;
+    }
+
+    return new_node;
+}
+
 static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
@@ -118,6 +158,7 @@ static struct vfs_callback callbacks = {
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)devfs_ioctl,
     .poll = (vfs_poll_t)devfs_poll,
+    .dup = (vfs_dup_t)devfs_dup,
 };
 
 ssize_t inputdev_event_read(void *data, uint64_t offset, void *buf, uint64_t len)
@@ -247,7 +288,7 @@ vfs_node_t regist_dev(const char *name,
     if (strstr(name, "/") != NULL)
     {
         new_name = strstr(name, "/") + 1;
-        uint64_t path_len = new_name - name - 1;
+        uint64_t path_len = new_name - name;
         char new_path[32];
         strcpy(new_path, "/dev/");
         strncpy(new_path + 5, name, path_len);
