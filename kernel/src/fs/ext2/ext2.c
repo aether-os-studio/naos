@@ -1579,18 +1579,7 @@ int ext2_poll(void *file, size_t events)
 
 vfs_node_t ext2_dup(vfs_node_t node)
 {
-    if (!node)
-        return NULL;
-
-    // 创建新的vfs节点
-    vfs_node_t new_node = vfs_node_alloc(node->parent, node->name);
-    if (!new_node)
-        return NULL;
-
-    // 复制节点属性
-    memcpy(new_node, node, sizeof(struct vfs_node));
-
-    return new_node;
+    return node;
 }
 
 static struct vfs_callback callbacks = {

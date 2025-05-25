@@ -38,6 +38,7 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name)
     node->lock.l_type = F_UNLCK;
     node->mode = 0777;
     node->flags = 0;
+    node->refcount = 0;
     if (parent)
         list_prepend(parent->child, node);
     return node;
@@ -303,6 +304,7 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, bool nosymlink)
     }
 
     free(path);
+    current->refcount++;
     return current;
 
 err:
@@ -346,9 +348,12 @@ int vfs_close(vfs_node_t node)
         return 0;
     if (node->type & file_dir)
         return 0;
-    bool real_closed = callbackof(node, close)(node->handle);
-    if (real_closed)
-        node->handle = NULL;
+    if (--node->refcount == 0)
+    {
+        bool real_closed = callbackof(node, close)(node->handle);
+        if (real_closed)
+            node->handle = NULL;
+    }
     return 0;
 }
 
@@ -507,5 +512,6 @@ int vfs_rename(vfs_node_t node, const char *new)
 
 vfs_node_t vfs_dup(vfs_node_t node)
 {
+    node->refcount++;
     return callbackof(node, dup)(node);
 }

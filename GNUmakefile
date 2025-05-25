@@ -89,10 +89,7 @@ HOST_LDFLAGS :=
 HOST_LIBS :=
 
 .PHONY: all
-all: $(IMAGE_NAME).iso
-
-.PHONY: all-hdd
-all-hdd: $(IMAGE_NAME).hdd
+all: $(IMAGE_NAME).hdd
 
 .PHONY: run
 run: run-hdd-$(ARCH)

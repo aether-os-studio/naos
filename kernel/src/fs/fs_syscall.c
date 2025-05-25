@@ -135,7 +135,7 @@ uint64_t sys_close(uint64_t fd)
         current_task->fds[fd]->lock.l_pid = 0;
     }
 
-    vfs_close(current_task->fds[fd]);
+    int res = vfs_close(current_task->fds[fd]);
 
     current_task->fds[fd] = NULL;
 

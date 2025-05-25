@@ -119,29 +119,13 @@ vfs_node_t devfs_dup(vfs_node_t node)
 
     devfs_handle_t handle = (devfs_handle_t)node->handle;
 
-    vfs_node_t new_node = vfs_node_alloc(node->parent, node->name);
-    if (!new_node)
-        return NULL;
-
-    memcpy(new_node, node, sizeof(struct vfs_node));
-
-    devfs_handle_t new_handle = malloc(sizeof(struct devfs_handle));
-    if (!new_handle)
+    if (!strncmp(handle->name, "event", 5))
     {
-        vfs_free(new_node);
-        return NULL;
-    }
-
-    memcpy(new_handle, handle, sizeof(struct devfs_handle));
-    new_node->handle = new_handle;
-
-    if (!strncmp(new_handle->name, "event", 5))
-    {
-        dev_input_event_t *event = new_handle->data;
+        dev_input_event_t *event = handle->data;
         event->timesOpened++;
     }
 
-    return new_node;
+    return node;
 }
 
 static struct vfs_callback callbacks = {

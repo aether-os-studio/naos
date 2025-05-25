@@ -251,19 +251,7 @@ int pipefs_poll(void *file, size_t events)
 
 vfs_node_t pipefs_dup(vfs_node_t node)
 {
-    if (!node || !node->handle)
-        return NULL;
-
-    vfs_node_t new_node = vfs_node_alloc(node->parent, node->name);
-    if (!new_node)
-        return NULL;
-
-    memcpy(new_node, node, sizeof(struct vfs_node));
-
-    new_node->handle = malloc(sizeof(pipe_specific_t));
-    memcpy(new_node->handle, node->handle, sizeof(pipe_specific_t));
-
-    pipe_specific_t *spec = (pipe_specific_t *)new_node->handle;
+    pipe_specific_t *spec = (pipe_specific_t *)node->handle;
     pipe_info_t *pipe = spec->info;
 
     if (spec->write)
@@ -271,7 +259,7 @@ vfs_node_t pipefs_dup(vfs_node_t node)
     else
         pipe->readFds++;
 
-    return new_node;
+    return node;
 }
 
 static struct vfs_callback callbacks = {
