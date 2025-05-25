@@ -390,6 +390,50 @@ uint64_t sys_getcwd(char *cwd, uint64_t size)
 extern int unix_socket_fsid;
 extern int unix_accept_fsid;
 
+// Implement the sys_dup3 function
+uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags)
+{
+    if (oldfd >= MAX_FD_NUM || current_task->fds[oldfd] == NULL)
+    {
+        return -EBADF;
+    }
+
+    if (newfd >= MAX_FD_NUM)
+    {
+        return -EBADF;
+    }
+
+    if (flags & ~O_CLOEXEC)
+    {
+        return -EINVAL;
+    }
+
+    if (oldfd == newfd)
+    {
+        return -EBADF;
+    }
+
+    if (current_task->fds[newfd] != NULL)
+    {
+        sys_close(newfd);
+    }
+
+    vfs_node_t new_node = vfs_dup(current_task->fds[oldfd]);
+    if (new_node == NULL)
+    {
+        return -EMFILE;
+    }
+
+    current_task->fds[newfd] = new_node;
+
+    if (flags & O_CLOEXEC)
+    {
+        new_node->flags |= O_CLOEXEC;
+    }
+
+    return newfd;
+}
+
 uint64_t sys_dup2(uint64_t fd, uint64_t newfd)
 {
     vfs_node_t node = current_task->fds[fd];

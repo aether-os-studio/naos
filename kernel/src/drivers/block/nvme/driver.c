@@ -145,7 +145,7 @@ uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba, uint32_t coun
 
     uint64_t size = count * ns->BSZ;
 
-    uint64_t buffer_phys = translate_address(get_current_page_dir(false), bufAddr);
+    uint64_t buffer_phys = virt_to_phys(bufAddr);
     if (!buffer_phys)
     {
         printk("NVME: Invalid physical address\n");

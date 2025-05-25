@@ -32,9 +32,6 @@ void aarch64_do_syscall(struct pt_regs *frame)
 
     switch (idx)
     {
-    case SYS_OPEN:
-        frame->x0 = sys_open((const char *)arg1, arg2, arg3);
-        break;
     case SYS_OPENAT:
         frame->x0 = sys_openat(arg1, (const char *)arg2, arg3, arg4);
         break;
@@ -69,12 +66,6 @@ void aarch64_do_syscall(struct pt_regs *frame)
         break;
     case SYS_CLONE:
         frame->x0 = sys_clone(frame, arg1, arg2, (int *)arg3, (int *)arg4, arg5);
-        break;
-    case SYS_FORK:
-        frame->x0 = task_fork(frame);
-        break;
-    case SYS_VFORK:
-        frame->x0 = task_fork(frame);
         break;
     case SYS_EXECVE:
         frame->x0 = task_execve((const char *)arg1, (const char **)arg2, (const char **)arg3);
@@ -235,9 +226,6 @@ void aarch64_do_syscall(struct pt_regs *frame)
     case SYS_SET_TID_ADDRESS:
         frame->x0 = current_task->pid;
         break;
-    case SYS_POLL:
-        frame->x0 = sys_poll((struct pollfd *)arg1, arg2, arg3);
-        break;
     case SYS_SIGALTSTACK:
         frame->x0 = 0;
         break;
@@ -247,18 +235,9 @@ void aarch64_do_syscall(struct pt_regs *frame)
     case SYS_FUTEX:
         frame->x0 = 0;
         break;
-    case SYS_PIPE:
-        frame->x0 = sys_pipe((int *)arg1);
-        break;
     case SYS_PIPE2:
         // todo: support flags
         frame->x0 = sys_pipe((int *)arg1);
-        break;
-    case SYS_STAT:
-        frame->x0 = sys_stat((const char *)arg1, (struct stat *)arg2);
-        break;
-    case SYS_LSTAT:
-        frame->x0 = sys_stat((const char *)arg1, (struct stat *)arg2);
         break;
     case SYS_STATFS:
         frame->x0 = 0;
@@ -266,7 +245,7 @@ void aarch64_do_syscall(struct pt_regs *frame)
     case SYS_FSTAT:
         frame->x0 = sys_fstat(arg1, (struct stat *)arg2);
         break;
-    case SYS_NEWFSTATAT:
+    case SYS_FSTATAT:
         frame->x0 = sys_newfstatat(arg1, (const char *)arg2, (struct stat *)arg3, arg4);
         break;
     case SYS_STATX:
@@ -325,8 +304,8 @@ void aarch64_do_syscall(struct pt_regs *frame)
     case SYS_DUP:
         frame->x0 = sys_dup(arg1);
         break;
-    case SYS_DUP2:
-        frame->x0 = sys_dup2(arg1, arg2);
+    case SYS_DUP3:
+        frame->x0 = sys_dup3(arg1, arg2, arg3);
         break;
     case SYS_GETRLIMIT:
         frame->x0 = sys_get_rlimit(arg1, (struct rlimit *)arg2);
@@ -334,29 +313,14 @@ void aarch64_do_syscall(struct pt_regs *frame)
     case SYS_PRLIMIT64:
         frame->x0 = sys_prlimit64(arg1, arg2, (struct rlimit *)arg3, (struct rlimit *)arg4);
         break;
-    case SYS_ACCESS:
-        frame->x0 = sys_access((char *)arg1, arg2);
-        break;
     case SYS_FACCESSAT:
         frame->x0 = sys_faccessat(arg1, (const char *)arg2, arg3);
         break;
     case SYS_FACCESSAT2:
         frame->x0 = sys_faccessat2(arg1, (const char *)arg2, arg3, arg4);
         break;
-    case SYS_SELECT:
-        frame->x0 = sys_select(arg1, (uint8_t *)arg2, (uint8_t *)arg3, (uint8_t *)arg4, (struct timeval *)arg5);
-        break;
     case SYS_PSELECT6:
         frame->x0 = sys_pselect6(arg1, (fd_set *)arg2, (fd_set *)arg3, (fd_set *)arg4, (struct timespec *)arg5, (WeirdPselect6 *)arg6);
-        break;
-    case SYS_READLINK:
-        frame->x0 = sys_readlink((char *)arg1, (char *)arg2, arg3);
-        break;
-    case SYS_RENAME:
-        frame->x0 = sys_rename((const char *)arg1, (const char *)arg2);
-        break;
-    case SYS_UNLINK:
-        frame->x0 = sys_unlink((const char *)arg1);
         break;
     case SYS_UNLINKAT:
         frame->x0 = sys_unlinkat(arg1, (const char *)arg2, arg3);
@@ -367,26 +331,14 @@ void aarch64_do_syscall(struct pt_regs *frame)
     case SYS_EPOLL_CREATE1:
         frame->x0 = sys_epoll_create1(arg1);
         break;
-    case SYS_EPOLL_CREATE:
-        frame->x0 = sys_epoll_create(arg1);
-        break;
     case SYS_EPOLL_CTL:
         frame->x0 = sys_epoll_ctl(arg1, arg2, arg3, (struct epoll_event *)arg4);
         break;
     case SYS_EPOLL_PWAIT:
         frame->x0 = sys_epoll_pwait(arg1, (struct epoll_event *)arg2, arg3, arg4, (sigset_t *)arg5, arg6);
         break;
-    case SYS_EPOLL_WAIT:
-        frame->x0 = sys_epoll_wait(arg1, (struct epoll_event *)arg2, arg3, arg4);
-        break;
-    case SYS_LINK:
-        frame->x0 = sys_link((const char *)arg1, (const char *)arg2);
-        break;
     case SYS_EVENTFD2:
         frame->x0 = sys_eventfd2(arg1, arg2);
-        break;
-    case SYS_SIGNALFD:
-        frame->x0 = sys_signalfd(arg1, (const sigset_t *)arg2, arg3);
         break;
     case SYS_SIGNALFD4:
         frame->x0 = sys_signalfd4(arg1, (const sigset_t *)arg2, arg3, arg4);
@@ -427,13 +379,7 @@ void aarch64_do_syscall(struct pt_regs *frame)
     case SYS_SETITIMER:
         frame->x0 = sys_setitimer(arg1, (struct itimerval *)arg2, (struct itimerval *)arg3);
         break;
-    case SYS_CHOWN:
-        frame->x0 = 0;
-        break;
     case SYS_FCHOWN:
-        frame->x0 = 0;
-        break;
-    case SYS_CHMOD:
         frame->x0 = 0;
         break;
     case SYS_FCHMOD:
@@ -441,12 +387,6 @@ void aarch64_do_syscall(struct pt_regs *frame)
         break;
     case SYS_UMASK:
         frame->x0 = 0;
-        break;
-    case SYS_MKDIR:
-        frame->x0 = sys_mkdir((const char *)arg1, arg2);
-        break;
-    case SYS_RMDIR:
-        frame->x0 = sys_unlink((const char *)arg1);
         break;
     case SYS_SETPRIORITY:
         frame->x0 = 0;

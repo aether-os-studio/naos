@@ -239,9 +239,9 @@ uint64_t translate_address(uint64_t *pml4, uint64_t vaddr)
     }
     uint64_t *pd = (uint64_t *)phys_to_virt(pdpt[pdpt_id] & ~(0xFFFUL));
     uint64_t pd_id = (vaddr >> 21) & 0x1FFUL;
-    if ((pd[pd_id] & ARCH_PT_FLAG_TABLE) == 0)
+    if (PT_IS_TABLE(pd[pd_id]))
     {
-        return ((pd[pd_id] & ~((1UL << 21) - 1))) + (vaddr & ((1UL << 21) - 1));
+        return (pd[pd_id] & ~((1UL << 21) - 1)) + (vaddr & ((1UL << 21) - 1));
     }
     if ((pd[pd_id] & (1 << 0)) == 0)
     {

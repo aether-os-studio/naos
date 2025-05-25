@@ -5,10 +5,10 @@
 
 bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state)
 {
-    uint8_t data = serial_read();
-
+    uint8_t data = 0;
     do
     {
+        data = serial_read();
         arch_pause();
     } while (data == 0);
 
@@ -19,6 +19,7 @@ bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state)
 
 uint8_t get_keyboard_input()
 {
+    return 0;
 }
 
 size_t kb_event_bit(void *data, uint64_t request, void *arg)

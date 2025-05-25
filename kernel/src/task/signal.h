@@ -2,45 +2,45 @@
 
 #include <libs/klibc.h>
 
-#define SIGHUP 1UL
-#define SIGINT 2UL
-#define SIGQUIT 3UL
-#define SIGILL 4UL
-#define SIGTRAP 5UL
-#define SIGABRT 6UL
+#define SIGHUP 1
+#define SIGINT 2
+#define SIGQUIT 3
+#define SIGILL 4
+#define SIGTRAP 5
+#define SIGABRT 6
 #define SIGIOT SIGABRT
-#define SIGBUS 7UL
-#define SIGFPE 8UL
-#define SIGKILL 9UL
-#define SIGUSR1 10UL
-#define SIGSEGV 11UL
-#define SIGUSR2 12UL
-#define SIGPIPE 13UL
-#define SIGALRM 14UL
-#define SIGTERM 15UL
-#define SIGSTKFLT 16UL
-#define SIGCHLD 17UL
-#define SIGCONT 18UL
-#define SIGSTOP 19UL
-#define SIGTSTP 20UL
-#define SIGTTIN 21UL
-#define SIGTTOU 22UL
-#define SIGURG 23UL
-#define SIGXCPU 24UL
-#define SIGXFSZ 25UL
-#define SIGVTALRM 26UL
-#define SIGPROF 27UL
-#define SIGWINCH 28UL
-#define SIGIO 29UL
-#define SIGPOLL 29UL
-#define SIGPWR 30UL
-#define SIGSYS 31UL
+#define SIGBUS 7
+#define SIGFPE 8
+#define SIGKILL 9
+#define SIGUSR1 10
+#define SIGSEGV 11
+#define SIGUSR2 12
+#define SIGPIPE 13
+#define SIGALRM 14
+#define SIGTERM 15
+#define SIGSTKFLT 16
+#define SIGCHLD 17
+#define SIGCONT 18
+#define SIGSTOP 19
+#define SIGTSTP 20
+#define SIGTTIN 21
+#define SIGTTOU 22
+#define SIGURG 23
+#define SIGXCPU 24
+#define SIGXFSZ 25
+#define SIGVTALRM 26
+#define SIGPROF 27
+#define SIGWINCH 28
+#define SIGIO 29
+#define SIGPOLL 29
+#define SIGPWR 30
+#define SIGSYS 31
 #define SIGUNUSED SIGSYS
 
-#define MINSIG 1UL
-#define MAXSIG 32UL
+#define MINSIG 1
+#define MAXSIG 32
 
-#define SIGMASK(sig) (1UL << (sig))
+#define SIGMASK(sig) (1 << (sig))
 
 typedef enum signal_internal
 {
