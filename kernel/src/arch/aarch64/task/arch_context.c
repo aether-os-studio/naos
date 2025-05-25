@@ -1,5 +1,6 @@
 #include <arch/aarch64/task/arch_context.h>
 #include <mm/mm.h>
+#include <task/task.h>
 
 void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64_t entry, uint64_t stack, bool user_mode)
 {

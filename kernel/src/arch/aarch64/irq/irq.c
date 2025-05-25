@@ -1,5 +1,6 @@
 #include "irq.h"
 #include <interrupt/irq_manager.h>
+#include <arch/arch.h>
 #include <task/task.h>
 #include <arch/aarch64/acpi/gic.h>
 

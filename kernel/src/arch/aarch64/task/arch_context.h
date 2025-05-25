@@ -1,7 +1,6 @@
 #pragma once
 
 #include <libs/klibc.h>
-#include <task/task.h>
 #include <arch/aarch64/irq/ptrace.h>
 #include <arch/elf.h>
 
@@ -30,6 +29,9 @@ typedef struct arch_signal_frame
 
 #define USER_STACK_START 0x00006ffffff00000
 #define USER_STACK_END 0x0000700000000000
+
+struct task;
+typedef struct task task_t;
 
 void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64_t entry, uint64_t stack, bool user_mode);
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack);

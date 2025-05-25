@@ -7,11 +7,11 @@ SCRIPT=$(realpath "$0")
 SCRIPTPATH=$(dirname "$SCRIPT")
 
 # APK package manager (host)
-APK_PATH="$HOME/opt/apk-static"
-APK_URI="https://gitlab.alpinelinux.org/api/v4/projects/5/packages/generic/v2.14.6/x86_64/apk.static"
-APK_SHA512="782b29d10256ad07fbdfa9bf1b2ac4df9a9ae7162c836ee0ecffc991a4f75113512840f7b3959f5deb81f1d6042c15eeb407139896a8a02c57060de986489e7a"
-chmod +x "${SCRIPTPATH}/pass_acq.sh"
-${SCRIPTPATH}/pass_acq.sh "$APK_URI" "$APK_SHA512" "$APK_PATH"
+APK_PATH="$HOME/opt/$ARCH-apk-static"
+APK_URI="https://gitlab.alpinelinux.org/api/v4/projects/5/packages/generic/v2.14.6/$ARCH/apk.static"
+if [ ! -f $APK_PATH ]; then
+    wget $APK_URI -O $APK_PATH
+fi
 chmod +x "$APK_PATH"
 
 ALPINE_VERSION=v3.14

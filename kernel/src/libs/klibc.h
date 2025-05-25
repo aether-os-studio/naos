@@ -667,7 +667,7 @@ static inline void spin_unlock(spinlock_t *lock)
         : "memory");
 }
 
-static inline void spin_lock_irqsave(spinlock_irq_t *lock)
+static inline void spin_lock_irqsave(spinlock_t *lock)
 {
     uint32_t tmp, daif;
 
@@ -693,7 +693,7 @@ static inline void spin_lock_irqsave(spinlock_irq_t *lock)
     lock->daif = daif; // 保存原始DAIF状态
 }
 
-static inline void spin_unlock_irqrestore(spinlock_irq_t *lock)
+static inline void spin_unlock_irqrestore(spinlock_t *lock)
 {
     uint32_t daif = lock->daif;
 

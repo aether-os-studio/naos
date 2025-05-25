@@ -21,7 +21,7 @@ void serial_printk(char *str, int len)
 uint8_t serial_read()
 {
     if (uart_base == 0)
-        return;
+        return 0;
 
     if (*(volatile uint32_t *)(uart_base + UART_FR) & (1 << 4))
         return 0; // FIFO为空
