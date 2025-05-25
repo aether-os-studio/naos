@@ -118,8 +118,6 @@ task_t *task_create(const char *name, void (*entry)())
 
     can_schedule = true;
 
-    arch_enable_interrupt();
-
     return task;
 }
 

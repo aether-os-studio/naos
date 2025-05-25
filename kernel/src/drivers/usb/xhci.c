@@ -27,22 +27,6 @@ const uint32_t SPEED_XHCI[16] =
 };
 USB_HUB_OPERATION XHCI_OPERARTION;
 
-void usb_kernel_thread()
-{
-    printk("USB kernel thread is running\n");
-
-    XHCI_CONTROLLER *controller = (XHCI_CONTROLLER *)USB_CTRL;
-
-    while (true)
-    {
-        while (XHCIProcessEvent(controller))
-            arch_pause();
-
-        arch_enable_interrupt();
-        arch_pause();
-    }
-}
-
 void xhci_init()
 {
     pci_device_t *devs[16];
@@ -59,7 +43,7 @@ void xhci_init()
     // for (int i = 0; i < xhci_dev_num; i++)
     for (int i = 0; i < 1; i++)
     {
-        SetupXHCIControllerPCI(devs[0]);
+        SetupXHCIControllerPCI(devs[i]);
     }
 }
 
@@ -71,6 +55,10 @@ void SetupXHCIControllerPCI(pci_device_t *dvc)
 
     uint64_t virt = phys_to_virt(dvc->bars[0].address);
     map_page_range(get_current_page_dir(false), virt, dvc->bars[0].address, dvc->bars[0].size, PT_FLAG_R | PT_FLAG_W);
+
+    uint32_t cmd = dvc->op->read(dvc->bus, dvc->slot, dvc->func, dvc->segment, 0x04);
+    cmd |= 0x6;
+    dvc->op->write(dvc->bus, dvc->slot, dvc->func, dvc->segment, 0x04, cmd);
 
     XHCI_CONTROLLER *controller = SetupXHCIController(virt);
     if (!controller)
@@ -256,8 +244,6 @@ uint32_t ConfigureXHCI(XHCI_CONTROLLER *controller)
     hub->PC = controller->PN;
     hub->OP = &XHCI_OPERARTION;
 
-    task_create("USB kthread", usb_kernel_thread);
-
     int count = USBEnumerate(hub);
     // xhci_free_pipes
     // if (count)
@@ -365,6 +351,9 @@ uint32_t XHCIWaitCompletion(XHCI_CONTROLLER *controller, XHCI_TRANSFER_RING *rin
 {
     while (ring->EID != ring->NID)
     {
+        while (XHCIProcessEvent(controller))
+            arch_pause();
+
         arch_pause();
     }
     return ring->EVT.DATA[2] >> 24;

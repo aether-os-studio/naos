@@ -103,7 +103,7 @@ run-hdd-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-M q35 \
 		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).hdd,format=raw,id=harddisk \
-		-drive if=none,file=rootfs.hdd,format=raw,id=rootdisk \
+		-drive if=none,file=rootfs-$(ARCH).hdd,format=raw,id=rootdisk \
 		-device ahci,id=ahci \
 		-device qemu-xhci,id=xhci \
 		-device nvme,drive=harddisk,serial=1234 \
@@ -118,9 +118,10 @@ run-hdd-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-device ramfb \
 		-device qemu-xhci,id=xhci \
 		-device usb-kbd \
+		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).hdd,format=raw,id=harddisk \
-		-drive if=none,file=rootfs.hdd,format=raw,id=rootdisk \
+		-drive if=none,file=rootfs-$(ARCH).hdd,format=raw,id=rootdisk \
 		-device nvme,drive=harddisk,serial=1234 \
 		-device nvme,drive=rootdisk,serial=5678 \
 		$(QEMUFLAGS)
@@ -209,10 +210,10 @@ ifeq ($(ARCH),loongarch64)
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTLOONGARCH64.EFI ::/EFI/BOOT
 endif
 
-	dd if=/dev/zero bs=1M count=2048 of=rootfs.hdd
-	mkfs.ext2 rootfs.hdd
+	dd if=/dev/zero bs=1M count=2048 of=rootfs-$(ARCH).hdd
+	mkfs.ext2 rootfs-$(ARCH).hdd
 	mkdir -p mnt
-	sudo mount rootfs.hdd mnt
+	sudo mount rootfs-$(ARCH).hdd mnt
 	sudo cp -r user/rootfs-$(ARCH)/* mnt/
 	sudo umount mnt
 	rm -rf mnt
@@ -221,7 +222,7 @@ endif
 clean:
 	$(MAKE) -C kernel clean
 	$(MAKE) -C user clean
-	rm -rf $(IMAGE_NAME).hdd rootfs.hdd
+	rm -rf $(IMAGE_NAME).hdd rootfs-$(ARCH).hdd
 
 .PHONY: distclean
 distclean:
