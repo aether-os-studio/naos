@@ -9,6 +9,8 @@
 
 #include <libs/errno.h>
 
+#include <libs/endian.h>
+
 typedef int64_t err_t;
 
 typedef int clockid_t;

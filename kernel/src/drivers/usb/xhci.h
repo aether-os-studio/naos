@@ -4,7 +4,9 @@
 #include <drivers/usb/usb.h>
 
 #define XHCI_TIME_POSTPOWER 20
-#define XHCI_RING_ITEMS 255
+
+#define XHCI_RING_ITEMS 32
+#define XHCI_RING_SIZE (XHCI_RING_ITEMS * sizeof(XHCI_TRANSFER_BLOCK))
 
 #define XHCI_CMD_RS (1 << 0) // Run Stop
 #define XHCI_CMD_HCRST (1 << 1)
@@ -47,7 +49,8 @@ typedef struct _XHCI_CAPABILITY
     uint32_t DBO;  // Doorbell Offset
     uint32_t RRSO; // Runtime Registers Space Offset
     uint32_t CP2;  // Capability Parameters 2
-} XHCI_CAPABILITY;
+} __attribute__((packed)) XHCI_CAPABILITY;
+
 typedef struct _XHCI_OPERATIONAL
 {
     uint32_t CMD; // USB Command
@@ -59,14 +62,15 @@ typedef struct _XHCI_OPERATIONAL
     uint32_t RSV1[4];
     uint64_t DCA; // Device Context Base Address Array Pointer
     uint32_t CFG; // Configure
-} XHCI_OPERATIONAL;
+} __attribute__((packed)) XHCI_OPERATIONAL;
 typedef struct _XHCI_PORT
 {
     uint32_t PSC;   // Port Status and Control
     uint32_t PPMSC; // Port Power Management Status and Control
     uint32_t PLI;   // Port Link Info
     uint32_t RSV;
-} XHCI_PORT;
+} __attribute__((packed)) XHCI_PORT;
+
 typedef struct _XHCI_INTERRUPT
 {
     uint32_t IMAN; // Interrupt Management
@@ -75,17 +79,20 @@ typedef struct _XHCI_INTERRUPT
     uint32_t RSV;
     uint64_t ERS; // Event Ring Segment Table Base Address
     uint64_t ERD; // Event Ring Dequeue Pointer
-} XHCI_INTERRUPT;
+} __attribute__((packed)) XHCI_INTERRUPT;
+
 typedef struct _XHCI_RUNTIME
 {
     uint64_t MFI[4];      // Microframe Index
     XHCI_INTERRUPT IR[0]; // Interrupt Register Set
-} XHCI_RUNTIME;
+} __attribute__((packed)) XHCI_RUNTIME;
+
 typedef struct _XHCI_XCAPABILITY
 {
     uint32_t CAP;
     uint32_t DATA[];
-} XHCI_XCAPABILITY;
+} __attribute__((packed)) XHCI_XCAPABILITY;
+
 typedef union _XHCI_TRANSFER_BLOCK // transfer block (ring element)
 {
     struct
@@ -102,7 +109,8 @@ typedef union _XHCI_TRANSFER_BLOCK // transfer block (ring element)
         uint32_t TYPE : 0x06; // TBR Type
         uint32_t RSV4 : 0x10;
     };
-} XHCI_TRANSFER_BLOCK;
+} __attribute__((packed)) XHCI_TRANSFER_BLOCK;
+
 typedef struct _XHCI_TRANSFER_RING
 {
     XHCI_TRANSFER_BLOCK *RING;
@@ -111,14 +119,16 @@ typedef struct _XHCI_TRANSFER_RING
     uint16_t NID;
     uint8_t CCS;
     uint8_t LOCK;
-} XHCI_TRANSFER_RING;
+} __attribute__((packed)) XHCI_TRANSFER_RING;
+
 // event ring segment
 typedef struct _XHCI_RING_SEGMENT
 {
     uint64_t A; // Address
     uint32_t S; // Size
     uint32_t R; // Reserved
-} XHCI_RING_SEGMENT;
+} __attribute__((packed)) XHCI_RING_SEGMENT;
+
 typedef struct _XHCI_CONTROLLER
 {
     USB_CONTROLLER USB;
@@ -141,6 +151,7 @@ typedef struct _XHCI_CONTROLLER
     uint32_t XEC; // xHCI Extended Capability Pointer
     uint32_t CSZ; // Context Size
 } XHCI_CONTROLLER;
+
 typedef struct _XHCI_INPUT_COMTROL_CONTEXT
 {
     uint32_t DRP;
@@ -150,7 +161,8 @@ typedef struct _XHCI_INPUT_COMTROL_CONTEXT
     uint8_t IN; // Interface Number
     uint8_t AS; // Alternate Setting
     uint8_t RSV1;
-} XHCI_INPUT_CONTROL_CONTEXT;
+} __attribute__((packed)) XHCI_INPUT_CONTROL_CONTEXT;
+
 typedef struct _XHCI_SLOT_CONTEXT
 {
     uint32_t RS : 0x14;  // Route String
@@ -171,7 +183,8 @@ typedef struct _XHCI_SLOT_CONTEXT
     uint32_t RSV2 : 0x13;
     uint32_t SS : 0x05; // Slot State
     uint32_t RSV3[4];
-} XHCI_SLOT_CONTEXT;
+} __attribute__((packed)) XHCI_SLOT_CONTEXT;
+
 typedef struct _XHCI_ENDPOINT_CONTEXT
 {
     uint32_t EPS : 0x03; // EP State
@@ -197,7 +210,8 @@ typedef struct _XHCI_ENDPOINT_CONTEXT
     uint16_t ATL;  // Average TRB Length
     uint16_t MEPL; // Max ESIT Payload Lo
     uint32_t RSV4[3];
-} XHCI_ENDPOINT_CONTEXT;
+} __attribute__((packed)) XHCI_ENDPOINT_CONTEXT;
+
 typedef struct _XHCI_PIPE
 {
     USB_PIPE USB;
@@ -205,6 +219,7 @@ typedef struct _XHCI_PIPE
     uint32_t SID;
     uint32_t EPID;
 } XHCI_PIPE;
+
 typedef union _XHCI_TRB_NORMAL
 {
     XHCI_TRANSFER_BLOCK TRB;
@@ -226,7 +241,7 @@ typedef union _XHCI_TRB_NORMAL
         uint32_t TYPE : 0x06; // TRB Type
         uint32_t RSV1 : 0x10;
     };
-} XHCI_TRB_NORMAL;
+} __attribute__((packed)) XHCI_TRB_NORMAL;
 typedef union _XHCI_TRB_SETUP_STAGE
 {
     XHCI_TRANSFER_BLOCK TRB;
@@ -247,7 +262,7 @@ typedef union _XHCI_TRB_SETUP_STAGE
         uint32_t TRT : 0x02;  // Transfer Type
         uint32_t RSV3 : 0x0E;
     };
-} XHCI_TRB_SETUP_STAGE;
+} __attribute__((packed)) XHCI_TRB_SETUP_STAGE;
 typedef union _XHCI_TRB_DATA_STAGE
 {
     XHCI_TRANSFER_BLOCK TRB;
@@ -271,7 +286,7 @@ typedef union _XHCI_TRB_DATA_STAGE
         uint32_t DIR : 0x01;  // Direction
         uint32_t RSV1 : 0x0F;
     };
-} XHCI_TRB_DATA_STAGE;
+} __attribute__((packed)) XHCI_TRB_DATA_STAGE;
 typedef union _XHCI_TRB_STATUS_STAGE
 {
     XHCI_TRANSFER_BLOCK TRB;
@@ -294,7 +309,7 @@ typedef union _XHCI_TRB_STATUS_STAGE
         uint32_t DIR : 0x01;  // Direction
         uint32_t RSV5 : 0x0F;
     };
-} XHCI_TRB_STATUS_STAGE;
+} __attribute__((packed)) XHCI_TRB_STATUS_STAGE;
 typedef union _XHCI_TRB_LINK
 {
     XHCI_TRANSFER_BLOCK TRB;
@@ -313,7 +328,7 @@ typedef union _XHCI_TRB_LINK
         uint32_t TYPE : 0x06; // TRB Type
         uint32_t RSV4 : 0x10;
     };
-} XHCI_TRB_LINK;
+} __attribute__((packed)) XHCI_TRB_LINK;
 typedef union _XHCI_TRB_ENABLE_SLOT
 {
     XHCI_TRANSFER_BLOCK TRB;
@@ -326,7 +341,7 @@ typedef union _XHCI_TRB_ENABLE_SLOT
         uint32_t ST : 0x05;   // Slot Type
         uint32_t RSV2 : 0x0B;
     };
-} XHCI_TRB_ENABLE_SLOT;
+} __attribute__((packed)) XHCI_TRB_ENABLE_SLOT;
 typedef union _XHCI_TRB_DISABLE_SLOT
 {
     XHCI_TRANSFER_BLOCK TRB;
@@ -339,7 +354,7 @@ typedef union _XHCI_TRB_DISABLE_SLOT
         uint8_t RSV2;
         uint8_t SID;
     };
-} XHCI_TRB_DISABLE_SLOT;
+} __attribute__((packed)) XHCI_TRB_DISABLE_SLOT;
 typedef union _XHCI_TRB_ADDRESS_DEVICE
 {
     XHCI_TRANSFER_BLOCK TRB;
@@ -355,7 +370,7 @@ typedef union _XHCI_TRB_ADDRESS_DEVICE
         uint8_t RSV3;
         uint8_t SID; // Slot ID
     };
-} XHCI_TRB_ADDRESS_DEVICE;
+} __attribute__((packed)) XHCI_TRB_ADDRESS_DEVICE;
 typedef union _XHCI_TRB_CONFIGURE_ENDPOINT
 {
     XHCI_TRANSFER_BLOCK TRB;
@@ -370,7 +385,7 @@ typedef union _XHCI_TRB_CONFIGURE_ENDPOINT
         uint8_t RSV2;
         uint8_t SID; // Slot ID
     };
-} XHCI_TRB_CONFIGURE_ENDPOINT;
+} __attribute__((packed)) XHCI_TRB_CONFIGURE_ENDPOINT;
 typedef union _XHCI_TRB_EVALUATE_CONTEXT
 {
     XHCI_TRANSFER_BLOCK TRB;
@@ -385,7 +400,7 @@ typedef union _XHCI_TRB_EVALUATE_CONTEXT
         uint8_t RSV2;
         uint8_t SID; // Slot ID
     };
-} XHCI_TRB_EVALUATE_CONTEXT;
+} __attribute__((packed)) XHCI_TRB_EVALUATE_CONTEXT;
 typedef union _XHCI_TRB_COMMAND_COMPLETION
 {
     XHCI_TRANSFER_BLOCK TRB;
@@ -400,7 +415,7 @@ typedef union _XHCI_TRB_COMMAND_COMPLETION
         uint8_t VFID;
         uint8_t SID;
     };
-} XHCI_TRB_COMMAND_COMPLETION;
+} __attribute__((packed)) XHCI_TRB_COMMAND_COMPLETION;
 typedef union _XHCI_TRB_TRANSFER_RING
 {
     XHCI_TRANSFER_BLOCK TRB;
@@ -413,7 +428,8 @@ typedef union _XHCI_TRB_TRANSFER_RING
         uint16_t TYPE : 0x06; // TRB Type
         uint16_t RSV2;
     };
-} XHCI_TRB_TRANSFER_RING;
+} __attribute__((packed)) XHCI_TRB_TRANSFER_RING;
+
 typedef enum _XHCI_PORT_LINK_STATE
 {
     PLS_U0 = 0,
@@ -429,7 +445,7 @@ typedef enum _XHCI_PORT_LINK_STATE
     PLS_COMPILANCE_MODE = 10,
     PLS_TEST_MODE = 11,
     PLS_RESUME = 15,
-} XHCI_PORT_LINK_STATE;
+} __attribute__((packed)) XHCI_PORT_LINK_STATE;
 typedef enum _XHCI_ENDPOINT_TYPE
 {
     EP_NOT_VALID = 0,
@@ -440,7 +456,7 @@ typedef enum _XHCI_ENDPOINT_TYPE
     EP_IN_ISOCH,
     EP_IN_BULK,
     EP_IN_INTERRUPT
-} XHCI_ENDPOINT_TYPE;
+} __attribute__((packed)) XHCI_ENDPOINT_TYPE;
 typedef enum _XHCI_TRB_TYPE
 {
     TRB_RESERVED = 0,
@@ -475,7 +491,7 @@ typedef enum _XHCI_TRB_TYPE
     TRB_HOST_CONTROLLER,
     TRB_DEVICE_NOTIFICATION,
     TRB_MFINDEX_WRAP,
-} XHCI_TRB_TYPE;
+} __attribute__((packed)) XHCI_TRB_TYPE;
 
 extern const uint32_t SPEED_XHCI[];
 

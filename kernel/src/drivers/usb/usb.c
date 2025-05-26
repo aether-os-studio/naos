@@ -1,4 +1,5 @@
 #include <drivers/usb/xhci.h>
+#include <drivers/usb/hid/hid.h>
 #include <drivers/kernel_logger.h>
 #include <mm/mm.h>
 
@@ -152,12 +153,12 @@ uint32_t ConfigureUSB(USB_COMMON *common)
             goto LABEL001;
         }
 
-        config = malloc(cfg.TL);
+        config = alloc_frames_bytes(cfg.TL);
         memset(config, 0, cfg.TL);
         req.L = cfg.TL;
         if (controller->XFER(common->PIPE, &req, config, 0, 0) || config->TL != cfg.TL)
         {
-            free(config);
+            free_frames_bytes(config, cfg.TL);
             config = NULL;
         }
     }
@@ -220,7 +221,7 @@ LABEL001:;
         else if (interface->IC == USB_CLASS_HID)
         {
             printk("HID device\n");
-            // cc = ConfigureHID(common);
+            cc = ConfigureHID(common);
         }
     }
     if (cc)
@@ -237,11 +238,13 @@ CONFIG_FAIL:;
     common->IFC = 0;
     return 0;
 }
+
 void USBD2P(USB_PIPE *pipe, USB_COMMON *usbdev, USB_ENDPOINT *epdesc)
 {
     pipe->CTRL = usbdev->CTRL;
     pipe->MPS = epdesc->MPS;
 }
+
 USB_ENDPOINT *USBSearchEndpoint(USB_COMMON *usbdev, int type, int dir)
 {
     USB_CONFIG *config = usbdev->CFG;

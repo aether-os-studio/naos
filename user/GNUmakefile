@@ -8,7 +8,6 @@ all:
 
 .PHONY: clean
 clean:
-	rm -rf $(CWD)/rootfs-$(ARCH)
 
 .PHONY: distclean
 distclean:

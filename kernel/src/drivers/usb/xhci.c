@@ -198,28 +198,22 @@ uint32_t ConfigureXHCI(XHCI_CONTROLLER *controller)
 
     controller->OR->CFG = controller->SN;
     controller->CMD.CCS = 1;
-    controller->OR->CRC = virt_to_phys((uint64_t)controller->CMD.RING) | 1;
-    controller->OR->DCA = virt_to_phys((uint64_t)controller->DVC);
+    controller->OR->CRC = translate_address(get_current_page_dir(false), (uint64_t)controller->CMD.RING) | 1;
+    controller->OR->DCA = translate_address(get_current_page_dir(false), (uint64_t)controller->DVC);
 
-    controller->SEG->A = virt_to_phys((uint64_t)controller->EVT.RING);
-    controller->SEG->S = XHCI_RING_ITEMS;
+    controller->SEG->A = translate_address(get_current_page_dir(false), (uint64_t)controller->EVT.RING);
+    controller->SEG->S = XHCI_RING_ITEMS - 1;
 
     controller->EVT.CCS = 1;
     controller->RR->IR[0].IMOD = 0;
-    controller->RR->IR[0].IMAN |= 2; // Interrupt Enable
     controller->RR->IR[0].TS = 1;
-    controller->RR->IR[0].ERS = virt_to_phys((uint64_t)controller->SEG);
-    controller->RR->IR[0].ERD = virt_to_phys((uint64_t)controller->EVT.RING);
+    controller->RR->IR[0].ERS = translate_address(get_current_page_dir(false), (uint64_t)controller->SEG);
+    controller->RR->IR[0].ERD = translate_address(get_current_page_dir(false), (uint64_t)controller->EVT.RING);
 
     reg = controller->CR->SP2;
     uint32_t spb = (reg >> 21 & 0x1F) << 5 | reg >> 27;
     if (spb)
     {
-        /*
-        printk("CREATE SCRATCHPAD ");
-        PRINTRAX(spb, 3);
-        LINEFEED();
-        */
         uint64_t pageAddress = 0;
         uint64_t *spba = 0;
         spba = (uint64_t *)phys_to_virt(alloc_frames(1));
@@ -230,10 +224,10 @@ uint32_t ConfigureXHCI(XHCI_CONTROLLER *controller)
             memset((void *)phys_to_virt(pageAddress), 0, DEFAULT_PAGE_SIZE);
             spba[i] = pageAddress;
         }
-        controller->DVC[0] = virt_to_phys((uint64_t)spba);
+        controller->DVC[0] = translate_address(get_current_page_dir(false), (uint64_t)spba);
     }
 
-    controller->OR->CMD |= XHCI_CMD_INTE;
+    // controller->OR->CMD |= XHCI_CMD_INTE;
     controller->OR->CMD |= XHCI_CMD_RS;
 
     // Find devices
@@ -255,7 +249,7 @@ uint32_t ConfigureXHCI(XHCI_CONTROLLER *controller)
     // while (!(controller->OR->STS & XHCI_STS_HCH))
     //     arch_pause();
 
-    free_frames(virt_to_phys(physicalAddress), 1);
+    free_frames_bytes((void *)physicalAddress, 1);
     return 0;
 }
 
@@ -265,24 +259,27 @@ void XHCIQueueTRB(XHCI_TRANSFER_RING *ring, XHCI_TRANSFER_BLOCK *block)
     {
         XHCI_TRB_LINK trb;
         memset(&trb, 0, sizeof(XHCI_TRB_LINK));
-        trb.RSP = virt_to_phys((uint64_t)ring->RING) >> 4;
+        trb.RSP = translate_address(get_current_page_dir(false), (uint64_t)ring->RING) >> 4;
         trb.TYPE = TRB_LINK;
         trb.TC = 1;
         XHCICopyTRB(ring, &trb.TRB);
         ring->NID = 0;
         ring->CCS ^= 1;
     }
+
     XHCICopyTRB(ring, block);
     ring->NID++;
 }
+
 void XHCICopyTRB(XHCI_TRANSFER_RING *ring, XHCI_TRANSFER_BLOCK *element)
 {
-    XHCI_TRANSFER_BLOCK *dst = ring->RING + ring->NID;
+    XHCI_TRANSFER_BLOCK *dst = &ring->RING[ring->NID];
     dst->DATA[0] = element->DATA[0];
     dst->DATA[1] = element->DATA[1];
     dst->DATA[2] = element->DATA[2];
-    dst->DATA[3] = element->DATA[3] | ring->CCS;
+    dst->DATA[3] = (element->DATA[3] & 0xFFFFFFFE) | ring->CCS;
 }
+
 void XHCIDoorbell(XHCI_CONTROLLER *controller, uint32_t slot, uint32_t value)
 {
     controller->DR[slot] = value;
@@ -309,7 +306,7 @@ uint32_t XHCIProcessEvent(XHCI_CONTROLLER *controller)
         XHCI_TRB_COMMAND_COMPLETION *cc = (XHCI_TRB_COMMAND_COMPLETION *)trb;
         uint64_t ctp = phys_to_virt((uint64_t)cc->CTP);
         XHCI_TRANSFER_BLOCK *firstTRB = (XHCI_TRANSFER_BLOCK *)((ctp >> 12) << 12);
-        XHCI_TRB_TRANSFER_RING *ringTRB = (XHCI_TRB_TRANSFER_RING *)(firstTRB + XHCI_RING_ITEMS);
+        XHCI_TRB_TRANSFER_RING *ringTRB = (XHCI_TRB_TRANSFER_RING *)((uint64_t)firstTRB + XHCI_RING_SIZE - sizeof(XHCI_TRANSFER_BLOCK));
         XHCI_TRANSFER_RING *ring = (XHCI_TRANSFER_RING *)phys_to_virt(ringTRB->RING);
         uint32_t eid = ((cc->CTP & 0xFF0) >> 4) + 1;
         memcpy(&ring->EVT, trb, sizeof(XHCI_TRANSFER_BLOCK));
@@ -344,9 +341,10 @@ uint32_t XHCIProcessEvent(XHCI_CONTROLLER *controller)
         event->CCS ^= 1;
     }
     event->NID = nid;
-    controller->RR->IR[0].ERD = virt_to_phys((uint64_t)(event->RING + event->NID));
+    controller->RR->IR[0].ERD = translate_address(get_current_page_dir(false), (uint64_t)(event->RING + event->NID));
     return 1;
 }
+
 uint32_t XHCIWaitCompletion(XHCI_CONTROLLER *controller, XHCI_TRANSFER_RING *ring)
 {
     while (ring->EID != ring->NID)
@@ -358,12 +356,14 @@ uint32_t XHCIWaitCompletion(XHCI_CONTROLLER *controller, XHCI_TRANSFER_RING *rin
     }
     return ring->EVT.DATA[2] >> 24;
 }
+
 uint32_t XHCICommand(XHCI_CONTROLLER *controller, XHCI_TRANSFER_BLOCK *trb)
 {
     XHCIQueueTRB(&controller->CMD, trb);
     controller->DR[0] = 0;
     return XHCIWaitCompletion(controller, &controller->CMD);
 }
+
 uint32_t XHCIHUBDetect(USB_HUB *hub, uint32_t port)
 {
     XHCI_CONTROLLER *controller = (XHCI_CONTROLLER *)hub->CTRL;
@@ -434,17 +434,18 @@ uint32_t XHCIHUBReset(USB_HUB *hub, uint32_t port)
     */
     return SPEED_XHCI[(controller->PR[port].PSC >> 10) & 0xF];
 }
+
 uint32_t XHCIHUBDisconnect(USB_HUB *hub, uint32_t port)
 {
     // XXX - should turn the port power off.
     return 0;
 }
+
 uint64_t XHCICreateInputContext(USB_COMMON *usbdev, uint32_t maxepid)
 {
     XHCI_CONTROLLER *controller = (XHCI_CONTROLLER *)usbdev->CTRL;
     uint64_t size = (sizeof(XHCI_INPUT_CONTROL_CONTEXT) << controller->CSZ) * 33;
-    XHCI_INPUT_CONTROL_CONTEXT *icctx = (XHCI_INPUT_CONTROL_CONTEXT *)alloc_frames(1);
-    icctx = (XHCI_INPUT_CONTROL_CONTEXT *)(phys_to_virt(icctx));
+    XHCI_INPUT_CONTROL_CONTEXT *icctx = (XHCI_INPUT_CONTROL_CONTEXT *)alloc_frames_bytes(sizeof(XHCI_INPUT_CONTROL_CONTEXT));
     memset(icctx, 0, size);
 
     XHCI_SLOT_CONTEXT *sctx = (XHCI_SLOT_CONTEXT *)(icctx + (1ULL << controller->CSZ));
@@ -486,6 +487,7 @@ uint64_t XHCICreateInputContext(USB_COMMON *usbdev, uint32_t maxepid)
     sctx->RHPN = usbdev->PORT + 1;
     return (uint64_t)icctx;
 }
+
 USB_PIPE *XHCICreatePipe(USB_COMMON *common, USB_PIPE *upipe, USB_ENDPOINT *epdesc)
 {
     if (!epdesc)
@@ -494,7 +496,7 @@ USB_PIPE *XHCICreatePipe(USB_COMMON *common, USB_PIPE *upipe, USB_ENDPOINT *epde
         if (upipe)
         {
             XHCI_PIPE *xpipe = (XHCI_PIPE *)upipe;
-            free_frames(virt_to_phys((uint64_t)xpipe->RING.RING), 1);
+            free_frames_bytes(xpipe->RING.RING, XHCI_RING_SIZE);
             free(xpipe);
         }
         return 0;
@@ -503,7 +505,7 @@ USB_PIPE *XHCICreatePipe(USB_COMMON *common, USB_PIPE *upipe, USB_ENDPOINT *epde
     {
         XHCI_CONTROLLER *controller = (XHCI_CONTROLLER *)common->CTRL;
         uint8_t eptype = epdesc->AT & USB_ENDPOINT_XFER_TYPE;
-        uint32_t epid = 1;
+        uint16_t epid = 1;
         if (epdesc->EA)
         {
             epid = (epdesc->EA & 0x0f) << 1;
@@ -526,7 +528,7 @@ USB_PIPE *XHCICreatePipe(USB_COMMON *common, USB_PIPE *upipe, USB_ENDPOINT *epde
         {
             // usb_get_period
             /*
-            uint32_t period = epdesc->ITV;
+            DWORD period = epdesc->ITV;
             if (common->SPD != USB_HIGHSPEED)
             {
                 if (period)
@@ -555,9 +557,8 @@ USB_PIPE *XHCICreatePipe(USB_COMMON *common, USB_PIPE *upipe, USB_ENDPOINT *epde
         {
             epctx->EPT = EP_CONTROL;
         }
-
         epctx->MPSZ = pipe->USB.MPS;
-        epctx->TRDP = virt_to_phys((uint64_t)pipe->RING.RING) >> 4;
+        epctx->TRDP = translate_address(get_current_page_dir(false), (uint64_t)pipe->RING.RING) >> 4;
         epctx->DCS = 1;
         epctx->ATL = pipe->USB.MPS;
 
@@ -582,7 +583,7 @@ USB_PIPE *XHCICreatePipe(USB_COMMON *common, USB_PIPE *upipe, USB_ENDPOINT *epde
 
                 XHCI_TRB_CONFIGURE_ENDPOINT trb;
                 memset(&trb, 0, sizeof(XHCI_TRB_CONFIGURE_ENDPOINT));
-                trb.ICP = virt_to_phys((uint64_t)icctx);
+                trb.ICP = translate_address(get_current_page_dir(false), (uint64_t)icctx);
                 trb.TYPE = TRB_CONFIGURE_ENDPOINT;
                 trb.SID = pipe->SID;
                 uint32_t cc;
@@ -610,13 +611,13 @@ USB_PIPE *XHCICreatePipe(USB_COMMON *common, USB_PIPE *upipe, USB_ENDPOINT *epde
             uint32_t size = (sizeof(XHCI_SLOT_CONTEXT) << controller->CSZ) * 32;
             XHCI_SLOT_CONTEXT *dev = phys_to_virt((XHCI_SLOT_CONTEXT *)alloc_frames(1));
             memset(dev, 0, size);
-            controller->DVC[slot] = virt_to_phys((uint64_t)dev);
+            controller->DVC[slot] = translate_address(get_current_page_dir(false), (uint64_t)dev);
 
             // Send SET_ADDRESS command
             // Send Address Device command
             XHCI_TRB_ADDRESS_DEVICE trb01;
             memset(&trb01, 0, sizeof(XHCI_TRB_ADDRESS_DEVICE));
-            trb01.ICP = virt_to_phys((uint64_t)icctx) >> 4;
+            trb01.ICP = translate_address(get_current_page_dir(false), (uint64_t)icctx) >> 4;
             trb01.TYPE = TRB_ADDRESS_DEVICE;
             trb01.SID = slot;
             cc = XHCICommand(controller, &trb01.TRB);
@@ -635,11 +636,11 @@ USB_PIPE *XHCICreatePipe(USB_COMMON *common, USB_PIPE *upipe, USB_ENDPOINT *epde
                     goto FAILED;
                 }
                 controller->DVC[slot] = 0;
-                free_frames(virt_to_phys((uint64_t)dev), 1);
+                free_frames_bytes(dev, 1);
                 goto FAILED;
             }
             pipe->SID = slot;
-            free_frames(virt_to_phys((uint64_t)dev), 1);
+            free_frames_bytes(dev, 1);
         }
         else
         {
@@ -648,7 +649,7 @@ USB_PIPE *XHCICreatePipe(USB_COMMON *common, USB_PIPE *upipe, USB_ENDPOINT *epde
             // Send configure command
             XHCI_TRB_CONFIGURE_ENDPOINT trb;
             memset(&trb, 0, sizeof(XHCI_TRB_CONFIGURE_ENDPOINT));
-            trb.ICP = virt_to_phys((uint64_t)icctx);
+            trb.ICP = translate_address(get_current_page_dir(false), (uint64_t)icctx);
             trb.TYPE = TRB_CONFIGURE_ENDPOINT;
             trb.SID = pipe->SID;
             uint32_t cc;
@@ -658,12 +659,12 @@ USB_PIPE *XHCICreatePipe(USB_COMMON *common, USB_PIPE *upipe, USB_ENDPOINT *epde
                 goto FAILED;
             }
         }
-        free_frames(virt_to_phys((uint64_t)icctx), 1);
+        free_frames_bytes(icctx, sizeof(XHCI_INPUT_CONTROL_CONTEXT));
         return &pipe->USB;
 
     FAILED:;
-        free_frames(virt_to_phys((uint64_t)icctx), 1);
-        free_frames(virt_to_phys((uint64_t)pipe->RING.RING), 1);
+        free_frames_bytes(icctx, sizeof(XHCI_INPUT_CONTROL_CONTEXT));
+        free_frames_bytes(pipe->RING.RING, 1);
         free(pipe);
         return 0;
     }
@@ -696,7 +697,7 @@ USB_PIPE *XHCICreatePipe(USB_COMMON *common, USB_PIPE *upipe, USB_ENDPOINT *epde
 
     XHCI_TRB_EVALUATE_CONTEXT trb;
     memset(&trb, 0, sizeof(XHCI_TRB_EVALUATE_CONTEXT));
-    trb.ICP = virt_to_phys((uint64_t)in);
+    trb.ICP = translate_address(get_current_page_dir(false), (uint64_t)in);
     trb.TYPE = TRB_EVALUATE_CONTEXT;
     trb.SID = pipe->SID;
     uint32_t cc = XHCICommand(controller, &trb.TRB);
@@ -704,15 +705,17 @@ USB_PIPE *XHCICreatePipe(USB_COMMON *common, USB_PIPE *upipe, USB_ENDPOINT *epde
     {
         printk("CREATE PIPE:EVALUATE CONTROL ENDPOINT FAILED %#04x", cc);
     }
-    free_frames(virt_to_phys((uint64_t)in), 1);
+    free_frames_bytes(in, 1);
     return upipe;
 }
+
 uint32_t XHCITransfer(USB_PIPE *pipe, USB_DEVICE_REQUEST *req, void *data, uint32_t xferlen, uint32_t wait)
 {
     XHCI_PIPE *xpipe = (XHCI_PIPE *)pipe;
     XHCI_CONTROLLER *controller = (XHCI_CONTROLLER *)pipe->CTRL;
     uint32_t slotid = xpipe->SID;
     XHCI_TRANSFER_RING *ring = &xpipe->RING;
+
     if (req)
     {
         uint32_t dir = (req->T & 0x80) >> 7;
@@ -747,10 +750,9 @@ uint32_t XHCITransfer(USB_PIPE *pipe, USB_DEVICE_REQUEST *req, void *data, uint3
     else
     {
         // XHCI Transfer Normal
-        // while (1) arch_pause();
         XHCI_TRB_NORMAL trb;
         memset(&trb, 0, sizeof(XHCI_TRB_NORMAL));
-        trb.DATA = virt_to_phys((uint64_t)data);
+        trb.DATA = translate_address(get_current_page_dir(false), (uint64_t)data);
         trb.TL = xferlen;
         trb.IOC = 1;
         trb.TYPE = TRB_NORMAL;
@@ -771,9 +773,9 @@ uint32_t XHCITransfer(USB_PIPE *pipe, USB_DEVICE_REQUEST *req, void *data, uint3
 
 void XHCICreateTransferRing(XHCI_TRANSFER_RING *tr)
 {
-    uint64_t pageAddress = phys_to_virt(alloc_frames(1));
-    memset((void *)pageAddress, 0, DEFAULT_PAGE_SIZE);
+    uint64_t pageAddress = (uint64_t)alloc_frames_bytes(XHCI_RING_SIZE);
+    memset((void *)pageAddress, 0, XHCI_RING_SIZE);
     tr->RING = (XHCI_TRANSFER_BLOCK *)pageAddress;
-    XHCI_TRB_TRANSFER_RING *ring = (XHCI_TRB_TRANSFER_RING *)(tr->RING + XHCI_RING_ITEMS);
-    ring->RING = virt_to_phys((uint64_t)tr);
+    XHCI_TRB_TRANSFER_RING *ring = (XHCI_TRB_TRANSFER_RING *)&tr->RING[XHCI_RING_ITEMS - 1];
+    ring->RING = translate_address(get_current_page_dir(false), (uint64_t)tr);
 }

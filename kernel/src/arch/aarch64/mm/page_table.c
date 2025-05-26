@@ -114,7 +114,7 @@ void unmap_page(uint64_t *pml4, uint64_t vaddr)
         uint64_t *check_table = (uint64_t *)phys_to_virt(*entry & ARCH_ADDR_MASK);
         for (int i = 0; i < 512; ++i)
         {
-            if (PT_IS_TABLE(check_table[i]))
+            if (ARCH_PT_IS_TABLE(check_table[i]))
             {
                 used = true;
                 break;
@@ -224,35 +224,46 @@ void free_page_table(uint64_t directory)
 
 uint64_t translate_address(uint64_t *pml4, uint64_t vaddr)
 {
-    uint64_t offset = vaddr & 0xFFFUL;
+    uint64_t indices[] = {
+        (vaddr >> 39) & 0x1FF, // PML4索引
+        (vaddr >> 30) & 0x1FF, // PDPT索引
+        (vaddr >> 21) & 0x1FF, // PD索引
+        (vaddr >> 12) & 0x1FF  // PT索引
+    };
 
-    uint64_t pml4_id = (vaddr >> 39) & 0x1FFUL;
-    if ((pml4[pml4_id] & (1 << 0)) == 0)
+    uint64_t *current_table = pml4;
+    uint64_t offset = vaddr & 0xFFF;
+
+    for (int level = 0; level < 4; ++level)
     {
-        return 0;
-    }
-    uint64_t *pdpt = (uint64_t *)phys_to_virt(pml4[pml4_id] & ~(0xFFFUL));
-    uint64_t pdpt_id = (vaddr >> 30) & 0x1FFUL;
-    if ((pdpt[pdpt_id] & (1 << 0)) == 0)
-    {
-        return 0;
-    }
-    uint64_t *pd = (uint64_t *)phys_to_virt(pdpt[pdpt_id] & ~(0xFFFUL));
-    uint64_t pd_id = (vaddr >> 21) & 0x1FFUL;
-    if (PT_IS_TABLE(pd[pd_id]))
-    {
-        return (pd[pd_id] & ~((1UL << 21) - 1)) + (vaddr & ((1UL << 21) - 1));
-    }
-    if ((pd[pd_id] & (1 << 0)) == 0)
-    {
-        return 0;
-    }
-    uint64_t *pt = (uint64_t *)phys_to_virt(pd[pd_id] & ~(0xFFFUL));
-    uint64_t pt_id = (vaddr >> 12) & 0x1FFUL;
-    if ((pt[pt_id] & (1 << 0)) == 0)
-    {
-        return 0;
+        uint64_t index = indices[level];
+        if (index >= 512)
+            return 0;
+
+        uint64_t entry = current_table[index];
+        if (!(entry & ARCH_PT_FLAG_VALID))
+            return 0;
+
+        if (level < 3)
+        {
+            if (!ARCH_PT_IS_LARGE(entry))
+            {
+                uint64_t next_table_phys = entry & ARCH_ADDR_MASK;
+                current_table = phys_to_virt((uint64_t *)next_table_phys);
+                continue;
+            }
+
+            switch (level)
+            {
+            case 1:
+                return (entry & ~((1UL << 30) - 1)) | (vaddr & ((1UL << 30) - 1));
+            case 2:
+                return (entry & ~((1UL << 21) - 1)) | (vaddr & ((1UL << 21) - 1));
+            default:
+                return 0;
+            }
+        }
     }
 
-    return (pt[pt_id] & 0x00007FFFFFFFF000) + offset;
+    return (current_table[indices[3]] & ARCH_ADDR_MASK) | offset;
 }
