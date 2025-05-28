@@ -1,6 +1,7 @@
 #include <arch/x64/drivers/chars/ps2_kbd.h>
 #include <drivers/kernel_logger.h>
 #include <interrupt/irq_manager.h>
+#include <arch/arch.h>
 #include <task/task.h>
 #include <arch/x64/io.h>
 #include <fs/vfs/dev.h>

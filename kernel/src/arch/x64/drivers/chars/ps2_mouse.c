@@ -2,6 +2,7 @@
 #include <arch/x64/drivers/chars/ps2_mouse.h>
 #include <interrupt/irq_manager.h>
 #include <arch/x64/io.h>
+#include <arch/arch.h>
 #include <task/task.h>
 #include <fs/vfs/dev.h>
 #include <drivers/fb.h>

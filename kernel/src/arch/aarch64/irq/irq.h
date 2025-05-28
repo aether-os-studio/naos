@@ -18,3 +18,5 @@ void timer_handler(uint64_t irq_num, void *parameter, struct pt_regs *regs);
 extern void timer_init_percpu();
 
 extern void setup_vectors();
+
+extern uint64_t nanoTime();
