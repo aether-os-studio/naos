@@ -3,7 +3,12 @@
 #![allow(unused_imports)]
 #![allow(unused_variables)]
 
+extern crate alloc;
+
 pub mod arch;
+pub mod drivers;
+pub mod fs;
+pub mod ipc;
 pub mod libs;
 pub mod mm;
 pub mod rust;
@@ -15,5 +20,6 @@ extern "C" fn rust_init() {
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
+    println!("{}", info);
     loop {}
 }

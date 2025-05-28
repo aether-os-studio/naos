@@ -1,6 +1,6 @@
 use core::alloc::GlobalAlloc;
 
-use crate::rust::bindings::bindings::{aligned_alloc, free};
+use crate::rust::bindings::bindings::{aligned_alloc, free, get_physical_memory_offset};
 
 pub struct HeapAllocator;
 
@@ -14,4 +14,13 @@ unsafe impl GlobalAlloc for HeapAllocator {
     }
 }
 
+#[global_allocator]
 pub static KERNEL_ALLOCATOR: HeapAllocator = HeapAllocator;
+
+pub fn phys_to_virt(paddr: usize) -> usize {
+    paddr + unsafe { get_physical_memory_offset() } as usize
+}
+
+pub fn virt_to_phys(vaddr: usize) -> usize {
+    vaddr - unsafe { get_physical_memory_offset() } as usize
+}

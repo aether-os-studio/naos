@@ -17,15 +17,15 @@ struct MBR_DPTE
     uint8_t end_head;
     uint16_t end_sector : 6, // 0~5
         end_cylinder : 10;   // 6~15
-    uint32_t start_LBA;
+    uint32_t start_lba;
     uint32_t sectors_limit;
 } __attribute__((packed));
 
 struct MBR_DPT
 {
-    uint8_t BS_reserved[446];
-    struct MBR_DPTE DPTE[4];
-    uint16_t BS_TrailSig;
+    uint8_t bs_reserved[446];
+    struct MBR_DPTE dpte[4];
+    uint16_t bs_trail_sig;
 } __attribute__((packed));
 
 #define GPT_MAX_PARTITION_NUM 128

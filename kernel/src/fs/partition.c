@@ -78,7 +78,7 @@ void partition_init()
         struct MBR_DPT *boot_sector = (struct MBR_DPT *)malloc(sizeof(struct MBR_DPT));
         blkdev_read(i, 0, boot_sector, sizeof(struct MBR_DPT));
 
-        if (boot_sector->BS_TrailSig != 0xAA55)
+        if (boot_sector->bs_trail_sig != 0xAA55)
         {
             part->blkdev_id = i;
             part->starting_lba = 0;
@@ -90,12 +90,12 @@ void partition_init()
 
         for (int j = 0; j < MBR_MAX_PARTITION_NUM; j++)
         {
-            if (boot_sector->DPTE[j].start_LBA == 0 || boot_sector->DPTE[j].sectors_limit == 0)
+            if (boot_sector->dpte[j].start_lba == 0 || boot_sector->dpte[j].sectors_limit == 0)
                 continue;
 
             part->blkdev_id = i;
-            part->starting_lba = boot_sector->DPTE[j].start_LBA;
-            part->ending_lba = boot_sector->DPTE[j].sectors_limit;
+            part->starting_lba = boot_sector->dpte[j].start_lba;
+            part->ending_lba = boot_sector->dpte[j].sectors_limit;
             part->type = MBR;
             partition_num++;
         }

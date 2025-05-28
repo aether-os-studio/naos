@@ -2,6 +2,9 @@ use core::fmt;
 use core::fmt::Write;
 use spin::Mutex;
 
+pub mod dma;
+pub mod io;
+
 use crate::rust::bindings::bindings::printk;
 
 pub struct KernelWriter;

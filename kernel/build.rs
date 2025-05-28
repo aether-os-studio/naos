@@ -37,6 +37,6 @@ fn main() {
     let bindings = builder.generate().expect("Unable to generate bindings");
 
     bindings
-        .write_to_file(out_path.join("bindings.rs"))
+        .write_to_file(out_path.join(format!("bindings_{}.rs", env!("ARCH"))))
         .expect("Couldn't write bindings!");
 }

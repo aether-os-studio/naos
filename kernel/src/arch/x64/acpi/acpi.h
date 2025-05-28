@@ -69,7 +69,7 @@ struct madt_io_apic
 struct madt_local_apic
 {
     struct madt_header h;
-    uint8_t ACPI_Processor_UID;
+    uint8_t acpi_processor_uid;
     uint8_t local_apic_id;
     uint32_t flags;
 };
