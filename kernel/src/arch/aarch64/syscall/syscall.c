@@ -433,7 +433,7 @@ void aarch64_do_syscall(struct pt_regs *frame)
     default:
         char buf[32];
         int len = sprintf(buf, "syscall %d not implemented\n", idx);
-        serial_printk(buf, len);
+        printk(buf, len);
         frame->x0 = (uint64_t)-ENOSYS;
         break;
     }

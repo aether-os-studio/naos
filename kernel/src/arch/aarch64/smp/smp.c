@@ -1,5 +1,5 @@
 #include <arch/arch.h>
-#include <arch/aarch64/acpi/gic.h>
+#include <arch/aarch64/drivers/gic.h>
 #include <drivers/kernel_logger.h>
 #include <task/task.h>
 
@@ -67,7 +67,7 @@ void ap_kmain(struct limine_mp_info *cpu)
 
     arch_set_current(idle_tasks[current_cpu_id]);
 
-    gic_v3_init_percpu();
+    gic_init_percpu(current_cpu_id);
 
     timer_init_percpu();
 

@@ -7,7 +7,10 @@ edition = "2024"
 crate-type = ["staticlib"]
 
 [dependencies]
+acpi = "5.2.0"
+arm-gic = "0.4.0"
 bitflags = "2.9.1"
+limine = "0.4.0"
 spin = "0.10.0"
 
 [build-dependencies]

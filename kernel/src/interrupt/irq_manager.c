@@ -1,5 +1,6 @@
 #include <interrupt/irq_manager.h>
 #include <drivers/kernel_logger.h>
+#include <arch/arch.h>
 #include <task/task.h>
 
 irq_action_t actions[ARCH_MAX_IRQ_NUM];

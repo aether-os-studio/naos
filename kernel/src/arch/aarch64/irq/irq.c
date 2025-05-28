@@ -2,7 +2,6 @@
 #include <interrupt/irq_manager.h>
 #include <arch/arch.h>
 #include <task/task.h>
-#include <arch/aarch64/acpi/gic.h>
 
 void arch_enable_interrupt()
 {
@@ -16,7 +15,7 @@ void arch_disable_interrupt()
 
 void irq_init()
 {
-    gic_v3_init();
+    gic_init();
     timer_init_percpu();
     irq_regist_irq(TIMER_IRQ, timer_handler, 0, NULL, &gic_controller, "GENERIC TIMER");
 }
@@ -25,15 +24,13 @@ extern void do_irq(struct pt_regs *regs, uint64_t irq_num);
 
 void aarch64_do_irq(struct pt_regs *regs)
 {
-    uint64_t irq = gic_v3_get_current_irq();
+    uint64_t irq = get_current_irq();
 
     if (irq == 1023)
         return;
 
     do_irq(regs, irq);
 }
-
-extern void gic_send_eoi(uint32_t irq);
 
 void timer_handler(uint64_t irq_num, void *parameter, struct pt_regs *regs)
 {

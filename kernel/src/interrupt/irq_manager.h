@@ -1,6 +1,8 @@
 #pragma once
 
-#include <arch/arch.h>
+#include <libs/klibc.h>
+
+struct pt_regs;
 
 typedef struct irq_controller
 {

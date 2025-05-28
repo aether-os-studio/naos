@@ -1,4 +1,5 @@
 #![no_std]
+#![feature(allocator_api)]
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(unused_imports)]
 #![allow(unused_variables)]
