@@ -8,15 +8,19 @@ override OUTPUT := kernel
 
 ifeq ($(ARCH), x86_64)
 ARCH_DIR := src/arch/x64
+RUST_TARGET := x86_64-unknown-none
 endif
 ifeq ($(ARCH), aarch64)
 ARCH_DIR := src/arch/aarch64
+RUST_TARGET := aarch64-unknown-none
 endif
 ifeq ($(ARCH), riscv64)
 ARCH_DIR := src/arch/riscv64
+RUST_TARGET := riscv64gc-unknown-none
 endif
 ifeq ($(ARCH), loongarch64)
 ARCH_DIR := src/arch/loongarch64
+RUST_TARGET := loongarch64-unknown-none
 endif
 
 # Install prefix; /usr/local is a good, standard default pick.
@@ -171,17 +175,20 @@ all: bin-$(ARCH)/$(OUTPUT)
 # Include header dependencies.
 -include $(HEADER_DEPS)
 
+.PHONY: bin-$(ARCH)/$(OUTPUT)
 # Link rules for the final executable.
 bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH).ld $(OBJ)
+	cargo build --target $(RUST_TARGET)
+
 	mkdir -p "$$(dirname $@)"
 ifeq ($(ARCH), x86_64)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) -o $@.tmp
+	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) target/$(RUST_TARGET)/debug/libkernel.a -o $@.tmp
 	gcc -o kallsyms kallsyms.c
 	$(NM) -n $@.tmp | ./kallsyms > kallsyms.S
 	$(CC) -c kallsyms.S -o kallsyms.o
 	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) kallsyms.o -o $@
 else
-	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) target/$(RUST_TARGET)/debug/libkernel.a -o $@
 endif
 
 # Compilation rules for *.c files.

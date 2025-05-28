@@ -2,7 +2,7 @@
 /  Configurations of FatFs Module
 /---------------------------------------------------------------------------*/
 
-#define FFCONF_DEF 80286 /* Revision ID */
+#define FFCONF_DEF 80286 /* revision ID */
 
 /*---------------------------------------------------------------------------/
 / Function Configurations

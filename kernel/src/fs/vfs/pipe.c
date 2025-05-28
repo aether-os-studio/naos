@@ -35,7 +35,7 @@ ssize_t pipefs_read(void *file, void *addr, size_t offset, size_t size)
     uint32_t available = (pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF;
     if (available == 0)
     {
-        if (pipe->writeFds == 0)
+        if (pipe->write_fds == 0)
         {
             spin_unlock(&pipe->lock);
             return -EPIPE;
@@ -101,7 +101,7 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
     uint32_t free_space = PIPE_BUFF - ((pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF);
     if (free_space < size)
     {
-        if (pipe->readFds == 0)
+        if (pipe->read_fds == 0)
         {
             spin_unlock(&pipe->lock);
             return -EPIPE;
@@ -199,19 +199,19 @@ bool pipefs_close(void *current)
     spin_lock(&pipe->lock);
     if (spec->write)
     {
-        pipe->writeFds--;
+        pipe->write_fds--;
     }
     else
     {
-        pipe->readFds--;
+        pipe->read_fds--;
     }
 
-    if (!pipe->writeFds)
+    if (!pipe->write_fds)
         wake_blocked_tasks(&pipe->blocking_read);
-    if (!pipe->readFds)
+    if (!pipe->read_fds)
         wake_blocked_tasks(&pipe->blocking_write);
 
-    if (pipe->writeFds == 0 && pipe->readFds == 0)
+    if (pipe->write_fds == 0 && pipe->read_fds == 0)
     {
         free(pipe);
     }
@@ -232,7 +232,7 @@ int pipefs_poll(void *file, size_t events)
     spin_lock(&pipe->lock);
     if (events & EPOLLIN)
     {
-        if (!pipe->writeFds)
+        if (!pipe->write_fds)
             out |= EPOLLHUP;
         else if (pipe->write_ptr != pipe->read_ptr)
             out |= EPOLLIN;
@@ -240,7 +240,7 @@ int pipefs_poll(void *file, size_t events)
 
     if (events & EPOLLOUT)
     {
-        if (!pipe->readFds)
+        if (!pipe->read_fds)
             out |= EPOLLERR;
         else if (pipe->assigned < PIPE_BUFF)
             out |= EPOLLOUT;
@@ -267,9 +267,9 @@ vfs_node_t pipefs_dup(vfs_node_t node)
     pipe_info_t *pipe = spec->info;
 
     if (spec->write)
-        pipe->writeFds++;
+        pipe->write_fds++;
     else
-        pipe->readFds++;
+        pipe->read_fds++;
 
     return new_node;
 }
@@ -333,8 +333,8 @@ int sys_pipe(int pipefd[2])
 
     pipe_info_t *info = (pipe_info_t *)malloc(sizeof(pipe_info_t));
     memset(info, 0, sizeof(pipe_info_t));
-    info->readFds = 1;
-    info->writeFds = 1;
+    info->read_fds = 1;
+    info->write_fds = 1;
     info->blocking_read.next = NULL;
     info->blocking_write.next = NULL;
     info->lock.lock = 0;

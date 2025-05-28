@@ -19,7 +19,7 @@
 /----------------------------------------------------------------------------*/
 
 #ifndef FF_DEFINED
-#define FF_DEFINED 80286 /* Revision ID */
+#define FF_DEFINED 80286 /* revision ID */
 
 #include "../vfs/vfs.h"
 

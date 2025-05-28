@@ -116,8 +116,8 @@ typedef struct _NVME_IDENTIFY_NAMESPACE
     uint16_t NPDG;    // Namespace Preferred Deallocate Granularity
     uint16_t NPDA;    // Namespace Preferred Deallocate Alignment
     uint16_t NOWS;    // Namespace Optimal Write Size
-    uint16_t SSRL;    // Maximum Single Source Range Length
-    uint32_t MXCL;    // Maximum Copy Length
+    uint16_t SSRL;    // Maximum Single Source Range length
+    uint32_t MXCL;    // Maximum Copy length
     uint8_t MSRC;     // Maximum Source Range Count (MSRC)
     uint8_t RSV0[11];
     uint32_t AGID; // ANA Group Identifier
@@ -136,7 +136,7 @@ typedef struct _NVME_IDENTIFY_CONTROLLER
     uint16_t PSID;    // PCI Subsystem Vendor ID
     uint8_t SERN[20]; // Serial Number
     uint8_t MODN[40]; // Model Number
-    uint8_t FREV[8];  // Frimware Revision
+    uint8_t FREV[8];  // Frimware revision
     uint8_t RCAB;     // Recommended Arbitration Burst
     uint8_t IEEE[3];  // IEEE OUI Identifier
     uint8_t CMIC;     // Controller Multi-Path I/O and Namespace Sharing Capabilities

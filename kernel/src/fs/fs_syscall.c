@@ -753,12 +753,12 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout)
 }
 
 static inline struct pollfd *select_add(struct pollfd **comp, size_t *compIndex,
-                                        size_t *compLength, int fd, int events)
+                                        size_t *complength, int fd, int events)
 {
-    if ((*compIndex + 1) * sizeof(struct pollfd) >= *compLength)
+    if ((*compIndex + 1) * sizeof(struct pollfd) >= *complength)
     {
-        *compLength *= 2;
-        *comp = realloc(*comp, *compLength);
+        *complength *= 2;
+        *comp = realloc(*comp, *complength);
     }
 
     (*comp)[*compIndex].fd = fd;
@@ -786,15 +786,15 @@ static inline void select_bitmap_set(uint8_t *map, int index)
 size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except,
                   struct timeval *timeout)
 {
-    size_t compLength = sizeof(struct pollfd);
-    struct pollfd *comp = (struct pollfd *)malloc(compLength);
+    size_t complength = sizeof(struct pollfd);
+    struct pollfd *comp = (struct pollfd *)malloc(complength);
     size_t compIndex = 0;
     if (read)
     {
         for (int i = 0; i < nfds; i++)
         {
             if (select_bitmap(read, i))
-                select_add(&comp, &compIndex, &compLength, i, POLLIN);
+                select_add(&comp, &compIndex, &complength, i, POLLIN);
         }
     }
     if (write)
@@ -802,7 +802,7 @@ size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except,
         for (int i = 0; i < nfds; i++)
         {
             if (select_bitmap(write, i))
-                select_add(&comp, &compIndex, &compLength, i, POLLOUT);
+                select_add(&comp, &compIndex, &complength, i, POLLOUT);
         }
     }
     if (except)
@@ -810,7 +810,7 @@ size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except,
         for (int i = 0; i < nfds; i++)
         {
             if (select_bitmap(except, i))
-                select_add(&comp, &compIndex, &compLength, i, POLLPRI | POLLERR);
+                select_add(&comp, &compIndex, &complength, i, POLLPRI | POLLERR);
         }
     }
 

@@ -190,11 +190,11 @@ void apic_setup(MADT *madt)
     uint64_t current = 0;
     for (;;)
     {
-        if (current + ((uint32_t)sizeof(MADT) - 1) >= madt->h.Length)
+        if (current + ((uint32_t)sizeof(MADT) - 1) >= madt->h.length)
         {
             break;
         }
-        MadtHeader *header = (MadtHeader *)((uint64_t)(&madt->entries) + current);
+        Madtheader *header = (Madtheader *)((uint64_t)(&madt->entries) + current);
         if (header->entry_type == MADT_APIC_IO)
         {
             MadtIOApic *ioapic = (MadtIOApic *)((uint64_t)(&madt->entries) + current);

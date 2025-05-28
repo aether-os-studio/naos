@@ -22,8 +22,8 @@ typedef struct pipe_info
     char buf[PIPE_BUFF];
     int assigned;
 
-    int writeFds;
-    int readFds;
+    int write_fds;
+    int read_fds;
 
     spinlock_t lock;
 

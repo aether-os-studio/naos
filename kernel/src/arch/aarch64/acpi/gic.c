@@ -16,11 +16,11 @@ void madt_setup(MADT *madt)
     uint64_t current = 0;
     for (;;)
     {
-        if (current + ((uint32_t)sizeof(MADT) - 1) >= madt->h.Length)
+        if (current + ((uint32_t)sizeof(MADT) - 1) >= madt->h.length)
         {
             break;
         }
-        MadtHeader *header = (MadtHeader *)((uint64_t)(&madt->entries) + current);
+        Madtheader *header = (Madtheader *)((uint64_t)(&madt->entries) + current);
         if (header->entry_type == ACPI_MADT_TYPE_GICD)
         {
             GicdEntry *gicd = (GicdEntry *)((uint64_t)(&madt->entries) + current);
@@ -33,11 +33,11 @@ void madt_setup(MADT *madt)
     current = 0;
     for (;;)
     {
-        if (current + ((uint32_t)sizeof(MADT) - 1) >= madt->h.Length)
+        if (current + ((uint32_t)sizeof(MADT) - 1) >= madt->h.length)
         {
             break;
         }
-        MadtHeader *header = (MadtHeader *)((uint64_t)(&madt->entries) + current);
+        Madtheader *header = (Madtheader *)((uint64_t)(&madt->entries) + current);
         if (header->entry_type == ACPI_MADT_TYPE_GICR)
         {
 
@@ -51,11 +51,11 @@ void madt_setup(MADT *madt)
     // current = 0;
     // for (;;)
     // {
-    //     if (current + ((uint32_t)sizeof(MADT) - 1) >= madt->h.Length)
+    //     if (current + ((uint32_t)sizeof(MADT) - 1) >= madt->h.length)
     //     {
     //         break;
     //     }
-    //     MadtHeader *header = (MadtHeader *)((uint64_t)(&madt->entries) + current);
+    //     Madtheader *header = (Madtheader *)((uint64_t)(&madt->entries) + current);
     //     if (header->entry_type == ACPI_MADT_TYPE_GICC)
     //     {
 

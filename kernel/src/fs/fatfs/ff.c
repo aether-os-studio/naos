@@ -37,7 +37,7 @@ static inline char *strchr(char *_s, int _c)
 
 ---------------------------------------------------------------------------*/
 
-#if FF_DEFINED != 80286 /* Revision ID */
+#if FF_DEFINED != 80286 /* revision ID */
 #error Wrong include file (ff.h).
 #endif
 
@@ -147,7 +147,7 @@ static inline char *strchr(char *_s, int _c)
 #define BPB_NumFATsEx 110    /* exFAT: Number of FATs (byte) */
 #define BPB_DrvNumEx 111     /* exFAT: Physical drive number for int13h (byte) */
 #define BPB_PercInUseEx 112  /* exFAT: Percent in use (byte) */
-#define BPB_RsvdEx 113       /* exFAT: Reserved (7-byte) */
+#define BPB_RsvdEx 113       /* exFAT: reserved (7-byte) */
 #define BS_BootCodeEx 120    /* exFAT: Boot code (390-byte) */
 
 #define DIR_Name 0            /* Short file name (11-byte) */
@@ -211,7 +211,7 @@ static inline char *strchr(char *_s, int _c)
 #define PTE_SizLba 12 /* MBR PTE: Size in LBA */
 
 #define GPTH_Sign 0     /* GPT HDR: Signature (8-byte) */
-#define GPTH_Rev 8      /* GPT HDR: Revision (u32) */
+#define GPTH_Rev 8      /* GPT HDR: revision (u32) */
 #define GPTH_Size 12    /* GPT HDR: Header size (u32) */
 #define GPTH_Bcc 16     /* GPT HDR: Header BCC (u32) */
 #define GPTH_CurLba 24  /* GPT HDR: This header LBA (u64) */
@@ -7411,7 +7411,7 @@ FRESULT f_mkfs(const TCHAR *path,    /* Logical drive number */
         if (disk_write(pdrv, buf, sect++, 1) != RES_OK)
           LEAVE_MKFS(FR_DISK_ERR);
       }
-      /* OEM/Reserved record (+9..+10) */
+      /* OEM/reserved record (+9..+10) */
       memset(buf, 0, ss);
       for (; j < 11; j++)
       {

@@ -23,7 +23,7 @@ struct MBR_DPTE
 
 struct MBR_DPT
 {
-    uint8_t BS_Reserved[446];
+    uint8_t BS_reserved[446];
     struct MBR_DPTE DPTE[4];
     uint16_t BS_TrailSig;
 } __attribute__((packed));

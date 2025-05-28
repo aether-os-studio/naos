@@ -11,15 +11,15 @@ XSDT *xsdt;
 
 void *find_table(const char *name)
 {
-    uint64_t entry_count = (xsdt->h.Length - 32) / 8;
-    uint64_t *t = (uint64_t *)((char *)xsdt + offsetof(XSDT, PointerToOtherSDT));
+    uint64_t entry_count = (xsdt->h.length - 32) / 8;
+    uint64_t *t = (uint64_t *)((char *)xsdt + offsetof(XSDT, pointer_to_other_sdt));
     for (uint64_t i = 0; i < entry_count; i++)
     {
         uint64_t phys = (uint64_t)(*(t + i));
         uint64_t ptr = phys_to_virt(phys);
         map_page_range(get_current_page_dir(false), ptr, phys, DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
         uint8_t signa[5] = {0};
-        memcpy(signa, ((struct ACPISDTHeader *)ptr)->Signature, 4);
+        memcpy(signa, ((struct ACPISDTheader *)ptr)->signature, 4);
         if (memcmp(signa, name, 4) == 0)
         {
             return (void *)ptr;

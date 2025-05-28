@@ -11,17 +11,17 @@ typedef struct
     uint64_t address;
 } acpi_address_t;
 
-struct ACPISDTHeader
+struct ACPISDTheader
 {
-    char Signature[4];
-    uint32_t Length;
-    uint8_t Revision;
-    uint8_t Checksum;
-    char OEMID[6];
-    char OEMTableID[8];
-    uint32_t OEMRevision;
-    uint32_t CreatorID;
-    uint32_t CreatorRevision;
+    char signature[4];
+    uint32_t length;
+    uint8_t revision;
+    uint8_t checksum;
+    char oemid[6];
+    char oemtableid[8];
+    uint32_t oemrevision;
+    uint32_t creatorid;
+    uint32_t creator_revsion;
 };
 
 typedef struct
@@ -39,13 +39,13 @@ typedef struct
 
 typedef struct
 {
-    struct ACPISDTHeader h;
-    uint64_t PointerToOtherSDT;
+    struct ACPISDTheader h;
+    uint64_t pointer_to_other_sdt;
 } __attribute__((packed)) XSDT;
 
 typedef struct
 {
-    struct ACPISDTHeader h;
+    struct ACPISDTheader h;
     uint32_t local_apic_address;
     uint32_t flags;
     void *entries;
@@ -76,7 +76,7 @@ struct madt_local_apic
 
 typedef struct
 {
-    struct ACPISDTHeader h;
+    struct ACPISDTheader h;
     uint8_t definition_block;
 } acpi_dsdt_t;
 
@@ -91,7 +91,7 @@ struct generic_address
 
 struct hpet
 {
-    struct ACPISDTHeader h;
+    struct ACPISDTheader h;
     uint32_t event_block_id;
     struct generic_address base_address;
     uint16_t clock_tick_unit;
@@ -134,7 +134,7 @@ typedef struct dsdt_table
 
 typedef struct facp_table
 {
-    struct ACPISDTHeader h;
+    struct ACPISDTheader h;
     uint32_t firmware_ctrl;
     uint32_t dsdt;
     uint8_t reserved;
@@ -190,8 +190,8 @@ typedef struct facp_table
 
 typedef struct
 {
-    struct ACPISDTHeader Header;
-    uint64_t Reserved;
+    struct ACPISDTheader header;
+    uint64_t reserved;
 } __attribute__((packed)) MCFG;
 
 typedef struct
@@ -205,7 +205,7 @@ typedef struct
 
 typedef struct generic_address GenericAddress;
 typedef struct hpet Hpet;
-typedef struct madt_header MadtHeader;
+typedef struct madt_header Madtheader;
 typedef struct madt_io_apic MadtIOApic;
 typedef struct madt_local_apic MadtLocalApic;
 typedef struct facp_table acpi_facp_t;

@@ -19,6 +19,8 @@ __attribute__((used, section(".limine_requests_start"))) static volatile struct 
 
 __attribute__((used, section(".limine_requests_end"))) static volatile LIMINE_REQUESTS_END_MARKER;
 
+extern void rust_init();
+
 void kmain(void)
 {
     arch_disable_interrupt();
@@ -35,6 +37,8 @@ void kmain(void)
     printk("Next Aether-OS starting...\n");
 
     heap_init();
+
+    rust_init();
 
     arch_early_init();
 

@@ -419,7 +419,7 @@ struct fb_fix_screeninfo
     char id[16];           /* identification string eg "TT Builtin" */
     uint64_t smem_start;   /* Start of frame buffer mem */
                            /* (physical address) */
-    uint32_t smem_len;     /* Length of frame buffer mem */
+    uint32_t smem_len;     /* length of frame buffer mem */
     uint32_t type;         /* see FB_TYPE_*		*/
     uint32_t type_aux;     /* Interleave for interleaved Planes */
     uint32_t visual;       /* see FB_VISUAL_*		*/
@@ -429,11 +429,11 @@ struct fb_fix_screeninfo
     uint32_t line_length;  /* length of a line in bytes    */
     uint64_t mmio_start;   /* Start of Memory Mapped I/O   */
                            /* (physical address) */
-    uint32_t mmio_len;     /* Length of Memory Mapped I/O  */
+    uint32_t mmio_len;     /* length of Memory Mapped I/O  */
     uint32_t accel;        /* Indicate to driver which	*/
                            /*  specific chip/card we have	*/
     uint16_t capabilities; /* see FB_CAP_*			*/
-    uint16_t reserved[2];  /* Reserved for future compatibility */
+    uint16_t reserved[2];  /* reserved for future compatibility */
 };
 
 struct fb_bitfield
@@ -482,7 +482,7 @@ struct fb_var_screeninfo
     uint32_t vmode;       /* see FB_VMODE_*		*/
     uint32_t rotate;      /* angle we rotate counter clockwise */
     uint32_t colorspace;  /* colorspace for FOURCC-based modes */
-    uint32_t reserved[4]; /* Reserved for future compatibility */
+    uint32_t reserved[4]; /* reserved for future compatibility */
 };
 
 struct rlimit

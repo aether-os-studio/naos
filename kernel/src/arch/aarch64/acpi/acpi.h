@@ -11,17 +11,17 @@ typedef struct
     uint64_t address;
 } acpi_address_t;
 
-struct ACPISDTHeader
+struct ACPISDTheader
 {
-    char Signature[4];
-    uint32_t Length;
-    uint8_t Revision;
-    uint8_t Checksum;
-    char OEMID[6];
-    char OEMTableID[8];
-    uint32_t OEMRevision;
-    uint32_t CreatorID;
-    uint32_t CreatorRevision;
+    char signature[4];
+    uint32_t length;
+    uint8_t revision;
+    uint8_t checksum;
+    char oemid[6];
+    char oemtableid[8];
+    uint32_t oemrevision;
+    uint32_t creatorid;
+    uint32_t creator_revsion;
 };
 
 typedef struct
@@ -39,13 +39,13 @@ typedef struct
 
 typedef struct
 {
-    struct ACPISDTHeader h;
-    uint64_t PointerToOtherSDT;
+    struct ACPISDTheader h;
+    uint64_t pointer_to_other_sdt;
 } __attribute__((packed)) XSDT;
 
 typedef struct
 {
-    struct ACPISDTHeader h;
+    struct ACPISDTheader h;
     uint32_t local_apic_address;
     uint32_t flags;
     void *entries;
@@ -55,7 +55,7 @@ typedef struct madt_header
 {
     uint8_t entry_type;
     uint8_t length;
-} __attribute__((packed)) MadtHeader;
+} __attribute__((packed)) Madtheader;
 
 #define ACPI_MADT_TYPE_GICC 0x0B
 #define ACPI_MADT_TYPE_GICD 0x0C
@@ -102,8 +102,8 @@ typedef struct gicr_entry
 
 typedef struct
 {
-    struct ACPISDTHeader Header;
-    uint64_t Reserved;
+    struct ACPISDTheader header;
+    uint64_t reserved;
 } __attribute__((packed)) MCFG;
 
 typedef struct
@@ -126,7 +126,7 @@ struct generic_address
 
 typedef struct
 {
-    struct ACPISDTHeader Header;
+    struct ACPISDTheader header;
     uint8_t iface_type;
     uint8_t reserved0[3];
     struct generic_address address;

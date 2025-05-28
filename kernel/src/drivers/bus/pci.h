@@ -20,7 +20,7 @@
 #define PCI_CONF_DEVICE 0X2   // Device ID
 #define PCI_CONF_COMMAND 0x4  // Command
 #define PCI_CONF_STATUS 0x6   // Status
-#define PCI_CONF_REVISION 0x8 // Revision ID
+#define PCI_CONF_REVISION 0x8 // revision ID
 
 #define PCI_DEVICE_MAX 256
 

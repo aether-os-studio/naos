@@ -9,7 +9,7 @@ uint64_t mcfg_entries_len = 0;
 void mcfg_addr_to_entries(MCFG *mcfg, MCFG_ENTRY **entries, uint64_t *num)
 {
     MCFG_ENTRY *entry = (MCFG_ENTRY *)((uint64_t)mcfg + sizeof(MCFG));
-    int length = mcfg->Header.Length - sizeof(MCFG);
+    int length = mcfg->header.length - sizeof(MCFG);
     *num = length / sizeof(MCFG_ENTRY);
     for (uint64_t i = 0; i < *num; i++)
     {

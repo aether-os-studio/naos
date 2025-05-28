@@ -55,7 +55,7 @@ SER ?= 0
 MON ?= 0
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
-QEMUFLAGS := -m $(MEM) -smp $(SMP) -d trace:usb_xhci*
+QEMUFLAGS := -m $(MEM) -smp $(SMP)
 
 DEBUG ?= 0
 
@@ -89,10 +89,7 @@ HOST_LDFLAGS :=
 HOST_LIBS :=
 
 .PHONY: all
-all: $(IMAGE_NAME).iso
-
-.PHONY: all-hdd
-all-hdd: $(IMAGE_NAME).hdd
+all: $(IMAGE_NAME).hdd
 
 .PHONY: run
 run: run-hdd-$(ARCH)
