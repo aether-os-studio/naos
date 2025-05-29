@@ -60,9 +60,11 @@ extern "C" fn get_virtio_keyboard_input() -> u8 {
 
 pub fn init_pci(transport: PciTransport) {
     if let Ok(device) = VirtIOInputDriver::new(transport) {
-        INPUT_DRIVERS.lock().push(device);
-        unsafe {
-            task_create("Virtio input kthread".as_ptr(), Some(virtio_input_kthread));
+        if INPUT_DRIVERS.lock().len() == 0 {
+            unsafe {
+                task_create("Virtio input kthread".as_ptr(), Some(virtio_input_kthread));
+            }
         }
+        INPUT_DRIVERS.lock().push(device);
     }
 }
