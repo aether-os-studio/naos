@@ -337,6 +337,9 @@ void aarch64_do_syscall(struct pt_regs *frame)
     case SYS_EPOLL_PWAIT:
         frame->x0 = sys_epoll_pwait(arg1, (struct epoll_event *)arg2, arg3, arg4, (sigset_t *)arg5, arg6);
         break;
+    case SYS_PPOLL:
+        frame->x0 = sys_ppoll((struct pollfd *)arg1, arg2, (struct timespec *)arg3, (sigset_t *)arg4, arg5);
+        break;
     case SYS_EVENTFD2:
         frame->x0 = sys_eventfd2(arg1, arg2);
         break;
@@ -432,8 +435,7 @@ void aarch64_do_syscall(struct pt_regs *frame)
 
     default:
         char buf[32];
-        int len = sprintf(buf, "syscall %d not implemented\n", idx);
-        printk(buf, len);
+        printk("syscall %d not implemented\n", idx);
         frame->x0 = (uint64_t)-ENOSYS;
         break;
     }

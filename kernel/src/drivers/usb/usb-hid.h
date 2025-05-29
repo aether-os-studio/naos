@@ -10,6 +10,8 @@ int usb_mouse_active(void);
 int usb_mouse_command(int command, uint8_t *param);
 void usb_check_event(void);
 
+extern void push_char(uint8_t ch);
+
 /****************************************************************
  * hid flags
  ****************************************************************/

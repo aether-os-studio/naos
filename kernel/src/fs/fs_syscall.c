@@ -739,17 +739,50 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout)
         if (ready > 0 || sigexit)
             break;
 
+#if defined(__x86_64__)
         arch_enable_interrupt();
+#endif
 
         arch_pause();
     } while (timeout != 0 && ((int)timeout == -1 || (nanoTime() - start_time) < timeout));
 
+#if defined(__x86_64__)
     arch_disable_interrupt();
+#endif
 
     if (!ready && sigexit)
         return (size_t)-EINTR;
 
     return ready;
+}
+
+uint64_t sys_ppoll(struct pollfd *fds, uint64_t nfds, const struct timespec *timeout_ts, const sigset_t *sigmask, size_t sigsetsize)
+{
+    if (sigmask && sigsetsize < sizeof(sigset_t))
+    {
+        return (uint64_t)-EINVAL;
+    }
+
+    sigset_t origmask;
+    if (sigmask)
+    {
+        sys_ssetmask(SIG_SETMASK, sigmask, &origmask);
+    }
+
+    int timeout = -1;
+    if (timeout_ts)
+    {
+        timeout = timeout_ts->tv_sec * 1000 + timeout_ts->tv_nsec / 1000000;
+    }
+
+    uint64_t ret = sys_poll(fds, nfds, timeout);
+
+    if (sigmask)
+    {
+        sys_ssetmask(SIG_SETMASK, &origmask, NULL);
+    }
+
+    return ret;
 }
 
 static inline struct pollfd *select_add(struct pollfd **comp, size_t *compIndex,
@@ -1105,12 +1138,16 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events, int maxevent
         if (ready > 0 || sigexit)
             break;
 
+#if defined(__x86_64__)
         arch_enable_interrupt();
+#endif
 
         arch_pause();
     } while (timeout != 0 && (timeout == -1 || nanoTime() < target));
 
+#if defined(__x86_64__)
     arch_disable_interrupt();
+#endif
 
     if (!ready && sigexit)
         return (uint64_t)-EINTR;
@@ -1376,12 +1413,16 @@ static ssize_t signalfd_read(void *data, uint64_t offset, void *buf, uint64_t le
 
     while (ctx->queue_head == ctx->queue_tail)
     {
+#if defined(__x86_64__)
         arch_enable_interrupt();
+#endif
 
         arch_pause();
     }
 
+#if defined(__x86_64__)
     arch_disable_interrupt();
+#endif
 
     struct sigevent *ev = &ctx->queue[ctx->queue_tail];
     size_t copy_len = len < sizeof(*ev) ? len : sizeof(*ev);
@@ -1829,12 +1870,16 @@ uint64_t sys_flock(int fd, uint64_t operation)
 
             while (lock->lock)
             {
+#if defined(__x86_64__)
                 arch_enable_interrupt();
+#endif
 
                 arch_pause();
             }
 
+#if defined(__x86_64__)
             arch_disable_interrupt();
+#endif
         }
         lock->l_type = (operation & LOCK_EX) ? F_WRLCK : F_RDLCK;
         lock->l_pid = pid;

@@ -990,6 +990,10 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
         child->signal = current_task->signal;
         child->blocked = current_task->blocked;
     }
+    else
+    {
+        memset(child->actions, 0, sizeof(child->actions));
+    }
 
     if (flags & CLONE_SETTLS)
     {

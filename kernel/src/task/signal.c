@@ -179,7 +179,7 @@ int sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction)
 {
     if (sig < MINSIG || sig > MAXSIG || sig == SIGKILL)
     {
-        return 0;
+        return -EINVAL;
     }
 
     sigaction_t *ptr = &current_task->actions[sig];

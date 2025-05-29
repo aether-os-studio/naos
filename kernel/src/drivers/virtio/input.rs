@@ -42,7 +42,7 @@ unsafe extern "C" fn virtio_input_kthread() {
                     if let DecodeType::Key(key, ty) = code {
                         SCANCODE_QUEUE
                             .push(key.to_char().unwrap() as u8)
-                            .expect("virtio keyboard buffer full!!!");
+                            .expect("keyboard buffer full!!!");
                     } else if let DecodeType::Mouse(mouse) = code {
                     }
                 }
@@ -54,7 +54,12 @@ unsafe extern "C" fn virtio_input_kthread() {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn get_virtio_keyboard_input() -> u8 {
+extern "C" fn push_char(c: u8) {
+    SCANCODE_QUEUE.push(c).expect("keyboard buffer full!!!");
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn get_keyboard_input_queue() -> u8 {
     SCANCODE_QUEUE.pop().or(Some(0)).unwrap()
 }
 

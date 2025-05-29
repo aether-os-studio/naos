@@ -4,7 +4,7 @@
 
 #include <libs/klibc.h>
 #include <drivers/bus/pci.h>
-#include <drivers/usb/hid.h>
+#include <drivers/usb/usb-hid.h>
 
 #define container_of(ptr, type, member) ({                      \
         const typeof( ((type *)0)->member ) *__mptr = (ptr);    \

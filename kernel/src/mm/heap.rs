@@ -34,6 +34,7 @@ fn do_malloc(size: usize) -> usize {
         }
 
         guard.insert(vaddr, (vaddr, len, cap));
+        drop(guard);
         return vaddr;
     } else {
         return 0;
@@ -61,12 +62,15 @@ unsafe extern "C" fn realloc(old_ptr: *mut core::ffi::c_void, new_size: usize) -
     }
 
     let vaddr = old_ptr as usize;
-    let mut guard = C_ALLOCATION_MAP.lock();
+    let guard = C_ALLOCATION_MAP.lock();
     let Some(&(old_vaddr, old_len, old_cap)) = guard.get(&vaddr) else {
         panic!("realloc: invalid pointer {:p}", old_ptr);
     };
+    drop(guard);
 
     let new_ptr = do_malloc(new_size) as *mut u8;
+
+    let mut guard = C_ALLOCATION_MAP.lock();
 
     let copy_size = old_len.min(new_size);
     core::ptr::copy_nonoverlapping(old_vaddr as *const u8, new_ptr, copy_size);

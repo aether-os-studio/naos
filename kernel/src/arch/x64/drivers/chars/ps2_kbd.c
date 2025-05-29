@@ -153,7 +153,7 @@ char character_table[] = {
     0x2C,
 };
 
-char shiftedCharacterTable[] = {
+char shifted_character_table[] = {
     0,
     27,
     '!',
@@ -522,7 +522,7 @@ char handle_kb_event()
 
     if (scan_code < sizeof(character_table) && !(scan_code & 0x80))
     {
-        char character = (shifted || capsLocked) ? shiftedCharacterTable[scan_code] : character_table[scan_code];
+        char character = (shifted || capsLocked) ? shifted_character_table[scan_code] : character_table[scan_code];
 
         if (character != 0)
         { // Normal char

@@ -7,7 +7,7 @@ bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state)
     uint8_t data = 0;
     do
     {
-        data = get_virtio_keyboard_input();
+        data = get_keyboard_input();
 
         arch_pause();
     } while (data == 0);
@@ -19,7 +19,7 @@ bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state)
 
 uint8_t get_keyboard_input()
 {
-    return 0;
+    return get_keyboard_input_queue();
 }
 
 size_t kb_event_bit(void *data, uint64_t request, void *arg)

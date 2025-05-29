@@ -281,6 +281,7 @@ struct pollfd
 };
 
 size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout);
+uint64_t sys_ppoll(struct pollfd *fds, uint64_t nfds, const struct timespec *timeout_ts, const sigset_t *sigmask, size_t sigsetsize);
 
 size_t sys_access(char *filename, int mode);
 uint64_t sys_faccessat(uint64_t dirfd, const char *pathname, uint64_t mode);
