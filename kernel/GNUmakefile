@@ -205,6 +205,7 @@ obj-$(ARCH)/src/%.S.o: src/%.S GNUmakefile
 .PHONY: clean
 clean:
 	rm -rf bin-$(ARCH) obj-$(ARCH)
+	cargo clean
 
 # Remove everything built and generated including downloaded dependencies.
 .PHONY: distclean

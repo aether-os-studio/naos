@@ -7,7 +7,6 @@ edition = "2024"
 crate-type = ["staticlib"]
 
 [dependencies]
-acpi = "5.2.0"
 bitflags = "2.9.1"
 limine = "0.4.0"
 linked_list_allocator = "0.10.5"

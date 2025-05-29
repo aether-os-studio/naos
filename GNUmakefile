@@ -55,7 +55,7 @@ SER ?= 0
 MON ?= 0
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
-QEMUFLAGS := -m $(MEM) -smp $(SMP) -d trace:usb_xhci*
+QEMUFLAGS := -m $(MEM) -smp $(SMP)
 
 DEBUG ?= 0
 
