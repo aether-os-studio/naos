@@ -55,7 +55,7 @@ SER ?= 0
 MON ?= 0
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
-QEMUFLAGS := -m $(MEM) -smp $(SMP)
+QEMUFLAGS := -m $(MEM) -smp $(SMP) -d trace:usb_xhci*
 
 DEBUG ?= 0
 
@@ -112,8 +112,9 @@ run-hdd-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-M virt,gic-version=3 \
 		-cpu cortex-a76 \
 		-device ramfb \
-		-device virtio-keyboard-pci \
-		-device virtio-mouse-pci \
+		-device qemu-xhci,id=xhci \
+		-device usb-kbd \
+		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).hdd,format=raw,id=harddisk \
 		-drive if=none,file=rootfs-$(ARCH).hdd,format=raw,id=rootdisk \

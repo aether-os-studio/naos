@@ -1,13 +1,13 @@
 #include <arch/arch.h>
 #include <interrupt/irq_manager.h>
 #include <drivers/dtb/dtb.h>
-#include <arch/aarch64/drivers/gic.h>
+#include <arch/aarch64/acpi/gic.h>
 
 void arch_early_init()
 {
     setup_vectors();
     smp_init();
-    gic_init();
+    acpi_init();
     dtb_init();
     irq_init();
 }

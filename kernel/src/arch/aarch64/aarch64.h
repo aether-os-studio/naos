@@ -5,7 +5,7 @@
 #include "acpi/acpi.h"
 #include "drivers/chars/keyboard.h"
 #include "drivers/chars/mouse.h"
-#include "drivers/gic.h"
+#include "acpi/gic.h"
 #include "mm/page_table.h"
 #include "irq/ptrace.h"
 #include "irq/irq.h"

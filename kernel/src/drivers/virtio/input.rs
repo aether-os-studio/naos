@@ -62,7 +62,10 @@ pub fn init_pci(transport: PciTransport) {
     if let Ok(device) = VirtIOInputDriver::new(transport) {
         if INPUT_DRIVERS.lock().len() == 0 {
             unsafe {
-                task_create("Virtio input kthread".as_ptr(), Some(virtio_input_kthread));
+                task_create(
+                    "Virtio input kthread".as_ptr() as *const core::ffi::c_char,
+                    Some(virtio_input_kthread),
+                );
             }
         }
         INPUT_DRIVERS.lock().push(device);
