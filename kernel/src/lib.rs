@@ -1,5 +1,6 @@
 #![no_std]
 #![feature(allocator_api)]
+#![feature(vec_into_raw_parts)]
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(unused_imports)]
 #![allow(unused_variables)]

@@ -3,7 +3,6 @@
 #include <libs/klibc.h>
 #include <mm/bitmap.h>
 #include <mm/hhdm.h>
-#include <mm/heap/heap.h>
 #include <mm/page_table_flags.h>
 #include <arch/arch.h>
 
@@ -31,8 +30,12 @@ uint64_t alloc_frames(size_t count);
 void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t size, uint64_t flags);
 void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size);
 
-void inc_frame_ref(uint64_t addr);
-void dec_frame_ref(uint64_t addr);
+void heap_init();
+
+void *malloc(size_t size);
+void *calloc(size_t num, size_t size);
+void *realloc(void *ptr, size_t size);
+void free(void *ptr);
 
 static inline void *alloc_frames_bytes(uint64_t bytes)
 {

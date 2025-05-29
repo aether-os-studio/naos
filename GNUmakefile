@@ -102,9 +102,6 @@ run-hdd-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-drive if=none,file=$(IMAGE_NAME).hdd,format=raw,id=harddisk \
 		-drive if=none,file=rootfs-$(ARCH).hdd,format=raw,id=rootdisk \
 		-device ahci,id=ahci \
-		-device qemu-xhci,id=xhci \
-		-device usb-kbd \
-		-device usb-mouse \
 		-device nvme,drive=harddisk,serial=1234 \
 		-device nvme,drive=rootdisk,serial=5678 \
 		$(QEMUFLAGS)
@@ -115,9 +112,8 @@ run-hdd-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-M virt,gic-version=3 \
 		-cpu cortex-a76 \
 		-device ramfb \
-		-device qemu-xhci,id=xhci \
-		-device usb-kbd \
-		-device usb-mouse \
+		-device virtio-keyboard-pci \
+		-device virtio-mouse-pci \
 		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).hdd,format=raw,id=harddisk \
 		-drive if=none,file=rootfs-$(ARCH).hdd,format=raw,id=rootdisk \
@@ -179,7 +175,7 @@ kernel: kernel-deps
 	$(MAKE) -C user
 
 .PHONY: user
-user: libc-$(ARCH)
+user:
 	$(MAKE) -C user all
 
 $(IMAGE_NAME).hdd: limine/limine kernel

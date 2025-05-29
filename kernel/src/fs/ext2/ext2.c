@@ -1,4 +1,5 @@
 #include <fs/ext2/ext2.h>
+#include <mm/mm.h>
 #include <arch/arch.h>
 #include <task/task.h>
 #include <fs/fs_syscall.h>

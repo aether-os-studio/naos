@@ -24,8 +24,8 @@ task_t *get_free_task()
     {
         if (tasks[i] == NULL)
         {
-            tasks[i] = (task_t *)alloc_frames_bytes(sizeof(task_t));
-            memset(tasks[i], 0, DEFAULT_PAGE_SIZE);
+            tasks[i] = (task_t *)malloc(sizeof(task_t));
+            memset(tasks[i], 0, sizeof(task_t));
             tasks[i]->pid = i;
             return tasks[i];
         }
@@ -388,6 +388,7 @@ uint64_t task_fork(struct pt_regs *regs)
     child->load_start = current_task->load_start;
     child->load_end = current_task->load_end;
 
+    memset(child->fds, 0, sizeof(child->fds));
     child->fds[0] = vfs_open("/dev/stdin");
     child->fds[1] = vfs_open("/dev/stdout");
     child->fds[2] = vfs_open("/dev/stderr");
@@ -599,11 +600,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
                 uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W | PT_FLAG_X;
                 map_page_range(get_current_page_dir(true), aligned_addr, 0, alloc_size, flags);
-#if defined(__x86_64__)
                 fast_memcpy((void *)seg_addr, (void *)(INTERPRETER_EHDR_ADDR + interpreter_phdr[j].p_offset), file_size);
-#else
-                memcpy((void *)seg_addr, (void *)(INTERPRETER_EHDR_ADDR + interpreter_phdr[j].p_offset), file_size);
-#endif
 
                 if (seg_size > file_size)
                 {
@@ -645,11 +642,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
             uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W | PT_FLAG_X;
             map_page_range(get_current_page_dir(true), aligned_addr, 0, alloc_size, flags);
-#if defined(__x86_64__)
             fast_memcpy((void *)seg_addr, (void *)(EHDR_START_ADDR + phdr[i].p_offset), file_size);
-#else
-            memcpy((void *)seg_addr, (void *)(EHDR_START_ADDR + phdr[i].p_offset), file_size);
-#endif
 
             if (seg_size > file_size)
             {
@@ -907,7 +900,7 @@ rollback:
 
         free(child->arch_context);
 
-        free_frames_bytes(child, sizeof(task_t));
+        free(child);
     }
     else if (options & WNOHANG)
     {
@@ -967,6 +960,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->load_start = current_task->load_start;
     child->load_end = current_task->load_end;
 
+    memset(child->fds, 0, sizeof(child->fds));
     child->fds[0] = vfs_open("/dev/stdin");
     child->fds[1] = vfs_open("/dev/stdout");
     child->fds[2] = vfs_open("/dev/stderr");

@@ -7,7 +7,8 @@ bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state)
     uint8_t data = 0;
     do
     {
-        // data = serial_read();
+        data = get_virtio_keyboard_input();
+
         arch_pause();
     } while (data == 0);
 

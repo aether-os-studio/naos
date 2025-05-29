@@ -240,6 +240,9 @@ uint64_t translate_address(uint64_t *pml4, uint64_t vaddr)
         if (index >= 512)
             return 0;
 
+        if (!current_table || current_table[index])
+            return 0;
+
         uint64_t entry = current_table[index];
         if (!(entry & ARCH_PT_FLAG_VALID))
             return 0;
