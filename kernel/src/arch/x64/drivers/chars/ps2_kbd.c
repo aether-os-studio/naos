@@ -692,7 +692,6 @@ void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
             kbCurr = (kbCurr >= back_steps) ? kbCurr - back_steps : 0;
             memset(&kbBuff[kbCurr], 0, back_steps);
         }
-
         else if (!(task->term.c_lflag & ICANON))
             kb_char(task, out);
         break;
@@ -725,6 +724,11 @@ void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
 
     if (task->state == TASK_BLOCKING)
         task->state = TASK_READY;
+}
+
+void push_kb_char(char c)
+{
+    kb_char(current_task, c);
 }
 
 bool kb_is_ocupied() { return !!kbBuff; }

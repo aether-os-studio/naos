@@ -185,6 +185,7 @@ static uint16_t ModifierToScanCode[] = {
     // lcntl, lshift, lalt, lgui, rcntl, rshift, ralt, rgui
     0x001d, 0x002a, 0x0038, 0xe05b, 0xe01d, 0x0036, 0xe038, 0xe05c};
 
+#if !defined(__x86_64__)
 char character_table[] = {
     0,
     27,
@@ -200,8 +201,8 @@ char character_table[] = {
     '0',
     '-',
     '=',
-    0,
-    9,
+    '\b',
+    '\t',
     'q',
     'w',
     'e',
@@ -343,8 +344,8 @@ char shifted_character_table[] = {
     ')',
     '_',
     '+',
-    0,
-    9,
+    '\b',
+    '\t',
     'Q',
     'W',
     'E',
@@ -470,6 +471,7 @@ char shifted_character_table[] = {
     0,
     0x2C,
 };
+#endif
 
 #define RELEASEBIT 0x80
 
@@ -536,9 +538,16 @@ static void handle_key(struct keyevent *data)
             continue;
         // New key pressed.
         uint16_t scancode = KeyToScanCode[key];
-        char c = shift ? shifted_character_table[scancode] : character_table[scancode];
-        if (c)
-            push_char(c);
+        if (scancode == 0x1C)
+        {
+            push_kb_char('\n');
+        }
+        else
+        {
+            char c = shift ? shifted_character_table[scancode] : character_table[scancode];
+            if (c)
+                push_kb_char(c);
+        }
         old.keys[addpos++] = key;
         old.repeatcount = KEYREPEATWAITMS / KEYREPEATMS + 1;
     }
@@ -550,10 +559,6 @@ static void handle_key(struct keyevent *data)
     {
         if (!old.repeatcount)
         {
-            uint16_t scancode = KeyToScanCode[old.keys[addpos - 1]];
-            char c = shift ? shifted_character_table[scancode] : character_table[scancode];
-            if (c)
-                push_char(c);
         }
         else if (old.repeatcount != 0xff)
             old.repeatcount--;

@@ -1,11 +1,10 @@
 use core::hint::spin_loop;
 
 use alloc::vec::Vec;
-use crossbeam_queue::ArrayQueue;
 use spin::{Lazy, Mutex, MutexGuard};
 use virtio_drivers::{Error, device::input::VirtIOInput, transport::pci::PciTransport};
 
-use crate::rust::bindings::bindings::task_create;
+use crate::rust::bindings::bindings::{arch_get_current, kb_char, task_create};
 
 use super::{
     decode::{DecodeType, Decoder},
@@ -26,9 +25,6 @@ impl VirtIOInputDriver {
 
 static INPUT_DRIVERS: Mutex<Vec<VirtIOInputDriver>> = Mutex::new(Vec::new());
 
-pub const SCANCODE_QUEUE_SIZE: usize = 1024;
-static SCANCODE_QUEUE: Lazy<ArrayQueue<u8>> = Lazy::new(|| ArrayQueue::new(SCANCODE_QUEUE_SIZE));
-
 unsafe extern "C" fn virtio_input_kthread() {
     loop {
         for device in INPUT_DRIVERS.lock().iter() {
@@ -40,9 +36,7 @@ unsafe extern "C" fn virtio_input_kthread() {
                 );
                 if let Ok(code) = decode {
                     if let DecodeType::Key(key, ty) = code {
-                        SCANCODE_QUEUE
-                            .push(key.to_char().unwrap() as u8)
-                            .expect("keyboard buffer full!!!");
+                        push_char(key.to_char().unwrap() as u8);
                     } else if let DecodeType::Mouse(mouse) = code {
                     }
                 }
@@ -53,14 +47,8 @@ unsafe extern "C" fn virtio_input_kthread() {
     }
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn push_char(c: u8) {
-    SCANCODE_QUEUE.push(c).expect("keyboard buffer full!!!");
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn get_keyboard_input_queue() -> u8 {
-    SCANCODE_QUEUE.pop().or(Some(0)).unwrap()
+fn push_char(c: u8) {
+    unsafe { kb_char(arch_get_current(), c as core::ffi::c_char) };
 }
 
 pub fn init_pci(transport: PciTransport) {

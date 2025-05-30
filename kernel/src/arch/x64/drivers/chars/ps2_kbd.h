@@ -56,11 +56,16 @@ bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state);
 #define CHARACTER_ENTER '\n'
 #define CHARACTER_BACK '\b'
 
-uint8_t get_keyboard_input();
-
 size_t kb_event_bit(void *data, uint64_t request, void *arg);
 
 void kbd_init();
+
+void kb_char(task_t *task, char out);
+
+extern char character_table[];
+extern char shifted_character_table[];
+
+void push_kb_char(char c);
 
 /*
  * Keys and buttons

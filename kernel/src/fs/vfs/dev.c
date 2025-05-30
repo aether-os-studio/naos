@@ -446,6 +446,9 @@ bool ioSwitch = false;
 ssize_t stdio_poll(void *data, size_t events)
 {
     ssize_t revents = 0;
+    if (events & EPOLLERR || events & EPOLLPRI)
+        return 0;
+
     if (events & EPOLLIN && ioSwitch)
         revents |= EPOLLIN;
     if (events & EPOLLOUT)
