@@ -1,6 +1,6 @@
 #pragma once
 
-#include <libs/klibc.h>
+#include <stdint.h>
 
 extern uint64_t physical_memory_offset;
 

@@ -4,47 +4,6 @@
 #include <drivers/kernel_logger.h>
 #include <task/task.h>
 
-extern uint64_t kallsyms_addresses[] __attribute__((weak));
-extern long kallsyms_syms_num __attribute__((weak));
-extern long kallsyms_index[] __attribute__((weak));
-extern char *kallsyms_names __attribute__((weak));
-
-int lookup_kallsyms(uint64_t address)
-{
-    int index = 0;
-    char *string = (char *)&kallsyms_names;
-    for (index = 0; index < kallsyms_syms_num; index++)
-        if (address > kallsyms_addresses[index] && address <= kallsyms_addresses[index + 1])
-            break;
-    if (index < kallsyms_syms_num)
-    {
-        printk("backtrace address:%#018lx (+) %04d\tbacktrace function:%s(%#018lx)\n", address, address - kallsyms_addresses[index], &string[kallsyms_index[index]], kallsyms_addresses[index]);
-        return 0;
-    }
-    else
-        return 1;
-}
-
-void backtrace(struct pt_regs *regs)
-{
-    uint64_t *rbp = (uint64_t *)regs->rbp;
-    uint64_t ret_address = *(rbp + 1);
-    int i = 0;
-
-    lookup_kallsyms(regs->rip);
-    for (i = 0; i < 32; i++)
-    {
-        if (!rbp || !*rbp || (uint64_t)rbp < get_physical_memory_offset() || *rbp < get_physical_memory_offset())
-            break;
-
-        if (lookup_kallsyms(ret_address))
-            break;
-
-        rbp = (uint64_t *)*rbp;
-        ret_address = *(rbp + 1);
-    }
-}
-
 void irq_init()
 {
     gdtidt_setup();
@@ -101,8 +60,6 @@ void dump_regs(struct pt_regs *regs, const char *error_str, ...)
     printk("R10 = %#018lx, R11 = %#018lx\n", regs->r10, regs->r11);
     printk("R12 = %#018lx, R13 = %#018lx\n", regs->r12, regs->r13);
     printk("R14 = %#018lx, R15 = %#018lx\n", regs->r14, regs->r15);
-
-    backtrace(regs);
 }
 
 // 0 #DE 除法错误

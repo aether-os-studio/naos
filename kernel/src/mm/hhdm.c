@@ -1,4 +1,5 @@
 #include <mm/hhdm.h>
+#include <limine.h>
 
 __attribute__((used, section(".limine_requests"))) static volatile struct limine_hhdm_request hhdm_request = {.id = LIMINE_HHDM_REQUEST, .revision = 0};
 

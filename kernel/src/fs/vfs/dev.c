@@ -340,8 +340,10 @@ ssize_t stdin_read(void *data, uint64_t offset, void *buf, uint64_t len)
 
     while (current_task->state == TASK_BLOCKING)
     {
+        arch_enable_interrupt();
         arch_pause();
     }
+    arch_disable_interrupt();
 
     if (current_task->term.c_lflag & ICANON)
         printk("\n");

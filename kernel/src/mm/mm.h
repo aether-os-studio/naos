@@ -30,7 +30,7 @@ uint64_t alloc_frames(size_t count);
 void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t size, uint64_t flags);
 void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size);
 
-void heap_init();
+extern void heap_init();
 
 void *malloc(size_t size);
 void *calloc(size_t num, size_t size);

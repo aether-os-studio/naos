@@ -715,3 +715,14 @@ static inline void spin_unlock_irqrestore(spinlock_t *lock)
 }
 
 #endif
+
+#include <mm/hhdm.h>
+
+static inline bool check_user_oevrflow(uint64_t addr, uint64_t size)
+{
+    if ((addr + size) > get_physical_memory_offset())
+    {
+        return true;
+    }
+    return false;
+}

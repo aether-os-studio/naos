@@ -5,8 +5,6 @@
 /src/limine.h
 /bin-*
 /obj-*
-/kallsyms
-/kallsyms.S
 /target
 /src/rust/bindings/bindings*.rs
 *.lock

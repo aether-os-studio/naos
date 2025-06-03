@@ -15,11 +15,6 @@ pub mod libs;
 pub mod mm;
 pub mod rust;
 
-#[unsafe(no_mangle)]
-extern "C" fn rust_init() {
-    println!("rust initialized");
-}
-
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     println!("{}", info);

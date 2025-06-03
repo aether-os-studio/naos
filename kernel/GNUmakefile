@@ -181,15 +181,7 @@ bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH).ld $(OBJ)
 	cargo build --target $(RUST_TARGET)
 
 	mkdir -p "$$(dirname $@)"
-ifeq ($(ARCH), x86_64)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) target/$(RUST_TARGET)/debug/libkernel.a -o $@.tmp
-	gcc -o kallsyms kallsyms.c
-	$(NM) -n $@.tmp | ./kallsyms > kallsyms.S
-	$(CC) -c kallsyms.S -o kallsyms.o
-	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) kallsyms.o -o $@
-else
 	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) target/$(RUST_TARGET)/debug/libkernel.a -o $@
-endif
 
 # Compilation rules for *.c files.
 obj-$(ARCH)/src/%.c.o: src/%.c GNUmakefile

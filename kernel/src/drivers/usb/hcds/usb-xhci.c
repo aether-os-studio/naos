@@ -589,6 +589,7 @@ void xhci_init()
     if (!pci_dev)
     {
         printk("XHCI controller not found\n");
+        return;
     }
 
     uint64_t mmio_phys = pci_dev->bars[0].address;
