@@ -68,6 +68,13 @@ void do_divide_error(struct pt_regs *regs, uint64_t error_code)
     (void)error_code;
     dump_regs(regs, "do_divder_error(0)");
 
+    if (regs->rsp <= get_physical_memory_offset())
+    {
+        can_schedule = true;
+        task_exit(-EFAULT);
+        return;
+    }
+
     while (1)
         asm volatile("hlt");
 }

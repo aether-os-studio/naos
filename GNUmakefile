@@ -102,8 +102,9 @@ run-hdd-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-drive if=none,file=$(IMAGE_NAME).hdd,format=raw,id=harddisk \
 		-drive if=none,file=rootfs-$(ARCH).hdd,format=raw,id=rootdisk \
 		-device ahci,id=ahci \
+		-device qemu-xhci,id=xhci \
 		-device nvme,drive=harddisk,serial=1234 \
-		-device nvme,drive=rootdisk,serial=5678 \
+		-device usb-storage,bus=xhci.0,drive=rootdisk \
 		$(QEMUFLAGS)
 
 .PHONY: run-hdd-aarch64

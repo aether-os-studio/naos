@@ -543,10 +543,6 @@ uint64_t sys_stat(const char *fd, struct stat *buf)
     {
         return (uint64_t)-EFAULT;
     }
-    if (!buf || check_user_oevrflow((uint64_t)buf, sizeof(struct stat)))
-    {
-        return (uint64_t)-EFAULT;
-    }
     vfs_node_t node = vfs_open(fd);
     if (!node)
     {

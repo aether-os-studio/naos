@@ -33,7 +33,7 @@ uint64_t blkdev_ioctl(uint64_t drive, uint64_t cmd, uint64_t arg)
     return 0;
 }
 
-#define MAX_BLOCK_IO_SIZE (DEFAULT_PAGE_SIZE / 4)
+#define MAX_BLOCK_IO_SIZE (DEFAULT_PAGE_SIZE)
 
 uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len)
 {

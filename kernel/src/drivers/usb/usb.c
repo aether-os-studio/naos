@@ -1,6 +1,7 @@
 #include <drivers/usb/usb.h>
 #include <drivers/usb/hcds/usb-xhci.h>
 #include <drivers/usb/usb-hid.h>
+#include <drivers/usb/block/msc.h>
 #include <mm/mm.h>
 #include <arch/arch.h>
 
@@ -354,8 +355,8 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
     else if (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE)
     {
         printk("MASS STORAGE DEVICE\n");
-        // if (iface->bInterfaceProtocol == US_PR_BULK)
-        //     ret = usb_msc_setup(usbdev);
+        if (iface->bInterfaceProtocol == US_PR_BULK)
+            ret = usb_msc_setup(usbdev);
         // if (iface->bInterfaceProtocol == US_PR_UAS)
         //     ret = usb_uas_setup(usbdev);
     }
