@@ -1,4 +1,5 @@
 #include "arch_context.h"
+#include <mm/mm.h>
 #include <arch/arch.h>
 #include <task/task.h>
 
@@ -43,7 +44,7 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64
 
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack)
 {
-    dst->cr3 = clone_page_table(src->cr3, USER_STACK_START, USER_STACK_END);
+    dst->cr3 = clone_page_table(src->cr3);
     dst->ctx = (struct pt_regs *)stack - 1;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
     dst->ctx->ds = SELECTOR_USER_DS;
@@ -170,6 +171,8 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t
 void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
 {
     arch_context_to_user_mode(context, entry, stack);
+
+    __asm__ __volatile__("movq %0, %%cr3" ::"r"(context->cr3));
 
     __asm__ __volatile__(
         "movq %0, %%rsp\n\t"

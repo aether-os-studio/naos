@@ -482,7 +482,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 #if defined(__x86_64__)
     if (current_task->arch_context->cr3 == (uint64_t)virt_to_phys(get_kernel_page_dir()))
     {
-        current_task->arch_context->cr3 = clone_page_table(current_task->arch_context->cr3, USER_STACK_START, USER_STACK_END);
+        current_task->arch_context->cr3 = clone_page_table(current_task->arch_context->cr3);
         __asm__ __volatile__("movq %0, %%cr3" ::"r"(current_task->arch_context->cr3));
     }
 #endif
@@ -900,6 +900,8 @@ rollback:
 
 #if defined(__x86_64__)
         free_page_table(child->arch_context->cr3);
+#elif defined(__aarch64__)
+        free_page_table(child->arch_context->ttbr);
 #endif
 
         free(child->arch_context);

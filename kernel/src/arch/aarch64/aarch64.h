@@ -9,7 +9,7 @@
 #include "mm/page_table.h"
 #include "irq/ptrace.h"
 #include "irq/irq.h"
-#include "mm/page_table.h"
+#include "mm/arch.h"
 #include "task/arch_context.h"
 #include "smp/smp.h"
 #include "syscall/nr.h"

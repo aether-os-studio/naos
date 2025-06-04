@@ -4,7 +4,7 @@
 
 #include "asm.h"
 #include "acpi/acpi.h"
-#include "mm/page_table.h"
+#include "mm/arch.h"
 #include "irq/ptrace.h"
 #include "irq/gate.h"
 #include "irq/trap.h"

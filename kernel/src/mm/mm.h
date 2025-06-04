@@ -2,7 +2,7 @@
 
 #include <libs/klibc.h>
 #include <mm/hhdm.h>
-#include <mm/page_table_flags.h>
+#include <mm/page_table.h>
 #include <arch/arch.h>
 
 #define MAX_USABLE_REGIONS_COUNT 128

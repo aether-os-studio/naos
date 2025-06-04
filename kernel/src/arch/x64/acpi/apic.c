@@ -1,6 +1,6 @@
 #include <drivers/kernel_logger.h>
 #include <arch/x64/acpi/acpi.h>
-#include <mm/hhdm.h>
+#include <mm/mm.h>
 #include <arch/arch.h>
 #include <interrupt/irq_manager.h>
 #include <task/task.h>

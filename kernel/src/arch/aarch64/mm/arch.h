@@ -1,7 +1,11 @@
 #pragma once
 
-#include <libs/klibc.h>
-#include <mm/mm.h>
+#define ARCH_MAX_PT_LEVEL 4
+
+#define ARCH_PT_OFFSET_BASE 12
+#define ARCH_PT_OFFSET_PER_LEVEL 9
+
+#include <mm/page_table.h>
 
 #define ARCH_PT_FLAG_VALID ((uint64_t)1 << 0)
 #define ARCH_PT_FLAG_TABLE ((uint64_t)1 << 1)
@@ -16,20 +20,10 @@
 #define ARCH_PT_FLAG_FB ((uint64_t)1 << 2)
 #define ARCH_ADDR_MASK ((uint64_t)0x0000FFFFFFFFF000)
 
-#define PT_TABLE_FLAGS (PT_FLAG_VALID | PT_FLAG_TABLE)
-
 #define ARCH_PT_TABLE_FLAGS (ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_TABLE | ARCH_PT_FLAG_ACCESS)
 
 #define ARCH_PT_IS_TABLE(x) (((x) & (ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_TABLE)) == (ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_TABLE))
 #define ARCH_PT_IS_LARGE(x) (((x) & (ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_TABLE)) == ARCH_PT_FLAG_VALID)
 
 uint64_t get_arch_page_table_flags(uint64_t flags);
-
-uint64_t *get_kernel_page_dir();
-uint64_t *get_current_page_dir(bool user);
-void map_page(uint64_t *pml4, uint64_t va, uint64_t pa, uint64_t flags);
-void unmap_page(uint64_t *pml4, uint64_t va);
-
-uint64_t clone_page_table(uint64_t cr3_old, uint64_t range_start, uint64_t range_end);
-void free_page_table(uint64_t directory);
-uint64_t translate_address(uint64_t *pml4, uint64_t vaddr);
+void arch_flush_tlb(uint64_t vaddr);

@@ -57,7 +57,7 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
 
 spinlock_t frame_op_lock = {0};
 
-#define MAX_ORDER 11
+#define MAX_ORDER 31
 
 typedef struct freearea freearea_t;
 
