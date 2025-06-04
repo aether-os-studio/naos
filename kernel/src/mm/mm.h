@@ -1,7 +1,6 @@
 #pragma once
 
 #include <libs/klibc.h>
-#include <mm/bitmap.h>
 #include <mm/hhdm.h>
 #include <mm/page_table_flags.h>
 #include <arch/arch.h>
@@ -12,15 +11,6 @@
 #define PROT_READ 0x01
 #define PROT_WRITE 0x02
 #define PROT_EXEC 0x04
-
-typedef struct
-{
-    Bitmap bitmap;
-    size_t origin_frames;
-    size_t usable_frames;
-} FrameAllocator;
-
-extern FrameAllocator frame_allocator;
 
 void frame_init();
 
