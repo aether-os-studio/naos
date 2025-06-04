@@ -37,12 +37,12 @@ export NM := $(ARCH)-linux-gnu-nm
 export RANLIB := $(ARCH)-linux-gnu-ranlib
 endif
 ifeq ($(ARCH), loongarch64)
-export CC := $(ARCH)-linux-gnu-gcc
-export CXX := $(ARCH)-linux-gnu-g++
-export LD := $(ARCH)-linux-gnu-ld
-export AR := $(ARCH)-linux-gnu-ar
-export NM := $(ARCH)-linux-gnu-nm
-export RANLIB := $(ARCH)-linux-gnu-ranlib
+export CC := $(ARCH)-unknown-linux-gnu-gcc
+export CXX := $(ARCH)-unknown-linux-gnu-g++
+export LD := $(ARCH)-unknown-linux-gnu-ld
+export AR := $(ARCH)-unknown-linux-gnu-ar
+export NM := $(ARCH)-unknown-linux-gnu-nm
+export RANLIB := $(ARCH)-unknown-linux-gnu-ranlib
 endif
 
 export ROOT_DIR := $(shell pwd)

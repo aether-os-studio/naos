@@ -14,7 +14,7 @@ pub static WRITER: Mutex<KernelWriter> = Mutex::new(KernelWriter);
 impl Write for KernelWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         unsafe {
-            printk(b"%s\0".as_ptr() as *const _, s.as_ptr());
+            printk(b"%s\0".as_ptr() as *const _, s);
         }
         Ok(())
     }

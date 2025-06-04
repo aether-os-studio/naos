@@ -289,7 +289,7 @@ vfs_node_t regist_dev(const char *name,
     {
         new_name = strstr(name, "/") + 1;
         uint64_t path_len = new_name - name;
-        char new_path[32];
+        char new_path[64];
         strcpy(new_path, "/dev/");
         strncpy(new_path + 5, name, path_len);
         dev = vfs_open((const char *)new_path);
@@ -314,7 +314,7 @@ vfs_node_t regist_dev(const char *name,
             devfs_handles[i]->data = data;
             vfs_node_t child = vfs_child_append(dev, devfs_handles[i]->name, NULL);
             child->type = file_block;
-            if (!strncmp(devfs_handles[i]->name, "std", 3) || !strncmp(devfs_handles[i]->name, "tty", 3))
+            if (!strncmp(devfs_handles[i]->name, "std", 3) || !strncmp(devfs_handles[i]->name, "tty", 3) || !strncmp(devfs_handles[i]->name, "card", 4))
                 child->type = file_stream;
             else if (!strncmp(devfs_handles[i]->name, "fb", 2))
                 child->type = file_fbdev;
@@ -466,6 +466,7 @@ void stdio_init()
     regist_dev("stderr", NULL, stdout_write, stdio_ioctl, stdio_poll, NULL);
 
     regist_dev("tty", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL);
+    regist_dev("tty0", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL);
 }
 
 uint64_t next = 0;

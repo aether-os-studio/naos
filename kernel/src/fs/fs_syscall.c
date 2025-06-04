@@ -53,7 +53,7 @@ char *at_resolve_pathname(int dirfd, char *pathname)
 
 uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode)
 {
-    if (!name || check_user_oevrflow((uint64_t)name, strlen(name)))
+    if (!name || check_user_overflow((uint64_t)name, strlen(name)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -110,7 +110,7 @@ uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode)
 
 uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags, uint64_t mode)
 {
-    if (!name || check_user_oevrflow((uint64_t)name, strlen(name)))
+    if (!name || check_user_overflow((uint64_t)name, strlen(name)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -148,7 +148,7 @@ uint64_t sys_close(uint64_t fd)
 
 uint64_t sys_read(uint64_t fd, void *buf, uint64_t len)
 {
-    if (!buf || check_user_oevrflow((uint64_t)buf, len))
+    if (!buf || check_user_overflow((uint64_t)buf, len))
     {
         return (uint64_t)-EFAULT;
     }
@@ -184,7 +184,7 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len)
 
 uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len)
 {
-    if (!buf || check_user_oevrflow((uint64_t)buf, len))
+    if (!buf || check_user_overflow((uint64_t)buf, len))
     {
         return (uint64_t)-EFAULT;
     }
@@ -270,7 +270,7 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg)
 
 uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count)
 {
-    if (!iovec || check_user_oevrflow((uint64_t)iovec, count * sizeof(struct iovec)))
+    if (!iovec || check_user_overflow((uint64_t)iovec, count * sizeof(struct iovec)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -299,7 +299,7 @@ uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count)
 
 uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count)
 {
-    if (!iovec || check_user_oevrflow((uint64_t)iovec, count * sizeof(struct iovec)))
+    if (!iovec || check_user_overflow((uint64_t)iovec, count * sizeof(struct iovec)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -328,7 +328,7 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count)
 
 uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
 {
-    if (check_user_oevrflow(buf, size))
+    if (check_user_overflow(buf, size))
     {
         return (uint64_t)-EFAULT;
     }
@@ -388,7 +388,7 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
 
 uint64_t sys_chdir(const char *dirname)
 {
-    if (!dirname || check_user_oevrflow((uint64_t)dirname, strlen(dirname)))
+    if (!dirname || check_user_overflow((uint64_t)dirname, strlen(dirname)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -405,7 +405,7 @@ uint64_t sys_chdir(const char *dirname)
 
 uint64_t sys_getcwd(char *cwd, uint64_t size)
 {
-    if (!cwd || check_user_oevrflow((uint64_t)cwd, size))
+    if (!cwd || check_user_overflow((uint64_t)cwd, size))
     {
         return (uint64_t)-EFAULT;
     }
@@ -539,10 +539,6 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
 
 uint64_t sys_stat(const char *fd, struct stat *buf)
 {
-    if (!fd || check_user_oevrflow((uint64_t)fd, strlen(fd)))
-    {
-        return (uint64_t)-EFAULT;
-    }
     vfs_node_t node = vfs_open(fd);
     if (!node)
     {
@@ -587,7 +583,7 @@ uint64_t sys_stat(const char *fd, struct stat *buf)
 
 uint64_t sys_fstat(uint64_t fd, struct stat *buf)
 {
-    if (!buf || check_user_oevrflow((uint64_t)buf, sizeof(struct stat)))
+    if (!buf || check_user_overflow((uint64_t)buf, sizeof(struct stat)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -631,17 +627,9 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
 
 uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname, struct stat *buf, uint64_t flags)
 {
-    if (!pathname || check_user_oevrflow((uint64_t)pathname, strlen(pathname)))
-    {
-        return (uint64_t)-EFAULT;
-    }
-    if (!buf || check_user_oevrflow((uint64_t)buf, sizeof(struct stat)))
-    {
-        return (uint64_t)-EFAULT;
-    }
     char *resolved = at_resolve_pathname(dirfd, (char *)pathname);
 
-    uint64_t ret = sys_stat(pathname, buf);
+    uint64_t ret = sys_stat(resolved, buf);
 
     free(resolved);
 
@@ -650,11 +638,11 @@ uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname, struct stat *buf, 
 
 uint64_t sys_statx(uint64_t dirfd, const char *pathname, uint64_t flags, uint64_t mask, struct statx *buff)
 {
-    if (!pathname || check_user_oevrflow((uint64_t)pathname, strlen(pathname)))
+    if (!pathname || check_user_overflow((uint64_t)pathname, strlen(pathname)))
     {
         return (uint64_t)-EFAULT;
     }
-    if (!buff || check_user_oevrflow((uint64_t)buff, sizeof(struct statx)))
+    if (!buff || check_user_overflow((uint64_t)buff, sizeof(struct statx)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -695,7 +683,7 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname, uint64_t flags, uint64_
 
 uint64_t sys_get_rlimit(uint64_t resource, struct rlimit *lim)
 {
-    if (!lim || check_user_oevrflow((uint64_t)lim, sizeof(struct rlimit)))
+    if (!lim || check_user_overflow((uint64_t)lim, sizeof(struct rlimit)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -705,7 +693,7 @@ uint64_t sys_get_rlimit(uint64_t resource, struct rlimit *lim)
 
 uint64_t sys_prlimit64(uint64_t pid, int resource, const struct rlimit *new_rlim, struct rlimit *old_rlim)
 {
-    if (!new_rlim || check_user_oevrflow((uint64_t)new_rlim, sizeof(struct rlimit)))
+    if (new_rlim && check_user_overflow((uint64_t)new_rlim, sizeof(struct rlimit)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -798,7 +786,7 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout)
             }
         }
 
-        sigexit = signals_pending_quick(current_task);
+        // sigexit = signals_pending_quick(current_task);
 
         if (ready > 0 || sigexit)
             break;
@@ -822,7 +810,7 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout)
 
 uint64_t sys_ppoll(struct pollfd *fds, uint64_t nfds, const struct timespec *timeout_ts, const sigset_t *sigmask, size_t sigsetsize)
 {
-    if (!fds || check_user_oevrflow((uint64_t)fds, nfds * sizeof(struct pollfd)))
+    if (!fds || check_user_overflow((uint64_t)fds, nfds * sizeof(struct pollfd)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -887,7 +875,15 @@ static inline void select_bitmap_set(uint8_t *map, int index)
 size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except,
                   struct timeval *timeout)
 {
-    if (!read || check_user_oevrflow((uint64_t)read, sizeof(struct pollfd)))
+    if (read && check_user_overflow((uint64_t)read, sizeof(struct pollfd)))
+    {
+        return (size_t)-EFAULT;
+    }
+    if (write && check_user_overflow((uint64_t)write, sizeof(struct pollfd)))
+    {
+        return (size_t)-EFAULT;
+    }
+    if (except && check_user_overflow((uint64_t)except, sizeof(struct pollfd)))
     {
         return (size_t)-EFAULT;
     }
@@ -964,15 +960,15 @@ size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except,
 
 uint64_t sys_pselect6(uint64_t nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timespec *timeout, WeirdPselect6 *weirdPselect6)
 {
-    if (readfds && check_user_oevrflow((uint64_t)readfds, sizeof(fd_set) * nfds))
+    if (readfds && check_user_overflow((uint64_t)readfds, sizeof(fd_set) * nfds))
     {
         return (size_t)-EFAULT;
     }
-    if (writefds && check_user_oevrflow((uint64_t)writefds, sizeof(fd_set) * nfds))
+    if (writefds && check_user_overflow((uint64_t)writefds, sizeof(fd_set) * nfds))
     {
         return (size_t)-EFAULT;
     }
-    if (exceptfds && check_user_oevrflow((uint64_t)exceptfds, sizeof(fd_set) * nfds))
+    if (exceptfds && check_user_overflow((uint64_t)exceptfds, sizeof(fd_set) * nfds))
     {
         return (size_t)-EFAULT;
     }
@@ -997,8 +993,8 @@ uint64_t sys_pselect6(uint64_t nfds, fd_set *readfds, fd_set *writefds, fd_set *
     }
     else
     {
-        timeoutConv = (struct timeval){.tv_sec = 0,
-                                       .tv_usec = 0};
+        timeoutConv = (struct timeval){.tv_sec = (uint64_t)-1,
+                                       .tv_usec = (uint64_t)-1};
     }
 
     size_t ret = sys_select(nfds, (uint8_t *)readfds, (uint8_t *)writefds,
@@ -1023,7 +1019,7 @@ uint64_t sys_faccessat(uint64_t dirfd, const char *pathname, uint64_t mode)
     { // by fd
         return 0;
     }
-    if (check_user_oevrflow((uint64_t)pathname, strlen(pathname)))
+    if (check_user_overflow((uint64_t)pathname, strlen(pathname)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -1045,7 +1041,7 @@ uint64_t sys_faccessat2(uint64_t dirfd, const char *pathname, uint64_t mode, uin
     { // by fd
         return 0;
     }
-    if (check_user_oevrflow((uint64_t)pathname, strlen(pathname)))
+    if (check_user_overflow((uint64_t)pathname, strlen(pathname)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -1063,11 +1059,11 @@ uint64_t sys_faccessat2(uint64_t dirfd, const char *pathname, uint64_t mode, uin
 
 uint64_t sys_link(const char *old, const char *new)
 {
-    if (check_user_oevrflow((uint64_t)old, strlen(old)))
+    if (check_user_overflow((uint64_t)old, strlen(old)))
     {
         return (uint64_t)-EFAULT;
     }
-    if (check_user_oevrflow((uint64_t)new, strlen(new)))
+    if (check_user_overflow((uint64_t)new, strlen(new)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -1104,11 +1100,11 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
     {
         return (uint64_t)-EFAULT;
     }
-    if (check_user_oevrflow((uint64_t)path, strlen(path)))
+    if (check_user_overflow((uint64_t)path, strlen(path)))
     {
         return (uint64_t)-EFAULT;
     }
-    if (check_user_oevrflow((uint64_t)buf, size))
+    if (check_user_overflow((uint64_t)buf, size))
     {
         return (uint64_t)-EFAULT;
     }
@@ -1138,7 +1134,7 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
 
 uint64_t sys_rmdir(const char *name)
 {
-    if (check_user_oevrflow((uint64_t)name, strlen(name)))
+    if (check_user_overflow((uint64_t)name, strlen(name)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -1155,7 +1151,7 @@ uint64_t sys_rmdir(const char *name)
 
 uint64_t sys_unlink(const char *name)
 {
-    if (check_user_oevrflow((uint64_t)name, strlen(name)))
+    if (check_user_overflow((uint64_t)name, strlen(name)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -1170,7 +1166,7 @@ uint64_t sys_unlink(const char *name)
 
 uint64_t sys_unlinkat(uint64_t dirfd, const char *name, uint64_t flags)
 {
-    if (check_user_oevrflow((uint64_t)name, strlen(name)))
+    if (check_user_overflow((uint64_t)name, strlen(name)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -1379,7 +1375,7 @@ cleanup:
 size_t epoll_pwait(vfs_node_t epollFd, struct epoll_event *events, int maxevents,
                    int timeout, sigset_t *sigmask, size_t sigsetsize)
 {
-    if (check_user_oevrflow((uint64_t)events, maxevents * sizeof(struct epoll_event)))
+    if (check_user_overflow((uint64_t)events, maxevents * sizeof(struct epoll_event)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -1401,7 +1397,7 @@ size_t epoll_pwait(vfs_node_t epollFd, struct epoll_event *events, int maxevents
 
 uint64_t sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
 {
-    if (check_user_oevrflow((uint64_t)events, maxevents * sizeof(struct epoll_event)))
+    if (check_user_overflow((uint64_t)events, maxevents * sizeof(struct epoll_event)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -1413,7 +1409,7 @@ uint64_t sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int
 
 uint64_t sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)
 {
-    if (check_user_oevrflow((uint64_t)event, sizeof(struct epoll_event)))
+    if (check_user_overflow((uint64_t)event, sizeof(struct epoll_event)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -1427,7 +1423,7 @@ uint64_t sys_epoll_pwait(int epfd, struct epoll_event *events,
                          int maxevents, int timeout, sigset_t *sigmask,
                          size_t sigsetsize)
 {
-    if (check_user_oevrflow((uint64_t)events, maxevents * sizeof(struct epoll_event)))
+    if (check_user_overflow((uint64_t)events, maxevents * sizeof(struct epoll_event)))
     {
         return (uint64_t)-EFAULT;
     }
@@ -2044,7 +2040,7 @@ uint64_t sys_flock(int fd, uint64_t operation)
 
 uint64_t sys_mkdir(const char *name, uint64_t mode)
 {
-    if (check_user_oevrflow((uint64_t)name, strlen(name)))
+    if (check_user_overflow((uint64_t)name, strlen(name)))
     {
         return (uint64_t)-EFAULT;
     }

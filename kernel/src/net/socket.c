@@ -246,7 +246,7 @@ int socket_socket(int domain, int type, int protocol)
 
     char buf[128];
     sprintf(buf, "sock%d", sockfsfd_id++);
-    vfs_node_t socknode = vfs_node_alloc(rootdir, buf);
+    vfs_node_t socknode = vfs_node_alloc(sockfs_root, buf);
     socknode->type = file_socket;
     socknode->fsid = unix_socket_fsid;
     socknode->flags = 0;
@@ -479,34 +479,6 @@ int socket_connect(socket_t *sock, const struct sockaddr_un *addr, socklen_t add
     arch_disable_interrupt();
 
     return 0;
-}
-
-bool socket_close(void *fd)
-{
-    socket_handle_t *handle = fd;
-    socket_t *unix_socket = handle->sock;
-    unix_socket->timesOpened--;
-    if (unix_socket->pair)
-    {
-        unix_socket->pair->clientFds--;
-        if (!unix_socket->pair->clientFds && !unix_socket->pair->serverFds)
-            unix_socket_free_pair(unix_socket->pair);
-    }
-    if (unix_socket->timesOpened == 0)
-    {
-        socket_t *browse = &first_unix_socket;
-
-        while (browse->next != unix_socket)
-        {
-            browse = browse->next;
-        }
-
-        browse->next = unix_socket->next;
-        free(unix_socket);
-
-        return true;
-    }
-    return false;
 }
 
 size_t unix_socket_recv_from(vfs_node_t fd, uint8_t *out, size_t limit, int flags,
@@ -1104,7 +1076,7 @@ vfs_node_t socket_socket_dup(vfs_node_t node)
         vfs_free(new_node);
         return NULL;
     }
-    memcpy(new_handle, node->handle, sizeof(socket_handle_t));
+    memcpy(new_handle, handle, sizeof(socket_handle_t));
     new_node->handle = new_handle;
 
     socket_t *new_socket = new_handle->sock;

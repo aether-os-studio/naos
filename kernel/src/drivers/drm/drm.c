@@ -1,14 +1,14 @@
 #include <drivers/drm/drm.h>
 #include <fs/vfs/dev.h>
+#include <fs/vfs/sys.h>
+#include <arch/arch.h>
 #include <mm/mm.h>
-
-static struct drm_device primary_dev;
 
 extern volatile struct limine_framebuffer_request framebuffer_request;
 
 static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
 {
-    struct drm_device *dev = data;
+    drm_device_t *dev = (drm_device_t *)data;
 
     switch (cmd)
     {
@@ -44,8 +44,8 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
     {
         struct drm_mode_create_dumb *create = (struct drm_mode_create_dumb *)arg;
         // 创建简单的显示缓冲区
-        create->height = dev->height;
-        create->width = dev->width;
+        create->height = dev->framebuffer->height;
+        create->width = dev->framebuffer->width;
         create->bpp = 32;
         create->size = create->height * create->width * 4;
         create->pitch = create->width * 4;
@@ -56,14 +56,14 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
     case DRM_IOCTL_MODE_MAP_DUMB:
     {
         struct drm_mode_map_dumb *map = (struct drm_mode_map_dumb *)arg;
-        map->offset = (uint64_t)dev->paddr;
+        map->offset = translate_address(get_current_page_dir(false), (uint64_t)dev->framebuffer->address);
         return 0;
     }
 
     case DRM_IOCTL_MODE_GETCONNECTOR:
     {
         struct drm_mode_get_connector *conn = (struct drm_mode_get_connector *)arg;
-        conn->connection = DRM_MODE_CONNECTED;
+        conn->connection = DRM_MODE_CONNECTOR_VGA;
         conn->count_modes = 1;
         conn->count_props = 0;
         conn->count_encoders = 1;
@@ -71,14 +71,14 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
     }
     case DRM_IOCTL_MODE_GETFB:
     {
-        struct drm_mode_fb_cmd fb = {
-            .fb_id = 1,
-            .width = dev->width,
-            .height = dev->height,
-            .pitch = dev->pitch,
-            .bpp = dev->bpp,
-            .depth = 24,
-            .handle = (uint32_t)(uintptr_t)dev->paddr};
+        struct drm_mode_fb_cmd fb;
+        fb.fb_id = dev->id;
+        fb.width = dev->framebuffer->width,
+        fb.height = dev->framebuffer->height,
+        fb.pitch = dev->framebuffer->pitch,
+        fb.bpp = dev->framebuffer->bpp,
+        fb.depth = 24,
+        fb.handle = (uint32_t)translate_address(get_current_page_dir(false), (uint64_t)dev->framebuffer->address);
         memcpy((void *)arg, &fb, sizeof(fb));
         return 0;
     }
@@ -90,18 +90,62 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
 
 void drm_init()
 {
-    if (framebuffer_request.response &&
-        framebuffer_request.response->framebuffer_count > 0)
+    for (int i = 0; i < framebuffer_request.response->framebuffer_count; i++)
     {
-        struct limine_framebuffer *fb = framebuffer_request.response->framebuffers[0];
-
-        primary_dev.flags = 0;
-        primary_dev.width = fb->width;
-        primary_dev.height = fb->height;
-        primary_dev.pitch = fb->pitch;
-        primary_dev.bpp = fb->bpp;
-        primary_dev.paddr = (uint64_t)fb->address;
+        char buf[16];
+        sprintf(buf, "dri/card%d", i);
+        drm_device_t *drm = malloc(sizeof(drm_device_t));
+        drm->id = i + 1;
+        drm->framebuffer = framebuffer_request.response->framebuffers[i];
+        regist_dev(buf, NULL, NULL, drm_ioctl, NULL, drm);
     }
+}
 
-    regist_dev("dri/card0", NULL, NULL, drm_ioctl, NULL, &primary_dev);
+void drm_init_sysfs()
+{
+    vfs_node_t class = vfs_open("/sys/class");
+    vfs_node_t drm = vfs_node_alloc(class, "drm");
+    drm->type = file_dir;
+    drm->mode = 0644;
+    for (int i = 0; i < framebuffer_request.response->framebuffer_count; i++)
+    {
+        char buf[32];
+        sprintf(buf, "card%d", i);
+        vfs_node_t cardn = vfs_node_alloc(drm, (const char *)buf);
+        cardn->type = file_dir;
+        cardn->mode = 0644;
+
+        sprintf(buf, "card%d-Virtual-1", i);
+        vfs_node_t cardn_virtual = vfs_node_alloc(cardn, (const char *)buf);
+        cardn_virtual->type = file_dir;
+        cardn_virtual->mode = 0644;
+
+        vfs_node_t connector_id = vfs_node_alloc(cardn_virtual, (const char *)buf);
+        connector_id->type = file_none;
+        connector_id->mode = 0700;
+        sysfs_handle_t *handle = malloc(sizeof(sysfs_handle_t));
+        memset(handle, 0, sizeof(sysfs_handle_t));
+        sprintf(handle->content, "%d", i + 1);
+        connector_id->handle = handle;
+
+        vfs_node_t modes = vfs_node_alloc(cardn_virtual, (const char *)buf);
+        modes->type = file_none;
+        modes->mode = 0700;
+        handle = malloc(sizeof(sysfs_handle_t));
+        memset(handle, 0, sizeof(sysfs_handle_t));
+        sprintf(handle->content, "%dx%d", framebuffer_request.response->framebuffers[i]->width, framebuffer_request.response->framebuffers[i]->height);
+        modes->handle = handle;
+
+        vfs_node_t uevent = vfs_node_alloc(cardn_virtual, (const char *)buf);
+        uevent->type = file_none;
+        uevent->mode = 0700;
+        handle = malloc(sizeof(sysfs_handle_t));
+        memset(handle, 0, sizeof(sysfs_handle_t));
+        sprintf(handle->content, "DEVTYPE=drm_connector");
+        uevent->handle = handle;
+
+        vfs_node_t subsystem = vfs_node_alloc(cardn, "subsystem");
+        subsystem->type = file_dir;
+        subsystem->mode = 0644;
+    }
 }
