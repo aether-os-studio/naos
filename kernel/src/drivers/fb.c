@@ -94,13 +94,22 @@ ssize_t fb_ioctl(void *data, ssize_t cmd, ssize_t arg)
     }
 }
 
+void *fb_map(void *data, void *addr, uint64_t len)
+{
+    struct limine_framebuffer *framebuffer = (struct limine_framebuffer *)data;
+
+    map_page_range(get_current_page_dir(false), (uint64_t)framebuffer->address, (uint64_t)framebuffer->address, framebuffer->width * framebuffer->height * framebuffer->bpp / 4, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+
+    return (void *)framebuffer->address;
+}
+
 void fbdev_init()
 {
     for (uint64_t i = 0; i < framebuffer_request.response->framebuffer_count; i++)
     {
         char name[MAX_DEV_NAME_LEN];
         sprintf(name, "fb%d", i);
-        regist_dev(name, fb_read, fb_write, fb_ioctl, NULL, framebuffer_request.response->framebuffers[i]);
+        regist_dev(name, fb_read, fb_write, fb_ioctl, NULL, fb_map, framebuffer_request.response->framebuffers[i]);
     }
 }
 

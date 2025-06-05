@@ -2,6 +2,7 @@
 
 #include "fs/fatfs/ff.h"
 #include <drivers/kernel_logger.h>
+#include <mm/mm_syscall.h>
 
 static FATFS volume[10];
 static int fatfs_id = 0;
@@ -275,6 +276,11 @@ vfs_node_t fatfs_dup(vfs_node_t node)
     return new_node;
 }
 
+void *fatfs_map(void *file, void *addr, size_t offset, size_t size, size_t prot, size_t flags)
+{
+    return general_map((vfs_read_t)fatfs_readfile, file, (uint64_t)addr, size, prot, flags, offset);
+}
+
 static struct vfs_callback callbacks = {
     .mount = fatfs_mount,
     .unmount = fatfs_unmount,
@@ -286,6 +292,7 @@ static struct vfs_callback callbacks = {
     .mkfile = fatfs_mkfile,
     .delete = (vfs_del_t)fatfs_delete,
     .rename = (vfs_rename_t)fatfs_rename,
+    .map = (vfs_mapfile_t)fatfs_map,
     .stat = fatfs_stat,
     .ioctl = fatfs_ioctl,
     .poll = fatfs_poll,

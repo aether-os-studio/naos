@@ -64,8 +64,9 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr, uint64_t flag
     }
 
     uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
-    if (pgdir[index] == 0)
-        pgdir[index] = (paddr & (~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL))) | flags;
+    if (pgdir[index] != 0)
+        free_frames((paddr & (~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL))), 1);
+    pgdir[index] = (paddr & (~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL))) | flags;
 
     arch_flush_tlb(vaddr);
 

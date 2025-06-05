@@ -47,6 +47,7 @@ static struct vfs_callback callbacks =
         .rename = (vfs_rename_t)dummy,
         .stat = (vfs_stat_t)dummy,
         .ioctl = (vfs_ioctl_t)dummy,
+        .map = (vfs_mapfile_t)dummy,
         .poll = (vfs_poll_t)dummy,
         .mount = (vfs_mount_t)dummy,
         .unmount = (vfs_unmount_t)dummy,

@@ -1,5 +1,6 @@
 #include <fs/ext2/ext2.h>
 #include <mm/mm.h>
+#include <mm/mm_syscall.h>
 #include <arch/arch.h>
 #include <task/task.h>
 #include <fs/fs_syscall.h>
@@ -1594,6 +1595,11 @@ vfs_node_t ext2_dup(vfs_node_t node)
     return new_node;
 }
 
+void *ext2_map(void *file, void *addr, size_t offset, size_t size, size_t prot, size_t flags)
+{
+    return general_map((vfs_read_t)ext2_read, file, (uint64_t)addr, size, prot, flags, offset);
+}
+
 static struct vfs_callback callbacks = {
     .mount = ext2_mount,
     .unmount = ext2_unmount,
@@ -1605,6 +1611,7 @@ static struct vfs_callback callbacks = {
     .mkfile = ext2_mkfile,
     .delete = ext2_delete,
     .rename = ext2_rename,
+    .map = ext2_map,
     .stat = ext2_stat,
     .ioctl = ext2_ioctl,
     .poll = ext2_poll,

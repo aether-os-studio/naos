@@ -89,6 +89,16 @@ int devfs_ioctl(devfs_handle_t handle, ssize_t cmd, ssize_t arg)
     return 0;
 }
 
+void *devfs_map(devfs_handle_t handle, void *addr, size_t offset, size_t size, size_t prot, size_t flags)
+{
+    if (handle->ioctl)
+    {
+        return handle->map(handle->data, addr, size);
+    }
+
+    return NULL;
+}
+
 int devfs_mkdir(void *parent, const char *name, vfs_node_t node)
 {
     vfs_node_t child = vfs_child_append(node, name, NULL);
@@ -155,6 +165,7 @@ static struct vfs_callback callbacks = {
     .mkfile = (vfs_mk_t)devfs_mkfile,
     .delete = (vfs_del_t)dummy,
     .rename = (vfs_rename_t)dummy,
+    .map = (vfs_mapfile_t)devfs_map,
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)devfs_ioctl,
     .poll = (vfs_poll_t)devfs_poll,
@@ -279,6 +290,7 @@ vfs_node_t regist_dev(const char *name,
                       ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len),
                       ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg),
                       ssize_t (*poll)(void *data, size_t event),
+                      void *(*map)(void *data, void *addr, uint64_t len),
                       void *data)
 {
     const char *new_name = name;
@@ -311,6 +323,7 @@ vfs_node_t regist_dev(const char *name,
             devfs_handles[i]->write = write;
             devfs_handles[i]->ioctl = ioctl;
             devfs_handles[i]->poll = poll;
+            devfs_handles[i]->map = map;
             devfs_handles[i]->data = data;
             vfs_node_t child = vfs_child_append(dev, devfs_handles[i]->name, NULL);
             child->type = file_block;
@@ -461,12 +474,12 @@ ssize_t stdio_poll(void *data, size_t events)
 
 void stdio_init()
 {
-    regist_dev("stdin", stdin_read, NULL, stdio_ioctl, stdio_poll, NULL);
-    regist_dev("stdout", NULL, stdout_write, stdio_ioctl, stdio_poll, NULL);
-    regist_dev("stderr", NULL, stdout_write, stdio_ioctl, stdio_poll, NULL);
+    regist_dev("stdin", stdin_read, NULL, stdio_ioctl, stdio_poll, NULL, NULL);
+    regist_dev("stdout", NULL, stdout_write, stdio_ioctl, stdio_poll, NULL, NULL);
+    regist_dev("stderr", NULL, stdout_write, stdio_ioctl, stdio_poll, NULL, NULL);
 
-    regist_dev("tty", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL);
-    regist_dev("tty0", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL);
+    regist_dev("tty", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL, NULL);
+    regist_dev("tty0", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL, NULL);
 }
 
 uint64_t next = 0;
@@ -550,7 +563,7 @@ void dev_init()
     kb_input_event->device_events.read_ptr = 0;
     kb_input_event->device_events.write_ptr = 0;
     circular_int_init(&kb_input_event->device_events, 16384);
-    vfs_node_t kb_node = regist_dev("input/event0", inputdev_event_read, inputdev_event_write, inputdev_ioctl, inputdev_poll, kb_input_event);
+    vfs_node_t kb_node = regist_dev("input/event0", inputdev_event_read, inputdev_event_write, inputdev_ioctl, inputdev_poll, NULL, kb_input_event);
     dev_input_event_t *mouse_input_event = malloc(sizeof(dev_input_event_t));
     mouse_input_event->inputid.bustype = 0x05;   // BUS_PS2
     mouse_input_event->inputid.vendor = 0x045e;  // Microsoft
@@ -560,11 +573,11 @@ void dev_init()
     mouse_input_event->device_events.read_ptr = 0;
     mouse_input_event->device_events.write_ptr = 0;
     circular_int_init(&mouse_input_event->device_events, 16384);
-    vfs_node_t mouse_node = regist_dev("input/event1", inputdev_event_read, inputdev_event_write, inputdev_ioctl, inputdev_poll, mouse_input_event);
+    vfs_node_t mouse_node = regist_dev("input/event1", inputdev_event_read, inputdev_event_write, inputdev_ioctl, inputdev_poll, NULL, mouse_input_event);
 
-    regist_dev("null", null_dev_read, null_dev_write, NULL, NULL, NULL);
-    regist_dev("random", random_dev_read, NULL, NULL, NULL, NULL);
-    regist_dev("urandom", urandom_dev_read, urandom_dev_write, urandom_dev_ioctl, NULL, NULL);
+    regist_dev("null", null_dev_read, null_dev_write, NULL, NULL, NULL, NULL);
+    regist_dev("random", random_dev_read, NULL, NULL, NULL, NULL, NULL);
+    regist_dev("urandom", urandom_dev_read, urandom_dev_write, urandom_dev_ioctl, NULL, NULL, NULL);
 }
 
 void circular_int_init(circular_int_t *circ, size_t size)

@@ -518,3 +518,8 @@ vfs_node_t vfs_dup(vfs_node_t node)
 {
     return callbackof(node, dup)(node);
 }
+
+void *vfs_map(vfs_node_t node, uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset)
+{
+    return callbackof(node, map)(node->handle, (void *)addr, offset, len, prot, flags);
+}

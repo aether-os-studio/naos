@@ -108,7 +108,7 @@ void partition_init()
     {
         char name[MAX_DEV_NAME_LEN];
         sprintf(name, "part%d", i);
-        regist_dev(name, partition_read, partition_write, NULL, NULL, &partitions[i]);
+        regist_dev(name, partition_read, partition_write, NULL, NULL, NULL, &partitions[i]);
     }
 }
 

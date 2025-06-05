@@ -97,7 +97,7 @@ void drm_init()
         drm_device_t *drm = malloc(sizeof(drm_device_t));
         drm->id = i + 1;
         drm->framebuffer = framebuffer_request.response->framebuffers[i];
-        regist_dev(buf, NULL, NULL, drm_ioctl, NULL, drm);
+        regist_dev(buf, NULL, NULL, drm_ioctl, NULL, NULL, drm);
     }
 }
 

@@ -285,6 +285,7 @@ static struct vfs_callback callbacks = {
     .mkfile = (vfs_mk_t)dummy,
     .delete = (vfs_del_t)dummy,
     .rename = (vfs_rename_t)dummy,
+    .map = (vfs_mapfile_t)dummy,
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)pipefs_ioctl,
     .poll = pipefs_poll,

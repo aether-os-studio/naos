@@ -1,4 +1,5 @@
 #include <fs/vfs/vfs.h>
+#include <mm/mm_syscall.h>
 
 static inline const char *strchrnul(const char *_s, int _c)
 {
@@ -768,6 +769,11 @@ vfs_node_t iso9660_dup(vfs_node_t node)
     return new_node;
 }
 
+void *iso9660_map(void *file, void *addr, size_t offset, size_t size, size_t prot, size_t flags)
+{
+    return general_map((vfs_read_t)iso9660_readfile, file, (uint64_t)addr, size, prot, flags, offset);
+}
+
 static struct vfs_callback callbacks = {
     .mount = iso9660_mount,
     .unmount = iso9660_unmount,
@@ -779,6 +785,7 @@ static struct vfs_callback callbacks = {
     .mkfile = iso9660_mkfile,
     .delete = (vfs_del_t)iso9660_delete,
     .rename = (vfs_rename_t)iso9660_rename,
+    .map = (vfs_mapfile_t)iso9660_map,
     .stat = iso9660_stat,
     .ioctl = iso9660_ioctl,
     .poll = iso9660_poll,

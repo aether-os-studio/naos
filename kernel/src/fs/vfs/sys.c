@@ -120,6 +120,7 @@ static struct vfs_callback callback = {
     .mkfile = (vfs_mk_t)dummy,
     .delete = (vfs_del_t)dummy,
     .rename = (vfs_rename_t)dummy,
+    .map = (vfs_mapfile_t)dummy,
     .stat = sysfs_stat,
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = sysfs_poll,
