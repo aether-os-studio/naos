@@ -595,11 +595,6 @@ void xhci_init()
     uint64_t mmio_phys = pci_dev->bars[0].address;
     baseaddr = (void *)phys_to_virt(mmio_phys);
 
-    // 启用PCI总线主控
-    uint32_t cmd = pci_read(pci_dev->bus, pci_dev->slot, pci_dev->func, pci_dev->segment, 0x04);
-    cmd |= 0x06;
-    pci_write(pci_dev->bus, pci_dev->slot, pci_dev->func, pci_dev->segment, 0x04, cmd);
-
     map_page_range(get_current_page_dir(false), (uint64_t)baseaddr, mmio_phys, pci_dev->bars[0].size, PT_FLAG_R | PT_FLAG_W);
 
     xhci = xhci_controller_setup(baseaddr);

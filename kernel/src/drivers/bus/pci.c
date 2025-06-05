@@ -373,6 +373,8 @@ void pci_scan_function(uint16_t segment_group, uint8_t bus, uint8_t device, uint
     pci_device->slot = device;
     pci_device->func = function;
 
+    pci_device_init(pci_device);
+
     switch (header_type)
     {
     // Endpoint
@@ -683,7 +685,7 @@ void pcie_setup(MCFG *mcfg)
 
 void pci_init()
 {
-    printk("Scanning PCI bus\n");
+    printk("Scanning PCIe bus\n");
 
     if (mcfg_buffer)
     {

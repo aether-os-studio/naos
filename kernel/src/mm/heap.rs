@@ -1,5 +1,5 @@
 use alloc::{collections::btree_map::BTreeMap, vec::Vec};
-use linked_list_allocator::LockedHeap;
+use good_memory_allocator::SpinLockedAllocator;
 use spin::Mutex;
 
 use crate::rust::bindings::bindings::{PT_FLAG_R, PT_FLAG_W, get_current_page_dir, map_page_range};
@@ -8,7 +8,7 @@ pub const KERNEL_HEAP_START: usize = 0xffff_c000_0000_0000;
 pub const KERNEL_HEAP_SIZE: usize = 64 * 1024 * 1024;
 
 #[global_allocator]
-static KERNEL_ALLOCATOR: LockedHeap = LockedHeap::empty();
+static KERNEL_ALLOCATOR: SpinLockedAllocator = SpinLockedAllocator::empty();
 
 static C_ALLOCATION_MAP: Mutex<BTreeMap<usize, (usize, usize, usize)>> =
     Mutex::new(BTreeMap::new());
@@ -106,7 +106,5 @@ unsafe extern "C" fn heap_init() {
         PT_FLAG_R as u64 | PT_FLAG_W as u64,
     );
 
-    KERNEL_ALLOCATOR
-        .lock()
-        .init(KERNEL_HEAP_START as *mut u8, KERNEL_HEAP_SIZE);
+    KERNEL_ALLOCATOR.init(KERNEL_HEAP_START, KERNEL_HEAP_SIZE);
 }

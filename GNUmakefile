@@ -55,7 +55,7 @@ SER ?= 0
 MON ?= 0
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
-QEMUFLAGS := -m $(MEM) -smp $(SMP)
+QEMUFLAGS := -m $(MEM) -smp $(SMP) -netdev user,id=net0 -net nic,model=rtl8139,netdev=net0
 
 DEBUG ?= 0
 
