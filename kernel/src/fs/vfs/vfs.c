@@ -388,11 +388,20 @@ int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize)
         return 0;
     }
 
-    size_t link_len = strlen(node->linkname);
-    ssize_t copy_len = (link_len < bufsize) ? link_len : (bufsize - 1);
+    ssize_t copy_len = 0;
 
-    strncpy(buf, node->linkname, copy_len);
-    buf[copy_len] = '\0';
+    if (node->type & file_dir)
+    {
+        size_t link_len = strlen(node->linkname);
+        copy_len = (link_len < bufsize) ? link_len : (bufsize - 1);
+
+        strncpy(buf, node->linkname, copy_len);
+        buf[copy_len] = '\0';
+    }
+    else
+    {
+        copy_len = vfs_read(node, buf, node->offset, bufsize);
+    }
 
     return copy_len;
 }

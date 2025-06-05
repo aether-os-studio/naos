@@ -53,11 +53,6 @@ char *at_resolve_pathname(int dirfd, char *pathname)
 
 uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode)
 {
-    if (!name || check_user_overflow((uint64_t)name, strlen(name)))
-    {
-        return (uint64_t)-EFAULT;
-    }
-
     uint64_t i = 0;
     for (i = 3; i < MAX_FD_NUM; i++)
     {
@@ -1114,6 +1109,48 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
     {
         return (uint64_t)-ENOENT;
     }
+
+    ssize_t result = vfs_readlink(node, buf, (size_t)size);
+    vfs_close(node);
+
+    if (result < 0)
+    {
+        switch (-result)
+        {
+        case 1:
+            return (uint64_t)-ENOLINK;
+        default:
+            return (uint64_t)-EIO;
+        }
+    }
+
+    return (uint64_t)result;
+}
+
+uint64_t sys_readlinkat(int dfd, char *path, char *buf, uint64_t size)
+{
+    if (path == NULL || buf == NULL || size == 0)
+    {
+        return (uint64_t)-EFAULT;
+    }
+    if (check_user_overflow((uint64_t)path, strlen(path)))
+    {
+        return (uint64_t)-EFAULT;
+    }
+    if (check_user_overflow((uint64_t)buf, size))
+    {
+        return (uint64_t)-EFAULT;
+    }
+
+    char *resolved = at_resolve_pathname(dfd, path);
+
+    vfs_node_t node = vfs_open_at(current_task->cwd, resolved, true);
+    if (node == NULL)
+    {
+        return (uint64_t)-ENOENT;
+    }
+
+    free(resolved);
 
     ssize_t result = vfs_readlink(node, buf, (size_t)size);
     vfs_close(node);

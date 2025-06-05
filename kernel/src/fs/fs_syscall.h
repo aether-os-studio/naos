@@ -292,6 +292,7 @@ uint64_t sys_pselect6(uint64_t nfds, fd_set *readfds, fd_set *writefds, fd_set *
 
 uint64_t sys_link(const char *old, const char *new);
 uint64_t sys_readlink(char *path, char *buf, uint64_t size);
+uint64_t sys_readlinkat(int dfd, char *path, char *buf, uint64_t size);
 
 typedef union epoll_data
 {

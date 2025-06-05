@@ -2,6 +2,8 @@
 
 #include <libs/klibc.h>
 
+#if defined(__x86_64__)
+
 #define REG_MAC0 0x00
 #define REG_TSR 0x10
 #define REG_RXCONFIG 0x44
@@ -27,3 +29,5 @@ typedef struct rtl8139
 } rtl8139_t;
 
 bool rtl8139_init();
+
+#endif

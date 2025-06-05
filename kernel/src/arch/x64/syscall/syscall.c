@@ -408,6 +408,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_READLINK:
         regs->rax = sys_readlink((char *)arg1, (char *)arg2, arg3);
         break;
+    case SYS_READLINKAT:
+        regs->rax = sys_readlinkat(arg1, (char *)arg2, (char *)arg3, arg4);
+        break;
     case SYS_RENAME:
         regs->rax = sys_rename((const char *)arg1, (const char *)arg2);
         break;

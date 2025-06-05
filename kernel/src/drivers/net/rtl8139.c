@@ -6,6 +6,8 @@
 #include <drivers/bus/msi.h>
 #include <interrupt/irq_manager.h>
 
+#if defined(__x86_64__)
+
 rtl8139_t rtl8139_controller;
 
 static void rtl8139_hw_init(pci_device_t *pci_dev)
@@ -118,3 +120,5 @@ int rtl8139_send_packet(void *data, uint16_t len)
 
     return len;
 }
+
+#endif

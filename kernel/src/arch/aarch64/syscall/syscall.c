@@ -322,6 +322,9 @@ void aarch64_do_syscall(struct pt_regs *frame)
     case SYS_PSELECT6:
         frame->x0 = sys_pselect6(arg1, (fd_set *)arg2, (fd_set *)arg3, (fd_set *)arg4, (struct timespec *)arg5, (WeirdPselect6 *)arg6);
         break;
+    case SYS_READLINKAT:
+        frame->x0 = sys_readlinkat((char *)arg1, (char *)arg2, arg3);
+        break;
     case SYS_UNLINKAT:
         frame->x0 = sys_unlinkat(arg1, (const char *)arg2, arg3);
         break;
