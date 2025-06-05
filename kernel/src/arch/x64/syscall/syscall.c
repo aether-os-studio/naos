@@ -550,10 +550,14 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
 
     default:
+        regs->rax = (uint64_t)-ENOSYS;
+        break;
+    }
+
+    if (regs->rax == (uint64_t)-ENOSYS)
+    {
         char buf[32];
         int len = sprintf(buf, "syscall %d not implemented\n", idx);
         serial_printk(buf, len);
-        regs->rax = (uint64_t)-ENOSYS;
-        break;
     }
 }

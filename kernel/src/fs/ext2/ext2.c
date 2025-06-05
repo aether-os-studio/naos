@@ -1570,7 +1570,7 @@ int ext2_stat(void *file, vfs_node_t node)
 
 int ext2_ioctl(void *file, ssize_t cmd, ssize_t arg)
 {
-    return -ENOSYS;
+    return 0;
 }
 
 int ext2_poll(void *file, size_t events)

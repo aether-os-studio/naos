@@ -251,7 +251,7 @@ int fatfs_rename(file_t file, const char *new)
 
 int fatfs_ioctl(void *file, ssize_t cmd, ssize_t arg)
 {
-    return -ENOSYS;
+    return 0;
 }
 
 int fatfs_poll(void *file, size_t events)
