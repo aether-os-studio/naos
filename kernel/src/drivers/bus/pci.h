@@ -60,6 +60,14 @@ typedef struct
 
     uint32_t capability_point;
 
+    uint64_t msix_mmio_vaddr;
+    uint64_t msix_mmio_size;
+    uint32_t msix_offset;
+    uint16_t msix_table_size;
+
+    uint8_t irq_line;
+    uint8_t irq_pin;
+
     pci_device_op_t *op;
 } pci_device_t;
 

@@ -8,3 +8,7 @@
 #include <fs/termios.h>
 #include <task/task.h>
 #include <task/signal.h>
+
+#if defined(__x86_64__)
+#include <drivers/bus/msi.h>
+#endif

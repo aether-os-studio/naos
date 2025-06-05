@@ -106,5 +106,5 @@ unsafe extern "C" fn heap_init() {
         PT_FLAG_R as u64 | PT_FLAG_W as u64,
     );
 
-    KERNEL_ALLOCATOR.init(KERNEL_HEAP_START, KERNEL_HEAP_SIZE);
+    KERNEL_ALLOCATOR.init(KERNEL_HEAP_START as usize, KERNEL_HEAP_SIZE as usize);
 }

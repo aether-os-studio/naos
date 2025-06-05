@@ -13,6 +13,7 @@
 #include "drivers/apic_timer.h"
 #include "drivers/chars/ps2_kbd.h"
 #include "drivers/chars/ps2_mouse.h"
+#include "drivers/msi_arch.h"
 #include "task/arch_context.h"
 #include "task/fsgsbase.h"
 #include "syscall/nr.h"

@@ -181,11 +181,11 @@ static void free_page_table_inner(uint64_t phys_addr, int level)
 
         if (level == 3 && (pte & ARCH_PT_FLAG_HUGE))
         {
-            free_frames(pte & 0x00007FFFFFFFF000, 1 << 30);
+            free_frames(pte & 0x00007FFFFFFFF000, (1 << 30) / DEFAULT_PAGE_SIZE);
         }
         else if (level == 2 && (pte & ARCH_PT_FLAG_HUGE))
         {
-            free_frames(pte & 0x00007FFFFFFFF000, 1 << 21);
+            free_frames(pte & 0x00007FFFFFFFF000, (1 << 21) / DEFAULT_PAGE_SIZE);
         }
         else if (level > 1)
         {

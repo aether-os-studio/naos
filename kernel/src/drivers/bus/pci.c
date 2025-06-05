@@ -386,6 +386,10 @@ void pci_scan_function(uint16_t segment_group, uint8_t bus, uint8_t device, uint
         pci_device->vendor_id = vendor_id;
         pci_device->device_id = device_id;
 
+        uint32_t interrupt_value = pci_device->op->read(pci_device->bus, pci_device->slot, pci_device->func, pci_device->segment, 0x3c);
+        pci_device->irq_line = interrupt_value & 0xff;
+        pci_device->irq_pin = (interrupt_value >> 8) & 0xff;
+
         printk("Found PCIe device: %#08lx name: %s\n", pci_device->class_code, pci_device->name);
 
         uint32_t capability_point = pci_device->op->read(pci_device->bus, pci_device->slot, pci_device->func, pci_device->segment, 0x34) & 0xff;
@@ -538,6 +542,10 @@ void pci_scan_device_legacy(uint32_t bus, uint32_t equipment, uint32_t f)
     uint16_t value_d = device->op->read(bus, equipment, f, 0, PCI_CONF_DEVICE);
     uint16_t vendor_id = value_v & 0xffff;
     uint16_t device_id = value_d & 0xffff;
+
+    uint32_t interrupt_value = device->op->read(device->bus, device->slot, device->func, device->segment, 0x3c);
+    device->irq_line = interrupt_value & 0xff;
+    device->irq_pin = (interrupt_value >> 8) & 0xff;
 
     device->name = pci_classname(class_code);
     device->vendor_id = vendor_id;

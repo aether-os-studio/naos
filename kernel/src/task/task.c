@@ -164,10 +164,9 @@ void idle_entry()
 #include <drivers/usb/usb.h>
 #include <drivers/drm/drm.h>
 #include <drivers/virtio/virtio.h>
+#include <drivers/net/net.h>
 #include <fs/partition.h>
 #include <drivers/fb.h>
-
-extern void net_init();
 
 extern void ext2_init();
 extern void fatfs_init();
@@ -701,17 +700,17 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     }
     free(new_envp);
 
-    // for (uint64_t i = 3; i < MAX_FD_NUM; i++)
-    // {
-    //     if (!current_task->fds[i])
-    //         continue;
+    for (uint64_t i = 3; i < MAX_FD_NUM; i++)
+    {
+        if (!current_task->fds[i])
+            continue;
 
-    //     if (current_task->fds[i]->flags & O_CLOEXEC)
-    //     {
-    //         vfs_close(current_task->fds[i]);
-    //         current_task->fds[i] = NULL;
-    //     }
-    // }
+        if (current_task->fds[i]->flags & O_CLOEXEC)
+        {
+            vfs_close(current_task->fds[i]);
+            current_task->fds[i] = NULL;
+        }
+    }
 
     current_task->cmdline = strdup(cmdline);
     current_task->load_start = load_start;
