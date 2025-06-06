@@ -36,9 +36,9 @@ ssize_t sysfs_read(void *file, void *addr, size_t offset, size_t size)
 
     if (handle->private_data != NULL)
     {
-        if (handle->node->offset >= DEFAULT_PAGE_SIZE)
+        if (offset >= DEFAULT_PAGE_SIZE)
             return 0;
-        size_t toCopy = DEFAULT_PAGE_SIZE - handle->node->offset;
+        size_t toCopy = DEFAULT_PAGE_SIZE - offset;
         if (toCopy > size)
             toCopy = size;
 
@@ -46,7 +46,7 @@ ssize_t sysfs_read(void *file, void *addr, size_t offset, size_t size)
 
         for (size_t i = 0; i < toCopy; i++)
         {
-            uint16_t word = device->op->read(device->bus, device->slot, device->func, device->segment, handle->node->offset++) & 0xFFFF;
+            uint16_t word = device->op->read(device->bus, device->slot, device->func, device->segment, offset++) & 0xFFFF;
             ((uint8_t *)addr)[i] = (uint8_t)EXPORT_BYTE(word, true);
         }
 

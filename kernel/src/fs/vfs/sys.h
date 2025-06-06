@@ -9,4 +9,3 @@ typedef struct sysfs_handle
     char name[128];
     char content[256];
 } sysfs_handle_t;
-

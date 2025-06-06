@@ -14,7 +14,7 @@ if [ ! -f $APK_PATH ]; then
 fi
 chmod +x "$APK_PATH"
 
-ALPINE_VERSION=edge
+ALPINE_VERSION=latest-stable
 
 # bootstrap alpine userspace
 sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/${ALPINE_VERSION}/main -U --allow-untrusted --root $SYSROOT/../ --initdb add alpine-base bash coreutils grep musl ncurses

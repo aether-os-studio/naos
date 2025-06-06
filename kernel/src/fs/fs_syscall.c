@@ -115,6 +115,7 @@ uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode)
     current_task->fds[i]->node = node;
     current_task->fds[i]->offset = 0;
     current_task->fds[i]->flags = flags;
+    node->refcount++;
 
     return i;
 }
@@ -352,7 +353,8 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
         return (uint64_t)-ENOTDIR;
 
     struct dirent *dents = (struct dirent *)buf;
-    vfs_node_t node = current_task->fds[fd]->node;
+    fd_t *filedescriptor = current_task->fds[fd];
+    vfs_node_t node = filedescriptor->node;
 
     uint64_t child_count = (uint64_t)list_length(node->child);
 
@@ -363,15 +365,15 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
     uint64_t offset = 0;
     list_foreach(node->child, i)
     {
-        if (offset < node->offset)
+        if (offset < filedescriptor->offset)
             goto next;
-        if (node->offset >= (child_count * sizeof(struct dirent)))
+        if (filedescriptor->offset >= (child_count * sizeof(struct dirent)))
             break;
         if (read_count >= max_dents_num)
             break;
         vfs_node_t child_node = (vfs_node_t)i->data;
         dents[read_count].d_ino = child_node->inode;
-        dents[read_count].d_off = node->offset;
+        dents[read_count].d_off = filedescriptor->offset;
         dents[read_count].d_reclen = sizeof(struct dirent);
         switch (child_node->type)
         {
@@ -389,7 +391,7 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
             break;
         }
         strncpy(dents[read_count].d_name, child_node->name, 1024);
-        node->offset += sizeof(struct dirent);
+        filedescriptor->offset += sizeof(struct dirent);
         read_count++;
     next:
         offset += sizeof(struct dirent);
@@ -469,6 +471,7 @@ uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags)
     }
 
     current_task->fds[newfd] = new_node;
+    new_node->node->refcount++;
 
     if (flags & O_CLOEXEC)
     {
@@ -494,6 +497,7 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd)
     }
 
     current_task->fds[newfd] = new;
+    new->node->refcount++;
 
     return newfd;
 }
@@ -1261,6 +1265,7 @@ size_t epoll_create1(int flags)
     sprintf(buf, "epoll%d", epollfd_id++);
     vfs_node_t node = vfs_node_alloc(epollfs_root, buf);
     node->type = file_epoll;
+    node->refcount++;
     epoll_t *epoll = malloc(sizeof(epoll_t));
     epoll->lock = false;
     epoll->firstEpollWatch = NULL;
@@ -1540,6 +1545,7 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags)
     char buf[256];
     sprintf(buf, "eventfd%d", eventfd_id++);
     vfs_node_t node = vfs_node_alloc(eventfdfs_root, buf);
+    node->refcount++;
     node->mode = 0700;
     node->type = file_stream;
     node->fsid = eventfdfs_id;
@@ -1677,6 +1683,7 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask, int flags
     char buf[256];
     sprintf(buf, "signalfd%d", signalfd_id++);
     vfs_node_t node = vfs_node_alloc(signalfdfs_root, buf);
+    node->refcount++;
     node->mode = 0700;
     node->type = file_stream;
     node->fsid = signalfdfs_id;
@@ -1750,6 +1757,7 @@ int sys_timerfd_create(int clockid, int flags)
     char buf[32];
     sprintf(buf, "timerfd%d", timerfd_id++);
     vfs_node_t node = vfs_node_alloc(timerfdfs_root, buf);
+    node->refcount++;
     node->type = file_stream;
     node->fsid = timerfdfs_id;
     node->handle = tfd;

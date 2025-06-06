@@ -537,20 +537,23 @@ void task_signal()
 
     for (int i = 0; i < MAX_FD_NUM; i++)
     {
-        vfs_node_t node = current_task->fds[i];
-        if (node && node->fsid == signalfdfs_id)
+        if (current_task->fds[i])
         {
-            struct signalfd_ctx *ctx = node->handle;
-
-            struct sigevent info;
-            memset(&info, 0, sizeof(struct sigevent));
-            info.sigev_signo = sig;
-
-            memcpy(&ctx->queue[ctx->queue_head], &info, sizeof(struct sigevent));
-            ctx->queue_head = (ctx->queue_head + 1) % ctx->queue_size;
-            if (ctx->queue_head == ctx->queue_tail)
+            vfs_node_t node = current_task->fds[i]->node;
+            if (node && node->fsid == signalfdfs_id)
             {
-                ctx->queue_tail = (ctx->queue_tail + 1) % ctx->queue_size;
+                struct signalfd_ctx *ctx = node->handle;
+
+                struct sigevent info;
+                memset(&info, 0, sizeof(struct sigevent));
+                info.sigev_signo = sig;
+
+                memcpy(&ctx->queue[ctx->queue_head], &info, sizeof(struct sigevent));
+                ctx->queue_head = (ctx->queue_head + 1) % ctx->queue_size;
+                if (ctx->queue_head == ctx->queue_tail)
+                {
+                    ctx->queue_tail = (ctx->queue_tail + 1) % ctx->queue_size;
+                }
             }
         }
     }

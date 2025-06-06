@@ -293,6 +293,7 @@ vfs_node_t regist_dev(const char *name,
             devfs_handles[i]->map = map;
             devfs_handles[i]->data = data;
             vfs_node_t child = vfs_child_append(dev, devfs_handles[i]->name, NULL);
+            child->refcount++;
             child->type = file_block;
             if (!strncmp(devfs_handles[i]->name, "std", 3) || !strncmp(devfs_handles[i]->name, "tty", 3) || !strncmp(devfs_handles[i]->name, "card", 4))
                 child->type = file_stream;

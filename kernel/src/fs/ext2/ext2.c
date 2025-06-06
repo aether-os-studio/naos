@@ -916,7 +916,6 @@ static bool find_in_dir_block(ext2_file_t *dir, uint8_t *block, const char *name
             handle->block_groups_count = dir->block_groups_count;
             handle->file_type = dirent->type;
             handle->node = node;
-            handle->ref_count = 1;
             node->inode = handle->inode_id;
             node->blksz = handle->block_size;
             node->handle = handle;
@@ -1047,13 +1046,8 @@ void ext2_open(void *parent, const char *name, vfs_node_t node)
 bool ext2_close(void *current)
 {
     ext2_file_t *f = (ext2_file_t *)current;
-    f->ref_count--;
-    if (f->ref_count == 0)
-    {
-        free(f);
-        return true;
-    }
-    return false;
+    free(f);
+    return true;
 }
 
 int ext2_mount(const char *src, vfs_node_t node)
@@ -1082,7 +1076,6 @@ int ext2_mount(const char *src, vfs_node_t node)
     file->block_groups_count = (sb.s_blocks_count + sb.s_blocks_per_group - 1) / sb.s_blocks_per_group;
     file->file_type = EXT2_FT_DIRECTORY;
     file->node = node;
-    file->ref_count = 1;
 
     node->inode = file->inode_id;
     node->blksz = file->block_size;
@@ -1108,7 +1101,6 @@ ssize_t ext2_write(void *file, const void *addr, size_t offset, size_t size)
         return -EINVAL;
 
     spin_lock(&ext2_op_lock);
-    f->ref_count++;
 
     ext2_inode_t f_inode;
 

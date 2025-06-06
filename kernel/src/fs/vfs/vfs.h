@@ -212,7 +212,6 @@ struct vfs_node
     uint64_t realsize;   // 项目真实占用的空间 (可选)
     uint64_t size;       // 文件大小或若是文件夹则填0
     uint64_t blksz;      // 块大小
-    uint64_t offset;     // 偏移
     uint64_t createtime; // 创建时间
     uint64_t readtime;   // 最后读取时间
     uint64_t writetime;  // 最后写入时间
@@ -224,6 +223,7 @@ struct vfs_node
     flock_t lock;        // 锁
     list_t child;        // 子目录和子文件
     vfs_node_t root;     // 根目录
+    uint32_t refcount;   // 引用计数
     uint16_t mode;       // 模式
 };
 

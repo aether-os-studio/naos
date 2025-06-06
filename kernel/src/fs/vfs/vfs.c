@@ -28,7 +28,6 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name)
         return NULL;
     memset(node, 0, sizeof(struct vfs_node));
     node->parent = parent;
-    node->offset = 0;
     node->blksz = DEFAULT_PAGE_SIZE;
     node->name = name ? strdup(name) : NULL;
     node->linkname = NULL;
@@ -37,6 +36,7 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name)
     node->root = parent ? parent->root : node;
     node->lock.l_pid = 0;
     node->lock.l_type = F_UNLCK;
+    node->refcount = 0;
     node->mode = 0777;
     if (parent)
         list_prepend(parent->child, node);
@@ -348,9 +348,14 @@ int vfs_close(vfs_node_t node)
         return 0;
     if (node->type & file_dir)
         return 0;
-    bool real_closed = callbackof(node, close)(node->handle);
-    if (real_closed)
+    if (node->refcount > 0)
+        node->refcount--;
+    if (node->refcount == 0)
+    {
+        callbackof(node, close)(node->handle);
         node->handle = NULL;
+    }
+
     return 0;
 }
 
@@ -358,7 +363,7 @@ int vfs_mount(const char *src, vfs_node_t node, const char *type)
 {
     if (node == NULL)
         return -1;
-    if (node->type != file_dir)
+    if (!(node->type & file_dir))
         return -1;
     for (int i = 1; i < fs_nextid; i++)
     {
@@ -392,18 +397,18 @@ int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize)
 
     ssize_t copy_len = 0;
 
-    if (node->type & file_dir)
-    {
-        size_t link_len = strlen(node->linkname);
-        copy_len = (link_len < bufsize) ? link_len : (bufsize - 1);
+    // if (node->type & file_dir)
+    // {
+    size_t link_len = strlen(node->linkname);
+    copy_len = (link_len < bufsize) ? link_len : (bufsize - 1);
 
-        strncpy(buf, node->linkname, copy_len);
-        buf[copy_len] = '\0';
-    }
-    else
-    {
-        copy_len = vfs_read(node, buf, node->offset, bufsize);
-    }
+    strncpy(buf, node->linkname, copy_len);
+    buf[copy_len] = '\0';
+    // }
+    // else
+    // {
+    //     copy_len = vfs_read(node, buf, node->offset, bufsize);
+    // }
 
     return copy_len;
 }
@@ -521,9 +526,8 @@ fd_t *vfs_dup(fd_t *fd)
 {
     fd_t *new_fd = malloc(sizeof(fd_t));
     vfs_node_t node = fd->node;
-    char *fullpath = vfs_get_fullpath(node);
-    new_fd->node = vfs_open(fullpath);
-    free(fullpath);
+    node->refcount++;
+    new_fd->node = node;
     new_fd->offset = 0;
     new_fd->flags = fd->flags;
     return new_fd;

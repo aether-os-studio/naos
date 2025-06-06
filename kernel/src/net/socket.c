@@ -53,6 +53,7 @@ vfs_node_t unix_socket_accept_create(unix_socket_pair_t *dir)
     char buf[128];
     sprintf(buf, "sock%d", sockfsfd_id++);
     vfs_node_t socknode = vfs_child_append(sockfs_root, buf, NULL);
+    socknode->refcount++;
     socknode->type = file_socket;
     socknode->type = 0700;
 
@@ -249,6 +250,7 @@ int socket_socket(int domain, int type, int protocol)
     vfs_node_t socknode = vfs_node_alloc(sockfs_root, buf);
     socknode->type = file_socket;
     socknode->fsid = unix_socket_fsid;
+    socknode->refcount++;
     socket_handle_t *handle = malloc(sizeof(socket_handle_t));
     memset(handle, 0, sizeof(socket_handle_t));
     socket_t *unix_socket = malloc(sizeof(socket_t));
