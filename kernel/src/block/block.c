@@ -6,11 +6,12 @@ uint64_t blk_devnum = 0;
 
 spinlock_t blockdev_op_lock = {0};
 
-void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size, uint64_t (*read)(void *data, uint64_t lba, void *buffer, uint64_t size), uint64_t (*write)(void *data, uint64_t lba, void *buffer, uint64_t size))
+void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size, uint64_t max_op_size, uint64_t (*read)(void *data, uint64_t lba, void *buffer, uint64_t size), uint64_t (*write)(void *data, uint64_t lba, void *buffer, uint64_t size))
 {
     blk_devs[blk_devnum].name = strdup((const char *)name);
     blk_devs[blk_devnum].ptr = ptr;
     blk_devs[blk_devnum].block_size = block_size;
+    blk_devs[blk_devnum].max_op_size = max_op_size;
     blk_devs[blk_devnum].size = size;
     blk_devs[blk_devnum].read = read;
     blk_devs[blk_devnum].write = write;
@@ -32,8 +33,6 @@ uint64_t blkdev_ioctl(uint64_t drive, uint64_t cmd, uint64_t arg)
 
     return 0;
 }
-
-#define MAX_BLOCK_IO_SIZE (DEFAULT_PAGE_SIZE)
 
 uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len)
 {
@@ -63,9 +62,9 @@ uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len)
         uint64_t chunk_size = remaining;
 
         // 限制单次I/O大小
-        if (chunk_sectors * dev->block_size > MAX_BLOCK_IO_SIZE)
+        if (chunk_sectors * dev->block_size > dev->max_op_size)
         {
-            chunk_sectors = MAX_BLOCK_IO_SIZE / dev->block_size;
+            chunk_sectors = dev->max_op_size / dev->block_size;
             chunk_size = chunk_sectors * dev->block_size - offset_in_block;
             if (chunk_size > remaining)
             {
@@ -146,9 +145,9 @@ uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf, uint64_t
         uint64_t chunk_size = remaining;
 
         // 限制单次I/O大小
-        if (chunk_sectors * dev->block_size > MAX_BLOCK_IO_SIZE)
+        if (chunk_sectors * dev->block_size > dev->max_op_size)
         {
-            chunk_sectors = MAX_BLOCK_IO_SIZE / dev->block_size;
+            chunk_sectors = dev->max_op_size / dev->block_size;
             chunk_size = chunk_sectors * dev->block_size - offset_in_block;
             if (chunk_size > remaining)
             {
