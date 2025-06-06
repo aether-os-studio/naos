@@ -178,8 +178,6 @@ typedef void *(*vfs_mapfile_t)(void *file, void *addr, size_t offset, size_t siz
 
 typedef int (*vfs_poll_t)(void *file, size_t events);
 
-typedef vfs_node_t (*vfs_dup_t)(vfs_node_t node);
-
 typedef struct vfs_callback
 {
     vfs_mount_t mount;
@@ -196,7 +194,6 @@ typedef struct vfs_callback
     vfs_mapfile_t map;
     vfs_ioctl_t ioctl;
     vfs_poll_t poll;
-    vfs_dup_t dup;
 } *vfs_callback_t;
 
 typedef struct flock
@@ -228,8 +225,14 @@ struct vfs_node
     list_t child;        // 子目录和子文件
     vfs_node_t root;     // 根目录
     uint16_t mode;       // 模式
-    uint64_t flags;      // 标志位
 };
+
+typedef struct fd
+{
+    vfs_node_t node;
+    uint64_t offset;
+    uint64_t flags;
+} fd_t;
 
 extern vfs_node_t rootdir; // vfs 根目录
 
@@ -300,7 +303,7 @@ ssize_t vfs_write(vfs_node_t file, const void *addr, size_t offset, size_t size)
  *\param node     挂载到的节点
  *\return 0 成功，-1 失败
  */
-int vfs_mount(const char *src, vfs_node_t node);
+int vfs_mount(const char *src, vfs_node_t node, const char *type);
 /**
  *\brief 卸载文件系统
  *
@@ -315,7 +318,7 @@ int vfs_unmount(const char *path);
  *\param node     文件节点
  *\return 0 成功，-1 失败
  */
-int vfs_close(vfs_node_t node);
+int vfs_close(vfs_node_t fd);
 
 /**
  *\brief 删除文件
@@ -374,7 +377,7 @@ char *vfs_get_fullpath(vfs_node_t node);
  */
 int vfs_poll(vfs_node_t node, size_t event);
 
-vfs_node_t vfs_dup(vfs_node_t node);
+fd_t *vfs_dup(fd_t *fd);
 
 void *vfs_map(vfs_node_t node, uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset);
 

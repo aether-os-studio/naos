@@ -164,38 +164,33 @@ static uint32_t ext2_find_free_block(ext2_file_t *parent)
 
                 if (vfs_write(parent->device, block_bitmap, block_bitmap_block, parent->block_size) != (ssize_t)parent->block_size)
                 {
-                    free(block_bitmap);
-                    return 0;
+                    block_bitmap[i / 8] &= ~(1 << (i % 8));
+                    continue;
                 }
 
                 bg_desc.bg_free_blocks_count--;
                 uint8_t *new_bg_block = malloc(parent->block_size);
                 if (!new_bg_block)
                 {
-                    free(block_bitmap);
-                    return 0;
+                    block_bitmap[i / 8] &= ~(1 << (i % 8));
+                    continue;
                 }
-
                 if (vfs_read(parent->device, new_bg_block, bg_desc_block * parent->block_size, parent->block_size) <= 0)
                 {
                     free(new_bg_block);
-                    free(block_bitmap);
-                    return 0;
+                    block_bitmap[i / 8] &= ~(1 << (i % 8));
+                    continue;
                 }
-
                 fast_memcpy(new_bg_block + bg_desc_offset, &bg_desc, sizeof(ext2_block_group_desc_t));
-
                 if (vfs_write(parent->device, new_bg_block, bg_desc_block * parent->block_size, parent->block_size) <= 0)
                 {
                     free(new_bg_block);
-                    free(block_bitmap);
-                    return 0;
+                    block_bitmap[i / 8] &= ~(1 << (i % 8));
+                    continue;
                 }
-
                 free(new_bg_block);
-                free(block_bitmap);
 
-                // 返回全局块号
+                free(block_bitmap);
                 return bg * parent->blocks_per_group + i;
             }
         }
@@ -921,6 +916,7 @@ static bool find_in_dir_block(ext2_file_t *dir, uint8_t *block, const char *name
             handle->block_groups_count = dir->block_groups_count;
             handle->file_type = dirent->type;
             handle->node = node;
+            handle->ref_count = 1;
             node->inode = handle->inode_id;
             node->blksz = handle->block_size;
             node->handle = handle;
@@ -1051,8 +1047,13 @@ void ext2_open(void *parent, const char *name, vfs_node_t node)
 bool ext2_close(void *current)
 {
     ext2_file_t *f = (ext2_file_t *)current;
-    free(f);
-    return true;
+    f->ref_count--;
+    if (f->ref_count == 0)
+    {
+        free(f);
+        return true;
+    }
+    return false;
 }
 
 int ext2_mount(const char *src, vfs_node_t node)
@@ -1081,6 +1082,7 @@ int ext2_mount(const char *src, vfs_node_t node)
     file->block_groups_count = (sb.s_blocks_count + sb.s_blocks_per_group - 1) / sb.s_blocks_per_group;
     file->file_type = EXT2_FT_DIRECTORY;
     file->node = node;
+    file->ref_count = 1;
 
     node->inode = file->inode_id;
     node->blksz = file->block_size;
@@ -1106,6 +1108,7 @@ ssize_t ext2_write(void *file, const void *addr, size_t offset, size_t size)
         return -EINVAL;
 
     spin_lock(&ext2_op_lock);
+    f->ref_count++;
 
     ext2_inode_t f_inode;
 
@@ -1516,6 +1519,8 @@ int ext2_delete(void *parent, vfs_node_t node)
 
                     ext2_remove_dir_entry(parent_dir, node->name);
 
+                    free(node->handle);
+
                     return 0;
                 }
                 else
@@ -1538,6 +1543,8 @@ int ext2_delete(void *parent, vfs_node_t node)
                     free(block);
 
                     ext2_remove_dir_entry(parent_dir, node->name);
+
+                    free(node->handle);
 
                     return 0;
                 }
@@ -1579,22 +1586,6 @@ int ext2_poll(void *file, size_t events)
     return -EOPNOTSUPP;
 }
 
-vfs_node_t ext2_dup(vfs_node_t node)
-{
-    if (!node)
-        return NULL;
-
-    // 创建新的vfs节点
-    vfs_node_t new_node = vfs_node_alloc(node->parent, node->name);
-    if (!new_node)
-        return NULL;
-
-    // 复制节点属性
-    memcpy(new_node, node, sizeof(struct vfs_node));
-
-    return new_node;
-}
-
 void *ext2_map(void *file, void *addr, size_t offset, size_t size, size_t prot, size_t flags)
 {
     return general_map((vfs_read_t)ext2_read, file, (uint64_t)addr, size, prot, flags, offset);
@@ -1615,7 +1606,6 @@ static struct vfs_callback callbacks = {
     .stat = ext2_stat,
     .ioctl = ext2_ioctl,
     .poll = ext2_poll,
-    .dup = ext2_dup,
 };
 
 void ext2_init()

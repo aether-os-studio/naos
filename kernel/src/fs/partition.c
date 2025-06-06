@@ -121,7 +121,7 @@ void mount_root()
         char buf[11];
         sprintf(buf, "/dev/part%d", i);
 
-        if (!vfs_mount((const char *)buf, rootdir))
+        if (!vfs_mount((const char *)buf, rootdir, "ext2"))
         {
             err = false;
             break;

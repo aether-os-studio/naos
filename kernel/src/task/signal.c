@@ -1,4 +1,5 @@
 #include <task/signal.h>
+#include <fs/vfs/vfs.h>
 #include <arch/arch.h>
 #include <task/task.h>
 
@@ -378,6 +379,8 @@ int sys_kill(int pid, int sig)
     return 0;
 }
 
+extern int signalfdfs_id;
+
 void task_signal()
 {
     arch_disable_interrupt();
@@ -530,6 +533,26 @@ void task_signal()
     if (ptr->sa_flags & SIG_ONESHOT)
     {
         ptr->sa_handler = SIG_DFL;
+    }
+
+    for (int i = 0; i < MAX_FD_NUM; i++)
+    {
+        vfs_node_t node = current_task->fds[i];
+        if (node && node->fsid == signalfdfs_id)
+        {
+            struct signalfd_ctx *ctx = node->handle;
+
+            struct sigevent info;
+            memset(&info, 0, sizeof(struct sigevent));
+            info.sigev_signo = sig;
+
+            memcpy(&ctx->queue[ctx->queue_head], &info, sizeof(struct sigevent));
+            ctx->queue_head = (ctx->queue_head + 1) % ctx->queue_size;
+            if (ctx->queue_head == ctx->queue_tail)
+            {
+                ctx->queue_tail = (ctx->queue_tail + 1) % ctx->queue_size;
+            }
+        }
     }
 
     current_task->blocked |= (SIGMASK(sig) | ptr->sa_mask);

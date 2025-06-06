@@ -51,7 +51,6 @@ static struct vfs_callback callbacks =
         .poll = (vfs_poll_t)dummy,
         .mount = (vfs_mount_t)dummy,
         .unmount = (vfs_unmount_t)dummy,
-        .dup = (vfs_dup_t)dummy,
 };
 
 void proc_init()

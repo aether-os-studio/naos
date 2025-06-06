@@ -31,6 +31,8 @@ typedef void *timer_t;
 #define MAX(x, y) ((x > y) ? (x) : (y))
 #define MIN(x, y) ((x < y) ? (x) : (y))
 
+#define PADDING_UP(a, align) (typeof(a))((((uint64_t)(a)) + ((uint64_t)(align)) - 1) & ~(((uint64_t)(align)) - 1))
+
 // 四舍五入成整数
 static inline uint64_t round(double x)
 {

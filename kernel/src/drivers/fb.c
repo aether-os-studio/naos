@@ -98,9 +98,11 @@ void *fb_map(void *data, void *addr, uint64_t len)
 {
     struct limine_framebuffer *framebuffer = (struct limine_framebuffer *)data;
 
-    map_page_range(get_current_page_dir(false), (uint64_t)framebuffer->address, (uint64_t)framebuffer->address, framebuffer->width * framebuffer->height * framebuffer->bpp / 4, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+    uint64_t fb_addr = virt_to_phys((uint64_t)framebuffer->address);
 
-    return (void *)framebuffer->address;
+    map_page_range(get_current_page_dir(true), (uint64_t)fb_addr, (uint64_t)fb_addr, framebuffer->width * framebuffer->height * framebuffer->bpp / 8, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+
+    return (void *)fb_addr;
 }
 
 void fbdev_init()

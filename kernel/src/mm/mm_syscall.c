@@ -43,7 +43,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
 
     if (fd < MAX_FD_NUM && current_task->fds[fd])
     {
-        vfs_node_t node = current_task->fds[fd];
+        vfs_node_t node = current_task->fds[fd]->node;
         return (uint64_t)vfs_map(node, addr, len, prot, flags, offset);
     }
     else
@@ -71,6 +71,12 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
 
         return addr;
     }
+}
+
+uint64_t sys_munmap(uint64_t addr, uint64_t size)
+{
+    unmap_page_range(get_current_page_dir(false), addr, size);
+    return 0;
 }
 
 void *general_map(vfs_read_t read_callback, void *file, uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset)

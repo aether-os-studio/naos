@@ -76,9 +76,18 @@ task_t *task_create(const char *name, void (*entry)())
     task->brk_end = USER_BRK_START;
     memset(task->actions, 0, sizeof(task->actions));
     memset(task->fds, 0, sizeof(task->fds));
-    task->fds[0] = vfs_open("/dev/stdin");
-    task->fds[1] = vfs_open("/dev/stdout");
-    task->fds[2] = vfs_open("/dev/stderr");
+    task->fds[0] = malloc(sizeof(fd_t));
+    task->fds[0]->node = vfs_open("/dev/stdin");
+    task->fds[0]->offset = 0;
+    task->fds[0]->flags = 0;
+    task->fds[1] = malloc(sizeof(fd_t));
+    task->fds[1]->node = vfs_open("/dev/stdout");
+    task->fds[1]->offset = 0;
+    task->fds[1]->flags = 0;
+    task->fds[2] = malloc(sizeof(fd_t));
+    task->fds[2]->node = vfs_open("/dev/stderr");
+    task->fds[2]->offset = 0;
+    task->fds[2]->flags = 0;
     strncpy(task->name, name, TASK_NAME_MAX);
 
     memset(&task->term, 0, sizeof(termios));
@@ -194,7 +203,7 @@ void init_thread()
 
     usb_init();
 
-    // drm_init();
+    drm_init();
 
     partition_init();
     fbdev_init();
@@ -202,7 +211,7 @@ void init_thread()
     sysfs_init();
 
     fbdev_init_sysfs();
-    // drm_init_sysfs();
+    drm_init_sysfs();
 
     net_init();
 
@@ -348,7 +357,7 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], char *en
     return tmp_stack;
 }
 
-uint64_t task_fork(struct pt_regs *regs)
+uint64_t task_fork(struct pt_regs *regs, bool vfork)
 {
     arch_disable_interrupt();
 
@@ -396,21 +405,33 @@ uint64_t task_fork(struct pt_regs *regs)
     child->load_end = current_task->load_end;
 
     memset(child->fds, 0, sizeof(child->fds));
-    child->fds[0] = vfs_open("/dev/stdin");
-    child->fds[1] = vfs_open("/dev/stdout");
-    child->fds[2] = vfs_open("/dev/stderr");
+    child->fds[0] = malloc(sizeof(fd_t));
+    child->fds[0]->node = vfs_open("/dev/stdin");
+    child->fds[0]->offset = 0;
+    child->fds[0]->flags = 0;
+    child->fds[1] = malloc(sizeof(fd_t));
+    child->fds[1]->node = vfs_open("/dev/stdout");
+    child->fds[1]->offset = 0;
+    child->fds[1]->flags = 0;
+    child->fds[2] = malloc(sizeof(fd_t));
+    child->fds[2]->node = vfs_open("/dev/stderr");
+    child->fds[2]->offset = 0;
+    child->fds[2]->flags = 0;
 
-    for (uint64_t i = 3; i < MAX_FD_NUM; i++)
+    if (!vfork)
     {
-        vfs_node_t node = current_task->fds[i];
+        for (uint64_t i = 3; i < MAX_FD_NUM; i++)
+        {
+            fd_t *fd = current_task->fds[i];
 
-        if (node)
-        {
-            child->fds[i] = vfs_dup(node);
-        }
-        else
-        {
-            child->fds[i] = NULL;
+            if (fd)
+            {
+                child->fds[i] = vfs_dup(fd);
+            }
+            else
+            {
+                child->fds[i] = NULL;
+            }
         }
     }
 
@@ -707,7 +728,8 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
         if (current_task->fds[i]->flags & O_CLOEXEC)
         {
-            vfs_close(current_task->fds[i]);
+            vfs_close(current_task->fds[i]->node);
+            free(current_task->fds[i]);
             current_task->fds[i] = NULL;
         }
     }
@@ -770,7 +792,8 @@ uint64_t task_exit(int64_t code)
     {
         if (task->fds[i])
         {
-            vfs_close(task->fds[i]);
+            vfs_close(task->fds[i]->node);
+            free(task->fds[i]);
 
             task->fds[i] = NULL;
         }
@@ -970,17 +993,24 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->load_end = current_task->load_end;
 
     memset(child->fds, 0, sizeof(child->fds));
-    child->fds[0] = vfs_open("/dev/stdin");
-    child->fds[1] = vfs_open("/dev/stdout");
-    child->fds[2] = vfs_open("/dev/stderr");
+    child->fds[0] = malloc(sizeof(fd_t));
+    child->fds[0]->node = vfs_open("/dev/stdin");
+    child->fds[0]->offset = 0;
+    child->fds[0]->flags = 0;
+    child->fds[1] = malloc(sizeof(fd_t));
+    child->fds[1]->node = vfs_open("/dev/stdout");
+    child->fds[1]->offset = 0;
+    child->fds[1]->flags = 0;
+    child->fds[2] = malloc(sizeof(fd_t));
+    child->fds[2]->node = vfs_open("/dev/stderr");
+    child->fds[2]->offset = 0;
+    child->fds[2]->flags = 0;
 
     for (uint64_t i = 3; i < MAX_FD_NUM; i++)
     {
-        vfs_node_t node = current_task->fds[i];
-
-        if (node)
+        if (current_task->fds[i])
         {
-            child->fds[i] = vfs_dup(node);
+            child->fds[i] = vfs_dup(current_task->fds[i]);
         }
         else
         {
@@ -1155,10 +1185,9 @@ void sched_update_itimer()
                 else
                     kt->expires = 0;
             }
-            if (current_task->fds[i] &&
-                current_task->fds[i]->fsid == timerfdfs_id)
+            if (current_task->fds[i] && current_task->fds[i]->node && current_task->fds[i]->node->fsid == timerfdfs_id)
             {
-                timerfd_t *tfd = current_task->fds[i]->handle;
+                timerfd_t *tfd = current_task->fds[i]->node->handle;
                 if (tfd->timer.expires && jiffies >= tfd->timer.expires)
                 {
                     tfd->count++;

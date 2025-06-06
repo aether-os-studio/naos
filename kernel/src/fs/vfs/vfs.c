@@ -5,6 +5,7 @@
 #include "task/task.h"
 
 vfs_node_t rootdir = NULL;
+char *id_to_callback_name[256];
 
 static int empty_func()
 {
@@ -37,7 +38,6 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name)
     node->lock.l_pid = 0;
     node->lock.l_type = F_UNLCK;
     node->mode = 0777;
-    node->flags = 0;
     if (parent)
         list_prepend(parent->child, node);
     return node;
@@ -233,6 +233,7 @@ int vfs_regist(const char *name, vfs_callback_t callback)
     }
     int id = fs_nextid++;
     fs_callbacks[id] = callback;
+    id_to_callback_name[id] = strdup(name);
     return id;
 }
 
@@ -325,6 +326,7 @@ void vfs_update(vfs_node_t node)
 
 bool vfs_init()
 {
+    memset(id_to_callback_name, 0, sizeof(id_to_callback_name));
     for (size_t i = 0; i < sizeof(struct vfs_callback) / sizeof(void *); i++)
     {
         ((void **)&vfs_empty_callback)[i] = &empty_func;
@@ -352,7 +354,7 @@ int vfs_close(vfs_node_t node)
     return 0;
 }
 
-int vfs_mount(const char *src, vfs_node_t node)
+int vfs_mount(const char *src, vfs_node_t node, const char *type)
 {
     if (node == NULL)
         return -1;
@@ -360,7 +362,7 @@ int vfs_mount(const char *src, vfs_node_t node)
         return -1;
     for (int i = 1; i < fs_nextid; i++)
     {
-        if (fs_callbacks[i]->mount(src, node) == 0)
+        if (!strcmp(id_to_callback_name[i], type) && fs_callbacks[i]->mount(src, node) == 0)
         {
             node->fsid = i;
             node->root = node;
@@ -504,6 +506,7 @@ int vfs_delete(vfs_node_t node)
     int res = callbackof(node, delete)(node->parent->handle, node);
     if (res < 0)
         return -1;
+    list_delete(node->parent->child, node);
     node->handle = NULL;
     vfs_free(node);
     return 0;
@@ -514,9 +517,16 @@ int vfs_rename(vfs_node_t node, const char *new)
     return callbackof(node, rename)(node->handle, new);
 }
 
-vfs_node_t vfs_dup(vfs_node_t node)
+fd_t *vfs_dup(fd_t *fd)
 {
-    return callbackof(node, dup)(node);
+    fd_t *new_fd = malloc(sizeof(fd_t));
+    vfs_node_t node = fd->node;
+    char *fullpath = vfs_get_fullpath(node);
+    new_fd->node = vfs_open(fullpath);
+    free(fullpath);
+    new_fd->offset = 0;
+    new_fd->flags = fd->flags;
+    return new_fd;
 }
 
 void *vfs_map(vfs_node_t node, uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset)

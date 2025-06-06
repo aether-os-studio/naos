@@ -127,10 +127,10 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = sys_clone(regs, arg1, arg2, (int *)arg3, (int *)arg4, arg5);
         break;
     case SYS_FORK:
-        regs->rax = task_fork(regs);
+        regs->rax = task_fork(regs, false);
         break;
     case SYS_VFORK:
-        regs->rax = task_fork(regs);
+        regs->rax = task_fork(regs, true);
         break;
     case SYS_EXECVE:
         regs->rax = task_execve((const char *)arg1, (const char **)arg2, (const char **)arg3);
@@ -184,7 +184,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = 0;
         break;
     case SYS_MUNMAP:
-        regs->rax = 0;
+        regs->rax = sys_munmap(arg1, arg2);
         break;
     case SYS_CLOCK_GETTIME:
         tm time;
@@ -419,6 +419,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_UNLINKAT:
         regs->rax = sys_unlinkat(arg1, (const char *)arg2, arg3);
+        break;
+    case SYS_MOUNT:
+        regs->rax = sys_mount((char *)arg1, (char *)arg2, (char *)arg3, arg4, (void *)arg5);
         break;
     case SYS_NANOSLEEP:
         regs->rax = sys_nanosleep((struct timespec *)arg1, (struct timespec *)arg2);

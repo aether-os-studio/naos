@@ -1,14 +1,22 @@
 use alloc::{collections::btree_map::BTreeMap, vec::Vec};
-use good_memory_allocator::SpinLockedAllocator;
 use spin::Mutex;
+use talc::{ClaimOnOom, Span, Talc, Talck};
 
 use crate::rust::bindings::bindings::{PT_FLAG_R, PT_FLAG_W, get_current_page_dir, map_page_range};
 
 pub const KERNEL_HEAP_START: usize = 0xffff_c000_0000_0000;
-pub const KERNEL_HEAP_SIZE: usize = 64 * 1024 * 1024;
+pub const KERNEL_HEAP_SIZE: usize = 32 * 1024 * 1024;
 
 #[global_allocator]
-static KERNEL_ALLOCATOR: SpinLockedAllocator = SpinLockedAllocator::empty();
+static KERNEL_ALLOCATOR: Talck<Mutex<()>, ClaimOnOom> = Talc::new(unsafe {
+    // if we're in a hosted environment, the Rust runtime may allocate before
+    // main() is called, so we need to initialize the arena automatically
+    ClaimOnOom::new(Span::from_base_size(
+        KERNEL_HEAP_START as *mut u8,
+        KERNEL_HEAP_SIZE,
+    ))
+})
+.lock();
 
 static C_ALLOCATION_MAP: Mutex<BTreeMap<usize, (usize, usize, usize)>> =
     Mutex::new(BTreeMap::new());
@@ -105,6 +113,4 @@ unsafe extern "C" fn heap_init() {
         KERNEL_HEAP_SIZE as u64,
         PT_FLAG_R as u64 | PT_FLAG_W as u64,
     );
-
-    KERNEL_ALLOCATOR.init(KERNEL_HEAP_START as usize, KERNEL_HEAP_SIZE as usize);
 }

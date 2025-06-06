@@ -126,6 +126,8 @@ typedef struct kernel_timer
 #define MAX_TIMERS_NUM 8
 
 struct rlimit;
+struct fd;
+typedef struct fd fd_t;
 
 typedef struct task
 {
@@ -155,7 +157,7 @@ typedef struct task
     uint64_t signal;
     uint64_t blocked;
     vfs_node_t cwd;
-    vfs_node_t fds[MAX_FD_NUM];
+    fd_t *fds[MAX_FD_NUM];
     uint64_t timer_slack_ns;
     termios term;
     uint32_t tmp_rec_v;
@@ -172,7 +174,7 @@ void task_init();
 
 struct pt_regs;
 
-uint64_t task_fork(struct pt_regs *regs);
+uint64_t task_fork(struct pt_regs *regs, bool vfork);
 uint64_t task_execve(const char *path, const char **argv, const char **envp);
 uint64_t task_exit(int64_t code);
 

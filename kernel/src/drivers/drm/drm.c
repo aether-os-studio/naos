@@ -107,6 +107,15 @@ void drm_init_sysfs()
     vfs_node_t drm = vfs_node_alloc(class, "drm");
     drm->type = file_dir;
     drm->mode = 0644;
+    vfs_node_t version = vfs_node_alloc(drm, "version");
+    version->type = file_none;
+    version->mode = 0700;
+    sysfs_handle_t *handle = malloc(sizeof(sysfs_handle_t));
+    memset(handle, 0, sizeof(sysfs_handle_t));
+    sprintf(handle->content, "drm 1.1.0 20060810");
+    version->handle = handle;
+    memset(handle, 0, sizeof(sysfs_handle_t));
+
     for (int i = 0; i < framebuffer_request.response->framebuffer_count; i++)
     {
         char buf[32];

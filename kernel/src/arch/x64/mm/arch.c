@@ -1,5 +1,6 @@
 #include "arch.h"
 #include <drivers/kernel_logger.h>
+#include <drivers/fb.h>
 #include <libs/klibc.h>
 #include <mm/mm.h>
 
@@ -30,6 +31,21 @@ uint64_t get_arch_page_table_flags(uint64_t flags)
     // }
 
     return result;
+}
+
+bool is_reserved_memory_region(uint64_t pml4_idx, uint64_t pdpt_idx, uint64_t pd_idx, uint64_t pt_idx)
+{
+    uint64_t vaddr = (pml4_idx << 39) | (pdpt_idx << 30) | (pd_idx << 21) | (pt_idx << 12);
+
+    uint64_t fb_addr = virt_to_phys((uint64_t)framebuffer_request.response->framebuffers[0]->address);
+    uint64_t fb_size = framebuffer_request.response->framebuffers[0]->width * framebuffer_request.response->framebuffers[0]->height * framebuffer_request.response->framebuffers[0]->bpp / 8;
+
+    // todo: others
+    if ((vaddr >= fb_addr) && (vaddr <= ((fb_addr + fb_size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)))))
+    {
+        return true;
+    }
+    return false;
 }
 
 uint64_t clone_page_table(uint64_t cr3_old)
@@ -150,15 +166,22 @@ uint64_t clone_page_table(uint64_t cr3_old)
 
                     uint64_t *page_old = (uint64_t *)phys_to_virt(pte_old & 0x00007FFFFFFFF000);
 
-                    uint64_t pte_new = alloc_frames(1);
-                    pte_new |= ARCH_PT_FLAG_VALID;
-                    pte_new |= pte_old_write ? ARCH_PT_FLAG_WRITEABLE : 0;
-                    pte_new |= pte_old_user ? ARCH_PT_FLAG_USER : 0;
-                    pte_new |= pte_old_nx ? ARCH_PT_FLAG_NX : 0;
-                    pt_new[pt_idx] = pte_new;
+                    if (is_reserved_memory_region(pml4_idx, pdpt_idx, pd_idx, pt_idx))
+                    {
+                        pt_new[pt_idx] = pte_old;
+                    }
+                    else
+                    {
+                        uint64_t pte_new = alloc_frames(1);
+                        pte_new |= ARCH_PT_FLAG_VALID;
+                        pte_new |= pte_old_write ? ARCH_PT_FLAG_WRITEABLE : 0;
+                        pte_new |= pte_old_user ? ARCH_PT_FLAG_USER : 0;
+                        pte_new |= pte_old_nx ? ARCH_PT_FLAG_NX : 0;
+                        pt_new[pt_idx] = pte_new;
 
-                    uint64_t *page_new = (uint64_t *)phys_to_virt(pte_new & 0x00007FFFFFFFF000);
-                    fast_memcpy(page_new, page_old, DEFAULT_PAGE_SIZE);
+                        uint64_t *page_new = (uint64_t *)phys_to_virt(pte_new & 0x00007FFFFFFFF000);
+                        fast_memcpy(page_new, page_old, DEFAULT_PAGE_SIZE);
+                    }
                 }
             }
         }
@@ -169,9 +192,6 @@ uint64_t clone_page_table(uint64_t cr3_old)
 static void free_page_table_inner(uint64_t phys_addr, int level)
 {
     uint64_t *table = (uint64_t *)phys_to_virt(phys_addr);
-
-    if (translate_address(get_current_page_dir(false), phys_to_virt(phys_addr)) == 0)
-        return;
 
     for (int i = 0; i < 512; i++)
     {

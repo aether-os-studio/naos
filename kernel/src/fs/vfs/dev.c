@@ -122,38 +122,6 @@ int devfs_poll(devfs_handle_t handle, size_t event)
     return 0;
 }
 
-vfs_node_t devfs_dup(vfs_node_t node)
-{
-    if (!node || !node->handle)
-        return NULL;
-
-    devfs_handle_t handle = (devfs_handle_t)node->handle;
-
-    vfs_node_t new_node = vfs_node_alloc(node->parent, node->name);
-    if (!new_node)
-        return NULL;
-
-    memcpy(new_node, node, sizeof(struct vfs_node));
-
-    devfs_handle_t new_handle = malloc(sizeof(struct devfs_handle));
-    if (!new_handle)
-    {
-        vfs_free(new_node);
-        return NULL;
-    }
-
-    memcpy(new_handle, handle, sizeof(struct devfs_handle));
-    new_node->handle = new_handle;
-
-    if (!strncmp(new_handle->name, "event", 5))
-    {
-        dev_input_event_t *event = new_handle->data;
-        event->timesOpened++;
-    }
-
-    return new_node;
-}
-
 static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
@@ -169,7 +137,6 @@ static struct vfs_callback callbacks = {
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)devfs_ioctl,
     .poll = (vfs_poll_t)devfs_poll,
-    .dup = (vfs_dup_t)devfs_dup,
 };
 
 ssize_t inputdev_event_read(void *data, uint64_t offset, void *buf, uint64_t len)
@@ -449,7 +416,7 @@ ssize_t stdio_ioctl(void *data, ssize_t cmd, ssize_t arg)
         state->v_state = 0;  // 状态标志
         return 0;
     case VT_OPENQRY:
-        *(int *)arg = 1;
+        *(int *)arg = 0;
         return 0;
     }
 

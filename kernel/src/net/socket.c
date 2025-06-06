@@ -113,7 +113,7 @@ bool socket_socket_close(socket_handle_t *socket_handle)
     {
         socket_t *browse = &first_unix_socket;
 
-        while (browse->next != unixSocket)
+        while (browse && browse->next != unixSocket)
         {
             browse = browse->next;
         }
@@ -128,14 +128,14 @@ bool socket_socket_close(socket_handle_t *socket_handle)
     return false;
 }
 
-size_t unix_socket_accept_recv_from(vfs_node_t fd, uint8_t *out, size_t limit,
+size_t unix_socket_accept_recv_from(fd_t *fd, uint8_t *out, size_t limit,
                                     int flags, struct sockaddr_un *addr,
                                     uint32_t *len)
 {
     (void)addr;
     (void)len;
 
-    socket_handle_t *handle = fd->handle;
+    socket_handle_t *handle = fd->node->handle;
     unix_socket_pair_t *pair = handle->sock;
     if (!pair->clientFds && pair->serverBuffPos == 0)
         return 0;
@@ -164,7 +164,7 @@ size_t unix_socket_accept_recv_from(vfs_node_t fd, uint8_t *out, size_t limit,
     return toCopy;
 }
 
-size_t unix_socket_accept_sendto(vfs_node_t fd, uint8_t *in, size_t limit,
+size_t unix_socket_accept_sendto(fd_t *fd, uint8_t *in, size_t limit,
                                  int flags, struct sockaddr_un *addr, uint32_t len)
 {
     while (socket_op_lock)
@@ -177,7 +177,7 @@ size_t unix_socket_accept_sendto(vfs_node_t fd, uint8_t *in, size_t limit,
     (void)addr;
     (void)len;
 
-    socket_handle_t *handle = fd->handle;
+    socket_handle_t *handle = fd->node->handle;
     unix_socket_pair_t *pair = handle->sock;
 
     if (limit > pair->clientBuffSize)
@@ -249,7 +249,6 @@ int socket_socket(int domain, int type, int protocol)
     vfs_node_t socknode = vfs_node_alloc(sockfs_root, buf);
     socknode->type = file_socket;
     socknode->fsid = unix_socket_fsid;
-    socknode->flags = 0;
     socket_handle_t *handle = malloc(sizeof(socket_handle_t));
     memset(handle, 0, sizeof(socket_handle_t));
     socket_t *unix_socket = malloc(sizeof(socket_t));
@@ -283,7 +282,10 @@ int socket_socket(int domain, int type, int protocol)
         return -EBADF;
     }
 
-    current_task->fds[i] = socknode;
+    current_task->fds[i] = malloc(sizeof(fd_t));
+    current_task->fds[i]->node = socknode;
+    current_task->fds[i]->offset = 0;
+    current_task->fds[i]->flags = 0;
 
     // if (type | SOCK_CLOEXEC)
     //     sockNode->closeOnExec = true;
@@ -405,7 +407,10 @@ int socket_accept(socket_t *sock, struct sockaddr_un *addr, socklen_t *addrlen)
     new_sock->options.peercred = sock->options.peercred;
     new_sock->options.has_peercred = true;
 
-    current_task->fds[i] = acceptFd;
+    current_task->fds[i] = malloc(sizeof(fd_t));
+    current_task->fds[i]->node = acceptFd;
+    current_task->fds[i]->offset = 0;
+    current_task->fds[i]->flags = 0;
 
     return i;
 }
@@ -481,7 +486,7 @@ int socket_connect(socket_t *sock, const struct sockaddr_un *addr, socklen_t add
     return 0;
 }
 
-size_t unix_socket_recv_from(vfs_node_t fd, uint8_t *out, size_t limit, int flags,
+size_t unix_socket_recv_from(fd_t *fd, uint8_t *out, size_t limit, int flags,
                              struct sockaddr_un *addr, uint32_t *len)
 {
     while (socket_op_lock)
@@ -495,7 +500,7 @@ size_t unix_socket_recv_from(vfs_node_t fd, uint8_t *out, size_t limit, int flag
     (void)addr;
     (void)len;
 
-    socket_handle_t *handle = fd->handle;
+    socket_handle_t *handle = fd->node->handle;
     socket_t *socket = handle->sock;
     unix_socket_pair_t *pair = socket->pair;
     if (!pair)
@@ -534,7 +539,7 @@ size_t unix_socket_recv_from(vfs_node_t fd, uint8_t *out, size_t limit, int flag
     return toCopy;
 }
 
-size_t unix_socket_send_to(vfs_node_t fd, uint8_t *in, size_t limit, int flags,
+size_t unix_socket_send_to(fd_t *fd, uint8_t *in, size_t limit, int flags,
                            struct sockaddr_un *addr, uint32_t len)
 {
     // useless unless SOCK_DGRAM
@@ -548,7 +553,7 @@ size_t unix_socket_send_to(vfs_node_t fd, uint8_t *in, size_t limit, int flags,
 
     socket_op_lock = true;
 
-    socket_handle_t *handle = fd->handle;
+    socket_handle_t *handle = fd->node->handle;
     socket_t *socket = handle->sock;
     unix_socket_pair_t *pair = socket->pair;
     if (!pair)
@@ -588,7 +593,7 @@ size_t unix_socket_send_to(vfs_node_t fd, uint8_t *in, size_t limit, int flags,
     return limit;
 }
 
-size_t unix_socket_recv_msg(vfs_node_t fd, struct msghdr *msg, int flags)
+size_t unix_socket_recv_msg(fd_t *fd, struct msghdr *msg, int flags)
 {
     msg->msg_controllen = 0;
     msg->msg_flags = 0;
@@ -598,9 +603,9 @@ size_t unix_socket_recv_msg(vfs_node_t fd, struct msghdr *msg, int flags)
     {
         struct iovec *curr =
             (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
-        if (cnt > 0 && fs_callbacks[fd->fsid]->poll)
+        if (cnt > 0 && fs_callbacks[fd->node->fsid]->poll)
         {
-            if (!(fs_callbacks[fd->fsid]->poll(fd, EPOLLIN) & EPOLLIN))
+            if (!(fs_callbacks[fd->node->fsid]->poll(fd, EPOLLIN) & EPOLLIN))
                 return cnt;
         }
         size_t singleCnt = unix_socket_recv_from(fd, curr->iov_base, curr->len,
@@ -614,7 +619,7 @@ size_t unix_socket_recv_msg(vfs_node_t fd, struct msghdr *msg, int flags)
     return cnt;
 }
 
-size_t unix_socket_send_msg(vfs_node_t fd, const struct msghdr *msg, int flags)
+size_t unix_socket_send_msg(fd_t *fd, const struct msghdr *msg, int flags)
 {
     size_t cnt = 0;
     bool noblock = flags & MSG_DONTWAIT;
@@ -635,7 +640,7 @@ size_t unix_socket_send_msg(vfs_node_t fd, const struct msghdr *msg, int flags)
     return cnt;
 }
 
-size_t unix_socket_accept_recv_msg(vfs_node_t fd, struct msghdr *msg,
+size_t unix_socket_accept_recv_msg(fd_t *fd, struct msghdr *msg,
                                    int flags)
 {
     msg->msg_controllen = 0;
@@ -646,10 +651,10 @@ size_t unix_socket_accept_recv_msg(vfs_node_t fd, struct msghdr *msg,
     {
         struct iovec *curr =
             (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
-        if (cnt > 0 && fs_callbacks[fd->fsid]->poll)
+        if (cnt > 0 && fs_callbacks[fd->node->fsid]->poll)
         {
             // check syscalls_fs.c for why this is necessary
-            if (!(fs_callbacks[fd->fsid]->poll(fd, EPOLLIN) & EPOLLIN))
+            if (!(fs_callbacks[fd->node->fsid]->poll(fd, EPOLLIN) & EPOLLIN))
                 return cnt;
         }
         size_t singleCnt = unix_socket_accept_recv_from(
@@ -663,7 +668,7 @@ size_t unix_socket_accept_recv_msg(vfs_node_t fd, struct msghdr *msg,
     return cnt;
 }
 
-size_t unix_socket_accept_send_msg(vfs_node_t fd, const struct msghdr *msg, int flags)
+size_t unix_socket_accept_send_msg(fd_t *fd, const struct msghdr *msg, int flags)
 {
     if (msg->msg_name || msg->msg_namelen > 0)
         return -(ENOSYS);
@@ -693,7 +698,7 @@ int unix_socket_pair(int type, int protocol, int *sv)
     if ((int64_t)(sock1) < 0)
         return sock1;
 
-    vfs_node_t sock1Fd = current_task->fds[sock1];
+    vfs_node_t sock1Fd = current_task->fds[sock1]->node;
 
     unix_socket_pair_t *pair = unix_socket_allocate_pair();
     pair->clientFds = 1;
@@ -730,7 +735,10 @@ int unix_socket_pair(int type, int protocol, int *sv)
     new_sock->options.peercred = sock->options.peercred;
     new_sock->options.has_peercred = true;
 
-    current_task->fds[i] = sock2Fd;
+    current_task->fds[i] = malloc(sizeof(fd_t));
+    current_task->fds[i]->node = sock2Fd;
+    current_task->fds[i]->offset = 0;
+    current_task->fds[i]->flags = 0;
 
     // finish it off
     sv[0] = sock1;
@@ -1054,65 +1062,6 @@ int socket_stat(void *file, vfs_node_t node)
     return 0;
 }
 
-vfs_node_t socket_socket_dup(vfs_node_t node)
-{
-    if (!node || !node->handle)
-        return NULL;
-
-    socket_handle_t *socket_handle = node->handle;
-
-    vfs_node_t new_node = vfs_node_alloc(node->parent, node->name);
-    if (!new_node)
-        return NULL;
-
-    memcpy(new_node, node, sizeof(struct vfs_node));
-
-    socket_handle_t *handle = node->handle;
-    socket_t *old_sock = handle->sock;
-
-    socket_handle_t *new_handle = malloc(sizeof(socket_handle_t));
-    if (!new_handle)
-    {
-        vfs_free(new_node);
-        return NULL;
-    }
-    memcpy(new_handle, handle, sizeof(socket_handle_t));
-    new_node->handle = new_handle;
-
-    socket_t *new_socket = new_handle->sock;
-
-    if (new_socket->pair)
-    {
-        new_socket->pair->clientFds++;
-    }
-
-    return new_node;
-}
-
-vfs_node_t socket_accept_dup(vfs_node_t node)
-{
-    if (!node || !node->handle)
-        return NULL;
-
-    vfs_node_t new_node = vfs_node_alloc(node->parent, node->name);
-    if (!new_node)
-        return NULL;
-
-    memcpy(new_node, node, sizeof(struct vfs_node));
-
-    socket_handle_t *new_handle = malloc(sizeof(socket_handle_t));
-    if (!new_handle)
-    {
-        vfs_free(new_node);
-        return NULL;
-    }
-
-    memcpy(new_handle, node->handle, sizeof(socket_handle_t));
-    new_node->handle = new_handle;
-
-    return new_node;
-}
-
 socket_op_t socket_ops = {
     .accept = socket_accept,
     .listen = socket_listen,
@@ -1151,7 +1100,6 @@ static struct vfs_callback socket_callback =
         .stat = (vfs_stat_t)dummy,
         .ioctl = (vfs_ioctl_t)dummy,
         .poll = (vfs_poll_t)socket_socket_poll,
-        .dup = (vfs_dup_t)socket_socket_dup,
 };
 
 static struct vfs_callback accept_callback =
@@ -1170,7 +1118,6 @@ static struct vfs_callback accept_callback =
         .stat = (vfs_stat_t)dummy,
         .ioctl = (vfs_ioctl_t)dummy,
         .poll = (vfs_poll_t)socket_accept_poll,
-        .dup = (vfs_dup_t)socket_accept_dup,
 };
 
 void socketfs_init()
@@ -1179,7 +1126,6 @@ void socketfs_init()
     unix_socket_fsid = vfs_regist("socketfs", &socket_callback);
     unix_accept_fsid = vfs_regist("socketfs", &accept_callback);
     sockfs_root = vfs_node_alloc(rootdir, "sock");
-    sockfs_root->flags = 0;
     sockfs_root->type = file_dir;
     sockfs_root->mode = 0644;
     memset(&first_unix_socket, 0, sizeof(socket_handle_t));

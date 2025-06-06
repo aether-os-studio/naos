@@ -753,22 +753,6 @@ int iso9660_poll(void *file, size_t events)
     return -EOPNOTSUPP;
 }
 
-vfs_node_t iso9660_dup(vfs_node_t node)
-{
-    if (!node)
-        return NULL;
-
-    // 创建新的vfs节点
-    vfs_node_t new_node = vfs_node_alloc(node->parent, node->name);
-    if (!new_node)
-        return NULL;
-
-    // 复制节点属性
-    memcpy(new_node, node, sizeof(struct vfs_node));
-
-    return new_node;
-}
-
 void *iso9660_map(void *file, void *addr, size_t offset, size_t size, size_t prot, size_t flags)
 {
     return general_map((vfs_read_t)iso9660_readfile, file, (uint64_t)addr, size, prot, flags, offset);
@@ -789,7 +773,6 @@ static struct vfs_callback callbacks = {
     .stat = iso9660_stat,
     .ioctl = iso9660_ioctl,
     .poll = iso9660_poll,
-    .dup = iso9660_dup,
 };
 
 void iso9660_init()

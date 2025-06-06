@@ -301,10 +301,10 @@ typedef struct socket_op
     int (*listen)(socket_t *sock, int backlog);
     int (*accept)(socket_t *sock, struct sockaddr_un *addr, socklen_t *addrlen);
     int (*connect)(socket_t *sock, const struct sockaddr_un *addr, socklen_t addrlen);
-    size_t (*sendto)(vfs_node_t fd, uint8_t *in, size_t limit, int flags, struct sockaddr_un *addr, uint32_t len);
-    size_t (*recvfrom)(vfs_node_t fd, uint8_t *out, size_t limit, int flags, struct sockaddr_un *addr, uint32_t *len);
-    size_t (*recvmsg)(vfs_node_t fd, struct msghdr *msg, int flags);
-    size_t (*sendmsg)(vfs_node_t fd, const struct msghdr *msg, int flags);
+    size_t (*sendto)(fd_t *fd, uint8_t *in, size_t limit, int flags, struct sockaddr_un *addr, uint32_t len);
+    size_t (*recvfrom)(fd_t *fd, uint8_t *out, size_t limit, int flags, struct sockaddr_un *addr, uint32_t *len);
+    size_t (*recvmsg)(fd_t *fd, struct msghdr *msg, int flags);
+    size_t (*sendmsg)(fd_t *fd, const struct msghdr *msg, int flags);
 } socket_op_t;
 
 typedef struct socket_handle

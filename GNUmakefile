@@ -50,7 +50,7 @@ export ROOT_DIR := $(shell pwd)
 KVM ?= 0
 HVF ?= 0
 SMP ?= 2
-MEM ?= 4G
+MEM ?= 8G
 SER ?= 0
 MON ?= 0
 
@@ -104,7 +104,7 @@ run-hdd-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-device ahci,id=ahci \
 		-device qemu-xhci,id=xhci \
 		-device nvme,drive=harddisk,serial=1234 \
-		-device usb-storage,bus=xhci.0,drive=rootdisk \
+		-device nvme,drive=rootdisk,serial=5678 \
 		$(QEMUFLAGS)
 
 .PHONY: run-hdd-aarch64
@@ -182,7 +182,7 @@ user:
 
 $(IMAGE_NAME).hdd: limine/limine kernel
 	rm -rf $(IMAGE_NAME).hdd
-	dd if=/dev/zero bs=1M count=0 seek=128 of=$(IMAGE_NAME).hdd
+	dd if=/dev/zero bs=1M count=0 seek=512 of=$(IMAGE_NAME).hdd
 ifeq ($(ARCH),x86_64)
 	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00 -m 1
 else
@@ -212,6 +212,7 @@ endif
 	mkdir -p mnt
 	sudo mount rootfs-$(ARCH).hdd mnt
 	sudo cp -r user/rootfs-$(ARCH)/* mnt/
+	sudo chmod -R 700 mnt/*
 	sudo umount mnt
 	rm -rf mnt
 

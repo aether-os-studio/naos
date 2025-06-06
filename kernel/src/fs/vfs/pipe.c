@@ -249,31 +249,6 @@ int pipefs_poll(void *file, size_t events)
     return out;
 }
 
-vfs_node_t pipefs_dup(vfs_node_t node)
-{
-    if (!node || !node->handle)
-        return NULL;
-
-    vfs_node_t new_node = vfs_node_alloc(node->parent, node->name);
-    if (!new_node)
-        return NULL;
-
-    memcpy(new_node, node, sizeof(struct vfs_node));
-
-    new_node->handle = malloc(sizeof(pipe_specific_t));
-    memcpy(new_node->handle, node->handle, sizeof(pipe_specific_t));
-
-    pipe_specific_t *spec = (pipe_specific_t *)new_node->handle;
-    pipe_info_t *pipe = spec->info;
-
-    if (spec->write)
-        pipe->write_fds++;
-    else
-        pipe->read_fds++;
-
-    return new_node;
-}
-
 static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
@@ -289,7 +264,6 @@ static struct vfs_callback callbacks = {
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)pipefs_ioctl,
     .poll = pipefs_poll,
-    .dup = pipefs_dup,
 };
 
 void pipefs_init()
@@ -354,7 +328,10 @@ int sys_pipe(int pipefd[2])
     node_input->handle = read_spec;
     node_output->handle = write_spec;
 
-    current_task->fds[i1] = node_input;
+    current_task->fds[i1] = malloc(sizeof(fd_t));
+    current_task->fds[i1]->node = node_input;
+    current_task->fds[i1]->offset = 0;
+    current_task->fds[i1]->flags = 0;
 
     int i2 = -1;
     for (i2 = 3; i2 < MAX_FD_NUM; i2++)
@@ -370,7 +347,10 @@ int sys_pipe(int pipefd[2])
         return -EBADF;
     }
 
-    current_task->fds[i2] = node_output;
+    current_task->fds[i2] = malloc(sizeof(fd_t));
+    current_task->fds[i2]->node = node_output;
+    current_task->fds[i2]->offset = 0;
+    current_task->fds[i2]->flags = 0;
 
     pipefd[0] = i1;
     pipefd[1] = i2;

@@ -110,10 +110,31 @@ struct sigevent
     } __sev_fields;
 };
 
+struct signalfd_siginfo
+{
+    uint32_t ssi_signo;   // 信号编号
+    int32_t ssi_errno;    // 错误代码（通常为0）
+    int32_t ssi_code;     // 信号来源（如SI_USER）
+    uint32_t ssi_pid;     // 发送进程PID
+    uint32_t ssi_uid;     // 发送用户UID
+    int32_t ssi_fd;       // 相关文件描述符（若适用）
+    uint32_t ssi_tid;     // 内核定时器ID（若适用）
+    uint32_t ssi_band;    // 带宽事件（用于SIGPOLL）
+    uint32_t ssi_overrun; // 定时器超限计数
+    uint32_t ssi_trapno;  // 陷阱号（SIGSEGV等）
+    int32_t ssi_status;   // 退出状态（SIGCHLD）
+    int32_t ssi_int;      // 信号携带的整数值
+    uint64_t ssi_ptr;     // 信号携带的指针值
+    uint64_t ssi_utime;   // 用户时间（SIGCHLD）
+    uint64_t ssi_stime;   // 系统时间（SIGCHLD）
+    uint64_t ssi_addr;    // 触发地址（SIGSEGV/SIGBUS）
+    uint8_t __pad[48];    // 填充至128字节
+};
+
 struct signalfd_ctx
 {
-    sigset_t sigmask;       // 监控的信号集合
-    struct sigevent *queue; // 信号事件队列
+    sigset_t sigmask;               // 监控的信号集合
+    struct signalfd_siginfo *queue; // 信号事件队列
     size_t queue_size;
     size_t queue_head;
     size_t queue_tail;
