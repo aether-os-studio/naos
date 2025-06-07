@@ -319,6 +319,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_STATFS:
         regs->rax = 0;
         break;
+    case SYS_FSTATFS:
+        regs->rax = 0;
+        break;
     case SYS_FSTAT:
         regs->rax = sys_fstat(arg1, (struct stat *)arg2);
         break;

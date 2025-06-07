@@ -127,7 +127,7 @@ typedef struct socket
 
 bool sys_socket_close(void *current);
 
-int socket_getsockname(socket_t *sock, struct sockaddr_un *addr, socklen_t *addrlen);
+int socket_getsockname(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen);
 
 // 套接字层级
 #define SOL_SOCKET 1
@@ -296,15 +296,17 @@ struct msghdr
 typedef struct socket_op
 {
     uint64_t (*shutdown)(uint64_t fd, uint64_t how);
-    size_t (*getpeername)(socket_t *sock, struct sockaddr_un *addr, socklen_t *addrlen);
-    int (*bind)(socket_t *sock, const struct sockaddr_un *addr, socklen_t addrlen);
-    int (*listen)(socket_t *sock, int backlog);
-    int (*accept)(socket_t *sock, struct sockaddr_un *addr, socklen_t *addrlen);
-    int (*connect)(socket_t *sock, const struct sockaddr_un *addr, socklen_t addrlen);
-    size_t (*sendto)(fd_t *fd, uint8_t *in, size_t limit, int flags, struct sockaddr_un *addr, uint32_t len);
-    size_t (*recvfrom)(fd_t *fd, uint8_t *out, size_t limit, int flags, struct sockaddr_un *addr, uint32_t *len);
-    size_t (*recvmsg)(fd_t *fd, struct msghdr *msg, int flags);
-    size_t (*sendmsg)(fd_t *fd, const struct msghdr *msg, int flags);
+    size_t (*getpeername)(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen);
+    int (*bind)(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen);
+    int (*listen)(uint64_t fd, int backlog);
+    int (*accept)(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen);
+    int (*connect)(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen);
+    size_t (*sendto)(uint64_t fd, uint8_t *in, size_t limit, int flags, struct sockaddr_un *addr, uint32_t len);
+    size_t (*recvfrom)(uint64_t fd, uint8_t *out, size_t limit, int flags, struct sockaddr_un *addr, uint32_t *len);
+    size_t (*recvmsg)(uint64_t fd, struct msghdr *msg, int flags);
+    size_t (*sendmsg)(uint64_t fd, const struct msghdr *msg, int flags);
+    size_t (*getsockopt)(uint64_t fd, int level, int optname, const void *optval, socklen_t *optlen);
+    size_t (*setsockopt)(uint64_t fd, int level, int optname, const void *optval, socklen_t optlen);
 } socket_op_t;
 
 typedef struct socket_handle
@@ -313,18 +315,22 @@ typedef struct socket_handle
     socket_op_t *op;
 } socket_handle_t;
 
+extern void socket_on_new_task(uint64_t pid);
+extern void socket_on_exit_task(uint64_t pid);
+extern void socket_on_dup_file(uint64_t fd, uint64_t newfd);
+
 uint64_t unix_socket_shutdown(uint64_t fd, uint64_t how);
-size_t unix_socket_getpeername(socket_t *sock, struct sockaddr_un *addr, uint32_t *len);
+size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr, uint32_t *len);
 int socket_socket(int domain, int type, int protocol);
 int unix_socket_pair(int type, int protocol, int *sv);
-int socket_bind(socket_t *sock, const struct sockaddr_un *addr, socklen_t addrlen);
-int socket_listen(socket_t *sock, int backlog);
-int socket_accept(socket_t *sock, struct sockaddr_un *addr, socklen_t *addrlen);
-int socket_connect(socket_t *sock, const struct sockaddr_un *addr, socklen_t addrlen);
+int socket_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen);
+int socket_listen(uint64_t fd, int backlog);
+int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen);
+int socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen);
 
-size_t unix_socket_getsockopt(socket_t *sock, int level, int optname, const void *optval, socklen_t *optlen);
-size_t unix_socket_setsockopt(socket_t *sock, int level, int optname, const void *optval, socklen_t optlen);
-size_t unix_socket_getpeername(socket_t *socket, struct sockaddr_un *addr, socklen_t *len);
+size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, const void *optval, socklen_t *optlen);
+size_t unix_socket_setsockopt(uint64_t fd, int level, int optname, const void *optval, socklen_t optlen);
+size_t unix_socket_getpeername(uint64_t fdet, struct sockaddr_un *addr, socklen_t *len);
 
 extern int unix_socket_fsid;
 extern int unix_accept_fsid;

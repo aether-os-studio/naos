@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use alloc::collections::vec_deque::VecDeque;
 use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -7,8 +8,9 @@ use alloc::vec::Vec;
 use core::hint::spin_loop;
 use core::mem::size_of;
 use core::sync::atomic::{Ordering, fence};
+use smoltcp::socket::Socket;
 use smoltcp::socket::dhcpv4::Event;
-use spin::Mutex;
+use spin::{Lazy, Mutex};
 
 use bit_field::*;
 use bitflags::*;
@@ -20,6 +22,7 @@ use smoltcp::wire::{EthernetAddress, *};
 use smoltcp::{iface::*, socket};
 
 use crate::mm::phys_to_virt;
+use crate::net::SOCKETS;
 use crate::println;
 use crate::rust::bindings::bindings::{
     DEFAULT_PAGE_SIZE, PT_FLAG_R, PT_FLAG_W, alloc_frames, arch_enable_interrupt, arch_yield,
@@ -391,7 +394,7 @@ fn get_current_instant() -> Instant {
     Instant::from_millis(unsafe { mktime(&mut time as *mut tm) })
 }
 
-unsafe extern "C" fn e1000_init_thread(arg: u64) {
+pub static E1000_DRIVER: Lazy<Mutex<Vec<E1000Interface>>> = Lazy::new(|| {
     let devices: &mut [*mut pci_device_t; 8] = &mut [
         core::ptr::null_mut(),
         core::ptr::null_mut(),
@@ -403,27 +406,31 @@ unsafe extern "C" fn e1000_init_thread(arg: u64) {
         core::ptr::null_mut(),
     ];
     let mut num: u32 = 0;
-    pci_find_class(
-        devices as *mut *mut pci_device_t,
-        &mut num as *mut u32,
-        0x020000,
-    );
+    unsafe {
+        pci_find_class(
+            devices as *mut *mut pci_device_t,
+            &mut num as *mut u32,
+            0x020000,
+        )
+    };
 
     let mut drivers = Vec::new();
 
     (0..num).for_each(|i| {
-        let device = &mut *devices[i as usize];
+        let device = unsafe { &mut *devices[i as usize] };
 
         let bar_addr = device.bars[0].address;
         let bar_size = device.bars[0].size;
         let vaddr = phys_to_virt(bar_addr as usize);
-        map_page_range(
-            get_current_page_dir(false),
-            vaddr as u64,
-            bar_addr,
-            bar_size,
-            PT_FLAG_R as u64 | PT_FLAG_W as u64,
-        );
+        unsafe {
+            map_page_range(
+                get_current_page_dir(false),
+                vaddr as u64,
+                bar_addr,
+                bar_size,
+                PT_FLAG_R as u64 | PT_FLAG_W as u64,
+            )
+        };
 
         let mac = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
         let e1000 = E1000::new(vaddr, bar_size as usize, EthernetAddress(mac));
@@ -442,6 +449,12 @@ unsafe extern "C" fn e1000_init_thread(arg: u64) {
             irq: None, // TODO: enable interrupt handling for this device
         });
     });
+
+    Mutex::new(drivers)
+});
+
+unsafe extern "C" fn e1000_init_thread(arg: u64) {
+    let mut drivers = E1000_DRIVER.lock();
 
     if drivers.len() > 0 {
         let driver = &mut drivers[0];
@@ -486,10 +499,6 @@ unsafe extern "C" fn e1000_init_thread(arg: u64) {
                         // println!("Default gateway: None");
                         driver.iface.lock().routes_mut().remove_default_ipv4_route();
                     }
-
-                    // for (i, s) in config.dns_servers.iter().enumerate() {
-                    //     println!("DNS server {}: {}", i, s);
-                    // }
                 }
             }
 

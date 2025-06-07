@@ -125,6 +125,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
     task->rlim[RLIMIT_NOFILE] = (struct rlimit){MAX_FD_NUM, MAX_FD_NUM};
     task->rlim[RLIMIT_CORE] = (struct rlimit){0, 0};
 
+    socket_on_new_task(task->pid);
+
     can_schedule = true;
 
     return task;
@@ -444,6 +446,8 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     child->tmp_rec_v = current_task->tmp_rec_v;
 
     memcpy(child->rlim, current_task->rlim, sizeof(child->rlim));
+
+    socket_on_new_task(child->pid);
 
     can_schedule = true;
 
@@ -807,6 +811,8 @@ uint64_t task_exit(int64_t code)
     if (task->cmdline)
         free(task->cmdline);
 
+    socket_on_exit_task(task->pid);
+
     task->state = TASK_DIED;
 
     task_t *next = task_search(TASK_READY, task->cpu_id);
@@ -1051,6 +1057,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->tmp_rec_v = current_task->tmp_rec_v;
 
     memcpy(child->rlim, current_task->rlim, sizeof(child->rlim));
+
+    socket_on_new_task(child->pid);
 
     can_schedule = true;
 

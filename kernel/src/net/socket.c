@@ -13,7 +13,7 @@ extern socket_op_t accept_ops;
 
 vfs_node_t sockfs_root = NULL;
 
-static int sockfsfd_id = 0;
+int sockfsfd_id = 0;
 
 socket_t first_unix_socket;
 
@@ -129,14 +129,14 @@ bool socket_socket_close(socket_handle_t *socket_handle)
     return false;
 }
 
-size_t unix_socket_accept_recv_from(fd_t *fd, uint8_t *out, size_t limit,
+size_t unix_socket_accept_recv_from(uint64_t fd, uint8_t *out, size_t limit,
                                     int flags, struct sockaddr_un *addr,
                                     uint32_t *len)
 {
     (void)addr;
     (void)len;
 
-    socket_handle_t *handle = fd->node->handle;
+    socket_handle_t *handle = current_task->fds[fd]->node->handle;
     unix_socket_pair_t *pair = handle->sock;
     if (!pair->clientFds && pair->serverBuffPos == 0)
         return 0;
@@ -146,7 +146,7 @@ size_t unix_socket_accept_recv_from(fd_t *fd, uint8_t *out, size_t limit,
         {
             return 0;
         }
-        else if ((fd->flags & O_NONBLOCK || flags & MSG_DONTWAIT) &&
+        else if ((current_task->fds[fd]->flags & O_NONBLOCK || flags & MSG_DONTWAIT) &&
                  pair->serverBuffPos == 0)
         {
             return -(EWOULDBLOCK);
@@ -165,7 +165,7 @@ size_t unix_socket_accept_recv_from(fd_t *fd, uint8_t *out, size_t limit,
     return toCopy;
 }
 
-size_t unix_socket_accept_sendto(fd_t *fd, uint8_t *in, size_t limit,
+size_t unix_socket_accept_sendto(uint64_t fd, uint8_t *in, size_t limit,
                                  int flags, struct sockaddr_un *addr, uint32_t len)
 {
     while (socket_op_lock)
@@ -178,7 +178,7 @@ size_t unix_socket_accept_sendto(fd_t *fd, uint8_t *in, size_t limit,
     (void)addr;
     (void)len;
 
-    socket_handle_t *handle = fd->node->handle;
+    socket_handle_t *handle = current_task->fds[fd]->node->handle;
     unix_socket_pair_t *pair = handle->sock;
 
     if (limit > pair->clientBuffSize)
@@ -196,7 +196,7 @@ size_t unix_socket_accept_sendto(fd_t *fd, uint8_t *in, size_t limit,
         if ((pair->clientBuffPos + limit) <= pair->clientBuffSize)
             break;
 
-        if (fd->flags & O_NONBLOCK || flags & MSG_DONTWAIT)
+        if (current_task->fds[fd]->flags & O_NONBLOCK || flags & MSG_DONTWAIT)
         {
             socket_op_lock = false;
             return -(EWOULDBLOCK);
@@ -297,8 +297,11 @@ int socket_socket(int domain, int type, int protocol)
     return i;
 }
 
-int socket_bind(socket_t *sock, const struct sockaddr_un *addr, socklen_t addrlen)
+int socket_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen)
 {
+    socket_handle_t *handle = current_task->fds[fd]->node->handle;
+    socket_t *sock = handle->sock;
+
     if (sock->bindAddr)
         return -(EINVAL);
 
@@ -340,12 +343,15 @@ int socket_bind(socket_t *sock, const struct sockaddr_un *addr, socklen_t addrle
     return 0;
 }
 
-int socket_listen(socket_t *sock, int backlog)
+int socket_listen(uint64_t fd, int backlog)
 {
     if (backlog == 0) // newer kernel behavior
         backlog = 1;
     if (backlog < 0)
         backlog = 128;
+
+    socket_handle_t *handle = current_task->fds[fd]->node->handle;
+    socket_t *sock = handle->sock;
 
     // maybe do a typical array here
     sock->connMax = backlog;
@@ -353,11 +359,14 @@ int socket_listen(socket_t *sock, int backlog)
     return 0;
 }
 
-int socket_accept(socket_t *sock, struct sockaddr_un *addr, socklen_t *addrlen)
+int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen)
 {
     if (addr && addrlen && *addrlen > 0)
     {
     }
+
+    socket_handle_t *handle = current_task->fds[fd]->node->handle;
+    socket_t *sock = handle->sock;
 
     while (true)
     {
@@ -403,8 +412,8 @@ int socket_accept(socket_t *sock, struct sockaddr_un *addr, socklen_t *addrlen)
         return -EBADF;
     }
 
-    socket_handle_t *handle = acceptFd->handle;
-    socket_t *new_sock = handle->sock;
+    socket_handle_t *new_handle = acceptFd->handle;
+    socket_t *new_sock = new_handle->sock;
 
     new_sock->options.peercred = sock->options.peercred;
     new_sock->options.has_peercred = true;
@@ -417,8 +426,11 @@ int socket_accept(socket_t *sock, struct sockaddr_un *addr, socklen_t *addrlen)
     return i;
 }
 
-int socket_connect(socket_t *sock, const struct sockaddr_un *addr, socklen_t addrlen)
+int socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen)
 {
+    socket_handle_t *handle = current_task->fds[fd]->node->handle;
+    socket_t *sock = handle->sock;
+
     if (sock->connMax != 0) // already ran listen()
         return -(ECONNREFUSED);
 
@@ -488,7 +500,7 @@ int socket_connect(socket_t *sock, const struct sockaddr_un *addr, socklen_t add
     return 0;
 }
 
-size_t unix_socket_recv_from(fd_t *fd, uint8_t *out, size_t limit, int flags,
+size_t unix_socket_recv_from(uint64_t fd, uint8_t *out, size_t limit, int flags,
                              struct sockaddr_un *addr, uint32_t *len)
 {
     while (socket_op_lock)
@@ -502,7 +514,7 @@ size_t unix_socket_recv_from(fd_t *fd, uint8_t *out, size_t limit, int flags,
     (void)addr;
     (void)len;
 
-    socket_handle_t *handle = fd->node->handle;
+    socket_handle_t *handle = current_task->fds[fd]->node->handle;
     socket_t *socket = handle->sock;
     unix_socket_pair_t *pair = socket->pair;
     if (!pair)
@@ -519,7 +531,7 @@ size_t unix_socket_recv_from(fd_t *fd, uint8_t *out, size_t limit, int flags,
             socket_op_lock = false;
             return 0;
         }
-        else if ((fd->flags & O_NONBLOCK || flags & MSG_DONTWAIT) &&
+        else if ((current_task->fds[fd]->flags & O_NONBLOCK || flags & MSG_DONTWAIT) &&
                  pair->clientBuffPos == 0)
         {
             socket_op_lock = false;
@@ -541,7 +553,7 @@ size_t unix_socket_recv_from(fd_t *fd, uint8_t *out, size_t limit, int flags,
     return toCopy;
 }
 
-size_t unix_socket_send_to(fd_t *fd, uint8_t *in, size_t limit, int flags,
+size_t unix_socket_send_to(uint64_t fd, uint8_t *in, size_t limit, int flags,
                            struct sockaddr_un *addr, uint32_t len)
 {
     // useless unless SOCK_DGRAM
@@ -555,7 +567,7 @@ size_t unix_socket_send_to(fd_t *fd, uint8_t *in, size_t limit, int flags,
 
     socket_op_lock = true;
 
-    socket_handle_t *handle = fd->node->handle;
+    socket_handle_t *handle = current_task->fds[fd]->node->handle;
     socket_t *socket = handle->sock;
     unix_socket_pair_t *pair = socket->pair;
     if (!pair)
@@ -576,7 +588,7 @@ size_t unix_socket_send_to(fd_t *fd, uint8_t *in, size_t limit, int flags,
             socket_op_lock = false;
             return -(EPIPE);
         }
-        else if ((fd->flags & O_NONBLOCK || flags & MSG_DONTWAIT) &&
+        else if ((current_task->fds[fd]->flags & O_NONBLOCK || flags & MSG_DONTWAIT) &&
                  (pair->serverBuffPos + limit) > pair->serverBuffSize)
         {
             socket_op_lock = false;
@@ -595,7 +607,7 @@ size_t unix_socket_send_to(fd_t *fd, uint8_t *in, size_t limit, int flags,
     return limit;
 }
 
-size_t unix_socket_recv_msg(fd_t *fd, struct msghdr *msg, int flags)
+size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
 {
     msg->msg_controllen = 0;
     msg->msg_flags = 0;
@@ -605,9 +617,9 @@ size_t unix_socket_recv_msg(fd_t *fd, struct msghdr *msg, int flags)
     {
         struct iovec *curr =
             (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
-        if (cnt > 0 && fs_callbacks[fd->node->fsid]->poll)
+        if (cnt > 0 && fs_callbacks[current_task->fds[fd]->node->fsid]->poll)
         {
-            if (!(fs_callbacks[fd->node->fsid]->poll(fd, EPOLLIN) & EPOLLIN))
+            if (!(fs_callbacks[current_task->fds[fd]->node->fsid]->poll(current_task->fds[fd]->node, EPOLLIN) & EPOLLIN))
                 return cnt;
         }
         size_t singleCnt = unix_socket_recv_from(fd, curr->iov_base, curr->len,
@@ -621,7 +633,7 @@ size_t unix_socket_recv_msg(fd_t *fd, struct msghdr *msg, int flags)
     return cnt;
 }
 
-size_t unix_socket_send_msg(fd_t *fd, const struct msghdr *msg, int flags)
+size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
 {
     size_t cnt = 0;
     bool noblock = flags & MSG_DONTWAIT;
@@ -642,7 +654,7 @@ size_t unix_socket_send_msg(fd_t *fd, const struct msghdr *msg, int flags)
     return cnt;
 }
 
-size_t unix_socket_accept_recv_msg(fd_t *fd, struct msghdr *msg,
+size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
                                    int flags)
 {
     msg->msg_controllen = 0;
@@ -653,10 +665,10 @@ size_t unix_socket_accept_recv_msg(fd_t *fd, struct msghdr *msg,
     {
         struct iovec *curr =
             (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
-        if (cnt > 0 && fs_callbacks[fd->node->fsid]->poll)
+        if (cnt > 0 && fs_callbacks[current_task->fds[fd]->node->fsid]->poll)
         {
             // check syscalls_fs.c for why this is necessary
-            if (!(fs_callbacks[fd->node->fsid]->poll(fd, EPOLLIN) & EPOLLIN))
+            if (!(fs_callbacks[current_task->fds[fd]->node->fsid]->poll(current_task->fds[fd]->node, EPOLLIN) & EPOLLIN))
                 return cnt;
         }
         size_t singleCnt = unix_socket_accept_recv_from(
@@ -670,7 +682,7 @@ size_t unix_socket_accept_recv_msg(fd_t *fd, struct msghdr *msg,
     return cnt;
 }
 
-size_t unix_socket_accept_send_msg(fd_t *fd, const struct msghdr *msg, int flags)
+size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
 {
     if (msg->msg_name || msg->msg_namelen > 0)
         return -(ENOSYS);
@@ -783,12 +795,14 @@ int socket_socket_poll(void *file, int events)
     return revents;
 }
 
-size_t unix_socket_setsockopt(socket_t *sock, int level, int optname, const void *optval, socklen_t optlen)
+size_t unix_socket_setsockopt(uint64_t fd, int level, int optname, const void *optval, socklen_t optlen)
 {
     if (level != SOL_SOCKET)
     {
         return -ENOPROTOOPT;
     }
+    socket_handle_t *handle = current_task->fds[fd]->node->handle;
+    socket_t *sock = handle->sock;
 
     switch (optname)
     {
@@ -892,12 +906,14 @@ size_t unix_socket_setsockopt(socket_t *sock, int level, int optname, const void
     return 0;
 }
 
-size_t unix_socket_getsockopt(socket_t *sock, int level, int optname, const void *optval, socklen_t *optlen)
+size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, const void *optval, socklen_t *optlen)
 {
     if (level != SOL_SOCKET)
     {
         return -ENOPROTOOPT;
     }
+    socket_handle_t *handle = current_task->fds[fd]->node->handle;
+    socket_t *sock = handle->sock;
 
     // 获取选项值
     switch (optname)
@@ -1019,8 +1035,10 @@ static int dummy()
     return -ENOSYS;
 }
 
-size_t unix_socket_getpeername(socket_t *socket, struct sockaddr_un *addr, socklen_t *len)
+size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr, socklen_t *len)
 {
+    socket_handle_t *handle = current_task->fds[fd]->node->handle;
+    socket_t *socket = handle->sock;
     unix_socket_pair_t *pair = socket->pair;
     if (!pair)
         return -(ENOTCONN);
@@ -1041,7 +1059,7 @@ void socket_open(void *parent, const char *name, vfs_node_t node)
     // memset(handle, 0, sizeof(socket_handle_t));
     // if (node->fsid == unix_socket_fsid)
     // {
-    //     socket_t *sock = malloc(sizeof(socket_t));
+    //     uint64_t fd = malloc(sizeof(socket_t));
     //     memset(sock, 0, sizeof(socket_t));
     //     handle->sock = sock;
     //     sock->timesOpened++;
@@ -1074,6 +1092,8 @@ socket_op_t socket_ops = {
     .sendmsg = unix_socket_send_msg,
     .recvmsg = unix_socket_recv_msg,
     .getpeername = unix_socket_getpeername,
+    .getsockopt = unix_socket_getsockopt,
+    .setsockopt = unix_socket_setsockopt,
 };
 
 socket_op_t accept_ops = {
@@ -1084,6 +1104,8 @@ socket_op_t accept_ops = {
     .sendmsg = unix_socket_accept_send_msg,
     .recvmsg = unix_socket_accept_recv_msg,
     .getpeername = unix_socket_getpeername,
+    .getsockopt = unix_socket_getsockopt,
+    .setsockopt = unix_socket_setsockopt,
 };
 
 static struct vfs_callback socket_callback =
