@@ -3,7 +3,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 
-void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64_t entry, uint64_t stack, bool user_mode)
+void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64_t entry, uint64_t stack, bool user_mode, uint64_t initial_arg)
 {
     memset(context, 0, sizeof(arch_context_t));
 
@@ -20,6 +20,7 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64
     context->ctx->rsp = stack;
     context->ctx->rbp = stack;
     context->ctx->rflags = (0UL << 12) | (0b10) | (1UL << 9);
+    context->ctx->rdi = initial_arg;
     context->fsbase = 0;
     context->gsbase = 0;
     if (user_mode)

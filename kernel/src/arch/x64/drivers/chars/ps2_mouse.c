@@ -11,7 +11,7 @@
 #include <libs/flanterm/flanterm_private.h>
 #include <libs/flanterm/backends/fb_private.h>
 
-err_t mouse_install(uint64_t vector, uint64_t arg)
+int64_t mouse_install(uint64_t vector, uint64_t arg)
 {
     ioapic_add(vector, 12);
 

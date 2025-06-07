@@ -2,12 +2,13 @@
 #include <mm/mm.h>
 #include <task/task.h>
 
-void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64_t entry, uint64_t stack, bool user_mode)
+void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64_t entry, uint64_t stack, bool user_mode, uint64_t initial_arg)
 {
     context->ctx = (struct pt_regs *)((stack - sizeof(struct pt_regs)));
     memset(context->ctx, 0, sizeof(struct pt_regs));
     context->ctx->pc = entry;
     context->ctx->sp_el0 = stack;
+    context->ctx->x0 = initial_arg;
 
     uint32_t spsr = 0;
     if (user_mode)

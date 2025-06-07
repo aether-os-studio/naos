@@ -25,7 +25,7 @@ impl VirtIOInputDriver {
 
 static INPUT_DRIVERS: Mutex<Vec<VirtIOInputDriver>> = Mutex::new(Vec::new());
 
-unsafe extern "C" fn virtio_input_kthread() {
+unsafe extern "C" fn virtio_input_kthread(arg: u64) {
     loop {
         for device in INPUT_DRIVERS.lock().iter() {
             if let Some(event) = device.lock().pop_pending_event() {
@@ -58,6 +58,7 @@ pub fn init_pci(transport: PciTransport) {
                 task_create(
                     "Virtio input kthread".as_ptr() as *const core::ffi::c_char,
                     Some(virtio_input_kthread),
+                    0,
                 );
             }
         }

@@ -236,19 +236,19 @@ uint64_t gic_v3_get_current_irq()
     return irq_num;
 }
 
-err_t gic_unmask(uint64_t irq)
+int64_t gic_unmask(uint64_t irq)
 {
     gic_enable_irq(irq);
     return 0;
 }
 
-err_t gic_mask(uint64_t irq)
+int64_t gic_mask(uint64_t irq)
 {
     gic_disable_irq(irq);
     return 0;
 }
 
-err_t gic_ack(uint64_t irq)
+int64_t gic_ack(uint64_t irq)
 {
     gic_send_eoi(irq);
     return 0;

@@ -50,12 +50,12 @@ export ROOT_DIR := $(shell pwd)
 KVM ?= 0
 HVF ?= 0
 SMP ?= 2
-MEM ?= 8G
+MEM ?= 4G
 SER ?= 0
 MON ?= 0
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
-QEMUFLAGS := -m $(MEM) -smp $(SMP) -netdev user,id=net0 -net nic,model=rtl8139,netdev=net0
+QEMUFLAGS := -m $(MEM) -smp $(SMP) -netdev user,id=net0 -net nic,model=e1000,netdev=net0
 
 DEBUG ?= 0
 

@@ -17,6 +17,7 @@ pub mod fs;
 pub mod ipc;
 pub mod libs;
 pub mod mm;
+pub mod net;
 pub mod rust;
 
 #[panic_handler]

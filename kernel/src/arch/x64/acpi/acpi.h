@@ -247,10 +247,10 @@ uint32_t get_cpuid_by_lapic_id(uint32_t lapic_id);
 void ioapic_enable(uint8_t vector);
 void ioapic_add(uint8_t vector, uint32_t irq);
 
-err_t apic_mask(uint64_t irq);
-err_t apic_unmask(uint64_t irq);
-err_t apic_install(uint64_t irq, uint64_t arg);
-err_t apic_ack(uint64_t irq);
+int64_t apic_mask(uint64_t irq);
+int64_t apic_unmask(uint64_t irq);
+int64_t apic_install(uint64_t irq, uint64_t arg);
+int64_t apic_ack(uint64_t irq);
 
 struct irq_controller;
 extern struct irq_controller apic_controller;

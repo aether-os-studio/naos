@@ -6,10 +6,10 @@ struct pt_regs;
 
 typedef struct irq_controller
 {
-    err_t (*unmask)(uint64_t irq);
-    err_t (*mask)(uint64_t irq);
-    err_t (*install)(uint64_t irq, uint64_t arg);
-    err_t (*ack)(uint64_t irq);
+    int64_t (*unmask)(uint64_t irq);
+    int64_t (*mask)(uint64_t irq);
+    int64_t (*install)(uint64_t irq, uint64_t arg);
+    int64_t (*ack)(uint64_t irq);
 } irq_controller_t;
 
 typedef struct irq_action

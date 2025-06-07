@@ -1,3 +1,4 @@
+use alloc::string::ToString;
 use core::fmt;
 use core::fmt::Write;
 use spin::Mutex;
@@ -13,8 +14,10 @@ pub static WRITER: Mutex<KernelWriter> = Mutex::new(KernelWriter);
 
 impl Write for KernelWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
+        let mut string = s.to_string();
+        string.push('\0');
         unsafe {
-            printk(b"%s\0".as_ptr() as *const _, s);
+            printk(string.as_ptr() as *const _);
         }
         Ok(())
     }

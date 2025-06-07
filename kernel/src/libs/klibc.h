@@ -11,8 +11,6 @@
 
 #include <libs/endian.h>
 
-typedef int64_t err_t;
-
 typedef int clockid_t;
 typedef void *timer_t;
 
@@ -717,6 +715,45 @@ static inline void spin_unlock_irqrestore(spinlock_t *lock)
 }
 
 #endif
+
+typedef struct semaphore
+{
+    spinlock_t lock;
+    uint32_t cnt;
+    uint8_t invalid;
+} semaphore_t;
+
+extern uint64_t nanoTime();
+
+static inline bool semaphore_wait(semaphore_t *sem, uint32_t timeout)
+{
+    uint64_t timerStart = nanoTime();
+    bool ret = false;
+
+    while (true)
+    {
+        if (timeout > 0 && nanoTime() > (timerStart + timeout * 1000))
+            goto just_return;
+        if (sem->cnt > 0)
+        {
+            sem->cnt--;
+            ret = true;
+            goto cleanup;
+        }
+    }
+
+cleanup:
+    spin_unlock(&sem->lock);
+just_return:
+    return ret;
+}
+
+static inline void semaphore_post(semaphore_t *sem)
+{
+    spin_lock(&sem->lock);
+    sem->cnt++;
+    spin_unlock(&sem->lock);
+}
 
 #include <mm/hhdm.h>
 

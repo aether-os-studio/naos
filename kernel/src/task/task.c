@@ -43,7 +43,7 @@ uint32_t alloc_cpu_id()
     return idx;
 }
 
-task_t *task_create(const char *name, void (*entry)())
+task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
 {
     arch_disable_interrupt();
 
@@ -67,7 +67,7 @@ task_t *task_create(const char *name, void (*entry)())
     memset((void *)(task->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
     task->arch_context = malloc(sizeof(arch_context_t));
     memset(task->arch_context, 0, sizeof(arch_context_t));
-    arch_context_init(task->arch_context, virt_to_phys((uint64_t)get_kernel_page_dir()), (uint64_t)entry, task->kernel_stack, false);
+    arch_context_init(task->arch_context, virt_to_phys((uint64_t)get_kernel_page_dir()), (uint64_t)entry, task->kernel_stack, false, arg);
     task->signal = 0;
     task->status = 0;
     task->cwd = rootdir;
@@ -158,7 +158,7 @@ task_t *task_search(task_state_t state, uint32_t cpu_id)
     return task;
 }
 
-void idle_entry()
+void idle_entry(uint64_t arg)
 {
     while (1)
     {
@@ -189,7 +189,7 @@ extern void mount_root();
 
 bool system_initialized = false;
 
-void init_thread()
+void init_thread(uint64_t arg)
 {
     printk("NAOS init thread is running...\n");
 
@@ -245,11 +245,11 @@ void task_init()
 
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++)
     {
-        idle_tasks[cpu] = task_create("idle", idle_entry);
+        idle_tasks[cpu] = task_create("idle", idle_entry, 0);
         idle_tasks[cpu]->state = TASK_RUNNING;
     }
     arch_set_current(idle_tasks[0]);
-    task_create("init", init_thread);
+    task_create("init", init_thread, 0);
 
     task_initialized = true;
 

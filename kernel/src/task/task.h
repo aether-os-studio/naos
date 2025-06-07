@@ -169,7 +169,7 @@ typedef struct task
 
 void sched_update_itimer();
 
-task_t *task_create(const char *name, void (*entry)());
+task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg);
 void task_init();
 
 struct pt_regs;

@@ -106,7 +106,7 @@ static int usb_kbd_setup(struct usbdevice_s *usbdev, struct usb_endpoint_descrip
     if (add_pipe_node(&keyboards, usbdev, epdesc))
         return -1;
 
-    task_create("USB KBD HANDLE", usb_check_key);
+    task_create("USB KBD HANDLE", usb_check_key, 0);
 
     return 0;
 }

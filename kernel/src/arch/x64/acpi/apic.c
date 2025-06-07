@@ -295,27 +295,27 @@ void smp_init()
     apu_startup(mp_request.response);
 }
 
-err_t apic_mask(uint64_t irq)
+int64_t apic_mask(uint64_t irq)
 {
     ioapic_disable((uint8_t)irq);
 
     return 0;
 }
 
-err_t apic_unmask(uint64_t irq)
+int64_t apic_unmask(uint64_t irq)
 {
     ioapic_enable((uint8_t)irq);
 
     return 0;
 }
 
-err_t apic_install(uint64_t irq, uint64_t arg)
+int64_t apic_install(uint64_t irq, uint64_t arg)
 {
     ioapic_add(irq, arg);
     return 0;
 }
 
-err_t apic_ack(uint64_t irq)
+int64_t apic_ack(uint64_t irq)
 {
     send_eoi((uint32_t)irq);
     return 0;

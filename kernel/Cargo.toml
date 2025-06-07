@@ -7,15 +7,22 @@ edition = "2024"
 crate-type = ["staticlib"]
 
 [dependencies]
+bit_field = "0.10.2"
 bitflags = "2.9.1"
 good_memory_allocator = "0.1.7"
 limine = "0.4.0"
 pci_types = "0.10.0"
 spin = "0.10.0"
+vcell = "0.1.3"
 
 [dependencies.crossbeam-queue]
 version = "0.3.11"
 features = ["alloc"]
+default-features = false
+
+[dependencies.smoltcp]
+version = "0.12.0"
+features = ["log", "proto-ipv4", "proto-ipv6", "socket-icmp", "socket-udp", "socket-dhcpv4", "socket-tcp", "socket-raw", "medium-ip", "medium-ethernet", "alloc"]
 default-features = false
 
 [dependencies.virtio-drivers]
