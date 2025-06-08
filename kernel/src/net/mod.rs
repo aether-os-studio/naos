@@ -1,17 +1,31 @@
-use alloc::{
-    collections::{btree_map::BTreeMap, vec_deque::VecDeque},
-    vec::Vec,
-};
+use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 use smoltcp::{
+    iface::{SocketHandle, SocketSet},
     socket::{AnySocket, Socket, raw},
     storage::{PacketBuffer, PacketMetadata},
     wire::{IpProtocol, IpVersion},
 };
-use spin::Mutex;
+use spin::{Lazy, Mutex};
 
-use crate::rust::bindings::bindings::*;
+use crate::{drivers::net::e1000::E1000_DRIVER, rust::bindings::bindings::*};
 
-pub static SOCKETS: Mutex<BTreeMap<usize, BTreeMap<i32, Socket>>> = Mutex::new(BTreeMap::new());
+pub trait NetworkDevice: Send + Sync {
+    fn poll(&mut self);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SocketType {
+    Raw,
+    Tcp,
+    Udp,
+}
+
+pub static SOCKETS_SET: Lazy<Mutex<SocketSet>> =
+    Lazy::new(|| Mutex::new(SocketSet::new(Vec::new())));
+pub static SOCKETS_TYPE_MAP: Mutex<BTreeMap<SocketHandle, SocketType>> =
+    Mutex::new(BTreeMap::new());
+pub static SOCKETS: Mutex<BTreeMap<usize, BTreeMap<i32, SocketHandle>>> =
+    Mutex::new(BTreeMap::new());
 pub static SOCKETS_DUPS: Mutex<BTreeMap<usize, BTreeMap<i32, usize>>> = Mutex::new(BTreeMap::new());
 
 #[unsafe(no_mangle)]
@@ -21,7 +35,10 @@ unsafe extern "C" fn socket_on_new_task(pid: usize) {
 }
 #[unsafe(no_mangle)]
 unsafe extern "C" fn socket_on_exit_task(pid: usize) {
-    let _ = SOCKETS.lock().remove(&pid);
+    let queue = SOCKETS.lock().remove(&pid).unwrap();
+    for (_, handle) in queue {
+        SOCKETS_SET.lock().remove(handle);
+    }
     let _ = SOCKETS_DUPS.lock().remove(&pid);
 }
 #[unsafe(no_mangle)]
@@ -39,7 +56,7 @@ unsafe extern "C" fn socket_on_dup_file(fd: usize, newfd: usize) {
     queue.insert(newfd as i32, fd);
 }
 
-const RAW_BUFFER_SIZE: usize = 1524;
+const RAW_BUFFER_SIZE: usize = 1536;
 
 unsafe extern "C" {
     fn socket_alloc_fd_net() -> i32;
@@ -70,16 +87,15 @@ unsafe extern "C" fn net_socket(domain: i32, ty: i32, protocol: i32) -> i32 {
         2 => match ty {
             // RAW
             3 => {
-                let socket = Socket::Raw(raw::Socket::new(
-                    IpVersion::Ipv4,
-                    IpProtocol::from(protocol as u8),
-                    rx,
-                    tx,
-                ));
+                let socket =
+                    raw::Socket::new(IpVersion::Ipv4, IpProtocol::from(protocol as u8), rx, tx);
+
+                let handle = SOCKETS_SET.lock().add(socket);
+                SOCKETS_TYPE_MAP.lock().insert(handle, SocketType::Raw);
 
                 let fd = socket_alloc_fd_net();
 
-                SOCKETS.lock().get_mut(&pid).unwrap().insert(fd, socket);
+                SOCKETS.lock().get_mut(&pid).unwrap().insert(fd, handle);
 
                 return fd;
             }
@@ -89,16 +105,15 @@ unsafe extern "C" fn net_socket(domain: i32, ty: i32, protocol: i32) -> i32 {
         10 => match ty {
             // RAW
             3 => {
-                let socket = Socket::Raw(raw::Socket::new(
-                    IpVersion::Ipv4,
-                    IpProtocol::from(protocol as u8),
-                    rx,
-                    tx,
-                ));
+                let socket =
+                    raw::Socket::new(IpVersion::Ipv6, IpProtocol::from(protocol as u8), rx, tx);
+
+                let handle = SOCKETS_SET.lock().add(socket);
+                SOCKETS_TYPE_MAP.lock().insert(handle, SocketType::Raw);
 
                 let fd = socket_alloc_fd_net();
 
-                SOCKETS.lock().get_mut(&pid).unwrap().insert(fd, socket);
+                SOCKETS.lock().get_mut(&pid).unwrap().insert(fd, handle);
 
                 return fd;
             }
@@ -304,6 +319,8 @@ unsafe extern "C" fn net_sendto(
     addr: *mut sockaddr_un,
     len: u32,
 ) -> u64 {
+    let mut sockets_set = SOCKETS_SET.lock();
+    let sockets_type_map = SOCKETS_TYPE_MAP.lock();
     let mut sockets = SOCKETS.lock();
 
     let queue = {
@@ -325,7 +342,8 @@ unsafe extern "C" fn net_sendto(
     };
 
     if let Some(socket) = queue.get_mut(&(fd as i32)) {
-        if let Socket::Raw(raw) = socket {
+        if *sockets_type_map.get(&*socket).unwrap() == SocketType::Raw {
+            let raw: &mut raw::Socket = sockets_set.get_mut(*socket);
             if let Err(err) =
                 raw.send_slice(unsafe { core::slice::from_raw_parts(inaddr, limit as usize) })
             {
@@ -337,7 +355,8 @@ unsafe extern "C" fn net_sendto(
         }
     } else if let Some(&dupfd) = dupfds.get(&(fd as i32)) {
         if let Some(socket) = queue.get_mut(&(dupfd as i32)) {
-            if let Socket::Raw(raw) = socket {
+            if *sockets_type_map.get(&*socket).unwrap() == SocketType::Raw {
+                let raw: &mut raw::Socket = sockets_set.get_mut(*socket);
                 if let Err(err) =
                     raw.send_slice(unsafe { core::slice::from_raw_parts(inaddr, limit as usize) })
                 {
@@ -362,6 +381,8 @@ unsafe extern "C" fn net_recvfrom(
     addr: *mut sockaddr_un,
     len: *mut u32,
 ) -> u64 {
+    let mut sockets_set = SOCKETS_SET.lock();
+    let sockets_type_map = SOCKETS_TYPE_MAP.lock();
     let mut sockets = SOCKETS.lock();
 
     let queue = {
@@ -383,33 +404,31 @@ unsafe extern "C" fn net_recvfrom(
     };
 
     if let Some(socket) = queue.get_mut(&(fd as i32)) {
-        if let Socket::Raw(raw) = socket {
-            loop {
+        if *sockets_type_map.get(&*socket).unwrap() == SocketType::Raw {
+            let raw: &mut raw::Socket = sockets_set.get_mut(*socket);
+            if let Err(err) =
+                raw.recv_slice(unsafe { core::slice::from_raw_parts_mut(out, limit as usize) })
+            {
+                match err {
+                    raw::RecvError::Exhausted => return 0,
+                    raw::RecvError::Truncated => return (-(EMSGSIZE as i64)) as u64,
+                }
+            }
+            return limit as u64;
+        }
+    } else if let Some(&dupfd) = dupfds.get(&(fd as i32)) {
+        if let Some(socket) = queue.get_mut(&(dupfd as i32)) {
+            if *sockets_type_map.get(&*socket).unwrap() == SocketType::Raw {
+                let raw: &mut raw::Socket = sockets_set.get_mut(*socket);
                 if let Err(err) =
                     raw.recv_slice(unsafe { core::slice::from_raw_parts_mut(out, limit as usize) })
                 {
                     match err {
-                        raw::RecvError::Exhausted => continue,
+                        raw::RecvError::Exhausted => return 0,
                         raw::RecvError::Truncated => return (-(EMSGSIZE as i64)) as u64,
                     }
                 }
                 return limit as u64;
-            }
-        }
-    } else if let Some(&dupfd) = dupfds.get(&(fd as i32)) {
-        if let Some(socket) = queue.get_mut(&(dupfd as i32)) {
-            if let Socket::Raw(raw) = socket {
-                loop {
-                    if let Err(err) = raw
-                        .recv_slice(unsafe { core::slice::from_raw_parts_mut(out, limit as usize) })
-                    {
-                        match err {
-                            raw::RecvError::Exhausted => continue,
-                            raw::RecvError::Truncated => return (-(EMSGSIZE as i64)) as u64,
-                        }
-                    }
-                    return limit as u64;
-                }
             }
         }
     }

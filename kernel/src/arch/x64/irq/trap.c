@@ -249,7 +249,7 @@ void do_page_fault(struct pt_regs *regs, uint64_t error_code)
     uint64_t cr2 = 0;
     // 先保存cr2寄存器的值，避免由于再次触发页故障而丢失值
     // cr2存储着触发异常的线性地址
-    __asm__ __volatile__("movq %%cr2, %0"
+    asm volatile("movq %%cr2, %0"
                          : "=r"(cr2)::"memory");
 
     (void)error_code;

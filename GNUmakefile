@@ -55,7 +55,10 @@ SER ?= 0
 MON ?= 0
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
-QEMUFLAGS := -m $(MEM) -smp $(SMP) -netdev user,id=net0 -net nic,model=e1000,netdev=net0
+QEMUFLAGS := -m $(MEM) -smp $(SMP)
+QEMUFLAGS += -netdev tap,id=eth0,ifname=tap0,script=no,downscript=no
+QEMUFLAGS += -device e1000,netdev=eth0,mac=5A:5A:5A:5A:5A:33
+QEMUFLAGS += -d trace:e1000*,trace:net*
 
 DEBUG ?= 0
 
@@ -92,7 +95,7 @@ HOST_LIBS :=
 all: $(IMAGE_NAME).hdd
 
 .PHONY: run
-run: run-hdd-$(ARCH)
+run: tap0 run-hdd-$(ARCH)
 
 .PHONY: run-hdd-x86_64
 run-hdd-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
@@ -227,3 +230,23 @@ distclean:
 	$(MAKE) -C kernel distclean
 	$(MAKE) -C user distclean
 	rm -rf *.hdd kernel-deps limine ovmf
+
+IFACE:=$(shell sudo ip -o -4 route show to default | awk '{print $$5}')
+
+TAP0:=/sys/class/net/tap0
+
+.SECONDARY: $(TAP0)
+
+# 网桥 IP 地址
+GATEWAY:=172.16.16.1
+
+$(TAP0):
+	sudo ip tuntap add mode tap $(notdir $@) user $(USER)
+	sudo ip addr add $(GATEWAY)/24 dev $(notdir $@)
+	sudo ip link set dev $(notdir $@) up
+
+	sudo sysctl net.ipv4.ip_forward=1
+	sudo iptables -t nat -A POSTROUTING -s $(GATEWAY)/24 -o $(IFACE) -j MASQUERADE
+	sudo iptables -A FORWARD -i $(notdir $@) -o $(IFACE) -j ACCEPT
+
+tap0: $(TAP0)

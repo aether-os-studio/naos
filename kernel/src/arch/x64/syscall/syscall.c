@@ -186,6 +186,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_MUNMAP:
         regs->rax = sys_munmap(arg1, arg2);
         break;
+    case SYS_MADVISE:
+        regs->rax = 0;
+        break;
     case SYS_CLOCK_GETTIME:
         tm time;
         time_read(&time);
@@ -301,7 +304,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = current_task->pid;
         break;
     case SYS_FUTEX:
-        regs->rax = 0;
+        regs->rax = sys_futex((int *)arg1, arg2, arg3, (const struct timespec *)arg4, (int *)arg5, arg6);
         break;
     case SYS_PIPE:
         regs->rax = sys_pipe((int *)arg1);

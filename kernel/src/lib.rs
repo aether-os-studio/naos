@@ -1,6 +1,7 @@
 #![no_std]
 #![feature(allocator_api)]
 #![feature(vec_into_raw_parts)]
+#![allow(static_mut_refs)]
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(unused_imports)]
 #![allow(unused_variables)]
@@ -19,6 +20,14 @@ pub mod libs;
 pub mod mm;
 pub mod net;
 pub mod rust;
+
+pub fn addr_of<T>(x: &T) -> usize {
+    x as *const T as usize
+}
+
+pub fn ref_to_mut<T>(x: &T) -> &mut T {
+    unsafe { &mut *(addr_of(x) as *mut T) }
+}
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {

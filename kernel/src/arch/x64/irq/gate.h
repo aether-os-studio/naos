@@ -49,7 +49,7 @@ extern unsigned int TSS64_Table[26];
     do                                                                                                 \
     {                                                                                                  \
         uint64_t __d0, __d1;                                                                           \
-        __asm__ __volatile__("movw	%%dx,	%%ax	\n\t"                                                    \
+        asm volatile("movw	%%dx,	%%ax	\n\t"                                                    \
                              "andq	$0x7,	%%rcx	\n\t"                                                   \
                              "addq	%4,	%%rcx	\n\t"                                                     \
                              "shlq	$32,	%%rcx	\n\t"                                                    \
@@ -84,7 +84,7 @@ static inline void set_tss_descriptor(unsigned int n, void *addr)
 #define load_TR(n)                                        \
     do                                                    \
     {                                                     \
-        __asm__ __volatile__("ltr %%ax" ::"a"((n) << 3)); \
+        asm volatile("ltr %%ax" ::"a"((n) << 3)); \
     } while (0)
 
 /**

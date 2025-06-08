@@ -38,7 +38,7 @@
 #define SIGUNUSED SIGSYS
 
 #define MINSIG 1
-#define MAXSIG 32
+#define MAXSIG 65
 
 #define SIGMASK(sig) (1 << (sig))
 

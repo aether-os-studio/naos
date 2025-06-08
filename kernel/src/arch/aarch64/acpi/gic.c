@@ -80,8 +80,8 @@ void madt_setup(MADT *madt)
 }
 
 // 内存屏障宏
-#define dsb(op) __asm__ __volatile__("dsb " #op : : : "memory")
-#define isb() __asm__ __volatile__("isb" : : : "memory")
+#define dsb(op) asm volatile("dsb " #op : : : "memory")
+#define isb() asm volatile("isb" : : : "memory")
 
 // 中断控制函数
 void gic_enable_irq(uint32_t irq);

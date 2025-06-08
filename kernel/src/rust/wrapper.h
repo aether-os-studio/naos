@@ -1,5 +1,6 @@
 #include <libs/klibc.h>
 #include <arch/arch.h>
+#include <interrupt/irq_manager.h>
 #include <drivers/kernel_logger.h>
 #include <drivers/bus/pci.h>
 #include <mm/mm.h>

@@ -26,7 +26,7 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64
     asm volatile("mrs %0, fpcr" : "=r"(context->ctx->fpcr));
     asm volatile("mrs %0, fpsr" : "=r"(context->ctx->fpsr));
     context->usermode = user_mode;
-    __asm__ __volatile__("mrs %0, TTBR0_EL1" : "=r"(context->ttbr));
+    asm volatile("mrs %0, TTBR0_EL1" : "=r"(context->ttbr));
 }
 
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack)
@@ -75,10 +75,10 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
     next->current_state = TASK_RUNNING;
 
     // 1. 更新TTBR0_EL1
-    __asm__ __volatile__("msr TTBR0_EL1, %0" : : "r"(next->arch_context->ttbr));
+    asm volatile("msr TTBR0_EL1, %0" : : "r"(next->arch_context->ttbr));
 
     // 2. 刷新TLB
-    __asm__ __volatile__("dsb ishst\n\t"
+    asm volatile("dsb ishst\n\t"
                          "tlbi vmalle1is\n\t"
                          "dsb ish\n\t"
                          "isb\n\t");
@@ -108,10 +108,10 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
     arch_context_to_user_mode(context, entry, stack);
 
     // 1. 更新TTBR0_EL1
-    __asm__ __volatile__("msr TTBR0_EL1, %0" : : "r"(context->ttbr));
+    asm volatile("msr TTBR0_EL1, %0" : : "r"(context->ttbr));
 
     // 2. 刷新TLB
-    __asm__ __volatile__("dsb ishst\n\t"
+    asm volatile("dsb ishst\n\t"
                          "tlbi vmalle1is\n\t"
                          "dsb ish\n\t"
                          "isb\n\t");

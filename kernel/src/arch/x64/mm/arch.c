@@ -7,7 +7,7 @@
 uint64_t *get_current_page_dir(bool user)
 {
     uint64_t page_table_base = 0;
-    __asm__ __volatile__("movq %%cr3, %0" : "=r"(page_table_base));
+    asm volatile("movq %%cr3, %0" : "=r"(page_table_base));
     return (uint64_t *)phys_to_virt(page_table_base);
 }
 
@@ -241,5 +241,5 @@ void free_page_table(uint64_t directory)
 
 void arch_flush_tlb(uint64_t vaddr)
 {
-    __asm__ __volatile__("invlpg (%0)" ::"r"(vaddr) : "memory");
+    asm volatile("invlpg (%0)" ::"r"(vaddr) : "memory");
 }

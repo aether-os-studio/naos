@@ -91,35 +91,35 @@ void arch_switch_with_context(arch_context_t *prev, arch_context_t *next, uint64
 {
     if (prev)
     {
-        __asm__ __volatile__("movq %%fs, %0\n\t" : "=r"(prev->fs));
-        __asm__ __volatile__("movq %%gs, %0\n\t" : "=r"(prev->gs));
+        asm volatile("movq %%fs, %0\n\t" : "=r"(prev->fs));
+        asm volatile("movq %%gs, %0\n\t" : "=r"(prev->gs));
 
         prev->fsbase = read_fsbase();
         prev->gsbase = read_gsbase();
 
         if (prev->fpu_ctx)
         {
-            __asm__ __volatile__("fxsave (%0)" ::"r"(prev->fpu_ctx));
+            asm volatile("fxsave (%0)" ::"r"(prev->fpu_ctx));
         }
     }
 
     // Start to switch
     if (next->fpu_ctx)
     {
-        __asm__ __volatile__("fxrstor (%0)" ::"r"(next->fpu_ctx));
+        asm volatile("fxrstor (%0)" ::"r"(next->fpu_ctx));
     }
 
-    __asm__ __volatile__("movq %0, %%cr3\n\t" ::"r"(next->cr3));
+    asm volatile("movq %0, %%cr3\n\t" ::"r"(next->cr3));
 
     tss[current_cpu_id].rsp0 = kernel_stack;
 
-    __asm__ __volatile__("movq %0, %%fs\n\t" ::"r"(next->fs));
-    __asm__ __volatile__("movq %0, %%gs\n\t" ::"r"(next->gs));
+    asm volatile("movq %0, %%fs\n\t" ::"r"(next->fs));
+    asm volatile("movq %0, %%gs\n\t" ::"r"(next->gs));
 
     write_fsbase(next->fsbase);
     write_gsbase(next->gsbase);
 
-    __asm__ __volatile__(
+    asm volatile(
         "movq %0, %%rsp\n\t"
         "jmp ret_from_exception" ::"r"(next->ctx));
 }
@@ -162,7 +162,7 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t
     context->fs = SELECTOR_USER_DS;
     context->gs = SELECTOR_USER_DS;
 
-    __asm__ __volatile__("movq %0, %%fs\n\t"
+    asm volatile("movq %0, %%fs\n\t"
                          "movq %0, %%gs\n\t" ::"r"(context->fs),
                          "r"(context->gs));
 
@@ -173,16 +173,16 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
 {
     arch_context_to_user_mode(context, entry, stack);
 
-    __asm__ __volatile__("movq %0, %%cr3" ::"r"(context->cr3));
+    asm volatile("movq %0, %%cr3" ::"r"(context->cr3));
 
-    __asm__ __volatile__(
+    asm volatile(
         "movq %0, %%rsp\n\t"
         "jmp ret_from_exception" ::"r"(context->ctx));
 }
 
 void arch_yield()
 {
-    __asm__ __volatile__("int %0" ::"i"(APIC_TIMER_INTERRUPT_VECTOR));
+    asm volatile("int %0" ::"i"(APIC_TIMER_INTERRUPT_VECTOR));
 }
 
 #define ARCH_SET_GS 0x1001

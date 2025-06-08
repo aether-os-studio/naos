@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use alloc::boxed::Box;
 use alloc::collections::vec_deque::VecDeque;
 use alloc::format;
 use alloc::string::String;
@@ -10,25 +11,24 @@ use core::mem::size_of;
 use core::sync::atomic::{Ordering, fence};
 use smoltcp::socket::Socket;
 use smoltcp::socket::dhcpv4::Event;
-use spin::{Lazy, Mutex};
+use spin::{Lazy, Mutex, RwLock};
 
 use bit_field::*;
 use bitflags::*;
-use vcell::VolatileCell;
 
 use smoltcp::phy::{self, DeviceCapabilities};
 use smoltcp::time::{Duration, Instant};
-use smoltcp::wire::{EthernetAddress, *};
+use smoltcp::wire::*;
 use smoltcp::{iface::*, socket};
 
 use crate::mm::phys_to_virt;
-use crate::net::SOCKETS;
-use crate::println;
+use crate::net::{NetworkDevice, SOCKETS, SOCKETS_SET};
 use crate::rust::bindings::bindings::{
-    DEFAULT_PAGE_SIZE, PT_FLAG_R, PT_FLAG_W, alloc_frames, arch_enable_interrupt, arch_yield,
-    get_current_page_dir, map_page_range, mktime, pci_device_t, pci_find_class, task_create,
-    task_exit, time_read, tm,
+    DEFAULT_PAGE_SIZE, PT_FLAG_R, PT_FLAG_W, alloc_frames, apic_controller, arch_enable_interrupt,
+    arch_yield, get_current_page_dir, irq_controller_t, irq_regist_irq, map_page_range, mktime,
+    pci_device_t, pci_find_class, pt_regs, task_create, task_exit, time_read, tm,
 };
+use crate::{println, ref_to_mut};
 
 // At the beginning, all transmit descriptors have there status non-zero,
 // so we need to track whether we are using the descriptor for the first time.
@@ -39,7 +39,7 @@ pub struct E1000 {
     header: usize,
     size: usize,
     mac: EthernetAddress,
-    registers: &'static mut [VolatileCell<u32>],
+    registers: &'static mut [u32],
     send_queue: &'static mut [E1000SendDesc],
     send_buffers: Vec<usize>,
     recv_queue: &'static mut [E1000RecvDesc],
@@ -101,20 +101,20 @@ impl E1000 {
         let send_queue: &mut [E1000SendDesc] = unsafe {
             core::slice::from_raw_parts_mut(
                 send_queue_va as *mut _,
-                4096 / size_of::<E1000SendDesc>(),
+                DEFAULT_PAGE_SIZE as usize / size_of::<E1000SendDesc>(),
             )
         };
         let recv_queue: &mut [E1000RecvDesc] = unsafe {
             core::slice::from_raw_parts_mut(
                 recv_queue_va as *mut _,
-                4096 / size_of::<E1000RecvDesc>(),
+                DEFAULT_PAGE_SIZE as usize / size_of::<E1000RecvDesc>(),
             )
         };
 
         let mut send_buffers = Vec::with_capacity(send_queue.len());
         let mut recv_buffers = Vec::with_capacity(recv_queue.len());
 
-        let e1000: &mut [VolatileCell<u32>] =
+        let e1000: &mut [u32] =
             unsafe { core::slice::from_raw_parts_mut(header as *mut _, size / 4) };
 
         // 4.6 Software Initialization Sequence
@@ -122,15 +122,15 @@ impl E1000 {
         // 4.6.6 Transmit Initialization
 
         // Program the descriptor base address with the address of the region.
-        e1000[E1000_TDBAL].set(send_queue_pa as u32); // TDBAL
-        e1000[E1000_TDBAH].set((send_queue_pa >> 32) as u32); // TDBAH
+        e1000[E1000_TDBAL] = send_queue_pa as u32; // TDBAL
+        e1000[E1000_TDBAH] = (send_queue_pa >> 32) as u32; // TDBAH
 
         // Set the length register to the size of the descriptor ring.
-        e1000[E1000_TDLEN].set(4096u32); // TDLEN
+        e1000[E1000_TDLEN] = DEFAULT_PAGE_SIZE; // TDLEN
 
         // If needed, program the head and tail registers.
-        e1000[E1000_TDH].set(0); // TDH
-        e1000[E1000_TDT].set(0); // TDT
+        e1000[E1000_TDH] = 0; // TDH
+        e1000[E1000_TDT] = 0; // TDT
 
         for i in 0..send_queue.len() {
             let buffer_page_pa = unsafe { alloc_frames(1) } as usize;
@@ -140,9 +140,9 @@ impl E1000 {
         }
 
         // EN | PSP | CT=0x10 | COLD=0x40
-        e1000[E1000_TCTL].set((1 << 1) | (1 << 3) | (0x10 << 4) | (0x40 << 12)); // TCTL
+        e1000[E1000_TCTL] = (1 << 1) | (1 << 3) | (0x10 << 4) | (0x40 << 12); // TCTL
         // IPGT=0xa | IPGR1=0x8 | IPGR2=0xc
-        e1000[E1000_TIPG].set(0xa | (0x8 << 10) | (0xc << 20)); // TIPG
+        e1000[E1000_TIPG] = 0xa | (0x8 << 10) | (0xc << 20); // TIPG
 
         // 4.6.5 Receive Initialization
         let mut ral: u32 = 0;
@@ -154,27 +154,27 @@ impl E1000 {
             rah = rah | (mac.as_bytes()[i + 4] as u32) << (i * 8);
         }
 
-        e1000[E1000_RAL].set(ral); // RAL
+        e1000[E1000_RAL] = ral; // RAL
         // AV | AS=DA
-        e1000[E1000_RAH].set(rah | (1 << 31)); // RAH
+        e1000[E1000_RAH] = rah | (1 << 31); // RAH
 
         // MTA
         for i in E1000_MTA..E1000_RAL {
-            e1000[i].set(0);
+            e1000[i] = 0;
         }
 
         // Program the descriptor base address with the address of the region.
-        e1000[E1000_RDBAL].set(recv_queue_pa as u32); // RDBAL
-        e1000[E1000_RDBAH].set((recv_queue_pa >> 32) as u32); // RDBAH
+        e1000[E1000_RDBAL] = recv_queue_pa as u32; // RDBAL
+        e1000[E1000_RDBAH] = (recv_queue_pa >> 32) as u32; // RDBAH
 
         // Set the length register to the size of the descriptor ring.
-        e1000[E1000_RDLEN].set(4096u32); // RDLEN
+        e1000[E1000_RDLEN] = DEFAULT_PAGE_SIZE; // RDLEN
 
         // If needed, program the head and tail registers. Note: the head and tail pointers are initialized (by hardware) to zero after a power-on or a software-initiated device reset.
-        e1000[E1000_RDH].set(0); // RDH
+        e1000[E1000_RDH] = 0; // RDH
 
         // The tail pointer should be set to point one descriptor beyond the end.
-        e1000[E1000_RDT].set((recv_queue.len() - 1) as u32); // RDT
+        e1000[E1000_RDT] = (recv_queue.len() - 1) as u32; // RDT
 
         // Receive buffers of appropriate size should be allocated and pointers to these buffers should be stored in the descriptor ring.
         for i in 0..recv_queue.len() {
@@ -184,18 +184,10 @@ impl E1000 {
             recv_buffers.push(buffer_page_va as usize);
         }
 
-        // EN | BAM | BSIZE=3 | BSEX | SECRC
-        // BSIZE=3 | BSEX means buffer size = 4096
-        e1000[E1000_RCTL].set((1 << 1) | (1 << 15) | (3 << 16) | (1 << 25) | (1 << 26)); // RCTL
+        e1000[E1000_RCTL] = (1 << 1) | (1 << 15) | (1 << 16) | (1 << 26); // RCTL
 
-        // enable interrupt
-        // clear interrupt
-        e1000[E1000_ICR].set(e1000[E1000_ICR].get());
         // RXT0
-        e1000[E1000_IMS].set(1 << 7); // IMS
-
-        // clear interrupt
-        e1000[E1000_ICR].set(e1000[E1000_ICR].get());
+        e1000[E1000_IMS] = 1 << 7; // IMS
 
         E1000 {
             header,
@@ -211,10 +203,11 @@ impl E1000 {
     }
 
     pub fn handle_interrupt(&mut self) -> bool {
-        let icr = self.registers[E1000_ICR].get();
+        let icr = self.registers[E1000_ICR];
+
         if icr != 0 {
             // clear it
-            self.registers[E1000_ICR].set(icr);
+            self.registers[E1000_ICR] = icr;
             true
         } else {
             false
@@ -222,44 +215,37 @@ impl E1000 {
     }
 
     pub fn receive(&mut self) -> Option<Vec<u8>> {
-        let tdt = self.registers[E1000_TDT].get() as usize;
-        let index = tdt % self.send_queue.len();
-        let send_desc = &mut self.send_queue[index];
-
-        let mut rdt = self.registers[E1000_RDT].get() as usize;
+        let rdt = self.registers[E1000_RDT] as usize;
         let index = (rdt + 1) % self.recv_queue.len();
         let recv_desc = &mut self.recv_queue[index];
 
-        let transmit_avail = self.first_trans || send_desc.status.get_bit(0);
-        let receive_avail = recv_desc.status.get_bit(0);
-
-        if !(transmit_avail && receive_avail) {
+        if !recv_desc.status.get_bit(0) {
+            // 只检查接收描述符状态
             return None;
         }
-        let buffer = unsafe {
-            core::slice::from_raw_parts_mut(
-                self.recv_buffers[index] as *mut _,
-                recv_desc.len as usize,
-            )
-        };
 
-        recv_desc.status.set_bit(0, false);
+        let pkt_len = (recv_desc.len as usize).saturating_sub(4);
 
-        rdt = index;
-        self.registers[E1000_RDT].set(rdt as u32);
+        let buffer =
+            unsafe { core::slice::from_raw_parts(self.recv_buffers[index] as *const _, pkt_len) };
+
+        recv_desc.status = 0;
+        recv_desc.addr = self.recv_buffers[index] as u64; // 重新绑定缓冲区地址
+
+        self.registers[E1000_RDT] = index as u32;
 
         Some(buffer.to_vec())
     }
 
     pub fn can_send(&self) -> bool {
-        let tdt = self.registers[E1000_TDT].get();
+        let tdt = self.registers[E1000_TDT];
         let index = (tdt as usize) % self.send_queue.len();
         let send_desc = &self.send_queue[index];
         self.first_trans || send_desc.status.get_bit(0)
     }
 
     pub fn send(&mut self, buffer: &[u8]) {
-        let mut tdt = self.registers[E1000_TDT].get();
+        let mut tdt = self.registers[E1000_TDT];
         let index = (tdt as usize) % self.send_queue.len();
         let send_desc = &mut self.send_queue[index];
         assert!(self.first_trans || send_desc.status.get_bit(0));
@@ -275,7 +261,7 @@ impl E1000 {
         fence(Ordering::SeqCst);
 
         tdt = (tdt + 1) % self.send_queue.len() as u32;
-        self.registers[E1000_TDT].set(tdt);
+        self.registers[E1000_TDT] = tdt;
         fence(Ordering::SeqCst);
 
         // round
@@ -307,10 +293,10 @@ const E1000_RAL: usize = 0x5400 / 4;
 const E1000_RAH: usize = 0x5404 / 4;
 
 #[derive(Clone)]
-pub struct E1000Driver(Arc<Mutex<E1000>>);
+pub struct E1000Driver(Arc<E1000>);
 
 pub struct E1000Interface {
-    iface: Mutex<Interface>,
+    iface: Arc<Interface>,
     driver: E1000Driver,
     name: String,
     irq: Option<usize>,
@@ -324,14 +310,13 @@ impl phy::Device for E1000Driver {
     type TxToken<'a> = E1000TxToken;
 
     fn receive(&mut self, _timestamp: Instant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
-        self.0
-            .lock()
+        ref_to_mut(self.0.as_ref())
             .receive()
             .map(|vec| (E1000RxToken(vec), E1000TxToken(self.clone())))
     }
 
     fn transmit(&mut self, _timestamp: Instant) -> Option<Self::TxToken<'_>> {
-        if self.0.lock().can_send() {
+        if self.0.as_ref().can_send() {
             Some(E1000TxToken(self.clone()))
         } else {
             None
@@ -363,7 +348,7 @@ impl phy::TxToken for E1000TxToken {
         let mut buffer = [0u8; DEFAULT_PAGE_SIZE as usize];
         let result = f(&mut buffer[..len]);
 
-        let mut driver = (self.0).0.lock();
+        let driver = ref_to_mut((self.0).0.as_ref());
         driver.send(&buffer);
 
         result
@@ -394,7 +379,9 @@ fn get_current_instant() -> Instant {
     Instant::from_millis(unsafe { mktime(&mut time as *mut tm) })
 }
 
-pub static E1000_DRIVER: Lazy<Mutex<Vec<E1000Interface>>> = Lazy::new(|| {
+pub static mut ACTIVATE_DRIVER: Option<Arc<E1000Interface>> = None;
+
+pub static E1000_DRIVER: Lazy<Mutex<Vec<Arc<E1000Interface>>>> = Lazy::new(|| {
     let devices: &mut [*mut pci_device_t; 8] = &mut [
         core::ptr::null_mut(),
         core::ptr::null_mut(),
@@ -432,32 +419,57 @@ pub static E1000_DRIVER: Lazy<Mutex<Vec<E1000Interface>>> = Lazy::new(|| {
             )
         };
 
-        let mac = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
+        let mac: [u8; 6] = [0x54, 0x51, 0x9F, 0x71, 0xC0, i as u8];
         let e1000 = E1000::new(vaddr, bar_size as usize, EthernetAddress(mac));
-        let mut net_driver = E1000Driver(Arc::new(Mutex::new(e1000)));
+        let mut net_driver = E1000Driver(Arc::new(e1000));
 
         let ethernet_addr = EthernetAddress::from_bytes(&mac);
-        let ip_addrs = [IpCidr::new(IpAddress::v4(10, 0, 0, 2), 24)];
+        let ip_addrs = [IpCidr::new(IpAddress::v4(10, 0, i as u8, 2), 24)];
         let mut config = Config::new(HardwareAddress::Ethernet(EthernetAddress(mac)));
         config.random_seed = 10;
 
         let iface = Interface::new(config, &mut net_driver, get_current_instant());
-        drivers.push(E1000Interface {
-            iface: Mutex::new(iface),
-            driver: net_driver,
+
+        let interface = Arc::new(E1000Interface {
+            iface: Arc::new(iface),
+            driver: net_driver.clone(),
             name: format!("eth{}", i),
-            irq: None, // TODO: enable interrupt handling for this device
+            irq: Some(device.irq_line as usize),
         });
+        drivers.push(interface.clone());
+
+        unsafe {
+            if let None = ACTIVATE_DRIVER {
+                ACTIVATE_DRIVER.replace(interface);
+            }
+        }
+
+        unsafe {
+            irq_regist_irq(
+                device.irq_line as u64 + 32,
+                Some(e1000_irq_handler),
+                device.irq_line as u64,
+                core::ptr::null_mut(),
+                &raw mut apic_controller as *mut irq_controller_t,
+                "e1000\0".as_ptr() as usize as *mut core::ffi::c_char,
+            )
+        };
     });
 
     Mutex::new(drivers)
 });
 
-unsafe extern "C" fn e1000_init_thread(arg: u64) {
-    let mut drivers = E1000_DRIVER.lock();
+unsafe extern "C" fn e1000_irq_handler(
+    irq_num: u64,
+    data: *mut ::core::ffi::c_void,
+    regs: *mut pt_regs,
+) {
+    ref_to_mut(ACTIVATE_DRIVER.clone().unwrap().driver.0.as_ref()).handle_interrupt();
+}
 
-    if drivers.len() > 0 {
-        let driver = &mut drivers[0];
+unsafe extern "C" fn e1000_init_thread(arg: u64) {
+    if E1000_DRIVER.lock().len() > 0 {
+        let driver = ACTIVATE_DRIVER.clone().unwrap();
 
         let mut dhcp_socket = socket::dhcpv4::Socket::new();
         dhcp_socket.reset();
@@ -467,10 +479,11 @@ unsafe extern "C" fn e1000_init_thread(arg: u64) {
 
         loop {
             let time_stamp = get_current_instant();
-            driver
-                .iface
-                .lock()
-                .poll(time_stamp, &mut driver.driver, &mut set);
+            ref_to_mut(driver.iface.as_ref()).poll(
+                time_stamp,
+                ref_to_mut(&driver.driver),
+                &mut set,
+            );
 
             let dhcp_socket: &mut socket::dhcpv4::Socket = set.get_mut(dhcp_socket);
             let event = dhcp_socket.poll();
@@ -478,31 +491,39 @@ unsafe extern "C" fn e1000_init_thread(arg: u64) {
             match event {
                 None => {}
                 Some(Event::Deconfigured) => {
-                    driver.iface.lock().update_ip_addrs(|addrs| addrs.clear());
-                    driver.iface.lock().routes_mut().remove_default_ipv4_route();
+                    ref_to_mut(driver.iface.as_ref()).update_ip_addrs(|addrs| addrs.clear());
+                    ref_to_mut(driver.iface.as_ref())
+                        .routes_mut()
+                        .remove_default_ipv4_route();
                 }
                 Some(Event::Configured(config)) => {
                     // println!("DHCP config acquired!");
 
                     // println!("IP address: {}", config.address);
-                    set_ipv4_addr(&mut driver.iface.lock(), config.address);
+                    set_ipv4_addr(&mut ref_to_mut(driver.iface.as_ref()), config.address);
 
                     if let Some(router) = config.router {
                         // println!("Default gateway: {}", router);
-                        driver
-                            .iface
-                            .lock()
+                        ref_to_mut(driver.iface.as_ref())
                             .routes_mut()
                             .add_default_ipv4_route(router)
                             .unwrap();
                     } else {
                         // println!("Default gateway: None");
-                        driver.iface.lock().routes_mut().remove_default_ipv4_route();
+                        ref_to_mut(driver.iface.as_ref())
+                            .routes_mut()
+                            .remove_default_ipv4_route();
                     }
                 }
             }
 
-            driver.iface.lock().poll_delay(time_stamp, &set);
+            ref_to_mut(driver.iface.as_ref()).poll_delay(time_stamp, &set);
+
+            ref_to_mut(driver.iface.as_ref()).poll(
+                get_current_instant(),
+                ref_to_mut(&driver.driver),
+                &mut SOCKETS_SET.lock(),
+            );
 
             arch_enable_interrupt();
 

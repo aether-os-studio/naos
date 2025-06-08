@@ -1998,6 +1998,80 @@ uint64_t sys_mkdir(const char *name, uint64_t mode)
     return 0;
 }
 
+spinlock_t futex_lock = {0};
+struct futex_wait futex_wait_list = {NULL, 0, NULL};
+
+int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *uaddr2, int val3)
+{
+    if (check_user_overflow((uint64_t)uaddr, sizeof(int)) || (timeout && !check_user_overflow((uint64_t)timeout, sizeof(struct timespec))))
+    {
+        return -EFAULT;
+    }
+
+    switch (op & FUTEX_CMD_MASK)
+    {
+    case FUTEX_WAIT:
+    {
+        spin_lock(&futex_lock);
+
+        int current = *(int *)uaddr;
+        if (current != val)
+        {
+            spin_unlock(&futex_lock);
+            return -EWOULDBLOCK;
+        }
+
+        struct futex_wait *wait = malloc(sizeof(struct futex_wait));
+        wait->uaddr = uaddr;
+        wait->task = current_task;
+        struct futex_wait *curr = &futex_wait_list;
+        while (curr && curr->next)
+            curr = curr->next;
+
+        curr->next = wait;
+
+        spin_unlock(&futex_lock);
+
+        task_block(current_task, TASK_BLOCKING, -1);
+
+        while (current_task->state == TASK_BLOCKING)
+        {
+            arch_enable_interrupt();
+            arch_pause();
+        }
+
+        return 0;
+    }
+    case FUTEX_WAKE:
+    {
+        spin_lock(&futex_lock);
+
+        struct futex_wait *curr = &futex_wait_list;
+        struct futex_wait *prev = NULL;
+        int count = 0;
+        while (curr)
+        {
+            if (curr->uaddr == uaddr && ++count <= val)
+            {
+                task_unblock(curr->task, EOK);
+                if (prev)
+                {
+                    prev->next = curr->next;
+                }
+                free(curr);
+            }
+            prev = curr;
+            curr = curr->next;
+        }
+
+        spin_unlock(&futex_lock);
+        return count;
+    }
+    default:
+        return -ENOSYS;
+    }
+}
+
 void wake_blocked_tasks(task_block_list_t *head)
 {
     task_block_list_t *current = head->next;

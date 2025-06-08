@@ -24,7 +24,7 @@ void usleep(uint64_t nano)
             targetTime = n;
         }
 
-        __asm__ __volatile__("pause");
+        asm volatile("pause");
 
         if (after >= target)
         {

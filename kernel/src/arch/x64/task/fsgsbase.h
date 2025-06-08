@@ -19,7 +19,7 @@ void write_kgsbase(uint64_t value);
 static inline uint32_t has_fsgsbase()
 {
     uint32_t eax, ebx, ecx, edx;
-    __asm__ __volatile__("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0x07), "c"(0x00));
+    asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0x07), "c"(0x00));
     return ebx & (1 << 0);
 }
 

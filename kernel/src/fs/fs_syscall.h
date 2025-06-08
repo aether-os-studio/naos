@@ -432,4 +432,18 @@ typedef struct
 int sys_timerfd_create(int clockid, int flags);
 int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, struct itimerval *old_v);
 
+struct futex_wait
+{
+    void *uaddr;
+    task_t *task;
+    struct futex_wait *next;
+};
+
+#define FUTEX_CMD_MASK 0x7F
+
+#define FUTEX_WAIT 0
+#define FUTEX_WAKE 1
+
+int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *uaddr2, int val3);
+
 void wake_blocked_tasks(task_block_list_t *head);

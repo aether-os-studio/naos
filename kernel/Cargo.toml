@@ -13,7 +13,6 @@ good_memory_allocator = "0.1.7"
 limine = "0.4.0"
 pci_types = "0.10.0"
 spin = "0.10.0"
-vcell = "0.1.3"
 
 [dependencies.crossbeam-queue]
 version = "0.3.11"

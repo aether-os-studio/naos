@@ -211,7 +211,7 @@ void apic_setup(MADT *madt)
 
 void sse_init()
 {
-    __asm__ __volatile__("movq %cr0, %rax\n\t"
+    asm volatile("movq %cr0, %rax\n\t"
                          "and $0xFFF3, %ax	\n\t" // clear coprocessor emulation CR0.EM and CR0.TS
                          "or $0x2, %ax\n\t"       // set coprocessor monitoring  CR0.MP
                          "movq %rax, %cr0\n\t"
@@ -227,7 +227,7 @@ void ap_entry(struct limine_mp_info *cpu)
     close_interrupt;
 
     uint64_t cr3 = (uint64_t)virt_to_phys(get_current_page_dir(false));
-    __asm__ __volatile__("movq %0, %%cr3" ::"r"(cr3) : "memory");
+    asm volatile("movq %0, %%cr3" ::"r"(cr3) : "memory");
 
     sse_init();
 

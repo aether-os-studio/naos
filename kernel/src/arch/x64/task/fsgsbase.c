@@ -28,25 +28,25 @@ void (*write_gsbase)(uint64_t value) = write_gsbase_msr;
 uint64_t rdfsbase()
 {
     uint64_t ret;
-    __asm__ __volatile__("rdfsbase %0" : "=r"(ret));
+    asm volatile("rdfsbase %0" : "=r"(ret));
     return ret;
 }
 
 void wrfsbase(uint64_t value)
 {
-    __asm__ __volatile__("wrfsbase %0" ::"r"(value));
+    asm volatile("wrfsbase %0" ::"r"(value));
 }
 
 uint64_t rdgsbase()
 {
     uint64_t ret;
-    __asm__ __volatile__("rdgsbase %0" : "=r"(ret));
+    asm volatile("rdgsbase %0" : "=r"(ret));
     return ret;
 }
 
 void wrgsbase(uint64_t value)
 {
-    __asm__ __volatile__("wrgsbase %0" ::"r"(value));
+    asm volatile("wrgsbase %0" ::"r"(value));
 }
 
 uint64_t read_kgsbase()
@@ -65,9 +65,9 @@ uint64_t fsgsbase_init()
     if (support)
     {
         uint64_t cr4 = 0;
-        __asm__ __volatile__("movq %%cr4, %0" : "=r"(cr4));
+        asm volatile("movq %%cr4, %0" : "=r"(cr4));
         cr4 |= (1 << 16);
-        __asm__ __volatile__("movq %0, %%cr4" ::"r"(cr4));
+        asm volatile("movq %0, %%cr4" ::"r"(cr4));
 
         read_fsbase = rdfsbase;
         write_fsbase = wrfsbase;

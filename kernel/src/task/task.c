@@ -511,7 +511,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     if (current_task->arch_context->cr3 == (uint64_t)virt_to_phys(get_kernel_page_dir()))
     {
         current_task->arch_context->cr3 = clone_page_table(current_task->arch_context->cr3);
-        __asm__ __volatile__("movq %0, %%cr3" ::"r"(current_task->arch_context->cr3));
+        asm volatile("movq %0, %%cr3" ::"r"(current_task->arch_context->cr3));
     }
 #endif
 
