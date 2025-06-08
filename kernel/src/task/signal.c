@@ -353,21 +353,21 @@ int sys_kill(int pid, int sig)
         return 0;
     }
 
-    if (task->ppid != 0 && task->ppid != task->pid)
-    {
-        task_t *parent = tasks[task->ppid];
-        if (!parent)
-        {
-            return 0;
-        }
+    // if (task->ppid != 0 && task->ppid != task->pid)
+    // {
+    //     task_t *parent = tasks[task->ppid];
+    //     if (!parent)
+    //     {
+    //         return 0;
+    //     }
 
-        parent->signal |= SIGMASK(SIGCHLD);
+    //     parent->signal |= SIGMASK(SIGCHLD);
 
-        if (parent->state == TASK_BLOCKING)
-        {
-            task_unblock(parent, -SIGCHLD);
-        }
-    }
+    //     if (parent->state == TASK_BLOCKING)
+    //     {
+    //         task_unblock(parent, -SIGCHLD);
+    //     }
+    // }
 
     task->signal |= SIGMASK(sig);
 

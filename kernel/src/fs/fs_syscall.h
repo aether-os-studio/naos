@@ -7,6 +7,8 @@
 #include <fs/vfs/vfs.h>
 #include <task/task.h>
 
+char *at_resolve_pathname(int dirfd, char *pathname);
+
 struct iovec
 {
     uint8_t *iov_base;

@@ -40,7 +40,7 @@
 #define MINSIG 1
 #define MAXSIG 65
 
-#define SIGMASK(sig) (1 << (sig))
+#define SIGMASK(sig) (1UL << (sig))
 
 typedef enum signal_internal
 {

@@ -24,7 +24,7 @@ echo "http://mirrors.ustc.edu.cn/alpine/${ALPINE_VERSION}/main\nhttp://mirrors.u
 sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add musl-dev gcompat gzip xz make file tar pciutils tzdata
 sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add nano
 sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add lua5.1 gcc binutils python3
-# sudo "$APK_PATH" --arch $ARCH -X http://mirrors.ustc.edu.cn/alpine/v3.14/community -U --allow-untrusted --root $SYSROOT/../ --initdb add weston weston-backend-fbdev weston-shell-desktop
+# sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add seatd weston weston-backend-drm weston-shell-desktop
 # sudo "$APK_PATH" --arch $ARCH -U --allow-untrusted --root $SYSROOT/../ --initdb add xorg-server xf86-video-fbdev xf86-input-evdev xinit xsetroot mesa-gl mesa-utils mesa-vulkan-swrast mesa-dri-gallium twm
 
 sudo cp -r $SYSROOT/share/zoneinfo/Asia/Shanghai $SYSROOT/../etc/localtime
