@@ -14,7 +14,9 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64
         context->fpu_ctx->mxscr = 0x1f80;
         context->fpu_ctx->fcw = 0x037f;
     }
-    context->cr3 = page_table_addr;
+    context->mm = malloc(sizeof(task_mm_info_t));
+    context->mm->page_table_addr = page_table_addr;
+    context->mm->ref_count = 1;
     context->ctx = (struct pt_regs *)stack - 1;
     context->ctx->rip = entry;
     context->ctx->rsp = stack;
@@ -43,9 +45,9 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64
     }
 }
 
-void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack)
+void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack, uint64_t clone_flags)
 {
-    dst->cr3 = clone_page_table(src->cr3);
+    dst->mm = clone_page_table(src->mm, clone_flags);
     dst->ctx = (struct pt_regs *)stack - 1;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
     dst->ctx->ds = SELECTOR_USER_DS;
@@ -109,7 +111,7 @@ void arch_switch_with_context(arch_context_t *prev, arch_context_t *next, uint64
         asm volatile("fxrstor (%0)" ::"r"(next->fpu_ctx));
     }
 
-    asm volatile("movq %0, %%cr3\n\t" ::"r"(next->cr3));
+    asm volatile("movq %0, %%cr3\n\t" ::"r"(next->mm->page_table_addr));
 
     tss[current_cpu_id].rsp0 = kernel_stack;
 
@@ -163,8 +165,8 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t
     context->gs = SELECTOR_USER_DS;
 
     asm volatile("movq %0, %%fs\n\t"
-                         "movq %0, %%gs\n\t" ::"r"(context->fs),
-                         "r"(context->gs));
+                 "movq %0, %%gs\n\t" ::"r"(context->fs),
+                 "r"(context->gs));
 
     context->ctx->rflags = (0UL << 12) | (0b10) | (1UL << 9);
 }
@@ -173,7 +175,7 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
 {
     arch_context_to_user_mode(context, entry, stack);
 
-    asm volatile("movq %0, %%cr3" ::"r"(context->cr3));
+    asm volatile("movq %0, %%cr3" ::"r"(context->mm->page_table_addr));
 
     asm volatile(
         "movq %0, %%rsp\n\t"

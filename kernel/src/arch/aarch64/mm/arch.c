@@ -65,11 +65,14 @@ static void copy_page_table_inner(uint64_t src_phys, uint64_t dst_phys, int leve
     }
 }
 
-uint64_t clone_page_table(uint64_t cr3_old)
+task_mm_info_t *clone_page_table(task_mm_info_t *cr3_old, uint64_t clone_flags)
 {
     uint64_t new = alloc_frames(1);
-    copy_page_table_inner(cr3_old, new, 3);
-    return new;
+    task_mm_info_t *new_info = malloc(sizeof(task_mm_info_t));
+    copy_page_table_inner(cr3_old->page_table_addr, new, 3);
+    new_info->page_table_addr = new;
+    new_info->ref_count = 1;
+    return new_info;
 }
 
 static void free_page_table_inner(uint64_t phys_addr, int level)
@@ -95,9 +98,9 @@ static void free_page_table_inner(uint64_t phys_addr, int level)
     free_frames(phys_addr, 1);
 }
 
-void free_page_table(uint64_t directory)
+void free_page_table(task_mm_info_t *directory)
 {
-    free_page_table_inner(directory, 4);
+    free_page_table_inner(directory->page_table_addr, 4);
 }
 
 // 内存屏障和TLB操作

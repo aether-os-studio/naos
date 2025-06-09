@@ -162,13 +162,13 @@ int sys_ssetmask(int how, sigset_t *nset, sigset_t *oset)
             current_task->blocked |= safe;
             break;
         case SIG_UNBLOCK:
-            current_task->blocked &= ~safe;
+            current_task->blocked &= ~(safe);
             break;
         case SIG_SETMASK:
             current_task->blocked = safe;
             break;
         default:
-            return -ENOSYS;
+            return -EINVAL;
             break;
         }
     }
@@ -558,7 +558,7 @@ void task_signal()
         }
     }
 
-    current_task->blocked |= (SIGMASK(sig) | ptr->sa_mask);
+    current_task->blocked |= ptr->sa_mask;
 
     arch_switch_with_context(NULL, current_task->arch_context, current_task->kernel_stack);
 }

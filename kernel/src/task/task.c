@@ -387,7 +387,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     child->arch_context = malloc(sizeof(arch_context_t));
     memset(child->arch_context, 0, sizeof(arch_context_t));
     current_task->arch_context->ctx = regs;
-    arch_context_copy(child->arch_context, current_task->arch_context, child->kernel_stack);
+    arch_context_copy(child->arch_context, current_task->arch_context, child->kernel_stack, vfork ? CLONE_VM : 0);
     child->ppid = current_task->pid;
     child->uid = current_task->uid;
     child->gid = current_task->gid;
@@ -508,10 +508,10 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     new_envp[envp_count] = NULL;
 
 #if defined(__x86_64__)
-    if (current_task->arch_context->cr3 == (uint64_t)virt_to_phys(get_kernel_page_dir()))
+    if (current_task->arch_context->mm->page_table_addr == (uint64_t)virt_to_phys(get_kernel_page_dir()))
     {
-        current_task->arch_context->cr3 = clone_page_table(current_task->arch_context->cr3);
-        asm volatile("movq %0, %%cr3" ::"r"(current_task->arch_context->cr3));
+        current_task->arch_context->mm = clone_page_table(current_task->arch_context->mm, CLONE_VM);
+        asm volatile("movq %0, %%cr3" ::"r"(current_task->arch_context->mm->page_table_addr));
     }
 #endif
 
@@ -930,11 +930,7 @@ rollback:
 
         tasks[child->pid] = NULL;
 
-#if defined(__x86_64__)
-        free_page_table(child->arch_context->cr3);
-#elif defined(__aarch64__)
-        free_page_table(child->arch_context->ttbr);
-#endif
+        free_page_table(child->arch_context->mm);
 
         free(child->arch_context);
 
@@ -975,7 +971,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->arch_context = malloc(sizeof(arch_context_t));
     memset(child->arch_context, 0, sizeof(arch_context_t));
     current_task->arch_context->ctx = regs;
-    arch_context_copy(child->arch_context, current_task->arch_context, child->kernel_stack);
+    arch_context_copy(child->arch_context, current_task->arch_context, child->kernel_stack, flags);
 #if defined(__x86_64__)
     if (newsp)
         child->arch_context->ctx->rsp = newsp;

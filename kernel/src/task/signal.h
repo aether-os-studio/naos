@@ -67,7 +67,7 @@ bool signals_pending_quick(task_t *task);
 #define SIG_SETMASK 2 /* for setting the signal mask */
 
 typedef uint64_t sigset_t;
-typedef void (*sighandler_t)(void);
+typedef void (*sighandler_t)(int);
 
 #define SIG_DFL ((sighandler_t)0) // 默认的信号处理程序（信号句柄）
 #define SIG_IGN ((sighandler_t)1) // 忽略信号的处理程序

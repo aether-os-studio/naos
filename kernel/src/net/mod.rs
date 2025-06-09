@@ -7,7 +7,7 @@ use smoltcp::{
 };
 use spin::{Lazy, Mutex};
 
-use crate::{drivers::net::e1000::E1000_DRIVER, rust::bindings::bindings::*};
+use crate::rust::bindings::bindings::*;
 
 pub trait NetworkDevice: Send + Sync {
     fn poll(&mut self);

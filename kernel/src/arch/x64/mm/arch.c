@@ -3,6 +3,7 @@
 #include <drivers/fb.h>
 #include <libs/klibc.h>
 #include <mm/mm.h>
+#include <task/task.h>
 
 uint64_t *get_current_page_dir(bool user)
 {
@@ -33,6 +34,21 @@ uint64_t get_arch_page_table_flags(uint64_t flags)
     return result;
 }
 
+bool is_stack_memory_region(uint64_t pml4_idx, uint64_t pdpt_idx, uint64_t pd_idx, uint64_t pt_idx)
+{
+    uint64_t vaddr = (pml4_idx << 39) | (pdpt_idx << 30) | (pd_idx << 21) | (pt_idx << 12);
+
+    uint64_t fb_addr = virt_to_phys((uint64_t)framebuffer_request.response->framebuffers[0]->address);
+    uint64_t fb_size = framebuffer_request.response->framebuffers[0]->width * framebuffer_request.response->framebuffers[0]->height * framebuffer_request.response->framebuffers[0]->bpp / 8;
+
+    // todo: others
+    if ((vaddr >= USER_STACK_START) && (vaddr <= USER_BRK_END))
+    {
+        return true;
+    }
+    return false;
+}
+
 bool is_reserved_memory_region(uint64_t pml4_idx, uint64_t pdpt_idx, uint64_t pd_idx, uint64_t pt_idx)
 {
     uint64_t vaddr = (pml4_idx << 39) | (pdpt_idx << 30) | (pd_idx << 21) | (pt_idx << 12);
@@ -48,14 +64,20 @@ bool is_reserved_memory_region(uint64_t pml4_idx, uint64_t pdpt_idx, uint64_t pd
     return false;
 }
 
-uint64_t clone_page_table(uint64_t cr3_old)
+task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags)
 {
+    task_mm_info_t *new = malloc(sizeof(task_mm_info_t));
+
     uint64_t cr3_new = alloc_frames(1);
     if (cr3_new == 0)
     {
         printk("Cannot clone page table: no page can be allocated");
-        return cr3_old;
+        return old;
     }
+
+    new->page_table_addr = cr3_new;
+    uint64_t cr3_old = old->page_table_addr;
+
     // 4层嵌套for循环，简单粗暴
     // 你当然可以用算法优化一下的
     // 我就这样写了，就是给你提供个思路
@@ -166,7 +188,7 @@ uint64_t clone_page_table(uint64_t cr3_old)
 
                     uint64_t *page_old = (uint64_t *)phys_to_virt(pte_old & 0x00007FFFFFFFF000);
 
-                    if (is_reserved_memory_region(pml4_idx, pdpt_idx, pd_idx, pt_idx))
+                    if ((is_stack_memory_region(pml4_idx, pdpt_idx, pd_idx, pt_idx) && (clone_flags & CLONE_VM)) || (is_reserved_memory_region(pml4_idx, pdpt_idx, pd_idx, pt_idx)))
                     {
                         pt_new[pt_idx] = pte_old;
                     }
@@ -186,7 +208,8 @@ uint64_t clone_page_table(uint64_t cr3_old)
             }
         }
     }
-    return cr3_new;
+
+    return new;
 }
 
 static void free_page_table_inner(uint64_t phys_addr, int level)
@@ -220,23 +243,30 @@ static void free_page_table_inner(uint64_t phys_addr, int level)
     free_frames(phys_addr, 1);
 }
 
-void free_page_table(uint64_t directory)
+void free_page_table(task_mm_info_t *directory)
 {
-    uint64_t *pml4 = phys_to_virt((uint64_t *)directory);
-
-    for (int i = 0; i < 256; i++)
+    if (directory->ref_count == 1)
     {
-        if (!(pml4[i] & ARCH_PT_FLAG_VALID))
-            continue;
+        uint64_t *pml4 = phys_to_virt((uint64_t *)directory->page_table_addr);
 
-        uint64_t pdpt_phys = pml4[i] & 0x00007FFFFFFFF000;
-        if ((pdpt_phys & 0xFFFF800000000000) != 0)
-            continue;
-        free_page_table_inner(pdpt_phys, 3);
-        pml4[i] = 0; // 清除PML4条目
+        for (int i = 0; i < 256; i++)
+        {
+            if (!(pml4[i] & ARCH_PT_FLAG_VALID))
+                continue;
+
+            uint64_t pdpt_phys = pml4[i] & 0x00007FFFFFFFF000;
+            if ((pdpt_phys & 0xFFFF800000000000) != 0)
+                continue;
+            free_page_table_inner(pdpt_phys, 3);
+            pml4[i] = 0; // 清除PML4条目
+        }
+
+        free_frames((uint64_t)directory, 1);
     }
-
-    free_frames((uint64_t)directory, 1);
+    else
+    {
+        directory->ref_count--;
+    }
 }
 
 void arch_flush_tlb(uint64_t vaddr)

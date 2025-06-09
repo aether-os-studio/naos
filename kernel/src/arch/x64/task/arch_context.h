@@ -2,6 +2,7 @@
 
 #include <arch/x64/irq/ptrace.h>
 #include <arch/elf.h>
+#include <mm/mm.h>
 
 #define USER_STACK_START 0x00006fffff000000
 #define USER_STACK_END 0x0000700000000000
@@ -45,7 +46,7 @@ typedef struct arch_context
     uint64_t gs;
     uint64_t fsbase;
     uint64_t gsbase;
-    uint64_t cr3;
+    task_mm_info_t *mm;
     struct pt_regs *ctx;
     fpu_context_t *fpu_ctx;
 } arch_context_t;
@@ -81,8 +82,8 @@ typedef struct arch_signal_frame
     struct fpstate *fpstate; /* zero when no FPU context */
 } __attribute__((packed)) arch_signal_frame_t;
 
-void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64_t entry, uint64_t stack, bool user_mode, uint64_t initial_arg);
-void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack);
+void arch_context_init(arch_context_t *context, uint64_t page_table_dir, uint64_t entry, uint64_t stack, bool user_mode, uint64_t initial_arg);
+void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack, uint64_t clone_flags);
 void arch_context_free(arch_context_t *context);
 task_t *arch_get_current();
 void arch_set_current(task_t *current);

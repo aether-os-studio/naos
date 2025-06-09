@@ -10,8 +10,11 @@
 uint64_t *get_kernel_page_dir();
 uint64_t *get_current_page_dir(bool user);
 
-uint64_t clone_page_table(uint64_t cr3_old);
-void free_page_table(uint64_t directory);
+struct task_mm_info;
+typedef struct task_mm_info task_mm_info_t;
+
+task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags);
+void free_page_table(task_mm_info_t *directory);
 
 uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr);
 
