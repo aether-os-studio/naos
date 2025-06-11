@@ -92,7 +92,7 @@ HOST_LDFLAGS :=
 HOST_LIBS :=
 
 .PHONY: all
-all: $(IMAGE_NAME).hdd
+all: $(IMAGE_NAME).img
 
 .PHONY: kernel
 kernel:
@@ -107,53 +107,41 @@ user:
 clean:
 	$(MAKE) -C kernel clean
 	$(MAKE) -C user clean
-	rm -rf $(IMAGE_NAME).hdd rootfs-$(ARCH).hdd
+	rm -rf $(IMAGE_NAME).img rootfs-$(ARCH).img
 
 .PHONY: distclean
 distclean:
 	$(MAKE) -C kernel distclean
 	$(MAKE) -C user distclean
-	rm -rf *.hdd limine ovmf
+	rm -rf *.img assets
 
-$(IMAGE_NAME).hdd: limine/limine kernel
-	rm -rf $(IMAGE_NAME).hdd
-	dd if=/dev/zero bs=1M count=0 seek=512 of=$(IMAGE_NAME).hdd
 ifeq ($(ARCH),x86_64)
-	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00 -m 1
-else
-	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00
+EFI_FILE = assets/limine/BOOTX64.EFI:EFI/BOOT/BOOTX64.EFI
+else ifeq ($(ARCH),aarch64)
+EFI_FILE = assets/limine/BOOTAA64.EFI:EFI/BOOT/BOOTAA64.EFI
+else ifeq ($(ARCH),riscv64)
+EFI_FILE = assets/limine/BOOTRISCV64.EFI:EFI/BOOT/BOOTRISCV64.EFI
+else ifeq ($(ARCH),loongarch64)
+EFI_FILE = assets/limine/BOOTLOONGARCH64.EFI:EFI/BOOT/BOOTLOONGARCH64.EFI
 endif
-	mformat -i $(IMAGE_NAME).hdd@@1M
-	mmd -i $(IMAGE_NAME).hdd@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
-	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(ARCH)/kernel ::/boot
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf ::/boot/limine
-ifeq ($(ARCH),x86_64)
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/limine-bios.sys ::/boot/limine
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTX64.EFI ::/EFI/BOOT
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTIA32.EFI ::/EFI/BOOT
-endif
-ifeq ($(ARCH),aarch64)
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTAA64.EFI ::/EFI/BOOT
-endif
-ifeq ($(ARCH),riscv64)
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTRISCV64.EFI ::/EFI/BOOT
-endif
-ifeq ($(ARCH),loongarch64)
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTLOONGARCH64.EFI ::/EFI/BOOT
-endif
-	dd if=/dev/zero bs=1M count=0 seek=2048 of=rootfs-$(ARCH).hdd
-	mkfs.ext2 -F -q -d user/rootfs-$(ARCH) rootfs-$(ARCH).hdd
+$(IMAGE_NAME).img: assets/limine assets/oib kernel
+	assets/oib -o $(IMAGE_NAME).img -f $(EFI_FILE) \
+		-f kernel/bin-$(ARCH)/kernel:boot/kernel \
+		-f limine.conf:boot/limine/limine.conf \
+		-f assets/limine/limine-bios.sys:boot/limine/limine-bios.sys
+	dd if=/dev/zero bs=1M count=0 seek=2048 of=rootfs-$(ARCH).img
+	mkfs.ext2 -F -q -d user/rootfs-$(ARCH) rootfs-$(ARCH).img
 
 .PHONY: run
 run: run-$(ARCH)
 
 .PHONY: run-x86_64
-run-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
+run-x86_64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
 	qemu-system-$(ARCH) \
 		-M q35 \
-		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
-		-drive if=none,file=$(IMAGE_NAME).hdd,format=raw,id=harddisk \
-		-drive if=none,file=rootfs-$(ARCH).hdd,format=raw,id=rootdisk \
+		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
+		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
+		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
 		-device ahci,id=ahci \
 		-device qemu-xhci,id=xhci \
 		-device nvme,drive=harddisk,serial=1234 \
@@ -161,7 +149,7 @@ run-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		$(QEMUFLAGS)
 
 .PHONY: run-aarch64
-run-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
+run-aarch64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
 	qemu-system-$(ARCH) \
 		-M virt,gic-version=3 \
 		-cpu cortex-a76 \
@@ -169,15 +157,15 @@ run-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-device qemu-xhci,id=xhci \
 		-device usb-kbd \
 		-device usb-mouse \
-		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
-		-drive if=none,file=$(IMAGE_NAME).hdd,format=raw,id=harddisk \
-		-drive if=none,file=rootfs-$(ARCH).hdd,format=raw,id=rootdisk \
+		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
+		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
+		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
 		-device nvme,drive=harddisk,serial=1234 \
 		-device nvme,drive=rootdisk,serial=5678 \
 		$(QEMUFLAGS)
 
 .PHONY: run-riscv64
-run-riscv64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
+run-riscv64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
 	qemu-system-$(ARCH) \
 		-M virt \
 		-cpu rv64 \
@@ -185,12 +173,12 @@ run-riscv64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-device qemu-xhci \
 		-device usb-kbd \
 		-device usb-mouse \
-		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
-		-hda $(IMAGE_NAME).hdd \
+		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
+		-hda $(IMAGE_NAME).img \
 		$(QEMUFLAGS)
 
 .PHONY: run-loongarch64
-run-loongarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
+run-loongarch64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
 	qemu-system-$(ARCH) \
 		-M virt \
 		-cpu la464 \
@@ -199,23 +187,34 @@ run-loongarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-device usb-kbd \
 		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
-		-hda $(IMAGE_NAME).hdd \
+		-hda $(IMAGE_NAME).img \
 		$(QEMUFLAGS)
 
-ovmf/ovmf-code-$(ARCH).fd:
-	mkdir -p ovmf
-	curl -Lo $@ https://github.com/osdev0/edk2-ovmf-nightly/releases/latest/download/ovmf-code-$(ARCH).fd
-	case "$(ARCH)" in \
-		aarch64) dd if=/dev/zero of=$@ bs=1 count=0 seek=67108864 2>/dev/null;; \
-		riscv64) dd if=/dev/zero of=$@ bs=1 count=0 seek=33554432 2>/dev/null;; \
-	esac
+OIB_VERSION = v0.3.0
+OIB_ARCH = x86_64-unknown-linux-gnu
+OIB_URL = https://github.com/wenxuanjun/oib/releases/download/$(OIB_VERSION)/oib-$(OIB_ARCH).tar.gz
 
-limine/limine:
-	rm -rf limine
-	git clone https://github.com/limine-bootloader/limine.git --branch=v9.x-binary --depth=1
-	$(MAKE) -C limine \
+assets/oib:
+	mkdir -p assets
+	curl -L $(OIB_URL) | tar -xz -C /tmp
+	mv /tmp/oib-$(OIB_ARCH)/oib assets/oib
+	rm -rf /tmp/oib-$(OIB_ARCH)
+	chmod +x assets/oib
+
+assets/limine:
+	rm -rf assets/limine
+	git clone https://github.com/limine-bootloader/limine.git --branch=v9.x-binary --depth=1 assets/limine
+	$(MAKE) -C assets/limine \
 		CC="$(HOST_CC)" \
 		CFLAGS="$(HOST_CFLAGS)" \
 		CPPFLAGS="$(HOST_CPPFLAGS)" \
 		LDFLAGS="$(HOST_LDFLAGS)" \
 		LIBS="$(HOST_LIBS)"
+
+assets/ovmf-code-$(ARCH).fd:
+	mkdir -p assets
+	curl -Lo $@ https://github.com/osdev0/edk2-ovmf-nightly/releases/latest/download/ovmf-code-$(ARCH).fd
+	case "$(ARCH)" in \
+		aarch64) dd if=/dev/zero of=$@ bs=1 count=0 seek=67108864 2>/dev/null;; \
+		riscv64) dd if=/dev/zero of=$@ bs=1 count=0 seek=33554432 2>/dev/null;; \
+	esac
