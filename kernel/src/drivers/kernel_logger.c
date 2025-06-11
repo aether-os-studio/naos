@@ -163,7 +163,7 @@ int vsprintf(char *buf, const char *fmt, va_list args)
             ++fmt;
         }
         // 为了支持lld
-        if (qualifier == 'l' && *fmt == 'l' || *(fmt + 1) == 'd')
+        if ((qualifier == (int)'l' && *fmt == 'l') || *(fmt + 1) == 'd')
             ++fmt;
 
         // 转化成字符串
@@ -370,13 +370,21 @@ char *write_num(char *str, uint64_t num, int base, int field_width, int precisio
 
     // sign占用了一个宽度
     if (sign)
+    {
         --field_width;
+    }
 
     if (flags & SPECIAL)
+    {
         if (base == 16) // 0x占用2个位置
+        {
             field_width -= 2;
+        }
         else if (base == 8) // O占用一个位置
+        {
             --field_width;
+        }
+    }
 
     int js_num = 0; // 临时数字字符串tmp_num的长度
 
@@ -406,13 +414,17 @@ char *write_num(char *str, uint64_t num, int base, int field_width, int precisio
     if (sign)
         *str++ = sign;
     if (flags & SPECIAL)
+    {
         if (base == 16)
         {
             *str++ = '0';
             *str++ = digits[33];
         }
         else if (base == 8)
+        {
             *str++ = digits[24]; // 注意这里是英文字母O或者o
+        }
+    }
     if (!(flags & LEFT))
         while (field_width-- > 0)
             *str++ = pad;

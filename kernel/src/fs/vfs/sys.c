@@ -179,4 +179,8 @@ void sysfs_init()
         config_handle->private_data = dev;
         config_handle->node = config_file;
     }
+
+    vfs_node_t char_dev = vfs_child_append(dev_root, "char", NULL);
+    vfs_node_t dev_node = vfs_child_append(char_dev, "29:0", NULL);
+    vfs_node_t device_node = vfs_child_append(dev_node, "device", NULL);
 }

@@ -48,7 +48,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         create->width = dev->framebuffer->width;
         create->bpp = 32;
         create->size = create->height * create->width * 4;
-        create->pitch = create->width * 4;
+        create->pitch = dev->framebuffer->pitch;
         create->handle = 1;
         return 0;
     }
@@ -103,10 +103,9 @@ void drm_init()
 
 void drm_init_sysfs()
 {
-    vfs_node_t class = vfs_open("/sys/class");
-    vfs_node_t drm = vfs_node_alloc(class, "drm");
-    drm->type = file_dir;
-    drm->mode = 0644;
+    vfs_node_t dev = vfs_open("/sys/dev/char/29:0/device");
+    vfs_node_t drm = vfs_child_append(dev, "drm", NULL);
+
     vfs_node_t version = vfs_node_alloc(drm, "version");
     version->type = file_none;
     version->mode = 0700;
@@ -116,18 +115,50 @@ void drm_init_sysfs()
     version->handle = handle;
     memset(handle, 0, sizeof(sysfs_handle_t));
 
+    vfs_node_t class = vfs_open("/sys/class");
+    vfs_node_t drm_link = vfs_node_alloc(class, "drm");
+    drm_link->type = file_symlink;
+    drm_link->mode = 0644;
+
     for (int i = 0; i < framebuffer_request.response->framebuffer_count; i++)
     {
-        char buf[32];
+        char buf[256];
         sprintf(buf, "card%d", i);
         vfs_node_t cardn = vfs_node_alloc(drm, (const char *)buf);
         cardn->type = file_dir;
         cardn->mode = 0644;
 
+        vfs_node_t cardn_link = vfs_node_alloc(drm_link, (const char *)buf);
+        cardn_link->type = file_symlink | file_dir;
+        cardn_link->mode = 0644;
+        cardn_link->linkname = vfs_get_fullpath(cardn);
+
         sprintf(buf, "card%d-Virtual-1", i);
         vfs_node_t cardn_virtual = vfs_node_alloc(cardn, (const char *)buf);
         cardn_virtual->type = file_dir;
         cardn_virtual->mode = 0644;
+
+        vfs_node_t uevent_link = vfs_child_append(cardn, "uevent", NULL);
+        uevent_link->type = file_symlink | file_none;
+        uevent_link->mode = 0644;
+        sprintf(buf, "/sys/class/drm/card%d/subsystem/uevent", i);
+        uevent_link->linkname = strdup(buf);
+
+        vfs_node_t subsystem = vfs_child_append(cardn, "subsystem", NULL);
+        subsystem->type = file_dir;
+        subsystem->mode = 0644;
+        sysfs_handle_t *subsystem_handle = malloc(sizeof(sysfs_handle_t));
+        memset(subsystem_handle, 0, sizeof(sysfs_handle_t));
+        subsystem->handle = subsystem_handle;
+        subsystem_handle->node = subsystem;
+        subsystem_handle->private_data = NULL;
+
+        vfs_node_t uevent = vfs_child_append(subsystem, "uevent", NULL);
+        uevent->type = file_none;
+        uevent->mode = 0700;
+        sysfs_handle_t *uevent_handle = malloc(sizeof(sysfs_handle_t));
+        sprintf(uevent_handle->content, "MAJOR=%d\nMINOR=%d\nDEVNAME=/dev/dri/card%d\nSUBSYSTEM=graphics\n", 29, 0, i);
+        uevent->handle = uevent_handle;
 
         vfs_node_t connector_id = vfs_node_alloc(cardn_virtual, (const char *)buf);
         connector_id->type = file_none;
@@ -144,17 +175,5 @@ void drm_init_sysfs()
         memset(handle, 0, sizeof(sysfs_handle_t));
         sprintf(handle->content, "%dx%d", framebuffer_request.response->framebuffers[i]->width, framebuffer_request.response->framebuffers[i]->height);
         modes->handle = handle;
-
-        vfs_node_t uevent = vfs_node_alloc(cardn_virtual, (const char *)buf);
-        uevent->type = file_none;
-        uevent->mode = 0700;
-        handle = malloc(sizeof(sysfs_handle_t));
-        memset(handle, 0, sizeof(sysfs_handle_t));
-        sprintf(handle->content, "DEVTYPE=drm_connector");
-        uevent->handle = handle;
-
-        vfs_node_t subsystem = vfs_node_alloc(cardn, "subsystem");
-        subsystem->type = file_dir;
-        subsystem->mode = 0644;
     }
 }

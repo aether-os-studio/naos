@@ -39,7 +39,7 @@
 #define Build_IRQ(number)                                                      \
     extern void IRQ_NAME(number);                                              \
     __asm__(".section .text\n\t" SYMBOL_NAME_STR(IRQ) #number "interrupt:\n\t" \
-                                                              "cli\n\t"        \                                                             
+                                                              "cli\n\t"        \
     "pushq $0x00\n\t" SAVE_ALL_REGS                                            \
     "movq %rsp, %rdi\n\t"                                                      \
     "leaq ret_from_intr(%rip), %rax\n\t"                                       \

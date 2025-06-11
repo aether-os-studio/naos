@@ -326,21 +326,14 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
         dents[read_count].d_ino = child_node->inode;
         dents[read_count].d_off = filedescriptor->offset;
         dents[read_count].d_reclen = sizeof(struct dirent);
-        switch (child_node->type)
-        {
-        case file_dir:
-            dents[read_count].d_type = DT_DIR;
-            break;
-        case file_none:
-            dents[read_count].d_type = DT_REG;
-            break;
-        case file_symlink:
+        if (child_node->type & file_symlink)
             dents[read_count].d_type = DT_LNK;
-            break;
-        default:
+        else if (child_node->type & file_none)
+            dents[read_count].d_type = DT_REG;
+        else if (child_node->type & file_dir)
+            dents[read_count].d_type = DT_DIR;
+        else
             dents[read_count].d_type = DT_UNKNOWN;
-            break;
-        }
         strncpy(dents[read_count].d_name, child_node->name, 1024);
         filedescriptor->offset += sizeof(struct dirent);
         read_count++;

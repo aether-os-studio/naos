@@ -191,7 +191,7 @@ run-loongarch64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
 		$(QEMUFLAGS)
 
 OIB_VERSION = v0.3.0
-OIB_ARCH = x86_64-unknown-linux-gnu
+OIB_ARCH = $(shell uname -m)-unknown-linux-gnu
 OIB_URL = https://github.com/wenxuanjun/oib/releases/download/$(OIB_VERSION)/oib-$(OIB_ARCH).tar.gz
 
 assets/oib:

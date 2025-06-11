@@ -295,9 +295,9 @@ vfs_node_t regist_dev(const char *name,
             vfs_node_t child = vfs_child_append(dev, devfs_handles[i]->name, NULL);
             child->refcount++;
             child->type = file_block;
-            if (!strncmp(devfs_handles[i]->name, "std", 3) || !strncmp(devfs_handles[i]->name, "tty", 3) || !strncmp(devfs_handles[i]->name, "card", 4))
+            if (!strncmp(devfs_handles[i]->name, "std", 3) || !strncmp(devfs_handles[i]->name, "tty", 3))
                 child->type = file_stream;
-            else if (!strncmp(devfs_handles[i]->name, "fb", 2))
+            else if (!strncmp(devfs_handles[i]->name, "fb", 2) || !strncmp(devfs_handles[i]->name, "card", 4))
                 child->type = file_fbdev;
             else if (!strncmp(devfs_handles[i]->name, "event0", 6))
                 child->type = file_keyboard;
