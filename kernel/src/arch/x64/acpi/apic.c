@@ -85,7 +85,7 @@ uint64_t lapic_id()
     return x2apic_mode ? phy_id : (phy_id >> 24);
 }
 
-uint64_t calibrated_timer_initial;
+uint64_t calibrated_timer_initial = 0;
 
 void lapic_timer_stop();
 
@@ -127,9 +127,9 @@ void local_apic_init(bool is_print)
 void local_apic_ap_init()
 {
     uint64_t value = rdmsr(0x1b);
-    value |= (1 << 11);
+    value |= (1UL << 11);
     if (x2apic_mode)
-        value |= (1 << 10);
+        value |= (1UL << 10);
     wrmsr(0x1b, value);
 
     lapic_timer_stop();
@@ -212,12 +212,12 @@ void apic_setup(MADT *madt)
 void sse_init()
 {
     asm volatile("movq %cr0, %rax\n\t"
-                         "and $0xFFF3, %ax	\n\t" // clear coprocessor emulation CR0.EM and CR0.TS
-                         "or $0x2, %ax\n\t"       // set coprocessor monitoring  CR0.MP
-                         "movq %rax, %cr0\n\t"
-                         "movq %cr4, %rax\n\t"
-                         "or $(3 << 9), %ax\n\t" // set CR4.OSFXSR and CR4.OSXMMEXCPT at the same time
-                         "movq %rax, %cr4\n\t");
+                 "and $0xFFF3, %ax	\n\t" // clear coprocessor emulation CR0.EM and CR0.TS
+                 "or $0x2, %ax\n\t"       // set coprocessor monitoring  CR0.MP
+                 "movq %rax, %cr0\n\t"
+                 "movq %cr4, %rax\n\t"
+                 "or $(3 << 9), %ax\n\t" // set CR4.OSFXSR and CR4.OSXMMEXCPT at the same time
+                 "movq %rax, %cr4\n\t");
 }
 
 extern bool task_initialized;
@@ -230,6 +230,8 @@ void ap_entry(struct limine_mp_info *cpu)
     asm volatile("movq %0, %%cr3" ::"r"(cr3) : "memory");
 
     sse_init();
+
+    printk("APU %d starting...\n", cpu->processor_id);
 
     gdtidt_setup();
 
