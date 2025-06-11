@@ -3,7 +3,7 @@ MAKEFLAGS += -rR
 .SUFFIXES:
 
 # Target architecture to build for. Default to x86_64.
-export ARCH := x86_64
+export ARCH ?= x86_64
 
 ifeq ($(ARCH), x86_64)
 ARCH_DIR := x64
@@ -56,8 +56,8 @@ MON ?= 0
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
 QEMUFLAGS := -m $(MEM) -smp $(SMP)
-QEMUFLAGS += -netdev tap,id=eth0,ifname=tap0,script=no,downscript=no
-QEMUFLAGS += -device e1000,netdev=eth0,mac=5A:5A:5A:5A:5A:33
+QEMUFLAGS += -netdev user,id=user.0
+QEMUFLAGS += -device e1000,netdev=user.0,mac=5A:5A:5A:5A:5A:33
 QEMUFLAGS += -d trace:e1000*,trace:net*
 
 DEBUG ?= 0
@@ -94,11 +94,61 @@ HOST_LIBS :=
 .PHONY: all
 all: $(IMAGE_NAME).hdd
 
-.PHONY: run
-run: tap0 run-hdd-$(ARCH)
+.PHONY: kernel
+kernel:
+	$(MAKE) -C kernel
+	$(MAKE) -C user
 
-.PHONY: run-hdd-x86_64
-run-hdd-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
+.PHONY: user
+user:
+	$(MAKE) -C user all
+
+.PHONY: clean
+clean:
+	$(MAKE) -C kernel clean
+	$(MAKE) -C user clean
+	rm -rf $(IMAGE_NAME).hdd rootfs-$(ARCH).hdd
+
+.PHONY: distclean
+distclean:
+	$(MAKE) -C kernel distclean
+	$(MAKE) -C user distclean
+	rm -rf *.hdd limine ovmf
+
+$(IMAGE_NAME).hdd: limine/limine kernel
+	rm -rf $(IMAGE_NAME).hdd
+	dd if=/dev/zero bs=1M count=0 seek=512 of=$(IMAGE_NAME).hdd
+ifeq ($(ARCH),x86_64)
+	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00 -m 1
+else
+	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00
+endif
+	mformat -i $(IMAGE_NAME).hdd@@1M
+	mmd -i $(IMAGE_NAME).hdd@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
+	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(ARCH)/kernel ::/boot
+	mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf ::/boot/limine
+ifeq ($(ARCH),x86_64)
+	mcopy -i $(IMAGE_NAME).hdd@@1M limine/limine-bios.sys ::/boot/limine
+	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTX64.EFI ::/EFI/BOOT
+	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTIA32.EFI ::/EFI/BOOT
+endif
+ifeq ($(ARCH),aarch64)
+	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTAA64.EFI ::/EFI/BOOT
+endif
+ifeq ($(ARCH),riscv64)
+	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTRISCV64.EFI ::/EFI/BOOT
+endif
+ifeq ($(ARCH),loongarch64)
+	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTLOONGARCH64.EFI ::/EFI/BOOT
+endif
+	dd if=/dev/zero bs=1M count=0 seek=2048 of=rootfs-$(ARCH).hdd
+	mkfs.ext2 -F -q -d user/rootfs-$(ARCH) rootfs-$(ARCH).hdd
+
+.PHONY: run
+run: run-$(ARCH)
+
+.PHONY: run-x86_64
+run-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 	qemu-system-$(ARCH) \
 		-M q35 \
 		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
@@ -110,8 +160,8 @@ run-hdd-x86_64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-device nvme,drive=rootdisk,serial=5678 \
 		$(QEMUFLAGS)
 
-.PHONY: run-hdd-aarch64
-run-hdd-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
+.PHONY: run-aarch64
+run-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 	qemu-system-$(ARCH) \
 		-M virt,gic-version=3 \
 		-cpu cortex-a76 \
@@ -126,8 +176,8 @@ run-hdd-aarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-device nvme,drive=rootdisk,serial=5678 \
 		$(QEMUFLAGS)
 
-.PHONY: run-hdd-riscv64
-run-hdd-riscv64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
+.PHONY: run-riscv64
+run-riscv64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 	qemu-system-$(ARCH) \
 		-M virt \
 		-cpu rv64 \
@@ -139,8 +189,8 @@ run-hdd-riscv64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 		-hda $(IMAGE_NAME).hdd \
 		$(QEMUFLAGS)
 
-.PHONY: run-hdd-loongarch64
-run-hdd-loongarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
+.PHONY: run-loongarch64
+run-loongarch64: ovmf/ovmf-code-$(ARCH).fd $(IMAGE_NAME).hdd
 	qemu-system-$(ARCH) \
 		-M virt \
 		-cpu la464 \
@@ -169,84 +219,3 @@ limine/limine:
 		CPPFLAGS="$(HOST_CPPFLAGS)" \
 		LDFLAGS="$(HOST_LDFLAGS)" \
 		LIBS="$(HOST_LIBS)"
-
-kernel-deps:
-	./kernel/get-deps
-	touch kernel-deps
-
-.PHONY: kernel
-kernel: kernel-deps
-	$(MAKE) -C kernel
-	$(MAKE) -C user
-
-.PHONY: user
-user:
-	$(MAKE) -C user all
-
-$(IMAGE_NAME).hdd: limine/limine kernel
-	rm -rf $(IMAGE_NAME).hdd
-	dd if=/dev/zero bs=1M count=0 seek=512 of=$(IMAGE_NAME).hdd
-ifeq ($(ARCH),x86_64)
-	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00 -m 1
-else
-	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00
-endif
-	mformat -i $(IMAGE_NAME).hdd@@1M
-	mmd -i $(IMAGE_NAME).hdd@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
-	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(ARCH)/kernel ::/boot
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf ::/boot/limine
-ifeq ($(ARCH),x86_64)
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/limine-bios.sys ::/boot/limine
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTX64.EFI ::/EFI/BOOT
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTIA32.EFI ::/EFI/BOOT
-endif
-ifeq ($(ARCH),aarch64)
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTAA64.EFI ::/EFI/BOOT
-endif
-ifeq ($(ARCH),riscv64)
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTRISCV64.EFI ::/EFI/BOOT
-endif
-ifeq ($(ARCH),loongarch64)
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTLOONGARCH64.EFI ::/EFI/BOOT
-endif
-
-	dd if=/dev/zero bs=1M count=2048 of=rootfs-$(ARCH).hdd
-	mkfs.ext2 rootfs-$(ARCH).hdd
-	mkdir -p mnt
-	sudo mount rootfs-$(ARCH).hdd mnt
-	sudo cp -r user/rootfs-$(ARCH)/* mnt/
-	sudo chmod -R 700 mnt/*
-	sudo umount mnt
-	rm -rf mnt
-
-.PHONY: clean
-clean:
-	$(MAKE) -C kernel clean
-	$(MAKE) -C user clean
-	rm -rf $(IMAGE_NAME).hdd rootfs-$(ARCH).hdd
-
-.PHONY: distclean
-distclean:
-	$(MAKE) -C kernel distclean
-	$(MAKE) -C user distclean
-	rm -rf *.hdd kernel-deps limine ovmf
-
-IFACE:=$(shell sudo ip -o -4 route show to default | awk '{print $$5}')
-
-TAP0:=/sys/class/net/tap0
-
-.SECONDARY: $(TAP0)
-
-# 网桥 IP 地址
-GATEWAY:=172.16.16.1
-
-$(TAP0):
-	sudo ip tuntap add mode tap $(notdir $@) user $(USER)
-	sudo ip addr add $(GATEWAY)/24 dev $(notdir $@)
-	sudo ip link set dev $(notdir $@) up
-
-	sudo sysctl net.ipv4.ip_forward=1
-	sudo iptables -t nat -A POSTROUTING -s $(GATEWAY)/24 -o $(IFACE) -j MASQUERADE
-	sudo iptables -A FORWARD -i $(notdir $@) -o $(IFACE) -j ACCEPT
-
-tap0: $(TAP0)
