@@ -241,7 +241,11 @@ void init_thread(uint64_t arg)
 
     system_initialized = true;
 
-    task_execve("/bin/bash", NULL, NULL);
+    const char *argvs[2];
+    memset(argvs, 0, sizeof(argvs));
+    argvs[0] = "/bin/bash";
+
+    task_execve("/bin/bash", argvs, NULL);
 
     printk("run /bin/bash failed\n");
 
@@ -455,7 +459,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
 
     memcpy(&child->term, &current_task->term, sizeof(termios));
 
-    child->tmp_rec_v = current_task->tmp_rec_v;
+    child->tmp_rec_v = 0;
 
     memcpy(child->rlim, current_task->rlim, sizeof(child->rlim));
 
@@ -555,7 +559,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         int i;
         for (i = 0; i < argv_count; i++)
             argvs[i + 2] = argv[i];
-        argvs[i] = NULL;
+        argvs[i + 2] = NULL;
         return task_execve("/bin/sh", argvs, envp);
     }
 
@@ -1063,7 +1067,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
         *child_tid = (int)child->pid;
     }
 
-    child->tmp_rec_v = current_task->tmp_rec_v;
+    child->tmp_rec_v = 0;
 
     memcpy(child->rlim, current_task->rlim, sizeof(child->rlim));
 

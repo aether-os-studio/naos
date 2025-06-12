@@ -452,6 +452,8 @@ bool ctrled = false;
 bool shifted = false;
 bool capsLocked = false;
 
+static char cache_buffer[8] = {0};
+
 char *kbBuff = 0;
 uint32_t kbCurr = 0;
 uint32_t kbMax = 0;
@@ -552,29 +554,6 @@ char handle_kb_event()
     return 0;
 }
 
-// used by the kernel atm
-uint32_t read_str(char *buffstr)
-{
-    while (kb_is_ocupied())
-        arch_pause();
-
-    task_t *task = tasks[0];
-    if (!task)
-        return 0;
-
-    while (kbBuff)
-    {
-        arch_enable_interrupt();
-        arch_pause();
-    }
-    uint32_t ret = task->tmp_rec_v;
-    buffstr[ret] = '\0';
-    return ret;
-}
-
-uint8_t kb_special_key_status = 0;
-char kb_special_key = 0;
-
 bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state)
 {
     while (kb_is_ocupied())
@@ -588,19 +567,13 @@ bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state)
     kbMax = limit;
     kb_task = task;
 
-    if (kb_special_key_status == 1) // 上下左右
+    if (cache_buffer[0] != 0) // 上下左右
     {
-        kbBuff[kbCurr++] = '[';
-        kb_special_key_status = 2;
-        kb_finalise_stream();
-        return true;
-    }
-    else if (kb_special_key_status == 2) // 上下左右第二阶段
-    {
-        kbBuff[kbCurr++] = kb_special_key;
-        kb_special_key_status = 0;
-        kb_special_key = 0;
-        kb_finalise_stream();
+        uint32_t offset = (limit > 2) ? 2 : limit;
+        memcpy(kbBuff, cache_buffer, offset);
+        memset(cache_buffer, 0, offset);
+        memmove(cache_buffer, &cache_buffer[offset], 8 - offset);
+        kb_reset();
         return true;
     }
 
@@ -629,6 +602,8 @@ void kbd_init()
     // io_out8(PORT_KB_DATA, 0x02);
 
     // wait_KB_read();
+
+    memset(cache_buffer, 0, sizeof(cache_buffer));
 
     for (uint64_t i = 0; i < MAX_DEV_NUM; i++)
     {
@@ -674,7 +649,6 @@ void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
     switch ((uint8_t)out)
     {
     case CHARACTER_ENTER:
-        // kbBuff[kbCurr] = '\0';
         if (task->term.c_lflag & ICANON)
             kb_finalise_stream();
         else
@@ -697,23 +671,55 @@ void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
         break;
     case KEY_BUTTON_UP:
         kb_char(task, '\x1b');
-        kb_special_key_status = 1;
-        kb_special_key = 'A';
+        if (kbMax - kbCurr >= 2)
+        {
+            kb_char(task, '[');
+            kb_char(task, 'A');
+        }
+        else
+        {
+            cache_buffer[0] = '[';
+            cache_buffer[1] = 'A';
+        }
         break;
     case KEY_BUTTON_DOWN:
         kb_char(task, '\x1b');
-        kb_special_key_status = 1;
-        kb_special_key = 'B';
+        if (kbMax - kbCurr >= 2)
+        {
+            kb_char(task, '[');
+            kb_char(task, 'B');
+        }
+        else
+        {
+            cache_buffer[0] = '[';
+            cache_buffer[1] = 'B';
+        }
         break;
     case KEY_BUTTON_LEFT:
         kb_char(task, '\x1b');
-        kb_special_key_status = 1;
-        kb_special_key = 'D';
+        if (kbMax - kbCurr >= 2)
+        {
+            kb_char(task, '[');
+            kb_char(task, 'D');
+        }
+        else
+        {
+            cache_buffer[0] = '[';
+            cache_buffer[1] = 'D';
+        }
         break;
     case KEY_BUTTON_RIGHT:
         kb_char(task, '\x1b');
-        kb_special_key_status = 1;
-        kb_special_key = 'C';
+        if (kbMax - kbCurr >= 2)
+        {
+            kb_char(task, '[');
+            kb_char(task, 'C');
+        }
+        else
+        {
+            cache_buffer[0] = '[';
+            cache_buffer[1] = 'C';
+        }
         break;
     default:
         if (ctrled)
