@@ -20,7 +20,18 @@ extern int unix_accept_fsid;
 
 task_t *get_free_task()
 {
-    for (uint64_t i = 0; i < MAX_TASK_NUM; i++)
+    for (uint64_t i = 0; i < cpu_count; i++)
+    {
+        if (idle_tasks[i] == NULL)
+        {
+            idle_tasks[i] = (task_t *)malloc(sizeof(task_t));
+            memset(idle_tasks[i], 0, sizeof(task_t));
+            idle_tasks[i]->pid = 0;
+            return idle_tasks[i];
+        }
+    }
+
+    for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
     {
         if (tasks[i] == NULL)
         {
@@ -136,7 +147,7 @@ task_t *task_search(task_state_t state, uint32_t cpu_id)
 {
     task_t *task = NULL;
 
-    for (size_t i = cpu_count; i < MAX_TASK_NUM; i++)
+    for (size_t i = 1; i < MAX_TASK_NUM; i++)
     {
         task_t *ptr = tasks[i];
         if (ptr == NULL)
@@ -248,6 +259,7 @@ void task_init()
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++)
     {
         idle_tasks[cpu] = task_create("idle", idle_entry, 0);
+        idle_tasks[cpu]->cpu_id = cpu;
         idle_tasks[cpu]->state = TASK_RUNNING;
     }
     arch_set_current(idle_tasks[0]);
@@ -536,14 +548,15 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         free(new_envp);
 
         execve_lock = false;
-        const char *argvs[256];
+        const char *argvs[64];
         memset(argvs, 0, 64 * sizeof(const char *));
-        argvs[0] = path;
+        argvs[0] = "/bin/sh";
+        argvs[1] = path;
         int i;
         for (i = 0; i < argv_count; i++)
-            argvs[i + 1] = argv[i];
+            argvs[i + 2] = argv[i];
         argvs[i] = NULL;
-        return task_execve("/bin/bash", argvs, envp);
+        return task_execve("/bin/sh", argvs, envp);
     }
 
     const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)EHDR_START_ADDR;
@@ -843,7 +856,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
         bool has_child = false;
 
         // 遍历所有任务查找符合条件的子进程
-        for (uint64_t i = cpu_count; i < MAX_TASK_NUM; i++)
+        for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
         {
             task_t *ptr = tasks[i];
             if (!ptr || ptr->pid == ptr->ppid || ptr->ppid != current_task->pid)
@@ -1149,7 +1162,7 @@ extern int timerfdfs_id;
 
 void sched_update_itimer()
 {
-    for (uint64_t i = cpu_count; i < MAX_TASK_NUM; i++)
+    for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
     {
         task_t *ptr = tasks[i];
 

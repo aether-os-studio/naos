@@ -520,9 +520,8 @@ uint64_t sys_stat(const char *fn, struct stat *buf)
     buf->st_ino = node->inode;
     buf->st_nlink = 1;
     buf->st_mode = node->mode | ((node->type & file_symlink) ? S_IFLNK : (node->type & file_dir ? S_IFDIR : S_IFREG));
-    buf->st_uid = 0;
-    buf->st_uid = 0;
-    buf->st_gid = 0;
+    buf->st_uid = current_task->uid;
+    buf->st_gid = current_task->gid;
     if (node->type & file_stream)
     {
         buf->st_rdev = (4 << 8) | 1;
