@@ -554,13 +554,12 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         execve_lock = false;
         const char *argvs[64];
         memset(argvs, 0, 64 * sizeof(const char *));
-        argvs[0] = "/bin/sh";
-        argvs[1] = path;
+        argvs[0] = path;
         int i;
         for (i = 0; i < argv_count; i++)
-            argvs[i + 2] = argv[i];
-        argvs[i + 2] = NULL;
-        return task_execve("/bin/sh", argvs, envp);
+            argvs[i + 1] = argv[i];
+        argvs[i + 1] = NULL;
+        return task_execve("/bin/bash", argvs, envp);
     }
 
     const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)EHDR_START_ADDR;

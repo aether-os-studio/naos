@@ -50,7 +50,7 @@ export ROOT_DIR := $(shell pwd)
 KVM ?= 0
 HVF ?= 0
 SMP ?= 2
-MEM ?= 8G
+MEM ?= 4G
 SER ?= 0
 MON ?= 0
 
