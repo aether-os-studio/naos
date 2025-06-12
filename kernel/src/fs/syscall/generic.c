@@ -878,6 +878,26 @@ uint64_t sys_rename(const char *old, const char *new)
     return 0;
 }
 
+uint64_t sys_renameat(uint64_t oldfd, const char *old, uint64_t newfd, const char *new)
+{
+    char *old_path = at_resolve_pathname(oldfd, (char *)old);
+    char *new_path = at_resolve_pathname(newfd, (char *)new);
+
+    vfs_node_t node = vfs_open(old_path);
+    int ret = vfs_rename(node, new_path);
+    if (ret < 0)
+    {
+        free(old_path);
+        free(new_path);
+        return -ENOENT;
+    }
+
+    free(old_path);
+    free(new_path);
+
+    return 0;
+}
+
 uint64_t sys_fchdir(uint64_t fd)
 {
     if (fd >= MAX_FD_NUM || !current_task->fds[fd])

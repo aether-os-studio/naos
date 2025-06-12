@@ -420,6 +420,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_RENAME:
         regs->rax = sys_rename((const char *)arg1, (const char *)arg2);
         break;
+    case SYS_RENAMEAT:
+        regs->rax = sys_renameat(arg1, (const char *)arg2, arg3, (const char *)arg4);
+        break;
     case SYS_UNLINK:
         regs->rax = sys_unlink((const char *)arg1);
         break;

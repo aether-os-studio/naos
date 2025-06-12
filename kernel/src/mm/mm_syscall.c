@@ -30,6 +30,11 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
 
     uint64_t aligned_len = (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
 
+    if (check_user_overflow(addr, aligned_len))
+    {
+        return -EFAULT;
+    }
+
     if (addr == 0)
     {
         addr = current_task->mmap_start;
@@ -75,6 +80,10 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
 
 uint64_t sys_munmap(uint64_t addr, uint64_t size)
 {
+    if (check_user_overflow(addr, size))
+    {
+        return -EFAULT;
+    }
     unmap_page_range(get_current_page_dir(false), addr, size);
     return 0;
 }
