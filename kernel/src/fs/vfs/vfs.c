@@ -28,6 +28,8 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name)
         return NULL;
     memset(node, 0, sizeof(struct vfs_node));
     node->parent = parent;
+    node->dev = 0;
+    node->rdev = 0;
     node->blksz = DEFAULT_PAGE_SIZE;
     node->name = name ? strdup(name) : NULL;
     node->linkname = NULL;
@@ -278,6 +280,10 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, bool nosymlink)
             current = current->parent;
             do_update(current);
             continue;
+        }
+        if (!(current->type & file_dir))
+        {
+            goto err;
         }
         current = vfs_child_find(current, buf);
         if (current == NULL)

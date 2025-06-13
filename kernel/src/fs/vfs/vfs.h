@@ -123,17 +123,14 @@ typedef int64_t ssize_t;
 
 enum
 {
-    file_none = 0x0001UL,     // 普通文件
-    file_dir = 0x0002UL,      // 文件夹
-    file_symlink = 0x0004UL,  // 符号链接
-    file_block = 0x0008UL,    // 块设备，如硬盘
-    file_stream = 0x0010UL,   // 流式设备，如终端
-    file_fbdev = 0x0020UL,    // 帧缓冲设备
-    file_keyboard = 0x0040UL, // 键盘设备
-    file_mouse = 0x0080UL,    // 鼠标设备
-    file_pipe = 0x0100UL,     // 管道设备
-    file_socket = 0x0200UL,   // 套接字设备
-    file_epoll = 0x0400UL,    // epoll 设备
+    file_none = 0x0001UL,    // 普通文件
+    file_dir = 0x0002UL,     // 文件夹
+    file_symlink = 0x0004UL, // 符号链接
+    file_block = 0x0008UL,   // 块设备，如硬盘
+    file_stream = 0x0010UL,  // 流式设备，如终端
+    file_pipe = 0x0020UL,    // 管道设备
+    file_socket = 0x0040UL,  // 套接字设备
+    file_epoll = 0x0080UL,   // epoll 设备
 };
 
 typedef struct vfs_node *vfs_node_t;
@@ -236,6 +233,8 @@ typedef struct flock
 struct vfs_node
 {
     vfs_node_t parent;   // 父目录
+    uint64_t dev;        // 设备号
+    uint64_t rdev;       // 真实设备号
     char *name;          // 名称
     char *linkname;      // 符号链接名称
     uint64_t inode;      // 节点号

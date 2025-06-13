@@ -25,7 +25,8 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
             cap->value = 1; // 支持dumb buffer
             return 0;
         default:
-            return -EINVAL;
+            cap->value = 0;
+            return 0;
         }
     }
 
@@ -103,8 +104,10 @@ void drm_init()
 
 void drm_init_sysfs()
 {
-    vfs_node_t dev = vfs_open("/sys/dev/char/29:0/device");
+    vfs_node_t dev = vfs_open("/sys/dev/char/226:0/device");
     vfs_node_t drm = vfs_child_append(dev, "drm", NULL);
+    drm->type = file_dir;
+    drm->mode = 0644;
 
     vfs_node_t version = vfs_node_alloc(drm, "version");
     version->type = file_none;
@@ -117,7 +120,7 @@ void drm_init_sysfs()
 
     vfs_node_t class = vfs_open("/sys/class");
     vfs_node_t drm_link = vfs_node_alloc(class, "drm");
-    drm_link->type = file_symlink;
+    drm_link->type = file_symlink | file_dir;
     drm_link->mode = 0644;
 
     for (int i = 0; i < framebuffer_request.response->framebuffer_count; i++)
@@ -157,9 +160,10 @@ void drm_init_sysfs()
         uevent->type = file_none;
         uevent->mode = 0700;
         sysfs_handle_t *uevent_handle = malloc(sizeof(sysfs_handle_t));
-        sprintf(uevent_handle->content, "MAJOR=%d\nMINOR=%d\nDEVNAME=/dev/dri/card%d\nSUBSYSTEM=graphics\n", 29, 0, i);
+        sprintf(uevent_handle->content, "MAJOR=%d\nMINOR=%d\nDEVNAME=dri/card%d\nSUBSYSTEM=drm_minor\n", 226, 0, i);
         uevent->handle = uevent_handle;
 
+        sprintf(buf, "connector_id");
         vfs_node_t connector_id = vfs_node_alloc(cardn_virtual, (const char *)buf);
         connector_id->type = file_none;
         connector_id->mode = 0700;
@@ -168,6 +172,7 @@ void drm_init_sysfs()
         sprintf(handle->content, "%d", i + 1);
         connector_id->handle = handle;
 
+        sprintf(buf, "modes");
         vfs_node_t modes = vfs_node_alloc(cardn_virtual, (const char *)buf);
         modes->type = file_none;
         modes->mode = 0700;

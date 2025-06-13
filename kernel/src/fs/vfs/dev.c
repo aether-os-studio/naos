@@ -296,13 +296,25 @@ vfs_node_t regist_dev(const char *name,
             child->refcount++;
             child->type = file_block;
             if (!strncmp(devfs_handles[i]->name, "std", 3) || !strncmp(devfs_handles[i]->name, "tty", 3))
+            {
                 child->type = file_stream;
-            else if (!strncmp(devfs_handles[i]->name, "fb", 2) || !strncmp(devfs_handles[i]->name, "card", 4))
-                child->type = file_fbdev;
-            else if (!strncmp(devfs_handles[i]->name, "event0", 6))
-                child->type = file_keyboard;
-            else if (!strncmp(devfs_handles[i]->name, "event1", 6))
-                child->type = file_mouse;
+                child->rdev = (4 << 8) | 1;
+            }
+            else if (!strncmp(devfs_handles[i]->name, "fb", 2))
+            {
+                child->type = file_stream;
+                child->rdev = (29 << 8) | 0;
+            }
+            else if (!strncmp(devfs_handles[i]->name, "card", 4))
+            {
+                child->type = file_stream;
+                child->rdev = (226 << 8) | 0;
+            }
+            else if (!strncmp(devfs_handles[i]->name, "event", 5))
+            {
+                child->type = file_stream;
+                child->rdev = (19 << 8) | 0;
+            }
 
             child->mode = 0700;
 

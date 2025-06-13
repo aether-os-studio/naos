@@ -181,6 +181,12 @@ void sysfs_init()
     }
 
     vfs_node_t char_dev = vfs_child_append(dev_root, "char", NULL);
-    vfs_node_t dev_node = vfs_child_append(char_dev, "29:0", NULL);
+    char_dev->type = file_dir;
+    char_dev->mode = 0644;
+    vfs_node_t dev_node = vfs_child_append(char_dev, "226:0", NULL);
+    dev_node->type = file_dir;
+    dev_node->mode = 0644;
     vfs_node_t device_node = vfs_child_append(dev_node, "device", NULL);
+    device_node->type = file_dir;
+    device_node->mode = 0644;
 }

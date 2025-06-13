@@ -516,32 +516,13 @@ uint64_t sys_stat(const char *fn, struct stat *buf)
         return (uint64_t)-ENOENT;
     }
 
-    buf->st_dev = 0;
+    buf->st_dev = node->dev;
     buf->st_ino = node->inode;
     buf->st_nlink = 1;
-    buf->st_mode = node->mode | ((node->type & file_symlink) ? S_IFLNK : (node->type & file_dir ? S_IFDIR : S_IFREG));
+    buf->st_mode = node->mode | ((node->type & file_symlink) ? S_IFLNK : (node->type & file_dir ? S_IFDIR : (node->type == file_stream ? S_IFCHR : S_IFREG)));
     buf->st_uid = current_task->uid;
     buf->st_gid = current_task->gid;
-    if (node->type & file_stream)
-    {
-        buf->st_rdev = (4 << 8) | 1;
-    }
-    else if (node->type & file_fbdev)
-    {
-        buf->st_rdev = (29 << 8) | 0;
-    }
-    else if (node->type & file_keyboard)
-    {
-        buf->st_rdev = (13 << 8) | 0;
-    }
-    else if (node->type & file_mouse)
-    {
-        buf->st_rdev = (13 << 8) | 1;
-    }
-    else
-    {
-        buf->st_rdev = 0;
-    }
+    buf->st_rdev = node->rdev;
     buf->st_blksize = node->blksz;
     buf->st_size = node->size;
     buf->st_blocks = (buf->st_size + buf->st_blksize - 1) / buf->st_blksize;
@@ -562,32 +543,13 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
         return (uint64_t)-EBADF;
     }
 
-    buf->st_dev = 0;
+    buf->st_dev = current_task->fds[fd]->node->dev;
     buf->st_ino = current_task->fds[fd]->node->inode;
     buf->st_nlink = 1;
-    buf->st_mode = current_task->fds[fd]->node->mode | ((current_task->fds[fd]->node->type & file_symlink) ? S_IFLNK : (current_task->fds[fd]->node->type & file_dir ? S_IFDIR : S_IFREG));
+    buf->st_mode = current_task->fds[fd]->node->mode | ((current_task->fds[fd]->node->type & file_symlink) ? S_IFLNK : (current_task->fds[fd]->node->type & file_dir ? S_IFDIR : (current_task->fds[fd]->node->type == file_stream ? S_IFCHR : S_IFREG)));
     buf->st_uid = 0;
     buf->st_gid = 0;
-    if (current_task->fds[fd]->node->type & file_stream)
-    {
-        buf->st_rdev = (4 << 8) | 1;
-    }
-    else if (current_task->fds[fd]->node->type & file_fbdev)
-    {
-        buf->st_rdev = (29 << 8) | 0;
-    }
-    else if (current_task->fds[fd]->node->type & file_keyboard)
-    {
-        buf->st_rdev = (13 << 8) | 0;
-    }
-    else if (current_task->fds[fd]->node->type & file_mouse)
-    {
-        buf->st_rdev = (13 << 8) | 1;
-    }
-    else
-    {
-        buf->st_rdev = 0;
-    }
+    buf->st_rdev = current_task->fds[fd]->node->rdev;
     buf->st_blksize = current_task->fds[fd]->node->blksz;
     buf->st_size = current_task->fds[fd]->node->size;
     buf->st_blocks = (buf->st_size + buf->st_blksize - 1) / buf->st_blksize;
