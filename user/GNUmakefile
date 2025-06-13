@@ -7,6 +7,7 @@ all:
 
 .PHONY: clean
 clean:
+	rm -rf .build-stamp
 
 .PHONY: distclean
 distclean:

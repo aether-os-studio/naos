@@ -1,2 +1,3 @@
 rootfs-*/
 ports/cache
+.build-stamp

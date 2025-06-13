@@ -92,16 +92,17 @@ HOST_LDFLAGS :=
 HOST_LIBS :=
 
 .PHONY: all
-all: $(IMAGE_NAME).img
+all: $(IMAGE_NAME).img rootfs-$(ARCH).img
 
 .PHONY: kernel
 kernel:
-	$(MAKE) -C kernel
-	$(MAKE) -C user
+	./kernel/get-deps
+	$(MAKE) -C kernel -j$(shell nproc)
 
-.PHONY: user
-user:
-	$(MAKE) -C user all
+user: user/.build-stamp
+user/.build-stamp:
+	$(MAKE) -C user
+	touch $@
 
 .PHONY: clean
 clean:
@@ -129,6 +130,8 @@ $(IMAGE_NAME).img: assets/limine assets/oib kernel
 		-f kernel/bin-$(ARCH)/kernel:boot/kernel \
 		-f limine.conf:boot/limine/limine.conf \
 		-f assets/limine/limine-bios.sys:boot/limine/limine-bios.sys
+
+rootfs-$(ARCH).img: user/.build-stamp
 	dd if=/dev/zero bs=1M count=0 seek=2048 of=rootfs-$(ARCH).img
 	mkfs.ext2 -F -q -d user/rootfs-$(ARCH) rootfs-$(ARCH).img
 
@@ -136,7 +139,7 @@ $(IMAGE_NAME).img: assets/limine assets/oib kernel
 run: run-$(ARCH)
 
 .PHONY: run-x86_64
-run-x86_64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
+run-x86_64: assets/ovmf-code-$(ARCH).fd all
 	qemu-system-$(ARCH) \
 		-M q35 \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
@@ -149,7 +152,7 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
 		$(QEMUFLAGS)
 
 .PHONY: run-aarch64
-run-aarch64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
+run-aarch64: assets/ovmf-code-$(ARCH).fd all
 	qemu-system-$(ARCH) \
 		-M virt,gic-version=3 \
 		-cpu cortex-a76 \
@@ -165,7 +168,7 @@ run-aarch64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
 		$(QEMUFLAGS)
 
 .PHONY: run-riscv64
-run-riscv64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
+run-riscv64: assets/ovmf-code-$(ARCH).fd all
 	qemu-system-$(ARCH) \
 		-M virt \
 		-cpu rv64 \
@@ -178,7 +181,7 @@ run-riscv64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
 		$(QEMUFLAGS)
 
 .PHONY: run-loongarch64
-run-loongarch64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
+run-loongarch64: assets/ovmf-code-$(ARCH).fd all
 	qemu-system-$(ARCH) \
 		-M virt \
 		-cpu la464 \
