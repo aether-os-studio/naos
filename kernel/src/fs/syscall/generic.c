@@ -800,10 +800,6 @@ uint64_t sys_rmdir(const char *name)
 
 uint64_t sys_unlink(const char *name)
 {
-    if (check_user_overflow((uint64_t)name, strlen(name)))
-    {
-        return (uint64_t)-EFAULT;
-    }
     vfs_node_t node = vfs_open(name);
     if (!node)
         return -ENOENT;

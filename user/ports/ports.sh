@@ -24,21 +24,23 @@ export APK_PATH ARCH SYSROOT ALPINE_VERSION
 unshare -r -- /bin/bash -c '
 set -xe
 
-MIRROR="http://mirrors.ustc.edu.cn/alpine/${ALPINE_VERSION}"
+MIRROR_ROOT="http://mirrors.ustc.edu.cn/alpine"
+
+MIRROR="${MIRROR_ROOT}/${ALPINE_VERSION}"
 APK_CMD="$APK_PATH --arch $ARCH -U --allow-untrusted --root $SYSROOT/../"
 
 # Bootstrap alpine userspace
 $APK_CMD -X "$MIRROR/main" -U --initdb add alpine-base bash coreutils grep musl ncurses
 
 # Use a fast mirror :)
-printf "${MIRROR}/main\n${MIRROR}/community" > $SYSROOT/../etc/apk/repositories
+printf "${MIRROR}/main\n${MIRROR}/community\n${MIRROR_ROOT}/edge/testing" > $SYSROOT/../etc/apk/repositories
 
 $APK_CMD add musl-dev gcompat gzip xz make file tar pciutils tzdata nano lua5.1 gcc binutils python3 libdrm-tests
 # $APK_CMD add seatd weston weston-backend-drm weston-shell-desktop
 # $APK_CMD add xorg-server xf86-video-fbdev xf86-input-evdev xinit xsetroot
 # $APK_CMD add mesa-gl mesa-utils mesa-vulkan-swrast mesa-dri-gallium twm
 
-cp -r $SYSROOT/../usr/share/zoneinfo/Asia/Shanghai $SYSROOT/../etc/localtime
+ln -sf $SYSROOT/../usr/share/zoneinfo/Asia/Shanghai $SYSROOT/../etc/localtime
 '
 
 cp -r $SCRIPTPATH/etc $SYSROOT/../

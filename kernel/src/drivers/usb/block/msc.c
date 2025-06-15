@@ -1,5 +1,6 @@
 #include <drivers/usb/block/msc.h>
 #include <drivers/usb/hcds/usb-xhci.h>
+#include <mm/mm.h>
 #include <block/block.h>
 
 int usb_bulk_transfer(struct usb_pipe *pipe, void *data, size_t len, bool is_read)

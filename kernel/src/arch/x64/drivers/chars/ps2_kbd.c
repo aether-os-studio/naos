@@ -486,6 +486,7 @@ char handle_kb_event()
     if (scan_code == 0xE0)
     {
         uint8_t extended_code = io_in8(PORT_KB_DATA);
+        kb_evdev_generate(extended_code);
         switch (extended_code)
         {
         case 0x48:

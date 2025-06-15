@@ -561,17 +561,7 @@ static inline const char *strstr(const char *haystack, const char *needle)
     return NULL;
 }
 
-extern void *malloc(size_t size);
-
-static inline char *strdup(const char *s)
-{
-    size_t len = strlen((char *)s);
-    char *ptr = (char *)malloc(len + 1);
-    if (ptr == NULL)
-        return NULL;
-    memcpy(ptr, (void *)s, len + 1);
-    return ptr;
-}
+char *strdup(const char *s);
 
 #if defined(__x86_64__)
 
@@ -755,7 +745,7 @@ static inline void semaphore_post(semaphore_t *sem)
     spin_unlock(&sem->lock);
 }
 
-#include <mm/hhdm.h>
+extern uint64_t get_physical_memory_offset();
 
 static inline bool check_user_overflow(uint64_t addr, uint64_t size)
 {
@@ -764,4 +754,48 @@ static inline bool check_user_overflow(uint64_t addr, uint64_t size)
         return true;
     }
     return false;
+}
+
+static inline void qsort_swap(void *a, void *b, size_t size)
+{
+    char tmp[size];
+    memcpy(tmp, a, size);
+    memcpy(a, b, size);
+    memcpy(b, tmp, size);
+}
+
+static inline void *qsort_partition(void *base, size_t size, void *low, void *high, int (*cmp)(const void *, const void *))
+{
+    void *pivot = high;
+    void *i = low - size;
+    for (void *j = low; j != high; j += size)
+    {
+        if (cmp(j, pivot) <= 0)
+        {
+            i += size;
+            qsort_swap(i, j, size);
+        }
+    }
+    qsort_swap(i + size, high, size);
+    return (i + size);
+}
+
+static inline void qsort_quicksort(void *base, size_t size, void *low, void *high, int (*cmp)(const void *, const void *))
+{
+    if (low < high)
+    {
+        void *pi = qsort_partition(base, size, low, high, cmp);
+        qsort_quicksort(base, size, low, pi - size, cmp);
+        qsort_quicksort(base, size, pi + size, high, cmp);
+    }
+}
+
+static inline void qsort(void *base, size_t nitems, size_t size, int (*cmp)(const void *, const void *))
+{
+    qsort_quicksort(base, size, base, (char *)base + size * (nitems - 1), cmp);
+}
+
+static inline int qsort_compare(const void *a, const void *b)
+{
+    return (*(int *)a - *(int *)b);
 }

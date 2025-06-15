@@ -47,7 +47,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         // 创建简单的显示缓冲区
         create->height = dev->framebuffer->height;
         create->width = dev->framebuffer->width;
-        create->bpp = 32;
+        create->bpp = dev->framebuffer->bpp;
         create->size = create->height * create->width * 4;
         create->pitch = dev->framebuffer->pitch;
         create->handle = 1;

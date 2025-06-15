@@ -71,6 +71,8 @@ override CFLAGS += \
 # Internal C preprocessor flags that should not be changed by the user.
 override CPPFLAGS := \
     -I src \
+    -I src/fs/ext/lwext4/include \
+    -DCONFIG_USE_DEFAULT_CFG \
     -isystem freestnd-c-hdrs \
     $(CPPFLAGS) \
     -MMD \
@@ -181,7 +183,7 @@ bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH).ld $(OBJ)
 	cargo build --target $(RUST_TARGET)
 
 	mkdir -p "$$(dirname $@)"
-	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) target/$(RUST_TARGET)/debug/libkernel.a -o $@
+	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) target/$(RUST_TARGET)/debug/libkernel.a -o $@
 
 # Compilation rules for *.c files.
 obj-$(ARCH)/src/%.c.o: src/%.c GNUmakefile

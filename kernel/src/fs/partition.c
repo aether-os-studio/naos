@@ -66,7 +66,7 @@ void partition_init()
         {
             part->blkdev_id = i;
             part->starting_lba = 0;
-            part->ending_lba = 0;
+            part->ending_lba = blkdev_ioctl(i, IOCTL_GETSIZE, 0) / 512;
             part->type = RAW;
             partition_num++;
 
@@ -82,7 +82,7 @@ void partition_init()
         {
             part->blkdev_id = i;
             part->starting_lba = 0;
-            part->ending_lba = 0;
+            part->ending_lba = blkdev_ioctl(i, IOCTL_GETSIZE, 0) / 512 - 1;
             part->type = RAW;
             partition_num++;
             continue;
@@ -121,7 +121,7 @@ void mount_root()
         char buf[11];
         sprintf(buf, "/dev/part%d", i);
 
-        if (!vfs_mount((const char *)buf, rootdir, "ext2"))
+        if (!vfs_mount((const char *)buf, rootdir, "ext"))
         {
             err = false;
             break;

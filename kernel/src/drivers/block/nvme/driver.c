@@ -443,7 +443,7 @@ void nvme_driver_init(uint64_t bar0, uint64_t bar_size)
 
         namespaces[nvme_device_num] = ns;
 
-        regist_blkdev((char *)"nvme", ns, ns->BSZ, ns->NLBA * ns->BSZ, ns->MXRS * ns->BSZ, nvme_read, nvme_write);
+        regist_blkdev((char *)"nvme", ns, ns->BSZ, ns->NLBA * ns->BSZ, DEFAULT_PAGE_SIZE, nvme_read, nvme_write);
 
         nvme_device_num++;
     }

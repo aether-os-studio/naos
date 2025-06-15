@@ -114,6 +114,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         sys_lseek(arg1, arg4, SEEK_SET);
         regs->rax = sys_write(arg1, (void *)arg2, arg3);
         break;
+    case SYS_FSYNC:
+        regs->rax = 0;
+        break;
     case SYS_IOCTL:
         regs->rax = sys_ioctl(arg1, arg2, arg3);
         break;
