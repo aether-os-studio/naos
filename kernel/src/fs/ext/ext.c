@@ -97,9 +97,9 @@ void ext_open(void *parent, const char *name, vfs_node_t node)
         path = vfs_get_fullpath(handle->node->parent);
         char buffer[256];
         if (!strcmp(path, "/"))
-            sprintf(buffer, "/%s", name);
+            sprintf(buffer, "/%s", node->linkname);
         else
-            sprintf(buffer, "%s/%s", path, name);
+            sprintf(buffer, "%s/%s", path, node->linkname);
         free(path);
         ext4_fopen(lfile, (const char *)buffer, "r+b");
         node->size = ext4_fsize(lfile);

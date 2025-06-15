@@ -53,7 +53,7 @@ extern "C"
 #define F_SET_EXT4 4
 
 #ifndef CONFIG_EXT_FEATURE_SET_LVL
-#define CONFIG_EXT_FEATURE_SET_LVL F_SET_EXT4
+#define CONFIG_EXT_FEATURE_SET_LVL F_SET_EXT2
 #endif
 
     /*****************************************************************************/
