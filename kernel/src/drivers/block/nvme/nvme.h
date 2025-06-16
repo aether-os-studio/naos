@@ -217,6 +217,17 @@ typedef struct _NVME_NAMESPACE
     uint32_t MXRS; // Max Request Size
 } NVME_NAMESPACE;
 
+#define NVME_SQE_PRP_PTR ((uint32_t)1 << 13)
+
+typedef struct _NVME_PRP_LIST
+{
+    uint64_t prp1;
+    uint64_t prp2;
+    bool UPRP;  // Use PRP list
+    void *A;    //
+    uint64_t S; //
+} NVME_PRP_LIST;
+
 #define MAX_NVME_DEV_NUM 32
 
 #define is_digit(c) ((c) >= '0' && (c) <= '9') // 用来判断是否是数字的宏

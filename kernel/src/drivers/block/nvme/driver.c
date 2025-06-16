@@ -121,6 +121,61 @@ void nvme_rwfail(uint16_t status)
     printk("Status: %#010lx, status code: %#010lx, status code type: %#010lx\n", status, status & 0xFF, (status >> 8) & 0x7);
 }
 
+bool BuildPRPList(void *vaddr, uint64_t size, NVME_PRP_LIST *prpList)
+{
+    uint64_t vaddrStart = (uint64_t)vaddr;
+    uint64_t vaddrEnd = vaddrStart + size;
+    uint64_t pageMask = DEFAULT_PAGE_SIZE - 1;
+
+    uint64_t firstPage = vaddrStart & ~pageMask;
+    uint64_t lastPage = (vaddrEnd - 1) & ~pageMask;
+    uint32_t pageCount = ((lastPage - firstPage) / DEFAULT_PAGE_SIZE) + 1;
+
+    if (pageCount <= 2)
+    {
+        prpList->prp1 = virt_to_phys(vaddrStart);
+        if (pageCount == 1)
+        {
+            prpList->prp2 = 0;
+        }
+        else
+        {
+            prpList->prp2 = virt_to_phys(firstPage + DEFAULT_PAGE_SIZE);
+        }
+        prpList->UPRP = false;
+        prpList->A = NULL;
+        return true;
+    }
+
+    uint32_t prpEntries = pageCount - 1;
+    uint64_t *prpArray = alloc_frames_bytes(prpEntries * sizeof(uint64_t));
+    if (!prpArray)
+        return false;
+
+    uint64_t currentPage = firstPage + DEFAULT_PAGE_SIZE;
+    for (uint32_t i = 0; i < prpEntries; i++)
+    {
+        prpArray[i] = translate_address(get_current_page_dir(false), currentPage);
+        currentPage += DEFAULT_PAGE_SIZE;
+    }
+
+    prpList->prp1 = translate_address(get_current_page_dir(false), vaddrStart);
+    prpList->prp2 = translate_address(get_current_page_dir(false), (uint64_t)prpArray);
+    prpList->UPRP = true;
+    prpList->A = prpArray;
+    prpList->S = prpEntries * sizeof(uint64_t);
+    return true;
+}
+
+void FreePRPList(NVME_PRP_LIST *prpList)
+{
+    if (prpList->A)
+    {
+        free_frames_bytes(prpList->A, prpList->S);
+        prpList->A = NULL;
+    }
+}
+
 uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba, uint32_t count, uint32_t write)
 {
     if (!count || !ns || !buf)
@@ -132,45 +187,58 @@ uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba, uint32_t coun
         return 0;
     }
 
-    uint64_t bufAddr = (uint64_t)buf;
-    uint32_t maxCount = (DEFAULT_PAGE_SIZE / ns->BSZ) - ((bufAddr & (DEFAULT_PAGE_SIZE - 1)) / ns->BSZ);
-    if (count > maxCount)
+    uint32_t transferred = 0;
+    uint8_t *currentBuf = (uint8_t *)buf;
+    uint64_t currentLBA = lba;
+
+    while (count > 0)
     {
-        count = maxCount;
+        uint32_t chunk = count;
+        if (ns->MXRS != (uint32_t)-1 && chunk > ns->MXRS)
+        {
+            chunk = ns->MXRS;
+        }
+
+        uint64_t size = chunk * ns->BSZ;
+        NVME_PRP_LIST prpList;
+        if (!BuildPRPList(currentBuf, size, &prpList))
+        {
+            printk("NVME: Failed to build PRP list\n");
+            return transferred;
+        }
+
+        NVME_SUBMISSION_QUEUE_ENTRY sqe;
+        memset(&sqe, 0, sizeof(NVME_SUBMISSION_QUEUE_ENTRY));
+        sqe.CDW0 = write ? NVME_SQE_OPC_IO_WRITE : NVME_SQE_OPC_IO_READ;
+        sqe.NSID = ns->NSID;
+        sqe.CDWA = (uint32_t)(currentLBA & 0xFFFFFFFF);
+        sqe.CDWB = (uint32_t)(currentLBA >> 32);
+        sqe.CDWC = (1UL << 31) | ((chunk - 1) & 0xFFFF);
+
+        sqe.DATA[0] = prpList.prp1;
+        sqe.DATA[1] = prpList.prp2;
+        if (prpList.UPRP)
+        {
+            sqe.CDW0 |= NVME_SQE_PRP_PTR;
+        }
+
+        NVME_COMPLETION_QUEUE_ENTRY cqe = NVMEWaitingCMD(&ns->CTRL->ISQ, &sqe);
+        if ((cqe.STS >> 1) & 0xFF)
+        {
+            nvme_rwfail(cqe.STS);
+            FreePRPList(&prpList);
+            return transferred;
+        }
+
+        currentBuf += size;
+        currentLBA += chunk;
+        transferred += chunk;
+        count -= chunk;
+
+        FreePRPList(&prpList);
     }
-    if (ns->MXRS != (uint32_t)-1 && count > ns->MXRS)
-    {
-        count = ns->MXRS;
-    }
 
-    uint64_t size = count * ns->BSZ;
-
-    uint64_t buffer_phys = virt_to_phys(bufAddr);
-    if (!buffer_phys)
-    {
-        printk("NVME: Invalid physical address\n");
-        return 0;
-    }
-
-    NVME_SUBMISSION_QUEUE_ENTRY sqe;
-    memset(&sqe, 0, sizeof(NVME_SUBMISSION_QUEUE_ENTRY));
-    sqe.CDW0 = write ? NVME_SQE_OPC_IO_WRITE : NVME_SQE_OPC_IO_READ;
-    sqe.META = 0;
-    sqe.DATA[0] = buffer_phys;
-    sqe.DATA[1] = 0;
-    sqe.NSID = ns->NSID;
-    sqe.CDWA = (uint32_t)(lba & 0xFFFFFFFF);
-    sqe.CDWB = (uint32_t)(lba >> 32);
-    sqe.CDWC = (1UL << 31) | ((count - 1) & 0xFFFF);
-
-    NVME_COMPLETION_QUEUE_ENTRY cqe = NVMEWaitingCMD(&ns->CTRL->ISQ, &sqe);
-    if ((cqe.STS >> 1) & 0xFF)
-    {
-        nvme_rwfail(cqe.STS);
-        return 0;
-    }
-
-    return count;
+    return transferred;
 }
 
 void failed_nvme(NVME_CONTROLLER *ctrl)
@@ -443,7 +511,7 @@ void nvme_driver_init(uint64_t bar0, uint64_t bar_size)
 
         namespaces[nvme_device_num] = ns;
 
-        regist_blkdev((char *)"nvme", ns, ns->BSZ, ns->NLBA * ns->BSZ, DEFAULT_PAGE_SIZE, nvme_read, nvme_write);
+        regist_blkdev((char *)"nvme", ns, ns->BSZ, ns->NLBA * ns->BSZ, ns->MXRS * ns->BSZ, nvme_read, nvme_write);
 
         nvme_device_num++;
     }
