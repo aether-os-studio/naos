@@ -1,6 +1,7 @@
 #pragma once
 
 #include <libs/klibc.h>
+#include <fs/vfs/vfs.h>
 
 #define PIPE_BUFF 1024
 
@@ -36,4 +37,5 @@ struct pipe_specific
 {
     bool write;
     pipe_info_t *info;
+    vfs_node_t node;
 };

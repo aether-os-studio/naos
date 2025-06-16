@@ -1,6 +1,5 @@
 #include <arch/arch.h>
 #include <task/task.h>
-#include <fs/vfs/vfs.h>
 #include <fs/fs_syscall.h>
 
 vfs_node_t pipefs_root;
@@ -219,6 +218,8 @@ bool pipefs_close(void *current)
 
     free(spec);
 
+    list_delete(pipefs_root->child, spec->node);
+
     return true;
 }
 
@@ -322,10 +323,12 @@ int sys_pipe(int pipefd[2])
     pipe_specific_t *read_spec = (pipe_specific_t *)malloc(sizeof(pipe_specific_t));
     read_spec->write = false;
     read_spec->info = info;
+    read_spec->node = node_input;
 
     pipe_specific_t *write_spec = (pipe_specific_t *)malloc(sizeof(pipe_specific_t));
     write_spec->write = true;
     write_spec->info = info;
+    write_spec->node = node_output;
 
     node_input->handle = read_spec;
     node_output->handle = write_spec;

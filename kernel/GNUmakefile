@@ -23,6 +23,12 @@ ARCH_DIR := src/arch/loongarch64
 RUST_TARGET := loongarch64-unknown-none
 endif
 
+RUST_PROFILE ?= dev
+RUST_PROFILE_DIR := $(RUST_PROFILE)
+ifeq ($(RUST_PROFILE), dev)
+RUST_PROFILE_DIR := debug
+endif
+
 # Install prefix; /usr/local is a good, standard default pick.
 PREFIX := /usr/local
 
@@ -185,10 +191,10 @@ all: bin-$(ARCH)/$(OUTPUT)
 .PHONY: bin-$(ARCH)/$(OUTPUT)
 # Link rules for the final executable.
 bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH).ld $(OBJ)
-	cargo build --target $(RUST_TARGET)
+	cargo build --target $(RUST_TARGET) --profile $(RUST_PROFILE)
 
 	mkdir -p "$$(dirname $@)"
-	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) target/$(RUST_TARGET)/debug/libkernel.a -o $@
+	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) target/$(RUST_TARGET)/$(RUST_PROFILE_DIR)/libkernel.a -o $@
 
 # Compilation rules for *.c files.
 obj-$(ARCH)/src/%.c.o: src/%.c GNUmakefile
