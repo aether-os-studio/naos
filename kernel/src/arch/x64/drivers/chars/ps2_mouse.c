@@ -7,10 +7,6 @@
 #include <fs/vfs/dev.h>
 #include <drivers/fb.h>
 
-#define FLANTERM_IN_FLANTERM
-#include <libs/flanterm/flanterm_private.h>
-#include <libs/flanterm/backends/fb_private.h>
-
 int64_t mouse_install(uint64_t vector, uint64_t arg)
 {
     ioapic_add(vector, 12);
@@ -75,8 +71,6 @@ bool clickedRight = true;
 
 dev_input_event_t *mouse_event = NULL;
 
-extern struct flanterm_context *ft_ctx;
-
 void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs)
 {
     uint8_t byte = mouse_read();
@@ -111,10 +105,20 @@ void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs)
                 gx = 0;
             if (gy < 0)
                 gy = 0;
-            if ((size_t)gx > ((struct flanterm_fb_context *)ft_ctx)->width)
-                gx = ((struct flanterm_fb_context *)ft_ctx)->width;
-            if ((size_t)gy > ((struct flanterm_fb_context *)ft_ctx)->height)
-                gy = ((struct flanterm_fb_context *)ft_ctx)->height;
+
+            size_t addr;
+            size_t width;
+            size_t height;
+            size_t bpp;
+            size_t cols;
+            size_t rows;
+
+            os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
+
+            if ((size_t)gx > width)
+                gx = width;
+            if ((size_t)gy > height)
+                gy = height;
 
             bool click = mouse1 & (1 << 0);
             bool rclick = mouse1 & (1 << 1);
@@ -189,6 +193,15 @@ void mouse_init()
 
 size_t mouse_event_bit(void *data, uint64_t request, void *arg)
 {
+    size_t addr;
+    size_t width;
+    size_t height;
+    size_t bpp;
+    size_t cols;
+    size_t rows;
+
+    os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
+
     size_t number = _IOC_NR(request);
     size_t size = _IOC_SIZE(request);
 
@@ -238,7 +251,7 @@ size_t mouse_event_bit(void *data, uint64_t request, void *arg)
         memset(target, 0, sizeof(struct input_absinfo));
         target->value = 0; // todo
         target->minimum = 0;
-        target->maximum = framebuffer_request.response->framebuffers[0]->width;
+        target->maximum = width;
         ret = 0;
         break;
     }
@@ -248,7 +261,7 @@ size_t mouse_event_bit(void *data, uint64_t request, void *arg)
         memset(target, 0, sizeof(struct input_absinfo));
         target->value = 0; // todo
         target->minimum = 0;
-        target->maximum = framebuffer_request.response->framebuffers[0]->height;
+        target->maximum = height;
         ret = 0;
         break;
     }

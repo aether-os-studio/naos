@@ -4,10 +4,6 @@
 #include <arch/arch.h>
 #include <task/task.h>
 
-#define FLANTERM_IN_FLANTERM
-#include <libs/flanterm/flanterm_private.h>
-#include <libs/flanterm/backends/fb_private.h>
-
 int devfs_id = 0;
 vfs_node_t devfs_root = NULL;
 vfs_node_t input_root = NULL;
@@ -356,15 +352,11 @@ ssize_t stdout_write(void *data, uint64_t offset, const void *buf, uint64_t len)
     (void)data;
     (void)offset;
 
-    for (uint64_t i = 0; i < len; i++)
-    {
-        printk("%c", ((const char *)buf)[i]);
-    }
+    serial_printk((char *)buf, len);
+    os_terminal_write(buf, len);
 
     return (ssize_t)len;
 }
-
-extern struct flanterm_context *ft_ctx;
 
 ssize_t stdio_ioctl(void *data, ssize_t cmd, ssize_t arg)
 {
@@ -375,11 +367,20 @@ ssize_t stdio_ioctl(void *data, ssize_t cmd, ssize_t arg)
     switch (cmd)
     {
     case TIOCGWINSZ:
+        size_t addr;
+        size_t width;
+        size_t height;
+        size_t bpp;
+        size_t cols;
+        size_t rows;
+
+        os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
+
         *(struct winsize *)arg = (struct winsize){
-            .ws_xpixel = ((struct flanterm_fb_context *)ft_ctx)->width,
-            .ws_ypixel = ((struct flanterm_fb_context *)ft_ctx)->height,
-            .ws_col = ft_ctx->cols,
-            .ws_row = ft_ctx->rows,
+            .ws_xpixel = width,
+            .ws_ypixel = height,
+            .ws_col = cols,
+            .ws_row = rows,
         };
         return 0;
     case TIOCSCTTY:

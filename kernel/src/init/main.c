@@ -32,9 +32,10 @@ void kmain(void)
     }
 
     frame_init();
-    printk("Next Aether-OS starting...\n");
 
     heap_init();
+
+    printk("Next Aether-OS starting...\n");
 
     arch_early_init();
 

@@ -38,9 +38,6 @@ bool is_stack_memory_region(uint64_t pml4_idx, uint64_t pdpt_idx, uint64_t pd_id
 {
     uint64_t vaddr = (pml4_idx << 39) | (pdpt_idx << 30) | (pd_idx << 21) | (pt_idx << 12);
 
-    uint64_t fb_addr = virt_to_phys((uint64_t)framebuffer_request.response->framebuffers[0]->address);
-    uint64_t fb_size = framebuffer_request.response->framebuffers[0]->width * framebuffer_request.response->framebuffers[0]->height * framebuffer_request.response->framebuffers[0]->bpp / 8;
-
     // todo: others
     if ((vaddr >= USER_STACK_START) && (vaddr <= USER_BRK_END))
     {
@@ -53,11 +50,16 @@ bool is_reserved_memory_region(uint64_t pml4_idx, uint64_t pdpt_idx, uint64_t pd
 {
     uint64_t vaddr = (pml4_idx << 39) | (pdpt_idx << 30) | (pd_idx << 21) | (pt_idx << 12);
 
-    uint64_t fb_addr = virt_to_phys((uint64_t)framebuffer_request.response->framebuffers[0]->address);
-    uint64_t fb_size = framebuffer_request.response->framebuffers[0]->width * framebuffer_request.response->framebuffers[0]->height * framebuffer_request.response->framebuffers[0]->bpp / 8;
+    size_t addr;
+    size_t width;
+    size_t height;
+    size_t bpp;
+    size_t cols;
+    size_t rows;
 
-    // todo: others
-    if ((vaddr >= fb_addr) && (vaddr <= ((fb_addr + fb_size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)))))
+    os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
+
+    if (vaddr >= addr && vaddr <= (width * height * bpp / 8))
     {
         return true;
     }

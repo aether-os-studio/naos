@@ -479,14 +479,16 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         free(new_envp);
 
         execve_lock = false;
-        const char *argvs[64];
-        memset(argvs, 0, 64 * sizeof(const char *));
-        argvs[0] = path;
-        int i;
-        for (i = 0; i < argv_count; i++)
-            argvs[i + 1] = argv[i];
-        argvs[i + 1] = NULL;
-        return task_execve("/bin/bash", argvs, envp);
+
+        int argc = 0;
+        while (argv[argc++])
+            ;
+        const char *injected_argv[64];
+        memcpy((char *)&injected_argv[1], argv, argc * sizeof(char *));
+        injected_argv[1] = path;
+        injected_argv[0] = "/bin/bash";
+
+        return task_execve((const char *)injected_argv[0], injected_argv, envp);
     }
 
     const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)EHDR_START_ADDR;

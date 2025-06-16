@@ -13,15 +13,9 @@
 
 #define is_digit(c) ((c) >= '0' && (c) <= '9') // 用来判断是否是数字的宏
 
-struct flanterm_context *ft_ctx = NULL;
-
 bool printk_initialized = false;
 
 char buf[4096];
-
-__attribute__((used, section(".limine_requests"))) volatile struct limine_framebuffer_request framebuffer_request = {
-    .id = LIMINE_FRAMEBUFFER_REQUEST,
-    .revision = 0};
 
 char *write_num(char *str, uint64_t num, int base, int field_width, int precision, int flags);
 char *write_float_point_num(char *str, double num, int field_width, int precision, int flags);
@@ -538,31 +532,12 @@ spinlock_t printk_lock = {0};
 
 int printk(const char *fmt, ...)
 {
-    struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];
-
     spin_lock_irqsave(&printk_lock);
 
     if (!printk_initialized)
     {
         init_serial();
 
-        if (framebuffer)
-        {
-            ft_ctx = flanterm_fb_init(
-                alloc_frames_bytes,
-                free_frames_bytes,
-                (uint32_t *)framebuffer->address, framebuffer->width, framebuffer->height, framebuffer->pitch,
-                framebuffer->red_mask_size, framebuffer->red_mask_shift,
-                framebuffer->green_mask_size, framebuffer->green_mask_shift,
-                framebuffer->blue_mask_size, framebuffer->blue_mask_shift,
-                NULL,
-                NULL, NULL,
-                NULL, NULL,
-                NULL, NULL,
-                NULL, 0, 0, 1,
-                0, 0,
-                0);
-        }
         printk_initialized = true;
     }
 
@@ -575,13 +550,7 @@ int printk(const char *fmt, ...)
 
     serial_printk(buf, len);
 
-    if (!framebuffer_request.response->framebuffer_count)
-    {
-        spin_unlock_irqrestore(&printk_lock);
-        return len;
-    }
-
-    flanterm_write(ft_ctx, buf, len);
+    os_terminal_write(buf, len);
     spin_unlock_irqrestore(&printk_lock);
 
     return len;
