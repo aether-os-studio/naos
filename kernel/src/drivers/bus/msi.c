@@ -10,10 +10,12 @@
  */
 struct msi_msg_t *msi_arch_get_msg(struct msi_desc_t *msi_desc)
 {
+#if defined(__x86_64__)
     msi_desc->msg.address_hi = 0;
     msi_desc->msg.address_lo = ia64_pci_get_arch_msi_message_address(msi_desc->processor);
     msi_desc->msg.data = ia64_pci_get_arch_msi_message_data(msi_desc->irq_num, msi_desc->processor, msi_desc->edge_trigger, msi_desc->assert);
     msi_desc->msg.vector_control = 0;
+#endif
     return &(msi_desc->msg);
 }
 

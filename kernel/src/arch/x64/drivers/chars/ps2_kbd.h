@@ -4,14 +4,6 @@
 #include <arch/x64/irq/irq.h>
 #include <drivers/block/ahci/hba.h>
 
-enum
-{
-    KEY_BUTTON_UP = 0x81,
-    KEY_BUTTON_DOWN = 0x82,
-    KEY_BUTTON_LEFT = 0x83,
-    KEY_BUTTON_RIGHT = 0x84,
-};
-
 #define PORT_KB_DATA 0x60
 #define PORT_KB_STATUS 0x64
 #define PORT_KB_CMD 0x64
@@ -39,22 +31,6 @@ struct task;
 typedef struct task task_t;
 
 bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state);
-
-#define SYN_REPORT 0
-#define SYN_CONFIG 1
-#define SYN_MT_REPORT 2
-#define SYN_DROPPED 3
-#define SYN_MAX 0xf
-#define SYN_CNT (SYN_MAX + 1)
-
-#define SCANCODE_ENTER 28
-#define SCANCODE_BACK 14
-#define SCANCODE_SHIFT 42
-#define SCANCODE_CAPS 58
-#define SCANCODE_UP 0x48
-
-#define CHARACTER_ENTER '\n'
-#define CHARACTER_BACK '\b'
 
 size_t kb_event_bit(void *data, uint64_t request, void *arg);
 

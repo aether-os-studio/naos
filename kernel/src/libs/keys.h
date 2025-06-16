@@ -362,5 +362,29 @@ extern char character_table[140];
 extern char shifted_character_table[140];
 extern const uint8_t evdevTable[89];
 
+#define SYN_REPORT 0
+#define SYN_CONFIG 1
+#define SYN_MT_REPORT 2
+#define SYN_DROPPED 3
+#define SYN_MAX 0xf
+#define SYN_CNT (SYN_MAX + 1)
+
+#define SCANCODE_ENTER 28
+#define SCANCODE_BACK 14
+#define SCANCODE_SHIFT 42
+#define SCANCODE_CAPS 58
+#define SCANCODE_UP 0x48
+
+#define CHARACTER_ENTER '\n'
+#define CHARACTER_BACK '\b'
+
+enum
+{
+    KEY_BUTTON_UP = 0x81,
+    KEY_BUTTON_DOWN = 0x82,
+    KEY_BUTTON_LEFT = 0x83,
+    KEY_BUTTON_RIGHT = 0x84,
+};
+
 void kb_evdev_generate(uint8_t raw);
-char handle_kb_event();
+char handle_kb_event(uint8_t scancode);
