@@ -39,3 +39,15 @@ x86_64 = "0.15.2"
 
 [build-dependencies]
 bindgen = "0.72.0"
+
+[profile.dev]
+panic = "abort"
+lto = true
+opt-level = 3
+debug = true
+
+[profile.release]
+panic = "abort"
+lto = true
+opt-level = 3
+debug = true

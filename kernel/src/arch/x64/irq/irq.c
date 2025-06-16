@@ -36,16 +36,16 @@
 // 构造中断entry
 // 为了复用返回函数的代码，需要压入一个错误码0
 
-#define Build_IRQ(number)                                                      \
-    extern void IRQ_NAME(number);                                              \
-    __asm__(".section .text\n\t" SYMBOL_NAME_STR(IRQ) #number "interrupt:\n\t" \
-                                                              "cli\n\t"        \
-    "pushq $0x00\n\t" SAVE_ALL_REGS                                            \
-    "movq %rsp, %rdi\n\t"                                                      \
-    "leaq ret_from_intr(%rip), %rax\n\t"                                       \
-    "pushq %rax \n\t"                                                          \
-    "movq	$" #number ", %rsi\n\t"                                            \
-    "jmp do_irq\n\t");
+#define Build_IRQ(number)                                                                          \
+    extern void IRQ_NAME(number);                                                                  \
+    __asm__(".section .text\n\t" SYMBOL_NAME_STR(IRQ) #number "interrupt:\n\t"                     \
+                                                              "cli\n\t"                            \
+                                                              "pushq $0x00\n\t" SAVE_ALL_REGS      \
+                                                              "movq %rsp, %rdi\n\t"                \
+                                                              "leaq ret_from_intr(%rip), %rax\n\t" \
+                                                              "pushq %rax \n\t"                    \
+                                                              "movq	$" #number ", %rsi\n\t"        \
+                                                              "jmp do_irq\n\t");
 
 // 构造中断入口
 Build_IRQ(0x20);
@@ -74,6 +74,12 @@ Build_IRQ(0x36);
 Build_IRQ(0x37);
 Build_IRQ(0x38);
 Build_IRQ(0x39);
+Build_IRQ(0x3a);
+Build_IRQ(0x3b);
+Build_IRQ(0x3c);
+Build_IRQ(0x3d);
+Build_IRQ(0x3e);
+Build_IRQ(0x3f);
 Build_IRQ(0x40);
 
 // 初始化中断数组
@@ -105,6 +111,12 @@ void (*interrupt_table[])(void) =
         IRQ0x37interrupt,
         IRQ0x38interrupt,
         IRQ0x39interrupt,
+        IRQ0x3ainterrupt,
+        IRQ0x3binterrupt,
+        IRQ0x3cinterrupt,
+        IRQ0x3dinterrupt,
+        IRQ0x3einterrupt,
+        IRQ0x3finterrupt,
         IRQ0x40interrupt,
 };
 

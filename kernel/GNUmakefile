@@ -88,7 +88,12 @@ endif
 ifeq ($(ARCH),x86_64)
     ifeq ($(CC_IS_CLANG),1)
         override CC += \
-            -target x86_64-unknown-none
+            -target x86_64-unknown-none \
+            -mno-80387 \
+            -mno-mmx \
+            -mno-sse \
+            -mno-sse2 \
+            -msoft-float
     endif
     override CFLAGS += \
         -m64 \

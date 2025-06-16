@@ -50,15 +50,15 @@ typedef uint32_t hba_reg_t;
 
 #define HBA_NONFATAL (HBA_PxINTR_NIF | HBA_PxINTR_OF)
 
-#define HBA_RGHC_ACHI_ENABLE (1 << 31)
-#define HBA_RGHC_INTR_ENABLE (1 << 1)
+#define HBA_RGHC_ACHI_ENABLE ((uint32_t)1 << 31)
+#define HBA_RGHC_INTR_ENABLE ((uint32_t)1 << 1)
 #define HBA_RGHC_RESET 1
 
 #define HBA_RPxSSTS_PWR(x) (((x) >> 8) & 0xf)
 #define HBA_RPxSSTS_IF(x) (((x) >> 4) & 0xf)
 #define HBA_RPxSSTS_PHYSTATE(x) ((x) & 0xf)
 
-#define hba_clear_reg(reg) (reg) = -1
+#define hba_clear_reg(reg) (reg) = (hba_reg_t)(-1)
 
 #define HBA_DEV_SIG_ATAPI 0xeb140101
 #define HBA_DEV_SIG_ATA 0x00000101

@@ -6,6 +6,7 @@
 #include <task/task.h>
 #include <fs/vfs/dev.h>
 #include <drivers/fb.h>
+#include <libs/keys.h>
 
 int64_t mouse_install(uint64_t vector, uint64_t arg)
 {
