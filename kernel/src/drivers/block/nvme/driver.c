@@ -133,14 +133,14 @@ bool BuildPRPList(void *vaddr, uint64_t size, NVME_PRP_LIST *prpList)
 
     if (pageCount <= 2)
     {
-        prpList->prp1 = virt_to_phys(vaddrStart);
+        prpList->prp1 = translate_address(get_current_page_dir(false), vaddrStart);
         if (pageCount == 1)
         {
             prpList->prp2 = 0;
         }
         else
         {
-            prpList->prp2 = virt_to_phys(firstPage + DEFAULT_PAGE_SIZE);
+            prpList->prp2 = translate_address(get_current_page_dir(false), firstPage + DEFAULT_PAGE_SIZE);
         }
         prpList->UPRP = false;
         prpList->A = NULL;
