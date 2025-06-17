@@ -110,6 +110,39 @@ uint64_t sys_close(uint64_t fd)
     return 0;
 }
 
+uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags)
+{
+    if (fd > maxfd)
+    {
+        return (uint64_t)-EINVAL;
+    }
+
+    if (maxfd > MAX_FD_NUM)
+    {
+        maxfd = MAX_FD_NUM;
+    }
+
+    for (uint64_t fd_ = fd; fd_ <= maxfd; fd_++)
+    {
+        if (current_task->fds[fd_])
+        {
+            current_task->fds[fd_]->offset = 0;
+            if (current_task->fds[fd_]->node->lock.l_pid == current_task->pid)
+            {
+                current_task->fds[fd_]->node->lock.l_type = F_UNLCK;
+                current_task->fds[fd_]->node->lock.l_pid = 0;
+            }
+
+            vfs_close(current_task->fds[fd_]->node);
+            free(current_task->fds[fd_]);
+
+            current_task->fds[fd_] = NULL;
+        }
+    }
+
+    return 0;
+}
+
 uint64_t sys_read(uint64_t fd, void *buf, uint64_t len)
 {
     if (!buf || check_user_overflow((uint64_t)buf, len))

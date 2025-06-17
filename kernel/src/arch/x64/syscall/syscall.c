@@ -97,6 +97,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_CLOSE:
         regs->rax = sys_close(arg1);
         break;
+    case SYS_CLOSE_RANGE:
+        regs->rax = sys_close_range(arg1, arg2, arg3);
+        break;
     case SYS_LSEEK:
         regs->rax = sys_lseek(arg1, arg2, arg3);
         break;

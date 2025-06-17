@@ -239,12 +239,6 @@ int socket_accept_poll(void *file, int events)
 
 int socket_socket(int domain, int type, int protocol)
 {
-    // rest are not supported yet, only SOCK_STREAM
-    if (!(type & 1))
-    {
-        return -(ENOSYS);
-    }
-
     char buf[128];
     sprintf(buf, "sock%d", sockfsfd_id++);
     vfs_node_t socknode = vfs_node_alloc(sockfs_root, buf);
