@@ -10,7 +10,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
 {
     drm_device_t *dev = (drm_device_t *)data;
 
-    switch (cmd)
+    switch (cmd & 0xffffffff)
     {
     case DRM_IOCTL_VERSION:
         *(uint32_t *)arg = 0x010101;

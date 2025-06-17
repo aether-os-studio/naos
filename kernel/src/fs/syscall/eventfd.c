@@ -50,6 +50,8 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags)
     node->fsid = eventfdfs_id;
     node->handle = efd;
 
+    efd->node = node;
+
     current_task->fds[fd] = malloc(sizeof(fd_t));
     current_task->fds[fd]->node = node;
     current_task->fds[fd]->offset = 0;
@@ -59,9 +61,8 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags)
 }
 
 // 实现读写操作
-static ssize_t eventfd_read(vfs_node_t node, void *buf, size_t offset, size_t len)
+static ssize_t eventfd_read(eventfd_t *efd, void *buf, size_t offset, size_t len)
 {
-    eventfd_t *efd = node->handle;
     uint64_t value;
 
     while (efd->count == 0)
@@ -81,9 +82,8 @@ static ssize_t eventfd_read(vfs_node_t node, void *buf, size_t offset, size_t le
     return sizeof(uint64_t);
 }
 
-static ssize_t eventfd_write(vfs_node_t node, const void *buf, size_t offset, size_t len)
+static ssize_t eventfd_write(eventfd_t *efd, const void *buf, size_t offset, size_t len)
 {
-    eventfd_t *efd = node->handle;
     uint64_t value;
     memcpy(&value, buf, sizeof(uint64_t));
 
@@ -95,16 +95,35 @@ static ssize_t eventfd_write(vfs_node_t node, const void *buf, size_t offset, si
     return sizeof(uint64_t);
 }
 
-static int eventfd_poll(void *file, size_t event)
+bool eventfd_close(void *current)
 {
-    return -EOPNOTSUPP;
+    eventfd_t *efd = current;
+    free(efd->node);
+    list_delete(eventfdfs_root->child, efd->node);
+    free(efd);
+
+    return true;
+}
+
+static int eventfd_poll(void *file, size_t events)
+{
+    eventfd_t *eventFd = file;
+    int revents = 0;
+
+    if (events & EPOLLIN && eventFd->count > 0)
+        revents |= EPOLLIN;
+
+    if (events & EPOLLOUT && eventFd->count < UINT64_MAX)
+        revents |= EPOLLOUT;
+
+    return revents;
 }
 
 static struct vfs_callback eventfd_callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
     .open = (vfs_open_t)dummy,
-    .close = (vfs_close_t)dummy,
+    .close = (vfs_close_t)eventfd_close,
     .read = (vfs_read_t)eventfd_read,
     .write = (vfs_write_t)eventfd_write,
     .mkdir = (vfs_mk_t)dummy,

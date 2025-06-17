@@ -430,7 +430,7 @@ ssize_t stdio_ioctl(void *data, ssize_t cmd, ssize_t arg)
         state->v_state = 0;  // 状态标志
         return 0;
     case VT_OPENQRY:
-        *(int *)arg = 0;
+        *(int *)arg = 1;
         return 0;
     }
 
@@ -461,6 +461,7 @@ void stdio_init()
 
     regist_dev("tty", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL, NULL);
     regist_dev("tty0", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL, NULL);
+    regist_dev("tty1", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL, NULL);
 }
 
 uint64_t next = 0;

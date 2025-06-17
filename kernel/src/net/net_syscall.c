@@ -17,11 +17,23 @@ int sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen)
     fd_t *node = current_task->fds[fd];
 
     socket_handle_t *handle = node->node->handle;
-    return unix_socket_getpeername(fd, addr, addrlen);
+    if (handle->op->getpeername)
+    {
+        handle->op->getpeername(fd, addr, addrlen);
+    }
+    return -ENOSYS;
 }
 
 int sys_getsockname(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen)
 {
+    if (sockfd >= MAX_FD_NUM)
+        return -EBADF;
+    fd_t *node = current_task->fds[sockfd];
+
+    socket_handle_t *handle = node->node->handle;
+    socket_t *socket = handle->sock;
+    strncpy(addr->sun_path, socket->bindAddr, SOCKET_NAME_LEN);
+    *addrlen = strnlen(socket->bindAddr, SOCKET_NAME_LEN);
     return 0;
 }
 

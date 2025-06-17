@@ -118,6 +118,7 @@ extern "C" fn virtio_init() {
             {
                 match transport.device_type() {
                     DeviceType::Input => input::init_pci(transport),
+                    DeviceType::Network => crate::drivers::net::virtio::init_pci(transport),
                     _ => {}
                 }
             }

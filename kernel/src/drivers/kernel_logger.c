@@ -18,7 +18,6 @@ bool printk_initialized = false;
 char buf[4096];
 
 char *write_num(char *str, uint64_t num, int base, int field_width, int precision, int flags);
-char *write_float_point_num(char *str, double num, int field_width, int precision, int flags);
 
 int skip_and_atoi(const char **s)
 {
@@ -293,18 +292,6 @@ int vsprintf(char *buf, const char *fmt, va_list args)
 
             *ip = str - buf;
             break;
-        case 'f':
-            // 默认精度为3
-            // printk("1111\n");
-            // va_arg(args, double);
-            // printk("222\n");
-
-            if (precision < 0)
-                precision = 3;
-
-            str = write_float_point_num(str, va_arg(args, double), field_width, precision, flags);
-
-            break;
 
         // 对于不识别的控制符，直接输出
         default:
@@ -436,98 +423,6 @@ char *write_num(char *str, uint64_t num, int base, int field_width, int precisio
 
     return str;
 }
-
-char *write_float_point_num(char *str, double num, int field_width, int precision, int flags)
-{
-    /**
-     * @brief 将浮点数按照指定的要求转换成对应的字符串
-     *
-     * @param str 要返回的字符串
-     * @param num 要打印的数值
-     * @param field_width 区域宽度
-     * @param precision 精度
-     * @param flags 标志位
-     */
-
-    char pad, sign, tmp_num_z[100], tmp_num_d[350];
-
-    const char *digits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    // 显示小写字母
-    if (flags & SMALL)
-        digits = "0123456789abcdefghijklmnopqrstuvwxyz";
-
-    // 设置填充元素
-    pad = (flags & PAD_ZERO) ? '0' : ' ';
-    sign = 0;
-    if (flags & SIGN && num < 0)
-    {
-        sign = '-';
-        num = -num;
-    }
-    else
-    {
-        // 设置符号
-        sign = (flags & PLUS) ? '+' : ((flags & SPACE) ? ' ' : 0);
-    }
-
-    // sign占用了一个宽度
-    if (sign)
-        --field_width;
-
-    int js_num_z = 0, js_num_d = 0;                                      // 临时数字字符串tmp_num_z tmp_num_d的长度
-    uint64_t num_z = (uint64_t)(num);                                    // 获取整数部分
-    uint64_t num_decimal = (uint64_t)(round((num - num_z) * precision)); // 获取小数部分
-
-    if (num == 0)
-        tmp_num_z[js_num_z++] = '0';
-    else
-    {
-        // 存储整数部分
-        while (num_z > 0)
-        {
-            tmp_num_z[js_num_z++] = digits[num_z % 10]; // 注意这里，输出的数字，是小端对齐的。低位存低位
-            num_z /= 10;
-        }
-    }
-
-    while (num_decimal > 0)
-    {
-        tmp_num_d[js_num_d++] = digits[num_decimal % 10];
-        num_decimal /= 10;
-    }
-
-    field_width -= (precision + 1 + js_num_z);
-
-    // 靠右对齐
-    if (!(flags & LEFT))
-        while (field_width-- > 0)
-            *str++ = pad;
-
-    if (sign)
-        *str++ = sign;
-
-    // 输出整数部分
-    while (js_num_z-- > 0)
-        *str++ = tmp_num_z[js_num_z];
-
-    *str++ = '.';
-
-    // 输出小数部分
-    while (js_num_d-- > 0)
-        *str++ = tmp_num_d[js_num_d];
-
-    while (js_num_d < precision)
-    {
-        --precision;
-        *str++ = '0';
-    }
-
-    while (field_width-- > 0)
-        *str++ = ' ';
-
-    return str;
-}
-
 spinlock_t printk_lock = {0};
 
 int printk(const char *fmt, ...)

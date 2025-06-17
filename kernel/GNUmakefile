@@ -94,21 +94,22 @@ endif
 ifeq ($(ARCH),x86_64)
     ifeq ($(CC_IS_CLANG),1)
         override CC += \
-            -target x86_64-unknown-none \
-            -mno-80387 \
-            -mno-mmx \
-            -mno-sse \
-            -mno-sse2 \
-            -msoft-float
+            -target x86_64-unknown-none
     endif
     override CFLAGS += \
         -m64 \
         -march=x86-64 \
         -mno-red-zone \
         -mcmodel=kernel \
+        -fsanitize=undefined \
+        -mno-80387 -mno-mmx -mno-sse -mno-sse2 \
         -D__x86_64__
     override LDFLAGS += \
         -Wl,-m,elf_x86_64
+    ifeq ($(CC_IS_CLANG),1)
+        override LDFLAGS += \
+            -lgcc
+    endif
     override NASMFLAGS += \
         -f elf64
 endif

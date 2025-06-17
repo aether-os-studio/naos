@@ -404,8 +404,12 @@ pub static E1000_DRIVER: Lazy<Mutex<Vec<Arc<E1000Interface>>>> = Lazy::new(|| {
 
     let mut drivers = Vec::new();
 
-    (0..num).for_each(|i| {
+    for i in 0..num {
         let device = unsafe { &mut *devices[i as usize] };
+
+        if device.vendor_id != 0x8086 {
+            continue;
+        }
 
         let bar_addr = device.bars[0].address;
         let bar_size = device.bars[0].size;
@@ -455,7 +459,7 @@ pub static E1000_DRIVER: Lazy<Mutex<Vec<Arc<E1000Interface>>>> = Lazy::new(|| {
                 "e1000\0".as_ptr() as usize as *mut core::ffi::c_char,
             )
         };
-    });
+    }
 
     Mutex::new(drivers)
 });

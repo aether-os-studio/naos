@@ -45,28 +45,28 @@ extern struct desc_struct GDT_Table[]; // GDT_Table是entry.S中的GDT_Table
 extern struct gate_struct IDT_Table[]; // IDT_Table是entry.S中的IDT_Table
 extern unsigned int TSS64_Table[26];
 
-#define _set_gate(gate_selector_addr, attr, ist, code_addr)                                            \
-    do                                                                                                 \
-    {                                                                                                  \
-        uint64_t __d0, __d1;                                                                           \
+#define _set_gate(gate_selector_addr, attr, ist, code_addr)                                    \
+    do                                                                                         \
+    {                                                                                          \
+        uint64_t __d0, __d1;                                                                   \
         asm volatile("movw	%%dx,	%%ax	\n\t"                                                    \
-                             "andq	$0x7,	%%rcx	\n\t"                                                   \
-                             "addq	%4,	%%rcx	\n\t"                                                     \
-                             "shlq	$32,	%%rcx	\n\t"                                                    \
-                             "addq	%%rcx,	%%rax	\n\t"                                                  \
-                             "xorq	%%rcx,	%%rcx	\n\t"                                                  \
-                             "movl	%%edx,	%%ecx	\n\t"                                                  \
-                             "shrq	$16,	%%rcx	\n\t"                                                    \
-                             "shlq	$48,	%%rcx	\n\t"                                                    \
-                             "addq	%%rcx,	%%rax	\n\t"                                                  \
-                             "movq	%%rax,	%0	\n\t"                                                     \
-                             "shrq	$32,	%%rdx	\n\t"                                                    \
-                             "movq	%%rdx,	%1	\n\t"                                                     \
-                             : "=m"(*((uint64_t *)(gate_selector_addr))),                              \
-                               "=m"(*(1 + (uint64_t *)(gate_selector_addr))), "=&a"(__d0), "=&d"(__d1) \
-                             : "i"(attr << 8),                                                         \
-                               "3"((uint64_t *)(code_addr)), "2"(0x8 << 16), "c"(ist)                  \
-                             : "memory");                                                              \
+                     "andq	$0x7,	%%rcx	\n\t"                                                   \
+                     "addq	%4,	%%rcx	\n\t"                                                     \
+                     "shlq	$32,	%%rcx	\n\t"                                                    \
+                     "addq	%%rcx,	%%rax	\n\t"                                                  \
+                     "xorq	%%rcx,	%%rcx	\n\t"                                                  \
+                     "movl	%%edx,	%%ecx	\n\t"                                                  \
+                     "shrq	$16,	%%rcx	\n\t"                                                    \
+                     "shlq	$48,	%%rcx	\n\t"                                                    \
+                     "addq	%%rcx,	%%rax	\n\t"                                                  \
+                     "movq	%%rax,	%0	\n\t"                                                     \
+                     "shrq	$32,	%%rdx	\n\t"                                                    \
+                     "movq	%%rdx,	%1	\n\t"                                                     \
+                     : "=m"(*((uint64_t *)(gate_selector_addr))),                              \
+                       "=m"(*(1 + (uint64_t *)(gate_selector_addr))), "=&a"(__d0), "=&d"(__d1) \
+                     : "i"(attr << 8),                                                         \
+                       "3"((uint64_t *)(code_addr)), "2"(0x8 << 16), "c"(ist)                  \
+                     : "memory");                                                              \
     } while (0)
 
 static inline void set_tss_descriptor(unsigned int n, void *addr)
@@ -81,9 +81,9 @@ static inline void set_tss_descriptor(unsigned int n, void *addr)
  * @param n TSS基地址在GDT中的第几项
  * 左移3位的原因是GDT每项占8字节
  */
-#define load_TR(n)                                        \
-    do                                                    \
-    {                                                     \
+#define load_TR(n)                                \
+    do                                            \
+    {                                             \
         asm volatile("ltr %%ax" ::"a"((n) << 3)); \
     } while (0)
 

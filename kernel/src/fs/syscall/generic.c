@@ -1019,7 +1019,10 @@ int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *
 
         spin_unlock(&futex_lock);
 
-        task_block(current_task, TASK_BLOCKING, -1);
+        int tmo = -1;
+        if (timeout)
+            tmo = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000;
+        task_block(current_task, TASK_BLOCKING, tmo);
 
         while (current_task->state == TASK_BLOCKING)
         {
@@ -1038,7 +1041,7 @@ int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *
         int count = 0;
         while (curr)
         {
-            if (curr->uaddr == uaddr && ++count <= val)
+            if (curr->uaddr && curr->uaddr == uaddr && ++count <= val)
             {
                 task_unblock(curr->task, EOK);
                 if (prev)

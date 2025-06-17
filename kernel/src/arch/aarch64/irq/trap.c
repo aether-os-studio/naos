@@ -234,13 +234,13 @@ void process_exception(struct pt_regs *frame, unsigned long esr, unsigned long e
 
     case ESR_ELx_EC_DABT_LOW:
         printk("Data abort from a lower Exception level\r\n");
-        __asm__ volatile("mrs %0, far_el1" : "=r"(fault_addr));
+        asm volatile("mrs %0, far_el1" : "=r"(fault_addr));
         data_abort(fault_addr, iss);
         break;
 
     case ESR_ELx_EC_DABT_CUR:
         printk("Data abort\r\n");
-        __asm__ volatile("mrs %0, far_el1" : "=r"(fault_addr));
+        asm volatile("mrs %0, far_el1" : "=r"(fault_addr));
         data_abort(fault_addr, iss);
         break;
 
@@ -268,7 +268,7 @@ void handle_exception(struct pt_regs *frame)
 
     if (ec == ESR_ELx_EC_DABT_LOW || ec == ESR_ELx_EC_DABT_CUR)
     {
-        __asm__ volatile("mrs %0, far_el1" : "=r"(fault_addr));
+        asm volatile("mrs %0, far_el1" : "=r"(fault_addr));
         printk("fault address = %#018lx", fault_addr);
     }
 
