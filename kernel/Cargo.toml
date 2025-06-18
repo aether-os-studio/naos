@@ -19,6 +19,9 @@ version = "0.3.12"
 features = ["alloc"]
 default-features = false
 
+[dependencies.nvme]
+git = "https://github.com/plos-clan/nvme-rs"
+
 [dependencies.os-terminal]
 version = "0.6.10"
 features = ["bitmap", "truetype"]
@@ -42,8 +45,6 @@ bindgen = "0.72.0"
 
 [profile.dev]
 panic = "abort"
-lto = true
-opt-level = 3
 debug = true
 
 [profile.release]

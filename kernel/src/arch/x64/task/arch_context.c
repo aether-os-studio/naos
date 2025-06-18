@@ -19,8 +19,8 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64
     context->mm->ref_count = 1;
     context->ctx = (struct pt_regs *)stack - 1;
     context->ctx->rip = entry;
-    context->ctx->rsp = stack;
-    context->ctx->rbp = stack;
+    context->ctx->rsp = stack - 8;
+    context->ctx->rbp = stack - 8;
     context->ctx->rflags = (0UL << 12) | (0b10) | (1UL << 9);
     context->ctx->rdi = initial_arg;
     context->fsbase = 0;

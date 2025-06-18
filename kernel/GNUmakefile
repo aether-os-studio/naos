@@ -23,7 +23,7 @@ ARCH_DIR := src/arch/loongarch64
 RUST_TARGET := loongarch64-unknown-none
 endif
 
-RUST_PROFILE ?= dev
+RUST_PROFILE ?= release
 RUST_PROFILE_DIR := $(RUST_PROFILE)
 ifeq ($(RUST_PROFILE), dev)
 RUST_PROFILE_DIR := debug

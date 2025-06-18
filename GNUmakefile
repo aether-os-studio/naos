@@ -55,7 +55,9 @@ SER ?= 0
 MON ?= 0
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
-QEMUFLAGS := -m $(MEM) -smp $(SMP)
+QEMUFLAGS := -m $(MEM) -smp $(SMP) 
+QEMUFLAGS += -netdev user,id=user.0
+QEMUFLAGS += -device virtio-net,netdev=user.0,mac=5A:5A:5A:5A:5A:33
 
 DEBUG ?= 0
 
@@ -142,9 +144,7 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
-		-device ahci,id=ahci \
 		-device qemu-xhci,id=xhci \
-		-device virtio-net \
 		-device nvme,drive=harddisk,serial=1234 \
 		-device nvme,drive=rootdisk,serial=5678 \
 		$(QEMUFLAGS)

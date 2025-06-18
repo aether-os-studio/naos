@@ -20,6 +20,7 @@ use crate::{
 pub mod decode;
 pub mod hal;
 pub mod input;
+pub mod net;
 
 #[derive(Clone)]
 pub struct PciConfigurationAccess;
@@ -87,23 +88,6 @@ extern "C" fn virtio_init() {
 
         for i in 0..virtio_device_num as usize {
             let pci_device = *virtio_devices[i];
-            let op = *pci_device.op;
-            let mut value = op.read.unwrap()(
-                pci_device.bus as u32,
-                pci_device.slot as u32,
-                pci_device.func as u32,
-                pci_device.segment as u32,
-                0x04,
-            );
-            value |= 0x6;
-            op.write.unwrap()(
-                pci_device.bus as u32,
-                pci_device.slot as u32,
-                pci_device.func as u32,
-                pci_device.segment as u32,
-                0x04,
-                value,
-            );
 
             let mut access = PciRoot::new(PciConfigurationAccess);
             let device_function = DeviceFunction {
@@ -118,7 +102,7 @@ extern "C" fn virtio_init() {
             {
                 match transport.device_type() {
                     DeviceType::Input => input::init_pci(transport),
-                    // DeviceType::Network => crate::drivers::net::virtio::init_pci(transport),
+                    DeviceType::Network => net::init_pci(transport),
                     _ => {}
                 }
             }

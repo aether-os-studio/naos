@@ -706,7 +706,7 @@ fn queue_part_sizes(queue_size: u16) -> (usize, usize, usize) {
     (desc, avail, used)
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Debug, FromBytes, Immutable, IntoBytes, KnownLayout)]
 pub(crate) struct Descriptor {
     addr: u64,

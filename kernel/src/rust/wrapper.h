@@ -3,6 +3,7 @@
 #include <interrupt/irq_manager.h>
 #include <drivers/kernel_logger.h>
 #include <drivers/bus/pci.h>
+#include <drivers/block/nvme/nvme.h>
 #include <mm/mm.h>
 #include <fs/vfs/vfs.h>
 #include <fs/partition.h>

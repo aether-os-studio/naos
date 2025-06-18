@@ -380,9 +380,9 @@ fn get_current_instant() -> Instant {
     Instant::from_millis(unsafe { mktime(&mut time as *mut tm) })
 }
 
-pub static mut ACTIVATE_DRIVER: Option<Arc<E1000Interface>> = None;
+static mut ACTIVATE_DRIVER: Option<Arc<E1000Interface>> = None;
 
-pub static E1000_DRIVER: Lazy<Mutex<Vec<Arc<E1000Interface>>>> = Lazy::new(|| {
+static E1000_DRIVER: Lazy<Mutex<Vec<Arc<E1000Interface>>>> = Lazy::new(|| {
     let devices: &mut [*mut pci_device_t; 8] = &mut [
         core::ptr::null_mut(),
         core::ptr::null_mut(),
@@ -407,7 +407,7 @@ pub static E1000_DRIVER: Lazy<Mutex<Vec<Arc<E1000Interface>>>> = Lazy::new(|| {
     for i in 0..num {
         let device = unsafe { &mut *devices[i as usize] };
 
-        if device.vendor_id != 0x8086 {
+        if device.vendor_id != 0x8086 || device.device_id != 0x1000 {
             continue;
         }
 
