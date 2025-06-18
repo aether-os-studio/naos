@@ -115,6 +115,9 @@ distclean:
 	$(MAKE) -C user distclean
 	rm -rf *.img assets
 
+clippy:
+	$(MAKE) -C kernel clippy
+
 ifeq ($(ARCH),x86_64)
 EFI_FILE = assets/limine/BOOTX64.EFI:EFI/BOOT/BOOTX64.EFI
 else ifeq ($(ARCH),aarch64)

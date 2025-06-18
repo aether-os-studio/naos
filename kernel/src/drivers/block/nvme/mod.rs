@@ -100,7 +100,7 @@ extern "C" fn nvme_init_rs(handles: *mut nvme_handle_t) {
     let mut m = 0;
 
     connections.iter().for_each(|device| {
-        let devices: Vec<NvmeBlockDevice> = {
+        let (devices, max_xfer_size): (Vec<NvmeBlockDevice>, usize) = {
             let mut controller = device.lock();
             let namespaces = controller.identify_namespaces(0).unwrap();
 
@@ -115,7 +115,10 @@ extern "C" fn nvme_init_rs(handles: *mut nvme_handle_t) {
                 })
             };
 
-            namespaces.into_iter().filter_map(mapper).collect()
+            (
+                namespaces.into_iter().filter_map(mapper).collect(),
+                controller.controller_data().max_transfer_size,
+            )
         };
 
         let mut nvme_devices = BTreeMap::new();
@@ -136,6 +139,7 @@ extern "C" fn nvme_init_rs(handles: *mut nvme_handle_t) {
             }
 
             handles[idx].max_size = device.namespace.block_count() * device.namespace.block_size();
+            handles[idx].max_xfer_size = max_xfer_size as u64;
             if k != 0 {
                 handles[idx].valid = true;
             }

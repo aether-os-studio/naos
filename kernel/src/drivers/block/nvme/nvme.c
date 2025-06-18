@@ -39,7 +39,7 @@ void nvme_init()
         nvme_handle_t *handle = &handlers[i];
         if (handle->valid)
         {
-            regist_blkdev((char *)"nvme", handle, 512, handle->max_size, DEFAULT_PAGE_SIZE * 128, nvme_read, nvme_write);
+            regist_blkdev((char *)"nvme", handle, 512, handle->max_size, handle->max_xfer_size, nvme_read, nvme_write);
         }
     }
 }

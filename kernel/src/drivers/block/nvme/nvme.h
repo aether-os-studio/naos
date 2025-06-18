@@ -11,6 +11,7 @@ typedef struct nvme_handle
     uint64_t minor_id;
     uint16_t qpairs[MAX_QPAIR_NUM];
     uint64_t max_size;
+    uint64_t max_xfer_size;
     bool valid;
 } nvme_handle_t;
 

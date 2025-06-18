@@ -23,11 +23,10 @@ use smoltcp::{iface::*, socket};
 
 use crate::mm::phys_to_virt;
 use crate::net::{NetworkDevice, SOCKETS, SOCKETS_SET};
-use crate::rust::bindings::bindings::apic_controller;
 use crate::rust::bindings::bindings::{
-    DEFAULT_PAGE_SIZE, PT_FLAG_R, PT_FLAG_W, alloc_frames, arch_enable_interrupt, arch_yield,
-    get_current_page_dir, irq_controller_t, irq_regist_irq, map_page_range, mktime, pci_device_t,
-    pci_find_class, pt_regs, task_create, task_exit, time_read, tm,
+    DEFAULT_PAGE_SIZE, PT_FLAG_R, PT_FLAG_W, alloc_frames, apic_controller, arch_enable_interrupt,
+    arch_yield, get_current_page_dir, irq_controller_t, irq_regist_irq, map_page_range, mktime,
+    pci_device_t, pci_find_class, pt_regs, task_create, task_exit, time_read, tm,
 };
 use crate::{println, ref_to_mut};
 

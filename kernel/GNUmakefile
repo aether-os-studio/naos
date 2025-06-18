@@ -207,6 +207,9 @@ obj-$(ARCH)/src/%.S.o: src/%.S GNUmakefile
 	mkdir -p "$$(dirname $@)"
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
+clippy:
+	cargo clippy --fix --allow-dirty
+
 # Remove object files and the final executable.
 .PHONY: clean
 clean:
