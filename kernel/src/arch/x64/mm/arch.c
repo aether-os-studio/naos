@@ -190,7 +190,7 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags)
 
                     uint64_t *page_old = (uint64_t *)phys_to_virt(pte_old & 0x00007FFFFFFFF000);
 
-                    if ((is_stack_memory_region(pml4_idx, pdpt_idx, pd_idx, pt_idx) && (clone_flags & CLONE_VM)) || (is_reserved_memory_region(pml4_idx, pdpt_idx, pd_idx, pt_idx)))
+                    if ((!is_stack_memory_region(pml4_idx, pdpt_idx, pd_idx, pt_idx) && (clone_flags & CLONE_VM)) || (is_reserved_memory_region(pml4_idx, pdpt_idx, pd_idx, pt_idx)))
                     {
                         pt_new[pt_idx] = pte_old;
                     }

@@ -534,10 +534,10 @@ unsafe extern "C" fn e1000_init_thread(arg: u64) {
 
             spin_loop();
         }
-    } else {
-        unsafe { task_exit(-1) };
-        unreachable!()
     }
+
+    unsafe { task_exit(-1) };
+    unreachable!()
 }
 
 pub fn init() {
