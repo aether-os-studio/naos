@@ -1,4 +1,4 @@
-use core::alloc::Layout;
+use core::{alloc::Layout, num::NonZeroUsize, ptr::NonNull, sync::atomic::AtomicUsize};
 
 use alloc::collections::btree_map::BTreeMap;
 use alloc::sync::Arc;
@@ -17,15 +17,13 @@ use crate::{
 
 pub static BUFFERS: Mutex<BTreeMap<usize, Layout>> = Mutex::new(BTreeMap::new());
 
-type LockedQueuePair = Arc<Mutex<IoQueuePair<NvmeAllocator>>>;
-
 pub struct NvmeAllocator;
 
 impl Allocator for NvmeAllocator {
     unsafe fn allocate(&self, size: usize) -> usize {
         let buffer = phys_to_virt(alloc_frames(size / DEFAULT_PAGE_SIZE as usize) as usize);
         let layout = Layout::from_size_align_unchecked(size, DEFAULT_PAGE_SIZE as usize);
-        BUFFERS.lock().insert(buffer, layout.clone());
+        BUFFERS.lock().insert(buffer, layout);
         buffer
     }
 
@@ -42,11 +40,12 @@ impl Allocator for NvmeAllocator {
 
 pub struct NvmeBlockDevice {
     pub namespace: Namespace,
-    pub qpairs: BTreeMap<u16, LockedQueuePair>,
+    pub qpairs: QueuePairMap,
 }
 
-pub static IO_PAIRS: Mutex<BTreeMap<usize, BTreeMap<usize, BTreeMap<u16, LockedQueuePair>>>> =
-    Mutex::new(BTreeMap::new());
+type QueuePairMap = BTreeMap<u16, IoQueuePair<NvmeAllocator>>;
+
+pub static IO_PAIRS: Mutex<Vec<Vec<QueuePairMap>>> = Mutex::new(Vec::new());
 
 #[unsafe(no_mangle)]
 extern "C" fn nvme_init_rs(handles: *mut nvme_handle_t) {
@@ -75,7 +74,7 @@ extern "C" fn nvme_init_rs(handles: *mut nvme_handle_t) {
         let bar = pci_device.bars[0];
 
         let (address, size) = (bar.address, bar.size);
-        let physical_address = address as u64;
+        let physical_address = address;
         let virtual_address = phys_to_virt(physical_address as usize) as u64;
 
         unsafe {
@@ -90,46 +89,41 @@ extern "C" fn nvme_init_rs(handles: *mut nvme_handle_t) {
 
         let virtual_address = virtual_address as usize;
         let device = Device::init(virtual_address, NvmeAllocator).unwrap();
-        connections.push(Arc::new(Mutex::new(device)));
+        connections.push(device);
     }
 
     let handles = unsafe { core::slice::from_raw_parts_mut(handles, MAX_NVME_DEVICE_NUM as usize) };
 
     let mut idx = 0;
 
-    let mut m = 0;
-
-    connections.iter().for_each(|device| {
+    connections.iter_mut().enumerate().for_each(|(m, device)| {
         let (devices, max_xfer_size): (Vec<NvmeBlockDevice>, usize) = {
-            let mut controller = device.lock();
-            let namespaces = controller.identify_namespaces(0).unwrap();
+            let namespaces = device.identify_namespaces(0).unwrap();
 
             let mapper = |namespace: Namespace| {
-                let qpair = controller
-                    .create_io_queue_pair(namespace.clone(), 64)
-                    .ok()?;
+                let qpair = device.create_io_queue_pair(namespace.clone(), 64).ok()?;
 
                 Some(NvmeBlockDevice {
                     namespace,
-                    qpairs: BTreeMap::from([(*qpair.id(), Arc::new(Mutex::new(qpair)))]),
+                    qpairs: BTreeMap::from([(*qpair.id(), qpair)]),
                 })
             };
 
             (
                 namespaces.into_iter().filter_map(mapper).collect(),
-                controller.controller_data().max_transfer_size,
+                device.controller_data().max_transfer_size,
             )
         };
 
-        let mut nvme_devices = BTreeMap::new();
+        let mut nvme_devices = Vec::new();
 
-        for (n, device) in devices.iter().enumerate() {
+        for (n, device) in devices.into_iter().enumerate() {
             let mut io_queue_pairs = BTreeMap::new();
 
             handles[idx].major_id = m as u64;
             handles[idx].minor_id = n as u64;
-            for (&id, qpair) in device.qpairs.iter() {
-                io_queue_pairs.insert(id, qpair.clone());
+            for (id, qpair) in device.qpairs.into_iter() {
+                io_queue_pairs.insert(id, qpair);
             }
 
             let mut k = 0;
@@ -138,8 +132,8 @@ extern "C" fn nvme_init_rs(handles: *mut nvme_handle_t) {
                 k += 1;
             }
 
-            handles[idx].max_size = device.namespace.block_count() * device.namespace.block_size();
             handles[idx].max_xfer_size = max_xfer_size as u64;
+            handles[idx].max_size = device.namespace.block_count() * device.namespace.block_size();
             if k != 0 {
                 handles[idx].valid = true;
             }
@@ -148,9 +142,8 @@ extern "C" fn nvme_init_rs(handles: *mut nvme_handle_t) {
 
             nvme_devices.insert(n, io_queue_pairs);
         }
-        IO_PAIRS.lock().insert(m, nvme_devices);
 
-        m += 1;
+        IO_PAIRS.lock().insert(m, nvme_devices);
     });
 }
 
@@ -163,16 +156,16 @@ extern "C" fn nvme_read_rs(
     buffer: u64,
     bytes: u64,
 ) -> u64 {
-    let q_pairs = IO_PAIRS.lock();
-    let device = q_pairs.get(&major).unwrap();
-    let pairs = device.get(&minor).unwrap();
-    let pair = pairs.get(&qpair_id).unwrap();
+    let mut q_pairs = IO_PAIRS.lock();
+    let device = q_pairs.get_mut(major).unwrap();
+    let pairs = device.get_mut(minor).unwrap();
+    let pair = pairs.get_mut(&qpair_id).unwrap();
 
-    if let Err(_) = pair.lock().read(buffer as *mut u8, bytes as usize, lba) {
+    if let Err(_) = pair.read(buffer as *mut u8, bytes as usize, lba) {
         return 0;
     }
 
-    return bytes;
+    bytes
 }
 
 #[unsafe(no_mangle)]
@@ -184,14 +177,14 @@ extern "C" fn nvme_write_rs(
     buffer: u64,
     bytes: u64,
 ) -> u64 {
-    let q_pairs = IO_PAIRS.lock();
-    let device = q_pairs.get(&major).unwrap();
-    let pairs = device.get(&minor).unwrap();
-    let pair = pairs.get(&qpair_id).unwrap();
+    let mut q_pairs = IO_PAIRS.lock();
+    let device = q_pairs.get_mut(major).unwrap();
+    let pairs = device.get_mut(minor).unwrap();
+    let pair = pairs.get_mut(&qpair_id).unwrap();
 
-    if let Err(_) = pair.lock().write(buffer as *const u8, bytes as usize, lba) {
+    if let Err(_) = pair.write(buffer as *const u8, bytes as usize, lba) {
         return 0;
     }
 
-    return bytes;
+    bytes
 }
