@@ -7,9 +7,10 @@ all:
 
 .PHONY: clean
 clean:
-	rm -rf .build-stamp
+	rm -rf .build-stamp-*
 
 .PHONY: distclean
 distclean:
+	rm -rf .build-stamp-*
 	rm -rf $(CWD)/rootfs-$(ARCH)
 	rm -rf $(CWD)/ports/cache

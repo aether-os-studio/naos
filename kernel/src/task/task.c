@@ -67,6 +67,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
     task->gid = 0;
     task->euid = 0;
     task->egid = 0;
+    task->ruid = 0;
+    task->rgid = 0;
     task->pgid = 0;
     task->waitpid = 0;
     task->state = TASK_READY;
@@ -336,6 +338,8 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     child->gid = current_task->gid;
     child->euid = current_task->euid;
     child->egid = current_task->egid;
+    child->ruid = current_task->ruid;
+    child->rgid = current_task->rgid;
     child->pgid = current_task->pgid;
 
     child->jiffies = current_task->jiffies;
@@ -724,12 +728,8 @@ void task_unblock(task_t *task, int reason)
     task->state = TASK_READY;
 }
 
-uint64_t task_exit(int64_t code)
+void task_exit_inner(task_t *task, int64_t code)
 {
-    arch_disable_interrupt();
-
-    task_t *task = current_task;
-
     arch_context_free(task->arch_context);
 
     free_frames_bytes((void *)task->kernel_stack, STACK_SIZE);
@@ -759,8 +759,23 @@ uint64_t task_exit(int64_t code)
     socket_on_exit_task(task->pid);
 
     task->state = TASK_DIED;
+}
 
-    task_t *next = task_search(TASK_READY, task->cpu_id);
+uint64_t task_exit(int64_t code)
+{
+    arch_disable_interrupt();
+
+    // for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
+    // {
+    //     if (tasks[i] && tasks[i]->ppid == current_task->pid)
+    //     {
+    //         task_exit_inner(tasks[i], (int64_t)-ECHILD);
+    //     }
+    // }
+
+    task_exit_inner(current_task, code);
+
+    task_t *next = task_search(TASK_READY, current_task->cpu_id);
 
     if (next)
     {
@@ -926,6 +941,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->gid = current_task->gid;
     child->euid = current_task->euid;
     child->egid = current_task->egid;
+    child->ruid = current_task->ruid;
+    child->rgid = current_task->rgid;
     child->pgid = current_task->pgid;
 
     child->jiffies = current_task->jiffies;

@@ -19,7 +19,7 @@ int sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen)
     socket_handle_t *handle = node->node->handle;
     if (handle->op->getpeername)
     {
-        handle->op->getpeername(fd, addr, addrlen);
+        return handle->op->getpeername(fd, addr, addrlen);
     }
     return -ENOSYS;
 }

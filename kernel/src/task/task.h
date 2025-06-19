@@ -137,6 +137,8 @@ typedef struct task
     int64_t gid;
     int64_t euid;
     int64_t egid;
+    int64_t ruid;
+    int64_t rgid;
     int64_t pgid;
     uint64_t waitpid;
     uint64_t status;

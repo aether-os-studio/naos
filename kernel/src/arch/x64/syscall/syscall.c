@@ -196,16 +196,28 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = 0;
         break;
     case SYS_CLOCK_GETTIME:
-        tm time;
-        time_read(&time);
-        uint64_t timestamp = mktime(&time);
         switch (arg1)
         {
-        case 1: // <- todo
+        case 1: // CLOCK_MONOTONIC
         case 6: // CLOCK_MONOTONIC_COARSE
         case 4: // CLOCK_MONOTONIC_RAW
+        {
+            if (arg2)
+            {
+                struct timespec *ts = (struct timespec *)arg2;
+                uint64_t nano = nanoTime();
+                ts->tv_sec = nano / 1000000000ULL;
+                ts->tv_nsec = nano % 1000000000ULL;
+            }
+            regs->rax = 0;
+            break;
+        }
         case 0:
         {
+            tm time;
+            time_read(&time);
+            uint64_t timestamp = mktime(&time);
+
             if (arg2)
             {
                 struct timespec *ts = (struct timespec *)arg2;
@@ -390,6 +402,20 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         current_task->gid = arg1;
         regs->rax = 0;
         break;
+    case SYS_GETRESUID:
+        regs->rax = current_task->ruid;
+        break;
+    case SYS_GETRESGID:
+        regs->rax = current_task->rgid;
+        break;
+    case SYS_SETRESUID:
+        current_task->ruid = arg1;
+        regs->rax = 0;
+        break;
+    case SYS_SETRESGID:
+        current_task->rgid = arg1;
+        regs->rax = 0;
+        break;
     case SYS_DUP:
         regs->rax = sys_dup(arg1);
         break;
@@ -494,12 +520,6 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_GETSOCKOPT:
         regs->rax = sys_getsockopt(arg1, arg2, arg3, (void *)arg4, (socklen_t *)arg5);
-        break;
-    case SYS_SETRESUID:
-        regs->rax = 0;
-        break;
-    case SYS_GETRESUID:
-        regs->rax = 0;
         break;
     case SYS_SETITIMER:
         regs->rax = sys_setitimer(arg1, (struct itimerval *)arg2, (struct itimerval *)arg3);

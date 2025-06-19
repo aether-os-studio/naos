@@ -35,6 +35,12 @@ char *unix_socket_addr_safe(const struct sockaddr_un *addr, size_t len)
     if (!safe)
         return (void *)-(ENOMEM);
 
+    if (abstract && addr->sun_path[1] == '\0')
+    {
+        free(safe);
+        return (char *)-EINVAL;
+    }
+
     if (abstract)
     {
         safe[0] = ':';
@@ -55,7 +61,7 @@ vfs_node_t unix_socket_accept_create(unix_socket_pair_t *dir)
     vfs_node_t socknode = vfs_child_append(sockfs_root, buf, NULL);
     socknode->refcount++;
     socknode->type = file_socket;
-    socknode->type = 0700;
+    socknode->mode = 0700;
 
     socket_handle_t *handle = malloc(sizeof(socket_handle_t));
     memset(handle, 0, sizeof(socket_handle_t));
@@ -412,6 +418,8 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen)
     new_sock->options.peercred = sock->options.peercred;
     new_sock->options.has_peercred = true;
 
+    new_sock->pair = pair;
+
     current_task->fds[i] = malloc(sizeof(fd_t));
     current_task->fds[i]->node = acceptFd;
     current_task->fds[i]->offset = 0;
@@ -468,15 +476,13 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrle
 
     unix_socket_pair_t *pair = unix_socket_allocate_pair();
     sock->pair = pair;
+    parent->pair = pair;
     pair->clientFds = 1;
     parent->backlog[parent->connCurr++] = pair;
 
     // todo!
-    while (true)
+    while (!pair->established)
     {
-        if (pair->established)
-            break;
-
         // wait for parent to accept this thing and have it's own fd on the side
 
         arch_enable_interrupt();
@@ -484,12 +490,12 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrle
         arch_pause();
     }
 
+    arch_disable_interrupt();
+
     sock->options.peercred.pid = current_task->pid;
     sock->options.peercred.uid = current_task->uid;
     sock->options.peercred.gid = current_task->gid;
     sock->options.has_peercred = true;
-
-    arch_disable_interrupt();
 
     return 0;
 }
@@ -742,6 +748,8 @@ int unix_socket_pair(int type, int protocol, int *sv)
     socket_t *new_sock = new_handle->sock;
     new_sock->options.peercred = sock->options.peercred;
     new_sock->options.has_peercred = true;
+
+    new_sock->pair = pair;
 
     current_task->fds[i] = malloc(sizeof(fd_t));
     current_task->fds[i]->node = sock2Fd;
@@ -1042,7 +1050,15 @@ size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr, socklen_t 
     if (toCopy < sizeof(addr->sun_family))
         return -(EINVAL);
     addr->sun_family = 1;
-    memcpy(addr->sun_path, pair->filename, toCopy - sizeof(addr->sun_family));
+    if (pair->filename[0] == ':')
+    {
+        memcpy(addr->sun_path + 1, pair->filename + 1, toCopy - sizeof(addr->sun_family));
+        addr->sun_path[0] = '\0';
+    }
+    else
+    {
+        memcpy(addr->sun_path, pair->filename, toCopy - sizeof(addr->sun_family));
+    }
     *len = toCopy;
     return 0;
 }

@@ -98,8 +98,8 @@ kernel:
 	./kernel/get-deps
 	$(MAKE) -C kernel -j$(shell nproc)
 
-user: user/.build-stamp
-user/.build-stamp:
+user: user/.build-stamp-$(ARCH)
+user/.build-stamp-$(ARCH):
 	$(MAKE) -C user
 	touch $@
 
@@ -133,7 +133,7 @@ $(IMAGE_NAME).img: assets/limine assets/oib kernel
 		-f limine.conf:boot/limine/limine.conf \
 		-f assets/limine/limine-bios.sys:boot/limine/limine-bios.sys
 
-rootfs-$(ARCH).img: user/.build-stamp
+rootfs-$(ARCH).img: user/.build-stamp-$(ARCH)
 	dd if=/dev/zero bs=1M count=0 seek=2048 of=rootfs-$(ARCH).img
 	mkfs.ext2 -F -q -d user/rootfs-$(ARCH) rootfs-$(ARCH).img
 

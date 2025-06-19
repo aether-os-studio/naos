@@ -76,13 +76,13 @@ static uint64_t last_alloc_pos = 0;
 
 uint64_t alloc_frames(size_t count)
 {
-    spin_lock_irqsave(&frame_op_lock);
+    spin_lock(&frame_op_lock);
 
     Bitmap *bitmap = &frame_allocator.bitmap;
 
     if (frame_allocator.usable_frames < count)
     {
-        spin_unlock_irqrestore(&frame_op_lock);
+        spin_unlock(&frame_op_lock);
         return 0;
     }
 
@@ -94,7 +94,7 @@ retry:
         last_alloc_pos = frame_index + count;
         bitmap_set_range(bitmap, frame_index, frame_index + count, false);
         frame_allocator.usable_frames -= count;
-        spin_unlock_irqrestore(&frame_op_lock);
+        spin_unlock(&frame_op_lock);
         return frame_index * DEFAULT_PAGE_SIZE;
     }
 
@@ -106,18 +106,18 @@ retry:
 
     printk("Allocate frame failed!!!\n");
 
-    spin_unlock_irqrestore(&frame_op_lock);
+    spin_unlock(&frame_op_lock);
 
     return 0;
 }
 
 void free_frames(uint64_t addr, uint64_t size)
 {
-    spin_lock_irqsave(&frame_op_lock);
+    spin_lock(&frame_op_lock);
 
     if (addr == 0)
     {
-        spin_unlock_irqrestore(&frame_op_lock);
+        spin_unlock(&frame_op_lock);
         return;
     }
 
@@ -126,7 +126,7 @@ void free_frames(uint64_t addr, uint64_t size)
     bitmap_set_range(&frame_allocator.bitmap, frame_index, frame_index + size, true);
     frame_allocator.usable_frames++;
 
-    spin_unlock_irqrestore(&frame_op_lock);
+    spin_unlock(&frame_op_lock);
 }
 
 // 内存映射相关函数保持不变

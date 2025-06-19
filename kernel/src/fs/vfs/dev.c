@@ -306,10 +306,15 @@ vfs_node_t regist_dev(const char *name,
                 child->type = file_stream;
                 child->rdev = (226 << 8) | 0;
             }
-            else if (!strncmp(devfs_handles[i]->name, "event", 5))
+            else if (!strncmp(devfs_handles[i]->name, "event0", 6))
             {
                 child->type = file_stream;
-                child->rdev = (19 << 8) | 0;
+                child->rdev = (13 << 8) | 0;
+            }
+            else if (!strncmp(devfs_handles[i]->name, "event1", 6))
+            {
+                child->type = file_stream;
+                child->rdev = (13 << 8) | 1;
             }
 
             child->mode = 0700;

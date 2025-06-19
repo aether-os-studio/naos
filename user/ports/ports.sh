@@ -37,14 +37,17 @@ printf "${MIRROR}/main\n${MIRROR}/community\n${MIRROR_ROOT}/edge/testing" > $SYS
 
 $APK_CMD add musl-dev gcompat gzip xz make file tar pciutils tzdata nano lua5.1 gcc binutils python3 libdrm-tests curl sysbench
 # $APK_CMD add seatd weston weston-backend-drm weston-shell-desktop
-# $APK_CMD add xorg-server xf86-video-fbdev xf86-input-evdev xinit xsetroot
-# $APK_CMD add mesa-gl mesa-utils mesa-vulkan-swrast mesa-dri-gallium twm
+# $APK_CMD add xorg-server xf86-video-fbdev xf86-input-evdev xinit xsetroot twm
+# $APK_CMD add mesa-gl mesa-utils mesa-vulkan-swrast mesa-dri-gallium
 
 ln -sf $SYSROOT/../usr/share/zoneinfo/Asia/Shanghai $SYSROOT/../etc/localtime
 '
 
 cp -r $SCRIPTPATH/etc $SYSROOT/../
 cp -r $SCRIPTPATH/root $SYSROOT/../
+
+rm -rf $SYSROOT/../bin/sh
+ln -sf bash $SYSROOT/../bin/sh
 
 # Make us able to read the files later
 chmod -R u+r $SYSROOT/../

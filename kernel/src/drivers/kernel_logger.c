@@ -427,7 +427,7 @@ spinlock_t printk_lock = {0};
 
 int printk(const char *fmt, ...)
 {
-    spin_lock_irqsave(&printk_lock);
+    spin_lock(&printk_lock);
 
     if (!printk_initialized)
     {
@@ -446,7 +446,7 @@ int printk(const char *fmt, ...)
     serial_printk(buf, len);
 
     os_terminal_write(buf, len);
-    spin_unlock_irqrestore(&printk_lock);
+    spin_unlock(&printk_lock);
 
     return len;
 }
