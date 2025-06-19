@@ -1034,7 +1034,7 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, const void *o
 
 static int dummy()
 {
-    return -ENOSYS;
+    return 0;
 }
 
 size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr, socklen_t *len)

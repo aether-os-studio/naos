@@ -14,7 +14,7 @@ static vfs_node_t graphics_root = NULL;
 
 static int dummy()
 {
-    return -ENOSYS;
+    return 0;
 }
 
 void sysfs_open(void *parent, const char *name, vfs_node_t node)

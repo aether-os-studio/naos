@@ -7,7 +7,7 @@ int eventfd_id = 0;
 
 static int dummy()
 {
-    return -ENOSYS;
+    return 0;
 }
 
 uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags)

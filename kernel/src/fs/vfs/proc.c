@@ -2,9 +2,19 @@
 #include <arch/arch.h>
 #include <task/task.h>
 
+__attribute__((used, section(".limine_requests"))) static volatile struct limine_executable_cmdline_request executable_cmdline_request = {
+    .id = LIMINE_EXECUTABLE_CMDLINE_REQUEST,
+};
+
+vfs_node_t cmdline = NULL;
+
 ssize_t procfs_read(void *file, void *addr, size_t offset, size_t size)
 {
     proc_handle_t *handle = (proc_handle_t *)file;
+    if (!handle)
+    {
+        return -EINVAL;
+    }
     task_t *task;
     if (handle->task == NULL)
     {
@@ -23,6 +33,15 @@ ssize_t procfs_read(void *file, void *addr, size_t offset, size_t size)
         memcpy(addr, task->name, len + 1);
         return len + 1;
     }
+    else if (!strcmp(handle->name, "cmdline"))
+    {
+        ssize_t len = strlen(executable_cmdline_request.response->cmdline);
+        if (len == 0)
+            return 0;
+        len = (len + 1) > size ? size : len + 1;
+        memcpy(addr, executable_cmdline_request.response->cmdline, len);
+        return len;
+    }
 
     return 0;
 }
@@ -32,12 +51,21 @@ int procfs_id = 0;
 
 static int dummy()
 {
-    return -ENOSYS;
+    return 0;
+}
+
+void procfs_open(void *parent, const char *name, vfs_node_t node)
+{
+}
+
+bool procfs_close(void *current)
+{
+    return false;
 }
 
 static struct vfs_callback callbacks =
     {
-        .open = (vfs_open_t)dummy,
+        .open = (vfs_open_t)procfs_open,
         .close = (vfs_close_t)dummy,
         .read = procfs_read,
         .write = (vfs_write_t)dummy,
@@ -72,4 +100,12 @@ void proc_init()
     self_exe->handle = handle;
     handle->task = NULL;
     sprintf(handle->name, "self/exe");
+
+    cmdline = vfs_node_alloc(procfs_root, "cmdline");
+    cmdline->type = file_none;
+    cmdline->mode = 0700;
+    handle = malloc(sizeof(proc_handle_t));
+    cmdline->handle = handle;
+    handle->task = NULL;
+    sprintf(handle->name, "cmdline");
 }

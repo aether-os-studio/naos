@@ -83,7 +83,7 @@ bool sys_timerfd_close(void *current)
 
 static int dummy()
 {
-    return -ENOSYS;
+    return 0;
 }
 
 static struct vfs_callback timerfd_callbacks = {

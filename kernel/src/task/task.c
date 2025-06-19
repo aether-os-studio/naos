@@ -484,13 +484,28 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
         execve_lock = false;
 
+        char *p = (char *)buffer + 2;
+        const char *interpreter_name = NULL;
+        while (*p != '\n')
+        {
+            if (!interpreter_name && *p != ' ')
+            {
+                interpreter_name = (const char *)p;
+            }
+            p++;
+        }
+        *p = '\0';
+
+        if (!interpreter_name)
+            return -EINVAL;
+
         int argc = 0;
         while (argv[argc++])
             ;
         const char *injected_argv[64];
         memcpy((char *)&injected_argv[1], argv, argc * sizeof(char *));
         injected_argv[1] = path;
-        injected_argv[0] = "/bin/bash";
+        injected_argv[0] = interpreter_name;
 
         return task_execve((const char *)injected_argv[0], injected_argv, envp);
     }

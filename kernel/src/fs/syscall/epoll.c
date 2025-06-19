@@ -6,7 +6,7 @@ int epollfd_id = 0;
 
 static int dummy()
 {
-    return -ENOSYS;
+    return 0;
 }
 
 // epoll API

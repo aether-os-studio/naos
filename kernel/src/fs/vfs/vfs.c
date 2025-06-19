@@ -358,8 +358,11 @@ int vfs_close(vfs_node_t node)
         node->refcount--;
     if (node->refcount == 0)
     {
-        callbackof(node, close)(node->handle);
-        node->handle = NULL;
+        bool real_close = callbackof(node, close)(node->handle);
+        if (real_close)
+        {
+            node->handle = NULL;
+        }
     }
 
     return 0;

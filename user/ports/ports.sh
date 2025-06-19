@@ -43,11 +43,14 @@ $APK_CMD add musl-dev gcompat gzip xz make file tar pciutils tzdata nano lua5.1 
 ln -sf $SYSROOT/../usr/share/zoneinfo/Asia/Shanghai $SYSROOT/../etc/localtime
 '
 
-cp -r $SCRIPTPATH/etc $SYSROOT/../
-cp -r $SCRIPTPATH/root $SYSROOT/../
-
 rm -rf $SYSROOT/../bin/sh
 ln -sf bash $SYSROOT/../bin/sh
+
+rm -rf $SYSROOT/../etc/init.d/*
+rm -rf $SYSROOT/../etc/conf.d/*
+
+cp -r $SCRIPTPATH/etc $SYSROOT/../
+cp -r $SCRIPTPATH/root $SYSROOT/../
 
 # Make us able to read the files later
 chmod -R u+r $SYSROOT/../

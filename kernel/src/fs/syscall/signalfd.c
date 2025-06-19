@@ -2,7 +2,7 @@
 
 static int dummy()
 {
-    return -ENOSYS;
+    return 0;
 }
 
 static int signalfd_poll(void *file, size_t event)

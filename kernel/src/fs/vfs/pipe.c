@@ -8,7 +8,7 @@ static int pipefd_id = 0;
 
 static int dummy()
 {
-    return -ENOSYS;
+    return 0;
 }
 
 void pipefs_open(void *parent, const char *name, vfs_node_t node)
@@ -183,8 +183,24 @@ int pipefs_ioctl(void *file, ssize_t cmd, ssize_t arg)
     case FIOCLEX:
         return 0;
     case TIOCGWINSZ:
+        size_t addr;
+        size_t width;
+        size_t height;
+        size_t bpp;
+        size_t cols;
+        size_t rows;
+
+        os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
+
+        *(struct winsize *)arg = (struct winsize){
+            .ws_xpixel = width,
+            .ws_ypixel = height,
+            .ws_col = cols,
+            .ws_row = rows,
+        };
+        return 0;
     case TIOCSWINSZ:
-        return -ENOTTY;
+        return 0;
     default:
         return -ENOSYS;
     }

@@ -12,7 +12,7 @@ devfs_handle_t devfs_handles[MAX_DEV_NUM];
 
 static int dummy()
 {
-    return -ENOSYS;
+    return 0;
 }
 
 ssize_t devfs_read(void *file, void *addr, size_t offset, size_t size)
