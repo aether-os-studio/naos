@@ -405,6 +405,9 @@ uint64_t sys_flock(int fd, uint64_t cmd);
 
 uint64_t sys_mkdir(const char *name, uint64_t mode);
 
+uint64_t sys_link(const char *name, const char *target_name);
+uint64_t sys_symlink(const char *name, const char *target_name);
+
 uint64_t sys_rename(const char *old, const char *new);
 uint64_t sys_renameat(uint64_t oldfd, const char *old, uint64_t newfd, const char *new);
 

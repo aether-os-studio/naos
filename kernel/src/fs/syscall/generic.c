@@ -697,43 +697,6 @@ uint64_t sys_faccessat2(uint64_t dirfd, const char *pathname, uint64_t mode, uin
     return ret;
 }
 
-uint64_t sys_link(const char *old, const char *new)
-{
-    if (check_user_overflow((uint64_t)old, strlen(old)))
-    {
-        return (uint64_t)-EFAULT;
-    }
-    if (check_user_overflow((uint64_t)new, strlen(new)))
-    {
-        return (uint64_t)-EFAULT;
-    }
-    vfs_node_t old_node = vfs_open(old);
-    if (!old_node)
-    {
-        return (uint64_t)-ENOENT;
-    }
-
-    int ret = 0;
-    if (old_node->type & file_dir)
-    {
-        ret = vfs_mkdir(new);
-        if (ret < 0)
-        {
-            return (uint64_t)-EEXIST;
-        }
-    }
-    else
-    {
-        ret = vfs_mkfile(new);
-        if (ret < 0)
-        {
-            return (uint64_t)-EEXIST;
-        }
-    }
-
-    return 0;
-}
-
 uint64_t sys_readlink(char *path, char *buf, uint64_t size)
 {
     if (path == NULL || buf == NULL || size == 0)
@@ -915,6 +878,28 @@ uint64_t sys_mkdir(const char *name, uint64_t mode)
         return (uint64_t)-EEXIST;
     }
     return 0;
+}
+
+uint64_t sys_link(const char *name, const char *new)
+{
+    if (check_user_overflow((uint64_t)name, strlen(name)))
+    {
+        return (uint64_t)-EFAULT;
+    }
+    int ret = vfs_link(name, new);
+
+    return ret;
+}
+
+uint64_t sys_symlink(const char *name, const char *new)
+{
+    if (check_user_overflow((uint64_t)name, strlen(name)))
+    {
+        return (uint64_t)-EFAULT;
+    }
+    int ret = vfs_symlink(name, new);
+
+    return ret;
 }
 
 uint64_t sys_flock(int fd, uint64_t operation)

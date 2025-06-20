@@ -482,9 +482,6 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_EPOLL_WAIT:
         regs->rax = sys_epoll_wait(arg1, (struct epoll_event *)arg2, arg3, arg4);
         break;
-    case SYS_LINK:
-        regs->rax = sys_link((const char *)arg1, (const char *)arg2);
-        break;
     case SYS_EVENTFD2:
         regs->rax = sys_eventfd2(arg1, arg2);
         break;
@@ -544,6 +541,12 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_RMDIR:
         regs->rax = sys_unlink((const char *)arg1);
+        break;
+    case SYS_LINK:
+        regs->rax = sys_link((const char *)arg1, (const char *)arg2);
+        break;
+    case SYS_SYMLINK:
+        regs->rax = sys_symlink((const char *)arg1, (const char *)arg2);
         break;
     case SYS_SETPRIORITY:
         regs->rax = 0;

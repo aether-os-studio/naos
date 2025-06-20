@@ -204,6 +204,42 @@ int ext_mkfile(void *parent, const char *name, vfs_node_t node)
     return ret;
 }
 
+int ext_link(void *parent, const char *name, vfs_node_t node)
+{
+    char buf[256];
+
+    ext_handle_t *parent_handle = parent;
+    char *parent_path = vfs_get_fullpath(parent_handle->node);
+    if (!strcmp(parent_path, "/"))
+        sprintf(buf, "/%s", name);
+    else
+        sprintf(buf, "%s/%s", parent_path, name);
+    free(parent_path);
+
+    ext4_file f;
+    int ret = ext4_flink((const char *)buf, (const char *)node->linkname);
+    ext4_fclose(&f);
+
+    return ret;
+}
+
+int ext_symlink(void *parent, const char *name, vfs_node_t node)
+{
+    char buf[256];
+
+    ext_handle_t *parent_handle = parent;
+    char *parent_path = vfs_get_fullpath(parent_handle->node);
+    if (!strcmp(parent_path, "/"))
+        sprintf(buf, "/%s", name);
+    else
+        sprintf(buf, "%s/%s", parent_path, name);
+    free(parent_path);
+
+    int ret = ext4_fsymlink((const char *)node->linkname, (const char *)buf);
+
+    return ret;
+}
+
 int ext_mkdir(void *parent, const char *name, vfs_node_t node)
 {
     char buf[256];
@@ -273,6 +309,8 @@ static struct vfs_callback callbacks = {
     .write = (vfs_write_t)ext_write,
     .mkdir = ext_mkdir,
     .mkfile = ext_mkfile,
+    .link = ext_link,
+    .symlink = ext_symlink,
     .delete = (vfs_del_t)ext_delete,
     .rename = (vfs_rename_t)ext_rename,
     .map = (vfs_mapfile_t)ext_map,

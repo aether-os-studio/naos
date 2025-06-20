@@ -222,6 +222,166 @@ err:
     return -1;
 }
 
+/**
+ *\brief 创建link文件
+ *
+ *\param name     文件名
+ *\return 0 成功，-1 失败
+ */
+int vfs_link(const char *name, const char *target_name)
+{
+    vfs_node_t current = rootdir;
+    char *path;
+    if (name[0] != '/')
+    {
+        current = current_task->cwd;
+        path = strdup(name);
+    }
+    else
+    {
+        path = strdup(name + 1);
+    }
+
+    char *save_ptr = path;
+    char *filename = path + strlen(path);
+
+    while (*--filename != '/' && filename != path)
+    {
+    }
+    if (filename != path)
+    {
+        *filename++ = '\0';
+    }
+    else
+    {
+        goto create;
+    }
+
+    if (strlen(path) == 0)
+    {
+        free(path);
+        return -1;
+    }
+    for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr))
+    {
+        if (streq(buf, "."))
+            continue;
+        if (streq(buf, ".."))
+        {
+            if (!current->parent || current->type != file_dir)
+                goto err;
+            current = current->parent;
+            continue;
+        }
+        vfs_node_t new_current = vfs_child_find(current, buf);
+        if (new_current == NULL)
+        {
+            new_current = vfs_node_alloc(current, buf);
+            new_current->type = file_dir;
+            callbackof(current, mkdir)(current->handle, buf, new_current);
+        }
+        current = new_current;
+        do_update(current);
+
+        if (current->type != file_dir)
+            goto err;
+    }
+
+create:
+    vfs_node_t node = vfs_child_append(current, filename, NULL);
+    node->type = file_none;
+    node->linkname = strdup(target_name);
+    callbackof(current, link)(current->handle, filename, node);
+
+    free(path);
+
+    return 0;
+
+err:
+    free(path);
+    return -1;
+}
+
+/**
+ *\brief 创建symlink文件
+ *
+ *\param name     文件名
+ *\return 0 成功，-1 失败
+ */
+int vfs_symlink(const char *name, const char *target_name)
+{
+    vfs_node_t current = rootdir;
+    char *path;
+    if (name[0] != '/')
+    {
+        current = current_task->cwd;
+        path = strdup(name);
+    }
+    else
+    {
+        path = strdup(name + 1);
+    }
+
+    char *save_ptr = path;
+    char *filename = path + strlen(path);
+
+    while (*--filename != '/' && filename != path)
+    {
+    }
+    if (filename != path)
+    {
+        *filename++ = '\0';
+    }
+    else
+    {
+        goto create;
+    }
+
+    if (strlen(path) == 0)
+    {
+        free(path);
+        return -1;
+    }
+    for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr))
+    {
+        if (streq(buf, "."))
+            continue;
+        if (streq(buf, ".."))
+        {
+            if (!current->parent || current->type != file_dir)
+                goto err;
+            current = current->parent;
+            continue;
+        }
+        vfs_node_t new_current = vfs_child_find(current, buf);
+        if (new_current == NULL)
+        {
+            new_current = vfs_node_alloc(current, buf);
+            new_current->type = file_dir;
+            callbackof(current, mkdir)(current->handle, buf, new_current);
+        }
+        current = new_current;
+        do_update(current);
+
+        if (current->type != file_dir)
+            goto err;
+    }
+
+create:
+    vfs_node_t node = vfs_child_append(current, filename, NULL);
+    node->type = file_symlink;
+    node->linkname = strdup(target_name);
+    callbackof(current, symlink)(current->handle, filename, node);
+
+    free(path);
+
+    return 0;
+
+err:
+    free(path);
+    return -1;
+}
+
 int vfs_regist(const char *name, vfs_callback_t callback)
 {
     (void)name;

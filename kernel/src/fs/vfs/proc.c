@@ -63,22 +63,23 @@ bool procfs_close(void *current)
     return false;
 }
 
-static struct vfs_callback callbacks =
-    {
-        .open = (vfs_open_t)procfs_open,
-        .close = (vfs_close_t)dummy,
-        .read = procfs_read,
-        .write = (vfs_write_t)dummy,
-        .mkdir = (vfs_mk_t)dummy,
-        .mkfile = (vfs_mk_t)dummy,
-        .delete = (vfs_del_t)dummy,
-        .rename = (vfs_rename_t)dummy,
-        .stat = (vfs_stat_t)dummy,
-        .ioctl = (vfs_ioctl_t)dummy,
-        .map = (vfs_mapfile_t)dummy,
-        .poll = (vfs_poll_t)dummy,
-        .mount = (vfs_mount_t)dummy,
-        .unmount = (vfs_unmount_t)dummy,
+static struct vfs_callback callbacks = {
+    .open = (vfs_open_t)procfs_open,
+    .close = (vfs_close_t)dummy,
+    .read = procfs_read,
+    .write = (vfs_write_t)dummy,
+    .mkdir = (vfs_mk_t)dummy,
+    .mkfile = (vfs_mk_t)dummy,
+    .link = (vfs_mk_t)dummy,
+    .symlink = (vfs_mk_t)dummy,
+    .delete = (vfs_del_t)dummy,
+    .rename = (vfs_rename_t)dummy,
+    .stat = (vfs_stat_t)dummy,
+    .ioctl = (vfs_ioctl_t)dummy,
+    .map = (vfs_mapfile_t)dummy,
+    .poll = (vfs_poll_t)dummy,
+    .mount = (vfs_mount_t)dummy,
+    .unmount = (vfs_unmount_t)dummy,
 };
 
 void proc_init()

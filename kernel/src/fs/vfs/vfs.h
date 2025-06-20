@@ -215,6 +215,8 @@ typedef struct vfs_callback
     vfs_write_t write;
     vfs_mk_t mkdir;
     vfs_mk_t mkfile;
+    vfs_mk_t link;
+    vfs_mk_t symlink;
     vfs_del_t delete;
     vfs_rename_t rename;
     vfs_stat_t stat;
@@ -303,6 +305,20 @@ int vfs_mkdir(const char *name);
  *\return 0 成功，-1 失败
  */
 int vfs_mkfile(const char *name);
+/**
+ *\brief 创建link文件
+ *
+ *\param name     文件名
+ *\return 0 成功，-1 失败
+ */
+int vfs_link(const char *name, const char *target_name);
+/**
+ *\brief 创建symlink文件
+ *
+ *\param name     文件名
+ *\return 0 成功，-1 失败
+ */
+int vfs_symlink(const char *name, const char *target_name);
 
 /**
  *\brief 读取文件

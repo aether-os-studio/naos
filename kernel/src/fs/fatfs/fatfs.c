@@ -60,6 +60,16 @@ int fatfs_mkfile(void *parent, const char *name, vfs_node_t node)
     return 0;
 }
 
+int fatfs_link(void *parent, const char *name, vfs_node_t node)
+{
+    return -ENOSYS;
+}
+
+int fatfs_symlink(void *parent, const char *name, vfs_node_t node)
+{
+    return -ENOSYS;
+}
+
 size_t fatfs_readfile(file_t file, void *addr, size_t offset, size_t size)
 {
     if (file == NULL || addr == NULL)
@@ -274,6 +284,8 @@ static struct vfs_callback callbacks = {
     .write = (vfs_write_t)fatfs_writefile,
     .mkdir = fatfs_mkdir,
     .mkfile = fatfs_mkfile,
+    .link = fatfs_link,
+    .symlink = fatfs_symlink,
     .delete = (vfs_del_t)fatfs_delete,
     .rename = (vfs_rename_t)fatfs_rename,
     .map = (vfs_mapfile_t)fatfs_map,

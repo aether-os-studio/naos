@@ -758,6 +758,11 @@ void *iso9660_map(void *file, void *addr, size_t offset, size_t size, size_t pro
     return general_map((vfs_read_t)iso9660_readfile, file, (uint64_t)addr, size, prot, flags, offset);
 }
 
+static int dummy()
+{
+    return 0;
+}
+
 static struct vfs_callback callbacks = {
     .mount = iso9660_mount,
     .unmount = iso9660_unmount,
@@ -767,6 +772,8 @@ static struct vfs_callback callbacks = {
     .write = (vfs_write_t)iso9660_writefile,
     .mkdir = iso9660_mkdir,
     .mkfile = iso9660_mkfile,
+    .link = (vfs_mk_t)dummy,
+    .symlink = (vfs_mk_t)dummy,
     .delete = (vfs_del_t)iso9660_delete,
     .rename = (vfs_rename_t)iso9660_rename,
     .map = (vfs_mapfile_t)iso9660_map,
