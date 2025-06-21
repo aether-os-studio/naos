@@ -449,16 +449,7 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, bool nosymlink)
         if (current == NULL)
             goto err;
         do_update(current);
-        if (!nosymlink && (current->type & (file_symlink | file_none)) == (file_symlink | file_none))
-        {
-            if (!current->parent || !current->linkname)
-                goto err;
-            current = vfs_open_at(current->parent, current->linkname, nosymlink);
-            if (!current)
-                goto err;
-            do_update(current);
-        }
-        else if ((current->type & (file_symlink | file_dir)) == (file_symlink | file_dir))
+        if (!nosymlink && (current->type & file_symlink) == file_symlink)
         {
             if (!current->parent || !current->linkname)
                 goto err;
@@ -566,18 +557,18 @@ int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize)
 
     ssize_t copy_len = 0;
 
-    // if (node->type & file_dir)
-    // {
-    size_t link_len = strlen(node->linkname);
-    copy_len = (link_len < bufsize) ? link_len : (bufsize - 1);
+    if (node->type & file_dir)
+    {
+        size_t link_len = strlen(node->linkname);
+        copy_len = (link_len < bufsize) ? link_len : (bufsize - 1);
 
-    strncpy(buf, node->linkname, copy_len);
-    buf[copy_len] = '\0';
-    // }
-    // else
-    // {
-    //     copy_len = vfs_read(node, buf, node->offset, bufsize);
-    // }
+        strncpy(buf, node->linkname, copy_len);
+        buf[copy_len] = '\0';
+    }
+    else
+    {
+        copy_len = vfs_read(node, buf, 0, bufsize);
+    }
 
     return copy_len;
 }

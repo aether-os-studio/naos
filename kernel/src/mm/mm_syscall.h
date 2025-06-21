@@ -10,5 +10,6 @@
 uint64_t sys_brk(uint64_t addr);
 uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t fd, uint64_t offset);
 uint64_t sys_munmap(uint64_t addr, uint64_t size);
+uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec);
 
 void *general_map(vfs_read_t read_callback, void *file, uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset);

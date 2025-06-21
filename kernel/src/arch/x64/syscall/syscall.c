@@ -195,6 +195,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_MADVISE:
         regs->rax = 0;
         break;
+    case SYS_MINCORE:
+        regs->rax = sys_mincore(arg1, arg2, arg3);
+        break;
     case SYS_CLOCK_GETTIME:
         switch (arg1)
         {

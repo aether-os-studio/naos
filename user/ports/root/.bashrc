@@ -16,7 +16,6 @@ fi
 
 alias ls='coreutils --coreutils-prog=ls --color=auto'
 alias dir="coreutils --coreutils-prog=dir --color=auto"
-alias grep='coreutils --coreutils-prog=grep --color=auto'
 alias cp='coreutils --coreutils-prog=cp'
 alias mv='coreutils --coreutils-prog=mv'
 alias rm='coreutils --coreutils-prog=rm'

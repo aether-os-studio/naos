@@ -727,7 +727,7 @@ int task_block(task_t *task, task_state_t state, int timeout_ms)
 
     if (current_task == task)
     {
-        arch_enable_interrupt();
+        arch_yield();
 
         arch_pause();
     }
@@ -782,9 +782,10 @@ uint64_t task_exit(int64_t code)
 
     // for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
     // {
-    //     if (tasks[i] && tasks[i]->ppid == current_task->pid)
+    //     if (tasks[i] && tasks[i]->pgid == current_task->pid)
     //     {
-    //         task_exit_inner(tasks[i], (int64_t)-ECHILD);
+    //         tasks[i]->signal |= SIGMASK(SIGCONT);
+    //         task_unblock(tasks[i], SIGCONT);
     //     }
     // }
 

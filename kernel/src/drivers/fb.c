@@ -156,13 +156,13 @@ void fbdev_init_sysfs()
     vfs_node_t subsystem_link = vfs_child_append(node, "subsystem", NULL);
     subsystem_link->type = file_symlink | file_dir;
     subsystem_link->mode = 0644;
-    sprintf(name, "/sys/class/graphics/fb%d/device/subsystem");
+    sprintf(name, "/sys/class/graphics/fb%d/device/subsystem", 0);
     subsystem_link->linkname = strdup(name);
 
     vfs_node_t uevent_link = vfs_child_append(node, "uevent", NULL);
     uevent_link->type = file_symlink | file_none;
     uevent_link->mode = 0644;
-    sprintf(name, "/sys/class/graphics/fb%d/device/subsystem/uevent");
+    sprintf(name, "/sys/class/graphics/fb%d/device/subsystem/uevent", 0);
     uevent_link->linkname = strdup(name);
 
     vfs_node_t device = vfs_child_append(node, "device", NULL);

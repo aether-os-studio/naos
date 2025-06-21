@@ -615,8 +615,7 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
     bool noblock = flags & MSG_DONTWAIT;
     for (int i = 0; i < msg->msg_iovlen; i++)
     {
-        struct iovec *curr =
-            (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
+        struct iovec *curr = (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
         if (cnt > 0 && fs_callbacks[current_task->fds[fd]->node->fsid]->poll)
         {
             if (!(fs_callbacks[current_task->fds[fd]->node->fsid]->poll(current_task->fds[fd]->node, EPOLLIN) & EPOLLIN))
@@ -667,7 +666,6 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
             (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
         if (cnt > 0 && fs_callbacks[current_task->fds[fd]->node->fsid]->poll)
         {
-            // check syscalls_fs.c for why this is necessary
             if (!(fs_callbacks[current_task->fds[fd]->node->fsid]->poll(current_task->fds[fd]->node, EPOLLIN) & EPOLLIN))
                 return cnt;
         }

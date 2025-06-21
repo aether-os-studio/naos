@@ -448,7 +448,6 @@ uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags)
     }
 
     current_task->fds[newfd] = new_node;
-    new_node->node->refcount++;
 
     if (flags & O_CLOEXEC)
     {
@@ -712,7 +711,7 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
         return (uint64_t)-EFAULT;
     }
 
-    vfs_node_t node = vfs_open_at(current_task->cwd, path, true);
+    vfs_node_t node = vfs_open(path);
     if (node == NULL)
     {
         return (uint64_t)-ENOENT;

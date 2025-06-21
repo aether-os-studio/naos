@@ -91,16 +91,12 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events, int maxevent
         if (ready > 0 || sigexit)
             break;
 
-#if defined(__x86_64__)
         arch_enable_interrupt();
-#endif
 
         arch_pause();
     } while (timeout != 0 && (timeout == -1 || nanoTime() < target));
 
-#if defined(__x86_64__)
     arch_disable_interrupt();
-#endif
 
     if (!ready && sigexit)
         return (uint64_t)-EINTR;

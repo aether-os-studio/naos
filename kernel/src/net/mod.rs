@@ -9,10 +9,6 @@ use spin::{Lazy, Mutex};
 
 use crate::rust::bindings::bindings::*;
 
-pub trait NetworkDevice: Send + Sync {
-    fn poll(&mut self);
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SocketType {
     Raw,

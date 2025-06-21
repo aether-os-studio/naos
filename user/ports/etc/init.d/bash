@@ -1,6 +1,0 @@
-#!/sbin/openrc-run
-
-name="bash"
-command="/bin/bash"
-command_args="$BASH_OPTS"
-pidfile="/run/bash.pid"

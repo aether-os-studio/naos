@@ -119,3 +119,22 @@ void *general_map(vfs_read_t read_callback, void *file, uint64_t addr, uint64_t 
 
     return (void *)addr;
 }
+
+uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec)
+{
+    if ((uintptr_t)addr % DEFAULT_PAGE_SIZE != 0 || !vec)
+    {
+        return -EINVAL;
+    }
+
+    size_t npages = (size + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE;
+
+    for (size_t i = 0; i < npages; i++)
+    {
+        uint64_t page_addr = addr + i * DEFAULT_PAGE_SIZE;
+
+        ((uint8_t *)vec)[i] = (!!translate_address(get_current_page_dir(true), page_addr));
+    }
+
+    return 0;
+}

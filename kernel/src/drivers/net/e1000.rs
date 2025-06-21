@@ -22,7 +22,7 @@ use smoltcp::wire::*;
 use smoltcp::{iface::*, socket};
 
 use crate::mm::phys_to_virt;
-use crate::net::{NetworkDevice, SOCKETS, SOCKETS_SET};
+use crate::net::{SOCKETS, SOCKETS_SET};
 use crate::rust::bindings::bindings::{
     DEFAULT_PAGE_SIZE, PT_FLAG_R, PT_FLAG_W, alloc_frames, apic_controller, arch_enable_interrupt,
     arch_yield, get_current_page_dir, irq_controller_t, irq_regist_irq, map_page_range, mktime,
