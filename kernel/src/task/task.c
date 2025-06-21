@@ -345,7 +345,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     child->jiffies = current_task->jiffies;
 
     child->cwd = current_task->cwd;
-    child->cmdline = current_task->cmdline;
+    child->cmdline = strdup(current_task->cmdline);
 
     child->mmap_start = USER_MMAP_START;
     child->brk_start = USER_BRK_START;
@@ -745,6 +745,12 @@ void task_unblock(task_t *task, int reason)
 
 void task_exit_inner(task_t *task, int64_t code)
 {
+    if (current_task->ppid && current_task->pid != current_task->ppid && current_task->ppid < MAX_TASK_NUM && tasks[current_task->ppid])
+    {
+        tasks[current_task->ppid]->signal |= SIGMASK(SIGCHLD);
+        task_unblock(tasks[current_task->ppid], SIGCHLD);
+    }
+
     arch_context_free(task->arch_context);
 
     free_frames_bytes((void *)task->kernel_stack, STACK_SIZE);
@@ -773,21 +779,13 @@ void task_exit_inner(task_t *task, int64_t code)
 
     socket_on_exit_task(task->pid);
 
+    task->current_state = TASK_DIED;
     task->state = TASK_DIED;
 }
 
 uint64_t task_exit(int64_t code)
 {
     arch_disable_interrupt();
-
-    // for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
-    // {
-    //     if (tasks[i] && tasks[i]->pgid == current_task->pid)
-    //     {
-    //         tasks[i]->signal |= SIGMASK(SIGCONT);
-    //         task_unblock(tasks[i], SIGCONT);
-    //     }
-    // }
 
     task_exit_inner(current_task, code);
 
@@ -964,7 +962,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->jiffies = current_task->jiffies;
 
     child->cwd = current_task->cwd;
-    child->cmdline = current_task->cmdline;
+    child->cmdline = strdup(current_task->cmdline);
 
     child->mmap_start = USER_MMAP_START;
     child->brk_start = USER_BRK_START;
