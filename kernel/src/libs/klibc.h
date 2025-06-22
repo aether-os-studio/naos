@@ -31,6 +31,13 @@ typedef void *timer_t;
 
 #define PADDING_UP(a, align) (typeof(a))((((uint64_t)(a)) + ((uint64_t)(align)) - 1) & ~(((uint64_t)(align)) - 1))
 
+#define container_of(ptr, type, member) ({                      \
+        uint64_t __mptr = ((uint64_t)(ptr));    \
+        (type *)( (char *)__mptr - offsetof(type,member) ); })
+#define container_of_or_null(ptr, type, member) ({                      \
+        uint64_t __mptr = ((uint64_t)(ptr));    \
+        (type *)( (char *)__mptr - offsetof(type,member) ) : NULL; })
+
 // 四舍五入成整数
 static inline uint64_t round(double x)
 {

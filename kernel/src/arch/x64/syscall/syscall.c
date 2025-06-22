@@ -58,8 +58,6 @@ void syscall_init()
     wrmsr(MSR_SYSCALL_MASK, (1 << 9));
 }
 
-extern int sys_pipe(int pipefd[2]);
-
 // Beware the 65 character limit!
 char sysname[] = "Next Aether OS";
 char nodename[] = "Aether";
@@ -328,11 +326,10 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = sys_futex((int *)arg1, arg2, arg3, (const struct timespec *)arg4, (int *)arg5, arg6);
         break;
     case SYS_PIPE:
-        regs->rax = sys_pipe((int *)arg1);
+        regs->rax = sys_pipe((int *)arg1, 0);
         break;
     case SYS_PIPE2:
-        // todo: support flags
-        regs->rax = sys_pipe((int *)arg1);
+        regs->rax = sys_pipe((int *)arg1, arg2);
         break;
     case SYS_STAT:
         regs->rax = sys_stat((const char *)arg1, (struct stat *)arg2);

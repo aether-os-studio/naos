@@ -184,7 +184,7 @@ uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags);
 #define F_DUPFD_CLOEXEC 1030
 
 uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg);
-int sys_pipe(int fd[2]);
+int sys_pipe(int fd[2], uint64_t flags);
 uint64_t sys_stat(const char *fd, struct stat *buf);
 uint64_t sys_fstat(uint64_t fd, struct stat *buf);
 uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname, struct stat *buf, uint64_t flags);

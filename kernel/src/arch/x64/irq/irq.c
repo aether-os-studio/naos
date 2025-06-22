@@ -36,16 +36,16 @@
 // 构造中断entry
 // 为了复用返回函数的代码，需要压入一个错误码0
 
-#define Build_IRQ(number)                                                                          \
-    extern void IRQ_NAME(number);                                                                  \
-    __asm__(".section .text\n\t" SYMBOL_NAME_STR(IRQ) #number "interrupt:\n\t"                     \
-                                                              "cli\n\t"                            \
-                                                              "pushq $0x00\n\t" SAVE_ALL_REGS      \
-                                                              "movq %rsp, %rdi\n\t"                \
-                                                              "leaq ret_from_intr(%rip), %rax\n\t" \
-                                                              "pushq %rax \n\t"                    \
-                                                              "movq	$" #number ", %rsi\n\t"        \
-                                                              "jmp do_irq\n\t");
+#define Build_IRQ(number)                                                                      \
+    extern void IRQ_NAME(number);                                                              \
+    asm(".section .text\n\t" SYMBOL_NAME_STR(IRQ) #number "interrupt:\n\t"                     \
+                                                          "cli\n\t"                            \
+                                                          "pushq $0x00\n\t" SAVE_ALL_REGS      \
+                                                          "movq %rsp, %rdi\n\t"                \
+                                                          "leaq ret_from_intr(%rip), %rax\n\t" \
+                                                          "pushq %rax \n\t"                    \
+                                                          "movq	$" #number ", %rsi\n\t"        \
+                                                          "jmp do_irq\n\t");
 
 // 构造中断入口
 Build_IRQ(0x20);

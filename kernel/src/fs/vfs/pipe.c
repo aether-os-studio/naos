@@ -34,10 +34,17 @@ ssize_t pipefs_read(void *file, void *addr, size_t offset, size_t size)
     uint32_t available = (pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF;
     if (available == 0)
     {
+        fd_t *fd = container_of(spec->node, fd_t, node);
+        if (fd->flags & O_NONBLOCK)
+        {
+            spin_unlock(&pipe->lock);
+            return -EWOULDBLOCK;
+        }
+
         if (pipe->write_fds == 0)
         {
             spin_unlock(&pipe->lock);
-            return -EPIPE;
+            return 0;
         }
         arch_disable_interrupt();
         task_block_list_t *new_block = malloc(sizeof(task_block_list_t));
@@ -62,8 +69,16 @@ ssize_t pipefs_read(void *file, void *addr, size_t offset, size_t size)
     }
     spin_unlock(&pipe->lock);
 
+    available = (pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF;
+
     // 实际读取量
     uint32_t to_read = MIN(size, available);
+
+    if (available == 0)
+    {
+        spin_unlock(&pipe->lock);
+        return 0;
+    }
 
     // 分两种情况拷贝数据
     if (pipe->read_ptr + to_read <= PIPE_BUFF)
@@ -126,8 +141,6 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
         }
         arch_disable_interrupt();
     }
-
-    spin_unlock(&pipe->lock);
 
     if (pipe->write_ptr + size <= PIPE_BUFF)
     {
@@ -294,8 +307,7 @@ void pipefs_init()
     pipefs_root->fsid = pipefs_id;
 }
 
-// 创建一个新管道
-int sys_pipe(int pipefd[2])
+int sys_pipe(int pipefd[2], uint64_t flags)
 {
     int i1 = -1;
     for (i1 = 3; i1 < MAX_FD_NUM; i1++)
@@ -354,7 +366,7 @@ int sys_pipe(int pipefd[2])
     current_task->fds[i1] = malloc(sizeof(fd_t));
     current_task->fds[i1]->node = node_input;
     current_task->fds[i1]->offset = 0;
-    current_task->fds[i1]->flags = 0;
+    current_task->fds[i1]->flags = flags;
 
     int i2 = -1;
     for (i2 = 3; i2 < MAX_FD_NUM; i2++)
@@ -373,7 +385,7 @@ int sys_pipe(int pipefd[2])
     current_task->fds[i2] = malloc(sizeof(fd_t));
     current_task->fds[i2]->node = node_output;
     current_task->fds[i2]->offset = 0;
-    current_task->fds[i2]->flags = 0;
+    current_task->fds[i2]->flags = flags;
 
     pipefd[0] = i1;
     pipefd[1] = i2;
