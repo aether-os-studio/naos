@@ -88,9 +88,10 @@ void ext_open(void *parent, const char *name, vfs_node_t node)
     {
         char *path = vfs_get_fullpath(node);
         char *buf = malloc(256);
-        ext4_readlink((const char *)path, buf, 256, NULL);
+        size_t rcnt = 0;
+        ext4_readlink((const char *)path, buf, 256, &rcnt);
         free(path);
-
+        buf[rcnt] = '\0';
         node->linkname = buf;
 
         ext4_file *lfile = malloc(sizeof(ext4_file));

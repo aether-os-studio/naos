@@ -101,7 +101,6 @@ ifeq ($(ARCH),x86_64)
         -march=x86-64 \
         -mno-red-zone \
         -mcmodel=kernel \
-        -fsanitize=undefined \
         -mno-80387 -mno-mmx -mno-sse -mno-sse2 \
         -D__x86_64__
     override LDFLAGS += \

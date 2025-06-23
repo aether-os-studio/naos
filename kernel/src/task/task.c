@@ -814,105 +814,92 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
 
     while (1)
     {
-        bool has_child = false;
+        bool found_alive = false;
 
-        // 遍历所有任务查找符合条件的子进程
+        // 优先查找僵尸进程
         for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
         {
             task_t *ptr = tasks[i];
-            if (!ptr || ptr->pid == ptr->ppid || ptr->ppid != current_task->pid)
+            if (!ptr || ptr->ppid != current_task->pid)
                 continue;
 
-            // 处理不同pid参数情况
-            if (pid == (uint64_t)-1)
-            { // 任意子进程
-                child = ptr;
-                has_child = true;
-                if (child->state == TASK_DIED)
-                {
-                    goto rollback;
-                }
-                break;
-            }
-            else if (pid == 0)
-            { // 同进程组
-                if (ptr->pgid == current_task->pgid)
-                {
-                    child = ptr;
-                    has_child = true;
-                    break;
-                }
-            }
-            else if (pid > 0)
-            { // 指定PID
+            // 检查pid匹配条件
+            if ((int64_t)pid > 0)
+            {
                 if (ptr->pid != pid)
                     continue;
             }
+            else if (pid == 0)
+            {
+                if (ptr->pgid != current_task->pgid)
+                    continue;
+            }
+            else if (pid != (uint64_t)-1)
+            {
+                continue; // 仅支持 -1, 0, >0
+            }
 
-            // 检查进程状态
+            child = ptr;
+
+            // 优先处理僵尸进程
             if (ptr->state == TASK_DIED)
             {
-                child = ptr;
-                // tasks[i] = NULL;
-                goto rollback;
+                goto rollback; // 立即回收
             }
             else
             {
-                child = ptr;
-                has_child = true;
-                break;
+                found_alive = true;
             }
         }
 
-        if (!has_child || !child)
+        // 找到僵尸进程会直接跳转到rollback
+        if (found_alive)
         {
             if (options & WNOHANG)
             {
-                return 0;
+                return 0; // 非阻塞立即返回
             }
-            break;
+
+            // 设置等待并阻塞当前进程
+            child->waitpid = current_task->pid;
+
+            task_block(current_task, TASK_BLOCKING, -1);
+
+            // 被唤醒后重新检查
+            continue;
         }
 
-        child->waitpid = current_task->pid;
-
-        current_task->state = TASK_BLOCKING;
-
-        while (current_task->state == TASK_BLOCKING)
+        // 没有任何匹配的子进程
+        if (options & WNOHANG)
         {
-            arch_enable_interrupt();
-            arch_pause();
+            return -ECHILD;
         }
+        break;
     }
 
 rollback:
     if (child)
     {
+        // 复制状态码
         if (status)
         {
-            if (child->status < 128)
+            if (child->status & 0x80)
             {
-                *status = (child->status & 0xff) << 8;
+                *status = (child->status & 0x7F); // 信号终止
             }
             else
             {
-                int sig = child->status - 128;
-                *status = sig | (0x80 << 8);
+                *status = (child->status << 8); // 正常退出
             }
         }
 
         ret = child->pid;
 
+        // 清理进程资源
         tasks[child->pid] = NULL;
-
         free_page_table(child->arch_context->mm);
-
         free(child->arch_context);
-
         free(child);
-    }
-    else if (options & WNOHANG)
-    {
-        ret = 0;
     }
 
     return ret;

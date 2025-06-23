@@ -632,12 +632,15 @@ int vfs_poll(vfs_node_t node, size_t event)
     return callbackof(node, poll)(node->handle, event);
 }
 
+spinlock_t get_path_lock = {0};
+
 // 使用请记得free掉返回的buff
 char *vfs_get_fullpath(vfs_node_t node)
 {
     if (node == NULL)
         return NULL;
-    int inital = 16;
+    int inital = 32;
+    spin_lock(&get_path_lock);
     vfs_node_t *nodes = (vfs_node_t *)malloc(sizeof(vfs_node_t) * inital);
     int count = 0;
     for (vfs_node_t cur = node; cur; cur = cur->parent)
@@ -661,6 +664,7 @@ char *vfs_get_fullpath(vfs_node_t node)
             strcat(buff, "/");
     }
     free(nodes);
+    spin_unlock(&get_path_lock);
     return buff;
 }
 
@@ -690,6 +694,21 @@ fd_t *vfs_dup(fd_t *fd)
     new_fd->node = node;
     new_fd->offset = 0;
     new_fd->flags = fd->flags;
+    // if (node->type == file_pipe)
+    // {
+    //     pipe_specific_t *spec = node->handle;
+    //     pipe_info_t *pipe = spec->info;
+    //     spin_lock(&pipe->lock);
+    //     if (spec->write)
+    //     {
+    //         pipe->write_fds++;
+    //     }
+    //     else
+    //     {
+    //         pipe->read_fds++;
+    //     }
+    //     spin_unlock(&pipe->lock);
+    // }
     return new_fd;
 }
 

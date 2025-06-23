@@ -407,7 +407,7 @@ uint64_t sys_getcwd(char *cwd, uint64_t size)
     }
     strncpy(cwd, str, size);
     free(str);
-    return (uint64_t)strlen(str);
+    return (uint64_t)strlen(cwd);
 }
 
 extern int unix_socket_fsid;
@@ -511,32 +511,51 @@ uint64_t sys_dup(uint64_t fd)
     return sys_dup2(fd, i);
 }
 
+spinlock_t fcntl_lock = {0};
+
 uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
 {
     if (fd > MAX_FD_NUM || !current_task->fds[fd])
         return (uint64_t)-EBADF;
 
+    spin_lock(&fcntl_lock);
+
     switch (command)
     {
     case F_GETFD:
+        spin_unlock(&fcntl_lock);
         return !!(current_task->fds[fd]->flags & O_CLOEXEC);
     case F_SETFD:
-        return current_task->fds[fd]->flags |= O_CLOEXEC;
+        spin_unlock(&fcntl_lock);
+        if (current_task->fds[fd]->flags & O_CLOEXEC)
+        {
+            current_task->fds[fd]->flags &= ~(uint64_t)O_CLOEXEC;
+        }
+        else
+        {
+            current_task->fds[fd]->flags |= (uint64_t)O_CLOEXEC;
+        }
+        return 0;
     case F_DUPFD_CLOEXEC:
         uint64_t newfd = sys_dup(fd);
         current_task->fds[newfd]->flags |= O_CLOEXEC;
+        spin_unlock(&fcntl_lock);
         return newfd;
     case F_DUPFD:
+        spin_unlock(&fcntl_lock);
         return sys_dup(fd);
     case F_GETFL:
+        spin_unlock(&fcntl_lock);
         return current_task->fds[fd]->flags;
     case F_SETFL:
         uint32_t valid_flags = O_APPEND | O_DIRECT | O_NOATIME | O_NONBLOCK;
         current_task->fds[fd]->flags &= ~valid_flags;
         current_task->fds[fd]->flags |= arg & valid_flags;
+        spin_unlock(&fcntl_lock);
         return 0;
     }
 
+    spin_unlock(&fcntl_lock);
     return (uint64_t)-ENOSYS;
 }
 

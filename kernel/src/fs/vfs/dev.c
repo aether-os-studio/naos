@@ -341,13 +341,8 @@ ssize_t stdin_read(void *data, uint64_t offset, void *buf, uint64_t len)
     }
     arch_disable_interrupt();
 
-    if (current_task->term.c_lflag & ICANON)
-        printk("\n");
-
     uint32_t fr = current_task->tmp_rec_v;
     memcpy(buf, kernel_buff, fr);
-    if (current_task->term.c_lflag & ICANON && fr < len)
-        ((char *)buf)[fr++] = '\n';
 
     free(kernel_buff);
 

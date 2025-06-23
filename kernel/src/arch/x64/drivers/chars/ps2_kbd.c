@@ -54,7 +54,7 @@ bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state)
         uint32_t offset = (limit > 2) ? 2 : limit;
         memcpy(kbBuff, cache_buffer, offset);
         memset(cache_buffer, 0, offset);
-        memmove(cache_buffer, &cache_buffer[offset], 8 - offset);
+        memmove(cache_buffer, &cache_buffer[offset], sizeof(cache_buffer) - offset);
         kb_reset();
         return true;
     }
@@ -213,9 +213,6 @@ void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
         kb_char(task, out);
         break;
     }
-
-    if (task->state == TASK_BLOCKING)
-        task->state = TASK_READY;
 }
 
 void push_kb_char(char c)

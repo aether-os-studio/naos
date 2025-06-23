@@ -59,13 +59,6 @@ ssize_t pipefs_read(void *file, void *addr, size_t offset, size_t size)
         spin_unlock(&pipe->lock);
 
         task_block(current_task, TASK_BLOCKING, -1);
-
-        while (current_task->state == TASK_BLOCKING)
-        {
-            arch_enable_interrupt();
-            arch_pause();
-        }
-        arch_disable_interrupt();
     }
     spin_unlock(&pipe->lock);
 

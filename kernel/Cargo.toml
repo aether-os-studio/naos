@@ -21,6 +21,7 @@ default-features = false
 
 [dependencies.nvme]
 git = "https://github.com/plos-clan/nvme-rs"
+rev = "827fa5d46ce9c89ad042203c6a5a1fc6d06a3fcf"
 
 [dependencies.os-terminal]
 version = "0.6.10"
