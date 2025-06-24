@@ -31,11 +31,31 @@ unsafe extern "C" fn socket_on_new_task(pid: usize) {
 }
 #[unsafe(no_mangle)]
 unsafe extern "C" fn socket_on_exit_task(pid: usize) {
-    let queue = SOCKETS.lock().remove(&pid).unwrap();
-    for (_, handle) in queue {
-        SOCKETS_SET.lock().remove(handle);
+    let mut sockets = SOCKETS.lock();
+    if let Some(queue) = sockets.remove(&pid) {
+        for (_, handle) in queue {
+            SOCKETS_SET.lock().remove(handle);
+        }
+    } else if let Some(dup_fds) = SOCKETS_DUPS.lock().remove(&pid) {
+        let mut q = BTreeMap::new();
+        let mut b = false;
+        for (_, fd) in dup_fds {
+            for (_, queue) in sockets.iter_mut() {
+                if queue.contains_key(&(fd as i32)) {
+                    q = queue.clone();
+                    b = true;
+                    break;
+                }
+            }
+
+            if b {
+                break;
+            }
+        }
+        for (_, handle) in q {
+            SOCKETS_SET.lock().remove(handle.clone());
+        }
     }
-    let _ = SOCKETS_DUPS.lock().remove(&pid);
 }
 #[unsafe(no_mangle)]
 unsafe extern "C" fn socket_on_dup_file(fd: usize, newfd: usize) {
