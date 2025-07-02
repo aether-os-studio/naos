@@ -375,7 +375,9 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
 
             if (fd)
             {
-                child->fds[i] = vfs_dup(fd);
+                child->fds[i] = malloc(sizeof(fd_t));
+                memcpy(child->fds[i], fd, sizeof(fd_t));
+                child->fds[i]->node->refcount++;
             }
             else
             {
@@ -975,7 +977,9 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     {
         if (current_task->fds[i])
         {
-            child->fds[i] = vfs_dup(current_task->fds[i]);
+            child->fds[i] = malloc(sizeof(fd_t));
+            memcpy(child->fds[i], current_task->fds[i], sizeof(fd_t));
+            child->fds[i]->node->refcount++;
         }
         else
         {
@@ -1271,4 +1275,40 @@ int sys_timer_settime(timer_t timerid, const struct itimerval *new_value, struct
     kt->expires = now + expires;
 
     return 0;
+}
+
+#define LINUX_REBOOT_MAGIC1 0xfee1dead
+#define LINUX_REBOOT_MAGIC2 672274793
+#define LINUX_REBOOT_MAGIC2A 85072278
+#define LINUX_REBOOT_MAGIC2B 369367448
+#define LINUX_REBOOT_MAGIC2C 537993216
+
+#define LINUX_REBOOT_CMD_RESTART 0x01234567
+#define LINUX_REBOOT_CMD_HALT 0xCDEF0123
+#define LINUX_REBOOT_CMD_CAD_ON 0x89ABCDEF
+#define LINUX_REBOOT_CMD_CAD_OFF 0x00000000
+#define LINUX_REBOOT_CMD_POWER_OFF 0x4321FEDC
+#define LINUX_REBOOT_CMD_RESTART2 0xA1B2C3D4
+#define LINUX_REBOOT_CMD_SW_SUSPEND 0xD000FCE2
+#define LINUX_REBOOT_CMD_KEXEC 0x45584543
+
+bool cad_enabled = true;
+
+uint64_t sys_reboot(int magic1, int magic2, uint32_t cmd, void *arg)
+{
+    if (magic1 != LINUX_REBOOT_MAGIC1 || magic2 != LINUX_REBOOT_MAGIC2)
+        return (uint64_t)-EINVAL;
+
+    switch (cmd)
+    {
+    case LINUX_REBOOT_CMD_CAD_OFF:
+        cad_enabled = false;
+        return 0;
+    case LINUX_REBOOT_CMD_CAD_ON:
+        cad_enabled = true;
+        return 0;
+    default:
+        return (uint64_t)-EINVAL;
+        break;
+    }
 }

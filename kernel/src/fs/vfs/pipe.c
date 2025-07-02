@@ -1,6 +1,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <fs/fs_syscall.h>
+#include <fs/vfs/dev.h>
 
 vfs_node_t pipefs_root;
 int pipefs_id = 0;
@@ -186,27 +187,6 @@ int pipefs_ioctl(void *file, ssize_t cmd, ssize_t arg)
 {
     switch (cmd)
     {
-    case FIOCLEX:
-        return 0;
-    case TIOCGWINSZ:
-        size_t addr;
-        size_t width;
-        size_t height;
-        size_t bpp;
-        size_t cols;
-        size_t rows;
-
-        os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
-
-        *(struct winsize *)arg = (struct winsize){
-            .ws_xpixel = width,
-            .ws_ypixel = height,
-            .ws_col = cols,
-            .ws_row = rows,
-        };
-        return 0;
-    case TIOCSWINSZ:
-        return 0;
     default:
         return -ENOSYS;
     }

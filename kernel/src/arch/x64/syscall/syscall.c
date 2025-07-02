@@ -145,6 +145,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_EXIT_GROUP:
         regs->rax = task_exit((int64_t)arg1);
         break;
+    case SYS_REBOOT:
+        regs->rax = sys_reboot(arg1, arg2, arg3, (void *)arg4);
+        break;
     case SYS_GETPID:
         if (arg1 == UINT64_MAX && arg2 == UINT64_MAX && arg3 == UINT64_MAX && arg4 == UINT64_MAX && arg5 == UINT64_MAX)
             regs->rax = 1;

@@ -3,7 +3,7 @@
 #include <libs/klibc.h>
 #include <fs/vfs/vfs.h>
 
-#define PIPE_BUFF 4096
+#define PIPE_BUFF 8192
 
 #define MAX_PIPES 32
 

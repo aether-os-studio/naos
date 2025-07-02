@@ -1,4 +1,5 @@
 #include "fs/vfs/vfs.h"
+#include "fs/vfs/dev.h"
 #include "fs/fs_syscall.h"
 #include "arch/arch.h"
 #include "mm/mm.h"
@@ -616,12 +617,87 @@ int vfs_unmount(const char *path)
     return -1;
 }
 
+int tty_mode = KD_TEXT;
+int tty_kbmode = K_XLATE;
+struct vt_mode current_vt_mode = {0};
+
 int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg)
 {
     do_update(node);
     if (node->type & file_dir)
         return -1;
-    return callbackof(node, ioctl)(node->handle, cmd, arg);
+
+    switch (cmd)
+    {
+    case TIOCGWINSZ:
+        size_t addr;
+        size_t width;
+        size_t height;
+        size_t bpp;
+        size_t cols;
+        size_t rows;
+
+        os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
+
+        *(struct winsize *)arg = (struct winsize){
+            .ws_xpixel = width,
+            .ws_ypixel = height,
+            .ws_col = cols,
+            .ws_row = rows,
+        };
+        return 0;
+    case TIOCSCTTY:
+        return 0;
+    case TIOCGPGRP:
+        int *pid = (int *)arg;
+        *pid = current_task->pid;
+        return 0;
+    case TIOCSPGRP:
+        return 0;
+    case TCGETS:
+        memcpy((void *)arg, &current_task->term, sizeof(termios));
+        return 0;
+    case TCSETS:
+        memcpy(&current_task->term, (void *)arg, sizeof(termios));
+        return 0;
+    case TCSETSW:
+        memcpy(&current_task->term, (void *)arg, sizeof(termios));
+        return 0;
+    case TIOCSWINSZ:
+        return 0;
+    case KDGETMODE:
+        *(int *)arg = tty_mode;
+        return 0;
+    case KDSETMODE:
+        tty_mode = *(int *)arg;
+        return 0;
+    case KDGKBMODE:
+        *(int *)arg = tty_kbmode;
+        return 0;
+    case KDSKBMODE:
+        tty_kbmode = *(int *)arg;
+        return 0;
+    case VT_SETMODE:
+        memcpy(&current_vt_mode, (void *)arg, sizeof(struct vt_mode));
+        return 0;
+    case VT_GETMODE:
+        memcpy((void *)arg, &current_vt_mode, sizeof(struct vt_mode));
+        return 0;
+    case VT_ACTIVATE:
+        return 0;
+    case VT_WAITACTIVE:
+        return 0;
+    case VT_GETSTATE:
+        struct vt_state *state = (struct vt_state *)arg;
+        state->v_active = 0; // 当前活动终端
+        state->v_state = 0;  // 状态标志
+        return 0;
+    case VT_OPENQRY:
+        *(int *)arg = 1;
+        return 0;
+    default:
+        return callbackof(node, ioctl)(node->handle, cmd, arg);
+    }
 }
 
 int vfs_poll(vfs_node_t node, size_t event)
@@ -694,21 +770,19 @@ fd_t *vfs_dup(fd_t *fd)
     new_fd->node = node;
     new_fd->offset = 0;
     new_fd->flags = fd->flags;
-    // if (node->type == file_pipe)
-    // {
-    //     pipe_specific_t *spec = node->handle;
-    //     pipe_info_t *pipe = spec->info;
-    //     spin_lock(&pipe->lock);
-    //     if (spec->write)
-    //     {
-    //         pipe->write_fds++;
-    //     }
-    //     else
-    //     {
-    //         pipe->read_fds++;
-    //     }
-    //     spin_unlock(&pipe->lock);
-    // }
+    if (node->type == file_pipe)
+    {
+        pipe_specific_t *spec = node->handle;
+        pipe_info_t *pipe = spec->info;
+        if (spec->write)
+        {
+            pipe->write_fds++;
+        }
+        else
+        {
+            pipe->read_fds++;
+        }
+    }
     return new_fd;
 }
 
