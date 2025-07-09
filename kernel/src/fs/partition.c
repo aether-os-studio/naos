@@ -39,13 +39,14 @@ void partition_init()
             goto probe_mbr;
         }
 
-        uint64_t num_partitions = buffer->num_partition_entries / buffer->size_of_partition_entry;
+        struct GPT_DPTE *dptes = (struct GPT_DPTE *)malloc(128 * sizeof(struct GPT_DPTE));
+        blkdev_read(i, buffer->partition_entry_lba * 512, dptes, 128 * sizeof(struct GPT_DPTE));
 
-        struct GPT_DPTE *dptes = (struct GPT_DPTE *)malloc(buffer->num_partition_entries);
-        blkdev_read(i, buffer->partition_entry_lba * 512, dptes, buffer->num_partition_entries);
-
-        for (uint32_t j = 0; j < num_partitions; j++)
+        for (uint32_t j = 0; j < 128; j++)
         {
+            if (dptes[j].starting_lba == 0 || dptes[j].ending_lba == 0)
+                continue;
+
             part->blkdev_id = i;
             part->starting_lba = dptes[j].starting_lba;
             part->ending_lba = dptes[j].ending_lba;

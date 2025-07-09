@@ -4,6 +4,7 @@
 #include "arch/arch.h"
 #include "mm/mm.h"
 #include "task/task.h"
+#include "net/socket.h"
 
 vfs_node_t rootdir = NULL;
 char *id_to_callback_name[256];
@@ -781,6 +782,24 @@ fd_t *vfs_dup(fd_t *fd)
         else
         {
             pipe->read_fds++;
+        }
+    }
+    else if (node->type == file_socket)
+    {
+        socket_handle_t *handle = node->handle;
+        socket_t *socket = handle->sock;
+        if (node->fsid == unix_socket_fsid)
+        {
+            socket->timesOpened++;
+            if (socket->pair)
+            {
+                socket->pair->clientFds++;
+            }
+        }
+        else if (node->fsid == unix_accept_fsid)
+        {
+            unix_socket_pair_t *pair = socket->pair;
+            pair->serverFds++;
         }
     }
     return new_fd;
