@@ -52,6 +52,7 @@ extern void epoll_init();
 extern void eventfd_init();
 extern void signalfd_init();
 extern void timerfd_init();
+extern void memfd_init();
 
 void fs_syscall_init()
 {
@@ -59,6 +60,7 @@ void fs_syscall_init()
     eventfd_init();
     signalfd_init();
     timerfd_init();
+    memfd_init();
 }
 
 void wake_blocked_tasks(task_block_list_t *head)

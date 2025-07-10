@@ -35,19 +35,19 @@
  */
 
 #include <ext4_config.h>
-#include <ext4_debug.h>
-#include <ext4_errno.h>
-#include <ext4_misc.h>
 #include <ext4_types.h>
+#include <ext4_misc.h>
+#include <ext4_errno.h>
+#include <ext4_debug.h>
 
+#include <ext4_super.h>
 #include <ext4_block_group.h>
 #include <ext4_dir.h>
 #include <ext4_dir_idx.h>
 #include <ext4_fs.h>
-#include <ext4_ialloc.h>
 #include <ext4_inode.h>
+#include <ext4_ialloc.h>
 #include <ext4_mkfs.h>
-#include <ext4_super.h>
 
 #include <libs/klibc.h>
 
@@ -111,10 +111,8 @@ static uint32_t compute_inodes(struct ext4_mkfs_info *info)
 
 static uint32_t compute_inodes_per_group(struct ext4_mkfs_info *info)
 {
-	uint32_t blocks =
-		(uint32_t)EXT4_DIV_ROUND_UP(info->len, info->block_size);
-	uint32_t block_groups =
-		EXT4_DIV_ROUND_UP(blocks, info->blocks_per_group);
+	uint32_t blocks = (uint32_t)EXT4_DIV_ROUND_UP(info->len, info->block_size);
+	uint32_t block_groups = EXT4_DIV_ROUND_UP(blocks, info->blocks_per_group);
 	uint32_t inodes = EXT4_DIV_ROUND_UP(info->inodes, block_groups);
 	inodes = EXT4_ALIGN(inodes, (info->block_size / info->inode_size));
 
@@ -128,8 +126,9 @@ static uint32_t compute_inodes_per_group(struct ext4_mkfs_info *info)
 
 static uint32_t compute_journal_blocks(struct ext4_mkfs_info *info)
 {
-	uint32_t journal_blocks =
-		(uint32_t)EXT4_DIV_ROUND_UP(info->len, info->block_size) / 64;
+	uint32_t journal_blocks = (uint32_t)EXT4_DIV_ROUND_UP(info->len,
+														  info->block_size) /
+							  64;
 	if (journal_blocks < 1024)
 		journal_blocks = 1024;
 	if (journal_blocks > 32768)
@@ -150,28 +149,29 @@ static int create_fs_aux_info(struct fs_aux_info *aux_info,
 {
 	aux_info->first_data_block = (info->block_size > 1024) ? 0 : 1;
 	aux_info->len_blocks = info->len / info->block_size;
-	aux_info->inode_table_blocks = EXT4_DIV_ROUND_UP(
-		info->inodes_per_group * info->inode_size, info->block_size);
-	aux_info->groups = (uint32_t)EXT4_DIV_ROUND_UP(
-		aux_info->len_blocks - aux_info->first_data_block,
-		info->blocks_per_group);
+	aux_info->inode_table_blocks = EXT4_DIV_ROUND_UP(info->inodes_per_group *
+														 info->inode_size,
+													 info->block_size);
+	aux_info->groups = (uint32_t)EXT4_DIV_ROUND_UP(aux_info->len_blocks -
+													   aux_info->first_data_block,
+												   info->blocks_per_group);
 	aux_info->blocks_per_ind = info->block_size / sizeof(uint32_t);
 	aux_info->blocks_per_dind =
 		aux_info->blocks_per_ind * aux_info->blocks_per_ind;
 	aux_info->blocks_per_tind =
 		aux_info->blocks_per_dind * aux_info->blocks_per_dind;
 
-	aux_info->bg_desc_blocks = EXT4_DIV_ROUND_UP(
-		aux_info->groups * info->dsc_size, info->block_size);
+	aux_info->bg_desc_blocks =
+		EXT4_DIV_ROUND_UP(aux_info->groups * info->dsc_size,
+						  info->block_size);
 
 	aux_info->default_i_flags = EXT4_INODE_FLAG_NOATIME;
 
-	uint32_t last_group_size =
-		aux_info->len_blocks % info->blocks_per_group;
+	uint32_t last_group_size = aux_info->len_blocks % info->blocks_per_group;
 	uint32_t last_header_size = 2 + aux_info->inode_table_blocks;
 	if (has_superblock(info, aux_info->groups - 1))
-		last_header_size +=
-			1 + aux_info->bg_desc_blocks + info->bg_desc_reserve_blocks;
+		last_header_size += 1 + aux_info->bg_desc_blocks +
+							info->bg_desc_reserve_blocks;
 
 	if (last_group_size > 0 && last_group_size < last_header_size)
 	{
@@ -229,8 +229,7 @@ static void fill_sb(struct fs_aux_info *aux_info, struct ext4_mkfs_info *info)
 
 	ext4_sb_set_blocks_cnt(sb, aux_info->len_blocks);
 	ext4_sb_set_free_blocks_cnt(sb, aux_info->len_blocks);
-	sb->free_inodes_count =
-		to_le32(info->inodes_per_group * aux_info->groups);
+	sb->free_inodes_count = to_le32(info->inodes_per_group * aux_info->groups);
 
 	sb->reserved_blocks_count_lo = to_le32(0);
 	sb->first_data_block = to_le32(aux_info->first_data_block);
@@ -291,16 +290,17 @@ static void fill_sb(struct fs_aux_info *aux_info, struct ext4_mkfs_info *info)
 	sb->mkfs_time = to_le32(0);
 
 	sb->reserved_blocks_count_hi = to_le32(0);
-	sb->min_extra_isize =
-		to_le32(sizeof(struct ext4_inode) - EXT4_GOOD_OLD_INODE_SIZE);
-	sb->want_extra_isize =
-		to_le32(sizeof(struct ext4_inode) - EXT4_GOOD_OLD_INODE_SIZE);
+	sb->min_extra_isize = to_le32(sizeof(struct ext4_inode) -
+								  EXT4_GOOD_OLD_INODE_SIZE);
+	sb->want_extra_isize = to_le32(sizeof(struct ext4_inode) -
+								   EXT4_GOOD_OLD_INODE_SIZE);
 	sb->flags = to_le32(EXT4_SUPERBLOCK_FLAGS_SIGNED_HASH);
 }
 
 static int write_bgroup_block(struct ext4_blockdev *bd,
 							  struct fs_aux_info *aux_info,
-							  struct ext4_mkfs_info *info, uint32_t blk)
+							  struct ext4_mkfs_info *info,
+							  uint32_t blk)
 {
 	int r = EOK;
 	uint32_t j;
@@ -310,8 +310,8 @@ static int write_bgroup_block(struct ext4_blockdev *bd,
 
 	for (j = 0; j < aux_info->groups; j++)
 	{
-		uint64_t bg_start_block =
-			aux_info->first_data_block + j * info->blocks_per_group;
+		uint64_t bg_start_block = aux_info->first_data_block +
+								  j * info->blocks_per_group;
 		uint32_t blk_off = 0;
 
 		blk_off += aux_info->bg_desc_blocks;
@@ -357,13 +357,12 @@ static int write_bgroups(struct ext4_blockdev *bd, struct fs_aux_info *aux_info,
 	for (i = 0; i < aux_info->groups; i++)
 	{
 		uint64_t bg_start_block = aux_info->first_data_block +
-								  aux_info->first_data_block +
-								  i * info->blocks_per_group;
+								  aux_info->first_data_block + i * info->blocks_per_group;
 		uint32_t blk_off = 0;
 
 		bg_desc = (void *)(aux_info->bg_desc_blk + k * dsc_size);
-		bg_free_blk =
-			info->blocks_per_group - aux_info->inode_table_blocks;
+		bg_free_blk = info->blocks_per_group -
+					  aux_info->inode_table_blocks;
 
 		bg_free_blk -= 2;
 		blk_off += aux_info->bg_desc_blocks;
@@ -385,20 +384,21 @@ static int write_bgroups(struct ext4_blockdev *bd, struct fs_aux_info *aux_info,
 		ext4_bg_set_inode_bitmap(bg_desc, aux_info->sb,
 								 bg_start_block + blk_off + 2);
 
-		ext4_bg_set_inode_table_first_block(
-			bg_desc, aux_info->sb, bg_start_block + blk_off + 3);
+		ext4_bg_set_inode_table_first_block(bg_desc,
+											aux_info->sb,
+											bg_start_block + blk_off + 3);
 
 		ext4_bg_set_free_blocks_count(bg_desc, aux_info->sb,
 									  bg_free_blk);
 
-		ext4_bg_set_free_inodes_count(
-			bg_desc, aux_info->sb,
-			to_le32(aux_info->sb->inodes_per_group));
+		ext4_bg_set_free_inodes_count(bg_desc,
+									  aux_info->sb, to_le32(aux_info->sb->inodes_per_group));
 
 		ext4_bg_set_used_dirs_count(bg_desc, aux_info->sb, 0);
 
-		ext4_bg_set_flag(bg_desc, EXT4_BLOCK_GROUP_BLOCK_UNINIT |
-									  EXT4_BLOCK_GROUP_INODE_UNINIT);
+		ext4_bg_set_flag(bg_desc,
+						 EXT4_BLOCK_GROUP_BLOCK_UNINIT |
+							 EXT4_BLOCK_GROUP_INODE_UNINIT);
 
 		sb_free_blk += bg_free_blk;
 
@@ -448,9 +448,7 @@ static int write_sblocks(struct ext4_blockdev *bd, struct fs_aux_info *aux_info,
 	{
 		if (has_superblock(info, i))
 		{
-			offset =
-				info->block_size * (aux_info->first_data_block +
-									i * info->blocks_per_group);
+			offset = info->block_size * (aux_info->first_data_block + i * info->blocks_per_group);
 
 			aux_info->sb->block_group_index = to_le16(i);
 			r = ext4_block_writebytes(bd, offset, aux_info->sb,
@@ -629,8 +627,7 @@ static int create_dirs(struct ext4_fs *fs)
 			return r;
 	}
 
-	r = ext4_dir_add_entry(&root, "lost+found", strlen("lost+found"),
-						   &child);
+	r = ext4_dir_add_entry(&root, "lost+found", strlen("lost+found"), &child);
 	if (r != EOK)
 		return r;
 
@@ -644,7 +641,8 @@ static int create_dirs(struct ext4_fs *fs)
 	return r;
 }
 
-static int create_journal_inode(struct ext4_fs *fs, struct ext4_mkfs_info *info)
+static int create_journal_inode(struct ext4_fs *fs,
+								struct ext4_mkfs_info *info)
 {
 	int ret;
 	struct ext4_inode_ref inode_ref;
@@ -723,8 +721,7 @@ int ext4_mkfs(struct ext4_fs *fs, struct ext4_blockdev *bd,
 	if (info->block_size == 0)
 		info->block_size = 4096; /*Set block size to default value*/
 
-	/* Round down the filesystem length to be a multiple of the block size
-	 */
+	/* Round down the filesystem length to be a multiple of the block size */
 	info->len &= ~((uint64_t)info->block_size - 1);
 
 	if (info->journal_blocks == 0)

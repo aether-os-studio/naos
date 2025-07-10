@@ -91,6 +91,7 @@ static struct vfs_callback callback = {
     .stat = sysfs_stat,
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = sysfs_poll,
+    .resize = (vfs_resize_t)dummy,
 };
 
 extern uint32_t device_number;

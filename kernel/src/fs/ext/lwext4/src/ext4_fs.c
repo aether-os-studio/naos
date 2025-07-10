@@ -39,26 +39,27 @@
  */
 
 #include <ext4_config.h>
-#include <ext4_debug.h>
-#include <ext4_errno.h>
-#include <ext4_misc.h>
 #include <ext4_types.h>
+#include <ext4_misc.h>
+#include <ext4_errno.h>
+#include <ext4_debug.h>
 
+#include <ext4_trans.h>
+#include <ext4_fs.h>
+#include <ext4_blockdev.h>
+#include <ext4_super.h>
+#include <ext4_crc32.h>
+#include <ext4_block_group.h>
 #include <ext4_balloc.h>
 #include <ext4_bitmap.h>
-#include <ext4_block_group.h>
-#include <ext4_blockdev.h>
-#include <ext4_crc32.h>
-#include <ext4_extent.h>
-#include <ext4_fs.h>
-#include <ext4_ialloc.h>
 #include <ext4_inode.h>
-#include <ext4_super.h>
-#include <ext4_trans.h>
+#include <ext4_ialloc.h>
+#include <ext4_extent.h>
 
 #include <libs/klibc.h>
 
-int ext4_fs_init(struct ext4_fs *fs, struct ext4_blockdev *bdev, bool read_only)
+int ext4_fs_init(struct ext4_fs *fs, struct ext4_blockdev *bdev,
+				 bool read_only)
 {
 	int r, i;
 	uint16_t tmp;
@@ -117,8 +118,7 @@ int ext4_fs_init(struct ext4_fs *fs, struct ext4_blockdev *bdev, bool read_only)
 			return r;
 
 		/*Update mount count*/
-		ext4_set16(&fs->sb, mount_count,
-				   ext4_get16(&fs->sb, mount_count) + 1);
+		ext4_set16(&fs->sb, mount_count, ext4_get16(&fs->sb, mount_count) + 1);
 	}
 
 	return r;
@@ -269,10 +269,9 @@ static bool ext4_block_in_group(struct ext4_sblock *s, ext4_fsblk_t baddr,
 	return false;
 }
 
-/**@brief   To avoid calling the atomic setbit hundreds or thousands of times,
- * we only need to use it within a single byte (to ensure we get endianness
- * right). We can use memset for the rest of the bitmap as there are no other
- * users.
+/**@brief   To avoid calling the atomic setbit hundreds or thousands of times, we only
+ *          need to use it within a single byte (to ensure we get endianness right).
+ *          We can use memset for the rest of the bitmap as there are no other users.
  */
 static void ext4_fs_mark_bitmap_end(int start_bit, int end_bit, void *bitmap)
 {
@@ -308,8 +307,7 @@ static int ext4_fs_init_block_bitmap(struct ext4_block_group_ref *bg_ref)
 	ext4_fsblk_t bmp_blk = ext4_bg_get_block_bitmap(bg, sb);
 	ext4_fsblk_t bmp_inode = ext4_bg_get_inode_bitmap(bg, sb);
 	ext4_fsblk_t inode_table = ext4_bg_get_inode_table_first_block(bg, sb);
-	ext4_fsblk_t first_bg =
-		ext4_balloc_get_block_of_bgid(sb, bg_ref->index);
+	ext4_fsblk_t first_bg = ext4_balloc_get_block_of_bgid(sb, bg_ref->index);
 
 	uint32_t dsc_per_block = block_size / ext4_sb_get_desc_size(sb);
 
@@ -319,8 +317,7 @@ static int ext4_fs_init_block_bitmap(struct ext4_block_group_ref *bg_ref)
 	uint32_t inode_table_bcnt = inodes_per_group * inode_size / block_size;
 
 	struct ext4_block block_bitmap;
-	rc = ext4_trans_block_get_noread(bg_ref->fs->bdev, &block_bitmap,
-									 bmp_blk);
+	rc = ext4_trans_block_get_noread(bg_ref->fs->bdev, &block_bitmap, bmp_blk);
 	if (rc != EOK)
 		return rc;
 
@@ -384,8 +381,7 @@ static int ext4_fs_init_block_bitmap(struct ext4_block_group_ref *bg_ref)
 	 * less than the blocksize * 8 ( which is the size
 	 * of bitmap ), set rest of the block bitmap to 1
 	 */
-	ext4_fs_mark_bitmap_end(group_blocks, block_size * 8,
-							block_bitmap.data);
+	ext4_fs_mark_bitmap_end(group_blocks, block_size * 8, block_bitmap.data);
 	ext4_trans_set_block_dirty(block_bitmap.buf);
 
 	ext4_balloc_set_bitmap_csum(sb, bg_ref->block_group, block_bitmap.data);
@@ -409,8 +405,7 @@ static int ext4_fs_init_inode_bitmap(struct ext4_block_group_ref *bg_ref)
 	ext4_fsblk_t bitmap_block_addr = ext4_bg_get_inode_bitmap(bg, sb);
 
 	struct ext4_block b;
-	rc = ext4_trans_block_get_noread(bg_ref->fs->bdev, &b,
-									 bitmap_block_addr);
+	rc = ext4_trans_block_get_noread(bg_ref->fs->bdev, &b, bitmap_block_addr);
 	if (rc != EOK)
 		return rc;
 
@@ -467,8 +462,7 @@ static int ext4_fs_init_inode_table(struct ext4_block_group_ref *bg_ref)
 	for (fblock = first_block; fblock <= last_block; ++fblock)
 	{
 		struct ext4_block b;
-		int rc =
-			ext4_trans_block_get_noread(bg_ref->fs->bdev, &b, fblock);
+		int rc = ext4_trans_block_get_noread(bg_ref->fs->bdev, &b, fblock);
 		if (rc != EOK)
 			return rc;
 
@@ -527,8 +521,8 @@ static uint16_t ext4_fs_bg_checksum(struct ext4_sblock *sb, uint32_t bgid,
 		bg->checksum = 0;
 
 		/* First calculate crc32 checksum against fs uuid */
-		checksum =
-			ext4_crc32c(EXT4_CRC32_INIT, sb->uuid, sizeof(sb->uuid));
+		checksum = ext4_crc32c(EXT4_CRC32_INIT, sb->uuid,
+							   sizeof(sb->uuid));
 		/* Then calculate crc32 checksum against bgid */
 		checksum = ext4_crc32c(checksum, &le32_bgid, sizeof(bgid));
 		/* Finally calculate crc32 checksum against block_group_desc */
@@ -576,7 +570,8 @@ static uint16_t ext4_fs_bg_checksum(struct ext4_sblock *sb, uint32_t bgid,
 }
 
 #if CONFIG_META_CSUM_ENABLE
-static bool ext4_fs_verify_bg_csum(struct ext4_sblock *sb, uint32_t bgid,
+static bool ext4_fs_verify_bg_csum(struct ext4_sblock *sb,
+								   uint32_t bgid,
 								   struct ext4_bgroup *bg)
 {
 	if (!ext4_sb_feature_ro_com(sb, EXT4_FRO_COM_METADATA_CSUM))
@@ -597,8 +592,7 @@ int ext4_fs_get_block_group_ref(struct ext4_fs *fs, uint32_t bgid,
 
 	/* Block group descriptor table starts at the next block after
 	 * superblock */
-	uint64_t block_id =
-		ext4_fs_get_descriptor_block(&fs->sb, bgid, dsc_cnt);
+	uint64_t block_id = ext4_fs_get_descriptor_block(&fs->sb, bgid, dsc_cnt);
 
 	uint32_t offset = (bgid % dsc_cnt) * ext4_sb_get_desc_size(&fs->sb);
 
@@ -700,8 +694,8 @@ static uint32_t ext4_fs_inode_checksum(struct ext4_inode_ref *inode_ref)
 		ext4_inode_set_csum(sb, inode_ref->inode, 0);
 
 		/* First calculate crc32 checksum against fs uuid */
-		checksum =
-			ext4_crc32c(EXT4_CRC32_INIT, sb->uuid, sizeof(sb->uuid));
+		checksum = ext4_crc32c(EXT4_CRC32_INIT, sb->uuid,
+							   sizeof(sb->uuid));
 		/* Then calculate crc32 checksum against inode number
 		 * and inode generation */
 		checksum = ext4_crc32c(checksum, &ino_index, sizeof(ino_index));
@@ -746,8 +740,10 @@ static bool ext4_fs_verify_inode_csum(struct ext4_inode_ref *inode_ref)
 #define ext4_fs_verify_inode_csum(...) true
 #endif
 
-static int __ext4_fs_get_inode_ref(struct ext4_fs *fs, uint32_t index,
-								   struct ext4_inode_ref *ref, bool initialized)
+static int
+__ext4_fs_get_inode_ref(struct ext4_fs *fs, uint32_t index,
+						struct ext4_inode_ref *ref,
+						bool initialized)
 {
 	/* Compute number of i-nodes, that fits in one data block */
 	uint32_t inodes_per_group = ext4_get32(&fs->sb, inodes_per_group);
@@ -931,8 +927,8 @@ int ext4_fs_alloc_inode(struct ext4_fs *fs, struct ext4_inode_ref *inode_ref,
 	else if (filetype == EXT4_DE_SYMLINK)
 	{
 		/*
-		 * Default symbolic link permissions to be compatible with other
-		 * systems 0777 (octal) == rwxrwxrwx
+		 * Default symbolic link permissions to be compatible with other systems
+		 * 0777 (octal) == rwxrwxrwx
 		 */
 
 		mode = 0777;
@@ -991,8 +987,7 @@ int ext4_fs_free_inode(struct ext4_inode_ref *inode_ref)
 	/* Release all indirect (no data) blocks */
 
 	/* 1) Single indirect */
-	ext4_fsblk_t fblock =
-		ext4_inode_get_indirect_block(inode_ref->inode, 0);
+	ext4_fsblk_t fblock = ext4_inode_get_indirect_block(inode_ref->inode, 0);
 	if (fblock != 0)
 	{
 		int rc = ext4_balloc_free_block(inode_ref, fblock);
@@ -1054,7 +1049,8 @@ int ext4_fs_free_inode(struct ext4_inode_ref *inode_ref)
 
 		if (ind_block == 0)
 			continue;
-		rc = ext4_trans_block_get(fs->bdev, &subblock, ind_block);
+		rc = ext4_trans_block_get(fs->bdev, &subblock,
+								  ind_block);
 		if (rc != EOK)
 		{
 			ext4_block_set(fs->bdev, &block);
@@ -1064,8 +1060,7 @@ int ext4_fs_free_inode(struct ext4_inode_ref *inode_ref)
 		ext4_fsblk_t ind_subblk;
 		for (suboff = 0; suboff < count; ++suboff)
 		{
-			ind_subblk =
-				to_le32(((uint32_t *)subblock.data)[suboff]);
+			ind_subblk = to_le32(((uint32_t *)subblock.data)[suboff]);
 
 			if (ind_subblk == 0)
 				continue;
@@ -1080,7 +1075,8 @@ int ext4_fs_free_inode(struct ext4_inode_ref *inode_ref)
 
 		ext4_block_set(fs->bdev, &subblock);
 
-		rc = ext4_balloc_free_block(inode_ref, ind_block);
+		rc = ext4_balloc_free_block(inode_ref,
+									ind_block);
 		if (rc != EOK)
 		{
 			ext4_block_set(fs->bdev, &block);
@@ -1174,8 +1170,7 @@ static int ext4_fs_release_inode_block(struct ext4_inode_ref *inode_ref,
 	ext4_fsblk_t current_block =
 		ext4_inode_get_indirect_block(inode, level - 1);
 	uint32_t offset_in_block =
-		(uint32_t)(block_offset_in_level /
-				   fs->inode_blocks_per_level[level - 1]);
+		(uint32_t)(block_offset_in_level / fs->inode_blocks_per_level[level - 1]);
 
 	/*
 	 * Navigate through other levels, until we find the block number
@@ -1219,9 +1214,8 @@ static int ext4_fs_release_inode_block(struct ext4_inode_ref *inode_ref,
 
 		/* Visit the next level */
 		block_offset_in_level %= fs->inode_blocks_per_level[level];
-		offset_in_block =
-			(uint32_t)(block_offset_in_level /
-					   fs->inode_blocks_per_level[level - 1]);
+		offset_in_block = (uint32_t)(block_offset_in_level /
+									 fs->inode_blocks_per_level[level - 1]);
 	}
 
 	fblock = current_block;
@@ -1267,7 +1261,8 @@ int ext4_fs_truncate_inode(struct ext4_inode_ref *inode_ref, uint64_t new_size)
 	}
 
 	i = ext4_inode_type(sb, inode_ref->inode);
-	if (i == EXT4_INODE_MODE_CHARDEV || i == EXT4_INODE_MODE_BLOCKDEV ||
+	if (i == EXT4_INODE_MODE_CHARDEV ||
+		i == EXT4_INODE_MODE_BLOCKDEV ||
 		i == EXT4_INODE_MODE_SOCKET)
 	{
 		inode_ref->inode->blocks[0] = 0;
@@ -1279,10 +1274,8 @@ int ext4_fs_truncate_inode(struct ext4_inode_ref *inode_ref, uint64_t new_size)
 
 	/* Compute how many blocks will be released */
 	uint32_t block_size = ext4_sb_get_block_size(sb);
-	uint32_t new_blocks_cnt =
-		(uint32_t)((new_size + block_size - 1) / block_size);
-	uint32_t old_blocks_cnt =
-		(uint32_t)((old_size + block_size - 1) / block_size);
+	uint32_t new_blocks_cnt = (uint32_t)((new_size + block_size - 1) / block_size);
+	uint32_t old_blocks_cnt = (uint32_t)((old_size + block_size - 1) / block_size);
 	uint32_t diff_blocks_cnt = old_blocks_cnt - new_blocks_cnt;
 #if CONFIG_EXTENT_ENABLE && CONFIG_EXTENTS_ENABLE
 	if ((ext4_sb_feature_incom(sb, EXT4_FINCOM_EXTENTS)) &&
@@ -1352,8 +1345,8 @@ int ext4_fs_indirect_find_goal(struct ext4_inode_ref *inode_ref,
 	/* If inode has some blocks, get last block address + 1 */
 	if (iblock_cnt > 0)
 	{
-		r = ext4_fs_get_inode_dblk_idx(inode_ref, iblock_cnt - 1, goal,
-									   false);
+		r = ext4_fs_get_inode_dblk_idx(inode_ref, iblock_cnt - 1,
+									   goal, false);
 		if (r != EOK)
 			return r;
 
@@ -1382,8 +1375,7 @@ int ext4_fs_indirect_find_goal(struct ext4_inode_ref *inode_ref,
 
 	/* Compute indexes */
 	uint32_t bg_count = ext4_block_group_cnt(sb);
-	ext4_fsblk_t itab_first_block =
-		ext4_bg_get_inode_table_first_block(bg, sb);
+	ext4_fsblk_t itab_first_block = ext4_bg_get_inode_table_first_block(bg, sb);
 	uint16_t itab_item_size = ext4_get16(sb, inode_size);
 	uint32_t itab_bytes;
 
@@ -1412,8 +1404,7 @@ int ext4_fs_indirect_find_goal(struct ext4_inode_ref *inode_ref,
 }
 
 static int ext4_fs_get_inode_dblk_idx_internal(struct ext4_inode_ref *inode_ref,
-											   ext4_lblk_t iblock,
-											   ext4_fsblk_t *fblock,
+											   ext4_lblk_t iblock, ext4_fsblk_t *fblock,
 											   bool extent_create,
 											   bool support_unwritten __unused)
 {
@@ -1436,8 +1427,8 @@ static int ext4_fs_get_inode_dblk_idx_internal(struct ext4_inode_ref *inode_ref,
 	{
 
 		ext4_fsblk_t current_fsblk;
-		int rc = ext4_extent_get_blocks(
-			inode_ref, iblock, 1, &current_fsblk, extent_create, NULL);
+		int rc = ext4_extent_get_blocks(inode_ref, iblock, 1,
+										&current_fsblk, extent_create, NULL);
 		if (rc != EOK)
 			return rc;
 
@@ -1476,11 +1467,9 @@ static int ext4_fs_get_inode_dblk_idx_internal(struct ext4_inode_ref *inode_ref,
 		return EIO;
 
 	/* Compute offsets for the topmost level */
-	uint32_t blk_off_in_lvl =
-		(uint32_t)(iblock - fs->inode_block_limits[l - 1]);
+	uint32_t blk_off_in_lvl = (uint32_t)(iblock - fs->inode_block_limits[l - 1]);
 	current_block = ext4_inode_get_indirect_block(inode, l - 1);
-	uint32_t off_in_blk =
-		(uint32_t)(blk_off_in_lvl / fs->inode_blocks_per_level[l - 1]);
+	uint32_t off_in_blk = (uint32_t)(blk_off_in_lvl / fs->inode_blocks_per_level[l - 1]);
 
 	/* Sparse file */
 	if (current_block == 0)
@@ -1503,7 +1492,8 @@ static int ext4_fs_get_inode_dblk_idx_internal(struct ext4_inode_ref *inode_ref,
 			return rc;
 
 		/* Read block address from indirect block */
-		current_block = to_le32(((uint32_t *)block.data)[off_in_blk]);
+		current_block =
+			to_le32(((uint32_t *)block.data)[off_in_blk]);
 
 		/* Put back indirect block untouched */
 		rc = ext4_block_set(fs->bdev, &block);
@@ -1527,8 +1517,7 @@ static int ext4_fs_get_inode_dblk_idx_internal(struct ext4_inode_ref *inode_ref,
 
 		/* Visit the next level */
 		blk_off_in_lvl %= fs->inode_blocks_per_level[l];
-		off_in_blk = (uint32_t)(blk_off_in_lvl /
-								fs->inode_blocks_per_level[l - 1]);
+		off_in_blk = (uint32_t)(blk_off_in_lvl / fs->inode_blocks_per_level[l - 1]);
 	}
 
 	*fblock = current_block;
@@ -1552,8 +1541,7 @@ int ext4_fs_init_inode_dblk_idx(struct ext4_inode_ref *inode_ref,
 }
 
 static int ext4_fs_set_inode_data_block_index(struct ext4_inode_ref *inode_ref,
-											  ext4_lblk_t iblock,
-											  ext4_fsblk_t fblock)
+											  ext4_lblk_t iblock, ext4_fsblk_t fblock)
 {
 	struct ext4_fs *fs = inode_ref->fs;
 
@@ -1595,12 +1583,10 @@ static int ext4_fs_set_inode_data_block_index(struct ext4_inode_ref *inode_ref,
 	uint32_t block_size = ext4_sb_get_block_size(&fs->sb);
 
 	/* Compute offsets for the topmost level */
-	uint32_t blk_off_in_lvl =
-		(uint32_t)(iblock - fs->inode_block_limits[l - 1]);
+	uint32_t blk_off_in_lvl = (uint32_t)(iblock - fs->inode_block_limits[l - 1]);
 	ext4_fsblk_t current_block =
 		ext4_inode_get_indirect_block(inode_ref->inode, l - 1);
-	uint32_t off_in_blk =
-		(uint32_t)(blk_off_in_lvl / fs->inode_blocks_per_level[l - 1]);
+	uint32_t off_in_blk = (uint32_t)(blk_off_in_lvl / fs->inode_blocks_per_level[l - 1]);
 
 	ext4_fsblk_t new_blk;
 
@@ -1667,7 +1653,8 @@ static int ext4_fs_set_inode_data_block_index(struct ext4_inode_ref *inode_ref,
 			}
 
 			/* Allocate new block */
-			rc = ext4_balloc_alloc_block(inode_ref, goal, &new_blk);
+			rc =
+				ext4_balloc_alloc_block(inode_ref, goal, &new_blk);
 			if (rc != EOK)
 			{
 				ext4_block_set(fs->bdev, &block);
@@ -1725,8 +1712,7 @@ static int ext4_fs_set_inode_data_block_index(struct ext4_inode_ref *inode_ref,
 
 		/* Visit the next level */
 		blk_off_in_lvl %= fs->inode_blocks_per_level[l];
-		off_in_blk = (uint32_t)(blk_off_in_lvl /
-								fs->inode_blocks_per_level[l - 1]);
+		off_in_blk = (uint32_t)(blk_off_in_lvl / fs->inode_blocks_per_level[l - 1]);
 	}
 
 	return EOK;
@@ -1745,8 +1731,7 @@ int ext4_fs_append_inode_dblk(struct ext4_inode_ref *inode_ref,
 		struct ext4_sblock *sb = &inode_ref->fs->sb;
 		uint64_t inode_size = ext4_inode_get_size(sb, inode_ref->inode);
 		uint32_t block_size = ext4_sb_get_block_size(sb);
-		*iblock =
-			(uint32_t)((inode_size + block_size - 1) / block_size);
+		*iblock = (uint32_t)((inode_size + block_size - 1) / block_size);
 
 		rc = ext4_extent_get_blocks(inode_ref, *iblock, 1,
 									&current_fsblk, true, NULL);

@@ -136,6 +136,7 @@ static struct vfs_callback eventfd_callbacks = {
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = eventfd_poll,
+    .resize = (vfs_resize_t)dummy,
 };
 
 void eventfd_init()

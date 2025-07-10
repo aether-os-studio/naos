@@ -52,5 +52,7 @@ rm -rf $SYSROOT/../etc/conf.d/*
 cp -r $SCRIPTPATH/etc $SYSROOT/../
 cp -r $SCRIPTPATH/root $SYSROOT/../
 
+mkdir -p $SYSROOT/../var/cache/fontconfig
+
 # Make us able to read the files later
 chmod -R u+r $SYSROOT/../

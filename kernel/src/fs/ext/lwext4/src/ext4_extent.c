@@ -9,18 +9,18 @@
  */
 
 #include <ext4_config.h>
-#include <ext4_debug.h>
-#include <ext4_errno.h>
-#include <ext4_misc.h>
 #include <ext4_types.h>
+#include <ext4_misc.h>
+#include <ext4_errno.h>
+#include <ext4_debug.h>
 
-#include <ext4_balloc.h>
 #include <ext4_blockdev.h>
-#include <ext4_crc32.h>
-#include <ext4_extent.h>
+#include <ext4_trans.h>
 #include <ext4_fs.h>
 #include <ext4_super.h>
-#include <ext4_trans.h>
+#include <ext4_crc32.h>
+#include <ext4_balloc.h>
+#include <ext4_extent.h>
 
 #include <libs/klibc.h>
 
@@ -37,12 +37,14 @@
 #define EXT4_EXT_UNWRITTEN_MASK (1L << 15)
 
 #define EXT4_EXT_MAX_LEN_WRITTEN (1L << 15)
-#define EXT4_EXT_MAX_LEN_UNWRITTEN (EXT4_EXT_MAX_LEN_WRITTEN - 1)
+#define EXT4_EXT_MAX_LEN_UNWRITTEN \
+	(EXT4_EXT_MAX_LEN_WRITTEN - 1)
 
 #define EXT4_EXT_GET_LEN(ex) to_le16((ex)->block_count)
 #define EXT4_EXT_GET_LEN_UNWRITTEN(ex) \
 	(EXT4_EXT_GET_LEN(ex) & ~(EXT4_EXT_UNWRITTEN_MASK))
-#define EXT4_EXT_SET_LEN(ex, count) ((ex)->block_count = to_le16(count))
+#define EXT4_EXT_SET_LEN(ex, count) \
+	((ex)->block_count = to_le16(count))
 
 #define EXT4_EXT_IS_UNWRITTEN(ex) \
 	(EXT4_EXT_GET_LEN(ex) > EXT4_EXT_MAX_LEN_WRITTEN)
@@ -171,9 +173,8 @@ struct ext4_extent_header
 	(EXT_FIRST_EXTENT((__hdr__)) + to_le16((__hdr__)->entries_count) - 1)
 #define EXT_LAST_INDEX(__hdr__) \
 	(EXT_FIRST_INDEX((__hdr__)) + to_le16((__hdr__)->entries_count) - 1)
-#define EXT_MAX_EXTENT(__hdr__)                                            \
-	(EXT_FIRST_EXTENT((__hdr__)) + to_le16((__hdr__)->max_entries_count) - \
-	 1)
+#define EXT_MAX_EXTENT(__hdr__) \
+	(EXT_FIRST_EXTENT((__hdr__)) + to_le16((__hdr__)->max_entries_count) - 1)
 #define EXT_MAX_INDEX(__hdr__) \
 	(EXT_FIRST_INDEX((__hdr__)) + to_le16((__hdr__)->max_entries_count) - 1)
 
@@ -232,8 +233,7 @@ static inline uint64_t ext4_extent_get_start(struct ext4_extent *extent)
 /**@brief Set physical number of the first block covered by extent.
  * @param extent Extent to load number
  * @param fblock Physical number of the first block covered by extent */
-static inline void ext4_extent_set_start(struct ext4_extent *extent,
-										 uint64_t fblock)
+static inline void ext4_extent_set_start(struct ext4_extent *extent, uint64_t fblock)
 {
 	extent->start_lo = to_le32((fblock << 32) >> 32);
 	extent->start_hi = to_le16((uint16_t)(fblock >> 32));
@@ -290,8 +290,8 @@ ext4_extent_header_get_magic(struct ext4_extent_header *header)
 /**@brief Set magic value to extent header.
  * @param header Extent header to set value to
  * @param magic  Magic value of extent header */
-static inline void
-ext4_extent_header_set_magic(struct ext4_extent_header *header, uint16_t magic)
+static inline void ext4_extent_header_set_magic(struct ext4_extent_header *header,
+												uint16_t magic)
 {
 	header->magic = to_le16(magic);
 }
@@ -776,9 +776,8 @@ static int ext4_ext_check(struct ext4_inode_ref *inode_ref,
 	return EOK;
 
 corrupted:
-	ext4_dbg(DEBUG_EXTENT,
-			 "Bad extents B+ tree block: %s. "
-			 "Blocknr: %" PRId64 "\n",
+	ext4_dbg(DEBUG_EXTENT, "Bad extents B+ tree block: %s. "
+						   "Blocknr: %" PRId64 "\n",
 			 error_msg, pblk);
 	return EIO;
 }
@@ -1466,8 +1465,8 @@ static int ext4_ext_grow_indepth(struct ext4_inode_ref *inode_ref,
 		/* Root extent block becomes index block */
 		neh->max_entries_count =
 			to_le16(ext4_ext_space_root_idx(inode_ref));
-		EXT_FIRST_INDEX(neh)->first_block =
-			EXT_FIRST_EXTENT(neh)->first_block;
+		EXT_FIRST_INDEX(neh)
+			->first_block = EXT_FIRST_EXTENT(neh)->first_block;
 	}
 	neh->depth = to_le16(to_le16(neh->depth) + 1);
 
@@ -1674,9 +1673,9 @@ static int ext4_ext_remove_leaf(struct ext4_inode_ref *inode_ref,
 		newblock = ext4_ext_pblock(ex);
 		/*
 		 * The 1st case:
-		 *   The position that we start truncation is inside the range
-		 * of an extent. Here we should calculate the new length of that
-		 * extent and may start the removal from the next extent.
+		 *   The position that we start truncation is inside the range of an
+		 *   extent. Here we should calculate the new length of that extent and
+		 *   may start the removal from the next extent.
 		 */
 		if (start < from)
 		{
@@ -1689,9 +1688,9 @@ static int ext4_ext_remove_leaf(struct ext4_inode_ref *inode_ref,
 		{
 			/*
 			 * The second case:
-			 *   The last block to be truncated is inside the range
-			 * of an extent. We need to calculate the new length and
-			 * the new start of the extent.
+			 *   The last block to be truncated is inside the range of an
+			 *   extent. We need to calculate the new length and the new
+			 *   start of the extent.
 			 */
 			if (start + len - 1 > to)
 			{
@@ -1734,9 +1733,7 @@ static int ext4_ext_remove_leaf(struct ext4_inode_ref *inode_ref,
 	 * Move any remaining extents to the starting position of the node.
 	 */
 	if (ex2 <= EXT_LAST_EXTENT(eh))
-		memmove(start_ex, ex2,
-				(EXT_LAST_EXTENT(eh) - ex2 + 1) *
-					sizeof(struct ext4_extent));
+		memmove(start_ex, ex2, (EXT_LAST_EXTENT(eh) - ex2 + 1) * sizeof(struct ext4_extent));
 
 	eh->entries_count = to_le16(new_entries);
 	ext4_ext_dirty(inode_ref, path + depth);

@@ -35,20 +35,29 @@
  */
 
 #include <ext4_config.h>
-#include <ext4_debug.h>
-#include <ext4_errno.h>
-#include <ext4_misc.h>
 #include <ext4_types.h>
+#include <ext4_misc.h>
+#include <ext4_errno.h>
+#include <ext4_debug.h>
 
 #include <stdarg.h>
 
 static uint32_t debug_mask;
 
-void ext4_dmask_set(uint32_t m) { debug_mask |= m; }
+void ext4_dmask_set(uint32_t m)
+{
+	debug_mask |= m;
+}
 
-void ext4_dmask_clr(uint32_t m) { debug_mask &= ~m; }
+void ext4_dmask_clr(uint32_t m)
+{
+	debug_mask &= ~m;
+}
 
-uint32_t ext4_dmask_get(void) { return debug_mask; }
+uint32_t ext4_dmask_get(void)
+{
+	return debug_mask;
+}
 
 /**
  * @}

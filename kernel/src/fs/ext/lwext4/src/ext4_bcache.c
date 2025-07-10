@@ -34,12 +34,12 @@
  * @brief Block cache allocator.
  */
 
+#include <ext4_config.h>
+#include <ext4_types.h>
 #include <ext4_bcache.h>
 #include <ext4_blockdev.h>
-#include <ext4_config.h>
 #include <ext4_debug.h>
 #include <ext4_errno.h>
-#include <ext4_types.h>
 
 #include <libs/klibc.h>
 
@@ -61,10 +61,10 @@ static int ext4_bcache_lru_compare(struct ext4_buf *a, struct ext4_buf *b)
 	return 0;
 }
 
-RB_GENERATE_INTERNAL(ext4_buf_lba, ext4_buf, lba_node, ext4_bcache_lba_compare,
-					 static inline)
-RB_GENERATE_INTERNAL(ext4_buf_lru, ext4_buf, lru_node, ext4_bcache_lru_compare,
-					 static inline)
+RB_GENERATE_INTERNAL(ext4_buf_lba, ext4_buf, lba_node,
+					 ext4_bcache_lba_compare, static inline)
+RB_GENERATE_INTERNAL(ext4_buf_lru, ext4_buf, lru_node,
+					 ext4_bcache_lru_compare, static inline)
 
 int ext4_bcache_init_dynamic(struct ext4_bcache *bc, uint32_t cnt,
 							 uint32_t itemsize)
@@ -116,7 +116,8 @@ int ext4_bcache_fini_dynamic(struct ext4_bcache *bc)
  *  referenced.
  */
 
-static struct ext4_buf *ext4_buf_alloc(struct ext4_bcache *bc, uint64_t lba)
+static struct ext4_buf *
+ext4_buf_alloc(struct ext4_bcache *bc, uint64_t lba)
 {
 	void *data;
 	struct ext4_buf *buf;
@@ -143,9 +144,11 @@ static void ext4_buf_free(struct ext4_buf *buf)
 	ext4_free(buf);
 }
 
-static struct ext4_buf *ext4_buf_lookup(struct ext4_bcache *bc, uint64_t lba)
+static struct ext4_buf *
+ext4_buf_lookup(struct ext4_bcache *bc, uint64_t lba)
 {
-	struct ext4_buf tmp = {.lba = lba};
+	struct ext4_buf tmp = {
+		.lba = lba};
 
 	return RB_FIND(ext4_buf_lba, &bc->lba_root, &tmp);
 }
@@ -160,9 +163,8 @@ void ext4_bcache_drop_buf(struct ext4_bcache *bc, struct ext4_buf *buf)
 	/* Warn on dropping any referenced buffers.*/
 	if (buf->refctr)
 	{
-		ext4_dbg(DEBUG_BCACHE,
-				 DBG_WARN "Buffer is still referenced. "
-						  "lba: %" PRIu64 ", refctr: %" PRIu32 "\n",
+		ext4_dbg(DEBUG_BCACHE, DBG_WARN "Buffer is still referenced. "
+										"lba: %" PRIu64 ", refctr: %" PRIu32 "\n",
 				 buf->lba, buf->refctr);
 	}
 	else
@@ -178,7 +180,8 @@ void ext4_bcache_drop_buf(struct ext4_bcache *bc, struct ext4_buf *buf)
 	bc->ref_blocks--;
 }
 
-void ext4_bcache_invalidate_buf(struct ext4_bcache *bc, struct ext4_buf *buf)
+void ext4_bcache_invalidate_buf(struct ext4_bcache *bc,
+								struct ext4_buf *buf)
 {
 	buf->end_write = NULL;
 	buf->end_write_arg = NULL;
@@ -190,7 +193,8 @@ void ext4_bcache_invalidate_buf(struct ext4_bcache *bc, struct ext4_buf *buf)
 	ext4_bcache_clear_dirty(buf);
 }
 
-void ext4_bcache_invalidate_lba(struct ext4_bcache *bc, uint64_t from,
+void ext4_bcache_invalidate_lba(struct ext4_bcache *bc,
+								uint64_t from,
 								uint32_t cnt)
 {
 	uint64_t end = from + cnt - 1;
@@ -204,8 +208,9 @@ void ext4_bcache_invalidate_lba(struct ext4_bcache *bc, uint64_t from,
 	}
 }
 
-struct ext4_buf *ext4_bcache_find_get(struct ext4_bcache *bc,
-									  struct ext4_block *b, uint64_t lba)
+struct ext4_buf *
+ext4_bcache_find_get(struct ext4_bcache *bc, struct ext4_block *b,
+					 uint64_t lba)
 {
 	struct ext4_buf *buf = ext4_buf_lookup(bc, lba);
 	if (buf)

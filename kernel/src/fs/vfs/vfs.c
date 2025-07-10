@@ -805,6 +805,13 @@ fd_t *vfs_dup(fd_t *fd)
     return new_fd;
 }
 
+void vfs_resize(vfs_node_t node, uint64_t size)
+{
+    if (node->type != file_none)
+        return;
+    callbackof(node, resize)(node->handle, size);
+}
+
 void *vfs_map(vfs_node_t node, uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset)
 {
     return callbackof(node, map)(node->handle, (void *)addr, offset, len, prot, flags);

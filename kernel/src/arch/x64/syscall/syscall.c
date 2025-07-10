@@ -506,6 +506,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_TIMERFD_SETTIME:
         regs->rax = sys_timerfd_settime(arg1, arg2, (const struct itimerval *)arg3, (struct itimerval *)arg4);
         break;
+    case SYS_MEMFD_CREATE:
+        regs->rax = sys_memfd_create((const char *)arg1, arg2);
+        break;
     case SYS_FLOCK:
         regs->rax = sys_flock(arg1, arg2);
         break;
@@ -550,6 +553,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_SYMLINK:
         regs->rax = sys_symlink((const char *)arg1, (const char *)arg2);
+        break;
+    case SYS_FALLOCATE:
+        regs->rax = sys_fallocate(arg1, arg2, arg3, arg4);
         break;
     case SYS_SETPRIORITY:
         regs->rax = 0;

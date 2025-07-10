@@ -275,6 +275,11 @@ void *fatfs_map(void *file, void *addr, size_t offset, size_t size, size_t prot,
     return general_map((vfs_read_t)fatfs_readfile, file, (uint64_t)addr, size, prot, flags, offset);
 }
 
+static int dummy()
+{
+    return 0;
+}
+
 static struct vfs_callback callbacks = {
     .mount = fatfs_mount,
     .unmount = fatfs_unmount,
@@ -292,6 +297,7 @@ static struct vfs_callback callbacks = {
     .stat = fatfs_stat,
     .ioctl = fatfs_ioctl,
     .poll = fatfs_poll,
+    .resize = (vfs_resize_t)dummy,
 };
 
 void fatfs_init()

@@ -40,17 +40,17 @@
  */
 
 #include <ext4_config.h>
-#include <ext4_debug.h>
-#include <ext4_errno.h>
-#include <ext4_misc.h>
 #include <ext4_types.h>
+#include <ext4_misc.h>
+#include <ext4_errno.h>
+#include <ext4_debug.h>
 
-#include <ext4_crc32.h>
+#include <ext4_trans.h>
 #include <ext4_dir.h>
 #include <ext4_dir_idx.h>
-#include <ext4_fs.h>
+#include <ext4_crc32.h>
 #include <ext4_inode.h>
-#include <ext4_trans.h>
+#include <ext4_fs.h>
 
 #include <libs/klibc.h>
 
@@ -58,7 +58,8 @@
 
 /* Walk through a dirent block to find a checksum "dirent" at the tail */
 static struct ext4_dir_entry_tail *
-ext4_dir_get_tail(struct ext4_inode_ref *inode_ref, struct ext4_dir_en *de)
+ext4_dir_get_tail(struct ext4_inode_ref *inode_ref,
+				  struct ext4_dir_en *de)
 {
 	struct ext4_dir_entry_tail *t;
 	struct ext4_sblock *sb = &inode_ref->fs->sb;
@@ -158,7 +159,8 @@ void ext4_dir_set_csum(struct ext4_inode_ref *inode_ref,
  * @param block_size Size of data block
  * @return Error code
  */
-static int ext4_dir_iterator_set(struct ext4_dir_iter *it, uint32_t block_size)
+static int ext4_dir_iterator_set(struct ext4_dir_iter *it,
+								 uint32_t block_size)
 {
 	uint32_t off_in_block = it->curr_off % block_size;
 	struct ext4_sblock *sb = &it->inode_ref->fs->sb;
@@ -232,7 +234,8 @@ static int ext4_dir_iterator_seek(struct ext4_dir_iter *it, uint64_t pos)
 	 * If we don't have a block or are moving across block boundary,
 	 * we need to get another block
 	 */
-	if ((it->curr_blk.lb_id == 0) || (current_blk_idx != next_blk_idx))
+	if ((it->curr_blk.lb_id == 0) ||
+		(current_blk_idx != next_blk_idx))
 	{
 		if (it->curr_blk.lb_id)
 		{
@@ -402,12 +405,13 @@ int ext4_dir_add_entry(struct ext4_inode_ref *parent, const char *name,
 					 DBG_WARN "Leaf block checksum failed."
 							  "Inode: %" PRIu32 ", "
 							  "Block: %" PRIu32 "\n",
-					 parent->index, iblock);
+					 parent->index,
+					 iblock);
 		}
 
 		/* If adding is successful, function can finish */
-		r = ext4_dir_try_insert_entry(sb, parent, &block, child, name,
-									  name_len);
+		r = ext4_dir_try_insert_entry(sb, parent, &block, child,
+									  name, name_len);
 		if (r == EOK)
 			success = true;
 
@@ -518,7 +522,8 @@ int ext4_dir_find_entry(struct ext4_dir_search_result *result,
 					 DBG_WARN "Leaf block checksum failed."
 							  "Inode: %" PRIu32 ", "
 							  "Block: %" PRIu32 "\n",
-					 parent->index, iblock);
+					 parent->index,
+					 iblock);
 		}
 
 		/* Try to find entry in block */
@@ -589,7 +594,8 @@ int ext4_dir_remove_entry(struct ext4_inode_ref *parent, const char *name,
 		ext4_dir_en_set_entry_len(tmp_de, de_len + del_len);
 	}
 
-	ext4_dir_set_csum(parent, (struct ext4_dir_en *)result.block.data);
+	ext4_dir_set_csum(parent,
+					  (struct ext4_dir_en *)result.block.data);
 	ext4_trans_set_block_dirty(result.block.buf);
 
 	return ext4_dir_destroy_result(parent, &result);

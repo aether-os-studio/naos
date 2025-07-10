@@ -291,6 +291,7 @@ static struct vfs_callback epoll_callbacks = {
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = epoll_poll,
+    .resize = (vfs_resize_t)dummy,
 };
 
 void epoll_init()

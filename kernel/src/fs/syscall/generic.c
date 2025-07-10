@@ -553,6 +553,10 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
         current_task->fds[fd]->flags |= arg & valid_flags;
         spin_unlock(&fcntl_lock);
         return 0;
+    case F_GET_SEALS:
+    case F_ADD_SEALS:
+        spin_unlock(&fcntl_lock);
+        return 0;
     }
 
     spin_unlock(&fcntl_lock);
@@ -920,6 +924,21 @@ uint64_t sys_symlink(const char *name, const char *new)
     return ret;
 }
 
+uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len)
+{
+    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fds[fd])
+        return -EBADF;
+
+    if (offset + len < offset)
+        return -EINVAL;
+
+    vfs_node_t node = current_task->fds[fd]->node;
+
+    vfs_resize(node, offset + len);
+
+    return 0;
+}
+
 uint64_t sys_flock(int fd, uint64_t operation)
 {
     if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fds[fd])
@@ -961,16 +980,12 @@ uint64_t sys_flock(int fd, uint64_t operation)
 
             while (lock->lock)
             {
-#if defined(__x86_64__)
                 arch_enable_interrupt();
-#endif
 
                 arch_pause();
             }
 
-#if defined(__x86_64__)
             arch_disable_interrupt();
-#endif
         }
         lock->l_type = (operation & LOCK_EX) ? F_WRLCK : F_RDLCK;
         lock->l_pid = pid;

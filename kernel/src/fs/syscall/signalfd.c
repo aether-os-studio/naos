@@ -7,7 +7,16 @@ static int dummy()
 
 static int signalfd_poll(void *file, size_t event)
 {
-    return -EOPNOTSUPP;
+    struct signalfd_ctx *ctx = file;
+
+    int revents = 0;
+
+    if (ctx->queue_head != ctx->queue_tail)
+    {
+        revents |= EPOLLIN;
+    }
+
+    return revents;
 }
 
 static vfs_node_t signalfdfs_root = NULL;
@@ -117,6 +126,7 @@ static struct vfs_callback signalfd_callbacks = {
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)signalfd_ioctl,
     .poll = signalfd_poll,
+    .resize = (vfs_resize_t)dummy,
 };
 
 void signalfd_init()

@@ -449,9 +449,7 @@ static int ext4_xattr_set_entry(struct ext4_xattr_info *i,
 			if (EXT4_XATTR_SIZE(i->value_len) != i->value_len)
 				memset((char *)s->base + value_offs +
 						   i->value_len,
-					   0,
-					   EXT4_XATTR_SIZE(i->value_len) -
-						   i->value_len);
+					   0, EXT4_XATTR_SIZE(i->value_len) - i->value_len);
 		}
 	}
 	else
@@ -1202,11 +1200,9 @@ out:
 		else
 		{
 			/*
-			 * Modify the in-inode pointer to point to the new xattr
-			 * block
+			 * Modify the in-inode pointer to point to the new xattr block
 			 */
-			ext4_inode_set_file_acl(inode_ref->inode, &fs->sb,
-									xattr_block);
+			ext4_inode_set_file_acl(inode_ref->inode, &fs->sb, xattr_block);
 			inode_ref->dirty = true;
 		}
 	}
@@ -1280,8 +1276,8 @@ int ext4_xattr_remove(struct ext4_inode_ref *inode_ref, uint8_t name_index,
 		struct ext4_block new_block;
 
 		/*
-		 * There will be no effect when the xattr block is only
-		 * referenced once.
+		 * There will be no effect when the xattr block is only referenced
+		 * once.
 		 */
 		ret = ext4_xattr_copy_new_block(inode_ref, &block, &new_block,
 										&xattr_block, &allocated);
@@ -1315,7 +1311,8 @@ int ext4_xattr_remove(struct ext4_inode_ref *inode_ref, uint8_t name_index,
 			header = EXT4_XATTR_BHDR(&new_block);
 			ext4_assert(block_finder.s.first);
 			ext4_xattr_rehash(header, block_finder.s.first);
-			ext4_xattr_set_block_checksum(inode_ref, block.lb_id,
+			ext4_xattr_set_block_checksum(inode_ref,
+										  block.lb_id,
 										  header);
 
 			ext4_trans_set_block_dirty(new_block.buf);
@@ -1344,7 +1341,8 @@ out:
  * @return Error code
  */
 static int ext4_xattr_block_set(struct ext4_inode_ref *inode_ref,
-								struct ext4_xattr_info *i, bool no_insert)
+								struct ext4_xattr_info *i,
+								bool no_insert)
 {
 	int ret = EOK;
 	bool allocated = false;
@@ -1392,7 +1390,8 @@ static int ext4_xattr_block_set(struct ext4_inode_ref *inode_ref,
 			ext4_assert(s.first);
 			ext4_xattr_compute_hash(header, s.here);
 			ext4_xattr_rehash(header, s.first);
-			ext4_xattr_set_block_checksum(inode_ref, block.lb_id,
+			ext4_xattr_set_block_checksum(inode_ref,
+										  block.lb_id,
 										  header);
 			ext4_trans_set_block_dirty(block.buf);
 		}
@@ -1421,8 +1420,7 @@ static int ext4_xattr_block_set(struct ext4_inode_ref *inode_ref,
 			 * There are other people referencing the
 			 * same xattr block
 			 */
-			ret = ext4_xattr_block_find_entry(inode_ref, &finder,
-											  &block);
+			ret = ext4_xattr_block_find_entry(inode_ref, &finder, &block);
 			if (ret != EOK)
 			{
 				ext4_block_set(fs->bdev, &block);
@@ -1437,8 +1435,8 @@ static int ext4_xattr_block_set(struct ext4_inode_ref *inode_ref,
 		}
 
 		/*
-		 * There will be no effect when the xattr block is only
-		 * referenced once.
+		 * There will be no effect when the xattr block is only referenced
+		 * once.
 		 */
 		ret = ext4_xattr_copy_new_block(inode_ref, &block, &new_block,
 										&orig_xattr_block, &allocated);
@@ -1470,7 +1468,8 @@ static int ext4_xattr_block_set(struct ext4_inode_ref *inode_ref,
 			ext4_assert(finder.s.first);
 			ext4_xattr_compute_hash(header, finder.s.here);
 			ext4_xattr_rehash(header, finder.s.first);
-			ext4_xattr_set_block_checksum(inode_ref, block.lb_id,
+			ext4_xattr_set_block_checksum(inode_ref,
+										  block.lb_id,
 										  header);
 			ext4_trans_set_block_dirty(block.buf);
 		}
@@ -1535,7 +1534,9 @@ static int ext4_xattr_block_remove(struct ext4_inode_ref *inode_ref,
 		header = EXT4_XATTR_BHDR(&block);
 		ext4_assert(finder.s.first);
 		ext4_xattr_rehash(header, finder.s.first);
-		ext4_xattr_set_block_checksum(inode_ref, block.lb_id, header);
+		ext4_xattr_set_block_checksum(inode_ref,
+									  block.lb_id,
+									  header);
 		ext4_trans_set_block_dirty(block.buf);
 	}
 
@@ -1609,8 +1610,7 @@ int ext4_xattr_set(struct ext4_inode_ref *inode_ref, uint8_t name_index,
 	else
 	{
 	try_insert:
-		/* Only try to set entry in ibody if inode is sufficiently large
-		 */
+		/* Only try to set entry in ibody if inode is sufficiently large */
 		if (extra_isize)
 			ret = ext4_xattr_set_entry(&i, &ibody_finder.s, false);
 		else
@@ -1620,8 +1620,7 @@ int ext4_xattr_set(struct ext4_inode_ref *inode_ref, uint8_t name_index,
 		{
 			if (!block_found)
 			{
-				ret =
-					ext4_xattr_block_set(inode_ref, &i, false);
+				ret = ext4_xattr_block_set(inode_ref, &i, false);
 				ibody_finder.i.value = NULL;
 				ext4_xattr_set_entry(&ibody_finder.i,
 									 &ibody_finder.s, false);

@@ -35,10 +35,10 @@
  */
 
 #include <ext4_config.h>
-#include <ext4_debug.h>
-#include <ext4_errno.h>
-#include <ext4_misc.h>
 #include <ext4_types.h>
+#include <ext4_misc.h>
+#include <ext4_errno.h>
+#include <ext4_debug.h>
 
 #include <ext4_blockdev.h>
 #include <ext4_fs.h>
@@ -89,8 +89,10 @@ int ext4_block_init(struct ext4_blockdev *bdev)
 	int rc;
 	ext4_assert(bdev);
 	ext4_assert(bdev->bdif);
-	ext4_assert(bdev->bdif->open && bdev->bdif->close &&
-				bdev->bdif->bread && bdev->bdif->bwrite);
+	ext4_assert(bdev->bdif->open &&
+				bdev->bdif->close &&
+				bdev->bdif->bread &&
+				bdev->bdif->bwrite);
 
 	if (bdev->bdif->ph_refctr)
 	{

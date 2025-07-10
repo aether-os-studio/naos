@@ -35,10 +35,10 @@
  */
 
 #include <ext4_config.h>
-#include <ext4_debug.h>
-#include <ext4_errno.h>
-#include <ext4_misc.h>
 #include <ext4_types.h>
+#include <ext4_misc.h>
+#include <ext4_errno.h>
+#include <ext4_debug.h>
 
 #include <ext4_mbr.h>
 
@@ -89,9 +89,8 @@ int ext4_mbr_scan(struct ext4_blockdev *parent, struct ext4_mbr_bdevs *bdevs)
 
 	if (to_le16(mbr->signature) != MBR_SIGNATURE)
 	{
-		ext4_dbg(DEBUG_MBR,
-				 DBG_ERROR "ext4_mbr_scan: unknown "
-						   "signature: 0x%x\n",
+		ext4_dbg(DEBUG_MBR, DBG_ERROR "ext4_mbr_scan: unknown "
+									  "signature: 0x%x\n",
 				 to_le16(mbr->signature));
 		r = ENOENT;
 		goto blockdev_fini;
@@ -103,8 +102,7 @@ int ext4_mbr_scan(struct ext4_blockdev *parent, struct ext4_mbr_bdevs *bdevs)
 	{
 		if (!(i & 0xF))
 			ext4_dbg(DEBUG_MBR | DEBUG_NOPREFIX, "\n");
-		ext4_dbg(DEBUG_MBR | DEBUG_NOPREFIX, "%02x, ",
-				 mbr->bootstrap[i]);
+		ext4_dbg(DEBUG_MBR | DEBUG_NOPREFIX, "%02x, ", mbr->bootstrap[i]);
 	}
 
 	ext4_dbg(DEBUG_MBR | DEBUG_NOPREFIX, "\n\n");
@@ -114,8 +112,7 @@ int ext4_mbr_scan(struct ext4_blockdev *parent, struct ext4_mbr_bdevs *bdevs)
 		ext4_dbg(DEBUG_MBR, "mbr_part: %d\n", (int)i);
 		ext4_dbg(DEBUG_MBR, "\tstatus: 0x%x\n", pe->status);
 		ext4_dbg(DEBUG_MBR, "\ttype 0x%x:\n", pe->type);
-		ext4_dbg(DEBUG_MBR, "\tfirst_lba: 0x%" PRIx32 "\n",
-				 pe->first_lba);
+		ext4_dbg(DEBUG_MBR, "\tfirst_lba: 0x%" PRIx32 "\n", pe->first_lba);
 		ext4_dbg(DEBUG_MBR, "\tsectors: 0x%" PRIx32 "\n", pe->sectors);
 
 		if (!pe->sectors)
@@ -136,8 +133,7 @@ blockdev_fini:
 	return r;
 }
 
-int ext4_mbr_write(struct ext4_blockdev *parent, struct ext4_mbr_parts *parts,
-				   uint32_t disk_id)
+int ext4_mbr_write(struct ext4_blockdev *parent, struct ext4_mbr_parts *parts, uint32_t disk_id)
 {
 	int r;
 	uint64_t disk_size;

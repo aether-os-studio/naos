@@ -53,7 +53,7 @@ extern "C"
 #define F_SET_EXT4 4
 
 #ifndef CONFIG_EXT_FEATURE_SET_LVL
-#define CONFIG_EXT_FEATURE_SET_LVL F_SET_EXT2
+#define CONFIG_EXT_FEATURE_SET_LVL F_SET_EXT4
 #endif
 
     /*****************************************************************************/
@@ -126,7 +126,7 @@ extern "C"
 
 /**@brief   Cache size of block device.*/
 #ifndef CONFIG_BLOCK_DEV_CACHE_SIZE
-#define CONFIG_BLOCK_DEV_CACHE_SIZE 8
+#define CONFIG_BLOCK_DEV_CACHE_SIZE 16
 #endif
 
 /**@brief   Maximum block device name*/

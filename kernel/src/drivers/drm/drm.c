@@ -134,6 +134,7 @@ void drm_init_sysfs()
     vfs_node_t drm_link = vfs_node_alloc(class, "drm");
     drm_link->type = file_symlink | file_dir;
     drm_link->mode = 0644;
+    drm_link->linkname = strdup("/sys/dev/char/226:0/device/drm");
 
     size_t addr;
     size_t width;
@@ -201,4 +202,12 @@ void drm_init_sysfs()
     memset(handle, 0, sizeof(sysfs_handle_t));
     sprintf(handle->content, "%dx%d", width, height);
     modes->handle = handle;
+
+    vfs_node_t device_subsystem = vfs_node_alloc(dev, "subsystem");
+    device_subsystem->type = file_dir;
+    device_subsystem->mode = 0644;
+
+    vfs_node_t pci_dir = vfs_node_alloc(device_subsystem, "pci");
+    pci_dir->type = file_dir;
+    pci_dir->mode = 0644;
 }

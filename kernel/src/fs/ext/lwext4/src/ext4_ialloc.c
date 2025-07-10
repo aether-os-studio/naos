@@ -40,19 +40,19 @@
  */
 
 #include <ext4_config.h>
-#include <ext4_debug.h>
-#include <ext4_errno.h>
-#include <ext4_misc.h>
 #include <ext4_types.h>
+#include <ext4_misc.h>
+#include <ext4_errno.h>
+#include <ext4_debug.h>
 
-#include <ext4_bitmap.h>
-#include <ext4_block_group.h>
-#include <ext4_blockdev.h>
-#include <ext4_crc32.h>
-#include <ext4_fs.h>
+#include <ext4_trans.h>
 #include <ext4_ialloc.h>
 #include <ext4_super.h>
-#include <ext4_trans.h>
+#include <ext4_crc32.h>
+#include <ext4_fs.h>
+#include <ext4_blockdev.h>
+#include <ext4_block_group.h>
+#include <ext4_bitmap.h>
 
 /**@brief  Convert i-node number to relative index in block group.
  * @param sb    Superblock
@@ -97,7 +97,8 @@ static uint32_t ext4_ialloc_bitmap_csum(struct ext4_sblock *sb, void *bitmap)
 	uint32_t csum = 0;
 	if (ext4_sb_feature_ro_com(sb, EXT4_FRO_COM_METADATA_CSUM))
 	{
-		uint32_t inodes_per_group = ext4_get32(sb, inodes_per_group);
+		uint32_t inodes_per_group =
+			ext4_get32(sb, inodes_per_group);
 
 		/* First calculate crc32 checksum against fs uuid */
 		csum = ext4_crc32c(EXT4_CRC32_INIT, sb->uuid, sizeof(sb->uuid));
@@ -128,9 +129,9 @@ void ext4_ialloc_set_bitmap_csum(struct ext4_sblock *sb, struct ext4_bgroup *bg,
 }
 
 #if CONFIG_META_CSUM_ENABLE
-static bool ext4_ialloc_verify_bitmap_csum(struct ext4_sblock *sb,
-										   struct ext4_bgroup *bg,
-										   void *bitmap __unused)
+static bool
+ext4_ialloc_verify_bitmap_csum(struct ext4_sblock *sb, struct ext4_bgroup *bg,
+							   void *bitmap __unused)
 {
 
 	int desc_size = ext4_sb_get_desc_size(sb);
@@ -169,7 +170,8 @@ int ext4_ialloc_free_inode(struct ext4_fs *fs, uint32_t index, bool is_dir)
 	struct ext4_bgroup *bg = bg_ref.block_group;
 
 	/* Load i-node bitmap */
-	ext4_fsblk_t bitmap_block_addr = ext4_bg_get_inode_bitmap(bg, sb);
+	ext4_fsblk_t bitmap_block_addr =
+		ext4_bg_get_inode_bitmap(bg, sb);
 
 	struct ext4_block b;
 	rc = ext4_trans_block_get(fs->bdev, &b, bitmap_block_addr);
@@ -266,8 +268,7 @@ int ext4_ialloc_alloc_inode(struct ext4_fs *fs, uint32_t *idx, bool is_dir)
 		if (free_inodes > 0)
 		{
 			/* Load block with bitmap */
-			ext4_fsblk_t bmp_blk_add =
-				ext4_bg_get_inode_bitmap(bg, sb);
+			ext4_fsblk_t bmp_blk_add = ext4_bg_get_inode_bitmap(bg, sb);
 
 			struct ext4_block b;
 			rc = ext4_trans_block_get(fs->bdev, &b, bmp_blk_add);
@@ -312,7 +313,8 @@ int ext4_ialloc_alloc_inode(struct ext4_fs *fs, uint32_t *idx, bool is_dir)
 			ext4_bmap_bit_set(b.data, idx_in_bg);
 
 			/* Free i-node found, save the bitmap */
-			ext4_ialloc_set_bitmap_csum(sb, bg, b.data);
+			ext4_ialloc_set_bitmap_csum(sb, bg,
+										b.data);
 			ext4_trans_set_block_dirty(b.buf);
 
 			ext4_block_set(fs->bdev, &b);
@@ -334,7 +336,8 @@ int ext4_ialloc_alloc_inode(struct ext4_fs *fs, uint32_t *idx, bool is_dir)
 			}
 
 			/* Decrease unused inodes count */
-			uint32_t unused = ext4_bg_get_itable_unused(bg, sb);
+			uint32_t unused =
+				ext4_bg_get_itable_unused(bg, sb);
 
 			uint32_t free = inodes_in_bg - unused;
 

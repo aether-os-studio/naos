@@ -1138,6 +1138,7 @@ static struct vfs_callback socket_callback = {
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = (vfs_poll_t)socket_socket_poll,
+    .resize = (vfs_resize_t)dummy,
 };
 
 static struct vfs_callback accept_callback = {
@@ -1157,6 +1158,7 @@ static struct vfs_callback accept_callback = {
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = (vfs_poll_t)socket_accept_poll,
+    .resize = (vfs_resize_t)dummy,
 };
 
 void socketfs_init()

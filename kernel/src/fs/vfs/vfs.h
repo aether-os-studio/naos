@@ -223,6 +223,7 @@ typedef struct vfs_callback
     vfs_mapfile_t map;
     vfs_ioctl_t ioctl;
     vfs_poll_t poll;
+    vfs_resize_t resize;
 } *vfs_callback_t;
 
 typedef struct flock
@@ -407,6 +408,14 @@ int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize);
  *\param node     文件节点
  */
 void vfs_update(vfs_node_t node);
+
+/**
+ *\brief 修改文件大小
+ *
+ *\param node     文件节点
+ *\param size     新长度
+ */
+void vfs_resize(vfs_node_t node, uint64_t size);
 
 /**
  *\brief 获取文件的完整路径

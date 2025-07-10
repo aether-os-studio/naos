@@ -97,8 +97,11 @@ void *devfs_map(devfs_handle_t handle, void *addr, size_t offset, size_t size, s
 
 int devfs_mkdir(void *parent, const char *name, vfs_node_t node)
 {
-    vfs_node_t child = vfs_child_append(node, name, NULL);
+    vfs_node_t parent_node = parent;
+
+    vfs_node_t child = vfs_child_append(parent_node, name, NULL);
     child->type = file_dir;
+    child->handle = child;
 
     return 0;
 }
@@ -135,6 +138,7 @@ static struct vfs_callback callbacks = {
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)devfs_ioctl,
     .poll = (vfs_poll_t)devfs_poll,
+    .resize = (vfs_resize_t)dummy,
 };
 
 ssize_t inputdev_event_read(void *data, uint64_t offset, void *buf, uint64_t len)
@@ -461,6 +465,7 @@ void dev_init()
     devfs_root->type = file_dir;
     devfs_root->fsid = devfs_id;
     devfs_root->mode = 0644;
+    devfs_root->handle = devfs_root;
 
     memset(devfs_handles, 0, sizeof(devfs_handles));
 

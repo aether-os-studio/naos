@@ -36,10 +36,10 @@
  */
 
 #include <ext4_config.h>
-#include <ext4_debug.h>
-#include <ext4_errno.h>
-#include <ext4_misc.h>
 #include <ext4_types.h>
+#include <ext4_misc.h>
+#include <ext4_errno.h>
+#include <ext4_debug.h>
 
 #include <ext4_fs.h>
 #include <ext4_journal.h>
@@ -50,7 +50,9 @@ int ext4_trans_set_block_dirty(struct ext4_buf *buf)
 #if CONFIG_JOURNALING_ENABLE
 	struct ext4_fs *fs = buf->bc->bdev->fs;
 	struct ext4_block block = {
-		.lb_id = buf->lba, .data = buf->data, .buf = buf};
+		.lb_id = buf->lba,
+		.data = buf->data,
+		.buf = buf};
 
 	if (fs->jbd_journal && fs->curr_trans)
 	{
@@ -63,7 +65,8 @@ int ext4_trans_set_block_dirty(struct ext4_buf *buf)
 }
 
 int ext4_trans_block_get_noread(struct ext4_blockdev *bdev,
-								struct ext4_block *b, uint64_t lba)
+								struct ext4_block *b,
+								uint64_t lba)
 {
 	int r = ext4_block_get_noread(bdev, b, lba);
 	if (r != EOK)
@@ -72,7 +75,8 @@ int ext4_trans_block_get_noread(struct ext4_blockdev *bdev,
 	return r;
 }
 
-int ext4_trans_block_get(struct ext4_blockdev *bdev, struct ext4_block *b,
+int ext4_trans_block_get(struct ext4_blockdev *bdev,
+						 struct ext4_block *b,
 						 uint64_t lba)
 {
 	int r = ext4_block_get(bdev, b, lba);

@@ -3,6 +3,8 @@
 
 static int ext_fsid = 0;
 
+spinlock_t rwlock = {0};
+
 int ext_mount(const char *src, vfs_node_t node)
 {
     ext4_device_register(vfs_dev_get(), src);
@@ -59,6 +61,8 @@ void ext_unmount(void *root)
 
 void ext_open(void *parent, const char *name, vfs_node_t node)
 {
+    spin_lock(&rwlock);
+
     ext_handle_t *handle = malloc(sizeof(ext4_file));
     handle->node = node;
     char *path = vfs_get_fullpath(node);
@@ -131,18 +135,24 @@ void ext_open(void *parent, const char *name, vfs_node_t node)
     ext4_mode_get((const char *)buf, &mode);
     node->mode = mode;
     node->handle = handle;
+
+    spin_unlock(&rwlock);
 }
 
 bool ext_close(void *current)
 {
+    spin_lock(&rwlock);
     ext_handle_t *handle = current;
     ext4_fclose(handle->file);
     free(current);
+    spin_unlock(&rwlock);
     return true;
 }
 
 ssize_t ext_write(void *file, const void *addr, size_t offset, size_t size)
 {
+    spin_lock(&rwlock);
+
     ssize_t ret = 0;
     ext_handle_t *handle = file;
     if (handle->node->size < offset)
@@ -156,11 +166,15 @@ ssize_t ext_write(void *file, const void *addr, size_t offset, size_t size)
     ext4_fseek(handle->file, (int64_t)offset, (uint32_t)SEEK_SET);
     ext4_fwrite(handle->file, addr, size, (size_t *)&ret);
     handle->node->size = ext4_fsize(handle->file);
+
+    spin_unlock(&rwlock);
+
     return ret;
 }
 
 ssize_t ext_read(void *file, void *addr, size_t offset, size_t size)
 {
+    spin_lock(&rwlock);
     ssize_t ret = 0;
     ext_handle_t *handle = file;
     if (handle->node->type & file_symlink)
@@ -183,6 +197,7 @@ ssize_t ext_read(void *file, void *addr, size_t offset, size_t size)
         ext4_fseek(handle->file, (int64_t)offset, (uint32_t)SEEK_SET);
         ext4_fread(handle->file, addr, size, (size_t *)&ret);
     }
+    spin_unlock(&rwlock);
     return ret;
 }
 
@@ -296,6 +311,15 @@ int ext_poll(void *file, size_t events)
     return 0;
 }
 
+void ext_resize(void *current, uint64_t size)
+{
+    ext_handle_t *handle = current;
+    if (handle->node->type & file_none)
+    {
+        handle->node->size = ext4_ftruncate(handle->file, size);
+    }
+}
+
 void *ext_map(void *file, void *addr, size_t offset, size_t size, size_t prot, size_t flags)
 {
     return general_map((vfs_read_t)ext_read, file, (uint64_t)addr, size, prot, flags, offset);
@@ -318,6 +342,7 @@ static struct vfs_callback callbacks = {
     .stat = ext_stat,
     .ioctl = ext_ioctl,
     .poll = ext_poll,
+    .resize = (vfs_resize_t)ext_resize,
 };
 
 void ext_init()

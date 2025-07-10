@@ -183,6 +183,14 @@ uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags);
 
 #define F_DUPFD_CLOEXEC 1030
 
+#define F_GET_SEALS 1032 /* 0x408 */
+#define F_ADD_SEALS 1033 /* 0x409 */
+
+#define F_SEAL_SEAL 0x0001   /* 防止后续seal操作 */
+#define F_SEAL_SHRINK 0x0002 /* 禁止缩小文件 */
+#define F_SEAL_GROW 0x0004   /* 禁止增大文件 */
+#define F_SEAL_WRITE 0x0008  /* 禁止写操作 */
+
 uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg);
 int sys_pipe(int fd[2], uint64_t flags);
 uint64_t sys_stat(const char *fd, struct stat *buf);
@@ -439,6 +447,10 @@ typedef struct
 
 int sys_timerfd_create(int clockid, int flags);
 int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, struct itimerval *old_v);
+
+uint64_t sys_memfd_create(const char *name, unsigned int flags);
+
+uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len);
 
 struct futex_wait
 {
