@@ -1163,7 +1163,7 @@ void sched_update_itimer()
             if (ptr->fds[fd] && ptr->fds[fd]->node && ptr->fds[fd]->node->fsid == timerfdfs_id)
             {
                 timerfd_t *tfd = ptr->fds[fd]->node->handle;
-                if (tfd->timer.expires && jiffies >= tfd->timer.expires)
+                if (tfd->timer.expires && nanoTime() >= tfd->timer.expires)
                 {
                     tfd->count++;
                     if (tfd->timer.interval)

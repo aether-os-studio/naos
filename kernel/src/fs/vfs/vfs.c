@@ -42,6 +42,7 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name)
     node->lock.l_type = F_UNLCK;
     node->refcount = 0;
     node->mode = 0777;
+    node->rw_hint = 0;
     if (parent)
         list_prepend(parent->child, node);
     return node;
@@ -666,12 +667,24 @@ int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg)
     case TIOCSPGRP:
         return 0;
     case TCGETS:
+        if (check_user_overflow(arg, sizeof(termios)))
+        {
+            return -EFAULT;
+        }
         memcpy((void *)arg, &current_task->term, sizeof(termios));
         return 0;
     case TCSETS:
+        if (check_user_overflow(arg, sizeof(termios)))
+        {
+            return -EFAULT;
+        }
         memcpy(&current_task->term, (void *)arg, sizeof(termios));
         return 0;
     case TCSETSW:
+        if (check_user_overflow(arg, sizeof(termios)))
+        {
+            return -EFAULT;
+        }
         memcpy(&current_task->term, (void *)arg, sizeof(termios));
         return 0;
     case TIOCSWINSZ:

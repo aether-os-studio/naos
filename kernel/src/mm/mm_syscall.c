@@ -90,6 +90,37 @@ uint64_t sys_munmap(uint64_t addr, uint64_t size)
     return 0;
 }
 
+uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uint64_t flags, uint64_t new_addr)
+{
+    if (check_user_overflow(old_addr, old_size) || check_user_overflow(new_addr, new_size))
+    {
+        return -EFAULT;
+    }
+
+    uint64_t *page_dir = get_current_page_dir(true);
+
+    if (translate_address(page_dir, old_addr) == 0)
+    {
+        return -EINVAL;
+    }
+
+    uint64_t aligned_old = (old_size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
+    uint64_t aligned_new = (new_size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
+
+    if (aligned_new < aligned_old)
+    {
+        unmap_page_range(page_dir, old_addr + aligned_new, aligned_old - aligned_new);
+        return old_addr;
+    }
+
+    uint64_t extension = aligned_new - aligned_old;
+
+    map_page_range(page_dir, old_addr + aligned_old, 0, extension,
+                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+
+    return old_addr;
+}
+
 void *general_map(vfs_read_t read_callback, void *file, uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset)
 {
     current_task->mmap_start += (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));

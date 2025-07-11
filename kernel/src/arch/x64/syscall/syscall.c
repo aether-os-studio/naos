@@ -187,6 +187,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_MMAP:
         regs->rax = sys_mmap(arg1, arg2, arg3, arg4, arg5, arg6);
         break;
+    case SYS_MREMAP:
+        regs->rax = sys_mremap(arg1, arg2, arg3, arg4, arg5);
+        break;
     case SYS_MPROTECT:
         regs->rax = 0;
         break;
@@ -557,6 +560,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_FALLOCATE:
         regs->rax = sys_fallocate(arg1, arg2, arg3, arg4);
         break;
+    case SYS_FTRUNCATE:
+        regs->rax = 0;
+        break;
     case SYS_SETPRIORITY:
         regs->rax = 0;
         break;
@@ -604,7 +610,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     }
 
-    if (regs->rax == (uint64_t)-ENOSYS)
+    if (regs->rax == (uint64_t)-ENOSYS || (uint32_t)regs->rax == (uint32_t)-ENOSYS)
     {
         char buf[32];
         int len = sprintf(buf, "syscall %d not implemented\n", idx);

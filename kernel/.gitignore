@@ -7,4 +7,7 @@
 /obj-*
 /target
 /src/rust/bindings/bindings*.rs
-*.lock
+Cargo.lock
+/kallsyms
+/kallsyms.S
+/kallsyms.o

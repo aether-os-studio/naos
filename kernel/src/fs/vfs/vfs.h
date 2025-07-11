@@ -257,6 +257,7 @@ struct vfs_node
     vfs_node_t root;     // 根目录
     uint32_t refcount;   // 引用计数
     uint16_t mode;       // 模式
+    uint32_t rw_hint;    // 读写提示
 };
 
 typedef struct fd

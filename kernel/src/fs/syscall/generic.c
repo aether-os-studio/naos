@@ -513,6 +513,13 @@ uint64_t sys_dup(uint64_t fd)
 
 spinlock_t fcntl_lock = {0};
 
+#define RWF_WRITE_LIFE_NOT_SET 0
+#define RWH_WRITE_LIFE_NONE 1
+#define RWH_WRITE_LIFE_SHORT 2
+#define RWH_WRITE_LIFE_MEDIUM 3
+#define RWH_WRITE_LIFE_LONG 4
+#define RWH_WRITE_LIFE_EXTREME 5
+
 uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
 {
     if (fd > MAX_FD_NUM || !current_task->fds[fd])
@@ -557,10 +564,27 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
     case F_ADD_SEALS:
         spin_unlock(&fcntl_lock);
         return 0;
-    }
+    case F_GET_RW_HINT:
+        spin_unlock(&fcntl_lock);
+        if (!current_task->fds[fd]->node->rw_hint)
+        {
+            return 0;
+        }
+        return current_task->fds[fd]->node->rw_hint;
 
-    spin_unlock(&fcntl_lock);
-    return (uint64_t)-ENOSYS;
+    case F_SET_RW_HINT:
+        if (arg < RWH_WRITE_LIFE_NONE || arg > RWH_WRITE_LIFE_EXTREME)
+        {
+            spin_unlock(&fcntl_lock);
+            return -EINVAL;
+        }
+        current_task->fds[fd]->node->rw_hint = arg;
+        spin_unlock(&fcntl_lock);
+        return 0;
+    default:
+        spin_unlock(&fcntl_lock);
+        return (uint64_t)-ENOSYS;
+    }
 }
 
 uint64_t sys_stat(const char *fn, struct stat *buf)

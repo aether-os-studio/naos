@@ -182,9 +182,18 @@ uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags);
 #define F_GETSIG 11
 
 #define F_DUPFD_CLOEXEC 1030
+#define F_LINUX_SPECIFIC_BASE 1024
 
-#define F_GET_SEALS 1032 /* 0x408 */
-#define F_ADD_SEALS 1033 /* 0x409 */
+#define F_SETLEASE (F_LINUX_SPECIFIC_BASE + 0)
+#define F_GETLEASE (F_LINUX_SPECIFIC_BASE + 1)
+
+#define F_ADD_SEALS (F_LINUX_SPECIFIC_BASE + 9)
+#define F_GET_SEALS (F_LINUX_SPECIFIC_BASE + 10)
+
+#define F_GET_RW_HINT (F_LINUX_SPECIFIC_BASE + 11)
+#define F_SET_RW_HINT (F_LINUX_SPECIFIC_BASE + 12)
+#define F_GET_FILE_RW_HINT (F_LINUX_SPECIFIC_BASE + 13)
+#define F_SET_FILE_RW_HINT (F_LINUX_SPECIFIC_BASE + 14)
 
 #define F_SEAL_SEAL 0x0001   /* 防止后续seal操作 */
 #define F_SEAL_SHRINK 0x0002 /* 禁止缩小文件 */

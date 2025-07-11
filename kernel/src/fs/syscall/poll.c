@@ -79,16 +79,12 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout)
         if (ready > 0 || sigexit)
             break;
 
-#if defined(__x86_64__)
         arch_enable_interrupt();
-#endif
 
         arch_pause();
     } while (timeout != 0 && ((int)timeout == -1 || (nanoTime() - start_time) < timeout));
 
-#if defined(__x86_64__)
     arch_disable_interrupt();
-#endif
 
     if (!ready && sigexit)
         return (size_t)-EINTR;

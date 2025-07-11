@@ -60,6 +60,9 @@ struct ucred
     uint32_t gid;
 };
 
+#define SCM_RIGHTS 0x01
+#define SCM_CREDENTIALS 0x02
+
 typedef struct unix_socket_pair
 {
     // accept()/server
@@ -79,6 +82,12 @@ typedef struct unix_socket_pair
     uint8_t *clientBuff;
     int clientBuffPos;
     int clientBuffSize;
+
+    // msg_control/msg_controllen
+    int *pending_fds;
+    fd_t *pending_files;
+    int pending_fds_count;
+    int pending_fds_size;
 } unix_socket_pair_t;
 
 #define MAX_CONNECTIONS 16
@@ -284,14 +293,56 @@ int socket_getsockname(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen
 
 struct msghdr
 {
-    void *msg_name;           // 套接字地址（用于未连接套接字）
-    socklen_t msg_namelen;    // 地址长度
-    struct iovec *msg_iov;    // 分散/聚集数组的指针
-    int msg_iovlen;           // iovec元素数量
-    void *msg_control;        // 辅助数据（控制信息）
-    socklen_t msg_controllen; // 辅助数据长度
-    int msg_flags;            // 接收消息的标志
+    void *msg_name;         /* ptr to socket address structure */
+    int msg_namelen;        /* size of socket address structure */
+    struct iovec *msg_iov;  /* scatter/gather array */
+    size_t msg_iovlen;      /* # elements in msg_iov */
+    void *msg_control;      /* ancillary data */
+    size_t msg_controllen;  /* ancillary data buffer length */
+    unsigned int msg_flags; /* flags on received message */
 };
+
+struct cmsghdr
+{
+    size_t cmsg_len;
+    int cmsg_level;
+    int cmsg_type;
+};
+
+#define __CMSG_NXTHDR(ctl, len, cmsg) __cmsg_nxthdr((ctl), (len), (cmsg))
+#define CMSG_NXTHDR(mhdr, cmsg) cmsg_nxthdr((mhdr), (cmsg))
+
+#define CMSG_ALIGN(len) (((len) + sizeof(long) - 1) & ~(sizeof(long) - 1))
+
+#define CMSG_DATA(cmsg) \
+    ((void *)(cmsg) + sizeof(struct cmsghdr))
+#define CMSG_USER_DATA(cmsg) \
+    ((void __user *)(cmsg) + sizeof(struct cmsghdr))
+#define CMSG_SPACE(len) (sizeof(struct cmsghdr) + CMSG_ALIGN(len))
+#define CMSG_LEN(len) (sizeof(struct cmsghdr) + (len))
+
+// #define __CMSG_FIRSTHDR(ctl, len) ((len) >= sizeof(struct cmsghdr) ? (struct cmsghdr *)(ctl) : (struct cmsghdr *)NULL)
+#define __CMSG_FIRSTHDR(ctl, len) ((struct cmsghdr *)(ctl))
+#define CMSG_FIRSTHDR(msg) __CMSG_FIRSTHDR((msg)->msg_control, (msg)->msg_controllen)
+#define CMSG_OK(mhdr, cmsg) ((cmsg)->cmsg_len >= sizeof(struct cmsghdr) &&                \
+                             (cmsg)->cmsg_len <= (unsigned long)((mhdr)->msg_controllen - \
+                                                                 ((char *)(cmsg) - (char *)(mhdr)->msg_control)))
+
+static inline struct cmsghdr *__cmsg_nxthdr(void *__ctl, size_t __size, struct cmsghdr *__cmsg)
+{
+    struct cmsghdr *__ptr;
+
+    __ptr = (struct cmsghdr *)(((unsigned char *)__cmsg) + CMSG_ALIGN(__cmsg->cmsg_len));
+    if ((unsigned long)((char *)(__ptr + 1) - (char *)__ctl) > __size)
+        return (struct cmsghdr *)0;
+
+    return __ptr;
+}
+
+static inline struct cmsghdr *cmsg_nxthdr(struct msghdr *__msg, struct cmsghdr *__cmsg)
+{
+    return __cmsg_nxthdr(__msg->msg_control, __msg->msg_controllen, __cmsg);
+}
 
 typedef struct socket_op
 {

@@ -55,23 +55,23 @@ int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, st
 
     if (old_value)
     {
-        uint64_t remaining = tfd->timer.expires > jiffies ? tfd->timer.expires - jiffies : 0;
+        uint64_t now = nanoTime();
+        uint64_t remaining = tfd->timer.expires > now ? tfd->timer.expires - now : 0;
 
-        old_value->it_interval.tv_sec = tfd->timer.interval / 10; // 1秒 = 10 jiffies
-        old_value->it_interval.tv_usec = (tfd->timer.interval % 10) * 100000;
+        old_value->it_interval.tv_sec = tfd->timer.interval / 10000000ULL;
+        old_value->it_interval.tv_usec = (tfd->timer.interval % 10000000ULL) / 10ULL;
 
-        old_value->it_value.tv_sec = remaining / 10;
-        old_value->it_value.tv_usec = (remaining % 10) * 100000;
+        old_value->it_value.tv_sec = remaining / 10000000ULL;
+        old_value->it_value.tv_usec = (remaining % 10000000ULL) / 10ULL;
     }
 
-    uint64_t interval = new_value->it_interval.tv_sec * 10 +
-                        new_value->it_interval.tv_usec / 100000;
-
-    uint64_t expires = new_value->it_value.tv_sec * 10 +
-                       new_value->it_value.tv_usec / 100000;
+    uint64_t interval = new_value->it_interval.tv_sec * 10000000ULL +
+                        new_value->it_interval.tv_usec * 10ULL;
+    uint64_t expires = new_value->it_value.tv_sec * 10000000ULL +
+                       new_value->it_value.tv_usec * 10ULL;
 
     tfd->timer.interval = interval;
-    tfd->timer.expires = jiffies + expires;
+    tfd->timer.expires = nanoTime() + expires;
 
     return 0;
 }

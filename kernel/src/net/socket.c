@@ -81,6 +81,10 @@ unix_socket_pair_t *unix_socket_allocate_pair()
     pair->serverBuffSize = BUFFER_SIZE;
     pair->serverBuff = malloc(pair->serverBuffSize);
     pair->clientBuff = malloc(pair->clientBuffSize);
+    pair->pending_fds = malloc(4 * sizeof(int));
+    pair->pending_files = malloc(4 * sizeof(fd_t));
+    pair->pending_fds_size = 4;
+    pair->pending_fds_count = 0;
     return pair;
 }
 
@@ -89,6 +93,8 @@ void unix_socket_free_pair(unix_socket_pair_t *pair)
     free(pair->clientBuff);
     free(pair->serverBuff);
     free(pair->filename);
+    free(pair->pending_fds);
+    free(pair->pending_files);
     free(pair);
 }
 
@@ -626,6 +632,55 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
     msg->msg_flags = 0;
     size_t cnt = 0;
     bool noblock = flags & MSG_DONTWAIT;
+
+    if (msg->msg_control)
+    {
+        socket_handle_t *handle = current_task->fds[fd]->node->handle;
+        socket_t *socket = handle->sock;
+        unix_socket_pair_t *pair = socket->pair;
+
+        struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
+
+        while (socket_op_lock)
+            arch_pause();
+        socket_op_lock = true;
+
+        if (pair->pending_fds_count > 0)
+        {
+            size_t max_fds = (msg->msg_controllen - CMSG_LEN(0)) / sizeof(int);
+            int num_fds = MIN(pair->pending_fds_count, max_fds);
+
+            cmsg->cmsg_level = SOL_SOCKET;
+            cmsg->cmsg_type = SCM_RIGHTS;
+            cmsg->cmsg_len = CMSG_LEN(num_fds * sizeof(int));
+
+            int *dest_fds = (int *)CMSG_DATA(cmsg);
+            for (int i = 0; i < num_fds; i++)
+            {
+                dest_fds[i] = pair->pending_fds[i];
+                if (current_task->fds[dest_fds[i]])
+                {
+                    sys_close(dest_fds[i]);
+                }
+                current_task->fds[dest_fds[i]] = malloc(sizeof(fd_t));
+                memcpy(current_task->fds[dest_fds[i]], &pair->pending_files[i], sizeof(fd_t));
+                current_task->fds[dest_fds[i]]->node->refcount++;
+            }
+
+            memmove(pair->pending_fds, &pair->pending_fds[num_fds],
+                    (pair->pending_fds_count - num_fds) * sizeof(fd_t));
+            pair->pending_fds_count -= num_fds;
+
+            msg->msg_controllen = cmsg->cmsg_len;
+        }
+        else
+        {
+            msg->msg_controllen = 0;
+        }
+
+        socket_op_lock = false;
+    }
+
     for (int i = 0; i < msg->msg_iovlen; i++)
     {
         struct iovec *curr = (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
@@ -650,6 +705,61 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
     size_t cnt = 0;
     bool noblock = flags & MSG_DONTWAIT;
 
+    if (msg->msg_controllen > 0)
+    {
+        if (msg->msg_control == NULL ||
+            msg->msg_controllen < CMSG_SPACE(sizeof(int)))
+        {
+            return -EINVAL;
+        }
+    }
+
+    if (msg->msg_control)
+    {
+        socket_handle_t *handle = current_task->fds[fd]->node->handle;
+        socket_t *socket = handle->sock;
+        unix_socket_pair_t *pair = socket->pair;
+
+        struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
+        for (; cmsg != NULL; cmsg = CMSG_NXTHDR((struct msghdr *)msg, cmsg))
+        {
+            if (cmsg->cmsg_level == SOL_SOCKET &&
+                cmsg->cmsg_type == SCM_RIGHTS)
+            {
+
+                int *fds = (int *)CMSG_DATA(cmsg);
+                int num_fds = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+
+                // 加锁保证原子操作
+                while (socket_op_lock)
+                    arch_pause();
+                socket_op_lock = true;
+
+                // 扩展描述符数组空间
+                if (pair->pending_fds_count + num_fds > pair->pending_fds_size)
+                {
+                    int new_size = pair->pending_fds_size * 2;
+                    int *new_fds = realloc(pair->pending_fds, new_size * sizeof(int));
+                    if (!new_fds)
+                    {
+                        socket_op_lock = false;
+                        return -ENOMEM;
+                    }
+                    pair->pending_fds = new_fds;
+                    pair->pending_fds_size = new_size;
+                }
+
+                for (int i = 0; i < num_fds; i++)
+                {
+                    pair->pending_fds[pair->pending_fds_count] = fds[i];
+                    memcpy(&pair->pending_files[pair->pending_fds_count++], current_task->fds[fds[i]], sizeof(fd_t));
+                }
+
+                socket_op_lock = false;
+            }
+        }
+    }
+
     for (int i = 0; i < msg->msg_iovlen; i++)
     {
         struct iovec *curr = (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
@@ -673,6 +783,54 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
     msg->msg_flags = 0;
     size_t cnt = 0;
     bool noblock = flags & MSG_DONTWAIT;
+
+    if (msg->msg_control)
+    {
+        socket_handle_t *handle = current_task->fds[fd]->node->handle;
+        unix_socket_pair_t *pair = handle->sock;
+
+        struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
+
+        while (socket_op_lock)
+            arch_pause();
+        socket_op_lock = true;
+
+        if (pair->pending_fds_count > 0)
+        {
+            size_t max_fds = (msg->msg_controllen - CMSG_LEN(0)) / sizeof(int);
+            int num_fds = MIN(pair->pending_fds_count, max_fds);
+
+            cmsg->cmsg_level = SOL_SOCKET;
+            cmsg->cmsg_type = SCM_RIGHTS;
+            cmsg->cmsg_len = CMSG_LEN(num_fds * sizeof(int));
+
+            int *dest_fds = (int *)CMSG_DATA(cmsg);
+            for (int i = 0; i < num_fds; i++)
+            {
+                dest_fds[i] = pair->pending_fds[i];
+                if (current_task->fds[dest_fds[i]])
+                {
+                    sys_close(dest_fds[i]);
+                }
+                current_task->fds[dest_fds[i]] = malloc(sizeof(fd_t));
+                memcpy(current_task->fds[dest_fds[i]], &pair->pending_files[i], sizeof(fd_t));
+                current_task->fds[dest_fds[i]]->node->refcount++;
+            }
+
+            memmove(pair->pending_fds, &pair->pending_fds[num_fds],
+                    (pair->pending_fds_count - num_fds) * sizeof(fd_t));
+            pair->pending_fds_count -= num_fds;
+
+            msg->msg_controllen = cmsg->cmsg_len;
+        }
+        else
+        {
+            msg->msg_controllen = 0;
+        }
+
+        socket_op_lock = false;
+    }
+
     for (int i = 0; i < msg->msg_iovlen; i++)
     {
         struct iovec *curr =
@@ -700,6 +858,60 @@ size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg, int fl
 
     size_t cnt = 0;
     bool noblock = flags & MSG_DONTWAIT;
+
+    if (msg->msg_controllen > 0)
+    {
+        if (msg->msg_control == NULL ||
+            msg->msg_controllen < CMSG_SPACE(sizeof(int)))
+        {
+            return -EINVAL;
+        }
+    }
+
+    if (msg->msg_control)
+    {
+        socket_handle_t *handle = current_task->fds[fd]->node->handle;
+        unix_socket_pair_t *pair = handle->sock;
+
+        struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
+        for (; cmsg != NULL; cmsg = CMSG_NXTHDR((struct msghdr *)msg, cmsg))
+        {
+            if (cmsg->cmsg_level == SOL_SOCKET &&
+                cmsg->cmsg_type == SCM_RIGHTS)
+            {
+
+                int *fds = (int *)CMSG_DATA(cmsg);
+                int num_fds = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+
+                // 加锁保证原子操作
+                while (socket_op_lock)
+                    arch_pause();
+                socket_op_lock = true;
+
+                // 扩展描述符数组空间
+                if (pair->pending_fds_count + num_fds > pair->pending_fds_size)
+                {
+                    int new_size = pair->pending_fds_size * 2;
+                    int *new_fds = realloc(pair->pending_fds, new_size * sizeof(int));
+                    if (!new_fds)
+                    {
+                        socket_op_lock = false;
+                        return -ENOMEM;
+                    }
+                    pair->pending_fds = new_fds;
+                    pair->pending_fds_size = new_size;
+                }
+
+                for (int i = 0; i < num_fds; i++)
+                {
+                    pair->pending_fds[pair->pending_fds_count] = fds[i];
+                    memcpy(&pair->pending_files[pair->pending_fds_count++], current_task->fds[fds[i]], sizeof(fd_t));
+                }
+
+                socket_op_lock = false;
+            }
+        }
+    }
 
     for (int i = 0; i < msg->msg_iovlen; i++)
     {

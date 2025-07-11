@@ -4,6 +4,13 @@
 #include <drivers/kernel_logger.h>
 #include <task/task.h>
 
+// 使用弱引用属性导出kallsyms中的符号表。
+// 采用weak属性是由于第一次编译时，kallsyms还未链接进来，若不使用weak属性则会报错
+extern const uint64_t kallsyms_address[] __attribute__((weak));
+extern const uint64_t kallsyms_num __attribute__((weak));
+extern const uint64_t kallsyms_names_index[] __attribute__((weak));
+extern const char *kallsyms_names __attribute__((weak));
+
 void irq_init()
 {
     gdtidt_setup();
@@ -29,6 +36,55 @@ void irq_init()
     set_trap_gate(18, 0, machine_check);
     set_trap_gate(19, 0, SIMD_exception);
     set_trap_gate(20, 0, virtualization_exception);
+}
+
+int lookup_kallsyms(uint64_t addr, int level)
+{
+    const char *str = (const char *)&kallsyms_names;
+
+    uint64_t index = 0;
+    for (index = 0; index < kallsyms_num - 1; ++index)
+    {
+        if (addr > kallsyms_address[index] && addr <= kallsyms_address[index + 1])
+            break;
+    }
+
+    if (index < kallsyms_num)
+    {
+        printk("function:%s() \t(+) %04d address:%#018lx\n", &str[kallsyms_names_index[index]], addr - kallsyms_address[index], addr);
+        return 0;
+    }
+    else
+        return -1;
+}
+
+void traceback(struct pt_regs *regs)
+{
+    if (!check_user_overflow(regs->rbp, 0))
+    {
+        printk("Kernel traceback: Fault in userland. pid=%ld, rbp=%#018lx\n", current_task->pid, regs->rbp);
+        return;
+    }
+
+    uint64_t *rbp = (uint64_t *)regs->rbp;
+    printk("======== Kernel traceback =======\n");
+
+    uint64_t ret_addr = regs->rip;
+    for (int i = 0; i < 32; ++i)
+    {
+        if (lookup_kallsyms(ret_addr, i) != 0)
+            break;
+
+        if ((uint64_t)(rbp) < get_physical_memory_offset() || ((uint64_t)rbp < regs->rsp))
+            break;
+
+        printk("rbp:%#018lx,*rbp:%#018lx\n", rbp, *rbp);
+
+        ret_addr = *(rbp + 1);
+        rbp = (uint64_t *)(*rbp);
+        printk("\n");
+    }
+    printk("======== Kernel traceback end =======\n");
 }
 
 extern int vsprintf(char *buf, const char *fmt, va_list args);
@@ -60,6 +116,8 @@ void dump_regs(struct pt_regs *regs, const char *error_str, ...)
     printk("R10 = %#018lx, R11 = %#018lx\n", regs->r10, regs->r11);
     printk("R12 = %#018lx, R13 = %#018lx\n", regs->r12, regs->r13);
     printk("R14 = %#018lx, R15 = %#018lx\n", regs->r14, regs->r15);
+
+    traceback(regs);
 }
 
 // 0 #DE 除法错误
