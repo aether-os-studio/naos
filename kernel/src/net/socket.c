@@ -161,12 +161,20 @@ size_t unix_socket_accept_recv_from(uint64_t fd, uint8_t *out, size_t limit,
             break;
     }
 
+    while (socket_op_lock)
+    {
+        arch_pause();
+    }
+    socket_op_lock = true;
+
     // spinlock already acquired
     size_t toCopy = MIN(limit, pair->serverBuffPos);
     memcpy(out, pair->serverBuff, toCopy);
     memmove(pair->serverBuff, &pair->serverBuff[toCopy],
             pair->serverBuffPos - toCopy);
     pair->serverBuffPos -= toCopy;
+
+    socket_op_lock = false;
 
     return toCopy;
 }
@@ -739,6 +747,9 @@ int unix_socket_pair(int type, int protocol, int *sv)
 
     if (i == MAX_FD_NUM)
     {
+        unix_socket_free_pair(pair);
+        sys_close(sock1);
+        vfs_free(sock2Fd);
         return -EBADF;
     }
 
@@ -748,11 +759,10 @@ int unix_socket_pair(int type, int protocol, int *sv)
     sock->options.has_peercred = true;
 
     socket_handle_t *new_handle = sock2Fd->handle;
-    socket_t *new_sock = new_handle->sock;
-    new_sock->options.peercred = sock->options.peercred;
-    new_sock->options.has_peercred = true;
+    unix_socket_pair_t *new_sock = new_handle->sock;
 
-    new_sock->pair = pair;
+    sock->options.peercred = sock->options.peercred;
+    sock->options.has_peercred = true;
 
     current_task->fds[i] = malloc(sizeof(fd_t));
     current_task->fds[i]->node = sock2Fd;
@@ -1110,15 +1120,10 @@ socket_op_t socket_ops = {
 };
 
 socket_op_t accept_ops = {
-    .accept = socket_accept,
-    .connect = socket_connect,
     .sendto = unix_socket_accept_sendto,
     .recvfrom = unix_socket_accept_recv_from,
     .sendmsg = unix_socket_accept_send_msg,
     .recvmsg = unix_socket_accept_recv_msg,
-    .getpeername = unix_socket_getpeername,
-    .getsockopt = unix_socket_getsockopt,
-    .setsockopt = unix_socket_setsockopt,
 };
 
 static struct vfs_callback socket_callback = {
