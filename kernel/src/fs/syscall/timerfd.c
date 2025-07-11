@@ -57,17 +57,18 @@ int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, st
     {
         uint64_t remaining = tfd->timer.expires > jiffies ? tfd->timer.expires - jiffies : 0;
 
-        old_value->it_interval.tv_sec = tfd->timer.interval / 1000;
-        old_value->it_interval.tv_usec = (tfd->timer.interval % 1000) * 1000;
+        old_value->it_interval.tv_sec = tfd->timer.interval / 10; // 1秒 = 10 jiffies
+        old_value->it_interval.tv_usec = (tfd->timer.interval % 10) * 100000;
 
-        old_value->it_value.tv_sec = remaining / 1000;
-        old_value->it_value.tv_usec = (remaining % 1000) * 1000;
+        old_value->it_value.tv_sec = remaining / 10;
+        old_value->it_value.tv_usec = (remaining % 10) * 100000;
     }
 
-    uint64_t interval = new_value->it_interval.tv_sec * 1000 +
-                        new_value->it_interval.tv_usec / 1000000;
-    uint64_t expires = new_value->it_value.tv_sec * 1000 +
-                       new_value->it_value.tv_usec / 1000000;
+    uint64_t interval = new_value->it_interval.tv_sec * 10 +
+                        new_value->it_interval.tv_usec / 100000;
+
+    uint64_t expires = new_value->it_value.tv_sec * 10 +
+                       new_value->it_value.tv_usec / 100000;
 
     tfd->timer.interval = interval;
     tfd->timer.expires = jiffies + expires;
@@ -79,6 +80,29 @@ bool sys_timerfd_close(void *current)
 {
     free(current);
     return true;
+}
+
+int timerfd_poll(void *file, size_t events)
+{
+    timerfd_t *tfd = file;
+
+    int revents = 0;
+
+    if (events & EPOLLIN)
+    {
+        if (tfd->count > 0)
+        {
+            revents |= EPOLLIN;
+        }
+    }
+
+    if (revents && !tfd->timer.interval)
+    {
+        tfd->count = 0;
+        tfd->timer.expires = 0;
+    }
+
+    return revents;
 }
 
 static int dummy()
@@ -102,7 +126,7 @@ static struct vfs_callback timerfd_callbacks = {
     .map = (vfs_mapfile_t)dummy,
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)dummy,
-    .poll = (vfs_poll_t)dummy,
+    .poll = (vfs_poll_t)timerfd_poll,
     .resize = (vfs_resize_t)dummy,
 };
 

@@ -367,7 +367,7 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
             dents[read_count].d_type = DT_DIR;
         else
             dents[read_count].d_type = DT_UNKNOWN;
-        strncpy(dents[read_count].d_name, child_node->name, 1024);
+        strncpy(dents[read_count].d_name, child_node->name, 256);
         filedescriptor->offset += sizeof(struct dirent);
         read_count++;
     next:

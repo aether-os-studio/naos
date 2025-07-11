@@ -1156,9 +1156,13 @@ void sched_update_itimer()
                 else
                     kt->expires = 0;
             }
-            if (current_task->fds[i] && current_task->fds[i]->node && current_task->fds[i]->node->fsid == timerfdfs_id)
+        }
+
+        for (int fd = 3; fd < MAX_FD_NUM; fd++)
+        {
+            if (ptr->fds[fd] && ptr->fds[fd]->node && ptr->fds[fd]->node->fsid == timerfdfs_id)
             {
-                timerfd_t *tfd = current_task->fds[i]->node->handle;
+                timerfd_t *tfd = ptr->fds[fd]->node->handle;
                 if (tfd->timer.expires && jiffies >= tfd->timer.expires)
                 {
                     tfd->count++;

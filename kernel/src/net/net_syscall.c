@@ -69,8 +69,10 @@ int sys_socket(int domain, int type, int protocol)
 {
     if (domain == 10 || domain == 2)
         return net_socket(domain, type, protocol);
-    else
+    else if (domain == 1)
         return socket_socket(domain, type, protocol);
+    else
+        return -EINVAL;
 }
 
 int sys_socketpair(int family, int type, int protocol, int *sv)

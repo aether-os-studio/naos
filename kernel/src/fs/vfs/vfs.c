@@ -549,6 +549,16 @@ ssize_t vfs_read(vfs_node_t file, void *addr, size_t offset, size_t size)
 
 int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize)
 {
+    char *fullpath = vfs_get_fullpath(node);
+
+    if (!strcmp(fullpath, "/proc/self/exe"))
+    {
+        free(fullpath);
+        strncpy(buf, current_task->name, bufsize);
+        return strlen(current_task->name) > bufsize ? bufsize : strlen(current_task->name);
+    }
+    free(fullpath);
+
     if (node->linkname == NULL)
     {
         char *fullpath = vfs_get_fullpath(node);

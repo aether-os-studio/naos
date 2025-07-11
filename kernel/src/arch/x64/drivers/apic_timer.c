@@ -9,7 +9,7 @@ void apic_timer_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
     current_task->jiffies++;
 
     if (current_cpu_id == 0)
-        jiffies += 100;
+        jiffies++;
 }
 
 void apic_timer_init()

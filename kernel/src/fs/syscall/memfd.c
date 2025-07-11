@@ -45,6 +45,13 @@ static ssize_t memfd_write(void *data, const void *buf, uint64_t offset, uint64_
     return len;
 }
 
+void memfd_close(void *current)
+{
+    struct memfd_ctx *ctx = current;
+    free(ctx->data);
+    free(ctx);
+}
+
 int memfd_stat(void *file, vfs_node_t node)
 {
     struct memfd_ctx *ctx = file;
@@ -74,7 +81,7 @@ static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
     .open = (vfs_open_t)dummy,
-    .close = (vfs_close_t)dummy,
+    .close = (vfs_close_t)memfd_close,
     .read = (vfs_read_t)memfd_read,
     .write = (vfs_write_t)memfd_write,
     .mkdir = (vfs_mk_t)dummy,
