@@ -35,8 +35,8 @@ $APK_CMD -X "$MIRROR/main" -U --initdb add alpine-base bash coreutils grep musl 
 # Use a fast mirror :)
 printf "${MIRROR}/main\n${MIRROR}/community\n${MIRROR_ROOT}/edge/testing" > $SYSROOT/../etc/apk/repositories
 
-$APK_CMD add musl-dev gcompat gzip xz make file tar pciutils tzdata nano lua5.1 gcc binutils python3 libdrm-tests curl sysbench
-# $APK_CMD -X ${MIRROR_ROOT}/v3.14/community add seatd weston weston-backend-fbdev weston-shell-desktop
+$APK_CMD add musl-dev gcompat gzip xz make file tar pciutils tzdata nano lua5.1 gcc binutils python3 libdrm-tests curl sysbench evtest
+# $APK_CMD -X ${MIRROR_ROOT}/v3.14/community add seatd weston weston-backend-fbdev weston-shell-desktop weston-xwayland xwayland wayland-libs-cursor libxcursor weston-terminal breeze-cursors breeze-icons font-noto-cjk
 # $APK_CMD add xorg-server xf86-video-fbdev xf86-input-evdev xinit xsetroot twm
 # $APK_CMD add mesa-gl mesa-utils mesa-vulkan-swrast mesa-dri-gallium
 
@@ -53,6 +53,8 @@ cp -r $SCRIPTPATH/etc $SYSROOT/../
 cp -r $SCRIPTPATH/root $SYSROOT/../
 
 mkdir -p $SYSROOT/../var/cache/fontconfig
+
+chmod -R 0700 $SYSROOT/../run
 
 # Make us able to read the files later
 chmod -R u+r $SYSROOT/../

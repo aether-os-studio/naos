@@ -3,6 +3,7 @@
 #include <drivers/kernel_logger.h>
 #include <arch/arch.h>
 #include <task/task.h>
+#include <drivers/pty.h>
 
 int devfs_id = 0;
 vfs_node_t devfs_root = NULL;
@@ -323,7 +324,7 @@ vfs_node_t regist_dev(const char *name,
                 child->rdev = (13 << 8) | 1;
             }
 
-            child->mode = 0700;
+            child->mode = 0666;
 
             return child;
         }
@@ -493,6 +494,18 @@ void dev_init()
     regist_dev("null", null_dev_read, null_dev_write, NULL, NULL, NULL, NULL);
     regist_dev("random", random_dev_read, NULL, NULL, NULL, NULL, NULL);
     regist_dev("urandom", urandom_dev_read, urandom_dev_write, urandom_dev_ioctl, NULL, NULL, NULL);
+
+    vfs_node_t pts_node = vfs_node_alloc(devfs_root, "pts");
+    pts_node->type = file_dir;
+    pts_node->mode = 0644;
+
+    vfs_node_t shm_node = vfs_node_alloc(devfs_root, "shm");
+    shm_node->type = file_dir;
+    shm_node->mode = 0644;
+
+    pty_init();
+    ptmx_init();
+    pts_init();
 }
 
 void circular_int_init(circular_int_t *circ, size_t size)

@@ -5,6 +5,7 @@
 #include "mm/mm.h"
 #include "task/task.h"
 #include "net/socket.h"
+#include "drivers/pty.h"
 
 vfs_node_t rootdir = NULL;
 char *id_to_callback_name[256];
@@ -824,6 +825,20 @@ fd_t *vfs_dup(fd_t *fd)
             unix_socket_pair_t *pair = socket->pair;
             pair->serverFds++;
         }
+    }
+    else if (node->type == file_ptmx)
+    {
+        pty_pair_t *pair = node->handle;
+        spin_lock(&pair->lock);
+        pair->masterFds++;
+        spin_unlock(&pair->lock);
+    }
+    else if (node->type == file_pts)
+    {
+        pty_pair_t *pair = node->handle;
+        spin_lock(&pair->lock);
+        pair->slaveFds++;
+        spin_unlock(&pair->lock);
     }
     return new_fd;
 }

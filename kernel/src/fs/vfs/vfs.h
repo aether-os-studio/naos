@@ -131,6 +131,8 @@ enum
     file_pipe = 0x0020UL,    // 管道设备
     file_socket = 0x0040UL,  // 套接字设备
     file_epoll = 0x0080UL,   // epoll 设备
+    file_ptmx = 0x0100UL,    // ptmx 设备
+    file_pts = 0x0200UL,     // pts 设备
 };
 
 typedef struct vfs_node *vfs_node_t;
@@ -265,6 +267,7 @@ typedef struct fd
     vfs_node_t node;
     uint64_t offset;
     uint64_t flags;
+    uint64_t bind_mmap_addr;
 } fd_t;
 
 extern vfs_node_t rootdir; // vfs 根目录

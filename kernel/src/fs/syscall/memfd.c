@@ -139,4 +139,5 @@ void memfd_init()
     memfd_root = vfs_node_alloc(rootdir, "memfd");
     memfd_root->fsid = memfd_fsid;
     memfd_root->type = file_dir;
+    memfd_root->mode = 0644;
 }

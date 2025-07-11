@@ -431,14 +431,6 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen)
         return -EBADF;
     }
 
-    socket_handle_t *new_handle = acceptFd->handle;
-    socket_t *new_sock = new_handle->sock;
-
-    new_sock->options.peercred = sock->options.peercred;
-    new_sock->options.has_peercred = true;
-
-    new_sock->pair = pair;
-
     current_task->fds[i] = malloc(sizeof(fd_t));
     current_task->fds[i]->node = acceptFd;
     current_task->fds[i]->offset = 0;
@@ -1336,6 +1328,8 @@ socket_op_t accept_ops = {
     .recvfrom = unix_socket_accept_recv_from,
     .sendmsg = unix_socket_accept_send_msg,
     .recvmsg = unix_socket_accept_recv_msg,
+    .getsockopt = unix_socket_getsockopt,
+    .setsockopt = unix_socket_setsockopt,
 };
 
 static struct vfs_callback socket_callback = {

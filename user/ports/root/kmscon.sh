@@ -1,4 +1,0 @@
-#! /bin/sh
-
-seatd &
-kmscon

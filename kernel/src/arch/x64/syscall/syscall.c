@@ -298,6 +298,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_ACCEPT:
         regs->rax = sys_accept(arg1, (struct sockaddr_un *)arg2, (socklen_t *)arg3);
         break;
+    case SYS_ACCEPT4:
+        regs->rax = sys_accept(arg1, (struct sockaddr_un *)arg2, (socklen_t *)arg3);
+        break;
     case SYS_CONNECT:
         regs->rax = sys_connect(arg1, (const struct sockaddr_un *)arg2, arg3);
         break;
@@ -570,7 +573,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = 0;
         break;
     case SYS_SETSID:
-        regs->rax = 0;
+        regs->rax = current_task->sid;
         break;
     case SYS_SET_ROBUST_LIST:
         regs->rax = 0;

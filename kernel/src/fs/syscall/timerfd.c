@@ -58,17 +58,17 @@ int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, st
         uint64_t now = nanoTime();
         uint64_t remaining = tfd->timer.expires > now ? tfd->timer.expires - now : 0;
 
-        old_value->it_interval.tv_sec = tfd->timer.interval / 10000000ULL;
-        old_value->it_interval.tv_usec = (tfd->timer.interval % 10000000ULL) / 10ULL;
+        old_value->it_interval.tv_sec = tfd->timer.interval / 1000000000ULL;
+        old_value->it_interval.tv_usec = (tfd->timer.interval % 1000000000ULL) / 1000ULL;
 
-        old_value->it_value.tv_sec = remaining / 10000000ULL;
-        old_value->it_value.tv_usec = (remaining % 10000000ULL) / 10ULL;
+        old_value->it_value.tv_sec = remaining / 1000000000ULL;
+        old_value->it_value.tv_usec = (remaining % 1000000000ULL) / 1000ULL;
     }
 
-    uint64_t interval = new_value->it_interval.tv_sec * 10000000ULL +
-                        new_value->it_interval.tv_usec * 10ULL;
-    uint64_t expires = new_value->it_value.tv_sec * 10000000ULL +
-                       new_value->it_value.tv_usec * 10ULL;
+    uint64_t interval = new_value->it_interval.tv_sec * 1000000000ULL +
+                        new_value->it_interval.tv_usec * 1000ULL;
+    uint64_t expires = new_value->it_value.tv_sec * 1000000000ULL +
+                       new_value->it_value.tv_usec * 1000ULL;
 
     tfd->timer.interval = interval;
     tfd->timer.expires = nanoTime() + expires;

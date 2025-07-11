@@ -70,6 +70,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
     task->ruid = 0;
     task->rgid = 0;
     task->pgid = 0;
+    task->sid = 0;
     task->waitpid = 0;
     task->state = TASK_READY;
     task->current_state = TASK_READY;
@@ -341,6 +342,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     child->ruid = current_task->ruid;
     child->rgid = current_task->rgid;
     child->pgid = current_task->pgid;
+    child->sid = current_task->sid;
 
     child->jiffies = current_task->jiffies;
 
@@ -947,6 +949,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->ruid = current_task->ruid;
     child->rgid = current_task->rgid;
     child->pgid = current_task->pgid;
+    child->sid = current_task->sid;
 
     child->jiffies = current_task->jiffies;
 

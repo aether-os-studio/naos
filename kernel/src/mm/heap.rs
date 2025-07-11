@@ -35,6 +35,7 @@ fn do_malloc(size: usize) -> usize {
 
         guard.insert(vaddr, (vaddr, len, cap));
         drop(guard);
+        unsafe { core::slice::from_raw_parts_mut(vaddr as *mut u8, size) }.fill(0);
         return vaddr;
     } else {
         return 0;

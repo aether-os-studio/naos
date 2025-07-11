@@ -1,0 +1,37 @@
+#include <libs/klibc.h>
+#include <fs/vfs/dev.h>
+#include <fs/fs_syscall.h>
+#include <fs/termios.h>
+
+#define PTY_MAX 1024
+#define PTY_BUFF_SIZE 4096
+
+typedef struct pty_pair
+{
+    struct pty_pair *next;
+
+    spinlock_t lock;
+
+    int masterFds;
+    int slaveFds;
+
+    termios term;
+    struct winsize win;
+    uint8_t *bufferMaster;
+    uint8_t *bufferSlave;
+
+    int ptrMaster;
+    int ptrSlave;
+
+    // controlling stuff
+    int ctrlSession;
+    int ctrlPgid;
+    // above not used by ptyIsAssigned() since they aren't cleared
+
+    int id;
+    bool locked; // by default unlocked (hence 0)
+} pty_pair_t;
+
+void pty_init();
+void ptmx_init();
+void pts_init();
