@@ -74,7 +74,7 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout)
             }
         }
 
-        // sigexit = signals_pending_quick(current_task);
+        sigexit = signals_pending_quick(current_task);
 
         if (ready > 0 || sigexit)
             break;

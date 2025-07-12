@@ -72,7 +72,7 @@ int sys_socket(int domain, int type, int protocol)
     else if (domain == 1)
         return socket_socket(domain, type, protocol);
     else
-        return -EINVAL;
+        return -ENOSYS;
 }
 
 int sys_socketpair(int family, int type, int protocol, int *sv)
@@ -104,7 +104,7 @@ int sys_listen(int sockfd, int backlog)
     return 0;
 }
 
-int sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen)
+int sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen, uint64_t flags)
 {
     if (sockfd >= MAX_FD_NUM || !current_task->fds[sockfd])
         return -EBADF;
@@ -112,7 +112,7 @@ int sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen)
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->accept)
-        return handle->op->accept(sockfd, addr, addrlen);
+        return handle->op->accept(sockfd, addr, addrlen, flags);
     return 0;
 }
 

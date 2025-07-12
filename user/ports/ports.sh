@@ -36,11 +36,12 @@ $APK_CMD -X "$MIRROR/main" -U --initdb add alpine-base bash coreutils grep musl 
 printf "${MIRROR}/main\n${MIRROR}/community\n${MIRROR_ROOT}/edge/testing" > $SYSROOT/../etc/apk/repositories
 
 $APK_CMD add musl-dev gcompat gzip xz make file tar pciutils tzdata nano lua5.1 gcc binutils python3 libdrm-tests curl sysbench evtest
-# $APK_CMD -X ${MIRROR_ROOT}/v3.14/community add seatd weston weston-backend-fbdev weston-shell-desktop weston-xwayland xwayland wayland-libs-cursor libxcursor weston-terminal breeze-cursors breeze-icons font-noto-cjk
+# $APK_CMD -X ${MIRROR_ROOT}/v3.14/community add seatd weston weston-backend-fbdev weston-shell-desktop weston-xwayland xwayland wayland-libs-cursor libxcursor weston-terminal
+# $APK_CMD -X ${MIRROR_ROOT}/v3.14/community add breeze-cursors breeze-icons font-dejavu
 # $APK_CMD add xorg-server xf86-video-fbdev xf86-input-evdev xinit xsetroot twm
 # $APK_CMD add mesa-gl mesa-utils mesa-vulkan-swrast mesa-dri-gallium
 
-ln -sf $SYSROOT/../usr/share/zoneinfo/Asia/Shanghai $SYSROOT/../etc/localtime
+ln -sf /usr/share/zoneinfo/Asia/Shanghai $SYSROOT/../etc/localtime
 '
 
 rm -rf $SYSROOT/../bin/sh
@@ -52,7 +53,10 @@ rm -rf $SYSROOT/../etc/conf.d/*
 cp -r $SCRIPTPATH/etc $SYSROOT/../
 cp -r $SCRIPTPATH/root $SYSROOT/../
 
+mkdir -p $SYSROOT/../root/.cache/fontconfig
 mkdir -p $SYSROOT/../var/cache/fontconfig
+chmod -R 755 $SYSROOT/../root/.cache/fontconfig
+chmod -R 755 $SYSROOT/../var/cache/fontconfig
 
 chmod -R 0700 $SYSROOT/../run
 

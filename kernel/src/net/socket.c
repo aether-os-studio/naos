@@ -258,10 +258,10 @@ int socket_accept_poll(void *file, int events)
 
 int socket_socket(int domain, int type, int protocol)
 {
-    if (!(type & 1))
-    {
-        return -ENOSYS;
-    }
+    // if (!(type & 1))
+    // {
+    //     return -ENOSYS;
+    // }
 
     char buf[128];
     sprintf(buf, "sock%d", sockfsfd_id++);
@@ -377,7 +377,7 @@ int socket_listen(uint64_t fd, int backlog)
     return 0;
 }
 
-int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen)
+int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen, uint64_t flags)
 {
     if (addr && addrlen && *addrlen > 0)
     {
@@ -390,11 +390,11 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen)
     {
         if (sock->connCurr > 0)
             break;
-        // if (node->flags & O_NONBLOCK)
-        // {
-        //     sock->acceptWouldBlock = true;
-        //     return -(EWOULDBLOCK);
-        // }
+        if (current_task->fds[fd]->flags & O_NONBLOCK)
+        {
+            sock->acceptWouldBlock = true;
+            return -(EWOULDBLOCK);
+        }
         else
             sock->acceptWouldBlock = false;
 
@@ -433,7 +433,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen)
     current_task->fds[i] = malloc(sizeof(fd_t));
     current_task->fds[i]->node = acceptFd;
     current_task->fds[i]->offset = 0;
-    current_task->fds[i]->flags = 0;
+    current_task->fds[i]->flags = flags;
 
     return i;
 }
@@ -490,11 +490,8 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrle
     pair->clientFds = 1;
     parent->backlog[parent->connCurr++] = pair;
 
-    // todo!
     while (!pair->established)
     {
-        // wait for parent to accept this thing and have it's own fd on the side
-
         arch_enable_interrupt();
 
         arch_pause();

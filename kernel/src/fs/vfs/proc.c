@@ -98,15 +98,23 @@ void proc_init()
     vfs_node_t self_exe = vfs_node_alloc(procfs_self, "exe");
     self_exe->type = file_none;
     self_exe->mode = 0700;
-    proc_handle_t *handle = malloc(sizeof(proc_handle_t));
-    self_exe->handle = handle;
-    handle->task = NULL;
-    sprintf(handle->name, "self/exe");
+    proc_handle_t *self_exe_handle = malloc(sizeof(proc_handle_t));
+    self_exe->handle = self_exe_handle;
+    self_exe_handle->task = NULL;
+    sprintf(self_exe_handle->name, "self/exe");
+
+    vfs_node_t self_environ = vfs_node_alloc(procfs_self, "environ");
+    self_environ->type = file_none;
+    self_environ->mode = 0700;
+    proc_handle_t *self_environ_handle = malloc(sizeof(proc_handle_t));
+    self_environ->handle = self_environ_handle;
+    self_environ_handle->task = NULL;
+    sprintf(self_environ_handle->name, "self/environ");
 
     cmdline = vfs_node_alloc(procfs_root, "cmdline");
     cmdline->type = file_none;
     cmdline->mode = 0700;
-    handle = malloc(sizeof(proc_handle_t));
+    proc_handle_t *handle = malloc(sizeof(proc_handle_t));
     cmdline->handle = handle;
     handle->task = NULL;
     sprintf(handle->name, "cmdline");

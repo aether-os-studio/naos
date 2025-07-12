@@ -50,7 +50,7 @@ export ROOT_DIR := $(shell pwd)
 KVM ?= 0
 HVF ?= 0
 SMP ?= 2
-MEM ?= 4G
+MEM ?= 8G
 SER ?= 0
 MON ?= 0
 
@@ -62,7 +62,7 @@ QEMUFLAGS += -device virtio-net,netdev=user.0,mac=5A:5A:5A:5A:5A:33
 DEBUG ?= 0
 
 ifeq ($(DEBUG), 1)
-override QEMUFLAGS := $(QEMUFLAGS) -s -S
+override QEMUFLAGS := $(QEMUFLAGS) -s -S -d cpu_reset
 endif
 
 ifeq ($(KVM), 1)

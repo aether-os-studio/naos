@@ -296,10 +296,10 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = sys_listen(arg1, arg2);
         break;
     case SYS_ACCEPT:
-        regs->rax = sys_accept(arg1, (struct sockaddr_un *)arg2, (socklen_t *)arg3);
+        regs->rax = sys_accept(arg1, (struct sockaddr_un *)arg2, (socklen_t *)arg3, 0);
         break;
     case SYS_ACCEPT4:
-        regs->rax = sys_accept(arg1, (struct sockaddr_un *)arg2, (socklen_t *)arg3);
+        regs->rax = sys_accept(arg1, (struct sockaddr_un *)arg2, (socklen_t *)arg3, arg4);
         break;
     case SYS_CONNECT:
         regs->rax = sys_connect(arg1, (const struct sockaddr_un *)arg2, arg3);

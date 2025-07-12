@@ -350,7 +350,7 @@ typedef struct socket_op
     size_t (*getpeername)(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen);
     int (*bind)(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen);
     int (*listen)(uint64_t fd, int backlog);
-    int (*accept)(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen);
+    int (*accept)(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen, uint64_t flags);
     int (*connect)(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen);
     size_t (*sendto)(uint64_t fd, uint8_t *in, size_t limit, int flags, struct sockaddr_un *addr, uint32_t len);
     size_t (*recvfrom)(uint64_t fd, uint8_t *out, size_t limit, int flags, struct sockaddr_un *addr, uint32_t *len);
@@ -376,7 +376,7 @@ int socket_socket(int domain, int type, int protocol);
 int unix_socket_pair(int type, int protocol, int *sv);
 int socket_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen);
 int socket_listen(uint64_t fd, int backlog);
-int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen);
+int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen, uint64_t flags);
 int socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen);
 
 size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, const void *optval, socklen_t *optlen);

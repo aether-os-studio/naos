@@ -32,7 +32,7 @@ ssize_t fb_ioctl(void *data, ssize_t cmd, ssize_t arg)
     {
     case FBIOGET_FSCREENINFO:
         struct fb_fix_screeninfo *fb_fix = (struct fb_fix_screeninfo *)arg;
-        memcpy(fb_fix->id, "BIOS", 5);
+        memcpy(fb_fix->id, "NAOS-FBDEV", 10);
         fb_fix->smem_start = translate_address(get_current_page_dir(false), (uint64_t)framebuffer->address);
         fb_fix->smem_len = framebuffer->pitch * framebuffer->height;
         fb_fix->type = FB_TYPE_PACKED_PIXELS;
@@ -57,10 +57,9 @@ ssize_t fb_ioctl(void *data, ssize_t cmd, ssize_t arg)
         fb_var->red = (struct fb_bitfield){.offset = framebuffer->red_mask_shift,
                                            .length = framebuffer->red_mask_size,
                                            .msb_right = 0};
-        fb_var->green =
-            (struct fb_bitfield){.offset = framebuffer->green_mask_shift,
-                                 .length = framebuffer->green_mask_size,
-                                 .msb_right = 0};
+        fb_var->green = (struct fb_bitfield){.offset = framebuffer->green_mask_shift,
+                                             .length = framebuffer->green_mask_size,
+                                             .msb_right = 0};
         fb_var->blue = (struct fb_bitfield){.offset = framebuffer->blue_mask_shift,
                                             .length = framebuffer->blue_mask_size,
                                             .msb_right = 0};
@@ -100,9 +99,9 @@ void *fb_map(void *data, void *addr, uint64_t len)
 
     uint64_t fb_addr = translate_address(get_current_page_dir(false), (uint64_t)framebuffer->address);
 
-    map_page_range(get_current_page_dir(true), (uint64_t)fb_addr, (uint64_t)fb_addr, framebuffer->width * framebuffer->height * framebuffer->bpp / 8, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+    map_page_range(get_current_page_dir(true), (uint64_t)addr, (uint64_t)fb_addr, framebuffer->width * framebuffer->height * framebuffer->bpp / 8, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
-    return (void *)fb_addr;
+    return addr;
 }
 
 void fbdev_init()

@@ -267,7 +267,6 @@ typedef struct fd
     vfs_node_t node;
     uint64_t offset;
     uint64_t flags;
-    uint64_t bind_mmap_addr;
 } fd_t;
 
 extern vfs_node_t rootdir; // vfs 根目录
