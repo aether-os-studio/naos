@@ -293,13 +293,13 @@ int socket_getsockname(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen
 
 struct msghdr
 {
-    void *msg_name;         /* ptr to socket address structure */
-    int msg_namelen;        /* size of socket address structure */
-    struct iovec *msg_iov;  /* scatter/gather array */
-    size_t msg_iovlen;      /* # elements in msg_iov */
-    void *msg_control;      /* ancillary data */
-    size_t msg_controllen;  /* ancillary data buffer length */
-    unsigned int msg_flags; /* flags on received message */
+    void *msg_name;        /* ptr to socket address structure */
+    int msg_namelen;       /* size of socket address structure */
+    struct iovec *msg_iov; /* scatter/gather array */
+    size_t msg_iovlen;     /* # elements in msg_iov */
+    void *msg_control;     /* ancillary data */
+    size_t msg_controllen; /* ancillary data buffer length */
+    uint32_t msg_flags;    /* flags on received message */
 };
 
 struct cmsghdr

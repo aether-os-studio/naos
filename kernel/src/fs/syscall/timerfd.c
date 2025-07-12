@@ -105,6 +105,37 @@ int timerfd_poll(void *file, size_t events)
     return revents;
 }
 
+ssize_t timerfd_read(void *file, void *addr, size_t offset, size_t size)
+{
+    timerfd_t *tfd = file;
+    uint64_t count = 0;
+
+    uint64_t now = nanoTime();
+
+    if (tfd->timer.expires > 0 && now >= tfd->timer.expires)
+    {
+        if (tfd->timer.interval > 0)
+        {
+            count = (now - tfd->timer.expires) / tfd->timer.interval + 1;
+            tfd->timer.expires += count * tfd->timer.interval;
+        }
+        else
+        {
+            count = 1;
+            tfd->timer.expires = 0;
+        }
+        tfd->count = count;
+    }
+
+    if (size < sizeof(uint64_t))
+        return -EINVAL;
+
+    *(uint64_t *)addr = tfd->count;
+    tfd->count = 0; // 读取后重置计数
+
+    return sizeof(uint64_t);
+}
+
 static int dummy()
 {
     return 0;
@@ -115,7 +146,7 @@ static struct vfs_callback timerfd_callbacks = {
     .unmount = (vfs_unmount_t)dummy,
     .open = (vfs_open_t)dummy,
     .close = (vfs_close_t)sys_timerfd_close,
-    .read = (vfs_read_t)dummy,
+    .read = (vfs_read_t)timerfd_read,
     .write = (vfs_write_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,

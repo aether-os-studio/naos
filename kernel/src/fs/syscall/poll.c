@@ -199,7 +199,7 @@ size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except,
         }
     }
 
-    int toZero = (nfds + 8) / 8;
+    int toZero = (nfds + 7) / 8;
     if (read)
         memset(read, 0, toZero);
     if (write)

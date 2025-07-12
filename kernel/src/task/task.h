@@ -51,7 +51,7 @@ extern uint64_t jiffies;
 
 #define TASK_NAME_MAX 128
 
-#define MAX_FD_NUM 64
+#define MAX_FD_NUM 256
 
 #define current_task arch_get_current()
 

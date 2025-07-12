@@ -229,7 +229,6 @@ size_t unix_socket_accept_sendto(uint64_t fd, uint8_t *in, size_t limit,
 
     arch_disable_interrupt();
 
-    // spinlock already acquired
     memcpy(&pair->clientBuff[pair->clientBuffPos], in, limit);
     pair->clientBuffPos += limit;
 
@@ -649,14 +648,25 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
             int *dest_fds = (int *)CMSG_DATA(cmsg);
             for (int i = 0; i < num_fds; i++)
             {
-                dest_fds[i] = pair->pending_fds[i];
-                if (current_task->fds[dest_fds[i]])
+                int f = -1;
+                for (f = 3; f < MAX_FD_NUM; f++)
                 {
-                    sys_close(dest_fds[i]);
+                    if (!current_task->fds[f])
+                    {
+                        break;
+                    }
                 }
+
+                if (f == -1)
+                {
+                    socket_op_lock = false;
+                    return -EMFILE;
+                }
+
+                dest_fds[i] = f;
+
                 current_task->fds[dest_fds[i]] = malloc(sizeof(fd_t));
                 memcpy(current_task->fds[dest_fds[i]], &pair->pending_files[i], sizeof(fd_t));
-                current_task->fds[dest_fds[i]]->node->refcount++;
             }
 
             memmove(pair->pending_fds, &pair->pending_fds[num_fds],
@@ -700,7 +710,7 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
     if (msg->msg_controllen > 0)
     {
         if (msg->msg_control == NULL ||
-            msg->msg_controllen < CMSG_SPACE(sizeof(int)))
+            msg->msg_controllen < sizeof(struct cmsghdr))
         {
             return -EINVAL;
         }
@@ -727,24 +737,11 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
                     arch_pause();
                 socket_op_lock = true;
 
-                // 扩展描述符数组空间
-                if (pair->pending_fds_count + num_fds > pair->pending_fds_size)
-                {
-                    int new_size = pair->pending_fds_size * 2;
-                    int *new_fds = realloc(pair->pending_fds, new_size * sizeof(int));
-                    if (!new_fds)
-                    {
-                        socket_op_lock = false;
-                        return -ENOMEM;
-                    }
-                    pair->pending_fds = new_fds;
-                    pair->pending_fds_size = new_size;
-                }
-
                 for (int i = 0; i < num_fds; i++)
                 {
                     pair->pending_fds[pair->pending_fds_count] = fds[i];
                     memcpy(&pair->pending_files[pair->pending_fds_count++], current_task->fds[fds[i]], sizeof(fd_t));
+                    current_task->fds[fds[i]]->node->refcount++;
                 }
 
                 socket_op_lock = false;
@@ -799,14 +796,25 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
             int *dest_fds = (int *)CMSG_DATA(cmsg);
             for (int i = 0; i < num_fds; i++)
             {
-                dest_fds[i] = pair->pending_fds[i];
-                if (current_task->fds[dest_fds[i]])
+                int f = -1;
+                for (f = 3; f < MAX_FD_NUM; f++)
                 {
-                    sys_close(dest_fds[i]);
+                    if (!current_task->fds[f])
+                    {
+                        break;
+                    }
                 }
+
+                if (f == -1)
+                {
+                    socket_op_lock = false;
+                    return -EMFILE;
+                }
+
+                dest_fds[i] = f;
+
                 current_task->fds[dest_fds[i]] = malloc(sizeof(fd_t));
                 memcpy(current_task->fds[dest_fds[i]], &pair->pending_files[i], sizeof(fd_t));
-                current_task->fds[dest_fds[i]]->node->refcount++;
             }
 
             memmove(pair->pending_fds, &pair->pending_fds[num_fds],
@@ -845,16 +853,13 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
 
 size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
 {
-    if (msg->msg_name || msg->msg_namelen > 0)
-        return -(ENOSYS);
-
     size_t cnt = 0;
     bool noblock = flags & MSG_DONTWAIT;
 
     if (msg->msg_controllen > 0)
     {
         if (msg->msg_control == NULL ||
-            msg->msg_controllen < CMSG_SPACE(sizeof(int)))
+            msg->msg_controllen < sizeof(struct cmsghdr))
         {
             return -EINVAL;
         }
@@ -880,24 +885,11 @@ size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg, int fl
                     arch_pause();
                 socket_op_lock = true;
 
-                // 扩展描述符数组空间
-                if (pair->pending_fds_count + num_fds > pair->pending_fds_size)
-                {
-                    int new_size = pair->pending_fds_size * 2;
-                    int *new_fds = realloc(pair->pending_fds, new_size * sizeof(int));
-                    if (!new_fds)
-                    {
-                        socket_op_lock = false;
-                        return -ENOMEM;
-                    }
-                    pair->pending_fds = new_fds;
-                    pair->pending_fds_size = new_size;
-                }
-
                 for (int i = 0; i < num_fds; i++)
                 {
                     pair->pending_fds[pair->pending_fds_count] = fds[i];
                     memcpy(&pair->pending_files[pair->pending_fds_count++], current_task->fds[fds[i]], sizeof(fd_t));
+                    current_task->fds[fds[i]]->node->refcount++;
                 }
 
                 socket_op_lock = false;

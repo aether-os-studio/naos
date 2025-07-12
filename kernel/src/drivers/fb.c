@@ -153,6 +153,25 @@ void fbdev_init_sysfs()
     vfs_node_t node = vfs_child_append(graphics, name, NULL);
     node->type = file_dir;
 
+    size_t addr;
+    size_t width;
+    size_t height;
+    size_t bpp;
+    size_t cols;
+    size_t rows;
+
+    os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
+
+    vfs_node_t modes = vfs_child_append(node, "modes", NULL);
+    modes->type = file_none;
+    modes->mode = 0700;
+    sysfs_handle_t *modes_handle = malloc(sizeof(sysfs_handle_t));
+    memset(modes_handle, 0, sizeof(sysfs_handle_t));
+    modes->handle = modes_handle;
+    modes_handle->node = modes;
+    modes_handle->private_data = NULL;
+    sprintf(modes_handle->content, "U:%dx%d-60-%d\n", width, height, bpp);
+
     vfs_node_t subsystem_link = vfs_child_append(node, "subsystem", NULL);
     subsystem_link->type = file_symlink | file_dir;
     subsystem_link->mode = 0644;
