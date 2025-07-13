@@ -51,7 +51,9 @@ int lookup_kallsyms(uint64_t addr, int level)
 
     if (index < kallsyms_num)
     {
-        printk("function:%s() \t(+) %04d address:%#018lx\n", &str[kallsyms_names_index[index]], addr - kallsyms_address[index], addr);
+        char buffer[256];
+        sprintf(buffer, "function:%s() \t(+) %04d address:%#018lx\n", &str[kallsyms_names_index[index]], addr - kallsyms_address[index], addr);
+        serial_printk(buffer, strlen(buffer));
         return 0;
     }
     else
@@ -62,12 +64,12 @@ void traceback(struct pt_regs *regs)
 {
     if (!check_user_overflow(regs->rbp, 0))
     {
-        printk("Kernel traceback: Fault in userland. pid=%ld, rbp=%#018lx\n", current_task->pid, regs->rbp);
+        serial_printk("Kernel traceback: Fault in userland.\n", 37);
         return;
     }
 
     uint64_t *rbp = (uint64_t *)regs->rbp;
-    printk("======== Kernel traceback =======\n");
+    serial_printk("======== Kernel traceback =======\n", 34);
 
     uint64_t ret_addr = regs->rip;
     for (int i = 0; i < 32; ++i)
@@ -78,22 +80,25 @@ void traceback(struct pt_regs *regs)
         if ((uint64_t)(rbp) < get_physical_memory_offset() || ((uint64_t)rbp < regs->rsp))
             break;
 
-        printk("rbp:%#018lx,*rbp:%#018lx\n", rbp, *rbp);
-
         ret_addr = *(rbp + 1);
         rbp = (uint64_t *)(*rbp);
-        printk("\n");
     }
-    printk("======== Kernel traceback end =======\n");
+    serial_printk("======== Kernel traceback end =======\n", 38);
 }
 
 extern int vsprintf(char *buf, const char *fmt, va_list args);
 
 extern bool can_schedule;
 
+spinlock_t dump_lock = {0};
+
 void dump_regs(struct pt_regs *regs, const char *error_str, ...)
 {
     can_schedule = false;
+
+    spin_lock(&dump_lock);
+
+    traceback(regs);
 
     char buf[128];
     va_list args;
@@ -117,7 +122,7 @@ void dump_regs(struct pt_regs *regs, const char *error_str, ...)
     printk("R12 = %#018lx, R13 = %#018lx\n", regs->r12, regs->r13);
     printk("R14 = %#018lx, R15 = %#018lx\n", regs->r14, regs->r15);
 
-    traceback(regs);
+    spin_unlock(&dump_lock);
 }
 
 // 0 #DE 除法错误

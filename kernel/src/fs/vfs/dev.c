@@ -90,7 +90,7 @@ void *devfs_map(devfs_handle_t handle, void *addr, size_t offset, size_t size, s
 {
     if (handle->ioctl)
     {
-        return handle->map(handle->data, addr, size);
+        return handle->map(handle->data, addr, offset, size);
     }
 
     return NULL;
@@ -260,7 +260,7 @@ vfs_node_t regist_dev(const char *name,
                       ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len),
                       ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg),
                       ssize_t (*poll)(void *data, size_t event),
-                      void *(*map)(void *data, void *addr, uint64_t len),
+                      void *(*map)(void *data, void *addr, uint64_t offset, uint64_t len),
                       void *data)
 {
     const char *new_name = name;
@@ -592,8 +592,8 @@ void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code,
 
     struct input_event *event = malloc(sizeof(struct input_event));
     memset(event, 0, sizeof(struct input_event));
-    event->sec = jiffies / 1000;
-    event->usec = (jiffies % 1000) * 1000;
+    event->sec = current_task->jiffies / 1000;
+    event->usec = (current_task->jiffies % 1000) * 1000;
     event->type = type;
     event->code = code;
     event->value = value;

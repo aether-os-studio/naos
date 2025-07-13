@@ -55,7 +55,7 @@ void bitmap_set_range(Bitmap *bitmap, size_t start, size_t end, bool value)
         }
     }
 
-    for (size_t i = end_word * 64; i < end; i++)
+    for (size_t i = end_word * 64; i <= end; i++)
     {
         bitmap_set(bitmap, i, value);
     }

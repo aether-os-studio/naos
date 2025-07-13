@@ -42,6 +42,13 @@ ssize_t procfs_read(void *file, void *addr, size_t offset, size_t size)
         memcpy(addr, executable_cmdline_request.response->cmdline, len);
         return len;
     }
+    else if (!strcmp(handle->name, "dri_name"))
+    {
+        char name[] = "naos_drm";
+        int len = strlen(name);
+        memcpy(addr, name, len);
+        return len;
+    }
 
     return 0;
 }

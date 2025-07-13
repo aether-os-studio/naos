@@ -14,20 +14,30 @@ spinlock_t frame_op_lock = {0};
 FrameAllocator frame_allocator;
 uint64_t memory_size = 0;
 
+uint64_t get_memory_size()
+{
+    uint64_t all_memory_size = 0;
+    struct limine_memmap_response *memory_map = memmap_request.response;
+
+    for (uint64_t i = memory_map->entry_count - 1;; i--)
+    {
+        struct limine_memmap_entry *region = memory_map->entries[i];
+        if (region->type == LIMINE_MEMMAP_USABLE)
+        {
+            all_memory_size = region->base + region->length;
+            break;
+        }
+    }
+    return all_memory_size;
+}
+
 void frame_init()
 {
     hhdm_init();
 
     struct limine_memmap_response *memory_map = memmap_request.response;
 
-    for (uint64_t i = 0; i < memory_map->entry_count; i++)
-    {
-        struct limine_memmap_entry *region = memory_map->entries[i];
-        if (region->base + region->length > memory_size)
-        {
-            memory_size = region->base + region->length;
-        }
-    }
+    memory_size = get_memory_size();
 
     uint64_t last_size = UINT64_MAX;
 
@@ -124,12 +134,11 @@ void free_frames(uint64_t addr, uint64_t size)
     size_t frame_index = addr / DEFAULT_PAGE_SIZE;
 
     bitmap_set_range(&frame_allocator.bitmap, frame_index, frame_index + size, true);
-    frame_allocator.usable_frames++;
+    frame_allocator.usable_frames += size;
 
     spin_unlock(&frame_op_lock);
 }
 
-// 内存映射相关函数保持不变
 bool mem_map_op_lock = false;
 
 void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t size, uint64_t flags)

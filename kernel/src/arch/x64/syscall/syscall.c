@@ -569,6 +569,21 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_SETPRIORITY:
         regs->rax = 0;
         break;
+    case SYS_UTIMES:
+        regs->rax = 0;
+        break;
+    case SYS_UTIMENSAT:
+        regs->rax = 0;
+        break;
+    case SYS_FUTIMESAT:
+        regs->rax = 0;
+        break;
+    case SYS_SCHED_SETSCHEDULER:
+        regs->rax = 0;
+        break;
+    case SYS_SCHED_SETAFFINITY:
+        regs->rax = 0;
+        break;
     case SYS_MEMBARRIER:
         regs->rax = 0;
         break;

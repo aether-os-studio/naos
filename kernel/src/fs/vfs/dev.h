@@ -13,7 +13,7 @@ typedef struct devfs_handle
     ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len);
     ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg);
     ssize_t (*poll)(void *data, size_t event);
-    void *(*map)(void *data, void *addr, uint64_t len);
+    void *(*map)(void *data, void *addr, uint64_t offset, uint64_t len);
     void *data;
 } *devfs_handle_t;
 
@@ -31,7 +31,7 @@ vfs_node_t regist_dev(const char *name,
                       ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len),
                       ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg),
                       ssize_t (*poll)(void *data, size_t event),
-                      void *(*map)(void *data, void *addr, uint64_t len),
+                      void *(*map)(void *data, void *addr, uint64_t offset, uint64_t len),
                       void *data);
 
 void dev_init();

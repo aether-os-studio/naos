@@ -42,8 +42,9 @@ void init_thread(uint64_t arg)
 
     sysfs_init();
 
-    fbdev_init_sysfs();
     drm_init();
+
+    fbdev_init_sysfs();
     drm_init_sysfs();
 
     net_init();

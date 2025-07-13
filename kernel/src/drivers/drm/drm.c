@@ -2,10 +2,13 @@
 #include <drivers/drm/drm.h>
 #include <fs/vfs/dev.h>
 #include <fs/vfs/sys.h>
+#include <fs/vfs/proc.h>
 #include <arch/arch.h>
 #include <mm/mm.h>
 
 #define HZ 60
+
+static uint32_t fb_id_counter = 1;
 
 extern volatile struct limine_framebuffer_request framebuffer_request;
 
@@ -40,6 +43,18 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         res->count_crtcs = 1;
         res->count_connectors = 1;
         res->count_encoders = 1;
+        res->min_width = dev->framebuffer->width;
+        res->min_height = dev->framebuffer->height;
+        res->max_width = dev->framebuffer->width;
+        res->max_height = dev->framebuffer->height;
+        if (res->encoder_id_ptr)
+        {
+            *(uint32_t *)res->encoder_id_ptr = dev->id;
+        }
+        if (res->crtc_id_ptr)
+        {
+            *(uint32_t *)res->crtc_id_ptr = dev->id;
+        }
         return 0;
     }
 
@@ -58,7 +73,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         crtc->gamma_size = 0;
         crtc->mode_valid = 1;
         crtc->mode = mode;
-        crtc->fb_id = dev->id;
+        crtc->fb_id = 1; // 假设只有一个framebuffer
         crtc->x = 0;
         crtc->y = 0;
         return 0;
@@ -101,12 +116,26 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         conn->count_modes = 1;
         conn->count_props = 0;
         conn->count_encoders = 1;
+        struct drm_mode_modeinfo *mode = (struct drm_mode_modeinfo *)(uintptr_t)conn->modes_ptr;
+        if (mode)
+        {
+            mode->hdisplay = dev->framebuffer->width;
+            mode->vdisplay = dev->framebuffer->height;
+            mode->vrefresh = HZ;
+            mode->clock = mode->hdisplay * mode->vdisplay * mode->vrefresh / 1000;
+            mode->type = DRM_MODE_TYPE_PREFERRED;
+        }
+        uint32_t *encoders = (uint32_t *)(uintptr_t)conn->encoders_ptr;
+        if (encoders)
+        {
+            encoders[0] = dev->id;
+        }
         return 0;
     }
     case DRM_IOCTL_MODE_GETFB:
     {
         struct drm_mode_fb_cmd fb;
-        fb.fb_id = dev->id;
+        fb.fb_id = fb_id_counter++;
         fb.width = dev->framebuffer->width,
         fb.height = dev->framebuffer->height,
         fb.pitch = dev->framebuffer->pitch,
@@ -114,6 +143,62 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         fb.depth = 24,
         fb.handle = (uint32_t)translate_address(get_current_page_dir(false), (uint64_t)dev->framebuffer->address);
         memcpy((void *)arg, &fb, sizeof(fb));
+        return 0;
+    }
+    case DRM_IOCTL_MODE_ADDFB:
+    {
+        struct drm_mode_fb_cmd *fb = (struct drm_mode_fb_cmd *)arg;
+
+        if (fb->width > dev->framebuffer->width ||
+            fb->height > dev->framebuffer->height ||
+            fb->bpp != dev->framebuffer->bpp)
+        {
+            return -EINVAL;
+        }
+
+        if (fb->handle != 1)
+        {
+            return -ENOENT;
+        }
+
+        fb->fb_id = fb_id_counter++;
+
+        fb->depth = 24;
+        fb->pitch = dev->framebuffer->pitch;
+
+        return 0;
+    }
+    case DRM_IOCTL_MODE_ADDFB2:
+    {
+        struct drm_mode_fb_cmd2 *fb = (struct drm_mode_fb_cmd2 *)arg;
+
+        if (fb->width > dev->framebuffer->width || fb->height > dev->framebuffer->height)
+        {
+            return -EINVAL;
+        }
+
+        fb->fb_id = fb_id_counter++;
+
+        fb->handles[0] = 1;
+        fb->pitches[0] = dev->framebuffer->pitch;
+        fb->offsets[0] = 0;
+        fb->modifier[0] = 0;
+
+        return 0;
+    }
+
+    case DRM_IOCTL_MODE_SETCRTC:
+    {
+        struct drm_mode_crtc *crtc = (struct drm_mode_crtc *)arg;
+
+        if (crtc->crtc_id != dev->id)
+        {
+            return -ENOENT;
+        }
+
+        // dev->framebuffer->width = crtc->mode.hdisplay;
+        // dev->framebuffer->height = crtc->mode.vdisplay;
+
         return 0;
     }
 
@@ -160,6 +245,15 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
     }
 }
 
+void *drm_map(void *data, void *addr, uint64_t offset, uint64_t len)
+{
+    drm_device_t *dev = (drm_device_t *)data;
+
+    map_page_range(get_current_page_dir(false), (uint64_t)addr, offset, len, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+
+    return addr;
+}
+
 void drm_init()
 {
     size_t addr;
@@ -180,9 +274,9 @@ void drm_init()
     char buf[16];
     sprintf(buf, "dri/card%d", 0);
     drm_device_t *drm = malloc(sizeof(drm_device_t));
-    drm->id = 0 + 1;
+    drm->id = 1;
     drm->framebuffer = fb;
-    regist_dev(buf, NULL, NULL, drm_ioctl, NULL, NULL, drm);
+    regist_dev(buf, NULL, NULL, drm_ioctl, NULL, drm_map, drm);
 }
 
 void drm_init_sysfs()

@@ -4,8 +4,6 @@
 #include <task/signal.h>
 #include <fs/termios.h>
 
-extern uint64_t jiffies;
-
 #define AT_NULL 0
 #define AT_IGNORE 1
 #define AT_EXECFD 2

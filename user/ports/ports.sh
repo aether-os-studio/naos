@@ -35,9 +35,9 @@ $APK_CMD -X "$MIRROR/main" -U --initdb add alpine-base bash coreutils grep musl 
 # Use a fast mirror :)
 printf "${MIRROR}/main\n${MIRROR}/community\n${MIRROR_ROOT}/edge/testing" > $SYSROOT/../etc/apk/repositories
 
-$APK_CMD add musl-dev gcompat gzip xz make file tar pciutils tzdata nano lua5.1 gcc binutils libdrm-tests curl sysbench evtest
-$APK_CMD -X ${MIRROR_ROOT}/v3.14/community add seatd weston weston-backend-fbdev weston-shell-desktop weston-xwayland xwayland wayland-libs-cursor libxcursor weston-terminal
-$APK_CMD -X ${MIRROR_ROOT}/v3.14/community add breeze-cursors breeze-icons font-dejavu
+$APK_CMD add musl-dev gcompat gzip xz make file tar pciutils tzdata nano lua5.1 gcc binutils libdrm-dev libdrm-tests curl sysbench evtest
+# $APK_CMD -X ${MIRROR_ROOT}/v3.14/community add seatd weston weston-backend-fbdev weston-shell-desktop weston-xwayland xwayland wayland-libs-cursor libxcursor weston-terminal
+# $APK_CMD -X ${MIRROR_ROOT}/v3.14/community add breeze-cursors breeze-icons font-dejavu
 # $APK_CMD add xorg-server xf86-video-fbdev xf86-input-evdev xinit xsetroot twm
 # $APK_CMD add mesa-gl mesa-utils mesa-vulkan-swrast mesa-dri-gallium
 
