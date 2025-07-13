@@ -822,7 +822,7 @@ fd_t *vfs_dup(fd_t *fd)
         }
         else if (node->fsid == unix_accept_fsid)
         {
-            unix_socket_pair_t *pair = socket->pair;
+            unix_socket_pair_t *pair = handle->sock;
             pair->serverFds++;
         }
     }

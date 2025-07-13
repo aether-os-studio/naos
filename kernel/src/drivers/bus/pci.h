@@ -72,6 +72,7 @@ typedef struct
 } pci_device_t;
 
 extern pci_device_t *pci_devices[PCI_DEVICE_MAX];
+extern uint32_t pci_device_number;
 
 uint32_t pci_enumerate_capability_list(pci_device_t *pci_dev, uint32_t cap_type);
 

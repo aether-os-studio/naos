@@ -404,14 +404,13 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen, uin
 
     arch_disable_interrupt();
 
-    // now pick the first thing! (sock spinlock already engaged)
     unix_socket_pair_t *pair = sock->backlog[0];
     pair->serverFds++;
     pair->established = true;
     pair->filename = strdup(sock->bindAddr);
 
     vfs_node_t acceptFd = unix_socket_accept_create(pair);
-    sock->backlog[0] = 0; // just in case
+    sock->backlog[0] = NULL;
     memmove(sock->backlog, &sock->backlog[1],
             (sock->connMax - 1) * sizeof(unix_socket_pair_t *));
     sock->connCurr--;

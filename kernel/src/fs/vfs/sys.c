@@ -127,7 +127,7 @@ void sysfs_init()
     pci_devices_root->type = file_dir;
     pci_devices_root->mode = 0644;
 
-    for (uint32_t i = 0; i < device_number; i++)
+    for (uint32_t i = 0; i < pci_device_number; i++)
     {
         pci_device_t *dev = pci_devices[i];
         if (dev == NULL)

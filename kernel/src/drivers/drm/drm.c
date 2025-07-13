@@ -1,8 +1,11 @@
+#include <drivers/bus/pci.h>
 #include <drivers/drm/drm.h>
 #include <fs/vfs/dev.h>
 #include <fs/vfs/sys.h>
 #include <arch/arch.h>
 #include <mm/mm.h>
+
+#define HZ 60
 
 extern volatile struct limine_framebuffer_request framebuffer_request;
 
@@ -33,7 +36,6 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
     case DRM_IOCTL_MODE_GETRESOURCES:
     {
         struct drm_mode_card_res *res = (struct drm_mode_card_res *)arg;
-        // 返回基本显示资源信息
         res->count_fbs = 1;
         res->count_crtcs = 1;
         res->count_connectors = 1;
@@ -41,10 +43,41 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         return 0;
     }
 
+    case DRM_IOCTL_MODE_GETCRTC:
+    {
+        struct drm_mode_crtc *crtc = (struct drm_mode_crtc *)arg;
+
+        struct drm_mode_modeinfo mode = {
+            .clock = dev->framebuffer->width * HZ, // 假设为HZ刷新率
+            .hdisplay = dev->framebuffer->width,
+            .vdisplay = dev->framebuffer->height,
+            .vrefresh = HZ,
+        };
+
+        crtc->crtc_id = dev->id;
+        crtc->gamma_size = 0;
+        crtc->mode_valid = 1;
+        crtc->mode = mode;
+        crtc->fb_id = dev->id;
+        crtc->x = 0;
+        crtc->y = 0;
+        return 0;
+    }
+
+    case DRM_IOCTL_MODE_GETENCODER:
+    {
+        struct drm_mode_get_encoder *enc = (struct drm_mode_get_encoder *)arg;
+        enc->encoder_id = dev->id;
+        enc->encoder_type = DRM_MODE_ENCODER_VIRTUAL;
+        enc->crtc_id = dev->id;
+        enc->possible_crtcs = 1;
+        enc->possible_clones = 0;
+        return 0;
+    }
+
     case DRM_IOCTL_MODE_CREATE_DUMB:
     {
         struct drm_mode_create_dumb *create = (struct drm_mode_create_dumb *)arg;
-        // 创建简单的显示缓冲区
         create->height = dev->framebuffer->height;
         create->width = dev->framebuffer->width;
         create->bpp = dev->framebuffer->bpp;
@@ -84,6 +117,44 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         return 0;
     }
 
+    case DRM_IOCTL_MODE_GETPLANERESOURCES:
+    {
+        struct drm_mode_get_plane_res *res = (struct drm_mode_get_plane_res *)arg;
+        res->plane_id_ptr = 0;
+        res->count_planes = 0;
+        return 0;
+    }
+
+    case DRM_IOCTL_MODE_OBJ_GETPROPERTIES:
+    {
+        struct drm_mode_obj_get_properties *props = (struct drm_mode_obj_get_properties *)arg;
+        props->count_props = 0;
+        props->props_ptr = 0;
+        props->prop_values_ptr = 0;
+        return 0;
+    }
+
+    case DRM_IOCTL_SET_CLIENT_CAP:
+    {
+        struct drm_set_client_cap *cap = (struct drm_set_client_cap *)arg;
+        switch (cap->capability)
+        {
+        case DRM_CLIENT_CAP_ATOMIC:
+            return 0;
+        default:
+            return -EINVAL;
+        }
+    }
+
+    case DRM_IOCTL_SET_MASTER:
+    {
+        return 0;
+    }
+    case DRM_IOCTL_DROP_MASTER:
+    {
+        return 0;
+    }
+
     default:
         return -ENOTTY;
     }
@@ -116,10 +187,63 @@ void drm_init()
 
 void drm_init_sysfs()
 {
+    pci_device_t *pci_device = NULL;
+    for (int i = 0; i < pci_device_number; i++)
+    {
+        if (pci_devices[i]->class_code == 0x030000)
+        {
+            pci_device = pci_devices[i];
+            break;
+        }
+    }
+
     vfs_node_t dev = vfs_open("/sys/dev/char/226:0/device");
     vfs_node_t drm = vfs_child_append(dev, "drm", NULL);
     drm->type = file_dir;
     drm->mode = 0644;
+
+    vfs_node_t dev_uevent = vfs_node_alloc(dev, "uevent");
+    dev_uevent->type = file_none;
+    dev_uevent->mode = 0700;
+    sysfs_handle_t *dev_uevent_handle = malloc(sizeof(sysfs_handle_t));
+    dev_uevent->handle = dev_uevent_handle;
+
+    if (pci_device)
+    {
+        sprintf(dev_uevent_handle->content, "PCI_SLOT_NAME=%04x:%02x:%02x.%u\n", pci_device->segment, pci_device->bus, pci_device->slot, pci_device->func);
+
+        vfs_node_t dev_vendor = vfs_node_alloc(dev, "vendor");
+        dev_vendor->type = file_none;
+        dev_vendor->mode = 0700;
+        sysfs_handle_t *dev_vendor_handle = malloc(sizeof(sysfs_handle_t));
+        sprintf(dev_vendor_handle->content, "0x%04x\n", pci_device->vendor_id);
+        dev_vendor->handle = dev_vendor_handle;
+
+        vfs_node_t dev_subsystem_vendor = vfs_node_alloc(dev, "subsystem_vendor");
+        dev_subsystem_vendor->type = file_none;
+        dev_subsystem_vendor->mode = 0700;
+        sysfs_handle_t *dev_subsystem_vendor_handle = malloc(sizeof(sysfs_handle_t));
+        sprintf(dev_subsystem_vendor_handle->content, "0x%04x\n", pci_device->vendor_id);
+        dev_subsystem_vendor->handle = dev_subsystem_vendor_handle;
+
+        vfs_node_t dev_device = vfs_node_alloc(dev, "device");
+        dev_device->type = file_none;
+        dev_device->mode = 0700;
+        sysfs_handle_t *dev_device_handle = malloc(sizeof(sysfs_handle_t));
+        sprintf(dev_device_handle->content, "0x%04x\n", pci_device->device_id);
+        dev_device->handle = dev_device_handle;
+
+        vfs_node_t dev_subsystem_device = vfs_node_alloc(dev, "subsystem_device");
+        dev_subsystem_device->type = file_none;
+        dev_subsystem_device->mode = 0700;
+        sysfs_handle_t *dev_subsystem_device_handle = malloc(sizeof(sysfs_handle_t));
+        sprintf(dev_subsystem_device_handle->content, "0x%04x\n", pci_device->device_id);
+        dev_subsystem_device->handle = dev_subsystem_device_handle;
+    }
+    else
+    {
+        sprintf(dev_uevent_handle->content, "PCI_SLOT_NAME=%04x:%02x:%02x.%u", 0, 0, 0, 0);
+    }
 
     vfs_node_t version = vfs_node_alloc(drm, "version");
     version->type = file_none;
@@ -204,8 +328,13 @@ void drm_init_sysfs()
     modes->handle = handle;
 
     vfs_node_t device_subsystem = vfs_node_alloc(dev, "subsystem");
+    device_subsystem->type = file_dir | file_symlink;
+    device_subsystem->mode = 0700;
+    device_subsystem->linkname = strdup("/sys/dev/char/226:0/device/pci");
+
+    vfs_node_t device_pci = vfs_node_alloc(dev, "pci");
     device_subsystem->type = file_dir;
-    device_subsystem->mode = 0644;
+    device_subsystem->mode = 0700;
 
     vfs_node_t pci_dir = vfs_node_alloc(device_subsystem, "pci");
     pci_dir->type = file_dir;

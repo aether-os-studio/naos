@@ -284,7 +284,7 @@ struct
     {0x000000, (char *)NULL}};
 
 pci_device_t *pci_devices[PCI_DEVICE_MAX];
-uint32_t device_number = 0;
+uint32_t pci_device_number = 0;
 
 const char *pci_classname(uint32_t classcode)
 {
@@ -305,7 +305,7 @@ const char *pci_classname(uint32_t classcode)
 void pci_find_vid(pci_device_t **result, uint32_t *n, uint32_t vid)
 {
     int idx = 0;
-    for (uint32_t i = 0; i < device_number; i++)
+    for (uint32_t i = 0; i < pci_device_number; i++)
     {
         if (pci_devices[i]->vendor_id == vid)
         {
@@ -320,7 +320,7 @@ void pci_find_vid(pci_device_t **result, uint32_t *n, uint32_t vid)
 void pci_find_class(pci_device_t **result, uint32_t *n, uint32_t class_code)
 {
     int idx = 0;
-    for (uint32_t i = 0; i < device_number; i++)
+    for (uint32_t i = 0; i < pci_device_number; i++)
     {
         if (pci_devices[i]->class_code == class_code)
         {
@@ -468,8 +468,8 @@ void pci_scan_function(uint16_t segment_group, uint8_t bus, uint8_t device, uint
             }
         }
 
-        pci_devices[device_number] = pci_device;
-        device_number++;
+        pci_devices[pci_device_number] = pci_device;
+        pci_device_number++;
 
         break;
     }
@@ -627,8 +627,8 @@ void pci_scan_device_legacy(uint32_t bus, uint32_t equipment, uint32_t f)
         }
     }
 
-    pci_devices[device_number] = device;
-    device_number++;
+    pci_devices[pci_device_number] = device;
+    pci_device_number++;
 }
 
 static void pci_config0(uint32_t bus, uint32_t f, uint32_t equipment, uint32_t adder)
