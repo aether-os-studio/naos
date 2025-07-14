@@ -1063,6 +1063,7 @@ int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *
         struct futex_wait *wait = malloc(sizeof(struct futex_wait));
         wait->uaddr = uaddr;
         wait->task = current_task;
+        wait->next = NULL;
         struct futex_wait *curr = &futex_wait_list;
         while (curr && curr->next)
             curr = curr->next;

@@ -418,8 +418,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen, uin
 
     vfs_node_t acceptFd = unix_socket_accept_create(pair);
     sock->backlog[0] = NULL;
-    memmove(sock->backlog, &sock->backlog[1],
-            (sock->connMax - 1) * sizeof(unix_socket_pair_t *));
+    memmove(sock->backlog, &sock->backlog[1], (sock->connMax - 1) * sizeof(unix_socket_pair_t *));
     sock->connCurr--;
 
     uint64_t i = 0;

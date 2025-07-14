@@ -590,15 +590,13 @@ void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code,
     if (!item || item->timesOpened == 0)
         return;
 
-    struct input_event *event = malloc(sizeof(struct input_event));
-    memset(event, 0, sizeof(struct input_event));
-    event->sec = current_task->jiffies / 1000;
-    event->usec = (current_task->jiffies % 1000) * 1000;
-    event->type = type;
-    event->code = code;
-    event->value = value;
+    struct input_event event;
+    memset(&event, 0, sizeof(struct input_event));
+    event.sec = current_task->jiffies / 1000;
+    event.usec = (current_task->jiffies % 1000) * 1000;
+    event.type = type;
+    event.code = code;
+    event.value = value;
 
-    circular_int_write(&item->device_events, (const void *)event, sizeof(struct input_event));
-
-    free(event);
+    circular_int_write(&item->device_events, (const void *)&event, sizeof(struct input_event));
 }

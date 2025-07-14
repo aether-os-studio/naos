@@ -11,6 +11,7 @@
 
 #include <libs/endian.h>
 
+typedef long ssize_t;
 typedef int clockid_t;
 typedef void *timer_t;
 
@@ -29,7 +30,8 @@ typedef void *timer_t;
 #define MAX(x, y) ((x > y) ? (x) : (y))
 #define MIN(x, y) ((x < y) ? (x) : (y))
 
-#define PADDING_UP(a, align) (typeof(a))((((uint64_t)(a)) + ((uint64_t)(align)) - 1) & ~(((uint64_t)(align)) - 1))
+#define PADDING_DOWN(size, to) ((size_t)(size) / (size_t)(to) * (size_t)(to))
+#define PADDING_UP(size, to) PADDING_DOWN((size_t)(size) + (size_t)(to) - (size_t)1, to)
 
 #define container_of(ptr, type, member) ({                      \
         uint64_t __mptr = ((uint64_t)(ptr));    \

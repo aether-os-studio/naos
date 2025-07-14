@@ -4,6 +4,7 @@
 #include <mm/bitmap.h>
 #include <mm/hhdm.h>
 #include <mm/page_table.h>
+#include <mm/heap.h>
 #include <arch/arch.h>
 
 #define MAX_USABLE_REGIONS_COUNT 128
@@ -36,12 +37,7 @@ uint64_t alloc_frames(size_t count);
 void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t size, uint64_t flags);
 void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size);
 
-extern void heap_init();
-
-void *malloc(size_t size);
-void *calloc(size_t num, size_t size);
-void *realloc(void *ptr, size_t size);
-void free(void *ptr);
+void heap_init();
 
 static inline void *alloc_frames_bytes(uint64_t bytes)
 {

@@ -114,8 +114,6 @@ static inline char *pathtok(char **sp)
 
 #define max(x, y) ((x > y) ? (x) : (y))
 
-typedef int64_t ssize_t;
-
 // * 所有时间请使用 GMT 时间 *
 
 // 读写时请 padding 到 PAGE_SIZE 的整数倍
