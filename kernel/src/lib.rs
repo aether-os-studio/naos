@@ -1,5 +1,6 @@
 #![no_std]
 #![feature(allocator_api)]
+#![feature(ip_from)]
 #![feature(vec_into_raw_parts)]
 #![allow(static_mut_refs)]
 #![allow(unsafe_op_in_unsafe_fn)]

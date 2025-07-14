@@ -454,6 +454,16 @@ uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags)
         current_task->fds[newfd]->flags |= O_CLOEXEC;
     }
 
+    switch (new_node->node->type)
+    {
+    case file_socket:
+        socket_on_dup_file(oldfd, newfd);
+        break;
+
+    default:
+        break;
+    }
+
     return newfd;
 }
 

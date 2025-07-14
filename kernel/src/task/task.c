@@ -141,6 +141,9 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
 
     socket_on_new_task(task->pid);
 
+    task->child_vfork_done = false;
+    task->is_vfork = false;
+
     can_schedule = true;
 
     return task;
@@ -400,7 +403,34 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
 
     socket_on_new_task(child->pid);
 
+    child->child_vfork_done = false;
+
+    if (vfork)
+    {
+        child->is_vfork = true;
+    }
+    else
+    {
+        child->is_vfork = false;
+    }
+
     can_schedule = true;
+
+    if (vfork)
+    {
+        current_task->child_vfork_done = false;
+
+        arch_enable_interrupt();
+
+        while (!current_task->child_vfork_done)
+        {
+            arch_pause();
+        }
+
+        arch_disable_interrupt();
+
+        current_task->child_vfork_done = false;
+    }
 
     return child->pid;
 }
@@ -458,13 +488,11 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     }
     new_envp[envp_count] = NULL;
 
-#if defined(__x86_64__)
     if (current_task->arch_context->mm->page_table_addr == (uint64_t)virt_to_phys(get_kernel_page_dir()))
     {
         current_task->arch_context->mm = clone_page_table(current_task->arch_context->mm, CLONE_VM);
         asm volatile("movq %0, %%cr3" ::"r"(current_task->arch_context->mm->page_table_addr));
     }
-#endif
 
     uint8_t *buffer = (uint8_t *)EHDR_START_ADDR;
     map_page_range(get_current_page_dir(true), EHDR_START_ADDR, 0, buf_len, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
@@ -667,6 +695,12 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     uint64_t stack = push_infos(current_task, USER_STACK_END, (char **)new_argv, (char **)new_envp, e_entry, (uint64_t)(load_start + ehdr->e_phoff), ehdr->e_phnum, interpreter_entry ? INTERPRETER_BASE_ADDR : load_start);
 
+    if (current_task->is_vfork && current_task->ppid != current_task->pid && tasks[current_task->ppid] && !tasks[current_task->ppid]->child_vfork_done)
+    {
+        tasks[current_task->ppid]->child_vfork_done = true;
+        current_task->is_vfork = false;
+    }
+
     char cmdline[DEFAULT_PAGE_SIZE];
     memset(cmdline, 0, sizeof(cmdline));
     char *cmdline_ptr = cmdline;
@@ -732,11 +766,7 @@ int task_block(task_t *task, task_state_t state, int timeout_ms)
     if (current_task == task)
     {
         arch_yield();
-
-        arch_pause();
     }
-
-    arch_disable_interrupt();
 
     return task->status;
 }
@@ -782,6 +812,12 @@ void task_exit_inner(task_t *task, int64_t code)
         free(task->cmdline);
 
     socket_on_exit_task(task->pid);
+
+    if (task->is_vfork && task->ppid != task->pid && tasks[task->ppid] && !tasks[task->ppid]->child_vfork_done)
+    {
+        tasks[task->ppid]->child_vfork_done = true;
+        task->is_vfork = false;
+    }
 
     task->current_state = TASK_DIED;
     task->state = TASK_DIED;
@@ -1026,9 +1062,34 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
 
     socket_on_new_task(child->pid);
 
+    child->child_vfork_done = false;
+
+    if (flags & CLONE_VFORK)
+    {
+        child->is_vfork = true;
+    }
+    else
+    {
+        child->is_vfork = false;
+    }
+
     can_schedule = true;
 
-    arch_enable_interrupt();
+    if (flags & CLONE_VFORK)
+    {
+        current_task->child_vfork_done = false;
+
+        arch_enable_interrupt();
+
+        while (!current_task->child_vfork_done)
+        {
+            arch_pause();
+        }
+
+        arch_disable_interrupt();
+
+        current_task->child_vfork_done = false;
+    }
 
     return child->pid;
 }

@@ -16,7 +16,7 @@ use virtio_drivers::{
 
 use crate::{
     drivers::virtio::hal::HalImpl,
-    net::SOCKETS_SET,
+    net::net_core::SOCKETS_SET,
     ref_to_mut,
     rust::bindings::bindings::{
         DEFAULT_PAGE_SIZE, arch_enable_interrupt, mktime, task_create, task_exit, time_read, tm,

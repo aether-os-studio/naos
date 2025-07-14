@@ -46,6 +46,13 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
         return (uint64_t)-EINVAL;
     }
 
+    current_task->mmap_start += (aligned_len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
+    if (current_task->mmap_start > USER_MMAP_END)
+    {
+        current_task->mmap_start -= (aligned_len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
+        return (uint64_t)-ENOMEM;
+    }
+
     if (fd < MAX_FD_NUM && current_task->fds[fd])
     {
         vfs_node_t node = current_task->fds[fd]->node;
@@ -53,13 +60,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
     }
     else
     {
-        current_task->mmap_start += (aligned_len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
-        if (current_task->mmap_start > USER_MMAP_END)
-        {
-            current_task->mmap_start -= (aligned_len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
-            return (uint64_t)-ENOMEM;
-        }
-
         uint64_t pt_flags = PT_FLAG_U | PT_FLAG_W;
 
         if (prot & PROT_READ)
@@ -69,9 +69,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
         if (prot & PROT_EXEC)
             pt_flags |= PT_FLAG_X;
 
-        // if (flags & MAP_FIXED && addr < USER_BRK_START)
-        //     map_page_range(get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)), addr & (~(DEFAULT_PAGE_SIZE - 1)), (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
-        // else
         map_page_range(get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)), 0, (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
 
         memset((void *)addr, 0, len);
@@ -123,13 +120,6 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uin
 
 void *general_map(vfs_read_t read_callback, void *file, uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset)
 {
-    current_task->mmap_start += (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
-    if (current_task->mmap_start > USER_MMAP_END)
-    {
-        current_task->mmap_start -= (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
-        return (void *)-ENOMEM;
-    }
-
     uint64_t pt_flags = PT_FLAG_U | PT_FLAG_W;
 
     if (prot & PROT_READ)

@@ -166,6 +166,8 @@ typedef struct task
     int_timer_internal_t itimer_real;
     kernel_timer_t *timers[MAX_TIMERS_NUM];
     struct rlimit rlim[16];
+    bool child_vfork_done;
+    bool is_vfork;
 } task_t;
 
 void sched_update_itimer();

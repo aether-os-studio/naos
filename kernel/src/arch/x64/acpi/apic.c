@@ -226,7 +226,7 @@ void ap_entry(struct limine_mp_info *cpu)
 {
     close_interrupt;
 
-    uint64_t cr3 = (uint64_t)virt_to_phys(get_current_page_dir(false));
+    uint64_t cr3 = (uint64_t)virt_to_phys(get_kernel_page_dir());
     asm volatile("movq %0, %%cr3" ::"r"(cr3) : "memory");
 
     sse_init();

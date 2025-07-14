@@ -77,6 +77,7 @@ vfs_node_t unix_socket_accept_create(unix_socket_pair_t *dir)
 unix_socket_pair_t *unix_socket_allocate_pair()
 {
     unix_socket_pair_t *pair = calloc(sizeof(unix_socket_pair_t), 1);
+    pair->established = false;
     pair->clientBuffSize = BUFFER_SIZE;
     pair->serverBuffSize = BUFFER_SIZE;
     pair->serverBuff = malloc(pair->serverBuffSize);
@@ -85,6 +86,9 @@ unix_socket_pair_t *unix_socket_allocate_pair()
     pair->pending_files = malloc(4 * sizeof(fd_t));
     pair->pending_fds_size = 4;
     pair->pending_fds_count = 0;
+    pair->serverFds = 0;
+    pair->clientFds = 0;
+    pair->waiting_task = NULL;
     return pair;
 }
 
@@ -173,7 +177,6 @@ size_t unix_socket_accept_recv_from(uint64_t fd, uint8_t *out, size_t limit,
     }
     socket_op_lock = true;
 
-    // spinlock already acquired
     size_t toCopy = MIN(limit, pair->serverBuffPos);
     memcpy(out, pair->serverBuff, toCopy);
     memmove(pair->serverBuff, &pair->serverBuff[toCopy],
@@ -407,6 +410,10 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen, uin
     unix_socket_pair_t *pair = sock->backlog[0];
     pair->serverFds++;
     pair->established = true;
+    if (pair->waiting_task)
+    {
+        task_unblock(pair->waiting_task, EOK);
+    }
     pair->filename = strdup(sock->bindAddr);
 
     vfs_node_t acceptFd = unix_socket_accept_create(pair);
@@ -485,7 +492,6 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrle
 
     unix_socket_pair_t *pair = unix_socket_allocate_pair();
     sock->pair = pair;
-    parent->pair = pair;
     pair->clientFds = 1;
     parent->backlog[parent->connCurr++] = pair;
 
@@ -497,6 +503,8 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrle
     }
 
     arch_disable_interrupt();
+
+    parent->pair = pair;
 
     sock->options.peercred.pid = current_task->pid;
     sock->options.peercred.uid = current_task->uid;
@@ -547,7 +555,6 @@ size_t unix_socket_recv_from(uint64_t fd, uint8_t *out, size_t limit, int flags,
             break;
     }
 
-    // spinlock already acquired
     size_t toCopy = MIN(limit, pair->clientBuffPos);
     memcpy(out, pair->clientBuff, toCopy);
     memmove(pair->clientBuff, &pair->clientBuff[toCopy],
@@ -604,7 +611,6 @@ size_t unix_socket_send_to(uint64_t fd, uint8_t *in, size_t limit, int flags,
             break;
     }
 
-    // spinlock already acquired
     memcpy(&pair->serverBuff[pair->serverBuffPos], in, limit);
     pair->serverBuffPos += limit;
 

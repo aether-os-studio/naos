@@ -38,14 +38,14 @@ void init_thread(uint64_t arg)
     usb_init();
 
     partition_init();
+
     fbdev_init();
+    // drm_init();
 
     sysfs_init();
 
-    drm_init();
-
     fbdev_init_sysfs();
-    drm_init_sysfs();
+    // drm_init_sysfs();
 
     net_init();
 

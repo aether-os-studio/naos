@@ -35,6 +35,8 @@ void kmain(void)
 
     heap_init();
 
+    page_table_init();
+
     printk("Next Aether-OS starting...\n");
 
     arch_early_init();

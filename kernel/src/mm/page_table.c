@@ -1,5 +1,6 @@
 #include <arch/arch.h>
 #include <mm/mm.h>
+#include <task/task.h>
 
 uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr)
 {
@@ -117,4 +118,84 @@ uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr)
     }
 
     return 0;
+}
+
+static page_table_t *copy_page_table_recursive(page_table_t *source_table, int level, bool all_copy, bool kernel_space)
+{
+    if (source_table == NULL)
+        return NULL;
+    if (level == 0)
+    {
+        if (kernel_space)
+        {
+            return source_table;
+        }
+
+        uint64_t frame = alloc_frames(1);
+        page_table_t *new_page_table = (page_table_t *)phys_to_virt(frame);
+        fast_memcpy(new_page_table, phys_to_virt(source_table)->entries, DEFAULT_PAGE_SIZE);
+        return new_page_table;
+    }
+
+    uint64_t phy_frame = alloc_frames(1);
+    page_table_t *new_table = (page_table_t *)phys_to_virt(phy_frame);
+    for (uint64_t i = 0; i < (all_copy ? 512 : (level == ARCH_MAX_PT_LEVEL ? 256 : 512)); i++)
+    {
+        if (ARCH_PT_IS_LARGE(phys_to_virt(source_table)->entries[i].value))
+        {
+            new_table->entries[i].value = phys_to_virt(source_table)->entries[i].value;
+            continue;
+        }
+
+        page_table_t *source_page_table_next = (page_table_t *)(phys_to_virt(source_table)->entries[i].value & 0x00007fffffff000);
+        page_table_t *new_page_table = copy_page_table_recursive(source_page_table_next, level - 1, all_copy, level != ARCH_MAX_PT_LEVEL ? kernel_space : i >= 256);
+        new_table->entries[i].value = (uint64_t)virt_to_phys((uint64_t)new_page_table) | (phys_to_virt(source_table)->entries[i].value & 0xFFFF000000000FFF);
+    }
+    return new_table;
+}
+
+static void free_page_table_recursive(page_table_t *table, int level)
+{
+    if (table == phys_to_virt(NULL))
+        return;
+    if (level == 0)
+    {
+        free_frames((uint64_t)virt_to_phys((uint64_t)table), 1);
+        return;
+    }
+
+    for (int i = 0; i < (level == ARCH_MAX_PT_LEVEL ? 256 : 512); i++)
+    {
+        page_table_t *page_table_next = (page_table_t *)phys_to_virt(table->entries[i].value & 0x00007fffffff000);
+        free_page_table_recursive(page_table_next, level - 1);
+    }
+    free_frames((uint64_t)virt_to_phys((uint64_t)table), 1);
+}
+
+task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags)
+{
+    task_mm_info_t *new_mm = (task_mm_info_t *)malloc(sizeof(task_mm_info_t));
+    memset(new_mm, 0, sizeof(task_mm_info_t));
+    new_mm->page_table_addr = virt_to_phys((uint64_t)copy_page_table_recursive((page_table_t *)old->page_table_addr, ARCH_MAX_PT_LEVEL, !!(clone_flags & CLONE_VM), false));
+#if defined(__x86_64__)
+    memcpy((uint64_t *)phys_to_virt(new_mm->page_table_addr) + 256, (uint64_t *)phys_to_virt(old->page_table_addr) + 256, DEFAULT_PAGE_SIZE / 2);
+#endif
+    new_mm->ref_count++;
+    return new_mm;
+}
+
+void free_page_table(task_mm_info_t *directory)
+{
+    if (directory->ref_count == 1)
+    {
+        free_page_table_recursive((page_table_t *)phys_to_virt(directory->page_table_addr), ARCH_MAX_PT_LEVEL);
+    }
+    else
+    {
+        directory->ref_count--;
+    }
+}
+
+void page_table_init()
+{
 }

@@ -88,6 +88,8 @@ typedef struct unix_socket_pair
     fd_t *pending_files;
     int pending_fds_count;
     int pending_fds_size;
+
+    task_t *waiting_task;
 } unix_socket_pair_t;
 
 #define MAX_CONNECTIONS 16
