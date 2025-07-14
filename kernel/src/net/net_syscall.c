@@ -4,6 +4,7 @@
 #include <task/task.h>
 #include <fs/vfs/vfs.h>
 #include <drivers/kernel_logger.h>
+#include <net/netlink.h>
 
 uint64_t sys_shutdown(uint64_t fd, uint64_t how)
 {
@@ -31,9 +32,17 @@ int sys_getsockname(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen)
     fd_t *node = current_task->fds[sockfd];
 
     socket_handle_t *handle = node->node->handle;
-    socket_t *socket = handle->sock;
-    strncpy(addr->sun_path, socket->bindAddr, SOCKET_NAME_LEN);
-    *addrlen = strnlen(socket->bindAddr, SOCKET_NAME_LEN);
+    if (handle->op == &socket_ops || handle->op == &accept_ops)
+    {
+        socket_t *socket = handle->sock;
+        strncpy(addr->sun_path, socket->bindAddr, SOCKET_NAME_LEN);
+        *addrlen = strnlen(socket->bindAddr, SOCKET_NAME_LEN);
+    }
+    else if (handle->op == &netlink_ops)
+    {
+        struct netlink_sock *socket = handle->sock;
+        memcpy(addr, socket->bind_addr, sizeof(struct sockaddr_nl));
+    }
     return 0;
 }
 
@@ -71,6 +80,8 @@ int sys_socket(int domain, int type, int protocol)
         return net_socket(domain, type, protocol);
     else if (domain == 1)
         return socket_socket(domain, type, protocol);
+    else if (domain == 16)
+        return netlink_socket(domain, type, protocol);
     else
         return -ENOSYS;
 }

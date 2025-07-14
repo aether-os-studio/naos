@@ -136,6 +136,7 @@ int vfs_mkdir(const char *name)
             current = vfs_node_alloc(father, buf);
             current->type = file_dir;
             callbackof(father, mkdir)(father->handle, buf, current);
+            do_update(current);
         }
         else
         {
@@ -564,9 +565,11 @@ int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize)
     if (node->linkname == NULL)
     {
         char *fullpath = vfs_get_fullpath(node);
-        strncpy(buf, fullpath, bufsize);
+        int len = strlen(fullpath);
+        len = (len > bufsize) ? bufsize : len;
+        memcpy(buf, fullpath, len);
         free(fullpath);
-        return 0;
+        return len;
     }
 
     ssize_t copy_len = 0;

@@ -151,6 +151,7 @@ void fbdev_init_sysfs()
     sprintf(name, "fb%d", 0);
     vfs_node_t node = vfs_child_append(graphics, name, NULL);
     node->type = file_dir;
+    node->linkname = strdup(name);
 
     size_t addr;
     size_t width;

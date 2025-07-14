@@ -63,7 +63,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         struct drm_mode_crtc *crtc = (struct drm_mode_crtc *)arg;
 
         struct drm_mode_modeinfo mode = {
-            .clock = dev->framebuffer->width * HZ, // 假设为HZ刷新率
+            .clock = dev->framebuffer->width * HZ,
             .hdisplay = dev->framebuffer->width,
             .vdisplay = dev->framebuffer->height,
             .vrefresh = HZ,
@@ -72,8 +72,8 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         crtc->crtc_id = dev->id;
         crtc->gamma_size = 0;
         crtc->mode_valid = 1;
-        crtc->mode = mode;
-        crtc->fb_id = 1; // 假设只有一个framebuffer
+        memcpy(&crtc->mode, &mode, sizeof(struct drm_mode_modeinfo));
+        crtc->fb_id = 1;
         crtc->x = 0;
         crtc->y = 0;
         return 0;
@@ -96,8 +96,8 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         create->height = dev->framebuffer->height;
         create->width = dev->framebuffer->width;
         create->bpp = dev->framebuffer->bpp;
-        create->size = create->height * create->width * 4;
         create->pitch = dev->framebuffer->pitch;
+        create->size = create->pitch * create->height;
         create->handle = 1;
         return 0;
     }
@@ -109,9 +109,15 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         return 0;
     }
 
+    case DRM_IOCTL_MODE_DESTROY_DUMB:
+    {
+        return 0;
+    }
+
     case DRM_IOCTL_MODE_GETCONNECTOR:
     {
         struct drm_mode_get_connector *conn = (struct drm_mode_get_connector *)arg;
+        conn->connector_id = 1;
         conn->connection = DRM_MODE_CONNECTOR_VGA;
         conn->count_modes = 1;
         conn->count_props = 0;
@@ -119,6 +125,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         struct drm_mode_modeinfo *mode = (struct drm_mode_modeinfo *)(uintptr_t)conn->modes_ptr;
         if (mode)
         {
+            sprintf(mode->name, "%dx%d", dev->framebuffer->width, dev->framebuffer->height);
             mode->hdisplay = dev->framebuffer->width;
             mode->vdisplay = dev->framebuffer->height;
             mode->vrefresh = HZ;
@@ -140,7 +147,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         fb.height = dev->framebuffer->height,
         fb.pitch = dev->framebuffer->pitch,
         fb.bpp = dev->framebuffer->bpp,
-        fb.depth = 24,
+        fb.depth = 32,
         fb.handle = (uint32_t)translate_address(get_current_page_dir(false), (uint64_t)dev->framebuffer->address);
         memcpy((void *)arg, &fb, sizeof(fb));
         return 0;
@@ -163,7 +170,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
 
         fb->fb_id = fb_id_counter++;
 
-        fb->depth = 24;
+        fb->depth = 32;
         fb->pitch = dev->framebuffer->pitch;
 
         return 0;
@@ -226,6 +233,8 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         {
         case DRM_CLIENT_CAP_ATOMIC:
             return 0;
+        case DRM_CLIENT_CAP_UNIVERSAL_PLANES:
+            return 0;
         default:
             return -EINVAL;
         }
@@ -236,6 +245,20 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         return 0;
     }
     case DRM_IOCTL_DROP_MASTER:
+    {
+        return 0;
+    }
+
+    case DRM_IOCTL_MODE_GETGAMMA:
+    {
+        return 0;
+    }
+    case DRM_IOCTL_MODE_SETGAMMA:
+    {
+        return 0;
+    }
+
+    case DRM_IOCTL_MODE_DIRTYFB:
     {
         return 0;
     }

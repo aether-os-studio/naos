@@ -63,13 +63,20 @@ int memfd_stat(void *file, vfs_node_t node)
 void memfd_resize(void *current, uint64_t size)
 {
     struct memfd_ctx *ctx = current;
-    ctx->data = realloc(ctx->data, size);
-    ctx->size = size;
+    if (size > ctx->size)
+    {
+        ctx->data = realloc(ctx->data, size);
+        ctx->size = size;
+    }
 }
 
 void *memfd_map(void *file, void *addr, size_t offset, size_t size, size_t prot, size_t flags)
 {
-    return general_map((vfs_read_t)memfd_read, file, (uint64_t)addr, size, prot, flags, offset);
+    struct memfd_ctx *ctx = file;
+
+    map_page_range(get_current_page_dir(true), (uint64_t)addr, translate_address(get_current_page_dir(false), (uint64_t)ctx->data), size, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+
+    return addr;
 }
 
 static int dummy()
@@ -106,9 +113,9 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags)
     struct memfd_ctx *ctx = malloc(sizeof(struct memfd_ctx));
     strncpy(ctx->name, name, 63);
     ctx->name[63] = '\0';
-    ctx->size = 4096;
+    ctx->size = 256 * 1024;
     ctx->len = 0;
-    ctx->data = malloc(ctx->size);
+    ctx->data = aligned_alloc(DEFAULT_PAGE_SIZE, ctx->size);
     ctx->flags = flags;
 
     int fd = -1;

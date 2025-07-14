@@ -5,6 +5,7 @@
 #include <fs/fs_syscall.h>
 #include <fs/vfs/vfs.h>
 #include <task/task.h>
+#include <net/netlink.h>
 
 bool socket_op_lock = false;
 
@@ -1374,4 +1375,6 @@ void socketfs_init()
     sockfs_root->type = file_dir;
     sockfs_root->mode = 0644;
     memset(&first_unix_socket, 0, sizeof(socket_handle_t));
+
+    netlink_init();
 }

@@ -570,6 +570,62 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
         current_task->fds[fd]->flags |= arg & valid_flags;
         spin_unlock(&fcntl_lock);
         return 0;
+    case F_SETLKW:
+    case F_SETLK:
+    {
+        struct flock lock;
+        if (check_user_overflow(arg, sizeof(struct flock)))
+        {
+            spin_unlock(&fcntl_lock);
+            return -EFAULT;
+        }
+        memcpy(&lock, (void *)arg, sizeof(struct flock));
+
+        vfs_node_t node = current_task->fds[fd]->node;
+        struct flock *file_lock = &node->lock;
+
+        if (lock.l_type != F_RDLCK && lock.l_type != F_WRLCK && lock.l_type != F_UNLCK)
+        {
+            spin_unlock(&fcntl_lock);
+            return -EINVAL;
+        }
+
+        if (lock.l_type == F_UNLCK)
+        {
+            if (file_lock->l_pid != current_task->pid)
+            {
+                spin_unlock(&fcntl_lock);
+                return -EACCES;
+            }
+            file_lock->l_type = F_UNLCK;
+            file_lock->l_pid = 0;
+            spin_unlock(&fcntl_lock);
+            return 0;
+        }
+
+        while (file_lock->l_type != F_UNLCK &&
+               (file_lock->l_pid != current_task->pid ||
+                lock.l_type == F_WRLCK))
+        {
+            if (command == F_SETLK)
+            {
+                spin_unlock(&fcntl_lock);
+                return -EAGAIN;
+            }
+
+            while (file_lock->lock)
+            {
+                arch_enable_interrupt();
+                arch_pause();
+            }
+            arch_disable_interrupt();
+        }
+
+        file_lock->l_type = lock.l_type;
+        file_lock->l_pid = current_task->pid;
+        spin_unlock(&fcntl_lock);
+        return 0;
+    }
     case F_GET_SEALS:
     case F_ADD_SEALS:
         spin_unlock(&fcntl_lock);
@@ -1033,6 +1089,18 @@ uint64_t sys_flock(int fd, uint64_t operation)
         lock->lock = 1;
         break;
     }
+
+    return 0;
+}
+
+uint64_t sys_fadvise64(int fd, uint64_t offset, uint64_t len, int advice)
+{
+    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fds[fd])
+        return -EBADF;
+
+    (void)offset;
+    (void)len;
+    (void)advice;
 
     return 0;
 }

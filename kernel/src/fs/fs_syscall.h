@@ -176,6 +176,9 @@ uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags);
 #define F_SETFD 2
 #define F_GETFL 3
 #define F_SETFL 4
+#define F_GETLK 5
+#define F_SETLK 6
+#define F_SETLKW 7
 #define F_SETOWN 8
 #define F_GETOWN 9
 #define F_SETSIG 10
@@ -460,6 +463,8 @@ int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, st
 uint64_t sys_memfd_create(const char *name, unsigned int flags);
 
 uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len);
+
+uint64_t sys_fadvise64(int fd, uint64_t offset, uint64_t len, int advice);
 
 struct futex_wait
 {

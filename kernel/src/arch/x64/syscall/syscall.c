@@ -272,6 +272,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_FCNTL:
         regs->rax = sys_fcntl(arg1, arg2, arg3);
         break;
+    case SYS_FADVISE64:
+        regs->rax = sys_fadvise64(arg1, arg2, arg3, arg4);
+        break;
     case SYS_SOCKET:
         regs->rax = sys_socket(arg1, arg2, arg3);
         break;
@@ -622,7 +625,12 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
 
         regs->rax = get_len;
         break;
-
+    case SYS_INOTIFY_INIT1:
+        regs->rax = 0;
+        break;
+    case SYS_INOTIFY_ADD_WATCH:
+        regs->rax = 0;
+        break;
     default:
         regs->rax = (uint64_t)-ENOSYS;
         break;

@@ -60,5 +60,7 @@ chmod -R 755 $SYSROOT/../var/cache/fontconfig
 
 chmod -R 700 $SYSROOT/../run
 
+rm -rf $SYSROOT/../dev
+
 # Make us able to read the files later
 chmod -R u+r $SYSROOT/../

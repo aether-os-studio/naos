@@ -362,6 +362,9 @@ typedef struct socket_op
     size_t (*setsockopt)(uint64_t fd, int level, int optname, const void *optval, socklen_t optlen);
 } socket_op_t;
 
+extern socket_op_t socket_ops;
+extern socket_op_t accept_ops;
+
 typedef struct socket_handle
 {
     void *sock;

@@ -103,12 +103,20 @@ int devfs_mkdir(void *parent, const char *name, vfs_node_t node)
     vfs_node_t child = vfs_child_append(parent_node, name, NULL);
     child->type = file_dir;
     child->handle = child;
+    child->fsid = devfs_id;
 
     return 0;
 }
 
 int devfs_mkfile(void *parent, const char *name, vfs_node_t node)
 {
+    vfs_node_t parent_node = parent;
+
+    vfs_node_t child = vfs_child_append(parent_node, name, NULL);
+    child->type = file_dir;
+    child->handle = child;
+    child->fsid = devfs_id;
+
     return 0;
 }
 
@@ -462,7 +470,7 @@ void dev_init()
 {
     devfs_id = vfs_regist("devfs", &callbacks);
 
-    devfs_root = vfs_node_alloc(rootdir, "dev");
+    devfs_root = vfs_child_append(rootdir, "dev", NULL);
     devfs_root->type = file_dir;
     devfs_root->fsid = devfs_id;
     devfs_root->mode = 0644;
@@ -495,11 +503,11 @@ void dev_init()
     regist_dev("random", random_dev_read, NULL, NULL, NULL, NULL, NULL);
     regist_dev("urandom", urandom_dev_read, urandom_dev_write, urandom_dev_ioctl, NULL, NULL, NULL);
 
-    vfs_node_t pts_node = vfs_node_alloc(devfs_root, "pts");
+    vfs_node_t pts_node = vfs_child_append(devfs_root, "pts", NULL);
     pts_node->type = file_dir;
     pts_node->mode = 0644;
 
-    vfs_node_t shm_node = vfs_node_alloc(devfs_root, "shm");
+    vfs_node_t shm_node = vfs_child_append(devfs_root, "shm", NULL);
     shm_node->type = file_dir;
     shm_node->mode = 0644;
 
