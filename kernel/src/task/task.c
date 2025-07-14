@@ -821,14 +821,6 @@ void task_exit_inner(task_t *task, int64_t code)
 
     task->current_state = TASK_DIED;
     task->state = TASK_DIED;
-
-    if (task->waitpid == 0)
-    {
-        tasks[task->pid] = NULL;
-        free_page_table(task->arch_context->mm);
-        free(task->arch_context);
-        free(task);
-    }
 }
 
 uint64_t task_exit(int64_t code)
