@@ -69,6 +69,38 @@ ssize_t sysfs_read(void *file, void *addr, size_t offset, size_t size)
     }
 }
 
+ssize_t sysfs_readlink(void *file, void *addr, size_t offset, size_t size)
+{
+    sysfs_handle_t *handle = file;
+    if (!handle)
+        return 0;
+    vfs_node_t node = handle->node;
+
+    vfs_node_t original_node = node;
+    while (original_node->link_by)
+    {
+        original_node = original_node->link_by;
+    }
+
+    vfs_node_t target_node = vfs_open_at(node->parent, node->linkname, false);
+    if (!target_node)
+        return -1;
+
+    char *node_path = vfs_get_fullpath(target_node);
+    vfs_close(target_node);
+    char *original_node_path = vfs_get_fullpath(original_node);
+
+    char relative_path[1024];
+    memset(relative_path, 0, sizeof(relative_path));
+    rel_status status = calculate_relative_path(relative_path, original_node_path, node_path, size);
+    memcpy(addr, relative_path, size);
+
+    free(node_path);
+    free(original_node_path);
+
+    return size;
+}
+
 int sysfs_poll(void *file, size_t event)
 {
     return -EOPNOTSUPP;
@@ -81,6 +113,7 @@ static struct vfs_callback callback = {
     .close = (vfs_close_t)dummy,
     .read = (vfs_read_t)sysfs_read,
     .write = (vfs_write_t)dummy,
+    .readlink = (vfs_read_t)sysfs_readlink,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,

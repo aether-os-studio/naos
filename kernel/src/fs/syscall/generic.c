@@ -603,28 +603,30 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
             return 0;
         }
 
-        while (file_lock->l_type != F_UNLCK &&
-               (file_lock->l_pid != current_task->pid ||
-                lock.l_type == F_WRLCK))
+        for (;;)
         {
+            if (file_lock->l_type == F_UNLCK ||
+                (file_lock->l_pid == current_task->pid &&
+                 !(lock.l_type == F_WRLCK && file_lock->l_type == F_RDLCK)))
+            {
+                file_lock->l_type = lock.l_type;
+                file_lock->l_pid = current_task->pid;
+                spin_unlock(&fcntl_lock);
+                return 0;
+            }
+
             if (command == F_SETLK)
             {
                 spin_unlock(&fcntl_lock);
                 return -EAGAIN;
             }
 
-            while (file_lock->lock)
-            {
-                arch_enable_interrupt();
-                arch_pause();
-            }
-            arch_disable_interrupt();
-        }
+            spin_unlock(&fcntl_lock);
 
-        file_lock->l_type = lock.l_type;
-        file_lock->l_pid = current_task->pid;
-        spin_unlock(&fcntl_lock);
-        return 0;
+            arch_yield();
+
+            spin_lock(&fcntl_lock);
+        }
     }
     case F_GET_SEALS:
     case F_ADD_SEALS:
@@ -830,6 +832,16 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
         return (uint64_t)-ENOENT;
     }
 
+    if (!node->linkname)
+    {
+        char *path = vfs_get_fullpath(node);
+        int len = strlen(path);
+        len = (len > size) ? size : len;
+        memcpy(buf, path, len);
+        free(path);
+        return len;
+    }
+
     ssize_t result = vfs_readlink(node, buf, (size_t)size);
     vfs_close(node);
 
@@ -844,7 +856,7 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
         }
     }
 
-    return (uint64_t)result;
+    return result;
 }
 
 uint64_t sys_readlinkat(int dfd, char *path, char *buf, uint64_t size)

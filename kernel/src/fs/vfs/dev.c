@@ -137,6 +137,7 @@ static struct vfs_callback callbacks = {
     .close = devfs_close,
     .read = devfs_read,
     .write = devfs_write,
+    .readlink = (vfs_read_t)dummy,
     .mkdir = (vfs_mk_t)devfs_mkdir,
     .mkfile = (vfs_mk_t)devfs_mkfile,
     .link = (vfs_mk_t)dummy,
@@ -502,10 +503,6 @@ void dev_init()
     regist_dev("null", null_dev_read, null_dev_write, NULL, NULL, NULL, NULL);
     regist_dev("random", random_dev_read, NULL, NULL, NULL, NULL, NULL);
     regist_dev("urandom", urandom_dev_read, urandom_dev_write, urandom_dev_ioctl, NULL, NULL, NULL);
-
-    vfs_node_t pts_node = vfs_child_append(devfs_root, "pts", NULL);
-    pts_node->type = file_dir;
-    pts_node->mode = 0644;
 
     vfs_node_t shm_node = vfs_child_append(devfs_root, "shm", NULL);
     shm_node->type = file_dir;

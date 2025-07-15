@@ -373,9 +373,12 @@ void drm_init_sysfs()
 
     vfs_node_t class = vfs_open("/sys/class");
     vfs_node_t drm_link = vfs_node_alloc(class, "drm");
-    drm_link->type = file_symlink | file_dir;
+    drm_link->type = file_dir;
     drm_link->mode = 0644;
-    drm_link->linkname = strdup("/sys/dev/char/226:0/device/drm");
+    handle = malloc(sizeof(sysfs_handle_t));
+    memset(handle, 0, sizeof(sysfs_handle_t));
+    handle->node = drm_link;
+    drm_link->handle = handle;
 
     size_t addr;
     size_t width;
@@ -393,11 +396,20 @@ void drm_init_sysfs()
     vfs_node_t cardn = vfs_node_alloc(drm, (const char *)buf);
     cardn->type = file_dir;
     cardn->mode = 0644;
+    cardn->linkname = strdup(buf);
+    handle = malloc(sizeof(sysfs_handle_t));
+    memset(handle, 0, sizeof(sysfs_handle_t));
+    handle->node = cardn;
+    cardn->handle = handle;
 
     vfs_node_t cardn_link = vfs_node_alloc(drm_link, (const char *)buf);
     cardn_link->type = file_symlink | file_dir;
     cardn_link->mode = 0644;
     cardn_link->linkname = vfs_get_fullpath(cardn);
+    handle = malloc(sizeof(sysfs_handle_t));
+    memset(handle, 0, sizeof(sysfs_handle_t));
+    handle->node = cardn_link;
+    cardn_link->handle = handle;
 
     sprintf(buf, "card%d-Virtual-1", i);
     vfs_node_t cardn_virtual = vfs_node_alloc(cardn, (const char *)buf);
@@ -409,6 +421,10 @@ void drm_init_sysfs()
     uevent_link->mode = 0644;
     sprintf(buf, "/sys/class/drm/card%d/subsystem/uevent", i);
     uevent_link->linkname = strdup(buf);
+    handle = malloc(sizeof(sysfs_handle_t));
+    memset(handle, 0, sizeof(sysfs_handle_t));
+    handle->node = uevent_link;
+    uevent_link->handle = handle;
 
     vfs_node_t subsystem = vfs_child_append(cardn, "subsystem", NULL);
     subsystem->type = file_dir;
@@ -448,6 +464,10 @@ void drm_init_sysfs()
     device_subsystem->type = file_dir | file_symlink;
     device_subsystem->mode = 0700;
     device_subsystem->linkname = strdup("/sys/dev/char/226:0/device/pci");
+    handle = malloc(sizeof(sysfs_handle_t));
+    memset(handle, 0, sizeof(sysfs_handle_t));
+    handle->node = device_subsystem;
+    device_subsystem->handle = handle;
 
     vfs_node_t device_pci = vfs_node_alloc(dev, "pci");
     device_subsystem->type = file_dir;

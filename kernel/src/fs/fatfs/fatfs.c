@@ -287,6 +287,7 @@ static struct vfs_callback callbacks = {
     .close = (vfs_close_t)fatfs_close,
     .read = (vfs_read_t)fatfs_readfile,
     .write = (vfs_write_t)fatfs_writefile,
+    .readlink = (vfs_read_t)dummy,
     .mkdir = fatfs_mkdir,
     .mkfile = fatfs_mkfile,
     .link = fatfs_link,

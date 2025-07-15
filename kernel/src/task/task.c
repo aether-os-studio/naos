@@ -2,6 +2,7 @@
 #include <task/task.h>
 #include <drivers/kernel_logger.h>
 #include <fs/vfs/vfs.h>
+#include <fs/vfs/proc.h>
 #include <arch/arch.h>
 #include <mm/mm.h>
 #include <fs/fs_syscall.h>
@@ -143,6 +144,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
 
     task->child_vfork_done = false;
     task->is_vfork = false;
+
+    procfs_on_new_task(task);
 
     can_schedule = true;
 
@@ -413,6 +416,8 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     {
         child->is_vfork = false;
     }
+
+    procfs_on_new_task(child);
 
     can_schedule = true;
 
@@ -821,6 +826,8 @@ void task_exit_inner(task_t *task, int64_t code)
 
     task->current_state = TASK_DIED;
     task->state = TASK_DIED;
+
+    procfs_on_exit_task(task);
 }
 
 uint64_t task_exit(int64_t code)
@@ -1072,6 +1079,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     {
         child->is_vfork = false;
     }
+
+    procfs_on_new_task(child);
 
     can_schedule = true;
 

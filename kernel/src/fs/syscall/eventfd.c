@@ -126,6 +126,7 @@ static struct vfs_callback eventfd_callbacks = {
     .close = (vfs_close_t)eventfd_close,
     .read = (vfs_read_t)eventfd_read,
     .write = (vfs_write_t)eventfd_write,
+    .readlink = (vfs_read_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,

@@ -72,10 +72,12 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events, int maxevent
         epoll->lock = true;
         epoll_watch_t *browse = epoll->firstEpollWatch;
 
+        arch_disable_interrupt();
+
         while (browse && ready < maxevents)
         {
             int revents = vfs_poll(browse->fd, browse->watchEvents);
-            if (revents != 0 && ready < maxevents)
+            if (revents > 0 && ready < maxevents)
             {
                 events[ready].events = revents;
                 events[ready].data = (epoll_data_t)browse->userlandData;
@@ -281,6 +283,7 @@ static struct vfs_callback epoll_callbacks = {
     .close = epollfs_close,
     .read = (vfs_read_t)dummy,
     .write = (vfs_write_t)dummy,
+    .readlink = (vfs_read_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,

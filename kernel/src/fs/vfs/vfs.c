@@ -36,6 +36,7 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name)
     node->blksz = DEFAULT_PAGE_SIZE;
     node->name = name ? strdup(name) : NULL;
     node->linkname = NULL;
+    node->link_by = NULL;
     node->type = file_none;
     node->fsid = parent ? parent->fsid : 0;
     node->root = parent ? parent->root : node;
@@ -82,7 +83,7 @@ static inline void do_open(vfs_node_t file)
 
 static inline void do_update(vfs_node_t file)
 {
-    if ((file->type & file_dir) || file->handle == NULL)
+    if (file->type & file_none || file->type & file_dir || file->type & file_symlink || file->handle == NULL)
         do_open(file);
 }
 
@@ -454,14 +455,19 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, bool nosymlink)
         if (current == NULL)
             goto err;
         do_update(current);
+
         if (!nosymlink && (current->type & file_symlink) == file_symlink)
         {
             if (!current->parent || !current->linkname)
                 goto err;
-            current = vfs_open_at(current->parent, current->linkname, nosymlink);
-            if (!current)
+            vfs_node_t target = vfs_open_at(current->parent, current->linkname, nosymlink);
+            if (!target)
                 goto err;
-            do_update(current);
+
+            target->link_by = current;
+            current = target;
+
+            break;
         }
     }
 
@@ -552,42 +558,7 @@ ssize_t vfs_read(vfs_node_t file, void *addr, size_t offset, size_t size)
 
 int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize)
 {
-    char *fullpath = vfs_get_fullpath(node);
-
-    if (!strcmp(fullpath, "/proc/self/exe"))
-    {
-        free(fullpath);
-        strncpy(buf, current_task->name, bufsize);
-        return strlen(current_task->name) > bufsize ? bufsize : strlen(current_task->name);
-    }
-    free(fullpath);
-
-    if (node->linkname == NULL)
-    {
-        char *fullpath = vfs_get_fullpath(node);
-        int len = strlen(fullpath);
-        len = (len > bufsize) ? bufsize : len;
-        memcpy(buf, fullpath, len);
-        free(fullpath);
-        return len;
-    }
-
-    ssize_t copy_len = 0;
-
-    if (node->type & file_dir)
-    {
-        size_t link_len = strlen(node->linkname);
-        copy_len = (link_len < bufsize) ? link_len : (bufsize - 1);
-
-        strncpy(buf, node->linkname, copy_len);
-        buf[copy_len] = '\0';
-    }
-    else
-    {
-        copy_len = vfs_read(node, buf, 0, bufsize);
-    }
-
-    return copy_len;
+    return callbackof(node, readlink)(node->handle, buf, 0, bufsize);
 }
 
 ssize_t vfs_write(vfs_node_t file, const void *addr, size_t offset, size_t size)
@@ -595,7 +566,8 @@ ssize_t vfs_write(vfs_node_t file, const void *addr, size_t offset, size_t size)
     do_update(file);
     if (file->type & file_dir)
         return -1;
-    ssize_t write_bytes = callbackof(file, write)(file->handle, addr, offset, size);
+    ssize_t write_bytes = 0;
+    write_bytes = callbackof(file, write)(file->handle, addr, offset, size);
     if (write_bytes > 0)
     {
         file->size = max(file->size, offset + write_bytes);
@@ -637,93 +609,102 @@ int tty_mode = KD_TEXT;
 int tty_kbmode = K_XLATE;
 struct vt_mode current_vt_mode = {0};
 
+extern int pts_fsid;
+
 int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg)
 {
     do_update(node);
     if (node->type & file_dir)
         return -1;
 
-    switch (cmd)
+    if (node->fsid != pts_fsid)
     {
-    case TIOCGWINSZ:
-        size_t addr;
-        size_t width;
-        size_t height;
-        size_t bpp;
-        size_t cols;
-        size_t rows;
+        switch (cmd)
+        {
+        case TIOCGWINSZ:
+            size_t addr;
+            size_t width;
+            size_t height;
+            size_t bpp;
+            size_t cols;
+            size_t rows;
 
-        os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
+            os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
 
-        *(struct winsize *)arg = (struct winsize){
-            .ws_xpixel = width,
-            .ws_ypixel = height,
-            .ws_col = cols,
-            .ws_row = rows,
-        };
-        return 0;
-    case TIOCSCTTY:
-        return 0;
-    case TIOCGPGRP:
-        int *pid = (int *)arg;
-        *pid = current_task->pid;
-        return 0;
-    case TIOCSPGRP:
-        return 0;
-    case TCGETS:
-        if (check_user_overflow(arg, sizeof(termios)))
-        {
-            return -EFAULT;
+            *(struct winsize *)arg = (struct winsize){
+                .ws_xpixel = width,
+                .ws_ypixel = height,
+                .ws_col = cols,
+                .ws_row = rows,
+            };
+            return 0;
+        case TIOCSCTTY:
+            return 0;
+        case TIOCGPGRP:
+            int *pid = (int *)arg;
+            *pid = current_task->pid;
+            return 0;
+        case TIOCSPGRP:
+            return 0;
+        case TCGETS:
+            if (check_user_overflow(arg, sizeof(termios)))
+            {
+                return -EFAULT;
+            }
+            memcpy((void *)arg, &current_task->term, sizeof(termios));
+            return 0;
+        case TCSETS:
+            if (check_user_overflow(arg, sizeof(termios)))
+            {
+                return -EFAULT;
+            }
+            memcpy(&current_task->term, (void *)arg, sizeof(termios));
+            return 0;
+        case TCSETSW:
+            if (check_user_overflow(arg, sizeof(termios)))
+            {
+                return -EFAULT;
+            }
+            memcpy(&current_task->term, (void *)arg, sizeof(termios));
+            return 0;
+        case TIOCSWINSZ:
+            return 0;
+        case KDGETMODE:
+            *(int *)arg = tty_mode;
+            return 0;
+        case KDSETMODE:
+            tty_mode = *(int *)arg;
+            return 0;
+        case KDGKBMODE:
+            *(int *)arg = tty_kbmode;
+            return 0;
+        case KDSKBMODE:
+            tty_kbmode = *(int *)arg;
+            return 0;
+        case VT_SETMODE:
+            memcpy(&current_vt_mode, (void *)arg, sizeof(struct vt_mode));
+            return 0;
+        case VT_GETMODE:
+            memcpy((void *)arg, &current_vt_mode, sizeof(struct vt_mode));
+            return 0;
+        case VT_ACTIVATE:
+            return 0;
+        case VT_WAITACTIVE:
+            return 0;
+        case VT_GETSTATE:
+            struct vt_state *state = (struct vt_state *)arg;
+            state->v_active = 0; // 当前活动终端
+            state->v_state = 0;  // 状态标志
+            return 0;
+        case VT_OPENQRY:
+            *(int *)arg = 1;
+            return 0;
+        default:
+            return callbackof(node, ioctl)(node->handle, cmd, arg);
         }
-        memcpy((void *)arg, &current_task->term, sizeof(termios));
-        return 0;
-    case TCSETS:
-        if (check_user_overflow(arg, sizeof(termios)))
-        {
-            return -EFAULT;
-        }
-        memcpy(&current_task->term, (void *)arg, sizeof(termios));
-        return 0;
-    case TCSETSW:
-        if (check_user_overflow(arg, sizeof(termios)))
-        {
-            return -EFAULT;
-        }
-        memcpy(&current_task->term, (void *)arg, sizeof(termios));
-        return 0;
-    case TIOCSWINSZ:
-        return 0;
-    case KDGETMODE:
-        *(int *)arg = tty_mode;
-        return 0;
-    case KDSETMODE:
-        tty_mode = *(int *)arg;
-        return 0;
-    case KDGKBMODE:
-        *(int *)arg = tty_kbmode;
-        return 0;
-    case KDSKBMODE:
-        tty_kbmode = *(int *)arg;
-        return 0;
-    case VT_SETMODE:
-        memcpy(&current_vt_mode, (void *)arg, sizeof(struct vt_mode));
-        return 0;
-    case VT_GETMODE:
-        memcpy((void *)arg, &current_vt_mode, sizeof(struct vt_mode));
-        return 0;
-    case VT_ACTIVATE:
-        return 0;
-    case VT_WAITACTIVE:
-        return 0;
-    case VT_GETSTATE:
-        struct vt_state *state = (struct vt_state *)arg;
-        state->v_active = 0; // 当前活动终端
-        state->v_state = 0;  // 状态标志
-        return 0;
-    case VT_OPENQRY:
-        *(int *)arg = 1;
-        return 0;
-    default:
+    }
+    else
+    {
         return callbackof(node, ioctl)(node->handle, cmd, arg);
     }
 }
@@ -743,7 +724,7 @@ char *vfs_get_fullpath(vfs_node_t node)
 {
     if (node == NULL)
         return NULL;
-    int inital = 32;
+    int inital = 16;
     spin_lock(&get_path_lock);
     vfs_node_t *nodes = (vfs_node_t *)malloc(sizeof(vfs_node_t) * inital);
     int count = 0;
@@ -757,12 +738,13 @@ char *vfs_get_fullpath(vfs_node_t node)
         nodes[count++] = cur;
     }
     // 正常的路径都不应该超过这个数值
-    char *buff = (char *)malloc(256);
+    char *buff = (char *)malloc(1024);
     strcpy(buff, "/");
     for (int j = count - 1; j >= 0; j--)
     {
         if (nodes[j] == rootdir)
             continue;
+
         strcat(buff, nodes[j]->name);
         if (j != 0)
             strcat(buff, "/");

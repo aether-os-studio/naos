@@ -12,4 +12,9 @@ typedef struct proc_handle
 
 ssize_t procfs_read(void *file, void *addr, size_t offset, size_t size);
 
+#define MAX_PID_NAME_LEN 4
+
 void proc_init();
+
+void procfs_on_new_task(task_t *task);
+void procfs_on_exit_task(task_t *task);

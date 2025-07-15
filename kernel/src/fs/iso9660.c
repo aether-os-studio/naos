@@ -770,6 +770,7 @@ static struct vfs_callback callbacks = {
     .close = (vfs_close_t)iso9660_close,
     .read = (vfs_read_t)iso9660_readfile,
     .write = (vfs_write_t)iso9660_writefile,
+    .readlink = (vfs_read_t)dummy,
     .mkdir = iso9660_mkdir,
     .mkfile = iso9660_mkfile,
     .link = (vfs_mk_t)dummy,

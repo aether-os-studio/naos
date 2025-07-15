@@ -90,6 +90,18 @@ typedef struct unix_socket_pair
     int pending_fds_size;
 
     task_t *waiting_task;
+
+    int reuseaddr;
+    int keepalive;
+    struct timeval sndtimeo;
+    struct timeval rcvtimeo;
+    char bind_to_dev[IFNAMSIZ];
+    struct linger linger_opt;
+    int passcred;
+    struct sock_filter *filter;
+    size_t filter_len;
+    struct ucred peercred;
+    bool has_peercred;
 } unix_socket_pair_t;
 
 #define MAX_CONNECTIONS 16
@@ -118,22 +130,6 @@ typedef struct socket
 
     // connect()
     unix_socket_pair_t *pair;
-
-    // socket选项
-    struct
-    {
-        int reuseaddr;
-        int keepalive;
-        struct timeval sndtimeo;
-        struct timeval rcvtimeo;
-        char bind_to_dev[IFNAMSIZ];
-        struct linger linger_opt;
-        int passcred;
-        struct sock_filter *filter;
-        size_t filter_len;
-        struct ucred peercred;
-        bool has_peercred;
-    } options;
 } socket_t;
 
 bool sys_socket_close(void *current);

@@ -66,6 +66,9 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout)
                 }
                 continue;
             }
+
+            arch_disable_interrupt();
+
             int revents = epoll_to_poll_comp(vfs_poll(node, poll_to_epoll_comp(fds[i].events)));
             if (revents > 0)
             {

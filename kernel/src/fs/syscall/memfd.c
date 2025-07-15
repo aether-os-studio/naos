@@ -31,9 +31,11 @@ static ssize_t memfd_write(void *data, const void *buf, uint64_t offset, uint64_
     if (offset + len > ctx->size)
     {
         size_t new_size = ctx->size * 2;
-        uint8_t *new_data = realloc(ctx->data, new_size);
+        uint8_t *new_data = alloc_frames_bytes(new_size);
         if (!new_data)
             return -ENOMEM;
+        memcpy(new_data, ctx->data, ctx->size);
+        free_frames_bytes(ctx->data, ctx->size);
         ctx->data = new_data;
         ctx->size = new_size;
     }
@@ -48,7 +50,7 @@ static ssize_t memfd_write(void *data, const void *buf, uint64_t offset, uint64_
 void memfd_close(void *current)
 {
     struct memfd_ctx *ctx = current;
-    free(ctx->data);
+    free_frames_bytes(ctx->data, ctx->size);
     free(ctx);
 }
 
@@ -65,7 +67,10 @@ void memfd_resize(void *current, uint64_t size)
     struct memfd_ctx *ctx = current;
     if (size > ctx->size)
     {
-        ctx->data = realloc(ctx->data, size);
+        uint8_t *new_data = alloc_frames_bytes(size);
+        memcpy(new_data, ctx->data, ctx->size);
+        free_frames_bytes(ctx->data, ctx->size);
+        ctx->data = new_data;
         ctx->size = size;
     }
 }
@@ -91,6 +96,7 @@ static struct vfs_callback callbacks = {
     .close = (vfs_close_t)memfd_close,
     .read = (vfs_read_t)memfd_read,
     .write = (vfs_write_t)memfd_write,
+    .readlink = (vfs_read_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,
@@ -113,9 +119,9 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags)
     struct memfd_ctx *ctx = malloc(sizeof(struct memfd_ctx));
     strncpy(ctx->name, name, 63);
     ctx->name[63] = '\0';
-    ctx->size = 256 * 1024;
+    ctx->size = 512 * 1024;
     ctx->len = 0;
-    ctx->data = aligned_alloc(DEFAULT_PAGE_SIZE, ctx->size);
+    ctx->data = alloc_frames_bytes(ctx->size);
     ctx->flags = flags;
 
     int fd = -1;

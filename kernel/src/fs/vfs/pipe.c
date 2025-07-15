@@ -259,6 +259,7 @@ static struct vfs_callback callbacks = {
     .close = (vfs_close_t)pipefs_close,
     .read = pipefs_read,
     .write = pipefs_write,
+    .readlink = (vfs_read_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,

@@ -91,6 +91,7 @@ static struct vfs_callback netlink_callback = {
     .close = (vfs_close_t)dummy,
     .read = (vfs_read_t)dummy,
     .write = (vfs_write_t)dummy,
+    .readlink = (vfs_read_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,

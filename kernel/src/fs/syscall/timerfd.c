@@ -148,6 +148,7 @@ static struct vfs_callback timerfd_callbacks = {
     .close = (vfs_close_t)sys_timerfd_close,
     .read = (vfs_read_t)timerfd_read,
     .write = (vfs_write_t)dummy,
+    .readlink = (vfs_read_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,

@@ -6,7 +6,7 @@ spinlock_t pty_global_lock = {0};
 pty_pair_t first_pair;
 
 static int ptmx_fsid = 0;
-static int pts_fsid = 0;
+int pts_fsid = 0;
 
 size_t pts_write_inner(pty_pair_t *pair, uint8_t *in, size_t limit);
 
@@ -71,17 +71,19 @@ void ptmx_open(void *parent, const char *name, vfs_node_t node)
 
     n->next = malloc(sizeof(pty_pair_t));
     pty_pair_t *pair = n->next;
-    pair->masterFds = 1;
+    memset(pair, 0, sizeof(pty_pair_t));
     pair->id = id;
     pair->bufferMaster = malloc(PTY_BUFF_SIZE);
     pair->bufferSlave = malloc(PTY_BUFF_SIZE);
     pty_termios_default(&pair->term);
     pair->win.ws_row = 24;
     pair->win.ws_col = 80; // some sane defaults
-    node->handle = pair;
+    pair->masterFds = 1;
+    node->handle = n->next;
     node->fsid = ptmx_fsid;
 
     vfs_node_t pts_node = vfs_open("/dev/pts");
+    pts_node->fsid = pts_fsid;
     char nm[4];
     sprintf(nm, "%d", id);
     vfs_node_t pty_slave_node = vfs_node_alloc(pts_node, nm);
@@ -541,6 +543,7 @@ static struct vfs_callback ptmx_callbacks = {
     .close = (vfs_close_t)ptmx_close,
     .read = (vfs_read_t)ptmx_read,
     .write = (vfs_write_t)ptmx_write,
+    .readlink = (vfs_read_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,
@@ -561,6 +564,7 @@ static struct vfs_callback pts_callbacks = {
     .close = (vfs_close_t)pts_close,
     .read = (vfs_read_t)pts_read,
     .write = (vfs_write_t)pts_write,
+    .readlink = (vfs_read_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,
@@ -569,8 +573,8 @@ static struct vfs_callback pts_callbacks = {
     .delete = (vfs_del_t)dummy,
     .map = (vfs_mapfile_t)dummy,
     .stat = (vfs_stat_t)dummy,
-    .ioctl = (vfs_ioctl_t)ptmx_ioctl,
-    .poll = ptmx_poll,
+    .ioctl = (vfs_ioctl_t)pts_ioctl,
+    .poll = (vfs_poll_t)pts_poll,
     .resize = (vfs_resize_t)dummy,
 };
 
@@ -585,7 +589,16 @@ void ptmx_init()
     ptmx->fsid = ptmx_fsid;
 }
 
+extern vfs_node_t devfs_root;
+
 void pts_init()
 {
     pts_fsid = vfs_regist("pts", &pts_callbacks);
+
+    first_pair.id = 0xffffffff;
+
+    vfs_node_t pts_node = vfs_child_append(devfs_root, "pts", NULL);
+    pts_node->fsid = pts_fsid;
+    pts_node->type = file_dir;
+    pts_node->mode = 0644;
 }
