@@ -91,7 +91,7 @@ HOST_LDFLAGS :=
 HOST_LIBS :=
 
 .PHONY: all
-all: $(IMAGE_NAME).img rootfs-$(ARCH).img
+all: $(IMAGE_NAME).img
 
 .PHONY: kernel
 kernel:
@@ -107,7 +107,7 @@ user/.build-stamp-$(ARCH):
 clean:
 	$(MAKE) -C kernel clean
 	$(MAKE) -C user clean
-	rm -rf $(IMAGE_NAME).img rootfs-$(ARCH).img
+	rm -rf $(IMAGE_NAME).img
 
 .PHONY: distclean
 distclean:
@@ -118,24 +118,31 @@ distclean:
 clippy:
 	$(MAKE) -C kernel clippy
 
-ifeq ($(ARCH),x86_64)
-EFI_FILE = assets/limine/BOOTX64.EFI:EFI/BOOT/BOOTX64.EFI
-else ifeq ($(ARCH),aarch64)
-EFI_FILE = assets/limine/BOOTAA64.EFI:EFI/BOOT/BOOTAA64.EFI
-else ifeq ($(ARCH),riscv64)
-EFI_FILE = assets/limine/BOOTRISCV64.EFI:EFI/BOOT/BOOTRISCV64.EFI
-else ifeq ($(ARCH),loongarch64)
-EFI_FILE = assets/limine/BOOTLOONGARCH64.EFI:EFI/BOOT/BOOTLOONGARCH64.EFI
-endif
-$(IMAGE_NAME).img: assets/limine assets/oib kernel
-	assets/oib -o $(IMAGE_NAME).img -f $(EFI_FILE) \
-		-f kernel/bin-$(ARCH)/kernel:boot/kernel \
-		-f limine.conf:boot/limine/limine.conf \
-		-f assets/limine/limine-bios.sys:boot/limine/limine-bios.sys
+ROOTFS_IMG_SIZE ?= 2048
 
 rootfs-$(ARCH).img: user/.build-stamp-$(ARCH)
-	dd if=/dev/zero bs=1M count=0 seek=2048 of=rootfs-$(ARCH).img
+	dd if=/dev/zero bs=1M count=0 seek=$(ROOTFS_IMG_SIZE) of=rootfs-$(ARCH).img
 	mkfs.ext2 -F -q -d user/rootfs-$(ARCH) rootfs-$(ARCH).img
+
+ifeq ($(ARCH),x86_64)
+EFI_FILE = assets/limine/BOOTX64.EFI
+else ifeq ($(ARCH),aarch64)
+EFI_FILE = assets/limine/BOOTAA64.EFI
+else ifeq ($(ARCH),riscv64)
+EFI_FILE = assets/limine/BOOTRISCV64.EFI
+else ifeq ($(ARCH),loongarch64)
+EFI_FILE = assets/limine/BOOTLOONGARCH64.EFI
+endif
+$(IMAGE_NAME).img: assets/limine assets/oib kernel rootfs-$(ARCH).img
+	dd if=/dev/zero of=$(IMAGE_NAME).img bs=1M count=$$(( $(ROOTFS_IMG_SIZE) + 1024 ))
+	sgdisk --new=1:1M:511M --new=2:512M:$$(( $$(($(ROOTFS_IMG_SIZE) + 1024 )) * 1024 )) $(IMAGE_NAME).img
+	mkfs.vfat -F 16 --offset 2048 -S 512 $(IMAGE_NAME).img
+	mmd -i $(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
+	mcopy -i $(IMAGE_NAME).img@@1M $(EFI_FILE) ::/EFI/BOOT
+	mcopy -i $(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/boot
+	mcopy -i $(IMAGE_NAME).img@@1M limine.conf ::/boot/limine
+
+	dd if=rootfs-$(ARCH).img of=$(IMAGE_NAME).img bs=1M count=$(ROOTFS_IMG_SIZE) seek=512
 
 .PHONY: run
 run: run-$(ARCH)
@@ -146,10 +153,8 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-M q35 \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
-		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
 		-device qemu-xhci,id=xhci \
 		-device nvme,drive=harddisk,serial=1234 \
-		-device nvme,drive=rootdisk,serial=5678 \
 		$(QEMUFLAGS)
 
 .PHONY: run-aarch64
@@ -163,9 +168,7 @@ run-aarch64: assets/ovmf-code-$(ARCH).fd all
 		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
-		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
 		-device nvme,drive=harddisk,serial=1234 \
-		-device nvme,drive=rootdisk,serial=5678 \
 		$(QEMUFLAGS)
 
 .PHONY: run-riscv64
