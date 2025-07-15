@@ -112,7 +112,7 @@ int usb_msc_setup(struct usbdevice_s *usbdev)
         dev->block_size = be32toh(*(uint32_t *)(capacity + 4));
     }
 
-    regist_blkdev("USB MSC", dev, dev->block_size, dev->block_count * dev->block_size, DEFAULT_PAGE_SIZE, usb_msc_read_blocks, usb_msc_write_blocks);
+    regist_blkdev("USB MSC", dev, dev->block_size, dev->block_count * dev->block_size, DEFAULT_PAGE_SIZE * 4, usb_msc_read_blocks, usb_msc_write_blocks);
 
     return 0;
 fail:
