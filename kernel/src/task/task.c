@@ -494,9 +494,9 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     }
     new_envp[envp_count] = NULL;
 
-    if (current_task->arch_context->mm->page_table_addr == (uint64_t)virt_to_phys(get_kernel_page_dir()))
+    if (current_task->is_vfork || current_task->arch_context->mm->page_table_addr == (uint64_t)virt_to_phys(get_kernel_page_dir()))
     {
-        current_task->arch_context->mm = clone_page_table(current_task->arch_context->mm, CLONE_VM);
+        current_task->arch_context->mm = clone_page_table(current_task->arch_context->mm, 0);
         asm volatile("movq %0, %%cr3" ::"r"(current_task->arch_context->mm->page_table_addr));
     }
 
