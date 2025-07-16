@@ -240,6 +240,10 @@ uint64_t sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)
     {
         return (uint64_t)-EFAULT;
     }
+    if (epfd >= MAX_FD_NUM || current_task->fd_info->fds[epfd] == NULL)
+    {
+        return (uint64_t)-EBADF;
+    }
     vfs_node_t node = current_task->fd_info->fds[epfd]->node;
     if (!node)
         return (uint64_t)-EBADF;
@@ -277,7 +281,22 @@ bool epollfs_close(void *current)
 
 static int epoll_poll(void *file, size_t event)
 {
-    return -EOPNOTSUPP;
+    epoll_t *epoll = file;
+    int revents = 0;
+
+    epoll_watch_t *current = epoll->firstEpollWatch;
+    while (current)
+    {
+        int ret = vfs_poll(current->fd, event);
+        if (ret)
+        {
+            revents |= EPOLLIN;
+            break;
+        }
+        current = current->next;
+    }
+
+    return revents;
 }
 
 static struct vfs_callback epoll_callbacks = {

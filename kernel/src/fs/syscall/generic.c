@@ -1163,6 +1163,8 @@ int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *
             arch_pause();
         }
 
+        arch_disable_interrupt();
+
         return 0;
     }
     case FUTEX_WAKE:
@@ -1174,6 +1176,8 @@ int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *
         int count = 0;
         while (curr)
         {
+            bool found = false;
+
             if (curr->uaddr && curr->uaddr == uaddr && ++count <= val)
             {
                 task_unblock(curr->task, EOK);
@@ -1182,9 +1186,17 @@ int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *
                     prev->next = curr->next;
                 }
                 free(curr);
+                found = true;
             }
-            prev = curr;
-            curr = curr->next;
+            if (found)
+            {
+                curr = prev->next;
+            }
+            else
+            {
+                prev = curr;
+                curr = curr->next;
+            }
         }
 
         spin_unlock(&futex_lock);
