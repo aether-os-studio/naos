@@ -91,8 +91,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
     task->brk_start = USER_BRK_START;
     task->brk_end = USER_BRK_START;
     task->fd_info = malloc(sizeof(fd_info_t));
-    memset(task->actions, 0, sizeof(task->actions));
     memset(task->fd_info, 0, sizeof(task->fd_info));
+    memset(task->fd_info->fds, 0, sizeof(task->fd_info->fds));
     task->fd_info->fds[0] = malloc(sizeof(fd_t));
     task->fd_info->fds[0]->node = vfs_open("/dev/stdin");
     task->fd_info->fds[0]->offset = 0;
@@ -107,6 +107,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
     task->fd_info->fds[2]->flags = 0;
     task->fd_info->ref_count++;
     strncpy(task->name, name, TASK_NAME_MAX);
+
+    memset(task->actions, 0, sizeof(task->actions));
 
     memset(&task->term, 0, sizeof(termios));
     task->term.c_iflag = BRKINT | ICRNL | INPCK | ISTRIP | IXON;
@@ -1257,6 +1259,9 @@ void sched_update_itimer()
         if (!ptr)
             break;
 
+        if (ptr->cpu_id != current_cpu_id)
+            continue;
+
         uint64_t rtAt = ptr->itimer_real.at;
         uint64_t rtReset = ptr->itimer_real.reset;
 
@@ -1279,7 +1284,7 @@ void sched_update_itimer()
         for (int j = 0; j < MAX_TIMERS_NUM; j++)
         {
             if (ptr->timers[i] == NULL)
-                continue;
+                break;
             kernel_timer_t *kt = ptr->timers[j];
             if (kt->expires && jiffies >= kt->expires)
             {
