@@ -75,6 +75,8 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
 
     prev->current_state = prev->state;
 
+    task_signal();
+
     next->current_state = TASK_RUNNING;
 
     // 1. 更新TTBR0_EL1
@@ -85,8 +87,6 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
                  "tlbi vmalle1is\n\t"
                  "dsb ish\n\t"
                  "isb\n\t");
-
-    task_signal();
 
     arch_set_current(next);
 

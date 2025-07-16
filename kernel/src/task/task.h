@@ -129,6 +129,7 @@ typedef struct fd fd_t;
 
 typedef struct task
 {
+    bool call_in_signal;
     uint64_t pid;
     uint64_t ppid;
     int64_t uid;

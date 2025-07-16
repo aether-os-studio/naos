@@ -73,6 +73,14 @@ void memfd_resize(void *current, uint64_t size)
         ctx->data = new_data;
         ctx->size = size;
     }
+    else
+    {
+        uint8_t *new_data = alloc_frames_bytes(size);
+        memcpy(new_data, ctx->data, ctx->size);
+        free_frames_bytes(ctx->data, size);
+        ctx->data = new_data;
+        ctx->size = size;
+    }
 }
 
 void *memfd_map(void *file, void *addr, size_t offset, size_t size, size_t prot, size_t flags)
@@ -119,7 +127,7 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags)
     struct memfd_ctx *ctx = malloc(sizeof(struct memfd_ctx));
     strncpy(ctx->name, name, 63);
     ctx->name[63] = '\0';
-    ctx->size = DEFAULT_PAGE_SIZE * 4096;
+    ctx->size = DEFAULT_PAGE_SIZE;
     ctx->len = 0;
     ctx->data = alloc_frames_bytes(ctx->size);
     ctx->flags = flags;

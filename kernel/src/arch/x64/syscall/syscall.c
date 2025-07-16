@@ -7,12 +7,14 @@
 
 uint64_t switch_to_kernel_stack()
 {
-    return current_task->syscall_stack;
-}
-
-uint64_t switch_to_sigreturn_stack()
-{
-    return current_task->syscall_stack - STACK_SIZE / 2;
+    if (current_task->call_in_signal)
+    {
+        return current_task->syscall_stack - STACK_SIZE / 2;
+    }
+    else
+    {
+        return current_task->syscall_stack;
+    }
 }
 
 void *real_memcpy(void *dst, const void *src, size_t len)

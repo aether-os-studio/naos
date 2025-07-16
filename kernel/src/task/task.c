@@ -62,6 +62,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
     can_schedule = false;
 
     task_t *task = get_free_task();
+    task->call_in_signal = false;
     task->cpu_id = alloc_cpu_id();
     task->ppid = task->pid;
     task->uid = 0;
@@ -198,9 +199,9 @@ void task_init()
 
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++)
     {
-        idle_tasks[cpu] = task_create("idle", idle_entry, 0);
-        idle_tasks[cpu]->cpu_id = cpu;
-        idle_tasks[cpu]->state = TASK_RUNNING;
+        task_t *idle_task = task_create("idle", idle_entry, 0);
+        idle_task->cpu_id = cpu;
+        idle_task->state = TASK_RUNNING;
     }
     arch_set_current(idle_tasks[0]);
     task_create("init", init_thread, 0);
@@ -325,7 +326,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     }
 
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
-
+    child->call_in_signal = current_task->call_in_signal;
     child->state = TASK_READY;
     child->current_state = TASK_READY;
 
@@ -1002,7 +1003,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     }
 
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
-
+    child->call_in_signal = current_task->call_in_signal;
     child->state = TASK_READY;
     child->current_state = TASK_READY;
 

@@ -206,8 +206,12 @@ int sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction)
     return 0;
 }
 
+spinlock_t sigreturn_lock = {0};
+
 void sys_sigreturn(struct pt_regs *regs)
 {
+    spin_lock(&sigreturn_lock);
+
 #if defined(__x86_64__)
     arch_disable_interrupt();
 
@@ -256,7 +260,13 @@ void sys_sigreturn(struct pt_regs *regs)
 
     current_task->arch_context->ctx = context;
 
-    arch_switch_with_context(NULL, current_task->arch_context, current_task->kernel_stack);
+    spin_unlock(&sigreturn_lock);
+
+    current_task->call_in_signal = false;
+
+    asm volatile(
+        "movq %0, %%rsp\n\t"
+        "jmp ret_from_exception" ::"r"(current_task->arch_context->ctx));
 #elif defined(__aarch64__)
 #else
     // todo: other architectures
@@ -470,6 +480,8 @@ void task_signal()
             }
         }
     }
+
+    current_task->call_in_signal = true;
 
     current_task->blocked |= ptr->sa_mask;
 
