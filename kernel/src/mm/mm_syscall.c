@@ -53,9 +53,9 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
         return (uint64_t)-ENOMEM;
     }
 
-    if (fd < MAX_FD_NUM && current_task->fds[fd])
+    if (fd < MAX_FD_NUM && current_task->fd_info->fds[fd])
     {
-        vfs_node_t node = current_task->fds[fd]->node;
+        vfs_node_t node = current_task->fd_info->fds[fd]->node;
         return (uint64_t)vfs_map(node, addr, len, prot, flags, offset);
     }
     else

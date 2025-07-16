@@ -127,6 +127,12 @@ struct rlimit;
 struct fd;
 typedef struct fd fd_t;
 
+typedef struct fd_info
+{
+    fd_t *fds[MAX_FD_NUM];
+    int ref_count;
+} fd_info_t;
+
 typedef struct task
 {
     bool call_in_signal;
@@ -159,7 +165,7 @@ typedef struct task
     uint64_t signal;
     uint64_t blocked;
     vfs_node_t cwd;
-    fd_t *fds[MAX_FD_NUM];
+    fd_info_t *fd_info;
     uint64_t timer_slack_ns;
     termios term;
     uint32_t tmp_rec_v;

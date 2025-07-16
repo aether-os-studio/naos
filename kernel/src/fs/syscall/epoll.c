@@ -15,7 +15,7 @@ size_t epoll_create1(int flags)
     int i = -1;
     for (i = 3; i < MAX_FD_NUM; i++)
     {
-        if (current_task->fds[i] == NULL)
+        if (current_task->fd_info->fds[i] == NULL)
         {
             break;
         }
@@ -39,10 +39,10 @@ size_t epoll_create1(int flags)
     node->handle = epoll;
     node->fsid = epollfs_id;
 
-    current_task->fds[i] = malloc(sizeof(fd_t));
-    current_task->fds[i]->node = node;
-    current_task->fds[i]->offset = 0;
-    current_task->fds[i]->flags = 0;
+    current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
+    current_task->fd_info->fds[i]->node = node;
+    current_task->fd_info->fds[i]->offset = 0;
+    current_task->fd_info->fds[i]->flags = 0;
 
     return i;
 }
@@ -122,13 +122,13 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd, struct epoll_event *event)
 
     size_t ret = 0;
 
-    if (!current_task->fds[fd])
+    if (!current_task->fd_info->fds[fd])
     {
         ret = (uint64_t)(-EBADF);
         goto cleanup;
     }
 
-    vfs_node_t fdNode = current_task->fds[fd]->node;
+    vfs_node_t fdNode = current_task->fd_info->fds[fd]->node;
 
     switch (op)
     {
@@ -228,7 +228,7 @@ uint64_t sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int
     {
         return (uint64_t)-EFAULT;
     }
-    vfs_node_t node = current_task->fds[epfd]->node;
+    vfs_node_t node = current_task->fd_info->fds[epfd]->node;
     if (!node)
         return (uint64_t)-EBADF;
     return epoll_wait(node, events, maxevents, timeout);
@@ -240,7 +240,7 @@ uint64_t sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)
     {
         return (uint64_t)-EFAULT;
     }
-    vfs_node_t node = current_task->fds[epfd]->node;
+    vfs_node_t node = current_task->fd_info->fds[epfd]->node;
     if (!node)
         return (uint64_t)-EBADF;
     return epoll_ctl(node, op, fd, event);
@@ -254,7 +254,11 @@ uint64_t sys_epoll_pwait(int epfd, struct epoll_event *events,
     {
         return (uint64_t)-EFAULT;
     }
-    vfs_node_t node = current_task->fds[epfd]->node;
+    if (epfd >= MAX_FD_NUM || current_task->fd_info->fds[epfd] == NULL)
+    {
+        return (uint64_t)-EBADF;
+    }
+    vfs_node_t node = current_task->fd_info->fds[epfd]->node;
     if (!node)
         return (uint64_t)-EBADF;
     return epoll_pwait(node, events, maxevents, timeout, sigmask, sigsetsize);

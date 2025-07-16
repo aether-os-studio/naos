@@ -15,7 +15,7 @@ int sys_timerfd_create(int clockid, int flags)
     int fd = -1;
     for (int i = 3; i < MAX_FD_NUM; i++)
     {
-        if (!current_task->fds[i])
+        if (!current_task->fd_info->fds[i])
         {
             fd = i;
             break;
@@ -37,20 +37,20 @@ int sys_timerfd_create(int clockid, int flags)
     node->fsid = timerfdfs_id;
     node->handle = tfd;
 
-    current_task->fds[fd] = malloc(sizeof(fd_t));
-    current_task->fds[fd]->node = node;
-    current_task->fds[fd]->offset = 0;
-    current_task->fds[fd]->flags = 0;
+    current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
+    current_task->fd_info->fds[fd]->node = node;
+    current_task->fd_info->fds[fd]->offset = 0;
+    current_task->fd_info->fds[fd]->flags = 0;
 
     return fd;
 }
 
 int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, struct itimerval *old_value)
 {
-    if (fd >= MAX_FD_NUM || !current_task->fds[fd])
+    if (fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
 
-    vfs_node_t node = current_task->fds[fd]->node;
+    vfs_node_t node = current_task->fd_info->fds[fd]->node;
     timerfd_t *tfd = node->handle;
 
     if (old_value)

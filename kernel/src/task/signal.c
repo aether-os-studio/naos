@@ -460,9 +460,9 @@ void task_signal()
 
     for (int i = 0; i < MAX_FD_NUM; i++)
     {
-        if (current_task->fds[i])
+        if (current_task->fd_info->fds[i])
         {
-            vfs_node_t node = current_task->fds[i]->node;
+            vfs_node_t node = current_task->fd_info->fds[i]->node;
             if (node && node->fsid == signalfdfs_id)
             {
                 struct signalfd_ctx *ctx = node->handle;

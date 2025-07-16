@@ -17,7 +17,7 @@ char *at_resolve_pathname(int dirfd, char *pathname)
         }
         else
         { // relative to dirfd, resolve accordingly
-            vfs_node_t node = current_task->fds[dirfd]->node;
+            vfs_node_t node = current_task->fd_info->fds[dirfd]->node;
             if (!node)
                 return NULL;
             if (node->type != file_dir)

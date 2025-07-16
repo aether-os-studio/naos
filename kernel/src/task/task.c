@@ -90,20 +90,22 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
     task->mmap_start = USER_MMAP_START;
     task->brk_start = USER_BRK_START;
     task->brk_end = USER_BRK_START;
+    task->fd_info = malloc(sizeof(fd_info_t));
     memset(task->actions, 0, sizeof(task->actions));
-    memset(task->fds, 0, sizeof(task->fds));
-    task->fds[0] = malloc(sizeof(fd_t));
-    task->fds[0]->node = vfs_open("/dev/stdin");
-    task->fds[0]->offset = 0;
-    task->fds[0]->flags = 0;
-    task->fds[1] = malloc(sizeof(fd_t));
-    task->fds[1]->node = vfs_open("/dev/stdout");
-    task->fds[1]->offset = 0;
-    task->fds[1]->flags = 0;
-    task->fds[2] = malloc(sizeof(fd_t));
-    task->fds[2]->node = vfs_open("/dev/stderr");
-    task->fds[2]->offset = 0;
-    task->fds[2]->flags = 0;
+    memset(task->fd_info, 0, sizeof(task->fd_info));
+    task->fd_info->fds[0] = malloc(sizeof(fd_t));
+    task->fd_info->fds[0]->node = vfs_open("/dev/stdin");
+    task->fd_info->fds[0]->offset = 0;
+    task->fd_info->fds[0]->flags = 0;
+    task->fd_info->fds[1] = malloc(sizeof(fd_t));
+    task->fd_info->fds[1]->node = vfs_open("/dev/stdout");
+    task->fd_info->fds[1]->offset = 0;
+    task->fd_info->fds[1]->flags = 0;
+    task->fd_info->fds[2] = malloc(sizeof(fd_t));
+    task->fd_info->fds[2]->node = vfs_open("/dev/stderr");
+    task->fd_info->fds[2]->offset = 0;
+    task->fd_info->fds[2]->flags = 0;
+    task->fd_info->ref_count++;
     strncpy(task->name, name, TASK_NAME_MAX);
 
     memset(&task->term, 0, sizeof(termios));
@@ -362,37 +364,43 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     child->load_start = current_task->load_start;
     child->load_end = current_task->load_end;
 
-    memset(child->fds, 0, sizeof(child->fds));
-    child->fds[0] = malloc(sizeof(fd_t));
-    child->fds[0]->node = vfs_open("/dev/stdin");
-    child->fds[0]->offset = 0;
-    child->fds[0]->flags = 0;
-    child->fds[1] = malloc(sizeof(fd_t));
-    child->fds[1]->node = vfs_open("/dev/stdout");
-    child->fds[1]->offset = 0;
-    child->fds[1]->flags = 0;
-    child->fds[2] = malloc(sizeof(fd_t));
-    child->fds[2]->node = vfs_open("/dev/stderr");
-    child->fds[2]->offset = 0;
-    child->fds[2]->flags = 0;
+    child->fd_info = vfork ? current_task->fd_info : malloc(sizeof(fd_info_t));
 
     if (!vfork)
     {
+        memset(child->fd_info->fds, 0, sizeof(child->fd_info->fds));
+        child->fd_info->fds[0] = malloc(sizeof(fd_t));
+        child->fd_info->fds[0]->node = vfs_open("/dev/stdin");
+        child->fd_info->fds[0]->offset = 0;
+        child->fd_info->fds[0]->flags = 0;
+        child->fd_info->fds[1] = malloc(sizeof(fd_t));
+        child->fd_info->fds[1]->node = vfs_open("/dev/stdout");
+        child->fd_info->fds[1]->offset = 0;
+        child->fd_info->fds[1]->flags = 0;
+        child->fd_info->fds[2] = malloc(sizeof(fd_t));
+        child->fd_info->fds[2]->node = vfs_open("/dev/stderr");
+        child->fd_info->fds[2]->offset = 0;
+        child->fd_info->fds[2]->flags = 0;
+
         for (uint64_t i = 3; i < MAX_FD_NUM; i++)
         {
-            fd_t *fd = current_task->fds[i];
+            fd_t *fd = current_task->fd_info->fds[i];
 
             if (fd)
             {
-                child->fds[i] = malloc(sizeof(fd_t));
-                memcpy(child->fds[i], fd, sizeof(fd_t));
-                child->fds[i]->node->refcount++;
+                child->fd_info->fds[i] = malloc(sizeof(fd_t));
+                memcpy(child->fd_info->fds[i], fd, sizeof(fd_t));
+                child->fd_info->fds[i]->node->refcount++;
             }
             else
             {
-                child->fds[i] = NULL;
+                child->fd_info->fds[i] = NULL;
             }
         }
+    }
+    else
+    {
+        child->fd_info->ref_count++;
     }
 
     memcpy(child->actions, current_task->actions, sizeof(child->actions));
@@ -735,14 +743,14 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     for (uint64_t i = 3; i < MAX_FD_NUM; i++)
     {
-        if (!current_task->fds[i])
+        if (!current_task->fd_info->fds[i])
             continue;
 
-        if (current_task->fds[i]->flags & O_CLOEXEC)
+        if (current_task->fd_info->fds[i]->flags & O_CLOEXEC)
         {
-            vfs_close(current_task->fds[i]->node);
-            free(current_task->fds[i]);
-            current_task->fds[i] = NULL;
+            vfs_close(current_task->fd_info->fds[i]->node);
+            free(current_task->fd_info->fds[i]);
+            current_task->fd_info->fds[i] = NULL;
         }
     }
 
@@ -798,14 +806,18 @@ void task_exit_inner(task_t *task, int64_t code)
 
     task->status = (uint64_t)code;
 
-    for (uint64_t i = 0; i < MAX_FD_NUM; i++)
+    task->fd_info->ref_count--;
+    if (task->fd_info->ref_count <= 0)
     {
-        if (task->fds[i])
+        for (uint64_t i = 0; i < MAX_FD_NUM; i++)
         {
-            vfs_close(task->fds[i]->node);
-            free(task->fds[i]);
+            if (task->fd_info->fds[i])
+            {
+                vfs_close(task->fd_info->fds[i]->node);
+                free(task->fd_info->fds[i]);
 
-            task->fds[i] = NULL;
+                task->fd_info->fds[i] = NULL;
+            }
         }
     }
 
@@ -1043,32 +1055,43 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->load_start = current_task->load_start;
     child->load_end = current_task->load_end;
 
-    memset(child->fds, 0, sizeof(child->fds));
-    child->fds[0] = malloc(sizeof(fd_t));
-    child->fds[0]->node = vfs_open("/dev/stdin");
-    child->fds[0]->offset = 0;
-    child->fds[0]->flags = 0;
-    child->fds[1] = malloc(sizeof(fd_t));
-    child->fds[1]->node = vfs_open("/dev/stdout");
-    child->fds[1]->offset = 0;
-    child->fds[1]->flags = 0;
-    child->fds[2] = malloc(sizeof(fd_t));
-    child->fds[2]->node = vfs_open("/dev/stderr");
-    child->fds[2]->offset = 0;
-    child->fds[2]->flags = 0;
+    child->fd_info = (flags & CLONE_FILES) ? current_task->fd_info : malloc(sizeof(fd_info_t));
 
-    for (uint64_t i = 3; i < MAX_FD_NUM; i++)
+    if (!(flags & CLONE_FILES))
     {
-        if (current_task->fds[i])
+        memset(child->fd_info->fds, 0, sizeof(child->fd_info->fds));
+        child->fd_info->fds[0] = malloc(sizeof(fd_t));
+        child->fd_info->fds[0]->node = vfs_open("/dev/stdin");
+        child->fd_info->fds[0]->offset = 0;
+        child->fd_info->fds[0]->flags = 0;
+        child->fd_info->fds[1] = malloc(sizeof(fd_t));
+        child->fd_info->fds[1]->node = vfs_open("/dev/stdout");
+        child->fd_info->fds[1]->offset = 0;
+        child->fd_info->fds[1]->flags = 0;
+        child->fd_info->fds[2] = malloc(sizeof(fd_t));
+        child->fd_info->fds[2]->node = vfs_open("/dev/stderr");
+        child->fd_info->fds[2]->offset = 0;
+        child->fd_info->fds[2]->flags = 0;
+
+        for (uint64_t i = 3; i < MAX_FD_NUM; i++)
         {
-            child->fds[i] = malloc(sizeof(fd_t));
-            memcpy(child->fds[i], current_task->fds[i], sizeof(fd_t));
-            child->fds[i]->node->refcount++;
+            fd_t *fd = current_task->fd_info->fds[i];
+
+            if (fd)
+            {
+                child->fd_info->fds[i] = malloc(sizeof(fd_t));
+                memcpy(child->fd_info->fds[i], fd, sizeof(fd_t));
+                child->fd_info->fds[i]->node->refcount++;
+            }
+            else
+            {
+                child->fd_info->fds[i] = NULL;
+            }
         }
-        else
-        {
-            child->fds[i] = NULL;
-        }
+    }
+    else
+    {
+        child->fd_info->ref_count++;
     }
 
     memcpy(&child->term, &current_task->term, sizeof(termios));
@@ -1271,9 +1294,9 @@ void sched_update_itimer()
 
         for (int fd = 3; fd < MAX_FD_NUM; fd++)
         {
-            if (ptr->fds[fd] && ptr->fds[fd]->node && ptr->fds[fd]->node->fsid == timerfdfs_id)
+            if (ptr->fd_info->fds[fd] && ptr->fd_info->fds[fd]->node && ptr->fd_info->fds[fd]->node->fsid == timerfdfs_id)
             {
-                timerfd_t *tfd = ptr->fds[fd]->node->handle;
+                timerfd_t *tfd = ptr->fd_info->fds[fd]->node->handle;
                 if (tfd->timer.expires && nanoTime() >= tfd->timer.expires)
                 {
                     tfd->count++;

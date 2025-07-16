@@ -287,7 +287,7 @@ int sys_pipe(int pipefd[2], uint64_t flags)
     int i1 = -1;
     for (i1 = 3; i1 < MAX_FD_NUM; i1++)
     {
-        if (current_task->fds[i1] == NULL)
+        if (current_task->fd_info->fds[i1] == NULL)
         {
             break;
         }
@@ -338,15 +338,15 @@ int sys_pipe(int pipefd[2], uint64_t flags)
     node_input->handle = read_spec;
     node_output->handle = write_spec;
 
-    current_task->fds[i1] = malloc(sizeof(fd_t));
-    current_task->fds[i1]->node = node_input;
-    current_task->fds[i1]->offset = 0;
-    current_task->fds[i1]->flags = flags;
+    current_task->fd_info->fds[i1] = malloc(sizeof(fd_t));
+    current_task->fd_info->fds[i1]->node = node_input;
+    current_task->fd_info->fds[i1]->offset = 0;
+    current_task->fd_info->fds[i1]->flags = flags;
 
     int i2 = -1;
     for (i2 = 3; i2 < MAX_FD_NUM; i2++)
     {
-        if (current_task->fds[i2] == NULL)
+        if (current_task->fd_info->fds[i2] == NULL)
         {
             break;
         }
@@ -357,10 +357,10 @@ int sys_pipe(int pipefd[2], uint64_t flags)
         return -EBADF;
     }
 
-    current_task->fds[i2] = malloc(sizeof(fd_t));
-    current_task->fds[i2]->node = node_output;
-    current_task->fds[i2]->offset = 0;
-    current_task->fds[i2]->flags = flags;
+    current_task->fd_info->fds[i2] = malloc(sizeof(fd_t));
+    current_task->fd_info->fds[i2]->node = node_output;
+    current_task->fd_info->fds[i2]->offset = 0;
+    current_task->fd_info->fds[i2]->flags = flags;
 
     pipefd[0] = i1;
     pipefd[1] = i2;

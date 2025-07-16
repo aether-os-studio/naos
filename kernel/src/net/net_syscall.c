@@ -15,7 +15,7 @@ int sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen)
 {
     if (fd >= MAX_FD_NUM)
         return -EBADF;
-    fd_t *node = current_task->fds[fd];
+    fd_t *node = current_task->fd_info->fds[fd];
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->getpeername)
@@ -29,7 +29,7 @@ int sys_getsockname(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen)
 {
     if (sockfd >= MAX_FD_NUM)
         return -EBADF;
-    fd_t *node = current_task->fds[sockfd];
+    fd_t *node = current_task->fd_info->fds[sockfd];
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op == &socket_ops || handle->op == &accept_ops)
@@ -50,7 +50,7 @@ int sys_setsockopt(int fd, int level, int optname, const void *optval, socklen_t
 {
     if (fd >= MAX_FD_NUM)
         return -EBADF;
-    fd_t *node = current_task->fds[fd];
+    fd_t *node = current_task->fd_info->fds[fd];
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->setsockopt)
@@ -64,7 +64,7 @@ int sys_getsockopt(int fd, int level, int optname, void *optval, socklen_t *optl
 {
     if (fd >= MAX_FD_NUM)
         return -EBADF;
-    fd_t *node = current_task->fds[fd];
+    fd_t *node = current_task->fd_info->fds[fd];
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->getsockopt)
@@ -93,9 +93,9 @@ int sys_socketpair(int family, int type, int protocol, int *sv)
 
 int sys_bind(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen)
 {
-    if (sockfd >= MAX_FD_NUM || !current_task->fds[sockfd])
+    if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;
-    fd_t *node = current_task->fds[sockfd];
+    fd_t *node = current_task->fd_info->fds[sockfd];
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->bind)
@@ -105,9 +105,9 @@ int sys_bind(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen)
 
 int sys_listen(int sockfd, int backlog)
 {
-    if (sockfd >= MAX_FD_NUM || !current_task->fds[sockfd])
+    if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;
-    fd_t *node = current_task->fds[sockfd];
+    fd_t *node = current_task->fd_info->fds[sockfd];
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->listen)
@@ -117,9 +117,9 @@ int sys_listen(int sockfd, int backlog)
 
 int sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen, uint64_t flags)
 {
-    if (sockfd >= MAX_FD_NUM || !current_task->fds[sockfd])
+    if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;
-    fd_t *node = current_task->fds[sockfd];
+    fd_t *node = current_task->fd_info->fds[sockfd];
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->accept)
@@ -129,9 +129,9 @@ int sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen, uint64_
 
 int sys_connect(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen)
 {
-    if (sockfd >= MAX_FD_NUM || !current_task->fds[sockfd])
+    if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;
-    fd_t *node = current_task->fds[sockfd];
+    fd_t *node = current_task->fd_info->fds[sockfd];
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->connect)
@@ -141,9 +141,9 @@ int sys_connect(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen)
 
 int64_t sys_send(int sockfd, void *buff, size_t len, int flags, struct sockaddr_un *dest_addr, socklen_t addrlen)
 {
-    if (sockfd >= MAX_FD_NUM || !current_task->fds[sockfd])
+    if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;
-    fd_t *node = current_task->fds[sockfd];
+    fd_t *node = current_task->fd_info->fds[sockfd];
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->sendto)
@@ -153,9 +153,9 @@ int64_t sys_send(int sockfd, void *buff, size_t len, int flags, struct sockaddr_
 
 int64_t sys_recv(int sockfd, void *buf, size_t len, int flags, struct sockaddr_un *dest_addr, socklen_t *addrlen)
 {
-    if (sockfd >= MAX_FD_NUM || !current_task->fds[sockfd])
+    if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;
-    fd_t *node = current_task->fds[sockfd];
+    fd_t *node = current_task->fd_info->fds[sockfd];
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->recvfrom)
@@ -165,9 +165,9 @@ int64_t sys_recv(int sockfd, void *buf, size_t len, int flags, struct sockaddr_u
 
 int64_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags)
 {
-    if (sockfd >= MAX_FD_NUM || !current_task->fds[sockfd])
+    if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;
-    fd_t *node = current_task->fds[sockfd];
+    fd_t *node = current_task->fd_info->fds[sockfd];
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->sendmsg)
@@ -177,9 +177,9 @@ int64_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags)
 
 int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags)
 {
-    if (sockfd >= MAX_FD_NUM || !current_task->fds[sockfd])
+    if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;
-    fd_t *node = current_task->fds[sockfd];
+    fd_t *node = current_task->fd_info->fds[sockfd];
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->recvmsg)
@@ -189,7 +189,7 @@ int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags)
 
 size_t net_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
 {
-    socket_handle_t *handle = current_task->fds[fd]->node->handle;
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
 
     msg->msg_controllen = 0;
     msg->msg_flags = 0;
@@ -199,10 +199,10 @@ size_t net_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
     {
         struct iovec *curr =
             (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
-        if (cnt > 0 && fs_callbacks[current_task->fds[fd]->node->fsid]->poll)
+        if (cnt > 0 && fs_callbacks[current_task->fd_info->fds[fd]->node->fsid]->poll)
         {
             // check syscalls_fs.c for why this is necessary
-            if (!(fs_callbacks[current_task->fds[fd]->node->fsid]->poll(current_task->fds[fd]->node, EPOLLIN) & EPOLLIN))
+            if (!(fs_callbacks[current_task->fd_info->fds[fd]->node->fsid]->poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
                 return cnt;
         }
         size_t singleCnt = handle->op->recvfrom(
@@ -218,7 +218,7 @@ size_t net_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
 
 size_t net_sendmsg(uint64_t fd, const struct msghdr *msg, int flags)
 {
-    socket_handle_t *handle = current_task->fds[fd]->node->handle;
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
 
     size_t cnt = 0;
     bool noblock = flags & MSG_DONTWAIT;
@@ -261,7 +261,7 @@ int socket_alloc_fd_net()
 {
     int fd = 0;
     for (uint64_t i = 0; i < MAX_FD_NUM; i++)
-        if (current_task->fds[i] == NULL)
+        if (current_task->fd_info->fds[i] == NULL)
         {
             fd = i;
             break;
@@ -270,15 +270,15 @@ int socket_alloc_fd_net()
     if (fd == 0)
         return 0;
 
-    current_task->fds[fd] = malloc(sizeof(fd_t));
+    current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
     char buf[256];
     sprintf(buf, "sock%d", sockfsfd_id++);
-    current_task->fds[fd]->node = vfs_node_alloc(sockfs_root, buf);
+    current_task->fd_info->fds[fd]->node = vfs_node_alloc(sockfs_root, buf);
     socket_handle_t *sock = malloc(sizeof(socket_handle_t));
     sock->op = &net_ops;
     sock->sock = NULL;
-    current_task->fds[fd]->node->handle = sock;
-    current_task->fds[fd]->node->type = file_socket;
+    current_task->fd_info->fds[fd]->node->handle = sock;
+    current_task->fd_info->fds[fd]->node->type = file_socket;
 
     return fd;
 }

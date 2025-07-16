@@ -80,7 +80,7 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask, int flags
     int fd = -1;
     for (int i = 3; i < MAX_FD_NUM; i++)
     {
-        if (!current_task->fds[i])
+        if (!current_task->fd_info->fds[i])
         {
             fd = i;
             break;
@@ -96,10 +96,10 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask, int flags
     node->type = file_stream;
     node->fsid = signalfdfs_id;
     node->handle = ctx;
-    current_task->fds[fd] = malloc(sizeof(fd_t));
-    current_task->fds[fd]->node = node;
-    current_task->fds[fd]->offset = 0;
-    current_task->fds[fd]->flags = 0;
+    current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
+    current_task->fd_info->fds[fd]->node = node;
+    current_task->fd_info->fds[fd]->offset = 0;
+    current_task->fd_info->fds[fd]->flags = 0;
 
     return fd;
 }

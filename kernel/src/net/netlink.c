@@ -8,7 +8,7 @@ static int netlink_socket_fsid = 0;
 
 int netlink_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen)
 {
-    socket_handle_t *handle = current_task->fds[fd]->node->handle;
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     struct netlink_sock *sock = handle->sock;
     memcpy(sock->bind_addr, addr, sizeof(struct sockaddr_nl));
 
@@ -60,7 +60,7 @@ int netlink_socket(int domain, int type, int protocol)
     uint64_t i = 0;
     for (i = 3; i < MAX_FD_NUM; i++)
     {
-        if (current_task->fds[i] == NULL)
+        if (current_task->fd_info->fds[i] == NULL)
         {
             break;
         }
@@ -71,10 +71,10 @@ int netlink_socket(int domain, int type, int protocol)
         return -EBADF;
     }
 
-    current_task->fds[i] = malloc(sizeof(fd_t));
-    current_task->fds[i]->node = socknode;
-    current_task->fds[i]->offset = 0;
-    current_task->fds[i]->flags = 0;
+    current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
+    current_task->fd_info->fds[i]->node = socknode;
+    current_task->fd_info->fds[i]->offset = 0;
+    current_task->fd_info->fds[i]->flags = 0;
 
     return i;
 }

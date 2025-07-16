@@ -20,7 +20,7 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags)
     int fd = -1;
     for (int i = 3; i < MAX_FD_NUM; i++)
     {
-        if (!current_task->fds[i])
+        if (!current_task->fd_info->fds[i])
         {
             fd = i;
             break;
@@ -52,10 +52,10 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags)
 
     efd->node = node;
 
-    current_task->fds[fd] = malloc(sizeof(fd_t));
-    current_task->fds[fd]->node = node;
-    current_task->fds[fd]->offset = 0;
-    current_task->fds[fd]->flags = 0;
+    current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
+    current_task->fd_info->fds[fd]->node = node;
+    current_task->fd_info->fds[fd]->offset = 0;
+    current_task->fd_info->fds[fd]->flags = 0;
 
     return fd;
 }
