@@ -91,7 +91,10 @@ Restore_all:
     iretq
 
 ENTRY(ret_from_intr)
+    call task_signal
+
 ENTRY(ret_from_exception)
+
     jmp Restore_all
     
 Err_Code:

@@ -172,8 +172,11 @@ static void free_page_table_recursive(page_table_t *table, int level)
     free_frames((uint64_t)virt_to_phys((uint64_t)table), 1);
 }
 
+spinlock_t clone_lock = {0};
+
 task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags)
 {
+    spin_lock(&clone_lock);
     task_mm_info_t *new_mm = (task_mm_info_t *)malloc(sizeof(task_mm_info_t));
     memset(new_mm, 0, sizeof(task_mm_info_t));
     new_mm->page_table_addr = virt_to_phys((uint64_t)copy_page_table_recursive((page_table_t *)old->page_table_addr, ARCH_MAX_PT_LEVEL, !!(clone_flags & CLONE_VM), false));
@@ -181,6 +184,7 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags)
     memcpy((uint64_t *)phys_to_virt(new_mm->page_table_addr) + 256, (uint64_t *)phys_to_virt(old->page_table_addr) + 256, DEFAULT_PAGE_SIZE / 2);
 #endif
     new_mm->ref_count++;
+    spin_unlock(&clone_lock);
     return new_mm;
 }
 

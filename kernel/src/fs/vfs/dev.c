@@ -113,7 +113,7 @@ int devfs_mkfile(void *parent, const char *name, vfs_node_t node)
     vfs_node_t parent_node = parent;
 
     vfs_node_t child = vfs_child_append(parent_node, name, NULL);
-    child->type = file_dir;
+    child->type = file_none;
     child->handle = child;
     child->fsid = devfs_id;
 
@@ -307,6 +307,7 @@ vfs_node_t regist_dev(const char *name,
             vfs_node_t child = vfs_child_append(dev, devfs_handles[i]->name, NULL);
             child->refcount++;
             child->type = file_block;
+            child->fsid = devfs_id;
             if (!strncmp(devfs_handles[i]->name, "std", 3) || !strncmp(devfs_handles[i]->name, "tty", 3))
             {
                 child->type = file_stream;

@@ -73,8 +73,8 @@ void ptmx_open(void *parent, const char *name, vfs_node_t node)
     pty_pair_t *pair = n->next;
     memset(pair, 0, sizeof(pty_pair_t));
     pair->id = id;
-    pair->bufferMaster = malloc(PTY_BUFF_SIZE);
-    pair->bufferSlave = malloc(PTY_BUFF_SIZE);
+    pair->bufferMaster = alloc_frames_bytes(PTY_BUFF_SIZE);
+    pair->bufferSlave = alloc_frames_bytes(PTY_BUFF_SIZE);
     pty_termios_default(&pair->term);
     pair->win.ws_row = 24;
     pair->win.ws_col = 80; // some sane defaults
@@ -94,8 +94,8 @@ void ptmx_open(void *parent, const char *name, vfs_node_t node)
 
 void pty_pair_cleanup(pty_pair_t *pair)
 {
-    free(pair->bufferMaster);
-    free(pair->bufferSlave);
+    free_frames_bytes(pair->bufferMaster, PTY_BUFF_SIZE);
+    free_frames_bytes(pair->bufferSlave, PTY_BUFF_SIZE);
     pty_bitmap_remove(pair->id);
 
     spin_lock(&pty_global_lock);

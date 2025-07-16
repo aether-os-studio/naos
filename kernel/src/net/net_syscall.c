@@ -8,7 +8,7 @@
 
 uint64_t sys_shutdown(uint64_t fd, uint64_t how)
 {
-    return 0;
+    return -ENOSYS;
 }
 
 int sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen)

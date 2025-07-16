@@ -87,10 +87,10 @@ void arch_set_current(task_t *current)
 
 extern tss_t tss[MAX_CPU_NUM];
 
-extern void task_signal();
-
 void arch_switch_with_context(arch_context_t *prev, arch_context_t *next, uint64_t kernel_stack)
 {
+    arch_disable_interrupt();
+
     if (prev)
     {
         asm volatile("movq %%fs, %0\n\t" : "=r"(prev->fs));
@@ -125,6 +125,8 @@ void arch_switch_with_context(arch_context_t *prev, arch_context_t *next, uint64
         "movq %0, %%rsp\n\t"
         "jmp ret_from_exception" ::"r"(next->ctx));
 }
+
+extern void task_signal();
 
 void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
 {

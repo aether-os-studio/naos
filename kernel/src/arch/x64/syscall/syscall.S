@@ -1,4 +1,5 @@
 #include "arch/x64/asm.h"
+#include "settings.h"
 
 ENTRY(syscall_exception)
     cli
@@ -30,10 +31,27 @@ ENTRY(syscall_exception)
 
     movq %rsp, %r15
 
+    movq 128(%rsp), %rax
+
+    cmp $15, %rax
+    je prepare_sigreturn_stack
+    jmp prepare_normal_stack
+
+prepare_sigreturn_stack:
+    call switch_to_sigreturn_stack
+    subq $0xc0, %rax
+    movq %rax, %rsp
+
+    jmp next
+
+prepare_normal_stack:
     call switch_to_kernel_stack
     subq $0xc0, %rax
     movq %rax, %rsp
 
+    jmp next
+
+next:
     movq %rsp, %rdi
     movq %r15, %rsi
     movq $0xc0, %rdx

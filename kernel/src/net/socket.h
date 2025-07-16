@@ -84,7 +84,6 @@ typedef struct unix_socket_pair
     int clientBuffSize;
 
     // msg_control/msg_controllen
-    int *pending_fds;
     fd_t *pending_files;
     int pending_fds_count;
     int pending_fds_size;
@@ -319,8 +318,7 @@ struct cmsghdr
 #define CMSG_SPACE(len) (sizeof(struct cmsghdr) + CMSG_ALIGN(len))
 #define CMSG_LEN(len) (sizeof(struct cmsghdr) + (len))
 
-// #define __CMSG_FIRSTHDR(ctl, len) ((len) >= sizeof(struct cmsghdr) ? (struct cmsghdr *)(ctl) : (struct cmsghdr *)NULL)
-#define __CMSG_FIRSTHDR(ctl, len) ((struct cmsghdr *)(ctl))
+#define __CMSG_FIRSTHDR(ctl, len) ((len) >= sizeof(struct cmsghdr) ? (struct cmsghdr *)(ctl) : (struct cmsghdr *)NULL)
 #define CMSG_FIRSTHDR(msg) __CMSG_FIRSTHDR((msg)->msg_control, (msg)->msg_controllen)
 #define CMSG_OK(mhdr, cmsg) ((cmsg)->cmsg_len >= sizeof(struct cmsghdr) &&                \
                              (cmsg)->cmsg_len <= (unsigned long)((mhdr)->msg_controllen - \
@@ -328,13 +326,18 @@ struct cmsghdr
 
 static inline struct cmsghdr *__cmsg_nxthdr(void *__ctl, size_t __size, struct cmsghdr *__cmsg)
 {
-    struct cmsghdr *__ptr;
+    if (!__cmsg || __size < sizeof(struct cmsghdr))
+        return NULL;
 
-    __ptr = (struct cmsghdr *)(((unsigned char *)__cmsg) + CMSG_ALIGN(__cmsg->cmsg_len));
-    if ((unsigned long)((char *)(__ptr + 1) - (char *)__ctl) > __size)
-        return (struct cmsghdr *)0;
+    struct cmsghdr *next = (struct cmsghdr *)((unsigned char *)__cmsg + CMSG_ALIGN(__cmsg->cmsg_len));
+    unsigned char *end = (unsigned char *)__ctl + __size;
 
-    return __ptr;
+    if ((unsigned char *)(next + 1) > end)
+        return NULL;
+    if ((unsigned char *)next + CMSG_ALIGN(next->cmsg_len) > end)
+        return NULL;
+
+    return next;
 }
 
 static inline struct cmsghdr *cmsg_nxthdr(struct msghdr *__msg, struct cmsghdr *__cmsg)

@@ -75,6 +75,8 @@ vfs_node_t unix_socket_accept_create(unix_socket_pair_t *dir)
     return socknode;
 }
 
+#define MAX_PENDING_FILES_COUNT 8
+
 unix_socket_pair_t *unix_socket_allocate_pair()
 {
     unix_socket_pair_t *pair = calloc(sizeof(unix_socket_pair_t), 1);
@@ -83,9 +85,8 @@ unix_socket_pair_t *unix_socket_allocate_pair()
     pair->serverBuffSize = BUFFER_SIZE;
     pair->serverBuff = malloc(pair->serverBuffSize);
     pair->clientBuff = malloc(pair->clientBuffSize);
-    pair->pending_fds = malloc(4 * sizeof(int));
-    pair->pending_files = malloc(4 * sizeof(fd_t));
-    pair->pending_fds_size = 4;
+    pair->pending_files = malloc(MAX_PENDING_FILES_COUNT * sizeof(fd_t));
+    pair->pending_fds_size = MAX_PENDING_FILES_COUNT;
     pair->pending_fds_count = 0;
     pair->serverFds = 0;
     pair->clientFds = 0;
@@ -98,7 +99,6 @@ void unix_socket_free_pair(unix_socket_pair_t *pair)
     free(pair->clientBuff);
     free(pair->serverBuff);
     free(pair->filename);
-    free(pair->pending_fds);
     free(pair->pending_files);
     free(pair);
 }
@@ -155,8 +155,6 @@ size_t unix_socket_accept_recv_from(uint64_t fd, uint8_t *out, size_t limit,
 
     socket_handle_t *handle = current_task->fds[fd]->node->handle;
     unix_socket_pair_t *pair = handle->sock;
-    if (!pair->clientFds && pair->serverBuffPos == 0)
-        return 0;
     while (true)
     {
         if (!pair->clientFds && pair->serverBuffPos == 0)
@@ -482,6 +480,11 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrle
     if (!parent)
         return -(ENOENT);
 
+    if (parent->acceptWouldBlock && current_task->fds[fd]->flags & O_NONBLOCK)
+    {
+        return -(EINPROGRESS);
+    }
+
     if (!parent->connMax)
     {
         return -(ECONNREFUSED);
@@ -510,8 +513,6 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrle
     }
 
     arch_disable_interrupt();
-
-    parent->pair = pair;
 
     return 0;
 }
@@ -623,8 +624,6 @@ size_t unix_socket_send_to(uint64_t fd, uint8_t *in, size_t limit, int flags,
 
 size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
 {
-    msg->msg_controllen = 0;
-    msg->msg_flags = 0;
     size_t cnt = 0;
     bool noblock = flags & MSG_DONTWAIT;
 
@@ -640,7 +639,7 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
             arch_pause();
         socket_op_lock = true;
 
-        if (pair->pending_fds_count > 0)
+        while (cmsg && pair->pending_fds_count > 0)
         {
             size_t max_fds = (msg->msg_controllen - CMSG_LEN(0)) / sizeof(int);
             int num_fds = MIN(pair->pending_fds_count, max_fds);
@@ -673,15 +672,11 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
                 memcpy(current_task->fds[dest_fds[i]], &pair->pending_files[i], sizeof(fd_t));
             }
 
-            memmove(pair->pending_fds, &pair->pending_fds[num_fds],
-                    (pair->pending_fds_count - num_fds) * sizeof(fd_t));
+            memmove(pair->pending_files, &pair->pending_files[num_fds],
+                    (pair->pending_fds_size - num_fds) * sizeof(fd_t));
             pair->pending_fds_count -= num_fds;
 
-            msg->msg_controllen = cmsg->cmsg_len;
-        }
-        else
-        {
-            msg->msg_controllen = 0;
+            cmsg = CMSG_NXTHDR(msg, cmsg);
         }
 
         socket_op_lock = false;
@@ -697,9 +692,17 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
         }
         size_t singleCnt = unix_socket_recv_from(fd, curr->iov_base, curr->len,
                                                  noblock ? MSG_DONTWAIT : 0, 0, 0);
-        if (((int64_t)singleCnt) < 0)
-            return singleCnt;
-
+        if ((int64_t)singleCnt < 0)
+        {
+            if (cnt > 0)
+            {
+                return cnt;
+            }
+            else
+            {
+                return singleCnt;
+            }
+        }
         cnt += singleCnt;
     }
 
@@ -716,7 +719,8 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
         if (msg->msg_control == NULL ||
             msg->msg_controllen < sizeof(struct cmsghdr))
         {
-            return -EINVAL;
+            ((struct msghdr *)msg)->msg_flags |= MSG_CTRUNC;
+            return 0;
         }
     }
 
@@ -727,12 +731,15 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
         unix_socket_pair_t *pair = socket->pair;
 
         struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
+        if (!cmsg)
+        {
+            return -EINVAL;
+        }
         for (; cmsg != NULL; cmsg = CMSG_NXTHDR((struct msghdr *)msg, cmsg))
         {
             if (cmsg->cmsg_level == SOL_SOCKET &&
                 cmsg->cmsg_type == SCM_RIGHTS)
             {
-
                 int *fds = (int *)CMSG_DATA(cmsg);
                 int num_fds = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
 
@@ -743,7 +750,6 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
 
                 for (int i = 0; i < num_fds; i++)
                 {
-                    pair->pending_fds[pair->pending_fds_count] = fds[i];
                     memcpy(&pair->pending_files[pair->pending_fds_count++], current_task->fds[fds[i]], sizeof(fd_t));
                     current_task->fds[fds[i]]->node->refcount++;
                 }
@@ -772,8 +778,6 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
 size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
                                    int flags)
 {
-    msg->msg_controllen = 0;
-    msg->msg_flags = 0;
     size_t cnt = 0;
     bool noblock = flags & MSG_DONTWAIT;
 
@@ -788,7 +792,7 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
             arch_pause();
         socket_op_lock = true;
 
-        if (pair->pending_fds_count > 0)
+        while (cmsg && pair->pending_fds_count > 0)
         {
             size_t max_fds = (msg->msg_controllen - CMSG_LEN(0)) / sizeof(int);
             int num_fds = MIN(pair->pending_fds_count, max_fds);
@@ -821,15 +825,11 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
                 memcpy(current_task->fds[dest_fds[i]], &pair->pending_files[i], sizeof(fd_t));
             }
 
-            memmove(pair->pending_fds, &pair->pending_fds[num_fds],
-                    (pair->pending_fds_count - num_fds) * sizeof(fd_t));
+            memmove(pair->pending_files, &pair->pending_files[num_fds],
+                    (pair->pending_fds_size - num_fds) * sizeof(fd_t));
             pair->pending_fds_count -= num_fds;
 
-            msg->msg_controllen = cmsg->cmsg_len;
-        }
-        else
-        {
-            msg->msg_controllen = 0;
+            cmsg = CMSG_NXTHDR(msg, cmsg);
         }
 
         socket_op_lock = false;
@@ -846,9 +846,18 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
         }
         size_t singleCnt = unix_socket_accept_recv_from(
             fd, curr->iov_base, curr->len, noblock ? MSG_DONTWAIT : 0, 0, 0);
-        if ((int64_t)(singleCnt) < 0)
-            return singleCnt;
 
+        if ((int64_t)singleCnt < 0)
+        {
+            if (cnt > 0)
+            {
+                return cnt;
+            }
+            else
+            {
+                return singleCnt;
+            }
+        }
         cnt += singleCnt;
     }
 
@@ -865,7 +874,8 @@ size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg, int fl
         if (msg->msg_control == NULL ||
             msg->msg_controllen < sizeof(struct cmsghdr))
         {
-            return -EINVAL;
+            ((struct msghdr *)msg)->msg_flags |= MSG_CTRUNC;
+            return 0;
         }
     }
 
@@ -875,12 +885,15 @@ size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg, int fl
         unix_socket_pair_t *pair = handle->sock;
 
         struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
+        if (!cmsg)
+        {
+            return -EINVAL;
+        }
         for (; cmsg != NULL; cmsg = CMSG_NXTHDR((struct msghdr *)msg, cmsg))
         {
             if (cmsg->cmsg_level == SOL_SOCKET &&
                 cmsg->cmsg_type == SCM_RIGHTS)
             {
-
                 int *fds = (int *)CMSG_DATA(cmsg);
                 int num_fds = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
 
@@ -891,7 +904,6 @@ size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg, int fl
 
                 for (int i = 0; i < num_fds; i++)
                 {
-                    pair->pending_fds[pair->pending_fds_count] = fds[i];
                     memcpy(&pair->pending_files[pair->pending_fds_count++], current_task->fds[fds[i]], sizeof(fd_t));
                     current_task->fds[fds[i]]->node->refcount++;
                 }
@@ -1355,7 +1367,7 @@ size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr, socklen_t 
     addr->sun_family = 1;
     if (pair->filename[0] == ':')
     {
-        memcpy(addr->sun_path + 1, pair->filename + 1, toCopy - sizeof(addr->sun_family));
+        memcpy(addr->sun_path + 1, pair->filename + 1, toCopy - sizeof(addr->sun_family) - 1);
         addr->sun_path[0] = '\0';
     }
     else
@@ -1368,26 +1380,6 @@ size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr, socklen_t 
 
 void socket_open(void *parent, const char *name, vfs_node_t node)
 {
-    // socket_handle_t *handle = malloc(sizeof(socket_handle_t));
-    // memset(handle, 0, sizeof(socket_handle_t));
-    // if (node->fsid == unix_socket_fsid)
-    // {
-    //     uint64_t fd = malloc(sizeof(socket_t));
-    //     memset(sock, 0, sizeof(socket_t));
-    //     handle->sock = sock;
-    //     sock->timesOpened++;
-    //     node->handle = handle;
-    //     handle->op = &accept_ops;
-    // }
-    // else
-    // {
-    //     unix_socket_pair_t *pair = malloc(sizeof(unix_socket_pair_t));
-    //     memset(pair, 0, sizeof(socket_t));
-    //     handle->sock = pair;
-    //     pair->serverFds++;
-    //     node->handle = handle;
-    //     handle->op = &accept_ops;
-    // }
 }
 
 int socket_stat(void *file, vfs_node_t node)

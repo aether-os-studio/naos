@@ -83,7 +83,8 @@ typedef struct sigaction
 int sys_sgetmask();
 int sys_ssetmask(int how, sigset_t *nset, sigset_t *oset);
 int sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction);
-void sys_sigreturn();
+struct pt_regs;
+void sys_sigreturn(struct pt_regs *regs);
 int sys_sigsuspend(const sigset_t *mask);
 int sys_kill(int pid, int sig);
 

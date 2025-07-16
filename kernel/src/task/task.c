@@ -856,21 +856,41 @@ uint64_t task_exit(int64_t code)
 
 uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
 {
-    task_t *child = NULL;
+    arch_disable_interrupt();
+    task_t *target = NULL;
     uint64_t ret = -ECHILD;
+
+    // First check if we have any children at all
+    bool has_children = false;
+    for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
+    {
+        task_t *ptr = tasks[i];
+        if (ptr && ptr->ppid == current_task->pid)
+        {
+            has_children = true;
+            break;
+        }
+    }
+
+    if (!has_children)
+    {
+        arch_enable_interrupt();
+        return -ECHILD;
+    }
 
     while (1)
     {
         bool found_alive = false;
+        task_t *found_dead = NULL;
 
-        // 优先查找僵尸进程
+        // First search for any terminated children
         for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
         {
             task_t *ptr = tasks[i];
             if (!ptr || ptr->ppid != current_task->pid)
                 continue;
 
-            // 检查pid匹配条件
+            // Check pid match conditions
             if ((int64_t)pid > 0)
             {
                 if (ptr->pid != pid)
@@ -883,15 +903,13 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
             }
             else if (pid != (uint64_t)-1)
             {
-                continue; // 仅支持 -1, 0, >0
+                continue;
             }
 
-            child = ptr;
-
-            // 优先处理僵尸进程
             if (ptr->state == TASK_DIED)
             {
-                goto rollback; // 立即回收
+                found_dead = ptr;
+                break;
             }
             else
             {
@@ -899,56 +917,75 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
             }
         }
 
-        // 找到僵尸进程会直接跳转到rollback
+        // If we found a dead child, handle it
+        if (found_dead)
+        {
+            target = found_dead;
+            break;
+        }
+
+        // Handle WNOHANG
+        if (options & WNOHANG)
+        {
+            if (found_alive)
+            {
+                arch_enable_interrupt();
+                return 0;
+            }
+            arch_enable_interrupt();
+            return -ECHILD;
+        }
+
+        // If we have alive children but none dead, block
         if (found_alive)
         {
-            if (options & WNOHANG)
-            {
-                return 0; // 非阻塞立即返回
-            }
-
-            // 设置等待并阻塞当前进程
-            child->waitpid = current_task->pid;
-
-            task_block(current_task, TASK_BLOCKING, -1);
-
-            // 被唤醒后重新检查
+            current_task->state = TASK_BLOCKING;
+            arch_enable_interrupt();
+            arch_yield();
+            arch_disable_interrupt();
             continue;
         }
 
-        // 没有任何匹配的子进程
-        if (options & WNOHANG)
-        {
-            return -ECHILD;
-        }
-        break;
+        // No children at all
+        arch_enable_interrupt();
+        return -ECHILD;
     }
 
-rollback:
-    if (child)
+    // Handle found terminated child
+    if (target)
     {
-        // 复制状态码
+        // Set status
         if (status)
         {
-            if (child->status & 0x80)
+            if (target->status < 128)
             {
-                *status = (child->status & 0x7F); // 信号终止
+                *status = (target->status & 0xff) << 8;
             }
             else
             {
-                *status = (child->status << 8); // 正常退出
+                int sig = target->status - 128;
+                *status = (sig & 0xff);
             }
         }
 
-        ret = child->pid;
+        ret = target->pid;
 
-        // 清理进程资源
-        tasks[child->pid] = NULL;
-        free_page_table(child->arch_context->mm);
-        free(child->arch_context);
-        free(child);
+        // Cleanup task resources
+        tasks[target->pid] = NULL;
+        socket_on_exit_task(target->pid);
+        procfs_on_exit_task(target);
+
+        // Free memory
+        if (target->cmdline)
+            free(target->cmdline);
+        if (target->arch_context)
+            arch_context_free(target->arch_context);
+        free_frames_bytes((void *)target->kernel_stack, STACK_SIZE);
+        free_frames_bytes((void *)target->syscall_stack, STACK_SIZE);
+        free(target);
     }
 
+    arch_enable_interrupt();
     return ret;
 }
 

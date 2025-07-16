@@ -10,6 +10,11 @@ uint64_t switch_to_kernel_stack()
     return current_task->syscall_stack;
 }
 
+uint64_t switch_to_sigreturn_stack()
+{
+    return current_task->syscall_stack - STACK_SIZE / 2;
+}
+
 void *real_memcpy(void *dst, const void *src, size_t len)
 {
 #if defined(__x86_64__)
@@ -266,7 +271,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = sys_kill(arg1, arg2);
         break;
     case SYS_RT_SIGRETURN:
-        sys_sigreturn();
+        sys_sigreturn(regs);
         regs->rax = 0;
         break;
     case SYS_FCNTL:
@@ -426,6 +431,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_SETRESGID:
         current_task->rgid = arg1;
+        regs->rax = 0;
+        break;
+    case SYS_SETGROUPS:
         regs->rax = 0;
         break;
     case SYS_DUP:

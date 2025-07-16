@@ -173,7 +173,7 @@ void aarch64_do_syscall(struct pt_regs *frame)
         frame->x0 = sys_kill(arg1, arg2);
         break;
     case SYS_RT_SIGRETURN:
-        sys_sigreturn();
+        sys_sigreturn(frame);
         frame->x0 = 0;
         break;
     case SYS_FCNTL:
