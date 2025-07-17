@@ -782,6 +782,7 @@ static struct vfs_callback callbacks = {
     .ioctl = iso9660_ioctl,
     .poll = iso9660_poll,
     .resize = (vfs_resize_t)dummy,
+    .dup = vfs_generic_dup,
 };
 
 void iso9660_init()

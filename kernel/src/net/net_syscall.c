@@ -8,7 +8,7 @@
 
 uint64_t sys_shutdown(uint64_t fd, uint64_t how)
 {
-    return -ENOSYS;
+    return 0;
 }
 
 int sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen)
@@ -80,8 +80,8 @@ int sys_socket(int domain, int type, int protocol)
         return net_socket(domain, type, protocol);
     else if (domain == 1)
         return socket_socket(domain, type, protocol);
-    else if (domain == 16)
-        return netlink_socket(domain, type, protocol);
+    // else if (domain == 16)
+    //     return netlink_socket(domain, type, protocol);
     else
         return -ENOSYS;
 }

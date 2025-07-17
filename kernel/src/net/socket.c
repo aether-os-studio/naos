@@ -90,7 +90,6 @@ unix_socket_pair_t *unix_socket_allocate_pair()
     pair->pending_fds_count = 0;
     pair->serverFds = 0;
     pair->clientFds = 0;
-    pair->waiting_task = NULL;
     return pair;
 }
 
@@ -262,10 +261,10 @@ int socket_accept_poll(void *file, int events)
 
 int socket_socket(int domain, int type, int protocol)
 {
-    // if (!(type & 1))
-    // {
-    //     return -ENOSYS;
-    // }
+    if (!(type & 1))
+    {
+        return -ENOSYS;
+    }
 
     char buf[128];
     sprintf(buf, "sock%d", sockfsfd_id++);
@@ -310,11 +309,6 @@ int socket_socket(int domain, int type, int protocol)
     current_task->fd_info->fds[i]->node = socknode;
     current_task->fd_info->fds[i]->offset = 0;
     current_task->fd_info->fds[i]->flags = 0;
-
-    // if (type | SOCK_CLOEXEC)
-    //     sockNode->closeOnExec = true;
-    // if (type | SOCK_NONBLOCK)
-    //   sockNode->flags |= O_NONBLOCK;
 
     return i;
 }
@@ -377,7 +371,7 @@ int socket_listen(uint64_t fd, int backlog)
 
     // maybe do a typical array here
     sock->connMax = backlog;
-    sock->backlog = calloc(sock->connMax * sizeof(unix_socket_pair_t *), 1);
+    sock->backlog = calloc(sizeof(unix_socket_pair_t *), sock->connMax);
     return 0;
 }
 
@@ -411,10 +405,6 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen, uin
     unix_socket_pair_t *pair = sock->backlog[0];
     pair->established = true;
     pair->serverFds++;
-    if (pair->waiting_task)
-    {
-        task_unblock(pair->waiting_task, EOK);
-    }
     pair->filename = strdup(sock->bindAddr);
 
     vfs_node_t acceptFd = unix_socket_accept_create(pair);
@@ -498,12 +488,14 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrle
     unix_socket_pair_t *pair = unix_socket_allocate_pair();
     sock->pair = pair;
     pair->clientFds = 1;
-    parent->backlog[parent->connCurr++] = pair;
+    parent->backlog[parent->connCurr] = pair;
 
     pair->peercred.pid = current_task->pid;
     pair->peercred.uid = current_task->uid;
     pair->peercred.gid = current_task->gid;
     pair->has_peercred = true;
+
+    parent->connCurr++;
 
     while (!pair->established)
     {
@@ -944,6 +936,7 @@ int unix_socket_pair(int type, int protocol, int *sv)
     socket_handle_t *handle = sock1Fd->handle;
     socket_t *sock = handle->sock;
     sock->pair = pair;
+    sock->connMax = 0;
     handle->sock = sock;
 
     vfs_node_t sock2Fd = unix_socket_accept_create(pair);
@@ -1410,6 +1403,26 @@ socket_op_t accept_ops = {
     .setsockopt = unix_socket_setsockopt,
 };
 
+vfs_node_t socket_dup(vfs_node_t node)
+{
+    socket_handle_t *handle = node->handle;
+    socket_t *socket = handle->sock;
+    socket->timesOpened++;
+    if (socket->pair)
+    {
+        socket->pair->clientFds++;
+    }
+    return node;
+}
+
+vfs_node_t socket_accept_dup(vfs_node_t node)
+{
+    socket_handle_t *handle = node->handle;
+    unix_socket_pair_t *pair = handle->sock;
+    pair->serverFds++;
+    return node;
+}
+
 static struct vfs_callback socket_callback = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
@@ -1429,6 +1442,7 @@ static struct vfs_callback socket_callback = {
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = (vfs_poll_t)socket_socket_poll,
     .resize = (vfs_resize_t)dummy,
+    .dup = (vfs_dup_t)socket_dup,
 };
 
 static struct vfs_callback accept_callback = {
@@ -1450,6 +1464,7 @@ static struct vfs_callback accept_callback = {
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = (vfs_poll_t)socket_accept_poll,
     .resize = (vfs_resize_t)dummy,
+    .dup = (vfs_dup_t)socket_accept_dup,
 };
 
 void socketfs_init()

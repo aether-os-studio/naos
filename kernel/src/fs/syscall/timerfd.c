@@ -160,6 +160,7 @@ static struct vfs_callback timerfd_callbacks = {
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = (vfs_poll_t)timerfd_poll,
     .resize = (vfs_resize_t)dummy,
+    .dup = vfs_generic_dup,
 };
 
 void timerfd_init()

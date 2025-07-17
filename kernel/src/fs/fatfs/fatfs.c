@@ -299,6 +299,7 @@ static struct vfs_callback callbacks = {
     .ioctl = fatfs_ioctl,
     .poll = fatfs_poll,
     .resize = (vfs_resize_t)dummy,
+    .dup = vfs_generic_dup,
 };
 
 void fatfs_init()

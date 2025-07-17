@@ -531,6 +531,24 @@ int pts_poll(pty_pair_t *pair, int events)
     return revents;
 }
 
+vfs_node_t ptmx_dup(vfs_node_t node)
+{
+    pty_pair_t *pair = node->handle;
+    spin_lock(&pair->lock);
+    pair->masterFds++;
+    spin_unlock(&pair->lock);
+    return node;
+}
+
+vfs_node_t pts_dup(vfs_node_t node)
+{
+    pty_pair_t *pair = node->handle;
+    spin_lock(&pair->lock);
+    pair->slaveFds++;
+    spin_unlock(&pair->lock);
+    return node;
+}
+
 static int dummy()
 {
     return 0;
@@ -555,6 +573,7 @@ static struct vfs_callback ptmx_callbacks = {
     .ioctl = (vfs_ioctl_t)ptmx_ioctl,
     .poll = ptmx_poll,
     .resize = (vfs_resize_t)dummy,
+    .dup = (vfs_dup_t)ptmx_dup,
 };
 
 static struct vfs_callback pts_callbacks = {
@@ -576,6 +595,7 @@ static struct vfs_callback pts_callbacks = {
     .ioctl = (vfs_ioctl_t)pts_ioctl,
     .poll = (vfs_poll_t)pts_poll,
     .resize = (vfs_resize_t)dummy,
+    .dup = (vfs_dup_t)pts_dup,
 };
 
 void ptmx_init()

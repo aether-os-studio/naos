@@ -88,8 +88,6 @@ typedef struct unix_socket_pair
     int pending_fds_count;
     int pending_fds_size;
 
-    task_t *waiting_task;
-
     int reuseaddr;
     int keepalive;
     struct timeval sndtimeo;

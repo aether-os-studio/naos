@@ -777,54 +777,10 @@ fd_t *vfs_dup(fd_t *fd)
     fd_t *new_fd = malloc(sizeof(fd_t));
     vfs_node_t node = fd->node;
     node->refcount++;
-    new_fd->node = node;
+    new_fd->node = callbackof(node, dup)(node);
     new_fd->offset = 0;
     new_fd->flags = fd->flags;
-    if (node->type == file_pipe)
-    {
-        pipe_specific_t *spec = node->handle;
-        pipe_info_t *pipe = spec->info;
-        if (spec->write)
-        {
-            pipe->write_fds++;
-        }
-        else
-        {
-            pipe->read_fds++;
-        }
-    }
-    else if (node->type == file_socket)
-    {
-        socket_handle_t *handle = node->handle;
-        socket_t *socket = handle->sock;
-        if (node->fsid == unix_socket_fsid)
-        {
-            socket->timesOpened++;
-            if (socket->pair)
-            {
-                socket->pair->clientFds++;
-            }
-        }
-        else if (node->fsid == unix_accept_fsid)
-        {
-            unix_socket_pair_t *pair = handle->sock;
-            pair->serverFds++;
-        }
-    }
-    else if (node->type == file_ptmx)
-    {
-        pty_pair_t *pair = node->handle;
-        spin_lock(&pair->lock);
-        pair->masterFds++;
-        spin_unlock(&pair->lock);
-    }
-    else if (node->type == file_pts)
-    {
-        pty_pair_t *pair = node->handle;
-        spin_lock(&pair->lock);
-        pair->slaveFds++;
-        spin_unlock(&pair->lock);
-    }
+
     return new_fd;
 }
 

@@ -103,6 +103,7 @@ static struct vfs_callback netlink_callback = {
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = (vfs_poll_t)dummy,
     .resize = (vfs_resize_t)dummy,
+    .dup = vfs_generic_dup,
 };
 
 void netlink_init()

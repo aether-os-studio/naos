@@ -493,15 +493,14 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd)
     }
 
     current_task->fd_info->fds[newfd] = new;
-    new->node->refcount++;
 
     return newfd;
 }
 
 uint64_t sys_dup(uint64_t fd)
 {
-    vfs_node_t node = current_task->fd_info->fds[fd]->node;
-    if (!node)
+    fd_t *f = current_task->fd_info->fds[fd];
+    if (!f)
         return (uint64_t)-EBADF;
 
     uint64_t i;

@@ -116,6 +116,7 @@ static struct vfs_callback callbacks = {
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = (vfs_poll_t)dummy,
     .resize = (vfs_resize_t)memfd_resize,
+    .dup = vfs_generic_dup,
 };
 
 #define MFD_CLOEXEC 0x0001U

@@ -14,8 +14,6 @@ task_t *idle_tasks[MAX_CPU_NUM];
 bool task_initialized = false;
 bool can_schedule = false;
 
-uint64_t jiffies = 0;
-
 extern int unix_socket_fsid;
 extern int unix_accept_fsid;
 
@@ -791,6 +789,7 @@ void task_unblock(task_t *task, int reason)
 {
     task->status = reason;
     task->state = TASK_READY;
+    task->jiffies = current_task->jiffies;
 }
 
 void task_exit_inner(task_t *task, int64_t code)
@@ -889,7 +888,6 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
 
     if (!has_children)
     {
-        arch_enable_interrupt();
         return -ECHILD;
     }
 
@@ -898,14 +896,15 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
         bool found_alive = false;
         task_t *found_dead = NULL;
 
-        // First search for any terminated children
         for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
         {
             task_t *ptr = tasks[i];
-            if (!ptr || ptr->ppid != current_task->pid)
+            if (!ptr)
+                break;
+
+            if (ptr->ppid != current_task->pid)
                 continue;
 
-            // Check pid match conditions
             if ((int64_t)pid > 0)
             {
                 if (ptr->pid != pid)
@@ -932,44 +931,33 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
             }
         }
 
-        // If we found a dead child, handle it
         if (found_dead)
         {
             target = found_dead;
             break;
         }
 
-        // Handle WNOHANG
-        if (options & WNOHANG)
+        if (found_alive && (options & WNOHANG))
         {
-            if (found_alive)
-            {
-                arch_enable_interrupt();
-                return 0;
-            }
-            arch_enable_interrupt();
-            return -ECHILD;
+            return 0;
         }
 
-        // If we have alive children but none dead, block
         if (found_alive)
         {
-            current_task->state = TASK_BLOCKING;
-            arch_enable_interrupt();
-            arch_yield();
-            arch_disable_interrupt();
+            task_block(current_task, TASK_BLOCKING, -1);
+            while (current_task->state == TASK_BLOCKING)
+            {
+                arch_yield();
+                arch_pause();
+            }
             continue;
         }
 
-        // No children at all
-        arch_enable_interrupt();
         return -ECHILD;
     }
 
-    // Handle found terminated child
     if (target)
     {
-        // Set status
         if (status)
         {
             if (target->status < 128)
@@ -985,22 +973,11 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
 
         ret = target->pid;
 
-        // Cleanup task resources
         tasks[target->pid] = NULL;
-        socket_on_exit_task(target->pid);
-        procfs_on_exit_task(target);
 
-        // Free memory
-        if (target->cmdline)
-            free(target->cmdline);
-        if (target->arch_context)
-            arch_context_free(target->arch_context);
-        free_frames_bytes((void *)target->kernel_stack, STACK_SIZE);
-        free_frames_bytes((void *)target->syscall_stack, STACK_SIZE);
         free(target);
     }
 
-    arch_enable_interrupt();
     return ret;
 }
 
@@ -1265,7 +1242,7 @@ void sched_update_itimer()
         uint64_t rtAt = ptr->itimer_real.at;
         uint64_t rtReset = ptr->itimer_real.reset;
 
-        if (rtAt && rtAt <= jiffies)
+        if (rtAt && rtAt <= nanoTime())
         {
             ptr->signal |= SIGMASK(SIGALRM);
             if (ptr->state == TASK_BLOCKING)
@@ -1273,7 +1250,7 @@ void sched_update_itimer()
 
             if (rtReset)
             {
-                ptr->itimer_real.at = jiffies + rtReset;
+                ptr->itimer_real.at = nanoTime() + rtReset;
             }
             else
             {
@@ -1286,7 +1263,7 @@ void sched_update_itimer()
             if (ptr->timers[i] == NULL)
                 break;
             kernel_timer_t *kt = ptr->timers[j];
-            if (kt->expires && jiffies >= kt->expires)
+            if (kt->expires && nanoTime() >= kt->expires)
             {
                 ptr->signal |= SIGMASK(kt->sigev_signo);
 
@@ -1331,7 +1308,7 @@ size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old)
 
     if (old)
     {
-        uint64_t realValue = rt_at - jiffies;
+        uint64_t realValue = rt_at - nanoTime();
         ms_to_timeval(realValue, &old->it_value);
         ms_to_timeval(rt_reset, &old->it_interval);
     }
@@ -1342,7 +1319,7 @@ size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old)
         uint64_t targInterval = timeval_to_ms(value->it_interval);
 
         if (targValue)
-            current_task->itimer_real.at = jiffies + targValue;
+            current_task->itimer_real.at = nanoTime() + targValue;
         else
             current_task->itimer_real.at = 0ULL;
 
@@ -1400,7 +1377,7 @@ int sys_timer_settime(timer_t timerid, const struct itimerval *new_value, struct
     struct itimerval kts;
     memcpy(&kts, new_value, sizeof(*new_value));
 
-    uint64_t now = jiffies;
+    uint64_t now = nanoTime();
     uint64_t interval = kts.it_interval.tv_sec * 1000 + kts.it_interval.tv_usec / 1000000;
     uint64_t expires = kts.it_value.tv_sec * 1000 + kts.it_value.tv_usec / 1000000;
 

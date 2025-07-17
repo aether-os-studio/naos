@@ -95,6 +95,13 @@ typedef void *(*vfs_mapfile_t)(void *file, void *addr, size_t offset, size_t siz
 
 typedef int (*vfs_poll_t)(void *file, size_t events);
 
+typedef vfs_node_t (*vfs_dup_t)(vfs_node_t node);
+
+static inline vfs_node_t vfs_generic_dup(vfs_node_t node)
+{
+    return node;
+}
+
 typedef struct vfs_callback
 {
     vfs_mount_t mount;
@@ -115,6 +122,7 @@ typedef struct vfs_callback
     vfs_ioctl_t ioctl;
     vfs_poll_t poll;
     vfs_resize_t resize;
+    vfs_dup_t dup;
 } *vfs_callback_t;
 
 typedef struct flock

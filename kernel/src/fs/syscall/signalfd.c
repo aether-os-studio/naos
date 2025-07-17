@@ -128,6 +128,7 @@ static struct vfs_callback signalfd_callbacks = {
     .ioctl = (vfs_ioctl_t)signalfd_ioctl,
     .poll = signalfd_poll,
     .resize = (vfs_resize_t)dummy,
+    .dup = vfs_generic_dup,
 };
 
 void signalfd_init()

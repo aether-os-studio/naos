@@ -252,6 +252,22 @@ int pipefs_poll(void *file, size_t events)
     return out;
 }
 
+vfs_node_t pipe_dup(vfs_node_t node)
+{
+    pipe_specific_t *spec = node->handle;
+    pipe_info_t *pipe = spec->info;
+    if (spec->write)
+    {
+        pipe->write_fds++;
+    }
+    else
+    {
+        pipe->read_fds++;
+    }
+
+    return node;
+}
+
 static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
@@ -271,6 +287,7 @@ static struct vfs_callback callbacks = {
     .ioctl = (vfs_ioctl_t)pipefs_ioctl,
     .poll = pipefs_poll,
     .resize = (vfs_resize_t)dummy,
+    .dup = (vfs_dup_t)pipe_dup,
 };
 
 void pipefs_init()
