@@ -439,7 +439,14 @@ void kb_evdev_generate(uint8_t raw)
     }
     input_generate_event(kb_event, EV_SYN, SYN_REPORT, 0);
 
-    evdevInternal[index / 8] |= (clicked << (index % 8));
+    if (clicked)
+    {
+        evdevInternal[index / 8] |= (1 << (index % 8));
+    }
+    else
+    {
+        evdevInternal[index / 8] &= ~(1 << (index % 8));
+    }
 }
 
 bool ctrled = false;
@@ -447,8 +454,11 @@ bool ctrled = false;
 bool shifted = false;
 bool capsLocked = false;
 
-char handle_kb_event(uint8_t scan_code)
+char handle_kb_event()
 {
+#if defined(__x86_64__)
+    uint8_t scan_code = io_in8(PORT_KB_DATA);
+#endif
     kb_evdev_generate(scan_code);
 
 #if defined(__x86_64__)

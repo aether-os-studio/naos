@@ -379,20 +379,20 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     if (!vfork)
     {
         memset(child->fd_info->fds, 0, sizeof(child->fd_info->fds));
-        child->fd_info->fds[0] = malloc(sizeof(fd_t));
-        child->fd_info->fds[0]->node = vfs_open("/dev/stdin");
-        child->fd_info->fds[0]->offset = 0;
-        child->fd_info->fds[0]->flags = 0;
-        child->fd_info->fds[1] = malloc(sizeof(fd_t));
-        child->fd_info->fds[1]->node = vfs_open("/dev/stdout");
-        child->fd_info->fds[1]->offset = 0;
-        child->fd_info->fds[1]->flags = 0;
-        child->fd_info->fds[2] = malloc(sizeof(fd_t));
-        child->fd_info->fds[2]->node = vfs_open("/dev/stderr");
-        child->fd_info->fds[2]->offset = 0;
-        child->fd_info->fds[2]->flags = 0;
+        // child->fd_info->fds[0] = malloc(sizeof(fd_t));
+        // child->fd_info->fds[0]->node = vfs_open("/dev/stdin");
+        // child->fd_info->fds[0]->offset = 0;
+        // child->fd_info->fds[0]->flags = 0;
+        // child->fd_info->fds[1] = malloc(sizeof(fd_t));
+        // child->fd_info->fds[1]->node = vfs_open("/dev/stdout");
+        // child->fd_info->fds[1]->offset = 0;
+        // child->fd_info->fds[1]->flags = 0;
+        // child->fd_info->fds[2] = malloc(sizeof(fd_t));
+        // child->fd_info->fds[2]->node = vfs_open("/dev/stderr");
+        // child->fd_info->fds[2]->offset = 0;
+        // child->fd_info->fds[2]->flags = 0;
 
-        for (uint64_t i = 3; i < MAX_FD_NUM; i++)
+        for (uint64_t i = 0; i < MAX_FD_NUM; i++)
         {
             fd_t *fd = current_task->fd_info->fds[i];
 
@@ -1056,20 +1056,20 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     if (!(flags & CLONE_FILES))
     {
         memset(child->fd_info->fds, 0, sizeof(child->fd_info->fds));
-        child->fd_info->fds[0] = malloc(sizeof(fd_t));
-        child->fd_info->fds[0]->node = vfs_open("/dev/stdin");
-        child->fd_info->fds[0]->offset = 0;
-        child->fd_info->fds[0]->flags = 0;
-        child->fd_info->fds[1] = malloc(sizeof(fd_t));
-        child->fd_info->fds[1]->node = vfs_open("/dev/stdout");
-        child->fd_info->fds[1]->offset = 0;
-        child->fd_info->fds[1]->flags = 0;
-        child->fd_info->fds[2] = malloc(sizeof(fd_t));
-        child->fd_info->fds[2]->node = vfs_open("/dev/stderr");
-        child->fd_info->fds[2]->offset = 0;
-        child->fd_info->fds[2]->flags = 0;
+        // child->fd_info->fds[0] = malloc(sizeof(fd_t));
+        // child->fd_info->fds[0]->node = vfs_open("/dev/stdin");
+        // child->fd_info->fds[0]->offset = 0;
+        // child->fd_info->fds[0]->flags = 0;
+        // child->fd_info->fds[1] = malloc(sizeof(fd_t));
+        // child->fd_info->fds[1]->node = vfs_open("/dev/stdout");
+        // child->fd_info->fds[1]->offset = 0;
+        // child->fd_info->fds[1]->flags = 0;
+        // child->fd_info->fds[2] = malloc(sizeof(fd_t));
+        // child->fd_info->fds[2]->node = vfs_open("/dev/stderr");
+        // child->fd_info->fds[2]->offset = 0;
+        // child->fd_info->fds[2]->flags = 0;
 
-        for (uint64_t i = 3; i < MAX_FD_NUM; i++)
+        for (uint64_t i = 0; i < MAX_FD_NUM; i++)
         {
             fd_t *fd = current_task->fd_info->fds[i];
 

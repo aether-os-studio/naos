@@ -387,4 +387,4 @@ enum
 };
 
 void kb_evdev_generate(uint8_t raw);
-char handle_kb_event(uint8_t scancode);
+char handle_kb_event();
