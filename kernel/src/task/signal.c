@@ -347,13 +347,26 @@ int sys_kill(int pid, int sig)
 
 extern int signalfdfs_id;
 
+spinlock_t signal_lock = {0};
+
 void task_signal()
 {
     arch_disable_interrupt();
 
+    spin_lock(&signal_lock);
+
+    if (current_task->call_in_signal)
+    {
+        spin_unlock(&signal_lock);
+        return;
+    }
+
     uint64_t map = current_task->signal & (~current_task->blocked);
     if (!map)
+    {
+        spin_unlock(&signal_lock);
         return;
+    }
 
     int sig = 1;
     for (; sig <= MAXSIG; sig++)
@@ -367,6 +380,7 @@ void task_signal()
 
     if (sig == SIGKILL)
     {
+        spin_unlock(&signal_lock);
         task_exit(-sig);
         return;
     }
@@ -398,11 +412,13 @@ void task_signal()
 
     if (ptr->sa_handler == SIG_IGN)
     {
+        spin_unlock(&signal_lock);
         return;
     }
 
     if (ptr->sa_handler == SIG_DFL)
     {
+        spin_unlock(&signal_lock);
         return;
     }
 
@@ -484,6 +500,8 @@ void task_signal()
     current_task->call_in_signal = true;
 
     current_task->blocked |= ptr->sa_mask;
+
+    spin_unlock(&signal_lock);
 
     arch_switch_with_context(NULL, current_task->arch_context, current_task->kernel_stack);
 }

@@ -51,32 +51,10 @@ static inline void *memcpy(void *dest, const void *src, size_t n)
     uint8_t *pdest = (uint8_t *)dest;
     const uint8_t *psrc = (const uint8_t *)src;
 
-    if (((uintptr_t)pdest | (uintptr_t)psrc) & (sizeof(uint64_t) - 1))
+    while (n--)
     {
-        while (n--)
-        {
-            *pdest++ = *psrc++;
-        }
-        return dest;
+        *pdest++ = *psrc++;
     }
-
-    uint64_t *pdest64 = (uint64_t *)pdest;
-    const uint64_t *psrc64 = (const uint64_t *)psrc;
-    for (size_t i = n / sizeof(uint64_t); i; --i)
-    {
-        *pdest64++ = *psrc64++;
-    }
-
-    if (n &= sizeof(uint64_t) - 1)
-    {
-        pdest = (uint8_t *)pdest64;
-        psrc = (const uint8_t *)psrc64;
-        while (n--)
-        {
-            *pdest++ = *psrc++;
-        }
-    }
-
     return dest;
 }
 

@@ -8,6 +8,8 @@
 #include <fs/fs_syscall.h>
 #include <net/socket.h>
 
+#define MAX_CONTINUE_NULL_TASKS 3
+
 task_t *tasks[MAX_TASK_NUM];
 task_t *idle_tasks[MAX_CPU_NUM];
 
@@ -159,11 +161,19 @@ task_t *task_search(task_state_t state, uint32_t cpu_id)
 {
     task_t *task = NULL;
 
+    uint64_t continue_ptr_count = 0;
+
     for (size_t i = 1; i < MAX_TASK_NUM; i++)
     {
         task_t *ptr = tasks[i];
         if (ptr == NULL)
-            break;
+        {
+            continue_ptr_count++;
+            if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
+                break;
+            continue;
+        }
+        continue_ptr_count = 0;
         if (ptr->state != state)
             continue;
         if (current_task == ptr)
@@ -802,9 +812,6 @@ void task_exit_inner(task_t *task, int64_t code)
 
     arch_context_free(task->arch_context);
 
-    free_frames_bytes((void *)task->kernel_stack, STACK_SIZE);
-    free_frames_bytes((void *)task->syscall_stack, STACK_SIZE);
-
     task->status = (uint64_t)code;
 
     task->fd_info->ref_count--;
@@ -896,11 +903,19 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
         bool found_alive = false;
         task_t *found_dead = NULL;
 
+        uint64_t continue_ptr_count = 0;
         for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
         {
             task_t *ptr = tasks[i];
-            if (!ptr)
-                break;
+
+            if (ptr == NULL)
+            {
+                continue_ptr_count++;
+                if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
+                    break;
+                continue;
+            }
+            continue_ptr_count = 0;
 
             if (ptr->ppid != current_task->pid)
                 continue;
@@ -975,6 +990,8 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
 
         tasks[target->pid] = NULL;
 
+        free_frames_bytes((void *)target->kernel_stack, STACK_SIZE);
+        free_frames_bytes((void *)target->syscall_stack, STACK_SIZE);
         free(target);
     }
 
@@ -1214,15 +1231,15 @@ uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
     }
 }
 
-void ms_to_timeval(uint64_t ns, struct timeval *tv)
+void ms_to_timeval(uint64_t ms, struct timeval *tv)
 {
-    tv->tv_sec = ns / 1000000000ULL;
-    tv->tv_usec = (ns % 1000000000ULL) / 1000; // 转换为微秒
+    tv->tv_sec = ms / 1000;
+    tv->tv_usec = (ms % 1000) * 1000; // 转换为微秒保持结构体定义
 }
 
 uint64_t timeval_to_ms(struct timeval tv)
 {
-    return (uint64_t)tv.tv_sec * 1000000000ULL + tv.tv_usec * 1000ULL;
+    return (uint64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000; // 微秒转毫秒
 }
 
 extern int timerfdfs_id;
@@ -1233,8 +1250,15 @@ void sched_update_itimer()
     {
         task_t *ptr = tasks[i];
 
-        if (!ptr)
-            break;
+        uint64_t continue_ptr_count = 0;
+        if (ptr == NULL)
+        {
+            continue_ptr_count++;
+            if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
+                break;
+            continue;
+        }
+        continue_ptr_count = 0;
 
         if (ptr->cpu_id != current_cpu_id)
             continue;
@@ -1242,7 +1266,12 @@ void sched_update_itimer()
         uint64_t rtAt = ptr->itimer_real.at;
         uint64_t rtReset = ptr->itimer_real.reset;
 
-        if (rtAt && rtAt <= nanoTime())
+        tm time_now;
+        time_read(&time_now);
+
+        uint64_t now = mktime(&time_now) * 1000;
+
+        if (rtAt && rtAt <= now)
         {
             ptr->signal |= SIGMASK(SIGALRM);
             if (ptr->state == TASK_BLOCKING)
@@ -1304,19 +1333,23 @@ size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old)
     uint64_t rt_at = current_task->itimer_real.at;
     uint64_t rt_reset = current_task->itimer_real.reset;
 
+    tm time_now;
+    time_read(&time_now);
+    uint64_t now = mktime(&time_now) * 1000;
+
     if (old)
     {
-        uint64_t remaining = rt_at > nanoTime() ? rt_at - nanoTime() : 0;
+        uint64_t remaining = rt_at > now ? rt_at - now : 0;
         ms_to_timeval(remaining, &old->it_value);
         ms_to_timeval(rt_reset, &old->it_interval);
     }
 
     if (value)
     {
-        uint64_t targValue = value->it_value.tv_sec * 1000000000ULL + value->it_value.tv_usec * 1000ULL;
-        uint64_t targInterval = value->it_interval.tv_sec * 1000000000ULL + value->it_interval.tv_usec * 1000ULL;
+        uint64_t targValue = value->it_value.tv_sec * 1000 + value->it_value.tv_usec / 1000;
+        uint64_t targInterval = value->it_interval.tv_sec * 1000 + value->it_interval.tv_usec / 1000;
 
-        current_task->itimer_real.at = targValue ? nanoTime() + targValue : 0ULL;
+        current_task->itimer_real.at = targValue ? (now + targValue) : 0ULL;
         current_task->itimer_real.reset = targInterval;
     }
 
@@ -1371,9 +1404,13 @@ int sys_timer_settime(timer_t timerid, const struct itimerval *new_value, struct
     struct itimerval kts;
     memcpy(&kts, new_value, sizeof(*new_value));
 
-    uint64_t now = nanoTime();
-    uint64_t interval = new_value->it_interval.tv_sec * 1000000000ULL + new_value->it_interval.tv_usec * 1000ULL;
-    uint64_t expires = new_value->it_value.tv_sec * 1000000000ULL + new_value->it_value.tv_usec * 1000ULL;
+    uint64_t interval = new_value->it_interval.tv_sec * 1000 + new_value->it_interval.tv_usec / 1000;
+    uint64_t expires = new_value->it_value.tv_sec * 1000 + new_value->it_value.tv_usec / 1000;
+
+    tm time_now;
+    time_read(&time_now);
+
+    uint64_t now = mktime(&time_now) * 1000;
 
     if (old_value)
     {

@@ -25,7 +25,7 @@ irq_controller_t mouse_controller =
 
 void mouse_wait(uint8_t a_type)
 {
-    uint32_t timeout = 1000;
+    uint32_t timeout = 100000;
     if (!a_type)
     {
         while (--timeout)

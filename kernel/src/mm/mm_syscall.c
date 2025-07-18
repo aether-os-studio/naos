@@ -3,6 +3,8 @@
 #include <fs/vfs/vfs.h>
 #include <task/task.h>
 
+spinlock_t mm_op_lock = {0};
+
 uint64_t sys_brk(uint64_t addr)
 {
     uint64_t new_brk = (addr + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
@@ -60,6 +62,8 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
     }
     else
     {
+        spin_lock(&mm_op_lock);
+
         uint64_t pt_flags = PT_FLAG_U | PT_FLAG_W;
 
         if (prot & PROT_READ)
@@ -71,6 +75,10 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
 
         map_page_range(get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)), 0, (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
 
+        memset((void *)addr, 0, len);
+
+        spin_unlock(&mm_op_lock);
+
         return addr;
     }
 }
@@ -81,7 +89,9 @@ uint64_t sys_munmap(uint64_t addr, uint64_t size)
     {
         return -EFAULT;
     }
+    spin_lock(&mm_op_lock);
     unmap_page_range(get_current_page_dir(false), addr, size);
+    spin_unlock(&mm_op_lock);
     return 0;
 }
 
@@ -99,12 +109,15 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uin
         return -EINVAL;
     }
 
+    spin_lock(&mm_op_lock);
+
     uint64_t aligned_old = (old_size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
     uint64_t aligned_new = (new_size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
 
     if (aligned_new < aligned_old)
     {
         unmap_page_range(page_dir, old_addr + aligned_new, aligned_old - aligned_new);
+        spin_unlock(&mm_op_lock);
         return old_addr;
     }
 
@@ -112,6 +125,7 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uin
 
     map_page_range(page_dir, old_addr + aligned_old, 0, extension,
                    PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+    spin_unlock(&mm_op_lock);
 
     return old_addr;
 }
@@ -146,6 +160,8 @@ uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec)
         return -EINVAL;
     }
 
+    spin_lock(&mm_op_lock);
+
     size_t npages = size / DEFAULT_PAGE_SIZE;
 
     for (size_t i = 0; i < npages; i++)
@@ -154,6 +170,8 @@ uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec)
 
         ((uint8_t *)vec)[i] = translate_address(get_current_page_dir(true), page_addr) ? 1 : 0;
     }
+
+    spin_unlock(&mm_op_lock);
 
     return 0;
 }
