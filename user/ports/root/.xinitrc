@@ -2,7 +2,6 @@
 
 xsetroot -solid "#006666" &
 xeyes &
-# nedit &
-xclock -update 1 &
-# st &
+nedit &
+# xclock -update 1 &
 twm

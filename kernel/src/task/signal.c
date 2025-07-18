@@ -246,8 +246,8 @@ void sys_sigreturn(struct pt_regs *regs)
 
     context->cs = ucontext->arch.cs;
     context->ss = ucontext->arch.ss;
-    context->ds = ucontext->arch.ss;
-    context->es = ucontext->arch.ss;
+    context->ds = SELECTOR_USER_DS;
+    context->es = SELECTOR_USER_DS;
     current_task->arch_context->fs = ucontext->arch.fs;
     current_task->arch_context->gs = ucontext->arch.gs;
 

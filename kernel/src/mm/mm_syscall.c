@@ -55,15 +55,17 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
         return (uint64_t)-ENOMEM;
     }
 
+    spin_lock(&mm_op_lock);
+
     if (fd < MAX_FD_NUM && current_task->fd_info->fds[fd])
     {
         vfs_node_t node = current_task->fd_info->fds[fd]->node;
-        return (uint64_t)vfs_map(node, addr, len, prot, flags, offset);
+        uint64_t ret = (uint64_t)vfs_map(node, addr, len, prot, flags, offset);
+        spin_unlock(&mm_op_lock);
+        return ret;
     }
     else
     {
-        spin_lock(&mm_op_lock);
-
         uint64_t pt_flags = PT_FLAG_U | PT_FLAG_W;
 
         if (prot & PROT_READ)

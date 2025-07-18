@@ -507,8 +507,12 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg)
         ret = 0;
         break;
     }
-    case 0x540f: // TIOCGPGRP
-        *((int *)arg) = pair->ctrlPgid;
+    case TIOCGPGRP:
+        int *pid = (int *)arg;
+        *pid = current_task->pid;
+        ret = 0;
+        break;
+    case TIOCSPGRP:
         ret = 0;
         break;
     }
