@@ -600,6 +600,10 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_MEMBARRIER:
         regs->rax = 0;
         break;
+    case SYS_GETSID:
+        current_task->sid = regs->rdi;
+        regs->rax = 0;
+        break;
     case SYS_SETSID:
         regs->rax = current_task->sid;
         break;

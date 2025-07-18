@@ -59,7 +59,7 @@ uint8_t mouse_read()
     return t;
 }
 
-int mouseCycle = 0;
+int mouseCycle = 0xffffffff;
 
 int mouse1 = 0;
 int mouse2 = 0;
@@ -68,9 +68,11 @@ int gx = 0;
 int gy = 0;
 
 bool clickedLeft = false;
-bool clickedRight = true;
+bool clickedRight = false;
 
 dev_input_event_t *mouse_event = NULL;
+
+spinlock_t mouse_irq_lock = {0};
 
 void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs)
 {
@@ -79,75 +81,88 @@ void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs)
     if (!mouse_event)
         return;
 
+    spin_lock(&mouse_irq_lock);
+
     // return;
     // rest are just for demonstration
 
     // debugf("%d %d %d\n", byte1, byte2, byte3);
+    if (mouseCycle == 0xffffffff)
+    {
+        if (byte == 0xfa)
+        {
+            mouseCycle = 0;
+        }
+    }
     if (mouseCycle == 0)
-        mouse1 = byte;
+    {
+        if ((byte & 0xc8) == 0x08)
+        {
+            mouse1 = byte;
+            mouseCycle = 1;
+        }
+    }
     else if (mouseCycle == 1)
+    {
         mouse2 = byte;
-    else
+        mouseCycle = 2;
+    }
+    else if (mouseCycle == 2)
     {
         int mouse3 = byte;
 
-        do
-        {
-            int x = mouse2;
-            int y = mouse3;
-            if (x && mouse1 & (1 << 4))
-                x -= 0x100;
-            if (y && mouse1 & (1 << 5))
-                y -= 0x100;
+        int x = mouse2;
+        int y = mouse3;
+        if (x && (mouse1 & (1 << 4)))
+            x |= 0xffffff00;
+        if (y && (mouse1 & (1 << 5)))
+            y |= 0xffffff00;
 
-            gx += x;
-            gy += -y;
-            if (gx < 0)
-                gx = 0;
-            if (gy < 0)
-                gy = 0;
+        gx += x;
+        gy += -y;
+        if (gx < 0)
+            gx = 0;
+        if (gy < 0)
+            gy = 0;
 
-            size_t addr;
-            size_t width;
-            size_t height;
-            size_t bpp;
-            size_t cols;
-            size_t rows;
+        size_t addr;
+        size_t width;
+        size_t height;
+        size_t bpp;
+        size_t cols;
+        size_t rows;
 
-            os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
+        os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
 
-            if ((size_t)gx > width)
-                gx = width;
-            if ((size_t)gy > height)
-                gy = height;
+        if ((size_t)gx > width)
+            gx = width;
+        if ((size_t)gy > height)
+            gy = height;
 
-            bool click = mouse1 & (1 << 0);
-            bool rclick = mouse1 & (1 << 1);
+        bool click = (mouse1 & (1 << 0)) != 0;
+        bool rclick = (mouse1 & (1 << 1)) != 0;
 
-            if (clickedLeft && !click)
-                input_generate_event(mouse_event, EV_KEY, BTN_LEFT, 0);
-            if (!clickedLeft && click)
-                input_generate_event(mouse_event, EV_KEY, BTN_LEFT, 1);
+        if (clickedLeft && !click)
+            input_generate_event(mouse_event, EV_KEY, BTN_LEFT, 0);
+        if (!clickedLeft && click)
+            input_generate_event(mouse_event, EV_KEY, BTN_LEFT, 1);
 
-            if (clickedRight && !rclick)
-                input_generate_event(mouse_event, EV_KEY, BTN_RIGHT, 0);
-            if (!clickedRight && rclick)
-                input_generate_event(mouse_event, EV_KEY, BTN_RIGHT, 1);
+        if (clickedRight && !rclick)
+            input_generate_event(mouse_event, EV_KEY, BTN_RIGHT, 0);
+        if (!clickedRight && rclick)
+            input_generate_event(mouse_event, EV_KEY, BTN_RIGHT, 1);
 
-            clickedRight = rclick;
-            clickedLeft = click;
+        clickedRight = rclick;
+        clickedLeft = click;
 
-            input_generate_event(mouse_event, EV_REL, REL_X, x);
-            input_generate_event(mouse_event, EV_REL, REL_Y, -y);
-            input_generate_event(mouse_event, EV_SYN, SYN_REPORT, 0);
+        input_generate_event(mouse_event, EV_REL, REL_X, x);
+        input_generate_event(mouse_event, EV_REL, REL_Y, -y);
+        input_generate_event(mouse_event, EV_SYN, SYN_REPORT, 0);
 
-            (void)mouse3;
-        } while (0);
+        mouseCycle = 0;
     }
 
-    mouseCycle++;
-    if (mouseCycle > 2)
-        mouseCycle = 0;
+    spin_unlock(&mouse_irq_lock);
 }
 
 void mouse_init()

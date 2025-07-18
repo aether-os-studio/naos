@@ -533,8 +533,8 @@ size_t circular_int_read(circular_int_t *circ, uint8_t *buff, size_t length)
     }
 
     circ->lock_read = true;
-    size_t write = circ->write_ptr;
-    size_t read = circ->read_ptr;
+    ssize_t write = circ->write_ptr;
+    ssize_t read = circ->read_ptr;
     if (write == read)
     {
         circ->lock_read = false;
@@ -557,8 +557,8 @@ size_t circular_int_read(circular_int_t *circ, uint8_t *buff, size_t length)
 
 size_t circular_int_write(circular_int_t *circ, const uint8_t *buff, size_t length)
 {
-    size_t write = circ->write_ptr;
-    size_t read = circ->read_ptr;
+    ssize_t write = circ->write_ptr;
+    ssize_t read = circ->read_ptr;
     size_t writable = CIRC_WRITABLE(write, read, circ->buff_size);
     if (length > writable)
     {
@@ -585,8 +585,8 @@ size_t circular_int_read_poll(circular_int_t *circ)
     }
 
     circ->lock_read = true;
-    size_t write = circ->write_ptr;
-    size_t read = circ->read_ptr;
+    ssize_t write = circ->write_ptr;
+    ssize_t read = circ->read_ptr;
     ret = CIRC_READABLE(write, read, circ->buff_size);
     circ->lock_read = false;
     return ret;
@@ -597,10 +597,14 @@ void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code,
     if (!item || item->timesOpened == 0)
         return;
 
+    tm time;
+    time_read(&time);
+    int64_t now = mktime(&time);
+
     struct input_event event;
     memset(&event, 0, sizeof(struct input_event));
-    event.sec = current_task->jiffies / 1000;
-    event.usec = (current_task->jiffies % 1000) * 1000;
+    event.sec = now / 1000;
+    event.usec = (now % 1000) * 1000;
     event.type = type;
     event.code = code;
     event.value = value;
