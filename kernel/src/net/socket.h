@@ -8,7 +8,7 @@ typedef uint32_t socklen_t;
 typedef unsigned short sa_family_t;
 
 #define MAX_SOCKETS 256
-#define BUFFER_SIZE 65536
+#define BUFFER_SIZE 32768
 #define SOCKET_NAME_LEN 108
 
 struct sockaddr_un

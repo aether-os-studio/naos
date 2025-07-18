@@ -1214,15 +1214,15 @@ uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
     }
 }
 
-void ms_to_timeval(uint64_t ms, struct timeval *tv)
+void ms_to_timeval(uint64_t ns, struct timeval *tv)
 {
-    tv->tv_sec = ms / 1000;
-    tv->tv_usec = (ms % 1000) * 1000;
+    tv->tv_sec = ns / 1000000000ULL;
+    tv->tv_usec = (ns % 1000000000ULL) / 1000; // 转换为微秒
 }
 
 uint64_t timeval_to_ms(struct timeval tv)
 {
-    return (uint64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+    return (uint64_t)tv.tv_sec * 1000000000ULL + tv.tv_usec * 1000ULL;
 }
 
 extern int timerfdfs_id;
@@ -1299,30 +1299,24 @@ void sched_update_itimer()
 size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old)
 {
     if (which != 0)
-    {
         return (size_t)-ENOSYS;
-    }
 
     uint64_t rt_at = current_task->itimer_real.at;
     uint64_t rt_reset = current_task->itimer_real.reset;
 
     if (old)
     {
-        uint64_t realValue = rt_at - nanoTime();
-        ms_to_timeval(realValue, &old->it_value);
+        uint64_t remaining = rt_at > nanoTime() ? rt_at - nanoTime() : 0;
+        ms_to_timeval(remaining, &old->it_value);
         ms_to_timeval(rt_reset, &old->it_interval);
     }
 
     if (value)
     {
-        uint64_t targValue = timeval_to_ms(value->it_value);
-        uint64_t targInterval = timeval_to_ms(value->it_interval);
+        uint64_t targValue = value->it_value.tv_sec * 1000000000ULL + value->it_value.tv_usec * 1000ULL;
+        uint64_t targInterval = value->it_interval.tv_sec * 1000000000ULL + value->it_interval.tv_usec * 1000ULL;
 
-        if (targValue)
-            current_task->itimer_real.at = nanoTime() + targValue;
-        else
-            current_task->itimer_real.at = 0ULL;
-
+        current_task->itimer_real.at = targValue ? nanoTime() + targValue : 0ULL;
         current_task->itimer_real.reset = targInterval;
     }
 
@@ -1378,8 +1372,8 @@ int sys_timer_settime(timer_t timerid, const struct itimerval *new_value, struct
     memcpy(&kts, new_value, sizeof(*new_value));
 
     uint64_t now = nanoTime();
-    uint64_t interval = kts.it_interval.tv_sec * 1000 + kts.it_interval.tv_usec / 1000000;
-    uint64_t expires = kts.it_value.tv_sec * 1000 + kts.it_value.tv_usec / 1000000;
+    uint64_t interval = new_value->it_interval.tv_sec * 1000000000ULL + new_value->it_interval.tv_usec * 1000ULL;
+    uint64_t expires = new_value->it_value.tv_sec * 1000000000ULL + new_value->it_value.tv_usec * 1000ULL;
 
     if (old_value)
     {

@@ -36,6 +36,8 @@ char *unix_socket_addr_safe(const struct sockaddr_un *addr, size_t len)
     if (!safe)
         return (void *)-(ENOMEM);
 
+    memset(safe, 0, addrLen + 2);
+
     if (abstract && addr->sun_path[1] == '\0')
     {
         free(safe);
@@ -249,11 +251,11 @@ int socket_accept_poll(void *file, int events)
     if (!pair->clientFds)
         revents |= EPOLLHUP;
 
-    if (events & EPOLLOUT && pair->clientFds &&
+    if ((events & EPOLLOUT) && pair->clientFds &&
         pair->clientBuffPos < pair->clientBuffSize)
         revents |= EPOLLOUT;
 
-    if (events & EPOLLIN && pair->serverBuffPos > 0)
+    if ((events & EPOLLIN) && pair->serverBuffPos > 0)
         revents |= EPOLLIN;
 
     return revents;
@@ -999,11 +1001,11 @@ int socket_socket_poll(void *file, int events)
         if (!pair->serverFds)
             revents |= EPOLLHUP;
 
-        if (events & EPOLLOUT && pair->serverFds &&
+        if ((events & EPOLLOUT) && pair->serverFds &&
             pair->serverBuffPos < pair->serverBuffSize)
             revents |= EPOLLOUT;
 
-        if (events & EPOLLIN && pair->clientBuffPos > 0)
+        if ((events & EPOLLIN) && pair->clientBuffPos > 0)
             revents |= EPOLLIN;
     }
     else
@@ -1360,14 +1362,15 @@ size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr, socklen_t 
     addr->sun_family = 1;
     if (pair->filename[0] == ':')
     {
-        memcpy(addr->sun_path + 1, pair->filename + 1, toCopy - sizeof(addr->sun_family) - 1);
-        addr->sun_path[0] = '\0';
+        memcpy(addr->sun_path, pair->filename + 1, toCopy - sizeof(addr->sun_family) - 1);
+        // addr->sun_path[0] = '\0';
+        *len = toCopy - 1;
     }
     else
     {
         memcpy(addr->sun_path, pair->filename, toCopy - sizeof(addr->sun_family));
+        *len = toCopy;
     }
-    *len = toCopy;
     return 0;
 }
 
@@ -1423,13 +1426,171 @@ vfs_node_t socket_accept_dup(vfs_node_t node)
     return node;
 }
 
+ssize_t socket_read(void *f, void *buf, size_t offset, size_t limit)
+{
+    (void)offset;
+
+    socket_handle_t *handle = f;
+    socket_t *sock = handle->sock;
+    unix_socket_pair_t *pair = sock->pair;
+    while (true)
+    {
+        if (!pair->clientFds && pair->clientBuffPos == 0)
+        {
+            return 0;
+        }
+        else if (pair->clientBuffPos > 0)
+            break;
+    }
+
+    while (socket_op_lock)
+    {
+        arch_pause();
+    }
+    socket_op_lock = true;
+
+    size_t toCopy = MIN(limit, pair->clientBuffPos);
+    memcpy(buf, pair->clientBuff, toCopy);
+    memmove(pair->clientBuff, &pair->clientBuff[toCopy],
+            pair->clientBuffPos - toCopy);
+    pair->clientBuffPos -= toCopy;
+
+    socket_op_lock = false;
+
+    return toCopy;
+}
+
+ssize_t socket_write(void *f, const void *buf, size_t offset, size_t limit)
+{
+    (void)offset;
+
+    while (socket_op_lock)
+    {
+        arch_pause();
+    }
+    socket_op_lock = true;
+
+    socket_handle_t *handle = f;
+    socket_t *sock = handle->sock;
+    unix_socket_pair_t *pair = sock->pair;
+
+    if (limit > pair->serverBuffSize)
+    {
+        limit = pair->serverBuffSize;
+    }
+
+    while (true)
+    {
+        if (!pair->serverFds)
+        {
+            current_task->signal |= SIGMASK(SIGPIPE);
+            socket_op_lock = false;
+            return -(EPIPE);
+        }
+
+        if ((pair->serverBuffPos + limit) <= pair->serverBuffSize)
+            break;
+
+        arch_enable_interrupt();
+
+        arch_pause();
+    }
+
+    arch_disable_interrupt();
+
+    memcpy(&pair->serverBuff[pair->serverBuffPos], buf, limit);
+    pair->serverBuffPos += limit;
+
+    socket_op_lock = false;
+
+    return limit;
+}
+
+ssize_t socket_accept_read(void *f, void *buf, size_t offset, size_t limit)
+{
+    (void)offset;
+
+    socket_handle_t *handle = f;
+    unix_socket_pair_t *pair = handle->sock;
+    while (true)
+    {
+        if (!pair->clientFds && pair->serverBuffPos == 0)
+        {
+            return 0;
+        }
+        else if (pair->serverBuffPos > 0)
+            break;
+    }
+
+    while (socket_op_lock)
+    {
+        arch_pause();
+    }
+    socket_op_lock = true;
+
+    size_t toCopy = MIN(limit, pair->serverBuffPos);
+    memcpy(buf, pair->serverBuff, toCopy);
+    memmove(pair->serverBuff, &pair->serverBuff[toCopy],
+            pair->serverBuffPos - toCopy);
+    pair->serverBuffPos -= toCopy;
+
+    socket_op_lock = false;
+
+    return toCopy;
+}
+
+ssize_t socket_accept_write(void *f, const void *buf, size_t offset, size_t limit)
+{
+    (void)offset;
+
+    while (socket_op_lock)
+    {
+        arch_pause();
+    }
+    socket_op_lock = true;
+
+    socket_handle_t *handle = f;
+    unix_socket_pair_t *pair = handle->sock;
+
+    if (limit > pair->clientBuffSize)
+    {
+        limit = pair->clientBuffSize;
+    }
+
+    while (true)
+    {
+        if (!pair->clientFds)
+        {
+            current_task->signal |= SIGMASK(SIGPIPE);
+            socket_op_lock = false;
+            return -(EPIPE);
+        }
+
+        if ((pair->clientBuffPos + limit) <= pair->clientBuffSize)
+            break;
+
+        arch_enable_interrupt();
+
+        arch_pause();
+    }
+
+    arch_disable_interrupt();
+
+    memcpy(&pair->clientBuff[pair->clientBuffPos], buf, limit);
+    pair->clientBuffPos += limit;
+
+    socket_op_lock = false;
+
+    return limit;
+}
+
 static struct vfs_callback socket_callback = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
     .open = (vfs_open_t)socket_open,
     .close = (vfs_close_t)socket_socket_close,
-    .read = (vfs_read_t)dummy,
-    .write = (vfs_write_t)dummy,
+    .read = (vfs_read_t)socket_read,
+    .write = (vfs_write_t)socket_write,
     .readlink = (vfs_read_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
@@ -1450,8 +1611,8 @@ static struct vfs_callback accept_callback = {
     .unmount = (vfs_unmount_t)dummy,
     .open = (vfs_open_t)socket_open,
     .close = (vfs_close_t)socket_accept_close,
-    .read = (vfs_read_t)dummy,
-    .write = (vfs_write_t)dummy,
+    .read = (vfs_read_t)socket_accept_read,
+    .write = (vfs_write_t)socket_accept_write,
     .readlink = (vfs_read_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
