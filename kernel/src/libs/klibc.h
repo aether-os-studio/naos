@@ -46,16 +46,45 @@ static inline uint64_t round(double x)
     return (uint64_t)(x + 0.5);
 }
 
-static inline void *memcpy(void *dest, const void *src, size_t n)
+static inline void *memcpy(void *restrict dst, const void *restrict src, size_t n)
 {
-    uint8_t *pdest = (uint8_t *)dest;
-    const uint8_t *psrc = (const uint8_t *)src;
+    unsigned char *pd = dst;
+    const unsigned char *ps = src;
 
-    while (n--)
+    for (; (n > 0) && ((uintptr_t)pd & 7); --n)
     {
-        *pdest++ = *psrc++;
+        *pd++ = *ps++;
     }
-    return dest;
+
+    uint64_t *pd64 = (uint64_t *)pd;
+    const uint64_t *ps64 = (const uint64_t *)ps;
+    while (n >= 8)
+    {
+        *pd64++ = *ps64++;
+        n -= 8;
+    }
+
+    pd = (unsigned char *)pd64;
+    ps = (const unsigned char *)ps64;
+
+    if (n & 4)
+    {
+        *(uint32_t *)pd = *(const uint32_t *)ps;
+        pd += 4;
+        ps += 4;
+    }
+    if (n & 2)
+    {
+        *(uint16_t *)pd = *(const uint16_t *)ps;
+        pd += 2;
+        ps += 2;
+    }
+    if (n & 1)
+    {
+        *pd = *ps;
+    }
+
+    return dst;
 }
 
 static inline void *fast_memcpy(void *s1, const void *s2, size_t n)
