@@ -203,6 +203,8 @@ ssize_t ext_read(void *file, void *addr, size_t offset, size_t size)
 
 ssize_t ext_readlink(void *file, void *addr, size_t offset, size_t size)
 {
+    spin_lock(&rwlock);
+
     ext_handle_t *handle = file;
 
     vfs_node_t node = handle->node;
@@ -228,6 +230,8 @@ ssize_t ext_readlink(void *file, void *addr, size_t offset, size_t size)
 
     free(node_path);
     free(original_node_path);
+
+    spin_unlock(&rwlock);
 
     return size;
 }

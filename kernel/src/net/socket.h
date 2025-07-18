@@ -364,6 +364,7 @@ extern socket_op_t accept_ops;
 
 typedef struct socket_handle
 {
+    fd_t *fd;
     void *sock;
     socket_op_t *op;
 } socket_handle_t;

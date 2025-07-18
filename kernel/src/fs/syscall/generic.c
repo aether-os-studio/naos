@@ -875,7 +875,7 @@ uint64_t sys_readlinkat(int dfd, char *path, char *buf, uint64_t size)
 
     char *resolved = at_resolve_pathname(dfd, path);
 
-    vfs_node_t node = vfs_open_at(current_task->cwd, resolved, true);
+    vfs_node_t node = vfs_open(resolved);
     if (node == NULL)
     {
         return (uint64_t)-ENOENT;

@@ -104,6 +104,7 @@ int devfs_mkdir(void *parent, const char *name, vfs_node_t node)
     child->type = file_dir;
     child->handle = child;
     child->fsid = devfs_id;
+    child->handle = child;
 
     return 0;
 }
@@ -116,6 +117,7 @@ int devfs_mkfile(void *parent, const char *name, vfs_node_t node)
     child->type = file_none;
     child->handle = child;
     child->fsid = devfs_id;
+    child->handle = child;
 
     return 0;
 }

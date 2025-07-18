@@ -106,6 +106,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
     task->fd_info->fds[2]->offset = 0;
     task->fd_info->fds[2]->flags = 0;
     task->fd_info->ref_count++;
+    task->exec_node = NULL;
     strncpy(task->name, name, TASK_NAME_MAX);
 
     memset(task->actions, 0, sizeof(task->actions));
@@ -338,6 +339,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     }
 
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
+    child->exec_node = current_task->exec_node;
     child->call_in_signal = current_task->call_in_signal;
     child->state = TASK_READY;
     child->current_state = TASK_READY;
@@ -525,10 +527,10 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     char *fullpath = vfs_get_fullpath(node);
 
-    vfs_close(node);
-
     if (buffer[0] == '#' && buffer[1] == '!')
     {
+        vfs_close(node);
+
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
                 free(new_argv[i]);
@@ -574,6 +576,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     if (e_entry == 0)
     {
+        vfs_close(node);
         free(fullpath);
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
@@ -590,6 +593,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     if (!arch_check_elf(ehdr))
     {
+        vfs_close(node);
         free(fullpath);
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
@@ -619,6 +623,16 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
             vfs_node_t interpreter_node = vfs_open(interpreter_name);
             if (!interpreter_node)
             {
+                vfs_close(node);
+                free(fullpath);
+                for (int i = 0; i < argv_count; i++)
+                    if (new_argv[i])
+                        free(new_argv[i]);
+                free(new_argv);
+                for (int i = 0; i < envp_count; i++)
+                    if (new_envp[i])
+                        free(new_envp[i]);
+                free(new_envp);
                 can_schedule = true;
                 execve_lock = false;
                 return (uint64_t)-ENOENT;
@@ -768,6 +782,8 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     current_task->load_start = load_start;
     current_task->load_end = load_end;
 
+    current_task->exec_node = node;
+
     execve_lock = false;
     can_schedule = true;
 
@@ -809,6 +825,9 @@ void task_exit_inner(task_t *task, int64_t code)
         tasks[current_task->ppid]->signal |= SIGMASK(SIGCHLD);
         task_unblock(tasks[current_task->ppid], SIGCHLD);
     }
+
+    if (task->exec_node)
+        vfs_close(task->exec_node);
 
     arch_context_free(task->arch_context);
 
@@ -1011,6 +1030,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     }
 
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
+    child->exec_node = current_task->exec_node;
     child->call_in_signal = current_task->call_in_signal;
     child->state = TASK_READY;
     child->current_state = TASK_READY;
@@ -1244,6 +1264,8 @@ uint64_t timeval_to_ms(struct timeval tv)
 
 extern int timerfdfs_id;
 
+spinlock_t itimer_op_lock = {0};
+
 void sched_update_itimer()
 {
     for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
@@ -1262,6 +1284,8 @@ void sched_update_itimer()
 
         if (ptr->cpu_id != current_cpu_id)
             continue;
+
+        spin_lock(&itimer_op_lock);
 
         uint64_t rtAt = ptr->itimer_real.at;
         uint64_t rtReset = ptr->itimer_real.reset;
@@ -1322,6 +1346,8 @@ void sched_update_itimer()
                 }
             }
         }
+
+        spin_unlock(&itimer_op_lock);
     }
 }
 

@@ -312,6 +312,8 @@ int socket_socket(int domain, int type, int protocol)
     current_task->fd_info->fds[i]->offset = 0;
     current_task->fd_info->fds[i]->flags = 0;
 
+    handle->fd = current_task->fd_info->fds[i];
+
     return i;
 }
 
@@ -432,6 +434,9 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen, uin
     current_task->fd_info->fds[i]->node = acceptFd;
     current_task->fd_info->fds[i]->offset = 0;
     current_task->fd_info->fds[i]->flags = flags;
+
+    socket_handle_t *accept_handle = acceptFd->handle;
+    accept_handle->fd = current_task->fd_info->fds[i];
 
     return i;
 }
@@ -966,12 +971,13 @@ int unix_socket_pair(int type, int protocol, int *sv)
     pair->has_peercred = true;
 
     socket_handle_t *new_handle = sock2Fd->handle;
-    unix_socket_pair_t *new_sock = new_handle->sock;
 
     current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
     current_task->fd_info->fds[i]->node = sock2Fd;
     current_task->fd_info->fds[i]->offset = 0;
     current_task->fd_info->fds[i]->flags = 0;
+
+    new_handle->fd = current_task->fd_info->fds[i];
 
     // finish it off
     sv[0] = sock1;
@@ -1439,6 +1445,10 @@ ssize_t socket_read(void *f, void *buf, size_t offset, size_t limit)
         {
             return 0;
         }
+        else if ((handle->fd->flags & O_NONBLOCK) && pair->clientBuffPos == 0)
+        {
+            return -(EWOULDBLOCK);
+        }
         else if (pair->clientBuffPos > 0)
             break;
     }
@@ -1487,6 +1497,11 @@ ssize_t socket_write(void *f, const void *buf, size_t offset, size_t limit)
             socket_op_lock = false;
             return -(EPIPE);
         }
+        else if ((handle->fd->flags & O_NONBLOCK) && (pair->serverBuffPos + limit) > pair->serverBuffSize)
+        {
+            socket_op_lock = false;
+            return -(EWOULDBLOCK);
+        }
 
         if ((pair->serverBuffPos + limit) <= pair->serverBuffSize)
             break;
@@ -1517,6 +1532,10 @@ ssize_t socket_accept_read(void *f, void *buf, size_t offset, size_t limit)
         if (!pair->clientFds && pair->serverBuffPos == 0)
         {
             return 0;
+        }
+        else if ((handle->fd->flags & O_NONBLOCK) && pair->serverBuffPos == 0)
+        {
+            return -(EWOULDBLOCK);
         }
         else if (pair->serverBuffPos > 0)
             break;
@@ -1568,6 +1587,12 @@ ssize_t socket_accept_write(void *f, const void *buf, size_t offset, size_t limi
 
         if ((pair->clientBuffPos + limit) <= pair->clientBuffSize)
             break;
+
+        if (handle->fd->flags & O_NONBLOCK)
+        {
+            socket_op_lock = false;
+            return -(EWOULDBLOCK);
+        }
 
         arch_enable_interrupt();
 

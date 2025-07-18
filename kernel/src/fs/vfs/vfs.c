@@ -482,9 +482,15 @@ err:
 vfs_node_t vfs_open(const char *_path)
 {
     if (current_task && current_task->cwd)
-        return vfs_open_at(current_task->cwd, _path, false);
+    {
+        vfs_node_t node = vfs_open_at(current_task->cwd, _path, false);
+        return node;
+    }
     else
-        return vfs_open_at(rootdir, _path, false);
+    {
+        vfs_node_t node = vfs_open_at(rootdir, _path, false);
+        return node;
+    }
 }
 
 void vfs_update(vfs_node_t node)

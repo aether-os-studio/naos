@@ -150,6 +150,7 @@ typedef struct task
     uint64_t status;
     uint32_t cpu_id;
     char name[TASK_NAME_MAX];
+    vfs_node_t exec_node;
     uint64_t jiffies;
     task_state_t state;
     task_state_t current_state;

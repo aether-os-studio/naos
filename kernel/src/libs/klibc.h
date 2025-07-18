@@ -246,7 +246,7 @@ static inline int strncmp(const char *s1, const char *s2, int size)
         size--;
     }
 
-    return !((*s1 == '\0') || (*s2 == '\0') || (*s1 == *s2));
+    return !((*s1 == '\0') || (*s2 == '\0') || size == 0 || *s1 == *s2);
 }
 
 static inline int strcmp(const char *str1, const char *str2)

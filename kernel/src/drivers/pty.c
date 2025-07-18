@@ -640,7 +640,7 @@ void ptmx_init()
     ptmx_fsid = vfs_regist("ptmx", &ptmx_callbacks);
 
     vfs_node_t dev_node = vfs_open("/dev");
-    vfs_node_t ptmx = vfs_node_alloc(dev_node, "ptmx");
+    vfs_node_t ptmx = vfs_child_append(dev_node, "ptmx", NULL);
     ptmx->type = file_ptmx;
     ptmx->mode = 0700;
     ptmx->fsid = ptmx_fsid;

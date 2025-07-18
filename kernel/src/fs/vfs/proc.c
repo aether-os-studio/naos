@@ -6,6 +6,8 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
     .id = LIMINE_EXECUTABLE_CMDLINE_REQUEST,
 };
 
+spinlock_t procfs_oplock = {0};
+
 vfs_node_t cmdline = NULL;
 
 ssize_t procfs_read(void *file, void *addr, size_t offset, size_t size)
@@ -79,12 +81,33 @@ bool procfs_close(void *current)
     return false;
 }
 
+ssize_t procfs_readlink(void *file, void *addr, size_t offset, size_t size)
+{
+    proc_handle_t *handle = file;
+    if (!strcmp(handle->name, "self/exe") && current_task->exec_node)
+    {
+        vfs_node_t original_node = current_task->exec_node;
+        while (original_node->link_by)
+        {
+            original_node = original_node->link_by;
+        }
+
+        char *fullpath = vfs_get_fullpath(original_node);
+        int len = strlen(fullpath);
+        len = MIN(len, size);
+        memcpy(addr, fullpath, len);
+        return len;
+    }
+
+    return 0;
+}
+
 static struct vfs_callback callbacks = {
     .open = (vfs_open_t)procfs_open,
     .close = (vfs_close_t)dummy,
     .read = procfs_read,
     .write = (vfs_write_t)dummy,
-    .readlink = (vfs_read_t)dummy,
+    .readlink = procfs_readlink,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,
@@ -115,6 +138,7 @@ void proc_init()
 
     vfs_node_t self_exe = vfs_node_alloc(procfs_self, "exe");
     self_exe->type = file_none;
+    self_exe->linkname = strdup("/proc/self/real_exe");
     self_exe->mode = 0700;
     proc_handle_t *self_exe_handle = malloc(sizeof(proc_handle_t));
     self_exe->handle = self_exe_handle;
@@ -140,6 +164,8 @@ void proc_init()
 
 void procfs_on_new_task(task_t *task)
 {
+    spin_lock(&procfs_oplock);
+
     char name[MAX_PID_NAME_LEN];
     sprintf(name, "%d", task->pid);
 
@@ -154,10 +180,14 @@ void procfs_on_new_task(task_t *task)
     cmdline->handle = handle;
     handle->task = task;
     sprintf(handle->name, "proc_cmdline");
+
+    spin_unlock(&procfs_oplock);
 }
 
 void procfs_on_exit_task(task_t *task)
 {
+    spin_lock(&procfs_oplock);
+
     char name[6 + MAX_PID_NAME_LEN];
     sprintf(name, "/proc/%d", task->pid);
 
@@ -167,4 +197,6 @@ void procfs_on_exit_task(task_t *task)
         list_delete(node->parent->child, node);
         vfs_free(node);
     }
+
+    spin_unlock(&procfs_oplock);
 }
