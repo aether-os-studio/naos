@@ -55,7 +55,7 @@ SER ?= 0
 MON ?= 0
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
-QEMUFLAGS := -m $(MEM) -smp $(SMP)
+QEMUFLAGS := -m $(MEM) -smp $(SMP) -cpu max
 QEMUFLAGS += -netdev user,id=user.0
 QEMUFLAGS += -device virtio-net,netdev=user.0,mac=5A:5A:5A:5A:5A:33
 

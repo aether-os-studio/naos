@@ -1279,7 +1279,7 @@ void sched_update_itimer()
 
             if (rtReset)
             {
-                ptr->itimer_real.at = nanoTime() + rtReset;
+                ptr->itimer_real.at = now + rtReset;
             }
             else
             {
@@ -1292,7 +1292,7 @@ void sched_update_itimer()
             if (ptr->timers[i] == NULL)
                 break;
             kernel_timer_t *kt = ptr->timers[j];
-            if (kt->expires && nanoTime() >= kt->expires)
+            if (kt->expires && now >= kt->expires)
             {
                 ptr->signal |= SIGMASK(kt->sigev_signo);
 
@@ -1308,7 +1308,7 @@ void sched_update_itimer()
             if (ptr->fd_info->fds[fd] && ptr->fd_info->fds[fd]->node && ptr->fd_info->fds[fd]->node->fsid == timerfdfs_id)
             {
                 timerfd_t *tfd = ptr->fd_info->fds[fd]->node->handle;
-                if (tfd->timer.expires && nanoTime() >= tfd->timer.expires)
+                if (tfd->timer.expires && now >= tfd->timer.expires)
                 {
                     tfd->count++;
                     if (tfd->timer.interval)
