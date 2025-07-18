@@ -1126,9 +1126,10 @@ int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *
         return -EFAULT;
     }
 
-    switch (op & FUTEX_CMD_MASK)
+    switch (op)
     {
     case FUTEX_WAIT:
+    case FUTEX_WAIT_PRIVATE:
     {
         spin_lock(&futex_lock);
 
@@ -1167,6 +1168,7 @@ int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *
         return 0;
     }
     case FUTEX_WAKE:
+    case FUTEX_WAKE_PRIVATE:
     {
         spin_lock(&futex_lock);
 

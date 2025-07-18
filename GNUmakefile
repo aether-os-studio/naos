@@ -56,7 +56,6 @@ MON ?= 0
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
 QEMUFLAGS := -m $(MEM) -smp $(SMP) -cpu max
-QEMUFLAGS += -netdev user,id=user.0
 
 DEBUG ?= 0
 

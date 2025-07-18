@@ -23,6 +23,9 @@ typedef struct pty_pair
     int ptrMaster;
     int ptrSlave;
 
+    int tty_kbmode;
+    struct vt_mode vt_mode;
+
     // controlling stuff
     int ctrlSession;
     int ctrlPgid;

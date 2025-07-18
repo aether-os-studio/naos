@@ -78,6 +78,8 @@ void ptmx_open(void *parent, const char *name, vfs_node_t node)
     pty_termios_default(&pair->term);
     pair->win.ws_row = 24;
     pair->win.ws_col = 80; // some sane defaults
+    pair->tty_kbmode = K_XLATE;
+    memset(&pair->vt_mode, 0, sizeof(struct vt_mode));
     pair->masterFds = 1;
     node->handle = n->next;
     node->fsid = ptmx_fsid;
@@ -515,6 +517,37 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg)
     case TIOCSPGRP:
         ret = 0;
         break;
+    case KDGKBMODE:
+        *(int *)arg = pair->tty_kbmode;
+        return 0;
+    case KDSKBMODE:
+        pair->tty_kbmode = *(int *)arg;
+        ret = 0;
+        break;
+    case VT_SETMODE:
+        memcpy(&pair->vt_mode, (void *)arg, sizeof(struct vt_mode));
+        ret = 0;
+        break;
+    case VT_GETMODE:
+        memcpy((void *)arg, &pair->vt_mode, sizeof(struct vt_mode));
+        ret = 0;
+        break;
+    case VT_ACTIVATE:
+        ret = 0;
+        break;
+    case VT_WAITACTIVE:
+        ret = 0;
+        break;
+    case VT_GETSTATE:
+        struct vt_state *state = (struct vt_state *)arg;
+        state->v_active = 0; // 当前活动终端
+        state->v_state = 0;  // 状态标志
+        ret = 0;
+        break;
+    case VT_OPENQRY:
+        *(int *)arg = 1;
+        ret = 0;
+        break;
     }
     spin_unlock(&pair->lock);
 
@@ -625,4 +658,5 @@ void pts_init()
     pts_node->fsid = pts_fsid;
     pts_node->type = file_dir;
     pts_node->mode = 0644;
+    pts_node->handle = pts_node;
 }
