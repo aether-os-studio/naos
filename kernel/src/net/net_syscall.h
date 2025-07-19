@@ -20,6 +20,11 @@ int64_t sys_recv(int sockfd, void *buff, size_t len, int flags, struct sockaddr_
 int64_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags);
 int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags);
 
+static inline int sys_accept_normal(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen)
+{
+    return sys_accept(sockfd, addr, addrlen, 0);
+}
+
 extern int net_socket(int domain, int type, int protocol);
 extern uint64_t net_shutdown(uint64_t fd, uint64_t how);
 extern size_t net_getpeername(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen);

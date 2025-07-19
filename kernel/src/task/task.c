@@ -894,6 +894,26 @@ uint64_t task_exit(int64_t code)
     return (uint64_t)-EAGAIN;
 }
 
+uint64_t sys_set_tid_address(uint64_t addr)
+{
+    return 0;
+}
+
+uint64_t sys_setfsgid(uint64_t gid)
+{
+    return 0;
+}
+
+uint64_t sys_setfsuid(uint64_t uid)
+{
+    return 0;
+}
+
+uint64_t sys_umask(uint64_t mask)
+{
+    return 0;
+}
+
 uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
 {
     arch_disable_interrupt();
@@ -1487,5 +1507,75 @@ uint64_t sys_reboot(int magic1, int magic2, uint32_t cmd, void *arg)
     default:
         return (uint64_t)-EINVAL;
         break;
+    }
+}
+
+// Beware the 65 character limit!
+char sysname[] = "Next Aether OS";
+char nodename[] = "Aether";
+char release[] = BUILD_VERSION;
+char version[] = BUILD_VERSION;
+
+#if defined(__x86_64__)
+char machine[] = "x86_64";
+#endif
+
+uint64_t sys_uname(struct utsname *nm)
+{
+    strcpy(nm->sysname, sysname);
+    strcpy(nm->nodename, nodename);
+    strcpy(nm->release, release);
+    strcpy(nm->version, version);
+    strcpy(nm->machine, machine);
+
+    return 0;
+}
+
+uint64_t sys_gettimeofday(struct timeval *val)
+{
+    tm time_day;
+    time_read(&time_day);
+    uint64_t timestamp_day = mktime(&time_day);
+    if (val)
+    {
+        val->tv_sec = timestamp_day;
+        val->tv_usec = 0;
+    }
+
+    return 0;
+}
+
+uint64_t sys_clock_gettime(uint64_t clock_id, struct timespec *ts)
+{
+    switch (clock_id)
+    {
+    case 1: // CLOCK_MONOTONIC
+    case 6: // CLOCK_MONOTONIC_COARSE
+    case 4: // CLOCK_MONOTONIC_RAW
+    {
+        if (ts)
+        {
+            uint64_t nano = nanoTime();
+            ts->tv_sec = nano / 1000000000ULL;
+            ts->tv_nsec = nano % 1000000000ULL;
+        }
+        return 0;
+    }
+    case 0:
+    {
+        tm time;
+        time_read(&time);
+        uint64_t timestamp = mktime(&time);
+
+        if (ts)
+        {
+            ts->tv_sec = timestamp;
+            ts->tv_nsec = 0;
+        }
+        return 0;
+    }
+    default:
+        printk("clock not supported\n");
+        return (uint64_t)-EINVAL;
     }
 }

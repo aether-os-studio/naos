@@ -205,6 +205,12 @@ uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags);
 
 uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg);
 int sys_pipe(int fd[2], uint64_t flags);
+
+static inline int sys_pipe_normal(int fd[2])
+{
+    return sys_pipe(fd, 0);
+}
+
 uint64_t sys_stat(const char *fd, struct stat *buf);
 uint64_t sys_fstat(uint64_t fd, struct stat *buf);
 uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname, struct stat *buf, uint64_t flags);
@@ -403,6 +409,11 @@ typedef struct eventfd
 
 uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags);
 
+static inline uint64_t sys_eventfd_normal(uint64_t initial_val)
+{
+    return sys_eventfd2(initial_val, 0);
+}
+
 #define SIGNALFD_IOC_MASK 0x53010008
 
 uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask, int flags);
@@ -436,6 +447,9 @@ uint64_t sys_fchdir(uint64_t fd);
 uint64_t sys_rmdir(const char *name);
 uint64_t sys_unlink(const char *name);
 uint64_t sys_unlinkat(uint64_t dirfd, const char *name, uint64_t flags);
+
+uint64_t sys_chmod(const char *fn, uint64_t mode);
+uint64_t sys_fchmod(uint64_t fd, uint64_t mode);
 
 #define CLOCK_REALTIME 0
 #define CLOCK_MONOTONIC 1
@@ -511,3 +525,15 @@ struct futex_wait
 int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *uaddr2, int val3);
 
 void wake_blocked_tasks(task_block_list_t *head);
+
+static inline uint64_t sys_pread64(uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4)
+{
+    sys_lseek(arg1, arg4, SEEK_SET);
+    return sys_read(arg1, (void *)arg2, arg3);
+}
+
+static inline uint64_t sys_pwrite64(uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4)
+{
+    sys_lseek(arg1, arg4, SEEK_SET);
+    return sys_write(arg1, (const void *)arg2, arg3);
+}

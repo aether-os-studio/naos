@@ -26,6 +26,16 @@ uint64_t sys_brk(uint64_t addr)
     return new_brk;
 }
 
+uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot)
+{
+    return 0;
+}
+
+uint64_t sys_membarrier()
+{
+    return 0;
+}
+
 uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t fd, uint64_t offset)
 {
     addr = addr & (~(DEFAULT_PAGE_SIZE - 1));

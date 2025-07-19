@@ -189,6 +189,13 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork);
 uint64_t task_execve(const char *path, const char **argv, const char **envp);
 uint64_t task_exit(int64_t code);
 
+uint64_t sys_set_tid_address(uint64_t addr);
+
+uint64_t sys_setfsgid(uint64_t gid);
+uint64_t sys_setfsuid(uint64_t uid);
+
+uint64_t sys_umask(uint64_t mask);
+
 #define WNOHANG 1
 #define WUNTRACED 2
 
@@ -219,3 +226,134 @@ uint64_t sys_reboot(int magic1, int magic2, uint32_t cmd, void *arg);
 
 extern task_t *tasks[MAX_TASK_NUM];
 extern task_t *idle_tasks[MAX_CPU_NUM];
+
+static inline uint64_t sys_fork(struct pt_regs *regs)
+{
+    return task_fork(regs, false);
+}
+
+static inline uint64_t sys_vfork(struct pt_regs *regs)
+{
+    return task_fork(regs, true);
+}
+
+static inline uint64_t sys_getpid(uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5)
+{
+    if (arg1 == UINT64_MAX && arg2 == UINT64_MAX && arg3 == UINT64_MAX && arg4 == UINT64_MAX && arg5 == UINT64_MAX)
+        return 1;
+    else
+        return current_task->pid;
+}
+
+static inline uint64_t sys_getppid()
+{
+    return current_task->ppid;
+}
+
+static inline uint64_t sys_getpgid()
+{
+    return current_task->pgid;
+}
+
+static inline uint64_t sys_setpgid(uint64_t arg1, uint64_t arg2)
+{
+    if (!arg1)
+    {
+        current_task->pgid = (int64_t)arg2;
+    }
+    else
+    {
+        if (tasks[arg1] == NULL)
+        {
+            return (uint64_t)-ENOENT;
+        }
+        tasks[arg1]->pgid = arg2;
+    }
+
+    return 0;
+}
+
+static inline uint64_t sys_getuid()
+{
+    return current_task->uid;
+}
+
+static inline uint64_t sys_setuid(uint64_t arg)
+{
+    current_task->uid = arg;
+    return 0;
+}
+
+static inline uint64_t sys_getgid()
+{
+    return current_task->gid;
+}
+
+static inline uint64_t sys_setgid(uint64_t arg)
+{
+    current_task->gid = arg;
+    return 0;
+}
+
+static inline uint64_t sys_getsid()
+{
+    return current_task->sid;
+}
+
+static inline uint64_t sys_setsid(uint64_t arg)
+{
+    current_task->sid = arg;
+    return 0;
+}
+
+static inline uint64_t sys_getegid()
+{
+    return current_task->egid;
+}
+
+static inline uint64_t sys_setegid(uint64_t arg)
+{
+    current_task->egid = arg;
+    return 0;
+}
+
+static inline uint64_t sys_geteuid()
+{
+    return current_task->euid;
+}
+
+static inline uint64_t sys_seteuid(uint64_t arg)
+{
+    current_task->euid = arg;
+    return 0;
+}
+
+static inline uint64_t sys_getrgid()
+{
+    return current_task->rgid;
+}
+
+static inline uint64_t sys_setrgid(uint64_t arg)
+{
+    current_task->rgid = arg;
+    return 0;
+}
+
+static inline uint64_t sys_getruid()
+{
+    return current_task->ruid;
+}
+
+static inline uint64_t sys_setruid(uint64_t arg)
+{
+    current_task->ruid = arg;
+    return 0;
+}
+
+uint64_t sys_uname(struct utsname *nm);
+
+uint64_t sys_gettimeofday(struct timeval *val);
+
+struct timespec;
+
+uint64_t sys_clock_gettime(uint64_t clock_id, struct timespec *spec);
