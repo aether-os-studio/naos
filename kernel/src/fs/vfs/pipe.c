@@ -32,16 +32,14 @@ ssize_t pipefs_read(void *file, void *addr, size_t offset, size_t size)
 
     spin_lock(&pipe->lock);
 
-    uint32_t available = (pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF;
+    uint32_t available = pipe->assigned;
     if (available == 0)
     {
-        fd_t *fd = container_of(spec->node, fd_t, node);
-        if (fd->flags & O_NONBLOCK)
+        if (spec->fd->flags & O_NONBLOCK)
         {
             spin_unlock(&pipe->lock);
-            return -EWOULDBLOCK;
+            return 0;
         }
-
         if (pipe->write_fds == 0)
         {
             spin_unlock(&pipe->lock);
@@ -61,9 +59,6 @@ ssize_t pipefs_read(void *file, void *addr, size_t offset, size_t size)
 
         task_block(current_task, TASK_BLOCKING, -1);
     }
-    spin_unlock(&pipe->lock);
-
-    available = (pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF;
 
     // 实际读取量
     uint32_t to_read = MIN(size, available);
@@ -74,20 +69,9 @@ ssize_t pipefs_read(void *file, void *addr, size_t offset, size_t size)
         return 0;
     }
 
-    // 分两种情况拷贝数据
-    if (pipe->read_ptr + to_read <= PIPE_BUFF)
-    {
-        memcpy(addr, &pipe->buf[pipe->read_ptr], to_read);
-    }
-    else
-    {
-        uint32_t first_chunk = PIPE_BUFF - pipe->read_ptr;
-        memcpy(addr, &pipe->buf[pipe->read_ptr], first_chunk);
-        memcpy(addr + first_chunk, pipe->buf, to_read - first_chunk);
-    }
-
-    // 更新读指针
-    pipe->read_ptr = (pipe->read_ptr + to_read) % PIPE_BUFF;
+    memcpy(addr, pipe->buf, to_read);
+    pipe->assigned -= to_read;
+    memmove(pipe->buf, &pipe->buf[to_read], PIPE_BUFF - to_read);
 
     wake_blocked_tasks(&pipe->blocking_write);
 
@@ -106,9 +90,14 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
 
     spin_lock(&pipe->lock);
 
-    uint32_t free_space = PIPE_BUFF - ((pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF);
+    uint32_t free_space = PIPE_BUFF - pipe->assigned;
     if (free_space < size)
     {
+        if (spec->fd->flags & O_NONBLOCK)
+        {
+            spin_unlock(&pipe->lock);
+            return 0;
+        }
         if (pipe->read_fds == 0)
         {
             spin_unlock(&pipe->lock);
@@ -127,27 +116,10 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
         spin_unlock(&pipe->lock);
 
         task_block(current_task, TASK_BLOCKING, -1);
-
-        while (current_task->state == TASK_BLOCKING)
-        {
-            arch_enable_interrupt();
-            arch_pause();
-        }
-        arch_disable_interrupt();
     }
 
-    if (pipe->write_ptr + size <= PIPE_BUFF)
-    {
-        memcpy(&pipe->buf[pipe->write_ptr], addr, size);
-    }
-    else
-    {
-        uint32_t first_chunk = PIPE_BUFF - pipe->write_ptr;
-        memcpy(&pipe->buf[pipe->write_ptr], addr, first_chunk);
-        memcpy(pipe->buf, addr + first_chunk, size - first_chunk);
-    }
-
-    pipe->write_ptr = (pipe->write_ptr + size) % PIPE_BUFF;
+    memcpy(&pipe->buf[pipe->assigned], addr, size);
+    pipe->assigned += size;
 
     wake_blocked_tasks(&pipe->blocking_read);
 
@@ -237,7 +209,7 @@ int pipefs_poll(void *file, size_t events)
     {
         if (!pipe->write_fds)
             out |= EPOLLHUP;
-        else if (pipe->write_ptr != pipe->read_ptr)
+        else if (pipe->assigned > 0)
             out |= EPOLLIN;
     }
 
@@ -338,8 +310,6 @@ int sys_pipe(int pipefd[2], uint64_t flags)
     info->blocking_read.next = NULL;
     info->blocking_write.next = NULL;
     info->lock.lock = 0;
-    info->read_ptr = 0;
-    info->write_ptr = 0;
     info->assigned = 0;
 
     pipe_specific_t *read_spec = (pipe_specific_t *)malloc(sizeof(pipe_specific_t));
@@ -360,6 +330,8 @@ int sys_pipe(int pipefd[2], uint64_t flags)
     current_task->fd_info->fds[i1]->offset = 0;
     current_task->fd_info->fds[i1]->flags = flags;
 
+    read_spec->fd = current_task->fd_info->fds[i1];
+
     int i2 = -1;
     for (i2 = 3; i2 < MAX_FD_NUM; i2++)
     {
@@ -369,15 +341,12 @@ int sys_pipe(int pipefd[2], uint64_t flags)
         }
     }
 
-    if (i2 == MAX_FD_NUM)
-    {
-        return -EBADF;
-    }
-
     current_task->fd_info->fds[i2] = malloc(sizeof(fd_t));
     current_task->fd_info->fds[i2]->node = node_output;
     current_task->fd_info->fds[i2]->offset = 0;
     current_task->fd_info->fds[i2]->flags = flags;
+
+    write_spec->fd = current_task->fd_info->fds[i2];
 
     pipefd[0] = i1;
     pipefd[1] = i2;

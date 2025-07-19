@@ -25,7 +25,8 @@ extern void syscall_exception();
 
 #define NR_SYSCALL 500
 
-typedef uint64_t (*syscall_handler_t)(uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5, uint64_t arg6, uint64_t arg7);
+typedef uint64_t (*syscall_handler_t)(uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5, uint64_t arg6);
+typedef uint64_t (*special_syscall_handler_t)(struct pt_regs *regs, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5, uint64_t arg6);
 extern syscall_handler_t syscall_handlers[NR_SYSCALL];
 
 void syscall_init();

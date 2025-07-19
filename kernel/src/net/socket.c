@@ -46,7 +46,7 @@ char *unix_socket_addr_safe(const struct sockaddr_un *addr, size_t len)
 
     if (abstract)
     {
-        safe[0] = ':';
+        safe[0] = '@';
         memcpy(safe + 1, addr->sun_path + skip, addrLen - skip);
     }
     else
@@ -85,8 +85,8 @@ unix_socket_pair_t *unix_socket_allocate_pair()
     pair->established = false;
     pair->clientBuffSize = BUFFER_SIZE;
     pair->serverBuffSize = BUFFER_SIZE;
-    pair->serverBuff = malloc(pair->serverBuffSize);
-    pair->clientBuff = malloc(pair->clientBuffSize);
+    pair->serverBuff = alloc_frames_bytes(pair->serverBuffSize);
+    pair->clientBuff = alloc_frames_bytes(pair->clientBuffSize);
     pair->pending_files = malloc(MAX_PENDING_FILES_COUNT * sizeof(fd_t));
     pair->pending_fds_size = MAX_PENDING_FILES_COUNT;
     pair->pending_fds_count = 0;
@@ -97,8 +97,8 @@ unix_socket_pair_t *unix_socket_allocate_pair()
 
 void unix_socket_free_pair(unix_socket_pair_t *pair)
 {
-    free(pair->clientBuff);
-    free(pair->serverBuff);
+    free_frames_bytes(pair->clientBuff, pair->clientBuffSize);
+    free_frames_bytes(pair->serverBuff, pair->serverBuffSize);
     free(pair->filename);
     free(pair->pending_files);
     free(pair);
@@ -407,7 +407,6 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen, uin
     arch_disable_interrupt();
 
     unix_socket_pair_t *pair = sock->backlog[0];
-    pair->established = true;
     pair->serverFds++;
     pair->filename = strdup(sock->bindAddr);
 
@@ -438,8 +437,12 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen, uin
     socket_handle_t *accept_handle = acceptFd->handle;
     accept_handle->fd = current_task->fd_info->fds[i];
 
+    pair->established = true;
+
     return i;
 }
+
+spinlock_t connect_lock = {0};
 
 int socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen)
 {
@@ -492,6 +495,8 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrle
         return -(ECONNREFUSED); // no slot
     }
 
+    spin_lock(&connect_lock);
+
     unix_socket_pair_t *pair = unix_socket_allocate_pair();
     sock->pair = pair;
     pair->clientFds = 1;
@@ -506,12 +511,10 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrle
 
     while (!pair->established)
     {
-        arch_enable_interrupt();
-
-        arch_pause();
+        arch_yield();
     }
 
-    arch_disable_interrupt();
+    spin_unlock(&connect_lock);
 
     return 0;
 }
@@ -1366,11 +1369,11 @@ size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr, socklen_t 
     if (toCopy < sizeof(addr->sun_family))
         return -(EINVAL);
     addr->sun_family = 1;
-    if (pair->filename[0] == ':')
+    if (pair->filename[0] == '@')
     {
-        memcpy(addr->sun_path, pair->filename + 1, toCopy - sizeof(addr->sun_family) - 1);
-        // addr->sun_path[0] = '\0';
-        *len = toCopy - 1;
+        memcpy(addr->sun_path + 1, pair->filename + 1, toCopy - sizeof(addr->sun_family) - 1);
+        addr->sun_path[0] = '\0';
+        *len = toCopy;
     }
     else
     {

@@ -49,7 +49,7 @@ export ROOT_DIR := $(shell pwd)
 
 KVM ?= 0
 HVF ?= 0
-SMP ?= 2
+SMP ?= 4
 MEM ?= 8G
 SER ?= 0
 MON ?= 0

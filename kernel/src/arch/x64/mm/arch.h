@@ -20,3 +20,9 @@
 
 uint64_t get_arch_page_table_flags(uint64_t flags);
 void arch_flush_tlb(uint64_t vaddr);
+
+static inline void arch_set_current_page_dir(bool user, uint64_t page_table_phys)
+{
+    (void)user;
+    asm volatile("movq %0, %%cr3" ::"r"(page_table_phys));
+}

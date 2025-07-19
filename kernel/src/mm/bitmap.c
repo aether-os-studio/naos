@@ -36,7 +36,7 @@ void bitmap_set_range(Bitmap *bitmap, size_t start, size_t end, bool value)
     size_t start_word = (start + 63) / 64;
     size_t end_word = end / 64;
 
-    for (size_t i = start; i < start_word * 64 && i < end; i++)
+    for (size_t i = start; i < MIN(start_word * 64, end) && i < end; i++)
     {
         bitmap_set(bitmap, i, value);
     }
@@ -46,7 +46,7 @@ void bitmap_set_range(Bitmap *bitmap, size_t start, size_t end, bool value)
         return;
     }
 
-    if (start_word < end_word)
+    if (start_word <= end_word)
     {
         size_t fill_value = value ? (size_t)-1 : 0;
         for (size_t i = start_word; i < end_word; i++)

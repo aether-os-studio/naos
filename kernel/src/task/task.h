@@ -179,6 +179,7 @@ typedef struct task
 } task_t;
 
 void sched_update_itimer();
+void sched_update_timerfd();
 
 task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg);
 void task_init();
@@ -243,6 +244,11 @@ static inline uint64_t sys_getpid(uint64_t arg1, uint64_t arg2, uint64_t arg3, u
         return 1;
     else
         return current_task->pid;
+}
+
+static inline uint64_t sys_gettid()
+{
+    return current_task->pid;
 }
 
 static inline uint64_t sys_getppid()
@@ -357,3 +363,28 @@ uint64_t sys_gettimeofday(struct timeval *val);
 struct timespec;
 
 uint64_t sys_clock_gettime(uint64_t clock_id, struct timespec *spec);
+uint64_t sys_clock_getres(uint64_t clock_id, struct timespec *arg2);
+
+static inline uint64_t sys_getrandom(uint64_t arg1, uint64_t arg2, uint64_t arg3)
+{
+    void *buffer = (void *)arg1;
+    size_t get_len = (size_t)arg2;
+    uint32_t flags = (uint32_t)arg3;
+
+    if (get_len == 0 || get_len > 1024 * 1024)
+    {
+        return (uint64_t)-EINVAL;
+    }
+
+    for (size_t i = 0; i < get_len; i++)
+    {
+        tm time;
+        time_read(&time);
+        uint64_t next = mktime(&time);
+        next = next * 1103515245 + 12345;
+        uint8_t rand_byte = ((uint8_t)(next / 65536) % 32768);
+        memcpy(buffer + i, &rand_byte, 1);
+    }
+
+    return get_len;
+}

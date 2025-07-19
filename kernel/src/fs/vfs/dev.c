@@ -66,6 +66,10 @@ void devfs_open(void *parent, const char *name, vfs_node_t node)
 bool devfs_close(void *current)
 {
     devfs_handle_t handle = (devfs_handle_t)current;
+    if (!strncmp(handle->name, "std", 3))
+    {
+        return false;
+    }
     if (!strncmp(handle->name, "event", 5))
     {
         dev_input_event_t *event = handle->data;

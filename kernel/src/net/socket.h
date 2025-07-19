@@ -101,8 +101,6 @@ typedef struct unix_socket_pair
     bool has_peercred;
 } unix_socket_pair_t;
 
-#define MAX_CONNECTIONS 16
-
 struct timeval;
 
 typedef struct socket

@@ -8,7 +8,7 @@
 #include <fs/fs_syscall.h>
 #include <net/socket.h>
 
-#define MAX_CONTINUE_NULL_TASKS 3
+#define MAX_CONTINUE_NULL_TASKS 5
 
 task_t *tasks[MAX_TASK_NUM];
 task_t *idle_tasks[MAX_CPU_NUM];
@@ -846,6 +846,8 @@ void task_exit_inner(task_t *task, int64_t code)
                 task->fd_info->fds[i] = NULL;
             }
         }
+
+        free(task->fd_info);
     }
 
     if (task->waitpid != 0 && tasks[task->waitpid])
@@ -874,9 +876,25 @@ uint64_t task_exit(int64_t code)
 {
     arch_disable_interrupt();
 
+    can_schedule = false;
+
+    for (uint64_t pid = 1; pid < MAX_TASK_NUM; pid++)
+    {
+        if (tasks[pid] && tasks[pid]->pid != tasks[pid]->ppid && tasks[pid]->ppid == current_task->pid)
+        {
+            task_exit_inner(tasks[pid], 0);
+
+            free_frames_bytes((void *)tasks[pid]->kernel_stack, STACK_SIZE);
+            free_frames_bytes((void *)tasks[pid]->syscall_stack, STACK_SIZE);
+            free(tasks[pid]);
+        }
+    }
+
     task_exit_inner(current_task, code);
 
     task_t *next = task_search(TASK_READY, current_task->cpu_id);
+
+    can_schedule = true;
 
     if (next)
     {
@@ -1339,6 +1357,8 @@ void sched_update_itimer()
             if (kt->expires && now >= kt->expires)
             {
                 ptr->signal |= SIGMASK(kt->sigev_signo);
+                if (ptr->state == TASK_BLOCKING)
+                    task_unblock(ptr, EOK);
 
                 if (kt->interval)
                     kt->expires += kt->interval;
@@ -1347,27 +1367,35 @@ void sched_update_itimer()
             }
         }
 
-        for (int fd = 3; fd < MAX_FD_NUM; fd++)
+        spin_unlock(&itimer_op_lock);
+    }
+}
+
+void sched_update_timerfd()
+{
+    tm time_now;
+    time_read(&time_now);
+
+    uint64_t now = mktime(&time_now) * 1000;
+
+    for (int fd = 3; fd < MAX_FD_NUM; fd++)
+    {
+        if (current_task->fd_info->fds[fd] && current_task->fd_info->fds[fd]->node->fsid == timerfdfs_id)
         {
-            if (ptr->fd_info->fds[fd] && ptr->fd_info->fds[fd]->node && ptr->fd_info->fds[fd]->node->fsid == timerfdfs_id)
+            timerfd_t *tfd = current_task->fd_info->fds[fd]->node->handle;
+            if (tfd->timer.expires && now >= tfd->timer.expires)
             {
-                timerfd_t *tfd = ptr->fd_info->fds[fd]->node->handle;
-                if (tfd->timer.expires && now >= tfd->timer.expires)
+                tfd->count++;
+                if (tfd->timer.interval)
                 {
-                    tfd->count++;
-                    if (tfd->timer.interval)
-                    {
-                        tfd->timer.expires += tfd->timer.interval;
-                    }
-                    else
-                    {
-                        tfd->timer.expires = 0;
-                    }
+                    tfd->timer.expires += tfd->timer.interval;
+                }
+                else
+                {
+                    tfd->timer.expires = 0;
                 }
             }
         }
-
-        spin_unlock(&itimer_op_lock);
     }
 }
 
@@ -1578,4 +1606,10 @@ uint64_t sys_clock_gettime(uint64_t clock_id, struct timespec *ts)
         printk("clock not supported\n");
         return (uint64_t)-EINVAL;
     }
+}
+
+uint64_t sys_clock_getres(uint64_t clock_id, struct timespec *arg2)
+{
+    arg2->tv_nsec = 1000000;
+    return 0;
 }

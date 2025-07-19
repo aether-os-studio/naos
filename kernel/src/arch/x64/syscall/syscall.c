@@ -67,7 +67,7 @@ void syscall_init()
     syscall_handlers_init();
 }
 
-syscall_handler_t syscall_handlers[NR_SYSCALL];
+syscall_handler_t syscall_handlers[NR_SYSCALL] = {0};
 
 void syscall_handlers_init()
 {
@@ -170,7 +170,7 @@ void syscall_handlers_init()
     // syscall_handlers[SYS_LCHOWN] = (syscall_handler_t)sys_lchown;
     syscall_handlers[SYS_UMASK] = (syscall_handler_t)sys_umask;
     // syscall_handlers[SYS_GETTIMEOFDAY] = (syscall_handler_t)sys_gettimeofday;
-    // syscall_handlers[SYS_GETRLIMIT] = (syscall_handler_t)sys_getrlimit;
+    syscall_handlers[SYS_GETRLIMIT] = (syscall_handler_t)sys_get_rlimit;
     syscall_handlers[SYS_GETRUSAGE] = (syscall_handler_t)syscall_dummy_handler;
     syscall_handlers[SYS_SYSINFO] = (syscall_handler_t)syscall_dummy_handler;
     // syscall_handlers[SYS_TIMES] = (syscall_handler_t)sys_times;
@@ -210,7 +210,7 @@ void syscall_handlers_init()
     // syscall_handlers[SYS_USELIB] = (syscall_handler_t)sys_uselib;
     // syscall_handlers[SYS_PERSONALITY] = (syscall_handler_t)sys_personality;
     // syscall_handlers[SYS_USTAT] = (syscall_handler_t)sys_ustat;
-    // syscall_handlers[SYS_STATFS] = (syscall_handler_t)sys_statfs;
+    syscall_handlers[SYS_STATFS] = (syscall_handler_t)syscall_dummy_handler;
     syscall_handlers[SYS_FSTATFS] = (syscall_handler_t)syscall_dummy_handler;
     // syscall_handlers[SYS_SYSFS] = (syscall_handler_t)sys_sysfs;
     syscall_handlers[SYS_GETPRIORITY] = (syscall_handler_t)syscall_dummy_handler;
@@ -259,7 +259,7 @@ void syscall_handlers_init()
     // syscall_handlers[SYS_AFS_SYSCALL] = (syscall_handler_t)sys_afs_syscall;
     // syscall_handlers[SYS_TUXCALL] = (syscall_handler_t)sys_tuxcall;
     // syscall_handlers[SYS_SECURITY] = (syscall_handler_t)sys_security;
-    // syscall_handlers[SYS_GETTID] = (syscall_handler_t)sys_gettid;
+    syscall_handlers[SYS_GETTID] = (syscall_handler_t)sys_gettid;
     // syscall_handlers[SYS_READAHEAD] = (syscall_handler_t)sys_readahead;
     // syscall_handlers[SYS_SETXATTR] = (syscall_handler_t)sys_setxattr;
     // syscall_handlers[SYS_LSETXATTR] = (syscall_handler_t)sys_lsetxattr;
@@ -302,7 +302,7 @@ void syscall_handlers_init()
     // syscall_handlers[SYS_TIMER_DELETE] = (syscall_handler_t)sys_timer_delete;
     // syscall_handlers[SYS_CLOCK_SETTIME] = (syscall_handler_t)sys_clock_settime;
     syscall_handlers[SYS_CLOCK_GETTIME] = (syscall_handler_t)sys_clock_gettime;
-    syscall_handlers[SYS_CLOCK_GETRES] = (syscall_handler_t)syscall_dummy_handler;
+    syscall_handlers[SYS_CLOCK_GETRES] = (syscall_handler_t)sys_clock_getres;
     syscall_handlers[SYS_CLOCK_NANOSLEEP] = (syscall_handler_t)sys_nanosleep;
     syscall_handlers[SYS_EXIT_GROUP] = (syscall_handler_t)task_exit;
     syscall_handlers[SYS_EPOLL_WAIT] = (syscall_handler_t)sys_epoll_wait;
@@ -391,7 +391,7 @@ void syscall_handlers_init()
     // syscall_handlers[SYS_SCHED_GETATTR] = (syscall_handler_t)sys_sched_getattr;
     // syscall_handlers[SYS_RENAMEAT2] = (syscall_handler_t)sys_renameat2;
     // syscall_handlers[SYS_SECCOMP] = (syscall_handler_t)sys_seccomp;
-    syscall_handlers[SYS_GETRANDOM] = (syscall_handler_t)syscall_dummy_handler;
+    syscall_handlers[SYS_GETRANDOM] = (syscall_handler_t)sys_getrandom;
     syscall_handlers[SYS_MEMFD_CREATE] = (syscall_handler_t)sys_memfd_create;
     // syscall_handlers[SYS_KEXEC_FILE_LOAD] = (syscall_handler_t)sys_kexec_file_load;
     // syscall_handlers[SYS_BPF] = (syscall_handler_t)sys_bpf;
@@ -407,7 +407,7 @@ void syscall_handlers_init()
     // syscall_handlers[SYS_PKEY_FREE] = (syscall_handler_t)sys_pkey_free;
     syscall_handlers[SYS_STATX] = (syscall_handler_t)sys_statx;
     // syscall_handlers[SYS_IO_PGETEVENTS] = (syscall_handler_t)sys_io_pgetevents;
-    // syscall_handlers[SYS_RSEQ] = (syscall_handler_t)sys_rseq;
+    syscall_handlers[SYS_RSEQ] = (syscall_handler_t)syscall_dummy_handler;
     // syscall_handlers[SYS_PIDFD_SEND_SIGNAL] = (syscall_handler_t)sys_pidfd_send_signal;
     // syscall_handlers[SYS_IO_URING_SETUP] = (syscall_handler_t)sys_io_uring_setup;
     // syscall_handlers[SYS_IO_URING_ENTER] = (syscall_handler_t)sys_io_uring_enter;
@@ -457,7 +457,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     uint64_t arg5 = regs->r8;
     uint64_t arg6 = regs->r9;
 
-    if (idx > SYS_FCHMODAT2 || !syscall_handlers[idx])
+    if (idx > NR_SYSCALL || !syscall_handlers[idx])
     {
         char buf[32];
         int len = sprintf(buf, "syscall %d not implemented\n", idx);
@@ -468,10 +468,14 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
 
     if (idx == SYS_FORK || idx == SYS_VFORK || idx == SYS_CLONE || idx == SYS_CLONE3 || idx == SYS_RT_SIGRETURN)
     {
-        regs->rax = syscall_handlers[idx]((uint64_t)regs, arg1, arg2, arg3, arg4, arg5, arg6);
+        regs->rax = ((special_syscall_handler_t)syscall_handlers[idx])(regs, arg1, arg2, arg3, arg4, arg5, arg6);
     }
     else
     {
-        regs->rax = syscall_handlers[idx](arg1, arg2, arg3, arg4, arg5, arg6, 0);
+        regs->rax = syscall_handlers[idx](arg1, arg2, arg3, arg4, arg5, arg6);
+        if ((int)regs->rax < 0)
+        {
+            regs->rax |= 0xffffffff00000000;
+        }
     }
 }
