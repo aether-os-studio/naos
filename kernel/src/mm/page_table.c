@@ -188,16 +188,17 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags)
 #if defined(__x86_64__)
     memcpy((uint64_t *)phys_to_virt(new_mm->page_table_addr) + 256, (uint64_t *)phys_to_virt(old->page_table_addr) + 256, DEFAULT_PAGE_SIZE / 2);
 #endif
-    new_mm->ref_count++;
+    new_mm->ref_count = 1;
     spin_unlock(&clone_lock);
     return new_mm;
 }
 
 void free_page_table(task_mm_info_t *directory)
 {
-    if (directory->ref_count == 1)
+    if (directory->ref_count <= 1)
     {
         free_page_table_recursive((page_table_t *)phys_to_virt(directory->page_table_addr), ARCH_MAX_PT_LEVEL);
+        free(directory);
     }
     else
     {
@@ -211,7 +212,8 @@ void page_table_init()
 {
     kernel_mm_info.page_table_addr = (uint64_t)virt_to_phys(get_current_page_dir(false));
     kernel_mm_info.ref_count = 1;
-    task_mm_info_t *new_mm_info = clone_page_table(&kernel_mm_info, CLONE_VM);
+    task_mm_info_t *new_mm_info = clone_page_table(&kernel_mm_info, 0);
     arch_set_current_page_dir(false, new_mm_info->page_table_addr);
     free(new_mm_info);
+    kernel_page_dir = get_current_page_dir(false);
 }

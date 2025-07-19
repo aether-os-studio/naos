@@ -27,6 +27,7 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64
     asm volatile("mrs %0, fpsr" : "=r"(context->ctx->fpsr));
     context->usermode = user_mode;
     context->mm = malloc(sizeof(task_mm_info_t));
+    memset(context->mm, 0, sizeof(task_mm_info_t));
     context->mm->page_table_addr = page_table_addr;
     context->mm->ref_count = 1;
     asm volatile("mrs %0, TTBR0_EL1" : "=r"(context->mm->page_table_addr));

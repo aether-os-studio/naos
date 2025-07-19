@@ -526,8 +526,9 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     if (current_task->is_vfork || current_task->arch_context->mm->page_table_addr == (uint64_t)virt_to_phys(get_kernel_page_dir()))
     {
+        current_task->arch_context->mm->ref_count--;
         current_task->arch_context->mm = clone_page_table(current_task->arch_context->mm, 0);
-        asm volatile("movq %0, %%cr3" ::"r"(current_task->arch_context->mm->page_table_addr));
+        arch_set_current_page_dir(true, current_task->arch_context->mm->page_table_addr);
     }
 
     uint8_t *buffer = (uint8_t *)EHDR_START_ADDR;
@@ -829,6 +830,11 @@ void task_unblock(task_t *task, int reason)
 
 void task_exit_inner(task_t *task, int64_t code)
 {
+    task->state = TASK_DIED;
+    task->current_state = TASK_DIED;
+
+    procfs_on_exit_task(task);
+
     if (current_task->ppid && current_task->pid != current_task->ppid && current_task->ppid < MAX_TASK_NUM && tasks[current_task->ppid])
     {
         tasks[current_task->ppid]->signal |= SIGMASK(SIGCHLD);
@@ -874,11 +880,6 @@ void task_exit_inner(task_t *task, int64_t code)
         tasks[task->ppid]->child_vfork_done = true;
         task->is_vfork = false;
     }
-
-    task->current_state = TASK_DIED;
-    task->state = TASK_DIED;
-
-    procfs_on_exit_task(task);
 }
 
 uint64_t task_exit(int64_t code)
@@ -895,6 +896,7 @@ uint64_t task_exit(int64_t code)
 
             free_frames_bytes((void *)tasks[pid]->kernel_stack, STACK_SIZE);
             free_frames_bytes((void *)tasks[pid]->syscall_stack, STACK_SIZE);
+            free_page_table(tasks[pid]->arch_context->mm);
             free(tasks[pid]);
         }
     }
@@ -1058,6 +1060,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
 
         free_frames_bytes((void *)target->kernel_stack, STACK_SIZE);
         free_frames_bytes((void *)target->syscall_stack, STACK_SIZE);
+        free_page_table(target->arch_context->mm);
         free(target);
     }
 

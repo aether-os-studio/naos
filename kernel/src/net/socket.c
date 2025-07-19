@@ -47,11 +47,11 @@ char *unix_socket_addr_safe(const struct sockaddr_un *addr, size_t len)
     if (abstract)
     {
         safe[0] = '@';
-        memcpy(safe + 1, addr->sun_path + skip, addrLen - skip);
+        fast_memcpy(safe + 1, addr->sun_path + skip, addrLen - skip);
     }
     else
     {
-        memcpy(safe, addr->sun_path, addrLen);
+        fast_memcpy(safe, addr->sun_path, addrLen);
     }
 
     return safe;
@@ -178,7 +178,7 @@ size_t unix_socket_accept_recv_from(uint64_t fd, uint8_t *out, size_t limit,
     socket_op_lock = true;
 
     size_t toCopy = MIN(limit, pair->serverBuffPos);
-    memcpy(out, pair->serverBuff, toCopy);
+    fast_memcpy(out, pair->serverBuff, toCopy);
     memmove(pair->serverBuff, &pair->serverBuff[toCopy],
             pair->serverBuffPos - toCopy);
     pair->serverBuffPos -= toCopy;
@@ -234,7 +234,7 @@ size_t unix_socket_accept_sendto(uint64_t fd, uint8_t *in, size_t limit,
 
     arch_disable_interrupt();
 
-    memcpy(&pair->clientBuff[pair->clientBuffPos], in, limit);
+    fast_memcpy(&pair->clientBuff[pair->clientBuffPos], in, limit);
     pair->clientBuffPos += limit;
 
     socket_op_lock = false;
@@ -561,7 +561,7 @@ size_t unix_socket_recv_from(uint64_t fd, uint8_t *out, size_t limit, int flags,
     }
 
     size_t toCopy = MIN(limit, pair->clientBuffPos);
-    memcpy(out, pair->clientBuff, toCopy);
+    fast_memcpy(out, pair->clientBuff, toCopy);
     memmove(pair->clientBuff, &pair->clientBuff[toCopy],
             pair->clientBuffPos - toCopy);
     pair->clientBuffPos -= toCopy;
@@ -616,7 +616,7 @@ size_t unix_socket_send_to(uint64_t fd, uint8_t *in, size_t limit, int flags,
             break;
     }
 
-    memcpy(&pair->serverBuff[pair->serverBuffPos], in, limit);
+    fast_memcpy(&pair->serverBuff[pair->serverBuffPos], in, limit);
     pair->serverBuffPos += limit;
 
     socket_op_lock = false;
@@ -671,7 +671,7 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
                 dest_fds[i] = f;
 
                 current_task->fd_info->fds[dest_fds[i]] = malloc(sizeof(fd_t));
-                memcpy(current_task->fd_info->fds[dest_fds[i]], &pair->pending_files[i], sizeof(fd_t));
+                fast_memcpy(current_task->fd_info->fds[dest_fds[i]], &pair->pending_files[i], sizeof(fd_t));
             }
 
             memmove(pair->pending_files, &pair->pending_files[num_fds],
@@ -752,7 +752,7 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
 
                 for (int i = 0; i < num_fds; i++)
                 {
-                    memcpy(&pair->pending_files[pair->pending_fds_count++], current_task->fd_info->fds[fds[i]], sizeof(fd_t));
+                    fast_memcpy(&pair->pending_files[pair->pending_fds_count++], current_task->fd_info->fds[fds[i]], sizeof(fd_t));
                     current_task->fd_info->fds[fds[i]]->node->refcount++;
                 }
 
@@ -824,7 +824,7 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
                 dest_fds[i] = f;
 
                 current_task->fd_info->fds[dest_fds[i]] = malloc(sizeof(fd_t));
-                memcpy(current_task->fd_info->fds[dest_fds[i]], &pair->pending_files[i], sizeof(fd_t));
+                fast_memcpy(current_task->fd_info->fds[dest_fds[i]], &pair->pending_files[i], sizeof(fd_t));
             }
 
             memmove(pair->pending_files, &pair->pending_files[num_fds],
@@ -906,7 +906,7 @@ size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg, int fl
 
                 for (int i = 0; i < num_fds; i++)
                 {
-                    memcpy(&pair->pending_files[pair->pending_fds_count++], current_task->fd_info->fds[fds[i]], sizeof(fd_t));
+                    fast_memcpy(&pair->pending_files[pair->pending_fds_count++], current_task->fd_info->fds[fds[i]], sizeof(fd_t));
                     current_task->fd_info->fds[fds[i]]->node->refcount++;
                 }
 
@@ -1064,7 +1064,7 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname, const void *o
             {
                 return -EINVAL;
             }
-            memcpy(&pair->sndtimeo, optval, sizeof(struct timeval));
+            fast_memcpy(&pair->sndtimeo, optval, sizeof(struct timeval));
             break;
         case SO_RCVTIMEO_OLD:
         case SO_RCVTIMEO_NEW:
@@ -1072,7 +1072,7 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname, const void *o
             {
                 return -EINVAL;
             }
-            memcpy(&pair->rcvtimeo, optval, sizeof(struct timeval));
+            fast_memcpy(&pair->rcvtimeo, optval, sizeof(struct timeval));
             break;
         case SO_BINDTODEVICE:
             if (optlen > IFNAMSIZ)
@@ -1092,7 +1092,7 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname, const void *o
             {
                 return -EINVAL;
             }
-            memcpy(&pair->linger_opt, optval, sizeof(struct linger));
+            fast_memcpy(&pair->linger_opt, optval, sizeof(struct linger));
             break;
         case SO_SNDBUF:
             if (optlen < sizeof(int))
@@ -1143,7 +1143,7 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname, const void *o
             {
                 return -EINVAL;
             }
-            memcpy(&fprog, optval, sizeof(fprog));
+            fast_memcpy(&fprog, optval, sizeof(fprog));
             if (fprog.len > 64 || fprog.len == 0)
             {
                 return -EINVAL;
@@ -1151,7 +1151,7 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname, const void *o
 
             // 分配内存保存过滤器
             pair->filter = malloc(sizeof(struct sock_filter) * fprog.len);
-            memcpy(pair->filter, fprog.filter, sizeof(struct sock_filter) * fprog.len);
+            fast_memcpy(pair->filter, fprog.filter, sizeof(struct sock_filter) * fprog.len);
             pair->filter_len = fprog.len;
             break;
         }
@@ -1166,7 +1166,7 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname, const void *o
         switch (optname)
         {
         case SO_PEERCRED:
-            memcpy(&pair->peercred, optval, optlen);
+            fast_memcpy(&pair->peercred, optval, optlen);
             break;
         default:
             return -ENOPROTOOPT;
@@ -1221,7 +1221,7 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, const void *o
             {
                 return -EINVAL;
             }
-            memcpy(optval, &pair->sndtimeo, sizeof(struct timeval));
+            fast_memcpy(optval, &pair->sndtimeo, sizeof(struct timeval));
             *optlen = sizeof(struct timeval);
             break;
         case SO_RCVTIMEO_OLD:
@@ -1230,7 +1230,7 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, const void *o
             {
                 return -EINVAL;
             }
-            memcpy(optval, &pair->rcvtimeo, sizeof(struct timeval));
+            fast_memcpy(optval, &pair->rcvtimeo, sizeof(struct timeval));
             *optlen = sizeof(struct timeval);
             break;
         case SO_BINDTODEVICE:
@@ -1259,7 +1259,7 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, const void *o
             {
                 return -EINVAL;
             }
-            memcpy(optval, &pair->linger_opt, sizeof(struct linger));
+            fast_memcpy(optval, &pair->linger_opt, sizeof(struct linger));
             *optlen = sizeof(struct linger);
             break;
         case SO_SNDBUF:
@@ -1305,7 +1305,7 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, const void *o
                 return -EINVAL;
             }
             if (pair)
-                memcpy(optval, &pair->peercred, sizeof(struct ucred));
+                fast_memcpy(optval, &pair->peercred, sizeof(struct ucred));
             else
                 return (size_t)-ENOTCONN;
             *optlen = sizeof(struct ucred);
@@ -1318,7 +1318,7 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, const void *o
             struct sock_fprog fprog = {
                 .len = pair->filter_len,
                 .filter = pair->filter};
-            memcpy(optval, &fprog, sizeof(fprog));
+            fast_memcpy(optval, &fprog, sizeof(fprog));
             *optlen = sizeof(fprog);
             break;
         default:
@@ -1340,7 +1340,7 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, const void *o
             {
                 return -EINVAL;
             }
-            memcpy(optval, &pair->peercred, sizeof(struct ucred));
+            fast_memcpy(optval, &pair->peercred, sizeof(struct ucred));
             *optlen = sizeof(struct ucred);
             break;
         default:
@@ -1371,13 +1371,13 @@ size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr, socklen_t 
     addr->sun_family = 1;
     if (pair->filename[0] == '@')
     {
-        memcpy(addr->sun_path + 1, pair->filename + 1, toCopy - sizeof(addr->sun_family) - 1);
+        fast_memcpy(addr->sun_path + 1, pair->filename + 1, toCopy - sizeof(addr->sun_family) - 1);
         addr->sun_path[0] = '\0';
         *len = toCopy;
     }
     else
     {
-        memcpy(addr->sun_path, pair->filename, toCopy - sizeof(addr->sun_family));
+        fast_memcpy(addr->sun_path, pair->filename, toCopy - sizeof(addr->sun_family));
         *len = toCopy;
     }
     return 0;
@@ -1469,7 +1469,7 @@ ssize_t socket_read(void *f, void *buf, size_t offset, size_t limit)
     socket_op_lock = true;
 
     size_t toCopy = MIN(limit, pair->clientBuffPos);
-    memcpy(buf, pair->clientBuff, toCopy);
+    fast_memcpy(buf, pair->clientBuff, toCopy);
     memmove(pair->clientBuff, &pair->clientBuff[toCopy],
             pair->clientBuffPos - toCopy);
     pair->clientBuffPos -= toCopy;
@@ -1527,7 +1527,7 @@ ssize_t socket_write(void *f, const void *buf, size_t offset, size_t limit)
 
     arch_disable_interrupt();
 
-    memcpy(&pair->serverBuff[pair->serverBuffPos], buf, limit);
+    fast_memcpy(&pair->serverBuff[pair->serverBuffPos], buf, limit);
     pair->serverBuffPos += limit;
 
     socket_op_lock = false;
@@ -1563,7 +1563,7 @@ ssize_t socket_accept_read(void *f, void *buf, size_t offset, size_t limit)
     socket_op_lock = true;
 
     size_t toCopy = MIN(limit, pair->serverBuffPos);
-    memcpy(buf, pair->serverBuff, toCopy);
+    fast_memcpy(buf, pair->serverBuff, toCopy);
     memmove(pair->serverBuff, &pair->serverBuff[toCopy],
             pair->serverBuffPos - toCopy);
     pair->serverBuffPos -= toCopy;
@@ -1616,7 +1616,7 @@ ssize_t socket_accept_write(void *f, const void *buf, size_t offset, size_t limi
 
     arch_disable_interrupt();
 
-    memcpy(&pair->clientBuff[pair->clientBuffPos], buf, limit);
+    fast_memcpy(&pair->clientBuff[pair->clientBuffPos], buf, limit);
     pair->clientBuffPos += limit;
 
     socket_op_lock = false;

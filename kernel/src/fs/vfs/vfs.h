@@ -135,6 +135,7 @@ typedef struct flock
 struct vfs_node
 {
     vfs_node_t parent;   // 父目录
+    spinlock_t spin;     // 自旋锁
     uint64_t dev;        // 设备号
     uint64_t rdev;       // 真实设备号
     char *name;          // 名称

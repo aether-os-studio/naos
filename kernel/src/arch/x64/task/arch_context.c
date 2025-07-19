@@ -15,6 +15,7 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64
         context->fpu_ctx->fcw = 0x037f;
     }
     context->mm = malloc(sizeof(task_mm_info_t));
+    memset(context->mm, 0, sizeof(task_mm_info_t));
     context->mm->page_table_addr = page_table_addr;
     context->mm->ref_count = 1;
     context->ctx = (struct pt_regs *)stack - 1;
@@ -139,8 +140,8 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
 
     prev->current_state = prev->state;
 
-    sched_update_itimer();
-    sched_update_timerfd();
+    // sched_update_itimer();
+    // sched_update_timerfd();
 
     task_signal();
 

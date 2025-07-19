@@ -63,8 +63,6 @@ void syscall_init()
 
     // 4. 设置 SYSCALL_MASK MSR (RFLAGS 掩码)
     wrmsr(MSR_SYSCALL_MASK, (1 << 9));
-
-    syscall_handlers_init();
 }
 
 syscall_handler_t syscall_handlers[NR_SYSCALL] = {0};
@@ -147,7 +145,7 @@ void syscall_handlers_init()
     // syscall_handlers[SYS_MSGCTL] = (syscall_handler_t)sys_msgctl;
     syscall_handlers[SYS_FCNTL] = (syscall_handler_t)sys_fcntl;
     syscall_handlers[SYS_FLOCK] = (syscall_handler_t)sys_flock;
-    // syscall_handlers[SYS_FSYNC] = (syscall_handler_t)sys_fsync;
+    syscall_handlers[SYS_FSYNC] = (syscall_handler_t)syscall_dummy_handler;
     // syscall_handlers[SYS_FDATASYNC] = (syscall_handler_t)sys_fdatasync;
     syscall_handlers[SYS_TRUNCATE] = (syscall_handler_t)syscall_dummy_handler;
     syscall_handlers[SYS_FTRUNCATE] = (syscall_handler_t)syscall_dummy_handler;
@@ -190,10 +188,10 @@ void syscall_handlers_init()
     // syscall_handlers[SYS_SETREGID] = (syscall_handler_t)sys_setregid;
     // syscall_handlers[SYS_GETGROUPS] = (syscall_handler_t)sys_getgroups;
     // syscall_handlers[SYS_SETGROUPS] = (syscall_handler_t)sys_setgroups;
-    syscall_handlers[SYS_SETRESUID] = (syscall_handler_t)sys_setruid;
-    syscall_handlers[SYS_GETRESUID] = (syscall_handler_t)sys_getruid;
-    syscall_handlers[SYS_SETRESGID] = (syscall_handler_t)sys_setrgid;
-    syscall_handlers[SYS_GETRESGID] = (syscall_handler_t)sys_getrgid;
+    // syscall_handlers[SYS_SETRESUID] = (syscall_handler_t)sys_setruid;
+    // syscall_handlers[SYS_GETRESUID] = (syscall_handler_t)sys_getruid;
+    // syscall_handlers[SYS_SETRESGID] = (syscall_handler_t)sys_setrgid;
+    // syscall_handlers[SYS_GETRESGID] = (syscall_handler_t)sys_getrgid;
     syscall_handlers[SYS_GETPGID] = (syscall_handler_t)sys_getpgid;
     syscall_handlers[SYS_SETFSUID] = (syscall_handler_t)sys_setfsuid;
     syscall_handlers[SYS_SETFSGID] = (syscall_handler_t)sys_setfsgid;
@@ -308,7 +306,7 @@ void syscall_handlers_init()
     syscall_handlers[SYS_EPOLL_WAIT] = (syscall_handler_t)sys_epoll_wait;
     syscall_handlers[SYS_EPOLL_CTL] = (syscall_handler_t)sys_epoll_ctl;
     // syscall_handlers[SYS_TGKILL] = (syscall_handler_t)sys_tkill;
-    // syscall_handlers[SYS_UTIMES] = (syscall_handler_t)sys_utimes;
+    syscall_handlers[SYS_UTIMES] = (syscall_handler_t)syscall_dummy_handler;
     // syscall_handlers[SYS_VSERVER] = (syscall_handler_t)sys_vserver;
     // syscall_handlers[SYS_MBIND] = (syscall_handler_t)sys_mbind;
     // syscall_handlers[SYS_SET_MEMPOLICY] = (syscall_handler_t)sys_set_mempolicy;
@@ -353,7 +351,7 @@ void syscall_handlers_init()
     // syscall_handlers[SYS_SYNC_FILE_RANGE] = (syscall_handler_t)sys_sync_file_range;
     // syscall_handlers[SYS_VMSPLICE] = (syscall_handler_t)sys_vmsplice;
     // syscall_handlers[SYS_MOVE_PAGES] = (syscall_handler_t)sys_move_pages;
-    // syscall_handlers[SYS_UTIMENSAT] = (syscall_handler_t)sys_utimensat;
+    syscall_handlers[SYS_UTIMENSAT] = (syscall_handler_t)syscall_dummy_handler;
     syscall_handlers[SYS_EPOLL_PWAIT] = (syscall_handler_t)sys_epoll_pwait;
     syscall_handlers[SYS_SIGNALFD] = (syscall_handler_t)sys_signalfd;
     syscall_handlers[SYS_TIMERFD_CREATE] = (syscall_handler_t)sys_timerfd_create;
@@ -480,9 +478,10 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     else
     {
         regs->rax = syscall_handlers[idx](arg1, arg2, arg3, arg4, arg5, arg6);
-        if ((int)regs->rax < 0)
-        {
-            regs->rax |= 0xffffffff00000000;
-        }
+    }
+
+    if ((int)regs->rax < 0)
+    {
+        regs->rax |= (uint64_t)0xffffffff00000000;
     }
 }
