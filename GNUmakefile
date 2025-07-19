@@ -89,7 +89,7 @@ HOST_LDFLAGS :=
 HOST_LIBS :=
 
 .PHONY: all
-all: $(IMAGE_NAME).img
+all: $(IMAGE_NAME).img rootfs-$(ARCH).img
 
 .PHONY: kernel
 kernel:
@@ -131,7 +131,7 @@ EFI_FILE = assets/limine/BOOTRISCV64.EFI
 else ifeq ($(ARCH),loongarch64)
 EFI_FILE = assets/limine/BOOTLOONGARCH64.EFI
 endif
-$(IMAGE_NAME).img: assets/limine assets/oib kernel rootfs-$(ARCH).img
+$(IMAGE_NAME).img: assets/limine assets/oib kernel
 	dd if=/dev/zero of=$(IMAGE_NAME).img bs=1M count=$$(( $(ROOTFS_IMG_SIZE) + 1024 ))
 	sgdisk --new=1:1M:511M --new=2:512M:$$(( $$(($(ROOTFS_IMG_SIZE) + 1024 )) * 1024 )) $(IMAGE_NAME).img
 	mkfs.vfat -F 16 --offset 2048 -S 512 $(IMAGE_NAME).img
@@ -140,7 +140,7 @@ $(IMAGE_NAME).img: assets/limine assets/oib kernel rootfs-$(ARCH).img
 	mcopy -i $(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/boot
 	mcopy -i $(IMAGE_NAME).img@@1M limine.conf ::/boot/limine
 
-	dd if=rootfs-$(ARCH).img of=$(IMAGE_NAME).img bs=1M count=$(ROOTFS_IMG_SIZE) seek=512
+# 	dd if=rootfs-$(ARCH).img of=$(IMAGE_NAME).img bs=1M count=$(ROOTFS_IMG_SIZE) seek=512
 
 .PHONY: run
 run: run-$(ARCH)
@@ -151,8 +151,10 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-M q35 \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
-		-device qemu-xhci,id=xhci \
+		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
 		-device nvme,drive=harddisk,serial=1234 \
+		-device nvme,drive=rootdisk,serial=5678 \
+		-device qemu-xhci,id=xhci \
 		$(QEMUFLAGS)
 
 .PHONY: run-aarch64
@@ -166,7 +168,9 @@ run-aarch64: assets/ovmf-code-$(ARCH).fd all
 		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
+		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
 		-device nvme,drive=harddisk,serial=1234 \
+		-device nvme,drive=rootdisk,serial=5678 \
 		$(QEMUFLAGS)
 
 .PHONY: run-riscv64

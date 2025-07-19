@@ -429,6 +429,8 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
 
     child->child_vfork_done = false;
 
+    child->exec_node->refcount++;
+
     if (vfork)
     {
         child->is_vfork = true;
@@ -478,6 +480,12 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     execve_lock = true;
 
+    if (current_task->exec_node)
+    {
+        vfs_close(current_task->exec_node);
+        current_task->exec_node = NULL;
+    }
+
     vfs_node_t node = vfs_open(path);
     if (!node)
     {
@@ -485,6 +493,8 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         execve_lock = false;
         return (uint64_t)-ENOENT;
     }
+
+    node->refcount++;
 
     uint64_t buf_len = (node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
 
@@ -529,8 +539,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     if (buffer[0] == '#' && buffer[1] == '!')
     {
-        vfs_close(node);
-
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
                 free(new_argv[i]);
@@ -576,7 +584,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     if (e_entry == 0)
     {
-        vfs_close(node);
         free(fullpath);
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
@@ -593,7 +600,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     if (!arch_check_elf(ehdr))
     {
-        vfs_close(node);
         free(fullpath);
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
@@ -621,9 +627,11 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
             const char *interpreter_name = ((const char *)ehdr + phdr[i].p_offset);
 
             vfs_node_t interpreter_node = vfs_open(interpreter_name);
+
+            interpreter_node->refcount++;
+
             if (!interpreter_node)
             {
-                vfs_close(node);
                 free(fullpath);
                 for (int i = 0; i < argv_count; i++)
                     if (new_argv[i])
@@ -782,7 +790,8 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     current_task->load_start = load_start;
     current_task->load_end = load_end;
 
-    current_task->exec_node = node;
+    current_task->exec_node = vfs_open(path);
+    current_task->exec_node->refcount++;
 
     execve_lock = false;
     can_schedule = true;
@@ -1183,6 +1192,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     memcpy(child->rlim, current_task->rlim, sizeof(child->rlim));
 
     socket_on_new_task(child->pid);
+
+    child->exec_node->refcount++;
 
     child->child_vfork_done = false;
 

@@ -149,8 +149,8 @@ void syscall_handlers_init()
     syscall_handlers[SYS_FLOCK] = (syscall_handler_t)sys_flock;
     // syscall_handlers[SYS_FSYNC] = (syscall_handler_t)sys_fsync;
     // syscall_handlers[SYS_FDATASYNC] = (syscall_handler_t)sys_fdatasync;
-    // syscall_handlers[SYS_TRUNCATE] = (syscall_handler_t)sys_truncate;
-    // syscall_handlers[SYS_FTRUNCATE] = (syscall_handler_t)sys_ftruncate;
+    syscall_handlers[SYS_TRUNCATE] = (syscall_handler_t)syscall_dummy_handler;
+    syscall_handlers[SYS_FTRUNCATE] = (syscall_handler_t)syscall_dummy_handler;
     syscall_handlers[SYS_GETDENTS] = (syscall_handler_t)sys_getdents;
     syscall_handlers[SYS_GETCWD] = (syscall_handler_t)sys_getcwd;
     syscall_handlers[SYS_CHDIR] = (syscall_handler_t)sys_chdir;
@@ -276,8 +276,8 @@ void syscall_handlers_init()
     // syscall_handlers[SYS_TKILL] = (syscall_handler_t)sys_tkill;
     // syscall_handlers[SYS_TIME] = (syscall_handler_t)sys_time;
     syscall_handlers[SYS_FUTEX] = (syscall_handler_t)sys_futex;
-    // syscall_handlers[SYS_SCHED_SETAFFINITY] = (syscall_handler_t)sys_sched_setaffinity;
-    // syscall_handlers[SYS_SCHED_GETAFFINITY] = (syscall_handler_t)sys_sched_getaffinity;
+    syscall_handlers[SYS_SCHED_SETAFFINITY] = (syscall_handler_t)syscall_dummy_handler;
+    syscall_handlers[SYS_SCHED_GETAFFINITY] = (syscall_handler_t)syscall_dummy_handler;
     // syscall_handlers[SYS_SET_THREAD_AREA] = (syscall_handler_t)sys_set_thread_area;
     // syscall_handlers[SYS_IO_SETUP] = (syscall_handler_t)sys_io_setup;
     // syscall_handlers[SYS_IO_DESTROY] = (syscall_handler_t)sys_io_destroy;
@@ -464,6 +464,13 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         serial_printk(buf, len);
         regs->rax = (uint64_t)-ENOSYS;
         return;
+    }
+
+    if (syscall_handlers[idx] == (syscall_handler_t)syscall_dummy_handler)
+    {
+        char buf[64];
+        int len = sprintf(buf, "syscall %d is the dummy handler\n", idx);
+        serial_printk(buf, len);
     }
 
     if (idx == SYS_FORK || idx == SYS_VFORK || idx == SYS_CLONE || idx == SYS_CLONE3 || idx == SYS_RT_SIGRETURN)

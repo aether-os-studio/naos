@@ -31,6 +31,8 @@ int ext_mount(const char *src, vfs_node_t node)
     {
         if (!strcmp((const char *)entry->name, ".") || !strcmp((const char *)entry->name, ".."))
             continue;
+        if (vfs_child_find(node, (const char *)entry->name))
+            continue;
         vfs_node_t child = vfs_child_append(node, (const char *)entry->name, NULL);
         child->inode = (uint64_t)entry->inode;
         child->fsid = ext_fsid;
@@ -75,6 +77,10 @@ void ext_open(void *parent, const char *name, vfs_node_t node)
 
         while ((entry = ext4_dir_entry_next(handle->dir)))
         {
+            if (!strcmp((const char *)entry->name, ".") || !strcmp((const char *)entry->name, ".."))
+                continue;
+            if (vfs_child_find(node, (const char *)entry->name))
+                continue;
             vfs_node_t child = vfs_child_append(node, (const char *)entry->name, NULL);
             child->fsid = ext_fsid;
             child->inode = (uint64_t)entry->inode;

@@ -140,7 +140,7 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
     prev->current_state = prev->state;
 
     sched_update_itimer();
-    // sched_update_timerfd();
+    sched_update_timerfd();
 
     task_signal();
 
