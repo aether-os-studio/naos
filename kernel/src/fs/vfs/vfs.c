@@ -31,6 +31,7 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name)
         return NULL;
     memset(node, 0, sizeof(struct vfs_node));
     node->parent = parent;
+    node->spin.lock = 0;
     node->dev = 0;
     node->rdev = 0;
     node->blksz = DEFAULT_PAGE_SIZE;
@@ -71,6 +72,7 @@ void vfs_free_child(vfs_node_t vfs)
 
 static inline void do_open(vfs_node_t file)
 {
+    spin_lock(&file->spin);
     if (file->handle != NULL)
     {
         callbackof(file, stat)(file->handle, file);
@@ -79,6 +81,7 @@ static inline void do_open(vfs_node_t file)
     {
         callbackof(file, open)(file->parent->handle, file->name, file);
     }
+    spin_unlock(&file->spin);
 }
 
 static inline void do_update(vfs_node_t file)
@@ -522,6 +525,7 @@ int vfs_close(vfs_node_t node)
         return 0;
     if (node->type & file_dir)
         return 0;
+    spin_lock(&node->spin);
     if (node->refcount > 0)
         node->refcount--;
     if (node->refcount == 0)
@@ -532,6 +536,7 @@ int vfs_close(vfs_node_t node)
             node->handle = NULL;
         }
     }
+    spin_unlock(&node->spin);
 
     return 0;
 }
@@ -559,7 +564,10 @@ ssize_t vfs_read(vfs_node_t file, void *addr, size_t offset, size_t size)
     do_update(file);
     if (file->type & file_dir)
         return -1;
-    return callbackof(file, read)(file->handle, addr, offset, size);
+    spin_lock(&file->spin);
+    ssize_t ret = callbackof(file, read)(file->handle, addr, offset, size);
+    spin_unlock(&file->spin);
+    return ret;
 }
 
 int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize)
@@ -572,12 +580,14 @@ ssize_t vfs_write(vfs_node_t file, const void *addr, size_t offset, size_t size)
     do_update(file);
     if (file->type & file_dir)
         return -1;
+    spin_lock(&file->spin);
     ssize_t write_bytes = 0;
     write_bytes = callbackof(file, write)(file->handle, addr, offset, size);
     if (write_bytes > 0)
     {
         file->size = max(file->size, offset + write_bytes);
     }
+    spin_unlock(&file->spin);
     return write_bytes;
 }
 

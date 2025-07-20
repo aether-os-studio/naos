@@ -145,7 +145,7 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
 
     arch_set_current(next);
 
-    sched_update_itimer();
+    // sched_update_itimer();
 
     arch_switch_with_context(prev->arch_context, next->arch_context, next->kernel_stack);
 }

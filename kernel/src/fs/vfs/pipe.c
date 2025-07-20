@@ -58,6 +58,7 @@ ssize_t pipefs_read(void *file, void *addr, size_t offset, size_t size)
         browse->next = new_block;
 
         spin_unlock(&pipe->lock);
+        spin_unlock(&spec->node->spin);
 
         task_block(current_task, TASK_BLOCKING, -1);
     }
@@ -125,6 +126,7 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
         browse->next = new_block;
 
         spin_unlock(&pipe->lock);
+        spin_unlock(&spec->node->spin);
 
         task_block(current_task, TASK_BLOCKING, -1);
 

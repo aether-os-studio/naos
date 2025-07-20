@@ -672,7 +672,7 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
             }
 
             memmove(pair->pending_files, &pair->pending_files[num_fds],
-                    (pair->pending_fds_size - num_fds) * sizeof(fd_t));
+                    (pair->pending_fds_count - num_fds) * sizeof(fd_t));
             pair->pending_fds_count -= num_fds;
 
             cmsg = CMSG_NXTHDR(msg, cmsg);
@@ -825,7 +825,7 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
             }
 
             memmove(pair->pending_files, &pair->pending_files[num_fds],
-                    (pair->pending_fds_size - num_fds) * sizeof(fd_t));
+                    (pair->pending_fds_count - num_fds) * sizeof(fd_t));
             pair->pending_fds_count -= num_fds;
 
             cmsg = CMSG_NXTHDR(msg, cmsg);

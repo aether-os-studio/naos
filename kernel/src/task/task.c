@@ -8,7 +8,7 @@
 #include <fs/fs_syscall.h>
 #include <net/socket.h>
 
-#define MAX_CONTINUE_NULL_TASKS 3
+#define MAX_CONTINUE_NULL_TASKS 5
 
 task_t *tasks[MAX_TASK_NUM];
 task_t *idle_tasks[MAX_CPU_NUM];
@@ -106,7 +106,6 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
     task->fd_info->fds[2]->offset = 0;
     task->fd_info->fds[2]->flags = 0;
     task->fd_info->ref_count++;
-    task->exec_node = NULL;
     strncpy(task->name, name, TASK_NAME_MAX);
 
     memset(task->actions, 0, sizeof(task->actions));
@@ -146,7 +145,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
     task->rlim[RLIMIT_NOFILE] = (struct rlimit){MAX_FD_NUM, MAX_FD_NUM};
     task->rlim[RLIMIT_CORE] = (struct rlimit){0, 0};
 
-    socket_on_new_task(task->pid);
+    // socket_on_new_task(task->pid);
 
     task->child_vfork_done = false;
     task->is_vfork = false;
@@ -339,7 +338,6 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     }
 
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
-    child->exec_node = current_task->exec_node;
     child->call_in_signal = current_task->call_in_signal;
     child->state = TASK_READY;
     child->current_state = TASK_READY;
@@ -425,7 +423,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
 
     memcpy(child->rlim, current_task->rlim, sizeof(child->rlim));
 
-    socket_on_new_task(child->pid);
+    // socket_on_new_task(child->pid);
 
     child->child_vfork_done = false;
 
@@ -525,12 +523,12 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     vfs_read(node, buffer, 0, node->size);
 
+    vfs_close(node);
+
     char *fullpath = vfs_get_fullpath(node);
 
     if (buffer[0] == '#' && buffer[1] == '!')
     {
-        vfs_close(node);
-
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
                 free(new_argv[i]);
@@ -576,7 +574,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     if (e_entry == 0)
     {
-        vfs_close(node);
         free(fullpath);
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
@@ -593,7 +590,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     if (!arch_check_elf(ehdr))
     {
-        vfs_close(node);
         free(fullpath);
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
@@ -623,7 +619,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
             vfs_node_t interpreter_node = vfs_open(interpreter_name);
             if (!interpreter_node)
             {
-                vfs_close(node);
                 free(fullpath);
                 for (int i = 0; i < argv_count; i++)
                     if (new_argv[i])
@@ -782,8 +777,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     current_task->load_start = load_start;
     current_task->load_end = load_end;
 
-    current_task->exec_node = node;
-
     execve_lock = false;
     can_schedule = true;
 
@@ -826,9 +819,6 @@ void task_exit_inner(task_t *task, int64_t code)
         task_unblock(tasks[current_task->ppid], SIGCHLD);
     }
 
-    if (task->exec_node)
-        vfs_close(task->exec_node);
-
     arch_context_free(task->arch_context);
 
     task->status = (uint64_t)code;
@@ -855,8 +845,6 @@ void task_exit_inner(task_t *task, int64_t code)
 
     if (task->cmdline)
         free(task->cmdline);
-
-    socket_on_exit_task(task->pid);
 
     if (task->is_vfork && task->ppid != task->pid && tasks[task->ppid] && !tasks[task->ppid]->child_vfork_done)
     {
@@ -1030,7 +1018,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     }
 
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
-    child->exec_node = current_task->exec_node;
     child->call_in_signal = current_task->call_in_signal;
     child->state = TASK_READY;
     child->current_state = TASK_READY;
@@ -1143,8 +1130,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->tmp_rec_v = 0;
 
     memcpy(child->rlim, current_task->rlim, sizeof(child->rlim));
-
-    socket_on_new_task(child->pid);
 
     child->child_vfork_done = false;
 
@@ -1327,21 +1312,24 @@ void sched_update_itimer()
             }
         }
 
-        for (int fd = 3; fd < MAX_FD_NUM; fd++)
+        if (ptr->fd_info)
         {
-            if (ptr->fd_info->fds[fd] && ptr->fd_info->fds[fd]->node && ptr->fd_info->fds[fd]->node->fsid == timerfdfs_id)
+            for (int fd = 3; fd < MAX_FD_NUM; fd++)
             {
-                timerfd_t *tfd = ptr->fd_info->fds[fd]->node->handle;
-                if (tfd->timer.expires && now >= tfd->timer.expires)
+                if (ptr->fd_info->fds[fd] && ptr->fd_info->fds[fd]->node && ptr->fd_info->fds[fd]->node->fsid == timerfdfs_id)
                 {
-                    tfd->count++;
-                    if (tfd->timer.interval)
+                    timerfd_t *tfd = ptr->fd_info->fds[fd]->node->handle;
+                    if (tfd->timer.expires && now >= tfd->timer.expires)
                     {
-                        tfd->timer.expires += tfd->timer.interval;
-                    }
-                    else
-                    {
-                        tfd->timer.expires = 0;
+                        tfd->count++;
+                        if (tfd->timer.interval)
+                        {
+                            tfd->timer.expires += tfd->timer.interval;
+                        }
+                        else
+                        {
+                            tfd->timer.expires = 0;
+                        }
                     }
                 }
             }

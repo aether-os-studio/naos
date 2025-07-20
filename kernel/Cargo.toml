@@ -28,11 +28,6 @@ version = "0.6.10"
 features = ["bitmap", "truetype"]
 default-features = false
 
-[dependencies.smoltcp]
-version = "0.12.0"
-features = ["log", "proto-ipv4", "proto-ipv6", "socket-dns", "socket-icmp", "socket-udp", "socket-dhcpv4", "socket-tcp", "socket-raw", "medium-ip", "medium-ethernet", "alloc"]
-default-features = false
-
 [dependencies.virtio-drivers]
 path = "crates/virtio-drivers"
 

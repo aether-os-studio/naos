@@ -93,6 +93,12 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
 
     switch (idx)
     {
+    case SYS_READ:
+        regs->rax = sys_read(arg1, (void *)arg2, arg3);
+        break;
+    case SYS_WRITE:
+        regs->rax = sys_write(arg1, (const void *)arg2, arg3);
+        break;
     case SYS_OPEN:
         regs->rax = sys_open((const char *)arg1, arg2, arg3);
         break;
@@ -107,12 +113,6 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     case SYS_LSEEK:
         regs->rax = sys_lseek(arg1, arg2, arg3);
-        break;
-    case SYS_READ:
-        regs->rax = sys_read(arg1, (void *)arg2, arg3);
-        break;
-    case SYS_WRITE:
-        regs->rax = sys_write(arg1, (const void *)arg2, arg3);
         break;
     case SYS_PREAD64:
         sys_lseek(arg1, arg4, SEEK_SET);

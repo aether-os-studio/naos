@@ -76,14 +76,14 @@ int sys_getsockopt(int fd, int level, int optname, void *optval, socklen_t *optl
 
 int sys_socket(int domain, int type, int protocol)
 {
-    if (domain == 10 || domain == 2)
-        return net_socket(domain, type, protocol);
-    else if (domain == 1)
-        return socket_socket(domain, type, protocol);
+    // if (domain == 10 || domain == 2)
+    //     return net_socket(domain, type, protocol);
+    // else if (domain == 1)
+    return socket_socket(domain, type, protocol);
     // else if (domain == 16)
     //     return netlink_socket(domain, type, protocol);
-    else
-        return -ENOSYS;
+    // else
+    //     return -ENOSYS;
 }
 
 int sys_socketpair(int family, int type, int protocol, int *sv)

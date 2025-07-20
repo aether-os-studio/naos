@@ -482,15 +482,15 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd)
         free(current_task->fd_info->fds[newfd]);
     }
 
-    switch (new->node->type)
-    {
-    case file_socket:
-        socket_on_dup_file(fd, newfd);
-        break;
+    // switch (new->node->type)
+    // {
+    // case file_socket:
+    //     socket_on_dup_file(fd, newfd);
+    //     break;
 
-    default:
-        break;
-    }
+    // default:
+    //     break;
+    // }
 
     current_task->fd_info->fds[newfd] = new;
 

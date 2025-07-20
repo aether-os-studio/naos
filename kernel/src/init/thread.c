@@ -7,7 +7,6 @@
 #include <drivers/usb/usb.h>
 #include <drivers/drm/drm.h>
 #include <drivers/virtio/virtio.h>
-#include <drivers/net/net.h>
 #include <fs/partition.h>
 #include <drivers/fb.h>
 
@@ -46,8 +45,6 @@ void init_thread(uint64_t arg)
 
     fbdev_init_sysfs();
     // drm_init_sysfs();
-
-    net_init();
 
     fs_syscall_init();
     socketfs_init();
