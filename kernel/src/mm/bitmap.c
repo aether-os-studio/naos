@@ -46,7 +46,7 @@ void bitmap_set_range(Bitmap *bitmap, size_t start, size_t end, bool value)
         return;
     }
 
-    if (start_word < end_word)
+    if (start_word <= end_word)
     {
         size_t fill_value = value ? (size_t)-1 : 0;
         for (size_t i = start_word; i < end_word; i++)

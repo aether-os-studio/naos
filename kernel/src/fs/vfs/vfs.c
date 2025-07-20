@@ -87,7 +87,7 @@ static inline void do_update(vfs_node_t file)
         do_open(file);
 }
 
-static vfs_node_t vfs_child_find(vfs_node_t parent, const char *name)
+vfs_node_t vfs_child_find(vfs_node_t parent, const char *name)
 {
     return list_first(parent->child, data, streq(name, ((vfs_node_t)data)->name));
 }
