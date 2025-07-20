@@ -428,8 +428,8 @@ void kb_evdev_generate(uint8_t raw)
     else if (oldstate && clicked)
     {
         // was clicked previously, now clicked (repeat)
-        if (evdevCode != lastPressed)
-            return; // no need to re-set it on the bitmap
+        // if (evdevCode != lastPressed)
+        //     return; // no need to re-set it on the bitmap
         input_generate_event(kb_event, EV_KEY, evdevCode, 2);
     }
     else if (oldstate && !clicked)
