@@ -7,8 +7,6 @@
 #include <task/task.h>
 #include <net/netlink.h>
 
-bool socket_op_lock = false;
-
 extern socket_op_t socket_ops;
 extern socket_op_t accept_ops;
 
@@ -82,6 +80,7 @@ vfs_node_t unix_socket_accept_create(unix_socket_pair_t *dir)
 unix_socket_pair_t *unix_socket_allocate_pair()
 {
     unix_socket_pair_t *pair = calloc(sizeof(unix_socket_pair_t), 1);
+    pair->lock.lock = 0;
     pair->established = false;
     pair->clientBuffSize = BUFFER_SIZE;
     pair->serverBuffSize = BUFFER_SIZE;
@@ -171,11 +170,7 @@ size_t unix_socket_accept_recv_from(uint64_t fd, uint8_t *out, size_t limit,
             break;
     }
 
-    while (socket_op_lock)
-    {
-        arch_pause();
-    }
-    socket_op_lock = true;
+    spin_lock(&pair->lock);
 
     size_t toCopy = MIN(limit, pair->serverBuffPos);
     fast_memcpy(out, pair->serverBuff, toCopy);
@@ -183,7 +178,7 @@ size_t unix_socket_accept_recv_from(uint64_t fd, uint8_t *out, size_t limit,
             pair->serverBuffPos - toCopy);
     pair->serverBuffPos -= toCopy;
 
-    socket_op_lock = false;
+    spin_unlock(&pair->lock);
 
     return toCopy;
 }
@@ -191,12 +186,6 @@ size_t unix_socket_accept_recv_from(uint64_t fd, uint8_t *out, size_t limit,
 size_t unix_socket_accept_sendto(uint64_t fd, uint8_t *in, size_t limit,
                                  int flags, struct sockaddr_un *addr, uint32_t len)
 {
-    while (socket_op_lock)
-    {
-        arch_pause();
-    }
-    socket_op_lock = true;
-
     // useless unless SOCK_DGRAM
     (void)addr;
     (void)len;
@@ -214,7 +203,6 @@ size_t unix_socket_accept_sendto(uint64_t fd, uint8_t *in, size_t limit,
         if (!pair->clientFds)
         {
             current_task->signal |= SIGMASK(SIGPIPE);
-            socket_op_lock = false;
             return -(EPIPE);
         }
 
@@ -223,7 +211,6 @@ size_t unix_socket_accept_sendto(uint64_t fd, uint8_t *in, size_t limit,
 
         if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK || flags & MSG_DONTWAIT)
         {
-            socket_op_lock = false;
             return -(EWOULDBLOCK);
         }
 
@@ -234,10 +221,12 @@ size_t unix_socket_accept_sendto(uint64_t fd, uint8_t *in, size_t limit,
 
     arch_disable_interrupt();
 
+    spin_lock(&pair->lock);
+
     fast_memcpy(&pair->clientBuff[pair->clientBuffPos], in, limit);
     pair->clientBuffPos += limit;
 
-    socket_op_lock = false;
+    spin_unlock(&pair->lock);
 
     return limit;
 }
@@ -519,13 +508,6 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrle
 size_t unix_socket_recv_from(uint64_t fd, uint8_t *out, size_t limit, int flags,
                              struct sockaddr_un *addr, uint32_t *len)
 {
-    while (socket_op_lock)
-    {
-        arch_pause();
-    }
-
-    socket_op_lock = true;
-
     // useless unless SOCK_DGRAM
     (void)addr;
     (void)len;
@@ -535,7 +517,6 @@ size_t unix_socket_recv_from(uint64_t fd, uint8_t *out, size_t limit, int flags,
     unix_socket_pair_t *pair = socket->pair;
     if (!pair)
     {
-        socket_op_lock = false;
         return -(ENOTCONN);
     }
     if (!pair->serverFds && pair->clientBuffPos == 0)
@@ -544,18 +525,18 @@ size_t unix_socket_recv_from(uint64_t fd, uint8_t *out, size_t limit, int flags,
     {
         if (!pair->serverFds && pair->clientBuffPos == 0)
         {
-            socket_op_lock = false;
             return 0;
         }
         else if ((current_task->fd_info->fds[fd]->flags & O_NONBLOCK || flags & MSG_DONTWAIT) &&
                  pair->clientBuffPos == 0)
         {
-            socket_op_lock = false;
             return -(EWOULDBLOCK);
         }
         else if (pair->clientBuffPos > 0)
             break;
     }
+
+    spin_lock(&pair->lock);
 
     size_t toCopy = MIN(limit, pair->clientBuffPos);
     fast_memcpy(out, pair->clientBuff, toCopy);
@@ -563,7 +544,7 @@ size_t unix_socket_recv_from(uint64_t fd, uint8_t *out, size_t limit, int flags,
             pair->clientBuffPos - toCopy);
     pair->clientBuffPos -= toCopy;
 
-    socket_op_lock = false;
+    spin_unlock(&pair->lock);
 
     return toCopy;
 }
@@ -575,19 +556,11 @@ size_t unix_socket_send_to(uint64_t fd, uint8_t *in, size_t limit, int flags,
     (void)addr;
     (void)len;
 
-    while (socket_op_lock)
-    {
-        arch_pause();
-    }
-
-    socket_op_lock = true;
-
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     socket_t *socket = handle->sock;
     unix_socket_pair_t *pair = socket->pair;
     if (!pair)
     {
-        socket_op_lock = false;
         return -(ENOTCONN);
     }
     if (limit > pair->serverBuffSize)
@@ -600,23 +573,23 @@ size_t unix_socket_send_to(uint64_t fd, uint8_t *in, size_t limit, int flags,
         if (!pair->serverFds)
         {
             current_task->signal |= SIGMASK(SIGPIPE);
-            socket_op_lock = false;
             return -(EPIPE);
         }
         else if ((current_task->fd_info->fds[fd]->flags & O_NONBLOCK || flags & MSG_DONTWAIT) &&
                  (pair->serverBuffPos + limit) > pair->serverBuffSize)
         {
-            socket_op_lock = false;
             return -(EWOULDBLOCK);
         }
         else if ((pair->serverBuffPos + limit) <= pair->serverBuffSize)
             break;
     }
 
+    spin_lock(&pair->lock);
+
     fast_memcpy(&pair->serverBuff[pair->serverBuffPos], in, limit);
     pair->serverBuffPos += limit;
 
-    socket_op_lock = false;
+    spin_unlock(&pair->lock);
 
     return limit;
 }
@@ -633,10 +606,6 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
         unix_socket_pair_t *pair = socket->pair;
 
         struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
-
-        while (socket_op_lock)
-            arch_pause();
-        socket_op_lock = true;
 
         while (cmsg && pair->pending_fds_count > 0)
         {
@@ -661,7 +630,6 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
 
                 if (f == -1)
                 {
-                    socket_op_lock = false;
                     return -EMFILE;
                 }
 
@@ -677,8 +645,6 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
 
             cmsg = CMSG_NXTHDR(msg, cmsg);
         }
-
-        socket_op_lock = false;
     }
 
     for (int i = 0; i < msg->msg_iovlen; i++)
@@ -742,18 +708,11 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
                 int *fds = (int *)CMSG_DATA(cmsg);
                 int num_fds = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
 
-                // 加锁保证原子操作
-                while (socket_op_lock)
-                    arch_pause();
-                socket_op_lock = true;
-
                 for (int i = 0; i < num_fds; i++)
                 {
                     memcpy(&pair->pending_files[pair->pending_fds_count++], current_task->fd_info->fds[fds[i]], sizeof(fd_t));
                     current_task->fd_info->fds[fds[i]]->node->refcount++;
                 }
-
-                socket_op_lock = false;
             }
         }
     }
@@ -787,10 +746,6 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
 
         struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
 
-        while (socket_op_lock)
-            arch_pause();
-        socket_op_lock = true;
-
         while (cmsg && pair->pending_fds_count > 0)
         {
             size_t max_fds = (msg->msg_controllen - CMSG_LEN(0)) / sizeof(int);
@@ -814,7 +769,6 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
 
                 if (f == -1)
                 {
-                    socket_op_lock = false;
                     return -EMFILE;
                 }
 
@@ -830,8 +784,6 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
 
             cmsg = CMSG_NXTHDR(msg, cmsg);
         }
-
-        socket_op_lock = false;
     }
 
     for (int i = 0; i < msg->msg_iovlen; i++)
@@ -896,18 +848,11 @@ size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg, int fl
                 int *fds = (int *)CMSG_DATA(cmsg);
                 int num_fds = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
 
-                // 加锁保证原子操作
-                while (socket_op_lock)
-                    arch_pause();
-                socket_op_lock = true;
-
                 for (int i = 0; i < num_fds; i++)
                 {
                     memcpy(&pair->pending_files[pair->pending_fds_count++], current_task->fd_info->fds[fds[i]], sizeof(fd_t));
                     current_task->fd_info->fds[fds[i]]->node->refcount++;
                 }
-
-                socket_op_lock = false;
             }
         }
     }
@@ -1453,11 +1398,7 @@ ssize_t socket_read(void *f, void *buf, size_t offset, size_t limit)
             break;
     }
 
-    while (socket_op_lock)
-    {
-        arch_pause();
-    }
-    socket_op_lock = true;
+    spin_lock(&pair->lock);
 
     size_t toCopy = MIN(limit, pair->clientBuffPos);
     fast_memcpy(buf, pair->clientBuff, toCopy);
@@ -1465,7 +1406,7 @@ ssize_t socket_read(void *f, void *buf, size_t offset, size_t limit)
             pair->clientBuffPos - toCopy);
     pair->clientBuffPos -= toCopy;
 
-    socket_op_lock = false;
+    spin_unlock(&pair->lock);
 
     return toCopy;
 }
@@ -1473,12 +1414,6 @@ ssize_t socket_read(void *f, void *buf, size_t offset, size_t limit)
 ssize_t socket_write(void *f, const void *buf, size_t offset, size_t limit)
 {
     (void)offset;
-
-    while (socket_op_lock)
-    {
-        arch_pause();
-    }
-    socket_op_lock = true;
 
     socket_handle_t *handle = f;
     socket_t *sock = handle->sock;
@@ -1494,12 +1429,10 @@ ssize_t socket_write(void *f, const void *buf, size_t offset, size_t limit)
         if (!pair->serverFds)
         {
             current_task->signal |= SIGMASK(SIGPIPE);
-            socket_op_lock = false;
             return -(EPIPE);
         }
         else if ((handle->fd->flags & O_NONBLOCK) && (pair->serverBuffPos + limit) > pair->serverBuffSize)
         {
-            socket_op_lock = false;
             return -(EWOULDBLOCK);
         }
 
@@ -1513,10 +1446,12 @@ ssize_t socket_write(void *f, const void *buf, size_t offset, size_t limit)
 
     arch_disable_interrupt();
 
+    spin_lock(&pair->lock);
+
     fast_memcpy(&pair->serverBuff[pair->serverBuffPos], buf, limit);
     pair->serverBuffPos += limit;
 
-    socket_op_lock = false;
+    spin_unlock(&pair->lock);
 
     return limit;
 }
@@ -1541,11 +1476,7 @@ ssize_t socket_accept_read(void *f, void *buf, size_t offset, size_t limit)
             break;
     }
 
-    while (socket_op_lock)
-    {
-        arch_pause();
-    }
-    socket_op_lock = true;
+    spin_lock(&pair->lock);
 
     size_t toCopy = MIN(limit, pair->serverBuffPos);
     fast_memcpy(buf, pair->serverBuff, toCopy);
@@ -1553,7 +1484,7 @@ ssize_t socket_accept_read(void *f, void *buf, size_t offset, size_t limit)
             pair->serverBuffPos - toCopy);
     pair->serverBuffPos -= toCopy;
 
-    socket_op_lock = false;
+    spin_unlock(&pair->lock);
 
     return toCopy;
 }
@@ -1561,12 +1492,6 @@ ssize_t socket_accept_read(void *f, void *buf, size_t offset, size_t limit)
 ssize_t socket_accept_write(void *f, const void *buf, size_t offset, size_t limit)
 {
     (void)offset;
-
-    while (socket_op_lock)
-    {
-        arch_pause();
-    }
-    socket_op_lock = true;
 
     socket_handle_t *handle = f;
     unix_socket_pair_t *pair = handle->sock;
@@ -1581,7 +1506,6 @@ ssize_t socket_accept_write(void *f, const void *buf, size_t offset, size_t limi
         if (!pair->clientFds)
         {
             current_task->signal |= SIGMASK(SIGPIPE);
-            socket_op_lock = false;
             return -(EPIPE);
         }
 
@@ -1590,7 +1514,6 @@ ssize_t socket_accept_write(void *f, const void *buf, size_t offset, size_t limi
 
         if (handle->fd->flags & O_NONBLOCK)
         {
-            socket_op_lock = false;
             return -(EWOULDBLOCK);
         }
 
@@ -1601,10 +1524,12 @@ ssize_t socket_accept_write(void *f, const void *buf, size_t offset, size_t limi
 
     arch_disable_interrupt();
 
+    spin_lock(&pair->lock);
+
     fast_memcpy(&pair->clientBuff[pair->clientBuffPos], buf, limit);
     pair->clientBuffPos += limit;
 
-    socket_op_lock = false;
+    spin_unlock(&pair->lock);
 
     return limit;
 }

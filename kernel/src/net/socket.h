@@ -65,6 +65,8 @@ struct ucred
 
 typedef struct unix_socket_pair
 {
+    spinlock_t lock;
+
     // accept()/server
     bool established;
     int serverFds;
