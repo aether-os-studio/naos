@@ -650,7 +650,12 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     }
 
-    if (regs->rax == (uint64_t)-ENOSYS || (uint32_t)regs->rax == (uint32_t)-ENOSYS)
+    if ((int)regs->rax < 0)
+        regs->rax |= 0xffffffff00000000;
+    else if ((int64_t)regs->rax < 0 && ((regs->rax & 0xffffffff) == 0))
+        regs->rax = 0;
+
+    if (regs->rax == (uint64_t)-ENOSYS)
     {
         char buf[32];
         int len = sprintf(buf, "syscall %d not implemented\n", idx);

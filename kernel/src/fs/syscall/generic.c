@@ -816,10 +816,6 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
     {
         return (uint64_t)-EFAULT;
     }
-    if (check_user_overflow((uint64_t)path, strlen(path)))
-    {
-        return (uint64_t)-EFAULT;
-    }
     if (check_user_overflow((uint64_t)buf, size))
     {
         return (uint64_t)-EFAULT;
@@ -831,12 +827,16 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
         return (uint64_t)-ENOENT;
     }
 
-    if (!node->linkname)
+    if (!node->linkname && !node->link_by)
     {
         char *path = vfs_get_fullpath(node);
-        int len = strlen(path);
-        len = (len > size) ? size : len;
-        memcpy(buf, path, len);
+        int str_len = strlen(path);
+        int node_name_len = strlen(node->name);
+        char *ptr = path + str_len - node_name_len;
+        char tmp[256];
+        sprintf(tmp, "./%s", ptr);
+        uint64_t len = strnlen(tmp, size);
+        memcpy(buf, tmp, len);
         free(path);
         return len;
     }
@@ -875,29 +875,7 @@ uint64_t sys_readlinkat(int dfd, char *path, char *buf, uint64_t size)
 
     char *resolved = at_resolve_pathname(dfd, path);
 
-    vfs_node_t node = vfs_open(resolved);
-    if (node == NULL)
-    {
-        return (uint64_t)-ENOENT;
-    }
-
-    free(resolved);
-
-    ssize_t result = vfs_readlink(node, buf, (size_t)size);
-    vfs_close(node);
-
-    if (result < 0)
-    {
-        switch (-result)
-        {
-        case 1:
-            return (uint64_t)-ENOLINK;
-        default:
-            return (uint64_t)-EIO;
-        }
-    }
-
-    return (uint64_t)result;
+    return sys_readlink(resolved, buf, (size_t)size);
 }
 
 uint64_t sys_rmdir(const char *name)
@@ -1030,7 +1008,7 @@ uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len)
     if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
 
-    if (offset + len < offset)
+    if ((int64_t)offset + (int64_t)len <= (int64_t)offset)
         return -EINVAL;
 
     vfs_node_t node = current_task->fd_info->fds[fd]->node;

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <fs/vfs/pipe.h>
+#include <arch/arch.h>
 #include <task/signal.h>
 #include <fs/termios.h>
 

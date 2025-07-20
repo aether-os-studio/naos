@@ -70,9 +70,7 @@ static ssize_t eventfd_read(eventfd_t *efd, void *buf, size_t offset, size_t len
         if (efd->flags & EFD_NONBLOCK)
             return -EAGAIN;
 
-        arch_enable_interrupt();
-
-        arch_pause();
+        arch_yield();
     }
 
     value = (efd->flags & EFD_SEMAPHORE) ? 1 : efd->count;

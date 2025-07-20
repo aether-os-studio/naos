@@ -1,5 +1,6 @@
 #include <fs/vfs/dev.h>
 #include <fs/fs_syscall.h>
+#include <fs/vfs/sys.h>
 #include <drivers/kernel_logger.h>
 #include <arch/arch.h>
 #include <task/task.h>
@@ -330,11 +331,47 @@ vfs_node_t regist_dev(const char *name,
             {
                 child->type = file_stream;
                 child->rdev = (13 << 8) | 0;
+                vfs_node_t char_root = vfs_open("/sys/dev/char/");
+                vfs_node_t node = vfs_child_append(char_root, "13:0", NULL);
+                node->type = file_dir;
+                node->mode = 0644;
+                vfs_node_t uevent = vfs_child_append(node, "uevent", NULL);
+                uevent->type = file_none | file_symlink;
+                uevent->mode = 0700;
+                uevent->linkname = strdup("./subsystem/uevent");
+                vfs_node_t subsystem = vfs_child_append(node, "subsystem", NULL);
+                subsystem->type = file_dir;
+                subsystem->mode = 0644;
+                uevent = vfs_child_append(subsystem, "uevent", NULL);
+                uevent->type = file_none;
+                uevent->mode = 0700;
+                uevent->handle = malloc(sizeof(sysfs_handle_t));
+                sysfs_handle_t *handle = uevent->handle;
+                sprintf(handle->content, "MAJOR=13\nMINOR=0\nDEVNAME=/dev/input/event0\nSUBSYSTEM=input\n");
+                handle->node = uevent;
             }
             else if (!strncmp(devfs_handles[i]->name, "event1", 6))
             {
                 child->type = file_stream;
                 child->rdev = (13 << 8) | 1;
+                vfs_node_t char_root = vfs_open("/sys/dev/char/");
+                vfs_node_t node = vfs_child_append(char_root, "13:1", NULL);
+                node->type = file_dir;
+                node->mode = 0644;
+                vfs_node_t uevent = vfs_child_append(node, "uevent", NULL);
+                uevent->type = file_none | file_symlink;
+                uevent->mode = 0700;
+                uevent->linkname = strdup("./subsystem/uevent");
+                vfs_node_t subsystem = vfs_child_append(node, "subsystem", NULL);
+                subsystem->type = file_dir;
+                subsystem->mode = 0644;
+                uevent = vfs_child_append(subsystem, "uevent", NULL);
+                uevent->type = file_none;
+                uevent->mode = 0700;
+                uevent->handle = malloc(sizeof(sysfs_handle_t));
+                sysfs_handle_t *handle = uevent->handle;
+                sprintf(handle->content, "MAJOR=13\nMINOR=1\nDEVNAME=/dev/input/event1\nSUBSYSTEM=input\n");
+                handle->node = uevent;
             }
 
             child->mode = 0666;
@@ -482,7 +519,10 @@ void dev_init()
     devfs_root->handle = devfs_root;
 
     memset(devfs_handles, 0, sizeof(devfs_handles));
+}
 
+void dev_init_after_sysfs()
+{
     dev_input_event_t *kb_input_event = malloc(sizeof(dev_input_event_t));
     kb_input_event->inputid.bustype = 0x05;   // BUS_PS2
     kb_input_event->inputid.vendor = 0x045e;  // Microsoft

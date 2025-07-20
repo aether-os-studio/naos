@@ -470,7 +470,7 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, bool nosymlink)
             target->link_by = current;
             current = target;
 
-            break;
+            continue;
         }
     }
 

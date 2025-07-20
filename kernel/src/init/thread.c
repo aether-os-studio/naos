@@ -1,6 +1,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 
+#include <fs/vfs/dev.h>
 #include <drivers/bus/pci.h>
 #include <drivers/block/ahci/ahci.h>
 #include <drivers/block/nvme/nvme.h>
@@ -45,6 +46,8 @@ void init_thread(uint64_t arg)
 
     fbdev_init_sysfs();
     // drm_init_sysfs();
+
+    dev_init_after_sysfs();
 
     fs_syscall_init();
     socketfs_init();

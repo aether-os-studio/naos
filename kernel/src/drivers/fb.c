@@ -202,5 +202,6 @@ void fbdev_init_sysfs()
     uevent->mode = 0700;
     sysfs_handle_t *uevent_handle = malloc(sizeof(sysfs_handle_t));
     sprintf(uevent_handle->content, "MAJOR=%d\nMINOR=%d\nDEVNAME=/dev/fb%d\nSUBSYSTEM=graphics\n", 29, 0, 0);
+    uevent_handle->node = uevent;
     uevent->handle = uevent_handle;
 }

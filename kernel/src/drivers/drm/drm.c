@@ -315,15 +315,44 @@ void drm_init_sysfs()
     }
 
     vfs_node_t dev = vfs_open("/sys/dev/char/226:0/device");
+
+    vfs_node_t boot_vga_node = vfs_child_append(dev, "boot_vga", NULL);
+    boot_vga_node->type = file_none;
+    boot_vga_node->mode = 0700;
+    sysfs_handle_t *handle = malloc(sizeof(sysfs_handle_t));
+    sprintf(handle->content, "1");
+    handle->node = boot_vga_node;
+    boot_vga_node->handle = handle;
+
+    vfs_node_t subsystem_link = vfs_child_append(dev, "subsystem", NULL);
+    subsystem_link->type = file_dir | file_symlink;
+    subsystem_link->mode = 0644;
+    subsystem_link->linkname = strdup("./drm/card0/subsystem");
+    handle = malloc(sizeof(sysfs_handle_t));
+    handle->node = subsystem_link;
+    subsystem_link->handle = handle;
+
     vfs_node_t drm = vfs_child_append(dev, "drm", NULL);
     drm->type = file_dir;
     drm->mode = 0644;
+    handle = malloc(sizeof(sysfs_handle_t));
+    handle->node = drm;
+    drm->handle = handle;
+
+    subsystem_link = vfs_child_append(drm, "subsystem", NULL);
+    subsystem_link->type = file_dir | file_symlink;
+    subsystem_link->mode = 0644;
+    subsystem_link->linkname = strdup("./card0/subsystem");
+    handle = malloc(sizeof(sysfs_handle_t));
+    handle->node = subsystem_link;
+    subsystem_link->handle = handle;
 
     vfs_node_t dev_uevent = vfs_node_alloc(dev, "uevent");
     dev_uevent->type = file_none;
     dev_uevent->mode = 0700;
     sysfs_handle_t *dev_uevent_handle = malloc(sizeof(sysfs_handle_t));
     dev_uevent->handle = dev_uevent_handle;
+    dev_uevent_handle->node = dev_uevent;
 
     if (pci_device)
     {
@@ -365,7 +394,7 @@ void drm_init_sysfs()
     vfs_node_t version = vfs_node_alloc(drm, "version");
     version->type = file_none;
     version->mode = 0700;
-    sysfs_handle_t *handle = malloc(sizeof(sysfs_handle_t));
+    handle = malloc(sizeof(sysfs_handle_t));
     memset(handle, 0, sizeof(sysfs_handle_t));
     sprintf(handle->content, "drm 1.1.0 20060810");
     version->handle = handle;
@@ -373,8 +402,9 @@ void drm_init_sysfs()
 
     vfs_node_t class = vfs_open("/sys/class");
     vfs_node_t drm_link = vfs_node_alloc(class, "drm");
-    drm_link->type = file_dir;
+    drm_link->type = file_dir | file_symlink;
     drm_link->mode = 0644;
+    drm_link->linkname = strdup("../dev/char/226:0/device/drm");
     handle = malloc(sizeof(sysfs_handle_t));
     memset(handle, 0, sizeof(sysfs_handle_t));
     handle->node = drm_link;
@@ -396,16 +426,22 @@ void drm_init_sysfs()
     vfs_node_t cardn = vfs_node_alloc(drm, (const char *)buf);
     cardn->type = file_dir;
     cardn->mode = 0644;
-    cardn->linkname = strdup(buf);
     handle = malloc(sizeof(sysfs_handle_t));
     memset(handle, 0, sizeof(sysfs_handle_t));
     handle->node = cardn;
     cardn->handle = handle;
 
+    vfs_node_t uevent = vfs_child_append(cardn, "uevent", NULL);
+    uevent->type = file_none;
+    uevent->mode = 0700;
+    sysfs_handle_t *uevent_handle = malloc(sizeof(sysfs_handle_t));
+    sprintf(uevent_handle->content, "MAJOR=%d\nMINOR=%d\nDEVNAME=dri/card%d\nSUBSYSTEM=drm_minor\n", 226, 0, i);
+    uevent_handle->node = uevent;
+    uevent->handle = uevent_handle;
+
     vfs_node_t cardn_link = vfs_node_alloc(drm_link, (const char *)buf);
-    cardn_link->type = file_symlink | file_dir;
+    cardn_link->type = file_dir | file_symlink;
     cardn_link->mode = 0644;
-    cardn_link->linkname = vfs_get_fullpath(cardn);
     handle = malloc(sizeof(sysfs_handle_t));
     memset(handle, 0, sizeof(sysfs_handle_t));
     handle->node = cardn_link;
@@ -416,16 +452,6 @@ void drm_init_sysfs()
     cardn_virtual->type = file_dir;
     cardn_virtual->mode = 0644;
 
-    vfs_node_t uevent_link = vfs_child_append(cardn, "uevent", NULL);
-    uevent_link->type = file_symlink | file_none;
-    uevent_link->mode = 0644;
-    sprintf(buf, "/sys/class/drm/card%d/subsystem/uevent", i);
-    uevent_link->linkname = strdup(buf);
-    handle = malloc(sizeof(sysfs_handle_t));
-    memset(handle, 0, sizeof(sysfs_handle_t));
-    handle->node = uevent_link;
-    uevent_link->handle = handle;
-
     vfs_node_t subsystem = vfs_child_append(cardn, "subsystem", NULL);
     subsystem->type = file_dir;
     subsystem->mode = 0644;
@@ -434,13 +460,6 @@ void drm_init_sysfs()
     subsystem->handle = subsystem_handle;
     subsystem_handle->node = subsystem;
     subsystem_handle->private_data = NULL;
-
-    vfs_node_t uevent = vfs_child_append(subsystem, "uevent", NULL);
-    uevent->type = file_none;
-    uevent->mode = 0700;
-    sysfs_handle_t *uevent_handle = malloc(sizeof(sysfs_handle_t));
-    sprintf(uevent_handle->content, "MAJOR=%d\nMINOR=%d\nDEVNAME=dri/card%d\nSUBSYSTEM=drm_minor\n", 226, 0, i);
-    uevent->handle = uevent_handle;
 
     sprintf(buf, "connector_id");
     vfs_node_t connector_id = vfs_node_alloc(cardn_virtual, (const char *)buf);
@@ -470,10 +489,18 @@ void drm_init_sysfs()
     device_subsystem->handle = handle;
 
     vfs_node_t device_pci = vfs_node_alloc(dev, "pci");
-    device_subsystem->type = file_dir;
-    device_subsystem->mode = 0700;
+    device_pci->type = file_dir;
+    device_pci->mode = 0700;
+    handle = malloc(sizeof(sysfs_handle_t));
+    memset(handle, 0, sizeof(sysfs_handle_t));
+    handle->node = device_pci;
+    device_pci->handle = handle;
 
     vfs_node_t pci_dir = vfs_node_alloc(device_subsystem, "pci");
     pci_dir->type = file_dir;
     pci_dir->mode = 0644;
+    handle = malloc(sizeof(sysfs_handle_t));
+    memset(handle, 0, sizeof(sysfs_handle_t));
+    handle->node = pci_dir;
+    pci_dir->handle = handle;
 }

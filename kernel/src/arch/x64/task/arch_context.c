@@ -111,7 +111,15 @@ void arch_switch_with_context(arch_context_t *prev, arch_context_t *next, uint64
         asm volatile("fxrstor (%0)" ::"r"(next->fpu_ctx));
     }
 
-    asm volatile("movq %0, %%cr3\n\t" ::"r"(next->mm->page_table_addr));
+    if (!next->mm)
+    {
+        printk("next->mm == NULL!!! next = %#018lx", next);
+        asm volatile("movq %0, %%cr3\n\t" ::"r"(virt_to_phys(get_kernel_page_dir())));
+    }
+    else
+    {
+        asm volatile("movq %0, %%cr3\n\t" ::"r"(next->mm->page_table_addr));
+    }
 
     tss[current_cpu_id].rsp0 = kernel_stack;
 
@@ -145,7 +153,7 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
 
     arch_set_current(next);
 
-    // sched_update_itimer();
+    sched_update_itimer();
 
     arch_switch_with_context(prev->arch_context, next->arch_context, next->kernel_stack);
 }

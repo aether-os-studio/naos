@@ -616,6 +616,8 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
             cmsg->cmsg_type = SCM_RIGHTS;
             cmsg->cmsg_len = CMSG_LEN(num_fds * sizeof(int));
 
+            spin_lock(&pair->lock);
+
             int *dest_fds = (int *)CMSG_DATA(cmsg);
             for (int i = 0; i < num_fds; i++)
             {
@@ -642,6 +644,10 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
             memmove(pair->pending_files, &pair->pending_files[num_fds],
                     (pair->pending_fds_count - num_fds) * sizeof(fd_t));
             pair->pending_fds_count -= num_fds;
+
+            msg->msg_controllen = CMSG_LEN(0) + num_fds * sizeof(int);
+
+            spin_unlock(&pair->lock);
 
             cmsg = CMSG_NXTHDR(msg, cmsg);
         }
@@ -700,6 +706,9 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
         {
             return -EINVAL;
         }
+
+        spin_lock(&pair->lock);
+
         for (; cmsg != NULL; cmsg = CMSG_NXTHDR((struct msghdr *)msg, cmsg))
         {
             if (cmsg->cmsg_level == SOL_SOCKET &&
@@ -715,6 +724,8 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
                 }
             }
         }
+
+        spin_unlock(&pair->lock);
     }
 
     for (int i = 0; i < msg->msg_iovlen; i++)
@@ -755,6 +766,8 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
             cmsg->cmsg_type = SCM_RIGHTS;
             cmsg->cmsg_len = CMSG_LEN(num_fds * sizeof(int));
 
+            spin_lock(&pair->lock);
+
             int *dest_fds = (int *)CMSG_DATA(cmsg);
             for (int i = 0; i < num_fds; i++)
             {
@@ -781,6 +794,10 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
             memmove(pair->pending_files, &pair->pending_files[num_fds],
                     (pair->pending_fds_count - num_fds) * sizeof(fd_t));
             pair->pending_fds_count -= num_fds;
+
+            msg->msg_controllen = CMSG_LEN(0) + num_fds * sizeof(int);
+
+            spin_unlock(&pair->lock);
 
             cmsg = CMSG_NXTHDR(msg, cmsg);
         }
@@ -840,6 +857,9 @@ size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg, int fl
         {
             return -EINVAL;
         }
+
+        spin_lock(&pair->lock);
+
         for (; cmsg != NULL; cmsg = CMSG_NXTHDR((struct msghdr *)msg, cmsg))
         {
             if (cmsg->cmsg_level == SOL_SOCKET &&
@@ -855,6 +875,8 @@ size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg, int fl
                 }
             }
         }
+
+        spin_unlock(&pair->lock);
     }
 
     for (int i = 0; i < msg->msg_iovlen; i++)

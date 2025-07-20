@@ -209,8 +209,6 @@ ssize_t ext_read(void *file, void *addr, size_t offset, size_t size)
 
 ssize_t ext_readlink(void *file, void *addr, size_t offset, size_t size)
 {
-    spin_lock(&rwlock);
-
     ext_handle_t *handle = file;
 
     vfs_node_t node = handle->node;
@@ -221,9 +219,11 @@ ssize_t ext_readlink(void *file, void *addr, size_t offset, size_t size)
         original_node = original_node->link_by;
     }
 
-    vfs_node_t target_node = vfs_open_at(node->parent, node->linkname, false);
+    vfs_node_t target_node = vfs_open_at(original_node->parent, original_node->linkname, false);
     if (!target_node)
+    {
         return -1;
+    }
 
     char *node_path = vfs_get_fullpath(target_node);
     vfs_close(target_node);
@@ -236,8 +236,6 @@ ssize_t ext_readlink(void *file, void *addr, size_t offset, size_t size)
 
     free(node_path);
     free(original_node_path);
-
-    spin_unlock(&rwlock);
 
     return size;
 }
@@ -345,13 +343,11 @@ int ext_rename(void *current, const char *new)
 
 int ext_stat(void *file, vfs_node_t node)
 {
-    spin_lock(&rwlock);
     ext_handle_t *handle = file;
     if (handle->node->type & file_none)
     {
         handle->node->size = ext4_fsize(handle->file);
     }
-    spin_unlock(&rwlock);
 
     return 0;
 }

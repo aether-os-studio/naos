@@ -283,15 +283,15 @@ char *strdup(const char *s);
 
 #if defined(__x86_64__)
 
-typedef struct
+typedef struct spinlock
 {
-    volatile uint32_t lock;
-    uint64_t rflags;
+    volatile long lock;
+    long rflags;
 } spinlock_t;
 
 static inline void spin_lock(spinlock_t *lock)
 {
-    uint64_t flags;
+    long flags;
     asm volatile(
         "pushfq\n\t" // 保存RFLAGS
         "pop %0\n\t" // 存储到flags变量
@@ -301,11 +301,14 @@ static inline void spin_lock(spinlock_t *lock)
         : "memory");
 
     asm volatile(
-        "1: lock btsl $0, %0\n\t" // 测试并设置
-        "   jc 1b\n\t"            // 如果已锁定则重试
+        "1:\n\t"
+        "lock btsq $0, %0\n\t" // 测试并设置
+        "   jc 1b\n\t"         // 如果已锁定则重试
         : "+m"(lock->lock)
         :
         : "memory", "cc");
+
+    asm volatile("mfence" ::: "memory");
 
     lock->rflags = flags; // 保存原始中断状态
 }
@@ -313,31 +316,33 @@ static inline void spin_lock(spinlock_t *lock)
 static inline void spin_unlock(spinlock_t *lock)
 {
     asm volatile(
-        "lock btrl $0, %0\n\t" // 清除锁标志
+        "lock btrq $0, %0\n\t" // 清除锁标志
         : "+m"(lock->lock)
         :
         : "memory", "cc");
 
-    uint64_t flags = lock->rflags;
+    long flags = lock->rflags;
     asm volatile(
         "push %0\n\t" // 恢复原始RFLAGS
         "popfq"
         :
         : "r"(flags)
         : "memory");
+
+    asm volatile("sfence" ::: "memory");
 }
 
 #elif defined(__aarch64__)
 
 typedef struct
 {
-    volatile uint32_t lock;
-    uint64_t daif;
+    volatile long lock;
+    long daif;
 } spinlock_t;
 
 static inline void spin_lock(spinlock_t *lock)
 {
-    uint32_t tmp, daif;
+    long tmp, daif;
 
     // 保存并禁用中断
     asm volatile(
@@ -363,7 +368,7 @@ static inline void spin_lock(spinlock_t *lock)
 
 static inline void spin_unlock(spinlock_t *lock)
 {
-    uint32_t daif = lock->daif;
+    long daif = lock->daif;
 
     // 释放锁
     asm volatile(
@@ -382,44 +387,7 @@ static inline void spin_unlock(spinlock_t *lock)
 
 #endif
 
-typedef struct semaphore
-{
-    spinlock_t lock;
-    uint32_t cnt;
-    uint8_t invalid;
-} semaphore_t;
-
 extern uint64_t nanoTime();
-
-static inline bool semaphore_wait(semaphore_t *sem, uint32_t timeout)
-{
-    uint64_t timerStart = nanoTime();
-    bool ret = false;
-
-    while (true)
-    {
-        if (timeout > 0 && nanoTime() > (timerStart + timeout * 1000))
-            goto just_return;
-        if (sem->cnt > 0)
-        {
-            sem->cnt--;
-            ret = true;
-            goto cleanup;
-        }
-    }
-
-cleanup:
-    spin_unlock(&sem->lock);
-just_return:
-    return ret;
-}
-
-static inline void semaphore_post(semaphore_t *sem)
-{
-    spin_lock(&sem->lock);
-    sem->cnt++;
-    spin_unlock(&sem->lock);
-}
 
 extern uint64_t get_physical_memory_offset();
 

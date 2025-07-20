@@ -82,23 +82,15 @@ ssize_t sysfs_readlink(void *file, void *addr, size_t offset, size_t size)
         original_node = original_node->link_by;
     }
 
-    vfs_node_t target_node = vfs_open_at(node->parent, node->linkname, false);
-    if (!target_node)
-        return -1;
+    if (original_node->linkname)
+    {
+        size_t len = strnlen(original_node->linkname, size);
+        memcpy(addr, original_node->linkname, len);
+        ((char *)addr)[len] = '\0';
+        return len;
+    }
 
-    char *node_path = vfs_get_fullpath(target_node);
-    vfs_close(target_node);
-    char *original_node_path = vfs_get_fullpath(original_node);
-
-    char relative_path[1024];
-    memset(relative_path, 0, sizeof(relative_path));
-    rel_status status = calculate_relative_path(relative_path, original_node_path, node_path, size);
-    memcpy(addr, relative_path, size);
-
-    free(node_path);
-    free(original_node_path);
-
-    return size;
+    return -ENOLINK;
 }
 
 int sysfs_poll(void *file, size_t event)
