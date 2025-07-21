@@ -33,11 +33,11 @@ socket_op_t netlink_ops = {
 
 int netlink_socket(int domain, int type, int protocol)
 {
-    char buf[128];
-    sprintf(buf, "sock%d", sockfsfd_id++);
-
     if (current_task->uid != 0) // 需要root权限
         return -EPERM;
+
+    char buf[128];
+    sprintf(buf, "sock%d", sockfsfd_id++);
 
     struct netlink_sock *nl_sk = malloc(sizeof(struct netlink_sock));
     memset(nl_sk, 0, sizeof(struct netlink_sock));
@@ -77,6 +77,11 @@ int netlink_socket(int domain, int type, int protocol)
     current_task->fd_info->fds[i]->flags = 0;
 
     return i;
+}
+
+int netlink_socket_pair(int type, int protocol, int *sv)
+{
+    return 0;
 }
 
 static int dummy()

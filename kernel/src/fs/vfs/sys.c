@@ -5,11 +5,13 @@
 static vfs_node_t sysfs_root = NULL;
 static int sysfs_id = 0;
 
+static vfs_node_t devices_root = NULL;
 static vfs_node_t dev_root = NULL;
 static vfs_node_t bus_root = NULL;
 static vfs_node_t class_root = NULL;
 static vfs_node_t pci_root = NULL;
 static vfs_node_t pci_devices_root = NULL;
+static vfs_node_t input_root = NULL;
 static vfs_node_t graphics_root = NULL;
 
 static int dummy()
@@ -134,6 +136,9 @@ void sysfs_init()
     sysfs_root->type = file_dir;
     sysfs_root->fsid = sysfs_id;
     sysfs_root->mode = 0644;
+    devices_root = vfs_child_append(sysfs_root, "devices", NULL);
+    devices_root->type = file_dir;
+    devices_root->mode = 0644;
     dev_root = vfs_child_append(sysfs_root, "dev", NULL);
     dev_root->type = file_dir;
     dev_root->mode = 0644;
@@ -149,6 +154,9 @@ void sysfs_init()
     graphics_root = vfs_child_append(class_root, "graphics", NULL);
     graphics_root->type = file_dir;
     graphics_root->mode = 0644;
+    input_root = vfs_child_append(class_root, "input", NULL);
+    input_root->type = file_dir;
+    input_root->mode = 0644;
     pci_devices_root = vfs_child_append(pci_root, "devices", NULL);
     pci_devices_root->type = file_dir;
     pci_devices_root->mode = 0644;
@@ -218,4 +226,90 @@ void sysfs_init()
     vfs_node_t device_node = vfs_child_append(dev_node, "device", NULL);
     device_node->type = file_dir;
     device_node->mode = 0644;
+    dev_node = vfs_child_append(char_dev, "13:0", NULL);
+    dev_node->type = file_dir | file_symlink;
+    dev_node->mode = 0644;
+#if defined(__x86_64__)
+    dev_node->linkname = strdup("../../devices/platform/i8042/serio0/input/input0");
+#endif
+    device_node = vfs_child_append(dev_node, "device", NULL);
+    device_node->type = file_dir;
+    device_node->mode = 0644;
+    dev_node = vfs_child_append(char_dev, "13:1", NULL);
+    dev_node->type = file_dir | file_symlink;
+    dev_node->mode = 0644;
+#if defined(__x86_64__)
+    dev_node->linkname = strdup("../../devices/platform/i8042/serio1/input/input1");
+#endif
+
+#if defined(__x86_64__)
+    vfs_node_t devices_platform = vfs_child_append(devices_root, "platform", NULL);
+    devices_platform->type = file_dir;
+    devices_platform->mode = 0644;
+    vfs_node_t devices_platform_i8042 = vfs_child_append(devices_platform, "i8042", NULL);
+    devices_platform_i8042->type = file_dir;
+    devices_platform_i8042->mode = 0644;
+
+    vfs_node_t serio0 = vfs_child_append(devices_platform_i8042, "serio0", NULL);
+    serio0->type = file_dir;
+    serio0->mode = 0644;
+    vfs_node_t serio1 = vfs_child_append(devices_platform_i8042, "serio1", NULL);
+    serio1->type = file_dir;
+    serio1->mode = 0644;
+
+    vfs_node_t serio0_input = vfs_child_append(serio0, "input", NULL);
+    serio0_input->type = file_dir;
+    serio0_input->mode = 0644;
+    vfs_node_t serio1_input = vfs_child_append(serio1, "input", NULL);
+    serio1_input->type = file_dir;
+    serio1_input->mode = 0644;
+
+    vfs_node_t input0 = vfs_child_append(serio0_input, "input0", NULL);
+    input0->type = file_dir;
+    input0->mode = 0644;
+    sysfs_handle_t *handle = malloc(sizeof(sysfs_handle_t));
+    handle->node = input0;
+    input0->handle = handle;
+    vfs_node_t input1 = vfs_child_append(serio1_input, "input1", NULL);
+    input1->type = file_dir;
+    input1->mode = 0644;
+    handle = malloc(sizeof(sysfs_handle_t));
+    handle->node = input1;
+    input1->handle = handle;
+
+    vfs_node_t subsystem = vfs_child_append(input0, "subsystem", NULL);
+    subsystem->type = file_dir;
+    subsystem->mode = 0644;
+    subsystem = vfs_child_append(input1, "subsystem", NULL);
+    subsystem->type = file_dir;
+    subsystem->mode = 0644;
+
+    vfs_node_t uevent = vfs_child_append(input0, "uevent", NULL);
+    uevent->type = file_none;
+    uevent->mode = 0644;
+    handle = malloc(sizeof(sysfs_handle_t));
+    sprintf(handle->content, "DEVNAME=input/event0\nDEVPATH=/devices/platform/i8042/serio0/input/input0\nSUBSYSTEM=input\n");
+    handle->node = uevent;
+    uevent->handle = handle;
+    uevent = vfs_child_append(input1, "uevent", NULL);
+    uevent->type = file_none;
+    uevent->mode = 0644;
+    handle = malloc(sizeof(sysfs_handle_t));
+    sprintf(handle->content, "DEVNAME=input/event1\nDEVPATH=/devices/platform/i8042/serio1/input/input1\nSUBSYSTEM=input\n");
+    handle->node = uevent;
+    uevent->handle = handle;
+
+    vfs_node_t capabilities = vfs_child_append(input0, "capabilities", NULL);
+    capabilities->type = file_dir;
+    capabilities->mode = 0644;
+    vfs_node_t key = vfs_child_append(capabilities, "key", NULL);
+    key->type = file_none;
+    key->mode = 0700;
+    capabilities = vfs_child_append(input1, "capabilities", NULL);
+    capabilities->type = file_dir;
+    capabilities->mode = 0644;
+    vfs_node_t rel = vfs_child_append(capabilities, "rel", NULL);
+    rel->type = file_none;
+    rel->mode = 0700;
+#endif
 }

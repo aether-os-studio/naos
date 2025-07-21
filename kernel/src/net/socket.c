@@ -252,10 +252,10 @@ int socket_accept_poll(void *file, int events)
 
 int socket_socket(int domain, int type, int protocol)
 {
-    if (!(type & 1))
-    {
-        return -ENOSYS;
-    }
+    // if (!(type & 1))
+    // {
+    //     return -ENOSYS;
+    // }
 
     char buf[128];
     sprintf(buf, "sock%d", sockfsfd_id++);
@@ -329,6 +329,7 @@ int socket_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen)
             free(safe);
             return -(EADDRINUSE);
         }
+        vfs_mkfile(safe);
     }
 
     size_t safeLen = strlen(safe);
@@ -1098,7 +1099,7 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname, const void *o
             if (pair)
                 pair->passcred = *(int *)optval;
             else
-                return (size_t)-ENOTCONN;
+                sock->passcred = *(int *)optval;
             break;
         case SO_ATTACH_FILTER:
         {

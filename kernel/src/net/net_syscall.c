@@ -1,10 +1,10 @@
 #include <arch/arch.h>
 #include <net/net_syscall.h>
 #include <net/socket.h>
+#include <net/netlink.h>
 #include <task/task.h>
 #include <fs/vfs/vfs.h>
 #include <drivers/kernel_logger.h>
-#include <net/netlink.h>
 
 uint64_t sys_shutdown(uint64_t fd, uint64_t how)
 {
@@ -78,17 +78,25 @@ int sys_socket(int domain, int type, int protocol)
 {
     // if (domain == 10 || domain == 2)
     //     return net_socket(domain, type, protocol);
-    // else if (domain == 1)
-    return socket_socket(domain, type, protocol);
-    // else if (domain == 16)
-    //     return netlink_socket(domain, type, protocol);
-    // else
-    //     return -ENOSYS;
+    if (domain == 1)
+        return socket_socket(domain, type, protocol);
+    else if (domain == 16)
+        return netlink_socket(domain, type, protocol);
+    else
+        return -ENOSYS;
 }
 
 int sys_socketpair(int family, int type, int protocol, int *sv)
 {
-    return unix_socket_pair(type, protocol, sv);
+    if (family == 1)
+    {
+        return unix_socket_pair(type, protocol, sv);
+    }
+    else if (family == 16)
+    {
+        return netlink_socket_pair(type, protocol, sv);
+    }
+    return -ENOSYS;
 }
 
 int sys_bind(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen)

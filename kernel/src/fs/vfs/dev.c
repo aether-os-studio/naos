@@ -331,47 +331,55 @@ vfs_node_t regist_dev(const char *name,
             {
                 child->type = file_stream;
                 child->rdev = (13 << 8) | 0;
-                vfs_node_t char_root = vfs_open("/sys/dev/char/");
-                vfs_node_t node = vfs_child_append(char_root, "13:0", NULL);
-                node->type = file_dir;
-                node->mode = 0644;
-                vfs_node_t uevent = vfs_child_append(node, "uevent", NULL);
-                uevent->type = file_none | file_symlink;
-                uevent->mode = 0700;
-                uevent->linkname = strdup("./subsystem/uevent");
-                vfs_node_t subsystem = vfs_child_append(node, "subsystem", NULL);
+                child->mode = 0660;
+                vfs_node_t input_root = vfs_open("/sys/class/input");
+                vfs_node_t event0 = vfs_child_append(input_root, "event0", NULL);
+                event0->type = file_dir;
+                event0->mode = 0644;
+                vfs_node_t subsystem = vfs_child_append(event0, "subsystem", NULL);
                 subsystem->type = file_dir;
-                subsystem->mode = 0644;
-                uevent = vfs_child_append(subsystem, "uevent", NULL);
+                subsystem->mode = 0700;
+                vfs_node_t uevent_link = vfs_child_append(event0, "uevent", NULL);
+                uevent_link->type = file_none | file_symlink;
+                uevent_link->mode = 0700;
+                uevent_link->linkname = strdup("./device/uevent");
+                vfs_node_t device = vfs_child_append(event0, "device", NULL);
+                device->type = file_dir;
+                device->mode = 0644;
+                vfs_node_t uevent = vfs_child_append(device, "uevent", NULL);
                 uevent->type = file_none;
                 uevent->mode = 0700;
-                uevent->handle = malloc(sizeof(sysfs_handle_t));
-                sysfs_handle_t *handle = uevent->handle;
-                sprintf(handle->content, "MAJOR=13\nMINOR=0\nDEVNAME=/dev/input/event0\nSUBSYSTEM=input\n");
+                sysfs_handle_t *handle = malloc(sizeof(sysfs_handle_t));
+                sprintf(handle->content, "ID_SEAT=seat0\nSYSNAME=event0\nDEVPATH=/devices/platform/i8042/serio0/input/input0\nDEVNAME=input/event0\nSUBSYSTEM=input\nPRODUCT=11/1/1/0\n");
                 handle->node = uevent;
+                uevent->handle = handle;
             }
             else if (!strncmp(devfs_handles[i]->name, "event1", 6))
             {
                 child->type = file_stream;
                 child->rdev = (13 << 8) | 1;
-                vfs_node_t char_root = vfs_open("/sys/dev/char/");
-                vfs_node_t node = vfs_child_append(char_root, "13:1", NULL);
-                node->type = file_dir;
-                node->mode = 0644;
-                vfs_node_t uevent = vfs_child_append(node, "uevent", NULL);
-                uevent->type = file_none | file_symlink;
-                uevent->mode = 0700;
-                uevent->linkname = strdup("./subsystem/uevent");
-                vfs_node_t subsystem = vfs_child_append(node, "subsystem", NULL);
+                child->mode = 0660;
+                vfs_node_t input_root = vfs_open("/sys/class/input");
+                vfs_node_t event1 = vfs_child_append(input_root, "event1", NULL);
+                event1->type = file_dir;
+                event1->mode = 0644;
+                vfs_node_t uevent_link = vfs_child_append(event1, "uevent", NULL);
+                uevent_link->type = file_none | file_symlink;
+                uevent_link->mode = 0700;
+                vfs_node_t subsystem = vfs_child_append(event1, "subsystem", NULL);
                 subsystem->type = file_dir;
-                subsystem->mode = 0644;
-                uevent = vfs_child_append(subsystem, "uevent", NULL);
+                subsystem->mode = 0700;
+                uevent_link->linkname = strdup("./device/uevent");
+                vfs_node_t device = vfs_child_append(event1, "device", NULL);
+                device->type = file_dir;
+                device->mode = 0644;
+                vfs_node_t uevent = vfs_child_append(device, "uevent", NULL);
                 uevent->type = file_none;
                 uevent->mode = 0700;
-                uevent->handle = malloc(sizeof(sysfs_handle_t));
-                sysfs_handle_t *handle = uevent->handle;
-                sprintf(handle->content, "MAJOR=13\nMINOR=1\nDEVNAME=/dev/input/event1\nSUBSYSTEM=input\n");
+                sysfs_handle_t *handle = malloc(sizeof(sysfs_handle_t));
+                sprintf(handle->content, "ID_SEAT=seat0\nSYSNAME=event1\nDEVPATH=/devices/platform/i8042/serio1/input/input1\nDEVNAME=input/event1\nSUBSYSTEM=input\nPRODUCT=11/1/1/0\n");
                 handle->node = uevent;
+                uevent->handle = handle;
             }
 
             child->mode = 0666;
@@ -507,6 +515,15 @@ ssize_t urandom_dev_ioctl(void *data, ssize_t cmd, ssize_t arg)
         return -ENOTTY;
     }
 }
+ssize_t kmsg_read(void *data, uint64_t offset, void *buf, uint64_t len)
+{
+    return len;
+}
+
+ssize_t kmsg_write(void *data, uint64_t offset, const void *buf, uint64_t len)
+{
+    return len;
+}
 
 void dev_init()
 {
@@ -519,6 +536,8 @@ void dev_init()
     devfs_root->handle = devfs_root;
 
     memset(devfs_handles, 0, sizeof(devfs_handles));
+
+    regist_dev("kmsg", kmsg_read, kmsg_write, NULL, NULL, NULL, NULL);
 }
 
 void dev_init_after_sysfs()

@@ -127,6 +127,8 @@ typedef struct socket
     int connCurr;
     unix_socket_pair_t **backlog;
 
+    int passcred;
+
     // connect()
     unix_socket_pair_t *pair;
 } socket_t;

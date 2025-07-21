@@ -11,6 +11,20 @@
 #include <fs/partition.h>
 #include <drivers/fb.h>
 
+void udevd_thread(uint64_t arg)
+{
+    if (vfs_open("/sbin/udevd"))
+    {
+        vfs_mkdir("/run/udev");
+
+        const char *argvs[2];
+        memset(argvs, 0, sizeof(argvs));
+        argvs[0] = "udevd";
+
+        task_execve("/sbin/udevd", argvs, NULL);
+    }
+}
+
 extern void ext_init();
 extern void fatfs_init();
 extern void iso9660_init();
@@ -61,6 +75,8 @@ void init_thread(uint64_t arg)
     arch_input_dev_init();
 
     system_initialized = true;
+
+    task_create("udevd", udevd_thread, 0);
 
     const char *argvs[2];
     memset(argvs, 0, sizeof(argvs));

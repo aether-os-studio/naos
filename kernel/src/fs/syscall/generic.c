@@ -829,15 +829,16 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
 
     if (!node->linkname && !node->link_by)
     {
-        char *path = vfs_get_fullpath(node);
-        int str_len = strlen(path);
+        char *p = vfs_get_fullpath(node);
+        int str_len = strlen(p);
         int node_name_len = strlen(node->name);
-        char *ptr = path + str_len - node_name_len;
+        char *ptr = p + str_len - node_name_len;
         char tmp[256];
-        sprintf(tmp, "./%s", ptr);
+        sprintf(tmp, "%s", ptr);
         uint64_t len = strnlen(tmp, size);
         memcpy(buf, tmp, len);
-        free(path);
+        buf[len] = 0;
+        free(p);
         return len;
     }
 
