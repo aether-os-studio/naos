@@ -203,7 +203,7 @@ void aarch64_do_syscall(struct pt_regs *frame)
         frame->x0 = sys_listen(arg1, arg2);
         break;
     case SYS_ACCEPT:
-        frame->x0 = sys_accept(arg1, (struct sockaddr_un *)arg2, (socklen_t *)arg3);
+        frame->x0 = sys_accept(arg1, (struct sockaddr_un *)arg2, (socklen_t *)arg3, 0);
         break;
     case SYS_CONNECT:
         frame->x0 = sys_connect(arg1, (const struct sockaddr_un *)arg2, arg3);

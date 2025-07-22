@@ -829,32 +829,15 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
 
     if (!node->linkto)
     {
-        char *p = vfs_get_fullpath(node);
-        int str_len = strlen(p);
-        int node_name_len = strlen(node->name);
-        char *ptr = p + str_len - node_name_len;
-        char tmp[256];
-        sprintf(tmp, "%s", ptr);
-        uint64_t len = strnlen(tmp, size);
-        memcpy(buf, tmp, len);
-        buf[len] = 0;
-        free(p);
-        return len;
+        return (uint64_t)-EINVAL;
     }
 
     ssize_t result = vfs_readlink(node, buf, (size_t)size);
     vfs_close(node);
-    buf[result] = 0;
 
     if (result < 0)
     {
-        switch (-result)
-        {
-        case 1:
-            return (uint64_t)-ENOLINK;
-        default:
-            return (uint64_t)-EIO;
-        }
+        return (uint64_t)-EINVAL;
     }
 
     return result;
@@ -877,7 +860,11 @@ uint64_t sys_readlinkat(int dfd, char *path, char *buf, uint64_t size)
 
     char *resolved = at_resolve_pathname(dfd, path);
 
-    return sys_readlink(resolved, buf, (size_t)size);
+    ssize_t res = sys_readlink(resolved, buf, (size_t)size);
+
+    free(resolved);
+
+    return res;
 }
 
 uint64_t sys_rmdir(const char *name)
@@ -890,7 +877,7 @@ uint64_t sys_rmdir(const char *name)
     if (!node)
         return -ENOENT;
     if (!(node->type & file_dir))
-        return -EBADF;
+        return -ENOTDIR;
 
     uint64_t ret = vfs_delete(node);
 

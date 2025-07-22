@@ -523,9 +523,9 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     vfs_read(node, buffer, 0, node->size);
 
-    vfs_close(node);
-
     char *fullpath = vfs_get_fullpath(node);
+
+    vfs_close(node);
 
     if (buffer[0] == '#' && buffer[1] == '!')
     {
@@ -722,6 +722,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     }
 
     strncpy(current_task->name, fullpath, TASK_NAME_MAX);
+
     free(fullpath);
 
     map_page_range(get_current_page_dir(true), USER_STACK_START, 0, USER_STACK_END - USER_STACK_START, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);

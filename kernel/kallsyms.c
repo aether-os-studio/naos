@@ -58,7 +58,7 @@ int read_symbol(FILE *filp, struct kernel_symbol_entry_t *entry)
     }
 
     char symbol_name[512] = {0};
-    int retval = sscanf(str, "%llx %c %512c", &entry->vaddr, &entry->type, symbol_name);
+    int retval = sscanf(str, "%lx %c %512c", &entry->vaddr, &entry->type, symbol_name);
 
     // 如果当前行不符合要求
     if (retval != 3)
@@ -150,7 +150,7 @@ void generate_result()
             continue;
 
         // 输出符号地址
-        printf("\t.quad\t%#llx\n", symbol_table[i].vaddr);
+        printf("\t.quad\t%#lx\n", symbol_table[i].vaddr);
         ++total_syms_to_write;
 
         last_vaddr = symbol_table[i].vaddr;
@@ -162,7 +162,7 @@ void generate_result()
     printf(".global kallsyms_num\n");
     printf(".align 8\n");
     printf("kallsyms_num:\n");
-    printf("\t.quad\t%lld\n", total_syms_to_write);
+    printf("\t.quad\t%ld\n", total_syms_to_write);
 
     putchar('\n');
 
@@ -182,7 +182,7 @@ void generate_result()
             continue;
 
         // 输出符号名称的偏移量
-        printf("\t.quad\t%lld\n", position);
+        printf("\t.quad\t%ld\n", position);
         position += symbol_table[i].symbol_length;
         last_vaddr = symbol_table[i].vaddr;
     }
