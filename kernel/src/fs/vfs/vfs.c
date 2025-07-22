@@ -36,8 +36,7 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name)
     node->rdev = 0;
     node->blksz = DEFAULT_PAGE_SIZE;
     node->name = name ? strdup(name) : NULL;
-    node->linkname = NULL;
-    node->link_by = NULL;
+    node->linkto = NULL;
     node->type = file_none;
     node->fsid = parent ? parent->fsid : 0;
     node->root = parent ? parent->root : node;
@@ -58,8 +57,8 @@ void vfs_free(vfs_node_t vfs)
     list_free_with(vfs->child, (free_t)vfs_free);
     vfs_close(vfs);
     free(vfs->name);
-    if (vfs->linkname)
-        free(vfs->linkname);
+    if (vfs->linkto)
+        vfs_close(vfs->linkto);
     free(vfs);
 }
 
@@ -299,8 +298,8 @@ int vfs_link(const char *name, const char *target_name)
 create:
     vfs_node_t node = vfs_child_append(current, filename, NULL);
     node->type = file_none;
-    node->linkname = strdup(target_name);
-    callbackof(current, link)(current->handle, filename, node);
+    callbackof(current, link)(current->handle, target_name, node);
+    node->linkto = vfs_open(target_name);
 
     free(path);
 
@@ -379,8 +378,8 @@ int vfs_symlink(const char *name, const char *target_name)
 create:
     vfs_node_t node = vfs_child_append(current, filename, NULL);
     node->type = file_symlink;
-    node->linkname = strdup(target_name);
-    callbackof(current, symlink)(current->handle, filename, node);
+    callbackof(current, symlink)(current->handle, target_name, node);
+    node->linkto = vfs_open(target_name);
 
     free(path);
 
@@ -413,7 +412,7 @@ static vfs_node_t vfs_do_search(vfs_node_t dir, const char *name)
     return list_first(dir->child, data, streq(name, ((vfs_node_t)data)->name));
 }
 
-vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, bool nosymlink)
+vfs_node_t vfs_open_at(vfs_node_t start, const char *_path)
 {
     if (!start)
         return NULL;
@@ -459,16 +458,40 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, bool nosymlink)
             goto err;
         do_update(current);
 
-        if (!nosymlink && (current->type & file_symlink) == file_symlink)
+        if (current->type & file_symlink)
         {
-            if (!current->parent || !current->linkname)
+            if (!current->parent || !current->linkto)
                 goto err;
-            vfs_node_t target = vfs_open_at(current->parent, current->linkname, nosymlink);
+
+            current->type = file_symlink | file_proxy;
+
+            vfs_node_t target = current->linkto;
             if (!target)
                 goto err;
 
-            target->link_by = current;
-            current = target;
+            target->refcount++;
+
+            current->type |= target->type;
+            current->size = target->size;
+            current->blksz = target->blksz;
+
+            current->fsid = target->fsid;
+            current->handle = target->handle;
+            current->root = target->root;
+            current->mode = target->mode;
+
+            if (target->type & file_dir)
+            {
+                list_foreach(target->child, i)
+                {
+                    vfs_node_t child_node = (vfs_node_t)i->data;
+                    if (!vfs_child_find(current, child_node->name))
+                    {
+                        list_prepend(current->child, child_node);
+                        child_node->refcount++;
+                    }
+                }
+            }
 
             continue;
         }
@@ -486,12 +509,12 @@ vfs_node_t vfs_open(const char *_path)
 {
     if (current_task && current_task->cwd)
     {
-        vfs_node_t node = vfs_open_at(current_task->cwd, _path, false);
+        vfs_node_t node = vfs_open_at(current_task->cwd, _path);
         return node;
     }
     else
     {
-        vfs_node_t node = vfs_open_at(rootdir, _path, false);
+        vfs_node_t node = vfs_open_at(rootdir, _path);
         return node;
     }
 }
@@ -523,6 +546,11 @@ int vfs_close(vfs_node_t node)
         return 0;
     if (node == rootdir)
         return 0;
+    if (node->type & file_proxy)
+    {
+        node->refcount--;
+        return 0;
+    }
     if (node->type & file_dir)
         return 0;
     spin_lock(&node->spin);
@@ -572,7 +600,7 @@ ssize_t vfs_read(vfs_node_t file, void *addr, size_t offset, size_t size)
 
 int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize)
 {
-    return callbackof(node, readlink)(node->handle, buf, 0, bufsize);
+    return callbackof(node, readlink)(node, buf, 0, bufsize);
 }
 
 ssize_t vfs_write(vfs_node_t file, const void *addr, size_t offset, size_t size)

@@ -81,16 +81,12 @@ bool procfs_close(void *current)
     return false;
 }
 
-ssize_t procfs_readlink(void *file, void *addr, size_t offset, size_t size)
+ssize_t procfs_readlink(vfs_node_t node, void *addr, size_t offset, size_t size)
 {
-    proc_handle_t *handle = file;
+    proc_handle_t *handle = node->handle;
     if (!strcmp(handle->name, "self/exe") && current_task->exec_node)
     {
         vfs_node_t original_node = current_task->exec_node;
-        while (original_node->link_by)
-        {
-            original_node = original_node->link_by;
-        }
 
         char *fullpath = vfs_get_fullpath(original_node);
         int len = strlen(fullpath);
@@ -107,7 +103,7 @@ static struct vfs_callback callbacks = {
     .close = (vfs_close_t)dummy,
     .read = procfs_read,
     .write = (vfs_write_t)dummy,
-    .readlink = procfs_readlink,
+    .readlink = (vfs_read_t)procfs_readlink,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,
@@ -138,7 +134,6 @@ void proc_init()
 
     vfs_node_t self_exe = vfs_node_alloc(procfs_self, "exe");
     self_exe->type = file_none;
-    self_exe->linkname = strdup("/proc/self/real_exe");
     self_exe->mode = 0700;
     proc_handle_t *self_exe_handle = malloc(sizeof(proc_handle_t));
     self_exe->handle = self_exe_handle;

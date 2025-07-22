@@ -151,7 +151,6 @@ void fbdev_init_sysfs()
     sprintf(name, "fb%d", 0);
     vfs_node_t node = vfs_child_append(graphics, name, NULL);
     node->type = file_dir;
-    node->linkname = strdup(name);
 
     size_t addr;
     size_t width;
@@ -171,18 +170,6 @@ void fbdev_init_sysfs()
     modes_handle->node = modes;
     modes_handle->private_data = NULL;
     sprintf(modes_handle->content, "U:%dx%d-60-%d\n", width, height, bpp);
-
-    vfs_node_t subsystem_link = vfs_child_append(node, "subsystem", NULL);
-    subsystem_link->type = file_symlink | file_dir;
-    subsystem_link->mode = 0644;
-    sprintf(name, "/sys/class/graphics/fb%d/device/subsystem", 0);
-    subsystem_link->linkname = strdup(name);
-
-    vfs_node_t uevent_link = vfs_child_append(node, "uevent", NULL);
-    uevent_link->type = file_symlink | file_none;
-    uevent_link->mode = 0644;
-    sprintf(name, "/sys/class/graphics/fb%d/device/subsystem/uevent", 0);
-    uevent_link->linkname = strdup(name);
 
     vfs_node_t device = vfs_child_append(node, "device", NULL);
     device->type = file_dir;
@@ -204,4 +191,14 @@ void fbdev_init_sysfs()
     sprintf(uevent_handle->content, "MAJOR=%d\nMINOR=%d\nDEVNAME=/dev/fb%d\nSUBSYSTEM=graphics\n", 29, 0, 0);
     uevent_handle->node = uevent;
     uevent->handle = uevent_handle;
+
+    vfs_node_t subsystem_link = vfs_child_append(node, "subsystem", NULL);
+    subsystem_link->type = file_symlink | file_dir;
+    subsystem_link->mode = 0644;
+    subsystem_link->linkto = subsystem;
+
+    vfs_node_t uevent_link = vfs_child_append(node, "uevent", NULL);
+    uevent_link->type = file_symlink | file_none;
+    uevent_link->mode = 0644;
+    uevent_link->linkto = uevent;
 }

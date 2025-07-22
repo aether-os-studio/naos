@@ -116,7 +116,7 @@ rel_status calculate_relative_path(char *relative, const char *from, const char 
     relative[0] = '\0';
 
     // Add "../" for each segment we need to go up
-    for (size_t i = 0; i < segments_up; i++)
+    for (size_t i = 0; i < segments_up - 1; i++)
     {
         if (pos + 3 >= size)
             return REL_ERROR_MEMORY;

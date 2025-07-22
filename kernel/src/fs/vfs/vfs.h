@@ -21,6 +21,7 @@ enum
     file_epoll = 0x0080UL,   // epoll 设备
     file_ptmx = 0x0100UL,    // ptmx 设备
     file_pts = 0x0200UL,     // pts 设备
+    file_proxy = 0x8000UL,   // 代理节点
 };
 
 typedef struct vfs_node *vfs_node_t;
@@ -139,8 +140,7 @@ struct vfs_node
     uint64_t dev;        // 设备号
     uint64_t rdev;       // 真实设备号
     char *name;          // 名称
-    char *linkname;      // 符号链接名称
-    vfs_node_t link_by;  // 被谁指向
+    vfs_node_t linkto;   // 符号链接节点
     uint64_t inode;      // 节点号
     uint64_t realsize;   // 项目真实占用的空间 (可选)
     uint64_t size;       // 文件大小或若是文件夹则填0
@@ -191,7 +191,7 @@ int vfs_regist(const char *name, vfs_callback_t callback);
 #define PATH_MAX 4096    // 路径最大长度
 #define FILENAME_MAX 256 // 文件名最大长度
 
-vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, bool nosymlink);
+vfs_node_t vfs_open_at(vfs_node_t start, const char *_path);
 
 vfs_node_t vfs_open(const char *_path);
 

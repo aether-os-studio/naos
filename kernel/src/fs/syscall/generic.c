@@ -693,8 +693,8 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
     buf->st_ino = current_task->fd_info->fds[fd]->node->inode;
     buf->st_nlink = 1;
     buf->st_mode = current_task->fd_info->fds[fd]->node->mode | ((current_task->fd_info->fds[fd]->node->type & file_symlink) ? S_IFLNK : (current_task->fd_info->fds[fd]->node->type & file_dir ? S_IFDIR : (current_task->fd_info->fds[fd]->node->type == file_stream ? S_IFCHR : S_IFREG)));
-    buf->st_uid = 0;
-    buf->st_gid = 0;
+    buf->st_uid = current_task->uid;
+    buf->st_gid = current_task->gid;
     buf->st_rdev = current_task->fd_info->fds[fd]->node->rdev;
     buf->st_blksize = current_task->fd_info->fds[fd]->node->blksz;
     buf->st_size = current_task->fd_info->fds[fd]->node->size;
@@ -827,7 +827,7 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
         return (uint64_t)-ENOENT;
     }
 
-    if (!node->linkname && !node->link_by)
+    if (!node->linkto)
     {
         char *p = vfs_get_fullpath(node);
         int str_len = strlen(p);
@@ -844,6 +844,7 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
 
     ssize_t result = vfs_readlink(node, buf, (size_t)size);
     vfs_close(node);
+    buf[result] = 0;
 
     if (result < 0)
     {
