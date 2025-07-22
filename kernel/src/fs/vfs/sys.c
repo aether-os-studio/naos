@@ -92,7 +92,9 @@ ssize_t sysfs_readlink(vfs_node_t node, void *addr, size_t offset, size_t size)
     free(linkto_path);
 
     int len = strnlen(buf, size);
-    memcpy(addr, buf, len);
+    len = MIN(len + 2, size);
+    memcpy(addr, "./", 2);
+    memcpy(addr + 2, buf, len);
     return len;
 }
 

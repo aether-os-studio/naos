@@ -426,6 +426,7 @@ void drm_init_sysfs()
     vfs_node_t cardn_link = vfs_node_alloc(drm_link, (const char *)buf);
     cardn_link->type = file_dir | file_symlink;
     cardn_link->mode = 0644;
+    cardn_link->linkto = cardn;
     handle = malloc(sizeof(sysfs_handle_t));
     memset(handle, 0, sizeof(sysfs_handle_t));
     handle->node = cardn_link;
