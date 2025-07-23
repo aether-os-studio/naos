@@ -1,8 +1,0 @@
-P: /class/input/event0
-N: input/event0
-E: DEVNAME=/dev/input/event0
-E: DEVPATH=/devices/platform/i8042/serio0/input/input0
-E: ID_SEAT=seat0
-E: PRODUCT=11/1/1/0
-E: SUBSYSTEM=subsystem
-E: SYSNAME=event0

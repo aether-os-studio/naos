@@ -5,7 +5,7 @@ use spin::Mutex;
 use crate::rust::bindings::bindings::{PT_FLAG_R, PT_FLAG_W, get_current_page_dir, map_page_range};
 
 pub const KERNEL_HEAP_START: usize = 0xffff_c000_0000_0000;
-pub const KERNEL_HEAP_SIZE: usize = 256 * 1024 * 1024;
+pub const KERNEL_HEAP_SIZE: usize = 512 * 1024 * 1024;
 
 #[global_allocator]
 static KERNEL_ALLOCATOR: LockedHeap = LockedHeap::empty();
@@ -106,6 +106,14 @@ unsafe extern "C" fn heap_init() {
         KERNEL_HEAP_SIZE as u64,
         PT_FLAG_R as u64 | PT_FLAG_W as u64,
     );
+
+    unsafe {
+        core::slice::from_raw_parts_mut(
+            KERNEL_HEAP_START as *mut u64,
+            KERNEL_HEAP_SIZE / size_of::<u64>(),
+        )
+        .fill(0);
+    }
 
     KERNEL_ALLOCATOR
         .lock()
