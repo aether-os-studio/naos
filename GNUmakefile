@@ -148,6 +148,7 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
 		-device qemu-xhci,id=xhci \
+		-device usb-kbd,id=kbd,bus=xhci.0 \
 		-device nvme,drive=harddisk,serial=1234 \
 		-device nvme,drive=rootdisk,serial=5678 \
 		$(QEMUFLAGS)

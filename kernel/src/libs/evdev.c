@@ -454,19 +454,14 @@ bool ctrled = false;
 bool shifted = false;
 bool capsLocked = false;
 
-char handle_kb_event()
+char handle_kb_event(uint8_t scan_code, uint8_t scan_code_1)
 {
-#if defined(__x86_64__)
-    uint8_t scan_code = io_in8(PORT_KB_DATA);
-#endif
     kb_evdev_generate(scan_code);
 
-#if defined(__x86_64__)
     if (scan_code == 0xE0)
     {
-        uint8_t extended_code = io_in8(PORT_KB_DATA);
-        kb_evdev_generate(extended_code);
-        switch (extended_code)
+        kb_evdev_generate(scan_code_1);
+        switch (scan_code_1)
         {
         case 0x48:
             return KEY_BUTTON_UP;
@@ -480,7 +475,6 @@ char handle_kb_event()
             return 0;
         }
     }
-#endif
 
     // Shift checks
     if (shifted == 1 && scan_code & 0x80)

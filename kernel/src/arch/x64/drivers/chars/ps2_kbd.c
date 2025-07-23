@@ -121,7 +121,14 @@ void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
     (void)data;
     (void)regs;
 
-    char out = handle_kb_event();
+    uint8_t scancode = io_in8(PORT_KB_DATA);
+
+    char out = 0;
+
+    if (scancode == 0xE0)
+        out = handle_kb_event(scancode, io_in8(PORT_KB_DATA));
+    else
+        out = handle_kb_event(scancode, 0);
     if (!out)
         return;
 

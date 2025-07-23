@@ -38,6 +38,8 @@ void kbd_init();
 
 void kb_char(task_t *task, char out);
 
+void kb_finalise_stream();
+
 extern char character_table[];
 extern char shifted_character_table[];
 

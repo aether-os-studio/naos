@@ -47,8 +47,7 @@ static int add_pipe_node(struct pipe_node **list, struct usbdevice_s *usbdev, st
  ****************************************************************/
 
 // Send USB HID protocol message.
-static int
-set_protocol(struct usb_pipe *pipe, uint16_t val, uint16_t inferface)
+static int set_protocol(struct usb_pipe *pipe, uint16_t val, uint16_t inferface)
 {
     struct usb_ctrlrequest req;
     req.bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE;
@@ -60,8 +59,7 @@ set_protocol(struct usb_pipe *pipe, uint16_t val, uint16_t inferface)
 }
 
 // Send USB HID SetIdle request.
-static int
-set_idle(struct usb_pipe *pipe, int ms)
+static int set_idle(struct usb_pipe *pipe, int ms)
 {
     struct usb_ctrlrequest req;
     req.bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE;
@@ -204,9 +202,14 @@ struct usbkeyinfo
 
 struct usbkeyinfo LastUSBkey;
 
+extern task_t *kb_task;
+
 // Process USB keyboard data.
 static void handle_key(struct keyevent *data)
 {
+    static bool ctrlPressed = false;
+    static bool shiftPressed = false;
+
     struct usbkeyinfo old;
     old.data = GET_LOW(LastUSBkey.data);
 
@@ -243,6 +246,16 @@ static void handle_key(struct keyevent *data)
     old.modifiers = data->modifiers;
 
     bool shift = (data->modifiers & (0x02 | 0x20)) != 0;
+    if (shift && !shiftPressed)
+    {
+        handle_kb_event(0x2A, 0);
+        shiftPressed = true;
+    }
+    else if (!shift && shiftPressed)
+    {
+        handle_kb_event(0xAA, 0);
+        shiftPressed = false;
+    }
 
     for (i = 0; i < ARRAY_SIZE(data->keys); i++)
     {
@@ -251,15 +264,18 @@ static void handle_key(struct keyevent *data)
             continue;
         // New key pressed.
         uint16_t scancode = KeyToScanCode[key];
-        if (scancode == 0x1C)
+        char k = handle_kb_event(scancode, 0);
+
+        if (kb_task && (k == CHARACTER_ENTER))
         {
-            push_kb_char('\n');
+            if (kb_task->term.c_lflag & ICANON)
+                kb_finalise_stream();
+            else
+                kb_char(kb_task, k);
         }
         else
         {
-            char c = shift ? shifted_character_table[scancode] : character_table[scancode];
-            if (c)
-                push_kb_char(c);
+            kb_char(kb_task, k);
         }
         old.keys[addpos++] = key;
         old.repeatcount = KEYREPEATWAITMS / KEYREPEATMS + 1;
