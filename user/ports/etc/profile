@@ -1,12 +1,12 @@
 # Set the initial path
-export PATH=/bin:/usr/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/sbin
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export LANG=C
 export LIBGL_ALWAYS_SOFTWARE=1
-export SHELL=/bin/bash
-export HOME=/root
+export SHELL="/bin/bash"
+export HOME="/root"
 
-export XDG_RUNTIME_DIR=/run
-export XDG_CONFIG_HOME=$HOME/.config
+export XDG_RUNTIME_DIR="/run"
+export XDG_CONFIG_HOME="$HOME/.config"
 
 export WESTON_LIBINPUT_LOG_PRIORITY=debug
 

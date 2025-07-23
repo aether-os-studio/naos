@@ -1,6 +1,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <fs/fs_syscall.h>
+#include <fs/vfs/pipe.h>
 #include <net/net_syscall.h>
 
 char *at_resolve_pathname(int dirfd, char *pathname)

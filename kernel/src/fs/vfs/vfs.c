@@ -507,16 +507,40 @@ err:
 
 vfs_node_t vfs_open(const char *_path)
 {
+    const char *env_path[] = {
+        "/usr/bin",
+        "/bin",
+    };
+
+    vfs_node_t node = NULL;
+
     if (current_task && current_task->cwd)
     {
-        vfs_node_t node = vfs_open_at(current_task->cwd, _path);
-        return node;
+        node = vfs_open_at(current_task->cwd, _path);
     }
     else
     {
-        vfs_node_t node = vfs_open_at(rootdir, _path);
-        return node;
+        node = vfs_open_at(rootdir, _path);
     }
+
+    if (!node)
+    {
+        vfs_node_t env_node = NULL;
+        for (int i = 0; i < sizeof(env_path) / sizeof(env_path[0]); i++)
+        {
+            env_node = vfs_open_at(rootdir, env_path[i]);
+            if (env_node)
+            {
+                node = vfs_open_at(env_node, _path);
+                if (node)
+                {
+                    break;
+                }
+            }
+        }
+    }
+
+    return node;
 }
 
 void vfs_update(vfs_node_t node)

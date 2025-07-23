@@ -9,7 +9,7 @@ void syscall_init()
 {
 }
 
-extern int sys_pipe(int pipefd[2]);
+extern int sys_pipe(int pipefd[2], uint64_t flags);
 
 // Beware the 65 character limit!
 char sysname[] = "Next Aether OS";
@@ -236,8 +236,7 @@ void aarch64_do_syscall(struct pt_regs *frame)
         frame->x0 = 0;
         break;
     case SYS_PIPE2:
-        // todo: support flags
-        frame->x0 = sys_pipe((int *)arg1);
+        frame->x0 = sys_pipe((int *)arg1, arg2);
         break;
     case SYS_STATFS:
         frame->x0 = 0;

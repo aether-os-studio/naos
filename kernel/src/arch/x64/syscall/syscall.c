@@ -650,7 +650,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         break;
     }
 
-    if ((int)regs->rax < 0 && ((regs->rax & 0xffffffff00000000) == 0))
+    if ((int)regs->rax < 0 && ((regs->rax & 0x8000000000000000) == 0))
         regs->rax |= 0xffffffff00000000;
     else if ((int64_t)regs->rax < 0 && ((regs->rax & 0xffffffff) == 0))
         regs->rax = 0;

@@ -510,4 +510,6 @@ struct futex_wait
 
 int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *uaddr2, int val3);
 
+struct task_block_list;
+typedef struct task_block_list task_block_list_t;
 void wake_blocked_tasks(task_block_list_t *head);
