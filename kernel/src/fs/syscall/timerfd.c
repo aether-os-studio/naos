@@ -166,7 +166,7 @@ static struct vfs_callback timerfd_callbacks = {
 void timerfd_init()
 {
     timerfdfs_id = vfs_regist("timerfd", &timerfd_callbacks);
-    timerfdfs_root = vfs_node_alloc(rootdir, "timer");
+    timerfdfs_root = vfs_node_alloc(NULL, "timer");
     timerfdfs_root->type = file_dir;
     timerfdfs_root->mode = 0644;
     timerfdfs_root->fsid = timerfdfs_id;

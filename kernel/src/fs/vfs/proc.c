@@ -123,7 +123,7 @@ static struct vfs_callback callbacks = {
 void proc_init()
 {
     procfs_id = vfs_regist("proc", &callbacks);
-    procfs_root = vfs_node_alloc(rootdir, "proc");
+    procfs_root = vfs_child_append(rootdir, "proc", NULL);
     procfs_root->type = file_dir;
     procfs_root->mode = 0644;
     procfs_root->fsid = procfs_id;

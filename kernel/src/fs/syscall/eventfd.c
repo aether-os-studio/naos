@@ -142,7 +142,7 @@ static struct vfs_callback eventfd_callbacks = {
 void eventfd_init()
 {
     eventfdfs_id = vfs_regist("eventfdfs", &eventfd_callbacks);
-    eventfdfs_root = vfs_node_alloc(rootdir, "event");
+    eventfdfs_root = vfs_node_alloc(NULL, "event");
     eventfdfs_root->type = file_dir;
     eventfdfs_root->mode = 0644;
     eventfdfs_root->fsid = eventfdfs_id;

@@ -1606,7 +1606,7 @@ void socketfs_init()
     memset(sockets, 0, sizeof(sockets));
     unix_socket_fsid = vfs_regist("socketfs", &socket_callback);
     unix_accept_fsid = vfs_regist("socketfs", &accept_callback);
-    sockfs_root = vfs_node_alloc(rootdir, "sock");
+    sockfs_root = vfs_node_alloc(NULL, "sock");
     sockfs_root->type = file_dir;
     sockfs_root->mode = 0644;
     memset(&first_unix_socket, 0, sizeof(socket_handle_t));

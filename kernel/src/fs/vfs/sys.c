@@ -135,7 +135,7 @@ void sysfs_init()
     sysfs_handle_t *handle = NULL;
 
     sysfs_id = vfs_regist("sysfs", &callback);
-    sysfs_root = vfs_node_alloc(rootdir, "sys");
+    sysfs_root = vfs_child_append(rootdir, "sys", NULL);
     sysfs_root->type = file_dir;
     sysfs_root->fsid = sysfs_id;
     sysfs_root->mode = 0644;

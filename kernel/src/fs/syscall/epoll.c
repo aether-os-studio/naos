@@ -324,7 +324,7 @@ static struct vfs_callback epoll_callbacks = {
 void epoll_init()
 {
     epollfs_id = vfs_regist("epollfs", &epoll_callbacks);
-    epollfs_root = vfs_node_alloc(rootdir, "epoll");
+    epollfs_root = vfs_node_alloc(NULL, "epoll");
     epollfs_root->type = file_dir;
     epollfs_root->mode = 0644;
     epollfs_root->fsid = epollfs_id;

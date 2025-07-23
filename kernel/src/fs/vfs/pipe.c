@@ -295,7 +295,7 @@ static struct vfs_callback callbacks = {
 void pipefs_init()
 {
     pipefs_id = vfs_regist("pipefs", &callbacks);
-    pipefs_root = vfs_node_alloc(rootdir, "pipe");
+    pipefs_root = vfs_node_alloc(NULL, "pipe");
     pipefs_root->type = file_dir;
     pipefs_root->mode = 0644;
     pipefs_root->fsid = pipefs_id;
