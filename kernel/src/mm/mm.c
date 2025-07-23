@@ -188,3 +188,56 @@ void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size)
 
     mem_map_op_lock = false;
 }
+
+uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags)
+{
+    uint64_t indexs[ARCH_MAX_PT_LEVEL];
+    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++)
+    {
+        indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(vaddr, i + 1);
+    }
+
+    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL - 1; i++)
+    {
+        uint64_t index = indexs[i];
+        uint64_t addr = pgdir[index];
+        if (ARCH_PT_IS_LARGE(addr))
+        {
+            pgdir[index] &= ~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL);
+            pgdir[index] |= flags;
+        }
+        if (!ARCH_PT_IS_TABLE(addr))
+        {
+            return 0;
+        }
+        pgdir = (uint64_t *)phys_to_virt(addr & (~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL)));
+    }
+
+    uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
+
+    pgdir[index] &= ~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL);
+    pgdir[index] |= flags;
+
+    arch_flush_tlb(vaddr);
+
+    return 0;
+}
+
+uint64_t map_change_attribute_range(uint64_t *pgdir, uint64_t vaddr, uint64_t len, uint64_t flags)
+{
+    while (mem_map_op_lock)
+    {
+        arch_pause();
+    }
+
+    mem_map_op_lock = true;
+
+    for (uint64_t va = vaddr; va < vaddr + len; va += DEFAULT_PAGE_SIZE)
+    {
+        map_change_attribute(pgdir, va, get_arch_page_table_flags(flags));
+    }
+
+    mem_map_op_lock = false;
+
+    return 0;
+}

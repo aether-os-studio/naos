@@ -198,7 +198,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = sys_mremap(arg1, arg2, arg3, arg4, arg5);
         break;
     case SYS_MPROTECT:
-        regs->rax = 0;
+        regs->rax = sys_mprotect(arg1, arg2, arg3);
         break;
     case SYS_MUNMAP:
         regs->rax = sys_munmap(arg1, arg2);

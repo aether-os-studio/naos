@@ -585,6 +585,8 @@ int vfs_close(vfs_node_t node)
         bool real_close = callbackof(node, close)(node->handle);
         if (real_close)
         {
+            if (node->linkto)
+                vfs_close(node->linkto);
             node->handle = NULL;
         }
     }

@@ -66,7 +66,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
     }
     else
     {
-        uint64_t pt_flags = PT_FLAG_U | PT_FLAG_W;
+        uint64_t pt_flags = PT_FLAG_W | PT_FLAG_U;
 
         if (prot & PROT_READ)
             pt_flags |= PT_FLAG_R;
@@ -77,12 +77,31 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
 
         map_page_range(get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)), 0, (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
 
-        memset((void *)addr, 0, len);
-
         spin_unlock(&mm_op_lock);
 
         return addr;
     }
+}
+
+uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot)
+{
+    if (check_user_overflow(addr, len))
+    {
+        return -EFAULT;
+    }
+
+    uint64_t pt_flags = PT_FLAG_U;
+
+    if (prot & PROT_READ)
+        pt_flags |= PT_FLAG_R;
+    if (prot & PROT_WRITE)
+        pt_flags |= PT_FLAG_W;
+    if (prot & PROT_EXEC)
+        pt_flags |= PT_FLAG_X;
+
+    map_change_attribute_range(get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)), (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
+
+    return 0;
 }
 
 uint64_t sys_munmap(uint64_t addr, uint64_t size)

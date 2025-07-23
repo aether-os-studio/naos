@@ -16,7 +16,6 @@ extern crate alloc;
 pub mod arch;
 pub mod drivers;
 pub mod fs;
-pub mod ipc;
 pub mod libs;
 pub mod mm;
 pub mod net;
