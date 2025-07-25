@@ -7,7 +7,7 @@ from_source=glib2
 revision=1
 imagedeps="python3-docutils"
 hostdeps="gcc pkg-config"
-deps="core-libs pcre2 libffi zlib util-linux"
+deps="core-libs pcre2 libffi zlib"
 
 configure() {
     meson_configure \

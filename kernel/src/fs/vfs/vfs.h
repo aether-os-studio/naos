@@ -21,7 +21,7 @@ enum
     file_epoll = 0x0080UL,   // epoll 设备
     file_ptmx = 0x0100UL,    // ptmx 设备
     file_pts = 0x0200UL,     // pts 设备
-    // file_proxy = 0x8000UL,   // 代理节点
+    file_proxy = 0x8000UL,   // 代理节点
 };
 
 typedef struct vfs_node *vfs_node_t;

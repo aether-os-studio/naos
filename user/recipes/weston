@@ -1,0 +1,43 @@
+#! /bin/sh
+
+name=weston
+skip_pkg_check=yes
+version=9.0.92git
+revision=1
+git_url="https://gitlab.freedesktop.org/wayland/weston.git"
+commit=18d9ad98b1f383b0e5a0c8a25f289a9085bcecc1
+imagedeps="build-essential pkg-config libwayland-dev"
+hostdeps="gcc pkg-config"
+deps="core-libs libxkbcommon wayland wayland-protocols pixman libinput libdrm cairo pam libxcursor lcms"
+
+configure() {
+    CFLAGS="$TARGET_CFLAGS -Wno-implicit-function-declaration" \
+    CXXFLAGS="$TARGET_CXXFLAGS -Wno-implicit-function-declaration" \
+    LDFLAGS="$TARGET_LDFLAGS" \
+    meson_configure_noflags \
+        --buildtype=debug \
+        -Dbackend-default=fbdev \
+        -Dbackend-drm=false \
+        -Dbackend-drm-screencast-vaapi=false \
+        -Dbackend-x11=false \
+        -Dbackend-rdp=false \
+        -Dcolor-management-colord=false \
+        -Ddemo-clients=false \
+        -Dsystemd=false \
+        -Dremoting=false \
+        -Drenderer-gl=false \
+        -Dimage-jpeg=false \
+        -Dimage-webp=false \
+        -Dlauncher-logind=false \
+        -Dpipewire=false \
+        -Dsimple-clients=[] \
+        -Dxwayland=false
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+}

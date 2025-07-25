@@ -1,0 +1,29 @@
+#! /bin/sh
+
+name=libudev
+skip_pkg_check=yes
+version=3.2.9
+revision=1
+tarball_url="https://dev.gentoo.org/~blueness/eudev/eudev-3.2.9.tar.gz"
+tarball_blake2b="8792ded8a7d1dfbc16fae249283b58251656961cf360d72932c3fc6ea3e752f6334c21e9ebd9ee3ad0da03a590f8405b3bb7413eec3f964984225f7813311ef6"
+imagedeps="build-essential gperf"
+hostdeps="gcc pkg-config"
+deps="mlibc libgcc"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure \
+        --disable-blkid \
+        --disable-kmod
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+}

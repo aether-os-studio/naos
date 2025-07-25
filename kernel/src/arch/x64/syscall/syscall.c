@@ -335,6 +335,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_POLL:
         regs->rax = sys_poll((struct pollfd *)arg1, arg2, arg3);
         break;
+    case SYS_PPOLL:
+        regs->rax = sys_ppoll((struct pollfd *)arg1, arg2, (struct timespec *)arg3, (sigset_t *)arg4, arg5);
+        break;
     case SYS_SIGALTSTACK:
         regs->rax = 0;
         break;
