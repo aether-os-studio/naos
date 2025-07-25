@@ -4,7 +4,7 @@ void bitmap_init(Bitmap *bitmap, uint64_t *buffer, size_t size)
 {
     bitmap->buffer = buffer;
     bitmap->length = size * 64;
-    memset(buffer, 0, size);
+    memset(buffer, 0, size * 8);
 }
 
 bool bitmap_get(const Bitmap *bitmap, size_t index)

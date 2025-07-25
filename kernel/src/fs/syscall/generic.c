@@ -618,7 +618,7 @@ uint64_t sys_stat(const char *fn, struct stat *buf)
     buf->st_dev = node->dev;
     buf->st_ino = node->inode;
     buf->st_nlink = 1;
-    buf->st_mode = node->mode | ((node->type & file_symlink) ? S_IFLNK : (node->type & file_dir ? S_IFDIR : (node->type == file_stream ? S_IFCHR : S_IFREG)));
+    buf->st_mode = node->mode | ((node->type & file_symlink) ? S_IFLNK : (node->type & file_dir ? S_IFDIR : ((node->type & file_stream) ? S_IFCHR : S_IFREG)));
     buf->st_uid = current_task->uid;
     buf->st_gid = current_task->gid;
     buf->st_rdev = node->rdev;
@@ -645,7 +645,8 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
     buf->st_dev = current_task->fd_info->fds[fd]->node->dev;
     buf->st_ino = current_task->fd_info->fds[fd]->node->inode;
     buf->st_nlink = 1;
-    buf->st_mode = current_task->fd_info->fds[fd]->node->mode | ((current_task->fd_info->fds[fd]->node->type & file_symlink) ? S_IFLNK : (current_task->fd_info->fds[fd]->node->type & file_dir ? S_IFDIR : (current_task->fd_info->fds[fd]->node->type == file_stream ? S_IFCHR : S_IFREG)));
+    buf->st_mode = current_task->fd_info->fds[fd]->node->mode | (((current_task->fd_info->fds[fd]->node->type & file_symlink) ? S_IFLNK : (current_task->fd_info->fds[fd]->node->type & file_dir ? S_IFDIR : (current_task->fd_info->fds[fd]->node->type == file_stream) ? S_IFCHR
+                                                                                                                                                                                                                                                                         : S_IFREG)));
     buf->st_uid = current_task->uid;
     buf->st_gid = current_task->gid;
     buf->st_rdev = current_task->fd_info->fds[fd]->node->rdev;

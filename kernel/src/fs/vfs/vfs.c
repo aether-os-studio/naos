@@ -463,35 +463,37 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path)
             if (!current->parent || !current->linkto)
                 goto err;
 
-            current->type = file_symlink | file_proxy;
+            // current->type = file_symlink | file_proxy;
 
-            vfs_node_t target = current->linkto;
-            if (!target)
-                goto err;
+            // vfs_node_t target = current->linkto;
+            // if (!target)
+            //     goto err;
 
-            target->refcount++;
+            // target->refcount++;
 
-            current->type |= target->type;
-            current->size = target->size;
-            current->blksz = target->blksz;
+            // current->type |= target->type;
+            // current->size = target->size;
+            // current->blksz = target->blksz;
 
-            current->fsid = target->fsid;
-            current->handle = target->handle;
-            current->root = target->root;
-            current->mode = target->mode;
+            // current->fsid = target->fsid;
+            // current->handle = target->handle;
+            // current->root = target->root;
+            // current->mode = target->mode;
 
-            if (target->type & file_dir)
-            {
-                list_foreach(target->child, i)
-                {
-                    vfs_node_t child_node = (vfs_node_t)i->data;
-                    if (!vfs_child_find(current, child_node->name))
-                    {
-                        list_prepend(current->child, child_node);
-                        child_node->refcount++;
-                    }
-                }
-            }
+            // if (target->type & file_dir)
+            // {
+            //     list_foreach(target->child, i)
+            //     {
+            //         vfs_node_t child_node = (vfs_node_t)i->data;
+            //         if (!vfs_child_find(current, child_node->name))
+            //         {
+            //             list_prepend(current->child, child_node);
+            //             child_node->refcount++;
+            //         }
+            //     }
+            // }
+
+            current = current->linkto;
 
             continue;
         }
@@ -507,11 +509,6 @@ err:
 
 vfs_node_t vfs_open(const char *_path)
 {
-    const char *env_path[] = {
-        "/usr/bin",
-        "/bin",
-    };
-
     vfs_node_t node = NULL;
 
     if (current_task && current_task->cwd)
@@ -521,23 +518,6 @@ vfs_node_t vfs_open(const char *_path)
     else
     {
         node = vfs_open_at(rootdir, _path);
-    }
-
-    if (!node)
-    {
-        vfs_node_t env_node = NULL;
-        for (int i = 0; i < sizeof(env_path) / sizeof(env_path[0]); i++)
-        {
-            env_node = vfs_open_at(rootdir, env_path[i]);
-            if (env_node)
-            {
-                node = vfs_open_at(env_node, _path);
-                if (node)
-                {
-                    break;
-                }
-            }
-        }
     }
 
     return node;
@@ -570,11 +550,11 @@ int vfs_close(vfs_node_t node)
         return 0;
     if (node == rootdir)
         return 0;
-    if (node->type & file_proxy)
-    {
-        node->refcount--;
-        return 0;
-    }
+    // if (node->type & file_proxy)
+    // {
+    //     node->refcount--;
+    //     return 0;
+    // }
     if (node->type & file_dir)
         return 0;
     spin_lock(&node->spin);

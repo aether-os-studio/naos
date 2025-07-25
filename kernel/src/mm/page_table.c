@@ -198,6 +198,7 @@ void free_page_table(task_mm_info_t *directory)
     if (directory->ref_count == 1)
     {
         free_page_table_recursive((page_table_t *)phys_to_virt(directory->page_table_addr), ARCH_MAX_PT_LEVEL);
+        free(directory);
     }
     else
     {
@@ -205,6 +206,14 @@ void free_page_table(task_mm_info_t *directory)
     }
 }
 
+task_mm_info_t kernel_mm_info;
+
 void page_table_init()
 {
+    kernel_mm_info.page_table_addr = (uint64_t)virt_to_phys(get_current_page_dir(false));
+    task_mm_info_t *new_mm_info = clone_page_table(&kernel_mm_info, 0);
+#if defined(__x86_64__)
+    asm volatile("movq %0, %%cr3" ::"r"(new_mm_info->page_table_addr));
+#endif
+    free(new_mm_info);
 }

@@ -40,8 +40,6 @@ void frame_init()
 
     memory_size = get_memory_size();
 
-    uint64_t last_size = UINT64_MAX;
-
     size_t bitmap_size = (memory_size / DEFAULT_PAGE_SIZE + 63) / 64;
     uint64_t bitmap_address = 0;
 
@@ -65,14 +63,15 @@ void frame_init()
     for (uint64_t i = 0; i < memory_map->entry_count; i++)
     {
         struct limine_memmap_entry *region = memory_map->entries[i];
-        if (region->type == LIMINE_MEMMAP_USABLE)
-        {
-            size_t start_frame = region->base / DEFAULT_PAGE_SIZE;
-            size_t frame_count = region->length / DEFAULT_PAGE_SIZE;
-            origin_frames += frame_count;
-            bitmap_set_range(bitmap, start_frame, start_frame + frame_count, true);
-        }
+
+        size_t start_frame = region->base / DEFAULT_PAGE_SIZE;
+        size_t frame_count = region->length / DEFAULT_PAGE_SIZE;
+        origin_frames += frame_count;
+        bitmap_set_range(bitmap, start_frame, start_frame + frame_count, (region->type == LIMINE_MEMMAP_USABLE));
     }
+
+    size_t low_1M_frame_count = 0x100000 / DEFAULT_PAGE_SIZE;
+    bitmap_set_range(bitmap, 0, low_1M_frame_count, false);
 
     size_t bitmap_frame_start = bitmap_address / DEFAULT_PAGE_SIZE;
     size_t bitmap_frame_count = (bitmap_size + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE;
@@ -80,7 +79,7 @@ void frame_init()
     bitmap_set_range(bitmap, bitmap_frame_start, bitmap_frame_end, false);
 
     frame_allocator.origin_frames = origin_frames;
-    frame_allocator.usable_frames = origin_frames - bitmap_frame_count;
+    frame_allocator.usable_frames = origin_frames - bitmap_frame_count - low_1M_frame_count;
 }
 
 static uint64_t last_alloc_pos = 0;

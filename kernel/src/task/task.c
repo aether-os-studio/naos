@@ -565,6 +565,8 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         injected_argv[1] = path;
         injected_argv[0] = interpreter_name;
 
+        free(fullpath);
+
         return task_execve((const char *)injected_argv[0], injected_argv, envp);
     }
 
@@ -585,6 +587,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
             if (new_envp[i])
                 free(new_envp[i]);
         free(new_envp);
+        free(fullpath);
         can_schedule = true;
         execve_lock = false;
         return (uint64_t)-EINVAL;
@@ -601,6 +604,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
             if (new_envp[i])
                 free(new_envp[i]);
         free(new_envp);
+        free(fullpath);
         can_schedule = true;
         execve_lock = false;
         return (uint64_t)-EINVAL;
@@ -630,6 +634,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
                     if (new_envp[i])
                         free(new_envp[i]);
                 free(new_envp);
+                free(fullpath);
                 can_schedule = true;
                 execve_lock = false;
                 return (uint64_t)-ENOENT;
@@ -827,7 +832,7 @@ void task_exit_inner(task_t *task, int64_t code)
     task->status = (uint64_t)code;
 
     task->fd_info->ref_count--;
-    if (task->fd_info->ref_count <= 0)
+    if (task->fd_info->ref_count <= 1)
     {
         for (uint64_t i = 0; i < MAX_FD_NUM; i++)
         {
@@ -1000,8 +1005,13 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
 
         tasks[target->pid] = NULL;
 
-        free_frames_bytes((void *)target->kernel_stack, STACK_SIZE);
-        free_frames_bytes((void *)target->syscall_stack, STACK_SIZE);
+        free(target->arch_context);
+
+        free_page_table(target->arch_context->mm);
+
+        free_frames_bytes((void *)(target->kernel_stack - STACK_SIZE), STACK_SIZE);
+        free_frames_bytes((void *)(target->syscall_stack - STACK_SIZE), STACK_SIZE);
+
         free(target);
     }
 

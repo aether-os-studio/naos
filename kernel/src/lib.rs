@@ -31,8 +31,11 @@ pub fn ref_to_mut<T>(x: &T) -> &mut T {
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
+    serial_println!("{}", info);
     println!("{}", info);
+
     unsafe { task_exit(-1) };
+
     loop {
         spin_loop();
     }

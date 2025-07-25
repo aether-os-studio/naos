@@ -524,7 +524,7 @@ void dev_init_after_sysfs()
     kb_input_event->event_bit = kb_event_bit;
     kb_input_event->device_events.read_ptr = 0;
     kb_input_event->device_events.write_ptr = 0;
-    circular_int_init(&kb_input_event->device_events, 16384);
+    circular_int_init(&kb_input_event->device_events, 4096);
     vfs_node_t kb_node = regist_dev("input/event0", inputdev_event_read, inputdev_event_write, inputdev_ioctl, inputdev_poll, NULL, kb_input_event);
     dev_input_event_t *mouse_input_event = malloc(sizeof(dev_input_event_t));
     mouse_input_event->inputid.bustype = 0x05;   // BUS_PS2
@@ -534,7 +534,7 @@ void dev_init_after_sysfs()
     mouse_input_event->event_bit = mouse_event_bit;
     mouse_input_event->device_events.read_ptr = 0;
     mouse_input_event->device_events.write_ptr = 0;
-    circular_int_init(&mouse_input_event->device_events, 16384);
+    circular_int_init(&mouse_input_event->device_events, 4096);
     vfs_node_t mouse_node = regist_dev("input/event1", inputdev_event_read, inputdev_event_write, inputdev_ioctl, inputdev_poll, NULL, mouse_input_event);
 
     regist_dev("null", null_dev_read, null_dev_write, NULL, NULL, NULL, NULL);

@@ -5,7 +5,7 @@ use spin::Mutex;
 use crate::rust::bindings::bindings::{PT_FLAG_R, PT_FLAG_W, get_current_page_dir, map_page_range};
 
 pub const KERNEL_HEAP_START: usize = 0xffff_c000_0000_0000;
-pub const KERNEL_HEAP_SIZE: usize = 512 * 1024 * 1024;
+pub const KERNEL_HEAP_SIZE: usize = 128 * 1024 * 1024;
 
 #[global_allocator]
 static KERNEL_ALLOCATOR: LockedHeap = LockedHeap::empty();
@@ -14,6 +14,11 @@ static C_ALLOCATION_MAP: Mutex<BTreeMap<usize, (usize, usize, usize)>> =
     Mutex::new(BTreeMap::new());
 
 fn do_malloc(size: usize) -> usize {
+    #[cfg(target_arch = "x86_64")]
+    let irq = x86_64::instructions::interrupts::are_enabled();
+    #[cfg(target_arch = "x86_64")]
+    x86_64::instructions::interrupts::disable();
+
     let space: Vec<u8> = alloc::vec![0u8; size];
 
     assert!(space.len() == size);
@@ -36,8 +41,27 @@ fn do_malloc(size: usize) -> usize {
         guard.insert(vaddr, (vaddr, len, cap));
         drop(guard);
         unsafe { core::slice::from_raw_parts_mut(vaddr as *mut u8, size) }.fill(0);
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            if irq {
+                x86_64::instructions::interrupts::enable();
+            } else {
+                x86_64::instructions::interrupts::disable();
+            }
+        }
+
         return vaddr;
     } else {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if irq {
+                x86_64::instructions::interrupts::enable();
+            } else {
+                x86_64::instructions::interrupts::disable();
+            }
+        }
+
         return 0;
     }
 }
@@ -62,6 +86,11 @@ unsafe extern "C" fn realloc(old_ptr: *mut core::ffi::c_void, new_size: usize) -
         return 0;
     }
 
+    #[cfg(target_arch = "x86_64")]
+    let irq = x86_64::instructions::interrupts::are_enabled();
+    #[cfg(target_arch = "x86_64")]
+    x86_64::instructions::interrupts::disable();
+
     let vaddr = old_ptr as usize;
     let guard = C_ALLOCATION_MAP.lock();
     let Some(&(old_vaddr, old_len, old_cap)) = guard.get(&vaddr) else {
@@ -80,11 +109,25 @@ unsafe extern "C" fn realloc(old_ptr: *mut core::ffi::c_void, new_size: usize) -
     drop(guard);
     drop(Vec::from_raw_parts(old_vaddr as *mut u8, old_len, old_cap));
 
+    #[cfg(target_arch = "x86_64")]
+    {
+        if irq {
+            x86_64::instructions::interrupts::enable();
+        } else {
+            x86_64::instructions::interrupts::disable();
+        }
+    }
+
     new_ptr as usize
 }
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn free(ptr: *const core::ffi::c_void) {
+    #[cfg(target_arch = "x86_64")]
+    let irq = x86_64::instructions::interrupts::are_enabled();
+    #[cfg(target_arch = "x86_64")]
+    x86_64::instructions::interrupts::disable();
+
     let vaddr = ptr as usize;
     let mut guard = C_ALLOCATION_MAP.lock();
     let p = guard.remove(&vaddr);
@@ -95,6 +138,15 @@ unsafe extern "C" fn free(ptr: *const core::ffi::c_void) {
     }
     let (vaddr, len, cap) = p.unwrap();
     drop(Vec::from_raw_parts(vaddr as *mut u8, len, cap));
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        if irq {
+            x86_64::instructions::interrupts::enable();
+        } else {
+            x86_64::instructions::interrupts::disable();
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
