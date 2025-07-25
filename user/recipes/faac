@@ -1,0 +1,28 @@
+#! /bin/sh
+
+name=faac
+version=1.31.1
+revision=1
+tarball_url="https://github.com/lfs-book/faac/archive/v${version}/faac-${version}.tar.gz"
+tarball_blake2b="490bed53a23029fa70d961ab6ddee689657c9758ba0be055f762fc21e0e1a316b054ba89af34584f788734e2e4ffafaf14ad3ab3dccf0b62a9c422af62ecf2cb"
+source_hostdeps="autoconf automake libtool pkg-config"
+hostdeps="gcc autoconf automake libtool pkg-config"
+deps="core-libs"
+
+prepare() {
+    autoreconf -fvi
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

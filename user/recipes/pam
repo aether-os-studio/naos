@@ -1,0 +1,33 @@
+#! /bin/sh
+
+name=pam
+version=1.7.0
+revision=1
+tarball_url="https://github.com/linux-pam/linux-pam/releases/download/v${version}/Linux-PAM-${version}.tar.xz"
+tarball_blake2b="39c8c2ccc6f7d125d12d49439ae44cb8fe115f0529549269246e54f4b4de0b3b24c1099e4d3fa39d4e477af8a92b66dd6dc2cb93f0643ab7b56bcaabdd3b8539"
+# builddeps="base"
+imagedeps="build-essential"
+hostdeps="gcc pkg-config"
+deps="core-libs libintl"
+
+configure() {
+    meson_configure \
+        -Ddocdir=${prefix}/share/doc/Linux-PAM-${version} \
+        -Ddocs=disabled
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR=${dest_dir} meson install --no-rebuild
+
+    rm -fv ${dest_dir}/etc/pam.d/other
+    chmod -v 4755 ${dest_dir}${prefix}/bin/unix_chkpwd
+
+    mkdir -pv ${dest_dir}/etc/pam.d/
+    cp -v "${base_dir}"/build-support/pam/* "${dest_dir}"/etc/pam.d/
+
+    post_package_strip
+}

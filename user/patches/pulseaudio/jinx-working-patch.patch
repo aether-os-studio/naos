@@ -1,0 +1,12 @@
+diff -urN --no-dereference pulseaudio-clean/meson.build pulseaudio-workdir/meson.build
+--- pulseaudio-clean/meson.build
++++ pulseaudio-workdir/meson.build
+@@ -384,6 +384,8 @@
+   libintl_dep = cc.find_library('intl')
+ endif
+ 
++libintl_dep = cc.find_library('intl')
++
+ # Symbols
+ 
+ if cc.has_header_symbol('signal.h', 'SIGXCPU')

@@ -1,0 +1,36 @@
+#! /bin/sh
+
+name=cargo-cbuild
+from_source=cargo-cbuild
+revision=1
+imagedeps="build-essential gcc libssl-dev pkg-config"
+hostdeps="rust"
+# Needed for `cargo fetch` during configure
+allow_network=yes
+
+configure() {
+    cp -rp "${source_dir}"/. ./
+
+        CARGO_HOME="${CARGO_HOME}" \
+    cargo fetch \
+        --target x86_64-unknown-linux-gnu
+}
+
+build() {
+        CARGO_HOME="${CARGO_HOME}" \
+    cargo build \
+        --release \
+        --offline \
+        --target x86_64-unknown-linux-gnu
+}
+
+package() {
+    find target/x86_64-unknown-linux-gnu/release \
+        -maxdepth 1 \
+        -type f \
+        -executable \
+        -exec install -D -m755 -t "${dest_dir}${prefix}/bin" {} +
+
+        strip_command=strip \
+    post_package_strip
+}

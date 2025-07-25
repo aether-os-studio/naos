@@ -1,0 +1,23 @@
+#! /bin/sh
+
+name=libsndfile
+version=1.2.2
+revision=1
+tarball_url="https://github.com/libsndfile/libsndfile/releases/download/${version}/libsndfile-${version}.tar.xz"
+tarball_blake2b="bc8e49983d9ad9dfd98984e2ffef501c6f576480e556e9f9ef91c7d597524cc1bb8baed15dfef8e239f72c42136c524117029eb8271f3a2c9d607fee490279b5"
+hostdeps="gcc pkg-config"
+deps="core-libs alsa-lib flac libvorbis opus sqlite"
+
+configure() {
+    cmake_configure
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

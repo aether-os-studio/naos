@@ -1,0 +1,34 @@
+#! /bin/sh
+
+name=modemmanager
+version=1.24.0
+revision=1
+tarball_url="https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/archive/${version}/ModemManager-${version}.tar.gz"
+tarball_blake2b="8d7e3720375740dc4d4be2d4b3c12d26b4aed2a25dedba6f600e3eab4b20060e2fbde48ec44cf9aeed52b8ee88a4eb0ada9602922ad811878cde6f42181a0a85"
+imagedeps="build-essential patchelf"
+hostdeps="gcc pkg-config glib2 gobject-introspection vala"
+deps="core-libs libgudev libmbim libqmi polkit dbus"
+
+configure() {
+    vala_env meson_configure \
+        -Dbash_completion=false \
+        -Dman=false \
+        -Dqrtr=false \
+        -Dudevdir=${prefix}/lib/udev
+}
+
+build() {
+    gi_env vala_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    mkdir -pv ${dest_dir}${prefix}/share/polkit-1/actions
+    mkdir -pv ${dest_dir}${prefix}/lib/systemd/system
+    mv -v ${dest_dir}${sysroot_dir}${prefix}/share/polkit-1/actions/* ${dest_dir}${prefix}/share/polkit-1/actions/
+    mv -v ${dest_dir}${sysroot_dir}${prefix}/lib/systemd/system/* ${dest_dir}${prefix}/lib/systemd/system/
+    rm -rv ${dest_dir}${sysroot_dir}/
+
+    post_package_strip
+}

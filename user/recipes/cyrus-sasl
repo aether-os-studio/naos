@@ -1,0 +1,39 @@
+#! /bin/sh
+
+name=cyrus-sasl
+version=2.1.28
+revision=1
+tarball_url="https://github.com/cyrusimap/cyrus-sasl/releases/download/cyrus-sasl-${version}/cyrus-sasl-${version}.tar.gz"
+tarball_blake2b="6cca8c26cebb9c2ee5d539c43797d30b6309a476ec4233225789978e1d7315c4ea5d2abbc7f5464be0f3c0de5fd9212706b43fbc92f40b76cd0b1013cc00f823"
+imagedeps="build-essential"
+hostdeps="gcc pkg-config"
+deps="core-libs pam sqlite lmdb openssl"
+
+prepare() {
+    # Fix some problems identified by gcc 14
+    sed '/saslint/a #include <time.h>'       -i ${source_dir}/lib/saslutil.c
+    sed '/plugin_common/a #include <time.h>' -i ${source_dir}/plugins/cram.c
+
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure \
+        CFLAGS="$TARGET_CFLAGS -std=gnu17" \
+        --enable-auth-sasldb \
+        --with-dblib=lmdb \
+        --with-dbpath=/var/lib/sasl/sasldb2 \
+        --with-sphinx-build=no \
+        --with-saslauthd=/var/run/saslauthd
+}
+
+build() {
+    # This package does not support parallel build
+    make -j1
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

@@ -1,0 +1,28 @@
+#! /bin/sh
+
+name=xf86-input-evdev
+version=2.11.0
+revision=1
+tarball_url="https://www.x.org/archive/individual/driver/xf86-input-evdev-${version}.tar.xz"
+tarball_blake2b="11e89f0d102f94499d3d848d7047e97274b173535c22f6aefa7715dd0f7b8058bf1cedd65bde7d3eef954ccfb65b62c37ceda49f349490085098e1c39791d561"
+hostdeps="gcc pkg-config"
+deps="core-libs libevdev xorg-proto xorg-server"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure \
+        --with-sdkdir="${prefix}/include/xorg"
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

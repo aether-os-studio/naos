@@ -1,0 +1,29 @@
+#! /bin/sh
+
+name=kmod
+version=34
+revision=2
+tarball_url="https://cdn.kernel.org/pub/linux/utils/kernel/kmod/kmod-${version}.tar.xz"
+tarball_blake2b="115e7e84efd33bfc3e16b57a27ba8cb1b56056800b4d86664188cf2a5d7a5f59484b1b536b6760d153fec5ca89c9da5fd7a1df31a3c9d95e1c6cec9afd3eb1fe"
+imagedeps="build-essential"
+hostdeps="gcc pkg-config"
+deps="core-libs openssl xz zlib zstd"
+
+configure() {
+    meson_configure \
+        -Dmanpages=false
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR=${dest_dir} meson install --no-rebuild
+
+    # for x in {dep,ins,ls,rm}mod mod{info,probe}; do
+    #     ln -sv kmod "${dest_dir}${prefix}/bin/$x"
+    # done
+
+    post_package_strip
+}

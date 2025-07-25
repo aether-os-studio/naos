@@ -1,0 +1,12 @@
+diff -urN --no-dereference cyrus-sasl-clean/saslauthd/saslauthd-main.c cyrus-sasl-workdir/saslauthd/saslauthd-main.c
+--- cyrus-sasl-clean/saslauthd/saslauthd-main.c
++++ cyrus-sasl-workdir/saslauthd/saslauthd-main.c
+@@ -99,6 +99,8 @@
+ # include <strings.h>
+ #endif /* _AIX */
+ 
++#include <strings.h>
++
+ #include <syslog.h>
+ #include <signal.h>
+ #include <sys/file.h>

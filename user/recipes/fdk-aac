@@ -1,0 +1,23 @@
+#! /bin/sh
+
+name=fdk-aac
+version=2.0.3
+revision=1
+tarball_url="https://downloads.sourceforge.net/opencore-amr/fdk-aac-${version}.tar.gz"
+tarball_blake2b="a3dbf45c637680bda178c2886926cb459ef00660ec6b0e9eef6e48a7b04de961659da8cf0016b6e7376ce6d513abc142b43068c65b10c8cba2ed6b3aec0a9521"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    cmake_configure
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

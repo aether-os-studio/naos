@@ -1,0 +1,39 @@
+#! /bin/sh
+
+name=pinentry
+version=1.3.1
+revision=1
+tarball_url="https://www.gnupg.org/ftp/gcrypt/pinentry/pinentry-${version}.tar.bz2"
+tarball_blake2b="47a510b3746fc8cdd83b56302132f4f4d9c61324fc857ce0867387f70f79490dad375bca4dc72e5d1cdca707bf89a16e1c9a20bf1aa0e857d69e59dc59403afd"
+imagedeps="build-essential"
+hostdeps="gcc pkg-config"
+deps="core-libs libassuan libgpg-error libsecret"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure \
+        --enable-pinentry-tty \
+        --with-libgpg-error-prefix=${sysroot_dir}${prefix} \
+        --with-libassuan-prefix=${sysroot_dir}${prefix} \
+        --disable-pinentry-efl \
+        --disable-pinentry-gtk2 \
+        --disable-pinentry-gnome3 \
+        --disable-pinentry-qt5 \
+        --disable-pinentry-qt \
+        --disable-pinentry-qt4 \
+        --disable-pinentry-tqt \
+        --disable-pinentry-fltk
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

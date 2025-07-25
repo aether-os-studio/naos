@@ -1,0 +1,45 @@
+Submitted By:            Douglas R. Reno <renodr at linuxfromscratch dot org>
+Date:                    2024-03-02
+Initial Package Version: 5.2.2
+Origin:                  Upstream (thanks to Joe Locash for the pointer)
+Upstream Status:         Applied
+Description:             Prevents giflib from installing XML files into
+                         /usr/share/man/man1 instead of manual pages.
+
+diff -Naurp giflib-5.2.2.orig/Makefile giflib-5.2.2/Makefile
+--- giflib-5.2.2.orig/Makefile	2024-03-02 12:53:46.244595714 -0600
++++ giflib-5.2.2/Makefile	2024-03-02 12:55:35.428874223 -0600
+@@ -63,15 +63,19 @@ UTILS = $(INSTALLABLE) \
+ 
+ LDLIBS=libgif.a -lm
+ 
+-MANUAL_PAGES = \
++MANUAL_PAGES_1 = \
+ 	doc/gif2rgb.xml \
+ 	doc/gifbuild.xml \
+ 	doc/gifclrmp.xml \
+ 	doc/giffix.xml \
+-	doc/giflib.xml \
+ 	doc/giftext.xml \
+ 	doc/giftool.xml
+ 
++MANUAL_PAGES_7 = \
++	doc/giflib.xml
++
++MANUAL_PAGES = $(MANUAL_PAGES_1) $(MANUAL_PAGES_7)
++
+ SOEXTENSION	= so
+ LIBGIFSO	= libgif.$(SOEXTENSION)
+ LIBGIFSOMAJOR	= libgif.$(SOEXTENSION).$(LIBMAJOR)
+@@ -148,8 +152,9 @@ install-lib:
+ 	ln -sf $(LIBGIFSOVER) "$(DESTDIR)$(LIBDIR)/$(LIBGIFSOMAJOR)"
+ 	ln -sf $(LIBGIFSOMAJOR) "$(DESTDIR)$(LIBDIR)/$(LIBGIFSO)"
+ install-man:
+-	$(INSTALL) -d "$(DESTDIR)$(MANDIR)/man1"
+-	$(INSTALL) -m 644 $(MANUAL_PAGES) "$(DESTDIR)$(MANDIR)/man1"
++	$(INSTALL) -d "$(DESTDIR)$(MANDIR)/man1" "$(DESTDIR)$(MANDIR)/man7"
++	$(INSTALL) -m 644 $(MANUAL_PAGES_1:xml=1) "$(DESTDIR)$(MANDIR)/man1"
++	$(INSTALL) -m 644 $(MANUAL_PAGES_7:xml=7) "$(DESTDIR)$(MANDIR)/man7"
+ uninstall: uninstall-man uninstall-include uninstall-lib uninstall-bin
+ uninstall-bin:
+ 	cd "$(DESTDIR)$(BINDIR)" && rm -f $(INSTALLABLE)

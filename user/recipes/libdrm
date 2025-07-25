@@ -1,0 +1,29 @@
+#! /bin/sh
+
+name=libdrm
+version=2.4.124
+revision=1
+tarball_url="https://dri.freedesktop.org/libdrm/libdrm-${version}.tar.xz"
+tarball_blake2b="b463dfb78168c9c94d7dd7e241a233f6500bc6ef00487daf81b936975a3d4f056cc83a764aee6de7200f5804e3aa05c0b2d3fb7e10ada5e1bc414d9a8f120f2c"
+hostdeps="gcc pkg-config"
+deps="core-libs libpciaccess"
+
+configure() {
+    meson_configure \
+        -Dudev=true \
+        -Detnaviv=disabled \
+        -Dfreedreno=disabled \
+        -Dvc4=disabled \
+        -Dvalgrind=disabled \
+        -Dtests=false
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

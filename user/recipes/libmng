@@ -1,0 +1,24 @@
+#! /bin/sh
+
+name=libmng
+version=2.0.3
+revision=1
+tarball_url="https://downloads.sourceforge.net/libmng/libmng-${version}.tar.xz"
+tarball_blake2b="18f29d270d8c646da1eef41da094271acd5ce86094441f7f4d78dadab9dbc147619c4226bc642722639eb6d1a49567c517acaadea823f38c7bdd8ee3f498b927"
+hostdeps="gcc pkg-config"
+deps="core-libs libjpeg-turbo lcms"
+
+configure() {
+    cmake_configure \
+        -DMNG_INSTALL_LIB_DIR=lib
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

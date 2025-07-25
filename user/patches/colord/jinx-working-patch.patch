@@ -1,0 +1,96 @@
+diff -urN --no-dereference colord-clean/data/cmf/meson.build colord-workdir/data/cmf/meson.build
+--- colord-clean/data/cmf/meson.build
++++ colord-workdir/data/cmf/meson.build
+@@ -2,7 +2,7 @@
+   custom_target(arg,
+     input: arg + '.csv',
+     output: arg + '.cmf',
+-    command: [ cd_idt8, 'create-cmf', '@OUTPUT@', '@INPUT@', '1.0' ],
++    command: [ '/usr/bin/cd-it8', 'create-cmf', '@OUTPUT@', '@INPUT@', '1.0' ],
+     install: true,
+     install_dir: join_paths(datadir, 'colord', 'cmf')
+   )
+diff -urN --no-dereference colord-clean/data/illuminant/meson.build colord-workdir/data/illuminant/meson.build
+--- colord-clean/data/illuminant/meson.build
++++ colord-workdir/data/illuminant/meson.build
+@@ -24,7 +24,7 @@
+   custom_target(arg,
+     input: arg + '.csv',
+     output: arg + '.sp',
+-    command: [ cd_idt8, 'create-sp', '@OUTPUT@', '@INPUT@', '100.0' ],
++    command: [ '/usr/bin/cd-it8', 'create-sp', '@OUTPUT@', '@INPUT@', '100.0' ],
+     install: true,
+     install_dir: join_paths(datadir, 'colord', 'illuminant')
+   )
+diff -urN --no-dereference colord-clean/data/profiles/meson.build colord-workdir/data/profiles/meson.build
+--- colord-clean/data/profiles/meson.build
++++ colord-workdir/data/profiles/meson.build
+@@ -59,7 +59,7 @@
+   generated_icc = custom_target(arg + '.icc',
+     input: xml_i18n,
+     output: arg + '.icc',
+-    command: [ cd_create_profile, '--output=@OUTPUT@', '@INPUT@' ],
++    command: [ '/usr/bin/cd-create-profile', '--output=@OUTPUT@', '@INPUT@' ],
+     install: true,
+     install_dir: join_paths(datadir, 'color', 'icc', 'colord'),
+   )
+diff -urN --no-dereference colord-clean/meson.build colord-workdir/meson.build
+--- colord-clean/meson.build
++++ colord-workdir/meson.build
+@@ -278,5 +278,5 @@
+   subdir('src')
+ endif
+ 
+-meson.add_install_script('meson_post_install.sh',
+-                         localstatedir, get_option('daemon_user'))
++#meson.add_install_script('meson_post_install.sh',
++#                         localstatedir, get_option('daemon_user'))
+diff -urN --no-dereference colord-clean/policy/meson.build colord-workdir/policy/meson.build
+--- colord-clean/policy/meson.build
++++ colord-workdir/policy/meson.build
+@@ -7,24 +7,24 @@
+ )
+ 
+ #newer polkit has the ITS rules included
+-if polkit.version().version_compare('>0.113')
+-  i18n.merge_file(
+-    input: policy_in,
+-    output: 'org.freedesktop.color.policy',
+-    install: true,
+-    install_dir: join_paths(datadir, 'polkit-1', 'actions') ,
+-    type: 'xml',
+-    po_dir: join_paths(meson.source_root(), 'po')
+-  )
+-#older polkit is missing ITS rules and will fail
+-else
+-  i18n.merge_file(
+-    input: policy_in,
+-    output: 'org.freedesktop.color.policy',
+-    install: true,
+-    install_dir: join_paths(datadir, 'polkit-1', 'actions') ,
+-    type: 'xml',
+-    data_dirs: join_paths(meson.source_root(), 'policy'),
+-    po_dir: join_paths(meson.source_root(), 'po')
+-  )
+-endif
++#if polkit.version().version_compare('>0.113')
++#  i18n.merge_file(
++#    input: policy_in,
++#    output: 'org.freedesktop.color.policy',
++#    install: true,
++#    install_dir: join_paths(datadir, 'polkit-1', 'actions') ,
++#    type: 'xml',
++#    po_dir: join_paths(meson.source_root(), 'po')
++#  )
++##older polkit is missing ITS rules and will fail
++#else
++i18n.merge_file(
++  input: policy_in,
++  output: 'org.freedesktop.color.policy',
++  install: true,
++  install_dir: join_paths(datadir, 'polkit-1', 'actions') ,
++  type: 'xml',
++  data_dirs: join_paths(meson.source_root(), 'policy'),
++  po_dir: join_paths(meson.source_root(), 'po')
++)
++#endif

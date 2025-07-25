@@ -1,0 +1,33 @@
+#! /bin/sh
+
+name=lmdb
+version=0.9.31
+revision=1
+tarball_url="https://github.com/LMDB/lmdb/archive/LMDB_${version}.tar.gz"
+tarball_blake2b="2f759940bd58299f41d14cc7adc2df23ea7cab8b6f4864e85a630783af9c8c7f3f5263a0b3a49ec71ee84a12ab358d1d14dca353983bb6fd018e709fca9a3fa7"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    cp -rp ${source_dir}/. ./
+}
+
+build() {
+    cd libraries/liblmdb
+
+    make -j${parallelism} \
+        CFLAGS="$TARGET_CFLAGS" \
+        LDFLAGS="$TARGET_LDFLAGS" \
+        CC=${OS_TRIPLET}-gcc \
+        AR=${OS_TRIPLET}-ar
+
+    sed -i 's| liblmdb.a||' Makefile
+}
+
+package() {
+    cd libraries/liblmdb
+
+    DESTDIR="${dest_dir}" make prefix=${prefix} install
+
+    post_package_strip
+}

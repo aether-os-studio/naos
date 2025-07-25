@@ -1,0 +1,28 @@
+#! /bin/sh
+
+name=vala
+version=0.56.18
+revision=1
+tarball_url="https://download.gnome.org/sources/vala/0.56/vala-${version}.tar.xz"
+tarball_blake2b="ee3eaf719a59e1d562ec5d5334ba6fe6490a92aba90b3a89600a483f896219a2428edf3228b4abaa1a6ad5e7b0bd4d5234c7c8862f47ec1236427f50420f1b1c"
+hostdeps="gcc pkg-config"
+deps="core-libs glib2 libxslt"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure \
+        --disable-valadoc
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

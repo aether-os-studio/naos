@@ -1,0 +1,2364 @@
+diff -urN --no-dereference mlibc-clean/abis/linux/fcntl.h mlibc-workdir/abis/linux/fcntl.h
+--- mlibc-clean/abis/linux/fcntl.h
++++ mlibc-workdir/abis/linux/fcntl.h
+@@ -103,6 +103,8 @@
+ #endif /* _GNU_SOURCE */
+ 
+ #define F_OWNER_TID 0
++#define F_OWNER_PID 1
++#define F_OWNER_PGRP 2
+ 
+ #define POSIX_FADV_NORMAL 0
+ #define POSIX_FADV_RANDOM 1
+diff -urN --no-dereference mlibc-clean/abis/linux/ioctls.h mlibc-workdir/abis/linux/ioctls.h
+--- mlibc-clean/abis/linux/ioctls.h
++++ mlibc-workdir/abis/linux/ioctls.h
+@@ -17,4 +17,8 @@
+ #define SIOCGIFBRDADDR 0x8919
+ #define SIOCGIFNETMASK 0x891B
+ 
++#define SIOCSIFHWADDR 0x8924
++#define SIOCADDMULTI 0x8931
++#define SIOCDELMULTI 0x8932
++
+ #endif /* _ABIBITS_IOCTLS_H */
+diff -urN --no-dereference mlibc-clean/abis/linux/ipc.h mlibc-workdir/abis/linux/ipc.h
+--- mlibc-clean/abis/linux/ipc.h
++++ mlibc-workdir/abis/linux/ipc.h
+@@ -31,13 +31,13 @@
+ typedef int key_t;
+ 
+ struct ipc64_perm {
+-	key_t __ipc_perm_key;
++	key_t key;
+ 	uid_t uid;
+ 	gid_t gid;
+ 	uid_t cuid;
+ 	gid_t cgid;
+ 	mode_t mode;
+-	int __ipc_perm_seq;
++	int __seq;
+ 	long __unused[2];
+ };
+ 
+diff -urN --no-dereference mlibc-clean/abis/linux/limits.h mlibc-workdir/abis/linux/limits.h
+--- mlibc-clean/abis/linux/limits.h
++++ mlibc-workdir/abis/linux/limits.h
+@@ -6,5 +6,8 @@
+ #define HOST_NAME_MAX 64
+ #define NAME_MAX 255
+ #define OPEN_MAX 256
++#define MAX_INPUT 255
++
++#define _POSIX_MAX_INPUT 255
+ 
+ #endif /*_ABIBITS_LIMITS_H */
+diff -urN --no-dereference mlibc-clean/options/ansi/generic/stdio.cpp mlibc-workdir/options/ansi/generic/stdio.cpp
+--- mlibc-clean/options/ansi/generic/stdio.cpp
++++ mlibc-workdir/options/ansi/generic/stdio.cpp
+@@ -393,7 +393,8 @@
+ 			} else {
+ 				char *typed_dest = (char *)dest;
+ 				if(typed_dest)
+-					typed_dest[count++] = c;
++					typed_dest[count] = c;
++				count++;
+ 			}
+ 		};
+ 
+@@ -648,7 +649,6 @@
+ 					handler.consume();
+ 					append_to_buffer(c);
+ 					c = handler.look_ahead();
+-					count++;
+ 				}
+ 				break;
+ 			}
+diff -urN --no-dereference mlibc-clean/options/ansi/generic/string.cpp mlibc-workdir/options/ansi/generic/string.cpp
+--- mlibc-clean/options/ansi/generic/string.cpp
++++ mlibc-workdir/options/ansi/generic/string.cpp
+@@ -103,7 +103,9 @@
+ 	}
+ }
+ 
+-size_t strxfrm(char *__restrict dest, const char *__restrict src, size_t n) {
++size_t strxfrm_l(char *__restrict dest, const char *__restrict src, size_t n, locale_t loc) {
++	(void)loc;
++
+ 	// NOTE: This might not work for non ANSI charsets.
+ 	size_t l = strlen(src);
+ 
+@@ -114,6 +116,11 @@
+ 	return l;
+ }
+ 
++size_t strxfrm(char *__restrict dest, const char *__restrict src, size_t n) {
++	// TODO: Replace NULL with the current locale.
++	return strxfrm_l(dest, src, n, NULL);
++}
++
+ void *memchr(const void *s, int c, size_t size) {
+ 	auto s_bytes = static_cast<const unsigned char *>(s);
+ 	for(size_t i = 0; i < size; i++)
+@@ -286,9 +293,35 @@
+ 	return *l - *r;
+ }
+ 
+-int wcscoll(const wchar_t *, const wchar_t *) { MLIBC_STUB_BODY; }
++int wcscoll_l(const wchar_t *l, const wchar_t *r, locale_t loc) {
++	(void)loc;
++	return wcscmp(l, r);
++}
++
++int wcscoll(const wchar_t *l, const wchar_t *r) {
++	// TODO: Replace NULL with the current locale.
++	return wcscoll_l(l, r, NULL);
++}
++
+ int wcsncmp(const wchar_t *, const wchar_t *, size_t) { MLIBC_STUB_BODY; }
+-int wcsxfrm(wchar_t *__restrict, const wchar_t *__restrict, size_t) { MLIBC_STUB_BODY; }
++
++int wcsxfrm_l(wchar_t *__restrict dest, const wchar_t *__restrict src, size_t n, locale_t loc) {
++	(void)loc;
++	// NOTE: This might not work for non ANSI charsets.
++	size_t l = wcslen(src);
++	if(l < n) {
++		wmemcpy(dest, src, l + 1);
++	}else if(n) {
++		wmemcpy(dest, src, n - 1);
++		dest[n - 1] = 0;
++	}
++	return l;
++}
++
++int wcsxfrm(wchar_t *__restrict dest, const wchar_t *__restrict src, size_t n) {
++	// TODO: Replace NULL with the current locale.
++	return wcsxfrm_l(dest, src, n, NULL);
++}
+ 
+ int wmemcmp(const wchar_t *a, const wchar_t *b, size_t size) {
+ 	for(size_t i = 0; i < size; i++) {
+diff -urN --no-dereference mlibc-clean/options/ansi/generic/time.cpp mlibc-workdir/options/ansi/generic/time.cpp
+--- mlibc-clean/options/ansi/generic/time.cpp
++++ mlibc-workdir/options/ansi/generic/time.cpp
+@@ -89,8 +89,10 @@
+ 	return localtime_r(unix_gmt, &per_thread_tm);
+ }
+ 
+-size_t strftime(char *__restrict dest, size_t max_size,
+-		const char *__restrict format, const struct tm *__restrict tm) {
++size_t strftime_l(char *__restrict dest, size_t max_size,
++		const char *__restrict format, const struct tm *__restrict tm,
++		locale_t locale) {
++	(void)locale;
+ 	auto c = format;
+ 	auto p = dest;
+ 	[[maybe_unused]] bool use_alternative_symbols = false;
+@@ -447,6 +449,12 @@
+ 	return (p - dest);
+ }
+ 
++size_t strftime(char *__restrict dest, size_t max_size,
++	const char *__restrict format, const struct tm *__restrict tm) {
++	// TODO: Replace NULL with the current locale.
++	return strftime_l(dest, max_size, format, tm, NULL);
++}
++
+ size_t wcsftime(wchar_t *__restrict, size_t, const wchar_t *__restrict,
+ 		const struct tm *__restrict) {
+ 	mlibc::infoLogger() << "mlibc: wcsftime is a stub" << frg::endlog;
+diff -urN --no-dereference mlibc-clean/options/ansi/include/inttypes.h mlibc-workdir/options/ansi/include/inttypes.h
+--- mlibc-clean/options/ansi/include/inttypes.h
++++ mlibc-workdir/options/ansi/include/inttypes.h
+@@ -110,6 +110,7 @@
+ #define SCNx64 __PRI64 "x"
+ #define SCNxMAX __PRI64 "x"
+ #define SCNi8 "hhi"
++#define SCNx8 "hhx"
+ #define SCNxPTR __PRIPTR "x"
+ 
+ #define SCNi8 "hhi"
+diff -urN --no-dereference mlibc-clean/options/ansi/include/stdio.h mlibc-workdir/options/ansi/include/stdio.h
+--- mlibc-clean/options/ansi/include/stdio.h
++++ mlibc-workdir/options/ansi/include/stdio.h
+@@ -58,6 +58,7 @@
+ };
+ 
+ typedef off_t fpos_t;
++typedef off64_t fpos64_t;
+ 
+ /* [C11-7.21.1] I/O related macros */
+ 
+diff -urN --no-dereference mlibc-clean/options/ansi/include/string.h mlibc-workdir/options/ansi/include/string.h
+--- mlibc-clean/options/ansi/include/string.h
++++ mlibc-workdir/options/ansi/include/string.h
+@@ -2,6 +2,7 @@
+ #define _STRING_H
+ 
+ #include <mlibc-config.h>
++#include <bits/posix/locale_t.h>
+ #include <bits/null.h>
+ #include <bits/size_t.h>
+ 
+@@ -30,6 +31,7 @@
+ int strcoll(const char *__a, const char *__b);
+ int strncmp(const char *__a, const char *__b, size_t __max_size);
+ size_t strxfrm(char *__restrict __dest, const char *__restrict __src, size_t __max_size);
++size_t strxfrm_l(char *__restrict __dest, const char *__restrict __src, size_t __max_size, locale_t __locale);
+ 
+ /* [7.24.5] Search functions */
+ 
+diff -urN --no-dereference mlibc-clean/options/ansi/include/time.h mlibc-workdir/options/ansi/include/time.h
+--- mlibc-clean/options/ansi/include/time.h
++++ mlibc-workdir/options/ansi/include/time.h
+@@ -80,6 +80,7 @@
+ /* POSIX extensions. */
+ 
+ #if __MLIBC_POSIX_OPTION
++#	include <bits/posix/locale_t.h>
+ #	include <bits/posix/posix_time.h>
+ #	include <bits/posix/timer_t.h>
+ #endif /* __MLIBC_POSIX_OPTION */
+@@ -111,6 +112,9 @@
+ 
+ #if __MLIBC_POSIX_OPTION
+ #include <abi-bits/pid_t.h>
++size_t strftime_l(char * __restrict __dest, size_t __max_size,
++		const char *__restrict __format, const struct tm *__restrict _ptr,
++		locale_t __locale);
+ char *strptime(const char *__restrict __buf, const char *__restrict __format,
+ 		struct tm *__restrict __tm);
+ int clock_getcpuclockid(pid_t __pid, clockid_t *__clockid);
+diff -urN --no-dereference mlibc-clean/options/ansi/include/wchar.h mlibc-workdir/options/ansi/include/wchar.h
+--- mlibc-clean/options/ansi/include/wchar.h
++++ mlibc-workdir/options/ansi/include/wchar.h
+@@ -1,6 +1,7 @@
+ #ifndef _WCHAR_H
+ #define _WCHAR_H
+ 
++#include <bits/posix/locale_t.h>
+ #include <bits/null.h>
+ #include <bits/size_t.h>
+ #include <bits/wchar_t.h>
+@@ -70,8 +71,10 @@
+ 
+ int wcscmp(const wchar_t *__a, const wchar_t *__b);
+ int wcscoll(const wchar_t *__a, const wchar_t *__b);
++int wcscoll_l(const wchar_t *__a, const wchar_t *__b, locale_t __locale);
+ int wcsncmp(const wchar_t *__a, const wchar_t *__b, size_t __size);
+ int wcsxfrm(wchar_t *__restrict __dest, const wchar_t *__restrict __src, size_t __size);
++int wcsxfrm_l(wchar_t *__restrict __dest, const wchar_t *__restrict __src, size_t __size, locale_t __locale);
+ int wmemcmp(const wchar_t *__a, const wchar_t *__b, size_t __size);
+ 
+ wchar_t *wcschr(const wchar_t *__s, wchar_t __wc);
+diff -urN --no-dereference mlibc-clean/options/glibc/generic/gshadow.cpp mlibc-workdir/options/glibc/generic/gshadow.cpp
+--- mlibc-clean/options/glibc/generic/gshadow.cpp
++++ mlibc-workdir/options/glibc/generic/gshadow.cpp
+@@ -5,3 +5,18 @@
+ 	__ensure(!"Not implemented");
+ 	__builtin_unreachable();
+ }
++
++int putsgent(const struct sgrp *, FILE *) {
++	__ensure(!"Not implemented");
++	__builtin_unreachable();
++}
++
++struct sgrp *fgetsgent(FILE *) {
++	__ensure(!"Not implemented");
++	__builtin_unreachable();
++}
++
++void endsgent(void) {
++	__ensure(!"Not implemented");
++	__builtin_unreachable();
++}
+diff -urN --no-dereference mlibc-clean/options/glibc/generic/shadow.cpp mlibc-workdir/options/glibc/generic/shadow.cpp
+--- mlibc-clean/options/glibc/generic/shadow.cpp
++++ mlibc-workdir/options/glibc/generic/shadow.cpp
+@@ -207,9 +207,18 @@
+ 	return res;
+ }
+ 
+-struct spwd *fgetspent(FILE *) {
+-	__ensure(!"Not implemented");
+-	__builtin_unreachable();
++struct spwd *fgetspent(FILE *f) {
++	static struct spwd sp;
++	static char *line;
++	struct spwd *res = 0;
++	size_t size = 0;
++	int cs;
++	pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
++	if(getline(&line, &size, f) >= 0 && __parsespent(line, &sp) >= 0) {
++		res = &sp;
++	}
++	pthread_setcancelstate(cs, 0);
++	return res;
+ }
+ 
+ void endspent(void) {
+diff -urN --no-dereference mlibc-clean/options/glibc/include/gshadow.h mlibc-workdir/options/glibc/include/gshadow.h
+--- mlibc-clean/options/glibc/include/gshadow.h
++++ mlibc-workdir/options/glibc/include/gshadow.h
+@@ -1,6 +1,7 @@
+ #ifndef _GSHADOW_H
+ #define _GSHADOW_H
+ 
++#include <stdio.h>
+ #include <paths.h>
+ #include <bits/size_t.h>
+ 
+@@ -20,6 +21,9 @@
+ #endif
+ 
+ int getsgnam_r(const char *__name, struct sgrp *__result_buf, char *__buffer, size_t __len, struct sgrp **__result);
++int putsgent(const struct sgrp *__g, FILE *__stream);
++struct sgrp *fgetsgent(FILE *__stream);
++void endsgent(void);
+ 
+ #ifdef __cplusplus
+ }
+diff -urN --no-dereference mlibc-clean/options/linux/generic/capabilities.cpp mlibc-workdir/options/linux/generic/capabilities.cpp
+--- mlibc-clean/options/linux/generic/capabilities.cpp
++++ mlibc-workdir/options/linux/generic/capabilities.cpp
+@@ -1,16 +1,28 @@
++#include <errno.h>
++#include <bits/ensure.h>
++
+ #include <mlibc/debug.hpp>
++#include <mlibc/linux-sysdeps.hpp>
+ 
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
+ 
+-int capset(void *, void *) {
+-	mlibc::infoLogger() << "mlibc: capset is a no-op!" << frg::endlog;
++int capset(void *hdr, const void *data) {
++	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_capset, -1);
++	if(int e = mlibc::sys_capset(hdr, data); e) {
++		errno = e;
++		return -1;
++	}
+ 	return 0;
+ }
+ 
+-int capget(void *, void *) {
+-	mlibc::infoLogger() << "mlibc: capget is a no-op!" << frg::endlog;
++int capget(void *hdr, void *data) {
++	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_capget, -1);
++	if(int e = mlibc::sys_capget(hdr, data); e) {
++		errno = e;
++		return -1;
++	}
+ 	return 0;
+ }
+ 
+diff -urN --no-dereference mlibc-clean/options/linux/generic/sched.cpp mlibc-workdir/options/linux/generic/sched.cpp
+--- mlibc-clean/options/linux/generic/sched.cpp
++++ mlibc-workdir/options/linux/generic/sched.cpp
+@@ -24,9 +24,14 @@
+ 	return 0;
+ }
+ 
+-int sched_getscheduler(pid_t) {
+-	__ensure(!"Not implemented");
+-	__builtin_unreachable();
++int sched_getscheduler(pid_t pid) {
++	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_getscheduler, -1);
++	int policy;
++	if(int e = mlibc::sys_getscheduler(pid, &policy); e) {
++		errno = e;
++		return -1;
++	}
++	return policy;
+ }
+ 
+ int sched_getaffinity(pid_t pid, size_t cpusetsize, cpu_set_t *mask) {
+diff -urN --no-dereference mlibc-clean/options/linux/generic/sys-sysinfo.cpp mlibc-workdir/options/linux/generic/sys-sysinfo.cpp
+--- mlibc-clean/options/linux/generic/sys-sysinfo.cpp
++++ mlibc-workdir/options/linux/generic/sys-sysinfo.cpp
+@@ -1,5 +1,6 @@
+ #include <errno.h>
+ #include <sys/sysinfo.h>
++#include <unistd.h>
+ 
+ #include <bits/ensure.h>
+ #include <mlibc/debug.hpp>
+@@ -14,12 +15,12 @@
+ 	return 0;
+ }
+ 
+-int get_nprocs(void) {
+-	__ensure(!"Not implemented");
+-	__builtin_unreachable();
++int get_nprocs_conf() {
++	// Taken from musl
++	return sysconf(_SC_NPROCESSORS_CONF);
+ }
+ 
+-int get_nprocs_conf(void) {
+-	__ensure(!"Not implemented");
+-	__builtin_unreachable();
++int get_nprocs() {
++	// Taken from musl
++	return sysconf(_SC_NPROCESSORS_ONLN);
+ }
+diff -urN --no-dereference mlibc-clean/options/linux/include/bits/linux/cpu_set.h mlibc-workdir/options/linux/include/bits/linux/cpu_set.h
+--- mlibc-clean/options/linux/include/bits/linux/cpu_set.h
++++ mlibc-workdir/options/linux/include/bits/linux/cpu_set.h
+@@ -40,6 +40,24 @@
+ #define CPU_COUNT_S(setsize, set) __mlibc_cpu_count((setsize), (set))
+ #define CPU_COUNT(set) CPU_COUNT_S(sizeof(cpu_set_t), set)
+ 
++#define __CPU_op_func_S(func, op) \
++static __inline void __CPU_##func##_S(size_t __size, cpu_set_t *__dest, \
++	const cpu_set_t *__src1, const cpu_set_t *__src2) \
++{ \
++	size_t __i; \
++	for (__i=0; __i<__size/sizeof(long); __i++) \
++		((unsigned long *)__dest)[__i] = ((unsigned long *)__src1)[__i] \
++			op ((unsigned long *)__src2)[__i] ; \
++}
++
++__CPU_op_func_S(AND, &)
++__CPU_op_func_S(OR, |)
++__CPU_op_func_S(XOR, ^)
++
++#define CPU_AND_S(a,b,c,d) __CPU_AND_S(a,b,c,d)
++#define CPU_OR_S(a,b,c,d) __CPU_OR_S(a,b,c,d)
++#define CPU_XOR_S(a,b,c,d) __CPU_XOR_S(a,b,c,d)
++
+ #endif /* !__MLIBC_ABI_ONLY */
+ 
+ #ifdef __cplusplus
+diff -urN --no-dereference mlibc-clean/options/linux/include/mlibc/linux-sysdeps.hpp mlibc-workdir/options/linux/include/mlibc/linux-sysdeps.hpp
+--- mlibc-clean/options/linux/include/mlibc/linux-sysdeps.hpp
++++ mlibc-workdir/options/linux/include/mlibc/linux-sysdeps.hpp
+@@ -94,6 +94,9 @@
+ [[gnu::weak]] int sys_pidfd_getpid(int fd, pid_t *outpid);
+ [[gnu::weak]] int sys_pidfd_send_signal(int pidfd, int sig, siginfo_t *info, unsigned int flags);
+ 
++[[gnu::weak]] int sys_capset(void *hdr, const void *data);
++[[gnu::weak]] int sys_capget(void *hdr, void *data);
++
+ } // namespace mlibc
+ 
+ #endif // MLIBX_LINUX_SYSDEPS
+diff -urN --no-dereference mlibc-clean/options/linux/include/scsi/scsi.h mlibc-workdir/options/linux/include/scsi/scsi.h
+--- mlibc-clean/options/linux/include/scsi/scsi.h
++++ mlibc-workdir/options/linux/include/scsi/scsi.h
+@@ -9,10 +9,22 @@
+ #define START_STOP 0x1b
+ #define ALLOW_MEDIUM_REMOVAL 0x1e
+ 
++#define TYPE_DISK 0x00
++#define TYPE_TAPE 0x01
++#define TYPE_PROCESSOR 0x03
++#define TYPE_WORM 0x04
++#define TYPE_ROM  0x05
++#define TYPE_SCANNER 0x06
++#define TYPE_MOD 0x07
++#define TYPE_MEDIUM_CHANGER 0x08
++#define TYPE_ENCLOSURE 0x0d
++#define TYPE_NO_LUN 0x7f
++
+ #define SCSI_IOCTL_GET_IDLUN 0x5382
+ #define SCSI_IOCTL_TAGGED_ENABLE 0x5383
+ #define SCSI_IOCTL_TAGGED_DISABLE 0x5384
+ #define SCSI_IOCTL_PROBE_HOST 0x5385
++#define SCSI_IOCTL_GET_BUS_NUMBER 0x5386
+ 
+ #endif /* _LINUX_SCSI_SCSI_H */
+ 
+diff -urN --no-dereference mlibc-clean/options/linux/include/scsi/sg.h mlibc-workdir/options/linux/include/scsi/sg.h
+--- mlibc-clean/options/linux/include/scsi/sg.h
++++ mlibc-workdir/options/linux/include/scsi/sg.h
+@@ -71,6 +71,26 @@
+     int unused;
+ } sg_req_info_t;
+ 
++#define SG_MAX_SENSE 16
++
++struct sg_header {
++    int pack_len;
++    int reply_len;
++    int pack_id;
++    int result;
++    unsigned int twelve_byte:1;
++    unsigned int target_status:5;
++    unsigned int host_status:8;
++    unsigned int driver_status:8;
++    unsigned int other_flags:10;
++    unsigned char sense_buffer[SG_MAX_SENSE];
++};
++
++#define SG_GET_RESERVED_SIZE 0x2272
++#define SG_SET_RESERVED_SIZE 0x2275
++#define SG_GET_SG_TABLESIZE 0x227F
++#define SG_SCSI_RESET 0x2284
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff -urN --no-dereference mlibc-clean/options/posix/generic/monetary.cpp mlibc-workdir/options/posix/generic/monetary.cpp
+--- mlibc-clean/options/posix/generic/monetary.cpp	1970-01-01 01:00:00.000000000 +0100
++++ mlibc-workdir/options/posix/generic/monetary.cpp
+@@ -0,0 +1,5 @@
++#include <bits/ensure.h>
++#include <monetary.h>
++
++ssize_t strfmon(char *__restrict, size_t, const char *__restrict, ...) { MLIBC_STUB_BODY; }
++ssize_t strfmon_l(char *__restrict, size_t, locale_t, const char *__restrict, ...) { MLIBC_STUB_BODY; }
+diff -urN --no-dereference mlibc-clean/options/posix/generic/mqueue.cpp mlibc-workdir/options/posix/generic/mqueue.cpp
+--- mlibc-clean/options/posix/generic/mqueue.cpp
++++ mlibc-workdir/options/posix/generic/mqueue.cpp
+@@ -20,3 +20,8 @@
+ 	__ensure(!"Not implemented");
+ 	__builtin_unreachable();
+ }
++
++int mq_close(mqd_t) {
++	__ensure(!"Not implemented");
++	__builtin_unreachable();
++}
+diff -urN --no-dereference mlibc-clean/options/posix/generic/posix_locale.cpp mlibc-workdir/options/posix/generic/posix_locale.cpp
+--- mlibc-clean/options/posix/generic/posix_locale.cpp
++++ mlibc-workdir/options/posix/generic/posix_locale.cpp
+@@ -1,34 +1,55 @@
++#include <errno.h>
++#include <locale.h>
++
+ #include <bits/posix/posix_locale.h>
+ #include <bits/ensure.h>
+ #include <mlibc/debug.hpp>
+ 
+ namespace {
+ 
+-bool newlocale_seen = false;
+-bool uselocale_seen = false;
++struct LocaleObject {
++	/* ... */
++};
++
++LocaleObject cLocaleObject = {};
+ 
+ }
+ 
+-locale_t newlocale(int, const char *, locale_t) {
+-	// Due to all of the locale functions being stubs, the locale will not be used
+-	if(!newlocale_seen) {
+-		mlibc::infoLogger() << "mlibc: newlocale() is a no-op" << frg::endlog;
+-		newlocale_seen = true;
++locale_t newlocale(int, const char *locale, locale_t) {
++	if(!locale) {
++		errno = EINVAL;
++		return nullptr;
++	}
++
++	if(strcmp(locale, "C") != 0 && strcmp(locale, "POSIX") != 0) {
++		mlibc::infoLogger() << "mlibc: newlocale() only supports \"C\" and \"POSIX\" locales" << frg::endlog;
++		errno = ENOENT;
++		return nullptr;
+ 	}
+-	return nullptr;
++
++	mlibc::infoLogger() << "mlibc: newlocale() is a stub" << frg::endlog;
++	return (locale_t)&cLocaleObject;
+ }
+ 
+ void freelocale(locale_t) {
+ 	mlibc::infoLogger() << "mlibc: freelocale() is a no-op" << frg::endlog;
+-	return;
+ }
+ 
+-locale_t uselocale(locale_t) {
+-	if(!uselocale_seen) {
+-		mlibc::infoLogger() << "mlibc: uselocale() is a no-op" << frg::endlog;
+-		uselocale_seen = true;
++locale_t uselocale(locale_t locale) {
++	if(!locale) {
++		errno = EINVAL;
++		return nullptr;
++	}
++
++	if(locale == LC_GLOBAL_LOCALE) {
++		locale = &cLocaleObject;
++	} else if(locale != &cLocaleObject) {
++		errno = EINVAL;
++		return nullptr;
+ 	}
+-	return nullptr;
++
++	mlibc::infoLogger() << "mlibc: uselocale() is a stub" << frg::endlog;
++	return &cLocaleObject;
+ }
+ 
+ locale_t duplocale(locale_t) {
+diff -urN --no-dereference mlibc-clean/options/posix/generic/posix_stdlib.cpp mlibc-workdir/options/posix/generic/posix_stdlib.cpp
+--- mlibc-clean/options/posix/generic/posix_stdlib.cpp
++++ mlibc-workdir/options/posix/generic/posix_stdlib.cpp
+@@ -80,7 +80,7 @@
+ 
+ unsigned short seed_48[7] = { 0, 0, 0, 0xe66d, 0xdeec, 0x5, 0xb };
+ 
+-uint64_t eand48_step(unsigned short *xi, unsigned short *lc) {
++uint64_t rand48_step(unsigned short *xi, unsigned short *lc) {
+ 	uint64_t x = xi[0] | (xi[1] + 0U) << 16 | (xi[2] + 0ULL) << 32;
+ 	uint64_t a = lc[0] | (lc[1] + 0U) << 16 | (lc[2] + 0ULL) << 32;
+ 	x = a*x + lc[3];
+@@ -96,7 +96,7 @@
+ 	union {
+ 		uint64_t u;
+ 		double f;
+-	} x = { 0x3ff0000000000000ULL | eand48_step(s, seed_48+3)<<4 };
++	} x = { 0x3ff0000000000000ULL | rand48_step(s, seed_48+3)<<4 };
+ 	return x.f - 1.0;
+ }
+ 
+@@ -116,9 +116,8 @@
+ 	seed48(arr);
+ }
+ 
+-long jrand48(unsigned short [3]) {
+-	__ensure(!"Not implemented");
+-	__builtin_unreachable();
++long jrand48(unsigned short s[3]) {
++	return (int32_t)(rand48_step(s, seed_48 + 3) >> 16);
+ }
+ 
+ long int mrand48(void) {
+diff -urN --no-dereference mlibc-clean/options/posix/generic/sys-uio.cpp mlibc-workdir/options/posix/generic/sys-uio.cpp
+--- mlibc-clean/options/posix/generic/sys-uio.cpp
++++ mlibc-workdir/options/posix/generic/sys-uio.cpp
+@@ -65,3 +65,31 @@
+ 	__ensure(!"Not implemented");
+ 	__builtin_unreachable();
+ }
++
++ssize_t process_vm_readv(pid_t pid,
++		const struct iovec *local_iov, unsigned long local_iov_count,
++		const struct iovec *remote_iov, unsigned long remote_iov_count,
++		unsigned long flags) {
++	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_process_vm_readv, -1);
++	ssize_t bytes_read;
++	if(int e = mlibc::sys_process_vm_readv(pid, local_iov, local_iov_count,
++			remote_iov, remote_iov_count, flags, &bytes_read); e) {
++		errno = e;
++		return -1;
++	}
++	return bytes_read;
++}
++
++ssize_t process_vm_writev(pid_t pid,
++		const struct iovec *local_iov, unsigned long local_iov_count,
++		const struct iovec *remote_iov, unsigned long remote_iov_count,
++		unsigned long flags) {
++	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_process_vm_writev, -1);
++	ssize_t bytes_written;
++	if(int e = mlibc::sys_process_vm_writev(pid, local_iov, local_iov_count,
++			remote_iov, remote_iov_count, flags, &bytes_written); e) {
++		errno = e;
++		return -1;
++	}
++	return bytes_written;
++}
+diff -urN --no-dereference mlibc-clean/options/posix/generic/termios.cpp mlibc-workdir/options/posix/generic/termios.cpp
+--- mlibc-clean/options/posix/generic/termios.cpp
++++ mlibc-workdir/options/posix/generic/termios.cpp
+@@ -101,3 +101,7 @@
+ 	return 0;
+ }
+ 
++int cfsetspeed(struct termios *, speed_t) {
++	__ensure(!"Not implemented");
++	__builtin_unreachable();
++}
+diff -urN --no-dereference mlibc-clean/options/posix/generic/unistd.cpp mlibc-workdir/options/posix/generic/unistd.cpp
+--- mlibc-clean/options/posix/generic/unistd.cpp
++++ mlibc-workdir/options/posix/generic/unistd.cpp
+@@ -1449,6 +1449,11 @@
+ 	return 0;
+ }
+ 
++char *cuserid(char *) {
++	__ensure(!"Not implemented");
++	__builtin_unreachable();
++}
++
+ #if __MLIBC_BSD_OPTION
+ void *sbrk(intptr_t increment) {
+ 	if(increment) {
+diff -urN --no-dereference mlibc-clean/options/posix/include/mlibc/posix-sysdeps.hpp mlibc-workdir/options/posix/include/mlibc/posix-sysdeps.hpp
+--- mlibc-clean/options/posix/include/mlibc/posix-sysdeps.hpp
++++ mlibc-workdir/options/posix/include/mlibc/posix-sysdeps.hpp
+@@ -233,6 +233,7 @@
+ [[gnu::weak]] int sys_semget(key_t key, int n, int fl, int *id);
+ [[gnu::weak]] int sys_semctl(int semid, int semnum, int cmd, void *semun, int *ret);
+ 
++[[gnu::weak]] int sys_getscheduler(pid_t pid, int *ret);
+ [[gnu::weak]] int sys_getaffinity(pid_t pid, size_t cpusetsize, cpu_set_t *mask);
+ [[gnu::weak]] int sys_getthreadaffinity(pid_t tid, size_t cpusetsize, cpu_set_t *mask);
+ 
+@@ -249,6 +250,15 @@
+ [[gnu::weak]] int sys_shmdt(const void *shmaddr);
+ [[gnu::weak]] int sys_shmget(int *shm_id, key_t key, size_t size, int shmflg);
+ 
++[[gnu::weak]] int sys_process_vm_readv(pid_t pid,
++		const struct iovec *local_iov, unsigned long local_iov_count,
++		const struct iovec *remote_iov, unsigned long remote_iov_count,
++		unsigned long flags, ssize_t *out);
++[[gnu::weak]] int sys_process_vm_writev(pid_t pid,
++		const struct iovec *local_iov, unsigned long local_iov_count,
++		const struct iovec *remote_iov, unsigned long remote_iov_count,
++		unsigned long flags, ssize_t *out);
++
+ } //namespace mlibc
+ 
+ #endif // MLIBC_POSIX_SYSDEPS
+diff -urN --no-dereference mlibc-clean/options/posix/include/monetary.h mlibc-workdir/options/posix/include/monetary.h
+--- mlibc-clean/options/posix/include/monetary.h	1970-01-01 01:00:00.000000000 +0100
++++ mlibc-workdir/options/posix/include/monetary.h
+@@ -0,0 +1,26 @@
++
++#ifndef _MONETARY_H
++#define _MONETARY_H
++
++#include <mlibc-config.h>
++#include <bits/posix/locale_t.h>
++#include <bits/null.h>
++#include <bits/size_t.h>
++#include <bits/ssize_t.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#ifndef __MLIBC_ABI_ONLY
++
++ssize_t strfmon(char *__restrict, size_t, const char *__restrict, ...);
++ssize_t strfmon_l(char *__restrict, size_t, locale_t, const char *__restrict, ...);
++
++#endif /* !__MLIBC_ABI_ONLY */
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* _MONETARY_H */
+diff -urN --no-dereference mlibc-clean/options/posix/include/mqueue.h mlibc-workdir/options/posix/include/mqueue.h
+--- mlibc-clean/options/posix/include/mqueue.h
++++ mlibc-workdir/options/posix/include/mqueue.h
+@@ -15,6 +15,7 @@
+ int mq_setattr(mqd_t __mqdes, const struct mq_attr *__restrict__ __newattr, struct mq_attr *__restrict__ __oldattr);
+ int mq_unlink(const char *__name);
+ mqd_t mq_open(const char *__name, int __flags, ...);
++int mq_close(mqd_t __mqdes);
+ 
+ #endif /* !__MLIBC_ABI_ONLY */
+ 
+diff -urN --no-dereference mlibc-clean/options/posix/include/netinet/tcp.h mlibc-workdir/options/posix/include/netinet/tcp.h
+--- mlibc-clean/options/posix/include/netinet/tcp.h
++++ mlibc-workdir/options/posix/include/netinet/tcp.h
+@@ -47,6 +47,68 @@
+ 	TCP_CA_Loss = 4
+ };
+ 
++typedef	uint32_t tcp_seq;
++
++struct tcphdr {
++	union {
++		struct {
++			uint16_t th_sport;
++			uint16_t th_dport;
++			tcp_seq th_seq;
++			tcp_seq th_ack;
++# if __BYTE_ORDER == __LITTLE_ENDIAN
++			uint8_t th_x2:4;
++			uint8_t th_off:4;
++# else
++			uint8_t th_off:4;
++			uint8_t th_x2:4;
++# endif
++			uint8_t th_flags;
++# define TH_FIN 0x01
++# define TH_SYN 0x02
++# define TH_RST 0x04
++# define TH_PUSH 0x08
++# define TH_ACK 0x10
++# define TH_URG 0x20
++			uint16_t th_win;
++			uint16_t th_sum;
++			uint16_t th_urp;
++		};
++		struct {
++			uint16_t source;
++			uint16_t dest;
++			uint32_t seq;
++			uint32_t ack_seq;
++# if __BYTE_ORDER == __LITTLE_ENDIAN
++			uint16_t res1:4;
++			uint16_t doff:4;
++			uint16_t fin:1;
++			uint16_t syn:1;
++			uint16_t rst:1;
++			uint16_t psh:1;
++			uint16_t ack:1;
++			uint16_t urg:1;
++			uint16_t res2:2;
++# elif __BYTE_ORDER == __BIG_ENDIAN
++			uint16_t doff:4;
++			uint16_t res1:4;
++			uint16_t res2:2;
++			uint16_t urg:1;
++			uint16_t ack:1;
++			uint16_t psh:1;
++			uint16_t rst:1;
++			uint16_t syn:1;
++			uint16_t fin:1;
++# else
++#  error "Adjust your <bits/endian.h> defines"
++# endif
++			uint16_t window;
++			uint16_t check;
++			uint16_t urg_ptr;
++		};
++	};
++};
++
+ struct tcp_info {
+ 	uint8_t tcpi_state;
+ 	uint8_t tcpi_ca_state;
+diff -urN --no-dereference mlibc-clean/options/posix/include/sys/msg.h mlibc-workdir/options/posix/include/sys/msg.h
+--- mlibc-clean/options/posix/include/sys/msg.h
++++ mlibc-workdir/options/posix/include/sys/msg.h
+@@ -9,6 +9,17 @@
+ extern "C" {
+ #endif
+ 
++struct msginfo {
++	int msgpool;
++	int msgmap;
++	int msgmax;
++	int msgmnb;
++	int msgmni;
++	int msgssz;
++	int msgtql;
++	unsigned short int msgseg;
++};
++
+ #ifndef __MLIBC_ABI_ONLY
+ 
+ int msgget(key_t __key, int __msgflg);
+diff -urN --no-dereference mlibc-clean/options/posix/include/sys/sem.h mlibc-workdir/options/posix/include/sys/sem.h
+--- mlibc-clean/options/posix/include/sys/sem.h
++++ mlibc-workdir/options/posix/include/sys/sem.h
+@@ -12,9 +12,15 @@
+ #define GETPID 11
+ #define GETVAL 12
+ #define GETALL 13
++#define GETNCNT 14
++#define GETZCNT 15
+ #define SETVAL 16
+ #define SETALL 17
+ 
++#define SEM_STAT 18
++#define SEM_INFO 19
++#define SEM_STAT_ANY 20
++
+ #define SEM_UNDO 0x1000
+ 
+ struct sembuf {
+@@ -31,6 +37,19 @@
+ 	unsigned long   sem_nsems;
+ };
+ 
++struct seminfo {
++	int semmap;
++	int semmni;
++	int semmns;
++	int semmnu;
++	int semmsl;
++	int semopm;
++	int semume;
++	int semusz;
++	int semvmx;
++	int semaem;
++};
++
+ #ifndef __MLIBC_ABI_ONLY
+ 
+ int semget(key_t __key, int __nsems, int __semflg);
+diff -urN --no-dereference mlibc-clean/options/posix/include/sys/uio.h mlibc-workdir/options/posix/include/sys/uio.h
+--- mlibc-clean/options/posix/include/sys/uio.h
++++ mlibc-workdir/options/posix/include/sys/uio.h
+@@ -1,6 +1,7 @@
+ #ifndef _SYS_UIO_H
+ #define _SYS_UIO_H
+ 
++#include <abi-bits/pid_t.h>
+ #include <bits/posix/iovec.h>
+ #include <bits/ssize_t.h>
+ #include <bits/off_t.h>
+@@ -22,6 +23,12 @@
+ ssize_t preadv(int __fd, const struct iovec *__iov, int __iovcnt, off_t __offset);
+ ssize_t pwritev(int __fd, const struct iovec *__iov, int __iovcnt, off_t __offset);
+ 
++// Linux extensions
++ssize_t process_vm_readv(pid_t __pid, const struct iovec *__local_iov, unsigned long __liovcnt, const struct iovec *__remote_iov,
++	unsigned long __riovcnt, unsigned long __flags);
++ssize_t process_vm_writev(pid_t __pid, const struct iovec *__local_iov, unsigned long __liovcnt, const struct iovec *__remote_iov,
++	unsigned long __riovcnt, unsigned long __flags);
++
+ #endif /* !__MLIBC_ABI_ONLY */
+ 
+ #ifdef __cplusplus
+diff -urN --no-dereference mlibc-clean/options/posix/include/termios.h mlibc-workdir/options/posix/include/termios.h
+--- mlibc-clean/options/posix/include/termios.h
++++ mlibc-workdir/options/posix/include/termios.h
+@@ -87,6 +87,7 @@
+ pid_t tcgetsid(int __fd);
+ int tcsendbreak(int __fd, int __duration);
+ int tcsetattr(int __fd, int __optional_actions, const struct termios *__attr);
++int cfsetspeed(struct termios *__tios, speed_t __speed);
+ 
+ #endif /* !__MLIBC_ABI_ONLY */
+ 
+diff -urN --no-dereference mlibc-clean/options/posix/include/unistd.h mlibc-workdir/options/posix/include/unistd.h
+--- mlibc-clean/options/posix/include/unistd.h
++++ mlibc-workdir/options/posix/include/unistd.h
+@@ -392,6 +392,8 @@
+ int getresuid(uid_t *__ruid, uid_t *__euid, uid_t *__suid);
+ int getresgid(gid_t *__rgid, gid_t *__egid, gid_t *__sgid);
+ 
++char *cuserid(char *__string);
++
+ #endif /* !__MLIBC_ABI_ONLY */
+ 
+ #ifdef __cplusplus
+diff -urN --no-dereference mlibc-clean/options/posix/meson.build mlibc-workdir/options/posix/meson.build
+--- mlibc-clean/options/posix/meson.build
++++ mlibc-workdir/options/posix/meson.build
+@@ -12,6 +12,7 @@
+ 	'generic/langinfo.cpp',
+ 	'generic/libgen.cpp',
+ 	'generic/lookup.cpp',
++	'generic/monetary.cpp',
+ 	'generic/netdb.cpp',
+ 	'generic/net-if.cpp',
+ 	'generic/poll.cpp',
+@@ -103,6 +104,7 @@
+ 		'include/wordexp.h',
+ 		'include/semaphore.h',
+ 		'include/mqueue.h',
++		'include/monetary.h',
+ 	)
+ 	install_headers(
+ 		'include/arpa/inet.h',
+diff -urN --no-dereference mlibc-clean/scripts/rust-libc-config.yml mlibc-workdir/scripts/rust-libc-config.yml
+--- mlibc-clean/scripts/rust-libc-config.yml
++++ mlibc-workdir/scripts/rust-libc-config.yml
+@@ -181,6 +181,7 @@
+   - "CHAR_MIN"
+   - "CLOCKS_PER_SEC"
+   - "CMSG_NXTHDR"
++  - "CPU_AND_S"
+   - "CPU_ALLOC"
+   - "CPU_ALLOC_SIZE"
+   - "CPU_CLR"
+@@ -190,8 +191,10 @@
+   - "CPU_FREE"
+   - "CPU_ISSET"
+   - "CPU_ISSET_S"
++  - "CPU_OR_S"
+   - "CPU_SET"
+   - "CPU_SET_S"
++  - "CPU_XOR_S"
+   - "CPU_ZERO"
+   - "CPU_ZERO_S"
+   - "DOUBLEBITS"
+@@ -1447,6 +1450,476 @@
+   - "MNTOPT_SUID"
+   - "MNTOPT_NOSUID"
+   - "MNTOPT_NOAUTO"
++  # src/unix/linux_like/linux/arch/mod.rs
++  - "SO_REUSEADDR"
++  - "SO_TYPE"
++  - "SO_ERROR"
++  - "SO_DONTROUTE"
++  - "SO_BROADCAST"
++  - "SO_SNDBUF"
++  - "SO_RCVBUF"
++  - "SO_KEEPALIVE"
++  - "SO_OOBINLINE"
++  - "SO_NO_CHECK"
++  - "SO_PRIORITY"
++  - "SO_LINGER"
++  - "SO_BSDCOMPAT"
++  - "SO_REUSEPORT"
++  - "SO_PASSCRED"
++  - "SO_PEERCRED"
++  - "SO_RCVLOWAT"
++  - "SO_SNDLOWAT"
++  - "SO_ACCEPTCONN"
++  - "SO_PEERSEC"
++  - "SO_SNDBUFFORCE"
++  - "SO_RCVBUFFORCE"
++  - "SO_PROTOCOL"
++  - "SO_DOMAIN"
++  - "SO_RCVTIMEO"
++  - "SO_SNDTIMEO"
++  - "SO_TIMESTAMP"
++  - "SO_TIMESTAMPNS"
++  - "SO_TIMESTAMPING"
++  - "SO_SECURITY_AUTHENTICATION"
++  - "SO_SECURITY_ENCRYPTION_TRANSPORT"
++  - "SO_SECURITY_ENCRYPTION_NETWORK"
++  - "SO_BINDTODEVICE"
++  - "SO_ATTACH_FILTER"
++  - "SO_DETACH_FILTER"
++  - "SO_GET_FILTER"
++  - "SO_PEERNAME"
++  - "SO_PASSSEC"
++  - "SCM_TIMESTAMPNS"
++  - "SO_MARK"
++  - "SCM_TIMESTAMPING"
++  - "SO_RXQ_OVFL"
++  - "SO_WIFI_STATUS"
++  - "SCM_WIFI_STATUS"
++  - "SO_PEEK_OFF"
++  - "SO_NOFCS"
++  - "SO_LOCK_FILTER"
++  - "SO_SELECT_ERR_QUEUE"
++  - "SO_BUSY_POLL"
++  - "SO_MAX_PACING_RATE"
++  - "SO_BPF_EXTENSIONS"
++  - "SO_INCOMING_CPU"
++  - "SO_ATTACH_BPF"
++  - "SO_DETACH_BPF"
++  - "SO_ATTACH_REUSEPORT_CBPF"
++  - "SO_ATTACH_REUSEPORT_EBPF"
++  - "SO_CNX_ADVICE"
++  - "SCM_TIMESTAMPING_OPT_STATS"
++  - "SO_MEMINFO"
++  - "SO_INCOMING_NAPI_ID"
++  - "SO_COOKIE"
++  - "SCM_TIMESTAMPING_PKTINFO"
++  - "SO_PEERGROUPS"
++  - "SO_ZEROCOPY"
++  - "SO_TXTIME"
++  - "SCM_TXTIME"
++  - "SO_BINDTOIFINDEX"
++  - "SO_DETACH_REUSEPORT_BPF"
++  - "SOL_SOCKET"
++  - "TIOCEXCL"
++  - "TIOCNXCL"
++  - "TIOCMGET"
++  - "TIOCMBIS"
++  - "TIOCMBIC"
++  - "FIONREAD"
++  - "FIONBIO"
++  - "FIONCLEX"
++  - "FIOCLEX"
++  - "TIOCM_DTR"
++  - "TIOCM_RTS"
++  - "TIOCM_CTS"
++  - "TIOCM_CAR"
++  - "TIOCM_RNG"
++  - "TIOCM_DSR"
++  - "TIOCM_RI"
++  - "TIOCM_CD"
++  - "TIOCSCTTY"
++  - "TIOCGPGRP"
++  - "TIOCSPGRP"
++  - "TIOCGWINSZ"
++  - "TIOCSWINSZ"
++  - "TIOCGSID"
++  # syscall numbers
++  # broken because no linux headers, provided in rust-libc-header.rs
++  - "SYS_read"
++  - "SYS_write"
++  - "SYS_open"
++  - "SYS_close"
++  - "SYS_stat"
++  - "SYS_fstat"
++  - "SYS_lstat"
++  - "SYS_poll"
++  - "SYS_lseek"
++  - "SYS_mmap"
++  - "SYS_mprotect"
++  - "SYS_munmap"
++  - "SYS_brk"
++  - "SYS_rt_sigaction"
++  - "SYS_rt_sigprocmask"
++  - "SYS_rt_sigreturn"
++  - "SYS_ioctl"
++  - "SYS_pread64"
++  - "SYS_pwrite64"
++  - "SYS_readv"
++  - "SYS_writev"
++  - "SYS_access"
++  - "SYS_pipe"
++  - "SYS_select"
++  - "SYS_sched_yield"
++  - "SYS_mremap"
++  - "SYS_msync"
++  - "SYS_mincore"
++  - "SYS_madvise"
++  - "SYS_shmget"
++  - "SYS_shmat"
++  - "SYS_shmctl"
++  - "SYS_dup"
++  - "SYS_dup2"
++  - "SYS_pause"
++  - "SYS_nanosleep"
++  - "SYS_getitimer"
++  - "SYS_alarm"
++  - "SYS_setitimer"
++  - "SYS_getpid"
++  - "SYS_sendfile"
++  - "SYS_socket"
++  - "SYS_connect"
++  - "SYS_accept"
++  - "SYS_sendto"
++  - "SYS_recvfrom"
++  - "SYS_sendmsg"
++  - "SYS_recvmsg"
++  - "SYS_shutdown"
++  - "SYS_bind"
++  - "SYS_listen"
++  - "SYS_getsockname"
++  - "SYS_getpeername"
++  - "SYS_socketpair"
++  - "SYS_setsockopt"
++  - "SYS_getsockopt"
++  - "SYS_clone"
++  - "SYS_fork"
++  - "SYS_vfork"
++  - "SYS_execve"
++  - "SYS_exit"
++  - "SYS_wait4"
++  - "SYS_kill"
++  - "SYS_uname"
++  - "SYS_semget"
++  - "SYS_semop"
++  - "SYS_semctl"
++  - "SYS_shmdt"
++  - "SYS_msgget"
++  - "SYS_msgsnd"
++  - "SYS_msgrcv"
++  - "SYS_msgctl"
++  - "SYS_fcntl"
++  - "SYS_flock"
++  - "SYS_fsync"
++  - "SYS_fdatasync"
++  - "SYS_truncate"
++  - "SYS_ftruncate"
++  - "SYS_getdents"
++  - "SYS_getcwd"
++  - "SYS_chdir"
++  - "SYS_fchdir"
++  - "SYS_rename"
++  - "SYS_mkdir"
++  - "SYS_rmdir"
++  - "SYS_creat"
++  - "SYS_link"
++  - "SYS_unlink"
++  - "SYS_symlink"
++  - "SYS_readlink"
++  - "SYS_chmod"
++  - "SYS_fchmod"
++  - "SYS_chown"
++  - "SYS_fchown"
++  - "SYS_lchown"
++  - "SYS_umask"
++  - "SYS_gettimeofday"
++  - "SYS_getrlimit"
++  - "SYS_getrusage"
++  - "SYS_sysinfo"
++  - "SYS_times"
++  - "SYS_ptrace"
++  - "SYS_getuid"
++  - "SYS_syslog"
++  - "SYS_getgid"
++  - "SYS_setuid"
++  - "SYS_setgid"
++  - "SYS_geteuid"
++  - "SYS_getegid"
++  - "SYS_setpgid"
++  - "SYS_getppid"
++  - "SYS_getpgrp"
++  - "SYS_setsid"
++  - "SYS_setreuid"
++  - "SYS_setregid"
++  - "SYS_getgroups"
++  - "SYS_setgroups"
++  - "SYS_setresuid"
++  - "SYS_getresuid"
++  - "SYS_setresgid"
++  - "SYS_getresgid"
++  - "SYS_getpgid"
++  - "SYS_setfsuid"
++  - "SYS_setfsgid"
++  - "SYS_getsid"
++  - "SYS_capget"
++  - "SYS_capset"
++  - "SYS_rt_sigpending"
++  - "SYS_rt_sigtimedwait"
++  - "SYS_rt_sigqueueinfo"
++  - "SYS_rt_sigsuspend"
++  - "SYS_sigaltstack"
++  - "SYS_utime"
++  - "SYS_mknod"
++  - "SYS_uselib"
++  - "SYS_personality"
++  - "SYS_ustat"
++  - "SYS_statfs"
++  - "SYS_fstatfs"
++  - "SYS_sysfs"
++  - "SYS_getpriority"
++  - "SYS_setpriority"
++  - "SYS_sched_setparam"
++  - "SYS_sched_getparam"
++  - "SYS_sched_setscheduler"
++  - "SYS_sched_getscheduler"
++  - "SYS_sched_get_priority_max"
++  - "SYS_sched_get_priority_min"
++  - "SYS_sched_rr_get_interval"
++  - "SYS_mlock"
++  - "SYS_munlock"
++  - "SYS_mlockall"
++  - "SYS_munlockall"
++  - "SYS_vhangup"
++  - "SYS_modify_ldt"
++  - "SYS_pivot_root"
++  - "SYS__sysctl"
++  - "SYS_prctl"
++  - "SYS_arch_prctl"
++  - "SYS_adjtimex"
++  - "SYS_setrlimit"
++  - "SYS_chroot"
++  - "SYS_sync"
++  - "SYS_acct"
++  - "SYS_settimeofday"
++  - "SYS_mount"
++  - "SYS_umount2"
++  - "SYS_swapon"
++  - "SYS_swapoff"
++  - "SYS_reboot"
++  - "SYS_sethostname"
++  - "SYS_setdomainname"
++  - "SYS_iopl"
++  - "SYS_ioperm"
++  - "SYS_create_module"
++  - "SYS_init_module"
++  - "SYS_delete_module"
++  - "SYS_get_kernel_syms"
++  - "SYS_query_module"
++  - "SYS_quotactl"
++  - "SYS_nfsservctl"
++  - "SYS_getpmsg"
++  - "SYS_putpmsg"
++  - "SYS_afs_syscall"
++  - "SYS_tuxcall"
++  - "SYS_security"
++  - "SYS_gettid"
++  - "SYS_readahead"
++  - "SYS_setxattr"
++  - "SYS_lsetxattr"
++  - "SYS_fsetxattr"
++  - "SYS_getxattr"
++  - "SYS_lgetxattr"
++  - "SYS_fgetxattr"
++  - "SYS_listxattr"
++  - "SYS_llistxattr"
++  - "SYS_flistxattr"
++  - "SYS_removexattr"
++  - "SYS_lremovexattr"
++  - "SYS_fremovexattr"
++  - "SYS_tkill"
++  - "SYS_time"
++  - "SYS_futex"
++  - "SYS_sched_setaffinity"
++  - "SYS_sched_getaffinity"
++  - "SYS_set_thread_area"
++  - "SYS_io_setup"
++  - "SYS_io_destroy"
++  - "SYS_io_getevents"
++  - "SYS_io_submit"
++  - "SYS_io_cancel"
++  - "SYS_get_thread_area"
++  - "SYS_lookup_dcookie"
++  - "SYS_epoll_create"
++  - "SYS_epoll_ctl_old"
++  - "SYS_epoll_wait_old"
++  - "SYS_remap_file_pages"
++  - "SYS_getdents64"
++  - "SYS_set_tid_address"
++  - "SYS_restart_syscall"
++  - "SYS_semtimedop"
++  - "SYS_fadvise64"
++  - "SYS_timer_create"
++  - "SYS_timer_settime"
++  - "SYS_timer_gettime"
++  - "SYS_timer_getoverrun"
++  - "SYS_timer_delete"
++  - "SYS_clock_settime"
++  - "SYS_clock_gettime"
++  - "SYS_clock_getres"
++  - "SYS_clock_nanosleep"
++  - "SYS_exit_group"
++  - "SYS_epoll_wait"
++  - "SYS_epoll_ctl"
++  - "SYS_tgkill"
++  - "SYS_utimes"
++  - "SYS_vserver"
++  - "SYS_mbind"
++  - "SYS_set_mempolicy"
++  - "SYS_get_mempolicy"
++  - "SYS_mq_open"
++  - "SYS_mq_unlink"
++  - "SYS_mq_timedsend"
++  - "SYS_mq_timedreceive"
++  - "SYS_mq_notify"
++  - "SYS_mq_getsetattr"
++  - "SYS_kexec_load"
++  - "SYS_waitid"
++  - "SYS_add_key"
++  - "SYS_request_key"
++  - "SYS_keyctl"
++  - "SYS_ioprio_set"
++  - "SYS_ioprio_get"
++  - "SYS_inotify_init"
++  - "SYS_inotify_add_watch"
++  - "SYS_inotify_rm_watch"
++  - "SYS_migrate_pages"
++  - "SYS_openat"
++  - "SYS_mkdirat"
++  - "SYS_mknodat"
++  - "SYS_fchownat"
++  - "SYS_futimesat"
++  - "SYS_newfstatat"
++  - "SYS_unlinkat"
++  - "SYS_renameat"
++  - "SYS_linkat"
++  - "SYS_symlinkat"
++  - "SYS_readlinkat"
++  - "SYS_fchmodat"
++  - "SYS_faccessat"
++  - "SYS_pselect6"
++  - "SYS_ppoll"
++  - "SYS_unshare"
++  - "SYS_set_robust_list"
++  - "SYS_get_robust_list"
++  - "SYS_splice"
++  - "SYS_tee"
++  - "SYS_sync_file_range"
++  - "SYS_vmsplice"
++  - "SYS_move_pages"
++  - "SYS_utimensat"
++  - "SYS_epoll_pwait"
++  - "SYS_signalfd"
++  - "SYS_timerfd_create"
++  - "SYS_eventfd"
++  - "SYS_fallocate"
++  - "SYS_timerfd_settime"
++  - "SYS_timerfd_gettime"
++  - "SYS_accept4"
++  - "SYS_signalfd4"
++  - "SYS_eventfd2"
++  - "SYS_epoll_create1"
++  - "SYS_dup3"
++  - "SYS_pipe2"
++  - "SYS_inotify_init1"
++  - "SYS_preadv"
++  - "SYS_pwritev"
++  - "SYS_rt_tgsigqueueinfo"
++  - "SYS_perf_event_open"
++  - "SYS_recvmmsg"
++  - "SYS_fanotify_init"
++  - "SYS_fanotify_mark"
++  - "SYS_prlimit64"
++  - "SYS_name_to_handle_at"
++  - "SYS_open_by_handle_at"
++  - "SYS_clock_adjtime"
++  - "SYS_syncfs"
++  - "SYS_sendmmsg"
++  - "SYS_setns"
++  - "SYS_getcpu"
++  - "SYS_process_vm_readv"
++  - "SYS_process_vm_writev"
++  - "SYS_kcmp"
++  - "SYS_finit_module"
++  - "SYS_sched_setattr"
++  - "SYS_sched_getattr"
++  - "SYS_renameat2"
++  - "SYS_seccomp"
++  - "SYS_getrandom"
++  - "SYS_memfd_create"
++  - "SYS_kexec_file_load"
++  - "SYS_bpf"
++  - "SYS_execveat"
++  - "SYS_userfaultfd"
++  - "SYS_membarrier"
++  - "SYS_mlock2"
++  - "SYS_copy_file_range"
++  - "SYS_preadv2"
++  - "SYS_pwritev2"
++  - "SYS_pkey_mprotect"
++  - "SYS_pkey_alloc"
++  - "SYS_pkey_free"
++  - "SYS_statx"
++  - "SYS_rseq"
++  - "SYS_pidfd_send_signal"
++  - "SYS_io_uring_setup"
++  - "SYS_io_uring_enter"
++  - "SYS_io_uring_register"
++  - "SYS_open_tree"
++  - "SYS_move_mount"
++  - "SYS_fsopen"
++  - "SYS_fsconfig"
++  - "SYS_fsmount"
++  - "SYS_fspick"
++  - "SYS_pidfd_open"
++  - "SYS_clone3"
++  - "SYS_close_range"
++  - "SYS_openat2"
++  - "SYS_pidfd_getfd"
++  - "SYS_faccessat2"
++  - "SYS_process_madvise"
++  - "SYS_epoll_pwait2"
++  - "SYS_mount_setattr"
++  - "SYS_quotactl_fd"
++  - "SYS_landlock_create_ruleset"
++  - "SYS_landlock_add_rule"
++  - "SYS_landlock_restrict_self"
++  - "SYS_memfd_secret"
++  - "SYS_process_mrelease"
++  - "SYS_futex_waitv"
++  - "SYS_set_mempolicy_home_node"
++  - "SYS_fchmodat2"
++  - "SYS_mseal"
++  - "SYS_cachestat"
++  - "SYS_futex_requeue"
++  - "SYS_futex_wait"
++  - "SYS_futex_wake"
++  - "SYS_io_pgetevents"
++  - "SYS_listmount"
++  - "SYS_lsm_get_self_attr"
++  - "SYS_lsm_list_modules"
++  - "SYS_lsm_set_self_attr"
++  - "SYS_map_shadow_stack"
++  - "SYS_statmount"
++  - "SYS_uretprobe"
+ 
+ forced_macros:
+   - "__MLIBC_THREAD_CREATE_JOINABLE"
+@@ -1947,6 +2420,15 @@
+   - "recvmsg"
+   - "uname"
+   - "strchrnul"
++  # :shrug:
++  - "clone"
++  - "getopt_long"
++  - "glob"
++  - "pthread_once"
++  - "posix_spawn"
++  - "posix_spawnp"
++  - "ioctl"
++
+ 
+ forced_functions:
+   - "__errno_location"
+@@ -2040,6 +2522,7 @@
+   "usize":
+     - "NCCS"
+     - "PTHREAD_STACK_MIN"
++    - "SIGSTKSZ"
+     - "VEOF"
+     - "VMIN"
+     - "VTIME"
+diff -urN --no-dereference mlibc-clean/scripts/rust-libc-header.rs mlibc-workdir/scripts/rust-libc-header.rs
+--- mlibc-clean/scripts/rust-libc-header.rs
++++ mlibc-workdir/scripts/rust-libc-header.rs
+@@ -3,95 +3,81 @@
+ 
+ use crate::prelude::*;
+ 
++cfg_if! {
++    if #[cfg(doc)] {
++        // Used in `linux::arch` to define ioctl constants.
++        pub(crate) type Ioctl = c_int;
++    } else {
++        #[doc(hidden)]
++        pub type Ioctl = c_int;
++    }
++}
++
++pub type __sc_word_t = c_long;
++
++extern "C" {
++    pub fn  __do_syscall0(num: c_long) -> __sc_word_t;
++    pub fn  __do_syscall1(num: c_long, arg1: __sc_word_t) -> __sc_word_t;
++    pub fn  __do_syscall2(num: c_long, arg1: __sc_word_t, arg2: __sc_word_t) -> __sc_word_t;
++    pub fn  __do_syscall3(
++        num: c_long,
++        arg1: __sc_word_t,
++        arg2: __sc_word_t,
++        arg3: __sc_word_t,
++    ) -> __sc_word_t;
++    pub fn  __do_syscall4(
++        num: c_long,
++        arg1: __sc_word_t,
++        arg2: __sc_word_t,
++        arg3: __sc_word_t,
++        arg4: __sc_word_t,
++    ) -> __sc_word_t;
++    pub fn  __do_syscall5(
++        num: c_long,
++        arg1: __sc_word_t,
++        arg2: __sc_word_t,
++        arg3: __sc_word_t,
++        arg4: __sc_word_t,
++        arg5: __sc_word_t,
++    ) -> __sc_word_t;
++    pub fn  __do_syscall6(
++        num: c_long,
++        arg1: __sc_word_t,
++        arg2: __sc_word_t,
++        arg3: __sc_word_t,
++        arg4: __sc_word_t,
++        arg5: __sc_word_t,
++        arg6: __sc_word_t,
++    ) -> __sc_word_t;
++    pub fn  __do_syscall7(
++        num: c_long,
++        arg1: __sc_word_t,
++        arg2: __sc_word_t,
++        arg3: __sc_word_t,
++        arg4: __sc_word_t,
++        arg5: __sc_word_t,
++        arg6: __sc_word_t,
++        arg7: __sc_word_t,
++    ) -> __sc_word_t;
++    pub fn __do_syscall_ret(ret: __sc_word_t) -> c_long;
++}
++
+ use crate::sighandler_t;
+ 
+-pub type blkcnt64_t = i64;
+-pub type rlimit64 = crate::rlimit;
+-pub type rlim64_t = crate::rlim_t;
+-pub type dirent64 = crate::dirent;
++pub type msqid_ds = crate::msqid64_ds;
+ pub type stat64 = crate::stat;
+ pub type statfs64 = crate::statfs;
+ pub type statvfs64 = crate::statvfs;
+-pub type idtype_t = c_uint;
+-pub const RTLD_DEFAULT: *mut c_void = 0i64 as *mut c_void;
+-pub const RLIM_INFINITY: crate::rlim_t = !0;
+-
+-pub type Elf32_Half = u16;
+-pub type Elf32_Word = u32;
+-pub type Elf32_Off = u32;
+-pub type Elf32_Addr = u32;
+-
+-pub type Elf64_Half = u16;
+-pub type Elf64_Word = u32;
+-pub type Elf64_Off = u64;
+-pub type Elf64_Addr = u64;
+-pub type Elf64_Xword = u64;
+-
+-s! {
+-    pub struct Elf32_Phdr {
+-        pub p_type: Elf32_Word,
+-        pub p_offset: Elf32_Off,
+-        pub p_vaddr: Elf32_Addr,
+-        pub p_paddr: Elf32_Addr,
+-        pub p_filesz: Elf32_Word,
+-        pub p_memsz: Elf32_Word,
+-        pub p_flags: Elf32_Word,
+-        pub p_align: Elf32_Word,
+-    }
+-
+-    pub struct Elf64_Phdr {
+-        pub p_type: Elf64_Word,
+-        pub p_flags: Elf64_Word,
+-        pub p_offset: Elf64_Off,
+-        pub p_vaddr: Elf64_Addr,
+-        pub p_paddr: Elf64_Addr,
+-        pub p_filesz: Elf64_Xword,
+-        pub p_memsz: Elf64_Xword,
+-        pub p_align: Elf64_Xword,
+-    }
+-}
+-
+-s! {
+-    pub struct dl_phdr_info {
+-        #[cfg(target_pointer_width = "64")]
+-        pub dlpi_addr: Elf64_Addr,
+-        #[cfg(target_pointer_width = "32")]
+-        pub dlpi_addr: Elf32_Addr,
+-
+-        pub dlpi_name: *const c_char,
+-
+-        #[cfg(target_pointer_width = "64")]
+-        pub dlpi_phdr: *const Elf64_Phdr,
+-        #[cfg(target_pointer_width = "32")]
+-        pub dlpi_phdr: *const Elf32_Phdr,
+-
+-        #[cfg(target_pointer_width = "64")]
+-        pub dlpi_phnum: Elf64_Half,
+-        #[cfg(target_pointer_width = "32")]
+-        pub dlpi_phnum: Elf32_Half,
+-
+-        pub dlpi_adds: c_ulonglong,
+-        pub dlpi_subs: c_ulonglong,
+-        pub dlpi_tls_modid: size_t,
+-        pub dlpi_tls_data: *mut c_void,
+-    }
+-}
+-
+-f! {
+-    pub fn CMSG_NXTHDR(mhdr: *const msghdr, cmsg: *const cmsghdr) -> *mut cmsghdr {
+-        if ((*cmsg).cmsg_len as usize) < mem::size_of::<cmsghdr>() {
+-            return 0 as *mut cmsghdr;
+-        };
+-        let next = (cmsg as usize + super::CMSG_ALIGN((*cmsg).cmsg_len as usize)) as *mut cmsghdr;
+-        let max = (*mhdr).msg_control as usize + (*mhdr).msg_controllen as usize;
+-        if (next.offset(1)) as usize > max ||
+-            next as usize + super::CMSG_ALIGN((*next).cmsg_len as usize) > max {
+-            0 as *mut cmsghdr
+-        } else {
+-            next as *mut cmsghdr
+-        }
+-    }
+-}
++pub type __u64 = c_ulong;
++pub type __s64 = c_long;
++
++pub const __SIZEOF_PTHREAD_MUTEXATTR_T: usize = 20;
++pub const __SIZEOF_PTHREAD_RWLOCKATTR_T: usize = 4;
++pub const __SIZEOF_PTHREAD_CONDATTR_T: usize = 8;
++pub const __SIZEOF_PTHREAD_BARRIERATTR_T: usize = 4;
++pub const __SIZEOF_PTHREAD_MUTEX_T: usize = 16;
++pub const __SIZEOF_PTHREAD_RWLOCK_T: usize = 12;
++pub const __SIZEOF_PTHREAD_BARRIER_T: usize = 20;
+ 
+ pub const PTHREAD_MUTEX_INITIALIZER: pthread_mutex_t = pthread_mutex_t {
+     size: [0; 16],
+@@ -103,149 +89,475 @@
+     size: [0; 12],
+ };
+ 
+-s_no_extra_traits! {
+-    pub struct ifreq {
+-        pub ifru_addr: crate::sockaddr,
+-        pub ifru_dstaddr: crate::sockaddr,
+-        pub ifru_broadaddr: crate::sockaddr,
+-        pub ifru_netmask: crate::sockaddr,
+-        pub ifru_hwaddr: crate::sockaddr,
+-        pub ifru_flags: c_short,
+-        pub ifru_ivalue: c_int,
+-        pub ifru_mtu: c_int,
+-        pub ifru_map: crate::ifmap,
+-        pub ifru_slave: [c_char; 16],
+-        pub ifru_newname: [c_char; 16],
+-        pub ifru_data: *mut c_char,
+-    }
++pub const MAP_HUGE_SHIFT: c_int = 26;
++pub const MAP_HUGE_MASK: c_int = 0x3f;
++
++pub const MAP_HUGE_64KB: c_int = 16 << MAP_HUGE_SHIFT;
++pub const MAP_HUGE_512KB: c_int = 19 << MAP_HUGE_SHIFT;
++pub const MAP_HUGE_1MB: c_int = 20 << MAP_HUGE_SHIFT;
++pub const MAP_HUGE_2MB: c_int = 21 << MAP_HUGE_SHIFT;
++pub const MAP_HUGE_8MB: c_int = 23 << MAP_HUGE_SHIFT;
++pub const MAP_HUGE_16MB: c_int = 24 << MAP_HUGE_SHIFT;
++pub const MAP_HUGE_32MB: c_int = 25 << MAP_HUGE_SHIFT;
++pub const MAP_HUGE_256MB: c_int = 28 << MAP_HUGE_SHIFT;
++pub const MAP_HUGE_512MB: c_int = 29 << MAP_HUGE_SHIFT;
++pub const MAP_HUGE_1GB: c_int = 30 << MAP_HUGE_SHIFT;
++pub const MAP_HUGE_2GB: c_int = 31 << MAP_HUGE_SHIFT;
++pub const MAP_HUGE_16GB: c_int = 34 << MAP_HUGE_SHIFT;
++
++#[repr(C)]
++struct __siginfo_fields {
++    fields: [c_int; 1],
+ }
+ 
+-impl fmt::Debug for ifreq {
+-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+-        f.debug_struct("ifreq").finish()
++impl siginfo_t {
++    pub unsafe fn si_addr(&self) -> *mut c_void {
++        #[repr(C)]
++        struct siginfo_sigfault {
++            _si_signo: c_int,
++            _si_errno: c_int,
++            _si_code: c_int,
++            si_addr: *mut c_void,
++        }
++        (*(self as *const siginfo_t as *const siginfo_sigfault)).si_addr
+     }
+-}
+ 
+-safe_f! {
+-    pub {const} fn makedev(major: c_uint, minor: c_uint) -> crate::dev_t {
+-        let major = major as crate::dev_t;
+-        let minor = minor as crate::dev_t;
+-        let mut dev = 0;
+-        dev |= (major & 0x00000fff) << 8;
+-        dev |= (major & 0xfffff000) << 32;
+-        dev |= (minor & 0x000000ff) << 0;
+-        dev |= (minor & 0xffffff00) << 12;
+-        dev
++    pub unsafe fn si_value(&self) -> crate::sigval {
++        #[repr(C)]
++        struct siginfo_timer {
++            _si_signo: c_int,
++            _si_errno: c_int,
++            _si_code: c_int,
++            _si_tid: c_int,
++            _si_overrun: c_int,
++            si_sigval: crate::sigval,
++        }
++        (*(self as *const siginfo_t as *const siginfo_timer)).si_sigval
+     }
+ }
+ 
+-f! {
+-    pub fn major(dev: crate::dev_t) -> c_uint {
+-        let mut major = 0;
+-        major |= (dev & 0x00000000000fff00) >> 8;
+-        major |= (dev & 0xfffff00000000000) >> 32;
+-        major as c_uint
+-    }
+-
+-    pub fn minor(dev: crate::dev_t) -> c_uint {
+-        let mut minor = 0;
+-        minor |= (dev & 0x00000000000000ff) >> 0;
+-        minor |= (dev & 0x00000ffffff00000) >> 12;
+-        minor as c_uint
++// Internal, for casts to access union fields
++#[repr(C)]
++struct sifields_sigchld {
++    si_pid: crate::pid_t,
++    si_uid: crate::uid_t,
++    si_status: c_int,
++    si_utime: c_long,
++    si_stime: c_long,
++}
++
++impl Copy for sifields_sigchld {}
++impl Clone for sifields_sigchld {
++    fn clone(&self) -> sifields_sigchld {
++        *self
+     }
+ }
+ 
+-extern "C" {
+-    #[link_name = "__gnu_strerror_r"]
+-    pub fn strerror_r(errnum: c_int, buf: *mut c_char, buflen: size_t) -> c_int;
++// Internal, for casts to access union fields
++#[repr(C)]
++union sifields {
++    _align_pointer: *mut c_void,
++    sigchld: sifields_sigchld,
+ }
+ 
++// Internal, for casts to access union fields. Note that some variants
++// of sifields start with a pointer, which makes the alignment of
++// sifields vary on 32-bit and 64-bit architectures.
+ #[repr(C)]
+-struct __siginfo_fields {
+-    fields: [c_int; 1],
++struct siginfo_f {
++    _siginfo_base: [c_int; 3],
++    sifields: sifields,
+ }
+ 
+ impl siginfo_t {
+-    unsafe fn sifields(&self) -> &__siginfo_fields {
+-        &(*(self.__si_fields.as_ptr() as *const __siginfo_fields))
++    unsafe fn sifields(&self) -> &sifields {
++        &(*(self as *const siginfo_t as *const siginfo_f)).sifields
++    }
++
++    pub unsafe fn si_pid(&self) -> crate::pid_t {
++        self.sifields().sigchld.si_pid
++    }
++
++    pub unsafe fn si_uid(&self) -> crate::uid_t {
++        self.sifields().sigchld.si_uid
+     }
+ 
+     pub unsafe fn si_status(&self) -> c_int {
+-        self.sifields().fields[0]
++        self.sifields().sigchld.si_status
++    }
++
++    pub unsafe fn si_utime(&self) -> c_long {
++        self.sifields().sigchld.si_utime
+     }
+-}
+ 
+-s! {
+-    pub struct sockaddr_nl {
+-        pub nl_family: crate::sa_family_t,
+-        nl_pad: c_ushort,
+-        pub nl_pid: u32,
+-        pub nl_groups: u32,
+-    }
+-}
+-
+-// linux/netlink.h
+-pub const NLA_ALIGNTO: c_int = 4;
+-
+-pub const NETLINK_ROUTE: c_int = 0;
+-pub const NETLINK_UNUSED: c_int = 1;
+-pub const NETLINK_USERSOCK: c_int = 2;
+-pub const NETLINK_FIREWALL: c_int = 3;
+-pub const NETLINK_SOCK_DIAG: c_int = 4;
+-pub const NETLINK_NFLOG: c_int = 5;
+-pub const NETLINK_XFRM: c_int = 6;
+-pub const NETLINK_SELINUX: c_int = 7;
+-pub const NETLINK_ISCSI: c_int = 8;
+-pub const NETLINK_AUDIT: c_int = 9;
+-pub const NETLINK_FIB_LOOKUP: c_int = 10;
+-pub const NETLINK_CONNECTOR: c_int = 11;
+-pub const NETLINK_NETFILTER: c_int = 12;
+-pub const NETLINK_IP6_FW: c_int = 13;
+-pub const NETLINK_DNRTMSG: c_int = 14;
+-pub const NETLINK_KOBJECT_UEVENT: c_int = 15;
+-pub const NETLINK_GENERIC: c_int = 16;
+-pub const NETLINK_SCSITRANSPORT: c_int = 18;
+-pub const NETLINK_ECRYPTFS: c_int = 19;
+-pub const NETLINK_RDMA: c_int = 20;
+-pub const NETLINK_CRYPTO: c_int = 21;
+-pub const NETLINK_INET_DIAG: c_int = NETLINK_SOCK_DIAG;
+-
+-pub const NLM_F_REQUEST: c_int = 1;
+-pub const NLM_F_MULTI: c_int = 2;
+-pub const NLM_F_ACK: c_int = 4;
+-pub const NLM_F_ECHO: c_int = 8;
+-pub const NLM_F_DUMP_INTR: c_int = 16;
+-pub const NLM_F_DUMP_FILTERED: c_int = 32;
+-
+-pub const NLM_F_ROOT: c_int = 0x100;
+-pub const NLM_F_MATCH: c_int = 0x200;
+-pub const NLM_F_ATOMIC: c_int = 0x400;
+-pub const NLM_F_DUMP: c_int = NLM_F_ROOT | NLM_F_MATCH;
+-
+-pub const NLM_F_REPLACE: c_int = 0x100;
+-pub const NLM_F_EXCL: c_int = 0x200;
+-pub const NLM_F_CREATE: c_int = 0x400;
+-pub const NLM_F_APPEND: c_int = 0x800;
+-
+-pub const NLM_F_NONREC: c_int = 0x100;
+-pub const NLM_F_BULK: c_int = 0x200;
+-
+-pub const NLM_F_CAPPED: c_int = 0x100;
+-pub const NLM_F_ACK_TLVS: c_int = 0x200;
+-
+-pub const NETLINK_ADD_MEMBERSHIP: c_int = 1;
+-pub const NETLINK_DROP_MEMBERSHIP: c_int = 2;
+-pub const NETLINK_PKTINFO: c_int = 3;
+-pub const NETLINK_BROADCAST_ERROR: c_int = 4;
+-pub const NETLINK_NO_ENOBUFS: c_int = 5;
+-pub const NETLINK_RX_RING: c_int = 6;
+-pub const NETLINK_TX_RING: c_int = 7;
+-pub const NETLINK_LISTEN_ALL_NSID: c_int = 8;
+-pub const NETLINK_LIST_MEMBERSHIPS: c_int = 9;
+-pub const NETLINK_CAP_ACK: c_int = 10;
+-pub const NETLINK_EXT_ACK: c_int = 11;
+-pub const NETLINK_GET_STRICT_CHK: c_int = 12;
+-
+-pub const NLA_F_NESTED: c_int = 1 << 15;
+-pub const NLA_F_NET_BYTEORDER: c_int = 1 << 14;
+-pub const NLA_TYPE_MASK: c_int = !(NLA_F_NESTED | NLA_F_NET_BYTEORDER);
++    pub unsafe fn si_stime(&self) -> c_long {
++        self.sifields().sigchld.si_stime
++    }
++}
++
++pub const SYS_read: c_long = 0;
++pub const SYS_write: c_long = 1;
++pub const SYS_open: c_long = 2;
++pub const SYS_close: c_long = 3;
++pub const SYS_stat: c_long = 4;
++pub const SYS_fstat: c_long = 5;
++pub const SYS_lstat: c_long = 6;
++pub const SYS_poll: c_long = 7;
++pub const SYS_lseek: c_long = 8;
++pub const SYS_mmap: c_long = 9;
++pub const SYS_mprotect: c_long = 10;
++pub const SYS_munmap: c_long = 11;
++pub const SYS_brk: c_long = 12;
++pub const SYS_rt_sigaction: c_long = 13;
++pub const SYS_rt_sigprocmask: c_long = 14;
++pub const SYS_rt_sigreturn: c_long = 15;
++pub const SYS_ioctl: c_long = 16;
++pub const SYS_pread64: c_long = 17;
++pub const SYS_pwrite64: c_long = 18;
++pub const SYS_readv: c_long = 19;
++pub const SYS_writev: c_long = 20;
++pub const SYS_access: c_long = 21;
++pub const SYS_pipe: c_long = 22;
++pub const SYS_select: c_long = 23;
++pub const SYS_sched_yield: c_long = 24;
++pub const SYS_mremap: c_long = 25;
++pub const SYS_msync: c_long = 26;
++pub const SYS_mincore: c_long = 27;
++pub const SYS_madvise: c_long = 28;
++pub const SYS_shmget: c_long = 29;
++pub const SYS_shmat: c_long = 30;
++pub const SYS_shmctl: c_long = 31;
++pub const SYS_dup: c_long = 32;
++pub const SYS_dup2: c_long = 33;
++pub const SYS_pause: c_long = 34;
++pub const SYS_nanosleep: c_long = 35;
++pub const SYS_getitimer: c_long = 36;
++pub const SYS_alarm: c_long = 37;
++pub const SYS_setitimer: c_long = 38;
++pub const SYS_getpid: c_long = 39;
++pub const SYS_sendfile: c_long = 40;
++pub const SYS_socket: c_long = 41;
++pub const SYS_connect: c_long = 42;
++pub const SYS_accept: c_long = 43;
++pub const SYS_sendto: c_long = 44;
++pub const SYS_recvfrom: c_long = 45;
++pub const SYS_sendmsg: c_long = 46;
++pub const SYS_recvmsg: c_long = 47;
++pub const SYS_shutdown: c_long = 48;
++pub const SYS_bind: c_long = 49;
++pub const SYS_listen: c_long = 50;
++pub const SYS_getsockname: c_long = 51;
++pub const SYS_getpeername: c_long = 52;
++pub const SYS_socketpair: c_long = 53;
++pub const SYS_setsockopt: c_long = 54;
++pub const SYS_getsockopt: c_long = 55;
++pub const SYS_clone: c_long = 56;
++pub const SYS_fork: c_long = 57;
++pub const SYS_vfork: c_long = 58;
++pub const SYS_execve: c_long = 59;
++pub const SYS_exit: c_long = 60;
++pub const SYS_wait4: c_long = 61;
++pub const SYS_kill: c_long = 62;
++pub const SYS_uname: c_long = 63;
++pub const SYS_semget: c_long = 64;
++pub const SYS_semop: c_long = 65;
++pub const SYS_semctl: c_long = 66;
++pub const SYS_shmdt: c_long = 67;
++pub const SYS_msgget: c_long = 68;
++pub const SYS_msgsnd: c_long = 69;
++pub const SYS_msgrcv: c_long = 70;
++pub const SYS_msgctl: c_long = 71;
++pub const SYS_fcntl: c_long = 72;
++pub const SYS_flock: c_long = 73;
++pub const SYS_fsync: c_long = 74;
++pub const SYS_fdatasync: c_long = 75;
++pub const SYS_truncate: c_long = 76;
++pub const SYS_ftruncate: c_long = 77;
++pub const SYS_getdents: c_long = 78;
++pub const SYS_getcwd: c_long = 79;
++pub const SYS_chdir: c_long = 80;
++pub const SYS_fchdir: c_long = 81;
++pub const SYS_rename: c_long = 82;
++pub const SYS_mkdir: c_long = 83;
++pub const SYS_rmdir: c_long = 84;
++pub const SYS_creat: c_long = 85;
++pub const SYS_link: c_long = 86;
++pub const SYS_unlink: c_long = 87;
++pub const SYS_symlink: c_long = 88;
++pub const SYS_readlink: c_long = 89;
++pub const SYS_chmod: c_long = 90;
++pub const SYS_fchmod: c_long = 91;
++pub const SYS_chown: c_long = 92;
++pub const SYS_fchown: c_long = 93;
++pub const SYS_lchown: c_long = 94;
++pub const SYS_umask: c_long = 95;
++pub const SYS_gettimeofday: c_long = 96;
++pub const SYS_getrlimit: c_long = 97;
++pub const SYS_getrusage: c_long = 98;
++pub const SYS_sysinfo: c_long = 99;
++pub const SYS_times: c_long = 100;
++pub const SYS_ptrace: c_long = 101;
++pub const SYS_getuid: c_long = 102;
++pub const SYS_syslog: c_long = 103;
++pub const SYS_getgid: c_long = 104;
++pub const SYS_setuid: c_long = 105;
++pub const SYS_setgid: c_long = 106;
++pub const SYS_geteuid: c_long = 107;
++pub const SYS_getegid: c_long = 108;
++pub const SYS_setpgid: c_long = 109;
++pub const SYS_getppid: c_long = 110;
++pub const SYS_getpgrp: c_long = 111;
++pub const SYS_setsid: c_long = 112;
++pub const SYS_setreuid: c_long = 113;
++pub const SYS_setregid: c_long = 114;
++pub const SYS_getgroups: c_long = 115;
++pub const SYS_setgroups: c_long = 116;
++pub const SYS_setresuid: c_long = 117;
++pub const SYS_getresuid: c_long = 118;
++pub const SYS_setresgid: c_long = 119;
++pub const SYS_getresgid: c_long = 120;
++pub const SYS_getpgid: c_long = 121;
++pub const SYS_setfsuid: c_long = 122;
++pub const SYS_setfsgid: c_long = 123;
++pub const SYS_getsid: c_long = 124;
++pub const SYS_capget: c_long = 125;
++pub const SYS_capset: c_long = 126;
++pub const SYS_rt_sigpending: c_long = 127;
++pub const SYS_rt_sigtimedwait: c_long = 128;
++pub const SYS_rt_sigqueueinfo: c_long = 129;
++pub const SYS_rt_sigsuspend: c_long = 130;
++pub const SYS_sigaltstack: c_long = 131;
++pub const SYS_utime: c_long = 132;
++pub const SYS_mknod: c_long = 133;
++pub const SYS_uselib: c_long = 134;
++pub const SYS_personality: c_long = 135;
++pub const SYS_ustat: c_long = 136;
++pub const SYS_statfs: c_long = 137;
++pub const SYS_fstatfs: c_long = 138;
++pub const SYS_sysfs: c_long = 139;
++pub const SYS_getpriority: c_long = 140;
++pub const SYS_setpriority: c_long = 141;
++pub const SYS_sched_setparam: c_long = 142;
++pub const SYS_sched_getparam: c_long = 143;
++pub const SYS_sched_setscheduler: c_long = 144;
++pub const SYS_sched_getscheduler: c_long = 145;
++pub const SYS_sched_get_priority_max: c_long = 146;
++pub const SYS_sched_get_priority_min: c_long = 147;
++pub const SYS_sched_rr_get_interval: c_long = 148;
++pub const SYS_mlock: c_long = 149;
++pub const SYS_munlock: c_long = 150;
++pub const SYS_mlockall: c_long = 151;
++pub const SYS_munlockall: c_long = 152;
++pub const SYS_vhangup: c_long = 153;
++pub const SYS_modify_ldt: c_long = 154;
++pub const SYS_pivot_root: c_long = 155;
++pub const SYS__sysctl: c_long = 156;
++pub const SYS_prctl: c_long = 157;
++pub const SYS_arch_prctl: c_long = 158;
++pub const SYS_adjtimex: c_long = 159;
++pub const SYS_setrlimit: c_long = 160;
++pub const SYS_chroot: c_long = 161;
++pub const SYS_sync: c_long = 162;
++pub const SYS_acct: c_long = 163;
++pub const SYS_settimeofday: c_long = 164;
++pub const SYS_mount: c_long = 165;
++pub const SYS_umount2: c_long = 166;
++pub const SYS_swapon: c_long = 167;
++pub const SYS_swapoff: c_long = 168;
++pub const SYS_reboot: c_long = 169;
++pub const SYS_sethostname: c_long = 170;
++pub const SYS_setdomainname: c_long = 171;
++pub const SYS_iopl: c_long = 172;
++pub const SYS_ioperm: c_long = 173;
++#[deprecated(since = "0.2.70", note = "Functional up to 2.6 kernel")]
++pub const SYS_create_module: c_long = 174;
++pub const SYS_init_module: c_long = 175;
++pub const SYS_delete_module: c_long = 176;
++#[deprecated(since = "0.2.70", note = "Functional up to 2.6 kernel")]
++pub const SYS_get_kernel_syms: c_long = 177;
++#[deprecated(since = "0.2.70", note = "Functional up to 2.6 kernel")]
++pub const SYS_query_module: c_long = 178;
++pub const SYS_quotactl: c_long = 179;
++pub const SYS_nfsservctl: c_long = 180;
++pub const SYS_getpmsg: c_long = 181;
++pub const SYS_putpmsg: c_long = 182;
++pub const SYS_afs_syscall: c_long = 183;
++pub const SYS_tuxcall: c_long = 184;
++pub const SYS_security: c_long = 185;
++pub const SYS_gettid: c_long = 186;
++pub const SYS_readahead: c_long = 187;
++pub const SYS_setxattr: c_long = 188;
++pub const SYS_lsetxattr: c_long = 189;
++pub const SYS_fsetxattr: c_long = 190;
++pub const SYS_getxattr: c_long = 191;
++pub const SYS_lgetxattr: c_long = 192;
++pub const SYS_fgetxattr: c_long = 193;
++pub const SYS_listxattr: c_long = 194;
++pub const SYS_llistxattr: c_long = 195;
++pub const SYS_flistxattr: c_long = 196;
++pub const SYS_removexattr: c_long = 197;
++pub const SYS_lremovexattr: c_long = 198;
++pub const SYS_fremovexattr: c_long = 199;
++pub const SYS_tkill: c_long = 200;
++pub const SYS_time: c_long = 201;
++pub const SYS_futex: c_long = 202;
++pub const SYS_sched_setaffinity: c_long = 203;
++pub const SYS_sched_getaffinity: c_long = 204;
++pub const SYS_set_thread_area: c_long = 205;
++pub const SYS_io_setup: c_long = 206;
++pub const SYS_io_destroy: c_long = 207;
++pub const SYS_io_getevents: c_long = 208;
++pub const SYS_io_submit: c_long = 209;
++pub const SYS_io_cancel: c_long = 210;
++pub const SYS_get_thread_area: c_long = 211;
++pub const SYS_lookup_dcookie: c_long = 212;
++pub const SYS_epoll_create: c_long = 213;
++pub const SYS_epoll_ctl_old: c_long = 214;
++pub const SYS_epoll_wait_old: c_long = 215;
++pub const SYS_remap_file_pages: c_long = 216;
++pub const SYS_getdents64: c_long = 217;
++pub const SYS_set_tid_address: c_long = 218;
++pub const SYS_restart_syscall: c_long = 219;
++pub const SYS_semtimedop: c_long = 220;
++pub const SYS_fadvise64: c_long = 221;
++pub const SYS_timer_create: c_long = 222;
++pub const SYS_timer_settime: c_long = 223;
++pub const SYS_timer_gettime: c_long = 224;
++pub const SYS_timer_getoverrun: c_long = 225;
++pub const SYS_timer_delete: c_long = 226;
++pub const SYS_clock_settime: c_long = 227;
++pub const SYS_clock_gettime: c_long = 228;
++pub const SYS_clock_getres: c_long = 229;
++pub const SYS_clock_nanosleep: c_long = 230;
++pub const SYS_exit_group: c_long = 231;
++pub const SYS_epoll_wait: c_long = 232;
++pub const SYS_epoll_ctl: c_long = 233;
++pub const SYS_tgkill: c_long = 234;
++pub const SYS_utimes: c_long = 235;
++pub const SYS_vserver: c_long = 236;
++pub const SYS_mbind: c_long = 237;
++pub const SYS_set_mempolicy: c_long = 238;
++pub const SYS_get_mempolicy: c_long = 239;
++pub const SYS_mq_open: c_long = 240;
++pub const SYS_mq_unlink: c_long = 241;
++pub const SYS_mq_timedsend: c_long = 242;
++pub const SYS_mq_timedreceive: c_long = 243;
++pub const SYS_mq_notify: c_long = 244;
++pub const SYS_mq_getsetattr: c_long = 245;
++pub const SYS_kexec_load: c_long = 246;
++pub const SYS_waitid: c_long = 247;
++pub const SYS_add_key: c_long = 248;
++pub const SYS_request_key: c_long = 249;
++pub const SYS_keyctl: c_long = 250;
++pub const SYS_ioprio_set: c_long = 251;
++pub const SYS_ioprio_get: c_long = 252;
++pub const SYS_inotify_init: c_long = 253;
++pub const SYS_inotify_add_watch: c_long = 254;
++pub const SYS_inotify_rm_watch: c_long = 255;
++pub const SYS_migrate_pages: c_long = 256;
++pub const SYS_openat: c_long = 257;
++pub const SYS_mkdirat: c_long = 258;
++pub const SYS_mknodat: c_long = 259;
++pub const SYS_fchownat: c_long = 260;
++pub const SYS_futimesat: c_long = 261;
++pub const SYS_newfstatat: c_long = 262;
++pub const SYS_unlinkat: c_long = 263;
++pub const SYS_renameat: c_long = 264;
++pub const SYS_linkat: c_long = 265;
++pub const SYS_symlinkat: c_long = 266;
++pub const SYS_readlinkat: c_long = 267;
++pub const SYS_fchmodat: c_long = 268;
++pub const SYS_faccessat: c_long = 269;
++pub const SYS_pselect6: c_long = 270;
++pub const SYS_ppoll: c_long = 271;
++pub const SYS_unshare: c_long = 272;
++pub const SYS_set_robust_list: c_long = 273;
++pub const SYS_get_robust_list: c_long = 274;
++pub const SYS_splice: c_long = 275;
++pub const SYS_tee: c_long = 276;
++pub const SYS_sync_file_range: c_long = 277;
++pub const SYS_vmsplice: c_long = 278;
++pub const SYS_move_pages: c_long = 279;
++pub const SYS_utimensat: c_long = 280;
++pub const SYS_epoll_pwait: c_long = 281;
++pub const SYS_signalfd: c_long = 282;
++pub const SYS_timerfd_create: c_long = 283;
++pub const SYS_eventfd: c_long = 284;
++pub const SYS_fallocate: c_long = 285;
++pub const SYS_timerfd_settime: c_long = 286;
++pub const SYS_timerfd_gettime: c_long = 287;
++pub const SYS_accept4: c_long = 288;
++pub const SYS_signalfd4: c_long = 289;
++pub const SYS_eventfd2: c_long = 290;
++pub const SYS_epoll_create1: c_long = 291;
++pub const SYS_dup3: c_long = 292;
++pub const SYS_pipe2: c_long = 293;
++pub const SYS_inotify_init1: c_long = 294;
++pub const SYS_preadv: c_long = 295;
++pub const SYS_pwritev: c_long = 296;
++pub const SYS_rt_tgsigqueueinfo: c_long = 297;
++pub const SYS_perf_event_open: c_long = 298;
++pub const SYS_recvmmsg: c_long = 299;
++pub const SYS_fanotify_init: c_long = 300;
++pub const SYS_fanotify_mark: c_long = 301;
++pub const SYS_prlimit64: c_long = 302;
++pub const SYS_name_to_handle_at: c_long = 303;
++pub const SYS_open_by_handle_at: c_long = 304;
++pub const SYS_clock_adjtime: c_long = 305;
++pub const SYS_syncfs: c_long = 306;
++pub const SYS_sendmmsg: c_long = 307;
++pub const SYS_setns: c_long = 308;
++pub const SYS_getcpu: c_long = 309;
++pub const SYS_process_vm_readv: c_long = 310;
++pub const SYS_process_vm_writev: c_long = 311;
++pub const SYS_kcmp: c_long = 312;
++pub const SYS_finit_module: c_long = 313;
++pub const SYS_sched_setattr: c_long = 314;
++pub const SYS_sched_getattr: c_long = 315;
++pub const SYS_renameat2: c_long = 316;
++pub const SYS_seccomp: c_long = 317;
++pub const SYS_getrandom: c_long = 318;
++pub const SYS_memfd_create: c_long = 319;
++pub const SYS_kexec_file_load: c_long = 320;
++pub const SYS_bpf: c_long = 321;
++pub const SYS_execveat: c_long = 322;
++pub const SYS_userfaultfd: c_long = 323;
++pub const SYS_membarrier: c_long = 324;
++pub const SYS_mlock2: c_long = 325;
++pub const SYS_copy_file_range: c_long = 326;
++pub const SYS_preadv2: c_long = 327;
++pub const SYS_pwritev2: c_long = 328;
++pub const SYS_pkey_mprotect: c_long = 329;
++pub const SYS_pkey_alloc: c_long = 330;
++pub const SYS_pkey_free: c_long = 331;
++pub const SYS_statx: c_long = 332;
++pub const SYS_rseq: c_long = 334;
++pub const SYS_pidfd_send_signal: c_long = 424;
++pub const SYS_io_uring_setup: c_long = 425;
++pub const SYS_io_uring_enter: c_long = 426;
++pub const SYS_io_uring_register: c_long = 427;
++pub const SYS_open_tree: c_long = 428;
++pub const SYS_move_mount: c_long = 429;
++pub const SYS_fsopen: c_long = 430;
++pub const SYS_fsconfig: c_long = 431;
++pub const SYS_fsmount: c_long = 432;
++pub const SYS_fspick: c_long = 433;
++pub const SYS_pidfd_open: c_long = 434;
++pub const SYS_clone3: c_long = 435;
++pub const SYS_close_range: c_long = 436;
++pub const SYS_openat2: c_long = 437;
++pub const SYS_pidfd_getfd: c_long = 438;
++pub const SYS_faccessat2: c_long = 439;
++pub const SYS_process_madvise: c_long = 440;
++pub const SYS_epoll_pwait2: c_long = 441;
++pub const SYS_mount_setattr: c_long = 442;
++pub const SYS_quotactl_fd: c_long = 443;
++pub const SYS_landlock_create_ruleset: c_long = 444;
++pub const SYS_landlock_add_rule: c_long = 445;
++pub const SYS_landlock_restrict_self: c_long = 446;
++pub const SYS_memfd_secret: c_long = 447;
++pub const SYS_process_mrelease: c_long = 448;
++pub const SYS_futex_waitv: c_long = 449;
++pub const SYS_set_mempolicy_home_node: c_long = 450;
++pub const SYS_fchmodat2: c_long = 452;
++pub const SYS_mseal: c_long = 462;
+diff -urN --no-dereference mlibc-clean/sysdeps/linux/generic/sysdeps.cpp mlibc-workdir/sysdeps/linux/generic/sysdeps.cpp
+--- mlibc-clean/sysdeps/linux/generic/sysdeps.cpp
++++ mlibc-workdir/sysdeps/linux/generic/sysdeps.cpp
+@@ -587,14 +587,14 @@
+ }
+ 
+ int sys_getresuid(uid_t *ruid, uid_t *euid, uid_t *suid) {
+-	auto ret = do_syscall(SYS_getresuid, &ruid, &euid, &suid);
++	auto ret = do_syscall(SYS_getresuid, ruid, euid, suid);
+         if (int e = sc_error(ret); e)
+                 return e;
+ 	return 0;
+ }
+ 
+ int sys_getresgid(gid_t *rgid, gid_t *egid, gid_t *sgid) {
+-	auto ret = do_syscall(SYS_getresgid, &rgid, &egid, &sgid);
++	auto ret = do_syscall(SYS_getresgid, rgid, egid, sgid);
+         if (int e = sc_error(ret); e)
+                 return e;
+ 	return 0;
+@@ -1036,6 +1036,14 @@
+ 	return 0;
+ }
+ 
++int sys_getscheduler(pid_t pid, int *ret) {
++	auto ret_val = do_syscall(SYS_sched_getscheduler, pid);
++	if (int e = sc_error(ret_val); e)
++		return e;
++	*ret = sc_int_result<int>(ret_val);
++	return 0;
++}
++
+ int sys_getaffinity(pid_t pid, size_t cpusetsize, cpu_set_t *mask) {
+ 	auto ret = do_syscall(SYS_sched_getaffinity, pid, cpusetsize, mask);
+ 	if (int e = sc_error(ret); e)
+@@ -1477,6 +1485,10 @@
+ 	return sys_setresuid(-1, euid, -1);
+ }
+ 
++int sys_setegid(gid_t egid) {
++	return sys_setresgid(-1, egid, -1);
++}
++
+ int sys_vm_remap(void *pointer, size_t size, size_t new_size, void **window) {
+ 	auto ret = do_syscall(SYS_mremap, pointer, size, new_size, MREMAP_MAYMOVE);
+ 	// TODO: musl fixes up EPERM errors from the kernel.
+@@ -1620,6 +1632,30 @@
+ 	return 0;
+ }
+ 
++int sys_process_vm_readv(pid_t pid,
++		const struct iovec *local_iov, unsigned long local_iov_count,
++		const struct iovec *remote_iov, unsigned long remote_iov_count,
++		unsigned long flags, ssize_t *out) {
++	auto ret = do_syscall(SYS_process_vm_readv, pid, local_iov, local_iov_count,
++			remote_iov, remote_iov_count, flags);
++	if(int e = sc_error(ret); e)
++		return e;
++	*out = sc_int_result<ssize_t>(ret);
++	return 0;
++}
++
++int sys_process_vm_writev(pid_t pid,
++		const struct iovec *local_iov, unsigned long local_iov_count,
++		const struct iovec *remote_iov, unsigned long remote_iov_count,
++		unsigned long flags, ssize_t *out) {
++	auto ret = do_syscall(SYS_process_vm_writev, pid, local_iov, local_iov_count,
++			remote_iov, remote_iov_count, flags);
++	if(int e = sc_error(ret); e)
++		return e;
++	*out = sc_int_result<ssize_t>(ret);
++	return 0;
++}
++
+ #endif // __MLIBC_POSIX_OPTION
+ 
+ #if __MLIBC_LINUX_OPTION
+@@ -1695,6 +1731,20 @@
+ 	return 0;
+ }
+ 
++int sys_capset(void *hdr, const void *data) {
++	auto ret = do_syscall(SYS_capset, hdr, data);
++	if (int e = sc_error(ret); e)
++		return e;
++	return 0;
++}
++
++int sys_capget(void *hdr, void *data) {
++	auto ret = do_syscall(SYS_capget, hdr, data);
++	if (int e = sc_error(ret); e)
++		return e;
++	return 0;
++}
++
+ #endif // __MLIBC_LINUX_OPTION
+ 
+ int sys_times(struct tms *tms, clock_t *out) {
+@@ -1896,6 +1946,14 @@
+ 	return 0;
+ }
+ 
++int sys_readlinkat(int dirfd, const char *path, void *buffer, size_t max_size, ssize_t *length) {
++	auto ret = do_syscall(SYS_readlinkat, dirfd, path, buffer, max_size);
++	if (int e = sc_error(ret); e)
++		return e;
++	*length = sc_int_result<ssize_t>(ret);
++	return 0;
++}
++
+ #if __MLIBC_BSD_OPTION
+ // getloadavg() adapted from musl
+ int sys_getloadavg(double *samples) {

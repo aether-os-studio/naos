@@ -1,0 +1,57 @@
+#! /bin/sh
+
+name=appstream
+version=1.0.4
+revision=1
+tarball_url="https://www.freedesktop.org/software/appstream/releases/AppStream-${version}.tar.xz"
+tarball_blake2b="e8b3ca6092d4cddf73e5f902ac9d5e071d9eb31d8b206fd814e2078f5bcfcba1683e97beccaea9e7024da0285d77c63fb426e3b3d17f15c3add332e964e313d3"
+imagedeps="build-essential patchelf gperf pkg-config appstream libappstream-dev itstool"
+hostdeps="gcc pkg-config gobject-introspection glib2 vala"
+deps="core-libs curl libxml2 libxmlb libyaml zstd libxslt systemd"
+
+configure() {
+    vala_env meson_configure \
+        -Dapidocs=false \
+        -Dstemming=false \
+        -Dsystemd=true \
+        -Dvapi=true
+}
+
+build() {
+    gi_env vala_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    install -vdm755 ${dest_dir}${prefix}/share/metainfo
+cat > ${dest_dir}${prefix}/share/metainfo/org.osdev.jinix.xml << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="operating-system">
+  <id>org.osdev.jinix</id>
+  <name>Jinix</name>
+  <summary>A customized Linux system built entirely from source, using Jinix</summary>
+  <description>
+    <p>
+      Jinix is a project is a project that aims to build a modern
+      customized Linux system entirely from source, driven at build time by Jinx, using mlibc as the C library.
+    </p>
+  </description>
+  <url type="homepage">https://discord.gg/TBD</url>
+  <metadata_license>All Rights Reserved</metadata_license>
+  <developer id='OSDev'>
+    <name>The Jinix Editors</name>
+  </developer>
+
+  <releases>
+    <release version="0.0.1" type="development" date="2025-04-27">
+      <description>
+        <p>The next release of Jinix.</p>
+      </description>
+    </release>
+  </releases>
+</component>
+EOF
+
+    post_package_strip
+}

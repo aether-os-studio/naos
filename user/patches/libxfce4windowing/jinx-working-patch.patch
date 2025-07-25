@@ -1,0 +1,34 @@
+diff -urN --no-dereference libxfce4windowing-clean/meson.build libxfce4windowing-workdir/meson.build
+--- libxfce4windowing-clean/meson.build
++++ libxfce4windowing-workdir/meson.build
+@@ -76,8 +76,8 @@
+ if enable_wayland
+   feature_cflags += '-DENABLE_WAYLAND=1'
+ 
+-  wayland_scanner_path = wayland_scanner.get_variable(pkgconfig: 'wayland_scanner')
+-  wayland_scanner_bin = find_program(wayland_scanner_path, required: true)
++  # wayland_scanner_path = wayland_scanner.get_variable(pkgconfig: 'wayland_scanner')
++  # wayland_scanner_bin = find_program(wayland_scanner_path, required: true)
+ 
+   wl_protocols_pkgdatadir = wayland_protocols.get_variable(pkgconfig: 'pkgdatadir')
+ 
+diff -urN --no-dereference libxfce4windowing-clean/protocols/meson.build libxfce4windowing-workdir/protocols/meson.build
+--- libxfce4windowing-clean/protocols/meson.build
++++ libxfce4windowing-workdir/protocols/meson.build
+@@ -12,14 +12,14 @@
+       '@0@-client-header'.format(name),
+       input: file,
+       output: '@0@-client.h'.format(name),
+-      command: [wayland_scanner_bin, 'client-header', '@INPUT@', '@OUTPUT@'],
++      command: ['/usr/bin/wayland-scanner', 'client-header', '@INPUT@', '@OUTPUT@'],
+     )
+ 
+     private_code = custom_target(
+       '@0@-private-code'.format(name),
+       input: file,
+       output: '@0@.c'.format(name),
+-      command: [wayland_scanner_bin, 'private-code', '@INPUT@', '@OUTPUT@'],
++      command: ['/usr/bin/wayland-scanner', 'private-code', '@INPUT@', '@OUTPUT@'],
+     )
+ 
+     wayland_protocols_generated_sources += [client_header, private_code]

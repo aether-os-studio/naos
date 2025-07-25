@@ -1,0 +1,29 @@
+#! /bin/sh
+
+name=alsa-lib
+version=1.2.14
+revision=1
+tarball_url="https://www.alsa-project.org/files/pub/lib/alsa-lib-${version}.tar.bz2"
+tarball_blake2b="6fee05f859a19b8ef0d9896d37442c55f602e8b4aaa7698f30c01e03a339d7a74b3214493b095a64b59ee581fb7756d903d4965e080db552e062e2001e0662ff"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    make install DESTDIR="${dest_dir}"
+
+    # TODO: Install ucm files, see BLFS
+
+    post_package_strip
+}

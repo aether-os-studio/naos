@@ -1,0 +1,27 @@
+#! /bin/sh
+
+name=psmisc
+version=23.7
+revision=1
+tarball_url="https://downloads.sourceforge.net/psmisc/psmisc-${version}.tar.xz"
+tarball_blake2b="5064f929bf320c3fe91d3e665479dcb0913b12f4dddd23e49e296509f89e29b5d147b411c33cca9892a43d955c8e431bccf00872ae86a9c9d2545295f05b69d7"
+hostdeps="gcc pkg-config"
+deps="core-libs ncurses"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR=${dest_dir} make install
+
+    post_package_strip
+}

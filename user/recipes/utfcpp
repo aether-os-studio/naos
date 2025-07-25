@@ -1,0 +1,23 @@
+#! /bin/sh
+
+name=utfcpp
+version=4.0.6
+revision=1
+tarball_url="https://github.com/nemtrif/utfcpp/archive/v${version}/utfcpp-${version}.tar.gz"
+tarball_blake2b="9ad44b7390d1f93e2692641e87c693b83ee13f93732dbab893f678db0c32e37e0d2399d2c2834f98ad629ee7025bf7a1f2f36d14b9b89926d97caaaeb8635c83"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    cmake_configure
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

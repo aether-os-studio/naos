@@ -1,0 +1,24 @@
+#! /bin/sh
+
+name=libseccomp
+version=2.6.0
+revision=1
+tarball_url="https://github.com/seccomp/libseccomp/releases/download/v${version}/libseccomp-${version}.tar.gz"
+tarball_blake2b="45c4f4dd67db5848bb536613e8929633f95cfbeb8738525381a76631187e7b0fc2c02f1a103579cd0f4135e9c175250fe2d784b85cc85424ec3125b4dafcf11c"
+imagedeps="gperf"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

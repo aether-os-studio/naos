@@ -1,0 +1,38 @@
+#! /bin/sh
+
+name=ripgrep
+version=14.1.1
+revision=1
+tarball_url="https://github.com/BurntSushi/ripgrep/archive/refs/tags/${version}.tar.gz"
+tarball_blake2b="113dc509bcc3327cca541dcfcbe8e4d196503124f89ce50c94a3a2f8b29e194429941876b324c106d6ed4195d2c726022ba01144f0bcd4fc2a1db1e95b452b76"
+source_hostdeps="rust"
+imagedeps="build-essential"
+hostdeps="gcc pkg-config rust"
+deps="core-libs"
+# Needed for `cargo fetch` during configure
+allow_network=yes
+
+prepare() {
+    cargo_inject_patches
+}
+
+configure() {
+    cp -rp "${source_dir}"/. ./
+
+        CARGO_HOME="${CARGO_HOME}" \
+    cargo fetch \
+        --target x86_64-unknown-linux-mlibc
+}
+
+package() {
+        CARGO_HOME="${CARGO_HOME}" \
+    cargo install \
+        --offline \
+        --no-track \
+        --path . \
+        --root "${dest_dir}${prefix}" \
+        --target x86_64-unknown-linux-mlibc \
+        --jobs "${parallelism}"
+
+    post_package_strip
+}

@@ -1,0 +1,24 @@
+#! /bin/sh
+
+name=libdisplay-info
+version=0.2.0
+revision=1
+tarball_url="https://gitlab.freedesktop.org/emersion/libdisplay-info/-/releases/${version}/downloads/libdisplay-info-${version}.tar.xz"
+tarball_blake2b="bcfec916c1f30204e5e0af9e3e57a5ef9929c09912a5c1302fbfb76b54208ad4b96fe1c972afe1814c5762f9f78b0ff093f2249ee0dbf6f1b30202722bd05449"
+imagedeps="hwdata pkg-config"
+hostdeps="gcc pkg-config"
+deps="core-libs hwdata"
+
+configure() {
+    meson_configure
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

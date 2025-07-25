@@ -1,0 +1,27 @@
+#! /bin/sh
+
+name=jasper
+version=4.2.5
+revision=1
+tarball_url="https://github.com/jasper-software/jasper/archive/version-${version}/jasper-${version}.tar.gz"
+tarball_blake2b="48d9ddefdc747114661d96cee29984e754bbaff9d6da7c3709dc9f0ac124136189c0613ac6cf7c7450a8a655e2cf77079ea619d601422f67fb534298cb57a6e2"
+hostdeps="gcc pkg-config"
+deps="core-libs libjpeg-turbo freeglut"
+
+configure() {
+    cmake_configure \
+        -DCMAKE_SKIP_INSTALL_RPATH=YES \
+        -DJAS_ENABLE_DOC=NO \
+        -DALLOW_IN_SOURCE_BUILD=YES \
+        -DJAS_STDC_VERSION=201112L
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

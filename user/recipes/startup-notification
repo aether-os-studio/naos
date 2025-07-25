@@ -1,0 +1,31 @@
+#! /bin/sh
+
+name=startup-notification
+version=0.12
+revision=1
+tarball_url="https://www.freedesktop.org/software/startup-notification/releases/startup-notification-${version}.tar.gz"
+tarball_blake2b="9822de9745fdeef28d7c6422d2a967394ffc329e7f37e1676c79e900f8e776578698ef47ff199fa05aa795540382f5eab5cb63f6cb20512328897236df1ab152"
+hostdeps="gcc pkg-config"
+deps="core-libs xcb-util libx11 libice"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure \
+        lf_cv_sane_realloc=yes
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    install -v -m644 -D ${source_dir}/doc/startup-notification.txt \
+        ${dest_dir}${prefix}/share/doc/startup-notification/startup-notification.txt
+
+    post_package_strip
+}

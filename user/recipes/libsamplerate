@@ -1,0 +1,23 @@
+#! /bin/sh
+
+name=libsamplerate
+version=0.2.2
+revision=1
+tarball_url="https://github.com/libsndfile/libsamplerate/releases/download/${version}/libsamplerate-${version}.tar.xz"
+tarball_blake2b="71b1e8a1644a94fff019abc6bf98c557df84994293f1e9bc651ad3ad3f0afeb24f54b8c75fc26e5202ae7c3a3e34e783fd1be7f7c6fdefe9eac9a5dfe7100b91"
+hostdeps="gcc pkg-config"
+deps="core-libs alsa-lib fftw libsndfile"
+
+configure() {
+    cmake_configure
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

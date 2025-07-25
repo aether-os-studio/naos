@@ -1,0 +1,25 @@
+#! /bin/sh
+
+name=libxfce4windowing
+version=4.20.2
+revision=1
+tarball_url="https://archive.xfce.org/src/xfce/libxfce4windowing/4.20/libxfce4windowing-${version}.tar.bz2"
+tarball_blake2b="9c306542bf8c6d4b2d908675ac909abe4925701ecd2769c2e524d4306acc0d5d33ef98d751eca3f34ba06ecff6d8a6cdfca8f7dfc0af23ae6da3eaa42a3f3dfb"
+imagedeps="build-essential python3-distutils-extra patchelf xfce4-dev-tools libwayland-bin"
+hostdeps="gcc glib2 pkg-config gobject-introspection"
+deps="core-libs glib2 gtk3 libwnck3 libdisplay-info libx11 wayland"
+
+configure() {
+    meson_configure \
+        -Dgtk-doc=false
+}
+
+build() {
+    gi_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

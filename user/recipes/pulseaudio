@@ -1,0 +1,37 @@
+#! /bin/sh
+
+name=pulseaudio
+version=17.0
+revision=1
+tarball_url="https://www.freedesktop.org/software/pulseaudio/releases/pulseaudio-${version}.tar.xz"
+tarball_blake2b="781ece3d507916aa681d3b0132689730a621b4d92e45f86570e4d2fdebc4c0025ebe7f7a05046545f9b26caca513e8975f12498fa314524bc67eacaea72842fa"
+imagedeps="libxml-parser-perl"
+hostdeps="gcc pkg-config"
+deps="core-libs alsa-lib dbus glib2 gtk3 libsamplerate libsndfile libxtst speex bluez sbc avahi systemd fftw gstreamer-plugins-base libtool libice libsm"
+
+configure() {
+    meson_configure \
+        -Dudevrulesdir=${prefix}/lib/udev/rules.d \
+        -Ddatabase=gdbm \
+        -Ddoxygen=false \
+        -Dtests=false \
+        -Dsystemduserunitdir=${prefix}/lib/systemd/user
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    # Remove unneeded config file
+    rm -fv ${dest_dir}/etc/dbus-1/system.d/pulseaudio-system.conf
+
+    # Remove pulseaudio server autostart, wireplumber has it's own server
+    rm -vf ${dest_dir}/etc/xdg/autostart/pulseaudio.desktop
+    rm -vf ${dest_dir}/etc/xdg/Xwayland-session.d/00-pulseaudio-x11
+    sed -e '$a autospawn = no' -i ${dest_dir}/etc/pulse/client.conf
+
+    post_package_strip
+}

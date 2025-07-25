@@ -1,0 +1,33 @@
+diff -urN --no-dereference util-linux-clean/libmount/src/hook_idmap.c util-linux-workdir/libmount/src/hook_idmap.c
+--- util-linux-clean/libmount/src/hook_idmap.c
++++ util-linux-workdir/libmount/src/hook_idmap.c
+@@ -20,6 +20,7 @@
+ #include <sys/wait.h>
+ #include <sys/ioctl.h>
+ #include <sys/mount.h>
++#include <signal.h>
+ 
+ #include "strutils.h"
+ #include "all-io.h"
+diff -urN --no-dereference util-linux-clean/sys-utils/nsenter.c util-linux-workdir/sys-utils/nsenter.c
+--- util-linux-clean/sys-utils/nsenter.c
++++ util-linux-workdir/sys-utils/nsenter.c
+@@ -23,6 +23,7 @@
+ #include <grp.h>
+ #include <sys/stat.h>
+ #include <sys/statfs.h>
++#include <signal.h>
+ 
+ #include <sys/ioctl.h>
+ #include <linux/sockios.h>
+diff -urN --no-dereference util-linux-clean/sys-utils/unshare.c util-linux-workdir/sys-utils/unshare.c
+--- util-linux-clean/sys-utils/unshare.c
++++ util-linux-workdir/sys-utils/unshare.c
+@@ -32,6 +32,7 @@
+ #include <sys/stat.h>
+ #include <sys/prctl.h>
+ #include <grp.h>
++#include <signal.h>
+ 
+ /* we only need some defines missing in sys/mount.h, no libmount linkage */
+ #include <libmount.h>

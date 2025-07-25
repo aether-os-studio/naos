@@ -1,0 +1,50 @@
+diff -urN --no-dereference rust-libc-clean/src/unix/linux_like/linux/mod.rs rust-libc-workdir/src/unix/linux_like/linux/mod.rs
+--- rust-libc-clean/src/unix/linux_like/linux/mod.rs
++++ rust-libc-workdir/src/unix/linux_like/linux/mod.rs
+@@ -3018,12 +3018,15 @@
+ pub const MEMBARRIER_CMD_PRIVATE_EXPEDITED_RSEQ: c_int = 1 << 7;
+ pub const MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED_RSEQ: c_int = 1 << 8;
+ 
++#[cfg(not(target_env = "mlibc"))]
+ pub const PTHREAD_MUTEX_INITIALIZER: pthread_mutex_t = pthread_mutex_t {
+     size: [0; __SIZEOF_PTHREAD_MUTEX_T],
+ };
++#[cfg(not(target_env = "mlibc"))]
+ pub const PTHREAD_COND_INITIALIZER: pthread_cond_t = pthread_cond_t {
+     size: [0; __SIZEOF_PTHREAD_COND_T],
+ };
++#[cfg(not(target_env = "mlibc"))]
+ pub const PTHREAD_RWLOCK_INITIALIZER: pthread_rwlock_t = pthread_rwlock_t {
+     size: [0; __SIZEOF_PTHREAD_RWLOCK_T],
+ };
+@@ -6243,7 +6246,7 @@
+ }
+ 
+ cfg_if! {
+-    if #[cfg(all(not(target_env = "uclibc"), not(target_env = "ohos")))] {
++    if #[cfg(all(not(target_env = "uclibc"), not(target_env = "ohos"), not(target_env = "mlibc")))] {
+         extern "C" {
+             #[cfg_attr(gnu_file_offset_bits64, link_name = "aio_read64")]
+             pub fn aio_read(aiocbp: *mut aiocb) -> c_int;
+@@ -6387,9 +6390,10 @@
+ 
+ extern "C" {
+     #[cfg_attr(
+-        not(any(target_env = "musl", target_env = "ohos")),
++        not(any(target_env = "musl", target_env = "ohos", target_env = "mlibc")),
+         link_name = "__xpg_strerror_r"
+     )]
++    #[cfg_attr(target_env = "mlibc", link_name = "__gnu_strerror_r")]
+     pub fn strerror_r(errnum: c_int, buf: *mut c_char, buflen: size_t) -> c_int;
+ 
+     pub fn abs(i: c_int) -> c_int;
+@@ -7044,6 +7048,9 @@
+     } else if #[cfg(target_env = "gnu")] {
+         mod gnu;
+         pub use self::gnu::*;
++    } else if #[cfg(target_env = "mlibc")] {
++        mod mlibc;
++        pub use self::mlibc::*;
+     }
+ }
+ 

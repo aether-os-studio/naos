@@ -1,0 +1,29 @@
+#! /bin/sh
+
+name=libaom
+repology_id=aom
+version=3.12.1
+revision=1
+tarball_url="https://storage.googleapis.com/aom-releases/libaom-${version}.tar.gz"
+tarball_blake2b="4fa4ea0620b27013d2c39589ea5bc4333ea26ffe51dad64e95b240cdf5c82fcd0810fecf45410f34b89057d9000c93efae106c49e4017796d7c8b2752357709d"
+imagedeps="nasm"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    cmake_configure \
+        -DENABLE_NASM=yes \
+        -DENABLE_DOCS=no
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    rm -v ${dest_dir}${prefix}/lib/libaom.a
+
+    post_package_strip
+}

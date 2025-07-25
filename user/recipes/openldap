@@ -1,0 +1,40 @@
+#! /bin/sh
+
+name=openldap
+version=2.6.9
+revision=1
+tarball_url="https://www.openldap.org/software/download/OpenLDAP/openldap-release/openldap-${version}.tgz"
+tarball_blake2b="b86ee6cf275632a4c963d33c6ceb1a4eef4611a5e678e6369458c6b70d5251ee4d299a941c9a42241855996dc81b55c8aef09e92da46f19766e5501bf0355aba"
+imagedeps="groff"
+hostdeps="gcc pkg-config"
+deps="core-libs cyrus-sasl gnutls"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure \
+        --enable-dynamic \
+        --disable-debug \
+        --disable-slapd \
+        --with-yielding_select=yes \
+        CC=${OS_TRIPLET}-gcc \
+        AR=${OS_TRIPLET}-ar \
+        STRIP=${OS_TRIPLET}-strip \
+        ac_cv_func_memcmp_working=yes
+}
+
+build() {
+    make depend -j${parallelism}
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install \
+        CC=${OS_TRIPLET}-gcc \
+        AR=${OS_TRIPLET}-ar \
+        STRIP=${OS_TRIPLET}-strip
+
+    post_package_strip
+}

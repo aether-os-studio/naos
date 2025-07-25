@@ -1,0 +1,37 @@
+diff -urN --no-dereference modemmanager-clean/libqcdm/src/com.c modemmanager-workdir/libqcdm/src/com.c
+--- modemmanager-clean/libqcdm/src/com.c
++++ modemmanager-workdir/libqcdm/src/com.c
+@@ -23,6 +23,22 @@
+ #include "com.h"
+ #include "errors.h"
+ 
++#ifndef CBAUD
++#define CBAUD 0010017
++#endif
++
++#ifndef ECHOPRT
++#define ECHOPRT 0002000
++#endif
++
++#ifndef ECHOCTL
++#define ECHOCTL 0001000
++#endif
++
++#ifndef ECHOKE
++#define ECHOKE 0004000
++#endif
++
+ int
+ qcdm_port_setup (int fd)
+ {
+diff -urN --no-dereference modemmanager-clean/src/mm-port-serial-qcdm.c modemmanager-workdir/src/mm-port-serial-qcdm.c
+--- modemmanager-clean/src/mm-port-serial-qcdm.c
++++ modemmanager-workdir/src/mm-port-serial-qcdm.c
+@@ -19,6 +19,7 @@
+ #include <stdlib.h>
+ #include <unistd.h>
+ #include <string.h>
++#include <endian.h>
+ 
+ #include <ModemManager.h>
+ #include <mm-errors-types.h>

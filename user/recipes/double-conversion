@@ -1,0 +1,23 @@
+#! /bin/sh
+
+name=double-conversion
+version=3.3.1
+revision=1
+tarball_url="https://github.com/google/double-conversion/archive/v${version}/double-conversion-${version}.tar.gz"
+tarball_blake2b="faf010305f98af29d63bc0006bb99b34a6bd943309ebb121ce6b0de1921770dc9e17bbc8654ce26b533a642f10cd042bd318aa847be8246a6e4cc668a4cb9fa0"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    cmake_configure
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

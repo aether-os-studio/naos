@@ -1,0 +1,23 @@
+#! /bin/sh
+
+name=libssh
+version=1.11.1
+revision=1
+tarball_url="https://www.libssh2.org/download/libssh2-${version}.tar.gz"
+tarball_blake2b="a44073d59eeeed57626063067d498f28d64f66febf5cdbd830cf1fa0ffd33e39f4bca57289abef175d4f0413952e1dbc57847aa4fe1d9c0140d8789b7b925528"
+hostdeps="gcc pkg-config"
+deps="core-libs openssh openssl"
+
+configure() {
+    cmake_configure
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

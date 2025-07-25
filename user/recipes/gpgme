@@ -1,0 +1,31 @@
+#! /bin/sh
+
+name=gpgme
+version=1.24.2
+revision=1
+tarball_url="https://www.gnupg.org/ftp/gcrypt/gpgme/gpgme-${version}.tar.bz2"
+tarball_blake2b="3d112fe3401c6143d09474eefcc3fda00394b0db61c37d7da79ddf3352c71b67e2972800efbefa89bba4726a4997ef473c3dbdac8c5d42612a73332711cf4d4a"
+imagedeps="build-essential"
+hostdeps="gcc pkg-config"
+deps="core-libs libassuan"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure \
+        --disable-gpg-test \
+        --with-libgpg-error-prefix="${sysroot_dir}${prefix}" \
+        --with-libassuan-prefix="${sysroot_dir}${prefix}"
+}
+
+build() {
+    make PYTHONS= -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

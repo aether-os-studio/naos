@@ -1,0 +1,26 @@
+#! /bin/sh
+
+name=libavif
+version=1.2.1
+revision=1
+tarball_url="https://github.com/AOMediaCodec/libavif/archive/v${version}/libavif-${version}.tar.gz"
+tarball_blake2b="2ddfe956779691711e06641fc0cd210e9bdf4801ddc5898cd544117409ae37abbbcd6c07704f063b2cbc383dc30dd7367b8f8fdd2de584cccd3324c4f3a71b3d"
+hostdeps="gcc pkg-config"
+deps="core-libs libaom gdk-pixbuf"
+
+configure() {
+    cmake_configure \
+        -DAVIF_CODEC_AOM=SYSTEM \
+        -DAVIF_BUILD_GDK_PIXBUF=ON \
+        -DAVIF_LIBYUV=OFF
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

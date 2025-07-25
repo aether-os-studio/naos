@@ -1,0 +1,58 @@
+diff -urN --no-dereference binutils-clean/configure binutils-workdir/configure
+--- binutils-clean/configure
++++ binutils-workdir/configure
+@@ -3083,7 +3083,7 @@
+       *-*-elf* | *-*-sysv4* | *-*-unixware* | *-*-eabi* | hppa*64*-*-hpux* \
+       | *-*-linux* | *-*-gnu* | frv-*-uclinux* | *-*-irix5* | *-*-irix6* \
+       | *-*-netbsd* | *-*-openbsd* | *-*-freebsd* | *-*-dragonfly* \
+-      | *-*-solaris2* | *-*-nto* | *-*-nacl* | *-*-haiku*)
++      | *-*-solaris2* | *-*-nto* | *-*-nacl* | *-*-haiku* | *-*-mlibc*)
+         case "${target}" in
+           *-*-linux*aout* | *-*-linux*oldld*)
+             ;;
+diff -urN --no-dereference binutils-clean/gprofng/libcollector/collector.c binutils-workdir/gprofng/libcollector/collector.c
+--- binutils-clean/gprofng/libcollector/collector.c
++++ binutils-workdir/gprofng/libcollector/collector.c
+@@ -27,6 +27,7 @@
+ #include <sys/param.h>
+ #include <sys/utsname.h>	/* struct utsname	*/
+ #include <sys/resource.h>
++#include <sys/stat.h>
+ #include <sys/syscall.h>	/* system call fork() */
+ 
+ #include "gp-defs.h"
+diff -urN --no-dereference binutils-clean/gprofng/libcollector/dispatcher.c binutils-workdir/gprofng/libcollector/dispatcher.c
+--- binutils-clean/gprofng/libcollector/dispatcher.c
++++ binutils-workdir/gprofng/libcollector/dispatcher.c
+@@ -598,7 +598,11 @@
+   sigev.sigev_signo = SIGPROF;
+   sigev.sigev_value.sival_ptr = ptimerid;
+ #if !defined(__MUSL_LIBC)
++#if defined(__GLIBC__)
+   sigev._sigev_un._tid = __collector_gettid ();
++#else
++  sigev.sigev_notify_thread_id = __collector_gettid ();
++#endif
+ #endif
+   if (CALL_REAL (timer_create)(CLOCK_THREAD_CPUTIME_ID, &sigev, ptimerid) == -1)
+     {
+diff -urN --no-dereference binutils-clean/gprofng/libcollector/mmaptrace.c binutils-workdir/gprofng/libcollector/mmaptrace.c
+--- binutils-clean/gprofng/libcollector/mmaptrace.c
++++ binutils-workdir/gprofng/libcollector/mmaptrace.c
+@@ -32,6 +32,7 @@
+ #include <elf.h>
+ #include <sys/mman.h>
+ #include <sys/param.h>
++#include <sys/stat.h>
+ #include <stdint.h>
+ 
+ #include "gp-defs.h"
+@@ -470,7 +471,7 @@
+       TprintfT (0, "ERROR: dlopen(%s,NOLOAD): %s\n", dl_info.dli_fname, dlerror ());
+       return NULL;
+     }
+-#if !defined(__MUSL_LIBC)
++#if !defined(__MUSL_LIBC) && !defined(__mlibc__)
+   Dl_serinfo _info, *info = &_info;
+   Dl_serpath *path;
+ 

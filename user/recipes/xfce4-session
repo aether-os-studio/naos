@@ -1,0 +1,25 @@
+#! /bin/sh
+
+name=xfce4-session
+version=4.21.0
+revision=1
+tarball_url="https://archive.xfce.org/src/xfce/xfce4-session/4.21/xfce4-session-${version}.tar.xz"
+tarball_blake2b="4fd0fd2b385c52851a0a02d3a48af5f16e6bd7f8c0440bdfee7fd98d7649b1d93cd99a321a69953355d15fdc82317baaf3fa1ba9f338d812fbe11a4625833fdf"
+# libgdk-pixbuf2.0-bin is needed for gdk-pixbuf-csource, x11-xserver-utils is needed for iceauth
+imagedeps="libgdk-pixbuf2.0-bin x11-xserver-utils"
+hostdeps="gcc glib2 pkg-config"
+deps="core-libs libwnck3 libxfce4ui xfdesktop xorg-iceauth"
+
+configure() {
+    meson_configure
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

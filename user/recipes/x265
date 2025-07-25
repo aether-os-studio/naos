@@ -1,0 +1,28 @@
+#! /bin/sh
+
+name=x265
+version=4.1
+revision=1
+tarball_url="https://bitbucket.org/multicoreware/x265_git/downloads/x265_${version}.tar.gz"
+tarball_blake2b="0957c121aea761f9dc6549b624d03f31114dfe37a947780194459c37532e2ba05d94de9484ad2233819e0431030eb0c794894030df0a3aeab73df43a3d62ad6e"
+imagedeps="nasm"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+        cmake_source_dir="${source_dir}/source" \
+    cmake_configure \
+        -DGIT_ARCHETYPE=1
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    rm -vf ${dest_dir}${prefix}/lib/libx265.a
+
+    post_package_strip
+}

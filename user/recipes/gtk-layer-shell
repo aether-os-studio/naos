@@ -1,0 +1,25 @@
+#! /bin/sh
+
+name=gtk-layer-shell
+version=0.9.1
+revision=1
+tarball_url="https://github.com/wmww/gtk-layer-shell/archive/refs/tags/v${version}.tar.gz"
+tarball_blake2b="961f5ea47f275bc21d7cfeac5258a5f7b357689becf311b1e0a1f1b745d0167ff57dd3e53606672aaae7722be60b14c442ac3282b05cbd3a65c0dbca60423b20"
+imagedeps="build-essential libwayland-bin pkg-config python3-distutils-extra patchelf"
+hostdeps="gcc glib2 pkg-config gobject-introspection vala"
+deps="core-libs glib2 gtk3 wayland"
+
+configure() {
+    vala_env meson_configure
+}
+
+build() {
+    gi_env vala_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}
+

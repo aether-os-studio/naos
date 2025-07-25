@@ -1,0 +1,28 @@
+#! /bin/sh
+
+name=xf86-input-libinput
+version=1.5.0
+revision=1
+tarball_url="https://www.x.org/archive/individual/driver/xf86-input-libinput-${version}.tar.xz"
+tarball_blake2b="33c81de8bd621c6c838420747f140689c8937d7fae4c4a5beef7ede65a1ad24e1bb620f2798a002de063eef47a6e6a5a3e8bad405370b02f87aa63c2f7897afb"
+hostdeps="gcc pkg-config"
+deps="core-libs libinput xorg-proto xorg-server"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure \
+        --with-sdkdir="${prefix}/include/xorg"
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

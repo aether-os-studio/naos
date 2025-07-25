@@ -1,0 +1,28 @@
+#! /bin/sh
+
+name=libtheora
+version=1.2.0
+revision=1
+tarball_url="https://downloads.xiph.org/releases/theora/libtheora-${version}.tar.xz"
+tarball_blake2b="f1264e9d5b0624f41780d7b6815f295309529f3c21a1aff9536239c9691b916912c9d3a1877e58506c7e1a37f1367c48d9b0765fe27f6c1db69a361aa9865eee"
+hostdeps="gcc pkg-config"
+deps="core-libs libogg libvorbis"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure \
+        CFLAGS="$TARGET_CFLAGS -std=gnu17"
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

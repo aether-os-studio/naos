@@ -1,0 +1,25 @@
+#! /bin/sh
+
+name=libxres
+version=1.2.2
+revision=1
+tarball_url="https://www.x.org/archive/individual/lib/libXres-${version}.tar.xz"
+tarball_blake2b="569d4e4b8bf43254139a7c1428ba9dbce592930b05588ca90266e42721fe7cdfb997d05f983dce97afda460c39b9b232128f760f2c69aa87d800f948562a03fc"
+hostdeps="gcc pkg-config"
+deps="core-libs xorg-util-macros xorg-proto libxext"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+build() {
+    autotools_configure
+
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

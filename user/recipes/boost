@@ -1,0 +1,35 @@
+#! /bin/sh
+
+name=boost
+version=1.88.0
+revision=1
+tarball_url="https://github.com/boostorg/boost/releases/download/boost-${version}/boost-${version}-b2-nodocs.tar.xz"
+tarball_blake2b="8b826177bd2a82024835bb4b5ebaa891a17ad406b6d96539904d81d84485448a0af4bdb76c64f1c2f49604e0da6e100a840b8929afe6a146fedd6f55fbb75b8a"
+imagedeps="build-essential"
+hostdeps="gcc pkg-config"
+deps="core-libs bzip2 icu python xz zlib zstd"
+
+configure() {
+    cp -rp ${source_dir}/. ./
+
+    cat <<EOF >./tools/build/src/user-config.jam
+using gcc : : ${OS_TRIPLET}-g++ ;
+using python : : /usr/bin/python3 : ${sysroot_dir}$(python_include_dir) : ${sysroot_dir}${prefix}/lib ;
+EOF
+
+    ./bootstrap.sh --prefix=${prefix}
+}
+
+build() {
+    ./b2 stage -j${parallelism} threading=multi link=shared target-os=linux toolset=gcc
+}
+
+package() {
+    DESTDIR="${dest_dir}" ./b2 install \
+        --prefix=${dest_dir}${prefix} \
+        --includedir=${dest_dir}${prefix}/include \
+        --libdir=${dest_dir}${prefix}/lib \
+        threading=multi link=shared target-os=linux toolset=gcc
+
+    post_package_strip
+}

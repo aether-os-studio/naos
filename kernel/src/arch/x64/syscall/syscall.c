@@ -444,6 +444,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     case SYS_DUP2:
         regs->rax = sys_dup2(arg1, arg2);
         break;
+    case SYS_DUP3:
+        regs->rax = sys_dup3(arg1, arg2, arg3);
+        break;
     case SYS_GETRLIMIT:
         regs->rax = sys_get_rlimit(arg1, (struct rlimit *)arg2);
         break;

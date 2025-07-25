@@ -1,0 +1,7 @@
+#! /bin/sh
+
+name=rust
+version=1.86.0
+tarball_url="https://static.rust-lang.org/dist/rustc-${version}-src.tar.xz"
+tarball_blake2b="9f33a710a3e567d92f56091920643f5ef2ddf2ad52acb5d9ee78496a7b5dbc10da5a51c72cf2a6f66d543a531d3138a49767c98501ae4e885e03988d2ccfbb59"
+deps="rust-libc"

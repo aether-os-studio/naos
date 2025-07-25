@@ -1,0 +1,28 @@
+#! /bin/sh
+
+name=sassc
+version=3.6.2
+revision=1
+tarball_url="https://github.com/sass/sassc/archive/${version}/sassc-${version}.tar.gz"
+tarball_blake2b="97699b1235dc955ef976c2ee87a42b5153effca4703c1003363bb192eaae5fd2519d7c8ae96bb94a53ea98de95a208b44f680dcedf8334b1d179a3484261319d"
+source_hostdeps="automake autoconf pkg-config libtool"
+hostdeps="gcc autoconf automake pkg-config libtool"
+deps="core-libs libsass"
+
+prepare() {
+    autoreconf -fvi
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

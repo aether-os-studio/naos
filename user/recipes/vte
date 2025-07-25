@@ -1,0 +1,36 @@
+#! /bin/sh
+
+name=vte
+version=0.80.1
+revision=1
+tarball_url="https://gitlab.gnome.org/GNOME/vte/-/archive/${version}/vte-${version}.tar.gz"
+tarball_blake2b="e165602646eb31b54ee51829e6f2e4d0977441998cd8503d735f0e81606ddb7cb83d387c264013495103f502d2f00da804956af04f40e080100c0474c9d34a81"
+imagedeps="build-essential patchelf"
+hostdeps="gcc pkg-config gobject-introspection glib2 vala"
+deps="core-libs cairo fribidi glib2 gnutls gtk3 gtk4 icu pango pcre2 zlib fast_float"
+
+configure() {
+    vala_env meson_configure \
+        -Da11y=true \
+        -Dfribidi=true \
+        -Dglade=true \
+        -Dgnutls=true \
+        -Dgtk3=true \
+        -Dgtk4=true \
+        -Dicu=true \
+        -Dgir=true \
+        -Dvapi=true \
+        -D_systemd=true
+}
+
+build() {
+    gi_env vala_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR=${dest_dir} meson install --no-rebuild
+
+    rm -vr ${dest_dir}/etc/
+
+    post_package_strip
+}

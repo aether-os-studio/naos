@@ -1,0 +1,55 @@
+diff -urN --no-dereference v4l-utils-clean/lib/libdvbv5/meson.build v4l-utils-workdir/lib/libdvbv5/meson.build
+--- v4l-utils-clean/lib/libdvbv5/meson.build
++++ v4l-utils-workdir/lib/libdvbv5/meson.build
+@@ -124,6 +124,7 @@
+ 
+ libdvbv5_deps = [
+     dep_iconv,
++    dep_intl,
+     dep_libm,
+     dep_librt,
+     dep_libudev,
+diff -urN --no-dereference v4l-utils-clean/meson.build v4l-utils-workdir/meson.build
+--- v4l-utils-clean/meson.build
++++ v4l-utils-workdir/meson.build
+@@ -190,6 +190,8 @@
+     endif
+ endif
+ 
++dep_intl = dependency('intl', required : false)
++
+ if found_iconv
+     conf.set('HAVE_ICONV', 1)
+     iconv_const_test = '''#include <iconv.h>
+diff -urN --no-dereference v4l-utils-clean/utils/dvb/meson.build v4l-utils-workdir/utils/dvb/meson.build
+--- v4l-utils-clean/utils/dvb/meson.build
++++ v4l-utils-workdir/utils/dvb/meson.build
+@@ -1,5 +1,6 @@
+ dvb_common_deps =  [
+     dep_argp,
++    dep_intl,
+     dep_libdvbv5,
+     dep_libudev,
+     dep_threads,
+diff -urN --no-dereference v4l-utils-clean/utils/ir-ctl/meson.build v4l-utils-workdir/utils/ir-ctl/meson.build
+--- v4l-utils-clean/utils/ir-ctl/meson.build
++++ v4l-utils-workdir/utils/ir-ctl/meson.build
+@@ -12,6 +12,7 @@
+ 
+ ir_ctl_deps =  [
+     dep_argp,
++    dep_intl,
+ ]
+ 
+ ir_ctl = executable('ir-ctl',
+diff -urN --no-dereference v4l-utils-clean/utils/keytable/meson.build v4l-utils-workdir/utils/keytable/meson.build
+--- v4l-utils-clean/utils/keytable/meson.build
++++ v4l-utils-workdir/utils/keytable/meson.build
+@@ -11,6 +11,7 @@
+ 
+ ir_keytable_deps = [
+     dep_argp,
++    dep_intl,
+ ]
+ 
+ ir_keytable_system_dir = udevdir

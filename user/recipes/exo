@@ -1,0 +1,27 @@
+#! /bin/sh
+
+name=exo
+version=4.21.0
+revision=1
+tarball_url="https://archive.xfce.org/src/xfce/exo/4.21/exo-${version}.tar.bz2"
+tarball_blake2b="4bb4a5a63fe94bd2d32be9e84733c3febe44aef8572965fff49a4a748ba8236efb4bbf8247af9050147f62da67876669551f5bbef3f13b202d3ba48f3f17bd96"
+hostdeps="gcc glib2 pkg-config"
+deps="core-libs dbus gtk3 libxfce4ui libxfce4util"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

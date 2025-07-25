@@ -1,0 +1,27 @@
+#! /bin/sh
+
+name=libusb
+version=1.0.28
+revision=1
+tarball_url="https://github.com/libusb/libusb/releases/download/v${version}/libusb-${version}.tar.bz2"
+tarball_blake2b="9bf506455fc1b981de155600936ab229f089ea28e58491076eab632455c4e814bf0336cd9326056a255508aa3956643c503af3ff2feda80bac036cf5cad86e80"
+hostdeps="gcc pkg-config"
+deps="core-libs systemd"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

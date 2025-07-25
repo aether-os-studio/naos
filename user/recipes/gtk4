@@ -1,0 +1,35 @@
+#! /bin/sh
+
+name=gtk4
+repology_id=gtk
+version=4.18.4
+revision=1
+tarball_url="https://download.gnome.org/sources/gtk/4.18/gtk-${version}.tar.xz"
+tarball_blake2b="f911615ae563563c82e8b122bb5b0b1002e5b7933e473a9eee090114f91644fc2e738ddc72665d03556c099366715e8f884fdb0be71e89bd525e95f5456d8ab6"
+imagedeps="build-essential patchelf libwayland-bin libgdk-pixbuf2.0-bin glslc"
+hostdeps="gcc pkg-config gobject-introspection glib2 vala"
+# Missing: printing and colord
+deps="core-libs fribidi gdk-pixbuf graphene iso-codes libepoxy libxkbcommon pango wayland-protocols gstreamer-plugins-bad gstreamer-plugins-good hicolor-icon-theme librsvg libcloudproviders sassc tinysparql"
+
+# TODO: Vulkan not configuring
+configure() {
+    meson_configure \
+        -Dintrospection=enabled \
+        -Dx11-backend=true \
+        -Dbroadway-backend=true \
+        -Dwayland-backend=true \
+        -Ddocumentation=false \
+        -Dtracker=enabled \
+        -Dcloudproviders=enabled \
+        -Dvulkan=disabled
+}
+
+build() {
+    gi_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

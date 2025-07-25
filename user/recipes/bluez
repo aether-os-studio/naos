@@ -1,0 +1,66 @@
+#! /bin/sh
+
+name=bluez
+version=5.79
+revision=1
+tarball_url="https://www.kernel.org/pub/linux/bluetooth/bluez-${version}.tar.xz"
+tarball_blake2b="e908bc000b45832845a09ea7e906d39e107e4934fef4efc9a78b278b7f8ae914ed3a573ef53512de7076a3b1ca8115634fb502cb8d1d0c8516febe05f9e059f8"
+hostdeps="gcc pkg-config"
+deps="core-libs dbus glib2 libical systemd"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure \
+        CFLAGS="$TARGET_CFLAGS -std=gnu17 -Wl,--copy-dt-needed-entries" \
+        --disable-manpages \
+        --enable-library \
+        --with-systemduserunitdir=${prefix}/lib/systemd/user \
+        --with-systemdsystemunitdir=${prefix}/lib/systemd/system \
+        --with-dbusconfdir=${prefix}/share \
+        --with-udevdir=${prefix}/lib/udev \
+        --with-dbussystembusdir=${prefix}/share/dbus-1/system-services \
+        --with-dbussessionbusdir=${prefix}/share/dbus-1/services
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    ln -svf ../libexec/bluetooth/bluetoothd ${dest_dir}${prefix}/bin
+
+    install -v -dm755 ${dest_dir}/etc/bluetooth
+    install -v -m644 ${source_dir}/src/main.conf ${dest_dir}/etc/bluetooth/main.conf
+
+    cat > ${dest_dir}/etc/bluetooth/rfcomm.conf << "EOF"
+# Start rfcomm.conf
+# Set up the RFCOMM configuration of the Bluetooth subsystem in the Linux kernel.
+# Use one line per command
+# See the rfcomm man page for options
+
+
+# End of rfcomm.conf
+EOF
+
+cat > ${dest_dir}/etc/bluetooth/uart.conf << "EOF"
+# Start uart.conf
+# Attach serial devices via UART HCI to BlueZ stack
+# Use one line per device
+# See the hciattach man page for options
+
+# End of uart.conf
+EOF
+
+    # mkdir -pv ${dest_dir}/etc/systemd/system/bluetooth.target.wants
+    # mkdir -pv ${dest_dir}/etc/systemd/user
+    # ln -svn /usr/lib/systemd/system/bluetooth.service ${dest_dir}/etc/systemd/system/dbus-org.bluez.service
+    # ln -svn /usr/lib/systemd/system/bluetooth.service ${dest_dir}/etc/systemd/system/bluetooth.target.wants/bluetooth.service
+    # ln -svn /usr/lib/systemd/user/obex.service ${dest_dir}/etc/systemd/user/dbus-org.bluez.obex.service
+
+    post_package_strip
+}

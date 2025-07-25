@@ -1,0 +1,46 @@
+#! /bin/sh
+
+name=libyaml
+version=0.2.5
+revision=1
+git_url="https://github.com/yaml/libyaml.git"
+commit="2c891fc7a770e8ba2fec34fc6b545c672beb37e6"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    cmake_configure
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    # Create a libyaml.pc file for pkg-config
+    mkdir -p "${dest_dir}${prefix}/lib/pkgconfig"
+    cat > "${dest_dir}${prefix}/lib/pkgconfig/yaml-0.1.pc" <<"EOF"
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+includedir=@includedir@
+libdir=@libdir@
+
+Name: LibYAML
+Description: Library to parse and emit YAML
+Version: @version@
+Cflags: -I${includedir}
+Libs: -L${libdir} -lyaml
+EOF
+
+    sed \
+        -e "s|@prefix@|${prefix}|" \
+        -e "s|@exec_prefix@|${prefix}|" \
+        -e "s|@includedir@|${prefix}/include|" \
+        -e "s|@libdir@|${prefix}/lib|" \
+        -e "s|@version@|${version}|" \
+        -i "${dest_dir}${prefix}/lib/pkgconfig/yaml-0.1.pc"
+
+    post_package_strip
+}

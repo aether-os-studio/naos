@@ -1,0 +1,33 @@
+#! /bin/sh
+
+name=xfwm4
+version=4.20.0
+revision=1
+tarball_url="https://archive.xfce.org/src/xfce/xfwm4/4.20/xfwm4-${version}.tar.bz2"
+tarball_blake2b=999b50c046582241bcc565e3af313a61ee3bee7b00b359d826ed32ac2c36d25cc299810325ac81617d59a8292d2791947a51d4c1ec4949d794f999bd24d1417e
+hostdeps="gcc pkg-config"
+deps="core-libs libxfce4ui xfconf libwnck3 libepoxy libxpresent hicolor-icon-theme"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+build() {
+    autotools_configure \
+        CFLAGS="$CFLAGS -Wl,--copy-dt-needed-entries" \
+        --enable-epoxy \
+        --enable-compositor \
+        --enable-xpresent \
+        --enable-randr \
+        --enable-render \
+        --enable-xi2 \
+        --enable-xsync
+
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

@@ -1,0 +1,34 @@
+#! /bin/sh
+
+name=gtk3
+repology_id=gtk
+repology_status=legacy
+version=3.24.49
+revision=1
+tarball_url="https://download.gnome.org/sources/gtk/3.24/gtk-${version}.tar.xz"
+tarball_blake2b="c45299fdf6c004c56d6480cbde9ff4dee64e460be6742331b93097e5782591c81decdd4dfbba59bd3f0a72ad26c7919c7363877b4d4b3227ecc246025c29f1b2"
+imagedeps="build-essential patchelf libwayland-bin libgdk-pixbuf2.0-bin"
+hostdeps="gcc pkg-config gobject-introspection glib2 vala"
+# Missing: printing and colord
+deps="core-libs at-spi2-core cairo glib2 gdk-pixbuf iso-codes libx11 libxext libxcb libxcomposite libxrender libxrandr libxfixes libxdamage libxinerama libxslt pango fribidi libepoxy libxkbcommon fontconfig freetype2 libxi harfbuzz libxcursor gsettings-desktop-schemas dbus wayland-protocols sassc tinysparql libcloudproviders libavif libjxl webp-pixbuf-loader librsvg"
+
+configure() {
+    meson_configure \
+        -Dintrospection=true \
+        -Dx11_backend=true \
+        -Dbroadway_backend=true \
+        -Dwayland_backend=true \
+        -Dgtk_doc=false \
+        -Dtracker3=true \
+        -Dcloudproviders=true
+}
+
+build() {
+    gi_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

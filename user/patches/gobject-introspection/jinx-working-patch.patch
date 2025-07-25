@@ -1,0 +1,83 @@
+diff -urN --no-dereference gobject-introspection-clean/Makefile.introspection gobject-introspection-workdir/Makefile.introspection
+--- gobject-introspection-clean/Makefile.introspection
++++ gobject-introspection-workdir/Makefile.introspection
+@@ -16,6 +16,8 @@
+ #   INTROSPECTION_COMPILER - Command to invoke compiler, normally set by
+ #      GOBJECT_INTROSPECTION_REQUIRE/CHECK() in introspection.m4
+ #   INTROSPECTION_COMPILER_ARGS - Additional args to pass in to the compiler
++#   INTROSPECTION_GIRDIR - Directory containing .gir files
++#   INTROSPECTION_TYPELIBDIR - Directory containing .typelib files
+ #
+ # * Simple tutorial
+ #
+@@ -136,6 +138,7 @@
+ 	@ $(MKDIR_P) $(dir $(1))
+ 	$(_gir_silent_scanner_prefix) $(_gir_default_scanner_env) $(INTROSPECTION_SCANNER_ENV) $(INTROSPECTION_SCANNER) $(_gir_silent_scanner_opts) \
+ 	$(INTROSPECTION_SCANNER_ARGS) \
++	  --add-include-path=$(INTROSPECTION_GIRDIR) \
+ 	  --namespace=$(_gir_namespace) \
+ 	  --nsversion=$(_gir_version) \
+ 	  $(_gir_libtool) \
+@@ -163,7 +166,7 @@
+ # $(2): typelib filename (output)
+ #
+ define introspection-compiler
+-$(_gir_silent_compiler) $(INTROSPECTION_COMPILER) $(INTROSPECTION_COMPILER_ARGS) --includedir=. $(1) -o $(2)
++$(_gir_silent_compiler) $(INTROSPECTION_COMPILER) $(INTROSPECTION_COMPILER_ARGS) --includedir=. --includedir=$(INTROSPECTION_GIRDIR) $(1) -o $(2)
+ endef
+ 
+ # Simple rule to compile a typelib.
+diff -urN --no-dereference gobject-introspection-clean/giscanner/ccompiler.py gobject-introspection-workdir/giscanner/ccompiler.py
+--- gobject-introspection-clean/giscanner/ccompiler.py
++++ gobject-introspection-workdir/giscanner/ccompiler.py
+@@ -240,6 +240,7 @@
+             if not libtool:
+                 # https://bugzilla.gnome.org/show_bug.cgi?id=625195
+                 args.append('-Wl,-rpath,.')
++                args.append('-Wl,-rpath-link,.')
+ 
+             # Ensure libraries are always linked as we are going to use ldd to work
+             # out their names later
+@@ -260,6 +261,7 @@
+                         args.append(library_path)
+                     else:
+                         args.append('-Wl,-rpath,' + library_path)
++                        args.append('-Wl,-rpath-link,' + library_path)
+ 
+             runtime_paths.append(library_path)
+ 
+diff -urN --no-dereference gobject-introspection-clean/giscanner/shlibs.py gobject-introspection-workdir/giscanner/shlibs.py
+--- gobject-introspection-clean/giscanner/shlibs.py
++++ gobject-introspection-workdir/giscanner/shlibs.py
+@@ -97,8 +97,11 @@
+             args.extend(libtool)
+             args.append('--mode=execute')
+         platform_system = platform.system()
++        ldd_wrapper_from_env = os.environ.get("GI_LDD_WRAPPER")
+         if options.ldd_wrapper:
+             args.extend([options.ldd_wrapper, binary.args[0]])
++        elif ldd_wrapper_from_env:
++            args.extend([ldd_wrapper_from_env, binary.args[0]])
+         elif platform_system == 'Darwin':
+             args.extend(['otool', '-L', binary.args[0]])
+         else:
+diff -urN --no-dereference gobject-introspection-clean/m4/introspection.m4 gobject-introspection-workdir/m4/introspection.m4
+--- gobject-introspection-clean/m4/introspection.m4
++++ gobject-introspection-workdir/m4/introspection.m4
+@@ -102,11 +102,11 @@
+     INTROSPECTION_GIRDIR=
+     INTROSPECTION_TYPELIBDIR=
+     if test "x$found_introspection" = "xyes"; then
+-       INTROSPECTION_SCANNER=$PKG_CONFIG_SYSROOT_DIR`$PKG_CONFIG --variable=g_ir_scanner gobject-introspection-1.0`
+-       INTROSPECTION_COMPILER=$PKG_CONFIG_SYSROOT_DIR`$PKG_CONFIG --variable=g_ir_compiler gobject-introspection-1.0`
+-       INTROSPECTION_GENERATE=$PKG_CONFIG_SYSROOT_DIR`$PKG_CONFIG --variable=g_ir_generate gobject-introspection-1.0`
+-       INTROSPECTION_GIRDIR=`$PKG_CONFIG --define-variable=datadir="${_GI_EXP_DATADIR}" --variable=girdir gobject-introspection-1.0`
+-       INTROSPECTION_TYPELIBDIR="$($PKG_CONFIG --define-variable=libdir="${_GI_EXP_LIBDIR}" --variable=typelibdir gobject-introspection-1.0)"
++       INTROSPECTION_SCANNER=$INTROSPECTION_SCANNER_ENV
++       INTROSPECTION_COMPILER=$INTROSPECTION_COMPILER_ENV
++       INTROSPECTION_GENERATE=$INTROSPECTION_GENERATE_ENV
++       INTROSPECTION_GIRDIR=$INTROSPECTION_GIRDIR_ENV
++       INTROSPECTION_TYPELIBDIR=$INTROSPECTION_TYPELIBDIR_ENV
+        INTROSPECTION_CFLAGS=`$PKG_CONFIG --cflags gobject-introspection-1.0`
+        INTROSPECTION_LIBS=`$PKG_CONFIG --libs gobject-introspection-1.0`
+        INTROSPECTION_MAKEFILE=$PKG_CONFIG_SYSROOT_DIR`$PKG_CONFIG --variable=datadir gobject-introspection-1.0`/gobject-introspection-1.0/Makefile.introspection

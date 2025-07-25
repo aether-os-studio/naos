@@ -1,0 +1,27 @@
+diff -urN --no-dereference psmisc-clean/src/peekfd.c psmisc-workdir/src/peekfd.c
+--- psmisc-clean/src/peekfd.c
++++ psmisc-workdir/src/peekfd.c
+@@ -38,6 +38,7 @@
+ #include <stdint.h>
+ #include <errno.h>
+ #include <string.h>
++#include <signal.h>
+ 
+ #include "i18n.h"
+ 
+diff -urN --no-dereference psmisc-clean/src/pstree.c psmisc-workdir/src/pstree.c
+--- psmisc-clean/src/pstree.c
++++ psmisc-workdir/src/pstree.c
+@@ -62,7 +62,12 @@
+ typedef void* security_context_t; /* DUMMY to remove most ifdefs */
+ #endif /* !WITH_SELINUX && !WITH_APPARMOR  */
+ 
++// mlibc workaround
++#if 0
+ extern const char *__progname;
++#else
++extern char *__progname;
++#endif
+ 
+ #define PROC_BASE    "/proc"
+ 

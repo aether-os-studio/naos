@@ -1,0 +1,33 @@
+#! /bin/sh
+
+name=gettext
+repology_srcname=gettext
+version=0.25
+revision=1
+tarball_url="https://ftpmirror.gnu.org/gnu/gettext/gettext-${version}.tar.xz"
+tarball_blake2b="cec5dd43f64ea676b112d53374452852ad25b2d31833a805bb2f92cd0b172536b47f916ad630fd4acd11208d408ff302eac2a5cd6a78ec653b7d5a3b447f5584"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    # Remove conflicting libintl files
+    rm -f "${dest_dir}${prefix}"/include/libintl.h
+    rm -f "${dest_dir}${prefix}"/lib/libintl.so*
+    rm -f "${dest_dir}${prefix}"/share/locale/locale.alias
+
+    post_package_strip
+}

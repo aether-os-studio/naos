@@ -1,0 +1,30 @@
+#! /bin/sh
+
+name=gstreamer-plugins-bad
+repology_id=gstreamer:bad
+version=1.26.0
+revision=1
+tarball_url="https://gstreamer.freedesktop.org/src/gst-plugins-bad/gst-plugins-bad-${version}.tar.xz"
+tarball_blake2b="b8ffd8c7694c171f4e2bff88e37c0c63d5f58d04baa2a7bad4b526179ef630cc6909a8bef3479cdc5ee8c7c1f23f1c53f4a6f462799a0f940483116b407c12ae"
+imagedeps="build-essential patchelf libwayland-bin glslc"
+hostdeps="gcc pkg-config gobject-introspection glib2"
+# Missing: libva, opencv, wpebackend-fdo
+deps="core-libs bluez curl faac faad fdk-aac gstreamer-plugins-base json-glib lcms libaom libass libdvdread libdvdnav libexif librsvg libsoup libsndfile libssh libusb libwebp libxkbcommon neon nettle openjpeg opus libqrencode sbc soundtouch wayland x265 gtk3 zxing-cpp"
+
+configure() {
+    meson_configure \
+        --wrap-mode=nodownload \
+        -Dgpl=enabled \
+        -Dpackage-name="GStreamer ${version}" \
+        -Dintrospection=enabled
+}
+
+build() {
+    gi_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

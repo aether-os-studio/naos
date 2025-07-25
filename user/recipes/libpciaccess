@@ -1,0 +1,23 @@
+#! /bin/sh
+
+name=libpciaccess
+version=0.18.1
+revision=1
+tarball_url="https://www.x.org/releases/individual/lib/libpciaccess-${version}.tar.xz"
+tarball_blake2b="19ebe4e8cb3f409f51be01d0c771aea79d9251d7b464f49d8adf40af55180b0f87c6092271023289f802cc2b684eecace963b5fdcb026ff7879481d22a34a675"
+hostdeps="gcc pkg-config"
+deps="core-libs zlib"
+
+configure() {
+    meson_configure
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

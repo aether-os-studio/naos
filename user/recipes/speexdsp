@@ -1,0 +1,27 @@
+#! /bin/sh
+
+name=speexdsp
+version=1.2.1
+revision=1
+tarball_url="https://downloads.xiph.org/releases/speex/speexdsp-${version}.tar.gz"
+tarball_blake2b="9105967eaee3ea8fcba2df1739d92a520407e086d3f4645763d8c7f26adff4f6c46b653e873b3e5ca04fce2ee5f765f8f7a242172d7cc4873fe15c3295a5913b"
+hostdeps="gcc pkg-config"
+deps="core-libs libogg"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

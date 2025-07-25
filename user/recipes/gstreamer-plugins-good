@@ -1,0 +1,29 @@
+#! /bin/sh
+
+name=gstreamer-plugins-good
+repology_id=gstreamer:good
+version=1.26.0
+revision=1
+tarball_url="https://gstreamer.freedesktop.org/src/gst-plugins-good/gst-plugins-good-${version}.tar.xz"
+tarball_blake2b="e10f51ed5c4cf9012a37ceaeb6e2c4835bc9d79c84b44fea3cbe6d0cb287f4f8f3af58ff6736d30e0900b3067b716ae83bf10923a1756f83bedc480e44d6bf2e"
+imagedeps="libwayland-bin pkg-config"
+hostdeps="gcc pkg-config glib2"
+deps="core-libs alsa-lib cairo flac gdk-pixbuf gstreamer-plugins-base libdv libsoup libsoup3 libvpx mpg123 pulseaudio speex taglib v4l-utils gtk3"
+
+# v4l2 -Wincompatible-pointer-types error
+configure() {
+    meson_configure \
+        --wrap-mode=nodownload \
+        -Dpackage-name="GStreamer ${version}" \
+        -Dv4l2=disabled
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

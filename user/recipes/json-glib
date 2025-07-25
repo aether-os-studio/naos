@@ -1,0 +1,25 @@
+#! /bin/sh
+
+name=json-glib
+version=1.10.6
+version_short=1.10
+revision=1
+tarball_url="https://download.gnome.org/sources/json-glib/${version_short}/json-glib-${version}.tar.xz"
+tarball_blake2b="125ba305d5d33ecb1a1fbe46322c5035c7f97bd49e8eeef26e3c9c5d829693978fdc10bbe3d926cd4d07f8fd80c9df282d5ff7fe80ab4a6ab8e17c93e9d362d4"
+imagedeps="build-essential patchelf"
+hostdeps="gcc pkg-config glib2 gobject-introspection"
+deps="core-libs glib2 gobject-introspection"
+
+configure() {
+    meson_configure
+}
+
+build() {
+    gi_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

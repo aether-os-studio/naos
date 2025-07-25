@@ -1,0 +1,41 @@
+diff -urN --no-dereference gcr4-clean/meson.build gcr4-workdir/meson.build
+--- gcr4-clean/meson.build
++++ gcr4-workdir/meson.build
+@@ -94,9 +94,15 @@
+   error('Couldn\'t find location for pkcs11 module config')
+ endif
+ libsecret_dep = dependency('libsecret-1', version: '>= 0.20', required: get_option('ssh_agent'))
++ssh_add_path = get_option('ssh_add_path')
++ssh_agent_path = get_option('ssh_agent_path')
+ if get_option('ssh_agent')
+-  ssh_add_path = find_program('ssh-add').full_path()
+-  ssh_agent_path = find_program('ssh-agent').full_path()
++  if ssh_add_path == ''
++    ssh_add_path = find_program('ssh-add').full_path()
++  endif
++  if ssh_agent_path == ''
++    ssh_agent_path = find_program('ssh-agent').full_path()
++  endif
+ endif
+ 
+ with_systemd = false
+diff -urN --no-dereference gcr4-clean/meson_options.txt gcr4-workdir/meson_options.txt
+--- gcr4-clean/meson_options.txt
++++ gcr4-workdir/meson_options.txt
+@@ -23,6 +23,16 @@
+   value: '',
+   description: 'Path to gpg, autodetected if not set',
+ )
++option('ssh_add_path',
++  type: 'string',
++  value: '',
++  description: 'Path to ssh-add, autodetected if not set',
++)
++option('ssh_agent_path',
++  type: 'string',
++  value: '',
++  description: 'Path to ssh-agent, autodetected if not set',
++)
+ option('crypto',
+   type: 'combo',
+   choices: ['libgcrypt', 'gnutls'],

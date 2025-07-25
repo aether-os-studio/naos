@@ -1,0 +1,31 @@
+#! /bin/sh
+
+name=neon
+version=0.34.2
+revision=1
+tarball_url="https://notroj.github.io/neon/neon-${version}.tar.gz"
+tarball_blake2b="808c506a854a97dc646c36159c7c87bb2b9ada2dbd9bb6bd93496be3d2b5181fa51b547da809049d287f5ce95b40add9597d4721f6f90983305738d3fa0cb1dd"
+hostdeps="gcc pkg-config"
+deps="core-libs libxml2 nss openssl"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    cp -rp ${source_dir}/. ./
+
+        configure_script_path=./configure \
+    autotools_configure \
+        --with-ssl
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

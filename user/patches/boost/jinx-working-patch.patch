@@ -1,0 +1,13 @@
+diff -urN --no-dereference boost-clean/libs/log/src/timestamp.cpp boost-workdir/libs/log/src/timestamp.cpp
+--- boost-clean/libs/log/src/timestamp.cpp
++++ boost-workdir/libs/log/src/timestamp.cpp
+@@ -162,7 +162,8 @@
+ #endif // BOOST_USE_WINAPI_VERSION >= BOOST_WINAPI_VERSION_WIN6
+ 
+ #elif (defined(_POSIX_TIMERS) && (_POSIX_TIMERS+0) > 0)  /* POSIX timers supported */ \
+-      || defined(__GNU__) || defined(__OpenBSD__) || defined(__CloudABI__)  /* GNU Hurd, OpenBSD and Nuxi CloudABI don't support POSIX timers fully but do provide clock_gettime() */
++      || defined(__GNU__) || defined(__OpenBSD__) || defined(__CloudABI__)  /* GNU Hurd, OpenBSD and Nuxi CloudABI don't support POSIX timers fully but do provide clock_gettime() */ \
++      || defined(__mlibc__) /* mlibc provides clock_gettime() */
+ 
+ BOOST_LOG_API int64_t duration::milliseconds() const
+ {

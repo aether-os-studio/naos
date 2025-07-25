@@ -1,0 +1,12 @@
+diff -urN --no-dereference libsamplerate-clean/examples/audio_out.c libsamplerate-workdir/examples/audio_out.c
+--- libsamplerate-clean/examples/audio_out.c
++++ libsamplerate-workdir/examples/audio_out.c
+@@ -314,7 +314,7 @@
+ 
+ #include <fcntl.h>
+ #include <sys/ioctl.h>
+-#include <sys/soundcard.h>
++#include <linux/soundcard.h>
+ 
+ #define	OSS_MAGIC		MAKE_MAGIC ('L', 'i', 'n', 'u', 'x', 'O', 'S', 'S')
+ 

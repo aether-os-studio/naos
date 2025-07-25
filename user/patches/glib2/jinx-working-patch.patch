@@ -1,0 +1,28 @@
+diff -urN --no-dereference glib-clean/girepository/compiler/meson.build glib-workdir/girepository/compiler/meson.build
+--- glib-clean/girepository/compiler/meson.build
++++ glib-workdir/girepository/compiler/meson.build
+@@ -29,5 +29,5 @@
+ if enable_gir
+   # Replace the default g-ir-compiler target with the version we
+   # just built.
+-  meson.override_find_program('g-ir-compiler', gicompilerepository)
++  # meson.override_find_program('g-ir-compiler', gicompilerepository)
+ endif
+diff -urN --no-dereference glib-clean/glib/gnulib/meson.build glib-workdir/glib/gnulib/meson.build
+--- glib-clean/glib/gnulib/meson.build
++++ glib-workdir/glib/gnulib/meson.build
+@@ -315,9 +315,11 @@
+ if not gl_cv_func_frexp_works and gl_cv_func_frexp_broken_beyond_repair
+   error ('frexp() is missing or broken beyond repair, and we have nothing to replace it with')
+ endif
+-if not gl_cv_func_frexpl_works and gl_cv_func_frexpl_broken_beyond_repair
+-  error ('frexpl() is missing or broken beyond repair, and we have nothing to replace it with')
+-endif
++#if not gl_cv_func_frexpl_works and gl_cv_func_frexpl_broken_beyond_repair
++#  error ('frexpl() is missing or broken beyond repair, and we have nothing to replace it with')
++#endif
++
++gl_cv_func_frexpl_works = true
+ 
+ math_h_config.set ('REPLACE_FREXP', gl_cv_func_frexp_works ? 0 : 1)
+ math_h_config.set ('REPLACE_FREXPL', gl_cv_func_frexpl_works ? 0 : 1)

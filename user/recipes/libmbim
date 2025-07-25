@@ -1,0 +1,26 @@
+#! /bin/sh
+
+name=libmbim
+version=1.32.0
+revision=1
+tarball_url="https://gitlab.freedesktop.org/mobile-broadband/libmbim/-/archive/${version}/libmbim-${version}.tar.gz"
+tarball_blake2b="4ec15bd267b4cc9d5f13f56ebd335921bc2d018bf560b7dc86268209763f1ae072814e3f0226de896b0ababc8931015b1d638d8eafe37b5663b04ba9e0b6e5ef"
+imagedeps="build-essential patchelf"
+hostdeps="gcc pkg-config glib2 gobject-introspection"
+deps="core-libs glib2"
+
+configure() {
+    meson_configure \
+        -Dman=false \
+        -Dbash_completion=false
+}
+
+build() {
+    gi_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

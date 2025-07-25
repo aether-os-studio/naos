@@ -1,0 +1,38 @@
+diff -urN --no-dereference shadow-clean/lib/freezero.c shadow-workdir/lib/freezero.c
+--- shadow-clean/lib/freezero.c
++++ shadow-workdir/lib/freezero.c
+@@ -18,6 +18,12 @@
+ #include <stdlib.h>
+ #include <string.h>
+ 
++// Work around mlibc missing explicit_bzero
++static void explicit_bzero(void *s, size_t n) {
++	s = memset(s, 0, n);
++	__asm__ __volatile__("" : : "r"(s) : "memory");
++}
++
+ void
+ freezero(void *ptr, size_t sz)
+ {
+diff -urN --no-dereference shadow-clean/lib/utmp.c shadow-workdir/lib/utmp.c
+--- shadow-clean/lib/utmp.c
++++ shadow-workdir/lib/utmp.c
+@@ -22,6 +22,7 @@
+ #include <stdio.h>
+ #include <string.h>
+ #include <fcntl.h>
++#include <netinet/in.h>
+ 
+ #include "alloc/x/xcalloc.h"
+ #include "alloc/x/xmalloc.h"
+diff -urN --no-dereference shadow-clean/src/newgrp.c shadow-workdir/src/newgrp.c
+--- shadow-clean/src/newgrp.c
++++ shadow-workdir/src/newgrp.c
+@@ -15,6 +15,7 @@
+ #include <pwd.h>
+ #include <stdio.h>
+ #include <sys/types.h>
++#include <signal.h>
+ 
+ #include "agetpass.h"
+ #include "alloc/x/xmalloc.h"

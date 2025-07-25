@@ -1,0 +1,37 @@
+#! /bin/sh
+
+name=util-linux
+version=2.41
+revision=1
+tarball_url="https://www.kernel.org/pub/linux/utils/util-linux/v${version}/util-linux-${version}.tar.xz"
+tarball_blake2b="b0f6d63c1365d3b065584d4d79a1716e1f036474984fc08dd6b298d7f50e66736af046404d3c9d8051fd0c9c455bcd623257ea1b967b755bee063415d91c5c21"
+hostdeps="gcc pkg-config"
+deps="core-libs ncurses file zlib"
+
+build() {
+    autotools_configure \
+        ADJTIME_PATH=/var/lib/hwclock/adjtime \
+        --disable-makeinstall-chown \
+        --disable-chfn-chsh \
+        --disable-login \
+        --disable-nologin \
+        --disable-su \
+        --disable-setpriv \
+        --disable-runuser \
+        --disable-lscpu \
+        --disable-pylibmount \
+        --without-python \
+        --disable-liblastlog2
+
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    # util-linux has no way to customize usrsbin_execdir
+    mv -v ${dest_dir}${prefix}/sbin/* ${dest_dir}${prefix}/bin/
+    rm -rvf ${dest_dir}${prefix}/sbin
+
+    post_package_strip
+}

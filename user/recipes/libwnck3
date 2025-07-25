@@ -1,0 +1,29 @@
+#! /bin/sh
+
+name=libwnck3
+repology_id=libwnck
+version=43.0
+revision=1
+tarball_url="https://download.gnome.org/sources/libwnck/43/libwnck-${version}.tar.xz"
+tarball_blake2b="591b7a9016f5149a2493d36ed8ec8a7e2a59b13043aed23bf87ef67520954d2e5cab0edb6f427c36f33fe80478ad363c9db6f4dacbc7c6d4295e79191e7f5043"
+imagedeps="build-essential patchelf"
+hostdeps="gcc pkg-config glib2 gobject-introspection"
+deps="core-libs cairo glib2 gtk3 libx11 libxi libxres startup-notification"
+
+configure() {
+    meson_configure \
+        -Dinstall_tools=true \
+        -Dintrospection=enabled \
+        -Dgtk_doc=false
+}
+
+build() {
+    gi_env vala_env meson compile -j${parallelism}
+}
+
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

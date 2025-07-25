@@ -1,0 +1,41 @@
+#! /bin/sh
+
+name=librsvg
+version=2.60.0
+version_short=2.60
+revision=1
+tarball_url="https://download.gnome.org/sources/librsvg/${version_short}/librsvg-${version}.tar.xz"
+tarball_blake2b="8831ff0aa9f2dc564ab6fd9d48d44e770831fd76107bf4ba883b1e549fdc4bcd63425336b817d6da373123e1d861faa32e205c0377b260c662c1d919a1ff42ec"
+source_hostdeps="rust"
+imagedeps="build-essential patchelf"
+hostdeps="gcc pkg-config rust cargo-cbuild gobject-introspection glib2 vala"
+deps="core-libs cairo harfbuzz pango gdk-pixbuf libidn2 libunistring libxml2 glib2 gobject-introspection vala"
+# Needed for cargo to download crates during the build process.
+source_allow_network=yes
+allow_network=yes
+
+prepare() {
+    cargo_inject_patches
+}
+
+configure() {
+    vala_env meson_configure \
+        -Dtriplet=x86_64-unknown-linux-mlibc
+}
+
+build() {
+        CARGO_HOME="${CARGO_HOME}" \
+    gi_env vala_env meson compile -j${parallelism}
+}
+
+package() {
+        DESTDIR="${dest_dir}" \
+        CARGO_HOME="${CARGO_HOME}" \
+    meson install
+
+    # Move installed pixbuf loaders to the correct location.
+    mv "${dest_dir}${sysroot_dir}${prefix}"/lib/gdk-pixbuf-2.0/ "${dest_dir}${prefix}"/lib/
+    rm -rfv ${dest_dir}${sysroot_dir}
+
+    post_package_strip
+}

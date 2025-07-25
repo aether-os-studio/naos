@@ -1,0 +1,35 @@
+#! /bin/sh
+
+name=tinysparql
+version=3.9.2
+revision=1
+tarball_url="https://download.gnome.org/sources/tinysparql/3.9/tinysparql-${version}.tar.xz"
+tarball_blake2b="de128835e736b940f09793dcc7bd4a71680410fea8c00ab6a36d85b2d62639b3f08ddded74f4d1851c6060e5f5f82841a5ef714191a29869546549dd21d1722b"
+imagedeps="build-essential patchelf python3 python3-gi"
+hostdeps="gcc pkg-config glib2 gobject-introspection vala"
+deps="core-libs glib2 gobject-introspection vala json-glib icu sqlite dbus libsoup3"
+
+prepare() {
+    sed -e "s/'generate'/&, '--no-namespace-dir'/" \
+        -e "/--output-dir/s/@OUTPUT@/&\/tinysparql-${version}/" \
+        -i ${source_dir}/docs/reference/meson.build
+}
+
+configure() {
+    vala_env meson_configure \
+        -Dman=false \
+        -Dsystemd_user_services_dir="${prefix}/lib/systemd/user/"
+}
+
+build() {
+    gi_env vala_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    # Move documentation to the correct location
+    mv ${dest_dir}${prefix}/share/doc/Tsparql-3.0 ${dest_dir}${prefix}/share/doc/tinysparql
+
+    post_package_strip
+}

@@ -1,0 +1,29 @@
+#! /bin/sh
+
+name=upower
+version=1.90.9
+revision=1
+tarball_url="https://gitlab.freedesktop.org/upower/upower/-/archive/v${version}/upower-v${version}.tar.bz2"
+tarball_blake2b="5a749e63882cef9d3f940ac9983f367aca8114f14c2e949aaa87e2ac91fedf76c0c753a53fd68e380e755b917bb1db67b765e5794c4d9d0112fe9106bdd9977d"
+imagedeps="build-essential patchelf"
+hostdeps="gcc pkg-config gobject-introspection glib2"
+deps="core-libs libgudev libusb" # python-dbusmock python-gobject umockdev"
+
+configure() {
+    meson_configure \
+        -Dgtk-doc=false \
+        -Dman=false \
+        -Dudevrulesdir=${prefix}/lib/udev/rules.d/ \
+        -Dudevhwdbdir=${prefix}/lib/udev/hwdb.d/ \
+        -Dsystemdsystemunitdir=${prefix}/lib/systemd/system/
+}
+
+build() {
+    gi_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

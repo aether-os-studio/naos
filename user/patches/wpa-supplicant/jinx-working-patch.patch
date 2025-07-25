@@ -1,0 +1,12 @@
+diff -urN --no-dereference wpa-supplicant-clean/src/utils/os.h wpa-supplicant-workdir/src/utils/os.h
+--- wpa-supplicant-clean/src/utils/os.h
++++ wpa-supplicant-workdir/src/utils/os.h
+@@ -9,6 +9,8 @@
+ #ifndef OS_H
+ #define OS_H
+ 
++#include <strings.h>
++
+ typedef long os_time_t;
+ 
+ /**

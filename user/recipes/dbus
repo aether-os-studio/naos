@@ -1,0 +1,40 @@
+#! /bin/sh
+
+name=dbus
+version=1.16.2
+revision=1
+git_url="https://gitlab.freedesktop.org/dbus/dbus.git"
+commit=958bf9db2100553bcd2fe2a854e1ebb42e886054
+hostdeps="gcc pkg-config"
+deps="core-libs libexpat libx11 systemd"
+
+configure() {
+    meson_configure \
+        -Druntime_dir=/run \
+        -Ddoxygen_docs=disabled \
+        -Dxml_docs=disabled \
+        -Dsystem_pid_file=/run/dbus/pid \
+        -Dsystem_socket=/run/dbus/system_bus_socket \
+        -Dsystemd_system_unitdir=${prefix}/lib/systemd/system \
+        -Dsystemd_user_unitdir=${prefix}/lib/systemd/user \
+        -Dselinux=disabled \
+        -Dapparmor=disabled \
+        -Dlibaudit=disabled \
+        -Dkqueue=disabled \
+        -Dlaunchd=disabled \
+        -Dsystemd=enabled \
+        -Dmodular_tests=disabled
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    touch "${dest_dir}${prefix}"/share/dbus-1/session.d/.keep
+    touch "${dest_dir}"/var/lib/dbus/.keep
+
+    post_package_strip
+}

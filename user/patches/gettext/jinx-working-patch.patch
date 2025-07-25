@@ -1,0 +1,39 @@
+diff -urN --no-dereference gettext-clean/gettext-runtime/gnulib-lib/getlocalename_l-unsafe.c gettext-workdir/gettext-runtime/gnulib-lib/getlocalename_l-unsafe.c
+--- gettext-clean/gettext-runtime/gnulib-lib/getlocalename_l-unsafe.c
++++ gettext-workdir/gettext-runtime/gnulib-lib/getlocalename_l-unsafe.c
+@@ -655,6 +655,9 @@
+       };
+       const char *name = ((struct __locale_t *) locale)->mb_cur_max == 4 ? "C.UTF-8" : "C";
+       return (struct string_with_storage) { name, STORAGE_INDEFINITE };
++#elif defined __mlibc__
++      /* mlibc */
++      return (struct string_with_storage) { "C", STORAGE_INDEFINITE };
+ #else
+  #error "Please port gnulib getlocalename_l-unsafe.c to your platform! Report this to bug-gnulib."
+ #endif
+diff -urN --no-dereference gettext-clean/gettext-runtime/intl/gnulib-lib/getlocalename_l-unsafe.c gettext-workdir/gettext-runtime/intl/gnulib-lib/getlocalename_l-unsafe.c
+--- gettext-clean/gettext-runtime/intl/gnulib-lib/getlocalename_l-unsafe.c
++++ gettext-workdir/gettext-runtime/intl/gnulib-lib/getlocalename_l-unsafe.c
+@@ -484,6 +484,9 @@
+       /* musl libc */
+       const char *name = nl_langinfo_l (NL_LOCALE_NAME (category), locale);
+       return (struct string_with_storage) { name, STORAGE_OBJECT };
++#elif defined __mlibc__
++      /* mlibc */
++      return (struct string_with_storage) { "C", STORAGE_INDEFINITE };
+ #elif (defined __FreeBSD__ || defined __DragonFly__) || (defined __APPLE__ && defined __MACH__)
+       /* FreeBSD >= 9.1, Mac OS X */
+       int mask;
+diff -urN --no-dereference gettext-clean/gettext-tools/gnulib-lib/getlocalename_l-unsafe.c gettext-workdir/gettext-tools/gnulib-lib/getlocalename_l-unsafe.c
+--- gettext-clean/gettext-tools/gnulib-lib/getlocalename_l-unsafe.c
++++ gettext-workdir/gettext-tools/gnulib-lib/getlocalename_l-unsafe.c
+@@ -655,6 +655,9 @@
+       };
+       const char *name = ((struct __locale_t *) locale)->mb_cur_max == 4 ? "C.UTF-8" : "C";
+       return (struct string_with_storage) { name, STORAGE_INDEFINITE };
++#elif defined __mlibc__
++      /* mlibc */
++      return (struct string_with_storage) { "C", STORAGE_INDEFINITE };
+ #else
+  #error "Please port gnulib getlocalename_l-unsafe.c to your platform! Report this to bug-gnulib."
+ #endif

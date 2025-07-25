@@ -1,0 +1,23 @@
+#! /bin/sh
+
+name=libnl
+version=3.11.0
+revision=1
+tarball_url="https://github.com/thom311/libnl/releases/download/libnl3_11_0/libnl-${version}.tar.gz"
+tarball_blake2b="8e2792620f56e1e9e05e4fe1f9bece70938c82c2d1a9f4e0f9de1ce0b1a7a2bf60f31a42e6056407b383875c08c575b26df87b9bd6b421d5053e96983e193c54"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

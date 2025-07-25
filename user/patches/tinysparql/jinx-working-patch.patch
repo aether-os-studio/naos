@@ -1,0 +1,171 @@
+diff -urN --no-dereference tinysparql-clean/meson.build tinysparql-workdir/meson.build
+--- tinysparql-clean/meson.build
++++ tinysparql-workdir/meson.build
+@@ -150,80 +150,84 @@
+ libstemmer = cc.find_library('stemmer', required: get_option('stemmer'))
+ have_libstemmer = libstemmer.found()
+ 
+-if meson.is_cross_build() and not meson.has_exe_wrapper()
+-  sqlite3_fts5 = meson.get_cross_property('sqlite3_has_fts5')
+-  if sqlite3_fts5 == ''
+-    error('Please assign an appropriate value for sqlite3_has_fts5 in the [properties] section of your crossfile')
+-  elif sqlite3_fts5 == 'true'
+-    sqlite3_has_builtin_fts5 = true
+-  elif sqlite3_fts5 == 'false'
+-    sqlite3_has_builtin_fts5 = false
+-  else
+-    error('Invalid value of sqlite3_has_fts5 property, use \'true\' or \'false\'')
+-  endif
+-elif not sqlite_is_subproject
+-  sqlite3_builtin_fts5_test = '''
+-    #include <sqlite3.h>
++sqlite3_has_builtin_fts5 = true
+ 
+-    int main (int argc, char *argv[]) {
+-      sqlite3 *db;
+-      int rc;
+-      rc = sqlite3_open(":memory:", &db);
+-      if (rc!=SQLITE_OK) return -1;
+-      rc = sqlite3_exec(db, "create table a(text)", 0, 0, 0);
+-      if (rc!=SQLITE_OK) return -1;
+-      rc = sqlite3_exec(db, "create virtual table t using fts5(content='a',text)", 0, 0, 0);
+-      if (rc!=SQLITE_OK) return -1;
+-    }
+-  '''
++#if meson.is_cross_build() and not meson.has_exe_wrapper()
++#  sqlite3_fts5 = meson.get_cross_property('sqlite3_has_fts5')
++#  if sqlite3_fts5 == ''
++#    error('Please assign an appropriate value for sqlite3_has_fts5 in the [properties] section of your crossfile')
++#  elif sqlite3_fts5 == 'true'
++#    sqlite3_has_builtin_fts5 = true
++#  elif sqlite3_fts5 == 'false'
++#    sqlite3_has_builtin_fts5 = false
++#  else
++#    error('Invalid value of sqlite3_has_fts5 property, use \'true\' or \'false\'')
++#  endif
++#elif not sqlite_is_subproject
++#  sqlite3_builtin_fts5_test = '''
++#    #include <sqlite3.h>
++#
++#    int main (int argc, char *argv[]) {
++#      sqlite3 *db;
++#      int rc;
++#      rc = sqlite3_open(":memory:", &db);
++#      if (rc!=SQLITE_OK) return -1;
++#      rc = sqlite3_exec(db, "create table a(text)", 0, 0, 0);
++#      if (rc!=SQLITE_OK) return -1;
++#      rc = sqlite3_exec(db, "create virtual table t using fts5(content='a',text)", 0, 0, 0);
++#      if (rc!=SQLITE_OK) return -1;
++#    }
++#  '''
++#
++#  result = cc.run(sqlite3_builtin_fts5_test,
++#    name: 'sqlite3 has builtin FTS5 module',
++#    dependencies: sqlite)
++#
++#  if not result.compiled()
++#    error('Failed to compile SQLite FTS test.')
++#  endif
++#
++#  if result.returncode() != 0
++#    error('SQLite has no builtin FTS5.')
++#  endif
++#endif
++
++###################################################################
++## Get an appropriate 4-digit year modifier for strftime
++###################################################################
++#result = cc.run('''
++#  #define _TIME_BITS 64
++#  #define _GNU_SOURCE
++#  #include <stdio.h>
++#  #include <string.h>
++#  #include <time.h>
++#
++#  int main (int argc, char *argv[]) {
++#    char *modifiers[] = { "%Y", "%C%y", "%4Y", "%2C%y", NULL };
++#    time_t timestamp = -58979923200; /* 0101-01-01T01:01:01Z */
++#    char buf[100];
++#    struct tm tm;
++#    int i;
++#    gmtime_r (&timestamp, &tm);
++#    for (i = 0; modifiers[i]; i++) {
++#      strftime (buf, sizeof buf, modifiers[i], &tm);
++#      if (strcmp (buf, "0101") == 0) {
++#        printf ("%s", modifiers[i]);
++#        return 0;
++#      }
++#    }
++#    return -1;
++#  }
++#  ''',
++#  name: 'strftime 4-digit year modifier')
++#
++#if not result.compiled() or result.returncode() != 0
++#  error('Libc implementation has broken 4-digit years implementation.')
++#else
++#  year_modifier = result.stdout()
++#endif
+ 
+-  result = cc.run(sqlite3_builtin_fts5_test,
+-    name: 'sqlite3 has builtin FTS5 module',
+-    dependencies: sqlite)
+-
+-  if not result.compiled()
+-    error('Failed to compile SQLite FTS test.')
+-  endif
+-
+-  if result.returncode() != 0
+-    error('SQLite has no builtin FTS5.')
+-  endif
+-endif
+-
+-##################################################################
+-# Get an appropriate 4-digit year modifier for strftime
+-##################################################################
+-result = cc.run('''
+-  #define _TIME_BITS 64
+-  #define _GNU_SOURCE
+-  #include <stdio.h>
+-  #include <string.h>
+-  #include <time.h>
+-
+-  int main (int argc, char *argv[]) {
+-    char *modifiers[] = { "%Y", "%C%y", "%4Y", "%2C%y", NULL };
+-    time_t timestamp = -58979923200; /* 0101-01-01T01:01:01Z */
+-    char buf[100];
+-    struct tm tm;
+-    int i;
+-    gmtime_r (&timestamp, &tm);
+-    for (i = 0; modifiers[i]; i++) {
+-      strftime (buf, sizeof buf, modifiers[i], &tm);
+-      if (strcmp (buf, "0101") == 0) {
+-        printf ("%s", modifiers[i]);
+-        return 0;
+-      }
+-    }
+-    return -1;
+-  }
+-  ''',
+-  name: 'strftime 4-digit year modifier')
+-
+-if not result.compiled() or result.returncode() != 0
+-  error('Libc implementation has broken 4-digit years implementation.')
+-else
+-  year_modifier = result.stdout()
+-endif
++year_modifier = '%Y'
+ 
+ ##################################################################
+ # Check for libtracker-data and libtracker-fts: Unicode support
+diff -urN --no-dereference tinysparql-clean/src/libtinysparql/meson.build tinysparql-workdir/src/libtinysparql/meson.build
+--- tinysparql-clean/src/libtinysparql/meson.build
++++ tinysparql-workdir/src/libtinysparql/meson.build
+@@ -246,6 +246,6 @@
+ 
+ tracker_sparql_uninstalled_dir = meson.current_build_dir()
+ 
+-meson.add_install_script('symlink-libtracker-sparql.sh', get_option('libdir'), meson.current_build_dir())
++#meson.add_install_script('symlink-libtracker-sparql.sh', get_option('libdir'), meson.current_build_dir())
+ 
+ meson.override_dependency('tinysparql-3.0', tracker_sparql_dep)

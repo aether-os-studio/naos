@@ -1,0 +1,25 @@
+#! /bin/sh
+
+name=iso-codes
+version=4.18.0
+revision=1
+tarball_url="https://ftp.debian.org/debian/pool/main/i/iso-codes/iso-codes_${version}.orig.tar.xz"
+tarball_blake2b="14257918034500fb35ba559f53c15bdb04bf632e5710a40fe19a2b4d3621b707c8a2124efc943f90b566bd8bd00b50f8d58a1adc8c7384bdca68cd0e7bd3af27"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+}

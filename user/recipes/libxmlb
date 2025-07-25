@@ -1,0 +1,25 @@
+#! /bin/sh
+
+name=libxmlb
+version=0.3.22
+revision=1
+tarball_url="https://github.com/hughsie/libxmlb/releases/download/${version}/libxmlb-${version}.tar.xz"
+tarball_blake2b="2595bb5c7a0e158db9a7ecd5a0a48a0eb971fb895d980714e366630cd0d802b877a2586852eb62f4605ecc3dcfe07cf08ba1969e0ebb1abcd1f38d542454b990"
+imagedeps="build-essential patchelf"
+hostdeps="gcc pkg-config gobject-introspection glib2"
+deps="core-libs glib2"
+
+configure() {
+    meson_configure \
+        -Dgtkdoc=false
+}
+
+build() {
+    gi_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

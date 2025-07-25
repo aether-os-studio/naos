@@ -1,0 +1,19 @@
+#! /bin/sh
+
+name=linux-headers
+skip_pkg_check=yes
+from_source=linux
+revision=1
+imagedeps="build-essential rsync"
+
+build() {
+    cp -rp "${source_dir}"/. ./
+
+    make ARCH=$ARCHITECTURE headers_install
+    find usr/include -type f ! -name *.h -delete
+}
+
+package() {
+    mkdir -p "${dest_dir}${prefix}"
+    cp -r usr/include "${dest_dir}${prefix}"/
+}

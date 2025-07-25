@@ -1,0 +1,23 @@
+#! /bin/sh
+
+name=vulkan-headers
+version=1.4.309
+revision=1
+tarball_url="https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v${version}/Vulkan-Headers-${version}.tar.gz"
+tarball_blake2b="c0b4f83bc3ee65f448b9d46e5924b09d77bd475b405d2dac8e0b0089bf135d3b28a84827d78c49c63bebd8fa1c7ee790acb34957049b033f2fdffa9420845dda"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    cmake_configure
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

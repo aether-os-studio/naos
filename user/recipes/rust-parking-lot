@@ -1,0 +1,10 @@
+#! /bin/sh
+
+name=rust-parking-lot
+skip_pkg_check=yes
+version=0.12.3
+revision=1
+tarball_url="https://github.com/Amanieu/parking_lot/archive/refs/tags/${version}.tar.gz"
+tarball_blake2b="7df0c42b6657ff6ac9e55f855e35380ab99dde8acabf4cd19b5b2d1de60aa8e3f8e2b6b48023b9d55133f2f8e9644a609eac0ca842bcde92eb106ed8dd602ca9"
+
+package_rust_crate

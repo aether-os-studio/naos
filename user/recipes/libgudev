@@ -1,0 +1,24 @@
+#! /bin/sh
+
+name=libgudev
+version=238
+revision=1
+tarball_url="https://download.gnome.org/sources/libgudev/${version}/libgudev-${version}.tar.xz"
+tarball_blake2b="386491e78c82081e89dad897d16ea6733430a67db3f75f2d9fdee5474b074ad6fede9f08e429f4eb6feaa9bbbb982d9d039db738aac5b5ce0ffac2d3a19430d4"
+imagedeps="build-essential patchelf pkg-config"
+hostdeps="gcc pkg-config gobject-introspection glib2 vala"
+deps="core-libs glib2 systemd gobject-introspection"
+
+configure() {
+    vala_env meson_configure
+}
+
+build() {
+    gi_env vala_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

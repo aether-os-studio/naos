@@ -1,0 +1,10 @@
+#! /bin/sh
+
+name=rust-target-lexicon
+skip_pkg_check=yes
+version=0.12.16
+revision=1
+tarball_url="https://github.com/bytecodealliance/target-lexicon/archive/refs/tags/v${version}.tar.gz"
+tarball_blake2b="7287e81bc1d18840c0f44e852cff6e44861852761d6fd50f4feb885b88021ad6f46b4097995aa06508115dacc911521cea1abf986852a00bc732cfc9afe66038"
+
+package_rust_crate

@@ -1,0 +1,25 @@
+#! /bin/sh
+
+name=libgusb
+version=0.4.9
+revision=1
+tarball_url="https://github.com/hughsie/libgusb/releases/download/${version}/libgusb-${version}.tar.xz"
+tarball_blake2b="b40d39b1d4db63ccc01c1c15807c15c867c84f76d0f36b71ea877e6aef11bb3f1ec6a68affaed385bea1485b945b8c513e10d26e31fa0b362e1607f7d532f9bc"
+imagedeps="build-essential patchelf"
+hostdeps="gcc pkg-config gobject-introspection glib2 vala"
+deps="core-libs json-glib libusb"
+
+configure() {
+    vala_env meson_configure \
+        -Ddocs=false
+}
+
+build() {
+    gi_env vala_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

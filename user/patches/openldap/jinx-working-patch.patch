@@ -1,0 +1,11 @@
+diff -urN --no-dereference openldap-clean/clients/tools/ldapurl.c openldap-workdir/clients/tools/ldapurl.c
+--- openldap-clean/clients/tools/ldapurl.c
++++ openldap-workdir/clients/tools/ldapurl.c
+@@ -33,6 +33,7 @@
+ 
+ #include <ac/stdlib.h>
+ #include <stdio.h>
++#include <strings.h>
+ #include <ac/unistd.h>
+ #include <ac/socket.h>
+ 

@@ -1,0 +1,13 @@
+[build]
+rustc = "/base_dir/host-pkgs/rust/usr/local/bin/rustc"
+target = "x86_64-unknown-linux-mlibc"
+
+[target.x86_64-unknown-linux-mlibc]
+linker = "x86_64-linux-mlibc-gcc"
+
+[patch.crates-io]
+cfg-expr-0_15_8 = { path = "/base_dir/sources/rust-cfg-expr-0.15.8", package = "cfg-expr" }
+cfg-expr-0_17_2 = { path = "/base_dir/sources/rust-cfg-expr-0.17.2", package = "cfg-expr" }
+libc = { path = "/base_dir/sources/rust-libc" }
+parking_lot = { path = "/base_dir/sources/rust-parking-lot" }
+target-lexicon = { path = "/base_dir/sources/rust-target-lexicon" }

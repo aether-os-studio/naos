@@ -1,0 +1,27 @@
+#! /bin/sh
+
+name=curl
+version=8.13.0
+revision=1
+tarball_url="https://curl.se/download/curl-${version}.tar.xz"
+tarball_blake2b="6869634ad50f015d5c7526699034d5a3f27d9588bc32eacc8080dbd6c690f63b1f25cee40d3fdf8fd9dd8535c305ea9c5edf1d5a02bc6d9ce60fd8c88230aca0"
+hostdeps="gcc pkg-config"
+deps="core-libs openssl zlib zstd ca-certificates libpsl brotli libidn2 libssh nghttp2 openldap"
+
+configure() {
+    cmake_configure \
+        -DENABLE_THREADED_RESOLVER=ON \
+        -DCURL_USE_OPENSSL=ON \
+        -DCURL_CA_PATH=/etc/ssl/certs \
+        -DCURL_USE_LIBSSH2=ON
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

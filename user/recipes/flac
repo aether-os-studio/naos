@@ -1,0 +1,23 @@
+#! /bin/sh
+
+name=flac
+version=1.5.0
+revision=1
+tarball_url="https://downloads.xiph.org/releases/flac/flac-${version}.tar.xz"
+tarball_blake2b="6b1c9a36db5daf24e2c21fa8429aa8776df5fd2fb430de8ee6728628a1ffc44f49c2bdedba514a24dea5ea87553e32dd08af4830870d64d77b3f776e4fe69644"
+hostdeps="gcc pkg-config"
+deps="core-libs libogg"
+
+configure() {
+    cmake_configure
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

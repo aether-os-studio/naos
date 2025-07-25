@@ -1,0 +1,89 @@
+diff -urN --no-dereference polkit-clean/meson.build polkit-workdir/meson.build
+--- polkit-clean/meson.build
++++ polkit-workdir/meson.build
+@@ -211,14 +211,20 @@
+ 
+ # systemd unit / sysuser / tmpfiles.d file installation directories
+ systemdsystemunitdir = get_option('systemdsystemunitdir')
++sysusers_dir = get_option('sysusers_dir')
++tmpfiles_dir = get_option('tmpfiles_dir')
+ systemd_dep = dependency('systemd', required : false)
+ if systemd_dep.found()
+   if systemdsystemunitdir == ''
+     # FIXME: systemd.pc file does not use variables with relative paths, so `define_variable` cannot be used
+     systemdsystemunitdir = systemd_dep.get_variable(pkgconfig : 'systemdsystemunitdir')
+   endif
+-  sysusers_dir = systemd_dep.get_variable(pkgconfig : 'sysusers_dir')
+-  tmpfiles_dir = systemd_dep.get_variable(pkgconfig : 'tmpfiles_dir')
++  if sysusers_dir == ''
++    sysusers_dir = systemd_dep.get_variable(pkgconfig : 'sysusers_dir')
++  endif
++  if tmpfiles_dir == ''
++    tmpfiles_dir = systemd_dep.get_variable(pkgconfig : 'tmpfiles_dir')
++  endif
+ else
+   if systemdsystemunitdir == ''
+     systemdsystemunitdir = '/usr/lib/systemd/system'
+diff -urN --no-dereference polkit-clean/meson_options.txt polkit-workdir/meson_options.txt
+--- polkit-clean/meson_options.txt
++++ polkit-workdir/meson_options.txt
+@@ -1,5 +1,7 @@
+ option('session_tracking', type: 'combo', choices: ['logind', 'elogind', 'ConsoleKit'], value: 'logind', description: 'session tracking (logind/elogind/ConsoleKit)')
+ option('systemdsystemunitdir', type: 'string', value: '', description: 'custom directory for systemd system units')
++option('sysusers_dir', type: 'string', value: '', description: 'custom directory for systemd sysuser config')
++option('tmpfiles_dir', type: 'string', value: '', description: 'custom directory for systemd tmpfiles config')
+ 
+ option('libs-only', type: 'boolean', value: false, description: 'Only build libraries (skips building polkitd)')
+ option('polkitd_user', type: 'string', value: 'polkitd', description: 'User for running polkitd (polkitd)')
+diff -urN --no-dereference polkit-clean/meson_post_install.py polkit-workdir/meson_post_install.py
+--- polkit-clean/meson_post_install.py
++++ polkit-workdir/meson_post_install.py
+@@ -28,16 +28,16 @@
+ 
+ dst = os.path.join(bindir, 'pkexec')
+ 
+-if os.geteuid() == 0:
+-    os.chown(dst, 0, -1)
+-    os.chmod(dst, 0o4755)
+-else:
+-    print(
+-        'Owner and mode of {} need to be setuid root (04755) after '
+-        'installation'.format(
+-            dst,
+-        )
++# if os.geteuid() == 0:
++#     os.chown(dst, 0, -1)
++#     os.chmod(dst, 0o4755)
++# else:
++print(
++    'Owner and mode of {} need to be setuid root (04755) after '
++    'installation'.format(
++        dst,
+     )
++)
+ 
+ dst = os.path.join(pkgsysconfdir, 'rules.d')
+ 
+@@ -57,13 +57,13 @@
+ # and/or other users.
+ dst = os.path.join(pkglibdir, 'polkit-agent-helper-1')
+ 
+-if os.geteuid() == 0:
+-    os.chown(dst, 0, -1)
+-    os.chmod(dst, 0o4755)
+-else:
+-    print(
+-        'Owner and mode of {} need to be setuid root (04755) after '
+-        'installation'.format(
+-            dst,
+-        )
++# if os.geteuid() == 0:
++#     os.chown(dst, 0, -1)
++#     os.chmod(dst, 0o4755)
++# else:
++print(
++    'Owner and mode of {} need to be setuid root (04755) after '
++    'installation'.format(
++        dst,
+     )
++)

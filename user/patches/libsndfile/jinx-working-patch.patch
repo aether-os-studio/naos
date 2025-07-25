@@ -1,0 +1,12 @@
+diff -urN --no-dereference libsndfile-clean/programs/sndfile-play.c libsndfile-workdir/programs/sndfile-play.c
+--- libsndfile-clean/programs/sndfile-play.c
++++ libsndfile-workdir/programs/sndfile-play.c
+@@ -59,7 +59,7 @@
+ #elif defined (__linux__) || defined (__FreeBSD_kernel__) || defined (__FreeBSD__) || defined (__riscos__)
+ 	#include 	<fcntl.h>
+ 	#include 	<sys/ioctl.h>
+-	#include 	<sys/soundcard.h>
++	#include 	<linux/soundcard.h>
+ 
+ #elif HAVE_SNDIO_H
+ 	#include <sndio.h>

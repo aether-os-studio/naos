@@ -1,0 +1,44 @@
+#! /bin/sh
+
+name=libcap
+version=2.76
+revision=1
+tarball_url="https://mirrors.edge.kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-${version}.tar.xz"
+tarball_blake2b="301c74ceae00e915f70ff8f0a32c86a5ddf405a00522f4299390e4e0b6bc4270fc7e3c4ba5c53db2ddc5f7de6a97b43e310097a4ecc1d678f721f9dfa53cef53"
+imagedeps="build-essential"
+hostdeps="gcc pkg-config"
+deps="core-libs pam"
+
+configure() {
+    cp -rp "${source_dir}"/. ./
+}
+
+build() {
+    make -j${parallelism} \
+        prefix="${prefix}" \
+        lib=lib \
+        sbindir=bin \
+        PAM_CAP=yes \
+        DYNAMIC=yes \
+        GOLANG=no \
+        CROSS_COMPILE=${OS_TRIPLET}- \
+        BUILD_CC=gcc \
+        BUILD_ld=ld
+}
+
+package() {
+    make install \
+        prefix="${prefix}" \
+        lib=lib \
+        sbindir=bin \
+        DESTDIR="${dest_dir}" \
+        RAISE_SETFCAP=no \
+        CROSS_COMPILE=${OS_TRIPLET}- \
+        BUILD_CC=gcc \
+        BUILD_ld=ld
+
+    # Remove static libraries
+    rm -rf "${dest_dir}${prefix}"/lib/*.a
+
+    post_package_strip
+}

@@ -1,0 +1,26 @@
+#! /bin/sh
+
+name=geoclue
+version=2.7.2
+revision=1
+tarball_url="https://gitlab.freedesktop.org/geoclue/geoclue/-/archive/${version}/geoclue-${version}.tar.bz2"
+tarball_blake2b="7fdb7a2d844079df005c2a665131a5541e667367de9a95b6bb9a930f0063e194f98cb69bd4a668f81c8e6ce9cf86e25229fd0d6ef9c25406995052024466076c"
+imagedeps="build-essential patchelf"
+hostdeps="gcc pkg-config glib2 gobject-introspection vala"
+deps="core-libs json-glib libsoup3 modemmanager avahi libnotify"
+
+configure() {
+    vala_env meson_configure \
+        -Dgtk-doc=false \
+        -Dsystemd-system-unit-dir=${prefix}/lib/systemd/
+}
+
+build() {
+    gi_env vala_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

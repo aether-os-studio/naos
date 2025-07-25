@@ -1,0 +1,23 @@
+#! /bin/sh
+
+name=opus
+version=1.5.2
+revision=1
+tarball_url="https://downloads.xiph.org/releases/opus/opus-${version}.tar.gz"
+tarball_blake2b="1c54de8171df1da69b64a2eca4ce97a0280cfceafb387f40ef1186add366030a397fabc19b18cf1e50d6dbaccb027697d1e2b3da4fa6ab73d70c2b4e723e87f7"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    meson_configure
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

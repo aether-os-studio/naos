@@ -1,0 +1,26 @@
+#! /bin/sh
+
+name=at-spi2-core
+version=2.56.2
+revision=1
+tarball_url="https://download.gnome.org/sources/at-spi2-core/2.56/at-spi2-core-${version}.tar.xz"
+tarball_blake2b="12dff02209243cde88108eced8b2757bdce3dff20eff95a362d00de610374aabeedbc8878a60c11ac28f0e71918f74caf0083c07d652bd06b656c27d4238579f"
+imagedeps="build-essential patchelf"
+hostdeps="gcc pkg-config gobject-introspection glib2 vala"
+deps="core-libs dbus glib2 libxml2 libxtst gobject-introspection"
+
+configure() {
+    meson_configure \
+        -Dintrospection=enabled \
+        -Dgtk2_atk_adaptor=false
+}
+
+build() {
+    gi_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

@@ -1,0 +1,24 @@
+#! /bin/sh
+
+name=zxing-cpp
+version=2.3.0
+revision=1
+tarball_url="https://github.com/zxing-cpp/zxing-cpp/archive/v${version}/zxing-cpp-${version}.tar.gz"
+tarball_blake2b="a0c94e1c276759e032695918f1d177e32b3ac4d1c60085872210ef9c97f2cc0c95a54972d18ec971bc6733ea9531be15d5155011ff8893e39706acd8d5c9a7bd"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    cmake_configure \
+        -DZXING_EXAMPLES=OFF
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

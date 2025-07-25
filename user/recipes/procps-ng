@@ -1,0 +1,29 @@
+#! /bin/sh
+
+name=procps-ng
+version=4.0.5
+revision=1
+tarball_url="https://sourceforge.net/projects/procps-ng/files/Production/procps-ng-${version}.tar.xz"
+tarball_blake2b="4b273ac7737202147fbf392995da1c5ff385df2b53ad84180b6412dc45c2a671e81d7659c0a5824c0d8c19fa37cbf2e58b0545841c74399b3717a9f27fd26c23"
+hostdeps="gcc pkg-config"
+deps="core-libs ncurses"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure \
+        --disable-kill \
+        --enable-watch8bit
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR=${dest_dir} make install
+
+    post_package_strip
+}

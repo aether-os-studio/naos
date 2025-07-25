@@ -1,0 +1,25 @@
+#! /bin/sh
+
+name=highway
+repology_id=highway-simd-library
+version=1.2.0
+revision=1
+tarball_url="https://github.com/google/highway/archive/${version}/highway-${version}.tar.gz"
+tarball_blake2b="b92f699c0f2f15fd9d223cf9546125b68a5c12ba9c84f8a3a990129f40bc56a266858e4f99eebe34e47c9904bd9164a138de1af8d405911d4b03bea67532489a"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    cmake_configure \
+        -DBUILD_TESTING=OFF
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

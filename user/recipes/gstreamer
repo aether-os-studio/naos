@@ -1,0 +1,27 @@
+#! /bin/sh
+
+name=gstreamer
+version=1.26.0
+revision=1
+tarball_url="https://gstreamer.freedesktop.org/src/gstreamer/gstreamer-${version}.tar.xz"
+tarball_blake2b="48ac9eb40c3ae9644028d2f1135658cb6eb661870556edfb956023bc126a3d8077e5e030c0f3718a0f572a0ac8bcc2339cad8e74563cd0c10de7f9956bcba939"
+imagedeps="build-essential patchelf"
+hostdeps="gcc pkg-config gobject-introspection glib2"
+deps="core-libs glib2 libcap gtk3 gsl"
+
+configure() {
+    meson_configure \
+       -Dgst_debug=false \
+       -Dpackage-name="GStreamer ${version}" \
+       -Dintrospection=enabled
+}
+
+build() {
+    gi_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

@@ -1,0 +1,12 @@
+diff -urN --no-dereference sbc-clean/src/sbcdec.c sbc-workdir/src/sbcdec.c
+--- sbc-clean/src/sbcdec.c
++++ sbc-workdir/src/sbcdec.c
+@@ -21,7 +21,7 @@
+ #include <getopt.h>
+ #include <sys/stat.h>
+ #include <sys/ioctl.h>
+-#include <sys/soundcard.h>
++#include <linux/soundcard.h>
+ 
+ #include "sbc/sbc.h"
+ #include "formats.h"

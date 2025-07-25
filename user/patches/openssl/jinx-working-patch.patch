@@ -1,0 +1,44 @@
+diff -urN --no-dereference openssl-clean/crypto/conf/conf_def.c openssl-workdir/crypto/conf/conf_def.c
+--- openssl-clean/crypto/conf/conf_def.c
++++ openssl-workdir/crypto/conf/conf_def.c
+@@ -11,6 +11,7 @@
+ 
+ #include <stdio.h>
+ #include <string.h>
++#include <strings.h>
+ #include "internal/cryptlib.h"
+ #include "internal/o_dir.h"
+ #include <openssl/lhash.h>
+diff -urN --no-dereference openssl-clean/test/bntest.c openssl-workdir/test/bntest.c
+--- openssl-clean/test/bntest.c
++++ openssl-workdir/test/bntest.c
+@@ -10,6 +10,7 @@
+ #include <errno.h>
+ #include <stdio.h>
+ #include <string.h>
++#include <strings.h>
+ #include <ctype.h>
+ 
+ #include <openssl/bn.h>
+diff -urN --no-dereference openssl-clean/test/ssl_test_ctx.c openssl-workdir/test/ssl_test_ctx.c
+--- openssl-clean/test/ssl_test_ctx.c
++++ openssl-workdir/test/ssl_test_ctx.c
+@@ -8,6 +8,7 @@
+  */
+ 
+ #include <string.h>
++#include <strings.h>
+ 
+ #include <openssl/e_os2.h>
+ #include <openssl/crypto.h>
+diff -urN --no-dereference openssl-clean/test/v3nametest.c openssl-workdir/test/v3nametest.c
+--- openssl-clean/test/v3nametest.c
++++ openssl-workdir/test/v3nametest.c
+@@ -8,6 +8,7 @@
+  */
+ 
+ #include <string.h>
++#include <strings.h>
+ 
+ #include <openssl/e_os2.h>
+ #include <openssl/x509.h>

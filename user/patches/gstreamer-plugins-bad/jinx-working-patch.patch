@@ -1,0 +1,11 @@
+diff -urN --no-dereference gstreamer-plugins-bad-clean/sys/kms/gstkmssink.c gstreamer-plugins-bad-workdir/sys/kms/gstkmssink.c
+--- gstreamer-plugins-bad-clean/sys/kms/gstkmssink.c
++++ gstreamer-plugins-bad-workdir/sys/kms/gstkmssink.c
+@@ -57,6 +57,7 @@
+ #include <xf86drmMode.h>
+ #include <drm_fourcc.h>
+ #include <string.h>
++#include <strings.h>
+ #include <math.h>
+ 
+ #include "gstkmssink.h"

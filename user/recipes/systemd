@@ -1,0 +1,59 @@
+#! /bin/sh
+
+name=systemd
+version=256.8
+revision=1
+tarball_url="https://github.com/systemd/systemd/archive/v${version}/systemd-${version}.tar.gz"
+tarball_blake2b="2c108eb694606d9996a25ab33feb6dbd01ec81d2e494dac37f01dee93b71136121d26b33d069cd85ff7fbb30e81db1614ed89b4cdda16186e703f1b5a7bbba51"
+imagedeps="build-essential python3-jinja2 gperf"
+hostdeps="gcc pkg-config"
+# deps="core-libs gnutls kmod libcap libgcrypt libidn2 libpwquality libseccomp libxkbcommon p11-kit pam pcre2 qrencode"
+deps="core-libs kmod libcap pam util-linux acl"
+
+configure() {
+    meson_configure \
+        -Ddefault-dnssec=no \
+        -Dfirstboot=true \
+        -Dtests=false \
+        -Dinstall-tests=false \
+        -Dldconfig=false \
+        -Dman=false \
+        -Dsysusers=false \
+        -Drpmmacrosdir=no \
+        -Dhomed=disabled \
+        -Duserdb=false \
+        -Dmode=debug \
+        -Dpam=true \
+        -Dpamconfdir=/etc/pam.d \
+        -Ddev-kvm-mode=0660 \
+        -Dnobody-group=nogroup \
+        -Dsysupdate=disabled \
+        -Dukify=disabled \
+        -Dcoredump=false \
+        -Dtimesyncd=false \
+        -Dnss-myhostname=false \
+        -Dnss-mymachines=false \
+        -Dnss-resolve=false \
+        -Dnss-systemd=false \
+        -Dbpf-framework=false \
+        -Dutmp=false
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    mkdir -pv ${dest_dir}/etc/pam.d/
+    cp -v "${base_dir}"/build-support/systemd/* "${dest_dir}"/etc/pam.d/
+
+    mkdir -pv ${dest_dir}/etc/systemd/system/getty.target.wants
+    ln -sv "${prefix}"/lib/systemd/system/getty@.service "${dest_dir}"/etc/systemd/system/getty.target.wants/getty@tty1.service
+
+    mv -v ${dest_dir}${prefix}/sbin/* ${dest_dir}${prefix}/bin
+    rm -rvf ${dest_dir}${prefix}/sbin
+
+    post_package_strip
+}

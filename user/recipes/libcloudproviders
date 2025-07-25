@@ -1,0 +1,24 @@
+#! /bin/sh
+
+name=libcloudproviders
+version=0.3.6
+revision=1
+tarball_url="https://download.gnome.org/sources/libcloudproviders/0.3/libcloudproviders-${version}.tar.xz"
+tarball_blake2b="af5864fa9f4de8842dce80efb53b7b6ff73a679589a49b4edf55c77e0e49114dd5da8dbdc6950574a758483b09168e90e27ded05b0ef501bf9b454341196f7ff"
+imagedeps="build-essential patchelf python3-gi"
+hostdeps="gcc pkg-config glib2 gobject-introspection vala"
+deps="core-libs glib2 gobject-introspection vala"
+
+configure() {
+    vala_env meson_configure
+}
+
+build() {
+    gi_env vala_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

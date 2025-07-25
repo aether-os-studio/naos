@@ -1,0 +1,18 @@
+#! /bin/sh
+
+name=rust-libc
+skip_pkg_check=yes
+version=0.2.172
+revision=1
+tarball_url="https://github.com/rust-lang/libc/archive/refs/tags/${version}.tar.gz"
+tarball_blake2b="e1d171c2cd3fdf2dcc69382400bb9facc7df8572abad4aa5ae6a03cc1be78e240580fa53f46bb1d19b59d4c4635adc0ab7aba17510a7472eb36b6cf0937f6914"
+source_imagedeps="libclang-dev python3 python3-clang python3-colorama python3-yaml"
+source_deps="mlibc-headers"
+
+prepare() {
+    # Not using ${prefix} here instead of /usr because prefix is not set during prepare
+    python3 ${build_dir}/sources/mlibc/scripts/rust-libc.py ${sysroot_dir}/usr/include \
+        > ${source_dir}/src/unix/linux_like/linux/mlibc.rs
+}
+
+package_rust_crate

@@ -1,0 +1,43 @@
+diff -urN --no-dereference kbd-clean/src/kbdinfo.c kbd-workdir/src/kbdinfo.c
+--- kbd-clean/src/kbdinfo.c
++++ kbd-workdir/src/kbdinfo.c
+@@ -3,6 +3,7 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <strings.h>
+ #include <errno.h>
+ #include <unistd.h>
+ #include <sys/ioctl.h>
+diff -urN --no-dereference kbd-clean/src/libkeymap/ksyms.c kbd-workdir/src/libkeymap/ksyms.c
+--- kbd-clean/src/libkeymap/ksyms.c
++++ kbd-workdir/src/libkeymap/ksyms.c
+@@ -3,6 +3,7 @@
+ #include <linux/keyboard.h>
+ #include <stdio.h>
+ #include <string.h>
++#include <strings.h>
+ #include <stdlib.h>
+ 
+ #include "keymap.h"
+diff -urN --no-dereference kbd-clean/src/libkeymap/parser.c kbd-workdir/src/libkeymap/parser.c
+--- kbd-clean/src/libkeymap/parser.c
++++ kbd-workdir/src/libkeymap/parser.c
+@@ -69,6 +69,8 @@
+ /* First part of user prologue.  */
+ #line 12 "parser.y"
+ 
++#include <strings.h>
++
+ #include "config.h"
+ #include "libcommon.h"
+ 
+diff -urN --no-dereference kbd-clean/src/showkey.c kbd-workdir/src/showkey.c
+--- kbd-clean/src/showkey.c
++++ kbd-workdir/src/showkey.c
+@@ -1,3 +1,5 @@
++#define _GNU_SOURCE
++
+ #include "config.h"
+ 
+ #include <stdio.h>

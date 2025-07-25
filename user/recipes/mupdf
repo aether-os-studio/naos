@@ -1,0 +1,49 @@
+#! /bin/sh
+
+name=mupdf
+version=1.25.6
+revision=1
+tarball_url="https://www.mupdf.com/downloads/archive/mupdf-${version}-source.tar.gz"
+tarball_blake2b="f9fb771e96938c2862e10aa7482f52218cf5d159e77300016b64f2f10424d72e6ea13566abf8180eb2a31644d711755f93edc69189230d50a543408105881b55"
+hostdeps="gcc pkg-config"
+deps="core-libs zlib harfbuzz libjpeg-turbo openjpeg curl libglvnd libx11 libxext libxrandr"
+
+configure() {
+    cat > user.make << EOF
+USE_SYSTEM_FREETYPE := yes
+USE_SYSTEM_HARFBUZZ := yes
+USE_SYSTEM_JBIG2DEC := no
+USE_SYSTEM_JPEGXR := no # not used without HAVE_JPEGXR
+USE_SYSTEM_LCMS2 := no # lcms2mt is strongly preferred
+USE_SYSTEM_LIBJPEG := yes
+USE_SYSTEM_MUJS := no # build needs source anyway
+USE_SYSTEM_OPENJPEG := yes
+USE_SYSTEM_ZLIB := yes
+USE_SYSTEM_GLUT := yes
+USE_SYSTEM_CURL := yes
+USE_SYSTEM_GUMBO := no
+EOF
+
+    cp -rp "${source_dir}"/. ./
+}
+
+build() {
+    make PKG_CONFIG=${OS_TRIPLET}-pkg-config CC=${OS_TRIPLET}-gcc LD=${OS_TRIPLET}-ld AR=${OS_TRIPLET}-ar CXX=${OS_TRIPLET}-g++ build=debug shared=yes verbose=yes -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make PKG_CONFIG=${OS_TRIPLET}-pkg-config prefix=/usr shared=yes install
+
+    ln -sfv libmupdf.so.25.6 ${dest_dir}${prefix}/lib/libmupdf.so
+    ln -sfv libmupdf.so.25.6 ${dest_dir}${prefix}/lib/libmupdf.so.6
+    chmod 755 ${dest_dir}${prefix}/lib/libmupdf.so.25.6
+
+    ln -sfv mupdf-x11 ${dest_dir}${prefix}/bin/mupdf
+
+    mkdir -pv ${dest_dir}${prefix}/lib/pkgconfig
+    cp -v ${source_dir}/platform/debian/mupdf.pc ${dest_dir}${prefix}/lib/pkgconfig
+    # TODO: Install .desktop file
+    # cp -v ${source_dir}/platform/debian/mupdf.desktop ${dest_dir}${prefix}
+
+    post_package_strip
+}

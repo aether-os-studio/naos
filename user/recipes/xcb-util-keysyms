@@ -1,0 +1,27 @@
+#! /bin/sh
+
+name=xcb-util-keysyms
+version=0.4.1
+revision=1
+tarball_url="https://xcb.freedesktop.org/dist/xcb-util-keysyms-${version}.tar.xz"
+tarball_blake2b="15d08761c673647fda2d8faf7fd47b817f7068cde157384d7ea879b0a50983eb97ea6f4b593c26d631419ee59a128f7fb5b3ca029dedf14f6629096fcb49ed7b"
+hostdeps="gcc pkg-config"
+deps="core-libs libxcb xcb-util"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

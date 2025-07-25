@@ -1,0 +1,26 @@
+#! /bin/sh
+
+name=argp-standalone
+version=0.0git
+revision=1
+git_url="https://github.com/argp-standalone/argp-standalone.git"
+commit=8ded2bc942740b5d291e450af661c5090dc3ca38
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    meson_configure
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    mkdir -pv ${dest_dir}${prefix}/include
+    cp -v ${source_dir}/argp.h ${dest_dir}${prefix}/include/
+
+    post_package_strip
+}

@@ -1,0 +1,88 @@
+diff -urN --no-dereference rust-parking-lot-clean/core/src/thread_parker/linux.rs rust-parking-lot-workdir/core/src/thread_parker/linux.rs
+--- rust-parking-lot-clean/core/src/thread_parker/linux.rs
++++ rust-parking-lot-workdir/core/src/thread_parker/linux.rs
+@@ -13,6 +13,58 @@
+ use std::thread;
+ use std::time::Instant;
+ 
++#[cfg(target_env = "mlibc")]
++unsafe fn sys_futex_wait(
++    futex: *const AtomicI32,
++    op: i32,
++    expected: u32,
++    timeout: *const libc::timespec,
++    uaddr2: *const u32,
++    val3: u32,
++) -> core::ffi::c_long {
++    let r = libc::__do_syscall6(
++        libc::SYS_futex,
++        futex as _,
++        op as _,
++        expected as _,
++        timeout as _,
++        uaddr2 as _,
++        val3 as _,
++    );
++    libc::__do_syscall_ret(r)
++}
++
++#[cfg(not(target_env = "mlibc"))]
++unsafe fn sys_futex_wait(
++    futex: *const AtomicI32,
++    op: i32,
++    expected: u32,
++    timeout: *const libc::timespec,
++    uaddr2: *const u32,
++    val3: u32,
++) -> core::ffi::c_long {
++    libc::syscall(
++        libc::SYS_futex,
++        futex,
++        op,
++        expected,
++        timeout,
++        uaddr2, // This argument is unused for FUTEX_WAIT_BITSET.
++        val3,   // A full bitmask, to make it behave like a regular FUTEX_WAIT.
++    )
++}
++
++#[cfg(target_env = "mlibc")]
++unsafe fn sys_futex_wake(futex: *const AtomicI32, op: i32, count: i32) -> libc::c_long {
++    let r = libc::__do_syscall3(libc::SYS_futex, futex as _, op as _, count as _);
++    libc::__do_syscall_ret(r)
++}
++
++#[cfg(not(target_env = "mlibc"))]
++unsafe fn sys_futex_wake(futex: *const AtomicI32, op: i32, count: i32) -> libc::c_long {
++    libc::syscall(libc::SYS_futex, futex, op, count)
++}
++
+ // x32 Linux uses a non-standard type for tv_nsec in timespec.
+ // See https://sourceware.org/bugzilla/show_bug.cgi?id=16437
+ #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+@@ -109,12 +161,13 @@
+             .map(|ts_ref| ts_ref as *const _)
+             .unwrap_or(ptr::null());
+         let r = unsafe {
+-            libc::syscall(
+-                libc::SYS_futex,
++            sys_futex_wait(
+                 &self.futex,
+                 libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+                 1,
+                 ts_ptr,
++                ptr::null(),
++                0,
+             )
+         };
+         debug_assert!(r == 0 || r == -1);
+@@ -137,8 +190,7 @@
+     unsafe fn unpark(self) {
+         // The thread data may have been freed at this point, but it doesn't
+         // matter since the syscall will just return EFAULT in that case.
+-        let r = libc::syscall(
+-            libc::SYS_futex,
++        let r = sys_futex_wake(
+             self.futex,
+             libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG,
+             1,

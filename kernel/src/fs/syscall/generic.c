@@ -386,8 +386,6 @@ uint64_t sys_chdir(const char *dirname)
     vfs_node_t new_cwd = vfs_open(dirname);
     if (!new_cwd)
         return (uint64_t)-ENOENT;
-    if (new_cwd->type != file_dir)
-        return (uint64_t)-ENOTDIR;
 
     current_task->cwd = new_cwd;
 
@@ -412,60 +410,6 @@ uint64_t sys_getcwd(char *cwd, uint64_t size)
 
 extern int unix_socket_fsid;
 extern int unix_accept_fsid;
-
-// Implement the sys_dup3 function
-uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags)
-{
-    if (oldfd >= MAX_FD_NUM || current_task->fd_info->fds[oldfd] == NULL)
-    {
-        return -EBADF;
-    }
-
-    if (newfd >= MAX_FD_NUM)
-    {
-        return -EBADF;
-    }
-
-    if (flags & ~O_CLOEXEC)
-    {
-        return -EINVAL;
-    }
-
-    if (oldfd == newfd)
-    {
-        return -EBADF;
-    }
-
-    if (current_task->fd_info->fds[newfd] != NULL)
-    {
-        sys_close(newfd);
-    }
-
-    fd_t *new_node = vfs_dup(current_task->fd_info->fds[oldfd]);
-    if (new_node == NULL)
-    {
-        return -EMFILE;
-    }
-
-    current_task->fd_info->fds[newfd] = new_node;
-
-    if (flags & O_CLOEXEC)
-    {
-        current_task->fd_info->fds[newfd]->flags |= O_CLOEXEC;
-    }
-
-    switch (new_node->node->type)
-    {
-    case file_socket:
-        socket_on_dup_file(oldfd, newfd);
-        break;
-
-    default:
-        break;
-    }
-
-    return newfd;
-}
 
 uint64_t sys_dup2(uint64_t fd, uint64_t newfd)
 {
@@ -493,6 +437,15 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd)
     // }
 
     current_task->fd_info->fds[newfd] = new;
+
+    return newfd;
+}
+
+// Implement the sys_dup3 function
+uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags)
+{
+    uint64_t fd = sys_dup2(oldfd, newfd);
+    current_task->fd_info->fds[fd]->flags = flags;
 
     return newfd;
 }
@@ -706,6 +659,11 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
 uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname, struct stat *buf, uint64_t flags)
 {
     char *resolved = at_resolve_pathname(dirfd, (char *)pathname);
+
+    if (!resolved)
+    {
+        return (uint64_t)-EINVAL;
+    }
 
     uint64_t ret = sys_stat(resolved, buf);
 
@@ -1098,11 +1056,6 @@ struct futex_wait futex_wait_list = {NULL, 0, NULL};
 
 int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *uaddr2, int val3)
 {
-    if (check_user_overflow((uint64_t)uaddr, sizeof(int)) || (timeout && !check_user_overflow((uint64_t)timeout, sizeof(struct timespec))))
-    {
-        return -EFAULT;
-    }
-
     switch (op)
     {
     case FUTEX_WAIT:

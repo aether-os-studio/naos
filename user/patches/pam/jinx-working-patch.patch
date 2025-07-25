@@ -1,0 +1,48 @@
+diff -urN --no-dereference pam-clean/libpam_misc/meson.build pam-workdir/libpam_misc/meson.build
+--- pam-clean/libpam_misc/meson.build
++++ pam-workdir/libpam_misc/meson.build
+@@ -18,7 +18,7 @@
+   'pam_misc',
+   sources: libpam_misc_src,
+   include_directories: [libpam_misc_inc, libpamc_inc],
+-  dependencies: [libpam_internal_dep, libpam_dep],
++  dependencies: [libpam_internal_dep, libpam_dep, libintl],
+   link_depends: libpam_misc_link_deps,
+   link_args: libpam_misc_link_args,
+   version: libpam_misc_version,
+diff -urN --no-dereference pam-clean/modules/module-meson.build pam-workdir/modules/module-meson.build
+--- pam-clean/modules/module-meson.build
++++ pam-workdir/modules/module-meson.build
+@@ -12,8 +12,9 @@
+   pam_module_deps += [libeconf]
+ endif
+ if module == 'pam_faillock'
++  subdir_done()
+   pam_module_src += ['faillock.c', 'faillock_config.c']
+-  pam_module_deps += [libaudit]
++  pam_module_deps += [libaudit, libintl]
+ endif
+ if module == 'pam_issue'
+   pam_module_deps += [libsystemd]
+diff -urN --no-dereference pam-clean/modules/pam_namespace/pam_namespace.h pam-workdir/modules/pam_namespace/pam_namespace.h
+--- pam-clean/modules/pam_namespace/pam_namespace.h
++++ pam-workdir/modules/pam_namespace/pam_namespace.h
+@@ -59,6 +59,7 @@
+ #include <sched.h>
+ #include <glob.h>
+ #include <locale.h>
++#include <signal.h>
+ #include "security/pam_modules.h"
+ #include "security/pam_modutil.h"
+ #include "security/pam_ext.h"
+diff -urN --no-dereference pam-clean/modules/pam_unix/pam_unix_acct.c pam-workdir/modules/pam_unix/pam_unix_acct.c
+--- pam-clean/modules/pam_unix/pam_unix_acct.c
++++ pam-workdir/modules/pam_unix/pam_unix_acct.c
+@@ -50,6 +50,7 @@
+ #include <time.h>		/* for time() */
+ #include <errno.h>
+ #include <sys/wait.h>
++#include <signal.h>
+ 
+ #include <security/_pam_macros.h>
+ 

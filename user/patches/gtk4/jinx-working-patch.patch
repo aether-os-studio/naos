@@ -1,0 +1,35 @@
+diff -urN --no-dereference gtk4-clean/gdk/loaders/gdkpng.c gtk4-workdir/gdk/loaders/gdkpng.c
+--- gtk4-clean/gdk/loaders/gdkpng.c
++++ gtk4-workdir/gdk/loaders/gdkpng.c
+@@ -37,13 +37,6 @@
+ 
+ /* {{{ Callbacks */
+ 
+-/* No sigsetjmp on Windows */
+-#ifndef HAVE_SIGSETJMP
+-#define sigjmp_buf jmp_buf
+-#define sigsetjmp(jb, x) setjmp(jb)
+-#define siglongjmp longjmp
+-#endif
+-
+ typedef struct
+ {
+   guchar *data;
+@@ -344,7 +337,7 @@
+   png_set_read_user_chunk_fn (png, &cicp, png_read_chunk_func);
+ #endif
+ 
+-  if (sigsetjmp (png_jmpbuf (png), 1))
++  if (setjmp (png_jmpbuf (png)))
+     {
+       g_free (buffer);
+       g_free (row_pointers);
+@@ -639,7 +632,7 @@
+   gdk_color_state_ref (color_state);
+   bytes = NULL;
+ 
+-  if (sigsetjmp (png_jmpbuf (png), 1))
++  if (setjmp (png_jmpbuf (png)))
+     {
+       gdk_color_state_unref (color_state);
+       g_clear_pointer (&bytes, g_bytes_unref);

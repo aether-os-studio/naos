@@ -1,0 +1,27 @@
+#! /bin/sh
+
+name=gtksourceview5
+repology_id=gtksourceview
+version=5.16.0
+revision=1
+tarball_url="https://download.gnome.org/sources/gtksourceview/5.16/gtksourceview-${version}.tar.xz"
+tarball_blake2b="f4817b12705063409eb5dcc31232ffb27529182f9c5c00ae17a9835592125243125b21b25369a367f521c80976412b45aad3db0466d4dac91a0ac30957380347"
+imagedeps="build-essential patchelf gtk-update-icon-cache"
+hostdeps="gcc pkg-config gobject-introspection glib2 vala"
+deps="core-libs gtk4 pcre2 libxml2 vulkan-loader"
+
+configure() {
+    vala_env meson_configure \
+        -Dintrospection=enabled \
+        -Dvapi=true
+}
+
+build() {
+    gi_env vala_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

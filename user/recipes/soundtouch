@@ -1,0 +1,23 @@
+#! /bin/sh
+
+name=soundtouch
+version=2.4.0
+revision=1
+tarball_url="https://www.surina.net/soundtouch/soundtouch-${version}.tar.gz"
+tarball_blake2b="41237c616f2f6ea81b39e636c8c3e9c4f2f2e76b221a90d0d22a12b102cfb397cc8da69a92476770107741382206cef7ef8e9a2380c50c3e4936b7a5b73c4c03"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    cmake_configure
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

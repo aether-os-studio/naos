@@ -1,0 +1,251 @@
+diff -urN --no-dereference gcc-host-clean/fixincludes/mkfixinc.sh gcc-host-workdir/fixincludes/mkfixinc.sh
+--- gcc-host-clean/fixincludes/mkfixinc.sh
++++ gcc-host-workdir/fixincludes/mkfixinc.sh
+@@ -12,6 +12,7 @@
+ # Check for special fix rules for particular targets
+ case $machine in
+     i?86-*-cygwin* | \
++    *-mlibc* | \
+     *-mingw32* | \
+     powerpc-*-eabisim* | \
+     powerpc-*-eabi*    | \
+diff -urN --no-dereference gcc-host-clean/gcc/config/i386/t-linux64 gcc-host-workdir/gcc/config/i386/t-linux64
+--- gcc-host-clean/gcc/config/i386/t-linux64
++++ gcc-host-workdir/gcc/config/i386/t-linux64
+@@ -33,6 +33,6 @@
+ comma=,
+ MULTILIB_OPTIONS    = $(subst $(comma),/,$(TM_MULTILIB_CONFIG))
+ MULTILIB_DIRNAMES   = $(patsubst m%, %, $(subst /, ,$(MULTILIB_OPTIONS)))
+-MULTILIB_OSDIRNAMES = m64=../lib64$(call if_multiarch,:x86_64-linux-gnu)
+-MULTILIB_OSDIRNAMES+= m32=$(if $(wildcard $(shell echo $(SYSTEM_HEADER_DIR))/../../usr/lib32),../lib32,../lib)$(call if_multiarch,:i386-linux-gnu)
++MULTILIB_OSDIRNAMES = m64=../lib$(call if_multiarch,:x86_64-linux-gnu)
++MULTILIB_OSDIRNAMES+= m32=$(if $(wildcard $(shell echo $(SYSTEM_HEADER_DIR))/../../usr/lib32),../lib32)$(call if_multiarch,:i386-linux-gnu)
+ MULTILIB_OSDIRNAMES+= mx32=../libx32$(call if_multiarch,:x86_64-linux-gnux32)
+diff -urN --no-dereference gcc-host-clean/gcc/config/linux-d.cc gcc-host-workdir/gcc/config/linux-d.cc
+--- gcc-host-clean/gcc/config/linux-d.cc
++++ gcc-host-workdir/gcc/config/linux-d.cc
+@@ -44,6 +44,8 @@
+     d_add_builtin_version ("CRuntime_Bionic");
+   else if (OPTION_MUSL)
+     d_add_builtin_version ("CRuntime_Musl");
++  else if (OPTION_MLIBC)
++    d_add_builtin_version ("CRuntime_Mlibc");
+ }
+ 
+ /* Handle a call to `__traits(getTargetInfo, "objectFormat")'.  */
+diff -urN --no-dereference gcc-host-clean/gcc/config/linux-rust.cc gcc-host-workdir/gcc/config/linux-rust.cc
+--- gcc-host-clean/gcc/config/linux-rust.cc
++++ gcc-host-workdir/gcc/config/linux-rust.cc
+@@ -45,6 +45,8 @@
+     rust_add_target_info ("target_env", "gnu");
+   else if (OPTION_MUSL)
+     rust_add_target_info ("target_env", "musl");
++  else if (OPTION_MLIBC)
++    rust_add_target_info ("target_env", "mlibc");
+   else if (OPTION_UCLIBC)
+     rust_add_target_info ("target_env", "uclibc");
+   else
+diff -urN --no-dereference gcc-host-clean/gcc/config/linux.h gcc-host-workdir/gcc/config/linux.h
+--- gcc-host-clean/gcc/config/linux.h
++++ gcc-host-workdir/gcc/config/linux.h
+@@ -34,23 +34,28 @@
+ #define OPTION_BIONIC_P(opts)	(DEFAULT_LIBC == LIBC_BIONIC)
+ #undef OPTION_MUSL_P
+ #define OPTION_MUSL_P(opts)	(DEFAULT_LIBC == LIBC_MUSL)
++#define OPTION_MLIBC_P(opts)	(DEFAULT_LIBC == LIBC_MLIBC)
+ #else
+ #define OPTION_GLIBC_P(opts)	((opts)->x_linux_libc == LIBC_GLIBC)
+ #define OPTION_UCLIBC_P(opts)	((opts)->x_linux_libc == LIBC_UCLIBC)
+ #define OPTION_BIONIC_P(opts)	((opts)->x_linux_libc == LIBC_BIONIC)
+ #undef OPTION_MUSL_P
+ #define OPTION_MUSL_P(opts)	((opts)->x_linux_libc == LIBC_MUSL)
++#define OPTION_MLIBC_P(opts)	((opts)->x_linux_libc == LIBC_MLIBC)
+ #endif
+ #define OPTION_GLIBC		OPTION_GLIBC_P (&global_options)
+ #define OPTION_UCLIBC		OPTION_UCLIBC_P (&global_options)
+ #define OPTION_BIONIC		OPTION_BIONIC_P (&global_options)
+ #undef OPTION_MUSL
+ #define OPTION_MUSL		OPTION_MUSL_P (&global_options)
++#define OPTION_MLIBC		OPTION_MLIBC_P (&global_options)
+ 
+ #define GNU_USER_TARGET_OS_CPP_BUILTINS()			\
+     do {							\
+ 	if (OPTION_GLIBC)					\
+ 	  builtin_define ("__gnu_linux__");			\
++	if (OPTION_MLIBC)					\
++	  builtin_define ("__mlibc__");			\
+ 	builtin_define_std ("linux");				\
+ 	builtin_define_std ("unix");				\
+ 	builtin_assert ("system=linux");			\
+@@ -63,21 +68,24 @@
+    -muclibc or -mglibc or -mbionic or -mmusl has been passed to change
+    the default.  */
+ 
+-#define CHOOSE_DYNAMIC_LINKER1(LIBC1, LIBC2, LIBC3, LIBC4, LD1, LD2, LD3, LD4)	\
+-  "%{" LIBC2 ":" LD2 ";:%{" LIBC3 ":" LD3 ";:%{" LIBC4 ":" LD4 ";:" LD1 "}}}"
++#define CHOOSE_DYNAMIC_LINKER1(LIBC1, LIBC2, LIBC3, LIBC4, LIBC5, LD1, LD2, LD3, LD4, LD5)	\
++  "%{" LIBC2 ":" LD2 ";:%{" LIBC3 ":" LD3 ";:%{" LIBC4 ":" LD4 ";:%{" LIBC5 ":" LD5 ";:" LD1 "}}}}"
+ 
+ #if DEFAULT_LIBC == LIBC_GLIBC
+-#define CHOOSE_DYNAMIC_LINKER(G, U, B, M) \
+-  CHOOSE_DYNAMIC_LINKER1 ("mglibc", "muclibc", "mbionic", "mmusl", G, U, B, M)
++#define CHOOSE_DYNAMIC_LINKER(G, U, B, MU, ML) \
++  CHOOSE_DYNAMIC_LINKER1 ("mglibc", "muclibc", "mbionic", "mmusl", "mmlibc", G, U, B, MU, ML)
+ #elif DEFAULT_LIBC == LIBC_UCLIBC
+-#define CHOOSE_DYNAMIC_LINKER(G, U, B, M) \
+-  CHOOSE_DYNAMIC_LINKER1 ("muclibc", "mglibc", "mbionic", "mmusl", U, G, B, M)
++#define CHOOSE_DYNAMIC_LINKER(G, U, B, MU, ML) \
++  CHOOSE_DYNAMIC_LINKER1 ("muclibc", "mglibc", "mbionic", "mmusl", "mmlibc", U, G, B, MU, ML)
+ #elif DEFAULT_LIBC == LIBC_BIONIC
+-#define CHOOSE_DYNAMIC_LINKER(G, U, B, M) \
+-  CHOOSE_DYNAMIC_LINKER1 ("mbionic", "mglibc", "muclibc", "mmusl", B, G, U, M)
++#define CHOOSE_DYNAMIC_LINKER(G, U, B, MU, ML) \
++  CHOOSE_DYNAMIC_LINKER1 ("mbionic", "mglibc", "muclibc", "mmusl", "mmlibc", B, G, U, MU, ML)
+ #elif DEFAULT_LIBC == LIBC_MUSL
+-#define CHOOSE_DYNAMIC_LINKER(G, U, B, M) \
+-  CHOOSE_DYNAMIC_LINKER1 ("mmusl", "mglibc", "muclibc", "mbionic", M, G, U, B)
++#define CHOOSE_DYNAMIC_LINKER(G, U, B, MU, ML) \
++  CHOOSE_DYNAMIC_LINKER1 ("mmusl", "mglibc", "muclibc", "mbionic", "mmlibc", MU, G, U, B, ML)
++#elif DEFAULT_LIBC == LIBC_MLIBC
++#define CHOOSE_DYNAMIC_LINKER(G, U, B, MU, ML) \
++  CHOOSE_DYNAMIC_LINKER1 ("mmlibc", "mglibc", "muclibc", "mbionic", "mmusl", ML, G, U, B, MU)
+ #else
+ #error "Unsupported DEFAULT_LIBC"
+ #endif /* DEFAULT_LIBC */
+@@ -99,19 +107,23 @@
+ #define MUSL_DYNAMIC_LINKER32 "/dev/null"
+ #define MUSL_DYNAMIC_LINKER64 "/dev/null"
+ #define MUSL_DYNAMIC_LINKERX32 "/dev/null"
++#define MLIBC_DYNAMIC_LINKER "/lib/ld.so"
++#define MLIBC_DYNAMIC_LINKER32 "/dev/null"
++#define MLIBC_DYNAMIC_LINKER64 "/lib/ld.so"
++#define MLIBC_DYNAMIC_LINKERX32 "/dev/null"
+ 
+ #define GNU_USER_DYNAMIC_LINKER						\
+   CHOOSE_DYNAMIC_LINKER (GLIBC_DYNAMIC_LINKER, UCLIBC_DYNAMIC_LINKER,	\
+-			 BIONIC_DYNAMIC_LINKER, MUSL_DYNAMIC_LINKER)
++			 BIONIC_DYNAMIC_LINKER, MUSL_DYNAMIC_LINKER, MLIBC_DYNAMIC_LINKER)
+ #define GNU_USER_DYNAMIC_LINKER32					\
+   CHOOSE_DYNAMIC_LINKER (GLIBC_DYNAMIC_LINKER32, UCLIBC_DYNAMIC_LINKER32, \
+-			 BIONIC_DYNAMIC_LINKER32, MUSL_DYNAMIC_LINKER32)
++			 BIONIC_DYNAMIC_LINKER32, MUSL_DYNAMIC_LINKER32, MLIBC_DYNAMIC_LINKER32)
+ #define GNU_USER_DYNAMIC_LINKER64					\
+   CHOOSE_DYNAMIC_LINKER (GLIBC_DYNAMIC_LINKER64, UCLIBC_DYNAMIC_LINKER64, \
+-			 BIONIC_DYNAMIC_LINKER64, MUSL_DYNAMIC_LINKER64)
++			 BIONIC_DYNAMIC_LINKER64, MUSL_DYNAMIC_LINKER64, MLIBC_DYNAMIC_LINKER64)
+ #define GNU_USER_DYNAMIC_LINKERX32					\
+   CHOOSE_DYNAMIC_LINKER (GLIBC_DYNAMIC_LINKERX32, UCLIBC_DYNAMIC_LINKERX32, \
+-			 BIONIC_DYNAMIC_LINKERX32, MUSL_DYNAMIC_LINKERX32)
++			 BIONIC_DYNAMIC_LINKERX32, MUSL_DYNAMIC_LINKERX32, MLIBC_DYNAMIC_LINKERX32)
+ 
+ /* Whether we have Bionic libc runtime */
+ #undef TARGET_HAS_BIONIC
+diff -urN --no-dereference gcc-host-clean/gcc/config.build gcc-host-workdir/gcc/config.build
+--- gcc-host-clean/gcc/config.build
++++ gcc-host-workdir/gcc/config.build
+@@ -45,7 +45,7 @@
+ build_xm_file=
+ build_xm_defines=
+ build_exeext=
+-build_install_headers_dir=install-headers-tar
++build_install_headers_dir=install-headers-cp
+ build_file_translate=
+ 
+ # System-specific settings.
+diff -urN --no-dereference gcc-host-clean/gcc/config.gcc gcc-host-workdir/gcc/config.gcc
+--- gcc-host-clean/gcc/config.gcc
++++ gcc-host-workdir/gcc/config.gcc
+@@ -694,7 +694,7 @@
+ esac
+ 
+ # Common C libraries.
+-tm_defines="$tm_defines LIBC_GLIBC=1 LIBC_UCLIBC=2 LIBC_BIONIC=3 LIBC_MUSL=4"
++tm_defines="$tm_defines LIBC_GLIBC=1 LIBC_UCLIBC=2 LIBC_BIONIC=3 LIBC_MUSL=4 LIBC_MLIBC=5"
+ 
+ # 32-bit x86 processors supported by --with-arch=.  Each processor
+ # MUST be separated by exactly one space.
+@@ -920,6 +920,9 @@
+     *-*-*musl*)
+       tm_defines="$tm_defines DEFAULT_LIBC=LIBC_MUSL"
+       ;;
++    *-*-*mlibc*)
++      tm_defines="$tm_defines DEFAULT_LIBC=LIBC_MLIBC"
++      ;;
+     *)
+       tm_defines="$tm_defines DEFAULT_LIBC=LIBC_GLIBC"
+       ;;
+diff -urN --no-dereference gcc-host-clean/libcpp/Makefile.in gcc-host-workdir/libcpp/Makefile.in
+--- gcc-host-clean/libcpp/Makefile.in
++++ gcc-host-workdir/libcpp/Makefile.in
+@@ -32,10 +32,10 @@
+ AUTOHEADER = @AUTOHEADER@
+ CATALOGS = $(patsubst %,po/%,@CATALOGS@)
+ CC = @CC@
+-CFLAGS = @CFLAGS@
++override CFLAGS := @CFLAGS@
+ WARN_CFLAGS = @warn@ @c_warn@ @WARN_PEDANTIC@ @WERROR@
+ CXX = @CXX@
+-CXXFLAGS = @CXXFLAGS@
++override CXXFLAGS := @CXXFLAGS@
+ WARN_CXXFLAGS = @warn@ @WARN_PEDANTIC@ @WERROR@
+ CPP = @CPP@
+ CPPFLAGS = @CPPFLAGS@
+@@ -45,7 +45,7 @@
+ INSTALL_DATA = @INSTALL_DATA@
+ INSTALL_PROGRAM = @INSTALL_PROGRAM@
+ INSTALL_SCRIPT = @INSTALL_SCRIPT@
+-LDFLAGS = @LDFLAGS@
++override LDFLAGS := @LDFLAGS@
+ LIBICONV = @LIBICONV@
+ LIBINTL = @LIBINTL@
+ PACKAGE = @PACKAGE@
+diff -urN --no-dereference gcc-host-clean/libgcc/config.host gcc-host-workdir/libgcc/config.host
+--- gcc-host-clean/libgcc/config.host
++++ gcc-host-workdir/libgcc/config.host
+@@ -310,6 +310,11 @@
+   tmake_file="$tmake_file t-crtstuff-pic t-libgcc-pic t-eh-dw2-dip t-slibgcc t-slibgcc-fuchsia"
+   extra_parts="crtbegin.o crtend.o"
+   ;;
++*-*-*-mlibc)
++  extra_parts="$extra_parts crtbegin.o crtbeginS.o crtend.o crtendS.o"
++  tmake_file="$tmake_file t-crtstuff-pic"
++  tmake_file="$tmake_file t-slibgcc t-slibgcc-gld t-slibgcc-elf-ver t-libgcc-pic"
++  ;;
+ *-*-linux* | frv-*-*linux* | *-*-kfreebsd*-gnu | *-*-gnu* | *-*-kopensolaris*-gnu | *-*-uclinuxfdpiceabi)
+   tmake_file="$tmake_file t-crtstuff-pic t-libgcc-pic t-eh-dw2-dip t-slibgcc t-slibgcc-gld t-slibgcc-elf-ver t-linux"
+   extra_parts="crtbegin.o crtbeginS.o crtbeginT.o crtend.o crtendS.o"
+@@ -767,6 +772,10 @@
+ x86_64-*-fuchsia*)
+ 	tmake_file="$tmake_file t-libgcc-pic"
+ 	;;
++x86_64-*-*-mlibc)
++	extra_parts="$extra_parts crtprec32.o crtprec64.o crtprec80.o crtfastmath.o"
++	tmake_file="$tmake_file i386/t-crtpc t-crtfm i386/t-crtstuff t-dfprules"
++	;;
+ i[34567]86-*-dragonfly*)
+ 	tmake_file="${tmake_file} i386/t-dragonfly i386/t-crtstuff"
+ 	md_unwind_header=i386/dragonfly-unwind.h
+diff -urN --no-dereference gcc-host-clean/libstdc++-v3/configure gcc-host-workdir/libstdc++-v3/configure
+--- gcc-host-clean/libstdc++-v3/configure
++++ gcc-host-workdir/libstdc++-v3/configure
+@@ -38856,7 +38856,7 @@
+ 
+   fi
+     ;;
+-  *-linux* | *-uclinux* | *-gnu* | *-kfreebsd*-gnu | *-cygwin* | *-solaris*)
++  *-linux* | *-uclinux* | *-gnu* | *-kfreebsd*-gnu | *-cygwin* | *-solaris* | *-mlibc*)
+ 
+   # All these tests are for C++; save the language and the compiler flags.
+   # The CXXFLAGS thing is suspicious, but based on similar bits previously
+diff -urN --no-dereference gcc-host-clean/libstdc++-v3/configure.host gcc-host-workdir/libstdc++-v3/configure.host
+--- gcc-host-clean/libstdc++-v3/configure.host
++++ gcc-host-workdir/libstdc++-v3/configure.host
+@@ -265,7 +265,7 @@
+   freebsd*)
+     os_include_dir="os/bsd/freebsd"
+     ;;
+-  linux-musl*)
++  linux-musl* | linux-mlibc*)
+     os_include_dir="os/generic"
+     ;;
+   gnu* | linux* | kfreebsd*-gnu | uclinux*)

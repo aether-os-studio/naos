@@ -1,0 +1,30 @@
+#! /bin/sh
+
+name=gobject-introspection
+version=1.84.0
+version_short=1.84
+revision=1
+tarball_url="https://download.gnome.org/sources/gobject-introspection/${version_short}/gobject-introspection-${version}.tar.xz"
+tarball_blake2b="c888cc36f980db61bf7da46199fecfbe944034b9ffdf3e6e21cc56b2177c3ece1a0571166ab37c63c6f0d5c80be91963c9e342f5162e2b908838d8eef9e193e3"
+imagedeps="build-essential patchelf libpython3-dev gobject-introspection"
+hostdeps="gcc pkg-config"
+deps="core-libs bootstrap-glib2 python"
+
+configure() {
+    meson_configure \
+        -Dgtk_doc=false \
+        -Dgi_cross_use_prebuilt_gi=true \
+        -Dgi_cross_binary_wrapper="${build_dir}"/build-support/mlibc-run-wrapper \
+        -Dgi_cross_ldd_wrapper="${build_dir}"/build-support/mlibc-ldd-wrapper \
+        -Dtests=false
+}
+
+build() {
+    gi_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

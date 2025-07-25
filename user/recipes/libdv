@@ -1,0 +1,29 @@
+#! /bin/sh
+
+# XXX i couldn't get the "proper" libdv to build due to some weird errors, so
+# i'm using a meson port of it from freedesktop instead
+_commit_hash=85feab8e0a7304f02789e6e9a5163350e6ae7e71
+
+name=libdv
+version=1.0.0
+revision=1
+tarball_url="https://gitlab.freedesktop.org/gstreamer/meson-ports/libdv/-/archive/${_commit_hash}/libdv-${_commit_hash}.tar.bz2"
+tarball_blake2b="77b4411f04e95e5fcbe433e0326e4348f2515942e92e2567ece0a58b4336dfdcd8a2b03fd9e6aac31f9870873d9c75ec3085d258dbcd837f50c025cb0257ee45"
+hostdeps="gcc pkg-config"
+deps="core-libs popt"
+
+configure() {
+    meson_configure \
+        -Dtests=disabled \
+        -Dtools=enabled
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

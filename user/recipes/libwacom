@@ -1,0 +1,24 @@
+#! /bin/sh
+
+name=libwacom
+version=2.15.0
+revision=1
+tarball_url="https://github.com/linuxwacom/libwacom/releases/download/libwacom-${version}/libwacom-${version}.tar.xz"
+tarball_blake2b="c52c9eab66fb9cfc58ed78d09c0890a72a472e92ce96ba9095e10694e18e96afe0106c4877106e2dcb54f77076edb600deaef664082252488898b74826e150e2"
+hostdeps="gcc pkg-config"
+deps="core-libs librsvg libgudev libxml2 libevdev"
+
+configure() {
+    meson_configure \
+        -Dtests=disabled
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

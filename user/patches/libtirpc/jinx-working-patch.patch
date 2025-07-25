@@ -1,0 +1,12 @@
+diff -urN --no-dereference libtirpc-clean/src/svc.c libtirpc-workdir/src/svc.c
+--- libtirpc-clean/src/svc.c
++++ libtirpc-workdir/src/svc.c
+@@ -657,7 +657,7 @@
+   assert (readfds != NULL);
+ 
+   setsize = _rpc_dtablesize ();
+-  maskp = readfds->fds_bits;
++  maskp = (fd_mask *)readfds->fds_bits;
+   for (sock = 0; sock < setsize; sock += NFDBITS)
+     {
+       for (mask = *maskp++; (bit = ffsl(mask)) != 0; mask ^= (1L << (bit - 1)))

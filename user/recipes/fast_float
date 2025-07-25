@@ -1,0 +1,24 @@
+#! /bin/sh
+
+name=fast_float
+repology_id=fast-float
+version=8.0.2
+revision=1
+tarball_url="https://github.com/fastfloat/fast_float/archive/v${version}/fast_float-${version}.tar.gz"
+tarball_blake2b="5c2f16241c33bcda3bfdf696462250aae9b7fe23ccd080a26137db75a9e8158b3e7665df09f5e92e123087af37248a9a3acaf71a77010e77e06aa94bfb3e16d7"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    cmake_configure
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

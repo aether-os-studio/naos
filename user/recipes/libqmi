@@ -1,0 +1,27 @@
+#! /bin/sh
+
+name=libqmi
+version=1.36.0
+revision=1
+tarball_url="https://gitlab.freedesktop.org/mobile-broadband/libqmi/-/archive/${version}/libqmi-${version}.tar.gz"
+tarball_blake2b="e63df94e95b4e54eaee15d57273405a26a5cff185c0d65b37a850bbc7f2ab393275fdf8e76f1f4a07613fbb89a5bea1e31e537613f09eebdf3e0c49baa540cc5"
+imagedeps="build-essential patchelf"
+hostdeps="gcc pkg-config glib2 gobject-introspection"
+deps="core-libs libmbim libgudev"
+
+configure() {
+    meson_configure \
+        -Dqrtr=false \
+        -Dman=false \
+        -Dbash_completion=false
+}
+
+build() {
+    gi_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

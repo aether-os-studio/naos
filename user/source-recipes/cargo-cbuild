@@ -1,0 +1,6 @@
+#! /bin/sh
+
+name=cargo-cbuild
+version=0.10.12
+tarball_url="https://github.com/lu-zero/cargo-c/archive/refs/tags/v${version}.tar.gz"
+tarball_blake2b="04a17b3db7e463b1f58ae198d5003f63047539e5b110837099f276e0994bd13b1c613a9168aabbdcfe264844f4483c1e56fa0d5e8139f2498ecc23b848e0f09f"

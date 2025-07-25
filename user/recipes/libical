@@ -1,0 +1,32 @@
+#! /bin/sh
+
+name=libical
+version=3.0.20
+revision=1
+tarball_url="https://github.com/libical/libical/releases/download/v${version}/libical-${version}.tar.gz"
+tarball_blake2b="3492efc8ace54b254a7079aa863394da0555a4c342b7c83a47991ecdf31fe06035bb8c196700ec6804bde2b1c074e5e3a2118c948fec26bdff90b92b9c5042e8"
+imagedeps="build-essential python3-distutils-extra patchelf"
+hostdeps="gcc libical pkg-config gobject-introspection glib2 vala"
+deps="core-libs icu glib2 libxml2 pcre2"
+
+configure() {
+        ICAL_NATIVE_TOOL=/usr/local/libexec/libical/ical-glib-src-generator \
+    gi_env vala_env cmake_configure \
+        -DSHARED_ONLY=yes \
+        -DICAL_BUILD_DOCS=false \
+        -DGOBJECT_INTROSPECTION=true \
+        -DICAL_GLIB_VAPI=true \
+        -DIMPORT_ICAL_GLIB_SRC_GENERATOR=${base_dir}/build-support/libical/ical.cmake
+}
+
+build() {
+        GI_SCANNER_DISABLE_CACHE=1 \
+        PKG_CONFIG="${OS_TRIPLET}-pkg-config" \
+    gi_env vala_env cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

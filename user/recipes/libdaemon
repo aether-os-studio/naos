@@ -1,0 +1,30 @@
+#! /bin/sh
+
+name=libdaemon
+version=0.14
+revision=1
+tarball_url="https://0pointer.de/lennart/projects/libdaemon/libdaemon-${version}.tar.gz"
+tarball_blake2b="1dd6ac48e7b9a31f58688c7a59814435059287a30db80dd7c9cf69f9eaba27245424ecdbfd8719a4cf30d9686f4b61bb5e394821f66c05e770c244a0208e8f3f"
+source_hostdeps="autoconf automake libtool pkg-config"
+hostdeps="gcc autoconf automake libtool pkg-config"
+deps="core-libs"
+
+prepare() {
+    # Autotools too old, regenerate
+    autoreconf -fvi
+}
+
+configure() {
+        ac_cv_func_setpgrp_void=yes \
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

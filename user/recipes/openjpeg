@@ -1,0 +1,23 @@
+#! /bin/sh
+
+name=openjpeg
+version=2.5.3
+revision=1
+tarball_url="https://github.com/uclouvain/openjpeg/archive/v${version}/openjpeg-${version}.tar.gz"
+tarball_blake2b="170a425a9180b734ded086ee6c5292f246324260f948598d081c2c27e90328e2f48ad86990a918cf358e0affc5b87e6f973412fea239cafb8f78a71a97c54be3"
+hostdeps="gcc pkg-config"
+deps="core-libs lcms libpng libtiff"
+
+configure() {
+    cmake_configure
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

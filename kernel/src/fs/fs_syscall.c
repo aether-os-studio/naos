@@ -21,8 +21,6 @@ char *at_resolve_pathname(int dirfd, char *pathname)
             vfs_node_t node = current_task->fd_info->fds[dirfd]->node;
             if (!node)
                 return NULL;
-            if (node->type != file_dir)
-                return NULL;
 
             char *dirname = vfs_get_fullpath(node);
 

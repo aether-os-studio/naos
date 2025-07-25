@@ -1,0 +1,23 @@
+#! /bin/sh
+
+name=qpdf
+version=12.2.0
+revision=1
+tarball_url="https://github.com/qpdf/qpdf/releases/download/v${version}/qpdf-${version}.tar.gz"
+tarball_blake2b="1e116f0c2d19cc37afa2185fc6962c0963f205811bff6eac8dbadaa92a3b99f1fbd21251cadd1bd90312ab02cb90577ebf908e8059dfe006cb85c293bdbd0001"
+hostdeps="gcc pkg-config"
+deps="core-libs libjpeg-turbo gnutls libtiff"
+
+configure() {
+    cmake_configure
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

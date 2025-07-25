@@ -1,0 +1,24 @@
+#! /bin/sh
+
+name=libxfce4util
+version=4.20.1
+revision=1
+tarball_url="https://archive.xfce.org/src/xfce/libxfce4util/4.20/libxfce4util-${version}.tar.bz2"
+tarball_blake2b="6b5b4a72b364ebfe166743194a8277a4b7a302e6efcbdd2b5f9c3b15c48f4c8510990c6917402fd76e4ce29dadac871803344f3625dccb1c6631549bc7531ead"
+imagedeps="build-essential patchelf"
+hostdeps="gcc pkg-config glib2 gobject-introspection vala"
+deps="core-libs glib2 gobject-introspection vala"
+
+configure() {
+    vala_env meson_configure
+}
+
+build() {
+    gi_env vala_env meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

@@ -1,0 +1,26 @@
+#! /bin/sh
+
+name=libpcap
+version=1.10.5
+revision=1
+tarball_url="https://www.tcpdump.org/release/libpcap-${version}.tar.gz"
+tarball_blake2b="c0bb29c5c308cb21244a9c63d3daa19033eb21fbd721607c057f04b2ae6b2527fb1cfeeb2b29b7c3535d5d6256aa5fdf5aa22ce48aa4f88a3cc8a81029a98116"
+hostdeps="gcc pkg-config"
+deps="core-libs bluez libnl libusb"
+
+configure() {
+    cmake_configure
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    # Remove static libraries
+    rm -v "${dest_dir}${prefix}/lib/libpcap.a"
+
+    post_package_strip
+}

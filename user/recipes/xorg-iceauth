@@ -1,0 +1,28 @@
+#! /bin/sh
+
+name=xorg-iceauth
+repology_id=iceauth
+version=1.0.10
+revision=1
+tarball_url="https://www.x.org/releases/individual/app/iceauth-${version}.tar.xz"
+tarball_blake2b="e5559f7b2b57c98d6f294cd30312e42827975cc4b9111918bcd81e46cf8946ce2b76a10e613fe2a592cd51509a372523ee0440557e42178d279c1ce30589cbf9"
+hostdeps="gcc pkg-config"
+deps="core-libs libice xorg-proto"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

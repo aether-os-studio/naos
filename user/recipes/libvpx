@@ -1,0 +1,41 @@
+#! /bin/sh
+
+name=libvpx
+version=1.15.1
+revision=1
+tarball_url="https://github.com/webmproject/libvpx/archive/refs/tags/v${version}.tar.gz"
+tarball_blake2b="69f5774e5e002ce442c1325cbf301942100f12e5d0afbfb08ab22401454d77db436bf98fd8b3d54292f55d0bcf4b35c3783c657941b6a8377b7e36891e8dd16a"
+imagedeps="build-essential nasm which"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    # Override standard configure invocation as sqlite errors out on unrecognized configure options
+    configure_script_path="${source_dir}/configure"
+
+        ac_cv_func_malloc_0_nonnull=yes \
+        ac_cv_func_calloc_0_nonnull=yes \
+        ac_cv_func_realloc_0_nonnull=yes \
+    ${configure_script_path} \
+        --prefix=${prefix} \
+        --enable-shared \
+        --disable-static \
+        --enable-pic \
+        --enable-vp8 \
+        --enable-vp9 \
+        --enable-multithread \
+        --enable-vp9-highbitdepth \
+        --disable-examples \
+        --disable-install-docs \
+        --disable-docs
+}
+
+build() {
+    make HAVE_GNU_STRIP=no CC=${OS_TRIPLET}-gcc LD=${OS_TRIPLET}-gcc CXX=${OS_TRIPLET}-g++ AR=${OS_TRIPLET}-ar NM=${OS_TRIPLET}-nm -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

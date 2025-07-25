@@ -1,0 +1,47 @@
+diff -urN --no-dereference libxfce4util-clean/configure libxfce4util-workdir/configure
+--- libxfce4util-clean/configure
++++ libxfce4util-workdir/configure
+@@ -18852,11 +18852,11 @@
+     INTROSPECTION_GIRDIR=
+     INTROSPECTION_TYPELIBDIR=
+     if test "x$found_introspection" = "xyes"; then
+-       INTROSPECTION_SCANNER=$PKG_CONFIG_SYSROOT_DIR`$PKG_CONFIG --variable=g_ir_scanner gobject-introspection-1.0`
+-       INTROSPECTION_COMPILER=$PKG_CONFIG_SYSROOT_DIR`$PKG_CONFIG --variable=g_ir_compiler gobject-introspection-1.0`
+-       INTROSPECTION_GENERATE=$PKG_CONFIG_SYSROOT_DIR`$PKG_CONFIG --variable=g_ir_generate gobject-introspection-1.0`
+-       INTROSPECTION_GIRDIR=`$PKG_CONFIG --define-variable=datadir="${_GI_EXP_DATADIR}" --variable=girdir gobject-introspection-1.0`
+-       INTROSPECTION_TYPELIBDIR="$($PKG_CONFIG --define-variable=libdir="${_GI_EXP_LIBDIR}" --variable=typelibdir gobject-introspection-1.0)"
++       INTROSPECTION_SCANNER=$INTROSPECTION_SCANNER_ENV
++       INTROSPECTION_COMPILER=$INTROSPECTION_COMPILER_ENV
++       INTROSPECTION_GENERATE=$INTROSPECTION_GENERATE_ENV
++       INTROSPECTION_GIRDIR=$INTROSPECTION_GIRDIR_ENV
++       INTROSPECTION_TYPELIBDIR=$INTROSPECTION_TYPELIBDIR_ENV
+        INTROSPECTION_CFLAGS=`$PKG_CONFIG --cflags gobject-introspection-1.0`
+        INTROSPECTION_LIBS=`$PKG_CONFIG --libs gobject-introspection-1.0`
+        INTROSPECTION_MAKEFILE=$PKG_CONFIG_SYSROOT_DIR`$PKG_CONFIG --variable=datadir gobject-introspection-1.0`/gobject-introspection-1.0/Makefile.introspection
+@@ -19134,12 +19134,12 @@
+   case $enable_vala in #(
+   yes) :
+ 
+-      VAPIGEN=`$PKG_CONFIG --variable=vapigen $vapigen_pkg_name`
+-      VAPIGEN_MAKEFILE=`$PKG_CONFIG --variable=datadir $vapigen_pkg_name`/vala/Makefile.vapigen
++      VAPIGEN=$VAPIGEN
++      VAPIGEN_MAKEFILE=$VALA_MAKEFILE
+       if test "x" = "x"
+ then :
+ 
+-          VAPIGEN_VAPIDIR=`$PKG_CONFIG --variable=vapidir $vapigen_pkg_name`
++          VAPIGEN_VAPIDIR=$VALADIR
+ 
+ else case e in #(
+   e)
+diff -urN --no-dereference libxfce4util-clean/libxfce4util/Makefile.in libxfce4util-workdir/libxfce4util/Makefile.in
+--- libxfce4util-clean/libxfce4util/Makefile.in
++++ libxfce4util-workdir/libxfce4util/Makefile.in
+@@ -568,7 +568,6 @@
+ 
+ @ENABLE_VAPIGEN_TRUE@VAPIGEN_DEPS = gio-2.0
+ @ENABLE_VAPIGEN_TRUE@VAPIGEN_VAPIS = libxfce4util-1.0.vapi
+-@ENABLE_VAPIGEN_TRUE@VAPIGEN_GIRDIRS = $(prefix)/share/gir-1.0
+ @ENABLE_VAPIGEN_TRUE@libxfce4util_1_0_vapi_METADATADIRS = $(srcdir)
+ @ENABLE_VAPIGEN_TRUE@libxfce4util_1_0_vapi_FILES = Libxfce4util-1.0.gir
+ @ENABLE_VAPIGEN_TRUE@vapidir = $(datadir)/vala/vapi

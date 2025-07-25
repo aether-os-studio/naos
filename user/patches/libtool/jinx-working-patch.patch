@@ -1,0 +1,167 @@
+diff -urN --no-dereference libtool-clean/m4/libtool.m4 libtool-workdir/m4/libtool.m4
+--- libtool-clean/m4/libtool.m4
++++ libtool-workdir/m4/libtool.m4
+@@ -2889,6 +2889,18 @@
+   hardcode_into_libs=yes
+   ;;
+ 
++*-mlibc)
++  version_type=linux # correct to gnu/linux during the next big refactor
++  need_lib_prefix=no
++  need_version=no
++  library_names_spec='$libname$release$shared_ext$versuffix $libname$release$shared_ext$major $libname$shared_ext'
++  soname_spec='$libname$release$shared_ext$major'
++  dynamic_linker='mlibc ld.so'
++  shlibpath_var=LD_LIBRARY_PATH
++  shlibpath_overrides_runpath=no
++  hardcode_into_libs=yes
++  ;;
++
+ # No shared lib support for Linux oldld, aout, or coff.
+ linux*oldld* | linux*aout* | linux*coff*)
+   dynamic_linker=no
+@@ -2996,18 +3008,6 @@
+   hardcode_into_libs=yes
+   ;;
+ 
+-*-mlibc)
+-  version_type=linux # correct to gnu/linux during the next big refactor
+-  need_lib_prefix=no
+-  need_version=no
+-  library_names_spec='$libname$release$shared_ext$versuffix $libname$release$shared_ext$major $libname$shared_ext'
+-  soname_spec='$libname$release$shared_ext$major'
+-  dynamic_linker='mlibc ld.so'
+-  shlibpath_var=LD_LIBRARY_PATH
+-  shlibpath_overrides_runpath=no
+-  hardcode_into_libs=yes
+-  ;;
+-
+ newsos6)
+   version_type=linux # correct to gnu/linux during the next big refactor
+   library_names_spec='$libname$release$shared_ext$versuffix $libname$release$shared_ext$major $libname$shared_ext'
+@@ -3669,12 +3669,12 @@
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+-# This must be glibc/ELF.
+-linux* | k*bsd*-gnu | kopensolaris*-gnu | gnu*)
++*-mlibc)
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+-*-mlibc)
++# This must be glibc/ELF.
++linux* | k*bsd*-gnu | kopensolaris*-gnu | gnu*)
+   lt_cv_deplibs_check_method=pass_all
+   ;;
+ 
+@@ -4497,6 +4497,8 @@
+ 	    ;;
+ 	esac
+ 	;;
++      *-mlibc)
++	;;
+       linux* | k*bsd*-gnu | kopensolaris*-gnu | gnu*)
+ 	case $cc_basename in
+ 	  KCC*)
+@@ -4563,8 +4565,6 @@
+ 	;;
+       netbsd* | netbsdelf*-gnu)
+ 	;;
+-      *-mlibc)
+-	;;
+       *qnx* | *nto*)
+         # QNX uses GNU C++, but need to define -shared option too, otherwise
+         # it will coredump.
+@@ -4825,6 +4825,12 @@
+       _LT_TAGVAR(lt_prog_compiler_static, $1)='-non_shared'
+       ;;
+ 
++    *-mlibc)
++      _LT_TAGVAR(lt_prog_compiler_wl, $1)='-Wl,'
++      _LT_TAGVAR(lt_prog_compiler_pic, $1)='-fPIC'
++      _LT_TAGVAR(lt_prog_compiler_static, $1)='-static'
++      ;;
++
+     linux* | k*bsd*-gnu | kopensolaris*-gnu | gnu*)
+       case $cc_basename in
+       # old Intel for x86_64, which still supported -KPIC.
+@@ -4921,12 +4927,6 @@
+       _LT_TAGVAR(lt_prog_compiler_static, $1)='-Bstatic'
+       ;;
+ 
+-    *-mlibc)
+-      _LT_TAGVAR(lt_prog_compiler_wl, $1)='-Wl,'
+-      _LT_TAGVAR(lt_prog_compiler_pic, $1)='-fPIC'
+-      _LT_TAGVAR(lt_prog_compiler_static, $1)='-static'
+-      ;;
+-
+     *nto* | *qnx*)
+       # QNX uses GNU C++, but need to define -shared option too, otherwise
+       # it will coredump.
+@@ -5328,6 +5328,11 @@
+       _LT_TAGVAR(archive_expsym_cmds, $1)='$SED "s|^|_|" $export_symbols >$output_objdir/$soname.expsym~$CC -shared $pic_flag $libobjs $deplibs $compiler_flags $wl-h,$soname $wl--retain-symbols-file,$output_objdir/$soname.expsym $wl--image-base,`expr ${RANDOM-$$} % 4096 / 2 \* 262144 + 1342177280` -o $lib'
+       ;;
+ 
++    *-mlibc)
++	_LT_TAGVAR(archive_cmds, $1)='$CC -shared $pic_flag $libobjs $deplibs $compiler_flags $wl-soname $wl$soname -o $lib'
++	_LT_TAGVAR(archive_expsym_cmds, $1)='$CC -shared $pic_flag $libobjs $deplibs $compiler_flags $wl-soname $wl$soname $wl-retain-symbols-file $wl$export_symbols -o $lib'
++      ;;
++
+     gnu* | linux* | tpf* | k*bsd*-gnu | kopensolaris*-gnu)
+       tmp_diet=no
+       if test linux-dietlibc = "$host_os"; then
+@@ -5408,11 +5413,6 @@
+       fi
+       ;;
+ 
+-    *-mlibc)
+-	_LT_TAGVAR(archive_cmds, $1)='$CC -shared $pic_flag $libobjs $deplibs $compiler_flags $wl-soname $wl$soname -o $lib'
+-	_LT_TAGVAR(archive_expsym_cmds, $1)='$CC -shared $pic_flag $libobjs $deplibs $compiler_flags $wl-soname $wl$soname $wl-retain-symbols-file $wl$export_symbols -o $lib'
+-      ;;
+-
+     netbsd* | netbsdelf*-gnu)
+       if echo __ELF__ | $CC -E - | $GREP __ELF__ >/dev/null; then
+ 	_LT_TAGVAR(archive_cmds, $1)='$LD -Bshareable $libobjs $deplibs $linker_flags -o $lib'
+@@ -5945,6 +5945,9 @@
+       _LT_TAGVAR(link_all_deplibs, $1)=yes
+       ;;
+ 
++    *-mlibc)
++      ;;
++
+     linux*)
+       case $cc_basename in
+       tcc*)
+@@ -5956,9 +5959,6 @@
+       esac
+       ;;
+ 
+-    *-mlibc)
+-      ;;
+-
+     netbsd* | netbsdelf*-gnu)
+       if echo __ELF__ | $CC -E - | $GREP __ELF__ >/dev/null; then
+ 	_LT_TAGVAR(archive_cmds, $1)='$LD -Bshareable -o $lib $libobjs $deplibs $linker_flags'  # a.out
+@@ -7097,6 +7097,10 @@
+         _LT_TAGVAR(inherit_rpath, $1)=yes
+         ;;
+ 
++      *-mlibc)
++        _LT_TAGVAR(ld_shlibs, $1)=yes
++	;;
++
+       linux* | k*bsd*-gnu | kopensolaris*-gnu | gnu*)
+         case $cc_basename in
+           KCC*)
+@@ -7262,10 +7266,6 @@
+ 	esac
+ 	;;
+ 
+-      *-mlibc)
+-        _LT_TAGVAR(ld_shlibs, $1)=yes
+-	;;
+-
+       netbsd*)
+         if echo __ELF__ | $CC -E - | $GREP __ELF__ >/dev/null; then
+ 	  _LT_TAGVAR(archive_cmds, $1)='$LD -Bshareable  -o $lib $predep_objects $libobjs $deplibs $postdep_objects $linker_flags'

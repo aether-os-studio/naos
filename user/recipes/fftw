@@ -1,0 +1,49 @@
+#! /bin/sh
+
+name=fftw
+version=3.3.10
+revision=1
+tarball_url="https://www.fftw.org/fftw-${version}.tar.gz"
+tarball_blake2b="3663872bd95a01d2c79af185f53918e1d1a9c91c620082402772c07f25b9b77d4920a78dc686fac6b51aa961b8d62b7e2cef3f3031e096bed40ced80b59b29d5"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+_build_types="single float long-double"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    _build_dir=$(pwd -P)
+
+    for x in ${_build_types}; do
+        configure_flags="--enable-threads"
+        case $x in
+            single) configure_flags="$configure_flags --enable-sse --enable-avx --enable-single" ;;
+            float) configure_flags="$configure_flags --enable-sse2 --enable-avx" ;;
+            long-double) configure_flags="$configure_flags --enable-long-double" ;;
+        esac
+
+        mkdir -p "${_build_dir}/build-$x"
+        cd "${_build_dir}/build-$x"
+        autotools_configure $configure_flags
+    done
+}
+
+build() {
+    _build_dir=$(pwd -P)
+
+    for x in ${_build_types}; do
+        cd "${_build_dir}/build-$x"
+        make -j${parallelism}
+    done
+}
+
+package() {
+    for x in ${_build_types}; do
+        DESTDIR="${dest_dir}" make -C build-$x install
+    done
+
+    post_package_strip
+}

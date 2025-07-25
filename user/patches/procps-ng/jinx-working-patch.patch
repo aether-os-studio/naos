@@ -1,0 +1,22 @@
+diff -urN --no-dereference procps-ng-clean/src/w.c procps-ng-workdir/src/w.c
+--- procps-ng-clean/src/w.c
++++ procps-ng-workdir/src/w.c
+@@ -61,6 +61,7 @@
+ #      include <elogind/sd-login.h>
+ #      include <elogind/sd-daemon.h>
+ #endif
++#include <utmp.h>
+ 
+ #include "c.h"
+ #include "fileutils.h"
+diff -urN --no-dereference procps-ng-clean/src/watch.c procps-ng-workdir/src/watch.c
+--- procps-ng-clean/src/watch.c
++++ procps-ng-workdir/src/watch.c
+@@ -49,6 +49,7 @@
+ #include <sys/ioctl.h>
+ #include <sys/time.h>
+ #include <sys/wait.h>
++#include <sys/stat.h>
+ #include <termios.h>
+ #include <time.h>
+ #include <unistd.h>

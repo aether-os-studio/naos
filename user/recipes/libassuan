@@ -1,0 +1,29 @@
+#! /bin/sh
+
+name=libassuan
+version=3.0.2
+revision=1
+tarball_url="https://www.gnupg.org/ftp/gcrypt/libassuan/libassuan-${version}.tar.bz2"
+tarball_blake2b="1ce087f02f64dcae13a90c329010c08a4779b6e86fc5d019326d0d38ff125caea56a1db873ab083db8a762e548d1b5a6f0e2eba8480288d61a98a13b08e19173"
+imagedeps="build-essential"
+hostdeps="gcc pkg-config"
+deps="core-libs libgpg-error"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure \
+        --with-libgpg-error-prefix=${sysroot_dir}${prefix}
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

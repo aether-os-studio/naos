@@ -1,0 +1,29 @@
+#! /bin/sh
+
+name=libtirpc
+version=1.3.6
+revision=1
+tarball_url="https://downloads.sourceforge.net/libtirpc/libtirpc-${version}.tar.bz2"
+tarball_blake2b="521e1e3d2ceefd668f1b0d52b7c0342b97952d322eeb7bf740bb1eb1fb88a14b0a2fce57f07a9fd3797d289f57f511085924bba3d8984f15c799468d30f47500"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure \
+        CFLAGS="$TARGET_CFLAGS -std=gnu17" \
+        --disable-gssapi
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR=${dest_dir} make install
+
+    post_package_strip
+}

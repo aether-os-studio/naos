@@ -1,0 +1,31 @@
+diff -urN --no-dereference rust-cfg-expr-0.15.8-clean/src/targets/builtins.rs rust-cfg-expr-0.15.8-workdir/src/targets/builtins.rs
+--- rust-cfg-expr-0.15.8-clean/src/targets/builtins.rs
++++ rust-cfg-expr-0.15.8-workdir/src/targets/builtins.rs
+@@ -2874,6 +2874,19 @@
+         panic: Panic::unwind,
+     },
+     TargetInfo {
++        triple: Triple::new_const("x86_64-unknown-linux-mlibc"),
++        os: Some(Os::linux),
++        abi: None,
++        arch: Arch::x86_64,
++        env: Some(Env::mlibc),
++        vendor: Some(Vendor::unknown),
++        families: Families::unix,
++        pointer_width: 64,
++        endian: Endian::little,
++        has_atomics: HasAtomics::atomic_8_16_32_64_ptr,
++        panic: Panic::unwind,
++    },
++    TargetInfo {
+         triple: Triple::new_const("x86_64-unknown-linux-ohos"),
+         os: Some(Os::linux),
+         abi: None,
+@@ -3129,6 +3142,7 @@
+     pub const gnueabihf: Env = Env::new_const("gnueabihf");
+     pub const msvc: Env = Env::new_const("msvc");
+     pub const musl: Env = Env::new_const("musl");
++    pub const mlibc: Env = Env::new_const("mlibc");
+     pub const newlib: Env = Env::new_const("newlib");
+     pub const nto70: Env = Env::new_const("nto70");
+     pub const nto71: Env = Env::new_const("nto71");

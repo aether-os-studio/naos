@@ -1,0 +1,23 @@
+diff -urN --no-dereference xfce4-session-clean/xfce4-session/meson.build xfce4-session-workdir/xfce4-session/meson.build
+--- xfce4-session-clean/xfce4-session/meson.build
++++ xfce4-session-workdir/xfce4-session/meson.build
+@@ -89,7 +89,7 @@
+   'xfsm-chooser-icon.h',
+   input: 'xfsm-chooser-icon.png',
+   output: 'xfsm-chooser-icon.h',
+-  command: [gdk_pixbuf_csource, '--static', '--raw', '--stream', '--name=xfsm_chooser_icon_data', '@INPUT@'],
++  command: ['/usr/bin/gdk-pixbuf-csource', '--static', '--raw', '--stream', '--name=xfsm_chooser_icon_data', '@INPUT@'],
+   capture: true,
+ )
+ 
+diff -urN --no-dereference xfce4-session-clean/xfce4-session/xfsm-manager.c xfce4-session-workdir/xfce4-session/xfsm-manager.c
+--- xfce4-session-clean/xfce4-session/xfsm-manager.c
++++ xfce4-session-workdir/xfce4-session/xfsm-manager.c
+@@ -44,6 +44,7 @@
+ #include <unistd.h>
+ #endif
+ 
++#include <strings.h>
+ #include <gdk-pixbuf/gdk-pixdata.h>
+ #include <gio/gio.h>
+ #include <gtk/gtk.h>

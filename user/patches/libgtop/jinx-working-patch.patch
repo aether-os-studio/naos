@@ -1,0 +1,46 @@
+diff -urN --no-dereference libgtop-clean/Makefile.in libgtop-workdir/Makefile.in
+--- libgtop-clean/Makefile.in
++++ libgtop-workdir/Makefile.in
+@@ -445,7 +445,7 @@
+ top_srcdir = @top_srcdir@
+ @EXAMPLES_FALSE@EXAMPLES_DIR = 
+ @EXAMPLES_TRUE@EXAMPLES_DIR = examples
+-SUBDIRS = po misc include sysdeps lib src $(EXAMPLES_DIR) doc
++SUBDIRS = po misc include sysdeps lib src $(EXAMPLES_DIR)
+ libgtopinclude_HEADERS = glibtop.h libgtopconfig.h
+ libgtopincludedir = $(includedir)/libgtop-2.0
+ EXTRA_DIST = autogen.sh libgtop.spec.in copyright.txt \
+diff -urN --no-dereference libgtop-clean/configure libgtop-workdir/configure
+--- libgtop-clean/configure
++++ libgtop-workdir/configure
+@@ -3920,13 +3920,11 @@
+     INTROSPECTION_GIRDIR=
+     INTROSPECTION_TYPELIBDIR=
+     if test "x$found_introspection" = "xyes"; then
+-       INTROSPECTION_SCANNER=`$PKG_CONFIG --variable=g_ir_scanner gobject-introspection-1.0`
+-       INTROSPECTION_COMPILER=`$PKG_CONFIG --variable=g_ir_compiler gobject-introspection-1.0`
+-       INTROSPECTION_GENERATE=`$PKG_CONFIG --variable=g_ir_generate gobject-introspection-1.0`
+-       INTROSPECTION_GIRDIR=`$PKG_CONFIG --variable=girdir gobject-introspection-1.0`
+-       INTROSPECTION_GIRDIR=`echo ${INTROSPECTION_GIRDIR} | sed -e "s|${datadir}|\\\$(datadir)|"`
+-       INTROSPECTION_TYPELIBDIR="$($PKG_CONFIG --variable=typelibdir gobject-introspection-1.0)"
+-       INTROSPECTION_TYPELIBDIR=`echo ${INTROSPECTION_TYPELIBDIR} | sed -e "s|${libdir}|\\\$(libdir)|"`
++       INTROSPECTION_SCANNER=$INTROSPECTION_SCANNER_ENV
++       INTROSPECTION_COMPILER=$INTROSPECTION_COMPILER_ENV
++       INTROSPECTION_GENERATE=$INTROSPECTION_GENERATE_ENV
++       INTROSPECTION_GIRDIR=$INTROSPECTION_GIRDIR_ENV
++       INTROSPECTION_TYPELIBDIR=$INTROSPECTION_TYPELIBDIR_ENV
+        INTROSPECTION_CFLAGS=`$PKG_CONFIG --cflags gobject-introspection-1.0`
+        INTROSPECTION_LIBS=`$PKG_CONFIG --libs gobject-introspection-1.0`
+        INTROSPECTION_MAKEFILE=`$PKG_CONFIG --variable=datadir gobject-introspection-1.0`/gobject-introspection-1.0/Makefile.introspection
+diff -urN --no-dereference libgtop-clean/sysdeps/linux/sem_limits.c libgtop-workdir/sysdeps/linux/sem_limits.c
+--- libgtop-clean/sysdeps/linux/sem_limits.c
++++ libgtop-workdir/sysdeps/linux/sem_limits.c
+@@ -25,7 +25,7 @@
+ #include <sys/ipc.h>
+ #include <sys/sem.h>
+ 
+-#ifdef _SEM_SEMUN_UNDEFINED
++#if defined(_SEM_SEMUN_UNDEFINED) || defined(__mlibc__)
+ 
+ /* glibc 2.1 will no longer defines semun, instead it defines
+  * _SEM_SEMUN_UNDEFINED so users can define semun on their own.

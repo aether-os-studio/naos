@@ -1,0 +1,11 @@
+diff -urN --no-dereference libpcap-clean/bpf_filter.c libpcap-workdir/bpf_filter.c
+--- libpcap-clean/bpf_filter.c
++++ libpcap-workdir/bpf_filter.c
+@@ -40,6 +40,7 @@
+ 
+ #include <config.h>
+ 
++#include <sys/time.h>
+ #include <pcap/pcap-inttypes.h>
+ #include "pcap-types.h"
+ #include "extract.h"

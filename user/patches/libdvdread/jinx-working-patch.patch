@@ -1,0 +1,11 @@
+diff -urN --no-dereference libdvdread-clean/src/dvd_reader.c libdvdread-workdir/src/dvd_reader.c
+--- libdvdread-clean/src/dvd_reader.c
++++ libdvdread-workdir/src/dvd_reader.c
+@@ -29,6 +29,7 @@
+ #include <stdio.h>          /* fprintf */
+ #include <errno.h>          /* errno, EIN* */
+ #include <string.h>         /* memcpy, strlen */
++#include <strings.h>
+ #include <unistd.h>         /* pclose */
+ #include <limits.h>         /* PATH_MAX */
+ #include <dirent.h>         /* opendir, readdir */

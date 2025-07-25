@@ -1,0 +1,49 @@
+#! /bin/sh
+
+name=cups
+version=2.4.12
+revision=1
+tarball_url="https://github.com/OpenPrinting/cups/releases/download/v${version}/cups-${version}-source.tar.gz"
+tarball_blake2b="9392e13c016d89a1e801cc3d4ec9924ec300a916b12dc764a83ae94371f24e2dc13b105a7673ba88bf2054c9a30ada461d913e1c352f803960a103c4af3b78f6"
+imagedeps="build-essential"
+hostdeps="gcc pkg-config"
+deps="core-libs gnutls colord dbus libusb pam avahi libpaper"
+
+prepare() {
+    sed -i 's#@CUPS_HTMLVIEW@#firefox#' ${source_dir}/desktop/cups.desktop.in
+}
+
+configure() {
+    cp -rp "${source_dir}"/. ./
+
+        configure_script_path=./configure \
+    autotools_configure \
+        --with-rundir=/run/cups \
+        --with-system-groups=lpadmin \
+        --enable-libpaper \
+        --with-systemd=${prefix}/lib/systemd
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    echo "ServerName /run/cups/cups.sock" > ${dest_dir}/etc/cups/client.conf
+
+    chmod 644 ${dest_dir}/etc/pam.d/cups
+    cat > ${dest_dir}/etc/pam.d/cups << "EOF"
+# Begin /etc/pam.d/cups
+
+auth    include system-auth
+account include system-account
+session include system-session
+
+# End /etc/pam.d/cups
+EOF
+    chmod 444 ${dest_dir}/etc/pam.d/cups
+
+    post_package_strip
+}

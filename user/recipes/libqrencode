@@ -1,0 +1,24 @@
+#! /bin/sh
+
+name=libqrencode
+repology_id=qrencode
+version=4.1.1
+revision=1
+tarball_url="https://github.com/fukuchi/libqrencode/archive/v${version}/libqrencode-${version}.tar.gz"
+tarball_blake2b="b2397c52505301e147a584c4bc8c5f9ef418227fdc760c462c39815e5207c04258a8777f6c85883114f26675ef922038eacf758b8457fa1af5168eeceffda648"
+hostdeps="gcc pkg-config"
+deps="core-libs sdl2-compat libpng"
+
+configure() {
+    cmake_configure
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

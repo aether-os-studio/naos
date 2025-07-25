@@ -1,0 +1,31 @@
+#! /bin/sh
+
+name=libjxl
+version=0.11.1
+revision=1
+tarball_url="https://github.com/libjxl/libjxl/archive/v${version}/libjxl-${version}.tar.gz"
+tarball_blake2b="e2a96464fdcdff483de92e0f3301870a62f934976e6d78fd1efe30fe96f30ce6c3459843385712df7914ad53aeff3de1b84ac1a4d22294e909ed559d7c6c9db9"
+hostdeps="gcc pkg-config"
+deps="core-libs libavif gdk-pixbuf brotli giflib highway lcms libjpeg-turbo libwebp"
+
+configure() {
+    cmake_configure \
+        -DBUILD_TESTING=OFF \
+        -DJPEGXL_ENABLE_SKCMS=OFF \
+        -DJPEGXL_ENABLE_SJPEG=OFF \
+        -DJPEGXL_ENABLE_PLUGINS=ON
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    # Move installed pixbuf loaders to the correct location.
+    mv "${dest_dir}${sysroot_dir}${prefix}"/lib/gdk-pixbuf-2.0/ "${dest_dir}${prefix}"/lib/
+    rm -rfv ${dest_dir}${sysroot_dir}
+
+    post_package_strip
+}

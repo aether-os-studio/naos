@@ -1,3 +1,10 @@
-rootfs-*/
-ports/cache
-.build-stamp-*
+/rootfs-*
+/meta-sources
+/.build-stamp-*
+/.jinx-cache
+/builds
+/host-builds
+/host-pkgs
+/pkgs
+/sources
+/sysroot

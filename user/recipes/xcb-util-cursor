@@ -1,0 +1,27 @@
+#! /bin/sh
+
+name=xcb-util-cursor
+version=0.1.5
+revision=1
+tarball_url="https://xcb.freedesktop.org/dist/xcb-util-cursor-${version}.tar.xz"
+tarball_blake2b="a6c2d3d539191fdf896814711f7483ddd5e450dbd11293d8fbf9b04a05ebc3a0e2374b910bc43dd57a8d33936c611048a1ba20563f2df585b5ceed69332c1942"
+hostdeps="gcc pkg-config"
+deps="core-libs libxcb xcb-util-image xcb-util-renderutil"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

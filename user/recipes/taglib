@@ -1,0 +1,23 @@
+#! /bin/sh
+
+name=taglib
+version=2.0.2
+revision=1
+tarball_url="https://taglib.org/releases/taglib-${version}.tar.gz"
+tarball_blake2b="389af213bd467d68e2b0ca4485f51c35e660439baf2ecb7165069e5cb73589f5cf6c92d56e25780cea60e082b6fa51c5dde320dd25b8c5ef0e3b738ff0a6d4ea"
+hostdeps="gcc pkg-config"
+deps="core-libs utfcpp"
+
+configure() {
+    cmake_configure
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

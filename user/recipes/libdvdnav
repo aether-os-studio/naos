@@ -1,0 +1,27 @@
+#! /bin/sh
+
+name=libdvdnav
+version=6.1.1
+revision=1
+tarball_url="https://get.videolan.org/libdvdnav/${version}/libdvdnav-${version}.tar.bz2"
+tarball_blake2b="680e9636d407b0fb1eceb2c435d91fb5f7480b65e3c272f2750b3c9957ab5b85815ff12715fb98a5a91e5c0e4b2b2d488823525455c5ec2acd92b8dab197d518"
+hostdeps="gcc pkg-config"
+deps="core-libs libdvdread"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

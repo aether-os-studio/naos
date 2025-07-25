@@ -1,0 +1,32 @@
+#! /bin/sh
+
+name=glib2
+revision=1
+from_source=glib2
+imagedeps="python3-docutils build-essential libpcre2-dev pkg-config libffi-dev zlib1g-dev"
+
+configure() {
+    meson setup "${source_dir}" \
+        --prefix=${prefix} \
+        --sysconfdir=/etc \
+        --localstatedir=/var \
+        --libdir=lib \
+        --sbindir=bin \
+        --buildtype=release \
+        -Ddefault_library=shared \
+        -Dglib_debug=disabled \
+        -Dman-pages=enabled \
+        -Dsysprof=disabled \
+        -Dintrospection=disabled
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    strip_command=strip \
+        post_package_strip
+}

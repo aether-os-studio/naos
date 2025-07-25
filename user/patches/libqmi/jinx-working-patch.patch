@@ -1,0 +1,18 @@
+diff -urN --no-dereference libqmi-clean/src/qmi-firmware-update/qfu-at-device.c libqmi-workdir/src/qmi-firmware-update/qfu-at-device.c
+--- libqmi-clean/src/qmi-firmware-update/qfu-at-device.c
++++ libqmi-workdir/src/qmi-firmware-update/qfu-at-device.c
+@@ -27,6 +27,14 @@
+ #include <termios.h>
+ #include <unistd.h>
+ 
++#ifndef CBAUD
++#define CBAUD 0010017
++#endif
++
++#ifndef CRTSCTS
++#define CRTSCTS 020000000000
++#endif
++
+ #include <glib-object.h>
+ #include <gio/gio.h>
+ 

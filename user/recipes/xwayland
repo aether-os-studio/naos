@@ -1,0 +1,35 @@
+#! /bin/sh
+
+name=xwayland
+version=24.1.6
+revision=1
+tarball_url="https://www.x.org/pub/individual/xserver/xwayland-${version}.tar.xz"
+tarball_blake2b="e29a349bd7bc815a4005c8d7fe26697dc6444a3d866cee9673b0f72dbeb377e21c09800f16468a46f9b8f3ae6a10907ef0625e928acf991174ffd65fd01748be"
+imagedeps="pkg-config libwayland-bin"
+hostdeps="gcc pkg-config"
+deps="core-libs libxcvt pixman wayland-protocols libepoxy libtirpc mesa libgcrypt nettle xkbcomp libxfont2 systemd"
+
+regenerate() {
+    sed -i '/install_man/,$d' meson.build
+}
+
+configure() {
+    meson_configure \
+        -Dxvfb=false \
+        -Dxkb_dir=${prefix}/share/X11/xkb \
+        -Dxkb_output_dir=/var/lib/xkb
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    rm -rv ${dest_dir}${prefix}/lib/xorg
+    # This will be installed by xorg-server
+    rm -v ${dest_dir}${prefix}/share/man/man1/Xserver.1
+
+    post_package_strip
+}

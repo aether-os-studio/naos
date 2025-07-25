@@ -1,0 +1,24 @@
+#! /bin/sh
+
+name=faad
+repology_id=faad2
+version=2.11.2
+revision=1
+tarball_url="https://github.com/knik0/faad2/archive/${version}/faad2-${version}.tar.gz"
+tarball_blake2b="cf7852e1891af0eb254b6ec068bbe472dd8c2e465fc4104bd1a69d7cbbe2d36439e50ee252b0879e7a77fab9dcd8299056eff7d7855352a50ebe29978421e7f0"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    cmake_configure
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

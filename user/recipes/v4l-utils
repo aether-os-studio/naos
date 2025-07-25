@@ -1,0 +1,37 @@
+#! /bin/sh
+
+name=v4l-utils
+repology_id=video4linux
+repology_srcname=v4l-utils
+version=1.28.1
+revision=1
+tarball_url="https://linuxtv.org/downloads/v4l-utils/v4l-utils-${version}.tar.xz"
+tarball_blake2b="a68728ab6802754cd766453375e212624ee731a7fc9b0d0da6a4c62ce19e75968c5bdbefa33d2977d439a23f36f5c8ff83efc44dae65eed206a31ef19ea57363"
+imagedeps="libxml-parser-perl"
+hostdeps="gcc pkg-config"
+deps="core-libs alsa-lib glu libjpeg-turbo llvm sdl2-compat argp-standalone"
+
+configure() {
+    meson_configure \
+        -Dudevdir="${prefix}/lib/udev/rules.d" \
+        -Ddoxygen-doc=disabled \
+        -Dgconv=disabled
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    # Move v4l2-dbg from ${prefix}/sbin to ${prefix}/bin
+    mv -v "${dest_dir}${prefix}/sbin/v4l2-dbg" "${dest_dir}${prefix}/bin/"
+    rmdir -v "${dest_dir}${prefix}/sbin"
+
+    # Install contrib programs
+    install -Dvm755 contrib/test/v4l2gl "${dest_dir}${prefix}/bin/"
+    install -Dvm755 contrib/test/v4l2grab "${dest_dir}${prefix}/bin/"
+
+    post_package_strip
+}

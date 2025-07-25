@@ -1,0 +1,11 @@
+diff -urN --no-dereference libqrencode-clean/qrenc.c libqrencode-workdir/qrenc.c
+--- libqrencode-clean/qrenc.c
++++ libqrencode-workdir/qrenc.c
+@@ -25,6 +25,7 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <strings.h>
+ #include <getopt.h>
+ #include <errno.h>
+ #if HAVE_PNG

@@ -1,0 +1,24 @@
+#! /bin/sh
+
+name=libpaper
+version=2.2.6
+revision=1
+tarball_url="https://github.com/rrthomas/libpaper/releases/download/v${version}/libpaper-${version}.tar.gz"
+tarball_blake2b="ed7936a5437b6f7e963616ba03456a1dfe37b10d34857ac0581cde1143b49d2b88a50474f5b54a0ca8b6302eba213e8fdd0f3f9f260c174536e21b8d6d240a56"
+imagedeps="gperf"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

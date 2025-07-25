@@ -1,0 +1,27 @@
+#! /bin/sh
+
+name=xcb-util-wm
+version=0.4.2
+revision=1
+tarball_url="https://xcb.freedesktop.org/dist/xcb-util-wm-${version}.tar.xz"
+tarball_blake2b="091bdfe318d0ab37df934dd4ea75382a8792577e60471dd6bfb3de8966a9ac9c25c8776a9fa7afb0a0b924f952ebc17084070f1fcfe9665cb5c0e1b2d576d39b"
+hostdeps="gcc pkg-config"
+deps="core-libs libxcb xcb-util"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

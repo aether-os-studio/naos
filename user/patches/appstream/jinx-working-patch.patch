@@ -1,0 +1,12 @@
+diff -urN --no-dereference appstream-clean/data/meson.build appstream-workdir/data/meson.build
+--- appstream-clean/data/meson.build
++++ appstream-workdir/data/meson.build
+@@ -21,7 +21,7 @@
+ metainfo_with_relinfo = custom_target('gen-output',
+     input : ['../NEWS', 'org.freedesktop.appstream.cli.metainfo.xml'],
+     output : ['nol10n_withrelinfo_org.freedesktop.appstream.cli.metainfo.xml'],
+-    command : [ascli_exe, 'news-to-metainfo', '--limit=6', '@INPUT0@', '@INPUT1@', '@OUTPUT@']
++    command : ['/usr/bin/appstreamcli', 'news-to-metainfo', '--limit=6', '@INPUT0@', '@INPUT1@', '@OUTPUT@']
+ )
+ 
+ metainfo_i18n = i18n.itstool_join(

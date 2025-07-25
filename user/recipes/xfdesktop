@@ -1,0 +1,25 @@
+#! /bin/sh
+
+name=xfdesktop
+version=4.20.1
+revision=1
+tarball_url="https://archive.xfce.org/src/xfce/xfdesktop/4.20/xfdesktop-${version}.tar.bz2"
+tarball_blake2b="b9ce68433181221c20b15bab27d1652ef044b0a1524d9acfbff12b40034f629af8b99eebb6b8874816cc37f4db4874ceca03eec51c7cf091795f0b934d3fd20b"
+imagedeps="libwayland-bin pkg-config"
+hostdeps="gcc glib2 pkg-config"
+deps="core-libs exo gtk3 gtk-layer-shell libwnck3 libxfce4ui libxfce4util libxfce4windowing libyaml"
+
+configure() {
+    meson_configure \
+        -Dtests=false
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}

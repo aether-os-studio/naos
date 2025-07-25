@@ -1,0 +1,30 @@
+#! /bin/sh
+
+name=kbd
+version=2.6.3
+revision=1
+tarball_url="https://mirrors.edge.kernel.org/pub/linux/utils/kbd/kbd-${version}.tar.xz"
+tarball_blake2b="9c3f9e2ec9abd3a18bd4159b3a223deee6aee74610ed843582dc2a0397bb80075ae5e76a67d030fcd7a706641a8fb4604840eec67057271ce3e75a0630145942"
+hostdeps="gcc pkg-config"
+deps="core-libs pam"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure \
+        --disable-werror \
+        --disable-vlock \
+        --disable-tests
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}

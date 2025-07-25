@@ -1,0 +1,29 @@
+#! /bin/sh
+
+name=htop
+version=3.4.1
+revision=1
+tarball_url="https://github.com/htop-dev/htop/releases/download/${version}/htop-${version}.tar.xz"
+tarball_blake2b="dd520c754084a8ad15a04c19a70936053588b52ab2b2004530d0664c9595043ff2d56baa220f579a29cef99aa09a68a79e6d697a6015a87386ebf26998691b50"
+hostdeps="gcc pkg-config"
+deps="core-libs ncurses libcap"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure \
+        --enable-unicode \
+        --enable-capabilities
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}
