@@ -8,17 +8,20 @@ tarball_blake2b="2aec3b237d8cf2109186518a1604d9d10e0ef6739730988e01b91f20d48dcd7
 hostdeps="gcc pkg-config"
 deps="core-libs zlib"
 
+prepare() {
+    autotools_recursive_regen
+}
+
 configure() {
-    cmake_configure \
-        -DPNG_STATIC=OFF
+    autotools_configure
 }
 
 build() {
-    cmake --build . -j${parallelism}
+    make -j${parallelism}
 }
 
 package() {
-    DESTDIR="${dest_dir}" cmake --install .
+    DESTDIR="${dest_dir}" make install
 
     post_package_strip
 }

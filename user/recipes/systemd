@@ -8,7 +8,7 @@ tarball_blake2b="2c108eb694606d9996a25ab33feb6dbd01ec81d2e494dac37f01dee93b71136
 imagedeps="build-essential python3-jinja2 gperf"
 hostdeps="gcc pkg-config"
 # deps="core-libs gnutls kmod libcap libgcrypt libidn2 libpwquality libseccomp libxkbcommon p11-kit pam pcre2 qrencode"
-deps="core-libs kmod libcap pam util-linux acl"
+deps="core-libs kmod libcap util-linux pam acl"
 
 configure() {
     meson_configure \
@@ -22,7 +22,7 @@ configure() {
         -Drpmmacrosdir=no \
         -Dhomed=disabled \
         -Duserdb=false \
-        -Dmode=debug \
+        -Dmode=release \
         -Dpam=true \
         -Dpamconfdir=/etc/pam.d \
         -Ddev-kvm-mode=0660 \

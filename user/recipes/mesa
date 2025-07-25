@@ -5,38 +5,26 @@ version=25.0.5
 revision=1
 tarball_url="https://archive.mesa3d.org/mesa-${version}.tar.xz"
 tarball_blake2b="f17f8c2a733fd3c37f346b9304241dc1d13e01df9c8c723b73b10279dd3c2ebed062ec1f15cdbc8b9936bae840a087b23ac38cae7d8982228d582d468ab8c9c9"
-imagedeps="python3-mako python3-yaml glslang-tools libwayland-bin pkg-config"
+imagedeps="meson ninja-build python3-mako python3-yaml glslang-tools"
 hostdeps="gcc pkg-config"
-deps="core-libs libdrm libexpat libglvnd libx11 libxcb libxext libxfixes libxrandr libxshmfence libxxf86vm llvm systemd wayland-protocols xcb-util-keysyms zlib zstd"
+deps="core-libs llvm libexpat libx11 libxcb libxext libxshmfence libxxf86vm libxrandr zlib zstd"
 
 configure() {
     meson_configure \
-        -Db_ndebug=true \
-        -Dbuild-tests=false \
-        -Dshared-glapi=enabled \
-        -Dexpat=enabled \
-        -Dgbm=enabled \
-        -Dgles1=enabled \
-        -Dgles2=enabled \
-        -Dglvnd=enabled \
-        -Degl=enabled \
-        -Dllvm=enabled \
-        -Dzstd=enabled \
+        -Dglx=xlib \
+        -Dplatforms=x11 \
+        -Dgallium-drivers=llvmpipe,softpipe \
+        -Dvulkan-drivers=swrast \
         -Dosmesa=true \
-        -Dvideo-codecs=all_free \
-        -Dvulkan-drivers=amd,swrast,virtio \
-        -Dvulkan-layers=device-select,intel-nullhw,overlay \
-        -Dgallium-drivers=r300,r600,nouveau,virgl,svga,i915,crocus,zink,softpipe,llvmpipe \
-        -Dgallium-extra-hud=true \
-        -Dgallium-rusticl=false
+        -Dvideo-codecs=all
 }
 
 build() {
-    meson compile -j${parallelism}
+    ninja -j${parallelism}
 }
 
 package() {
-    DESTDIR="${dest_dir}" meson install --no-rebuild
+    DESTDIR="${dest_dir}" ninja install
 
     post_package_strip
 }

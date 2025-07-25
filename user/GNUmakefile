@@ -1,4 +1,4 @@
-export CWD = $(shell pwd)
+export CWD = "$(shell pwd)"
 
 all:
 	mkdir -p rootfs-$(ARCH)

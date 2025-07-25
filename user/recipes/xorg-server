@@ -6,26 +6,51 @@ revision=1
 tarball_url="https://www.x.org/releases/individual/xserver/xorg-server-${version}.tar.xz"
 tarball_blake2b="90a2aded6ab324dbaed976461062b7dccbc09466229cf8da8aaf0e9049144a8a5109ad35b1ee994451cdc5c33be45c6cb1f5a32ab6e8c021ca71f6ef180400f8"
 hostdeps="gcc pkg-config"
-deps="core-libs dbus xorg-util-macros xorg-proto xcb-proto xtrans libtirpc libdrm libpciaccess libxinerama libxcvt libxshmfence libx11 libxaw libxxf86vm libxkbfile libxmu libxfont2 libepoxy libxi libxv libxdamage libxrender libxrandr libxcb libxfixes libxext nettle mesa xorg-font-util xorg-xkbcomp xkeyboard-config pixman"
+deps="core-libs xorg-util-macros xorg-proto xcb-proto xtrans libxinerama libxcvt libxshmfence libx11 libxaw libxxf86vm libxkbfile libxmu libxfont2 libepoxy libxi libxv libxdamage libxrender libxrandr libxcb libxfixes libxext nettle xorg-xkbcomp xkeyboard-config pixman"
+
+prepare() {
+    autotools_recursive_regen
+}
 
 configure() {
-    meson_configure \
-        -Dglamor=true \
-        -Dsystemd_logind=true \
-        -Dxkb_dir=${prefix}/share/X11/xkb \
-        -Dxkb_output_dir=/var/lib/xkb \
-        -Dxkb_bin_dir=${prefix}/bin \
-        -Ddefault_font_path=${prefix}/share/fonts/X11/misc
-
-    sed -i 's|/sysroot||' include/dix-config.h
+    autotools_configure \
+        --with-xkb-bin-directory=/usr/bin \
+        --with-xkb-path=/usr/share/X11/xkb \
+        --with-xkb-output=/var/lib/xkb \
+        --with-fontrootdir=/usr/share/fonts/X11 \
+        --enable-xorg \
+        --enable-xv \
+        --enable-xvfb \
+        --disable-xephyr \
+        --disable-xnest \
+        --disable-suid-wrapper \
+        --disable-pciaccess \
+        --disable-dpms \
+        --enable-screensaver \
+        --disable-xres \
+        --disable-xvmc \
+        --disable-systemd-logind \
+        --disable-secure-rpc \
+        --disable-config-udev \
+        --disable-dri \
+        --disable-dri2 \
+        --disable-dri3 \
+        --disable-int10-module \
+        --disable-vgahw \
+        --disable-libdrm \
+        --disable-glamor \
+        --disable-glx
 }
 
 build() {
-    meson compile -j${parallelism}
+    make -j${parallelism}
 }
 
 package() {
-    DESTDIR="${dest_dir}" meson install --no-rebuild
+    DESTDIR="${dest_dir}" make install
+
+    mkdir -p "${dest_dir}"/etc/X11
+    cp -v "${base_dir}"/build-support/xorg-server/xorg.conf "${dest_dir}"/etc/X11/
 
     post_package_strip
 }

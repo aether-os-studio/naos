@@ -9,16 +9,20 @@ tarball_blake2b="a3850f8594e8b4240f731dce696c3ab8310c3b2419117dea3141a093a690d9b
 hostdeps="gcc pkg-config"
 deps="core-libs xorg-util-macros"
 
+prepare() {
+    autotools_recursive_regen
+}
+
 configure() {
-    meson_configure
+    autotools_configure
 }
 
 build() {
-    meson compile -j${parallelism}
+    make -j${parallelism}
 }
 
 package() {
-    DESTDIR="${dest_dir}" meson install --no-rebuild
+    DESTDIR="${dest_dir}" make install
 
     post_package_strip
 }

@@ -47,7 +47,7 @@ export NM := $(ARCH)-unknown-linux-gnu-nm
 export RANLIB := $(ARCH)-unknown-linux-gnu-ranlib
 endif
 
-export ROOT_DIR := $(shell pwd)
+export ROOT_DIR := "$(shell pwd)"
 
 KVM ?= 0
 HVF ?= 0
