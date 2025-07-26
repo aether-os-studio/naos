@@ -23,6 +23,8 @@ configure() {
         -Dbackend-rdp=false \
         -Dcolor-management-colord=false \
         -Ddemo-clients=false \
+        -Dlauncher-libseat=false \
+        -Dscreenshare=false \
         -Dsystemd=false \
         -Dremoting=false \
         -Drenderer-gl=false \
@@ -31,6 +33,9 @@ configure() {
         -Dlauncher-logind=false \
         -Dpipewire=false \
         -Dsimple-clients=[] \
+        -Dtest-junit-xml=false \
+        -Dtest-skip-is-failure=false \
+        -Dtest-gl-renderer=false \
         -Dxwayland=false
 }
 

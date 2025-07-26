@@ -290,23 +290,39 @@ void sysfs_init()
     handle->node = input1;
     input1->handle = handle;
 
-    vfs_node_t subsystem = vfs_child_append(input0, "subsystem", NULL);
+    vfs_node_t event0 = vfs_child_append(input0, "event0", NULL);
+    event0->type = file_dir;
+    event0->mode = 0644;
+    vfs_node_t event1 = vfs_child_append(input1, "event1", NULL);
+    event1->type = file_dir;
+    event1->mode = 0644;
+
+    vfs_node_t device = vfs_child_append(input0, "device", NULL);
+    device->type = file_dir | file_symlink;
+    device->mode = 0644;
+    device->linkto = input0;
+    device = vfs_child_append(input1, "device", NULL);
+    device->type = file_dir | file_symlink;
+    device->mode = 0644;
+    device->linkto = input1;
+
+    vfs_node_t subsystem = vfs_child_append(event0, "subsystem", NULL);
     subsystem->type = file_dir | file_symlink;
     subsystem->mode = 0644;
     subsystem->linkto = input_root;
-    subsystem = vfs_child_append(input1, "subsystem", NULL);
+    subsystem = vfs_child_append(event1, "subsystem", NULL);
     subsystem->type = file_dir | file_symlink;
     subsystem->mode = 0644;
     subsystem->linkto = input_root;
 
-    vfs_node_t uevent = vfs_child_append(input0, "uevent", NULL);
+    vfs_node_t uevent = vfs_child_append(event0, "uevent", NULL);
     uevent->type = file_none;
     uevent->mode = 0644;
     handle = malloc(sizeof(sysfs_handle_t));
     sprintf(handle->content, "MAJOR=13\nMINOR=0\nDEVNAME=input/event0\n");
     handle->node = uevent;
     uevent->handle = handle;
-    uevent = vfs_child_append(input1, "uevent", NULL);
+    uevent = vfs_child_append(event1, "uevent", NULL);
     uevent->type = file_none;
     uevent->mode = 0644;
     handle = malloc(sizeof(sysfs_handle_t));

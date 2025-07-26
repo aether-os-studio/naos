@@ -1,0 +1,12 @@
+diff -urN --no-dereference weston/tools/zunitc/src/zunitc_impl.c weston-workdir/tools/zunitc/src/zunitc_impl.c 
+--- weston/tools/zunitc/src/zunitc_impl.c  2025-07-26 20:20:16.281104760 +0800
++++ weston-workdir/tools/zunitc/src/zunitc_impl.c  2025-07-26 20:29:48.188122213 +0800
+@@ -36,6 +36,7 @@
+ #include <sys/wait.h>
+ #include <time.h>
+ #include <unistd.h>
++#include <signal.h>
+ 
+ #include "zunitc/zunitc_impl.h"
+ #include "zunitc/zunitc.h"
+ 
