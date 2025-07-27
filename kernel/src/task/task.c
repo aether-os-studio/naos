@@ -477,6 +477,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     execve_lock = true;
 
     vfs_node_t node = vfs_open(path);
+    node->refcount++;
     if (!node)
     {
         can_schedule = true;
@@ -768,18 +769,18 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     }
     free(new_envp);
 
-    for (uint64_t i = 3; i < MAX_FD_NUM; i++)
-    {
-        if (!current_task->fd_info->fds[i])
-            continue;
+    // for (uint64_t i = 3; i < MAX_FD_NUM; i++)
+    // {
+    //     if (!current_task->fd_info->fds[i])
+    //         continue;
 
-        if (current_task->fd_info->fds[i]->flags & O_CLOEXEC)
-        {
-            vfs_close(current_task->fd_info->fds[i]->node);
-            free(current_task->fd_info->fds[i]);
-            current_task->fd_info->fds[i] = NULL;
-        }
-    }
+    //     if (current_task->fd_info->fds[i]->flags & O_CLOEXEC)
+    //     {
+    //         vfs_close(current_task->fd_info->fds[i]->node);
+    //         free(current_task->fd_info->fds[i]);
+    //         current_task->fd_info->fds[i] = NULL;
+    //     }
+    // }
 
     current_task->cmdline = strdup(cmdline);
     current_task->load_start = load_start;

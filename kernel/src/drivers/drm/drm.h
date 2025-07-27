@@ -1177,10 +1177,22 @@ enum drm_blob_ids
 #define DRM_MODE_DPMS_SUSPEND 2
 #define DRM_MODE_DPMS_OFF 3
 
+#include <fs/fs_syscall.h>
+
+struct k_drm_event
+{
+    uint32_t type;
+    uint64_t user_data;
+    struct timespec timestamp;
+};
+
+#define DRM_MAX_EVENTS_COUNT 32
+
 typedef struct drm_device
 {
     int id;
     struct limine_framebuffer *framebuffer;
+    struct k_drm_event *drm_events[DRM_MAX_EVENTS_COUNT];
 } drm_device_t;
 
 void drm_init();

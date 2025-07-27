@@ -759,7 +759,6 @@ int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg)
 
 int vfs_poll(vfs_node_t node, size_t event)
 {
-    do_update(node);
     if (node->type & file_dir)
         return -1;
     return callbackof(node, poll)(node->handle, event);

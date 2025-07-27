@@ -71,10 +71,8 @@ bool devfs_close(void *current)
     {
         dev_input_event_t *event = handle->data;
         event->timesOpened--;
-        if (event->timesOpened)
-            return false;
     }
-    return true;
+    return false;
 }
 
 int devfs_ioctl(devfs_handle_t handle, ssize_t cmd, ssize_t arg)

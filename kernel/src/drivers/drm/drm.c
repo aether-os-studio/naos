@@ -1,6 +1,7 @@
 #include <drivers/bus/pci.h>
 #include <drivers/drm/drm_fourcc.h>
 #include <drivers/drm/drm.h>
+#include <fs/fs_syscall.h>
 #include <fs/vfs/dev.h>
 #include <fs/vfs/sys.h>
 #include <fs/vfs/proc.h>
@@ -284,13 +285,17 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         case DRM_PROPERTY_ID_PLANE_TYPE:
             prop->flags = DRM_MODE_PROP_ENUM;
             strncpy((char *)prop->name, "type", DRM_PROP_NAME_LEN);
-            prop->count_enum_blobs = 1;
+            prop->count_enum_blobs = 3;
 
             if (prop->enum_blob_ptr)
             {
                 struct drm_mode_property_enum *enums = (struct drm_mode_property_enum *)prop->enum_blob_ptr;
-                strncpy(enums[0].name, "Primary", DRM_PROP_NAME_LEN);
-                enums[0].value = DRM_PLANE_TYPE_PRIMARY;
+                strncpy(enums[0].name, "Overlay", DRM_PROP_NAME_LEN);
+                enums[0].value = DRM_PLANE_TYPE_OVERLAY;
+                strncpy(enums[1].name, "Primary", DRM_PROP_NAME_LEN);
+                enums[1].value = DRM_PLANE_TYPE_PRIMARY;
+                strncpy(enums[2].name, "Cursor", DRM_PROP_NAME_LEN);
+                enums[2].value = DRM_PLANE_TYPE_CURSOR;
             }
 
             prop->count_values = 3;
@@ -455,6 +460,18 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         if (flip->crtc_id != 1)
             return -ENOENT;
 
+        for (int i = 0; i < DRM_MAX_EVENTS_COUNT; i++)
+        {
+            if (!dev->drm_events[i])
+            {
+                dev->drm_events[i] = malloc(sizeof(struct k_drm_event));
+                dev->drm_events[i]->type = DRM_EVENT_FLIP_COMPLETE;
+                dev->drm_events[i]->user_data = flip->user_data;
+                dev->drm_events[i]->timestamp.tv_sec = nanoTime() / 1000000000ULL;
+                dev->drm_events[i]->timestamp.tv_nsec = 0;
+            }
+        }
+
         return 0;
     }
 
@@ -462,6 +479,60 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         printk("drm: Unsupported ioctl: cmd = %#010lx\n", cmd);
         return -ENOTTY;
     }
+}
+
+ssize_t drm_read(void *data, uint64_t offset, void *buf, uint64_t len)
+{
+    drm_device_t *dev = data;
+
+    if (dev->drm_events[0])
+    {
+        struct drm_event_vblank vbl = {
+            .base.type = dev->drm_events[0]->type,
+            .base.length = sizeof(vbl),
+            .user_data = dev->drm_events[0]->user_data,
+            .tv_sec = dev->drm_events[0]->timestamp.tv_sec,
+            .tv_usec = dev->drm_events[0]->timestamp.tv_nsec / 1000};
+
+        free(dev->drm_events[0]);
+
+        dev->drm_events[0] = NULL;
+
+        memmove(&dev->drm_events[0], &dev->drm_events[1], sizeof(struct k_drm_event *) * (DRM_MAX_EVENTS_COUNT - 1));
+
+        ssize_t ret = 0;
+
+        if (len >= sizeof(vbl))
+        {
+            memcpy(buf, &vbl, sizeof(vbl));
+            ret = sizeof(vbl);
+        }
+        else
+        {
+            ret = -EINVAL;
+        }
+
+        return ret;
+    }
+    else
+    {
+        // todo: block
+        return -EAGAIN;
+    }
+}
+
+ssize_t drm_poll(void *data, size_t event)
+{
+    drm_device_t *dev = (drm_device_t *)data;
+
+    ssize_t revent = 0;
+
+    if (event == EPOLLIN)
+    {
+        revent |= EPOLLIN;
+    }
+
+    return revent;
 }
 
 void *drm_map(void *data, void *addr, uint64_t offset, uint64_t len)
@@ -494,9 +565,10 @@ void drm_init()
     char buf[16];
     sprintf(buf, "dri/card%d", 0);
     drm_device_t *drm = malloc(sizeof(drm_device_t));
+    memset(drm, 0, sizeof(drm_device_t));
     drm->id = 1;
     drm->framebuffer = fb;
-    regist_dev(buf, NULL, NULL, drm_ioctl, NULL, drm_map, drm);
+    regist_dev(buf, drm_read, NULL, drm_ioctl, drm_poll, drm_map, drm);
 }
 
 void drm_init_sysfs()
