@@ -72,6 +72,480 @@ char release[] = BUILD_VERSION;
 char version[] = BUILD_VERSION;
 char machine[] = "x86_64";
 
+syscall_handle_t syscall_handlers[MAX_SYSCALL_NUM];
+
+uint64_t sys_getrandom(uint64_t arg1, uint64_t arg2, uint64_t arg3)
+{
+    void *buffer = (void *)arg1;
+    size_t get_len = (size_t)arg2;
+    uint32_t flags = (uint32_t)arg3;
+
+    if (get_len == 0 || get_len > 1024 * 1024)
+    {
+        return (uint64_t)-EINVAL;
+    }
+
+    for (size_t i = 0; i < get_len; i++)
+    {
+        tm time;
+        time_read(&time);
+        uint64_t next = mktime(&time);
+        next = next * 1103515245 + 12345;
+        uint8_t rand_byte = ((uint8_t)(next / 65536) % 32768);
+        memcpy(buffer + i, &rand_byte, 1);
+    }
+
+    return get_len;
+}
+
+uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3)
+{
+    switch (arg1)
+    {
+    case 1: // CLOCK_MONOTONIC
+    case 6: // CLOCK_MONOTONIC_COARSE
+    case 4: // CLOCK_MONOTONIC_RAW
+    {
+        if (arg2)
+        {
+            struct timespec *ts = (struct timespec *)arg2;
+            uint64_t nano = nanoTime();
+            ts->tv_sec = nano / 1000000000ULL;
+            ts->tv_nsec = nano % 1000000000ULL;
+        }
+        return 0;
+    }
+    case 0:
+    {
+        tm time;
+        time_read(&time);
+        uint64_t timestamp = mktime(&time);
+
+        if (arg2)
+        {
+            struct timespec *ts = (struct timespec *)arg2;
+            ts->tv_sec = timestamp;
+            ts->tv_nsec = 0;
+        }
+        return 0;
+    }
+    default:
+        printk("clock not supported\n");
+        return (uint64_t)-EINVAL;
+    }
+}
+
+uint64_t sys_clock_getres(uint64_t arg1, uint64_t arg2)
+{
+    ((struct timespec *)arg2)->tv_sec = 0;
+    ((struct timespec *)arg2)->tv_nsec = 1000000;
+    return 0;
+}
+
+uint64_t sys_accept_normal(uint64_t arg1, struct sockaddr_un *arg2, socklen_t *arg3)
+{
+    return sys_accept(arg1, arg2, arg3, 0);
+}
+
+uint64_t sys_gettimeofday(uint64_t arg1)
+{
+    tm time_day;
+    time_read(&time_day);
+    uint64_t timestamp_day = mktime(&time_day);
+    if (arg1)
+    {
+        struct timespec *ts = (struct timespec *)arg1;
+        ts->tv_sec = timestamp_day;
+        ts->tv_nsec = 0;
+    }
+    return 0;
+}
+
+uint64_t sys_uname(uint64_t arg1)
+{
+    struct utsname *utsname = (struct utsname *)arg1;
+    memcpy(utsname->sysname, sysname, sizeof(sysname));
+    memcpy(utsname->nodename, nodename, sizeof(nodename));
+    memcpy(utsname->release, release, sizeof(release));
+    memcpy(utsname->version, version, sizeof(version));
+    memcpy(utsname->machine, machine, sizeof(machine));
+    return 0;
+}
+
+uint64_t sys_eventfd(uint64_t arg1)
+{
+    return sys_eventfd2(arg1, 0);
+}
+
+void syscall_handler_init()
+{
+    memset(syscall_handlers, 0, MAX_SYSCALL_NUM);
+
+    syscall_handlers[SYS_READ] = (syscall_handle_t)sys_read;
+    syscall_handlers[SYS_WRITE] = (syscall_handle_t)sys_write;
+    syscall_handlers[SYS_OPEN] = (syscall_handle_t)sys_open;
+    syscall_handlers[SYS_CLOSE] = (syscall_handle_t)sys_close;
+    syscall_handlers[SYS_STAT] = (syscall_handle_t)sys_stat;
+    syscall_handlers[SYS_FSTAT] = (syscall_handle_t)sys_fstat;
+    syscall_handlers[SYS_LSTAT] = (syscall_handle_t)sys_stat;
+    syscall_handlers[SYS_POLL] = (syscall_handle_t)sys_poll;
+    syscall_handlers[SYS_LSEEK] = (syscall_handle_t)sys_lseek;
+    syscall_handlers[SYS_MMAP] = (syscall_handle_t)sys_mmap;
+    syscall_handlers[SYS_MPROTECT] = (syscall_handle_t)sys_mprotect;
+    syscall_handlers[SYS_MUNMAP] = (syscall_handle_t)sys_munmap;
+    syscall_handlers[SYS_BRK] = (syscall_handle_t)sys_brk;
+    syscall_handlers[SYS_RT_SIGACTION] = (syscall_handle_t)sys_sigaction;
+    syscall_handlers[SYS_RT_SIGPROCMASK] = (syscall_handle_t)sys_ssetmask;
+    syscall_handlers[SYS_RT_SIGRETURN] = (syscall_handle_t)sys_sigreturn;
+    syscall_handlers[SYS_IOCTL] = (syscall_handle_t)sys_ioctl;
+    syscall_handlers[SYS_PREAD64] = (syscall_handle_t)sys_pread64;
+    syscall_handlers[SYS_PWRITE64] = (syscall_handle_t)sys_pwrite64;
+    syscall_handlers[SYS_READV] = (syscall_handle_t)sys_readv;
+    syscall_handlers[SYS_WRITEV] = (syscall_handle_t)sys_writev;
+    syscall_handlers[SYS_ACCESS] = (syscall_handle_t)sys_access;
+    syscall_handlers[SYS_PIPE] = (syscall_handle_t)sys_pipe;
+    syscall_handlers[SYS_SELECT] = (syscall_handle_t)sys_select;
+    syscall_handlers[SYS_SCHED_YIELD] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_MREMAP] = (syscall_handle_t)sys_mremap;
+    syscall_handlers[SYS_MSYNC] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_MINCORE] = (syscall_handle_t)sys_mincore;
+    syscall_handlers[SYS_MADVISE] = (syscall_handle_t)dummy_syscall_handler;
+    // syscall_handlers[SYS_SHMGET] = (syscall_handle_t)sys_shmget;
+    // syscall_handlers[SYS_SHMAT] = (syscall_handle_t)sys_shmat;
+    // syscall_handlers[SYS_SHMCTL] = (syscall_handle_t)sys_shmctl;
+    syscall_handlers[SYS_DUP] = (syscall_handle_t)sys_dup;
+    syscall_handlers[SYS_DUP2] = (syscall_handle_t)sys_dup2;
+    syscall_handlers[SYS_PAUSE] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_NANOSLEEP] = (syscall_handle_t)sys_nanosleep;
+    // syscall_handlers[SYS_GETITIMER] = (syscall_handle_t)sys_getitimer;
+    // syscall_handlers[SYS_ALARM] = (syscall_handle_t)sys_alarm;
+    syscall_handlers[SYS_SETITIMER] = (syscall_handle_t)sys_setitimer;
+    syscall_handlers[SYS_GETPID] = (syscall_handle_t)sys_getpid;
+    // syscall_handlers[SYS_SENDFILE] = (syscall_handle_t)sys_sendfile;
+    syscall_handlers[SYS_SOCKET] = (syscall_handle_t)sys_socket;
+    syscall_handlers[SYS_CONNECT] = (syscall_handle_t)sys_connect;
+    syscall_handlers[SYS_ACCEPT] = (syscall_handle_t)sys_accept;
+    syscall_handlers[SYS_SENDTO] = (syscall_handle_t)sys_send;
+    syscall_handlers[SYS_RECVFROM] = (syscall_handle_t)sys_recv;
+    syscall_handlers[SYS_SENDMSG] = (syscall_handle_t)sys_sendmsg;
+    syscall_handlers[SYS_RECVMSG] = (syscall_handle_t)sys_recvmsg;
+    syscall_handlers[SYS_SHUTDOWN] = (syscall_handle_t)sys_shutdown;
+    syscall_handlers[SYS_BIND] = (syscall_handle_t)sys_bind;
+    syscall_handlers[SYS_LISTEN] = (syscall_handle_t)sys_listen;
+    syscall_handlers[SYS_GETSOCKNAME] = (syscall_handle_t)sys_getsockname;
+    syscall_handlers[SYS_GETPEERNAME] = (syscall_handle_t)sys_getpeername;
+    syscall_handlers[SYS_SOCKETPAIR] = (syscall_handle_t)sys_socketpair;
+    syscall_handlers[SYS_SETSOCKOPT] = (syscall_handle_t)sys_setsockopt;
+    syscall_handlers[SYS_GETSOCKOPT] = (syscall_handle_t)sys_getsockopt;
+    syscall_handlers[SYS_CLONE] = (syscall_handle_t)sys_clone;
+    syscall_handlers[SYS_FORK] = (syscall_handle_t)sys_fork;
+    syscall_handlers[SYS_VFORK] = (syscall_handle_t)sys_vfork;
+    syscall_handlers[SYS_EXECVE] = (syscall_handle_t)task_execve;
+    syscall_handlers[SYS_EXIT] = (syscall_handle_t)task_exit;
+    syscall_handlers[SYS_WAIT4] = (syscall_handle_t)sys_waitpid;
+    syscall_handlers[SYS_KILL] = (syscall_handle_t)sys_kill;
+    syscall_handlers[SYS_UNAME] = (syscall_handle_t)sys_uname;
+    // syscall_handlers[SYS_SEMGET] = (syscall_handle_t)sys_semget;
+    // syscall_handlers[SYS_SEMOP] = (syscall_handle_t)sys_semop;
+    // syscall_handlers[SYS_SEMCTL] = (syscall_handle_t)sys_semctl;
+    // syscall_handlers[SYS_SHMDT] = (syscall_handle_t)sys_shmdt;
+    // syscall_handlers[SYS_MSGGET] = (syscall_handle_t)sys_msgget;
+    // syscall_handlers[SYS_MSGSND] = (syscall_handle_t)sys_msgsnd;
+    // syscall_handlers[SYS_MSGRCV] = (syscall_handle_t)sys_msgrcv;
+    // syscall_handlers[SYS_MSGCTL] = (syscall_handle_t)sys_msgctl;
+    syscall_handlers[SYS_FCNTL] = (syscall_handle_t)sys_fcntl;
+    syscall_handlers[SYS_FLOCK] = (syscall_handle_t)sys_flock;
+    syscall_handlers[SYS_FSYNC] = (syscall_handle_t)dummy_syscall_handler;
+    // syscall_handlers[SYS_FDATASYNC] = (syscall_handle_t)sys_fdatasync;
+    // syscall_handlers[SYS_TRUNCATE] = (syscall_handle_t)sys_truncate;
+    // syscall_handlers[SYS_FTRUNCATE] = (syscall_handle_t)sys_ftruncate;
+    syscall_handlers[SYS_GETDENTS] = (syscall_handle_t)sys_getdents;
+    syscall_handlers[SYS_GETCWD] = (syscall_handle_t)sys_getcwd;
+    syscall_handlers[SYS_CHDIR] = (syscall_handle_t)sys_chdir;
+    syscall_handlers[SYS_FCHDIR] = (syscall_handle_t)sys_fchdir;
+    syscall_handlers[SYS_RENAME] = (syscall_handle_t)sys_rename;
+    syscall_handlers[SYS_MKDIR] = (syscall_handle_t)sys_mkdir;
+    syscall_handlers[SYS_RMDIR] = (syscall_handle_t)sys_rmdir;
+    // syscall_handlers[SYS_CREAT] = (syscall_handle_t)sys_creat;
+    syscall_handlers[SYS_LINK] = (syscall_handle_t)sys_link;
+    syscall_handlers[SYS_UNLINK] = (syscall_handle_t)sys_unlink;
+    syscall_handlers[SYS_SYMLINK] = (syscall_handle_t)sys_symlink;
+    syscall_handlers[SYS_READLINK] = (syscall_handle_t)sys_readlink;
+    // syscall_handlers[SYS_CHMOD] = (syscall_handle_t)sys_chmod;
+    // syscall_handlers[SYS_FCHMOD] = (syscall_handle_t)sys_fchmod;
+    // syscall_handlers[SYS_CHOWN] = (syscall_handle_t)sys_chown;
+    // syscall_handlers[SYS_FCHOWN] = (syscall_handle_t)sys_fchown;
+    // syscall_handlers[SYS_LCHOWN] = (syscall_handle_t)sys_lchown;
+    // syscall_handlers[SYS_UMASK] = (syscall_handle_t)sys_umask;
+    syscall_handlers[SYS_GETTIMEOFDAY] = (syscall_handle_t)sys_gettimeofday;
+    syscall_handlers[SYS_GETRLIMIT] = (syscall_handle_t)sys_get_rlimit;
+    // syscall_handlers[SYS_GETRUSAGE] = (syscall_handle_t)sys_getrusage;
+    // syscall_handlers[SYS_SYSINFO] = (syscall_handle_t)sys_sysinfo;
+    // syscall_handlers[SYS_TIMES] = (syscall_handle_t)sys_times;
+    // syscall_handlers[SYS_PTRACE] = (syscall_handle_t)sys_ptrace;
+    syscall_handlers[SYS_GETUID] = (syscall_handle_t)sys_getuid;
+    // syscall_handlers[SYS_SYSLOG] = (syscall_handle_t)sys_syslog;
+    syscall_handlers[SYS_GETGID] = (syscall_handle_t)sys_getgid;
+    syscall_handlers[SYS_SETUID] = (syscall_handle_t)sys_setuid;
+    syscall_handlers[SYS_SETGID] = (syscall_handle_t)sys_setgid;
+    syscall_handlers[SYS_GETEUID] = (syscall_handle_t)sys_geteuid;
+    syscall_handlers[SYS_GETEGID] = (syscall_handle_t)sys_getegid;
+    syscall_handlers[SYS_SETPGID] = (syscall_handle_t)sys_setpgid;
+    syscall_handlers[SYS_GETPPID] = (syscall_handle_t)sys_getppid;
+    // syscall_handlers[SYS_GETPGRP] = (syscall_handle_t)sys_getpgrp;
+    syscall_handlers[SYS_SETSID] = (syscall_handle_t)sys_setsid;
+    // syscall_handlers[SYS_SETREUID] = (syscall_handle_t)sys_setreuid;
+    // syscall_handlers[SYS_SETREGID] = (syscall_handle_t)sys_setregid;
+    // syscall_handlers[SYS_GETGROUPS] = (syscall_handle_t)sys_getgroups;
+    // syscall_handlers[SYS_SETGROUPS] = (syscall_handle_t)sys_setgroups;
+    syscall_handlers[SYS_SETRESUID] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_GETRESUID] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_SETRESGID] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_GETRESGID] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_GETPGID] = (syscall_handle_t)sys_getpgid;
+    // syscall_handlers[SYS_SETFSUID] = (syscall_handle_t)sys_setfsuid;
+    // syscall_handlers[SYS_SETFSGID] = (syscall_handle_t)sys_setfsgid;
+    syscall_handlers[SYS_GETSID] = (syscall_handle_t)sys_getsid;
+    // syscall_handlers[SYS_CAPGET] = (syscall_handle_t)sys_capget;
+    // syscall_handlers[SYS_CAPSET] = (syscall_handle_t)sys_capset;
+    // syscall_handlers[SYS_RT_SIGPENDING] = (syscall_handle_t)sys_rt_sigpending;
+    // syscall_handlers[SYS_RT_SIGTIMEDWAIT] = (syscall_handle_t)sys_rt_sigtimedwait;
+    // syscall_handlers[SYS_RT_SIGQUEUEINFO] = (syscall_handle_t)sys_rt_sigqueueinfo;
+    syscall_handlers[SYS_RT_SIGSUSPEND] = (syscall_handle_t)sys_sigsuspend;
+    // syscall_handlers[SYS_SIGALTSTACK] = (syscall_handle_t)sys_sigaltstack;
+    // syscall_handlers[SYS_UTIME] = (syscall_handle_t)sys_utime;
+    // syscall_handlers[SYS_MKNOD] = (syscall_handle_t)sys_mknod;
+    // syscall_handlers[SYS_USELIB] = (syscall_handle_t)sys_uselib;
+    // syscall_handlers[SYS_PERSONALITY] = (syscall_handle_t)sys_personality;
+    // syscall_handlers[SYS_USTAT] = (syscall_handle_t)sys_ustat;
+    // syscall_handlers[SYS_STATFS] = (syscall_handle_t)sys_statfs;
+    // syscall_handlers[SYS_FSTATFS] = (syscall_handle_t)sys_fstatfs;
+    // syscall_handlers[SYS_SYSFS] = (syscall_handle_t)sys_sysfs;
+    // syscall_handlers[SYS_GETPRIORITY] = (syscall_handle_t)sys_getpriority;
+    // syscall_handlers[SYS_SETPRIORITY] = (syscall_handle_t)sys_setpriority;
+    // syscall_handlers[SYS_SCHED_SETPARAM] = (syscall_handle_t)sys_sched_setparam;
+    // syscall_handlers[SYS_SCHED_GETPARAM] = (syscall_handle_t)sys_sched_getparam;
+    // syscall_handlers[SYS_SCHED_SETSCHEDULER] = (syscall_handle_t)sys_sched_setscheduler;
+    // syscall_handlers[SYS_SCHED_GETSCHEDULER] = (syscall_handle_t)sys_sched_getscheduler;
+    // syscall_handlers[SYS_SCHED_GET_PRIORITY_MAX] = (syscall_handle_t)sys_sched_get_priority_max;
+    // syscall_handlers[SYS_SCHED_GET_PRIORITY_MIN] = (syscall_handle_t)sys_sched_get_priority_min;
+    // syscall_handlers[SYS_SCHED_RR_GET_INTERVAL] = (syscall_handle_t)sys_sched_rr_get_interval;
+    // syscall_handlers[SYS_MLOCK] = (syscall_handle_t)sys_mlock;
+    // syscall_handlers[SYS_MUNLOCK] = (syscall_handle_t)sys_munlock;
+    // syscall_handlers[SYS_MLOCKALL] = (syscall_handle_t)sys_mlockall;
+    // syscall_handlers[SYS_MUNLOCKALL] = (syscall_handle_t)sys_munlockall;
+    // syscall_handlers[SYS_VHANGUP] = (syscall_handle_t)sys_vhangup;
+    // syscall_handlers[SYS_MODIFY_LDT] = (syscall_handle_t)sys_modify_ldt;
+    // syscall_handlers[SYS_PIVOT_ROOT] = (syscall_handle_t)sys_pivot_root;
+    // syscall_handlers[SYS__SYSCTL] = (syscall_handle_t)sys__sysctl;
+    syscall_handlers[SYS_PRCTL] = (syscall_handle_t)sys_prctl;
+    syscall_handlers[SYS_ARCH_PRCTL] = (syscall_handle_t)sys_arch_prctl;
+    // syscall_handlers[SYS_ADJTIMEX] = (syscall_handle_t)sys_adjtimex;
+    // syscall_handlers[SYS_SETRLIMIT] = (syscall_handle_t)sys_setrlimit;
+    // syscall_handlers[SYS_CHROOT] = (syscall_handle_t)sys_chroot;
+    // syscall_handlers[SYS_SYNC] = (syscall_handle_t)sys_sync;
+    // syscall_handlers[SYS_ACCT] = (syscall_handle_t)sys_acct;
+    // syscall_handlers[SYS_SETTIMEOFDAY] = (syscall_handle_t)sys_settimeofday;
+    syscall_handlers[SYS_MOUNT] = (syscall_handle_t)sys_mount;
+    // syscall_handlers[SYS_UMOUNT2] = (syscall_handle_t)sys_umount2;
+    // syscall_handlers[SYS_SWAPON] = (syscall_handle_t)sys_swapon;
+    // syscall_handlers[SYS_SWAPOFF] = (syscall_handle_t)sys_swapoff;
+    syscall_handlers[SYS_REBOOT] = (syscall_handle_t)sys_reboot;
+    // syscall_handlers[SYS_SETHOSTNAME] = (syscall_handle_t)sys_sethostname;
+    // syscall_handlers[SYS_SETDOMAINNAME] = (syscall_handle_t)sys_setdomainname;
+    // syscall_handlers[SYS_IOPL] = (syscall_handle_t)sys_iopl;
+    // syscall_handlers[SYS_IOPERM] = (syscall_handle_t)sys_ioperm;
+    // syscall_handlers[SYS_CREATE_MODULE] = (syscall_handle_t)sys_create_module;
+    // syscall_handlers[SYS_INIT_MODULE] = (syscall_handle_t)sys_init_module;
+    // syscall_handlers[SYS_DELETE_MODULE] = (syscall_handle_t)sys_delete_module;
+    // syscall_handlers[SYS_GET_KERNEL_SYMS] = (syscall_handle_t)sys_get_kernel_syms;
+    // syscall_handlers[SYS_QUERY_MODULE] = (syscall_handle_t)sys_query_module;
+    // syscall_handlers[SYS_QUOTACTL] = (syscall_handle_t)sys_quotactl;
+    // syscall_handlers[SYS_NFSSERVCTL] = (syscall_handle_t)sys_nfsservctl;
+    // syscall_handlers[SYS_GETPMSG] = (syscall_handle_t)sys_getpmsg;
+    // syscall_handlers[SYS_PUTPMSG] = (syscall_handle_t)sys_putpmsg;
+    // syscall_handlers[SYS_AFS_SYSCALL] = (syscall_handle_t)sys_afs_syscall;
+    // syscall_handlers[SYS_TUXCALL] = (syscall_handle_t)sys_tuxcall;
+    // syscall_handlers[SYS_SECURITY] = (syscall_handle_t)sys_security;
+    syscall_handlers[SYS_GETTID] = (syscall_handle_t)sys_getpid;
+    // syscall_handlers[SYS_READAHEAD] = (syscall_handle_t)sys_readahead;
+    // syscall_handlers[SYS_SETXATTR] = (syscall_handle_t)sys_setxattr;
+    // syscall_handlers[SYS_LSETXATTR] = (syscall_handle_t)sys_lsetxattr;
+    // syscall_handlers[SYS_FSETXATTR] = (syscall_handle_t)sys_fsetxattr;
+    // syscall_handlers[SYS_GETXATTR] = (syscall_handle_t)sys_getxattr;
+    // syscall_handlers[SYS_LGETXATTR] = (syscall_handle_t)sys_lgetxattr;
+    // syscall_handlers[SYS_FGETXATTR] = (syscall_handle_t)sys_fgetxattr;
+    // syscall_handlers[SYS_LISTXATTR] = (syscall_handle_t)sys_listxattr;
+    // syscall_handlers[SYS_LLISTXATTR] = (syscall_handle_t)sys_llistxattr;
+    // syscall_handlers[SYS_FLISTXATTR] = (syscall_handle_t)sys_flistxattr;
+    // syscall_handlers[SYS_REMOVEXATTR] = (syscall_handle_t)sys_removexattr;
+    // syscall_handlers[SYS_LREMOVEXATTR] = (syscall_handle_t)sys_lremovexattr;
+    // syscall_handlers[SYS_FREMOVEXATTR] = (syscall_handle_t)sys_fremovexattr;
+    // syscall_handlers[SYS_TKILL] = (syscall_handle_t)sys_tkill;
+    // syscall_handlers[SYS_TIME] = (syscall_handle_t)sys_time;
+    syscall_handlers[SYS_FUTEX] = (syscall_handle_t)sys_futex;
+    // syscall_handlers[SYS_SCHED_SETAFFINITY] = (syscall_handle_t)sys_sched_setaffinity;
+    // syscall_handlers[SYS_SCHED_GETAFFINITY] = (syscall_handle_t)sys_sched_getaffinity;
+    // syscall_handlers[SYS_SET_THREAD_AREA] = (syscall_handle_t)sys_set_thread_area;
+    // syscall_handlers[SYS_IO_SETUP] = (syscall_handle_t)sys_io_setup;
+    // syscall_handlers[SYS_IO_DESTROY] = (syscall_handle_t)sys_io_destroy;
+    // syscall_handlers[SYS_IO_GETEVENTS] = (syscall_handle_t)sys_io_getevents;
+    // syscall_handlers[SYS_IO_SUBMIT] = (syscall_handle_t)sys_io_submit;
+    // syscall_handlers[SYS_IO_CANCEL] = (syscall_handle_t)sys_io_cancel;
+    // syscall_handlers[SYS_GET_THREAD_AREA] = (syscall_handle_t)sys_get_thread_area;
+    // syscall_handlers[SYS_LOOKUP_DCOOKIE] = (syscall_handle_t)sys_lookup_dcookie;
+    syscall_handlers[SYS_EPOLL_CREATE] = (syscall_handle_t)sys_epoll_create;
+    // syscall_handlers[SYS_EPOLL_CTL_OLD] = (syscall_handle_t)sys_epoll_ctl_old;
+    // syscall_handlers[SYS_EPOLL_WAIT_OLD] = (syscall_handle_t)sys_epoll_wait_old;
+    // syscall_handlers[SYS_REMAP_FILE_PAGES] = (syscall_handle_t)sys_remap_file_pages;
+    syscall_handlers[SYS_GETDENTS64] = (syscall_handle_t)sys_getdents;
+    syscall_handlers[SYS_SET_TID_ADDRESS] = (syscall_handle_t)dummy_syscall_handler;
+    // syscall_handlers[SYS_RESTART_SYSCALL] = (syscall_handle_t)sys_restart_syscall;
+    // syscall_handlers[SYS_SEMTIMEDOP] = (syscall_handle_t)sys_semtimedop;
+    // syscall_handlers[SYS_FADVISE64] = (syscall_handle_t)sys_fadvise64;
+    // syscall_handlers[SYS_TIMER_CREATE] = (syscall_handle_t)sys_timer_create;
+    // syscall_handlers[SYS_TIMER_SETTIME] = (syscall_handle_t)sys_timer_settime;
+    // syscall_handlers[SYS_TIMER_GETTIME] = (syscall_handle_t)sys_timer_gettime;
+    // syscall_handlers[SYS_TIMER_GETOVERRUN] = (syscall_handle_t)sys_timer_getoverrun;
+    // syscall_handlers[SYS_TIMER_DELETE] = (syscall_handle_t)sys_timer_delete;
+    // syscall_handlers[SYS_CLOCK_SETTIME] = (syscall_handle_t)sys_clock_settime;
+    syscall_handlers[SYS_CLOCK_GETTIME] = (syscall_handle_t)sys_clock_gettime;
+    syscall_handlers[SYS_CLOCK_GETRES] = (syscall_handle_t)sys_clock_getres;
+    // syscall_handlers[SYS_CLOCK_NANOSLEEP] = (syscall_handle_t)sys_clock_nanosleep;
+    syscall_handlers[SYS_EXIT_GROUP] = (syscall_handle_t)task_exit;
+    syscall_handlers[SYS_EPOLL_WAIT] = (syscall_handle_t)sys_epoll_wait;
+    syscall_handlers[SYS_EPOLL_CTL] = (syscall_handle_t)sys_epoll_ctl;
+    // syscall_handlers[SYS_TGKILL] = (syscall_handle_t)sys_tgkill;
+    // syscall_handlers[SYS_UTIMES] = (syscall_handle_t)sys_utimes;
+    // syscall_handlers[SYS_VSERVER] = (syscall_handle_t)sys_vserver;
+    // syscall_handlers[SYS_MBIND] = (syscall_handle_t)sys_mbind;
+    // syscall_handlers[SYS_SET_MEMPOLICY] = (syscall_handle_t)sys_set_mempolicy;
+    // syscall_handlers[SYS_GET_MEMPOLICY] = (syscall_handle_t)sys_get_mempolicy;
+    // syscall_handlers[SYS_MQ_OPEN] = (syscall_handle_t)sys_mq_open;
+    // syscall_handlers[SYS_MQ_UNLINK] = (syscall_handle_t)sys_mq_unlink;
+    // syscall_handlers[SYS_MQ_TIMEDSEND] = (syscall_handle_t)sys_mq_timedsend;
+    // syscall_handlers[SYS_MQ_TIMEDRECEIVE] = (syscall_handle_t)sys_mq_timedreceive;
+    // syscall_handlers[SYS_MQ_NOTIFY] = (syscall_handle_t)sys_mq_notify;
+    // syscall_handlers[SYS_MQ_GETSETATTR] = (syscall_handle_t)sys_mq_getsetattr;
+    // syscall_handlers[SYS_KEXEC_LOAD] = (syscall_handle_t)sys_kexec_load;
+    // syscall_handlers[SYS_WAITID] = (syscall_handle_t)sys_waitid;
+    // syscall_handlers[SYS_ADD_KEY] = (syscall_handle_t)sys_add_key;
+    // syscall_handlers[SYS_REQUEST_KEY] = (syscall_handle_t)sys_request_key;
+    // syscall_handlers[SYS_KEYCTL] = (syscall_handle_t)sys_keyctl;
+    // syscall_handlers[SYS_IOPRIO_SET] = (syscall_handle_t)sys_ioprio_set;
+    // syscall_handlers[SYS_IOPRIO_GET] = (syscall_handle_t)sys_ioprio_get;
+    // syscall_handlers[SYS_INOTIFY_INIT] = (syscall_handle_t)sys_inotify_init;
+    // syscall_handlers[SYS_INOTIFY_ADD_WATCH] = (syscall_handle_t)sys_inotify_add_watch;
+    // syscall_handlers[SYS_INOTIFY_RM_WATCH] = (syscall_handle_t)sys_inotify_rm_watch;
+    // syscall_handlers[SYS_MIGRATE_PAGES] = (syscall_handle_t)sys_migrate_pages;
+    syscall_handlers[SYS_OPENAT] = (syscall_handle_t)sys_openat;
+    // syscall_handlers[SYS_MKDIRAT] = (syscall_handle_t)sys_mkdirat;
+    // syscall_handlers[SYS_MKNODAT] = (syscall_handle_t)sys_mknodat;
+    // syscall_handlers[SYS_FCHOWNAT] = (syscall_handle_t)sys_fchownat;
+    // syscall_handlers[SYS_FUTIMESAT] = (syscall_handle_t)sys_futimesat;
+    syscall_handlers[SYS_NEWFSTATAT] = (syscall_handle_t)sys_newfstatat;
+    syscall_handlers[SYS_UNLINKAT] = (syscall_handle_t)sys_unlinkat;
+    syscall_handlers[SYS_RENAMEAT] = (syscall_handle_t)sys_renameat;
+    // syscall_handlers[SYS_LINKAT] = (syscall_handle_t)sys_linkat;
+    // syscall_handlers[SYS_SYMLINKAT] = (syscall_handle_t)sys_symlinkat;
+    syscall_handlers[SYS_READLINKAT] = (syscall_handle_t)sys_readlinkat;
+    // syscall_handlers[SYS_FCHMODAT] = (syscall_handle_t)sys_fchmodat;
+    syscall_handlers[SYS_FACCESSAT] = (syscall_handle_t)sys_faccessat;
+    syscall_handlers[SYS_PSELECT6] = (syscall_handle_t)sys_pselect6;
+    syscall_handlers[SYS_PPOLL] = (syscall_handle_t)sys_ppoll;
+    // syscall_handlers[SYS_UNSHARE] = (syscall_handle_t)sys_unshare;
+    // syscall_handlers[SYS_SET_ROBUST_LIST] = (syscall_handle_t)sys_set_robust_list;
+    // syscall_handlers[SYS_GET_ROBUST_LIST] = (syscall_handle_t)sys_get_robust_list;
+    // syscall_handlers[SYS_SPLICE] = (syscall_handle_t)sys_splice;
+    // syscall_handlers[SYS_TEE] = (syscall_handle_t)sys_tee;
+    // syscall_handlers[SYS_SYNC_FILE_RANGE] = (syscall_handle_t)sys_sync_file_range;
+    // syscall_handlers[SYS_VMSPLICE] = (syscall_handle_t)sys_vmsplice;
+    // syscall_handlers[SYS_MOVE_PAGES] = (syscall_handle_t)sys_move_pages;
+    // syscall_handlers[SYS_UTIMENSAT] = (syscall_handle_t)sys_utimensat;
+    syscall_handlers[SYS_EPOLL_PWAIT] = (syscall_handle_t)sys_epoll_pwait;
+    syscall_handlers[SYS_SIGNALFD] = (syscall_handle_t)sys_signalfd;
+    syscall_handlers[SYS_TIMERFD_CREATE] = (syscall_handle_t)sys_timerfd_create;
+    syscall_handlers[SYS_EVENTFD] = (syscall_handle_t)sys_eventfd;
+    syscall_handlers[SYS_FALLOCATE] = (syscall_handle_t)sys_fallocate;
+    syscall_handlers[SYS_TIMERFD_SETTIME] = (syscall_handle_t)sys_timerfd_settime;
+    // syscall_handlers[SYS_TIMERFD_GETTIME] = (syscall_handle_t)sys_timerfd_gettime;
+    syscall_handlers[SYS_ACCEPT4] = (syscall_handle_t)sys_accept;
+    syscall_handlers[SYS_SIGNALFD4] = (syscall_handle_t)sys_signalfd4;
+    syscall_handlers[SYS_EVENTFD2] = (syscall_handle_t)sys_eventfd2;
+    syscall_handlers[SYS_EPOLL_CREATE1] = (syscall_handle_t)sys_epoll_create1;
+    syscall_handlers[SYS_DUP3] = (syscall_handle_t)sys_dup3;
+    syscall_handlers[SYS_PIPE2] = (syscall_handle_t)sys_pipe;
+    // syscall_handlers[SYS_INOTIFY_INIT1] = (syscall_handle_t)sys_inotify_init1;
+    // syscall_handlers[SYS_PREADV] = (syscall_handle_t)sys_preadv;
+    // syscall_handlers[SYS_PWRITEV] = (syscall_handle_t)sys_pwritev;
+    // syscall_handlers[SYS_RT_TGSIGQUEUEINFO] = (syscall_handle_t)sys_rt_tgsigqueueinfo;
+    // syscall_handlers[SYS_PERF_EVENT_OPEN] = (syscall_handle_t)sys_perf_event_open;
+    // syscall_handlers[SYS_RECVMMSG] = (syscall_handle_t)sys_recvmmsg;
+    // syscall_handlers[SYS_FANOTIFY_INIT] = (syscall_handle_t)sys_fanotify_init;
+    // syscall_handlers[SYS_FANOTIFY_MARK] = (syscall_handle_t)sys_fanotify_mark;
+    syscall_handlers[SYS_PRLIMIT64] = (syscall_handle_t)sys_prlimit64;
+    // syscall_handlers[SYS_NAME_TO_HANDLE_AT] = (syscall_handle_t)sys_name_to_handle_at;
+    // syscall_handlers[SYS_OPEN_BY_HANDLE_AT] = (syscall_handle_t)sys_open_by_handle_at;
+    // syscall_handlers[SYS_CLOCK_ADJTIME] = (syscall_handle_t)sys_clock_adjtime;
+    // syscall_handlers[SYS_SYNCFS] = (syscall_handle_t)sys_syncfs;
+    // syscall_handlers[SYS_SENDMMSG] = (syscall_handle_t)sys_sendmmsg;
+    // syscall_handlers[SYS_SETNS] = (syscall_handle_t)sys_setns;
+    // syscall_handlers[SYS_GETCPU] = (syscall_handle_t)sys_getcpu;
+    // syscall_handlers[SYS_PROCESS_VM_READV] = (syscall_handle_t)sys_process_vm_readv;
+    // syscall_handlers[SYS_PROCESS_VM_WRITEV] = (syscall_handle_t)sys_process_vm_writev;
+    // syscall_handlers[SYS_KCMP] = (syscall_handle_t)sys_kcmp;
+    // syscall_handlers[SYS_FINIT_MODULE] = (syscall_handle_t)sys_finit_module;
+    // syscall_handlers[SYS_SCHED_SETATTR] = (syscall_handle_t)sys_sched_setattr;
+    // syscall_handlers[SYS_SCHED_GETATTR] = (syscall_handle_t)sys_sched_getattr;
+    // syscall_handlers[SYS_RENAMEAT2] = (syscall_handle_t)sys_renameat2;
+    // syscall_handlers[SYS_SECCOMP] = (syscall_handle_t)sys_seccomp;
+    syscall_handlers[SYS_GETRANDOM] = (syscall_handle_t)sys_getrandom;
+    syscall_handlers[SYS_MEMFD_CREATE] = (syscall_handle_t)sys_memfd_create;
+    // syscall_handlers[SYS_KEXEC_FILE_LOAD] = (syscall_handle_t)sys_kexec_file_load;
+    // syscall_handlers[SYS_BPF] = (syscall_handle_t)sys_bpf;
+    // syscall_handlers[SYS_EXECVEAT] = (syscall_handle_t)sys_execveat;
+    // syscall_handlers[SYS_USERFAULTFD] = (syscall_handle_t)sys_userfaultfd;
+    // syscall_handlers[SYS_MEMBARRIER] = (syscall_handle_t)sys_membarrier;
+    // syscall_handlers[SYS_MLOCK2] = (syscall_handle_t)sys_mlock2;
+    // syscall_handlers[SYS_COPY_FILE_RANGE] = (syscall_handle_t)sys_copy_file_range;
+    // syscall_handlers[SYS_PREADV2] = (syscall_handle_t)sys_preadv2;
+    // syscall_handlers[SYS_PWRITEV2] = (syscall_handle_t)sys_pwritev2;
+    // syscall_handlers[SYS_PKEY_MPROTECT] = (syscall_handle_t)sys_pkey_mprotect;
+    // syscall_handlers[SYS_PKEY_ALLOC] = (syscall_handle_t)sys_pkey_alloc;
+    // syscall_handlers[SYS_PKEY_FREE] = (syscall_handle_t)sys_pkey_free;
+    syscall_handlers[SYS_STATX] = (syscall_handle_t)sys_statx;
+    // syscall_handlers[SYS_IO_PGETEVENTS] = (syscall_handle_t)sys_io_pgetevents;
+    // syscall_handlers[SYS_RSEQ] = (syscall_handle_t)sys_rseq;
+    // syscall_handlers[SYS_PIDFD_SEND_SIGNAL] = (syscall_handle_t)sys_pidfd_send_signal;
+    // syscall_handlers[SYS_IO_URING_SETUP] = (syscall_handle_t)sys_io_uring_setup;
+    // syscall_handlers[SYS_IO_URING_ENTER] = (syscall_handle_t)sys_io_uring_enter;
+    // syscall_handlers[SYS_IO_URING_REGISTER] = (syscall_handle_t)sys_io_uring_register;
+    // syscall_handlers[SYS_OPEN_TREE] = (syscall_handle_t)sys_open_tree;
+    // syscall_handlers[SYS_MOVE_MOUNT] = (syscall_handle_t)sys_move_mount;
+    // syscall_handlers[SYS_FSOPEN] = (syscall_handle_t)sys_fsopen;
+    // syscall_handlers[SYS_FSCONFIG] = (syscall_handle_t)sys_fsconfig;
+    // syscall_handlers[SYS_FSMOUNT] = (syscall_handle_t)sys_fsmount;
+    // syscall_handlers[SYS_FSPICK] = (syscall_handle_t)sys_fspick;
+    // syscall_handlers[SYS_PIDFD_OPEN] = (syscall_handle_t)sys_pidfd_open;
+    // syscall_handlers[SYS_CLONE3] = (syscall_handle_t)sys_clone3;
+    syscall_handlers[SYS_CLOSE_RANGE] = (syscall_handle_t)sys_close_range;
+    // syscall_handlers[SYS_OPENAT2] = (syscall_handle_t)sys_openat2;
+    // syscall_handlers[SYS_PIDFD_GETFD] = (syscall_handle_t)sys_pidfd_getfd;
+    syscall_handlers[SYS_FACCESSAT2] = (syscall_handle_t)sys_faccessat2;
+    // syscall_handlers[SYS_PROCESS_MADVISE] = (syscall_handle_t)sys_process_madvise;
+    // syscall_handlers[SYS_EPOLL_PWAIT2] = (syscall_handle_t)sys_epoll_pwait2;
+    // syscall_handlers[SYS_MOUNT_SETATTR] = (syscall_handle_t)sys_mount_setattr;
+    // syscall_handlers[SYS_LANDLOCK_CREATE_RULESET] = (syscall_handle_t)sys_landlock_create_ruleset;
+    // syscall_handlers[SYS_LANDLOCK_ADD_RULE] = (syscall_handle_t)sys_landlock_add_rule;
+    // syscall_handlers[SYS_LANDLOCK_RESTRICT_SELF] = (syscall_handle_t)sys_landlock_restrict_self;
+    // syscall_handlers[SYS_MEMFD_SECRET] = (syscall_handle_t)sys_memfd_secret;
+    // syscall_handlers[SYS_PROCESS_MRELEASE] = (syscall_handle_t)sys_process_mrelease;
+    // syscall_handlers[SYS_FUTEX_WAITV] = (syscall_handle_t)sys_futex_waitv;
+    // syscall_handlers[SYS_SET_MEMPOLICY_HOME_NODE] = (syscall_handle_t)sys_set_mempolicy_home_node;
+    // syscall_handlers[SYS_CACHESTAT] = (syscall_handle_t)sys_cachestat;
+    // syscall_handlers[SYS_FCHMODAT2] = (syscall_handle_t)sys_fchmodat2;
+}
+
 void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
 {
     regs->rip = regs->rcx;
@@ -91,571 +565,30 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     uint64_t arg5 = regs->r8;
     uint64_t arg6 = regs->r9;
 
-    switch (idx)
+    if (idx > MAX_SYSCALL_NUM)
     {
-    case SYS_READ:
-        regs->rax = sys_read(arg1, (void *)arg2, arg3);
-        break;
-    case SYS_WRITE:
-        regs->rax = sys_write(arg1, (const void *)arg2, arg3);
-        break;
-    case SYS_OPEN:
-        regs->rax = sys_open((const char *)arg1, arg2, arg3);
-        break;
-    case SYS_OPENAT:
-        regs->rax = sys_openat(arg1, (const char *)arg2, arg3, arg4);
-        break;
-    case SYS_CLOSE:
-        regs->rax = sys_close(arg1);
-        break;
-    case SYS_CLOSE_RANGE:
-        regs->rax = sys_close_range(arg1, arg2, arg3);
-        break;
-    case SYS_LSEEK:
-        regs->rax = sys_lseek(arg1, arg2, arg3);
-        break;
-    case SYS_PREAD64:
-        sys_lseek(arg1, arg4, SEEK_SET);
-        regs->rax = sys_read(arg1, (void *)arg2, arg3);
-        break;
-    case SYS_PWRITE64:
-        sys_lseek(arg1, arg4, SEEK_SET);
-        regs->rax = sys_write(arg1, (void *)arg2, arg3);
-        break;
-    case SYS_FSYNC:
-        regs->rax = 0;
-        break;
-    case SYS_IOCTL:
-        regs->rax = sys_ioctl(arg1, arg2, arg3);
-        break;
-    case SYS_READV:
-        regs->rax = sys_readv(arg1, (struct iovec *)arg2, arg3);
-        break;
-    case SYS_WRITEV:
-        regs->rax = sys_writev(arg1, (struct iovec *)arg2, arg3);
-        break;
-    case SYS_CLONE:
-        regs->rax = sys_clone(regs, arg1, arg2, (int *)arg3, (int *)arg4, arg5);
-        break;
-    case SYS_FORK:
-        regs->rax = task_fork(regs, false);
-        break;
-    case SYS_VFORK:
-        regs->rax = task_fork(regs, true);
-        break;
-    case SYS_EXECVE:
-        regs->rax = task_execve((const char *)arg1, (const char **)arg2, (const char **)arg3);
-        break;
-    case SYS_EXIT:
-        regs->rax = task_exit((int64_t)arg1);
-        break;
-    case SYS_EXIT_GROUP:
-        regs->rax = task_exit((int64_t)arg1);
-        break;
-    case SYS_REBOOT:
-        regs->rax = sys_reboot(arg1, arg2, arg3, (void *)arg4);
-        break;
-    case SYS_GETPID:
-        if (arg1 == UINT64_MAX && arg2 == UINT64_MAX && arg3 == UINT64_MAX && arg4 == UINT64_MAX && arg5 == UINT64_MAX)
-            regs->rax = 1;
-        else
-            regs->rax = current_task->pid;
-        break;
-    case SYS_GETPPID:
-        regs->rax = current_task->ppid;
-        break;
-    case SYS_WAIT4:
-        regs->rax = sys_waitpid(arg1, (int *)arg2, arg3);
-        break;
-    case SYS_PRCTL:
-        regs->rax = sys_prctl(arg1, arg2, arg3, arg4, arg5);
-        break;
-    case SYS_ARCH_PRCTL:
-        regs->rax = sys_arch_prctl(arg1, arg2);
-        break;
-    case SYS_BRK:
-        regs->rax = sys_brk(arg1);
-        break;
-    case SYS_RT_SIGPROCMASK:
-        regs->rax = sys_ssetmask(arg1, (sigset_t *)arg2, (sigset_t *)arg3);
-        break;
-    case SYS_GETDENTS64:
-        regs->rax = sys_getdents(arg1, arg2, arg3);
-        break;
-    case SYS_CHDIR:
-        regs->rax = sys_chdir((const char *)arg1);
-        break;
-    case SYS_FCHDIR:
-        regs->rax = sys_fchdir(arg1);
-        break;
-    case SYS_GETCWD:
-        regs->rax = sys_getcwd((char *)arg1, arg2);
-        break;
-    case SYS_MMAP:
-        regs->rax = sys_mmap(arg1, arg2, arg3, arg4, arg5, arg6);
-        break;
-    case SYS_MREMAP:
-        regs->rax = sys_mremap(arg1, arg2, arg3, arg4, arg5);
-        break;
-    case SYS_MPROTECT:
-        regs->rax = sys_mprotect(arg1, arg2, arg3);
-        break;
-    case SYS_MUNMAP:
-        regs->rax = sys_munmap(arg1, arg2);
-        break;
-    case SYS_MADVISE:
-        regs->rax = 0;
-        break;
-    case SYS_MINCORE:
-        regs->rax = sys_mincore(arg1, arg2, arg3);
-        break;
-    case SYS_CLOCK_GETTIME:
-        switch (arg1)
-        {
-        case 1: // CLOCK_MONOTONIC
-        case 6: // CLOCK_MONOTONIC_COARSE
-        case 4: // CLOCK_MONOTONIC_RAW
-        {
-            if (arg2)
-            {
-                struct timespec *ts = (struct timespec *)arg2;
-                uint64_t nano = nanoTime();
-                ts->tv_sec = nano / 1000000000ULL;
-                ts->tv_nsec = nano % 1000000000ULL;
-            }
-            regs->rax = 0;
-            break;
-        }
-        case 0:
-        {
-            tm time;
-            time_read(&time);
-            uint64_t timestamp = mktime(&time);
-
-            if (arg2)
-            {
-                struct timespec *ts = (struct timespec *)arg2;
-                ts->tv_sec = timestamp;
-                ts->tv_nsec = 0;
-            }
-            regs->rax = 0;
-            break;
-        }
-        default:
-            printk("clock not supported\n");
-            regs->rax = (uint64_t)-EINVAL;
-            break;
-        }
-        break;
-    case SYS_GETTIMEOFDAY:
-        tm time_day;
-        time_read(&time_day);
-        uint64_t timestamp_day = mktime(&time_day);
-        if (arg1)
-        {
-            struct timespec *ts = (struct timespec *)arg1;
-            ts->tv_sec = timestamp_day;
-            ts->tv_nsec = 0;
-        }
-        regs->rax = 0;
-        break;
-    case SYS_CLOCK_GETRES:
-        ((struct timespec *)arg2)->tv_nsec = 1000000;
-        regs->rax = 0;
-        break;
-    case SYS_RT_SIGACTION:
-        regs->rax = sys_sigaction(arg1, (sigaction_t *)arg2, (sigaction_t *)arg3);
-        break;
-    case SYS_RT_SIGSUSPEND:
-        regs->rax = sys_sigsuspend((const sigset_t *)arg1);
-        break;
-    case SYS_KILL:
-        regs->rax = sys_kill(arg1, arg2);
-        break;
-    case SYS_RT_SIGRETURN:
-        sys_sigreturn(regs);
-        regs->rax = 0;
-        break;
-    case SYS_FCNTL:
-        regs->rax = sys_fcntl(arg1, arg2, arg3);
-        break;
-    case SYS_FADVISE64:
-        regs->rax = sys_fadvise64(arg1, arg2, arg3, arg4);
-        break;
-    case SYS_SOCKET:
-        regs->rax = sys_socket(arg1, arg2, arg3);
-        break;
-    case SYS_SOCKETPAIR:
-        regs->rax = sys_socketpair(arg1, arg2, arg3, (void *)arg4);
-        break;
-    case SYS_GETSOCKNAME:
-        regs->rax = sys_getsockname(arg1, (struct sockaddr_un *)arg2, (socklen_t *)arg3);
-        break;
-    case SYS_GETPEERNAME:
-    {
-        int fd = arg1;
-        struct sockaddr_un *addr = (struct sockaddr_un *)arg2;
-        socklen_t *addrlen = (socklen_t *)arg3;
-        regs->rax = sys_getpeername(fd, addr, addrlen);
-        break;
-    }
-    case SYS_BIND:
-        regs->rax = sys_bind(arg1, (const struct sockaddr_un *)arg2, arg3);
-        break;
-    case SYS_LISTEN:
-        regs->rax = sys_listen(arg1, arg2);
-        break;
-    case SYS_ACCEPT:
-        regs->rax = sys_accept(arg1, (struct sockaddr_un *)arg2, (socklen_t *)arg3, 0);
-        break;
-    case SYS_ACCEPT4:
-        regs->rax = sys_accept(arg1, (struct sockaddr_un *)arg2, (socklen_t *)arg3, arg4);
-        break;
-    case SYS_CONNECT:
-        regs->rax = sys_connect(arg1, (const struct sockaddr_un *)arg2, arg3);
-        break;
-    case SYS_SENDTO:
-        regs->rax = sys_send(arg1, (const void *)arg2, arg3, arg4, (struct sockaddr_un *)arg5, (socklen_t)arg6);
-        break;
-    case SYS_RECVFROM:
-        regs->rax = sys_recv(arg1, (void *)arg2, arg3, arg4, (struct sockaddr_un *)arg5, (socklen_t *)arg6);
-        break;
-    case SYS_SENDMSG:
-        regs->rax = sys_sendmsg(arg1, (const struct msghdr *)arg2, arg3);
-        break;
-    case SYS_RECVMSG:
-        regs->rax = sys_recvmsg(arg1, (struct msghdr *)arg2, arg3);
-        break;
-    case SYS_SHUTDOWN:
-        regs->rax = sys_shutdown(arg1, arg2);
-        break;
-    case SYS_SET_TID_ADDRESS:
-        regs->rax = current_task->pid;
-        break;
-    case SYS_POLL:
-        regs->rax = sys_poll((struct pollfd *)arg1, arg2, arg3);
-        break;
-    case SYS_PPOLL:
-        regs->rax = sys_ppoll((struct pollfd *)arg1, arg2, (struct timespec *)arg3, (sigset_t *)arg4, arg5);
-        break;
-    case SYS_SIGALTSTACK:
-        regs->rax = 0;
-        break;
-    case SYS_GETTID:
-        regs->rax = current_task->pid;
-        break;
-    case SYS_FUTEX:
-        regs->rax = sys_futex((int *)arg1, arg2, arg3, (const struct timespec *)arg4, (int *)arg5, arg6);
-        break;
-    case SYS_PIPE:
-        regs->rax = sys_pipe((int *)arg1, 0);
-        break;
-    case SYS_PIPE2:
-        regs->rax = sys_pipe((int *)arg1, arg2);
-        break;
-    case SYS_STAT:
-        regs->rax = sys_stat((const char *)arg1, (struct stat *)arg2);
-        break;
-    case SYS_LSTAT:
-        regs->rax = sys_stat((const char *)arg1, (struct stat *)arg2);
-        break;
-    case SYS_STATFS:
-        regs->rax = 0;
-        break;
-    case SYS_FSTATFS:
-        regs->rax = 0;
-        break;
-    case SYS_FSTAT:
-        regs->rax = sys_fstat(arg1, (struct stat *)arg2);
-        break;
-    case SYS_NEWFSTATAT:
-        regs->rax = sys_newfstatat(arg1, (const char *)arg2, (struct stat *)arg3, arg4);
-        break;
-    case SYS_STATX:
-        regs->rax = sys_statx(arg1, (const char *)arg2, arg3, arg4, (struct statx *)arg5);
-        break;
-    case SYS_SYSINFO:
-        break;
-    case SYS_UNAME:
-        struct utsname *utsname = (struct utsname *)arg1;
-        memcpy(utsname->sysname, sysname, sizeof(sysname));
-        memcpy(utsname->nodename, nodename, sizeof(nodename));
-        memcpy(utsname->release, release, sizeof(release));
-        memcpy(utsname->version, version, sizeof(version));
-        memcpy(utsname->machine, machine, sizeof(machine));
-        regs->rax = 0;
-        break;
-    case SYS_GETUID:
-        regs->rax = current_task->uid;
-        break;
-    case SYS_GETGID:
-        regs->rax = current_task->gid;
-        break;
-    case SYS_GETEUID:
-        regs->rax = current_task->euid;
-        break;
-    case SYS_GETEGID:
-        regs->rax = current_task->egid;
-        break;
-    case SYS_SETPGID:
-        if (!arg1)
-        {
-            current_task->pgid = (int64_t)arg2;
-        }
-        else
-        {
-            if (tasks[arg1] == NULL)
-            {
-                regs->rax = (uint64_t)-ENOENT;
-                break;
-            }
-            tasks[arg1]->pgid = arg2;
-        }
-        regs->rax = 0;
-        break;
-    case SYS_GETPGID:
-        regs->rax = current_task->pgid;
-        break;
-    case SYS_SETUID:
-        current_task->uid = arg1;
-        regs->rax = 0;
-        break;
-    case SYS_SETGID:
-        current_task->gid = arg1;
-        regs->rax = 0;
-        break;
-    case SYS_GETRESUID:
-        regs->rax = current_task->ruid;
-        break;
-    case SYS_GETRESGID:
-        regs->rax = current_task->rgid;
-        break;
-    case SYS_SETRESUID:
-        current_task->ruid = arg1;
-        regs->rax = 0;
-        break;
-    case SYS_SETRESGID:
-        current_task->rgid = arg1;
-        regs->rax = 0;
-        break;
-    case SYS_SETGROUPS:
-        regs->rax = 0;
-        break;
-    case SYS_DUP:
-        regs->rax = sys_dup(arg1);
-        break;
-    case SYS_DUP2:
-        regs->rax = sys_dup2(arg1, arg2);
-        break;
-    case SYS_DUP3:
-        regs->rax = sys_dup3(arg1, arg2, arg3);
-        break;
-    case SYS_GETRLIMIT:
-        regs->rax = sys_get_rlimit(arg1, (struct rlimit *)arg2);
-        break;
-    case SYS_PRLIMIT64:
-        regs->rax = sys_prlimit64(arg1, arg2, (struct rlimit *)arg3, (struct rlimit *)arg4);
-        break;
-    case SYS_ACCESS:
-        regs->rax = sys_access((char *)arg1, arg2);
-        break;
-    case SYS_FACCESSAT:
-        regs->rax = sys_faccessat(arg1, (const char *)arg2, arg3);
-        break;
-    case SYS_FACCESSAT2:
-        regs->rax = sys_faccessat2(arg1, (const char *)arg2, arg3, arg4);
-        break;
-    case SYS_SELECT:
-        regs->rax = sys_select(arg1, (uint8_t *)arg2, (uint8_t *)arg3, (uint8_t *)arg4, (struct timeval *)arg5);
-        break;
-    case SYS_PSELECT6:
-        regs->rax = sys_pselect6(arg1, (fd_set *)arg2, (fd_set *)arg3, (fd_set *)arg4, (struct timespec *)arg5, (WeirdPselect6 *)arg6);
-        break;
-    case SYS_READLINK:
-        regs->rax = sys_readlink((char *)arg1, (char *)arg2, arg3);
-        break;
-    case SYS_READLINKAT:
-        regs->rax = sys_readlinkat(arg1, (char *)arg2, (char *)arg3, arg4);
-        break;
-    case SYS_RENAME:
-        regs->rax = sys_rename((const char *)arg1, (const char *)arg2);
-        break;
-    case SYS_RENAMEAT:
-        regs->rax = sys_renameat(arg1, (const char *)arg2, arg3, (const char *)arg4);
-        break;
-    case SYS_UNLINK:
-        regs->rax = sys_unlink((const char *)arg1);
-        break;
-    case SYS_UNLINKAT:
-        regs->rax = sys_unlinkat(arg1, (const char *)arg2, arg3);
-        break;
-    case SYS_MOUNT:
-        regs->rax = sys_mount((char *)arg1, (char *)arg2, (char *)arg3, arg4, (void *)arg5);
-        break;
-    case SYS_NANOSLEEP:
-        regs->rax = sys_nanosleep((struct timespec *)arg1, (struct timespec *)arg2);
-        break;
-    case SYS_EPOLL_CREATE1:
-        regs->rax = sys_epoll_create1(arg1);
-        break;
-    case SYS_EPOLL_CREATE:
-        regs->rax = sys_epoll_create(arg1);
-        break;
-    case SYS_EPOLL_CTL:
-        regs->rax = sys_epoll_ctl(arg1, arg2, arg3, (struct epoll_event *)arg4);
-        break;
-    case SYS_EPOLL_PWAIT:
-        regs->rax = sys_epoll_pwait(arg1, (struct epoll_event *)arg2, arg3, arg4, (sigset_t *)arg5, arg6);
-        break;
-    case SYS_EPOLL_WAIT:
-        regs->rax = sys_epoll_wait(arg1, (struct epoll_event *)arg2, arg3, arg4);
-        break;
-    case SYS_EVENTFD2:
-        regs->rax = sys_eventfd2(arg1, arg2);
-        break;
-    case SYS_SIGNALFD:
-        regs->rax = sys_signalfd(arg1, (const sigset_t *)arg2, arg3);
-        break;
-    case SYS_SIGNALFD4:
-        regs->rax = sys_signalfd4(arg1, (const sigset_t *)arg2, arg3, arg4);
-        break;
-    case SYS_TIMER_CREATE:
-        regs->rax = sys_timer_create((clockid_t)arg1, (struct sigevent *)arg2, (timer_t *)arg3);
-        break;
-    case SYS_TIMER_SETTIME:
-        regs->rax = sys_timer_settime((timer_t)arg1, (const struct itimerval *)arg2, (struct itimerval *)arg3);
-        break;
-    case SYS_TIMERFD_CREATE:
-        regs->rax = sys_timerfd_create(arg1, arg2);
-        break;
-    case SYS_TIMERFD_SETTIME:
-        regs->rax = sys_timerfd_settime(arg1, arg2, (const struct itimerval *)arg3, (struct itimerval *)arg4);
-        break;
-    case SYS_MEMFD_CREATE:
-        regs->rax = sys_memfd_create((const char *)arg1, arg2);
-        break;
-    case SYS_FLOCK:
-        regs->rax = sys_flock(arg1, arg2);
-        break;
-    case SYS_SETFSUID:
-        regs->rax = 0;
-        break;
-    case SYS_SETFSGID:
-        regs->rax = 0;
-        break;
-    case SYS_SETSOCKOPT:
-        regs->rax = sys_setsockopt(arg1, arg2, arg3, (const void *)arg4, arg5);
-        break;
-    case SYS_GETSOCKOPT:
-        regs->rax = sys_getsockopt(arg1, arg2, arg3, (void *)arg4, (socklen_t *)arg5);
-        break;
-    case SYS_SETITIMER:
-        regs->rax = sys_setitimer(arg1, (struct itimerval *)arg2, (struct itimerval *)arg3);
-        break;
-    case SYS_CHOWN:
-        regs->rax = 0;
-        break;
-    case SYS_FCHOWN:
-        regs->rax = 0;
-        break;
-    case SYS_CHMOD:
-        regs->rax = 0;
-        break;
-    case SYS_FCHMOD:
-        regs->rax = 0;
-        break;
-    case SYS_UMASK:
-        regs->rax = 0;
-        break;
-    case SYS_MKDIR:
-        regs->rax = sys_mkdir((const char *)arg1, arg2);
-        break;
-    case SYS_RMDIR:
-        regs->rax = sys_unlink((const char *)arg1);
-        break;
-    case SYS_LINK:
-        regs->rax = sys_link((const char *)arg1, (const char *)arg2);
-        break;
-    case SYS_SYMLINK:
-        regs->rax = sys_symlink((const char *)arg1, (const char *)arg2);
-        break;
-    case SYS_FALLOCATE:
-        regs->rax = sys_fallocate(arg1, arg2, arg3, arg4);
-        break;
-    case SYS_FTRUNCATE:
-        regs->rax = 0;
-        break;
-    case SYS_SETPRIORITY:
-        regs->rax = 0;
-        break;
-    case SYS_UTIMES:
-        regs->rax = 0;
-        break;
-    case SYS_UTIMENSAT:
-        regs->rax = 0;
-        break;
-    case SYS_FUTIMESAT:
-        regs->rax = 0;
-        break;
-    case SYS_SCHED_SETSCHEDULER:
-        regs->rax = 0;
-        break;
-    case SYS_SCHED_SETAFFINITY:
-        regs->rax = 0;
-        break;
-    case SYS_MEMBARRIER:
-        regs->rax = 0;
-        break;
-    case SYS_GETSID:
-        current_task->sid = regs->rdi;
-        regs->rax = 0;
-        break;
-    case SYS_SETSID:
-        regs->rax = current_task->sid;
-        break;
-    case SYS_SET_ROBUST_LIST:
-        regs->rax = 0;
-        break;
-    case SYS_RSEQ:
-        regs->rax = 0;
-        break;
-    case SYS_SCHED_GETAFFINITY:
-        regs->rax = 0;
-        break;
-    case SYS_GETRANDOM:
-        void *buffer = (void *)arg1;
-        size_t get_len = (size_t)arg2;
-        uint32_t flags = (uint32_t)arg3;
-
-        if (get_len == 0 || get_len > 1024 * 1024)
-        {
-            regs->rax = (uint64_t)-EINVAL;
-            break;
-        }
-
-        for (size_t i = 0; i < get_len; i++)
-        {
-            tm time;
-            time_read(&time);
-            uint64_t next = mktime(&time);
-            next = next * 1103515245 + 12345;
-            uint8_t rand_byte = ((uint8_t)(next / 65536) % 32768);
-            memcpy(buffer + i, &rand_byte, 1);
-        }
-
-        regs->rax = get_len;
-        break;
-    case SYS_INOTIFY_INIT1:
-        regs->rax = 0;
-        break;
-    case SYS_INOTIFY_ADD_WATCH:
-        regs->rax = 0;
-        break;
-    default:
         regs->rax = (uint64_t)-ENOSYS;
-        break;
+        goto done;
     }
 
+    syscall_handle_t handler = syscall_handlers[idx];
+    if (!handler)
+    {
+        regs->rax = (uint64_t)-ENOSYS;
+        goto done;
+    }
+
+    if (idx == SYS_FORK || idx == SYS_VFORK || idx == SYS_CLONE || idx == SYS_CLONE3 || idx == SYS_RT_SIGRETURN)
+    {
+        special_syscall_handle_t h = (special_syscall_handle_t)handler;
+        regs->rax = h(regs, arg1, arg2, arg3, arg4, arg5, arg6);
+    }
+    else
+    {
+        regs->rax = handler(arg1, arg2, arg3, arg4, arg5, arg6);
+    }
+
+done:
     if ((int)regs->rax < 0 && ((regs->rax & 0x8000000000000000) == 0))
         regs->rax |= 0xffffffff00000000;
     else if ((int64_t)regs->rax < 0 && ((regs->rax & 0xffffffff) == 0))

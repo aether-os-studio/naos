@@ -22,6 +22,8 @@ void arch_init()
 {
     syscall_init();
 
+    syscall_handler_init();
+
     open_interrupt;
 }
 

@@ -1,4 +1,5 @@
 /compile_commands.json
+/.vscode
 /.cache
 /freestnd-c-hdrs
 /src/cc-runtime

@@ -217,5 +217,77 @@ int sys_timer_settime(timer_t timerid, const struct itimerval *new_value, struct
 
 uint64_t sys_reboot(int magic1, int magic2, uint32_t cmd, void *arg);
 
+static inline uint64_t sys_getpgid(uint64_t pid)
+{
+    return 0;
+}
+
+static inline uint64_t sys_setpgid(uint64_t pid, uint64_t pgid)
+{
+    return 0;
+}
+
+static inline uint64_t sys_getuid()
+{
+    return current_task->uid;
+}
+
+static inline uint64_t sys_setuid(uint64_t uid)
+{
+    current_task->uid = uid;
+    return 0;
+}
+
+static inline uint64_t sys_getgid()
+{
+    return current_task->gid;
+}
+
+static inline uint64_t sys_geteuid()
+{
+    return current_task->euid;
+}
+
+static inline uint64_t sys_getegid()
+{
+    return current_task->egid;
+}
+
+static inline uint64_t sys_setgid(uint64_t gid)
+{
+    current_task->gid = gid;
+    return 0;
+}
+
+static inline uint64_t sys_getsid(uint64_t pid)
+{
+    return 0;
+}
+
+static inline uint64_t sys_setsid()
+{
+    return 0;
+}
+
+static inline uint64_t sys_fork(struct pt_regs *regs)
+{
+    return task_fork(regs, false);
+}
+
+static inline uint64_t sys_vfork(struct pt_regs *regs)
+{
+    return task_fork(regs, true);
+}
+
+static inline uint64_t sys_getpid()
+{
+    return current_task->pid;
+}
+
+static inline uint64_t sys_getppid()
+{
+    return current_task->ppid;
+}
+
 extern task_t *tasks[MAX_TASK_NUM];
 extern task_t *idle_tasks[MAX_CPU_NUM];

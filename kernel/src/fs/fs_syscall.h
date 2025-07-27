@@ -513,3 +513,15 @@ int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *
 struct task_block_list;
 typedef struct task_block_list task_block_list_t;
 void wake_blocked_tasks(task_block_list_t *head);
+
+static inline uint64_t sys_pwrite64(int fd, const void *buf, size_t count, uint64_t offset)
+{
+    sys_lseek(fd, offset, SEEK_SET);
+    return sys_write(fd, buf, count);
+}
+
+static inline uint64_t sys_pread64(int fd, void *buf, size_t count, uint64_t offset)
+{
+    sys_lseek(fd, offset, SEEK_SET);
+    return sys_read(fd, buf, count);
+}
