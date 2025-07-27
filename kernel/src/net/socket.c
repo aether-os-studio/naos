@@ -326,10 +326,13 @@ int socket_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen)
         if (new_node)
         {
             vfs_close(new_node);
-            free(safe);
-            return -(EADDRINUSE);
+            // free(safe);
+            // return -(EADDRINUSE);
         }
-        vfs_mkfile(safe);
+        else
+        {
+            vfs_mkfile(safe);            
+        }
     }
 
     size_t safeLen = strlen(safe);

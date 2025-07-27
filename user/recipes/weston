@@ -2,10 +2,10 @@
 
 name=weston
 skip_pkg_check=yes
-version=9.0.92git
+version=9.0.0git
 revision=1
 git_url="https://gitlab.freedesktop.org/wayland/weston.git"
-commit=18d9ad98b1f383b0e5a0c8a25f289a9085bcecc1
+commit=04d3ae265d8d8f84352c8dac21ec40b2fe07e7d2
 imagedeps="build-essential pkg-config libwayland-dev"
 hostdeps="gcc pkg-config"
 deps="core-libs libxkbcommon wayland wayland-protocols pixman libinput libdrm cairo pam libxcursor lcms"
@@ -23,7 +23,6 @@ configure() {
         -Dbackend-rdp=false \
         -Dcolor-management-colord=false \
         -Ddemo-clients=false \
-        -Dlauncher-libseat=false \
         -Dscreenshare=false \
         -Dsystemd=false \
         -Dremoting=false \
@@ -34,7 +33,6 @@ configure() {
         -Dpipewire=false \
         -Dsimple-clients=[] \
         -Dtest-junit-xml=false \
-        -Dtest-skip-is-failure=false \
         -Dtest-gl-renderer=false \
         -Dxwayland=false
 }
