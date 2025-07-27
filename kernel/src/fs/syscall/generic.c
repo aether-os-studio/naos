@@ -615,6 +615,8 @@ uint64_t sys_stat(const char *fn, struct stat *buf)
         return (uint64_t)-ENOENT;
     }
 
+    node->refcount++;
+
     buf->st_dev = node->dev;
     buf->st_ino = node->inode;
     buf->st_nlink = 1;
@@ -847,6 +849,8 @@ uint64_t sys_rmdir(const char *name)
         return -ENOENT;
     if (!(node->type & file_dir))
         return -ENOTDIR;
+
+    node->refcount++;
 
     uint64_t ret = vfs_delete(node);
 

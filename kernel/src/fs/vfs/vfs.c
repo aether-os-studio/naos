@@ -664,8 +664,6 @@ extern int pts_fsid;
 int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg)
 {
     do_update(node);
-    if (node->type & file_dir)
-        return -1;
 
     if (node->fsid != pts_fsid)
     {

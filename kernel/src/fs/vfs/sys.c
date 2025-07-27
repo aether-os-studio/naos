@@ -319,14 +319,14 @@ void sysfs_init()
     uevent->type = file_none;
     uevent->mode = 0644;
     handle = malloc(sizeof(sysfs_handle_t));
-    sprintf(handle->content, "MAJOR=13\nMINOR=0\nDEVNAME=input/event0\n");
+    sprintf(handle->content, "MAJOR=13\nMINOR=0\nDEVNAME=input/event0\nID_INPUT=1\nID_INPUT_KEYBOARD=1\n");
     handle->node = uevent;
     uevent->handle = handle;
     uevent = vfs_child_append(event1, "uevent", NULL);
     uevent->type = file_none;
     uevent->mode = 0644;
     handle = malloc(sizeof(sysfs_handle_t));
-    sprintf(handle->content, "MAJOR=13\nMINOR=1\nDEVNAME=input/event1\n");
+    sprintf(handle->content, "MAJOR=13\nMINOR=1\nDEVNAME=input/event1\nID_INPUT=1\nID_INPUT_MOUSE=1\n");
     handle->node = uevent;
     uevent->handle = handle;
 #endif

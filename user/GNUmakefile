@@ -8,11 +8,13 @@ all:
 	./jinx build-if-needed base $(PKGS)
 	./jinx install rootfs-$(ARCH) base $(PKGS)
 
-	cp build-support/profile rootfs-$(ARCH)/etc
-	cp build-support/passwd rootfs-$(ARCH)/etc
-	cp build-support/group rootfs-$(ARCH)/etc
-	cp build-support/shells rootfs-$(ARCH)/etc
-	cp build-support/bash/* rootfs-$(ARCH)/etc
+	cp -r build-support/profile rootfs-$(ARCH)/etc
+	cp -r build-support/passwd rootfs-$(ARCH)/etc
+	cp -r build-support/group rootfs-$(ARCH)/etc
+	cp -r build-support/shells rootfs-$(ARCH)/etc
+	cp -r build-support/bash/* rootfs-$(ARCH)/etc
+	mkdir -p rootfs-$(ARCH)/run/
+	cp -r build-support/weston/udev rootfs-$(ARCH)/run
 
 	mkdir -p rootfs-$(ARCH)/tmp
 	mkdir -p rootfs-$(ARCH)/run

@@ -105,13 +105,14 @@ void ext_open(void *parent, const char *name, vfs_node_t node)
         spin_unlock(&rwlock);
         node->linkto = vfs_open_at(node->parent, buf);
         spin_lock(&rwlock);
-        node->linkto->refcount++;
+        if (node->linkto)
+        {
+            node->linkto->refcount++;
+            node->size = node->linkto->size;
 
-        node->size = node->linkto->size;
-
-        ext_handle_t *target_handle = node->linkto->handle;
-
-        handle->file = target_handle->file;
+            ext_handle_t *target_handle = node->linkto->handle;
+            handle->file = target_handle->file;
+        }
     }
     else
     {

@@ -1,0 +1,14 @@
+diff -urN --no-dereference libinput/src/evdev.c libinput-workdir/src/evdev.c 
+--- libinput/src/evdev.c        2025-04-01 10:46:07.000000000 +0800
++++ libinput-workdir/src/evdev.c        2025-07-27 07:39:08.853789193 +0800
+@@ -2411,8 +2411,8 @@
+ 		goto err;
+ 	}
+ 
+-	if (!evdev_device_have_same_syspath(udev_device, fd))
+-		goto err;
++	// if (!evdev_device_have_same_syspath(udev_device, fd))
++	// 	goto err;
+ 
+ 	device = zalloc(sizeof *device);
+ 	device->sysname = sysname;
