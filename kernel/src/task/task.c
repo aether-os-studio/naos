@@ -1317,6 +1317,8 @@ void sched_update_itimer()
             if (kt->expires && now >= kt->expires)
             {
                 ptr->signal |= SIGMASK(kt->sigev_signo);
+                if (ptr->state == TASK_BLOCKING)
+                    task_unblock(ptr, EOK);
 
                 if (kt->interval)
                     kt->expires += kt->interval;
@@ -1329,18 +1331,22 @@ void sched_update_itimer()
         {
             for (int fd = 3; fd < MAX_FD_NUM; fd++)
             {
-                if (ptr->fd_info->fds[fd] && ptr->fd_info->fds[fd]->node && ptr->fd_info->fds[fd]->node->fsid == timerfdfs_id)
+                if (ptr->fd_info->fds[fd] && ptr->fd_info->fds[fd]->node->fsid == timerfdfs_id)
                 {
                     timerfd_t *tfd = ptr->fd_info->fds[fd]->node->handle;
+
                     if (tfd->timer.expires && now >= tfd->timer.expires)
                     {
-                        tfd->count++;
                         if (tfd->timer.interval)
                         {
-                            tfd->timer.expires += tfd->timer.interval;
+                            uint64_t delta = now - tfd->timer.expires;
+                            uint64_t periods = delta / tfd->timer.interval + 1;
+                            tfd->count += periods;
+                            tfd->timer.expires += periods * tfd->timer.interval;
                         }
                         else
                         {
+                            tfd->count++;
                             tfd->timer.expires = 0;
                         }
                     }

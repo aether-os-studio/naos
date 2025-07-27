@@ -18,6 +18,7 @@ all:
 
 	mkdir -p rootfs-$(ARCH)/tmp
 	mkdir -p rootfs-$(ARCH)/run
+	chmod 700 rootfs-$(ARCH)/run
 	mkdir -p rootfs-$(ARCH)/var
 
 	mkdir -p rootfs-$(ARCH)/root

@@ -30,7 +30,7 @@ uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode)
 
     if (i == MAX_FD_NUM)
     {
-        return (uint64_t)-EBADF;
+        return (uint64_t)-EMFILE;
     }
 
     int create_mode = (flags & O_CREAT);
@@ -467,7 +467,7 @@ uint64_t sys_dup(uint64_t fd)
 
     if (i == MAX_FD_NUM)
     {
-        return (uint64_t)-EBADF;
+        return (uint64_t)-EMFILE;
     }
 
     return sys_dup2(fd, i);

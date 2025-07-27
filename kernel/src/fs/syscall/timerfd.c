@@ -45,6 +45,25 @@ int sys_timerfd_create(int clockid, int flags)
     return fd;
 }
 
+static uint64_t get_current_time_ms()
+{
+    tm time;
+    time_read(&time);
+    return (uint64_t)mktime(&time) * 1000ULL;
+}
+
+static uint64_t get_current_time(uint64_t clock_type)
+{
+    if (clock_type == CLOCK_MONOTONIC)
+    {
+        return nanoTime() / 1000000UL;
+    }
+    else
+    {
+        return get_current_time_ms();
+    }
+}
+
 int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, struct itimerval *old_value)
 {
     if (fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
@@ -55,24 +74,38 @@ int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, st
 
     if (old_value)
     {
-        uint64_t now = nanoTime();
+        uint64_t now = get_current_time(tfd->timer.clock_type);
         uint64_t remaining = tfd->timer.expires > now ? tfd->timer.expires - now : 0;
 
-        old_value->it_interval.tv_sec = tfd->timer.interval / 1000000000ULL;
-        old_value->it_interval.tv_usec = (tfd->timer.interval % 1000000000ULL) / 1000ULL;
-
-        old_value->it_value.tv_sec = remaining / 1000000000ULL;
-        old_value->it_value.tv_usec = (remaining % 1000000000ULL) / 1000ULL;
+        old_value->it_interval.tv_sec = tfd->timer.interval / 1000;
+        old_value->it_interval.tv_usec = (tfd->timer.interval % 1000) * 1000;
+        old_value->it_value.tv_sec = remaining / 1000;
+        old_value->it_value.tv_usec = (remaining % 1000) * 1000;
     }
 
-    uint64_t interval = new_value->it_interval.tv_sec * 1000000000ULL +
-                        new_value->it_interval.tv_usec * 1000ULL;
-    uint64_t expires = new_value->it_value.tv_sec * 1000000000ULL +
-                       new_value->it_value.tv_usec * 1000ULL;
+    // 输入参数转换为毫秒
+    uint64_t interval = new_value->it_interval.tv_sec * 1000 +
+                        new_value->it_interval.tv_usec / 1000;
+    uint64_t expires = new_value->it_value.tv_sec * 1000 +
+                       new_value->it_value.tv_usec / 1000;
+
+    // 处理绝对/相对时间
+    if (flags & TFD_TIMER_ABSTIME)
+    {
+        tfd->timer.expires = expires;
+        uint64_t now = get_current_time(tfd->timer.clock_type);
+        if (tfd->timer.expires < now && interval > 0)
+        {
+            uint64_t periods = (now - tfd->timer.expires + interval - 1) / interval;
+            tfd->timer.expires += periods * interval;
+        }
+    }
+    else
+    {
+        tfd->timer.expires = get_current_time(tfd->timer.clock_type) + expires;
+    }
 
     tfd->timer.interval = interval;
-    tfd->timer.expires = nanoTime() + expires;
-
     return 0;
 }
 
@@ -108,9 +141,8 @@ int timerfd_poll(void *file, size_t events)
 ssize_t timerfd_read(void *file, void *addr, size_t offset, size_t size)
 {
     timerfd_t *tfd = file;
+    uint64_t now = get_current_time(tfd->timer.clock_type);
     uint64_t count = 0;
-
-    uint64_t now = nanoTime();
 
     if (tfd->timer.expires > 0 && now >= tfd->timer.expires)
     {
@@ -118,6 +150,13 @@ ssize_t timerfd_read(void *file, void *addr, size_t offset, size_t size)
         {
             count = (now - tfd->timer.expires) / tfd->timer.interval + 1;
             tfd->timer.expires += count * tfd->timer.interval;
+
+            if (tfd->timer.expires < now)
+            {
+                uint64_t overrun = (now - tfd->timer.expires) / tfd->timer.interval;
+                count += overrun;
+                tfd->timer.expires += overrun * tfd->timer.interval;
+            }
         }
         else
         {

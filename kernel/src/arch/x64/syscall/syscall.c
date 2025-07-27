@@ -5,6 +5,12 @@
 #include <mm/mm_syscall.h>
 #include <net/net_syscall.h>
 
+__attribute__((used, section(".limine_requests"))) static volatile struct limine_date_at_boot_request boot_time_request =
+    {
+        .id = LIMINE_DATE_AT_BOOT_REQUEST,
+        .revision = 0,
+};
+
 uint64_t switch_to_kernel_stack()
 {
     if (current_task->call_in_signal)
@@ -111,7 +117,7 @@ uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3)
             struct timespec *ts = (struct timespec *)arg2;
             uint64_t nano = nanoTime();
             ts->tv_sec = nano / 1000000000ULL;
-            ts->tv_nsec = nano % 1000000000ULL;
+            ts->tv_nsec = 0;
         }
         return 0;
     }

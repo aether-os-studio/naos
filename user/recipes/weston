@@ -2,13 +2,13 @@
 
 name=weston
 skip_pkg_check=yes
-version=9.0.0git
+version=14.0.0git
 revision=1
 git_url="https://gitlab.freedesktop.org/wayland/weston.git"
-commit=04d3ae265d8d8f84352c8dac21ec40b2fe07e7d2
+commit=1a9149cc062ac744ab190c8b2dc34102ca8a0adc
 imagedeps="build-essential pkg-config libwayland-dev"
 hostdeps="gcc pkg-config"
-deps="core-libs libxkbcommon wayland wayland-protocols pixman libinput libdrm cairo pam libxcursor lcms"
+deps="core-libs libxkbcommon wayland wayland-protocols pixman libinput libdrm cairo pam libxcursor lcms seatd libdisplay-info"
 
 configure() {
     CFLAGS="$TARGET_CFLAGS -Wno-implicit-function-declaration" \
@@ -16,12 +16,12 @@ configure() {
     LDFLAGS="$TARGET_LDFLAGS" \
     meson_configure_noflags \
         --buildtype=debug \
-        -Dbackend-default=fbdev \
-        -Dbackend-drm=false \
+        -Dbackend-default=drm \
         -Dbackend-drm-screencast-vaapi=false \
         -Dbackend-x11=false \
         -Dbackend-rdp=false \
-        -Dcolor-management-colord=false \
+        -Dbackend-vnc=false \
+        -Dbackend-pipewire=false \
         -Ddemo-clients=false \
         -Dscreenshare=false \
         -Dsystemd=false \
@@ -29,11 +29,10 @@ configure() {
         -Drenderer-gl=false \
         -Dimage-jpeg=false \
         -Dimage-webp=false \
-        -Dlauncher-logind=false \
         -Dpipewire=false \
         -Dsimple-clients=[] \
+    	-Dtest-skip-is-failure=false \
         -Dtest-junit-xml=false \
-        -Dtest-gl-renderer=false \
         -Dxwayland=false
 }
 

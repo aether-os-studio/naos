@@ -457,6 +457,9 @@ typedef struct
     int flags;
 } timerfd_t;
 
+#define TFD_TIMER_ABSTIME (1 << 0)
+#define TFD_TIMER_CANCEL_ON_SET (1 << 1)
+
 int sys_timerfd_create(int clockid, int flags);
 int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, struct itimerval *old_v);
 

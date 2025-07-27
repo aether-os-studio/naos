@@ -1,0 +1,29 @@
+#! /bin/sh
+
+name=seatd
+skip_pkg_check=yes
+version=0.9.1git
+revision=1
+git_url="https://github.com/kennylevinsen/seatd.git"
+commit=900e359f99818df434389eb3a39ee767f1d84f2c
+imagedeps="build-essential pkg-config"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    CFLAGS="$TARGET_CFLAGS -Wno-implicit-function-declaration" \
+    CXXFLAGS="$TARGET_CXXFLAGS -Wno-implicit-function-declaration" \
+    LDFLAGS="$TARGET_LDFLAGS" \
+    meson_configure_noflags \
+        --buildtype=debug \
+        -Dlibseat-logind=disabled \
+        -Dlibseat-seatd=enabled
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+}

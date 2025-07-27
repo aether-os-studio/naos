@@ -120,6 +120,7 @@ clippy:
 
 ROOTFS_IMG_SIZE ?= 1024
 
+.PHONY: rootfs-$(ARCH).img
 rootfs-$(ARCH).img: user/.build-stamp-$(ARCH)
 	dd if=/dev/zero bs=1M count=0 seek=$(ROOTFS_IMG_SIZE) of=rootfs-$(ARCH).img
 	mkfs.ext2 -F -q -d user/rootfs-$(ARCH) rootfs-$(ARCH).img

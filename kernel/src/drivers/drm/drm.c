@@ -1,4 +1,5 @@
 #include <drivers/bus/pci.h>
+#include <drivers/drm/drm_fourcc.h>
 #include <drivers/drm/drm.h>
 #include <fs/vfs/dev.h>
 #include <fs/vfs/sys.h>
@@ -30,6 +31,9 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         case DRM_CAP_DUMB_BUFFER:
             cap->value = 1; // 支持dumb buffer
             return 0;
+        case DRM_CAP_TIMESTAMP_MONOTONIC:
+            cap->value = 1;
+            return 0;
         default:
             cap->value = 0;
             return 0;
@@ -53,7 +57,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         }
         if (res->crtc_id_ptr)
         {
-            *(uint32_t *)res->crtc_id_ptr = dev->id;
+            *(uint32_t *)res->crtc_id_ptr = 1;
         }
         return 0;
     }
@@ -65,11 +69,19 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         struct drm_mode_modeinfo mode = {
             .clock = dev->framebuffer->width * HZ,
             .hdisplay = dev->framebuffer->width,
+            .hsync_start = dev->framebuffer->width + 16,      // 水平同步开始 = 显示宽度 + 前廊
+            .hsync_end = dev->framebuffer->width + 16 + 96,   // 水平同步结束 = hsync_start + 同步脉冲宽度
+            .htotal = dev->framebuffer->width + 16 + 96 + 48, // 水平总像素 = hsync_end + 后廊
             .vdisplay = dev->framebuffer->height,
+            .vsync_start = dev->framebuffer->height + 10,     // 垂直同步开始 = 显示高度 + 前廊
+            .vsync_end = dev->framebuffer->height + 10 + 2,   // 垂直同步结束 = vsync_start + 同步脉冲宽度
+            .vtotal = dev->framebuffer->height + 10 + 2 + 33, // 垂直总行数 = vsync_end + 后廊
             .vrefresh = HZ,
         };
 
-        crtc->crtc_id = dev->id;
+        sprintf(mode.name, "%dx%d", dev->framebuffer->width, dev->framebuffer->height);
+
+        crtc->crtc_id = 1;
         crtc->gamma_size = 0;
         crtc->mode_valid = 1;
         memcpy(&crtc->mode, &mode, sizeof(struct drm_mode_modeinfo));
@@ -84,7 +96,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         struct drm_mode_get_encoder *enc = (struct drm_mode_get_encoder *)arg;
         enc->encoder_id = dev->id;
         enc->encoder_type = DRM_MODE_ENCODER_VIRTUAL;
-        enc->crtc_id = dev->id;
+        enc->crtc_id = 1;
         enc->possible_crtcs = 1;
         enc->possible_clones = 0;
         return 0;
@@ -125,12 +137,23 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         struct drm_mode_modeinfo *mode = (struct drm_mode_modeinfo *)(uintptr_t)conn->modes_ptr;
         if (mode)
         {
-            sprintf(mode->name, "%dx%d", dev->framebuffer->width, dev->framebuffer->height);
-            mode->hdisplay = dev->framebuffer->width;
-            mode->vdisplay = dev->framebuffer->height;
-            mode->vrefresh = HZ;
-            mode->clock = mode->hdisplay * mode->vdisplay * mode->vrefresh / 1000;
-            mode->type = DRM_MODE_TYPE_PREFERRED;
+            struct drm_mode_modeinfo m = {
+                .clock = dev->framebuffer->width * HZ,
+                .hdisplay = dev->framebuffer->width,
+                .hsync_start = dev->framebuffer->width + 16,      // 水平同步开始 = 显示宽度 + 前廊
+                .hsync_end = dev->framebuffer->width + 16 + 96,   // 水平同步结束 = hsync_start + 同步脉冲宽度
+                .htotal = dev->framebuffer->width + 16 + 96 + 48, // 水平总像素 = hsync_end + 后廊
+                .vdisplay = dev->framebuffer->height,
+                .vsync_start = dev->framebuffer->height + 10,     // 垂直同步开始 = 显示高度 + 前廊
+                .vsync_end = dev->framebuffer->height + 10 + 2,   // 垂直同步结束 = vsync_start + 同步脉冲宽度
+                .vtotal = dev->framebuffer->height + 10 + 2 + 33, // 垂直总行数 = vsync_end + 后廊
+                .vrefresh = HZ,
+                .type = DRM_MODE_TYPE_PREFERRED,
+            };
+
+            sprintf(m.name, "%dx%d", dev->framebuffer->width, dev->framebuffer->height);
+
+            memcpy(&mode[0], &m, sizeof(struct drm_mode_modeinfo));
         }
         uint32_t *encoders = (uint32_t *)(uintptr_t)conn->encoders_ptr;
         if (encoders)
@@ -198,7 +221,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
     {
         struct drm_mode_crtc *crtc = (struct drm_mode_crtc *)arg;
 
-        if (crtc->crtc_id != dev->id)
+        if (crtc->crtc_id != 1)
         {
             return -ENOENT;
         }
@@ -212,17 +235,179 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
     case DRM_IOCTL_MODE_GETPLANERESOURCES:
     {
         struct drm_mode_get_plane_res *res = (struct drm_mode_get_plane_res *)arg;
-        res->plane_id_ptr = 0;
-        res->count_planes = 0;
+
+        res->count_planes = 1;
+
+        if (res->plane_id_ptr)
+        {
+            uint32_t *planes = (uint32_t *)(uintptr_t)res->plane_id_ptr;
+            planes[0] = 0;
+        }
+
+        return 0;
+    }
+
+    case DRM_IOCTL_MODE_GETPLANE:
+    {
+        struct drm_mode_get_plane *plane = (struct drm_mode_get_plane *)arg;
+
+        if (plane->plane_id != 0)
+            return -ENOENT;
+
+        plane->crtc_id = 1;
+        plane->fb_id = 1;
+
+        plane->possible_crtcs = 1;
+        plane->gamma_size = 0;
+
+        if (plane->format_type_ptr)
+        {
+            uint32_t *formats = (uint32_t *)(uintptr_t)plane->format_type_ptr;
+            formats[0] = DRM_FORMAT_ARGB8888;
+        }
+        plane->count_format_types = 1;
+
+        return 0;
+    }
+
+    case DRM_IOCTL_MODE_SETPLANE:
+    {
+        return 0;
+    }
+
+    case DRM_IOCTL_MODE_GETPROPERTY:
+    {
+        struct drm_mode_get_property *prop = (struct drm_mode_get_property *)arg;
+
+        switch (prop->prop_id)
+        {
+        case DRM_PROPERTY_ID_PLANE_TYPE:
+            prop->flags = DRM_MODE_PROP_ENUM;
+            strncpy((char *)prop->name, "type", DRM_PROP_NAME_LEN);
+            prop->count_enum_blobs = 1;
+
+            if (prop->enum_blob_ptr)
+            {
+                struct drm_mode_property_enum *enums = (struct drm_mode_property_enum *)prop->enum_blob_ptr;
+                strncpy(enums[0].name, "Primary", DRM_PROP_NAME_LEN);
+                enums[0].value = DRM_PLANE_TYPE_PRIMARY;
+            }
+
+            prop->count_values = 3;
+
+            if (prop->values_ptr)
+            {
+                uint64_t *values = (uint64_t *)(uintptr_t)prop->values_ptr;
+                values[0] = DRM_PLANE_TYPE_OVERLAY;
+                values[1] = DRM_PLANE_TYPE_PRIMARY;
+                values[2] = DRM_PLANE_TYPE_CURSOR;
+            }
+            return 0;
+        case DRM_CRTC_ACTIVE_PROP_ID:
+            prop->flags = DRM_MODE_PROP_BLOB;
+            strncpy((char *)prop->name, "ACTIVE", DRM_PROP_NAME_LEN);
+            break;
+
+        case DRM_CONNECTOR_DPMS_PROP_ID:
+            prop->flags = DRM_MODE_PROP_ENUM;
+            strncpy((char *)prop->name, "DPMS", DRM_PROP_NAME_LEN);
+            prop->count_values = 4;
+            if (prop->values_ptr)
+            {
+                uint64_t *values = (uint64_t *)(uintptr_t)prop->values_ptr;
+                values[0] = DRM_MODE_DPMS_ON;
+                values[1] = DRM_MODE_DPMS_STANDBY;
+                values[2] = DRM_MODE_DPMS_SUSPEND;
+                values[3] = DRM_MODE_DPMS_OFF;
+            }
+            break;
+
+        default:
+            return -ENOENT;
+        }
+
+        return 0;
+    }
+
+    case DRM_IOCTL_MODE_GETPROPBLOB:
+    {
+        struct drm_mode_get_blob *blob = (struct drm_mode_get_blob *)arg;
+        switch (blob->blob_id)
+        {
+        case DRM_BLOB_ID_PLANE_TYPE:
+            memcpy((void *)blob->data, "Overlay\nPrimary\nCursor", 23);
+            break;
+
+        default:
+            return -ENOENT;
+        }
+
+        return 0;
+    }
+
+    case DRM_IOCTL_MODE_SETPROPERTY:
+    {
         return 0;
     }
 
     case DRM_IOCTL_MODE_OBJ_GETPROPERTIES:
     {
         struct drm_mode_obj_get_properties *props = (struct drm_mode_obj_get_properties *)arg;
-        props->count_props = 0;
-        props->props_ptr = 0;
-        props->prop_values_ptr = 0;
+
+        switch (props->obj_type)
+        {
+        case DRM_MODE_OBJECT_PLANE:
+            props->count_props = 1;
+            if (props->props_ptr)
+            {
+                uint32_t *prop_ids = (uint32_t *)(uintptr_t)props->props_ptr;
+                prop_ids[0] = DRM_PROPERTY_ID_PLANE_TYPE;
+            }
+            if (props->prop_values_ptr)
+            {
+                uint64_t *prop_values = (uint64_t *)(uintptr_t)props->prop_values_ptr;
+                prop_values[0] = DRM_PLANE_TYPE_PRIMARY;
+            }
+            break;
+
+        case DRM_MODE_OBJECT_CRTC:
+            props->count_props = 2;
+            if (props->props_ptr)
+            {
+                uint32_t *prop_ids = (uint32_t *)(uintptr_t)props->props_ptr;
+                prop_ids[0] = DRM_CRTC_ACTIVE_PROP_ID;  // 激活状态属性
+                prop_ids[1] = DRM_CRTC_MODE_ID_PROP_ID; // 当前模式ID
+            }
+            if (props->prop_values_ptr)
+            {
+                uint64_t *prop_values = (uint64_t *)(uintptr_t)props->prop_values_ptr;
+                prop_values[0] = 1; // 假设CRTC始终处于激活状态
+                prop_values[1] = 1; // 当前模式ID=1
+            }
+            break;
+
+        case DRM_MODE_OBJECT_CONNECTOR:
+            props->count_props = 3;
+            if (props->props_ptr)
+            {
+                uint32_t *prop_ids = (uint32_t *)(uintptr_t)props->props_ptr;
+                prop_ids[0] = DRM_CONNECTOR_DPMS_PROP_ID;    // DPMS状态
+                prop_ids[1] = DRM_CONNECTOR_EDID_PROP_ID;    // EDID信息
+                prop_ids[2] = DRM_CONNECTOR_CRTC_ID_PROP_ID; // 关联的CRTC
+            }
+            if (props->prop_values_ptr)
+            {
+                uint64_t *prop_values = (uint64_t *)(uintptr_t)props->prop_values_ptr;
+                prop_values[0] = DRM_MODE_DPMS_ON; // 电源开启状态
+                prop_values[1] = 0;                // EDID句柄(需要具体实现)
+                prop_values[2] = 1;                // 关联的CRTC ID
+            }
+            break;
+
+        default:
+            return -EINVAL;
+        }
+
         return 0;
     }
 
@@ -263,7 +448,18 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         return 0;
     }
 
+    case DRM_IOCTL_MODE_PAGE_FLIP:
+    {
+        struct drm_mode_crtc_page_flip *flip = (struct drm_mode_crtc_page_flip *)arg;
+
+        if (flip->crtc_id != 1)
+            return -ENOENT;
+
+        return 0;
+    }
+
     default:
+        printk("drm: Unsupported ioctl: cmd = %#010lx\n", cmd);
         return -ENOTTY;
     }
 }
@@ -293,6 +489,7 @@ void drm_init()
     fb->width = width;
     fb->height = height;
     fb->bpp = bpp;
+    fb->pitch = width * bpp / 8;
 
     char buf[16];
     sprintf(buf, "dri/card%d", 0);

@@ -121,14 +121,12 @@ void ext_open(void *parent, const char *name, vfs_node_t node)
         node->size = ext4_fsize(handle->file);
     }
 
-    free(path);
-
-    char buf[1024];
-
     uint32_t mode = 0;
-    ext4_mode_get((const char *)buf, &mode);
+    ext4_mode_get((const char *)path, &mode);
     node->mode = mode;
     node->handle = handle;
+
+    free(path);
 
     spin_unlock(&rwlock);
 }

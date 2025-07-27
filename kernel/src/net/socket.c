@@ -293,7 +293,7 @@ int socket_socket(int domain, int type, int protocol)
 
     if (i == MAX_FD_NUM)
     {
-        return -EBADF;
+        return -EMFILE;
     }
 
     current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
@@ -320,21 +320,6 @@ int socket_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen)
 
     bool is_abstract = (addr->sun_path[0] == '\0');
 
-    if (!is_abstract)
-    {
-        vfs_node_t new_node = vfs_open(safe);
-        if (new_node)
-        {
-            vfs_close(new_node);
-            // free(safe);
-            // return -(EADDRINUSE);
-        }
-        else
-        {
-            vfs_mkfile(safe);            
-        }
-    }
-
     size_t safeLen = strlen(safe);
     socket_t *browse = &first_unix_socket;
     while (browse)
@@ -350,6 +335,21 @@ int socket_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen)
     {
         free(safe);
         return -(EADDRINUSE);
+    }
+
+    if (!is_abstract)
+    {
+        vfs_node_t new_node = vfs_open(safe);
+        if (new_node)
+        {
+            vfs_close(new_node);
+            // free(safe);
+            // return -(EADDRINUSE);
+        }
+        else
+        {
+            vfs_mkfile(safe);
+        }
     }
 
     sock->bindAddr = safe;
@@ -420,7 +420,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen, uin
 
     if (i == MAX_FD_NUM)
     {
-        return -EBADF;
+        return -EMFILE;
     }
 
     current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
@@ -933,7 +933,7 @@ int unix_socket_pair(int type, int protocol, int *sv)
         unix_socket_free_pair(pair);
         sys_close(sock1);
         vfs_free(sock2Fd);
-        return -EBADF;
+        return -EMFILE;
     }
 
     pair->peercred.pid = current_task->pid;

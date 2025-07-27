@@ -1106,6 +1106,76 @@ extern "C"
 #if defined(__cplusplus)
 }
 #endif
+enum drm_property_id
+{
+    DRM_PROPERTY_ID_INVALID,
+    DRM_PROPERTY_ID_SRC_W,
+    DRM_PROPERTY_ID_SRC_H,
+    DRM_PROPERTY_ID_FB_ID,
+    DRM_PROPERTY_ID_MODE_ID,
+    DRM_PROPERTY_ID_CRTC_X,
+    DRM_PROPERTY_ID_CRTC_Y,
+    DRM_PROPERTY_ID_PLANE_TYPE,
+    DRM_PROPERTY_ID_DPMS,
+    DRM_PROPERTY_ID_CRTC_ID,
+    DRM_PROPERTY_ID_ACTIVE,
+    DRM_PROPERTY_ID_SRC_X,
+    DRM_PROPERTY_ID_SRC_Y,
+    DRM_PROPERTY_ID_CRTC_W,
+    DRM_PROPERTY_ID_CRTC_H,
+    DRM_PROPERTY_ID_IN_FORMATS,
+};
+
+enum drm_plane_type
+{
+    /**
+     * @DRM_PLANE_TYPE_OVERLAY:
+     *
+     * Overlay planes represent all non-primary, non-cursor planes. Some
+     * drivers refer to these types of planes as "sprites" internally.
+     */
+    DRM_PLANE_TYPE_OVERLAY,
+
+    /**
+     * @DRM_PLANE_TYPE_PRIMARY:
+     *
+     * A primary plane attached to a CRTC is the most likely to be able to
+     * light up the CRTC when no scaling/cropping is used and the plane
+     * covers the whole CRTC.
+     */
+    DRM_PLANE_TYPE_PRIMARY,
+
+    /**
+     * @DRM_PLANE_TYPE_CURSOR:
+     *
+     * A cursor plane attached to a CRTC is more likely to be able to be
+     * enabled when no scaling/cropping is used and the framebuffer has the
+     * size indicated by &drm_mode_config.cursor_width and
+     * &drm_mode_config.cursor_height. Additionally, if the driver doesn't
+     * support modifiers, the framebuffer should have a linear layout.
+     */
+    DRM_PLANE_TYPE_CURSOR,
+};
+
+enum drm_blob_ids
+{
+    DRM_BLOB_ID_PLANE_TYPE = 1,
+};
+
+/* CRTC属性 */
+#define DRM_CRTC_ACTIVE_PROP_ID 0x100
+#define DRM_CRTC_MODE_ID_PROP_ID 0x101
+
+/* Connector属性 */
+#define DRM_CONNECTOR_DPMS_PROP_ID 0x200
+#define DRM_CONNECTOR_EDID_PROP_ID 0x201
+#define DRM_CONNECTOR_CRTC_ID_PROP_ID 0x202
+
+/* DPMS状态 */
+#define DRM_MODE_DPMS_ON 0
+#define DRM_MODE_DPMS_STANDBY 1
+#define DRM_MODE_DPMS_SUSPEND 2
+#define DRM_MODE_DPMS_OFF 3
 
 typedef struct drm_device
 {
