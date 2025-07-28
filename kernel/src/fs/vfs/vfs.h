@@ -101,7 +101,7 @@ typedef int (*vfs_rename_t)(void *current, const char *new);
 typedef int (*vfs_ioctl_t)(void *file, ssize_t cmd, ssize_t arg);
 
 // 映射文件从 offset 开始的 size 大小
-typedef void *(*vfs_mapfile_t)(void *file, void *addr, size_t offset, size_t size, size_t prot, size_t flags);
+typedef void *(*vfs_mapfile_t)(fd_t *fd, void *addr, size_t offset, size_t size, size_t prot, size_t flags);
 
 typedef int (*vfs_poll_t)(void *file, size_t events);
 
@@ -341,6 +341,6 @@ int vfs_poll(vfs_node_t node, size_t event);
 
 fd_t *vfs_dup(fd_t *fd);
 
-void *vfs_map(vfs_node_t node, uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset);
+void *vfs_map(fd_t *fd, uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset);
 
 extern vfs_callback_t fs_callbacks[256];

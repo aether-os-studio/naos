@@ -87,9 +87,11 @@ int devfs_ioctl(devfs_handle_t handle, ssize_t cmd, ssize_t arg)
     return 0;
 }
 
-void *devfs_map(devfs_handle_t handle, void *addr, size_t offset, size_t size, size_t prot, size_t flags)
+void *devfs_map(fd_t *fd, void *addr, size_t offset, size_t size, size_t prot, size_t flags)
 {
-    if (handle->ioctl)
+    devfs_handle_t handle = fd->node->handle;
+
+    if (handle->map)
     {
         return handle->map(handle->data, addr, offset, size);
     }

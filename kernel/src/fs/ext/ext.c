@@ -334,7 +334,7 @@ void ext_resize(void *current, uint64_t size)
     spin_unlock(&rwlock);
 }
 
-void *ext_map(void *file, void *addr, size_t offset, size_t size, size_t prot, size_t flags)
+void *ext_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot, size_t flags)
 {
     return general_map((vfs_read_t)ext_read, file, (uint64_t)addr, size, prot, flags, offset);
 }

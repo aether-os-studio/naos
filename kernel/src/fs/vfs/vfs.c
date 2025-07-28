@@ -873,7 +873,7 @@ void vfs_resize(vfs_node_t node, uint64_t size)
     callbackof(node, resize)(node->handle, size);
 }
 
-void *vfs_map(vfs_node_t node, uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset)
+void *vfs_map(fd_t *fd, uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset)
 {
-    return callbackof(node, map)(node->handle, (void *)addr, offset, len, prot, flags);
+    return callbackof(fd->node, map)(fd, (void *)addr, offset, len, prot, flags);
 }

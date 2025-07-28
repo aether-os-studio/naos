@@ -90,9 +90,9 @@ void memfd_resize(void *current, uint64_t size)
     ctx->node->size = ctx->len;
 }
 
-void *memfd_map(void *file, void *addr, size_t offset, size_t size, size_t prot, size_t flags)
+void *memfd_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot, size_t flags)
 {
-    struct memfd_ctx *ctx = file;
+    struct memfd_ctx *ctx = file->node->handle;
 
     map_page_range(get_current_page_dir(true), (uint64_t)addr, translate_address(get_current_page_dir(false), (uint64_t)ctx->data), size, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 

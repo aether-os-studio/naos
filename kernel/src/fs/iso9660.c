@@ -754,7 +754,7 @@ int iso9660_poll(void *file, size_t events)
     return -EOPNOTSUPP;
 }
 
-void *iso9660_map(void *file, void *addr, size_t offset, size_t size, size_t prot, size_t flags)
+void *iso9660_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot, size_t flags)
 {
     return general_map((vfs_read_t)iso9660_readfile, file, (uint64_t)addr, size, prot, flags, offset);
 }
