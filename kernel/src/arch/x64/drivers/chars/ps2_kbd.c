@@ -137,13 +137,13 @@ void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
     if (!task)
         return;
 
-    if (ctrled && out == 'c')
-    {
-        kb_finalise_stream();
-        task->signal |= SIGMASK(SIGINT);
-        task_unblock(task, SIGINT);
-        return;
-    }
+    // if (ctrled && out == 'c')
+    // {
+    //     kb_finalise_stream();
+    //     task->signal |= SIGMASK(SIGINT);
+    //     task_unblock(task, SIGINT);
+    //     return;
+    // }
 
     switch ((uint8_t)out)
     {

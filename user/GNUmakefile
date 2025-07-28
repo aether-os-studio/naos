@@ -21,6 +21,9 @@ all:
 	chmod 700 rootfs-$(ARCH)/run
 	mkdir -p rootfs-$(ARCH)/var
 
+	rm -rf rootfs-$(ARCH)/usr/bin/sh
+	ln -sf /usr/bin/bash rootfs-$(ARCH)/usr/bin/sh
+
 	mkdir -p rootfs-$(ARCH)/root
 	cp -r build-support/root/* rootfs-$(ARCH)/root
 
