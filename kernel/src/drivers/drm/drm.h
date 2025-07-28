@@ -1193,6 +1193,7 @@ typedef struct drm_device
     int id;
     struct limine_framebuffer *framebuffer;
     struct k_drm_event *drm_events[DRM_MAX_EVENTS_COUNT];
+    uint64_t vblank_counter;
 } drm_device_t;
 
 void drm_init();

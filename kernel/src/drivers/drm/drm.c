@@ -469,8 +469,27 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
                 dev->drm_events[i]->user_data = flip->user_data;
                 dev->drm_events[i]->timestamp.tv_sec = nanoTime() / 1000000000ULL;
                 dev->drm_events[i]->timestamp.tv_nsec = 0;
+                break;
             }
         }
+
+        return 0;
+    }
+
+    case DRM_IOCTL_WAIT_VBLANK:
+    {
+        union drm_wait_vblank *vbl = (union drm_wait_vblank *)arg;
+
+        uint64_t seq = dev->vblank_counter;
+
+        if (vbl->request.type & _DRM_VBLANK_RELATIVE)
+            vbl->request.sequence += seq;
+        else
+            vbl->request.sequence = seq;
+
+        vbl->reply.sequence =
+            vbl->reply.tval_sec = nanoTime() / 1000000000ULL;
+        vbl->reply.tval_usec = (nanoTime() % 1000000000ULL) / 1000;
 
         return 0;
     }
@@ -529,7 +548,10 @@ ssize_t drm_poll(void *data, size_t event)
 
     if (event == EPOLLIN)
     {
-        revent |= EPOLLIN;
+        if (dev->drm_events[0])
+        {
+            revent |= EPOLLIN;
+        }
     }
 
     return revent;
