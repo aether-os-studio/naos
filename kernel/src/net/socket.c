@@ -1403,9 +1403,11 @@ vfs_node_t socket_accept_dup(vfs_node_t node)
     return node;
 }
 
-ssize_t socket_read(void *f, void *buf, size_t offset, size_t limit)
+ssize_t socket_read(fd_t *fd, void *buf, size_t offset, size_t limit)
 {
     (void)offset;
+
+    void *f = fd->node->handle;
 
     socket_handle_t *handle = f;
     socket_t *sock = handle->sock;
@@ -1437,9 +1439,11 @@ ssize_t socket_read(void *f, void *buf, size_t offset, size_t limit)
     return toCopy;
 }
 
-ssize_t socket_write(void *f, const void *buf, size_t offset, size_t limit)
+ssize_t socket_write(fd_t *fd, const void *buf, size_t offset, size_t limit)
 {
     (void)offset;
+
+    void *f = fd->node->handle;
 
     socket_handle_t *handle = f;
     socket_t *sock = handle->sock;
@@ -1482,9 +1486,11 @@ ssize_t socket_write(void *f, const void *buf, size_t offset, size_t limit)
     return limit;
 }
 
-ssize_t socket_accept_read(void *f, void *buf, size_t offset, size_t limit)
+ssize_t socket_accept_read(fd_t *fd, void *buf, size_t offset, size_t limit)
 {
     (void)offset;
+
+    void *f = fd->node->handle;
 
     socket_handle_t *handle = f;
     unix_socket_pair_t *pair = handle->sock;
@@ -1515,9 +1521,11 @@ ssize_t socket_accept_read(void *f, void *buf, size_t offset, size_t limit)
     return toCopy;
 }
 
-ssize_t socket_accept_write(void *f, const void *buf, size_t offset, size_t limit)
+ssize_t socket_accept_write(fd_t *fd, const void *buf, size_t offset, size_t limit)
 {
     (void)offset;
+
+    void *f = fd->node->handle;
 
     socket_handle_t *handle = f;
     unix_socket_pair_t *pair = handle->sock;
@@ -1567,7 +1575,7 @@ static struct vfs_callback socket_callback = {
     .close = (vfs_close_t)socket_socket_close,
     .read = (vfs_read_t)socket_read,
     .write = (vfs_write_t)socket_write,
-    .readlink = (vfs_read_t)dummy,
+    .readlink = (vfs_readlink_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,
@@ -1589,7 +1597,7 @@ static struct vfs_callback accept_callback = {
     .close = (vfs_close_t)socket_accept_close,
     .read = (vfs_read_t)socket_accept_read,
     .write = (vfs_write_t)socket_accept_write,
-    .readlink = (vfs_read_t)dummy,
+    .readlink = (vfs_readlink_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,

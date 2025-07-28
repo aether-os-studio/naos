@@ -138,8 +138,9 @@ int timerfd_poll(void *file, size_t events)
     return revents;
 }
 
-ssize_t timerfd_read(void *file, void *addr, size_t offset, size_t size)
+ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size)
 {
+    void *file = fd->node->handle;
     timerfd_t *tfd = file;
     uint64_t now = get_current_time(tfd->timer.clock_type);
     uint64_t count = 0;
@@ -187,7 +188,7 @@ static struct vfs_callback timerfd_callbacks = {
     .close = (vfs_close_t)sys_timerfd_close,
     .read = (vfs_read_t)timerfd_read,
     .write = (vfs_write_t)dummy,
-    .readlink = (vfs_read_t)dummy,
+    .readlink = (vfs_readlink_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,

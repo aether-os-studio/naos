@@ -1,0 +1,16 @@
+---
+ scripts/kmscon.in | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git kmscon/scripts/kmscon.in kmscon-workdir/scripts/kmscon.in
+--- kmscon/scripts/kmscon.in
++++ kmscon-workdir/scripts/kmscon.in
+@@ -52,5 +52,5 @@ setupLocale() {
+     [ -n "${X11OPTIONS}" ] && export XKB_DEFAULT_OPTIONS="${X11OPTIONS}"
+ }
+ 
+-setupLocale
++# setupLocale
+ exec ${helperdir}/kmscon "$@"
+-- 
+2.47.2

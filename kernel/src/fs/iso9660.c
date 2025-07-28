@@ -543,8 +543,9 @@ int iso9660_mkfile(void *parent, const char *name, vfs_node_t node)
     return -1;
 }
 
-size_t iso9660_readfile(file_t file, void *addr, size_t offset, size_t size)
+size_t iso9660_readfile(fd_t *fd, void *addr, size_t offset, size_t size)
 {
+    file_t file = fd->node->handle;
     if (file->type & file_dir)
         return -1;
     l9660_file *fp = file->handle;
@@ -568,7 +569,7 @@ size_t iso9660_readfile(file_t file, void *addr, size_t offset, size_t size)
     return total_read;
 }
 
-size_t iso9660_writefile(file_t file, const void *addr, size_t offset, size_t size)
+size_t iso9660_writefile(fd_t *file, const void *addr, size_t offset, size_t size)
 {
     // normally, iso9660 is read-only
     // so we don't need to implement this function
@@ -770,7 +771,7 @@ static struct vfs_callback callbacks = {
     .close = (vfs_close_t)iso9660_close,
     .read = (vfs_read_t)iso9660_readfile,
     .write = (vfs_write_t)iso9660_writefile,
-    .readlink = (vfs_read_t)dummy,
+    .readlink = (vfs_readlink_t)dummy,
     .mkdir = iso9660_mkdir,
     .mkfile = iso9660_mkfile,
     .link = (vfs_mk_t)dummy,

@@ -23,8 +23,10 @@ static vfs_node_t signalfdfs_root = NULL;
 int signalfdfs_id = 0;
 int signalfd_id = 0;
 
-static ssize_t signalfd_read(void *data, uint64_t offset, void *buf, uint64_t len)
+static ssize_t signalfd_read(fd_t *fd, uint64_t offset, void *buf, uint64_t len)
 {
+    void *data = fd->node->handle;
+
     struct signalfd_ctx *ctx = data;
 
     while (ctx->queue_head == ctx->queue_tail)
@@ -116,7 +118,7 @@ static struct vfs_callback signalfd_callbacks = {
     .close = (vfs_close_t)dummy,
     .read = (vfs_read_t)signalfd_read,
     .write = (vfs_write_t)dummy,
-    .readlink = (vfs_read_t)dummy,
+    .readlink = (vfs_readlink_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,

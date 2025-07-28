@@ -164,7 +164,7 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len)
         return (uint64_t)-EFAULT;
     }
 
-    ssize_t ret = vfs_read(current_task->fd_info->fds[fd]->node, buf, current_task->fd_info->fds[fd]->offset, len);
+    ssize_t ret = vfs_read_fd(current_task->fd_info->fds[fd], buf, current_task->fd_info->fds[fd]->offset, len);
 
     if (ret > 0)
     {
@@ -200,7 +200,7 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len)
         return (uint64_t)-EFAULT;
     }
 
-    ssize_t ret = vfs_write(current_task->fd_info->fds[fd]->node, buf, current_task->fd_info->fds[fd]->offset, len);
+    ssize_t ret = vfs_write_fd(current_task->fd_info->fds[fd], buf, current_task->fd_info->fds[fd]->offset, len);
 
     if (ret > 0)
     {

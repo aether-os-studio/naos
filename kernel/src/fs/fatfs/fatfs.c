@@ -70,8 +70,10 @@ int fatfs_symlink(void *parent, const char *name, vfs_node_t node)
     return -ENOSYS;
 }
 
-size_t fatfs_readfile(file_t file, void *addr, size_t offset, size_t size)
+size_t fatfs_readfile(fd_t *fd, void *addr, size_t offset, size_t size)
 {
+    file_t file = fd->node->handle;
+
     if (file == NULL || addr == NULL)
         return -1;
     FRESULT res;
@@ -85,8 +87,10 @@ size_t fatfs_readfile(file_t file, void *addr, size_t offset, size_t size)
     return n;
 }
 
-size_t fatfs_writefile(file_t file, const void *addr, size_t offset, size_t size)
+size_t fatfs_writefile(fd_t *fd, const void *addr, size_t offset, size_t size)
 {
+    file_t file = fd->node->handle;
+
     if (file == NULL || addr == NULL)
         return -1;
     FRESULT res;
@@ -287,7 +291,7 @@ static struct vfs_callback callbacks = {
     .close = (vfs_close_t)fatfs_close,
     .read = (vfs_read_t)fatfs_readfile,
     .write = (vfs_write_t)fatfs_writefile,
-    .readlink = (vfs_read_t)dummy,
+    .readlink = (vfs_readlink_t)dummy,
     .mkdir = fatfs_mkdir,
     .mkfile = fatfs_mkfile,
     .link = fatfs_link,

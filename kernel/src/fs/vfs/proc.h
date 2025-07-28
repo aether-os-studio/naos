@@ -10,7 +10,7 @@ typedef struct proc_handle
     task_t *task;
 } proc_handle_t;
 
-ssize_t procfs_read(void *file, void *addr, size_t offset, size_t size);
+ssize_t procfs_read(fd_t *file, void *addr, size_t offset, size_t size);
 
 #define MAX_PID_NAME_LEN 4
 

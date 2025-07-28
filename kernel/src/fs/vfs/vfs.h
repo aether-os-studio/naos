@@ -26,6 +26,13 @@ enum
 
 typedef struct vfs_node *vfs_node_t;
 
+typedef struct fd
+{
+    vfs_node_t node;
+    uint64_t offset;
+    uint64_t flags;
+} fd_t;
+
 typedef int (*vfs_mount_t)(const char *src, vfs_node_t node);
 typedef void (*vfs_unmount_t)(void *root);
 
@@ -61,7 +68,7 @@ typedef void (*vfs_resize_t)(void *current, uint64_t size);
  *\param offset   写入的偏移
  *\param size     写入的大小
  */
-typedef ssize_t (*vfs_write_t)(void *file, const void *addr, size_t offset, size_t size);
+typedef ssize_t (*vfs_write_t)(fd_t *fd, const void *addr, size_t offset, size_t size);
 
 /**
  *\brief 读取一个文件
@@ -71,7 +78,9 @@ typedef ssize_t (*vfs_write_t)(void *file, const void *addr, size_t offset, size
  *\param offset   读取的偏移
  *\param size     读取的大小
  */
-typedef ssize_t (*vfs_read_t)(void *file, void *addr, size_t offset, size_t size);
+typedef ssize_t (*vfs_read_t)(fd_t *fd, void *addr, size_t offset, size_t size);
+
+typedef ssize_t (*vfs_readlink_t)(void *fd, void *addr, size_t offset, size_t size);
 
 /**
  *\brief 获取文件信息
@@ -111,7 +120,7 @@ typedef struct vfs_callback
     vfs_close_t close;
     vfs_read_t read;
     vfs_write_t write;
-    vfs_read_t readlink;
+    vfs_readlink_t readlink;
     vfs_mk_t mkdir;
     vfs_mk_t mkfile;
     vfs_mk_t link;
@@ -160,13 +169,6 @@ struct vfs_node
     uint16_t mode;       // 模式
     uint32_t rw_hint;    // 读写提示
 };
-
-typedef struct fd
-{
-    vfs_node_t node;
-    uint64_t offset;
-    uint64_t flags;
-} fd_t;
 
 extern vfs_node_t rootdir; // vfs 根目录
 
@@ -244,6 +246,9 @@ ssize_t vfs_read(vfs_node_t file, void *addr, size_t offset, size_t size);
  *\return 0 成功，-1 失败
  */
 ssize_t vfs_write(vfs_node_t file, const void *addr, size_t offset, size_t size);
+
+ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size);
+ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size);
 
 /**
  *\brief 挂载文件系统

@@ -142,9 +142,11 @@ bool ext_close(void *current)
     return true;
 }
 
-ssize_t ext_write(void *file, const void *addr, size_t offset, size_t size)
+ssize_t ext_write(fd_t *fd, const void *addr, size_t offset, size_t size)
 {
     spin_lock(&rwlock);
+
+    void *file = fd->node->handle;
 
     ssize_t ret = 0;
     ext_handle_t *handle = file;
@@ -167,9 +169,12 @@ ssize_t ext_write(void *file, const void *addr, size_t offset, size_t size)
     return ret;
 }
 
-ssize_t ext_read(void *file, void *addr, size_t offset, size_t size)
+ssize_t ext_read(fd_t *fd, void *addr, size_t offset, size_t size)
 {
     spin_lock(&rwlock);
+
+    void *file = fd->node->handle;
+
     ssize_t ret = 0;
     ext_handle_t *handle = file;
     if (!handle || !handle->node || !handle->file)
@@ -346,7 +351,7 @@ static struct vfs_callback callbacks = {
     .close = (vfs_close_t)ext_close,
     .read = (vfs_read_t)ext_read,
     .write = (vfs_write_t)ext_write,
-    .readlink = (vfs_read_t)ext_readlink,
+    .readlink = (vfs_readlink_t)ext_readlink,
     .mkdir = ext_mkdir,
     .mkfile = ext_mkfile,
     .link = ext_link,

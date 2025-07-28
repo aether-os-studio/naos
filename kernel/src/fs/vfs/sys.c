@@ -30,8 +30,10 @@ int sysfs_stat(void *file, vfs_node_t node)
     return 0;
 }
 
-ssize_t sysfs_read(void *file, void *addr, size_t offset, size_t size)
+ssize_t sysfs_read(fd_t *fd, void *addr, size_t offset, size_t size)
 {
+    void *file = fd->node->handle;
+
     if (!file)
         return 0;
 
@@ -108,7 +110,7 @@ static struct vfs_callback callback = {
     .close = (vfs_close_t)dummy,
     .read = (vfs_read_t)sysfs_read,
     .write = (vfs_write_t)dummy,
-    .readlink = (vfs_read_t)sysfs_readlink,
+    .readlink = (vfs_readlink_t)sysfs_readlink,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,

@@ -14,8 +14,10 @@ struct memfd_ctx
     int flags;
 };
 
-static ssize_t memfd_read(void *data, void *buf, uint64_t offset, uint64_t len)
+static ssize_t memfd_read(fd_t *fd, void *buf, uint64_t offset, uint64_t len)
 {
+    void *data = fd->node->handle;
+
     struct memfd_ctx *ctx = data;
     size_t avail = ctx->len - offset;
     if (avail <= 0)
@@ -25,8 +27,10 @@ static ssize_t memfd_read(void *data, void *buf, uint64_t offset, uint64_t len)
     return copy_len;
 }
 
-static ssize_t memfd_write(void *data, const void *buf, uint64_t offset, uint64_t len)
+static ssize_t memfd_write(fd_t *fd, const void *buf, uint64_t offset, uint64_t len)
 {
+    void *data = fd->node->handle;
+
     struct memfd_ctx *ctx = data;
     if (offset + len > ctx->len)
     {
@@ -107,7 +111,7 @@ static struct vfs_callback callbacks = {
     .close = (vfs_close_t)memfd_close,
     .read = (vfs_read_t)memfd_read,
     .write = (vfs_write_t)memfd_write,
-    .readlink = (vfs_read_t)dummy,
+    .readlink = (vfs_readlink_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,

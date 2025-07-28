@@ -599,8 +599,23 @@ ssize_t vfs_read(vfs_node_t file, void *addr, size_t offset, size_t size)
     if (file->type & file_dir)
         return -1;
     spin_lock(&file->spin);
-    ssize_t ret = callbackof(file, read)(file->handle, addr, offset, size);
+    fd_t fd;
+    fd.node = file;
+    fd.flags = 0;
+    fd.offset = offset;
+    ssize_t ret = callbackof(file, read)(&fd, addr, offset, size);
     spin_unlock(&file->spin);
+    return ret;
+}
+
+ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size)
+{
+    do_update(fd->node);
+    if (fd->node->type & file_dir)
+        return -1;
+    spin_lock(&fd->node->spin);
+    ssize_t ret = callbackof(fd->node, read)(fd, addr, offset, size);
+    spin_unlock(&fd->node->spin);
     return ret;
 }
 
@@ -615,13 +630,33 @@ ssize_t vfs_write(vfs_node_t file, const void *addr, size_t offset, size_t size)
     if (file->type & file_dir)
         return -1;
     spin_lock(&file->spin);
+    fd_t fd;
+    fd.node = file;
+    fd.flags = 0;
+    fd.offset = offset;
     ssize_t write_bytes = 0;
-    write_bytes = callbackof(file, write)(file->handle, addr, offset, size);
+    write_bytes = callbackof(file, write)(&fd, addr, offset, size);
     if (write_bytes > 0)
     {
         file->size = max(file->size, offset + write_bytes);
     }
     spin_unlock(&file->spin);
+    return write_bytes;
+}
+
+ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size)
+{
+    do_update(fd->node);
+    if (fd->node->type & file_dir)
+        return -1;
+    spin_lock(&fd->node->spin);
+    ssize_t write_bytes = 0;
+    write_bytes = callbackof(fd->node, write)(fd, addr, offset, size);
+    if (write_bytes > 0)
+    {
+        fd->node->size = max(fd->node->size, offset + write_bytes);
+    }
+    spin_unlock(&fd->node->spin);
     return write_bytes;
 }
 
@@ -741,7 +776,7 @@ int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg)
             return 0;
         case VT_GETSTATE:
             struct vt_state *state = (struct vt_state *)arg;
-            state->v_active = 0; // 当前活动终端
+            state->v_active = 1; // 当前活动终端
             state->v_state = 0;  // 状态标志
             return 0;
         case VT_OPENQRY:

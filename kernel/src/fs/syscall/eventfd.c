@@ -61,8 +61,10 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags)
 }
 
 // 实现读写操作
-static ssize_t eventfd_read(eventfd_t *efd, void *buf, size_t offset, size_t len)
+static ssize_t eventfd_read(fd_t *fd, void *buf, size_t offset, size_t len)
 {
+    eventfd_t *efd = fd->node->handle;
+
     uint64_t value;
 
     while (efd->count == 0)
@@ -124,7 +126,7 @@ static struct vfs_callback eventfd_callbacks = {
     .close = (vfs_close_t)eventfd_close,
     .read = (vfs_read_t)eventfd_read,
     .write = (vfs_write_t)eventfd_write,
-    .readlink = (vfs_read_t)dummy,
+    .readlink = (vfs_readlink_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,

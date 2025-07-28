@@ -12,6 +12,7 @@ deps="core-libs linux-headers libxkbcommon libdrm libudev libtsm pango"
 
 configure() {
     meson_configure \
+        -Dextra_debug=true \
         -Dtests=false
 }
 

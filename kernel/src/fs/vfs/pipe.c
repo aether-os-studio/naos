@@ -18,10 +18,12 @@ void pipefs_open(void *parent, const char *name, vfs_node_t node)
     (void)name;
 }
 
-ssize_t pipefs_read(void *file, void *addr, size_t offset, size_t size)
+ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size)
 {
     if (size > PIPE_BUFF)
         size = PIPE_BUFF;
+
+    void *file = fd->node->handle;
 
     pipe_specific_t *spec = (pipe_specific_t *)file;
     if (!spec)
@@ -158,9 +160,10 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
     return size;
 }
 
-ssize_t pipefs_write(void *file, const void *addr, size_t offset, size_t size)
+ssize_t pipefs_write(fd_t *fd, const void *addr, size_t offset, size_t size)
 {
     int ret = 0;
+    void *file = fd->node->handle;
     size_t chunks = size / PIPE_BUFF;
     size_t remainder = size % PIPE_BUFF;
     if (chunks)
@@ -277,7 +280,7 @@ static struct vfs_callback callbacks = {
     .close = (vfs_close_t)pipefs_close,
     .read = pipefs_read,
     .write = pipefs_write,
-    .readlink = (vfs_read_t)dummy,
+    .readlink = (vfs_readlink_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,

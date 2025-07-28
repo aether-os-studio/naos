@@ -17,8 +17,9 @@ static int dummy()
     return 0;
 }
 
-ssize_t devfs_read(void *file, void *addr, size_t offset, size_t size)
+ssize_t devfs_read(fd_t *fd, void *addr, size_t offset, size_t size)
 {
+    void *file = fd->node->handle;
     devfs_handle_t handle = (devfs_handle_t)file;
     if (handle->read)
     {
@@ -28,8 +29,9 @@ ssize_t devfs_read(void *file, void *addr, size_t offset, size_t size)
     return 0;
 }
 
-ssize_t devfs_write(void *file, const void *addr, size_t offset, size_t size)
+ssize_t devfs_write(fd_t *fd, const void *addr, size_t offset, size_t size)
 {
+    void *file = fd->node->handle;
     devfs_handle_t handle = (devfs_handle_t)file;
     if (handle->write)
     {
@@ -138,7 +140,7 @@ static struct vfs_callback callbacks = {
     .close = devfs_close,
     .read = devfs_read,
     .write = devfs_write,
-    .readlink = (vfs_read_t)dummy,
+    .readlink = (vfs_readlink_t)dummy,
     .mkdir = (vfs_mk_t)devfs_mkdir,
     .mkfile = (vfs_mk_t)devfs_mkfile,
     .link = (vfs_mk_t)dummy,

@@ -10,8 +10,9 @@ spinlock_t procfs_oplock = {0};
 
 vfs_node_t cmdline = NULL;
 
-ssize_t procfs_read(void *file, void *addr, size_t offset, size_t size)
+ssize_t procfs_read(fd_t *fd, void *addr, size_t offset, size_t size)
 {
+    void *file = fd->node->handle;
     proc_handle_t *handle = (proc_handle_t *)file;
     if (!handle)
     {
@@ -103,7 +104,7 @@ static struct vfs_callback callbacks = {
     .close = (vfs_close_t)dummy,
     .read = procfs_read,
     .write = (vfs_write_t)dummy,
-    .readlink = (vfs_read_t)procfs_readlink,
+    .readlink = (vfs_readlink_t)procfs_readlink,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,

@@ -131,8 +131,9 @@ size_t ptmx_data_avail(pty_pair_t *pair)
     return pair->ptrMaster; // won't matter here
 }
 
-size_t ptmx_read(void *file, void *addr, size_t offset, size_t size)
+size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size)
 {
+    void *file = fd->node->handle;
     pty_pair_t *pair = file;
     while (true)
     {
@@ -144,11 +145,11 @@ size_t ptmx_read(void *file, void *addr, size_t offset, size_t size)
             spin_unlock(&pair->lock);
             return 0;
         }
-        // if (fd->flags & O_NONBLOCK)
-        // {
-        //     spin_unlock(&pair->lock);
-        //     return ERR(EWOULDBLOCK);
-        // }
+        if (fd->flags & O_NONBLOCK)
+        {
+            spin_unlock(&pair->lock);
+            return -(EWOULDBLOCK);
+        }
         arch_enable_interrupt();
         spin_unlock(&pair->lock);
     }
@@ -165,8 +166,9 @@ size_t ptmx_read(void *file, void *addr, size_t offset, size_t size)
     return toCopy;
 }
 
-size_t ptmx_write(void *file, const void *addr, size_t offset, size_t limit)
+size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit)
 {
+    void *file = fd->node->handle;
     pty_pair_t *pair = file;
     // if (in[0] == 3) { // also has to be dynamic from termios
     //   syscallKill(-pair->ctrlPgid, SIGINT);
@@ -183,13 +185,13 @@ size_t ptmx_write(void *file, const void *addr, size_t offset, size_t limit)
         }
         if ((pair->ptrSlave + limit) < PTY_BUFF_SIZE)
             break;
-        // if (fd->flags & O_NONBLOCK)
-        // {
-        //     spin_unlock(&pair->lock);
-        //     return ERR(EWOULDBLOCK);
-        // }
-        spin_unlock(&pair->lock);
+        if (fd->flags & O_NONBLOCK)
+        {
+            spin_unlock(&pair->lock);
+            return -(EWOULDBLOCK);
+        }
         arch_enable_interrupt();
+        spin_unlock(&pair->lock);
     }
 
     arch_disable_interrupt();
@@ -378,9 +380,10 @@ size_t pts_data_avali(pty_pair_t *pair)
     return 0; // nothing found
 }
 
-size_t pts_read(void *fd, uint8_t *out, size_t offset, size_t limit)
+size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit)
 {
-    pty_pair_t *pair = fd;
+    void *file = fd->node->handle;
+    pty_pair_t *pair = file;
     while (true)
     {
         spin_lock(&pair->lock);
@@ -391,13 +394,13 @@ size_t pts_read(void *fd, uint8_t *out, size_t offset, size_t limit)
             spin_unlock(&pair->lock);
             return 0;
         }
-        // if (fd->flags & O_NONBLOCK)
-        // {
-        //     spin_unlock(&pair->lock);
-        //     return ERR(EWOULDBLOCK);
-        // }
-        spin_unlock(&pair->lock);
+        if (fd->flags & O_NONBLOCK)
+        {
+            spin_unlock(&pair->lock);
+            return -(EWOULDBLOCK);
+        }
         arch_enable_interrupt();
+        spin_unlock(&pair->lock);
     }
 
     arch_disable_interrupt();
@@ -439,8 +442,11 @@ size_t pts_write_inner(pty_pair_t *pair, uint8_t *in, size_t limit)
     return written;
 }
 
-size_t pts_write(pty_pair_t *pair, uint8_t *in, size_t offset, size_t limit)
+size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit)
 {
+    void *file = fd->node->handle;
+    pty_pair_t *pair = file;
+
     while (true)
     {
         spin_lock(&pair->lock);
@@ -452,13 +458,13 @@ size_t pts_write(pty_pair_t *pair, uint8_t *in, size_t offset, size_t limit)
         }
         if ((pair->ptrMaster + limit) < PTY_BUFF_SIZE)
             break;
-        // if (fd->flags & O_NONBLOCK)
-        // {
-        //     spin_unlock(&pair->lock);
-        //     return ERR(EWOULDBLOCK);
-        // }
-        spin_unlock(&pair->lock);
+        if (fd->flags & O_NONBLOCK)
+        {
+            spin_unlock(&pair->lock);
+            return -(EWOULDBLOCK);
+        }
         arch_enable_interrupt();
+        spin_unlock(&pair->lock);
     }
 
     arch_disable_interrupt();
@@ -540,12 +546,12 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg)
         break;
     case VT_GETSTATE:
         struct vt_state *state = (struct vt_state *)arg;
-        state->v_active = 0; // 当前活动终端
+        state->v_active = 2; // 当前活动终端
         state->v_state = 0;  // 状态标志
         ret = 0;
         break;
     case VT_OPENQRY:
-        *(int *)arg = 1;
+        *(int *)arg = 2;
         ret = 0;
         break;
     }
@@ -598,7 +604,7 @@ static struct vfs_callback ptmx_callbacks = {
     .close = (vfs_close_t)ptmx_close,
     .read = (vfs_read_t)ptmx_read,
     .write = (vfs_write_t)ptmx_write,
-    .readlink = (vfs_read_t)dummy,
+    .readlink = (vfs_readlink_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,
@@ -620,7 +626,7 @@ static struct vfs_callback pts_callbacks = {
     .close = (vfs_close_t)pts_close,
     .read = (vfs_read_t)pts_read,
     .write = (vfs_write_t)pts_write,
-    .readlink = (vfs_read_t)dummy,
+    .readlink = (vfs_readlink_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,
