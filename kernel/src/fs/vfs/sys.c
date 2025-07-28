@@ -9,6 +9,7 @@ static int sysfs_id = 0;
 static vfs_node_t devices_root = NULL;
 static vfs_node_t dev_root = NULL;
 static vfs_node_t bus_root = NULL;
+static vfs_node_t bus_drm_root = NULL;
 static vfs_node_t class_root = NULL;
 static vfs_node_t pci_root = NULL;
 static vfs_node_t pci_devices_root = NULL;
@@ -153,6 +154,9 @@ void sysfs_init()
     class_root = vfs_child_append(sysfs_root, "class", NULL);
     class_root->type = file_dir;
     class_root->mode = 0644;
+    bus_drm_root = vfs_child_append(bus_root, "pci", NULL);
+    bus_drm_root->type = file_dir;
+    bus_drm_root->mode = 0644;
     pci_root = vfs_child_append(bus_root, "pci", NULL);
     pci_root->type = file_dir;
     pci_root->mode = 0644;

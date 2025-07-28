@@ -175,16 +175,7 @@ void fbdev_init_sysfs()
     device->type = file_dir;
     device->mode = 0644;
 
-    vfs_node_t subsystem = vfs_child_append(device, "subsystem", NULL);
-    subsystem->type = file_dir;
-    subsystem->mode = 0644;
-    sysfs_handle_t *subsystem_handle = malloc(sizeof(sysfs_handle_t));
-    memset(subsystem_handle, 0, sizeof(sysfs_handle_t));
-    subsystem->handle = subsystem_handle;
-    subsystem_handle->node = subsystem;
-    subsystem_handle->private_data = NULL;
-
-    vfs_node_t uevent = vfs_child_append(subsystem, "uevent", NULL);
+    vfs_node_t uevent = vfs_child_append(node, "uevent", NULL);
     uevent->type = file_none;
     uevent->mode = 0700;
     sysfs_handle_t *uevent_handle = malloc(sizeof(sysfs_handle_t));
@@ -195,10 +186,5 @@ void fbdev_init_sysfs()
     vfs_node_t subsystem_link = vfs_child_append(node, "subsystem", NULL);
     subsystem_link->type = file_symlink | file_dir;
     subsystem_link->mode = 0644;
-    subsystem_link->linkto = subsystem;
-
-    vfs_node_t uevent_link = vfs_child_append(node, "uevent", NULL);
-    uevent_link->type = file_symlink | file_none;
-    uevent_link->mode = 0644;
-    uevent_link->linkto = uevent;
+    subsystem_link->linkto = graphics;
 }

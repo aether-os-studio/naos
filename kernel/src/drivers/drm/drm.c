@@ -721,21 +721,14 @@ void drm_init_sysfs()
     cardn_virtual->mode = 0644;
 
     vfs_node_t subsystem = vfs_child_append(cardn, "subsystem", NULL);
-    subsystem->type = file_dir;
+    subsystem->type = file_dir | file_symlink;
     subsystem->mode = 0644;
-    sysfs_handle_t *subsystem_handle = malloc(sizeof(sysfs_handle_t));
-    memset(subsystem_handle, 0, sizeof(sysfs_handle_t));
-    subsystem->handle = subsystem_handle;
-    subsystem_handle->node = subsystem;
-    subsystem_handle->private_data = NULL;
+    subsystem->linkto = vfs_open("/sys/bus/drm");
 
     vfs_node_t subsystem_link = vfs_child_append(dev, "subsystem", NULL);
     subsystem_link->type = file_dir | file_symlink;
     subsystem_link->mode = 0644;
-    subsystem_link->linkto = subsystem;
-    handle = malloc(sizeof(sysfs_handle_t));
-    handle->node = subsystem_link;
-    subsystem_link->handle = handle;
+    subsystem_link->linkto = vfs_open("/sys/bus/drm");
 
     sprintf(buf, "connector_id");
     vfs_node_t connector_id = vfs_node_alloc(cardn_virtual, (const char *)buf);
