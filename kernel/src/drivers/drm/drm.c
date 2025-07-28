@@ -8,9 +8,9 @@
 #include <arch/arch.h>
 #include <mm/mm.h>
 
-#define HZ 30
+#include <drivers/gfx/vmware/vmware.h>
 
-static uint32_t fb_id_counter = 1;
+#define HZ 60
 
 extern volatile struct limine_framebuffer_request framebuffer_request;
 
@@ -93,7 +93,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         crtc->gamma_size = 0;
         crtc->mode_valid = 1;
         memcpy(&crtc->mode, &mode, sizeof(struct drm_mode_modeinfo));
-        crtc->fb_id = 1;
+        crtc->fb_id = 0;
         crtc->x = 0;
         crtc->y = 0;
         return 0;
@@ -167,7 +167,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
     case DRM_IOCTL_MODE_GETFB:
     {
         struct drm_mode_fb_cmd fb;
-        fb.fb_id = fb_id_counter++;
+        fb.fb_id = 0;
 
         uint32_t width, height, bpp;
         uint64_t addr;
@@ -201,7 +201,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
             return -ENOENT;
         }
 
-        fb->fb_id = fb_id_counter++;
+        fb->fb_id = 0;
 
         fb->depth = 32;
         fb->pitch = width * bpp / 8;
@@ -221,7 +221,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
             return -EINVAL;
         }
 
-        fb->fb_id = fb_id_counter++;
+        fb->fb_id = 0;
 
         fb->handles[0] = 1;
         fb->pitches[0] = width * bpp / 8;
@@ -269,7 +269,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
             return -ENOENT;
 
         plane->crtc_id = 1;
-        plane->fb_id = 1;
+        plane->fb_id = 0;
 
         plane->possible_crtcs = 1;
         plane->gamma_size = 0;
@@ -580,8 +580,16 @@ void drm_init()
     drm_device_t *drm = malloc(sizeof(drm_device_t));
     memset(drm, 0, sizeof(drm_device_t));
     drm->id = 1;
-    drm->data = fb;
-    drm->op = &simple_drm_ops;
+    if (vmware_gpu_devices_count)
+    {
+        drm->data = vmware_gpu_devices[0];
+        drm->op = &vmware_drm_device_op;
+    }
+    else
+    {
+        drm->data = fb;
+        drm->op = &simple_drm_ops;
+    }
     regist_dev(buf, drm_read, NULL, drm_ioctl, drm_poll, drm_map, drm);
 }
 

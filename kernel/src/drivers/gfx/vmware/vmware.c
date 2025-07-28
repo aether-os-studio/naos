@@ -4,11 +4,11 @@
 
 #if defined(__x86_64__)
 
-pci_device_t *devices[MAX_VMWARE_GPU_DEVICE_NUM];
-uint32_t devices_count = 0;
+static pci_device_t *devices[MAX_VMWARE_GPU_DEVICE_NUM];
+static uint32_t devices_count = 0;
 
-static vmware_gpu_device_t *gpu_devices[MAX_VMWARE_GPU_DEVICE_NUM];
-static uint32_t gpu_devices_count = 0;
+vmware_gpu_device_t *vmware_gpu_devices[MAX_VMWARE_GPU_DEVICE_NUM];
+uint32_t vmware_gpu_devices_count = 0;
 
 static uint32_t read_register(vmware_gpu_device_t *device, uint32_t index)
 {
@@ -32,22 +32,27 @@ static void fifo_write_register(vmware_gpu_device_t *device, uint32_t index, uin
     ((uint32_t *)device->fifo_mmio_base)[index] = value;
 }
 
+static inline bool has_capability(vmware_gpu_device_t *device, enum caps capability)
+{
+    return (device->caps & (uint32_t)capability) != 0;
+}
+
 void vmware_gpu_pci_init(pci_device_t *device)
 {
-    gpu_devices[gpu_devices_count] = malloc(sizeof(vmware_gpu_device_t));
-    gpu_devices[gpu_devices_count]->io_base = device->bars[0].address;
-    gpu_devices[gpu_devices_count]->fb_mmio_base = phys_to_virt((uint64_t)device->bars[1].address);
-    gpu_devices[gpu_devices_count]->fifo_mmio_base = phys_to_virt((uint64_t)device->bars[2].address);
+    vmware_gpu_devices[vmware_gpu_devices_count] = malloc(sizeof(vmware_gpu_device_t));
+    vmware_gpu_devices[vmware_gpu_devices_count]->io_base = device->bars[0].address;
+    vmware_gpu_devices[vmware_gpu_devices_count]->fb_mmio_base = phys_to_virt((uint64_t)device->bars[1].address);
+    vmware_gpu_devices[vmware_gpu_devices_count]->fifo_mmio_base = phys_to_virt((uint64_t)device->bars[2].address);
 
-    map_page_range(get_current_page_dir(false), gpu_devices[gpu_devices_count]->fb_mmio_base, device->bars[1].address, device->bars[1].size, PT_FLAG_R | PT_FLAG_W);
-    map_page_range(get_current_page_dir(false), gpu_devices[gpu_devices_count]->fifo_mmio_base, device->bars[2].address, device->bars[2].size, PT_FLAG_R | PT_FLAG_W);
+    map_page_range(get_current_page_dir(false), vmware_gpu_devices[vmware_gpu_devices_count]->fb_mmio_base, device->bars[1].address, device->bars[1].size, PT_FLAG_R | PT_FLAG_W);
+    map_page_range(get_current_page_dir(false), vmware_gpu_devices[vmware_gpu_devices_count]->fifo_mmio_base, device->bars[2].address, device->bars[2].size, PT_FLAG_R | PT_FLAG_W);
 
     uint32_t _deviceVersion = VMWARE_GPU_VERSION_ID_2;
 
     do
     {
-        write_register(gpu_devices[gpu_devices_count], register_index_id, _deviceVersion);
-        if (read_register(gpu_devices[gpu_devices_count], register_index_id) == _deviceVersion)
+        write_register(vmware_gpu_devices[vmware_gpu_devices_count], register_index_id, _deviceVersion);
+        if (read_register(vmware_gpu_devices[vmware_gpu_devices_count], register_index_id) == _deviceVersion)
         {
             break;
         }
@@ -55,27 +60,29 @@ void vmware_gpu_pci_init(pci_device_t *device)
         _deviceVersion--;
     } while (_deviceVersion >= VMWARE_GPU_VERSION_ID_0);
 
-    gpu_devices[gpu_devices_count]->version = _deviceVersion;
+    vmware_gpu_devices[vmware_gpu_devices_count]->version = _deviceVersion;
 
-    uint32_t fifosize = read_register(gpu_devices[gpu_devices_count], register_index_mem_size);
+    uint32_t fifosize = read_register(vmware_gpu_devices[vmware_gpu_devices_count], register_index_mem_size);
 
-    gpu_devices[gpu_devices_count]->fifosize = fifosize;
+    vmware_gpu_devices[vmware_gpu_devices_count]->fifo_size = fifosize;
+
+    vmware_gpu_devices[vmware_gpu_devices_count]->caps = _deviceVersion >= VMWARE_GPU_VERSION_ID_1 ? read_register(vmware_gpu_devices[vmware_gpu_devices_count], register_index_capabilities) : 0;
 
     uint32_t min = fifo_index_num_regs * 4;
-    fifo_write_register(gpu_devices[gpu_devices_count], fifo_index_min, min);
-    fifo_write_register(gpu_devices[gpu_devices_count], fifo_index_max, fifosize);
-    fifo_write_register(gpu_devices[gpu_devices_count], fifo_index_next_cmd, min);
-    fifo_write_register(gpu_devices[gpu_devices_count], fifo_index_stop, min);
+    fifo_write_register(vmware_gpu_devices[vmware_gpu_devices_count], fifo_index_min, min);
+    fifo_write_register(vmware_gpu_devices[vmware_gpu_devices_count], fifo_index_max, fifosize);
+    fifo_write_register(vmware_gpu_devices[vmware_gpu_devices_count], fifo_index_next_cmd, min);
+    fifo_write_register(vmware_gpu_devices[vmware_gpu_devices_count], fifo_index_stop, min);
 
-    write_register(gpu_devices[gpu_devices_count], register_index_config_done, 1);
+    write_register(vmware_gpu_devices[vmware_gpu_devices_count], register_index_config_done, 1);
 
-    uint32_t current_w = read_register(gpu_devices[gpu_devices_count], register_index_width);
-    uint32_t current_h = read_register(gpu_devices[gpu_devices_count], register_index_height);
+    uint32_t current_w = read_register(vmware_gpu_devices[vmware_gpu_devices_count], register_index_width);
+    uint32_t current_h = read_register(vmware_gpu_devices[vmware_gpu_devices_count], register_index_height);
 
-    gpu_devices[gpu_devices_count]->current_w = current_w;
-    gpu_devices[gpu_devices_count]->current_h = current_h;
+    vmware_gpu_devices[vmware_gpu_devices_count]->current_w = current_w;
+    vmware_gpu_devices[vmware_gpu_devices_count]->current_h = current_h;
 
-    gpu_devices_count++;
+    vmware_gpu_devices_count++;
 }
 
 void vmware_gpu_init()
@@ -98,6 +105,115 @@ void vmware_gpu_init()
         vmware_gpu_pci_init(dev);
     }
 }
+
+uint8_t bounce_buf[1024 * 1024];
+bool _usingBounceBuf;
+
+static inline void *reserve(vmware_gpu_device_t *dev, size_t size)
+{
+    size_t bytes = size * 4;
+    uint32_t min = fifo_read_register(dev, fifo_index_min);
+    uint32_t max = fifo_read_register(dev, fifo_index_max);
+    uint32_t next_cmd = fifo_read_register(dev, fifo_index_next_cmd);
+
+    bool reserveable = has_capability(dev, fifo_reserve);
+
+    while (1)
+    {
+        uint32_t stop = fifo_read_register(dev, fifo_index_stop);
+        bool in_place = false;
+
+        if (next_cmd >= stop)
+        {
+            if (next_cmd + bytes < max ||
+                (next_cmd + bytes == max && stop > min))
+                in_place = true;
+
+            // else if ((max - next_cmd) + (stop - min) <= bytes)
+            // {
+            //     co_await _device->waitIrq(2); // TODO: add a definiton for the mask
+            // }
+            else
+            {
+                _usingBounceBuf = true;
+            }
+        }
+        else
+        {
+            if (next_cmd + bytes < stop)
+                in_place = true;
+            // else
+            //     co_await _device->waitIrq(2); // TODO: add a definiton for the mask
+        }
+
+        if (in_place)
+        {
+            if (reserveable)
+            {
+                fifo_write_register(dev, fifo_index_reserved, bytes);
+                uint64_t mem = dev->fifo_mmio_base;
+                void *ptr = (void *)(mem + next_cmd);
+
+                return ptr;
+            }
+        }
+
+        return bounce_buf;
+    }
+
+    return NULL;
+}
+
+static inline void commit(vmware_gpu_device_t *dev, size_t bytes)
+{
+    uint32_t min = fifo_read_register(dev, fifo_index_min);
+    uint32_t max = fifo_read_register(dev, fifo_index_max);
+    uint32_t next_cmd = fifo_read_register(dev, fifo_index_next_cmd);
+
+    bool reserveable = has_capability(dev, fifo_reserve);
+
+    if (_usingBounceBuf)
+    {
+        if (reserveable)
+        {
+            uint8_t *fifo = (uint8_t *)dev->fifo_mmio_base;
+
+            size_t chunk_size = MIN(bytes, (size_t)(max - next_cmd));
+            fifo_write_register(dev, fifo_index_reserved, bytes);
+            memcpy(fifo + next_cmd, bounce_buf, chunk_size);
+            memcpy(fifo + min, &bounce_buf[chunk_size], bytes - chunk_size);
+        }
+        else
+        {
+            uint32_t *buf = (uint32_t *)bounce_buf;
+            uint32_t *fifo = (uint32_t *)dev->fifo_mmio_base;
+            while (bytes)
+            {
+                fifo[next_cmd / 4] = *buf++;
+                next_cmd += 4;
+                if (next_cmd >= max)
+                {
+                    next_cmd -= max - min;
+                }
+                fifo_write_register(dev, fifo_index_next_cmd, next_cmd);
+                bytes -= 4;
+            }
+        }
+    }
+    else
+    {
+        next_cmd += bytes;
+        if (next_cmd >= max)
+            next_cmd -= max - min;
+
+        fifo_write_register(dev, fifo_index_next_cmd, next_cmd);
+    }
+
+    if (reserveable)
+        fifo_write_register(dev, fifo_index_reserved, 0);
+}
+
+// About DRM
 
 int vmware_get_display_info(void *dev_data, uint32_t *width, uint32_t *height, uint32_t *bpp)
 {
@@ -124,11 +240,100 @@ int vmware_set_cursor(void *dev_data, struct drm_mode_cursor *cursor)
     return 0;
 }
 
+int vmware_create_dumb(void *dev_data, struct drm_mode_create_dumb *args)
+{
+    vmware_gpu_device_t *dev = dev_data;
+
+    args->pitch = args->width * args->bpp / 8;
+    uint64_t size = args->height * args->pitch;
+    args->size = size;
+
+    vmware_gpu_fb_t *fb = malloc(sizeof(vmware_gpu_fb_t));
+    fb->addr = alloc_frames((size + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE);
+    fb->width = args->width;
+    fb->height = args->height;
+
+    int i = -1;
+    for (i = 0; i < MAX_FB_NUM; i++)
+    {
+        if (!dev->fbs[i])
+        {
+            dev->fbs[i] = fb;
+            break;
+        }
+    }
+
+    args->handle = i;
+
+    return 0;
+}
+
+int vmware_map_dumb(void *dev_data, struct drm_mode_map_dumb *args)
+{
+    vmware_gpu_device_t *dev = dev_data;
+
+    vmware_gpu_fb_t *fb = dev->fbs[args->handle];
+
+    args->offset = fb->addr;
+
+    return 0;
+}
+
+int vmware_add_fb(void *dev_data, struct drm_mode_fb_cmd *cmd)
+{
+    vmware_gpu_device_t *dev = dev_data;
+
+    return 0;
+}
+
+int vmware_page_flip(drm_device_t *dev, struct drm_mode_crtc_page_flip *flip)
+{
+    if (flip->crtc_id != 1)
+        return -ENOENT;
+
+    vmware_gpu_device_t *gpu = dev->data;
+
+    size_t cmd_size = sizeof(struct vmware_gpu_update_rectangle) / 4 + 1;
+
+    vmware_gpu_fb_t *fb = gpu->fbs[flip->fb_id];
+
+    memcpy((void *)gpu->fb_mmio_base, (const void *)phys_to_virt(fb->addr), fb->width * fb->height * 4);
+
+    uint32_t *ptr = reserve(gpu, cmd_size);
+    ptr[0] = command_index_update;
+    struct vmware_gpu_update_rectangle *cmd = (struct vmware_gpu_update_rectangle *)(&ptr[1]);
+    cmd->x = 0;
+    cmd->y = 0;
+    cmd->w = fb->width;
+    cmd->h = fb->height;
+
+    commit(gpu, cmd_size * 4);
+
+    for (int i = 0; i < DRM_MAX_EVENTS_COUNT; i++)
+    {
+        if (!dev->drm_events[i])
+        {
+            dev->drm_events[i] = malloc(sizeof(struct k_drm_event));
+            dev->drm_events[i]->type = DRM_EVENT_FLIP_COMPLETE;
+            dev->drm_events[i]->user_data = flip->user_data;
+            dev->drm_events[i]->timestamp.tv_sec = nanoTime() / 1000000000ULL;
+            dev->drm_events[i]->timestamp.tv_nsec = 0;
+            break;
+        }
+    }
+
+    return 0;
+}
+
 drm_device_op_t vmware_drm_device_op = {
     .get_display_info = vmware_get_display_info,
     .set_crtc = vmware_set_crtc,
     .set_cursor = vmware_set_cursor,
     .set_plane = vmware_set_plane,
+    .create_dumb = vmware_create_dumb,
+    .map_dumb = vmware_map_dumb,
+    .add_fb = vmware_add_fb,
+    .page_flip = vmware_page_flip,
 };
 
 #endif

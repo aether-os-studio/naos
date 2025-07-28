@@ -368,7 +368,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     child->cwd = current_task->cwd;
     child->cmdline = strdup(current_task->cmdline);
 
-    child->mmap_start = USER_MMAP_START;
+    child->mmap_start = current_task->mmap_start;
     child->brk_start = USER_BRK_START;
     child->brk_end = USER_BRK_START;
     child->load_start = current_task->load_start;
@@ -1066,7 +1066,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->cwd = current_task->cwd;
     child->cmdline = strdup(current_task->cmdline);
 
-    child->mmap_start = USER_MMAP_START;
+    child->mmap_start = current_task->mmap_start;
     child->brk_start = USER_BRK_START;
     child->brk_end = USER_BRK_START;
     child->load_start = current_task->load_start;

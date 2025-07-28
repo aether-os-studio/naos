@@ -157,6 +157,16 @@ struct vmware_gpu_update_rectangle
     uint32_t h;
 };
 
+struct vmware_gpu_copy_rectangle
+{
+    uint32_t dx;
+    uint32_t dy;
+    uint32_t sx;
+    uint32_t sy;
+    uint32_t w;
+    uint32_t h;
+};
+
 enum caps
 {
     cursor = 0x00000020,
@@ -168,6 +178,13 @@ enum caps
 
 #define MAX_VMWARE_GPU_DEVICE_NUM 8
 
+typedef struct vmware_gpu_fb
+{
+    uint64_t addr;
+    uint64_t width;
+    uint64_t height;
+} vmware_gpu_fb_t;
+
 typedef struct vmware_gpu_device
 {
     uint16_t io_base;
@@ -178,7 +195,16 @@ typedef struct vmware_gpu_device
     uint32_t current_h;
 
     uint32_t version;
-    uint32_t fifosize;
+    uint32_t fifo_size;
+
+    uint32_t caps;
+
+    vmware_gpu_fb_t *fbs[MAX_FB_NUM];
 } vmware_gpu_device_t;
+
+extern vmware_gpu_device_t *vmware_gpu_devices[MAX_VMWARE_GPU_DEVICE_NUM];
+extern uint32_t vmware_gpu_devices_count;
+
+extern drm_device_op_t vmware_drm_device_op;
 
 void vmware_gpu_init();

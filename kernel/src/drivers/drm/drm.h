@@ -1197,6 +1197,7 @@ typedef struct drm_device_op
     int (*create_dumb)(void *dev_data, struct drm_mode_create_dumb *args);
     int (*destroy_dumb)(void *dev_data, uint32_t handle);
     int (*dirty_fb)(void *dev_data, struct drm_mode_fb_dirty_cmd *cmd);
+    int (*add_fb)(void *dev_data, struct drm_mode_fb_cmd *cmd);
     int (*set_plane)(void *dev_data, struct drm_mode_set_plane *plane);
     int (*atomic_commit)(void *dev_data, struct drm_mode_atomic *atomic);
     int (*map_dumb)(void *dev_data, struct drm_mode_map_dumb *args);
@@ -1205,6 +1206,8 @@ typedef struct drm_device_op
     int (*set_cursor)(void *dev_data, struct drm_mode_cursor *cursor);
     int (*gamma_set)(void *dev_data, struct drm_mode_crtc_lut *gamma);
 } drm_device_op_t;
+
+#define MAX_FB_NUM 16
 
 typedef struct drm_device
 {

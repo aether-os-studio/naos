@@ -308,12 +308,6 @@ void do_page_fault(struct pt_regs *regs, uint64_t error_code)
     asm volatile("movq %%cr2, %0"
                  : "=r"(cr2)::"memory");
 
-    if (cr2 >= USER_MMAP_START && cr2 < current_task->mmap_start)
-    {
-        map_page_range(get_current_page_dir(true), cr2, 0, current_task->mmap_start - cr2, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
-        return;
-    }
-
     (void)error_code;
     dump_regs(regs, "do_page_fault(14) cr2 = %#018lx", cr2);
 
