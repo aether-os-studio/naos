@@ -8,7 +8,7 @@
 #include <arch/arch.h>
 #include <mm/mm.h>
 
-#define HZ 60
+#define HZ 30
 
 static uint32_t fb_id_counter = 1;
 
@@ -285,27 +285,21 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         case DRM_PROPERTY_ID_PLANE_TYPE:
             prop->flags = DRM_MODE_PROP_ENUM;
             strncpy((char *)prop->name, "type", DRM_PROP_NAME_LEN);
-            prop->count_enum_blobs = 3;
+            prop->count_enum_blobs = 1;
 
             if (prop->enum_blob_ptr)
             {
                 struct drm_mode_property_enum *enums = (struct drm_mode_property_enum *)prop->enum_blob_ptr;
-                strncpy(enums[0].name, "Overlay", DRM_PROP_NAME_LEN);
-                enums[0].value = DRM_PLANE_TYPE_OVERLAY;
-                strncpy(enums[1].name, "Primary", DRM_PROP_NAME_LEN);
-                enums[1].value = DRM_PLANE_TYPE_PRIMARY;
-                strncpy(enums[2].name, "Cursor", DRM_PROP_NAME_LEN);
-                enums[2].value = DRM_PLANE_TYPE_CURSOR;
+                strncpy(enums[0].name, "Primary", DRM_PROP_NAME_LEN);
+                enums[0].value = DRM_PLANE_TYPE_PRIMARY;
             }
 
-            prop->count_values = 3;
+            prop->count_values = 1;
 
             if (prop->values_ptr)
             {
                 uint64_t *values = (uint64_t *)(uintptr_t)prop->values_ptr;
-                values[0] = DRM_PLANE_TYPE_OVERLAY;
-                values[1] = DRM_PLANE_TYPE_PRIMARY;
-                values[2] = DRM_PLANE_TYPE_CURSOR;
+                values[0] = DRM_PLANE_TYPE_PRIMARY;
             }
             return 0;
         case DRM_CRTC_ACTIVE_PROP_ID:
@@ -487,9 +481,9 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         else
             vbl->request.sequence = seq;
 
-        vbl->reply.sequence =
-            vbl->reply.tval_sec = nanoTime() / 1000000000ULL;
-        vbl->reply.tval_usec = (nanoTime() % 1000000000ULL) / 1000;
+        vbl->reply.sequence = vbl->request.sequence;
+        vbl->reply.tval_sec = nanoTime() / 1000000000ULL;
+        vbl->reply.tval_usec = 0;
 
         return 0;
     }

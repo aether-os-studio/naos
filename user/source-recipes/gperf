@@ -1,0 +1,6 @@
+#! /bin/sh
+
+name=gperf
+version=3.0.4
+tarball_url="https://ftp.gnu.org/gnu/gperf/gperf-${version}.tar.gz"
+tarball_blake2b=b83bb45fb88143f2847405efd769472c5b3ea9277af88568bf8860ae653563ff3c23a9705651eac50949fdfad3efd957856f712f7810b21cc6dd32dcf40adb12

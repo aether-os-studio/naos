@@ -1,0 +1,25 @@
+#! /bin/sh
+
+name=libtsm
+skip_pkg_check=yes
+version=4.1.0git
+revision=1
+git_url="https://github.com/Aetf/libtsm.git"
+commit=a50bde4158fb36fb4fb80c68f2069fae5cae6278
+imagedeps="build-essential pkg-config cmake"
+hostdeps="gcc pkg-config"
+deps="libxkbcommon"
+
+configure() {
+    cmake_configure
+}
+
+build() {
+    cmake --build . -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" cmake --install .
+
+    post_package_strip
+}

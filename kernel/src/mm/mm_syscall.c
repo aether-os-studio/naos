@@ -90,16 +90,16 @@ uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot)
         return -EFAULT;
     }
 
-    // uint64_t pt_flags = PT_FLAG_U;
+    uint64_t pt_flags = PT_FLAG_U;
 
-    // if (prot & PROT_READ)
-    //     pt_flags |= PT_FLAG_R;
-    // if (prot & PROT_WRITE)
-    //     pt_flags |= PT_FLAG_W;
-    // if (prot & PROT_EXEC)
-    //     pt_flags |= PT_FLAG_X;
+    if (prot & PROT_READ)
+        pt_flags |= PT_FLAG_R;
+    if (prot & PROT_WRITE)
+        pt_flags |= PT_FLAG_W;
+    if (prot & PROT_EXEC)
+        pt_flags |= PT_FLAG_X;
 
-    // map_change_attribute_range(get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)), (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
+    map_change_attribute_range(get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)), (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
 
     return 0;
 }

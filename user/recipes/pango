@@ -11,7 +11,9 @@ deps="core-libs glib2 fontconfig freetype2 fribidi cairo xorg-proto libx11 xtran
 
 configure() {
     meson_configure \
-        -Dintrospection=enabled
+        -Dintrospection=disabled \
+        -Dfontconfig=enabled \
+        -Dxft=disabled
 }
 
 build() {
