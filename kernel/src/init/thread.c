@@ -11,6 +11,10 @@
 #include <fs/partition.h>
 #include <drivers/fb.h>
 
+#if defined(__x86_64__)
+#include <drivers/gfx/vmware/vmware.h>
+#endif
+
 extern void ext_init();
 extern void fatfs_init();
 extern void iso9660_init();
@@ -38,6 +42,10 @@ void init_thread(uint64_t arg)
     usb_init();
 
     partition_init();
+
+#if defined(__x86_64__)
+    vmware_gpu_init();
+#endif
 
     fbdev_init();
     drm_init();

@@ -1188,10 +1188,29 @@ struct k_drm_event
 
 #define DRM_MAX_EVENTS_COUNT 32
 
+struct drm_device;
+
+typedef struct drm_device_op
+{
+    int (*get_display_info)(void *dev_data, uint32_t *width, uint32_t *height, uint32_t *bpp);
+    int (*get_fb)(void *dev_data, uint32_t *width, uint32_t *height, uint32_t *bpp, uint64_t *addr);
+    int (*create_dumb)(void *dev_data, struct drm_mode_create_dumb *args);
+    int (*destroy_dumb)(void *dev_data, uint32_t handle);
+    int (*dirty_fb)(void *dev_data, struct drm_mode_fb_dirty_cmd *cmd);
+    int (*set_plane)(void *dev_data, struct drm_mode_set_plane *plane);
+    int (*atomic_commit)(void *dev_data, struct drm_mode_atomic *atomic);
+    int (*map_dumb)(void *dev_data, struct drm_mode_map_dumb *args);
+    int (*set_crtc)(void *dev_data, struct drm_mode_crtc *crtc);
+    int (*page_flip)(struct drm_device *dev, struct drm_mode_crtc_page_flip *flip);
+    int (*set_cursor)(void *dev_data, struct drm_mode_cursor *cursor);
+    int (*gamma_set)(void *dev_data, struct drm_mode_crtc_lut *gamma);
+} drm_device_op_t;
+
 typedef struct drm_device
 {
     int id;
-    struct limine_framebuffer *framebuffer;
+    void *data;
+    drm_device_op_t *op;
     struct k_drm_event *drm_events[DRM_MAX_EVENTS_COUNT];
     uint64_t vblank_counter;
 } drm_device_t;

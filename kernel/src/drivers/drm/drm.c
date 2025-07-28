@@ -48,10 +48,14 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         res->count_crtcs = 1;
         res->count_connectors = 1;
         res->count_encoders = 1;
-        res->min_width = dev->framebuffer->width;
-        res->min_height = dev->framebuffer->height;
-        res->max_width = dev->framebuffer->width;
-        res->max_height = dev->framebuffer->height;
+
+        uint32_t width, height, bpp;
+        dev->op->get_display_info(dev->data, &width, &height, &bpp);
+
+        res->min_width = width;
+        res->min_height = height;
+        res->max_width = width;
+        res->max_height = height;
         if (res->encoder_id_ptr)
         {
             *(uint32_t *)res->encoder_id_ptr = dev->id;
@@ -67,20 +71,23 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
     {
         struct drm_mode_crtc *crtc = (struct drm_mode_crtc *)arg;
 
+        uint32_t width, height, bpp;
+        dev->op->get_display_info(dev->data, &width, &height, &bpp);
+
         struct drm_mode_modeinfo mode = {
-            .clock = dev->framebuffer->width * HZ,
-            .hdisplay = dev->framebuffer->width,
-            .hsync_start = dev->framebuffer->width + 16,      // 水平同步开始 = 显示宽度 + 前廊
-            .hsync_end = dev->framebuffer->width + 16 + 96,   // 水平同步结束 = hsync_start + 同步脉冲宽度
-            .htotal = dev->framebuffer->width + 16 + 96 + 48, // 水平总像素 = hsync_end + 后廊
-            .vdisplay = dev->framebuffer->height,
-            .vsync_start = dev->framebuffer->height + 10,     // 垂直同步开始 = 显示高度 + 前廊
-            .vsync_end = dev->framebuffer->height + 10 + 2,   // 垂直同步结束 = vsync_start + 同步脉冲宽度
-            .vtotal = dev->framebuffer->height + 10 + 2 + 33, // 垂直总行数 = vsync_end + 后廊
+            .clock = width * HZ,
+            .hdisplay = width,
+            .hsync_start = width + 16,      // 水平同步开始 = 显示宽度 + 前廊
+            .hsync_end = width + 16 + 96,   // 水平同步结束 = hsync_start + 同步脉冲宽度
+            .htotal = width + 16 + 96 + 48, // 水平总像素 = hsync_end + 后廊
+            .vdisplay = height,
+            .vsync_start = height + 10,     // 垂直同步开始 = 显示高度 + 前廊
+            .vsync_end = height + 10 + 2,   // 垂直同步结束 = vsync_start + 同步脉冲宽度
+            .vtotal = height + 10 + 2 + 33, // 垂直总行数 = vsync_end + 后廊
             .vrefresh = HZ,
         };
 
-        sprintf(mode.name, "%dx%d", dev->framebuffer->width, dev->framebuffer->height);
+        sprintf(mode.name, "%dx%d", width, height);
 
         crtc->crtc_id = 1;
         crtc->gamma_size = 0;
@@ -105,21 +112,12 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
 
     case DRM_IOCTL_MODE_CREATE_DUMB:
     {
-        struct drm_mode_create_dumb *create = (struct drm_mode_create_dumb *)arg;
-        create->height = dev->framebuffer->height;
-        create->width = dev->framebuffer->width;
-        create->bpp = dev->framebuffer->bpp;
-        create->pitch = dev->framebuffer->pitch;
-        create->size = create->pitch * create->height;
-        create->handle = 1;
-        return 0;
+        return dev->op->create_dumb(dev->data, (struct drm_mode_create_dumb *)arg);
     }
 
     case DRM_IOCTL_MODE_MAP_DUMB:
     {
-        struct drm_mode_map_dumb *map = (struct drm_mode_map_dumb *)arg;
-        map->offset = translate_address(get_current_page_dir(false), (uint64_t)dev->framebuffer->address);
-        return 0;
+        return dev->op->map_dumb(dev->data, (struct drm_mode_map_dumb *)arg);
     }
 
     case DRM_IOCTL_MODE_DESTROY_DUMB:
@@ -138,21 +136,24 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         struct drm_mode_modeinfo *mode = (struct drm_mode_modeinfo *)(uintptr_t)conn->modes_ptr;
         if (mode)
         {
+
+            uint32_t width, height, bpp;
+            dev->op->get_display_info(dev->data, &width, &height, &bpp);
+
             struct drm_mode_modeinfo m = {
-                .clock = dev->framebuffer->width * HZ,
-                .hdisplay = dev->framebuffer->width,
-                .hsync_start = dev->framebuffer->width + 16,      // 水平同步开始 = 显示宽度 + 前廊
-                .hsync_end = dev->framebuffer->width + 16 + 96,   // 水平同步结束 = hsync_start + 同步脉冲宽度
-                .htotal = dev->framebuffer->width + 16 + 96 + 48, // 水平总像素 = hsync_end + 后廊
-                .vdisplay = dev->framebuffer->height,
-                .vsync_start = dev->framebuffer->height + 10,     // 垂直同步开始 = 显示高度 + 前廊
-                .vsync_end = dev->framebuffer->height + 10 + 2,   // 垂直同步结束 = vsync_start + 同步脉冲宽度
-                .vtotal = dev->framebuffer->height + 10 + 2 + 33, // 垂直总行数 = vsync_end + 后廊
+                .clock = width * HZ,
+                .hdisplay = width,
+                .hsync_start = width + 16,      // 水平同步开始 = 显示宽度 + 前廊
+                .hsync_end = width + 16 + 96,   // 水平同步结束 = hsync_start + 同步脉冲宽度
+                .htotal = width + 16 + 96 + 48, // 水平总像素 = hsync_end + 后廊
+                .vdisplay = height,
+                .vsync_start = height + 10,     // 垂直同步开始 = 显示高度 + 前廊
+                .vsync_end = height + 10 + 2,   // 垂直同步结束 = vsync_start + 同步脉冲宽度
+                .vtotal = height + 10 + 2 + 33, // 垂直总行数 = vsync_end + 后廊
                 .vrefresh = HZ,
-                .type = DRM_MODE_TYPE_PREFERRED,
             };
 
-            sprintf(m.name, "%dx%d", dev->framebuffer->width, dev->framebuffer->height);
+            sprintf(m.name, "%dx%d", width, height);
 
             memcpy(&mode[0], &m, sizeof(struct drm_mode_modeinfo));
         }
@@ -167,12 +168,17 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
     {
         struct drm_mode_fb_cmd fb;
         fb.fb_id = fb_id_counter++;
-        fb.width = dev->framebuffer->width,
-        fb.height = dev->framebuffer->height,
-        fb.pitch = dev->framebuffer->pitch,
-        fb.bpp = dev->framebuffer->bpp,
+
+        uint32_t width, height, bpp;
+        uint64_t addr;
+        dev->op->get_fb(dev->data, &width, &height, &bpp, &addr);
+
+        fb.width = width,
+        fb.height = height,
+        fb.pitch = width * bpp / 8,
+        fb.bpp = bpp,
         fb.depth = 32,
-        fb.handle = (uint32_t)translate_address(get_current_page_dir(false), (uint64_t)dev->framebuffer->address);
+        fb.handle = addr;
         memcpy((void *)arg, &fb, sizeof(fb));
         return 0;
     }
@@ -180,9 +186,12 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
     {
         struct drm_mode_fb_cmd *fb = (struct drm_mode_fb_cmd *)arg;
 
-        if (fb->width > dev->framebuffer->width ||
-            fb->height > dev->framebuffer->height ||
-            fb->bpp != dev->framebuffer->bpp)
+        uint32_t width, height, bpp;
+        dev->op->get_display_info(dev->data, &width, &height, &bpp);
+
+        if (fb->width > width ||
+            fb->height > height ||
+            fb->bpp != bpp)
         {
             return -EINVAL;
         }
@@ -195,7 +204,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         fb->fb_id = fb_id_counter++;
 
         fb->depth = 32;
-        fb->pitch = dev->framebuffer->pitch;
+        fb->pitch = width * bpp / 8;
 
         return 0;
     }
@@ -203,7 +212,11 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
     {
         struct drm_mode_fb_cmd2 *fb = (struct drm_mode_fb_cmd2 *)arg;
 
-        if (fb->width > dev->framebuffer->width || fb->height > dev->framebuffer->height)
+        uint32_t width, height, bpp;
+        dev->op->get_display_info(dev->data, &width, &height, &bpp);
+
+        if (fb->width > width ||
+            fb->height > height)
         {
             return -EINVAL;
         }
@@ -211,7 +224,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         fb->fb_id = fb_id_counter++;
 
         fb->handles[0] = 1;
-        fb->pitches[0] = dev->framebuffer->pitch;
+        fb->pitches[0] = width * bpp / 8;
         fb->offsets[0] = 0;
         fb->modifier[0] = 0;
 
@@ -334,7 +347,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         switch (blob->blob_id)
         {
         case DRM_BLOB_ID_PLANE_TYPE:
-            memcpy((void *)blob->data, "Overlay\nPrimary\nCursor", 23);
+            memcpy((void *)blob->data, "Primary", 7);
             break;
 
         default:
@@ -449,25 +462,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
 
     case DRM_IOCTL_MODE_PAGE_FLIP:
     {
-        struct drm_mode_crtc_page_flip *flip = (struct drm_mode_crtc_page_flip *)arg;
-
-        if (flip->crtc_id != 1)
-            return -ENOENT;
-
-        for (int i = 0; i < DRM_MAX_EVENTS_COUNT; i++)
-        {
-            if (!dev->drm_events[i])
-            {
-                dev->drm_events[i] = malloc(sizeof(struct k_drm_event));
-                dev->drm_events[i]->type = DRM_EVENT_FLIP_COMPLETE;
-                dev->drm_events[i]->user_data = flip->user_data;
-                dev->drm_events[i]->timestamp.tv_sec = nanoTime() / 1000000000ULL;
-                dev->drm_events[i]->timestamp.tv_nsec = 0;
-                break;
-            }
-        }
-
-        return 0;
+        return dev->op->page_flip(dev, (struct drm_mode_crtc_page_flip *)arg);
     }
 
     case DRM_IOCTL_WAIT_VBLANK:
@@ -560,6 +555,8 @@ void *drm_map(void *data, void *addr, uint64_t offset, uint64_t len)
     return addr;
 }
 
+extern drm_device_op_t simple_drm_ops;
+
 void drm_init()
 {
     size_t addr;
@@ -583,7 +580,8 @@ void drm_init()
     drm_device_t *drm = malloc(sizeof(drm_device_t));
     memset(drm, 0, sizeof(drm_device_t));
     drm->id = 1;
-    drm->framebuffer = fb;
+    drm->data = fb;
+    drm->op = &simple_drm_ops;
     regist_dev(buf, drm_read, NULL, drm_ioctl, drm_poll, drm_map, drm);
 }
 
