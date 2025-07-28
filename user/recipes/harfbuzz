@@ -7,15 +7,15 @@ tarball_url="https://github.com/harfbuzz/harfbuzz/releases/download/${version}/h
 tarball_blake2b="112693a42120407c25b8bf84ed14f7a481810f34557132e5902e5eeaa967071d0aa785961541b7779b7d36f353c54b6f3167c3ab6bdb81238a69d385dab3ebfe"
 imagedeps="build-essential patchelf"
 hostdeps="gcc pkg-config gobject-introspection glib2"
-deps="core-libs graphite2 glib2 zlib freetype2 cairo icu"
+deps="core-libs glib2 zlib freetype2 cairo"
 
 configure() {
     meson_configure \
         -Dcpp_std=c++17 \
-        -Dgraphite2=enabled \
+        -Dgraphite2=disabled \
         -Dglib=enabled \
         -Dgobject=disabled \
-        -Dicu=enabled \
+        -Dicu=disabled \
         -Dfreetype=enabled \
         -Dcairo=enabled \
         -Dtests=disabled \
