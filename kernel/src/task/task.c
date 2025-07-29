@@ -1264,114 +1264,96 @@ uint64_t timeval_to_ms(struct timeval tv)
     return (uint64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000; // 微秒转毫秒
 }
 
-extern int timerfdfs_id;
-
-spinlock_t itimer_op_lock = {0};
-
 void sched_update_itimer()
 {
-    uint64_t continue_ptr_count = 0;
+    uint64_t rtAt = current_task->itimer_real.at;
+    uint64_t rtReset = current_task->itimer_real.reset;
 
-    for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
+    tm time_now;
+    time_read(&time_now);
+
+    uint64_t now = mktime(&time_now) * 1000;
+
+    if (rtAt && rtAt <= now)
     {
-        task_t *ptr = tasks[i];
+        current_task->signal |= SIGMASK(SIGALRM);
+        if (current_task->state == TASK_BLOCKING)
+            task_unblock(current_task, EOK);
 
-        if (ptr == NULL)
+        if (rtReset)
         {
-            continue_ptr_count++;
-            if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
-                break;
-            continue;
+            current_task->itimer_real.at = now + rtReset;
         }
-        continue_ptr_count = 0;
-
-        if (ptr->cpu_id != current_cpu_id)
-            continue;
-
-        spin_lock(&itimer_op_lock);
-
-        uint64_t rtAt = ptr->itimer_real.at;
-        uint64_t rtReset = ptr->itimer_real.reset;
-
-        tm time_now;
-        time_read(&time_now);
-
-        uint64_t now = mktime(&time_now) * 1000;
-
-        if (rtAt && rtAt <= now)
+        else
         {
-            ptr->signal |= SIGMASK(SIGALRM);
-            if (ptr->state == TASK_BLOCKING)
-                task_unblock(ptr, EOK);
+            current_task->itimer_real.at = 0;
+        }
+    }
 
-            if (rtReset)
-            {
-                ptr->itimer_real.at = now + rtReset;
-            }
+    for (int j = 0; j < MAX_TIMERS_NUM; j++)
+    {
+        if (current_task->timers[j] == NULL)
+            break;
+        kernel_timer_t *kt = current_task->timers[j];
+        if (kt->expires && now >= kt->expires)
+        {
+            current_task->signal |= SIGMASK(kt->sigev_signo);
+
+            if (kt->interval)
+                kt->expires += kt->interval;
             else
-            {
-                ptr->itimer_real.at = 0;
-            }
+                kt->expires = 0;
         }
+    }
+}
 
-        for (int j = 0; j < MAX_TIMERS_NUM; j++)
+extern int timerfdfs_id;
+
+extern uint64_t start_nanotime;
+
+void sched_update_timerfd()
+{
+    tm time;
+    time_read(&time);
+    uint64_t now = (uint64_t)mktime(&time) * 1000000000ULL + (nanoTime() - start_nanotime) % 1000000000ULL;
+
+    if (current_task->fd_info)
+    {
+        uint64_t continue_null_fd_count = 0;
+
+        for (int fd = 3; fd < MAX_FD_NUM; fd++)
         {
-            if (ptr->timers[i] == NULL)
-                break;
-            kernel_timer_t *kt = ptr->timers[j];
-            if (kt->expires && now >= kt->expires)
+            if (current_task->fd_info->fds[fd] == NULL)
             {
-                ptr->signal |= SIGMASK(kt->sigev_signo);
-                if (ptr->state == TASK_BLOCKING)
-                    task_unblock(ptr, EOK);
-
-                if (kt->interval)
-                    kt->expires += kt->interval;
-                else
-                    kt->expires = 0;
+                continue_null_fd_count++;
+                if (continue_null_fd_count >= 5)
+                    break;
+                continue;
             }
-        }
 
-        if (ptr->fd_info)
-        {
-            uint64_t continue_null_fd_count = 0;
+            continue_null_fd_count = 0;
 
-            for (int fd = 3; fd < MAX_FD_NUM; fd++)
+            if (current_task->fd_info->fds[fd] && current_task->fd_info->fds[fd]->node->fsid == timerfdfs_id)
             {
-                if (ptr->fd_info->fds[fd] == NULL)
+                timerfd_t *tfd = current_task->fd_info->fds[fd]->node->handle;
+
+                if (tfd->timer.expires && now >= tfd->timer.expires)
                 {
-                    continue_null_fd_count++;
-                    if (continue_null_fd_count >= 5)
-                        break;
-                    continue;
-                }
-
-                continue_null_fd_count = 0;
-
-                if (ptr->fd_info->fds[fd] && ptr->fd_info->fds[fd]->node->fsid == timerfdfs_id)
-                {
-                    timerfd_t *tfd = ptr->fd_info->fds[fd]->node->handle;
-
-                    if (tfd->timer.expires && now >= tfd->timer.expires)
+                    if (tfd->timer.interval)
                     {
-                        if (tfd->timer.interval)
-                        {
-                            uint64_t delta = now - tfd->timer.expires;
-                            uint64_t periods = delta / tfd->timer.interval + 1;
-                            tfd->count += periods;
-                            tfd->timer.expires += periods * tfd->timer.interval;
-                        }
-                        else
-                        {
-                            tfd->count++;
-                            tfd->timer.expires = 0;
-                        }
+                        uint64_t delta = now - tfd->timer.expires;
+                        uint64_t periods = delta / tfd->timer.interval + 1;
+                        tfd->count += periods;
+                        tfd->timer.expires += periods * tfd->timer.interval;
+                    }
+                    else
+                    {
+                        tfd->count++;
+                        tfd->timer.expires = 0;
                     }
                 }
             }
         }
-
-        spin_unlock(&itimer_op_lock);
     }
 }
 

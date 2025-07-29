@@ -182,6 +182,7 @@ typedef struct task
 } task_t;
 
 void sched_update_itimer();
+void sched_update_timerfd();
 
 task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg);
 void task_init();

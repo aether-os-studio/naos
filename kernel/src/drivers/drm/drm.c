@@ -475,7 +475,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
 
         vbl->reply.sequence = vbl->request.sequence;
         vbl->reply.tval_sec = nanoTime() / 1000000000ULL;
-        vbl->reply.tval_usec = 0;
+        vbl->reply.tval_usec = (nanoTime() % 1000000000ULL) / 1000ULL;
 
         return 0;
     }

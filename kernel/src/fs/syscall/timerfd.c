@@ -52,15 +52,24 @@ static uint64_t get_current_time_ms()
     return (uint64_t)mktime(&time) * 1000ULL;
 }
 
+extern uint64_t start_nanotime;
+
+static uint64_t get_current_time_ns()
+{
+    tm time;
+    time_read(&time);
+    return (uint64_t)mktime(&time) * 1000000000ULL + (nanoTime() - start_nanotime) % 1000000000ULL;
+}
+
 static uint64_t get_current_time(uint64_t clock_type)
 {
     if (clock_type == CLOCK_MONOTONIC)
     {
-        return nanoTime() / 1000000UL;
+        return nanoTime(); // 直接返回纳秒级单调时间
     }
     else
     {
-        return get_current_time_ms();
+        return get_current_time_ns(); // 使用增强版实时时钟
     }
 }
 
@@ -77,17 +86,16 @@ int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, st
         uint64_t now = get_current_time(tfd->timer.clock_type);
         uint64_t remaining = tfd->timer.expires > now ? tfd->timer.expires - now : 0;
 
-        old_value->it_interval.tv_sec = tfd->timer.interval / 1000;
-        old_value->it_interval.tv_usec = (tfd->timer.interval % 1000) * 1000;
-        old_value->it_value.tv_sec = remaining / 1000;
-        old_value->it_value.tv_usec = (remaining % 1000) * 1000;
+        old_value->it_interval.tv_sec = tfd->timer.interval / 1000000000ULL;
+        old_value->it_interval.tv_usec = (tfd->timer.interval % 1000000000ULL) / 1000ULL;
+        old_value->it_value.tv_sec = remaining / 1000000000ULL;
+        old_value->it_value.tv_usec = (remaining % 1000000000ULL) / 1000ULL;
     }
 
-    // 输入参数转换为毫秒
-    uint64_t interval = new_value->it_interval.tv_sec * 1000 +
-                        new_value->it_interval.tv_usec / 1000;
-    uint64_t expires = new_value->it_value.tv_sec * 1000 +
-                       new_value->it_value.tv_usec / 1000;
+    uint64_t interval = new_value->it_interval.tv_sec * 1000000000ULL +
+                        new_value->it_interval.tv_usec * 1000ULL;
+    uint64_t expires = new_value->it_value.tv_sec * 1000000000ULL +
+                       new_value->it_value.tv_usec * 1000ULL;
 
     // 处理绝对/相对时间
     if (flags & TFD_TIMER_ABSTIME)
