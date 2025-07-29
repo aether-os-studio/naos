@@ -10,16 +10,23 @@ static uint32_t devices_count = 0;
 vmware_gpu_device_t *vmware_gpu_devices[MAX_VMWARE_GPU_DEVICE_NUM];
 uint32_t vmware_gpu_devices_count = 0;
 
+static spinlock_t register_rw_lock = {0};
+
 static uint32_t read_register(vmware_gpu_device_t *device, uint32_t index)
 {
+    spin_lock(&register_rw_lock);
     io_out32(device->io_base + 0x00, index);
-    return io_in32(device->io_base + 0x01);
+    uint32_t ret = io_in32(device->io_base + 0x01);
+    spin_unlock(&register_rw_lock);
+    return ret;
 }
 
 static void write_register(vmware_gpu_device_t *device, uint32_t index, uint32_t value)
 {
+    spin_lock(&register_rw_lock);
     io_out32(device->io_base + 0x00, index);
     io_out32(device->io_base + 0x01, value);
+    spin_unlock(&register_rw_lock);
 }
 
 static uint32_t fifo_read_register(vmware_gpu_device_t *device, uint32_t index)

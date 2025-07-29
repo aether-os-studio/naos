@@ -159,10 +159,10 @@ struct vmware_gpu_update_rectangle
 
 struct vmware_gpu_copy_rectangle
 {
-    uint32_t dx;
-    uint32_t dy;
     uint32_t sx;
     uint32_t sy;
+    uint32_t dx;
+    uint32_t dy;
     uint32_t w;
     uint32_t h;
 };
