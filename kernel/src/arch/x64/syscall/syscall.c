@@ -117,7 +117,7 @@ uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3)
             struct timespec *ts = (struct timespec *)arg2;
             uint64_t nano = nanoTime();
             ts->tv_sec = nano / 1000000000ULL;
-            ts->tv_nsec = 0;
+            ts->tv_nsec = nano % 1000000000ULL;
         }
         return 0;
     }

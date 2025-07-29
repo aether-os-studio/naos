@@ -1218,5 +1218,7 @@ typedef struct drm_device
     uint64_t vblank_counter;
 } drm_device_t;
 
+extern void fast_copy_16(void *dst, const void *src, size_t size);
+
 void drm_init();
 void drm_init_sysfs();

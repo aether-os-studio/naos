@@ -325,8 +325,6 @@ int vmware_add_fb(void *dev_data, struct drm_mode_fb_cmd *cmd)
     return 0;
 }
 
-extern void fast_copy_16(void *dst, const void *src, size_t size);
-
 int vmware_page_flip(drm_device_t *dev, struct drm_mode_crtc_page_flip *flip)
 {
     if (flip->crtc_id != 1)

@@ -644,12 +644,10 @@ void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code,
     if (!item || item->timesOpened == 0)
         return;
 
-    uint64_t time = nanoTime();
-
     struct input_event event;
     memset(&event, 0, sizeof(struct input_event));
-    event.sec = time / 1000000000ULL;
-    event.usec = 0;
+    event.sec = nanoTime() / 1000000000ULL;
+    event.usec = (nanoTime() % 1000000000ULL) / 1000ULL;
     event.type = type;
     event.code = code;
     event.value = value;
