@@ -60,7 +60,7 @@ bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state)
     }
 
     if (change_state)
-        task->state = TASK_BLOCKING;
+        task_block(task, TASK_BLOCKING, -1);
 
     return true;
 }
