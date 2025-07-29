@@ -4,6 +4,8 @@
 #include <task/signal.h>
 #include <fs/termios.h>
 
+#include <libs/interval_tree.h>
+
 #define AT_NULL 0
 #define AT_IGNORE 1
 #define AT_EXECFD 2
@@ -156,11 +158,12 @@ typedef struct task
     task_state_t current_state;
     uint64_t kernel_stack;
     uint64_t syscall_stack;
-    uint64_t mmap_start;
     uint64_t brk_start;
     uint64_t brk_end;
     uint64_t load_start;
     uint64_t load_end;
+    uint64_t mmap_start;
+    struct interval_tree_node *mmap_regions;
     arch_context_t *arch_context;
     sigaction_t actions[MAXSIG];
     uint64_t signal;

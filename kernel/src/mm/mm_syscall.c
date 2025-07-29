@@ -32,30 +32,61 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
 
     uint64_t aligned_len = (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
 
+    uint64_t end = addr + aligned_len - 1;
+
     if (check_user_overflow(addr, aligned_len))
     {
         return -EFAULT;
     }
 
-    if (addr == 0)
-    {
-        addr = current_task->mmap_start;
-        flags &= (~MAP_FIXED);
-    }
+    spin_lock(&mm_op_lock);
 
     if (aligned_len == 0)
     {
         return (uint64_t)-EINVAL;
     }
 
-    current_task->mmap_start += (aligned_len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
-    if (current_task->mmap_start > USER_MMAP_END)
+    if (flags & MAP_FIXED)
     {
-        current_task->mmap_start -= (aligned_len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
-        return (uint64_t)-ENOMEM;
+        if (interval_tree_search(current_task->mmap_regions, addr, end))
+        {
+            spin_unlock(&mm_op_lock);
+            return (uint64_t)-ENOMEM;
+        }
+    }
+    else
+    {
+        // struct mmap_region *prev = NULL;
+        uint64_t gap_start = USER_MMAP_START;
+
+        struct mmap_region *reg = interval_tree_iter_first(current_task->mmap_regions, USER_MMAP_START, USER_MMAP_END);
+        while (reg)
+        {
+            if (reg->it_node.start - gap_start >= aligned_len)
+            {
+                addr = gap_start;
+                end = addr + aligned_len - 1;
+                break;
+            }
+            gap_start = reg->it_node.last + 1;
+            // prev = reg;
+            reg = interval_tree_iter_next(reg);
+        }
+
+        if (!addr)
+        {
+            addr = current_task->mmap_start;
+            current_task->mmap_start += aligned_len;
+        }
     }
 
-    spin_lock(&mm_op_lock);
+    struct mmap_region *new_reg = malloc(sizeof(struct mmap_region));
+    new_reg->it_node.start = addr;
+    new_reg->it_node.last = end;
+    new_reg->prot = prot;
+    new_reg->flags = flags;
+
+    interval_tree_insert(new_reg, &current_task->mmap_regions);
 
     if (fd < MAX_FD_NUM && current_task->fd_info->fds[fd])
     {
@@ -110,9 +141,22 @@ uint64_t sys_munmap(uint64_t addr, uint64_t size)
     {
         return -EFAULT;
     }
+
+    uint64_t end = addr + size - 1;
+
     spin_lock(&mm_op_lock);
-    unmap_page_range(get_current_page_dir(false), addr, size);
+
+    struct mmap_region *reg;
+    while ((reg = interval_tree_iter_first(current_task->mmap_regions, addr, end)))
+    {
+        interval_tree_remove(reg, &current_task->mmap_regions);
+        unmap_page_range(get_current_page_dir(false), reg->it_node.start, reg->it_node.last - reg->it_node.start + 1);
+
+        free(reg);
+    }
+
     spin_unlock(&mm_op_lock);
+
     return 0;
 }
 

@@ -87,6 +87,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
     task->signal = 0;
     task->status = 0;
     task->cwd = rootdir;
+    task->mmap_regions = NULL;
     task->mmap_start = USER_MMAP_START;
     task->brk_start = USER_BRK_START;
     task->brk_end = USER_BRK_START;
@@ -368,6 +369,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     child->cwd = current_task->cwd;
     child->cmdline = strdup(current_task->cmdline);
 
+    child->mmap_regions = NULL;
     child->mmap_start = current_task->mmap_start;
     child->brk_start = USER_BRK_START;
     child->brk_end = USER_BRK_START;
@@ -1066,6 +1068,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->cwd = current_task->cwd;
     child->cmdline = strdup(current_task->cmdline);
 
+    child->mmap_regions = NULL;
     child->mmap_start = current_task->mmap_start;
     child->brk_start = USER_BRK_START;
     child->brk_end = USER_BRK_START;
