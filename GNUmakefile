@@ -153,7 +153,7 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-device qemu-xhci,id=xhci \
 		-device nvme,drive=harddisk,serial=1234 \
 		-device nvme,drive=rootdisk,serial=5678 \
-		-vga vmware -d cpu_reset,trace:vmware_* \
+		-vga vmware \
 		$(QEMUFLAGS)
 
 .PHONY: run-aarch64

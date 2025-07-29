@@ -76,6 +76,16 @@ void vmware_gpu_pci_init(pci_device_t *device)
 
     write_register(vmware_gpu_devices[vmware_gpu_devices_count], register_index_config_done, 1);
 
+    if (vmware_gpu_devices[vmware_gpu_devices_count]->caps & (uint32_t)cap_irqmask)
+    {
+        write_register(vmware_gpu_devices[vmware_gpu_devices_count], register_index_irqmask, 0);
+        io_out32(vmware_gpu_devices[vmware_gpu_devices_count]->io_base + 0x08, 0xFF);
+    }
+    else
+    {
+        printk("gfx/vmware: device doesn't support interrupts\n");
+    }
+
     uint32_t current_w = read_register(vmware_gpu_devices[vmware_gpu_devices_count], register_index_width);
     uint32_t current_h = read_register(vmware_gpu_devices[vmware_gpu_devices_count], register_index_height);
 
@@ -106,6 +116,35 @@ void vmware_gpu_init()
     }
 }
 
+static void wait_irq(vmware_gpu_device_t *gpu, uint32_t irq_mask)
+{
+    static uint64_t irq_sequence;
+
+    if (gpu->caps & (uint32_t)cap_irqmask)
+    {
+        write_register(gpu, register_index_irqmask, irq_mask);
+        write_register(gpu, register_index_sync, 1);
+
+        while (true)
+        {
+            uint32_t irq_flags = io_in32(gpu->io_base + 0x08);
+            if (!(irq_flags & irq_mask))
+            {
+                continue;
+            }
+
+            io_out32(gpu->io_base + 0x08, irq_flags);
+
+            break;
+        }
+    }
+    else
+    {
+        write_register(gpu, register_index_sync, 1);
+        read_register(gpu, register_index_busy);
+    }
+}
+
 uint8_t bounce_buf[1024 * 1024];
 bool _usingBounceBuf;
 
@@ -116,7 +155,7 @@ static inline void *reserve(vmware_gpu_device_t *dev, size_t size)
     uint32_t max = fifo_read_register(dev, fifo_index_max);
     uint32_t next_cmd = fifo_read_register(dev, fifo_index_next_cmd);
 
-    bool reserveable = has_capability(dev, fifo_reserve);
+    bool reserveable = has_capability(dev, cap_fifo_reserve);
 
     while (1)
     {
@@ -129,10 +168,10 @@ static inline void *reserve(vmware_gpu_device_t *dev, size_t size)
                 (next_cmd + bytes == max && stop > min))
                 in_place = true;
 
-            // else if ((max - next_cmd) + (stop - min) <= bytes)
-            // {
-            //     co_await _device->waitIrq(2); // TODO: add a definiton for the mask
-            // }
+            else if ((max - next_cmd) + (stop - min) <= bytes)
+            {
+                wait_irq(dev, 2); // TODO: add a definiton for the mask
+            }
             else
             {
                 _usingBounceBuf = true;
@@ -142,8 +181,8 @@ static inline void *reserve(vmware_gpu_device_t *dev, size_t size)
         {
             if (next_cmd + bytes < stop)
                 in_place = true;
-            // else
-            //     co_await _device->waitIrq(2); // TODO: add a definiton for the mask
+            else
+                wait_irq(dev, 2); // TODO: add a definiton for the mask
         }
 
         if (in_place)
@@ -170,7 +209,7 @@ static inline void commit(vmware_gpu_device_t *dev, size_t bytes)
     uint32_t max = fifo_read_register(dev, fifo_index_max);
     uint32_t next_cmd = fifo_read_register(dev, fifo_index_next_cmd);
 
-    bool reserveable = has_capability(dev, fifo_reserve);
+    bool reserveable = has_capability(dev, cap_fifo_reserve);
 
     if (_usingBounceBuf)
     {
@@ -286,6 +325,8 @@ int vmware_add_fb(void *dev_data, struct drm_mode_fb_cmd *cmd)
     return 0;
 }
 
+extern void fast_copy_16(void *dst, const void *src, size_t size);
+
 int vmware_page_flip(drm_device_t *dev, struct drm_mode_crtc_page_flip *flip)
 {
     if (flip->crtc_id != 1)
@@ -297,7 +338,7 @@ int vmware_page_flip(drm_device_t *dev, struct drm_mode_crtc_page_flip *flip)
 
     vmware_gpu_fb_t *fb = gpu->fbs[flip->fb_id];
 
-    memcpy((void *)gpu->fb_mmio_base, (const void *)phys_to_virt(fb->addr), fb->width * fb->height * 4);
+    fast_copy_16((void *)gpu->fb_mmio_base, (const void *)phys_to_virt(fb->addr), fb->width * fb->height * 4);
 
     uint32_t *ptr = reserve(gpu, cmd_size);
     ptr[0] = command_index_update;

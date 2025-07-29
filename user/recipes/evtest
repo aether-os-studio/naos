@@ -1,0 +1,41 @@
+#! /bin/sh
+
+name=evtest
+skip_pkg_check=yes
+version=1.35git
+revision=1
+git_url="https://gitlab.freedesktop.org/libevdev/evtest.git"
+commit=3fe3ce98d81ae8b00156933ddb86b92a874cba6a
+imagedeps="build-essential pkg-config autoconf automake"
+hostdeps="gcc pkg-config"
+deps="core-libs libevdev"
+
+configure() {
+    cp -r ${base_dir}/sources/evtest/* ./
+
+    ./autogen.sh
+
+        CFLAGS="$TARGET_CFLAGS" \
+        CXXFLAGS="$TARGET_CXXFLAGS" \
+        LDFLAGS="$TARGET_LDFLAGS" \
+    ./configure \
+        --host=${OS_TRIPLET} \
+        --with-sysroot=${sysroot_dir} \
+        --prefix=${prefix} \
+        --sysconfdir=/etc \
+        --localstatedir=/var \
+        --bindir=${prefix}/bin \
+        --sbindir=${prefix}/bin \
+        --libdir=${prefix}/lib \
+        --disable-static \
+        --enable-shared \
+        --disable-malloc0returnsnull
+}
+
+build() {
+    make -j ${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+}

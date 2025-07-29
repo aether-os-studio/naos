@@ -381,7 +381,7 @@ vfs_node_t regist_dev(const char *name,
 
 ssize_t stdin_read(void *data, uint64_t offset, void *buf, uint64_t len)
 {
-    uint8_t *kernel_buff = malloc(len);
+    char kernel_buff[1024];
 
     task_read(current_task, (char *)kernel_buff, len, true);
 
@@ -394,8 +394,6 @@ ssize_t stdin_read(void *data, uint64_t offset, void *buf, uint64_t len)
 
     uint32_t fr = current_task->tmp_rec_v;
     memcpy(buf, kernel_buff, fr);
-
-    free(kernel_buff);
 
     return fr;
 }

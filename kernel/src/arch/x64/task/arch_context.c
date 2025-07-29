@@ -17,7 +17,7 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64
     context->mm = malloc(sizeof(task_mm_info_t));
     context->mm->page_table_addr = page_table_addr;
     context->mm->ref_count = 1;
-    context->ctx = (struct pt_regs *)stack - 1;
+    context->ctx = (struct pt_regs *)(stack - 8) - 1;
     context->ctx->rip = entry;
     context->ctx->rsp = stack - 8;
     context->ctx->rbp = stack - 8;

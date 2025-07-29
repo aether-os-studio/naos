@@ -169,11 +169,11 @@ struct vmware_gpu_copy_rectangle
 
 enum caps
 {
-    cursor = 0x00000020,
-    fifo_extended = 0x00008000,
-    irqmask = 0x00040000,
-    fifo_reserve = (1 << 6),
-    fifo_cursor_bypass_3 = (1 << 4),
+    cap_cursor = 0x00000020,
+    cap_fifo_extended = 0x00008000,
+    cap_irqmask = 0x00040000,
+    cap_fifo_reserve = (1 << 6),
+    cap_fifo_cursor_bypass_3 = (1 << 4),
 };
 
 #define MAX_VMWARE_GPU_DEVICE_NUM 8
