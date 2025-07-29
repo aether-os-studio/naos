@@ -363,7 +363,7 @@ int vmware_page_flip(drm_device_t *dev, struct drm_mode_crtc_page_flip *flip)
             dev->drm_events[i]->type = DRM_EVENT_FLIP_COMPLETE;
             dev->drm_events[i]->user_data = flip->user_data;
             dev->drm_events[i]->timestamp.tv_sec = nanoTime() / 1000000000ULL;
-            dev->drm_events[i]->timestamp.tv_nsec = 0;
+            dev->drm_events[i]->timestamp.tv_nsec = nanoTime() % 1000000000ULL;
             break;
         }
     }

@@ -144,7 +144,7 @@ uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3)
 uint64_t sys_clock_getres(uint64_t arg1, uint64_t arg2)
 {
     ((struct timespec *)arg2)->tv_sec = 0;
-    ((struct timespec *)arg2)->tv_nsec = 1000000;
+    ((struct timespec *)arg2)->tv_nsec = 1;
     return 0;
 }
 

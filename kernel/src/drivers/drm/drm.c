@@ -240,10 +240,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
             return -ENOENT;
         }
 
-        // dev->framebuffer->width = crtc->mode.hdisplay;
-        // dev->framebuffer->height = crtc->mode.vdisplay;
-
-        return 0;
+        return dev->op->set_crtc(dev->data, crtc);
     }
 
     case DRM_IOCTL_MODE_GETPLANERESOURCES:

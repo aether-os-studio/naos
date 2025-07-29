@@ -160,7 +160,7 @@ void aarch64_do_syscall(struct pt_regs *frame)
         frame->x0 = 0;
         break;
     case SYS_CLOCK_GETRES:
-        ((struct timespec *)arg2)->tv_nsec = 1000000;
+        ((struct timespec *)arg2)->tv_nsec = 1;
         frame->x0 = 0;
         break;
     case SYS_RT_SIGACTION:
