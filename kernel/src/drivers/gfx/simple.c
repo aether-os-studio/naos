@@ -78,7 +78,13 @@ int simple_page_flip(drm_device_t *dev, struct drm_mode_crtc_page_flip *flip)
     return 0;
 }
 
+int simple_set_crtc(void *dev_data, struct drm_mode_crtc *crtc)
+{
+    return 0;
+}
+
 drm_device_op_t simple_drm_ops = {
+    .set_crtc = simple_set_crtc,
     .get_display_info = simple_get_display_info,
     .get_fb = simple_get_fb,
     .create_dumb = simple_create_dumb,

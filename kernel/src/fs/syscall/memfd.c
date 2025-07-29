@@ -153,7 +153,7 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags)
 
     char fn[16];
     sprintf(fn, "memfd%d", memfd_idx++);
-    vfs_node_t node = vfs_child_append(memfd_root, fn, NULL);
+    vfs_node_t node = vfs_node_alloc(memfd_root, fn);
     node->type = file_none;
     node->handle = ctx;
     node->refcount++;

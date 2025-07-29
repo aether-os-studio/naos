@@ -1270,11 +1270,12 @@ spinlock_t itimer_op_lock = {0};
 
 void sched_update_itimer()
 {
+    uint64_t continue_ptr_count = 0;
+
     for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
     {
         task_t *ptr = tasks[i];
 
-        uint64_t continue_ptr_count = 0;
         if (ptr == NULL)
         {
             continue_ptr_count++;
@@ -1333,8 +1334,20 @@ void sched_update_itimer()
 
         if (ptr->fd_info)
         {
+            uint64_t continue_null_fd_count = 0;
+
             for (int fd = 3; fd < MAX_FD_NUM; fd++)
             {
+                if (ptr->fd_info->fds[fd] == NULL)
+                {
+                    continue_null_fd_count++;
+                    if (continue_null_fd_count >= 5)
+                        break;
+                    continue;
+                }
+
+                continue_null_fd_count = 0;
+
                 if (ptr->fd_info->fds[fd] && ptr->fd_info->fds[fd]->node->fsid == timerfdfs_id)
                 {
                     timerfd_t *tfd = ptr->fd_info->fds[fd]->node->handle;
