@@ -166,7 +166,7 @@ typedef struct circular_int
     size_t read_ptr;
     size_t write_ptr;
 
-    volatile bool lock_read;
+    spinlock_t lock_read;
 } circular_int_t;
 
 void circular_int_init(circular_int_t *circ, size_t size);

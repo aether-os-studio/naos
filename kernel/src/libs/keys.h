@@ -386,5 +386,5 @@ enum
     KEY_BUTTON_RIGHT = 0x84,
 };
 
-void kb_evdev_generate(uint8_t raw);
-char handle_kb_event(uint8_t scan_code, uint8_t scan_code_1);
+void kb_evdev_generate(uint8_t raw, uint8_t raw1, uint8_t raw2);
+char handle_kb_event(uint8_t scan_code, uint8_t scan_code_1, uint8_t scan_code_2);

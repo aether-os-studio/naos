@@ -383,70 +383,95 @@ const uint8_t evdevTable[89] = {
     KEY_F12,
 };
 
-// it's just a bitmap to accurately track press/release/repeat ops
-#define EVDEV_INTERNAL_SIZE (((sizeof(evdevTable) / sizeof(evdevTable[0]) + 7) / 8))
+int scanSet1E0(uint8_t data)
+{
+    switch (data)
+    {
+    case 0x1C:
+        return KEY_KPENTER;
+    case 0x1D:
+        return KEY_RIGHTCTRL;
+    case 0x35:
+        return KEY_KPSLASH;
+    case 0x37:
+        return KEY_SYSRQ;
+    case 0x38:
+        return KEY_RIGHTALT;
+    case 0x47:
+        return KEY_HOME;
+    case 0x48:
+        return KEY_UP;
+    case 0x49:
+        return KEY_PAGEUP;
+    case 0x4B:
+        return KEY_LEFT;
+    case 0x4D:
+        return KEY_RIGHT;
+    case 0x4F:
+        return KEY_END;
+    case 0x50:
+        return KEY_DOWN;
+    case 0x51:
+        return KEY_PAGEDOWN;
+    case 0x52:
+        return KEY_INSERT;
+    case 0x53:
+        return KEY_DELETE;
+    case 0x5B:
+        return KEY_LEFTMETA;
+    case 0x5C:
+        return KEY_RIGHTMETA;
+    case 0x5D:
+        return KEY_COMPOSE;
+    default:
+        return KEY_RESERVED;
+    }
+}
 
-uint8_t evdevInternal[EVDEV_INTERNAL_SIZE] = {0};
-
-uint8_t lastPressed = 0;
+int scanSet1E1(uint8_t data1, uint8_t data2)
+{
+    if (data1 == 0x1D && data2 == 0x45)
+    {
+        return KEY_PAUSE;
+    }
+    else
+    {
+        return KEY_RESERVED;
+    }
+}
 
 dev_input_event_t *kb_event = NULL;
 
-void kb_evdev_generate(uint8_t raw)
+void kb_evdev_generate(uint8_t raw, uint8_t raw1, uint8_t raw2)
 {
     if (!kb_event)
         return;
 
     uint8_t index = 0;
-    bool clicked = false;
-    if (raw <= 0x58)
+    if (raw & 0x80)
     {
-        clicked = true;
-        index = raw;
-    }
-    else if (raw <= 0xD8)
-    {
-        clicked = false;
         index = raw - 0x80;
     }
     else
-        return;
+    {
+        index = raw;
+    }
 
-    if (index > 88)
-        return;
+    bool released = (raw & 0x80) != 0;
+
     uint8_t evdevCode = evdevTable[index];
-    if (!evdevCode)
-        return;
 
-    bool oldstate = evdevInternal[index / 8];
-    if (!oldstate && clicked)
+    if (raw == 0xE0)
     {
-        // was not clicked previously, now clicked (click)
-        input_generate_event(kb_event, EV_KEY, evdevCode, 1);
-        lastPressed = evdevCode;
+        evdevCode = scanSet1E0(raw1);
     }
-    else if (oldstate && clicked)
+    else if (raw == 0xE1)
     {
-        // was clicked previously, now clicked (repeat)
-        // if (evdevCode != lastPressed)
-        //     return; // no need to re-set it on the bitmap
-        input_generate_event(kb_event, EV_KEY, evdevCode, 2);
+        evdevCode = scanSet1E1(raw1, raw2);
     }
-    else if (oldstate && !clicked)
-    {
-        // was clicked previously, now not clicked (release)
-        input_generate_event(kb_event, EV_KEY, evdevCode, 0);
-    }
+
+    input_generate_event(kb_event, EV_KEY, evdevCode, !released);
     input_generate_event(kb_event, EV_SYN, SYN_REPORT, 0);
-
-    if (clicked)
-    {
-        evdevInternal[index / 8] |= (1 << (index % 8));
-    }
-    else
-    {
-        evdevInternal[index / 8] &= ~(1 << (index % 8));
-    }
 }
 
 bool ctrled = false;
@@ -454,13 +479,12 @@ bool ctrled = false;
 bool shifted = false;
 bool capsLocked = false;
 
-char handle_kb_event(uint8_t scan_code, uint8_t scan_code_1)
+char handle_kb_event(uint8_t scan_code, uint8_t scan_code_1, uint8_t scan_code_2)
 {
-    kb_evdev_generate(scan_code);
+    kb_evdev_generate(scan_code, scan_code_1, scan_code_2);
 
     if (scan_code == 0xE0)
     {
-        kb_evdev_generate(scan_code_1);
         switch (scan_code_1)
         {
         case 0x48:

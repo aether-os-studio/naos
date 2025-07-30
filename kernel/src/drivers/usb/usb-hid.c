@@ -248,12 +248,12 @@ static void handle_key(struct keyevent *data)
     bool shift = (data->modifiers & (0x02 | 0x20)) != 0;
     if (shift && !shiftPressed)
     {
-        handle_kb_event(0x2A, 0);
+        handle_kb_event(0x2A, 0, 0);
         shiftPressed = true;
     }
     else if (!shift && shiftPressed)
     {
-        handle_kb_event(0xAA, 0);
+        handle_kb_event(0xAA, 0, 0);
         shiftPressed = false;
     }
 
@@ -264,7 +264,7 @@ static void handle_key(struct keyevent *data)
             continue;
         // New key pressed.
         uint16_t scancode = KeyToScanCode[key];
-        char k = handle_kb_event(scancode, 0);
+        char k = handle_kb_event(scancode, 0, 0);
 
         if (kb_task && (k == CHARACTER_ENTER))
         {

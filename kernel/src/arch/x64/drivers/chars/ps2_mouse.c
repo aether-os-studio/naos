@@ -47,7 +47,7 @@ void mouse_wait(uint8_t a_type)
 void mouse_write(uint8_t write)
 {
     mouse_wait(1);
-    io_out8(PORT_KB_STATUS, KB_SEND2MOUSE);
+    io_out8(PORT_KB_CMD, KB_SEND2MOUSE);
     mouse_wait(1);
     io_out8(PORT_KB_DATA, write);
 }

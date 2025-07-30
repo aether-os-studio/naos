@@ -563,36 +563,34 @@ void circular_int_init(circular_int_t *circ, size_t size)
     circ->write_ptr = 0;
     circ->buff_size = size;
     circ->buff = malloc(size);
-    circ->lock_read = false;
+    circ->lock_read.lock = 0;
     memset(circ->buff, 0, size);
 }
 
 size_t circular_int_read(circular_int_t *circ, uint8_t *buff, size_t length)
 {
-    while (circ->lock_read)
-    {
-        arch_pause();
-    }
-
-    circ->lock_read = true;
+    spin_lock(&circ->lock_read);
     ssize_t write = circ->write_ptr;
     ssize_t read = circ->read_ptr;
     if (write == read)
     {
-        circ->lock_read = false;
+        spin_unlock(&circ->lock_read);
         return 0;
     }
 
     size_t toCopy = MIN(CIRC_READABLE(write, read, circ->buff_size), length);
-    for (size_t i = 0; i < toCopy; i++)
+
+    size_t first_chunk = MIN(circ->buff_size - read, toCopy);
+    memcpy(buff, &circ->buff[read], first_chunk);
+
+    if (toCopy > first_chunk)
     {
-        // todo: could optimize this with edge memcpy() operations
-        buff[i] = circ->buff[read];
-        read = (read + 1) % circ->buff_size;
+        memcpy(buff + first_chunk, circ->buff, toCopy - first_chunk);
     }
 
-    circ->read_ptr = read;
-    circ->lock_read = false;
+    circ->read_ptr = (read + toCopy) % circ->buff_size;
+
+    spin_unlock(&circ->lock_read);
 
     return toCopy;
 }
@@ -621,16 +619,10 @@ size_t circular_int_write(circular_int_t *circ, const uint8_t *buff, size_t leng
 size_t circular_int_read_poll(circular_int_t *circ)
 {
     size_t ret = 0;
-    while (circ->lock_read)
-    {
-        arch_pause();
-    }
 
-    circ->lock_read = true;
     ssize_t write = circ->write_ptr;
     ssize_t read = circ->read_ptr;
     ret = CIRC_READABLE(write, read, circ->buff_size);
-    circ->lock_read = false;
     return ret;
 }
 

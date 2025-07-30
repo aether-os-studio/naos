@@ -75,17 +75,17 @@ void kbd_init()
 
     irq_regist_irq(PS2_KBD_INTERRUPT_VECTOR, keyboard_handler, PS2_KBD_INTERRUPT_VECTOR - 32, NULL, &apic_controller, "PS2 KBD");
 
-    // wait_KB_write();
-    // io_out8(PORT_KB_CMD, KBCMD_WRITE_CMD);
-    // wait_KB_read();
-    // io_out8(PORT_KB_DATA, KB_INIT_MODE);
+    wait_KB_write();
+    io_out8(PORT_KB_CMD, KBCMD_WRITE_CMD);
+    wait_KB_read();
+    io_out8(PORT_KB_DATA, KB_INIT_MODE);
 
-    // wait_KB_write();
-    // io_out8(PORT_KB_DATA, 0xF0);
-    // wait_KB_write();
-    // io_out8(PORT_KB_DATA, 0x02);
+    wait_KB_write();
+    io_out8(PORT_KB_DATA, 0xF0);
+    wait_KB_write();
+    io_out8(PORT_KB_DATA, 0x02);
 
-    // wait_KB_read();
+    wait_KB_read();
 
     memset(cache_buffer, 0, sizeof(cache_buffer));
 
@@ -126,9 +126,11 @@ void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
     char out = 0;
 
     if (scancode == 0xE0)
-        out = handle_kb_event(scancode, io_in8(PORT_KB_DATA));
+        out = handle_kb_event(scancode, io_in8(PORT_KB_DATA), 0);
+    else if (scancode == 0xE1)
+        out = handle_kb_event(scancode, io_in8(PORT_KB_DATA), io_in8(PORT_KB_DATA));
     else
-        out = handle_kb_event(scancode, 0);
+        out = handle_kb_event(scancode, 0, 0);
     if (!out)
         return;
 
