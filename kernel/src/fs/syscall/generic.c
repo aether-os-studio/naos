@@ -495,15 +495,10 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
         spin_unlock(&fcntl_lock);
         return !!(current_task->fd_info->fds[fd]->flags & O_CLOEXEC);
     case F_SETFD:
+        current_task->fd_info->fds[fd]->flags = (arg & 1) // FD_CLOEXEC
+                                                    ? (current_task->fd_info->fds[fd]->flags | O_CLOEXEC)
+                                                    : (current_task->fd_info->fds[fd]->flags & (~O_CLOEXEC));
         spin_unlock(&fcntl_lock);
-        if (current_task->fd_info->fds[fd]->flags & O_CLOEXEC)
-        {
-            current_task->fd_info->fds[fd]->flags &= ~(uint64_t)O_CLOEXEC;
-        }
-        else
-        {
-            current_task->fd_info->fds[fd]->flags |= (uint64_t)O_CLOEXEC;
-        }
         return 0;
     case F_DUPFD_CLOEXEC:
         uint64_t newfd = sys_dup(fd);
