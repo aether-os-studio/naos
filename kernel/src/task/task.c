@@ -824,10 +824,10 @@ void task_unblock(task_t *task, int reason)
 
 void task_exit_inner(task_t *task, int64_t code)
 {
-    if (current_task->ppid && current_task->pid != current_task->ppid && current_task->ppid < MAX_TASK_NUM && tasks[current_task->ppid])
+    if (task->ppid && task->pid != task->ppid && task->ppid < MAX_TASK_NUM && tasks[task->ppid])
     {
-        tasks[current_task->ppid]->signal |= SIGMASK(SIGCHLD);
-        task_unblock(tasks[current_task->ppid], SIGCHLD);
+        // tasks[task->ppid]->signal |= SIGMASK(SIGCHLD);
+        task_unblock(tasks[task->ppid], SIGCHLD);
     }
 
     arch_context_free(task->arch_context);
@@ -849,11 +849,6 @@ void task_exit_inner(task_t *task, int64_t code)
         }
     }
 
-    if (task->waitpid != 0 && tasks[task->waitpid])
-    {
-        task_unblock(tasks[task->waitpid], EOK);
-    }
-
     if (task->cmdline)
         free(task->cmdline);
 
@@ -865,6 +860,11 @@ void task_exit_inner(task_t *task, int64_t code)
 
     task->current_state = TASK_DIED;
     task->state = TASK_DIED;
+
+    if (task->waitpid != 0 && tasks[task->waitpid] && tasks[task->waitpid]->state == TASK_BLOCKING)
+    {
+        task_unblock(tasks[task->waitpid], EOK);
+    }
 
     procfs_on_exit_task(task);
 }
