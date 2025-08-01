@@ -45,5 +45,7 @@ if [[ -r /usr/share/bash-completion/bash_completion ]]; then
   . /usr/share/bash-completion/bash_completion
 fi
 
+export SHELL=/bin/bash
+
 export XDG_RUNTIME_DIR="/run"
 

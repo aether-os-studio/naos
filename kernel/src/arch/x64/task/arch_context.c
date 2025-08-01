@@ -47,7 +47,15 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64
 
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack, uint64_t clone_flags)
 {
+    if (!src->mm)
+    {
+        printk("src->mm == NULL!!! src = %#018lx", src);
+    }
     dst->mm = clone_page_table(src->mm, clone_flags);
+    if (!dst->mm)
+    {
+        printk("dst->mm == NULL!!! dst = %#018lx", dst);
+    }
     dst->ctx = (struct pt_regs *)stack - 1;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
     dst->ctx->ds = SELECTOR_USER_DS;
@@ -113,7 +121,7 @@ void arch_switch_with_context(arch_context_t *prev, arch_context_t *next, uint64
 
     if (!next->mm)
     {
-        printk("next->mm == NULL!!! next = %#018lx", next);
+        printk("next->mm == NULL!!! next = %#018lx\n", next);
         asm volatile("movq %0, %%cr3\n\t" ::"r"(virt_to_phys(get_kernel_page_dir())));
     }
     else

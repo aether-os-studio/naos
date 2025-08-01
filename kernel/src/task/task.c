@@ -1008,9 +1008,9 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
 
         tasks[target->pid] = NULL;
 
-        free(target->arch_context);
-
         free_page_table(target->arch_context->mm);
+
+        free(target->arch_context);
 
         free_frames_bytes((void *)(target->kernel_stack - STACK_SIZE), STACK_SIZE);
         free_frames_bytes((void *)(target->syscall_stack - STACK_SIZE), STACK_SIZE);
