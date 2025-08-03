@@ -423,7 +423,10 @@ char *write_num(char *str, uint64_t num, int base, int field_width, int precisio
 
     return str;
 }
+
 spinlock_t printk_lock = {0};
+
+extern int tty_mode;
 
 int printk(const char *fmt, ...)
 {
@@ -446,6 +449,7 @@ int printk(const char *fmt, ...)
     serial_printk(buf, len);
 
     os_terminal_write(buf, len);
+
     spin_unlock(&printk_lock);
 
     return len;

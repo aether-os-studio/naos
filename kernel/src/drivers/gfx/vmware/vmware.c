@@ -81,7 +81,7 @@ void vmware_gpu_pci_init(pci_device_t *device)
     fifo_write_register(vmware_gpu_devices[vmware_gpu_devices_count], fifo_index_next_cmd, min);
     fifo_write_register(vmware_gpu_devices[vmware_gpu_devices_count], fifo_index_stop, min);
 
-    write_register(vmware_gpu_devices[vmware_gpu_devices_count], register_index_config_done, 1);
+    // write_register(vmware_gpu_devices[vmware_gpu_devices_count], register_index_config_done, 1);
 
     if (vmware_gpu_devices[vmware_gpu_devices_count]->caps & (uint32_t)cap_irqmask)
     {
