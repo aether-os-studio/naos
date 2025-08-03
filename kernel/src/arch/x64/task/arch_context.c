@@ -153,16 +153,16 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
 
     prev->arch_context->ctx = ctx;
 
-    prev->current_state = prev->state;
+    sched_update_itimer();
+    sched_update_timerfd();
 
     task_signal();
+
+    prev->current_state = prev->state;
 
     next->current_state = TASK_RUNNING;
 
     arch_set_current(next);
-
-    sched_update_itimer();
-    sched_update_timerfd();
 
     arch_switch_with_context(prev->arch_context, next->arch_context, next->kernel_stack);
 }

@@ -5,6 +5,8 @@
 #include <interrupt/irq_manager.h>
 #include <task/task.h>
 
+#define SCHED_HZ 200
+
 bool x2apic_mode;
 uint64_t lapic_address;
 uint64_t ioapic_address;
@@ -108,7 +110,7 @@ void local_apic_init(bool is_print)
     uint64_t b = nanoTime();
     lapic_write(LAPIC_REG_TIMER_INITCNT, ~((uint32_t)0));
     for (;;)
-        if (nanoTime() - b >= 2500000)
+        if (nanoTime() - b >= 100000000 / SCHED_HZ)
             break;
     uint64_t lapic_timer = (~(uint32_t)0) - lapic_read(LAPIC_REG_TIMER_CURCNT);
     calibrated_timer_initial = (uint64_t)((uint64_t)(lapic_timer * 1000) / 250);
