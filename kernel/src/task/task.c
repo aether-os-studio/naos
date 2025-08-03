@@ -378,6 +378,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
 
     if (!vfork)
     {
+        memset(child->fd_info, 0, sizeof(fd_info_t));
         memset(child->fd_info->fds, 0, sizeof(child->fd_info->fds));
         // child->fd_info->fds[0] = malloc(sizeof(fd_t));
         // child->fd_info->fds[0]->node = vfs_open("/dev/stdin");
@@ -407,6 +408,8 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
                 child->fd_info->fds[i] = NULL;
             }
         }
+
+        child->fd_info->ref_count++;
     }
     else
     {
@@ -1078,6 +1081,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
 
     if (!(flags & CLONE_FILES))
     {
+        memset(child->fd_info, 0, sizeof(fd_info_t));
         memset(child->fd_info->fds, 0, sizeof(child->fd_info->fds));
         // child->fd_info->fds[0] = malloc(sizeof(fd_t));
         // child->fd_info->fds[0]->node = vfs_open("/dev/stdin");
@@ -1107,6 +1111,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
                 child->fd_info->fds[i] = NULL;
             }
         }
+
+        child->fd_info->ref_count++;
     }
     else
     {
