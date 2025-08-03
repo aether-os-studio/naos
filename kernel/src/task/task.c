@@ -340,8 +340,6 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
 
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
     child->call_in_signal = current_task->call_in_signal;
-    child->state = TASK_READY;
-    child->current_state = TASK_READY;
 
     child->cpu_id = alloc_cpu_id();
 
@@ -439,6 +437,9 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     }
 
     procfs_on_new_task(child);
+
+    child->state = TASK_READY;
+    child->current_state = TASK_READY;
 
     can_schedule = true;
 
@@ -1035,8 +1036,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
 
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
     child->call_in_signal = current_task->call_in_signal;
-    child->state = TASK_READY;
-    child->current_state = TASK_READY;
 
     child->cpu_id = alloc_cpu_id();
 
@@ -1160,6 +1159,9 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     }
 
     procfs_on_new_task(child);
+
+    child->state = TASK_READY;
+    child->current_state = TASK_READY;
 
     can_schedule = true;
 

@@ -52,5 +52,5 @@ void hpet_setup(Hpet *hpet)
     hpet_addr->generalConfiguration |= 1;
     *(volatile uint64_t *)((uint64_t)hpet_addr + 0xf0) = 0;
     start_nanotime = nanoTime();
-    printk("Setup acpi hpet table (nano_time: %#ld).", start_nanotime);
+    printk("Setup acpi hpet table (nano_time: %#ld).\n", start_nanotime);
 }
