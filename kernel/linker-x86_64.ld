@@ -13,6 +13,7 @@ PHDRS
     text PT_LOAD;
     rodata PT_LOAD;
     data PT_LOAD;
+    ksymtab PT_LOAD;
 }
 
 SECTIONS
@@ -45,6 +46,15 @@ SECTIONS
     .rodata : {
         *(.rodata .rodata.*)
     } :rodata
+
+    /* Move to the next memory page for .ksymtab */
+    . = ALIGN(CONSTANT(MAXPAGESIZE));
+
+    .ksymtab : {
+        __ksymtab_start = .;
+        KEEP(*(.ksymtab))
+        __ksymtab_end = .;
+    } : ksymtab
 
     /* Move to the next memory page for .data */
     . = ALIGN(CONSTANT(MAXPAGESIZE));

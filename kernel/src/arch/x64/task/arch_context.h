@@ -1,7 +1,7 @@
 #pragma once
 
 #include <arch/x64/irq/ptrace.h>
-#include <arch/elf.h>
+#include <libs/elf.h>
 #include <mm/mm.h>
 
 #define USER_STACK_START 0x00006fffff000000

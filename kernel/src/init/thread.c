@@ -2,6 +2,7 @@
 #include <task/task.h>
 
 #include <fs/vfs/dev.h>
+#include <mod/dlinker.h>
 #include <drivers/bus/pci.h>
 #include <drivers/block/ahci/ahci.h>
 #include <drivers/block/nvme/nvme.h>
@@ -42,6 +43,8 @@ void init_thread(uint64_t arg)
     usb_init();
 
     partition_init();
+
+    dlinker_init();
 
 #if defined(__x86_64__)
     vmware_gpu_init();
