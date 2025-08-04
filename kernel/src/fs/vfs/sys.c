@@ -236,31 +236,6 @@ void sysfs_init()
     device_node->type = file_dir;
     device_node->mode = 0644;
 
-    dev_node = vfs_child_append(char_dev, "13:0", NULL);
-    dev_node->type = file_dir;
-    dev_node->mode = 0644;
-    device_node = vfs_child_append(dev_node, "device", NULL);
-    device_node->type = file_dir;
-    device_node->mode = 0644;
-    vfs_node_t dev_node_uevent_node = vfs_child_append(dev_node, "uevent", NULL);
-    dev_node_uevent_node->type = file_none;
-    dev_node_uevent_node->mode = 0700;
-    handle = malloc(sizeof(sysfs_handle_t));
-    dev_node_uevent_node->handle = handle;
-    handle->node = dev_node_uevent_node;
-    sprintf(handle->content, "MAJOR=13\nMINOR=0\nDEVNAME=input/event0\n");
-
-    dev_node = vfs_child_append(char_dev, "13:1", NULL);
-    dev_node->type = file_dir;
-    dev_node->mode = 0644;
-    dev_node_uevent_node = vfs_child_append(dev_node, "uevent", NULL);
-    dev_node_uevent_node->type = file_none;
-    dev_node_uevent_node->mode = 0700;
-    handle = malloc(sizeof(sysfs_handle_t));
-    dev_node_uevent_node->handle = handle;
-    handle->node = dev_node_uevent_node;
-    sprintf(handle->content, "MAJOR=13\nMINOR=1\nDEVNAME=input/event1\n");
-
 #if defined(__x86_64__)
     vfs_node_t devices_platform = vfs_child_append(devices_root, "platform", NULL);
     devices_platform->type = file_dir;
@@ -299,9 +274,20 @@ void sysfs_init()
     vfs_node_t event0 = vfs_child_append(input0, "event0", NULL);
     event0->type = file_dir;
     event0->mode = 0644;
+
+    dev_node = vfs_child_append(char_dev, "13:0", NULL);
+    dev_node->type = file_dir;
+    dev_node->mode = 0644;
+    dev_node->linkto = event0;
+
     vfs_node_t event1 = vfs_child_append(input1, "event1", NULL);
     event1->type = file_dir;
     event1->mode = 0644;
+
+    dev_node = vfs_child_append(char_dev, "13:1", NULL);
+    dev_node->type = file_dir;
+    dev_node->mode = 0644;
+    dev_node->linkto = event1;
 
     vfs_node_t device = vfs_child_append(input0, "device", NULL);
     device->type = file_dir | file_symlink;

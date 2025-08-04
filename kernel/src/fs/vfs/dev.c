@@ -336,18 +336,12 @@ vfs_node_t regist_dev(const char *name,
                 child->mode = 0660;
                 vfs_node_t input_root = vfs_open("/sys/class/input");
                 vfs_node_t event0 = vfs_child_append(input_root, "event0", NULL);
-                vfs_node_t input_input0 = vfs_child_append(input_root, "input0", NULL);
 
-                vfs_node_t input0 = vfs_open("/sys/devices/platform/i8042/serio0/input/input0");
                 vfs_node_t e = vfs_open("/sys/devices/platform/i8042/serio0/input/input0/event0");
 
                 event0->type = file_dir | file_symlink;
                 event0->mode = 0644;
                 event0->linkto = e;
-
-                input_input0->type = file_dir | file_symlink;
-                input_input0->mode = 0644;
-                input_input0->linkto = input0;
             }
             else if (!strncmp(devfs_handles[i]->name, "event1", 6))
             {
@@ -356,18 +350,12 @@ vfs_node_t regist_dev(const char *name,
                 child->mode = 0660;
                 vfs_node_t input_root = vfs_open("/sys/class/input");
                 vfs_node_t event1 = vfs_child_append(input_root, "event1", NULL);
-                vfs_node_t input_input1 = vfs_child_append(input_root, "input1", NULL);
 
-                vfs_node_t input1 = vfs_open("/sys/devices/platform/i8042/serio1/input/input1");
                 vfs_node_t e = vfs_open("/sys/devices/platform/i8042/serio1/input/input1/event1");
 
                 event1->type = file_dir | file_symlink;
                 event1->mode = 0644;
                 event1->linkto = e;
-
-                input_input1->type = file_dir | file_symlink;
-                input_input1->mode = 0644;
-                input_input1->linkto = input1;
             }
 
             child->mode = 0666;
