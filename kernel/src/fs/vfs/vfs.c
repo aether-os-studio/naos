@@ -796,7 +796,10 @@ int vfs_poll(vfs_node_t node, size_t event)
 {
     if (node->type & file_dir)
         return -1;
-    return callbackof(node, poll)(node->handle, event);
+    spin_lock(&node->spin);
+    int ret = callbackof(node, poll)(node->handle, event);
+    spin_unlock(&node->spin);
+    return ret;
 }
 
 spinlock_t get_path_lock = {0};

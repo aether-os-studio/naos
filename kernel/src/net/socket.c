@@ -610,11 +610,14 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
         unix_socket_pair_t *pair = socket->pair;
 
         struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
+        size_t remaining_space = msg->msg_controllen;
 
-        while (cmsg && pair->pending_fds_count > 0)
+        while (pair->pending_fds_count > 0 && cmsg)
         {
-            size_t max_fds = (msg->msg_controllen - CMSG_LEN(0)) / sizeof(int);
+            size_t max_fds = (remaining_space - CMSG_LEN(0)) / sizeof(int);
             int num_fds = MIN(pair->pending_fds_count, max_fds);
+            if (num_fds <= 0)
+                break;
 
             cmsg->cmsg_level = SOL_SOCKET;
             cmsg->cmsg_type = SCM_RIGHTS;
@@ -634,8 +637,9 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
                     }
                 }
 
-                if (f == -1)
+                if (f == MAX_FD_NUM)
                 {
+                    spin_unlock(&pair->lock);
                     return -EMFILE;
                 }
 
@@ -653,6 +657,7 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
 
             spin_unlock(&pair->lock);
 
+            remaining_space -= CMSG_ALIGN(cmsg->cmsg_len);
             cmsg = CMSG_NXTHDR(msg, cmsg);
         }
     }
@@ -760,12 +765,16 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
         unix_socket_pair_t *pair = handle->sock;
 
         struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
+        size_t remaining_space = msg->msg_controllen;
 
-        while (cmsg && pair->pending_fds_count > 0)
+        while (pair->pending_fds_count > 0 && cmsg)
         {
-            size_t max_fds = (msg->msg_controllen - CMSG_LEN(0)) / sizeof(int);
+            size_t max_fds = (remaining_space - CMSG_LEN(0)) / sizeof(int);
             int num_fds = MIN(pair->pending_fds_count, max_fds);
+            if (num_fds <= 0)
+                break;
 
+            // 填充cmsg头
             cmsg->cmsg_level = SOL_SOCKET;
             cmsg->cmsg_type = SCM_RIGHTS;
             cmsg->cmsg_len = CMSG_LEN(num_fds * sizeof(int));
@@ -784,8 +793,9 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
                     }
                 }
 
-                if (f == -1)
+                if (f == MAX_FD_NUM)
                 {
+                    spin_unlock(&pair->lock);
                     return -EMFILE;
                 }
 
@@ -802,6 +812,8 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
             msg->msg_controllen = CMSG_LEN(0) + num_fds * sizeof(int);
 
             spin_unlock(&pair->lock);
+
+            remaining_space -= CMSG_ALIGN(cmsg->cmsg_len);
 
             cmsg = CMSG_NXTHDR(msg, cmsg);
         }
