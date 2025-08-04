@@ -916,7 +916,7 @@ uint64_t sys_fchdir(uint64_t fd)
         return -EBADF;
 
     vfs_node_t node = current_task->fd_info->fds[fd]->node;
-    if (node->type != file_dir)
+    if (!(node->type & file_dir))
         return -ENOTDIR;
 
     current_task->cwd = node;

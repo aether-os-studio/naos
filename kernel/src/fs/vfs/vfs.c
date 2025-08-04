@@ -144,7 +144,7 @@ int vfs_mkdir(const char *name)
         else
         {
             do_update(current);
-            if (current->type != file_dir)
+            if (!(current->type & file_dir))
                 goto err;
         }
     }
@@ -197,7 +197,7 @@ int vfs_mkfile(const char *name)
             continue;
         if (streq(buf, ".."))
         {
-            if (!current->parent || current->type != file_dir)
+            if (!current->parent || !(current->type & file_dir))
                 goto err;
             current = current->parent;
             continue;
@@ -212,7 +212,7 @@ int vfs_mkfile(const char *name)
         current = new_current;
         do_update(current);
 
-        if (current->type != file_dir)
+        if (!(current->type & file_dir))
             goto err;
     }
 
@@ -276,7 +276,7 @@ int vfs_link(const char *name, const char *target_name)
             continue;
         if (streq(buf, ".."))
         {
-            if (!current->parent || current->type != file_dir)
+            if (!current->parent || !(current->type & file_dir))
                 goto err;
             current = current->parent;
             continue;
@@ -291,7 +291,7 @@ int vfs_link(const char *name, const char *target_name)
         current = new_current;
         do_update(current);
 
-        if (current->type != file_dir)
+        if (!(current->type & file_dir))
             goto err;
     }
 
@@ -356,7 +356,7 @@ int vfs_symlink(const char *name, const char *target_name)
             continue;
         if (streq(buf, ".."))
         {
-            if (!current->parent || current->type != file_dir)
+            if (!current->parent || !(current->type & file_dir))
                 goto err;
             current = current->parent;
             continue;
@@ -371,7 +371,7 @@ int vfs_symlink(const char *name, const char *target_name)
         current = new_current;
         do_update(current);
 
-        if (current->type != file_dir)
+        if (!(current->type & file_dir))
             goto err;
     }
 
@@ -665,7 +665,7 @@ int vfs_unmount(const char *path)
     vfs_node_t node = vfs_open(path);
     if (node == NULL)
         return -1;
-    if (node->type != file_dir)
+    if (!(node->type & file_dir))
         return -1;
     if (node->fsid == 0)
         return -1;
@@ -871,7 +871,7 @@ fd_t *vfs_dup(fd_t *fd)
 
 void vfs_resize(vfs_node_t node, uint64_t size)
 {
-    if (node->type != file_none)
+    if (!(node->type & file_none))
         return;
     callbackof(node, resize)(node->handle, size);
 }
