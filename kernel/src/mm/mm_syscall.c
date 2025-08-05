@@ -46,6 +46,11 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
         return (uint64_t)-EINVAL;
     }
 
+    if (!addr)
+    {
+        flags &= (~MAP_FIXED);
+    }
+
     if (flags & MAP_FIXED)
     {
         if (interval_tree_search(current_task->mmap_regions, addr, end))

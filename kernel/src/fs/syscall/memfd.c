@@ -137,7 +137,7 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags)
     struct memfd_ctx *ctx = malloc(sizeof(struct memfd_ctx));
     strncpy(ctx->name, name, 63);
     ctx->name[63] = '\0';
-    ctx->len = DEFAULT_PAGE_SIZE;
+    ctx->len = DEFAULT_PAGE_SIZE * 4;
     ctx->data = alloc_frames_bytes(ctx->len);
     ctx->flags = flags;
 

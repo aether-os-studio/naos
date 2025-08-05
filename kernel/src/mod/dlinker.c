@@ -247,7 +247,7 @@ void dlinker_load(module_t *module)
 
     int ret = dlmain();
 
-    printk("Kernel model load done! Return code:%d.", ret);
+    printk("Kernel model load done! Return code: %d.", ret);
 }
 
 dlfunc_t *find_func(const char *name)
@@ -273,7 +273,7 @@ void find_kernel_symbol()
     for (size_t i = 0; i < dlfunc_count; i++)
     {
         dlfunc_t *entry = &__ksymtab_start[i];
-        printk("Exported: %s at %#018lx\n", entry->name, entry->addr);
+        // printk("Exported: %s at %#018lx\n", entry->name, entry->addr);
     }
 }
 
