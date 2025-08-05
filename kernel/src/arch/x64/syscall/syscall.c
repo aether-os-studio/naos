@@ -5,7 +5,7 @@
 #include <mm/mm_syscall.h>
 #include <net/net_syscall.h>
 
-__attribute__((used, section(".limine_requests"))) static volatile struct limine_date_at_boot_request boot_time_request =
+__attribute__((used, section(".limine_requests"))) volatile struct limine_date_at_boot_request boot_time_request =
     {
         .id = LIMINE_DATE_AT_BOOT_REQUEST,
         .revision = 0,
@@ -263,8 +263,8 @@ void syscall_handler_init()
     syscall_handlers[SYS_FLOCK] = (syscall_handle_t)sys_flock;
     syscall_handlers[SYS_FSYNC] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_FDATASYNC] = (syscall_handle_t)sys_fdatasync;
-    // syscall_handlers[SYS_TRUNCATE] = (syscall_handle_t)sys_truncate;
-    // syscall_handlers[SYS_FTRUNCATE] = (syscall_handle_t)sys_ftruncate;
+    syscall_handlers[SYS_TRUNCATE] = (syscall_handle_t)sys_truncate;
+    syscall_handlers[SYS_FTRUNCATE] = (syscall_handle_t)sys_ftruncate;
     syscall_handlers[SYS_GETDENTS] = (syscall_handle_t)sys_getdents;
     syscall_handlers[SYS_GETCWD] = (syscall_handle_t)sys_getcwd;
     syscall_handlers[SYS_CHDIR] = (syscall_handle_t)sys_chdir;
@@ -286,7 +286,7 @@ void syscall_handler_init()
     syscall_handlers[SYS_GETTIMEOFDAY] = (syscall_handle_t)sys_gettimeofday;
     syscall_handlers[SYS_GETRLIMIT] = (syscall_handle_t)sys_get_rlimit;
     // syscall_handlers[SYS_GETRUSAGE] = (syscall_handle_t)sys_getrusage;
-    // syscall_handlers[SYS_SYSINFO] = (syscall_handle_t)sys_sysinfo;
+    syscall_handlers[SYS_SYSINFO] = (syscall_handle_t)sys_sysinfo;
     // syscall_handlers[SYS_TIMES] = (syscall_handle_t)sys_times;
     // syscall_handlers[SYS_PTRACE] = (syscall_handle_t)sys_ptrace;
     syscall_handlers[SYS_GETUID] = (syscall_handle_t)sys_getuid;
@@ -327,12 +327,12 @@ void syscall_handler_init()
     // syscall_handlers[SYS_STATFS] = (syscall_handle_t)sys_statfs;
     // syscall_handlers[SYS_FSTATFS] = (syscall_handle_t)sys_fstatfs;
     // syscall_handlers[SYS_SYSFS] = (syscall_handle_t)sys_sysfs;
-    // syscall_handlers[SYS_GETPRIORITY] = (syscall_handle_t)sys_getpriority;
-    // syscall_handlers[SYS_SETPRIORITY] = (syscall_handle_t)sys_setpriority;
+    syscall_handlers[SYS_GETPRIORITY] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_SETPRIORITY] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_SCHED_SETPARAM] = (syscall_handle_t)sys_sched_setparam;
     // syscall_handlers[SYS_SCHED_GETPARAM] = (syscall_handle_t)sys_sched_getparam;
-    // syscall_handlers[SYS_SCHED_SETSCHEDULER] = (syscall_handle_t)sys_sched_setscheduler;
-    // syscall_handlers[SYS_SCHED_GETSCHEDULER] = (syscall_handle_t)sys_sched_getscheduler;
+    syscall_handlers[SYS_SCHED_SETSCHEDULER] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_SCHED_GETSCHEDULER] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_SCHED_GET_PRIORITY_MAX] = (syscall_handle_t)sys_sched_get_priority_max;
     // syscall_handlers[SYS_SCHED_GET_PRIORITY_MIN] = (syscall_handle_t)sys_sched_get_priority_min;
     // syscall_handlers[SYS_SCHED_RR_GET_INTERVAL] = (syscall_handle_t)sys_sched_rr_get_interval;
@@ -390,8 +390,8 @@ void syscall_handler_init()
     // syscall_handlers[SYS_TKILL] = (syscall_handle_t)sys_tkill;
     // syscall_handlers[SYS_TIME] = (syscall_handle_t)sys_time;
     syscall_handlers[SYS_FUTEX] = (syscall_handle_t)sys_futex;
-    // syscall_handlers[SYS_SCHED_SETAFFINITY] = (syscall_handle_t)sys_sched_setaffinity;
-    // syscall_handlers[SYS_SCHED_GETAFFINITY] = (syscall_handle_t)sys_sched_getaffinity;
+    syscall_handlers[SYS_SCHED_SETAFFINITY] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_SCHED_GETAFFINITY] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_SET_THREAD_AREA] = (syscall_handle_t)sys_set_thread_area;
     // syscall_handlers[SYS_IO_SETUP] = (syscall_handle_t)sys_io_setup;
     // syscall_handlers[SYS_IO_DESTROY] = (syscall_handle_t)sys_io_destroy;
@@ -511,7 +511,7 @@ void syscall_handler_init()
     // syscall_handlers[SYS_BPF] = (syscall_handle_t)sys_bpf;
     // syscall_handlers[SYS_EXECVEAT] = (syscall_handle_t)sys_execveat;
     // syscall_handlers[SYS_USERFAULTFD] = (syscall_handle_t)sys_userfaultfd;
-    // syscall_handlers[SYS_MEMBARRIER] = (syscall_handle_t)sys_membarrier;
+    syscall_handlers[SYS_MEMBARRIER] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_MLOCK2] = (syscall_handle_t)sys_mlock2;
     // syscall_handlers[SYS_COPY_FILE_RANGE] = (syscall_handle_t)sys_copy_file_range;
     // syscall_handlers[SYS_PREADV2] = (syscall_handle_t)sys_preadv2;
@@ -595,11 +595,6 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     }
 
 done:
-    if ((int)regs->rax < 0 && ((regs->rax & 0x8000000000000000) == 0))
-        regs->rax |= 0xffffffff00000000;
-    else if ((int64_t)regs->rax < 0 && ((regs->rax & 0xffffffff) == 0))
-        regs->rax = 0;
-
     if (regs->rax == (uint64_t)-ENOSYS)
     {
         char buf[32];

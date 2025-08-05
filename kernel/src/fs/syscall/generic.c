@@ -785,17 +785,18 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
 
     if (!node->linkto)
     {
-        char *p = vfs_get_fullpath(node);
-        int str_len = strlen(p);
-        int node_name_len = strlen(node->name);
-        char *ptr = p + str_len - node_name_len;
-        char tmp[256];
-        sprintf(tmp, "%s", ptr);
-        uint64_t len = strnlen(tmp, size);
-        memcpy(buf, tmp, len);
-        buf[len] = 0;
-        free(p);
-        return len;
+        // char *p = vfs_get_fullpath(node);
+        // int str_len = strlen(p);
+        // int node_name_len = strlen(node->name);
+        // char *ptr = p + str_len - node_name_len;
+        // char tmp[256];
+        // sprintf(tmp, "%s", ptr);
+        // uint64_t len = strnlen(tmp, size);
+        // memcpy(buf, tmp, len);
+        // buf[len] = 0;
+        // free(p);
+        // return len;
+        return (uint64_t)-EINVAL;
     }
 
     ssize_t result = vfs_readlink(node, buf, (size_t)size);
@@ -975,6 +976,29 @@ uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len)
     return 0;
 }
 
+uint64_t sys_truncate(const char *path, uint64_t length)
+{
+    vfs_node_t node = vfs_open(path);
+    if (!node)
+    {
+        return (uint64_t)-ENOENT;
+    }
+
+    vfs_resize(node, length);
+
+    return 0;
+}
+
+uint64_t sys_ftruncate(int fd, uint64_t length)
+{
+    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
+        return -EBADF;
+
+    vfs_resize(current_task->fd_info->fds[fd]->node, length);
+
+    return 0;
+}
+
 uint64_t sys_flock(int fd, uint64_t operation)
 {
     if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
@@ -1136,4 +1160,31 @@ int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *
     default:
         return -ENOSYS;
     }
+}
+
+extern volatile struct limine_date_at_boot_request boot_time_request;
+
+int sys_sysinfo(struct sysinfo *info)
+{
+    if (check_user_overflow((uint64_t)info, sizeof(struct sysinfo)))
+        return -EFAULT;
+
+    memset(info, 0, sizeof(struct sysinfo));
+    info->uptime = boot_time_request.response->timestamp;
+    info->loads[0] = 0;
+    info->loads[1] = 0;
+    info->loads[2] = 0;
+    info->totalram = frame_allocator.origin_frames * DEFAULT_PAGE_SIZE;
+    info->freeram = frame_allocator.usable_frames * DEFAULT_PAGE_SIZE;
+    int proc_count = 0;
+    for (int i = 0; i < MAX_TASK_NUM; i++)
+    {
+        if (!tasks[i])
+        {
+            proc_count++;
+        }
+    }
+    info->procs = proc_count;
+
+    return 0;
 }

@@ -465,6 +465,8 @@ int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, st
 
 uint64_t sys_memfd_create(const char *name, unsigned int flags);
 
+uint64_t sys_truncate(const char *path, uint64_t length);
+uint64_t sys_ftruncate(int fd, uint64_t length);
 uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len);
 
 uint64_t sys_fadvise64(int fd, uint64_t offset, uint64_t len, int advice);
@@ -528,3 +530,23 @@ static inline uint64_t sys_pread64(int fd, void *buf, size_t count, uint64_t off
     sys_lseek(fd, offset, SEEK_SET);
     return sys_read(fd, buf, count);
 }
+
+struct sysinfo
+{
+    int64_t uptime;                                        /* Seconds since boot */
+    uint64_t loads[3];                                     /* 1, 5, and 15 minute load averages */
+    uint64_t totalram;                                     /* Total usable main memory size */
+    uint64_t freeram;                                      /* Available memory size */
+    uint64_t sharedram;                                    /* Amount of shared memory */
+    uint64_t bufferram;                                    /* Memory used by buffers */
+    uint64_t totalswap;                                    /* Total swap space size */
+    uint64_t freeswap;                                     /* swap space still available */
+    uint16_t procs;                                        /* Number of current processes */
+    uint16_t pad;                                          /* Explicit padding for m68k */
+    uint64_t totalhigh;                                    /* Total high memory size */
+    uint64_t freehigh;                                     /* Available high memory size */
+    uint32_t mem_unit;                                     /* Memory unit size in bytes */
+    char _f[20 - 2 * sizeof(uint64_t) - sizeof(uint32_t)]; /* Padding: libc5 uses this.. */
+};
+
+int sys_sysinfo(struct sysinfo *info);
