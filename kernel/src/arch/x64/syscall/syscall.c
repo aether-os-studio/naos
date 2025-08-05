@@ -131,7 +131,7 @@ uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3)
         {
             struct timespec *ts = (struct timespec *)arg2;
             ts->tv_sec = timestamp;
-            ts->tv_nsec = 0;
+            ts->tv_nsec = nanoTime() % 1000000000ULL;
         }
         return 0;
     }
@@ -162,7 +162,7 @@ uint64_t sys_gettimeofday(uint64_t arg1)
     {
         struct timespec *ts = (struct timespec *)arg1;
         ts->tv_sec = timestamp_day;
-        ts->tv_nsec = 0;
+        ts->tv_nsec = nanoTime() % 1000000000ULL;
     }
     return 0;
 }

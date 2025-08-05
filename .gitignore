@@ -1,9 +1,6 @@
 /.vscode
 /kernel-deps
 /assets
-/tmp
-/libc-*
-/mnt
 *.iso
 *.img
 *.vmdk

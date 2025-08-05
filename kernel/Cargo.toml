@@ -46,6 +46,5 @@ debug = true
 
 [profile.release]
 panic = "abort"
-lto = true
-opt-level = 3
+opt-level = 2
 debug = true

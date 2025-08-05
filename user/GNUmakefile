@@ -15,6 +15,8 @@ all:
 	cp -r build-support/bash/* rootfs-$(ARCH)/etc
 	mkdir -p rootfs-$(ARCH)/run/
 	cp -r build-support/weston/udev rootfs-$(ARCH)/run
+	mkdir -p rootfs-$(ARCH)/etc/xdg/weston
+	cp -r build-support/weston/weston.ini rootfs-$(ARCH)/etc/xdg/weston
 
 	mkdir -p rootfs-$(ARCH)/tmp
 	mkdir -p rootfs-$(ARCH)/run
