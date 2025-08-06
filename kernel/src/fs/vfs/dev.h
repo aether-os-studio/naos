@@ -188,6 +188,8 @@ typedef struct dev_input_event
 
     event_bit_t event_bit;
 
+    int clock_id;
+
     char uniq[32];
 } dev_input_event_t;
 

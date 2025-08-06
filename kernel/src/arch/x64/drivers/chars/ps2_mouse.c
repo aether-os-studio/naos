@@ -207,6 +207,12 @@ void mouse_init()
     strncpy(mouse_event->uniq, "ps2mouse", sizeof(mouse_event->uniq));
 }
 
+struct input_repeat_params
+{
+    int delay;
+    int period;
+};
+
 size_t mouse_event_bit(void *data, uint64_t request, void *arg)
 {
     size_t addr;
@@ -224,6 +230,13 @@ size_t mouse_event_bit(void *data, uint64_t request, void *arg)
     size_t ret = (size_t)-ENOSYS;
     switch (number)
     {
+    // case 0x03:
+    // {
+    //     struct input_repeat_params *params = arg;
+    //     params->delay = 500;
+    //     params->period = 50;
+    //     break;
+    // }
     case 0x20:
     {
         size_t out = (1 << EV_SYN) | (1 << EV_KEY) | (1 << EV_REL);
@@ -290,7 +303,13 @@ size_t mouse_event_bit(void *data, uint64_t request, void *arg)
     case 0x1b: // EVIOCGSW()
         ret = MIN(8, size);
         break;
+    case 0xa0:
+        dev_input_event_t *event = data;
+        event->clock_id = *(int *)arg;
+        ret = 0;
+        break;
     default:
+        printk("mouse_event_bit(): Unsupported ioctl: request = %#018lx\n", request);
         break;
     }
 

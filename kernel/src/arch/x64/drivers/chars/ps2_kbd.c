@@ -237,6 +237,12 @@ void push_kb_char(char c)
 
 bool kb_is_ocupied() { return !!kbBuff; }
 
+struct input_repeat_params
+{
+    int delay;
+    int period;
+};
+
 size_t kb_event_bit(void *data, uint64_t request, void *arg)
 {
     size_t number = _IOC_NR(request);
@@ -245,6 +251,13 @@ size_t kb_event_bit(void *data, uint64_t request, void *arg)
     size_t ret = (size_t)-ENOSYS;
     switch (number)
     {
+    case 0x03:
+    {
+        struct input_repeat_params *params = arg;
+        params->delay = 500;
+        params->period = 50;
+        break;
+    }
     case 0x20:
     {
         size_t out = (1 << EV_SYN) | (1 << EV_KEY);
@@ -290,7 +303,13 @@ size_t kb_event_bit(void *data, uint64_t request, void *arg)
     case 0x1b: // EVIOCGSW()
         ret = MIN(8, size);
         break;
+    case 0xa0:
+        dev_input_event_t *event = data;
+        event->clock_id = *(int *)arg;
+        ret = 0;
+        break;
     default:
+        printk("kb_event_bit(): Unsupported ioctl: request = %#018lx\n", request);
         break;
     }
 

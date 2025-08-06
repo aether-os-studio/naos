@@ -243,6 +243,9 @@ ssize_t inputdev_ioctl(void *data, ssize_t request, ssize_t arg)
         memcpy((void *)arg, &event->properties, toCopy);
         ret = size;
         break;
+    case 0x03: // EVIOCGREP
+        ret = event->event_bit(data, request, (void *)arg);
+        break;
     case 0x18: // EVIOCGKEY()
         ret = event->event_bit(data, request, (void *)arg);
         break;
@@ -252,8 +255,11 @@ ssize_t inputdev_ioctl(void *data, ssize_t request, ssize_t arg)
     case 0x1b: // EVIOCGSW()
         ret = event->event_bit(data, request, (void *)arg);
         break;
+    case 0xa0: // EVIOCSCLOCKID()
+        ret = event->event_bit(data, request, (void *)arg);
+        break;
     default:
-        printk("unsupported ioctl! %lx", number);
+        printk("inputdev_ioctl(): Unsupported ioctl: %#018lx\n", request);
         ret = -ENOTTY;
         break;
     }
@@ -519,6 +525,7 @@ void dev_init_after_sysfs()
     kb_input_event->event_bit = kb_event_bit;
     kb_input_event->device_events.read_ptr = 0;
     kb_input_event->device_events.write_ptr = 0;
+    kb_input_event->clock_id = CLOCK_MONOTONIC;
     circular_int_init(&kb_input_event->device_events, 4096);
     vfs_node_t kb_node = regist_dev("input/event0", inputdev_event_read, inputdev_event_write, inputdev_ioctl, inputdev_poll, NULL, kb_input_event);
     dev_input_event_t *mouse_input_event = malloc(sizeof(dev_input_event_t));
@@ -529,6 +536,7 @@ void dev_init_after_sysfs()
     mouse_input_event->event_bit = mouse_event_bit;
     mouse_input_event->device_events.read_ptr = 0;
     mouse_input_event->device_events.write_ptr = 0;
+    mouse_input_event->clock_id = CLOCK_MONOTONIC;
     circular_int_init(&mouse_input_event->device_events, 4096);
     vfs_node_t mouse_node = regist_dev("input/event1", inputdev_event_read, inputdev_event_write, inputdev_ioctl, inputdev_poll, NULL, mouse_input_event);
 
@@ -621,8 +629,23 @@ void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code,
 
     struct input_event event;
     memset(&event, 0, sizeof(struct input_event));
-    event.sec = nanoTime() / 1000000000ULL;
-    event.usec = (nanoTime() % 1000000000ULL) / 1000ULL;
+    if (item->clock_id == CLOCK_MONOTONIC)
+    {
+        event.sec = nanoTime() / 1000000000ULL;
+        event.usec = (nanoTime() % 1000000000ULL) / 1000ULL;
+    }
+    else if (item->clock_id == CLOCK_REALTIME)
+    {
+        tm time;
+        time_read(&time);
+        event.sec = mktime(&time);
+        event.usec = 0;
+    }
+    else
+    {
+        event.sec = 0;
+        event.usec = 0;
+    }
     event.type = type;
     event.code = code;
     event.value = value;
