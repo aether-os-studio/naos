@@ -1,7 +1,8 @@
-#ifndef __USB_XHCI_H
-#define __USB_XHCI_H
+#pragma once
 
-#include <libs/klibc.h>
+#include <libs/aether/stdio.h>
+#include <libs/aether/mm.h>
+#include <libs/aether/pci.h>
 
 #define ARRAY_SIZE(a) (sizeof((a)) / sizeof((a)[0]))
 
@@ -22,7 +23,6 @@ struct usb_pipe;
 // --------------------------------------------------------------
 
 // usb-xhci.c
-void xhci_setup(void);
 struct usb_pipe *xhci_realloc_pipe(struct usbdevice_s *usbdev, struct usb_pipe *upipe, struct usb_endpoint_descriptor *epdesc);
 int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data, int datasize);
 int xhci_poll_intr(struct usb_pipe *p, void *data);
@@ -154,6 +154,7 @@ struct xhci_er_seg
     uint32_t reserved_01;
 } __attribute__((packed));
 
-void xhci_init();
+int xhci_probe(pci_device_t *dev, uint32_t vendor_device_id);
 
-#endif // usb-xhci.h
+void xhci_remove(pci_device_t *dev);
+void xhci_shutdown(pci_device_t *dev);

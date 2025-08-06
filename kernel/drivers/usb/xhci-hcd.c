@@ -1,7 +1,5 @@
-#include <drivers/usb/hcds/usb-xhci.h>
-#include <drivers/usb/usb.h>
-#include <drivers/bus/pci.h>
-#include <mm/mm.h>
+#include "xhci-hcd.h"
+#include "usb.h"
 
 // --------------------------------------------------------------
 // configuration
@@ -572,39 +570,6 @@ static struct usb_xhci_s *xhci_controller_setup(void *baseaddr)
     return xhci;
 }
 
-static pci_device_t *xhci_find_controller()
-{
-    pci_device_t *devs[4];
-    uint32_t num;
-    pci_find_class(devs, &num, 0x0C0330); // USB XHCI类代码
-    return num > 0 ? devs[0] : NULL;
-}
-
-void xhci_init()
-{
-    struct usb_xhci_s *xhci;
-    void *baseaddr;
-
-    pci_device_t *pci_dev = xhci_find_controller();
-    if (!pci_dev)
-    {
-        printk("XHCI controller not found\n");
-        return;
-    }
-
-    uint64_t mmio_phys = pci_dev->bars[0].address;
-    baseaddr = (void *)phys_to_virt(mmio_phys);
-
-    map_page_range(get_current_page_dir(false), (uint64_t)baseaddr, mmio_phys, pci_dev->bars[0].size, PT_FLAG_R | PT_FLAG_W);
-
-    xhci = xhci_controller_setup(baseaddr);
-    if (!xhci)
-        return;
-
-    xhci->usb.pci = pci_dev;
-    configure_xhci(xhci);
-}
-
 /****************************************************************
  * End point communication
  ****************************************************************/
@@ -990,7 +955,7 @@ fail:
     return NULL;
 }
 
-struct usb_pipe *
+__attribute__((visibility("hidden"))) struct usb_pipe *
 xhci_realloc_pipe(struct usbdevice_s *usbdev, struct usb_pipe *upipe, struct usb_endpoint_descriptor *epdesc)
 {
     if (!epdesc)
@@ -1047,7 +1012,7 @@ static void xhci_xfer_normal(struct xhci_pipe *pipe,
     xhci_doorbell(xhci, pipe->slotid, pipe->epid);
 }
 
-int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data, int datalen)
+__attribute__((visibility("hidden"))) int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data, int datalen)
 {
     struct xhci_pipe *pipe = container_of(p, struct xhci_pipe, pipe);
     struct usb_xhci_s *xhci = container_of(pipe->pipe.cntl, struct usb_xhci_s, usb);
@@ -1074,11 +1039,10 @@ int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data, int
     return 0;
 }
 
-int xhci_poll_intr(struct usb_pipe *p, void *data)
+__attribute__((visibility("hidden"))) int xhci_poll_intr(struct usb_pipe *p, void *data)
 {
     struct xhci_pipe *pipe = container_of(p, struct xhci_pipe, pipe);
-    struct usb_xhci_s *xhci = container_of(
-        pipe->pipe.cntl, struct usb_xhci_s, usb);
+    struct usb_xhci_s *xhci = container_of(pipe->pipe.cntl, struct usb_xhci_s, usb);
     uint32_t len = pipe->pipe.maxpacket;
     void *buf = pipe->buf;
     int bufused = pipe->bufused;
@@ -1096,5 +1060,47 @@ int xhci_poll_intr(struct usb_pipe *p, void *data)
         return -1;
     memcpy(data, buf, len);
     xhci_xfer_normal(pipe, buf, len);
+    return 0;
+}
+
+int xhci_probe(pci_device_t *dev, uint32_t vendor_device_id)
+{
+    printf("Found XHCI controller.\n");
+
+    uint64_t mmio_phys = dev->bars[0].address;
+    void *baseaddr = (void *)phys_to_virt(mmio_phys);
+
+    map_page_range(get_current_page_dir(false), (uint64_t)baseaddr, mmio_phys, dev->bars[0].size, PT_FLAG_R | PT_FLAG_W);
+
+    struct usb_xhci_s *xhci = xhci_controller_setup(baseaddr);
+    if (!xhci)
+        return -1;
+
+    dev->desc = xhci;
+
+    configure_xhci(xhci);
+}
+
+void xhci_remove(pci_device_t *dev)
+{
+}
+
+void xhci_shutdown(pci_device_t *dev)
+{
+}
+
+pci_driver_t xhci_hcd_driver = {
+    .name = "xhci_hcd",
+    .class_id = 0x000C0330,
+    .vendor_device_id = 0x00000000,
+    .probe = xhci_probe,
+    .remove = xhci_remove,
+    .shutdown = xhci_shutdown,
+};
+
+int module_init()
+{
+    regist_pci_driver(&xhci_hcd_driver);
+
     return 0;
 }

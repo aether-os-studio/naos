@@ -1,35 +1,12 @@
-#include <drivers/usb/usb.h>
-#include <drivers/usb/hcds/usb-xhci.h>
-#include <drivers/usb/usb-hid.h>
-#include <drivers/usb/block/msc.h>
-#include <mm/mm.h>
-#include <arch/arch.h>
+#include "msc.h"
+#include "usb.h"
 
 /****************************************************************
  * Controller function wrappers
  ****************************************************************/
 
-// Allocate, update, or free a usb pipe.
-static struct usb_pipe *
-usb_realloc_pipe(struct usbdevice_s *usbdev, struct usb_pipe *pipe, struct usb_endpoint_descriptor *epdesc)
-{
-    switch (usbdev->hub->cntl->type)
-    {
-    default:
-    // case USB_TYPE_UHCI:
-    //     return uhci_realloc_pipe(usbdev, pipe, epdesc);
-    // case USB_TYPE_OHCI:
-    //     return ohci_realloc_pipe(usbdev, pipe, epdesc);
-    // case USB_TYPE_EHCI:
-    //     return ehci_realloc_pipe(usbdev, pipe, epdesc);
-    case USB_TYPE_XHCI:
-        return xhci_realloc_pipe(usbdev, pipe, epdesc);
-    }
-}
-
 // Send a message on a control pipe using the default control descriptor.
-static int
-usb_send_pipe(struct usb_pipe *pipe_fl, int dir, const void *cmd, void *data, int datasize)
+__attribute__((visibility("hidden"))) int usb_send_pipe(struct usb_pipe *pipe_fl, int dir, const void *cmd, void *data, int datasize)
 {
     switch (GET_LOWFLAT(pipe_fl->type))
     {
@@ -49,7 +26,7 @@ usb_send_pipe(struct usb_pipe *pipe_fl, int dir, const void *cmd, void *data, in
     }
 }
 
-int usb_poll_intr(struct usb_pipe *pipe_fl, void *data)
+__attribute__((visibility("hidden"))) int usb_poll_intr(struct usb_pipe *pipe_fl, void *data)
 {
     switch (GET_LOWFLAT(pipe_fl->type))
     {
@@ -65,7 +42,7 @@ int usb_poll_intr(struct usb_pipe *pipe_fl, void *data)
     }
 }
 
-int usb_32bit_pipe(struct usb_pipe *pipe_fl)
+__attribute__((visibility("hidden"))) int usb_32bit_pipe(struct usb_pipe *pipe_fl)
 {
     return true;
 }
@@ -74,41 +51,26 @@ int usb_32bit_pipe(struct usb_pipe *pipe_fl)
  * Helper functions
  ****************************************************************/
 
-// Allocate a usb pipe.
-struct usb_pipe *
-usb_alloc_pipe(struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epdesc)
-{
-    return usb_realloc_pipe(usbdev, NULL, epdesc);
-}
-
-// Free an allocated control or bulk pipe.
-void usb_free_pipe(struct usbdevice_s *usbdev, struct usb_pipe *pipe)
-{
-    if (!pipe)
-        return;
-    usb_realloc_pipe(usbdev, pipe, NULL);
-}
-
 // Send a message to the default control pipe of a device.
-int usb_send_default_control(struct usb_pipe *pipe, const struct usb_ctrlrequest *req, void *data)
+__attribute__((visibility("hidden"))) int usb_send_default_control(struct usb_pipe *pipe, const struct usb_ctrlrequest *req, void *data)
 {
     return usb_send_pipe(pipe, req->bRequestType & USB_DIR_IN, req, data, req->wLength);
 }
 
 // Send a message to a bulk endpoint
-int usb_send_bulk(struct usb_pipe *pipe_fl, int dir, void *data, int datasize)
+__attribute__((visibility("hidden"))) int usb_send_bulk(struct usb_pipe *pipe_fl, int dir, void *data, int datasize)
 {
     return usb_send_pipe(pipe_fl, dir, NULL, data, datasize);
 }
 
 // Check if a pipe for a given controller is on the freelist
-int usb_is_freelist(struct usb_s *cntl, struct usb_pipe *pipe)
+__attribute__((visibility("hidden"))) int usb_is_freelist(struct usb_s *cntl, struct usb_pipe *pipe)
 {
     return pipe->cntl != cntl;
 }
 
 // Add a pipe to the controller's freelist
-void usb_add_freelist(struct usb_pipe *pipe)
+__attribute__((visibility("hidden"))) void usb_add_freelist(struct usb_pipe *pipe)
 {
     if (!pipe)
         return;
@@ -118,7 +80,7 @@ void usb_add_freelist(struct usb_pipe *pipe)
 }
 
 // Check for an available pipe on the freelist.
-struct usb_pipe *
+__attribute__((visibility("hidden"))) struct usb_pipe *
 usb_get_freelist(struct usb_s *cntl, uint8_t eptype)
 {
     struct usb_pipe **pfree = &cntl->freelist;
@@ -137,7 +99,7 @@ usb_get_freelist(struct usb_s *cntl, uint8_t eptype)
 }
 
 // Fill "pipe" endpoint info from an endpoint descriptor.
-void usb_desc2pipe(struct usb_pipe *pipe, struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epdesc)
+__attribute__((visibility("hidden"))) void usb_desc2pipe(struct usb_pipe *pipe, struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epdesc)
 {
     pipe->cntl = usbdev->hub->cntl;
     pipe->type = usbdev->hub->cntl->type;
@@ -148,17 +110,8 @@ void usb_desc2pipe(struct usb_pipe *pipe, struct usbdevice_s *usbdev, struct usb
     pipe->eptype = epdesc->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK;
 }
 
-// Find the exponential period of the requested interrupt end point.
-int usb_get_period(struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epdesc)
-{
-    int period = epdesc->bInterval;
-    if (usbdev->speed != USB_HIGHSPEED)
-        return (period <= 0) ? 0 : __fls(period);
-    return (period <= 4) ? 0 : period - 4;
-}
-
 // Maximum time (in ms) a data transfer should take
-int usb_xfer_time(struct usb_pipe *pipe, int datalen)
+__attribute__((visibility("hidden"))) int usb_xfer_time(struct usb_pipe *pipe, int datalen)
 {
     // Use the maximum command time (5 seconds), except for
     // set_address commands where we don't want to stall the boot if
@@ -170,7 +123,7 @@ int usb_xfer_time(struct usb_pipe *pipe, int datalen)
 }
 
 // Find the first endpoint of a given type in an interface description.
-struct usb_endpoint_descriptor *
+__attribute__((visibility("hidden"))) struct usb_endpoint_descriptor *
 usb_find_desc(struct usbdevice_s *usbdev, int type, int dir)
 {
     struct usb_endpoint_descriptor *epdesc = (void *)&usbdev->iface[1];
@@ -333,7 +286,7 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
         if (iface->bDescriptorType == USB_DT_INTERFACE)
         {
             num_iface--;
-            if (iface->bInterfaceClass == USB_CLASS_HUB || (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE && (iface->bInterfaceProtocol == US_PR_BULK || iface->bInterfaceProtocol == US_PR_UAS)) || (iface->bInterfaceClass == USB_CLASS_HID && iface->bInterfaceSubClass == USB_INTERFACE_SUBCLASS_BOOT))
+            if (iface->bInterfaceClass == USB_CLASS_HUB || (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE && (iface->bInterfaceProtocol == US_PR_BULK || iface->bInterfaceProtocol == US_PR_UAS)) || (iface->bInterfaceClass == USB_CLASS_HID))
                 break;
         }
         iface = (void *)iface + iface->bLength;
@@ -350,21 +303,21 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
     usbdev->imax = (void *)config + config->wTotalLength - (void *)iface;
     if (iface->bInterfaceClass == USB_CLASS_HUB)
     {
-        printk("HUB DEVICE\n");
+        printf("hub device detected\n");
     }
     else if (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE)
     {
-        printk("MASS STORAGE DEVICE\n");
+        printf("mass storage device detected\n");
         if (iface->bInterfaceProtocol == US_PR_BULK)
             ret = usb_msc_setup(usbdev);
         // if (iface->bInterfaceProtocol == US_PR_UAS)
         //     ret = usb_uas_setup(usbdev);
     }
-    else
-    {
-        printk("HID DEVICE\n");
-        ret = usb_hid_setup(usbdev);
-    }
+    // else
+    // {
+    //     printk("HID DEVICE\n");
+    //     ret = usb_hid_setup(usbdev);
+    // }
     if (ret)
         goto fail;
 
@@ -431,7 +384,7 @@ resetfail:
 
 static uint32_t usb_time_sigatt;
 
-void usb_enumerate(struct usbhub_s *hub)
+__attribute__((visibility("hidden"))) void usb_enumerate(struct usbhub_s *hub)
 {
     uint32_t portcount = hub->portcount;
     hub->threads = portcount;
@@ -454,9 +407,4 @@ void usb_enumerate(struct usbhub_s *hub)
     // Wait for threads to complete.
     while (hub->threads)
         arch_pause();
-}
-
-void usb_init()
-{
-    xhci_init();
 }

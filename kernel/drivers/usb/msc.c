@@ -1,9 +1,6 @@
-#include <drivers/usb/block/msc.h>
-#include <drivers/usb/hcds/usb-xhci.h>
-#include <mm/mm.h>
-#include <block/block.h>
+#include "msc.h"
 
-int usb_bulk_transfer(struct usb_pipe *pipe, void *data, size_t len, bool is_read)
+__attribute__((visibility("hidden"))) int usb_bulk_transfer(struct usb_pipe *pipe, void *data, size_t len, bool is_read)
 {
     if (!pipe || !pipe->cntl)
         return -EINVAL;
@@ -50,7 +47,7 @@ static int usb_msc_transfer(usb_msc_device *dev, void *cmd, void *data, size_t d
     return (csw.bCSWStatus == 0) ? 0 : -1;
 }
 
-uint64_t usb_msc_read_blocks(void *dev, uint64_t lba, void *buf, uint64_t count)
+__attribute__((visibility("hidden"))) uint64_t usb_msc_read_blocks(void *dev, uint64_t lba, void *buf, uint64_t count)
 {
     uint8_t cmd[16] = {
         SCSI_READ_10,
@@ -67,7 +64,7 @@ uint64_t usb_msc_read_blocks(void *dev, uint64_t lba, void *buf, uint64_t count)
     return usb_msc_transfer(dev, cmd, buf, count * ((usb_msc_device *)dev)->block_size, true) == 0 ? count : 0;
 }
 
-uint64_t usb_msc_write_blocks(void *dev, uint64_t lba, void *buf, uint64_t count)
+__attribute__((visibility("hidden"))) uint64_t usb_msc_write_blocks(void *dev, uint64_t lba, void *buf, uint64_t count)
 {
     uint8_t cmd[16] = {
         SCSI_WRITE_10,
@@ -84,7 +81,7 @@ uint64_t usb_msc_write_blocks(void *dev, uint64_t lba, void *buf, uint64_t count
     return usb_msc_transfer(dev, cmd, buf, count * ((usb_msc_device *)dev)->block_size, false) == 0 ? count : 0;
 }
 
-int usb_msc_setup(struct usbdevice_s *usbdev)
+__attribute__((visibility("hidden"))) int usb_msc_setup(struct usbdevice_s *usbdev)
 {
     usb_msc_device *dev = malloc(sizeof(usb_msc_device));
     dev->udev = usbdev;
@@ -112,7 +109,7 @@ int usb_msc_setup(struct usbdevice_s *usbdev)
         dev->block_size = be32toh(*(uint32_t *)(capacity + 4));
     }
 
-    regist_blkdev("USB MSC", dev, dev->block_size, dev->block_count * dev->block_size, DEFAULT_PAGE_SIZE * 4, usb_msc_read_blocks, usb_msc_write_blocks);
+    regist_blkdev("usb msc", dev, dev->block_size, dev->block_count * dev->block_size, DEFAULT_PAGE_SIZE * 16, usb_msc_read_blocks, usb_msc_write_blocks);
 
     return 0;
 fail:

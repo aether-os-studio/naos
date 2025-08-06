@@ -3,8 +3,7 @@
 #define __USB_H
 
 #include <libs/klibc.h>
-#include <drivers/bus/pci.h>
-#include <drivers/usb/usb-hid.h>
+#include "xhci-hcd.h"
 
 // Information on a USB end point.
 struct usb_pipe
@@ -40,7 +39,6 @@ struct usb_s
 {
     struct usb_pipe *freelist;
     spinlock_t resetlock;
-    pci_device_t *pci;
     void *mmio;
     uint8_t type;
     uint8_t maxaddr;
@@ -245,18 +243,43 @@ struct usb_endpoint_descriptor
 int usb_send_bulk(struct usb_pipe *pipe, int dir, void *data, int datasize);
 int usb_poll_intr(struct usb_pipe *pipe, void *data);
 int usb_32bit_pipe(struct usb_pipe *pipe_fl);
-struct usb_pipe *usb_alloc_pipe(struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epdesc);
-void usb_free_pipe(struct usbdevice_s *usbdev, struct usb_pipe *pipe);
+
+// Allocate, update, or free a usb pipe.
+static inline struct usb_pipe *usb_realloc_pipe(struct usbdevice_s *usbdev, struct usb_pipe *pipe, struct usb_endpoint_descriptor *epdesc)
+{
+    switch (usbdev->hub->cntl->type)
+    {
+    default:
+    // case USB_TYPE_UHCI:
+    //     return uhci_realloc_pipe(usbdev, pipe, epdesc);
+    // case USB_TYPE_OHCI:
+    //     return ohci_realloc_pipe(usbdev, pipe, epdesc);
+    // case USB_TYPE_EHCI:
+    //     return ehci_realloc_pipe(usbdev, pipe, epdesc);
+    case USB_TYPE_XHCI:
+        return xhci_realloc_pipe(usbdev, pipe, epdesc);
+    }
+}
+
+// Allocate a usb pipe.
+static inline struct usb_pipe *usb_alloc_pipe(struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epdesc)
+{
+    return usb_realloc_pipe(usbdev, NULL, epdesc);
+}
+
+// Free an allocated control or bulk pipe.
+static inline void usb_free_pipe(struct usbdevice_s *usbdev, struct usb_pipe *pipe)
+{
+    if (!pipe)
+        return;
+    usb_realloc_pipe(usbdev, pipe, NULL);
+}
+
 int usb_send_default_control(struct usb_pipe *pipe, const struct usb_ctrlrequest *req, void *data);
 int usb_is_freelist(struct usb_s *cntl, struct usb_pipe *pipe);
 void usb_add_freelist(struct usb_pipe *pipe);
 struct usb_pipe *usb_get_freelist(struct usb_s *cntl, uint8_t eptype);
 void usb_desc2pipe(struct usb_pipe *pipe, struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epdesc);
-int usb_get_period(struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epdesc);
-int usb_xfer_time(struct usb_pipe *pipe, int datalen);
-struct usb_endpoint_descriptor *usb_find_desc(struct usbdevice_s *usbdev, int type, int dir);
-void usb_enumerate(struct usbhub_s *hub);
-void usb_init();
 
 static inline int __fls(unsigned int x)
 {
@@ -291,5 +314,18 @@ static inline int __fls(unsigned int x)
     }
     return pos;
 }
+
+// Find the exponential period of the requested interrupt end point.
+static inline int usb_get_period(struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epdesc)
+{
+    int period = epdesc->bInterval;
+    if (usbdev->speed != USB_HIGHSPEED)
+        return (period <= 0) ? 0 : __fls(period);
+    return (period <= 4) ? 0 : period - 4;
+}
+
+int usb_xfer_time(struct usb_pipe *pipe, int datalen);
+struct usb_endpoint_descriptor *usb_find_desc(struct usbdevice_s *usbdev, int type, int dir);
+void usb_enumerate(struct usbhub_s *hub);
 
 #endif // usb.h

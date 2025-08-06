@@ -1,7 +1,7 @@
 #pragma once
 
-#include <libs/klibc.h>
-#include <drivers/usb/usb.h>
+#include <libs/aether/block.h>
+#include "usb.h"
 
 // SCSI命令定义
 enum
