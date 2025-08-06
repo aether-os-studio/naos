@@ -1,6 +1,8 @@
 #include "dlinker.h"
 #include <mm/mm.h>
 
+uint64_t kernel_modules_load_offset = 0;
+
 extern dlfunc_t __ksymtab_start[]; // .ksymtab section
 extern dlfunc_t __ksymtab_end[];
 size_t dlfunc_count = 0;
@@ -149,21 +151,21 @@ dlinit_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr, uint64_t offset)
     {
         switch (dyn_entry->d_tag)
         {
-        case DT_SYMTAB:;
+        case DT_SYMTAB:
             uint64_t symtab_addr = dyn_entry->d_un.d_ptr + offset;
             symtab = (Elf64_Sym *)symtab_addr;
             break;
         case DT_STRTAB:
             strtab = (char *)dyn_entry->d_un.d_ptr + offset;
             break;
-        case DT_RELA:;
+        case DT_RELA:
             uint64_t rel_addr = dyn_entry->d_un.d_ptr + offset;
             rel = (Elf64_Rela *)rel_addr;
             break;
         case DT_RELASZ:
             relsz = dyn_entry->d_un.d_val;
             break;
-        case DT_JMPREL:;
+        case DT_JMPREL:
             uint64_t jmprel_addr = dyn_entry->d_un.d_ptr + offset;
             jmprel = (Elf64_Rela *)jmprel_addr;
             break;
@@ -188,11 +190,15 @@ dlinit_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr, uint64_t offset)
 
         if (type == R_X86_64_GLOB_DAT || type == R_X86_64_JUMP_SLOT)
         {
-            *reloc_addr = (uint64_t)resolve_symbol(symtab, sym_idx);
+            *reloc_addr = (uint64_t)resolve_symbol(symtab, sym_idx) + offset;
         }
         else if (type == R_X86_64_RELATIVE)
         {
-            *reloc_addr = (uint64_t)((char *)ehdr + r->r_addend);
+            *reloc_addr = (uint64_t)(offset + r->r_addend);
+        }
+        else if (type == R_X86_64_64)
+        {
+            *reloc_addr = (uint64_t)resolve_symbol(symtab, sym_idx) + r->r_addend + offset;
         }
     }
     if (!handle_relocations(jmprel, symtab, strtab, jmprel_sz, offset))
@@ -232,18 +238,20 @@ void dlinker_load(module_t *module)
     }
 
     Elf64_Phdr *phdrs = (Elf64_Phdr *)((char *)ehdr + ehdr->e_phoff);
-    if (!mmap_phdr_segment(ehdr, phdrs, get_kernel_page_dir(), 0, NULL))
+    if (!mmap_phdr_segment(ehdr, phdrs, get_kernel_page_dir(), KERNEL_MODULES_SPACE_START + kernel_modules_load_offset, NULL))
     {
         printk("Cannot mmap elf segment.\n");
         return;
     }
 
-    dlinit_t dlinit = load_dynamic(phdrs, ehdr, 0);
+    dlinit_t dlinit = load_dynamic(phdrs, ehdr, KERNEL_MODULES_SPACE_START + kernel_modules_load_offset);
     if (dlinit == NULL)
     {
         printk("cannot load dynamic section.\n");
         return;
     }
+
+    kernel_modules_load_offset += (module->size + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1);
 
     int ret = dlinit();
 }

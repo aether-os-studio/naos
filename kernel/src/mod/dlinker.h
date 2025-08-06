@@ -4,6 +4,9 @@
 #include <mod/module.h>
 #include <libs/elf.h>
 
+#define KERNEL_MODULES_SPACE_START 0xffffb00000000000
+#define KERNEL_MODULES_SPACE_END 0xffffc00000000000
+
 #define EXPORT_SYMBOL(name)                                                            \
     __attribute__((used, section(".ksymtab"))) static const dlfunc_t __ksym_##name = { \
         #name, (void *)name}

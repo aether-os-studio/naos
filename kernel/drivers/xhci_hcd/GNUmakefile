@@ -6,7 +6,7 @@ override OBJ := $(addprefix ../../obj-drivers-$(ARCH)/,$(CFILES:.c=.c.o) $(ASFIL
 
 
 all: $(OBJ)
-	$(LD) -T ../modules_link_script.lds -shared $(OBJ) -o ../../drivers-$(ARCH)/xhci_hcd.ko
+	$(CC) -fPIC -shared $(OBJ) -o ../../drivers-$(ARCH)/xhci_hcd.ko
 
 # Compilation rules for *.c files.
 ../../obj-drivers-$(ARCH)/%.c.o: %.c GNUmakefile

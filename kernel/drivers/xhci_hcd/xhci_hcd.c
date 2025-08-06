@@ -2,6 +2,7 @@
 
 int xhci_probe(pci_device_t *dev, uint32_t vendor_device_id)
 {
+    printf("Found XHCI controller.\n");
 }
 
 void xhci_remove(pci_device_t *dev)
@@ -12,7 +13,7 @@ void xhci_shutdown(pci_device_t *dev)
 {
 }
 
-static pci_driver_t xhci_hcd_driver = {
+pci_driver_t xhci_hcd_driver = {
     .name = "xhci_hcd",
     .class_id = 0x000C0330,
     .vendor_device_id = 0x00000000,
