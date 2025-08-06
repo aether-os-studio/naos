@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <libs/klibc.h>
+
 #if defined(__x86_64__)
 
 #include <arch/x64/acpi/acpi.h>
@@ -69,6 +70,8 @@ typedef struct
     uint8_t irq_pin;
 
     pci_device_op_t *op;
+
+    void *desc;
 } pci_device_t;
 
 extern pci_device_t *pci_devices[PCI_DEVICE_MAX];

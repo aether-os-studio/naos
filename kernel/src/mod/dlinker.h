@@ -8,7 +8,7 @@
     __attribute__((used, section(".ksymtab"))) static const dlfunc_t __ksym_##name = { \
         #name, (void *)name}
 
-typedef int (*dlmain_t)(void);
+typedef int (*dlinit_t)(void);
 
 typedef struct
 {

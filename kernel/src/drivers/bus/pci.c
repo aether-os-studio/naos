@@ -1,6 +1,7 @@
 #include <mm/mm.h>
 #include <drivers/kernel_logger.h>
 #include <drivers/bus/pci.h>
+#include <libs/aether/pci.h>
 
 #if defined(__x86_64__) || defined(__aarch64__)
 MCFG_ENTRY *mcfg_entries[PCI_MCFG_MAX_ENTRIES_LEN];
@@ -639,6 +640,8 @@ static void pci_config0(uint32_t bus, uint32_t f, uint32_t equipment, uint32_t a
     io_out32(PCI_COMMAND_PORT, cmd);
 }
 
+#endif
+
 MCFG *mcfg_buffer = NULL;
 
 void pcie_setup(MCFG *mcfg)
@@ -646,10 +649,14 @@ void pcie_setup(MCFG *mcfg)
     mcfg_buffer = mcfg;
 }
 
+extern pci_driver_t *pci_drivers[MAX_PCI_DRIVERS];
+
 void pci_init()
 {
+#if defined(__x86_64__)
     if (mcfg_buffer)
     {
+#endif
         printk("Scanning PCIe bus\n");
         // Scan PCIe bus
         mcfg_addr_to_entries(mcfg_buffer, mcfg_entries, &mcfg_entries_len);
@@ -659,6 +666,7 @@ void pci_init()
             uint16_t segment_group = mcfg_entries[i]->pci_segment_group;
             pci_scan_segment(segment_group);
         }
+#if defined(__x86_64__)
     }
     else
     {
@@ -681,30 +689,22 @@ void pci_init()
             }
         }
     }
-}
-#else
+#endif
 
-MCFG *mcfg_buffer = NULL;
-
-void pcie_setup(MCFG *mcfg)
-{
-    mcfg_buffer = mcfg;
-}
-
-void pci_init()
-{
-    printk("Scanning PCIe bus\n");
-
-    if (mcfg_buffer)
+    for (uint64_t i = 0; i < pci_device_number; i++)
     {
-        // Scan PCIe bus
-        mcfg_addr_to_entries(mcfg_buffer, mcfg_entries, &mcfg_entries_len);
+        pci_device_t *device = pci_devices[i];
 
-        for (uint64_t i = 0; i < mcfg_entries_len; i++)
+        for (uint64_t d = 0; d < MAX_PCI_DRIVERS; d++)
         {
-            uint16_t segment_group = mcfg_entries[i]->pci_segment_group;
-            pci_scan_segment(segment_group);
+            if (pci_drivers[d] && ((pci_drivers[d]->class_id == device->class_code) || (pci_drivers[d]->vendor_device_id == (((uint32_t)device->vendor_id << 16) | (device->device_id)))))
+            {
+                int ret = pci_drivers[d]->probe(device, ((uint32_t)device->vendor_id << 16) | (device->device_id));
+                if (ret < 0)
+                {
+                    printk("PCI driver %s probe failed!!!\n", pci_drivers[d]->name);
+                }
+            }
         }
     }
 }
-#endif

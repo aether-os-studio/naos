@@ -6,6 +6,7 @@
 /src/limine.h
 /bin-*
 /obj-*
+/drivers-*
 /target
 /src/rust/bindings/bindings*.rs
 Cargo.lock

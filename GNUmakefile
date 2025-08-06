@@ -136,6 +136,7 @@ EFI_FILE = assets/limine/BOOTLOONGARCH64.EFI:EFI/BOOT/BOOTLOONGARCH64.EFI
 endif
 $(IMAGE_NAME).img: assets/limine assets/oib kernel
 	assets/oib -o $(IMAGE_NAME).img -f $(EFI_FILE) \
+		-d kernel/drivers-$(ARCH):drivers \
 		-f kernel/bin-$(ARCH)/kernel:boot/kernel \
 		-f limine.conf:boot/limine/limine.conf \
 		-f assets/limine/limine-bios.sys:boot/limine/limine-bios.sys

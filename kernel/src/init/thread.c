@@ -32,7 +32,10 @@ void init_thread(uint64_t arg)
 {
     printk("NAOS init thread is running...\n");
 
+    dlinker_init();
+
     pci_init();
+
 #if defined(__x86_64__)
     ahci_init();
 #endif
@@ -43,8 +46,6 @@ void init_thread(uint64_t arg)
     usb_init();
 
     partition_init();
-
-    dlinker_init();
 
 #if defined(__x86_64__)
     vmware_gpu_init();

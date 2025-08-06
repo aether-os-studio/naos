@@ -89,7 +89,7 @@ bool handle_relocations(Elf64_Rela *rela_start, Elf64_Sym *symtab, char *strtab,
         }
         else
         {
-            printk("Failed relocating %s at %p", sym_name, rela->r_offset + offset);
+            printk("Failed relocating %s at %p\n", sym_name, rela->r_offset + offset);
             return false;
         }
     }
@@ -120,7 +120,7 @@ void *find_symbol_address(const char *symbol_name, Elf64_Sym *symtab, char *strt
     return NULL;
 }
 
-dlmain_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr, uint64_t offset)
+dlinit_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr, uint64_t offset)
 {
     Elf64_Dyn *dyn_entry = NULL;
     for (size_t i = 0; i < ehdr->e_phnum; i++)
@@ -200,10 +200,10 @@ dlmain_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr, uint64_t offset)
         return NULL;
     }
 
-    void *entry = find_symbol_address("main", symtab, strtab, symtabsz, ehdr, offset);
+    void *entry = find_symbol_address("module_init", symtab, strtab, symtabsz, ehdr, offset);
 
-    dlmain_t dlmain_func = (dlmain_t)entry;
-    return dlmain_func;
+    dlinit_t dlinit_func = (dlinit_t)entry;
+    return dlinit_func;
 }
 
 void dlinker_load(module_t *module)
@@ -214,40 +214,38 @@ void dlinker_load(module_t *module)
     Elf64_Ehdr *ehdr = (Elf64_Ehdr *)module->data;
     if (!arch_check_elf(ehdr))
     {
-        printk("No elf file.");
+        printk("No elf file.\n");
         return;
     }
 
     Elf64_Phdr phdr[12];
     if (ehdr->e_phnum > sizeof(phdr) / sizeof(phdr[0]) || ehdr->e_phnum < 1)
     {
-        printk("ELF file has wrong number of program headers");
+        printk("ELF file has wrong number of program headers\n");
         return;
     }
 
     if (ehdr->e_type != ET_DYN)
     {
-        printk("ELF file is not a dynamic library.");
+        printk("ELF file is not a dynamic library.\n");
         return;
     }
 
     Elf64_Phdr *phdrs = (Elf64_Phdr *)((char *)ehdr + ehdr->e_phoff);
     if (!mmap_phdr_segment(ehdr, phdrs, get_kernel_page_dir(), 0, NULL))
     {
-        printk("Cannot mmap elf segment.");
+        printk("Cannot mmap elf segment.\n");
         return;
     }
 
-    dlmain_t dlmain = load_dynamic(phdrs, ehdr, 0);
-    if (dlmain == NULL)
+    dlinit_t dlinit = load_dynamic(phdrs, ehdr, 0);
+    if (dlinit == NULL)
     {
-        printk("cannot load dynamic section.");
+        printk("cannot load dynamic section.\n");
         return;
     }
 
-    int ret = dlmain();
-
-    printk("Kernel model load done! Return code: %d.", ret);
+    int ret = dlinit();
 }
 
 dlfunc_t *find_func(const char *name)
@@ -277,7 +275,26 @@ void find_kernel_symbol()
     }
 }
 
+__attribute__((used, section(".limine_requests"))) static volatile struct limine_module_request modules_request =
+    {
+        .id = LIMINE_MODULE_REQUEST,
+        .revision = 0,
+};
+
 void dlinker_init()
 {
     find_kernel_symbol();
+
+    for (uint64_t i = 0; i < modules_request.response->module_count; i++)
+    {
+        module_t module = {
+            .is_use = false,
+            .path = modules_request.response->modules[i]->path,
+            .data = modules_request.response->modules[i]->address,
+            .size = modules_request.response->modules[i]->size,
+        };
+        strcpy(module.module_name, module.path);
+
+        dlinker_load(&module);
+    }
 }
