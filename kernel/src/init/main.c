@@ -2,6 +2,7 @@
 #include <drivers/kernel_logger.h>
 #include <mm/mm.h>
 #include <arch/arch.h>
+#include <mod/dlinker.h>
 #include <task/task.h>
 #include <fs/vfs/vfs.h>
 #include <fs/vfs/dev.h>
@@ -48,6 +49,8 @@ void kmain(void)
     stdio_init();
 
     proc_init();
+
+    dlinker_init();
 
     task_init();
 

@@ -6,6 +6,8 @@ EXPORT_SYMBOL(get_current_page_dir);
 
 EXPORT_SYMBOL(alloc_frames);
 EXPORT_SYMBOL(free_frames);
+EXPORT_SYMBOL(alloc_frames_bytes);
+EXPORT_SYMBOL(free_frames_bytes);
 
 EXPORT_SYMBOL(map_page_range);
 EXPORT_SYMBOL(unmap_page_range);

@@ -2,10 +2,8 @@
 #include <task/task.h>
 
 #include <fs/vfs/dev.h>
-#include <mod/dlinker.h>
 #include <drivers/bus/pci.h>
 #include <drivers/block/ahci/ahci.h>
-#include <drivers/block/nvme/nvme.h>
 #include <drivers/drm/drm.h>
 #include <drivers/virtio/virtio.h>
 #include <fs/partition.h>
@@ -31,15 +29,11 @@ void init_thread(uint64_t arg)
 {
     printk("NAOS init thread is running...\n");
 
-    dlinker_init();
-
     pci_init();
 
 #if defined(__x86_64__)
     ahci_init();
 #endif
-    nvme_init();
-
     virtio_init();
 
     partition_init();

@@ -3,4 +3,5 @@ export CFLAGS := -Wno-address-of-packed-member -fPIC -fno-builtin -nostdinc -nos
 all:
 	mkdir -p ../drivers-$(ARCH)
 
-	$(MAKE) -C usb	
+	$(MAKE) -C nvme
+	$(MAKE) -C usb

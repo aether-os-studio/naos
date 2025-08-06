@@ -26,10 +26,7 @@ void load_segment(Elf64_Phdr *phdr, void *elf, uint64_t *directory,
     }
     uint64_t flags = PT_FLAG_R | PT_FLAG_W;
 
-    for (size_t i = lo; i < hi; i += 0x1000)
-    {
-        map_page(directory, i, alloc_frames(1), (phdr->p_flags & PF_X) ? (PT_FLAG_X | flags) : flags);
-    }
+    map_page_range(directory, lo, 0, hi - lo, (phdr->p_flags & PF_X) ? (PT_FLAG_X | flags) : flags);
 
     uint64_t p_vaddr = (uint64_t)phdr->p_vaddr + offset;
     uint64_t p_filesz = (uint64_t)phdr->p_filesz;
@@ -251,7 +248,7 @@ void dlinker_load(module_t *module)
         return;
     }
 
-    kernel_modules_load_offset += (module->size + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1);
+    kernel_modules_load_offset += MAX_SIZE_PER_MODULE;
 
     int ret = dlinit();
 }
