@@ -74,8 +74,6 @@ void acpi_init()
     load_table(MCFG, pcie_setup);
 }
 
-uint64_t start_nanotime = 0;
-
 uint64_t nanoTime()
 {
     return 0;

@@ -1342,13 +1342,11 @@ void sched_update_itimer()
 
 extern int timerfdfs_id;
 
-extern uint64_t start_nanotime;
-
 void sched_update_timerfd()
 {
     tm time;
     time_read(&time);
-    uint64_t now = (uint64_t)mktime(&time) * 1000000000ULL + (nanoTime() - start_nanotime) % 1000000000ULL;
+    uint64_t now = (uint64_t)mktime(&time) * 1000000000ULL + nanoTime() % 1000000000ULL;
 
     if (current_task->fd_info)
     {

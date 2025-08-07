@@ -5,8 +5,6 @@
 HpetInfo *hpet_addr;
 static uint64_t hpetPeriod = 0;
 
-uint64_t start_nanotime = 0;
-
 void usleep(uint64_t nano)
 {
     uint64_t target = nano * 1000;
@@ -51,6 +49,5 @@ void hpet_setup(Hpet *hpet)
     hpetPeriod = counterClockPeriod / 1000000;
     hpet_addr->generalConfiguration |= 1;
     *(volatile uint64_t *)((uint64_t)hpet_addr + 0xf0) = 0;
-    start_nanotime = nanoTime();
-    printk("Setup acpi hpet table (nano_time: %#ld).\n", start_nanotime);
+    printk("Setup acpi hpet table (nano_time: %#ld).\n", nanoTime());
 }

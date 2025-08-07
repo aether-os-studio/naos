@@ -325,6 +325,16 @@ int vmware_map_dumb(void *dev_data, struct drm_mode_map_dumb *args)
     return 0;
 }
 
+static int vmware_get_fb(void *dev_data, uint32_t *width, uint32_t *height, uint32_t *bpp, uint64_t *addr)
+{
+    vmware_gpu_device_t *gpu = dev_data;
+
+    size_t cols, rows;
+    os_terminal_get_screen_info((size_t *)addr, (size_t *)width, (size_t *)height, (size_t *)bpp, &cols, &rows);
+
+    return 0;
+}
+
 int vmware_add_fb(void *dev_data, struct drm_mode_fb_cmd *cmd)
 {
     vmware_gpu_device_t *dev = dev_data;
@@ -378,6 +388,7 @@ drm_device_op_t vmware_drm_device_op = {
     .set_plane = vmware_set_plane,
     .create_dumb = vmware_create_dumb,
     .map_dumb = vmware_map_dumb,
+    .get_fb = vmware_get_fb,
     .add_fb = vmware_add_fb,
     .page_flip = vmware_page_flip,
 };

@@ -5,7 +5,7 @@ override ASFILES := $(filter %.S,$(SRCFILES))
 override OBJ := $(addprefix ../../obj-drivers-$(ARCH)/usb/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o))
 
 all: $(OBJ)
-	$(LD) -shared $(OBJ) -o ../../drivers-$(ARCH)/usb.ko
+	$(CC) -shared $(OBJ) -o ../../drivers-$(ARCH)/usb.ko
 
 # Compilation rules for *.c files.
 ../../obj-drivers-$(ARCH)/usb/%.c.o: %.c GNUmakefile

@@ -594,7 +594,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax = handler(arg1, arg2, arg3, arg4, arg5, arg6);
     }
 
-    if ((idx != SYS_BRK) && (idx != SYS_MMAP) && (idx != SYS_MREMAP) && (idx != SYS_SHMAT) && (int)regs->rax < 0 && ((regs->rax & 0x8000000000000000) == 0))
+    if ((idx != SYS_BRK) && (idx != SYS_MMAP) && (idx != SYS_MREMAP) && (idx != SYS_SHMAT) && (idx != SYS_FCNTL) && (int)regs->rax < 0 && ((regs->rax & 0x8000000000000000) == 0))
         regs->rax |= 0xffffffff00000000;
     else if ((int64_t)regs->rax < 0 && ((regs->rax & 0xffffffff) == 0))
         regs->rax = 0;

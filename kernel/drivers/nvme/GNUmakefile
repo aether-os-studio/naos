@@ -5,7 +5,7 @@ override ASFILES := $(filter %.S,$(SRCFILES))
 override OBJ := $(addprefix ../../obj-drivers-$(ARCH)/nvme/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o))
 
 all: $(OBJ)
-	$(LD) -shared $(OBJ) -o ../../drivers-$(ARCH)/nvme.ko
+	$(CC) -shared $(OBJ) -o ../../drivers-$(ARCH)/nvme.ko
 
 # Compilation rules for *.c files.
 ../../obj-drivers-$(ARCH)/nvme/%.c.o: %.c GNUmakefile

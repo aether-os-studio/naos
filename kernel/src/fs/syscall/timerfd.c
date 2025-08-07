@@ -52,13 +52,11 @@ static uint64_t get_current_time_ms()
     return (uint64_t)mktime(&time) * 1000ULL;
 }
 
-extern uint64_t start_nanotime;
-
 static uint64_t get_current_time_ns()
 {
     tm time;
     time_read(&time);
-    return (uint64_t)mktime(&time) * 1000000000ULL + (nanoTime() - start_nanotime) % 1000000000ULL;
+    return (uint64_t)mktime(&time) * 1000000000ULL + nanoTime() % 1000000000ULL;
 }
 
 static uint64_t get_current_time(uint64_t clock_type)

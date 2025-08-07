@@ -189,13 +189,6 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         uint32_t width, height, bpp;
         dev->op->get_display_info(dev->data, &width, &height, &bpp);
 
-        if (fb->width > width ||
-            fb->height > height ||
-            fb->bpp != bpp)
-        {
-            return -EINVAL;
-        }
-
         if (fb->handle != 1)
         {
             return -ENOENT;
@@ -203,8 +196,11 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
 
         fb->fb_id = 0;
 
+        fb->width = width;
+        fb->height = height;
         fb->depth = 32;
         fb->pitch = width * bpp / 8;
+        fb->bpp = bpp;
 
         return 0;
     }
@@ -214,12 +210,6 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
 
         uint32_t width, height, bpp;
         dev->op->get_display_info(dev->data, &width, &height, &bpp);
-
-        if (fb->width > width ||
-            fb->height > height)
-        {
-            return -EINVAL;
-        }
 
         fb->fb_id = 0;
 
@@ -312,6 +302,18 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
                 values[0] = DRM_PLANE_TYPE_PRIMARY;
             }
             return 0;
+
+        case DRM_CRTC_MODE_ID_PROP_ID:
+            prop->flags = DRM_MODE_PROP_BLOB;
+            strncpy((char *)prop->name, "MODE_ID", DRM_PROP_NAME_LEN);
+
+            if (prop->values_ptr)
+            {
+                uint64_t *values = (uint64_t *)(uintptr_t)prop->values_ptr;
+                values[0] = 1; // 假设当前模式ID为1
+            }
+            return 0;
+
         case DRM_CRTC_ACTIVE_PROP_ID:
             prop->flags = DRM_MODE_PROP_BLOB;
             strncpy((char *)prop->name, "ACTIVE", DRM_PROP_NAME_LEN);
@@ -332,6 +334,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
             break;
 
         default:
+            printk("drm: Unsupported mode property: %#010lx\n", prop->prop_id);
             return -ENOENT;
         }
 
@@ -414,6 +417,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
             break;
 
         default:
+            printk("drm: Unsupported mode obj property: %#010lx\n", props->obj_type);
             return -EINVAL;
         }
 
@@ -486,6 +490,15 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
 
         strcpy(u->unique, "pci:0000:00:00.0");
         u->unique_len = 17;
+
+        return 0;
+    }
+
+    case DRM_IOCTL_MODE_LIST_LESSEES:
+    {
+        struct drm_mode_list_lessees *l = (struct drm_mode_list_lessees *)arg;
+
+        l->count_lessees = 0;
 
         return 0;
     }
@@ -607,22 +620,23 @@ void drm_init()
 
 void drm_init_sysfs()
 {
-    pci_device_t *pci_device = NULL;
-    for (int i = 0; i < pci_device_number; i++)
-    {
-        if (pci_devices[i]->class_code == 0x030000)
-        {
-            pci_device = pci_devices[i];
-            break;
-        }
-    }
+    int i = 0;
+
+    vfs_node_t char_dev = vfs_open("/sys/dev/char/226:0");
+    vfs_node_t uevent_dev = vfs_child_append(char_dev, "uevent", NULL);
+    uevent_dev->type = file_none;
+    uevent_dev->mode = 0700;
+    sysfs_handle_t *handle = malloc(sizeof(sysfs_handle_t));
+    sprintf(handle->content, "MAJOR=%d\nMINOR=%d\nDEVNAME=dri/card%d\nSUBSYSTEM=drm_minor\n", 226, 0, i);
+    handle->node = uevent_dev;
+    uevent_dev->handle = handle;
 
     vfs_node_t dev = vfs_open("/sys/dev/char/226:0/device");
 
     vfs_node_t boot_vga_node = vfs_child_append(dev, "boot_vga", NULL);
     boot_vga_node->type = file_none;
     boot_vga_node->mode = 0700;
-    sysfs_handle_t *handle = malloc(sizeof(sysfs_handle_t));
+    handle = malloc(sizeof(sysfs_handle_t));
     sprintf(handle->content, "1");
     handle->node = boot_vga_node;
     boot_vga_node->handle = handle;
@@ -640,6 +654,16 @@ void drm_init_sysfs()
     sysfs_handle_t *dev_uevent_handle = malloc(sizeof(sysfs_handle_t));
     dev_uevent->handle = dev_uevent_handle;
     dev_uevent_handle->node = dev_uevent;
+
+    pci_device_t *pci_device = NULL;
+    for (int i = 0; i < pci_device_number; i++)
+    {
+        if (pci_devices[i]->class_code == 0x030000)
+        {
+            pci_device = pci_devices[i];
+            break;
+        }
+    }
 
     if (pci_device)
     {
@@ -687,16 +711,6 @@ void drm_init_sysfs()
     version->handle = handle;
     memset(handle, 0, sizeof(sysfs_handle_t));
 
-    vfs_node_t class = vfs_open("/sys/class");
-    vfs_node_t drm_link = vfs_node_alloc(class, "drm");
-    drm_link->type = file_dir | file_symlink;
-    drm_link->mode = 0644;
-    drm_link->linkto = drm;
-    handle = malloc(sizeof(sysfs_handle_t));
-    memset(handle, 0, sizeof(sysfs_handle_t));
-    handle->node = drm_link;
-    drm_link->handle = handle;
-
     size_t addr;
     size_t width;
     size_t height;
@@ -705,8 +719,6 @@ void drm_init_sysfs()
     size_t rows;
 
     os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
-
-    int i = 0;
 
     char buf[256];
     sprintf(buf, "card%d", i);
@@ -726,15 +738,6 @@ void drm_init_sysfs()
     uevent_handle->node = uevent;
     uevent->handle = uevent_handle;
 
-    vfs_node_t cardn_link = vfs_node_alloc(drm_link, (const char *)buf);
-    cardn_link->type = file_dir | file_symlink;
-    cardn_link->mode = 0644;
-    cardn_link->linkto = cardn;
-    handle = malloc(sizeof(sysfs_handle_t));
-    memset(handle, 0, sizeof(sysfs_handle_t));
-    handle->node = cardn_link;
-    cardn_link->handle = handle;
-
     sprintf(buf, "card%d-Virtual-1", i);
     vfs_node_t cardn_virtual = vfs_node_alloc(cardn, (const char *)buf);
     cardn_virtual->type = file_dir;
@@ -748,7 +751,7 @@ void drm_init_sysfs()
     vfs_node_t subsystem_link = vfs_child_append(dev, "subsystem", NULL);
     subsystem_link->type = file_dir | file_symlink;
     subsystem_link->mode = 0644;
-    subsystem_link->linkto = vfs_open("/sys/class/drm");
+    subsystem_link->linkto = vfs_open("/sys/bus/pci");
 
     sprintf(buf, "connector_id");
     vfs_node_t connector_id = vfs_node_alloc(cardn_virtual, (const char *)buf);

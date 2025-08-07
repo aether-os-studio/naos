@@ -798,7 +798,6 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
     }
 
     ssize_t result = vfs_readlink(node, buf, (size_t)size);
-    vfs_close(node);
 
     if (result < 0)
     {
