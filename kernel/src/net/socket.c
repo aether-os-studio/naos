@@ -44,7 +44,7 @@ char *unix_socket_addr_safe(const struct sockaddr_un *addr, size_t len)
 
     if (abstract)
     {
-        safe[0] = ':';
+        safe[0] = '@';
         memcpy(safe + 1, addr->sun_path + skip, addrLen - skip);
     }
     else
@@ -1349,7 +1349,7 @@ size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr, socklen_t 
     if (toCopy < sizeof(addr->sun_family))
         return -(EINVAL);
     addr->sun_family = 1;
-    if (pair->filename[0] == ':')
+    if (pair->filename[0] == '@')
     {
         memcpy(addr->sun_path, pair->filename + 1, toCopy - sizeof(addr->sun_family) - 1);
         // addr->sun_path[0] = '\0';

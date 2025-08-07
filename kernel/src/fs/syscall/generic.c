@@ -623,8 +623,6 @@ uint64_t sys_stat(const char *fn, struct stat *buf)
     buf->st_size = node->size;
     buf->st_blocks = (buf->st_size + buf->st_blksize - 1) / buf->st_blksize;
 
-    vfs_close(node);
-
     return 0;
 }
 

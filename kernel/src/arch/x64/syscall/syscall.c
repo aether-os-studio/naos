@@ -309,8 +309,8 @@ void syscall_handler_init()
     syscall_handlers[SYS_SETRESGID] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_GETRESGID] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_GETPGID] = (syscall_handle_t)sys_getpgid;
-    // syscall_handlers[SYS_SETFSUID] = (syscall_handle_t)sys_setfsuid;
-    // syscall_handlers[SYS_SETFSGID] = (syscall_handle_t)sys_setfsgid;
+    syscall_handlers[SYS_SETFSUID] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_SETFSGID] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_GETSID] = (syscall_handle_t)sys_getsid;
     // syscall_handlers[SYS_CAPGET] = (syscall_handle_t)sys_capget;
     // syscall_handlers[SYS_CAPSET] = (syscall_handle_t)sys_capset;
@@ -324,8 +324,8 @@ void syscall_handler_init()
     // syscall_handlers[SYS_USELIB] = (syscall_handle_t)sys_uselib;
     // syscall_handlers[SYS_PERSONALITY] = (syscall_handle_t)sys_personality;
     // syscall_handlers[SYS_USTAT] = (syscall_handle_t)sys_ustat;
-    // syscall_handlers[SYS_STATFS] = (syscall_handle_t)sys_statfs;
-    // syscall_handlers[SYS_FSTATFS] = (syscall_handle_t)sys_fstatfs;
+    syscall_handlers[SYS_STATFS] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_FSTATFS] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_SYSFS] = (syscall_handle_t)sys_sysfs;
     syscall_handlers[SYS_GETPRIORITY] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_SETPRIORITY] = (syscall_handle_t)dummy_syscall_handler;
@@ -408,7 +408,7 @@ void syscall_handler_init()
     syscall_handlers[SYS_SET_TID_ADDRESS] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_RESTART_SYSCALL] = (syscall_handle_t)sys_restart_syscall;
     // syscall_handlers[SYS_SEMTIMEDOP] = (syscall_handle_t)sys_semtimedop;
-    // syscall_handlers[SYS_FADVISE64] = (syscall_handle_t)sys_fadvise64;
+    syscall_handlers[SYS_FADVISE64] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_TIMER_CREATE] = (syscall_handle_t)sys_timer_create;
     // syscall_handlers[SYS_TIMER_SETTIME] = (syscall_handle_t)sys_timer_settime;
     // syscall_handlers[SYS_TIMER_GETTIME] = (syscall_handle_t)sys_timer_gettime;
@@ -593,6 +593,11 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     {
         regs->rax = handler(arg1, arg2, arg3, arg4, arg5, arg6);
     }
+
+    if ((idx != SYS_BRK) && (idx != SYS_MMAP) && (idx != SYS_MREMAP) && (idx != SYS_SHMAT) && (int)regs->rax < 0 && ((regs->rax & 0x8000000000000000) == 0))
+        regs->rax |= 0xffffffff00000000;
+    else if ((int64_t)regs->rax < 0 && ((regs->rax & 0xffffffff) == 0))
+        regs->rax = 0;
 
 done:
     if (regs->rax == (uint64_t)-ENOSYS)

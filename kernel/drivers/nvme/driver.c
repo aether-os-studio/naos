@@ -146,7 +146,7 @@ __attribute__((visibility("hidden"))) bool BuildPRPList(void *vaddr, uint64_t si
     }
 
     uint32_t prpEntries = pageCount - 1;
-    uint64_t *prpArray = (void *)phys_to_virt(alloc_frames((prpEntries * sizeof(uint64_t) + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE));
+    uint64_t *prpArray = alloc_frames_bytes(prpEntries * sizeof(uint64_t));
     if (!prpArray)
         return false;
 
@@ -169,7 +169,7 @@ __attribute__((visibility("hidden"))) void FreePRPList(NVME_PRP_LIST *prpList)
 {
     if (prpList->A)
     {
-        free_frames((uint64_t)virt_to_phys(prpList->A), (prpList->S + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE);
+        free_frames_bytes(prpList->A, prpList->S);
         prpList->A = NULL;
     }
 }

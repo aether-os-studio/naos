@@ -43,12 +43,12 @@ void init_thread(uint64_t arg)
 #endif
 
     fbdev_init();
-    drm_init();
+    // drm_init();
 
     sysfs_init();
 
     fbdev_init_sysfs();
-    drm_init_sysfs();
+    // drm_init_sysfs();
 
     dev_init_after_sysfs();
 

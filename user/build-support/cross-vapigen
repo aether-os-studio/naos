@@ -1,4 +1,0 @@
-#!/bin/sh
-[ -z "$VALADIR" ] && ( echo "Please set VALADIR environment variable"; exit 1 )
-[ -z "$GI_GIR_PATH" ] && ( echo "Please set GI_GIR_PATH environment variable"; exit 1 )
-vapigen --vapidir="$VALADIR" --girdir="$GI_GIR_PATH" "$@"

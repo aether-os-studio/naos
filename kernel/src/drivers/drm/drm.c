@@ -480,6 +480,21 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         return 0;
     }
 
+    case DRM_IOCTL_GET_UNIQUE:
+    {
+        struct drm_unique *u = (struct drm_unique *)arg;
+
+        strcpy(u->unique, "pci:0000:00:00.0");
+        u->unique_len = 17;
+
+        return 0;
+    }
+
+    case DRM_IOCTL_SET_VERSION:
+    {
+        return 0;
+    }
+
     default:
         printk("drm: Unsupported ioctl: cmd = %#010lx\n", cmd);
         return -ENOTTY;

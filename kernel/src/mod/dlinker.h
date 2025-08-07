@@ -7,7 +7,7 @@
 #define KERNEL_MODULES_SPACE_START 0xffffb00000000000
 #define KERNEL_MODULES_SPACE_END 0xffffc00000000000
 
-#define MAX_SIZE_PER_MODULE 0x1000000
+#define MAX_SIZE_PER_MODULE 0x4000000
 
 #define EXPORT_SYMBOL(name)                                                            \
     __attribute__((used, section(".ksymtab"))) static const dlfunc_t __ksym_##name = { \

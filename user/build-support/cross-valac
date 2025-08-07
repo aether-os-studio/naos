@@ -1,3 +1,0 @@
-#!/bin/sh
-[ -z "$VALADIR" ] && ( echo "Please set VALADIR environment variable"; exit 1 )
-valac --vapidir="$VALADIR" "$@"

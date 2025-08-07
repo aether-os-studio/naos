@@ -1,9 +1,0 @@
-#! /bin/sh
-
-# Basic script that naively mimicks ldd, required for g-ir-scanner
-
-# Unset LD_PRELOAD and LD_LIBRARY_PATH to avoid crashes
-unset LD_PRELOAD
-unset LD_LIBRARY_PATH
-
-$OBJDUMP -p $1 | awk '/NEEDED/{print $2" => /usr/lib/"$2}'
