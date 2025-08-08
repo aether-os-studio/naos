@@ -1250,7 +1250,7 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem)
             return (uint64_t)-EINTR;
         }
 
-        arch_yield()
+        arch_yield();
     } while (target > nanoTime());
 
     return 0;
