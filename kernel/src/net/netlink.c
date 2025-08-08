@@ -25,10 +25,56 @@ size_t netlink_setsockopt(uint64_t fd, int level, int optname, const void *optva
     return 0;
 }
 
+size_t netlink_recv_uevent(struct msghdr *msg, int flags)
+{
+    return 0;
+}
+
+size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
+{
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    struct netlink_sock *sock = handle->sock;
+
+    struct sockaddr_nl *addr = msg->msg_name;
+    if (msg->msg_namelen != sizeof(struct sockaddr_nl))
+    {
+        return (size_t)-EINVAL;
+    }
+
+    if (addr->nl_pid == 0)
+    {
+        // KERNEL SPACE
+        switch (sock->protocol)
+        {
+        case NETLINK_KOBJECT_UEVENT:
+            return netlink_recv_uevent(msg, flags);
+
+        default:
+            return (size_t)-EINVAL;
+        }
+    }
+    else
+    {
+        // TODO
+        return (size_t)-ENOSYS;
+    }
+}
+
+size_t netlink_sendmsg(uint64_t fd, const struct msghdr *msg, int flags)
+{
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    struct netlink_sock *sock = handle->sock;
+
+    // TODO
+    return 0;
+}
+
 socket_op_t netlink_ops = {
     .bind = netlink_bind,
     .getsockopt = netlink_getsockopt,
     .setsockopt = netlink_setsockopt,
+    .sendmsg = netlink_sendmsg,
+    .recvmsg = netlink_recvmsg,
 };
 
 int netlink_socket(int domain, int type, int protocol)
@@ -41,7 +87,8 @@ int netlink_socket(int domain, int type, int protocol)
 
     struct netlink_sock *nl_sk = malloc(sizeof(struct netlink_sock));
     memset(nl_sk, 0, sizeof(struct netlink_sock));
-    nl_sk->portid = (uint32_t)current_task->pid; // 使用PID作为默认portid
+    nl_sk->lock.lock = 0;
+    nl_sk->protocol = protocol;
     nl_sk->bind_addr = malloc(sizeof(struct sockaddr_nl));
     memset(nl_sk->bind_addr, 0, sizeof(struct sockaddr_nl));
 
