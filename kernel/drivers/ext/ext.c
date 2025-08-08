@@ -1,4 +1,4 @@
-#include <fs/ext/ext.h>
+#include <ext.h>
 #include <mm/mm_syscall.h>
 
 static int ext_fsid = 0;
@@ -7,6 +7,8 @@ spinlock_t rwlock = {0};
 
 int ext_mount(const char *src, vfs_node_t node)
 {
+    spin_lock(&rwlock);
+
     ext4_device_register(vfs_dev_get(), src);
 
     vfs_dev_name_set(src);
@@ -18,6 +20,7 @@ int ext_mount(const char *src, vfs_node_t node)
     {
         ext4_device_unregister(src);
         free(fullpath);
+        spin_unlock(&rwlock);
         return -1;
     }
 
@@ -26,7 +29,7 @@ int ext_mount(const char *src, vfs_node_t node)
 
     free(fullpath);
 
-    ext4_direntry *entry;
+    const ext4_direntry *entry;
     while ((entry = ext4_dir_entry_next(dir)))
     {
         if (!strcmp((const char *)entry->name, ".") || !strcmp((const char *)entry->name, ".."))
@@ -53,6 +56,8 @@ int ext_mount(const char *src, vfs_node_t node)
     node->inode = EXT4_ROOT_INO;
     node->handle = handle;
 
+    spin_unlock(&rwlock);
+
     return ret;
 }
 
@@ -73,8 +78,7 @@ void ext_open(void *parent, const char *name, vfs_node_t node)
         handle->dir = malloc(sizeof(ext4_dir));
         ext4_dir_open(handle->dir, (const char *)path);
 
-        ext4_direntry *entry;
-
+        const ext4_direntry *entry;
         while ((entry = ext4_dir_entry_next(handle->dir)))
         {
             if (!strcmp((const char *)entry->name, ".") || !strcmp((const char *)entry->name, ".."))
@@ -253,6 +257,8 @@ int ext_link(void *parent, const char *name, vfs_node_t node)
 
 int ext_symlink(void *parent, const char *name, vfs_node_t node)
 {
+    spin_lock(&rwlock);
+
     char *fullpath = vfs_get_fullpath(node);
 
     int ret = ext4_fsymlink(name, fullpath);
@@ -260,6 +266,8 @@ int ext_symlink(void *parent, const char *name, vfs_node_t node)
     ext4_mode_set(name, 0700);
 
     free(fullpath);
+
+    spin_unlock(&rwlock);
 
     return ret;
 }
@@ -378,7 +386,7 @@ static struct vfs_callback callbacks = {
     .dup = (vfs_dup_t)ext_dup,
 };
 
-void ext_init()
+__attribute__((visibility("default"))) void module_init()
 {
     ext_fsid = vfs_regist("ext", &callbacks);
 }

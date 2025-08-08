@@ -1,6 +1,6 @@
 #include "msc.h"
 
-__attribute__((visibility("hidden"))) int usb_bulk_transfer(struct usb_pipe *pipe, void *data, size_t len, bool is_read)
+int usb_bulk_transfer(struct usb_pipe *pipe, void *data, size_t len, bool is_read)
 {
     if (!pipe || !pipe->cntl)
         return -EINVAL;
@@ -47,7 +47,7 @@ static int usb_msc_transfer(usb_msc_device *dev, void *cmd, void *data, size_t d
     return (csw.bCSWStatus == 0) ? 0 : -1;
 }
 
-__attribute__((visibility("hidden"))) uint64_t usb_msc_read_blocks(void *dev, uint64_t lba, void *buf, uint64_t count)
+uint64_t usb_msc_read_blocks(void *dev, uint64_t lba, void *buf, uint64_t count)
 {
     uint8_t cmd[16] = {
         SCSI_READ_10,
@@ -64,7 +64,7 @@ __attribute__((visibility("hidden"))) uint64_t usb_msc_read_blocks(void *dev, ui
     return usb_msc_transfer(dev, cmd, buf, count * ((usb_msc_device *)dev)->block_size, true) == 0 ? count : 0;
 }
 
-__attribute__((visibility("hidden"))) uint64_t usb_msc_write_blocks(void *dev, uint64_t lba, void *buf, uint64_t count)
+uint64_t usb_msc_write_blocks(void *dev, uint64_t lba, void *buf, uint64_t count)
 {
     uint8_t cmd[16] = {
         SCSI_WRITE_10,
@@ -81,7 +81,7 @@ __attribute__((visibility("hidden"))) uint64_t usb_msc_write_blocks(void *dev, u
     return usb_msc_transfer(dev, cmd, buf, count * ((usb_msc_device *)dev)->block_size, false) == 0 ? count : 0;
 }
 
-__attribute__((visibility("hidden"))) int usb_msc_setup(struct usbdevice_s *usbdev)
+int usb_msc_setup(struct usbdevice_s *usbdev)
 {
     usb_msc_device *dev = malloc(sizeof(usb_msc_device));
     dev->udev = usbdev;

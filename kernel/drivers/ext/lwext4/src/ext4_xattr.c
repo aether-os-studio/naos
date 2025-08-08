@@ -431,7 +431,7 @@ static int ext4_xattr_set_entry(struct ext4_xattr_info *i,
 			last->e_value_offs = to_le16(value_offs);
 			last->e_value_block = 0;
 			last->e_value_size = to_le32(i->value_len);
-			memcpy(EXT4_XATTR_NAME(last), i->name, name_len);
+			memcpy(EXT4_XATTR_NAME(last), (char *)i->name, name_len);
 
 			/* Set valid last entry indicator */
 			*(uint32_t *)EXT4_XATTR_NEXT(last) = 0;
@@ -442,7 +442,7 @@ static int ext4_xattr_set_entry(struct ext4_xattr_info *i,
 		/* Insert the value's part */
 		if (value_offs)
 		{
-			memcpy((char *)s->base + value_offs, i->value,
+			memcpy((char *)s->base + value_offs, (char *)i->value,
 				   i->value_len);
 
 			/* Clear the padding bytes if there is */

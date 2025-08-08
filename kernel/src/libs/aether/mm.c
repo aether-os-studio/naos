@@ -9,10 +9,17 @@ EXPORT_SYMBOL(free_frames);
 EXPORT_SYMBOL(alloc_frames_bytes);
 EXPORT_SYMBOL(free_frames_bytes);
 
+EXPORT_SYMBOL(malloc);
+EXPORT_SYMBOL(realloc);
+EXPORT_SYMBOL(calloc);
+EXPORT_SYMBOL(free);
+
 EXPORT_SYMBOL(map_page_range);
 EXPORT_SYMBOL(unmap_page_range);
 
 EXPORT_SYMBOL(translate_address);
+
+EXPORT_SYMBOL(general_map);
 
 EXPORT_SYMBOL(memset);
 EXPORT_SYMBOL(memcpy);

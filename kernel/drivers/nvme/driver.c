@@ -28,13 +28,13 @@ static inline char *LeadingWhitespace(char *beg, char *end)
     return beg;
 }
 
-__attribute__((visibility("hidden"))) void NVMEConfigureQ(NVME_CONTROLLER *ctrl, NVME_QUEUE_COMMON *q, uint32_t idx, uint32_t len)
+void NVMEConfigureQ(NVME_CONTROLLER *ctrl, NVME_QUEUE_COMMON *q, uint32_t idx, uint32_t len)
 {
     memset(q, 0, sizeof(NVME_QUEUE_COMMON));
     q->DBL = (uint32_t *)(((uint8_t *)ctrl->CAP) + 0x1000 + idx * ctrl->DST);
     q->MSK = len - 1;
 }
-__attribute__((visibility("hidden"))) int NVMEConfigureCQ(NVME_CONTROLLER *ctrl, NVME_COMPLETION_QUEUE *cq, uint32_t idx, uint32_t len)
+int NVMEConfigureCQ(NVME_CONTROLLER *ctrl, NVME_COMPLETION_QUEUE *cq, uint32_t idx, uint32_t len)
 {
     NVMEConfigureQ(ctrl, &cq->COM, idx, len);
     cq->CQE = 0;
@@ -47,7 +47,7 @@ __attribute__((visibility("hidden"))) int NVMEConfigureCQ(NVME_CONTROLLER *ctrl,
     cq->COM.PHA = 1;
     return 0;
 }
-__attribute__((visibility("hidden"))) int NVMEConfigureSQ(NVME_CONTROLLER *ctrl, NVME_SUBMISSION_QUEUE *sq, uint32_t idx, uint32_t len)
+int NVMEConfigureSQ(NVME_CONTROLLER *ctrl, NVME_SUBMISSION_QUEUE *sq, uint32_t idx, uint32_t len)
 {
     NVMEConfigureQ(ctrl, &sq->COM, idx, len);
     uint64_t phyAddr = 0;
@@ -59,7 +59,7 @@ __attribute__((visibility("hidden"))) int NVMEConfigureSQ(NVME_CONTROLLER *ctrl,
     sq->COM.PHA = 0;
     return 0;
 }
-__attribute__((visibility("hidden"))) int NVMEWaitingRDY(NVME_CONTROLLER *ctrl, uint32_t rdy)
+int NVMEWaitingRDY(NVME_CONTROLLER *ctrl, uint32_t rdy)
 {
     uint32_t csts;
     while (rdy != ((csts = ctrl->CAP->CST) & NVME_CSTS_RDY))
@@ -68,7 +68,7 @@ __attribute__((visibility("hidden"))) int NVMEWaitingRDY(NVME_CONTROLLER *ctrl, 
     }
     return 0;
 }
-__attribute__((visibility("hidden"))) NVME_COMPLETION_QUEUE_ENTRY NVMEWaitingCMD(NVME_SUBMISSION_QUEUE *sq, NVME_SUBMISSION_QUEUE_ENTRY *e)
+NVME_COMPLETION_QUEUE_ENTRY NVMEWaitingCMD(NVME_SUBMISSION_QUEUE *sq, NVME_SUBMISSION_QUEUE_ENTRY *e)
 {
     NVME_COMPLETION_QUEUE_ENTRY errcqe;
     memset(&errcqe, 0xFF, sizeof(NVME_COMPLETION_QUEUE_ENTRY));
@@ -114,12 +114,12 @@ __attribute__((visibility("hidden"))) NVME_COMPLETION_QUEUE_ENTRY NVMEWaitingCMD
     return *cqe;
 }
 
-__attribute__((visibility("hidden"))) void nvme_rwfail(uint16_t status)
+void nvme_rwfail(uint16_t status)
 {
     printf("Status: %#010lx, status code: %#010lx, status code type: %#010lx\n", status, status & 0xFF, (status >> 8) & 0x7);
 }
 
-__attribute__((visibility("hidden"))) bool BuildPRPList(void *vaddr, uint64_t size, NVME_PRP_LIST *prpList)
+bool BuildPRPList(void *vaddr, uint64_t size, NVME_PRP_LIST *prpList)
 {
     uint64_t vaddrStart = (uint64_t)vaddr;
     uint64_t vaddrEnd = vaddrStart + size;
@@ -165,7 +165,7 @@ __attribute__((visibility("hidden"))) bool BuildPRPList(void *vaddr, uint64_t si
     return true;
 }
 
-__attribute__((visibility("hidden"))) void FreePRPList(NVME_PRP_LIST *prpList)
+void FreePRPList(NVME_PRP_LIST *prpList)
 {
     if (prpList->A)
     {
@@ -174,7 +174,7 @@ __attribute__((visibility("hidden"))) void FreePRPList(NVME_PRP_LIST *prpList)
     }
 }
 
-__attribute__((visibility("hidden"))) uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba, uint32_t count, uint32_t write)
+uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba, uint32_t count, uint32_t write)
 {
     if (!count || !ns || !buf)
         return 0;
@@ -239,7 +239,7 @@ __attribute__((visibility("hidden"))) uint32_t NVMETransfer(NVME_NAMESPACE *ns, 
     return transferred;
 }
 
-__attribute__((visibility("hidden"))) void failed_nvme(NVME_CONTROLLER *ctrl)
+void failed_nvme(NVME_CONTROLLER *ctrl)
 {
     if (ctrl->ICQ.CQE)
     {
@@ -259,24 +259,24 @@ __attribute__((visibility("hidden"))) void failed_nvme(NVME_CONTROLLER *ctrl)
     }
 }
 
-__attribute__((visibility("hidden"))) void failed_namespace(NVME_IDENTIFY_NAMESPACE *identifyNS)
+void failed_namespace(NVME_IDENTIFY_NAMESPACE *identifyNS)
 {
     free_frames(virt_to_phys((uint64_t)identifyNS), 1);
 }
 
-__attribute__((visibility("hidden"))) uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t bytes)
+uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t bytes)
 {
     uint64_t ret = NVMETransfer((NVME_NAMESPACE *)data, buffer, lba, bytes, false);
     return ret;
 }
 
-__attribute__((visibility("hidden"))) uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t bytes)
+uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t bytes)
 {
     uint64_t ret = NVMETransfer((NVME_NAMESPACE *)data, buffer, lba, bytes, true);
     return ret;
 }
 
-__attribute__((visibility("hidden"))) NVME_CONTROLLER *nvme_driver_init(uint64_t bar0, uint64_t bar_size)
+NVME_CONTROLLER *nvme_driver_init(uint64_t bar0, uint64_t bar_size)
 {
     NVME_CAPABILITY *cap = (NVME_CAPABILITY *)phys_to_virt(bar0);
     map_page_range(get_current_page_dir(false), (uint64_t)cap, bar0, bar_size, PT_FLAG_R | PT_FLAG_W);

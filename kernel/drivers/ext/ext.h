@@ -1,9 +1,9 @@
 #pragma once
 
 #include <fs/vfs/vfs.h>
-#include <fs/ext/lwext4/blockdev/vfs_dev.h>
-#include <fs/ext/lwext4/include/ext4_types.h>
-#include <fs/ext/lwext4/include/ext4.h>
+#include <lwext4/blockdev/vfs_dev.h>
+#include <lwext4/include/ext4_types.h>
+#include <lwext4/include/ext4.h>
 
 typedef struct ext_handle
 {

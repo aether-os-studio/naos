@@ -45,7 +45,6 @@ void init_thread(uint64_t arg)
     fs_syscall_init();
     socketfs_init();
     pipefs_init();
-    ext_init();
     iso9660_init();
     fatfs_init();
 

@@ -32,10 +32,8 @@
 #include <ext4_blockdev.h>
 #include <ext4_config.h>
 #include <ext4_errno.h>
-#include <fs/ext/lwext4/blockdev/vfs_dev.h>
+#include <lwext4/blockdev/vfs_dev.h>
 #include <stdbool.h>
-
-#include <fs/vfs/dev.h>
 
 #include <libs/klibc.h>
 

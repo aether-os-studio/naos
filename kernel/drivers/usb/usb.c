@@ -6,7 +6,7 @@
  ****************************************************************/
 
 // Send a message on a control pipe using the default control descriptor.
-__attribute__((visibility("hidden"))) int usb_send_pipe(struct usb_pipe *pipe_fl, int dir, const void *cmd, void *data, int datasize)
+int usb_send_pipe(struct usb_pipe *pipe_fl, int dir, const void *cmd, void *data, int datasize)
 {
     switch (GET_LOWFLAT(pipe_fl->type))
     {
@@ -26,7 +26,7 @@ __attribute__((visibility("hidden"))) int usb_send_pipe(struct usb_pipe *pipe_fl
     }
 }
 
-__attribute__((visibility("hidden"))) int usb_poll_intr(struct usb_pipe *pipe_fl, void *data)
+int usb_poll_intr(struct usb_pipe *pipe_fl, void *data)
 {
     switch (GET_LOWFLAT(pipe_fl->type))
     {
@@ -42,7 +42,7 @@ __attribute__((visibility("hidden"))) int usb_poll_intr(struct usb_pipe *pipe_fl
     }
 }
 
-__attribute__((visibility("hidden"))) int usb_32bit_pipe(struct usb_pipe *pipe_fl)
+int usb_32bit_pipe(struct usb_pipe *pipe_fl)
 {
     return true;
 }
@@ -52,25 +52,25 @@ __attribute__((visibility("hidden"))) int usb_32bit_pipe(struct usb_pipe *pipe_f
  ****************************************************************/
 
 // Send a message to the default control pipe of a device.
-__attribute__((visibility("hidden"))) int usb_send_default_control(struct usb_pipe *pipe, const struct usb_ctrlrequest *req, void *data)
+int usb_send_default_control(struct usb_pipe *pipe, const struct usb_ctrlrequest *req, void *data)
 {
     return usb_send_pipe(pipe, req->bRequestType & USB_DIR_IN, req, data, req->wLength);
 }
 
 // Send a message to a bulk endpoint
-__attribute__((visibility("hidden"))) int usb_send_bulk(struct usb_pipe *pipe_fl, int dir, void *data, int datasize)
+int usb_send_bulk(struct usb_pipe *pipe_fl, int dir, void *data, int datasize)
 {
     return usb_send_pipe(pipe_fl, dir, NULL, data, datasize);
 }
 
 // Check if a pipe for a given controller is on the freelist
-__attribute__((visibility("hidden"))) int usb_is_freelist(struct usb_s *cntl, struct usb_pipe *pipe)
+int usb_is_freelist(struct usb_s *cntl, struct usb_pipe *pipe)
 {
     return pipe->cntl != cntl;
 }
 
 // Add a pipe to the controller's freelist
-__attribute__((visibility("hidden"))) void usb_add_freelist(struct usb_pipe *pipe)
+void usb_add_freelist(struct usb_pipe *pipe)
 {
     if (!pipe)
         return;
@@ -80,7 +80,7 @@ __attribute__((visibility("hidden"))) void usb_add_freelist(struct usb_pipe *pip
 }
 
 // Check for an available pipe on the freelist.
-__attribute__((visibility("hidden"))) struct usb_pipe *
+struct usb_pipe *
 usb_get_freelist(struct usb_s *cntl, uint8_t eptype)
 {
     struct usb_pipe **pfree = &cntl->freelist;
@@ -99,7 +99,7 @@ usb_get_freelist(struct usb_s *cntl, uint8_t eptype)
 }
 
 // Fill "pipe" endpoint info from an endpoint descriptor.
-__attribute__((visibility("hidden"))) void usb_desc2pipe(struct usb_pipe *pipe, struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epdesc)
+void usb_desc2pipe(struct usb_pipe *pipe, struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epdesc)
 {
     pipe->cntl = usbdev->hub->cntl;
     pipe->type = usbdev->hub->cntl->type;
@@ -111,7 +111,7 @@ __attribute__((visibility("hidden"))) void usb_desc2pipe(struct usb_pipe *pipe, 
 }
 
 // Maximum time (in ms) a data transfer should take
-__attribute__((visibility("hidden"))) int usb_xfer_time(struct usb_pipe *pipe, int datalen)
+int usb_xfer_time(struct usb_pipe *pipe, int datalen)
 {
     // Use the maximum command time (5 seconds), except for
     // set_address commands where we don't want to stall the boot if
@@ -123,7 +123,7 @@ __attribute__((visibility("hidden"))) int usb_xfer_time(struct usb_pipe *pipe, i
 }
 
 // Find the first endpoint of a given type in an interface description.
-__attribute__((visibility("hidden"))) struct usb_endpoint_descriptor *
+struct usb_endpoint_descriptor *
 usb_find_desc(struct usbdevice_s *usbdev, int type, int dir)
 {
     struct usb_endpoint_descriptor *epdesc = (void *)&usbdev->iface[1];
@@ -384,7 +384,7 @@ resetfail:
 
 static uint32_t usb_time_sigatt;
 
-__attribute__((visibility("hidden"))) void usb_enumerate(struct usbhub_s *hub)
+void usb_enumerate(struct usbhub_s *hub)
 {
     uint32_t portcount = hub->portcount;
     hub->threads = portcount;

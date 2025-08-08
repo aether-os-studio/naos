@@ -28,7 +28,7 @@ pci_driver_t nvme_driver = {
     .shutdown = nvme_shutdown,
 };
 
-int module_init()
+__attribute__((visibility("default"))) int module_init()
 {
     regist_pci_driver(&nvme_driver);
 

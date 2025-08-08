@@ -43,7 +43,7 @@ extern "C"
 #endif
 
 #if !CONFIG_USE_DEFAULT_CFG
-#include "generated/ext4_config.h"
+#include "ext4_config.h"
 #endif
 
     /*****************************************************************************/

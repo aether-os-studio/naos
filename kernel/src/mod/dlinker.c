@@ -262,6 +262,8 @@ void dlinker_load(module_t *module)
         return;
     }
 
+    printk("Loaded module %s at %#018lx\n", module->module_name, KERNEL_MODULES_SPACE_START + kernel_modules_load_offset);
+
     kernel_modules_load_offset += (load_size + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1);
 
     int ret = dlinit();

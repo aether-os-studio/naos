@@ -955,7 +955,7 @@ fail:
     return NULL;
 }
 
-__attribute__((visibility("hidden"))) struct usb_pipe *
+struct usb_pipe *
 xhci_realloc_pipe(struct usbdevice_s *usbdev, struct usb_pipe *upipe, struct usb_endpoint_descriptor *epdesc)
 {
     if (!epdesc)
@@ -1012,7 +1012,7 @@ static void xhci_xfer_normal(struct xhci_pipe *pipe,
     xhci_doorbell(xhci, pipe->slotid, pipe->epid);
 }
 
-__attribute__((visibility("hidden"))) int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data, int datalen)
+int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data, int datalen)
 {
     struct xhci_pipe *pipe = container_of(p, struct xhci_pipe, pipe);
     struct usb_xhci_s *xhci = container_of(pipe->pipe.cntl, struct usb_xhci_s, usb);
@@ -1039,7 +1039,7 @@ __attribute__((visibility("hidden"))) int xhci_send_pipe(struct usb_pipe *p, int
     return 0;
 }
 
-__attribute__((visibility("hidden"))) int xhci_poll_intr(struct usb_pipe *p, void *data)
+int xhci_poll_intr(struct usb_pipe *p, void *data)
 {
     struct xhci_pipe *pipe = container_of(p, struct xhci_pipe, pipe);
     struct usb_xhci_s *xhci = container_of(pipe->pipe.cntl, struct usb_xhci_s, usb);
@@ -1098,7 +1098,7 @@ pci_driver_t xhci_hcd_driver = {
     .shutdown = xhci_shutdown,
 };
 
-int module_init()
+__attribute__((visibility("default"))) int module_init()
 {
     regist_pci_driver(&xhci_hcd_driver);
 

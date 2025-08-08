@@ -31,7 +31,7 @@
 #include <ext4_blockdev.h>
 #include <ext4_config.h>
 
-#include <fs/vfs/vfs.h>
+#include <libs/aether/fs.h>
 
 #include <stdbool.h>
 #include <stdint.h>
