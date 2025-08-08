@@ -37,23 +37,20 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
         return -EFAULT;
     }
 
-    if (addr == 0)
-    {
-        addr = current_task->mmap_start;
-        flags &= (~MAP_FIXED);
-    }
-
     if (aligned_len == 0)
     {
         return (uint64_t)-EINVAL;
     }
 
-    current_task->mmap_start += (aligned_len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
-    if (current_task->mmap_start > USER_MMAP_END)
+    if (addr == 0)
     {
-        current_task->mmap_start -= (aligned_len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
-        return (uint64_t)-ENOMEM;
+        uint64_t page_count = aligned_len / DEFAULT_PAGE_SIZE;
+        uint64_t idx = bitmap_find_range(&current_task->mmap_regions, page_count, true);
+        addr = (idx * DEFAULT_PAGE_SIZE) + USER_MMAP_START;
+        flags &= (~MAP_FIXED);
     }
+
+    bitmap_set_range(&current_task->mmap_regions, (addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (addr - USER_MMAP_START + aligned_len) / DEFAULT_PAGE_SIZE, false);
 
     spin_lock(&mm_op_lock);
 
