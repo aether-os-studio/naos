@@ -3,128 +3,7 @@
 #include <drivers/kernel_logger.h>
 #include <drivers/bus/pci.h>
 
-static vfs_node_t sysfs_root = NULL;
-static int sysfs_id = 0;
-
-static vfs_node_t devices_root = NULL;
-static vfs_node_t dev_root = NULL;
-static vfs_node_t bus_root = NULL;
-static vfs_node_t class_drm_root = NULL;
-static vfs_node_t class_root = NULL;
-static vfs_node_t pci_root = NULL;
-static vfs_node_t pci_devices_root = NULL;
-static vfs_node_t input_root = NULL;
-static vfs_node_t graphics_root = NULL;
-
-static int dummy()
-{
-    return 0;
-}
-
-void sysfs_open(void *parent, const char *name, vfs_node_t node)
-{
-    sysfs_handle_t *parent_handle = parent;
-}
-
-int sysfs_stat(void *file, vfs_node_t node)
-{
-    return 0;
-}
-
-ssize_t sysfs_read(fd_t *fd, void *addr, size_t offset, size_t size)
-{
-    void *file = fd->node->handle;
-
-    if (!file)
-        return 0;
-
-    sysfs_handle_t *handle = file;
-
-    if (handle->private_data != NULL)
-    {
-        if (offset >= DEFAULT_PAGE_SIZE)
-            return 0;
-        size_t toCopy = DEFAULT_PAGE_SIZE - offset;
-        if (toCopy > size)
-            toCopy = size;
-
-        pci_device_t *device = handle->private_data;
-
-        for (size_t i = 0; i < toCopy; i++)
-        {
-            uint16_t word = device->op->read(device->bus, device->slot, device->func, device->segment, offset++) & 0xFFFF;
-            ((uint8_t *)addr)[i] = (uint8_t)EXPORT_BYTE(word, true);
-        }
-
-        return toCopy;
-    }
-    else
-    {
-        size_t content_len = strlen(handle->content);
-
-        if (offset >= content_len)
-        {
-            return 0;
-        }
-
-        size_t remaining = content_len - offset;
-        size_t read_size = (size < remaining) ? size : remaining;
-
-        memcpy(addr, handle->content + offset, read_size);
-        return read_size;
-    }
-}
-
-ssize_t sysfs_readlink(vfs_node_t node, void *addr, size_t offset, size_t size)
-{
-    vfs_node_t linkto = node->linkto;
-
-    if (!linkto)
-    {
-        return -ENOLINK;
-    }
-
-    char *current_path = vfs_get_fullpath(node);
-    char *linkto_path = vfs_get_fullpath(linkto);
-
-    char buf[1024];
-    memset(buf, 0, sizeof(buf));
-    rel_status status = calculate_relative_path(buf, current_path, linkto_path, sizeof(buf));
-
-    free(current_path);
-    free(linkto_path);
-
-    int len = strnlen(buf, size);
-    memcpy(addr, buf, len);
-    return len;
-}
-
-int sysfs_poll(void *file, size_t event)
-{
-    return -EOPNOTSUPP;
-}
-
-static struct vfs_callback callback = {
-    .mount = (vfs_mount_t)dummy,
-    .unmount = (vfs_unmount_t)dummy,
-    .open = sysfs_open,
-    .close = (vfs_close_t)dummy,
-    .read = (vfs_read_t)sysfs_read,
-    .write = (vfs_write_t)dummy,
-    .readlink = (vfs_readlink_t)sysfs_readlink,
-    .mkdir = (vfs_mk_t)dummy,
-    .mkfile = (vfs_mk_t)dummy,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)dummy,
-    .delete = (vfs_del_t)dummy,
-    .rename = (vfs_rename_t)dummy,
-    .map = (vfs_mapfile_t)dummy,
-    .stat = sysfs_stat,
-    .ioctl = (vfs_ioctl_t)dummy,
-    .poll = sysfs_poll,
-    .resize = (vfs_resize_t)dummy,
-    .dup = vfs_generic_dup,
-};
+vfs_node_t sysfs_root = NULL;
 
 extern uint32_t device_number;
 
@@ -135,40 +14,23 @@ extern uint32_t device_number;
 
 void sysfs_init()
 {
-    sysfs_handle_t *handle = NULL;
+    vfs_mkdir("/sys");
+    sysfs_root = vfs_open("/sys");
 
-    sysfs_id = vfs_regist("sysfs", &callback);
-    sysfs_root = vfs_child_append(rootdir, "sys", NULL);
-    sysfs_root->type = file_dir;
-    sysfs_root->fsid = sysfs_id;
-    sysfs_root->mode = 0644;
-    devices_root = vfs_child_append(sysfs_root, "devices", NULL);
-    devices_root->type = file_dir;
-    devices_root->mode = 0644;
-    dev_root = vfs_child_append(sysfs_root, "dev", NULL);
-    dev_root->type = file_dir;
-    dev_root->mode = 0644;
-    bus_root = vfs_child_append(sysfs_root, "bus", NULL);
-    bus_root->type = file_dir;
-    bus_root->mode = 0644;
-    class_root = vfs_child_append(sysfs_root, "class", NULL);
-    class_root->type = file_dir;
-    class_root->mode = 0644;
-    class_drm_root = vfs_child_append(class_root, "drm", NULL);
-    class_drm_root->type = file_dir;
-    class_drm_root->mode = 0644;
-    pci_root = vfs_child_append(bus_root, "pci", NULL);
-    pci_root->type = file_dir;
-    pci_root->mode = 0644;
-    graphics_root = vfs_child_append(class_root, "graphics", NULL);
-    graphics_root->type = file_dir;
-    graphics_root->mode = 0644;
-    input_root = vfs_child_append(class_root, "input", NULL);
-    input_root->type = file_dir;
-    input_root->mode = 0644;
-    pci_devices_root = vfs_child_append(pci_root, "devices", NULL);
-    pci_devices_root->type = file_dir;
-    pci_devices_root->mode = 0644;
+    vfs_mkdir("/sys/devices");
+
+    vfs_mkdir("/sys/dev");
+    vfs_mkdir("/sys/dev/char");
+    vfs_mkdir("/sys/dev/block");
+
+    vfs_mkdir("/sys/bus");
+    vfs_mkdir("/sys/bus/pci");
+    vfs_mkdir("/sys/bus/pci/devices");
+
+    vfs_mkdir("/sys/class");
+    vfs_mkdir("/sys/class/graphics");
+    vfs_mkdir("/sys/class/input");
+    vfs_mkdir("/sys/class/drm");
 
     for (uint32_t i = 0; i < pci_device_number; i++)
     {
@@ -176,150 +38,191 @@ void sysfs_init()
         if (dev == NULL)
             continue;
 
-        char dirname[128];
-        sprintf(dirname, "%04d:%02d:%02d.%d", dev->segment, dev->bus, dev->slot, dev->func);
+        char name[128];
+        sprintf(name, "/sys/bus/pci/devices/%04d:%02d:%02d.%d", dev->segment, dev->bus, dev->slot, dev->func);
 
-        vfs_node_t pci_device_dir = vfs_child_append(pci_devices_root, dirname, dev);
-        pci_device_dir->type = file_dir;
-        pci_device_dir->mode = 0644;
+        vfs_mkdir(name);
 
-        vfs_node_t class_file = vfs_child_append(pci_device_dir, "class", NULL);
-        class_file->type = file_none;
-        class_file->handle = malloc(sizeof(sysfs_handle_t));
-        sysfs_handle_t *class_handle = class_file->handle;
-        class_handle->node = class_file;
-        class_handle->private_data = NULL;
-        uint32_t class_code = dev->op->read(dev->bus, dev->slot, dev->func, dev->segment, 0x0a) << 8;
-        class_code |= ((uint32_t)dev->revision_id) << 8;
-        sprintf(class_handle->content, "0x%x\n", class_code);
+        sprintf(name, "/sys/bus/pci/devices/%04d:%02d:%02d.%d/class", dev->segment, dev->bus, dev->slot, dev->func);
+        vfs_mkfile(name);
 
-        vfs_node_t revision_file = vfs_child_append(pci_device_dir, "revision", NULL);
-        revision_file->type = file_none;
-        revision_file->handle = malloc(sizeof(sysfs_handle_t));
-        sysfs_handle_t *revision_handle = revision_file->handle;
-        revision_handle->node = revision_file;
-        revision_handle->private_data = NULL;
-        sprintf(revision_handle->content, "0x%02x\n", dev->revision_id);
+        char content[64];
+        sprintf(content, "0x%x", dev->class_code);
+        vfs_write(vfs_open(name), content, 0, strlen(content));
 
-        vfs_node_t vendor_file = vfs_child_append(pci_device_dir, "vendor", NULL);
-        vendor_file->type = file_none;
-        vendor_file->handle = malloc(sizeof(sysfs_handle_t));
-        sysfs_handle_t *vendor_handle = vendor_file->handle;
-        vendor_handle->node = vendor_file;
-        vendor_handle->private_data = NULL;
-        sprintf(vendor_handle->content, "0x%04x\n", dev->vendor_id);
+        sprintf(name, "/sys/bus/pci/devices/%04d:%02d:%02d.%d/revision", dev->segment, dev->bus, dev->slot, dev->func);
+        vfs_mkfile(name);
 
-        vfs_node_t device_file = vfs_child_append(pci_device_dir, "device", NULL);
-        device_file->type = file_none;
-        device_file->handle = malloc(sizeof(sysfs_handle_t));
-        sysfs_handle_t *device_handle = device_file->handle;
-        device_handle->node = device_file;
-        device_handle->private_data = NULL;
-        sprintf(device_handle->content, "0x%04x\n", dev->device_id);
+        sprintf(content, "0x%02x", dev->revision_id);
+        vfs_write(vfs_open(name), content, 0, strlen(content));
 
-        vfs_node_t config_file = vfs_child_append(pci_device_dir, "config", dev);
-        config_file->type = file_none;
-        config_file->handle = malloc(sizeof(sysfs_handle_t));
-        config_file->fsid = sysfs_id;
-        sysfs_handle_t *config_handle = config_file->handle;
-        config_handle->private_data = dev;
-        config_handle->node = config_file;
+        sprintf(name, "/sys/bus/pci/devices/%04d:%02d:%02d.%d/vendor", dev->segment, dev->bus, dev->slot, dev->func);
+        vfs_mkfile(name);
+
+        sprintf(content, "0x%04x", dev->vendor_id);
+        vfs_write(vfs_open(name), content, 0, strlen(content));
+
+        sprintf(name, "/sys/bus/pci/devices/%04d:%02d:%02d.%d/device", dev->segment, dev->bus, dev->slot, dev->func);
+        vfs_mkfile(name);
+
+        sprintf(content, "0x%04x", dev->device_id);
+        vfs_write(vfs_open(name), content, 0, strlen(content));
     }
 
-    vfs_node_t char_dev = vfs_child_append(dev_root, "char", NULL);
-    char_dev->type = file_dir;
-    char_dev->mode = 0644;
-    vfs_node_t dev_node = vfs_child_append(char_dev, "226:0", NULL);
-    dev_node->type = file_dir;
-    dev_node->mode = 0644;
-    vfs_node_t device_node = vfs_child_append(dev_node, "device", NULL);
-    device_node->type = file_dir;
-    device_node->mode = 0644;
+    // #if defined(__x86_64__)
+    //     vfs_node_t devices_platform = vfs_child_append(devices_root, "platform", NULL);
+    //     devices_platform->type = file_dir;
+    //     devices_platform->mode = 0644;
+    //     vfs_node_t devices_platform_i8042 = vfs_child_append(devices_platform, "i8042", NULL);
+    //     devices_platform_i8042->type = file_dir;
+    //     devices_platform_i8042->mode = 0644;
 
-#if defined(__x86_64__)
-    vfs_node_t devices_platform = vfs_child_append(devices_root, "platform", NULL);
-    devices_platform->type = file_dir;
-    devices_platform->mode = 0644;
-    vfs_node_t devices_platform_i8042 = vfs_child_append(devices_platform, "i8042", NULL);
-    devices_platform_i8042->type = file_dir;
-    devices_platform_i8042->mode = 0644;
+    //     vfs_node_t serio0 = vfs_child_append(devices_platform_i8042, "serio0", NULL);
+    //     serio0->type = file_dir;
+    //     serio0->mode = 0644;
+    //     vfs_node_t serio1 = vfs_child_append(devices_platform_i8042, "serio1", NULL);
+    //     serio1->type = file_dir;
+    //     serio1->mode = 0644;
 
-    vfs_node_t serio0 = vfs_child_append(devices_platform_i8042, "serio0", NULL);
-    serio0->type = file_dir;
-    serio0->mode = 0644;
-    vfs_node_t serio1 = vfs_child_append(devices_platform_i8042, "serio1", NULL);
-    serio1->type = file_dir;
-    serio1->mode = 0644;
+    //     vfs_node_t serio0_input = vfs_child_append(serio0, "input", NULL);
+    //     serio0_input->type = file_dir;
+    //     serio0_input->mode = 0644;
+    //     vfs_node_t serio1_input = vfs_child_append(serio1, "input", NULL);
+    //     serio1_input->type = file_dir;
+    //     serio1_input->mode = 0644;
 
-    vfs_node_t serio0_input = vfs_child_append(serio0, "input", NULL);
-    serio0_input->type = file_dir;
-    serio0_input->mode = 0644;
-    vfs_node_t serio1_input = vfs_child_append(serio1, "input", NULL);
-    serio1_input->type = file_dir;
-    serio1_input->mode = 0644;
+    //     vfs_node_t input0 = vfs_child_append(serio0_input, "input0", NULL);
+    //     input0->type = file_dir;
+    //     input0->mode = 0644;
+    //     handle = malloc(sizeof(sysfs_handle_t));
+    //     handle->node = input0;
+    //     input0->handle = handle;
+    //     vfs_node_t input1 = vfs_child_append(serio1_input, "input1", NULL);
+    //     input1->type = file_dir;
+    //     input1->mode = 0644;
+    //     handle = malloc(sizeof(sysfs_handle_t));
+    //     handle->node = input1;
+    //     input1->handle = handle;
 
-    vfs_node_t input0 = vfs_child_append(serio0_input, "input0", NULL);
-    input0->type = file_dir;
-    input0->mode = 0644;
-    handle = malloc(sizeof(sysfs_handle_t));
-    handle->node = input0;
-    input0->handle = handle;
-    vfs_node_t input1 = vfs_child_append(serio1_input, "input1", NULL);
-    input1->type = file_dir;
-    input1->mode = 0644;
-    handle = malloc(sizeof(sysfs_handle_t));
-    handle->node = input1;
-    input1->handle = handle;
+    //     vfs_node_t event0 = vfs_child_append(input0, "event0", NULL);
+    //     event0->type = file_dir;
+    //     event0->mode = 0644;
 
-    vfs_node_t event0 = vfs_child_append(input0, "event0", NULL);
-    event0->type = file_dir;
-    event0->mode = 0644;
+    //     vfs_node_t dev_node = vfs_child_append(char_dev, "13:0", NULL);
+    //     dev_node->type = file_dir;
+    //     dev_node->mode = 0644;
+    //     dev_node->linkto = event0;
 
-    dev_node = vfs_child_append(char_dev, "13:0", NULL);
-    dev_node->type = file_dir;
-    dev_node->mode = 0644;
-    dev_node->linkto = event0;
+    //     vfs_node_t event1 = vfs_child_append(input1, "event1", NULL);
+    //     event1->type = file_dir;
+    //     event1->mode = 0644;
 
-    vfs_node_t event1 = vfs_child_append(input1, "event1", NULL);
-    event1->type = file_dir;
-    event1->mode = 0644;
+    //     dev_node = vfs_child_append(char_dev, "13:1", NULL);
+    //     dev_node->type = file_dir;
+    //     dev_node->mode = 0644;
+    //     dev_node->linkto = event1;
 
-    dev_node = vfs_child_append(char_dev, "13:1", NULL);
-    dev_node->type = file_dir;
-    dev_node->mode = 0644;
-    dev_node->linkto = event1;
+    //     vfs_node_t device = vfs_child_append(input0, "device", NULL);
+    //     device->type = file_dir | file_symlink;
+    //     device->mode = 0644;
+    //     device->linkto = input0;
+    //     device = vfs_child_append(input1, "device", NULL);
+    //     device->type = file_dir | file_symlink;
+    //     device->mode = 0644;
+    //     device->linkto = input1;
 
-    vfs_node_t device = vfs_child_append(input0, "device", NULL);
-    device->type = file_dir | file_symlink;
-    device->mode = 0644;
-    device->linkto = input0;
-    device = vfs_child_append(input1, "device", NULL);
-    device->type = file_dir | file_symlink;
-    device->mode = 0644;
-    device->linkto = input1;
+    //     vfs_node_t subsystem = vfs_child_append(event0, "subsystem", NULL);
+    //     subsystem->type = file_dir | file_symlink;
+    //     subsystem->mode = 0644;
+    //     subsystem->linkto = input_root;
+    //     subsystem = vfs_child_append(event1, "subsystem", NULL);
+    //     subsystem->type = file_dir | file_symlink;
+    //     subsystem->mode = 0644;
+    //     subsystem->linkto = input_root;
 
-    vfs_node_t subsystem = vfs_child_append(event0, "subsystem", NULL);
-    subsystem->type = file_dir | file_symlink;
-    subsystem->mode = 0644;
-    subsystem->linkto = input_root;
-    subsystem = vfs_child_append(event1, "subsystem", NULL);
-    subsystem->type = file_dir | file_symlink;
-    subsystem->mode = 0644;
-    subsystem->linkto = input_root;
+    //     vfs_node_t uevent = vfs_child_append(event0, "uevent", NULL);
+    //     uevent->type = file_none;
+    //     uevent->mode = 0644;
+    //     handle = malloc(sizeof(sysfs_handle_t));
+    //     sprintf(handle->content, "MAJOR=13\nMINOR=0\nDEVNAME=input/event0\nID_INPUT=1\nID_INPUT_KEYBOARD=1\n");
+    //     handle->node = uevent;
+    //     uevent->handle = handle;
+    //     uevent = vfs_child_append(event1, "uevent", NULL);
+    //     uevent->type = file_none;
+    //     uevent->mode = 0644;
+    //     handle = malloc(sizeof(sysfs_handle_t));
+    //     sprintf(handle->content, "MAJOR=13\nMINOR=1\nDEVNAME=input/event1\nID_INPUT=1\nID_INPUT_MOUSE=1\n");
+    //     handle->node = uevent;
+    //     uevent->handle = handle;
+    // #endif
+}
 
-    vfs_node_t uevent = vfs_child_append(event0, "uevent", NULL);
-    uevent->type = file_none;
-    uevent->mode = 0644;
-    handle = malloc(sizeof(sysfs_handle_t));
-    sprintf(handle->content, "MAJOR=13\nMINOR=0\nDEVNAME=input/event0\nID_INPUT=1\nID_INPUT_KEYBOARD=1\n");
-    handle->node = uevent;
-    uevent->handle = handle;
-    uevent = vfs_child_append(event1, "uevent", NULL);
-    uevent->type = file_none;
-    uevent->mode = 0644;
-    handle = malloc(sizeof(sysfs_handle_t));
-    sprintf(handle->content, "MAJOR=13\nMINOR=1\nDEVNAME=input/event1\nID_INPUT=1\nID_INPUT_MOUSE=1\n");
-    handle->node = uevent;
-    uevent->handle = handle;
-#endif
+vfs_node_t sysfs_regist_dev(char t, int major, int minor, const char *real_device_path, const char *dev_name, const char *other_uevent_content)
+{
+    const char *root = (t == 'c') ? "char" : "block";
+
+    char dev_root_path[256];
+    sprintf(dev_root_path, "/sys/dev/%s/%d:%d", root, major, minor);
+
+    bool dev_root_is_real = (strlen(real_device_path) == 0);
+
+    vfs_node_t real_device_node = NULL;
+    if (dev_root_is_real)
+    {
+        vfs_mkdir(dev_root_path);
+        real_device_node = vfs_open(dev_root_path);
+    }
+    else
+    {
+        vfs_mkdir(real_device_path);
+        vfs_symlink(dev_root_path, real_device_path);
+        real_device_node = vfs_open(real_device_path);
+    }
+
+    char *fullpath = vfs_get_fullpath(real_device_node);
+
+    char uevent_path[256];
+    sprintf(uevent_path, "%s/uevent", fullpath);
+
+    vfs_mkfile(uevent_path);
+    vfs_node_t uevent_node = vfs_open(uevent_path);
+
+    char uevent_content[256];
+    sprintf(uevent_content, "MAJOR=%d\nMINOR=%d\nDEVNAME=%s\n%s", major, minor, dev_name, other_uevent_content);
+    vfs_write(uevent_node, uevent_content, 0, strlen(uevent_content));
+
+    free(fullpath);
+
+    return real_device_node;
+}
+
+vfs_node_t sysfs_child_append(vfs_node_t parent, const char *name, bool is_dir)
+{
+    char *parent_path = vfs_get_fullpath(parent);
+
+    char path[512];
+    sprintf(path, "%s/%s", parent_path, name);
+
+    if (is_dir)
+        vfs_mkdir(path);
+    else
+        vfs_mkfile(path);
+
+    free(parent_path);
+
+    return vfs_open(path);
+}
+
+vfs_node_t sysfs_child_append_symlink(vfs_node_t parent, const char *name, const char *target_path)
+{
+    char *parent_path = vfs_get_fullpath(parent);
+
+    char path[512];
+    sprintf(path, "%s/%s", parent_path, name);
+
+    vfs_symlink(path, target_path);
+
+    free(parent_path);
+
+    return vfs_open(path);
 }

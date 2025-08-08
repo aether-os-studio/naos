@@ -610,8 +610,6 @@ uint64_t sys_stat(const char *fn, struct stat *buf)
         return (uint64_t)-ENOENT;
     }
 
-    node->refcount++;
-
     buf->st_dev = node->dev;
     buf->st_ino = node->inode;
     buf->st_nlink = 1;

@@ -75,17 +75,17 @@ void kbd_init()
 
     irq_regist_irq(PS2_KBD_INTERRUPT_VECTOR, keyboard_handler, PS2_KBD_INTERRUPT_VECTOR - 32, NULL, &apic_controller, "PS2 KBD");
 
-    wait_KB_write();
-    io_out8(PORT_KB_CMD, KBCMD_WRITE_CMD);
-    wait_KB_read();
-    io_out8(PORT_KB_DATA, KB_INIT_MODE);
+    // wait_KB_write();
+    // io_out8(PORT_KB_CMD, KBCMD_WRITE_CMD);
+    // wait_KB_read();
+    // io_out8(PORT_KB_DATA, KB_INIT_MODE);
 
-    wait_KB_write();
-    io_out8(PORT_KB_DATA, 0xF0);
-    wait_KB_write();
-    io_out8(PORT_KB_DATA, 0x02);
+    // wait_KB_write();
+    // io_out8(PORT_KB_DATA, 0xF0);
+    // wait_KB_write();
+    // io_out8(PORT_KB_DATA, 0x02);
 
-    wait_KB_read();
+    // wait_KB_read();
 
     memset(cache_buffer, 0, sizeof(cache_buffer));
 

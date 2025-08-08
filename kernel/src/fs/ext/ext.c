@@ -239,6 +239,8 @@ int ext_mkfile(void *parent, const char *name, vfs_node_t node)
     int ret = ext4_fopen2(&f, (const char *)buf, O_CREAT);
     ext4_fclose(&f);
 
+    ext4_mode_set(buf, 0700);
+
     spin_unlock(&rwlock);
 
     return ret;
@@ -251,7 +253,15 @@ int ext_link(void *parent, const char *name, vfs_node_t node)
 
 int ext_symlink(void *parent, const char *name, vfs_node_t node)
 {
-    return 0;
+    char *fullpath = vfs_get_fullpath(node);
+
+    int ret = ext4_fsymlink(name, fullpath);
+
+    ext4_mode_set(name, 0700);
+
+    free(fullpath);
+
+    return ret;
 }
 
 int ext_mkdir(void *parent, const char *name, vfs_node_t node)
@@ -269,6 +279,8 @@ int ext_mkdir(void *parent, const char *name, vfs_node_t node)
     free(parent_path);
 
     int ret = ext4_dir_mk((const char *)buf);
+
+    ext4_mode_set(buf, 0700);
 
     spin_unlock(&rwlock);
 

@@ -42,6 +42,15 @@ void init_thread(uint64_t arg)
     vmware_gpu_init();
 #endif
 
+    fs_syscall_init();
+    socketfs_init();
+    pipefs_init();
+    ext_init();
+    iso9660_init();
+    fatfs_init();
+
+    mount_root();
+
     fbdev_init();
     drm_init();
 
@@ -51,15 +60,6 @@ void init_thread(uint64_t arg)
     drm_init_sysfs();
 
     dev_init_after_sysfs();
-
-    fs_syscall_init();
-    socketfs_init();
-    pipefs_init();
-    ext_init();
-    iso9660_init();
-    fatfs_init();
-
-    mount_root();
 
     arch_input_dev_init();
 

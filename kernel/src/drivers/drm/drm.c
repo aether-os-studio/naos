@@ -622,38 +622,18 @@ void drm_init_sysfs()
 {
     int i = 0;
 
-    vfs_node_t char_dev = vfs_open("/sys/dev/char/226:0");
-    vfs_node_t uevent_dev = vfs_child_append(char_dev, "uevent", NULL);
-    uevent_dev->type = file_none;
-    uevent_dev->mode = 0700;
-    sysfs_handle_t *handle = malloc(sizeof(sysfs_handle_t));
-    sprintf(handle->content, "MAJOR=%d\nMINOR=%d\nDEVNAME=dri/card%d\nSUBSYSTEM=drm_minor\n", 226, 0, i);
-    handle->node = uevent_dev;
-    uevent_dev->handle = handle;
+    char dev_name[32];
+    sprintf(dev_name, "dri/card%d", i);
+    vfs_node_t dev_root = sysfs_regist_dev('c', 226, i, "", dev_name, "SUBSYSTEM=drm_minor\n");
 
-    vfs_node_t dev = vfs_open("/sys/dev/char/226:0/device");
+    vfs_node_t dev = sysfs_child_append(dev_root, "device", true);
 
-    vfs_node_t boot_vga_node = vfs_child_append(dev, "boot_vga", NULL);
-    boot_vga_node->type = file_none;
-    boot_vga_node->mode = 0700;
-    handle = malloc(sizeof(sysfs_handle_t));
-    sprintf(handle->content, "1");
-    handle->node = boot_vga_node;
-    boot_vga_node->handle = handle;
+    vfs_node_t boot_vga_node = sysfs_child_append(dev, "boot_vga", false);
+    vfs_write(boot_vga_node, "1", 0, 1);
 
-    vfs_node_t drm = vfs_child_append(dev, "drm", NULL);
-    drm->type = file_dir;
-    drm->mode = 0644;
-    handle = malloc(sizeof(sysfs_handle_t));
-    handle->node = drm;
-    drm->handle = handle;
+    vfs_node_t drm = sysfs_child_append(dev, "drm", true);
 
-    vfs_node_t dev_uevent = vfs_node_alloc(dev, "uevent");
-    dev_uevent->type = file_none;
-    dev_uevent->mode = 0700;
-    sysfs_handle_t *dev_uevent_handle = malloc(sizeof(sysfs_handle_t));
-    dev_uevent->handle = dev_uevent_handle;
-    dev_uevent_handle->node = dev_uevent;
+    vfs_node_t dev_uevent = sysfs_child_append(dev, "uevent", false);
 
     pci_device_t *pci_device = NULL;
     for (int i = 0; i < pci_device_number; i++)
@@ -665,109 +645,53 @@ void drm_init_sysfs()
         }
     }
 
+    char content[64];
+
     if (pci_device)
     {
-        sprintf(dev_uevent_handle->content, "PCI_SLOT_NAME=%04x:%02x:%02x.%u\n", pci_device->segment, pci_device->bus, pci_device->slot, pci_device->func);
+        sprintf(content, "PCI_SLOT_NAME=%04x:%02x:%02x.%u\n", pci_device->segment, pci_device->bus, pci_device->slot, pci_device->func);
+        vfs_write(dev_uevent, content, 0, strlen(content));
 
-        vfs_node_t dev_vendor = vfs_node_alloc(dev, "vendor");
-        dev_vendor->type = file_none;
-        dev_vendor->mode = 0700;
-        sysfs_handle_t *dev_vendor_handle = malloc(sizeof(sysfs_handle_t));
-        sprintf(dev_vendor_handle->content, "0x%04x\n", pci_device->vendor_id);
-        dev_vendor->handle = dev_vendor_handle;
+        vfs_node_t dev_vendor = sysfs_child_append(dev, "vendor", false);
+        sprintf(content, "0x%04x\n", pci_device->vendor_id);
+        vfs_write(dev_vendor, content, 0, strlen(content));
 
-        vfs_node_t dev_subsystem_vendor = vfs_node_alloc(dev, "subsystem_vendor");
-        dev_subsystem_vendor->type = file_none;
-        dev_subsystem_vendor->mode = 0700;
-        sysfs_handle_t *dev_subsystem_vendor_handle = malloc(sizeof(sysfs_handle_t));
-        sprintf(dev_subsystem_vendor_handle->content, "0x%04x\n", pci_device->vendor_id);
-        dev_subsystem_vendor->handle = dev_subsystem_vendor_handle;
+        vfs_node_t dev_subsystem_vendor = sysfs_child_append(dev, "subsystem_vendor", false);
+        sprintf(content, "0x%04x\n", pci_device->vendor_id);
+        vfs_write(dev_subsystem_vendor, content, 0, strlen(content));
 
-        vfs_node_t dev_device = vfs_node_alloc(dev, "device");
-        dev_device->type = file_none;
-        dev_device->mode = 0700;
-        sysfs_handle_t *dev_device_handle = malloc(sizeof(sysfs_handle_t));
-        sprintf(dev_device_handle->content, "0x%04x\n", pci_device->device_id);
-        dev_device->handle = dev_device_handle;
+        vfs_node_t dev_device = sysfs_child_append(dev, "device", false);
+        sprintf(content, "0x%04x\n", pci_device->device_id);
+        vfs_write(dev_device, content, 0, strlen(content));
 
-        vfs_node_t dev_subsystem_device = vfs_node_alloc(dev, "subsystem_device");
-        dev_subsystem_device->type = file_none;
-        dev_subsystem_device->mode = 0700;
-        sysfs_handle_t *dev_subsystem_device_handle = malloc(sizeof(sysfs_handle_t));
-        sprintf(dev_subsystem_device_handle->content, "0x%04x\n", pci_device->device_id);
-        dev_subsystem_device->handle = dev_subsystem_device_handle;
+        vfs_node_t dev_subsystem_device = sysfs_child_append(dev, "subsystem_device", false);
+        sprintf(content, "0x%04x\n", pci_device->device_id);
+        vfs_write(dev_subsystem_device, content, 0, strlen(content));
     }
     else
     {
-        sprintf(dev_uevent_handle->content, "PCI_SLOT_NAME=%04x:%02x:%02x.%u", 0, 0, 0, 0);
+        sprintf(content, "PCI_SLOT_NAME=%04x:%02x:%02x.%u\n", pci_device->segment, pci_device->bus, pci_device->slot, pci_device->func);
+        vfs_write(dev_uevent, content, 0, strlen(content));
     }
 
-    vfs_node_t version = vfs_node_alloc(drm, "version");
-    version->type = file_none;
-    version->mode = 0700;
-    handle = malloc(sizeof(sysfs_handle_t));
-    memset(handle, 0, sizeof(sysfs_handle_t));
-    sprintf(handle->content, "drm 1.1.0 20060810");
-    version->handle = handle;
-    memset(handle, 0, sizeof(sysfs_handle_t));
+    vfs_node_t version = sysfs_child_append(drm, "version", false);
+    sprintf(content, "drm 1.1.0 20060810");
+    vfs_write(version, content, 0, strlen(content));
 
-    size_t addr;
-    size_t width;
-    size_t height;
-    size_t bpp;
-    size_t cols;
-    size_t rows;
-
-    os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
-
-    char buf[256];
+    char buf[32];
     sprintf(buf, "card%d", i);
-    vfs_node_t cardn = vfs_node_alloc(drm, (const char *)buf);
-    cardn->type = file_dir;
-    cardn->mode = 0644;
-    handle = malloc(sizeof(sysfs_handle_t));
-    memset(handle, 0, sizeof(sysfs_handle_t));
-    handle->node = cardn;
-    cardn->handle = handle;
+    vfs_node_t cardn = sysfs_child_append(drm, (const char *)buf, true);
 
-    vfs_node_t uevent = vfs_child_append(cardn, "uevent", NULL);
-    uevent->type = file_none;
-    uevent->mode = 0700;
-    sysfs_handle_t *uevent_handle = malloc(sizeof(sysfs_handle_t));
-    sprintf(uevent_handle->content, "MAJOR=%d\nMINOR=%d\nDEVNAME=dri/card%d\nSUBSYSTEM=drm_minor\n", 226, 0, i);
-    uevent_handle->node = uevent;
-    uevent->handle = uevent_handle;
+    vfs_node_t class_drm = vfs_open("/sys/class/drm");
+    vfs_node_t class_drm_cardn = sysfs_child_append_symlink(class_drm, "card0", "/sys/dev/char/226:0/device/drm/card0");
+
+    vfs_node_t uevent = sysfs_child_append(cardn, "uevent", false);
+    sprintf(content, "MAJOR=%d\nMINOR=%d\nDEVNAME=dri/card%d\nSUBSYSTEM=drm_minor\n", 226, i, i);
+    vfs_write(uevent, content, 0, strlen(content));
 
     sprintf(buf, "card%d-Virtual-1", i);
-    vfs_node_t cardn_virtual = vfs_node_alloc(cardn, (const char *)buf);
-    cardn_virtual->type = file_dir;
-    cardn_virtual->mode = 0644;
+    vfs_node_t cardn_virtual = sysfs_child_append(cardn, (const char *)buf, true);
 
-    vfs_node_t subsystem = vfs_child_append(cardn, "subsystem", NULL);
-    subsystem->type = file_dir | file_symlink;
-    subsystem->mode = 0644;
-    subsystem->linkto = vfs_open("/sys/class/drm");
-
-    vfs_node_t subsystem_link = vfs_child_append(dev, "subsystem", NULL);
-    subsystem_link->type = file_dir | file_symlink;
-    subsystem_link->mode = 0644;
-    subsystem_link->linkto = vfs_open("/sys/bus/pci");
-
-    sprintf(buf, "connector_id");
-    vfs_node_t connector_id = vfs_node_alloc(cardn_virtual, (const char *)buf);
-    connector_id->type = file_none;
-    connector_id->mode = 0700;
-    sysfs_handle_t *sysfs_handle = malloc(sizeof(sysfs_handle_t));
-    memset(sysfs_handle, 0, sizeof(sysfs_handle_t));
-    sprintf(sysfs_handle->content, "%d", i + 1);
-    connector_id->handle = sysfs_handle;
-
-    sprintf(buf, "modes");
-    vfs_node_t modes = vfs_node_alloc(cardn_virtual, (const char *)buf);
-    modes->type = file_none;
-    modes->mode = 0700;
-    handle = malloc(sizeof(sysfs_handle_t));
-    memset(handle, 0, sizeof(sysfs_handle_t));
-    sprintf(handle->content, "%dx%d", width, height);
-    modes->handle = handle;
+    sysfs_child_append_symlink(cardn, "subsystem", "/sys/class/drm");
+    sysfs_child_append_symlink(dev, "subsystem", "/sys/bus/pci");
 }
