@@ -1106,12 +1106,6 @@ int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *
             tmo = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000;
         task_block(current_task, TASK_BLOCKING, tmo);
 
-        while (current_task->state == TASK_BLOCKING)
-        {
-            arch_enable_interrupt();
-            arch_pause();
-        }
-
         arch_disable_interrupt();
 
         return 0;
