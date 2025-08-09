@@ -789,6 +789,8 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     current_task->load_start = load_start;
     current_task->load_end = load_end;
 
+    memset(current_task->mmap_regions.buffer, 0xff, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64);
+
     execve_lock = false;
     can_schedule = true;
 
@@ -849,6 +851,8 @@ void task_exit_inner(task_t *task, int64_t code)
             }
         }
     }
+
+    free_frames_bytes(task->mmap_regions.buffer, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64);
 
     if (task->cmdline)
         free(task->cmdline);

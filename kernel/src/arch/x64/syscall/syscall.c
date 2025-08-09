@@ -72,8 +72,8 @@ void syscall_init()
 }
 
 // Beware the 65 character limit!
-char sysname[] = "Next Aether OS";
-char nodename[] = "Aether";
+char sysname[] = "Neo-Aether OS";
+char nodename[] = "aether";
 char release[] = BUILD_VERSION;
 char version[] = BUILD_VERSION;
 char machine[] = "x86_64";

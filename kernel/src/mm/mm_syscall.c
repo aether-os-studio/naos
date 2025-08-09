@@ -46,6 +46,8 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
     {
         uint64_t page_count = aligned_len / DEFAULT_PAGE_SIZE;
         uint64_t idx = bitmap_find_range(&current_task->mmap_regions, page_count, true);
+        if (idx == (uint64_t)-1)
+            return (uint64_t)-ENOMEM;
         addr = (idx * DEFAULT_PAGE_SIZE) + USER_MMAP_START;
         flags &= (~MAP_FIXED);
     }
