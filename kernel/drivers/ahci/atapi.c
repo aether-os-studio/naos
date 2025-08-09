@@ -1,6 +1,4 @@
-#include <drivers/block/ahci/ahci.h>
-#include <mm/mm.h>
-#include <libs/klibc.h>
+#include "ahci.h"
 
 void scsi_create_packet12(struct scsi_cdb12 *cdb,
                           uint8_t opcode,

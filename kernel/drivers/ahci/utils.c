@@ -1,5 +1,4 @@
-#include "drivers/block/ahci/ahci.h"
-#include "drivers/kernel_logger.h"
+#include "ahci.h"
 
 int ahci_try_send(struct hba_port *port, int slot)
 {

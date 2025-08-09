@@ -3,7 +3,6 @@
 
 #include <fs/vfs/dev.h>
 #include <drivers/bus/pci.h>
-#include <drivers/block/ahci/ahci.h>
 #include <drivers/drm/drm.h>
 #include <drivers/virtio/virtio.h>
 #include <fs/partition.h>
@@ -36,9 +35,6 @@ void init_thread(uint64_t arg)
 
     pci_init();
 
-#if defined(__x86_64__)
-    ahci_init();
-#endif
     virtio_init();
 
     partition_init();

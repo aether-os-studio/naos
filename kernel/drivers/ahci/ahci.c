@@ -1,8 +1,4 @@
-#include <drivers/bus/pci.h>
-#include <drivers/kernel_logger.h>
-#include <block/block.h>
-#include <drivers/block/ahci/ahci.h>
-#include <mm/mm.h>
+#include "ahci.h"
 
 void *op_buffer;
 
@@ -378,30 +374,41 @@ struct ahci_driver *ahci_driver_init(pci_bar_t *bar5)
 
 struct ahci_driver *drv;
 
-#define MAX_AHCI_DEV_NUM 16
-
-uint64_t ahci_init()
+int ahci_probe(pci_device_t *dev, uint32_t vendor_device_id)
 {
-    pci_device_t *devs[MAX_AHCI_DEV_NUM];
-    uint32_t ahci_dev_num;
-
-    pci_find_class(devs, &ahci_dev_num, 0x010601);
-    if (ahci_dev_num == 0)
-    {
-        printk("No AHCI controller found\n");
-        return (uint64_t)-1;
-    }
-
-    pci_bar_t *bar5 = &devs[0]->bars[5];
+    pci_bar_t *bar5 = &dev->bars[5];
     if (bar5->address == 0 || bar5->size == 0)
     {
-        printk("ahci device has no bar5\n");
-        return (uint64_t)-1;
+        return -1;
     }
 
     op_buffer = (void *)alloc_frames(0x400000UL / DEFAULT_PAGE_SIZE);
 
     drv = ahci_driver_init(bar5);
+
+    return 0;
+}
+
+void ahci_remove(pci_device_t *dev)
+{
+}
+
+void ahci_shutdown(pci_device_t *dev)
+{
+}
+
+pci_driver_t ahci_driver = {
+    .name = "ahci_driver",
+    .class_id = 0x010601,
+    .vendor_device_id = 0x00000000,
+    .probe = ahci_probe,
+    .remove = ahci_remove,
+    .shutdown = ahci_shutdown,
+};
+
+__attribute__((visibility("default"))) int module_init()
+{
+    regist_pci_driver(&ahci_driver);
 
     return 0;
 }

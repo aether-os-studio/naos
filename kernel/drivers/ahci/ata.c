@@ -1,6 +1,4 @@
-#include <drivers/block/ahci/ahci.h>
-#include <drivers/kernel_logger.h>
-#include <mm/mm.h>
+#include "ahci.h"
 
 void sata_read_error(struct hba_port *port)
 {

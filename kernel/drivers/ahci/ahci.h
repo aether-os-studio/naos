@@ -1,8 +1,13 @@
 #pragma once
 
-#include "drivers/block/ahci/hba.h"
-#include "drivers/block/ahci/sata.h"
-#include "drivers/block/ahci/scsi.h"
+#include <libs/aether/block.h>
+#include <libs/aether/stdio.h>
+#include <libs/aether/mm.h>
+#include <libs/aether/pci.h>
+
+#include "hba.h"
+#include "sata.h"
+#include "scsi.h"
 
 #define is_digit(c) ((c) >= '0' && (c) <= '9') // 用来判断是否是数字的宏
 

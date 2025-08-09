@@ -2,7 +2,6 @@
 
 #include <arch/x64/acpi/acpi.h>
 #include <arch/x64/irq/irq.h>
-#include <drivers/block/ahci/hba.h>
 
 #define PORT_KB_DATA 0x60
 #define PORT_KB_STATUS 0x64

@@ -3,6 +3,7 @@ export CFLAGS := -Wno-address-of-packed-member -fvisibility=hidden -Wl,-z,now -f
 all:
 	mkdir -p ../drivers-$(ARCH)
 
+	$(MAKE) -C ahci
 	$(MAKE) -C nvme
 	$(MAKE) -C usb
 	$(MAKE) -C ext
