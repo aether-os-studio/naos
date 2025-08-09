@@ -9,9 +9,6 @@ size_t dlfunc_count = 0;
 
 dlfunc_t __printf = {.name = "printf", .addr = (void *)printk};
 
-EXPORT_SYMBOL(malloc);
-EXPORT_SYMBOL(free);
-
 void load_segment(Elf64_Phdr *phdr, void *elf, uint64_t *directory,
                   uint64_t offset, uint64_t *load_start)
 {
@@ -264,9 +261,9 @@ void dlinker_load(module_t *module)
 
     printk("Loaded module %s at %#018lx\n", module->module_name, KERNEL_MODULES_SPACE_START + kernel_modules_load_offset);
 
-    kernel_modules_load_offset += (load_size + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1);
-
     int ret = dlinit();
+
+    kernel_modules_load_offset += (load_size + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1);
 }
 
 dlfunc_t *find_func(const char *name)

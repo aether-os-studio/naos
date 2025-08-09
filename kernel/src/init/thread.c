@@ -25,9 +25,14 @@ extern void mount_root();
 
 bool system_initialized = false;
 
+extern bool can_schedule;
+
 void init_thread(uint64_t arg)
 {
     printk("NAOS init thread is running...\n");
+
+    arch_disable_interrupt();
+    can_schedule = false;
 
     pci_init();
 
@@ -63,6 +68,9 @@ void init_thread(uint64_t arg)
     arch_input_dev_init();
 
     system_initialized = true;
+
+    can_schedule = true;
+    arch_enable_interrupt();
 
     const char *argvs[2];
     memset(argvs, 0, sizeof(argvs));
