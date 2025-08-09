@@ -18,9 +18,10 @@ char *at_resolve_pathname(int dirfd, char *pathname)
         }
         else
         { // relative to dirfd, resolve accordingly
-            vfs_node_t node = current_task->fd_info->fds[dirfd]->node;
-            if (!node)
+            if (dirfd < 0 || dirfd > MAX_FD_NUM || !current_task->fd_info->fds[dirfd] || !current_task->fd_info->fds[dirfd]->node)
                 return NULL;
+
+            vfs_node_t node = current_task->fd_info->fds[dirfd]->node;
 
             char *dirname = vfs_get_fullpath(node);
 

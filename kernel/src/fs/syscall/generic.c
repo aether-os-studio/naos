@@ -922,16 +922,23 @@ uint64_t sys_fchdir(uint64_t fd)
 
 uint64_t sys_mkdir(const char *name, uint64_t mode)
 {
-    if (check_user_overflow((uint64_t)name, strlen(name)))
-    {
-        return (uint64_t)-EFAULT;
-    }
     int ret = vfs_mkdir(name);
     if (ret < 0)
     {
         return (uint64_t)-EEXIST;
     }
     return 0;
+}
+
+uint64_t sys_mkdirat(int dfd, const char *name, uint64_t mode)
+{
+    char *path = at_resolve_pathname(dfd, name);
+
+    uint64_t ret = sys_mkdir((const char *)path, mode);
+
+    free(path);
+
+    return ret;
 }
 
 uint64_t sys_link(const char *name, const char *new)

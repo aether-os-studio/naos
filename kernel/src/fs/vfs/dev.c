@@ -457,7 +457,7 @@ ssize_t null_dev_read(void *data, uint64_t offset, void *buf, uint64_t len)
     (void)offset;
     (void)buf;
     (void)len;
-    return 0;
+    return len;
 }
 
 ssize_t null_dev_write(void *data, uint64_t offset, const void *buf, uint64_t len)
@@ -466,7 +466,7 @@ ssize_t null_dev_write(void *data, uint64_t offset, const void *buf, uint64_t le
     (void)offset;
     (void)buf;
     (void)len;
-    return 0;
+    return len;
 }
 
 static uint32_t simple_rand()

@@ -153,6 +153,11 @@ uint64_t sys_accept_normal(uint64_t arg1, struct sockaddr_un *arg2, socklen_t *a
     return sys_accept(arg1, arg2, arg3, 0);
 }
 
+uint64_t sys_pipe_normal(uint64_t arg1)
+{
+    return sys_pipe((int *)arg1, 0);
+}
+
 uint64_t sys_gettimeofday(uint64_t arg1)
 {
     tm time_day;
@@ -209,7 +214,7 @@ void syscall_handler_init()
     syscall_handlers[SYS_READV] = (syscall_handle_t)sys_readv;
     syscall_handlers[SYS_WRITEV] = (syscall_handle_t)sys_writev;
     syscall_handlers[SYS_ACCESS] = (syscall_handle_t)sys_access;
-    syscall_handlers[SYS_PIPE] = (syscall_handle_t)sys_pipe;
+    syscall_handlers[SYS_PIPE] = (syscall_handle_t)sys_pipe_normal;
     syscall_handlers[SYS_SELECT] = (syscall_handle_t)sys_select;
     syscall_handlers[SYS_SCHED_YIELD] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_MREMAP] = (syscall_handle_t)sys_mremap;
@@ -277,12 +282,12 @@ void syscall_handler_init()
     syscall_handlers[SYS_UNLINK] = (syscall_handle_t)sys_unlink;
     syscall_handlers[SYS_SYMLINK] = (syscall_handle_t)sys_symlink;
     syscall_handlers[SYS_READLINK] = (syscall_handle_t)sys_readlink;
-    // syscall_handlers[SYS_CHMOD] = (syscall_handle_t)sys_chmod;
-    // syscall_handlers[SYS_FCHMOD] = (syscall_handle_t)sys_fchmod;
-    // syscall_handlers[SYS_CHOWN] = (syscall_handle_t)sys_chown;
-    // syscall_handlers[SYS_FCHOWN] = (syscall_handle_t)sys_fchown;
-    // syscall_handlers[SYS_LCHOWN] = (syscall_handle_t)sys_lchown;
-    // syscall_handlers[SYS_UMASK] = (syscall_handle_t)sys_umask;
+    syscall_handlers[SYS_CHMOD] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_FCHMOD] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_CHOWN] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_FCHOWN] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_LCHOWN] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_UMASK] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_GETTIMEOFDAY] = (syscall_handle_t)sys_gettimeofday;
     syscall_handlers[SYS_GETRLIMIT] = (syscall_handle_t)sys_get_rlimit;
     // syscall_handlers[SYS_GETRUSAGE] = (syscall_handle_t)sys_getrusage;
@@ -445,7 +450,7 @@ void syscall_handler_init()
     // syscall_handlers[SYS_INOTIFY_RM_WATCH] = (syscall_handle_t)sys_inotify_rm_watch;
     // syscall_handlers[SYS_MIGRATE_PAGES] = (syscall_handle_t)sys_migrate_pages;
     syscall_handlers[SYS_OPENAT] = (syscall_handle_t)sys_openat;
-    // syscall_handlers[SYS_MKDIRAT] = (syscall_handle_t)sys_mkdirat;
+    syscall_handlers[SYS_MKDIRAT] = (syscall_handle_t)sys_mkdirat;
     // syscall_handlers[SYS_MKNODAT] = (syscall_handle_t)sys_mknodat;
     // syscall_handlers[SYS_FCHOWNAT] = (syscall_handle_t)sys_fchownat;
     // syscall_handlers[SYS_FUTIMESAT] = (syscall_handle_t)sys_futimesat;

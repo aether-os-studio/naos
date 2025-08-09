@@ -37,7 +37,6 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size)
     uint32_t available = (pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF;
     if (available == 0)
     {
-        fd_t *fd = container_of(spec->node, fd_t, node);
         if (fd->flags & O_NONBLOCK)
         {
             spin_unlock(&pipe->lock);

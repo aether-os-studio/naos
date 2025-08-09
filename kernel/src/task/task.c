@@ -485,7 +485,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     execve_lock = true;
 
     vfs_node_t node = vfs_open(path);
-    node->refcount++;
     if (!node)
     {
         can_schedule = true;
@@ -535,8 +534,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     vfs_read(node, buffer, 0, node->size);
 
     char *fullpath = vfs_get_fullpath(node);
-
-    vfs_close(node);
 
     if (buffer[0] == '#' && buffer[1] == '!')
     {
@@ -653,8 +650,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
             map_page_range(get_current_page_dir(true), INTERPRETER_EHDR_ADDR, 0, (interpreter_node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
             vfs_read(interpreter_node, interpreter_buffer, 0, interpreter_node->size);
-
-            vfs_close(interpreter_node);
 
             Elf64_Ehdr *interpreter_ehdr = (Elf64_Ehdr *)interpreter_buffer;
             Elf64_Phdr *interpreter_phdr = (Elf64_Phdr *)(interpreter_buffer + interpreter_ehdr->e_phoff);
@@ -1011,12 +1006,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
 
         if (found_alive)
         {
-            task_block(current_task, TASK_BLOCKING, -1);
-            while (current_task->state == TASK_BLOCKING)
-            {
-                arch_yield();
-                arch_pause();
-            }
+            arch_yield();
             continue;
         }
 

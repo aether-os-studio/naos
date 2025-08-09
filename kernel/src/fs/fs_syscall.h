@@ -424,6 +424,7 @@ uint64_t sys_signalfd(int ufd, const sigset_t *mask, size_t sizemask);
 uint64_t sys_flock(int fd, uint64_t cmd);
 
 uint64_t sys_mkdir(const char *name, uint64_t mode);
+uint64_t sys_mkdirat(int dfd, const char *name, uint64_t mode);
 
 uint64_t sys_link(const char *name, const char *target_name);
 uint64_t sys_symlink(const char *name, const char *target_name);
