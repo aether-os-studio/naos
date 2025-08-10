@@ -151,6 +151,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
     task->child_vfork_done = false;
     task->is_vfork = false;
 
+    socket_on_new_task(task->pid);
+
     procfs_on_new_task(task);
 
     can_schedule = true;
@@ -440,6 +442,8 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     {
         child->is_vfork = false;
     }
+
+    socket_on_new_task(child->pid);
 
     procfs_on_new_task(child);
 
@@ -871,6 +875,8 @@ void task_exit_inner(task_t *task, int64_t code)
         task_unblock(tasks[task->waitpid], EOK);
     }
 
+    socket_on_exit_task(task->pid);
+
     procfs_on_exit_task(task);
 }
 
@@ -1189,6 +1195,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     {
         child->is_vfork = false;
     }
+
+    socket_on_new_task(child->pid);
 
     procfs_on_new_task(child);
 

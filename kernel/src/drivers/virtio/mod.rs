@@ -20,6 +20,7 @@ use crate::{
 pub mod decode;
 pub mod hal;
 pub mod input;
+pub mod net;
 
 #[derive(Clone)]
 pub struct PciConfigurationAccess;
@@ -101,6 +102,7 @@ extern "C" fn virtio_init() {
             {
                 match transport.device_type() {
                     DeviceType::Input => input::init_pci(transport),
+                    DeviceType::Network => net::init_pci(transport),
                     _ => {}
                 }
             }
