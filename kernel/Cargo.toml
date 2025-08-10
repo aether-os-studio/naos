@@ -38,9 +38,11 @@ bindgen = "0.72.0"
 
 [profile.dev]
 panic = "abort"
+lto = true
 debug = true
 
 [profile.release]
 panic = "abort"
-opt-level = 2
+lto = true
+opt-level = 3
 debug = true

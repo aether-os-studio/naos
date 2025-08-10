@@ -25,6 +25,20 @@ typedef void *timer_t;
 #define _IOR(a, b, c) _IOC(_IOC_READ, (a), (b), sizeof(c))
 #define _IOWR(a, b, c) _IOC(_IOC_READ | _IOC_WRITE, (a), (b), sizeof(c))
 
+#define wait_until(cond) \
+    ({                   \
+        while (!(cond))  \
+            ;            \
+    })
+
+#define wait_until_expire(cond, max)          \
+    ({                                        \
+        uint64_t __wcounter__ = (max);        \
+        while (!(cond) && __wcounter__-- > 1) \
+            ;                                 \
+        __wcounter__;                         \
+    })
+
 #define ABS(x) ((x) > 0 ? (x) : -(x)) // 绝对值
 // 最大最小值
 #define MAX(x, y) ((x > y) ? (x) : (y))

@@ -80,17 +80,13 @@ vfs_node_t unix_socket_accept_create(unix_socket_pair_t *dir)
 unix_socket_pair_t *unix_socket_allocate_pair()
 {
     unix_socket_pair_t *pair = calloc(sizeof(unix_socket_pair_t), 1);
-    pair->lock.lock = 0;
-    pair->established = false;
+    memset(pair, 0, sizeof(unix_socket_pair_t));
     pair->clientBuffSize = BUFFER_SIZE;
     pair->serverBuffSize = BUFFER_SIZE;
     pair->serverBuff = malloc(pair->serverBuffSize);
     pair->clientBuff = malloc(pair->clientBuffSize);
     pair->pending_files = malloc(MAX_PENDING_FILES_COUNT * sizeof(fd_t));
     pair->pending_fds_size = MAX_PENDING_FILES_COUNT;
-    pair->pending_fds_count = 0;
-    pair->serverFds = 0;
-    pair->clientFds = 0;
     return pair;
 }
 
@@ -174,8 +170,7 @@ size_t unix_socket_accept_recv_from(uint64_t fd, uint8_t *out, size_t limit,
 
     size_t toCopy = MIN(limit, pair->serverBuffPos);
     fast_memcpy(out, pair->serverBuff, toCopy);
-    memmove(pair->serverBuff, &pair->serverBuff[toCopy],
-            pair->serverBuffPos - toCopy);
+    memmove(pair->serverBuff, &pair->serverBuff[toCopy], pair->serverBuffPos - toCopy);
     pair->serverBuffPos -= toCopy;
 
     spin_unlock(&pair->lock);
@@ -344,7 +339,6 @@ int socket_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen)
         vfs_node_t new_node = vfs_open(safe);
         if (new_node)
         {
-            vfs_close(new_node);
             // free(safe);
             // return -(EADDRINUSE);
         }
@@ -546,8 +540,7 @@ size_t unix_socket_recv_from(uint64_t fd, uint8_t *out, size_t limit, int flags,
 
     size_t toCopy = MIN(limit, pair->clientBuffPos);
     fast_memcpy(out, pair->clientBuff, toCopy);
-    memmove(pair->clientBuff, &pair->clientBuff[toCopy],
-            pair->clientBuffPos - toCopy);
+    memmove(pair->clientBuff, &pair->clientBuff[toCopy], pair->clientBuffPos - toCopy);
     pair->clientBuffPos -= toCopy;
 
     spin_unlock(&pair->lock);
@@ -1492,8 +1485,7 @@ ssize_t socket_read(fd_t *fd, void *buf, size_t offset, size_t limit)
 
     size_t toCopy = MIN(limit, pair->clientBuffPos);
     fast_memcpy(buf, pair->clientBuff, toCopy);
-    memmove(pair->clientBuff, &pair->clientBuff[toCopy],
-            pair->clientBuffPos - toCopy);
+    memmove(pair->clientBuff, &pair->clientBuff[toCopy], pair->clientBuffPos - toCopy);
     pair->clientBuffPos -= toCopy;
 
     spin_unlock(&pair->lock);
@@ -1574,8 +1566,7 @@ ssize_t socket_accept_read(fd_t *fd, void *buf, size_t offset, size_t limit)
 
     size_t toCopy = MIN(limit, pair->serverBuffPos);
     fast_memcpy(buf, pair->serverBuff, toCopy);
-    memmove(pair->serverBuff, &pair->serverBuff[toCopy],
-            pair->serverBuffPos - toCopy);
+    memmove(pair->serverBuff, &pair->serverBuff[toCopy], pair->serverBuffPos - toCopy);
     pair->serverBuffPos -= toCopy;
 
     spin_unlock(&pair->lock);

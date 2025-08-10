@@ -282,10 +282,8 @@ int sys_sigsuspend(const sigset_t *mask)
 
     while (!signals_pending_quick(current_task))
     {
-        arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
-    arch_disable_interrupt();
 
     current_task->blocked = old;
 
