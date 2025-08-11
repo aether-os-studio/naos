@@ -230,13 +230,6 @@ void dlinker_load(module_t *module)
         return;
     }
 
-    Elf64_Phdr phdr[12];
-    if (ehdr->e_phnum > sizeof(phdr) / sizeof(phdr[0]) || ehdr->e_phnum < 1)
-    {
-        printk("ELF file has wrong number of program headers\n");
-        return;
-    }
-
     if (ehdr->e_type != ET_DYN)
     {
         printk("ELF file is not a dynamic library.\n");

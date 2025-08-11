@@ -449,9 +449,7 @@ NVME_CONTROLLER *nvme_driver_init(uint64_t bar0, uint64_t bar_size)
     // Probe Namespace
     uint32_t nsid = nsidx + 1;
 
-    NVME_IDENTIFY_NAMESPACE *identifyNS = 0;
-    identifyNS = (NVME_IDENTIFY_NAMESPACE *)alloc_frames(1);
-    identifyNS = (NVME_IDENTIFY_NAMESPACE *)phys_to_virt(identifyNS);
+    NVME_IDENTIFY_NAMESPACE *identifyNS = (NVME_IDENTIFY_NAMESPACE *)alloc_frames_bytes(DEFAULT_PAGE_SIZE);
     memset(identifyNS, 0, 0x1000);
 
     memset(&sqe, 0, sizeof(NVME_SUBMISSION_QUEUE_ENTRY));
@@ -479,6 +477,7 @@ NVME_CONTROLLER *nvme_driver_init(uint64_t bar0, uint64_t bar_size)
 
     if (!identifyNS->SIZE)
     {
+        printf("Invalid namespace size\n");
         failed_namespace(identifyNS);
         return NULL;
     }

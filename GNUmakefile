@@ -155,7 +155,7 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-device nvme,drive=harddisk,serial=1234 \
 		-device nvme,drive=rootdisk,serial=5678 \
 		-netdev user,id=eth0 \
-		-device virtio-net-pci,netdev=eth0 \
+		-device e1000,netdev=eth0 \
 		-vga vmware \
 		$(QEMUFLAGS)
 

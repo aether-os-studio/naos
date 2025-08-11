@@ -9,6 +9,8 @@ int nvme_probe(pci_device_t *dev, uint32_t vendor_device_id)
         return -1;
 
     dev->desc = nvme;
+
+    return 0;
 }
 
 void nvme_remove(pci_device_t *dev)
