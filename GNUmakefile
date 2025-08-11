@@ -93,6 +93,9 @@ HOST_LIBS :=
 .PHONY: all
 all: $(IMAGE_NAME).img rootfs-$(ARCH).img
 
+.PHONY: all
+all-single: single-$(IMAGE_NAME).img
+
 .PHONY: kernel
 kernel:
 	./kernel/get-deps
@@ -118,7 +121,7 @@ distclean:
 clippy:
 	$(MAKE) -C kernel clippy
 
-ROOTFS_IMG_SIZE ?= 4096
+ROOTFS_IMG_SIZE ?= 2048
 
 .PHONY: rootfs-$(ARCH).img
 rootfs-$(ARCH).img: user/.build-stamp-$(ARCH)
@@ -141,8 +144,33 @@ $(IMAGE_NAME).img: assets/limine assets/oib kernel
 		-f limine.conf:boot/limine/limine.conf \
 		-f assets/limine/limine-bios.sys:boot/limine/limine-bios.sys
 
+
+ifeq ($(ARCH),x86_64)
+EFI_FILE_SINGLE = assets/limine/BOOTX64.EFI
+else ifeq ($(ARCH),aarch64)
+EFI_FILE_SINGLE = assets/limine/BOOTAA64.EFI
+else ifeq ($(ARCH),riscv64)
+EFI_FILE_SINGLE = assets/limine/BOOTRISCV64.EFI
+else ifeq ($(ARCH),loongarch64)
+EFI_FILE_SINGLE = assets/limine/BOOTLOONGARCH64.EFI
+endif
+single-$(IMAGE_NAME).img: assets/limine kernel rootfs-$(ARCH).img
+	dd if=/dev/zero of=single-$(IMAGE_NAME).img bs=1M count=$$(( $(ROOTFS_IMG_SIZE) + 1024 ))
+	sgdisk --new=1:1M:511M --new=2:512M:$$(( $$(($(ROOTFS_IMG_SIZE) + 1024 )) * 1024 )) single-$(IMAGE_NAME).img
+	mkfs.vfat -F 32 --offset 2048 -S 512 single-$(IMAGE_NAME).img
+	mmd -i single-$(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
+	mcopy -i single-$(IMAGE_NAME).img@@1M kernel/drivers-$(ARCH) ::/drivers
+	mcopy -i single-$(IMAGE_NAME).img@@1M $(EFI_FILE_SINGLE) ::/EFI/BOOT
+	mcopy -i single-$(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/boot
+	mcopy -i single-$(IMAGE_NAME).img@@1M limine.conf ::/boot/limine
+
+	dd if=rootfs-$(ARCH).img of=single-$(IMAGE_NAME).img bs=1M count=$(ROOTFS_IMG_SIZE) seek=512
+
 .PHONY: run
 run: run-$(ARCH)
+
+.PHONY: run-single
+run-single: run-$(ARCH)-single
 
 .PHONY: run-x86_64
 run-x86_64: assets/ovmf-code-$(ARCH).fd all
@@ -154,6 +182,20 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-device qemu-xhci,id=xhci \
 		-device nvme,drive=harddisk,serial=1234 \
 		-device nvme,drive=rootdisk,serial=5678 \
+		-netdev user,id=eth0 \
+		-device e1000,netdev=eth0 \
+		-vga vmware \
+		$(QEMUFLAGS)
+
+
+.PHONY: run-x86_64
+run-x86_64-single: assets/ovmf-code-$(ARCH).fd all-single
+	qemu-system-$(ARCH) \
+		-M q35 \
+		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
+		-drive if=none,file=single-$(IMAGE_NAME).img,format=raw,id=harddisk \
+		-device qemu-xhci,id=xhci \
+		-device nvme,drive=harddisk,serial=1234 \
 		-netdev user,id=eth0 \
 		-device e1000,netdev=eth0 \
 		-vga vmware \

@@ -119,7 +119,7 @@ void mount_root()
 
     for (uint64_t i = 0; i < partition_num; i++)
     {
-        char buf[11];
+        char buf[16];
         sprintf(buf, "/dev/part%d", i);
 
         if (!vfs_mount((const char *)buf, rootdir, "ext"))

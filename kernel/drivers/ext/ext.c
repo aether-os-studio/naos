@@ -1,5 +1,6 @@
 #include <ext.h>
-#include <mm/mm_syscall.h>
+#include <libs/aether/stdio.h>
+#include <libs/aether/mm.h>
 
 static int ext_fsid = 0;
 
