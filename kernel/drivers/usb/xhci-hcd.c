@@ -399,7 +399,7 @@ xhci_free_pipes(struct usb_xhci_s *xhci)
     // XXX - should walk list of pipes and free unused pipes.
 }
 
-static void
+static int
 configure_xhci(void *data)
 {
     struct usb_xhci_s *xhci = data;
@@ -428,9 +428,9 @@ configure_xhci(void *data)
     }
 
     xhci->op->usbcmd = XHCI_CMD_HCRST;
-    if (wait_bit(&xhci->op->usbcmd, XHCI_CMD_HCRST, 0, 1000) != 0)
+    if (wait_bit(&xhci->op->usbcmd, XHCI_CMD_HCRST, 0, 10000) != 0)
         goto fail;
-    if (wait_bit(&xhci->op->usbsts, XHCI_STS_CNR, 0, 1000) != 0)
+    if (wait_bit(&xhci->op->usbsts, XHCI_STS_CNR, 0, 10000) != 0)
         goto fail;
 
     xhci->op->config = xhci->slots;
@@ -480,10 +480,10 @@ configure_xhci(void *data)
 
     // Find devices
     int count = xhci_check_ports(xhci);
-    xhci_free_pipes(xhci);
+    // xhci_free_pipes(xhci);
     // if (count)
     // Success
-    return;
+    return 0;
 
     // // No devices found - shutdown and free controller.
     // reg = xhci->op->usbcmd;
@@ -492,11 +492,15 @@ configure_xhci(void *data)
     // wait_bit(&xhci->op->usbsts, XHCI_STS_HCH, XHCI_STS_HCH, 32);
 
 fail:
+    printf("Configure XHCI failed");
+
     free_frames_bytes(xhci->eseg, sizeof(*xhci->eseg));
     free_frames_bytes(xhci->evts, sizeof(*xhci->evts));
     free_frames_bytes(xhci->cmds, sizeof(*xhci->cmds));
     free_frames_bytes(xhci->devs, sizeof(*xhci->devs) * (xhci->slots + 1));
     free(xhci);
+
+    return -1;
 }
 
 static struct usb_xhci_s *xhci_controller_setup(void *baseaddr)
@@ -563,6 +567,7 @@ static struct usb_xhci_s *xhci_controller_setup(void *baseaddr)
     uint32_t pagesize = xhci->op->pagesize;
     if (DEFAULT_PAGE_SIZE != (pagesize << 12))
     {
+        printf("XHCI: Invalid page size %d\n", pagesize);
         free(xhci);
         return NULL;
     }
@@ -1073,12 +1078,15 @@ int xhci_probe(pci_device_t *dev, uint32_t vendor_device_id)
     map_page_range(get_current_page_dir(false), (uint64_t)baseaddr, mmio_phys, dev->bars[0].size, PT_FLAG_R | PT_FLAG_W);
 
     struct usb_xhci_s *xhci = xhci_controller_setup(baseaddr);
+
     if (!xhci)
         return -1;
 
-    dev->desc = xhci;
+    int ret = configure_xhci(xhci);
+    if (ret)
+        return ret;
 
-    configure_xhci(xhci);
+    dev->desc = xhci;
 }
 
 void xhci_remove(pci_device_t *dev)

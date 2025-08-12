@@ -376,6 +376,8 @@ struct ahci_driver *drv;
 
 int ahci_probe(pci_device_t *dev, uint32_t vendor_device_id)
 {
+    printf("Found AHCI controller.\n");
+
     pci_bar_t *bar5 = &dev->bars[5];
     if (bar5->address == 0 || bar5->size == 0)
     {

@@ -179,7 +179,7 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
-		-device qemu-xhci,id=xhci \
+		-device nec-usb-xhci,id=xhci \
 		-device nvme,drive=harddisk,serial=1234 \
 		-device nvme,drive=rootdisk,serial=5678 \
 		-netdev user,id=eth0 \

@@ -310,14 +310,15 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
         printf("mass storage device detected\n");
         if (iface->bInterfaceProtocol == US_PR_BULK)
             ret = usb_msc_setup(usbdev);
-        // if (iface->bInterfaceProtocol == US_PR_UAS)
+        if (iface->bInterfaceProtocol == US_PR_UAS)
+            printf("unsupported USB device: UAS\n");
         //     ret = usb_uas_setup(usbdev);
     }
-    // else
-    // {
-    //     printk("HID DEVICE\n");
-    //     ret = usb_hid_setup(usbdev);
-    // }
+    else if (iface->bInterfaceClass == USB_CLASS_HID)
+    {
+        printk("hid device detected\n");
+        // ret = usb_hid_setup(usbdev);
+    }
     if (ret)
         goto fail;
 
@@ -340,11 +341,15 @@ usb_hub_port_setup(void *data)
         // Detect if device present (and possibly start reset)
         int ret = hub->op->detect(hub, port);
         if (ret > 0)
+        {
             // Device connected.
             break;
+        }
         if (ret <= 0)
+        {
             // No device found.
             goto done;
+        }
     }
 
     // XXX - wait USB_TIME_ATTDB time?
@@ -378,6 +383,7 @@ done:
     return;
 
 resetfail:
+    printf("Reset USB device failed at port %d\n", port);
     spin_unlock(&hub->cntl->resetlock);
     goto done;
 }
