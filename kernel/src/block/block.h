@@ -2,7 +2,7 @@
 
 #include <libs/klibc.h>
 
-#define MAX_BLKDEV_NUM 8
+#define MAX_BLKDEV_NUM 64
 
 typedef struct blkdev
 {

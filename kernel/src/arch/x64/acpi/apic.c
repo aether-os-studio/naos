@@ -25,6 +25,7 @@ void tss_init()
 __attribute__((used, section(".limine_requests"))) static volatile struct limine_mp_request mp_request = {
     .id = LIMINE_MP_REQUEST,
     .revision = 0,
+    .flags = LIMINE_MP_X2APIC,
 };
 
 void disable_pic()
