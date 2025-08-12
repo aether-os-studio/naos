@@ -376,14 +376,6 @@ void pci_scan_function(uint16_t segment_group, uint8_t bus, uint8_t device, uint
 
     pci_device_init(pci_device);
 
-    if (vendor_id == 0x8086 && device_id == 0x1e31)
-    {
-#define USB3_PSSEN 0xd0
-#define XUSB2PR 0xd8
-        pci_device->op->write(pci_device->bus, pci_device->slot, pci_device->func, pci_device->segment, USB3_PSSEN, 0xffffffff);
-        pci_device->op->write(pci_device->bus, pci_device->slot, pci_device->func, pci_device->segment, XUSB2PR, 0xffffffff);
-    }
-
     switch (header_type)
     {
     // Endpoint

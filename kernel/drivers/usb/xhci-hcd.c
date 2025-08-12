@@ -1072,6 +1072,16 @@ int xhci_probe(pci_device_t *dev, uint32_t vendor_device_id)
 {
     printf("Found XHCI controller.\n");
 
+    if (dev->vendor_id == 0x8086 && dev->device_id == 0x1e31)
+    {
+#define USB3_PSSEN 0xd0
+#define XUSB2PR 0xd8
+        printf("Found Intel XHCI controller.\n");
+
+        dev->op->write(dev->bus, dev->slot, dev->func, dev->segment, USB3_PSSEN, 0xffffffff);
+        dev->op->write(dev->bus, dev->slot, dev->func, dev->segment, XUSB2PR, 0xffffffff);
+    }
+
     uint64_t mmio_phys = dev->bars[0].address;
     void *baseaddr = (void *)phys_to_virt(mmio_phys);
 
