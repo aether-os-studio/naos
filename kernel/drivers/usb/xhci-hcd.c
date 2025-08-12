@@ -1097,6 +1097,8 @@ int xhci_probe(pci_device_t *dev, uint32_t vendor_device_id)
         return ret;
 
     dev->desc = xhci;
+
+    return 0;
 }
 
 void xhci_remove(pci_device_t *dev)
