@@ -48,7 +48,7 @@ void frame_init()
         struct limine_memmap_entry *region = memory_map->entries[i];
         if (region->type == LIMINE_MEMMAP_USABLE)
         {
-            if (region->length >= bitmap_size)
+            if (region->base >= 0x100000 && region->length >= bitmap_size)
             {
                 bitmap_address = region->base;
                 break;
