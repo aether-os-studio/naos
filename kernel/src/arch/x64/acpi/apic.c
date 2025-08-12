@@ -286,7 +286,7 @@ void apu_startup(struct limine_mp_response *mp_response)
     for (uint64_t i = 0; i < mp_response->cpu_count; i++)
     {
         struct limine_mp_info *cpu = mp_response->cpus[i];
-        cpuid_to_lapicid[cpu->processor_id] = cpu->lapic_id;
+        cpuid_to_lapicid[i] = cpu->lapic_id;
 
         if (cpu->lapic_id == mp_response->bsp_lapic_id)
             continue;
