@@ -121,7 +121,7 @@ distclean:
 clippy:
 	$(MAKE) -C kernel clippy
 
-ROOTFS_IMG_SIZE ?= 2048
+ROOTFS_IMG_SIZE ?= 1024
 
 .PHONY: rootfs-$(ARCH).img
 rootfs-$(ARCH).img: user/.build-stamp-$(ARCH)

@@ -12,6 +12,8 @@ void fbdev_init_sysfs();
 
 extern volatile struct limine_framebuffer_request framebuffer_request;
 
+extern struct limine_framebuffer *framebuffer;
+
 #define FB_MAJOR 29
 
 #define TTY_CHARACTER_WIDTH 8

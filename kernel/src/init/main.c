@@ -8,11 +8,11 @@
 #include <fs/vfs/dev.h>
 #include <fs/vfs/proc.h>
 
-__attribute__((used, section(".limine_requests"))) static volatile LIMINE_BASE_REVISION(3);
-
 __attribute__((used, section(".limine_requests_start"))) static volatile LIMINE_REQUESTS_START_MARKER;
 
-__attribute__((used, section(".limine_requests_start"))) static volatile struct limine_stack_size_request stack_size_request = {
+__attribute__((used, section(".limine_requests"))) static volatile LIMINE_BASE_REVISION(3);
+
+__attribute__((used, section(".limine_requests"))) static volatile struct limine_stack_size_request stack_size_request = {
     .id = LIMINE_STACK_SIZE_REQUEST,
     .revision = 0,
     .stack_size = STACK_SIZE,
@@ -23,14 +23,6 @@ __attribute__((used, section(".limine_requests_end"))) static volatile LIMINE_RE
 void kmain(void)
 {
     arch_disable_interrupt();
-
-    if (LIMINE_BASE_REVISION_SUPPORTED == false)
-    {
-        while (1)
-        {
-            arch_pause();
-        }
-    }
 
     frame_init();
 

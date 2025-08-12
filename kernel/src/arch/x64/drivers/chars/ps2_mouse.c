@@ -125,19 +125,10 @@ void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs)
         if (gy < 0)
             gy = 0;
 
-        size_t addr;
-        size_t width;
-        size_t height;
-        size_t bpp;
-        size_t cols;
-        size_t rows;
-
-        os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
-
-        if ((size_t)gx > width)
-            gx = width;
-        if ((size_t)gy > height)
-            gy = height;
+        if ((size_t)gx > framebuffer->width)
+            gx = framebuffer->width;
+        if ((size_t)gy > framebuffer->height)
+            gy = framebuffer->height;
 
         bool click = (mouse1 & (1 << 0)) != 0;
         bool rclick = (mouse1 & (1 << 1)) != 0;
@@ -215,15 +206,6 @@ struct input_repeat_params
 
 size_t mouse_event_bit(void *data, uint64_t request, void *arg)
 {
-    size_t addr;
-    size_t width;
-    size_t height;
-    size_t bpp;
-    size_t cols;
-    size_t rows;
-
-    os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
-
     size_t number = _IOC_NR(request);
     size_t size = _IOC_SIZE(request);
 
@@ -280,7 +262,7 @@ size_t mouse_event_bit(void *data, uint64_t request, void *arg)
         memset(target, 0, sizeof(struct input_absinfo));
         target->value = 0; // todo
         target->minimum = 0;
-        target->maximum = width;
+        target->maximum = framebuffer->width;
         ret = 0;
         break;
     }
@@ -290,7 +272,7 @@ size_t mouse_event_bit(void *data, uint64_t request, void *arg)
         memset(target, 0, sizeof(struct input_absinfo));
         target->value = 0; // todo
         target->minimum = 0;
-        target->maximum = height;
+        target->maximum = framebuffer->height;
         ret = 0;
         break;
     }

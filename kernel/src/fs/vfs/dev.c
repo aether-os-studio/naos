@@ -403,7 +403,7 @@ ssize_t stdout_write(void *data, uint64_t offset, const void *buf, uint64_t len)
     (void)offset;
 
     serial_printk((char *)buf, len);
-    os_terminal_write(buf, len);
+    flanterm_write(ft_ctx, buf, len);
 
     return (ssize_t)len;
 }

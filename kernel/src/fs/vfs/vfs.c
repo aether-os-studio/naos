@@ -6,6 +6,7 @@
 #include "task/task.h"
 #include "net/socket.h"
 #include "drivers/pty.h"
+#include "drivers/fb.h"
 
 vfs_node_t rootdir = NULL;
 char *id_to_callback_name[256];
@@ -705,20 +706,11 @@ int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg)
         switch (cmd)
         {
         case TIOCGWINSZ:
-            size_t addr;
-            size_t width;
-            size_t height;
-            size_t bpp;
-            size_t cols;
-            size_t rows;
-
-            os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
-
             *(struct winsize *)arg = (struct winsize){
-                .ws_xpixel = width,
-                .ws_ypixel = height,
-                .ws_col = cols,
-                .ws_row = rows,
+                .ws_xpixel = framebuffer->width,
+                .ws_ypixel = framebuffer->height,
+                .ws_col = framebuffer->width / 8,
+                .ws_row = framebuffer->height / 16,
             };
             return 0;
         case TIOCSCTTY:

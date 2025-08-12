@@ -165,17 +165,28 @@ get_device_config(struct usb_pipe *pipe)
     req.wLength = sizeof(cfg);
     int ret = usb_send_default_control(pipe, &req, &cfg);
     if (ret)
+    {
+        printf("[usb.c:%d] Failed to get configuration descriptor: usb_send_default_control\n", __LINE__);
         return NULL;
+    }
 
     struct usb_config_descriptor *config = malloc(cfg.wTotalLength);
     if (!config)
     {
+        printf("[usb.c:%d] Failed to get configuration descriptor: malloc\n", __LINE__);
         return NULL;
     }
     req.wLength = cfg.wTotalLength;
     ret = usb_send_default_control(pipe, &req, config);
-    if (ret || config->wTotalLength != cfg.wTotalLength)
+    if (ret)
     {
+        printf("[usb.c:%d] Failed to get configuration descriptor: usb_send_default_control\n", __LINE__);
+        free(config);
+        return NULL;
+    }
+    if (config->wTotalLength != cfg.wTotalLength)
+    {
+        printf("[usb.c:%d] Failed to get configuration descriptor: config->wTotalLength != cfg.wTotalLength\tconfig->wTotalLength = %d, cfg.wTotalLength = %d", __LINE__, config->wTotalLength, cfg.wTotalLength);
         free(config);
         return NULL;
     }
@@ -266,12 +277,18 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
     };
     usbdev->defpipe = usb_realloc_pipe(usbdev, usbdev->defpipe, &epdesc);
     if (!usbdev->defpipe)
+    {
+        printf("Failed to reallocate control pipe for USB device\n");
         return -1;
+    }
 
     // Get configuration
     struct usb_config_descriptor *config = get_device_config(usbdev->defpipe);
     if (!config)
+    {
+        printf("[usb.c:%d] Failed to get configuration descriptor for USB device\n", __LINE__);
         return 0;
+    }
 
     // Determine if a driver exists for this device - only look at the
     // interfaces of the first configuration.
@@ -342,11 +359,13 @@ usb_hub_port_setup(void *data)
         int ret = hub->op->detect(hub, port);
         if (ret > 0)
         {
+            printf("USB device found at port %d\n", port);
             // Device connected.
             break;
         }
         if (ret <= 0)
         {
+            printf("No device found at port %d\n", port);
             // No device found.
             goto done;
         }

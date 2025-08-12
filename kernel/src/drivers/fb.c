@@ -5,6 +5,10 @@
 #include <fs/fs_syscall.h>
 #include <fs/vfs/sys.h>
 
+__attribute__((used, section(".limine_requests"))) volatile struct limine_framebuffer_request framebuffer_request = {.id = LIMINE_FRAMEBUFFER_REQUEST, .revision = 0};
+
+struct limine_framebuffer *framebuffer = NULL;
+
 ssize_t fb_read(void *data, uint64_t offset, void *buf, uint64_t len)
 {
     struct limine_framebuffer *fb = (struct limine_framebuffer *)data;
@@ -106,41 +110,9 @@ void *fb_map(void *data, void *addr, uint64_t offset, uint64_t len)
 
 void fbdev_init()
 {
-    size_t addr;
-    size_t width;
-    size_t height;
-    size_t bpp;
-    size_t cols;
-    size_t rows;
-
-    os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
-
-    struct limine_framebuffer *fb = malloc(sizeof(struct limine_framebuffer));
-    fb->address = (void *)addr;
-    fb->width = width;
-    fb->height = height;
-    fb->bpp = bpp;
-    fb->pitch = width * bpp / 8;
-
-    size_t red;
-    size_t blue;
-    size_t green;
-    size_t red1;
-    size_t blue1;
-    size_t green1;
-
-    os_terminal_get_screen_info_red_green_blue(&red, &blue, &green, &red1, &blue1, &green1);
-
-    fb->red_mask_shift = red;
-    fb->blue_mask_shift = blue;
-    fb->green_mask_shift = green;
-    fb->red_mask_size = red1;
-    fb->blue_mask_size = blue1;
-    fb->green_mask_size = green1;
-
     char name[MAX_DEV_NAME_LEN];
     sprintf(name, "fb%d", 0);
-    regist_dev(name, fb_read, fb_write, fb_ioctl, NULL, fb_map, fb);
+    regist_dev(name, fb_read, fb_write, fb_ioctl, NULL, fb_map, framebuffer);
 }
 
 void fbdev_init_sysfs()
@@ -151,18 +123,9 @@ void fbdev_init_sysfs()
     sprintf(name, "fb%d", 0);
     vfs_node_t node = sysfs_child_append(graphics, name, true);
 
-    size_t addr;
-    size_t width;
-    size_t height;
-    size_t bpp;
-    size_t cols;
-    size_t rows;
-
-    os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
-
     vfs_node_t modes = sysfs_child_append(node, "modes", false);
     char content[64];
-    sprintf(content, "U:%dx%d\n", width, height, bpp);
+    sprintf(content, "U:%dx%d\n", framebuffer->width, framebuffer->height);
     vfs_write(modes, content, 0, strlen(content));
 
     vfs_node_t device = sysfs_child_append(node, "device", true);

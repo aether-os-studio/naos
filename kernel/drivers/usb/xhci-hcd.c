@@ -317,7 +317,8 @@ xhci_hub_reset(struct usbhub_s *hub, uint32_t port)
         // Device no longer connected?!
         return -1;
 
-    switch (xhci_get_field(portsc, XHCI_PORTSC_PLS))
+    uint8_t pls = xhci_get_field(portsc, XHCI_PORTSC_PLS);
+    switch (pls)
     {
     case PLS_U0:
         // A USB3 port - controller automatically performs reset
@@ -327,6 +328,7 @@ xhci_hub_reset(struct usbhub_s *hub, uint32_t port)
         xhci->pr[port].portsc = portsc | XHCI_PORTSC_PR;
         break;
     default:
+        printf("XHCI reset: unknown pls %d\n", pls);
         return -1;
     }
 
@@ -480,6 +482,9 @@ configure_xhci(void *data)
 
     // Find devices
     int count = xhci_check_ports(xhci);
+
+    printf("Found %d USB devices on XHCI controller\n", count);
+
     // xhci_free_pipes(xhci);
     // if (count)
     // Success

@@ -64,10 +64,13 @@ void frame_init()
     {
         struct limine_memmap_entry *region = memory_map->entries[i];
 
-        size_t start_frame = region->base / DEFAULT_PAGE_SIZE;
-        size_t frame_count = region->length / DEFAULT_PAGE_SIZE;
-        origin_frames += frame_count;
-        bitmap_set_range(bitmap, start_frame, start_frame + frame_count, (region->type == LIMINE_MEMMAP_USABLE));
+        if (region->type == LIMINE_MEMMAP_USABLE)
+        {
+            size_t start_frame = region->base / DEFAULT_PAGE_SIZE;
+            size_t frame_count = region->length / DEFAULT_PAGE_SIZE;
+            origin_frames += frame_count;
+            bitmap_set_range(bitmap, start_frame, start_frame + frame_count, true);
+        }
     }
 
     size_t low_1M_frame_count = 0x100000 / DEFAULT_PAGE_SIZE;
