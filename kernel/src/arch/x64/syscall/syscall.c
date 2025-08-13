@@ -518,7 +518,7 @@ void syscall_handler_init()
     // syscall_handlers[SYS_USERFAULTFD] = (syscall_handle_t)sys_userfaultfd;
     syscall_handlers[SYS_MEMBARRIER] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_MLOCK2] = (syscall_handle_t)sys_mlock2;
-    // syscall_handlers[SYS_COPY_FILE_RANGE] = (syscall_handle_t)sys_copy_file_range;
+    syscall_handlers[SYS_COPY_FILE_RANGE] = (syscall_handle_t)sys_copy_file_range;
     // syscall_handlers[SYS_PREADV2] = (syscall_handle_t)sys_preadv2;
     // syscall_handlers[SYS_PWRITEV2] = (syscall_handle_t)sys_pwritev2;
     // syscall_handlers[SYS_PKEY_MPROTECT] = (syscall_handle_t)sys_pkey_mprotect;

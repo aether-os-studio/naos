@@ -336,7 +336,7 @@ int ext_stat(void *file, vfs_node_t node)
 
 int ext_ioctl(void *file, ssize_t cmd, ssize_t arg)
 {
-    return 0;
+    return -EINVAL;
 }
 
 int ext_poll(void *file, size_t events)

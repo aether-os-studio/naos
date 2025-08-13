@@ -143,6 +143,44 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags)
     return 0;
 }
 
+uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t *offset_in, uint64_t fd_out, uint64_t *offset_out, uint64_t len, uint64_t flags)
+{
+    if (fd_in >= MAX_FD_NUM || fd_out >= MAX_FD_NUM)
+    {
+        return (uint64_t)-EBADF;
+    }
+
+    fd_t *in_fd = current_task->fd_info->fds[fd_in];
+    fd_t *out_fd = current_task->fd_info->fds[fd_out];
+    if (!in_fd || !out_fd)
+    {
+        return (uint64_t)-EBADF;
+    }
+
+    if (out_fd->offset >= out_fd->node->size && out_fd->node->size > 0)
+        return 0;
+
+    uint64_t src_offset = offset_in ? *offset_in : in_fd->offset;
+    uint64_t dst_offset = offset_out ? *offset_out : out_fd->offset;
+
+    uint64_t length = in_fd->node->size > len ? len : in_fd->node->size;
+    uint8_t *buffer = (uint8_t *)alloc_frames_bytes(length);
+    size_t copy_total = 0;
+
+    vfs_read_fd(in_fd, buffer, src_offset, length);
+
+    if ((copy_total = vfs_write_fd(out_fd, buffer, dst_offset, length)) == (ssize_t)-1)
+    {
+        free(buffer);
+        return (uint64_t)-EIO;
+    }
+    vfs_update(out_fd->node);
+    free_frames_bytes(buffer, length);
+    out_fd->offset += copy_total;
+
+    return copy_total;
+}
+
 uint64_t sys_read(uint64_t fd, void *buf, uint64_t len)
 {
     if (!buf || check_user_overflow((uint64_t)buf, len))
