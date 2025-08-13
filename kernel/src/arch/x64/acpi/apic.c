@@ -223,6 +223,8 @@ void sse_init()
                  "movq %rax, %cr4\n\t");
 }
 
+spinlock_t ap_startup_lock = {0};
+
 extern bool task_initialized;
 
 void ap_entry(struct limine_mp_info *cpu)
@@ -243,6 +245,8 @@ void ap_entry(struct limine_mp_info *cpu)
     local_apic_ap_init();
 
     syscall_init();
+
+    spin_unlock(&ap_startup_lock);
 
     while (!task_initialized)
     {
@@ -288,6 +292,8 @@ void apu_startup(struct limine_mp_response *mp_response)
 
         if (cpu->lapic_id == mp_response->bsp_lapic_id)
             continue;
+
+        spin_lock(&ap_startup_lock);
 
         cpu->goto_address = ap_entry;
     }
