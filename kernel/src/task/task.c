@@ -831,12 +831,6 @@ void task_unblock(task_t *task, int reason)
 
 void task_exit_inner(task_t *task, int64_t code)
 {
-    if (task->ppid && task->pid != task->ppid && task->ppid < MAX_TASK_NUM && tasks[task->ppid])
-    {
-        // tasks[task->ppid]->signal |= SIGMASK(SIGCHLD);
-        task_unblock(tasks[task->ppid], SIGCHLD);
-    }
-
     arch_context_free(task->arch_context);
 
     task->status = (uint64_t)code;
@@ -854,6 +848,7 @@ void task_exit_inner(task_t *task, int64_t code)
                 task->fd_info->fds[i] = NULL;
             }
         }
+        free(task->fd_info);
     }
 
     free_frames_bytes(task->mmap_regions.buffer, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64);
@@ -869,6 +864,12 @@ void task_exit_inner(task_t *task, int64_t code)
 
     task->current_state = TASK_DIED;
     task->state = TASK_DIED;
+
+    if (task->ppid && task->pid != task->ppid && task->ppid < MAX_TASK_NUM && tasks[task->ppid])
+    {
+        // tasks[task->ppid]->signal |= SIGMASK(SIGCHLD);
+        task_unblock(tasks[task->ppid], SIGCHLD);
+    }
 
     if (task->waitpid != 0 && tasks[task->waitpid] && tasks[task->waitpid]->state == TASK_BLOCKING)
     {

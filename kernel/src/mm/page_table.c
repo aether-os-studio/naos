@@ -195,6 +195,8 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags)
 
 void free_page_table(task_mm_info_t *directory)
 {
+    spin_lock(&clone_lock);
+
     if (directory->ref_count <= 1)
     {
         free_page_table_recursive((page_table_t *)phys_to_virt(directory->page_table_addr), ARCH_MAX_PT_LEVEL);
@@ -204,6 +206,8 @@ void free_page_table(task_mm_info_t *directory)
     {
         directory->ref_count--;
     }
+
+    spin_unlock(&clone_lock);
 }
 
 task_mm_info_t kernel_mm_info;
