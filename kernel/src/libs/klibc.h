@@ -293,6 +293,21 @@ static inline const char *strstr(const char *haystack, const char *needle)
     return NULL;
 }
 
+static inline char *strrchr(const char *s, int c)
+{
+    const char *last = NULL;
+    if (!s)
+        return NULL;
+
+    do
+    {
+        if (*s == (char)c)
+            last = s;
+    } while (*s++);
+
+    return (char *)last;
+}
+
 char *strdup(const char *s);
 
 #if defined(__x86_64__)

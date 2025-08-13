@@ -852,7 +852,22 @@ int vfs_delete(vfs_node_t node)
 
 int vfs_rename(vfs_node_t node, const char *new)
 {
-    return callbackof(node, rename)(node->handle, new);
+    int ret = callbackof(node, rename)(node->handle, new);
+    if (ret < 0)
+        return ret;
+
+    list_delete(node->parent->child, node);
+    char *filename = strrchr(new, '/');
+    if (!filename)
+        return -EINVAL;
+    vfs_node_t new_node = vfs_child_append(node->parent, filename + 1, NULL);
+    new_node->type = node->type;
+    new_node->inode = node->inode;
+    new_node->linkto = node->linkto;
+    vfs_free(node);
+    vfs_open(new);
+
+    return ret;
 }
 
 fd_t *vfs_dup(fd_t *fd)

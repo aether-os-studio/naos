@@ -8,6 +8,7 @@
 #include <task/task.h>
 
 char *at_resolve_pathname(int dirfd, char *pathname);
+char *at_resolve_pathname_fullpath(int dirfd, char *pathname);
 
 struct iovec
 {
