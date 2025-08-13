@@ -46,9 +46,6 @@ ln -sf /usr/share/zoneinfo/Asia/Shanghai $SYSROOT/../etc/localtime
 rm -rf $SYSROOT/../bin/sh
 ln -sf bash $SYSROOT/../bin/sh
 
-rm -rf $SYSROOT/../etc/init.d/*
-rm -rf $SYSROOT/../etc/conf.d/*
-
 cp -r $SCRIPTPATH/etc $SYSROOT/../
 cp -r $SCRIPTPATH/root $SYSROOT/../
 cp -r $SCRIPTPATH/run $SYSROOT/../

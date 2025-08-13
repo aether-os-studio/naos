@@ -295,7 +295,7 @@ void syscall_handler_init()
     // syscall_handlers[SYS_TIMES] = (syscall_handle_t)sys_times;
     // syscall_handlers[SYS_PTRACE] = (syscall_handle_t)sys_ptrace;
     syscall_handlers[SYS_GETUID] = (syscall_handle_t)sys_getuid;
-    // syscall_handlers[SYS_SYSLOG] = (syscall_handle_t)sys_syslog;
+    syscall_handlers[SYS_SYSLOG] = (syscall_handle_t)sys_syslog;
     syscall_handlers[SYS_GETGID] = (syscall_handle_t)sys_getgid;
     syscall_handlers[SYS_SETUID] = (syscall_handle_t)sys_setuid;
     syscall_handlers[SYS_SETGID] = (syscall_handle_t)sys_setgid;

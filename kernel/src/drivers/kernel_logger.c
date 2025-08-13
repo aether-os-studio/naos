@@ -471,3 +471,11 @@ int sprintf(char *buf, const char *fmt, ...)
 
     return len;
 }
+
+int sys_syslog(int type, const char *buf, size_t len)
+{
+    serial_printk(buf, len);
+    os_terminal_write(buf, len);
+
+    return len;
+}
