@@ -8,7 +8,7 @@
 #include <arch/arch.h>
 
 #define KERNEL_HEAP_START 0xffffffffc0000000
-#define KERNEL_HEAP_SIZE 128 * 1024 * 1024
+#define KERNEL_HEAP_SIZE 256 * 1024 * 1024
 
 #define MAX_USABLE_REGIONS_COUNT 128
 

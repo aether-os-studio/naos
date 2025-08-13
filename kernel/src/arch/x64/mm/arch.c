@@ -46,26 +46,6 @@ bool is_stack_memory_region(uint64_t pml4_idx, uint64_t pdpt_idx, uint64_t pd_id
     return false;
 }
 
-bool is_reserved_memory_region(uint64_t pml4_idx, uint64_t pdpt_idx, uint64_t pd_idx, uint64_t pt_idx)
-{
-    uint64_t vaddr = (pml4_idx << 39) | (pdpt_idx << 30) | (pd_idx << 21) | (pt_idx << 12);
-
-    size_t addr;
-    size_t width;
-    size_t height;
-    size_t bpp;
-    size_t cols;
-    size_t rows;
-
-    os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
-
-    if (vaddr >= addr && vaddr <= (width * height * bpp / 8))
-    {
-        return true;
-    }
-    return false;
-}
-
 void arch_flush_tlb(uint64_t vaddr)
 {
     asm volatile("invlpg (%0)" ::"r"(vaddr) : "memory");

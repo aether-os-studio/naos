@@ -1,5 +1,6 @@
 #include <arch/arch.h>
 #include <drivers/bus/pci.h>
+#include <drivers/fb.h>
 #include <drivers/gfx/vmware/vmware.h>
 
 #if defined(__x86_64__)
@@ -329,8 +330,10 @@ static int vmware_get_fb(void *dev_data, uint32_t *width, uint32_t *height, uint
 {
     vmware_gpu_device_t *gpu = dev_data;
 
-    size_t cols, rows;
-    os_terminal_get_screen_info((size_t *)addr, (size_t *)width, (size_t *)height, (size_t *)bpp, &cols, &rows);
+    *width = framebuffer->width;
+    *height = framebuffer->height;
+    *bpp = framebuffer->bpp;
+    *addr = (uint64_t)framebuffer->address;
 
     return 0;
 }

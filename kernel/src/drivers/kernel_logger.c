@@ -1,7 +1,7 @@
 #include <drivers/kernel_logger.h>
 #include <arch/arch.h>
 #include <mm/mm.h>
-#include <drivers/fb.h>s
+#include <drivers/fb.h>
 
 struct flanterm_context *ft_ctx = NULL;
 
@@ -441,13 +441,6 @@ int printk(const char *fmt, ...)
 
         framebuffer = framebuffer_request.response->framebuffers[0];
 
-        ft_ctx = flanterm_fb_init(malloc, (void (*)(void *, size_t))free,
-                                  framebuffer->address, framebuffer->width, framebuffer->height, framebuffer->pitch,
-                                  framebuffer->red_mask_size, framebuffer->red_mask_shift,
-                                  framebuffer->green_mask_size, framebuffer->green_mask_shift,
-                                  framebuffer->blue_mask_size, framebuffer->blue_mask_shift,
-                                  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, 0, 0, 0, 0, 0);
-
         printk_initialized = true;
     }
 
@@ -460,7 +453,7 @@ int printk(const char *fmt, ...)
 
     serial_printk(buf, len);
 
-    flanterm_write(ft_ctx, buf, len);
+    os_terminal_write(buf, len);
 
     spin_unlock(&printk_lock);
 

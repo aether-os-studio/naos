@@ -1,6 +1,7 @@
 #include <drivers/bus/pci.h>
 #include <drivers/drm/drm_fourcc.h>
 #include <drivers/drm/drm.h>
+#include <drivers/fb.h>
 #include <fs/fs_syscall.h>
 #include <fs/vfs/dev.h>
 #include <fs/vfs/sys.h>
@@ -584,22 +585,6 @@ extern drm_device_op_t simple_drm_ops;
 
 void drm_init()
 {
-    size_t addr;
-    size_t width;
-    size_t height;
-    size_t bpp;
-    size_t cols;
-    size_t rows;
-
-    os_terminal_get_screen_info(&addr, &width, &height, &bpp, &cols, &rows);
-
-    struct limine_framebuffer *fb = malloc(sizeof(struct limine_framebuffer));
-    fb->address = (void *)addr;
-    fb->width = width;
-    fb->height = height;
-    fb->bpp = bpp;
-    fb->pitch = width * bpp / 8;
-
     char buf[16];
     sprintf(buf, "dri/card%d", 0);
     drm_device_t *drm = malloc(sizeof(drm_device_t));
@@ -612,7 +597,7 @@ void drm_init()
     }
     else
     {
-        drm->data = fb;
+        drm->data = framebuffer;
         drm->op = &simple_drm_ops;
     }
     regist_dev(buf, drm_read, NULL, drm_ioctl, drm_poll, drm_map, drm);

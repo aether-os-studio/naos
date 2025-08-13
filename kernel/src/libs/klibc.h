@@ -459,5 +459,3 @@ static inline int qsort_compare(const void *a, const void *b)
 }
 
 extern void os_terminal_write(const char *buf, size_t len);
-extern void os_terminal_get_screen_info(size_t *addr, size_t *width, size_t *height, size_t *bpp, size_t *cols, size_t *rows);
-extern void os_terminal_get_screen_info_red_green_blue(size_t *red, size_t *blue, size_t *green, size_t *red1, size_t *blue1, size_t *green1);
