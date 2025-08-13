@@ -158,6 +158,13 @@ void do_nmi(struct pt_regs *regs, uint64_t error_code)
     (void)error_code;
     dump_regs(regs, "do_nmi(2)");
 
+    if (regs->rsp <= get_physical_memory_offset())
+    {
+        can_schedule = true;
+        task_exit(-EFAULT);
+        return;
+    }
+
     while (1)
         asm volatile("hlt");
 }
@@ -168,6 +175,13 @@ void do_int3(struct pt_regs *regs, uint64_t error_code)
     (void)error_code;
     dump_regs(regs, "do_int3(3)");
 
+    if (regs->rsp <= get_physical_memory_offset())
+    {
+        can_schedule = true;
+        task_exit(-EFAULT);
+        return;
+    }
+
     return;
 }
 
@@ -176,6 +190,13 @@ void do_overflow(struct pt_regs *regs, uint64_t error_code)
 {
     (void)error_code;
     dump_regs(regs, "do_overflow(4)");
+
+    if (regs->rsp <= get_physical_memory_offset())
+    {
+        can_schedule = true;
+        task_exit(-EFAULT);
+        return;
+    }
 
     while (1)
         asm volatile("hlt");
@@ -186,6 +207,13 @@ void do_bounds(struct pt_regs *regs, uint64_t error_code)
 {
     (void)error_code;
     dump_regs(regs, "do_bounds(5)");
+
+    if (regs->rsp <= get_physical_memory_offset())
+    {
+        can_schedule = true;
+        task_exit(-EFAULT);
+        return;
+    }
 
     while (1)
         asm volatile("hlt");
@@ -214,6 +242,13 @@ void do_dev_not_avaliable(struct pt_regs *regs, uint64_t error_code)
     (void)error_code;
     dump_regs(regs, "do_dev_not_avaliable(7)");
 
+    if (regs->rsp <= get_physical_memory_offset())
+    {
+        can_schedule = true;
+        task_exit(-EFAULT);
+        return;
+    }
+
     while (1)
         asm volatile("hlt");
 }
@@ -233,6 +268,13 @@ void do_coprocessor_segment_overrun(struct pt_regs *regs, uint64_t error_code)
 {
     (void)error_code;
     dump_regs(regs, "do_coprocessor_segment_overrun(9)");
+
+    if (regs->rsp <= get_physical_memory_offset())
+    {
+        can_schedule = true;
+        task_exit(-EFAULT);
+        return;
+    }
 
     while (1)
         asm volatile("hlt");
@@ -277,6 +319,13 @@ void do_stack_segment_fault(struct pt_regs *regs, uint64_t error_code)
 {
     (void)error_code;
     dump_regs(regs, "do_stack_segment_fault(12)");
+
+    if (regs->rsp <= get_physical_memory_offset())
+    {
+        can_schedule = true;
+        task_exit(-EFAULT);
+        return;
+    }
 
     while (1)
         asm volatile("hlt");
@@ -330,6 +379,13 @@ void do_x87_FPU_error(struct pt_regs *regs, uint64_t error_code)
     (void)error_code;
     dump_regs(regs, "do_x87_FPU_error(16)");
 
+    if (regs->rsp <= get_physical_memory_offset())
+    {
+        can_schedule = true;
+        task_exit(-EFAULT);
+        return;
+    }
+
     while (1)
         asm volatile("hlt");
 }
@@ -339,6 +395,13 @@ void do_alignment_check(struct pt_regs *regs, uint64_t error_code)
 {
     (void)error_code;
     dump_regs(regs, "do_alignment_check(17)");
+
+    if (regs->rsp <= get_physical_memory_offset())
+    {
+        can_schedule = true;
+        task_exit(-EFAULT);
+        return;
+    }
 
     while (1)
         asm volatile("hlt");
@@ -350,6 +413,13 @@ void do_machine_check(struct pt_regs *regs, uint64_t error_code)
     (void)error_code;
     dump_regs(regs, "do_machine_check(18)");
 
+    if (regs->rsp <= get_physical_memory_offset())
+    {
+        can_schedule = true;
+        task_exit(-EFAULT);
+        return;
+    }
+
     while (1)
         asm volatile("hlt");
 }
@@ -360,6 +430,13 @@ void do_SIMD_exception(struct pt_regs *regs, uint64_t error_code)
     (void)error_code;
     dump_regs(regs, "do_SIMD_exception(19)");
 
+    if (regs->rsp <= get_physical_memory_offset())
+    {
+        can_schedule = true;
+        task_exit(-EFAULT);
+        return;
+    }
+
     while (1)
         asm volatile("hlt");
 }
@@ -369,6 +446,13 @@ void do_virtualization_exception(struct pt_regs *regs, uint64_t error_code)
 {
     (void)error_code;
     dump_regs(regs, "do_virtualization_exception(20)");
+
+    if (regs->rsp <= get_physical_memory_offset())
+    {
+        can_schedule = true;
+        task_exit(-EFAULT);
+        return;
+    }
 
     while (1)
         asm volatile("hlt");
