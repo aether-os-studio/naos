@@ -83,6 +83,7 @@ typedef enum task_state
     TASK_RUNNING = 1,
     TASK_READY,
     TASK_BLOCKING,
+    TASK_READING_STDIO,
     TASK_DIED,
 } task_state_t;
 

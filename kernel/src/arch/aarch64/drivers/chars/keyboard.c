@@ -20,7 +20,7 @@ bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state)
     kb_task = task;
 
     if (change_state)
-        task->state = TASK_BLOCKING;
+        task->state = TASK_READING_STDIO;
 
     return true;
 }
@@ -87,7 +87,7 @@ void push_kb_char(char ch)
         kb_char(kb_task, ch);
     }
 
-    if (kb_task->state == TASK_BLOCKING)
+    if (kb_task->state == TASK_READING_STDIO)
         kb_task->state = TASK_READY;
 }
 

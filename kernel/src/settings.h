@@ -8,3 +8,5 @@
 #define STACK_SIZE 65536UL
 
 #define BUILD_VERSION "0.69.2"
+
+#define MAX_CONTINUE_NULL_TASKS 5

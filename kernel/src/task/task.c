@@ -1,6 +1,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <drivers/kernel_logger.h>
+#include <fs/vfs/dev.h>
 #include <fs/vfs/vfs.h>
 #include <fs/vfs/proc.h>
 #include <arch/arch.h>
@@ -8,10 +9,42 @@
 #include <fs/fs_syscall.h>
 #include <net/socket.h>
 
-#define MAX_CONTINUE_NULL_TASKS 5
-
 task_t *tasks[MAX_TASK_NUM];
 task_t *idle_tasks[MAX_CPU_NUM];
+
+extern stdio_handle_t *global_stdio_handle;
+
+void send_sigint()
+{
+    if (global_stdio_handle == NULL)
+        return;
+
+    uint64_t continue_ptr_count = 0;
+    for (size_t i = 1; i < MAX_TASK_NUM; i++)
+    {
+        task_t *ptr = tasks[i];
+        if (ptr == NULL)
+        {
+            continue_ptr_count++;
+            if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
+                break;
+            continue;
+        }
+        continue_ptr_count = 0;
+
+        if (tasks[i]->pgid == global_stdio_handle->at_process_group_id)
+        {
+            if (tasks[i]->actions[SIGINT].sa_handler == SIG_DFL || tasks[i]->actions[SIGINT].sa_handler == SIG_IGN)
+            {
+                tasks[i]->signal |= SIGMASK(SIGKILL);
+            }
+            else if (tasks[i]->state != TASK_READING_STDIO)
+            {
+                tasks[i]->signal |= SIGMASK(SIGINT);
+            }
+        }
+    }
+}
 
 bool task_initialized = false;
 bool can_schedule = false;
@@ -146,12 +179,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
     task->rlim[RLIMIT_NOFILE] = (struct rlimit){MAX_FD_NUM, MAX_FD_NUM};
     task->rlim[RLIMIT_CORE] = (struct rlimit){0, 0};
 
-    // socket_on_new_task(task->pid);
-
     task->child_vfork_done = false;
     task->is_vfork = false;
-
-    socket_on_new_task(task->pid);
 
     procfs_on_new_task(task);
 
@@ -247,10 +276,10 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], char *en
 
     uint64_t execfn_ptr = tmp_stack;
 
-    uint64_t *envps = (uint64_t *)malloc(1024);
-    memset(envps, 0, 1024);
-    uint64_t *argvps = (uint64_t *)malloc(1024);
-    memset(argvps, 0, 1024);
+    uint64_t *envps = (uint64_t *)malloc(4096);
+    memset(envps, 0, 4096);
+    uint64_t *argvps = (uint64_t *)malloc(4096);
+    memset(argvps, 0, 4096);
 
     if (envp != NULL)
     {
@@ -430,8 +459,6 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
 
     memcpy(child->rlim, current_task->rlim, sizeof(child->rlim));
 
-    // socket_on_new_task(child->pid);
-
     child->child_vfork_done = false;
 
     if (vfork)
@@ -442,8 +469,6 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     {
         child->is_vfork = false;
     }
-
-    socket_on_new_task(child->pid);
 
     procfs_on_new_task(child);
 
@@ -498,10 +523,10 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     uint64_t buf_len = (node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
 
-    char **new_argv = (char **)malloc(1024);
-    memset(new_argv, 0, 1024);
-    char **new_envp = (char **)malloc(1024);
-    memset(new_envp, 0, 1024);
+    char **new_argv = (char **)malloc(4096);
+    memset(new_argv, 0, 4096);
+    char **new_envp = (char **)malloc(4096);
+    memset(new_envp, 0, 4096);
 
     int argv_count = 0;
     int envp_count = 0;
@@ -876,8 +901,6 @@ void task_exit_inner(task_t *task, int64_t code)
         task_unblock(tasks[task->waitpid], EOK);
     }
 
-    socket_on_exit_task(task->pid);
-
     procfs_on_exit_task(task);
 }
 
@@ -1196,8 +1219,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     {
         child->is_vfork = false;
     }
-
-    socket_on_new_task(child->pid);
 
     procfs_on_new_task(child);
 

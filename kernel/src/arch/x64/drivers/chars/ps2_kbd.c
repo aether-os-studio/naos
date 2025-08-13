@@ -60,7 +60,7 @@ bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state)
     }
 
     if (change_state)
-        task_block(task, TASK_BLOCKING, -1);
+        task_block(task, TASK_READING_STDIO, -1);
 
     return true;
 }
@@ -115,6 +115,8 @@ void kb_char(task_t *task, char out)
         kb_finalise_stream();
 }
 
+extern void send_sigint();
+
 void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
 {
     (void)irq_num;
@@ -134,18 +136,17 @@ void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
     if (!out)
         return;
 
+    if (ctrled && out == 'c')
+    {
+        kb_finalise_stream();
+        send_sigint();
+        return;
+    }
+
     task_t *task = kb_task;
 
     if (!task)
         return;
-
-    // if (ctrled && out == 'c')
-    // {
-    //     kb_finalise_stream();
-    //     task->signal |= SIGMASK(SIGINT);
-    //     task_unblock(task, SIGINT);
-    //     return;
-    // }
 
     switch ((uint8_t)out)
     {

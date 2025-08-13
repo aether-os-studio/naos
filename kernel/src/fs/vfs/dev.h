@@ -17,6 +17,11 @@ typedef struct devfs_handle
     void *data;
 } *devfs_handle_t;
 
+typedef struct stdio_handle
+{
+    int64_t at_process_group_id;
+} stdio_handle_t;
+
 extern devfs_handle_t devfs_handles[MAX_DEV_NUM];
 
 typedef struct partition_node

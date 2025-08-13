@@ -31,7 +31,6 @@ bool mpool_init(mpool_t pool, void *ptr, size_t size)
     pool->cb_reqmem = NULL;
     pool->cb_delmem = NULL;
     pool->large_blk = NULL;
-#pragma unroll
     for (size_t i = 0; i < FREELIST_NUM; i++)
     {
         pool->freed[i] = NULL;

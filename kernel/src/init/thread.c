@@ -5,7 +5,6 @@
 #include <drivers/bus/pci.h>
 #include <drivers/drm/drm.h>
 #include <drivers/virtio/virtio.h>
-#include <drivers/net/nic.h>
 #include <fs/partition.h>
 #include <drivers/fb.h>
 
@@ -37,8 +36,6 @@ void init_thread(uint64_t arg)
     pci_init();
 
     virtio_init();
-
-    net_init();
 
     partition_init();
 
