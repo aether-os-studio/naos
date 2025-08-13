@@ -7,7 +7,7 @@
 
 #define SCHED_HZ 100
 
-bool x2apic_mode;
+bool x2apic_mode = false;
 uint64_t lapic_address;
 uint64_t ioapic_address;
 
@@ -94,7 +94,7 @@ void lapic_timer_stop();
 
 void local_apic_init(bool is_print)
 {
-    x2apic_mode = ((mp_request.flags & LIMINE_MP_X2APIC) != 0);
+    x2apic_mode = !!(mp_request.response->flags & LIMINE_MP_X2APIC);
 
     uint64_t value = rdmsr(0x1b);
     value |= (1UL << 11);
@@ -174,7 +174,6 @@ void ioapic_disable(uint8_t vector)
 void send_eoi(uint32_t irq)
 {
     lapic_write(0xb0, 0);
-    *(uint32_t *)(ioapic_address + 0x40) = irq;
 }
 
 void lapic_timer_stop()
