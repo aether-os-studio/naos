@@ -167,11 +167,16 @@ uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t *offset_in, uint64_t fd_ou
     uint8_t *buffer = (uint8_t *)alloc_frames_bytes(length);
     size_t copy_total = 0;
 
-    vfs_read_fd(in_fd, buffer, src_offset, length);
+    ssize_t ret = vfs_read_fd(in_fd, buffer, src_offset, length);
+    if (ret < 0)
+    {
+        free_frames_bytes(buffer, length);
+        return (uint64_t)-EIO;
+    }
 
     if ((copy_total = vfs_write_fd(out_fd, buffer, dst_offset, length)) == (ssize_t)-1)
     {
-        free(buffer);
+        free_frames_bytes(buffer, length);
         return (uint64_t)-EIO;
     }
     vfs_update(out_fd->node);

@@ -410,7 +410,15 @@ ssize_t stdout_write(void *data, uint64_t offset, const void *buf, uint64_t len)
 
 ssize_t stdio_ioctl(void *data, ssize_t cmd, ssize_t arg)
 {
-    return -ENOTTY;
+    switch (cmd)
+    {
+    case TCSETSF:
+        memcpy(&current_task->term, (void *)arg, sizeof(termios));
+        return 0;
+    default:
+        printk("stdio_ioctl(): Unsupported ioctl: %#018lx\n", cmd);
+        return -ENOTTY;
+    }
 }
 
 bool ioSwitch = false;

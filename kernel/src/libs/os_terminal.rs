@@ -95,3 +95,12 @@ unsafe extern "C" fn os_terminal_write(buf: *const core::ffi::c_char, len: usize
     let buf = core::slice::from_raw_parts(buf as *const u8, len);
     TERMINAL.lock().process(buf);
 }
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn get_terminal_col_rows(cols: *mut usize, rows: *mut usize) {
+    let term = TERMINAL.lock();
+    unsafe {
+        *cols = term.columns();
+        *rows = term.rows();
+    }
+}
