@@ -234,8 +234,6 @@ void ap_entry(struct limine_mp_info *cpu)
 
     sse_init();
 
-    printk("APU %d starting...\n", cpu->processor_id);
-
     gdtidt_setup();
 
     tss_init();
