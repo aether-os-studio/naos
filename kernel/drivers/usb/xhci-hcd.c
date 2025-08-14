@@ -528,6 +528,7 @@ static struct usb_xhci_s *xhci_controller_setup(void *baseaddr)
     xhci->slots = hcs1 & 0xff;
     xhci->xcap = ((hcc >> 16) & 0xffff) << 2;
     xhci->context64 = (hcc & 0x04) ? 1 : 0;
+    xhci->usb.resetlock.lock = 0;
     xhci->usb.type = USB_TYPE_XHCI;
 
     if (xhci->xcap)

@@ -304,7 +304,7 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
         if (iface->bDescriptorType == USB_DT_INTERFACE)
         {
             num_iface--;
-            if (iface->bInterfaceClass == USB_CLASS_HUB || (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE && (iface->bInterfaceProtocol == US_PR_BULK || iface->bInterfaceProtocol == US_PR_UAS)) || (iface->bInterfaceClass == USB_CLASS_HID))
+            if (iface->bInterfaceClass == USB_CLASS_HUB || (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE && (iface->bInterfaceProtocol == US_PR_BULK || iface->bInterfaceProtocol == US_PR_UAS)) || (iface->bInterfaceClass == USB_CLASS_HID && iface->bInterfaceSubClass == USB_INTERFACE_SUBCLASS_BOOT))
                 break;
         }
         iface = (void *)iface + iface->bLength;
@@ -336,6 +336,10 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
     {
         printk("hid device detected\n");
         ret = usb_hid_setup(usbdev);
+    }
+    else
+    {
+        goto fail;
     }
     if (ret)
         goto fail;
@@ -378,14 +382,18 @@ usb_hub_port_setup(void *data)
     spin_lock(&hub->cntl->resetlock);
     int ret = hub->op->reset(hub, port);
     if (ret < 0)
+    {
         // Reset failed
+        printf("Failed to reset USB device at port %d\n", port);
         goto resetfail;
+    }
     usbdev->speed = ret;
 
     // Set address of port
     ret = usb_set_address(usbdev);
     if (ret)
     {
+        printf("Failed to set USB device address at port %d\n", port);
         hub->op->disconnect(hub, port);
         goto resetfail;
     }
