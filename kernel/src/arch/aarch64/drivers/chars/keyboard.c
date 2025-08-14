@@ -5,7 +5,7 @@
 static char *kbBuff = NULL;
 static uint32_t kbCurr = 0;
 static uint32_t kbMax = 0;
-static task_t *kb_task = NULL;
+task_t *kb_task = NULL;
 
 bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state)
 {

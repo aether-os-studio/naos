@@ -1,4 +1,5 @@
 #include "msc.h"
+#include "hid.h"
 #include "usb.h"
 
 /****************************************************************
@@ -334,7 +335,7 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
     else if (iface->bInterfaceClass == USB_CLASS_HID)
     {
         printk("hid device detected\n");
-        // ret = usb_hid_setup(usbdev);
+        ret = usb_hid_setup(usbdev);
     }
     if (ret)
         goto fail;

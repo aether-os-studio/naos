@@ -209,6 +209,7 @@ dlinit_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr, uint64_t offset)
     }
     if (!handle_relocations(jmprel, symtab, strtab, jmprel_sz, offset))
     {
+        printk("Failed to handle relocations.\n");
         return NULL;
     }
 
