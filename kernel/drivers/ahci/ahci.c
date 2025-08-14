@@ -408,7 +408,7 @@ pci_driver_t ahci_driver = {
     .shutdown = ahci_shutdown,
 };
 
-__attribute__((visibility("default"))) int module_init()
+__attribute__((visibility("default"))) int dlmain()
 {
     regist_pci_driver(&ahci_driver);
 

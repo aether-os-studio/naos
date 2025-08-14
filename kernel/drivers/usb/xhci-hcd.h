@@ -3,6 +3,7 @@
 #include <libs/aether/stdio.h>
 #include <libs/aether/mm.h>
 #include <libs/aether/pci.h>
+#include <libs/aether/time.h>
 
 #define ARRAY_SIZE(a) (sizeof((a)) / sizeof((a)[0]))
 

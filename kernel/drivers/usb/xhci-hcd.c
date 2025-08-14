@@ -667,6 +667,9 @@ static int xhci_event_wait(struct usb_xhci_s *xhci,
                            struct xhci_ring *ring,
                            uint32_t timeout)
 {
+    uint64_t timeout_ns = (uint64_t)timeout * 1000000; // Convert ms to ns
+    uint64_t start_ns = nanoTime();
+
     for (;;)
     {
         xhci_process_events(xhci);
@@ -676,6 +679,11 @@ static int xhci_event_wait(struct usb_xhci_s *xhci,
             return (status >> 24) & 0xff;
         }
         arch_pause();
+        if (nanoTime() - start_ns > timeout_ns)
+        {
+            printf("XHCI event wait timeout\n");
+            return CC_INVALID; // Timeout
+        }
     }
 }
 
@@ -1124,7 +1132,7 @@ pci_driver_t xhci_hcd_driver = {
     .shutdown = xhci_shutdown,
 };
 
-__attribute__((visibility("default"))) int module_init()
+__attribute__((visibility("default"))) int dlmain()
 {
     regist_pci_driver(&xhci_hcd_driver);
 

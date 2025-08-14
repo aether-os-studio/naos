@@ -387,7 +387,7 @@ static struct vfs_callback callbacks = {
     .dup = (vfs_dup_t)ext_dup,
 };
 
-__attribute__((visibility("default"))) void module_init()
+__attribute__((visibility("default"))) void dlmain()
 {
     ext_fsid = vfs_regist("ext", &callbacks);
 }

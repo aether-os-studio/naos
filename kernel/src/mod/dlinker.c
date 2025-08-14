@@ -98,7 +98,6 @@ bool handle_relocations(Elf64_Rela *rela_start, Elf64_Sym *symtab, char *strtab,
         else
         {
             printk("Failed relocating %s at %p\n", sym_name, rela->r_offset + offset);
-            return false;
         }
     }
     return true;
@@ -110,7 +109,7 @@ void *find_symbol_address(const char *symbol_name, Elf64_Sym *symtab, char *strt
     if (symbol_name == NULL || symtab == NULL || strtab == NULL)
         return NULL;
 
-    for (size_t i = 0; i < symtabsz; i++)
+    for (size_t i = 0; i <= symtabsz; i++)
     {
         Elf64_Sym *sym = &symtab[i];
         char *sym_name = &strtab[sym->st_name];
@@ -125,6 +124,7 @@ void *find_symbol_address(const char *symbol_name, Elf64_Sym *symtab, char *strt
             return addr;
         }
     }
+    printk("Cannot find symbol %s in ELF file.\n", symbol_name);
     return NULL;
 }
 
@@ -213,7 +213,7 @@ dlinit_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr, uint64_t offset)
         return NULL;
     }
 
-    void *entry = find_symbol_address("module_init", symtab, strtab, symtabsz, ehdr, offset);
+    void *entry = find_symbol_address("dlmain", symtab, strtab, symtabsz, ehdr, offset);
 
     dlinit_t dlinit_func = (dlinit_t)entry;
     return dlinit_func;
@@ -283,7 +283,6 @@ void find_kernel_symbol()
     for (size_t i = 0; i < dlfunc_count; i++)
     {
         dlfunc_t *entry = &__ksymtab_start[i];
-        // printk("Exported: %s at %#018lx\n", entry->name, entry->addr);
     }
 }
 
