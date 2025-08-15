@@ -119,7 +119,7 @@ distclean:
 clippy:
 	$(MAKE) -C kernel clippy
 
-ROOTFS_IMG_SIZE ?= 1024
+ROOTFS_IMG_SIZE ?= 2048
 
 .PHONY: rootfs-$(ARCH).img
 rootfs-$(ARCH).img: user/.build-stamp-$(ARCH)
@@ -180,8 +180,6 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-device nec-usb-xhci,id=xhci \
 		-device nvme,drive=harddisk,serial=1234 \
 		-device nvme,drive=rootdisk,serial=5678 \
-		-netdev user,id=eth0 \
-		-device e1000,netdev=eth0 \
 		-vga vmware \
 		$(QEMUFLAGS)
 
@@ -194,8 +192,6 @@ run-x86_64-single: assets/ovmf-code-$(ARCH).fd all-single
 		-drive if=none,file=single-$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-device qemu-xhci,id=xhci \
 		-device nvme,drive=harddisk,serial=1234 \
-		-netdev user,id=eth0 \
-		-device e1000,netdev=eth0 \
 		-vga vmware \
 		$(QEMUFLAGS)
 
