@@ -370,7 +370,6 @@ usb_hub_port_setup(void *data)
         }
         if (ret <= 0)
         {
-            printf("No device found at port %d\n", port);
             // No device found.
             goto done;
         }

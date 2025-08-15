@@ -307,6 +307,8 @@ xhci_hub_detect(struct usbhub_s *hub, uint32_t port)
     return (portsc & XHCI_PORTSC_CCS) ? 1 : 0;
 }
 
+#define XHCI_RESET_TIMEOUT_MS 1000
+
 // Reset device on port
 static int
 xhci_hub_reset(struct usbhub_s *hub, uint32_t port)
@@ -332,6 +334,8 @@ xhci_hub_reset(struct usbhub_s *hub, uint32_t port)
         return -1;
     }
 
+    uint64_t start_ns = nanoTime();
+
     // Wait for device to complete reset and be enabled
     for (;;)
     {
@@ -343,9 +347,15 @@ xhci_hub_reset(struct usbhub_s *hub, uint32_t port)
             // Reset complete
             break;
         arch_pause();
+        if ((nanoTime() - start_ns) > (XHCI_RESET_TIMEOUT_MS * 1000000))
+        {
+            printf("XHCI reset: timeout waiting for port %d to reset\n", port);
+            return -1;
+        }
     }
 
     int rc = speed_from_xhci[xhci_get_field(portsc, XHCI_PORTSC_SPEED)];
+    printf("XHCI reset: port %d reset complete, speed %s\n", port, speed_name[xhci_get_field(portsc, XHCI_PORTSC_SPEED)]);
     return rc;
 }
 
@@ -479,6 +489,27 @@ configure_xhci(void *data)
     reg = xhci->op->usbcmd;
     reg |= XHCI_CMD_RS;
     xhci->op->usbcmd = reg;
+
+    for (uint32_t i = 0; i < xhci->ports; i++)
+    {
+        if (xhci->pr[i].portsc & XHCI_PORTSC_CCS)
+        {
+            if (!(xhci->pr[i].portsc & XHCI_PORTSC_PED))
+            {
+                printf("XHCI: Port %d is not enabled, resetting...\n", i);
+
+                // Reset the port
+                xhci->pr[i].portsc |= XHCI_PORTSC_PR;
+                while (!(xhci->pr[i].portsc & XHCI_PORTSC_PRC))
+                {
+                    // Wait for port to reset
+                    arch_pause();
+                }
+
+                xhci->pr[i].portsc &= ~XHCI_PORTSC_PRC;
+            }
+        }
+    }
 
     // Find devices
     int count = xhci_check_ports(xhci);

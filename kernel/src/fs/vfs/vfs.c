@@ -697,14 +697,14 @@ struct vt_mode current_vt_mode = {0};
 
 extern int pts_fsid;
 
+extern stdio_handle_t *global_stdio_handle;
+
 int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg)
 {
     do_update(node);
 
     if (node->fsid != pts_fsid)
     {
-        stdio_handle_t *stdio_handle = (stdio_handle_t *)node->handle;
-
         switch (cmd)
         {
         case TIOCGWINSZ:
@@ -722,10 +722,10 @@ int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg)
             return 0;
         case TIOCGPGRP:
             int *pid = (int *)arg;
-            *pid = stdio_handle->at_process_group_id;
+            *pid = global_stdio_handle->at_process_group_id;
             return 0;
         case TIOCSPGRP:
-            stdio_handle->at_process_group_id = *(int *)arg;
+            global_stdio_handle->at_process_group_id = *(int *)arg;
             return 0;
         case TCGETS:
             if (check_user_overflow(arg, sizeof(termios)))

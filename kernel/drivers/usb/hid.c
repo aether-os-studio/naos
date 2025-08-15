@@ -266,7 +266,7 @@ static void handle_key(struct keyevent *data)
             else
                 kb_char(get_kb_task(), k);
         }
-        else
+        else if (get_kb_task())
         {
             kb_char(get_kb_task(), k);
         }
