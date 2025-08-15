@@ -892,7 +892,11 @@ void task_exit_inner(task_t *task, int64_t code)
 
     if (task->ppid && task->pid != task->ppid && task->ppid < MAX_TASK_NUM && tasks[task->ppid])
     {
-        // tasks[task->ppid]->signal |= SIGMASK(SIGCHLD);
+        void *handler = tasks[task->ppid]->actions[SIGCHLD].sa_handler;
+        if (!(handler == SIG_DFL || handler == SIG_IGN))
+        {
+            tasks[task->ppid]->signal |= SIGMASK(SIGCHLD);
+        }
         task_unblock(tasks[task->ppid], SIGCHLD);
     }
 

@@ -210,6 +210,14 @@ typedef struct madt_io_apic MadtIOApic;
 typedef struct madt_local_apic MadtLocalApic;
 typedef struct facp_table acpi_facp_t;
 
+typedef struct madt_int_src_override
+{
+    uint8_t bus_source;
+    uint8_t irq_source;
+    uint32_t gsi_base;
+    uint16_t flags;
+} madt_int_src_override_t;
+
 extern uint64_t rsdp_paddr;
 
 void *find_table(const char *name);
