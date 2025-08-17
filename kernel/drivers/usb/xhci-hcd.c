@@ -476,8 +476,8 @@ configure_xhci(void *data)
         void *pad = alloc_frames_bytes(DEFAULT_PAGE_SIZE * spb);
         if (!spba || !pad)
         {
-            free(spba);
-            free(pad);
+            free_frames_bytes(spba, sizeof(*spba) * spb);
+            free_frames_bytes(pad, DEFAULT_PAGE_SIZE * spb);
             goto fail;
         }
         int i;
@@ -911,7 +911,7 @@ xhci_alloc_pipe(struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epde
         pipe->buf = malloc(pipe->pipe.maxpacket);
         if (!pipe->buf)
         {
-            free(pipe);
+            free_frames_bytes(pipe, sizeof(*pipe));
             return NULL;
         }
     }
@@ -953,7 +953,7 @@ xhci_alloc_pipe(struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epde
         int slotid = xhci_cmd_enable_slot(xhci);
         if (slotid < 0)
         {
-            free(dev);
+            free_frames_bytes(dev, size);
             goto fail;
         }
         memset(dev, 0, size);
@@ -972,7 +972,7 @@ xhci_alloc_pipe(struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epde
             }
             xhci->devs[slotid].ptr_low = 0;
             xhci->devs[slotid].ptr_high = 0;
-            free(dev);
+            free_frames_bytes(dev, size);
             goto fail;
         }
         pipe->slotid = slotid;
@@ -989,13 +989,13 @@ xhci_alloc_pipe(struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epde
             goto fail;
         }
     }
-    free(in);
+    free_frames_bytes(in, (sizeof(struct xhci_inctx) * 33) << xhci->context64);
     return &pipe->pipe;
 
 fail:
     free(pipe->buf);
-    free(pipe);
-    free(in);
+    free_frames_bytes(pipe, sizeof(*pipe));
+    free_frames_bytes(in, (sizeof(struct xhci_inctx) * 33) << xhci->context64);
     return NULL;
 }
 
@@ -1029,7 +1029,7 @@ xhci_realloc_pipe(struct usbdevice_s *usbdev, struct usb_pipe *upipe, struct usb
     if (cc != CC_SUCCESS)
     {
     }
-    free(in);
+    free_frames_bytes(in, (sizeof(struct xhci_inctx) * 33) << xhci->context64);
 
     return upipe;
 }
