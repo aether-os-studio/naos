@@ -9,6 +9,8 @@ crate-type = ["staticlib"]
 [dependencies]
 bit_field = "0.10.2"
 bitflags = "2.9.1"
+good_memory_allocator = "0.1.7"
+linked_list_allocator = "0.10.5"
 pci_types = "0.10.0"
 spin = "0.10.0"
 

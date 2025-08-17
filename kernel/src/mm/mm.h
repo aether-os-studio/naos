@@ -1,14 +1,10 @@
 #pragma once
 
-#include <mm/alloc/alloc.h>
 #include <libs/klibc.h>
 #include <mm/bitmap.h>
 #include <mm/hhdm.h>
 #include <mm/page_table.h>
 #include <arch/arch.h>
-
-#define KERNEL_HEAP_START 0xffffffffc0000000
-#define KERNEL_HEAP_SIZE 256 * 1024 * 1024
 
 #define MAX_USABLE_REGIONS_COUNT 128
 

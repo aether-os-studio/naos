@@ -269,7 +269,7 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence)
     if (real_offset < 0 && current_task->fd_info->fds[fd]->node->type & file_none && whence != SEEK_CUR)
         return (uint64_t)-EBADF;
 
-    switch (whence)
+    switch (whence & 3)
     {
     case SEEK_SET:
         current_task->fd_info->fds[fd]->offset = real_offset;
