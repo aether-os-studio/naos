@@ -1,5 +1,4 @@
 #include "msc.h"
-#include "hid.h"
 #include "usb.h"
 
 /****************************************************************
@@ -304,7 +303,7 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
         if (iface->bDescriptorType == USB_DT_INTERFACE)
         {
             num_iface--;
-            if (iface->bInterfaceClass == USB_CLASS_HUB || (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE && (iface->bInterfaceProtocol == US_PR_BULK || iface->bInterfaceProtocol == US_PR_UAS)) || (iface->bInterfaceClass == USB_CLASS_HID && iface->bInterfaceSubClass == USB_INTERFACE_SUBCLASS_BOOT))
+            if (iface->bInterfaceClass == USB_CLASS_HUB || (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE && (iface->bInterfaceProtocol == US_PR_BULK || iface->bInterfaceProtocol == US_PR_UAS)) || (iface->bInterfaceClass == USB_CLASS_HID))
                 break;
         }
         iface = (void *)iface + iface->bLength;
@@ -322,6 +321,7 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
     if (iface->bInterfaceClass == USB_CLASS_HUB)
     {
         printf("hub device detected\n");
+        goto fail;
     }
     else if (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE)
     {
@@ -329,13 +329,17 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
         if (iface->bInterfaceProtocol == US_PR_BULK)
             ret = usb_msc_setup(usbdev);
         if (iface->bInterfaceProtocol == US_PR_UAS)
+        {
             printf("unsupported USB device: UAS\n");
+            goto fail;
+        }
         //     ret = usb_uas_setup(usbdev);
     }
     else if (iface->bInterfaceClass == USB_CLASS_HID)
     {
         printk("hid device detected\n");
-        ret = usb_hid_setup(usbdev);
+        // ret = usb_hid_setup(usbdev);
+        goto fail;
     }
     else
     {
