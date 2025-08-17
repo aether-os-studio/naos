@@ -411,6 +411,8 @@ xhci_free_pipes(struct usb_xhci_s *xhci)
     // XXX - should walk list of pipes and free unused pipes.
 }
 
+void xhci_poll_task(uint64_t arg);
+
 static int
 configure_xhci(void *data)
 {
@@ -483,33 +485,14 @@ configure_xhci(void *data)
             spba[i] = translate_address(get_current_page_dir(false), (uint64_t)pad) + (i * DEFAULT_PAGE_SIZE);
         uint64_t spba_phys = translate_address(get_current_page_dir(false), (uint64_t)spba);
         xhci->devs[0].ptr_low = (uint32_t)(spba_phys & 0xFFFFFFFF);
-        xhci->devs[0].ptr_high = (uint32_t)(spba_phys >> 23);
+        xhci->devs[0].ptr_high = (uint32_t)(spba_phys >> 32);
     }
 
     reg = xhci->op->usbcmd;
     reg |= XHCI_CMD_RS;
     xhci->op->usbcmd = reg;
 
-    for (uint32_t i = 0; i < xhci->ports; i++)
-    {
-        if (xhci->pr[i].portsc & XHCI_PORTSC_CCS)
-        {
-            if (!(xhci->pr[i].portsc & XHCI_PORTSC_PED))
-            {
-                printf("XHCI: Port %d is not enabled, resetting...\n", i);
-
-                // Reset the port
-                xhci->pr[i].portsc |= XHCI_PORTSC_PR;
-                while (!(xhci->pr[i].portsc & XHCI_PORTSC_PRC))
-                {
-                    // Wait for port to reset
-                    arch_pause();
-                }
-
-                xhci->pr[i].portsc &= ~XHCI_PORTSC_PRC;
-            }
-        }
-    }
+    task_create("xhci_poll_task", xhci_poll_task, (uint64_t)xhci);
 
     // Find devices
     int count = xhci_check_ports(xhci);
@@ -693,28 +676,39 @@ static int xhci_ring_busy(struct xhci_ring *ring)
     return (eidx != nidx);
 }
 
+void xhci_poll_task(uint64_t arg)
+{
+    struct usb_xhci_s *xhci = (struct usb_xhci_s *)arg;
+
+    while (1)
+    {
+        xhci_process_events(xhci);
+
+        arch_pause();
+    }
+}
+
 // Wait for a ring to empty (all TRBs processed by hardware)
 static int xhci_event_wait(struct usb_xhci_s *xhci,
                            struct xhci_ring *ring,
                            uint32_t timeout)
 {
-    uint64_t timeout_ns = (uint64_t)timeout * 1000000; // Convert ms to ns
-    uint64_t start_ns = nanoTime();
+    // uint64_t timeout_ns = (uint64_t)timeout * 1000000; // Convert ms to ns
+    // uint64_t start_ns = nanoTime();
 
     for (;;)
     {
-        xhci_process_events(xhci);
         if (!xhci_ring_busy(ring))
         {
             uint32_t status = ring->evt.status;
             return (status >> 24) & 0xff;
         }
         arch_pause();
-        if (nanoTime() - start_ns > timeout_ns)
-        {
-            printf("XHCI event wait timeout\n");
-            return CC_INVALID; // Timeout
-        }
+        // if (nanoTime() - start_ns > timeout_ns)
+        // {
+        //     printf("XHCI event wait timeout\n");
+        //     return CC_INVALID; // Timeout
+        // }
     }
 }
 

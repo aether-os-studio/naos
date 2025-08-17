@@ -103,13 +103,33 @@ bool handle_relocations(Elf64_Rela *rela_start, Elf64_Sym *symtab, char *strtab,
     return true;
 }
 
-void *find_symbol_address(const char *symbol_name, Elf64_Sym *symtab, char *strtab, size_t symtabsz,
-                          Elf64_Ehdr *ehdr, uint64_t offset)
+void *find_symbol_address(const char *symbol_name, Elf64_Ehdr *ehdr, uint64_t offset)
 {
-    if (symbol_name == NULL || symtab == NULL || strtab == NULL)
+    if (symbol_name == NULL || ehdr == NULL)
         return NULL;
 
-    for (size_t i = 0; i <= symtabsz; i++)
+    Elf64_Sym *symtab = NULL;
+    char *strtab = NULL;
+
+    Elf64_Shdr *shdrs = (Elf64_Shdr *)((char *)ehdr + ehdr->e_shoff);
+    char *shstrtab = (char *)ehdr + shdrs[ehdr->e_shstrndx].sh_offset;
+
+    size_t symtabsz = 0;
+
+    for (int i = 0; i < ehdr->e_shnum; i++)
+    {
+        if (shdrs[i].sh_type == SHT_SYMTAB)
+        {
+            symtab = (Elf64_Sym *)((char *)ehdr + shdrs[i].sh_offset);
+            symtabsz = shdrs[i].sh_size;
+            strtab = (char *)ehdr + shdrs[shdrs[i].sh_link].sh_offset;
+            break;
+        }
+    }
+
+    size_t num_symbols = symtabsz / sizeof(Elf64_Sym);
+
+    for (size_t i = 0; i < symtabsz; i++)
     {
         Elf64_Sym *sym = &symtab[i];
         char *sym_name = &strtab[sym->st_name];
@@ -151,7 +171,7 @@ dlinit_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr, uint64_t offset)
     char *strtab = NULL;
     Elf64_Rela *rel = NULL;
     Elf64_Rela *jmprel = NULL;
-    size_t relsz = 0, symtabsz = 0, jmprel_sz = 0;
+    size_t relsz = 0, jmprel_sz = 0;
 
     while (dyn_entry->d_tag != DT_NULL)
     {
@@ -174,9 +194,6 @@ dlinit_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr, uint64_t offset)
         case DT_JMPREL:
             uint64_t jmprel_addr = dyn_entry->d_un.d_ptr + offset;
             jmprel = (Elf64_Rela *)jmprel_addr;
-            break;
-        case DT_SYMENT:
-            symtabsz = dyn_entry->d_un.d_val;
             break;
         case DT_PLTRELSZ:
             jmprel_sz = dyn_entry->d_un.d_val;
@@ -213,7 +230,7 @@ dlinit_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr, uint64_t offset)
         return NULL;
     }
 
-    void *entry = find_symbol_address("dlmain", symtab, strtab, symtabsz, ehdr, offset);
+    void *entry = find_symbol_address("dlmain", ehdr, offset);
 
     dlinit_t dlinit_func = (dlinit_t)entry;
     return dlinit_func;

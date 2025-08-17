@@ -51,9 +51,7 @@ int lookup_kallsyms(uint64_t addr, int level)
 
     if (index < kallsyms_num)
     {
-        char buffer[256];
-        sprintf(buffer, "function:%s() \t(+) %04d address:%#018lx\n", &str[kallsyms_names_index[index]], addr - kallsyms_address[index], addr);
-        serial_printk(buffer, strlen(buffer));
+        printk("function:%s() \t(+) %04d address:%#018lx\n", &str[kallsyms_names_index[index]], addr - kallsyms_address[index], addr);
         return 0;
     }
     else
@@ -64,12 +62,12 @@ void traceback(struct pt_regs *regs)
 {
     if (!check_user_overflow(regs->rbp, 0))
     {
-        serial_printk("Kernel traceback: Fault in userland.\n", 37);
+        printk("Kernel traceback: Fault in userland.\n");
         return;
     }
 
     uint64_t *rbp = (uint64_t *)regs->rbp;
-    serial_printk("======== Kernel traceback =======\n", 34);
+    printk("======== Kernel traceback =======\n");
 
     uint64_t ret_addr = regs->rip;
     for (int i = 0; i < 32; ++i)
@@ -83,7 +81,7 @@ void traceback(struct pt_regs *regs)
         ret_addr = *(rbp + 1);
         rbp = (uint64_t *)(*rbp);
     }
-    serial_printk("======== Kernel traceback end =======\n", 38);
+    printk("======== Kernel traceback end =======\n");
 }
 
 extern int vsprintf(char *buf, const char *fmt, va_list args);

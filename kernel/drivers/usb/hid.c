@@ -8,35 +8,6 @@
 #include "hid.h"
 #include "usb.h"
 
-struct pipe_node
-{
-    struct usb_pipe *pipe;
-    struct pipe_node *next;
-};
-
-struct pipe_node *keyboards = NULL;
-struct pipe_node *mice = NULL;
-
-static int add_pipe_node(struct pipe_node **list, struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epdesc)
-{
-    struct usb_pipe *pipe = usb_alloc_pipe(usbdev, epdesc);
-    if (!pipe)
-        return -1;
-
-    struct pipe_node *new_node = malloc(sizeof(struct pipe_node));
-    if (!new_node)
-    {
-        return -1;
-    }
-
-    new_node->pipe = pipe;
-
-    new_node->next = *list;
-    *list = new_node;
-
-    return 0;
-}
-
 /****************************************************************
  * Setup
  ****************************************************************/
@@ -78,7 +49,7 @@ struct keyevent
 
 #define MAX_KBD_EVENT 16
 
-static void usb_check_key();
+static void usb_check_key(uint64_t arg);
 
 static int usb_kbd_setup(struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epdesc)
 {
@@ -97,10 +68,9 @@ static int usb_kbd_setup(struct usbdevice_s *usbdev, struct usb_endpoint_descrip
     if (set_idle(usbdev->defpipe, KEYREPEATMS))
         return -1;
 
-    if (add_pipe_node(&keyboards, usbdev, epdesc))
-        return -1;
+    struct usb_pipe *pipe = usb_alloc_pipe(usbdev, epdesc);
 
-    task_create("usb-hid-keyboard", usb_check_key, 0);
+    task_create("usb-hid-keyboard", usb_check_key, (uint64_t)pipe);
 
     return 0;
 }
@@ -290,27 +260,17 @@ static void handle_key(struct keyevent *data)
 }
 
 // Check if a USB keyboard event is pending and process it if so.
-static void usb_check_key()
+static void usb_check_key(uint64_t arg)
 {
-    while (1)
+    struct usb_pipe *pipe = (struct usb_pipe *)arg;
+
+    for (;;)
     {
-        for (struct pipe_node *node = keyboards;
-             node;
-             node = node->next)
-        {
-            struct usb_pipe *pipe = node->pipe;
-
-            for (;;)
-            {
-                uint8_t data[MAX_KBD_EVENT];
-                int ret = usb_poll_intr(pipe, data);
-                if (ret)
-                    break;
-                handle_key((void *)data);
-            }
-        }
-
-        arch_pause();
+        uint8_t data[MAX_KBD_EVENT];
+        int ret = usb_poll_intr(pipe, data);
+        if (ret)
+            task_exit(ret);
+        handle_key((void *)data);
     }
 }
 
