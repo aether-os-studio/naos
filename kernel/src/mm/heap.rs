@@ -1,14 +1,17 @@
 use alloc::{collections::btree_map::BTreeMap, vec::Vec};
-use good_memory_allocator::SpinLockedAllocator;
+use linked_list_allocator::LockedHeap;
 use spin::Mutex;
 
 pub const KERNEL_HEAP_START: usize = 0xffffffffc0000000;
 pub const KERNEL_HEAP_SIZE: usize = 256 * 1024 * 1024;
 
-use crate::rust::bindings::bindings::{PT_FLAG_R, PT_FLAG_W, get_current_page_dir, map_page_range};
+use crate::rust::bindings::bindings::{
+    PT_FLAG_R, PT_FLAG_W, arch_disable_interrupt, arch_enable_interrupt, get_current_page_dir,
+    map_page_range,
+};
 
 #[global_allocator]
-static KERNEL_ALLOCATOR: SpinLockedAllocator = SpinLockedAllocator::empty();
+static KERNEL_ALLOCATOR: LockedHeap = LockedHeap::empty();
 
 static C_ALLOCATION_MAP: Mutex<BTreeMap<usize, (usize, usize, usize)>> =
     Mutex::new(BTreeMap::new());
@@ -16,8 +19,10 @@ static C_ALLOCATION_MAP: Mutex<BTreeMap<usize, (usize, usize, usize)>> =
 fn do_malloc(size: usize) -> usize {
     #[cfg(target_arch = "x86_64")]
     let irq = x86_64::instructions::interrupts::are_enabled();
-    #[cfg(target_arch = "x86_64")]
-    x86_64::instructions::interrupts::disable();
+    #[cfg(target_arch = "loongarch64")]
+    let irq = loongArch64::register::crmd::Crmd::from(loongArch64::register::crmd::read()).ie();
+
+    unsafe { arch_disable_interrupt() };
 
     let space: Vec<u8> = alloc::vec![0u8; size];
 
@@ -42,24 +47,14 @@ fn do_malloc(size: usize) -> usize {
         drop(guard);
         unsafe { core::slice::from_raw_parts_mut(vaddr as *mut u8, size) }.fill(0);
 
-        #[cfg(target_arch = "x86_64")]
-        {
-            if irq {
-                x86_64::instructions::interrupts::enable();
-            } else {
-                x86_64::instructions::interrupts::disable();
-            }
+        if irq {
+            unsafe { arch_enable_interrupt() };
         }
 
         return vaddr;
     } else {
-        #[cfg(target_arch = "x86_64")]
-        {
-            if irq {
-                x86_64::instructions::interrupts::enable();
-            } else {
-                x86_64::instructions::interrupts::disable();
-            }
+        if irq {
+            unsafe { arch_enable_interrupt() };
         }
 
         return 0;
@@ -88,8 +83,10 @@ unsafe extern "C" fn realloc(old_ptr: *mut core::ffi::c_void, new_size: usize) -
 
     #[cfg(target_arch = "x86_64")]
     let irq = x86_64::instructions::interrupts::are_enabled();
-    #[cfg(target_arch = "x86_64")]
-    x86_64::instructions::interrupts::disable();
+    #[cfg(target_arch = "loongarch64")]
+    let irq = loongArch64::register::crmd::Crmd::from(loongArch64::register::crmd::read()).ie();
+
+    arch_disable_interrupt();
 
     let vaddr = old_ptr as usize;
     let guard = C_ALLOCATION_MAP.lock();
@@ -109,13 +106,10 @@ unsafe extern "C" fn realloc(old_ptr: *mut core::ffi::c_void, new_size: usize) -
     drop(guard);
     drop(Vec::from_raw_parts(old_vaddr as *mut u8, old_len, old_cap));
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        if irq {
-            x86_64::instructions::interrupts::enable();
-        } else {
-            x86_64::instructions::interrupts::disable();
-        }
+    if irq {
+        use crate::rust::bindings::bindings::arch_enable_interrupt;
+
+        arch_enable_interrupt();
     }
 
     new_ptr as usize
@@ -125,8 +119,8 @@ unsafe extern "C" fn realloc(old_ptr: *mut core::ffi::c_void, new_size: usize) -
 unsafe extern "C" fn free(ptr: *const core::ffi::c_void) {
     #[cfg(target_arch = "x86_64")]
     let irq = x86_64::instructions::interrupts::are_enabled();
-    #[cfg(target_arch = "x86_64")]
-    x86_64::instructions::interrupts::disable();
+    #[cfg(target_arch = "loongarch64")]
+    let irq = loongArch64::register::crmd::Crmd::from(loongArch64::register::crmd::read()).ie();
 
     let vaddr = ptr as usize;
     let mut guard = C_ALLOCATION_MAP.lock();
@@ -139,13 +133,10 @@ unsafe extern "C" fn free(ptr: *const core::ffi::c_void) {
     let (vaddr, len, cap) = p.unwrap();
     drop(Vec::from_raw_parts(vaddr as *mut u8, len, cap));
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        if irq {
-            x86_64::instructions::interrupts::enable();
-        } else {
-            x86_64::instructions::interrupts::disable();
-        }
+    if irq {
+        use crate::rust::bindings::bindings::arch_enable_interrupt;
+
+        arch_enable_interrupt();
     }
 }
 
@@ -167,5 +158,7 @@ unsafe extern "C" fn heap_init() {
         .fill(0);
     }
 
-    KERNEL_ALLOCATOR.init(KERNEL_HEAP_START, KERNEL_HEAP_SIZE);
+    KERNEL_ALLOCATOR
+        .lock()
+        .init(KERNEL_HEAP_START as *mut u8, KERNEL_HEAP_SIZE);
 }

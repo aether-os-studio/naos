@@ -149,6 +149,7 @@ ifeq ($(ARCH),loongarch64)
     override CFLAGS += \
         -march=loongarch64 \
         -mabi=lp64d \
+        -gdwarf-2 \
         -D__loongarch64__
     override LDFLAGS += \
         -Wl,-m,elf64loongarch \

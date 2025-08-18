@@ -9,8 +9,8 @@ crate-type = ["staticlib"]
 [dependencies]
 bit_field = "0.10.2"
 bitflags = "2.9.1"
-good_memory_allocator = "0.1.7"
 linked_list_allocator = "0.10.5"
+loongArch64 = "0.2.5"
 pci_types = "0.10.0"
 spin = "0.10.0"
 
@@ -32,6 +32,9 @@ uart_16550 = "0.4.0"
 x86_64 = "0.15.2"
 
 [target.'cfg(target_arch = "aarch64")'.dependencies]
+
+[target.'cfg(target_arch = "loongarch64")'.dependencies]
+loongArch64 = "0.2.5"
 
 [build-dependencies]
 bindgen = "0.72.0"

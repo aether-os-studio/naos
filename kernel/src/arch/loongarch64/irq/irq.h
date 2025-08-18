@@ -1,5 +1,7 @@
 #pragma once
 
+#include <libs/klibc.h>
+
 #define ARCH_TIMER_IRQ 0 // TODO
 
 void arch_enable_interrupt();

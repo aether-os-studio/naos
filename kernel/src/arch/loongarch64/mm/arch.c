@@ -10,20 +10,20 @@ uint64_t *get_current_page_dir(bool user)
     uint64_t page_table_base = 0;
     if (user)
     {
-        asm volatile("csrrd %0, 0x1d" // PGDL
+        asm volatile("csrrd %0, 0x19" // PGDL
                      : "=r"(page_table_base));
     }
     else
     {
-        asm volatile("csrrd %0, 0x1c" // PGDH
+        asm volatile("csrrd %0, 0x1a" // PGDH
                      : "=r"(page_table_base));
     }
-    return (uint64_t *)phys_to_virt(page_table_base);
+    return (uint64_t *)phys_to_virt(page_table_base & ~DEFAULT_PAGE_SIZE);
 }
 
 uint64_t get_arch_page_table_flags(uint64_t flags)
 {
-    uint64_t result = ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_GLOBAL;
+    uint64_t result = ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_GLOBAL | ARCH_PT_FLAG_MAT_CC;
 
     if ((flags & PT_FLAG_W) != 0)
     {
@@ -45,11 +45,11 @@ uint64_t get_arch_page_table_flags(uint64_t flags)
 
 void arch_flush_tlb(uint64_t vaddr)
 {
-    uint64_t dummy = 0;
+    // vaddr &= ((~DEFAULT_PAGE_SIZE) << 1);
     asm volatile(
-        "invtlb 0x1, %0, %1\n\t"
+        "invtlb 0x6, $zero, %0\n\t"
         "dbar 0\n\t"
         :
-        : "r"(vaddr), "r"(dummy)
+        : "r"(vaddr)
         : "memory");
 }

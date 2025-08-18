@@ -233,7 +233,7 @@ run-loongarch64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
 		-device qemu-xhci \
 		-device usb-kbd \
 		-device usb-mouse \
-		-drive if=pflash,unit=0,format=raw,file=ovmf/ovmf-code-$(ARCH).fd,readonly=on \
+		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-hda $(IMAGE_NAME).img \
 		$(QEMUFLAGS)
 

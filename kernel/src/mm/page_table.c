@@ -41,7 +41,7 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr, uint64_t flag
     if (!kernel_page_dir)
         kernel_page_dir = pgdir;
 
-    uint64_t indexs[ARCH_MAX_PT_LEVEL];
+    uint64_t indexs[ARCH_MAX_PT_LEVEL] = {0};
     for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++)
     {
         indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(vaddr, i + 1);
@@ -139,7 +139,13 @@ static page_table_t *copy_page_table_recursive(page_table_t *source_table, int l
 
     uint64_t phy_frame = alloc_frames(1);
     page_table_t *new_table = (page_table_t *)phys_to_virt(phy_frame);
-    for (uint64_t i = 0; i < (all_copy ? 512 : (level == ARCH_MAX_PT_LEVEL ? 256 : 512)); i++)
+    for (uint64_t i = 0; i <
+#if defined(__x86_64__)
+                         (all_copy ? 512 : (level == ARCH_MAX_PT_LEVEL ? 256 : 512));
+#else
+                         512;
+#endif
+         i++)
     {
         if (ARCH_PT_IS_LARGE(phys_to_virt(source_table)->entries[i].value))
         {
@@ -164,7 +170,14 @@ static void free_page_table_recursive(page_table_t *table, int level)
         return;
     }
 
-    for (int i = 0; i < (level == ARCH_MAX_PT_LEVEL ? 256 : 512); i++)
+    for (int i = 0; i <
+
+#if defined(__x86_64__)
+                    (level == ARCH_MAX_PT_LEVEL ? 256 : 512);
+#else
+                    512;
+#endif
+         i++)
     {
         page_table_t *page_table_next = (page_table_t *)phys_to_virt(table->entries[i].value & ARCH_ADDR_MASK);
         free_page_table_recursive(page_table_next, level - 1);
@@ -219,6 +232,8 @@ void page_table_init()
     task_mm_info_t *new_mm_info = clone_page_table(&kernel_mm_info, 0);
 #if defined(__x86_64__)
     asm volatile("movq %0, %%cr3" ::"r"(new_mm_info->page_table_addr));
+#elif defined(__loongarch64)
+    asm volatile("csrwr %0, 0x1a" ::"r"(new_mm_info->page_table_addr));
 #endif
     kernel_page_dir = (uint64_t *)phys_to_virt(new_mm_info->page_table_addr);
     free(new_mm_info);

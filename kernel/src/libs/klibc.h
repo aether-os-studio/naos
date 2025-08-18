@@ -426,47 +426,30 @@ static inline void spin_lock(spinlock_t *lock)
 {
     uint32_t tmp;
 
-    // Save current CRMD value and disable interrupts
-    asm volatile(
-        "csrrd %0, 0x0\n"     // Read CRMD into tmp
-        "st.w   %0, %1\n"     // Store original CRMD to lock->crmd
-        "li.w   %0, -0x2\n"   // Create mask ~CRMD_IE (interrupt enable bit)
-        "csrxchg %0, %0, 0x0" // Clear IE bit in CRMD
-        : "=&r"(tmp)
-        : "m"(lock->crmd)
-        : "memory");
+    uint64_t __crmd;
+    __asm__ __volatile__(
+        "csrrd %0, 0x1\n\t"
+        : "=r"(__crmd));
+    lock->crmd = __crmd;
+    __crmd &= ~0x4UL;
+    __asm__ __volatile__(
+        "csrwr %0, 0x1"
+        : : "r"(__crmd));
 
-    // Atomic compare and exchange loop
-    asm volatile(
-        "1:\n"
-        "ll.w    %0, %1\n"       // Load lock value
-        "bnez    %0, 1b\n"       // If lock is held, keep spinning
-        "ori     %0, $zero, 1\n" // Set tmp to 1
-        "sc.w    %0, %1\n"       // Try to acquire lock
-        "beqz    %0, 1b\n"       // If sc.w failed, retry
-        : "=&r"(tmp), "+m"(lock->lock)::"memory");
-
-    __asm__ __volatile__("dbar 0" ::: "memory");
+    /* 自旋等待 */
+    while (__sync_lock_test_and_set(&lock->lock, 1))
+    {
+        while (lock->lock)
+            ;
+    }
 }
 
 static inline void spin_unlock(spinlock_t *lock)
 {
-    uint32_t tmp;
-
-    __asm__ __volatile__("dbar 0" ::: "memory");
-
-    // Release the lock
-    asm volatile(
-        "st.w $zero, %0"
-        : "=m"(lock->lock)::"memory");
-
-    // Restore original CRMD value
-    asm volatile(
-        "ld.w   %0, %1\n"  // Load saved CRMD value
-        "csrwr  %0, 0x0\n" // Restore CRMD
-        : "=&r"(tmp)
-        : "m"(lock->crmd)
-        : "memory");
+    __sync_lock_release(&lock->lock);
+    __asm__ __volatile__(
+        "csrwr %0, 0x1"
+        : : "r"(lock->crmd));
 }
 
 #endif
