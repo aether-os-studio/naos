@@ -4,7 +4,7 @@
 // --------------------------------------------------------------
 // configuration
 
-#define XHCI_RING_ITEMS 16
+#define XHCI_RING_ITEMS 64
 #define XHCI_RING_SIZE (XHCI_RING_ITEMS * sizeof(struct xhci_trb))
 
 /*
@@ -480,7 +480,7 @@ configure_xhci(void *data)
         }
         int i;
         for (i = 0; i < spb; i++)
-            spba[i] = translate_address(get_current_page_dir(false), (uint64_t)pad) + (i * DEFAULT_PAGE_SIZE);
+            spba[i] = translate_address(get_current_page_dir(false), (uint64_t)pad + (i * DEFAULT_PAGE_SIZE));
         uint64_t spba_phys = translate_address(get_current_page_dir(false), (uint64_t)spba);
         xhci->devs[0].ptr_low = (uint32_t)(spba_phys & 0xFFFFFFFF);
         xhci->devs[0].ptr_high = (uint32_t)(spba_phys >> 32);
@@ -1096,14 +1096,20 @@ int xhci_probe(pci_device_t *dev, uint32_t vendor_device_id)
 {
     printf("Found XHCI controller.\n");
 
-    if (dev->vendor_id == 0x8086 && dev->device_id == 0x1e31)
+    if (dev->vendor_id == 0x8086)
     {
-#define USB3_PSSEN 0xd0
-#define XUSB2PR 0xd8
         printf("Found Intel XHCI controller.\n");
 
-        dev->op->write(dev->bus, dev->slot, dev->func, dev->segment, USB3_PSSEN, 0xffffffff);
-        dev->op->write(dev->bus, dev->slot, dev->func, dev->segment, XUSB2PR, 0xffffffff);
+        uint32_t val = dev->op->read(dev->bus, dev->slot, dev->func, dev->segment, 0xdc);
+        dev->op->write(dev->bus, dev->slot, dev->func, dev->segment, 0xdc, val | (1UL << 9));
+
+        if (dev->device_id == 0x1e31)
+        {
+#define USB3_PSSEN 0xd0
+#define XUSB2PR 0xd8
+            dev->op->write(dev->bus, dev->slot, dev->func, dev->segment, USB3_PSSEN, 0xffffffff);
+            dev->op->write(dev->bus, dev->slot, dev->func, dev->segment, XUSB2PR, 0xffffffff);
+        }
     }
 
     uint64_t mmio_phys = dev->bars[0].address;
