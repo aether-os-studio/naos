@@ -61,7 +61,7 @@ uint64_t usb_msc_read_blocks(void *dev, uint64_t lba, void *buf, uint64_t count)
         count & 0xFF,
         0};
 
-    return usb_msc_transfer(dev, cmd, buf, count * ((usb_msc_device *)dev)->block_size, true) == 0 ? count : 0;
+    return usb_msc_transfer(dev, cmd, buf, count * (((usb_msc_device *)dev)->block_size ? ((usb_msc_device *)dev)->block_size : 512), true) == 0 ? count : 0;
 }
 
 uint64_t usb_msc_write_blocks(void *dev, uint64_t lba, void *buf, uint64_t count)
@@ -78,7 +78,7 @@ uint64_t usb_msc_write_blocks(void *dev, uint64_t lba, void *buf, uint64_t count
         count & 0xFF,
         0};
 
-    return usb_msc_transfer(dev, cmd, buf, count * ((usb_msc_device *)dev)->block_size, false) == 0 ? count : 0;
+    return usb_msc_transfer(dev, cmd, buf, count * (((usb_msc_device *)dev)->block_size ? ((usb_msc_device *)dev)->block_size : 512), false) == 0 ? count : 0;
 }
 
 int usb_msc_setup(struct usbdevice_s *usbdev)
@@ -111,7 +111,7 @@ int usb_msc_setup(struct usbdevice_s *usbdev)
         dev->block_size = be32toh(*(uint32_t *)(capacity + 4));
     }
 
-    regist_blkdev("usb msc", dev, dev->block_size, dev->block_count * dev->block_size, DEFAULT_PAGE_SIZE * 8, usb_msc_read_blocks, usb_msc_write_blocks);
+    regist_blkdev("usb msc", dev, dev->block_size, dev->block_count * dev->block_size, MIN(inpipe->maxpacket, outpipe->maxpacket), usb_msc_read_blocks, usb_msc_write_blocks);
 
     return 0;
 fail:

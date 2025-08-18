@@ -10,7 +10,7 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size, ui
 {
     blk_devs[blk_devnum].name = strdup((const char *)name);
     blk_devs[blk_devnum].ptr = ptr;
-    blk_devs[blk_devnum].block_size = block_size;
+    blk_devs[blk_devnum].block_size = block_size ? block_size : 512;
     blk_devs[blk_devnum].max_op_size = max_op_size;
     blk_devs[blk_devnum].size = size;
     blk_devs[blk_devnum].read = read;
