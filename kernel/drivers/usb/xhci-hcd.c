@@ -626,12 +626,12 @@ static void xhci_process_events(struct usb_xhci_s *xhci)
         case ER_TRANSFER:
         case ER_COMMAND_COMPLETE:
         {
-            struct xhci_trb *rtrb = (void *)(etrb->ptr_low | (uint64_t)etrb->ptr_high << 32);
+            struct xhci_trb *rtrb = (void *)phys_to_virt(etrb->ptr_low | (uint64_t)etrb->ptr_high << 32);
             struct xhci_ring *ring = XHCI_RING(rtrb);
             struct xhci_trb *evt = &ring->evt;
             uint32_t eidx = rtrb - ring->ring + 1;
-            memcpy(phys_to_virt(evt), phys_to_virt(etrb), sizeof(*etrb));
-            phys_to_virt(ring)->eidx = eidx;
+            memcpy(evt, etrb, sizeof(*etrb));
+            ring->eidx = eidx;
             break;
         }
         case ER_PORT_STATUS_CHANGE:
@@ -645,6 +645,7 @@ static void xhci_process_events(struct usb_xhci_s *xhci)
             break;
         }
         default:
+            printf("%s: Unknown event type: %d\n", __func__, evt_type);
             break;
         }
 
@@ -688,12 +689,12 @@ static int xhci_event_wait(struct usb_xhci_s *xhci,
             uint32_t status = ring->evt.status;
             return (status >> 24) & 0xff;
         }
-        arch_pause();
         if (nanoTime() - start_ns > timeout_ns)
         {
             printf("XHCI event wait timeout\n");
             return CC_INVALID; // Timeout
         }
+        arch_pause();
     }
 }
 
@@ -1043,6 +1044,12 @@ static void xhci_xfer_normal(struct xhci_pipe *pipe,
 
 int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data, int datalen)
 {
+    if (!p)
+    {
+        printf("%s: Invalid usb pipe\n", __func__);
+        return -1;
+    }
+
     struct xhci_pipe *pipe = container_of(p, struct xhci_pipe, pipe);
     struct usb_xhci_s *xhci = container_of(pipe->pipe.cntl, struct usb_xhci_s, usb);
 

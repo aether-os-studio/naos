@@ -131,7 +131,7 @@ usb_find_desc(struct usbdevice_s *usbdev, int type, int dir)
     struct usb_endpoint_descriptor *epdesc = (void *)&usbdev->iface[1];
     for (;;)
     {
-        if ((void *)epdesc >= (void *)usbdev->iface + usbdev->imax || epdesc->bDescriptorType == USB_DT_INTERFACE)
+        if ((void *)epdesc >= (void *)usbdev->iface + usbdev->imax)
         {
             return NULL;
         }
