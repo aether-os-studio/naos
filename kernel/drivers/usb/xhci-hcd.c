@@ -1159,6 +1159,8 @@ pci_driver_t xhci_hcd_driver = {
 
 __attribute__((visibility("default"))) int dlmain()
 {
+    memset(usbdevs, 0, sizeof(usbdevs));
+
     regist_pci_driver(&xhci_hcd_driver);
 
     return 0;

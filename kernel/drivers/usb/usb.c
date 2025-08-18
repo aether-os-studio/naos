@@ -1,6 +1,8 @@
 #include "msc.h"
 #include "usb.h"
 
+struct usbdevice_s *usbdevs[MAX_USBDEV_NUM];
+
 /****************************************************************
  * Controller function wrappers
  ****************************************************************/
@@ -152,6 +154,19 @@ get_device_info8(struct usb_pipe *pipe, struct usb_device_descriptor *dinfo)
     return usb_send_default_control(pipe, &req, dinfo);
 }
 
+// Get the all bytes of the device descriptor.
+static int
+get_device_info(struct usb_pipe *pipe, struct usb_device_descriptor *dinfo)
+{
+    struct usb_ctrlrequest req;
+    req.bRequestType = USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_DEVICE;
+    req.bRequest = USB_REQ_GET_DESCRIPTOR;
+    req.wValue = USB_DT_DEVICE << 8;
+    req.wIndex = 0;
+    req.wLength = sizeof(struct usb_device_descriptor);
+    return usb_send_default_control(pipe, &req, dinfo);
+}
+
 static struct usb_config_descriptor *
 get_device_config(struct usb_pipe *pipe)
 {
@@ -263,6 +278,8 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
 {
     // Set the max packet size for endpoint 0 of this device.
     struct usb_device_descriptor dinfo;
+    dinfo.idVendor = 0xFFFF;
+    dinfo.idProduct = 0xFFFF;
     int ret = get_device_info8(usbdev->defpipe, &dinfo);
     if (ret)
         return 0;
@@ -271,6 +288,45 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
         maxpacket = 1 << dinfo.bMaxPacketSize0;
     if (maxpacket < 8)
         return 0;
+
+    if (maxpacket >= sizeof(struct usb_device_descriptor))
+    {
+        int ret = get_device_info(usbdev->defpipe, &dinfo);
+        if (ret)
+            return 0;
+    }
+
+    usbdev->vendor_id = dinfo.idVendor;
+    usbdev->product_id = dinfo.idProduct;
+
+    for (int i = 0; i < MAX_USBDEV_NUM; i++)
+    {
+        if (usbdevs[i])
+        {
+            struct usbdevice_s *dev = usbdevs[i];
+            if (dev->vendor_id != 0xFFFF && dev->product_id != 0xFFFF && dev->vendor_id == usbdev->vendor_id && dev->product_id == usbdev->product_id && dev->port == usbdev->port)
+            {
+                printf("Found duplicate usb device, vendor: %#04x, product: %#04x\n", dev->vendor_id, dev->product_id);
+                // The same usb device
+                if (dev->speed >= usbdev->speed)
+                {
+                    return 0;
+                }
+                else
+                {
+                    if (dev->iface->bInterfaceClass == USB_CLASS_MASS_STORAGE)
+                    {
+                        if (dev->iface->bInterfaceProtocol == US_PR_BULK)
+                        {
+                            printf("Unregisting msc device\n");
+                            unregist_blkdev(dev->desc);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     struct usb_endpoint_descriptor epdesc = {
         .wMaxPacketSize = maxpacket,
         .bmAttributes = USB_ENDPOINT_XFER_CONTROL,
@@ -406,16 +462,32 @@ usb_hub_port_setup(void *data)
     int count = configure_usb_device(usbdev);
     usb_free_pipe(usbdev, usbdev->defpipe);
     if (!count)
+    {
         hub->op->disconnect(hub, port);
+        free(usbdev);
+        usbdev = NULL;
+    }
     hub->devcount += count;
 done:
     hub->threads--;
-    free(usbdev);
+
+    for (int i = 0; i < MAX_USBDEV_NUM; i++)
+    {
+        if (!usbdevs[i])
+        {
+            usbdevs[i] = usbdev;
+            break;
+        }
+    }
+
+    // free(usbdev);
     return;
 
 resetfail:
     printf("Reset USB device failed at port %d\n", port);
     spin_unlock(&hub->cntl->resetlock);
+    free(usbdev);
+    usbdev = NULL;
     goto done;
 }
 

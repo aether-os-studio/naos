@@ -86,6 +86,8 @@ int usb_msc_setup(struct usbdevice_s *usbdev)
     usb_msc_device *dev = malloc(sizeof(usb_msc_device));
     dev->udev = usbdev;
 
+    usbdev->desc = dev;
+
     struct usb_pipe *inpipe = NULL, *outpipe = NULL;
     struct usb_endpoint_descriptor *indesc = usb_find_desc(
         usbdev, USB_ENDPOINT_XFER_BULK, USB_DIR_IN);
@@ -109,7 +111,7 @@ int usb_msc_setup(struct usbdevice_s *usbdev)
         dev->block_size = be32toh(*(uint32_t *)(capacity + 4));
     }
 
-    regist_blkdev("usb msc", dev, dev->block_size, dev->block_count * dev->block_size, DEFAULT_PAGE_SIZE * 16, usb_msc_read_blocks, usb_msc_write_blocks);
+    regist_blkdev("usb msc", dev, dev->block_size, dev->block_count * dev->block_size, DEFAULT_PAGE_SIZE * 8, usb_msc_read_blocks, usb_msc_write_blocks);
 
     return 0;
 fail:

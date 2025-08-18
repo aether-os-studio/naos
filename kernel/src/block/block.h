@@ -19,6 +19,7 @@ extern blkdev_t blk_devs[MAX_BLKDEV_NUM];
 extern uint64_t blk_devnum;
 
 void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size, uint64_t max_op_size, uint64_t (*read)(void *data, uint64_t lba, void *buffer, uint64_t size), uint64_t (*write)(void *data, uint64_t lba, void *buffer, uint64_t size));
+void unregist_blkdev(void *ptr);
 
 enum
 {

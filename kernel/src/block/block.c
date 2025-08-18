@@ -18,6 +18,25 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size, ui
     blk_devnum++;
 }
 
+void unregist_blkdev(void *ptr)
+{
+    for (int i = 0; i < MAX_BLKDEV_NUM; i++)
+    {
+        if (blk_devs[i].ptr == ptr)
+        {
+            free(blk_devs[i].name);
+            blk_devs[i].ptr = NULL;
+            blk_devs[i].block_size = 0;
+            blk_devs[i].max_op_size = 0;
+            blk_devs[i].size = 0;
+            blk_devs[i].read = NULL;
+            blk_devs[i].write = NULL;
+            memmove(&blk_devs[i], &blk_devs[i + 1], (blk_devnum - i - 1) * sizeof(blkdev_t));
+            blk_devnum--;
+        }
+    }
+}
+
 uint64_t blkdev_ioctl(uint64_t drive, uint64_t cmd, uint64_t arg)
 {
     switch (cmd)

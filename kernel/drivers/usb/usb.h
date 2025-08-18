@@ -21,6 +21,8 @@ struct usb_pipe
     uint8_t eptype;
 };
 
+#define MAX_USBDEV_NUM 256
+
 // Common information for usb devices.
 struct usbdevice_s
 {
@@ -32,7 +34,14 @@ struct usbdevice_s
     int imax;
     uint8_t speed;
     uint8_t devaddr;
+
+    uint16_t vendor_id;
+    uint16_t product_id;
+
+    void *desc;
 };
+
+extern struct usbdevice_s *usbdevs[MAX_USBDEV_NUM];
 
 // Common information for usb controllers.
 struct usb_s
