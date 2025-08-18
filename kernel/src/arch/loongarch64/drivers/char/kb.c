@@ -1,6 +1,8 @@
 #include "kb.h"
 #include <task/task.h>
 
+task_t *kb_task = NULL;
+
 void kb_char(task_t *task, char ch)
 {
 }

@@ -225,7 +225,7 @@ run-riscv64: assets/ovmf-code-$(ARCH).fd all
 		$(QEMUFLAGS)
 
 .PHONY: run-loongarch64
-run-loongarch64: assets/ovmf-code-$(ARCH).fd all
+run-loongarch64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
 	qemu-system-$(ARCH) \
 		-M virt \
 		-cpu la464 \

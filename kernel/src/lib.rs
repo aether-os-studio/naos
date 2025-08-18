@@ -31,6 +31,7 @@ pub fn ref_to_mut<T>(x: &T) -> &mut T {
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
+    #[cfg(target_arch = "x86_64")]
     serial_println!("{}", info);
     println!("{}", info);
 
