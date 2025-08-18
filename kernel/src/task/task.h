@@ -3,6 +3,7 @@
 #include <arch/arch.h>
 #include <task/signal.h>
 #include <fs/termios.h>
+#include <mm/bitmap.h>
 
 #define AT_NULL 0
 #define AT_IGNORE 1
@@ -51,8 +52,6 @@
 
 #define MAX_FD_NUM 256
 
-#define current_task arch_get_current()
-
 #define CLONE_VM 0x00000100             /* set if VM shared between processes */
 #define CLONE_FS 0x00000200             /* set if fs info shared between processes */
 #define CLONE_FILES 0x00000400          /* set if open files shared between processes */
@@ -93,6 +92,18 @@ typedef struct arch_context arch_context_t;
 struct vfs_node;
 typedef struct vfs_node *vfs_node_t;
 
+struct rlimit
+{
+    size_t rlim_cur;
+    size_t rlim_max;
+};
+
+struct timeval
+{
+    long tv_sec;
+    long tv_usec;
+};
+
 struct itimerval
 {
     struct timeval it_interval;
@@ -124,7 +135,6 @@ typedef struct kernel_timer
 
 #define MAX_TIMERS_NUM 8
 
-struct rlimit;
 struct fd;
 typedef struct fd fd_t;
 
@@ -178,6 +188,10 @@ typedef struct task
     bool child_vfork_done;
     bool is_vfork;
 } task_t;
+
+extern task_t *arch_get_current();
+
+#define current_task arch_get_current()
 
 void sched_update_itimer();
 void sched_update_timerfd();

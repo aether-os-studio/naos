@@ -3,6 +3,7 @@
 #include <fs/fs_syscall.h>
 #include <fs/vfs/pipe.h>
 #include <net/net_syscall.h>
+#include <drivers/kernel_logger.h>
 
 char *at_resolve_pathname(int dirfd, char *pathname)
 {

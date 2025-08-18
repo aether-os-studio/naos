@@ -105,8 +105,6 @@ typedef struct unix_socket_pair
 
 #define MAX_CONNECTIONS 16
 
-struct timeval;
-
 typedef struct socket
 {
     struct socket *next;

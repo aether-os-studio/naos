@@ -453,18 +453,6 @@ struct fb_var_screeninfo
     uint32_t reserved[4]; /* reserved for future compatibility */
 };
 
-struct rlimit
-{
-    size_t rlim_cur;
-    size_t rlim_max;
-};
-
-struct timeval
-{
-    long tv_sec;
-    long tv_usec;
-};
-
 #define FBIOGET_VSCREENINFO 0x4600
 #define FBIOPUT_VSCREENINFO 0x4601
 #define FBIOGET_FSCREENINFO 0x4602

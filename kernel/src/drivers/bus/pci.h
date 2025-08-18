@@ -15,6 +15,10 @@
 
 #include <arch/aarch64/acpi/acpi.h>
 
+#elif defined(__loongarch64)
+
+#include <arch/loongarch64/acpi/acpi.h>
+
 #endif
 
 #define PCI_CONF_VENDOR 0X0   // Vendor ID
@@ -79,7 +83,7 @@ extern uint32_t pci_device_number;
 
 uint32_t pci_enumerate_capability_list(pci_device_t *pci_dev, uint32_t cap_type);
 
-#if defined(__x86_64__) || defined(__aarch64__)
+#if defined(__x86_64__) || defined(__aarch64__) || defined(__loongarch64)
 
 #define PCI_MCFG_MAX_ENTRIES_LEN 1024
 

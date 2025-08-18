@@ -1,5 +1,6 @@
 #include "dlinker.h"
 #include <mm/mm.h>
+#include <drivers/kernel_logger.h>
 
 uint64_t kernel_modules_load_offset = 0;
 

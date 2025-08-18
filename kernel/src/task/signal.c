@@ -268,9 +268,9 @@ void sys_sigreturn(struct pt_regs *regs)
         "movq %0, %%rsp\n\t"
         "jmp ret_from_exception" ::"r"(current_task->arch_context->ctx));
 #elif defined(__aarch64__)
+#elif defined(__loongarch64)
 #else
     // todo: other architectures
-    return NULL;
 #endif
 }
 

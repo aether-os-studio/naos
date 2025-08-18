@@ -2,6 +2,7 @@
 
 #include <libs/klibc.h>
 #include <mm/mm.h>
+#include <drivers/kernel_logger.h>
 
 #pragma GCC system_header
 

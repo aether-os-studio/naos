@@ -147,9 +147,9 @@ static page_table_t *copy_page_table_recursive(page_table_t *source_table, int l
             continue;
         }
 
-        page_table_t *source_page_table_next = (page_table_t *)(phys_to_virt(source_table)->entries[i].value & 0x00007ffffffff000);
+        page_table_t *source_page_table_next = (page_table_t *)(phys_to_virt(source_table)->entries[i].value & ARCH_ADDR_MASK);
         page_table_t *new_page_table = copy_page_table_recursive(source_page_table_next, level - 1, all_copy, level != ARCH_MAX_PT_LEVEL ? kernel_space : i >= 256);
-        new_table->entries[i].value = (uint64_t)virt_to_phys((uint64_t)new_page_table) | (phys_to_virt(source_table)->entries[i].value & 0xFFFF000000000FFF);
+        new_table->entries[i].value = (uint64_t)virt_to_phys((uint64_t)new_page_table) | (phys_to_virt(source_table)->entries[i].value & ~ARCH_ADDR_MASK);
     }
     return new_table;
 }
@@ -166,7 +166,7 @@ static void free_page_table_recursive(page_table_t *table, int level)
 
     for (int i = 0; i < (level == ARCH_MAX_PT_LEVEL ? 256 : 512); i++)
     {
-        page_table_t *page_table_next = (page_table_t *)phys_to_virt(table->entries[i].value & 0x00007ffffffff000);
+        page_table_t *page_table_next = (page_table_t *)phys_to_virt(table->entries[i].value & ARCH_ADDR_MASK);
         free_page_table_recursive(page_table_next, level - 1);
     }
     free_frames((uint64_t)virt_to_phys((uint64_t)table), 1);
