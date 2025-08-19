@@ -51,7 +51,7 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr, uint64_t flag
     {
         uint64_t index = indexs[i];
         uint64_t addr = pgdir[index];
-        if (!ARCH_PT_IS_TABLE(addr))
+        if (!ARCH_PT_IS_TABLE(addr) || !(addr & ARCH_ADDR_MASK))
         {
             uint64_t a = alloc_frames(1);
             memset((uint64_t *)phys_to_virt(a), 0, DEFAULT_PAGE_SIZE);
@@ -61,13 +61,13 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr, uint64_t flag
         {
             return 0;
         }
-        pgdir = (uint64_t *)phys_to_virt(pgdir[index] & (~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL)));
+        pgdir = (uint64_t *)phys_to_virt(pgdir[index] & ARCH_ADDR_MASK);
     }
 
     uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
     if (pgdir[index] != 0)
-        free_frames((pgdir[index] & (~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL))), 1);
-    pgdir[index] = (paddr & (~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL))) | flags;
+        free_frames((pgdir[index] & ARCH_ADDR_MASK), 1);
+    pgdir[index] = (paddr & ARCH_ADDR_MASK) | flags;
 
     arch_flush_tlb(vaddr);
 

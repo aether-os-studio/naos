@@ -3,7 +3,7 @@ use linked_list_allocator::LockedHeap;
 use spin::Mutex;
 
 pub const KERNEL_HEAP_START: usize = 0xffff_ffff_c000_0000;
-pub const KERNEL_HEAP_SIZE: usize = 256 * 1024 * 1024;
+pub const KERNEL_HEAP_SIZE: usize = 128 * 1024 * 1024;
 
 use crate::rust::bindings::bindings::{
     PT_FLAG_R, PT_FLAG_W, arch_disable_interrupt, arch_enable_interrupt, get_current_page_dir,
