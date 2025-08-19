@@ -37,12 +37,14 @@ uint64_t get_arch_page_table_flags(uint64_t flags)
 // 内存屏障和TLB操作
 #define dsb(opt) asm volatile("dsb " #opt : : : "memory")
 #define isb() asm volatile("isb" : : : "memory")
-#define tlbi(va) asm volatile("tlbi vaae1is, %0" : : "r"((va) >> 12) : "memory")
+#define tlbi(va) asm volatile("tlbi vale1, %0" : : "r"(va) : "memory")
 
 void arch_flush_tlb(uint64_t vaddr)
 {
-    dsb(ishst);  // 确保页表写入完成
-    tlbi(vaddr); // 无效化单个VA的TLB条目
-    dsb(ish);    // 等待TLB操作完成
-    isb();       // 流水线同步
+    uint64_t va = (vaddr >> 12) & 0x3FFFFFFFFF;
+
+    dsb(ishst); // 确保页表写入完成
+    tlbi(va);   // 无效化单个VA的TLB条目
+    dsb(ish);   // 等待TLB操作完成
+    isb();      // 流水线同步
 }

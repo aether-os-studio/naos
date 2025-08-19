@@ -54,6 +54,10 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr, uint64_t flag
         if (!ARCH_PT_IS_TABLE(addr) || !(addr & ARCH_ADDR_MASK))
         {
             uint64_t a = alloc_frames(1);
+            if (a == (uint64_t)-1)
+            {
+                return a;
+            }
             memset((uint64_t *)phys_to_virt(a), 0, DEFAULT_PAGE_SIZE);
             pgdir[index] = a | ARCH_PT_TABLE_FLAGS | (flags & ARCH_PT_FLAG_USER);
         }

@@ -64,10 +64,6 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size)
         task_block(current_task, TASK_BLOCKING, -1);
     }
 
-    spin_unlock(&pipe->lock);
-    spin_lock(&spec->node->spin);
-    spin_lock(&pipe->lock);
-
     available = (pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF;
 
     // 实际读取量

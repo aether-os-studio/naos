@@ -2,12 +2,14 @@ use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 use linked_list_allocator::LockedHeap;
 use spin::Mutex;
 
-pub const KERNEL_HEAP_START: usize = 0xffff_ffff_c000_0000;
-pub const KERNEL_HEAP_SIZE: usize = 128 * 1024 * 1024;
+pub const KERNEL_HEAP_SIZE: usize = 256 * 1024 * 1024;
 
-use crate::rust::bindings::bindings::{
-    PT_FLAG_R, PT_FLAG_W, arch_disable_interrupt, arch_enable_interrupt, get_current_page_dir,
-    map_page_range,
+use crate::{
+    mm::phys_to_virt,
+    rust::bindings::bindings::{
+        DEFAULT_PAGE_SIZE, PT_FLAG_R, PT_FLAG_W, alloc_frames, arch_disable_interrupt,
+        arch_enable_interrupt, get_current_page_dir, map_page_range,
+    },
 };
 
 #[global_allocator]
@@ -148,15 +150,18 @@ unsafe extern "C" fn free(ptr: *const core::ffi::c_void) {
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn heap_init() {
-    map_page_range(
-        get_current_page_dir(false),
-        KERNEL_HEAP_START as u64,
-        0,
-        KERNEL_HEAP_SIZE as u64,
-        PT_FLAG_R as u64 | PT_FLAG_W as u64,
-    );
+    // map_page_range(
+    //     get_current_page_dir(false),
+    //     KERNEL_HEAP_START as u64,
+    //     0,
+    //     KERNEL_HEAP_SIZE as u64,
+    //     PT_FLAG_R as u64 | PT_FLAG_W as u64,
+    // );
+
+    let heap_start =
+        phys_to_virt(alloc_frames(KERNEL_HEAP_SIZE / DEFAULT_PAGE_SIZE as usize) as usize);
 
     KERNEL_ALLOCATOR
         .lock()
-        .init(KERNEL_HEAP_START as *mut u8, KERNEL_HEAP_SIZE);
+        .init(heap_start as *mut u8, KERNEL_HEAP_SIZE);
 }
