@@ -34,6 +34,7 @@ ENTRY(syscall_exception)
     call switch_to_kernel_stack
     subq $0xc0, %rax
     movq %rax, %rsp
+    movq %rax, %rbp
 
     movq %rsp, %rdi
     movq %r15, %rsi

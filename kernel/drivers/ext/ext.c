@@ -186,11 +186,15 @@ ssize_t ext_read(fd_t *fd, void *addr, size_t offset, size_t size)
         return -1;
     if (handle->node->type & file_symlink)
     {
-        ext_handle_t *target_handle = handle->node->linkto->handle;
+        ext_handle_t *target_handle = fd->node->linkto->handle;
         if (target_handle)
         {
             ext4_fseek(target_handle->file, (int64_t)offset, (uint32_t)SEEK_SET);
             ext4_fread(target_handle->file, addr, size, (size_t *)&ret);
+        }
+        else
+        {
+            printf("%s: symlink doesn't has a target file\n", __func__);
         }
     }
     else

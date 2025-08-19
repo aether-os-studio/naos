@@ -19,8 +19,6 @@ uint64_t sys_brk(uint64_t addr)
 
     map_page_range(get_current_page_dir(true), start, 0, size, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
-    memset((void *)start, 0, size);
-
     current_task->brk_end = new_brk;
 
     return new_brk;
@@ -52,7 +50,10 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
         flags &= (~MAP_FIXED);
     }
 
-    bitmap_set_range(&current_task->mmap_regions, (addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (addr - USER_MMAP_START + aligned_len) / DEFAULT_PAGE_SIZE, false);
+    if (addr >= USER_MMAP_START && addr + len <= USER_MMAP_END)
+    {
+        bitmap_set_range(&current_task->mmap_regions, (addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (addr - USER_MMAP_START + aligned_len) / DEFAULT_PAGE_SIZE, false);
+    }
 
     spin_lock(&mm_op_lock);
 
@@ -74,8 +75,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
             pt_flags |= PT_FLAG_X;
 
         map_page_range(get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)), 0, (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
-
-        memset((void *)addr, 0, len);
 
         spin_unlock(&mm_op_lock);
 

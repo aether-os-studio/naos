@@ -387,28 +387,28 @@ void task_signal()
         return;
     }
 
-    for (int i = 0; i < MAX_FD_NUM; i++)
-    {
-        if (current_task->fd_info->fds[i])
-        {
-            vfs_node_t node = current_task->fd_info->fds[i]->node;
-            if (node && node->fsid == signalfdfs_id)
-            {
-                struct signalfd_ctx *ctx = node->handle;
+    // for (int i = 0; i < MAX_FD_NUM; i++)
+    // {
+    //     if (current_task->fd_info->fds[i])
+    //     {
+    //         vfs_node_t node = current_task->fd_info->fds[i]->node;
+    //         if (node && node->fsid == signalfdfs_id)
+    //         {
+    //             struct signalfd_ctx *ctx = node->handle;
 
-                struct signalfd_siginfo info;
-                memset(&info, 0, sizeof(struct sigevent));
-                info.ssi_signo = sig;
+    //             struct signalfd_siginfo info;
+    //             memset(&info, 0, sizeof(struct sigevent));
+    //             info.ssi_signo = sig;
 
-                memcpy(&ctx->queue[ctx->queue_head], &info, sizeof(struct signalfd_siginfo));
-                ctx->queue_head = (ctx->queue_head + 1) % ctx->queue_size;
-                if (ctx->queue_head == ctx->queue_tail)
-                {
-                    ctx->queue_tail = (ctx->queue_tail + 1) % ctx->queue_size;
-                }
-            }
-        }
-    }
+    //             memcpy(&ctx->queue[ctx->queue_head], &info, sizeof(struct signalfd_siginfo));
+    //             ctx->queue_head = (ctx->queue_head + 1) % ctx->queue_size;
+    //             if (ctx->queue_head == ctx->queue_tail)
+    //             {
+    //                 ctx->queue_tail = (ctx->queue_tail + 1) % ctx->queue_size;
+    //             }
+    //         }
+    //     }
+    // }
 
     sigaction_t *ptr = &current_task->actions[sig];
 

@@ -38,8 +38,6 @@ int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *
             tmo = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000;
         task_block(current_task, TASK_BLOCKING, tmo);
 
-        arch_disable_interrupt();
-
         return 0;
     }
     case FUTEX_WAKE:
@@ -107,8 +105,6 @@ int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *
         if (timeout)
             tmo = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000;
         task_block(current_task, TASK_BLOCKING, tmo);
-
-        arch_disable_interrupt();
 
         return 0;
     }

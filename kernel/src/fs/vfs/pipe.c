@@ -32,20 +32,16 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size)
     if (!pipe)
         return -EINVAL;
 
-    spin_lock(&pipe->lock);
-
     uint32_t available = (pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF;
     if (available == 0)
     {
         if (fd->flags & O_NONBLOCK)
         {
-            spin_unlock(&pipe->lock);
             return -EWOULDBLOCK;
         }
 
         if (pipe->write_fds == 0)
         {
-            spin_unlock(&pipe->lock);
             return 0;
         }
         arch_disable_interrupt();
@@ -58,11 +54,14 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size)
             browse = browse->next;
         browse->next = new_block;
 
-        spin_unlock(&pipe->lock);
         spin_unlock(&spec->node->spin);
 
         task_block(current_task, TASK_BLOCKING, -1);
+
+        arch_yield();
     }
+
+    spin_lock(&pipe->lock);
 
     available = (pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF;
 
@@ -105,14 +104,11 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
     pipe_specific_t *spec = (pipe_specific_t *)file;
     pipe_info_t *pipe = spec->info;
 
-    spin_lock(&pipe->lock);
-
     uint32_t free_space = PIPE_BUFF - ((pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF);
     if (free_space < size)
     {
         if (pipe->read_fds == 0)
         {
-            spin_unlock(&pipe->lock);
             return -EPIPE;
         }
         task_block_list_t *new_block = malloc(sizeof(task_block_list_t));
@@ -125,18 +121,14 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
             browse = browse->next;
         browse->next = new_block;
 
-        spin_unlock(&pipe->lock);
         spin_unlock(&spec->node->spin);
 
         task_block(current_task, TASK_BLOCKING, -1);
 
-        while (current_task->state == TASK_BLOCKING)
-        {
-            arch_enable_interrupt();
-            arch_pause();
-        }
-        arch_disable_interrupt();
+        arch_yield();
     }
+
+    spin_lock(&pipe->lock);
 
     if (pipe->write_ptr + size <= PIPE_BUFF)
     {
