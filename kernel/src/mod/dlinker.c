@@ -10,27 +10,19 @@ size_t dlfunc_count = 0;
 
 dlfunc_t __printf = {.name = "printf", .addr = (void *)printk};
 
-void load_segment(Elf64_Phdr *phdr, void *elf, uint64_t *directory,
-                  uint64_t offset, uint64_t *load_start)
+void load_segment(Elf64_Phdr *phdr, void *elf, uint64_t offset)
 {
-    size_t hi = PADDING_UP(phdr->p_paddr + phdr->p_memsz, 0x1000) + offset;
-    size_t lo = PADDING_DOWN(phdr->p_paddr, 0x1000) + offset;
-    if (load_start != NULL)
-    {
-        if (lo < *load_start)
-        {
-            *load_start = lo;
-        }
-    }
+    size_t hi = PADDING_UP(phdr->p_vaddr + phdr->p_memsz, DEFAULT_PAGE_SIZE) + offset;
+    size_t lo = PADDING_DOWN(phdr->p_vaddr, DEFAULT_PAGE_SIZE) + offset;
+
     uint64_t flags = PT_FLAG_R | PT_FLAG_W;
 
-    map_page_range(directory, lo, 0, hi - lo, (phdr->p_flags & PF_X) ? (PT_FLAG_X | flags) : flags);
+    map_page_range(get_current_page_dir(false), lo, 0, hi - lo, (phdr->p_flags & PF_X) ? (PT_FLAG_X | flags) : flags);
 
     uint64_t p_vaddr = (uint64_t)phdr->p_vaddr + offset;
     uint64_t p_filesz = (uint64_t)phdr->p_filesz;
     uint64_t p_memsz = (uint64_t)phdr->p_memsz;
-    uint64_t physaddr_in_directory = translate_address(directory, p_vaddr);
-    memcpy((void *)phys_to_virt(physaddr_in_directory), elf + phdr->p_offset, p_memsz);
+    memcpy((void *)p_vaddr, elf + phdr->p_offset, p_filesz);
 
     if (p_memsz > p_filesz)
     {
@@ -38,7 +30,7 @@ void load_segment(Elf64_Phdr *phdr, void *elf, uint64_t *directory,
     }
 }
 
-bool mmap_phdr_segment(Elf64_Ehdr *ehdr, Elf64_Phdr *phdrs, uint64_t *directory, uint64_t offset, uint64_t *load_start, uint64_t *load_size)
+bool mmap_phdr_segment(Elf64_Ehdr *ehdr, Elf64_Phdr *phdrs, uint64_t offset, uint64_t *load_size)
 {
     size_t i = 0;
     while (i < ehdr->e_phnum && phdrs[i].p_type != PT_LOAD)
@@ -58,11 +50,11 @@ bool mmap_phdr_segment(Elf64_Ehdr *ehdr, Elf64_Phdr *phdrs, uint64_t *directory,
     {
         if (phdrs[i].p_type == PT_LOAD)
         {
-            load_segment(&phdrs[i], (void *)ehdr, directory, offset, load_start);
+            load_segment(&phdrs[i], (void *)ehdr, offset);
             if (phdrs[i].p_vaddr + offset + phdrs[i].p_memsz > load_max)
-                load_max = phdrs[i].p_vaddr + offset + phdrs[i].p_memsz;
+                load_max = PADDING_UP(phdrs[i].p_vaddr + offset + phdrs[i].p_memsz, DEFAULT_PAGE_SIZE);
             if (phdrs[i].p_vaddr + offset < load_min)
-                load_min = phdrs[i].p_vaddr + offset;
+                load_min = PADDING_DOWN(phdrs[i].p_vaddr + offset, DEFAULT_PAGE_SIZE);
         }
     }
 
@@ -205,6 +197,7 @@ dlinit_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr, uint64_t offset)
         dyn_entry++;
     }
 
+#if defined(__x86_64__)
     for (size_t i = 0; i < relsz / sizeof(Elf64_Rela); i++)
     {
         Elf64_Rela *r = &rel[i];
@@ -225,6 +218,8 @@ dlinit_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr, uint64_t offset)
             *reloc_addr = (uint64_t)resolve_symbol(symtab, sym_idx) + r->r_addend + offset;
         }
     }
+#endif
+
     if (!handle_relocations(jmprel, symtab, strtab, jmprel_sz, offset))
     {
         printk("Failed to handle relocations.\n");
@@ -258,7 +253,7 @@ void dlinker_load(module_t *module)
     uint64_t load_size = 0;
 
     Elf64_Phdr *phdrs = (Elf64_Phdr *)((char *)ehdr + ehdr->e_phoff);
-    if (!mmap_phdr_segment(ehdr, phdrs, get_kernel_page_dir(), KERNEL_MODULES_SPACE_START + kernel_modules_load_offset, NULL, &load_size))
+    if (!mmap_phdr_segment(ehdr, phdrs, KERNEL_MODULES_SPACE_START + kernel_modules_load_offset, &load_size))
     {
         printk("Cannot mmap elf segment.\n");
         return;

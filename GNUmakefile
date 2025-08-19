@@ -228,7 +228,7 @@ run-riscv64: assets/ovmf-code-$(ARCH).fd all
 run-loongarch64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
 	qemu-system-$(ARCH) \
 		-M virt \
-		-cpu la464 \
+		-cpu max \
 		-device ramfb \
 		-device qemu-xhci \
 		-device usb-kbd \

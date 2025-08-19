@@ -2,7 +2,7 @@ use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 use linked_list_allocator::LockedHeap;
 use spin::Mutex;
 
-pub const KERNEL_HEAP_START: usize = 0xffffffffc0000000;
+pub const KERNEL_HEAP_START: usize = 0xffff_ffff_c000_0000;
 pub const KERNEL_HEAP_SIZE: usize = 256 * 1024 * 1024;
 
 use crate::rust::bindings::bindings::{
@@ -149,14 +149,6 @@ unsafe extern "C" fn heap_init() {
         KERNEL_HEAP_SIZE as u64,
         PT_FLAG_R as u64 | PT_FLAG_W as u64,
     );
-
-    unsafe {
-        core::slice::from_raw_parts_mut(
-            KERNEL_HEAP_START as *mut u64,
-            KERNEL_HEAP_SIZE / size_of::<u64>(),
-        )
-        .fill(0);
-    }
 
     KERNEL_ALLOCATOR
         .lock()

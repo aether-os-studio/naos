@@ -223,18 +223,6 @@ void free_page_table(task_mm_info_t *directory)
     spin_unlock(&clone_lock);
 }
 
-task_mm_info_t kernel_mm_info;
-
 void page_table_init()
 {
-    kernel_mm_info.page_table_addr = (uint64_t)virt_to_phys(get_current_page_dir(false));
-    kernel_mm_info.ref_count = 1;
-    task_mm_info_t *new_mm_info = clone_page_table(&kernel_mm_info, 0);
-#if defined(__x86_64__)
-    asm volatile("movq %0, %%cr3" ::"r"(new_mm_info->page_table_addr));
-#elif defined(__loongarch64)
-    asm volatile("csrwr %0, 0x1a" ::"r"(new_mm_info->page_table_addr));
-#endif
-    kernel_page_dir = (uint64_t *)phys_to_virt(new_mm_info->page_table_addr);
-    free(new_mm_info);
 }

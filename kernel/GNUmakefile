@@ -101,8 +101,7 @@ ifeq ($(ARCH),x86_64)
         -march=x86-64 \
         -mno-red-zone \
         -mcmodel=kernel \
-        -mno-80387 -mno-mmx -mno-sse -mno-sse2 \
-        -D__x86_64__
+        -mno-80387 -mno-mmx -mno-sse -mno-sse2
     override LDFLAGS += \
         -Wl,-m,elf_x86_64
     ifeq ($(CC_IS_CLANG),1)
@@ -117,8 +116,7 @@ ifeq ($(ARCH),aarch64)
         override CC += \
             -target aarch64-unknown-none
     endif
-    override CFLAGS += \
-        -D__aarch64__
+    override CFLAGS +=
     override LDFLAGS += \
         -Wl,-m,aarch64elf
 endif
@@ -127,16 +125,14 @@ ifeq ($(ARCH),riscv64)
         override CC += \
             -target riscv64-unknown-none
         override CFLAGS += \
-            -march=rv64imac \
-            -D__riscv64__
+            -march=rv64imac
     else
         override CFLAGS += \
             -march=rv64imac_zicsr_zifencei
     endif
     override CFLAGS += \
         -mabi=lp64 \
-        -mno-relax \
-        -D__riscv64__
+        -mno-relax
     override LDFLAGS += \
         -Wl,-m,elf64lriscv \
         -Wl,--no-relax
@@ -149,8 +145,7 @@ ifeq ($(ARCH),loongarch64)
     override CFLAGS += \
         -march=loongarch64 \
         -mabi=lp64d \
-        -gdwarf-2 \
-        -D__loongarch64__
+        -gdwarf-2
     override LDFLAGS += \
         -Wl,-m,elf64loongarch \
         -Wl,--no-relax

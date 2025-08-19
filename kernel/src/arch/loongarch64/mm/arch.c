@@ -35,10 +35,10 @@ uint64_t get_arch_page_table_flags(uint64_t flags)
         result |= ARCH_PT_FLAG_USER;
     }
 
-    // if ((flags & PT_FLAG_X) == 0)
-    // {
-    //     result |= ARCH_PT_FLAG_NX;
-    // }
+    if ((flags & PT_FLAG_X) == 0)
+    {
+        result |= ARCH_PT_FLAG_NX;
+    }
 
     return result;
 }
@@ -47,9 +47,9 @@ void arch_flush_tlb(uint64_t vaddr)
 {
     // vaddr &= ((~DEFAULT_PAGE_SIZE) << 1);
     asm volatile(
-        "invtlb 0x6, $zero, %0\n\t"
+        "invtlb 0x2, $zero, $zero\n\t"
         "dbar 0\n\t"
         :
-        : "r"(vaddr)
+        :
         : "memory");
 }
