@@ -12,7 +12,7 @@ impl Write for KernelWriter {
         unsafe {
             #[cfg(target_arch = "x86_64")]
             serial_println!("{}", s);
-            printk(s.as_ptr() as *const i8, s.len() as u64);
+            printk(s.as_ptr() as *const core::ffi::c_char, s.len() as u64);
         }
         Ok(())
     }

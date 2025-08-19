@@ -13,3 +13,5 @@ void kb_char(task_t *task, char ch);
 void push_kb_char(char ch);
 
 bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state);
+
+void kb_finalise_stream();

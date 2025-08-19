@@ -3,7 +3,7 @@
 #include <libs/klibc.h>
 #include <mm/mm.h>
 #include <arch/aarch64/irq/ptrace.h>
-#include <arch/elf.h>
+#include <libs/elf.h>
 
 #define __sysop_encode(op1, crn, crm, op2) \
     "#" #op1 ",C" #crn ",C" #crm ",#" #op2

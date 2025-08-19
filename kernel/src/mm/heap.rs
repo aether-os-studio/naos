@@ -19,6 +19,8 @@ static C_ALLOCATION_MAP: Mutex<BTreeMap<usize, (usize, usize, usize)>> =
 fn do_malloc(size: usize) -> usize {
     #[cfg(target_arch = "x86_64")]
     let irq = x86_64::instructions::interrupts::are_enabled();
+    #[cfg(target_arch = "aarch64")]
+    let irq = aarch64::regs::DAIF::I.is_set(1);
     #[cfg(target_arch = "loongarch64")]
     let irq = loongArch64::register::crmd::Crmd::from(loongArch64::register::crmd::read()).ie();
 
@@ -83,6 +85,8 @@ unsafe extern "C" fn realloc(old_ptr: *mut core::ffi::c_void, new_size: usize) -
 
     #[cfg(target_arch = "x86_64")]
     let irq = x86_64::instructions::interrupts::are_enabled();
+    #[cfg(target_arch = "aarch64")]
+    let irq = aarch64::regs::DAIF::I.is_set(1);
     #[cfg(target_arch = "loongarch64")]
     let irq = loongArch64::register::crmd::Crmd::from(loongArch64::register::crmd::read()).ie();
 
@@ -119,6 +123,8 @@ unsafe extern "C" fn realloc(old_ptr: *mut core::ffi::c_void, new_size: usize) -
 unsafe extern "C" fn free(ptr: *const core::ffi::c_void) {
     #[cfg(target_arch = "x86_64")]
     let irq = x86_64::instructions::interrupts::are_enabled();
+    #[cfg(target_arch = "aarch64")]
+    let irq = aarch64::regs::DAIF::I.is_set(1);
     #[cfg(target_arch = "loongarch64")]
     let irq = loongArch64::register::crmd::Crmd::from(loongArch64::register::crmd::read()).ie();
 
