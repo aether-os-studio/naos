@@ -30,7 +30,7 @@ MIRROR="${MIRROR_ROOT}/${ALPINE_VERSION}"
 APK_CMD="$APK_PATH --arch $ARCH -U --allow-untrusted --root $SYSROOT/../"
 
 # Bootstrap alpine userspace
-$APK_CMD -X "$MIRROR/main" -U --initdb add alpine-base bash coreutils grep musl ncurses
+$APK_CMD -X "$MIRROR/main" -U --initdb add bash coreutils grep musl ncurses
 
 # Use a fast mirror :)
 printf "${MIRROR}/main\n${MIRROR}/community\n${MIRROR_ROOT}/edge/testing" > $SYSROOT/../etc/apk/repositories
