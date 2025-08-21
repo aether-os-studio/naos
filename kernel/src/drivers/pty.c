@@ -84,6 +84,12 @@ void ptmx_open(void *parent, const char *name, vfs_node_t node)
     node->handle = n->next;
     node->fsid = ptmx_fsid;
 
+    vfs_node_t dev_root = node->parent;
+    node->parent = NULL;
+    vfs_node_t new_node = vfs_node_alloc(dev_root, "ptmx");
+    new_node->fsid = ptmx_fsid;
+    new_node->handle = NULL;
+
     vfs_node_t pts_node = vfs_open("/dev/pts");
     pts_node->fsid = pts_fsid;
     char nm[4];
