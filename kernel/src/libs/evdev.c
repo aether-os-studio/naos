@@ -442,6 +442,12 @@ int scanSet1E1(uint8_t data1, uint8_t data2)
 
 dev_input_event_t *kb_event = NULL;
 
+#define EVDEV_INTERNAL_SIZE (((sizeof(evdevTable) / sizeof(evdevTable[0]) + 7) / 8))
+
+uint8_t evdevInternal[EVDEV_INTERNAL_SIZE] = {0};
+
+uint8_t lastPressed = 0;
+
 void kb_evdev_generate(uint8_t raw, uint8_t raw1, uint8_t raw2)
 {
     if (!kb_event)
@@ -457,8 +463,6 @@ void kb_evdev_generate(uint8_t raw, uint8_t raw1, uint8_t raw2)
         index = raw;
     }
 
-    bool released = (raw & 0x80) != 0;
-
     uint8_t evdevCode = evdevTable[index];
 
     if (raw == 0xE0)
@@ -470,8 +474,37 @@ void kb_evdev_generate(uint8_t raw, uint8_t raw1, uint8_t raw2)
         evdevCode = scanSet1E1(raw1, raw2);
     }
 
-    input_generate_event(kb_event, EV_KEY, evdevCode, !released);
+    bool clicked = (raw & 0x80) == 0;
+
+    bool oldstate = evdevInternal[index / 8];
+    if (!oldstate && clicked)
+    {
+        // was not clicked previously, now clicked (click)
+        input_generate_event(kb_event, EV_KEY, evdevCode, 1);
+        lastPressed = evdevCode;
+    }
+    else if (oldstate && clicked)
+    {
+        // was clicked previously, now clicked (repeat)
+        // if (evdevCode != lastPressed)
+        //     return; // no need to re-set it on the bitmap
+        input_generate_event(kb_event, EV_KEY, evdevCode, 2);
+    }
+    else if (oldstate && !clicked)
+    {
+        // was clicked previously, now not clicked (release)
+        input_generate_event(kb_event, EV_KEY, evdevCode, 0);
+    }
     input_generate_event(kb_event, EV_SYN, SYN_REPORT, 0);
+
+    if (clicked)
+    {
+        evdevInternal[index / 8] |= (1 << (index % 8));
+    }
+    else
+    {
+        evdevInternal[index / 8] &= ~(1 << (index % 8));
+    }
 }
 
 bool ctrled = false;
