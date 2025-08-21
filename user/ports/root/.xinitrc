@@ -1,4 +1,4 @@
 #! /bin/sh
 
 st &
-dwm
+exec dwm
