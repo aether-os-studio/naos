@@ -37,8 +37,8 @@ printf "${MIRROR}/main\n${MIRROR}/community\n${MIRROR_ROOT}/edge/testing" > $SYS
 
 $APK_CMD add musl-dev gcompat gzip xz make file tar pciutils tzdata nano lua5.1 gcc binutils libdrm-dev libdrm-tests curl sysbench evtest
 # $APK_CMD add seatd weston weston-backend-drm weston-shell-desktop weston-xwayland xwayland wayland-libs-cursor libxcursor weston-terminal
-# $APK_CMD add xorg-server xf86-video-fbdev xf86-input-evdev xinit twm xsetroot xeyes xclock nedit st
-# $APK_CMD add mesa-gl mesa-utils mesa-vulkan-swrast mesa-dri-gallium
+$APK_CMD add xorg-server xf86-video-fbdev xf86-input-evdev xinit twm xsetroot xeyes xclock nedit st
+$APK_CMD add mesa-gl mesa-utils mesa-vulkan-swrast mesa-dri-gallium
 
 ln -sf /usr/share/zoneinfo/Asia/Shanghai $SYSROOT/../etc/localtime
 '

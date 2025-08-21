@@ -2,7 +2,7 @@ use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 use linked_list_allocator::LockedHeap;
 use spin::Mutex;
 
-pub const KERNEL_HEAP_SIZE: usize = 256 * 1024 * 1024;
+pub const KERNEL_HEAP_SIZE: usize = 512 * 1024 * 1024;
 
 use crate::{
     mm::phys_to_virt,

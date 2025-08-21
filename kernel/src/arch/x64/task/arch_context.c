@@ -203,6 +203,7 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
 
 void arch_yield()
 {
+    arch_enable_interrupt();
     asm volatile("int %0" ::"i"(APIC_TIMER_INTERRUPT_VECTOR));
 }
 
