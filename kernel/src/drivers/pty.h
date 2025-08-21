@@ -8,6 +8,8 @@
 
 typedef struct pty_pair
 {
+    vfs_node_t ptmx_node;
+
     struct pty_pair *next;
 
     spinlock_t lock;

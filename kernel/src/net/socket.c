@@ -83,8 +83,8 @@ unix_socket_pair_t *unix_socket_allocate_pair()
     memset(pair, 0, sizeof(unix_socket_pair_t));
     pair->clientBuffSize = BUFFER_SIZE;
     pair->serverBuffSize = BUFFER_SIZE;
-    pair->serverBuff = malloc(pair->serverBuffSize);
-    pair->clientBuff = malloc(pair->clientBuffSize);
+    pair->serverBuff = alloc_frames_bytes(pair->serverBuffSize);
+    pair->clientBuff = alloc_frames_bytes(pair->clientBuffSize);
     pair->pending_files = malloc(MAX_PENDING_FILES_COUNT * sizeof(fd_t));
     pair->pending_fds_size = MAX_PENDING_FILES_COUNT;
     return pair;
@@ -92,8 +92,8 @@ unix_socket_pair_t *unix_socket_allocate_pair()
 
 void unix_socket_free_pair(unix_socket_pair_t *pair)
 {
-    free(pair->clientBuff);
-    free(pair->serverBuff);
+    free_frames_bytes(pair->clientBuff, pair->clientBuffSize);
+    free_frames_bytes(pair->serverBuff, pair->serverBuffSize);
     free(pair->filename);
     free(pair->pending_files);
     free(pair);

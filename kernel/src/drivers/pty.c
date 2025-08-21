@@ -81,6 +81,7 @@ void ptmx_open(void *parent, const char *name, vfs_node_t node)
     pair->tty_kbmode = K_XLATE;
     memset(&pair->vt_mode, 0, sizeof(struct vt_mode));
     pair->masterFds = 1;
+    pair->ptmx_node = node;
     node->handle = n->next;
     node->fsid = ptmx_fsid;
 
@@ -128,6 +129,7 @@ bool ptmx_close(void *current)
         pty_pair_cleanup(pair);
     else
         spin_unlock(&pair->lock);
+    free(pair->ptmx_node);
     return true;
 }
 
