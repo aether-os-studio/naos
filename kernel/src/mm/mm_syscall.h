@@ -1,6 +1,7 @@
 #pragma once
 
 #include <mm/mm.h>
+#include <mm/shm.h>
 #include <fs/vfs/vfs.h>
 
 #define MAP_PRIVATE 2UL

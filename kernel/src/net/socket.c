@@ -1381,6 +1381,9 @@ static int dummy()
 
 size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr, socklen_t *len)
 {
+    if (fd > MAX_FD_NUM || !current_task->fd_info->fds[fd])
+        return (size_t)-EBADF;
+
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     socket_t *socket = handle->sock;
     unix_socket_pair_t *pair = socket->pair;
