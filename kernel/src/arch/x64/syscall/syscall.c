@@ -606,7 +606,9 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     else if ((int64_t)regs->rax < 0 && ((regs->rax & 0xffffffff) == 0))
         regs->rax = 0;
 
-    // if ((idx != SYS_BRK) && (idx != SYS_MMAP) && (idx != SYS_MREMAP) && (idx != SYS_SHMAT) && (idx != SYS_FCNTL) && (int64_t)regs->rax < 0)
+    // if ((idx != SYS_BRK) && (idx != SYS_MMAP) && (idx != SYS_MREMAP) && (idx != SYS_SHMAT) && (idx != SYS_FCNTL) &&
+    //     (idx != SYS_OPEN) && (idx != SYS_STAT) && (idx != SYS_OPENAT) && (idx != SYS_ACCESS) &&
+    //     (int64_t)regs->rax < 0)
     // {
     //     char buf[128];
     //     int len = sprintf(buf, "syscall %d has error: %s\n", idx, strerror(-(int)regs->rax));

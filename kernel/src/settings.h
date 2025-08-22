@@ -1,5 +1,7 @@
 #pragma once
 
+#define SERIAL_DEBUG 1
+
 #define LIMINE_API_REVISION 3
 
 #define DEFAULT_PAGE_SIZE 4096UL

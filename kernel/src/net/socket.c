@@ -681,29 +681,42 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
         spin_unlock(&pair->lock);
     }
 
+    int iov_len_total = 0;
+
+    for (int i = 0; i < msg->msg_iovlen; i++)
+    {
+        struct iovec *curr =
+            (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
+
+        iov_len_total += curr->len;
+    }
+
+    while (!noblock && !(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
+    {
+        arch_yield();
+    }
+
+    char *buffer = malloc(iov_len_total);
+
+    cnt = unix_socket_recv_from(fd, (uint8_t *)buffer, iov_len_total, noblock ? MSG_DONTWAIT : 0, NULL, 0);
+    if ((int64_t)cnt < 0)
+    {
+        free(buffer);
+        return cnt;
+    }
+
+    char *b = buffer;
+
     for (int i = 0; i < msg->msg_iovlen; i++)
     {
         struct iovec *curr = (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
-        if (cnt > 0 && fs_callbacks[current_task->fd_info->fds[fd]->node->fsid]->poll)
-        {
-            if (!(fs_callbacks[current_task->fd_info->fds[fd]->node->fsid]->poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
-                return cnt;
-        }
-        size_t singleCnt = unix_socket_recv_from(fd, curr->iov_base, curr->len,
-                                                 noblock ? MSG_DONTWAIT : 0, 0, 0);
-        if ((int64_t)singleCnt < 0)
-        {
-            if (cnt > 0)
-            {
-                return cnt;
-            }
-            else
-            {
-                return singleCnt;
-            }
-        }
-        cnt += singleCnt;
+
+        memcpy(curr->iov_base, b, curr->len);
+
+        b += curr->len;
     }
+
+    free(buffer);
 
     return cnt;
 }
@@ -860,31 +873,42 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
         spin_unlock(&pair->lock);
     }
 
+    int iov_len_total = 0;
+
     for (int i = 0; i < msg->msg_iovlen; i++)
     {
         struct iovec *curr =
             (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
-        if (cnt > 0 && fs_callbacks[current_task->fd_info->fds[fd]->node->fsid]->poll)
-        {
-            if (!(fs_callbacks[current_task->fd_info->fds[fd]->node->fsid]->poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
-                return cnt;
-        }
-        size_t singleCnt = unix_socket_accept_recv_from(
-            fd, curr->iov_base, curr->len, noblock ? MSG_DONTWAIT : 0, 0, 0);
 
-        if ((int64_t)singleCnt < 0)
-        {
-            if (cnt > 0)
-            {
-                return cnt;
-            }
-            else
-            {
-                return singleCnt;
-            }
-        }
-        cnt += singleCnt;
+        iov_len_total += curr->len;
     }
+
+    while (!noblock && !(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
+    {
+        arch_yield();
+    }
+
+    char *buffer = malloc(iov_len_total);
+
+    cnt = unix_socket_accept_recv_from(fd, (uint8_t *)buffer, iov_len_total, noblock ? MSG_DONTWAIT : 0, NULL, 0);
+    if ((int64_t)cnt < 0)
+    {
+        free(buffer);
+        return cnt;
+    }
+
+    char *b = buffer;
+
+    for (int i = 0; i < msg->msg_iovlen; i++)
+    {
+        struct iovec *curr = (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
+
+        memcpy(curr->iov_base, b, curr->len);
+
+        b += curr->len;
+    }
+
+    free(buffer);
 
     return cnt;
 }

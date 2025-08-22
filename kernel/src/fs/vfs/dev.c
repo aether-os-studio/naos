@@ -549,7 +549,7 @@ void dev_init_after_sysfs()
     kb_input_event->device_events.read_ptr = 0;
     kb_input_event->device_events.write_ptr = 0;
     kb_input_event->clock_id = CLOCK_MONOTONIC;
-    circular_int_init(&kb_input_event->device_events, 4096);
+    circular_int_init(&kb_input_event->device_events, DEFAULT_PAGE_SIZE * 4);
     vfs_node_t kb_node = regist_dev("input/event0", inputdev_event_read, inputdev_event_write, inputdev_ioctl, inputdev_poll, NULL, kb_input_event);
     dev_input_event_t *mouse_input_event = malloc(sizeof(dev_input_event_t));
     mouse_input_event->inputid.bustype = 0x05;   // BUS_PS2
@@ -560,7 +560,7 @@ void dev_init_after_sysfs()
     mouse_input_event->device_events.read_ptr = 0;
     mouse_input_event->device_events.write_ptr = 0;
     mouse_input_event->clock_id = CLOCK_MONOTONIC;
-    circular_int_init(&mouse_input_event->device_events, 4096);
+    circular_int_init(&mouse_input_event->device_events, DEFAULT_PAGE_SIZE * 4);
     vfs_node_t mouse_node = regist_dev("input/event1", inputdev_event_read, inputdev_event_write, inputdev_ioctl, inputdev_poll, NULL, mouse_input_event);
 
     regist_dev("null", null_dev_read, null_dev_write, NULL, NULL, NULL, NULL);
@@ -599,15 +599,14 @@ size_t circular_int_read(circular_int_t *circ, uint8_t *buff, size_t length)
 
     size_t toCopy = MIN(CIRC_READABLE(write, read, circ->buff_size), length);
 
-    size_t first_chunk = MIN(circ->buff_size - read, toCopy);
-    memcpy(buff, &circ->buff[read], first_chunk);
-
-    if (toCopy > first_chunk)
+    for (int i = 0; i < toCopy; i++)
     {
-        memcpy(buff + first_chunk, circ->buff, toCopy - first_chunk);
+        // todo: could optimize this with edge memcpy() operations
+        buff[i] = circ->buff[read];
+        read = (read + 1) % circ->buff_size;
     }
 
-    circ->read_ptr = (read + toCopy) % circ->buff_size;
+    circ->read_ptr = read;
 
     spin_unlock(&circ->lock_read);
 
@@ -616,11 +615,13 @@ size_t circular_int_read(circular_int_t *circ, uint8_t *buff, size_t length)
 
 size_t circular_int_write(circular_int_t *circ, const uint8_t *buff, size_t length)
 {
+    spin_lock(&circ->lock_read);
     ssize_t write = circ->write_ptr;
     ssize_t read = circ->read_ptr;
     size_t writable = CIRC_WRITABLE(write, read, circ->buff_size);
     if (length > writable)
     {
+        spin_unlock(&circ->lock_read);
         return 0; // cannot do this
     }
 
@@ -632,16 +633,20 @@ size_t circular_int_write(circular_int_t *circ, const uint8_t *buff, size_t leng
     }
 
     circ->write_ptr = write;
+
+    spin_unlock(&circ->lock_read);
+
     return length;
 }
 
 size_t circular_int_read_poll(circular_int_t *circ)
 {
     size_t ret = 0;
-
+    spin_lock(&circ->lock_read);
     ssize_t write = circ->write_ptr;
     ssize_t read = circ->read_ptr;
     ret = CIRC_READABLE(write, read, circ->buff_size);
+    spin_unlock(&circ->lock_read);
     return ret;
 }
 
