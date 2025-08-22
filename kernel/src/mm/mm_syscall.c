@@ -90,6 +90,10 @@ uint64_t sys_munmap(uint64_t addr, uint64_t size)
     }
     spin_lock(&mm_op_lock);
     unmap_page_range(get_current_page_dir(false), addr, size);
+    if (addr >= USER_MMAP_START && addr + size <= USER_MMAP_END)
+    {
+        bitmap_set_range(&current_task->mmap_regions, (addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (addr - USER_MMAP_START + size) / DEFAULT_PAGE_SIZE, true);
+    }
     spin_unlock(&mm_op_lock);
     return 0;
 }
@@ -137,14 +141,21 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uin
     if (aligned_new < aligned_old)
     {
         unmap_page_range(page_dir, old_addr + aligned_new, aligned_old - aligned_new);
+        if (old_addr + aligned_new >= USER_MMAP_START && old_addr + aligned_old <= USER_MMAP_END)
+        {
+            bitmap_set_range(&current_task->mmap_regions, (old_addr + aligned_new - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (old_addr + aligned_old - USER_MMAP_START) / DEFAULT_PAGE_SIZE, true);
+        }
         spin_unlock(&mm_op_lock);
         return old_addr;
     }
 
     uint64_t extension = aligned_new - aligned_old;
 
-    map_page_range(page_dir, old_addr + aligned_old, 0, extension,
-                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+    map_page_range(page_dir, old_addr + aligned_old, 0, extension, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+    if (old_addr + aligned_old >= USER_MMAP_START && old_addr + aligned_old + extension <= USER_MMAP_END)
+    {
+        bitmap_set_range(&current_task->mmap_regions, (old_addr + aligned_old - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (old_addr + aligned_old + extension - USER_MMAP_START) / DEFAULT_PAGE_SIZE, false);
+    }
     spin_unlock(&mm_op_lock);
 
     return old_addr;
@@ -161,9 +172,6 @@ void *general_map(vfs_read_t read_callback, void *file, uint64_t addr, uint64_t 
     if (prot & PROT_EXEC)
         pt_flags |= PT_FLAG_X;
 
-    // if (flags & MAP_FIXED && addr < USER_BRK_START)
-    //     map_page_range(get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)), addr & (~(DEFAULT_PAGE_SIZE - 1)), (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
-    // else
     map_page_range(get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)), 0, (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
 
     ssize_t ret = read_callback(file, (void *)addr, offset, len);
