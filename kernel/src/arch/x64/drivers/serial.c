@@ -38,12 +38,18 @@ void write_serial(char a)
     io_out8(SERIAL_PORT, a);
 }
 
+spinlock_t write_serial_lock = {0};
+
 void serial_printk(char *buf, int len)
 {
+    spin_lock(&write_serial_lock);
+
     for (int i = 0; i < len; i++)
     {
         if (buf[i] == '\n')
             write_serial('\r');
         write_serial(buf[i]);
     }
+
+    spin_unlock(&write_serial_lock);
 }

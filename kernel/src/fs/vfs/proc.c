@@ -30,11 +30,15 @@ ssize_t procfs_read(fd_t *fd, void *addr, size_t offset, size_t size)
 
     if (!strcmp(handle->name, "self/exe"))
     {
-        int len = strlen(task->name);
-        if (len > size)
-            return -ERANGE;
-        memcpy(addr, task->name, len + 1);
-        return len + 1;
+        if (task->exec_node)
+        {
+            char *fullpath = vfs_get_fullpath(task->exec_node);
+            strncpy(addr, fullpath, size);
+            free(fullpath);
+            return strlen(addr);
+        }
+        else
+            return 0;
     }
     else if (!strcmp(handle->name, "cmdline"))
     {
@@ -87,9 +91,7 @@ ssize_t procfs_readlink(vfs_node_t node, void *addr, size_t offset, size_t size)
     proc_handle_t *handle = node->handle;
     if (!strcmp(handle->name, "self/exe") && current_task->exec_node)
     {
-        vfs_node_t original_node = current_task->exec_node;
-
-        char *fullpath = vfs_get_fullpath(original_node);
+        char *fullpath = vfs_get_fullpath(current_task->exec_node);
         int len = strlen(fullpath);
         len = MIN(len, size);
         memcpy(addr, fullpath, len);
@@ -139,6 +141,7 @@ void proc_init()
     proc_handle_t *self_exe_handle = malloc(sizeof(proc_handle_t));
     self_exe->handle = self_exe_handle;
     self_exe_handle->task = NULL;
+    self_exe->linkto = rootdir;
     sprintf(self_exe_handle->name, "self/exe");
 
     vfs_node_t self_environ = vfs_node_alloc(procfs_self, "environ");

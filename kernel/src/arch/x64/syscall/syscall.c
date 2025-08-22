@@ -5,6 +5,7 @@
 #include <fs/vfs/fcntl.h>
 #include <mm/mm_syscall.h>
 #include <net/net_syscall.h>
+#include <libs/strerror.h>
 
 __attribute__((used, section(".limine_requests"))) volatile struct limine_date_at_boot_request boot_time_request =
     {
@@ -604,6 +605,13 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
         regs->rax |= 0xffffffff00000000;
     else if ((int64_t)regs->rax < 0 && ((regs->rax & 0xffffffff) == 0))
         regs->rax = 0;
+
+    // if ((idx != SYS_BRK) && (idx != SYS_MMAP) && (idx != SYS_MREMAP) && (idx != SYS_SHMAT) && (idx != SYS_FCNTL) && (int64_t)regs->rax < 0)
+    // {
+    //     char buf[128];
+    //     int len = sprintf(buf, "syscall %d has error: %s\n", idx, strerror(-(int)regs->rax));
+    //     serial_printk(buf, len);
+    // }
 
 done:
     if (regs->rax == (uint64_t)-ENOSYS)
