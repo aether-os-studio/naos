@@ -510,6 +510,3 @@ static inline int qsort_compare(const void *a, const void *b)
 {
     return (*(int *)a - *(int *)b);
 }
-
-extern void os_terminal_write(const char *buf, size_t len);
-extern void get_terminal_col_rows(size_t *cols, size_t *rows);

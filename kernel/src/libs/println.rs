@@ -10,8 +10,6 @@ pub struct KernelWriter;
 impl Write for KernelWriter {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         unsafe {
-            #[cfg(target_arch = "x86_64")]
-            serial_println!("{}", s);
             printk(s.as_ptr() as *const core::ffi::c_char, s.len() as u64);
         }
         Ok(())

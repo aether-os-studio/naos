@@ -397,13 +397,18 @@ ssize_t stdin_read(void *data, uint64_t offset, void *buf, uint64_t len)
     return fr;
 }
 
+#include <libs/flanterm/flanterm_backends/fb.h>
+#include <libs/flanterm/flanterm.h>
+
+extern struct flanterm_context *ft_ctx;
+
 ssize_t stdout_write(void *data, uint64_t offset, const void *buf, uint64_t len)
 {
     (void)data;
     (void)offset;
 
     serial_printk((char *)buf, len);
-    os_terminal_write(buf, len);
+    flanterm_write(ft_ctx, buf, len);
 
     return (ssize_t)len;
 }

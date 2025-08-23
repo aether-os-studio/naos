@@ -81,12 +81,9 @@ ssize_t fb_ioctl(void *data, ssize_t cmd, ssize_t arg)
     case 0x4605: // FBIOPUTCMAP, ignore so no xorg.log spam
         return 0;
     case 0x5413:
-        size_t col, row;
-        get_terminal_col_rows(&col, &row);
-
         struct winsize *win = (struct winsize *)arg;
-        win->ws_col = col;
-        win->ws_row = row;
+        win->ws_col = framebuffer->width / 8;
+        win->ws_row = framebuffer->height / 16;
 
         win->ws_xpixel = (uint16_t)framebuffer->width;
         win->ws_ypixel = (uint16_t)framebuffer->height;
