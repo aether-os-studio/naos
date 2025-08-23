@@ -184,7 +184,7 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		$(QEMUFLAGS)
 
 
-.PHONY: run-x86_64
+.PHONY: run-x86_64-single
 run-x86_64-single: assets/ovmf-code-$(ARCH).fd all-single
 	qemu-system-$(ARCH) \
 		-M q35 \
@@ -196,7 +196,7 @@ run-x86_64-single: assets/ovmf-code-$(ARCH).fd all-single
 		$(QEMUFLAGS)
 
 .PHONY: run-aarch64
-run-aarch64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
+run-aarch64: assets/ovmf-code-$(ARCH).fd all
 	qemu-system-$(ARCH) \
 		-M virt,gic-version=3 \
 		-cpu cortex-a76 \
@@ -206,6 +206,21 @@ run-aarch64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
 		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
+		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
+		-device nvme,drive=harddisk,serial=1234 \
+		$(QEMUFLAGS)
+
+.PHONY: run-aarch64-single
+run-aarch64-single: assets/ovmf-code-$(ARCH).fd all-single
+	qemu-system-$(ARCH) \
+		-M virt,gic-version=3 \
+		-cpu cortex-a76 \
+		-device ramfb \
+		-device qemu-xhci,id=xhci \
+		-device usb-kbd \
+		-device usb-mouse \
+		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
+		-drive if=none,file=single-$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-device nvme,drive=harddisk,serial=1234 \
 		$(QEMUFLAGS)
 

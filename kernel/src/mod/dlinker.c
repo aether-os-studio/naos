@@ -218,6 +218,28 @@ dlinit_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr, uint64_t offset)
             *reloc_addr = (uint64_t)resolve_symbol(symtab, sym_idx) + r->r_addend + offset;
         }
     }
+#elif defined(__aarch64__)
+
+    for (size_t i = 0; i < relsz / sizeof(Elf64_Rela); i++)
+    {
+        Elf64_Rela *r = &rel[i];
+        uint64_t *reloc_addr = (uint64_t *)(r->r_offset + offset);
+        uint32_t sym_idx = ELF64_R_SYM(r->r_info);
+        uint32_t type = ELF64_R_TYPE(r->r_info);
+
+        if (type == R_AARCH64_JUMP26 || type == R_AARCH64_CALL26)
+        {
+            *reloc_addr = (uint64_t)resolve_symbol(symtab, sym_idx) + offset;
+        }
+        else if (type == R_AARCH64_RELATIVE)
+        {
+            *reloc_addr = (uint64_t)(offset + r->r_addend);
+        }
+        else if (type == R_AARCH64_ABS64)
+        {
+            *reloc_addr = (uint64_t)resolve_symbol(symtab, sym_idx) + r->r_addend + offset;
+        }
+    }
 #endif
 
     if (!handle_relocations(jmprel, symtab, strtab, jmprel_sz, offset))
