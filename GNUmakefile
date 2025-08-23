@@ -222,6 +222,7 @@ run-aarch64-single: assets/ovmf-code-$(ARCH).fd all-single
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=single-$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-device nvme,drive=harddisk,serial=1234 \
+		-device nvme,drive=rootdisk,serial=5678 \
 		$(QEMUFLAGS)
 
 .PHONY: run-riscv64
