@@ -2,7 +2,10 @@ use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 use good_memory_allocator::SpinLockedAllocator;
 use spin::Mutex;
 
+#[cfg(target_arch = "x86_64")]
 pub const KERNEL_HEAP_SIZE: usize = 512 * 1024 * 1024;
+#[cfg(not(target_arch = "x86_64"))]
+pub const KERNEL_HEAP_SIZE: usize = 64 * 1024 * 1024;
 
 use crate::{
     mm::phys_to_virt,
