@@ -4,7 +4,6 @@
 #include <fs/vfs/dev.h>
 #include <drivers/bus/pci.h>
 #include <drivers/drm/drm.h>
-#include <drivers/virtio/virtio.h>
 #include <fs/partition.h>
 #include <drivers/fb.h>
 
@@ -34,8 +33,6 @@ void init_thread(uint64_t arg)
     can_schedule = false;
 
     pci_init();
-
-    virtio_init();
 
     partition_init();
 

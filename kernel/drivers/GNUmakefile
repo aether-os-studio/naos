@@ -6,4 +6,5 @@ all:
 	$(MAKE) -C ahci
 	$(MAKE) -C nvme
 	$(MAKE) -C usb
+	$(MAKE) -C virtio
 	$(MAKE) -C ext
