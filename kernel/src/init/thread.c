@@ -62,6 +62,8 @@ void init_thread(uint64_t arg)
 
     system_initialized = true;
 
+    printk("System initialized, ready to go to userland.\n");
+
     can_schedule = true;
     arch_enable_interrupt();
 
