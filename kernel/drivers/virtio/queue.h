@@ -1,6 +1,7 @@
 #pragma once
 
 #include <libs/klibc.h>
+#include "virtio.h"
 
 #define DESC_FLAGS_NEXT (1 << 0)
 #define DESC_FLAGS_WRITE (1 << 1)
@@ -54,11 +55,35 @@ typedef struct virtio_used_ring
     uint16_t avail_event;
 } virtio_used_ring_t;
 
+typedef struct virtqueue_legacy
+{
+    uint64_t paddr;
+    uint32_t size;
+    uint64_t avail_offset;
+    uint64_t used_offset;
+} virtqueue_legacy_t;
+
+typedef struct virtqueue_modern
+{
+    uint64_t driver_to_device_paddr;
+    uint32_t driver_to_device_size;
+    uint64_t device_to_driver_paddr;
+    uint32_t device_to_driver_size;
+    uint64_t avail_offset;
+} virtqueue_modern_t;
+
 typedef struct virtqueue
 {
     virtio_descriptor_t *desc;
     virtio_avail_ring_t *avail;
     virtio_used_ring_t *used;
+
+    bool is_modern;
+    union
+    {
+        virtqueue_legacy_t *legacy;
+        virtqueue_modern_t *modern;
+    } inner;
 
     uint16_t queue_idx;
     uint16_t num_used;
@@ -68,3 +93,5 @@ typedef struct virtqueue
     uint16_t last_used_idx;
     bool event_idx;
 } virtqueue_t;
+
+virtqueue_t *virt_queue_new(virtio_driver_t *driver, uint16_t queue_idx, bool indirect, bool event_idx);
