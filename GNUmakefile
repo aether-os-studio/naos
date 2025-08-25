@@ -180,6 +180,8 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-device nec-usb-xhci,id=xhci \
 		-device nvme,drive=harddisk,serial=1234 \
 		-device nvme,drive=rootdisk,serial=5678 \
+		-netdev user,id=net0 \
+		-device virtio-net-pci,netdev=net0 \
 		-vga vmware \
 		$(QEMUFLAGS)
 
