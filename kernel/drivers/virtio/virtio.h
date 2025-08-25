@@ -29,6 +29,8 @@ typedef struct virtio_driver_op
     void (*queue_set)(void *data, uint16_t queue, uint32_t size, uint64_t descriptors_paddr, uint64_t driver_area_paddr, uint64_t device_area_paddr);
     bool (*queue_used)(void *data, uint16_t queue);
     bool (*requires_legacy_layout)(void *data);
+    uint32_t (*read_config_space)(void *data, uint32_t offset);
+    void (*write_config_space)(void *data, uint32_t offset, uint32_t value);
 } virtio_driver_op_t;
 
 struct virtio_driver
@@ -36,3 +38,6 @@ struct virtio_driver
     void *data;
     virtio_driver_op_t *op;
 };
+
+void virtio_begin_init(virtio_driver_t *driver);
+void virtio_finish_init(virtio_driver_t *driver);

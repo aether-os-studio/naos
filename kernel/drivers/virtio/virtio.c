@@ -5,6 +5,19 @@
 
 extern virtio_driver_op_t virtio_pci_driver_op;
 
+void virtio_begin_init(virtio_driver_t *driver)
+{
+    driver->op->set_status(driver->data, 0);
+    driver->op->set_status(driver->data, 1 | 2);
+
+    driver->op->set_status(driver->data, 1 | 2 | 8);
+}
+
+void virtio_finish_init(virtio_driver_t *driver)
+{
+    driver->op->set_status(driver->data, 1 | 2 | 4 | 8);
+}
+
 int virtio_probe(pci_device_t *dev, uint32_t vendor_device_id)
 {
     uint16_t device_id = vendor_device_id & 0xFFFF;
