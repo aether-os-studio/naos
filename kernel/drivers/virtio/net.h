@@ -22,3 +22,8 @@ typedef struct virtio_net_hdr
 } virtio_net_hdr_t;
 
 int virtio_net_init(virtio_driver_t *driver);
+int virtio_net_send(virtio_net_device_t *net_dev, void *data, uint32_t len);
+int virtio_net_receive(virtio_net_device_t *net_dev, void *buffer, uint32_t buffer_size);
+bool virtio_net_has_packets(virtio_net_device_t *net_dev);
+virtio_net_device_t *virtio_net_get_device(uint32_t index);
+uint32_t virtio_net_get_device_count(void);

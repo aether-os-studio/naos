@@ -98,3 +98,9 @@ virtqueue_t *virt_queue_new(virtio_driver_t *driver, uint16_t queue_idx, bool in
 void virt_queue_set_dev_notify(virtqueue_t *queue, bool enable);
 bool virt_queue_should_notify(virtqueue_t *queue);
 bool virt_queue_can_pop(virtqueue_t *queue);
+uint16_t virt_queue_get_free_desc(virtqueue_t *queue);
+void virt_queue_free_desc(virtqueue_t *queue, uint16_t desc_idx);
+uint16_t virt_queue_add_buf(virtqueue_t *queue, virtio_buffer_t *bufs, uint16_t num_bufs, bool device_writable);
+void virt_queue_submit_buf(virtqueue_t *queue, uint16_t desc_idx);
+uint16_t virt_queue_get_used_buf(virtqueue_t *queue, uint32_t *len);
+void virt_queue_notify(virtio_driver_t *driver, virtqueue_t *queue);

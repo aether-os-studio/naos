@@ -106,3 +106,88 @@ bool virt_queue_can_pop(virtqueue_t *queue)
 {
     return queue->last_used_idx != queue->used->index;
 }
+
+uint16_t virt_queue_get_free_desc(virtqueue_t *queue)
+{
+    if (queue->free_head == 0xFFFF) {
+        return 0xFFFF; // No free descriptors
+    }
+
+    uint16_t desc_idx = queue->free_head;
+    queue->free_head = queue->desc[desc_idx].next;
+    queue->desc_shadow[desc_idx].next = 0xFFFF; // Mark as used
+
+    return desc_idx;
+}
+
+void virt_queue_free_desc(virtqueue_t *queue, uint16_t desc_idx)
+{
+    queue->desc[desc_idx].next = queue->free_head;
+    queue->desc_shadow[desc_idx].next = queue->free_head;
+    queue->free_head = desc_idx;
+}
+
+uint16_t virt_queue_add_buf(virtqueue_t *queue, virtio_buffer_t *bufs, uint16_t num_bufs, bool device_writable)
+{
+    if (num_bufs == 0 || queue->free_head == 0xFFFF) {
+        return 0xFFFF;
+    }
+
+    uint16_t head_idx = queue->free_head;
+    uint16_t prev_idx = head_idx;
+    uint16_t current_idx = head_idx;
+
+    for (uint16_t i = 0; i < num_bufs; i++) {
+        current_idx = queue->free_head;
+        queue->free_head = queue->desc[current_idx].next;
+
+        virtio_descriptor_set_buf(&queue->desc[current_idx],
+                                 (void*)bufs[i].addr,
+                                 bufs[i].size,
+                                 device_writable ? VIRTIO_DESC_BUFFER_DIR_DEVICE_TO_DRIVER : VIRTIO_DESC_BUFFER_DIR_DRIVER_TO_DEVICE,
+                                 0);
+
+        if (i > 0) {
+            queue->desc[prev_idx].next = current_idx;
+            queue->desc[prev_idx].flags |= DESC_FLAGS_NEXT;
+        }
+
+        prev_idx = current_idx;
+    }
+
+    queue->desc[current_idx].next = 0xFFFF;
+    queue->desc[current_idx].flags &= ~DESC_FLAGS_NEXT;
+
+    return head_idx;
+}
+
+void virt_queue_submit_buf(virtqueue_t *queue, uint16_t desc_idx)
+{
+    queue->avail->ring[queue->avail_idx % RING_SIZE] = desc_idx;
+    queue->avail_idx++;
+    __sync_synchronize(); // Memory barrier
+    queue->avail->index = queue->avail_idx;
+}
+
+uint16_t virt_queue_get_used_buf(virtqueue_t *queue, uint32_t *len)
+{
+    if (queue->last_used_idx == queue->used->index) {
+        return 0xFFFF; // No used buffers
+    }
+
+    virtio_used_elem_t *used_elem = &queue->used->ring[queue->last_used_idx % RING_SIZE];
+    uint16_t desc_idx = used_elem->id;
+    if (len) {
+        *len = used_elem->len;
+    }
+
+    queue->last_used_idx++;
+    return desc_idx;
+}
+
+void virt_queue_notify(virtio_driver_t *driver, virtqueue_t *queue)
+{
+    if (virt_queue_should_notify(queue)) {
+        driver->op->notify(driver->data, queue->queue_idx);
+    }
+}
