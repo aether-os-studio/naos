@@ -96,7 +96,5 @@ typedef struct virtqueue
 
 virtqueue_t *virt_queue_new(virtio_driver_t *driver, uint16_t queue_idx, bool indirect, bool event_idx);
 void virt_queue_set_dev_notify(virtqueue_t *queue, bool enable);
-uint16_t virt_queue_add(virtqueue_t *queue, virtio_buffer_t *input, virtio_buffer_t *output);
 bool virt_queue_should_notify(virtqueue_t *queue);
 bool virt_queue_can_pop(virtqueue_t *queue);
-uint32_t virt_queue_pop_used(virtqueue_t *queue, uint16_t token, virtio_buffer_t *input, virtio_buffer_t *output);

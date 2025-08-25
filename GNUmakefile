@@ -182,6 +182,7 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-device nvme,drive=rootdisk,serial=5678 \
 		-netdev user,id=net0 \
 		-device virtio-net-pci,netdev=net0,mac=51:51:54:55:51:54 \
+		-d trace:net*,trace:virtio-net* \
 		-vga vmware \
 		$(QEMUFLAGS)
 

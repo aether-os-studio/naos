@@ -89,46 +89,6 @@ void virt_queue_set_dev_notify(virtqueue_t *queue, bool enable)
     }
 }
 
-uint16_t virt_queue_add(virtqueue_t *queue, virtio_buffer_t *input, virtio_buffer_t *output)
-{
-    if (!input && !output)
-        return (uint16_t)-1;
-
-    uint32_t descriptor_need = input->size / sizeof(virtio_buffer_t) + output->size / sizeof(virtio_buffer_t);
-
-    if (queue->num_used + descriptor_need > QUEUE_SIZE)
-    {
-        return (uint16_t)-1;
-    }
-
-    uint16_t head = queue->free_head;
-    uint16_t last = queue->free_head;
-
-    virtio_buffer_t *input_buf = (virtio_buffer_t *)input->addr;
-    virtio_buffer_t *output_buf = (virtio_buffer_t *)input->addr;
-
-    for (int i = 0; i < descriptor_need; i++)
-    {
-        virtio_descriptor_t *desc = &queue->desc_shadow[queue->free_head];
-
-        virtio_buffer_t *buf = (i < (input->size / sizeof(virtio_buffer_t))) ? input_buf + i : output_buf + i - (input->size / sizeof(virtio_buffer_t));
-
-        virtio_descriptor_set_buf(desc, (void *)buf->addr, buf->size, (i < (input->size / sizeof(virtio_buffer_t))) ? VIRTIO_DESC_BUFFER_DIR_DRIVER_TO_DEVICE : VIRTIO_DESC_BUFFER_DIR_DEVICE_TO_DRIVER, DESC_FLAGS_NEXT);
-
-        last = queue->free_head;
-        queue->free_head = desc->next;
-
-        memcpy(&queue->desc[last], &queue->desc_shadow[last], sizeof(virtio_descriptor_t));
-    }
-
-    queue->desc_shadow[last].flags &= (~DESC_FLAGS_NEXT);
-    memcpy(&queue->desc[last], &queue->desc_shadow[last], sizeof(virtio_descriptor_t));
-
-    queue->num_used += descriptor_need;
-
-    return head;
-}
-
 bool virt_queue_should_notify(virtqueue_t *queue)
 {
     if (queue->event_idx)
@@ -145,68 +105,4 @@ bool virt_queue_should_notify(virtqueue_t *queue)
 bool virt_queue_can_pop(virtqueue_t *queue)
 {
     return queue->last_used_idx != queue->used->index;
-}
-
-void virt_queue_recycle_descriptors(virtqueue_t *queue, uint32_t head, virtio_buffer_t *input, virtio_buffer_t *output)
-{
-    uint16_t original_free_head = queue->free_head;
-    queue->free_head = head;
-
-    virtio_descriptor_t *head_desc = &queue->desc_shadow[head];
-    if (head_desc->flags & DESC_FLAGS_INDIRECT)
-    {
-        // TODO
-    }
-    else
-    {
-        uint16_t next = head;
-
-        uint32_t descriptor_need = input->size / sizeof(virtio_buffer_t) + output->size / sizeof(virtio_buffer_t);
-
-        virtio_buffer_t *input_buf = (virtio_buffer_t *)input->addr;
-        virtio_buffer_t *output_buf = (virtio_buffer_t *)input->addr;
-
-        for (int i = 0; i < descriptor_need; i++)
-        {
-            uint16_t desc_index = next;
-            virtio_descriptor_t *desc = &queue->desc_shadow[head];
-
-            uint64_t paddr = desc->addr;
-            desc->addr = 0;
-            desc->len = 0;
-            queue->num_used--;
-            next = desc->next;
-            if (!next)
-            {
-                desc->next = original_free_head;
-            }
-
-            memcpy(&queue->desc[desc_index], &queue->desc_shadow[desc_index], sizeof(virtio_descriptor_t));
-        }
-    }
-}
-
-uint32_t virt_queue_pop_used(virtqueue_t *queue, uint16_t token, virtio_buffer_t *input, virtio_buffer_t *output)
-{
-    if (!virt_queue_can_pop(queue))
-        return 0;
-
-    uint16_t last_used_slot = queue->last_used_idx & (QUEUE_SIZE - 1);
-    uint16_t index = queue->used->ring[last_used_slot].id;
-    uint32_t len = queue->used->ring[last_used_slot].len;
-
-    if (index != token)
-        return (uint32_t)-1;
-
-    // recycle_descriptors
-    virt_queue_recycle_descriptors(queue, index, input, output);
-
-    queue->last_used_idx++;
-
-    if (queue->event_idx)
-    {
-        queue->avail->used_event = queue->last_used_idx;
-    }
-
-    return len;
 }
