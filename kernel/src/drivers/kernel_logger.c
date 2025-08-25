@@ -448,8 +448,8 @@ int printk(const char *fmt, ...)
                                   framebuffer->red_mask_size, framebuffer->red_mask_shift,
                                   framebuffer->green_mask_size, framebuffer->green_mask_shift,
                                   framebuffer->blue_mask_size, framebuffer->blue_mask_shift,
-                                  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-                                  NULL, 0, 0, 0, 0);
+                                  NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                                  NULL, 0, 0, 0, 0, 0, 0);
 
         printk_initialized = true;
     }
