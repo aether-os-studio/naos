@@ -2,6 +2,7 @@
 #include "pci.h"
 
 #include "net.h"
+#include "blk.h"
 
 extern virtio_driver_op_t virtio_pci_driver_op;
 
@@ -36,6 +37,9 @@ int virtio_probe(pci_device_t *dev, uint32_t vendor_device_id)
         {
         case VIRTIO_DEVICE_TYPE_NETWORK:
             virtio_net_init(driver);
+            break;
+        case VIRTIO_DEVICE_TYPE_BLOCK:
+            virtio_blk_init(driver);
             break;
 
         default:

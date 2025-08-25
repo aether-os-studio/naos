@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+#include <stdbool.h>
 #include <libs/klibc.h>
 #include <libs/aether/mm.h>
 #include <libs/aether/pci.h>

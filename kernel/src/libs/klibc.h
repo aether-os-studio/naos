@@ -1,15 +1,15 @@
 #pragma once
 
-#include "settings.h"
+#include "../settings.h"
 
-#include <stdint.h>
-#include <stddef.h>
-#include <stdbool.h>
-#include <limine.h>
+#include "../../freestnd-c-hdrs/stdint.h"
+#include "../../freestnd-c-hdrs/stddef.h"
+#include "../../freestnd-c-hdrs/stdbool.h"
+#include "../limine.h"
 
-#include <libs/errno.h>
+#include "errno.h"
 
-#include <libs/endian.h>
+#include "endian.h"
 
 typedef long ssize_t;
 typedef int clockid_t;

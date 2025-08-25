@@ -1,7 +1,7 @@
 #ifndef _ENDIAN_H
 #define _ENDIAN_H 1
 
-#include <stdint.h>
+#include "../../freestnd-c-hdrs/stdint.h"
 
 // 判断系统字节序
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__

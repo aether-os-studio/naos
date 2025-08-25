@@ -10,9 +10,9 @@ all: $(OBJ)
 # Compilation rules for *.c files.
 ../../obj-drivers-$(ARCH)/virtio/%.c.o: %.c GNUmakefile
 	mkdir -p "$$(dirname $@)"
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -I../../src -I../../freestnd-c-hdrs -I../../src/libs -I../../src/mm -I../../src/drivers/bus -I../../src/block -c $< -o $@
 
 # Compilation rules for *.S files.
 ../../obj-drivers-$(ARCH)/virtio/%.S.o: %.S GNUmakefile
 	mkdir -p "$$(dirname $@)"
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -I../../src -I../../freestnd-c-hdrs -I../../src/libs -I../../src/mm -I../../src/drivers/bus -I../../src/block -c $< -o $@

@@ -1,7 +1,7 @@
 #pragma once
 
-#include <libs/klibc.h>
-#include <drivers/bus/pci.h>
+#include "../klibc.h"
+#include "../../drivers/bus/pci.h"
 
 typedef struct pci_driver
 {
