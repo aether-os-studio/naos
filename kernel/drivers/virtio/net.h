@@ -11,4 +11,14 @@ typedef struct virtio_net_config
     uint16_t mtu;
 } virtio_net_config_t;
 
+typedef struct virtio_net_hdr
+{
+    uint8_t flags;
+    uint8_t gso_type;
+    uint16_t hdr_len;
+    uint16_t gso_size;
+    uint16_t csum_start;
+    uint16_t csum_offset;
+} virtio_net_hdr_t;
+
 int virtio_net_init(virtio_driver_t *driver);

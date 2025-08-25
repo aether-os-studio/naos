@@ -39,5 +39,25 @@ struct virtio_driver
     virtio_driver_op_t *op;
 };
 
-void virtio_begin_init(virtio_driver_t *driver);
+typedef struct virtio_buffer
+{
+    uint64_t addr;
+    uint32_t size;
+} virtio_buffer_t;
+
+struct virtqueue;
+typedef struct virtqueue virtqueue_t;
+
+typedef struct virtio_net_device
+{
+    virtio_driver_t *driver;
+    uint8_t mac[6];
+    uint16_t mtu;
+    virtqueue_t *send_queue;
+    virtqueue_t *recv_queue;
+} virtio_net_device_t;
+
+uint32_t virtio_begin_init(virtio_driver_t *driver, uint32_t supported_features);
 void virtio_finish_init(virtio_driver_t *driver);
+
+#define MAX_NETDEV_NUM 32

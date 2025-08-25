@@ -5,12 +5,18 @@
 
 extern virtio_driver_op_t virtio_pci_driver_op;
 
-void virtio_begin_init(virtio_driver_t *driver)
+uint32_t virtio_begin_init(virtio_driver_t *driver, uint32_t supported_features)
 {
     driver->op->set_status(driver->data, 0);
     driver->op->set_status(driver->data, 1 | 2);
 
+    uint32_t features = driver->op->get_features(driver->data);
+    features &= supported_features;
+    driver->op->set_features(driver->data, features);
+
     driver->op->set_status(driver->data, 1 | 2 | 8);
+
+    return features;
 }
 
 void virtio_finish_init(virtio_driver_t *driver)
