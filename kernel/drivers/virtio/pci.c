@@ -95,6 +95,17 @@ virtio_driver_t *virtio_pci_init(void *data)
         map_page_range(get_current_page_dir(false), bar_vaddr, bar_paddr, pci->common_cfg->length, PT_FLAG_R | PT_FLAG_W);
         common_cfg_vaddr = bar_vaddr;
     }
+    else
+    {
+        if (common_cfg)
+            free(common_cfg);
+        if (notify_cfg)
+            free(notify_cfg);
+        if (device_cfg)
+            free(device_cfg);
+        free(pci);
+        return NULL;
+    }
 
     uint64_t notify_cfg_vaddr = 0;
 
@@ -108,6 +119,17 @@ virtio_driver_t *virtio_pci_init(void *data)
         map_page_range(get_current_page_dir(false), bar_vaddr, bar_paddr, notify_cfg->length, PT_FLAG_R | PT_FLAG_W);
         notify_cfg_vaddr = bar_vaddr;
     }
+    else
+    {
+        if (common_cfg)
+            free(common_cfg);
+        if (notify_cfg)
+            free(notify_cfg);
+        if (device_cfg)
+            free(device_cfg);
+        free(pci);
+        return NULL;
+    }
 
     uint64_t config_space_vaddr = 0;
 
@@ -120,6 +142,17 @@ virtio_driver_t *virtio_pci_init(void *data)
         uint64_t bar_vaddr = phys_to_virt(bar_paddr);
         map_page_range(get_current_page_dir(false), bar_vaddr, bar_paddr, pci->device_cfg->length, PT_FLAG_R | PT_FLAG_W);
         config_space_vaddr = bar_vaddr;
+    }
+    else
+    {
+        if (common_cfg)
+            free(common_cfg);
+        if (notify_cfg)
+            free(notify_cfg);
+        if (device_cfg)
+            free(device_cfg);
+        free(pci);
+        return NULL;
     }
 
 done:
@@ -143,8 +176,6 @@ virtio_device_type_t virtio_pci_get_device_type(void *data)
 uint64_t virtio_pci_get_features(void *data)
 {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
-    if (!pci->common_cfg)
-        return 0;
     pci->common_cfg_bar->device_feature_select = 0;
     uint32_t features_low = pci->common_cfg_bar->device_feature;
     pci->common_cfg_bar->device_feature_select = 1;
@@ -155,8 +186,6 @@ uint64_t virtio_pci_get_features(void *data)
 void virtio_pci_set_features(void *data, uint64_t features)
 {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
-    if (!pci->common_cfg)
-        return;
     pci->common_cfg_bar->device_feature_select = 0;
     uint32_t features_low = features & 0xFFFFFFFF;
     pci->common_cfg_bar->device_feature_select = 1;
@@ -166,8 +195,6 @@ void virtio_pci_set_features(void *data, uint64_t features)
 uint32_t virtio_pci_get_max_queue_size(void *data, uint16_t queue)
 {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
-    if (!pci->common_cfg)
-        return 0;
     pci->common_cfg_bar->queue_select = queue;
     return pci->common_cfg_bar->queue_size;
 }
@@ -175,8 +202,6 @@ uint32_t virtio_pci_get_max_queue_size(void *data, uint16_t queue)
 void virtio_pci_notify(void *data, uint16_t queue)
 {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
-    if (!pci->common_cfg)
-        return;
     uint16_t notify_off = pci->common_cfg_bar->queue_notify_off;
     uint64_t offset_bytes = (uint64_t)notify_off * pci->notify_off_multiplier;
     uint64_t index = offset_bytes / sizeof(uint16_t);
@@ -186,24 +211,18 @@ void virtio_pci_notify(void *data, uint16_t queue)
 uint32_t virtio_pci_get_status(void *data)
 {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
-    if (!pci->common_cfg)
-        return 0;
     return pci->common_cfg_bar->device_status;
 }
 
 void virtio_pci_set_status(void *data, uint32_t status)
 {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
-    if (!pci->common_cfg)
-        return;
     pci->common_cfg_bar->device_status = status;
 }
 
 void virtio_pci_queue_set(void *data, uint16_t queue, uint32_t size, uint64_t descriptors_paddr, uint64_t driver_area_paddr, uint64_t device_area_paddr)
 {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
-    if (!pci->common_cfg)
-        return;
     pci->common_cfg_bar->queue_select = queue;
     pci->common_cfg_bar->queue_size = size;
     pci->common_cfg_bar->queue_desc = descriptors_paddr;
@@ -215,8 +234,6 @@ void virtio_pci_queue_set(void *data, uint16_t queue, uint32_t size, uint64_t de
 bool virtio_pci_queue_used(void *data, uint16_t queue)
 {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
-    if (!pci->common_cfg)
-        return false;
     pci->common_cfg_bar->queue_select = queue;
     return (pci->common_cfg_bar->queue_enable == 1);
 }
