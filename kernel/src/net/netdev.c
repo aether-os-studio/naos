@@ -27,10 +27,12 @@ netdev_t *get_default_netdev()
 
 int netdev_send(netdev_t *dev, void *data, uint32_t len)
 {
-    return dev->send(dev->desc, data, len);
+    int ret = dev->send(dev->desc, data, len);
+    return ret;
 }
 
 int netdev_recv(netdev_t *dev, void *data, uint32_t len)
 {
-    return dev->recv(dev->desc, data, len);
+    int ret = dev->recv(dev->desc, data, len);
+    return ret;
 }
