@@ -137,7 +137,7 @@ EFI_FILE = assets/limine/BOOTLOONGARCH64.EFI:EFI/BOOT/BOOTLOONGARCH64.EFI
 endif
 $(IMAGE_NAME).img: assets/limine assets/oib kernel
 	assets/oib -o $(IMAGE_NAME).img -f $(EFI_FILE) \
-		-d kernel/drivers-$(ARCH):drivers \
+		-d kernel/modules-$(ARCH):modules \
 		-f kernel/bin-$(ARCH)/kernel:boot/kernel \
 		-f limine.conf:boot/limine/limine.conf \
 		-f assets/limine/limine-bios.sys:boot/limine/limine-bios.sys
@@ -157,7 +157,7 @@ single-$(IMAGE_NAME).img: assets/limine kernel rootfs-$(ARCH).img
 	sgdisk --new=1:1M:511M --new=2:512M:$$(( $$(($(ROOTFS_IMG_SIZE) + 1024 )) * 1024 )) single-$(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 single-$(IMAGE_NAME).img
 	mmd -i single-$(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
-	mcopy -i single-$(IMAGE_NAME).img@@1M kernel/drivers-$(ARCH) ::/drivers
+	mcopy -i single-$(IMAGE_NAME).img@@1M kernel/modules-$(ARCH) ::/modules
 	mcopy -i single-$(IMAGE_NAME).img@@1M $(EFI_FILE_SINGLE) ::/EFI/BOOT
 	mcopy -i single-$(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/boot
 	mcopy -i single-$(IMAGE_NAME).img@@1M limine.conf ::/boot/limine

@@ -2,7 +2,7 @@ CFLAGS := -g3 -O0 -fno-stack-protector -Wno-address-of-packed-member -fvisibilit
 export CFLAGS
 
 all:
-	mkdir -p ../drivers-$(ARCH)
+	mkdir -p ../modules-$(ARCH)
 
 	$(MAKE) -C ahci ARCH=$(ARCH) CFLAGS="$(CFLAGS)"
 	$(MAKE) -C nvme ARCH=$(ARCH) CFLAGS="$(CFLAGS)"

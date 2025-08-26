@@ -181,7 +181,7 @@ override HEADER_DEPS := $(addprefix obj-$(ARCH)/,$(CFILES:.c=.c.d) $(ASFILES:.S=
 # Default target. This must come first, before header dependencies.
 .PHONY: all
 all: bin-$(ARCH)/$(OUTPUT)
-	$(MAKE) -C drivers
+	$(MAKE) -C modules
 
 # Include header dependencies.
 -include $(HEADER_DEPS)
@@ -200,8 +200,8 @@ bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH).ld $(OBJ)
 
 	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) kallsyms.o target/$(RUST_TARGET)/$(RUST_PROFILE_DIR)/libkernel.a -o $@
 
-drivers:
-	$(MAKE) -C drivers
+modules:
+	$(MAKE) -C modules
 
 # Compilation rules for *.c files.
 obj-$(ARCH)/src/%.c.o: src/%.c GNUmakefile
