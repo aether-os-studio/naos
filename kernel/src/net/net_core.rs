@@ -10,8 +10,8 @@ use crate::{
     net::netdev::{NetDeviceDriver, NetDriver, set_ipv4_addr},
     println,
     rust::bindings::bindings::{
-        arch_disable_interrupt, arch_enable_interrupt, get_default_netdev, mktime, task_create,
-        time_read, tm,
+        arch_disable_interrupt, arch_enable_interrupt, arch_yield, get_default_netdev, mktime,
+        nanoTime, task_create, task_exit, time_read, tm,
     },
 };
 
@@ -37,11 +37,23 @@ pub fn get_current_instant() -> Instant {
     Instant::from_secs(time)
 }
 
+fn delay(ms: u64) {
+    unsafe {
+        let nanotime = nanoTime();
+        while (nanoTime() - nanotime) < ms * 1000000 {
+            arch_yield();
+        }
+    }
+}
+
 unsafe extern "C" fn net_helper_entry(_arg: u64) {
     let mut net_device_driver = NetDeviceDriver::new(get_default_netdev());
     let mut net_driver = NetDriver::new(&mut net_device_driver);
 
-    loop {
+    let mut dhcp_ready = false;
+
+    const DHCP_TRY_ROUND: u8 = 32;
+    for _i in 0..DHCP_TRY_ROUND {
         arch_disable_interrupt();
 
         let mut socket_set = SOCKET_SET.lock();
@@ -91,8 +103,35 @@ unsafe extern "C" fn net_helper_entry(_arg: u64) {
                         .routes_mut()
                         .remove_default_ipv4_route();
                 }
+
+                dhcp_ready = true;
+
+                break;
             }
         }
+
+        drop(socket_set);
+
+        arch_enable_interrupt();
+
+        delay(1000);
+    }
+
+    if !dhcp_ready {
+        println!("DHCP failed!");
+        task_exit(0);
+    }
+
+    loop {
+        arch_disable_interrupt();
+
+        let mut socket_set = SOCKET_SET.lock();
+
+        let time_stamp = get_current_instant();
+        net_driver
+            .iface
+            .lock()
+            .poll(time_stamp, &mut net_driver.driver, &mut socket_set);
 
         drop(socket_set);
 
@@ -105,7 +144,7 @@ extern "C" fn net_init() {
     if !(unsafe { get_default_netdev() }.is_null()) {
         let mut dhcp_socket = socket::dhcpv4::Socket::new();
         dhcp_socket.reset();
-        dhcp_socket.set_max_lease_duration(Some(Duration::from_secs(10)));
+        dhcp_socket.set_max_lease_duration(Some(Duration::from_secs(128)));
         let dhcp_socket_handle = SOCKET_SET.lock().add(dhcp_socket);
 
         DHCP_SOCKET_HANDLE.call_once(|| dhcp_socket_handle);

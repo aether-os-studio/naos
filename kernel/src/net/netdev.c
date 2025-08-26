@@ -11,6 +11,7 @@ void regist_netdev(void *desc, uint8_t *mac, uint32_t mtu, netdev_send_t send, n
         {
             netdevs[i] = malloc(sizeof(netdev_t));
             netdevs[i]->desc = desc;
+            netdevs[i]->mtu = mtu;
             memcpy(netdevs[i]->mac, mac, sizeof(netdevs[i]->mac));
             netdevs[i]->send = send;
             netdevs[i]->recv = recv;

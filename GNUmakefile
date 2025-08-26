@@ -181,8 +181,7 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-device nvme,drive=harddisk,serial=1234 \
 		-device nvme,drive=rootdisk,serial=5678 \
 		-netdev user,id=net0 \
-		-device virtio-net-pci,netdev=net0,mac=51:51:54:55:51:54 \
-		-d trace:net*,trace:virtio-net* \
+		-device virtio-net-pci,netdev=net0 \
 		-vga vmware \
 		$(QEMUFLAGS)
 
@@ -194,7 +193,7 @@ run-x86_64-single: assets/ovmf-code-$(ARCH).fd all-single
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=single-$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-device nec-usb-xhci,id=xhci \
-		-device usb-storage,drive=harddisk,bus=xhci.0 \
+		-device virtio-blk-pci,drive=harddisk \
 		-vga vmware \
 		$(QEMUFLAGS)
 

@@ -120,6 +120,11 @@ int virtio_net_receive(virtio_net_device_t *net_dev, void *buffer, uint32_t buff
         return -1;
     }
 
+    if (!virtio_net_has_packets(net_dev))
+    {
+        return 0;
+    }
+
     uint32_t len;
     uint16_t desc_idx = virt_queue_get_used_buf(net_dev->recv_queue, &len);
     if (desc_idx == 0xFFFF)
