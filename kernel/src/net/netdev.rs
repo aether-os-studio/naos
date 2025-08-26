@@ -5,11 +5,11 @@ use smoltcp::{
     time::Instant,
     wire::{EthernetAddress, HardwareAddress, IpAddress, IpCidr, Ipv4Cidr},
 };
-use spin::Mutex;
+use spin::{Lazy, Mutex};
 
 use crate::{
     net::net_core::get_current_instant,
-    rust::bindings::bindings::{netdev_recv, netdev_send, netdev_t},
+    rust::bindings::bindings::{get_default_netdev, netdev_recv, netdev_send, netdev_t},
 };
 
 pub struct NetDevice {
@@ -118,9 +118,18 @@ impl NetDriver {
     }
 }
 
+pub static DEFAULT_NETDEV: Lazy<Mutex<NetDriver>> = Lazy::new(|| {
+    Mutex::new(NetDriver::new(&mut NetDeviceDriver::new(unsafe {
+        get_default_netdev()
+    })))
+});
+
+pub static IPV4_ADDR: Mutex<Option<Ipv4Cidr>> = Mutex::new(None);
+
 pub fn set_ipv4_addr(iface: &mut Interface, cidr: Ipv4Cidr) {
     iface.update_ip_addrs(|addrs| {
         addrs.clear();
         addrs.push(IpCidr::Ipv4(cidr)).unwrap();
     });
+    *IPV4_ADDR.lock() = Some(cidr.clone());
 }

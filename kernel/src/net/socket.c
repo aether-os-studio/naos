@@ -5,6 +5,7 @@
 #include <fs/fs_syscall.h>
 #include <fs/vfs/vfs.h>
 #include <task/task.h>
+#include <net/socket/netsock.h>
 #include <net/netlink.h>
 
 extern socket_op_t socket_ops;
@@ -1702,5 +1703,6 @@ void socketfs_init()
     sockfs_root->mode = 0644;
     memset(&first_unix_socket, 0, sizeof(socket_handle_t));
 
+    netsock_init();
     netlink_init();
 }

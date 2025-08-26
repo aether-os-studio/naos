@@ -7,7 +7,7 @@ use smoltcp::{
 use spin::{Lazy, Mutex, Once};
 
 use crate::{
-    net::netdev::{NetDeviceDriver, NetDriver, set_ipv4_addr},
+    net::netdev::{DEFAULT_NETDEV, NetDeviceDriver, NetDriver, set_ipv4_addr},
     println,
     rust::bindings::bindings::{
         arch_disable_interrupt, arch_enable_interrupt, arch_yield, get_default_netdev, mktime,
@@ -58,17 +58,16 @@ fn delay(ms: u64) {
 unsafe extern "C" fn net_helper_entry(_arg: u64) {
     println!("Network helper starting...");
 
-    let mut net_device_driver = NetDeviceDriver::new(get_default_netdev());
-    let mut net_driver = NetDriver::new(&mut net_device_driver);
-
     loop {
         arch_disable_interrupt();
+
+        let net_driver = DEFAULT_NETDEV.lock();
 
         let mut socket_set = SOCKET_SET.lock();
 
         net_driver.iface.lock().poll(
             get_current_instant(),
-            &mut net_driver.driver,
+            &mut net_driver.driver.clone(),
             &mut socket_set,
         );
 
@@ -117,6 +116,8 @@ unsafe extern "C" fn net_helper_entry(_arg: u64) {
         }
 
         drop(socket_set);
+        drop(net_driver);
+
         arch_enable_interrupt();
 
         delay(1000);
@@ -124,12 +125,17 @@ unsafe extern "C" fn net_helper_entry(_arg: u64) {
 
     loop {
         arch_disable_interrupt();
+
+        let net_driver = DEFAULT_NETDEV.lock();
         let mut socket_set = SOCKET_SET.lock();
+
         let time_stamp = get_current_instant();
         net_driver
             .iface
             .lock()
-            .poll(time_stamp, &mut net_driver.driver, &mut socket_set);
+            .poll(time_stamp, &mut net_driver.driver.clone(), &mut socket_set);
+
+        drop(net_driver);
         drop(socket_set);
 
         arch_enable_interrupt();

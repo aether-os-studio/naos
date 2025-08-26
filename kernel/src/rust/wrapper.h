@@ -14,6 +14,7 @@
 #include <task/signal.h>
 #include <net/socket.h>
 #include <net/netdev.h>
+#include <net/socket/netsock.h>
 
 #if defined(__x86_64__)
 #include <drivers/bus/msi.h>
