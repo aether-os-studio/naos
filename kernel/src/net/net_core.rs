@@ -34,31 +34,61 @@ pub fn get_current_instant() -> Instant {
     };
     unsafe { time_read(&mut time as *mut tm) };
     let time = unsafe { mktime(&mut time as *mut tm) };
-    Instant::from_secs(time)
+    unsafe { Instant::from_micros(nanoTime() as i64) }
 }
 
 fn delay(ms: u64) {
+    if ms == 0 {
+        return;
+    }
+
     unsafe {
-        let nanotime = nanoTime();
-        while (nanoTime() - nanotime) < ms * 1000000 {
+        let start_time = nanoTime();
+        let target_nanos = ms * 1_000_000; // Convert ms to nanoseconds
+
+        // Use chunked delays to ensure proper yielding
+        let chunk_size = 10_000_000; // 10ms chunks
+        let mut elapsed = 0u64;
+
+        while elapsed < target_nanos {
+            let current_time = nanoTime();
+            elapsed = current_time - start_time;
+
+            if elapsed >= target_nanos {
+                break;
+            }
+
+            // Yield to allow other tasks and interrupts
             arch_yield();
+
+            // For longer delays, add more aggressive yielding
+            if ms > 100 {
+                // Sleep in smaller chunks for better responsiveness
+                let remaining = target_nanos - elapsed;
+                if remaining > chunk_size {
+                    // Force a longer yield for extended delays
+                    for _ in 0..10 {
+                        arch_yield();
+                    }
+                }
+            }
         }
     }
 }
 
 unsafe extern "C" fn net_helper_entry(_arg: u64) {
+    println!("Network helper starting...");
+
     let mut net_device_driver = NetDeviceDriver::new(get_default_netdev());
     let mut net_driver = NetDriver::new(&mut net_device_driver);
 
-    let mut dhcp_ready = false;
-
-    const DHCP_TRY_ROUND: u8 = 32;
-    for _i in 0..DHCP_TRY_ROUND {
+    loop {
         arch_disable_interrupt();
 
         let mut socket_set = SOCKET_SET.lock();
-
         let time_stamp = get_current_instant();
+
+        // Poll the network interface
         net_driver
             .iface
             .lock()
@@ -104,38 +134,28 @@ unsafe extern "C" fn net_helper_entry(_arg: u64) {
                         .remove_default_ipv4_route();
                 }
 
-                dhcp_ready = true;
-
                 break;
             }
         }
 
         drop(socket_set);
-
         arch_enable_interrupt();
 
         delay(1000);
     }
 
-    if !dhcp_ready {
-        println!("DHCP failed!");
-        task_exit(0);
-    }
-
     loop {
         arch_disable_interrupt();
-
         let mut socket_set = SOCKET_SET.lock();
-
         let time_stamp = get_current_instant();
         net_driver
             .iface
             .lock()
             .poll(time_stamp, &mut net_driver.driver, &mut socket_set);
-
         drop(socket_set);
-
         arch_enable_interrupt();
+
+        delay(10);
     }
 }
 
