@@ -114,10 +114,16 @@ extern "C" fn smoltcp_getsockname(smoltcp_fd: i32, addr: *mut c_void, addrlen: *
 
                 let endpoint = socket.endpoint();
                 if let Some(ep_addr) = endpoint.addr {
-                    unsafe { *addr }
-                        .sin_addr
-                        .copy_from_slice(ep_addr.as_bytes());
-                    unsafe { *addr }.sin_port = endpoint.port;
+                    let ep_addr = ep_addr.as_bytes();
+                    let mut sock_addr = sockaddr_in {
+                        sin_family: 0,
+                        sin_port: 0,
+                        sin_addr: [0u8; 4],
+                        sin_zero: [0u8; 8],
+                    };
+                    sock_addr.sin_addr.copy_from_slice(ep_addr);
+                    sock_addr.sin_port = endpoint.port;
+                    unsafe { *addr = sock_addr };
                     return 0;
                 } else {
                     return -(ENOTCONN as i32);
