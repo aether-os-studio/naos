@@ -34,7 +34,7 @@ pub fn get_current_instant() -> Instant {
     };
     unsafe { time_read(&mut time as *mut tm) };
     let time = unsafe { mktime(&mut time as *mut tm) };
-    unsafe { Instant::from_micros(nanoTime() as i64) }
+    unsafe { Instant::from_micros(time * 1_000_000_000 + nanoTime() as i64 % 1_000_000_000) }
 }
 
 fn delay(ms: u64) {
@@ -42,36 +42,15 @@ fn delay(ms: u64) {
         return;
     }
 
+    let nanos = ms * 1_000_000;
     unsafe {
         let start_time = nanoTime();
-        let target_nanos = ms * 1_000_000; // Convert ms to nanoseconds
-
-        // Use chunked delays to ensure proper yielding
-        let chunk_size = 10_000_000; // 10ms chunks
-        let mut elapsed = 0u64;
-
-        while elapsed < target_nanos {
+        while {
             let current_time = nanoTime();
-            elapsed = current_time - start_time;
-
-            if elapsed >= target_nanos {
-                break;
-            }
-
-            // Yield to allow other tasks and interrupts
+            let elapsed = current_time - start_time;
+            elapsed < nanos
+        } {
             arch_yield();
-
-            // For longer delays, add more aggressive yielding
-            if ms > 100 {
-                // Sleep in smaller chunks for better responsiveness
-                let remaining = target_nanos - elapsed;
-                if remaining > chunk_size {
-                    // Force a longer yield for extended delays
-                    for _ in 0..10 {
-                        arch_yield();
-                    }
-                }
-            }
         }
     }
 }
@@ -86,13 +65,12 @@ unsafe extern "C" fn net_helper_entry(_arg: u64) {
         arch_disable_interrupt();
 
         let mut socket_set = SOCKET_SET.lock();
-        let time_stamp = get_current_instant();
 
-        // Poll the network interface
-        net_driver
-            .iface
-            .lock()
-            .poll(time_stamp, &mut net_driver.driver, &mut socket_set);
+        net_driver.iface.lock().poll(
+            get_current_instant(),
+            &mut net_driver.driver,
+            &mut socket_set,
+        );
 
         let dhcp_socket: &mut socket::dhcpv4::Socket =
             socket_set.get_mut(DHCP_SOCKET_HANDLE.get().unwrap().clone());
@@ -153,6 +131,7 @@ unsafe extern "C" fn net_helper_entry(_arg: u64) {
             .lock()
             .poll(time_stamp, &mut net_driver.driver, &mut socket_set);
         drop(socket_set);
+
         arch_enable_interrupt();
 
         delay(10);
