@@ -1,7 +1,6 @@
 #include <arch/arch.h>
 #include <net/net_syscall.h>
 #include <net/socket.h>
-#include <net/socket/netsock.h>
 #include <net/netlink.h>
 #include <task/task.h>
 #include <fs/vfs/vfs.h>
@@ -46,13 +45,6 @@ int sys_getsockname(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen)
         struct netlink_sock *socket = handle->sock;
         memcpy(addr, socket->bind_addr, sizeof(struct sockaddr_nl));
     }
-    else if (handle->op == &netsock_ops)
-    {
-        netsock_t *sock = handle->sock;
-        int ret = smoltcp_getsockname(sock->handle_fd, addr, addrlen);
-        if (ret < 0)
-            return ret;
-    }
     return 0;
 }
 
@@ -88,8 +80,6 @@ int sys_socket(int domain, int type, int protocol)
 {
     if (domain == 1)
         return socket_socket(domain, type, protocol);
-    else if (domain == 2)
-        return netsock_socket(domain, type, protocol);
     else if (domain == 16)
         return netlink_socket(domain, type, protocol);
     else

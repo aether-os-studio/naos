@@ -6,7 +6,6 @@
 #include <drivers/drm/drm.h>
 #include <fs/partition.h>
 #include <drivers/fb.h>
-#include <net/net.h>
 
 #if defined(__x86_64__)
 #include <drivers/gfx/vmware/vmware.h>
@@ -58,8 +57,6 @@ void init_thread(uint64_t arg)
     // drm_init_sysfs();
 
     dev_init_after_sysfs();
-
-    net_init();
 
     arch_input_dev_init();
 
