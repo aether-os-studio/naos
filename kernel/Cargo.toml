@@ -18,6 +18,11 @@ version = "0.3.12"
 features = ["alloc"]
 default-features = false
 
+[dependencies.smoltcp]
+version = "0.11.0"
+default-features = false
+features = ["proto-ipv4", "proto-ipv6", "socket-icmp", "socket-udp", "socket-dhcpv4", "socket-tcp", "socket-raw", "medium-ip", "medium-ethernet", "proto-igmp", "alloc"]
+
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 uart_16550 = "0.4.0"
 x86_64 = "0.15.2"

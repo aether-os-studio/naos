@@ -61,5 +61,3 @@ typedef struct virtio_net_device
 
 uint32_t virtio_begin_init(virtio_driver_t *driver, uint32_t supported_features);
 void virtio_finish_init(virtio_driver_t *driver);
-
-#define MAX_NETDEV_NUM 32

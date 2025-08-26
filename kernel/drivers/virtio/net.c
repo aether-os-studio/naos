@@ -69,6 +69,8 @@ int virtio_net_init(virtio_driver_t *driver)
     // Notify device about the receive buffers
     virt_queue_notify(driver, recv_queue);
 
+    regist_netdev(net_device, net_device->mac, net_device->mtu, (netdev_send_t)virtio_net_send, (netdev_recv_t)virtio_net_receive);
+
     return 0;
 }
 

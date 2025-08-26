@@ -1,13 +1,23 @@
-use core::fmt::Write;
+use core::{ffi::CStr, fmt::Write};
 
-use crate::rust::bindings::bindings::printk;
+use alloc::vec;
+
+use crate::rust::bindings::bindings::{flanterm_write, ft_ctx, serial_printk};
 
 pub struct KernelWriter;
 
 impl Write for KernelWriter {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         unsafe {
-            printk(s.as_ptr() as *const core::ffi::c_char, s.len() as u64);
+            serial_printk(
+                s.as_ptr() as usize as *mut core::ffi::c_char,
+                s.len() as core::ffi::c_int,
+            );
+            flanterm_write(
+                ft_ctx,
+                s.as_ptr() as usize as *mut core::ffi::c_char,
+                s.len(),
+            );
         }
         Ok(())
     }

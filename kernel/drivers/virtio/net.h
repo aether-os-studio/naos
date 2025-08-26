@@ -3,6 +3,8 @@
 #include "virtio.h"
 #include "queue.h"
 
+#include <libs/aether/net.h>
+
 typedef struct virtio_net_config
 {
     uint8_t mac[6];

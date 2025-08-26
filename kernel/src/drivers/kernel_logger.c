@@ -2,8 +2,6 @@
 #include <arch/arch.h>
 #include <mm/mm.h>
 #include <drivers/fb.h>
-#include <libs/flanterm/flanterm_backends/fb.h>
-#include <libs/flanterm/flanterm.h>
 
 struct flanterm_context *ft_ctx = NULL;
 
