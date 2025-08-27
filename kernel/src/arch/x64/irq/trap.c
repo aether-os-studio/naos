@@ -3,13 +3,15 @@
 #include <mm/mm.h>
 #include <drivers/kernel_logger.h>
 #include <task/task.h>
+#include <mod/dlinker.h>
 
-// 使用弱引用属性导出kallsyms中的符号表。
-// 采用weak属性是由于第一次编译时，kallsyms还未链接进来，若不使用weak属性则会报错
 extern const uint64_t kallsyms_address[] __attribute__((weak));
 extern const uint64_t kallsyms_num __attribute__((weak));
 extern const uint64_t kallsyms_names_index[] __attribute__((weak));
 extern const char *kallsyms_names __attribute__((weak));
+
+extern module_symbol_t **all_modules_symbols;
+extern int all_modules_symbols_num;
 
 void irq_init()
 {
@@ -40,22 +42,47 @@ void irq_init()
 
 int lookup_kallsyms(uint64_t addr, int level)
 {
-    const char *str = (const char *)&kallsyms_names;
-
-    uint64_t index = 0;
-    for (index = 0; index < kallsyms_num - 1; ++index)
+    if (addr >= KERNEL_MODULES_SPACE_START && addr <= KERNEL_MODULES_SPACE_END)
     {
-        if (addr > kallsyms_address[index] && addr <= kallsyms_address[index + 1])
-            break;
-    }
-
-    if (index < kallsyms_num)
-    {
-        printk("function:%s() \t(+) %04d address:%#018lx\n", &str[kallsyms_names_index[index]], addr - kallsyms_address[index], addr);
-        return 0;
+        uint64_t index = 0;
+        uint64_t sym_offset_of_func_start = 0xffffffffffffffff;
+        uint64_t found_index = 0;
+        for (index = 0; index < all_modules_symbols_num - 1; ++index)
+        {
+            if ((addr - all_modules_symbols[index]->addr) < sym_offset_of_func_start && addr > all_modules_symbols[index]->addr)
+            {
+                sym_offset_of_func_start = addr - all_modules_symbols[index]->addr;
+                found_index = index;
+            }
+        }
+        if (found_index < all_modules_symbols_num)
+        {
+            module_symbol_t *symbols = all_modules_symbols[found_index];
+            printk("function:%s() \t(+) %04d address:%#018lx\n", symbols->name, addr - symbols->addr, addr);
+            return 0;
+        }
+        else
+            return -1;
     }
     else
-        return -1;
+    {
+        const char *str = (const char *)&kallsyms_names;
+
+        uint64_t index = 0;
+        for (index = 0; index < kallsyms_num - 1; ++index)
+        {
+            if (addr > kallsyms_address[index] && addr <= kallsyms_address[index + 1])
+                break;
+        }
+
+        if (index < kallsyms_num)
+        {
+            printk("function:%s() \t(+) %04d address:%#018lx\n", &str[kallsyms_names_index[index]], addr - kallsyms_address[index], addr);
+            return 0;
+        }
+        else
+            return -1;
+    }
 }
 
 void traceback(struct pt_regs *regs)

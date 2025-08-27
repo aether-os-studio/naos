@@ -19,6 +19,12 @@ typedef struct
     void *addr;
 } dlfunc_t;
 
+typedef struct module_symbol
+{
+    char *name;
+    uint64_t addr;
+} module_symbol_t;
+
 /**
  * 加载一个内核模块
  * @param module 文件句柄
