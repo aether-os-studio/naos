@@ -17,19 +17,32 @@ typedef struct real_socket
     int lwip_fd;
 } real_socket_t;
 
-void sockaddrLwipToLinux(void *dest_addr, uint16_t initialFamily)
+struct in_sockaddr
 {
-    struct sockaddr_un *linuxHandle = (struct sockaddr_un *)dest_addr;
-    linuxHandle->sun_family = initialFamily;
+    sa_family_t sin_family;
+    in_port_t sin_port;
+    u8_t sin_addr[4];
+    char sin_zero[8];
+};
+
+void sockaddrLwipToLinux(void *dest_addr, void *src_addr, uint16_t initialFamily)
+{
+    struct in_sockaddr *linuxHandle = (struct in_sockaddr *)dest_addr;
+    struct sockaddr_in *handle = (struct sockaddr_in *)src_addr;
+    linuxHandle->sin_family = initialFamily;
+    linuxHandle->sin_port = handle->sin_port;
+    memcpy(linuxHandle->sin_addr, &handle->sin_addr, 4);
 }
 
-uint16_t sockaddrLinuxToLwip(void *dest_addr, uint32_t addrlen)
+uint16_t sockaddrLinuxToLwip(void *dest_addr, void *src_addr, uint32_t addrlen)
 {
-    struct sockaddr_un *linuxHandle = (struct sockaddr_un *)dest_addr;
-    struct sockaddr *handle = (struct sockaddr *)dest_addr;
-    uint16_t initialFamily = linuxHandle->sun_family;
-    handle->sa_len = addrlen;
-    handle->sa_family = AF_INET;
+    struct in_sockaddr *linuxHandle = (struct in_sockaddr *)src_addr;
+    struct sockaddr_in *handle = (struct sockaddr_in *)dest_addr;
+    uint16_t initialFamily = linuxHandle->sin_family;
+    handle->sin_len = sizeof(struct sockaddr_in);
+    handle->sin_family = AF_INET;
+    handle->sin_port = linuxHandle->sin_port;
+    memcpy(&handle->sin_addr, linuxHandle->sin_addr, 4);
     return initialFamily;
 }
 
@@ -103,7 +116,7 @@ size_t real_socket_sendto(uint64_t fd, uint8_t *buff, size_t len, int flags, str
 
     struct sockaddr *aligned = malloc(addrlen);
     memcpy(aligned, dest_addr, addrlen);
-    uint16_t initialFamily = sockaddrLinuxToLwip(aligned, addrlen);
+    uint16_t initialFamily = sockaddrLinuxToLwip(aligned, dest_addr, addrlen);
 
     int lwipOut = -1;
     while (true)
@@ -118,12 +131,14 @@ size_t real_socket_sendto(uint64_t fd, uint8_t *buff, size_t len, int flags, str
             }
             continue;
         }
-        lwipOut = lwip_sendto(sock->lwip_fd, buff, len, flags, (void *)aligned, MIN(16, addrlen));
+        lwipOut = lwip_sendto(sock->lwip_fd, buff, len, flags, (void *)aligned, sizeof(struct sockaddr_in));
         if (lwipOut >= 0 || errno != EAGAIN)
             break;
     }
 
-    sockaddrLwipToLinux(aligned, initialFamily);
+    sockaddrLwipToLinux(aligned, aligned, initialFamily);
+
+    free(aligned);
 
     if (lwipOut < 0)
         return -errno;
@@ -138,6 +153,8 @@ size_t real_socket_recvfrom(uint64_t fd, uint8_t *buff, size_t len, int flags, s
     if (!addrlen || !addr)
         return real_socket_recv(fd, buff, len, flags);
 
+    struct sockaddr_in *a = malloc(sizeof(struct sockaddr_in));
+
     int lwipOut = -1;
     while (true)
     {
@@ -151,15 +168,20 @@ size_t real_socket_recvfrom(uint64_t fd, uint8_t *buff, size_t len, int flags, s
             }
             continue;
         }
-        lwipOut = lwip_recvfrom(sock->lwip_fd, buff, len, flags, (void *)addr, addrlen);
+        lwipOut = lwip_recvfrom(sock->lwip_fd, buff, len, flags, (void *)a, addrlen);
         if (lwipOut >= 0 || errno != EAGAIN)
             break;
     }
 
-    sockaddrLwipToLinux(addr, AF_INET);
+    sockaddrLwipToLinux(addr, a, AF_INET);
+
+    free(a);
 
     if (lwipOut < 0)
         return -errno;
+
+    *addrlen -= 1;
+
     return lwipOut;
 }
 
@@ -168,13 +190,16 @@ int real_socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t a
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     real_socket_t *sock = handle->sock;
 
-    uint16_t initial_family = sockaddrLinuxToLwip((void *)addr, addrlen);
+    struct sockaddr_in *a = malloc(sizeof(struct sockaddr_in));
+
+    uint16_t initial_family = sockaddrLinuxToLwip((void *)a, addr, addrlen);
     if (!(current_task->fd_info->fds[fd]->flags & O_NONBLOCK))
         lwip_fcntl(sock->lwip_fd, F_SETFL, 0);
-    int lwip_out = lwip_connect(sock->lwip_fd, (void *)addr, addrlen);
+    int lwip_out = lwip_connect(sock->lwip_fd, (void *)a, sizeof(struct sockaddr_in));
     if (!(current_task->fd_info->fds[fd]->flags & O_NONBLOCK))
         lwip_fcntl(sock->lwip_fd, F_SETFL, O_NONBLOCK);
-    sockaddrLwipToLinux((void *)addr, initial_family);
+    sockaddrLwipToLinux((void *)addr, a, initial_family);
+    free(a);
     if (lwip_out < 0)
         return -errno;
 
@@ -186,9 +211,13 @@ int real_socket_getsockname(uint64_t fd, struct sockaddr_un *addr, socklen_t *ad
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     real_socket_t *sock = handle->sock;
 
-    int lwip_out = lwip_getsockname(sock->lwip_fd, (struct sockaddr *)addr, addrlen);
+    struct sockaddr_in *a = malloc(sizeof(struct sockaddr_in));
+    int lwip_out = lwip_getsockname(sock->lwip_fd, (void *)a, addrlen);
+    sockaddrLwipToLinux(addr, a, AF_INET);
+    free(a);
     if (lwip_out < 0)
         return -errno;
+
     return lwip_out;
 }
 

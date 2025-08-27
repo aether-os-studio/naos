@@ -65,7 +65,7 @@ extern "C" {
 /* If your port already typedef's sa_family_t, define SA_FAMILY_T_DEFINED
    to prevent this code from redefining it. */
 #if !defined(sa_family_t) && !defined(SA_FAMILY_T_DEFINED)
-typedef u8_t sa_family_t;
+typedef u16_t sa_family_t;
 #endif
 /* If your port already typedef's in_port_t, define IN_PORT_T_DEFINED
    to prevent this code from redefining it. */
