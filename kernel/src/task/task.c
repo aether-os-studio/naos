@@ -557,8 +557,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 #endif
     }
 
-    uint8_t *buffer = (uint8_t *)EHDR_START_ADDR;
-    map_page_range(get_current_page_dir(true), EHDR_START_ADDR, 0, buf_len, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+    uint8_t *buffer = (uint8_t *)alloc_frames_bytes(node->size);
 
     vfs_read(node, buffer, 0, node->size);
 
@@ -605,7 +604,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         return task_execve((const char *)injected_argv[0], injected_argv, envp);
     }
 
-    const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)EHDR_START_ADDR;
+    const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)buffer;
 
     uint64_t e_entry = ehdr->e_entry;
 
@@ -613,6 +612,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     if (e_entry == 0)
     {
+        free_frames_bytes(buffer, node->size);
         free(fullpath);
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
@@ -630,6 +630,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     if (!arch_check_elf(ehdr))
     {
+        free_frames_bytes(buffer, node->size);
         free(fullpath);
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
@@ -646,7 +647,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     }
 
     // 处理程序头
-    Elf64_Phdr *phdr = (Elf64_Phdr *)(EHDR_START_ADDR + ehdr->e_phoff);
+    Elf64_Phdr *phdr = (Elf64_Phdr *)((char *)buffer + ehdr->e_phoff);
 
     uint64_t load_start = UINT64_MAX;
     uint64_t load_end = 0;
@@ -660,6 +661,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
             vfs_node_t interpreter_node = vfs_open(interpreter_name);
             if (!interpreter_node)
             {
+                free_frames_bytes(buffer, node->size);
                 free(fullpath);
                 for (int i = 0; i < argv_count; i++)
                     if (new_argv[i])
@@ -675,8 +677,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
                 return (uint64_t)-ENOENT;
             }
 
-            uint8_t *interpreter_buffer = (uint8_t *)INTERPRETER_EHDR_ADDR;
-            map_page_range(get_current_page_dir(true), INTERPRETER_EHDR_ADDR, 0, (interpreter_node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+            uint8_t *interpreter_buffer = (uint8_t *)alloc_frames_bytes(interpreter_node->size);
 
             vfs_read(interpreter_node, interpreter_buffer, 0, interpreter_node->size);
 
@@ -701,7 +702,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
                 uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W | PT_FLAG_X;
                 map_page_range(get_current_page_dir(true), aligned_addr, 0, alloc_size, flags);
-                fast_memcpy((void *)seg_addr, (void *)(INTERPRETER_EHDR_ADDR + interpreter_phdr[j].p_offset), file_size);
+                fast_memcpy((void *)seg_addr, (void *)((char *)interpreter_buffer + interpreter_phdr[j].p_offset), file_size);
 
                 if (seg_size > file_size)
                 {
@@ -719,6 +720,8 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
             }
 
             interpreter_entry = INTERPRETER_BASE_ADDR + interpreter_ehdr->e_entry;
+
+            free_frames_bytes(interpreter_buffer, node->size);
         }
         else
         {
@@ -743,7 +746,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
             uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W | PT_FLAG_X;
             map_page_range(get_current_page_dir(true), aligned_addr, 0, alloc_size, flags);
-            fast_memcpy((void *)seg_addr, (void *)(EHDR_START_ADDR + phdr[i].p_offset), file_size);
+            fast_memcpy((void *)seg_addr, (void *)((char *)buffer + phdr[i].p_offset), file_size);
 
             if (seg_size > file_size)
             {
@@ -770,6 +773,8 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     map_page_range(get_current_page_dir(true), USER_STACK_START, 0, USER_STACK_END - USER_STACK_START, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
     uint64_t stack = push_infos(current_task, USER_STACK_END, (char **)new_argv, (char **)new_envp, e_entry, (uint64_t)(load_start + ehdr->e_phoff), ehdr->e_phnum, interpreter_entry ? INTERPRETER_BASE_ADDR : load_start);
+
+    free_frames_bytes(buffer, node->size);
 
     if (current_task->is_vfork && current_task->ppid != current_task->pid && tasks[current_task->ppid] && !tasks[current_task->ppid]->child_vfork_done)
     {
