@@ -276,10 +276,10 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], char *en
 
     uint64_t execfn_ptr = tmp_stack;
 
-    uint64_t *envps = (uint64_t *)malloc(4096);
-    memset(envps, 0, 4096);
-    uint64_t *argvps = (uint64_t *)malloc(4096);
-    memset(argvps, 0, 4096);
+    uint64_t *envps = (uint64_t *)malloc(1024);
+    memset(envps, 0, 1024);
+    uint64_t *argvps = (uint64_t *)malloc(1024);
+    memset(argvps, 0, 1024);
 
     if (envp != NULL)
     {
@@ -523,10 +523,10 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     uint64_t buf_len = (node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
 
-    char **new_argv = (char **)malloc(4096);
-    memset(new_argv, 0, 4096);
-    char **new_envp = (char **)malloc(4096);
-    memset(new_envp, 0, 4096);
+    char **new_argv = (char **)malloc(1024);
+    memset(new_argv, 0, 1024);
+    char **new_envp = (char **)malloc(1024);
+    memset(new_envp, 0, 1024);
 
     int argv_count = 0;
     int envp_count = 0;
@@ -1046,7 +1046,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
 
         if (found_alive)
         {
-            arch_yield();
+            task_block(current_task, TASK_BLOCKING, -1);
             continue;
         }
 

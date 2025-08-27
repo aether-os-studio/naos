@@ -12,5 +12,5 @@ clean:
 .PHONY: distclean
 distclean:
 	rm -rf .build-stamp-*
-	rm -rf $(CWD)/rootfs-$(ARCH)
+	sudo rm -rf $(CWD)/rootfs-$(ARCH)
 	rm -rf $(CWD)/ports/cache

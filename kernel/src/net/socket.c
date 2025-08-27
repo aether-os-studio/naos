@@ -495,12 +495,8 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrle
 
     while (!pair->established)
     {
-        arch_enable_interrupt();
-
-        arch_pause();
+        arch_yield();
     }
-
-    arch_disable_interrupt();
 
     return 0;
 }
@@ -691,9 +687,14 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
         iov_len_total += curr->len;
     }
 
-    while (!noblock && !(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
+    while (!noblock && !(current_task->fd_info->fds[fd]->flags & O_NONBLOCK) && !(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
     {
         arch_yield();
+    }
+
+    if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
+    {
+        return (size_t)-EWOULDBLOCK;
     }
 
     char *buffer = malloc(iov_len_total);
@@ -883,9 +884,14 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
         iov_len_total += curr->len;
     }
 
-    while (!noblock && !(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
+    while (!noblock && !(current_task->fd_info->fds[fd]->flags & O_NONBLOCK) && !(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
     {
         arch_yield();
+    }
+
+    if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
+    {
+        return (size_t)-EWOULDBLOCK;
     }
 
     char *buffer = malloc(iov_len_total);

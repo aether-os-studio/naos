@@ -1,4 +1,4 @@
 #! /bin/sh
 
-st &
+xsetroot -solid "#006666" &
 exec twm

@@ -562,6 +562,9 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg)
         *(int *)arg = 2;
         ret = 0;
         break;
+    case TIOCNOTTY:
+        ret = 0;
+        break;
     }
     spin_unlock(&pair->lock);
 

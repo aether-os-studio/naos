@@ -53,4 +53,4 @@ sudo chmod -R 755 $SYSROOT/../var/cache/fontconfig
 sudo chmod -R 700 $SYSROOT/../run
 
 # Make us able to read the files later
-sudo chmod -R 777 $SYSROOT/../
+sudo chmod -R u+r $SYSROOT/../

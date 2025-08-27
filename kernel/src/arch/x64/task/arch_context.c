@@ -205,6 +205,7 @@ void arch_yield()
 {
     arch_enable_interrupt();
     asm volatile("int %0" ::"i"(APIC_TIMER_INTERRUPT_VECTOR));
+    arch_disable_interrupt();
 }
 
 #define ARCH_SET_GS 0x1001

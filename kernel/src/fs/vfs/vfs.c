@@ -711,8 +711,8 @@ int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg)
             *(struct winsize *)arg = (struct winsize){
                 .ws_xpixel = framebuffer->width,
                 .ws_ypixel = framebuffer->height,
-                .ws_col = framebuffer->height / 16,
-                .ws_row = framebuffer->width / 8,
+                .ws_col = framebuffer->width / 8,
+                .ws_row = framebuffer->height / 16,
             };
             return 0;
         case TIOCSCTTY:
@@ -776,6 +776,8 @@ int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg)
             return 0;
         case VT_OPENQRY:
             *(int *)arg = 1;
+            return 0;
+        case TIOCNOTTY:
             return 0;
         default:
             return callbackof(node, ioctl)(node->handle, cmd, arg);
