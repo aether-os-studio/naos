@@ -135,14 +135,14 @@ void proc_init()
     procfs_self->type = file_dir;
     procfs_self->mode = 0644;
 
-    vfs_node_t self_exe = vfs_node_alloc(procfs_self, "exe");
-    self_exe->type = file_none;
-    self_exe->mode = 0700;
-    proc_handle_t *self_exe_handle = malloc(sizeof(proc_handle_t));
-    self_exe->handle = self_exe_handle;
-    self_exe_handle->task = NULL;
-    self_exe->linkto = rootdir;
-    sprintf(self_exe_handle->name, "self/exe");
+    // vfs_node_t self_exe = vfs_node_alloc(procfs_self, "exe");
+    // self_exe->type = file_none;
+    // self_exe->mode = 0700;
+    // proc_handle_t *self_exe_handle = malloc(sizeof(proc_handle_t));
+    // self_exe->handle = self_exe_handle;
+    // self_exe_handle->task = NULL;
+    // self_exe->linkto = rootdir;
+    // sprintf(self_exe_handle->name, "self/exe");
 
     vfs_node_t self_environ = vfs_node_alloc(procfs_self, "environ");
     self_environ->type = file_none;

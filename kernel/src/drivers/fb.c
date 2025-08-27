@@ -82,8 +82,8 @@ ssize_t fb_ioctl(void *data, ssize_t cmd, ssize_t arg)
         return 0;
     case 0x5413:
         struct winsize *win = (struct winsize *)arg;
-        win->ws_col = framebuffer->width / 8;
-        win->ws_row = framebuffer->height / 16;
+        win->ws_col = framebuffer->height / 16;
+        win->ws_row = framebuffer->width / 8;
 
         win->ws_xpixel = (uint16_t)framebuffer->width;
         win->ws_ypixel = (uint16_t)framebuffer->height;
