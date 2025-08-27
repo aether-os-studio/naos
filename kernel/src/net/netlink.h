@@ -5,7 +5,7 @@
 
 struct sockaddr_nl
 {
-    sa_family_t nl_family;
+    uint16_t nl_family;
     unsigned short nl_pad;
     uint32_t nl_pid;
     uint32_t nl_groups;

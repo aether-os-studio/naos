@@ -12,6 +12,7 @@
 #include "endian.h"
 
 typedef long ssize_t;
+#define SSIZE_MAX __LONG_MAX__
 typedef int clockid_t;
 typedef void *timer_t;
 

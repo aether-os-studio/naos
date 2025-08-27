@@ -105,6 +105,9 @@ typedef void *(*vfs_mapfile_t)(fd_t *fd, void *addr, size_t offset, size_t size,
 
 typedef int (*vfs_poll_t)(void *file, size_t events);
 
+uint32_t poll_to_epoll_comp(uint32_t poll_events);
+uint32_t epoll_to_poll_comp(uint32_t epoll_events);
+
 typedef vfs_node_t (*vfs_dup_t)(vfs_node_t node);
 
 static inline vfs_node_t vfs_generic_dup(vfs_node_t node)
