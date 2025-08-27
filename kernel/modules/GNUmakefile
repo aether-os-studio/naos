@@ -7,6 +7,7 @@ all:
 	$(MAKE) -C ahci ARCH=$(ARCH) CFLAGS="$(CFLAGS)"
 	$(MAKE) -C nvme ARCH=$(ARCH) CFLAGS="$(CFLAGS)"
 	$(MAKE) -C usb ARCH=$(ARCH) CFLAGS="$(CFLAGS)"
+	$(MAKE) -C e1000 ARCH=$(ARCH) CFLAGS="$(CFLAGS)"
 	$(MAKE) -C virtio ARCH=$(ARCH) CFLAGS="$(CFLAGS)"
 
 	$(MAKE) -C ext ARCH=$(ARCH) CFLAGS="$(CFLAGS)"
