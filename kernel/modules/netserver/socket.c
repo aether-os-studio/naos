@@ -192,11 +192,35 @@ int real_socket_getsockname(uint64_t fd, struct sockaddr_un *addr, socklen_t *ad
     return lwip_out;
 }
 
+size_t real_socket_getsockopt(uint64_t fd, int level, int optname, const void *optval, socklen_t *optlen)
+{
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    real_socket_t *sock = handle->sock;
+
+    int lwip_out = lwip_getsockopt(sock->lwip_fd, level, optname, optval, optlen);
+    if (lwip_out < 0)
+        return -errno;
+    return lwip_out;
+}
+
+size_t real_socket_setsockopt(uint64_t fd, int level, int optname, const void *optval, socklen_t optlen)
+{
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    real_socket_t *sock = handle->sock;
+
+    int lwip_out = lwip_setsockopt(sock->lwip_fd, level, optname, optval, optlen);
+    if (lwip_out < 0)
+        return -errno;
+    return lwip_out;
+}
+
 socket_op_t real_socket_ops = {
     .getsockname = real_socket_getsockname,
     .connect = real_socket_connect,
     .sendto = real_socket_sendto,
     .recvfrom = real_socket_recvfrom,
+    .getsockopt = real_socket_getsockopt,
+    .setsockopt = real_socket_setsockopt,
 };
 
 bool real_socket_close(void *current)
