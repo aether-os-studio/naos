@@ -161,5 +161,10 @@ unsafe extern "C" fn heap_init() {
     let heap_start =
         phys_to_virt(alloc_frames(KERNEL_HEAP_SIZE / DEFAULT_PAGE_SIZE as usize) as usize);
 
+    unsafe {
+        core::slice::from_raw_parts_mut(heap_start as *mut u64, KERNEL_HEAP_SIZE / size_of::<u64>())
+    }
+    .fill(0);
+
     KERNEL_ALLOCATOR.init(heap_start, KERNEL_HEAP_SIZE);
 }
