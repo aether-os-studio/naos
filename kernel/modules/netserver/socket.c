@@ -292,7 +292,9 @@ static void delay(uint64_t ms)
 
 void receiver_entry(uint64_t arg)
 {
-    char buf[8192];
+    char buf[2048];
+    memset(buf, 0, sizeof(buf));
+
     while (1)
     {
         int len = netdev_recv((netdev_t *)arg, buf, sizeof(buf));
@@ -303,15 +305,14 @@ void receiver_entry(uint64_t arg)
             for (int i = 0; i < len; i++)
                 targ[i] = ((uint8_t *)buf)[i];
             global_netif.input(p, &global_netif);
+            memset(buf, 0, sizeof(buf));
         }
         delay(100);
     }
 }
 
-err_t lwip_receiver_init(struct netif *netif)
+err_t lwip_dummy_init(struct netif *netif)
 {
-    task_create("net_receiver", receiver_entry, (uint64_t)get_default_netdev());
-
     return ERR_OK;
 }
 
@@ -348,8 +349,8 @@ void lwip_init_in_thread(void *nicPre)
     this_netif->name[1] = 66;
     this_netif->next = NULL;
 
-    IP4_ADDR(&netmask, 255, 255, 255, 255);
-    netif_add(this_netif, NULL, &netmask, NULL, NULL, lwip_receiver_init, tcpip_input); // ethernetif_init_low
+    IP4_ADDR(&netmask, 255, 255, 255, 0);
+    netif_add(this_netif, NULL, &netmask, NULL, NULL, lwip_dummy_init, tcpip_input); // ethernetif_init_low
 
     this_netif->output = etharp_output;
     this_netif->linkoutput = lwip_output;
@@ -383,6 +384,7 @@ void real_socket_init_global_netif()
 {
     if (get_default_netdev())
     {
+        task_create("net_receiver", receiver_entry, (uint64_t)get_default_netdev());
         tcpip_init(lwip_init_in_thread, get_default_netdev());
     }
 }
