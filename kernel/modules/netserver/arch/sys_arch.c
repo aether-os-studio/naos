@@ -43,14 +43,35 @@ err_t sys_sem_new(sys_sem_t *sem, uint8_t cnt)
     return ERR_OK;
 }
 
-void sys_sem_signal(sys_sem_t *sem) { spin_unlock(&sem->lock); }
+void sys_sem_signal(sys_sem_t *sem)
+{
+    spin_lock(&sem->lock);
+    sem->cnt++;
+    spin_unlock(&sem->lock);
+}
 
 uint32_t sys_arch_sem_wait(sys_sem_t *sem, uint32_t timeout)
 {
-    spin_lock(&sem->lock);
-    spin_unlock(&sem->lock);
+    bool ret = false;
 
-    return 0;
+    while (true)
+    {
+        spin_lock(&sem->lock);
+        if (sem->cnt > 0)
+        {
+            sem->cnt--;
+            ret = true;
+            goto cleanup;
+        }
+        spin_unlock(&sem->lock);
+
+        arch_yield();
+    }
+
+cleanup:
+    spin_unlock(&sem->lock);
+just_return:
+    return ret ? 0 : SYS_ARCH_TIMEOUT;
 }
 
 void sys_sem_free(sys_sem_t *sem) { sys_sem_new(sem, 0); }
@@ -66,14 +87,13 @@ uint32_t sys_now(void)
 {
     tm time;
     time_read(&time);
-    return mktime(&time);
+    return mktime(&time) * 1000;
 }
 
 sys_thread_t sys_thread_new(const char *pcName,
                             void (*pxThread)(void *pvParameters), void *pvArg,
                             int iStackSize, int iPriority)
 {
-    // debugf("[lwip::glue::thread] stack{%d} name{%s}\n", iStackSize, pcName);
     task_t *task = task_create(pcName, (void (*)(uint64_t))pxThread, (uint64_t)pvArg);
     return task->pid;
 }

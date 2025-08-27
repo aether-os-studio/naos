@@ -1,20 +1,15 @@
-override SRCFILES := $(shell find . -name "*.[Sc]" | LC_ALL=C sort)
+KM_NAME := ext
 
-override CFLAGS += -I. -I./lwext4/include
+override SRCFILES := $(shell find . -name "*.[Sc]" | LC_ALL=C sort)
 
 override CFILES := $(filter %.c,$(SRCFILES))
 override ASFILES := $(filter %.S,$(SRCFILES))
-override OBJ := $(addprefix ../../obj-modules-$(ARCH)/ext/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o))
+override OBJ := $(addprefix ../../obj-modules-$(ARCH)/$(KM_NAME)/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o))
 
 all: $(OBJ)
-	$(CC) -shared $(OBJ) -o ../../modules-$(ARCH)/ext.ko
+	$(CC) $(CFLAGS) -shared $(OBJ) -o ../../modules-$(ARCH)/$(KM_NAME).ko
 
 # Compilation rules for *.c files.
-../../obj-modules-$(ARCH)/ext/%.c.o: %.c GNUmakefile
+../../obj-modules-$(ARCH)/$(KM_NAME)/%.c.o: %.c GNUmakefile
 	mkdir -p "$$(dirname $@)"
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# Compilation rules for *.S files.
-../../obj-modules-$(ARCH)/ext/%.S.o: %.S GNUmakefile
-	mkdir -p "$$(dirname $@)"
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -I$(shell pwd)/ -I$(shell pwd)/lwext4/include -I../../src -I../../freestnd-c-hdrs -c $< -o $@

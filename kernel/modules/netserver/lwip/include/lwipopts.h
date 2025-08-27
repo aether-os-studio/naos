@@ -60,6 +60,7 @@ typedef uint64_t sys_thread_t;
 typedef struct
 {
     spinlock_t lock;
+    uint32_t cnt;
     bool invalid;
 } sys_sem_t;
 typedef spinlock_t sys_mutex_t;

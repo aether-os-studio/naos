@@ -301,9 +301,7 @@ void receiver_entry(uint64_t arg)
         if (len > 0)
         {
             struct pbuf *p = pbuf_alloc(PBUF_RAW, len, PBUF_RAM);
-            uint8_t *targ = (uint8_t *)p->payload;
-            for (int i = 0; i < len; i++)
-                targ[i] = ((uint8_t *)buf)[i];
+            pbuf_take(p, buf, len);
             global_netif.input(p, &global_netif);
             memset(buf, 0, sizeof(buf));
         }
@@ -319,17 +317,10 @@ err_t lwip_dummy_init(struct netif *netif)
 err_t lwip_output(struct netif *netif, struct pbuf *p)
 {
     uint8_t *complete = malloc(p->tot_len);
-    struct pbuf *browse = p;
-    uint32_t cnt = 0;
 
-    while (browse)
-    {
-        memcpy(&complete[cnt], browse->payload, browse->len);
-        cnt += browse->len;
-        browse = browse->next;
-    }
+    pbuf_copy_partial(p, complete, p->tot_len, 0);
 
-    netdev_send(get_default_netdev(), complete, cnt);
+    netdev_send(get_default_netdev(), complete, p->tot_len);
 
     free(complete);
 
@@ -340,7 +331,6 @@ void lwip_init_in_thread(void *nicPre)
 {
     netdev_t *nic = (netdev_t *)nicPre;
     // struct ethernetif *ethernetif;
-    struct ip4_addr netmask;
 
     struct netif *this_netif = &global_netif;
 
@@ -349,12 +339,10 @@ void lwip_init_in_thread(void *nicPre)
     this_netif->name[1] = 66;
     this_netif->next = NULL;
 
-    IP4_ADDR(&netmask, 255, 255, 255, 0);
-    netif_add(this_netif, NULL, &netmask, NULL, NULL, lwip_dummy_init, tcpip_input); // ethernetif_init_low
+    netif_add(this_netif, IP4_ADDR_ANY, IP4_ADDR_ANY, IP4_ADDR_ANY, NULL, lwip_dummy_init, tcpip_input); // ethernetif_init_low
 
     this_netif->output = etharp_output;
     this_netif->linkoutput = lwip_output;
-    netif_set_default(this_netif);
     this_netif->hwaddr_len = ETHARP_HWADDR_LEN;
     this_netif->hwaddr[0] = nic->mac[0]; // or whatever u like
     this_netif->hwaddr[1] = nic->mac[1];
@@ -365,7 +353,10 @@ void lwip_init_in_thread(void *nicPre)
     this_netif->mtu = nic->mtu;
     this_netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP |
                         NETIF_FLAG_ETHERNET | NETIF_FLAG_LINK_UP;
+
+    netif_set_default(this_netif);
     netif_set_up(this_netif);
+
     err_t out = dhcp_start(this_netif);
 
     if (out != ERR_OK)
@@ -376,8 +367,8 @@ void lwip_init_in_thread(void *nicPre)
 
     delay(1000);
 
-    dhcp_supplied_address(this_netif);
     sys_check_timeouts();
+    dhcp_supplied_address(this_netif);
 }
 
 void real_socket_init_global_netif()
