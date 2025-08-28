@@ -374,7 +374,11 @@ void pci_scan_function(uint16_t segment_group, uint8_t bus, uint8_t device, uint
     pci_device->slot = device;
     pci_device->func = function;
 
-    pci_device_init(pci_device);
+    uint32_t value = pci_device->op->read(pci_device->bus, pci_device->slot, pci_device->func, pci_device->segment, 0x04);
+    value |= (1 << 2);
+    value |= (1 << 1);
+    value |= (1 << 0);
+    pci_device->op->write(pci_device->bus, pci_device->slot, pci_device->func, pci_device->segment, 0x04, value);
 
     switch (header_type)
     {

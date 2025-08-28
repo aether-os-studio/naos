@@ -8,25 +8,15 @@ override OUTPUT := kernel
 
 ifeq ($(ARCH), x86_64)
 ARCH_DIR := src/arch/x64
-RUST_TARGET := x86_64-unknown-none
 endif
 ifeq ($(ARCH), aarch64)
 ARCH_DIR := src/arch/aarch64
-RUST_TARGET := aarch64-unknown-none
 endif
 ifeq ($(ARCH), riscv64)
 ARCH_DIR := src/arch/riscv64
-RUST_TARGET := riscv64gc-unknown-none
 endif
 ifeq ($(ARCH), loongarch64)
 ARCH_DIR := src/arch/loongarch64
-RUST_TARGET := loongarch64-unknown-none
-endif
-
-RUST_PROFILE ?= dev
-RUST_PROFILE_DIR := $(RUST_PROFILE)
-ifeq ($(RUST_PROFILE), dev)
-RUST_PROFILE_DIR := debug
 endif
 
 # Install prefix; /usr/local is a good, standard default pick.
@@ -189,16 +179,14 @@ all: bin-$(ARCH)/$(OUTPUT)
 .PHONY: bin-$(ARCH)/$(OUTPUT)
 # Link rules for the final executable.
 bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH).ld $(OBJ)
-	cargo build --target $(RUST_TARGET) --profile $(RUST_PROFILE)
-
 	mkdir -p "$$(dirname $@)"
-	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) target/$(RUST_TARGET)/$(RUST_PROFILE_DIR)/libkernel.a -o $@.tmp
+	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) -o $@.tmp
 
 	gcc kallsyms.c -o kallsyms
 	$(NM) -n $@.tmp | ./kallsyms > kallsyms.S
 	@$(CC) $(CFLAGS) -c kallsyms.S -o kallsyms.o
 
-	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) kallsyms.o target/$(RUST_TARGET)/$(RUST_PROFILE_DIR)/libkernel.a -o $@
+	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) kallsyms.o -o $@
 
 modules:
 	$(MAKE) -C modules
@@ -213,14 +201,10 @@ obj-$(ARCH)/src/%.S.o: src/%.S GNUmakefile
 	mkdir -p "$$(dirname $@)"
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
-clippy:
-	cargo clippy --fix --allow-dirty
-
 # Remove object files and the final executable.
 .PHONY: clean
 clean:
 	rm -rf bin-$(ARCH) obj-$(ARCH)
-	cargo clean
 
 # Remove everything built and generated including downloaded dependencies.
 .PHONY: distclean

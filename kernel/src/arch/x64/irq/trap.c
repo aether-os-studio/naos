@@ -49,7 +49,7 @@ int lookup_kallsyms(uint64_t addr, int level)
         uint64_t found_index = 0;
         for (index = 0; index < all_modules_symbols_num - 1; ++index)
         {
-            if ((addr - all_modules_symbols[index]->addr) < sym_offset_of_func_start && addr > all_modules_symbols[index]->addr)
+            if (addr >= all_modules_symbols[index]->addr && (addr - all_modules_symbols[index]->addr) < sym_offset_of_func_start)
             {
                 sym_offset_of_func_start = addr - all_modules_symbols[index]->addr;
                 found_index = index;

@@ -36,8 +36,6 @@ uint64_t *get_kernel_page_dir()
     return kernel_page_dir;
 }
 
-extern Bitmap usable_regions;
-
 uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr, uint64_t flags)
 {
     if (!kernel_page_dir)
@@ -74,8 +72,7 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr, uint64_t flag
     if (pgdir[index] != 0)
     {
         uint64_t paddr = pgdir[index] & ARCH_ADDR_MASK;
-        if (bitmap_get(&usable_regions, paddr / DEFAULT_PAGE_SIZE))
-            free_frames(paddr, 1);
+        free_frames(paddr, 1);
     }
     pgdir[index] = (paddr & ARCH_ADDR_MASK) | flags;
 
@@ -143,7 +140,7 @@ static page_table_t *copy_page_table_recursive(page_table_t *source_table, int l
 
         uint64_t frame = alloc_frames(1);
         page_table_t *new_page_table = (page_table_t *)phys_to_virt(frame);
-        fast_memcpy(new_page_table, phys_to_virt(source_table)->entries, DEFAULT_PAGE_SIZE);
+        memcpy(new_page_table, phys_to_virt(source_table)->entries, DEFAULT_PAGE_SIZE);
         return new_page_table;
     }
 

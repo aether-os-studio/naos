@@ -140,7 +140,7 @@ retry:
     return (uint64_t)-1;
 }
 
-void free_frames(uint64_t addr, uint64_t size)
+void free_frames(uint64_t addr, uint64_t count)
 {
     spin_lock(&frame_op_lock);
 
@@ -152,8 +152,22 @@ void free_frames(uint64_t addr, uint64_t size)
 
     size_t frame_index = addr / DEFAULT_PAGE_SIZE;
 
-    bitmap_set_range(&frame_allocator.bitmap, frame_index, frame_index + size, true);
-    frame_allocator.usable_frames += size;
+    bool can_free = true;
+
+    for (uint64_t i = 0; i < count; i++)
+    {
+        if (!bitmap_get(&usable_regions, i))
+        {
+            can_free = false;
+            break;
+        }
+    }
+
+    if (can_free)
+    {
+        bitmap_set_range(&frame_allocator.bitmap, frame_index, frame_index + count, true);
+        frame_allocator.usable_frames += count;
+    }
 
     spin_unlock(&frame_op_lock);
 }

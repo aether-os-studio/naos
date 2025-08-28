@@ -702,7 +702,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
                 uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W | PT_FLAG_X;
                 map_page_range(get_current_page_dir(true), aligned_addr, 0, alloc_size, flags);
-                fast_memcpy((void *)seg_addr, (void *)((char *)interpreter_buffer + interpreter_phdr[j].p_offset), file_size);
+                memcpy((void *)seg_addr, (void *)((char *)interpreter_buffer + interpreter_phdr[j].p_offset), file_size);
 
                 if (seg_size > file_size)
                 {
@@ -746,7 +746,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
             uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W | PT_FLAG_X;
             map_page_range(get_current_page_dir(true), aligned_addr, 0, alloc_size, flags);
-            fast_memcpy((void *)seg_addr, (void *)((char *)buffer + phdr[i].p_offset), file_size);
+            memcpy((void *)seg_addr, (void *)((char *)buffer + phdr[i].p_offset), file_size);
 
             if (seg_size > file_size)
             {

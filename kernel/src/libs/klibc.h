@@ -61,41 +61,8 @@ static inline uint64_t round(double x)
     return (uint64_t)(x + 0.5);
 }
 
-extern void *memcpy(void *s1, void *s2, size_t n);
-
-static inline void *fast_memcpy(void *s1, const void *s2, size_t n)
-{
-    return __builtin_memcpy(s1, s2, n);
-}
-
-static inline void *memset(void *s, int c, size_t n)
-{
-    uint8_t *p = (uint8_t *)s;
-    uint8_t val = (uint8_t)c;
-
-    if (n >= 8)
-    {
-        uint64_t word = val;
-        word |= word << 8;
-        word |= word << 16;
-        word |= word << 32;
-
-        uint64_t *p64 = (uint64_t *)p;
-        while (n >= 8)
-        {
-            *p64++ = word;
-            n -= 8;
-        }
-        p = (uint8_t *)p64;
-    }
-
-    while (n--)
-    {
-        *p++ = val;
-    }
-
-    return s;
-}
+void *memset(void *s, int c, size_t n);
+void *memcpy(void *dest, const void *src, size_t n);
 
 static inline void *memmove(void *dest, const void *src, size_t n)
 {

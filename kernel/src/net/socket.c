@@ -169,7 +169,7 @@ size_t unix_socket_accept_recv_from(uint64_t fd, uint8_t *out, size_t limit,
     spin_lock(&pair->lock);
 
     size_t toCopy = MIN(limit, pair->serverBuffPos);
-    fast_memcpy(out, pair->serverBuff, toCopy);
+    memcpy(out, pair->serverBuff, toCopy);
     memmove(pair->serverBuff, &pair->serverBuff[toCopy], pair->serverBuffPos - toCopy);
     pair->serverBuffPos -= toCopy;
 
@@ -218,7 +218,7 @@ size_t unix_socket_accept_sendto(uint64_t fd, uint8_t *in, size_t limit,
 
     spin_lock(&pair->lock);
 
-    fast_memcpy(&pair->clientBuff[pair->clientBuffPos], in, limit);
+    memcpy(&pair->clientBuff[pair->clientBuffPos], in, limit);
     pair->clientBuffPos += limit;
 
     spin_unlock(&pair->lock);
@@ -535,7 +535,7 @@ size_t unix_socket_recv_from(uint64_t fd, uint8_t *out, size_t limit, int flags,
     spin_lock(&pair->lock);
 
     size_t toCopy = MIN(limit, pair->clientBuffPos);
-    fast_memcpy(out, pair->clientBuff, toCopy);
+    memcpy(out, pair->clientBuff, toCopy);
     memmove(pair->clientBuff, &pair->clientBuff[toCopy], pair->clientBuffPos - toCopy);
     pair->clientBuffPos -= toCopy;
 
@@ -581,7 +581,7 @@ size_t unix_socket_send_to(uint64_t fd, uint8_t *in, size_t limit, int flags,
 
     spin_lock(&pair->lock);
 
-    fast_memcpy(&pair->serverBuff[pair->serverBuffPos], in, limit);
+    memcpy(&pair->serverBuff[pair->serverBuffPos], in, limit);
     pair->serverBuffPos += limit;
 
     spin_unlock(&pair->lock);
@@ -1536,7 +1536,7 @@ ssize_t socket_read(fd_t *fd, void *buf, size_t offset, size_t limit)
     spin_lock(&pair->lock);
 
     size_t toCopy = MIN(limit, pair->clientBuffPos);
-    fast_memcpy(buf, pair->clientBuff, toCopy);
+    memcpy(buf, pair->clientBuff, toCopy);
     memmove(pair->clientBuff, &pair->clientBuff[toCopy], pair->clientBuffPos - toCopy);
     pair->clientBuffPos -= toCopy;
 
@@ -1584,7 +1584,7 @@ ssize_t socket_write(fd_t *fd, const void *buf, size_t offset, size_t limit)
 
     spin_lock(&pair->lock);
 
-    fast_memcpy(&pair->serverBuff[pair->serverBuffPos], buf, limit);
+    memcpy(&pair->serverBuff[pair->serverBuffPos], buf, limit);
     pair->serverBuffPos += limit;
 
     spin_unlock(&pair->lock);
@@ -1617,7 +1617,7 @@ ssize_t socket_accept_read(fd_t *fd, void *buf, size_t offset, size_t limit)
     spin_lock(&pair->lock);
 
     size_t toCopy = MIN(limit, pair->serverBuffPos);
-    fast_memcpy(buf, pair->serverBuff, toCopy);
+    memcpy(buf, pair->serverBuff, toCopy);
     memmove(pair->serverBuff, &pair->serverBuff[toCopy], pair->serverBuffPos - toCopy);
     pair->serverBuffPos -= toCopy;
 
@@ -1665,7 +1665,7 @@ ssize_t socket_accept_write(fd_t *fd, const void *buf, size_t offset, size_t lim
 
     spin_lock(&pair->lock);
 
-    fast_memcpy(&pair->clientBuff[pair->clientBuffPos], buf, limit);
+    memcpy(&pair->clientBuff[pair->clientBuffPos], buf, limit);
     pair->clientBuffPos += limit;
 
     spin_unlock(&pair->lock);
