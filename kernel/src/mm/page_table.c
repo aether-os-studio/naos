@@ -36,6 +36,8 @@ uint64_t *get_kernel_page_dir()
     return kernel_page_dir;
 }
 
+extern Bitmap usable_regions;
+
 uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr, uint64_t flags)
 {
     if (!kernel_page_dir)
@@ -70,7 +72,11 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr, uint64_t flag
 
     uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
     if (pgdir[index] != 0)
-        free_frames((pgdir[index] & ARCH_ADDR_MASK), 1);
+    {
+        uint64_t paddr = pgdir[index] & ARCH_ADDR_MASK;
+        if (bitmap_get(&usable_regions, paddr / DEFAULT_PAGE_SIZE))
+            free_frames(paddr, 1);
+    }
     pgdir[index] = (paddr & ARCH_ADDR_MASK) | flags;
 
     arch_flush_tlb(vaddr);
@@ -229,4 +235,11 @@ void free_page_table(task_mm_info_t *directory)
 
 void page_table_init()
 {
+    uint64_t new_page_table = alloc_frames(1);
+    memset((void *)phys_to_virt(new_page_table), 0, DEFAULT_PAGE_SIZE);
+#if defined(__x86_64__)
+    memcpy((uint64_t *)phys_to_virt(new_page_table) + 256, (uint64_t *)get_current_page_dir(false) + 256, DEFAULT_PAGE_SIZE / 2);
+    asm volatile("movq %0, %%cr3" ::"r"(new_page_table));
+#endif
+    kernel_page_dir = (uint64_t *)phys_to_virt(new_page_table);
 }

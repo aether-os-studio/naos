@@ -2,6 +2,7 @@ use alloc::{collections::btree_map::BTreeMap, vec::Vec};
 use good_memory_allocator::SpinLockedAllocator;
 use spin::Mutex;
 
+pub const KERNEL_HEAP_START: usize = 0xffffffff_c0000000;
 pub const KERNEL_HEAP_SIZE: usize = 128 * 1024 * 1024;
 
 use crate::{
@@ -150,21 +151,21 @@ unsafe extern "C" fn free(ptr: *const core::ffi::c_void) {
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn heap_init() {
-    // map_page_range(
-    //     get_current_page_dir(false),
-    //     KERNEL_HEAP_START as u64,
-    //     0,
-    //     KERNEL_HEAP_SIZE as u64,
-    //     PT_FLAG_R as u64 | PT_FLAG_W as u64,
-    // );
-
-    let heap_start =
-        phys_to_virt(alloc_frames(KERNEL_HEAP_SIZE / DEFAULT_PAGE_SIZE as usize) as usize);
+    map_page_range(
+        get_current_page_dir(false),
+        KERNEL_HEAP_START as u64,
+        0,
+        KERNEL_HEAP_SIZE as u64,
+        PT_FLAG_R as u64 | PT_FLAG_W as u64,
+    );
 
     unsafe {
-        core::slice::from_raw_parts_mut(heap_start as *mut u64, KERNEL_HEAP_SIZE / size_of::<u64>())
+        core::slice::from_raw_parts_mut(
+            KERNEL_HEAP_START as *mut u64,
+            KERNEL_HEAP_SIZE / size_of::<u64>(),
+        )
     }
     .fill(0);
 
-    KERNEL_ALLOCATOR.init(heap_start, KERNEL_HEAP_SIZE);
+    KERNEL_ALLOCATOR.init(KERNEL_HEAP_START, KERNEL_HEAP_SIZE);
 }

@@ -13,6 +13,7 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
 spinlock_t frame_op_lock = {0};
 
 FrameAllocator frame_allocator;
+Bitmap usable_regions;
 uint64_t memory_size = 0;
 
 uint64_t get_memory_size()
@@ -53,7 +54,7 @@ void frame_init()
 #if defined(__x86_64__)
                 region->base >= 0x100000 &&
 #endif
-                region->length >= bitmap_size)
+                region->length >= bitmap_size * 2)
             {
                 bitmap_address = region->base;
                 break;
@@ -63,6 +64,7 @@ void frame_init()
 
     Bitmap *bitmap = &frame_allocator.bitmap;
     bitmap_init(bitmap, (uint64_t *)phys_to_virt(bitmap_address), bitmap_size);
+    bitmap_init(&usable_regions, (uint64_t *)phys_to_virt(bitmap_address + bitmap_size), bitmap_size);
 
     size_t origin_frames = 0;
     for (uint64_t i = 0; i < memory_map->entry_count; i++)
@@ -76,21 +78,23 @@ void frame_init()
         {
             origin_frames += frame_count;
             bitmap_set_range(bitmap, start_frame, start_frame + frame_count, true);
+            bitmap_set_range(&usable_regions, start_frame, start_frame + frame_count, true);
         }
     }
 
 #if defined(__x86_64__)
     size_t low_1M_frame_count = 0x100000 / DEFAULT_PAGE_SIZE;
     bitmap_set_range(bitmap, 0, low_1M_frame_count, false);
+    bitmap_set_range(&usable_regions, 0, low_1M_frame_count, false);
 #endif
 
     size_t bitmap_frame_start = bitmap_address / DEFAULT_PAGE_SIZE;
-    size_t bitmap_frame_count = (bitmap_size + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE;
-    size_t bitmap_frame_end = bitmap_frame_start + bitmap_frame_count;
+    size_t bitmap_frame_end = (bitmap_address + bitmap_size * 2 + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE;
     bitmap_set_range(bitmap, bitmap_frame_start, bitmap_frame_end, false);
+    bitmap_set_range(&usable_regions, bitmap_frame_start, bitmap_frame_end, false);
 
     frame_allocator.origin_frames = origin_frames;
-    frame_allocator.usable_frames = origin_frames - bitmap_frame_count
+    frame_allocator.usable_frames = origin_frames - (bitmap_frame_end - bitmap_frame_start + 1)
 #if defined(__x86_64__)
                                     - low_1M_frame_count
 #endif
@@ -108,7 +112,7 @@ uint64_t alloc_frames(size_t count)
     if (frame_allocator.usable_frames < count)
     {
         spin_unlock(&frame_op_lock);
-        return 0;
+        return (uint64_t)-1;
     }
 
 retry:
@@ -133,7 +137,7 @@ retry:
 
     spin_unlock(&frame_op_lock);
 
-    return -1;
+    return (uint64_t)-1;
 }
 
 void free_frames(uint64_t addr, uint64_t size)

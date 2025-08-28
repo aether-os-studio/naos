@@ -28,9 +28,9 @@ void kmain(void)
 
     frame_init();
 
-    heap_init();
-
     page_table_init();
+
+    heap_init();
 
     printk("Next Aether-OS starting...\n");
 
