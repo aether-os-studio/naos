@@ -12,6 +12,8 @@
 
 struct netif global_netif;
 
+static int realsock_fsid = 0;
+
 typedef struct real_socket
 {
     int lwip_fd;
@@ -265,6 +267,33 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
     return lwip_out;
 }
 
+int real_socket_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen)
+{
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    real_socket_t *sock = handle->sock;
+
+    struct sockaddr_in *a = malloc(sizeof(struct sockaddr_in));
+    sockaddrLinuxToLwip(a, addr, addrlen);
+    int out = lwip_bind(sock->lwip_fd, a, sizeof(struct sockaddr_in));
+    free(a);
+    if (out < 0)
+        return -errno;
+
+    return out;
+}
+
+int real_socket_listen(uint64_t fd, int backlog)
+{
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    real_socket_t *sock = handle->sock;
+
+    int out = lwip_listen(sock->lwip_fd, backlog);
+    if (out < 0)
+        return -errno;
+
+    return out;
+}
+
 socket_op_t real_socket_ops = {
     .getsockname = real_socket_getsockname,
     .connect = real_socket_connect,
@@ -275,6 +304,75 @@ socket_op_t real_socket_ops = {
     .getsockopt = real_socket_getsockopt,
     .setsockopt = real_socket_setsockopt,
 };
+
+int real_socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen, uint64_t flags)
+{
+    // socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    // real_socket_t *sock = handle->sock;
+
+    // uint32_t revents = 0;
+
+    // do
+    // {
+    //     struct pollfd single = {.revents = 0,
+    //                             .events = epoll_to_poll_comp(EPOLLIN),
+    //                             .fd = sock->lwip_fd};
+
+    //     int ret = lwip_poll(&single, 1, 0);
+    //     if (ret != 1)
+    //         return -errno;
+
+    //     revents = poll_to_epoll_comp(single.revents);
+    // } while (!(revents & EPOLLIN));
+
+    // struct sockaddr_in *a = malloc(sizeof(struct sockaddr_in));
+    // sockaddrLinuxToLwip(a, addr, 0);
+    // int new_lwip_fd = lwip_accept(sock->lwip_fd, a, addrlen);
+    // free(a);
+    // if (new_lwip_fd < 0)
+    //     return -errno;
+
+    // *addrlen -= 1;
+
+    // vfs_node_t socknode = vfs_node_alloc(NULL, "realsock");
+    // socknode->type = file_socket;
+    // socknode->fsid = realsock_fsid;
+    // socknode->refcount++;
+    // socket_handle_t *new_handle = malloc(sizeof(socket_handle_t));
+    // memset(new_handle, 0, sizeof(socket_handle_t));
+    // real_socket_t *real_socket = malloc(sizeof(real_socket_t));
+    // memset(real_socket, 0, sizeof(real_socket_t));
+
+    // new_handle->sock = real_socket;
+    // real_socket->lwip_fd = new_lwip_fd;
+    // new_handle->op = &real_socket_ops;
+    // socknode->handle = new_handle;
+
+    // uint64_t i = 0;
+    // for (i = 3; i < MAX_FD_NUM; i++)
+    // {
+    //     if (current_task->fd_info->fds[i] == NULL)
+    //     {
+    //         break;
+    //     }
+    // }
+
+    // if (i == MAX_FD_NUM)
+    // {
+    //     return -EMFILE;
+    // }
+
+    // current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
+    // current_task->fd_info->fds[i]->node = socknode;
+    // current_task->fd_info->fds[i]->offset = 0;
+    // current_task->fd_info->fds[i]->flags = 0;
+
+    // new_handle->fd = current_task->fd_info->fds[i];
+
+    // return i;
+
+    return -ENOSYS;
+}
 
 bool real_socket_close(void *current)
 {
@@ -325,8 +423,6 @@ ssize_t real_socket_write(fd_t *fd, const void *addr, size_t offset, size_t size
 
     return lwip_out;
 }
-
-static int realsock_fsid = 0;
 
 static int dummy()
 {
