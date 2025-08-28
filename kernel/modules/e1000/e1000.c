@@ -317,7 +317,9 @@ int e1000_receive(void *dev_desc, void *buffer, uint32_t buffer_size)
     uint16_t next_rx = (dev->rx_tail + 1) % E1000_NUM_RX_DESC;
     struct e1000_rx_desc *desc = &dev->rx_descs[next_rx];
 
-    if (!(desc->status & E1000_RXD_STAT_DD))
+    bool have_data = !!(desc->status & E1000_RXD_STAT_DD);
+
+    if (!have_data)
     {
         // No packet available
         return 0;
@@ -345,7 +347,7 @@ cleanup:
     dev->rx_tail = next_rx;
     e1000_write32(dev, E1000_RDT, dev->rx_tail);
 
-    return (desc->status & E1000_RXD_STAT_DD) ? packet_len : 0;
+    return have_data ? packet_len : 0;
 }
 
 // Check if packets are available
