@@ -417,6 +417,16 @@ int real_socket_socket(int domain, int type, int protocol)
         real_socket_initialized = true;
     }
 
+    int try_bound = 0;
+    while (!dhcp_supplied_address(&global_netif))
+    {
+        try_bound++;
+        if (try_bound >= 10)
+            return -EHOSTUNREACH;
+        sys_check_timeouts();
+        delay(1000);
+    }
+
     int lwip_fd = lwip_socket(domain, type, protocol);
     if (lwip_fd < 0)
         return -errno;
