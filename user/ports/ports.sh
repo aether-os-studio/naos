@@ -15,7 +15,7 @@ mkdir -p "$(dirname "$APK_PATH")"
 [ -f "$APK_PATH" ] || wget "$APK_URI" -O "$APK_PATH"
 chmod +x "$APK_PATH"
 
-ALPINE_VERSION=latest-stable
+ALPINE_VERSION=v3.21
 
 # Export variables needed for the unshare'd environment
 export APK_PATH ARCH SYSROOT ALPINE_VERSION
@@ -26,7 +26,7 @@ MIRROR="${MIRROR_ROOT}/${ALPINE_VERSION}"
 APK_CMD="sudo $APK_PATH --arch $ARCH -U --allow-untrusted --root $SYSROOT/../"
 
 # Bootstrap alpine userspace
-$APK_CMD -X "$MIRROR/main" -U --initdb add bash coreutils grep musl ncurses
+$APK_CMD -X "$MIRROR/main" -U --initdb add alpine-base bash coreutils grep musl ncurses
 
 # Use a fast mirror :)
 printf "${MIRROR}/main\n${MIRROR}/community\n${MIRROR_ROOT}/edge/testing" | sudo tee $SYSROOT/../etc/apk/repositories

@@ -347,3 +347,5 @@ fd_t *vfs_dup(fd_t *fd);
 void *vfs_map(fd_t *fd, uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset);
 
 extern vfs_callback_t fs_callbacks[256];
+
+extern int fs_nextid;

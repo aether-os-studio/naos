@@ -77,7 +77,7 @@ int sys_socket(int domain, int type, int protocol)
         {
             if (real_sockets[i]->domain == domain)
             {
-                return real_sockets[i]->socket(domain, type, protocol);
+                return real_sockets[i]->socket(domain, type & 0xff, protocol);
             }
         }
 

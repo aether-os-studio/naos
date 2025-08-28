@@ -243,11 +243,35 @@ size_t real_socket_setsockopt(uint64_t fd, int level, int optname, const void *o
     return lwip_out;
 }
 
+size_t real_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags)
+{
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    real_socket_t *sock = handle->sock;
+
+    int lwip_out = lwip_sendmsg(sock->lwip_fd, msg, flags);
+    if (lwip_out < 0)
+        return -errno;
+    return lwip_out;
+}
+
+size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
+{
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    real_socket_t *sock = handle->sock;
+
+    int lwip_out = lwip_recvmsg(sock->lwip_fd, msg, flags);
+    if (lwip_out < 0)
+        return -errno;
+    return lwip_out;
+}
+
 socket_op_t real_socket_ops = {
     .getsockname = real_socket_getsockname,
     .connect = real_socket_connect,
     .sendto = real_socket_sendto,
     .recvfrom = real_socket_recvfrom,
+    .sendmsg = real_socket_sendmsg,
+    .recvmsg = real_socket_recvmsg,
     .getsockopt = real_socket_getsockopt,
     .setsockopt = real_socket_setsockopt,
 };
@@ -278,6 +302,30 @@ int real_socket_poll(void *curr, size_t events)
     return poll_to_epoll_comp(single.revents);
 }
 
+ssize_t real_socket_read(fd_t *fd, void *addr, size_t offset, size_t size)
+{
+    socket_handle_t *handle = fd->node->handle;
+    real_socket_t *sock = handle->sock;
+
+    int lwip_out = lwip_read(sock->lwip_fd, addr, size);
+    if (lwip_out < 0)
+        return -errno;
+
+    return lwip_out;
+}
+
+ssize_t real_socket_write(fd_t *fd, const void *addr, size_t offset, size_t size)
+{
+    socket_handle_t *handle = fd->node->handle;
+    real_socket_t *sock = handle->sock;
+
+    int lwip_out = lwip_write(sock->lwip_fd, addr, size);
+    if (lwip_out < 0)
+        return -errno;
+
+    return lwip_out;
+}
+
 static int realsock_fsid = 0;
 
 static int dummy()
@@ -290,8 +338,8 @@ struct vfs_callback callbacks = {
     .unmount = (vfs_unmount_t)dummy,
     .open = (vfs_open_t)dummy,
     .close = (vfs_close_t)real_socket_close,
-    .read = (vfs_read_t)dummy,
-    .write = (vfs_write_t)dummy,
+    .read = (vfs_read_t)real_socket_read,
+    .write = (vfs_write_t)real_socket_write,
     .readlink = (vfs_readlink_t)dummy,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,
@@ -321,18 +369,19 @@ static void delay(uint64_t ms)
 
 void receiver_entry(uint64_t arg)
 {
-    char buf[2048];
-    memset(buf, 0, sizeof(buf));
+    uint32_t mtu = get_default_netdev()->mtu;
+    char *buf = malloc(mtu);
+    memset(buf, 0, mtu);
 
     while (1)
     {
-        int len = netdev_recv((netdev_t *)arg, buf, sizeof(buf));
+        int len = netdev_recv((netdev_t *)arg, buf, mtu);
         if (len > 0)
         {
             struct pbuf *p = pbuf_alloc(PBUF_RAW, len, PBUF_RAM);
             pbuf_take(p, buf, len);
             global_netif.input(p, &global_netif);
-            memset(buf, 0, sizeof(buf));
+            memset(buf, 0, mtu);
         }
         delay(100);
     }
