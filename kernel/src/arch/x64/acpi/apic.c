@@ -5,8 +5,6 @@
 #include <interrupt/irq_manager.h>
 #include <task/task.h>
 
-#define SCHED_HZ 100
-
 bool x2apic_mode = false;
 uint64_t lapic_address;
 

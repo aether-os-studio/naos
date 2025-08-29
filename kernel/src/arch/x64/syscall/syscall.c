@@ -123,6 +123,16 @@ uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3)
         }
         return 0;
     }
+    case 2: // CLOCK_PROCESS_CPUTIME_ID
+        if (arg2)
+        {
+            struct timespec *ts = (struct timespec *)arg2;
+            uint64_t jiffies = current_task->jiffies;
+            uint64_t ms = jiffies * SCHED_HZ;
+            ts->tv_sec = ms / 1000;
+            ts->tv_nsec = ms * 1000000;
+        }
+        return 0;
     case 0:
     {
         tm time;
@@ -138,7 +148,7 @@ uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3)
         return 0;
     }
     default:
-        printk("clock not supported\n");
+        printk("clock not supported, clock_id = %d\n", arg1);
         return (uint64_t)-EINVAL;
     }
 }

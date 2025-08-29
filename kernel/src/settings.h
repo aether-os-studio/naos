@@ -12,3 +12,4 @@
 #define BUILD_VERSION "0.69.2"
 
 #define MAX_CONTINUE_NULL_TASKS 5
+#define SCHED_HZ 100
