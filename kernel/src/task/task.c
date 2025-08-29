@@ -112,8 +112,10 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
     task->jiffies = 0;
     task->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     task->syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
+    task->signal_syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     memset((void *)(task->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(task->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
+    memset((void *)(task->signal_syscall_stack - STACK_SIZE), 0, STACK_SIZE);
     task->arch_context = malloc(sizeof(arch_context_t));
     memset(task->arch_context, 0, sizeof(arch_context_t));
     arch_context_init(task->arch_context, virt_to_phys((uint64_t)get_kernel_page_dir()), (uint64_t)entry, task->kernel_stack, false, arg);
@@ -376,8 +378,10 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
 
     child->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     child->syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
+    child->signal_syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     memset((void *)(child->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(child->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
+    memset((void *)(child->signal_syscall_stack - STACK_SIZE), 0, STACK_SIZE);
 
     child->arch_context = malloc(sizeof(arch_context_t));
     memset(child->arch_context, 0, sizeof(arch_context_t));
@@ -496,28 +500,21 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     return child->pid;
 }
 
-bool execve_lock = false;
+spinlock_t execve_lock = {0};
 
 uint64_t task_execve(const char *path, const char **argv, const char **envp)
 {
-    while (execve_lock)
-    {
-        arch_enable_interrupt();
-
-        arch_pause();
-    }
-
     arch_disable_interrupt();
 
     can_schedule = false;
 
-    execve_lock = true;
+    spin_lock(&execve_lock);
 
     vfs_node_t node = vfs_open(path);
     if (!node)
     {
         can_schedule = true;
-        execve_lock = false;
+        spin_unlock(&execve_lock);
         return (uint64_t)-ENOENT;
     }
 
@@ -574,7 +571,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
                 free(new_envp[i]);
         free(new_envp);
 
-        execve_lock = false;
+        spin_unlock(&execve_lock);
 
         char *p = (char *)buffer + 2;
         const char *interpreter_name = NULL;
@@ -624,7 +621,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         free(new_envp);
         free(fullpath);
         can_schedule = true;
-        execve_lock = false;
+        spin_unlock(&execve_lock);
         return (uint64_t)-EINVAL;
     }
 
@@ -642,7 +639,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         free(new_envp);
         free(fullpath);
         can_schedule = true;
-        execve_lock = false;
+        spin_unlock(&execve_lock);
         return (uint64_t)-EINVAL;
     }
 
@@ -673,7 +670,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
                 free(new_envp);
                 free(fullpath);
                 can_schedule = true;
-                execve_lock = false;
+                spin_unlock(&execve_lock);
                 return (uint64_t)-ENOENT;
             }
 
@@ -827,7 +824,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     memset(current_task->mmap_regions.buffer, 0xff, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64);
 
-    execve_lock = false;
+    spin_unlock(&execve_lock);
     can_schedule = true;
 
     arch_to_user_mode(current_task->arch_context, interpreter_entry ? interpreter_entry : e_entry, stack);
@@ -883,7 +880,9 @@ void task_exit_inner(task_t *task, int64_t code)
         free(task->fd_info);
     }
 
-    free_frames_bytes(task->mmap_regions.buffer, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64);
+    task->mmap_regions.bitmap_refcount--;
+    if (!task->mmap_regions.bitmap_refcount)
+        free_frames_bytes(task->mmap_regions.buffer, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64);
 
     if (task->cmdline)
         free(task->cmdline);
@@ -1083,6 +1082,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
 
         free_frames_bytes((void *)(target->kernel_stack - STACK_SIZE), STACK_SIZE);
         free_frames_bytes((void *)(target->syscall_stack - STACK_SIZE), STACK_SIZE);
+        free_frames_bytes((void *)(target->signal_syscall_stack - STACK_SIZE), STACK_SIZE);
 
         free(target);
     }
@@ -1109,8 +1109,10 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
 
     child->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     child->syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
+    child->signal_syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     memset((void *)(child->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(child->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
+    memset((void *)(child->signal_syscall_stack - STACK_SIZE), 0, STACK_SIZE);
 
     child->arch_context = malloc(sizeof(arch_context_t));
     memset(child->arch_context, 0, sizeof(arch_context_t));
@@ -1136,9 +1138,18 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->cmdline = strdup(current_task->cmdline);
 
     const uint64_t bitmap_size = (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64;
-    void *data = alloc_frames_bytes(bitmap_size);
-    bitmap_init(&child->mmap_regions, data, bitmap_size);
-    memcpy(data, current_task->mmap_regions.buffer, bitmap_size);
+    if (flags & CLONE_VM)
+    {
+        child->mmap_regions.buffer = current_task->mmap_regions.buffer;
+        child->mmap_regions.length = current_task->mmap_regions.length;
+        child->mmap_regions.bitmap_refcount++;
+    }
+    else
+    {
+        void *data = alloc_frames_bytes(bitmap_size);
+        bitmap_init(&child->mmap_regions, data, bitmap_size);
+        memcpy(data, current_task->mmap_regions.buffer, bitmap_size);
+    }
     child->brk_start = USER_BRK_START;
     child->brk_end = USER_BRK_START;
     child->load_start = current_task->load_start;

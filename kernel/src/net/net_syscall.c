@@ -28,11 +28,10 @@ int sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen)
 
 int sys_getsockname(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen)
 {
-    if (sockfd >= MAX_FD_NUM)
+    if (sockfd < 0 || sockfd > MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;
-    fd_t *node = current_task->fd_info->fds[sockfd];
 
-    socket_handle_t *handle = node->node->handle;
+    socket_handle_t *handle = current_task->fd_info->fds[sockfd]->node->handle;
     if (handle->op->getsockname)
         return handle->op->getsockname(sockfd, addr, addrlen);
     return -ENOSYS;
@@ -40,11 +39,10 @@ int sys_getsockname(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen)
 
 int sys_setsockopt(int fd, int level, int optname, const void *optval, socklen_t optlen)
 {
-    if (fd >= MAX_FD_NUM)
+    if (fd < 0 || fd > MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
-    fd_t *node = current_task->fd_info->fds[fd];
 
-    socket_handle_t *handle = node->node->handle;
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     if (handle->op->setsockopt)
     {
         return handle->op->setsockopt(fd, level, optname, optval, optlen);

@@ -6,6 +6,7 @@ typedef struct
 {
     uint64_t *buffer;
     size_t length;
+    uint64_t bitmap_refcount;
 } Bitmap;
 
 void bitmap_init(Bitmap *bitmap, uint64_t *buffer, size_t size);

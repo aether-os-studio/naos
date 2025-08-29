@@ -17,7 +17,7 @@ uint64_t switch_to_kernel_stack()
 {
     if (current_task->call_in_signal)
     {
-        return current_task->syscall_stack - STACK_SIZE / 2;
+        return current_task->signal_syscall_stack;
     }
     else
     {

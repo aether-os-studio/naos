@@ -165,6 +165,7 @@ typedef struct task
     task_state_t current_state;
     uint64_t kernel_stack;
     uint64_t syscall_stack;
+    uint64_t signal_syscall_stack;
     uint64_t brk_start;
     uint64_t brk_end;
     uint64_t load_start;

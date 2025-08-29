@@ -4,6 +4,7 @@ void bitmap_init(Bitmap *bitmap, uint64_t *buffer, size_t size)
 {
     bitmap->buffer = buffer;
     bitmap->length = size * 64;
+    bitmap->bitmap_refcount = 1;
     memset(buffer, 0, size * 8);
 }
 
