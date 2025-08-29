@@ -317,32 +317,29 @@ int sys_kill(int pid, int sig)
         return 0;
     }
 
-    if (task->ppid != 0 && task->ppid != task->pid)
-    {
-        task_t *parent = tasks[task->ppid];
-        if (!parent)
-        {
-            return 0;
-        }
+    // if (task->ppid != 0 && task->ppid != task->pid)
+    // {
+    //     task_t *parent = tasks[task->ppid];
+    //     if (!parent)
+    //     {
+    //         return 0;
+    //     }
 
-        void *handler = parent->actions[SIGCHLD].sa_handler;
-        if (!(handler == SIG_DFL || handler == SIG_IGN))
-        {
-            parent->signal |= SIGMASK(SIGCHLD);
-        }
+    //     void *handler = parent->actions[SIGCHLD].sa_handler;
+    //     if (!(handler == SIG_DFL || handler == SIG_IGN))
+    //     {
+    //         parent->signal |= SIGMASK(SIGCHLD);
+    //     }
 
-        if (parent->state == TASK_BLOCKING)
-        {
-            task_unblock(parent, SIGCHLD);
-        }
-    }
+    //     if (parent->state == TASK_BLOCKING)
+    //     {
+    //         task_unblock(parent, SIGCHLD);
+    //     }
+    // }
 
     task->signal |= SIGMASK(sig);
 
-    if (task->state == TASK_BLOCKING)
-    {
-        task_unblock(task, -sig);
-    }
+    task_unblock(task, -sig);
 
     return 0;
 }
