@@ -43,29 +43,21 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout)
 
     bool sigexit = false;
 
+    for (int i = 0; i < nfds; i++)
+    {
+        fds[i].revents = 0;
+    }
+
     do
     {
         // 检查每个文件描述符
         for (int i = 0; i < nfds; i++)
         {
-            fds[i].revents = 0;
-
             if (fds[i].fd < 0 || fds[i].fd > MAX_FD_NUM || !current_task->fd_info->fds[fds[i].fd])
             {
                 return (size_t)-EBADF;
             }
             vfs_node_t node = current_task->fd_info->fds[fds[i].fd]->node;
-            if (!node)
-                continue;
-            if (!fs_callbacks[node->fsid]->poll)
-            {
-                if (fds[i].events & POLLIN || fds[i].events & POLLOUT)
-                {
-                    fds[i].revents = fds[i].events & POLLIN ? POLLIN : POLLOUT;
-                    ready++;
-                }
-                continue;
-            }
 
             arch_disable_interrupt();
 

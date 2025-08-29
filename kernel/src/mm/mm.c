@@ -172,16 +172,11 @@ void free_frames(uint64_t addr, uint64_t count)
     spin_unlock(&frame_op_lock);
 }
 
-bool mem_map_op_lock = false;
+spinlock_t mem_map_op_lock = {0};
 
 void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t size, uint64_t flags)
 {
-    while (mem_map_op_lock)
-    {
-        arch_pause();
-    }
-
-    mem_map_op_lock = true;
+    spin_lock(&mem_map_op_lock);
 
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE)
     {
@@ -193,32 +188,27 @@ void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t siz
                 printk("Cannot allocate frame\n");
                 break;
             }
-            map_page(pml4, va, phys, get_arch_page_table_flags(flags));
+            map_page(pml4, va, phys, get_arch_page_table_flags(flags), true);
         }
         else
         {
-            map_page(pml4, va, paddr + (va - vaddr), get_arch_page_table_flags(flags));
+            map_page(pml4, va, paddr + (va - vaddr), get_arch_page_table_flags(flags), true);
         }
     }
 
-    mem_map_op_lock = false;
+    spin_unlock(&mem_map_op_lock);
 }
 
 void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size)
 {
-    while (mem_map_op_lock)
-    {
-        arch_pause();
-    }
-
-    mem_map_op_lock = true;
+    spin_lock(&mem_map_op_lock);
 
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE)
     {
         unmap_page(pml4, va);
     }
 
-    mem_map_op_lock = false;
+    spin_unlock(&mem_map_op_lock);
 }
 
 uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags)
@@ -257,19 +247,14 @@ uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags)
 
 uint64_t map_change_attribute_range(uint64_t *pgdir, uint64_t vaddr, uint64_t len, uint64_t flags)
 {
-    while (mem_map_op_lock)
-    {
-        arch_pause();
-    }
-
-    mem_map_op_lock = true;
+    spin_lock(&mem_map_op_lock);
 
     for (uint64_t va = vaddr; va < vaddr + len; va += DEFAULT_PAGE_SIZE)
     {
         map_change_attribute(pgdir, va, get_arch_page_table_flags(flags));
     }
 
-    mem_map_op_lock = false;
+    spin_unlock(&mem_map_op_lock);
 
     return 0;
 }

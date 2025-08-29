@@ -1,5 +1,6 @@
 #include "arch_context.h"
 #include <mm/mm.h>
+#include <mm/heap/alloc/alloc.h>
 #include <arch/arch.h>
 #include <task/task.h>
 
@@ -9,7 +10,7 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64
 
     if (!context->fpu_ctx)
     {
-        context->fpu_ctx = alloc_frames_bytes(sizeof(fpu_context_t));
+        context->fpu_ctx = aligned_alloc(16, sizeof(fpu_context_t));
         memset(context->fpu_ctx, 0, sizeof(fpu_context_t));
         context->fpu_ctx->mxscr = 0x1f80;
         context->fpu_ctx->fcw = 0x037f;
@@ -61,7 +62,7 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
     dst->ctx->ds = SELECTOR_USER_DS;
     dst->ctx->es = SELECTOR_USER_DS;
     dst->ctx->rax = 0;
-    dst->fpu_ctx = alloc_frames_bytes(sizeof(fpu_context_t));
+    dst->fpu_ctx = aligned_alloc(16, sizeof(fpu_context_t));
     memset(dst->fpu_ctx, 0, sizeof(fpu_context_t));
     if (src->fpu_ctx)
     {
@@ -79,7 +80,7 @@ void arch_context_free(arch_context_t *context)
 {
     if (context->fpu_ctx)
     {
-        free_frames_bytes(context->fpu_ctx, sizeof(fpu_context_t));
+        free(context->fpu_ctx);
     }
 }
 

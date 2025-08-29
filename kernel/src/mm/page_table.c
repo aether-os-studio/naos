@@ -36,7 +36,7 @@ uint64_t *get_kernel_page_dir()
     return kernel_page_dir;
 }
 
-uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr, uint64_t flags)
+uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr, uint64_t flags, bool force)
 {
     if (!kernel_page_dir)
         kernel_page_dir = pgdir;
@@ -69,11 +69,17 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr, uint64_t flag
     }
 
     uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
-    if (pgdir[index] != 0)
+    if ((pgdir[index] & ARCH_ADDR_MASK) != 0)
     {
-        uint64_t paddr = pgdir[index] & ARCH_ADDR_MASK;
-        free_frames(paddr, 1);
+        if (force)
+        {
+            uint64_t paddr = pgdir[index] & ARCH_ADDR_MASK;
+            free_frames(paddr, 1);
+        }
+        else
+            return 0;
     }
+
     pgdir[index] = (paddr & ARCH_ADDR_MASK) | flags;
 
     arch_flush_tlb(vaddr);

@@ -2,7 +2,6 @@
 #include <net/net_syscall.h>
 #include <net/real_socket.h>
 #include <net/socket.h>
-#include <net/netlink.h>
 #include <task/task.h>
 #include <fs/vfs/vfs.h>
 #include <drivers/kernel_logger.h>
@@ -68,8 +67,6 @@ int sys_socket(int domain, int type, int protocol)
 {
     if (domain == 1)
         return socket_socket(domain, type, protocol);
-    else if (domain == 16)
-        return netlink_socket(domain, type, protocol);
     else
         for (int i = 0; i < socket_num; i++)
         {
@@ -87,10 +84,6 @@ int sys_socketpair(int family, int type, int protocol, int *sv)
     if (family == 1)
     {
         return unix_socket_pair(type, protocol, sv);
-    }
-    else if (family == 16)
-    {
-        return netlink_socket_pair(type, protocol, sv);
     }
     return -ENOSYS;
 }

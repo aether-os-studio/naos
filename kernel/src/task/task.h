@@ -36,7 +36,7 @@
 #define AT_SYSINFO 32
 #define AT_SYSINFO_EHDR 33
 
-#define INTERPRETER_BASE_ADDR 0x0000100000000000
+#define INTERPRETER_BASE_ADDR 0x0000200000000000
 
 #define USER_MMAP_START 0x0000004000000000
 #define USER_MMAP_END 0x0000006000000000
@@ -170,7 +170,7 @@ typedef struct task
     uint64_t brk_end;
     uint64_t load_start;
     uint64_t load_end;
-    Bitmap mmap_regions;
+    Bitmap *mmap_regions;
     arch_context_t *arch_context;
     sigaction_t actions[MAXSIG];
     uint64_t signal;

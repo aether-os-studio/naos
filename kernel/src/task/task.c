@@ -122,8 +122,9 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
     task->signal = 0;
     task->status = 0;
     task->cwd = rootdir;
-    bitmap_init(&task->mmap_regions, alloc_frames_bytes((USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64), (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64);
-    memset(task->mmap_regions.buffer, 0xff, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64);
+    task->mmap_regions = malloc(sizeof(Bitmap));
+    bitmap_init(task->mmap_regions, alloc_frames_bytes((USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64), (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64);
+    memset(task->mmap_regions->buffer, 0xff, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64);
     task->brk_start = USER_BRK_START;
     task->brk_end = USER_BRK_START;
     task->fd_info = malloc(sizeof(fd_info_t));
@@ -402,10 +403,19 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     child->cwd = current_task->cwd;
     child->cmdline = strdup(current_task->cmdline);
 
+    child->mmap_regions = vfork ? current_task->mmap_regions : malloc(sizeof(Bitmap));
     const uint64_t bitmap_size = (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64;
-    void *data = alloc_frames_bytes(bitmap_size);
-    bitmap_init(&child->mmap_regions, data, bitmap_size);
-    memcpy(data, current_task->mmap_regions.buffer, bitmap_size);
+    if (vfork)
+    {
+        child->mmap_regions->bitmap_refcount++;
+    }
+    else
+    {
+        void *data = alloc_frames_bytes(bitmap_size);
+        bitmap_init(child->mmap_regions, data, bitmap_size);
+        memcpy(data, current_task->mmap_regions->buffer, bitmap_size);
+    }
+
     child->brk_start = USER_BRK_START;
     child->brk_end = USER_BRK_START;
     child->load_start = current_task->load_start;
@@ -822,7 +832,10 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     current_task->load_start = load_start;
     current_task->load_end = load_end;
 
-    memset(current_task->mmap_regions.buffer, 0xff, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64);
+    memset(current_task->mmap_regions->buffer, 0xff, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64);
+
+    unmap_page_range(get_current_page_dir(true), current_task->brk_start, (current_task->brk_end - current_task->brk_start + DEFAULT_PAGE_SIZE - 1));
+    current_task->brk_end = current_task->brk_start;
 
     spin_unlock(&execve_lock);
     can_schedule = true;
@@ -880,10 +893,6 @@ void task_exit_inner(task_t *task, int64_t code)
         free(task->fd_info);
     }
 
-    task->mmap_regions.bitmap_refcount--;
-    if (!task->mmap_regions.bitmap_refcount)
-        free_frames_bytes(task->mmap_regions.buffer, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64);
-
     if (task->cmdline)
         free(task->cmdline);
 
@@ -909,6 +918,13 @@ void task_exit_inner(task_t *task, int64_t code)
     if (task->waitpid != 0 && tasks[task->waitpid] && tasks[task->waitpid]->state == TASK_BLOCKING)
     {
         task_unblock(tasks[task->waitpid], EOK);
+    }
+
+    task->mmap_regions->bitmap_refcount--;
+    if (!task->mmap_regions->bitmap_refcount)
+    {
+        free_frames_bytes(task->mmap_regions->buffer, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64);
+        free(task->mmap_regions);
     }
 
     procfs_on_exit_task(task);
@@ -1137,18 +1153,17 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->cwd = current_task->cwd;
     child->cmdline = strdup(current_task->cmdline);
 
+    child->mmap_regions = (flags & CLONE_FILES) ? current_task->mmap_regions : malloc(sizeof(Bitmap));
     const uint64_t bitmap_size = (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64;
     if (flags & CLONE_VM)
     {
-        child->mmap_regions.buffer = current_task->mmap_regions.buffer;
-        child->mmap_regions.length = current_task->mmap_regions.length;
-        child->mmap_regions.bitmap_refcount++;
+        child->mmap_regions->bitmap_refcount++;
     }
     else
     {
         void *data = alloc_frames_bytes(bitmap_size);
-        bitmap_init(&child->mmap_regions, data, bitmap_size);
-        memcpy(data, current_task->mmap_regions.buffer, bitmap_size);
+        bitmap_init(child->mmap_regions, data, bitmap_size);
+        memcpy(data, current_task->mmap_regions->buffer, bitmap_size);
     }
     child->brk_start = USER_BRK_START;
     child->brk_end = USER_BRK_START;

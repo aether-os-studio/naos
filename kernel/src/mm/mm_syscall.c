@@ -43,7 +43,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
     if (addr == 0)
     {
         uint64_t page_count = aligned_len / DEFAULT_PAGE_SIZE;
-        uint64_t idx = bitmap_find_range(&current_task->mmap_regions, page_count, true);
+        uint64_t idx = bitmap_find_range(current_task->mmap_regions, page_count, true);
         if (idx == (uint64_t)-1)
             return (uint64_t)-ENOMEM;
         addr = (idx * DEFAULT_PAGE_SIZE) + USER_MMAP_START;
@@ -52,7 +52,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
 
     if (addr >= USER_MMAP_START && addr + len <= USER_MMAP_END)
     {
-        bitmap_set_range(&current_task->mmap_regions, (addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (addr - USER_MMAP_START + aligned_len) / DEFAULT_PAGE_SIZE, false);
+        bitmap_set_range(current_task->mmap_regions, (addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (addr - USER_MMAP_START + aligned_len) / DEFAULT_PAGE_SIZE, false);
     }
 
     spin_lock(&mm_op_lock);
@@ -92,7 +92,7 @@ uint64_t sys_munmap(uint64_t addr, uint64_t size)
     unmap_page_range(get_current_page_dir(false), addr, size);
     if (addr >= USER_MMAP_START && addr + size <= USER_MMAP_END)
     {
-        bitmap_set_range(&current_task->mmap_regions, (addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (addr - USER_MMAP_START + size) / DEFAULT_PAGE_SIZE, true);
+        bitmap_set_range(current_task->mmap_regions, (addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (addr - USER_MMAP_START + size) / DEFAULT_PAGE_SIZE, true);
     }
     spin_unlock(&mm_op_lock);
     return 0;
@@ -143,7 +143,7 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uin
         unmap_page_range(page_dir, old_addr + aligned_new, aligned_old - aligned_new);
         if (old_addr + aligned_new >= USER_MMAP_START && old_addr + aligned_old <= USER_MMAP_END)
         {
-            bitmap_set_range(&current_task->mmap_regions, (old_addr + aligned_new - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (old_addr + aligned_old - USER_MMAP_START) / DEFAULT_PAGE_SIZE, true);
+            bitmap_set_range(current_task->mmap_regions, (old_addr + aligned_new - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (old_addr + aligned_old - USER_MMAP_START) / DEFAULT_PAGE_SIZE, true);
         }
         spin_unlock(&mm_op_lock);
         return old_addr;
@@ -154,7 +154,7 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uin
     map_page_range(page_dir, old_addr + aligned_old, 0, extension, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
     if (old_addr + aligned_old >= USER_MMAP_START && old_addr + aligned_old + extension <= USER_MMAP_END)
     {
-        bitmap_set_range(&current_task->mmap_regions, (old_addr + aligned_old - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (old_addr + aligned_old + extension - USER_MMAP_START) / DEFAULT_PAGE_SIZE, false);
+        bitmap_set_range(current_task->mmap_regions, (old_addr + aligned_old - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (old_addr + aligned_old + extension - USER_MMAP_START) / DEFAULT_PAGE_SIZE, false);
     }
     spin_unlock(&mm_op_lock);
 

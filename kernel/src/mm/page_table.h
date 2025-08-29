@@ -28,7 +28,7 @@ void free_page_table(task_mm_info_t *directory);
 
 uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr);
 
-uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr, uint64_t flags);
+uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr, uint64_t flags, bool force);
 uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr);
 
 void page_table_init();
