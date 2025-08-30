@@ -70,6 +70,8 @@ size_t real_socket_send(uint64_t fd, uint8_t *out, uint64_t limit, int flags)
         lwip_out = lwip_send(sock->lwip_fd, out, limit, flags);
         if (lwip_out >= 0 || errno != EAGAIN)
             break;
+
+        arch_yield();
     }
 
     if (lwip_out < 0)
@@ -100,6 +102,8 @@ size_t real_socket_recv(uint64_t fd, uint8_t *out, uint64_t limit, int flags)
         lwip_out = lwip_recv(sock->lwip_fd, out, limit, flags);
         if (lwip_out >= 0 || errno != EAGAIN)
             break;
+
+        arch_yield();
     }
 
     if (lwip_out < 0)
@@ -136,6 +140,8 @@ size_t real_socket_sendto(uint64_t fd, uint8_t *buff, size_t len, int flags, str
         lwipOut = lwip_sendto(sock->lwip_fd, buff, len, flags, (void *)aligned, sizeof(struct sockaddr_in));
         if (lwipOut >= 0 || errno != EAGAIN)
             break;
+
+        arch_yield();
     }
 
     sockaddrLwipToLinux(aligned, aligned, initialFamily);
@@ -173,6 +179,8 @@ size_t real_socket_recvfrom(uint64_t fd, uint8_t *buff, size_t len, int flags, s
         lwipOut = lwip_recvfrom(sock->lwip_fd, buff, len, flags, (void *)a, addrlen);
         if (lwipOut >= 0 || errno != EAGAIN)
             break;
+
+        arch_yield();
     }
 
     sockaddrLwipToLinux(addr, a, AF_INET);

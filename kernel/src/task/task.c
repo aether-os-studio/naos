@@ -1170,9 +1170,9 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->cwd = current_task->cwd;
     child->cmdline = strdup(current_task->cmdline);
 
-    child->mmap_regions = (flags & CLONE_FILES) ? current_task->mmap_regions : malloc(sizeof(Bitmap));
+    child->mmap_regions = ((flags & CLONE_VFORK) || (flags & CLONE_VM)) ? current_task->mmap_regions : malloc(sizeof(Bitmap));
     const uint64_t bitmap_size = (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 8;
-    if (flags & CLONE_VM)
+    if ((flags & CLONE_VFORK) || (flags & CLONE_VM))
     {
         child->mmap_regions->bitmap_refcount++;
     }
