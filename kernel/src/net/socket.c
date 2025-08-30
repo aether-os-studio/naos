@@ -576,6 +576,8 @@ size_t unix_socket_send_to(uint64_t fd, uint8_t *in, size_t limit, int flags,
         }
         else if ((pair->serverBuffPos + limit) <= pair->serverBuffSize)
             break;
+
+        arch_yield();
     }
 
     spin_lock(&pair->lock);
@@ -1530,6 +1532,8 @@ ssize_t socket_read(fd_t *fd, void *buf, size_t offset, size_t limit)
         }
         else if (pair->clientBuffPos > 0)
             break;
+
+        arch_yield();
     }
 
     spin_lock(&pair->lock);
@@ -1574,9 +1578,7 @@ ssize_t socket_write(fd_t *fd, const void *buf, size_t offset, size_t limit)
         if ((pair->serverBuffPos + limit) <= pair->serverBuffSize)
             break;
 
-        arch_enable_interrupt();
-
-        arch_pause();
+        arch_yield();
     }
 
     arch_disable_interrupt();
@@ -1611,6 +1613,8 @@ ssize_t socket_accept_read(fd_t *fd, void *buf, size_t offset, size_t limit)
         }
         else if (pair->serverBuffPos > 0)
             break;
+
+        arch_yield();
     }
 
     spin_lock(&pair->lock);
@@ -1655,9 +1659,7 @@ ssize_t socket_accept_write(fd_t *fd, const void *buf, size_t offset, size_t lim
             return -(EWOULDBLOCK);
         }
 
-        arch_enable_interrupt();
-
-        arch_pause();
+        arch_yield();
     }
 
     arch_disable_interrupt();

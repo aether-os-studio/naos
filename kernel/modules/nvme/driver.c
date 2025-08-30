@@ -93,7 +93,7 @@ NVME_COMPLETION_QUEUE_ENTRY NVMEWaitingCMD(NVME_SUBMISSION_QUEUE *sq, NVME_SUBMI
     NVME_COMPLETION_QUEUE *cq = sq->ICQ;
     while ((cq->CQE[cq->COM.HAD].STS & 0x1) != cq->COM.PHA)
     {
-        asm volatile("nop");
+        arch_pause();
     }
 
     // Consume CQE
