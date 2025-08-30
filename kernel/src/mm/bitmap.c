@@ -1,24 +1,24 @@
 #include <mm/bitmap.h>
 
-void bitmap_init(Bitmap *bitmap, uint64_t *buffer, size_t size)
+void bitmap_init(Bitmap *bitmap, uint8_t *buffer, size_t size)
 {
     bitmap->buffer = buffer;
-    bitmap->length = size * 64;
+    bitmap->length = size * 8;
     bitmap->bitmap_refcount = 1;
-    memset(buffer, 0, size * 8);
+    memset(buffer, 0, size);
 }
 
 bool bitmap_get(const Bitmap *bitmap, size_t index)
 {
-    size_t word_index = index / 64;
-    size_t bit_index = index % 64;
+    size_t word_index = index / 8;
+    size_t bit_index = index % 8;
     return (bitmap->buffer[word_index] >> bit_index) & 1;
 }
 
 void bitmap_set(Bitmap *bitmap, size_t index, bool value)
 {
-    size_t word_index = index / 64;
-    size_t bit_index = index % 64;
+    size_t word_index = index / 8;
+    size_t bit_index = index % 8;
     if (value)
     {
         bitmap->buffer[word_index] |= ((size_t)1UL << bit_index);
@@ -32,12 +32,14 @@ void bitmap_set(Bitmap *bitmap, size_t index, bool value)
 void bitmap_set_range(Bitmap *bitmap, size_t start, size_t end, bool value)
 {
     if (start >= end || start >= bitmap->length)
+    {
         return;
+    }
 
-    size_t start_word = (start + 63) / 64;
-    size_t end_word = end / 64;
+    size_t start_word = (start + 7) / 8;
+    size_t end_word = end / 8;
 
-    for (size_t i = start; i < start_word * 64 && i < end; i++)
+    for (size_t i = start; i < start_word * 8 && i < end; i++)
     {
         bitmap_set(bitmap, i, value);
     }
@@ -49,14 +51,14 @@ void bitmap_set_range(Bitmap *bitmap, size_t start, size_t end, bool value)
 
     if (start_word <= end_word)
     {
-        size_t fill_value = value ? (size_t)-1 : 0;
+        uint8_t fill_value = value ? (uint8_t)-1 : 0;
         for (size_t i = start_word; i < end_word; i++)
         {
             bitmap->buffer[i] = fill_value;
         }
     }
 
-    for (size_t i = end_word * 64; i < end; i++)
+    for (size_t i = end_word * 8; i < end; i++)
     {
         bitmap_set(bitmap, i, value);
     }
@@ -64,24 +66,28 @@ void bitmap_set_range(Bitmap *bitmap, size_t start, size_t end, bool value)
 
 size_t bitmap_find_range_from(const Bitmap *bitmap, size_t length, bool value, size_t start_from)
 {
-    size_t count = 0, start_index = (size_t)-1;
-    size_t word_match = value ? (size_t)-1 : 0;
-    size_t current_word_idx = start_from / 64;
+    size_t count = 0, start_index = 0;
+    uint8_t byte_match = value ? (uint8_t)-1 : 0;
 
-    for (size_t word_idx = current_word_idx; word_idx < bitmap->length / 64; word_idx++)
+    for (size_t byte_idx = start_from / 8; byte_idx < bitmap->length / 8; byte_idx++)
     {
-        size_t current_word = bitmap->buffer[word_idx];
-        size_t bit_start = (word_idx == current_word_idx) ? start_from % 64 : 0;
+        size_t byte = bitmap->buffer[byte_idx];
 
-        if (current_word == word_match)
+        if (byte == !byte_match)
         {
-            // 处理起始偏移
-            size_t valid_bits = 64 - bit_start;
+            count = 0;
+        }
+        else if (byte == byte_match)
+        {
+            if (length < 8)
+            {
+                return byte_idx * 8;
+            }
             if (count == 0)
             {
-                start_index = word_idx * 64 + bit_start;
+                start_index = byte_idx * 8;
             }
-            count += valid_bits;
+            count += 8;
             if (count >= length)
             {
                 return start_index;
@@ -89,17 +95,17 @@ size_t bitmap_find_range_from(const Bitmap *bitmap, size_t length, bool value, s
         }
         else
         {
-            // 逐bit扫描时保持跨word计数
-            for (size_t bit = bit_start; bit < 64; bit++)
+            for (size_t bit = 0; bit < 8; bit++)
             {
-                bool bit_value = (current_word >> bit) & 1;
+                bool bit_value = (byte >> bit) & 1;
                 if (bit_value == value)
                 {
                     if (count == 0)
                     {
-                        start_index = word_idx * 64 + bit;
+                        start_index = byte_idx * 8 + bit;
                     }
-                    if (++count >= length)
+                    count++;
+                    if (count == length)
                     {
                         return start_index;
                     }
@@ -107,11 +113,11 @@ size_t bitmap_find_range_from(const Bitmap *bitmap, size_t length, bool value, s
                 else
                 {
                     count = 0;
-                    start_index = (size_t)-1;
                 }
             }
         }
     }
+
     return (size_t)-1;
 }
 

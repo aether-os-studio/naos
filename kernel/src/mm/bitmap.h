@@ -4,12 +4,12 @@
 
 typedef struct
 {
-    uint64_t *buffer;
+    uint8_t *buffer;
     size_t length;
     uint64_t bitmap_refcount;
 } Bitmap;
 
-void bitmap_init(Bitmap *bitmap, uint64_t *buffer, size_t size);
+void bitmap_init(Bitmap *bitmap, uint8_t *buffer, size_t size);
 
 bool bitmap_get(const Bitmap *bitmap, size_t index);
 
