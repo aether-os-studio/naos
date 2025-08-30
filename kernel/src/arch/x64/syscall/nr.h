@@ -367,6 +367,19 @@
 #define SYS_CACHESTAT 451
 #define SYS_FCHMODAT2 452
 
+typedef struct linux_syscall
+{
+    const char *name;
+    const char *arg1;
+    const char *arg2;
+    const char *arg3;
+    const char *arg4;
+    const char *arg5;
+    const char *arg6;
+} LINUX_SYSCALL;
+
+extern const LINUX_SYSCALL linux_syscalls[336];
+
 #define FB_TYPE_PACKED_PIXELS 0      /* Packed Pixels	*/
 #define FB_TYPE_PLANES 1             /* Non interleaved planes */
 #define FB_TYPE_INTERLEAVED_PLANES 2 /* Interleaved planes	*/

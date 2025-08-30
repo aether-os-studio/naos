@@ -6,6 +6,7 @@
 #include <mm/mm_syscall.h>
 #include <net/net_syscall.h>
 #include <libs/strerror.h>
+#include <arch/x64/syscall/nr.h>
 
 __attribute__((used, section(".limine_requests"))) volatile struct limine_date_at_boot_request boot_time_request =
     {
@@ -569,6 +570,8 @@ void syscall_handler_init()
     // syscall_handlers[SYS_FCHMODAT2] = (syscall_handle_t)sys_fchmodat2;
 }
 
+spinlock_t syscall_debug_lock = {0};
+
 void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
 {
     regs->rip = regs->rcx;
@@ -622,6 +625,64 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     //     int len = sprintf(buf, "syscall %d has error: %s\n", idx, strerror(-(int)regs->rax));
     //     serial_printk(buf, len);
     // }
+
+    bool usable = idx < (sizeof(linux_syscalls) / sizeof(linux_syscalls[0]));
+    const LINUX_SYSCALL *info = &linux_syscalls[idx];
+
+    char buf[256];
+    int len;
+
+#define SYSCALL_DEBUG 0
+#if SYSCALL_DEBUG
+    spin_lock(&syscall_debug_lock);
+
+    len = sprintf(buf, "%d [syscall] %s(", current_task->pid, usable ? info->name : "???");
+    serial_printk(buf, len);
+    if (usable)
+    {
+        if (info->arg1[0])
+        {
+            len = sprintf(buf, "%s:%lx,", info->arg1, arg1);
+            serial_printk(buf, len);
+        }
+        if (info->arg2[0])
+        {
+            len = sprintf(buf, "%s:%lx,", info->arg2, arg2);
+            serial_printk(buf, len);
+        }
+        if (info->arg3[0])
+        {
+            len = sprintf(buf, "%s:%lx,", info->arg3, arg3);
+            serial_printk(buf, len);
+        }
+        if (info->arg4[0])
+        {
+            len = sprintf(buf, "%s:%lx,", info->arg4, arg4);
+            serial_printk(buf, len);
+        }
+        if (info->arg5[0])
+        {
+            len = sprintf(buf, "%s:%lx,", info->arg5, arg5);
+            serial_printk(buf, len);
+        }
+        if (info->arg6[0])
+        {
+            len = sprintf(buf, "%s:%lx,", info->arg6, arg6);
+            serial_printk(buf, len);
+        }
+    }
+    if ((int64_t)regs->rax < 0)
+    {
+        len = sprintf(buf, "\b) = %s%s%s\n", "ERR(", strerror(-regs->rax), ")");
+    }
+    else
+    {
+        len = sprintf(buf, "\b) = %d\n", regs->rax);
+    }
+    serial_printk(buf, len);
+
+    spin_unlock(&syscall_debug_lock);
+#endif
 
 done:
     if (regs->rax == (uint64_t)-ENOSYS)

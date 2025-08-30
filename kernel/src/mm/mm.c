@@ -99,6 +99,16 @@ void frame_init()
                                     - low_1M_frame_count
 #endif
         ;
+
+    for (uint64_t i = 0; i < memory_map->entry_count; i++)
+    {
+        struct limine_memmap_entry *region = memory_map->entries[i];
+
+        if (region->base >= 0x100000000 && region->type == LIMINE_MEMMAP_USABLE)
+        {
+            map_page_range(get_current_page_dir(false), phys_to_virt(region->base), region->base, region->length, PT_FLAG_R | PT_FLAG_W);
+        }
+    }
 }
 
 static uint64_t last_alloc_pos = 0;
