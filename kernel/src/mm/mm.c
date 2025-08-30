@@ -54,7 +54,7 @@ void frame_init()
 #if defined(__x86_64__)
                 region->base >= 0x100000 &&
 #endif
-                region->length >= bitmap_size * 2)
+                region->length >= bitmap_size * 8 * 2)
             {
                 bitmap_address = region->base;
                 break;
@@ -89,7 +89,7 @@ void frame_init()
 #endif
 
     size_t bitmap_frame_start = bitmap_address / DEFAULT_PAGE_SIZE;
-    size_t bitmap_frame_end = (bitmap_address + bitmap_size * 2 + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE;
+    size_t bitmap_frame_end = (bitmap_address + bitmap_size * 8 * 2 + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE;
     bitmap_set_range(bitmap, bitmap_frame_start, bitmap_frame_end, false);
     bitmap_set_range(&usable_regions, bitmap_frame_start, bitmap_frame_end, false);
 

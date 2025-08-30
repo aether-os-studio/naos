@@ -123,8 +123,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
     task->status = 0;
     task->cwd = rootdir;
     task->mmap_regions = malloc(sizeof(Bitmap));
-    bitmap_init(task->mmap_regions, alloc_frames_bytes((USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64), (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64);
-    memset(task->mmap_regions->buffer, 0xff, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64);
+    bitmap_init(task->mmap_regions, alloc_frames_bytes((USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64 * 8), (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64);
+    memset(task->mmap_regions->buffer, 0xff, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64 * 8);
     task->brk_start = USER_BRK_START;
     task->brk_end = USER_BRK_START;
     task->fd_info = malloc(sizeof(fd_info_t));
@@ -269,7 +269,7 @@ uint64_t push_slice(uint64_t ustack, uint8_t *slice, uint64_t len)
     return tmp_stack;
 }
 
-uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], char *envp[], uint64_t e_entry, uint64_t phdr, uint64_t phnum, uint64_t at_base)
+uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], int argv_count, char *envp[], int envp_count, uint64_t e_entry, uint64_t phdr, uint64_t phnum, uint64_t at_base)
 {
     uint64_t env_i = 0;
     uint64_t argv_i = 0;
@@ -279,10 +279,10 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], char *en
 
     uint64_t execfn_ptr = tmp_stack;
 
-    uint64_t *envps = (uint64_t *)malloc(4096);
-    memset(envps, 0, 4096);
-    uint64_t *argvps = (uint64_t *)malloc(4096);
-    memset(argvps, 0, 4096);
+    uint64_t *envps = (uint64_t *)malloc((1 + envp_count) * sizeof(uint64_t));
+    memset(envps, 0, (1 + envp_count) * sizeof(uint64_t));
+    uint64_t *argvps = (uint64_t *)malloc((1 + argv_count) * sizeof(uint64_t));
+    memset(argvps, 0, (1 + argv_count) * sizeof(uint64_t));
 
     if (envp != NULL)
     {
@@ -411,7 +411,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     }
     else
     {
-        void *data = alloc_frames_bytes(bitmap_size);
+        void *data = alloc_frames_bytes(bitmap_size * 8);
         bitmap_init(child->mmap_regions, data, bitmap_size);
         memcpy(data, current_task->mmap_regions->buffer, bitmap_size);
     }
@@ -530,13 +530,30 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     uint64_t buf_len = (node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
 
-    char **new_argv = (char **)malloc(4096);
-    memset(new_argv, 0, 4096);
-    char **new_envp = (char **)malloc(4096);
-    memset(new_envp, 0, 4096);
-
     int argv_count = 0;
     int envp_count = 0;
+
+    if (argv && (translate_address(get_current_page_dir(true), (uint64_t)argv) != 0))
+    {
+        for (argv_count = 0; argv[argv_count] != NULL && (translate_address(get_current_page_dir(true), (uint64_t)argv[argv_count]) != 0); argv_count++)
+        {
+        }
+    }
+
+    if (envp && (translate_address(get_current_page_dir(true), (uint64_t)envp) != 0))
+    {
+        for (envp_count = 0; envp[envp_count] != NULL && (translate_address(get_current_page_dir(true), (uint64_t)envp[envp_count]) != 0); envp_count++)
+        {
+        }
+    }
+
+    char **new_argv = (char **)malloc((argv_count + 1) * sizeof(char *));
+    memset(new_argv, 0, (argv_count + 1) * sizeof(char *));
+    char **new_envp = (char **)malloc((envp_count + 1) * sizeof(char *));
+    memset(new_envp, 0, (envp_count + 1) * sizeof(char *));
+
+    argv_count = 0;
+    envp_count = 0;
 
     if (argv && (translate_address(get_current_page_dir(true), (uint64_t)argv) != 0))
     {
@@ -779,7 +796,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     map_page_range(get_current_page_dir(true), USER_STACK_START, 0, USER_STACK_END - USER_STACK_START, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
-    uint64_t stack = push_infos(current_task, USER_STACK_END, (char **)new_argv, (char **)new_envp, e_entry, (uint64_t)(load_start + ehdr->e_phoff), ehdr->e_phnum, interpreter_entry ? INTERPRETER_BASE_ADDR : load_start);
+    uint64_t stack = push_infos(current_task, USER_STACK_END, (char **)new_argv, argv_count, (char **)new_envp, envp_count, e_entry, (uint64_t)(load_start + ehdr->e_phoff), ehdr->e_phnum, interpreter_entry ? INTERPRETER_BASE_ADDR : load_start);
 
     free_frames_bytes(buffer, node->size);
 
@@ -832,10 +849,10 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     current_task->load_start = load_start;
     current_task->load_end = load_end;
 
-    memset(current_task->mmap_regions->buffer, 0xff, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64);
+    // memset(current_task->mmap_regions->buffer, 0xff, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 64 * 8);
 
-    unmap_page_range(get_current_page_dir(true), current_task->brk_start, (current_task->brk_end - current_task->brk_start + DEFAULT_PAGE_SIZE - 1));
-    current_task->brk_end = current_task->brk_start;
+    // unmap_page_range(get_current_page_dir(true), current_task->brk_start, (current_task->brk_end - current_task->brk_start + DEFAULT_PAGE_SIZE - 1));
+    // current_task->brk_end = current_task->brk_start;
 
     spin_unlock(&execve_lock);
     can_schedule = true;
@@ -1161,7 +1178,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     }
     else
     {
-        void *data = alloc_frames_bytes(bitmap_size);
+        void *data = alloc_frames_bytes(bitmap_size * 8);
         bitmap_init(child->mmap_regions, data, bitmap_size);
         memcpy(data, current_task->mmap_regions->buffer, bitmap_size);
     }
