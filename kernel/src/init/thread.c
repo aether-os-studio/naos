@@ -70,10 +70,18 @@ void init_thread(uint64_t arg)
     const char *argvs[2];
     memset(argvs, 0, sizeof(argvs));
     argvs[0] = "/usr/bin/bash";
-
     task_execve("/usr/bin/bash", argvs, NULL);
 
-    printk("run /usr/bin/bash failed\n");
+    // const char *argvs[2];
+    // memset(argvs, 0, sizeof(argvs));
+    // argvs[0] = "/sbin/init";
+    // task_execve("/sbin/init", argvs, NULL);
+
+    // memset(argvs, 0, sizeof(argvs));
+    // argvs[0] = "/usr/bin/init";
+    // task_execve("/usr/bin/init", argvs, NULL);
+
+    printk("run init failed\n");
 
     while (1)
     {

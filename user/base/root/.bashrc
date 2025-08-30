@@ -14,6 +14,8 @@ if [ -z "${TERM}" ] || [ "${TERM}" == "dumb" ]; then
 	export TERM=linux
 fi
 
+export LIBRARY_PATH=$LIBRARY_PATH:/usr/lib/gcc/x86_64-linux-musl/14.2
+
 export PATH=/bin:/usr/bin:/usr/sbin:/sbin:/bin:/usr/local/bin:/usr/local/sbin
 export LANG=C.UTF-8
 export LIBGL_ALWAYS_SOFTWARE=1

@@ -134,6 +134,14 @@ uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3)
             ts->tv_nsec = ms * 1000000;
         }
         return 0;
+    case 7: // CLOCK_BOOTTIME
+        if (arg2)
+        {
+            struct timespec *ts = (struct timespec *)arg2;
+            ts->tv_sec = nanoTime() / 1000000000;
+            ts->tv_nsec = nanoTime() % 1000000000;
+        }
+        return 0;
     case 0:
     {
         tm time;
