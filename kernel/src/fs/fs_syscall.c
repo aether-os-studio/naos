@@ -13,7 +13,7 @@ char *at_resolve_pathname(int dirfd, char *pathname)
     }
     else if (pathname[0] != '/')
     {
-        if (dirfd == AT_FDCWD)
+        if (dirfd == (int)AT_FDCWD)
         { // relative to cwd
             return strdup(pathname);
         }
@@ -26,21 +26,15 @@ char *at_resolve_pathname(int dirfd, char *pathname)
 
             char *dirname = vfs_get_fullpath(node);
 
-            char *prefix = vfs_get_fullpath(node->root);
-
-            int prefixLen = strlen(prefix);
             int rootDirLen = strlen(dirname);
             int pathnameLen = strlen(pathname) + 1;
 
-            char *out = malloc(prefixLen + rootDirLen + 1 + pathnameLen + 1);
-
-            memcpy(out, prefix, prefixLen);
-            memcpy(&out[prefixLen], dirname, rootDirLen);
-            out[prefixLen + rootDirLen] = '/';
-            memcpy(&out[prefixLen + rootDirLen + 1], pathname, pathnameLen);
+            char *out = malloc(rootDirLen + 1 + pathnameLen);
+            memcpy(out, dirname, rootDirLen);
+            out[rootDirLen] = '/';
+            memcpy(out + rootDirLen + 1, pathname, pathnameLen);
 
             free(dirname);
-            free(prefix);
 
             return out;
         }
@@ -75,21 +69,15 @@ char *at_resolve_pathname_fullpath(int dirfd, char *pathname)
 
             char *dirname = vfs_get_fullpath(node);
 
-            char *prefix = vfs_get_fullpath(node->root);
-
-            int prefixLen = strlen(prefix);
             int rootDirLen = strlen(dirname);
             int pathnameLen = strlen(pathname) + 1;
 
-            char *out = malloc(prefixLen + rootDirLen + 1 + pathnameLen + 1);
-
-            memcpy(out, prefix, prefixLen);
-            memcpy(&out[prefixLen], dirname, rootDirLen);
-            out[prefixLen + rootDirLen] = '/';
-            memcpy(&out[prefixLen + rootDirLen + 1], pathname, pathnameLen);
+            char *out = malloc(rootDirLen + 1 + pathnameLen);
+            memcpy(out, dirname, rootDirLen);
+            out[rootDirLen] = '/';
+            memcpy(out + rootDirLen + 1, pathname, pathnameLen);
 
             free(dirname);
-            free(prefix);
 
             return out;
         }
@@ -111,21 +99,4 @@ void fs_syscall_init()
     signalfd_init();
     timerfd_init();
     memfd_init();
-}
-
-void wake_blocked_tasks(task_block_list_t *head)
-{
-    task_block_list_t *current = head->next;
-    head->next = NULL;
-
-    while (current)
-    {
-        task_block_list_t *next = current->next;
-        if (current->task)
-        {
-            task_unblock(current->task, EOK);
-        }
-        free(current);
-        current = next;
-    }
 }

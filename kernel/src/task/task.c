@@ -895,7 +895,7 @@ void task_exit_inner(task_t *task, int64_t code)
     task->status = (uint64_t)code;
 
     task->fd_info->ref_count--;
-    if (task->fd_info->ref_count <= 1)
+    if (task->fd_info->ref_count <= 0)
     {
         for (uint64_t i = 0; i < MAX_FD_NUM; i++)
         {

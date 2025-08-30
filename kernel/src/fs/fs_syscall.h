@@ -359,10 +359,6 @@ uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len);
 
 uint64_t sys_fadvise64(int fd, uint64_t offset, uint64_t len, int advice);
 
-struct task_block_list;
-typedef struct task_block_list task_block_list_t;
-void wake_blocked_tasks(task_block_list_t *head);
-
 static inline uint64_t sys_pwrite64(int fd, const void *buf, size_t count, uint64_t offset)
 {
     sys_lseek(fd, offset, SEEK_SET);

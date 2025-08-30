@@ -478,7 +478,7 @@ void syscall_handler_init()
     syscall_handlers[SYS_PSELECT6] = (syscall_handle_t)sys_pselect6;
     syscall_handlers[SYS_PPOLL] = (syscall_handle_t)sys_ppoll;
     // syscall_handlers[SYS_UNSHARE] = (syscall_handle_t)sys_unshare;
-    // syscall_handlers[SYS_SET_ROBUST_LIST] = (syscall_handle_t)sys_set_robust_list;
+    syscall_handlers[SYS_SET_ROBUST_LIST] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_GET_ROBUST_LIST] = (syscall_handle_t)sys_get_robust_list;
     // syscall_handlers[SYS_SPLICE] = (syscall_handle_t)sys_splice;
     // syscall_handlers[SYS_TEE] = (syscall_handle_t)sys_tee;
@@ -539,7 +539,7 @@ void syscall_handler_init()
     // syscall_handlers[SYS_PKEY_FREE] = (syscall_handle_t)sys_pkey_free;
     syscall_handlers[SYS_STATX] = (syscall_handle_t)sys_statx;
     // syscall_handlers[SYS_IO_PGETEVENTS] = (syscall_handle_t)sys_io_pgetevents;
-    // syscall_handlers[SYS_RSEQ] = (syscall_handle_t)sys_rseq;
+    syscall_handlers[SYS_RSEQ] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_PIDFD_SEND_SIGNAL] = (syscall_handle_t)sys_pidfd_send_signal;
     // syscall_handlers[SYS_IO_URING_SETUP] = (syscall_handle_t)sys_io_uring_setup;
     // syscall_handlers[SYS_IO_URING_ENTER] = (syscall_handle_t)sys_io_uring_enter;

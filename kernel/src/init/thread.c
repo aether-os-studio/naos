@@ -69,11 +69,11 @@ void init_thread(uint64_t arg)
 
     const char *argvs[2];
     memset(argvs, 0, sizeof(argvs));
-    argvs[0] = "/bin/bash";
+    argvs[0] = "/usr/bin/bash";
 
-    task_execve("/bin/bash", argvs, NULL);
+    task_execve("/usr/bin/bash", argvs, NULL);
 
-    printk("run /bin/bash failed\n");
+    printk("run /usr/bin/bash failed\n");
 
     while (1)
     {

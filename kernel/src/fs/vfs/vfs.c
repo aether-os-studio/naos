@@ -806,7 +806,7 @@ char *vfs_get_fullpath(vfs_node_t node)
 {
     if (node == NULL)
         return NULL;
-    int inital = 16;
+    int inital = 8;
     spin_lock(&get_path_lock);
     vfs_node_t *nodes = (vfs_node_t *)malloc(sizeof(vfs_node_t) * inital);
     int count = 0;

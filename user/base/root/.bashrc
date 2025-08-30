@@ -14,8 +14,15 @@ if [ -z "${TERM}" ] || [ "${TERM}" == "dumb" ]; then
 	export TERM=linux
 fi
 
-alias ls='coreutils --coreutils-prog=ls --color=auto'
-alias dir="coreutils --coreutils-prog=dir --color=auto"
-alias cp='coreutils --coreutils-prog=cp'
-alias mv='coreutils --coreutils-prog=mv'
-alias rm='coreutils --coreutils-prog=rm'
+export PATH=/bin:/usr/bin:/usr/sbin:/sbin:/bin:/usr/local/bin:/usr/local/sbin
+export LANG=C.UTF-8
+export LIBGL_ALWAYS_SOFTWARE=1
+export SHELL=/bin/bash
+export HOME="/root"
+
+export XDG_RUNTIME_DIR=/run
+export XDG_CONFIG_HOME=$HOME/.config
+
+PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+
+alias ls='ls --color=auto'

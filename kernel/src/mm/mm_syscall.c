@@ -189,23 +189,41 @@ void *general_map(vfs_read_t read_callback, void *file, uint64_t addr, uint64_t 
 
 uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec)
 {
-    if ((uintptr_t)addr % DEFAULT_PAGE_SIZE != 0 || !vec)
+    if (check_user_overflow(addr, size))
     {
-        return -EINVAL;
+        return -EFAULT;
+    }
+
+    if (size == 0)
+    {
+        return 0;
+    }
+
+    uint64_t start_page = addr & (~(DEFAULT_PAGE_SIZE - 1));
+    uint64_t end_page = (addr + size - 1) & (~(DEFAULT_PAGE_SIZE - 1));
+    uint64_t num_pages = ((end_page - start_page) / DEFAULT_PAGE_SIZE) + 1;
+
+    if (check_user_overflow(vec, num_pages))
+    {
+        return -EFAULT;
     }
 
     spin_lock(&mm_op_lock);
 
-    size_t npages = size / DEFAULT_PAGE_SIZE;
+    uint64_t *page_dir = get_current_page_dir(true);
+    uint64_t current_addr = start_page;
 
-    for (size_t i = 0; i < npages; i++)
+    for (uint64_t i = 0; i < num_pages; i++)
     {
-        uint64_t page_addr = addr + i * DEFAULT_PAGE_SIZE;
+        uint64_t phys_addr = translate_address(page_dir, current_addr);
 
-        ((uint8_t *)vec)[i] = translate_address(get_current_page_dir(true), page_addr) ? 1 : 0;
+        uint8_t resident = (phys_addr != 0) ? 1 : 0;
+
+        memcpy((void *)(vec + i), &resident, sizeof(uint8_t));
+
+        current_addr += DEFAULT_PAGE_SIZE;
     }
 
     spin_unlock(&mm_op_lock);
-
     return 0;
 }

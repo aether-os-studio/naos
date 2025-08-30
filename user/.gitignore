@@ -1,3 +1,4 @@
 /.build-stamp-*
-/ports/cache
+/xbps
+/xbps-bin
 /rootfs-*/

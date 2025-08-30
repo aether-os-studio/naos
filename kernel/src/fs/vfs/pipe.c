@@ -44,19 +44,8 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size)
         {
             return 0;
         }
-        arch_disable_interrupt();
-        task_block_list_t *new_block = malloc(sizeof(task_block_list_t));
-        new_block->task = current_task;
-        new_block->next = NULL;
-
-        task_block_list_t *browse = &pipe->blocking_read;
-        while (browse->next)
-            browse = browse->next;
-        browse->next = new_block;
 
         spin_unlock(&spec->node->spin);
-
-        task_block(current_task, TASK_BLOCKING, -1);
 
         arch_yield();
     }
@@ -89,8 +78,6 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size)
     // 更新读指针
     pipe->read_ptr = (pipe->read_ptr + to_read) % PIPE_BUFF;
 
-    wake_blocked_tasks(&pipe->blocking_write);
-
     spin_unlock(&pipe->lock);
 
     return to_read;
@@ -111,19 +98,8 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
         {
             return -EPIPE;
         }
-        task_block_list_t *new_block = malloc(sizeof(task_block_list_t));
-        new_block->task = current_task;
-        new_block->next = NULL;
-
-        task_block_list_t *browse = &pipe->blocking_write;
-
-        while (browse->next)
-            browse = browse->next;
-        browse->next = new_block;
 
         spin_unlock(&spec->node->spin);
-
-        task_block(current_task, TASK_BLOCKING, -1);
 
         arch_yield();
     }
@@ -142,8 +118,6 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
     }
 
     pipe->write_ptr = (pipe->write_ptr + size) % PIPE_BUFF;
-
-    wake_blocked_tasks(&pipe->blocking_read);
 
     spin_unlock(&pipe->lock);
 
@@ -201,11 +175,6 @@ bool pipefs_close(void *current)
     {
         pipe->read_fds--;
     }
-
-    if (!pipe->write_fds)
-        wake_blocked_tasks(&pipe->blocking_read);
-    if (!pipe->read_fds)
-        wake_blocked_tasks(&pipe->blocking_write);
 
     if (pipe->write_fds == 0 && pipe->read_fds == 0)
     {
@@ -330,8 +299,6 @@ int sys_pipe(int pipefd[2], uint64_t flags)
     memset(info, 0, sizeof(pipe_info_t));
     info->read_fds = 1;
     info->write_fds = 1;
-    info->blocking_read.next = NULL;
-    info->blocking_write.next = NULL;
     info->lock.lock = 0;
     info->read_ptr = 0;
     info->write_ptr = 0;

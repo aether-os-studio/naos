@@ -2,4 +2,4 @@
 
 xsetroot -solid "#006666" &
 st &
-exec dwm
+exec twm

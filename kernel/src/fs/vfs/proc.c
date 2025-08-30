@@ -10,6 +10,13 @@ spinlock_t procfs_oplock = {0};
 
 vfs_node_t cmdline = NULL;
 
+const char filesystems_content[] = "nodev\tsysfs\n"
+                                   "nodev\ttmpfs\n"
+                                   "nodev\tproc\n"
+                                   "     \text4\n"
+                                   "     \text3\n"
+                                   "     \text2\n";
+
 ssize_t procfs_read(fd_t *fd, void *addr, size_t offset, size_t size)
 {
     void *file = fd->node->handle;
@@ -36,6 +43,16 @@ ssize_t procfs_read(fd_t *fd, void *addr, size_t offset, size_t size)
             strncpy(addr, fullpath, size);
             free(fullpath);
             return strlen(addr);
+        }
+        else
+            return 0;
+    }
+    else if (!strcmp(handle->name, "filesystems"))
+    {
+        if (offset < strlen(filesystems_content))
+        {
+            memcpy(addr, filesystems_content + offset, size);
+            return size;
         }
         else
             return 0;
@@ -159,6 +176,14 @@ void proc_init()
     cmdline->handle = handle;
     handle->task = NULL;
     sprintf(handle->name, "cmdline");
+
+    vfs_node_t filesystems = vfs_node_alloc(procfs_root, "filesystems");
+    filesystems->type = file_none;
+    filesystems->mode = 0700;
+    proc_handle_t *filesystems_handle = malloc(sizeof(proc_handle_t));
+    filesystems->handle = filesystems_handle;
+    filesystems_handle->task = NULL;
+    sprintf(filesystems_handle->name, "filesystems");
 }
 
 void procfs_on_new_task(task_t *task)
