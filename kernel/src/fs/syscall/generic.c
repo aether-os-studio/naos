@@ -922,6 +922,8 @@ uint64_t sys_unlinkat(uint64_t dirfd, const char *name, uint64_t flags)
 uint64_t sys_rename(const char *old, const char *new)
 {
     vfs_node_t node = vfs_open(old);
+    if (!node)
+        return -ENOENT;
     int ret = vfs_rename(node, new);
     if (ret < 0)
         return -ret;
@@ -1002,6 +1004,22 @@ uint64_t sys_symlink(const char *name, const char *new)
         return (uint64_t)-EFAULT;
     }
     int ret = vfs_symlink(name, new);
+
+    return ret;
+}
+
+uint64_t sys_symlinkat(const char *name, int dfd, const char *new)
+{
+    if (check_user_overflow((uint64_t)name, strlen(name)) || check_user_overflow((uint64_t)new, strlen(new)))
+    {
+        return (uint64_t)-EFAULT;
+    }
+
+    char *buf = at_resolve_pathname_fullpath(dfd, new);
+
+    int ret = vfs_symlink(name, buf);
+
+    free(buf);
 
     return ret;
 }

@@ -566,8 +566,6 @@ int vfs_close(vfs_node_t node)
         bool real_close = callbackof(node, close)(node->handle);
         if (real_close)
         {
-            if (node->linkto)
-                vfs_close(node->linkto);
             node->handle = NULL;
         }
     }
@@ -855,16 +853,19 @@ int vfs_rename(vfs_node_t node, const char *new)
     if (ret < 0)
         return ret;
 
-    list_delete(node->parent->child, node);
-    char *filename = strrchr(new, '/');
-    if (!filename)
-        return -EINVAL;
-    vfs_node_t new_node = vfs_child_append(node->parent, filename + 1, NULL);
-    new_node->type = node->type;
-    new_node->inode = node->inode;
-    new_node->linkto = node->linkto;
-    vfs_free(node);
-    vfs_open(new);
+    char *filename = strrchr(new, '/') + 1;
+    if (filename == (char *)1)
+        filename = (const char *)new;
+
+    char buf[1024];
+    memset(buf, 0, sizeof(buf));
+    int fn_len = strlen(filename);
+    int dn_len = strlen(new) - fn_len;
+    memcpy(buf, new, dn_len);
+
+    node->parent = vfs_open(buf);
+    free(node->name);
+    node->name = strdup(filename);
 
     return ret;
 }

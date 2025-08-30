@@ -471,7 +471,7 @@ void syscall_handler_init()
     syscall_handlers[SYS_UNLINKAT] = (syscall_handle_t)sys_unlinkat;
     syscall_handlers[SYS_RENAMEAT] = (syscall_handle_t)sys_renameat;
     // syscall_handlers[SYS_LINKAT] = (syscall_handle_t)sys_linkat;
-    // syscall_handlers[SYS_SYMLINKAT] = (syscall_handle_t)sys_symlinkat;
+    syscall_handlers[SYS_SYMLINKAT] = (syscall_handle_t)sys_symlinkat;
     syscall_handlers[SYS_READLINKAT] = (syscall_handle_t)sys_readlinkat;
     // syscall_handlers[SYS_FCHMODAT] = (syscall_handle_t)sys_fchmodat;
     syscall_handlers[SYS_FACCESSAT] = (syscall_handle_t)sys_faccessat;

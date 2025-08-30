@@ -453,6 +453,8 @@ void stdio_init()
     regist_dev("stdout", NULL, stdout_write, stdio_ioctl, stdio_poll, NULL, global_stdio_handle);
     regist_dev("stderr", NULL, stdout_write, stdio_ioctl, stdio_poll, NULL, global_stdio_handle);
 
+    regist_dev("console", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL, global_stdio_handle);
+
     regist_dev("tty", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL, global_stdio_handle);
     regist_dev("tty0", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL, global_stdio_handle);
     regist_dev("tty1", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL, global_stdio_handle);
