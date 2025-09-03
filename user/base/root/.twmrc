@@ -83,6 +83,7 @@ menu "defops"
 "Terminal"	f.exec "exec st &"
 "Nedit"		f.exec "exec nedit &"
 "Xeyes"		f.exec "exec xeyes &"
+"Netsurf"		f.exec "exec netsurf-fb -f sdl &"
 ""		f.nop
 "Kill"		f.destroy
 "Delete"	f.delete

@@ -22,6 +22,8 @@ export LIBGL_ALWAYS_SOFTWARE=1
 export SHELL=/bin/bash
 export HOME="/root"
 
+export SDL_AUDIODRIVER=dummy
+
 export XDG_RUNTIME_DIR=/run
 export XDG_CONFIG_HOME=$HOME/.config
 

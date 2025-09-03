@@ -225,7 +225,7 @@ void syscall_handler_init()
     syscall_handlers[SYS_MMAP] = (syscall_handle_t)sys_mmap;
     syscall_handlers[SYS_MPROTECT] = (syscall_handle_t)sys_mprotect;
     syscall_handlers[SYS_MUNMAP] = (syscall_handle_t)sys_munmap;
-    syscall_handlers[SYS_BRK] = (syscall_handle_t)sys_brk;
+    // syscall_handlers[SYS_BRK] = (syscall_handle_t)sys_brk;
     syscall_handlers[SYS_RT_SIGACTION] = (syscall_handle_t)sys_sigaction;
     syscall_handlers[SYS_RT_SIGPROCMASK] = (syscall_handle_t)sys_ssetmask;
     syscall_handlers[SYS_RT_SIGRETURN] = (syscall_handle_t)sys_sigreturn;
@@ -328,7 +328,7 @@ void syscall_handler_init()
     syscall_handlers[SYS_SETSID] = (syscall_handle_t)sys_setsid;
     // syscall_handlers[SYS_SETREUID] = (syscall_handle_t)sys_setreuid;
     // syscall_handlers[SYS_SETREGID] = (syscall_handle_t)sys_setregid;
-    // syscall_handlers[SYS_GETGROUPS] = (syscall_handle_t)sys_getgroups;
+    syscall_handlers[SYS_GETGROUPS] = (syscall_handle_t)sys_getgroups;
     syscall_handlers[SYS_SETGROUPS] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_SETRESUID] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_GETRESUID] = (syscall_handle_t)dummy_syscall_handler;
@@ -693,7 +693,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
 #endif
 
 done:
-    if (regs->rax == (uint64_t)-ENOSYS)
+    if (idx != SYS_BRK && regs->rax == (uint64_t)-ENOSYS)
     {
         char buf[32];
         int len = sprintf(buf, "syscall %d not implemented\n", idx);

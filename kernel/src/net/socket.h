@@ -5,7 +5,7 @@
 #include <net/real_socket.h>
 
 #define MAX_SOCKETS 256
-#define BUFFER_SIZE 65536
+#define BUFFER_SIZE 262144
 
 typedef enum
 {

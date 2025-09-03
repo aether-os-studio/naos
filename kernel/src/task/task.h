@@ -304,5 +304,14 @@ static inline uint64_t sys_getppid()
     return current_task->ppid;
 }
 
+static inline uint64_t sys_getgroups(int gidsetsize, uint32_t *gids)
+{
+    if (!gidsetsize)
+        return 1;
+
+    gids[0] = 0;
+    return 1;
+}
+
 extern task_t *tasks[MAX_TASK_NUM];
 extern task_t *idle_tasks[MAX_CPU_NUM];
