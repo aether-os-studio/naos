@@ -200,7 +200,7 @@ u32_t sys_arch_mbox_fetch(sys_mbox_t *q, void **msg, u32_t timeout)
         block->task = current_task;
         block->write = false;
         spin_unlock(&q->lock);
-        task_block(current_task, TASK_BLOCKING, timeout);
+        // task_block(current_task, TASK_BLOCKING, timeout);
         arch_yield();
     }
 

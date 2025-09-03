@@ -55,7 +55,8 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout)
         {
             if (fds[i].fd < 0 || fds[i].fd > MAX_FD_NUM || !current_task->fd_info->fds[fds[i].fd])
             {
-                return (size_t)-EBADF;
+                fds[i].revents |= POLLNVAL;
+                continue;
             }
             vfs_node_t node = current_task->fd_info->fds[fds[i].fd]->node;
 
