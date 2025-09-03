@@ -317,6 +317,10 @@ uint64_t sys_link(const char *name, const char *target_name);
 uint64_t sys_symlink(const char *name, const char *target_name);
 uint64_t sys_symlinkat(const char *name, int dfd, const char *new);
 
+uint64_t sys_chmod(const char *name, uint16_t mode);
+uint64_t sys_fchmod(int fd, uint16_t mode);
+uint64_t sys_fchmodat(int dfd, const char *name, uint16_t mode);
+
 uint64_t sys_rename(const char *old, const char *new);
 uint64_t sys_renameat(uint64_t oldfd, const char *old, uint64_t newfd, const char *new);
 

@@ -123,6 +123,7 @@ static struct vfs_callback signalfd_callbacks = {
     .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,
     .symlink = (vfs_mk_t)dummy,
+    .chmod = (vfs_chmod_t)dummy,
     .delete = (vfs_del_t)dummy,
     .rename = (vfs_rename_t)dummy,
     .map = (vfs_mapfile_t)dummy,

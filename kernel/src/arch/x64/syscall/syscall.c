@@ -299,8 +299,8 @@ void syscall_handler_init()
     syscall_handlers[SYS_UNLINK] = (syscall_handle_t)sys_unlink;
     syscall_handlers[SYS_SYMLINK] = (syscall_handle_t)sys_symlink;
     syscall_handlers[SYS_READLINK] = (syscall_handle_t)sys_readlink;
-    syscall_handlers[SYS_CHMOD] = (syscall_handle_t)dummy_syscall_handler;
-    syscall_handlers[SYS_FCHMOD] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_CHMOD] = (syscall_handle_t)sys_chmod;
+    syscall_handlers[SYS_FCHMOD] = (syscall_handle_t)sys_fchmod;
     syscall_handlers[SYS_CHOWN] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_FCHOWN] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_LCHOWN] = (syscall_handle_t)dummy_syscall_handler;
@@ -477,7 +477,7 @@ void syscall_handler_init()
     // syscall_handlers[SYS_LINKAT] = (syscall_handle_t)sys_linkat;
     syscall_handlers[SYS_SYMLINKAT] = (syscall_handle_t)sys_symlinkat;
     syscall_handlers[SYS_READLINKAT] = (syscall_handle_t)sys_readlinkat;
-    // syscall_handlers[SYS_FCHMODAT] = (syscall_handle_t)sys_fchmodat;
+    syscall_handlers[SYS_FCHMODAT] = (syscall_handle_t)sys_fchmodat;
     syscall_handlers[SYS_FACCESSAT] = (syscall_handle_t)sys_faccessat;
     syscall_handlers[SYS_PSELECT6] = (syscall_handle_t)sys_pselect6;
     syscall_handlers[SYS_PPOLL] = (syscall_handle_t)sys_ppoll;

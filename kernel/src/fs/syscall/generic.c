@@ -1024,6 +1024,32 @@ uint64_t sys_symlinkat(const char *name, int dfd, const char *new)
     return ret;
 }
 
+uint64_t sys_chmod(const char *name, uint16_t mode)
+{
+    return vfs_chmod(name, mode);
+}
+
+uint64_t sys_fchmod(int fd, uint16_t mode)
+{
+    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
+        return -EBADF;
+
+    vfs_node_t node = current_task->fd_info->fds[fd]->node;
+
+    char *fullpath = vfs_get_fullpath(node);
+    int ret = vfs_chmod(fullpath, mode);
+    free(fullpath);
+    return ret;
+}
+
+uint64_t sys_fchmodat(int dfd, const char *name, uint16_t mode)
+{
+    char *resolved = at_resolve_pathname(dfd, name);
+    int ret = vfs_chmod(name, mode);
+    free(resolved);
+    return ret;
+}
+
 uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len)
 {
     if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])

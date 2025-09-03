@@ -300,6 +300,22 @@ int ext_mkdir(void *parent, const char *name, vfs_node_t node)
     return ret;
 }
 
+int ext_chmod(vfs_node_t node, uint16_t mode)
+{
+    spin_lock(&rwlock);
+
+    char *buf = vfs_get_fullpath(node);
+    int ret = ext4_mode_set(buf, mode);
+    free(buf);
+
+    if (!ret)
+        node->mode = mode;
+
+    spin_unlock(&rwlock);
+
+    return ret;
+}
+
 int ext_delete(void *parent, vfs_node_t node)
 {
     spin_lock(&rwlock);
@@ -381,6 +397,7 @@ static struct vfs_callback callbacks = {
     .mkfile = ext_mkfile,
     .link = ext_link,
     .symlink = ext_symlink,
+    .chmod = ext_chmod,
     .delete = (vfs_del_t)ext_delete,
     .rename = (vfs_rename_t)ext_rename,
     .map = (vfs_mapfile_t)ext_map,

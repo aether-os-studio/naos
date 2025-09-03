@@ -93,6 +93,8 @@ typedef int (*vfs_stat_t)(void *file, vfs_node_t node);
 // 创建一个文件或文件夹
 typedef int (*vfs_mk_t)(void *parent, const char *name, vfs_node_t node);
 
+typedef int (*vfs_chmod_t)(vfs_node_t node, uint16_t mode);
+
 typedef int (*vfs_del_t)(void *parent, vfs_node_t node);
 
 typedef int (*vfs_rename_t)(void *current, const char *new);
@@ -128,6 +130,7 @@ typedef struct vfs_callback
     vfs_mk_t mkfile;
     vfs_mk_t link;
     vfs_mk_t symlink;
+    vfs_chmod_t chmod;
     vfs_del_t delete;
     vfs_rename_t rename;
     vfs_stat_t stat;
@@ -228,6 +231,8 @@ int vfs_link(const char *name, const char *target_name);
  *\return 0 成功，-1 失败
  */
 int vfs_symlink(const char *name, const char *target_name);
+
+int vfs_chmod(const char *path, uint16_t mode);
 
 /**
  *\brief 读取文件

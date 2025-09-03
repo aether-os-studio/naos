@@ -391,6 +391,17 @@ err:
     return -1;
 }
 
+int vfs_chmod(const char *path, uint16_t mode)
+{
+    vfs_node_t node = vfs_open(path);
+    if (!node)
+        return -ENOENT;
+    spin_lock(&node->spin);
+    int ret = callbackof(node, chmod)(node, mode);
+    spin_unlock(&node->spin);
+    return ret;
+}
+
 int vfs_regist(const char *name, vfs_callback_t callback)
 {
     (void)name;
