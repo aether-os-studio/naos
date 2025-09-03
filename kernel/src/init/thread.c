@@ -69,8 +69,8 @@ void init_thread(uint64_t arg)
 
     const char *argvs[2];
     memset(argvs, 0, sizeof(argvs));
-    argvs[0] = "/usr/bin/bash";
-    task_execve("/usr/bin/bash", argvs, NULL);
+    argvs[0] = "/bin/bash";
+    task_execve("/bin/bash", argvs, NULL);
 
     // const char *argvs[2];
     // memset(argvs, 0, sizeof(argvs));

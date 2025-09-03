@@ -2,6 +2,7 @@
 #include <drivers/kernel_logger.h>
 #include <arch/arch.h>
 #include <task/task.h>
+#include <mm/bitmap.h>
 
 irq_action_t actions[ARCH_MAX_IRQ_NUM];
 
@@ -53,4 +54,25 @@ void irq_regist_irq(uint64_t irq_num, void (*handler)(uint64_t irq_num, void *da
     {
         action->irq_controller->unmask(irq_num);
     }
+}
+
+// true: used
+// false: unused
+Bitmap irq_bitmap;
+const int irq_bitmap_size = (ARCH_MAX_IRQ_NUM + 7) / 8;
+
+void irq_manager_init()
+{
+    bitmap_init(&irq_bitmap, malloc(irq_bitmap_size), irq_bitmap_size);
+    bitmap_set_range(&irq_bitmap, 0, IRQ_ALLOCATE_NUM_BASE, true);
+}
+
+int irq_allocate_irqnum()
+{
+    int idx = bitmap_find_range_from(&irq_bitmap, 1, false, IRQ_ALLOCATE_NUM_BASE);
+    if (idx < 0)
+    {
+        printk("Failed to allocate irq");
+    }
+    return idx;
 }

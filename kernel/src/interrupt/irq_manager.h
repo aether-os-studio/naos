@@ -21,3 +21,9 @@ typedef struct irq_action
 } irq_action_t;
 
 void irq_regist_irq(uint64_t irq_num, void (*handler)(uint64_t irq_num, void *data, struct pt_regs *regs), uint64_t arg, void *data, irq_controller_t *controller, char *name);
+
+void irq_manager_init();
+
+#define IRQ_ALLOCATE_NUM_BASE 128
+
+int irq_allocate_irqnum();

@@ -2,6 +2,9 @@
 
 #include "../klibc.h"
 #include "../../drivers/bus/pci.h"
+#if defined(__x86_64__)
+#include "../../drivers/bus/msi.h"
+#endif
 
 typedef struct pci_driver
 {

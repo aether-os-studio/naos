@@ -258,9 +258,30 @@ size_t real_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags)
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     real_socket_t *sock = handle->sock;
 
-    int lwip_out = lwip_sendmsg(sock->lwip_fd, msg, flags);
+    int lwip_out = -1;
+
+    while (true)
+    {
+        if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLOUT) & EPOLLOUT))
+        {
+            if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK || flags & 0x40)
+            {
+                lwip_out = -1;
+                errno = EAGAIN;
+                break;
+            }
+        }
+
+        lwip_out = lwip_sendmsg(sock->lwip_fd, msg, flags);
+        if (lwip_out >= 0 || errno != EAGAIN)
+            break;
+
+        arch_yield();
+    }
+
     if (lwip_out < 0)
         return -errno;
+
     return lwip_out;
 }
 
@@ -269,9 +290,30 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     real_socket_t *sock = handle->sock;
 
-    int lwip_out = lwip_recvmsg(sock->lwip_fd, msg, flags);
+    int lwip_out = -1;
+
+    while (true)
+    {
+        if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
+        {
+            if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK || flags & 0x40)
+            {
+                lwip_out = -1;
+                errno = EAGAIN;
+                break;
+            }
+        }
+
+        lwip_out = lwip_recvmsg(sock->lwip_fd, msg, flags);
+        if (lwip_out >= 0 || errno != EAGAIN)
+            break;
+
+        arch_yield();
+    }
+
     if (lwip_out < 0)
         return -errno;
+
     return lwip_out;
 }
 
@@ -413,7 +455,27 @@ ssize_t real_socket_read(fd_t *fd, void *addr, size_t offset, size_t size)
     socket_handle_t *handle = fd->node->handle;
     real_socket_t *sock = handle->sock;
 
-    int lwip_out = lwip_read(sock->lwip_fd, addr, size);
+    int lwip_out = -1;
+
+    while (true)
+    {
+        if (!(vfs_poll(fd->node, EPOLLIN) & EPOLLIN))
+        {
+            if (fd->flags & O_NONBLOCK)
+            {
+                lwip_out = -1;
+                errno = EAGAIN;
+                break;
+            }
+        }
+
+        lwip_out = lwip_read(sock->lwip_fd, addr, size);
+        if (lwip_out >= 0 || errno != EAGAIN)
+            break;
+
+        arch_yield();
+    }
+
     if (lwip_out < 0)
         return -errno;
 
@@ -425,7 +487,27 @@ ssize_t real_socket_write(fd_t *fd, const void *addr, size_t offset, size_t size
     socket_handle_t *handle = fd->node->handle;
     real_socket_t *sock = handle->sock;
 
-    int lwip_out = lwip_write(sock->lwip_fd, addr, size);
+    int lwip_out = -1;
+
+    while (true)
+    {
+        if (!(vfs_poll(fd->node, EPOLLOUT) & EPOLLOUT))
+        {
+            if (fd->flags & O_NONBLOCK)
+            {
+                lwip_out = -1;
+                errno = EAGAIN;
+                break;
+            }
+        }
+
+        lwip_out = lwip_sendmsg(sock->lwip_fd, addr, size);
+        if (lwip_out >= 0 || errno != EAGAIN)
+            break;
+
+        arch_yield();
+    }
+
     if (lwip_out < 0)
         return -errno;
 

@@ -516,14 +516,11 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 {
     arch_disable_interrupt();
 
-    can_schedule = false;
-
     spin_lock(&execve_lock);
 
     vfs_node_t node = vfs_open(path);
     if (!node)
     {
-        can_schedule = true;
         spin_unlock(&execve_lock);
         return (uint64_t)-ENOENT;
     }
@@ -647,7 +644,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
                 free(new_envp[i]);
         free(new_envp);
         free(fullpath);
-        can_schedule = true;
         spin_unlock(&execve_lock);
         return (uint64_t)-EINVAL;
     }
@@ -665,7 +661,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
                 free(new_envp[i]);
         free(new_envp);
         free(fullpath);
-        can_schedule = true;
         spin_unlock(&execve_lock);
         return (uint64_t)-EINVAL;
     }
@@ -696,7 +691,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
                         free(new_envp[i]);
                 free(new_envp);
                 free(fullpath);
-                can_schedule = true;
                 spin_unlock(&execve_lock);
                 return (uint64_t)-ENOENT;
             }
@@ -855,7 +849,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     // current_task->brk_end = current_task->brk_start;
 
     spin_unlock(&execve_lock);
-    can_schedule = true;
 
     arch_to_user_mode(current_task->arch_context, interpreter_entry ? interpreter_entry : e_entry, stack);
 
