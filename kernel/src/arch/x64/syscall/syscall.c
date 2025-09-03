@@ -28,11 +28,7 @@ uint64_t switch_to_kernel_stack()
 
 void *real_memcpy(void *dst, const void *src, size_t len)
 {
-#if defined(__x86_64__)
     return memcpy(dst, src, len);
-#else
-    return memcpy(dst, src, len);
-#endif
 }
 
 void syscall_init()

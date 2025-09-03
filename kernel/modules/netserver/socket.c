@@ -501,7 +501,7 @@ ssize_t real_socket_write(fd_t *fd, const void *addr, size_t offset, size_t size
             }
         }
 
-        lwip_out = lwip_sendmsg(sock->lwip_fd, addr, size);
+        lwip_out = lwip_write(sock->lwip_fd, addr, size);
         if (lwip_out >= 0 || errno != EAGAIN)
             break;
 
