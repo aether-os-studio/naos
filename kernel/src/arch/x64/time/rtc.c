@@ -1,5 +1,6 @@
 #include <arch/x64/time/time.h>
 #include <arch/x64/io.h>
+#include <drivers/kernel_logger.h>
 
 #define CMOS_ADDR 0x70 // CMOS 地址寄存器
 #define CMOS_DATA 0x71 // CMOS 数据寄存器
@@ -20,158 +21,68 @@
 #define DAY (24 * HOUR)    // 每天的秒数
 #define YEAR (365 * DAY)   // 每年的秒数，以 365 天算
 
+spinlock_t cmos_register_lock = {0};
+spinlock_t cmos_gettime_lock = {0};
+
 // 读 cmos 寄存器的值
 uint8_t cmos_read(uint8_t addr)
 {
+    spin_lock(&cmos_register_lock);
     io_out8(CMOS_ADDR, CMOS_NMI | addr);
-    return io_in8(CMOS_DATA);
+    uint8_t value = io_in8(CMOS_DATA);
+    spin_unlock(&cmos_register_lock);
+    return value;
 };
 
 // 写 cmos 寄存器的值
 void cmos_write(uint8_t addr, uint8_t value)
 {
+    spin_lock(&cmos_register_lock);
     io_out8(CMOS_ADDR, CMOS_NMI | addr);
     io_out8(CMOS_DATA, value);
+    spin_unlock(&cmos_register_lock);
 }
 
-// 每个月开始时的已经过去天数
-static int month[25] = {
-    0, // 这里占位，没有 0 月，从 1 月开始
-    0,
-    (31),
-    (31 + 29),
-    (31 + 29 + 31),
-    (31 + 29 + 31 + 30),
-    (31 + 29 + 31 + 30 + 31),
-    (31 + 29 + 31 + 30 + 31 + 30),
-    (31 + 29 + 31 + 30 + 31 + 30 + 31),
-    (31 + 29 + 31 + 30 + 31 + 30 + 31 + 31),
-    (31 + 29 + 31 + 30 + 31 + 30 + 31 + 31 + 30),
-    (31 + 29 + 31 + 30 + 31 + 30 + 31 + 31 + 30 + 31),
-    (31 + 29 + 31 + 30 + 31 + 30 + 31 + 31 + 30 + 31 + 30),
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0};
+int days_in_month[2][12] = {{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31},
+                            {31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}};
 
-int64_t startup_time;
 int century;
-
-int elapsed_leap_years(int year)
-{
-    int result = 0;
-    result += (year - 1) / 4;
-    result -= (year - 1) / 100;
-    result += (year + 299) / 400;
-    result -= (1970 - 1900) / 4;
-    return result;
-}
 
 bool is_leap_year(int year)
 {
-    return ((year % 4 == 0) && (year % 100 != 0)) || ((year + 1900) % 400 == 0);
-}
-
-void localtime(int64_t stamp, tm *time)
-{
-    time->tm_sec = stamp % 60;
-
-    int64_t remain = stamp / 60;
-
-    time->tm_min = remain % 60;
-    remain /= 60;
-
-    time->tm_hour = remain % 24;
-    int64_t days = remain / 24;
-
-    time->tm_wday = (days + 4) % 7; // 1970-01-01 是星期四
-
-    // 这里产生误差显然需要 365 个闰年，不管了
-    int years = days / 365 + 70;
-    time->tm_year = years;
-    int offset = 1;
-    if (is_leap_year(years))
-        offset = 0;
-
-    days -= elapsed_leap_years(years);
-    time->tm_yday = days % (366 - offset);
-
-    int mon = 1;
-    for (; mon < 13; mon++)
-    {
-        if ((month[mon] - offset) > time->tm_yday)
-            break;
-    }
-
-    time->tm_mon = mon - 1;
-    time->tm_mday = time->tm_yday - month[time->tm_mon] + offset + 1;
+    return ((year % 4 == 0) && (year % 100 != 0));
 }
 
 int64_t mktime(tm *time)
 {
-    int64_t res;
-    int year; // 1970 年开始的年数
-    // 下面从 1900 年开始的年数计算
-    if (time->tm_year >= 70)
-        year = time->tm_year - 70;
-    else
-        year = time->tm_year - 70 + 100;
+    int64_t seconds = 0;
+    int leap;
 
-    // 这些年经过的秒数时间
-    res = YEAR * year;
+    // Adjust year and month for Unix time (starting from 1970)
+    int year = time->tm_year;
+    int month = time->tm_mon - 1; // Month is 0-based in this logic
+    month -= (month > 11) ? 11 : 0;
+    int day = time->tm_mday - 1; // Day is 1-based in the RTC structure
 
-    // 已经过去的闰年，每个加 1 天
-    res += DAY * ((year + 1) / 4);
-
-    // 已经过完的月份的时间
-    res += month[time->tm_mon] * DAY;
-
-    // 如果 2 月已经过了，并且当前不是闰年，那么减去一天
-    if (time->tm_mon > 2 && ((year + 2) % 4))
-        res -= DAY;
-
-    // 这个月已经过去的天
-    res += DAY * (time->tm_mday - 1);
-
-    // 今天过去的小时
-    res += HOUR * time->tm_hour;
-
-    // 这个小时过去的分钟
-    res += MINUTE * time->tm_min;
-
-    // 这个分钟过去的秒
-    res += time->tm_sec;
-
-    return res;
-}
-
-int get_yday(tm *time)
-{
-    int res = month[time->tm_mon]; // 已经过去的月的天数
-    res += time->tm_mday;          // 这个月过去的天数
-
-    int year;
-    if (time->tm_year >= 70)
-        year = time->tm_year - 70;
-    else
-        year = time->tm_year - 70 + 100;
-
-    // 如果不是闰年，并且 2 月已经过去了，则减去一天
-    // 注：1972 年是闰年，这样算不太精确，忽略了 100 年的平年
-    if ((year + 2) % 4 && time->tm_mon > 2)
+    for (int y = 1970; y < year; y++)
     {
-        res -= 1;
+        leap = is_leap_year(y);
+        seconds += (365 + leap) * 86400;
     }
 
-    return res;
+    leap = is_leap_year(year);
+    for (int m = 0; m < month; m++)
+    {
+        seconds += days_in_month[leap][m] * 86400;
+    }
+
+    seconds += day * 86400;
+
+    seconds += time->tm_hour * 3600;
+    seconds += time->tm_min * 60;
+    seconds += time->tm_sec;
+
+    return seconds;
 }
 
 void time_read_bcd(tm *time)
@@ -184,7 +95,6 @@ void time_read_bcd(tm *time)
         time->tm_sec = cmos_read(CMOS_SECOND);
         time->tm_min = cmos_read(CMOS_MINUTE);
         time->tm_hour = cmos_read(CMOS_HOUR);
-        time->tm_wday = cmos_read(CMOS_WEEKDAY);
         time->tm_mday = cmos_read(CMOS_DAY);
         time->tm_mon = cmos_read(CMOS_MONTH);
         time->tm_year = cmos_read(CMOS_YEAR);
@@ -199,15 +109,28 @@ uint8_t bcd_to_bin(uint8_t value)
 
 void time_read(tm *time)
 {
+    spin_lock(&cmos_gettime_lock);
+
     time_read_bcd(time);
-    time->tm_sec = bcd_to_bin(time->tm_sec);
-    time->tm_min = bcd_to_bin(time->tm_min);
-    time->tm_hour = bcd_to_bin(time->tm_hour);
-    time->tm_wday = bcd_to_bin(time->tm_wday);
-    time->tm_mday = bcd_to_bin(time->tm_mday);
-    time->tm_mon = bcd_to_bin(time->tm_mon);
-    time->tm_year = bcd_to_bin(time->tm_year);
-    time->tm_yday = get_yday(time);
-    time->tm_isdst = -1;
-    century = bcd_to_bin(century);
+    uint8_t rb = cmos_read(0x0b);
+    bool need_convert = !(rb & 0x04);
+
+    if (need_convert)
+    {
+        time->tm_sec = bcd_to_bin(time->tm_sec);
+        time->tm_min = bcd_to_bin(time->tm_min);
+        time->tm_hour = bcd_to_bin(time->tm_hour);
+        time->tm_mday = bcd_to_bin(time->tm_mday);
+        time->tm_mon = bcd_to_bin(time->tm_mon);
+        time->tm_year = bcd_to_bin(time->tm_year);
+        time->tm_isdst = -1;
+        century = bcd_to_bin(century);
+    }
+
+    time->tm_year += century * 100;
+
+    if (!(rb & 0x02) && (time->tm_hour & 0x80))
+        time->tm_hour = ((time->tm_hour & 0x7F) + 12) % 24;
+
+    spin_unlock(&cmos_gettime_lock);
 }

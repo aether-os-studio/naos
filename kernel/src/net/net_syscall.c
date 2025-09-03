@@ -5,6 +5,7 @@
 #include <task/task.h>
 #include <fs/vfs/vfs.h>
 #include <drivers/kernel_logger.h>
+#include <net/netlink.h>
 
 uint64_t sys_shutdown(uint64_t fd, uint64_t how)
 {
@@ -67,6 +68,8 @@ int sys_socket(int domain, int type, int protocol)
 {
     if (domain == 1)
         return socket_socket(domain, type, protocol);
+    else if (domain == 16)
+        return netlink_socket(domain, type, protocol);
     else
         for (int i = 0; i < socket_num; i++)
         {
