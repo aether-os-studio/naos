@@ -33,7 +33,7 @@ void sockaddrLwipToLinux(void *dest_addr, void *src_addr, uint16_t initialFamily
     struct sockaddr_in *handle = (struct sockaddr_in *)src_addr;
     linuxHandle->sin_family = initialFamily;
     linuxHandle->sin_port = handle->sin_port;
-    memcpy(linuxHandle->sin_addr, &handle->sin_addr, 4);
+    memcpy(linuxHandle->sin_addr, &handle->sin_addr, sizeof(handle->sin_addr));
 }
 
 uint16_t sockaddrLinuxToLwip(void *dest_addr, void *src_addr, uint32_t addrlen)
@@ -44,7 +44,7 @@ uint16_t sockaddrLinuxToLwip(void *dest_addr, void *src_addr, uint32_t addrlen)
     handle->sin_len = sizeof(struct sockaddr_in);
     handle->sin_family = AF_INET;
     handle->sin_port = linuxHandle->sin_port;
-    memcpy(&handle->sin_addr, linuxHandle->sin_addr, 4);
+    memcpy(&handle->sin_addr, linuxHandle->sin_addr, sizeof(handle->sin_addr));
     return initialFamily;
 }
 
@@ -260,6 +260,20 @@ size_t real_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags)
 
     int lwip_out = -1;
 
+    struct sockaddr_in *a = malloc(sizeof(struct sockaddr_in));
+
+    sockaddrLinuxToLwip(a, msg->msg_name, sizeof(struct sockaddr_in));
+
+    struct msghdr mh = {
+        .msg_name = a,
+        .msg_namelen = sizeof(struct sockaddr_in),
+        .msg_iov = msg->msg_iov,
+        .msg_iovlen = msg->msg_iovlen,
+        .msg_control = msg->msg_control,
+        .msg_controllen = msg->msg_controllen,
+        .msg_flags = msg->msg_flags,
+    };
+
     while (true)
     {
         if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLOUT) & EPOLLOUT))
@@ -272,7 +286,7 @@ size_t real_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags)
             }
         }
 
-        lwip_out = lwip_sendmsg(sock->lwip_fd, msg, flags);
+        lwip_out = lwip_sendmsg(sock->lwip_fd, &mh, flags);
         if (lwip_out >= 0 || errno != EAGAIN)
             break;
 
@@ -292,6 +306,18 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
 
     int lwip_out = -1;
 
+    struct sockaddr_in *a = malloc(sizeof(struct sockaddr_in));
+
+    struct msghdr mh = {
+        .msg_name = a,
+        .msg_namelen = sizeof(struct sockaddr_in),
+        .msg_iov = msg->msg_iov,
+        .msg_iovlen = msg->msg_iovlen,
+        .msg_control = msg->msg_control,
+        .msg_controllen = msg->msg_controllen,
+        .msg_flags = msg->msg_flags,
+    };
+
     while (true)
     {
         if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
@@ -304,7 +330,7 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
             }
         }
 
-        lwip_out = lwip_recvmsg(sock->lwip_fd, msg, flags);
+        lwip_out = lwip_recvmsg(sock->lwip_fd, &mh, flags);
         if (lwip_out >= 0 || errno != EAGAIN)
             break;
 
@@ -313,6 +339,8 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
 
     if (lwip_out < 0)
         return -errno;
+
+    sockaddrLwipToLinux(msg->msg_name, a, 2);
 
     return lwip_out;
 }

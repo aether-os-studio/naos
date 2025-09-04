@@ -14,6 +14,8 @@ uint32_t epoll_to_poll_comp(uint32_t epoll_events)
         poll_events |= POLLERR;
     if (epoll_events & EPOLLHUP)
         poll_events |= POLLHUP;
+    if (epoll_events & EPOLLNVAL)
+        poll_events |= POLLNVAL;
 
     return poll_events;
 }
@@ -32,6 +34,8 @@ uint32_t poll_to_epoll_comp(uint32_t poll_events)
         epoll_events |= EPOLLERR;
     if (poll_events & POLLHUP)
         epoll_events |= EPOLLHUP;
+    if (poll_events & POLLNVAL)
+        epoll_events |= EPOLLNVAL;
 
     return epoll_events;
 }

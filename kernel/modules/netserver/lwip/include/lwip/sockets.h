@@ -139,12 +139,12 @@ struct msghdr {
   struct iovec *msg_iov;
   msg_iovlen_t  msg_iovlen;
   void         *msg_control;
-  socklen_t     msg_controllen;
+  size_t        msg_controllen;
   int           msg_flags;
 };
 
 /* struct msghdr->msg_flags bit field values */
-#define MSG_TRUNC   0x04
+#define MSG_TRUNC   0x20
 #define MSG_CTRUNC  0x08
 
 /* RFC 3542, Section 20: Ancillary Data */
