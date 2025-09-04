@@ -188,7 +188,6 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-vga vmware \
 		$(QEMUFLAGS)
 
-
 .PHONY: run-x86_64-single
 run-x86_64-single: assets/ovmf-code-$(ARCH).fd all-single
 	qemu-system-$(ARCH) \
