@@ -66,20 +66,29 @@ int sys_getsockopt(int fd, int level, int optname, void *optval, socklen_t *optl
 
 int sys_socket(int domain, int type, int protocol)
 {
+    int fd = -EAFNOSUPPORT;
     if (domain == 1)
-        return socket_socket(domain, type, protocol);
+        fd = socket_socket(domain, type, protocol);
     else if (domain == 16)
-        return netlink_socket(domain, type, protocol);
+        fd = netlink_socket(domain, type, protocol);
     else
         for (int i = 0; i < socket_num; i++)
         {
             if (real_sockets[i]->domain == domain)
             {
-                return real_sockets[i]->socket(domain, type & 0xff, protocol);
+                fd = real_sockets[i]->socket(domain, type & 0xff, protocol);
             }
         }
 
-    return -ENOSYS;
+    if (!(fd < 0))
+    {
+        if (type & O_CLOEXEC)
+            current_task->fd_info->fds[fd]->flags |= O_CLOEXEC;
+        if (type & O_NONBLOCK)
+            current_task->fd_info->fds[fd]->flags |= O_NONBLOCK;
+    }
+
+    return fd;
 }
 
 int sys_socketpair(int family, int type, int protocol, int *sv)

@@ -344,17 +344,6 @@ int real_socket_listen(uint64_t fd, int backlog)
     return out;
 }
 
-socket_op_t real_socket_ops = {
-    .getsockname = real_socket_getsockname,
-    .connect = real_socket_connect,
-    .sendto = real_socket_sendto,
-    .recvfrom = real_socket_recvfrom,
-    .sendmsg = real_socket_sendmsg,
-    .recvmsg = real_socket_recvmsg,
-    .getsockopt = real_socket_getsockopt,
-    .setsockopt = real_socket_setsockopt,
-};
-
 int real_socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen, uint64_t flags)
 {
     // socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
@@ -423,6 +412,20 @@ int real_socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen
 
     return -ENOSYS;
 }
+
+socket_op_t real_socket_ops = {
+    .getsockname = real_socket_getsockname,
+    .connect = real_socket_connect,
+    .bind = real_socket_bind,
+    .accept = real_socket_accept,
+    .listen = real_socket_listen,
+    .sendto = real_socket_sendto,
+    .recvfrom = real_socket_recvfrom,
+    .sendmsg = real_socket_sendmsg,
+    .recvmsg = real_socket_recvmsg,
+    .getsockopt = real_socket_getsockopt,
+    .setsockopt = real_socket_setsockopt,
+};
 
 bool real_socket_close(void *current)
 {
@@ -519,7 +522,7 @@ static int dummy()
     return 0;
 }
 
-struct vfs_callback callbacks = {
+static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
     .open = (vfs_open_t)dummy,
