@@ -215,54 +215,15 @@ void sys_sigreturn(struct pt_regs *regs)
 #if defined(__x86_64__)
     arch_disable_interrupt();
 
-    uint64_t sigrsp = regs->rsp;
-
-    struct sigcontext *ucontext = (struct sigcontext *)sigrsp;
-
-    int signal = ucontext->reserved1[0];
-    sigaction_t *action = &current_task->actions[signal];
-    int flags = action->sa_flags;
-
     struct pt_regs *context = (struct pt_regs *)current_task->kernel_stack - 1;
 
-    context->r8 = ucontext->arch.r8;
-    context->r9 = ucontext->arch.r9;
-    context->r10 = ucontext->arch.r10;
-    context->r11 = ucontext->arch.r11;
-    context->r12 = ucontext->arch.r12;
-    context->r13 = ucontext->arch.r13;
-    context->r14 = ucontext->arch.r14;
-    context->r15 = ucontext->arch.r15;
-    context->rdi = ucontext->arch.rdi;
-    context->rsi = ucontext->arch.rsi;
-    context->rbp = ucontext->arch.rbp;
-    context->rbx = ucontext->arch.rbx;
-    context->rdx = ucontext->arch.rdx;
-    context->rcx = ucontext->arch.rcx;
-    context->rax = ucontext->arch.rax;
-    context->rsp = ucontext->arch.rsp;
-    context->rip = ucontext->arch.rip;
-    context->rflags = ucontext->arch.eflags;
-
-    context->cs = ucontext->arch.cs;
-    context->ss = ucontext->arch.ss;
-    context->ds = ucontext->arch.ss;
-    context->es = ucontext->arch.ss;
-    current_task->arch_context->fs = ucontext->arch.fs;
-    current_task->arch_context->gs = ucontext->arch.gs;
-
-    if (ucontext->arch.fpstate)
-    {
-        memcpy(current_task->arch_context->fpu_ctx,
-               ucontext->arch.fpstate,
-               sizeof(struct fpstate));
-    }
+    memcpy(context, &current_task->signal_saved_regs, sizeof(struct pt_regs));
 
     current_task->arch_context->ctx = context;
 
-    spin_unlock(&sigreturn_lock);
+    current_task->call_in_signal = 0;
 
-    current_task->call_in_signal = false;
+    spin_unlock(&sigreturn_lock);
 
     asm volatile(
         "movq %0, %%rsp\n\t"
@@ -424,53 +385,9 @@ void task_signal()
 #if defined(__x86_64__)
     struct pt_regs *f = (struct pt_regs *)current_task->syscall_stack - 1;
 
+    memcpy(&current_task->signal_saved_regs, current_task->arch_context->ctx, sizeof(struct pt_regs));
+
     uint64_t sigrsp = f->rsp;
-
-    sigrsp -= 128;
-    sigrsp -= DEFAULT_PAGE_SIZE;
-    sigrsp = (sigrsp / DEFAULT_PAGE_SIZE) * DEFAULT_PAGE_SIZE;
-
-    sigrsp -= sizeof(struct fpstate);
-    struct fpstate *fpu = (struct fpstate *)sigrsp;
-    memcpy(fpu, current_task->arch_context->fpu_ctx, sizeof(struct fpstate));
-
-    sigrsp -= sizeof(struct sigcontext);
-    struct sigcontext *ucontext = (struct sigcontext *)sigrsp;
-
-    struct pt_regs *iframe = (struct pt_regs *)current_task->arch_context->ctx;
-
-    ucontext->arch.r8 = iframe->r8;
-    ucontext->arch.r9 = iframe->r9;
-    ucontext->arch.r10 = iframe->r10;
-    ucontext->arch.r11 = iframe->r11;
-    ucontext->arch.r12 = iframe->r12;
-    ucontext->arch.r13 = iframe->r13;
-    ucontext->arch.r14 = iframe->r14;
-    ucontext->arch.r15 = iframe->r15;
-    ucontext->arch.rdi = iframe->rdi;
-    ucontext->arch.rsi = iframe->rsi;
-    ucontext->arch.rbp = iframe->rbp;
-    ucontext->arch.rbx = iframe->rbx;
-    ucontext->arch.rdx = iframe->rdx;
-    ucontext->arch.rax = iframe->rax;
-    ucontext->arch.rcx = iframe->rcx;
-    ucontext->arch.rsp = iframe->rsp;
-    ucontext->arch.cs = iframe->cs;
-    ucontext->arch.ss = iframe->ss;
-    ucontext->arch.fs = current_task->arch_context->fs;
-    ucontext->arch.gs = current_task->arch_context->gs;
-    ucontext->arch.rip = iframe->rip;
-    ucontext->arch.eflags = iframe->rflags;
-    ucontext->arch.err = 0;
-    ucontext->arch.trapno = 0;
-    ucontext->arch.oldmask = 0;
-    ucontext->arch.cr2 = 0x1234567887654321;
-    ucontext->arch.fpstate = 0;
-    memset(ucontext->reserved1, 0, sizeof(ucontext->reserved1));
-
-    ucontext->arch.oldmask = current_task->blocked;
-    ucontext->arch.fpstate = fpu;
-    ucontext->reserved1[0] = sig;
 
     sigrsp -= sizeof(void *);
     *((void **)sigrsp) = (void *)ptr->sa_restorer;

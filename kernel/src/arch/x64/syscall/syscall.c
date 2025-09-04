@@ -14,23 +14,6 @@ __attribute__((used, section(".limine_requests"))) volatile struct limine_date_a
         .revision = 0,
 };
 
-uint64_t switch_to_kernel_stack()
-{
-    if (current_task->call_in_signal)
-    {
-        return current_task->signal_syscall_stack;
-    }
-    else
-    {
-        return current_task->syscall_stack;
-    }
-}
-
-void *real_memcpy(void *dst, const void *src, size_t len)
-{
-    return memcpy(dst, src, len);
-}
-
 void syscall_init()
 {
     uint64_t efer;
@@ -576,7 +559,7 @@ void syscall_handler_init()
 
 spinlock_t syscall_debug_lock = {0};
 
-void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
+void syscall_handler(struct pt_regs *regs, uint64_t user_regs)
 {
     regs->rip = regs->rcx;
     regs->rflags = regs->r11;
@@ -584,7 +567,7 @@ void syscall_handler(struct pt_regs *regs, struct pt_regs *user_regs)
     regs->ss = SELECTOR_USER_DS;
     regs->ds = SELECTOR_USER_DS;
     regs->es = SELECTOR_USER_DS;
-    regs->rsp = (uint64_t)(user_regs + 1);
+    regs->rsp = user_regs;
 
     uint64_t idx = regs->rax & 0xFFFFFFFF;
 

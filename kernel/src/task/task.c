@@ -95,7 +95,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
     can_schedule = false;
 
     task_t *task = get_free_task();
-    task->call_in_signal = false;
+    task->call_in_signal = 0;
+    memset(&task->signal_saved_regs, 0, sizeof(struct pt_regs));
     task->cpu_id = alloc_cpu_id();
     task->ppid = task->pid;
     task->uid = 0;
@@ -113,6 +114,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
     task->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     task->syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     task->signal_syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
+    task->syscall_stack_user = 0;
     memset((void *)(task->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(task->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(task->signal_syscall_stack - STACK_SIZE), 0, STACK_SIZE);
@@ -375,11 +377,14 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
     child->call_in_signal = current_task->call_in_signal;
 
+    memset(&child->signal_saved_regs, 0, sizeof(struct pt_regs));
+
     child->cpu_id = alloc_cpu_id();
 
     child->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     child->syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     child->signal_syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
+    child->syscall_stack_user = 0;
     memset((void *)(child->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(child->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(child->signal_syscall_stack - STACK_SIZE), 0, STACK_SIZE);
@@ -1131,11 +1136,14 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
     child->call_in_signal = current_task->call_in_signal;
 
+    memset(&child->signal_saved_regs, 0, sizeof(struct pt_regs));
+
     child->cpu_id = alloc_cpu_id();
 
     child->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     child->syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     child->signal_syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
+    child->syscall_stack_user = 0;
     memset((void *)(child->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(child->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(child->signal_syscall_stack - STACK_SIZE), 0, STACK_SIZE);

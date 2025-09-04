@@ -5,6 +5,22 @@ ENTRY(syscall_exception)
     cli
     cld
 
+    swapgs
+
+    movq %rsp, %gs:0x8 // syscall_stack_user
+
+    cmp $0, %gs:0x20
+    je normal
+
+signal:
+    movq %gs:0x10, %rsp // signal_syscall_stack
+    jmp next
+
+normal:
+    movq %gs:0x0, %rsp // syscall_stack
+    jmp next
+
+next:
     subq $0x38, %rsp
 
     pushq %rax
@@ -29,28 +45,12 @@ ENTRY(syscall_exception)
     pushq %r14
     pushq %r15
 
-    movq %rsp, %r15
-
-    call switch_to_kernel_stack
-    subq $0xc0, %rax
-    movq %rax, %rsp
-    movq %rax, %rbp
-
     movq %rsp, %rdi
-    movq %r15, %rsi
-    movq $0xc0, %rdx
-    call real_memcpy
+    movq %gs:0x8, %rsi
 
-    movq %rsp, %rdi
-    movq %r15, %rsi
+    swapgs
+
     call syscall_handler
-
-    movq %r15, %rdi
-    movq %rsp, %rsi
-    movq $0xc0, %rdx
-    call real_memcpy
-
-    movq %rax, %rsp
 
 ret_from_syscall:
     popq %r15
@@ -76,5 +76,11 @@ ret_from_syscall:
     popq %rax
 
     addq $0x38, %rsp
+
+    swapgs
+
+    movq %gs:0x8, %rsp // syscall_stack_user
+
+    swapgs
 
     sysretq

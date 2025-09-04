@@ -144,7 +144,12 @@ typedef struct fd_info
 
 typedef struct task
 {
-    bool call_in_signal;
+    uint64_t syscall_stack;
+    uint64_t syscall_stack_user;
+    uint64_t signal_syscall_stack;
+    uint64_t kernel_stack;
+    uint64_t call_in_signal;
+    struct pt_regs signal_saved_regs;
     uint64_t pid;
     uint64_t ppid;
     int64_t uid;
@@ -163,9 +168,6 @@ typedef struct task
     uint64_t jiffies;
     task_state_t state;
     task_state_t current_state;
-    uint64_t kernel_stack;
-    uint64_t syscall_stack;
-    uint64_t signal_syscall_stack;
     uint64_t brk_start;
     uint64_t brk_end;
     uint64_t load_start;
