@@ -260,13 +260,9 @@ size_t real_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags)
 
     int lwip_out = -1;
 
-    struct sockaddr_in *a = malloc(sizeof(struct sockaddr_in));
-
-    sockaddrLinuxToLwip(a, msg->msg_name, sizeof(struct sockaddr_in));
-
     struct msghdr mh = {
-        .msg_name = a,
-        .msg_namelen = sizeof(struct sockaddr_in),
+        .msg_name = NULL,
+        .msg_namelen = 0,
         .msg_iov = msg->msg_iov,
         .msg_iovlen = msg->msg_iovlen,
         .msg_control = msg->msg_control,
@@ -341,6 +337,7 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
         return -errno;
 
     sockaddrLwipToLinux(msg->msg_name, a, 2);
+    msg->msg_namelen = sizeof(struct sockaddr_in);
 
     return lwip_out;
 }

@@ -139,7 +139,7 @@ void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
     if (ctrled && out == 'c')
     {
         kb_finalise_stream();
-        send_sigint();
+        // send_sigint();
         return;
     }
 
