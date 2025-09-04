@@ -324,7 +324,7 @@ int real_socket_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addr
 
     struct sockaddr_in *a = malloc(sizeof(struct sockaddr_in));
     sockaddrLinuxToLwip(a, addr, addrlen);
-    int out = lwip_bind(sock->lwip_fd, a, sizeof(struct sockaddr_in));
+    int out = lwip_bind(sock->lwip_fd, (const struct sockaddr *)a, sizeof(struct sockaddr_in));
     free(a);
     if (out < 0)
         return -errno;

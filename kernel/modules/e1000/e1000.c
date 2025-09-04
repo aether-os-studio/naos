@@ -408,8 +408,8 @@ static int e1000_pci_probe(pci_device_t *pci_dev, uint32_t vendor_device_id)
     }
 
     // Map MMIO region
-    void *mmio_vaddr = phys_to_virt(mmio_base);
-    map_page_range(get_current_page_dir(false), mmio_vaddr, mmio_base,
+    void *mmio_vaddr = (void *)phys_to_virt(mmio_base);
+    map_page_range(get_current_page_dir(false), (uint64_t)mmio_vaddr, mmio_base,
                    mmio_size, PT_FLAG_R | PT_FLAG_W);
 
     // Initialize E1000 device
@@ -423,8 +423,8 @@ static void e1000_pci_remove(pci_device_t *pci_dev)
     {
         e1000_device_t *dev = e1000_devices[i];
         // Compare MMIO base to identify the device
-        if (dev->mmio_base >= pci_dev->bars[0].address &&
-            dev->mmio_base < pci_dev->bars[0].address + pci_dev->bars[0].size)
+        if ((uint64_t)dev->mmio_base >= pci_dev->bars[0].address &&
+            (uint64_t)dev->mmio_base < pci_dev->bars[0].address + pci_dev->bars[0].size)
         {
             // Disable device
             e1000_write32(dev, E1000_RCTL, 0);
