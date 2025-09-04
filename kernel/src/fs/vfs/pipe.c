@@ -32,8 +32,10 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size)
     if (!pipe)
         return -EINVAL;
 
+    spin_unlock(&spec->node->spin);
+
     uint32_t available = (pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF;
-    if (available == 0)
+    while (available == 0)
     {
         if (fd->flags & O_NONBLOCK)
         {
@@ -45,10 +47,12 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size)
             return 0;
         }
 
-        spin_unlock(&spec->node->spin);
-
         arch_yield();
+
+        available = (pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF;
     }
+
+    spin_lock(&spec->node->spin);
 
     spin_lock(&pipe->lock);
 
@@ -91,18 +95,22 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
     pipe_specific_t *spec = (pipe_specific_t *)file;
     pipe_info_t *pipe = spec->info;
 
+    spin_unlock(&spec->node->spin);
+
     uint32_t free_space = PIPE_BUFF - ((pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF);
-    if (free_space < size)
+    while (free_space < size)
     {
         if (pipe->read_fds == 0)
         {
             return -EPIPE;
         }
 
-        spin_unlock(&spec->node->spin);
-
         arch_yield();
+
+        free_space = PIPE_BUFF - ((pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF);
     }
+
+    spin_lock(&spec->node->spin);
 
     spin_lock(&pipe->lock);
 
