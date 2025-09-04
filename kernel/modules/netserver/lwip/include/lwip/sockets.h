@@ -149,7 +149,7 @@ struct msghdr {
 
 /* RFC 3542, Section 20: Ancillary Data */
 struct cmsghdr {
-  socklen_t  cmsg_len;   /* number of bytes, including header */
+  size_t     cmsg_len;   /* number of bytes, including header */
   int        cmsg_level; /* originating protocol */
   int        cmsg_type;  /* protocol-specific type */
 };

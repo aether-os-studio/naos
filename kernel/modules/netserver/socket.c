@@ -336,8 +336,11 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
     if (lwip_out < 0)
         return -errno;
 
-    sockaddrLwipToLinux(msg->msg_name, a, 2);
-    msg->msg_namelen = sizeof(struct sockaddr_in);
+    if (msg->msg_name)
+    {
+        sockaddrLwipToLinux(msg->msg_name, a, 2);
+        msg->msg_namelen = sizeof(struct sockaddr_in);
+    }
 
     return lwip_out;
 }
