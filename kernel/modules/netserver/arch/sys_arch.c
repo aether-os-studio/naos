@@ -147,7 +147,6 @@ void sys_mbox_post_unsafe(sys_mbox_t *q, void *msg)
         mboxBlock *next = browse->next;
         if (browse->write == false)
         {
-            task_unblock(browse->task, EOK);
             LinkedListRemove((void **)&q->firstBlock, browse);
         }
         browse = next;
@@ -200,7 +199,7 @@ u32_t sys_arch_mbox_fetch(sys_mbox_t *q, void **msg, u32_t timeout)
         block->task = current_task;
         block->write = false;
         spin_unlock(&q->lock);
-        // task_block(current_task, TASK_BLOCKING, timeout);
+
         arch_yield();
     }
 

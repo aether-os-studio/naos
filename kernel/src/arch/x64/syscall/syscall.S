@@ -8,7 +8,7 @@ ENTRY(syscall_exception)
 
     movq %rsp, %gs:0x8 // syscall_stack_user
 
-    cmp $0, %gs:0x20
+    cmpq $0, %gs:0x20
     je normal
 
 signal:
