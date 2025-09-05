@@ -500,14 +500,10 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     {
         current_task->child_vfork_done = false;
 
-        arch_enable_interrupt();
-
         while (!current_task->child_vfork_done)
         {
             arch_yield();
         }
-
-        arch_disable_interrupt();
 
         current_task->child_vfork_done = false;
     }
@@ -1286,14 +1282,10 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     {
         current_task->child_vfork_done = false;
 
-        arch_enable_interrupt();
-
         while (!current_task->child_vfork_done)
         {
             arch_yield();
         }
-
-        arch_disable_interrupt();
 
         current_task->child_vfork_done = false;
     }
