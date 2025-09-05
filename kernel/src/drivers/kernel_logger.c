@@ -468,6 +468,24 @@ int printk(const char *fmt, ...)
     return len;
 }
 
+int serial_fprintk(const char *fmt, ...)
+{
+    spin_lock(&printk_lock);
+
+    va_list args;
+    va_start(args, fmt);
+
+    int len = vsprintf(buf, fmt, args);
+
+    va_end(args);
+
+    serial_printk(buf, len);
+
+    spin_unlock(&printk_lock);
+
+    return len;
+}
+
 int sprintf(char *buf, const char *fmt, ...)
 {
     va_list args;

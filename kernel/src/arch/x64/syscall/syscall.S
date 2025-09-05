@@ -3,7 +3,6 @@
 
 ENTRY(syscall_exception)
     cli
-    cld
 
     swapgs
 
@@ -53,6 +52,8 @@ next:
     call syscall_handler
 
 ret_from_syscall:
+    cli
+
     popq %r15
     popq %r14
     popq %r13

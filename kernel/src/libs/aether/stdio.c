@@ -4,4 +4,5 @@
 #include <drivers/kernel_logger.h>
 
 EXPORT_SYMBOL(printk);
+EXPORT_SYMBOL(serial_fprintk);
 EXPORT_SYMBOL(sprintf);

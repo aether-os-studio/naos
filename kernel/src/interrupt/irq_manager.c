@@ -74,5 +74,11 @@ int irq_allocate_irqnum()
     {
         printk("Failed to allocate irq");
     }
+    bitmap_set(&irq_bitmap, idx, true);
     return idx;
+}
+
+void irq_deallocate_irqnum(int irq_num)
+{
+    bitmap_set(&irq_bitmap, irq_num, false);
 }

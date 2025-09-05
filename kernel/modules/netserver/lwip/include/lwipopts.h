@@ -72,7 +72,7 @@ typedef uint8_t sys_prot_t;
 #define LWIP_PLATFORM_ASSERT(x)                                           \
     do                                                                    \
     {                                                                     \
-        printk("Assertion \"%s\" failed at line %d in %s\n", x, __LINE__, \
+        serial_fprintk("Assertion \"%s\" failed at line %d in %s\n", x, __LINE__, \
                __FILE__);                                                 \
         while (1)                                                         \
         {                                                                 \
@@ -83,7 +83,7 @@ typedef uint8_t sys_prot_t;
 #define LWIP_PLATFORM_DIAG(x) \
     do                        \
     {                         \
-        printk x;             \
+        serial_fprintk x;             \
     } while (0)
 
 extern uint64_t next;

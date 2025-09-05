@@ -3,3 +3,4 @@
 
 EXPORT_SYMBOL(irq_regist_irq);
 EXPORT_SYMBOL(irq_allocate_irqnum);
+EXPORT_SYMBOL(irq_deallocate_irqnum);
