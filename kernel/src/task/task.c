@@ -88,7 +88,7 @@ uint32_t alloc_cpu_id()
     return idx;
 }
 
-task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
+task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg, uint64_t priority)
 {
     arch_disable_interrupt();
 
@@ -111,6 +111,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg)
     task->state = TASK_READY;
     task->current_state = TASK_READY;
     task->jiffies = 0;
+    task->priority = priority;
     task->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     task->syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     task->signal_syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
@@ -248,12 +249,12 @@ void task_init()
 
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++)
     {
-        task_t *idle_task = task_create("idle", idle_entry, 0);
+        task_t *idle_task = task_create("idle", idle_entry, 0, IDLE_PRIORITY);
         idle_task->cpu_id = cpu;
         idle_task->state = TASK_RUNNING;
     }
     arch_set_current(idle_tasks[0]);
-    task_create("init", init_thread, 0);
+    task_create("init", init_thread, 0, NORMAL_PRIORITY);
 
     task_initialized = true;
 
@@ -404,6 +405,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     child->sid = current_task->sid;
 
     child->jiffies = current_task->jiffies;
+    child->priority = NORMAL_PRIORITY;
 
     child->cwd = current_task->cwd;
     child->cmdline = strdup(current_task->cmdline);
@@ -1163,6 +1165,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->sid = current_task->sid;
 
     child->jiffies = current_task->jiffies;
+    child->priority = NORMAL_PRIORITY;
 
     child->cwd = current_task->cwd;
     child->cmdline = strdup(current_task->cmdline);

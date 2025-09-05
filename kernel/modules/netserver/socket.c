@@ -587,7 +587,7 @@ static void delay(uint64_t ms)
 
 void receiver_entry(uint64_t arg)
 {
-    uint32_t mtu = get_default_netdev()->mtu;
+    uint32_t mtu = ((netdev_t *)arg)->mtu;
     char *buf = malloc(mtu);
     memset(buf, 0, mtu);
 
@@ -671,7 +671,7 @@ void real_socket_init_global_netif()
 {
     if (get_default_netdev())
     {
-        task_create("net_receiver", receiver_entry, (uint64_t)get_default_netdev());
+        task_create("net_receiver", receiver_entry, (uint64_t)get_default_netdev(), KTHREAD_PRIORITY);
         tcpip_init(lwip_init_in_thread, get_default_netdev());
     }
 }

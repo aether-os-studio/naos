@@ -94,7 +94,7 @@ sys_thread_t sys_thread_new(const char *pcName,
                             void (*pxThread)(void *pvParameters), void *pvArg,
                             int iStackSize, int iPriority)
 {
-    task_t *task = task_create(pcName, (void (*)(uint64_t))pxThread, (uint64_t)pvArg);
+    task_t *task = task_create(pcName, (void (*)(uint64_t))pxThread, (uint64_t)pvArg, KTHREAD_PRIORITY);
     return task->pid;
 }
 

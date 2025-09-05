@@ -6,7 +6,7 @@
 
 void apic_timer_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
 {
-    current_task->jiffies++;
+    current_task->jiffies += current_task->priority;
 }
 
 void apic_timer_init()
