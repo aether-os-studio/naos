@@ -507,9 +507,10 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
             prop->flags = DRM_MODE_PROP_BLOB;
             strncpy((char *)prop->name, "MODE_ID", DRM_PROP_NAME_LEN);
 
-            if (prop->values_ptr)
+            prop->count_enum_blobs = 1;
+            if (prop->count_enum_blobs)
             {
-                uint64_t *values = (uint64_t *)(uintptr_t)prop->values_ptr;
+                uint64_t *values = (uint64_t *)(uintptr_t)prop->count_enum_blobs;
                 values[0] = 1; // 假设当前模式ID为1
             }
             return 0;
@@ -522,10 +523,10 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         case DRM_CONNECTOR_DPMS_PROP_ID:
             prop->flags = DRM_MODE_PROP_ENUM;
             strncpy((char *)prop->name, "DPMS", DRM_PROP_NAME_LEN);
-            prop->count_values = 4;
-            if (prop->values_ptr)
+            prop->count_enum_blobs = 4;
+            if (prop->enum_blob_ptr)
             {
-                uint64_t *values = (uint64_t *)(uintptr_t)prop->values_ptr;
+                uint64_t *values = (uint64_t *)(uintptr_t)prop->enum_blob_ptr;
                 values[0] = DRM_MODE_DPMS_ON;
                 values[1] = DRM_MODE_DPMS_STANDBY;
                 values[2] = DRM_MODE_DPMS_SUSPEND;
@@ -810,6 +811,7 @@ void drm_init()
     if (drm->op->get_connectors)
     {
         drm_connector_t *connectors[DRM_MAX_CONNECTORS_PER_DEVICE];
+        memset(connectors, 0, sizeof(connectors));
         uint32_t connector_count = 0;
         if (drm->op->get_connectors(drm, connectors, &connector_count) == 0)
         {
@@ -831,6 +833,7 @@ void drm_init()
     if (drm->op->get_crtcs)
     {
         drm_crtc_t *crtcs[DRM_MAX_CRTCS_PER_DEVICE];
+        memset(crtcs, 0, sizeof(crtcs));
         uint32_t crtc_count = 0;
         if (drm->op->get_crtcs(drm, crtcs, &crtc_count) == 0)
         {
@@ -852,6 +855,7 @@ void drm_init()
     if (drm->op->get_encoders)
     {
         drm_encoder_t *encoders[DRM_MAX_ENCODERS_PER_DEVICE];
+        memset(encoders, 0, sizeof(encoders));
         uint32_t encoder_count = 0;
         if (drm->op->get_encoders(drm, encoders, &encoder_count) == 0)
         {
@@ -873,6 +877,7 @@ void drm_init()
     if (drm->op->get_planes)
     {
         drm_plane_t *planes[DRM_MAX_PLANES_PER_DEVICE];
+        memset(planes, 0, sizeof(planes));
         uint32_t plane_count = 0;
         if (drm->op->get_planes(drm, planes, &plane_count) == 0)
         {
@@ -938,6 +943,15 @@ void drm_init()
             drm->resource_mgr.connectors[0]->encoder_id = encoder->id;
         }
     }
+
+    drm_framebuffer_t *framebuffer = drm_framebuffer_alloc(&drm->resource_mgr, NULL);
+    uint32_t width, height, bpp;
+    drm->op->get_display_info(drm, &width, &height, &bpp);
+    framebuffer->width = width;
+    framebuffer->height = height;
+    framebuffer->bpp = bpp;
+    framebuffer->pitch = width * sizeof(uint32_t);
+    framebuffer->depth = 24;
 
     regist_dev(buf, drm_read, NULL, drm_ioctl, drm_poll, drm_map, drm);
 }

@@ -7,6 +7,8 @@
 #include <drivers/gfx/vmware/vmware.h>
 #include <mm/mm.h>
 
+#define HZ 60
+
 #if defined(__x86_64__)
 
 vmware_gpu_device_t *vmware_gpu_devices[MAX_VMWARE_GPU_DEVICES];
@@ -104,7 +106,7 @@ void *vmware_fifo_reserve(vmware_gpu_device_t *device, size_t size)
             // Need to wait
             vmware_write_register(device, register_index_sync, 1);
             while (vmware_read_register(device, register_index_busy))
-                ;
+                arch_yield();
             return vmware_fifo_reserve(device, size);
         }
     }
@@ -189,10 +191,19 @@ int vmware_wait_fence(vmware_gpu_device_t *device, uint32_t sequence)
 // Display detection and management
 int vmware_gpu_detect_displays(vmware_gpu_device_t *device)
 {
-    uint32_t num_displays = vmware_read_register(device, register_index_num_guest_displays);
+    uint32_t num_displays = vmware_read_register(device, register_index_num_guest_displays) + 1;
     device->num_displays = MIN(num_displays, VMWARE_MAX_DISPLAYS);
 
-    for (uint32_t i = 0; i < device->num_displays; i++)
+    vmware_display_info_t *display0 = &device->displays[0];
+    display0->id = 0;
+    display0->is_primary = true;
+    display0->position_x = 0;
+    display0->position_y = 0;
+    display0->width = vmware_read_register(device, register_index_width);
+    display0->height = vmware_read_register(device, register_index_height);
+    display0->enabled = true;
+
+    for (uint32_t i = 1; i < device->num_displays; i++)
     {
         vmware_display_info_t *display = &device->displays[i];
 
@@ -380,6 +391,22 @@ void vmware_gpu_pci_init(pci_device_t *pci_dev)
                 device->connectors[i]->mm_width = device->displays[i].width;
                 device->connectors[i]->mm_height = device->displays[i].height;
             }
+
+            device->connectors[i]->modes = malloc(sizeof(struct drm_mode_modeinfo));
+            struct drm_mode_modeinfo mode = {
+                .clock = device->displays[i].width * HZ,
+                .hdisplay = device->displays[i].width,
+                .hsync_start = device->displays[i].width + 16,      // 水平同步开始 = 显示宽度 + 前廊
+                .hsync_end = device->displays[i].width + 16 + 96,   // 水平同步结束 = hsync_start + 同步脉冲宽度
+                .htotal = device->displays[i].width + 16 + 96 + 48, // 水平总像素 = hsync_end + 后廊
+                .vdisplay = device->displays[i].height,
+                .vsync_start = device->displays[i].height + 10,     // 垂直同步开始 = 显示高度 + 前廊
+                .vsync_end = device->displays[i].height + 10 + 2,   // 垂直同步结束 = vsync_start + 同步脉冲宽度
+                .vtotal = device->displays[i].height + 10 + 2 + 33, // 垂直总行数 = vsync_end + 后廊
+                .vrefresh = HZ,
+            };
+            memcpy(device->connectors[i]->modes, &mode, sizeof(struct drm_mode_modeinfo));
+            device->connectors[i]->count_modes = 1;
 
             // Create CRTC
             device->crtcs[i] = drm_crtc_alloc(&device->resource_mgr, device);
@@ -628,8 +655,13 @@ static int vmware_get_encoders(drm_device_t *drm_dev, drm_encoder_t **encoders, 
 static int vmware_get_planes(drm_device_t *drm_dev, drm_plane_t **planes, uint32_t *count)
 {
     // VMware doesn't support multiple planes in basic mode
+    vmware_gpu_device_t *device = drm_dev->data;
+
     *count = 1;
-    planes[0] = drm_plane_alloc(&drm_dev->resource_mgr, drm_dev->data);
+    planes[0] = drm_plane_alloc(&device->resource_mgr, drm_dev->data);
+    planes[0]->count_format_types = 1;
+    planes[0]->format_types = malloc(sizeof(uint32_t) * planes[0]->count_format_types);
+    planes[0]->format_types[0] = DRM_FORMAT_ARGB8888;
     return 0;
 }
 
