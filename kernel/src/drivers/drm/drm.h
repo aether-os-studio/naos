@@ -1162,6 +1162,13 @@ enum drm_blob_ids
     DRM_BLOB_ID_PLANE_TYPE = 1,
 };
 
+typedef enum
+{
+    DRM_MODE_CONNECTED = 1,
+    DRM_MODE_DISCONNECTED = 2,
+    DRM_MODE_UNKNOWNCONNECTION = 3
+} drmModeConnection;
+
 /* CRTC属性 */
 #define DRM_CRTC_ACTIVE_PROP_ID 0x100
 #define DRM_CRTC_MODE_ID_PROP_ID 0x101
@@ -1188,6 +1195,21 @@ struct k_drm_event
 
 #define DRM_MAX_EVENTS_COUNT 32
 
+struct drm_connector;
+typedef struct drm_connector drm_connector_t;
+
+struct drm_crtc;
+typedef struct drm_crtc drm_crtc_t;
+
+struct drm_encoder;
+typedef struct drm_encoder drm_encoder_t;
+
+struct drm_framebuffer;
+typedef struct drm_framebuffer drm_framebuffer_t;
+
+struct drm_plane;
+typedef struct drm_plane drm_plane_t;
+
 struct drm_device;
 
 typedef struct drm_device_op
@@ -1205,9 +1227,14 @@ typedef struct drm_device_op
     int (*page_flip)(struct drm_device *dev, struct drm_mode_crtc_page_flip *flip);
     int (*set_cursor)(void *dev_data, struct drm_mode_cursor *cursor);
     int (*gamma_set)(void *dev_data, struct drm_mode_crtc_lut *gamma);
+    int (*get_connectors)(void *dev_data, drm_connector_t **connectors, uint32_t *count);
+    int (*get_crtcs)(void *dev_data, drm_crtc_t **crtcs, uint32_t *count);
+    int (*get_encoders)(void *dev_data, drm_encoder_t **encoders, uint32_t *count);
+    int (*get_planes)(void *dev_data, drm_plane_t **planes, uint32_t *count);
 } drm_device_op_t;
 
-#define MAX_FB_NUM 16
+struct drm_resource_manager;
+typedef struct drm_resource_manager drm_resource_manager_t;
 
 typedef struct drm_device
 {
@@ -1216,6 +1243,7 @@ typedef struct drm_device
     drm_device_op_t *op;
     struct k_drm_event *drm_events[DRM_MAX_EVENTS_COUNT];
     uint64_t vblank_counter;
+    drm_resource_manager_t resource_mgr;
 } drm_device_t;
 
 extern void fast_copy_16(void *dst, const void *src, size_t size);

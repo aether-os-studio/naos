@@ -1,13 +1,21 @@
 #pragma once
 
 #include <libs/klibc.h>
-#include <drivers/drm/drm.h>
+#include <drivers/drm/drm_core.h>
+#include <drivers/drm/drm_mode.h>
 
 #define VMWARE_GPU_VERSION_MAGIC 0x900000
 #define VMWARE_GPU_VERSION_ID_2 ((VMWARE_GPU_VERSION_MAGIC << 8) | 2)
 #define VMWARE_GPU_VERSION_ID_1 ((VMWARE_GPU_VERSION_MAGIC << 8) | 1)
 #define VMWARE_GPU_VERSION_ID_0 ((VMWARE_GPU_VERSION_MAGIC << 8) | 0)
 
+// Maximum number of displays supported by VMware SVGA II
+#define VMWARE_MAX_DISPLAYS 16
+#define VMWARE_MAX_FRAMEBUFFERS 32
+#define VMWARE_CURSOR_WIDTH 64
+#define VMWARE_CURSOR_HEIGHT 64
+
+// Register indices
 enum register_index
 {
     register_index_id = 0,
@@ -65,6 +73,7 @@ enum register_index
     register_index_top = 48,
 };
 
+// Command indices
 enum command_index
 {
     command_index_invalid_cmd = 0,
@@ -88,6 +97,7 @@ enum command_index
     command_index_max
 };
 
+// FIFO indices
 enum fifo_index
 {
     fifo_index_min = 0,
@@ -126,10 +136,104 @@ enum fifo_index
     fifo_index_num_regs
 };
 
-// only necessary commands are implemented
+// Capabilities
+enum caps
+{
+    cap_cursor = 0x00000020,
+    cap_fifo_extended = 0x00008000,
+    cap_irqmask = 0x00040000,
+    cap_gmr = 0x00080000,
+    cap_gmr2 = 0x00100000,
+    cap_3d = 0x00020000,
+    cap_fifo_reserve = (1 << 6),
+    cap_fifo_cursor_bypass_3 = (1 << 4),
+};
+
+// IRQ masks
+enum irq_masks
+{
+    irq_mask_any = 0xFFFFFFFF,
+    irq_mask_fence = 0x00000001,
+    irq_mask_flip = 0x00000002,
+    irq_mask_cursor = 0x00000004,
+};
+
+// Display information structure
+typedef struct vmware_display_info
+{
+    uint32_t id;
+    uint32_t is_primary;
+    uint32_t position_x;
+    uint32_t position_y;
+    uint32_t width;
+    uint32_t height;
+    uint32_t enabled;
+} vmware_display_info_t;
+
+// Framebuffer structure
+typedef struct vmware_framebuffer
+{
+    uint64_t addr;
+    uint32_t width;
+    uint32_t height;
+    uint32_t pitch;
+    uint32_t bpp;
+    uint32_t format;
+    uint32_t refcount;
+} vmware_framebuffer_t;
+
+// Cursor structure
+typedef struct vmware_cursor
+{
+    uint32_t width;
+    uint32_t height;
+    uint32_t hotspot_x;
+    uint32_t hotspot_y;
+    uint32_t *pixels;
+    uint32_t refcount;
+} vmware_cursor_t;
+
+// Main device structure
+typedef struct vmware_gpu_device
+{
+    uint16_t io_base;
+    uint64_t fb_mmio_base;
+    uint64_t fifo_mmio_base;
+
+    uint32_t version;
+    uint32_t fifo_size;
+    uint32_t caps;
+    uint32_t vram_size;
+
+    // Display information
+    uint32_t num_displays;
+    vmware_display_info_t displays[VMWARE_MAX_DISPLAYS];
+
+    // Framebuffer management
+    vmware_framebuffer_t *framebuffers[VMWARE_MAX_FRAMEBUFFERS];
+    uint32_t next_fb_id;
+
+    // Cursor management
+    vmware_cursor_t *cursor;
+
+    // DRM resources
+    drm_connector_t *connectors[VMWARE_MAX_DISPLAYS];
+    drm_crtc_t *crtcs[VMWARE_MAX_DISPLAYS];
+    drm_encoder_t *encoders[VMWARE_MAX_DISPLAYS];
+
+    // Synchronization
+    spinlock_t lock;
+    uint32_t fence_seq;
+
+    // Interrupt handling
+    uint32_t irq_mask;
+    uint32_t pending_irqs;
+} vmware_gpu_device_t;
+
+// Command structures
 struct vmware_gpu_define_alpha_cursor
 {
-    uint32_t id; // must be 0
+    uint32_t id;
     uint32_t hotspot_x;
     uint32_t hotspot_y;
     uint32_t width;
@@ -139,7 +243,7 @@ struct vmware_gpu_define_alpha_cursor
 
 struct vmware_gpu_define_cursor
 {
-    uint32_t id; // must be 0
+    uint32_t id;
     uint32_t hotspot_x;
     uint32_t hotspot_y;
     uint32_t width;
@@ -167,44 +271,38 @@ struct vmware_gpu_copy_rectangle
     uint32_t h;
 };
 
-enum caps
+struct vmware_gpu_fence
 {
-    cap_cursor = 0x00000020,
-    cap_fifo_extended = 0x00008000,
-    cap_irqmask = 0x00040000,
-    cap_fifo_reserve = (1 << 6),
-    cap_fifo_cursor_bypass_3 = (1 << 4),
+    uint32_t sequence;
 };
 
-#define MAX_VMWARE_GPU_DEVICE_NUM 8
-
-typedef struct vmware_gpu_fb
-{
-    uint64_t addr;
-    uint64_t width;
-    uint64_t height;
-} vmware_gpu_fb_t;
-
-typedef struct vmware_gpu_device
-{
-    uint16_t io_base;
-    uint64_t fb_mmio_base;
-    uint64_t fifo_mmio_base;
-
-    uint32_t current_w;
-    uint32_t current_h;
-
-    uint32_t version;
-    uint32_t fifo_size;
-
-    uint32_t caps;
-
-    vmware_gpu_fb_t *fbs[MAX_FB_NUM];
-} vmware_gpu_device_t;
-
-extern vmware_gpu_device_t *vmware_gpu_devices[MAX_VMWARE_GPU_DEVICE_NUM];
+// Global device array
+#define MAX_VMWARE_GPU_DEVICES 8
+extern vmware_gpu_device_t *vmware_gpu_devices[MAX_VMWARE_GPU_DEVICES];
 extern uint32_t vmware_gpu_devices_count;
 
+// DRM device operations
 extern drm_device_op_t vmware_drm_device_op;
 
+// Function prototypes
 void vmware_gpu_init();
+void vmware_gpu_irq_handler(vmware_gpu_device_t *device);
+int vmware_gpu_detect_displays(vmware_gpu_device_t *device);
+int vmware_gpu_set_display_mode(vmware_gpu_device_t *device, uint32_t display_id,
+                                uint32_t width, uint32_t height, uint32_t bpp);
+int vmware_gpu_update_display(vmware_gpu_device_t *device, uint32_t display_id,
+                              uint32_t x, uint32_t y, uint32_t w, uint32_t h);
+int vmware_gpu_set_cursor(vmware_gpu_device_t *device, uint32_t display_id,
+                          vmware_cursor_t *cursor, uint32_t x, uint32_t y);
+int vmware_gpu_move_cursor(vmware_gpu_device_t *device, uint32_t display_id,
+                           uint32_t x, uint32_t y);
+
+// Utility functions
+static inline uint32_t vmware_read_register(vmware_gpu_device_t *device, uint32_t index);
+static inline void vmware_write_register(vmware_gpu_device_t *device, uint32_t index, uint32_t value);
+static inline uint32_t vmware_fifo_read(vmware_gpu_device_t *device, uint32_t index);
+static inline void vmware_fifo_write(vmware_gpu_device_t *device, uint32_t index, uint32_t value);
+static inline bool vmware_has_capability(vmware_gpu_device_t *device, enum caps capability);
+void *vmware_fifo_reserve(vmware_gpu_device_t *device, size_t size);
+void vmware_fifo_commit(vmware_gpu_device_t *device, size_t bytes);
+int vmware_wait_fence(vmware_gpu_device_t *device, uint32_t sequence);

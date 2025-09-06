@@ -1,6 +1,7 @@
 #include <drivers/bus/pci.h>
-#include <drivers/drm/drm_fourcc.h>
+#include <drivers/drm/drm_core.h>
 #include <drivers/drm/drm.h>
+#include <drivers/drm/drm_fourcc.h>
 #include <drivers/fb.h>
 #include <fs/fs_syscall.h>
 #include <fs/vfs/dev.h>
@@ -45,10 +46,47 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
     case DRM_IOCTL_MODE_GETRESOURCES:
     {
         struct drm_mode_card_res *res = (struct drm_mode_card_res *)arg;
-        res->count_fbs = 1;
-        res->count_crtcs = 1;
-        res->count_connectors = 1;
-        res->count_encoders = 1;
+        // Count available resources
+        res->count_fbs = 0;
+        res->count_crtcs = 0;
+        res->count_connectors = 0;
+        res->count_encoders = 0;
+
+        // Count framebuffers
+        for (uint32_t i = 0; i < DRM_MAX_FRAMEBUFFERS_PER_DEVICE; i++)
+        {
+            if (dev->resource_mgr.framebuffers[i])
+            {
+                res->count_fbs++;
+            }
+        }
+
+        // Count CRTCs
+        for (uint32_t i = 0; i < DRM_MAX_CRTCS_PER_DEVICE; i++)
+        {
+            if (dev->resource_mgr.crtcs[i])
+            {
+                res->count_crtcs++;
+            }
+        }
+
+        // Count connectors
+        for (uint32_t i = 0; i < DRM_MAX_CONNECTORS_PER_DEVICE; i++)
+        {
+            if (dev->resource_mgr.connectors[i])
+            {
+                res->count_connectors++;
+            }
+        }
+
+        // Count encoders
+        for (uint32_t i = 0; i < DRM_MAX_ENCODERS_PER_DEVICE; i++)
+        {
+            if (dev->resource_mgr.encoders[i])
+            {
+                res->count_encoders++;
+            }
+        }
 
         uint32_t width, height, bpp;
         dev->op->get_display_info(dev->data, &width, &height, &bpp);
@@ -57,13 +95,60 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         res->min_height = height;
         res->max_width = width;
         res->max_height = height;
-        if (res->encoder_id_ptr)
+        // Fill encoder IDs if pointer provided
+        if (res->encoder_id_ptr && res->count_encoders > 0)
         {
-            *(uint32_t *)res->encoder_id_ptr = dev->id;
+            uint32_t *encoder_ids = (uint32_t *)(uintptr_t)res->encoder_id_ptr;
+            uint32_t idx = 0;
+            for (uint32_t i = 0; i < DRM_MAX_ENCODERS_PER_DEVICE; i++)
+            {
+                if (dev->resource_mgr.encoders[i])
+                {
+                    encoder_ids[idx++] = dev->resource_mgr.encoders[i]->id;
+                }
+            }
         }
-        if (res->crtc_id_ptr)
+
+        // Fill CRTC IDs if pointer provided
+        if (res->crtc_id_ptr && res->count_crtcs > 0)
         {
-            *(uint32_t *)res->crtc_id_ptr = 1;
+            uint32_t *crtc_ids = (uint32_t *)(uintptr_t)res->crtc_id_ptr;
+            uint32_t idx = 0;
+            for (uint32_t i = 0; i < DRM_MAX_CRTCS_PER_DEVICE; i++)
+            {
+                if (dev->resource_mgr.crtcs[i])
+                {
+                    crtc_ids[idx++] = dev->resource_mgr.crtcs[i]->id;
+                }
+            }
+        }
+
+        // Fill connector IDs if pointer provided
+        if (res->connector_id_ptr && res->count_connectors > 0)
+        {
+            uint32_t *connector_ids = (uint32_t *)(uintptr_t)res->connector_id_ptr;
+            uint32_t idx = 0;
+            for (uint32_t i = 0; i < DRM_MAX_CONNECTORS_PER_DEVICE; i++)
+            {
+                if (dev->resource_mgr.connectors[i])
+                {
+                    connector_ids[idx++] = dev->resource_mgr.connectors[i]->id;
+                }
+            }
+        }
+
+        // Fill framebuffer IDs if pointer provided
+        if (res->fb_id_ptr && res->count_fbs > 0)
+        {
+            uint32_t *fb_ids = (uint32_t *)(uintptr_t)res->fb_id_ptr;
+            uint32_t idx = 0;
+            for (uint32_t i = 0; i < DRM_MAX_FRAMEBUFFERS_PER_DEVICE; i++)
+            {
+                if (dev->resource_mgr.framebuffers[i])
+                {
+                    fb_ids[idx++] = dev->resource_mgr.framebuffers[i]->id;
+                }
+            }
         }
         return 0;
     }
@@ -71,6 +156,13 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
     case DRM_IOCTL_MODE_GETCRTC:
     {
         struct drm_mode_crtc *crtc = (struct drm_mode_crtc *)arg;
+
+        // Find the CRTC by ID
+        drm_crtc_t *crtc_obj = drm_crtc_get(&dev->resource_mgr, crtc->crtc_id);
+        if (!crtc_obj)
+        {
+            return -ENOENT;
+        }
 
         uint32_t width, height, bpp;
         dev->op->get_display_info(dev->data, &width, &height, &bpp);
@@ -90,24 +182,36 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
 
         sprintf(mode.name, "%dx%d", width, height);
 
-        crtc->crtc_id = 1;
         crtc->gamma_size = 0;
         crtc->mode_valid = 1;
         memcpy(&crtc->mode, &mode, sizeof(struct drm_mode_modeinfo));
-        crtc->fb_id = 0;
-        crtc->x = 0;
-        crtc->y = 0;
+        crtc->fb_id = crtc_obj->fb_id;
+        crtc->x = crtc_obj->x;
+        crtc->y = crtc_obj->y;
+
+        // Release reference
+        drm_crtc_free(&dev->resource_mgr, crtc_obj->id);
         return 0;
     }
 
     case DRM_IOCTL_MODE_GETENCODER:
     {
         struct drm_mode_get_encoder *enc = (struct drm_mode_get_encoder *)arg;
-        enc->encoder_id = dev->id;
-        enc->encoder_type = DRM_MODE_ENCODER_VIRTUAL;
-        enc->crtc_id = 1;
-        enc->possible_crtcs = 1;
-        enc->possible_clones = 0;
+
+        // Find the encoder by ID
+        drm_encoder_t *encoder = drm_encoder_get(&dev->resource_mgr, enc->encoder_id);
+        if (!encoder)
+        {
+            return -ENOENT;
+        }
+
+        enc->encoder_type = encoder->type;
+        enc->crtc_id = encoder->crtc_id;
+        enc->possible_crtcs = encoder->possible_crtcs;
+        enc->possible_clones = encoder->possible_clones;
+
+        // Release reference
+        drm_encoder_free(&dev->resource_mgr, encoder->id);
         return 0;
     }
 
@@ -129,121 +233,181 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
     case DRM_IOCTL_MODE_GETCONNECTOR:
     {
         struct drm_mode_get_connector *conn = (struct drm_mode_get_connector *)arg;
-        conn->connector_id = 1;
-        conn->connection = DRM_MODE_CONNECTOR_VGA;
-        conn->count_modes = 1;
-        conn->count_props = 0;
-        conn->count_encoders = 1;
-        struct drm_mode_modeinfo *mode = (struct drm_mode_modeinfo *)(uintptr_t)conn->modes_ptr;
-        if (mode)
-        {
 
-            uint32_t width, height, bpp;
-            dev->op->get_display_info(dev->data, &width, &height, &bpp);
-
-            struct drm_mode_modeinfo m = {
-                .clock = width * HZ,
-                .hdisplay = width,
-                .hsync_start = width + 16,      // 水平同步开始 = 显示宽度 + 前廊
-                .hsync_end = width + 16 + 96,   // 水平同步结束 = hsync_start + 同步脉冲宽度
-                .htotal = width + 16 + 96 + 48, // 水平总像素 = hsync_end + 后廊
-                .vdisplay = height,
-                .vsync_start = height + 10,     // 垂直同步开始 = 显示高度 + 前廊
-                .vsync_end = height + 10 + 2,   // 垂直同步结束 = vsync_start + 同步脉冲宽度
-                .vtotal = height + 10 + 2 + 33, // 垂直总行数 = vsync_end + 后廊
-                .vrefresh = HZ,
-            };
-
-            sprintf(m.name, "%dx%d", width, height);
-
-            memcpy(&mode[0], &m, sizeof(struct drm_mode_modeinfo));
-        }
-        uint32_t *encoders = (uint32_t *)(uintptr_t)conn->encoders_ptr;
-        if (encoders)
-        {
-            encoders[0] = dev->id;
-        }
-        return 0;
-    }
-    case DRM_IOCTL_MODE_GETFB:
-    {
-        struct drm_mode_fb_cmd fb;
-        fb.fb_id = 0;
-
-        uint32_t width, height, bpp;
-        uint64_t addr;
-        dev->op->get_fb(dev->data, &width, &height, &bpp, &addr);
-
-        fb.width = width,
-        fb.height = height,
-        fb.pitch = width * bpp / 8,
-        fb.bpp = bpp,
-        fb.depth = 32,
-        fb.handle = addr;
-        memcpy((void *)arg, &fb, sizeof(fb));
-        return 0;
-    }
-    case DRM_IOCTL_MODE_ADDFB:
-    {
-        struct drm_mode_fb_cmd *fb = (struct drm_mode_fb_cmd *)arg;
-
-        uint32_t width, height, bpp;
-        dev->op->get_display_info(dev->data, &width, &height, &bpp);
-
-        if (fb->handle != 1)
+        // Find the connector by ID
+        drm_connector_t *connector = drm_connector_get(&dev->resource_mgr, conn->connector_id);
+        if (!connector)
         {
             return -ENOENT;
         }
 
-        fb->fb_id = 0;
+        conn->connection = connector->connection;
+        conn->count_modes = connector->count_modes;
+        conn->count_props = connector->count_props;
+        conn->count_encoders = 1; // For now, assume 1 encoder per connector
 
-        fb->width = width;
-        fb->height = height;
-        fb->depth = 32;
-        fb->pitch = width * bpp / 8;
-        fb->bpp = bpp;
+        // Fill modes if pointer provided
+        struct drm_mode_modeinfo *mode = (struct drm_mode_modeinfo *)(uintptr_t)conn->modes_ptr;
+        if (mode && connector->modes && connector->count_modes > 0)
+        {
+            memcpy(mode, connector->modes, connector->count_modes * sizeof(struct drm_mode_modeinfo));
+        }
 
+        // Fill encoders if pointer provided
+        uint32_t *encoders = (uint32_t *)(uintptr_t)conn->encoders_ptr;
+        if (encoders && conn->count_encoders > 0)
+        {
+            encoders[0] = connector->encoder_id;
+        }
+
+        // Fill properties if pointers provided
+        if (conn->props_ptr && conn->prop_values_ptr && connector->count_props > 0)
+        {
+            uint32_t *prop_ids = (uint32_t *)(uintptr_t)conn->props_ptr;
+            uint64_t *prop_values = (uint64_t *)(uintptr_t)conn->prop_values_ptr;
+            for (uint32_t i = 0; i < connector->count_props; i++)
+            {
+                prop_ids[i] = connector->prop_ids[i];
+                prop_values[i] = connector->prop_values[i];
+            }
+        }
+
+        // Release reference
+        drm_connector_free(&dev->resource_mgr, connector->id);
+        return 0;
+    }
+    case DRM_IOCTL_MODE_GETFB:
+    {
+        struct drm_mode_fb_cmd *fb_cmd = (struct drm_mode_fb_cmd *)arg;
+
+        // Find the framebuffer by ID
+        drm_framebuffer_t *fb = drm_framebuffer_get(&dev->resource_mgr, fb_cmd->fb_id);
+        if (!fb)
+        {
+            return -ENOENT;
+        }
+
+        fb_cmd->width = fb->width;
+        fb_cmd->height = fb->height;
+        fb_cmd->pitch = fb->pitch;
+        fb_cmd->bpp = fb->bpp;
+        fb_cmd->depth = fb->depth;
+        fb_cmd->handle = fb->handle;
+
+        // Release reference
+        drm_framebuffer_free(&dev->resource_mgr, fb->id);
+        return 0;
+    }
+    case DRM_IOCTL_MODE_ADDFB:
+    {
+        struct drm_mode_fb_cmd *fb_cmd = (struct drm_mode_fb_cmd *)arg;
+
+        // Allocate a new framebuffer
+        drm_framebuffer_t *fb = drm_framebuffer_alloc(&dev->resource_mgr, NULL);
+        if (!fb)
+        {
+            return -ENOMEM;
+        }
+
+        // Fill framebuffer details
+        fb->width = fb_cmd->width;
+        fb->height = fb_cmd->height;
+        fb->pitch = fb_cmd->pitch;
+        fb->bpp = fb_cmd->bpp;
+        fb->depth = fb_cmd->depth;
+        fb->handle = fb_cmd->handle;
+        fb->format = DRM_FORMAT_ARGB8888; // Default format
+
+        // Return the allocated FB ID
+        fb_cmd->fb_id = fb->id;
+
+        // Release reference (the resource manager keeps one)
+        drm_framebuffer_free(&dev->resource_mgr, fb->id);
         return 0;
     }
     case DRM_IOCTL_MODE_ADDFB2:
     {
-        struct drm_mode_fb_cmd2 *fb = (struct drm_mode_fb_cmd2 *)arg;
+        struct drm_mode_fb_cmd2 *fb_cmd = (struct drm_mode_fb_cmd2 *)arg;
 
-        uint32_t width, height, bpp;
-        dev->op->get_display_info(dev->data, &width, &height, &bpp);
+        // Allocate a new framebuffer
+        drm_framebuffer_t *fb = drm_framebuffer_alloc(&dev->resource_mgr, NULL);
+        if (!fb)
+        {
+            return -ENOMEM;
+        }
 
-        fb->fb_id = 0;
+        // Fill framebuffer details
+        fb->width = fb_cmd->width;
+        fb->height = fb_cmd->height;
+        fb->pitch = fb_cmd->pitches[0];
+        fb->bpp = 32; // Assume 32bpp for now
+        fb->depth = 24;
+        fb->handle = fb_cmd->handles[0];
+        fb->format = fb_cmd->pixel_format;
+        fb->modifier = fb_cmd->modifier[0];
 
-        fb->handles[0] = 1;
-        fb->pitches[0] = width * bpp / 8;
-        fb->offsets[0] = 0;
-        fb->modifier[0] = 0;
+        // Return the allocated FB ID
+        fb_cmd->fb_id = fb->id;
 
+        // Release reference (the resource manager keeps one)
+        drm_framebuffer_free(&dev->resource_mgr, fb->id);
         return 0;
     }
 
     case DRM_IOCTL_MODE_SETCRTC:
     {
-        struct drm_mode_crtc *crtc = (struct drm_mode_crtc *)arg;
+        struct drm_mode_crtc *crtc_cmd = (struct drm_mode_crtc *)arg;
 
-        if (crtc->crtc_id != 1)
+        // Find the CRTC by ID
+        drm_crtc_t *crtc = drm_crtc_get(&dev->resource_mgr, crtc_cmd->crtc_id);
+        if (!crtc)
         {
             return -ENOENT;
         }
 
-        return dev->op->set_crtc(dev->data, crtc);
+        // Update CRTC state
+        crtc->fb_id = crtc_cmd->fb_id;
+        crtc->x = crtc_cmd->x;
+        crtc->y = crtc_cmd->y;
+        if (crtc_cmd->mode_valid)
+        {
+            memcpy(&crtc->mode, &crtc_cmd->mode, sizeof(struct drm_mode_modeinfo));
+        }
+
+        // Call driver to set CRTC
+        int ret = dev->op->set_crtc(dev->data, crtc_cmd);
+
+        // Release reference
+        drm_crtc_free(&dev->resource_mgr, crtc->id);
+        return ret;
     }
 
     case DRM_IOCTL_MODE_GETPLANERESOURCES:
     {
         struct drm_mode_get_plane_res *res = (struct drm_mode_get_plane_res *)arg;
 
-        res->count_planes = 1;
-
-        if (res->plane_id_ptr)
+        // Count available planes
+        res->count_planes = 0;
+        for (uint32_t i = 0; i < DRM_MAX_PLANES_PER_DEVICE; i++)
         {
-            uint32_t *planes = (uint32_t *)(uintptr_t)res->plane_id_ptr;
-            planes[0] = 0;
+            if (dev->resource_mgr.planes[i])
+            {
+                res->count_planes++;
+            }
+        }
+
+        // Fill plane IDs if pointer provided
+        if (res->plane_id_ptr && res->count_planes > 0)
+        {
+            uint32_t *plane_ids = (uint32_t *)(uintptr_t)res->plane_id_ptr;
+            uint32_t idx = 0;
+            for (uint32_t i = 0; i < DRM_MAX_PLANES_PER_DEVICE; i++)
+            {
+                if (dev->resource_mgr.planes[i])
+                {
+                    plane_ids[idx++] = dev->resource_mgr.planes[i]->id;
+                }
+            }
         }
 
         return 0;
@@ -251,29 +415,64 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
 
     case DRM_IOCTL_MODE_GETPLANE:
     {
-        struct drm_mode_get_plane *plane = (struct drm_mode_get_plane *)arg;
+        struct drm_mode_get_plane *plane_cmd = (struct drm_mode_get_plane *)arg;
 
-        if (plane->plane_id != 0)
-            return -ENOENT;
-
-        plane->crtc_id = 1;
-        plane->fb_id = 0;
-
-        plane->possible_crtcs = 1;
-        plane->gamma_size = 0;
-
-        if (plane->format_type_ptr)
+        // Find the plane by ID
+        drm_plane_t *plane = drm_plane_get(&dev->resource_mgr, plane_cmd->plane_id);
+        if (!plane)
         {
-            uint32_t *formats = (uint32_t *)(uintptr_t)plane->format_type_ptr;
-            formats[0] = DRM_FORMAT_ARGB8888;
+            return -ENOENT;
         }
-        plane->count_format_types = 1;
 
+        plane_cmd->crtc_id = plane->crtc_id;
+        plane_cmd->fb_id = plane->fb_id;
+        plane_cmd->possible_crtcs = plane->possible_crtcs;
+        plane_cmd->gamma_size = plane->gamma_size;
+        plane_cmd->count_format_types = plane->count_format_types;
+
+        // Fill format types if pointer provided
+        if (plane_cmd->format_type_ptr && plane->count_format_types > 0 && plane->format_types)
+        {
+            uint32_t *formats = (uint32_t *)(uintptr_t)plane_cmd->format_type_ptr;
+            for (uint32_t i = 0; i < plane->count_format_types; i++)
+            {
+                formats[i] = plane->format_types[i];
+            }
+        }
+
+        // Release reference
+        drm_plane_free(&dev->resource_mgr, plane->id);
         return 0;
     }
 
     case DRM_IOCTL_MODE_SETPLANE:
     {
+        struct drm_mode_set_plane *plane_cmd = (struct drm_mode_set_plane *)arg;
+
+        // Find the plane by ID
+        drm_plane_t *plane = drm_plane_get(&dev->resource_mgr, plane_cmd->plane_id);
+        if (!plane)
+        {
+            return -ENOENT;
+        }
+
+        // Update plane state
+        plane->crtc_id = plane_cmd->crtc_id;
+        plane->fb_id = plane_cmd->fb_id;
+
+        // Call driver to set plane (if supported)
+        if (dev->op->set_plane)
+        {
+            int ret = dev->op->set_plane(dev->data, plane_cmd);
+            if (ret != 0)
+            {
+                drm_plane_free(&dev->resource_mgr, plane->id);
+                return ret;
+            }
+        }
+
+        // Release reference
+        drm_plane_free(&dev->resource_mgr, plane->id);
         return 0;
     }
 
@@ -590,16 +789,156 @@ void drm_init()
     drm_device_t *drm = malloc(sizeof(drm_device_t));
     memset(drm, 0, sizeof(drm_device_t));
     drm->id = 1;
+
+    // Initialize resource manager
+    drm_resource_manager_init(&drm->resource_mgr);
+
+#if defined(__x86_64__)
     if (vmware_gpu_devices_count)
     {
         drm->data = vmware_gpu_devices[0];
         drm->op = &vmware_drm_device_op;
     }
     else
+#endif
     {
         drm->data = framebuffer;
         drm->op = &simple_drm_ops;
     }
+
+    // Populate hardware resources if driver supports it
+    if (drm->op->get_connectors)
+    {
+        drm_connector_t *connectors[DRM_MAX_CONNECTORS_PER_DEVICE];
+        uint32_t connector_count = 0;
+        if (drm->op->get_connectors(drm->data, connectors, &connector_count) == 0)
+        {
+            for (uint32_t i = 0; i < connector_count && i < DRM_MAX_CONNECTORS_PER_DEVICE; i++)
+            {
+                if (connectors[i])
+                {
+                    uint32_t slot = drm_find_free_slot((void **)drm->resource_mgr.connectors, DRM_MAX_CONNECTORS_PER_DEVICE);
+                    if (slot != (uint32_t)-1)
+                    {
+                        drm->resource_mgr.connectors[slot] = connectors[i];
+                        connectors[i]->id = drm->resource_mgr.next_connector_id++;
+                    }
+                }
+            }
+        }
+    }
+
+    if (drm->op->get_crtcs)
+    {
+        drm_crtc_t *crtcs[DRM_MAX_CRTCS_PER_DEVICE];
+        uint32_t crtc_count = 0;
+        if (drm->op->get_crtcs(drm->data, crtcs, &crtc_count) == 0)
+        {
+            for (uint32_t i = 0; i < crtc_count && i < DRM_MAX_CRTCS_PER_DEVICE; i++)
+            {
+                if (crtcs[i])
+                {
+                    uint32_t slot = drm_find_free_slot((void **)drm->resource_mgr.crtcs, DRM_MAX_CRTCS_PER_DEVICE);
+                    if (slot != (uint32_t)-1)
+                    {
+                        drm->resource_mgr.crtcs[slot] = crtcs[i];
+                        crtcs[i]->id = drm->resource_mgr.next_crtc_id++;
+                    }
+                }
+            }
+        }
+    }
+
+    if (drm->op->get_encoders)
+    {
+        drm_encoder_t *encoders[DRM_MAX_ENCODERS_PER_DEVICE];
+        uint32_t encoder_count = 0;
+        if (drm->op->get_encoders(drm->data, encoders, &encoder_count) == 0)
+        {
+            for (uint32_t i = 0; i < encoder_count && i < DRM_MAX_ENCODERS_PER_DEVICE; i++)
+            {
+                if (encoders[i])
+                {
+                    uint32_t slot = drm_find_free_slot((void **)drm->resource_mgr.encoders, DRM_MAX_ENCODERS_PER_DEVICE);
+                    if (slot != (uint32_t)-1)
+                    {
+                        drm->resource_mgr.encoders[slot] = encoders[i];
+                        encoders[i]->id = drm->resource_mgr.next_encoder_id++;
+                    }
+                }
+            }
+        }
+    }
+
+    if (drm->op->get_planes)
+    {
+        drm_plane_t *planes[DRM_MAX_PLANES_PER_DEVICE];
+        uint32_t plane_count = 0;
+        if (drm->op->get_planes(drm->data, planes, &plane_count) == 0)
+        {
+            for (uint32_t i = 0; i < plane_count && i < DRM_MAX_PLANES_PER_DEVICE; i++)
+            {
+                if (planes[i])
+                {
+                    uint32_t slot = drm_find_free_slot((void **)drm->resource_mgr.planes, DRM_MAX_PLANES_PER_DEVICE);
+                    if (slot != (uint32_t)-1)
+                    {
+                        drm->resource_mgr.planes[slot] = planes[i];
+                        planes[i]->id = drm->resource_mgr.next_plane_id++;
+                    }
+                }
+            }
+        }
+    }
+
+    // If no hardware resources were found, create default ones
+    if (!drm->resource_mgr.connectors[0])
+    {
+        drm_connector_t *connector = drm_connector_alloc(&drm->resource_mgr, DRM_MODE_CONNECTOR_VIRTUAL, NULL);
+        if (connector)
+        {
+            connector->connection = DRM_MODE_CONNECTED;
+            connector->count_modes = 1;
+            connector->modes = malloc(sizeof(struct drm_mode_modeinfo));
+            if (connector->modes)
+            {
+                uint32_t width, height, bpp;
+                drm->op->get_display_info(drm->data, &width, &height, &bpp);
+
+                struct drm_mode_modeinfo mode = {
+                    .clock = width * HZ,
+                    .hdisplay = width,
+                    .hsync_start = width + 16,
+                    .hsync_end = width + 16 + 96,
+                    .htotal = width + 16 + 96 + 48,
+                    .vdisplay = height,
+                    .vsync_start = height + 10,
+                    .vsync_end = height + 10 + 2,
+                    .vtotal = height + 10 + 2 + 33,
+                    .vrefresh = HZ,
+                };
+                sprintf(mode.name, "%dx%d", width, height);
+                memcpy(connector->modes, &mode, sizeof(struct drm_mode_modeinfo));
+            }
+        }
+    }
+
+    if (!drm->resource_mgr.crtcs[0])
+    {
+        drm_crtc_t *crtc = drm_crtc_alloc(&drm->resource_mgr, NULL);
+        // CRTC will be configured when used
+    }
+
+    if (!drm->resource_mgr.encoders[0])
+    {
+        drm_encoder_t *encoder = drm_encoder_alloc(&drm->resource_mgr, DRM_MODE_ENCODER_VIRTUAL, NULL);
+        if (encoder && drm->resource_mgr.connectors[0] && drm->resource_mgr.crtcs[0])
+        {
+            encoder->possible_crtcs = 1;
+            drm->resource_mgr.connectors[0]->encoder_id = encoder->id;
+        }
+    }
+
     regist_dev(buf, drm_read, NULL, drm_ioctl, drm_poll, drm_map, drm);
 }
 

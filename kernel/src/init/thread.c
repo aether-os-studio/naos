@@ -3,6 +3,7 @@
 
 #include <fs/vfs/dev.h>
 #include <drivers/bus/pci.h>
+#include <drivers/drm/drm_core.h>
 #include <drivers/drm/drm.h>
 #include <fs/partition.h>
 #include <drivers/fb.h>
@@ -49,12 +50,12 @@ void init_thread(uint64_t arg)
     mount_root();
 
     fbdev_init();
-    // drm_init();
+    drm_init();
 
     sysfs_init();
 
     fbdev_init_sysfs();
-    // drm_init_sysfs();
+    drm_init_sysfs();
 
     dev_init_after_sysfs();
 

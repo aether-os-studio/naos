@@ -1,4 +1,6 @@
-#include <mm/hhdm.h>
+#include <mm/mm.h>
+#include <drivers/drm/drm_core.h>
+#include <drivers/drm/drm.h>
 #include <drivers/gfx/simple.h>
 
 static int simple_get_display_info(void *dev_data, uint32_t *width, uint32_t *height, uint32_t *bpp)
@@ -83,6 +85,35 @@ int simple_set_crtc(void *dev_data, struct drm_mode_crtc *crtc)
     return 0;
 }
 
+int simple_add_fb(void *dev_data, struct drm_mode_fb_cmd *cmd)
+{
+    return 0;
+}
+
+int simple_get_connectors(void *dev_data, drm_connector_t **connectors, uint32_t *count)
+{
+    *count = 0;
+    return 0;
+}
+
+int simple_get_crtcs(void *dev_data, drm_crtc_t **crtcs, uint32_t *count)
+{
+    *count = 0;
+    return 0;
+}
+
+int simple_get_encoders(void *dev_data, drm_encoder_t **encoders, uint32_t *count)
+{
+    *count = 0;
+    return 0;
+}
+
+int simple_get_planes(void *dev_data, drm_plane_t **planes, uint32_t *count)
+{
+    *count = 0;
+    return 0;
+}
+
 drm_device_op_t simple_drm_ops = {
     .set_crtc = simple_set_crtc,
     .get_display_info = simple_get_display_info,
@@ -92,4 +123,9 @@ drm_device_op_t simple_drm_ops = {
     .dirty_fb = simple_dirty_fb,
     .map_dumb = simple_map_dumb,
     .page_flip = simple_page_flip,
+    .add_fb = simple_add_fb,
+    .get_connectors = simple_get_connectors,
+    .get_crtcs = simple_get_crtcs,
+    .get_encoders = simple_get_encoders,
+    .get_planes = simple_get_planes,
 };
