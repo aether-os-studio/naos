@@ -709,11 +709,15 @@ static int xhci_ring_busy(struct xhci_ring *ring)
     return (eidx != nidx);
 }
 
+spinlock_t event_wait_lock = {0};
+
 // Wait for a ring to empty (all TRBs processed by hardware)
 int xhci_event_wait(struct usb_xhci_s *xhci,
                     struct xhci_ring *ring,
                     uint32_t timeout)
 {
+    spin_lock(&event_wait_lock);
+
     uint64_t timeout_ns = (uint64_t)timeout * 1000000; // Convert ms to ns
     uint64_t start_ns = nanoTime();
 
@@ -737,6 +741,8 @@ int xhci_event_wait(struct usb_xhci_s *xhci,
     }
 
     arch_disable_interrupt();
+
+    spin_unlock(&event_wait_lock);
 }
 
 // Add a TRB to the given ring

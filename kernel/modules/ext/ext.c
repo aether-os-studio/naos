@@ -77,7 +77,15 @@ void ext_open(void *parent, const char *name, vfs_node_t node)
     if (node->type & file_dir)
     {
         handle->dir = malloc(sizeof(ext4_dir));
-        ext4_dir_open(handle->dir, (const char *)path);
+        int ret = ext4_dir_open(handle->dir, (const char *)path);
+        if (ret != 0)
+        {
+            printk("Failed to open dir %s\n", path);
+            free(path);
+            free(handle);
+            spin_unlock(&rwlock);
+            return;
+        }
 
         const ext4_direntry *entry;
         while ((entry = ext4_dir_entry_next(handle->dir)))
