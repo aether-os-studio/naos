@@ -95,8 +95,24 @@ static inline int __msix_map_table(pci_device_t *pci_dev,
     pci_dev->msix_table_size = (msix_cap->msg_ctrl & 0x7ff) + 1;
     pci_dev->msix_mmio_size = pci_dev->msix_table_size * 16 + pci_dev->msix_offset;
 
-    uint64_t physical_address = translate_address(get_kernel_page_dir(), pci_dev->msix_mmio_vaddr);
-    map_page_range(get_kernel_page_dir(), pci_dev->msix_mmio_vaddr, physical_address, pci_dev->msix_mmio_size, PT_FLAG_R | PT_FLAG_W);
+    // 获取BAR的物理地址并映射到虚拟地址空间
+    uint32_t bir = msix_cap->dword1 & 0x7;
+    if (bir > 5)
+    {
+        printk("MSI-X: Invalid bir %d\n", bir);
+        return -EINVAL;
+    }
+
+    uint64_t bar_physical_address = pci_dev->bars[bir].address;
+
+    if (bar_physical_address == 0)
+    {
+        return -ENOMEM;
+    }
+
+    // 映射整个BAR区域（包括MSI-X表）
+    pci_dev->msix_mmio_vaddr = phys_to_virt((uint64_t)bar_physical_address);
+    map_page_range(get_current_page_dir(false), pci_dev->msix_mmio_vaddr, bar_physical_address, pci_dev->bars[bir].size, PT_FLAG_R | PT_FLAG_W);
 
     return 0;
 }
@@ -109,11 +125,16 @@ static inline int __msix_map_table(pci_device_t *pci_dev,
  */
 static inline void __msix_set_entry(struct msi_desc_t *msi_desc)
 {
-    uint64_t *ptr =
-        (uint64_t *)(msi_desc->pci_dev->msix_mmio_vaddr + msi_desc->pci_dev->msix_offset + msi_desc->msi_index * 16);
-    *ptr = ((uint64_t)(msi_desc->msg.address_hi) << 32) | (msi_desc->msg.address_lo);
-    ++ptr;
-    *ptr = ((uint64_t)(msi_desc->msg.data) << 32) | (msi_desc->msg.vector_control);
+    uint64_t table_base = msi_desc->pci_dev->msix_mmio_vaddr + msi_desc->pci_dev->msix_offset;
+    uint32_t *entry_ptr = (uint32_t *)(table_base + msi_desc->msi_index * 16);
+
+    // 设置地址字段（低32位 + 高32位），使用小端格式
+    entry_ptr[0] = msi_desc->msg.address_lo;
+    entry_ptr[1] = msi_desc->msg.address_hi;
+
+    // 设置数据字段和控制字段
+    entry_ptr[2] = msi_desc->msg.data;
+    entry_ptr[3] = msi_desc->msg.vector_control;
 }
 
 /**
@@ -124,10 +145,12 @@ static inline void __msix_set_entry(struct msi_desc_t *msi_desc)
  */
 static inline void __msix_clear_entry(pci_device_t *pci_dev, uint16_t msi_index)
 {
-    uint64_t *ptr = (uint64_t *)(pci_dev->msix_mmio_vaddr + pci_dev->msix_offset + msi_index * 16);
-    *ptr = 0;
-    ++ptr;
-    *ptr = 0;
+    uint64_t table_base = pci_dev->msix_mmio_vaddr + pci_dev->msix_offset;
+    uint64_t *entry_ptr = (uint64_t *)(table_base + msi_index * 16);
+
+    // 清除MSI-X表项
+    entry_ptr[0] = 0;
+    entry_ptr[1] = 0;
 }
 
 /**
@@ -178,23 +201,14 @@ int pci_enable_msi(struct msi_desc_t *msi_desc)
 
     if (msi_desc->pci.msi_attribute.is_msix) // MSI-X
     {
-        uint64_t table_offset = ptr->op->read(ptr->bus, ptr->slot, ptr->func, ptr->segment, cap_ptr + 0x04);
-        uint64_t bir = table_offset & 0x7;
-        if (bir > 5)
-        {
-            return -EINVAL;
-        }
-        uint32_t table_offset_in_bar = table_offset & 0xFFFFFFF8;
-
-        uint64_t msix_table_physical_address = ptr->bars[bir].address + table_offset_in_bar;
-        uint64_t msix_mmio_vaddr = phys_to_virt(msix_table_physical_address);
-
-        ptr->msix_mmio_vaddr = msix_mmio_vaddr;
-
         // 读取msix的信息
         struct pci_msix_cap_t cap = __msi_read_msix_cap_list(msi_desc, cap_ptr);
         // 映射msix table
-        __msix_map_table(ptr, &cap);
+        int ret = __msix_map_table(ptr, &cap);
+        if (ret < 0)
+        {
+            return ret;
+        }
         // 设置msix的中断
         __msix_set_entry(msi_desc);
 

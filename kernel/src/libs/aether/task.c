@@ -1,6 +1,10 @@
 #include <libs/aether/task.h>
 #include <mod/dlinker.h>
 
+#if defined(__x86_64__)
+EXPORT_SYMBOL(lapic_id);
+#endif
+
 EXPORT_SYMBOL(arch_yield);
 EXPORT_SYMBOL(arch_get_current);
 

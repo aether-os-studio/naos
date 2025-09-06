@@ -3,6 +3,7 @@
 #include <libs/aether/stdio.h>
 #include <libs/aether/mm.h>
 #include <libs/aether/pci.h>
+#include <libs/aether/irq.h>
 #include <libs/aether/time.h>
 #include <libs/aether/task.h>
 

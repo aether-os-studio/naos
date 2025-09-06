@@ -202,7 +202,7 @@ get_device_config(struct usb_pipe *pipe)
     }
     if (config->wTotalLength != cfg.wTotalLength)
     {
-        printf("[usb.c:%d] Failed to get configuration descriptor: config->wTotalLength != cfg.wTotalLength\tconfig->wTotalLength = %d, cfg.wTotalLength = %d", __LINE__, config->wTotalLength, cfg.wTotalLength);
+        printf("[usb.c:%d] Failed to get configuration descriptor: config->wTotalLength != cfg.wTotalLength\tconfig->wTotalLength = %d, cfg.wTotalLength = %d\n", __LINE__, config->wTotalLength, cfg.wTotalLength);
         free(config);
         return NULL;
     }

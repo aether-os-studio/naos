@@ -6,6 +6,8 @@
 
 #define ARCH_TIMER_IRQ TIMER_IRQ
 
+#define IRQ_ALLOCATE_NUM_BASE 0 // TODO
+
 void arch_enable_interrupt();
 void arch_disable_interrupt();
 

@@ -24,7 +24,5 @@ void irq_regist_irq(uint64_t irq_num, void (*handler)(uint64_t irq_num, void *da
 
 void irq_manager_init();
 
-#define IRQ_ALLOCATE_NUM_BASE 128
-
 int irq_allocate_irqnum();
 void irq_deallocate_irqnum(int irq_num);

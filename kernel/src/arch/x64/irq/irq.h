@@ -5,6 +5,8 @@
 #define PS2_KBD_INTERRUPT_VECTOR 0x21
 #define PS2_MOUSE_INTERRUPT_VECTOR 0x22
 
+#define IRQ_ALLOCATE_NUM_BASE 40
+
 void generic_interrupt_table_init();
 
 void arch_enable_interrupt();

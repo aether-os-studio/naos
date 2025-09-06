@@ -5,7 +5,7 @@ MAKEFLAGS += -rR
 # Target architecture to build for. Default to x86_64.
 export ARCH ?= x86_64
 
-export PKGS ?= 
+export PKGS ?=
 
 ifeq ($(ARCH), x86_64)
 ARCH_DIR := x64
@@ -179,7 +179,7 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
-		-device nec-usb-xhci,id=xhci \
+		-device qemu-xhci,id=xhci \
 		-device nvme,drive=harddisk,serial=1234 \
 		-device nvme,drive=rootdisk,serial=5678 \
 		-netdev user,id=net0 \
@@ -194,7 +194,7 @@ run-x86_64-single: assets/ovmf-code-$(ARCH).fd all-single
 		-M q35 \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=single-$(IMAGE_NAME).img,format=raw,id=harddisk \
-		-device nec-usb-xhci,id=xhci \
+		-device qemu-xhci,id=xhci \
 		-device virtio-blk-pci,drive=harddisk \
 		-vga vmware \
 		$(QEMUFLAGS)
