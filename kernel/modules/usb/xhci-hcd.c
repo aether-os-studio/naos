@@ -714,8 +714,8 @@ int xhci_event_wait(struct usb_xhci_s *xhci,
                     struct xhci_ring *ring,
                     uint32_t timeout)
 {
-    // uint64_t timeout_ns = (uint64_t)timeout * 1000000; // Convert ms to ns
-    // uint64_t start_ns = nanoTime();
+    uint64_t timeout_ns = (uint64_t)timeout * 1000000; // Convert ms to ns
+    uint64_t start_ns = nanoTime();
 
     arch_enable_interrupt();
 
@@ -727,11 +727,12 @@ int xhci_event_wait(struct usb_xhci_s *xhci,
             return (status >> 24) & 0xff;
         }
 
-        // if (nanoTime() - start_ns > timeout_ns)
-        // {
-        //     printf("XHCI event wait timeout\n");
-        //     return CC_INVALID; // Timeout
-        // }
+        if (nanoTime() - start_ns > timeout_ns)
+        {
+            printf("XHCI event wait timeout\n");
+            return CC_INVALID; // Timeout
+        }
+
         arch_pause();
     }
 

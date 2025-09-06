@@ -120,6 +120,5 @@ void *pvalloc(size_t size)
 
 void heap_init()
 {
-    map_page_range(get_current_page_dir(false), KERNEL_HEAP_START, 0, KERNEL_HEAP_SIZE, PT_FLAG_R | PT_FLAG_W);
-    mpool_init(&pool, (void *)KERNEL_HEAP_START, KERNEL_HEAP_SIZE);
+    mpool_init(&pool, alloc_frames_bytes(KERNEL_HEAP_SIZE), KERNEL_HEAP_SIZE);
 }
