@@ -89,7 +89,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         }
 
         uint32_t width, height, bpp;
-        dev->op->get_display_info(dev->data, &width, &height, &bpp);
+        dev->op->get_display_info(dev, &width, &height, &bpp);
 
         res->min_width = width;
         res->min_height = height;
@@ -165,7 +165,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         }
 
         uint32_t width, height, bpp;
-        dev->op->get_display_info(dev->data, &width, &height, &bpp);
+        dev->op->get_display_info(dev, &width, &height, &bpp);
 
         struct drm_mode_modeinfo mode = {
             .clock = width * HZ,
@@ -217,12 +217,12 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
 
     case DRM_IOCTL_MODE_CREATE_DUMB:
     {
-        return dev->op->create_dumb(dev->data, (struct drm_mode_create_dumb *)arg);
+        return dev->op->create_dumb(dev, (struct drm_mode_create_dumb *)arg);
     }
 
     case DRM_IOCTL_MODE_MAP_DUMB:
     {
-        return dev->op->map_dumb(dev->data, (struct drm_mode_map_dumb *)arg);
+        return dev->op->map_dumb(dev, (struct drm_mode_map_dumb *)arg);
     }
 
     case DRM_IOCTL_MODE_DESTROY_DUMB:
@@ -375,7 +375,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         }
 
         // Call driver to set CRTC
-        int ret = dev->op->set_crtc(dev->data, crtc_cmd);
+        int ret = dev->op->set_crtc(dev, crtc_cmd);
 
         // Release reference
         drm_crtc_free(&dev->resource_mgr, crtc->id);
@@ -463,7 +463,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         // Call driver to set plane (if supported)
         if (dev->op->set_plane)
         {
-            int ret = dev->op->set_plane(dev->data, plane_cmd);
+            int ret = dev->op->set_plane(dev, plane_cmd);
             if (ret != 0)
             {
                 drm_plane_free(&dev->resource_mgr, plane->id);
@@ -811,7 +811,7 @@ void drm_init()
     {
         drm_connector_t *connectors[DRM_MAX_CONNECTORS_PER_DEVICE];
         uint32_t connector_count = 0;
-        if (drm->op->get_connectors(drm->data, connectors, &connector_count) == 0)
+        if (drm->op->get_connectors(drm, connectors, &connector_count) == 0)
         {
             for (uint32_t i = 0; i < connector_count && i < DRM_MAX_CONNECTORS_PER_DEVICE; i++)
             {
@@ -832,7 +832,7 @@ void drm_init()
     {
         drm_crtc_t *crtcs[DRM_MAX_CRTCS_PER_DEVICE];
         uint32_t crtc_count = 0;
-        if (drm->op->get_crtcs(drm->data, crtcs, &crtc_count) == 0)
+        if (drm->op->get_crtcs(drm, crtcs, &crtc_count) == 0)
         {
             for (uint32_t i = 0; i < crtc_count && i < DRM_MAX_CRTCS_PER_DEVICE; i++)
             {
@@ -853,7 +853,7 @@ void drm_init()
     {
         drm_encoder_t *encoders[DRM_MAX_ENCODERS_PER_DEVICE];
         uint32_t encoder_count = 0;
-        if (drm->op->get_encoders(drm->data, encoders, &encoder_count) == 0)
+        if (drm->op->get_encoders(drm, encoders, &encoder_count) == 0)
         {
             for (uint32_t i = 0; i < encoder_count && i < DRM_MAX_ENCODERS_PER_DEVICE; i++)
             {
@@ -874,7 +874,7 @@ void drm_init()
     {
         drm_plane_t *planes[DRM_MAX_PLANES_PER_DEVICE];
         uint32_t plane_count = 0;
-        if (drm->op->get_planes(drm->data, planes, &plane_count) == 0)
+        if (drm->op->get_planes(drm, planes, &plane_count) == 0)
         {
             for (uint32_t i = 0; i < plane_count && i < DRM_MAX_PLANES_PER_DEVICE; i++)
             {
@@ -903,7 +903,7 @@ void drm_init()
             if (connector->modes)
             {
                 uint32_t width, height, bpp;
-                drm->op->get_display_info(drm->data, &width, &height, &bpp);
+                drm->op->get_display_info(drm, &width, &height, &bpp);
 
                 struct drm_mode_modeinfo mode = {
                     .clock = width * HZ,

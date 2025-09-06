@@ -1211,32 +1211,33 @@ struct drm_plane;
 typedef struct drm_plane drm_plane_t;
 
 struct drm_device;
+typedef struct drm_device drm_device_t;
 
 typedef struct drm_device_op
 {
-    int (*get_display_info)(void *dev_data, uint32_t *width, uint32_t *height, uint32_t *bpp);
-    int (*get_fb)(void *dev_data, uint32_t *width, uint32_t *height, uint32_t *bpp, uint64_t *addr);
-    int (*create_dumb)(void *dev_data, struct drm_mode_create_dumb *args);
-    int (*destroy_dumb)(void *dev_data, uint32_t handle);
-    int (*dirty_fb)(void *dev_data, struct drm_mode_fb_dirty_cmd *cmd);
-    int (*add_fb)(void *dev_data, struct drm_mode_fb_cmd *cmd);
-    int (*set_plane)(void *dev_data, struct drm_mode_set_plane *plane);
-    int (*atomic_commit)(void *dev_data, struct drm_mode_atomic *atomic);
-    int (*map_dumb)(void *dev_data, struct drm_mode_map_dumb *args);
-    int (*set_crtc)(void *dev_data, struct drm_mode_crtc *crtc);
+    int (*get_display_info)(drm_device_t *drm_dev, uint32_t *width, uint32_t *height, uint32_t *bpp);
+    int (*get_fb)(drm_device_t *drm_dev, uint32_t *width, uint32_t *height, uint32_t *bpp, uint64_t *addr);
+    int (*create_dumb)(drm_device_t *drm_dev, struct drm_mode_create_dumb *args);
+    int (*destroy_dumb)(drm_device_t *drm_dev, uint32_t handle);
+    int (*dirty_fb)(drm_device_t *drm_dev, struct drm_mode_fb_dirty_cmd *cmd);
+    int (*add_fb)(drm_device_t *drm_dev, struct drm_mode_fb_cmd *cmd);
+    int (*set_plane)(drm_device_t *drm_dev, struct drm_mode_set_plane *plane);
+    int (*atomic_commit)(drm_device_t *drm_dev, struct drm_mode_atomic *atomic);
+    int (*map_dumb)(drm_device_t *drm_dev, struct drm_mode_map_dumb *args);
+    int (*set_crtc)(drm_device_t *drm_dev, struct drm_mode_crtc *crtc);
     int (*page_flip)(struct drm_device *dev, struct drm_mode_crtc_page_flip *flip);
-    int (*set_cursor)(void *dev_data, struct drm_mode_cursor *cursor);
-    int (*gamma_set)(void *dev_data, struct drm_mode_crtc_lut *gamma);
-    int (*get_connectors)(void *dev_data, drm_connector_t **connectors, uint32_t *count);
-    int (*get_crtcs)(void *dev_data, drm_crtc_t **crtcs, uint32_t *count);
-    int (*get_encoders)(void *dev_data, drm_encoder_t **encoders, uint32_t *count);
-    int (*get_planes)(void *dev_data, drm_plane_t **planes, uint32_t *count);
+    int (*set_cursor)(drm_device_t *drm_dev, struct drm_mode_cursor *cursor);
+    int (*gamma_set)(drm_device_t *drm_dev, struct drm_mode_crtc_lut *gamma);
+    int (*get_connectors)(drm_device_t *drm_dev, drm_connector_t **connectors, uint32_t *count);
+    int (*get_crtcs)(drm_device_t *drm_dev, drm_crtc_t **crtcs, uint32_t *count);
+    int (*get_encoders)(drm_device_t *drm_dev, drm_encoder_t **encoders, uint32_t *count);
+    int (*get_planes)(drm_device_t *drm_dev, drm_plane_t **planes, uint32_t *count);
 } drm_device_op_t;
 
 struct drm_resource_manager;
 typedef struct drm_resource_manager drm_resource_manager_t;
 
-typedef struct drm_device
+struct drm_device
 {
     int id;
     void *data;
@@ -1244,7 +1245,7 @@ typedef struct drm_device
     struct k_drm_event *drm_events[DRM_MAX_EVENTS_COUNT];
     uint64_t vblank_counter;
     drm_resource_manager_t resource_mgr;
-} drm_device_t;
+};
 
 extern void fast_copy_16(void *dst, const void *src, size_t size);
 

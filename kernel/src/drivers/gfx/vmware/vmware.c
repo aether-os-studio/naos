@@ -189,7 +189,7 @@ int vmware_wait_fence(vmware_gpu_device_t *device, uint32_t sequence)
 // Display detection and management
 int vmware_gpu_detect_displays(vmware_gpu_device_t *device)
 {
-    uint32_t num_displays = vmware_read_register(device, register_index_num_displays);
+    uint32_t num_displays = vmware_read_register(device, register_index_num_guest_displays);
     device->num_displays = MIN(num_displays, VMWARE_MAX_DISPLAYS);
 
     for (uint32_t i = 0; i < device->num_displays; i++)
@@ -319,6 +319,8 @@ void vmware_gpu_pci_init(pci_device_t *pci_dev)
     vmware_gpu_device_t *device = malloc(sizeof(vmware_gpu_device_t));
     memset(device, 0, sizeof(vmware_gpu_device_t));
 
+    drm_resource_manager_init(&device->resource_mgr);
+
     device->io_base = pci_dev->bars[0].address;
     device->fb_mmio_base = phys_to_virt((uint64_t)pci_dev->bars[1].address);
     device->fifo_mmio_base = phys_to_virt((uint64_t)pci_dev->bars[2].address);
@@ -371,7 +373,7 @@ void vmware_gpu_pci_init(pci_device_t *pci_dev)
         if (device->displays[i].enabled)
         {
             // Create connector
-            device->connectors[i] = drm_connector_alloc(NULL, DRM_MODE_CONNECTOR_VIRTUAL, device);
+            device->connectors[i] = drm_connector_alloc(&device->resource_mgr, DRM_MODE_CONNECTOR_VIRTUAL, device);
             if (device->connectors[i])
             {
                 device->connectors[i]->connection = DRM_MODE_CONNECTED;
@@ -380,10 +382,10 @@ void vmware_gpu_pci_init(pci_device_t *pci_dev)
             }
 
             // Create CRTC
-            device->crtcs[i] = drm_crtc_alloc(NULL, device);
+            device->crtcs[i] = drm_crtc_alloc(&device->resource_mgr, device);
 
             // Create encoder
-            device->encoders[i] = drm_encoder_alloc(NULL, DRM_MODE_ENCODER_VIRTUAL, device);
+            device->encoders[i] = drm_encoder_alloc(&device->resource_mgr, DRM_MODE_ENCODER_VIRTUAL, device);
             if (device->encoders[i] && device->connectors[i] && device->crtcs[i])
             {
                 device->encoders[i]->possible_crtcs = 1 << i;
@@ -397,9 +399,9 @@ void vmware_gpu_pci_init(pci_device_t *pci_dev)
 }
 
 // DRM device operations
-static int vmware_get_display_info(void *dev_data, uint32_t *width, uint32_t *height, uint32_t *bpp)
+static int vmware_get_display_info(drm_device_t *drm_dev, uint32_t *width, uint32_t *height, uint32_t *bpp)
 {
-    vmware_gpu_device_t *device = dev_data;
+    vmware_gpu_device_t *device = drm_dev->data;
     if (device->num_displays > 0)
     {
         *width = device->displays[0].width;
@@ -410,9 +412,9 @@ static int vmware_get_display_info(void *dev_data, uint32_t *width, uint32_t *he
     return -ENODEV;
 }
 
-static int vmware_get_fb(void *dev_data, uint32_t *width, uint32_t *height, uint32_t *bpp, uint64_t *addr)
+static int vmware_get_fb(drm_device_t *drm_dev, uint32_t *width, uint32_t *height, uint32_t *bpp, uint64_t *addr)
 {
-    vmware_gpu_device_t *device = dev_data;
+    vmware_gpu_device_t *device = drm_dev->data;
     *width = device->displays[0].width;
     *height = device->displays[0].height;
     *bpp = 32;
@@ -420,9 +422,9 @@ static int vmware_get_fb(void *dev_data, uint32_t *width, uint32_t *height, uint
     return 0;
 }
 
-static int vmware_create_dumb(void *dev_data, struct drm_mode_create_dumb *args)
+static int vmware_create_dumb(drm_device_t *drm_dev, struct drm_mode_create_dumb *args)
 {
-    vmware_gpu_device_t *device = dev_data;
+    vmware_gpu_device_t *device = drm_dev->data;
 
     args->pitch = args->width * (args->bpp / 8);
     args->size = args->height * args->pitch;
@@ -455,9 +457,9 @@ static int vmware_create_dumb(void *dev_data, struct drm_mode_create_dumb *args)
     return -ENOSPC;
 }
 
-static int vmware_destroy_dumb(void *dev_data, uint32_t handle)
+static int vmware_destroy_dumb(drm_device_t *drm_dev, uint32_t handle)
 {
-    vmware_gpu_device_t *device = dev_data;
+    vmware_gpu_device_t *device = drm_dev->data;
 
     if (handle >= VMWARE_MAX_FRAMEBUFFERS || !device->framebuffers[handle])
     {
@@ -475,9 +477,9 @@ static int vmware_destroy_dumb(void *dev_data, uint32_t handle)
     return 0;
 }
 
-static int vmware_map_dumb(void *dev_data, struct drm_mode_map_dumb *args)
+static int vmware_map_dumb(drm_device_t *drm_dev, struct drm_mode_map_dumb *args)
 {
-    vmware_gpu_device_t *device = dev_data;
+    vmware_gpu_device_t *device = drm_dev->data;
 
     if (args->handle >= VMWARE_MAX_FRAMEBUFFERS || !device->framebuffers[args->handle])
     {
@@ -527,15 +529,15 @@ static int vmware_page_flip(drm_device_t *drm_dev, struct drm_mode_crtc_page_fli
     return 0;
 }
 
-static int vmware_set_crtc(void *dev_data, struct drm_mode_crtc *crtc)
+static int vmware_set_crtc(drm_device_t *drm_dev, struct drm_mode_crtc *crtc)
 {
     // CRTC configuration handled by page flip
     return 0;
 }
 
-static int vmware_set_cursor(void *dev_data, struct drm_mode_cursor *cursor)
+static int vmware_set_cursor(drm_device_t *drm_dev, struct drm_mode_cursor *cursor)
 {
-    vmware_gpu_device_t *device = dev_data;
+    vmware_gpu_device_t *device = drm_dev->data;
 
     if (!vmware_has_capability(device, cap_cursor))
     {
@@ -575,9 +577,9 @@ static int vmware_set_cursor(void *dev_data, struct drm_mode_cursor *cursor)
     return ret;
 }
 
-static int vmware_get_connectors(void *dev_data, drm_connector_t **connectors, uint32_t *count)
+static int vmware_get_connectors(drm_device_t *drm_dev, drm_connector_t **connectors, uint32_t *count)
 {
-    vmware_gpu_device_t *device = dev_data;
+    vmware_gpu_device_t *device = drm_dev->data;
     *count = 0;
 
     for (uint32_t i = 0; i < device->num_displays; i++)
@@ -591,9 +593,9 @@ static int vmware_get_connectors(void *dev_data, drm_connector_t **connectors, u
     return 0;
 }
 
-static int vmware_get_crtcs(void *dev_data, drm_crtc_t **crtcs, uint32_t *count)
+static int vmware_get_crtcs(drm_device_t *drm_dev, drm_crtc_t **crtcs, uint32_t *count)
 {
-    vmware_gpu_device_t *device = dev_data;
+    vmware_gpu_device_t *device = drm_dev->data;
     *count = 0;
 
     for (uint32_t i = 0; i < device->num_displays; i++)
@@ -607,9 +609,9 @@ static int vmware_get_crtcs(void *dev_data, drm_crtc_t **crtcs, uint32_t *count)
     return 0;
 }
 
-static int vmware_get_encoders(void *dev_data, drm_encoder_t **encoders, uint32_t *count)
+static int vmware_get_encoders(drm_device_t *drm_dev, drm_encoder_t **encoders, uint32_t *count)
 {
-    vmware_gpu_device_t *device = dev_data;
+    vmware_gpu_device_t *device = drm_dev->data;
     *count = 0;
 
     for (uint32_t i = 0; i < device->num_displays; i++)
@@ -623,10 +625,11 @@ static int vmware_get_encoders(void *dev_data, drm_encoder_t **encoders, uint32_
     return 0;
 }
 
-static int vmware_get_planes(void *dev_data, drm_plane_t **planes, uint32_t *count)
+static int vmware_get_planes(drm_device_t *drm_dev, drm_plane_t **planes, uint32_t *count)
 {
     // VMware doesn't support multiple planes in basic mode
-    *count = 0;
+    *count = 1;
+    planes[0] = drm_plane_alloc(&drm_dev->resource_mgr, drm_dev->data);
     return 0;
 }
 

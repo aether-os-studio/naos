@@ -228,6 +228,8 @@ typedef struct vmware_gpu_device
     // Interrupt handling
     uint32_t irq_mask;
     uint32_t pending_irqs;
+
+    drm_resource_manager_t resource_mgr;
 } vmware_gpu_device_t;
 
 // Command structures

@@ -3,9 +3,9 @@
 #include <drivers/drm/drm.h>
 #include <drivers/gfx/simple.h>
 
-static int simple_get_display_info(void *dev_data, uint32_t *width, uint32_t *height, uint32_t *bpp)
+static int simple_get_display_info(drm_device_t *drm_dev, uint32_t *width, uint32_t *height, uint32_t *bpp)
 {
-    struct limine_framebuffer *fb = dev_data;
+    struct limine_framebuffer *fb = drm_dev->data;
 
     *width = fb->width;
     *height = fb->height;
@@ -14,9 +14,9 @@ static int simple_get_display_info(void *dev_data, uint32_t *width, uint32_t *he
     return 0;
 }
 
-static int simple_get_fb(void *dev_data, uint32_t *width, uint32_t *height, uint32_t *bpp, uint64_t *addr)
+static int simple_get_fb(drm_device_t *drm_dev, uint32_t *width, uint32_t *height, uint32_t *bpp, uint64_t *addr)
 {
-    struct limine_framebuffer *fb = dev_data;
+    struct limine_framebuffer *fb = drm_dev->data;
 
     *width = fb->width;
     *height = fb->height;
@@ -26,9 +26,9 @@ static int simple_get_fb(void *dev_data, uint32_t *width, uint32_t *height, uint
     return 0;
 }
 
-int simple_create_dumb(void *dev_data, struct drm_mode_create_dumb *create)
+int simple_create_dumb(drm_device_t *drm_dev, struct drm_mode_create_dumb *create)
 {
-    struct limine_framebuffer *fb = dev_data;
+    struct limine_framebuffer *fb = drm_dev->data;
 
     create->height = fb->height;
     create->width = fb->width;
@@ -40,19 +40,19 @@ int simple_create_dumb(void *dev_data, struct drm_mode_create_dumb *create)
     return 0;
 }
 
-int simple_destroy_dumb(void *dev_data, uint32_t handle)
+int simple_destroy_dumb(drm_device_t *drm_dev, uint32_t handle)
 {
     return 0;
 }
 
-int simple_dirty_fb(void *dev_data, struct drm_mode_fb_dirty_cmd *cmd)
+int simple_dirty_fb(drm_device_t *drm_dev, struct drm_mode_fb_dirty_cmd *cmd)
 {
     return 0;
 }
 
-int simple_map_dumb(void *dev_data, struct drm_mode_map_dumb *map)
+int simple_map_dumb(drm_device_t *drm_dev, struct drm_mode_map_dumb *map)
 {
-    struct limine_framebuffer *fb = dev_data;
+    struct limine_framebuffer *fb = drm_dev->data;
 
     map->offset = virt_to_phys((uint64_t)fb->address);
 
@@ -80,35 +80,35 @@ int simple_page_flip(drm_device_t *dev, struct drm_mode_crtc_page_flip *flip)
     return 0;
 }
 
-int simple_set_crtc(void *dev_data, struct drm_mode_crtc *crtc)
+int simple_set_crtc(drm_device_t *drm_dev, struct drm_mode_crtc *crtc)
 {
     return 0;
 }
 
-int simple_add_fb(void *dev_data, struct drm_mode_fb_cmd *cmd)
+int simple_add_fb(drm_device_t *drm_dev, struct drm_mode_fb_cmd *cmd)
 {
     return 0;
 }
 
-int simple_get_connectors(void *dev_data, drm_connector_t **connectors, uint32_t *count)
-{
-    *count = 0;
-    return 0;
-}
-
-int simple_get_crtcs(void *dev_data, drm_crtc_t **crtcs, uint32_t *count)
+int simple_get_connectors(drm_device_t *drm_dev, drm_connector_t **connectors, uint32_t *count)
 {
     *count = 0;
     return 0;
 }
 
-int simple_get_encoders(void *dev_data, drm_encoder_t **encoders, uint32_t *count)
+int simple_get_crtcs(drm_device_t *drm_dev, drm_crtc_t **crtcs, uint32_t *count)
 {
     *count = 0;
     return 0;
 }
 
-int simple_get_planes(void *dev_data, drm_plane_t **planes, uint32_t *count)
+int simple_get_encoders(drm_device_t *drm_dev, drm_encoder_t **encoders, uint32_t *count)
+{
+    *count = 0;
+    return 0;
+}
+
+int simple_get_planes(drm_device_t *drm_dev, drm_plane_t **planes, uint32_t *count)
 {
     *count = 0;
     return 0;
