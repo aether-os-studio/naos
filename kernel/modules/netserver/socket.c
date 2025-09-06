@@ -55,6 +55,8 @@ size_t real_socket_send(uint64_t fd, uint8_t *out, uint64_t limit, int flags)
 
     int lwip_out = -1;
 
+    arch_enable_interrupt();
+
     while (true)
     {
         if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLOUT) & EPOLLOUT))
@@ -74,6 +76,8 @@ size_t real_socket_send(uint64_t fd, uint8_t *out, uint64_t limit, int flags)
         arch_yield();
     }
 
+    arch_disable_interrupt();
+
     if (lwip_out < 0)
         return -errno;
 
@@ -86,6 +90,8 @@ size_t real_socket_recv(uint64_t fd, uint8_t *out, uint64_t limit, int flags)
     real_socket_t *sock = handle->sock;
 
     int lwip_out = -1;
+
+    arch_enable_interrupt();
 
     while (true)
     {
@@ -106,6 +112,8 @@ size_t real_socket_recv(uint64_t fd, uint8_t *out, uint64_t limit, int flags)
         arch_yield();
     }
 
+    arch_disable_interrupt();
+
     if (lwip_out < 0)
         return -errno;
 
@@ -119,6 +127,8 @@ size_t real_socket_sendto(uint64_t fd, uint8_t *buff, size_t len, int flags, str
 
     if (!addrlen || !dest_addr)
         return real_socket_send(fd, buff, len, flags);
+
+    arch_enable_interrupt();
 
     struct sockaddr *aligned = malloc(addrlen);
     memcpy(aligned, dest_addr, addrlen);
@@ -148,6 +158,8 @@ size_t real_socket_sendto(uint64_t fd, uint8_t *buff, size_t len, int flags, str
 
     free(aligned);
 
+    arch_disable_interrupt();
+
     if (lwipOut < 0)
         return -errno;
     return lwipOut;
@@ -160,6 +172,8 @@ size_t real_socket_recvfrom(uint64_t fd, uint8_t *buff, size_t len, int flags, s
 
     if (!addrlen || !addr)
         return real_socket_recv(fd, buff, len, flags);
+
+    arch_enable_interrupt();
 
     struct sockaddr_in *a = malloc(sizeof(struct sockaddr_in));
 
@@ -186,6 +200,8 @@ size_t real_socket_recvfrom(uint64_t fd, uint8_t *buff, size_t len, int flags, s
     sockaddrLwipToLinux(addr, a, AF_INET);
 
     free(a);
+
+    arch_disable_interrupt();
 
     if (lwipOut < 0)
         return -errno;
@@ -260,6 +276,8 @@ size_t real_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags)
 
     int lwip_out = -1;
 
+    arch_enable_interrupt();
+
     struct msghdr mh = {
         .msg_name = NULL,
         .msg_namelen = 0,
@@ -289,6 +307,8 @@ size_t real_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags)
         arch_yield();
     }
 
+    arch_disable_interrupt();
+
     if (lwip_out < 0)
         return -errno;
 
@@ -301,6 +321,8 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
     real_socket_t *sock = handle->sock;
 
     int lwip_out = -1;
+
+    arch_enable_interrupt();
 
     struct sockaddr_in *a = malloc(sizeof(struct sockaddr_in));
 
@@ -332,6 +354,8 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
 
         arch_yield();
     }
+
+    arch_disable_interrupt();
 
     if (lwip_out < 0)
         return -errno;
@@ -488,6 +512,8 @@ ssize_t real_socket_read(fd_t *fd, void *addr, size_t offset, size_t size)
 
     int lwip_out = -1;
 
+    arch_enable_interrupt();
+
     while (true)
     {
         if (!(vfs_poll(fd->node, EPOLLIN) & EPOLLIN))
@@ -507,6 +533,8 @@ ssize_t real_socket_read(fd_t *fd, void *addr, size_t offset, size_t size)
         arch_yield();
     }
 
+    arch_disable_interrupt();
+
     if (lwip_out < 0)
         return -errno;
 
@@ -519,6 +547,8 @@ ssize_t real_socket_write(fd_t *fd, const void *addr, size_t offset, size_t size
     real_socket_t *sock = handle->sock;
 
     int lwip_out = -1;
+
+    arch_enable_interrupt();
 
     while (true)
     {
@@ -538,6 +568,8 @@ ssize_t real_socket_write(fd_t *fd, const void *addr, size_t offset, size_t size
 
         arch_yield();
     }
+
+    arch_disable_interrupt();
 
     if (lwip_out < 0)
         return -errno;
