@@ -1,8 +1,6 @@
 export CWD = $(shell pwd)
 export SYSROOT = $(CWD)/rootfs-$(ARCH)
 
-MIRROR ?= https://mirrors.tuna.tsinghua.edu.cn/voidlinux/current/musl
-
 all:
 	sh ports.sh
 

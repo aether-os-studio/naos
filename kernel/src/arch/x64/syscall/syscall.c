@@ -54,7 +54,7 @@ void syscall_init()
 }
 
 // Beware the 65 character limit!
-char sysname[] = "Neo-Aether OS";
+char sysname[] = "NeoAetherOS";
 char nodename[] = "aether";
 char release[] = BUILD_VERSION;
 char version[] = BUILD_VERSION;
