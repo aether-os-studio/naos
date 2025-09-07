@@ -656,9 +656,15 @@ static struct vfs_callback pts_callbacks = {
     .dup = (vfs_dup_t)pts_dup,
 };
 
+fs_t ptmxfs = {
+    .name = "ptmx",
+    .magic = 0,
+    .callback = &ptmx_callbacks,
+};
+
 void ptmx_init()
 {
-    ptmx_fsid = vfs_regist("ptmx", &ptmx_callbacks);
+    ptmx_fsid = vfs_regist(&ptmxfs);
 
     vfs_node_t dev_node = vfs_open("/dev");
     vfs_node_t ptmx = vfs_child_append(dev_node, "ptmx", NULL);
@@ -669,9 +675,15 @@ void ptmx_init()
 
 extern vfs_node_t devfs_root;
 
+fs_t ptsfs = {
+    .name = "ptsfs",
+    .magic = 0,
+    .callback = &pts_callbacks,
+};
+
 void pts_init()
 {
-    pts_fsid = vfs_regist("pts", &pts_callbacks);
+    pts_fsid = vfs_regist(&ptsfs);
 
     first_pair.id = 0xffffffff;
 

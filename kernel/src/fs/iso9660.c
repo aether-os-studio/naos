@@ -788,7 +788,13 @@ static struct vfs_callback callbacks = {
     .dup = vfs_generic_dup,
 };
 
+fs_t iso9660 = {
+    .name = "iso9660",
+    .magic = 0,
+    .callback = &callbacks,
+};
+
 void iso9660_init()
 {
-    iso9660_id = vfs_regist("iso9660", &callbacks);
+    iso9660_id = vfs_regist(&iso9660);
 }

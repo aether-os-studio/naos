@@ -1723,11 +1723,23 @@ static struct vfs_callback accept_callback = {
     .dup = (vfs_dup_t)socket_accept_dup,
 };
 
+fs_t sockfs = {
+    .name = "sockfs",
+    .magic = 0,
+    .callback = &socket_callback,
+};
+
+fs_t acceptfs = {
+    .name = "acceptfs",
+    .magic = 0,
+    .callback = &accept_callback,
+};
+
 void socketfs_init()
 {
     memset(sockets, 0, sizeof(sockets));
-    unix_socket_fsid = vfs_regist("socketfs", &socket_callback);
-    unix_accept_fsid = vfs_regist("socketfs", &accept_callback);
+    unix_socket_fsid = vfs_regist(&sockfs);
+    unix_accept_fsid = vfs_regist(&acceptfs);
     sockfs_root = vfs_node_alloc(NULL, "sock");
     sockfs_root->type = file_dir;
     sockfs_root->mode = 0644;

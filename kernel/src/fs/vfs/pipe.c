@@ -264,9 +264,15 @@ static struct vfs_callback callbacks = {
     .dup = (vfs_dup_t)pipe_dup,
 };
 
+fs_t pipefs = {
+    .name = "pipefs",
+    .magic = 0,
+    .callback = &callbacks,
+};
+
 void pipefs_init()
 {
-    pipefs_id = vfs_regist("pipefs", &callbacks);
+    pipefs_id = vfs_regist(&pipefs);
     pipefs_root = vfs_node_alloc(NULL, "pipe");
     pipefs_root->type = file_dir;
     pipefs_root->mode = 0644;

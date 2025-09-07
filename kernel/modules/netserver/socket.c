@@ -769,9 +769,15 @@ int real_socket_socket(int domain, int type, int protocol)
     return i;
 }
 
+fs_t socket = {
+    .name = "socket",
+    .magic = 0,
+    .callback = &callbacks,
+};
+
 void real_socket_init()
 {
-    realsock_fsid = vfs_regist("realsock", &callbacks);
+    realsock_fsid = vfs_regist(&socket);
 
     regist_socket(2, real_socket_socket);
 }

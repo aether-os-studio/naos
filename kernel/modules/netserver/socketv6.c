@@ -113,9 +113,15 @@ int real_socket_v6_socket(int domain, int type, int protocol)
     return i;
 }
 
+fs_t socketv6 = {
+    .name = "socketv6",
+    .magic = 0,
+    .callback = &callbacks,
+};
+
 void real_socket_v6_init()
 {
-    realsockv6_fsid = vfs_regist("realsockv6", &callbacks);
+    realsockv6_fsid = vfs_regist(&socketv6);
 
     regist_socket(10, real_socket_v6_socket);
 }

@@ -142,9 +142,15 @@ static struct vfs_callback callbacks = {
     .dup = vfs_generic_dup,
 };
 
+fs_t procfs = {
+    .name = "procfs",
+    .magic = 0,
+    .callback = &callbacks,
+};
+
 void proc_init()
 {
-    procfs_id = vfs_regist("proc", &callbacks);
+    procfs_id = vfs_regist(&procfs);
     procfs_root = vfs_child_append(rootdir, "proc", NULL);
     procfs_root->type = file_dir;
     procfs_root->mode = 0644;

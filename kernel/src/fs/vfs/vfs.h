@@ -156,6 +156,13 @@ typedef struct vfs_callback
     vfs_dup_t dup;
 } *vfs_callback_t;
 
+typedef struct fs
+{
+    const char *name;
+    uint64_t magic;
+    vfs_callback_t callback;
+} fs_t;
+
 typedef struct flock
 {
     volatile uint64_t l_pid;
@@ -209,7 +216,7 @@ bool vfs_init();
  *\param callback  文件系统回调
  *\return 文件系统 id
  */
-int vfs_regist(const char *name, vfs_callback_t callback);
+int vfs_regist(fs_t *fs);
 
 #define PATH_MAX 4096    // 路径最大长度
 #define FILENAME_MAX 256 // 文件名最大长度

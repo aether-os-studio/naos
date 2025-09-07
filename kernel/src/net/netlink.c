@@ -113,7 +113,13 @@ static struct vfs_callback netlink_callback = {
     .dup = vfs_generic_dup,
 };
 
+fs_t netlinksockfs = {
+    .name = "netlinksockfs",
+    .magic = 0,
+    .callback = &netlink_callback,
+};
+
 void netlink_init()
 {
-    netlink_socket_fsid = vfs_regist("socketfs", &netlink_callback);
+    netlink_socket_fsid = vfs_regist(&netlinksockfs);
 }

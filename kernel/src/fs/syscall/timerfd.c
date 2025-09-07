@@ -211,9 +211,15 @@ static struct vfs_callback timerfd_callbacks = {
     .dup = vfs_generic_dup,
 };
 
+fs_t timefdfs = {
+    .name = "timefdfs",
+    .magic = 0,
+    .callback = &timerfd_callbacks,
+};
+
 void timerfd_init()
 {
-    timerfdfs_id = vfs_regist("timerfd", &timerfd_callbacks);
+    timerfdfs_id = vfs_regist(&timefdfs);
     timerfdfs_root = vfs_node_alloc(NULL, "timer");
     timerfdfs_root->type = file_dir;
     timerfdfs_root->mode = 0644;

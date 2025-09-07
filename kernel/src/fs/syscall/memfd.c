@@ -169,9 +169,15 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags)
     return fd;
 }
 
+fs_t memfdfs = {
+    .name = "memfdfs",
+    .magic = 0,
+    .callback = &callbacks,
+};
+
 void memfd_init()
 {
-    memfd_fsid = vfs_regist("memfd", &callbacks);
+    memfd_fsid = vfs_regist(&memfdfs);
 
     memfd_root = vfs_node_alloc(NULL, "memfd");
     memfd_root->fsid = memfd_fsid;

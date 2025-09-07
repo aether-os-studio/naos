@@ -319,9 +319,15 @@ static struct vfs_callback epoll_callbacks = {
     .dup = vfs_generic_dup,
 };
 
+fs_t epollfs = {
+    .name = "epollfs",
+    .magic = 0,
+    .callback = &epoll_callbacks,
+};
+
 void epoll_init()
 {
-    epollfs_id = vfs_regist("epollfs", &epoll_callbacks);
+    epollfs_id = vfs_regist(&epollfs);
     epollfs_root = vfs_node_alloc(NULL, "epoll");
     epollfs_root->type = file_dir;
     epollfs_root->mode = 0644;

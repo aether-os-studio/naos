@@ -135,9 +135,15 @@ static struct vfs_callback signalfd_callbacks = {
     .dup = vfs_generic_dup,
 };
 
+fs_t signalfdfs = {
+    .name = "signalfdfs",
+    .magic = 0,
+    .callback = &signalfd_callbacks,
+};
+
 void signalfd_init()
 {
-    signalfdfs_id = vfs_regist("signalfdfs", &signalfd_callbacks);
+    signalfdfs_id = vfs_regist(&signalfdfs);
     signalfdfs_root = vfs_node_alloc(NULL, "signal");
     signalfdfs_root->type = file_dir;
     signalfdfs_root->mode = 0644;

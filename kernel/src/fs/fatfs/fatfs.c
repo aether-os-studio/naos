@@ -308,7 +308,13 @@ static struct vfs_callback callbacks = {
     .dup = vfs_generic_dup,
 };
 
+fs_t fatfs = {
+    .name = "vfat",
+    .magic = 0,
+    .callback = &callbacks,
+};
+
 void fatfs_init()
 {
-    fatfs_id = vfs_regist("fatfs", &callbacks);
+    fatfs_id = vfs_regist(&fatfs);
 }

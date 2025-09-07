@@ -532,9 +532,15 @@ ssize_t kmsg_write(void *data, uint64_t offset, const void *buf, uint64_t len, u
     return len;
 }
 
+fs_t devfs = {
+    .name = "devfs",
+    .magic = 0,
+    .callback = &callbacks,
+};
+
 void dev_init()
 {
-    devfs_id = vfs_regist("devfs", &callbacks);
+    devfs_id = vfs_regist(&devfs);
 
     devfs_root = vfs_child_append(rootdir, "dev", NULL);
     devfs_root->type = file_dir;

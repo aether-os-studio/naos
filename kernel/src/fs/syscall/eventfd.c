@@ -143,9 +143,15 @@ static struct vfs_callback eventfd_callbacks = {
     .dup = vfs_generic_dup,
 };
 
+fs_t eventfdfs = {
+    .name = "eventfdfs",
+    .magic = 0,
+    .callback = &eventfd_callbacks,
+};
+
 void eventfd_init()
 {
-    eventfdfs_id = vfs_regist("eventfdfs", &eventfd_callbacks);
+    eventfdfs_id = vfs_regist(&eventfdfs);
     eventfdfs_root = vfs_node_alloc(NULL, "event");
     eventfdfs_root->type = file_dir;
     eventfdfs_root->mode = 0644;

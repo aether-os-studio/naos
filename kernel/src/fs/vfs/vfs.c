@@ -9,7 +9,10 @@
 #include "drivers/fb.h"
 
 vfs_node_t rootdir = NULL;
-char *id_to_callback_name[256];
+
+fs_t *all_fs[256] = {
+    [0] = NULL,
+};
 
 static int empty_func()
 {
@@ -490,9 +493,9 @@ int vfs_chmod(const char *path, uint16_t mode)
     return ret;
 }
 
-int vfs_regist(const char *name, vfs_callback_t callback)
+int vfs_regist(fs_t *fs)
 {
-    (void)name;
+    vfs_callback_t callback = fs->callback;
 
     if (callback == NULL)
         return -1;
@@ -503,7 +506,7 @@ int vfs_regist(const char *name, vfs_callback_t callback)
     }
     int id = fs_nextid++;
     fs_callbacks[id] = callback;
-    id_to_callback_name[id] = strdup(name);
+    all_fs[id] = fs;
     return id;
 }
 
@@ -630,7 +633,6 @@ void vfs_update(vfs_node_t node)
 
 bool vfs_init()
 {
-    memset(id_to_callback_name, 0, sizeof(id_to_callback_name));
     for (size_t i = 0; i < sizeof(struct vfs_callback) / sizeof(void *); i++)
     {
         ((void **)&vfs_empty_callback)[i] = &empty_func;
@@ -681,7 +683,7 @@ int vfs_mount(const char *src, vfs_node_t node, const char *type)
         return -1;
     for (int i = 1; i < fs_nextid; i++)
     {
-        if (!strcmp(id_to_callback_name[i], type) && fs_callbacks[i]->mount(src, node) == 0)
+        if (!strcmp(all_fs[i]->name, type) && fs_callbacks[i]->mount(src, node) == 0)
         {
             node->fsid = i;
             node->root = node;
