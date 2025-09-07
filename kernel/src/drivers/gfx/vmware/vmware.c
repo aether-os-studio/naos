@@ -449,6 +449,49 @@ static int vmware_get_fb(drm_device_t *drm_dev, uint32_t *width, uint32_t *heigh
     return 0;
 }
 
+static int vmware_add_fb(drm_device_t *drm_dev, struct drm_mode_fb_cmd *fb_cmd)
+{
+    vmware_gpu_device_t *device = drm_dev->data;
+
+    drm_framebuffer_t *fb = drm_framebuffer_alloc(&device->resource_mgr, device);
+
+    fb->width = fb_cmd->width;
+    fb->height = fb_cmd->height;
+    fb->pitch = fb_cmd->pitch;
+    fb->bpp = fb_cmd->bpp;
+    fb->depth = fb_cmd->depth;
+    fb->handle = fb_cmd->handle;
+    fb->format = DRM_FORMAT_ARGB8888;
+
+    fb_cmd->fb_id = fb->id;
+
+    return 0;
+}
+
+static int vmware_add_fb2(drm_device_t *drm_dev, struct drm_mode_fb_cmd2 *fb_cmd)
+{
+    vmware_gpu_device_t *device = drm_dev->data;
+
+    drm_framebuffer_t *fb = drm_framebuffer_alloc(&device->resource_mgr, NULL);
+    if (!fb)
+    {
+        return -ENOMEM;
+    }
+
+    fb->width = fb_cmd->width;
+    fb->height = fb_cmd->height;
+    fb->pitch = fb_cmd->pitches[0];
+    fb->bpp = 32;
+    fb->depth = 24;
+    fb->handle = fb_cmd->handles[0];
+    fb->format = fb_cmd->pixel_format;
+    fb->modifier = fb_cmd->modifier[0];
+
+    fb_cmd->fb_id = fb->id;
+
+    return 0;
+}
+
 static int vmware_create_dumb(drm_device_t *drm_dev, struct drm_mode_create_dumb *args)
 {
     vmware_gpu_device_t *device = drm_dev->data;
@@ -475,6 +518,7 @@ static int vmware_create_dumb(drm_device_t *drm_dev, struct drm_mode_create_dumb
         if (!device->framebuffers[i])
         {
             device->framebuffers[i] = fb;
+            device->framebuffers[i]->fb_id = i;
             args->handle = i;
             return 0;
         }
@@ -523,12 +567,16 @@ static int vmware_page_flip(drm_device_t *drm_dev, struct drm_mode_crtc_page_fli
 {
     vmware_gpu_device_t *device = drm_dev->data;
 
-    if (flip->crtc_id >= device->num_displays || flip->fb_id >= VMWARE_MAX_FRAMEBUFFERS)
+    if (flip->crtc_id > device->num_displays || flip->fb_id >= VMWARE_MAX_FRAMEBUFFERS)
     {
         return -EINVAL;
     }
 
-    vmware_framebuffer_t *fb = device->framebuffers[flip->fb_id];
+    drm_framebuffer_t *drm_fb = device->resource_mgr.framebuffers[flip->fb_id - 1];
+    if (!drm_fb)
+        return -EINVAL;
+
+    vmware_framebuffer_t *fb = device->framebuffers[drm_fb->handle];
     if (!fb)
         return -EINVAL;
 
@@ -659,6 +707,9 @@ static int vmware_get_planes(drm_device_t *drm_dev, drm_plane_t **planes, uint32
 
     *count = 1;
     planes[0] = drm_plane_alloc(&device->resource_mgr, drm_dev->data);
+    planes[0]->crtc_id = device->crtcs[0]->id;
+    planes[0]->fb_id = device->crtcs[0]->fb_id;
+    planes[0]->possible_crtcs = 1;
     planes[0]->count_format_types = 1;
     planes[0]->format_types = malloc(sizeof(uint32_t) * planes[0]->count_format_types);
     planes[0]->format_types[0] = DRM_FORMAT_ARGB8888;
@@ -671,8 +722,9 @@ drm_device_op_t vmware_drm_device_op = {
     .get_fb = vmware_get_fb,
     .create_dumb = vmware_create_dumb,
     .destroy_dumb = vmware_destroy_dumb,
-    .dirty_fb = NULL,      // Not implemented
-    .add_fb = NULL,        // Handled by create_dumb
+    .dirty_fb = NULL, // Not implemented
+    .add_fb = vmware_add_fb,
+    .add_fb2 = vmware_add_fb2,
     .set_plane = NULL,     // Not implemented
     .atomic_commit = NULL, // Not implemented
     .map_dumb = vmware_map_dumb,
@@ -695,7 +747,8 @@ void vmware_gpu_init()
 
     for (uint32_t i = 0; i < count; i++)
     {
-        vmware_gpu_pci_init(pci_devices[i]);
+        if (pci_devices[i]->device_id == 0x0405)
+            vmware_gpu_pci_init(pci_devices[i]);
     }
 }
 

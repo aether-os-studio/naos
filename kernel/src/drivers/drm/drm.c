@@ -302,56 +302,13 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
     {
         struct drm_mode_fb_cmd *fb_cmd = (struct drm_mode_fb_cmd *)arg;
 
-        // Allocate a new framebuffer
-        drm_framebuffer_t *fb = drm_framebuffer_alloc(&dev->resource_mgr, NULL);
-        if (!fb)
-        {
-            return -ENOMEM;
-        }
-
-        // Fill framebuffer details
-        fb->width = fb_cmd->width;
-        fb->height = fb_cmd->height;
-        fb->pitch = fb_cmd->pitch;
-        fb->bpp = fb_cmd->bpp;
-        fb->depth = fb_cmd->depth;
-        fb->handle = fb_cmd->handle;
-        fb->format = DRM_FORMAT_ARGB8888; // Default format
-
-        // Return the allocated FB ID
-        fb_cmd->fb_id = fb->id;
-
-        // Release reference (the resource manager keeps one)
-        drm_framebuffer_free(&dev->resource_mgr, fb->id);
-        return 0;
+        return dev->op->add_fb(dev, fb_cmd);
     }
     case DRM_IOCTL_MODE_ADDFB2:
     {
         struct drm_mode_fb_cmd2 *fb_cmd = (struct drm_mode_fb_cmd2 *)arg;
 
-        // Allocate a new framebuffer
-        drm_framebuffer_t *fb = drm_framebuffer_alloc(&dev->resource_mgr, NULL);
-        if (!fb)
-        {
-            return -ENOMEM;
-        }
-
-        // Fill framebuffer details
-        fb->width = fb_cmd->width;
-        fb->height = fb_cmd->height;
-        fb->pitch = fb_cmd->pitches[0];
-        fb->bpp = 32; // Assume 32bpp for now
-        fb->depth = 24;
-        fb->handle = fb_cmd->handles[0];
-        fb->format = fb_cmd->pixel_format;
-        fb->modifier = fb_cmd->modifier[0];
-
-        // Return the allocated FB ID
-        fb_cmd->fb_id = fb->id;
-
-        // Release reference (the resource manager keeps one)
-        drm_framebuffer_free(&dev->resource_mgr, fb->id);
-        return 0;
+        return dev->op->add_fb2(dev, fb_cmd);
     }
 
     case DRM_IOCTL_MODE_SETCRTC:
@@ -424,6 +381,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
             return -ENOENT;
         }
 
+        plane_cmd->plane_id = plane->id;
         plane_cmd->crtc_id = plane->crtc_id;
         plane_cmd->fb_id = plane->fb_id;
         plane_cmd->possible_crtcs = plane->possible_crtcs;
@@ -536,7 +494,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
 
         default:
             printk("drm: Unsupported mode property: %#010lx\n", prop->prop_id);
-            return -ENOENT;
+            return -EINVAL;
         }
 
         return 0;
@@ -715,44 +673,44 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
     }
 }
 
-ssize_t drm_read(void *data, uint64_t offset, void *buf, uint64_t len)
+ssize_t drm_read(void *data, uint64_t offset, void *buf, uint64_t len, uint64_t flags)
 {
     drm_device_t *dev = data;
 
-    if (dev->drm_events[0])
+    while (!dev->drm_events[0])
     {
-        struct drm_event_vblank vbl = {
-            .base.type = dev->drm_events[0]->type,
-            .base.length = sizeof(vbl),
-            .user_data = dev->drm_events[0]->user_data,
-            .tv_sec = dev->drm_events[0]->timestamp.tv_sec,
-            .tv_usec = dev->drm_events[0]->timestamp.tv_nsec / 1000};
+        if (flags & O_NONBLOCK)
+            return -EWOULDBLOCK;
 
-        free(dev->drm_events[0]);
+        arch_yield();
+    }
 
-        dev->drm_events[0] = NULL;
+    struct drm_event_vblank vbl = {
+        .base.type = dev->drm_events[0]->type,
+        .base.length = sizeof(vbl),
+        .user_data = dev->drm_events[0]->user_data,
+        .tv_sec = dev->drm_events[0]->timestamp.tv_sec,
+        .tv_usec = dev->drm_events[0]->timestamp.tv_nsec / 1000};
 
-        memmove(&dev->drm_events[0], &dev->drm_events[1], sizeof(struct k_drm_event *) * (DRM_MAX_EVENTS_COUNT - 1));
+    free(dev->drm_events[0]);
 
-        ssize_t ret = 0;
+    dev->drm_events[0] = NULL;
 
-        if (len >= sizeof(vbl))
-        {
-            memcpy(buf, &vbl, sizeof(vbl));
-            ret = sizeof(vbl);
-        }
-        else
-        {
-            ret = -EINVAL;
-        }
+    memmove(&dev->drm_events[0], &dev->drm_events[1], sizeof(struct k_drm_event *) * (DRM_MAX_EVENTS_COUNT - 1));
 
-        return ret;
+    ssize_t ret = 0;
+
+    if (len >= sizeof(vbl))
+    {
+        memcpy(buf, &vbl, sizeof(vbl));
+        ret = sizeof(vbl);
     }
     else
     {
-        // todo: block
-        return -EAGAIN;
+        ret = -EINVAL;
     }
+
+    return ret;
 }
 
 ssize_t drm_poll(void *data, size_t event)

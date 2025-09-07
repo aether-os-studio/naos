@@ -23,7 +23,7 @@ ssize_t devfs_read(fd_t *fd, void *addr, size_t offset, size_t size)
     devfs_handle_t handle = (devfs_handle_t)file;
     if (handle->read)
     {
-        return handle->read(handle->data, offset, addr, size);
+        return handle->read(handle->data, offset, addr, size, fd->flags);
     }
 
     return 0;
@@ -35,7 +35,7 @@ ssize_t devfs_write(fd_t *fd, const void *addr, size_t offset, size_t size)
     devfs_handle_t handle = (devfs_handle_t)file;
     if (handle->write)
     {
-        return handle->write(handle->data, offset, addr, size);
+        return handle->write(handle->data, offset, addr, size, fd->flags);
     }
 
     return 0;
@@ -158,7 +158,7 @@ static struct vfs_callback callbacks = {
     .dup = vfs_generic_dup,
 };
 
-ssize_t inputdev_event_read(void *data, uint64_t offset, void *buf, uint64_t len)
+ssize_t inputdev_event_read(void *data, uint64_t offset, void *buf, uint64_t len, uint64_t flags)
 {
     dev_input_event_t *event = data;
 
@@ -167,7 +167,7 @@ ssize_t inputdev_event_read(void *data, uint64_t offset, void *buf, uint64_t len
     return cnt;
 }
 
-ssize_t inputdev_event_write(void *data, uint64_t offset, const void *buf, uint64_t len)
+ssize_t inputdev_event_write(void *data, uint64_t offset, const void *buf, uint64_t len, uint64_t flags)
 {
     dev_input_event_t *event = data;
 
@@ -278,8 +278,8 @@ ssize_t inputdev_poll(void *data, size_t event)
 }
 
 vfs_node_t regist_dev(const char *name,
-                      ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len),
-                      ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len),
+                      ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len, uint64_t flags),
+                      ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len, uint64_t flags),
                       ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg),
                       ssize_t (*poll)(void *data, size_t event),
                       void *(*map)(void *data, void *addr, uint64_t offset, uint64_t len),
@@ -384,7 +384,7 @@ vfs_node_t regist_dev(const char *name,
     return NULL;
 }
 
-ssize_t stdin_read(void *data, uint64_t offset, void *buf, uint64_t len)
+ssize_t stdin_read(void *data, uint64_t offset, void *buf, uint64_t len, uint64_t flags)
 {
     char *kernel_buff = malloc(len);
 
@@ -403,7 +403,7 @@ ssize_t stdin_read(void *data, uint64_t offset, void *buf, uint64_t len)
 
 extern struct flanterm_context *ft_ctx;
 
-ssize_t stdout_write(void *data, uint64_t offset, const void *buf, uint64_t len)
+ssize_t stdout_write(void *data, uint64_t offset, const void *buf, uint64_t len, uint64_t flags)
 {
     (void)data;
     (void)offset;
@@ -463,7 +463,7 @@ void stdio_init()
 
 uint64_t next = 0;
 
-ssize_t random_dev_read(void *data, uint64_t offset, void *buf, uint64_t len)
+ssize_t random_dev_read(void *data, uint64_t offset, void *buf, uint64_t len, uint64_t flags)
 {
     tm time;
     time_read(&time);
@@ -472,7 +472,7 @@ ssize_t random_dev_read(void *data, uint64_t offset, void *buf, uint64_t len)
     return ((unsigned)(next / 65536) % 32768);
 }
 
-ssize_t null_dev_read(void *data, uint64_t offset, void *buf, uint64_t len)
+ssize_t null_dev_read(void *data, uint64_t offset, void *buf, uint64_t len, uint64_t flags)
 {
     (void)data;
     (void)offset;
@@ -481,7 +481,7 @@ ssize_t null_dev_read(void *data, uint64_t offset, void *buf, uint64_t len)
     return len;
 }
 
-ssize_t null_dev_write(void *data, uint64_t offset, const void *buf, uint64_t len)
+ssize_t null_dev_write(void *data, uint64_t offset, const void *buf, uint64_t len, uint64_t flags)
 {
     (void)data;
     (void)offset;
@@ -499,7 +499,7 @@ static uint32_t simple_rand()
     return seed;
 }
 
-ssize_t urandom_dev_read(void *data, uint64_t offset, void *buf, uint64_t len)
+ssize_t urandom_dev_read(void *data, uint64_t offset, void *buf, uint64_t len, uint64_t flags)
 {
     for (uint64_t i = 0; i < len; i++)
     {
@@ -508,7 +508,7 @@ ssize_t urandom_dev_read(void *data, uint64_t offset, void *buf, uint64_t len)
     return len;
 }
 
-ssize_t urandom_dev_write(void *data, uint64_t offset, const void *buf, uint64_t len)
+ssize_t urandom_dev_write(void *data, uint64_t offset, const void *buf, uint64_t len, uint64_t flags)
 {
     return len;
 }
@@ -521,12 +521,12 @@ ssize_t urandom_dev_ioctl(void *data, ssize_t cmd, ssize_t arg)
         return -ENOTTY;
     }
 }
-ssize_t kmsg_read(void *data, uint64_t offset, void *buf, uint64_t len)
+ssize_t kmsg_read(void *data, uint64_t offset, void *buf, uint64_t len, uint64_t flags)
 {
     return len;
 }
 
-ssize_t kmsg_write(void *data, uint64_t offset, const void *buf, uint64_t len)
+ssize_t kmsg_write(void *data, uint64_t offset, const void *buf, uint64_t len, uint64_t flags)
 {
     return len;
 }

@@ -1221,6 +1221,7 @@ typedef struct drm_device_op
     int (*destroy_dumb)(drm_device_t *drm_dev, uint32_t handle);
     int (*dirty_fb)(drm_device_t *drm_dev, struct drm_mode_fb_dirty_cmd *cmd);
     int (*add_fb)(drm_device_t *drm_dev, struct drm_mode_fb_cmd *cmd);
+    int (*add_fb2)(drm_device_t *drm_dev, struct drm_mode_fb_cmd2 *cmd);
     int (*set_plane)(drm_device_t *drm_dev, struct drm_mode_set_plane *plane);
     int (*atomic_commit)(drm_device_t *drm_dev, struct drm_mode_atomic *atomic);
     int (*map_dumb)(drm_device_t *drm_dev, struct drm_mode_map_dumb *args);

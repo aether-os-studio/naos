@@ -173,6 +173,7 @@ typedef struct vmware_display_info
 // Framebuffer structure
 typedef struct vmware_framebuffer
 {
+    int fb_id;
     uint64_t addr;
     uint32_t width;
     uint32_t height;
