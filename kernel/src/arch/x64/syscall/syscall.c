@@ -310,9 +310,9 @@ void syscall_handler_init()
     syscall_handlers[SYS_GETGROUPS] = (syscall_handle_t)sys_getgroups;
     syscall_handlers[SYS_SETGROUPS] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_SETRESUID] = (syscall_handle_t)dummy_syscall_handler;
-    syscall_handlers[SYS_GETRESUID] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_GETRESUID] = (syscall_handle_t)sys_getresuid;
     syscall_handlers[SYS_SETRESGID] = (syscall_handle_t)dummy_syscall_handler;
-    syscall_handlers[SYS_GETRESGID] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_GETRESGID] = (syscall_handle_t)sys_getresgid;
     syscall_handlers[SYS_GETPGID] = (syscall_handle_t)sys_getpgid;
     syscall_handlers[SYS_SETFSUID] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_SETFSGID] = (syscall_handle_t)dummy_syscall_handler;
@@ -329,8 +329,8 @@ void syscall_handler_init()
     // syscall_handlers[SYS_USELIB] = (syscall_handle_t)sys_uselib;
     // syscall_handlers[SYS_PERSONALITY] = (syscall_handle_t)sys_personality;
     // syscall_handlers[SYS_USTAT] = (syscall_handle_t)sys_ustat;
-    syscall_handlers[SYS_STATFS] = (syscall_handle_t)dummy_syscall_handler;
-    syscall_handlers[SYS_FSTATFS] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_STATFS] = (syscall_handle_t)sys_statfs;
+    syscall_handlers[SYS_FSTATFS] = (syscall_handle_t)sys_fstatfs;
     // syscall_handlers[SYS_SYSFS] = (syscall_handle_t)sys_sysfs;
     syscall_handlers[SYS_GETPRIORITY] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_SETPRIORITY] = (syscall_handle_t)dummy_syscall_handler;
@@ -533,7 +533,7 @@ void syscall_handler_init()
     // syscall_handlers[SYS_IO_URING_REGISTER] = (syscall_handle_t)sys_io_uring_register;
     // syscall_handlers[SYS_OPEN_TREE] = (syscall_handle_t)sys_open_tree;
     // syscall_handlers[SYS_MOVE_MOUNT] = (syscall_handle_t)sys_move_mount;
-    // syscall_handlers[SYS_FSOPEN] = (syscall_handle_t)sys_fsopen;
+    syscall_handlers[SYS_FSOPEN] = (syscall_handle_t)sys_fsopen;
     // syscall_handlers[SYS_FSCONFIG] = (syscall_handle_t)sys_fsconfig;
     // syscall_handlers[SYS_FSMOUNT] = (syscall_handle_t)sys_fsmount;
     // syscall_handlers[SYS_FSPICK] = (syscall_handle_t)sys_fspick;
@@ -603,8 +603,6 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_regs)
 
     if ((idx != SYS_BRK) && (idx != SYS_MMAP) && (idx != SYS_MREMAP) && (idx != SYS_SHMAT) && (idx != SYS_FCNTL) && (int)regs->rax < 0 && ((regs->rax & 0x8000000000000000) == 0))
         regs->rax |= 0xffffffff00000000;
-    else if ((int64_t)regs->rax < 0 && ((regs->rax & 0xffffffff) == 0))
-        regs->rax = 0;
 
     // if ((int64_t)regs->rax < 0)
     // {

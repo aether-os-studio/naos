@@ -143,8 +143,8 @@ static struct vfs_callback callbacks = {
 };
 
 fs_t procfs = {
-    .name = "procfs",
-    .magic = 0,
+    .name = "proc",
+    .magic = 0x9fa0,
     .callback = &callbacks,
 };
 

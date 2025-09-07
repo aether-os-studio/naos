@@ -347,6 +347,31 @@ int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, st
 
 uint64_t sys_memfd_create(const char *name, unsigned int flags);
 
+typedef struct
+{
+    int val[2];
+} __kernel_fsid_t;
+
+struct statfs
+{
+    uint64_t f_type;
+    uint64_t f_bsize;
+    uint64_t f_blocks;
+    uint64_t f_bfree;
+    uint64_t f_bavail;
+    uint64_t f_files;
+    uint64_t f_ffree;
+    __kernel_fsid_t f_fsid;
+    uint64_t f_namelen;
+    uint64_t f_frsize;
+    uint64_t f_flags;
+    uint64_t f_spare[4];
+};
+
+int sys_fsopen(const char *fsname, unsigned int flags);
+int sys_statfs(const char *fsname, struct statfs *buf);
+int sys_fstatfs(int fd, struct statfs *buf);
+
 uint64_t sys_truncate(const char *path, uint64_t length);
 uint64_t sys_ftruncate(int fd, uint64_t length);
 uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len);

@@ -274,6 +274,24 @@ static inline uint64_t sys_getegid()
     return current_task->egid;
 }
 
+static inline uint64_t sys_getresuid(uint64_t *ruid, uint64_t *euid, uint64_t *suid)
+{
+    *ruid = current_task->ruid;
+    *euid = current_task->euid;
+    *suid = current_task->uid;
+
+    return 0;
+}
+
+static inline uint64_t sys_getresgid(uint64_t *rgid, uint64_t *egid, uint64_t *sgid)
+{
+    *rgid = current_task->rgid;
+    *egid = current_task->egid;
+    *sgid = current_task->gid;
+
+    return 0;
+}
+
 static inline uint64_t sys_setgid(uint64_t gid)
 {
     current_task->gid = gid;

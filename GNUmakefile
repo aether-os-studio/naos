@@ -5,8 +5,6 @@ MAKEFLAGS += -rR
 # Target architecture to build for. Default to x86_64.
 export ARCH ?= x86_64
 
-export PKGS ?=
-
 ifeq ($(ARCH), x86_64)
 ARCH_DIR := x64
 else

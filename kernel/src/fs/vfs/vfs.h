@@ -163,6 +163,8 @@ typedef struct fs
     vfs_callback_t callback;
 } fs_t;
 
+extern fs_t *all_fs[256];
+
 typedef struct flock
 {
     volatile uint64_t l_pid;
