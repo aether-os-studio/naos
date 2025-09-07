@@ -296,6 +296,7 @@ static struct vfs_callback callbacks = {
     .mkfile = fatfs_mkfile,
     .link = fatfs_link,
     .symlink = fatfs_symlink,
+    .mknod = (vfs_mknod_t)dummy,
     .chmod = (vfs_chmod_t)dummy,
     .delete = (vfs_del_t)fatfs_delete,
     .rename = (vfs_rename_t)fatfs_rename,

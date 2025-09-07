@@ -31,18 +31,6 @@ struct timespec
     long tv_nsec;
 };
 
-#define S_IFMT 00170000
-#define S_IFSOCK 0140000
-#define S_IFLNK 0120000
-#define S_IFREG 0100000
-#define S_IFBLK 0060000
-#define S_IFDIR 0040000
-#define S_IFCHR 0020000
-#define S_IFIFO 0010000
-#define S_ISUID 0004000
-#define S_ISGID 0002000
-#define S_ISVTX 0001000
-
 struct stat
 {
     long st_dev;
@@ -316,6 +304,7 @@ uint64_t sys_mkdirat(int dfd, const char *name, uint64_t mode);
 uint64_t sys_link(const char *name, const char *target_name);
 uint64_t sys_symlink(const char *name, const char *target_name);
 uint64_t sys_symlinkat(const char *name, int dfd, const char *new);
+uint64_t sys_mknod(const char *name, uint16_t umode, int dev);
 
 uint64_t sys_chmod(const char *name, uint16_t mode);
 uint64_t sys_fchmod(int fd, uint16_t mode);

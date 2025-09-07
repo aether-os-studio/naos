@@ -9,13 +9,13 @@ partition_t partitions[MAX_PARTITIONS_NUM];
 struct GPT_DPTE dpte[MAX_PARTITIONS_NUM];
 uint64_t partition_num;
 
-ssize_t partition_read(void *data, uint64_t offset, void *buf, uint64_t len)
+ssize_t partition_read(void *data, uint64_t offset, void *buf, uint64_t len, uint64_t flags)
 {
     partition_t *part = (partition_t *)data;
     return blkdev_read(part->blkdev_id, part->starting_lba * 512 + offset, buf, len);
 }
 
-ssize_t partition_write(void *data, uint64_t offset, const void *buf, uint64_t len)
+ssize_t partition_write(void *data, uint64_t offset, const void *buf, uint64_t len, uint64_t flags)
 {
     partition_t *part = (partition_t *)data;
     return blkdev_write(part->blkdev_id, part->starting_lba * 512 + offset, buf, len);

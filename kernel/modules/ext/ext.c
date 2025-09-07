@@ -285,6 +285,40 @@ int ext_symlink(void *parent, const char *name, vfs_node_t node)
     return ret;
 }
 
+int ext_mknod(void *parent, const char *name, vfs_node_t node, uint16_t mode, int dev)
+{
+    spin_lock(&rwlock);
+
+    char *fullpath = vfs_get_fullpath(node);
+
+    int ftype = 0;
+    switch (mode & S_IFMT)
+    {
+    case S_IFBLK:
+        ftype = EXT4_DE_BLKDEV;
+        break;
+    case S_IFCHR:
+        ftype = EXT4_DE_CHRDEV;
+        break;
+    case S_IFIFO:
+        ftype = EXT4_DE_FIFO;
+        break;
+    default:
+        ftype = EXT4_DE_UNKNOWN;
+        break;
+    }
+
+    int ret = ext4_mknod(fullpath, ftype, dev);
+
+    ext4_mode_set(fullpath, 0700);
+
+    free(fullpath);
+
+    spin_unlock(&rwlock);
+
+    return ret;
+}
+
 int ext_mkdir(void *parent, const char *name, vfs_node_t node)
 {
     spin_lock(&rwlock);
@@ -405,6 +439,7 @@ static struct vfs_callback callbacks = {
     .mkfile = ext_mkfile,
     .link = ext_link,
     .symlink = ext_symlink,
+    .mknod = ext_mknod,
     .chmod = ext_chmod,
     .delete = (vfs_del_t)ext_delete,
     .rename = (vfs_rename_t)ext_rename,

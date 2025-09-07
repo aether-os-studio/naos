@@ -75,7 +75,7 @@ typedef struct partition
 extern partition_t partitions[MAX_PARTITIONS_NUM];
 extern uint64_t partition_num;
 
-ssize_t partition_read(void *data, uint64_t offset, void *buf, uint64_t len);
-ssize_t partition_write(void *data, uint64_t offset, const void *buf, uint64_t len);
+ssize_t partition_read(void *data, uint64_t offset, void *buf, uint64_t len, uint64_t flags);
+ssize_t partition_write(void *data, uint64_t offset, const void *buf, uint64_t len, uint64_t flags);
 
 void partition_init();

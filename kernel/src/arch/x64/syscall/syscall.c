@@ -325,7 +325,7 @@ void syscall_handler_init()
     // syscall_handlers[SYS_RT_SIGSUSPEND] = (syscall_handle_t)sys_sigsuspend;
     syscall_handlers[SYS_SIGALTSTACK] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_UTIME] = (syscall_handle_t)sys_utime;
-    // syscall_handlers[SYS_MKNOD] = (syscall_handle_t)sys_mknod;
+    syscall_handlers[SYS_MKNOD] = (syscall_handle_t)sys_mknod;
     // syscall_handlers[SYS_USELIB] = (syscall_handle_t)sys_uselib;
     // syscall_handlers[SYS_PERSONALITY] = (syscall_handle_t)sys_personality;
     // syscall_handlers[SYS_USTAT] = (syscall_handle_t)sys_ustat;

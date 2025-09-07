@@ -776,6 +776,7 @@ static struct vfs_callback callbacks = {
     .mkfile = iso9660_mkfile,
     .link = (vfs_mk_t)dummy,
     .symlink = (vfs_mk_t)dummy,
+    .mknod = (vfs_mknod_t)dummy,
     .chmod = (vfs_chmod_t)dummy,
     .delete = (vfs_del_t)iso9660_delete,
     .rename = (vfs_rename_t)iso9660_rename,

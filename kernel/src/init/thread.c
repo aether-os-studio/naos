@@ -73,10 +73,9 @@ void init_thread(uint64_t arg)
     argvs[0] = "/bin/bash";
     task_execve("/bin/bash", argvs, NULL);
 
-    // const char *argvs[2];
-    // memset(argvs, 0, sizeof(argvs));
-    // argvs[0] = "/sbin/init";
-    // task_execve("/sbin/init", argvs, NULL);
+    memset(argvs, 0, sizeof(argvs));
+    argvs[0] = "/sbin/init";
+    task_execve("/sbin/init", argvs, NULL);
 
     // memset(argvs, 0, sizeof(argvs));
     // argvs[0] = "/usr/bin/init";

@@ -9,6 +9,18 @@
 // 读写时请 padding 到 PAGE_SIZE 的整数倍
 #define FILE_BLKSIZE PAGE_SIZE
 
+#define S_IFMT 00170000
+#define S_IFSOCK 0140000
+#define S_IFLNK 0120000
+#define S_IFREG 0100000
+#define S_IFBLK 0060000
+#define S_IFDIR 0040000
+#define S_IFCHR 0020000
+#define S_IFIFO 0010000
+#define S_ISUID 0004000
+#define S_ISGID 0002000
+#define S_ISVTX 0001000
+
 enum
 {
     file_none = 0x0001UL,    // 普通文件
@@ -93,6 +105,8 @@ typedef int (*vfs_stat_t)(void *file, vfs_node_t node);
 // 创建一个文件或文件夹
 typedef int (*vfs_mk_t)(void *parent, const char *name, vfs_node_t node);
 
+typedef int (*vfs_mknod_t)(void *parent, const char *name, vfs_node_t node, uint16_t mode, int dev);
+
 typedef int (*vfs_chmod_t)(vfs_node_t node, uint16_t mode);
 
 typedef int (*vfs_del_t)(void *parent, vfs_node_t node);
@@ -130,6 +144,7 @@ typedef struct vfs_callback
     vfs_mk_t mkfile;
     vfs_mk_t link;
     vfs_mk_t symlink;
+    vfs_mknod_t mknod;
     vfs_chmod_t chmod;
     vfs_del_t delete;
     vfs_rename_t rename;
@@ -231,6 +246,8 @@ int vfs_link(const char *name, const char *target_name);
  *\return 0 成功，-1 失败
  */
 int vfs_symlink(const char *name, const char *target_name);
+
+int vfs_mknod(const char *name, uint16_t umode, int dev);
 
 int vfs_chmod(const char *path, uint16_t mode);
 

@@ -391,6 +391,94 @@ err:
     return -1;
 }
 
+int vfs_mknod(const char *name, uint16_t umode, int dev)
+{
+    vfs_node_t current = rootdir;
+    char *path;
+    if (name[0] != '/')
+    {
+        current = current_task->cwd;
+        path = strdup(name);
+    }
+    else
+    {
+        path = strdup(name + 1);
+    }
+
+    char *save_ptr = path;
+    char *filename = path + strlen(path);
+
+    while (*--filename != '/' && filename != path)
+    {
+    }
+    if (filename != path)
+    {
+        *filename++ = '\0';
+    }
+    else
+    {
+        goto create;
+    }
+
+    if (strlen(path) == 0)
+    {
+        free(path);
+        return -1;
+    }
+    for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr))
+    {
+        if (streq(buf, "."))
+            continue;
+        if (streq(buf, ".."))
+        {
+            if (!current->parent || !(current->type & file_dir))
+                goto err;
+            current = current->parent;
+            continue;
+        }
+        vfs_node_t new_current = vfs_child_find(current, buf);
+        if (new_current == NULL)
+        {
+            new_current = vfs_node_alloc(current, buf);
+            new_current->type = file_dir;
+            callbackof(current, mkdir)(current->handle, buf, new_current);
+        }
+        current = new_current;
+        do_update(current);
+
+        if (!(current->type & file_dir))
+            goto err;
+    }
+
+create:
+    vfs_node_t node = vfs_child_append(current, filename, NULL);
+    int ftype = 0;
+    switch (umode & S_IFMT)
+    {
+    case S_IFBLK:
+        node->type = file_block;
+        break;
+    case S_IFCHR:
+        node->type = file_stream;
+        break;
+    case S_IFIFO:
+        node->type = file_stream;
+        break;
+    default:
+        node->type = file_none;
+        break;
+    }
+    callbackof(current, mknod)(current->handle, filename, node, umode, dev);
+
+    free(path);
+
+    return 0;
+
+err:
+    free(path);
+    return -1;
+}
+
 int vfs_chmod(const char *path, uint16_t mode)
 {
     vfs_node_t node = vfs_open(path);

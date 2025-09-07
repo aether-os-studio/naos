@@ -1024,6 +1024,15 @@ uint64_t sys_symlinkat(const char *name, int dfd, const char *new)
     return ret;
 }
 
+uint64_t sys_mknod(const char *name, uint16_t umode, int dev)
+{
+    int ret = vfs_mknod(name, umode, dev);
+    if (ret < 0)
+        return (uint64_t)-EINVAL;
+
+    return 0;
+}
+
 uint64_t sys_chmod(const char *name, uint16_t mode)
 {
     return vfs_chmod(name, mode);
