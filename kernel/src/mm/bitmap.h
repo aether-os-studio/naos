@@ -4,6 +4,7 @@
 
 typedef struct
 {
+    spinlock_t lock;
     uint8_t *buffer;
     size_t length;
     uint64_t bitmap_refcount;

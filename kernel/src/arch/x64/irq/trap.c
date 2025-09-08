@@ -87,11 +87,6 @@ int lookup_kallsyms(uint64_t addr, int level)
 
 void traceback(struct pt_regs *regs)
 {
-    if (!check_user_overflow(regs->rbp, 0))
-    {
-        printk("Kernel traceback: Fault in userland.\n");
-        return;
-    }
 
     uint64_t *rbp = (uint64_t *)regs->rbp;
     printk("======== Kernel traceback =======\n");
@@ -99,14 +94,21 @@ void traceback(struct pt_regs *regs)
     uint64_t ret_addr = regs->rip;
     for (int i = 0; i < 32; ++i)
     {
-        if (lookup_kallsyms(ret_addr, i) != 0)
-            break;
+        if (check_user_overflow(regs->rbp, 0))
+        {
+            if (lookup_kallsyms(ret_addr, i) != 0)
+                break;
+        }
+        else
+            printk("userland address:%#018lx\n", ret_addr);
 
-        if ((uint64_t)(rbp) < get_physical_memory_offset() || ((uint64_t)rbp < regs->rsp))
+        if (rbp == 0 || ((uint64_t)rbp < regs->rsp))
             break;
 
         ret_addr = *(rbp + 1);
         rbp = (uint64_t *)(*rbp);
+        if (rbp == 0)
+            break;
     }
     printk("======== Kernel traceback end =======\n");
 }

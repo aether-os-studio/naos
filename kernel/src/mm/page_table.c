@@ -73,8 +73,8 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr, uint64_t flag
     {
         if (force)
         {
-            uint64_t paddr = pgdir[index] & ARCH_ADDR_MASK;
-            free_frames(paddr, 1);
+            uint64_t addr = pgdir[index] & ARCH_ADDR_MASK;
+            free_frames(addr, 1);
         }
         else
             return 0;

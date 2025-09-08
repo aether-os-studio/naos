@@ -848,7 +848,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     memset(current_task->mmap_regions->buffer, 0xff, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 8);
 
-    // unmap_page_range(get_current_page_dir(true), current_task->brk_start, (current_task->brk_end - current_task->brk_start + DEFAULT_PAGE_SIZE - 1));
     // current_task->brk_end = current_task->brk_start;
 
     spin_unlock(&execve_lock);

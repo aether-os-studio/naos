@@ -5,6 +5,7 @@ void bitmap_init(Bitmap *bitmap, uint8_t *buffer, size_t size)
     bitmap->buffer = buffer;
     bitmap->length = size * 8;
     bitmap->bitmap_refcount = 1;
+    bitmap->lock.lock = 0;
     memset(buffer, 0, size);
 }
 
@@ -36,6 +37,8 @@ void bitmap_set_range(Bitmap *bitmap, size_t start, size_t end, bool value)
         return;
     }
 
+    spin_lock(&bitmap->lock);
+
     size_t start_word = (start + 7) / 8;
     size_t end_word = end / 8;
 
@@ -46,6 +49,7 @@ void bitmap_set_range(Bitmap *bitmap, size_t start, size_t end, bool value)
 
     if (start_word > end_word)
     {
+        spin_unlock(&bitmap->lock);
         return;
     }
 
@@ -62,10 +66,14 @@ void bitmap_set_range(Bitmap *bitmap, size_t start, size_t end, bool value)
     {
         bitmap_set(bitmap, i, value);
     }
+
+    spin_unlock(&bitmap->lock);
 }
 
 size_t bitmap_find_range_from(const Bitmap *bitmap, size_t length, bool value, size_t start_from)
 {
+    spin_lock(&bitmap->lock);
+
     size_t count = 0, start_index = 0;
     uint8_t byte_match = value ? (uint8_t)-1 : 0;
 
@@ -81,6 +89,7 @@ size_t bitmap_find_range_from(const Bitmap *bitmap, size_t length, bool value, s
         {
             if (length < 8)
             {
+                spin_unlock(&bitmap->lock);
                 return byte_idx * 8;
             }
             if (count == 0)
@@ -90,6 +99,7 @@ size_t bitmap_find_range_from(const Bitmap *bitmap, size_t length, bool value, s
             count += 8;
             if (count >= length)
             {
+                spin_unlock(&bitmap->lock);
                 return start_index;
             }
         }
@@ -107,6 +117,7 @@ size_t bitmap_find_range_from(const Bitmap *bitmap, size_t length, bool value, s
                     count++;
                     if (count == length)
                     {
+                        spin_unlock(&bitmap->lock);
                         return start_index;
                     }
                 }
@@ -117,6 +128,8 @@ size_t bitmap_find_range_from(const Bitmap *bitmap, size_t length, bool value, s
             }
         }
     }
+
+    spin_unlock(&bitmap->lock);
 
     return (size_t)-1;
 }
