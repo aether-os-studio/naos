@@ -23,6 +23,8 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
 
     if (addr == 0)
     {
+        flags &= (~MAP_FIXED);
+    find_free_addr:
         uint64_t page_count = aligned_len / DEFAULT_PAGE_SIZE;
         uint64_t idx = bitmap_find_range(current_task->mmap_regions, page_count, true);
         if (idx == (uint64_t)-1)
@@ -31,7 +33,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
             return (uint64_t)-ENOMEM;
         }
         addr = (idx * DEFAULT_PAGE_SIZE) + USER_MMAP_START;
-        flags &= (~MAP_FIXED);
     }
 
     spin_lock(&mm_op_lock);
@@ -58,6 +59,14 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
             pt_flags |= PT_FLAG_W;
         if (prot & PROT_EXEC)
             pt_flags |= PT_FLAG_X;
+
+        if (addr >= USER_MMAP_START && addr + len <= USER_MMAP_END)
+        {
+            if (bitmap_get(current_task->mmap_regions, (addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE) == false && !(flags & MAP_FIXED))
+            {
+                goto find_free_addr;
+            }
+        }
 
         map_page_range(get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)), 0, (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
 
@@ -111,44 +120,20 @@ uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot)
 
 uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uint64_t flags, uint64_t new_addr)
 {
-    if (check_user_overflow(old_addr, old_size) || check_user_overflow(new_addr, new_size))
+    void *buff = alloc_frames_bytes(old_size);
+    memcpy(buff, (void *)old_addr, old_size);
+
+    uint64_t ret = sys_munmap(old_addr, old_size);
+    if ((int64_t)ret < 0)
     {
-        return -EFAULT;
+        free_frames_bytes(buff, old_size);
+        return ret;
     }
 
-    uint64_t *page_dir = get_current_page_dir(true);
-
-    if (translate_address(page_dir, old_addr) == 0)
-    {
-        return -EINVAL;
-    }
-
-    spin_lock(&mm_op_lock);
-
-    uint64_t aligned_old = (old_size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
-    uint64_t aligned_new = (new_size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
-
-    if (aligned_new < aligned_old)
-    {
-        unmap_page_range(page_dir, old_addr + aligned_new, aligned_old - aligned_new);
-        if (old_addr + aligned_new >= USER_MMAP_START && old_addr + aligned_old <= USER_MMAP_END)
-        {
-            bitmap_set_range(current_task->mmap_regions, (old_addr + aligned_new - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (old_addr + aligned_old - USER_MMAP_START) / DEFAULT_PAGE_SIZE, true);
-        }
-        spin_unlock(&mm_op_lock);
-        return old_addr;
-    }
-
-    uint64_t extension = aligned_new - aligned_old;
-
-    map_page_range(page_dir, old_addr + aligned_old, 0, extension, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
-    if (old_addr + aligned_old >= USER_MMAP_START && old_addr + aligned_old + extension <= USER_MMAP_END)
-    {
-        bitmap_set_range(current_task->mmap_regions, (old_addr + aligned_old - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (old_addr + aligned_old + extension - USER_MMAP_START) / DEFAULT_PAGE_SIZE, false);
-    }
-    spin_unlock(&mm_op_lock);
-
-    return old_addr;
+    uint64_t addr = sys_mmap(new_addr, new_size, PROT_READ | PROT_WRITE, flags, (uint64_t)-1, 0);
+    memcpy((void *)addr, buff, MIN(old_size, new_size));
+    free_frames_bytes(buff, old_size);
+    return addr;
 }
 
 void *general_map(vfs_read_t read_callback, void *file, uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset)
