@@ -611,12 +611,14 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
         socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
         socket_t *sock = handle->sock;
         unix_socket_pair_t *pair = sock->pair;
+        if (!pair)
+            return (size_t)-ENOTCONN;
 
         spin_lock(&pair->lock);
         if (pair->pending_fds_count > 0)
         {
             size_t avail_space = msg->msg_controllen;
-            size_t max_fds = (avail_space - sizeof(struct cmsghdr)) / sizeof(int);
+            int max_fds = (avail_space - sizeof(struct cmsghdr)) / sizeof(int);
             int num_fds = MIN(pair->pending_fds_count, max_fds);
 
             if (num_fds > 0)
@@ -676,16 +678,24 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
                     return error;
                 }
 
-                msg->msg_controllen = CMSG_SPACE(num_fds * sizeof(int));
+                msg->msg_controllen = cmsg->cmsg_len;
                 memmove(pair->pending_files, &pair->pending_files[num_fds], (pair->pending_fds_count - num_fds) * sizeof(fd_t));
                 pair->pending_fds_count -= num_fds;
             }
+            else
+            {
+                msg->msg_controllen = 0;
+            }
+        }
+        else
+        {
+            msg->msg_controllen = 0;
         }
         spin_unlock(&pair->lock);
     }
-    else if (msg->msg_control)
+    else
     {
-        serial_fprintk("Invalid msg->msg_controllen!!!, len = %d\n", msg->msg_controllen);
+        msg->msg_controllen = 0;
     }
 
     int iov_len_total = 0;
@@ -728,21 +738,13 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
     size_t cnt = 0;
     bool noblock = !!(flags & MSG_DONTWAIT);
 
-    if (msg->msg_controllen > 0)
-    {
-        if (msg->msg_control == NULL ||
-            msg->msg_controllen < sizeof(struct cmsghdr))
-        {
-            ((struct msghdr *)msg)->msg_flags |= MSG_CTRUNC;
-            return 0;
-        }
-    }
-
     if (msg->msg_control)
     {
         socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
         socket_t *socket = handle->sock;
         unix_socket_pair_t *pair = socket->pair;
+        if (!pair)
+            return (size_t)-ENOTCONN;
 
         struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
         if (!cmsg)
@@ -812,7 +814,7 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
         if (pair->pending_fds_count > 0)
         {
             size_t avail_space = msg->msg_controllen;
-            size_t max_fds = (avail_space - sizeof(struct cmsghdr)) / sizeof(int);
+            int max_fds = (avail_space - sizeof(struct cmsghdr)) / sizeof(int);
             int num_fds = MIN(pair->pending_fds_count, max_fds);
 
             if (num_fds > 0)
@@ -872,17 +874,25 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
                     return error;
                 }
 
-                msg->msg_controllen = CMSG_SPACE(num_fds * sizeof(int));
+                msg->msg_controllen = cmsg->cmsg_len;
                 memmove(pair->pending_files, &pair->pending_files[num_fds], (pair->pending_fds_count - num_fds) * sizeof(fd_t));
                 pair->pending_fds_count -= num_fds;
             }
+            else
+            {
+                msg->msg_controllen = 0;
+            }
+        }
+        else
+        {
+            msg->msg_controllen = 0;
         }
 
         spin_unlock(&pair->lock);
     }
-    else if (msg->msg_control)
+    else
     {
-        serial_fprintk("Invalid msg->msg_controllen!!!, len = %d\n", msg->msg_controllen);
+        msg->msg_controllen = 0;
     }
 
     int iov_len_total = 0;
@@ -924,16 +934,6 @@ size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg, int fl
 {
     size_t cnt = 0;
     bool noblock = !!(flags & MSG_DONTWAIT);
-
-    if (msg->msg_controllen > 0)
-    {
-        if (msg->msg_control == NULL ||
-            msg->msg_controllen < sizeof(struct cmsghdr))
-        {
-            ((struct msghdr *)msg)->msg_flags |= MSG_CTRUNC;
-            return 0;
-        }
-    }
 
     if (msg->msg_control)
     {

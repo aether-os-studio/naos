@@ -305,9 +305,6 @@ struct cmsghdr
 #define CMSG_SPACE(len) (CMSG_ALIGN(len) + CMSG_ALIGN(sizeof(struct cmsghdr)))
 #define CMSG_LEN(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
 
-#define MAX_FDS_OUT 28
-#define CLEN (CMSG_LEN(MAX_FDS_OUT * sizeof(int32_t)))
-
 extern void socket_on_new_task(uint64_t pid);
 extern void socket_on_exit_task(uint64_t pid);
 extern void socket_on_dup_file(uint64_t fd, uint64_t newfd);
