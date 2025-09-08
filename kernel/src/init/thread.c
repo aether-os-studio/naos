@@ -12,7 +12,6 @@
 #include <drivers/gfx/vmware/vmware.h>
 #endif
 
-extern void ext_init();
 extern void fatfs_init();
 extern void iso9660_init();
 extern void sysfs_init();

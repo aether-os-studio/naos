@@ -285,7 +285,8 @@ struct msghdr
 
 struct cmsghdr
 {
-    size_t cmsg_len;
+    uint32_t cmsg_len;
+    int _pad;
     int cmsg_level;
     int cmsg_type;
 };

@@ -23,7 +23,10 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
     switch (cmd & 0xffffffff)
     {
     case DRM_IOCTL_VERSION:
-        *(uint32_t *)arg = 0x010101;
+        struct drm_version *version = (struct drm_version *)arg;
+        version->version_major = 2;
+        version->version_minor = 2;
+        version->version_patchlevel = 0;
         return 0;
 
     case DRM_IOCTL_GET_CAP:
@@ -310,7 +313,10 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
 
         return dev->op->add_fb2(dev, fb_cmd);
     }
-
+    case DRM_IOCTL_MODE_RMFB:
+    {
+        return 0;
+    }
     case DRM_IOCTL_MODE_SETCRTC:
     {
         struct drm_mode_crtc *crtc_cmd = (struct drm_mode_crtc *)arg;
