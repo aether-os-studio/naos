@@ -682,10 +682,11 @@ void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code,
         tm time;
         time_read(&time);
         event.sec = mktime(&time);
-        event.usec = 0;
+        event.usec = (nanoTime() % 1000000000ULL) / 1000ULL;
     }
     else
     {
+        printk("Unsupported clock_id for inputdev!!!\n");
         event.sec = 0;
         event.usec = 0;
     }

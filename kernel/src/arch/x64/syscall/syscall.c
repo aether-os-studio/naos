@@ -392,7 +392,7 @@ void syscall_handler_init()
     // syscall_handlers[SYS_REMOVEXATTR] = (syscall_handle_t)sys_removexattr;
     // syscall_handlers[SYS_LREMOVEXATTR] = (syscall_handle_t)sys_lremovexattr;
     // syscall_handlers[SYS_FREMOVEXATTR] = (syscall_handle_t)sys_fremovexattr;
-    // syscall_handlers[SYS_TKILL] = (syscall_handle_t)sys_tkill;
+    // syscall_handlers[SYS_TKILL] = (syscall_handle_t)sys_kill;
     // syscall_handlers[SYS_TIME] = (syscall_handle_t)sys_time;
     syscall_handlers[SYS_FUTEX] = (syscall_handle_t)sys_futex;
     syscall_handlers[SYS_SCHED_SETAFFINITY] = (syscall_handle_t)dummy_syscall_handler;
@@ -601,8 +601,10 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_regs)
         regs->rax = handler(arg1, arg2, arg3, arg4, arg5, arg6);
     }
 
-    if ((idx != SYS_BRK) && (idx != SYS_MMAP) && (idx != SYS_MREMAP) && (idx != SYS_SHMAT) && (idx != SYS_FCNTL) && (int)regs->rax < 0 && ((regs->rax & 0x8000000000000000) == 0))
+    if ((idx != SYS_BRK) && (idx != SYS_MMAP) && (idx != SYS_MREMAP) && (idx != SYS_SHMAT) && (idx != SYS_FCNTL) && (int)regs->rax < 0 && !((int64_t)regs->rax < 0))
         regs->rax |= 0xffffffff00000000;
+    if ((int)regs->rax == 0 && (int64_t)regs->rax < 0)
+        regs->rax = 0;
 
     // if ((int64_t)regs->rax < 0)
     // {

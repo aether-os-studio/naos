@@ -75,7 +75,7 @@ vfs_node_t unix_socket_accept_create(unix_socket_pair_t *dir)
     return socknode;
 }
 
-#define MAX_PENDING_FILES_COUNT 8
+#define MAX_PENDING_FILES_COUNT 32
 
 unix_socket_pair_t *unix_socket_allocate_pair()
 {
@@ -594,7 +594,7 @@ size_t unix_socket_send_to(uint64_t fd, uint8_t *in, size_t limit, int flags,
 size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
 {
     size_t cnt = 0;
-    bool noblock = flags & MSG_DONTWAIT;
+    bool noblock = !!(flags & MSG_DONTWAIT);
 
     while (!noblock && !(current_task->fd_info->fds[fd]->flags & O_NONBLOCK) && !(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
     {
@@ -676,7 +676,7 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
                     return error;
                 }
 
-                msg->msg_controllen = sizeof(struct cmsghdr) + (num_fds * sizeof(int));
+                msg->msg_controllen = CMSG_SPACE(num_fds * sizeof(int));
                 memmove(pair->pending_files, &pair->pending_files[num_fds], (pair->pending_fds_count - num_fds) * sizeof(fd_t));
                 pair->pending_fds_count -= num_fds;
             }
@@ -726,7 +726,7 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
 size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
 {
     size_t cnt = 0;
-    bool noblock = flags & MSG_DONTWAIT;
+    bool noblock = !!(flags & MSG_DONTWAIT);
 
     if (msg->msg_controllen > 0)
     {
@@ -791,7 +791,7 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
                                    int flags)
 {
     size_t cnt = 0;
-    bool noblock = flags & MSG_DONTWAIT;
+    bool noblock = !!(flags & MSG_DONTWAIT);
 
     while (!noblock && !(current_task->fd_info->fds[fd]->flags & O_NONBLOCK) && !(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
     {
@@ -872,7 +872,7 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
                     return error;
                 }
 
-                msg->msg_controllen = sizeof(struct cmsghdr) + (num_fds * sizeof(int));
+                msg->msg_controllen = CMSG_SPACE(num_fds * sizeof(int));
                 memmove(pair->pending_files, &pair->pending_files[num_fds], (pair->pending_fds_count - num_fds) * sizeof(fd_t));
                 pair->pending_fds_count -= num_fds;
             }
@@ -923,7 +923,7 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
 size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
 {
     size_t cnt = 0;
-    bool noblock = flags & MSG_DONTWAIT;
+    bool noblock = !!(flags & MSG_DONTWAIT);
 
     if (msg->msg_controllen > 0)
     {

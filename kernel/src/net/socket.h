@@ -285,50 +285,28 @@ struct msghdr
 
 struct cmsghdr
 {
-    uint32_t cmsg_len;
-    int _pad;
+    uint64_t cmsg_len;
     int cmsg_level;
     int cmsg_type;
 };
 
-#define __CMSG_NXTHDR(ctl, len, cmsg) __cmsg_nxthdr((ctl), (len), (cmsg))
-#define CMSG_NXTHDR(mhdr, cmsg) cmsg_nxthdr((mhdr), (cmsg))
+#define __CMSG_LEN(cmsg) (((cmsg)->cmsg_len + sizeof(long) - 1) & ~(long)(sizeof(long) - 1))
+#define __CMSG_NEXT(cmsg) ((unsigned char *)(cmsg) + __CMSG_LEN(cmsg))
+#define __MHDR_END(mhdr) ((unsigned char *)(mhdr)->msg_control + (mhdr)->msg_controllen)
 
-#define CMSG_ALIGN(len) (((len) + sizeof(long) - 1) & ~(sizeof(long) - 1))
+#define CMSG_DATA(cmsg) ((unsigned char *)(((struct cmsghdr *)(cmsg)) + 1))
+#define CMSG_NXTHDR(mhdr, cmsg) ((cmsg)->cmsg_len < sizeof(struct cmsghdr) ||                                                    \
+                                         __CMSG_LEN(cmsg) + sizeof(struct cmsghdr) >= __MHDR_END(mhdr) - (unsigned char *)(cmsg) \
+                                     ? 0                                                                                         \
+                                     : (struct cmsghdr *)__CMSG_NEXT(cmsg))
+#define CMSG_FIRSTHDR(mhdr) ((size_t)(mhdr)->msg_controllen >= sizeof(struct cmsghdr) ? (struct cmsghdr *)(mhdr)->msg_control : (struct cmsghdr *)0)
 
-#define CMSG_DATA(cmsg) \
-    ((void *)(cmsg) + sizeof(struct cmsghdr))
-#define CMSG_USER_DATA(cmsg) \
-    ((void __user *)(cmsg) + sizeof(struct cmsghdr))
-#define CMSG_SPACE(len) (sizeof(struct cmsghdr) + CMSG_ALIGN(len))
-#define CMSG_LEN(len) (sizeof(struct cmsghdr) + (len))
+#define CMSG_ALIGN(len) (((len) + sizeof(size_t) - 1) & (size_t)~(sizeof(size_t) - 1))
+#define CMSG_SPACE(len) (CMSG_ALIGN(len) + CMSG_ALIGN(sizeof(struct cmsghdr)))
+#define CMSG_LEN(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
 
-#define __CMSG_FIRSTHDR(ctl, len) ((len) >= sizeof(struct cmsghdr) ? (struct cmsghdr *)(ctl) : (struct cmsghdr *)NULL)
-#define CMSG_FIRSTHDR(msg) __CMSG_FIRSTHDR((msg)->msg_control, (msg)->msg_controllen)
-#define CMSG_OK(mhdr, cmsg) ((cmsg)->cmsg_len >= sizeof(struct cmsghdr) &&                \
-                             (cmsg)->cmsg_len <= (unsigned long)((mhdr)->msg_controllen - \
-                                                                 ((char *)(cmsg) - (char *)(mhdr)->msg_control)))
-
-static inline struct cmsghdr *__cmsg_nxthdr(void *__ctl, size_t __size, struct cmsghdr *__cmsg)
-{
-    if (!__cmsg || __size < sizeof(struct cmsghdr))
-        return NULL;
-
-    struct cmsghdr *next = (struct cmsghdr *)((unsigned char *)__cmsg + CMSG_ALIGN(__cmsg->cmsg_len));
-    unsigned char *end = (unsigned char *)__ctl + __size;
-
-    if ((unsigned char *)(next + 1) > end)
-        return NULL;
-    if ((unsigned char *)next + CMSG_ALIGN(next->cmsg_len) > end)
-        return NULL;
-
-    return next;
-}
-
-static inline struct cmsghdr *cmsg_nxthdr(struct msghdr *__msg, struct cmsghdr *__cmsg)
-{
-    return __cmsg_nxthdr(__msg->msg_control, __msg->msg_controllen, __cmsg);
-}
+#define MAX_FDS_OUT 28
+#define CLEN (CMSG_LEN(MAX_FDS_OUT * sizeof(int32_t)))
 
 extern void socket_on_new_task(uint64_t pid);
 extern void socket_on_exit_task(uint64_t pid);

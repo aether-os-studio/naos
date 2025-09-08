@@ -51,7 +51,7 @@
 
 #define TASK_NAME_MAX 128
 
-#define MAX_FD_NUM 256
+#define MAX_FD_NUM 128
 
 #define CLONE_VM 0x00000100             /* set if VM shared between processes */
 #define CLONE_FS 0x00000200             /* set if fs info shared between processes */
