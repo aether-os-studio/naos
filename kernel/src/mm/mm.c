@@ -133,8 +133,9 @@ retry:
         last_alloc_pos = frame_index + count;
         bitmap_set_range(bitmap, frame_index, frame_index + count, false);
         frame_allocator.usable_frames -= count;
+        uint64_t addr = frame_index * DEFAULT_PAGE_SIZE;
         spin_unlock(&frame_op_lock);
-        return frame_index * DEFAULT_PAGE_SIZE;
+        return addr;
     }
 
     if (last_alloc_pos != 0)

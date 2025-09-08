@@ -47,7 +47,8 @@ void free(void *ptr);
 
 static inline void *alloc_frames_bytes(uint64_t bytes)
 {
-    return phys_to_virt((void *)alloc_frames((bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE));
+    uint64_t addr = phys_to_virt(alloc_frames((bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE));
+    return (void *)addr;
 }
 
 static inline void free_frames_bytes(void *ptr, uint64_t bytes)

@@ -1,17 +1,25 @@
 #include "msc.h"
 
+spinlock_t usb_bulk_transfer_lock = {0};
+
 int usb_bulk_transfer(struct usb_pipe *pipe, void *data, size_t len, bool is_read)
 {
     if (!pipe || !pipe->cntl)
         return -EINVAL;
 
+    spin_lock(&usb_bulk_transfer_lock);
+
+    int ret = -EOPNOTSUPP;
+
     switch (pipe->cntl->type)
     {
     case USB_TYPE_XHCI:
-        return (usb_send_bulk(pipe, is_read ? USB_DIR_IN : USB_DIR_OUT, data, len) == 0) ? len : -EIO;
-    default:
-        return -EOPNOTSUPP;
+        ret = (usb_send_bulk(pipe, is_read ? USB_DIR_IN : USB_DIR_OUT, data, len) == 0) ? len : -EIO;
     }
+
+    spin_unlock(&usb_bulk_transfer_lock);
+
+    return ret;
 }
 
 static int usb_msc_transfer(usb_msc_device *dev, void *cmd, void *data, size_t data_len, bool is_read)

@@ -92,7 +92,7 @@ virtio_driver_t *virtio_pci_init(void *data)
         if (bar_paddr == 0)
             goto done;
         uint64_t bar_vaddr = phys_to_virt(bar_paddr);
-        map_page_range(get_current_page_dir(false), bar_vaddr, bar_paddr, pci->common_cfg->length, PT_FLAG_R | PT_FLAG_W);
+        map_page_range(get_current_page_dir(false), bar_vaddr, bar_paddr, pci->common_cfg->length, PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
         common_cfg_vaddr = bar_vaddr;
     }
     else
@@ -116,7 +116,7 @@ virtio_driver_t *virtio_pci_init(void *data)
         if (bar_paddr == 0)
             goto done;
         uint64_t bar_vaddr = phys_to_virt(bar_paddr);
-        map_page_range(get_current_page_dir(false), bar_vaddr, bar_paddr, notify_cfg->length, PT_FLAG_R | PT_FLAG_W);
+        map_page_range(get_current_page_dir(false), bar_vaddr, bar_paddr, notify_cfg->length, PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
         notify_cfg_vaddr = bar_vaddr;
     }
     else
@@ -140,7 +140,7 @@ virtio_driver_t *virtio_pci_init(void *data)
         if (bar_paddr == 0)
             goto done;
         uint64_t bar_vaddr = phys_to_virt(bar_paddr);
-        map_page_range(get_current_page_dir(false), bar_vaddr, bar_paddr, pci->device_cfg->length, PT_FLAG_R | PT_FLAG_W);
+        map_page_range(get_current_page_dir(false), bar_vaddr, bar_paddr, pci->device_cfg->length, PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
         config_space_vaddr = bar_vaddr;
     }
     else

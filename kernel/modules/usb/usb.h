@@ -5,6 +5,8 @@
 #include <libs/klibc.h>
 #include "xhci-hcd.h"
 
+struct usbdevice_s;
+
 // Information on a USB end point.
 struct usb_pipe
 {

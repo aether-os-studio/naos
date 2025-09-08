@@ -5,3 +5,4 @@
 #define PT_FLAG_X (1UL << 2)
 #define PT_FLAG_U (1UL << 3)
 #define PT_FLAG_COW (1UL << 4)
+#define PT_FLAG_UNCACHEABLE (1UL << 5)

@@ -10,6 +10,8 @@
 #define ARCH_PT_FLAG_VALID (0x1UL << 0)
 #define ARCH_PT_FLAG_WRITEABLE (0x1UL << 1)
 #define ARCH_PT_FLAG_USER (0x1UL << 2)
+#define ARCH_PT_FLAG_PWT (0x1UL << 3)
+#define ARCH_PT_FLAG_PCD (0x1UL << 4)
 #define ARCH_PT_FLAG_HUGE (0x1UL << 7)
 #define ARCH_PT_FLAG_NX (0x1UL << 63)
 #define ARCH_ADDR_MASK 0x00007FFFFFFFF000

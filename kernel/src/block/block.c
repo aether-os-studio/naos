@@ -58,7 +58,7 @@ uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len)
     spin_lock(&blockdev_op_lock);
 
     blkdev_t *dev = &blk_devs[drive];
-    if (!dev || !dev->read)
+    if (!dev || !dev->ptr || !dev->read)
     {
         spin_unlock(&blockdev_op_lock);
         return (uint64_t)-1;
@@ -141,7 +141,7 @@ uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf, uint64_t
     spin_lock(&blockdev_op_lock);
 
     blkdev_t *dev = &blk_devs[drive];
-    if (!dev || !dev->read || !dev->write)
+    if (!dev || !dev->ptr || !dev->write)
     {
         spin_unlock(&blockdev_op_lock);
         return (uint64_t)-1;

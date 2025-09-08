@@ -5,6 +5,12 @@
 #define CHARACTER_ENTER '\n'
 #define CHARACTER_BACK '\b'
 
+struct pipe_node
+{
+    struct usb_pipe *pipe;
+    struct pipe_node *next;
+};
+
 // hid.c
 struct usbdevice_s;
 int usb_hid_setup(struct usbdevice_s *usbdev);

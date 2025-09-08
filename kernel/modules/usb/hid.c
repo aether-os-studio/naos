@@ -8,12 +8,6 @@
 #include "hid.h"
 #include "usb.h"
 
-struct pipe_node
-{
-    struct usb_pipe *pipe;
-    struct pipe_node *next;
-};
-
 struct pipe_node *keyboards = NULL;
 struct pipe_node *mice = NULL;
 
@@ -104,7 +98,7 @@ static int usb_kbd_setup(struct usbdevice_s *usbdev, struct usb_endpoint_descrip
 
     if (!kb_task_created)
     {
-        task_create("usb-hid-keyboard", (void (*)(uint64_t))usb_check_key, 0, KTHREAD_PRIORITY);
+        task_create("usb_check_key", (void (*)(uint64_t))usb_check_key, 0, KTHREAD_PRIORITY);
         kb_task_created = true;
     }
 
@@ -316,7 +310,7 @@ static void usb_check_key()
             }
         }
 
-        arch_pause();
+        arch_yield();
     }
 }
 

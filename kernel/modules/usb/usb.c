@@ -273,6 +273,8 @@ usb_set_address(struct usbdevice_s *usbdev)
     return 0;
 }
 
+extern struct pipe_node *keyboards;
+
 // Called for every found device - see if a driver is available for
 // this device and do setup if so.
 static int configure_usb_device(struct usbdevice_s *usbdev)
@@ -321,6 +323,13 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
                         {
                             printf("Unregisting msc device\n");
                             unregist_blkdev(dev->desc);
+                        }
+                    }
+                    else if (dev->iface->bInterfaceClass == USB_CLASS_HID)
+                    {
+                        if (dev->iface->bInterfaceProtocol == USB_INTERFACE_PROTOCOL_KEYBOARD)
+                        {
+                            printf("Should Unregisting hid keyboard device\n");
                         }
                     }
                 }

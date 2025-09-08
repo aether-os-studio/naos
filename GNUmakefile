@@ -194,6 +194,7 @@ run-x86_64-single: assets/ovmf-code-$(ARCH).fd all-single
 		-drive if=none,file=single-$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-device qemu-xhci,id=xhci \
 		-device usb-storage,drive=harddisk,bus=xhci.0 \
+		-device usb-kbd,id=kbd \
 		-vga vmware \
 		$(QEMUFLAGS)
 
@@ -266,7 +267,7 @@ assets/oib:
 
 assets/limine:
 	rm -rf assets/limine
-	git clone https://github.com/limine-bootloader/limine.git --branch=v9.x-binary --depth=1 assets/limine
+	git clone https://codeberg.org/Limine/Limine --branch=v9.x-binary --depth=1 assets/limine
 	$(MAKE) -C assets/limine \
 		CC="$(HOST_CC)" \
 		CFLAGS="$(HOST_CFLAGS)" \
