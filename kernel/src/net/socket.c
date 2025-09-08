@@ -596,6 +596,16 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
     size_t cnt = 0;
     bool noblock = flags & MSG_DONTWAIT;
 
+    while (!noblock && !(current_task->fd_info->fds[fd]->flags & O_NONBLOCK) && !(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
+    {
+        arch_yield();
+    }
+
+    if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
+    {
+        return (size_t)-EWOULDBLOCK;
+    }
+
     if (msg->msg_control && msg->msg_controllen >= sizeof(struct cmsghdr))
     {
         socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
@@ -606,7 +616,7 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
         if (pair->pending_fds_count > 0)
         {
             size_t avail_space = msg->msg_controllen;
-            size_t max_fds = (avail_space - CMSG_SPACE(0)) / sizeof(int);
+            size_t max_fds = (avail_space - sizeof(struct cmsghdr)) / sizeof(int);
             int num_fds = MIN(pair->pending_fds_count, max_fds);
 
             if (num_fds > 0)
@@ -666,7 +676,7 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
                     return error;
                 }
 
-                msg->msg_controllen = CMSG_SPACE(num_fds * sizeof(int));
+                msg->msg_controllen = sizeof(struct cmsghdr) + (num_fds * sizeof(int));
                 memmove(pair->pending_files, &pair->pending_files[num_fds], (pair->pending_fds_count - num_fds) * sizeof(fd_t));
                 pair->pending_fds_count -= num_fds;
             }
@@ -686,16 +696,6 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
             (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
 
         iov_len_total += curr->len;
-    }
-
-    while (!noblock && !(current_task->fd_info->fds[fd]->flags & O_NONBLOCK) && !(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
-    {
-        arch_yield();
-    }
-
-    if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
-    {
-        return (size_t)-EWOULDBLOCK;
     }
 
     char *buffer = malloc(iov_len_total);
@@ -758,7 +758,7 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
                 cmsg->cmsg_type == SCM_RIGHTS)
             {
                 int *fds = (int *)CMSG_DATA(cmsg);
-                int num_fds = (cmsg->cmsg_len - CMSG_SPACE(0)) / sizeof(int);
+                int num_fds = (cmsg->cmsg_len - sizeof(struct cmsghdr)) / sizeof(int);
 
                 for (int i = 0; i < num_fds; i++)
                 {
@@ -793,6 +793,16 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
     size_t cnt = 0;
     bool noblock = flags & MSG_DONTWAIT;
 
+    while (!noblock && !(current_task->fd_info->fds[fd]->flags & O_NONBLOCK) && !(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
+    {
+        arch_yield();
+    }
+
+    if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
+    {
+        return (size_t)-EWOULDBLOCK;
+    }
+
     if (msg->msg_control && msg->msg_controllen >= sizeof(struct cmsghdr))
     {
         socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
@@ -802,7 +812,7 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
         if (pair->pending_fds_count > 0)
         {
             size_t avail_space = msg->msg_controllen;
-            size_t max_fds = (avail_space - CMSG_SPACE(0)) / sizeof(int);
+            size_t max_fds = (avail_space - sizeof(struct cmsghdr)) / sizeof(int);
             int num_fds = MIN(pair->pending_fds_count, max_fds);
 
             if (num_fds > 0)
@@ -862,7 +872,7 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
                     return error;
                 }
 
-                msg->msg_controllen = CMSG_SPACE(num_fds * sizeof(int));
+                msg->msg_controllen = sizeof(struct cmsghdr) + (num_fds * sizeof(int));
                 memmove(pair->pending_files, &pair->pending_files[num_fds], (pair->pending_fds_count - num_fds) * sizeof(fd_t));
                 pair->pending_fds_count -= num_fds;
             }
@@ -883,16 +893,6 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
             (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
 
         iov_len_total += curr->len;
-    }
-
-    while (!noblock && !(current_task->fd_info->fds[fd]->flags & O_NONBLOCK) && !(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
-    {
-        arch_yield();
-    }
-
-    if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
-    {
-        return (size_t)-EWOULDBLOCK;
     }
 
     char *buffer = malloc(iov_len_total);
@@ -954,7 +954,7 @@ size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg, int fl
                 cmsg->cmsg_type == SCM_RIGHTS)
             {
                 int *fds = (int *)CMSG_DATA(cmsg);
-                int num_fds = (cmsg->cmsg_len - CMSG_SPACE(0)) / sizeof(int);
+                int num_fds = (cmsg->cmsg_len - sizeof(struct cmsghdr)) / sizeof(int);
 
                 for (int i = 0; i < num_fds; i++)
                 {

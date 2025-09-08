@@ -245,6 +245,8 @@ struct usb_xhci_s
     struct xhci_ring *cmds;
     struct xhci_ring *evts;
     struct xhci_er_seg *eseg;
+
+    bool use_irq;
 };
 
 struct xhci_pipe
@@ -477,6 +479,8 @@ configure_xhci(void *data)
     xhci->ir->erstba_high = (uint32_t)(eseg_phys >> 32);
     xhci->evts->cs = 1;
 
+    xhci->use_irq = false;
+
 #if defined(__x86_64__)
     int irq = irq_allocate_irqnum();
 
@@ -497,8 +501,11 @@ configure_xhci(void *data)
 
     irq_regist_irq(irq, xhci_interrupt_handler, irq, xhci, get_apic_controller(), "XHCI");
 
+    printk("XHCI: use irq\n");
+
     xhci->ir->imod = 0;
     xhci->ir->iman |= 2; // Interrupt enable
+    xhci->use_irq = true;
 irq_done:
 #endif
     reg = xhci->caps->hcsparams2;
@@ -709,22 +716,22 @@ static int xhci_ring_busy(struct xhci_ring *ring)
     return (eidx != nidx);
 }
 
-spinlock_t event_wait_lock = {0};
-
 // Wait for a ring to empty (all TRBs processed by hardware)
 int xhci_event_wait(struct usb_xhci_s *xhci,
                     struct xhci_ring *ring,
                     uint32_t timeout)
 {
-    spin_lock(&event_wait_lock);
-
     uint64_t timeout_ns = (uint64_t)timeout * 1000000; // Convert ms to ns
     uint64_t start_ns = nanoTime();
 
-    arch_enable_interrupt();
+    if (xhci->use_irq)
+        arch_enable_interrupt();
 
     for (;;)
     {
+        if (!xhci->use_irq)
+            xhci_process_events(xhci);
+
         if (!xhci_ring_busy(ring))
         {
             uint32_t status = ring->evt.status;
@@ -740,9 +747,8 @@ int xhci_event_wait(struct usb_xhci_s *xhci,
         arch_pause();
     }
 
-    arch_disable_interrupt();
-
-    spin_unlock(&event_wait_lock);
+    if (xhci->use_irq)
+        arch_disable_interrupt();
 }
 
 // Add a TRB to the given ring

@@ -695,8 +695,8 @@ ssize_t drm_read(void *data, uint64_t offset, void *buf, uint64_t len, uint64_t 
         .base.type = dev->drm_events[0]->type,
         .base.length = sizeof(vbl),
         .user_data = dev->drm_events[0]->user_data,
-        .tv_sec = dev->drm_events[0]->timestamp.tv_sec,
-        .tv_usec = dev->drm_events[0]->timestamp.tv_nsec / 1000};
+        .tv_sec = nanoTime() / 1000000000,
+        .tv_usec = (nanoTime() % 1000000000) / 1000};
 
     free(dev->drm_events[0]);
 
