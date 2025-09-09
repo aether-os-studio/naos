@@ -76,6 +76,11 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events, int maxevent
 
         while (browse && ready < maxevents)
         {
+            if (!browse->fd)
+            {
+                browse = browse->next;
+                continue;
+            }
             int revents = vfs_poll(browse->fd, browse->watchEvents);
             if (revents > 0 && ready < maxevents)
             {

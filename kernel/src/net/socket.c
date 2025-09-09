@@ -155,7 +155,7 @@ size_t unix_socket_accept_recv_from(uint64_t fd, uint8_t *out, size_t limit,
     {
         if (!pair->clientFds && pair->serverBuffPos == 0)
         {
-            return 0;
+            return -EPIPE;
         }
         else if ((current_task->fd_info->fds[fd]->flags & O_NONBLOCK || flags & MSG_DONTWAIT) &&
                  pair->serverBuffPos == 0)
@@ -521,7 +521,7 @@ size_t unix_socket_recv_from(uint64_t fd, uint8_t *out, size_t limit, int flags,
     {
         if (!pair->serverFds && pair->clientBuffPos == 0)
         {
-            return 0;
+            return -EPIPE;
         }
         else if ((current_task->fd_info->fds[fd]->flags & O_NONBLOCK || flags & MSG_DONTWAIT) &&
                  pair->clientBuffPos == 0)
@@ -1542,7 +1542,7 @@ ssize_t socket_read(fd_t *fd, void *buf, size_t offset, size_t limit)
     {
         if (!pair->clientFds && pair->clientBuffPos == 0)
         {
-            return 0;
+            return -EPIPE;
         }
         else if ((handle->fd->flags & O_NONBLOCK) && pair->clientBuffPos == 0)
         {
@@ -1623,7 +1623,7 @@ ssize_t socket_accept_read(fd_t *fd, void *buf, size_t offset, size_t limit)
     {
         if (!pair->clientFds && pair->serverBuffPos == 0)
         {
-            return 0;
+            return -EPIPE;
         }
         else if ((handle->fd->flags & O_NONBLOCK) && pair->serverBuffPos == 0)
         {

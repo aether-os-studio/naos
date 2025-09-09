@@ -120,7 +120,8 @@ int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, st
 
 bool sys_timerfd_close(void *current)
 {
-    free(current);
+    if (current)
+        free(current);
     return true;
 }
 

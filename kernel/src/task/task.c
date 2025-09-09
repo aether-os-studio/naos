@@ -885,11 +885,11 @@ void task_unblock(task_t *task, int reason)
 
 void task_exit_inner(task_t *task, int64_t code)
 {
-    arch_disable_interrupt();
-    can_schedule = false;
-
     task->current_state = TASK_DIED;
     task->state = TASK_DIED;
+
+    arch_disable_interrupt();
+    can_schedule = false;
 
     arch_context_free(task->arch_context);
 
@@ -952,33 +952,35 @@ void task_exit_inner(task_t *task, int64_t code)
 
 uint64_t task_exit(int64_t code)
 {
-    // uint64_t continue_ptr_count = 0;
-    // for (int i = 0; i < MAX_TASK_NUM; i++)
-    // {
-    //     if (!tasks[i])
-    //     {
-    //         continue_ptr_count++;
-    //         if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
-    //             break;
-    //         continue;
-    //     }
-    //     continue_ptr_count = 0;
-    //     if ((tasks[i]->ppid != tasks[i]->pid) && (tasks[i]->ppid == current_task->pid))
-    //     {
-    //         task_exit_inner(tasks[i], SIGCHLD);
+    arch_disable_interrupt();
 
-    //         free_page_table(tasks[i]->arch_context->mm);
+    uint64_t continue_ptr_count = 0;
+    for (int i = 0; i < MAX_TASK_NUM; i++)
+    {
+        if (!tasks[i])
+        {
+            continue_ptr_count++;
+            if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
+                break;
+            continue;
+        }
+        continue_ptr_count = 0;
+        if ((tasks[i]->ppid != tasks[i]->pid) && (tasks[i]->ppid == current_task->pid))
+        {
+            task_exit_inner(tasks[i], SIGCHLD);
 
-    //         free(tasks[i]->arch_context);
+            free_page_table(tasks[i]->arch_context->mm);
 
-    //         free_frames_bytes((void *)(tasks[i]->kernel_stack - STACK_SIZE), STACK_SIZE);
-    //         free_frames_bytes((void *)(tasks[i]->syscall_stack - STACK_SIZE), STACK_SIZE);
+            free(tasks[i]->arch_context);
 
-    //         free(tasks[i]);
+            free_frames_bytes((void *)(tasks[i]->kernel_stack - STACK_SIZE), STACK_SIZE);
+            free_frames_bytes((void *)(tasks[i]->syscall_stack - STACK_SIZE), STACK_SIZE);
 
-    //         tasks[i] = NULL;
-    //     }
-    // }
+            free(tasks[i]);
+
+            tasks[i] = NULL;
+        }
+    }
 
     task_exit_inner(current_task, code);
 

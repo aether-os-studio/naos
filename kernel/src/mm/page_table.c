@@ -26,7 +26,7 @@ uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr)
     }
 
     uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
-    return (pgdir[index] & (~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL))) + (vaddr & PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL));
+    return (pgdir[index] & (~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL)) & ~get_physical_memory_offset()) + (vaddr & PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL));
 }
 
 uint64_t *kernel_page_dir = NULL;
