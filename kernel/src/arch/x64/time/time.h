@@ -15,3 +15,5 @@ typedef struct
 
 void time_read(tm *time);
 int64_t mktime(tm *time);
+
+uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3);

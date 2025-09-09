@@ -556,7 +556,7 @@ void dev_init()
 void dev_init_after_sysfs()
 {
     dev_input_event_t *kb_input_event = malloc(sizeof(dev_input_event_t));
-    kb_input_event->inputid.bustype = 0x05;   // BUS_PS2
+    kb_input_event->inputid.bustype = 0x11;   // BUS_PS2
     kb_input_event->inputid.vendor = 0x045e;  // Microsoft
     kb_input_event->inputid.product = 0x0001; // Generic MS Keyboard
     kb_input_event->inputid.version = 0x0100; // Basic MS Version
@@ -567,7 +567,7 @@ void dev_init_after_sysfs()
     circular_int_init(&kb_input_event->device_events, DEFAULT_PAGE_SIZE * 4);
     vfs_node_t kb_node = regist_dev("input/event0", inputdev_event_read, inputdev_event_write, inputdev_ioctl, inputdev_poll, NULL, kb_input_event);
     dev_input_event_t *mouse_input_event = malloc(sizeof(dev_input_event_t));
-    mouse_input_event->inputid.bustype = 0x05;   // BUS_PS2
+    mouse_input_event->inputid.bustype = 0x11;   // BUS_PS2
     mouse_input_event->inputid.vendor = 0x045e;  // Microsoft
     mouse_input_event->inputid.product = 0x00b4; // Generic MS Mouse
     mouse_input_event->inputid.version = 0x0100; // Basic MS Version
@@ -672,24 +672,10 @@ void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code,
 
     struct input_event event;
     memset(&event, 0, sizeof(struct input_event));
-    if (item->clock_id == CLOCK_MONOTONIC)
-    {
-        event.sec = nanoTime() / 1000000000ULL;
-        event.usec = (nanoTime() % 1000000000ULL) / 1000ULL;
-    }
-    else if (item->clock_id == CLOCK_REALTIME)
-    {
-        tm time;
-        time_read(&time);
-        event.sec = mktime(&time);
-        event.usec = (nanoTime() % 1000000000ULL) / 1000ULL;
-    }
-    else
-    {
-        printk("Unsupported clock_id for inputdev!!!\n");
-        event.sec = 0;
-        event.usec = 0;
-    }
+    struct timespec now;
+    sys_clock_gettime(item->clock_id, (uint64_t)&now, 0);
+    event.sec = now.tv_sec;
+    event.usec = now.tv_nsec / 1000;
     event.type = type;
     event.code = code;
     event.value = value;

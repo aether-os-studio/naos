@@ -7,6 +7,7 @@
 
 #include "hid.h"
 #include "usb.h"
+#include <libs/aether/evdev.h>
 
 struct pipe_node *keyboards = NULL;
 struct pipe_node *mice = NULL;
@@ -130,29 +131,6 @@ static int usb_kbd_setup(struct usbdevice_s *usbdev, struct usb_endpoint_descrip
 
 //     return 0;
 // }
-
-// Initialize a found USB HID device (if applicable).
-int usb_hid_setup(struct usbdevice_s *usbdev)
-{
-    struct usb_interface_descriptor *iface = usbdev->iface;
-    if (iface->bInterfaceSubClass != USB_INTERFACE_SUBCLASS_BOOT)
-        // Doesn't support boot protocol.
-        return -1;
-
-    // Find intr in endpoint.
-    struct usb_endpoint_descriptor *epdesc = usb_find_desc(
-        usbdev, USB_ENDPOINT_XFER_INT, USB_DIR_IN);
-    if (!epdesc)
-    {
-        return -1;
-    }
-
-    if (iface->bInterfaceProtocol == USB_INTERFACE_PROTOCOL_KEYBOARD)
-        return usb_kbd_setup(usbdev, epdesc);
-    // if (iface->bInterfaceProtocol == USB_INTERFACE_PROTOCOL_MOUSE)
-    //     return usb_mouse_setup(usbdev, epdesc);
-    return -1;
-}
 
 /****************************************************************
  * Keyboard events
@@ -314,6 +292,15 @@ static void usb_check_key()
     }
 }
 
+// Format of USB mouse event data
+struct mouseevent
+{
+    uint8_t buttons;
+    uint8_t x, y;
+};
+
+#define MAX_MOUSE_EVENT 8
+
 // // Handle a ps2 style keyboard command.
 // inline int
 // usb_kbd_command(int command, uint8_t *param)
@@ -329,3 +316,85 @@ static void usb_check_key()
 //         return -1;
 //     }
 // }
+
+bool mice_task_created = false;
+
+static void handle_mouse(struct mouseevent *data)
+{
+    int8_t x = data->x, y = data->y;
+    uint8_t flag = data->buttons & 0x7;
+
+    handle_mouse_event(flag, x, y);
+}
+
+static void usb_check_mouse(void)
+{
+    while (1)
+    {
+        for (struct pipe_node *node = mice;
+             node;
+             node = node->next)
+        {
+            struct usb_pipe *pipe = node->pipe;
+
+            for (;;)
+            {
+                uint8_t data[MAX_MOUSE_EVENT];
+                int ret = usb_poll_intr(pipe, data);
+                if (ret)
+                    break;
+                handle_mouse((void *)data);
+            }
+        }
+
+        arch_yield();
+    }
+}
+
+static int
+usb_mouse_setup(struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epdesc)
+{
+    if (epdesc->wMaxPacketSize < sizeof(struct mouseevent) || epdesc->wMaxPacketSize > MAX_MOUSE_EVENT)
+    {
+        printk("USB mouse wMaxPacketSize=%d; aborting\n", epdesc->wMaxPacketSize);
+        return -1;
+    }
+
+    // Enable "boot" protocol.
+    if (set_protocol(usbdev->defpipe, 0, usbdev->iface->bInterfaceNumber))
+        return -1;
+
+    if (add_pipe_node(&mice, usbdev, epdesc))
+        return -1;
+
+    if (!mice_task_created)
+    {
+        task_create("usb_check_mouse", (void (*)(uint64_t))usb_check_mouse, 0, KTHREAD_PRIORITY);
+        mice_task_created = true;
+    }
+
+    return 0;
+}
+
+// Initialize a found USB HID device (if applicable).
+int usb_hid_setup(struct usbdevice_s *usbdev)
+{
+    struct usb_interface_descriptor *iface = usbdev->iface;
+    if (iface->bInterfaceSubClass != USB_INTERFACE_SUBCLASS_BOOT)
+        // Doesn't support boot protocol.
+        return -1;
+
+    // Find intr in endpoint.
+    struct usb_endpoint_descriptor *epdesc = usb_find_desc(
+        usbdev, USB_ENDPOINT_XFER_INT, USB_DIR_IN);
+    if (!epdesc)
+    {
+        return -1;
+    }
+
+    if (iface->bInterfaceProtocol == USB_INTERFACE_PROTOCOL_KEYBOARD)
+        return usb_kbd_setup(usbdev, epdesc);
+    if (iface->bInterfaceProtocol == USB_INTERFACE_PROTOCOL_MOUSE)
+        return usb_mouse_setup(usbdev, epdesc);
+    return -1;
+}

@@ -56,10 +56,10 @@ static uint64_t get_current_time_ns()
 {
     tm time;
     time_read(&time);
-    return (uint64_t)mktime(&time) * 1000000000ULL + nanoTime() % 1000000000ULL;
+    return (uint64_t)mktime(&time) * 1000000000ULL;
 }
 
-static uint64_t get_current_time(uint64_t clock_type)
+uint64_t get_current_time(uint64_t clock_type)
 {
     if (clock_type == CLOCK_MONOTONIC)
     {
@@ -70,6 +70,8 @@ static uint64_t get_current_time(uint64_t clock_type)
         return get_current_time_ns(); // 使用增强版实时时钟
     }
 }
+
+extern volatile struct limine_date_at_boot_request boot_time_request;
 
 int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, struct itimerval *old_value)
 {
@@ -92,26 +94,29 @@ int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, st
 
     uint64_t interval = new_value->it_interval.tv_sec * 1000000000ULL +
                         new_value->it_interval.tv_usec * 1000ULL;
-    uint64_t expires = new_value->it_value.tv_sec * 1000000000ULL +
-                       new_value->it_value.tv_usec * 1000ULL;
-
-    // 处理绝对/相对时间
-    if (flags & TFD_TIMER_ABSTIME)
+    uint64_t expires = new_value->it_value.tv_sec * 1000000000ULL + new_value->it_value.tv_usec * 1000ULL;
+    if (!(flags & TFD_TIMER_ABSTIME))
     {
-        tfd->timer.expires = expires;
-        uint64_t now = get_current_time(tfd->timer.clock_type);
-        if (tfd->timer.expires < now && interval > 0)
-        {
-            uint64_t periods = (now - tfd->timer.expires + interval - 1) / interval;
-            tfd->timer.expires += periods * interval;
-        }
+        expires = get_current_time(tfd->timer.clock_type) + expires;
+    }
+    else if (tfd->timer.clock_type == CLOCK_REALTIME)
+    {
+        expires = expires - boot_time_request.response->timestamp * 1000000000ULL;
+    }
+    else if (tfd->timer.clock_type == CLOCK_MONOTONIC)
+    {
+        // expires = new_value->it_value.tv_sec * 1000000000ULL + new_value->it_value.tv_usec * 1000ULL;
     }
     else
     {
-        tfd->timer.expires = get_current_time(tfd->timer.clock_type) + expires;
+        printk("timerfd_settime: Unsupported clockid %d\n", tfd->timer.clock_type);
+        return -EINVAL;
     }
 
+    // todo: 处理绝对/相对时间
+    tfd->timer.expires = expires;
     tfd->timer.interval = interval;
+
     return 0;
 }
 
@@ -182,6 +187,23 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size)
     return sizeof(uint64_t);
 }
 
+#define TFD_IOC_SET_TICKS _IOW('T', 0, uint64_t)
+
+int timerfd_ioctl(void *file, ssize_t cmd, ssize_t arg)
+{
+    timerfd_t *tfd = file;
+    switch (cmd)
+    {
+    case TFD_IOC_SET_TICKS:
+        tfd->count = arg;
+        return 0;
+
+    default:
+        printk("timerfd_ioctl: Unsupported cmd %#018lx\n", cmd);
+        return -ENOSYS;
+    }
+}
+
 static int dummy()
 {
     return 0;
@@ -205,7 +227,7 @@ static struct vfs_callback timerfd_callbacks = {
     .rename = (vfs_rename_t)dummy,
     .map = (vfs_mapfile_t)dummy,
     .stat = (vfs_stat_t)dummy,
-    .ioctl = (vfs_ioctl_t)dummy,
+    .ioctl = (vfs_ioctl_t)timerfd_ioctl,
     .poll = (vfs_poll_t)timerfd_poll,
     .resize = (vfs_resize_t)dummy,
     .dup = vfs_generic_dup,

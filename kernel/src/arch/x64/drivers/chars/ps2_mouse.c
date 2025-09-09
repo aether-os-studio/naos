@@ -67,10 +67,10 @@ int mouse2 = 0;
 int gx = 0;
 int gy = 0;
 
-bool clickedLeft = false;
-bool clickedRight = false;
+extern bool clickedLeft;
+extern bool clickedRight;
 
-dev_input_event_t *mouse_event = NULL;
+extern dev_input_event_t *mouse_event;
 
 spinlock_t mouse_irq_lock = {0};
 

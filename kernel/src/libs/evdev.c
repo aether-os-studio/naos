@@ -450,7 +450,7 @@ uint8_t lastPressed = 0;
 
 void kb_evdev_generate(uint8_t raw, uint8_t raw1, uint8_t raw2)
 {
-    if (!kb_event)
+    if (!kb_event || !kb_event->timesOpened)
         return;
 
     uint8_t index = 0;
@@ -486,8 +486,8 @@ void kb_evdev_generate(uint8_t raw, uint8_t raw1, uint8_t raw2)
     else if (oldstate && clicked)
     {
         // was clicked previously, now clicked (repeat)
-        // if (evdevCode != lastPressed)
-        //     return; // no need to re-set it on the bitmap
+        if (evdevCode != lastPressed)
+            return; // no need to re-set it on the bitmap
         input_generate_event(kb_event, EV_KEY, evdevCode, 2);
     }
     else if (oldstate && !clicked)
@@ -582,4 +582,32 @@ char handle_kb_event(uint8_t scan_code, uint8_t scan_code_1, uint8_t scan_code_2
     }
 
     return 0;
+}
+
+bool clickedLeft = false;
+bool clickedRight = false;
+
+dev_input_event_t *mouse_event = NULL;
+
+void handle_mouse_event(uint8_t flag, int8_t x, int8_t y)
+{
+    if (!mouse_event)
+        return;
+
+    bool click = (flag & (1 << 0)) != 0;
+    bool rclick = (flag & (1 << 1)) != 0;
+
+    if (clickedLeft && !click)
+        input_generate_event(mouse_event, EV_KEY, BTN_LEFT, 0);
+    if (!clickedLeft && click)
+        input_generate_event(mouse_event, EV_KEY, BTN_LEFT, 1);
+
+    if (clickedRight && !rclick)
+        input_generate_event(mouse_event, EV_KEY, BTN_RIGHT, 0);
+    if (!clickedRight && rclick)
+        input_generate_event(mouse_event, EV_KEY, BTN_RIGHT, 1);
+
+    input_generate_event(mouse_event, EV_REL, REL_X, x);
+    input_generate_event(mouse_event, EV_REL, REL_Y, y);
+    input_generate_event(mouse_event, EV_SYN, SYN_REPORT, 0);
 }

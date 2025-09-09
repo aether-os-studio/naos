@@ -8,6 +8,8 @@ task_t *get_kb_task()
     return kb_task;
 }
 
+EXPORT_SYMBOL(handle_mouse_event);
+
 EXPORT_SYMBOL(handle_kb_event);
 EXPORT_SYMBOL(get_kb_task);
 
