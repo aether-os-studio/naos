@@ -228,14 +228,14 @@ vfs_node_t pipe_dup(vfs_node_t node)
 {
     pipe_specific_t *spec = node->handle;
     pipe_info_t *pipe = spec->info;
-    if (spec->write)
-    {
-        pipe->write_fds++;
-    }
-    else
-    {
-        pipe->read_fds++;
-    }
+    // if (spec->write)
+    // {
+    //     pipe->write_fds++;
+    // }
+    // else
+    // {
+    //     pipe->read_fds++;
+    // }
 
     return node;
 }

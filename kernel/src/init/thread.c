@@ -25,6 +25,16 @@ bool system_initialized = false;
 
 extern bool can_schedule;
 
+void seatd_entry(uint64_t arg)
+{
+    const char *argvs[2];
+    memset(argvs, 0, sizeof(argvs));
+    argvs[0] = "/usr/bin/seatd";
+    task_execve("/usr/bin/seatd", argvs, NULL);
+
+    task_exit(0);
+}
+
 void init_thread(uint64_t arg)
 {
     printk("NAOS init thread is running...\n");
@@ -67,14 +77,12 @@ void init_thread(uint64_t arg)
     can_schedule = true;
     arch_enable_interrupt();
 
+    task_create("seatd", seatd_entry, 0, NORMAL_PRIORITY);
+
     const char *argvs[2];
     memset(argvs, 0, sizeof(argvs));
     argvs[0] = "/bin/bash";
     task_execve("/bin/bash", argvs, NULL);
-
-    // memset(argvs, 0, sizeof(argvs));
-    // argvs[0] = "/sbin/init";
-    // task_execve("/sbin/init", argvs, NULL);
 
     printk("run init failed\n");
 

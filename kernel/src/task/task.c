@@ -803,7 +803,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         current_task->is_vfork = false;
     }
 
-    char cmdline[DEFAULT_PAGE_SIZE];
+    char cmdline[DEFAULT_PAGE_SIZE * 4];
     memset(cmdline, 0, sizeof(cmdline));
     char *cmdline_ptr = cmdline;
     for (int i = 0; i < argv_count; i++)

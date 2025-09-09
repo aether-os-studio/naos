@@ -3,16 +3,16 @@
 
 uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags, void *data)
 {
-    vfs_node_t dir = vfs_open((const char *)dir_name);
-    if (!dir)
-    {
-        return (uint64_t)-ENOENT;
-    }
+    // vfs_node_t dir = vfs_open((const char *)dir_name);
+    // if (!dir)
+    // {
+    //     return (uint64_t)-ENOENT;
+    // }
 
-    if (!vfs_mount((const char *)dev_name, dir, (const char *)type))
-    {
-        return -ENOENT;
-    }
+    // if (!vfs_mount((const char *)dev_name, dir, (const char *)type))
+    // {
+    //     return -ENOENT;
+    // }
 
     return 0;
 }
@@ -970,8 +970,10 @@ uint64_t sys_mkdir(const char *name, uint64_t mode)
     int ret = vfs_mkdir(name);
     if (ret < 0)
     {
-        return (uint64_t)-EEXIST;
+        return (uint64_t)ret;
     }
+    vfs_chmod(name, mode);
+
     return 0;
 }
 
@@ -1003,7 +1005,7 @@ uint64_t sys_symlink(const char *name, const char *new)
     {
         return (uint64_t)-EFAULT;
     }
-    int ret = vfs_symlink(name, new);
+    int ret = vfs_symlink(new, name);
 
     return ret;
 }

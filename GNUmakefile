@@ -182,7 +182,7 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-device nvme,drive=rootdisk,serial=5678 \
 		-netdev user,id=net0 \
 		-device virtio-net-pci,netdev=net0 \
-		-rtc base=localtime \
+		-rtc base=utc \
 		-vga vmware \
 		$(QEMUFLAGS)
 
