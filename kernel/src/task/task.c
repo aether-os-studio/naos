@@ -1420,10 +1420,6 @@ extern int timerfdfs_id;
 
 void sched_update_timerfd()
 {
-    tm time;
-    time_read(&time);
-    uint64_t now = (uint64_t)mktime(&time) * 1000000000ULL;
-
     if (current_task->fd_info)
     {
         uint64_t continue_null_fd_count = 0;
@@ -1443,6 +1439,19 @@ void sched_update_timerfd()
             if (current_task->fd_info->fds[fd] && current_task->fd_info->fds[fd]->node->fsid == timerfdfs_id)
             {
                 timerfd_t *tfd = current_task->fd_info->fds[fd]->node->handle;
+
+                // 根据时钟类型获取当前时间
+                uint64_t now;
+                if (tfd->timer.clock_type == CLOCK_MONOTONIC)
+                {
+                    now = nanoTime();
+                }
+                else // CLOCK_REALTIME
+                {
+                    tm time;
+                    time_read(&time);
+                    now = (uint64_t)mktime(&time) * 1000000000ULL;
+                }
 
                 if (tfd->timer.expires && now >= tfd->timer.expires)
                 {

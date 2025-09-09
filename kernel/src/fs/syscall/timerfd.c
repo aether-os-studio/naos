@@ -1,4 +1,7 @@
 #include <fs/fs_syscall.h>
+#include <arch/arch.h>
+#include <libs/klibc.h>
+#include <task/signal.h>
 
 int timerfdfs_id = 0;
 static vfs_node_t timerfdfs_root = NULL;
@@ -40,34 +43,23 @@ int sys_timerfd_create(int clockid, int flags)
     current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
     current_task->fd_info->fds[fd]->node = node;
     current_task->fd_info->fds[fd]->offset = 0;
-    current_task->fd_info->fds[fd]->flags = 0;
+    current_task->fd_info->fds[fd]->flags = flags;
 
     return fd;
 }
 
-static uint64_t get_current_time_ms()
-{
-    tm time;
-    time_read(&time);
-    return (uint64_t)mktime(&time) * 1000ULL;
-}
-
-static uint64_t get_current_time_ns()
-{
-    tm time;
-    time_read(&time);
-    return (uint64_t)mktime(&time) * 1000000000ULL;
-}
-
-uint64_t get_current_time(uint64_t clock_type)
+// 统一的当前时间获取函数
+static uint64_t get_current_time_ns(int clock_type)
 {
     if (clock_type == CLOCK_MONOTONIC)
     {
-        return nanoTime(); // 直接返回纳秒级单调时间
+        return nanoTime(); // 单调时钟，直接返回纳秒
     }
-    else
+    else // CLOCK_REALTIME
     {
-        return get_current_time_ns(); // 使用增强版实时时钟
+        tm time;
+        time_read(&time);
+        return (uint64_t)mktime(&time) * 1000000000ULL;
     }
 }
 
@@ -81,9 +73,10 @@ int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, st
     vfs_node_t node = current_task->fd_info->fds[fd]->node;
     timerfd_t *tfd = node->handle;
 
+    // 保存旧值
     if (old_value)
     {
-        uint64_t now = get_current_time(tfd->timer.clock_type);
+        uint64_t now = get_current_time_ns(tfd->timer.clock_type);
         uint64_t remaining = tfd->timer.expires > now ? tfd->timer.expires - now : 0;
 
         old_value->it_interval.tv_sec = tfd->timer.interval / 1000000000ULL;
@@ -92,30 +85,32 @@ int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, st
         old_value->it_value.tv_usec = (remaining % 1000000000ULL) / 1000ULL;
     }
 
+    // 设置新值
     uint64_t interval = new_value->it_interval.tv_sec * 1000000000ULL +
                         new_value->it_interval.tv_usec * 1000ULL;
-    uint64_t expires = new_value->it_value.tv_sec * 1000000000ULL + new_value->it_value.tv_usec * 1000ULL;
-    if (!(flags & TFD_TIMER_ABSTIME))
+    uint64_t value = new_value->it_value.tv_sec * 1000000000ULL +
+                     new_value->it_value.tv_usec * 1000ULL;
+
+    uint64_t expires;
+
+    if (flags & TFD_TIMER_ABSTIME)
     {
-        expires = get_current_time(tfd->timer.clock_type) + expires;
-    }
-    else if (tfd->timer.clock_type == CLOCK_REALTIME)
-    {
-        expires = expires - boot_time_request.response->timestamp * 1000000000ULL;
-    }
-    else if (tfd->timer.clock_type == CLOCK_MONOTONIC)
-    {
-        // expires = new_value->it_value.tv_sec * 1000000000ULL + new_value->it_value.tv_usec * 1000ULL;
+        // 绝对时间：直接使用提供的值
+        expires = value;
     }
     else
     {
-        printk("timerfd_settime: Unsupported clockid %d\n", tfd->timer.clock_type);
-        return -EINVAL;
+        // 相对时间：当前时间 + 提供的值
+        uint64_t now = get_current_time_ns(tfd->timer.clock_type);
+        expires = now + value;
     }
 
-    // todo: 处理绝对/相对时间
     tfd->timer.expires = expires;
     tfd->timer.interval = interval;
+    // 只有在解除定时器（value为0）时才重置count
+    if (value == 0) {
+        tfd->count = 0;
+    }
 
     return 0;
 }
@@ -140,12 +135,6 @@ int timerfd_poll(void *file, size_t events)
         }
     }
 
-    if (revents && !tfd->timer.interval)
-    {
-        tfd->count = 0;
-        tfd->timer.expires = 0;
-    }
-
     return revents;
 }
 
@@ -153,29 +142,89 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size)
 {
     void *file = fd->node->handle;
     timerfd_t *tfd = file;
-    uint64_t now = get_current_time(tfd->timer.clock_type);
-    uint64_t count = 0;
 
-    if (tfd->timer.expires > 0 && now >= tfd->timer.expires)
+    // 检查是否有待处理的超时事件
+    if (tfd->count == 0)
     {
-        if (tfd->timer.interval > 0)
-        {
-            count = (now - tfd->timer.expires) / tfd->timer.interval + 1;
-            tfd->timer.expires += count * tfd->timer.interval;
+        uint64_t now = get_current_time_ns(tfd->timer.clock_type);
 
-            if (tfd->timer.expires < now)
+        // 检查定时器是否未启动
+        if (tfd->timer.expires == 0)
+        {
+            // timerfd未启动，根据阻塞模式处理
+            if (fd->flags & O_NONBLOCK)
             {
-                uint64_t overrun = (now - tfd->timer.expires) / tfd->timer.interval;
-                count += overrun;
-                tfd->timer.expires += overrun * tfd->timer.interval;
+                return -EAGAIN; // 非阻塞模式，直接返回EAGAIN
+            }
+            else
+            {
+                // 阻塞模式，等待timerfd被设置
+                while (tfd->timer.expires == 0)
+                {
+                    arch_yield();
+                    if (signals_pending_quick(current_task))
+                    {
+                        return -EINTR;
+                    }
+                }
+                // 定时器被设置后，重新获取当前时间
+                now = get_current_time_ns(tfd->timer.clock_type);
             }
         }
-        else
+
+        // 等待超时（如果是阻塞模式）
+        if (tfd->timer.expires > 0 && now < tfd->timer.expires && !(fd->flags & O_NONBLOCK))
         {
-            count = 1;
-            tfd->timer.expires = 0;
+            // 阻塞等待直到超时
+            while (now < tfd->timer.expires)
+            {
+                arch_yield();
+                now = get_current_time_ns(tfd->timer.clock_type);
+                if (signals_pending_quick(current_task))
+                {
+                    return -EINTR;
+                }
+            }
         }
-        tfd->count = count;
+        else if (now < tfd->timer.expires && (fd->flags & O_NONBLOCK))
+        {
+            // 非阻塞模式且未超时
+            return -EAGAIN;
+        }
+    }
+
+    // 如果有待处理事件，直接使用现有的count
+    uint64_t count = tfd->count;
+
+    // 如果没有待处理事件但已经超时，计算新的超时事件
+    if (count == 0)
+    {
+        uint64_t now = get_current_time_ns(tfd->timer.clock_type);
+
+        if (tfd->timer.expires > 0 && now >= tfd->timer.expires)
+        {
+            if (tfd->timer.interval > 0)
+            {
+                // 周期性定时器：计算超时次数
+                count = (now - tfd->timer.expires) / tfd->timer.interval + 1;
+                tfd->timer.expires += count * tfd->timer.interval;
+
+                // 处理溢出情况
+                if (tfd->timer.expires < now)
+                {
+                    uint64_t overrun = (now - tfd->timer.expires) / tfd->timer.interval;
+                    count += overrun;
+                    tfd->timer.expires += overrun * tfd->timer.interval;
+                }
+            }
+            else
+            {
+                // 一次性定时器
+                count = 1;
+                tfd->timer.expires = 0;
+            }
+            tfd->count = count;
+        }
     }
 
     if (size < sizeof(uint64_t))
