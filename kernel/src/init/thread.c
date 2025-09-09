@@ -37,7 +37,7 @@ void init_thread(uint64_t arg)
     partition_init();
 
 #if defined(__x86_64__)
-    // vmware_gpu_init();
+    vmware_gpu_init();
 #endif
 
     fs_syscall_init();
@@ -49,12 +49,12 @@ void init_thread(uint64_t arg)
     mount_root();
 
     fbdev_init();
-    // drm_init();
+    drm_init();
 
     sysfs_init();
 
     fbdev_init_sysfs();
-    // drm_init_sysfs();
+    drm_init_sysfs();
 
     dev_init_after_sysfs();
 

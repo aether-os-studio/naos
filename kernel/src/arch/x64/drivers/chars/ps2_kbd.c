@@ -245,16 +245,16 @@ size_t kb_event_bit(void *data, uint64_t request, void *arg)
     size_t ret = (size_t)-ENOSYS;
     switch (number)
     {
-    case 0x03:
-    {
-        struct input_repeat_params *params = arg;
-        params->delay = 500;
-        params->period = 50;
-        break;
-    }
+    // case 0x03:
+    // {
+    //     struct input_repeat_params *params = arg;
+    //     params->delay = 500;
+    //     params->period = 50;
+    //     break;
+    // }
     case 0x20:
     {
-        size_t out = (1 << EV_SYN) | (1 << EV_KEY);
+        size_t out = (1 << EV_KEY);
         ret = MIN(sizeof(size_t), size);
         memcpy(arg, &out, ret);
         break;
@@ -266,11 +266,13 @@ size_t kb_event_bit(void *data, uint64_t request, void *arg)
     case (0x20 + EV_REL):
     case (0x20 + EV_ABS):
     {
+        *(size_t *)arg = 0;
         ret = MIN(sizeof(size_t), size);
         break;
     }
     case (0x20 + EV_FF):
     {
+        *(size_t *)arg = 0;
         ret = MIN(16, size);
         break;
     }
@@ -292,9 +294,11 @@ size_t kb_event_bit(void *data, uint64_t request, void *arg)
         break;
     }
     case 0x19: // EVIOCGLED()
+        *(size_t *)arg = 0;
         ret = MIN(8, size);
         break;
     case 0x1b: // EVIOCGSW()
+        *(size_t *)arg = 0;
         ret = MIN(8, size);
         break;
     case 0xa0:

@@ -74,6 +74,8 @@ extern dev_input_event_t *mouse_event;
 
 spinlock_t mouse_irq_lock = {0};
 
+extern void handle_mouse_event(uint8_t flag, int8_t x, int8_t y);
+
 void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs)
 {
     uint8_t byte = mouse_read();
@@ -130,25 +132,7 @@ void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs)
         if ((size_t)gy > framebuffer->height)
             gy = framebuffer->height;
 
-        bool click = (mouse1 & (1 << 0)) != 0;
-        bool rclick = (mouse1 & (1 << 1)) != 0;
-
-        if (clickedLeft && !click)
-            input_generate_event(mouse_event, EV_KEY, BTN_LEFT, 0);
-        if (!clickedLeft && click)
-            input_generate_event(mouse_event, EV_KEY, BTN_LEFT, 1);
-
-        if (clickedRight && !rclick)
-            input_generate_event(mouse_event, EV_KEY, BTN_RIGHT, 0);
-        if (!clickedRight && rclick)
-            input_generate_event(mouse_event, EV_KEY, BTN_RIGHT, 1);
-
-        clickedRight = rclick;
-        clickedLeft = click;
-
-        input_generate_event(mouse_event, EV_REL, REL_X, x);
-        input_generate_event(mouse_event, EV_REL, REL_Y, -y);
-        input_generate_event(mouse_event, EV_SYN, SYN_REPORT, 0);
+        handle_mouse_event(mouse1, x, -y);
 
         mouseCycle = 0;
     }
@@ -221,7 +205,7 @@ size_t mouse_event_bit(void *data, uint64_t request, void *arg)
     // }
     case 0x20:
     {
-        size_t out = (1 << EV_SYN) | (1 << EV_KEY) | (1 << EV_REL);
+        size_t out = (1 << EV_KEY) | (1 << EV_REL);
         ret = MIN(sizeof(size_t), size);
         memcpy(arg, &out, ret);
         break;
@@ -232,11 +216,13 @@ size_t mouse_event_bit(void *data, uint64_t request, void *arg)
     case (0x20 + EV_LED):
     case (0x20 + EV_ABS):
     {
+        *(size_t *)arg = 0;
         ret = MIN(sizeof(size_t), size);
         break;
     }
     case (0x20 + EV_FF):
     {
+        *(size_t *)arg = 0;
         ret = MIN(16, size);
         break;
     }

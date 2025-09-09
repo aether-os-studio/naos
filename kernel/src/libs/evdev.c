@@ -1,6 +1,7 @@
 #include <libs/klibc.h>
 #include <libs/keys.h>
 #include <fs/vfs/dev.h>
+#include <fs/fs_syscall.h>
 
 // Very bare bones, and basic keyboard driver
 // Copyright (C) 2024 Panagiotis
@@ -446,8 +447,6 @@ dev_input_event_t *kb_event = NULL;
 
 uint8_t evdevInternal[EVDEV_INTERNAL_SIZE] = {0};
 
-uint8_t lastPressed = 0;
-
 void kb_evdev_generate(uint8_t raw, uint8_t raw1, uint8_t raw2)
 {
     if (!kb_event || !kb_event->timesOpened)
@@ -474,28 +473,21 @@ void kb_evdev_generate(uint8_t raw, uint8_t raw1, uint8_t raw2)
         evdevCode = scanSet1E1(raw1, raw2);
     }
 
+    struct timespec now;
+    sys_clock_gettime(kb_event->clock_id, (uint64_t)&now, 0);
+
     bool clicked = (raw & 0x80) == 0;
 
-    bool oldstate = evdevInternal[index / 8];
+    bool oldstate = (evdevInternal[index / 8] & (1 << (index % 8))) != 0;
     if (!oldstate && clicked)
     {
-        // was not clicked previously, now clicked (click)
-        input_generate_event(kb_event, EV_KEY, evdevCode, 1);
-        lastPressed = evdevCode;
-    }
-    else if (oldstate && clicked)
-    {
-        // was clicked previously, now clicked (repeat)
-        if (evdevCode != lastPressed)
-            return; // no need to re-set it on the bitmap
-        input_generate_event(kb_event, EV_KEY, evdevCode, 2);
+        input_generate_event(kb_event, EV_KEY, evdevCode, 1, now.tv_sec, now.tv_nsec / 1000);
     }
     else if (oldstate && !clicked)
     {
-        // was clicked previously, now not clicked (release)
-        input_generate_event(kb_event, EV_KEY, evdevCode, 0);
+        input_generate_event(kb_event, EV_KEY, evdevCode, 0, now.tv_sec, now.tv_nsec / 1000);
     }
-    input_generate_event(kb_event, EV_SYN, SYN_REPORT, 0);
+    input_generate_event(kb_event, EV_SYN, SYN_REPORT, 0, now.tv_sec, now.tv_nsec / 1000);
 
     if (clicked)
     {
@@ -597,17 +589,23 @@ void handle_mouse_event(uint8_t flag, int8_t x, int8_t y)
     bool click = (flag & (1 << 0)) != 0;
     bool rclick = (flag & (1 << 1)) != 0;
 
+    struct timespec now;
+    sys_clock_gettime(kb_event->clock_id, (uint64_t)&now, 0);
+
     if (clickedLeft && !click)
-        input_generate_event(mouse_event, EV_KEY, BTN_LEFT, 0);
+        input_generate_event(mouse_event, EV_KEY, BTN_LEFT, 0, now.tv_sec, now.tv_nsec / 1000);
     if (!clickedLeft && click)
-        input_generate_event(mouse_event, EV_KEY, BTN_LEFT, 1);
+        input_generate_event(mouse_event, EV_KEY, BTN_LEFT, 1, now.tv_sec, now.tv_nsec / 1000);
 
     if (clickedRight && !rclick)
-        input_generate_event(mouse_event, EV_KEY, BTN_RIGHT, 0);
+        input_generate_event(mouse_event, EV_KEY, BTN_RIGHT, 0, now.tv_sec, now.tv_nsec / 1000);
     if (!clickedRight && rclick)
-        input_generate_event(mouse_event, EV_KEY, BTN_RIGHT, 1);
+        input_generate_event(mouse_event, EV_KEY, BTN_RIGHT, 1, now.tv_sec, now.tv_nsec / 1000);
 
-    input_generate_event(mouse_event, EV_REL, REL_X, x);
-    input_generate_event(mouse_event, EV_REL, REL_Y, y);
-    input_generate_event(mouse_event, EV_SYN, SYN_REPORT, 0);
+    input_generate_event(mouse_event, EV_REL, REL_X, x, now.tv_sec, now.tv_nsec / 1000);
+    input_generate_event(mouse_event, EV_REL, REL_Y, y, now.tv_sec, now.tv_nsec / 1000);
+    input_generate_event(mouse_event, EV_SYN, SYN_REPORT, 0, now.tv_sec, now.tv_nsec / 1000);
+
+    clickedLeft = click;
+    clickedRight = rclick;
 }

@@ -212,6 +212,6 @@ typedef struct dev_input_event
 #define LED_MAX 0x0f
 #define LED_CNT (LED_MAX + 1)
 
-void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code, int32_t value);
+void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code, int32_t value, uint64_t sec, uint64_t usecs);
 
 void stdio_init();

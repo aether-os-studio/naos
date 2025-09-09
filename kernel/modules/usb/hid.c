@@ -236,6 +236,7 @@ static void handle_key(struct keyevent *data)
         // New key pressed.
         uint16_t scancode = KeyToScanCode[key];
         char k = handle_kb_event(scancode, 0, 0);
+        handle_kb_event(scancode | 0x80, 0, 0);
 
         if (get_kb_task() && (k == CHARACTER_ENTER))
         {

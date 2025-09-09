@@ -103,7 +103,7 @@ int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, st
     {
         // 相对时间：当前时间 + 提供的值
         tfd->timer.clock_type = CLOCK_MONOTONIC;
-        uint64_t now = get_current_time_ns(tfd->timer.clock_type);
+        uint64_t now = value ? get_current_time_ns(tfd->timer.clock_type) : 0;
         expires = now + value;
     }
 

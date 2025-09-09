@@ -665,31 +665,15 @@ size_t circular_int_read_poll(circular_int_t *circ)
     return ret;
 }
 
-void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code, int32_t value)
+void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code, int32_t value, uint64_t sec, uint64_t usecs)
 {
     if (!item || item->timesOpened == 0)
         return;
 
     struct input_event event;
     memset(&event, 0, sizeof(struct input_event));
-    if (item->clock_id == CLOCK_MONOTONIC)
-    {
-        event.sec = nanoTime() / 1000000000ULL;
-        event.usec = (nanoTime() % 1000000000ULL) / 1000ULL;
-    }
-    else if (item->clock_id == CLOCK_REALTIME)
-    {
-        tm time;
-        time_read(&time);
-        event.sec = mktime(&time);
-        event.usec = (nanoTime() % 1000000000ULL) / 1000ULL;
-    }
-    else
-    {
-        printk("Unsupported clock_id for inputdev!!!\n");
-        event.sec = 0;
-        event.usec = 0;
-    }
+    event.sec = sec;
+    event.usec = usecs;
     event.type = type;
     event.code = code;
     event.value = value;

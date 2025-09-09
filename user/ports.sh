@@ -34,9 +34,9 @@ printf "${MIRROR}/main\n${MIRROR}/community\n" | sudo tee $SYSROOT/etc/apk/repos
 sudo cp -r $SCRIPTPATH/base/etc/resolv.conf $SYSROOT/etc/
 
 sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add musl-dev gcompat gzip xz make file tar pciutils tzdata nano lua5.1 gcc binutils libdrm-dev libdrm-tests bind-tools curl sysbench evtest"
-# sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add seatd weston weston-backend-drm weston-shell-desktop weston-xwayland xwayland weston-terminal"
-sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add xorg-server xf86-video-fbdev xf86-input-evdev xinit twm xsetroot xeyes xclock nedit st"
-sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add mesa-gl mesa-utils mesa-vulkan-swrast mesa-dri-gallium"
+sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add seatd weston weston-backend-drm weston-shell-desktop weston-xwayland xwayland weston-terminal"
+# sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add xorg-server xf86-video-fbdev xf86-input-evdev xinit twm xsetroot xeyes xclock nedit st"
+# sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add mesa-gl mesa-utils mesa-vulkan-swrast mesa-dri-gallium"
 
 sudo ln -sf /usr/share/zoneinfo/Asia/Shanghai $SYSROOT/etc/localtime
 
