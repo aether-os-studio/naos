@@ -40,7 +40,17 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         case DRM_CAP_TIMESTAMP_MONOTONIC:
             cap->value = 1;
             return 0;
+        case DRM_CAP_CURSOR_WIDTH:
+            cap->value = 32;
+            return 0;
+        case DRM_CAP_CURSOR_HEIGHT:
+            cap->value = 32;
+            return 0;
+        case DRM_CAP_ADDFB2_MODIFIERS:
+            cap->value = 1;
+            return 0;
         default:
+            printk("drm: Unsupported capability %d\n", cap->capability);
             cap->value = 0;
             return 0;
         }

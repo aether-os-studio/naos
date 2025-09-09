@@ -885,24 +885,33 @@ void task_unblock(task_t *task, int reason)
 
 void task_exit_inner(task_t *task, int64_t code)
 {
+    arch_disable_interrupt();
+    can_schedule = false;
+
+    task->current_state = TASK_DIED;
+    task->state = TASK_DIED;
+
     arch_context_free(task->arch_context);
 
     task->status = (uint64_t)code;
 
-    task->fd_info->ref_count--;
-    if (task->fd_info->ref_count <= 0)
+    if (task->fd_info)
     {
-        for (uint64_t i = 0; i < MAX_FD_NUM; i++)
+        task->fd_info->ref_count--;
+        if (task->fd_info->ref_count <= 0)
         {
-            if (task->fd_info->fds[i])
+            for (uint64_t i = 0; i < MAX_FD_NUM; i++)
             {
-                vfs_close(task->fd_info->fds[i]->node);
-                free(task->fd_info->fds[i]);
+                if (task->fd_info->fds[i])
+                {
+                    vfs_close(task->fd_info->fds[i]->node);
+                    free(task->fd_info->fds[i]);
 
-                task->fd_info->fds[i] = NULL;
+                    task->fd_info->fds[i] = NULL;
+                }
             }
+            free(task->fd_info);
         }
-        free(task->fd_info);
     }
 
     if (task->cmdline)
@@ -913,9 +922,6 @@ void task_exit_inner(task_t *task, int64_t code)
         tasks[task->ppid]->child_vfork_done = true;
         task->is_vfork = false;
     }
-
-    task->current_state = TASK_DIED;
-    task->state = TASK_DIED;
 
     if (task->ppid && task->pid != task->ppid && task->ppid < MAX_TASK_NUM && tasks[task->ppid])
     {
@@ -940,12 +946,12 @@ void task_exit_inner(task_t *task, int64_t code)
     }
 
     procfs_on_exit_task(task);
+
+    can_schedule = true;
 }
 
 uint64_t task_exit(int64_t code)
 {
-    arch_disable_interrupt();
-
     // uint64_t continue_ptr_count = 0;
     // for (int i = 0; i < MAX_TASK_NUM; i++)
     // {

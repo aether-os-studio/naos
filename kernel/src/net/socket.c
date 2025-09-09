@@ -1458,6 +1458,23 @@ int unix_socket_getsockname(uint64_t fd, struct sockaddr_un *addr, socklen_t *ad
     return 0;
 }
 
+int unix_socket_accept_getsockname(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen)
+{
+    if (fd > MAX_FD_NUM || !current_task->fd_info->fds[fd])
+        return -(EBADF);
+
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    unix_socket_pair_t *pair = handle->sock;
+    if (!pair)
+        return -(ENOTCONN);
+
+    addr->sun_family = 1;
+    strcpy(addr->sun_path, pair->filename);
+    *addrlen = sizeof(addr->sun_family) + strlen(pair->filename);
+
+    return 0;
+}
+
 void socket_open(void *parent, const char *name, vfs_node_t node)
 {
 }
@@ -1483,6 +1500,7 @@ socket_op_t socket_ops = {
 };
 
 socket_op_t accept_ops = {
+    .getsockname = unix_socket_accept_getsockname,
     .sendto = unix_socket_accept_sendto,
     .recvfrom = unix_socket_accept_recv_from,
     .sendmsg = unix_socket_accept_send_msg,
