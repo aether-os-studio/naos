@@ -556,26 +556,26 @@ void dev_init()
 void dev_init_after_sysfs()
 {
     dev_input_event_t *kb_input_event = malloc(sizeof(dev_input_event_t));
-    kb_input_event->inputid.bustype = 0x11;   // BUS_PS2
-    kb_input_event->inputid.vendor = 0x045e;  // Microsoft
-    kb_input_event->inputid.product = 0x0001; // Generic MS Keyboard
-    kb_input_event->inputid.version = 0x0100; // Basic MS Version
+    kb_input_event->inputid.bustype = 0x11;
+    kb_input_event->inputid.vendor = 0x0000;
+    kb_input_event->inputid.product = 0x0000;
+    kb_input_event->inputid.version = 0x0000;
     kb_input_event->event_bit = kb_event_bit;
     kb_input_event->device_events.read_ptr = 0;
     kb_input_event->device_events.write_ptr = 0;
     kb_input_event->clock_id = CLOCK_MONOTONIC;
-    circular_int_init(&kb_input_event->device_events, DEFAULT_PAGE_SIZE * 4);
+    circular_int_init(&kb_input_event->device_events, DEFAULT_PAGE_SIZE);
     vfs_node_t kb_node = regist_dev("input/event0", inputdev_event_read, inputdev_event_write, inputdev_ioctl, inputdev_poll, NULL, kb_input_event);
     dev_input_event_t *mouse_input_event = malloc(sizeof(dev_input_event_t));
-    mouse_input_event->inputid.bustype = 0x11;   // BUS_PS2
-    mouse_input_event->inputid.vendor = 0x045e;  // Microsoft
-    mouse_input_event->inputid.product = 0x00b4; // Generic MS Mouse
-    mouse_input_event->inputid.version = 0x0100; // Basic MS Version
+    mouse_input_event->inputid.bustype = 0x11;
+    mouse_input_event->inputid.vendor = 0x0000;
+    mouse_input_event->inputid.product = 0x0000;
+    mouse_input_event->inputid.version = 0x0000;
     mouse_input_event->event_bit = mouse_event_bit;
     mouse_input_event->device_events.read_ptr = 0;
     mouse_input_event->device_events.write_ptr = 0;
     mouse_input_event->clock_id = CLOCK_MONOTONIC;
-    circular_int_init(&mouse_input_event->device_events, DEFAULT_PAGE_SIZE * 4);
+    circular_int_init(&mouse_input_event->device_events, DEFAULT_PAGE_SIZE);
     vfs_node_t mouse_node = regist_dev("input/event1", inputdev_event_read, inputdev_event_write, inputdev_ioctl, inputdev_poll, NULL, mouse_input_event);
 
     regist_dev("null", null_dev_read, null_dev_write, NULL, NULL, NULL, NULL);
@@ -672,10 +672,24 @@ void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code,
 
     struct input_event event;
     memset(&event, 0, sizeof(struct input_event));
-    struct timespec now;
-    sys_clock_gettime(item->clock_id, (uint64_t)&now, 0);
-    event.sec = now.tv_sec;
-    event.usec = now.tv_nsec / 1000;
+    if (item->clock_id == CLOCK_MONOTONIC)
+    {
+        event.sec = nanoTime() / 1000000000ULL;
+        event.usec = (nanoTime() % 1000000000ULL) / 1000ULL;
+    }
+    else if (item->clock_id == CLOCK_REALTIME)
+    {
+        tm time;
+        time_read(&time);
+        event.sec = mktime(&time);
+        event.usec = (nanoTime() % 1000000000ULL) / 1000ULL;
+    }
+    else
+    {
+        printk("Unsupported clock_id for inputdev!!!\n");
+        event.sec = 0;
+        event.usec = 0;
+    }
     event.type = type;
     event.code = code;
     event.value = value;

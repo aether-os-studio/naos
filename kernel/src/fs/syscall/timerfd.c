@@ -59,7 +59,7 @@ static uint64_t get_current_time_ns(int clock_type)
     {
         tm time;
         time_read(&time);
-        return (uint64_t)mktime(&time) * 1000000000ULL;
+        return (uint64_t)mktime(&time) * 1000000000ULL + nanoTime() % 1000000000ULL;
     }
 }
 
@@ -96,11 +96,13 @@ int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, st
     if (flags & TFD_TIMER_ABSTIME)
     {
         // 绝对时间：直接使用提供的值
+        tfd->timer.clock_type = CLOCK_REALTIME;
         expires = value;
     }
     else
     {
         // 相对时间：当前时间 + 提供的值
+        tfd->timer.clock_type = CLOCK_MONOTONIC;
         uint64_t now = get_current_time_ns(tfd->timer.clock_type);
         expires = now + value;
     }
@@ -108,7 +110,8 @@ int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, st
     tfd->timer.expires = expires;
     tfd->timer.interval = interval;
     // 只有在解除定时器（value为0）时才重置count
-    if (value == 0) {
+    if (value == 0)
+    {
         tfd->count = 0;
     }
 
@@ -196,41 +199,10 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size)
     // 如果有待处理事件，直接使用现有的count
     uint64_t count = tfd->count;
 
-    // 如果没有待处理事件但已经超时，计算新的超时事件
-    if (count == 0)
-    {
-        uint64_t now = get_current_time_ns(tfd->timer.clock_type);
-
-        if (tfd->timer.expires > 0 && now >= tfd->timer.expires)
-        {
-            if (tfd->timer.interval > 0)
-            {
-                // 周期性定时器：计算超时次数
-                count = (now - tfd->timer.expires) / tfd->timer.interval + 1;
-                tfd->timer.expires += count * tfd->timer.interval;
-
-                // 处理溢出情况
-                if (tfd->timer.expires < now)
-                {
-                    uint64_t overrun = (now - tfd->timer.expires) / tfd->timer.interval;
-                    count += overrun;
-                    tfd->timer.expires += overrun * tfd->timer.interval;
-                }
-            }
-            else
-            {
-                // 一次性定时器
-                count = 1;
-                tfd->timer.expires = 0;
-            }
-            tfd->count = count;
-        }
-    }
-
     if (size < sizeof(uint64_t))
         return -EINVAL;
 
-    *(uint64_t *)addr = tfd->count;
+    *(uint64_t *)addr = count;
     tfd->count = 0; // 读取后重置计数
 
     return sizeof(uint64_t);
