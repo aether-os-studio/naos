@@ -26,6 +26,7 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64
     context->ctx->rdi = initial_arg;
     context->fsbase = 0;
     context->gsbase = 0;
+    context->dead = false;
     if (user_mode)
     {
         context->ctx->cs = SELECTOR_USER_CS;
@@ -82,6 +83,7 @@ void arch_context_free(arch_context_t *context)
     {
         free(context->fpu_ctx);
     }
+    context->dead = true;
 }
 
 task_t *arch_get_current()
@@ -143,6 +145,11 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
     {
         return;
     }
+    
+    if (next->signal & SIGMASK(SIGKILL))
+    {
+        return;
+    }
 
     prev->arch_context->ctx = ctx;
 
@@ -151,13 +158,18 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
 
     task_signal();
 
-    prev->current_state = prev->state;
+    if (next->arch_context->dead)
+        return;
 
+    prev->current_state = prev->state;
     next->current_state = TASK_RUNNING;
 
     arch_set_current(next);
 
     arch_switch_with_context(prev->arch_context, next->arch_context, next->kernel_stack);
+
+    next->current_state = next->state;
+    prev->current_state = TASK_RUNNING;
 }
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)

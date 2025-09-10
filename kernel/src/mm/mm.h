@@ -25,7 +25,7 @@ extern FrameAllocator frame_allocator;
 typedef struct task_mm_info
 {
     uint64_t page_table_addr;
-    uint8_t ref_count;
+    int ref_count;
 } task_mm_info_t;
 
 void frame_init();

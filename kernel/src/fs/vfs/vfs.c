@@ -746,7 +746,10 @@ ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size)
 
 int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize)
 {
-    return callbackof(node, readlink)(node, buf, 0, bufsize);
+    spin_lock(&node->spin);
+    int ret = callbackof(node, readlink)(node, buf, 0, bufsize);
+    spin_unlock(&node->spin);
+    return ret;
 }
 
 ssize_t vfs_write(vfs_node_t file, const void *addr, size_t offset, size_t size)

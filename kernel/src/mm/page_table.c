@@ -217,14 +217,11 @@ void free_page_table(task_mm_info_t *directory)
 {
     spin_lock(&clone_lock);
 
-    if (directory->ref_count <= 1)
+    directory->ref_count--;
+    if (directory->ref_count <= 0)
     {
         free_page_table_recursive((page_table_t *)phys_to_virt(directory->page_table_addr), ARCH_MAX_PT_LEVEL);
         free(directory);
-    }
-    else
-    {
-        directory->ref_count--;
     }
 
     spin_unlock(&clone_lock);

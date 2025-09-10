@@ -49,6 +49,7 @@ typedef struct arch_context
     task_mm_info_t *mm;
     struct pt_regs *ctx;
     fpu_context_t *fpu_ctx;
+    bool dead;
 } arch_context_t;
 
 typedef struct arch_signal_frame

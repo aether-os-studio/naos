@@ -79,7 +79,7 @@ vfs_node_t unix_socket_accept_create(unix_socket_pair_t *dir)
 
 unix_socket_pair_t *unix_socket_allocate_pair()
 {
-    unix_socket_pair_t *pair = calloc(sizeof(unix_socket_pair_t), 1);
+    unix_socket_pair_t *pair = malloc(sizeof(unix_socket_pair_t));
     memset(pair, 0, sizeof(unix_socket_pair_t));
     pair->clientBuffSize = BUFFER_SIZE;
     pair->serverBuffSize = BUFFER_SIZE;
@@ -94,7 +94,8 @@ void unix_socket_free_pair(unix_socket_pair_t *pair)
 {
     free_frames_bytes(pair->clientBuff, pair->clientBuffSize);
     free_frames_bytes(pair->serverBuff, pair->serverBuffSize);
-    free(pair->filename);
+    if (pair->filename)
+        free(pair->filename);
     free(pair->pending_files);
     free(pair);
 }

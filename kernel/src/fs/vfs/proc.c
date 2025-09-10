@@ -177,6 +177,14 @@ void proc_init()
     self_environ_handle->task = NULL;
     sprintf(self_environ_handle->name, "self/environ");
 
+    vfs_node_t self_maps = vfs_node_alloc(procfs_self, "maps");
+    self_maps->type = file_none;
+    self_maps->mode = 0700;
+    proc_handle_t *self_maps_handle = malloc(sizeof(proc_handle_t));
+    self_maps->handle = self_maps_handle;
+    self_maps_handle->task = NULL;
+    sprintf(self_maps_handle->name, "self/maps");
+
     cmdline = vfs_node_alloc(procfs_root, "cmdline");
     cmdline->type = file_none;
     cmdline->mode = 0700;

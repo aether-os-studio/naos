@@ -9,6 +9,7 @@
 #include <fs/fs_syscall.h>
 #include <net/socket.h>
 
+spinlock_t task_queue_lock = {0};
 task_t *tasks[MAX_TASK_NUM];
 task_t *idle_tasks[MAX_CPU_NUM];
 
@@ -65,6 +66,8 @@ task_t *get_free_task()
         }
     }
 
+    spin_lock(&task_queue_lock);
+
     for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
     {
         if (tasks[i] == NULL)
@@ -72,9 +75,12 @@ task_t *get_free_task()
             tasks[i] = (task_t *)malloc(sizeof(task_t));
             memset(tasks[i], 0, sizeof(task_t));
             tasks[i]->pid = i;
+            spin_unlock(&task_queue_lock);
             return tasks[i];
         }
     }
+
+    spin_unlock(&task_queue_lock);
 
     return NULL;
 }
@@ -199,6 +205,8 @@ task_t *task_search(task_state_t state, uint32_t cpu_id)
 {
     task_t *task = NULL;
 
+    spin_lock(&task_queue_lock);
+
     uint64_t continue_ptr_count = 0;
 
     for (size_t i = 1; i < MAX_TASK_NUM; i++)
@@ -227,6 +235,8 @@ task_t *task_search(task_state_t state, uint32_t cpu_id)
     {
         task = idle_tasks[cpu_id];
     }
+
+    spin_unlock(&task_queue_lock);
 
     return task;
 }
@@ -307,7 +317,7 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], int argv
         }
     }
 
-    uint64_t total_length = 2 * sizeof(uint64_t) + 7 * 2 * sizeof(uint64_t) + (env_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) + (argv_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) + sizeof(uint64_t);
+    uint64_t total_length = 2 * sizeof(uint64_t) + 7 * 2 + sizeof(uint64_t)+ (env_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) + (argv_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) + sizeof(uint64_t);
     tmp_stack -= (tmp_stack - total_length) % 0x10;
 
     // push auxv
@@ -800,6 +810,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     map_page_range(get_current_page_dir(true), USER_STACK_START, 0, USER_STACK_END - USER_STACK_START, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
+    memset((void *)USER_STACK_START, 0, USER_STACK_END - USER_STACK_START);
     uint64_t stack = push_infos(current_task, USER_STACK_END, (char **)new_argv, argv_count, (char **)new_envp, envp_count, e_entry, (uint64_t)(load_start + ehdr->e_phoff), ehdr->e_phnum, interpreter_entry ? INTERPRETER_BASE_ADDR : load_start);
 
     free_frames_bytes(buffer, node->size);
@@ -894,11 +905,13 @@ void task_unblock(task_t *task, int reason)
 
 void task_exit_inner(task_t *task, int64_t code)
 {
-    task->current_state = TASK_DIED;
-    task->state = TASK_DIED;
-
     arch_disable_interrupt();
     can_schedule = false;
+
+    spin_lock(&task_queue_lock);
+
+    task->current_state = TASK_DIED;
+    task->state = TASK_DIED;
 
     arch_context_free(task->arch_context);
 
@@ -956,40 +969,30 @@ void task_exit_inner(task_t *task, int64_t code)
 
     procfs_on_exit_task(task);
 
+    spin_unlock(&task_queue_lock);
+
     can_schedule = true;
 }
 
 uint64_t task_exit(int64_t code)
 {
-    arch_disable_interrupt();
-
-    // uint64_t continue_ptr_count = 0;
-    // for (int i = 0; i < MAX_TASK_NUM; i++)
-    // {
-    //     if (!tasks[i])
-    //     {
-    //         continue_ptr_count++;
-    //         if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
-    //             break;
-    //         continue;
-    //     }
-    //     continue_ptr_count = 0;
-    //     if ((tasks[i]->ppid != tasks[i]->pid) && (tasks[i]->ppid == current_task->pid))
-    //     {
-    //         task_exit_inner(tasks[i], SIGCHLD);
-
-    //         free_page_table(tasks[i]->arch_context->mm);
-
-    //         free(tasks[i]->arch_context);
-
-    //         free_frames_bytes((void *)(tasks[i]->kernel_stack - STACK_SIZE), STACK_SIZE);
-    //         free_frames_bytes((void *)(tasks[i]->syscall_stack - STACK_SIZE), STACK_SIZE);
-
-    //         free(tasks[i]);
-
-    //         tasks[i] = NULL;
-    //     }
-    // }
+    uint64_t continue_ptr_count = 0;
+    for (int i = 0; i < MAX_TASK_NUM; i++)
+    {
+        if (!tasks[i])
+        {
+            continue_ptr_count++;
+            if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
+                break;
+            continue;
+        }
+        continue_ptr_count = 0;
+        if ((tasks[i]->ppid != tasks[i]->pid) && (tasks[i]->ppid == current_task->pid))
+        {
+            tasks[i]->signal |= SIGMASK(SIGKILL);
+            task_unblock(tasks[i], SIGKILL);
+        }
+    }
 
     task_exit_inner(current_task, code);
 
@@ -1021,7 +1024,9 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
     bool has_children = false;
     for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
     {
+        spin_lock(&task_queue_lock);
         task_t *ptr = tasks[i];
+        spin_unlock(&task_queue_lock);
         if (ptr && ptr->ppid == current_task->pid)
         {
             has_children = true;
@@ -1042,7 +1047,9 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
         uint64_t continue_ptr_count = 0;
         for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
         {
+            spin_lock(&task_queue_lock);
             task_t *ptr = tasks[i];
+            spin_unlock(&task_queue_lock);
 
             if (ptr == NULL)
             {
@@ -1119,7 +1126,9 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
 
         ret = target->pid;
 
+        spin_lock(&task_queue_lock);
         tasks[target->pid] = NULL;
+        spin_unlock(&task_queue_lock);
 
         free_page_table(target->arch_context->mm);
 
