@@ -255,12 +255,6 @@ uint64_t sys_pselect6(uint64_t nfds, fd_set *readfds, fd_set *writefds, fd_set *
     size_t sigsetsize = weirdPselect6->ss_len;
     sigset_t *sigmask = weirdPselect6->ss;
 
-    if (sigsetsize < sizeof(sigset_t))
-    {
-        printk("weird sigset size\n");
-        return (uint64_t)-EINVAL;
-    }
-
     sigset_t origmask;
     if (sigmask)
         sys_ssetmask(SIG_SETMASK, sigmask, &origmask);

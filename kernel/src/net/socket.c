@@ -1441,6 +1441,33 @@ size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr, socklen_t 
     return 0;
 }
 
+size_t unix_socket_accept_getpeername(uint64_t fd, struct sockaddr_un *addr, socklen_t *len)
+{
+    if (fd > MAX_FD_NUM || !current_task->fd_info->fds[fd])
+        return (size_t)-EBADF;
+
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    unix_socket_pair_t *pair = handle->sock;
+
+    size_t actualLen = sizeof(addr->sun_family) + strlen(pair->filename);
+    int toCopy = MIN(*len, actualLen);
+    if (toCopy < sizeof(addr->sun_family))
+        return -(EINVAL);
+    addr->sun_family = 1;
+    if (pair->filename[0] == '@')
+    {
+        memcpy(addr->sun_path, pair->filename + 1, toCopy - sizeof(addr->sun_family) - 1);
+        // addr->sun_path[0] = '\0';
+        *len = toCopy - 1;
+    }
+    else
+    {
+        memcpy(addr->sun_path, pair->filename, toCopy - sizeof(addr->sun_family));
+        *len = toCopy;
+    }
+    return 0;
+}
+
 int unix_socket_getsockname(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen)
 {
     if (fd > MAX_FD_NUM || !current_task->fd_info->fds[fd])
@@ -1504,6 +1531,7 @@ socket_op_t accept_ops = {
     .recvfrom = unix_socket_accept_recv_from,
     .sendmsg = unix_socket_accept_send_msg,
     .recvmsg = unix_socket_accept_recv_msg,
+    .getpeername = unix_socket_accept_getpeername,
     .getsockopt = unix_socket_getsockopt,
     .setsockopt = unix_socket_setsockopt,
 };

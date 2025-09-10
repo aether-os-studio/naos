@@ -35,11 +35,10 @@ uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode)
 
     int create_mode = (flags & O_CREAT);
 
-    // printk("Opening file %s\n", name);
-
     vfs_node_t node = vfs_open(name);
     if (!node && !create_mode)
     {
+        // serial_fprintk("Opening file %s failed\n", name);
         return (uint64_t)-ENOENT;
     }
 
@@ -650,6 +649,7 @@ uint64_t sys_stat(const char *fn, struct stat *buf)
     vfs_node_t node = vfs_open(fn);
     if (!node)
     {
+        // serial_fprintk("Stating file %s failed\n", fn);
         return (uint64_t)-ENOENT;
     }
 

@@ -145,6 +145,7 @@ int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *
         return count;
     }
     default:
+        printk("futex: Unsupported op: %d\n", op);
         return -ENOSYS;
     }
 }

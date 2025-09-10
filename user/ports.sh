@@ -29,7 +29,7 @@ APK_CMD="sudo $APK_PATH --arch $ARCH -U --allow-untrusted --root $SYSROOT/"
 $APK_CMD -X "$MIRROR/main" -U --initdb add alpine-base bash coreutils grep musl ncurses
 
 # Use a fast mirror :)
-printf "${MIRROR}/main\n${MIRROR}/community\n" | sudo tee $SYSROOT/etc/apk/repositories
+printf "${MIRROR}/main\n${MIRROR}/community\n${MIRROR_ROOT}/edge/testing" | sudo tee $SYSROOT/etc/apk/repositories
 
 sudo cp -r $SCRIPTPATH/base/etc/resolv.conf $SYSROOT/etc/
 

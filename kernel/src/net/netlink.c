@@ -33,9 +33,6 @@ socket_op_t netlink_ops = {
 
 int netlink_socket(int domain, int type, int protocol)
 {
-    if (current_task->uid != 0) // 需要root权限
-        return -EPERM;
-
     char buf[128];
     sprintf(buf, "sock%d", sockfsfd_id++);
 

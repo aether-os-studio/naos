@@ -207,11 +207,6 @@ size_t epoll_pwait(vfs_node_t epollFd, struct epoll_event *events, int maxevents
     {
         return (uint64_t)-EFAULT;
     }
-    if (sigsetsize < sizeof(sigset_t))
-    {
-        printk("weird sigset size\n");
-        return (uint64_t)(-EINVAL);
-    }
 
     sigset_t origmask;
     if (sigmask)
