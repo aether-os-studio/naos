@@ -520,6 +520,7 @@ spinlock_t execve_lock = {0};
 uint64_t task_execve(const char *path, const char **argv, const char **envp)
 {
     arch_disable_interrupt();
+    can_schedule = false;
 
     spin_lock(&execve_lock);
 
@@ -628,6 +629,8 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
         free_frames_bytes(buffer, node->size);
         free(fullpath);
+
+        can_schedule = true;
 
         return task_execve((const char *)injected_argv[0], injected_argv, envp);
     }
@@ -854,6 +857,8 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     // current_task->brk_end = current_task->brk_start;
 
+    can_schedule = true;
+
     spin_unlock(&execve_lock);
 
     arch_to_user_mode(current_task->arch_context, interpreter_entry ? interpreter_entry : e_entry, stack);
@@ -958,33 +963,33 @@ uint64_t task_exit(int64_t code)
 {
     arch_disable_interrupt();
 
-    uint64_t continue_ptr_count = 0;
-    for (int i = 0; i < MAX_TASK_NUM; i++)
-    {
-        if (!tasks[i])
-        {
-            continue_ptr_count++;
-            if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
-                break;
-            continue;
-        }
-        continue_ptr_count = 0;
-        if ((tasks[i]->ppid != tasks[i]->pid) && (tasks[i]->ppid == current_task->pid))
-        {
-            task_exit_inner(tasks[i], SIGCHLD);
+    // uint64_t continue_ptr_count = 0;
+    // for (int i = 0; i < MAX_TASK_NUM; i++)
+    // {
+    //     if (!tasks[i])
+    //     {
+    //         continue_ptr_count++;
+    //         if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
+    //             break;
+    //         continue;
+    //     }
+    //     continue_ptr_count = 0;
+    //     if ((tasks[i]->ppid != tasks[i]->pid) && (tasks[i]->ppid == current_task->pid))
+    //     {
+    //         task_exit_inner(tasks[i], SIGCHLD);
 
-            free_page_table(tasks[i]->arch_context->mm);
+    //         free_page_table(tasks[i]->arch_context->mm);
 
-            free(tasks[i]->arch_context);
+    //         free(tasks[i]->arch_context);
 
-            free_frames_bytes((void *)(tasks[i]->kernel_stack - STACK_SIZE), STACK_SIZE);
-            free_frames_bytes((void *)(tasks[i]->syscall_stack - STACK_SIZE), STACK_SIZE);
+    //         free_frames_bytes((void *)(tasks[i]->kernel_stack - STACK_SIZE), STACK_SIZE);
+    //         free_frames_bytes((void *)(tasks[i]->syscall_stack - STACK_SIZE), STACK_SIZE);
 
-            free(tasks[i]);
+    //         free(tasks[i]);
 
-            tasks[i] = NULL;
-        }
-    }
+    //         tasks[i] = NULL;
+    //     }
+    // }
 
     task_exit_inner(current_task, code);
 

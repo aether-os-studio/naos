@@ -461,7 +461,7 @@ static int vmware_add_fb(drm_device_t *drm_dev, struct drm_mode_fb_cmd *fb_cmd)
     fb->bpp = fb_cmd->bpp;
     fb->depth = fb_cmd->depth;
     fb->handle = fb_cmd->handle;
-    fb->format = DRM_FORMAT_ARGB8888;
+    fb->format = DRM_FORMAT_XRGB8888;
 
     fb_cmd->fb_id = fb->id;
 
@@ -712,7 +712,7 @@ static int vmware_get_planes(drm_device_t *drm_dev, drm_plane_t **planes, uint32
     planes[0]->possible_crtcs = 1;
     planes[0]->count_format_types = 1;
     planes[0]->format_types = malloc(sizeof(uint32_t) * planes[0]->count_format_types);
-    planes[0]->format_types[0] = DRM_FORMAT_ARGB8888;
+    planes[0]->format_types[0] = DRM_FORMAT_XRGB8888;
     return 0;
 }
 

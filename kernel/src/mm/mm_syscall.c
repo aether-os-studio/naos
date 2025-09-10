@@ -64,6 +64,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
         {
             if (bitmap_get(current_task->mmap_regions, (addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE) == false && !(flags & MAP_FIXED))
             {
+                spin_unlock(&mm_op_lock);
                 goto find_free_addr;
             }
         }
