@@ -62,10 +62,13 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
 
         if (addr >= USER_MMAP_START && addr + len <= USER_MMAP_END)
         {
-            if (bitmap_get(current_task->mmap_regions, (addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE) == false && !(flags & MAP_FIXED))
+            for (uint64_t a = addr; a < addr + len; a += DEFAULT_PAGE_SIZE)
             {
-                spin_unlock(&mm_op_lock);
-                goto find_free_addr;
+                if (bitmap_get(current_task->mmap_regions, (a - USER_MMAP_START) / DEFAULT_PAGE_SIZE) == false && !(flags & MAP_FIXED))
+                {
+                    spin_unlock(&mm_op_lock);
+                    goto find_free_addr;
+                }
             }
         }
 
@@ -121,20 +124,52 @@ uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot)
 
 uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uint64_t flags, uint64_t new_addr)
 {
-    void *buff = alloc_frames_bytes(old_size);
-    memcpy(buff, (void *)old_addr, old_size);
+    new_size = (new_size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
 
-    uint64_t ret = sys_munmap(old_addr, old_size);
-    if ((int64_t)ret < 0)
+    uint64_t old_addr_phys = translate_address(get_current_page_dir(true), old_addr);
+
+    if (new_addr == 0)
     {
-        free_frames_bytes(buff, old_size);
-        return ret;
+        flags &= (~MAP_FIXED);
+    find_free_addr:
+        uint64_t page_count = new_size / DEFAULT_PAGE_SIZE;
+        uint64_t idx = bitmap_find_range(current_task->mmap_regions, page_count, true);
+        if (idx == (uint64_t)-1)
+        {
+            printk("Failed find range for mmap\n");
+            return (uint64_t)-ENOMEM;
+        }
+        new_addr = (idx * DEFAULT_PAGE_SIZE) + USER_MMAP_START;
     }
 
-    uint64_t addr = sys_mmap(new_addr, new_size, PROT_READ | PROT_WRITE, flags, (uint64_t)-1, 0);
-    memcpy((void *)addr, buff, MIN(old_size, new_size));
-    free_frames_bytes(buff, old_size);
-    return addr;
+    spin_lock(&mm_op_lock);
+
+    uint64_t pt_flags = PT_FLAG_R | PT_FLAG_W | PT_FLAG_U;
+
+    if (new_addr >= USER_MMAP_START && new_addr + new_size <= USER_MMAP_END)
+    {
+        for (uint64_t addr = new_addr; addr < new_addr + new_size; addr += DEFAULT_PAGE_SIZE)
+        {
+            if (bitmap_get(current_task->mmap_regions, (addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE) == false && !(flags & MAP_FIXED))
+            {
+                spin_unlock(&mm_op_lock);
+                goto find_free_addr;
+            }
+        }
+    }
+
+    map_page_range(get_current_page_dir(true), new_addr & (~(DEFAULT_PAGE_SIZE - 1)), old_addr_phys & (~(DEFAULT_PAGE_SIZE - 1)), (new_size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
+
+    if (new_addr >= USER_MMAP_START && new_addr + new_size <= USER_MMAP_END)
+    {
+        bitmap_set_range(current_task->mmap_regions, (new_addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (new_addr - USER_MMAP_START + new_size) / DEFAULT_PAGE_SIZE, false);
+    }
+
+    spin_unlock(&mm_op_lock);
+
+    sys_munmap(old_addr, old_size);
+
+    return new_addr;
 }
 
 void *general_map(vfs_read_t read_callback, void *file, uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset)

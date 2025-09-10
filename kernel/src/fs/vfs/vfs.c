@@ -494,6 +494,8 @@ create:
         node->type = file_none;
         break;
     }
+    node->dev = dev;
+    node->rdev = dev;
     callbackof(current, mknod)(current->handle, filename, node, umode, dev);
 
     free(path);
