@@ -1465,8 +1465,6 @@ int unix_socket_accept_getsockname(uint64_t fd, struct sockaddr_un *addr, sockle
 
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     unix_socket_pair_t *pair = handle->sock;
-    if (!pair)
-        return -(ENOTCONN);
 
     addr->sun_family = 1;
     strcpy(addr->sun_path, pair->filename);

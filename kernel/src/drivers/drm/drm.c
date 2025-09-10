@@ -524,6 +524,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
             break;
 
         default:
+            printk("drm: Invalid blob id %d\n", blob->blob_id);
             return -ENOENT;
         }
 
@@ -541,6 +542,87 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
 
         switch (props->obj_type)
         {
+        case DRM_MODE_OBJECT_ANY:
+            int i = 0;
+            for (int idx = 0; idx < DRM_MAX_FRAMEBUFFERS_PER_DEVICE; idx++)
+            {
+                if (dev->resource_mgr.framebuffers[idx])
+                {
+                    i++;
+                }
+            }
+            for (int idx = 0; idx < DRM_MAX_PLANES_PER_DEVICE; idx++)
+            {
+                if (dev->resource_mgr.planes[idx])
+                {
+                    i++;
+                }
+            }
+            for (int idx = 0; idx < DRM_MAX_CRTCS_PER_DEVICE; idx++)
+            {
+                if (dev->resource_mgr.crtcs[idx])
+                {
+                    i++;
+                }
+            }
+
+            props->count_props = i;
+
+            i = 0;
+            if (props->props_ptr)
+            {
+                uint32_t *prop_ids = (uint32_t *)(uintptr_t)props->props_ptr;
+                for (int idx = 0; idx < DRM_MAX_FRAMEBUFFERS_PER_DEVICE; idx++)
+                {
+                    if (dev->resource_mgr.framebuffers[idx])
+                    {
+                        prop_ids[i++] = DRM_PROPERTY_ID_FB_ID;
+                    }
+                }
+                for (int idx = 0; idx < DRM_MAX_PLANES_PER_DEVICE; idx++)
+                {
+                    if (dev->resource_mgr.planes[idx])
+                    {
+                        prop_ids[i++] = DRM_PROPERTY_ID_PLANE_TYPE;
+                    }
+                }
+                for (int idx = 0; idx < DRM_MAX_CRTCS_PER_DEVICE; idx++)
+                {
+                    if (dev->resource_mgr.crtcs[idx])
+                    {
+                        prop_ids[i++] = DRM_PROPERTY_ID_CRTC_ID;
+                    }
+                }
+            }
+
+            i = 0;
+            if (props->prop_values_ptr)
+            {
+                uint64_t *prop_values = (uint64_t *)(uintptr_t)props->prop_values_ptr;
+                for (int idx = 0; idx < DRM_MAX_FRAMEBUFFERS_PER_DEVICE; idx++)
+                {
+                    if (dev->resource_mgr.framebuffers[idx])
+                    {
+                        prop_values[i++] = dev->resource_mgr.framebuffers[idx]->id;
+                    }
+                }
+                for (int idx = 0; idx < DRM_MAX_PLANES_PER_DEVICE; idx++)
+                {
+                    if (dev->resource_mgr.planes[idx])
+                    {
+                        prop_values[i++] = dev->resource_mgr.planes[idx]->plane_type;
+                    }
+                }
+                for (int idx = 0; idx < DRM_MAX_CRTCS_PER_DEVICE; idx++)
+                {
+                    if (dev->resource_mgr.crtcs[idx])
+                    {
+                        prop_values[i++] = dev->resource_mgr.crtcs[idx]->id;
+                    }
+                }
+            }
+            break;
+
         case DRM_MODE_OBJECT_PLANE:
             props->count_props = 1;
             if (props->props_ptr)
@@ -606,7 +688,10 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
             return 0;
         case DRM_CLIENT_CAP_UNIVERSAL_PLANES:
             return 0;
+        case DRM_CLIENT_CAP_CURSOR_PLANE_HOTSPOT:
+            return 0;
         default:
+            printk("drm: Invalid client type %d\n", cap->capability);
             return -EINVAL;
         }
     }
@@ -735,7 +820,7 @@ ssize_t drm_poll(void *data, size_t event)
 
     ssize_t revent = 0;
 
-    if (event == EPOLLIN)
+    if (event & EPOLLIN)
     {
         if (dev->drm_events[0])
         {

@@ -672,7 +672,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         free(new_envp);
         free(fullpath);
         spin_unlock(&execve_lock);
-        return (uint64_t)-EINVAL;
+        return (uint64_t)-ENOEXEC;
     }
 
     // 处理程序头

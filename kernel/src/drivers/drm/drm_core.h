@@ -81,6 +81,37 @@ typedef struct drm_framebuffer
     uint32_t refcount;
 } drm_framebuffer_t;
 
+enum drm_plane_type
+{
+    /**
+     * @DRM_PLANE_TYPE_OVERLAY:
+     *
+     * Overlay planes represent all non-primary, non-cursor planes. Some
+     * drivers refer to these types of planes as "sprites" internally.
+     */
+    DRM_PLANE_TYPE_OVERLAY,
+
+    /**
+     * @DRM_PLANE_TYPE_PRIMARY:
+     *
+     * A primary plane attached to a CRTC is the most likely to be able to
+     * light up the CRTC when no scaling/cropping is used and the plane
+     * covers the whole CRTC.
+     */
+    DRM_PLANE_TYPE_PRIMARY,
+
+    /**
+     * @DRM_PLANE_TYPE_CURSOR:
+     *
+     * A cursor plane attached to a CRTC is more likely to be able to be
+     * enabled when no scaling/cropping is used and the framebuffer has the
+     * size indicated by &drm_mode_config.cursor_width and
+     * &drm_mode_config.cursor_height. Additionally, if the driver doesn't
+     * support modifiers, the framebuffer should have a linear layout.
+     */
+    DRM_PLANE_TYPE_CURSOR,
+};
+
 typedef struct drm_plane
 {
     uint32_t id;
@@ -92,6 +123,7 @@ typedef struct drm_plane
     uint32_t *format_types;
     void *driver_data;
     uint32_t refcount;
+    enum drm_plane_type plane_type;
 } drm_plane_t;
 
 typedef struct drm_resource_manager

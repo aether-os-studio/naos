@@ -39,18 +39,6 @@ uint64_t get_arch_page_table_flags(uint64_t flags)
     return result;
 }
 
-bool is_stack_memory_region(uint64_t pml4_idx, uint64_t pdpt_idx, uint64_t pd_idx, uint64_t pt_idx)
-{
-    uint64_t vaddr = (pml4_idx << 39) | (pdpt_idx << 30) | (pd_idx << 21) | (pt_idx << 12);
-
-    // todo: others
-    if ((vaddr >= USER_STACK_START) && (vaddr <= USER_BRK_END))
-    {
-        return true;
-    }
-    return false;
-}
-
 void arch_flush_tlb(uint64_t vaddr)
 {
     asm volatile("invlpg (%0)" ::"r"(vaddr) : "memory");

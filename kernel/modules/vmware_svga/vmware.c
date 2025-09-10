@@ -713,6 +713,7 @@ static int vmware_get_planes(drm_device_t *drm_dev, drm_plane_t **planes, uint32
     planes[0]->count_format_types = 1;
     planes[0]->format_types = malloc(sizeof(uint32_t) * planes[0]->count_format_types);
     planes[0]->format_types[0] = DRM_FORMAT_XRGB8888;
+    planes[0]->plane_type = DRM_PLANE_TYPE_PRIMARY;
     return 0;
 }
 

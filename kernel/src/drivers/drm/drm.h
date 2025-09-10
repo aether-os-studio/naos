@@ -698,6 +698,7 @@ extern "C"
 #define DRM_CAP_CRTC_IN_VBLANK_EVENT 0x12
 #define DRM_CAP_SYNCOBJ 0x13
 #define DRM_CAP_SYNCOBJ_TIMELINE 0x14
+#define DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP 0x15
 
     /** DRM_IOCTL_GET_CAP ioctl argument type */
     struct drm_get_cap
@@ -745,6 +746,8 @@ extern "C"
  * also supporting DRM_CLIENT_CAP_ATOMIC
  */
 #define DRM_CLIENT_CAP_WRITEBACK_CONNECTORS 5
+
+#define DRM_CLIENT_CAP_CURSOR_PLANE_HOTSPOT 6
 
     /** DRM_IOCTL_SET_CLIENT_CAP ioctl argument type */
     struct drm_set_client_cap
@@ -1125,37 +1128,6 @@ enum drm_property_id
     DRM_PROPERTY_ID_CRTC_W,
     DRM_PROPERTY_ID_CRTC_H,
     DRM_PROPERTY_ID_IN_FORMATS,
-};
-
-enum drm_plane_type
-{
-    /**
-     * @DRM_PLANE_TYPE_OVERLAY:
-     *
-     * Overlay planes represent all non-primary, non-cursor planes. Some
-     * drivers refer to these types of planes as "sprites" internally.
-     */
-    DRM_PLANE_TYPE_OVERLAY,
-
-    /**
-     * @DRM_PLANE_TYPE_PRIMARY:
-     *
-     * A primary plane attached to a CRTC is the most likely to be able to
-     * light up the CRTC when no scaling/cropping is used and the plane
-     * covers the whole CRTC.
-     */
-    DRM_PLANE_TYPE_PRIMARY,
-
-    /**
-     * @DRM_PLANE_TYPE_CURSOR:
-     *
-     * A cursor plane attached to a CRTC is more likely to be able to be
-     * enabled when no scaling/cropping is used and the framebuffer has the
-     * size indicated by &drm_mode_config.cursor_width and
-     * &drm_mode_config.cursor_height. Additionally, if the driver doesn't
-     * support modifiers, the framebuffer should have a linear layout.
-     */
-    DRM_PLANE_TYPE_CURSOR,
 };
 
 enum drm_blob_ids
