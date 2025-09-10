@@ -344,7 +344,7 @@ int socket_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen)
         }
         else
         {
-            vfs_mkfile(safe);
+            vfs_mknod(safe, S_IFSOCK | 0666, 0);
         }
     }
 
