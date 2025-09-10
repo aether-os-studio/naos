@@ -486,6 +486,7 @@ static pci_driver_t e1000_driver = {
     .probe = e1000_pci_probe,
     .remove = e1000_pci_remove,
     .shutdown = e1000_pci_shutdown,
+    .flags = 0,
 };
 
 // Module initialization function

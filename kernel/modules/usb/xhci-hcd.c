@@ -1234,6 +1234,7 @@ pci_driver_t xhci_hcd_driver = {
     .probe = xhci_probe,
     .remove = xhci_remove,
     .shutdown = xhci_shutdown,
+    .flags = 0,
 };
 
 __attribute__((visibility("default"))) int dlmain()

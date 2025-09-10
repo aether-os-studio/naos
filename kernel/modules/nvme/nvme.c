@@ -28,6 +28,7 @@ pci_driver_t nvme_driver = {
     .probe = nvme_probe,
     .remove = nvme_remove,
     .shutdown = nvme_shutdown,
+    .flags = 0,
 };
 
 __attribute__((visibility("default"))) int dlmain()

@@ -1,11 +1,7 @@
-#include <arch/arch.h>
-#include <drivers/bus/pci.h>
-#include <drivers/fb.h>
-#include <drivers/drm/drm_core.h>
-#include <drivers/drm/drm.h>
-#include <drivers/drm/drm_fourcc.h>
-#include <drivers/gfx/vmware/vmware.h>
-#include <mm/mm.h>
+#include <libs/aether/drm.h>
+#include <libs/aether/mm.h>
+#include <libs/aether/pci.h>
+#include "vmware.h"
 
 #define HZ 60
 
@@ -324,6 +320,8 @@ int vmware_gpu_move_cursor(vmware_gpu_device_t *device, uint32_t display_id,
     return 0;
 }
 
+extern drm_device_op_t vmware_drm_device_op;
+
 // PCI initialization
 void vmware_gpu_pci_init(pci_device_t *pci_dev)
 {
@@ -421,6 +419,8 @@ void vmware_gpu_pci_init(pci_device_t *pci_dev)
             }
         }
     }
+
+    drm_regist_pci_dev(device, &vmware_drm_device_op, pci_dev);
 
     vmware_gpu_devices[vmware_gpu_devices_count++] = device;
 }
@@ -738,31 +738,38 @@ drm_device_op_t vmware_drm_device_op = {
     .get_planes = vmware_get_planes,
 };
 
-// Main initialization
-void vmware_gpu_init()
-{
-    pci_device_t *pci_devices[MAX_VMWARE_GPU_DEVICES];
-    uint32_t count = 0;
-    pci_find_vid(pci_devices, &count, 0x15ad); // VMware vendor ID
-
-    for (uint32_t i = 0; i < count; i++)
-    {
-        if (pci_devices[i]->device_id == 0x0405)
-            vmware_gpu_pci_init(pci_devices[i]);
-    }
-}
-
-// IRQ handler
-void vmware_gpu_irq_handler(vmware_gpu_device_t *device)
-{
-    if (!vmware_has_capability(device, cap_irqmask))
-    {
-        return;
-    }
-
-    uint32_t irq_flags = io_in32(device->io_base + 0x08);
-    device->pending_irqs |= irq_flags;
-    io_out32(device->io_base + 0x08, irq_flags);
-}
-
 #endif
+
+int vmware_svga_probe(pci_device_t *dev, uint32_t vendor_device_id)
+{
+#if defined(__x86_64__)
+    vmware_gpu_pci_init(dev);
+#endif
+
+    return 0;
+}
+
+void vmware_svga_remove(pci_device_t *dev)
+{
+}
+
+void vmware_svga_shutdown(pci_device_t *dev)
+{
+}
+
+pci_driver_t vmware_svga_pci_driver = {
+    .name = "virtio",
+    .class_id = 0x00000000,
+    .vendor_device_id = 0x15AD0405,
+    .probe = vmware_svga_probe,
+    .remove = vmware_svga_remove,
+    .shutdown = vmware_svga_shutdown,
+    .flags = PCI_DRIVER_FLAGS_NEED_SYSFS,
+};
+
+int dlmain()
+{
+    regist_pci_driver(&vmware_svga_pci_driver);
+
+    return 0;
+}

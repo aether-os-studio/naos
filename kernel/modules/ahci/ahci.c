@@ -406,6 +406,7 @@ pci_driver_t ahci_driver = {
     .probe = ahci_probe,
     .remove = ahci_remove,
     .shutdown = ahci_shutdown,
+    .flags = 0,
 };
 
 __attribute__((visibility("default"))) int dlmain()

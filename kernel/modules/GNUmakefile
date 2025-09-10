@@ -9,6 +9,7 @@ all:
 	$(MAKE) -C usb
 	$(MAKE) -C e1000
 	$(MAKE) -C virtio
+	$(MAKE) -C vmware_svga
 
 	$(MAKE) -C ext
 

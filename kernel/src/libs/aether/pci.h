@@ -6,6 +6,8 @@
 #include "../../drivers/bus/msi.h"
 #endif
 
+#define PCI_DRIVER_FLAGS_NEED_SYSFS (1 << 0)
+
 typedef struct pci_driver
 {
     const char *name;
@@ -13,6 +15,7 @@ typedef struct pci_driver
     int (*probe)(pci_device_t *dev, uint32_t vendor_device_id);
     void (*remove)(pci_device_t *dev);
     void (*shutdown)(pci_device_t *dev);
+    int flags;
 } pci_driver_t;
 
 #define MAX_PCI_DRIVERS 256

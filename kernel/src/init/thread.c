@@ -8,10 +8,6 @@
 #include <fs/partition.h>
 #include <drivers/fb.h>
 
-#if defined(__x86_64__)
-#include <drivers/gfx/vmware/vmware.h>
-#endif
-
 extern void fatfs_init();
 extern void iso9660_init();
 extern void sysfs_init();
@@ -46,10 +42,6 @@ void init_thread(uint64_t arg)
 
     partition_init();
 
-#if defined(__x86_64__)
-    vmware_gpu_init();
-#endif
-
     fs_syscall_init();
     socketfs_init();
     pipefs_init();
@@ -59,12 +51,12 @@ void init_thread(uint64_t arg)
     mount_root();
 
     fbdev_init();
-    drm_init();
 
     sysfs_init();
 
+    pci_init_after_sysfs();
+
     fbdev_init_sysfs();
-    drm_init_sysfs();
 
     dev_init_after_sysfs();
 

@@ -10,8 +10,6 @@
 #include <arch/arch.h>
 #include <mm/mm.h>
 
-#include <drivers/gfx/vmware/vmware.h>
-
 #define HZ 60
 
 extern volatile struct limine_framebuffer_request framebuffer_request;
@@ -757,115 +755,105 @@ void *drm_map(void *data, void *addr, uint64_t offset, uint64_t len)
     return addr;
 }
 
-extern drm_device_op_t simple_drm_ops;
+static int drm_id = 0;
 
-void drm_init()
+drm_device_t *drm_regist_pci_dev(void *data, drm_device_op_t *op, pci_device_t *pci_dev)
 {
-    char buf[16];
-    sprintf(buf, "dri/card%d", 0);
-    drm_device_t *drm = malloc(sizeof(drm_device_t));
-    memset(drm, 0, sizeof(drm_device_t));
-    drm->id = 1;
+    char buf[64];
+    sprintf(buf, "dri/card%d", drm_id);
+    drm_device_t *drm_dev = malloc(sizeof(drm_device_t));
+    memset(drm_dev, 0, sizeof(drm_device_t));
+    drm_dev->id = drm_id + 1;
 
     // Initialize resource manager
-    drm_resource_manager_init(&drm->resource_mgr);
+    drm_resource_manager_init(&drm_dev->resource_mgr);
 
-#if defined(__x86_64__)
-    if (vmware_gpu_devices_count)
-    {
-        drm->data = vmware_gpu_devices[0];
-        drm->op = &vmware_drm_device_op;
-    }
-    else
-#endif
-    {
-        drm->data = framebuffer;
-        drm->op = &simple_drm_ops;
-    }
+    drm_dev->data = data;
+    drm_dev->op = op;
 
     // Populate hardware resources if driver supports it
-    if (drm->op->get_connectors)
+    if (drm_dev->op->get_connectors)
     {
         drm_connector_t *connectors[DRM_MAX_CONNECTORS_PER_DEVICE];
         memset(connectors, 0, sizeof(connectors));
         uint32_t connector_count = 0;
-        if (drm->op->get_connectors(drm, connectors, &connector_count) == 0)
+        if (drm_dev->op->get_connectors(drm_dev, connectors, &connector_count) == 0)
         {
             for (uint32_t i = 0; i < connector_count && i < DRM_MAX_CONNECTORS_PER_DEVICE; i++)
             {
                 if (connectors[i])
                 {
-                    uint32_t slot = drm_find_free_slot((void **)drm->resource_mgr.connectors, DRM_MAX_CONNECTORS_PER_DEVICE);
+                    uint32_t slot = drm_find_free_slot((void **)drm_dev->resource_mgr.connectors, DRM_MAX_CONNECTORS_PER_DEVICE);
                     if (slot != (uint32_t)-1)
                     {
-                        drm->resource_mgr.connectors[slot] = connectors[i];
-                        connectors[i]->id = drm->resource_mgr.next_connector_id++;
+                        drm_dev->resource_mgr.connectors[slot] = connectors[i];
+                        connectors[i]->id = drm_dev->resource_mgr.next_connector_id++;
                     }
                 }
             }
         }
     }
 
-    if (drm->op->get_crtcs)
+    if (drm_dev->op->get_crtcs)
     {
         drm_crtc_t *crtcs[DRM_MAX_CRTCS_PER_DEVICE];
         memset(crtcs, 0, sizeof(crtcs));
         uint32_t crtc_count = 0;
-        if (drm->op->get_crtcs(drm, crtcs, &crtc_count) == 0)
+        if (drm_dev->op->get_crtcs(drm_dev, crtcs, &crtc_count) == 0)
         {
             for (uint32_t i = 0; i < crtc_count && i < DRM_MAX_CRTCS_PER_DEVICE; i++)
             {
                 if (crtcs[i])
                 {
-                    uint32_t slot = drm_find_free_slot((void **)drm->resource_mgr.crtcs, DRM_MAX_CRTCS_PER_DEVICE);
+                    uint32_t slot = drm_find_free_slot((void **)drm_dev->resource_mgr.crtcs, DRM_MAX_CRTCS_PER_DEVICE);
                     if (slot != (uint32_t)-1)
                     {
-                        drm->resource_mgr.crtcs[slot] = crtcs[i];
-                        crtcs[i]->id = drm->resource_mgr.next_crtc_id++;
+                        drm_dev->resource_mgr.crtcs[slot] = crtcs[i];
+                        crtcs[i]->id = drm_dev->resource_mgr.next_crtc_id++;
                     }
                 }
             }
         }
     }
 
-    if (drm->op->get_encoders)
+    if (drm_dev->op->get_encoders)
     {
         drm_encoder_t *encoders[DRM_MAX_ENCODERS_PER_DEVICE];
         memset(encoders, 0, sizeof(encoders));
         uint32_t encoder_count = 0;
-        if (drm->op->get_encoders(drm, encoders, &encoder_count) == 0)
+        if (drm_dev->op->get_encoders(drm_dev, encoders, &encoder_count) == 0)
         {
             for (uint32_t i = 0; i < encoder_count && i < DRM_MAX_ENCODERS_PER_DEVICE; i++)
             {
                 if (encoders[i])
                 {
-                    uint32_t slot = drm_find_free_slot((void **)drm->resource_mgr.encoders, DRM_MAX_ENCODERS_PER_DEVICE);
+                    uint32_t slot = drm_find_free_slot((void **)drm_dev->resource_mgr.encoders, DRM_MAX_ENCODERS_PER_DEVICE);
                     if (slot != (uint32_t)-1)
                     {
-                        drm->resource_mgr.encoders[slot] = encoders[i];
-                        encoders[i]->id = drm->resource_mgr.next_encoder_id++;
+                        drm_dev->resource_mgr.encoders[slot] = encoders[i];
+                        encoders[i]->id = drm_dev->resource_mgr.next_encoder_id++;
                     }
                 }
             }
         }
     }
 
-    if (drm->op->get_planes)
+    if (drm_dev->op->get_planes)
     {
         drm_plane_t *planes[DRM_MAX_PLANES_PER_DEVICE];
         memset(planes, 0, sizeof(planes));
         uint32_t plane_count = 0;
-        if (drm->op->get_planes(drm, planes, &plane_count) == 0)
+        if (drm_dev->op->get_planes(drm_dev, planes, &plane_count) == 0)
         {
             for (uint32_t i = 0; i < plane_count && i < DRM_MAX_PLANES_PER_DEVICE; i++)
             {
                 if (planes[i])
                 {
-                    uint32_t slot = drm_find_free_slot((void **)drm->resource_mgr.planes, DRM_MAX_PLANES_PER_DEVICE);
+                    uint32_t slot = drm_find_free_slot((void **)drm_dev->resource_mgr.planes, DRM_MAX_PLANES_PER_DEVICE);
                     if (slot != (uint32_t)-1)
                     {
-                        drm->resource_mgr.planes[slot] = planes[i];
-                        planes[i]->id = drm->resource_mgr.next_plane_id++;
+                        drm_dev->resource_mgr.planes[slot] = planes[i];
+                        planes[i]->id = drm_dev->resource_mgr.next_plane_id++;
                     }
                 }
             }
@@ -873,9 +861,9 @@ void drm_init()
     }
 
     // If no hardware resources were found, create default ones
-    if (!drm->resource_mgr.connectors[0])
+    if (!drm_dev->resource_mgr.connectors[0])
     {
-        drm_connector_t *connector = drm_connector_alloc(&drm->resource_mgr, DRM_MODE_CONNECTOR_VIRTUAL, NULL);
+        drm_connector_t *connector = drm_connector_alloc(&drm_dev->resource_mgr, DRM_MODE_CONNECTOR_VIRTUAL, NULL);
         if (connector)
         {
             connector->connection = DRM_MODE_CONNECTED;
@@ -884,7 +872,7 @@ void drm_init()
             if (connector->modes)
             {
                 uint32_t width, height, bpp;
-                drm->op->get_display_info(drm, &width, &height, &bpp);
+                drm_dev->op->get_display_info(drm_dev, &width, &height, &bpp);
 
                 struct drm_mode_modeinfo mode = {
                     .clock = width * HZ,
@@ -904,108 +892,84 @@ void drm_init()
         }
     }
 
-    if (!drm->resource_mgr.crtcs[0])
+    if (!drm_dev->resource_mgr.crtcs[0])
     {
-        drm_crtc_t *crtc = drm_crtc_alloc(&drm->resource_mgr, NULL);
+        drm_crtc_t *crtc = drm_crtc_alloc(&drm_dev->resource_mgr, NULL);
         // CRTC will be configured when used
     }
 
-    if (!drm->resource_mgr.encoders[0])
+    if (!drm_dev->resource_mgr.encoders[0])
     {
-        drm_encoder_t *encoder = drm_encoder_alloc(&drm->resource_mgr, DRM_MODE_ENCODER_VIRTUAL, NULL);
-        if (encoder && drm->resource_mgr.connectors[0] && drm->resource_mgr.crtcs[0])
+        drm_encoder_t *encoder = drm_encoder_alloc(&drm_dev->resource_mgr, DRM_MODE_ENCODER_VIRTUAL, NULL);
+        if (encoder && drm_dev->resource_mgr.connectors[0] && drm_dev->resource_mgr.crtcs[0])
         {
             encoder->possible_crtcs = 1;
-            drm->resource_mgr.connectors[0]->encoder_id = encoder->id;
+            drm_dev->resource_mgr.connectors[0]->encoder_id = encoder->id;
         }
     }
 
-    drm_framebuffer_t *framebuffer = drm_framebuffer_alloc(&drm->resource_mgr, NULL);
+    drm_framebuffer_t *framebuffer = drm_framebuffer_alloc(&drm_dev->resource_mgr, NULL);
     uint32_t width, height, bpp;
-    drm->op->get_display_info(drm, &width, &height, &bpp);
+    drm_dev->op->get_display_info(drm_dev, &width, &height, &bpp);
     framebuffer->width = width;
     framebuffer->height = height;
     framebuffer->bpp = bpp;
     framebuffer->pitch = width * sizeof(uint32_t);
     framebuffer->depth = 24;
 
-    regist_dev(buf, drm_read, NULL, drm_ioctl, drm_poll, drm_map, drm);
-}
-
-void drm_init_sysfs()
-{
-    int i = 0;
+    regist_dev(buf, drm_read, NULL, drm_ioctl, drm_poll, drm_map, drm_dev);
 
     char dev_name[32];
-    sprintf(dev_name, "dri/card%d", i);
-    vfs_node_t dev_root = sysfs_regist_dev('c', 226, i, "", dev_name, "SUBSYSTEM=drm_minor\n");
+    sprintf(dev_name, "dri/card%d", drm_id);
+    vfs_node_t dev_root = sysfs_regist_dev('c', 226, drm_id, "", dev_name, "SUBSYSTEM=drm_minor\n");
 
     vfs_node_t dev = sysfs_child_append(dev_root, "device", true);
-
-    vfs_node_t boot_vga_node = sysfs_child_append(dev, "boot_vga", false);
-    vfs_write(boot_vga_node, "1", 0, 1);
 
     vfs_node_t drm = sysfs_child_append(dev, "drm", true);
 
     vfs_node_t dev_uevent = sysfs_child_append(dev, "uevent", false);
 
-    pci_device_t *pci_device = NULL;
-    for (int i = 0; i < pci_device_number; i++)
-    {
-        if (pci_devices[i]->class_code == 0x030000)
-        {
-            pci_device = pci_devices[i];
-            break;
-        }
-    }
-
     char content[64];
 
-    if (pci_device)
-    {
-        sprintf(content, "PCI_SLOT_NAME=%04x:%02x:%02x.%u\n", pci_device->segment, pci_device->bus, pci_device->slot, pci_device->func);
-        vfs_write(dev_uevent, content, 0, strlen(content));
+    sprintf(content, "PCI_SLOT_NAME=%04x:%02x:%02x.%u\n", pci_dev->segment, pci_dev->bus, pci_dev->slot, pci_dev->func);
+    vfs_write(dev_uevent, content, 0, strlen(content));
 
-        vfs_node_t dev_vendor = sysfs_child_append(dev, "vendor", false);
-        sprintf(content, "0x%04x\n", pci_device->vendor_id);
-        vfs_write(dev_vendor, content, 0, strlen(content));
+    vfs_node_t dev_vendor = sysfs_child_append(dev, "vendor", false);
+    sprintf(content, "0x%04x\n", pci_dev->vendor_id);
+    vfs_write(dev_vendor, content, 0, strlen(content));
 
-        vfs_node_t dev_subsystem_vendor = sysfs_child_append(dev, "subsystem_vendor", false);
-        sprintf(content, "0x%04x\n", pci_device->vendor_id);
-        vfs_write(dev_subsystem_vendor, content, 0, strlen(content));
+    vfs_node_t dev_subsystem_vendor = sysfs_child_append(dev, "subsystem_vendor", false);
+    sprintf(content, "0x%04x\n", pci_dev->vendor_id);
+    vfs_write(dev_subsystem_vendor, content, 0, strlen(content));
 
-        vfs_node_t dev_device = sysfs_child_append(dev, "device", false);
-        sprintf(content, "0x%04x\n", pci_device->device_id);
-        vfs_write(dev_device, content, 0, strlen(content));
+    vfs_node_t dev_device = sysfs_child_append(dev, "device", false);
+    sprintf(content, "0x%04x\n", pci_dev->device_id);
+    vfs_write(dev_device, content, 0, strlen(content));
 
-        vfs_node_t dev_subsystem_device = sysfs_child_append(dev, "subsystem_device", false);
-        sprintf(content, "0x%04x\n", pci_device->device_id);
-        vfs_write(dev_subsystem_device, content, 0, strlen(content));
-    }
-    else
-    {
-        sprintf(content, "PCI_SLOT_NAME=%04x:%02x:%02x.%u\n", pci_device->segment, pci_device->bus, pci_device->slot, pci_device->func);
-        vfs_write(dev_uevent, content, 0, strlen(content));
-    }
+    vfs_node_t dev_subsystem_device = sysfs_child_append(dev, "subsystem_device", false);
+    sprintf(content, "0x%04x\n", pci_dev->device_id);
+    vfs_write(dev_subsystem_device, content, 0, strlen(content));
 
     vfs_node_t version = sysfs_child_append(drm, "version", false);
     sprintf(content, "drm 1.1.0 20060810");
     vfs_write(version, content, 0, strlen(content));
 
-    char buf[32];
-    sprintf(buf, "card%d", i);
+    sprintf(buf, "card%d", drm_id);
     vfs_node_t cardn = sysfs_child_append(drm, (const char *)buf, true);
 
+    char path[256];
+    sprintf(path, "/sys/dev/char/226:%d/device/drm/card%d", drm_id, drm_id);
     vfs_node_t class_drm = vfs_open("/sys/class/drm");
-    vfs_node_t class_drm_cardn = sysfs_child_append_symlink(class_drm, "card0", "/sys/dev/char/226:0/device/drm/card0");
+    vfs_node_t class_drm_cardn = sysfs_child_append_symlink(class_drm, "card0", path);
 
     vfs_node_t uevent = sysfs_child_append(cardn, "uevent", false);
-    sprintf(content, "MAJOR=%d\nMINOR=%d\nDEVNAME=dri/card%d\nSUBSYSTEM=drm_minor\n", 226, i, i);
+    sprintf(content, "MAJOR=%d\nMINOR=%d\nDEVNAME=dri/card%d\nSUBSYSTEM=drm_minor\n", 226, drm_id, drm_id);
     vfs_write(uevent, content, 0, strlen(content));
-
-    sprintf(buf, "card%d-Virtual-1", i);
-    vfs_node_t cardn_virtual = sysfs_child_append(cardn, (const char *)buf, true);
 
     sysfs_child_append_symlink(cardn, "subsystem", "/sys/class/drm");
     sysfs_child_append_symlink(dev, "subsystem", "/sys/bus/pci");
+
+    drm_id++;
+
+    return drm_dev;
 }

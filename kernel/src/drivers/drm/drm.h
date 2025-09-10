@@ -1,6 +1,7 @@
 #pragma once
 
 #include "drm_mode.h"
+#include <drivers/bus/pci.h>
 
 /**
  * \file drm.h
@@ -1250,5 +1251,4 @@ struct drm_device
 
 extern void fast_copy_16(void *dst, const void *src, size_t size);
 
-void drm_init();
-void drm_init_sysfs();
+drm_device_t *drm_regist_pci_dev(void *data, drm_device_op_t *op, pci_device_t *pci_dev);

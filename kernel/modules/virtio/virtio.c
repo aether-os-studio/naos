@@ -66,6 +66,7 @@ pci_driver_t virtio_driver = {
     .probe = virtio_probe,
     .remove = virtio_remove,
     .shutdown = virtio_shutdown,
+    .flags = 0,
 };
 
 __attribute__((visibility("default"))) int dlmain()

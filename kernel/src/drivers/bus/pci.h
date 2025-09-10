@@ -98,5 +98,4 @@ const char *pci_classname(uint32_t classcode);
 void pci_find_vid(pci_device_t **result, uint32_t *n, uint32_t vid);
 void pci_find_class(pci_device_t **result, uint32_t *n, uint32_t class_code);
 void pci_init();
-
-extern void pci_device_init();
+void pci_init_after_sysfs();
