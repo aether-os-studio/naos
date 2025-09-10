@@ -530,7 +530,6 @@ spinlock_t execve_lock = {0};
 uint64_t task_execve(const char *path, const char **argv, const char **envp)
 {
     arch_disable_interrupt();
-    can_schedule = false;
 
     spin_lock(&execve_lock);
 
@@ -867,8 +866,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     memset(current_task->mmap_regions->buffer, 0xff, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 8);
 
     // current_task->brk_end = current_task->brk_start;
-
-    can_schedule = true;
 
     spin_unlock(&execve_lock);
 

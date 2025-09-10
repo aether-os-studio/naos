@@ -147,7 +147,10 @@ size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size)
     {
         spin_lock(&pair->lock);
         if (ptmx_data_avail(pair) > 0)
+        {
+            spin_unlock(&pair->lock);
             break;
+        }
         if (!pair->slaveFds)
         {
             spin_unlock(&pair->lock);
@@ -161,6 +164,8 @@ size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size)
         spin_unlock(&pair->lock);
         arch_yield();
     }
+
+    spin_lock(&pair->lock);
 
     arch_disable_interrupt();
 
@@ -178,11 +183,6 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit)
 {
     void *file = fd->node->handle;
     pty_pair_t *pair = file;
-    // if (in[0] == 3) { // also has to be dynamic from termios
-    //   syscallKill(-pair->ctrlPgid, SIGINT);
-    //   debugf("doned!\n");
-    //   return limit;
-    // }
     while (true)
     {
         spin_lock(&pair->lock);
@@ -192,7 +192,10 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit)
             return 0;
         }
         if ((pair->ptrSlave + limit) < PTY_BUFF_SIZE)
+        {
+            spin_unlock(&pair->lock);
             break;
+        }
         if (fd->flags & O_NONBLOCK)
         {
             spin_unlock(&pair->lock);
@@ -202,9 +205,8 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit)
         arch_yield();
     }
 
-    arch_disable_interrupt();
+    spin_lock(&pair->lock);
 
-    // we already have a lock in our hands
     memcpy(&pair->bufferSlave[pair->ptrSlave], addr, limit);
     if (pair->term.c_iflag & ICRNL)
         for (size_t i = 0; i < limit; i++)
@@ -258,6 +260,11 @@ size_t ptmx_ioctl(void *file, uint64_t request, uint64_t arg)
     {
         memcpy(&pair->win, (const void *)arg, sizeof(struct winsize));
         ret = 0;
+        break;
+    }
+    default:
+    {
+        printk("ptmx_ioctl: Unsupported request %d\n", request & 0xFFFF);
         break;
     }
     }
@@ -396,7 +403,10 @@ size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit)
     {
         spin_lock(&pair->lock);
         if (pts_data_avali(pair) > 0)
+        {
+            spin_unlock(&pair->lock);
             break;
+        }
         if (!pair->masterFds)
         {
             spin_unlock(&pair->lock);
@@ -410,6 +420,8 @@ size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit)
         spin_unlock(&pair->lock);
         arch_yield();
     }
+
+    spin_lock(&pair->lock);
 
     arch_disable_interrupt();
 
@@ -465,7 +477,10 @@ size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit)
             return (size_t)-EIO;
         }
         if ((pair->ptrMaster + limit) < PTY_BUFF_SIZE)
+        {
+            spin_unlock(&pair->lock);
             break;
+        }
         if (fd->flags & O_NONBLOCK)
         {
             spin_unlock(&pair->lock);
@@ -475,7 +490,7 @@ size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit)
         arch_yield();
     }
 
-    arch_disable_interrupt();
+    spin_lock(&pair->lock);
 
     // we already have a lock in our hands
     size_t written = pts_write_inner(pair, in, limit);
@@ -564,6 +579,9 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg)
         break;
     case TIOCNOTTY:
         ret = 0;
+        break;
+    default:
+        printk("pts_ioctl: Unsupported request %d\n",request);
         break;
     }
     spin_unlock(&pair->lock);
