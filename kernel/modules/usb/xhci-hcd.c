@@ -492,33 +492,33 @@ configure_xhci(void *data)
 
     xhci->use_irq = false;
 
-// #if defined(__x86_64__)
-//     int irq = irq_allocate_irqnum();
+    // #if defined(__x86_64__)
+    //     int irq = irq_allocate_irqnum();
 
-//     struct msi_desc_t desc;
-//     desc.irq_num = irq;
-//     desc.processor = lapic_id();
-//     desc.edge_trigger = 1;
-//     desc.assert = 1;
-//     desc.msi_index = 0;
-//     desc.pci_dev = xhci->pci_dev;
-//     desc.pci.msi_attribute.is_msix = true;
-//     int ret = pci_enable_msi(&desc);
-//     if (ret < 0)
-//     {
-//         printk("Failed to enable msi/msi-x\n");
-//         goto irq_done;
-//     }
+    //     struct msi_desc_t desc;
+    //     desc.irq_num = irq;
+    //     desc.processor = lapic_id();
+    //     desc.edge_trigger = 1;
+    //     desc.assert = 1;
+    //     desc.msi_index = 0;
+    //     desc.pci_dev = xhci->pci_dev;
+    //     desc.pci.msi_attribute.is_msix = true;
+    //     int ret = pci_enable_msi(&desc);
+    //     if (ret < 0)
+    //     {
+    //         printk("Failed to enable msi/msi-x\n");
+    //         goto irq_done;
+    //     }
 
-//     irq_regist_irq(irq, xhci_interrupt_handler, irq, xhci, get_apic_controller(), "XHCI");
+    //     irq_regist_irq(irq, xhci_interrupt_handler, irq, xhci, get_apic_controller(), "XHCI");
 
-//     printk("XHCI: use irq\n");
+    //     printk("XHCI: use irq\n");
 
-//     xhci->ir->imod = 4000;
-//     xhci->ir->iman |= 3;
-//     xhci->use_irq = true;
-// irq_done:
-// #endif
+    //     xhci->ir->imod = 4000;
+    //     xhci->ir->iman |= 3;
+    //     xhci->use_irq = true;
+    // irq_done:
+    // #endif
     reg = xhci->caps->hcsparams2;
     uint32_t spb = (reg >> 21 & 0x1f) << 5 | reg >> 27;
     if (spb)
@@ -860,6 +860,11 @@ static int xhci_cmd_evaluate_context(struct usb_xhci_s *xhci, uint32_t slotid, s
     return xhci_cmd_submit(xhci, inctx, (CR_EVALUATE_CONTEXT << 10) | (slotid << 24));
 }
 
+static int xhci_cmd_reset_endpoint(struct usb_xhci_s *xhci, uint32_t slotid, uint32_t epid)
+{
+    return xhci_cmd_submit(xhci, NULL, (CR_RESET_ENDPOINT << 10) | (slotid << 24) | (epid << 16));
+}
+
 static struct xhci_inctx *
 xhci_alloc_inctx(struct usbdevice_s *usbdev, int maxepid)
 {
@@ -1149,8 +1154,47 @@ int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data, int
     int cc = xhci_event_wait(xhci, &pipe->reqs, usb_xfer_time(p, datalen));
     if (cc != CC_SUCCESS)
     {
-        printk("xhci_send_pipe: %d\n", cc);
-        return -1;
+        if (cc == CC_STALL_ERROR)
+        {
+            printk("xhci_send_pipe: STALL error detected, resetting endpoint %d\n", pipe->epid);
+
+            // Reset the endpoint to clear the STALL condition
+            int reset_cc = xhci_cmd_reset_endpoint(xhci, pipe->slotid, pipe->epid);
+            if (reset_cc != CC_SUCCESS)
+            {
+                printk("xhci_send_pipe: Failed to reset endpoint, cc=%d\n", reset_cc);
+                return -1;
+            }
+
+            printk("xhci_send_pipe: Endpoint reset successful, retrying transfer\n");
+
+            // Retry the transfer after resetting the endpoint
+            if (cmd)
+            {
+                const struct usb_ctrlrequest *req = cmd;
+                if (req->bRequest == USB_REQ_SET_ADDRESS)
+                    // Set address command sent during xhci_alloc_pipe.
+                    return 0;
+                xhci_xfer_setup(pipe, dir, (void *)req, data, datalen);
+            }
+            else
+            {
+                xhci_xfer_normal(pipe, data, datalen);
+            }
+
+            // Wait for the retried transfer to complete
+            cc = xhci_event_wait(xhci, &pipe->reqs, usb_xfer_time(p, datalen));
+            if (cc != CC_SUCCESS)
+            {
+                printk("xhci_send_pipe: Retry failed with cc=%d\n", cc);
+                return -1;
+            }
+        }
+        else
+        {
+            printk("xhci_send_pipe: %d\n", cc);
+            return -1;
+        }
     }
 
     return 0;
