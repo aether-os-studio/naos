@@ -125,17 +125,7 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags)
     {
         if (current_task->fd_info->fds[fd_])
         {
-            current_task->fd_info->fds[fd_]->offset = 0;
-            if (current_task->fd_info->fds[fd_]->node->lock.l_pid == current_task->pid)
-            {
-                current_task->fd_info->fds[fd_]->node->lock.l_type = F_UNLCK;
-                current_task->fd_info->fds[fd_]->node->lock.l_pid = 0;
-            }
-
-            vfs_close(current_task->fd_info->fds[fd_]->node);
-            free(current_task->fd_info->fds[fd_]);
-
-            current_task->fd_info->fds[fd_] = NULL;
+            sys_close(fd_);
         }
     }
 
