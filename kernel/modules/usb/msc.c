@@ -32,7 +32,7 @@ static int usb_msc_transfer(usb_msc_device *dev, void *cmd, uint8_t cmd_length, 
     cbw.dCBWTag = 1;
     cbw.dCBWDataTransferLength = data_len;
     cbw.bmCBWFlags = is_read ? USB_DIR_IN : USB_DIR_OUT;
-    cbw.bCBWLUN = 0;
+    cbw.bCBWLUN = dev->lun;
     cbw.bCBWCBLength = cmd_length;
 
     memcpy(cbw.CBWCB, cmd, cmd_length);
@@ -199,7 +199,8 @@ static int usb_msc_write_16(usb_msc_device *dev, uint64_t lba, void *buf, uint64
 }
 
 // INQUIRY命令响应数据结构
-typedef struct {
+typedef struct
+{
     uint8_t peripheral_device_type;
     uint8_t removable;
     uint8_t version;
@@ -212,14 +213,16 @@ typedef struct {
 } __attribute__((packed)) scsi_inquiry_data_t;
 
 // VPD页面支持数据结构
-typedef struct {
+typedef struct
+{
     uint8_t peripheral_device_type;
     uint8_t page_code;
     uint16_t page_length;
     uint8_t supported_vpd_pages[256];
 } __attribute__((packed)) scsi_vpd_supported_pages_t;
 
-typedef struct {
+typedef struct
+{
     uint8_t peripheral_device_type;
     uint8_t page_code;
     uint16_t page_length;
@@ -265,15 +268,32 @@ static int usb_msc_detect_scsi_capability(usb_msc_device *dev)
     uint8_t scsi_version = inquiry_data.version;
 
     printk("[USB MSC]: SCSI Version: 0x%02X (", scsi_version);
-    switch (scsi_version) {
-        case 0x00: printk("SCSI-1/SPC"); break;
-        case 0x01: printk("SCSI-2/SPC-1"); break;
-        case 0x02: printk("SCSI-3/SPC-2"); break;
-        case 0x03: printk("SPC-3"); break;
-        case 0x04: printk("SPC-4"); break;
-        case 0x05: printk("SPC-5"); break;
-        case 0x06: printk("SPC-6"); break;
-        default: printk("Unknown"); break;
+    switch (scsi_version)
+    {
+    case 0x00:
+        printk("SCSI-1/SPC");
+        break;
+    case 0x01:
+        printk("SCSI-2/SPC-1");
+        break;
+    case 0x02:
+        printk("SCSI-3/SPC-2");
+        break;
+    case 0x03:
+        printk("SPC-3");
+        break;
+    case 0x04:
+        printk("SPC-4");
+        break;
+    case 0x05:
+        printk("SPC-5");
+        break;
+    case 0x06:
+        printk("SPC-6");
+        break;
+    default:
+        printk("Unknown");
+        break;
     }
     printk(")\n");
 
@@ -414,6 +434,7 @@ int usb_msc_setup(struct usbdevice_s *usbdev)
 
     memset(dev, 0, sizeof(usb_msc_device));
     dev->udev = usbdev;
+    dev->lun = 0;
 
     usbdev->desc = dev;
 
@@ -435,6 +456,15 @@ int usb_msc_setup(struct usbdevice_s *usbdev)
     dev->bulk_in = inpipe;
     dev->bulk_out = outpipe;
 
+    usb_msc_detect_scsi_capability(dev);
+
+    uint8_t test_cmd[16] = {0x00, dev->lun << 5 | 0, 0x00, 0x00, 0x00, 0x00};
+    int ret = 0;
+    do
+    {
+        ret = usb_msc_transfer(dev, test_cmd, 6, NULL, 0, true);
+    } while (ret != 0);
+
     uint8_t capacity[8];
     uint8_t cmd[16] = {SCSI_READ_CAPACITY_10};
     if (usb_msc_transfer(dev, cmd, 10, capacity, sizeof(capacity), true) == 0)
@@ -448,9 +478,7 @@ int usb_msc_setup(struct usbdevice_s *usbdev)
         dev->block_count = UINT64_MAX / 512;
     }
 
-    usb_msc_detect_scsi_capability(dev);
-
-    regist_blkdev("MSC", dev, dev->block_size, dev->block_count * dev->block_size, DEFAULT_PAGE_SIZE, usb_msc_read_blocks, usb_msc_write_blocks);
+    regist_blkdev("MSC", dev, dev->block_size, dev->block_count * dev->block_size, INT16_MAX, usb_msc_read_blocks, usb_msc_write_blocks);
 
     return 0;
 

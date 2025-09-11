@@ -210,7 +210,6 @@ struct xhci_ring
     uint32_t eidx;
     uint32_t nidx;
     uint32_t cs;
-    spinlock_t lock;
 };
 
 struct xhci_portmap
@@ -417,14 +416,24 @@ xhci_free_pipes(struct usb_xhci_s *xhci)
     // XXX - should walk list of pipes and free unused pipes.
 }
 
-void xhci_process_events(struct usb_xhci_s *xhci);
+// void xhci_process_events(struct usb_xhci_s *xhci);
 
-void xhci_interrupt_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
-{
-    struct usb_xhci_s *xhci = data;
-    xhci_process_events(xhci);
-    xhci->ir[0].erdp_low = xhci->ir[0].erdp_low & (~0x7ULL);
-}
+// void xhci_interrupt_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
+// {
+//     struct usb_xhci_s *xhci = data;
+//     if (xhci->op->usbsts & XHCI_STS_EINT)
+//     {
+//         xhci->op->usbsts |= XHCI_STS_EINT;
+//         xhci->ir->iman &= ~(1 << 1);
+//         xhci_process_events(xhci);
+//         xhci->ir->erdp_low |= (1 << 3);
+//         xhci->ir->iman |= (1 << 1);
+//     }
+//     else
+//     {
+//         printk("XHCI: interrupt handler\n");
+//     }
+// }
 
 static int
 configure_xhci(void *data)
@@ -483,33 +492,33 @@ configure_xhci(void *data)
 
     xhci->use_irq = false;
 
-#if defined(__x86_64__)
-    int irq = irq_allocate_irqnum();
+// #if defined(__x86_64__)
+//     int irq = irq_allocate_irqnum();
 
-    struct msi_desc_t desc;
-    desc.irq_num = irq;
-    desc.processor = lapic_id();
-    desc.edge_trigger = 1;
-    desc.assert = 1;
-    desc.msi_index = 0;
-    desc.pci_dev = xhci->pci_dev;
-    desc.pci.msi_attribute.is_msix = true;
-    int ret = pci_enable_msi(&desc);
-    if (ret < 0)
-    {
-        printk("Failed to enable msi/msi-x\n");
-        goto irq_done;
-    }
+//     struct msi_desc_t desc;
+//     desc.irq_num = irq;
+//     desc.processor = lapic_id();
+//     desc.edge_trigger = 1;
+//     desc.assert = 1;
+//     desc.msi_index = 0;
+//     desc.pci_dev = xhci->pci_dev;
+//     desc.pci.msi_attribute.is_msix = true;
+//     int ret = pci_enable_msi(&desc);
+//     if (ret < 0)
+//     {
+//         printk("Failed to enable msi/msi-x\n");
+//         goto irq_done;
+//     }
 
-    irq_regist_irq(irq, xhci_interrupt_handler, irq, xhci, get_apic_controller(), "XHCI");
+//     irq_regist_irq(irq, xhci_interrupt_handler, irq, xhci, get_apic_controller(), "XHCI");
 
-    printk("XHCI: use irq\n");
+//     printk("XHCI: use irq\n");
 
-    xhci->ir->imod = 0;
-    xhci->ir->iman |= 2; // Interrupt enable
-    xhci->use_irq = true;
-irq_done:
-#endif
+//     xhci->ir->imod = 4000;
+//     xhci->ir->iman |= 3;
+//     xhci->use_irq = true;
+// irq_done:
+// #endif
     reg = xhci->caps->hcsparams2;
     uint32_t spb = (reg >> 21 & 0x1f) << 5 | reg >> 27;
     if (spb)
@@ -708,7 +717,7 @@ void xhci_process_events(struct usb_xhci_s *xhci)
         if (nidx == XHCI_RING_ITEMS)
         {
             nidx = 0;
-            cs = cs ? 0 : 1;
+            cs = !cs;
             evts->cs = cs;
         }
         evts->nidx = nidx;
@@ -817,11 +826,9 @@ static int xhci_cmd_submit(struct usb_xhci_s *xhci, struct xhci_inctx *inctx, ui
         }
     }
 
-    spin_lock(&xhci->cmds->lock);
     xhci_trb_queue(xhci->cmds, inctx, 0, flags);
     xhci_doorbell(xhci, 0, 0);
     int rc = xhci_event_wait(xhci, xhci->cmds, 1000);
-    spin_unlock(&xhci->cmds->lock);
     return rc;
 }
 
@@ -963,7 +970,6 @@ xhci_alloc_pipe(struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epde
     usb_desc2pipe(&pipe->pipe, usbdev, epdesc);
     pipe->epid = epid;
     pipe->reqs.cs = 1;
-    pipe->reqs.lock.lock = 0;
     pipe->reqs.nidx = 0;
     pipe->reqs.eidx = 0;
     if (eptype == USB_ENDPOINT_XFER_INT)

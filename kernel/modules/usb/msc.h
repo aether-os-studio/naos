@@ -57,6 +57,7 @@ typedef int (*usb_msc_write_func_t)(usb_msc_device *dev, uint64_t lba, void *buf
 struct usb_msc_device
 {
     struct usbdevice_s *udev;
+    uint8_t lun;
     struct usb_pipe *bulk_in;
     struct usb_pipe *bulk_out;
     uint32_t block_size;
