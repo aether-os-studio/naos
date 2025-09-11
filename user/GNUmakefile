@@ -3,6 +3,7 @@ export SYSROOT = $(CWD)/rootfs-$(ARCH)
 
 all:
 	sh ports.sh
+	$(MAKE) -C init
 
 .PHONY: clean
 clean:

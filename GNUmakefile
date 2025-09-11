@@ -267,7 +267,7 @@ assets/oib:
 
 assets/limine:
 	rm -rf assets/limine
-	git clone https://codeberg.org/Limine/Limine --branch=v9.x-binary --depth=1 assets/limine
+	git clone https://codeberg.org/Limine/Limine --branch=v9.0.0-binary --depth=1 assets/limine
 	$(MAKE) -C assets/limine \
 		CC="$(HOST_CC)" \
 		CFLAGS="$(HOST_CFLAGS)" \
