@@ -422,6 +422,8 @@ ssize_t stdio_ioctl(void *data, ssize_t cmd, ssize_t arg)
     case TCSETSF:
         memcpy(&current_task->term, (void *)arg, sizeof(termios));
         return 0;
+    case TCFLSH:
+        return 0;
     default:
         printk("stdio_ioctl(): Unsupported ioctl: %#018lx\n", cmd);
         return -ENOTTY;

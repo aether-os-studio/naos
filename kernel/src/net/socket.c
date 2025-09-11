@@ -6,6 +6,7 @@
 #include <fs/vfs/vfs.h>
 #include <task/task.h>
 #include <net/netlink.h>
+#include <libs/strerror.h>
 
 extern socket_op_t socket_ops;
 extern socket_op_t accept_ops;
@@ -75,7 +76,7 @@ vfs_node_t unix_socket_accept_create(unix_socket_pair_t *dir)
     return socknode;
 }
 
-#define MAX_PENDING_FILES_COUNT 32
+#define MAX_PENDING_FILES_COUNT 64
 
 unix_socket_pair_t *unix_socket_allocate_pair()
 {
@@ -607,6 +608,41 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
         return (size_t)-EWOULDBLOCK;
     }
 
+    int iov_len_total = 0;
+
+    for (int i = 0; i < msg->msg_iovlen; i++)
+    {
+        struct iovec *curr =
+            (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
+
+        iov_len_total += curr->len;
+    }
+
+    char *buffer = malloc(iov_len_total);
+
+    cnt = unix_socket_recv_from(fd, (uint8_t *)buffer, iov_len_total, noblock ? MSG_DONTWAIT : 0, NULL, 0);
+    if ((int64_t)cnt < 0)
+    {
+        free(buffer);
+        return cnt;
+    }
+
+    char *b = buffer;
+
+    uint64_t remain = cnt;
+
+    for (int i = 0; i < msg->msg_iovlen; i++)
+    {
+        struct iovec *curr = (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
+
+        memcpy(curr->iov_base, b, MIN(curr->len, remain));
+
+        b += MIN(curr->len, remain);
+        remain -= MIN(curr->len, remain);
+    }
+
+    free(buffer);
+
     if (msg->msg_control && msg->msg_controllen >= sizeof(struct cmsghdr))
     {
         socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
@@ -659,12 +695,15 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
 
                     memcpy(new_fd_entry, &pair->pending_files[i], sizeof(fd_t));
                     current_task->fd_info->fds[new_fd] = new_fd_entry;
+                    if (flags & MSG_CMSG_CLOEXEC)
+                        current_task->fd_info->fds[new_fd]->flags |= O_CLOEXEC;
                     allocated_fds[i] = new_fd;
                     dest_fds[i] = new_fd;
                 }
 
                 if (error)
                 {
+                    printk("recv_msg: Encountered an error while accepting cmsg: %d\n", strerror(-error));
                     while (i-- > 0)
                     {
                         int fd_to_close = allocated_fds[i];
@@ -675,6 +714,7 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
                             current_task->fd_info->fds[fd_to_close] = NULL;
                         }
                     }
+                    msg->msg_controllen = 0;
                     spin_unlock(&pair->lock);
                     return error;
                 }
@@ -698,38 +738,6 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
     {
         msg->msg_controllen = 0;
     }
-
-    int iov_len_total = 0;
-
-    for (int i = 0; i < msg->msg_iovlen; i++)
-    {
-        struct iovec *curr =
-            (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
-
-        iov_len_total += curr->len;
-    }
-
-    char *buffer = malloc(iov_len_total);
-
-    cnt = unix_socket_recv_from(fd, (uint8_t *)buffer, iov_len_total, noblock ? MSG_DONTWAIT : 0, NULL, 0);
-    if ((int64_t)cnt < 0)
-    {
-        free(buffer);
-        return cnt;
-    }
-
-    char *b = buffer;
-
-    for (int i = 0; i < msg->msg_iovlen; i++)
-    {
-        struct iovec *curr = (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
-
-        memcpy(curr->iov_base, b, curr->len);
-
-        b += curr->len;
-    }
-
-    free(buffer);
 
     return cnt;
 }
@@ -765,6 +773,12 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
 
                 for (int i = 0; i < num_fds; i++)
                 {
+                    if (pair->pending_fds_count >= MAX_PENDING_FILES_COUNT)
+                    {
+                        printk("unix_socke_send_msg: Encountered an error while accepting cmsg: %d\n", strerror(EMFILE));
+                        spin_unlock(&pair->lock);
+                        return -EMFILE;
+                    }
                     memcpy(&pair->pending_files[pair->pending_fds_count++], current_task->fd_info->fds[fds[i]], sizeof(fd_t));
                     current_task->fd_info->fds[fds[i]]->node->refcount++;
                 }
@@ -805,6 +819,41 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
     {
         return (size_t)-EWOULDBLOCK;
     }
+
+    int iov_len_total = 0;
+
+    for (int i = 0; i < msg->msg_iovlen; i++)
+    {
+        struct iovec *curr =
+            (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
+
+        iov_len_total += curr->len;
+    }
+
+    char *buffer = malloc(iov_len_total);
+
+    cnt = unix_socket_accept_recv_from(fd, (uint8_t *)buffer, iov_len_total, noblock ? MSG_DONTWAIT : 0, NULL, 0);
+    if ((int64_t)cnt < 0)
+    {
+        free(buffer);
+        return cnt;
+    }
+
+    char *b = buffer;
+
+    uint32_t remain = cnt;
+
+    for (int i = 0; i < msg->msg_iovlen; i++)
+    {
+        struct iovec *curr = (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
+
+        memcpy(curr->iov_base, b, MIN(curr->len, remain));
+
+        b += MIN(curr->len, remain);
+        remain -= MIN(curr->len, remain);
+    }
+
+    free(buffer);
 
     if (msg->msg_control && msg->msg_controllen >= sizeof(struct cmsghdr))
     {
@@ -855,12 +904,15 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
 
                     memcpy(new_fd_entry, &pair->pending_files[i], sizeof(fd_t));
                     current_task->fd_info->fds[new_fd] = new_fd_entry;
+                    if (flags & MSG_CMSG_CLOEXEC)
+                        current_task->fd_info->fds[new_fd]->flags |= O_CLOEXEC;
                     allocated_fds[i] = new_fd;
                     dest_fds[i] = new_fd;
                 }
 
                 if (error)
                 {
+                    printk("accept_recv_msg: Encountered an error while accepting cmsg: %d\n", strerror(-error));
                     while (i-- > 0)
                     {
                         int fd_to_close = allocated_fds[i];
@@ -871,6 +923,7 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
                             current_task->fd_info->fds[fd_to_close] = NULL;
                         }
                     }
+                    msg->msg_controllen = 0;
                     spin_unlock(&pair->lock);
                     return error;
                 }
@@ -895,38 +948,6 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
     {
         msg->msg_controllen = 0;
     }
-
-    int iov_len_total = 0;
-
-    for (int i = 0; i < msg->msg_iovlen; i++)
-    {
-        struct iovec *curr =
-            (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
-
-        iov_len_total += curr->len;
-    }
-
-    char *buffer = malloc(iov_len_total);
-
-    cnt = unix_socket_accept_recv_from(fd, (uint8_t *)buffer, iov_len_total, noblock ? MSG_DONTWAIT : 0, NULL, 0);
-    if ((int64_t)cnt < 0)
-    {
-        free(buffer);
-        return cnt;
-    }
-
-    char *b = buffer;
-
-    for (int i = 0; i < msg->msg_iovlen; i++)
-    {
-        struct iovec *curr = (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
-
-        memcpy(curr->iov_base, b, curr->len);
-
-        b += curr->len;
-    }
-
-    free(buffer);
 
     return cnt;
 }
@@ -959,6 +980,12 @@ size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg, int fl
 
                 for (int i = 0; i < num_fds; i++)
                 {
+                    if (pair->pending_fds_count >= MAX_PENDING_FILES_COUNT)
+                    {
+                        printk("unix_socket_accept_send_msg: Encountered an error while accepting cmsg: %d\n", strerror(EMFILE));
+                        spin_unlock(&pair->lock);
+                        return -EMFILE;
+                    }
                     memcpy(&pair->pending_files[pair->pending_fds_count++], current_task->fd_info->fds[fds[i]], sizeof(fd_t));
                     current_task->fd_info->fds[fds[i]]->node->refcount++;
                 }
