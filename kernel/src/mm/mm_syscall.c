@@ -53,12 +53,15 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
     {
         uint64_t pt_flags = PT_FLAG_U | PT_FLAG_W;
 
-        if (prot & PROT_READ)
-            pt_flags |= PT_FLAG_R;
-        if (prot & PROT_WRITE)
-            pt_flags |= PT_FLAG_W;
-        if (prot & PROT_EXEC)
-            pt_flags |= PT_FLAG_X;
+        if (prot != PROT_NONE)
+        {
+            if (prot & PROT_READ)
+                pt_flags |= PT_FLAG_R;
+            if (prot & PROT_WRITE)
+                pt_flags |= PT_FLAG_W;
+            if (prot & PROT_EXEC)
+                pt_flags |= PT_FLAG_X;
+        }
 
         if (addr >= USER_MMAP_START && addr + len <= USER_MMAP_END)
         {

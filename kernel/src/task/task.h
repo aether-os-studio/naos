@@ -80,7 +80,8 @@
 
 typedef enum task_state
 {
-    TASK_RUNNING = 1,
+    TASK_CREATING = 1,
+    TASK_RUNNING,
     TASK_READY,
     TASK_BLOCKING,
     TASK_READING_STDIO,

@@ -55,13 +55,16 @@ extern int unix_accept_fsid;
 
 task_t *get_free_task()
 {
+    can_schedule = false;
     for (uint64_t i = 0; i < cpu_count; i++)
     {
         if (idle_tasks[i] == NULL)
         {
             idle_tasks[i] = (task_t *)malloc(sizeof(task_t));
             memset(idle_tasks[i], 0, sizeof(task_t));
+            idle_tasks[i]->state = TASK_CREATING;
             idle_tasks[i]->pid = 0;
+            can_schedule = true;
             return idle_tasks[i];
         }
     }
@@ -74,7 +77,9 @@ task_t *get_free_task()
         {
             tasks[i] = (task_t *)malloc(sizeof(task_t));
             memset(tasks[i], 0, sizeof(task_t));
+            tasks[i]->state = TASK_CREATING;
             tasks[i]->pid = i;
+            can_schedule = true;
             spin_unlock(&task_queue_lock);
             return tasks[i];
         }
@@ -98,8 +103,6 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg, uin
 {
     arch_disable_interrupt();
 
-    can_schedule = false;
-
     task_t *task = get_free_task();
     task->call_in_signal = 0;
     memset(&task->signal_saved_regs, 0, sizeof(struct pt_regs));
@@ -114,8 +117,6 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg, uin
     task->pgid = 0;
     task->sid = 0;
     task->waitpid = 0;
-    task->state = TASK_READY;
-    task->current_state = TASK_READY;
     task->jiffies = 0;
     task->priority = priority;
     task->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
@@ -196,7 +197,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg, uin
 
     procfs_on_new_task(task);
 
-    can_schedule = true;
+    task->state = TASK_READY;
+    task->current_state = TASK_READY;
 
     return task;
 }
@@ -317,7 +319,7 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], int argv
         }
     }
 
-    uint64_t total_length = 2 * sizeof(uint64_t) + 7 * 2 + sizeof(uint64_t)+ (env_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) + (argv_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) + sizeof(uint64_t);
+    uint64_t total_length = 2 * sizeof(uint64_t) + 7 * 2 + sizeof(uint64_t) + (env_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) + (argv_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) + sizeof(uint64_t);
     tmp_stack -= (tmp_stack - total_length) % 0x10;
 
     // push auxv
@@ -376,12 +378,9 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
 {
     arch_disable_interrupt();
 
-    can_schedule = false;
-
     task_t *child = get_free_task();
     if (child == NULL)
     {
-        can_schedule = true;
         return (uint64_t)-ENOMEM;
     }
 
@@ -505,8 +504,6 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
 
     child->state = TASK_READY;
     child->current_state = TASK_READY;
-
-    can_schedule = true;
 
     if (vfork)
     {
@@ -1145,8 +1142,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
 {
     arch_disable_interrupt();
 
-    can_schedule = false;
-
     task_t *child = get_free_task();
     if (child == NULL)
     {
@@ -1271,12 +1266,12 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
 #endif
     }
 
-    if (flags & CLONE_PARENT_SETTID)
+    if (parent_tid && (flags & CLONE_PARENT_SETTID))
     {
         *parent_tid = (int)current_task->pid;
     }
 
-    if (flags & CLONE_CHILD_SETTID)
+    if (child_tid && (flags & CLONE_CHILD_SETTID))
     {
         *child_tid = (int)child->pid;
     }
@@ -1287,7 +1282,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
 
     child->child_vfork_done = false;
 
-    if (flags & CLONE_VFORK)
+    if ((flags & CLONE_VM) || (flags & CLONE_VFORK))
     {
         child->is_vfork = true;
     }
@@ -1300,8 +1295,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
 
     child->state = TASK_READY;
     child->current_state = TASK_READY;
-
-    can_schedule = true;
 
     if (flags & CLONE_VFORK)
     {
