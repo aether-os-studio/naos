@@ -16,13 +16,13 @@ uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr)
         uint64_t addr = pgdir[index];
         if (ARCH_PT_IS_LARGE(addr))
         {
-            return (pgdir[index] & (~PAGE_CALC_PAGE_TABLE_MASK(i + 1))) + (vaddr & PAGE_CALC_PAGE_TABLE_MASK(i + 1));
+            return (pgdir[index] & (~PAGE_CALC_PAGE_TABLE_MASK(i + 1)) & ~get_physical_memory_offset()) + (vaddr & PAGE_CALC_PAGE_TABLE_MASK(i + 1));
         }
         if (!ARCH_PT_IS_TABLE(addr))
         {
             return 0;
         }
-        pgdir = (uint64_t *)phys_to_virt(addr & (~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL)));
+        pgdir = (uint64_t *)phys_to_virt(addr & (~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL)) & ~get_physical_memory_offset());
     }
 
     uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];

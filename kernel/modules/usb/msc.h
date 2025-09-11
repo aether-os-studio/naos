@@ -7,9 +7,22 @@
 enum
 {
     SCSI_INQUIRY = 0x12,
-    SCSI_READ_CAPACITY = 0x25,
+    SCSI_READ_CAPACITY_10 = 0x25,
+    SCSI_READ_CAPACITY_16 = 0x9E,
     SCSI_READ_10 = 0x28,
+    SCSI_READ_12 = 0xA8,
+    SCSI_READ_16 = 0x88,
     SCSI_WRITE_10 = 0x2A,
+    SCSI_WRITE_12 = 0xAA,
+    SCSI_WRITE_16 = 0x8A,
+};
+
+// SCSI版本定义
+enum scsi_version
+{
+    SCSI_VERSION_10 = 0,
+    SCSI_VERSION_12 = 1,
+    SCSI_VERSION_16 = 2,
 };
 
 // CBW/CSW结构体
@@ -34,13 +47,25 @@ typedef struct
 
 struct usbdevice_s;
 
-typedef struct
+struct usb_msc_device;
+typedef struct usb_msc_device usb_msc_device;
+
+// 函数指针类型定义
+typedef int (*usb_msc_read_func_t)(usb_msc_device *dev, uint64_t lba, void *buf, uint64_t count);
+typedef int (*usb_msc_write_func_t)(usb_msc_device *dev, uint64_t lba, void *buf, uint64_t count);
+
+struct usb_msc_device
 {
     struct usbdevice_s *udev;
     struct usb_pipe *bulk_in;
     struct usb_pipe *bulk_out;
     uint32_t block_size;
     uint64_t block_count;
-} usb_msc_device;
+    enum scsi_version scsi_version;
+    usb_msc_read_func_t read_func;
+    usb_msc_write_func_t write_func;
+} ;
 
 int usb_msc_setup(struct usbdevice_s *usbdev);
+uint64_t usb_msc_read_blocks(void *dev, uint64_t lba, void *buf, uint64_t count);
+uint64_t usb_msc_write_blocks(void *dev, uint64_t lba, void *buf, uint64_t count);

@@ -4,7 +4,7 @@
 // --------------------------------------------------------------
 // configuration
 
-#define XHCI_RING_ITEMS 16
+#define XHCI_RING_ITEMS 64
 #define XHCI_RING_SIZE (XHCI_RING_ITEMS * sizeof(struct xhci_trb))
 
 /*
@@ -259,11 +259,6 @@ struct xhci_pipe
     void *buf;
     int bufused;
 };
-
-void dump_xhci_status(struct usb_xhci_s *xhci)
-{
-    printk("usbcmd = %#018lx, usbsts = %#018lx\n", xhci->op->usbcmd, xhci->op->usbsts);
-}
 
 // --------------------------------------------------------------
 // tables
@@ -543,8 +538,6 @@ irq_done:
     // Find devices
     int count = xhci_check_ports(xhci);
 
-    dump_xhci_status(xhci);
-
     printf("Found %d USB devices on XHCI controller\n", count);
 
     // xhci_free_pipes(xhci);
@@ -743,6 +736,7 @@ int xhci_event_wait(struct usb_xhci_s *xhci,
 {
     uint64_t timeout_ns = (uint64_t)timeout * 1000000; // Convert ms to ns
     uint64_t start_ns = nanoTime();
+    int result;
 
     if (xhci->use_irq)
         arch_enable_interrupt();
@@ -755,14 +749,15 @@ int xhci_event_wait(struct usb_xhci_s *xhci,
         if (!xhci_ring_busy(ring))
         {
             uint32_t status = ring->evt.status;
-            return (status >> 24) & 0xff;
+            result = (status >> 24) & 0xff;
+            break;
         }
 
         if (nanoTime() - start_ns > timeout_ns)
         {
-            printf("XHCI event wait timeout\n");
-            dump_xhci_status(xhci);
-            return CC_INVALID; // Timeout
+            printk("XHCI event wait timeout!!!\n");
+            result = CC_INVALID; // Timeout
+            break;
         }
 
         arch_pause();
@@ -770,6 +765,8 @@ int xhci_event_wait(struct usb_xhci_s *xhci,
 
     if (xhci->use_irq)
         arch_disable_interrupt();
+
+    return result;
 }
 
 // Add a TRB to the given ring
@@ -1146,6 +1143,7 @@ int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data, int
     int cc = xhci_event_wait(xhci, &pipe->reqs, usb_xfer_time(p, datalen));
     if (cc != CC_SUCCESS)
     {
+        printk("xhci_send_pipe: %d\n", cc);
         return -1;
     }
 
