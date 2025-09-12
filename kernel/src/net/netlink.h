@@ -28,4 +28,6 @@ extern socket_op_t netlink_ops;
 int netlink_socket(int domain, int type, int protocol);
 int netlink_socket_pair(int type, int protocol, int *sv);
 
+void netlink_kernel_uevent_send(const char *buf, int len);
+
 void netlink_init();

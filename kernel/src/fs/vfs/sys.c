@@ -2,6 +2,7 @@
 #include <fs/vfs/sys.h>
 #include <drivers/kernel_logger.h>
 #include <drivers/bus/pci.h>
+#include <net/netlink.h>
 
 vfs_node_t sysfs_root = NULL;
 
@@ -192,6 +193,16 @@ vfs_node_t sysfs_regist_dev(char t, int major, int minor, const char *real_devic
     vfs_write(uevent_node, uevent_content, 0, strlen(uevent_content));
 
     free(fullpath);
+
+    char buffer[256];
+    sprintf(buffer, "add@%s\nACTION=add\n%s\n", dev_root_is_real ? dev_root_path : real_device_path, uevent_content);
+    int len = strlen(buffer);
+    for (int i = 0; i < len; i++)
+    {
+        if (buffer[i] == '\n')
+            buffer[i] = '\0';
+    }
+    netlink_kernel_uevent_send(buffer, len);
 
     return real_device_node;
 }

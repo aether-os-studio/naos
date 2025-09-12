@@ -163,3 +163,7 @@ void netlink_init()
 {
     netlink_socket_fsid = vfs_regist(&netlinksockfs);
 }
+
+void netlink_kernel_uevent_send(const char *buf, int len)
+{
+}
