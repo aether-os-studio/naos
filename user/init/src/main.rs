@@ -18,105 +18,105 @@ fn main() {
         assert_ne!(seatd, -1);
     }
 
-    // if unsafe { libc::access(b"/etc/udev/hwdb.bin".as_ptr() as *const _, libc::F_OK) } != 0 {
-    //     println!("init: Generating hwdb");
-    //     let hwdb = unsafe { libc::fork() };
-    //     if hwdb == 0 {
-    //         unsafe {
-    //             libc::execl(
-    //                 b"/sbin/udevadm\0".as_ptr() as *const _,
-    //                 b"udevadm\0".as_ptr() as *const _,
-    //                 b"hwdb\0".as_ptr() as *const _,
-    //                 b"--update\0".as_ptr() as *const _,
-    //                 core::ptr::null::<core::ffi::c_char>(),
-    //             )
-    //         };
-    //         panic!("Failed to exec udevadm hwdb --update");
-    //     } else {
-    //         assert_ne!(hwdb, -1);
-    //     }
+    if unsafe { libc::access(b"/etc/udev/hwdb.bin".as_ptr() as *const _, libc::F_OK) } != 0 {
+        println!("init: Generating hwdb");
+        let hwdb = unsafe { libc::fork() };
+        if hwdb == 0 {
+            unsafe {
+                libc::execl(
+                    b"/sbin/udevadm\0".as_ptr() as *const _,
+                    b"udevadm\0".as_ptr() as *const _,
+                    b"hwdb\0".as_ptr() as *const _,
+                    b"--update\0".as_ptr() as *const _,
+                    core::ptr::null::<core::ffi::c_char>(),
+                )
+            };
+            panic!("Failed to exec udevadm hwdb --update");
+        } else {
+            assert_ne!(hwdb, -1);
+        }
 
-    //     unsafe { libc::waitpid(hwdb, core::ptr::null_mut(), 0) };
-    // } else {
-    //     println!("init: hwdb already exists, skipping generation");
-    // }
+        unsafe { libc::waitpid(hwdb, core::ptr::null_mut(), 0) };
+    } else {
+        println!("init: hwdb already exists, skipping generation");
+    }
 
-    // println!("init: Starting udev");
-    // let udev = unsafe { libc::fork() };
-    // if udev == 0 {
-    //     unsafe {
-    //         libc::execl(
-    //             b"/sbin/udevd\0".as_ptr() as *const _,
-    //             b"udevd\0".as_ptr() as *const _,
-    //             // b"--debug\0".as_ptr() as *const _,
-    //             core::ptr::null::<core::ffi::c_char>(),
-    //         )
-    //     };
-    //     panic!("Failed to exec udevd");
-    // } else {
-    //     assert_ne!(udev, -1);
-    // }
+    println!("init: Starting udev");
+    let udev = unsafe { libc::fork() };
+    if udev == 0 {
+        unsafe {
+            libc::execl(
+                b"/sbin/udevd\0".as_ptr() as *const _,
+                b"udevd\0".as_ptr() as *const _,
+                // b"--debug\0".as_ptr() as *const _,
+                core::ptr::null::<core::ffi::c_char>(),
+            )
+        };
+        panic!("Failed to exec udevd");
+    } else {
+        assert_ne!(udev, -1);
+    }
 
-    // while unsafe { libc::access(b"/run/udev/control\0".as_ptr() as *const _, libc::F_OK) } != 0 {
-    //     // wait for /run/udev/control to appear
-    //     std::thread::sleep(std::time::Duration::from_millis(1000));
-    // }
+    while unsafe { libc::access(b"/run/udev/control\0".as_ptr() as *const _, libc::F_OK) } != 0 {
+        // wait for /run/udev/control to appear
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+    }
 
-    // println!("init: Running udev-trigger");
-    // let udev_trigger = unsafe { libc::fork() };
-    // if udev_trigger == 0 {
-    //     unsafe {
-    //         libc::execl(
-    //             b"/sbin/udevadm\0".as_ptr() as *const _,
-    //             b"udevadm\0".as_ptr() as *const _,
-    //             b"trigger\0".as_ptr() as *const _,
-    //             b"--action=add\0".as_ptr() as *const _,
-    //             core::ptr::null::<core::ffi::c_char>(),
-    //         )
-    //     };
-    //     panic!("Failed to exec udev-trigger");
-    // } else {
-    //     assert_ne!(udev_trigger, -1);
-    // }
+    println!("init: Running udev-trigger");
+    let udev_trigger = unsafe { libc::fork() };
+    if udev_trigger == 0 {
+        unsafe {
+            libc::execl(
+                b"/sbin/udevadm\0".as_ptr() as *const _,
+                b"udevadm\0".as_ptr() as *const _,
+                b"trigger\0".as_ptr() as *const _,
+                b"--action=add\0".as_ptr() as *const _,
+                core::ptr::null::<core::ffi::c_char>(),
+            )
+        };
+        panic!("Failed to exec udev-trigger");
+    } else {
+        assert_ne!(udev_trigger, -1);
+    }
 
-    // unsafe { libc::waitpid(udev_trigger, core::ptr::null_mut(), 0) };
+    unsafe { libc::waitpid(udev_trigger, core::ptr::null_mut(), 0) };
 
-    // println!("init: Running udev-settle");
-    // let udev_settle = unsafe { libc::fork() };
-    // if udev_settle == 0 {
-    //     unsafe {
-    //         libc::execl(
-    //             b"/sbin/udevadm\0".as_ptr() as *const _,
-    //             b"udevadm\0".as_ptr() as *const _,
-    //             b"settle\0".as_ptr() as *const _,
-    //             core::ptr::null::<core::ffi::c_char>(),
-    //         )
-    //     };
-    //     panic!("Failed to exec udev-settle");
-    // } else {
-    //     assert_ne!(udev_settle, -1);
-    // }
+    println!("init: Running udev-settle");
+    let udev_settle = unsafe { libc::fork() };
+    if udev_settle == 0 {
+        unsafe {
+            libc::execl(
+                b"/sbin/udevadm\0".as_ptr() as *const _,
+                b"udevadm\0".as_ptr() as *const _,
+                b"settle\0".as_ptr() as *const _,
+                core::ptr::null::<core::ffi::c_char>(),
+            )
+        };
+        panic!("Failed to exec udev-settle");
+    } else {
+        assert_ne!(udev_settle, -1);
+    }
 
-    // unsafe { libc::waitpid(udev_settle, core::ptr::null_mut(), 0) };
+    unsafe { libc::waitpid(udev_settle, core::ptr::null_mut(), 0) };
 
-    // let mut need_keyboard = true;
-    // let mut need_mouse = true;
+    let mut need_keyboard = true;
+    let mut need_mouse = true;
 
-    // println!("init: Waiting for keyboard and mouse");
+    println!("init: Waiting for keyboard and mouse");
 
-    // while need_keyboard || need_mouse {
-    //     if unsafe { libc::access(b"/run/udev/data/c13:0\0".as_ptr() as *const _, libc::F_OK) } == 0
-    //     {
-    //         need_keyboard = false;
-    //     }
-    //     if unsafe { libc::access(b"/run/udev/data/c13:1\0".as_ptr() as *const _, libc::F_OK) } == 0
-    //     {
-    //         need_mouse = false;
-    //     }
-    //     std::thread::sleep(std::time::Duration::from_millis(1000));
-    // }
+    while need_keyboard || need_mouse {
+        if unsafe { libc::access(b"/run/udev/data/c13:0\0".as_ptr() as *const _, libc::F_OK) } == 0
+        {
+            need_keyboard = false;
+        }
+        if unsafe { libc::access(b"/run/udev/data/c13:1\0".as_ptr() as *const _, libc::F_OK) } == 0
+        {
+            need_mouse = false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+    }
 
-    // println!("init: Found keyboard and mouse");
+    println!("init: Found keyboard and mouse");
 
     println!("init: Starting weston");
     let weston = unsafe { libc::fork() };
@@ -126,7 +126,7 @@ fn main() {
             std::env::set_var("XDG_RUNTIME_DIR", "/run");
             std::env::set_var("SHELL", "/bin/bash");
             std::env::set_var("MESA_SHADER_CACHE_DISABLE", "1");
-            std::env::set_var("WESTON_LIBINPUT_LOG_PRIORITY", "debug");
+            // std::env::set_var("WESTON_LIBINPUT_LOG_PRIORITY", "debug");
         }
 
         unsafe {

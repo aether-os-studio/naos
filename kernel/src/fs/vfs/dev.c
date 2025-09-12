@@ -320,18 +320,13 @@ vfs_node_t regist_dev(const char *name,
                 child->rdev = (13 << 8) | 0;
                 child->mode = 0660;
 
-                sysfs_regist_dev('c', 13, 0, "/sys/devices/platform/i8042/serio0/input/input0/event0", "/dev/input/event0", "ID_INPUT=1\nID_INPUT_KEYBOARD=1\nSUBSYSTEM=input\n");
+                sysfs_regist_dev('c', 13, 0, "/sys/devices/platform/i8042/serio0/input/input0/event0", "input/event0", "ID_INPUT=1\nID_INPUT_KEYBOARD=1\nSUBSYSTEM=input\n");
 
                 vfs_node_t input_root = vfs_open("/sys/class/input");
                 vfs_node_t event0 = sysfs_child_append_symlink(input_root, "event0", "/sys/devices/platform/i8042/serio0/input/input0/event0");
 
                 event0 = vfs_open("/sys/devices/platform/i8042/serio0/input/input0/event0");
                 sysfs_child_append_symlink(event0, "subsystem", "/sys/class/input");
-
-                char content[128];
-                vfs_node_t uevent = sysfs_child_append(event0, "uevent", false);
-                sprintf(content, "MAJOR=13\nMINOR=0\nDEVNAME=/dev/input/event0\nID_INPUT=1\nID_INPUT_KEYBOARD=1\nSUBSYSTEM=input\n");
-                vfs_write(uevent, content, 0, strlen(content));
             }
             else if (!strncmp(devfs_handles[i]->name, "event1", 6))
             {
@@ -339,18 +334,13 @@ vfs_node_t regist_dev(const char *name,
                 child->rdev = (13 << 8) | 1;
                 child->mode = 0660;
 
-                sysfs_regist_dev('c', 13, 1, "/sys/devices/platform/i8042/serio1/input/input1/event1", "/dev/input/event1", "ID_INPUT=1\nID_INPUT_MOUSE=1\nSUBSYSTEM=input\n");
+                sysfs_regist_dev('c', 13, 1, "/sys/devices/platform/i8042/serio1/input/input1/event1", "input/event1", "ID_INPUT=1\nID_INPUT_MOUSE=1\nSUBSYSTEM=input\n");
 
                 vfs_node_t input_root = vfs_open("/sys/class/input");
                 vfs_node_t event1 = sysfs_child_append_symlink(input_root, "event1", "/sys/devices/platform/i8042/serio1/input/input1/event1");
 
                 event1 = vfs_open("/sys/devices/platform/i8042/serio1/input/input1/event1");
                 sysfs_child_append_symlink(event1, "subsystem", "/sys/class/input");
-
-                char content[128];
-                vfs_node_t uevent = sysfs_child_append(event1, "uevent", false);
-                sprintf(content, "MAJOR=13\nMINOR=1\nDEVNAME=/dev/input/event1\nID_INPUT=1\nID_INPUT_MOUSE=1\nSUBSYSTEM=input\n");
-                vfs_write(uevent, content, 0, strlen(content));
             }
 
             child->mode = 0666;

@@ -1014,7 +1014,9 @@ int vfs_rename(vfs_node_t node, const char *new)
     int dn_len = strlen(new) - fn_len;
     memcpy(buf, new, dn_len);
 
+    list_delete(node->parent->child, node);
     node->parent = vfs_open(buf);
+    list_prepend(node->parent->child, node);
     free(node->name);
     node->name = strdup(filename);
 

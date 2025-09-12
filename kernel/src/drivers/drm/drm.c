@@ -1002,10 +1002,8 @@ drm_device_t *drm_regist_pci_dev(void *data, drm_device_op_t *op, pci_device_t *
     regist_dev(buf, drm_read, NULL, drm_ioctl, drm_poll, drm_map, drm_dev);
 
     char dev_name[32];
-    sprintf(dev_name, "/dev/dri/card%d", drm_id);
-    char real_path[64];
-    sprintf(real_path, "/sys/dev/dri/card%d", drm_id);
-    vfs_node_t dev_root = sysfs_regist_dev('c', 226, drm_id, real_path, dev_name, "SUBSYSTEM=drm\n");
+    sprintf(dev_name, "dri/card%d", drm_id);
+    vfs_node_t dev_root = sysfs_regist_dev('c', 226, drm_id, "", dev_name, "SUBSYSTEM=drm\n");
 
     vfs_node_t dev = sysfs_child_append(dev_root, "device", true);
 
@@ -1047,7 +1045,7 @@ drm_device_t *drm_regist_pci_dev(void *data, drm_device_op_t *op, pci_device_t *
     vfs_node_t class_drm_cardn = sysfs_child_append_symlink(class_drm, "card0", path);
 
     vfs_node_t uevent = sysfs_child_append(cardn, "uevent", false);
-    sprintf(content, "MAJOR=%d\nMINOR=%d\nDEVNAME=/dev/dri/card%d\nSUBSYSTEM=drm\n", 226, drm_id, drm_id);
+    sprintf(content, "MAJOR=%d\nMINOR=%d\nDEVNAME=dri/card%d\nSUBSYSTEM=drm\n", 226, drm_id, drm_id);
     vfs_write(uevent, content, 0, strlen(content));
 
     sysfs_child_append_symlink(cardn, "subsystem", "/sys/class/drm");

@@ -170,7 +170,7 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
         cmsg->cmsg_type = SCM_CREDENTIALS;
         struct ucred *cred = (struct ucred *)CMSG_DATA(cmsg);
         cred->pid = 0;
-        cred->gid = 0;
+        cred->gid = 1;
         cred->uid = 0;
     }
 
