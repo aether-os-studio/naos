@@ -13,5 +13,5 @@ includedir=${prefix}/include
 Name: libudev
 Description: Library to access udev device information
 Version: 251
-Libs: -L${libdir} -ludev
+Libs: -L${PKG_CONFIG_SYSROOT_DIR}/usr/lib -ludev
 Cflags: -I${includedir}
