@@ -99,32 +99,6 @@ void *devfs_map(fd_t *fd, void *addr, size_t offset, size_t size, size_t prot, s
     return NULL;
 }
 
-int devfs_mkdir(void *parent, const char *name, vfs_node_t node)
-{
-    vfs_node_t parent_node = parent;
-
-    vfs_node_t child = vfs_child_append(parent_node, name, NULL);
-    child->type = file_dir;
-    child->handle = child;
-    child->fsid = devfs_id;
-    child->handle = child;
-
-    return 0;
-}
-
-int devfs_mkfile(void *parent, const char *name, vfs_node_t node)
-{
-    vfs_node_t parent_node = parent;
-
-    vfs_node_t child = vfs_child_append(parent_node, name, NULL);
-    child->type = file_none;
-    child->handle = child;
-    child->fsid = devfs_id;
-    child->handle = child;
-
-    return 0;
-}
-
 int devfs_poll(devfs_handle_t handle, size_t event)
 {
     if (handle->poll)
@@ -143,8 +117,8 @@ static struct vfs_callback callbacks = {
     .read = devfs_read,
     .write = devfs_write,
     .readlink = (vfs_readlink_t)dummy,
-    .mkdir = (vfs_mk_t)devfs_mkdir,
-    .mkfile = (vfs_mk_t)devfs_mkfile,
+    .mkdir = (vfs_mk_t)dummy,
+    .mkfile = (vfs_mk_t)dummy,
     .link = (vfs_mk_t)dummy,
     .symlink = (vfs_mk_t)dummy,
     .mknod = (vfs_mknod_t)dummy,
@@ -260,6 +234,9 @@ ssize_t inputdev_ioctl(void *data, ssize_t request, ssize_t arg)
     case 0xa0: // EVIOCSCLOCKID()
         ret = event->event_bit(data, request, (void *)arg);
         break;
+    case 0x91:
+        ret = 0;
+        break;
     default:
         printk("inputdev_ioctl(): Unsupported ioctl: %#018lx\n", request);
         ret = -ENOTTY;
@@ -343,7 +320,7 @@ vfs_node_t regist_dev(const char *name,
                 child->rdev = (13 << 8) | 0;
                 child->mode = 0660;
 
-                sysfs_regist_dev('c', 13, 0, "/sys/devices/platform/i8042/serio0/input/input0/event0", "input/event0", "ID_INPUT=1\nID_INPUT_KEYBOARD=1\nSUBSYSTEM=input\n");
+                sysfs_regist_dev('c', 13, 0, "/sys/devices/platform/i8042/serio0/input/input0/event0", "/dev/input/event0", "ID_INPUT=1\nID_INPUT_KEYBOARD=1\nSUBSYSTEM=input\n");
 
                 vfs_node_t input_root = vfs_open("/sys/class/input");
                 vfs_node_t event0 = sysfs_child_append_symlink(input_root, "event0", "/sys/devices/platform/i8042/serio0/input/input0/event0");
@@ -353,7 +330,7 @@ vfs_node_t regist_dev(const char *name,
 
                 char content[128];
                 vfs_node_t uevent = sysfs_child_append(event0, "uevent", false);
-                sprintf(content, "MAJOR=13\nMINOR=0\nDEVNAME=input/event0\nID_INPUT=1\nID_INPUT_KEYBOARD=1\n");
+                sprintf(content, "MAJOR=13\nMINOR=0\nDEVNAME=/dev/input/event0\nID_INPUT=1\nID_INPUT_KEYBOARD=1\nSUBSYSTEM=input\n");
                 vfs_write(uevent, content, 0, strlen(content));
             }
             else if (!strncmp(devfs_handles[i]->name, "event1", 6))
@@ -362,7 +339,7 @@ vfs_node_t regist_dev(const char *name,
                 child->rdev = (13 << 8) | 1;
                 child->mode = 0660;
 
-                sysfs_regist_dev('c', 13, 1, "/sys/devices/platform/i8042/serio1/input/input1/event1", "input/event1", "ID_INPUT=1\nID_INPUT_MOUSE=1\nSUBSYSTEM=input\n");
+                sysfs_regist_dev('c', 13, 1, "/sys/devices/platform/i8042/serio1/input/input1/event1", "/dev/input/event1", "ID_INPUT=1\nID_INPUT_MOUSE=1\nSUBSYSTEM=input\n");
 
                 vfs_node_t input_root = vfs_open("/sys/class/input");
                 vfs_node_t event1 = sysfs_child_append_symlink(input_root, "event1", "/sys/devices/platform/i8042/serio1/input/input1/event1");
@@ -372,7 +349,7 @@ vfs_node_t regist_dev(const char *name,
 
                 char content[128];
                 vfs_node_t uevent = sysfs_child_append(event1, "uevent", false);
-                sprintf(content, "MAJOR=13\nMINOR=1\nDEVNAME=input/event1\nID_INPUT=1\nID_INPUT_MOUSE=1\n");
+                sprintf(content, "MAJOR=13\nMINOR=1\nDEVNAME=/dev/input/event1\nID_INPUT=1\nID_INPUT_MOUSE=1\nSUBSYSTEM=input\n");
                 vfs_write(uevent, content, 0, strlen(content));
             }
 
@@ -456,12 +433,6 @@ void stdio_init()
     regist_dev("stdin", stdin_read, NULL, stdio_ioctl, stdio_poll, NULL, global_stdio_handle);
     regist_dev("stdout", NULL, stdout_write, stdio_ioctl, stdio_poll, NULL, global_stdio_handle);
     regist_dev("stderr", NULL, stdout_write, stdio_ioctl, stdio_poll, NULL, global_stdio_handle);
-
-    regist_dev("console", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL, global_stdio_handle);
-
-    regist_dev("tty", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL, global_stdio_handle);
-    regist_dev("tty0", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL, global_stdio_handle);
-    regist_dev("tty1", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL, global_stdio_handle);
 }
 
 uint64_t next = 0;
@@ -544,15 +515,28 @@ void dev_init()
 {
     devfs_id = vfs_regist(&devfs);
 
-    devfs_root = vfs_child_append(rootdir, "dev", NULL);
+    devfs_root = vfs_node_alloc(rootdir, "dev");
     devfs_root->type = file_dir;
-    devfs_root->fsid = devfs_id;
-    devfs_root->mode = 0644;
-    devfs_root->handle = devfs_root;
+    devfs_root->mode = 0755;
 
     memset(devfs_handles, 0, sizeof(devfs_handles));
 
     regist_dev("kmsg", kmsg_read, kmsg_write, NULL, NULL, NULL, NULL);
+}
+
+void dev_init_after_mount_root()
+{
+    vfs_mkdir("/dev");
+    vfs_node_t new_devfs_root = vfs_open("/dev");
+    memcpy(new_devfs_root->child, devfs_root->child, sizeof(list_t));
+    free(devfs_root);
+    devfs_root = new_devfs_root;
+
+    regist_dev("console", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL, global_stdio_handle);
+
+    regist_dev("tty", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL, global_stdio_handle);
+    regist_dev("tty0", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL, global_stdio_handle);
+    regist_dev("tty1", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL, global_stdio_handle);
 }
 
 void dev_init_after_sysfs()

@@ -970,23 +970,35 @@ void task_exit_inner(task_t *task, int64_t code)
 
 uint64_t task_exit(int64_t code)
 {
-    uint64_t continue_ptr_count = 0;
-    for (int i = 0; i < MAX_TASK_NUM; i++)
-    {
-        if (!tasks[i])
-        {
-            continue_ptr_count++;
-            if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
-                break;
-            continue;
-        }
-        continue_ptr_count = 0;
-        if ((tasks[i]->ppid != tasks[i]->pid) && (tasks[i]->ppid == current_task->pid))
-        {
-            tasks[i]->signal |= SIGMASK(SIGKILL);
-            task_unblock(tasks[i], SIGKILL);
-        }
-    }
+    // spin_lock(&task_queue_lock);
+    // uint64_t continue_ptr_count = 0;
+    // for (int i = 0; i < MAX_TASK_NUM; i++)
+    // {
+    //     if (!tasks[i])
+    //     {
+    //         continue_ptr_count++;
+    //         if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
+    //             break;
+    //         continue;
+    //     }
+    //     continue_ptr_count = 0;
+    //     if ((tasks[i]->ppid != tasks[i]->pid) && (tasks[i]->ppid == current_task->pid))
+    //     {
+    //         task_exit_inner(tasks[i], SIGCHLD);
+
+    //         free_page_table(tasks[i]->arch_context->mm);
+
+    //         free(tasks[i]->arch_context);
+
+    //         free_frames_bytes((void *)(tasks[i]->kernel_stack - STACK_SIZE), STACK_SIZE);
+    //         free_frames_bytes((void *)(tasks[i]->syscall_stack - STACK_SIZE), STACK_SIZE);
+
+    //         free(tasks[i]);
+
+    //         tasks[i] = NULL;
+    //     }
+    // }
+    // spin_unlock(&task_queue_lock);
 
     task_exit_inner(current_task, code);
 

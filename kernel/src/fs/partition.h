@@ -61,6 +61,7 @@ struct GPT_DPTE
 
 typedef struct partition
 {
+    vfs_node_t node;
     uint64_t blkdev_id;
     uint64_t starting_lba;
     uint64_t ending_lba;

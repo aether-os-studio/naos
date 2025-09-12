@@ -40,6 +40,7 @@ vfs_node_t regist_dev(const char *name,
                       void *data);
 
 void dev_init();
+void dev_init_after_mount_root();
 void dev_init_after_sysfs();
 
 #define KDGETMODE 0x4B3B // 获取终端模式命令

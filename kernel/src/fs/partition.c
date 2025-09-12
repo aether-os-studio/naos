@@ -109,7 +109,7 @@ void partition_init()
     {
         char name[MAX_DEV_NAME_LEN];
         sprintf(name, "part%d", i);
-        regist_dev(name, partition_read, partition_write, NULL, NULL, NULL, &partitions[i]);
+        partitions[i].node = regist_dev(name, partition_read, partition_write, NULL, NULL, NULL, &partitions[i]);
     }
 }
 
@@ -122,7 +122,7 @@ void mount_root()
         char buf[16];
         sprintf(buf, "/dev/part%d", i);
 
-        if (!vfs_mount((const char *)buf, rootdir, "ext"))
+        if (!vfs_mount(partitions[i].node, rootdir, "ext"))
         {
             err = false;
             break;

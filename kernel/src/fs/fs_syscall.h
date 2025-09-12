@@ -378,6 +378,9 @@ uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len);
 
 uint64_t sys_fadvise64(int fd, uint64_t offset, uint64_t len, int advice);
 
+uint64_t sys_utimensat(int dfd, const char *pathname, struct timespec *utimes, int flags);
+uint64_t sys_futimesat(int dfd, const char *pathname, struct timeval *utimes);
+
 static inline uint64_t sys_pwrite64(int fd, const void *buf, size_t count, uint64_t offset)
 {
     sys_lseek(fd, offset, SEEK_SET);

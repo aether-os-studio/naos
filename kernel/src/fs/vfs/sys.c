@@ -158,6 +158,13 @@ void sysfs_init()
     // #endif
 }
 
+static int next_seq_num = 1;
+
+int alloc_seq_num()
+{
+    return next_seq_num++;
+}
+
 vfs_node_t sysfs_regist_dev(char t, int major, int minor, const char *real_device_path, const char *dev_name, const char *other_uevent_content)
 {
     const char *root = (t == 'c') ? "char" : "block";
@@ -189,13 +196,13 @@ vfs_node_t sysfs_regist_dev(char t, int major, int minor, const char *real_devic
     vfs_node_t uevent_node = vfs_open(uevent_path);
 
     char uevent_content[256];
-    sprintf(uevent_content, "MAJOR=%d\nMINOR=%d\nDEVNAME=%s\n%s", major, minor, dev_name, other_uevent_content);
+    sprintf(uevent_content, "MAJOR=%d\nMINOR=%d\nDEVNAME=%s\nDEVPATH=%s\n%s", major, minor, dev_name, fullpath + 4, other_uevent_content);
     vfs_write(uevent_node, uevent_content, 0, strlen(uevent_content));
 
     free(fullpath);
 
     char buffer[256];
-    sprintf(buffer, "add@%s\nACTION=add\n%s\n", dev_root_is_real ? dev_root_path : real_device_path, uevent_content);
+    sprintf(buffer, "add@/%s\nACTION=add\nSEQNUM=%d\n%s\n", dev_root_is_real ? dev_root_path : real_device_path, alloc_seq_num(), uevent_content);
     int len = strlen(buffer);
     for (int i = 0; i < len; i++)
     {

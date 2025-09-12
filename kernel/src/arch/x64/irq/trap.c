@@ -42,65 +42,34 @@ void irq_init()
 
 int lookup_kallsyms(uint64_t addr, int level)
 {
-    if (addr >= KERNEL_MODULES_SPACE_START && addr <= KERNEL_MODULES_SPACE_END)
+    const char *str = (const char *)&kallsyms_names;
+
+    uint64_t index = 0;
+    for (index = 0; index < kallsyms_num - 1; ++index)
     {
-        uint64_t index = 0;
-        uint64_t sym_offset_of_func_start = 0xffffffffffffffff;
-        uint64_t found_index = 0;
-        for (index = 0; index < all_modules_symbols_num - 1; ++index)
-        {
-            if (addr >= all_modules_symbols[index]->addr && (addr - all_modules_symbols[index]->addr) < sym_offset_of_func_start)
-            {
-                sym_offset_of_func_start = addr - all_modules_symbols[index]->addr;
-                found_index = index;
-            }
-        }
-        if (found_index < all_modules_symbols_num)
-        {
-            module_symbol_t *symbols = all_modules_symbols[found_index];
-            printk("function:%s() \t(+) %04d address:%#018lx\n", symbols->name, addr - symbols->addr, addr);
-            return 0;
-        }
-        else
-            return -1;
+        if (addr > kallsyms_address[index] && addr <= kallsyms_address[index + 1])
+            break;
+    }
+
+    if (index < kallsyms_num)
+    {
+        printk("function:%s() \t(+) %04d address:%#018lx\n", &str[kallsyms_names_index[index]], addr - kallsyms_address[index], addr);
+        return 0;
     }
     else
-    {
-        const char *str = (const char *)&kallsyms_names;
-
-        uint64_t index = 0;
-        for (index = 0; index < kallsyms_num - 1; ++index)
-        {
-            if (addr > kallsyms_address[index] && addr <= kallsyms_address[index + 1])
-                break;
-        }
-
-        if (index < kallsyms_num)
-        {
-            printk("function:%s() \t(+) %04d address:%#018lx\n", &str[kallsyms_names_index[index]], addr - kallsyms_address[index], addr);
-            return 0;
-        }
-        else
-            return -1;
-    }
+        return -1;
 }
 
 void traceback(struct pt_regs *regs)
 {
-
     uint64_t *rbp = (uint64_t *)regs->rbp;
     printk("======== Kernel traceback =======\n");
 
     uint64_t ret_addr = regs->rip;
     for (int i = 0; i < 32; ++i)
     {
-        if (check_user_overflow(regs->rbp, 0))
-        {
-            if (lookup_kallsyms(ret_addr, i) != 0)
-                break;
-        }
-        else
-            printk("userland address:%#018lx\n", ret_addr);
+        if (lookup_kallsyms(ret_addr, i) != 0)
+            break;
 
         if (rbp == 0 || ((uint64_t)rbp < regs->rsp))
             break;

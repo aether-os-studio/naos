@@ -37,13 +37,11 @@
 
 #include <libs/klibc.h>
 
-const char *dev_name;
-
 /**@brief   Image block size.*/
 #define EXT4_FILEDEV_BSIZE 512
 
 /**@brief   Image file descriptor.*/
-static vfs_node_t dev_node;
+vfs_node_t dev_node;
 
 #define DROP_LINUXCACHE_BUFFERS 0
 
@@ -63,7 +61,7 @@ EXT4_BLOCKDEV_STATIC_INSTANCE(vfs_dev, EXT4_FILEDEV_BSIZE, 0, vfs_dev_open,
 /******************************************************************************/
 static int vfs_dev_open(struct ext4_blockdev *bdev)
 {
-	dev_node = vfs_open(dev_name);
+	vfs_update(dev_node);
 
 	vfs_dev.part_offset = 0;
 	devfs_handle_t devfs_handle = dev_node->handle;
@@ -108,5 +106,5 @@ static int vfs_dev_close(struct ext4_blockdev *bdev)
 struct ext4_blockdev *vfs_dev_get(void) { return &vfs_dev; }
 /******************************************************************************/
 
-void vfs_dev_name_set(const char *n) { dev_name = n; }
+void vfs_dev_name_set(const char *n) {}
 /******************************************************************************/

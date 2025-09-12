@@ -15,7 +15,7 @@ typedef struct ext_handle
     };
 } ext_handle_t;
 
-int ext_mount(const char *src, vfs_node_t node);
+int ext_mount(vfs_node_t dev, vfs_node_t node);
 void ext_unmount(void *root);
 void ext_open(void *parent, const char *name, vfs_node_t node);
 bool ext_close(void *current);

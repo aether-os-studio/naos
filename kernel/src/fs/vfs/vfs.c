@@ -8,6 +8,8 @@
 #include "drivers/pty.h"
 #include "drivers/fb.h"
 
+spinlock_t global_rw_lock = {0};
+
 vfs_node_t rootdir = NULL;
 
 fs_t *all_fs[256] = {
@@ -113,6 +115,8 @@ vfs_node_t vfs_child_append(vfs_node_t parent, const char *name, void *handle)
 
 int vfs_mkdir(const char *name)
 {
+    spin_lock(&global_rw_lock);
+
     vfs_node_t current = rootdir;
     char *path;
     if (name[0] != '/')
@@ -175,17 +179,21 @@ create:
     node->type = file_dir;
     callbackof(current, mkdir)(current->handle, filename, node);
 
+    spin_unlock(&global_rw_lock);
+
     free(path);
 
     return 0;
 
 err:
+    spin_unlock(&global_rw_lock);
     free(path);
     return -1;
 }
 
 int vfs_mkfile(const char *name)
 {
+    spin_lock(&global_rw_lock);
     vfs_node_t current = rootdir;
     char *path;
     if (name[0] != '/')
@@ -248,11 +256,13 @@ create:
     node->type = file_none;
     callbackof(current, mkfile)(current->handle, filename, node);
 
+    spin_unlock(&global_rw_lock);
     free(path);
 
     return 0;
 
 err:
+    spin_unlock(&global_rw_lock);
     free(path);
     return -1;
 }
@@ -265,6 +275,7 @@ err:
  */
 int vfs_link(const char *name, const char *target_name)
 {
+    spin_lock(&global_rw_lock);
     vfs_node_t current = rootdir;
     char *path;
     if (name[0] != '/')
@@ -328,11 +339,13 @@ create:
     callbackof(current, link)(current->handle, target_name, node);
     node->linkto = vfs_open(target_name);
 
+    spin_unlock(&global_rw_lock);
     free(path);
 
     return 0;
 
 err:
+    spin_unlock(&global_rw_lock);
     free(path);
     return -1;
 }
@@ -345,6 +358,7 @@ err:
  */
 int vfs_symlink(const char *name, const char *target_name)
 {
+    spin_lock(&global_rw_lock);
     vfs_node_t current = rootdir;
     char *path;
     if (name[0] != '/')
@@ -405,20 +419,28 @@ int vfs_symlink(const char *name, const char *target_name)
 create:
     vfs_node_t node = vfs_child_append(current, filename, NULL);
     node->type = file_symlink;
-    callbackof(current, symlink)(current->handle, target_name, node);
+    ssize_t ret = callbackof(current, symlink)(current->handle, target_name, node);
+    if (ret < 0)
+    {
+        free(path);
+        return ret;
+    }
     node->linkto = vfs_open(target_name);
 
+    spin_unlock(&global_rw_lock);
     free(path);
 
     return 0;
 
 err:
+    spin_unlock(&global_rw_lock);
     free(path);
     return -1;
 }
 
 int vfs_mknod(const char *name, uint16_t umode, int dev)
 {
+    spin_lock(&global_rw_lock);
     vfs_node_t current = rootdir;
     char *path;
     if (name[0] != '/')
@@ -498,11 +520,13 @@ create:
     node->rdev = dev;
     callbackof(current, mknod)(current->handle, filename, node, umode, dev);
 
+    spin_unlock(&global_rw_lock);
     free(path);
 
     return 0;
 
 err:
+    spin_unlock(&global_rw_lock);
     free(path);
     return -1;
 }
@@ -684,7 +708,6 @@ int vfs_close(vfs_node_t node)
     }
     if (node->type & file_dir)
         return 0;
-    spin_lock(&node->spin);
     if (node->refcount > 0)
         node->refcount--;
     if (node->refcount == 0)
@@ -695,12 +718,11 @@ int vfs_close(vfs_node_t node)
             node->handle = NULL;
         }
     }
-    spin_unlock(&node->spin);
 
     return 0;
 }
 
-int vfs_mount(const char *src, vfs_node_t node, const char *type)
+int vfs_mount(vfs_node_t dev, vfs_node_t node, const char *type)
 {
     if (node == NULL)
         return -1;
@@ -708,7 +730,7 @@ int vfs_mount(const char *src, vfs_node_t node, const char *type)
         return -1;
     for (int i = 1; i < fs_nextid; i++)
     {
-        if (!strcmp(all_fs[i]->name, type) && fs_callbacks[i]->mount(src, node) == 0)
+        if (!strcmp(all_fs[i]->name, type) && fs_callbacks[i]->mount(dev, node) == 0)
         {
             node->fsid = i;
             node->root = node;
@@ -1022,3 +1044,5 @@ void *vfs_map(fd_t *fd, uint64_t addr, uint64_t len, uint64_t prot, uint64_t fla
 {
     return callbackof(fd->node, map)(fd, (void *)addr, offset, len, prot, flags);
 }
+
+extern vfs_node_t devfs_root;

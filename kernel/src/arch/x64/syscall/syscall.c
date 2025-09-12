@@ -453,7 +453,7 @@ void syscall_handler_init()
     syscall_handlers[SYS_MKDIRAT] = (syscall_handle_t)sys_mkdirat;
     // syscall_handlers[SYS_MKNODAT] = (syscall_handle_t)sys_mknodat;
     // syscall_handlers[SYS_FCHOWNAT] = (syscall_handle_t)sys_fchownat;
-    // syscall_handlers[SYS_FUTIMESAT] = (syscall_handle_t)sys_futimesat;
+    syscall_handlers[SYS_FUTIMESAT] = (syscall_handle_t)sys_futimesat;
     syscall_handlers[SYS_NEWFSTATAT] = (syscall_handle_t)sys_newfstatat;
     syscall_handlers[SYS_UNLINKAT] = (syscall_handle_t)sys_unlinkat;
     syscall_handlers[SYS_RENAMEAT] = (syscall_handle_t)sys_renameat;
@@ -472,7 +472,7 @@ void syscall_handler_init()
     // syscall_handlers[SYS_SYNC_FILE_RANGE] = (syscall_handle_t)sys_sync_file_range;
     // syscall_handlers[SYS_VMSPLICE] = (syscall_handle_t)sys_vmsplice;
     // syscall_handlers[SYS_MOVE_PAGES] = (syscall_handle_t)sys_move_pages;
-    // syscall_handlers[SYS_UTIMENSAT] = (syscall_handle_t)sys_utimensat;
+    syscall_handlers[SYS_UTIMENSAT] = (syscall_handle_t)sys_utimensat;
     syscall_handlers[SYS_EPOLL_PWAIT] = (syscall_handle_t)sys_epoll_pwait;
     syscall_handlers[SYS_SIGNALFD] = (syscall_handle_t)sys_signalfd;
     syscall_handlers[SYS_TIMERFD_CREATE] = (syscall_handle_t)sys_timerfd_create;

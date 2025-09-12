@@ -86,6 +86,11 @@ ssize_t procfs_read(fd_t *fd, void *addr, size_t offset, size_t size)
     return 0;
 }
 
+ssize_t procfs_write(fd_t *fd, const void *addr, size_t offset, size_t size)
+{
+    return size;
+}
+
 vfs_node_t procfs_root = NULL;
 int procfs_id = 0;
 
@@ -122,7 +127,7 @@ static struct vfs_callback callbacks = {
     .open = (vfs_open_t)procfs_open,
     .close = (vfs_close_t)dummy,
     .read = procfs_read,
-    .write = (vfs_write_t)dummy,
+    .write = (vfs_write_t)procfs_write,
     .readlink = (vfs_readlink_t)procfs_readlink,
     .mkdir = (vfs_mk_t)dummy,
     .mkfile = (vfs_mk_t)dummy,

@@ -27,12 +27,17 @@ char *at_resolve_pathname(int dirfd, char *pathname)
             char *dirname = vfs_get_fullpath(node);
 
             int rootDirLen = strlen(dirname);
-            int pathnameLen = strlen(pathname) + 1;
+            int pathnameLen = 0;
+            if (pathname)
+                pathnameLen = strlen(pathname) + 1;
 
             char *out = malloc(rootDirLen + 1 + pathnameLen);
             memcpy(out, dirname, rootDirLen);
             out[rootDirLen] = '/';
-            memcpy(out + rootDirLen + 1, pathname, pathnameLen);
+            if (pathname)
+                memcpy(out + rootDirLen + 1, pathname, pathnameLen);
+            else
+                out[rootDirLen + 1] = 0;
 
             free(dirname);
 

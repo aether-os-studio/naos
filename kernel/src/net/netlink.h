@@ -95,6 +95,7 @@ struct netlink_sock
     uint32_t dst_portid;
     uint32_t dst_groups;
     struct sockaddr_nl *bind_addr;
+    int uevent_message_pos;
     char *buffer;
     size_t buffer_size;
     size_t buffer_pos;

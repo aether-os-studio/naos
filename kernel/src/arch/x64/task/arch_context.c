@@ -63,7 +63,7 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
     dst->ctx->ds = SELECTOR_USER_DS;
     dst->ctx->es = SELECTOR_USER_DS;
     dst->ctx->rax = 0;
-    dst->fpu_ctx = aligned_alloc(16, sizeof(fpu_context_t));
+    dst->fpu_ctx = alloc_frames_bytes(sizeof(fpu_context_t));
     memset(dst->fpu_ctx, 0, sizeof(fpu_context_t));
     if (src->fpu_ctx)
     {
@@ -79,11 +79,11 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
 
 void arch_context_free(arch_context_t *context)
 {
+    context->dead = true;
     if (context->fpu_ctx)
     {
-        free(context->fpu_ctx);
+        free_frames_bytes(context->fpu_ctx, sizeof(fpu_context_t));
     }
-    context->dead = true;
 }
 
 task_t *arch_get_current()
@@ -145,7 +145,7 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
     {
         return;
     }
-    
+
     if (next->signal & SIGMASK(SIGKILL))
     {
         return;

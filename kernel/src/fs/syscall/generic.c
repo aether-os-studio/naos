@@ -1165,6 +1165,16 @@ uint64_t sys_fadvise64(int fd, uint64_t offset, uint64_t len, int advice)
     return 0;
 }
 
+uint64_t sys_utimensat(int dfd, const char *pathname, struct timespec *ntimes, int flags)
+{
+    return 0;
+}
+
+uint64_t sys_futimesat(int dfd, const char *pathname, struct timeval *utimes)
+{
+    return 0;
+}
+
 extern volatile struct limine_date_at_boot_request boot_time_request;
 
 int sys_sysinfo(struct sysinfo *info)

@@ -8,8 +8,6 @@
 #include <fs/partition.h>
 #include <drivers/fb.h>
 
-extern void fatfs_init();
-extern void iso9660_init();
 extern void sysfs_init();
 extern void fs_syscall_init();
 extern void pipefs_init();
@@ -20,6 +18,8 @@ extern void mount_root();
 bool system_initialized = false;
 
 extern bool can_schedule;
+
+extern vfs_node_t devfs_root;
 
 void init_thread(uint64_t arg)
 {
@@ -35,10 +35,12 @@ void init_thread(uint64_t arg)
     fs_syscall_init();
     socketfs_init();
     pipefs_init();
-    iso9660_init();
-    fatfs_init();
 
+    list_delete(devfs_root->parent->child, devfs_root);
+    devfs_root->parent = NULL;
     mount_root();
+
+    dev_init_after_mount_root();
 
     fbdev_init();
 

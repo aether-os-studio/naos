@@ -6,20 +6,24 @@ static int ext_fsid = 0;
 
 spinlock_t rwlock = {0};
 
-int ext_mount(const char *src, vfs_node_t node)
+extern vfs_node_t dev_node;
+
+int ext_mount(vfs_node_t dev, vfs_node_t node)
 {
     spin_lock(&rwlock);
 
-    ext4_device_register(vfs_dev_get(), src);
+    dev_node = dev;
 
-    vfs_dev_name_set(src);
+    ext4_device_register(vfs_dev_get(), "dev");
+
+    vfs_dev_name_set("dev");
 
     char *fullpath = vfs_get_fullpath(node);
-    int ret = ext4_mount(src, (const char *)fullpath, false);
+    int ret = ext4_mount("dev", (const char *)fullpath, false);
 
     if (ret != 0)
     {
-        ext4_device_unregister(src);
+        ext4_device_unregister("dev");
         free(fullpath);
         spin_unlock(&rwlock);
         return -1;
