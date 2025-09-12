@@ -25,6 +25,48 @@ size_t netlink_setsockopt(uint64_t fd, int level, int optname, const void *optva
     return 0;
 }
 
+size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
+{
+    return 0;
+}
+
+size_t netlink_sendmsg(uint64_t fd, const struct msghdr *msg, int flags)
+{
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    struct netlink_sock *nl_sk = handle->sock;
+
+    size_t cnt = 0;
+    bool noblock = !!(flags & MSG_DONTWAIT);
+
+    int iov_len_total = 0;
+
+    for (int i = 0; i < msg->msg_iovlen; i++)
+    {
+        struct iovec *curr =
+            (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
+
+        iov_len_total += curr->len;
+    }
+
+    char *buffer = malloc(iov_len_total);
+
+    size_t copied = 0;
+    for (int i = 0; i < msg->msg_iovlen; i++)
+    {
+        struct iovec *curr =
+            (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
+
+        memcpy(buffer + copied, curr->iov_base, curr->len);
+        copied += curr->len;
+    }
+
+    memcpy(nl_sk->buffer, buffer, iov_len_total);
+
+    free(buffer);
+
+    return iov_len_total;
+}
+
 socket_op_t netlink_ops = {
     .bind = netlink_bind,
     .getsockopt = netlink_getsockopt,
@@ -41,6 +83,7 @@ int netlink_socket(int domain, int type, int protocol)
     nl_sk->portid = (uint32_t)current_task->pid; // 使用PID作为默认portid
     nl_sk->bind_addr = malloc(sizeof(struct sockaddr_nl));
     memset(nl_sk->bind_addr, 0, sizeof(struct sockaddr_nl));
+    nl_sk->buffer = alloc_frames_bytes(NETLINK_BUFFER_SIZE);
 
     socket_handle_t *handle = malloc(sizeof(socket_handle_t));
     memset(handle, 0, sizeof(socket_handle_t));

@@ -11,6 +11,8 @@ struct sockaddr_nl
     uint32_t nl_groups;
 };
 
+#define NETLINK_BUFFER_SIZE 32768
+
 struct netlink_sock
 {
     uint32_t portid;
@@ -18,6 +20,7 @@ struct netlink_sock
     uint32_t dst_portid;
     uint32_t dst_groups;
     struct sockaddr_nl *bind_addr;
+    char *buffer;
 };
 
 extern socket_op_t netlink_ops;
