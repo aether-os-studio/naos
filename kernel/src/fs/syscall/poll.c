@@ -1,4 +1,6 @@
 #include <fs/fs_syscall.h>
+#include <task/task.h>
+#include <task/signal.h>
 
 uint32_t epoll_to_poll_comp(uint32_t epoll_events)
 {

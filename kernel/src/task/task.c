@@ -131,6 +131,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg, uin
     memset(task->arch_context, 0, sizeof(arch_context_t));
     arch_context_init(task->arch_context, virt_to_phys((uint64_t)get_kernel_page_dir()), (uint64_t)entry, task->kernel_stack, false, arg);
     task->signal = 0;
+    task->saved_signal = 0;
     task->status = 0;
     task->cwd = rootdir;
     task->mmap_regions = malloc(sizeof(Bitmap));
@@ -480,6 +481,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
         child->fd_info->ref_count++;
     }
 
+    child->saved_signal = 0;
     memcpy(child->actions, current_task->actions, sizeof(child->actions));
     child->signal = current_task->signal;
     child->blocked = current_task->blocked;
@@ -1258,6 +1260,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
 
     memcpy(&child->term, &current_task->term, sizeof(termios));
 
+    child->saved_signal = 0;
     if (flags & CLONE_SIGHAND)
     {
         memcpy(child->actions, current_task->actions, sizeof(child->actions));

@@ -310,7 +310,7 @@ void syscall_handler_init()
     // syscall_handlers[SYS_CAPGET] = (syscall_handle_t)sys_capget;
     // syscall_handlers[SYS_CAPSET] = (syscall_handle_t)sys_capset;
     // syscall_handlers[SYS_RT_SIGPENDING] = (syscall_handle_t)sys_rt_sigpending;
-    // syscall_handlers[SYS_RT_SIGTIMEDWAIT] = (syscall_handle_t)sys_rt_sigtimedwait;
+    syscall_handlers[SYS_RT_SIGTIMEDWAIT] = (syscall_handle_t)sys_rt_sigtimedwait;
     // syscall_handlers[SYS_RT_SIGQUEUEINFO] = (syscall_handle_t)sys_rt_sigqueueinfo;
     // syscall_handlers[SYS_RT_SIGSUSPEND] = (syscall_handle_t)sys_sigsuspend;
     syscall_handlers[SYS_SIGALTSTACK] = (syscall_handle_t)dummy_syscall_handler;
@@ -404,8 +404,8 @@ void syscall_handler_init()
     // syscall_handlers[SYS_RESTART_SYSCALL] = (syscall_handle_t)sys_restart_syscall;
     // syscall_handlers[SYS_SEMTIMEDOP] = (syscall_handle_t)sys_semtimedop;
     syscall_handlers[SYS_FADVISE64] = (syscall_handle_t)dummy_syscall_handler;
-    // syscall_handlers[SYS_TIMER_CREATE] = (syscall_handle_t)sys_timer_create;
-    // syscall_handlers[SYS_TIMER_SETTIME] = (syscall_handle_t)sys_timer_settime;
+    syscall_handlers[SYS_TIMER_CREATE] = (syscall_handle_t)sys_timer_create;
+    syscall_handlers[SYS_TIMER_SETTIME] = (syscall_handle_t)sys_timer_settime;
     // syscall_handlers[SYS_TIMER_GETTIME] = (syscall_handle_t)sys_timer_gettime;
     // syscall_handlers[SYS_TIMER_GETOVERRUN] = (syscall_handle_t)sys_timer_getoverrun;
     // syscall_handlers[SYS_TIMER_DELETE] = (syscall_handle_t)sys_timer_delete;

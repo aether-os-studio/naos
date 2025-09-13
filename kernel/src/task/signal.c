@@ -1,76 +1,10 @@
 #include <task/signal.h>
 #include <fs/vfs/vfs.h>
+#include <fs/fs_syscall.h>
 #include <arch/arch.h>
 #include <task/task.h>
 
 #define SI_MAX_SIZE 128
-
-typedef struct
-{
-    int32_t si_signo; // Signal number
-    int32_t si_errno; // Error number (if applicable)
-    int32_t si_code;  // Signal code
-
-    union
-    {
-        int32_t _pad[128 - 3 * sizeof(int32_t) / sizeof(int32_t)];
-
-        // Kill
-        struct
-        {
-            int32_t si_pid;  // Sending process ID
-            uint32_t si_uid; // Real user ID of sending process
-        } _kill;
-
-        // Timer
-        struct
-        {
-            int32_t si_tid;     // Timer ID
-            int32_t si_overrun; // Overrun count
-            int32_t si_sigval;  // Signal value
-        } _timer;
-
-        // POSIX.1b signals
-        struct
-        {
-            int32_t si_pid;    // Sending process ID
-            uint32_t si_uid;   // Real user ID of sending process
-            int32_t si_sigval; // Signal value
-        } _rt;
-
-        // SIGCHLD
-        struct
-        {
-            int32_t si_pid;    // Sending process ID
-            uint32_t si_uid;   // Real user ID of sending process
-            int32_t si_status; // Exit value or signal
-            int32_t si_utime;  // User time consumed
-            int32_t si_stime;  // System time consumed
-        } _sigchld;
-
-        // SIGILL, SIGFPE, SIGSEGV, SIGBUS
-        struct
-        {
-            uintptr_t si_addr;   // Faulting instruction or data address
-            int32_t si_addr_lsb; // LSB of the address (if applicable)
-        } _sigfault;
-
-        // SIGPOLL
-        struct
-        {
-            int32_t si_band; // Band event
-            int32_t si_fd;   // File descriptor
-        } _sigpoll;
-
-        // SIGSYS
-        struct
-        {
-            uintptr_t si_call_addr; // Calling user insn
-            int32_t si_syscall;     // Number of syscall
-            uint32_t si_arch;       // Architecture
-        } _sigsys;
-    } _sifields;
-} siginfo_t;
 
 struct sigcontext
 {
@@ -235,6 +169,44 @@ void sys_sigreturn(struct pt_regs *regs)
 #endif
 }
 
+int sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo, const struct timespec *uts, size_t sigsetsize)
+{
+    if (sigsetsize != sizeof(sigset_t))
+    {
+        return -EINVAL;
+    }
+
+    sigset_t old = current_task->blocked;
+
+    current_task->blocked = *uthese;
+
+    uint64_t start = nanoTime();
+    uint64_t wait_ns = 0;
+    if (uts)
+    {
+        wait_ns = uts->tv_sec * 1000000000ULL + uts->tv_nsec;
+    }
+
+    while ((current_task->saved_signal == 0) && (nanoTime() - start < wait_ns || wait_ns == 0))
+    {
+        arch_yield();
+    }
+
+    current_task->blocked = old;
+
+    if (uinfo)
+    {
+        memset(uinfo, 0, sizeof(siginfo_t));
+        uinfo->si_signo = current_task->saved_signal;
+        uinfo->si_errno = 0;
+        uinfo->si_code = 0;
+    }
+
+    current_task->saved_signal = 0;
+
+    return 0;
+}
+
 int sys_sigsuspend(const sigset_t *mask)
 {
     sigset_t old = current_task->blocked;
@@ -337,6 +309,8 @@ void task_signal()
             break;
         }
     }
+
+    current_task->saved_signal = sig;
 
     if (sig == SIGKILL)
     {

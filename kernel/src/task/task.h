@@ -183,6 +183,7 @@ typedef struct task
     sigaction_t actions[MAXSIG];
     uint64_t signal;
     uint64_t blocked;
+    int saved_signal;
     vfs_node_t cwd;
     fd_info_t *fd_info;
     uint64_t timer_slack_ns;

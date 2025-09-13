@@ -80,12 +80,82 @@ typedef struct sigaction
     sigset_t sa_mask;
 } sigaction_t;
 
+typedef struct
+{
+    int32_t si_signo; // Signal number
+    int32_t si_errno; // Error number (if applicable)
+    int32_t si_code;  // Signal code
+
+    union
+    {
+        int32_t _pad[128 - 3 * sizeof(int32_t) / sizeof(int32_t)];
+
+        // Kill
+        struct
+        {
+            int32_t si_pid;  // Sending process ID
+            uint32_t si_uid; // Real user ID of sending process
+        } _kill;
+
+        // Timer
+        struct
+        {
+            int32_t si_tid;     // Timer ID
+            int32_t si_overrun; // Overrun count
+            int32_t si_sigval;  // Signal value
+        } _timer;
+
+        // POSIX.1b signals
+        struct
+        {
+            int32_t si_pid;    // Sending process ID
+            uint32_t si_uid;   // Real user ID of sending process
+            int32_t si_sigval; // Signal value
+        } _rt;
+
+        // SIGCHLD
+        struct
+        {
+            int32_t si_pid;    // Sending process ID
+            uint32_t si_uid;   // Real user ID of sending process
+            int32_t si_status; // Exit value or signal
+            int32_t si_utime;  // User time consumed
+            int32_t si_stime;  // System time consumed
+        } _sigchld;
+
+        // SIGILL, SIGFPE, SIGSEGV, SIGBUS
+        struct
+        {
+            uintptr_t si_addr;   // Faulting instruction or data address
+            int32_t si_addr_lsb; // LSB of the address (if applicable)
+        } _sigfault;
+
+        // SIGPOLL
+        struct
+        {
+            int32_t si_band; // Band event
+            int32_t si_fd;   // File descriptor
+        } _sigpoll;
+
+        // SIGSYS
+        struct
+        {
+            uintptr_t si_call_addr; // Calling user insn
+            int32_t si_syscall;     // Number of syscall
+            uint32_t si_arch;       // Architecture
+        } _sigsys;
+    } _sifields;
+} siginfo_t;
+
+struct timespec;
+
 int sys_sgetmask();
 int sys_ssetmask(int how, sigset_t *nset, sigset_t *oset);
 int sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction);
 struct pt_regs;
 void sys_sigreturn(struct pt_regs *regs);
 int sys_sigsuspend(const sigset_t *mask);
+int sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo, const struct timespec *uts, size_t sigsetsize);
 int sys_kill(int pid, int sig);
 
 union sigval
