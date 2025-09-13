@@ -587,6 +587,13 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     if (current_task->is_vfork || current_task->arch_context->mm->page_table_addr == (uint64_t)virt_to_phys(get_kernel_page_dir()))
     {
+        current_task->mmap_regions->bitmap_refcount--;
+        current_task->mmap_regions = malloc(sizeof(Bitmap));
+        const uint64_t bitmap_size = (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 8;
+        void *data = alloc_frames_bytes(bitmap_size);
+        bitmap_init(current_task->mmap_regions, data, bitmap_size);
+        memset(data, 0xFF, bitmap_size);
+
         current_task->arch_context->mm = clone_page_table(current_task->arch_context->mm, 0);
 #if defined(__x86_64__)
         asm volatile("movq %0, %%cr3" ::"r"(current_task->arch_context->mm->page_table_addr));
