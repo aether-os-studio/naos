@@ -103,16 +103,6 @@ uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3)
         }
         return 0;
     }
-    case 2: // CLOCK_PROCESS_CPUTIME_ID
-        if (arg2)
-        {
-            struct timespec *ts = (struct timespec *)arg2;
-            uint64_t jiffies = current_task->jiffies;
-            uint64_t ms = jiffies * SCHED_HZ;
-            ts->tv_sec = ms / 1000;
-            ts->tv_nsec = ms * 1000000;
-        }
-        return 0;
     case 7: // CLOCK_BOOTTIME
         if (arg2)
         {

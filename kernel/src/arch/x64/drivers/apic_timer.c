@@ -3,10 +3,10 @@
 #include <interrupt/irq_manager.h>
 #include <arch/arch.h>
 #include <task/task.h>
+#include <task/eevdf.h>
 
 void apic_timer_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
 {
-    current_task->jiffies += current_task->priority;
 }
 
 void apic_timer_init()

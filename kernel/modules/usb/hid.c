@@ -99,7 +99,7 @@ static int usb_kbd_setup(struct usbdevice_s *usbdev, struct usb_endpoint_descrip
 
     if (!kb_task_created)
     {
-        task_create("usb_check_key", (void (*)(uint64_t))usb_check_key, 0, KTHREAD_PRIORITY);
+        task_create("usb_check_key", (void (*)(uint64_t))usb_check_key, 0, NICE_TO_PRIO(-1));
         kb_task_created = true;
     }
 
@@ -370,7 +370,7 @@ usb_mouse_setup(struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epde
 
     if (!mice_task_created)
     {
-        task_create("usb_check_mouse", (void (*)(uint64_t))usb_check_mouse, 0, KTHREAD_PRIORITY);
+        task_create("usb_check_mouse", (void (*)(uint64_t))usb_check_mouse, 0, NICE_TO_PRIO(-1));
         mice_task_created = true;
     }
 
