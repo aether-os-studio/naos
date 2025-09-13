@@ -391,6 +391,13 @@ void pci_scan_function(uint16_t segment_group, uint8_t bus, uint8_t device, uint
         pci_device->vendor_id = vendor_id;
         pci_device->device_id = device_id;
 
+        uint32_t subsystem_vendor_device_id = pci_device->op->read(pci_device->bus, pci_device->slot, pci_device->func, pci_device->segment, 0x2c);
+        uint16_t subsystem_vendor_id = subsystem_vendor_device_id & 0xFFFF;
+        uint16_t subsystem_device_id = (subsystem_vendor_device_id >> 16);
+
+        pci_device->subsystem_device_id = subsystem_device_id;
+        pci_device->subsystem_vendor_id = subsystem_vendor_id;
+
         uint32_t interrupt_value = pci_device->op->read(pci_device->bus, pci_device->slot, pci_device->func, pci_device->segment, 0x3c);
         pci_device->irq_line = interrupt_value & 0xff;
         pci_device->irq_pin = (interrupt_value >> 8) & 0xff;

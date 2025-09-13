@@ -779,8 +779,10 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
 
     default:
         printk("drm: Unsupported ioctl: cmd = %#010lx\n", cmd);
-        return -ENOSYS;
+        break;
     }
+
+    return -ENOSYS;
 }
 
 ssize_t drm_read(void *data, uint64_t offset, void *buf, uint64_t len, uint64_t flags)

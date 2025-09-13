@@ -56,6 +56,8 @@ typedef struct
 
     uint16_t vendor_id;
     uint16_t device_id;
+    uint16_t subsystem_vendor_id;
+    uint16_t subsystem_device_id;
     uint8_t revision_id;
     uint16_t segment;
     uint8_t bus;
