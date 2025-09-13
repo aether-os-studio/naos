@@ -1000,9 +1000,13 @@ int vfs_delete(vfs_node_t node)
 
 int vfs_rename(vfs_node_t node, const char *new)
 {
+    spin_lock(&node->spin);
     int ret = callbackof(node, rename)(node->handle, new);
     if (ret < 0)
+    {
+        spin_unlock(&node->spin);
         return ret;
+    }
 
     char *filename = strrchr(new, '/') + 1;
     if (filename == (char *)1)
@@ -1021,6 +1025,8 @@ int vfs_rename(vfs_node_t node, const char *new)
     list_prepend(node->parent->child, node);
     free(node->name);
     node->name = strdup(filename);
+
+    spin_unlock(&node->spin);
 
     return ret;
 }

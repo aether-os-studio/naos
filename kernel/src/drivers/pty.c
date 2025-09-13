@@ -214,11 +214,11 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit)
             if (pair->bufferSlave[pair->ptrSlave + i] == '\r')
                 pair->bufferSlave[pair->ptrSlave + i] = '\n';
         }
+    // if (pair->term.c_lflag & ICANON && pair->term.c_lflag & ECHO)
+    // {
+    //     pts_write_inner(pair, &pair->bufferSlave[pair->ptrSlave], limit);
+    // }
     pair->ptrSlave += limit;
-    if (pair->term.c_lflag & ICANON && pair->term.c_lflag & ECHO)
-    {
-        pts_write_inner(pair, &pair->bufferSlave[pair->ptrSlave - limit], limit);
-    }
 
     spin_unlock(&pair->lock);
     return limit;
@@ -248,7 +248,7 @@ size_t ptmx_ioctl(void *file, uint64_t request, uint64_t arg)
         ret = 0;
         break;
     }
-    switch (request & 0xFFFF)
+    switch (request & 0xFFFFFFFF)
     {
     case TIOCGWINSZ:
     {
@@ -263,10 +263,8 @@ size_t ptmx_ioctl(void *file, uint64_t request, uint64_t arg)
         break;
     }
     default:
-    {
-        printk("ptmx_ioctl: Unsupported request %d\n", request & 0xFFFF);
+        printk("ptmx_ioctl: Unsupported request %#010lx\n", request & 0xFFFFFFFF);
         break;
-    }
     }
     spin_unlock(&pair->lock);
 
@@ -581,7 +579,7 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg)
         ret = 0;
         break;
     default:
-        printk("pts_ioctl: Unsupported request %d\n",request);
+        printk("pts_ioctl: Unsupported request %#010lx\n", request);
         break;
     }
     spin_unlock(&pair->lock);
