@@ -37,6 +37,18 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
 
     spin_lock(&mm_op_lock);
 
+    if (addr >= USER_MMAP_START && addr + len <= USER_MMAP_END)
+    {
+        for (uint64_t a = addr; a < addr + len; a += DEFAULT_PAGE_SIZE)
+        {
+            if (bitmap_get(current_task->mmap_regions, (a - USER_MMAP_START) / DEFAULT_PAGE_SIZE) == false && !(flags & MAP_FIXED))
+            {
+                spin_unlock(&mm_op_lock);
+                goto find_free_addr;
+            }
+        }
+    }
+
     if (fd < MAX_FD_NUM && current_task->fd_info->fds[fd])
     {
         uint64_t ret = (uint64_t)vfs_map(current_task->fd_info->fds[fd], addr, len, prot, flags, offset);
@@ -63,19 +75,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
                 pt_flags |= PT_FLAG_X;
         }
 
-        if (addr >= USER_MMAP_START && addr + len <= USER_MMAP_END)
-        {
-            for (uint64_t a = addr; a < addr + len; a += DEFAULT_PAGE_SIZE)
-            {
-                if (bitmap_get(current_task->mmap_regions, (a - USER_MMAP_START) / DEFAULT_PAGE_SIZE) == false && !(flags & MAP_FIXED))
-                {
-                    spin_unlock(&mm_op_lock);
-                    goto find_free_addr;
-                }
-            }
-        }
-
-        map_page_range(get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)), 0, (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
+        map_page_range(get_current_page_dir(true), addr, 0, (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
 
         if (addr >= USER_MMAP_START && addr + len <= USER_MMAP_END)
         {

@@ -1567,11 +1567,11 @@ vfs_node_t socket_dup(vfs_node_t node)
 {
     socket_handle_t *handle = node->handle;
     socket_t *socket = handle->sock;
-    // socket->timesOpened++;
-    // if (socket->pair)
-    // {
-    //     socket->pair->clientFds++;
-    // }
+    socket->timesOpened++;
+    if (socket->pair)
+    {
+        socket->pair->clientFds++;
+    }
     return node;
 }
 
@@ -1579,7 +1579,7 @@ vfs_node_t socket_accept_dup(vfs_node_t node)
 {
     socket_handle_t *handle = node->handle;
     unix_socket_pair_t *pair = handle->sock;
-    // pair->serverFds++;
+    pair->serverFds++;
     return node;
 }
 
