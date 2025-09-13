@@ -370,6 +370,7 @@ ssize_t stdin_read(void *data, uint64_t offset, void *buf, uint64_t len, uint64_
 #include <libs/flanterm/flanterm.h>
 
 extern struct flanterm_context *ft_ctx;
+extern struct vt_mode current_vt_mode;
 
 ssize_t stdout_write(void *data, uint64_t offset, const void *buf, uint64_t len, uint64_t flags)
 {
@@ -377,7 +378,9 @@ ssize_t stdout_write(void *data, uint64_t offset, const void *buf, uint64_t len,
     (void)offset;
 
     serial_printk((char *)buf, len);
-    flanterm_write(ft_ctx, buf, len);
+
+    if (current_vt_mode.mode != VT_PROCESS)
+        flanterm_write(ft_ctx, buf, len);
 
     return (ssize_t)len;
 }
