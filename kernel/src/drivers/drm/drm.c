@@ -721,6 +721,20 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg)
         return dev->op->page_flip(dev, (struct drm_mode_crtc_page_flip *)arg);
     }
 
+    case DRM_IOCTL_MODE_CURSOR:
+    {
+        struct drm_mode_cursor *cmd = (struct drm_mode_cursor *)arg;
+        if (cmd->flags & DRM_MODE_CURSOR_BO)
+        {
+            return 0;
+        }
+        else if (cmd->flags & DRM_MODE_CURSOR_MOVE)
+        {
+            return 0;
+        }
+        break;
+    }
+
     case DRM_IOCTL_WAIT_VBLANK:
     {
         union drm_wait_vblank *vbl = (union drm_wait_vblank *)arg;

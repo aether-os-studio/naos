@@ -131,7 +131,7 @@ void fbdev_init_sysfs()
     vfs_node_t device = sysfs_child_append(node, "device", true);
     vfs_node_t subsystem = sysfs_child_append_symlink(device, "subsystem", "/sys/class/graphics");
     vfs_node_t uevent = sysfs_child_append(device, "uevent", false);
-    sprintf(content, "MAJOR=%d\nMINOR=%d\nDEVNAME=/dev/fb%d\nSUBSYSTEM=graphics\n", 29, 0, 0);
+    sprintf(content, "MAJOR=%d\nMINOR=%d\nDEVNAME=fb%d\nSUBSYSTEM=graphics\n", 29, 0, 0);
     vfs_write(uevent, content, 0, strlen(content));
 
     char *subsystem_fullpath = vfs_get_fullpath(subsystem);

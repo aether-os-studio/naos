@@ -955,7 +955,7 @@ char *vfs_get_fullpath(vfs_node_t node)
 {
     if (node == NULL)
         return NULL;
-    int inital = 8;
+    int inital = 16;
     spin_lock(&get_path_lock);
     vfs_node_t *nodes = (vfs_node_t *)malloc(sizeof(vfs_node_t) * inital);
     int count = 0;
@@ -1014,7 +1014,9 @@ int vfs_rename(vfs_node_t node, const char *new)
     int dn_len = strlen(new) - fn_len;
     memcpy(buf, new, dn_len);
 
-    list_delete(node->parent->child, node);
+    if (node->parent)
+        list_delete(node->parent->child, node);
+    vfs_mkdir(buf);
     node->parent = vfs_open(buf);
     list_prepend(node->parent->child, node);
     free(node->name);

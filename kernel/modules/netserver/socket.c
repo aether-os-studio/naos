@@ -704,7 +704,7 @@ void real_socket_init_global_netif()
 {
     if (get_default_netdev())
     {
-        task_create("net_receiver", receiver_entry, (uint64_t)get_default_netdev(), NICE_TO_PRIO(-1));
+        task_create("net_receiver", receiver_entry, (uint64_t)get_default_netdev(), KTHREAD_PRIORITY);
         tcpip_init(lwip_init_in_thread, get_default_netdev());
     }
 }

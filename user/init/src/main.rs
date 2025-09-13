@@ -118,9 +118,9 @@ fn main() {
 
     println!("init: Found keyboard and mouse");
 
-    println!("init: Starting weston");
-    let weston = unsafe { libc::fork() };
-    if weston == 0 {
+    println!("init: Starting desktop process");
+    let desktop = unsafe { libc::fork() };
+    if desktop == 0 {
         unsafe {
             std::env::set_var("HOME", "/root");
             std::env::set_var("XDG_RUNTIME_DIR", "/run");
@@ -133,16 +133,17 @@ fn main() {
             libc::execl(
                 b"/usr/bin/weston\0".as_ptr() as *const _,
                 b"weston\0".as_ptr() as *const _,
+                b"--xwayland\0".as_ptr() as *const _,
                 core::ptr::null::<core::ffi::c_char>(),
             )
         };
         panic!("Failed to exec desktop process");
     } else {
-        assert_ne!(weston, -1);
+        assert_ne!(desktop, -1);
     }
 
     let mut status: i32 = 0;
-    unsafe { libc::waitpid(weston, &mut status as *mut i32, 0) };
+    unsafe { libc::waitpid(desktop, &mut status as *mut i32, 0) };
 
-    println!("init: Weston exited with status: {}", status);
+    println!("init: desktop process exited with status: {}", status);
 }

@@ -216,7 +216,7 @@ int pipefs_poll(void *file, size_t events)
     if (events & EPOLLOUT)
     {
         if (!pipe->read_fds)
-            out |= EPOLLERR;
+            out |= EPOLLHUP;
         else if (pipe->assigned < PIPE_BUFF)
             out |= EPOLLOUT;
     }

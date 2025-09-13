@@ -2,6 +2,7 @@
 #include <arch/arch.h>
 #include <mm/mm.h>
 #include <drivers/fb.h>
+#include <fs/vfs/dev.h>
 
 struct flanterm_context *ft_ctx = NULL;
 
@@ -429,7 +430,7 @@ char *write_num(char *str, uint64_t num, int base, int field_width, int precisio
 
 spinlock_t printk_lock = {0};
 
-extern int tty_mode;
+extern struct vt_mode current_vt_mode;
 
 int printk(const char *fmt, ...)
 {
@@ -461,7 +462,8 @@ int printk(const char *fmt, ...)
 
     serial_printk(buf, len);
 
-    flanterm_write(ft_ctx, buf, len);
+    if (current_vt_mode.mode != VT_PROCESS)
+        flanterm_write(ft_ctx, buf, len);
 
     spin_unlock(&printk_lock);
 

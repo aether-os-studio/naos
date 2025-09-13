@@ -3,7 +3,6 @@
 #include <mm/heap/alloc/alloc.h>
 #include <arch/arch.h>
 #include <task/task.h>
-#include <task/eevdf.h>
 
 void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64_t entry, uint64_t stack, bool user_mode, uint64_t initial_arg)
 {
@@ -209,7 +208,6 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
 
 void arch_yield()
 {
-    ((struct sched_entity *)current_task->sched_info)->is_yield = true;
     asm volatile("sti\n\tint %0\n\tcli" ::"i"(APIC_TIMER_INTERRUPT_VECTOR));
 }
 
