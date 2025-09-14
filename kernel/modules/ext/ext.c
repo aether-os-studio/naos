@@ -75,7 +75,7 @@ void ext_open(void *parent, const char *name, vfs_node_t node)
 {
     spin_lock(&rwlock);
 
-    ext_handle_t *handle = malloc(sizeof(ext4_file));
+    ext_handle_t *handle = malloc(sizeof(ext_handle_t));
     handle->node = node;
     char *path = vfs_get_fullpath(node);
     if (node->type & file_dir)
