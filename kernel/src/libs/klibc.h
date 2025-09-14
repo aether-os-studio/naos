@@ -288,15 +288,6 @@ typedef struct spinlock
 
 static inline void spin_lock(spinlock_t *lock)
 {
-    long flags;
-    asm volatile(
-        "pushfq\n\t" // 保存RFLAGS
-        "pop %0\n\t" // 存储到flags变量
-        "cli\n\t"    // 禁用中断
-        : "=r"(flags)
-        :
-        : "memory");
-
     asm volatile(
         "1:\n\t"
         "lock btsq $0, %0\n\t" // 测试并设置
@@ -306,6 +297,15 @@ static inline void spin_lock(spinlock_t *lock)
         : "memory", "cc");
 
     asm volatile("mfence" ::: "memory");
+
+    long flags;
+    asm volatile(
+        "pushfq\n\t" // 保存RFLAGS
+        "pop %0\n\t" // 存储到flags变量
+        "cli\n\t"    // 禁用中断
+        : "=r"(flags)
+        :
+        : "memory");
 
     lock->rflags = flags; // 保存原始中断状态
 }
