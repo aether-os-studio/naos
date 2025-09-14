@@ -57,6 +57,8 @@ MON ?= 0
 # Default user QEMU flags. These are appended to the QEMU command calls.
 QEMUFLAGS := -m $(MEM) -smp $(SMP) -cpu max
 
+export EXTRA ?= 
+
 DEBUG ?= 0
 
 ifeq ($(DEBUG), 1)
@@ -78,6 +80,8 @@ endif
 ifeq ($(HVF), 1)
 override QEMUFLAGS := $(QEMUFLAGS) --accel hvf
 endif
+
+override QEMUFLAGS := $(QEMUFLAGS) $(EXTRA)
 
 override IMAGE_NAME := naos-$(ARCH)
 

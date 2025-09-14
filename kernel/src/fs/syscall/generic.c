@@ -916,7 +916,7 @@ uint64_t sys_rename(const char *old, const char *new)
         return -ENOENT;
     int ret = vfs_rename(node, new);
     if (ret < 0)
-        return -ret;
+        return ret;
 
     return 0;
 }
@@ -927,12 +927,14 @@ uint64_t sys_renameat(uint64_t oldfd, const char *old, uint64_t newfd, const cha
     char *new_path = at_resolve_pathname_fullpath(newfd, (char *)new);
 
     vfs_node_t node = vfs_open(old_path);
+    if (!node)
+        return -ENOENT;
     int ret = vfs_rename(node, new_path);
     if (ret < 0)
     {
         free(old_path);
         free(new_path);
-        return -ret;
+        return ret;
     }
 
     free(old_path);
