@@ -25,7 +25,7 @@ static void alloc_exit()
 void *malloc(size_t size)
 {
     alloc_enter();
-    void *ptr = mpool_alloc(&pool, size);
+    void *ptr = mpool_alloc(&pool, size + 8);
     alloc_exit();
     return ptr;
 }
