@@ -2,7 +2,7 @@
 
 #include <libs/klibc.h>
 
-#define PIPE_BUFF 8192
+#define PIPE_BUFF 65536
 
 #define MAX_PIPES 32
 
@@ -16,7 +16,7 @@ typedef struct pipe_info
 {
     uint32_t read_ptr;
     uint32_t write_ptr;
-    char buf[PIPE_BUFF];
+    char *buf;
     int assigned;
 
     int write_fds;

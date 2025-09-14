@@ -357,7 +357,7 @@ int socket_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen)
 int socket_listen(uint64_t fd, int backlog)
 {
     if (backlog == 0) // newer kernel behavior
-        backlog = 1;
+        backlog = 16;
     if (backlog < 0)
         backlog = 128;
 
@@ -404,7 +404,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen, uin
 
     vfs_node_t acceptFd = unix_socket_accept_create(pair);
     sock->backlog[0] = NULL;
-    memmove(sock->backlog, &sock->backlog[1], (sock->connMax - 1) * sizeof(unix_socket_pair_t *));
+    memmove(sock->backlog, &sock->backlog[1], (sock->connCurr) * sizeof(unix_socket_pair_t *));
     sock->connCurr--;
 
     uint64_t i = 0;
@@ -1099,8 +1099,10 @@ int socket_socket_poll(void *file, int events)
         if ((events & EPOLLIN) && pair->clientBuffPos > 0)
             revents |= EPOLLIN;
     }
-    else
-        revents |= EPOLLHUP;
+    // else
+    // {
+    //     revents |= EPOLLHUP;
+    // }
 
     return revents;
 }

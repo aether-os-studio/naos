@@ -81,23 +81,23 @@ fn main() {
 
     unsafe { libc::waitpid(udev_trigger, core::ptr::null_mut(), 0) };
 
-    println!("init: Running udev-settle");
-    let udev_settle = unsafe { libc::fork() };
-    if udev_settle == 0 {
-        unsafe {
-            libc::execl(
-                b"/sbin/udevadm\0".as_ptr() as *const _,
-                b"udevadm\0".as_ptr() as *const _,
-                b"settle\0".as_ptr() as *const _,
-                core::ptr::null::<core::ffi::c_char>(),
-            )
-        };
-        panic!("Failed to exec udev-settle");
-    } else {
-        assert_ne!(udev_settle, -1);
-    }
+    // println!("init: Running udev-settle");
+    // let udev_settle = unsafe { libc::fork() };
+    // if udev_settle == 0 {
+    //     unsafe {
+    //         libc::execl(
+    //             b"/sbin/udevadm\0".as_ptr() as *const _,
+    //             b"udevadm\0".as_ptr() as *const _,
+    //             b"settle\0".as_ptr() as *const _,
+    //             core::ptr::null::<core::ffi::c_char>(),
+    //         )
+    //     };
+    //     panic!("Failed to exec udev-settle");
+    // } else {
+    //     assert_ne!(udev_settle, -1);
+    // }
 
-    unsafe { libc::waitpid(udev_settle, core::ptr::null_mut(), 0) };
+    // unsafe { libc::waitpid(udev_settle, core::ptr::null_mut(), 0) };
 
     let mut need_keyboard = true;
     let mut need_mouse = true;

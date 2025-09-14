@@ -89,9 +89,6 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size)
 
 ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
 {
-    if (size > PIPE_BUFF)
-        size = PIPE_BUFF;
-
     pipe_specific_t *spec = (pipe_specific_t *)file;
     pipe_info_t *pipe = spec->info;
 
@@ -186,6 +183,7 @@ bool pipefs_close(void *current)
 
     if (pipe->write_fds == 0 && pipe->read_fds == 0)
     {
+        free_frames_bytes(pipe->buf, PIPE_BUFF);
         free(pipe);
     }
     spin_unlock(&pipe->lock);
@@ -313,6 +311,8 @@ int sys_pipe(int pipefd[2], uint64_t flags)
 
     pipe_info_t *info = (pipe_info_t *)malloc(sizeof(pipe_info_t));
     memset(info, 0, sizeof(pipe_info_t));
+    info->buf = alloc_frames_bytes(PIPE_BUFF);
+    memset(info->buf, 0, PIPE_BUFF);
     info->read_fds = 1;
     info->write_fds = 1;
     info->lock.lock = 0;

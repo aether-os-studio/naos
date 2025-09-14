@@ -448,7 +448,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
             {
                 child->fd_info->fds[i] = malloc(sizeof(fd_t));
                 memcpy(child->fd_info->fds[i], fd, sizeof(fd_t));
-                current_task->fd_info->fds[i]->node->refcount++;
+                fd->node->refcount++;
             }
             else
             {
@@ -802,7 +802,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     free_frames_bytes(buffer, node->size);
 
-    if (current_task->is_vfork && current_task->ppid != current_task->pid && tasks[current_task->ppid] && !tasks[current_task->ppid]->child_vfork_done)
+    if (current_task->ppid != current_task->pid && tasks[current_task->ppid] && !tasks[current_task->ppid]->child_vfork_done)
     {
         tasks[current_task->ppid]->child_vfork_done = true;
         current_task->is_vfork = false;
@@ -833,6 +833,30 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         }
     }
     free(new_envp);
+
+    if (current_task->ppid != current_task->pid && tasks[current_task->ppid] && (tasks[current_task->ppid]->fd_info == current_task->fd_info))
+    {
+        current_task->fd_info->ref_count--;
+        current_task->fd_info = malloc(sizeof(fd_info_t));
+
+        for (uint64_t i = 0; i < MAX_FD_NUM; i++)
+        {
+            fd_t *fd = tasks[current_task->ppid]->fd_info->fds[i];
+
+            if (fd)
+            {
+                current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
+                memcpy(current_task->fd_info->fds[i], fd, sizeof(fd_t));
+                fd->node->refcount++;
+            }
+            else
+            {
+                current_task->fd_info->fds[i] = NULL;
+            }
+        }
+
+        current_task->fd_info->ref_count++;
+    }
 
     for (uint64_t i = 3; i < MAX_FD_NUM; i++)
     {
@@ -869,9 +893,13 @@ void sys_yield()
 
 int task_block(task_t *task, task_state_t state, int timeout_ms)
 {
-    (void)timeout_ms;
+    uint64_t wakeup_ns = timeout_ms * 1000000;
 
     task->state = state;
+    if (timeout_ms > 0)
+        task->force_wakeup_ns = nanoTime() + wakeup_ns;
+    else
+        task->force_wakeup_ns = UINT64_MAX;
 
     remove_eevdf_entity(task, schedulers[task->cpu_id]);
 
@@ -934,7 +962,7 @@ void task_exit_inner(task_t *task, int64_t code)
         free(task->mmap_regions);
     }
 
-    if (task->is_vfork && task->ppid != task->pid && tasks[task->ppid] && !tasks[task->ppid]->child_vfork_done)
+    if (task->ppid != task->pid && tasks[task->ppid] && !tasks[task->ppid]->child_vfork_done)
     {
         tasks[task->ppid]->child_vfork_done = true;
         task->is_vfork = false;
@@ -1240,7 +1268,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
             {
                 child->fd_info->fds[i] = malloc(sizeof(fd_t));
                 memcpy(child->fd_info->fds[i], fd, sizeof(fd_t));
-                child->fd_info->fds[i]->node->refcount++;
+                fd->node->refcount++;
             }
             else
             {
@@ -1292,7 +1320,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
 
     child->child_vfork_done = false;
 
-    if ((flags & CLONE_VFORK))
+    if ((flags & CLONE_VM))
     {
         child->is_vfork = true;
     }
@@ -1497,6 +1525,28 @@ void sched_update_timerfd()
                     }
                 }
             }
+        }
+    }
+}
+
+void sched_check_wakeup()
+{
+    uint64_t continue_ptr_count = 0;
+    for (size_t i = 1; i < MAX_TASK_NUM; i++)
+    {
+        task_t *ptr = tasks[i];
+        if (ptr == NULL)
+        {
+            continue_ptr_count++;
+            if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
+                break;
+            continue;
+        }
+        continue_ptr_count = 0;
+
+        if (ptr->state == TASK_BLOCKING && nanoTime() > ptr->force_wakeup_ns)
+        {
+            task_unblock(ptr, ETIMEDOUT);
         }
     }
 }

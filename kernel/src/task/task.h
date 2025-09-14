@@ -51,7 +51,7 @@
 
 #define TASK_NAME_MAX 128
 
-#define MAX_FD_NUM 128
+#define MAX_FD_NUM 256
 
 #define CLONE_VM 0x00000100             /* set if VM shared between processes */
 #define CLONE_FS 0x00000200             /* set if fs info shared between processes */
@@ -174,6 +174,7 @@ typedef struct task
     void *sched_info;
     task_state_t state;
     task_state_t current_state;
+    uint64_t force_wakeup_ns;
     uint64_t brk_start;
     uint64_t brk_end;
     uint64_t load_start;
@@ -203,6 +204,7 @@ extern task_t *arch_get_current();
 
 void sched_update_itimer();
 void sched_update_timerfd();
+void sched_check_wakeup();
 
 task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg, uint64_t priority);
 void task_init();

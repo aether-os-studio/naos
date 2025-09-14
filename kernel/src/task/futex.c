@@ -35,7 +35,10 @@ int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *
 
         int tmo = -1;
         if (timeout)
+        {
             tmo = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000;
+            serial_fprintk("futex_wait with timeout %d ms\n", tmo);
+        }
         task_block(current_task, TASK_BLOCKING, tmo);
 
         return 0;
