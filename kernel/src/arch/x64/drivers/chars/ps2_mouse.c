@@ -180,6 +180,7 @@ void mouse_init()
         return;
 
     strncpy(mouse_event->uniq, "ps2mouse", sizeof(mouse_event->uniq));
+    mouse_event->devname = strdup("input/event1");
 }
 
 struct input_repeat_params

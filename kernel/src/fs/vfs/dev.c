@@ -197,9 +197,10 @@ ssize_t inputdev_ioctl(void *data, ssize_t request, ssize_t arg)
     }
     case 0x07:
     { // EVIOCGPHYS(len)
-        int toCopy = MIN(size, (size_t)strlen(event->physloc) + 1);
-        memcpy((void *)arg, event->physloc, toCopy);
-        ret = toCopy;
+        // int toCopy = MIN(size, (size_t)strlen(event->physloc) + 1);
+        // memcpy((void *)arg, event->physloc, toCopy);
+        // ret = toCopy;
+        ret = 0;
         break;
     }
     case 0x08: // EVIOCGUNIQ()

@@ -2,10 +2,6 @@
 #include <mm/mm.h>
 #include <drivers/kernel_logger.h>
 
-module_symbol_t **all_modules_symbols = NULL;
-int all_modules_symbols_num = 0;
-size_t all_modules_symbols_num_max = 1024;
-
 uint64_t kernel_modules_load_offset = 0;
 
 extern dlfunc_t __ksymtab_start[]; // .ksymtab section
@@ -141,16 +137,6 @@ void *find_symbol_address(const char *symbol_name, Elf64_Ehdr *ehdr, uint64_t of
     {
         Elf64_Sym *sym = &symtab[i];
         char *sym_name = &strtab[sym->st_name];
-
-        all_modules_symbols[all_modules_symbols_num] = malloc(sizeof(module_symbol_t));
-        all_modules_symbols[all_modules_symbols_num]->name = strdup(sym_name);
-        all_modules_symbols[all_modules_symbols_num]->addr = (uint64_t)sym->st_value + offset;
-        all_modules_symbols_num++;
-        if (all_modules_symbols_num >= all_modules_symbols_num_max)
-        {
-            all_modules_symbols_num_max *= 2;
-            all_modules_symbols = realloc(all_modules_symbols, all_modules_symbols_num_max * sizeof(module_symbol_t *));
-        }
 
         if (strcmp(symbol_name, sym_name) == 0)
         {
@@ -356,8 +342,6 @@ __attribute__((used, section(".limine_requests"))) static volatile struct limine
 void dlinker_init()
 {
     find_kernel_symbol();
-
-    all_modules_symbols = malloc(sizeof(module_symbol_t *) * all_modules_symbols_num_max);
 
     for (uint64_t i = 0; i < modules_request.response->module_count; i++)
     {

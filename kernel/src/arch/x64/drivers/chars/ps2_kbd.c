@@ -96,6 +96,7 @@ void kbd_init()
         return;
 
     strncpy(kb_event->uniq, "ps2kbd", sizeof(kb_event->uniq));
+    kb_event->devname = strdup("input/event0");
 }
 
 void kb_char(task_t *task, char out)
