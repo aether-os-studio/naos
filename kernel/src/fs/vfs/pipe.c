@@ -188,7 +188,10 @@ bool pipefs_close(void *current)
     }
     spin_unlock(&pipe->lock);
 
-    free(spec);
+    if (spec->write && pipe->write_fds == 0)
+        free(spec);
+    else if (pipe->read_fds == 0)
+        free(spec);
 
     list_delete(pipefs_root->child, spec->node);
 
@@ -224,17 +227,6 @@ int pipefs_poll(void *file, size_t events)
 
 vfs_node_t pipe_dup(vfs_node_t node)
 {
-    pipe_specific_t *spec = node->handle;
-    pipe_info_t *pipe = spec->info;
-    // if (spec->write)
-    // {
-    //     pipe->write_fds++;
-    // }
-    // else
-    // {
-    //     pipe->read_fds++;
-    // }
-
     return node;
 }
 

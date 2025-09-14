@@ -446,9 +446,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
 
             if (fd)
             {
-                child->fd_info->fds[i] = malloc(sizeof(fd_t));
-                memcpy(child->fd_info->fds[i], fd, sizeof(fd_t));
-                fd->node->refcount++;
+                child->fd_info->fds[i] = vfs_dup(fd);
             }
             else
             {
@@ -845,9 +843,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
             if (fd)
             {
-                current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
-                memcpy(current_task->fd_info->fds[i], fd, sizeof(fd_t));
-                fd->node->refcount++;
+                current_task->fd_info->fds[i] = vfs_dup(fd);
             }
             else
             {
@@ -1266,9 +1262,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
 
             if (fd)
             {
-                child->fd_info->fds[i] = malloc(sizeof(fd_t));
-                memcpy(child->fd_info->fds[i], fd, sizeof(fd_t));
-                fd->node->refcount++;
+                child->fd_info->fds[i] = vfs_dup(fd);
             }
             else
             {

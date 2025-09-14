@@ -1037,7 +1037,7 @@ fd_t *vfs_dup(fd_t *fd)
     vfs_node_t node = fd->node;
     node->refcount++;
     new_fd->node = callbackof(node, dup)(node);
-    new_fd->offset = 0;
+    new_fd->offset = fd->offset;
     new_fd->flags = fd->flags;
 
     return new_fd;
