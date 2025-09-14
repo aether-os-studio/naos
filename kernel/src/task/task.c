@@ -1,5 +1,6 @@
 #include <arch/arch.h>
 #include <task/task.h>
+#include <task/eevdf.h>
 #include <drivers/kernel_logger.h>
 #include <fs/vfs/dev.h>
 #include <fs/vfs/vfs.h>
@@ -202,46 +203,14 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg, uin
     task->state = TASK_READY;
     task->current_state = TASK_READY;
 
+    add_eevdf_entity_with_prio(task, task->priority, schedulers[task->cpu_id]);
+
     return task;
 }
 
 task_t *task_search(task_state_t state, uint32_t cpu_id)
 {
-    task_t *task = NULL;
-
-    spin_lock(&task_queue_lock);
-
-    uint64_t continue_ptr_count = 0;
-
-    for (size_t i = 1; i < MAX_TASK_NUM; i++)
-    {
-        task_t *ptr = tasks[i];
-        if (ptr == NULL)
-        {
-            continue_ptr_count++;
-            if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
-                break;
-            continue;
-        }
-        continue_ptr_count = 0;
-        if (ptr->state != state)
-            continue;
-        if (current_task == ptr)
-            continue;
-        if (ptr->cpu_id != cpu_id)
-            continue;
-
-        if (task == NULL || ptr->jiffies < task->jiffies)
-            task = ptr;
-    }
-
-    if (task == NULL && state == TASK_READY)
-    {
-        task = idle_tasks[cpu_id];
-    }
-
-    spin_unlock(&task_queue_lock);
-
+    task_t *task = pick_next_task(schedulers[cpu_id]);
     return task;
 }
 
@@ -263,10 +232,21 @@ void task_init()
 
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++)
     {
+        schedulers[cpu] = malloc(sizeof(eevdf_t));
+        memset(schedulers[cpu], 0, sizeof(eevdf_t));
+        schedulers[cpu]->root = malloc(sizeof(struct rb_root));
+        memset(schedulers[cpu]->root, 0, sizeof(struct rb_root));
+        schedulers[cpu]->min_vruntime = 0;
+    }
+
+    for (uint64_t cpu = 0; cpu < cpu_count; cpu++)
+    {
         task_t *idle_task = task_create("idle", idle_entry, 0, IDLE_PRIORITY);
         idle_task->cpu_id = cpu;
         idle_task->state = TASK_RUNNING;
+        schedulers[cpu]->current = idle_task->sched_info;
     }
+
     arch_set_current(idle_tasks[0]);
     task_create("init", init_thread, 0, NORMAL_PRIORITY);
 
@@ -508,6 +488,8 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     child->state = TASK_READY;
     child->current_state = TASK_READY;
 
+    add_eevdf_entity_with_prio(child, child->priority, schedulers[child->cpu_id]);
+
     if (vfork)
     {
         current_task->child_vfork_done = false;
@@ -592,7 +574,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         const uint64_t bitmap_size = (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 8;
         void *data = alloc_frames_bytes(bitmap_size);
         bitmap_init(current_task->mmap_regions, data, bitmap_size);
-        memset(data, 0xFF, bitmap_size);
 
         current_task->arch_context->mm = clone_page_table(current_task->arch_context->mm, 0);
 #if defined(__x86_64__)
@@ -890,6 +871,8 @@ int task_block(task_t *task, task_state_t state, int timeout_ms)
 
     task->state = state;
 
+    remove_eevdf_entity(task, schedulers[task->cpu_id]);
+
     if (current_task == task)
     {
         arch_yield();
@@ -902,12 +885,15 @@ void task_unblock(task_t *task, int reason)
 {
     task->status = reason;
     task->state = TASK_READY;
+    add_eevdf_entity_with_prio(task, task->priority, schedulers[task->cpu_id]);
 }
 
 void task_exit_inner(task_t *task, int64_t code)
 {
     arch_disable_interrupt();
     can_schedule = false;
+
+    remove_eevdf_entity(task, schedulers[task->cpu_id]);
 
     spin_lock(&task_queue_lock);
 
@@ -956,7 +942,7 @@ void task_exit_inner(task_t *task, int64_t code)
         task_unblock(tasks[task->ppid], SIGCHLD);
     }
 
-    if (task->waitpid != 0 && tasks[task->waitpid] && tasks[task->waitpid]->state == TASK_BLOCKING)
+    if (task->waitpid != 0 && task->waitpid < MAX_TASK_NUM && tasks[task->waitpid] && tasks[task->waitpid]->state == TASK_BLOCKING)
     {
         task_unblock(tasks[task->waitpid], EOK);
     }
@@ -1315,6 +1301,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
 
     child->state = TASK_READY;
     child->current_state = TASK_READY;
+
+    add_eevdf_entity_with_prio(child, child->priority, schedulers[child->cpu_id]);
 
     if (flags & CLONE_VFORK)
     {
