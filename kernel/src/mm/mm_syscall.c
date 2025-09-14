@@ -37,9 +37,9 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
 
     spin_lock(&mm_op_lock);
 
-    if (addr >= USER_MMAP_START && addr + len <= USER_MMAP_END)
+    if (addr >= USER_MMAP_START && addr + aligned_len <= USER_MMAP_END)
     {
-        for (uint64_t a = addr; a < addr + len; a += DEFAULT_PAGE_SIZE)
+        for (uint64_t a = addr; a < addr + aligned_len; a += DEFAULT_PAGE_SIZE)
         {
             if (bitmap_get(current_task->mmap_regions, (a - USER_MMAP_START) / DEFAULT_PAGE_SIZE) == false && !(flags & MAP_FIXED))
             {
@@ -51,9 +51,9 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
 
     if (fd < MAX_FD_NUM && current_task->fd_info->fds[fd])
     {
-        uint64_t ret = (uint64_t)vfs_map(current_task->fd_info->fds[fd], addr, len, prot, flags, offset);
+        uint64_t ret = (uint64_t)vfs_map(current_task->fd_info->fds[fd], addr, aligned_len, prot, flags, offset);
 
-        if (addr >= USER_MMAP_START && addr + len <= USER_MMAP_END)
+        if (addr >= USER_MMAP_START && addr + aligned_len <= USER_MMAP_END)
         {
             bitmap_set_range(current_task->mmap_regions, (addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (addr - USER_MMAP_START + aligned_len) / DEFAULT_PAGE_SIZE, false);
         }
@@ -75,9 +75,9 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
                 pt_flags |= PT_FLAG_X;
         }
 
-        map_page_range(get_current_page_dir(true), addr, 0, (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
+        map_page_range(get_current_page_dir(true), addr, 0, aligned_len, pt_flags);
 
-        if (addr >= USER_MMAP_START && addr + len <= USER_MMAP_END)
+        if (addr >= USER_MMAP_START && addr + aligned_len <= USER_MMAP_END)
         {
             bitmap_set_range(current_task->mmap_regions, (addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (addr - USER_MMAP_START + aligned_len) / DEFAULT_PAGE_SIZE, false);
         }

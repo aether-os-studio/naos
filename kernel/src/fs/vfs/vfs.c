@@ -969,7 +969,7 @@ char *vfs_get_fullpath(vfs_node_t node)
         nodes[count++] = cur;
     }
     // 正常的路径都不应该超过这个数值
-    char *buff = (char *)malloc(1024);
+    char *buff = (char *)malloc(2048);
     strcpy(buff, "/");
     for (int j = count - 1; j >= 0; j--)
     {
@@ -1012,7 +1012,7 @@ int vfs_rename(vfs_node_t node, const char *new)
     if (filename == (char *)1)
         filename = (const char *)new;
 
-    char buf[1024];
+    char buf[2048];
     memset(buf, 0, sizeof(buf));
     int fn_len = strlen(filename);
     int dn_len = strlen(new) - fn_len;

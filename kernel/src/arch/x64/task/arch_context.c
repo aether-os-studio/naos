@@ -210,7 +210,7 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
 void arch_yield()
 {
     ((struct sched_entity *)current_task->sched_info)->is_yield = true;
-    asm volatile("sti\n\tint %0\n\tcli" ::"i"(APIC_TIMER_INTERRUPT_VECTOR));
+    asm volatile("sti\n\tint %0\n\tcli\n\t" ::"i"(APIC_TIMER_INTERRUPT_VECTOR));
 }
 
 #define ARCH_SET_GS 0x1001

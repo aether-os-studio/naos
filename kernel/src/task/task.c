@@ -225,6 +225,8 @@ void idle_entry(uint64_t arg)
 
 extern void init_thread(uint64_t);
 
+extern void futex_init();
+
 void task_init()
 {
     memset(tasks, 0, sizeof(tasks));
@@ -890,10 +892,9 @@ void task_unblock(task_t *task, int reason)
 
 void task_exit_inner(task_t *task, int64_t code)
 {
-    arch_disable_interrupt();
-    can_schedule = false;
-
     remove_eevdf_entity(task, schedulers[task->cpu_id]);
+
+    arch_disable_interrupt();
 
     spin_lock(&task_queue_lock);
 
@@ -926,6 +927,13 @@ void task_exit_inner(task_t *task, int64_t code)
     if (task->cmdline)
         free(task->cmdline);
 
+    task->mmap_regions->bitmap_refcount--;
+    if (task->mmap_regions->bitmap_refcount == 0)
+    {
+        free_frames_bytes(task->mmap_regions->buffer, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 8);
+        free(task->mmap_regions);
+    }
+
     if (task->is_vfork && task->ppid != task->pid && tasks[task->ppid] && !tasks[task->ppid]->child_vfork_done)
     {
         tasks[task->ppid]->child_vfork_done = true;
@@ -947,22 +955,15 @@ void task_exit_inner(task_t *task, int64_t code)
         task_unblock(tasks[task->waitpid], EOK);
     }
 
-    task->mmap_regions->bitmap_refcount--;
-    if (!task->mmap_regions->bitmap_refcount)
-    {
-        free_frames_bytes(task->mmap_regions->buffer, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 8);
-        free(task->mmap_regions);
-    }
-
     procfs_on_exit_task(task);
 
     spin_unlock(&task_queue_lock);
-
-    can_schedule = true;
 }
 
 uint64_t task_exit(int64_t code)
 {
+    can_schedule = false;
+
     spin_lock(&task_queue_lock);
     uint64_t continue_ptr_count = 0;
     for (int i = 0; i < MAX_TASK_NUM; i++)
@@ -985,6 +986,7 @@ uint64_t task_exit(int64_t code)
 
             free_frames_bytes((void *)(tasks[i]->kernel_stack - STACK_SIZE), STACK_SIZE);
             free_frames_bytes((void *)(tasks[i]->syscall_stack - STACK_SIZE), STACK_SIZE);
+            free_frames_bytes((void *)(tasks[i]->signal_syscall_stack - STACK_SIZE), STACK_SIZE);
 
             free(tasks[i]);
 
@@ -994,6 +996,8 @@ uint64_t task_exit(int64_t code)
     spin_unlock(&task_queue_lock);
 
     task_exit_inner(current_task, code);
+
+    can_schedule = true;
 
     task_t *next = task_search(TASK_READY, current_task->cpu_id);
 
@@ -1192,9 +1196,9 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->cwd = current_task->cwd;
     child->cmdline = strdup(current_task->cmdline);
 
-    child->mmap_regions = ((flags & CLONE_VFORK) || (flags & CLONE_VM)) ? current_task->mmap_regions : malloc(sizeof(Bitmap));
+    child->mmap_regions = (flags & CLONE_VM) ? current_task->mmap_regions : malloc(sizeof(Bitmap));
     const uint64_t bitmap_size = (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 8;
-    if ((flags & CLONE_VFORK) || (flags & CLONE_VM))
+    if (flags & CLONE_VM)
     {
         child->mmap_regions->bitmap_refcount++;
     }
@@ -1288,7 +1292,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
 
     child->child_vfork_done = false;
 
-    if ((flags & CLONE_VM) || (flags & CLONE_VFORK))
+    if ((flags & CLONE_VFORK))
     {
         child->is_vfork = true;
     }
@@ -1304,7 +1308,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
 
     add_eevdf_entity_with_prio(child, child->priority, schedulers[child->cpu_id]);
 
-    if (flags & CLONE_VFORK)
+    if ((flags & CLONE_VFORK))
     {
         current_task->child_vfork_done = false;
 
