@@ -1159,6 +1159,8 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
 
         free_page_table(target->arch_context->mm);
 
+        arch_context_free(target->arch_context);
+
         free(target->arch_context);
 
         free_frames_bytes((void *)(target->kernel_stack - STACK_SIZE), STACK_SIZE);

@@ -82,6 +82,8 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
             bitmap_set_range(current_task->mmap_regions, (addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (addr - USER_MMAP_START + aligned_len) / DEFAULT_PAGE_SIZE, false);
         }
 
+        memset((void *)addr, 0, aligned_len);
+
         spin_unlock(&mm_op_lock);
 
         return addr;

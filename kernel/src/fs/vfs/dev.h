@@ -4,7 +4,7 @@
 #include "vfs.h"
 
 #define MAX_DEV_NUM 128
-#define MAX_DEV_NAME_LEN 32
+#define MAX_DEV_NAME_LEN 128
 
 typedef struct devfs_handle
 {
