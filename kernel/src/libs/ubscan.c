@@ -2,20 +2,6 @@
 #include <arch/arch.h>
 #include <drivers/kernel_logger.h>
 
-char ub_buf[256];
-
-void serial_print(const char *fmt, ...)
-{
-    // va_list args;
-    // va_start(args, fmt);
-
-    // int len = sprintf(ub_buf, fmt, args);
-
-    // va_end(args);
-
-    // serial_printk(ub_buf, len);
-}
-
 #define CRGB(r, g, b) "\033[38;2;" #r ";" #g ";" #b "m"
 #define CBRGB(r, g, b) "\033[48;2;" #r ";" #g ";" #b "m"
 #define CEND "\033[0m"
@@ -33,7 +19,7 @@ void serial_print(const char *fmt, ...)
 #define STR_FATAL "[" COLOR_FATAL "Fatal" CEND "] "
 
 #ifndef _log_func_
-#define _log_func_ serial_print
+#define _log_func_ serial_fprintk
 #endif
 
 typedef struct SourceLocation
@@ -73,7 +59,7 @@ static __attribute__((nonnull(1))) const char *_log_relative_path_(const char *p
 
 #define _format_(type)                                                                \
     STR_ERROR CRGB(253, 133, 172) "at" CEND " [" CRGB(192, 128, 255) "%s:" CEND CRGB( \
-        0, 255, 255) "%u" CEND ":" CRGB(255, 128, 192) "%u " CEND COLOR_ERROR         \
+        0, 255, 255) "%u" CEND ":" CRGB(255, 128, 192) "%u" CEND "] " COLOR_ERROR     \
                                                        "UB! " type CEND "\n"
 
 #define ublog(type, file, line, col)                                                       \
