@@ -272,7 +272,7 @@ vfs_node_t regist_dev(const char *name,
     {
         new_name = strstr(name, "/") + 1;
         uint64_t path_len = new_name - name;
-        char new_path[64];
+        char new_path[128];
         strcpy(new_path, "/dev/");
         strncpy(new_path + 5, name, path_len);
         dev = vfs_open((const char *)new_path);

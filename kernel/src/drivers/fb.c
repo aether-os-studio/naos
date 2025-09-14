@@ -120,7 +120,7 @@ void fbdev_init_sysfs()
     vfs_node_t graphics = vfs_open("/sys/class/graphics");
 
     char name[MAX_DEV_NAME_LEN];
-    sprintf(name, "/dev/fb%d", 0);
+    sprintf(name, "fb%d", 0);
     vfs_node_t node = sysfs_child_append(graphics, name, true);
 
     vfs_node_t modes = sysfs_child_append(node, "modes", false);
