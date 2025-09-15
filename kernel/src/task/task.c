@@ -647,7 +647,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     bitmap_init(current_task->mmap_regions, data, bitmap_size);
     memset(current_task->mmap_regions->buffer, 0xff, (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 8);
 
-    if (current_task->arch_context->mm->page_table_addr == (uint64_t)virt_to_phys(get_kernel_page_dir()))
+    if (current_task->is_vfork || current_task->arch_context->mm->page_table_addr == (uint64_t)virt_to_phys(get_kernel_page_dir()))
     {
         current_task->arch_context->mm = clone_page_table(current_task->arch_context->mm, 0);
 #if defined(__x86_64__)
