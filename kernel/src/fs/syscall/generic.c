@@ -1048,9 +1048,6 @@ uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len)
     if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
 
-    if ((int64_t)offset + (int64_t)len <= (int64_t)offset)
-        return -EINVAL;
-
     vfs_node_t node = current_task->fd_info->fds[fd]->node;
 
     vfs_resize(node, offset + len);

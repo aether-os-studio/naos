@@ -324,8 +324,8 @@ void syscall_handler_init()
     // syscall_handlers[SYS_SYSFS] = (syscall_handle_t)sys_sysfs;
     syscall_handlers[SYS_GETPRIORITY] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_SETPRIORITY] = (syscall_handle_t)dummy_syscall_handler;
-    // syscall_handlers[SYS_SCHED_SETPARAM] = (syscall_handle_t)sys_sched_setparam;
-    // syscall_handlers[SYS_SCHED_GETPARAM] = (syscall_handle_t)sys_sched_getparam;
+    syscall_handlers[SYS_SCHED_SETPARAM] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_SCHED_GETPARAM] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_SCHED_SETSCHEDULER] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_SCHED_GETSCHEDULER] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_SCHED_GET_PRIORITY_MAX] = (syscall_handle_t)sys_sched_get_priority_max;

@@ -69,6 +69,9 @@ int memfd_stat(void *file, vfs_node_t node)
 
 void memfd_resize(void *current, uint64_t size)
 {
+    if (size == 0)
+        return;
+
     struct memfd_ctx *ctx = current;
     if (size > ctx->len)
     {

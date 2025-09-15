@@ -758,7 +758,7 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
         struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
         if (!cmsg)
         {
-            return -EINVAL;
+            goto no_cmsg;
         }
 
         spin_lock(&pair->lock);
@@ -788,6 +788,7 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
         spin_unlock(&pair->lock);
     }
 
+no_cmsg:
     for (int i = 0; i < msg->msg_iovlen; i++)
     {
         struct iovec *curr = (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
@@ -965,7 +966,7 @@ size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg, int fl
         struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
         if (!cmsg)
         {
-            return -EINVAL;
+            goto no_cmsg;
         }
 
         spin_lock(&pair->lock);
@@ -995,6 +996,7 @@ size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg, int fl
         spin_unlock(&pair->lock);
     }
 
+no_cmsg:
     for (int i = 0; i < msg->msg_iovlen; i++)
     {
         struct iovec *curr = (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
