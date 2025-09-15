@@ -149,6 +149,7 @@ fn main() {
 
     #[allow(unused)]
     #[derive(Default)]
+    #[repr(C)]
     struct VtMode {
         pub mode: u8,    // 终端模式
         pub waitv: u8,   // 垂直同步
