@@ -241,12 +241,12 @@ size_t ptmx_ioctl(void *file, uint64_t request, uint64_t arg)
         else
             pair->locked = true;
         ret = 0;
-        break;
+        goto done;
     }
     case 0x30: // TIOCGPTN
         *((int *)arg) = pair->id;
         ret = 0;
-        break;
+        goto done;
     }
     switch (request & 0xFFFFFFFF)
     {
@@ -266,6 +266,7 @@ size_t ptmx_ioctl(void *file, uint64_t request, uint64_t arg)
         printk("ptmx_ioctl: Unsupported request %#010lx\n", request & 0xFFFFFFFF);
         break;
     }
+done:
     spin_unlock(&pair->lock);
 
     return ret;
