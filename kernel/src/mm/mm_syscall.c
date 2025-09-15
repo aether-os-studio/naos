@@ -130,6 +130,7 @@ uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot)
 uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uint64_t flags, uint64_t new_addr)
 {
     old_addr = old_addr & (~(DEFAULT_PAGE_SIZE - 1));
+    new_addr = new_addr & (~(DEFAULT_PAGE_SIZE - 1));
     new_size = (new_size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
 
     uint64_t old_addr_phys = translate_address(get_current_page_dir(true), old_addr);
