@@ -182,27 +182,27 @@ get_device_config(struct usb_pipe *pipe)
     int ret = usb_send_default_control(pipe, &req, &cfg);
     if (ret)
     {
-        printf("[usb.c:%d] Failed to get configuration descriptor: usb_send_default_control\n", __LINE__);
+        printk("[usb.c:%d] Failed to get configuration descriptor: usb_send_default_control\n", __LINE__);
         return NULL;
     }
 
     struct usb_config_descriptor *config = malloc(cfg.wTotalLength);
     if (!config)
     {
-        printf("[usb.c:%d] Failed to get configuration descriptor: malloc\n", __LINE__);
+        printk("[usb.c:%d] Failed to get configuration descriptor: malloc\n", __LINE__);
         return NULL;
     }
     req.wLength = cfg.wTotalLength;
     ret = usb_send_default_control(pipe, &req, config);
     if (ret)
     {
-        printf("[usb.c:%d] Failed to get configuration descriptor: usb_send_default_control\n", __LINE__);
+        printk("[usb.c:%d] Failed to get configuration descriptor: usb_send_default_control\n", __LINE__);
         free(config);
         return NULL;
     }
     if (config->wTotalLength != cfg.wTotalLength)
     {
-        printf("[usb.c:%d] Failed to get configuration descriptor: config->wTotalLength != cfg.wTotalLength\tconfig->wTotalLength = %d, cfg.wTotalLength = %d\n", __LINE__, config->wTotalLength, cfg.wTotalLength);
+        printk("[usb.c:%d] Failed to get configuration descriptor: config->wTotalLength != cfg.wTotalLength\tconfig->wTotalLength = %d, cfg.wTotalLength = %d\n", __LINE__, config->wTotalLength, cfg.wTotalLength);
         free(config);
         return NULL;
     }
@@ -309,7 +309,7 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
             struct usbdevice_s *dev = usbdevs[i];
             if (dev->vendor_id != 0xFFFF && dev->product_id != 0xFFFF && dev->vendor_id == usbdev->vendor_id && dev->product_id == usbdev->product_id && dev->port == usbdev->port)
             {
-                printf("Found duplicate usb device, vendor: %#04x, product: %#04x\n", dev->vendor_id, dev->product_id);
+                printk("Found duplicate usb device, vendor: %#04x, product: %#04x\n", dev->vendor_id, dev->product_id);
                 // The same usb device
                 if (dev->speed >= usbdev->speed)
                 {
@@ -321,7 +321,7 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
                     {
                         if (dev->iface->bInterfaceProtocol == US_PR_BULK)
                         {
-                            printf("Unregisting msc device\n");
+                            printk("Unregisting msc device\n");
                             unregist_blkdev(dev->desc);
                         }
                     }
@@ -329,7 +329,7 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
                     {
                         if (dev->iface->bInterfaceProtocol == USB_INTERFACE_PROTOCOL_KEYBOARD)
                         {
-                            printf("Should Unregisting hid keyboard device\n");
+                            printk("Should Unregisting hid keyboard device\n");
                         }
                     }
                 }
@@ -344,7 +344,7 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
     usbdev->defpipe = usb_realloc_pipe(usbdev, usbdev->defpipe, &epdesc);
     if (!usbdev->defpipe)
     {
-        printf("Failed to reallocate control pipe for USB device\n");
+        printk("Failed to reallocate control pipe for USB device\n");
         return -1;
     }
 
@@ -352,7 +352,7 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
     struct usb_config_descriptor *config = get_device_config(usbdev->defpipe);
     if (!config)
     {
-        printf("[usb.c:%d] Failed to get configuration descriptor for USB device\n", __LINE__);
+        printk("[usb.c:%d] Failed to get configuration descriptor for USB device\n", __LINE__);
         return 0;
     }
 
@@ -386,17 +386,17 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
     usbdev->imax = (void *)config + config->wTotalLength - (void *)iface;
     if (iface->bInterfaceClass == USB_CLASS_HUB)
     {
-        printf("hub device detected\n");
+        printk("hub device detected\n");
         goto fail;
     }
     else if (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE)
     {
-        printf("mass storage device detected\n");
+        printk("mass storage device detected\n");
         if (iface->bInterfaceProtocol == US_PR_BULK)
             ret = usb_msc_setup(usbdev);
         if (iface->bInterfaceProtocol == US_PR_UAS)
         {
-            printf("unsupported USB device: UAS\n");
+            printk("unsupported USB device: UAS\n");
             goto fail;
         }
         //     ret = usb_uas_setup(usbdev);
@@ -433,7 +433,7 @@ usb_hub_port_setup(void *data)
         int ret = hub->op->detect(hub, port);
         if (ret > 0)
         {
-            printf("USB device found at port %d\n", port);
+            printk("USB device found at port %d\n", port);
             // Device connected.
             break;
         }
@@ -452,7 +452,7 @@ usb_hub_port_setup(void *data)
     if (ret < 0)
     {
         // Reset failed
-        printf("Failed to reset USB device at port %d\n", port);
+        printk("Failed to reset USB device at port %d\n", port);
         goto resetfail;
     }
     usbdev->speed = ret;
@@ -461,7 +461,7 @@ usb_hub_port_setup(void *data)
     ret = usb_set_address(usbdev);
     if (ret)
     {
-        printf("Failed to set USB device address at port %d\n", port);
+        printk("Failed to set USB device address at port %d\n", port);
         hub->op->disconnect(hub, port);
         goto resetfail;
     }
@@ -493,7 +493,7 @@ done:
     return;
 
 resetfail:
-    printf("Reset USB device failed at port %d\n", port);
+    printk("Reset USB device failed at port %d\n", port);
     spin_unlock(&hub->cntl->resetlock);
     free(usbdev);
     usbdev = NULL;

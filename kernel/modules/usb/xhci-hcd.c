@@ -333,8 +333,7 @@ xhci_hub_reset(struct usbhub_s *hub, uint32_t port)
         xhci->pr[port].portsc = portsc | XHCI_PORTSC_PR;
         break;
     default:
-        printf("XHCI reset: unknown pls %d\n", pls);
-        return -1;
+        printk("XHCI reset: unknown pls %d\n", pls);
     }
 
     uint64_t start_ns = nanoTime();
@@ -352,13 +351,13 @@ xhci_hub_reset(struct usbhub_s *hub, uint32_t port)
         arch_pause();
         if ((nanoTime() - start_ns) > (XHCI_RESET_TIMEOUT_MS * 1000000))
         {
-            printf("XHCI reset: timeout waiting for port %d to reset\n", port);
+            printk("XHCI reset: timeout waiting for port %d to reset\n", port);
             return -1;
         }
     }
 
     int rc = speed_from_xhci[xhci_get_field(portsc, XHCI_PORTSC_SPEED)];
-    printf("XHCI reset: port %d reset complete, speed %s\n", port, speed_name[xhci_get_field(portsc, XHCI_PORTSC_SPEED)]);
+    printk("XHCI reset: port %d reset complete, speed %s\n", port, speed_name[xhci_get_field(portsc, XHCI_PORTSC_SPEED)]);
     return rc;
 }
 
@@ -547,7 +546,7 @@ configure_xhci(void *data)
     // Find devices
     int count = xhci_check_ports(xhci);
 
-    printf("Found %d USB devices on XHCI controller\n", count);
+    printk("Found %d USB devices on XHCI controller\n", count);
 
     // xhci_free_pipes(xhci);
     // if (count)
@@ -561,7 +560,7 @@ configure_xhci(void *data)
     // wait_bit(&xhci->op->usbsts, XHCI_STS_HCH, XHCI_STS_HCH, 32);
 
 fail:
-    printf("Configure XHCI failed");
+    printk("Configure XHCI failed");
 
     free_frames_bytes(xhci->eseg, sizeof(*xhci->eseg));
     free_frames_bytes(xhci->evts, sizeof(*xhci->evts));
@@ -637,7 +636,7 @@ static struct usb_xhci_s *xhci_controller_setup(void *baseaddr)
     uint32_t pagesize = xhci->op->pagesize;
     if (DEFAULT_PAGE_SIZE != (pagesize << 12))
     {
-        printf("XHCI: Invalid page size %d\n", pagesize);
+        printk("XHCI: Invalid page size %d\n", pagesize);
         free(xhci);
         return NULL;
     }
@@ -708,7 +707,7 @@ void xhci_process_events(struct usb_xhci_s *xhci)
             break;
         }
         default:
-            printf("%s: Unknown event type: %d\n", __func__, evt_type);
+            printk("%s: Unknown event type: %d\n", __func__, evt_type);
             break;
         }
 
@@ -1131,7 +1130,7 @@ int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data, int
 {
     if (!p)
     {
-        printf("%s: Invalid usb pipe\n", __func__);
+        printk("%s: Invalid usb pipe\n", __func__);
         return -1;
     }
 
@@ -1228,11 +1227,11 @@ int xhci_poll_intr(struct usb_pipe *p, void *data)
 
 int xhci_probe(pci_device_t *dev, uint32_t vendor_device_id)
 {
-    printf("Found XHCI controller.\n");
+    printk("Found XHCI controller.\n");
 
     if (dev->vendor_id == 0x8086)
     {
-        printf("Found Intel XHCI controller.\n");
+        printk("Found Intel XHCI controller.\n");
 
         uint32_t val = dev->op->read(dev->bus, dev->slot, dev->func, dev->segment, 0xdc);
         dev->op->write(dev->bus, dev->slot, dev->func, dev->segment, 0xdc, val | (1UL << 9));
