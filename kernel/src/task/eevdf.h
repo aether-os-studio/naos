@@ -2,8 +2,6 @@
 
 #include <libs/klibc.h>
 
-#define MAX(x, y) ((x > y) ? (x) : (y))
-
 #define MAX_NICE 19
 #define MIN_NICE -20
 #define NICE_WIDTH (MAX_NICE - MIN_NICE + 1)

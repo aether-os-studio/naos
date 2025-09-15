@@ -70,8 +70,8 @@ typedef struct unix_socket_pair
     int clientBuffSize;
 
     // msg_control/msg_controllen
-    fd_t *pending_files;
-    int pending_fds_count;
+    fd_t **client_pending_files;
+    fd_t **server_pending_files;
     int pending_fds_size;
 
     int reuseaddr;

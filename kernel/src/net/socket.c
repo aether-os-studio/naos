@@ -86,7 +86,10 @@ unix_socket_pair_t *unix_socket_allocate_pair()
     pair->serverBuffSize = BUFFER_SIZE;
     pair->serverBuff = alloc_frames_bytes(pair->serverBuffSize);
     pair->clientBuff = alloc_frames_bytes(pair->clientBuffSize);
-    pair->pending_files = malloc(MAX_PENDING_FILES_COUNT * sizeof(fd_t));
+    pair->client_pending_files = malloc(MAX_PENDING_FILES_COUNT * sizeof(fd_t *));
+    pair->server_pending_files = malloc(MAX_PENDING_FILES_COUNT * sizeof(fd_t *));
+    memset(pair->client_pending_files, 0, MAX_PENDING_FILES_COUNT * sizeof(fd_t *));
+    memset(pair->server_pending_files, 0, MAX_PENDING_FILES_COUNT * sizeof(fd_t *));
     pair->pending_fds_size = MAX_PENDING_FILES_COUNT;
     return pair;
 }
@@ -97,7 +100,8 @@ void unix_socket_free_pair(unix_socket_pair_t *pair)
     free_frames_bytes(pair->serverBuff, pair->serverBuffSize);
     if (pair->filename)
         free(pair->filename);
-    free(pair->pending_files);
+    free(pair->client_pending_files);
+    free(pair->server_pending_files);
     free(pair);
 }
 
@@ -651,87 +655,58 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags)
         if (!pair)
             return (size_t)-ENOTCONN;
 
-        spin_lock(&pair->lock);
-        if (pair->pending_fds_count > 0)
+        size_t max_fds = (msg->msg_controllen - sizeof(struct cmsghdr)) / sizeof(int);
+        size_t received_fds = 0;
+
+        struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
+        if (!cmsg)
         {
-            size_t avail_space = msg->msg_controllen;
-            int max_fds = (avail_space - sizeof(struct cmsghdr)) / sizeof(int);
-            int num_fds = MIN(pair->pending_fds_count, max_fds);
+            msg->msg_controllen = 0;
+            return cnt;
+        }
+        cmsg->cmsg_level = SOL_SOCKET;
+        cmsg->cmsg_type = SCM_RIGHTS;
 
-            if (num_fds > 0)
+        int *fds = (int *)CMSG_DATA(cmsg);
+
+        spin_lock(&pair->lock);
+
+        for (int i = 0; i < MAX_PENDING_FILES_COUNT; i++)
+        {
+            if (pair->client_pending_files[i] == NULL)
+                continue;
+
+            int fd;
+            for (fd = 0; fd < MAX_FD_NUM; fd++)
             {
-                struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
-                cmsg->cmsg_level = SOL_SOCKET;
-                cmsg->cmsg_type = SCM_RIGHTS;
-                cmsg->cmsg_len = CMSG_LEN(num_fds * sizeof(int));
-                int *dest_fds = (int *)CMSG_DATA(cmsg);
-
-                int allocated_fds[MAX_PENDING_FILES_COUNT];
-
-                int i, error = 0;
-                for (i = 0; i < num_fds; i++)
+                if (current_task->fd_info->fds[fd] == NULL)
                 {
-                    int new_fd = -1;
-                    for (int f = 3; f < MAX_FD_NUM; f++)
-                    {
-                        if (!current_task->fd_info->fds[f])
-                        {
-                            new_fd = f;
-                            break;
-                        }
-                    }
-                    if (new_fd == -1)
-                    {
-                        error = -EMFILE;
-                        break;
-                    }
-
-                    fd_t *new_fd_entry = malloc(sizeof(fd_t));
-                    if (!new_fd_entry)
-                    {
-                        error = -ENOMEM;
-                        break;
-                    }
-
-                    memcpy(new_fd_entry, &pair->pending_files[i], sizeof(fd_t));
-                    current_task->fd_info->fds[new_fd] = new_fd_entry;
-                    if (flags & MSG_CMSG_CLOEXEC)
-                        current_task->fd_info->fds[new_fd]->flags |= O_CLOEXEC;
-                    allocated_fds[i] = new_fd;
-                    dest_fds[i] = new_fd;
+                    break;
                 }
-
-                if (error)
-                {
-                    printk("recv_msg: Encountered an error while accepting cmsg: %d\n", strerror(-error));
-                    while (i-- > 0)
-                    {
-                        int fd_to_close = allocated_fds[i];
-                        fd_t *f = current_task->fd_info->fds[fd_to_close];
-                        if (f)
-                        {
-                            free(f);
-                            current_task->fd_info->fds[fd_to_close] = NULL;
-                        }
-                    }
-                    msg->msg_controllen = 0;
-                    spin_unlock(&pair->lock);
-                    return error;
-                }
-
-                msg->msg_controllen = cmsg->cmsg_len;
-                memmove(pair->pending_files, &pair->pending_files[num_fds], (pair->pending_fds_count - num_fds) * sizeof(fd_t));
-                pair->pending_fds_count -= num_fds;
             }
-            else
-            {
-                msg->msg_controllen = 0;
-            }
+
+            current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
+            memcpy(current_task->fd_info->fds[fd], pair->client_pending_files[i], sizeof(fd_t));
+            free(pair->client_pending_files[i]);
+            pair->client_pending_files[i] = NULL;
+            fds[received_fds] = fd;
+
+            if (received_fds + 1 >= max_fds)
+                break;
+
+            received_fds++;
+        }
+
+        if (received_fds > 0)
+        {
+            cmsg->cmsg_len = CMSG_LEN(received_fds * sizeof(int));
+            msg->msg_controllen = cmsg->cmsg_len;
         }
         else
         {
             msg->msg_controllen = 0;
         }
+
         spin_unlock(&pair->lock);
     }
     else
@@ -773,14 +748,16 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags)
 
                 for (int i = 0; i < num_fds; i++)
                 {
-                    if (pair->pending_fds_count >= MAX_PENDING_FILES_COUNT)
+                    for (int j = 0; j < MAX_PENDING_FILES_COUNT; j++)
                     {
-                        printk("unix_socke_send_msg: Encountered an error while accepting cmsg: %d\n", strerror(EMFILE));
-                        spin_unlock(&pair->lock);
-                        return -EMFILE;
+                        if (pair->server_pending_files[j] == NULL)
+                        {
+                            pair->server_pending_files[j] = malloc(sizeof(fd_t));
+                            memcpy(pair->server_pending_files[j], current_task->fd_info->fds[fds[i]], sizeof(fd_t));
+                            current_task->fd_info->fds[fds[i]]->node->refcount++;
+                            break;
+                        }
                     }
-                    memcpy(&pair->pending_files[pair->pending_fds_count++], current_task->fd_info->fds[fds[i]], sizeof(fd_t));
-                    current_task->fd_info->fds[fds[i]]->node->refcount++;
                 }
             }
         }
@@ -861,82 +838,52 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg,
         socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
         unix_socket_pair_t *pair = handle->sock;
 
-        spin_lock(&pair->lock);
-        if (pair->pending_fds_count > 0)
+        size_t max_fds = (msg->msg_controllen - sizeof(struct cmsghdr)) / sizeof(int);
+        size_t received_fds = 0;
+
+        struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
+        if (!cmsg)
         {
-            size_t avail_space = msg->msg_controllen;
-            int max_fds = (avail_space - sizeof(struct cmsghdr)) / sizeof(int);
-            int num_fds = MIN(pair->pending_fds_count, max_fds);
+            msg->msg_controllen = 0;
+            return cnt;
+        }
+        cmsg->cmsg_level = SOL_SOCKET;
+        cmsg->cmsg_type = SCM_RIGHTS;
 
-            if (num_fds > 0)
+        int *fds = (int *)CMSG_DATA(cmsg);
+
+        spin_lock(&pair->lock);
+
+        for (int i = 0; i < MAX_PENDING_FILES_COUNT; i++)
+        {
+            if (pair->server_pending_files[i] == NULL)
+                continue;
+
+            int fd;
+            for (fd = 0; fd < MAX_FD_NUM; fd++)
             {
-                struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
-                cmsg->cmsg_level = SOL_SOCKET;
-                cmsg->cmsg_type = SCM_RIGHTS;
-                cmsg->cmsg_len = CMSG_LEN(num_fds * sizeof(int));
-                int *dest_fds = (int *)CMSG_DATA(cmsg);
-
-                int allocated_fds[MAX_PENDING_FILES_COUNT];
-
-                int i, error = 0;
-                for (i = 0; i < num_fds; i++)
+                if (current_task->fd_info->fds[fd] == NULL)
                 {
-                    int new_fd = -1;
-                    for (int f = 3; f < MAX_FD_NUM; f++)
-                    {
-                        if (!current_task->fd_info->fds[f])
-                        {
-                            new_fd = f;
-                            break;
-                        }
-                    }
-                    if (new_fd == -1)
-                    {
-                        error = -EMFILE;
-                        break;
-                    }
-
-                    fd_t *new_fd_entry = malloc(sizeof(fd_t));
-                    if (!new_fd_entry)
-                    {
-                        error = -ENOMEM;
-                        break;
-                    }
-
-                    memcpy(new_fd_entry, &pair->pending_files[i], sizeof(fd_t));
-                    current_task->fd_info->fds[new_fd] = new_fd_entry;
-                    if (flags & MSG_CMSG_CLOEXEC)
-                        current_task->fd_info->fds[new_fd]->flags |= O_CLOEXEC;
-                    allocated_fds[i] = new_fd;
-                    dest_fds[i] = new_fd;
+                    break;
                 }
-
-                if (error)
-                {
-                    printk("accept_recv_msg: Encountered an error while accepting cmsg: %d\n", strerror(-error));
-                    while (i-- > 0)
-                    {
-                        int fd_to_close = allocated_fds[i];
-                        fd_t *f = current_task->fd_info->fds[fd_to_close];
-                        if (f)
-                        {
-                            free(f);
-                            current_task->fd_info->fds[fd_to_close] = NULL;
-                        }
-                    }
-                    msg->msg_controllen = 0;
-                    spin_unlock(&pair->lock);
-                    return error;
-                }
-
-                msg->msg_controllen = cmsg->cmsg_len;
-                memmove(pair->pending_files, &pair->pending_files[num_fds], (pair->pending_fds_count - num_fds) * sizeof(fd_t));
-                pair->pending_fds_count -= num_fds;
             }
-            else
-            {
-                msg->msg_controllen = 0;
-            }
+
+            current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
+            memcpy(current_task->fd_info->fds[fd], pair->server_pending_files[i], sizeof(fd_t));
+            free(pair->server_pending_files[i]);
+            pair->server_pending_files[i] = NULL;
+            fds[received_fds] = fd;
+
+            if (received_fds + 1 >= max_fds)
+                break;
+
+            received_fds++;
+        }
+
+        if (received_fds > 0)
+        {
+            cmsg->cmsg_len = CMSG_LEN(received_fds * sizeof(int));
+            msg->msg_controllen = cmsg->cmsg_len;
         }
         else
         {
@@ -981,14 +928,16 @@ size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg, int fl
 
                 for (int i = 0; i < num_fds; i++)
                 {
-                    if (pair->pending_fds_count >= MAX_PENDING_FILES_COUNT)
+                    for (int j = 0; j < MAX_PENDING_FILES_COUNT; j++)
                     {
-                        printk("unix_socket_accept_send_msg: Encountered an error while accepting cmsg: %d\n", strerror(EMFILE));
-                        spin_unlock(&pair->lock);
-                        return -EMFILE;
+                        if (pair->client_pending_files[j] == NULL)
+                        {
+                            pair->client_pending_files[j] = malloc(sizeof(fd_t));
+                            memcpy(pair->client_pending_files[j], current_task->fd_info->fds[fds[i]], sizeof(fd_t));
+                            current_task->fd_info->fds[fds[i]]->node->refcount++;
+                            break;
+                        }
                     }
-                    memcpy(&pair->pending_files[pair->pending_fds_count++], current_task->fd_info->fds[fds[i]], sizeof(fd_t));
-                    current_task->fd_info->fds[fds[i]]->node->refcount++;
                 }
             }
         }

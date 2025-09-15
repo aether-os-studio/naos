@@ -39,6 +39,7 @@ void init_thread(uint64_t arg)
     list_delete(devfs_root->parent->child, devfs_root);
     devfs_root->parent = NULL;
     mount_root();
+    devfs_root = vfs_open("/dev");
 
     dev_init_after_mount_root();
 
