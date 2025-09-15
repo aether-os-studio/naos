@@ -171,7 +171,6 @@ override HEADER_DEPS := $(addprefix obj-$(ARCH)/,$(CFILES:.c=.c.d) $(ASFILES:.S=
 # Default target. This must come first, before header dependencies.
 .PHONY: all
 all: bin-$(ARCH)/$(OUTPUT)
-	$(MAKE) -C modules
 
 # Include header dependencies.
 -include $(HEADER_DEPS)
@@ -188,8 +187,6 @@ bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH).ld $(OBJ)
 
 	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) kallsyms.o -o $@
 
-modules:
-	$(MAKE) -C modules
 
 # Compilation rules for *.c files.
 obj-$(ARCH)/src/%.c.o: src/%.c GNUmakefile
@@ -205,7 +202,6 @@ obj-$(ARCH)/src/%.S.o: src/%.S GNUmakefile
 .PHONY: clean
 clean:
 	rm -rf bin-$(ARCH) obj-$(ARCH)
-	rm -rf obj-modules-$(ARCH) modules-$(ARCH)
 
 # Remove everything built and generated including downloaded dependencies.
 .PHONY: distclean

@@ -138,6 +138,10 @@ struct usbhub_op_s
 #define USB_REQ_SET_INTERFACE 0x0B
 #define USB_REQ_SYNCH_FRAME 0x0C
 
+/* USB Mass Storage Class specific requests */
+#define USB_MSC_REQ_BULK_ONLY_RESET 0xFF
+#define USB_MSC_REQ_GET_MAX_LUN 0xFE
+
 struct usb_ctrlrequest
 {
     uint8_t bRequestType;
@@ -245,6 +249,28 @@ struct usb_endpoint_descriptor
 
 #define US_PR_BULK 0x50 /* bulk-only transport */
 #define US_PR_UAS 0x62  /* usb attached scsi   */
+
+// SCSI命令定义
+enum
+{
+    SCSI_INQUIRY = 0x12,
+    SCSI_READ_CAPACITY_10 = 0x25,
+    SCSI_READ_CAPACITY_16 = 0x9E,
+    SCSI_READ_10 = 0x28,
+    SCSI_READ_12 = 0xA8,
+    SCSI_READ_16 = 0x88,
+    SCSI_WRITE_10 = 0x2A,
+    SCSI_WRITE_12 = 0xAA,
+    SCSI_WRITE_16 = 0x8A,
+};
+
+// SCSI版本定义
+enum scsi_version
+{
+    SCSI_VERSION_10 = 0,
+    SCSI_VERSION_12 = 1,
+    SCSI_VERSION_16 = 2,
+};
 
 /****************************************************************
  * function defs

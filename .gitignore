@@ -1,6 +1,8 @@
 /.vscode
 /kernel-deps
 /assets
+/modules-*
+/obj-modules-*
 *.iso
 *.img
 *.vmdk

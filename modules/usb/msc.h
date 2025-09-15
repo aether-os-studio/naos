@@ -3,28 +3,6 @@
 #include <libs/aether/block.h>
 #include "usb.h"
 
-// SCSI命令定义
-enum
-{
-    SCSI_INQUIRY = 0x12,
-    SCSI_READ_CAPACITY_10 = 0x25,
-    SCSI_READ_CAPACITY_16 = 0x9E,
-    SCSI_READ_10 = 0x28,
-    SCSI_READ_12 = 0xA8,
-    SCSI_READ_16 = 0x88,
-    SCSI_WRITE_10 = 0x2A,
-    SCSI_WRITE_12 = 0xAA,
-    SCSI_WRITE_16 = 0x8A,
-};
-
-// SCSI版本定义
-enum scsi_version
-{
-    SCSI_VERSION_10 = 0,
-    SCSI_VERSION_12 = 1,
-    SCSI_VERSION_16 = 2,
-};
-
 // CBW/CSW结构体
 typedef struct
 {

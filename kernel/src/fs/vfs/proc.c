@@ -237,7 +237,7 @@ void procfs_on_exit_task(task_t *task)
     sprintf(name, "/proc/%d", task->pid);
 
     vfs_node_t node = vfs_open(name);
-    if (node)
+    if (node && node->parent)
     {
         list_delete(node->parent->child, node);
         vfs_free(node);

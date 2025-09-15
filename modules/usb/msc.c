@@ -19,6 +19,35 @@ int usb_bulk_transfer(struct usb_pipe *pipe, void *data, size_t len, bool is_rea
     return ret;
 }
 
+// 重置USB MSC设备端点
+static int usb_msc_reset_recovery(usb_msc_device *dev)
+{
+    printk("USB MSC: Performing reset recovery\n");
+
+    // 发送Bulk-Only Mass Storage Reset
+    struct usb_ctrlrequest req = {
+        .bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
+        .bRequest = USB_MSC_REQ_BULK_ONLY_RESET, // Bulk-Only Mass Storage Reset
+        .wValue = 0,
+        .wIndex = dev->udev->iface->bInterfaceNumber,
+        .wLength = 0};
+
+    int ret = usb_send_default_control(dev->udev->defpipe, &req, NULL);
+    if (ret != 0)
+    {
+        printk("USB MSC: Reset recovery failed: %d\n", ret);
+        return -1;
+    }
+
+    // 等待设备恢复
+    arch_pause();
+    arch_pause();
+    arch_pause();
+
+    printk("USB MSC: Reset recovery completed\n");
+    return 0;
+}
+
 spinlock_t usb_msc_transfer_lock = {0};
 
 static int usb_msc_transfer(usb_msc_device *dev, void *cmd, uint8_t cmd_length, void *data, size_t data_len, bool is_read)
@@ -48,30 +77,87 @@ static int usb_msc_transfer(usb_msc_device *dev, void *cmd, uint8_t cmd_length, 
     if (data_len > 0)
     {
         struct usb_pipe *pipe = is_read ? dev->bulk_in : dev->bulk_out;
-        if (usb_bulk_transfer(pipe, data, data_len, is_read) < 0)
+        int data_ret = usb_bulk_transfer(pipe, data, data_len, is_read);
+        if (data_ret < 0)
         {
             spin_unlock(&usb_msc_transfer_lock);
             printk("Failed to transfer data!!!\n");
+
+            // 数据传输失败时也尝试重置恢复
+            usb_msc_reset_recovery(dev);
+            return -1;
+        }
+
+        // 检查实际传输的数据长度是否匹配
+        if ((size_t)data_ret != data_len)
+        {
+            printk("Data transfer incomplete: expected %zu, got %d bytes\n", data_len, data_ret);
+            spin_unlock(&usb_msc_transfer_lock);
+
+            // 数据传输不完整时尝试重置恢复
+            usb_msc_reset_recovery(dev);
             return -1;
         }
     }
 
     // 接收CSW
     usb_msc_csw_t csw;
-    if (usb_bulk_transfer(dev->bulk_in, &csw, sizeof(csw), true) < 0)
+    int retries = 3;
+    int csw_ret = -1;
+
+    while (retries-- > 0)
+    {
+        csw_ret = usb_bulk_transfer(dev->bulk_in, &csw, sizeof(csw), true);
+        if (csw_ret < 0)
+        {
+            printk("Failed to transfer csw (retries left: %d)!!!\n", retries);
+
+            // 如果CSW接收失败，尝试重置恢复
+            if (retries == 0)
+            {
+                usb_msc_reset_recovery(dev);
+            }
+            continue;
+        }
+
+        // 验证CSW签名
+        if (csw.dCSWSignature != 0x53425355)
+        {
+            printk("Invalid CSW signature: 0x%08x, expected 0x53425355\n", csw.dCSWSignature);
+            continue;
+        }
+
+        // 验证CSW Tag是否匹配
+        if (csw.dCSWTag != cbw.dCBWTag)
+        {
+            printk("CSW tag mismatch: got %u, expected %u\n", csw.dCSWTag, cbw.dCBWTag);
+            continue;
+        }
+
+        break;
+    }
+
+    if (csw_ret < 0)
     {
         spin_unlock(&usb_msc_transfer_lock);
-        printk("Failed to transfer csw!!!\n");
+        printk("CSW transfer failed after all retries!!!\n");
         return -1;
     }
 
+    // 检查CSW状态
     if (csw.bCSWStatus == 0)
     {
         spin_unlock(&usb_msc_transfer_lock);
         return 0;
     }
 
-    printk("Failed to transfer!!! csw.bCSWStatus = %d\n", csw.bCSWStatus);
+    printk("Transfer failed! CSW status: %d, residue: %u\n", csw.bCSWStatus, csw.dCSWDataResidue);
+
+    // 如果CSW状态不是成功，尝试重置恢复
+    if (csw.bCSWStatus != 0)
+    {
+        usb_msc_reset_recovery(dev);
+    }
 
     spin_unlock(&usb_msc_transfer_lock);
     return -1;

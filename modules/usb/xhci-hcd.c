@@ -834,7 +834,7 @@ static int xhci_cmd_submit(struct usb_xhci_s *xhci, struct xhci_inctx *inctx, ui
 static int xhci_cmd_enable_slot(struct usb_xhci_s *xhci)
 {
     int cc = xhci_cmd_submit(xhci, NULL, CR_ENABLE_SLOT << 10);
-    if (cc != CC_SUCCESS)
+    if (cc != CC_SUCCESS && cc != CC_SHORT_PACKET)
         return -1;
     return (xhci->cmds->evt.control >> 24) & 0xff;
 }
@@ -935,7 +935,7 @@ static int xhci_config_hub(struct usbhub_s *hub)
 
     int cc = xhci_cmd_configure_endpoint(xhci, pipe->slotid, in);
     free_frames_bytes(in, (sizeof(struct xhci_inctx) * 33) << xhci->context64);
-    if (cc != CC_SUCCESS)
+    if (cc != CC_SUCCESS && cc != CC_SHORT_PACKET)
     {
         return -1;
     }
@@ -1033,10 +1033,10 @@ xhci_alloc_pipe(struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epde
 
         // Send set_address command.
         int cc = xhci_cmd_address_device(xhci, slotid, in);
-        if (cc != CC_SUCCESS)
+        if (cc != CC_SUCCESS && cc != CC_SHORT_PACKET)
         {
             cc = xhci_cmd_disable_slot(xhci, slotid);
-            if (cc != CC_SUCCESS)
+            if (cc != CC_SUCCESS && cc != CC_SHORT_PACKET)
             {
                 goto fail;
             }
@@ -1054,7 +1054,7 @@ xhci_alloc_pipe(struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epde
         pipe->slotid = defpipe->slotid;
         // Send configure command.
         int cc = xhci_cmd_configure_endpoint(xhci, pipe->slotid, in);
-        if (cc != CC_SUCCESS)
+        if (cc != CC_SUCCESS && cc != CC_SHORT_PACKET)
         {
             goto fail;
         }
@@ -1096,7 +1096,7 @@ xhci_realloc_pipe(struct usbdevice_s *usbdev, struct usb_pipe *upipe, struct usb
     struct xhci_epctx *ep = (void *)&in[2 << xhci->context64];
     ep->ctx[1] |= (pipe->pipe.maxpacket << 16);
     int cc = xhci_cmd_evaluate_context(xhci, pipe->slotid, in);
-    if (cc != CC_SUCCESS)
+    if (cc != CC_SUCCESS && cc != CC_SHORT_PACKET)
     {
     }
     free_frames_bytes(in, (sizeof(struct xhci_inctx) * 33) << xhci->context64);
@@ -1151,7 +1151,7 @@ int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data, int
     }
 
     int cc = xhci_event_wait(xhci, &pipe->reqs, usb_xfer_time(p, datalen));
-    if (cc != CC_SUCCESS)
+    if (cc != CC_SUCCESS && cc != CC_SHORT_PACKET)
     {
         if (cc == CC_STALL_ERROR)
         {
@@ -1159,7 +1159,7 @@ int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data, int
 
             // Reset the endpoint to clear the STALL condition
             int reset_cc = xhci_cmd_reset_endpoint(xhci, pipe->slotid, pipe->epid);
-            if (reset_cc != CC_SUCCESS)
+            if (reset_cc != CC_SUCCESS && reset_cc != CC_SHORT_PACKET)
             {
                 printk("xhci_send_pipe: Failed to reset endpoint, cc=%d\n", reset_cc);
                 return -1;
@@ -1183,7 +1183,7 @@ int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data, int
 
             // Wait for the retried transfer to complete
             cc = xhci_event_wait(xhci, &pipe->reqs, usb_xfer_time(p, datalen));
-            if (cc != CC_SUCCESS)
+            if (cc != CC_SUCCESS && cc != CC_SHORT_PACKET)
             {
                 printk("xhci_send_pipe: Retry failed with cc=%d\n", cc);
                 return -1;

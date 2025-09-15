@@ -113,12 +113,14 @@ clean:
 	$(MAKE) -C kernel clean
 	$(MAKE) -C user clean
 	rm -rf $(IMAGE_NAME).img
+	rm -rf obj-modules-$(ARCH) modules-$(ARCH)
 
 .PHONY: distclean
 distclean:
 	$(MAKE) -C kernel distclean
 	$(MAKE) -C user distclean
 	rm -rf *.img assets
+	rm -rf obj-modules-$(ARCH) modules-$(ARCH)
 
 clippy:
 	$(MAKE) -C kernel clippy
@@ -139,9 +141,9 @@ EFI_FILE = assets/limine/BOOTRISCV64.EFI:EFI/BOOT/BOOTRISCV64.EFI
 else ifeq ($(ARCH),loongarch64)
 EFI_FILE = assets/limine/BOOTLOONGARCH64.EFI:EFI/BOOT/BOOTLOONGARCH64.EFI
 endif
-$(IMAGE_NAME).img: assets/limine assets/oib kernel
+$(IMAGE_NAME).img: assets/limine assets/oib kernel modules
 	assets/oib -o $(IMAGE_NAME).img -f $(EFI_FILE) \
-		-d kernel/modules-$(ARCH):modules \
+		-d modules-$(ARCH):modules \
 		-f kernel/bin-$(ARCH)/kernel:boot/kernel \
 		-f limine.conf:boot/limine/limine.conf \
 		-f assets/limine/limine-bios.sys:boot/limine/limine-bios.sys
@@ -161,7 +163,7 @@ single-$(IMAGE_NAME).img: assets/limine kernel rootfs-$(ARCH).img
 	sgdisk --new=1:1M:511M --new=2:512M:$$(( $$(($(ROOTFS_IMG_SIZE) + 1024 )) * 1024 )) single-$(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 single-$(IMAGE_NAME).img
 	mmd -i single-$(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
-	mcopy -i single-$(IMAGE_NAME).img@@1M kernel/modules-$(ARCH) ::/modules
+	mcopy -i single-$(IMAGE_NAME).img@@1M modules-$(ARCH) ::/modules
 	mcopy -i single-$(IMAGE_NAME).img@@1M $(EFI_FILE_SINGLE) ::/EFI/BOOT
 	mcopy -i single-$(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/boot
 	mcopy -i single-$(IMAGE_NAME).img@@1M limine.conf ::/boot/limine
@@ -286,3 +288,7 @@ assets/ovmf-code-$(ARCH).fd:
 		aarch64) dd if=/dev/zero of=$@ bs=1 count=0 seek=67108864 2>/dev/null;; \
 		riscv64) dd if=/dev/zero of=$@ bs=1 count=0 seek=33554432 2>/dev/null;; \
 	esac
+
+.PHONY: modules
+modules:
+	$(MAKE) -C modules
