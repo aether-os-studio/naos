@@ -453,3 +453,8 @@ void do_virtualization_exception(struct pt_regs *regs, uint64_t error_code)
     while (1)
         asm volatile("hlt");
 }
+
+void arch_make_trap()
+{
+    asm volatile("int %0" ::"i"(1));
+}

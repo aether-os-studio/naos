@@ -37,3 +37,5 @@ void SIMD_exception();
 void virtualization_exception();
 
 void backtrace(struct pt_regs *regs);
+
+void arch_make_trap();

@@ -11,6 +11,12 @@
 
 #include "endian.h"
 
+void panic(const char *file, int line, const char *func, const char *cond);
+
+#define ASSERT(condition) \
+    if (!(condition))     \
+    panic(__FILE__, __LINE__, __func__, #condition)
+
 typedef long ssize_t;
 #define SSIZE_MAX __LONG_MAX__
 typedef int clockid_t;

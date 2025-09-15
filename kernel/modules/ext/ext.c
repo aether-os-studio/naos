@@ -194,7 +194,7 @@ ssize_t ext_read(fd_t *fd, void *addr, size_t offset, size_t size)
 
     ssize_t ret = 0;
     ext_handle_t *handle = file;
-    if (!handle || !handle->node || !handle->file)
+    if (!handle || !handle->node)
         return -1;
     if (handle->node->type & file_symlink)
     {

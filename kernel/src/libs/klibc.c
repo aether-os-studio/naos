@@ -1,4 +1,6 @@
 #include <libs/klibc.h>
+#include <drivers/kernel_logger.h>
+#include <arch/arch.h>
 
 void *memcpy(void *dest, const void *src, size_t n)
 {
@@ -55,4 +57,12 @@ void *memset(void *s, int c, size_t n)
     }
 
     return s;
+}
+
+void panic(const char *file, int line, const char *func, const char *cond)
+{
+    printk("assert failed! %s", cond);
+    printk("file: %s\nline %d\nfunc: %s\n", file, line, func);
+
+    arch_make_trap();
 }
