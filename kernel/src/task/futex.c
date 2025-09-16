@@ -146,6 +146,77 @@ int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *
         spin_unlock(&futex_lock);
         return count;
     }
+    case FUTEX_LOCK_PI:
+    case FUTEX_LOCK_PI_PRIVATE:
+    {
+    retry:
+        if ((*uaddr & INT32_MAX) == 0)
+        {
+            *uaddr = current_task->pid;
+            return 0;
+        }
+        else
+        {
+            struct futex_wait *wait = malloc(sizeof(struct futex_wait));
+            wait->uaddr = uaddr;
+            wait->task = current_task;
+            wait->next = NULL;
+            wait->bitset = (uint32_t)val3;
+            struct futex_wait *curr = &futex_wait_list;
+            while (curr && curr->next)
+                curr = curr->next;
+
+            curr->next = wait;
+
+            spin_unlock(&futex_lock);
+
+            int tmo = -1;
+            if (timeout)
+                tmo = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000;
+            task_block(current_task, TASK_BLOCKING, tmo);
+
+            goto retry;
+        }
+    }
+    case FUTEX_UNLOCK_PI:
+    case FUTEX_UNLOCK_PI_PRIVATE:
+    {
+        if ((*uaddr & INT32_MAX) != current_task->pid)
+        {
+            return -EPERM;
+        }
+        *uaddr = 0;
+
+        struct futex_wait *curr = &futex_wait_list;
+        struct futex_wait *prev = NULL;
+        int count = 0;
+        while (curr)
+        {
+            bool found = false;
+
+            if (curr->uaddr && curr->uaddr == uaddr && ++count <= 1)
+            {
+                task_unblock(curr->task, EOK);
+                if (prev)
+                {
+                    prev->next = curr->next;
+                }
+                free(curr);
+                found = true;
+            }
+            if (found)
+            {
+                curr = prev->next;
+            }
+            else
+            {
+                prev = curr;
+                curr = curr->next;
+            }
+        }
+
+        return 0;
+    }
     default:
         printk("futex: Unsupported op: %d\n", op);
         return -ENOSYS;

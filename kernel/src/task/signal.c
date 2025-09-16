@@ -128,15 +128,6 @@ int sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction)
         *ptr = *action;
     }
 
-    if (ptr->sa_flags & SIG_NOMASK)
-    {
-        ptr->sa_mask = 0;
-    }
-    else
-    {
-        ptr->sa_mask |= SIGMASK(sig);
-    }
-
     return 0;
 }
 
@@ -148,6 +139,9 @@ void sys_sigreturn(struct pt_regs *regs)
     struct pt_regs *context = (struct pt_regs *)current_task->kernel_stack - 1;
 
     memcpy(context, &current_task->signal_saved_regs, sizeof(struct pt_regs));
+
+    current_task->blocked = current_task->saved_blocked;
+    current_task->saved_blocked = 0;
 
     current_task->arch_context->ctx = context;
 
@@ -243,7 +237,7 @@ int sys_kill(int pid, int sig)
 
     if (!task)
     {
-        return 0;
+        return -ESRCH;
     }
 
     // if (task->ppid != 0 && task->ppid != task->pid)
@@ -266,7 +260,9 @@ int sys_kill(int pid, int sig)
     //     }
     // }
 
+    spin_lock(&task->signal_lock);
     task->signal |= SIGMASK(sig);
+    spin_unlock(&task->signal_lock);
 
     task_unblock(task, sig);
 
@@ -308,28 +304,28 @@ void task_signal()
         return;
     }
 
-    for (int i = 0; i < MAX_FD_NUM; i++)
-    {
-        if (current_task->fd_info->fds[i])
-        {
-            vfs_node_t node = current_task->fd_info->fds[i]->node;
-            if (node && node->fsid == signalfdfs_id)
-            {
-                struct signalfd_ctx *ctx = node->handle;
+    // for (int i = 0; i < MAX_FD_NUM; i++)
+    // {
+    //     if (current_task->fd_info->fds[i])
+    //     {
+    //         vfs_node_t node = current_task->fd_info->fds[i]->node;
+    //         if (node && node->fsid == signalfdfs_id)
+    //         {
+    //             struct signalfd_ctx *ctx = node->handle;
 
-                struct signalfd_siginfo info;
-                memset(&info, 0, sizeof(struct sigevent));
-                info.ssi_signo = sig;
+    //             struct signalfd_siginfo info;
+    //             memset(&info, 0, sizeof(struct sigevent));
+    //             info.ssi_signo = sig;
 
-                memcpy(&ctx->queue[ctx->queue_head], &info, sizeof(struct signalfd_siginfo));
-                ctx->queue_head = (ctx->queue_head + 1) % ctx->queue_size;
-                if (ctx->queue_head == ctx->queue_tail)
-                {
-                    ctx->queue_tail = (ctx->queue_tail + 1) % ctx->queue_size;
-                }
-            }
-        }
-    }
+    //             memcpy(&ctx->queue[ctx->queue_head], &info, sizeof(struct signalfd_siginfo));
+    //             ctx->queue_head = (ctx->queue_head + 1) % ctx->queue_size;
+    //             if (ctx->queue_head == ctx->queue_tail)
+    //             {
+    //                 ctx->queue_tail = (ctx->queue_tail + 1) % ctx->queue_size;
+    //             }
+    //         }
+    //     }
+    // }
 
     sigaction_t *ptr = &current_task->actions[sig];
 
@@ -378,7 +374,8 @@ void task_signal()
 
     current_task->call_in_signal = true;
 
-    current_task->blocked |= ptr->sa_mask;
+    current_task->saved_blocked = current_task->blocked;
+    current_task->blocked |= (1 << sig) | ptr->sa_mask;
 
     arch_switch_with_context(NULL, current_task->arch_context, current_task->kernel_stack);
 }

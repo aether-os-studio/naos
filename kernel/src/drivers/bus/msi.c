@@ -87,9 +87,6 @@ static inline struct pci_msix_cap_t __msi_read_msix_cap_list(struct msi_desc_t *
 static inline int __msix_map_table(pci_device_t *pci_dev,
                                    struct pci_msix_cap_t *msix_cap)
 {
-    // 计算bar寄存器的offset
-    uint32_t bar_off = 0x10 + 4 * (msix_cap->dword1 & 0x7);
-
     // msix table相对于bar寄存器中存储的地址的offset
     pci_dev->msix_offset = msix_cap->dword1 & (~0x7);
     pci_dev->msix_table_size = (msix_cap->msg_ctrl & 0x7ff) + 1;

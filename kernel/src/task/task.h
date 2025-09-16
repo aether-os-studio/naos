@@ -176,9 +176,11 @@ typedef struct task
     uint64_t load_end;
     Bitmap *mmap_regions;
     arch_context_t *arch_context;
+    spinlock_t signal_lock;
     sigaction_t actions[MAXSIG];
     uint64_t signal;
     uint64_t blocked;
+    uint64_t saved_blocked;
     int saved_signal;
     vfs_node_t cwd;
     fd_info_t *fd_info;

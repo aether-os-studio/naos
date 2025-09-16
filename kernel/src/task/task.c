@@ -39,11 +39,15 @@ void send_sigint()
         {
             if (tasks[i]->actions[SIGINT].sa_handler == SIG_DFL || tasks[i]->actions[SIGINT].sa_handler == SIG_IGN)
             {
+                spin_lock(&tasks[i]->signal_lock);
                 tasks[i]->signal |= SIGMASK(SIGKILL);
+                spin_unlock(&tasks[i]->signal_lock);
             }
             else if (tasks[i]->state != TASK_READING_STDIO)
             {
+                spin_lock(&tasks[i]->signal_lock);
                 tasks[i]->signal |= SIGMASK(SIGINT);
+                spin_unlock(&tasks[i]->signal_lock);
             }
         }
     }
@@ -480,18 +484,9 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     }
 
     child->saved_signal = 0;
-    if (vfork)
-    {
-        memcpy(child->actions, current_task->actions, sizeof(child->actions));
-        child->signal = current_task->signal;
-        child->blocked = current_task->blocked;
-    }
-    else
-    {
-        memset(child->actions, 0, sizeof(child->actions));
-        child->signal = 0;
-        child->blocked = 0;
-    }
+    memcpy(child->actions, current_task->actions, sizeof(child->actions));
+    child->signal = 0;
+    child->blocked = current_task->blocked;
 
     memcpy(&child->term, &current_task->term, sizeof(termios));
 
@@ -900,11 +895,17 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         }
     }
 
+    for (int i = 1; i < MAXSIG; i++)
+    {
+        if (i != SIGCHLD && current_task->actions[i].sa_handler != SIG_IGN)
+        {
+            memset(&current_task->actions[i], 0, sizeof(sigaction_t));
+        }
+    }
+
     current_task->cmdline = strdup(cmdline);
     current_task->load_start = load_start;
     current_task->load_end = load_end;
-
-    // current_task->brk_end = current_task->brk_start;
 
     spin_unlock(&execve_lock);
 
@@ -1307,18 +1308,9 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     memcpy(&child->term, &current_task->term, sizeof(termios));
 
     child->saved_signal = 0;
-    if (flags & CLONE_SIGHAND)
-    {
-        memcpy(child->actions, current_task->actions, sizeof(child->actions));
-        child->signal = current_task->signal;
-        child->blocked = current_task->blocked;
-    }
-    else
-    {
-        memset(child->actions, 0, sizeof(child->actions));
-        child->signal = 0;
-        child->blocked = 0;
-    }
+    memcpy(child->actions, current_task->actions, sizeof(child->actions));
+    child->signal = 0;
+    child->blocked = current_task->blocked;
 
     if (flags & CLONE_SETTLS)
     {
@@ -1462,7 +1454,9 @@ void sched_update_itimer()
 
     if (rtAt && rtAt <= now)
     {
+        spin_lock(&current_task->signal_lock);
         current_task->signal |= SIGMASK(SIGALRM);
+        spin_unlock(&current_task->signal_lock);
 
         if (rtReset)
         {
@@ -1481,7 +1475,9 @@ void sched_update_itimer()
         kernel_timer_t *kt = current_task->timers[j];
         if (kt->expires && now >= kt->expires)
         {
+            spin_lock(&current_task->signal_lock);
             current_task->signal |= SIGMASK(kt->sigev_signo);
+            spin_unlock(&current_task->signal_lock);
 
             if (kt->interval)
                 kt->expires += kt->interval;
