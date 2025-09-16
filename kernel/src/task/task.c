@@ -928,7 +928,7 @@ int task_block(task_t *task, task_state_t state, int timeout_ms)
     else
         task->force_wakeup_ns = UINT64_MAX;
 
-    if (current_task == task)
+    if (current_task == task && state == TASK_BLOCKING)
     {
         arch_yield();
     }
