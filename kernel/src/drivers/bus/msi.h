@@ -73,7 +73,7 @@ struct pci_msix_cap_t
 struct msi_desc_t
 {
     uint16_t irq_num;          // 中断向量号
-    uint16_t processor;        // 定向投递的处理器
+    uint32_t processor;        // 定向投递的处理器
     uint16_t edge_trigger;     // 是否边缘触发
     uint16_t assert;           // 是否高电平触发
     pci_device_t *pci_dev;     // 对应的pci设备的结构体

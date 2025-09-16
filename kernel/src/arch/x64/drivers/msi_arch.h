@@ -4,7 +4,7 @@
  * @brief 生成架构相关的msi的message address
  *
  */
-#define ia64_pci_get_arch_msi_message_address(processor) (0xfee00000UL | (processor << 12))
+#define ia64_pci_get_arch_msi_message_address(processor) (0xfee00000UL | ((uint8_t)processor << 12))
 
 /**
  * @brief 生成架构相关的message data
