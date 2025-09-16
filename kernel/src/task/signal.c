@@ -140,12 +140,8 @@ int sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction)
     return 0;
 }
 
-spinlock_t sigreturn_lock = {0};
-
 void sys_sigreturn(struct pt_regs *regs)
 {
-    spin_lock(&sigreturn_lock);
-
 #if defined(__x86_64__)
     arch_disable_interrupt();
 
@@ -157,7 +153,7 @@ void sys_sigreturn(struct pt_regs *regs)
 
     current_task->call_in_signal = 0;
 
-    spin_unlock(&sigreturn_lock);
+    task_unblock(current_task, EOK);
 
     asm volatile(
         "movq %0, %%rsp\n\t"
@@ -355,6 +351,8 @@ void task_signal()
         spin_unlock(&signal_lock);
         return;
     }
+
+    task_block(current_task, TASK_HANDLING_SIGNAL, -1);
 
 #if defined(__x86_64__)
     struct pt_regs *f = (struct pt_regs *)current_task->syscall_stack - 1;

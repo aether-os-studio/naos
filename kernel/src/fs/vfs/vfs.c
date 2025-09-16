@@ -51,6 +51,7 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name)
     node->refcount = 0;
     node->mode = 0777;
     node->rw_hint = 0;
+    node->deleted = false;
     if (parent)
         list_prepend(parent->child, node);
     return node;
@@ -718,6 +719,22 @@ int vfs_close(vfs_node_t node)
         if (real_close)
         {
             node->handle = NULL;
+            if (node->deleted)
+            {
+                int res = callbackof(node, delete)(node->parent->handle, node);
+                if (res < 0)
+                {
+                    spin_unlock(&node->spin);
+                    return -1;
+                }
+                list_delete(node->parent->child, node);
+                node->handle = NULL;
+                spin_unlock(&node->spin);
+                free(node->name);
+                free(node);
+
+                return 0;
+            }
         }
     }
     spin_unlock(&node->spin);
@@ -992,12 +1009,9 @@ int vfs_delete(vfs_node_t node)
 {
     if (node == rootdir)
         return -1;
-    int res = callbackof(node, delete)(node->parent->handle, node);
-    if (res < 0)
-        return -1;
-    list_delete(node->parent->child, node);
-    node->handle = NULL;
-    vfs_free(node);
+    spin_lock(&node->spin);
+    node->deleted = true;
+    spin_unlock(&node->spin);
     return 0;
 }
 

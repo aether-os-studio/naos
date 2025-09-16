@@ -198,6 +198,7 @@ struct vfs_node
     uint32_t refcount;   // 引用计数
     uint16_t mode;       // 模式
     uint32_t rw_hint;    // 读写提示
+    bool deleted;        // 是否已删除
 };
 
 extern vfs_node_t rootdir; // vfs 根目录

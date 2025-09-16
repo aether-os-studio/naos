@@ -480,9 +480,18 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     }
 
     child->saved_signal = 0;
-    memcpy(child->actions, current_task->actions, sizeof(child->actions));
-    child->signal = current_task->signal;
-    child->blocked = current_task->blocked;
+    if (vfork)
+    {
+        memcpy(child->actions, current_task->actions, sizeof(child->actions));
+        child->signal = current_task->signal;
+        child->blocked = current_task->blocked;
+    }
+    else
+    {
+        memset(child->actions, 0, sizeof(child->actions));
+        child->signal = 0;
+        child->blocked = 0;
+    }
 
     memcpy(&child->term, &current_task->term, sizeof(termios));
 
@@ -1307,6 +1316,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     else
     {
         memset(child->actions, 0, sizeof(child->actions));
+        child->signal = 0;
+        child->blocked = 0;
     }
 
     if (flags & CLONE_SETTLS)
