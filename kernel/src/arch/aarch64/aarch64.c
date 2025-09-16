@@ -1,6 +1,5 @@
 #include <arch/arch.h>
 #include <interrupt/irq_manager.h>
-#include <drivers/dtb/dtb.h>
 #include <arch/aarch64/acpi/gic.h>
 
 void arch_early_init()
@@ -8,7 +7,6 @@ void arch_early_init()
     setup_vectors();
     smp_init();
     acpi_init();
-    dtb_init();
     irq_init();
 }
 
