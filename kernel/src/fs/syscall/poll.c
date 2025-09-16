@@ -169,7 +169,7 @@ size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except,
     {
         return (size_t)-EFAULT;
     }
-    size_t complength = sizeof(struct pollfd) * 8;
+    size_t complength = sizeof(struct pollfd) * nfds * 3;
     struct pollfd *comp = (struct pollfd *)malloc(complength);
     size_t compIndex = 0;
     if (read)

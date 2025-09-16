@@ -225,6 +225,7 @@ size_t unix_socket_accept_sendto(uint64_t fd, uint8_t *in, size_t limit,
 
     spin_lock(&pair->lock);
 
+    limit = MIN(limit, pair->clientBuffSize);
     memcpy(&pair->clientBuff[pair->clientBuffPos], in, limit);
     pair->clientBuffPos += limit;
 
@@ -591,6 +592,7 @@ size_t unix_socket_send_to(uint64_t fd, uint8_t *in, size_t limit, int flags,
 
     spin_lock(&pair->lock);
 
+    limit = MIN(limit, pair->serverBuffSize);
     memcpy(&pair->serverBuff[pair->serverBuffPos], in, limit);
     pair->serverBuffPos += limit;
 
@@ -1068,146 +1070,140 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname, const void *o
     }
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
 
-    if (handle->op == &socket_ops)
+    socket_t *sock = handle->sock;
+    unix_socket_pair_t *pair = sock->pair;
+
+    switch (optname)
     {
-        socket_t *sock = handle->sock;
-        unix_socket_pair_t *pair = sock->pair;
-
-        switch (optname)
+    case SO_REUSEADDR:
+        if (optlen < sizeof(int))
         {
-        case SO_REUSEADDR:
-            if (optlen < sizeof(int))
-            {
-                return -EINVAL;
-            }
-            if (pair)
-                pair->reuseaddr = *(int *)optval;
-            else
-                return (size_t)-ENOTCONN;
-            break;
-        case SO_KEEPALIVE:
-            if (optlen < sizeof(int))
-            {
-                return -EINVAL;
-            }
-            if (pair)
-                pair->keepalive = *(int *)optval;
-            else
-                return (size_t)-ENOTCONN;
-            break;
-        case SO_SNDTIMEO_OLD:
-        case SO_SNDTIMEO_NEW:
-            if (optlen < sizeof(struct timeval))
-            {
-                return -EINVAL;
-            }
-            memcpy(&pair->sndtimeo, optval, sizeof(struct timeval));
-            break;
-        case SO_RCVTIMEO_OLD:
-        case SO_RCVTIMEO_NEW:
-            if (optlen < sizeof(struct timeval))
-            {
-                return -EINVAL;
-            }
-            memcpy(&pair->rcvtimeo, optval, sizeof(struct timeval));
-            break;
-        case SO_BINDTODEVICE:
-            if (optlen > IFNAMSIZ)
-            {
-                return -EINVAL;
-            }
-            if (pair)
-            {
-                strncpy(pair->bind_to_dev, optval, optlen);
-                pair->bind_to_dev[IFNAMSIZ - 1] = '\0';
-            }
-            else
-                return (size_t)-ENOTCONN;
-            break;
-        case SO_LINGER:
-            if (optlen < sizeof(struct linger))
-            {
-                return -EINVAL;
-            }
-            memcpy(&pair->linger_opt, optval, sizeof(struct linger));
-            break;
-        case SO_SNDBUF:
-            if (optlen < sizeof(int))
-            {
-                return -EINVAL;
-            }
-            if (pair)
-            {
-                pair->serverBuffSize = *(int *)optval;
-                if (pair->serverBuffSize < BUFFER_SIZE)
-                {
-                    pair->serverBuffSize = BUFFER_SIZE;
-                }
-            }
-            else
-                return (size_t)-ENOTCONN;
-            break;
-        case SO_RCVBUF:
-            if (optlen < sizeof(int))
-            {
-                return -EINVAL;
-            }
-            if (pair)
-            {
-                sock->pair->clientBuffSize = *(int *)optval;
-                if (sock->pair->clientBuffSize < BUFFER_SIZE)
-                {
-                    sock->pair->clientBuffSize = BUFFER_SIZE;
-                }
-            }
-            else
-                return (size_t)-ENOTCONN;
-            break;
-        case SO_PASSCRED:
-            if (optlen < sizeof(int))
-            {
-                return -EINVAL;
-            }
-            if (pair)
-                pair->passcred = *(int *)optval;
-            else
-                sock->passcred = *(int *)optval;
-            break;
-        case SO_ATTACH_FILTER:
+            return -EINVAL;
+        }
+        if (pair)
+            pair->reuseaddr = *(int *)optval;
+        else
+            return (size_t)-ENOTCONN;
+        break;
+    case SO_KEEPALIVE:
+        if (optlen < sizeof(int))
         {
-            struct sock_fprog fprog;
-            if (optlen < sizeof(fprog))
+            return -EINVAL;
+        }
+        if (pair)
+            pair->keepalive = *(int *)optval;
+        else
+            return (size_t)-ENOTCONN;
+        break;
+    case SO_SNDTIMEO_OLD:
+    case SO_SNDTIMEO_NEW:
+        if (optlen < sizeof(struct timeval))
+        {
+            return -EINVAL;
+        }
+        memcpy(&pair->sndtimeo, optval, sizeof(struct timeval));
+        break;
+    case SO_RCVTIMEO_OLD:
+    case SO_RCVTIMEO_NEW:
+        if (optlen < sizeof(struct timeval))
+        {
+            return -EINVAL;
+        }
+        memcpy(&pair->rcvtimeo, optval, sizeof(struct timeval));
+        break;
+    case SO_BINDTODEVICE:
+        if (optlen > IFNAMSIZ)
+        {
+            return -EINVAL;
+        }
+        if (pair)
+        {
+            strncpy(pair->bind_to_dev, optval, optlen);
+            pair->bind_to_dev[IFNAMSIZ - 1] = '\0';
+        }
+        else
+            return (size_t)-ENOTCONN;
+        break;
+    case SO_LINGER:
+        if (optlen < sizeof(struct linger))
+        {
+            return -EINVAL;
+        }
+        memcpy(&pair->linger_opt, optval, sizeof(struct linger));
+        break;
+    case SO_SNDBUF:
+        if (optlen < sizeof(int))
+        {
+            return -EINVAL;
+        }
+        if (pair)
+        {
+            int new_size = *(int *)optval;
+            if (new_size < BUFFER_SIZE)
             {
-                return -EINVAL;
+                new_size = BUFFER_SIZE;
             }
-            memcpy(&fprog, optval, sizeof(fprog));
-            if (fprog.len > 64 || fprog.len == 0)
+            void *newBuff = alloc_frames_bytes(new_size);
+            memcpy(newBuff, pair->serverBuff, MIN(new_size, pair->serverBuffSize));
+            free_frames_bytes(pair->serverBuff, pair->serverBuffSize);
+            pair->serverBuff = newBuff;
+            pair->serverBuffSize = new_size;
+        }
+        else
+            return (size_t)-ENOTCONN;
+        break;
+    case SO_RCVBUF:
+        if (optlen < sizeof(int))
+        {
+            return -EINVAL;
+        }
+        if (pair)
+        {
+            int new_size = *(int *)optval;
+            if (new_size < BUFFER_SIZE)
             {
-                return -EINVAL;
+                new_size = BUFFER_SIZE;
             }
+            void *newBuff = alloc_frames_bytes(new_size);
+            memcpy(newBuff, pair->clientBuff, MIN(new_size, pair->clientBuffSize));
+            free_frames_bytes(pair->clientBuff, pair->clientBuffSize);
+            pair->clientBuff = newBuff;
+            pair->clientBuffSize = new_size;
+        }
+        else
+            return (size_t)-ENOTCONN;
+        break;
+    case SO_PASSCRED:
+        if (optlen < sizeof(int))
+        {
+            return -EINVAL;
+        }
+        if (pair)
+            pair->passcred = *(int *)optval;
+        else
+            sock->passcred = *(int *)optval;
+        break;
+    case SO_ATTACH_FILTER:
+    {
+        struct sock_fprog fprog;
+        if (optlen < sizeof(fprog))
+        {
+            return -EINVAL;
+        }
+        memcpy(&fprog, optval, sizeof(fprog));
+        if (fprog.len > 64 || fprog.len == 0)
+        {
+            return -EINVAL;
+        }
 
-            // 分配内存保存过滤器
-            pair->filter = malloc(sizeof(struct sock_filter) * fprog.len);
-            memcpy(pair->filter, fprog.filter, sizeof(struct sock_filter) * fprog.len);
-            pair->filter_len = fprog.len;
-            break;
-        }
-        default:
-            return -ENOPROTOOPT;
-        }
+        // 分配内存保存过滤器
+        pair->filter = malloc(sizeof(struct sock_filter) * fprog.len);
+        memcpy(pair->filter, fprog.filter, sizeof(struct sock_filter) * fprog.len);
+        pair->filter_len = fprog.len;
+        break;
     }
-    else
-    {
-        unix_socket_pair_t *pair = handle->sock;
-
-        switch (optname)
-        {
-        case SO_PEERCRED:
-            memcpy(&pair->peercred, optval, optlen);
-            break;
-        default:
-            return -ENOPROTOOPT;
-        }
+    default:
+        return -ENOPROTOOPT;
     }
 
     return 0;
@@ -1221,168 +1217,425 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, const void *o
     }
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
 
-    if (handle->op == &socket_ops)
+    socket_t *sock = handle->sock;
+
+    unix_socket_pair_t *pair = sock->pair;
+
+    // 获取选项值
+    switch (optname)
     {
-        socket_t *sock = handle->sock;
-
-        unix_socket_pair_t *pair = sock->pair;
-
-        // 获取选项值
-        switch (optname)
+    case SO_REUSEADDR:
+        if (*optlen < sizeof(int))
         {
-        case SO_REUSEADDR:
-            if (*optlen < sizeof(int))
-            {
-                return -EINVAL;
-            }
-            if (pair)
-                *(int *)optval = pair->reuseaddr;
-            else
-                return (size_t)-ENOTCONN;
-            *optlen = sizeof(int);
-            break;
-        case SO_KEEPALIVE:
-            if (*optlen < sizeof(int))
-            {
-                return -EINVAL;
-            }
-            if (pair)
-                *(int *)optval = pair->keepalive;
-            else
-                return (size_t)-ENOTCONN;
-            *optlen = sizeof(int);
-            break;
-        case SO_SNDTIMEO_OLD:
-        case SO_SNDTIMEO_NEW:
-            if (*optlen < sizeof(struct timeval))
-            {
-                return -EINVAL;
-            }
-            memcpy(optval, &pair->sndtimeo, sizeof(struct timeval));
-            *optlen = sizeof(struct timeval);
-            break;
-        case SO_RCVTIMEO_OLD:
-        case SO_RCVTIMEO_NEW:
-            if (*optlen < sizeof(struct timeval))
-            {
-                return -EINVAL;
-            }
-            memcpy(optval, &pair->rcvtimeo, sizeof(struct timeval));
-            *optlen = sizeof(struct timeval);
-            break;
-        case SO_BINDTODEVICE:
-            if (*optlen < IFNAMSIZ)
-            {
-                return -EINVAL;
-            }
-            if (pair)
-            {
-                strncpy(optval, pair->bind_to_dev, IFNAMSIZ);
-                *optlen = strlen(pair->bind_to_dev);
-            }
-            else
-                return (size_t)-ENOTCONN;
-            break;
-        case SO_PROTOCOL:
-            if (*optlen < sizeof(int))
-            {
-                return -EINVAL;
-            }
-            *(int *)optval = sock->protocol;
-            *optlen = sizeof(int);
-            break;
-        case SO_LINGER:
-            if (*optlen < sizeof(struct linger))
-            {
-                return -EINVAL;
-            }
-            memcpy(optval, &pair->linger_opt, sizeof(struct linger));
-            *optlen = sizeof(struct linger);
-            break;
-        case SO_SNDBUF:
-            if (*optlen < sizeof(int))
-            {
-                return -EINVAL;
-            }
-            if (pair)
-                *(int *)optval = pair->serverBuffSize;
-            else
-                return (size_t)-ENOTCONN;
-            *optlen = sizeof(int);
-            break;
-        case SO_RCVBUF:
-            if (*optlen < sizeof(int))
-            {
-                return -EINVAL;
-            }
-            if (pair)
-                *(int *)optval = sock->pair->clientBuffSize;
-            else
-                return (size_t)-ENOTCONN;
-            *optlen = sizeof(int);
-            break;
-        case SO_PASSCRED:
-            if (*optlen < sizeof(int))
-            {
-                return -EINVAL;
-            }
-            if (pair)
-                *(int *)optval = pair->passcred;
-            else
-                return (size_t)-ENOTCONN;
-            *optlen = sizeof(int);
-            break;
-        case SO_PEERCRED:
-            if (!pair->has_peercred)
-            {
-                return -ENODATA;
-            }
-            if (*optlen < sizeof(struct ucred))
-            {
-                return -EINVAL;
-            }
-            if (pair)
-                memcpy(optval, &pair->peercred, sizeof(struct ucred));
-            else
-                return (size_t)-ENOTCONN;
-            *optlen = sizeof(struct ucred);
-            break;
-        case SO_ATTACH_FILTER:
-            if (*optlen < sizeof(struct sock_fprog))
-            {
-                return -EINVAL;
-            }
-            struct sock_fprog fprog = {
-                .len = pair->filter_len,
-                .filter = pair->filter};
-            memcpy(optval, &fprog, sizeof(fprog));
-            *optlen = sizeof(fprog);
-            break;
-        default:
-            return -ENOPROTOOPT;
+            return -EINVAL;
         }
-    }
-    else
-    {
-        unix_socket_pair_t *pair = handle->sock;
-
-        switch (optname)
+        if (pair)
+            *(int *)optval = pair->reuseaddr;
+        else
+            return (size_t)-ENOTCONN;
+        *optlen = sizeof(int);
+        break;
+    case SO_KEEPALIVE:
+        if (*optlen < sizeof(int))
         {
-        case SO_PEERCRED:
-            if (!pair->has_peercred)
-            {
-                return -ENODATA;
-            }
-            if (*optlen < sizeof(struct ucred))
-            {
-                return -EINVAL;
-            }
+            return -EINVAL;
+        }
+        if (pair)
+            *(int *)optval = pair->keepalive;
+        else
+            return (size_t)-ENOTCONN;
+        *optlen = sizeof(int);
+        break;
+    case SO_SNDTIMEO_OLD:
+    case SO_SNDTIMEO_NEW:
+        if (*optlen < sizeof(struct timeval))
+        {
+            return -EINVAL;
+        }
+        memcpy(optval, &pair->sndtimeo, sizeof(struct timeval));
+        *optlen = sizeof(struct timeval);
+        break;
+    case SO_RCVTIMEO_OLD:
+    case SO_RCVTIMEO_NEW:
+        if (*optlen < sizeof(struct timeval))
+        {
+            return -EINVAL;
+        }
+        memcpy(optval, &pair->rcvtimeo, sizeof(struct timeval));
+        *optlen = sizeof(struct timeval);
+        break;
+    case SO_BINDTODEVICE:
+        if (*optlen < IFNAMSIZ)
+        {
+            return -EINVAL;
+        }
+        if (pair)
+        {
+            strncpy(optval, pair->bind_to_dev, IFNAMSIZ);
+            *optlen = strlen(pair->bind_to_dev);
+        }
+        else
+            return (size_t)-ENOTCONN;
+        break;
+    case SO_PROTOCOL:
+        if (*optlen < sizeof(int))
+        {
+            return -EINVAL;
+        }
+        *(int *)optval = sock->protocol;
+        *optlen = sizeof(int);
+        break;
+    case SO_LINGER:
+        if (*optlen < sizeof(struct linger))
+        {
+            return -EINVAL;
+        }
+        memcpy(optval, &pair->linger_opt, sizeof(struct linger));
+        *optlen = sizeof(struct linger);
+        break;
+    case SO_SNDBUF:
+        if (*optlen < sizeof(int))
+        {
+            return -EINVAL;
+        }
+        if (pair)
+            *(int *)optval = pair->serverBuffSize;
+        else
+            return (size_t)-ENOTCONN;
+        *optlen = sizeof(int);
+        break;
+    case SO_RCVBUF:
+        if (*optlen < sizeof(int))
+        {
+            return -EINVAL;
+        }
+        if (pair)
+            *(int *)optval = sock->pair->clientBuffSize;
+        else
+            return (size_t)-ENOTCONN;
+        *optlen = sizeof(int);
+        break;
+    case SO_PASSCRED:
+        if (*optlen < sizeof(int))
+        {
+            return -EINVAL;
+        }
+        if (pair)
+            *(int *)optval = pair->passcred;
+        else
+            return (size_t)-ENOTCONN;
+        *optlen = sizeof(int);
+        break;
+    case SO_PEERCRED:
+        if (!pair->has_peercred)
+        {
+            return -ENODATA;
+        }
+        if (*optlen < sizeof(struct ucred))
+        {
+            return -EINVAL;
+        }
+        if (pair)
             memcpy(optval, &pair->peercred, sizeof(struct ucred));
-            *optlen = sizeof(struct ucred);
-            break;
-        default:
-            return -ENOPROTOOPT;
+        else
+            return (size_t)-ENOTCONN;
+        *optlen = sizeof(struct ucred);
+        break;
+    case SO_ATTACH_FILTER:
+        if (*optlen < sizeof(struct sock_fprog))
+        {
+            return -EINVAL;
         }
+        struct sock_fprog fprog = {
+            .len = pair->filter_len,
+            .filter = pair->filter};
+        memcpy(optval, &fprog, sizeof(fprog));
+        *optlen = sizeof(fprog);
+        break;
+    default:
+        return -ENOPROTOOPT;
+    }
+
+    return 0;
+}
+
+size_t unix_socket_accept_setsockopt(uint64_t fd, int level, int optname, const void *optval, socklen_t optlen)
+{
+    if (level != SOL_SOCKET)
+    {
+        return -ENOPROTOOPT;
+    }
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    unix_socket_pair_t *pair = handle->sock;
+
+    switch (optname)
+    {
+    case SO_REUSEADDR:
+        if (optlen < sizeof(int))
+        {
+            return -EINVAL;
+        }
+        if (pair)
+            pair->reuseaddr = *(int *)optval;
+        else
+            return (size_t)-ENOTCONN;
+        break;
+    case SO_KEEPALIVE:
+        if (optlen < sizeof(int))
+        {
+            return -EINVAL;
+        }
+        if (pair)
+            pair->keepalive = *(int *)optval;
+        else
+            return (size_t)-ENOTCONN;
+        break;
+    case SO_SNDTIMEO_OLD:
+    case SO_SNDTIMEO_NEW:
+        if (optlen < sizeof(struct timeval))
+        {
+            return -EINVAL;
+        }
+        memcpy(&pair->sndtimeo, optval, sizeof(struct timeval));
+        break;
+    case SO_RCVTIMEO_OLD:
+    case SO_RCVTIMEO_NEW:
+        if (optlen < sizeof(struct timeval))
+        {
+            return -EINVAL;
+        }
+        memcpy(&pair->rcvtimeo, optval, sizeof(struct timeval));
+        break;
+    case SO_BINDTODEVICE:
+        if (optlen > IFNAMSIZ)
+        {
+            return -EINVAL;
+        }
+        if (pair)
+        {
+            strncpy(pair->bind_to_dev, optval, optlen);
+            pair->bind_to_dev[IFNAMSIZ - 1] = '\0';
+        }
+        else
+            return (size_t)-ENOTCONN;
+        break;
+    case SO_LINGER:
+        if (optlen < sizeof(struct linger))
+        {
+            return -EINVAL;
+        }
+        memcpy(&pair->linger_opt, optval, sizeof(struct linger));
+        break;
+    case SO_SNDBUF:
+        if (optlen < sizeof(int))
+        {
+            return -EINVAL;
+        }
+        if (pair)
+        {
+            int new_size = *(int *)optval;
+            if (new_size < BUFFER_SIZE)
+            {
+                new_size = BUFFER_SIZE;
+            }
+            void *newBuff = alloc_frames_bytes(new_size);
+            memcpy(newBuff, pair->clientBuff, MIN(new_size, pair->clientBuffSize));
+            free_frames_bytes(pair->clientBuff, pair->clientBuffSize);
+            pair->clientBuff = newBuff;
+            pair->clientBuffSize = new_size;
+        }
+        else
+            return (size_t)-ENOTCONN;
+        break;
+    case SO_RCVBUF:
+        if (optlen < sizeof(int))
+        {
+            return -EINVAL;
+        }
+        if (pair)
+        {
+            int new_size = *(int *)optval;
+            if (new_size < BUFFER_SIZE)
+            {
+                new_size = BUFFER_SIZE;
+            }
+            void *newBuff = alloc_frames_bytes(new_size);
+            memcpy(newBuff, pair->serverBuff, MIN(new_size, pair->serverBuffSize));
+            free_frames_bytes(pair->serverBuff, pair->serverBuffSize);
+            pair->serverBuff = newBuff;
+            pair->serverBuffSize = new_size;
+        }
+        else
+            return (size_t)-ENOTCONN;
+        break;
+    case SO_PASSCRED:
+        if (optlen < sizeof(int))
+        {
+            return -EINVAL;
+        }
+        if (pair)
+            pair->passcred = *(int *)optval;
+        break;
+    case SO_ATTACH_FILTER:
+    {
+        struct sock_fprog fprog;
+        if (optlen < sizeof(fprog))
+        {
+            return -EINVAL;
+        }
+        memcpy(&fprog, optval, sizeof(fprog));
+        if (fprog.len > 64 || fprog.len == 0)
+        {
+            return -EINVAL;
+        }
+
+        // 分配内存保存过滤器
+        pair->filter = malloc(sizeof(struct sock_filter) * fprog.len);
+        memcpy(pair->filter, fprog.filter, sizeof(struct sock_filter) * fprog.len);
+        pair->filter_len = fprog.len;
+        break;
+    }
+    default:
+        return -ENOPROTOOPT;
+    }
+
+    return 0;
+}
+
+size_t unix_socket_accept_getsockopt(uint64_t fd, int level, int optname, const void *optval, socklen_t *optlen)
+{
+    if (level != SOL_SOCKET)
+    {
+        return -ENOPROTOOPT;
+    }
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    unix_socket_pair_t *pair = handle->sock;
+
+    // 获取选项值
+    switch (optname)
+    {
+    case SO_REUSEADDR:
+        if (*optlen < sizeof(int))
+        {
+            return -EINVAL;
+        }
+        if (pair)
+            *(int *)optval = pair->reuseaddr;
+        else
+            return (size_t)-ENOTCONN;
+        *optlen = sizeof(int);
+        break;
+    case SO_KEEPALIVE:
+        if (*optlen < sizeof(int))
+        {
+            return -EINVAL;
+        }
+        if (pair)
+            *(int *)optval = pair->keepalive;
+        else
+            return (size_t)-ENOTCONN;
+        *optlen = sizeof(int);
+        break;
+    case SO_SNDTIMEO_OLD:
+    case SO_SNDTIMEO_NEW:
+        if (*optlen < sizeof(struct timeval))
+        {
+            return -EINVAL;
+        }
+        memcpy(optval, &pair->sndtimeo, sizeof(struct timeval));
+        *optlen = sizeof(struct timeval);
+        break;
+    case SO_RCVTIMEO_OLD:
+    case SO_RCVTIMEO_NEW:
+        if (*optlen < sizeof(struct timeval))
+        {
+            return -EINVAL;
+        }
+        memcpy(optval, &pair->rcvtimeo, sizeof(struct timeval));
+        *optlen = sizeof(struct timeval);
+        break;
+    case SO_BINDTODEVICE:
+        if (*optlen < IFNAMSIZ)
+        {
+            return -EINVAL;
+        }
+        if (pair)
+        {
+            strncpy(optval, pair->bind_to_dev, IFNAMSIZ);
+            *optlen = strlen(pair->bind_to_dev);
+        }
+        else
+            return (size_t)-ENOTCONN;
+        break;
+    case SO_LINGER:
+        if (*optlen < sizeof(struct linger))
+        {
+            return -EINVAL;
+        }
+        memcpy(optval, &pair->linger_opt, sizeof(struct linger));
+        *optlen = sizeof(struct linger);
+        break;
+    case SO_SNDBUF:
+        if (*optlen < sizeof(int))
+        {
+            return -EINVAL;
+        }
+        if (pair)
+            *(int *)optval = pair->clientBuffSize;
+        else
+            return (size_t)-ENOTCONN;
+        *optlen = sizeof(int);
+        break;
+    case SO_RCVBUF:
+        if (*optlen < sizeof(int))
+        {
+            return -EINVAL;
+        }
+        if (pair)
+            *(int *)optval = pair->serverBuffSize;
+        else
+            return (size_t)-ENOTCONN;
+        *optlen = sizeof(int);
+        break;
+    case SO_PASSCRED:
+        if (*optlen < sizeof(int))
+        {
+            return -EINVAL;
+        }
+        if (pair)
+            *(int *)optval = pair->passcred;
+        else
+            return (size_t)-ENOTCONN;
+        *optlen = sizeof(int);
+        break;
+    case SO_PEERCRED:
+        if (!pair->has_peercred)
+        {
+            return -ENODATA;
+        }
+        if (*optlen < sizeof(struct ucred))
+        {
+            return -EINVAL;
+        }
+        if (pair)
+            memcpy(optval, &pair->peercred, sizeof(struct ucred));
+        else
+            return (size_t)-ENOTCONN;
+        *optlen = sizeof(struct ucred);
+        break;
+    case SO_ATTACH_FILTER:
+        if (*optlen < sizeof(struct sock_fprog))
+        {
+            return -EINVAL;
+        }
+        struct sock_fprog fprog = {
+            .len = pair->filter_len,
+            .filter = pair->filter};
+        memcpy(optval, &fprog, sizeof(fprog));
+        *optlen = sizeof(fprog);
+        break;
+    default:
+        return -ENOPROTOOPT;
     }
 
     return 0;
@@ -1514,8 +1767,8 @@ socket_op_t accept_ops = {
     .sendmsg = unix_socket_accept_send_msg,
     .recvmsg = unix_socket_accept_recv_msg,
     .getpeername = unix_socket_accept_getpeername,
-    .getsockopt = unix_socket_getsockopt,
-    .setsockopt = unix_socket_setsockopt,
+    .getsockopt = unix_socket_accept_getsockopt,
+    .setsockopt = unix_socket_accept_setsockopt,
 };
 
 vfs_node_t socket_dup(vfs_node_t node)
@@ -1613,6 +1866,7 @@ ssize_t socket_write(fd_t *fd, const void *buf, size_t offset, size_t limit)
 
     spin_lock(&pair->lock);
 
+    limit = MIN(limit, pair->serverBuffSize);
     memcpy(&pair->serverBuff[pair->serverBuffPos], buf, limit);
     pair->serverBuffPos += limit;
 
@@ -1695,6 +1949,7 @@ ssize_t socket_accept_write(fd_t *fd, const void *buf, size_t offset, size_t lim
 
     spin_lock(&pair->lock);
 
+    limit = MIN(limit, pair->clientBuffSize);
     memcpy(&pair->clientBuff[pair->clientBuffPos], buf, limit);
     pair->clientBuffPos += limit;
 
@@ -1771,7 +2026,7 @@ void socketfs_init()
     sockfs_root = vfs_node_alloc(NULL, "sock");
     sockfs_root->type = file_dir;
     sockfs_root->mode = 0644;
-    memset(&first_unix_socket, 0, sizeof(socket_handle_t));
+    memset(&first_unix_socket, 0, sizeof(socket_t));
 
     netlink_init();
 }

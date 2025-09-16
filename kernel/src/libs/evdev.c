@@ -483,6 +483,10 @@ void kb_evdev_generate(uint8_t raw, uint8_t raw1, uint8_t raw2)
     {
         input_generate_event(kb_event, EV_KEY, evdevCode, 1, now.tv_sec, now.tv_nsec / 1000);
     }
+    else if (oldstate && clicked)
+    {
+        input_generate_event(kb_event, EV_KEY, evdevCode, 2, now.tv_sec, now.tv_nsec / 1000);
+    }
     else if (oldstate && !clicked)
     {
         input_generate_event(kb_event, EV_KEY, evdevCode, 0, now.tv_sec, now.tv_nsec / 1000);
