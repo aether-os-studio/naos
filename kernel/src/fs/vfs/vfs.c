@@ -194,6 +194,7 @@ err:
 int vfs_mkfile(const char *name)
 {
     spin_lock(&global_rw_lock);
+
     vfs_node_t current = rootdir;
     char *path;
     if (name[0] != '/')
@@ -708,6 +709,7 @@ int vfs_close(vfs_node_t node)
     }
     if (node->type & file_dir)
         return 0;
+    spin_lock(&node->spin);
     if (node->refcount > 0)
         node->refcount--;
     if (node->refcount == 0)
@@ -718,6 +720,7 @@ int vfs_close(vfs_node_t node)
             node->handle = NULL;
         }
     }
+    spin_unlock(&node->spin);
 
     return 0;
 }

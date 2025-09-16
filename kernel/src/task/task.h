@@ -41,13 +41,10 @@
 #define AT_SYSINFO 32
 #define AT_SYSINFO_EHDR 33
 
-#define INTERPRETER_BASE_ADDR 0x0000200000000000
+#define INTERPRETER_BASE_ADDR 0x0000400000000000
 
-#define USER_MMAP_START 0x0000000400000000
-#define USER_MMAP_END 0x000000800000000
-
-#define USER_BRK_START 0x0000700000000000
-#define USER_BRK_END 0x0000800000000000
+#define USER_MMAP_START 0x0000000040000000
+#define USER_MMAP_END 0x0000000080000000
 
 #define TASK_NAME_MAX 128
 
@@ -174,8 +171,6 @@ typedef struct task
     task_state_t state;
     task_state_t current_state;
     uint64_t force_wakeup_ns;
-    uint64_t brk_start;
-    uint64_t brk_end;
     uint64_t load_start;
     uint64_t load_end;
     Bitmap *mmap_regions;
