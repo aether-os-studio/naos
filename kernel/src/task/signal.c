@@ -268,8 +268,6 @@ int sys_kill(int pid, int sig)
 
     task->signal |= SIGMASK(sig);
 
-    task_unblock(task, -sig);
-
     return 0;
 }
 

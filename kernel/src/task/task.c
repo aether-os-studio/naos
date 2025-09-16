@@ -995,7 +995,6 @@ void task_exit_inner(task_t *task, int64_t code)
         // {
         //     tasks[task->ppid]->signal |= SIGMASK(SIGCHLD);
         // }
-        task_unblock(tasks[task->ppid], SIGCHLD);
     }
 
     if (task->waitpid != 0 && task->waitpid < MAX_TASK_NUM && tasks[task->waitpid] && tasks[task->waitpid]->state == TASK_BLOCKING)
@@ -1094,7 +1093,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
 
     while (1)
     {
-        bool found_alive = false;
+        task_t *found_alive = NULL;
         task_t *found_dead = NULL;
 
         uint64_t continue_ptr_count = 0;
@@ -1138,7 +1137,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
             }
             else
             {
-                found_alive = true;
+                found_alive = ptr;
             }
         }
 
@@ -1155,6 +1154,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
 
         if (found_alive)
         {
+            found_alive->waitpid = current_task->pid;
             task_block(current_task, TASK_BLOCKING, -1);
             continue;
         }
@@ -1463,8 +1463,6 @@ void sched_update_itimer()
     if (rtAt && rtAt <= now)
     {
         current_task->signal |= SIGMASK(SIGALRM);
-        if (current_task->state == TASK_BLOCKING)
-            task_unblock(current_task, EOK);
 
         if (rtReset)
         {
