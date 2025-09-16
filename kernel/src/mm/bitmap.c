@@ -42,7 +42,7 @@ void bitmap_set_range(Bitmap *bitmap, size_t start, size_t end, bool value)
     size_t start_word = (start + 7) / 8;
     size_t end_word = end / 8;
 
-    for (size_t i = start; i < start_word * 8 && i < end; i++)
+    for (size_t i = start; i < MIN(start_word * 8, end); i++)
     {
         bitmap_set(bitmap, i, value);
     }
@@ -62,7 +62,7 @@ void bitmap_set_range(Bitmap *bitmap, size_t start, size_t end, bool value)
         }
     }
 
-    for (size_t i = end_word * 8; i < end; i++)
+    for (size_t i = MAX(end_word * 8, start); i < end; i++)
     {
         bitmap_set(bitmap, i, value);
     }
