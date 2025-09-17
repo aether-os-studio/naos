@@ -50,6 +50,8 @@ int sys_shmget(int key, int size, int shmflg)
     }
 }
 
+extern spinlock_t mm_op_lock;
+
 void *sys_shmat(int shmid, void *shmaddr, int shmflg)
 {
     shm_t *shm = &shm_head;
@@ -85,12 +87,16 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg)
         shmaddr = (void *)((idx * DEFAULT_PAGE_SIZE) + USER_MMAP_START);
     }
 
+    spin_lock(&mm_op_lock);
+
     if ((uint64_t)shmaddr >= USER_MMAP_START && (uint64_t)shmaddr + shm->size <= USER_MMAP_END)
     {
         bitmap_set_range(current_task->mmap_regions, ((uint64_t)shmaddr - USER_MMAP_START) / DEFAULT_PAGE_SIZE, ((uint64_t)shmaddr - USER_MMAP_START + shm->size) / DEFAULT_PAGE_SIZE, false);
     }
 
     map_page_range(get_current_page_dir(true), (uint64_t)shmaddr, translate_address(get_current_page_dir(false), (uint64_t)shm->addr), shm->size, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+
+    spin_unlock(&mm_op_lock);
 
     return shmaddr;
 }

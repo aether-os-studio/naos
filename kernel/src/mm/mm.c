@@ -165,7 +165,7 @@ void free_frames(uint64_t addr, uint64_t count)
 
     bool can_free = true;
 
-    for (uint64_t i = 0; i < count; i++)
+    for (uint64_t i = frame_index; i < frame_index + count; i++)
     {
         if (!bitmap_get(&usable_regions, i))
         {
@@ -174,11 +174,11 @@ void free_frames(uint64_t addr, uint64_t count)
         }
     }
 
-    if (can_free)
-    {
-        bitmap_set_range(&frame_allocator.bitmap, frame_index, frame_index + count, true);
-        frame_allocator.usable_frames += count;
-    }
+    // if (can_free)
+    // {
+    //     bitmap_set_range(&frame_allocator.bitmap, frame_index, frame_index + count, true);
+    //     frame_allocator.usable_frames += count;
+    // }
 
     spin_unlock(&frame_op_lock);
 }

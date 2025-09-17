@@ -52,11 +52,13 @@ static ssize_t memfd_write(fd_t *fd, const void *buf, uint64_t offset, uint64_t 
     return len;
 }
 
-void memfd_close(void *current)
+bool memfd_close(void *current)
 {
     struct memfd_ctx *ctx = current;
     free_frames_bytes(ctx->data, ctx->len);
     free(ctx);
+
+    return true;
 }
 
 int memfd_stat(void *file, vfs_node_t node)
