@@ -141,7 +141,7 @@ fn main() {
             std::env::set_var("XDG_RUNTIME_DIR", "/run");
             std::env::set_var("SHELL", "/bin/bash");
             std::env::set_var("MESA_SHADER_CACHE_DISABLE", "1");
-            std::env::set_var("SDL_VIDEODRIVER", "wayland");
+            std::env::set_var("SDL_VIDEODRIVER", "x11");
             std::env::set_var("SDL_AUDIODRIVER", "dummy");
             // std::env::set_var("WESTON_LIBINPUT_LOG_PRIORITY", "debug");
         }
