@@ -32,7 +32,7 @@ size_t epoll_create1(int flags)
     node->type = file_epoll;
     node->refcount++;
     epoll_t *epoll = malloc(sizeof(epoll_t));
-    epoll->lock = false;
+    epoll->lock.lock = 0;
     epoll->firstEpollWatch = NULL;
     epoll->reference_count = 1;
     node->mode = 0700;
@@ -42,7 +42,7 @@ size_t epoll_create1(int flags)
     current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
     current_task->fd_info->fds[i]->node = node;
     current_task->fd_info->fds[i]->offset = 0;
-    current_task->fd_info->fds[i]->flags = 0;
+    current_task->fd_info->fds[i]->flags = flags;
 
     return i;
 }
@@ -64,12 +64,7 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events, int maxevent
     size_t target = nanoTime() + timeout;
     do
     {
-        while (epoll->lock)
-        {
-            arch_pause();
-        }
-
-        epoll->lock = true;
+        spin_lock(&epoll->lock);
         epoll_watch_t *browse = epoll->firstEpollWatch;
 
         arch_disable_interrupt();
@@ -91,7 +86,7 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events, int maxevent
             browse = browse->next;
         }
 
-        epoll->lock = false;
+        spin_unlock(&epoll->lock);
 
         sigexit = signals_pending_quick(current_task);
 
@@ -111,11 +106,6 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd, struct epoll_event *event)
 {
     if (op != EPOLL_CTL_ADD && op != EPOLL_CTL_DEL && op != EPOLL_CTL_MOD)
         return (uint64_t)(-EINVAL);
-    if (op & EPOLLET || op & EPOLLONESHOT || op & EPOLLEXCLUSIVE)
-    {
-        printk("bad opcode!\n"); // could atl do oneshot, but later
-        return (uint64_t)(-ENOSYS);
-    }
 
     epoll_t *epoll = epollFd->handle;
     if (!epoll)
@@ -131,13 +121,15 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd, struct epoll_event *event)
 
     vfs_node_t fdNode = current_task->fd_info->fds[fd]->node;
 
-    switch (op)
+    spin_lock(&epoll->lock);
+
+    switch (op & 3)
     {
     case EPOLL_CTL_ADD:
     {
         epoll_watch_t *epollWatch = malloc(sizeof(epoll_watch_t));
         epollWatch->fd = fdNode;
-        epollWatch->watchEvents = event->events;
+        epollWatch->watchEvents = event->events | (op & EPOLLET);
         epollWatch->userlandData = (uint64_t)event->data.ptr;
         epollWatch->next = NULL;
         epoll_watch_t *current = epoll->firstEpollWatch;
@@ -197,6 +189,7 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd, struct epoll_event *event)
     }
 
 cleanup:
+    spin_unlock(&epoll->lock);
     return ret;
 }
 

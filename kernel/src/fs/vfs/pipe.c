@@ -81,6 +81,7 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size)
 
     // 更新读指针
     pipe->read_ptr = (pipe->read_ptr + to_read) % PIPE_BUFF;
+    pipe->assigned -= to_read;
 
     spin_unlock(&pipe->lock);
 
@@ -123,6 +124,7 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
     }
 
     pipe->write_ptr = (pipe->write_ptr + size) % PIPE_BUFF;
+    pipe->assigned += size;
 
     spin_unlock(&pipe->lock);
 
@@ -210,7 +212,7 @@ int pipefs_poll(void *file, size_t events)
     {
         if (!pipe->write_fds)
             out |= EPOLLHUP;
-        else if (pipe->write_ptr != pipe->read_ptr)
+        if (pipe->assigned > 0)
             out |= EPOLLIN;
     }
 
@@ -218,7 +220,7 @@ int pipefs_poll(void *file, size_t events)
     {
         if (!pipe->read_fds)
             out |= EPOLLHUP;
-        else if (pipe->assigned < PIPE_BUFF)
+        if (pipe->assigned < PIPE_BUFF)
             out |= EPOLLOUT;
     }
     spin_unlock(&pipe->lock);

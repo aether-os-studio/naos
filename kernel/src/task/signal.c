@@ -361,6 +361,7 @@ void task_signal()
     current_task->arch_context->fs = SELECTOR_USER_DS;
     current_task->arch_context->gs = SELECTOR_USER_DS;
 
+    current_task->arch_context->ctx->rflags = 0;
     current_task->arch_context->ctx->rsp = sigrsp;
 #elif defined(__aarch64__)
 #elif defined(__riscv)

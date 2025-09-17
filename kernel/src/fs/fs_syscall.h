@@ -241,7 +241,7 @@ typedef struct epoll_watch
 
 typedef struct epoll
 {
-    bool lock;
+    spinlock_t lock;
 
     struct epoll *next;
 
