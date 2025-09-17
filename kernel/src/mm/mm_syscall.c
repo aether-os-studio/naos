@@ -21,7 +21,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
         return (uint64_t)-EINVAL;
     }
 
-    if (addr == 0)
+    if (!(flags & MAP_FIXED) || addr == 0)
     {
         flags &= (~MAP_FIXED);
     find_free_addr:
@@ -82,7 +82,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
             bitmap_set_range(current_task->mmap_regions, (addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (addr - USER_MMAP_START + aligned_len) / DEFAULT_PAGE_SIZE, false);
         }
 
-        memset((void *)addr, 0, aligned_len);
+        // memset((void *)addr, 0, aligned_len);
 
         spin_unlock(&mm_op_lock);
 
@@ -131,13 +131,14 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uin
 {
     old_addr = old_addr & (~(DEFAULT_PAGE_SIZE - 1));
     new_addr = new_addr & (~(DEFAULT_PAGE_SIZE - 1));
+    old_size = (old_size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
     new_size = (new_size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
 
     uint64_t old_addr_phys = translate_address(get_current_page_dir(true), old_addr);
 
-    if (new_addr == 0)
+    if (!(flags & MREMAP_FIXED) || new_addr == 0)
     {
-        flags &= (~MAP_FIXED);
+        flags &= (~MREMAP_FIXED);
     find_free_addr:
         uint64_t page_count = new_size / DEFAULT_PAGE_SIZE;
         uint64_t idx = bitmap_find_range(current_task->mmap_regions, page_count, true);
@@ -153,7 +154,7 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uin
 
     uint64_t pt_flags = PT_FLAG_R | PT_FLAG_W | PT_FLAG_U;
 
-    if (new_addr >= USER_MMAP_START && new_addr + new_size <= USER_MMAP_END && !(flags & MAP_FIXED))
+    if (new_addr >= USER_MMAP_START && new_addr + new_size <= USER_MMAP_END && !(flags & MREMAP_FIXED))
     {
         for (uint64_t addr = new_addr; addr < new_addr + new_size; addr += DEFAULT_PAGE_SIZE)
         {
@@ -174,7 +175,8 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uin
 
     spin_unlock(&mm_op_lock);
 
-    sys_munmap(old_addr, old_size);
+    if (!(flags & MREMAP_DONTUNMAP))
+        sys_munmap(old_addr, old_size);
 
     return new_addr;
 }
