@@ -210,6 +210,31 @@ void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t siz
     spin_unlock(&mem_map_op_lock);
 }
 
+void map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t size, uint64_t flags)
+{
+    spin_lock(&mem_map_op_lock);
+
+    for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE)
+    {
+        if (paddr == 0)
+        {
+            uint64_t phys = alloc_frames(1);
+            if (phys == (uint64_t)-1)
+            {
+                printk("Cannot allocate frame\n");
+                break;
+            }
+            map_page(pml4, va, phys, get_arch_page_table_flags(flags), false);
+        }
+        else
+        {
+            map_page(pml4, va, paddr + (va - vaddr), get_arch_page_table_flags(flags), false);
+        }
+    }
+
+    spin_unlock(&mem_map_op_lock);
+}
+
 void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size)
 {
     spin_lock(&mem_map_op_lock);

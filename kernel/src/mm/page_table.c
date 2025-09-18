@@ -74,7 +74,7 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr, uint64_t flag
         if (force)
         {
             uint64_t addr = pgdir[index] & ARCH_ADDR_MASK;
-            // free_frames(addr, 1);
+            free_frames(addr, 1);
         }
         else
             return 0;
@@ -90,35 +90,78 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr, uint64_t flag
 uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr)
 {
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
+    uint64_t *table_ptrs[ARCH_MAX_PT_LEVEL];
+    uint64_t table_indices[ARCH_MAX_PT_LEVEL];
+
     for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++)
     {
         indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(vaddr, i + 1);
     }
 
+    // 保存每一级页表的指针和索引
+    table_ptrs[0] = pgdir;
+    table_indices[0] = indexs[0];
+
+    // 遍历页表层级
     for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL - 1; i++)
     {
-        uint64_t index = indexs[i];
-        uint64_t addr = pgdir[index];
+        uint64_t index = table_indices[i];
+        uint64_t addr = table_ptrs[i][index];
         if (ARCH_PT_IS_LARGE(addr))
         {
-            return 0;
+            return 0; // 大页映射，不支持部分释放
         }
         if (!ARCH_PT_IS_TABLE(addr))
         {
-            return 0;
+            return 0; // 页表不存在
         }
-        pgdir = (uint64_t *)phys_to_virt(addr & (~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL)) & ~get_physical_memory_offset());
+        table_ptrs[i + 1] = (uint64_t *)phys_to_virt(addr & (~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL)) & ~get_physical_memory_offset());
+        table_indices[i + 1] = indexs[i + 1];
     }
 
-    uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
-    uint64_t pte = pgdir[index];
+    // 处理最底层页表
+    uint64_t index = table_indices[ARCH_MAX_PT_LEVEL - 1];
+    uint64_t pte = table_ptrs[ARCH_MAX_PT_LEVEL - 1][index];
 
     if ((pte & ARCH_PT_FLAG_VALID) && (pte & ARCH_ADDR_MASK) != 0)
     {
         uint64_t paddr = pte & ARCH_ADDR_MASK;
         free_frames(paddr, 1);
-        pgdir[index] = 0;
+        table_ptrs[ARCH_MAX_PT_LEVEL - 1][index] = 0;
         arch_flush_tlb(vaddr);
+
+        // 从底层向上检查并释放空页表
+        for (int level = ARCH_MAX_PT_LEVEL - 1; level > 0; level--)
+        {
+            uint64_t *current_table = table_ptrs[level];
+            bool table_empty = true;
+
+            for (uint64_t i = 0; i < 512; i++)
+            {
+                if (current_table[i] != 0)
+                {
+                    table_empty = false;
+                    break;
+                }
+            }
+
+            if (table_empty)
+            {
+                // 释放空页表
+                uint64_t table_phys_addr = virt_to_phys((uint64_t)current_table);
+                free_frames(table_phys_addr, 1);
+
+                // 清除上级页表中的对应条目
+                uint64_t *parent_table = table_ptrs[level - 1];
+                uint64_t parent_index = table_indices[level - 1];
+                parent_table[parent_index] = 0;
+            }
+            else
+            {
+                // 页表不为空，停止向上检查
+                break;
+            }
+        }
     }
 
     return 0;
@@ -193,7 +236,7 @@ spinlock_t clone_lock = {0};
 
 task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags)
 {
-    if (old && (clone_flags & CLONE_VM))
+    if ((clone_flags & CLONE_VM) && old)
     {
         old->ref_count++;
         return old;

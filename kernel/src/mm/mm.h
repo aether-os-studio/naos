@@ -34,6 +34,7 @@ void free_frames(uint64_t addr, uint64_t size);
 uint64_t alloc_frames(size_t count);
 
 void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t size, uint64_t flags);
+void map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t size, uint64_t flags);
 void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size);
 uint64_t map_change_attribute(uint64_t *pml4, uint64_t vaddr, uint64_t flags);
 uint64_t map_change_attribute_range(uint64_t *pgdir, uint64_t vaddr, uint64_t len, uint64_t flags);

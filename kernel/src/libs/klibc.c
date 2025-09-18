@@ -61,7 +61,7 @@ void *memset(void *s, int c, size_t n)
 
 void panic(const char *file, int line, const char *func, const char *cond)
 {
-    printk("assert failed! %s", cond);
+    printk("assert failed! %s\n", cond);
     printk("file: %s\nline %d\nfunc: %s\n", file, line, func);
 
     arch_make_trap();
