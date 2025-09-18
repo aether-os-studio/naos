@@ -163,22 +163,27 @@ void free_frames(uint64_t addr, uint64_t count)
 
     size_t frame_index = addr / DEFAULT_PAGE_SIZE;
 
-    bool can_free = true;
-
     for (uint64_t i = frame_index; i < frame_index + count; i++)
     {
         if (!bitmap_get(&usable_regions, i))
         {
-            can_free = false;
-            break;
+            spin_unlock(&frame_op_lock);
+            return;
         }
     }
 
-    if (can_free)
+    for (uint64_t i = frame_index; i < frame_index + count; i++)
     {
-        bitmap_set_range(&frame_allocator.bitmap, frame_index, frame_index + count, true);
-        frame_allocator.usable_frames += count;
+        if (bitmap_get(&frame_allocator.bitmap, i) == true)
+        {
+            serial_fprintk("Frame double free detected!!!\n");
+            spin_unlock(&frame_op_lock);
+            return;
+        }
     }
+
+    bitmap_set_range(&frame_allocator.bitmap, frame_index, frame_index + count, true);
+    frame_allocator.usable_frames += count;
 
     spin_unlock(&frame_op_lock);
 }

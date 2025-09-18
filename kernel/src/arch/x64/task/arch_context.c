@@ -2,6 +2,7 @@
 #include <mm/mm.h>
 #include <arch/arch.h>
 #include <task/task.h>
+#include <task/eevdf.h>
 
 void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64_t entry, uint64_t stack, bool user_mode, uint64_t initial_arg)
 {
@@ -9,8 +10,8 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64
 
     if (!context->fpu_ctx)
     {
-        context->fpu_ctx = alloc_frames_bytes(sizeof(fpu_context_t));
-        memset(context->fpu_ctx, 0, sizeof(fpu_context_t));
+        context->fpu_ctx = alloc_frames_bytes(DEFAULT_PAGE_SIZE);
+        memset(context->fpu_ctx, 0, DEFAULT_PAGE_SIZE);
         context->fpu_ctx->mxscr = 0x1f80;
         context->fpu_ctx->fcw = 0x037f;
     }
@@ -57,16 +58,16 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
     {
         printk("dst->mm == NULL!!! dst = %#018lx", dst);
     }
-    dst->ctx = (struct pt_regs *)stack - 1;
+    dst->ctx = (struct pt_regs *)(stack - 8) - 1;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
     dst->ctx->ds = SELECTOR_USER_DS;
     dst->ctx->es = SELECTOR_USER_DS;
     dst->ctx->rax = 0;
-    dst->fpu_ctx = alloc_frames_bytes(sizeof(fpu_context_t));
-    memset(dst->fpu_ctx, 0, sizeof(fpu_context_t));
+    dst->fpu_ctx = alloc_frames_bytes(DEFAULT_PAGE_SIZE);
+    memset(dst->fpu_ctx, 0, DEFAULT_PAGE_SIZE);
     if (src->fpu_ctx)
     {
-        memcpy(dst->fpu_ctx, src->fpu_ctx, sizeof(fpu_context_t));
+        memcpy(dst->fpu_ctx, src->fpu_ctx, DEFAULT_PAGE_SIZE);
         dst->fpu_ctx->mxscr = 0x1f80;
         dst->fpu_ctx->fcw = 0x037f;
     }
@@ -81,7 +82,7 @@ void arch_context_free(arch_context_t *context)
     context->dead = true;
     if (context->fpu_ctx)
     {
-        free_frames_bytes(context->fpu_ctx, sizeof(fpu_context_t));
+        free_frames_bytes(context->fpu_ctx, DEFAULT_PAGE_SIZE);
     }
 }
 
@@ -109,21 +110,21 @@ void arch_switch_with_context(arch_context_t *prev, arch_context_t *next, uint64
         prev->fsbase = read_fsbase();
         prev->gsbase = read_gsbase();
 
-        if (prev->fpu_ctx)
+        if (prev->fpu_ctx && ((uint64_t)prev->fpu_ctx & 15) == 0)
         {
             asm volatile("fxsave (%0)" ::"r"(prev->fpu_ctx));
         }
     }
 
     // Start to switch
-    if (next->fpu_ctx)
+    if (next->fpu_ctx && ((uint64_t)next->fpu_ctx & 15) == 0)
     {
         asm volatile("fxrstor (%0)" ::"r"(next->fpu_ctx));
     }
 
     asm volatile("movq %0, %%cr3\n\t" ::"r"(next->mm->page_table_addr));
 
-    tss[current_cpu_id].rsp0 = kernel_stack;
+    tss[current_cpu_id].rsp0 = kernel_stack - 8;
 
     asm volatile("movq %0, %%fs\n\t" ::"r"(next->fs));
     asm volatile("movq %0, %%gs\n\t" ::"r"(next->gs));
@@ -173,7 +174,7 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next)
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
 {
-    context->ctx = (struct pt_regs *)current_task->kernel_stack - 1;
+    context->ctx = (struct pt_regs *)(current_task->kernel_stack - 8) - 1;
 
     memset(context->ctx, 0, sizeof(struct pt_regs));
 
@@ -207,6 +208,7 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack)
 
 void arch_yield()
 {
+    ((struct sched_entity *)current_task->sched_info)->is_yield = true;
     asm volatile("sti\n\tint %0\n\tcli\n\t" ::"i"(APIC_TIMER_INTERRUPT_VECTOR));
 }
 

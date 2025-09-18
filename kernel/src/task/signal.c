@@ -136,7 +136,7 @@ void sys_sigreturn(struct pt_regs *regs)
 #if defined(__x86_64__)
     arch_disable_interrupt();
 
-    struct pt_regs *context = (struct pt_regs *)current_task->kernel_stack - 1;
+    struct pt_regs *context = (struct pt_regs *)(current_task->kernel_stack - 8) - 1;
 
     memcpy(context, &current_task->signal_saved_regs, sizeof(struct pt_regs));
 

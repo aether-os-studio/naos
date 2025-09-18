@@ -2,8 +2,12 @@
 #include <mm/mm.h>
 #include <task/task.h>
 
+extern spinlock_t mem_map_op_lock;
+
 uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr)
 {
+    spin_lock(&mem_map_op_lock);
+
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
     for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++)
     {
@@ -16,17 +20,20 @@ uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr)
         uint64_t addr = pgdir[index];
         if (ARCH_PT_IS_LARGE(addr))
         {
+            spin_unlock(&mem_map_op_lock);
             return (pgdir[index] & (~PAGE_CALC_PAGE_TABLE_MASK(i + 1)) & ~get_physical_memory_offset()) + (vaddr & PAGE_CALC_PAGE_TABLE_MASK(i + 1));
         }
         if (!ARCH_PT_IS_TABLE(addr))
         {
+            spin_unlock(&mem_map_op_lock);
             return 0;
         }
         pgdir = (uint64_t *)phys_to_virt(addr & (~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL)) & ~get_physical_memory_offset());
     }
 
     uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
-    return (pgdir[index] & (~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL)) & ~get_physical_memory_offset()) + (vaddr & PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL));
+    spin_unlock(&mem_map_op_lock);
+    return (pgdir[index] & ARCH_ADDR_MASK) + (vaddr & PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL));
 }
 
 uint64_t *kernel_page_dir = NULL;
@@ -74,7 +81,8 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr, uint64_t flag
         if (force)
         {
             uint64_t addr = pgdir[index] & ARCH_ADDR_MASK;
-            free_frames(addr, 1);
+            if (bitmap_get(&frame_allocator.bitmap, addr / DEFAULT_PAGE_SIZE) != true)
+                free_frames(addr, 1);
         }
         else
             return 0;
@@ -126,7 +134,8 @@ uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr)
     if ((pte & ARCH_PT_FLAG_VALID) && (pte & ARCH_ADDR_MASK) != 0)
     {
         uint64_t paddr = pte & ARCH_ADDR_MASK;
-        free_frames(paddr, 1);
+        // if (bitmap_get(&frame_allocator.bitmap, paddr / DEFAULT_PAGE_SIZE) != true)
+        //     free_frames(paddr, 1);
         table_ptrs[ARCH_MAX_PT_LEVEL - 1][index] = 0;
         arch_flush_tlb(vaddr);
 

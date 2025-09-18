@@ -5,10 +5,9 @@
 #include <fs/termios.h>
 #include <mm/bitmap.h>
 
-// priority越大优先级越低
-#define IDLE_PRIORITY 20
-#define NORMAL_PRIORITY 1
-#define KTHREAD_PRIORITY 1
+#define IDLE_PRIORITY NICE_TO_PRIO(20)
+#define NORMAL_PRIORITY NICE_TO_PRIO(0)
+#define KTHREAD_PRIORITY NICE_TO_PRIO(-5)
 
 #define AT_NULL 0
 #define AT_IGNORE 1
@@ -168,7 +167,7 @@ typedef struct task
     char name[TASK_NAME_MAX];
     vfs_node_t exec_node;
     uint64_t priority;
-    uint64_t jiffies;
+    void *sched_info;
     task_state_t state;
     task_state_t current_state;
     uint64_t force_wakeup_ns;
