@@ -3,7 +3,6 @@
 #include <task/task.h>
 
 static int memfd_fsid = 0;
-vfs_node_t memfd_root = NULL;
 
 struct memfd_ctx
 {
@@ -160,8 +159,9 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags)
 
     char fn[16];
     sprintf(fn, "memfd%d", memfd_idx++);
-    vfs_node_t node = vfs_node_alloc(memfd_root, fn);
+    vfs_node_t node = vfs_node_alloc(NULL, fn);
     node->type = file_none;
+    node->fsid = memfd_fsid;
     node->handle = ctx;
     node->refcount++;
     node->size = ctx->len;
@@ -183,9 +183,4 @@ fs_t memfdfs = {
 void memfd_init()
 {
     memfd_fsid = vfs_regist(&memfdfs);
-
-    memfd_root = vfs_node_alloc(NULL, "memfd");
-    memfd_root->fsid = memfd_fsid;
-    memfd_root->type = file_dir;
-    memfd_root->mode = 0644;
 }
