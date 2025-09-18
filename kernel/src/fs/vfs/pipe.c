@@ -9,7 +9,7 @@ static int pipefd_id = 0;
 
 static int dummy()
 {
-    return 0;
+    return -ENOSYS;
 }
 
 void pipefs_open(void *parent, const char *name, vfs_node_t node)
@@ -232,6 +232,18 @@ vfs_node_t pipe_dup(vfs_node_t node)
     return node;
 }
 
+int pipefs_stat(void *file, vfs_node_t node)
+{
+    pipe_specific_t *spec = (pipe_specific_t *)file;
+    pipe_info_t *pipe = spec->info;
+    if (spec->write)
+        node->size = pipe->write_ptr;
+    else
+        node->size = pipe->read_ptr;
+
+    return 0;
+}
+
 static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
@@ -249,7 +261,7 @@ static struct vfs_callback callbacks = {
     .delete = (vfs_del_t)dummy,
     .rename = (vfs_rename_t)dummy,
     .map = (vfs_mapfile_t)dummy,
-    .stat = (vfs_stat_t)dummy,
+    .stat = (vfs_stat_t)pipefs_stat,
     .ioctl = (vfs_ioctl_t)pipefs_ioctl,
     .poll = pipefs_poll,
     .resize = (vfs_resize_t)dummy,
@@ -271,7 +283,7 @@ void pipefs_init()
     pipefs_root->fsid = pipefs_id;
 }
 
-int sys_pipe(int pipefd[2], uint64_t flags)
+uint64_t sys_pipe(int pipefd[2], uint64_t flags)
 {
     int i1 = -1;
     for (i1 = 3; i1 < MAX_FD_NUM; i1++)

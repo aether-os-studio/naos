@@ -104,7 +104,7 @@ uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags);
 #define F_SEAL_WRITE 0x0008  /* 禁止写操作 */
 
 uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg);
-int sys_pipe(int fd[2], uint64_t flags);
+uint64_t sys_pipe(int fd[2], uint64_t flags);
 uint64_t sys_stat(const char *fd, struct stat *buf);
 uint64_t sys_fstat(uint64_t fd, struct stat *buf);
 uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname, struct stat *buf, uint64_t flags);
@@ -342,8 +342,8 @@ typedef struct
 #define TFD_TIMER_ABSTIME (1 << 0)
 #define TFD_TIMER_CANCEL_ON_SET (1 << 1)
 
-int sys_timerfd_create(int clockid, int flags);
-int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, struct itimerval *old_v);
+uint64_t sys_timerfd_create(int clockid, int flags);
+uint64_t sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, struct itimerval *old_v);
 
 uint64_t sys_memfd_create(const char *name, unsigned int flags);
 
@@ -368,9 +368,9 @@ struct statfs
     uint64_t f_spare[4];
 };
 
-int sys_fsopen(const char *fsname, unsigned int flags);
-int sys_statfs(const char *fsname, struct statfs *buf);
-int sys_fstatfs(int fd, struct statfs *buf);
+uint64_t sys_fsopen(const char *fsname, unsigned int flags);
+uint64_t sys_statfs(const char *fsname, struct statfs *buf);
+uint64_t sys_fstatfs(int fd, struct statfs *buf);
 
 uint64_t sys_truncate(const char *path, uint64_t length);
 uint64_t sys_ftruncate(int fd, uint64_t length);
@@ -411,4 +411,4 @@ struct sysinfo
     char _f[20 - 2 * sizeof(uint64_t) - sizeof(uint32_t)]; /* Padding: libc5 uses this.. */
 };
 
-int sys_sysinfo(struct sysinfo *info);
+uint64_t sys_sysinfo(struct sysinfo *info);

@@ -21,9 +21,9 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
         return (uint64_t)-EINVAL;
     }
 
-    if (!(flags & MAP_FIXED) || addr == 0)
+    if (addr == 0)
     {
-        flags &= (~MAP_FIXED);
+        flags &= ~MAP_FIXED;
     find_free_addr:
         uint64_t page_count = aligned_len / DEFAULT_PAGE_SIZE;
         uint64_t idx = bitmap_find_range(current_task->mmap_regions, page_count, true);
@@ -53,9 +53,9 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
     {
         uint64_t ret = (uint64_t)vfs_map(current_task->fd_info->fds[fd], addr, aligned_len, prot, flags, offset);
 
-        if (addr >= USER_MMAP_START && addr + aligned_len <= USER_MMAP_END)
+        if (ret >= USER_MMAP_START && ret + aligned_len <= USER_MMAP_END)
         {
-            bitmap_set_range(current_task->mmap_regions, (addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (addr - USER_MMAP_START + aligned_len) / DEFAULT_PAGE_SIZE, false);
+            bitmap_set_range(current_task->mmap_regions, (ret - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (ret - USER_MMAP_START + aligned_len) / DEFAULT_PAGE_SIZE, false);
         }
 
         spin_unlock(&mm_op_lock);
@@ -82,7 +82,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
             bitmap_set_range(current_task->mmap_regions, (addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE, (addr - USER_MMAP_START + aligned_len) / DEFAULT_PAGE_SIZE, false);
         }
 
-        // memset((void *)addr, 0, aligned_len);
+        memset((void *)addr, 0, aligned_len);
 
         spin_unlock(&mm_op_lock);
 
@@ -92,11 +92,28 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, ui
 
 uint64_t sys_munmap(uint64_t addr, uint64_t size)
 {
+    addr = addr & (~(DEFAULT_PAGE_SIZE - 1));
+    size = (size + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1);
+
     if (check_user_overflow(addr, size))
     {
         return -EFAULT;
     }
+
     spin_lock(&mm_op_lock);
+
+    if (addr >= USER_MMAP_START && addr + size <= USER_MMAP_END)
+    {
+        for (uint64_t a = addr; a < addr + size; a += DEFAULT_PAGE_SIZE)
+        {
+            if (bitmap_get(current_task->mmap_regions, (a - USER_MMAP_START) / DEFAULT_PAGE_SIZE) == true)
+            {
+                spin_unlock(&mm_op_lock);
+                return 0;
+            }
+        }
+    }
+
     unmap_page_range(get_current_page_dir(true), addr, size);
     if (addr >= USER_MMAP_START && addr + size <= USER_MMAP_END)
     {
@@ -108,6 +125,9 @@ uint64_t sys_munmap(uint64_t addr, uint64_t size)
 
 uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot)
 {
+    addr = addr & (~(DEFAULT_PAGE_SIZE - 1));
+    len = (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
+
     if (check_user_overflow(addr, len))
     {
         return -EFAULT;
@@ -136,9 +156,9 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uin
 
     uint64_t old_addr_phys = translate_address(get_current_page_dir(true), old_addr);
 
-    if (!(flags & MREMAP_FIXED) || new_addr == 0)
+    if (new_addr == 0)
     {
-        flags &= (~MREMAP_FIXED);
+        flags &= ~MREMAP_FIXED;
     find_free_addr:
         uint64_t page_count = new_size / DEFAULT_PAGE_SIZE;
         uint64_t idx = bitmap_find_range(current_task->mmap_regions, page_count, true);
@@ -161,7 +181,14 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uin
             if (bitmap_get(current_task->mmap_regions, (addr - USER_MMAP_START) / DEFAULT_PAGE_SIZE) == false)
             {
                 spin_unlock(&mm_op_lock);
-                goto find_free_addr;
+                if (flags & MREMAP_MAYMOVE)
+                {
+                    goto find_free_addr;
+                }
+                else
+                {
+                    return (uint64_t)-ENOMEM;
+                }
             }
         }
     }
@@ -181,7 +208,7 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size, uin
     return new_addr;
 }
 
-void *general_map(vfs_read_t read_callback, void *file, uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset)
+void *general_map(vfs_read_t read_callback, fd_t *file, uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset)
 {
     uint64_t pt_flags = PT_FLAG_U | PT_FLAG_W;
 

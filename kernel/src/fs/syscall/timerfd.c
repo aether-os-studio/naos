@@ -8,7 +8,7 @@ static vfs_node_t timerfdfs_root = NULL;
 
 static int timerfd_id = 0;
 
-int sys_timerfd_create(int clockid, int flags)
+uint64_t sys_timerfd_create(int clockid, int flags)
 {
     // 参数检查
     if (clockid != CLOCK_REALTIME && clockid != CLOCK_MONOTONIC)
@@ -65,7 +65,7 @@ static uint64_t get_current_time_ns(int clock_type)
 
 extern volatile struct limine_date_at_boot_request boot_time_request;
 
-int sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, struct itimerval *old_value)
+uint64_t sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, struct itimerval *old_value)
 {
     if (fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;

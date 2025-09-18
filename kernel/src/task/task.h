@@ -235,8 +235,8 @@ void task_unblock(task_t *task, int reason);
 
 uint64_t sys_prctl(uint64_t options, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5);
 
-int sys_timer_create(clockid_t clockid, struct sigevent *sevp, timer_t *timerid);
-int sys_timer_settime(timer_t timerid, const struct itimerval *new_value, struct itimerval *old_value);
+uint64_t sys_timer_create(clockid_t clockid, struct sigevent *sevp, timer_t *timerid);
+uint64_t sys_timer_settime(timer_t timerid, const struct itimerval *new_value, struct itimerval *old_value);
 
 uint64_t sys_reboot(int magic1, int magic2, uint32_t cmd, void *arg);
 

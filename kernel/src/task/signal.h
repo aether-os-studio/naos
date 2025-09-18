@@ -149,14 +149,14 @@ typedef struct
 
 struct timespec;
 
-int sys_sgetmask();
-int sys_ssetmask(int how, sigset_t *nset, sigset_t *oset);
-int sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction);
+uint64_t sys_sgetmask();
+uint64_t sys_ssetmask(int how, sigset_t *nset, sigset_t *oset);
+uint64_t sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction);
 struct pt_regs;
 void sys_sigreturn(struct pt_regs *regs);
-int sys_sigsuspend(const sigset_t *mask);
-int sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo, const struct timespec *uts, size_t sigsetsize);
-int sys_kill(int pid, int sig);
+uint64_t sys_sigsuspend(const sigset_t *mask);
+uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo, const struct timespec *uts, size_t sigsetsize);
+uint64_t sys_kill(int pid, int sig);
 
 union sigval
 {

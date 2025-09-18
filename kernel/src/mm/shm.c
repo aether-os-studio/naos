@@ -14,7 +14,7 @@ shm_t shm_head = {
 
 static int shmid_counter = 1;
 
-int sys_shmget(int key, int size, int shmflg)
+uint64_t sys_shmget(int key, int size, int shmflg)
 {
     shm_t *shm = &shm_head;
     while (shm->next)
@@ -101,12 +101,12 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg)
     return shmaddr;
 }
 
-int sys_shmdt(void *shmaddr)
+uint64_t sys_shmdt(void *shmaddr)
 {
     return 0;
 }
 
-int sys_shmctl(int shmid, int cmd, struct shmid_ds *buf)
+uint64_t sys_shmctl(int shmid, int cmd, struct shmid_ds *buf)
 {
     shm_t *shm = &shm_head;
     while (shm)

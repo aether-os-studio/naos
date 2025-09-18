@@ -581,6 +581,8 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_regs)
         goto done;
     }
 
+    regs->rax = 0;
+
     if (idx == SYS_FORK || idx == SYS_VFORK || idx == SYS_CLONE || idx == SYS_CLONE3 || idx == SYS_RT_SIGRETURN)
     {
         special_syscall_handle_t h = (special_syscall_handle_t)handler;
@@ -591,10 +593,8 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_regs)
         regs->rax = handler(arg1, arg2, arg3, arg4, arg5, arg6);
     }
 
-    if ((idx != SYS_BRK) && (idx != SYS_MMAP) && (idx != SYS_MREMAP) && (idx != SYS_SHMAT) && (idx != SYS_FCNTL) && (int)regs->rax < 0 && !((int64_t)regs->rax < 0))
+    if ((idx != SYS_BRK) && (idx != SYS_MMAP) && (idx != SYS_MREMAP) && (idx != SYS_SHMAT) && (int)regs->rax < 0 && !((int64_t)regs->rax < 0))
         regs->rax |= 0xffffffff00000000;
-    if ((int)regs->rax == 0 && (int64_t)regs->rax < 0)
-        regs->rax = 0;
 
     // if ((int64_t)regs->rax < 0)
     // {

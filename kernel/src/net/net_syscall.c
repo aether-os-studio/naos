@@ -12,7 +12,7 @@ uint64_t sys_shutdown(uint64_t fd, uint64_t how)
     return 0;
 }
 
-int sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen)
+uint64_t sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen)
 {
     if (fd >= MAX_FD_NUM)
         return -EBADF;
@@ -26,7 +26,7 @@ int sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen)
     return -ENOSYS;
 }
 
-int sys_getsockname(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen)
+uint64_t sys_getsockname(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen)
 {
     if (sockfd < 0 || sockfd > MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;
@@ -37,7 +37,7 @@ int sys_getsockname(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen)
     return -ENOSYS;
 }
 
-int sys_setsockopt(int fd, int level, int optname, const void *optval, socklen_t optlen)
+uint64_t sys_setsockopt(int fd, int level, int optname, const void *optval, socklen_t optlen)
 {
     if (fd < 0 || fd > MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
@@ -50,7 +50,7 @@ int sys_setsockopt(int fd, int level, int optname, const void *optval, socklen_t
     return -ENOSYS;
 }
 
-int sys_getsockopt(int fd, int level, int optname, void *optval, socklen_t *optlen)
+uint64_t sys_getsockopt(int fd, int level, int optname, void *optval, socklen_t *optlen)
 {
     if (fd >= MAX_FD_NUM)
         return -EBADF;
@@ -64,7 +64,7 @@ int sys_getsockopt(int fd, int level, int optname, void *optval, socklen_t *optl
     return -ENOSYS;
 }
 
-int sys_socket(int domain, int type, int protocol)
+uint64_t sys_socket(int domain, int type, int protocol)
 {
     int fd = -EAFNOSUPPORT;
     if (domain == 1)
@@ -91,7 +91,7 @@ int sys_socket(int domain, int type, int protocol)
     return fd;
 }
 
-int sys_socketpair(int family, int type, int protocol, int *sv)
+uint64_t sys_socketpair(int family, int type, int protocol, int *sv)
 {
     if (family == 1)
     {
@@ -100,7 +100,7 @@ int sys_socketpair(int family, int type, int protocol, int *sv)
     return -ENOSYS;
 }
 
-int sys_bind(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen)
+uint64_t sys_bind(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen)
 {
     if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;
@@ -112,7 +112,7 @@ int sys_bind(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen)
     return 0;
 }
 
-int sys_listen(int sockfd, int backlog)
+uint64_t sys_listen(int sockfd, int backlog)
 {
     if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;
@@ -124,7 +124,7 @@ int sys_listen(int sockfd, int backlog)
     return 0;
 }
 
-int sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen, uint64_t flags)
+uint64_t sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen, uint64_t flags)
 {
     if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;
@@ -136,7 +136,7 @@ int sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen, uint64_
     return 0;
 }
 
-int sys_connect(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen)
+uint64_t sys_connect(int sockfd, const struct sockaddr_un *addr, socklen_t addrlen)
 {
     if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;

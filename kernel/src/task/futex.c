@@ -4,7 +4,7 @@
 spinlock_t futex_lock = {0};
 struct futex_wait futex_wait_list = {NULL, NULL, NULL, 0};
 
-int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *uaddr2, int val3)
+uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *uaddr2, int val3)
 {
     switch (op)
     {

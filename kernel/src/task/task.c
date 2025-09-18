@@ -65,12 +65,14 @@ task_t *get_free_task()
     {
         if (idle_tasks[i] == NULL)
         {
-            idle_tasks[i] = (task_t *)malloc(sizeof(task_t));
-            memset(idle_tasks[i], 0, sizeof(task_t));
-            idle_tasks[i]->state = TASK_CREATING;
-            idle_tasks[i]->pid = 0;
+            task_t *task = (task_t *)malloc(sizeof(task_t));
+            memset(task, 0, sizeof(task_t));
+            task->state = TASK_CREATING;
+            task->pid = i;
+            idle_tasks[i] = task;
             can_schedule = true;
-            return idle_tasks[i];
+            spin_unlock(&task_queue_lock);
+            return task;
         }
     }
 
@@ -80,13 +82,14 @@ task_t *get_free_task()
     {
         if (tasks[i] == NULL)
         {
-            tasks[i] = (task_t *)malloc(sizeof(task_t));
-            memset(tasks[i], 0, sizeof(task_t));
-            tasks[i]->state = TASK_CREATING;
-            tasks[i]->pid = i;
+            task_t *task = (task_t *)malloc(sizeof(task_t));
+            memset(task, 0, sizeof(task_t));
+            task->state = TASK_CREATING;
+            task->pid = i;
+            tasks[i] = task;
             can_schedule = true;
             spin_unlock(&task_queue_lock);
-            return tasks[i];
+            return task;
         }
     }
 
@@ -624,7 +627,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         int argc = 0;
         while (argv[argc++])
             ;
-        const char *injected_argv[64];
+        const char *injected_argv[256];
         memcpy((char *)&injected_argv[1], argv, argc * sizeof(char *));
         injected_argv[1] = path;
         strncpy(interpreter_name_global, interpreter_name, sizeof(interpreter_name_global));
@@ -1597,7 +1600,7 @@ size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old)
     return 0;
 }
 
-int sys_timer_create(clockid_t clockid, struct sigevent *sevp, timer_t *timerid)
+uint64_t sys_timer_create(clockid_t clockid, struct sigevent *sevp, timer_t *timerid)
 {
     kernel_timer_t *kt = NULL;
     uint64_t i;
@@ -1634,7 +1637,7 @@ int sys_timer_create(clockid_t clockid, struct sigevent *sevp, timer_t *timerid)
     return 0;
 }
 
-int sys_timer_settime(timer_t timerid, const struct itimerval *new_value, struct itimerval *old_value)
+uint64_t sys_timer_settime(timer_t timerid, const struct itimerval *new_value, struct itimerval *old_value)
 {
     uint64_t idx = (uint64_t)timerid;
     if (idx >= MAX_TIMERS_NUM)

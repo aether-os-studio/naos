@@ -74,7 +74,7 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr, uint64_t flag
         if (force)
         {
             uint64_t addr = pgdir[index] & ARCH_ADDR_MASK;
-            free_frames(addr, 1);
+            // free_frames(addr, 1);
         }
         else
             return 0;
@@ -99,14 +99,13 @@ uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr)
     {
         uint64_t index = indexs[i];
         uint64_t addr = pgdir[index];
-
-        if (!ARCH_PT_IS_TABLE(addr))
-        {
-            return -1;
-        }
         if (ARCH_PT_IS_LARGE(addr))
         {
-            return -1;
+            return 0;
+        }
+        if (!ARCH_PT_IS_TABLE(addr))
+        {
+            return 0;
         }
         pgdir = (uint64_t *)phys_to_virt(addr & (~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL)) & ~get_physical_memory_offset());
     }
@@ -114,12 +113,10 @@ uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr)
     uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
     uint64_t pte = pgdir[index];
 
-    if (pte & ARCH_PT_FLAG_VALID)
+    if ((pte & ARCH_PT_FLAG_VALID) && (pte & ARCH_ADDR_MASK) != 0)
     {
-        uint64_t paddr = pte & (~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL)) & ~get_physical_memory_offset();
-        size_t frame_count = 1;
-
-        free_frames(paddr, frame_count);
+        uint64_t paddr = pte & ARCH_ADDR_MASK;
+        free_frames(paddr, 1);
         pgdir[index] = 0;
         arch_flush_tlb(vaddr);
     }

@@ -44,13 +44,13 @@ struct shmid_ds
 #define IPC_EXCL 00002000
 #define IPC_NOWAIT 00004000
 
-int sys_shmget(int key, int size, int shmflg);
+uint64_t sys_shmget(int key, int size, int shmflg);
 void *sys_shmat(int shmid, void *shmaddr, int shmflg);
-int sys_shmdt(void *shmaddr);
+uint64_t sys_shmdt(void *shmaddr);
 
 #define IPC_RMID 0 /* remove resource */
 #define IPC_SET 1  /* set ipc_perm options */
 #define IPC_STAT 2 /* get ipc_perm options */
 #define IPC_INFO 3 /* see ipcs */
 
-int sys_shmctl(int shmid, int cmd, struct shmid_ds *buf);
+uint64_t sys_shmctl(int shmid, int cmd, struct shmid_ds *buf);

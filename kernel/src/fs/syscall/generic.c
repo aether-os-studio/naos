@@ -1167,7 +1167,7 @@ uint64_t sys_futimesat(int dfd, const char *pathname, struct timeval *utimes)
 
 extern volatile struct limine_date_at_boot_request boot_time_request;
 
-int sys_sysinfo(struct sysinfo *info)
+uint64_t sys_sysinfo(struct sysinfo *info)
 {
     if (check_user_overflow((uint64_t)info, sizeof(struct sysinfo)))
         return -EFAULT;

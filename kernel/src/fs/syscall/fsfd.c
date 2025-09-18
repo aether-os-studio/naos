@@ -7,7 +7,7 @@ typedef struct fsfd_ctx
     fs_t *fs;
 } fsfd_ctx_t;
 
-int sys_fsopen(const char *fsname, unsigned int flags)
+uint64_t sys_fsopen(const char *fsname, unsigned int flags)
 {
     for (int i = 1; i < fs_nextid; i++)
     {
@@ -42,7 +42,7 @@ int sys_fsopen(const char *fsname, unsigned int flags)
     return -ENOENT;
 }
 
-int sys_statfs(const char *path, struct statfs *buf)
+uint64_t sys_statfs(const char *path, struct statfs *buf)
 {
     vfs_node_t node = vfs_open(path);
     if (!node)
@@ -62,7 +62,7 @@ int sys_statfs(const char *path, struct statfs *buf)
     return -ENOENT;
 }
 
-int sys_fstatfs(int fd, struct statfs *buf)
+uint64_t sys_fstatfs(int fd, struct statfs *buf)
 {
     if (fd < 0 && fd > MAX_FD_NUM && !current_task->fd_info->fds[fd])
         return -EBADF;

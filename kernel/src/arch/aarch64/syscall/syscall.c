@@ -467,7 +467,7 @@ void syscall_handlers_init()
     // syscall_handlers[SYS_FCHMODAT2] = (syscall_handle_t)sys_fchmodat2;
 }
 
-extern int sys_pipe(int pipefd[2], uint64_t flags);
+extern uint64_t sys_pipe(int pipefd[2], uint64_t flags);
 
 void aarch64_do_syscall(struct pt_regs *frame)
 {

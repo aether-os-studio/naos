@@ -500,7 +500,7 @@ int sprintf(char *buf, const char *fmt, ...)
     return len;
 }
 
-int sys_syslog(int type, const char *buf, size_t len)
+uint64_t sys_syslog(int type, const char *buf, size_t len)
 {
     serial_printk(buf, len);
     flanterm_write(ft_ctx, buf, len);

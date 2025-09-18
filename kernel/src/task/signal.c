@@ -76,13 +76,13 @@ bool signals_pending_quick(task_t *task)
 }
 
 // 获取信号屏蔽位图
-int sys_sgetmask()
+uint64_t sys_sgetmask()
 {
     return current_task->blocked;
 }
 
 // 设置信号屏蔽位图
-int sys_ssetmask(int how, sigset_t *nset, sigset_t *oset)
+uint64_t sys_ssetmask(int how, sigset_t *nset, sigset_t *oset)
 {
     if (oset)
         *oset = current_task->blocked;
@@ -110,7 +110,7 @@ int sys_ssetmask(int how, sigset_t *nset, sigset_t *oset)
     return 0;
 }
 
-int sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction)
+uint64_t sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction)
 {
     if (sig < MINSIG || sig > MAXSIG || sig == SIGKILL)
     {
@@ -159,7 +159,7 @@ void sys_sigreturn(struct pt_regs *regs)
 #endif
 }
 
-int sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo, const struct timespec *uts, size_t sigsetsize)
+uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo, const struct timespec *uts, size_t sigsetsize)
 {
     if (sigsetsize != sizeof(sigset_t))
     {
@@ -197,7 +197,7 @@ int sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo, const struct t
     return 0;
 }
 
-int sys_sigsuspend(const sigset_t *mask)
+uint64_t sys_sigsuspend(const sigset_t *mask)
 {
     sigset_t old = current_task->blocked;
 
@@ -213,7 +213,7 @@ int sys_sigsuspend(const sigset_t *mask)
     return -EINTR;
 }
 
-int sys_kill(int pid, int sig)
+uint64_t sys_kill(int pid, int sig)
 {
     if (sig < MINSIG || sig > MAXSIG)
     {

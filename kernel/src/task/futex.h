@@ -46,4 +46,4 @@ struct futex_wait
 #define FUTEX_CMP_REQUEUE_PI_PRIVATE (FUTEX_CMP_REQUEUE_PI | \
                                       FUTEX_PRIVATE_FLAG)
 
-int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *uaddr2, int val3);
+uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *uaddr2, int val3);
