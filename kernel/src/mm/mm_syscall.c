@@ -108,12 +108,16 @@ uint64_t sys_munmap(uint64_t addr, uint64_t size) {
             if (bitmap_get(current_task->mmap_regions,
                            (a - USER_MMAP_START) / DEFAULT_PAGE_SIZE) ==
                 false) {
-                unmap_page_range(get_current_page_dir(true), a,
-                                 DEFAULT_PAGE_SIZE);
-                bitmap_set(current_task->mmap_regions,
-                           (a - USER_MMAP_START) / DEFAULT_PAGE_SIZE, true);
+                spin_unlock(&mm_op_lock);
+                return 0;
             }
         }
+    }
+
+    unmap_page_range(get_current_page_dir(true), addr, size);
+    if (addr >= USER_MMAP_START && addr + size <= USER_MMAP_END) {
+        bitmap_set_range(current_task->mmap_regions, addr / DEFAULT_PAGE_SIZE,
+                         (addr + size) / DEFAULT_PAGE_SIZE, true);
     }
 
     spin_unlock(&mm_op_lock);

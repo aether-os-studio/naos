@@ -327,8 +327,10 @@ void add_eevdf_entity_with_prio(task_t *new_task, uint64_t prio,
 void remove_sched_entity(eevdf_t *eevdf_sched, struct rb_root *root,
                          struct sched_entity *se) {
     rb_erase(&se->run_node, root);
-    if (eevdf_sched->current == se)
+    struct sched_entity *current = eevdf_sched->current;
+    if (current == se)
         eevdf_sched->current = NULL;
+    eevdf_sched->current = pick_eevdf(eevdf_sched);
     update_min_vruntime(eevdf_sched);
 }
 

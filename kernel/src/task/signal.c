@@ -240,7 +240,7 @@ uint64_t sys_kill(int pid, int sig) {
     task->signal |= SIGMASK(sig);
     spin_unlock(&task->signal_lock);
 
-    task_unblock(task, sig);
+    task_unblock(task, 128 + sig);
 
     return 0;
 }

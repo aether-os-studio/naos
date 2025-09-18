@@ -51,6 +51,47 @@ void send_sigint() {
     }
 }
 
+void task_free_service(uint64_t arg) {
+    while (1) {
+        uint64_t continue_ptr_count = 0;
+        for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
+            spin_lock(&task_queue_lock);
+            task_t *ptr = tasks[i];
+            spin_unlock(&task_queue_lock);
+
+            if (ptr == NULL) {
+                continue_ptr_count++;
+                if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
+                    break;
+                continue;
+            }
+            continue_ptr_count = 0;
+
+            if (ptr->should_free) {
+                tasks[ptr->pid] = NULL;
+
+                free_page_table(ptr->arch_context->mm);
+
+                arch_context_free(ptr->arch_context);
+
+                free(ptr->arch_context);
+
+                free_frames_bytes((void *)(ptr->kernel_stack - STACK_SIZE),
+                                  STACK_SIZE);
+                free_frames_bytes((void *)(ptr->syscall_stack - STACK_SIZE),
+                                  STACK_SIZE);
+                free_frames_bytes(
+                    (void *)(ptr->signal_syscall_stack - STACK_SIZE),
+                    STACK_SIZE);
+
+                free(ptr);
+            }
+        }
+
+        arch_yield();
+    }
+}
+
 bool task_initialized = false;
 bool can_schedule = false;
 
@@ -195,6 +236,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
 
     task->child_vfork_done = false;
     task->is_vfork = false;
+    task->should_free = false;
 
     procfs_on_new_task(task);
 
@@ -243,6 +285,7 @@ void task_init() {
 
     arch_set_current(idle_tasks[0]);
     task_create("init", init_thread, 0, NORMAL_PRIORITY);
+    task_create("task_free_service", task_free_service, 0, KTHREAD_PRIORITY);
 
     task_initialized = true;
 
@@ -466,6 +509,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
     } else {
         child->is_vfork = false;
     }
+    child->should_free = false;
 
     procfs_on_new_task(child);
 
@@ -961,11 +1005,14 @@ void task_exit_inner(task_t *task, int64_t code) {
 
     if (task->ppid && task->pid != task->ppid && task->ppid < MAX_TASK_NUM &&
         tasks[task->ppid]) {
-        // void *handler = tasks[task->ppid]->actions[SIGCHLD].sa_handler;
-        // if (!(handler == SIG_DFL || handler == SIG_IGN))
-        // {
-        //     tasks[task->ppid]->signal |= SIGMASK(SIGCHLD);
-        // }
+        void *handler = tasks[task->ppid]->actions[SIGCHLD].sa_handler;
+        if (handler != SIG_DFL) {
+            if (handler != SIG_IGN) {
+                // tasks[task->ppid]->signal |= SIGMASK(SIGCHLD);
+            } else {
+                task->should_free = true;
+            }
+        }
     }
 
     if (task->waitpid != 0 && task->waitpid < MAX_TASK_NUM &&
@@ -1126,24 +1173,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
 
         ret = target->pid;
 
-        spin_lock(&task_queue_lock);
-        tasks[target->pid] = NULL;
-        spin_unlock(&task_queue_lock);
-
-        free_page_table(target->arch_context->mm);
-
-        arch_context_free(target->arch_context);
-
-        free(target->arch_context);
-
-        free_frames_bytes((void *)(target->kernel_stack - STACK_SIZE),
-                          STACK_SIZE);
-        free_frames_bytes((void *)(target->syscall_stack - STACK_SIZE),
-                          STACK_SIZE);
-        free_frames_bytes((void *)(target->signal_syscall_stack - STACK_SIZE),
-                          STACK_SIZE);
-
-        free(target);
+        target->should_free = true;
     }
 
     return ret;
@@ -1280,6 +1310,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     } else {
         child->is_vfork = false;
     }
+    child->should_free = false;
 
     procfs_on_new_task(child);
 

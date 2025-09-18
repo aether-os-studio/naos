@@ -43,7 +43,7 @@
 #define INTERPRETER_BASE_ADDR 0x0000400000000000
 
 #define USER_MMAP_START 0x0000000040000000
-#define USER_MMAP_END 0x0000000080000000
+#define USER_MMAP_END 0x0000000100000000
 
 #define TASK_NAME_MAX 128
 
@@ -193,6 +193,7 @@ typedef struct task {
     struct rlimit rlim[16];
     bool child_vfork_done;
     bool is_vfork;
+    bool should_free;
 } task_t;
 
 extern task_t *arch_get_current();
