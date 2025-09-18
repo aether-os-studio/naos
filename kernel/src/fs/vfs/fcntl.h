@@ -41,8 +41,7 @@
 #define O_TMPFILE 020200000
 #define O_NDELAY O_NONBLOCK
 
-struct dirent
-{
+struct dirent {
     long d_ino;
     long d_off;
     unsigned short d_reclen;

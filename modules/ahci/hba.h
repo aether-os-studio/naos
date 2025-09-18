@@ -45,7 +45,7 @@ typedef uint32_t hba_reg_t;
 #define HBA_PxTFD_BSY (1 << 7)
 #define HBA_PxTFD_DRQ (1 << 3)
 
-#define HBA_FATAL \
+#define HBA_FATAL                                                              \
     (HBA_PxINTR_TFE | HBA_PxINTR_HBF | HBA_PxINTR_HBD | HBA_PxINTR_IF)
 
 #define HBA_NONFATAL (HBA_PxINTR_NIF | HBA_PxINTR_OF)
@@ -75,30 +75,28 @@ typedef uint32_t hba_reg_t;
 
 #define HBA_MAX_PRDTE 4
 
-#define wait_until(cond) \
-    ({                   \
-        while (!(cond))  \
-            ;            \
+#define wait_until(cond)                                                       \
+    ({                                                                         \
+        while (!(cond))                                                        \
+            ;                                                                  \
     })
 
-#define wait_until_expire(cond, max)          \
-    ({                                        \
-        uint64_t __wcounter__ = (max);        \
-        while (!(cond) && __wcounter__-- > 1) \
-            ;                                 \
-        __wcounter__;                         \
+#define wait_until_expire(cond, max)                                           \
+    ({                                                                         \
+        uint64_t __wcounter__ = (max);                                         \
+        while (!(cond) && __wcounter__-- > 1)                                  \
+            ;                                                                  \
+        __wcounter__;                                                          \
     })
 
-struct blkio_req
-{
+struct blkio_req {
     uint64_t buf;
     uint64_t lba;
     uint64_t len;
     uint64_t flags;
 };
 
-struct hba_cmdh
-{
+struct hba_cmdh {
     uint16_t options;
     uint16_t prdt_len;
     volatile uint32_t transferred_size;
@@ -109,8 +107,7 @@ struct hba_cmdh
 
 #define HBA_PRDTE_BYTE_CNT(cnt) ((cnt & 0x3FFFFF) | 0x1)
 
-struct hba_prdte
-{
+struct hba_prdte {
     uint32_t data_base;
     uint32_t data_base_upper;
     uint32_t reserved;
@@ -119,8 +116,7 @@ struct hba_prdte
     uint32_t i : 1;
 } __HBA_PACKED__;
 
-struct hba_cmdt
-{
+struct hba_cmdt {
     uint8_t command_fis[64];
     uint8_t atapi_cmd[16];
     uint8_t reserved[0x30];
@@ -133,8 +129,7 @@ struct hba_cmdt
 struct hba_port;
 struct ahci_hba;
 
-struct hba_device
-{
+struct hba_device {
     char serial_num[20];
     char model[40];
     uint32_t flags;
@@ -142,8 +137,7 @@ struct hba_device
     uint32_t block_size;
     uint64_t wwn;
     uint8_t cbd_size;
-    struct
-    {
+    struct {
         uint8_t sense_key;
         uint8_t error;
         uint8_t status;
@@ -155,26 +149,22 @@ struct hba_device
     struct hba_port *port;
     struct ahci_hba *hba;
 
-    struct
-    {
+    struct {
         void (*submit)(struct hba_device *dev, struct blkio_req *io_req);
     } ops;
 };
 
-struct hba_cmd_state
-{
+struct hba_cmd_state {
     struct hba_cmdt *cmd_table;
     void *state_ctx;
 };
 
-struct hba_cmd_context
-{
+struct hba_cmd_context {
     struct hba_cmd_state *issued[32];
     uint32_t tracked_ci;
 };
 
-struct hba_port
-{
+struct hba_port {
     volatile hba_reg_t *regs;
     uint32_t ssts;
     struct hba_cmdh *cmdlst;
@@ -184,8 +174,7 @@ struct hba_port
     struct ahci_hba *hba;
 };
 
-struct ahci_hba
-{
+struct ahci_hba {
     volatile hba_reg_t *base;
     uint32_t ports_num;
     uint32_t ports_bmp;

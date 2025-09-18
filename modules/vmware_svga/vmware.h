@@ -16,8 +16,7 @@
 #define VMWARE_CURSOR_HEIGHT 64
 
 // Register indices
-enum register_index
-{
+enum register_index {
     register_index_id = 0,
     register_index_enable = 1,
     register_index_width = 2,
@@ -74,8 +73,7 @@ enum register_index
 };
 
 // Command indices
-enum command_index
-{
+enum command_index {
     command_index_invalid_cmd = 0,
     command_index_update = 1,
     command_index_rect_copy = 3,
@@ -98,8 +96,7 @@ enum command_index
 };
 
 // FIFO indices
-enum fifo_index
-{
+enum fifo_index {
     fifo_index_min = 0,
     fifo_index_max,
     fifo_index_next_cmd,
@@ -137,8 +134,7 @@ enum fifo_index
 };
 
 // Capabilities
-enum caps
-{
+enum caps {
     cap_cursor = 0x00000020,
     cap_fifo_extended = 0x00008000,
     cap_irqmask = 0x00040000,
@@ -150,8 +146,7 @@ enum caps
 };
 
 // IRQ masks
-enum irq_masks
-{
+enum irq_masks {
     irq_mask_any = 0xFFFFFFFF,
     irq_mask_fence = 0x00000001,
     irq_mask_flip = 0x00000002,
@@ -159,8 +154,7 @@ enum irq_masks
 };
 
 // Display information structure
-typedef struct vmware_display_info
-{
+typedef struct vmware_display_info {
     uint32_t id;
     uint32_t is_primary;
     uint32_t position_x;
@@ -171,8 +165,7 @@ typedef struct vmware_display_info
 } vmware_display_info_t;
 
 // Framebuffer structure
-typedef struct vmware_framebuffer
-{
+typedef struct vmware_framebuffer {
     int fb_id;
     uint64_t addr;
     uint32_t width;
@@ -184,8 +177,7 @@ typedef struct vmware_framebuffer
 } vmware_framebuffer_t;
 
 // Cursor structure
-typedef struct vmware_cursor
-{
+typedef struct vmware_cursor {
     uint32_t width;
     uint32_t height;
     uint32_t hotspot_x;
@@ -195,8 +187,7 @@ typedef struct vmware_cursor
 } vmware_cursor_t;
 
 // Main device structure
-typedef struct vmware_gpu_device
-{
+typedef struct vmware_gpu_device {
     uint16_t io_base;
     uint64_t fb_mmio_base;
     uint64_t fifo_mmio_base;
@@ -234,8 +225,7 @@ typedef struct vmware_gpu_device
 } vmware_gpu_device_t;
 
 // Command structures
-struct vmware_gpu_define_alpha_cursor
-{
+struct vmware_gpu_define_alpha_cursor {
     uint32_t id;
     uint32_t hotspot_x;
     uint32_t hotspot_y;
@@ -244,8 +234,7 @@ struct vmware_gpu_define_alpha_cursor
     uint8_t pixel_data[];
 };
 
-struct vmware_gpu_define_cursor
-{
+struct vmware_gpu_define_cursor {
     uint32_t id;
     uint32_t hotspot_x;
     uint32_t hotspot_y;
@@ -256,16 +245,14 @@ struct vmware_gpu_define_cursor
     uint8_t pixel_data[];
 };
 
-struct vmware_gpu_update_rectangle
-{
+struct vmware_gpu_update_rectangle {
     uint32_t x;
     uint32_t y;
     uint32_t w;
     uint32_t h;
 };
 
-struct vmware_gpu_copy_rectangle
-{
+struct vmware_gpu_copy_rectangle {
     uint32_t sx;
     uint32_t sy;
     uint32_t dx;
@@ -274,8 +261,7 @@ struct vmware_gpu_copy_rectangle
     uint32_t h;
 };
 
-struct vmware_gpu_fence
-{
+struct vmware_gpu_fence {
     uint32_t sequence;
 };
 
@@ -291,8 +277,9 @@ extern drm_device_op_t vmware_drm_device_op;
 void vmware_gpu_init();
 void vmware_gpu_irq_handler(vmware_gpu_device_t *device);
 int vmware_gpu_detect_displays(vmware_gpu_device_t *device);
-int vmware_gpu_set_display_mode(vmware_gpu_device_t *device, uint32_t display_id,
-                                uint32_t width, uint32_t height, uint32_t bpp);
+int vmware_gpu_set_display_mode(vmware_gpu_device_t *device,
+                                uint32_t display_id, uint32_t width,
+                                uint32_t height, uint32_t bpp);
 int vmware_gpu_update_display(vmware_gpu_device_t *device, uint32_t display_id,
                               uint32_t x, uint32_t y, uint32_t w, uint32_t h);
 int vmware_gpu_set_cursor(vmware_gpu_device_t *device, uint32_t display_id,
@@ -301,11 +288,16 @@ int vmware_gpu_move_cursor(vmware_gpu_device_t *device, uint32_t display_id,
                            uint32_t x, uint32_t y);
 
 // Utility functions
-static inline uint32_t vmware_read_register(vmware_gpu_device_t *device, uint32_t index);
-static inline void vmware_write_register(vmware_gpu_device_t *device, uint32_t index, uint32_t value);
-static inline uint32_t vmware_fifo_read(vmware_gpu_device_t *device, uint32_t index);
-static inline void vmware_fifo_write(vmware_gpu_device_t *device, uint32_t index, uint32_t value);
-static inline bool vmware_has_capability(vmware_gpu_device_t *device, enum caps capability);
+static inline uint32_t vmware_read_register(vmware_gpu_device_t *device,
+                                            uint32_t index);
+static inline void vmware_write_register(vmware_gpu_device_t *device,
+                                         uint32_t index, uint32_t value);
+static inline uint32_t vmware_fifo_read(vmware_gpu_device_t *device,
+                                        uint32_t index);
+static inline void vmware_fifo_write(vmware_gpu_device_t *device,
+                                     uint32_t index, uint32_t value);
+static inline bool vmware_has_capability(vmware_gpu_device_t *device,
+                                         enum caps capability);
 void *vmware_fifo_reserve(vmware_gpu_device_t *device, size_t size);
 void vmware_fifo_commit(vmware_gpu_device_t *device, size_t bytes);
 int vmware_wait_fence(vmware_gpu_device_t *device, uint32_t sequence);

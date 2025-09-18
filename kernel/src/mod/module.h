@@ -2,8 +2,7 @@
 
 #include <libs/klibc.h>
 
-typedef struct
-{
+typedef struct {
     bool is_use;
     char module_name[64];
     char *path;

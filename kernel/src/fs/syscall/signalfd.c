@@ -1,18 +1,13 @@
 #include <fs/fs_syscall.h>
 
-static int dummy()
-{
-    return 0;
-}
+static int dummy() { return 0; }
 
-static int signalfd_poll(void *file, size_t event)
-{
+static int signalfd_poll(void *file, size_t event) {
     struct signalfd_ctx *ctx = file;
 
     int revents = 0;
 
-    if (ctx->queue_head != ctx->queue_tail)
-    {
+    if (ctx->queue_head != ctx->queue_tail) {
         revents |= EPOLLIN;
     }
 
@@ -23,14 +18,13 @@ static vfs_node_t signalfdfs_root = NULL;
 int signalfdfs_id = 0;
 int signalfd_id = 0;
 
-static ssize_t signalfd_read(fd_t *fd, uint64_t offset, void *buf, uint64_t len)
-{
+static ssize_t signalfd_read(fd_t *fd, uint64_t offset, void *buf,
+                             uint64_t len) {
     void *data = fd->node->handle;
 
     struct signalfd_ctx *ctx = data;
 
-    while (ctx->queue_head == ctx->queue_tail)
-    {
+    while (ctx->queue_head == ctx->queue_tail) {
 #if defined(__x86_64__)
         arch_enable_interrupt();
 #endif
@@ -50,11 +44,9 @@ static ssize_t signalfd_read(fd_t *fd, uint64_t offset, void *buf, uint64_t len)
     return copy_len;
 }
 
-static int signalfd_ioctl(void *data, ssize_t cmd, ssize_t arg)
-{
+static int signalfd_ioctl(void *data, ssize_t cmd, ssize_t arg) {
     struct signalfd_ctx *ctx = data;
-    switch (cmd)
-    {
+    switch (cmd) {
     case SIGNALFD_IOC_MASK:
         memcpy(&ctx->sigmask, (sigset_t *)arg, sizeof(sigset_t));
         return 0;
@@ -63,8 +55,8 @@ static int signalfd_ioctl(void *data, ssize_t cmd, ssize_t arg)
     }
 }
 
-uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask, int flags)
-{
+uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask,
+                       int flags) {
     if (sizemask != sizeof(sigset_t))
         return -EINVAL;
 
@@ -80,10 +72,8 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask, int flags
 
     // 分配文件描述符
     int fd = -1;
-    for (int i = 3; i < MAX_FD_NUM; i++)
-    {
-        if (!current_task->fd_info->fds[i])
-        {
+    for (int i = 3; i < MAX_FD_NUM; i++) {
+        if (!current_task->fd_info->fds[i]) {
             fd = i;
             break;
         }
@@ -106,8 +96,7 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask, int flags
     return fd;
 }
 
-uint64_t sys_signalfd(int ufd, const sigset_t *mask, size_t sizemask)
-{
+uint64_t sys_signalfd(int ufd, const sigset_t *mask, size_t sizemask) {
     return sys_signalfd4(ufd, mask, sizemask, 0);
 }
 
@@ -141,8 +130,7 @@ fs_t signalfdfs = {
     .callback = &signalfd_callbacks,
 };
 
-void signalfd_init()
-{
+void signalfd_init() {
     signalfdfs_id = vfs_regist(&signalfdfs);
     signalfdfs_root = vfs_node_alloc(NULL, "signal");
     signalfdfs_root->type = file_dir;

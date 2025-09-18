@@ -12,27 +12,23 @@
 
 static int realsockv6_fsid = 0;
 
-typedef struct real_socket_v6
-{
+typedef struct real_socket_v6 {
 } real_socket_v6_t;
 
-int real_socket_v6_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen)
-{
+int real_socket_v6_connect(uint64_t fd, const struct sockaddr_un *addr,
+                           socklen_t addrlen) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     real_socket_v6_t *sock = handle->sock;
 
     return -ENETUNREACH;
 }
 
-int real_socket_v6_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen)
-{
+int real_socket_v6_bind(uint64_t fd, const struct sockaddr_un *addr,
+                        socklen_t addrlen) {
     return -EADDRNOTAVAIL;
 }
 
-int real_socket_v6_listen(uint64_t fd, int backlog)
-{
-    return -EADDRINUSE;
-}
+int real_socket_v6_listen(uint64_t fd, int backlog) { return -EADDRINUSE; }
 
 socket_op_t real_socket_v6_ops = {
     .connect = real_socket_v6_connect,
@@ -40,15 +36,9 @@ socket_op_t real_socket_v6_ops = {
     .listen = real_socket_v6_listen,
 };
 
-bool real_socket_v6_close(void *current)
-{
-    return true;
-}
+bool real_socket_v6_close(void *current) { return true; }
 
-static int dummy()
-{
-    return 0;
-}
+static int dummy() { return 0; }
 
 static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)dummy,
@@ -74,8 +64,7 @@ static struct vfs_callback callbacks = {
     .dup = (vfs_dup_t)vfs_generic_dup,
 };
 
-int real_socket_v6_socket(int domain, int type, int protocol)
-{
+int real_socket_v6_socket(int domain, int type, int protocol) {
     vfs_node_t socknode = vfs_node_alloc(NULL, "realsockv6");
     socknode->type = file_socket;
     socknode->fsid = realsockv6_fsid;
@@ -90,16 +79,13 @@ int real_socket_v6_socket(int domain, int type, int protocol)
     socknode->handle = handle;
 
     uint64_t i = 0;
-    for (i = 3; i < MAX_FD_NUM; i++)
-    {
-        if (current_task->fd_info->fds[i] == NULL)
-        {
+    for (i = 3; i < MAX_FD_NUM; i++) {
+        if (current_task->fd_info->fds[i] == NULL) {
             break;
         }
     }
 
-    if (i == MAX_FD_NUM)
-    {
+    if (i == MAX_FD_NUM) {
         return -EMFILE;
     }
 
@@ -119,8 +105,7 @@ fs_t socketv6 = {
     .callback = &callbacks,
 };
 
-void real_socket_v6_init()
-{
+void real_socket_v6_init() {
     realsockv6_fsid = vfs_regist(&socketv6);
 
     regist_socket(10, real_socket_v6_socket);

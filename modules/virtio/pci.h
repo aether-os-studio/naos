@@ -3,8 +3,7 @@
 #include <libs/aether/pci.h>
 #include "virtio.h"
 
-typedef struct virtio_cap_info_t
-{
+typedef struct virtio_cap_info_t {
     uint8_t bar;
     uint32_t offset;
     uint32_t length;
@@ -14,8 +13,7 @@ typedef struct virtio_cap_info_t
 #define PCI_DEVICE_ID_BLOCK 0x1001
 #define PCI_DEVICE_ID_OFFSET 0x1040
 
-typedef struct virtio_pci_common_cfg_t
-{
+typedef struct virtio_pci_common_cfg_t {
     uint32_t device_feature_select;
     uint32_t device_feature;
     uint32_t driver_feature_select;
@@ -34,8 +32,7 @@ typedef struct virtio_pci_common_cfg_t
     uint64_t queue_device;
 } virtio_pci_common_cfg_t;
 
-typedef struct virtio_pci_device
-{
+typedef struct virtio_pci_device {
     pci_device_t *pci_dev;
     virtio_device_type_t device_type;
     virtio_cap_info_t *common_cfg;

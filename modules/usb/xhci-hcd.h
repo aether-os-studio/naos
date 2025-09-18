@@ -10,10 +10,9 @@
 #define ARRAY_SIZE(a) (sizeof((a)) / sizeof((a)[0]))
 
 #define GET_LOW(var) (var)
-#define SET_LOW(var, val) \
-    do                    \
-    {                     \
-        (var) = (val);    \
+#define SET_LOW(var, val)                                                      \
+    do {                                                                       \
+        (var) = (val);                                                         \
     } while (0)
 #define LOWFLAT2LOW(var) (var)
 #define GET_LOWFLAT(var) GET_LOW(*LOWFLAT2LOW(&(var)))
@@ -26,16 +25,18 @@ struct usb_pipe;
 // --------------------------------------------------------------
 
 // usb-xhci.c
-struct usb_pipe *xhci_realloc_pipe(struct usbdevice_s *usbdev, struct usb_pipe *upipe, struct usb_endpoint_descriptor *epdesc);
-int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data, int datasize);
+struct usb_pipe *xhci_realloc_pipe(struct usbdevice_s *usbdev,
+                                   struct usb_pipe *upipe,
+                                   struct usb_endpoint_descriptor *epdesc);
+int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data,
+                   int datasize);
 int xhci_poll_intr(struct usb_pipe *p, void *data);
 
 // --------------------------------------------------------------
 // register interface
 
 // capabilities
-struct xhci_caps
-{
+struct xhci_caps {
     uint8_t caplength;
     uint8_t reserved_01;
     uint16_t hciversion;
@@ -48,15 +49,13 @@ struct xhci_caps
 } __attribute__((packed));
 
 // extended capabilities
-struct xhci_xcap
-{
+struct xhci_xcap {
     uint32_t cap;
     uint32_t data[];
 } __attribute__((packed));
 
 // operational registers
-struct xhci_op
-{
+struct xhci_op {
     uint32_t usbcmd;
     uint32_t usbsts;
     uint32_t pagesize;
@@ -71,8 +70,7 @@ struct xhci_op
 } __attribute__((packed));
 
 // port registers
-struct xhci_pr
-{
+struct xhci_pr {
     uint32_t portsc;
     uint32_t portpmsc;
     uint32_t portli;
@@ -80,20 +78,17 @@ struct xhci_pr
 } __attribute__((packed));
 
 // doorbell registers
-struct xhci_db
-{
+struct xhci_db {
     uint32_t doorbell;
 } __attribute__((packed));
 
 // runtime registers
-struct xhci_rts
-{
+struct xhci_rts {
     uint32_t mfindex;
 } __attribute__((packed));
 
 // interrupter registers
-struct xhci_ir
-{
+struct xhci_ir {
     uint32_t iman;
     uint32_t imod;
     uint32_t erstsz;
@@ -108,15 +103,13 @@ struct xhci_ir
 // memory data structs
 
 // slot context
-struct xhci_slotctx
-{
+struct xhci_slotctx {
     uint32_t ctx[4];
     uint32_t reserved_01[4];
 } __attribute__((packed));
 
 // endpoint context
-struct xhci_epctx
-{
+struct xhci_epctx {
     uint32_t ctx[2];
     uint32_t deq_low;
     uint32_t deq_high;
@@ -125,23 +118,20 @@ struct xhci_epctx
 } __attribute__((packed));
 
 // device context array element
-struct xhci_devlist
-{
+struct xhci_devlist {
     uint32_t ptr_low;
     uint32_t ptr_high;
 } __attribute__((packed));
 
 // input context
-struct xhci_inctx
-{
+struct xhci_inctx {
     uint32_t del;
     uint32_t add;
     uint32_t reserved_01[6];
 } __attribute__((packed));
 
 // transfer block (ring element)
-struct xhci_trb
-{
+struct xhci_trb {
     uint32_t ptr_low;
     uint32_t ptr_high;
     uint32_t status;
@@ -149,8 +139,7 @@ struct xhci_trb
 } __attribute__((packed));
 
 // event ring segment
-struct xhci_er_seg
-{
+struct xhci_er_seg {
     uint32_t ptr_low;
     uint32_t ptr_high;
     uint32_t size;

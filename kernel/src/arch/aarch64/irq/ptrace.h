@@ -2,8 +2,7 @@
 
 #include <libs/klibc.h>
 
-struct pt_regs
-{
+struct pt_regs {
     uint64_t pc;
     uint64_t cpsr;
     uint64_t sp_el0;

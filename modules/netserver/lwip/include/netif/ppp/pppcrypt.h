@@ -33,10 +33,11 @@
 #include "netif/ppp/ppp_opts.h"
 #if PPP_SUPPORT /* don't build if not configured for use in lwipopts.h */
 
-/* This header file is included in all PPP modules needing hashes and/or ciphers */
+/* This header file is included in all PPP modules needing hashes and/or ciphers
+ */
 
 #ifndef PPPCRYPT_H
-#define	PPPCRYPT_H
+#define PPPCRYPT_H
 
 /*
  * If included PolarSSL copy is not used, user is expected to include
@@ -128,7 +129,8 @@ extern "C" {
 #define lwip_arc4_context mbedtls_arc4_context
 #define lwip_arc4_init mbedtls_arc4_init
 #define lwip_arc4_setup mbedtls_arc4_setup
-#define lwip_arc4_crypt(context, buffer, length) mbedtls_arc4_crypt(context, length, buffer, buffer)
+#define lwip_arc4_crypt(context, buffer, length)                               \
+    mbedtls_arc4_crypt(context, length, buffer, buffer)
 #define lwip_arc4_free mbedtls_arc4_free
 
 #endif /* LWIP_USE_EXTERNAL_MBEDTLS */

@@ -2,8 +2,7 @@
 #include <task/task.h>
 #include <task/signal.h>
 
-uint32_t epoll_to_poll_comp(uint32_t epoll_events)
-{
+uint32_t epoll_to_poll_comp(uint32_t epoll_events) {
     uint32_t poll_events = 0;
 
     if (epoll_events & EPOLLIN)
@@ -22,8 +21,7 @@ uint32_t epoll_to_poll_comp(uint32_t epoll_events)
     return poll_events;
 }
 
-uint32_t poll_to_epoll_comp(uint32_t poll_events)
-{
+uint32_t poll_to_epoll_comp(uint32_t poll_events) {
     uint32_t epoll_events = 0;
 
     if (poll_events & POLLIN)
@@ -42,25 +40,21 @@ uint32_t poll_to_epoll_comp(uint32_t poll_events)
     return epoll_events;
 }
 
-size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout)
-{
+size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
     int ready = 0;
     uint64_t start_time = nanoTime();
 
     bool sigexit = false;
 
-    for (int i = 0; i < nfds; i++)
-    {
+    for (int i = 0; i < nfds; i++) {
         fds[i].revents = 0;
     }
 
-    do
-    {
+    do {
         // 检查每个文件描述符
-        for (int i = 0; i < nfds; i++)
-        {
-            if (fds[i].fd < 0 || fds[i].fd > MAX_FD_NUM || !current_task->fd_info->fds[fds[i].fd])
-            {
+        for (int i = 0; i < nfds; i++) {
+            if (fds[i].fd < 0 || fds[i].fd > MAX_FD_NUM ||
+                !current_task->fd_info->fds[fds[i].fd]) {
                 fds[i].revents |= POLLNVAL;
                 continue;
             }
@@ -68,9 +62,9 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout)
 
             arch_disable_interrupt();
 
-            int revents = epoll_to_poll_comp(vfs_poll(node, poll_to_epoll_comp(fds[i].events)));
-            if (revents > 0)
-            {
+            int revents = epoll_to_poll_comp(
+                vfs_poll(node, poll_to_epoll_comp(fds[i].events)));
+            if (revents > 0) {
                 fds[i].revents = revents;
                 ready++;
             }
@@ -82,7 +76,8 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout)
             break;
 
         arch_yield();
-    } while (timeout != 0 && ((int)timeout == -1 || (nanoTime() - start_time) < timeout));
+    } while (timeout != 0 &&
+             ((int)timeout == -1 || (nanoTime() - start_time) < timeout));
 
     if (!ready && sigexit)
         return (size_t)-EINTR;
@@ -90,33 +85,30 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout)
     return ready;
 }
 
-uint64_t sys_ppoll(struct pollfd *fds, uint64_t nfds, const struct timespec *timeout_ts, const sigset_t *sigmask, size_t sigsetsize)
-{
-    if (!fds || check_user_overflow((uint64_t)fds, nfds * sizeof(struct pollfd)))
-    {
+uint64_t sys_ppoll(struct pollfd *fds, uint64_t nfds,
+                   const struct timespec *timeout_ts, const sigset_t *sigmask,
+                   size_t sigsetsize) {
+    if (!fds ||
+        check_user_overflow((uint64_t)fds, nfds * sizeof(struct pollfd))) {
         return (uint64_t)-EFAULT;
     }
-    if (sigmask && sigsetsize < sizeof(sigset_t))
-    {
+    if (sigmask && sigsetsize < sizeof(sigset_t)) {
         return (uint64_t)-EINVAL;
     }
 
     sigset_t origmask;
-    if (sigmask)
-    {
+    if (sigmask) {
         sys_ssetmask(SIG_SETMASK, sigmask, &origmask);
     }
 
     int timeout = -1;
-    if (timeout_ts)
-    {
+    if (timeout_ts) {
         timeout = timeout_ts->tv_sec * 1000 + timeout_ts->tv_nsec / 1000000;
     }
 
     uint64_t ret = sys_poll(fds, nfds, timeout);
 
-    if (sigmask)
-    {
+    if (sigmask) {
         sys_ssetmask(SIG_SETMASK, &origmask, NULL);
     }
 
@@ -124,10 +116,9 @@ uint64_t sys_ppoll(struct pollfd *fds, uint64_t nfds, const struct timespec *tim
 }
 
 static inline struct pollfd *select_add(struct pollfd **comp, size_t *compIndex,
-                                        size_t *complength, int fd, int events)
-{
-    if ((*compIndex + 1) * sizeof(struct pollfd) >= *complength)
-    {
+                                        size_t *complength, int fd,
+                                        int events) {
+    if ((*compIndex + 1) * sizeof(struct pollfd) >= *complength) {
         *complength *= 2;
         *comp = realloc(*comp, *complength);
     }
@@ -140,60 +131,50 @@ static inline struct pollfd *select_add(struct pollfd **comp, size_t *compIndex,
 }
 
 // i hate this obsolete system call and do not plan on making it efficient
-static inline bool select_bitmap(uint8_t *map, int index)
-{
+static inline bool select_bitmap(uint8_t *map, int index) {
     int div = index / 8;
     int mod = index % 8;
     return map[div] & (1 << mod);
 }
 
-static inline void select_bitmap_set(uint8_t *map, int index)
-{
+static inline void select_bitmap_set(uint8_t *map, int index) {
     int div = index / 8;
     int mod = index % 8;
     map[div] |= 1 << mod;
 }
 
 size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except,
-                  struct timeval *timeout)
-{
-    if (read && check_user_overflow((uint64_t)read, sizeof(struct pollfd)))
-    {
+                  struct timeval *timeout) {
+    if (read && check_user_overflow((uint64_t)read, sizeof(struct pollfd))) {
         return (size_t)-EFAULT;
     }
-    if (write && check_user_overflow((uint64_t)write, sizeof(struct pollfd)))
-    {
+    if (write && check_user_overflow((uint64_t)write, sizeof(struct pollfd))) {
         return (size_t)-EFAULT;
     }
-    if (except && check_user_overflow((uint64_t)except, sizeof(struct pollfd)))
-    {
+    if (except &&
+        check_user_overflow((uint64_t)except, sizeof(struct pollfd))) {
         return (size_t)-EFAULT;
     }
     size_t complength = sizeof(struct pollfd) * nfds * 3;
     struct pollfd *comp = (struct pollfd *)malloc(complength);
     size_t compIndex = 0;
-    if (read)
-    {
-        for (int i = 0; i < nfds; i++)
-        {
+    if (read) {
+        for (int i = 0; i < nfds; i++) {
             if (select_bitmap(read, i))
                 select_add(&comp, &compIndex, &complength, i, POLLIN);
         }
     }
-    if (write)
-    {
-        for (int i = 0; i < nfds; i++)
-        {
+    if (write) {
+        for (int i = 0; i < nfds; i++) {
             if (select_bitmap(write, i))
                 select_add(&comp, &compIndex, &complength, i, POLLOUT);
         }
     }
-    if (except)
-    {
-        for (int i = 0; i < nfds; i++)
-        {
+    if (except) {
+        for (int i = 0; i < nfds; i++) {
             if (select_bitmap(except, i))
-                select_add(&comp, &compIndex, &complength, i, POLLPRI | POLLERR);
+                select_add(&comp, &compIndex, &complength, i,
+                           POLLPRI | POLLERR);
         }
     }
 
@@ -205,32 +186,30 @@ size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except,
     if (except)
         memset(except, 0, toZero);
 
-    size_t res = sys_poll(comp, compIndex, timeout ? (timeout->tv_sec * 1000 + (timeout->tv_usec + 1000) / 1000) : -1);
+    size_t res = sys_poll(
+        comp, compIndex,
+        timeout ? (timeout->tv_sec * 1000 + (timeout->tv_usec + 1000) / 1000)
+                : -1);
 
-    if ((int64_t)res < 0)
-    {
+    if ((int64_t)res < 0) {
         free(comp);
         return res;
     }
 
     size_t verify = 0;
-    for (size_t i = 0; i < compIndex; i++)
-    {
+    for (size_t i = 0; i < compIndex; i++) {
         if (!comp[i].revents)
             continue;
-        if (comp[i].events & POLLIN && comp[i].revents & POLLIN)
-        {
+        if (comp[i].events & POLLIN && comp[i].revents & POLLIN) {
             select_bitmap_set(read, comp[i].fd);
             verify++;
         }
-        if (comp[i].events & POLLOUT && comp[i].revents & POLLOUT)
-        {
+        if (comp[i].events & POLLOUT && comp[i].revents & POLLOUT) {
             select_bitmap_set(write, comp[i].fd);
             verify++;
         }
         if ((comp[i].events & POLLPRI && comp[i].revents & POLLPRI) ||
-            (comp[i].events & POLLERR && comp[i].revents & POLLERR))
-        {
+            (comp[i].events & POLLERR && comp[i].revents & POLLERR)) {
             select_bitmap_set(except, comp[i].fd);
             verify++;
         }
@@ -240,18 +219,19 @@ size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except,
     return verify;
 }
 
-uint64_t sys_pselect6(uint64_t nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timespec *timeout, WeirdPselect6 *weirdPselect6)
-{
-    if (readfds && check_user_overflow((uint64_t)readfds, sizeof(fd_set) * nfds))
-    {
+uint64_t sys_pselect6(uint64_t nfds, fd_set *readfds, fd_set *writefds,
+                      fd_set *exceptfds, struct timespec *timeout,
+                      WeirdPselect6 *weirdPselect6) {
+    if (readfds &&
+        check_user_overflow((uint64_t)readfds, sizeof(fd_set) * nfds)) {
         return (size_t)-EFAULT;
     }
-    if (writefds && check_user_overflow((uint64_t)writefds, sizeof(fd_set) * nfds))
-    {
+    if (writefds &&
+        check_user_overflow((uint64_t)writefds, sizeof(fd_set) * nfds)) {
         return (size_t)-EFAULT;
     }
-    if (exceptfds && check_user_overflow((uint64_t)exceptfds, sizeof(fd_set) * nfds))
-    {
+    if (exceptfds &&
+        check_user_overflow((uint64_t)exceptfds, sizeof(fd_set) * nfds)) {
         return (size_t)-EFAULT;
     }
     size_t sigsetsize = weirdPselect6->ss_len;
@@ -262,15 +242,13 @@ uint64_t sys_pselect6(uint64_t nfds, fd_set *readfds, fd_set *writefds, fd_set *
         sys_ssetmask(SIG_SETMASK, sigmask, &origmask);
 
     struct timeval timeoutConv;
-    if (timeout)
-    {
-        timeoutConv = (struct timeval){.tv_sec = timeout->tv_sec,
-                                       .tv_usec = (timeout->tv_nsec + 1000) / 1000};
-    }
-    else
-    {
-        timeoutConv = (struct timeval){.tv_sec = (uint64_t)-1,
-                                       .tv_usec = (uint64_t)-1};
+    if (timeout) {
+        timeoutConv =
+            (struct timeval){.tv_sec = timeout->tv_sec,
+                             .tv_usec = (timeout->tv_nsec + 1000) / 1000};
+    } else {
+        timeoutConv =
+            (struct timeval){.tv_sec = (uint64_t)-1, .tv_usec = (uint64_t)-1};
     }
 
     size_t ret = sys_select(nfds, (uint8_t *)readfds, (uint8_t *)writefds,

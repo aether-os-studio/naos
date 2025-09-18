@@ -7,8 +7,8 @@
  * Copyright (c) 2007-2009 Frédéric Bernon, Simon Goldschmidt
  * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without modification,
- * are permitted provided that the following conditions are met:
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
  *
  * 1. Redistributions of source code must retain the above copyright notice,
  *    this list of conditions and the following disclaimer.
@@ -20,14 +20,14 @@
  *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
  * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
- * SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
- * OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
- * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
- * OF SUCH DAMAGE.
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
+ * EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  * This file is part of the lwIP TCP/IP stack.
  *
@@ -53,12 +53,12 @@
  * NTP timestamps instead.
  */
 #if !defined SNTP_SET_SYSTEM_TIME || defined __DOXYGEN__
-#define SNTP_SET_SYSTEM_TIME(sec)   LWIP_UNUSED_ARG(sec)
+#define SNTP_SET_SYSTEM_TIME(sec) LWIP_UNUSED_ARG(sec)
 #endif
 
 /** The maximum number of SNTP servers that can be set */
 #if !defined SNTP_MAX_SERVERS || defined __DOXYGEN__
-#define SNTP_MAX_SERVERS           LWIP_DHCP_MAX_NTP_SERVERS
+#define SNTP_MAX_SERVERS LWIP_DHCP_MAX_NTP_SERVERS
 #endif
 
 /** Set this to 1 to implement the callback function called by dhcp when
@@ -73,24 +73,25 @@
 #define SNTP_GET_SERVERS_FROM_DHCPV6 LWIP_DHCP6_GET_NTP_SRV
 #endif
 
-/** Set this to 1 to support DNS names (or IP address strings) to set sntp servers
- * One server address/name can be defined as default if SNTP_SERVER_DNS == 1:
+/** Set this to 1 to support DNS names (or IP address strings) to set sntp
+ * servers One server address/name can be defined as default if SNTP_SERVER_DNS
+ * == 1:
  * \#define SNTP_SERVER_ADDRESS "pool.ntp.org"
  */
 #if !defined SNTP_SERVER_DNS || defined __DOXYGEN__
-#define SNTP_SERVER_DNS            0
+#define SNTP_SERVER_DNS 0
 #endif
 
 /**
  * SNTP_DEBUG: Enable debugging for SNTP.
  */
 #if !defined SNTP_DEBUG || defined __DOXYGEN__
-#define SNTP_DEBUG                  LWIP_DBG_OFF
+#define SNTP_DEBUG LWIP_DBG_OFF
 #endif
 
 /** SNTP server port */
 #if !defined SNTP_PORT || defined __DOXYGEN__
-#define SNTP_PORT                   LWIP_IANA_PORT_SNTP
+#define SNTP_PORT LWIP_IANA_PORT_SNTP
 #endif
 
 /** Sanity check:
@@ -102,13 +103,13 @@
  *        sent to the server (to ensure response to older request).
  * - >= 3 @todo: discard reply if any of the VN, Stratum, or Transmit Timestamp
  *        fields is 0 or the Mode field is not 4 (unicast) or 5 (broadcast).
- * - >= 4 @todo: to check that the Root Delay and Root Dispersion fields are each
- *        greater than or equal to 0 and less than infinity, where infinity is
+ * - >= 4 @todo: to check that the Root Delay and Root Dispersion fields are
+ * each greater than or equal to 0 and less than infinity, where infinity is
  *        currently a cozy number like one second. This check avoids using a
  *        server whose synchronization source has expired for a very long time.
  */
 #if !defined SNTP_CHECK_RESPONSE || defined __DOXYGEN__
-#define SNTP_CHECK_RESPONSE         0
+#define SNTP_CHECK_RESPONSE 0
 #endif
 
 /** Enable round-trip delay compensation.
@@ -132,7 +133,7 @@
  * memory.
  */
 #if !defined SNTP_COMP_ROUNDTRIP || defined __DOXYGEN__
-#define SNTP_COMP_ROUNDTRIP         0
+#define SNTP_COMP_ROUNDTRIP 0
 #endif
 
 /** According to the RFC, this shall be a random delay
@@ -143,9 +144,9 @@
  */
 #if !defined SNTP_STARTUP_DELAY || defined __DOXYGEN__
 #ifdef LWIP_RAND
-#define SNTP_STARTUP_DELAY          1
+#define SNTP_STARTUP_DELAY 1
 #else
-#define SNTP_STARTUP_DELAY          0
+#define SNTP_STARTUP_DELAY 0
 #endif
 #endif
 
@@ -153,22 +154,23 @@
  * to a function (including the brackets) and define SNTP_STARTUP_DELAY to 1.
  */
 #if !defined SNTP_STARTUP_DELAY_FUNC || defined __DOXYGEN__
-#define SNTP_STARTUP_DELAY_FUNC     (LWIP_RAND() % 5000)
+#define SNTP_STARTUP_DELAY_FUNC (LWIP_RAND() % 5000)
 #endif
 
 /** SNTP receive timeout - in milliseconds
  * Also used as retry timeout - this shouldn't be too low.
- * Default is 15 seconds. Must not be below 15 seconds by specification (i.e. 15000)
+ * Default is 15 seconds. Must not be below 15 seconds by specification (i.e.
+ * 15000)
  */
 #if !defined SNTP_RECV_TIMEOUT || defined __DOXYGEN__
-#define SNTP_RECV_TIMEOUT           15000
+#define SNTP_RECV_TIMEOUT 15000
 #endif
 
 /** SNTP update delay - in milliseconds
  * Default is 1 hour. Must not be below 60 seconds by specification (i.e. 60000)
  */
 #if !defined SNTP_UPDATE_DELAY || defined __DOXYGEN__
-#define SNTP_UPDATE_DELAY           3600000
+#define SNTP_UPDATE_DELAY 3600000
 #endif
 
 /** SNTP macro to get system time, used with SNTP_CHECK_RESPONSE >= 2
@@ -178,7 +180,11 @@
  * work with native NTP timestamps instead.
  */
 #if !defined SNTP_GET_SYSTEM_TIME || defined __DOXYGEN__
-#define SNTP_GET_SYSTEM_TIME(sec, us)     do { (sec) = 0; (us) = 0; } while(0)
+#define SNTP_GET_SYSTEM_TIME(sec, us)                                          \
+    do {                                                                       \
+        (sec) = 0;                                                             \
+        (us) = 0;                                                              \
+    } while (0)
 #endif
 
 /** Default retry timeout (in milliseconds) if the response
@@ -186,19 +192,19 @@
  * This is doubled with each retry until SNTP_RETRY_TIMEOUT_MAX is reached.
  */
 #if !defined SNTP_RETRY_TIMEOUT || defined __DOXYGEN__
-#define SNTP_RETRY_TIMEOUT          SNTP_RECV_TIMEOUT
+#define SNTP_RETRY_TIMEOUT SNTP_RECV_TIMEOUT
 #endif
 
 /** Maximum retry timeout (in milliseconds). */
 #if !defined SNTP_RETRY_TIMEOUT_MAX || defined __DOXYGEN__
-#define SNTP_RETRY_TIMEOUT_MAX      (SNTP_RETRY_TIMEOUT * 10)
+#define SNTP_RETRY_TIMEOUT_MAX (SNTP_RETRY_TIMEOUT * 10)
 #endif
 
 /** Increase retry timeout with every retry sent
  * Default is on to conform to RFC.
  */
 #if !defined SNTP_RETRY_TIMEOUT_EXP || defined __DOXYGEN__
-#define SNTP_RETRY_TIMEOUT_EXP      1
+#define SNTP_RETRY_TIMEOUT_EXP 1
 #endif
 
 /** Keep a reachability shift register per server

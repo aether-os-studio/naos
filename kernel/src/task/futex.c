@@ -4,18 +4,15 @@
 spinlock_t futex_lock = {0};
 struct futex_wait futex_wait_list = {NULL, NULL, NULL, 0};
 
-uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *uaddr2, int val3)
-{
-    switch (op)
-    {
+uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
+                   int *uaddr2, int val3) {
+    switch (op) {
     case FUTEX_WAIT:
-    case FUTEX_WAIT_PRIVATE:
-    {
+    case FUTEX_WAIT_PRIVATE: {
         spin_lock(&futex_lock);
 
         int current = *(int *)uaddr;
-        if (current != val)
-        {
+        if (current != val) {
             spin_unlock(&futex_lock);
             return -EWOULDBLOCK;
         }
@@ -34,8 +31,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, 
         spin_unlock(&futex_lock);
 
         int tmo = -1;
-        if (timeout)
-        {
+        if (timeout) {
             tmo = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000;
         }
         task_block(current_task, TASK_BLOCKING, tmo);
@@ -43,33 +39,26 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, 
         return 0;
     }
     case FUTEX_WAKE:
-    case FUTEX_WAKE_PRIVATE:
-    {
+    case FUTEX_WAKE_PRIVATE: {
         spin_lock(&futex_lock);
 
         struct futex_wait *curr = &futex_wait_list;
         struct futex_wait *prev = NULL;
         int count = 0;
-        while (curr)
-        {
+        while (curr) {
             bool found = false;
 
-            if (curr->uaddr && curr->uaddr == uaddr && ++count <= val)
-            {
+            if (curr->uaddr && curr->uaddr == uaddr && ++count <= val) {
                 task_unblock(curr->task, EOK);
-                if (prev)
-                {
+                if (prev) {
                     prev->next = curr->next;
                 }
                 free(curr);
                 found = true;
             }
-            if (found)
-            {
+            if (found) {
                 curr = prev->next;
-            }
-            else
-            {
+            } else {
                 prev = curr;
                 curr = curr->next;
             }
@@ -79,13 +68,11 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, 
         return count;
     }
     case FUTEX_WAIT_BITSET:
-    case FUTEX_WAIT_BITSET_PRIVATE:
-    {
+    case FUTEX_WAIT_BITSET_PRIVATE: {
         spin_lock(&futex_lock);
 
         int current = *(int *)uaddr;
-        if (current != val)
-        {
+        if (current != val) {
             spin_unlock(&futex_lock);
             return -EWOULDBLOCK;
         }
@@ -111,33 +98,27 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, 
         return 0;
     }
     case FUTEX_WAKE_BITSET:
-    case FUTEX_WAKE_BITSET_PRIVATE:
-    {
+    case FUTEX_WAKE_BITSET_PRIVATE: {
         spin_lock(&futex_lock);
 
         struct futex_wait *curr = &futex_wait_list;
         struct futex_wait *prev = NULL;
         int count = 0;
-        while (curr)
-        {
+        while (curr) {
             bool found = false;
 
-            if (curr->uaddr && curr->uaddr == uaddr && (curr->bitset & val3) && ++count <= val)
-            {
+            if (curr->uaddr && curr->uaddr == uaddr && (curr->bitset & val3) &&
+                ++count <= val) {
                 task_unblock(curr->task, EOK);
-                if (prev)
-                {
+                if (prev) {
                     prev->next = curr->next;
                 }
                 free(curr);
                 found = true;
             }
-            if (found)
-            {
+            if (found) {
                 curr = prev->next;
-            }
-            else
-            {
+            } else {
                 prev = curr;
                 curr = curr->next;
             }
@@ -147,16 +128,12 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, 
         return count;
     }
     case FUTEX_LOCK_PI:
-    case FUTEX_LOCK_PI_PRIVATE:
-    {
+    case FUTEX_LOCK_PI_PRIVATE: {
     retry:
-        if ((*uaddr & INT32_MAX) == 0)
-        {
+        if ((*uaddr & INT32_MAX) == 0) {
             *uaddr = current_task->pid;
             return 0;
-        }
-        else
-        {
+        } else {
             struct futex_wait *wait = malloc(sizeof(struct futex_wait));
             wait->uaddr = uaddr;
             wait->task = current_task;
@@ -179,10 +156,8 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, 
         }
     }
     case FUTEX_UNLOCK_PI:
-    case FUTEX_UNLOCK_PI_PRIVATE:
-    {
-        if ((*uaddr & INT32_MAX) != current_task->pid)
-        {
+    case FUTEX_UNLOCK_PI_PRIVATE: {
+        if ((*uaddr & INT32_MAX) != current_task->pid) {
             return -EPERM;
         }
         *uaddr = 0;
@@ -190,26 +165,20 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, 
         struct futex_wait *curr = &futex_wait_list;
         struct futex_wait *prev = NULL;
         int count = 0;
-        while (curr)
-        {
+        while (curr) {
             bool found = false;
 
-            if (curr->uaddr && curr->uaddr == uaddr && ++count <= 1)
-            {
+            if (curr->uaddr && curr->uaddr == uaddr && ++count <= 1) {
                 task_unblock(curr->task, EOK);
-                if (prev)
-                {
+                if (prev) {
                     prev->next = curr->next;
                 }
                 free(curr);
                 found = true;
             }
-            if (found)
-            {
+            if (found) {
                 curr = prev->next;
-            }
-            else
-            {
+            } else {
                 prev = curr;
                 curr = curr->next;
             }

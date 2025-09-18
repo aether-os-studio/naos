@@ -7,20 +7,17 @@
 #include <libs/aether/block.h>
 
 // Virtio block device configuration structure
-typedef struct virtio_blk_config
-{
+typedef struct virtio_blk_config {
     uint64_t capacity;
     uint32_t size_max;
     uint32_t seg_max;
-    struct virtio_blk_geometry
-    {
+    struct virtio_blk_geometry {
         uint16_t cylinders;
         uint8_t heads;
         uint8_t sectors;
     } geometry;
     uint32_t blk_size;
-    struct virtio_blk_topology
-    {
+    struct virtio_blk_topology {
         // Number of logical blocks per physical block (log2)
         uint8_t physical_block_exp;
         // Offset of first aligned logical block
@@ -42,8 +39,7 @@ typedef struct virtio_blk_config
 } virtio_blk_config_t;
 
 // Virtio block request header
-typedef struct virtio_blk_req
-{
+typedef struct virtio_blk_req {
     uint32_t type;
     uint32_t reserved;
     uint64_t sector;
@@ -62,8 +58,7 @@ typedef struct virtio_blk_req
 #define VIRTIO_BLK_S_UNSUPP 2
 
 // Virtio block device structure
-typedef struct virtio_blk_device
-{
+typedef struct virtio_blk_device {
     virtio_driver_t *driver;
     uint64_t capacity;
     uint32_t block_size;
@@ -76,8 +71,10 @@ typedef struct virtio_blk_device
 
 // Function declarations
 int virtio_blk_init(virtio_driver_t *driver);
-int virtio_blk_read(virtio_blk_device_t *blk_dev, uint64_t sector, void *buffer, uint32_t count);
-int virtio_blk_write(virtio_blk_device_t *blk_dev, uint64_t sector, const void *buffer, uint32_t count);
+int virtio_blk_read(virtio_blk_device_t *blk_dev, uint64_t sector, void *buffer,
+                    uint32_t count);
+int virtio_blk_write(virtio_blk_device_t *blk_dev, uint64_t sector,
+                     const void *buffer, uint32_t count);
 int virtio_blk_flush(virtio_blk_device_t *blk_dev);
 virtio_blk_device_t *virtio_blk_get_device(uint32_t index);
 uint32_t virtio_blk_get_device_count(void);

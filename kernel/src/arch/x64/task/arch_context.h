@@ -10,8 +10,7 @@
 struct task;
 typedef struct task task_t;
 
-typedef struct fpu_context
-{
+typedef struct fpu_context {
     uint16_t fcw;
     uint16_t fsw;
     uint16_t ftw;
@@ -25,8 +24,7 @@ typedef struct fpu_context
     uint64_t rest[12];
 } __attribute__((aligned(16))) fpu_context_t;
 
-struct fpstate
-{
+struct fpstate {
     uint16_t cwd;
     uint16_t swd;
     uint16_t twd; /* Note this is not the same as the 32bit/x87/FSAVE twd */
@@ -40,8 +38,7 @@ struct fpstate
     uint32_t reserved2[24];
 } __attribute__((packed));
 
-typedef struct arch_context
-{
+typedef struct arch_context {
     uint64_t fs;
     uint64_t gs;
     uint64_t fsbase;
@@ -52,8 +49,7 @@ typedef struct arch_context
     bool dead;
 } arch_context_t;
 
-typedef struct arch_signal_frame
-{
+typedef struct arch_signal_frame {
     uint64_t r8;
     uint64_t r9;
     uint64_t r10;
@@ -83,15 +79,20 @@ typedef struct arch_signal_frame
     struct fpstate *fpstate; /* zero when no FPU context */
 } __attribute__((packed)) arch_signal_frame_t;
 
-void arch_context_init(arch_context_t *context, uint64_t page_table_dir, uint64_t entry, uint64_t stack, bool user_mode, uint64_t initial_arg);
-void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack, uint64_t clone_flags);
+void arch_context_init(arch_context_t *context, uint64_t page_table_dir,
+                       uint64_t entry, uint64_t stack, bool user_mode,
+                       uint64_t initial_arg);
+void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
+                       uint64_t clone_flags);
 void arch_context_free(arch_context_t *context);
 task_t *arch_get_current();
 void arch_set_current(task_t *current);
 
-void arch_switch_with_context(arch_context_t *prev, arch_context_t *next, uint64_t kernel_stack);
+void arch_switch_with_context(arch_context_t *prev, arch_context_t *next,
+                              uint64_t kernel_stack);
 void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next);
-void arch_context_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack);
+void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
+                               uint64_t stack);
 void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack);
 
 void arch_yield();

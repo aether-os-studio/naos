@@ -241,8 +241,9 @@
 #define KEY_BRIGHTNESSUP 225
 #define KEY_MEDIA 226
 
-#define KEY_SWITCHVIDEOMODE 227 /* Cycle between available video \
-                       outputs (Monitor/LCD/TV-out/etc) */
+#define KEY_SWITCHVIDEOMODE                                                    \
+    227 /* Cycle between available video                                       \
+outputs (Monitor/LCD/TV-out/etc) */
 #define KEY_KBDILLUMTOGGLE 228
 #define KEY_KBDILLUMDOWN 229
 #define KEY_KBDILLUMUP 230
@@ -264,9 +265,10 @@
 #define KEY_VIDEO_NEXT 241       /* drive next video source */
 #define KEY_VIDEO_PREV 242       /* drive previous video source */
 #define KEY_BRIGHTNESS_CYCLE 243 /* brightness up, after max is min */
-#define KEY_BRIGHTNESS_AUTO 244  /* Set Auto Brightness: manual \
-                       brightness control is off,               \
-                       rely on ambient */
+#define KEY_BRIGHTNESS_AUTO                                                    \
+    244 /* Set Auto Brightness: manual                                         \
+brightness control is off,                                                     \
+rely on ambient */
 #define KEY_BRIGHTNESS_ZERO KEY_BRIGHTNESS_AUTO
 #define KEY_DISPLAY_OFF 245 /* display device to off state */
 
@@ -378,8 +380,7 @@ extern const uint8_t evdevTable[89];
 #define CHARACTER_ENTER '\n'
 #define CHARACTER_BACK '\b'
 
-enum
-{
+enum {
     KEY_BUTTON_UP = 0x81,
     KEY_BUTTON_DOWN = 0x82,
     KEY_BUTTON_LEFT = 0x83,
@@ -387,4 +388,5 @@ enum
 };
 
 void kb_evdev_generate(uint8_t raw, uint8_t raw1, uint8_t raw2);
-char handle_kb_event(uint8_t scan_code, uint8_t scan_code_1, uint8_t scan_code_2);
+char handle_kb_event(uint8_t scan_code, uint8_t scan_code_1,
+                     uint8_t scan_code_2);

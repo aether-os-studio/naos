@@ -414,8 +414,7 @@
 #define FB_VISUAL_STATIC_PSEUDOCOLOR 5 /* Pseudo color readonly */
 #define FB_VISUAL_FOURCC 6             /* Visual identified by a V4L2 FOURCC */
 
-struct fb_fix_screeninfo
-{
+struct fb_fix_screeninfo {
     char id[16];           /* identification string eg "TT Builtin" */
     uint64_t smem_start;   /* Start of frame buffer mem */
                            /* (physical address) */
@@ -436,16 +435,14 @@ struct fb_fix_screeninfo
     uint16_t reserved[2];  /* reserved for future compatibility */
 };
 
-struct fb_bitfield
-{
+struct fb_bitfield {
     uint32_t offset;    /* beginning of bitfield	*/
     uint32_t length;    /* length of bitfield		*/
     uint32_t msb_right; /* != 0 : Most significant bit is */
                         /* right */
 };
 
-struct fb_var_screeninfo
-{
+struct fb_var_screeninfo {
     uint32_t xres; /* visible resolution		*/
     uint32_t yres;
     uint32_t xres_virtual; /* virtual resolution		*/

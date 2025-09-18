@@ -7,38 +7,33 @@
 #define MAX_SOCKETS 256
 #define BUFFER_SIZE 16 * 1024 * 1024
 
-typedef enum
-{
+typedef enum {
     SOCKET_TYPE_UNUSED,
     SOCKET_TYPE_UNCONNECTED,
     SOCKET_TYPE_LISTENING,
     SOCKET_TYPE_CONNECTED
 } socket_state_t;
 
-struct linger
-{
+struct linger {
     int l_onoff;  // linger active
     int l_linger; // linger time (seconds)
 };
 
 #define IFNAMSIZ 16
 
-struct sock_filter
-{
+struct sock_filter {
     uint16_t code;
     uint8_t jt;
     uint8_t jf;
     uint32_t k;
 };
 
-struct sock_fprog
-{
+struct sock_fprog {
     uint16_t len;
     struct sock_filter *filter;
 };
 
-struct ucred
-{
+struct ucred {
     int32_t pid;
     uint32_t uid;
     uint32_t gid;
@@ -47,8 +42,7 @@ struct ucred
 #define SCM_RIGHTS 0x01
 #define SCM_CREDENTIALS 0x02
 
-typedef struct unix_socket_pair
-{
+typedef struct unix_socket_pair {
     spinlock_t lock;
 
     // accept()/server
@@ -89,8 +83,7 @@ typedef struct unix_socket_pair
 
 #define MAX_CONNECTIONS 16
 
-typedef struct socket
-{
+typedef struct socket {
     struct socket *next;
 
     int domain;
@@ -117,7 +110,8 @@ typedef struct socket
 
 bool sys_socket_close(void *current);
 
-int socket_getsockname(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen);
+int socket_getsockname(uint64_t fd, struct sockaddr_un *addr,
+                       socklen_t *addrlen);
 
 // 套接字层级
 #define SOL_SOCKET 1
@@ -272,8 +266,7 @@ int socket_getsockname(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen
 #define MSG_FASTOPEN 0x20000000
 #define MSG_CMSG_CLOEXEC 0x40000000
 
-struct msghdr
-{
+struct msghdr {
     void *msg_name;        /* ptr to socket address structure */
     int msg_namelen;       /* size of socket address structure */
     struct iovec *msg_iov; /* scatter/gather array */
@@ -283,25 +276,32 @@ struct msghdr
     uint32_t msg_flags;    /* flags on received message */
 };
 
-struct cmsghdr
-{
+struct cmsghdr {
     uint64_t cmsg_len;
     int cmsg_level;
     int cmsg_type;
 };
 
-#define __CMSG_LEN(cmsg) (((cmsg)->cmsg_len + sizeof(long) - 1) & ~(long)(sizeof(long) - 1))
+#define __CMSG_LEN(cmsg)                                                       \
+    (((cmsg)->cmsg_len + sizeof(long) - 1) & ~(long)(sizeof(long) - 1))
 #define __CMSG_NEXT(cmsg) ((unsigned char *)(cmsg) + __CMSG_LEN(cmsg))
-#define __MHDR_END(mhdr) ((unsigned char *)(mhdr)->msg_control + (mhdr)->msg_controllen)
+#define __MHDR_END(mhdr)                                                       \
+    ((unsigned char *)(mhdr)->msg_control + (mhdr)->msg_controllen)
 
 #define CMSG_DATA(cmsg) ((unsigned char *)(((struct cmsghdr *)(cmsg)) + 1))
-#define CMSG_NXTHDR(mhdr, cmsg) ((cmsg)->cmsg_len < sizeof(struct cmsghdr) ||                                                    \
-                                         __CMSG_LEN(cmsg) + sizeof(struct cmsghdr) >= __MHDR_END(mhdr) - (unsigned char *)(cmsg) \
-                                     ? 0                                                                                         \
-                                     : (struct cmsghdr *)__CMSG_NEXT(cmsg))
-#define CMSG_FIRSTHDR(mhdr) ((size_t)(mhdr)->msg_controllen >= sizeof(struct cmsghdr) ? (struct cmsghdr *)(mhdr)->msg_control : (struct cmsghdr *)0)
+#define CMSG_NXTHDR(mhdr, cmsg)                                                \
+    ((cmsg)->cmsg_len < sizeof(struct cmsghdr) ||                              \
+             __CMSG_LEN(cmsg) + sizeof(struct cmsghdr) >=                      \
+                 __MHDR_END(mhdr) - (unsigned char *)(cmsg)                    \
+         ? 0                                                                   \
+         : (struct cmsghdr *)__CMSG_NEXT(cmsg))
+#define CMSG_FIRSTHDR(mhdr)                                                    \
+    ((size_t)(mhdr)->msg_controllen >= sizeof(struct cmsghdr)                  \
+         ? (struct cmsghdr *)(mhdr)->msg_control                               \
+         : (struct cmsghdr *)0)
 
-#define CMSG_ALIGN(len) (((len) + sizeof(size_t) - 1) & (size_t)~(sizeof(size_t) - 1))
+#define CMSG_ALIGN(len)                                                        \
+    (((len) + sizeof(size_t) - 1) & (size_t)~(sizeof(size_t) - 1))
 #define CMSG_SPACE(len) (CMSG_ALIGN(len) + CMSG_ALIGN(sizeof(struct cmsghdr)))
 #define CMSG_LEN(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
 
@@ -310,17 +310,23 @@ extern void socket_on_exit_task(uint64_t pid);
 extern void socket_on_dup_file(uint64_t fd, uint64_t newfd);
 
 uint64_t unix_socket_shutdown(uint64_t fd, uint64_t how);
-size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr, uint32_t *len);
+size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr,
+                               uint32_t *len);
 int socket_socket(int domain, int type, int protocol);
 int unix_socket_pair(int type, int protocol, int *sv);
 int socket_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen);
 int socket_listen(uint64_t fd, int backlog);
-int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen, uint64_t flags);
-int socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen);
+int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
+                  uint64_t flags);
+int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
+                   socklen_t addrlen);
 
-size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, const void *optval, socklen_t *optlen);
-size_t unix_socket_setsockopt(uint64_t fd, int level, int optname, const void *optval, socklen_t optlen);
-size_t unix_socket_getpeername(uint64_t fdet, struct sockaddr_un *addr, socklen_t *len);
+size_t unix_socket_getsockopt(uint64_t fd, int level, int optname,
+                              const void *optval, socklen_t *optlen);
+size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
+                              const void *optval, socklen_t optlen);
+size_t unix_socket_getpeername(uint64_t fdet, struct sockaddr_un *addr,
+                               socklen_t *len);
 
 extern int unix_socket_fsid;
 extern int unix_accept_fsid;

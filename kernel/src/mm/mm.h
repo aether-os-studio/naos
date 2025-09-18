@@ -13,8 +13,7 @@
 #define PROT_WRITE 0x02
 #define PROT_EXEC 0x04
 
-typedef struct
-{
+typedef struct {
     Bitmap bitmap;
     size_t origin_frames;
     size_t usable_frames;
@@ -22,8 +21,7 @@ typedef struct
 
 extern FrameAllocator frame_allocator;
 
-typedef struct task_mm_info
-{
+typedef struct task_mm_info {
     uint64_t page_table_addr;
     int ref_count;
 } task_mm_info_t;
@@ -33,11 +31,14 @@ void frame_init();
 void free_frames(uint64_t addr, uint64_t size);
 uint64_t alloc_frames(size_t count);
 
-void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t size, uint64_t flags);
-void map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr, uint64_t size, uint64_t flags);
+void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
+                    uint64_t size, uint64_t flags);
+void map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
+                            uint64_t size, uint64_t flags);
 void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size);
 uint64_t map_change_attribute(uint64_t *pml4, uint64_t vaddr, uint64_t flags);
-uint64_t map_change_attribute_range(uint64_t *pgdir, uint64_t vaddr, uint64_t len, uint64_t flags);
+uint64_t map_change_attribute_range(uint64_t *pgdir, uint64_t vaddr,
+                                    uint64_t len, uint64_t flags);
 
 void heap_init();
 
@@ -46,13 +47,13 @@ void *calloc(size_t num, size_t size);
 void *realloc(void *ptr, size_t size);
 void free(void *ptr);
 
-static inline void *alloc_frames_bytes(uint64_t bytes)
-{
-    uint64_t addr = phys_to_virt(alloc_frames((bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE));
+static inline void *alloc_frames_bytes(uint64_t bytes) {
+    uint64_t addr = phys_to_virt(
+        alloc_frames((bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE));
     return (void *)addr;
 }
 
-static inline void free_frames_bytes(void *ptr, uint64_t bytes)
-{
-    free_frames(virt_to_phys((uint64_t)ptr), (bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE);
+static inline void free_frames_bytes(void *ptr, uint64_t bytes) {
+    free_frames(virt_to_phys((uint64_t)ptr),
+                (bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE);
 }

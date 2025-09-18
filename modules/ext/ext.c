@@ -8,8 +8,7 @@ spinlock_t rwlock = {0};
 
 extern vfs_node_t dev_node;
 
-int ext_mount(vfs_node_t dev, vfs_node_t node)
-{
+int ext_mount(vfs_node_t dev, vfs_node_t node) {
     spin_lock(&rwlock);
 
     dev_node = dev;
@@ -21,8 +20,7 @@ int ext_mount(vfs_node_t dev, vfs_node_t node)
     char *fullpath = vfs_get_fullpath(node);
     int ret = ext4_mount("dev", (const char *)fullpath, false);
 
-    if (ret != 0)
-    {
+    if (ret != 0) {
         ext4_device_unregister("dev");
         free(fullpath);
         spin_unlock(&rwlock);
@@ -35,13 +33,14 @@ int ext_mount(vfs_node_t dev, vfs_node_t node)
     free(fullpath);
 
     const ext4_direntry *entry;
-    while ((entry = ext4_dir_entry_next(dir)))
-    {
-        if (!strcmp((const char *)entry->name, ".") || !strcmp((const char *)entry->name, ".."))
+    while ((entry = ext4_dir_entry_next(dir))) {
+        if (!strcmp((const char *)entry->name, ".") ||
+            !strcmp((const char *)entry->name, ".."))
             continue;
         if (vfs_child_find(node, (const char *)entry->name))
             continue;
-        vfs_node_t child = vfs_child_append(node, (const char *)entry->name, NULL);
+        vfs_node_t child =
+            vfs_child_append(node, (const char *)entry->name, NULL);
         child->inode = (uint64_t)entry->inode;
         child->fsid = ext_fsid;
         if (entry->inode_type == EXT4_DE_SYMLINK)
@@ -66,24 +65,20 @@ int ext_mount(vfs_node_t dev, vfs_node_t node)
     return ret;
 }
 
-void ext_unmount(void *root)
-{
+void ext_unmount(void *root) {
     // TODO
 }
 
-void ext_open(void *parent, const char *name, vfs_node_t node)
-{
+void ext_open(void *parent, const char *name, vfs_node_t node) {
     spin_lock(&rwlock);
 
     ext_handle_t *handle = malloc(sizeof(ext_handle_t));
     handle->node = node;
     char *path = vfs_get_fullpath(node);
-    if (node->type & file_dir)
-    {
+    if (node->type & file_dir) {
         handle->dir = malloc(sizeof(ext4_dir));
         int ret = ext4_dir_open(handle->dir, (const char *)path);
-        if (ret != 0)
-        {
+        if (ret != 0) {
             printk("Failed to open dir %s\n", path);
             free(path);
             free(handle);
@@ -92,13 +87,14 @@ void ext_open(void *parent, const char *name, vfs_node_t node)
         }
 
         const ext4_direntry *entry;
-        while ((entry = ext4_dir_entry_next(handle->dir)))
-        {
-            if (!strcmp((const char *)entry->name, ".") || !strcmp((const char *)entry->name, ".."))
+        while ((entry = ext4_dir_entry_next(handle->dir))) {
+            if (!strcmp((const char *)entry->name, ".") ||
+                !strcmp((const char *)entry->name, ".."))
                 continue;
             if (vfs_child_find(node, (const char *)entry->name))
                 continue;
-            vfs_node_t child = vfs_child_append(node, (const char *)entry->name, NULL);
+            vfs_node_t child =
+                vfs_child_append(node, (const char *)entry->name, NULL);
             child->fsid = ext_fsid;
             child->inode = (uint64_t)entry->inode;
             if (entry->inode_type == EXT4_DE_SYMLINK)
@@ -110,9 +106,7 @@ void ext_open(void *parent, const char *name, vfs_node_t node)
         }
 
         ext4_dir_entry_rewind(handle->dir);
-    }
-    else if (node->type & file_symlink)
-    {
+    } else if (node->type & file_symlink) {
         char *path = vfs_get_fullpath(node);
         char *buf = malloc(2048);
         size_t rcnt = 0;
@@ -122,17 +116,14 @@ void ext_open(void *parent, const char *name, vfs_node_t node)
         spin_unlock(&rwlock);
         node->linkto = vfs_open_at(node->parent, buf);
         spin_lock(&rwlock);
-        if (node->linkto)
-        {
+        if (node->linkto) {
             node->linkto->refcount++;
             node->size = node->linkto->size;
 
             ext_handle_t *target_handle = node->linkto->handle;
             handle->file = target_handle->file;
         }
-    }
-    else
-    {
+    } else {
         handle->file = malloc(sizeof(ext4_file));
         ext4_fopen(handle->file, (const char *)path, "r+b");
         node->size = ext4_fsize(handle->file);
@@ -148,8 +139,7 @@ void ext_open(void *parent, const char *name, vfs_node_t node)
     spin_unlock(&rwlock);
 }
 
-bool ext_close(void *current)
-{
+bool ext_close(void *current) {
     ext_handle_t *handle = current;
     if (handle->node->type & file_dir)
         ext4_dir_close(handle->dir);
@@ -159,8 +149,7 @@ bool ext_close(void *current)
     return true;
 }
 
-ssize_t ext_write(fd_t *fd, const void *addr, size_t offset, size_t size)
-{
+ssize_t ext_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     spin_lock(&rwlock);
 
     void *file = fd->node->handle;
@@ -169,11 +158,11 @@ ssize_t ext_write(fd_t *fd, const void *addr, size_t offset, size_t size)
     ext_handle_t *handle = file;
     if (!handle || !handle->node || !handle->file)
         return -1;
-    if (handle->node->size < offset)
-    {
+    if (handle->node->size < offset) {
         char *zero_buf = malloc(offset - handle->node->size);
         memset(zero_buf, 0, offset - handle->node->size);
-        ext4_fseek(handle->file, (int64_t)handle->node->size, (uint32_t)SEEK_SET);
+        ext4_fseek(handle->file, (int64_t)handle->node->size,
+                   (uint32_t)SEEK_SET);
         ext4_fwrite(handle->file, zero_buf, offset - handle->node->size, NULL);
         free(zero_buf);
     }
@@ -186,8 +175,7 @@ ssize_t ext_write(fd_t *fd, const void *addr, size_t offset, size_t size)
     return ret;
 }
 
-ssize_t ext_read(fd_t *fd, void *addr, size_t offset, size_t size)
-{
+ssize_t ext_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     spin_lock(&rwlock);
 
     void *file = fd->node->handle;
@@ -196,21 +184,16 @@ ssize_t ext_read(fd_t *fd, void *addr, size_t offset, size_t size)
     ext_handle_t *handle = file;
     if (!handle || !handle->node)
         return -1;
-    if ((handle->node->type & file_symlink) && fd->node->linkto)
-    {
+    if ((handle->node->type & file_symlink) && fd->node->linkto) {
         ext_handle_t *target_handle = fd->node->linkto->handle;
-        if (target_handle && target_handle->file)
-        {
-            ext4_fseek(target_handle->file, (int64_t)offset, (uint32_t)SEEK_SET);
+        if (target_handle && target_handle->file) {
+            ext4_fseek(target_handle->file, (int64_t)offset,
+                       (uint32_t)SEEK_SET);
             ext4_fread(target_handle->file, addr, size, (size_t *)&ret);
-        }
-        else
-        {
+        } else {
             printk("%s: symlink doesn't has a target file\n", __func__);
         }
-    }
-    else
-    {
+    } else {
         ext4_fseek(handle->file, (int64_t)offset, (uint32_t)SEEK_SET);
         ext4_fread(handle->file, addr, size, (size_t *)&ret);
     }
@@ -218,12 +201,10 @@ ssize_t ext_read(fd_t *fd, void *addr, size_t offset, size_t size)
     return ret;
 }
 
-ssize_t ext_readlink(vfs_node_t node, void *addr, size_t offset, size_t size)
-{
+ssize_t ext_readlink(vfs_node_t node, void *addr, size_t offset, size_t size) {
     vfs_node_t linkto = node->linkto;
 
-    if (!linkto)
-    {
+    if (!linkto) {
         return -ENOLINK;
     }
 
@@ -232,7 +213,8 @@ ssize_t ext_readlink(vfs_node_t node, void *addr, size_t offset, size_t size)
 
     char buf[2048];
     memset(buf, 0, sizeof(buf));
-    rel_status status = calculate_relative_path(buf, current_path, linkto_path, sizeof(buf));
+    rel_status status =
+        calculate_relative_path(buf, current_path, linkto_path, sizeof(buf));
 
     free(current_path);
     free(linkto_path);
@@ -242,8 +224,7 @@ ssize_t ext_readlink(vfs_node_t node, void *addr, size_t offset, size_t size)
     return len;
 }
 
-int ext_mkfile(void *parent, const char *name, vfs_node_t node)
-{
+int ext_mkfile(void *parent, const char *name, vfs_node_t node) {
     spin_lock(&rwlock);
 
     char buf[2048];
@@ -267,13 +248,9 @@ int ext_mkfile(void *parent, const char *name, vfs_node_t node)
     return ret;
 }
 
-int ext_link(void *parent, const char *name, vfs_node_t node)
-{
-    return 0;
-}
+int ext_link(void *parent, const char *name, vfs_node_t node) { return 0; }
 
-int ext_symlink(void *parent, const char *name, vfs_node_t node)
-{
+int ext_symlink(void *parent, const char *name, vfs_node_t node) {
     spin_lock(&rwlock);
 
     char *fullpath = vfs_get_fullpath(node);
@@ -289,15 +266,14 @@ int ext_symlink(void *parent, const char *name, vfs_node_t node)
     return ret;
 }
 
-int ext_mknod(void *parent, const char *name, vfs_node_t node, uint16_t mode, int dev)
-{
+int ext_mknod(void *parent, const char *name, vfs_node_t node, uint16_t mode,
+              int dev) {
     spin_lock(&rwlock);
 
     char *fullpath = vfs_get_fullpath(node);
 
     int ftype = 0;
-    switch (mode & S_IFMT)
-    {
+    switch (mode & S_IFMT) {
     case S_IFBLK:
         ftype = EXT4_DE_BLKDEV;
         break;
@@ -323,8 +299,7 @@ int ext_mknod(void *parent, const char *name, vfs_node_t node, uint16_t mode, in
     return ret;
 }
 
-int ext_mkdir(void *parent, const char *name, vfs_node_t node)
-{
+int ext_mkdir(void *parent, const char *name, vfs_node_t node) {
     spin_lock(&rwlock);
 
     char buf[2048];
@@ -346,8 +321,7 @@ int ext_mkdir(void *parent, const char *name, vfs_node_t node)
     return ret;
 }
 
-int ext_chmod(vfs_node_t node, uint16_t mode)
-{
+int ext_chmod(vfs_node_t node, uint16_t mode) {
     spin_lock(&rwlock);
 
     char *buf = vfs_get_fullpath(node);
@@ -362,8 +336,7 @@ int ext_chmod(vfs_node_t node, uint16_t mode)
     return ret;
 }
 
-int ext_delete(void *parent, vfs_node_t node)
-{
+int ext_delete(void *parent, vfs_node_t node) {
     spin_lock(&rwlock);
 
     char *path = vfs_get_fullpath(node);
@@ -375,8 +348,7 @@ int ext_delete(void *parent, vfs_node_t node)
     return ret;
 }
 
-int ext_rename(void *current, const char *new)
-{
+int ext_rename(void *current, const char *new) {
     spin_lock(&rwlock);
 
     ext_handle_t *handle = current;
@@ -389,47 +361,35 @@ int ext_rename(void *current, const char *new)
     return ret;
 }
 
-int ext_stat(void *file, vfs_node_t node)
-{
+int ext_stat(void *file, vfs_node_t node) {
     ext_handle_t *handle = file;
-    if (handle->node->type & file_none)
-    {
+    if (handle->node->type & file_none) {
         handle->node->size = ext4_fsize(handle->file);
     }
 
     return 0;
 }
 
-int ext_ioctl(void *file, ssize_t cmd, ssize_t arg)
-{
-    return -EINVAL;
-}
+int ext_ioctl(void *file, ssize_t cmd, ssize_t arg) { return -EINVAL; }
 
-int ext_poll(void *file, size_t events)
-{
-    return 0;
-}
+int ext_poll(void *file, size_t events) { return 0; }
 
-void ext_resize(void *current, uint64_t size)
-{
+void ext_resize(void *current, uint64_t size) {
     spin_lock(&rwlock);
     ext_handle_t *handle = current;
-    if (handle->node->type & file_none)
-    {
+    if (handle->node->type & file_none) {
         handle->node->size = ext4_ftruncate(handle->file, size);
     }
     spin_unlock(&rwlock);
 }
 
-void *ext_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot, size_t flags)
-{
-    return general_map((vfs_read_t)ext_read, file, (uint64_t)addr, size, prot, flags, offset);
+void *ext_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
+              size_t flags) {
+    return general_map((vfs_read_t)ext_read, file, (uint64_t)addr, size, prot,
+                       flags, offset);
 }
 
-vfs_node_t ext_dup(vfs_node_t node)
-{
-    return node;
-}
+vfs_node_t ext_dup(vfs_node_t node) { return node; }
 
 static struct vfs_callback callbacks = {
     .mount = ext_mount,
@@ -461,7 +421,6 @@ fs_t extfs = {
     .callback = &callbacks,
 };
 
-__attribute__((visibility("default"))) void dlmain()
-{
+__attribute__((visibility("default"))) void dlmain() {
     ext_fsid = vfs_regist(&extfs);
 }

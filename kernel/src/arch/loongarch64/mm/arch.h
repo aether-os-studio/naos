@@ -22,7 +22,9 @@
 #define ARCH_PT_TABLE_FLAGS 0
 
 #define ARCH_PT_IS_TABLE(x) ((!((x) & (ARCH_PT_FLAG_VALID))) && ((x) != 0))
-#define ARCH_PT_IS_LARGE(x) (((x) & (ARCH_PT_FLAG_HGLOBAL | ARCH_PT_FLAG_HUGE)) == (ARCH_PT_FLAG_HGLOBAL | ARCH_PT_FLAG_HUGE))
+#define ARCH_PT_IS_LARGE(x)                                                    \
+    (((x) & (ARCH_PT_FLAG_HGLOBAL | ARCH_PT_FLAG_HUGE)) ==                     \
+     (ARCH_PT_FLAG_HGLOBAL | ARCH_PT_FLAG_HUGE))
 
 uint64_t get_arch_page_table_flags(uint64_t flags);
 void arch_flush_tlb(uint64_t vaddr);

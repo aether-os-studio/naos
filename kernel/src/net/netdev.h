@@ -7,8 +7,7 @@ typedef int (*netdev_recv_t)(void *dev, void *data, uint32_t len);
 
 #define MAX_NETDEV_NUM 8
 
-typedef struct netdev
-{
+typedef struct netdev {
     uint8_t mac[6];
     uint32_t mtu;
     void *desc;
@@ -16,7 +15,8 @@ typedef struct netdev
     netdev_recv_t recv;
 } netdev_t;
 
-void regist_netdev(void *desc, uint8_t *mac, uint32_t mtu, netdev_send_t send, netdev_recv_t recv);
+void regist_netdev(void *desc, uint8_t *mac, uint32_t mtu, netdev_send_t send,
+                   netdev_recv_t recv);
 
 netdev_t *get_default_netdev();
 

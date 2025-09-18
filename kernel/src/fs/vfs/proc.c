@@ -2,8 +2,9 @@
 #include <arch/arch.h>
 #include <task/task.h>
 
-__attribute__((used, section(".limine_requests"))) static volatile struct limine_executable_cmdline_request executable_cmdline_request = {
-    .id = LIMINE_EXECUTABLE_CMDLINE_REQUEST,
+__attribute__((used, section(".limine_requests"))) static volatile struct
+    limine_executable_cmdline_request executable_cmdline_request = {
+        .id = LIMINE_EXECUTABLE_CMDLINE_REQUEST,
 };
 
 spinlock_t procfs_oplock = {0};
@@ -17,66 +18,48 @@ const char filesystems_content[] = "nodev\tsysfs\n"
                                    "     \text3\n"
                                    "     \text2\n";
 
-ssize_t procfs_read(fd_t *fd, void *addr, size_t offset, size_t size)
-{
+ssize_t procfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     void *file = fd->node->handle;
     proc_handle_t *handle = (proc_handle_t *)file;
-    if (!handle)
-    {
+    if (!handle) {
         return -EINVAL;
     }
     task_t *task;
-    if (handle->task == NULL)
-    {
+    if (handle->task == NULL) {
         task = current_task;
-    }
-    else
-    {
+    } else {
         task = handle->task;
     }
 
-    if (!strcmp(handle->name, "self/exe"))
-    {
-        if (task->exec_node)
-        {
+    if (!strcmp(handle->name, "self/exe")) {
+        if (task->exec_node) {
             char *fullpath = vfs_get_fullpath(task->exec_node);
             strncpy(addr, fullpath, size);
             free(fullpath);
             return strlen(addr);
-        }
-        else
+        } else
             return 0;
-    }
-    else if (!strcmp(handle->name, "filesystems"))
-    {
-        if (offset < strlen(filesystems_content))
-        {
+    } else if (!strcmp(handle->name, "filesystems")) {
+        if (offset < strlen(filesystems_content)) {
             memcpy(addr, filesystems_content + offset, size);
             return size;
-        }
-        else
+        } else
             return 0;
-    }
-    else if (!strcmp(handle->name, "cmdline"))
-    {
+    } else if (!strcmp(handle->name, "cmdline")) {
         ssize_t len = strlen(executable_cmdline_request.response->cmdline);
         if (len == 0)
             return 0;
         len = (len + 1) > size ? size : len + 1;
         memcpy(addr, executable_cmdline_request.response->cmdline, len);
         return len;
-    }
-    else if (!strcmp(handle->name, "proc_cmdline"))
-    {
+    } else if (!strcmp(handle->name, "proc_cmdline")) {
         ssize_t len = strlen(task->cmdline);
         if (len == 0)
             return 0;
         len = (len + 1) > size ? size : len + 1;
         memcpy(addr, task->cmdline, len);
         return len;
-    }
-    else if (!strcmp(handle->name, "dri_name"))
-    {
+    } else if (!strcmp(handle->name, "dri_name")) {
         char name[] = "naos_drm";
         int len = strlen(name);
         memcpy(addr, name, len);
@@ -86,33 +69,23 @@ ssize_t procfs_read(fd_t *fd, void *addr, size_t offset, size_t size)
     return 0;
 }
 
-ssize_t procfs_write(fd_t *fd, const void *addr, size_t offset, size_t size)
-{
+ssize_t procfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     return size;
 }
 
 vfs_node_t procfs_root = NULL;
 int procfs_id = 0;
 
-static int dummy()
-{
-    return 0;
-}
+static int dummy() { return 0; }
 
-void procfs_open(void *parent, const char *name, vfs_node_t node)
-{
-}
+void procfs_open(void *parent, const char *name, vfs_node_t node) {}
 
-bool procfs_close(void *current)
-{
-    return false;
-}
+bool procfs_close(void *current) { return false; }
 
-ssize_t procfs_readlink(vfs_node_t node, void *addr, size_t offset, size_t size)
-{
+ssize_t procfs_readlink(vfs_node_t node, void *addr, size_t offset,
+                        size_t size) {
     proc_handle_t *handle = node->handle;
-    if (!strcmp(handle->name, "self/exe") && current_task->exec_node)
-    {
+    if (!strcmp(handle->name, "self/exe") && current_task->exec_node) {
         char *fullpath = vfs_get_fullpath(current_task->exec_node);
         int len = strlen(fullpath);
         len = MIN(len, size);
@@ -153,8 +126,7 @@ fs_t procfs = {
     .callback = &callbacks,
 };
 
-void proc_init()
-{
+void proc_init() {
     procfs_id = vfs_regist(&procfs);
     procfs_root = vfs_child_append(rootdir, "proc", NULL);
     procfs_root->type = file_dir;
@@ -207,8 +179,7 @@ void proc_init()
     sprintf(filesystems_handle->name, "filesystems");
 }
 
-void procfs_on_new_task(task_t *task)
-{
+void procfs_on_new_task(task_t *task) {
     spin_lock(&procfs_oplock);
 
     char name[MAX_PID_NAME_LEN];
@@ -229,16 +200,14 @@ void procfs_on_new_task(task_t *task)
     spin_unlock(&procfs_oplock);
 }
 
-void procfs_on_exit_task(task_t *task)
-{
+void procfs_on_exit_task(task_t *task) {
     spin_lock(&procfs_oplock);
 
     char name[6 + MAX_PID_NAME_LEN];
     sprintf(name, "/proc/%d", task->pid);
 
     vfs_node_t node = vfs_open(name);
-    if (node && node->parent)
-    {
+    if (node && node->parent) {
         list_delete(node->parent->child, node);
         vfs_free(node);
     }

@@ -4,8 +4,7 @@
 
 static int memfd_fsid = 0;
 
-struct memfd_ctx
-{
+struct memfd_ctx {
     vfs_node_t node;
     char name[64];
     uint8_t *data;
@@ -13,8 +12,7 @@ struct memfd_ctx
     int flags;
 };
 
-static ssize_t memfd_read(fd_t *fd, void *buf, uint64_t offset, uint64_t len)
-{
+static ssize_t memfd_read(fd_t *fd, void *buf, uint64_t offset, uint64_t len) {
     void *data = fd->node->handle;
 
     struct memfd_ctx *ctx = data;
@@ -26,13 +24,12 @@ static ssize_t memfd_read(fd_t *fd, void *buf, uint64_t offset, uint64_t len)
     return copy_len;
 }
 
-static ssize_t memfd_write(fd_t *fd, const void *buf, uint64_t offset, uint64_t len)
-{
+static ssize_t memfd_write(fd_t *fd, const void *buf, uint64_t offset,
+                           uint64_t len) {
     void *data = fd->node->handle;
 
     struct memfd_ctx *ctx = data;
-    if (offset + len > ctx->len)
-    {
+    if (offset + len > ctx->len) {
         size_t new_size = ctx->len * 2;
         uint8_t *new_data = alloc_frames_bytes(new_size);
         if (!new_data)
@@ -43,16 +40,14 @@ static ssize_t memfd_write(fd_t *fd, const void *buf, uint64_t offset, uint64_t 
         ctx->len = new_size;
     }
     memcpy(ctx->data + offset, buf, len);
-    if (offset + len > ctx->len)
-    {
+    if (offset + len > ctx->len) {
         ctx->len = offset + len;
     }
     ctx->node->size = ctx->len;
     return len;
 }
 
-bool memfd_close(void *current)
-{
+bool memfd_close(void *current) {
     struct memfd_ctx *ctx = current;
     free_frames_bytes(ctx->data, ctx->len);
     free(ctx);
@@ -60,30 +55,25 @@ bool memfd_close(void *current)
     return true;
 }
 
-int memfd_stat(void *file, vfs_node_t node)
-{
+int memfd_stat(void *file, vfs_node_t node) {
     struct memfd_ctx *ctx = file;
     node->size = ctx->len;
 
     return 0;
 }
 
-void memfd_resize(void *current, uint64_t size)
-{
+void memfd_resize(void *current, uint64_t size) {
     if (size == 0)
         return;
 
     struct memfd_ctx *ctx = current;
-    if (size > ctx->len)
-    {
+    if (size > ctx->len) {
         uint8_t *new_data = alloc_frames_bytes(size);
         memcpy(new_data, ctx->data, ctx->len);
         free_frames_bytes(ctx->data, ctx->len);
         ctx->data = new_data;
         ctx->len = size;
-    }
-    else
-    {
+    } else {
         uint8_t *new_data = alloc_frames_bytes(size);
         memcpy(new_data, ctx->data, ctx->len);
         free_frames_bytes(ctx->data, size);
@@ -94,19 +84,19 @@ void memfd_resize(void *current, uint64_t size)
     ctx->node->size = ctx->len;
 }
 
-void *memfd_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot, size_t flags)
-{
+void *memfd_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
+                size_t flags) {
     struct memfd_ctx *ctx = file->node->handle;
 
-    map_page_range(get_current_page_dir(true), (uint64_t)addr, translate_address(get_current_page_dir(false), (uint64_t)ctx->data), size, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+    map_page_range(
+        get_current_page_dir(true), (uint64_t)addr,
+        translate_address(get_current_page_dir(false), (uint64_t)ctx->data),
+        size, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
     return addr;
 }
 
-static int dummy()
-{
-    return 0;
-}
+static int dummy() { return 0; }
 
 static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)dummy,
@@ -138,8 +128,7 @@ static struct vfs_callback callbacks = {
 
 static int memfd_idx = 0;
 
-uint64_t sys_memfd_create(const char *name, unsigned int flags)
-{
+uint64_t sys_memfd_create(const char *name, unsigned int flags) {
     struct memfd_ctx *ctx = malloc(sizeof(struct memfd_ctx));
     strncpy(ctx->name, name, 63);
     ctx->name[63] = '\0';
@@ -148,10 +137,8 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags)
     ctx->flags = flags;
 
     int fd = -1;
-    for (int i = 3; i < MAX_FD_NUM; i++)
-    {
-        if (!current_task->fd_info->fds[i])
-        {
+    for (int i = 3; i < MAX_FD_NUM; i++) {
+        if (!current_task->fd_info->fds[i]) {
             fd = i;
             break;
         }
@@ -167,7 +154,8 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags)
     node->size = ctx->len;
     current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
     current_task->fd_info->fds[fd]->node = node;
-    current_task->fd_info->fds[fd]->flags = (flags & MFD_CLOEXEC) ? O_CLOEXEC : 0;
+    current_task->fd_info->fds[fd]->flags =
+        (flags & MFD_CLOEXEC) ? O_CLOEXEC : 0;
 
     ctx->node = node;
 
@@ -180,7 +168,4 @@ fs_t memfdfs = {
     .callback = &callbacks,
 };
 
-void memfd_init()
-{
-    memfd_fsid = vfs_regist(&memfdfs);
-}
+void memfd_init() { memfd_fsid = vfs_regist(&memfdfs); }

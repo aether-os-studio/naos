@@ -57,8 +57,7 @@
 #define NLMSG_MIN_TYPE 0x10
 
 /* Netlink message header */
-struct nlmsghdr
-{
+struct nlmsghdr {
     uint32_t nlmsg_len;
     uint16_t nlmsg_type;
     uint16_t nlmsg_flags;
@@ -71,14 +70,14 @@ struct nlmsghdr
 #define NLMSG_LENGTH(len) ((len) + sizeof(struct nlmsghdr))
 #define NLMSG_SPACE(len) NLMSG_ALIGN(NLMSG_LENGTH(len))
 #define NLMSG_DATA(nlh) ((void *)((char *)(nlh) + NLMSG_LENGTH(0)))
-#define NLMSG_NEXT(nlh, len) ((len) -= NLMSG_ALIGN((nlh)->nlmsg_len), \
-                              (struct nlmsghdr *)((char *)(nlh) + NLMSG_ALIGN((nlh)->nlmsg_len)))
-#define NLMSG_OK(nlh, len) ((len) >= (int)sizeof(struct nlmsghdr) &&       \
-                            (nlh)->nlmsg_len >= sizeof(struct nlmsghdr) && \
-                            (nlh)->nlmsg_len <= (len))
+#define NLMSG_NEXT(nlh, len)                                                   \
+    ((len) -= NLMSG_ALIGN((nlh)->nlmsg_len),                                   \
+     (struct nlmsghdr *)((char *)(nlh) + NLMSG_ALIGN((nlh)->nlmsg_len)))
+#define NLMSG_OK(nlh, len)                                                     \
+    ((len) >= (int)sizeof(struct nlmsghdr) &&                                  \
+     (nlh)->nlmsg_len >= sizeof(struct nlmsghdr) && (nlh)->nlmsg_len <= (len))
 
-struct sockaddr_nl
-{
+struct sockaddr_nl {
     uint16_t nl_family;
     unsigned short nl_pad;
     uint32_t nl_pid;
@@ -88,8 +87,7 @@ struct sockaddr_nl
 #define NETLINK_BUFFER_SIZE 32768
 
 // Netlink socket structure
-struct netlink_sock
-{
+struct netlink_sock {
     uint32_t portid;
     uint32_t groups;
     uint32_t dst_portid;

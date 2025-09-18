@@ -42,8 +42,7 @@
 
 #define SIGMASK(sig) (1UL << (sig))
 
-typedef enum signal_internal
-{
+typedef enum signal_internal {
     SIGNAL_INTERNAL_CORE = 0,
     SIGNAL_INTERNAL_TERM,
     SIGNAL_INTERNAL_IGN,
@@ -72,50 +71,43 @@ typedef void (*sighandler_t)(int);
 #define SIG_DFL ((sighandler_t)0) // 默认的信号处理程序（信号句柄）
 #define SIG_IGN ((sighandler_t)1) // 忽略信号的处理程序
 
-typedef struct sigaction
-{
+typedef struct sigaction {
     sighandler_t sa_handler;
     unsigned long sa_flags;
     void (*sa_restorer)(void);
     sigset_t sa_mask;
 } sigaction_t;
 
-typedef struct
-{
+typedef struct {
     int32_t si_signo; // Signal number
     int32_t si_errno; // Error number (if applicable)
     int32_t si_code;  // Signal code
 
-    union
-    {
+    union {
         int32_t _pad[128 - 3 * sizeof(int32_t) / sizeof(int32_t)];
 
         // Kill
-        struct
-        {
+        struct {
             int32_t si_pid;  // Sending process ID
             uint32_t si_uid; // Real user ID of sending process
         } _kill;
 
         // Timer
-        struct
-        {
+        struct {
             int32_t si_tid;     // Timer ID
             int32_t si_overrun; // Overrun count
             int32_t si_sigval;  // Signal value
         } _timer;
 
         // POSIX.1b signals
-        struct
-        {
+        struct {
             int32_t si_pid;    // Sending process ID
             uint32_t si_uid;   // Real user ID of sending process
             int32_t si_sigval; // Signal value
         } _rt;
 
         // SIGCHLD
-        struct
-        {
+        struct {
             int32_t si_pid;    // Sending process ID
             uint32_t si_uid;   // Real user ID of sending process
             int32_t si_status; // Exit value or signal
@@ -124,22 +116,19 @@ typedef struct
         } _sigchld;
 
         // SIGILL, SIGFPE, SIGSEGV, SIGBUS
-        struct
-        {
+        struct {
             uintptr_t si_addr;   // Faulting instruction or data address
             int32_t si_addr_lsb; // LSB of the address (if applicable)
         } _sigfault;
 
         // SIGPOLL
-        struct
-        {
+        struct {
             int32_t si_band; // Band event
             int32_t si_fd;   // File descriptor
         } _sigpoll;
 
         // SIGSYS
-        struct
-        {
+        struct {
             uintptr_t si_call_addr; // Calling user insn
             int32_t si_syscall;     // Number of syscall
             uint32_t si_arch;       // Architecture
@@ -155,34 +144,30 @@ uint64_t sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction);
 struct pt_regs;
 void sys_sigreturn(struct pt_regs *regs);
 uint64_t sys_sigsuspend(const sigset_t *mask);
-uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo, const struct timespec *uts, size_t sigsetsize);
+uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
+                             const struct timespec *uts, size_t sigsetsize);
 uint64_t sys_kill(int pid, int sig);
 
-union sigval
-{
+union sigval {
     int sival_int;
     void *sival_ptr;
 };
 
-struct sigevent
-{
+struct sigevent {
     union sigval sigev_value;
     int sigev_signo;
     int sigev_notify;
-    union
-    {
+    union {
         char __pad[64 - 2 * sizeof(int) - sizeof(union sigval)];
         int sigev_notify_thread_id;
-        struct
-        {
+        struct {
             void (*sigev_notify_function)(union sigval);
             void *sigev_notify_attributes;
         } __sev_thread;
     } __sev_fields;
 };
 
-struct signalfd_siginfo
-{
+struct signalfd_siginfo {
     uint32_t ssi_signo;   // 信号编号
     int32_t ssi_errno;    // 错误代码（通常为0）
     int32_t ssi_code;     // 信号来源（如SI_USER）
@@ -202,8 +187,7 @@ struct signalfd_siginfo
     uint8_t __pad[48];    // 填充至128字节
 };
 
-struct signalfd_ctx
-{
+struct signalfd_ctx {
     sigset_t sigmask;               // 监控的信号集合
     struct signalfd_siginfo *queue; // 信号事件队列
     size_t queue_size;

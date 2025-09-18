@@ -9,10 +9,9 @@ struct usbdevice_s *usbdevs[MAX_USBDEV_NUM];
  ****************************************************************/
 
 // Send a message on a control pipe using the default control descriptor.
-int usb_send_pipe(struct usb_pipe *pipe_fl, int dir, const void *cmd, void *data, int datasize)
-{
-    switch (GET_LOWFLAT(pipe_fl->type))
-    {
+int usb_send_pipe(struct usb_pipe *pipe_fl, int dir, const void *cmd,
+                  void *data, int datasize) {
+    switch (GET_LOWFLAT(pipe_fl->type)) {
     default:
     // case USB_TYPE_UHCI:
     //     return uhci_send_pipe(pipe_fl, dir, cmd, data, datasize);
@@ -29,10 +28,8 @@ int usb_send_pipe(struct usb_pipe *pipe_fl, int dir, const void *cmd, void *data
     }
 }
 
-int usb_poll_intr(struct usb_pipe *pipe_fl, void *data)
-{
-    switch (GET_LOWFLAT(pipe_fl->type))
-    {
+int usb_poll_intr(struct usb_pipe *pipe_fl, void *data) {
+    switch (GET_LOWFLAT(pipe_fl->type)) {
     default:
     // case USB_TYPE_UHCI:
     //     return uhci_poll_intr(pipe_fl, data);
@@ -45,36 +42,31 @@ int usb_poll_intr(struct usb_pipe *pipe_fl, void *data)
     }
 }
 
-int usb_32bit_pipe(struct usb_pipe *pipe_fl)
-{
-    return true;
-}
+int usb_32bit_pipe(struct usb_pipe *pipe_fl) { return true; }
 
 /****************************************************************
  * Helper functions
  ****************************************************************/
 
 // Send a message to the default control pipe of a device.
-int usb_send_default_control(struct usb_pipe *pipe, const struct usb_ctrlrequest *req, void *data)
-{
-    return usb_send_pipe(pipe, req->bRequestType & USB_DIR_IN, req, data, req->wLength);
+int usb_send_default_control(struct usb_pipe *pipe,
+                             const struct usb_ctrlrequest *req, void *data) {
+    return usb_send_pipe(pipe, req->bRequestType & USB_DIR_IN, req, data,
+                         req->wLength);
 }
 
 // Send a message to a bulk endpoint
-int usb_send_bulk(struct usb_pipe *pipe_fl, int dir, void *data, int datasize)
-{
+int usb_send_bulk(struct usb_pipe *pipe_fl, int dir, void *data, int datasize) {
     return usb_send_pipe(pipe_fl, dir, NULL, data, datasize);
 }
 
 // Check if a pipe for a given controller is on the freelist
-int usb_is_freelist(struct usb_s *cntl, struct usb_pipe *pipe)
-{
+int usb_is_freelist(struct usb_s *cntl, struct usb_pipe *pipe) {
     return pipe->cntl != cntl;
 }
 
 // Add a pipe to the controller's freelist
-void usb_add_freelist(struct usb_pipe *pipe)
-{
+void usb_add_freelist(struct usb_pipe *pipe) {
     if (!pipe)
         return;
     struct usb_s *cntl = pipe->cntl;
@@ -83,17 +75,13 @@ void usb_add_freelist(struct usb_pipe *pipe)
 }
 
 // Check for an available pipe on the freelist.
-struct usb_pipe *
-usb_get_freelist(struct usb_s *cntl, uint8_t eptype)
-{
+struct usb_pipe *usb_get_freelist(struct usb_s *cntl, uint8_t eptype) {
     struct usb_pipe **pfree = &cntl->freelist;
-    for (;;)
-    {
+    for (;;) {
         struct usb_pipe *pipe = *pfree;
         if (!pipe)
             return NULL;
-        if (pipe->eptype == eptype)
-        {
+        if (pipe->eptype == eptype) {
             *pfree = pipe->freenext;
             return pipe;
         }
@@ -102,8 +90,8 @@ usb_get_freelist(struct usb_s *cntl, uint8_t eptype)
 }
 
 // Fill "pipe" endpoint info from an endpoint descriptor.
-void usb_desc2pipe(struct usb_pipe *pipe, struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epdesc)
-{
+void usb_desc2pipe(struct usb_pipe *pipe, struct usbdevice_s *usbdev,
+                   struct usb_endpoint_descriptor *epdesc) {
     pipe->cntl = usbdev->hub->cntl;
     pipe->type = usbdev->hub->cntl->type;
     pipe->ep = epdesc->bEndpointAddress & USB_ENDPOINT_NUMBER_MASK;
@@ -114,8 +102,7 @@ void usb_desc2pipe(struct usb_pipe *pipe, struct usbdevice_s *usbdev, struct usb
 }
 
 // Maximum time (in ms) a data transfer should take
-int usb_xfer_time(struct usb_pipe *pipe, int datalen)
-{
+int usb_xfer_time(struct usb_pipe *pipe, int datalen) {
     // Use the maximum command time (5 seconds), except for
     // set_address commands where we don't want to stall the boot if
     // the device doesn't actually exist.  Add 100ms to account for
@@ -126,26 +113,24 @@ int usb_xfer_time(struct usb_pipe *pipe, int datalen)
 }
 
 // Find the first endpoint of a given type in an interface description.
-struct usb_endpoint_descriptor *
-usb_find_desc(struct usbdevice_s *usbdev, int type, int dir)
-{
+struct usb_endpoint_descriptor *usb_find_desc(struct usbdevice_s *usbdev,
+                                              int type, int dir) {
     struct usb_endpoint_descriptor *epdesc = (void *)&usbdev->iface[1];
-    for (;;)
-    {
-        if ((void *)epdesc >= (void *)usbdev->iface + usbdev->imax)
-        {
+    for (;;) {
+        if ((void *)epdesc >= (void *)usbdev->iface + usbdev->imax) {
             return NULL;
         }
-        if (epdesc->bDescriptorType == USB_DT_ENDPOINT && (epdesc->bEndpointAddress & USB_ENDPOINT_DIR_MASK) == dir && (epdesc->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK) == type)
+        if (epdesc->bDescriptorType == USB_DT_ENDPOINT &&
+            (epdesc->bEndpointAddress & USB_ENDPOINT_DIR_MASK) == dir &&
+            (epdesc->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK) == type)
             return epdesc;
         epdesc = (void *)epdesc + epdesc->bLength;
     }
 }
 
 // Get the first 8 bytes of the device descriptor.
-static int
-get_device_info8(struct usb_pipe *pipe, struct usb_device_descriptor *dinfo)
-{
+static int get_device_info8(struct usb_pipe *pipe,
+                            struct usb_device_descriptor *dinfo) {
     struct usb_ctrlrequest req;
     req.bRequestType = USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_DEVICE;
     req.bRequest = USB_REQ_GET_DESCRIPTOR;
@@ -156,9 +141,8 @@ get_device_info8(struct usb_pipe *pipe, struct usb_device_descriptor *dinfo)
 }
 
 // Get the all bytes of the device descriptor.
-static int
-get_device_info(struct usb_pipe *pipe, struct usb_device_descriptor *dinfo)
-{
+static int get_device_info(struct usb_pipe *pipe,
+                           struct usb_device_descriptor *dinfo) {
     struct usb_ctrlrequest req;
     req.bRequestType = USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_DEVICE;
     req.bRequest = USB_REQ_GET_DESCRIPTOR;
@@ -168,9 +152,7 @@ get_device_info(struct usb_pipe *pipe, struct usb_device_descriptor *dinfo)
     return usb_send_default_control(pipe, &req, dinfo);
 }
 
-static struct usb_config_descriptor *
-get_device_config(struct usb_pipe *pipe)
-{
+static struct usb_config_descriptor *get_device_config(struct usb_pipe *pipe) {
     struct usb_config_descriptor cfg;
 
     struct usb_ctrlrequest req;
@@ -180,29 +162,33 @@ get_device_config(struct usb_pipe *pipe)
     req.wIndex = 0;
     req.wLength = sizeof(cfg);
     int ret = usb_send_default_control(pipe, &req, &cfg);
-    if (ret)
-    {
-        printk("[usb.c:%d] Failed to get configuration descriptor: usb_send_default_control\n", __LINE__);
+    if (ret) {
+        printk("[usb.c:%d] Failed to get configuration descriptor: "
+               "usb_send_default_control\n",
+               __LINE__);
         return NULL;
     }
 
     struct usb_config_descriptor *config = malloc(cfg.wTotalLength);
-    if (!config)
-    {
-        printk("[usb.c:%d] Failed to get configuration descriptor: malloc\n", __LINE__);
+    if (!config) {
+        printk("[usb.c:%d] Failed to get configuration descriptor: malloc\n",
+               __LINE__);
         return NULL;
     }
     req.wLength = cfg.wTotalLength;
     ret = usb_send_default_control(pipe, &req, config);
-    if (ret)
-    {
-        printk("[usb.c:%d] Failed to get configuration descriptor: usb_send_default_control\n", __LINE__);
+    if (ret) {
+        printk("[usb.c:%d] Failed to get configuration descriptor: "
+               "usb_send_default_control\n",
+               __LINE__);
         free(config);
         return NULL;
     }
-    if (config->wTotalLength != cfg.wTotalLength)
-    {
-        printk("[usb.c:%d] Failed to get configuration descriptor: config->wTotalLength != cfg.wTotalLength\tconfig->wTotalLength = %d, cfg.wTotalLength = %d\n", __LINE__, config->wTotalLength, cfg.wTotalLength);
+    if (config->wTotalLength != cfg.wTotalLength) {
+        printk("[usb.c:%d] Failed to get configuration descriptor: "
+               "config->wTotalLength != cfg.wTotalLength\tconfig->wTotalLength "
+               "= %d, cfg.wTotalLength = %d\n",
+               __LINE__, config->wTotalLength, cfg.wTotalLength);
         free(config);
         return NULL;
     }
@@ -210,9 +196,7 @@ get_device_config(struct usb_pipe *pipe)
     return config;
 }
 
-static int
-set_configuration(struct usb_pipe *pipe, uint16_t val)
-{
+static int set_configuration(struct usb_pipe *pipe, uint16_t val) {
     struct usb_ctrlrequest req;
     req.bRequestType = USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_DEVICE;
     req.bRequest = USB_REQ_SET_CONFIGURATION;
@@ -235,9 +219,7 @@ static const int speed_to_ctlsize[] = {
 
 // Assign an address to a device in the default state on the given
 // controller.
-static int
-usb_set_address(struct usbdevice_s *usbdev)
-{
+static int usb_set_address(struct usbdevice_s *usbdev) {
     struct usb_s *cntl = usbdev->hub->cntl;
     if (cntl->maxaddr >= USB_MAXADDR)
         return -1;
@@ -259,8 +241,7 @@ usb_set_address(struct usbdevice_s *usbdev)
     req.wIndex = 0;
     req.wLength = 0;
     int ret = usb_send_default_control(usbdev->defpipe, &req, NULL);
-    if (ret)
-    {
+    if (ret) {
         usb_free_pipe(usbdev, usbdev->defpipe);
         return -1;
     }
@@ -277,8 +258,7 @@ extern struct pipe_node *keyboards;
 
 // Called for every found device - see if a driver is available for
 // this device and do setup if so.
-static int configure_usb_device(struct usbdevice_s *usbdev)
-{
+static int configure_usb_device(struct usbdevice_s *usbdev) {
     // Set the max packet size for endpoint 0 of this device.
     struct usb_device_descriptor dinfo;
     dinfo.idVendor = 0xFFFF;
@@ -292,8 +272,7 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
     if (maxpacket < 8)
         return 0;
 
-    if (maxpacket >= sizeof(struct usb_device_descriptor))
-    {
+    if (maxpacket >= sizeof(struct usb_device_descriptor)) {
         int ret = get_device_info(usbdev->defpipe, &dinfo);
         if (ret)
             return 0;
@@ -302,33 +281,28 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
     usbdev->vendor_id = dinfo.idVendor;
     usbdev->product_id = dinfo.idProduct;
 
-    for (int i = 0; i < MAX_USBDEV_NUM; i++)
-    {
-        if (usbdevs[i])
-        {
+    for (int i = 0; i < MAX_USBDEV_NUM; i++) {
+        if (usbdevs[i]) {
             struct usbdevice_s *dev = usbdevs[i];
-            if (dev->vendor_id != 0xFFFF && dev->product_id != 0xFFFF && dev->vendor_id == usbdev->vendor_id && dev->product_id == usbdev->product_id && dev->port == usbdev->port)
-            {
-                printk("Found duplicate usb device, vendor: %#04x, product: %#04x\n", dev->vendor_id, dev->product_id);
+            if (dev->vendor_id != 0xFFFF && dev->product_id != 0xFFFF &&
+                dev->vendor_id == usbdev->vendor_id &&
+                dev->product_id == usbdev->product_id &&
+                dev->port == usbdev->port) {
+                printk("Found duplicate usb device, vendor: %#04x, product: "
+                       "%#04x\n",
+                       dev->vendor_id, dev->product_id);
                 // The same usb device
-                if (dev->speed >= usbdev->speed)
-                {
+                if (dev->speed >= usbdev->speed) {
                     return 0;
-                }
-                else
-                {
-                    if (dev->iface->bInterfaceClass == USB_CLASS_MASS_STORAGE)
-                    {
-                        if (dev->iface->bInterfaceProtocol == US_PR_BULK)
-                        {
+                } else {
+                    if (dev->iface->bInterfaceClass == USB_CLASS_MASS_STORAGE) {
+                        if (dev->iface->bInterfaceProtocol == US_PR_BULK) {
                             printk("Unregisting msc device\n");
                             unregist_blkdev(dev->desc);
                         }
-                    }
-                    else if (dev->iface->bInterfaceClass == USB_CLASS_HID)
-                    {
-                        if (dev->iface->bInterfaceProtocol == USB_INTERFACE_PROTOCOL_KEYBOARD)
-                        {
+                    } else if (dev->iface->bInterfaceClass == USB_CLASS_HID) {
+                        if (dev->iface->bInterfaceProtocol ==
+                            USB_INTERFACE_PROTOCOL_KEYBOARD) {
                             printk("Should Unregisting hid keyboard device\n");
                         }
                     }
@@ -342,17 +316,17 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
         .bmAttributes = USB_ENDPOINT_XFER_CONTROL,
     };
     usbdev->defpipe = usb_realloc_pipe(usbdev, usbdev->defpipe, &epdesc);
-    if (!usbdev->defpipe)
-    {
+    if (!usbdev->defpipe) {
         printk("Failed to reallocate control pipe for USB device\n");
         return -1;
     }
 
     // Get configuration
     struct usb_config_descriptor *config = get_device_config(usbdev->defpipe);
-    if (!config)
-    {
-        printk("[usb.c:%d] Failed to get configuration descriptor for USB device\n", __LINE__);
+    if (!config) {
+        printk("[usb.c:%d] Failed to get configuration descriptor for USB "
+               "device\n",
+               __LINE__);
         return 0;
     }
 
@@ -361,15 +335,17 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
     int num_iface = config->bNumInterfaces;
     void *config_end = (void *)config + config->wTotalLength;
     struct usb_interface_descriptor *iface = (void *)(&config[1]);
-    for (;;)
-    {
+    for (;;) {
         if (!num_iface || (void *)iface + iface->bLength > config_end)
             // Not a supported device.
             goto fail;
-        if (iface->bDescriptorType == USB_DT_INTERFACE)
-        {
+        if (iface->bDescriptorType == USB_DT_INTERFACE) {
             num_iface--;
-            if (iface->bInterfaceClass == USB_CLASS_HUB || (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE && (iface->bInterfaceProtocol == US_PR_BULK || iface->bInterfaceProtocol == US_PR_UAS)) || (iface->bInterfaceClass == USB_CLASS_HID))
+            if (iface->bInterfaceClass == USB_CLASS_HUB ||
+                (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE &&
+                 (iface->bInterfaceProtocol == US_PR_BULK ||
+                  iface->bInterfaceProtocol == US_PR_UAS)) ||
+                (iface->bInterfaceClass == USB_CLASS_HID))
                 break;
         }
         iface = (void *)iface + iface->bLength;
@@ -384,30 +360,22 @@ static int configure_usb_device(struct usbdevice_s *usbdev)
     usbdev->config = config;
     usbdev->iface = iface;
     usbdev->imax = (void *)config + config->wTotalLength - (void *)iface;
-    if (iface->bInterfaceClass == USB_CLASS_HUB)
-    {
+    if (iface->bInterfaceClass == USB_CLASS_HUB) {
         printk("hub device detected\n");
         goto fail;
-    }
-    else if (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE)
-    {
+    } else if (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE) {
         printk("mass storage device detected\n");
         if (iface->bInterfaceProtocol == US_PR_BULK)
             ret = usb_msc_setup(usbdev);
-        if (iface->bInterfaceProtocol == US_PR_UAS)
-        {
+        if (iface->bInterfaceProtocol == US_PR_UAS) {
             printk("unsupported USB device: UAS\n");
             goto fail;
         }
         //     ret = usb_uas_setup(usbdev);
-    }
-    else if (iface->bInterfaceClass == USB_CLASS_HID)
-    {
+    } else if (iface->bInterfaceClass == USB_CLASS_HID) {
         printk("hid device detected\n");
         ret = usb_hid_setup(usbdev);
-    }
-    else
-    {
+    } else {
         goto fail;
     }
     if (ret)
@@ -420,25 +388,20 @@ fail:
     return 0;
 }
 
-static void
-usb_hub_port_setup(void *data)
-{
+static void usb_hub_port_setup(void *data) {
     struct usbdevice_s *usbdev = data;
     struct usbhub_s *hub = usbdev->hub;
     uint32_t port = usbdev->port;
 
-    for (;;)
-    {
+    for (;;) {
         // Detect if device present (and possibly start reset)
         int ret = hub->op->detect(hub, port);
-        if (ret > 0)
-        {
+        if (ret > 0) {
             printk("USB device found at port %d\n", port);
             // Device connected.
             break;
         }
-        if (ret <= 0)
-        {
+        if (ret <= 0) {
             // No device found.
             goto done;
         }
@@ -449,8 +412,7 @@ usb_hub_port_setup(void *data)
     // Reset port and determine device speed
     spin_lock(&hub->cntl->resetlock);
     int ret = hub->op->reset(hub, port);
-    if (ret < 0)
-    {
+    if (ret < 0) {
         // Reset failed
         printk("Failed to reset USB device at port %d\n", port);
         goto resetfail;
@@ -459,8 +421,7 @@ usb_hub_port_setup(void *data)
 
     // Set address of port
     ret = usb_set_address(usbdev);
-    if (ret)
-    {
+    if (ret) {
         printk("Failed to set USB device address at port %d\n", port);
         hub->op->disconnect(hub, port);
         goto resetfail;
@@ -470,8 +431,7 @@ usb_hub_port_setup(void *data)
     // Configure the device
     int count = configure_usb_device(usbdev);
     usb_free_pipe(usbdev, usbdev->defpipe);
-    if (!count)
-    {
+    if (!count) {
         hub->op->disconnect(hub, port);
         free(usbdev);
         usbdev = NULL;
@@ -480,10 +440,8 @@ usb_hub_port_setup(void *data)
 done:
     hub->threads--;
 
-    for (int i = 0; i < MAX_USBDEV_NUM; i++)
-    {
-        if (!usbdevs[i])
-        {
+    for (int i = 0; i < MAX_USBDEV_NUM; i++) {
+        if (!usbdevs[i]) {
             usbdevs[i] = usbdev;
             break;
         }
@@ -502,18 +460,15 @@ resetfail:
 
 static uint32_t usb_time_sigatt;
 
-void usb_enumerate(struct usbhub_s *hub)
-{
+void usb_enumerate(struct usbhub_s *hub) {
     uint32_t portcount = hub->portcount;
     hub->threads = portcount;
 
     // Launch a thread for every port.
     int i;
-    for (i = 0; i < portcount; i++)
-    {
+    for (i = 0; i < portcount; i++) {
         struct usbdevice_s *usbdev = malloc(sizeof(*usbdev));
-        if (!usbdev)
-        {
+        if (!usbdev) {
             continue;
         }
         memset(usbdev, 0, sizeof(*usbdev));

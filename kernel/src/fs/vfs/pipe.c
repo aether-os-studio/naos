@@ -7,19 +7,14 @@ vfs_node_t pipefs_root;
 int pipefs_id = 0;
 static int pipefd_id = 0;
 
-static int dummy()
-{
-    return -ENOSYS;
-}
+static int dummy() { return -ENOSYS; }
 
-void pipefs_open(void *parent, const char *name, vfs_node_t node)
-{
+void pipefs_open(void *parent, const char *name, vfs_node_t node) {
     (void)parent;
     (void)name;
 }
 
-ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size)
-{
+ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     if (size > PIPE_BUFF)
         size = PIPE_BUFF;
 
@@ -35,15 +30,12 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size)
     spin_unlock(&spec->node->spin);
 
     uint32_t available = (pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF;
-    while (available == 0)
-    {
-        if (fd->flags & O_NONBLOCK)
-        {
+    while (available == 0) {
+        if (fd->flags & O_NONBLOCK) {
             return -EWOULDBLOCK;
         }
 
-        if (pipe->write_fds == 0)
-        {
+        if (pipe->write_fds == 0) {
             return 0;
         }
 
@@ -61,19 +53,15 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size)
     // 实际读取量
     uint32_t to_read = MIN(size, available);
 
-    if (available == 0)
-    {
+    if (available == 0) {
         spin_unlock(&pipe->lock);
         return 0;
     }
 
     // 分两种情况拷贝数据
-    if (pipe->read_ptr + to_read <= PIPE_BUFF)
-    {
+    if (pipe->read_ptr + to_read <= PIPE_BUFF) {
         memcpy(addr, &pipe->buf[pipe->read_ptr], to_read);
-    }
-    else
-    {
+    } else {
         uint32_t first_chunk = PIPE_BUFF - pipe->read_ptr;
         memcpy(addr, &pipe->buf[pipe->read_ptr], first_chunk);
         memcpy(addr + first_chunk, pipe->buf, to_read - first_chunk);
@@ -88,36 +76,32 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size)
     return to_read;
 }
 
-ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
-{
+ssize_t pipe_write_inner(void *file, const void *addr, size_t size) {
     pipe_specific_t *spec = (pipe_specific_t *)file;
     pipe_info_t *pipe = spec->info;
 
     spin_unlock(&spec->node->spin);
 
-    uint32_t free_space = PIPE_BUFF - ((pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF);
-    while (free_space < size)
-    {
-        if (pipe->read_fds == 0)
-        {
+    uint32_t free_space =
+        PIPE_BUFF - ((pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF);
+    while (free_space < size) {
+        if (pipe->read_fds == 0) {
             return -EPIPE;
         }
 
         arch_yield();
 
-        free_space = PIPE_BUFF - ((pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF);
+        free_space =
+            PIPE_BUFF - ((pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF);
     }
 
     spin_lock(&spec->node->spin);
 
     spin_lock(&pipe->lock);
 
-    if (pipe->write_ptr + size <= PIPE_BUFF)
-    {
+    if (pipe->write_ptr + size <= PIPE_BUFF) {
         memcpy(&pipe->buf[pipe->write_ptr], addr, size);
-    }
-    else
-    {
+    } else {
         uint32_t first_chunk = PIPE_BUFF - pipe->write_ptr;
         memcpy(&pipe->buf[pipe->write_ptr], addr, first_chunk);
         memcpy(pipe->buf, addr + first_chunk, size - first_chunk);
@@ -131,24 +115,21 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size)
     return size;
 }
 
-ssize_t pipefs_write(fd_t *fd, const void *addr, size_t offset, size_t size)
-{
+ssize_t pipefs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     int ret = 0;
     void *file = fd->node->handle;
     size_t chunks = size / PIPE_BUFF;
     size_t remainder = size % PIPE_BUFF;
     if (chunks)
-        for (size_t i = 0; i < chunks; i++)
-        {
+        for (size_t i = 0; i < chunks; i++) {
             int cycle = 0;
             while (cycle != PIPE_BUFF)
-                cycle +=
-                    pipe_write_inner(file, addr + i * PIPE_BUFF + cycle, PIPE_BUFF - cycle);
+                cycle += pipe_write_inner(file, addr + i * PIPE_BUFF + cycle,
+                                          PIPE_BUFF - cycle);
             ret += cycle;
         }
 
-    if (remainder)
-    {
+    if (remainder) {
         size_t cycle = 0;
         while (cycle != remainder)
             cycle += pipe_write_inner(file, addr + chunks * PIPE_BUFF + cycle,
@@ -159,32 +140,25 @@ ssize_t pipefs_write(fd_t *fd, const void *addr, size_t offset, size_t size)
     return ret;
 }
 
-int pipefs_ioctl(void *file, ssize_t cmd, ssize_t arg)
-{
-    switch (cmd)
-    {
+int pipefs_ioctl(void *file, ssize_t cmd, ssize_t arg) {
+    switch (cmd) {
     default:
         return -ENOSYS;
     }
 }
 
-bool pipefs_close(void *current)
-{
+bool pipefs_close(void *current) {
     pipe_specific_t *spec = (pipe_specific_t *)current;
     pipe_info_t *pipe = spec->info;
 
     spin_lock(&pipe->lock);
-    if (spec->write)
-    {
+    if (spec->write) {
         pipe->write_fds--;
-    }
-    else
-    {
+    } else {
         pipe->read_fds--;
     }
 
-    if (pipe->write_fds == 0 && pipe->read_fds == 0)
-    {
+    if (pipe->write_fds == 0 && pipe->read_fds == 0) {
         free_frames_bytes(pipe->buf, PIPE_BUFF);
         free(pipe);
     }
@@ -200,24 +174,21 @@ bool pipefs_close(void *current)
     return true;
 }
 
-int pipefs_poll(void *file, size_t events)
-{
+int pipefs_poll(void *file, size_t events) {
     pipe_specific_t *spec = (pipe_specific_t *)file;
     pipe_info_t *pipe = spec->info;
 
     int out = 0;
 
     spin_lock(&pipe->lock);
-    if (events & EPOLLIN)
-    {
+    if (events & EPOLLIN) {
         if (!pipe->write_fds)
             out |= EPOLLHUP;
         if (pipe->assigned > 0)
             out |= EPOLLIN;
     }
 
-    if (events & EPOLLOUT)
-    {
+    if (events & EPOLLOUT) {
         if (!pipe->read_fds)
             out |= EPOLLHUP;
         if (pipe->assigned < PIPE_BUFF)
@@ -227,13 +198,9 @@ int pipefs_poll(void *file, size_t events)
     return out;
 }
 
-vfs_node_t pipe_dup(vfs_node_t node)
-{
-    return node;
-}
+vfs_node_t pipe_dup(vfs_node_t node) { return node; }
 
-int pipefs_stat(void *file, vfs_node_t node)
-{
+int pipefs_stat(void *file, vfs_node_t node) {
     pipe_specific_t *spec = (pipe_specific_t *)file;
     pipe_info_t *pipe = spec->info;
     if (spec->write)
@@ -274,8 +241,7 @@ fs_t pipefs = {
     .callback = &callbacks,
 };
 
-void pipefs_init()
-{
+void pipefs_init() {
     pipefs_id = vfs_regist(&pipefs);
     pipefs_root = vfs_node_alloc(NULL, "pipe");
     pipefs_root->type = file_dir;
@@ -283,19 +249,15 @@ void pipefs_init()
     pipefs_root->fsid = pipefs_id;
 }
 
-uint64_t sys_pipe(int pipefd[2], uint64_t flags)
-{
+uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
     int i1 = -1;
-    for (i1 = 3; i1 < MAX_FD_NUM; i1++)
-    {
-        if (current_task->fd_info->fds[i1] == NULL)
-        {
+    for (i1 = 3; i1 < MAX_FD_NUM; i1++) {
+        if (current_task->fd_info->fds[i1] == NULL) {
             break;
         }
     }
 
-    if (i1 == MAX_FD_NUM)
-    {
+    if (i1 == MAX_FD_NUM) {
         return -EBADF;
     }
 
@@ -326,12 +288,14 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags)
     info->write_ptr = 0;
     info->assigned = 0;
 
-    pipe_specific_t *read_spec = (pipe_specific_t *)malloc(sizeof(pipe_specific_t));
+    pipe_specific_t *read_spec =
+        (pipe_specific_t *)malloc(sizeof(pipe_specific_t));
     read_spec->write = false;
     read_spec->info = info;
     read_spec->node = node_input;
 
-    pipe_specific_t *write_spec = (pipe_specific_t *)malloc(sizeof(pipe_specific_t));
+    pipe_specific_t *write_spec =
+        (pipe_specific_t *)malloc(sizeof(pipe_specific_t));
     write_spec->write = true;
     write_spec->info = info;
     write_spec->node = node_output;
@@ -345,16 +309,13 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags)
     current_task->fd_info->fds[i1]->flags = flags;
 
     int i2 = -1;
-    for (i2 = 3; i2 < MAX_FD_NUM; i2++)
-    {
-        if (current_task->fd_info->fds[i2] == NULL)
-        {
+    for (i2 = 3; i2 < MAX_FD_NUM; i2++) {
+        if (current_task->fd_info->fds[i2] == NULL) {
             break;
         }
     }
 
-    if (i2 == MAX_FD_NUM)
-    {
+    if (i2 == MAX_FD_NUM) {
         return -EBADF;
     }
 

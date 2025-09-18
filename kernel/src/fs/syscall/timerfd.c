@@ -8,18 +8,15 @@ static vfs_node_t timerfdfs_root = NULL;
 
 static int timerfd_id = 0;
 
-uint64_t sys_timerfd_create(int clockid, int flags)
-{
+uint64_t sys_timerfd_create(int clockid, int flags) {
     // 参数检查
     if (clockid != CLOCK_REALTIME && clockid != CLOCK_MONOTONIC)
         return -EINVAL;
 
     // 分配文件描述符
     int fd = -1;
-    for (int i = 3; i < MAX_FD_NUM; i++)
-    {
-        if (!current_task->fd_info->fds[i])
-        {
+    for (int i = 3; i < MAX_FD_NUM; i++) {
+        if (!current_task->fd_info->fds[i]) {
             fd = i;
             break;
         }
@@ -49,24 +46,23 @@ uint64_t sys_timerfd_create(int clockid, int flags)
 }
 
 // 统一的当前时间获取函数
-static uint64_t get_current_time_ns(int clock_type)
-{
-    if (clock_type == CLOCK_MONOTONIC)
-    {
+static uint64_t get_current_time_ns(int clock_type) {
+    if (clock_type == CLOCK_MONOTONIC) {
         return nanoTime(); // 单调时钟，直接返回纳秒
-    }
-    else // CLOCK_REALTIME
+    } else                 // CLOCK_REALTIME
     {
         tm time;
         time_read(&time);
-        return (uint64_t)mktime(&time) * 1000000000ULL + nanoTime() % 1000000000ULL;
+        return (uint64_t)mktime(&time) * 1000000000ULL +
+               nanoTime() % 1000000000ULL;
     }
 }
 
 extern volatile struct limine_date_at_boot_request boot_time_request;
 
-uint64_t sys_timerfd_settime(int fd, int flags, const struct itimerval *new_value, struct itimerval *old_value)
-{
+uint64_t sys_timerfd_settime(int fd, int flags,
+                             const struct itimerval *new_value,
+                             struct itimerval *old_value) {
     if (fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
 
@@ -74,13 +70,14 @@ uint64_t sys_timerfd_settime(int fd, int flags, const struct itimerval *new_valu
     timerfd_t *tfd = node->handle;
 
     // 保存旧值
-    if (old_value)
-    {
+    if (old_value) {
         uint64_t now = get_current_time_ns(tfd->timer.clock_type);
-        uint64_t remaining = tfd->timer.expires > now ? tfd->timer.expires - now : 0;
+        uint64_t remaining =
+            tfd->timer.expires > now ? tfd->timer.expires - now : 0;
 
         old_value->it_interval.tv_sec = tfd->timer.interval / 1000000000ULL;
-        old_value->it_interval.tv_usec = (tfd->timer.interval % 1000000000ULL) / 1000ULL;
+        old_value->it_interval.tv_usec =
+            (tfd->timer.interval % 1000000000ULL) / 1000ULL;
         old_value->it_value.tv_sec = remaining / 1000000000ULL;
         old_value->it_value.tv_usec = (remaining % 1000000000ULL) / 1000ULL;
     }
@@ -93,14 +90,11 @@ uint64_t sys_timerfd_settime(int fd, int flags, const struct itimerval *new_valu
 
     uint64_t expires;
 
-    if (flags & TFD_TIMER_ABSTIME)
-    {
+    if (flags & TFD_TIMER_ABSTIME) {
         // 绝对时间：直接使用提供的值
         tfd->timer.clock_type = CLOCK_REALTIME;
         expires = value;
-    }
-    else
-    {
+    } else {
         // 相对时间：当前时间 + 提供的值
         tfd->timer.clock_type = CLOCK_MONOTONIC;
         uint64_t now = value ? get_current_time_ns(tfd->timer.clock_type) : 0;
@@ -110,31 +104,26 @@ uint64_t sys_timerfd_settime(int fd, int flags, const struct itimerval *new_valu
     tfd->timer.expires = expires;
     tfd->timer.interval = interval;
     // 只有在解除定时器（value为0）时才重置count
-    if (value == 0)
-    {
+    if (value == 0) {
         tfd->count = 0;
     }
 
     return 0;
 }
 
-bool sys_timerfd_close(void *current)
-{
+bool sys_timerfd_close(void *current) {
     if (current)
         free(current);
     return true;
 }
 
-int timerfd_poll(void *file, size_t events)
-{
+int timerfd_poll(void *file, size_t events) {
     timerfd_t *tfd = file;
 
     int revents = 0;
 
-    if (events & EPOLLIN)
-    {
-        if (tfd->count > 0)
-        {
+    if (events & EPOLLIN) {
+        if (tfd->count > 0) {
             revents |= EPOLLIN;
         }
     }
@@ -142,32 +131,24 @@ int timerfd_poll(void *file, size_t events)
     return revents;
 }
 
-ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size)
-{
+ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     void *file = fd->node->handle;
     timerfd_t *tfd = file;
 
     // 检查是否有待处理的超时事件
-    if (tfd->count == 0)
-    {
+    if (tfd->count == 0) {
         uint64_t now = get_current_time_ns(tfd->timer.clock_type);
 
         // 检查定时器是否未启动
-        if (tfd->timer.expires == 0)
-        {
+        if (tfd->timer.expires == 0) {
             // timerfd未启动，根据阻塞模式处理
-            if (fd->flags & O_NONBLOCK)
-            {
+            if (fd->flags & O_NONBLOCK) {
                 return -EAGAIN; // 非阻塞模式，直接返回EAGAIN
-            }
-            else
-            {
+            } else {
                 // 阻塞模式，等待timerfd被设置
-                while (tfd->timer.expires == 0)
-                {
+                while (tfd->timer.expires == 0) {
                     arch_yield();
-                    if (signals_pending_quick(current_task))
-                    {
+                    if (signals_pending_quick(current_task)) {
                         return -EINTR;
                     }
                 }
@@ -177,21 +158,17 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size)
         }
 
         // 等待超时（如果是阻塞模式）
-        if (tfd->timer.expires > 0 && now < tfd->timer.expires && !(fd->flags & O_NONBLOCK))
-        {
+        if (tfd->timer.expires > 0 && now < tfd->timer.expires &&
+            !(fd->flags & O_NONBLOCK)) {
             // 阻塞等待直到超时
-            while (now < tfd->timer.expires)
-            {
+            while (now < tfd->timer.expires) {
                 arch_yield();
                 now = get_current_time_ns(tfd->timer.clock_type);
-                if (signals_pending_quick(current_task))
-                {
+                if (signals_pending_quick(current_task)) {
                     return -EINTR;
                 }
             }
-        }
-        else if (now < tfd->timer.expires && (fd->flags & O_NONBLOCK))
-        {
+        } else if (now < tfd->timer.expires && (fd->flags & O_NONBLOCK)) {
             // 非阻塞模式且未超时
             return -EAGAIN;
         }
@@ -211,11 +188,9 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size)
 
 #define TFD_IOC_SET_TICKS _IOW('T', 0, uint64_t)
 
-int timerfd_ioctl(void *file, ssize_t cmd, ssize_t arg)
-{
+int timerfd_ioctl(void *file, ssize_t cmd, ssize_t arg) {
     timerfd_t *tfd = file;
-    switch (cmd)
-    {
+    switch (cmd) {
     case TFD_IOC_SET_TICKS:
         tfd->count = arg;
         return 0;
@@ -226,10 +201,7 @@ int timerfd_ioctl(void *file, ssize_t cmd, ssize_t arg)
     }
 }
 
-static int dummy()
-{
-    return 0;
-}
+static int dummy() { return 0; }
 
 static struct vfs_callback timerfd_callbacks = {
     .mount = (vfs_mount_t)dummy,
@@ -261,8 +233,7 @@ fs_t timefdfs = {
     .callback = &timerfd_callbacks,
 };
 
-void timerfd_init()
-{
+void timerfd_init() {
     timerfdfs_id = vfs_regist(&timefdfs);
     timerfdfs_root = vfs_node_alloc(NULL, "timer");
     timerfdfs_root->type = file_dir;

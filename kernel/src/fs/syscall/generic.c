@@ -1,8 +1,8 @@
 #include <fs/fs_syscall.h>
 #include <net/socket.h>
 
-uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags, void *data)
-{
+uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
+                   void *data) {
     // vfs_node_t dir = vfs_open((const char *)dir_name);
     // if (!dir)
     // {
@@ -17,40 +17,31 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags, v
     return 0;
 }
 
-uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode)
-{
+uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode) {
     uint64_t i = 0;
-    for (i = 3; i < MAX_FD_NUM; i++)
-    {
-        if (current_task->fd_info->fds[i] == NULL)
-        {
+    for (i = 3; i < MAX_FD_NUM; i++) {
+        if (current_task->fd_info->fds[i] == NULL) {
             break;
         }
     }
 
-    if (i == MAX_FD_NUM)
-    {
+    if (i == MAX_FD_NUM) {
         return (uint64_t)-EMFILE;
     }
 
     int create_mode = (flags & O_CREAT);
 
     vfs_node_t node = vfs_open(name);
-    if (!node && !create_mode)
-    {
+    if (!node && !create_mode) {
         // serial_fprintk("Opening file %s failed\n", name);
         return (uint64_t)-ENOENT;
     }
 
-    if (!node)
-    {
+    if (!node) {
         int ret = 0;
-        if (mode & O_DIRECTORY)
-        {
+        if (mode & O_DIRECTORY) {
             ret = vfs_mkdir(name);
-        }
-        else
-        {
+        } else {
             ret = vfs_mkfile(name);
         }
         if (ret < 0)
@@ -70,10 +61,9 @@ uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode)
     return i;
 }
 
-uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags, uint64_t mode)
-{
-    if (!name || check_user_overflow((uint64_t)name, strlen(name)))
-    {
+uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags,
+                    uint64_t mode) {
+    if (!name || check_user_overflow((uint64_t)name, strlen(name))) {
         return (uint64_t)-EFAULT;
     }
     char *path = at_resolve_pathname(dirfd, (char *)name);
@@ -87,16 +77,13 @@ uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags, uint64_t m
     return ret;
 }
 
-uint64_t sys_close(uint64_t fd)
-{
-    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL)
-    {
+uint64_t sys_close(uint64_t fd) {
+    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
     }
 
     current_task->fd_info->fds[fd]->offset = 0;
-    if (current_task->fd_info->fds[fd]->node->lock.l_pid == current_task->pid)
-    {
+    if (current_task->fd_info->fds[fd]->node->lock.l_pid == current_task->pid) {
         current_task->fd_info->fds[fd]->node->lock.l_type = F_UNLCK;
         current_task->fd_info->fds[fd]->node->lock.l_pid = 0;
     }
@@ -109,22 +96,17 @@ uint64_t sys_close(uint64_t fd)
     return 0;
 }
 
-uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags)
-{
-    if (fd > maxfd)
-    {
+uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
+    if (fd > maxfd) {
         return (uint64_t)-EINVAL;
     }
 
-    if (maxfd > MAX_FD_NUM)
-    {
+    if (maxfd > MAX_FD_NUM) {
         maxfd = MAX_FD_NUM;
     }
 
-    for (uint64_t fd_ = fd; fd_ <= maxfd; fd_++)
-    {
-        if (current_task->fd_info->fds[fd_])
-        {
+    for (uint64_t fd_ = fd; fd_ <= maxfd; fd_++) {
+        if (current_task->fd_info->fds[fd_]) {
             sys_close(fd_);
         }
     }
@@ -132,17 +114,16 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags)
     return 0;
 }
 
-uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t *offset_in, uint64_t fd_out, uint64_t *offset_out, uint64_t len, uint64_t flags)
-{
-    if (fd_in >= MAX_FD_NUM || fd_out >= MAX_FD_NUM)
-    {
+uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t *offset_in,
+                             uint64_t fd_out, uint64_t *offset_out,
+                             uint64_t len, uint64_t flags) {
+    if (fd_in >= MAX_FD_NUM || fd_out >= MAX_FD_NUM) {
         return (uint64_t)-EBADF;
     }
 
     fd_t *in_fd = current_task->fd_info->fds[fd_in];
     fd_t *out_fd = current_task->fd_info->fds[fd_out];
-    if (!in_fd || !out_fd)
-    {
+    if (!in_fd || !out_fd) {
         return (uint64_t)-EBADF;
     }
 
@@ -157,14 +138,13 @@ uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t *offset_in, uint64_t fd_ou
     size_t copy_total = 0;
 
     ssize_t ret = vfs_read_fd(in_fd, buffer, src_offset, length);
-    if (ret < 0)
-    {
+    if (ret < 0) {
         free_frames_bytes(buffer, length);
         return (uint64_t)-EIO;
     }
 
-    if ((copy_total = vfs_write_fd(out_fd, buffer, dst_offset, length)) == (ssize_t)-1)
-    {
+    if ((copy_total = vfs_write_fd(out_fd, buffer, dst_offset, length)) ==
+        (ssize_t)-1) {
         free_frames_bytes(buffer, length);
         return (uint64_t)-EIO;
     }
@@ -175,108 +155,95 @@ uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t *offset_in, uint64_t fd_ou
     return copy_total;
 }
 
-uint64_t sys_read(uint64_t fd, void *buf, uint64_t len)
-{
-    if (!buf || check_user_overflow((uint64_t)buf, len))
-    {
+uint64_t sys_read(uint64_t fd, void *buf, uint64_t len) {
+    if (!buf || check_user_overflow((uint64_t)buf, len)) {
         return (uint64_t)-EFAULT;
     }
-    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL)
-    {
+    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
     }
 
-    if (current_task->fd_info->fds[fd]->node->type & file_dir)
-    {
+    if (current_task->fd_info->fds[fd]->node->type & file_dir) {
         return (uint64_t)-EISDIR; // 读取目录时返回正确错误码
     }
 
-    if (!buf)
-    {
+    if (!buf) {
         return (uint64_t)-EFAULT;
     }
 
-    ssize_t ret = vfs_read_fd(current_task->fd_info->fds[fd], buf, current_task->fd_info->fds[fd]->offset, len);
+    ssize_t ret = vfs_read_fd(current_task->fd_info->fds[fd], buf,
+                              current_task->fd_info->fds[fd]->offset, len);
 
-    if (ret > 0)
-    {
+    if (ret > 0) {
         current_task->fd_info->fds[fd]->offset += ret;
     }
 
-    if (ret == -EAGAIN)
-    {
+    if (ret == -EAGAIN) {
         return (uint64_t)-EAGAIN; // 保持非阻塞I/O语义
     }
 
     return ret;
 }
 
-uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len)
-{
-    if (!buf || check_user_overflow((uint64_t)buf, len))
-    {
+uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
+    if (!buf || check_user_overflow((uint64_t)buf, len)) {
         return (uint64_t)-EFAULT;
     }
-    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL)
-    {
+    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
     }
 
-    if (current_task->fd_info->fds[fd]->node->type & file_dir)
-    {
+    if (current_task->fd_info->fds[fd]->node->type & file_dir) {
         return (uint64_t)-EISDIR; // 读取目录时返回正确错误码
     }
 
-    if (!buf)
-    {
+    if (!buf) {
         return (uint64_t)-EFAULT;
     }
 
-    ssize_t ret = vfs_write_fd(current_task->fd_info->fds[fd], buf, current_task->fd_info->fds[fd]->offset, len);
+    ssize_t ret = vfs_write_fd(current_task->fd_info->fds[fd], buf,
+                               current_task->fd_info->fds[fd]->offset, len);
 
-    if (ret > 0)
-    {
+    if (ret > 0) {
         current_task->fd_info->fds[fd]->offset += ret;
     }
 
-    if (ret == -EAGAIN)
-    {
+    if (ret == -EAGAIN) {
         return (uint64_t)-EAGAIN; // 保持非阻塞I/O语义
     }
 
     return ret;
 }
 
-uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence)
-{
-    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL)
-    {
+uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
+    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
     }
 
     int64_t real_offset = offset;
-    if (real_offset < 0 && current_task->fd_info->fds[fd]->node->type & file_none && whence != SEEK_CUR)
+    if (real_offset < 0 &&
+        current_task->fd_info->fds[fd]->node->type & file_none &&
+        whence != SEEK_CUR)
         return (uint64_t)-EBADF;
 
-    switch (whence & 3)
-    {
+    switch (whence & 3) {
     case SEEK_SET:
         current_task->fd_info->fds[fd]->offset = real_offset;
         break;
     case SEEK_CUR:
         current_task->fd_info->fds[fd]->offset += real_offset;
-        if ((int64_t)current_task->fd_info->fds[fd]->offset < 0)
-        {
+        if ((int64_t)current_task->fd_info->fds[fd]->offset < 0) {
             current_task->fd_info->fds[fd]->offset = 0;
-        }
-        else if (current_task->fd_info->fds[fd]->offset > current_task->fd_info->fds[fd]->node->size)
-        {
-            current_task->fd_info->fds[fd]->offset = current_task->fd_info->fds[fd]->node->size;
+        } else if (current_task->fd_info->fds[fd]->offset >
+                   current_task->fd_info->fds[fd]->node->size) {
+            current_task->fd_info->fds[fd]->offset =
+                current_task->fd_info->fds[fd]->node->size;
         }
 
         break;
     case SEEK_END:
-        current_task->fd_info->fds[fd]->offset = current_task->fd_info->fds[fd]->node->size - real_offset;
+        current_task->fd_info->fds[fd]->offset =
+            current_task->fd_info->fds[fd]->node->size - real_offset;
         break;
 
     default:
@@ -287,36 +254,30 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence)
     return current_task->fd_info->fds[fd]->offset;
 }
 
-uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg)
-{
-    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL)
-    {
+uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
+    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
     }
 
     return vfs_ioctl(current_task->fd_info->fds[fd]->node, cmd, arg);
 }
 
-uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count)
-{
-    if (!iovec || check_user_overflow((uint64_t)iovec, count * sizeof(struct iovec)))
-    {
+uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count) {
+    if (!iovec ||
+        check_user_overflow((uint64_t)iovec, count * sizeof(struct iovec))) {
         return (uint64_t)-EFAULT;
     }
-    if ((uint64_t)iovec == 0)
-    {
+    if ((uint64_t)iovec == 0) {
         return -EINVAL;
     }
 
     ssize_t total_read = 0;
-    for (uint64_t i = 0; i < count; i++)
-    {
+    for (uint64_t i = 0; i < count; i++) {
         if (iovec[i].len == 0)
             continue;
 
         ssize_t ret = sys_read(fd, iovec[i].iov_base, iovec[i].len);
-        if (ret < 0)
-        {
+        if (ret < 0) {
             return (uint64_t)ret;
         }
         total_read += ret;
@@ -326,26 +287,22 @@ uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count)
     return total_read;
 }
 
-uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count)
-{
-    if (!iovec || check_user_overflow((uint64_t)iovec, count * sizeof(struct iovec)))
-    {
+uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count) {
+    if (!iovec ||
+        check_user_overflow((uint64_t)iovec, count * sizeof(struct iovec))) {
         return (uint64_t)-EFAULT;
     }
-    if ((uint64_t)iovec == 0)
-    {
+    if ((uint64_t)iovec == 0) {
         return -EINVAL;
     }
 
     ssize_t total_written = 0;
-    for (uint64_t i = 0; i < count; i++)
-    {
+    for (uint64_t i = 0; i < count; i++) {
         if (iovec[i].len == 0)
             continue;
 
         ssize_t ret = sys_write(fd, iovec[i].iov_base, iovec[i].len);
-        if (ret < 0)
-        {
+        if (ret < 0) {
             return (uint64_t)ret;
         }
         total_written += ret;
@@ -355,10 +312,8 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count)
     return total_written;
 }
 
-uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
-{
-    if (check_user_overflow(buf, size))
-    {
+uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size) {
+    if (check_user_overflow(buf, size)) {
         return (uint64_t)-EFAULT;
     }
     if (fd >= MAX_FD_NUM)
@@ -379,8 +334,7 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
     int64_t read_count = 0;
 
     uint64_t offset = 0;
-    list_foreach(node->child, i)
-    {
+    list_foreach(node->child, i) {
         if (offset < filedescriptor->offset)
             goto next;
         if (filedescriptor->offset >= (child_count * sizeof(struct dirent)))
@@ -409,10 +363,8 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size)
     return read_count * sizeof(struct dirent);
 }
 
-uint64_t sys_chdir(const char *dirname)
-{
-    if (!dirname || check_user_overflow((uint64_t)dirname, strlen(dirname)))
-    {
+uint64_t sys_chdir(const char *dirname) {
+    if (!dirname || check_user_overflow((uint64_t)dirname, strlen(dirname))) {
         return (uint64_t)-EFAULT;
     }
     vfs_node_t new_cwd = vfs_open(dirname);
@@ -424,15 +376,12 @@ uint64_t sys_chdir(const char *dirname)
     return 0;
 }
 
-uint64_t sys_getcwd(char *cwd, uint64_t size)
-{
-    if (!cwd || check_user_overflow((uint64_t)cwd, size))
-    {
+uint64_t sys_getcwd(char *cwd, uint64_t size) {
+    if (!cwd || check_user_overflow((uint64_t)cwd, size)) {
         return (uint64_t)-EFAULT;
     }
     char *str = vfs_get_fullpath(current_task->cwd);
-    if (size < (uint64_t)strlen(str))
-    {
+    if (size < (uint64_t)strlen(str)) {
         return (uint64_t)-ERANGE;
     }
     strncpy(cwd, str, size);
@@ -443,8 +392,7 @@ uint64_t sys_getcwd(char *cwd, uint64_t size)
 extern int unix_socket_fsid;
 extern int unix_accept_fsid;
 
-uint64_t sys_dup2(uint64_t fd, uint64_t newfd)
-{
+uint64_t sys_dup2(uint64_t fd, uint64_t newfd) {
     if (!current_task->fd_info->fds[fd])
         return (uint64_t)-EBADF;
 
@@ -452,8 +400,7 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd)
     if (!new)
         return (uint64_t)-ENOSPC;
 
-    if (current_task->fd_info->fds[newfd])
-    {
+    if (current_task->fd_info->fds[newfd]) {
         vfs_close(current_task->fd_info->fds[newfd]->node);
         free(current_task->fd_info->fds[newfd]);
     }
@@ -464,31 +411,26 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd)
 }
 
 // Implement the sys_dup3 function
-uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags)
-{
+uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
     uint64_t fd = sys_dup2(oldfd, newfd);
     current_task->fd_info->fds[fd]->flags = flags;
 
     return newfd;
 }
 
-uint64_t sys_dup(uint64_t fd)
-{
+uint64_t sys_dup(uint64_t fd) {
     fd_t *f = current_task->fd_info->fds[fd];
     if (!f)
         return (uint64_t)-EBADF;
 
     uint64_t i;
-    for (i = 3; i < MAX_FD_NUM; i++)
-    {
-        if (current_task->fd_info->fds[i] == NULL)
-        {
+    for (i = 3; i < MAX_FD_NUM; i++) {
+        if (current_task->fd_info->fds[i] == NULL) {
             break;
         }
     }
 
-    if (i == MAX_FD_NUM)
-    {
+    if (i == MAX_FD_NUM) {
         return (uint64_t)-EMFILE;
     }
 
@@ -504,22 +446,21 @@ spinlock_t fcntl_lock = {0};
 #define RWH_WRITE_LIFE_LONG 4
 #define RWH_WRITE_LIFE_EXTREME 5
 
-uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
-{
+uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
     if (fd > MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return (uint64_t)-EBADF;
 
     spin_lock(&fcntl_lock);
 
-    switch (command)
-    {
+    switch (command) {
     case F_GETFD:
         spin_unlock(&fcntl_lock);
         return !!(current_task->fd_info->fds[fd]->flags & O_CLOEXEC);
     case F_SETFD:
-        current_task->fd_info->fds[fd]->flags = (arg & 1) // FD_CLOEXEC
-                                                    ? (current_task->fd_info->fds[fd]->flags | O_CLOEXEC)
-                                                    : (current_task->fd_info->fds[fd]->flags & (~O_CLOEXEC));
+        current_task->fd_info->fds[fd]->flags =
+            (arg & 1) // FD_CLOEXEC
+                ? (current_task->fd_info->fds[fd]->flags | O_CLOEXEC)
+                : (current_task->fd_info->fds[fd]->flags & (~O_CLOEXEC));
         spin_unlock(&fcntl_lock);
         return 0;
     case F_DUPFD_CLOEXEC:
@@ -540,11 +481,9 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
         spin_unlock(&fcntl_lock);
         return 0;
     case F_SETLKW:
-    case F_SETLK:
-    {
+    case F_SETLK: {
         struct flock lock;
-        if (check_user_overflow(arg, sizeof(struct flock)))
-        {
+        if (check_user_overflow(arg, sizeof(struct flock))) {
             spin_unlock(&fcntl_lock);
             return -EFAULT;
         }
@@ -553,16 +492,14 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
         vfs_node_t node = current_task->fd_info->fds[fd]->node;
         struct flock *file_lock = &node->lock;
 
-        if (lock.l_type != F_RDLCK && lock.l_type != F_WRLCK && lock.l_type != F_UNLCK)
-        {
+        if (lock.l_type != F_RDLCK && lock.l_type != F_WRLCK &&
+            lock.l_type != F_UNLCK) {
             spin_unlock(&fcntl_lock);
             return -EINVAL;
         }
 
-        if (lock.l_type == F_UNLCK)
-        {
-            if (file_lock->l_pid != current_task->pid)
-            {
+        if (lock.l_type == F_UNLCK) {
+            if (file_lock->l_pid != current_task->pid) {
                 spin_unlock(&fcntl_lock);
                 return -EACCES;
             }
@@ -572,20 +509,17 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
             return 0;
         }
 
-        for (;;)
-        {
+        for (;;) {
             if (file_lock->l_type == F_UNLCK ||
                 (file_lock->l_pid == current_task->pid &&
-                 !(lock.l_type == F_WRLCK && file_lock->l_type == F_RDLCK)))
-            {
+                 !(lock.l_type == F_WRLCK && file_lock->l_type == F_RDLCK))) {
                 file_lock->l_type = lock.l_type;
                 file_lock->l_pid = current_task->pid;
                 spin_unlock(&fcntl_lock);
                 return 0;
             }
 
-            if (command == F_SETLK)
-            {
+            if (command == F_SETLK) {
                 spin_unlock(&fcntl_lock);
                 return -EAGAIN;
             }
@@ -603,15 +537,13 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
         return 0;
     case F_GET_RW_HINT:
         spin_unlock(&fcntl_lock);
-        if (!current_task->fd_info->fds[fd]->node->rw_hint)
-        {
+        if (!current_task->fd_info->fds[fd]->node->rw_hint) {
             return 0;
         }
         return current_task->fd_info->fds[fd]->node->rw_hint;
 
     case F_SET_RW_HINT:
-        if (arg < RWH_WRITE_LIFE_NONE || arg > RWH_WRITE_LIFE_EXTREME)
-        {
+        if (arg < RWH_WRITE_LIFE_NONE || arg > RWH_WRITE_LIFE_EXTREME) {
             spin_unlock(&fcntl_lock);
             return -EINVAL;
         }
@@ -624,11 +556,9 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg)
     }
 }
 
-uint64_t sys_stat(const char *fn, struct stat *buf)
-{
+uint64_t sys_stat(const char *fn, struct stat *buf) {
     vfs_node_t node = vfs_open(fn);
-    if (!node)
-    {
+    if (!node) {
         // serial_fprintk("Stating file %s failed\n", fn);
         return (uint64_t)-ENOENT;
     }
@@ -636,7 +566,13 @@ uint64_t sys_stat(const char *fn, struct stat *buf)
     buf->st_dev = node->dev;
     buf->st_ino = node->inode;
     buf->st_nlink = 1;
-    buf->st_mode = node->mode | (node->type & file_dir ? S_IFDIR : ((node->type & file_symlink) ? S_IFLNK : ((node->type & file_stream) ? S_IFCHR : S_IFREG)));
+    buf->st_mode =
+        node->mode |
+        (node->type & file_dir
+             ? S_IFDIR
+             : ((node->type & file_symlink)
+                    ? S_IFLNK
+                    : ((node->type & file_stream) ? S_IFCHR : S_IFREG)));
     buf->st_uid = current_task->uid;
     buf->st_gid = current_task->gid;
     buf->st_rdev = node->rdev;
@@ -647,14 +583,11 @@ uint64_t sys_stat(const char *fn, struct stat *buf)
     return 0;
 }
 
-uint64_t sys_fstat(uint64_t fd, struct stat *buf)
-{
-    if (!buf || check_user_overflow((uint64_t)buf, sizeof(struct stat)))
-    {
+uint64_t sys_fstat(uint64_t fd, struct stat *buf) {
+    if (!buf || check_user_overflow((uint64_t)buf, sizeof(struct stat))) {
         return (uint64_t)-EFAULT;
     }
-    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL)
-    {
+    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
     }
 
@@ -663,7 +596,13 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
     buf->st_dev = node->dev;
     buf->st_ino = node->inode;
     buf->st_nlink = 1;
-    buf->st_mode = node->mode | (node->type & file_dir ? S_IFDIR : ((node->type & file_symlink) ? S_IFLNK : ((node->type & file_stream) ? S_IFCHR : S_IFREG)));
+    buf->st_mode =
+        node->mode |
+        (node->type & file_dir
+             ? S_IFDIR
+             : ((node->type & file_symlink)
+                    ? S_IFLNK
+                    : ((node->type & file_stream) ? S_IFCHR : S_IFREG)));
     buf->st_uid = current_task->uid;
     buf->st_gid = current_task->gid;
     buf->st_rdev = node->rdev;
@@ -674,12 +613,11 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf)
     return 0;
 }
 
-uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname, struct stat *buf, uint64_t flags)
-{
+uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname, struct stat *buf,
+                        uint64_t flags) {
     char *resolved = at_resolve_pathname(dirfd, (char *)pathname);
 
-    if (!resolved)
-    {
+    if (!resolved) {
         return (uint64_t)-EINVAL;
     }
 
@@ -690,14 +628,13 @@ uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname, struct stat *buf, 
     return ret;
 }
 
-uint64_t sys_statx(uint64_t dirfd, const char *pathname, uint64_t flags, uint64_t mask, struct statx *buff)
-{
-    if (!pathname || check_user_overflow((uint64_t)pathname, strlen(pathname)))
-    {
+uint64_t sys_statx(uint64_t dirfd, const char *pathname, uint64_t flags,
+                   uint64_t mask, struct statx *buff) {
+    if (!pathname ||
+        check_user_overflow((uint64_t)pathname, strlen(pathname))) {
         return (uint64_t)-EFAULT;
     }
-    if (!buff || check_user_overflow((uint64_t)buff, sizeof(struct statx)))
-    {
+    if (!buff || check_user_overflow((uint64_t)buff, sizeof(struct statx))) {
         return (uint64_t)-EFAULT;
     }
     struct stat simple;
@@ -735,21 +672,17 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname, uint64_t flags, uint64_
     return 0;
 }
 
-size_t sys_access(char *filename, int mode)
-{
+size_t sys_access(char *filename, int mode) {
     (void)mode;
     struct stat buf;
     return sys_stat(filename, &buf);
 }
 
-uint64_t sys_faccessat(uint64_t dirfd, const char *pathname, uint64_t mode)
-{
-    if (pathname[0] == '\0')
-    { // by fd
+uint64_t sys_faccessat(uint64_t dirfd, const char *pathname, uint64_t mode) {
+    if (pathname[0] == '\0') { // by fd
         return 0;
     }
-    if (check_user_overflow((uint64_t)pathname, strlen(pathname)))
-    {
+    if (check_user_overflow((uint64_t)pathname, strlen(pathname))) {
         return (uint64_t)-EFAULT;
     }
 
@@ -764,14 +697,12 @@ uint64_t sys_faccessat(uint64_t dirfd, const char *pathname, uint64_t mode)
     return ret;
 }
 
-uint64_t sys_faccessat2(uint64_t dirfd, const char *pathname, uint64_t mode, uint64_t flags)
-{
-    if (pathname[0] == '\0')
-    { // by fd
+uint64_t sys_faccessat2(uint64_t dirfd, const char *pathname, uint64_t mode,
+                        uint64_t flags) {
+    if (pathname[0] == '\0') { // by fd
         return 0;
     }
-    if (check_user_overflow((uint64_t)pathname, strlen(pathname)))
-    {
+    if (check_user_overflow((uint64_t)pathname, strlen(pathname))) {
         return (uint64_t)-EFAULT;
     }
 
@@ -786,25 +717,20 @@ uint64_t sys_faccessat2(uint64_t dirfd, const char *pathname, uint64_t mode, uin
     return ret;
 }
 
-uint64_t sys_readlink(char *path, char *buf, uint64_t size)
-{
-    if (path == NULL || buf == NULL || size == 0)
-    {
+uint64_t sys_readlink(char *path, char *buf, uint64_t size) {
+    if (path == NULL || buf == NULL || size == 0) {
         return (uint64_t)-EFAULT;
     }
-    if (check_user_overflow((uint64_t)buf, size))
-    {
+    if (check_user_overflow((uint64_t)buf, size)) {
         return (uint64_t)-EFAULT;
     }
 
     vfs_node_t node = vfs_open(path);
-    if (node == NULL)
-    {
+    if (node == NULL) {
         return (uint64_t)-ENOENT;
     }
 
-    if (!node->linkto)
-    {
+    if (!node->linkto) {
         // char *p = vfs_get_fullpath(node);
         // int str_len = strlen(p);
         // int node_name_len = strlen(node->name);
@@ -821,26 +747,21 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size)
 
     ssize_t result = vfs_readlink(node, buf, (size_t)size);
 
-    if (result < 0)
-    {
+    if (result < 0) {
         return (uint64_t)-EINVAL;
     }
 
     return result;
 }
 
-uint64_t sys_readlinkat(int dfd, char *path, char *buf, uint64_t size)
-{
-    if (path == NULL || buf == NULL || size == 0)
-    {
+uint64_t sys_readlinkat(int dfd, char *path, char *buf, uint64_t size) {
+    if (path == NULL || buf == NULL || size == 0) {
         return (uint64_t)-EFAULT;
     }
-    if (check_user_overflow((uint64_t)path, strlen(path)))
-    {
+    if (check_user_overflow((uint64_t)path, strlen(path))) {
         return (uint64_t)-EFAULT;
     }
-    if (check_user_overflow((uint64_t)buf, size))
-    {
+    if (check_user_overflow((uint64_t)buf, size)) {
         return (uint64_t)-EFAULT;
     }
 
@@ -853,10 +774,8 @@ uint64_t sys_readlinkat(int dfd, char *path, char *buf, uint64_t size)
     return res;
 }
 
-uint64_t sys_rmdir(const char *name)
-{
-    if (check_user_overflow((uint64_t)name, strlen(name)))
-    {
+uint64_t sys_rmdir(const char *name) {
+    if (check_user_overflow((uint64_t)name, strlen(name))) {
         return (uint64_t)-EFAULT;
     }
     vfs_node_t node = vfs_open(name);
@@ -872,8 +791,7 @@ uint64_t sys_rmdir(const char *name)
     return ret;
 }
 
-uint64_t sys_unlink(const char *name)
-{
+uint64_t sys_unlink(const char *name) {
     vfs_node_t node = vfs_open(name);
     if (!node)
         return -ENOENT;
@@ -883,10 +801,8 @@ uint64_t sys_unlink(const char *name)
     return ret;
 }
 
-uint64_t sys_unlinkat(uint64_t dirfd, const char *name, uint64_t flags)
-{
-    if (check_user_overflow((uint64_t)name, strlen(name)))
-    {
+uint64_t sys_unlinkat(uint64_t dirfd, const char *name, uint64_t flags) {
+    if (check_user_overflow((uint64_t)name, strlen(name))) {
         return (uint64_t)-EFAULT;
     }
     char *path = at_resolve_pathname(dirfd, (char *)name);
@@ -900,8 +816,7 @@ uint64_t sys_unlinkat(uint64_t dirfd, const char *name, uint64_t flags)
     return ret;
 }
 
-uint64_t sys_rename(const char *old, const char *new)
-{
+uint64_t sys_rename(const char *old, const char *new) {
     vfs_node_t node = vfs_open(old);
     if (!node)
         return -ENOENT;
@@ -912,8 +827,8 @@ uint64_t sys_rename(const char *old, const char *new)
     return 0;
 }
 
-uint64_t sys_renameat(uint64_t oldfd, const char *old, uint64_t newfd, const char *new)
-{
+uint64_t sys_renameat(uint64_t oldfd, const char *old, uint64_t newfd,
+                      const char *new) {
     char *old_path = at_resolve_pathname_fullpath(oldfd, (char *)old);
     char *new_path = at_resolve_pathname_fullpath(newfd, (char *)new);
 
@@ -921,8 +836,7 @@ uint64_t sys_renameat(uint64_t oldfd, const char *old, uint64_t newfd, const cha
     if (!node)
         return -ENOENT;
     int ret = vfs_rename(node, new_path);
-    if (ret < 0)
-    {
+    if (ret < 0) {
         free(old_path);
         free(new_path);
         return ret;
@@ -934,8 +848,7 @@ uint64_t sys_renameat(uint64_t oldfd, const char *old, uint64_t newfd, const cha
     return 0;
 }
 
-uint64_t sys_fchdir(uint64_t fd)
-{
+uint64_t sys_fchdir(uint64_t fd) {
     if (fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
 
@@ -948,11 +861,9 @@ uint64_t sys_fchdir(uint64_t fd)
     return 0;
 }
 
-uint64_t sys_mkdir(const char *name, uint64_t mode)
-{
+uint64_t sys_mkdir(const char *name, uint64_t mode) {
     int ret = vfs_mkdir(name);
-    if (ret < 0)
-    {
+    if (ret < 0) {
         return (uint64_t)ret;
     }
     vfs_chmod(name, mode);
@@ -960,8 +871,7 @@ uint64_t sys_mkdir(const char *name, uint64_t mode)
     return 0;
 }
 
-uint64_t sys_mkdirat(int dfd, const char *name, uint64_t mode)
-{
+uint64_t sys_mkdirat(int dfd, const char *name, uint64_t mode) {
     char *path = at_resolve_pathname(dfd, name);
 
     uint64_t ret = sys_mkdir((const char *)path, mode);
@@ -971,10 +881,8 @@ uint64_t sys_mkdirat(int dfd, const char *name, uint64_t mode)
     return ret;
 }
 
-uint64_t sys_link(const char *name, const char *new)
-{
-    if (check_user_overflow((uint64_t)name, strlen(name)))
-    {
+uint64_t sys_link(const char *name, const char *new) {
+    if (check_user_overflow((uint64_t)name, strlen(name))) {
         return (uint64_t)-EFAULT;
     }
     int ret = vfs_link(name, new);
@@ -982,10 +890,8 @@ uint64_t sys_link(const char *name, const char *new)
     return ret;
 }
 
-uint64_t sys_symlink(const char *name, const char *new)
-{
-    if (check_user_overflow((uint64_t)name, strlen(name)))
-    {
+uint64_t sys_symlink(const char *name, const char *new) {
+    if (check_user_overflow((uint64_t)name, strlen(name))) {
         return (uint64_t)-EFAULT;
     }
     int ret = vfs_symlink(new, name);
@@ -993,10 +899,9 @@ uint64_t sys_symlink(const char *name, const char *new)
     return ret;
 }
 
-uint64_t sys_symlinkat(const char *name, int dfd, const char *new)
-{
-    if (check_user_overflow((uint64_t)name, strlen(name)) || check_user_overflow((uint64_t)new, strlen(new)))
-    {
+uint64_t sys_symlinkat(const char *name, int dfd, const char *new) {
+    if (check_user_overflow((uint64_t)name, strlen(name)) ||
+        check_user_overflow((uint64_t)new, strlen(new))) {
         return (uint64_t)-EFAULT;
     }
 
@@ -1009,8 +914,7 @@ uint64_t sys_symlinkat(const char *name, int dfd, const char *new)
     return ret;
 }
 
-uint64_t sys_mknod(const char *name, uint16_t umode, int dev)
-{
+uint64_t sys_mknod(const char *name, uint16_t umode, int dev) {
     int ret = vfs_mknod(name, umode, dev);
     if (ret < 0)
         return (uint64_t)-EINVAL;
@@ -1018,13 +922,11 @@ uint64_t sys_mknod(const char *name, uint16_t umode, int dev)
     return 0;
 }
 
-uint64_t sys_chmod(const char *name, uint16_t mode)
-{
+uint64_t sys_chmod(const char *name, uint16_t mode) {
     return vfs_chmod(name, mode);
 }
 
-uint64_t sys_fchmod(int fd, uint16_t mode)
-{
+uint64_t sys_fchmod(int fd, uint16_t mode) {
     if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
 
@@ -1036,16 +938,14 @@ uint64_t sys_fchmod(int fd, uint16_t mode)
     return ret;
 }
 
-uint64_t sys_fchmodat(int dfd, const char *name, uint16_t mode)
-{
+uint64_t sys_fchmodat(int dfd, const char *name, uint16_t mode) {
     char *resolved = at_resolve_pathname(dfd, name);
     int ret = vfs_chmod(name, mode);
     free(resolved);
     return ret;
 }
 
-uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len)
-{
+uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
     if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
 
@@ -1056,11 +956,9 @@ uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len)
     return 0;
 }
 
-uint64_t sys_truncate(const char *path, uint64_t length)
-{
+uint64_t sys_truncate(const char *path, uint64_t length) {
     vfs_node_t node = vfs_open(path);
-    if (!node)
-    {
+    if (!node) {
         return (uint64_t)-ENOENT;
     }
 
@@ -1069,8 +967,7 @@ uint64_t sys_truncate(const char *path, uint64_t length)
     return 0;
 }
 
-uint64_t sys_ftruncate(int fd, uint64_t length)
-{
+uint64_t sys_ftruncate(int fd, uint64_t length) {
     if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
 
@@ -1079,8 +976,7 @@ uint64_t sys_ftruncate(int fd, uint64_t length)
     return 0;
 }
 
-uint64_t sys_flock(int fd, uint64_t operation)
-{
+uint64_t sys_flock(int fd, uint64_t operation) {
     if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
 
@@ -1089,8 +985,7 @@ uint64_t sys_flock(int fd, uint64_t operation)
     uint64_t pid = current_task->pid;
 
     // 提前检查参数有效性
-    switch (operation & ~LOCK_NB)
-    {
+    switch (operation & ~LOCK_NB) {
     case LOCK_SH:
     case LOCK_EX:
     case LOCK_UN:
@@ -1100,8 +995,7 @@ uint64_t sys_flock(int fd, uint64_t operation)
     }
 
     // 非阻塞模式下立即检查冲突
-    if (operation & LOCK_NB)
-    {
+    if (operation & LOCK_NB) {
         if ((operation & LOCK_SH) && lock->l_type == F_WRLCK)
             return -EWOULDBLOCK;
         if ((operation & LOCK_EX) && lock->l_type != F_UNLCK)
@@ -1109,17 +1003,14 @@ uint64_t sys_flock(int fd, uint64_t operation)
     }
 
     // 实际加锁逻辑
-    switch (operation & ~LOCK_NB)
-    {
+    switch (operation & ~LOCK_NB) {
     case LOCK_SH:
     case LOCK_EX:
-        while (lock->l_type != F_UNLCK && lock->l_pid != pid)
-        {
+        while (lock->l_type != F_UNLCK && lock->l_pid != pid) {
             if (operation & LOCK_NB)
                 return -EWOULDBLOCK;
 
-            while (lock->lock)
-            {
+            while (lock->lock) {
                 arch_enable_interrupt();
 
                 arch_pause();
@@ -1143,8 +1034,7 @@ uint64_t sys_flock(int fd, uint64_t operation)
     return 0;
 }
 
-uint64_t sys_fadvise64(int fd, uint64_t offset, uint64_t len, int advice)
-{
+uint64_t sys_fadvise64(int fd, uint64_t offset, uint64_t len, int advice) {
     if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
 
@@ -1155,20 +1045,18 @@ uint64_t sys_fadvise64(int fd, uint64_t offset, uint64_t len, int advice)
     return 0;
 }
 
-uint64_t sys_utimensat(int dfd, const char *pathname, struct timespec *ntimes, int flags)
-{
+uint64_t sys_utimensat(int dfd, const char *pathname, struct timespec *ntimes,
+                       int flags) {
     return 0;
 }
 
-uint64_t sys_futimesat(int dfd, const char *pathname, struct timeval *utimes)
-{
+uint64_t sys_futimesat(int dfd, const char *pathname, struct timeval *utimes) {
     return 0;
 }
 
 extern volatile struct limine_date_at_boot_request boot_time_request;
 
-uint64_t sys_sysinfo(struct sysinfo *info)
-{
+uint64_t sys_sysinfo(struct sysinfo *info) {
     if (check_user_overflow((uint64_t)info, sizeof(struct sysinfo)))
         return -EFAULT;
 
@@ -1180,10 +1068,8 @@ uint64_t sys_sysinfo(struct sysinfo *info)
     info->totalram = frame_allocator.origin_frames * DEFAULT_PAGE_SIZE;
     info->freeram = frame_allocator.usable_frames * DEFAULT_PAGE_SIZE;
     int proc_count = 0;
-    for (int i = 0; i < MAX_TASK_NUM; i++)
-    {
-        if (!tasks[i])
-        {
+    for (int i = 0; i < MAX_TASK_NUM; i++) {
+        if (!tasks[i]) {
             proc_count++;
         }
     }

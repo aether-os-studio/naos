@@ -8,8 +8,7 @@
 
 #define PCI_DRIVER_FLAGS_NEED_SYSFS (1 << 0)
 
-typedef struct pci_driver
-{
+typedef struct pci_driver {
     const char *name;
     uint32_t class_id, vendor_device_id;
     int (*probe)(pci_device_t *dev, uint32_t vendor_device_id);

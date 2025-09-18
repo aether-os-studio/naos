@@ -1,28 +1,28 @@
 #include <libs/klibc.h>
 #include <arch/aarch64/time/time.h>
 
-__attribute__((used, section(".limine_requests"))) static volatile struct limine_date_at_boot_request boot_time_request =
-    {
+__attribute__((
+    used,
+    section(
+        ".limine_requests"))) static volatile struct limine_date_at_boot_request
+    boot_time_request = {
         .id = LIMINE_DATE_AT_BOOT_REQUEST,
         .revision = 0,
 };
 
-uint64_t get_counter()
-{
+uint64_t get_counter() {
     uint64_t val;
     asm volatile("mrs %0, CNTPCT_EL0" : "=r"(val));
     return val;
 }
 
-uint32_t get_freq()
-{
+uint32_t get_freq() {
     uint32_t freq;
     asm volatile("mrs %0, CNTFRQ_EL0" : "=r"(freq));
     return freq;
 }
 
-static int is_leap_year(int year)
-{
+static int is_leap_year(int year) {
     if (year % 4 != 0)
         return 0;
     if (year % 100 != 0)
@@ -30,8 +30,7 @@ static int is_leap_year(int year)
     return (year % 400 == 0);
 }
 
-void time_read(tm *time)
-{
+void time_read(tm *time) {
     uint64_t timestrap_at_boot = boot_time_request.response->timestamp;
     uint64_t timer_value = timestrap_at_boot + get_counter() / get_freq();
 
@@ -45,8 +44,7 @@ void time_read(tm *time)
     time->tm_wday = (days + 4) % 7;
 
     int year = 1970;
-    while (remaining_days >= (is_leap_year(year) ? 366 : 365))
-    {
+    while (remaining_days >= (is_leap_year(year) ? 366 : 365)) {
         remaining_days -= is_leap_year(year) ? 366 : 365;
         year++;
     }
@@ -58,8 +56,7 @@ void time_read(tm *time)
 
     int leap = is_leap_year(year);
     int month = 0;
-    while (remaining_days >= month_days[leap][month])
-    {
+    while (remaining_days >= month_days[leap][month]) {
         remaining_days -= month_days[leap][month];
         month++;
     }
@@ -68,8 +65,7 @@ void time_read(tm *time)
 
     // 计算一年中的天数
     time->tm_yday = 0;
-    for (int i = 0; i < month; i++)
-    {
+    for (int i = 0; i < month; i++) {
         time->tm_yday += month_days[leap][i];
     }
     time->tm_yday += remaining_days;
@@ -83,23 +79,21 @@ void time_read(tm *time)
 #define YEAR (365 * DAY)   // 每年的秒数，以 365 天算
 
 // 每个月开始时的已经过去天数
-static int month[13] = {
-    0, // 这里占位，没有 0 月，从 1 月开始
-    0,
-    (31),
-    (31 + 29),
-    (31 + 29 + 31),
-    (31 + 29 + 31 + 30),
-    (31 + 29 + 31 + 30 + 31),
-    (31 + 29 + 31 + 30 + 31 + 30),
-    (31 + 29 + 31 + 30 + 31 + 30 + 31),
-    (31 + 29 + 31 + 30 + 31 + 30 + 31 + 31),
-    (31 + 29 + 31 + 30 + 31 + 30 + 31 + 31 + 30),
-    (31 + 29 + 31 + 30 + 31 + 30 + 31 + 31 + 30 + 31),
-    (31 + 29 + 31 + 30 + 31 + 30 + 31 + 31 + 30 + 31 + 30)};
+static int month[13] = {0, // 这里占位，没有 0 月，从 1 月开始
+                        0,
+                        (31),
+                        (31 + 29),
+                        (31 + 29 + 31),
+                        (31 + 29 + 31 + 30),
+                        (31 + 29 + 31 + 30 + 31),
+                        (31 + 29 + 31 + 30 + 31 + 30),
+                        (31 + 29 + 31 + 30 + 31 + 30 + 31),
+                        (31 + 29 + 31 + 30 + 31 + 30 + 31 + 31),
+                        (31 + 29 + 31 + 30 + 31 + 30 + 31 + 31 + 30),
+                        (31 + 29 + 31 + 30 + 31 + 30 + 31 + 31 + 30 + 31),
+                        (31 + 29 + 31 + 30 + 31 + 30 + 31 + 31 + 30 + 31 + 30)};
 
-int64_t mktime(tm *time)
-{
+int64_t mktime(tm *time) {
     int64_t res;
     int year; // 1970 年开始的年数
     // 下面从 1900 年开始的年数计算

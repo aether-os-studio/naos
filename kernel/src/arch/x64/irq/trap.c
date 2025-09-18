@@ -13,8 +13,7 @@ extern const char *kallsyms_names __attribute__((weak));
 extern module_symbol_t **all_modules_symbols;
 extern int all_modules_symbols_num;
 
-void irq_init()
-{
+void irq_init() {
     gdtidt_setup();
 
     set_trap_gate(0, 0, divide_error);
@@ -40,34 +39,31 @@ void irq_init()
     set_trap_gate(20, 0, virtualization_exception);
 }
 
-int lookup_kallsyms(uint64_t addr, int level)
-{
+int lookup_kallsyms(uint64_t addr, int level) {
     const char *str = (const char *)&kallsyms_names;
 
     uint64_t index = 0;
-    for (index = 0; index < kallsyms_num - 1; ++index)
-    {
-        if (addr > kallsyms_address[index] && addr <= kallsyms_address[index + 1])
+    for (index = 0; index < kallsyms_num - 1; ++index) {
+        if (addr > kallsyms_address[index] &&
+            addr <= kallsyms_address[index + 1])
             break;
     }
 
-    if (index < kallsyms_num)
-    {
-        printk("function:%s() \t(+) %04d address:%#018lx\n", &str[kallsyms_names_index[index]], addr - kallsyms_address[index], addr);
+    if (index < kallsyms_num) {
+        printk("function:%s() \t(+) %04d address:%#018lx\n",
+               &str[kallsyms_names_index[index]],
+               addr - kallsyms_address[index], addr);
         return 0;
-    }
-    else
+    } else
         return -1;
 }
 
-void traceback(struct pt_regs *regs)
-{
+void traceback(struct pt_regs *regs) {
     uint64_t *rbp = (uint64_t *)regs->rbp;
     printk("======== Kernel traceback =======\n");
 
     uint64_t ret_addr = regs->rip;
-    for (int i = 0; i < 32; ++i)
-    {
+    for (int i = 0; i < 32; ++i) {
         if (lookup_kallsyms(ret_addr, i) != 0)
             break;
 
@@ -88,8 +84,7 @@ extern bool can_schedule;
 
 spinlock_t dump_lock = {0};
 
-void dump_regs(struct pt_regs *regs, const char *error_str, ...)
-{
+void dump_regs(struct pt_regs *regs, const char *error_str, ...) {
     can_schedule = false;
 
     spin_lock(&dump_lock);
@@ -106,7 +101,8 @@ void dump_regs(struct pt_regs *regs, const char *error_str, ...)
     // printk("\033[2J");
     printk("%s\n", buf);
 
-    printk("current_task->pid = %d, current_task->name = %s\n", current_task->pid, current_task->name);
+    printk("current_task->pid = %d, current_task->name = %s\n",
+           current_task->pid, current_task->name);
 
     printk("RIP = %#018lx\n", regs->rip);
     printk("RAX = %#018lx, RBX = %#018lx\n", regs->rax, regs->rbx);
@@ -122,13 +118,11 @@ void dump_regs(struct pt_regs *regs, const char *error_str, ...)
 }
 
 // 0 #DE 除法错误
-void do_divide_error(struct pt_regs *regs, uint64_t error_code)
-{
+void do_divide_error(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_divder_error(0)");
 
-    if (regs->rsp <= get_physical_memory_offset())
-    {
+    if (regs->rsp <= get_physical_memory_offset()) {
         can_schedule = true;
         task_exit(-EFAULT);
         return;
@@ -139,20 +133,17 @@ void do_divide_error(struct pt_regs *regs, uint64_t error_code)
 }
 
 // 1 #DB 调试异常
-void do_debug(struct pt_regs *regs, uint64_t error_code)
-{
+void do_debug(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_debug(1)");
 }
 
 // 2 不可屏蔽中断
-void do_nmi(struct pt_regs *regs, uint64_t error_code)
-{
+void do_nmi(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_nmi(2)");
 
-    if (regs->rsp <= get_physical_memory_offset())
-    {
+    if (regs->rsp <= get_physical_memory_offset()) {
         can_schedule = true;
         task_exit(-EFAULT);
         return;
@@ -163,13 +154,11 @@ void do_nmi(struct pt_regs *regs, uint64_t error_code)
 }
 
 // 3 #BP 断点异常
-void do_int3(struct pt_regs *regs, uint64_t error_code)
-{
+void do_int3(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_int3(3)");
 
-    if (regs->rsp <= get_physical_memory_offset())
-    {
+    if (regs->rsp <= get_physical_memory_offset()) {
         can_schedule = true;
         task_exit(-EFAULT);
         return;
@@ -179,13 +168,11 @@ void do_int3(struct pt_regs *regs, uint64_t error_code)
 }
 
 // 4 #OF 溢出异常
-void do_overflow(struct pt_regs *regs, uint64_t error_code)
-{
+void do_overflow(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_overflow(4)");
 
-    if (regs->rsp <= get_physical_memory_offset())
-    {
+    if (regs->rsp <= get_physical_memory_offset()) {
         can_schedule = true;
         task_exit(-EFAULT);
         return;
@@ -196,13 +183,11 @@ void do_overflow(struct pt_regs *regs, uint64_t error_code)
 }
 
 // 5 #BR 越界异常
-void do_bounds(struct pt_regs *regs, uint64_t error_code)
-{
+void do_bounds(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_bounds(5)");
 
-    if (regs->rsp <= get_physical_memory_offset())
-    {
+    if (regs->rsp <= get_physical_memory_offset()) {
         can_schedule = true;
         task_exit(-EFAULT);
         return;
@@ -213,13 +198,11 @@ void do_bounds(struct pt_regs *regs, uint64_t error_code)
 }
 
 // 6 #UD 无效/未定义的机器码
-void do_undefined_opcode(struct pt_regs *regs, uint64_t error_code)
-{
+void do_undefined_opcode(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_undefined_opcode(6)");
 
-    if (regs->rsp <= get_physical_memory_offset())
-    {
+    if (regs->rsp <= get_physical_memory_offset()) {
         can_schedule = true;
         task_exit(-EFAULT);
         return;
@@ -230,13 +213,11 @@ void do_undefined_opcode(struct pt_regs *regs, uint64_t error_code)
 }
 
 // 7 #NM 设备异常（FPU不存在）
-void do_dev_not_avaliable(struct pt_regs *regs, uint64_t error_code)
-{
+void do_dev_not_avaliable(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_dev_not_avaliable(7)");
 
-    if (regs->rsp <= get_physical_memory_offset())
-    {
+    if (regs->rsp <= get_physical_memory_offset()) {
         can_schedule = true;
         task_exit(-EFAULT);
         return;
@@ -247,8 +228,7 @@ void do_dev_not_avaliable(struct pt_regs *regs, uint64_t error_code)
 }
 
 // 8 #DF 双重错误
-void do_double_fault(struct pt_regs *regs, uint64_t error_code)
-{
+void do_double_fault(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_double_fault(8)");
 
@@ -257,13 +237,11 @@ void do_double_fault(struct pt_regs *regs, uint64_t error_code)
 }
 
 // 9 协处理器越界（保留）
-void do_coprocessor_segment_overrun(struct pt_regs *regs, uint64_t error_code)
-{
+void do_coprocessor_segment_overrun(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_coprocessor_segment_overrun(9)");
 
-    if (regs->rsp <= get_physical_memory_offset())
-    {
+    if (regs->rsp <= get_physical_memory_offset()) {
         can_schedule = true;
         task_exit(-EFAULT);
         return;
@@ -274,13 +252,11 @@ void do_coprocessor_segment_overrun(struct pt_regs *regs, uint64_t error_code)
 }
 
 // 10 #TS 无效的TSS段
-void do_invalid_TSS(struct pt_regs *regs, uint64_t error_code)
-{
+void do_invalid_TSS(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_invalid_TSS(10)");
 
-    if (regs->rsp <= get_physical_memory_offset())
-    {
+    if (regs->rsp <= get_physical_memory_offset()) {
         can_schedule = true;
         task_exit(-EFAULT);
         return;
@@ -291,13 +267,11 @@ void do_invalid_TSS(struct pt_regs *regs, uint64_t error_code)
 }
 
 // 11 #NP 段不存在
-void do_segment_not_exists(struct pt_regs *regs, uint64_t error_code)
-{
+void do_segment_not_exists(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_segment_not_exists(11");
 
-    if (regs->rsp <= get_physical_memory_offset())
-    {
+    if (regs->rsp <= get_physical_memory_offset()) {
         can_schedule = true;
         task_exit(-EFAULT);
         return;
@@ -308,13 +282,11 @@ void do_segment_not_exists(struct pt_regs *regs, uint64_t error_code)
 }
 
 // 12 #SS SS段错误
-void do_stack_segment_fault(struct pt_regs *regs, uint64_t error_code)
-{
+void do_stack_segment_fault(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_stack_segment_fault(12)");
 
-    if (regs->rsp <= get_physical_memory_offset())
-    {
+    if (regs->rsp <= get_physical_memory_offset()) {
         can_schedule = true;
         task_exit(-EFAULT);
         return;
@@ -325,13 +297,11 @@ void do_stack_segment_fault(struct pt_regs *regs, uint64_t error_code)
 }
 
 // 13 #GP 通用保护性异常
-void do_general_protection(struct pt_regs *regs, uint64_t error_code)
-{
+void do_general_protection(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_general_protection(13)");
 
-    if (regs->rsp <= get_physical_memory_offset())
-    {
+    if (regs->rsp <= get_physical_memory_offset()) {
         can_schedule = true;
         task_exit(-EFAULT);
         return;
@@ -342,19 +312,16 @@ void do_general_protection(struct pt_regs *regs, uint64_t error_code)
 }
 
 // 14 #PF 页故障
-void do_page_fault(struct pt_regs *regs, uint64_t error_code)
-{
+void do_page_fault(struct pt_regs *regs, uint64_t error_code) {
     uint64_t cr2 = 0;
     // 先保存cr2寄存器的值，避免由于再次触发页故障而丢失值
     // cr2存储着触发异常的线性地址
-    asm volatile("movq %%cr2, %0"
-                 : "=r"(cr2)::"memory");
+    asm volatile("movq %%cr2, %0" : "=r"(cr2)::"memory");
 
     (void)error_code;
     dump_regs(regs, "do_page_fault(14) cr2 = %#018lx", cr2);
 
-    if (regs->rsp <= get_physical_memory_offset())
-    {
+    if (regs->rsp <= get_physical_memory_offset()) {
         can_schedule = true;
         task_exit(-EFAULT);
         return;
@@ -367,13 +334,11 @@ void do_page_fault(struct pt_regs *regs, uint64_t error_code)
 // 15 Intel保留，请勿使用
 
 // 16 #MF x87FPU错误
-void do_x87_FPU_error(struct pt_regs *regs, uint64_t error_code)
-{
+void do_x87_FPU_error(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_x87_FPU_error(16)");
 
-    if (regs->rsp <= get_physical_memory_offset())
-    {
+    if (regs->rsp <= get_physical_memory_offset()) {
         can_schedule = true;
         task_exit(-EFAULT);
         return;
@@ -384,13 +349,11 @@ void do_x87_FPU_error(struct pt_regs *regs, uint64_t error_code)
 }
 
 // 17 #AC 对齐检测
-void do_alignment_check(struct pt_regs *regs, uint64_t error_code)
-{
+void do_alignment_check(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_alignment_check(17)");
 
-    if (regs->rsp <= get_physical_memory_offset())
-    {
+    if (regs->rsp <= get_physical_memory_offset()) {
         can_schedule = true;
         task_exit(-EFAULT);
         return;
@@ -401,13 +364,11 @@ void do_alignment_check(struct pt_regs *regs, uint64_t error_code)
 }
 
 // 18 #MC 机器检测
-void do_machine_check(struct pt_regs *regs, uint64_t error_code)
-{
+void do_machine_check(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_machine_check(18)");
 
-    if (regs->rsp <= get_physical_memory_offset())
-    {
+    if (regs->rsp <= get_physical_memory_offset()) {
         can_schedule = true;
         task_exit(-EFAULT);
         return;
@@ -418,13 +379,11 @@ void do_machine_check(struct pt_regs *regs, uint64_t error_code)
 }
 
 // 19 #XM SIMD浮点异常
-void do_SIMD_exception(struct pt_regs *regs, uint64_t error_code)
-{
+void do_SIMD_exception(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_SIMD_exception(19)");
 
-    if (regs->rsp <= get_physical_memory_offset())
-    {
+    if (regs->rsp <= get_physical_memory_offset()) {
         can_schedule = true;
         task_exit(-EFAULT);
         return;
@@ -435,13 +394,11 @@ void do_SIMD_exception(struct pt_regs *regs, uint64_t error_code)
 }
 
 // 20 #VE 虚拟化异常
-void do_virtualization_exception(struct pt_regs *regs, uint64_t error_code)
-{
+void do_virtualization_exception(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_virtualization_exception(20)");
 
-    if (regs->rsp <= get_physical_memory_offset())
-    {
+    if (regs->rsp <= get_physical_memory_offset()) {
         can_schedule = true;
         task_exit(-EFAULT);
         return;
@@ -451,7 +408,4 @@ void do_virtualization_exception(struct pt_regs *regs, uint64_t error_code)
         asm volatile("hlt");
 }
 
-void arch_make_trap()
-{
-    asm volatile("int %0" ::"i"(1));
-}
+void arch_make_trap() { asm volatile("int %0" ::"i"(1)); }

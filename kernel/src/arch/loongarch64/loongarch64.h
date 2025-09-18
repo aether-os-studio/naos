@@ -18,8 +18,4 @@ void arch_init();
 
 void arch_input_dev_init();
 
-static inline void arch_pause()
-{
-    asm volatile(
-        "idle 0\n" ::: "memory");
-}
+static inline void arch_pause() { asm volatile("idle 0\n" ::: "memory"); }

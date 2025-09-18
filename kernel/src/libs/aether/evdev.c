@@ -3,10 +3,7 @@
 
 extern task_t *kb_task;
 
-task_t *get_kb_task()
-{
-    return kb_task;
-}
+task_t *get_kb_task() { return kb_task; }
 
 EXPORT_SYMBOL(handle_mouse_event);
 

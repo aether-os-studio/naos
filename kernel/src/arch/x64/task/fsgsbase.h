@@ -16,10 +16,11 @@ extern void (*write_gsbase)(uint64_t value);
 uint64_t read_kgsbase();
 void write_kgsbase(uint64_t value);
 
-static inline uint32_t has_fsgsbase()
-{
+static inline uint32_t has_fsgsbase() {
     uint32_t eax, ebx, ecx, edx;
-    asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0x07), "c"(0x00));
+    asm volatile("cpuid"
+                 : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                 : "a"(0x07), "c"(0x00));
     return ebx & (1 << 0);
 }
 

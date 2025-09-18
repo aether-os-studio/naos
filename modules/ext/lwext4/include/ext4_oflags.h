@@ -38,11 +38,10 @@
 #define EXT4_OFLAGS_H_
 
 #ifdef __cplusplus
-extern "C"
-{
+extern "C" {
 #endif
 
-    /********************************FILE OPEN FLAGS*****************************/
+/********************************FILE OPEN FLAGS*****************************/
 
 #if CONFIG_HAVE_OWN_OFLAGS
 
@@ -74,7 +73,7 @@ extern "C"
 #define O_APPEND 02000
 #endif
 
-    /********************************FILE SEEK FLAGS*****************************/
+/********************************FILE SEEK FLAGS*****************************/
 
 #ifndef SEEK_SET
 #define SEEK_SET 0

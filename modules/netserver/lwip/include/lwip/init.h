@@ -7,8 +7,8 @@
  * Copyright (c) 2001-2004 Swedish Institute of Computer Science.
  * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without modification,
- * are permitted provided that the following conditions are met:
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
  *
  * 1. Redistributions of source code must retain the above copyright notice,
  *    this list of conditions and the following disclaimer.
@@ -20,14 +20,14 @@
  *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
  * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
- * SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
- * OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
- * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
- * OF SUCH DAMAGE.
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
+ * EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  * This file is part of the lwIP TCP/IP stack.
  *
@@ -50,24 +50,26 @@ extern "C" {
  */
 
 /** X.x.x: Major version of the stack */
-#define LWIP_VERSION_MAJOR      2
+#define LWIP_VERSION_MAJOR 2
 /** x.X.x: Minor version of the stack */
-#define LWIP_VERSION_MINOR      2
+#define LWIP_VERSION_MINOR 2
 /** x.x.X: Revision of the stack */
-#define LWIP_VERSION_REVISION   1
+#define LWIP_VERSION_REVISION 1
 /** For release candidates, this is set to 1..254
-  * For official releases, this is set to 255 (LWIP_RC_RELEASE)
-  * For development versions (Git), this is set to 0 (LWIP_RC_DEVELOPMENT) */
-#define LWIP_VERSION_RC         LWIP_RC_RELEASE
+ * For official releases, this is set to 255 (LWIP_RC_RELEASE)
+ * For development versions (Git), this is set to 0 (LWIP_RC_DEVELOPMENT) */
+#define LWIP_VERSION_RC LWIP_RC_RELEASE
 
 /** LWIP_VERSION_RC is set to LWIP_RC_RELEASE for official releases */
-#define LWIP_RC_RELEASE         255
+#define LWIP_RC_RELEASE 255
 /** LWIP_VERSION_RC is set to LWIP_RC_DEVELOPMENT for Git versions */
-#define LWIP_RC_DEVELOPMENT     0
+#define LWIP_RC_DEVELOPMENT 0
 
-#define LWIP_VERSION_IS_RELEASE     (LWIP_VERSION_RC == LWIP_RC_RELEASE)
+#define LWIP_VERSION_IS_RELEASE (LWIP_VERSION_RC == LWIP_RC_RELEASE)
 #define LWIP_VERSION_IS_DEVELOPMENT (LWIP_VERSION_RC == LWIP_RC_DEVELOPMENT)
-#define LWIP_VERSION_IS_RC          ((LWIP_VERSION_RC != LWIP_RC_RELEASE) && (LWIP_VERSION_RC != LWIP_RC_DEVELOPMENT))
+#define LWIP_VERSION_IS_RC                                                     \
+    ((LWIP_VERSION_RC != LWIP_RC_RELEASE) &&                                   \
+     (LWIP_VERSION_RC != LWIP_RC_DEVELOPMENT))
 
 /* Some helper defines to get a version string */
 #define LWIP_VERSTR2(x) #x
@@ -81,10 +83,14 @@ extern "C" {
 #endif
 
 /** Provides the version of the stack */
-#define LWIP_VERSION   ((LWIP_VERSION_MAJOR) << 24   | (LWIP_VERSION_MINOR) << 16 | \
-                        (LWIP_VERSION_REVISION) << 8 | (LWIP_VERSION_RC))
+#define LWIP_VERSION                                                           \
+    ((LWIP_VERSION_MAJOR) << 24 | (LWIP_VERSION_MINOR) << 16 |                 \
+     (LWIP_VERSION_REVISION) << 8 | (LWIP_VERSION_RC))
 /** Provides the version of the stack as string */
-#define LWIP_VERSION_STRING     LWIP_VERSTR(LWIP_VERSION_MAJOR) "." LWIP_VERSTR(LWIP_VERSION_MINOR) "." LWIP_VERSTR(LWIP_VERSION_REVISION) LWIP_VERSION_STRING_SUFFIX
+#define LWIP_VERSION_STRING                                                    \
+    LWIP_VERSTR(LWIP_VERSION_MAJOR)                                            \
+    "." LWIP_VERSTR(LWIP_VERSION_MINOR) "." LWIP_VERSTR(LWIP_VERSION_REVISION) \
+        LWIP_VERSION_STRING_SUFFIX
 
 /**
  * @}

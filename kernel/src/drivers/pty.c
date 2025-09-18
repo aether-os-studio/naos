@@ -10,14 +10,11 @@ int pts_fsid = 0;
 
 size_t pts_write_inner(pty_pair_t *pair, uint8_t *in, size_t limit);
 
-int pty_bitmap_decide()
-{
+int pty_bitmap_decide() {
     int ret = -1;
     spin_lock(&pty_global_lock);
-    for (int i = 0; i < PTY_MAX; i++)
-    {
-        if (!(pty_bitmap[i / 8] & (1 << (i % 8))))
-        {
+    for (int i = 0; i < PTY_MAX; i++) {
+        if (!(pty_bitmap[i / 8] & (1 << (i % 8)))) {
             pty_bitmap[i / 8] |= (1 << (i % 8));
             ret = i;
             break;
@@ -28,15 +25,13 @@ int pty_bitmap_decide()
     return ret;
 }
 
-void pty_bitmap_remove(int index)
-{
+void pty_bitmap_remove(int index) {
     spin_lock(&pty_global_lock);
     pty_bitmap[index / 8] &= ~(1 << (index % 8));
     spin_unlock(&pty_global_lock);
 }
 
-void pty_termios_default(struct termios *term)
-{
+void pty_termios_default(struct termios *term) {
     term->c_iflag = ICRNL | IXON | BRKINT | ISTRIP | INPCK;
     term->c_oflag = OPOST | ONLCR;
     term->c_cflag = B38400 | CS8 | CREAD | HUPCL;
@@ -54,18 +49,13 @@ void pty_termios_default(struct termios *term)
     term->c_cc[VSUSP] = 26;  // Ctrl-Z
 }
 
-void pty_init()
-{
-    pty_bitmap = calloc(PTY_MAX / 8, 1);
-}
+void pty_init() { pty_bitmap = calloc(PTY_MAX / 8, 1); }
 
-void ptmx_open(void *parent, const char *name, vfs_node_t node)
-{
+void ptmx_open(void *parent, const char *name, vfs_node_t node) {
     int id = pty_bitmap_decide(); // here to avoid double locks
     spin_lock(&pty_global_lock);
     pty_pair_t *n = &first_pair;
-    while (n->next)
-    {
+    while (n->next) {
         n = n->next;
     }
 
@@ -102,27 +92,23 @@ void ptmx_open(void *parent, const char *name, vfs_node_t node)
     spin_unlock(&pty_global_lock);
 }
 
-void pty_pair_cleanup(pty_pair_t *pair)
-{
+void pty_pair_cleanup(pty_pair_t *pair) {
     free_frames_bytes(pair->bufferMaster, PTY_BUFF_SIZE);
     free_frames_bytes(pair->bufferSlave, PTY_BUFF_SIZE);
     pty_bitmap_remove(pair->id);
 
     spin_lock(&pty_global_lock);
     pty_pair_t *n = &first_pair;
-    while (n->next && n->next != pair)
-    {
+    while (n->next && n->next != pair) {
         n = n->next;
     }
-    if (n->next)
-    {
+    if (n->next) {
         n->next = pair->next;
     }
     spin_unlock(&pty_global_lock);
 }
 
-bool ptmx_close(void *current)
-{
+bool ptmx_close(void *current) {
     pty_pair_t *pair = current;
     spin_lock(&pair->lock);
     pair->masterFds--;
@@ -135,30 +121,24 @@ bool ptmx_close(void *current)
 }
 
 // todo: control + d stuff
-size_t ptmx_data_avail(pty_pair_t *pair)
-{
+size_t ptmx_data_avail(pty_pair_t *pair) {
     return pair->ptrMaster; // won't matter here
 }
 
-size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size)
-{
+size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     void *file = fd->node->handle;
     pty_pair_t *pair = file;
-    while (true)
-    {
+    while (true) {
         spin_lock(&pair->lock);
-        if (ptmx_data_avail(pair) > 0)
-        {
+        if (ptmx_data_avail(pair) > 0) {
             spin_unlock(&pair->lock);
             break;
         }
-        if (!pair->slaveFds)
-        {
+        if (!pair->slaveFds) {
             spin_unlock(&pair->lock);
             return 0;
         }
-        if (fd->flags & O_NONBLOCK)
-        {
+        if (fd->flags & O_NONBLOCK) {
             spin_unlock(&pair->lock);
             return -(EWOULDBLOCK);
         }
@@ -180,25 +160,20 @@ size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size)
     return toCopy;
 }
 
-size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit)
-{
+size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
     void *file = fd->node->handle;
     pty_pair_t *pair = file;
-    while (true)
-    {
+    while (true) {
         spin_lock(&pair->lock);
-        if (!pair->slaveFds)
-        {
+        if (!pair->slaveFds) {
             spin_unlock(&pair->lock);
             return 0;
         }
-        if ((pair->ptrSlave + limit) < PTY_BUFF_SIZE)
-        {
+        if ((pair->ptrSlave + limit) < PTY_BUFF_SIZE) {
             spin_unlock(&pair->lock);
             break;
         }
-        if (fd->flags & O_NONBLOCK)
-        {
+        if (fd->flags & O_NONBLOCK) {
             spin_unlock(&pair->lock);
             return -(EWOULDBLOCK);
         }
@@ -210,8 +185,7 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit)
 
     memcpy(&pair->bufferSlave[pair->ptrSlave], addr, limit);
     if (pair->term.c_iflag & ICRNL)
-        for (size_t i = 0; i < limit; i++)
-        {
+        for (size_t i = 0; i < limit; i++) {
             if (pair->bufferSlave[pair->ptrSlave + i] == '\r')
                 pair->bufferSlave[pair->ptrSlave + i] = '\n';
         }
@@ -225,17 +199,14 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit)
     return limit;
 }
 
-size_t ptmx_ioctl(void *file, uint64_t request, uint64_t arg)
-{
+size_t ptmx_ioctl(void *file, uint64_t request, uint64_t arg) {
     pty_pair_t *pair = file;
     size_t ret = 0; // todo ERR(ENOTTY)
     size_t number = _IOC_NR(request);
 
     spin_lock(&pair->lock);
-    switch (number)
-    {
-    case 0x31:
-    { // TIOCSPTLCK
+    switch (number) {
+    case 0x31: { // TIOCSPTLCK
         int lock = *((int *)arg);
         if (lock == 0)
             pair->locked = false;
@@ -249,22 +220,20 @@ size_t ptmx_ioctl(void *file, uint64_t request, uint64_t arg)
         ret = 0;
         goto done;
     }
-    switch (request & 0xFFFFFFFF)
-    {
-    case TIOCGWINSZ:
-    {
+    switch (request & 0xFFFFFFFF) {
+    case TIOCGWINSZ: {
         memcpy((void *)arg, &pair->win, sizeof(struct winsize));
         ret = 0;
         break;
     }
-    case TIOCSWINSZ:
-    {
+    case TIOCSWINSZ: {
         memcpy(&pair->win, (const void *)arg, sizeof(struct winsize));
         ret = 0;
         break;
     }
     default:
-        printk("ptmx_ioctl: Unsupported request %#010lx\n", request & 0xFFFFFFFF);
+        printk("ptmx_ioctl: Unsupported request %#010lx\n",
+               request & 0xFFFFFFFF);
         break;
     }
 done:
@@ -273,8 +242,7 @@ done:
     return ret;
 }
 
-int ptmx_poll(void *file, size_t events)
-{
+int ptmx_poll(void *file, size_t events) {
     pty_pair_t *pair = file;
     int revents = 0;
 
@@ -288,33 +256,26 @@ int ptmx_poll(void *file, size_t events)
     return revents;
 }
 
-void pts_ctrl_assign(pty_pair_t *pair)
-{
+void pts_ctrl_assign(pty_pair_t *pair) {
     // currentTask->ctrlPty = pair->id;
     pair->ctrlSession = current_task->sid;
     pair->ctrlPgid = current_task->pgid;
     // debugf("heck yeah! %d %d\n", currentTask->id, pair->id);
 }
 
-int str_to_int(const char *str, int *result)
-{
+int str_to_int(const char *str, int *result) {
     int sign = 1;
     long value = 0;
 
-    if (*str == '-')
-    {
+    if (*str == '-') {
         sign = -1;
         str++;
-    }
-    else if (*str == '+')
-    {
+    } else if (*str == '+') {
         str++;
     }
 
-    for (; *str != '\0'; str++)
-    {
-        if (!(*str >= '0' && *str <= '9'))
-        {
+    for (; *str != '\0'; str++) {
+        if (!(*str >= '0' && *str <= '9')) {
             return -EINVAL;
         }
 
@@ -327,8 +288,7 @@ int str_to_int(const char *str, int *result)
     return 0;
 }
 
-void pts_open(void *parent, const char *name, vfs_node_t node)
-{
+void pts_open(void *parent, const char *name, vfs_node_t node) {
     int length = strlen(name);
 
     int id;
@@ -337,8 +297,7 @@ void pts_open(void *parent, const char *name, vfs_node_t node)
         return;
     spin_lock(&pty_global_lock);
     pty_pair_t *browse = &first_pair;
-    while (browse)
-    {
+    while (browse) {
         spin_lock(&browse->lock);
         if (browse->id == id)
             break;
@@ -350,8 +309,7 @@ void pts_open(void *parent, const char *name, vfs_node_t node)
     if (!browse)
         return;
 
-    if (browse->locked)
-    {
+    if (browse->locked) {
         spin_unlock(&pty_global_lock);
         return;
     }
@@ -364,8 +322,7 @@ void pts_open(void *parent, const char *name, vfs_node_t node)
     spin_unlock(&browse->lock);
 }
 
-bool pts_close(void *fd)
-{
+bool pts_close(void *fd) {
     pty_pair_t *pair = fd;
     spin_lock(&pair->lock);
     pair->slaveFds--;
@@ -376,15 +333,13 @@ bool pts_close(void *fd)
     return true;
 }
 
-size_t pts_data_avali(pty_pair_t *pair)
-{
+size_t pts_data_avali(pty_pair_t *pair) {
     bool canonical = pair->term.c_lflag & ICANON;
     if (!canonical)
         return pair->ptrSlave; // flush whatever we can
 
     // now we're on canonical mode
-    for (size_t i = 0; i < pair->ptrSlave; i++)
-    {
+    for (size_t i = 0; i < pair->ptrSlave; i++) {
         if (pair->bufferSlave[i] == '\n' ||
             pair->bufferSlave[i] == pair->term.c_cc[VEOF] ||
             pair->bufferSlave[i] == pair->term.c_cc[VEOL] ||
@@ -395,25 +350,20 @@ size_t pts_data_avali(pty_pair_t *pair)
     return 0; // nothing found
 }
 
-size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit)
-{
+size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit) {
     void *file = fd->node->handle;
     pty_pair_t *pair = file;
-    while (true)
-    {
+    while (true) {
         spin_lock(&pair->lock);
-        if (pts_data_avali(pair) > 0)
-        {
+        if (pts_data_avali(pair) > 0) {
             spin_unlock(&pair->lock);
             break;
         }
-        if (!pair->masterFds)
-        {
+        if (!pair->masterFds) {
             spin_unlock(&pair->lock);
             return 0;
         }
-        if (fd->flags & O_NONBLOCK)
-        {
+        if (fd->flags & O_NONBLOCK) {
             spin_unlock(&pair->lock);
             return -(EWOULDBLOCK);
         }
@@ -435,24 +385,19 @@ size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit)
     return toCopy;
 }
 
-size_t pts_write_inner(pty_pair_t *pair, uint8_t *in, size_t limit)
-{
+size_t pts_write_inner(pty_pair_t *pair, uint8_t *in, size_t limit) {
     size_t written = 0;
     bool doTranslate =
         (pair->term.c_oflag & OPOST) && (pair->term.c_oflag & ONLCR);
-    for (size_t i = 0; i < limit; ++i)
-    {
+    for (size_t i = 0; i < limit; ++i) {
         uint8_t ch = in[i];
-        if (doTranslate && ch == '\n')
-        {
+        if (doTranslate && ch == '\n') {
             if ((pair->ptrMaster + 2) >= PTY_BUFF_SIZE)
                 break;
             pair->bufferMaster[pair->ptrMaster++] = '\r';
             pair->bufferMaster[pair->ptrMaster++] = '\n';
             written++;
-        }
-        else
-        {
+        } else {
             if ((pair->ptrMaster + 1) >= PTY_BUFF_SIZE)
                 break;
             pair->bufferMaster[pair->ptrMaster++] = ch;
@@ -462,27 +407,23 @@ size_t pts_write_inner(pty_pair_t *pair, uint8_t *in, size_t limit)
     return written;
 }
 
-size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit)
-{
+size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit) {
     void *file = fd->node->handle;
     pty_pair_t *pair = file;
 
-    while (true)
-    {
+    while (true) {
         spin_lock(&pair->lock);
-        if (!pair->masterFds)
-        {
+        if (!pair->masterFds) {
             spin_unlock(&pair->lock);
-            // todo: send SIGHUP when master is closed, check controlling term/group
+            // todo: send SIGHUP when master is closed, check controlling
+            // term/group
             return (size_t)-EIO;
         }
-        if ((pair->ptrMaster + limit) < PTY_BUFF_SIZE)
-        {
+        if ((pair->ptrMaster + limit) < PTY_BUFF_SIZE) {
             spin_unlock(&pair->lock);
             break;
         }
-        if (fd->flags & O_NONBLOCK)
-        {
+        if (fd->flags & O_NONBLOCK) {
             spin_unlock(&pair->lock);
             return -(EWOULDBLOCK);
         }
@@ -499,41 +440,34 @@ size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit)
     return written;
 }
 
-size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg)
-{
+size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
     size_t ret = -ENOTTY;
 
     spin_lock(&pair->lock);
-    switch (request)
-    {
-    case TIOCGWINSZ:
-    {
+    switch (request) {
+    case TIOCGWINSZ: {
         memcpy(arg, &pair->win, sizeof(struct winsize));
         ret = 0;
         break;
     }
-    case TIOCSWINSZ:
-    {
+    case TIOCSWINSZ: {
         memcpy(&pair->win, arg, sizeof(struct winsize));
         ret = 0;
         break;
     }
-    case TIOCSCTTY:
-    {
+    case TIOCSCTTY: {
         pts_ctrl_assign(pair);
         ret = 0;
         break;
     }
-    case TCGETS:
-    {
+    case TCGETS: {
         memcpy(arg, &pair->term, sizeof(termios));
         ret = 0;
         break;
     }
     case TCSETS:
-    case TCSETSW: // this drains(?), idek man
-    case TCSETSF:
-    { // idek anymore man
+    case TCSETSW:   // this drains(?), idek man
+    case TCSETSF: { // idek anymore man
         memcpy(&pair->term, arg, sizeof(termios));
         ret = 0;
         break;
@@ -589,8 +523,7 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg)
     return ret;
 }
 
-int pts_poll(pty_pair_t *pair, int events)
-{
+int pts_poll(pty_pair_t *pair, int events) {
     int revents = 0;
 
     spin_lock(&pair->lock);
@@ -603,8 +536,7 @@ int pts_poll(pty_pair_t *pair, int events)
     return revents;
 }
 
-vfs_node_t ptmx_dup(vfs_node_t node)
-{
+vfs_node_t ptmx_dup(vfs_node_t node) {
     pty_pair_t *pair = node->handle;
     spin_lock(&pair->lock);
     pair->masterFds++;
@@ -612,8 +544,7 @@ vfs_node_t ptmx_dup(vfs_node_t node)
     return node;
 }
 
-vfs_node_t pts_dup(vfs_node_t node)
-{
+vfs_node_t pts_dup(vfs_node_t node) {
     pty_pair_t *pair = node->handle;
     spin_lock(&pair->lock);
     pair->slaveFds++;
@@ -621,10 +552,7 @@ vfs_node_t pts_dup(vfs_node_t node)
     return node;
 }
 
-static int dummy()
-{
-    return 0;
-}
+static int dummy() { return 0; }
 
 static struct vfs_callback ptmx_callbacks = {
     .mount = (vfs_mount_t)dummy,
@@ -680,8 +608,7 @@ fs_t ptmxfs = {
     .callback = &ptmx_callbacks,
 };
 
-void ptmx_init()
-{
+void ptmx_init() {
     ptmx_fsid = vfs_regist(&ptmxfs);
 
     vfs_node_t dev_node = vfs_open("/dev");
@@ -699,8 +626,7 @@ fs_t ptsfs = {
     .callback = &pts_callbacks,
 };
 
-void pts_init()
-{
+void pts_init() {
     pts_fsid = vfs_regist(&ptsfs);
 
     first_pair.id = 0xffffffff;

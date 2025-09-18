@@ -7,20 +7,19 @@
 #define KERNEL_MODULES_SPACE_START 0xffffffffb0000000
 #define KERNEL_MODULES_SPACE_END 0xffffffffc0000000
 
-#define EXPORT_SYMBOL(name)                                                            \
-    __attribute__((used, section(".ksymtab"))) static const dlfunc_t __ksym_##name = { \
+#define EXPORT_SYMBOL(name)                                                    \
+    __attribute__((                                                            \
+        used, section(".ksymtab"))) static const dlfunc_t __ksym_##name = {    \
         #name, (void *)name}
 
 typedef int (*dlinit_t)(void);
 
-typedef struct
-{
+typedef struct {
     char *name;
     void *addr;
 } dlfunc_t;
 
-typedef struct module_symbol
-{
+typedef struct module_symbol {
     char *name;
     uint64_t addr;
 } module_symbol_t;

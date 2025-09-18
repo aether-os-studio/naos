@@ -2,8 +2,7 @@
 
 #include <libs/klibc.h>
 
-typedef struct
-{
+typedef struct {
     uint8_t addressid;
     uint8_t register_bitwidth;
     uint8_t register_bitoffset;
@@ -11,8 +10,7 @@ typedef struct
     uint64_t address;
 } acpi_address_t;
 
-struct ACPISDTHeader
-{
+struct ACPISDTHeader {
     char signature[4];
     uint32_t length;
     uint8_t revision;
@@ -24,8 +22,7 @@ struct ACPISDTHeader
     uint32_t creator_revision;
 };
 
-typedef struct
-{
+typedef struct {
     char signature[8];         // 签名
     uint8_t checksum;          // 校验和
     char oem_id[6];            // OEM ID
@@ -37,22 +34,19 @@ typedef struct
     uint8_t reserved[3];       // 保留字段
 } __attribute__((packed)) RSDP;
 
-typedef struct
-{
+typedef struct {
     struct ACPISDTHeader h;
     uint64_t PointerToOtherSDT;
 } __attribute__((packed)) XSDT;
 
-typedef struct
-{
+typedef struct {
     struct ACPISDTHeader h;
     uint32_t local_apic_address;
     uint32_t flags;
     void *entries;
 } __attribute__((packed)) MADT;
 
-typedef struct madt_header
-{
+typedef struct madt_header {
     uint8_t entry_type;
     uint8_t length;
 } __attribute__((packed)) MadtHeader;
@@ -61,8 +55,7 @@ typedef struct madt_header
 #define ACPI_MADT_TYPE_GICD 0x0C
 #define ACPI_MADT_TYPE_GICR 0x0E
 
-typedef struct gicc_entry
-{
+typedef struct gicc_entry {
     struct madt_header header;
     uint8_t reserved1[2];
     uint32_t iface_no;
@@ -82,8 +75,7 @@ typedef struct gicc_entry
     uint16_t spe_overflow_gsiv;
 } __attribute__((packed)) GiccEntry;
 
-typedef struct gicd_entry
-{
+typedef struct gicd_entry {
     struct madt_header h;
     uint16_t reserved1;
     uint32_t gic_id;
@@ -92,22 +84,19 @@ typedef struct gicd_entry
     uint8_t reserved2[3];
 } __attribute__((packed)) GicdEntry;
 
-typedef struct gicr_entry
-{
+typedef struct gicr_entry {
     struct madt_header h;
     uint16_t _reserved;
     uint64_t discovery_range_base_address;
     uint32_t discovery_range_length;
 } __attribute__((packed)) GicrEntry;
 
-typedef struct
-{
+typedef struct {
     struct ACPISDTHeader header;
     uint64_t Reserved;
 } __attribute__((packed)) MCFG;
 
-typedef struct
-{
+typedef struct {
     uint64_t base_address;
     uint16_t pci_segment_group;
     uint8_t start_bus;
@@ -115,8 +104,7 @@ typedef struct
     uint32_t reserved;
 } __attribute__((packed)) MCFG_ENTRY;
 
-struct generic_address
-{
+struct generic_address {
     uint8_t address_space;
     uint8_t bit_width;
     uint8_t bit_offset;
@@ -124,8 +112,7 @@ struct generic_address
     uint64_t address;
 } __attribute__((packed));
 
-typedef struct
-{
+typedef struct {
     struct ACPISDTHeader Header;
     uint8_t iface_type;
     uint8_t reserved0[3];

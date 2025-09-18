@@ -7,8 +7,8 @@
  * Copyright (c) 2001-2003 Swedish Institute of Computer Science.
  * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without modification,
- * are permitted provided that the following conditions are met:
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
  *
  * 1. Redistributions of source code must retain the above copyright notice,
  *    this list of conditions and the following disclaimer.
@@ -20,14 +20,14 @@
  *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
  * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
- * SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
- * OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
- * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
- * OF SUCH DAMAGE.
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
+ * EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  * This file is part of the lwIP TCP/IP stack.
  *
@@ -62,7 +62,7 @@
  * does not depend on the CGI parameters.
  */
 #if !defined LWIP_HTTPD_CGI || defined __DOXYGEN__
-#define LWIP_HTTPD_CGI            0
+#define LWIP_HTTPD_CGI 0
 #endif
 
 /** Set this to 1 to support CGI (new style).
@@ -77,7 +77,7 @@
  * Use this CGI handler if you want CGI information passed on to SSI.
  */
 #if !defined LWIP_HTTPD_CGI_SSI || defined __DOXYGEN__
-#define LWIP_HTTPD_CGI_SSI        0
+#define LWIP_HTTPD_CGI_SSI 0
 #endif
 
 /** Set this to 1 to support SSI (Server-Side-Includes)
@@ -85,28 +85,29 @@
  * In contrast to other http servers, this only calls a preregistered callback
  * function (@see http_set_ssi_handler) for each tag (in the format of
  * <!--#tag-->) encountered in SSI-enabled pages.
- * SSI-enabled pages must have one of the predefined SSI-enabled file extensions.
- * All files with one of these extensions are parsed when sent.
+ * SSI-enabled pages must have one of the predefined SSI-enabled file
+ * extensions. All files with one of these extensions are parsed when sent.
  *
  * A downside of the current SSI implementation is that persistent connections
  * don't work, as the file length is not known in advance (and httpd currently
  * relies on the Content-Length header for persistent connections).
  *
- * To save memory, the maximum tag length is limited (@see LWIP_HTTPD_MAX_TAG_NAME_LEN).
- * To save memory, the maximum insertion string length is limited (@see
- * LWIP_HTTPD_MAX_TAG_INSERT_LEN). If this is not enough, @ref LWIP_HTTPD_SSI_MULTIPART
- * can be used.
+ * To save memory, the maximum tag length is limited (@see
+ * LWIP_HTTPD_MAX_TAG_NAME_LEN). To save memory, the maximum insertion string
+ * length is limited (@see LWIP_HTTPD_MAX_TAG_INSERT_LEN). If this is not
+ * enough, @ref LWIP_HTTPD_SSI_MULTIPART can be used.
  */
 #if !defined LWIP_HTTPD_SSI || defined __DOXYGEN__
-#define LWIP_HTTPD_SSI            0
+#define LWIP_HTTPD_SSI 0
 #endif
 
-/** Set this to 1 to implement an SSI tag handler callback that gets a const char*
- * to the tag (instead of an index into a pre-registered array of known tags)
- * If this is 0, the SSI handler callback function is only called pre-registered tags.
+/** Set this to 1 to implement an SSI tag handler callback that gets a const
+ * char* to the tag (instead of an index into a pre-registered array of known
+ * tags) If this is 0, the SSI handler callback function is only called
+ * pre-registered tags.
  */
 #if !defined LWIP_HTTPD_SSI_RAW || defined __DOXYGEN__
-#define LWIP_HTTPD_SSI_RAW        0
+#define LWIP_HTTPD_SSI_RAW 0
 #endif
 
 /** Set this to 0 to prevent parsing the file extension at runtime to decide
@@ -120,7 +121,7 @@
  * supporting the "-ssi" option, this info is already present in
  */
 #if !defined LWIP_HTTPD_SSI_BY_FILE_EXTENSION || defined __DOXYGEN__
-#define LWIP_HTTPD_SSI_BY_FILE_EXTENSION  1
+#define LWIP_HTTPD_SSI_BY_FILE_EXTENSION 1
 #endif
 
 /** This is a list of file extensions handled as SSI files. This define
@@ -133,7 +134,7 @@
 
 /** Set this to 1 to support HTTP POST */
 #if !defined LWIP_HTTPD_SUPPORT_POST || defined __DOXYGEN__
-#define LWIP_HTTPD_SUPPORT_POST   0
+#define LWIP_HTTPD_SUPPORT_POST 0
 #endif
 
 /* The maximum number of parameters that the CGI handler can be sent. */
@@ -146,7 +147,7 @@
  * inserted at once: the SSI handler function must then set 'next_tag_part'
  * which will be passed back to it in the next call. */
 #if !defined LWIP_HTTPD_SSI_MULTIPART || defined __DOXYGEN__
-#define LWIP_HTTPD_SSI_MULTIPART    0
+#define LWIP_HTTPD_SSI_MULTIPART 0
 #endif
 
 /* The maximum length of the string comprising the SSI tag name
@@ -164,12 +165,13 @@
 #endif
 
 #if !defined LWIP_HTTPD_POST_MANUAL_WND || defined __DOXYGEN__
-#define LWIP_HTTPD_POST_MANUAL_WND  0
+#define LWIP_HTTPD_POST_MANUAL_WND 0
 #endif
 
 /** This string is passed in the HTTP header as "Server: " */
 #if !defined HTTPD_SERVER_AGENT || defined __DOXYGEN__
-#define HTTPD_SERVER_AGENT "lwIP/" LWIP_VERSION_STRING " (http://savannah.nongnu.org/projects/lwip)"
+#define HTTPD_SERVER_AGENT                                                     \
+    "lwIP/" LWIP_VERSION_STRING " (http://savannah.nongnu.org/projects/lwip)"
 #endif
 
 /** Set this to 1 if you want to include code that creates HTTP headers
@@ -182,7 +184,7 @@
 #endif
 
 #if !defined HTTPD_DEBUG || defined __DOXYGEN__
-#define HTTPD_DEBUG         LWIP_DBG_OFF
+#define HTTPD_DEBUG LWIP_DBG_OFF
 #endif
 
 /** Set this to 1 to use a memp pool for allocating
@@ -192,22 +194,22 @@
  * the pool(s).
  */
 #if !defined HTTPD_USE_MEM_POOL || defined __DOXYGEN__
-#define HTTPD_USE_MEM_POOL  0
+#define HTTPD_USE_MEM_POOL 0
 #endif
 
 /** The server port for HTTPD to use */
 #if !defined HTTPD_SERVER_PORT || defined __DOXYGEN__
-#define HTTPD_SERVER_PORT                   LWIP_IANA_PORT_HTTP
+#define HTTPD_SERVER_PORT LWIP_IANA_PORT_HTTP
 #endif
 
 /** The https server port for HTTPD to use */
 #if !defined HTTPD_SERVER_PORT_HTTPS || defined __DOXYGEN__
-#define HTTPD_SERVER_PORT_HTTPS             LWIP_IANA_PORT_HTTPS
+#define HTTPD_SERVER_PORT_HTTPS LWIP_IANA_PORT_HTTPS
 #endif
 
 /** Enable https support? */
 #if !defined HTTPD_ENABLE_HTTPS || defined __DOXYGEN__
-#define HTTPD_ENABLE_HTTPS                  0
+#define HTTPD_ENABLE_HTTPS 0
 #endif
 
 /** Maximum retries before the connection is aborted/closed.
@@ -215,72 +217,74 @@
  * - reset when pcb->sent is called
  */
 #if !defined HTTPD_MAX_RETRIES || defined __DOXYGEN__
-#define HTTPD_MAX_RETRIES                   4
+#define HTTPD_MAX_RETRIES 4
 #endif
 
 /** The poll delay is X*500ms */
 #if !defined HTTPD_POLL_INTERVAL || defined __DOXYGEN__
-#define HTTPD_POLL_INTERVAL                 4
+#define HTTPD_POLL_INTERVAL 4
 #endif
 
 /** Priority for tcp pcbs created by HTTPD (very low by default).
  *  Lower priorities get killed first when running out of memory.
  */
 #if !defined HTTPD_TCP_PRIO || defined __DOXYGEN__
-#define HTTPD_TCP_PRIO                      TCP_PRIO_MIN
+#define HTTPD_TCP_PRIO TCP_PRIO_MIN
 #endif
 
 /** Set this to 1 to enable timing each file sent */
 #if !defined LWIP_HTTPD_TIMING || defined __DOXYGEN__
-#define LWIP_HTTPD_TIMING                   0
+#define LWIP_HTTPD_TIMING 0
 #endif
 /** Set this to 1 to enable timing each file sent */
 #if !defined HTTPD_DEBUG_TIMING || defined __DOXYGEN__
-#define HTTPD_DEBUG_TIMING                  LWIP_DBG_OFF
+#define HTTPD_DEBUG_TIMING LWIP_DBG_OFF
 #endif
 
 /** Set this to one to show error pages when parsing a request fails instead
     of simply closing the connection. */
 #if !defined LWIP_HTTPD_SUPPORT_EXTSTATUS || defined __DOXYGEN__
-#define LWIP_HTTPD_SUPPORT_EXTSTATUS        0
+#define LWIP_HTTPD_SUPPORT_EXTSTATUS 0
 #endif
 
 /** Set this to 0 to drop support for HTTP/0.9 clients (to save some bytes) */
 #if !defined LWIP_HTTPD_SUPPORT_V09 || defined __DOXYGEN__
-#define LWIP_HTTPD_SUPPORT_V09              1
+#define LWIP_HTTPD_SUPPORT_V09 1
 #endif
 
 /** Set this to 1 to enable HTTP/1.1 persistent connections.
  * ATTENTION: If the generated file system includes HTTP headers, these must
- * include the "Connection: keep-alive" header (pass argument "-11" to makefsdata).
+ * include the "Connection: keep-alive" header (pass argument "-11" to
+ * makefsdata).
  */
 #if !defined LWIP_HTTPD_SUPPORT_11_KEEPALIVE || defined __DOXYGEN__
-#define LWIP_HTTPD_SUPPORT_11_KEEPALIVE     0
+#define LWIP_HTTPD_SUPPORT_11_KEEPALIVE 0
 #endif
 
 /** Set this to 1 to support HTTP request coming in in multiple packets/pbufs */
 #if !defined LWIP_HTTPD_SUPPORT_REQUESTLIST || defined __DOXYGEN__
-#define LWIP_HTTPD_SUPPORT_REQUESTLIST      1
+#define LWIP_HTTPD_SUPPORT_REQUESTLIST 1
 #endif
 
 #if LWIP_HTTPD_SUPPORT_REQUESTLIST
 /** Number of rx pbufs to enqueue to parse an incoming request (up to the first
     newline) */
 #if !defined LWIP_HTTPD_REQ_QUEUELEN || defined __DOXYGEN__
-#define LWIP_HTTPD_REQ_QUEUELEN             5
+#define LWIP_HTTPD_REQ_QUEUELEN 5
 #endif
 
 /** Number of (TCP payload-) bytes (in pbufs) to enqueue to parse and incoming
     request (up to the first double-newline) */
 #if !defined LWIP_HTTPD_REQ_BUFSIZE || defined __DOXYGEN__
-#define LWIP_HTTPD_REQ_BUFSIZE              LWIP_HTTPD_MAX_REQ_LENGTH
+#define LWIP_HTTPD_REQ_BUFSIZE LWIP_HTTPD_MAX_REQ_LENGTH
 #endif
 
 /** Defines the maximum length of a HTTP request line (up to the first CRLF,
     copied from pbuf into this a global buffer when pbuf- or packet-queues
     are received - otherwise the input pbuf is used directly) */
 #if !defined LWIP_HTTPD_MAX_REQ_LENGTH || defined __DOXYGEN__
-#define LWIP_HTTPD_MAX_REQ_LENGTH           LWIP_MIN(1023, (LWIP_HTTPD_REQ_QUEUELEN * PBUF_POOL_BUFSIZE))
+#define LWIP_HTTPD_MAX_REQ_LENGTH                                              \
+    LWIP_MIN(1023, (LWIP_HTTPD_REQ_QUEUELEN * PBUF_POOL_BUFSIZE))
 #endif
 #endif /* LWIP_HTTPD_SUPPORT_REQUESTLIST */
 
@@ -290,7 +294,7 @@
  * Set to 0 to disable checking default filenames on non-root directories.
  */
 #if !defined LWIP_HTTPD_MAX_REQUEST_URI_LEN || defined __DOXYGEN__
-#define LWIP_HTTPD_MAX_REQUEST_URI_LEN      63
+#define LWIP_HTTPD_MAX_REQUEST_URI_LEN 63
 #endif
 
 /** Maximum length of the filename to send as response to a POST request,
@@ -303,19 +307,20 @@
 /** Set this to 0 to not send the SSI tag (default is on, so the tag will
  * be sent in the HTML page */
 #if !defined LWIP_HTTPD_SSI_INCLUDE_TAG || defined __DOXYGEN__
-#define LWIP_HTTPD_SSI_INCLUDE_TAG           1
+#define LWIP_HTTPD_SSI_INCLUDE_TAG 1
 #endif
 
 /** Set this to 1 to call tcp_abort when tcp_close fails with memory error.
  * This can be used to prevent consuming all memory in situations where the
  * HTTP server has low priority compared to other communication. */
 #if !defined LWIP_HTTPD_ABORT_ON_CLOSE_MEM_ERROR || defined __DOXYGEN__
-#define LWIP_HTTPD_ABORT_ON_CLOSE_MEM_ERROR  0
+#define LWIP_HTTPD_ABORT_ON_CLOSE_MEM_ERROR 0
 #endif
 
 /** Set this to 1 to kill the oldest connection when running out of
  * memory for 'struct http_state' or 'struct http_ssi_state'.
- * ATTENTION: This puts all connections on a linked list, so may be kind of slow.
+ * ATTENTION: This puts all connections on a linked list, so may be kind of
+ * slow.
  */
 #if !defined LWIP_HTTPD_KILL_OLD_ON_CONNECTIONS_EXCEEDED || defined __DOXYGEN__
 #define LWIP_HTTPD_KILL_OLD_ON_CONNECTIONS_EXCEEDED 0
@@ -332,8 +337,8 @@
 #define HTTP_IS_TAG_VOLATILE(ptr) TCP_WRITE_FLAG_COPY
 #endif
 
-/* By default, the httpd is limited to send 2*pcb->mss to keep resource usage low
-   when http is not an important protocol in the device. */
+/* By default, the httpd is limited to send 2*pcb->mss to keep resource usage
+   low when http is not an important protocol in the device. */
 #if !defined HTTPD_LIMIT_SENDING_TO_2MSS || defined __DOXYGEN__
 #define HTTPD_LIMIT_SENDING_TO_2MSS 1
 #endif
@@ -343,7 +348,7 @@
    The best place to define this is the hooks file (@see LWIP_HOOK_FILENAME) */
 #if !defined HTTPD_MAX_WRITE_LEN || defined __DOXYGEN__
 #if HTTPD_LIMIT_SENDING_TO_2MSS
-#define HTTPD_MAX_WRITE_LEN(pcb)    ((u16_t)(2 * altcp_mss(pcb)))
+#define HTTPD_MAX_WRITE_LEN(pcb) ((u16_t)(2 * altcp_mss(pcb)))
 #endif
 #endif
 
@@ -357,7 +362,7 @@
  *    Called to free resources allocated by fs_open_custom().
  */
 #if !defined LWIP_HTTPD_CUSTOM_FILES || defined __DOXYGEN__
-#define LWIP_HTTPD_CUSTOM_FILES       0
+#define LWIP_HTTPD_CUSTOM_FILES 0
 #endif
 
 /** Set this to 1 to support fs_read() to dynamically read file data.
@@ -365,14 +370,14 @@
  * and the contents must be ready after fs_open().
  */
 #if !defined LWIP_HTTPD_DYNAMIC_FILE_READ || defined __DOXYGEN__
-#define LWIP_HTTPD_DYNAMIC_FILE_READ  0
+#define LWIP_HTTPD_DYNAMIC_FILE_READ 0
 #endif
 
 /** Set this to 1 to include an application state argument per file
  * that is opened. This allows to keep a state per connection/file.
  */
 #if !defined LWIP_HTTPD_FILE_STATE || defined __DOXYGEN__
-#define LWIP_HTTPD_FILE_STATE         0
+#define LWIP_HTTPD_FILE_STATE 0
 #endif
 
 /** Set this to 1 to add the pextension field to the fs_file structure.
@@ -382,21 +387,21 @@
  * This option may be removed in a future version of lwip.
  */
 #if !defined LWIP_HTTPD_FILE_EXTENSION || defined __DOXYGEN__
-#define LWIP_HTTPD_FILE_EXTENSION     0
+#define LWIP_HTTPD_FILE_EXTENSION 0
 #endif
 
 /** HTTPD_PRECALCULATED_CHECKSUM==1: include precompiled checksums for
  * predefined (MSS-sized) chunks of the files to prevent having to calculate
  * the checksums at runtime. */
 #if !defined HTTPD_PRECALCULATED_CHECKSUM || defined __DOXYGEN__
-#define HTTPD_PRECALCULATED_CHECKSUM  0
+#define HTTPD_PRECALCULATED_CHECKSUM 0
 #endif
 
 /** LWIP_HTTPD_FS_ASYNC_READ==1: support asynchronous read operations
  * (fs_read_async returns FS_READ_DELAYED and calls a callback when finished).
  */
 #if !defined LWIP_HTTPD_FS_ASYNC_READ || defined __DOXYGEN__
-#define LWIP_HTTPD_FS_ASYNC_READ      0
+#define LWIP_HTTPD_FS_ASYNC_READ 0
 #endif
 
 /** Filename (including path) to use as FS data file */

@@ -2,8 +2,7 @@
 
 #include <fs/vfs/vfs.h>
 
-typedef struct proc_handle
-{
+typedef struct proc_handle {
     char name[64];
     char content[256];
     vfs_node_t node;

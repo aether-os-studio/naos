@@ -21,8 +21,7 @@
 #define S_ISGID 0002000
 #define S_ISVTX 0001000
 
-enum
-{
+enum {
     file_none = 0x0001UL,    // 普通文件
     file_dir = 0x0002UL,     // 文件夹
     file_symlink = 0x0004UL, // 符号链接
@@ -38,8 +37,7 @@ enum
 
 typedef struct vfs_node *vfs_node_t;
 
-typedef struct fd
-{
+typedef struct fd {
     vfs_node_t node;
     uint64_t offset;
     uint64_t flags;
@@ -80,7 +78,8 @@ typedef void (*vfs_resize_t)(void *current, uint64_t size);
  *\param offset   写入的偏移
  *\param size     写入的大小
  */
-typedef ssize_t (*vfs_write_t)(fd_t *fd, const void *addr, size_t offset, size_t size);
+typedef ssize_t (*vfs_write_t)(fd_t *fd, const void *addr, size_t offset,
+                               size_t size);
 
 /**
  *\brief 读取一个文件
@@ -92,7 +91,8 @@ typedef ssize_t (*vfs_write_t)(fd_t *fd, const void *addr, size_t offset, size_t
  */
 typedef ssize_t (*vfs_read_t)(fd_t *fd, void *addr, size_t offset, size_t size);
 
-typedef ssize_t (*vfs_readlink_t)(void *fd, void *addr, size_t offset, size_t size);
+typedef ssize_t (*vfs_readlink_t)(void *fd, void *addr, size_t offset,
+                                  size_t size);
 
 /**
  *\brief 获取文件信息
@@ -105,7 +105,8 @@ typedef int (*vfs_stat_t)(void *file, vfs_node_t node);
 // 创建一个文件或文件夹
 typedef int (*vfs_mk_t)(void *parent, const char *name, vfs_node_t node);
 
-typedef int (*vfs_mknod_t)(void *parent, const char *name, vfs_node_t node, uint16_t mode, int dev);
+typedef int (*vfs_mknod_t)(void *parent, const char *name, vfs_node_t node,
+                           uint16_t mode, int dev);
 
 typedef int (*vfs_chmod_t)(vfs_node_t node, uint16_t mode);
 
@@ -117,7 +118,8 @@ typedef int (*vfs_rename_t)(void *current, const char *new);
 typedef int (*vfs_ioctl_t)(void *file, ssize_t cmd, ssize_t arg);
 
 // 映射文件从 offset 开始的 size 大小
-typedef void *(*vfs_mapfile_t)(fd_t *fd, void *addr, size_t offset, size_t size, size_t prot, size_t flags);
+typedef void *(*vfs_mapfile_t)(fd_t *fd, void *addr, size_t offset, size_t size,
+                               size_t prot, size_t flags);
 
 typedef int (*vfs_poll_t)(void *file, size_t events);
 
@@ -126,13 +128,9 @@ uint32_t epoll_to_poll_comp(uint32_t epoll_events);
 
 typedef vfs_node_t (*vfs_dup_t)(vfs_node_t node);
 
-static inline vfs_node_t vfs_generic_dup(vfs_node_t node)
-{
-    return node;
-}
+static inline vfs_node_t vfs_generic_dup(vfs_node_t node) { return node; }
 
-typedef struct vfs_callback
-{
+typedef struct vfs_callback {
     vfs_mount_t mount;
     vfs_unmount_t unmount;
     vfs_open_t open;
@@ -156,8 +154,7 @@ typedef struct vfs_callback
     vfs_dup_t dup;
 } *vfs_callback_t;
 
-typedef struct fs
-{
+typedef struct fs {
     const char *name;
     uint64_t magic;
     vfs_callback_t callback;
@@ -165,15 +162,13 @@ typedef struct fs
 
 extern fs_t *all_fs[256];
 
-typedef struct flock
-{
+typedef struct flock {
     volatile uint64_t l_pid;
     volatile uint64_t l_type;
     volatile uint64_t lock;
 } flock_t;
 
-struct vfs_node
-{
+struct vfs_node {
     vfs_node_t parent;   // 父目录
     spinlock_t spin;     // 自旋锁
     uint64_t dev;        // 设备号
@@ -280,7 +275,8 @@ ssize_t vfs_read(vfs_node_t file, void *addr, size_t offset, size_t size);
  *\param size     写入的大小
  *\return 0 成功，-1 失败
  */
-ssize_t vfs_write(vfs_node_t file, const void *addr, size_t offset, size_t size);
+ssize_t vfs_write(vfs_node_t file, const void *addr, size_t offset,
+                  size_t size);
 
 ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size);
 ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size);
@@ -376,7 +372,8 @@ int vfs_poll(vfs_node_t node, size_t event);
 
 fd_t *vfs_dup(fd_t *fd);
 
-void *vfs_map(fd_t *fd, uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset);
+void *vfs_map(fd_t *fd, uint64_t addr, uint64_t len, uint64_t prot,
+              uint64_t flags, uint64_t offset);
 
 extern vfs_callback_t fs_callbacks[256];
 

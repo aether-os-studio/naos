@@ -12,7 +12,8 @@
 
 eevdf_t *schedulers[MAX_CPU_NUM];
 
-const uint64_t bitmap_size = (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 8;
+const uint64_t bitmap_size =
+    (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 8;
 
 spinlock_t task_queue_lock = {0};
 task_t *tasks[MAX_TASK_NUM];
@@ -20,17 +21,14 @@ task_t *idle_tasks[MAX_CPU_NUM];
 
 extern stdio_handle_t *global_stdio_handle;
 
-void send_sigint()
-{
+void send_sigint() {
     if (global_stdio_handle == NULL)
         return;
 
     uint64_t continue_ptr_count = 0;
-    for (size_t i = 1; i < MAX_TASK_NUM; i++)
-    {
+    for (size_t i = 1; i < MAX_TASK_NUM; i++) {
         task_t *ptr = tasks[i];
-        if (ptr == NULL)
-        {
+        if (ptr == NULL) {
             continue_ptr_count++;
             if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
                 break;
@@ -38,16 +36,13 @@ void send_sigint()
         }
         continue_ptr_count = 0;
 
-        if (tasks[i]->pgid == global_stdio_handle->at_process_group_id)
-        {
-            if (tasks[i]->actions[SIGINT].sa_handler == SIG_DFL || tasks[i]->actions[SIGINT].sa_handler == SIG_IGN)
-            {
+        if (tasks[i]->pgid == global_stdio_handle->at_process_group_id) {
+            if (tasks[i]->actions[SIGINT].sa_handler == SIG_DFL ||
+                tasks[i]->actions[SIGINT].sa_handler == SIG_IGN) {
                 spin_lock(&tasks[i]->signal_lock);
                 tasks[i]->signal |= SIGMASK(SIGKILL);
                 spin_unlock(&tasks[i]->signal_lock);
-            }
-            else if (tasks[i]->state != TASK_READING_STDIO)
-            {
+            } else if (tasks[i]->state != TASK_READING_STDIO) {
                 spin_lock(&tasks[i]->signal_lock);
                 tasks[i]->signal |= SIGMASK(SIGINT);
                 spin_unlock(&tasks[i]->signal_lock);
@@ -62,12 +57,9 @@ bool can_schedule = false;
 extern int unix_socket_fsid;
 extern int unix_accept_fsid;
 
-task_t *get_free_task()
-{
-    for (uint64_t i = 0; i < cpu_count; i++)
-    {
-        if (idle_tasks[i] == NULL)
-        {
+task_t *get_free_task() {
+    for (uint64_t i = 0; i < cpu_count; i++) {
+        if (idle_tasks[i] == NULL) {
             task_t *task = (task_t *)malloc(sizeof(task_t));
             memset(task, 0, sizeof(task_t));
             task->state = TASK_CREATING;
@@ -81,10 +73,8 @@ task_t *get_free_task()
 
     spin_lock(&task_queue_lock);
 
-    for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
-    {
-        if (tasks[i] == NULL)
-        {
+    for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
+        if (tasks[i] == NULL) {
             task_t *task = (task_t *)malloc(sizeof(task_t));
             memset(task, 0, sizeof(task_t));
             task->state = TASK_CREATING;
@@ -103,15 +93,14 @@ task_t *get_free_task()
 
 uint32_t cpu_idx = 0;
 
-uint32_t alloc_cpu_id()
-{
+uint32_t alloc_cpu_id() {
     uint32_t idx = cpu_idx;
     cpu_idx = (cpu_idx + 1) % cpu_count;
     return idx;
 }
 
-task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg, uint64_t priority)
-{
+task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
+                    uint64_t priority) {
     arch_disable_interrupt();
 
     task_t *task = get_free_task();
@@ -131,20 +120,24 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg, uin
     task->priority = priority;
     task->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     task->syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
-    task->signal_syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
+    task->signal_syscall_stack =
+        (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     task->syscall_stack_user = 0;
     memset((void *)(task->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(task->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(task->signal_syscall_stack - STACK_SIZE), 0, STACK_SIZE);
     task->arch_context = malloc(sizeof(arch_context_t));
     memset(task->arch_context, 0, sizeof(arch_context_t));
-    arch_context_init(task->arch_context, virt_to_phys((uint64_t)get_kernel_page_dir()), (uint64_t)entry, task->kernel_stack, false, arg);
+    arch_context_init(task->arch_context,
+                      virt_to_phys((uint64_t)get_kernel_page_dir()),
+                      (uint64_t)entry, task->kernel_stack, false, arg);
     task->signal = 0;
     task->saved_signal = 0;
     task->status = 0;
     task->cwd = rootdir;
     task->mmap_regions = malloc(sizeof(Bitmap));
-    bitmap_init(task->mmap_regions, alloc_frames_bytes(bitmap_size), bitmap_size);
+    bitmap_init(task->mmap_regions, alloc_frames_bytes(bitmap_size),
+                bitmap_size);
     memset(task->mmap_regions->buffer, 0xff, bitmap_size);
     task->fd_info = malloc(sizeof(fd_info_t));
     memset(task->fd_info, 0, sizeof(task->fd_info));
@@ -172,22 +165,21 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg, uin
     task->term.c_cflag = CS8 | CREAD | CLOCAL;
     task->term.c_lflag = ECHO | ICANON | IEXTEN | ISIG;
     task->term.c_line = 0;
-    task->term.c_cc[VINTR] = 3;     // Ctrl-C
-    task->term.c_cc[VQUIT] = 28;    // Ctrl-task->term.c_cc[VERASE] = 127; // DEL
-    task->term.c_cc[VKILL] = 21;    // Ctrl-U
-    task->term.c_cc[VEOF] = 4;      // Ctrl-D
-    task->term.c_cc[VTIME] = 0;     // No timer
-    task->term.c_cc[VMIN] = 1;      // Return each byte
-    task->term.c_cc[VSTART] = 17;   // Ctrl-Q
-    task->term.c_cc[VSTOP] = 19;    // Ctrl-S
-    task->term.c_cc[VSUSP] = 26;    // Ctrl-Z
+    task->term.c_cc[VINTR] = 3;   // Ctrl-C
+    task->term.c_cc[VQUIT] = 28;  // Ctrl-task->term.c_cc[VERASE] = 127; // DEL
+    task->term.c_cc[VKILL] = 21;  // Ctrl-U
+    task->term.c_cc[VEOF] = 4;    // Ctrl-D
+    task->term.c_cc[VTIME] = 0;   // No timer
+    task->term.c_cc[VMIN] = 1;    // Return each byte
+    task->term.c_cc[VSTART] = 17; // Ctrl-Q
+    task->term.c_cc[VSTOP] = 19;  // Ctrl-S
+    task->term.c_cc[VSUSP] = 26;  // Ctrl-Z
     task->term.c_cc[VREPRINT] = 18; // Ctrl-R
     task->term.c_cc[VDISCARD] = 15; // Ctrl-O
     task->term.c_cc[VWERASE] = 23;  // Ctrl-W
     task->term.c_cc[VLNEXT] = 22;   // Ctrl-V
     // Initialize other control characters to 0
-    for (int i = 16; i < NCCS; i++)
-    {
+    for (int i = 16; i < NCCS; i++) {
         task->term.c_cc[i] = 0;
     }
 
@@ -214,16 +206,13 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg, uin
     return task;
 }
 
-task_t *task_search(task_state_t state, uint32_t cpu_id)
-{
+task_t *task_search(task_state_t state, uint32_t cpu_id) {
     task_t *task = pick_next_task(schedulers[cpu_id]);
     return task;
 }
 
-void idle_entry(uint64_t arg)
-{
-    while (1)
-    {
+void idle_entry(uint64_t arg) {
+    while (1) {
         arch_enable_interrupt();
         arch_pause();
     }
@@ -233,13 +222,11 @@ extern void init_thread(uint64_t);
 
 extern void futex_init();
 
-void task_init()
-{
+void task_init() {
     memset(tasks, 0, sizeof(tasks));
     memset(idle_tasks, 0, sizeof(idle_tasks));
 
-    for (uint64_t cpu = 0; cpu < cpu_count; cpu++)
-    {
+    for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
         schedulers[cpu] = malloc(sizeof(eevdf_t));
         memset(schedulers[cpu], 0, sizeof(eevdf_t));
         schedulers[cpu]->root = malloc(sizeof(struct rb_root));
@@ -247,8 +234,7 @@ void task_init()
         schedulers[cpu]->min_vruntime = 0;
     }
 
-    for (uint64_t cpu = 0; cpu < cpu_count; cpu++)
-    {
+    for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
         task_t *idle_task = task_create("idle", idle_entry, 0, IDLE_PRIORITY);
         idle_task->cpu_id = cpu;
         idle_task->state = TASK_RUNNING;
@@ -263,8 +249,7 @@ void task_init()
     can_schedule = true;
 }
 
-uint64_t push_slice(uint64_t ustack, uint8_t *slice, uint64_t len)
-{
+uint64_t push_slice(uint64_t ustack, uint8_t *slice, uint64_t len) {
     uint64_t tmp_stack = ustack;
     tmp_stack -= len;
     tmp_stack -= (tmp_stack % 0x08);
@@ -274,13 +259,16 @@ uint64_t push_slice(uint64_t ustack, uint8_t *slice, uint64_t len)
     return tmp_stack;
 }
 
-uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], int argv_count, char *envp[], int envp_count, uint64_t e_entry, uint64_t phdr, uint64_t phnum, uint64_t at_base)
-{
+uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
+                    int argv_count, char *envp[], int envp_count,
+                    uint64_t e_entry, uint64_t phdr, uint64_t phnum,
+                    uint64_t at_base) {
     uint64_t env_i = 0;
     uint64_t argv_i = 0;
 
     uint64_t tmp_stack = current_stack;
-    tmp_stack = push_slice(tmp_stack, (uint8_t *)task->name, strlen(task->name) + 1);
+    tmp_stack =
+        push_slice(tmp_stack, (uint8_t *)task->name, strlen(task->name) + 1);
 
     uint64_t execfn_ptr = tmp_stack;
 
@@ -289,27 +277,28 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], int argv
     uint64_t *argvps = (uint64_t *)malloc((1 + argv_count) * sizeof(uint64_t));
     memset(argvps, 0, (1 + argv_count) * sizeof(uint64_t));
 
-    if (envp != NULL)
-    {
+    if (envp != NULL) {
         // push envs
-        for (env_i = 0; envp[env_i] != NULL; env_i++)
-        {
-            tmp_stack = push_slice(tmp_stack, (uint8_t *)envp[env_i], strlen(envp[env_i]) + 1);
+        for (env_i = 0; envp[env_i] != NULL; env_i++) {
+            tmp_stack = push_slice(tmp_stack, (uint8_t *)envp[env_i],
+                                   strlen(envp[env_i]) + 1);
             envps[env_i] = tmp_stack;
         }
     }
 
-    if (argv != NULL)
-    {
+    if (argv != NULL) {
         // push argvs
-        for (argv_i = 0; argv[argv_i] != NULL; argv_i++)
-        {
-            tmp_stack = push_slice(tmp_stack, (uint8_t *)argv[argv_i], strlen(argv[argv_i]) + 1);
+        for (argv_i = 0; argv[argv_i] != NULL; argv_i++) {
+            tmp_stack = push_slice(tmp_stack, (uint8_t *)argv[argv_i],
+                                   strlen(argv[argv_i]) + 1);
             argvps[argv_i] = tmp_stack;
         }
     }
 
-    uint64_t total_length = 2 * sizeof(uint64_t) + 7 * 2 * sizeof(uint64_t) + (env_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) + (argv_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) + sizeof(uint64_t);
+    uint64_t total_length = 2 * sizeof(uint64_t) + 7 * 2 * sizeof(uint64_t) +
+                            (env_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) +
+                            (argv_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) +
+                            sizeof(uint64_t);
     tmp_stack -= (tmp_stack - total_length) % 0x10;
 
     // push auxv
@@ -349,11 +338,13 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], int argv
 
     // push envp
     tmp_stack = push_slice(tmp_stack, tmp, sizeof(uint64_t));
-    tmp_stack = push_slice(tmp_stack, (uint8_t *)envps, env_i * sizeof(uint64_t));
+    tmp_stack =
+        push_slice(tmp_stack, (uint8_t *)envps, env_i * sizeof(uint64_t));
 
     // push argvp
     tmp_stack = push_slice(tmp_stack, tmp, sizeof(uint64_t));
-    tmp_stack = push_slice(tmp_stack, (uint8_t *)argvps, argv_i * sizeof(uint64_t));
+    tmp_stack =
+        push_slice(tmp_stack, (uint8_t *)argvps, argv_i * sizeof(uint64_t));
 
     tmp_stack = push_slice(tmp_stack, (uint8_t *)&argv_i, sizeof(uint64_t));
 
@@ -364,13 +355,11 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[], int argv
     return tmp_stack;
 }
 
-uint64_t task_fork(struct pt_regs *regs, bool vfork)
-{
+uint64_t task_fork(struct pt_regs *regs, bool vfork) {
     arch_disable_interrupt();
 
     task_t *child = get_free_task();
-    if (child == NULL)
-    {
+    if (child == NULL) {
         return (uint64_t)-ENOMEM;
     }
 
@@ -382,8 +371,10 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     child->cpu_id = alloc_cpu_id();
 
     child->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
-    child->syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
-    child->signal_syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
+    child->syscall_stack =
+        (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
+    child->signal_syscall_stack =
+        (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     child->syscall_stack_user = 0;
     memset((void *)(child->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(child->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
@@ -392,7 +383,8 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     child->arch_context = malloc(sizeof(arch_context_t));
     memset(child->arch_context, 0, sizeof(arch_context_t));
     current_task->arch_context->ctx = regs;
-    arch_context_copy(child->arch_context, current_task->arch_context, child->kernel_stack, vfork ? CLONE_VM : 0);
+    arch_context_copy(child->arch_context, current_task->arch_context,
+                      child->kernel_stack, vfork ? CLONE_VM : 0);
     child->ppid = current_task->pid;
     child->uid = current_task->uid;
     child->gid = current_task->gid;
@@ -408,13 +400,11 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     child->cwd = current_task->cwd;
     child->cmdline = strdup(current_task->cmdline);
 
-    child->mmap_regions = vfork ? current_task->mmap_regions : malloc(sizeof(Bitmap));
-    if (vfork)
-    {
+    child->mmap_regions =
+        vfork ? current_task->mmap_regions : malloc(sizeof(Bitmap));
+    if (vfork) {
         child->mmap_regions->bitmap_refcount++;
-    }
-    else
-    {
+    } else {
         void *data = alloc_frames_bytes(bitmap_size);
         bitmap_init(child->mmap_regions, data, bitmap_size);
         memcpy(data, current_task->mmap_regions->buffer, bitmap_size);
@@ -425,8 +415,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
 
     child->fd_info = vfork ? current_task->fd_info : malloc(sizeof(fd_info_t));
 
-    if (!vfork)
-    {
+    if (!vfork) {
         memset(child->fd_info, 0, sizeof(fd_info_t));
         memset(child->fd_info->fds, 0, sizeof(child->fd_info->fds));
         // child->fd_info->fds[0] = malloc(sizeof(fd_t));
@@ -442,26 +431,20 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
         // child->fd_info->fds[2]->offset = 0;
         // child->fd_info->fds[2]->flags = 0;
 
-        for (uint64_t i = 0; i < MAX_FD_NUM; i++)
-        {
+        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
             fd_t *fd = current_task->fd_info->fds[i];
 
-            if (fd)
-            {
+            if (fd) {
                 child->fd_info->fds[i] = malloc(sizeof(fd_t));
                 memcpy(child->fd_info->fds[i], fd, sizeof(fd_t));
                 fd->node->refcount++;
-            }
-            else
-            {
+            } else {
                 child->fd_info->fds[i] = NULL;
             }
         }
 
         child->fd_info->ref_count++;
-    }
-    else
-    {
+    } else {
         child->fd_info->ref_count++;
     }
 
@@ -478,12 +461,9 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
 
     child->child_vfork_done = false;
 
-    if (vfork)
-    {
+    if (vfork) {
         child->is_vfork = true;
-    }
-    else
-    {
+    } else {
         child->is_vfork = false;
     }
 
@@ -492,14 +472,13 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork)
     child->state = TASK_READY;
     child->current_state = TASK_READY;
 
-    add_eevdf_entity_with_prio(child, child->priority, schedulers[child->cpu_id]);
+    add_eevdf_entity_with_prio(child, child->priority,
+                               schedulers[child->cpu_id]);
 
-    if (vfork)
-    {
+    if (vfork) {
         current_task->child_vfork_done = false;
 
-        while (!current_task->child_vfork_done)
-        {
+        while (!current_task->child_vfork_done) {
             arch_yield();
         }
 
@@ -513,37 +492,42 @@ char interpreter_name_global[256] = {0};
 
 spinlock_t execve_lock = {0};
 
-uint64_t task_execve(const char *path, const char **argv, const char **envp)
-{
+uint64_t task_execve(const char *path, const char **argv, const char **envp) {
     arch_disable_interrupt();
 
     spin_lock(&execve_lock);
     can_schedule = false;
 
     vfs_node_t node = vfs_open(path);
-    if (!node)
-    {
+    if (!node) {
         spin_unlock(&execve_lock);
         can_schedule = true;
         return (uint64_t)-ENOENT;
     }
 
-    uint64_t buf_len = (node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
+    uint64_t buf_len =
+        (node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
 
     int argv_count = 0;
     int envp_count = 0;
 
-    if (argv && (translate_address(get_current_page_dir(true), (uint64_t)argv) != 0))
-    {
-        for (argv_count = 0; argv[argv_count] != NULL && (translate_address(get_current_page_dir(true), (uint64_t)argv[argv_count]) != 0); argv_count++)
-        {
+    if (argv &&
+        (translate_address(get_current_page_dir(true), (uint64_t)argv) != 0)) {
+        for (argv_count = 0;
+             argv[argv_count] != NULL &&
+             (translate_address(get_current_page_dir(true),
+                                (uint64_t)argv[argv_count]) != 0);
+             argv_count++) {
         }
     }
 
-    if (envp && (translate_address(get_current_page_dir(true), (uint64_t)envp) != 0))
-    {
-        for (envp_count = 0; envp[envp_count] != NULL && (translate_address(get_current_page_dir(true), (uint64_t)envp[envp_count]) != 0); envp_count++)
-        {
+    if (envp &&
+        (translate_address(get_current_page_dir(true), (uint64_t)envp) != 0)) {
+        for (envp_count = 0;
+             envp[envp_count] != NULL &&
+             (translate_address(get_current_page_dir(true),
+                                (uint64_t)envp[envp_count]) != 0);
+             envp_count++) {
         }
     }
 
@@ -555,19 +539,25 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     argv_count = 0;
     envp_count = 0;
 
-    if (argv && (translate_address(get_current_page_dir(true), (uint64_t)argv) != 0))
-    {
-        for (argv_count = 0; argv[argv_count] != NULL && (translate_address(get_current_page_dir(true), (uint64_t)argv[argv_count]) != 0); argv_count++)
-        {
+    if (argv &&
+        (translate_address(get_current_page_dir(true), (uint64_t)argv) != 0)) {
+        for (argv_count = 0;
+             argv[argv_count] != NULL &&
+             (translate_address(get_current_page_dir(true),
+                                (uint64_t)argv[argv_count]) != 0);
+             argv_count++) {
             new_argv[argv_count] = strdup(argv[argv_count]);
         }
     }
     new_argv[argv_count] = NULL;
 
-    if (envp && (translate_address(get_current_page_dir(true), (uint64_t)envp) != 0))
-    {
-        for (envp_count = 0; envp[envp_count] != NULL && (translate_address(get_current_page_dir(true), (uint64_t)envp[envp_count]) != 0); envp_count++)
-        {
+    if (envp &&
+        (translate_address(get_current_page_dir(true), (uint64_t)envp) != 0)) {
+        for (envp_count = 0;
+             envp[envp_count] != NULL &&
+             (translate_address(get_current_page_dir(true),
+                                (uint64_t)envp[envp_count]) != 0);
+             envp_count++) {
             new_envp[envp_count] = strdup(envp[envp_count]);
         }
     }
@@ -579,8 +569,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     char *fullpath = vfs_get_fullpath(node);
 
-    if (buffer[0] == '#' && buffer[1] == '!')
-    {
+    if (buffer[0] == '#' && buffer[1] == '!') {
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
                 free(new_argv[i]);
@@ -594,10 +583,8 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
         char *p = (char *)buffer + 2;
         const char *interpreter_name = NULL;
-        while (*p != '\n')
-        {
-            if (!interpreter_name && *p != ' ')
-            {
+        while (*p != '\n') {
+            if (!interpreter_name && *p != ' ') {
                 interpreter_name = (const char *)p;
             }
             p++;
@@ -613,7 +600,8 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         const char *injected_argv[256];
         memcpy((char *)&injected_argv[1], argv, argc * sizeof(char *));
         injected_argv[1] = path;
-        strncpy(interpreter_name_global, interpreter_name, sizeof(interpreter_name_global));
+        strncpy(interpreter_name_global, interpreter_name,
+                sizeof(interpreter_name_global));
         injected_argv[0] = interpreter_name_global;
 
         free_frames_bytes(buffer, node->size);
@@ -623,8 +611,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     }
 
     current_task->mmap_regions->bitmap_refcount--;
-    if (!current_task->mmap_regions->bitmap_refcount)
-    {
+    if (!current_task->mmap_regions->bitmap_refcount) {
         free_frames_bytes(current_task->mmap_regions->buffer, bitmap_size);
         free(current_task->mmap_regions);
     }
@@ -633,13 +620,16 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     bitmap_init(current_task->mmap_regions, data, bitmap_size);
     memset(current_task->mmap_regions->buffer, 0xff, bitmap_size);
 
-    if (current_task->is_vfork || current_task->arch_context->mm->page_table_addr == (uint64_t)virt_to_phys(get_kernel_page_dir()))
-    {
-        current_task->arch_context->mm = clone_page_table(current_task->arch_context->mm, 0);
+    if (current_task->is_vfork ||
+        current_task->arch_context->mm->page_table_addr ==
+            (uint64_t)virt_to_phys(get_kernel_page_dir())) {
+        current_task->arch_context->mm =
+            clone_page_table(current_task->arch_context->mm, 0);
     }
 
 #if defined(__x86_64__)
-    asm volatile("movq %0, %%cr3" ::"r"(current_task->arch_context->mm->page_table_addr));
+    asm volatile("movq %0, %%cr3" ::"r"(
+        current_task->arch_context->mm->page_table_addr));
 #endif
 
     const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)buffer;
@@ -648,8 +638,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     uint64_t interpreter_entry = 0;
 
-    if (e_entry == 0)
-    {
+    if (e_entry == 0) {
         free_frames_bytes(buffer, node->size);
         free(fullpath);
         for (int i = 0; i < argv_count; i++)
@@ -666,8 +655,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         return (uint64_t)-EINVAL;
     }
 
-    if (!arch_check_elf(ehdr))
-    {
+    if (!arch_check_elf(ehdr)) {
         free_frames_bytes(buffer, node->size);
         free(fullpath);
         for (int i = 0; i < argv_count; i++)
@@ -690,15 +678,13 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     uint64_t load_start = UINT64_MAX;
     uint64_t load_end = 0;
 
-    for (int i = 0; i < ehdr->e_phnum; ++i)
-    {
-        if (phdr[i].p_type == PT_INTERP)
-        {
-            const char *interpreter_name = ((const char *)ehdr + phdr[i].p_offset);
+    for (int i = 0; i < ehdr->e_phnum; ++i) {
+        if (phdr[i].p_type == PT_INTERP) {
+            const char *interpreter_name =
+                ((const char *)ehdr + phdr[i].p_offset);
 
             vfs_node_t interpreter_node = vfs_open(interpreter_name);
-            if (!interpreter_node)
-            {
+            if (!interpreter_node) {
                 free_frames_bytes(buffer, node->size);
                 free(fullpath);
                 for (int i = 0; i < argv_count; i++)
@@ -715,19 +701,22 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
                 return (uint64_t)-ENOENT;
             }
 
-            uint8_t *interpreter_buffer = (uint8_t *)alloc_frames_bytes(interpreter_node->size);
+            uint8_t *interpreter_buffer =
+                (uint8_t *)alloc_frames_bytes(interpreter_node->size);
 
-            vfs_read(interpreter_node, interpreter_buffer, 0, interpreter_node->size);
+            vfs_read(interpreter_node, interpreter_buffer, 0,
+                     interpreter_node->size);
 
             Elf64_Ehdr *interpreter_ehdr = (Elf64_Ehdr *)interpreter_buffer;
-            Elf64_Phdr *interpreter_phdr = (Elf64_Phdr *)(interpreter_buffer + interpreter_ehdr->e_phoff);
+            Elf64_Phdr *interpreter_phdr =
+                (Elf64_Phdr *)(interpreter_buffer + interpreter_ehdr->e_phoff);
 
-            for (int j = 0; j < interpreter_ehdr->e_phnum; j++)
-            {
+            for (int j = 0; j < interpreter_ehdr->e_phnum; j++) {
                 if (interpreter_phdr[j].p_type != PT_LOAD)
                     continue;
 
-                uint64_t seg_addr = INTERPRETER_BASE_ADDR + interpreter_phdr[j].p_vaddr;
+                uint64_t seg_addr =
+                    INTERPRETER_BASE_ADDR + interpreter_phdr[j].p_vaddr;
                 uint64_t seg_size = interpreter_phdr[j].p_memsz;
                 uint64_t file_size = interpreter_phdr[j].p_filesz;
                 uint64_t page_size = DEFAULT_PAGE_SIZE;
@@ -736,33 +725,36 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
                 // 计算对齐后的地址和大小
                 uint64_t aligned_addr = seg_addr & ~page_mask;
                 uint64_t size_diff = seg_addr - aligned_addr;
-                uint64_t alloc_size = (seg_size + size_diff + page_mask) & ~page_mask;
+                uint64_t alloc_size =
+                    (seg_size + size_diff + page_mask) & ~page_mask;
 
                 uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W | PT_FLAG_X;
-                map_page_range(get_current_page_dir(true), aligned_addr, 0, alloc_size, flags);
-                memcpy((void *)seg_addr, (void *)((char *)interpreter_buffer + interpreter_phdr[j].p_offset), file_size);
+                map_page_range(get_current_page_dir(true), aligned_addr, 0,
+                               alloc_size, flags);
+                memcpy((void *)seg_addr,
+                       (void *)((char *)interpreter_buffer +
+                                interpreter_phdr[j].p_offset),
+                       file_size);
 
-                if (seg_size > file_size)
-                {
+                if (seg_size > file_size) {
                     uint64_t bss_start = seg_addr + file_size;
                     uint64_t bss_size = seg_size - file_size;
                     memset((void *)bss_start, 0, bss_size);
 
                     uint64_t page_remain = (bss_size % DEFAULT_PAGE_SIZE);
-                    if (page_remain)
-                    {
-                        uint64_t align_start = bss_start + bss_size - page_remain;
+                    if (page_remain) {
+                        uint64_t align_start =
+                            bss_start + bss_size - page_remain;
                         memset((void *)align_start, 0, page_remain);
                     }
                 }
             }
 
-            interpreter_entry = INTERPRETER_BASE_ADDR + interpreter_ehdr->e_entry;
+            interpreter_entry =
+                INTERPRETER_BASE_ADDR + interpreter_ehdr->e_entry;
 
             free_frames_bytes(interpreter_buffer, interpreter_node->size);
-        }
-        else
-        {
+        } else {
             if (phdr[i].p_type != PT_LOAD)
                 continue;
 
@@ -775,7 +767,8 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
             // 计算对齐后的地址和大小
             uint64_t aligned_addr = seg_addr & ~page_mask;
             uint64_t size_diff = seg_addr - aligned_addr;
-            uint64_t alloc_size = (seg_size + size_diff + page_mask) & ~page_mask;
+            uint64_t alloc_size =
+                (seg_size + size_diff + page_mask) & ~page_mask;
 
             if (aligned_addr < load_start)
                 load_start = aligned_addr;
@@ -783,18 +776,18 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
                 load_end = aligned_addr + alloc_size;
 
             uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W | PT_FLAG_X;
-            map_page_range(get_current_page_dir(true), aligned_addr, 0, alloc_size, flags);
-            memcpy((void *)seg_addr, (void *)((char *)buffer + phdr[i].p_offset), file_size);
+            map_page_range(get_current_page_dir(true), aligned_addr, 0,
+                           alloc_size, flags);
+            memcpy((void *)seg_addr,
+                   (void *)((char *)buffer + phdr[i].p_offset), file_size);
 
-            if (seg_size > file_size)
-            {
+            if (seg_size > file_size) {
                 uint64_t bss_start = seg_addr + file_size;
                 uint64_t bss_size = seg_size - file_size;
                 memset((void *)bss_start, 0, bss_size);
 
                 uint64_t page_remain = (bss_size % DEFAULT_PAGE_SIZE);
-                if (page_remain)
-                {
+                if (page_remain) {
                     uint64_t align_start = bss_start + bss_size - page_remain;
                     memset((void *)align_start, 0, page_remain);
                 }
@@ -808,15 +801,21 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
 
     current_task->exec_node = node;
 
-    map_page_range(get_current_page_dir(true), USER_STACK_START, 0, USER_STACK_END - USER_STACK_START, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+    map_page_range(get_current_page_dir(true), USER_STACK_START, 0,
+                   USER_STACK_END - USER_STACK_START,
+                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
     memset((void *)USER_STACK_START, 0, USER_STACK_END - USER_STACK_START);
-    uint64_t stack = push_infos(current_task, USER_STACK_END, (char **)new_argv, argv_count, (char **)new_envp, envp_count, e_entry, (uint64_t)(load_start + ehdr->e_phoff), ehdr->e_phnum, interpreter_entry ? INTERPRETER_BASE_ADDR : load_start);
+    uint64_t stack =
+        push_infos(current_task, USER_STACK_END, (char **)new_argv, argv_count,
+                   (char **)new_envp, envp_count, e_entry,
+                   (uint64_t)(load_start + ehdr->e_phoff), ehdr->e_phnum,
+                   interpreter_entry ? INTERPRETER_BASE_ADDR : load_start);
 
     free_frames_bytes(buffer, node->size);
 
-    if (current_task->ppid != current_task->pid && tasks[current_task->ppid] && !tasks[current_task->ppid]->child_vfork_done)
-    {
+    if (current_task->ppid != current_task->pid && tasks[current_task->ppid] &&
+        !tasks[current_task->ppid]->child_vfork_done) {
         tasks[current_task->ppid]->child_vfork_done = true;
         current_task->is_vfork = false;
     }
@@ -824,46 +823,37 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     char cmdline[DEFAULT_PAGE_SIZE * 4];
     memset(cmdline, 0, sizeof(cmdline));
     char *cmdline_ptr = cmdline;
-    for (int i = 0; i < argv_count; i++)
-    {
+    for (int i = 0; i < argv_count; i++) {
         int len = sprintf(cmdline_ptr, "%s ", new_argv[i]);
         cmdline_ptr += len;
     }
 
-    for (int i = 0; i < argv_count; i++)
-    {
-        if (new_argv[i])
-        {
+    for (int i = 0; i < argv_count; i++) {
+        if (new_argv[i]) {
             free(new_argv[i]);
         }
     }
     free(new_argv);
-    for (int i = 0; i < envp_count; i++)
-    {
-        if (new_envp[i])
-        {
+    for (int i = 0; i < envp_count; i++) {
+        if (new_envp[i]) {
             free(new_envp[i]);
         }
     }
     free(new_envp);
 
-    if (current_task->ppid != current_task->pid && tasks[current_task->ppid] && (tasks[current_task->ppid]->fd_info == current_task->fd_info))
-    {
+    if (current_task->ppid != current_task->pid && tasks[current_task->ppid] &&
+        (tasks[current_task->ppid]->fd_info == current_task->fd_info)) {
         current_task->fd_info->ref_count--;
         current_task->fd_info = malloc(sizeof(fd_info_t));
 
-        for (uint64_t i = 0; i < MAX_FD_NUM; i++)
-        {
+        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
             fd_t *fd = tasks[current_task->ppid]->fd_info->fds[i];
 
-            if (fd)
-            {
+            if (fd) {
                 current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
                 memcpy(current_task->fd_info->fds[i], fd, sizeof(fd_t));
                 fd->node->refcount++;
-            }
-            else
-            {
+            } else {
                 current_task->fd_info->fds[i] = NULL;
             }
         }
@@ -871,23 +861,19 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
         current_task->fd_info->ref_count++;
     }
 
-    for (uint64_t i = 3; i < MAX_FD_NUM; i++)
-    {
+    for (uint64_t i = 3; i < MAX_FD_NUM; i++) {
         if (!current_task->fd_info->fds[i])
             continue;
 
-        if (current_task->fd_info->fds[i]->flags & O_CLOEXEC)
-        {
+        if (current_task->fd_info->fds[i]->flags & O_CLOEXEC) {
             vfs_close(current_task->fd_info->fds[i]->node);
             free(current_task->fd_info->fds[i]);
             current_task->fd_info->fds[i] = NULL;
         }
     }
 
-    for (int i = 1; i < MAXSIG; i++)
-    {
-        if (i != SIGCHLD && current_task->actions[i].sa_handler != SIG_IGN)
-        {
+    for (int i = 1; i < MAXSIG; i++) {
+        if (i != SIGCHLD && current_task->actions[i].sa_handler != SIG_IGN) {
             memset(&current_task->actions[i], 0, sizeof(sigaction_t));
         }
     }
@@ -899,18 +885,15 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp)
     spin_unlock(&execve_lock);
     can_schedule = true;
 
-    arch_to_user_mode(current_task->arch_context, interpreter_entry ? interpreter_entry : e_entry, stack);
+    arch_to_user_mode(current_task->arch_context,
+                      interpreter_entry ? interpreter_entry : e_entry, stack);
 
     return (uint64_t)-EAGAIN;
 }
 
-void sys_yield()
-{
-    arch_yield();
-}
+void sys_yield() { arch_yield(); }
 
-int task_block(task_t *task, task_state_t state, int timeout_ms)
-{
+int task_block(task_t *task, task_state_t state, int timeout_ms) {
     uint64_t wakeup_ns = timeout_ms * 1000000;
 
     task->state = state;
@@ -921,23 +904,20 @@ int task_block(task_t *task, task_state_t state, int timeout_ms)
 
     remove_eevdf_entity(task, schedulers[task->cpu_id]);
 
-    if (current_task == task && state == TASK_BLOCKING)
-    {
+    if (current_task == task && state == TASK_BLOCKING) {
         arch_yield();
     }
 
     return task->status;
 }
 
-void task_unblock(task_t *task, int reason)
-{
+void task_unblock(task_t *task, int reason) {
     task->status = reason;
     task->state = TASK_READY;
     add_eevdf_entity_with_prio(task, task->priority, schedulers[task->cpu_id]);
 }
 
-void task_exit_inner(task_t *task, int64_t code)
-{
+void task_exit_inner(task_t *task, int64_t code) {
     spin_lock(&task_queue_lock);
 
     remove_eevdf_entity(task, schedulers[task->cpu_id]);
@@ -949,15 +929,11 @@ void task_exit_inner(task_t *task, int64_t code)
 
     task->status = (uint64_t)code;
 
-    if (task->fd_info)
-    {
+    if (task->fd_info) {
         task->fd_info->ref_count--;
-        if (task->fd_info->ref_count <= 0)
-        {
-            for (uint64_t i = 0; i < MAX_FD_NUM; i++)
-            {
-                if (task->fd_info->fds[i])
-                {
+        if (task->fd_info->ref_count <= 0) {
+            for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+                if (task->fd_info->fds[i]) {
                     vfs_close(task->fd_info->fds[i]->node);
                     free(task->fd_info->fds[i]);
 
@@ -972,20 +948,19 @@ void task_exit_inner(task_t *task, int64_t code)
         free(task->cmdline);
 
     task->mmap_regions->bitmap_refcount--;
-    if (task->mmap_regions->bitmap_refcount == 0)
-    {
+    if (task->mmap_regions->bitmap_refcount == 0) {
         free_frames_bytes(task->mmap_regions->buffer, bitmap_size);
         free(task->mmap_regions);
     }
 
-    if (task->ppid != task->pid && tasks[task->ppid] && !tasks[task->ppid]->child_vfork_done)
-    {
+    if (task->ppid != task->pid && tasks[task->ppid] &&
+        !tasks[task->ppid]->child_vfork_done) {
         tasks[task->ppid]->child_vfork_done = true;
         task->is_vfork = false;
     }
 
-    if (task->ppid && task->pid != task->ppid && task->ppid < MAX_TASK_NUM && tasks[task->ppid])
-    {
+    if (task->ppid && task->pid != task->ppid && task->ppid < MAX_TASK_NUM &&
+        tasks[task->ppid]) {
         // void *handler = tasks[task->ppid]->actions[SIGCHLD].sa_handler;
         // if (!(handler == SIG_DFL || handler == SIG_IGN))
         // {
@@ -993,8 +968,8 @@ void task_exit_inner(task_t *task, int64_t code)
         // }
     }
 
-    if (task->waitpid != 0 && task->waitpid < MAX_TASK_NUM && tasks[task->waitpid] && tasks[task->waitpid]->state == TASK_BLOCKING)
-    {
+    if (task->waitpid != 0 && task->waitpid < MAX_TASK_NUM &&
+        tasks[task->waitpid] && tasks[task->waitpid]->state == TASK_BLOCKING) {
         task_unblock(tasks[task->waitpid], EOK);
     }
 
@@ -1003,8 +978,7 @@ void task_exit_inner(task_t *task, int64_t code)
     spin_unlock(&task_queue_lock);
 }
 
-uint64_t task_exit(int64_t code)
-{
+uint64_t task_exit(int64_t code) {
     arch_disable_interrupt();
 
     can_schedule = false;
@@ -1021,7 +995,8 @@ uint64_t task_exit(int64_t code)
     //         continue;
     //     }
     //     continue_ptr_count = 0;
-    //     if ((tasks[i]->ppid != tasks[i]->pid) && (tasks[i]->ppid == current_task->pid))
+    //     if ((tasks[i]->ppid != tasks[i]->pid) && (tasks[i]->ppid ==
+    //     current_task->pid))
     //     {
     //         task_exit_inner(tasks[i], SIGCHLD);
 
@@ -1029,9 +1004,10 @@ uint64_t task_exit(int64_t code)
 
     //         free(tasks[i]->arch_context);
 
-    //         free_frames_bytes((void *)(tasks[i]->kernel_stack - STACK_SIZE), STACK_SIZE);
-    //         free_frames_bytes((void *)(tasks[i]->syscall_stack - STACK_SIZE), STACK_SIZE);
-    //         free_frames_bytes((void *)(tasks[i]->signal_syscall_stack - STACK_SIZE), STACK_SIZE);
+    //         free_frames_bytes((void *)(tasks[i]->kernel_stack - STACK_SIZE),
+    //         STACK_SIZE); free_frames_bytes((void *)(tasks[i]->syscall_stack -
+    //         STACK_SIZE), STACK_SIZE); free_frames_bytes((void
+    //         *)(tasks[i]->signal_syscall_stack - STACK_SIZE), STACK_SIZE);
 
     //         free(tasks[i]);
 
@@ -1046,15 +1022,13 @@ uint64_t task_exit(int64_t code)
 
     task_t *next = task_search(TASK_READY, current_task->cpu_id);
 
-    if (next)
-    {
+    if (next) {
         arch_set_current(next);
         arch_switch_with_context(NULL, next->arch_context, next->kernel_stack);
-    }
-    else
-    {
+    } else {
         arch_set_current(idle_tasks[current_cpu_id]);
-        arch_switch_with_context(NULL, idle_tasks[current_cpu_id]->arch_context, idle_tasks[current_cpu_id]->kernel_stack);
+        arch_switch_with_context(NULL, idle_tasks[current_cpu_id]->arch_context,
+                                 idle_tasks[current_cpu_id]->kernel_stack);
     }
 
     // never return !!!
@@ -1062,45 +1036,38 @@ uint64_t task_exit(int64_t code)
     return (uint64_t)-EAGAIN;
 }
 
-uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
-{
+uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
     arch_disable_interrupt();
     task_t *target = NULL;
     uint64_t ret = -ECHILD;
 
     // First check if we have any children at all
     bool has_children = false;
-    for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
-    {
+    for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
         spin_lock(&task_queue_lock);
         task_t *ptr = tasks[i];
         spin_unlock(&task_queue_lock);
-        if (ptr && ptr->ppid == current_task->pid)
-        {
+        if (ptr && ptr->ppid == current_task->pid) {
             has_children = true;
             break;
         }
     }
 
-    if (!has_children)
-    {
+    if (!has_children) {
         return -ECHILD;
     }
 
-    while (1)
-    {
+    while (1) {
         task_t *found_alive = NULL;
         task_t *found_dead = NULL;
 
         uint64_t continue_ptr_count = 0;
-        for (uint64_t i = 1; i < MAX_TASK_NUM; i++)
-        {
+        for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
             spin_lock(&task_queue_lock);
             task_t *ptr = tasks[i];
             spin_unlock(&task_queue_lock);
 
-            if (ptr == NULL)
-            {
+            if (ptr == NULL) {
                 continue_ptr_count++;
                 if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
                     break;
@@ -1111,45 +1078,34 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
             if (ptr->ppid != current_task->pid)
                 continue;
 
-            if ((int64_t)pid > 0)
-            {
+            if ((int64_t)pid > 0) {
                 if (ptr->pid != pid)
                     continue;
-            }
-            else if (pid == 0)
-            {
+            } else if (pid == 0) {
                 if (ptr->pgid != current_task->pgid)
                     continue;
-            }
-            else if (pid != (uint64_t)-1)
-            {
+            } else if (pid != (uint64_t)-1) {
                 continue;
             }
 
-            if (ptr->state == TASK_DIED)
-            {
+            if (ptr->state == TASK_DIED) {
                 found_dead = ptr;
                 break;
-            }
-            else
-            {
+            } else {
                 found_alive = ptr;
             }
         }
 
-        if (found_dead)
-        {
+        if (found_dead) {
             target = found_dead;
             break;
         }
 
-        if (found_alive && (options & WNOHANG))
-        {
+        if (found_alive && (options & WNOHANG)) {
             return 0;
         }
 
-        if (found_alive)
-        {
+        if (found_alive) {
             found_alive->waitpid = current_task->pid;
             task_block(current_task, TASK_BLOCKING, -1);
             continue;
@@ -1158,16 +1114,11 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
         return -ECHILD;
     }
 
-    if (target)
-    {
-        if (status)
-        {
-            if (target->status < 128)
-            {
+    if (target) {
+        if (status) {
+            if (target->status < 128) {
                 *status = (target->status & 0xff) << 8;
-            }
-            else
-            {
+            } else {
                 int sig = target->status - 128;
                 *status = (sig & 0xff);
             }
@@ -1185,9 +1136,12 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
 
         free(target->arch_context);
 
-        free_frames_bytes((void *)(target->kernel_stack - STACK_SIZE), STACK_SIZE);
-        free_frames_bytes((void *)(target->syscall_stack - STACK_SIZE), STACK_SIZE);
-        free_frames_bytes((void *)(target->signal_syscall_stack - STACK_SIZE), STACK_SIZE);
+        free_frames_bytes((void *)(target->kernel_stack - STACK_SIZE),
+                          STACK_SIZE);
+        free_frames_bytes((void *)(target->syscall_stack - STACK_SIZE),
+                          STACK_SIZE);
+        free_frames_bytes((void *)(target->signal_syscall_stack - STACK_SIZE),
+                          STACK_SIZE);
 
         free(target);
     }
@@ -1195,13 +1149,12 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options)
     return ret;
 }
 
-uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *parent_tid, int *child_tid, uint64_t tls)
-{
+uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
+                   int *parent_tid, int *child_tid, uint64_t tls) {
     arch_disable_interrupt();
 
     task_t *child = get_free_task();
-    if (child == NULL)
-    {
+    if (child == NULL) {
         return (uint64_t)-ENOMEM;
     }
 
@@ -1213,8 +1166,10 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->cpu_id = alloc_cpu_id();
 
     child->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
-    child->syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
-    child->signal_syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
+    child->syscall_stack =
+        (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
+    child->signal_syscall_stack =
+        (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     child->syscall_stack_user = 0;
     memset((void *)(child->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(child->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
@@ -1223,7 +1178,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->arch_context = malloc(sizeof(arch_context_t));
     memset(child->arch_context, 0, sizeof(arch_context_t));
     current_task->arch_context->ctx = regs;
-    arch_context_copy(child->arch_context, current_task->arch_context, child->kernel_stack, flags);
+    arch_context_copy(child->arch_context, current_task->arch_context,
+                      child->kernel_stack, flags);
 #if defined(__x86_64__)
     if (newsp)
         child->arch_context->ctx->rsp = newsp;
@@ -1243,13 +1199,11 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->cwd = current_task->cwd;
     child->cmdline = strdup(current_task->cmdline);
 
-    child->mmap_regions = (flags & CLONE_VM) ? current_task->mmap_regions : malloc(sizeof(Bitmap));
-    if (flags & CLONE_VM)
-    {
+    child->mmap_regions = (flags & CLONE_VM) ? current_task->mmap_regions
+                                             : malloc(sizeof(Bitmap));
+    if (flags & CLONE_VM) {
         child->mmap_regions->bitmap_refcount++;
-    }
-    else
-    {
+    } else {
         void *data = alloc_frames_bytes(bitmap_size);
         bitmap_init(child->mmap_regions, data, bitmap_size);
         memcpy(data, current_task->mmap_regions->buffer, bitmap_size);
@@ -1257,10 +1211,10 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->load_start = current_task->load_start;
     child->load_end = current_task->load_end;
 
-    child->fd_info = (flags & CLONE_FILES) ? current_task->fd_info : malloc(sizeof(fd_info_t));
+    child->fd_info = (flags & CLONE_FILES) ? current_task->fd_info
+                                           : malloc(sizeof(fd_info_t));
 
-    if (!(flags & CLONE_FILES))
-    {
+    if (!(flags & CLONE_FILES)) {
         memset(child->fd_info, 0, sizeof(fd_info_t));
         memset(child->fd_info->fds, 0, sizeof(child->fd_info->fds));
         // child->fd_info->fds[0] = malloc(sizeof(fd_t));
@@ -1276,26 +1230,20 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
         // child->fd_info->fds[2]->offset = 0;
         // child->fd_info->fds[2]->flags = 0;
 
-        for (uint64_t i = 0; i < MAX_FD_NUM; i++)
-        {
+        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
             fd_t *fd = current_task->fd_info->fds[i];
 
-            if (fd)
-            {
+            if (fd) {
                 child->fd_info->fds[i] = malloc(sizeof(fd_t));
                 memcpy(child->fd_info->fds[i], fd, sizeof(fd_t));
                 fd->node->refcount++;
-            }
-            else
-            {
+            } else {
                 child->fd_info->fds[i] = NULL;
             }
         }
 
         child->fd_info->ref_count++;
-    }
-    else
-    {
+    } else {
         child->fd_info->ref_count++;
     }
 
@@ -1306,15 +1254,13 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->signal = 0;
     child->blocked = current_task->blocked;
 
-    if (flags & CLONE_SETTLS)
-    {
+    if (flags & CLONE_SETTLS) {
 #if defined(__x86_64__)
         child->arch_context->fsbase = tls;
 #endif
     }
 
-    if (parent_tid && (flags & CLONE_PARENT_SETTID))
-    {
+    if (parent_tid && (flags & CLONE_PARENT_SETTID)) {
         *parent_tid = (int)child->pid;
     }
 
@@ -1329,12 +1275,9 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
 
     child->child_vfork_done = false;
 
-    if ((flags & CLONE_VM))
-    {
+    if ((flags & CLONE_VM)) {
         child->is_vfork = true;
-    }
-    else
-    {
+    } else {
         child->is_vfork = false;
     }
 
@@ -1343,14 +1286,13 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     child->state = TASK_READY;
     child->current_state = TASK_READY;
 
-    add_eevdf_entity_with_prio(child, child->priority, schedulers[child->cpu_id]);
+    add_eevdf_entity_with_prio(child, child->priority,
+                               schedulers[child->cpu_id]);
 
-    if ((flags & CLONE_VFORK))
-    {
+    if ((flags & CLONE_VFORK)) {
         current_task->child_vfork_done = false;
 
-        while (!current_task->child_vfork_done)
-        {
+        while (!current_task->child_vfork_done) {
             arch_yield();
         }
 
@@ -1360,29 +1302,23 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *pa
     return child->pid;
 }
 
-uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem)
-{
+uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem) {
     if (req->tv_sec < 0)
         return (uint64_t)-EINVAL;
 
-    if (req->tv_sec < 0 || req->tv_nsec >= 1000000000L)
-    {
+    if (req->tv_sec < 0 || req->tv_nsec >= 1000000000L) {
         return (uint64_t)-EINVAL;
     }
 
     uint64_t start = nanoTime();
     uint64_t target = start + (req->tv_sec * 1000000000ULL) + req->tv_nsec;
 
-    do
-    {
-        if (signals_pending_quick(current_task))
-        {
-            if (rem)
-            {
+    do {
+        if (signals_pending_quick(current_task)) {
+            if (rem) {
                 uint64_t remaining = target - nanoTime();
-                struct timespec remain_ts = {
-                    .tv_sec = remaining / 1000000000,
-                    .tv_nsec = remaining % 1000000000};
+                struct timespec remain_ts = {.tv_sec = remaining / 1000000000,
+                                             .tv_nsec = remaining % 1000000000};
                 memcpy(rem, &remain_ts, sizeof(struct timespec));
             }
             return (uint64_t)-EINTR;
@@ -1394,10 +1330,9 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem)
     return 0;
 }
 
-uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5)
-{
-    switch (option)
-    {
+uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
+                   uint64_t arg5) {
+    switch (option) {
     case PR_SET_NAME: // 设置进程名 (PR_SET_NAME=15)
         strncpy(current_task->name, (char *)arg2, TASK_NAME_MAX);
         return 0;
@@ -1407,8 +1342,7 @@ uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
         return 0;
 
     case PR_SET_SECCOMP: // 启用seccomp过滤
-        if (arg2 == SECCOMP_MODE_STRICT)
-        {
+        if (arg2 == SECCOMP_MODE_STRICT) {
             // current_task->seccomp_mode = SECCOMP_MODE_STRICT;
             return 0;
         }
@@ -1427,19 +1361,16 @@ uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
     }
 }
 
-void ms_to_timeval(uint64_t ms, struct timeval *tv)
-{
+void ms_to_timeval(uint64_t ms, struct timeval *tv) {
     tv->tv_sec = ms / 1000;
     tv->tv_usec = (ms % 1000) * 1000; // 转换为微秒保持结构体定义
 }
 
-uint64_t timeval_to_ms(struct timeval tv)
-{
+uint64_t timeval_to_ms(struct timeval tv) {
     return (uint64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000; // 微秒转毫秒
 }
 
-void sched_update_itimer()
-{
+void sched_update_itimer() {
     uint64_t rtAt = current_task->itimer_real.at;
     uint64_t rtReset = current_task->itimer_real.reset;
 
@@ -1448,29 +1379,23 @@ void sched_update_itimer()
 
     uint64_t now = mktime(&time_now) * 1000;
 
-    if (rtAt && rtAt <= now)
-    {
+    if (rtAt && rtAt <= now) {
         spin_lock(&current_task->signal_lock);
         current_task->signal |= SIGMASK(SIGALRM);
         spin_unlock(&current_task->signal_lock);
 
-        if (rtReset)
-        {
+        if (rtReset) {
             current_task->itimer_real.at = now + rtReset;
-        }
-        else
-        {
+        } else {
             current_task->itimer_real.at = 0;
         }
     }
 
-    for (int j = 0; j < MAX_TIMERS_NUM; j++)
-    {
+    for (int j = 0; j < MAX_TIMERS_NUM; j++) {
         if (current_task->timers[j] == NULL)
             break;
         kernel_timer_t *kt = current_task->timers[j];
-        if (kt->expires && now >= kt->expires)
-        {
+        if (kt->expires && now >= kt->expires) {
             spin_lock(&current_task->signal_lock);
             current_task->signal |= SIGMASK(kt->sigev_signo);
             spin_unlock(&current_task->signal_lock);
@@ -1485,16 +1410,12 @@ void sched_update_itimer()
 
 extern int timerfdfs_id;
 
-void sched_update_timerfd()
-{
-    if (current_task->fd_info)
-    {
+void sched_update_timerfd() {
+    if (current_task->fd_info) {
         uint64_t continue_null_fd_count = 0;
 
-        for (int fd = 3; fd < MAX_FD_NUM; fd++)
-        {
-            if (current_task->fd_info->fds[fd] == NULL)
-            {
+        for (int fd = 3; fd < MAX_FD_NUM; fd++) {
+            if (current_task->fd_info->fds[fd] == NULL) {
                 continue_null_fd_count++;
                 if (continue_null_fd_count >= 5)
                     break;
@@ -1503,34 +1424,29 @@ void sched_update_timerfd()
 
             continue_null_fd_count = 0;
 
-            if (current_task->fd_info->fds[fd] && current_task->fd_info->fds[fd]->node->fsid == timerfdfs_id)
-            {
+            if (current_task->fd_info->fds[fd] &&
+                current_task->fd_info->fds[fd]->node->fsid == timerfdfs_id) {
                 timerfd_t *tfd = current_task->fd_info->fds[fd]->node->handle;
 
                 // 根据时钟类型获取当前时间
                 uint64_t now;
-                if (tfd->timer.clock_type == CLOCK_MONOTONIC)
-                {
+                if (tfd->timer.clock_type == CLOCK_MONOTONIC) {
                     now = nanoTime();
-                }
-                else // CLOCK_REALTIME
+                } else // CLOCK_REALTIME
                 {
                     tm time;
                     time_read(&time);
-                    now = (uint64_t)mktime(&time) * 1000000000ULL + nanoTime() % 1000000000ULL;
+                    now = (uint64_t)mktime(&time) * 1000000000ULL +
+                          nanoTime() % 1000000000ULL;
                 }
 
-                if (tfd->timer.expires && now >= tfd->timer.expires)
-                {
-                    if (tfd->timer.interval)
-                    {
+                if (tfd->timer.expires && now >= tfd->timer.expires) {
+                    if (tfd->timer.interval) {
                         uint64_t delta = now - tfd->timer.expires;
                         uint64_t periods = delta / tfd->timer.interval + 1;
                         tfd->count += periods;
                         tfd->timer.expires += periods * tfd->timer.interval;
-                    }
-                    else
-                    {
+                    } else {
                         tfd->count++;
                         tfd->timer.expires = 0;
                     }
@@ -1540,14 +1456,11 @@ void sched_update_timerfd()
     }
 }
 
-void sched_check_wakeup()
-{
+void sched_check_wakeup() {
     uint64_t continue_ptr_count = 0;
-    for (size_t i = 1; i < MAX_TASK_NUM; i++)
-    {
+    for (size_t i = 1; i < MAX_TASK_NUM; i++) {
         task_t *ptr = tasks[i];
-        if (ptr == NULL)
-        {
+        if (ptr == NULL) {
             continue_ptr_count++;
             if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
                 break;
@@ -1555,15 +1468,14 @@ void sched_check_wakeup()
         }
         continue_ptr_count = 0;
 
-        if (ptr->state == TASK_BLOCKING && nanoTime() > ptr->force_wakeup_ns)
-        {
+        if (ptr->state == TASK_BLOCKING && nanoTime() > ptr->force_wakeup_ns) {
             task_unblock(ptr, ETIMEDOUT);
         }
     }
 }
 
-size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old)
-{
+size_t sys_setitimer(int which, struct itimerval *value,
+                     struct itimerval *old) {
     if (which != 0)
         return (size_t)-ENOSYS;
 
@@ -1574,17 +1486,17 @@ size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old)
     time_read(&time_now);
     uint64_t now = mktime(&time_now) * 1000;
 
-    if (old)
-    {
+    if (old) {
         uint64_t remaining = rt_at > now ? rt_at - now : 0;
         ms_to_timeval(remaining, &old->it_value);
         ms_to_timeval(rt_reset, &old->it_interval);
     }
 
-    if (value)
-    {
-        uint64_t targValue = value->it_value.tv_sec * 1000 + value->it_value.tv_usec / 1000;
-        uint64_t targInterval = value->it_interval.tv_sec * 1000 + value->it_interval.tv_usec / 1000;
+    if (value) {
+        uint64_t targValue =
+            value->it_value.tv_sec * 1000 + value->it_value.tv_usec / 1000;
+        uint64_t targInterval = value->it_interval.tv_sec * 1000 +
+                                value->it_interval.tv_usec / 1000;
 
         current_task->itimer_real.at = targValue ? (now + targValue) : 0ULL;
         current_task->itimer_real.reset = targInterval;
@@ -1593,14 +1505,12 @@ size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old)
     return 0;
 }
 
-uint64_t sys_timer_create(clockid_t clockid, struct sigevent *sevp, timer_t *timerid)
-{
+uint64_t sys_timer_create(clockid_t clockid, struct sigevent *sevp,
+                          timer_t *timerid) {
     kernel_timer_t *kt = NULL;
     uint64_t i;
-    for (i = 0; i < MAX_TIMERS_NUM; i++)
-    {
-        if (current_task->timers[i] == NULL)
-        {
+    for (i = 0; i < MAX_TIMERS_NUM; i++) {
+        if (current_task->timers[i] == NULL) {
             kt = malloc(sizeof(kernel_timer_t));
             current_task->timers[i] = kt;
             break;
@@ -1615,8 +1525,7 @@ uint64_t sys_timer_create(clockid_t clockid, struct sigevent *sevp, timer_t *tim
     kt->clock_type = clockid;
     kt->sigev_notify = SIGEV_SIGNAL;
 
-    if (sevp)
-    {
+    if (sevp) {
         struct sigevent ksev;
         memcpy(&ksev, sevp, sizeof(struct sigevent));
 
@@ -1630,8 +1539,8 @@ uint64_t sys_timer_create(clockid_t clockid, struct sigevent *sevp, timer_t *tim
     return 0;
 }
 
-uint64_t sys_timer_settime(timer_t timerid, const struct itimerval *new_value, struct itimerval *old_value)
-{
+uint64_t sys_timer_settime(timer_t timerid, const struct itimerval *new_value,
+                           struct itimerval *old_value) {
     uint64_t idx = (uint64_t)timerid;
     if (idx >= MAX_TIMERS_NUM)
         return -EINVAL;
@@ -1641,16 +1550,17 @@ uint64_t sys_timer_settime(timer_t timerid, const struct itimerval *new_value, s
     struct itimerval kts;
     memcpy(&kts, new_value, sizeof(*new_value));
 
-    uint64_t interval = new_value->it_interval.tv_sec * 1000 + new_value->it_interval.tv_usec / 1000;
-    uint64_t expires = new_value->it_value.tv_sec * 1000 + new_value->it_value.tv_usec / 1000;
+    uint64_t interval = new_value->it_interval.tv_sec * 1000 +
+                        new_value->it_interval.tv_usec / 1000;
+    uint64_t expires =
+        new_value->it_value.tv_sec * 1000 + new_value->it_value.tv_usec / 1000;
 
     tm time_now;
     time_read(&time_now);
 
     uint64_t now = mktime(&time_now) * 1000;
 
-    if (old_value)
-    {
+    if (old_value) {
         struct itimerval old;
         old.it_interval.tv_sec = kt->interval / 1000;
         old.it_interval.tv_usec = (kt->interval % 1000) * 1000000;
@@ -1682,13 +1592,11 @@ uint64_t sys_timer_settime(timer_t timerid, const struct itimerval *new_value, s
 
 bool cad_enabled = true;
 
-uint64_t sys_reboot(int magic1, int magic2, uint32_t cmd, void *arg)
-{
+uint64_t sys_reboot(int magic1, int magic2, uint32_t cmd, void *arg) {
     if (magic1 != LINUX_REBOOT_MAGIC1 || magic2 != LINUX_REBOOT_MAGIC2)
         return (uint64_t)-EINVAL;
 
-    switch (cmd)
-    {
+    switch (cmd) {
     case LINUX_REBOOT_CMD_CAD_OFF:
         cad_enabled = false;
         return 0;

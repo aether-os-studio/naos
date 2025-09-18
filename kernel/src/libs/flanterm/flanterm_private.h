@@ -27,7 +27,8 @@
 #define FLANTERM_PRIVATE_H 1
 
 #ifndef FLANTERM_IN_FLANTERM
-#error "Do not use flanterm_private.h. Use interfaces defined in flanterm.h only."
+#error                                                                         \
+    "Do not use flanterm_private.h. Use interfaces defined in flanterm.h only."
 #endif
 
 #include <stddef.h>
@@ -98,7 +99,8 @@ struct flanterm_context {
     void (*set_text_bg_default)(struct flanterm_context *);
     void (*set_text_fg_default_bright)(struct flanterm_context *);
     void (*set_text_bg_default_bright)(struct flanterm_context *);
-    void (*move_character)(struct flanterm_context *, size_t new_x, size_t new_y, size_t old_x, size_t old_y);
+    void (*move_character)(struct flanterm_context *, size_t new_x,
+                           size_t new_y, size_t old_x, size_t old_y);
     void (*scroll)(struct flanterm_context *);
     void (*revscroll)(struct flanterm_context *);
     void (*swap_palette)(struct flanterm_context *);
@@ -110,7 +112,8 @@ struct flanterm_context {
 
     /* to be set by client */
 
-    void (*callback)(struct flanterm_context *, uint64_t, uint64_t, uint64_t, uint64_t);
+    void (*callback)(struct flanterm_context *, uint64_t, uint64_t, uint64_t,
+                     uint64_t);
 };
 
 void flanterm_context_reinit(struct flanterm_context *ctx);

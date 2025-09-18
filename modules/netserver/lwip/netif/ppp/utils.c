@@ -72,7 +72,8 @@ static void ppp_log_write(int level, char *buf);
 #if PRINTPKT_SUPPORT
 static void ppp_vslp_printer(void *arg, const char *fmt, ...);
 static void ppp_format_packet(const u_char *p, int len,
-		void (*printer) (void *, const char *, ...), void *arg);
+                              void (*printer)(void *, const char *, ...),
+                              void *arg);
 
 struct buffer_info {
     char *ptr;
@@ -88,12 +89,12 @@ size_t ppp_strlcpy(char *dest, const char *src, size_t len) {
     size_t ret = strlen(src);
 
     if (len != 0) {
-	if (ret < len)
-	    strcpy(dest, src);
-	else {
-	    strncpy(dest, src, len - 1);
-	    dest[len-1] = 0;
-	}
+        if (ret < len)
+            strcpy(dest, src);
+        else {
+            strncpy(dest, src, len - 1);
+            dest[len - 1] = 0;
+        }
     }
     return ret;
 }
@@ -105,9 +106,8 @@ size_t ppp_strlcpy(char *dest, const char *src, size_t len) {
 size_t ppp_strlcat(char *dest, const char *src, size_t len) {
     size_t dlen = strlen(dest);
 
-    return dlen + ppp_strlcpy(dest + dlen, src, (len > dlen? len - dlen: 0));
+    return dlen + ppp_strlcpy(dest + dlen, src, (len > dlen ? len - dlen : 0));
 }
-
 
 /*
  * ppp_slprintf - format a message into a buffer.  Like sprintf except we
@@ -130,7 +130,7 @@ int ppp_slprintf(char *buf, int buflen, const char *fmt, ...) {
 /*
  * ppp_vslprintf - like ppp_slprintf, takes a va_list instead of a list of args.
  */
-#define OUTCHAR(c)	(buflen > 0? (--buflen, *buf++ = (c)): 0)
+#define OUTCHAR(c) (buflen > 0 ? (--buflen, *buf++ = (c)) : 0)
 
 int ppp_vslprintf(char *buf, int buflen, const char *fmt, va_list args) {
     int c, i, n;
@@ -141,7 +141,7 @@ int ppp_vslprintf(char *buf, int buflen, const char *fmt, va_list args) {
     char *str, *buf0;
     const unsigned char *p;
     char num[32];
-#if 0 /* need port */
+#if 0  /* need port */
     time_t t;
 #endif /* need port */
     u32_t ip;
@@ -153,249 +153,257 @@ int ppp_vslprintf(char *buf, int buflen, const char *fmt, va_list args) {
     buf0 = buf;
     --buflen;
     while (buflen > 0) {
-	for (f = fmt; *f != '%' && *f != 0; ++f)
-	    ;
-	if (f > fmt) {
-	    len = f - fmt;
-	    if (len > buflen)
-		len = buflen;
-	    memcpy(buf, fmt, len);
-	    buf += len;
-	    buflen -= len;
-	    fmt = f;
-	}
-	if (*fmt == 0)
-	    break;
-	c = *++fmt;
-	width = 0;
-	prec = -1;
-	fillch = ' ';
-	if (c == '0') {
-	    fillch = '0';
-	    c = *++fmt;
-	}
-	if (c == '*') {
-	    width = va_arg(args, int);
-	    c = *++fmt;
-	} else {
-	    while (lwip_isdigit(c)) {
-		width = width * 10 + c - '0';
-		c = *++fmt;
-	    }
-	}
-	if (c == '.') {
-	    c = *++fmt;
-	    if (c == '*') {
-		prec = va_arg(args, int);
-		c = *++fmt;
-	    } else {
-		prec = 0;
-		while (lwip_isdigit(c)) {
-		    prec = prec * 10 + c - '0';
-		    c = *++fmt;
-		}
-	    }
-	}
-	str = 0;
-	base = 0;
-	neg = 0;
-	++fmt;
-	switch (c) {
-	case 'l':
-	    c = *fmt++;
-	    switch (c) {
-	    case 'd':
-		val = va_arg(args, long);
-		if ((long)val < 0) {
-		    neg = 1;
-		    val = (unsigned long)-(long)val;
-		}
-		base = 10;
-		break;
-	    case 'u':
-		val = va_arg(args, unsigned long);
-		base = 10;
-		break;
-	    default:
-		OUTCHAR('%');
-		OUTCHAR('l');
-		--fmt;		/* so %lz outputs %lz etc. */
-		continue;
-	    }
-	    break;
-	case 'd':
-	    i = va_arg(args, int);
-	    if (i < 0) {
-		neg = 1;
-		val = -i;
-	    } else
-		val = i;
-	    base = 10;
-	    break;
-	case 'u':
-	    val = va_arg(args, unsigned int);
-	    base = 10;
-	    break;
-	case 'o':
-	    val = va_arg(args, unsigned int);
-	    base = 8;
-	    break;
-	case 'x':
-	case 'X':
-	    val = va_arg(args, unsigned int);
-	    base = 16;
-	    break;
-#if 0 /* unused (and wrong on LLP64 systems) */
+        for (f = fmt; *f != '%' && *f != 0; ++f)
+            ;
+        if (f > fmt) {
+            len = f - fmt;
+            if (len > buflen)
+                len = buflen;
+            memcpy(buf, fmt, len);
+            buf += len;
+            buflen -= len;
+            fmt = f;
+        }
+        if (*fmt == 0)
+            break;
+        c = *++fmt;
+        width = 0;
+        prec = -1;
+        fillch = ' ';
+        if (c == '0') {
+            fillch = '0';
+            c = *++fmt;
+        }
+        if (c == '*') {
+            width = va_arg(args, int);
+            c = *++fmt;
+        } else {
+            while (lwip_isdigit(c)) {
+                width = width * 10 + c - '0';
+                c = *++fmt;
+            }
+        }
+        if (c == '.') {
+            c = *++fmt;
+            if (c == '*') {
+                prec = va_arg(args, int);
+                c = *++fmt;
+            } else {
+                prec = 0;
+                while (lwip_isdigit(c)) {
+                    prec = prec * 10 + c - '0';
+                    c = *++fmt;
+                }
+            }
+        }
+        str = 0;
+        base = 0;
+        neg = 0;
+        ++fmt;
+        switch (c) {
+        case 'l':
+            c = *fmt++;
+            switch (c) {
+            case 'd':
+                val = va_arg(args, long);
+                if ((long)val < 0) {
+                    neg = 1;
+                    val = (unsigned long)-(long)val;
+                }
+                base = 10;
+                break;
+            case 'u':
+                val = va_arg(args, unsigned long);
+                base = 10;
+                break;
+            default:
+                OUTCHAR('%');
+                OUTCHAR('l');
+                --fmt; /* so %lz outputs %lz etc. */
+                continue;
+            }
+            break;
+        case 'd':
+            i = va_arg(args, int);
+            if (i < 0) {
+                neg = 1;
+                val = -i;
+            } else
+                val = i;
+            base = 10;
+            break;
+        case 'u':
+            val = va_arg(args, unsigned int);
+            base = 10;
+            break;
+        case 'o':
+            val = va_arg(args, unsigned int);
+            base = 8;
+            break;
+        case 'x':
+        case 'X':
+            val = va_arg(args, unsigned int);
+            base = 16;
+            break;
+#if 0  /* unused (and wrong on LLP64 systems) */
 	case 'p':
 	    val = (unsigned long) va_arg(args, void *);
 	    base = 16;
 	    neg = 2;
 	    break;
 #endif /* unused (and wrong on LLP64 systems) */
-	case 's':
-	    str = va_arg(args, char *);
-	    break;
-	case 'c':
-	    num[0] = va_arg(args, int);
-	    num[1] = 0;
-	    str = num;
-	    break;
-#if 0 /* do we always have strerror() in embedded ? */
+        case 's':
+            str = va_arg(args, char *);
+            break;
+        case 'c':
+            num[0] = va_arg(args, int);
+            num[1] = 0;
+            str = num;
+            break;
+#if 0  /* do we always have strerror() in embedded ? */
 	case 'm':
 	    str = strerror(errno);
 	    break;
 #endif /* do we always have strerror() in embedded ? */
-	case 'I':
-	    ip = va_arg(args, u32_t);
-	    ip = lwip_ntohl(ip);
-	    ppp_slprintf(num, sizeof(num), "%d.%d.%d.%d", (ip >> 24) & 0xff,
-		     (ip >> 16) & 0xff, (ip >> 8) & 0xff, ip & 0xff);
-	    str = num;
-	    break;
-#if 0 /* need port */
+        case 'I':
+            ip = va_arg(args, u32_t);
+            ip = lwip_ntohl(ip);
+            ppp_slprintf(num, sizeof(num), "%d.%d.%d.%d", (ip >> 24) & 0xff,
+                         (ip >> 16) & 0xff, (ip >> 8) & 0xff, ip & 0xff);
+            str = num;
+            break;
+#if 0             /* need port */
 	case 't':
 	    time(&t);
 	    str = ctime(&t);
 	    str += 4;		/* chop off the day name */
 	    str[15] = 0;	/* chop off year and newline */
 	    break;
-#endif /* need port */
-	case 'v':		/* "visible" string */
-	case 'q':		/* quoted string */
-	    quoted = c == 'q';
-	    p = va_arg(args, unsigned char *);
-	    if (p == NULL)
-		p = (const unsigned char *)"<NULL>";
-	    if (fillch == '0' && prec >= 0) {
-		n = prec;
-	    } else {
-		n = strlen((const char *)p);
-		if (prec >= 0 && n > prec)
-		    n = prec;
-	    }
-	    while (n > 0 && buflen > 0) {
-		c = *p++;
-		--n;
-		if (!quoted && c >= 0x80) {
-		    OUTCHAR('M');
-		    OUTCHAR('-');
-		    c -= 0x80;
-		}
-		if (quoted && (c == '"' || c == '\\'))
-		    OUTCHAR('\\');
-		if (c < 0x20 || (0x7f <= c && c < 0xa0)) {
-		    if (quoted) {
-			OUTCHAR('\\');
-			switch (c) {
-			case '\t':	OUTCHAR('t');	break;
-			case '\n':	OUTCHAR('n');	break;
-			case '\b':	OUTCHAR('b');	break;
-			case '\f':	OUTCHAR('f');	break;
-			default:
-			    OUTCHAR('x');
-			    OUTCHAR(hexchars[c >> 4]);
-			    OUTCHAR(hexchars[c & 0xf]);
-			}
-		    } else {
-			if (c == '\t')
-			    OUTCHAR(c);
-			else {
-			    OUTCHAR('^');
-			    OUTCHAR(c ^ 0x40);
-			}
-		    }
-		} else
-		    OUTCHAR(c);
-	    }
-	    continue;
+#endif            /* need port */
+        case 'v': /* "visible" string */
+        case 'q': /* quoted string */
+            quoted = c == 'q';
+            p = va_arg(args, unsigned char *);
+            if (p == NULL)
+                p = (const unsigned char *)"<NULL>";
+            if (fillch == '0' && prec >= 0) {
+                n = prec;
+            } else {
+                n = strlen((const char *)p);
+                if (prec >= 0 && n > prec)
+                    n = prec;
+            }
+            while (n > 0 && buflen > 0) {
+                c = *p++;
+                --n;
+                if (!quoted && c >= 0x80) {
+                    OUTCHAR('M');
+                    OUTCHAR('-');
+                    c -= 0x80;
+                }
+                if (quoted && (c == '"' || c == '\\'))
+                    OUTCHAR('\\');
+                if (c < 0x20 || (0x7f <= c && c < 0xa0)) {
+                    if (quoted) {
+                        OUTCHAR('\\');
+                        switch (c) {
+                        case '\t':
+                            OUTCHAR('t');
+                            break;
+                        case '\n':
+                            OUTCHAR('n');
+                            break;
+                        case '\b':
+                            OUTCHAR('b');
+                            break;
+                        case '\f':
+                            OUTCHAR('f');
+                            break;
+                        default:
+                            OUTCHAR('x');
+                            OUTCHAR(hexchars[c >> 4]);
+                            OUTCHAR(hexchars[c & 0xf]);
+                        }
+                    } else {
+                        if (c == '\t')
+                            OUTCHAR(c);
+                        else {
+                            OUTCHAR('^');
+                            OUTCHAR(c ^ 0x40);
+                        }
+                    }
+                } else
+                    OUTCHAR(c);
+            }
+            continue;
 #if PRINTPKT_SUPPORT
-	case 'P':		/* print PPP packet */
-	    bufinfo.ptr = buf;
-	    bufinfo.len = buflen + 1;
-	    p = va_arg(args, unsigned char *);
-	    n = va_arg(args, int);
-	    ppp_format_packet(p, n, ppp_vslp_printer, &bufinfo);
-	    buf = bufinfo.ptr;
-	    buflen = bufinfo.len - 1;
-	    continue;
+        case 'P': /* print PPP packet */
+            bufinfo.ptr = buf;
+            bufinfo.len = buflen + 1;
+            p = va_arg(args, unsigned char *);
+            n = va_arg(args, int);
+            ppp_format_packet(p, n, ppp_vslp_printer, &bufinfo);
+            buf = bufinfo.ptr;
+            buflen = bufinfo.len - 1;
+            continue;
 #endif /* PRINTPKT_SUPPORT */
-	case 'B':
-	    p = va_arg(args, unsigned char *);
-	    for (n = prec; n > 0; --n) {
-		c = *p++;
-		if (fillch == ' ')
-		    OUTCHAR(' ');
-		OUTCHAR(hexchars[(c >> 4) & 0xf]);
-		OUTCHAR(hexchars[c & 0xf]);
-	    }
-	    continue;
-	default:
-	    *buf++ = '%';
-	    if (c != '%')
-		--fmt;		/* so %z outputs %z etc. */
-	    --buflen;
-	    continue;
-	}
-	if (base != 0) {
-	    str = num + sizeof(num);
-	    *--str = 0;
-	    while (str > num + neg) {
-		*--str = hexchars[val % base];
-		val = val / base;
-		if (--prec <= 0 && val == 0)
-		    break;
-	    }
-	    switch (neg) {
-	    case 1:
-		*--str = '-';
-		break;
-	    case 2:
-		*--str = 'x';
-		*--str = '0';
-		break;
-	    default:
-		break;
-	    }
-	    len = num + sizeof(num) - 1 - str;
-	} else {
-	    len = strlen(str);
-	    if (prec >= 0 && len > prec)
-		len = prec;
-	}
-	if (width > 0) {
-	    if (width > buflen)
-		width = buflen;
-	    if ((n = width - len) > 0) {
-		buflen -= n;
-		for (; n > 0; --n)
-		    *buf++ = fillch;
-	    }
-	}
-	if (len > buflen)
-	    len = buflen;
-	memcpy(buf, str, len);
-	buf += len;
-	buflen -= len;
+        case 'B':
+            p = va_arg(args, unsigned char *);
+            for (n = prec; n > 0; --n) {
+                c = *p++;
+                if (fillch == ' ')
+                    OUTCHAR(' ');
+                OUTCHAR(hexchars[(c >> 4) & 0xf]);
+                OUTCHAR(hexchars[c & 0xf]);
+            }
+            continue;
+        default:
+            *buf++ = '%';
+            if (c != '%')
+                --fmt; /* so %z outputs %z etc. */
+            --buflen;
+            continue;
+        }
+        if (base != 0) {
+            str = num + sizeof(num);
+            *--str = 0;
+            while (str > num + neg) {
+                *--str = hexchars[val % base];
+                val = val / base;
+                if (--prec <= 0 && val == 0)
+                    break;
+            }
+            switch (neg) {
+            case 1:
+                *--str = '-';
+                break;
+            case 2:
+                *--str = 'x';
+                *--str = '0';
+                break;
+            default:
+                break;
+            }
+            len = num + sizeof(num) - 1 - str;
+        } else {
+            len = strlen(str);
+            if (prec >= 0 && len > prec)
+                len = prec;
+        }
+        if (width > 0) {
+            if (width > buflen)
+                width = buflen;
+            if ((n = width - len) > 0) {
+                buflen -= n;
+                for (; n > 0; --n)
+                    *buf++ = fillch;
+            }
+        }
+        if (len > buflen)
+            len = buflen;
+        memcpy(buf, str, len);
+        buf += len;
+        buflen -= len;
     }
     *buf = 0;
     return buf - buf0;
@@ -411,7 +419,7 @@ static void ppp_vslp_printer(void *arg, const char *fmt, ...) {
     struct buffer_info *bi;
 
     va_start(pvar, fmt);
-    bi = (struct buffer_info *) arg;
+    bi = (struct buffer_info *)arg;
     n = ppp_vslprintf(bi->ptr, bi->len, fmt, pvar);
     va_end(pvar);
 
@@ -420,7 +428,7 @@ static void ppp_vslp_printer(void *arg, const char *fmt, ...) {
 }
 #endif /* PRINTPKT_SUPPORT */
 
-#if 0 /* UNUSED */
+#if 0  /* UNUSED */
 /*
  * log_packet - format a packet and log it.
  */
@@ -444,47 +452,48 @@ log_packet(p, len, prefix, level)
  * calling `printer(arg, format, ...)' to output it.
  */
 static void ppp_format_packet(const u_char *p, int len,
-		void (*printer) (void *, const char *, ...), void *arg) {
+                              void (*printer)(void *, const char *, ...),
+                              void *arg) {
     int i, n;
     u_short proto;
     const struct protent *protp;
 
     if (len >= 2) {
-	GETSHORT(proto, p);
-	len -= 2;
-	for (i = 0; (protp = protocols[i]) != NULL; ++i)
-	    if (proto == protp->protocol)
-		break;
-	if (protp != NULL) {
-	    printer(arg, "[%s", protp->name);
-	    n = (*protp->printpkt)(p, len, printer, arg);
-	    printer(arg, "]");
-	    p += n;
-	    len -= n;
-	} else {
-	    for (i = 0; (protp = protocols[i]) != NULL; ++i)
-		if (proto == (protp->protocol & ~0x8000))
-		    break;
-	    if (protp != 0 && protp->data_name != 0) {
-		printer(arg, "[%s data]", protp->data_name);
-		if (len > 8)
-		    printer(arg, "%.8B ...", p);
-		else
-		    printer(arg, "%.*B", len, p);
-		len = 0;
-	    } else
-		printer(arg, "[proto=0x%x]", proto);
-	}
+        GETSHORT(proto, p);
+        len -= 2;
+        for (i = 0; (protp = protocols[i]) != NULL; ++i)
+            if (proto == protp->protocol)
+                break;
+        if (protp != NULL) {
+            printer(arg, "[%s", protp->name);
+            n = (*protp->printpkt)(p, len, printer, arg);
+            printer(arg, "]");
+            p += n;
+            len -= n;
+        } else {
+            for (i = 0; (protp = protocols[i]) != NULL; ++i)
+                if (proto == (protp->protocol & ~0x8000))
+                    break;
+            if (protp != 0 && protp->data_name != 0) {
+                printer(arg, "[%s data]", protp->data_name);
+                if (len > 8)
+                    printer(arg, "%.8B ...", p);
+                else
+                    printer(arg, "%.*B", len, p);
+                len = 0;
+            } else
+                printer(arg, "[proto=0x%x]", proto);
+        }
     }
 
     if (len > 32)
-	printer(arg, "%.32B ...", p);
+        printer(arg, "%.32B ...", p);
     else
-	printer(arg, "%.*B", len, p);
+        printer(arg, "%.*B", len, p);
 }
 #endif /* PRINTPKT_SUPPORT */
 
-#if 0 /* UNUSED */
+#if 0  /* UNUSED */
 /*
  * init_pr_log, end_pr_log - initialize and finish use of pr_log.
  */
@@ -569,32 +578,33 @@ pr_log (void *arg, const char *fmt, ...)
  * ppp_print_string - print a readable representation of a string using
  * printer.
  */
-void ppp_print_string(const u_char *p, int len, void (*printer) (void *, const char *, ...), void *arg) {
+void ppp_print_string(const u_char *p, int len,
+                      void (*printer)(void *, const char *, ...), void *arg) {
     int c;
 
     printer(arg, "\"");
     for (; len > 0; --len) {
-	c = *p++;
-	if (' ' <= c && c <= '~') {
-	    if (c == '\\' || c == '"')
-		printer(arg, "\\");
-	    printer(arg, "%c", c);
-	} else {
-	    switch (c) {
-	    case '\n':
-		printer(arg, "\\n");
-		break;
-	    case '\r':
-		printer(arg, "\\r");
-		break;
-	    case '\t':
-		printer(arg, "\\t");
-		break;
-	    default:
-		printer(arg, "\\%.3o", (u8_t)c);
-		/* no break */
-	    }
-	}
+        c = *p++;
+        if (' ' <= c && c <= '~') {
+            if (c == '\\' || c == '"')
+                printer(arg, "\\");
+            printer(arg, "%c", c);
+        } else {
+            switch (c) {
+            case '\n':
+                printer(arg, "\\n");
+                break;
+            case '\r':
+                printer(arg, "\\r");
+                break;
+            case '\t':
+                printer(arg, "\\t");
+                break;
+            default:
+                printer(arg, "\\%.3o", (u8_t)c);
+                /* no break */
+            }
+        }
     }
     printer(arg, "\"");
 }
@@ -610,9 +620,10 @@ static void ppp_logit(int level, const char *fmt, va_list args) {
 }
 
 static void ppp_log_write(int level, char *buf) {
-    LWIP_UNUSED_ARG(level); /* necessary if PPPDEBUG is defined to an empty function */
+    LWIP_UNUSED_ARG(
+        level); /* necessary if PPPDEBUG is defined to an empty function */
     LWIP_UNUSED_ARG(buf);
-    PPPDEBUG(level, ("%s\n", buf) );
+    PPPDEBUG(level, ("%s\n", buf));
 #if 0
     if (log_to_fd >= 0 && (level != LOG_DEBUG || debug)) {
 	int n = strlen(buf);
@@ -636,7 +647,7 @@ void ppp_fatal_impl(const char *fmt, ...) {
     ppp_logit(LOG_ERR, fmt, pvar);
     va_end(pvar);
 
-    LWIP_ASSERT("ppp_fatal", 0);   /* as promised */
+    LWIP_ASSERT("ppp_fatal", 0); /* as promised */
 }
 
 /*
@@ -648,7 +659,7 @@ void ppp_error_impl(const char *fmt, ...) {
     va_start(pvar, fmt);
     ppp_logit(LOG_ERR, fmt, pvar);
     va_end(pvar);
-#if 0 /* UNUSED */
+#if 0  /* UNUSED */
     ++error_count;
 #endif /* UNUSED */
 }
@@ -710,18 +721,19 @@ void ppp_dump_packet(ppp_pcb *pcb, const char *tag, unsigned char *p, int len) {
      */
     proto = (p[0] << 8) + p[1];
     if (proto < 0xC000 && (proto & ~0x8000) == proto)
-	return;
+        return;
 
     /*
      * don't print valid LCP echo request/reply packets if the link is up.
      */
-    if (proto == PPP_LCP && pcb->phase == PPP_PHASE_RUNNING && len >= 2 + HEADERLEN) {
-	unsigned char *lcp = p + 2;
-	int l = (lcp[2] << 8) + lcp[3];
+    if (proto == PPP_LCP && pcb->phase == PPP_PHASE_RUNNING &&
+        len >= 2 + HEADERLEN) {
+        unsigned char *lcp = p + 2;
+        int l = (lcp[2] << 8) + lcp[3];
 
-	if ((lcp[0] == ECHOREQ || lcp[0] == ECHOREP)
-	    && l >= HEADERLEN && l <= len - 2)
-	    return;
+        if ((lcp[0] == ECHOREQ || lcp[0] == ECHOREP) && l >= HEADERLEN &&
+            l <= len - 2)
+            return;
     }
 
     ppp_dbglog(("%s %P", tag, p, len));
@@ -759,12 +771,12 @@ complete_read(int fd, void *buf, size_t count)
 /* Procedures for locking the serial device using a lock file. */
 #ifndef LOCK_DIR
 #ifdef __linux__
-#define LOCK_DIR	"/var/lock"
+#define LOCK_DIR "/var/lock"
 #else
 #ifdef SVR4
-#define LOCK_DIR	"/var/spool/locks"
+#define LOCK_DIR "/var/spool/locks"
 #else
-#define LOCK_DIR	"/var/spool/lock"
+#define LOCK_DIR "/var/spool/lock"
 #endif
 #endif
 #endif /* LOCK_DIR */

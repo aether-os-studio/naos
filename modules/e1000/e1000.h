@@ -89,8 +89,7 @@
 #define E1000_MTU 1500
 
 // RX Descriptor Structure
-struct e1000_rx_desc
-{
+struct e1000_rx_desc {
     uint64_t buffer_addr;
     uint16_t length;
     uint16_t checksum;
@@ -100,8 +99,7 @@ struct e1000_rx_desc
 } __attribute__((packed));
 
 // TX Descriptor Structure
-struct e1000_tx_desc
-{
+struct e1000_tx_desc {
     uint64_t buffer_addr;
     uint16_t length;
     uint8_t cso;
@@ -112,8 +110,7 @@ struct e1000_tx_desc
 } __attribute__((packed));
 
 // E1000 Device Structure
-typedef struct e1000_device
-{
+typedef struct e1000_device {
     void *mmio_base;
     uint8_t mac[6];
     uint32_t mtu;

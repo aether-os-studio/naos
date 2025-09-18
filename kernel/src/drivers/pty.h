@@ -6,8 +6,7 @@
 #define PTY_MAX 1024
 #define PTY_BUFF_SIZE 4096
 
-typedef struct pty_pair
-{
+typedef struct pty_pair {
     vfs_node_t ptmx_node;
 
     struct pty_pair *next;

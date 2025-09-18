@@ -1,7 +1,6 @@
 #include "ahci.h"
 
-void sata_read_error(struct hba_port *port)
-{
+void sata_read_error(struct hba_port *port) {
     printk("SATA read error\n");
     uint32_t tfd = port->regs[HBA_RPxTFD];
     port->device->last_result.sense_key = (tfd & 0xf000) >> 12;
@@ -9,8 +8,7 @@ void sata_read_error(struct hba_port *port)
     port->device->last_result.status = tfd & 0x00ff;
 }
 
-void sata_submit(struct hba_device *dev, struct blkio_req *io_req)
-{
+void sata_submit(struct hba_device *dev, struct blkio_req *io_req) {
     struct hba_port *port = dev->port;
     struct hba_cmdh *header;
     struct hba_cmdt *table;
@@ -24,18 +22,13 @@ void sata_submit(struct hba_device *dev, struct blkio_req *io_req)
     uint16_t count = ICEIL(io_req->len, port->device->block_size);
     struct sata_reg_fis *fis = (struct sata_reg_fis *)(&table->command_fis);
 
-    if ((port->device->flags & HBA_DEV_FEXTLBA))
-    {
+    if ((port->device->flags & HBA_DEV_FEXTLBA)) {
         // 如果该设备支持48位LBA寻址
-        sata_create_fis(fis,
-                        write ? ATA_WRITE_DMA_EXT : ATA_READ_DMA_EXT,
-                        io_req->lba,
+        sata_create_fis(fis, write ? ATA_WRITE_DMA_EXT : ATA_READ_DMA_EXT,
+                        io_req->lba, count);
+    } else {
+        sata_create_fis(fis, write ? ATA_WRITE_DMA : ATA_READ_DMA, io_req->lba,
                         count);
-    }
-    else
-    {
-        sata_create_fis(
-            fis, write ? ATA_WRITE_DMA : ATA_READ_DMA, io_req->lba, count);
     }
     fis->dev = (1 << 6);
 

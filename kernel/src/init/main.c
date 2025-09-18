@@ -9,20 +9,29 @@
 #include <fs/vfs/dev.h>
 #include <fs/vfs/proc.h>
 
-__attribute__((used, section(".limine_requests_start"))) static volatile LIMINE_REQUESTS_START_MARKER;
+__attribute__((used,
+               section(".limine_requests_"
+                       "start"))) static volatile LIMINE_REQUESTS_START_MARKER;
 
-__attribute__((used, section(".limine_requests"))) static volatile LIMINE_BASE_REVISION(3);
+__attribute__((
+    used, section(".limine_requests"))) static volatile LIMINE_BASE_REVISION(3);
 
-__attribute__((used, section(".limine_requests"))) static volatile struct limine_stack_size_request stack_size_request = {
-    .id = LIMINE_STACK_SIZE_REQUEST,
-    .revision = 0,
-    .stack_size = STACK_SIZE,
+__attribute__((
+    used,
+    section(
+        ".limine_requests"))) static volatile struct limine_stack_size_request
+    stack_size_request = {
+        .id = LIMINE_STACK_SIZE_REQUEST,
+        .revision = 0,
+        .stack_size = STACK_SIZE,
 };
 
-__attribute__((used, section(".limine_requests_end"))) static volatile LIMINE_REQUESTS_END_MARKER;
+__attribute__((
+    used,
+    section(
+        ".limine_requests_end"))) static volatile LIMINE_REQUESTS_END_MARKER;
 
-void kmain(void)
-{
+void kmain(void) {
     arch_disable_interrupt();
 
     frame_init();
@@ -51,8 +60,7 @@ void kmain(void)
 
     arch_init();
 
-    while (1)
-    {
+    while (1) {
         arch_enable_interrupt();
         arch_pause();
     }

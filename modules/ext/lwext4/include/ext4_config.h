@@ -38,15 +38,14 @@
 #define EXT4_CONFIG_H_
 
 #ifdef __cplusplus
-extern "C"
-{
+extern "C" {
 #endif
 
 #if !CONFIG_USE_DEFAULT_CFG
 #include "ext4_config.h"
 #endif
 
-    /*****************************************************************************/
+/*****************************************************************************/
 
 #define F_SET_EXT2 2
 #define F_SET_EXT3 3
@@ -56,7 +55,7 @@ extern "C"
 #define CONFIG_EXT_FEATURE_SET_LVL F_SET_EXT4
 #endif
 
-    /*****************************************************************************/
+/*****************************************************************************/
 
 #if CONFIG_EXT_FEATURE_SET_LVL == F_SET_EXT2
 /*Superblock features flag EXT2*/
@@ -80,7 +79,8 @@ extern "C"
 
 #define CONFIG_DIR_INDEX_ENABLE (CONFIG_SUPPORTED_FCOM & EXT4_FCOM_DIR_INDEX)
 #define CONFIG_EXTENT_ENABLE (CONFIG_SUPPORTED_FINCOM & EXT4_FINCOM_EXTENTS)
-#define CONFIG_META_CSUM_ENABLE (CONFIG_SUPPORTED_FRO_COM & EXT4_FRO_COM_METADATA_CSUM)
+#define CONFIG_META_CSUM_ENABLE                                                \
+    (CONFIG_SUPPORTED_FRO_COM & EXT4_FRO_COM_METADATA_CSUM)
 
 /*****************************************************************************/
 

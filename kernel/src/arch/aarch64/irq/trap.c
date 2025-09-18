@@ -3,37 +3,40 @@
 #include "irq.h"
 #include <arch/arch.h>
 
-void show_frame(struct pt_regs *regs)
-{
+void show_frame(struct pt_regs *regs) {
     printk("Execption:\r\n");
-    printk("X00:%#018lx X01:%#018lx X02:%#018lx X03:%#018lx\r\n", regs->x0, regs->x1, regs->x2, regs->x3);
-    printk("X04:%#018lx X05:%#018lx X06:%#018lx X07:%#018lx\r\n", regs->x4, regs->x5, regs->x6, regs->x7);
-    printk("X08:%#018lx X09:%#018lx X10:%#018lx X11:%#018lx\r\n", regs->x8, regs->x9, regs->x10, regs->x11);
-    printk("X12:%#018lx X13:%#018lx X14:%#018lx X15:%#018lx\r\n", regs->x12, regs->x13, regs->x14, regs->x15);
-    printk("X16:%#018lx X17:%#018lx X18:%#018lx X19:%#018lx\r\n", regs->x16, regs->x17, regs->x18, regs->x19);
-    printk("X20:%#018lx X21:%#018lx X22:%#018lx X23:%#018lx\r\n", regs->x20, regs->x21, regs->x22, regs->x23);
-    printk("X24:%#018lx X25:%#018lx X26:%#018lx X27:%#018lx\r\n", regs->x24, regs->x25, regs->x26, regs->x27);
-    printk("X28:%#018lx X29:%#018lx X30:%#018lx\r\n", regs->x28, regs->x29, regs->x30);
+    printk("X00:%#018lx X01:%#018lx X02:%#018lx X03:%#018lx\r\n", regs->x0,
+           regs->x1, regs->x2, regs->x3);
+    printk("X04:%#018lx X05:%#018lx X06:%#018lx X07:%#018lx\r\n", regs->x4,
+           regs->x5, regs->x6, regs->x7);
+    printk("X08:%#018lx X09:%#018lx X10:%#018lx X11:%#018lx\r\n", regs->x8,
+           regs->x9, regs->x10, regs->x11);
+    printk("X12:%#018lx X13:%#018lx X14:%#018lx X15:%#018lx\r\n", regs->x12,
+           regs->x13, regs->x14, regs->x15);
+    printk("X16:%#018lx X17:%#018lx X18:%#018lx X19:%#018lx\r\n", regs->x16,
+           regs->x17, regs->x18, regs->x19);
+    printk("X20:%#018lx X21:%#018lx X22:%#018lx X23:%#018lx\r\n", regs->x20,
+           regs->x21, regs->x22, regs->x23);
+    printk("X24:%#018lx X25:%#018lx X26:%#018lx X27:%#018lx\r\n", regs->x24,
+           regs->x25, regs->x26, regs->x27);
+    printk("X28:%#018lx X29:%#018lx X30:%#018lx\r\n", regs->x28, regs->x29,
+           regs->x30);
     printk("SP_EL0:%#018lx\r\n", regs->sp_el0);
     printk("SPSR  :%#018lx\r\n", regs->cpsr);
     printk("EPC   :%#018lx\r\n", regs->pc);
 }
 
-static void data_abort(unsigned long far, unsigned long iss)
-{
+static void data_abort(unsigned long far, unsigned long iss) {
     printk("fault addr = 0x%016lx\r\n", far);
-    if (iss & 0x40)
-    {
+    if (iss & 0x40) {
         printk("abort caused by write instruction\r\n");
-    }
-    else
-    {
+    } else {
         printk("abort caused by read instruction\r\n");
     }
-    switch (iss & 0x3f)
-    {
+    switch (iss & 0x3f) {
     case 0b000000:
-        printk("Address size fault, zeroth level of translation or translation table base register\r\n");
+        printk("Address size fault, zeroth level of translation or translation "
+               "table base register\r\n");
         break;
 
     case 0b000001:
@@ -93,39 +96,48 @@ static void data_abort(unsigned long far, unsigned long iss)
         break;
 
     case 0b011000:
-        printk("Synchronous parity or ECC error on memory access, not on translation table walk\r\n");
+        printk("Synchronous parity or ECC error on memory access, not on "
+               "translation table walk\r\n");
         break;
 
     case 0b010100:
-        printk("Synchronous external abort on translation table walk, zeroth level\r\n");
+        printk("Synchronous external abort on translation table walk, zeroth "
+               "level\r\n");
         break;
 
     case 0b010101:
-        printk("Synchronous external abort on translation table walk, first level\r\n");
+        printk("Synchronous external abort on translation table walk, first "
+               "level\r\n");
         break;
 
     case 0b010110:
-        printk("Synchronous external abort on translation table walk, second level\r\n");
+        printk("Synchronous external abort on translation table walk, second "
+               "level\r\n");
         break;
 
     case 0b010111:
-        printk("Synchronous external abort on translation table walk, third level\r\n");
+        printk("Synchronous external abort on translation table walk, third "
+               "level\r\n");
         break;
 
     case 0b011100:
-        printk("Synchronous parity or ECC error on memory access on translation table walk, zeroth level\r\n");
+        printk("Synchronous parity or ECC error on memory access on "
+               "translation table walk, zeroth level\r\n");
         break;
 
     case 0b011101:
-        printk("Synchronous parity or ECC error on memory access on translation table walk, first level\r\n");
+        printk("Synchronous parity or ECC error on memory access on "
+               "translation table walk, first level\r\n");
         break;
 
     case 0b011110:
-        printk("Synchronous parity or ECC error on memory access on translation table walk, second level\r\n");
+        printk("Synchronous parity or ECC error on memory access on "
+               "translation table walk, second level\r\n");
         break;
 
     case 0b011111:
-        printk("Synchronous parity or ECC error on memory access on translation table walk, third level\r\n");
+        printk("Synchronous parity or ECC error on memory access on "
+               "translation table walk, third level\r\n");
         break;
 
     case 0b100001:
@@ -141,15 +153,18 @@ static void data_abort(unsigned long far, unsigned long iss)
         break;
 
     case 0b110101:
-        printk("IMPLEMENTATION DEFINED fault (Unsupported Exclusive access fault)\r\n");
+        printk("IMPLEMENTATION DEFINED fault (Unsupported Exclusive access "
+               "fault)\r\n");
         break;
 
     case 0b111101:
-        printk("Section Domain Fault, used only for faults reported in the PAR_EL1\r\n");
+        printk("Section Domain Fault, used only for faults reported in the "
+               "PAR_EL1\r\n");
         break;
 
     case 0b111110:
-        printk("Page Domain Fault, used only for faults reported in the PAR_EL1\r\n");
+        printk("Page Domain Fault, used only for faults reported in the "
+               "PAR_EL1\r\n");
         break;
 
     default:
@@ -158,8 +173,8 @@ static void data_abort(unsigned long far, unsigned long iss)
     }
 }
 
-void process_exception(struct pt_regs *frame, unsigned long esr, unsigned long epc)
-{
+void process_exception(struct pt_regs *frame, unsigned long esr,
+                       unsigned long epc) {
     uint8_t ec;
     uint32_t iss;
     unsigned long fault_addr;
@@ -170,8 +185,7 @@ void process_exception(struct pt_regs *frame, unsigned long esr, unsigned long e
     printk("esr.IL :0x%02x\r\n", (unsigned char)((esr >> 25) & 0x01U));
     printk("esr.ISS:0x%08x\r\n", iss);
     printk("epc    :0x%016p\r\n", epc);
-    switch (ec)
-    {
+    switch (ec) {
     case 0x00:
         printk("Exceptions with an unknow reason\r\n");
         break;
@@ -185,7 +199,8 @@ void process_exception(struct pt_regs *frame, unsigned long esr, unsigned long e
         break;
 
     case 0x04:
-        printk("Exceptions from an MCRR or MRRC access to CP15 from AArch32\r\n");
+        printk(
+            "Exceptions from an MCRR or MRRC access to CP15 from AArch32\r\n");
         break;
 
     case 0x05:
@@ -197,19 +212,23 @@ void process_exception(struct pt_regs *frame, unsigned long esr, unsigned long e
         break;
 
     case 0x07:
-        printk("Exceptions from Access to Advanced SIMD or floating-point registers\r\n");
+        printk("Exceptions from Access to Advanced SIMD or floating-point "
+               "registers\r\n");
         break;
 
     case 0x08:
-        printk("Exceptions from an MRC (or VMRS) access to CP10 from AArch32\r\n");
+        printk(
+            "Exceptions from an MRC (or VMRS) access to CP10 from AArch32\r\n");
         break;
 
     case 0x0c:
-        printk("Exceptions from an MCRR or MRRC access to CP14 from AArch32\r\n");
+        printk(
+            "Exceptions from an MCRR or MRRC access to CP14 from AArch32\r\n");
         break;
 
     case 0x0e:
-        printk("Exceptions that occur because ther value of PSTATE.IL is 1\r\n");
+        printk(
+            "Exceptions that occur because ther value of PSTATE.IL is 1\r\n");
         break;
 
     case 0x11:
@@ -250,8 +269,7 @@ void process_exception(struct pt_regs *frame, unsigned long esr, unsigned long e
     }
 }
 
-void handle_exception(struct pt_regs *frame)
-{
+void handle_exception(struct pt_regs *frame) {
     unsigned long esr;
     unsigned char ec;
     unsigned long fault_addr;
@@ -266,8 +284,7 @@ void handle_exception(struct pt_regs *frame)
         return;
     }
 
-    if (ec == ESR_ELx_EC_DABT_LOW || ec == ESR_ELx_EC_DABT_CUR)
-    {
+    if (ec == ESR_ELx_EC_DABT_LOW || ec == ESR_ELx_EC_DABT_CUR) {
         asm volatile("mrs %0, far_el1" : "=r"(fault_addr));
         printk("fault address = %#018lx", fault_addr);
     }
@@ -275,26 +292,22 @@ void handle_exception(struct pt_regs *frame)
     process_exception(frame, esr, frame->pc);
     show_frame(frame);
 
-    while (1)
-    {
+    while (1) {
         arch_pause();
     }
 }
 
-void bad_mode(struct pt_regs *frame, int reason, unsigned int esr)
-{
+void bad_mode(struct pt_regs *frame, int reason, unsigned int esr) {
     show_frame(frame);
 
     arch_disable_interrupt();
 
-    while (1)
-    {
+    while (1) {
         arch_pause();
     }
 }
 
-void trap_dispatch(struct pt_regs *frame)
-{
+void trap_dispatch(struct pt_regs *frame) {
     arch_disable_interrupt();
 
     handle_exception(frame);

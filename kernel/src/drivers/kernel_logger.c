@@ -21,25 +21,23 @@ bool printk_initialized = false;
 
 char buf[4096];
 
-char *write_num(char *str, uint64_t num, int base, int field_width, int precision, int flags);
+char *write_num(char *str, uint64_t num, int base, int field_width,
+                int precision, int flags);
 
-int skip_and_atoi(const char **s)
-{
+int skip_and_atoi(const char **s) {
     /**
      * @brief 获取连续的一段字符对应整数的值
      * @param:**s 指向 指向字符串的指针 的指针
      */
     int ans = 0;
-    while (is_digit(**s))
-    {
+    while (is_digit(**s)) {
         ans = ans * 10 + (**s) - '0';
         ++(*s);
     }
     return ans;
 }
 
-int vsprintf(char *buf, const char *fmt, va_list args)
-{
+int vsprintf(char *buf, const char *fmt, va_list args) {
     /**
      * 将字符串按照fmt和args中的内容进行格式化，然后保存到buf中
      * @param buf 结果缓冲区
@@ -59,11 +57,9 @@ int vsprintf(char *buf, const char *fmt, va_list args)
     int len;
 
     // 开始解析字符串
-    for (; *fmt; ++fmt)
-    {
+    for (; *fmt; ++fmt) {
         // 内容不涉及到格式化，直接输出
-        if (*fmt != '%')
-        {
+        if (*fmt != '%') {
             *str = *fmt;
             ++str;
             continue;
@@ -78,10 +74,8 @@ int vsprintf(char *buf, const char *fmt, va_list args)
         bool flag_break = false;
 
         ++fmt;
-        while (flag_tmp)
-        {
-            switch (*fmt)
-            {
+        while (flag_tmp) {
+            switch (*fmt) {
             case '\0':
                 // 结束解析
                 flag_break = true;
@@ -122,16 +116,12 @@ int vsprintf(char *buf, const char *fmt, va_list args)
 
         // 获取区域宽度
         field_width = -1;
-        if (*fmt == '*')
-        {
+        if (*fmt == '*') {
             field_width = va_arg(args, int);
             ++fmt;
-        }
-        else if (is_digit(*fmt))
-        {
+        } else if (is_digit(*fmt)) {
             field_width = skip_and_atoi(&fmt);
-            if (field_width < 0)
-            {
+            if (field_width < 0) {
                 field_width = -field_width;
                 flags |= LEFT;
             }
@@ -139,23 +129,18 @@ int vsprintf(char *buf, const char *fmt, va_list args)
 
         // 获取小数精度
         precision = -1;
-        if (*fmt == '.')
-        {
+        if (*fmt == '.') {
             ++fmt;
-            if (*fmt == '*')
-            {
+            if (*fmt == '*') {
                 precision = va_arg(args, int);
                 ++fmt;
-            }
-            else if is_digit (*fmt)
-            {
+            } else if is_digit (*fmt) {
                 precision = skip_and_atoi(&fmt);
             }
         }
 
         // 获取要显示的数据的类型
-        if (*fmt == 'h' || *fmt == 'l' || *fmt == 'L' || *fmt == 'Z')
-        {
+        if (*fmt == 'h' || *fmt == 'l' || *fmt == 'L' || *fmt == 'Z') {
             qualifier = *fmt;
             ++fmt;
         }
@@ -165,8 +150,7 @@ int vsprintf(char *buf, const char *fmt, va_list args)
 
         // 转化成字符串
         long long *ip;
-        switch (*fmt)
-        {
+        switch (*fmt) {
         // 输出 %
         case '%':
             *str++ = '%';
@@ -175,10 +159,8 @@ int vsprintf(char *buf, const char *fmt, va_list args)
         // 显示一个字符
         case 'c':
             // 靠右对齐
-            if (!(flags & LEFT))
-            {
-                while (--field_width > 0)
-                {
+            if (!(flags & LEFT)) {
+                while (--field_width > 0) {
                     *str = ' ';
                     ++str;
                 }
@@ -186,8 +168,7 @@ int vsprintf(char *buf, const char *fmt, va_list args)
 
             *str++ = (unsigned char)va_arg(args, int);
 
-            while (--field_width > 0)
-            {
+            while (--field_width > 0) {
                 *str = ' ';
                 ++str;
             }
@@ -200,34 +181,29 @@ int vsprintf(char *buf, const char *fmt, va_list args)
             if (!s)
                 s = "\0";
             len = strlen(s);
-            if (precision < 0)
-            {
+            if (precision < 0) {
                 // 未指定精度
                 precision = len;
             }
 
-            else if (len > precision)
-            {
+            else if (len > precision) {
                 len = precision;
             }
 
             // 靠右对齐
             if (!(flags & LEFT))
-                while (len < field_width--)
-                {
+                while (len < field_width--) {
                     *str = ' ';
                     ++str;
                 }
 
-            for (int i = 0; i < len; i++)
-            {
+            for (int i = 0; i < len; i++) {
                 *str = *s;
                 ++s;
                 ++str;
             }
 
-            while (len < field_width--)
-            {
+            while (len < field_width--) {
                 *str = ' ';
                 ++str;
             }
@@ -239,20 +215,22 @@ int vsprintf(char *buf, const char *fmt, va_list args)
         case 'O':
             flags |= SPECIAL;
             if (qualifier == 'l')
-                str = write_num(str, va_arg(args, long long), 8, field_width, precision, flags);
+                str = write_num(str, va_arg(args, long long), 8, field_width,
+                                precision, flags);
             else
-                str = write_num(str, va_arg(args, int), 8, field_width, precision, flags);
+                str = write_num(str, va_arg(args, int), 8, field_width,
+                                precision, flags);
             break;
 
         // 打印指针指向的地址
         case 'p':
-            if (field_width == 0)
-            {
+            if (field_width == 0) {
                 field_width = 2 * sizeof(void *);
                 flags |= PAD_ZERO;
             }
 
-            str = write_num(str, (unsigned long)va_arg(args, void *), 16, field_width, precision, flags);
+            str = write_num(str, (unsigned long)va_arg(args, void *), 16,
+                            field_width, precision, flags);
 
             break;
 
@@ -262,9 +240,11 @@ int vsprintf(char *buf, const char *fmt, va_list args)
         case 'X':
             // flags |= SPECIAL;
             if (qualifier == 'l')
-                str = write_num(str, va_arg(args, long long), 16, field_width, precision, flags);
+                str = write_num(str, va_arg(args, long long), 16, field_width,
+                                precision, flags);
             else
-                str = write_num(str, va_arg(args, int), 16, field_width, precision, flags);
+                str = write_num(str, va_arg(args, int), 16, field_width,
+                                precision, flags);
             break;
 
         // 打印十进制有符号整数
@@ -273,17 +253,21 @@ int vsprintf(char *buf, const char *fmt, va_list args)
 
             flags |= SIGN;
             if (qualifier == 'l')
-                str = write_num(str, va_arg(args, long long), 10, field_width, precision, flags);
+                str = write_num(str, va_arg(args, long long), 10, field_width,
+                                precision, flags);
             else
-                str = write_num(str, va_arg(args, int), 10, field_width, precision, flags);
+                str = write_num(str, va_arg(args, int), 10, field_width,
+                                precision, flags);
             break;
 
         // 打印十进制无符号整数
         case 'u':
             if (qualifier == 'l')
-                str = write_num(str, va_arg(args, unsigned long long), 10, field_width, precision, flags);
+                str = write_num(str, va_arg(args, unsigned long long), 10,
+                                field_width, precision, flags);
             else
-                str = write_num(str, va_arg(args, unsigned int), 10, field_width, precision, flags);
+                str = write_num(str, va_arg(args, unsigned int), 10,
+                                field_width, precision, flags);
             break;
 
         // 输出有效字符数量到*ip对应的变量
@@ -313,8 +297,8 @@ int vsprintf(char *buf, const char *fmt, va_list args)
     return str - buf;
 }
 
-char *write_num(char *str, uint64_t num, int base, int field_width, int precision, int flags)
-{
+char *write_num(char *str, uint64_t num, int base, int field_width,
+                int precision, int flags) {
     /**
      * @brief 将数字按照指定的要求转换成对应的字符串
      *
@@ -342,30 +326,24 @@ char *write_num(char *str, uint64_t num, int base, int field_width, int precisio
     pad = (flags & PAD_ZERO) ? '0' : ' ';
 
     sign = 0;
-    if (flags & SIGN && (int64_t)num < 0)
-    {
+    if (flags & SIGN && (int64_t)num < 0) {
         sign = '-';
         num = -num;
-    }
-    else
-    {
+    } else {
         // 设置符号
         sign = (flags & PLUS) ? '+' : ((flags & SPACE) ? ' ' : 0);
     }
 
     // sign占用了一个宽度
-    if (sign)
-    {
+    if (sign) {
         --field_width;
     }
 
-    if (flags & SPECIAL)
-    {
+    if (flags & SPECIAL) {
         if (base == 16) // 0x占用2个位置
         {
             field_width -= 2;
-        }
-        else if (base == 8) // O占用一个位置
+        } else if (base == 8) // O占用一个位置
         {
             --field_width;
         }
@@ -375,13 +353,13 @@ char *write_num(char *str, uint64_t num, int base, int field_width, int precisio
 
     if (num == 0)
         tmp_num[js_num++] = '0';
-    else
-    {
+    else {
         num = ABS(num);
         // 进制转换
-        while (num > 0)
-        {
-            tmp_num[js_num++] = digits[num % base]; // 注意这里，输出的数字，是小端对齐的。低位存低位
+        while (num > 0) {
+            tmp_num[js_num++] =
+                digits[num %
+                       base]; // 注意这里，输出的数字，是小端对齐的。低位存低位
             num /= base;
         }
     }
@@ -398,23 +376,18 @@ char *write_num(char *str, uint64_t num, int base, int field_width, int precisio
 
     if (sign)
         *str++ = sign;
-    if (flags & SPECIAL)
-    {
-        if (base == 16)
-        {
+    if (flags & SPECIAL) {
+        if (base == 16) {
             *str++ = '0';
             *str++ = digits[33];
-        }
-        else if (base == 8)
-        {
+        } else if (base == 8) {
             *str++ = digits[24]; // 注意这里是英文字母O或者o
         }
     }
     if (!(flags & LEFT))
         while (field_width-- > 0)
             *str++ = pad;
-    while (js_num < precision)
-    {
+    while (js_num < precision) {
         --precision;
         *str++ = '0';
     }
@@ -432,23 +405,21 @@ spinlock_t printk_lock = {0};
 
 extern struct vt_mode current_vt_mode;
 
-int printk(const char *fmt, ...)
-{
+int printk(const char *fmt, ...) {
     spin_lock(&printk_lock);
 
-    if (!printk_initialized)
-    {
+    if (!printk_initialized) {
         init_serial();
 
         framebuffer = framebuffer_request.response->framebuffers[0];
 
-        ft_ctx = flanterm_fb_init(NULL, NULL,
-                                  framebuffer->address, framebuffer->width, framebuffer->height, framebuffer->pitch,
-                                  framebuffer->red_mask_size, framebuffer->red_mask_shift,
-                                  framebuffer->green_mask_size, framebuffer->green_mask_shift,
-                                  framebuffer->blue_mask_size, framebuffer->blue_mask_shift,
-                                  NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-                                  NULL, 0, 0, 0, 0, 0, 0);
+        ft_ctx = flanterm_fb_init(
+            NULL, NULL, framebuffer->address, framebuffer->width,
+            framebuffer->height, framebuffer->pitch, framebuffer->red_mask_size,
+            framebuffer->red_mask_shift, framebuffer->green_mask_size,
+            framebuffer->green_mask_shift, framebuffer->blue_mask_size,
+            framebuffer->blue_mask_shift, NULL, NULL, NULL, NULL, NULL, NULL,
+            NULL, NULL, 0, 0, 0, 0, 0, 0);
 
         printk_initialized = true;
     }
@@ -470,8 +441,7 @@ int printk(const char *fmt, ...)
     return len;
 }
 
-int serial_fprintk(const char *fmt, ...)
-{
+int serial_fprintk(const char *fmt, ...) {
     spin_lock(&printk_lock);
 
     va_list args;
@@ -488,8 +458,7 @@ int serial_fprintk(const char *fmt, ...)
     return len;
 }
 
-int sprintf(char *buf, const char *fmt, ...)
-{
+int sprintf(char *buf, const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
 
@@ -500,8 +469,7 @@ int sprintf(char *buf, const char *fmt, ...)
     return len;
 }
 
-uint64_t sys_syslog(int type, const char *buf, size_t len)
-{
+uint64_t sys_syslog(int type, const char *buf, size_t len) {
     serial_printk(buf, len);
     flanterm_write(ft_ctx, buf, len);
 

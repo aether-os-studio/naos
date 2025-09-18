@@ -6,16 +6,14 @@
 
 #define SI_MAX_SIZE 128
 
-struct sigcontext
-{
+struct sigcontext {
     arch_signal_frame_t arch;
     uint64_t reserved1[8];
 };
 
 signal_internal_t signal_internal_decisions[MAXSIG] = {0};
 
-void signal_init()
-{
+void signal_init() {
     signal_internal_decisions[SIGABRT] = SIGNAL_INTERNAL_CORE;
     signal_internal_decisions[SIGALRM] = SIGNAL_INTERNAL_TERM;
     signal_internal_decisions[SIGBUS] = SIGNAL_INTERNAL_CORE;
@@ -55,19 +53,18 @@ void signal_init()
     signal_internal_decisions[SIGWINCH] = SIGNAL_INTERNAL_IGN;
 }
 
-bool signals_pending_quick(task_t *task)
-{
+bool signals_pending_quick(task_t *task) {
     sigset_t pending_list = task->signal;
     sigset_t unblocked_list = pending_list & (~task->blocked);
-    for (int i = MINSIG; i <= MAXSIG; i++)
-    {
+    for (int i = MINSIG; i <= MAXSIG; i++) {
         if (!(unblocked_list & SIGMASK(i)))
             continue;
         sigaction_t *action = &task->actions[i];
         sighandler_t user_handler = action->sa_handler;
         if (user_handler == SIG_IGN)
             continue;
-        if (user_handler == SIG_DFL && signal_internal_decisions[i] == SIGNAL_INTERNAL_IGN)
+        if (user_handler == SIG_DFL &&
+            signal_internal_decisions[i] == SIGNAL_INTERNAL_IGN)
             continue;
 
         return true;
@@ -76,22 +73,16 @@ bool signals_pending_quick(task_t *task)
 }
 
 // 获取信号屏蔽位图
-uint64_t sys_sgetmask()
-{
-    return current_task->blocked;
-}
+uint64_t sys_sgetmask() { return current_task->blocked; }
 
 // 设置信号屏蔽位图
-uint64_t sys_ssetmask(int how, sigset_t *nset, sigset_t *oset)
-{
+uint64_t sys_ssetmask(int how, sigset_t *nset, sigset_t *oset) {
     if (oset)
         *oset = current_task->blocked;
-    if (nset)
-    {
+    if (nset) {
         uint64_t safe = *nset;
         safe &= ~(SIGMASK(SIGKILL) | SIGMASK(SIGSTOP)); // nuh uh!
-        switch (how)
-        {
+        switch (how) {
         case SIG_BLOCK:
             current_task->blocked |= safe;
             break;
@@ -110,33 +101,29 @@ uint64_t sys_ssetmask(int how, sigset_t *nset, sigset_t *oset)
     return 0;
 }
 
-uint64_t sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction)
-{
-    if (sig < MINSIG || sig > MAXSIG || sig == SIGKILL)
-    {
+uint64_t sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction) {
+    if (sig < MINSIG || sig > MAXSIG || sig == SIGKILL) {
         return -EINVAL;
     }
 
     sigaction_t *ptr = &current_task->actions[sig];
-    if (oldaction)
-    {
+    if (oldaction) {
         *oldaction = *ptr;
     }
 
-    if (action)
-    {
+    if (action) {
         *ptr = *action;
     }
 
     return 0;
 }
 
-void sys_sigreturn(struct pt_regs *regs)
-{
+void sys_sigreturn(struct pt_regs *regs) {
 #if defined(__x86_64__)
     arch_disable_interrupt();
 
-    struct pt_regs *context = (struct pt_regs *)(current_task->kernel_stack - 8) - 1;
+    struct pt_regs *context =
+        (struct pt_regs *)(current_task->kernel_stack - 8) - 1;
 
     memcpy(context, &current_task->signal_saved_regs, sizeof(struct pt_regs));
 
@@ -159,10 +146,9 @@ void sys_sigreturn(struct pt_regs *regs)
 #endif
 }
 
-uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo, const struct timespec *uts, size_t sigsetsize)
-{
-    if (sigsetsize != sizeof(sigset_t))
-    {
+uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
+                             const struct timespec *uts, size_t sigsetsize) {
+    if (sigsetsize != sizeof(sigset_t)) {
         return -EINVAL;
     }
 
@@ -172,20 +158,18 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo, const str
 
     uint64_t start = nanoTime();
     uint64_t wait_ns = 0;
-    if (uts)
-    {
+    if (uts) {
         wait_ns = uts->tv_sec * 1000000000ULL + uts->tv_nsec;
     }
 
-    while ((current_task->saved_signal == 0) && (nanoTime() - start < wait_ns || wait_ns == 0))
-    {
+    while ((current_task->saved_signal == 0) &&
+           (nanoTime() - start < wait_ns || wait_ns == 0)) {
         arch_yield();
     }
 
     current_task->blocked = old;
 
-    if (uinfo)
-    {
+    if (uinfo) {
         memset(uinfo, 0, sizeof(siginfo_t));
         uinfo->si_signo = current_task->saved_signal;
         uinfo->si_errno = 0;
@@ -197,14 +181,12 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo, const str
     return 0;
 }
 
-uint64_t sys_sigsuspend(const sigset_t *mask)
-{
+uint64_t sys_sigsuspend(const sigset_t *mask) {
     sigset_t old = current_task->blocked;
 
     current_task->blocked = *mask;
 
-    while (!signals_pending_quick(current_task))
-    {
+    while (!signals_pending_quick(current_task)) {
         arch_yield();
     }
 
@@ -213,19 +195,14 @@ uint64_t sys_sigsuspend(const sigset_t *mask)
     return -EINTR;
 }
 
-uint64_t sys_kill(int pid, int sig)
-{
-    if (sig < MINSIG || sig > MAXSIG)
-    {
+uint64_t sys_kill(int pid, int sig) {
+    if (sig < MINSIG || sig > MAXSIG) {
         return 0;
     }
 
-    if (pid < 0)
-    {
-        for (uint64_t i = cpu_count; i < MAX_TASK_NUM; i++)
-        {
-            if (tasks[i] && tasks[i]->ppid == current_task->pid)
-            {
+    if (pid < 0) {
+        for (uint64_t i = cpu_count; i < MAX_TASK_NUM; i++) {
+            if (tasks[i] && tasks[i]->ppid == current_task->pid) {
                 sys_kill(tasks[i]->pid, sig);
             }
         }
@@ -235,8 +212,7 @@ uint64_t sys_kill(int pid, int sig)
 
     task_t *task = tasks[pid];
 
-    if (!task)
-    {
+    if (!task) {
         return -ESRCH;
     }
 
@@ -271,26 +247,21 @@ uint64_t sys_kill(int pid, int sig)
 
 extern int signalfdfs_id;
 
-void task_signal()
-{
+void task_signal() {
     arch_disable_interrupt();
 
-    if (current_task->call_in_signal)
-    {
+    if (current_task->call_in_signal) {
         return;
     }
 
     uint64_t map = current_task->signal & (~current_task->blocked);
-    if (!map)
-    {
+    if (!map) {
         return;
     }
 
     int sig = 1;
-    for (; sig <= MAXSIG; sig++)
-    {
-        if (map & SIGMASK(sig))
-        {
+    for (; sig <= MAXSIG; sig++) {
+        if (map & SIGMASK(sig)) {
             current_task->signal &= (~SIGMASK(sig));
             break;
         }
@@ -298,8 +269,7 @@ void task_signal()
 
     current_task->saved_signal = sig;
 
-    if (sig == SIGKILL)
-    {
+    if (sig == SIGKILL) {
         task_exit(-sig);
         return;
     }
@@ -317,11 +287,12 @@ void task_signal()
     //             memset(&info, 0, sizeof(struct sigevent));
     //             info.ssi_signo = sig;
 
-    //             memcpy(&ctx->queue[ctx->queue_head], &info, sizeof(struct signalfd_siginfo));
-    //             ctx->queue_head = (ctx->queue_head + 1) % ctx->queue_size;
-    //             if (ctx->queue_head == ctx->queue_tail)
+    //             memcpy(&ctx->queue[ctx->queue_head], &info, sizeof(struct
+    //             signalfd_siginfo)); ctx->queue_head = (ctx->queue_head + 1) %
+    //             ctx->queue_size; if (ctx->queue_head == ctx->queue_tail)
     //             {
-    //                 ctx->queue_tail = (ctx->queue_tail + 1) % ctx->queue_size;
+    //                 ctx->queue_tail = (ctx->queue_tail + 1) %
+    //                 ctx->queue_size;
     //             }
     //         }
     //     }
@@ -329,13 +300,11 @@ void task_signal()
 
     sigaction_t *ptr = &current_task->actions[sig];
 
-    if (ptr->sa_handler == SIG_IGN)
-    {
+    if (ptr->sa_handler == SIG_IGN) {
         return;
     }
 
-    if (ptr->sa_handler == SIG_DFL)
-    {
+    if (ptr->sa_handler == SIG_DFL) {
         return;
     }
 
@@ -344,7 +313,8 @@ void task_signal()
 #if defined(__x86_64__)
     struct pt_regs *f = (struct pt_regs *)current_task->syscall_stack - 1;
 
-    memcpy(&current_task->signal_saved_regs, current_task->arch_context->ctx, sizeof(struct pt_regs));
+    memcpy(&current_task->signal_saved_regs, current_task->arch_context->ctx,
+           sizeof(struct pt_regs));
 
     uint64_t sigrsp = f->rsp;
 
@@ -368,8 +338,7 @@ void task_signal()
 #elif defined(__loongarch64)
 #endif
 
-    if (ptr->sa_flags & SIG_ONESHOT)
-    {
+    if (ptr->sa_flags & SIG_ONESHOT) {
         ptr->sa_handler = SIG_DFL;
     }
 
@@ -378,5 +347,6 @@ void task_signal()
     current_task->saved_blocked = current_task->blocked;
     current_task->blocked |= (1 << sig) | ptr->sa_mask;
 
-    arch_switch_with_context(NULL, current_task->arch_context, current_task->kernel_stack);
+    arch_switch_with_context(NULL, current_task->arch_context,
+                             current_task->kernel_stack);
 }

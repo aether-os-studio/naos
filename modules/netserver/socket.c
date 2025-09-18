@@ -14,21 +14,19 @@ struct netif global_netif;
 
 static int realsock_fsid = 0;
 
-typedef struct real_socket
-{
+typedef struct real_socket {
     int lwip_fd;
 } real_socket_t;
 
-struct in_sockaddr
-{
+struct in_sockaddr {
     sa_family_t sin_family;
     in_port_t sin_port;
     u8_t sin_addr[4];
     char sin_zero[8];
 };
 
-void sockaddrLwipToLinux(void *dest_addr, void *src_addr, uint16_t initialFamily)
-{
+void sockaddrLwipToLinux(void *dest_addr, void *src_addr,
+                         uint16_t initialFamily) {
     struct in_sockaddr *linuxHandle = (struct in_sockaddr *)dest_addr;
     struct sockaddr_in *handle = (struct sockaddr_in *)src_addr;
     linuxHandle->sin_family = initialFamily;
@@ -36,8 +34,8 @@ void sockaddrLwipToLinux(void *dest_addr, void *src_addr, uint16_t initialFamily
     memcpy(linuxHandle->sin_addr, &handle->sin_addr, sizeof(handle->sin_addr));
 }
 
-uint16_t sockaddrLinuxToLwip(void *dest_addr, void *src_addr, uint32_t addrlen)
-{
+uint16_t sockaddrLinuxToLwip(void *dest_addr, void *src_addr,
+                             uint32_t addrlen) {
     struct in_sockaddr *linuxHandle = (struct in_sockaddr *)src_addr;
     struct sockaddr_in *handle = (struct sockaddr_in *)dest_addr;
     uint16_t initialFamily = linuxHandle->sin_family;
@@ -48,8 +46,7 @@ uint16_t sockaddrLinuxToLwip(void *dest_addr, void *src_addr, uint32_t addrlen)
     return initialFamily;
 }
 
-size_t real_socket_send(uint64_t fd, uint8_t *out, uint64_t limit, int flags)
-{
+size_t real_socket_send(uint64_t fd, uint8_t *out, uint64_t limit, int flags) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     real_socket_t *sock = handle->sock;
 
@@ -57,12 +54,11 @@ size_t real_socket_send(uint64_t fd, uint8_t *out, uint64_t limit, int flags)
 
     arch_enable_interrupt();
 
-    while (true)
-    {
-        if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLOUT) & EPOLLOUT))
-        {
-            if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK || flags & 0x40)
-            {
+    while (true) {
+        if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLOUT) &
+              EPOLLOUT)) {
+            if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK ||
+                flags & 0x40) {
                 lwip_out = -1;
                 errno = EAGAIN;
                 break;
@@ -84,8 +80,7 @@ size_t real_socket_send(uint64_t fd, uint8_t *out, uint64_t limit, int flags)
     return lwip_out;
 }
 
-size_t real_socket_recv(uint64_t fd, uint8_t *out, uint64_t limit, int flags)
-{
+size_t real_socket_recv(uint64_t fd, uint8_t *out, uint64_t limit, int flags) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     real_socket_t *sock = handle->sock;
 
@@ -93,12 +88,11 @@ size_t real_socket_recv(uint64_t fd, uint8_t *out, uint64_t limit, int flags)
 
     arch_enable_interrupt();
 
-    while (true)
-    {
-        if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
-        {
-            if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK || flags & 0x40)
-            {
+    while (true) {
+        if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) &
+              EPOLLIN)) {
+            if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK ||
+                flags & 0x40) {
                 lwip_out = -1;
                 errno = EAGAIN;
                 break;
@@ -120,8 +114,8 @@ size_t real_socket_recv(uint64_t fd, uint8_t *out, uint64_t limit, int flags)
     return lwip_out;
 }
 
-size_t real_socket_sendto(uint64_t fd, uint8_t *buff, size_t len, int flags, struct sockaddr_un *dest_addr, socklen_t addrlen)
-{
+size_t real_socket_sendto(uint64_t fd, uint8_t *buff, size_t len, int flags,
+                          struct sockaddr_un *dest_addr, socklen_t addrlen) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     real_socket_t *sock = handle->sock;
 
@@ -135,19 +129,18 @@ size_t real_socket_sendto(uint64_t fd, uint8_t *buff, size_t len, int flags, str
     uint16_t initialFamily = sockaddrLinuxToLwip(aligned, dest_addr, addrlen);
 
     int lwipOut = -1;
-    while (true)
-    {
-        if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLOUT) & EPOLLOUT))
-        {
-            if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK)
-            {
+    while (true) {
+        if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLOUT) &
+              EPOLLOUT)) {
+            if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK) {
                 lwipOut = -1;
                 errno = EAGAIN;
                 break;
             }
             continue;
         }
-        lwipOut = lwip_sendto(sock->lwip_fd, buff, len, flags, (void *)aligned, sizeof(struct sockaddr_in));
+        lwipOut = lwip_sendto(sock->lwip_fd, buff, len, flags, (void *)aligned,
+                              sizeof(struct sockaddr_in));
         if (lwipOut >= 0 || errno != EAGAIN)
             break;
 
@@ -165,8 +158,8 @@ size_t real_socket_sendto(uint64_t fd, uint8_t *buff, size_t len, int flags, str
     return lwipOut;
 }
 
-size_t real_socket_recvfrom(uint64_t fd, uint8_t *buff, size_t len, int flags, struct sockaddr_un *addr, socklen_t *addrlen)
-{
+size_t real_socket_recvfrom(uint64_t fd, uint8_t *buff, size_t len, int flags,
+                            struct sockaddr_un *addr, socklen_t *addrlen) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     real_socket_t *sock = handle->sock;
 
@@ -178,19 +171,18 @@ size_t real_socket_recvfrom(uint64_t fd, uint8_t *buff, size_t len, int flags, s
     struct sockaddr_in *a = malloc(sizeof(struct sockaddr_in));
 
     int lwipOut = -1;
-    while (true)
-    {
-        if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
-        {
-            if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK)
-            {
+    while (true) {
+        if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) &
+              EPOLLIN)) {
+            if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK) {
                 lwipOut = -1;
                 errno = EAGAIN;
                 break;
             }
             continue;
         }
-        lwipOut = lwip_recvfrom(sock->lwip_fd, buff, len, flags, (void *)a, addrlen);
+        lwipOut =
+            lwip_recvfrom(sock->lwip_fd, buff, len, flags, (void *)a, addrlen);
         if (lwipOut >= 0 || errno != EAGAIN)
             break;
 
@@ -211,8 +203,8 @@ size_t real_socket_recvfrom(uint64_t fd, uint8_t *buff, size_t len, int flags, s
     return lwipOut;
 }
 
-int real_socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen)
-{
+int real_socket_connect(uint64_t fd, const struct sockaddr_un *addr,
+                        socklen_t addrlen) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     real_socket_t *sock = handle->sock;
 
@@ -221,7 +213,8 @@ int real_socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t a
     uint16_t initial_family = sockaddrLinuxToLwip((void *)a, addr, addrlen);
     if (!(current_task->fd_info->fds[fd]->flags & O_NONBLOCK))
         lwip_fcntl(sock->lwip_fd, F_SETFL, 0);
-    int lwip_out = lwip_connect(sock->lwip_fd, (void *)a, sizeof(struct sockaddr_in));
+    int lwip_out =
+        lwip_connect(sock->lwip_fd, (void *)a, sizeof(struct sockaddr_in));
     if (!(current_task->fd_info->fds[fd]->flags & O_NONBLOCK))
         lwip_fcntl(sock->lwip_fd, F_SETFL, O_NONBLOCK);
     sockaddrLwipToLinux((void *)addr, a, initial_family);
@@ -232,8 +225,8 @@ int real_socket_connect(uint64_t fd, const struct sockaddr_un *addr, socklen_t a
     return lwip_out;
 }
 
-int real_socket_getsockname(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen)
-{
+int real_socket_getsockname(uint64_t fd, struct sockaddr_un *addr,
+                            socklen_t *addrlen) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     real_socket_t *sock = handle->sock;
 
@@ -247,30 +240,31 @@ int real_socket_getsockname(uint64_t fd, struct sockaddr_un *addr, socklen_t *ad
     return lwip_out;
 }
 
-size_t real_socket_getsockopt(uint64_t fd, int level, int optname, const void *optval, socklen_t *optlen)
-{
+size_t real_socket_getsockopt(uint64_t fd, int level, int optname,
+                              const void *optval, socklen_t *optlen) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     real_socket_t *sock = handle->sock;
 
-    int lwip_out = lwip_getsockopt(sock->lwip_fd, level, optname, optval, optlen);
+    int lwip_out =
+        lwip_getsockopt(sock->lwip_fd, level, optname, optval, optlen);
     if (lwip_out < 0)
         return -errno;
     return lwip_out;
 }
 
-size_t real_socket_setsockopt(uint64_t fd, int level, int optname, const void *optval, socklen_t optlen)
-{
+size_t real_socket_setsockopt(uint64_t fd, int level, int optname,
+                              const void *optval, socklen_t optlen) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     real_socket_t *sock = handle->sock;
 
-    int lwip_out = lwip_setsockopt(sock->lwip_fd, level, optname, optval, optlen);
+    int lwip_out =
+        lwip_setsockopt(sock->lwip_fd, level, optname, optval, optlen);
     if (lwip_out < 0)
         return -errno;
     return lwip_out;
 }
 
-size_t real_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags)
-{
+size_t real_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     real_socket_t *sock = handle->sock;
 
@@ -288,12 +282,11 @@ size_t real_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags)
         .msg_flags = msg->msg_flags,
     };
 
-    while (true)
-    {
-        if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLOUT) & EPOLLOUT))
-        {
-            if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK || flags & 0x40)
-            {
+    while (true) {
+        if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLOUT) &
+              EPOLLOUT)) {
+            if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK ||
+                flags & 0x40) {
                 lwip_out = -1;
                 errno = EAGAIN;
                 break;
@@ -315,8 +308,7 @@ size_t real_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags)
     return lwip_out;
 }
 
-size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
-{
+size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     real_socket_t *sock = handle->sock;
 
@@ -336,12 +328,11 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
         .msg_flags = msg->msg_flags,
     };
 
-    while (true)
-    {
-        if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN))
-        {
-            if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK || flags & 0x40)
-            {
+    while (true) {
+        if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) &
+              EPOLLIN)) {
+            if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK ||
+                flags & 0x40) {
                 lwip_out = -1;
                 errno = EAGAIN;
                 break;
@@ -360,8 +351,7 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
     if (lwip_out < 0)
         return -errno;
 
-    if (msg->msg_name)
-    {
+    if (msg->msg_name) {
         sockaddrLwipToLinux(msg->msg_name, a, 2);
         msg->msg_namelen = sizeof(struct sockaddr_in);
     }
@@ -369,14 +359,15 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
     return lwip_out;
 }
 
-int real_socket_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen)
-{
+int real_socket_bind(uint64_t fd, const struct sockaddr_un *addr,
+                     socklen_t addrlen) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     real_socket_t *sock = handle->sock;
 
     struct sockaddr_in *a = malloc(sizeof(struct sockaddr_in));
     sockaddrLinuxToLwip(a, addr, addrlen);
-    int out = lwip_bind(sock->lwip_fd, (const struct sockaddr *)a, sizeof(struct sockaddr_in));
+    int out = lwip_bind(sock->lwip_fd, (const struct sockaddr *)a,
+                        sizeof(struct sockaddr_in));
     free(a);
     if (out < 0)
         return -errno;
@@ -384,8 +375,7 @@ int real_socket_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addr
     return out;
 }
 
-int real_socket_listen(uint64_t fd, int backlog)
-{
+int real_socket_listen(uint64_t fd, int backlog) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     real_socket_t *sock = handle->sock;
 
@@ -396,8 +386,8 @@ int real_socket_listen(uint64_t fd, int backlog)
     return out;
 }
 
-int real_socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen, uint64_t flags)
-{
+int real_socket_accept(uint64_t fd, struct sockaddr_un *addr,
+                       socklen_t *addrlen, uint64_t flags) {
     // socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     // real_socket_t *sock = handle->sock;
 
@@ -479,8 +469,7 @@ socket_op_t real_socket_ops = {
     .setsockopt = real_socket_setsockopt,
 };
 
-bool real_socket_close(void *current)
-{
+bool real_socket_close(void *current) {
     socket_handle_t *handle = (socket_handle_t *)current;
     real_socket_t *sock = handle->sock;
 
@@ -489,8 +478,7 @@ bool real_socket_close(void *current)
     return true;
 }
 
-int real_socket_poll(void *curr, size_t events)
-{
+int real_socket_poll(void *curr, size_t events) {
     socket_handle_t *handle = (socket_handle_t *)curr;
     real_socket_t *sock = handle->sock;
 
@@ -505,8 +493,7 @@ int real_socket_poll(void *curr, size_t events)
     return poll_to_epoll_comp(single.revents);
 }
 
-ssize_t real_socket_read(fd_t *fd, void *addr, size_t offset, size_t size)
-{
+ssize_t real_socket_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     socket_handle_t *handle = fd->node->handle;
     real_socket_t *sock = handle->sock;
 
@@ -514,12 +501,9 @@ ssize_t real_socket_read(fd_t *fd, void *addr, size_t offset, size_t size)
 
     arch_enable_interrupt();
 
-    while (true)
-    {
-        if (!(vfs_poll(fd->node, EPOLLIN) & EPOLLIN))
-        {
-            if (fd->flags & O_NONBLOCK)
-            {
+    while (true) {
+        if (!(vfs_poll(fd->node, EPOLLIN) & EPOLLIN)) {
+            if (fd->flags & O_NONBLOCK) {
                 lwip_out = -1;
                 errno = EAGAIN;
                 break;
@@ -541,8 +525,8 @@ ssize_t real_socket_read(fd_t *fd, void *addr, size_t offset, size_t size)
     return lwip_out;
 }
 
-ssize_t real_socket_write(fd_t *fd, const void *addr, size_t offset, size_t size)
-{
+ssize_t real_socket_write(fd_t *fd, const void *addr, size_t offset,
+                          size_t size) {
     socket_handle_t *handle = fd->node->handle;
     real_socket_t *sock = handle->sock;
 
@@ -550,12 +534,9 @@ ssize_t real_socket_write(fd_t *fd, const void *addr, size_t offset, size_t size
 
     arch_enable_interrupt();
 
-    while (true)
-    {
-        if (!(vfs_poll(fd->node, EPOLLOUT) & EPOLLOUT))
-        {
-            if (fd->flags & O_NONBLOCK)
-            {
+    while (true) {
+        if (!(vfs_poll(fd->node, EPOLLOUT) & EPOLLOUT)) {
+            if (fd->flags & O_NONBLOCK) {
                 lwip_out = -1;
                 errno = EAGAIN;
                 break;
@@ -577,10 +558,7 @@ ssize_t real_socket_write(fd_t *fd, const void *addr, size_t offset, size_t size
     return lwip_out;
 }
 
-static int dummy()
-{
-    return 0;
-}
+static int dummy() { return 0; }
 
 static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)dummy,
@@ -608,27 +586,22 @@ static struct vfs_callback callbacks = {
 
 bool real_socket_initialized = false;
 
-static void delay(uint64_t ms)
-{
+static void delay(uint64_t ms) {
     uint64_t ns = ms * 1000000;
     uint64_t start = nanoTime();
-    while (nanoTime() - start < ns)
-    {
+    while (nanoTime() - start < ns) {
         arch_yield();
     }
 }
 
-void receiver_entry(uint64_t arg)
-{
+void receiver_entry(uint64_t arg) {
     uint32_t mtu = ((netdev_t *)arg)->mtu;
     char *buf = malloc(mtu);
     memset(buf, 0, mtu);
 
-    while (1)
-    {
+    while (1) {
         int len = netdev_recv((netdev_t *)arg, buf, mtu);
-        if (len > 0)
-        {
+        if (len > 0) {
             struct pbuf *p = pbuf_alloc(PBUF_RAW, len, PBUF_RAM);
             pbuf_take(p, buf, len);
             global_netif.input(p, &global_netif);
@@ -638,13 +611,9 @@ void receiver_entry(uint64_t arg)
     }
 }
 
-err_t lwip_dummy_init(struct netif *netif)
-{
-    return ERR_OK;
-}
+err_t lwip_dummy_init(struct netif *netif) { return ERR_OK; }
 
-err_t lwip_output(struct netif *netif, struct pbuf *p)
-{
+err_t lwip_output(struct netif *netif, struct pbuf *p) {
     uint8_t *complete = malloc(p->tot_len);
 
     pbuf_copy_partial(p, complete, p->tot_len, 0);
@@ -656,8 +625,7 @@ err_t lwip_output(struct netif *netif, struct pbuf *p)
     return ERR_OK;
 }
 
-void lwip_init_in_thread(void *nicPre)
-{
+void lwip_init_in_thread(void *nicPre) {
     netdev_t *nic = (netdev_t *)nicPre;
     // struct ethernetif *ethernetif;
 
@@ -668,7 +636,8 @@ void lwip_init_in_thread(void *nicPre)
     this_netif->name[1] = 66;
     this_netif->next = NULL;
 
-    netif_add(this_netif, IP4_ADDR_ANY, IP4_ADDR_ANY, IP4_ADDR_ANY, NULL, lwip_dummy_init, tcpip_input); // ethernetif_init_low
+    netif_add(this_netif, IP4_ADDR_ANY, IP4_ADDR_ANY, IP4_ADDR_ANY, NULL,
+              lwip_dummy_init, tcpip_input); // ethernetif_init_low
 
     this_netif->output = etharp_output;
     this_netif->linkoutput = lwip_output;
@@ -688,8 +657,7 @@ void lwip_init_in_thread(void *nicPre)
 
     err_t out = dhcp_start(this_netif);
 
-    if (out != ERR_OK)
-    {
+    if (out != ERR_OK) {
         printk("Failed to start DHCP\n");
         task_exit(0);
     }
@@ -700,26 +668,22 @@ void lwip_init_in_thread(void *nicPre)
     dhcp_supplied_address(this_netif);
 }
 
-void real_socket_init_global_netif()
-{
-    if (get_default_netdev())
-    {
-        task_create("net_receiver", receiver_entry, (uint64_t)get_default_netdev(), KTHREAD_PRIORITY);
+void real_socket_init_global_netif() {
+    if (get_default_netdev()) {
+        task_create("net_receiver", receiver_entry,
+                    (uint64_t)get_default_netdev(), KTHREAD_PRIORITY);
         tcpip_init(lwip_init_in_thread, get_default_netdev());
     }
 }
 
-int real_socket_socket(int domain, int type, int protocol)
-{
-    if (!real_socket_initialized)
-    {
+int real_socket_socket(int domain, int type, int protocol) {
+    if (!real_socket_initialized) {
         real_socket_init_global_netif();
         real_socket_initialized = true;
     }
 
     int try_bound = 0;
-    while (!dhcp_supplied_address(&global_netif))
-    {
+    while (!dhcp_supplied_address(&global_netif)) {
         try_bound++;
         if (try_bound >= 10)
             return -EHOSTUNREACH;
@@ -746,16 +710,13 @@ int real_socket_socket(int domain, int type, int protocol)
     socknode->handle = handle;
 
     uint64_t i = 0;
-    for (i = 3; i < MAX_FD_NUM; i++)
-    {
-        if (current_task->fd_info->fds[i] == NULL)
-        {
+    for (i = 3; i < MAX_FD_NUM; i++) {
+        if (current_task->fd_info->fds[i] == NULL) {
             break;
         }
     }
 
-    if (i == MAX_FD_NUM)
-    {
+    if (i == MAX_FD_NUM) {
         return -EMFILE;
     }
 
@@ -775,8 +736,7 @@ fs_t socket = {
     .callback = &callbacks,
 };
 
-void real_socket_init()
-{
+void real_socket_init() {
     realsock_fsid = vfs_regist(&socket);
 
     regist_socket(2, real_socket_socket);

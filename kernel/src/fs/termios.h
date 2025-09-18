@@ -3,8 +3,7 @@
 #include <libs/klibc.h>
 
 #define NCCS 32
-typedef struct termios
-{
+typedef struct termios {
     uint32_t c_iflag;   /* input mode flags */
     uint32_t c_oflag;   /* output mode flags */
     uint32_t c_cflag;   /* control mode flags */

@@ -8,8 +8,8 @@
  * Copyright (c) 2001-2004 Swedish Institute of Computer Science.
  * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without modification,
- * are permitted provided that the following conditions are met:
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
  *
  * 1. Redistributions of source code must retain the above copyright notice,
  *    this list of conditions and the following disclaimer.
@@ -21,14 +21,14 @@
  *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
  * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
- * SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
- * OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
- * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
- * OF SUCH DAMAGE.
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
+ * EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  * This file is part of the lwIP TCP/IP stack.
  *
@@ -56,18 +56,19 @@
  * The sys_arch provides semaphores, mailboxes and mutexes to lwIP. For the full
  * lwIP functionality, multiple threads support can be implemented in the
  * sys_arch, but this is not required for the basic lwIP
- * functionality. Timer scheduling is implemented in lwIP, but can be implemented
- * by the sys_arch port (LWIP_TIMERS_CUSTOM==1).
+ * functionality. Timer scheduling is implemented in lwIP, but can be
+ * implemented by the sys_arch port (LWIP_TIMERS_CUSTOM==1).
  *
  * In addition to the source file providing the functionality of sys_arch,
  * the OS emulation layer must provide several header files defining
  * macros used throughout lwip.  The files required and the macros they
  * must define are listed below the sys_arch description.
  *
- * Since lwIP 1.4.0, semaphore, mutexes and mailbox functions are prototyped in a way that
- * allows both using pointers or actual OS structures to be used. This way, memory
- * required for such types can be either allocated in place (globally or on the
- * stack) or on the heap (allocated internally in the "*_new()" functions).
+ * Since lwIP 1.4.0, semaphore, mutexes and mailbox functions are prototyped in
+ * a way that allows both using pointers or actual OS structures to be used.
+ * This way, memory required for such types can be either allocated in place
+ * (globally or on the stack) or on the heap (allocated internally in the
+ * "*_new()" functions).
  *
  * Note:
  * -----
@@ -94,9 +95,9 @@
  * @defgroup sys_mbox Mailboxes
  * @ingroup sys_os
  * Mailboxes should be implemented as a queue which allows multiple messages
- * to be posted (implementing as a rendez-vous point where only one message can be
- * posted at a time can have a highly negative impact on performance). A message
- * in a mailbox is just a pointer, nothing more.
+ * to be posted (implementing as a rendez-vous point where only one message can
+ * be posted at a time can have a highly negative impact on performance). A
+ * message in a mailbox is just a pointer, nothing more.
  *
  * @defgroup sys_time Time
  * @ingroup sys_layer
@@ -131,17 +132,15 @@
  *
  * @param ms number of milliseconds to sleep
  */
-void
-sys_msleep(u32_t ms)
-{
-  if (ms > 0) {
-    sys_sem_t delaysem;
-    err_t err = sys_sem_new(&delaysem, 0);
-    if (err == ERR_OK) {
-      sys_arch_sem_wait(&delaysem, ms);
-      sys_sem_free(&delaysem);
+void sys_msleep(u32_t ms) {
+    if (ms > 0) {
+        sys_sem_t delaysem;
+        err_t err = sys_sem_new(&delaysem, 0);
+        if (err == ERR_OK) {
+            sys_arch_sem_wait(&delaysem, ms);
+            sys_sem_free(&delaysem);
+        }
     }
-  }
 }
 #endif /* sys_msleep */
 

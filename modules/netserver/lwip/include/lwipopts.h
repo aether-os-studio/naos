@@ -35,16 +35,14 @@
 #define SYS_LIGHTWEIGHT_PROT 0
 #define LWIP_COMPAT_SOCKETS 0
 
-typedef struct mboxBlock
-{
+typedef struct mboxBlock {
     struct mboxBlock *next;
 
     task_t *task;
     bool write;
 } mboxBlock;
 
-typedef struct
-{
+typedef struct {
     spinlock_t lock;
 
     mboxBlock *firstBlock;
@@ -57,8 +55,7 @@ typedef struct
 } sys_mbox_t;
 
 typedef uint64_t sys_thread_t;
-typedef struct
-{
+typedef struct {
     spinlock_t lock;
     uint32_t cnt;
     bool invalid;
@@ -69,27 +66,23 @@ typedef spinlock_t sys_mutex_t;
 // #define SYS_LIGHTWEIGHT_PROT 1
 typedef uint8_t sys_prot_t;
 
-#define LWIP_PLATFORM_ASSERT(x)                                           \
-    do                                                                    \
-    {                                                                     \
-        serial_fprintk("Assertion \"%s\" failed at line %d in %s\n", x, __LINE__, \
-               __FILE__);                                                 \
-        while (1)                                                         \
-        {                                                                 \
-            arch_yield();                                                 \
-        }                                                                 \
+#define LWIP_PLATFORM_ASSERT(x)                                                \
+    do {                                                                       \
+        serial_fprintk("Assertion \"%s\" failed at line %d in %s\n", x,        \
+                       __LINE__, __FILE__);                                    \
+        while (1) {                                                            \
+            arch_yield();                                                      \
+        }                                                                      \
     } while (0)
 
-#define LWIP_PLATFORM_DIAG(x) \
-    do                        \
-    {                         \
-        serial_fprintk x;             \
+#define LWIP_PLATFORM_DIAG(x)                                                  \
+    do {                                                                       \
+        serial_fprintk x;                                                      \
     } while (0)
 
 extern uint64_t next;
 
-static inline int rand(void)
-{
+static inline int rand(void) {
     next = next * 1103515245 + 12345;
     return (uint32_t)(next / 65536) % 32768;
 }

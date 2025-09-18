@@ -29,27 +29,31 @@
 
 #define PCI_DEVICE_MAX 256
 
-#define EXPORT_BYTE(target, first) ((first) ? ((target) & ~0xFF00) : (((target) & ~0x00FF) >> 8))
+#define EXPORT_BYTE(target, first)                                             \
+    ((first) ? ((target) & ~0xFF00) : (((target) & ~0x00FF) >> 8))
 
-uint32_t segment_bus_device_functon_to_pci_address(uint16_t segment, uint8_t bus, uint8_t device, uint8_t function);
-uint32_t pci_read(uint32_t b, uint32_t d, uint32_t f, uint32_t s, uint32_t offset);
-void pci_write(uint32_t b, uint32_t d, uint32_t f, uint32_t s, uint32_t offset, uint32_t value);
+uint32_t segment_bus_device_functon_to_pci_address(uint16_t segment,
+                                                   uint8_t bus, uint8_t device,
+                                                   uint8_t function);
+uint32_t pci_read(uint32_t b, uint32_t d, uint32_t f, uint32_t s,
+                  uint32_t offset);
+void pci_write(uint32_t b, uint32_t d, uint32_t f, uint32_t s, uint32_t offset,
+               uint32_t value);
 
-typedef struct
-{
+typedef struct {
     uint64_t address;
     uint64_t size;
     bool mmio;
 } pci_bar_t;
 
-typedef struct
-{
-    uint32_t (*read)(uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4, uint32_t arg5);
-    void (*write)(uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4, uint32_t arg5, uint32_t value);
+typedef struct {
+    uint32_t (*read)(uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4,
+                     uint32_t arg5);
+    void (*write)(uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4,
+                  uint32_t arg5, uint32_t value);
 } pci_device_op_t;
 
-typedef struct
-{
+typedef struct {
     const char *name;
     uint32_t class_code;
     uint8_t header_type;
@@ -83,7 +87,8 @@ typedef struct
 extern pci_device_t *pci_devices[PCI_DEVICE_MAX];
 extern uint32_t pci_device_number;
 
-uint32_t pci_enumerate_capability_list(pci_device_t *pci_dev, uint32_t cap_type);
+uint32_t pci_enumerate_capability_list(pci_device_t *pci_dev,
+                                       uint32_t cap_type);
 
 #if defined(__x86_64__) || defined(__aarch64__) || defined(__loongarch64)
 

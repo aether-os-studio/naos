@@ -48,58 +48,54 @@ vfs_node_t dev_node;
 /**********************BLOCKDEV INTERFACE**************************************/
 static int vfs_dev_open(struct ext4_blockdev *bdev);
 static int vfs_dev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
-						 uint32_t blk_cnt);
+                         uint32_t blk_cnt);
 static int vfs_dev_bwrite(struct ext4_blockdev *bdev, const void *buf,
-						  uint64_t blk_id, uint32_t blk_cnt);
+                          uint64_t blk_id, uint32_t blk_cnt);
 static int vfs_dev_close(struct ext4_blockdev *bdev);
 
 /******************************************************************************/
 EXT4_BLOCKDEV_STATIC_INSTANCE(vfs_dev, EXT4_FILEDEV_BSIZE, 0, vfs_dev_open,
-							  vfs_dev_bread, vfs_dev_bwrite, vfs_dev_close, 0,
-							  0);
+                              vfs_dev_bread, vfs_dev_bwrite, vfs_dev_close, 0,
+                              0);
 
 /******************************************************************************/
-static int vfs_dev_open(struct ext4_blockdev *bdev)
-{
-	vfs_update(dev_node);
+static int vfs_dev_open(struct ext4_blockdev *bdev) {
+    vfs_update(dev_node);
 
-	vfs_dev.part_offset = 0;
-	devfs_handle_t devfs_handle = dev_node->handle;
-	partition_t *part = devfs_handle->data;
-	vfs_dev.part_size = (part->ending_lba - part->starting_lba + 1) * 512;
-	vfs_dev.bdif->ph_bcnt = vfs_dev.part_size / vfs_dev.bdif->ph_bsize;
+    vfs_dev.part_offset = 0;
+    devfs_handle_t devfs_handle = dev_node->handle;
+    partition_t *part = devfs_handle->data;
+    vfs_dev.part_size = (part->ending_lba - part->starting_lba + 1) * 512;
+    vfs_dev.bdif->ph_bcnt = vfs_dev.part_size / vfs_dev.bdif->ph_bsize;
 
-	return EOK;
+    return EOK;
 }
 
 /******************************************************************************/
 
 static int vfs_dev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
-						 uint32_t blk_cnt)
-{
-	vfs_read(dev_node, buf, blk_id * vfs_dev.bdif->ph_bsize,
-			 blk_cnt * vfs_dev.bdif->ph_bsize);
+                         uint32_t blk_cnt) {
+    vfs_read(dev_node, buf, blk_id * vfs_dev.bdif->ph_bsize,
+             blk_cnt * vfs_dev.bdif->ph_bsize);
 
-	return EOK;
+    return EOK;
 }
 
 static void drop_cache(void) {}
 
 /******************************************************************************/
 static int vfs_dev_bwrite(struct ext4_blockdev *bdev, const void *buf,
-						  uint64_t blk_id, uint32_t blk_cnt)
-{
-	vfs_write(dev_node, buf, blk_id * vfs_dev.bdif->ph_bsize,
-			  blk_cnt * vfs_dev.bdif->ph_bsize);
+                          uint64_t blk_id, uint32_t blk_cnt) {
+    vfs_write(dev_node, buf, blk_id * vfs_dev.bdif->ph_bsize,
+              blk_cnt * vfs_dev.bdif->ph_bsize);
 
-	drop_cache();
-	return EOK;
+    drop_cache();
+    return EOK;
 }
 /******************************************************************************/
-static int vfs_dev_close(struct ext4_blockdev *bdev)
-{
-	vfs_close(dev_node);
-	return EOK;
+static int vfs_dev_close(struct ext4_blockdev *bdev) {
+    vfs_close(dev_node);
+    return EOK;
 }
 
 /******************************************************************************/

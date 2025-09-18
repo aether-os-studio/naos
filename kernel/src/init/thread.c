@@ -21,8 +21,7 @@ extern bool can_schedule;
 
 extern vfs_node_t devfs_root;
 
-void init_thread(uint64_t arg)
-{
+void init_thread(uint64_t arg) {
     printk("NAOS init thread is running...\n");
 
     arch_disable_interrupt();
@@ -69,8 +68,7 @@ void init_thread(uint64_t arg)
 
     printk("run init failed\n");
 
-    while (1)
-    {
+    while (1) {
         arch_pause();
     }
 }

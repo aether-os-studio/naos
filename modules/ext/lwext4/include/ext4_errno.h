@@ -37,8 +37,7 @@
 #define EXT4_ERRNO_H_
 
 #ifdef __cplusplus
-extern "C"
-{
+extern "C" {
 #endif
 
 #include <ext4_config.h>

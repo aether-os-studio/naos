@@ -8,10 +8,8 @@
 struct usbdevice_s;
 
 // Information on a USB end point.
-struct usb_pipe
-{
-    union
-    {
+struct usb_pipe {
+    union {
         struct usb_s *cntl;
         struct usb_pipe *freenext;
     };
@@ -26,8 +24,7 @@ struct usb_pipe
 #define MAX_USBDEV_NUM 256
 
 // Common information for usb devices.
-struct usbdevice_s
-{
+struct usbdevice_s {
     struct usbhub_s *hub;
     struct usb_pipe *defpipe;
     uint32_t port;
@@ -46,8 +43,7 @@ struct usbdevice_s
 extern struct usbdevice_s *usbdevs[MAX_USBDEV_NUM];
 
 // Common information for usb controllers.
-struct usb_s
-{
+struct usb_s {
     struct usb_pipe *freelist;
     spinlock_t resetlock;
     void *mmio;
@@ -56,8 +52,7 @@ struct usb_s
 };
 
 // Information for enumerating USB hubs
-struct usbhub_s
-{
+struct usbhub_s {
     struct usbhub_op_s *op;
     struct usbdevice_s *usbdev;
     struct usb_s *cntl;
@@ -70,8 +65,7 @@ struct usbhub_s
 };
 
 // Hub callback (32bit) info
-struct usbhub_op_s
-{
+struct usbhub_op_s {
     int (*detect)(struct usbhub_s *hub, uint32_t port);
     int (*reset)(struct usbhub_s *hub, uint32_t port);
     int (*portmap)(struct usbhub_s *hub, uint32_t port);
@@ -142,8 +136,7 @@ struct usbhub_op_s
 #define USB_MSC_REQ_BULK_ONLY_RESET 0xFF
 #define USB_MSC_REQ_GET_MAX_LUN 0xFE
 
-struct usb_ctrlrequest
-{
+struct usb_ctrlrequest {
     uint8_t bRequestType;
     uint8_t bRequest;
     uint16_t wValue;
@@ -160,8 +153,7 @@ struct usb_ctrlrequest
 #define USB_DT_OTHER_SPEED_CONFIG 0x07
 #define USB_DT_ENDPOINT_COMPANION 0x30
 
-struct usb_device_descriptor
-{
+struct usb_device_descriptor {
     uint8_t bLength;
     uint8_t bDescriptorType;
 
@@ -189,8 +181,7 @@ struct usb_device_descriptor
 #define USB_CLASS_MASS_STORAGE 8
 #define USB_CLASS_HUB 9
 
-struct usb_config_descriptor
-{
+struct usb_config_descriptor {
     uint8_t bLength;
     uint8_t bDescriptorType;
 
@@ -202,8 +193,7 @@ struct usb_config_descriptor
     uint8_t bMaxPower;
 } __attribute__((packed));
 
-struct usb_interface_descriptor
-{
+struct usb_interface_descriptor {
     uint8_t bLength;
     uint8_t bDescriptorType;
 
@@ -216,8 +206,7 @@ struct usb_interface_descriptor
     uint8_t iInterface;
 } __attribute__((packed));
 
-struct usb_endpoint_descriptor
-{
+struct usb_endpoint_descriptor {
     uint8_t bLength;
     uint8_t bDescriptorType;
 
@@ -251,8 +240,7 @@ struct usb_endpoint_descriptor
 #define US_PR_UAS 0x62  /* usb attached scsi   */
 
 // SCSI命令定义
-enum
-{
+enum {
     SCSI_INQUIRY = 0x12,
     SCSI_READ_CAPACITY_10 = 0x25,
     SCSI_READ_CAPACITY_16 = 0x9E,
@@ -265,8 +253,7 @@ enum
 };
 
 // SCSI版本定义
-enum scsi_version
-{
+enum scsi_version {
     SCSI_VERSION_10 = 0,
     SCSI_VERSION_12 = 1,
     SCSI_VERSION_16 = 2,
@@ -282,10 +269,10 @@ int usb_poll_intr(struct usb_pipe *pipe, void *data);
 int usb_32bit_pipe(struct usb_pipe *pipe_fl);
 
 // Allocate, update, or free a usb pipe.
-static inline struct usb_pipe *usb_realloc_pipe(struct usbdevice_s *usbdev, struct usb_pipe *pipe, struct usb_endpoint_descriptor *epdesc)
-{
-    switch (usbdev->hub->cntl->type)
-    {
+static inline struct usb_pipe *
+usb_realloc_pipe(struct usbdevice_s *usbdev, struct usb_pipe *pipe,
+                 struct usb_endpoint_descriptor *epdesc) {
+    switch (usbdev->hub->cntl->type) {
     default:
     // case USB_TYPE_UHCI:
     //     return uhci_realloc_pipe(usbdev, pipe, epdesc);
@@ -299,53 +286,50 @@ static inline struct usb_pipe *usb_realloc_pipe(struct usbdevice_s *usbdev, stru
 }
 
 // Allocate a usb pipe.
-static inline struct usb_pipe *usb_alloc_pipe(struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epdesc)
-{
+static inline struct usb_pipe *
+usb_alloc_pipe(struct usbdevice_s *usbdev,
+               struct usb_endpoint_descriptor *epdesc) {
     return usb_realloc_pipe(usbdev, NULL, epdesc);
 }
 
 // Free an allocated control or bulk pipe.
-static inline void usb_free_pipe(struct usbdevice_s *usbdev, struct usb_pipe *pipe)
-{
+static inline void usb_free_pipe(struct usbdevice_s *usbdev,
+                                 struct usb_pipe *pipe) {
     if (!pipe)
         return;
     usb_realloc_pipe(usbdev, pipe, NULL);
 }
 
-int usb_send_default_control(struct usb_pipe *pipe, const struct usb_ctrlrequest *req, void *data);
+int usb_send_default_control(struct usb_pipe *pipe,
+                             const struct usb_ctrlrequest *req, void *data);
 int usb_is_freelist(struct usb_s *cntl, struct usb_pipe *pipe);
 void usb_add_freelist(struct usb_pipe *pipe);
 struct usb_pipe *usb_get_freelist(struct usb_s *cntl, uint8_t eptype);
-void usb_desc2pipe(struct usb_pipe *pipe, struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epdesc);
+void usb_desc2pipe(struct usb_pipe *pipe, struct usbdevice_s *usbdev,
+                   struct usb_endpoint_descriptor *epdesc);
 
-static inline int __fls(unsigned int x)
-{
+static inline int __fls(unsigned int x) {
     if (x == 0)
         return -1;
 
     int pos = 0;
-    if (x & 0xFFFF0000)
-    {
+    if (x & 0xFFFF0000) {
         pos += 16;
         x >>= 16;
     }
-    if (x & 0xFF00)
-    {
+    if (x & 0xFF00) {
         pos += 8;
         x >>= 8;
     }
-    if (x & 0xF0)
-    {
+    if (x & 0xF0) {
         pos += 4;
         x >>= 4;
     }
-    if (x & 0xC)
-    {
+    if (x & 0xC) {
         pos += 2;
         x >>= 2;
     }
-    if (x & 0x2)
-    {
+    if (x & 0x2) {
         pos += 1;
         x >>= 1;
     }
@@ -353,8 +337,8 @@ static inline int __fls(unsigned int x)
 }
 
 // Find the exponential period of the requested interrupt end point.
-static inline int usb_get_period(struct usbdevice_s *usbdev, struct usb_endpoint_descriptor *epdesc)
-{
+static inline int usb_get_period(struct usbdevice_s *usbdev,
+                                 struct usb_endpoint_descriptor *epdesc) {
     int period = epdesc->bInterval;
     if (usbdev->speed != USB_HIGHSPEED)
         return (period <= 0) ? 0 : __fls(period);
@@ -362,7 +346,8 @@ static inline int usb_get_period(struct usbdevice_s *usbdev, struct usb_endpoint
 }
 
 int usb_xfer_time(struct usb_pipe *pipe, int datalen);
-struct usb_endpoint_descriptor *usb_find_desc(struct usbdevice_s *usbdev, int type, int dir);
+struct usb_endpoint_descriptor *usb_find_desc(struct usbdevice_s *usbdev,
+                                              int type, int dir);
 void usb_enumerate(struct usbhub_s *hub);
 
 #endif // usb.h

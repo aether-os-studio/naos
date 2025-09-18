@@ -2,25 +2,19 @@
 #include <fs/fs_syscall.h>
 #include <task/task.h>
 
-typedef struct fsfd_ctx
-{
+typedef struct fsfd_ctx {
     fs_t *fs;
 } fsfd_ctx_t;
 
-uint64_t sys_fsopen(const char *fsname, unsigned int flags)
-{
-    for (int i = 1; i < fs_nextid; i++)
-    {
-        if (!strcmp(all_fs[i]->name, fsname))
-        {
+uint64_t sys_fsopen(const char *fsname, unsigned int flags) {
+    for (int i = 1; i < fs_nextid; i++) {
+        if (!strcmp(all_fs[i]->name, fsname)) {
             fsfd_ctx_t *ctx = malloc(sizeof(fsfd_ctx_t));
             ctx->fs = all_fs[i];
 
             int fd = -1;
-            for (int i = 3; i < MAX_FD_NUM; i++)
-            {
-                if (!current_task->fd_info->fds[i])
-                {
+            for (int i = 3; i < MAX_FD_NUM; i++) {
+                if (!current_task->fd_info->fds[i]) {
                     fd = i;
                     break;
                 }
@@ -42,18 +36,14 @@ uint64_t sys_fsopen(const char *fsname, unsigned int flags)
     return -ENOENT;
 }
 
-uint64_t sys_statfs(const char *path, struct statfs *buf)
-{
+uint64_t sys_statfs(const char *path, struct statfs *buf) {
     vfs_node_t node = vfs_open(path);
     if (!node)
         return -ENOENT;
 
-    if (node->parent == rootdir && !strcmp(node->name, "proc"))
-    {
-        for (int i = 1; i < fs_nextid; i++)
-        {
-            if (!strcmp(all_fs[i]->name, "proc"))
-            {
+    if (node->parent == rootdir && !strcmp(node->name, "proc")) {
+        for (int i = 1; i < fs_nextid; i++) {
+            if (!strcmp(all_fs[i]->name, "proc")) {
                 buf->f_type = all_fs[i]->magic;
             }
         }
@@ -62,8 +52,7 @@ uint64_t sys_statfs(const char *path, struct statfs *buf)
     return -ENOENT;
 }
 
-uint64_t sys_fstatfs(int fd, struct statfs *buf)
-{
+uint64_t sys_fstatfs(int fd, struct statfs *buf) {
     if (fd < 0 && fd > MAX_FD_NUM && !current_task->fd_info->fds[fd])
         return -EBADF;
 
@@ -76,7 +65,6 @@ uint64_t sys_fstatfs(int fd, struct statfs *buf)
     return -ENOENT;
 }
 
-void fsfd_init()
-{
+void fsfd_init() {
     // fsfd_fsid = vfs_regist(&fsfd);
 }

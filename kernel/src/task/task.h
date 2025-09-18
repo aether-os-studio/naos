@@ -49,14 +49,21 @@
 
 #define MAX_FD_NUM 256
 
-#define CLONE_VM 0x00000100             /* set if VM shared between processes */
-#define CLONE_FS 0x00000200             /* set if fs info shared between processes */
-#define CLONE_FILES 0x00000400          /* set if open files shared between processes */
-#define CLONE_SIGHAND 0x00000800        /* set if signal handlers and blocked signals shared */
-#define CLONE_PIDFD 0x00001000          /* set if a pidfd should be placed in parent */
-#define CLONE_PTRACE 0x00002000         /* set if we want to let tracing continue on the child too */
-#define CLONE_VFORK 0x00004000          /* set if the parent wants the child to wake it up on mm_release */
-#define CLONE_PARENT 0x00008000         /* set if we want to have the same parent as the cloner */
+#define CLONE_VM 0x00000100 /* set if VM shared between processes */
+#define CLONE_FS 0x00000200 /* set if fs info shared between processes */
+#define CLONE_FILES                                                            \
+    0x00000400 /* set if open files shared between processes                   \
+                */
+#define CLONE_SIGHAND                                                          \
+    0x00000800 /* set if signal handlers and blocked signals shared */
+#define CLONE_PIDFD 0x00001000 /* set if a pidfd should be placed in parent */
+#define CLONE_PTRACE                                                           \
+    0x00002000 /* set if we want to let tracing continue on the child too */
+#define CLONE_VFORK                                                            \
+    0x00004000 /* set if the parent wants the child to wake it up on           \
+                  mm_release */
+#define CLONE_PARENT                                                           \
+    0x00008000 /* set if we want to have the same parent as the cloner */
 #define CLONE_THREAD 0x00010000         /* Same thread group? */
 #define CLONE_NEWNS 0x00020000          /* New mount namespace group */
 #define CLONE_SYSVSEM 0x00040000        /* share system V SEM_UNDO semantics */
@@ -64,18 +71,19 @@
 #define CLONE_PARENT_SETTID 0x00100000  /* set the TID in the parent */
 #define CLONE_CHILD_CLEARTID 0x00200000 /* clear the TID in the child */
 #define CLONE_DETACHED 0x00400000       /* Unused, ignored */
-#define CLONE_UNTRACED 0x00800000       /* set if the tracing process can't force CLONE_PTRACE on this clone */
-#define CLONE_CHILD_SETTID 0x01000000   /* set the TID in the child */
-#define CLONE_NEWCGROUP 0x02000000      /* New cgroup namespace */
-#define CLONE_NEWUTS 0x04000000         /* New utsname namespace */
-#define CLONE_NEWIPC 0x08000000         /* New ipc namespace */
-#define CLONE_NEWUSER 0x10000000        /* New user namespace */
-#define CLONE_NEWPID 0x20000000         /* New pid namespace */
-#define CLONE_NEWNET 0x40000000         /* New network namespace */
-#define CLONE_IO 0x80000000             /* Clone io context */
+#define CLONE_UNTRACED                                                         \
+    0x00800000 /* set if the tracing process can't force CLONE_PTRACE on this  \
+                  clone */
+#define CLONE_CHILD_SETTID 0x01000000 /* set the TID in the child */
+#define CLONE_NEWCGROUP 0x02000000    /* New cgroup namespace */
+#define CLONE_NEWUTS 0x04000000       /* New utsname namespace */
+#define CLONE_NEWIPC 0x08000000       /* New ipc namespace */
+#define CLONE_NEWUSER 0x10000000      /* New user namespace */
+#define CLONE_NEWPID 0x20000000       /* New pid namespace */
+#define CLONE_NEWNET 0x40000000       /* New network namespace */
+#define CLONE_IO 0x80000000           /* Clone io context */
 
-typedef enum task_state
-{
+typedef enum task_state {
     TASK_CREATING = 1,
     TASK_RUNNING,
     TASK_READY,
@@ -91,26 +99,22 @@ typedef struct arch_context arch_context_t;
 struct vfs_node;
 typedef struct vfs_node *vfs_node_t;
 
-struct rlimit
-{
+struct rlimit {
     size_t rlim_cur;
     size_t rlim_max;
 };
 
-struct timeval
-{
+struct timeval {
     long tv_sec;
     long tv_usec;
 };
 
-struct itimerval
-{
+struct itimerval {
     struct timeval it_interval;
     struct timeval it_value;
 };
 
-typedef struct int_timer_internal
-{
+typedef struct int_timer_internal {
     uint64_t at;
     uint64_t reset;
 } int_timer_internal_t;
@@ -122,8 +126,7 @@ union sigval;
 #define SIGEV_THREAD 2    /* deliver via thread creation */
 #define SIGEV_THREAD_ID 4 /* deliver to thread */
 
-typedef struct kernel_timer
-{
+typedef struct kernel_timer {
     clockid_t clock_type;
     int sigev_signo;
     union sigval sigev_value;
@@ -137,14 +140,12 @@ typedef struct kernel_timer
 struct fd;
 typedef struct fd fd_t;
 
-typedef struct fd_info
-{
+typedef struct fd_info {
     fd_t *fds[MAX_FD_NUM];
     int ref_count;
 } fd_info_t;
 
-typedef struct task
-{
+typedef struct task {
     uint64_t syscall_stack;
     uint64_t syscall_stack_user;
     uint64_t signal_syscall_stack;
@@ -202,7 +203,8 @@ void sched_update_itimer();
 void sched_update_timerfd();
 void sched_check_wakeup();
 
-task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg, uint64_t priority);
+task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
+                    uint64_t priority);
 void task_init();
 
 struct pt_regs;
@@ -215,7 +217,8 @@ uint64_t task_exit(int64_t code);
 #define WUNTRACED 2
 
 uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options);
-uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp, int *parent_tid, int *child_tid, uint64_t tls);
+uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
+                   int *parent_tid, int *child_tid, uint64_t tls);
 struct timespec;
 uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem);
 
@@ -232,51 +235,35 @@ void task_unblock(task_t *task, int reason);
 #define PR_SET_TIMERSLACK 23
 #define SECCOMP_MODE_STRICT 1
 
-uint64_t sys_prctl(uint64_t options, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5);
+uint64_t sys_prctl(uint64_t options, uint64_t arg2, uint64_t arg3,
+                   uint64_t arg4, uint64_t arg5);
 
-uint64_t sys_timer_create(clockid_t clockid, struct sigevent *sevp, timer_t *timerid);
-uint64_t sys_timer_settime(timer_t timerid, const struct itimerval *new_value, struct itimerval *old_value);
+uint64_t sys_timer_create(clockid_t clockid, struct sigevent *sevp,
+                          timer_t *timerid);
+uint64_t sys_timer_settime(timer_t timerid, const struct itimerval *new_value,
+                           struct itimerval *old_value);
 
 uint64_t sys_reboot(int magic1, int magic2, uint32_t cmd, void *arg);
 
-static inline uint64_t sys_getpgid(uint64_t pid)
-{
-    return 0;
-}
+static inline uint64_t sys_getpgid(uint64_t pid) { return 0; }
 
-static inline uint64_t sys_setpgid(uint64_t pid, uint64_t pgid)
-{
-    return 0;
-}
+static inline uint64_t sys_setpgid(uint64_t pid, uint64_t pgid) { return 0; }
 
-static inline uint64_t sys_getuid()
-{
-    return current_task->uid;
-}
+static inline uint64_t sys_getuid() { return current_task->uid; }
 
-static inline uint64_t sys_setuid(uint64_t uid)
-{
+static inline uint64_t sys_setuid(uint64_t uid) {
     current_task->uid = uid;
     return 0;
 }
 
-static inline uint64_t sys_getgid()
-{
-    return current_task->gid;
-}
+static inline uint64_t sys_getgid() { return current_task->gid; }
 
-static inline uint64_t sys_geteuid()
-{
-    return current_task->euid;
-}
+static inline uint64_t sys_geteuid() { return current_task->euid; }
 
-static inline uint64_t sys_getegid()
-{
-    return current_task->egid;
-}
+static inline uint64_t sys_getegid() { return current_task->egid; }
 
-static inline uint64_t sys_getresuid(uint64_t *ruid, uint64_t *euid, uint64_t *suid)
-{
+static inline uint64_t sys_getresuid(uint64_t *ruid, uint64_t *euid,
+                                     uint64_t *suid) {
     *ruid = current_task->ruid;
     *euid = current_task->euid;
     *suid = current_task->uid;
@@ -284,8 +271,8 @@ static inline uint64_t sys_getresuid(uint64_t *ruid, uint64_t *euid, uint64_t *s
     return 0;
 }
 
-static inline uint64_t sys_getresgid(uint64_t *rgid, uint64_t *egid, uint64_t *sgid)
-{
+static inline uint64_t sys_getresgid(uint64_t *rgid, uint64_t *egid,
+                                     uint64_t *sgid) {
     *rgid = current_task->rgid;
     *egid = current_task->egid;
     *sgid = current_task->gid;
@@ -293,44 +280,28 @@ static inline uint64_t sys_getresgid(uint64_t *rgid, uint64_t *egid, uint64_t *s
     return 0;
 }
 
-static inline uint64_t sys_setgid(uint64_t gid)
-{
+static inline uint64_t sys_setgid(uint64_t gid) {
     current_task->gid = gid;
     return 0;
 }
 
-static inline uint64_t sys_getsid(uint64_t pid)
-{
-    return 0;
-}
+static inline uint64_t sys_getsid(uint64_t pid) { return 0; }
 
-static inline uint64_t sys_setsid()
-{
-    return 0;
-}
+static inline uint64_t sys_setsid() { return 0; }
 
-static inline uint64_t sys_fork(struct pt_regs *regs)
-{
+static inline uint64_t sys_fork(struct pt_regs *regs) {
     return task_fork(regs, false);
 }
 
-static inline uint64_t sys_vfork(struct pt_regs *regs)
-{
+static inline uint64_t sys_vfork(struct pt_regs *regs) {
     return task_fork(regs, true);
 }
 
-static inline uint64_t sys_getpid()
-{
-    return current_task->pid;
-}
+static inline uint64_t sys_getpid() { return current_task->pid; }
 
-static inline uint64_t sys_getppid()
-{
-    return current_task->ppid;
-}
+static inline uint64_t sys_getppid() { return current_task->ppid; }
 
-static inline uint64_t sys_getgroups(int gidsetsize, uint32_t *gids)
-{
+static inline uint64_t sys_getgroups(int gidsetsize, uint32_t *gids) {
     if (!gidsetsize)
         return 1;
 

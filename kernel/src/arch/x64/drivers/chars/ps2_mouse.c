@@ -8,52 +8,42 @@
 #include <drivers/fb.h>
 #include <libs/keys.h>
 
-int64_t mouse_install(uint64_t vector, uint64_t arg)
-{
+int64_t mouse_install(uint64_t vector, uint64_t arg) {
     ioapic_add(vector, 12);
 
     return 0;
 }
 
-irq_controller_t mouse_controller =
-    {
-        .install = mouse_install,
-        .unmask = apic_unmask,
-        .mask = apic_mask,
-        .ack = apic_ack,
+irq_controller_t mouse_controller = {
+    .install = mouse_install,
+    .unmask = apic_unmask,
+    .mask = apic_mask,
+    .ack = apic_ack,
 };
 
-void mouse_wait(uint8_t a_type)
-{
+void mouse_wait(uint8_t a_type) {
     uint32_t timeout = 100000;
-    if (!a_type)
-    {
-        while (--timeout)
-        {
+    if (!a_type) {
+        while (--timeout) {
             if (io_in8(PORT_KB_STATUS) & MOUSE_BBIT)
                 break;
         }
-    }
-    else
-    {
-        while (--timeout)
-        {
+    } else {
+        while (--timeout) {
             if (!((io_in8(PORT_KB_STATUS) & MOUSE_ABIT)))
                 break;
         }
     }
 }
 
-void mouse_write(uint8_t write)
-{
+void mouse_write(uint8_t write) {
     mouse_wait(1);
     io_out8(PORT_KB_CMD, KB_SEND2MOUSE);
     mouse_wait(1);
     io_out8(PORT_KB_DATA, write);
 }
 
-uint8_t mouse_read()
-{
+uint8_t mouse_read() {
     mouse_wait(0);
     char t = io_in8(PORT_KB_DATA);
     return t;
@@ -76,8 +66,7 @@ spinlock_t mouse_irq_lock = {0};
 
 extern void handle_mouse_event(uint8_t flag, int8_t x, int8_t y);
 
-void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs)
-{
+void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs) {
     uint8_t byte = mouse_read();
 
     if (!mouse_event)
@@ -89,28 +78,20 @@ void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs)
     // rest are just for demonstration
 
     // debugf("%d %d %d\n", byte1, byte2, byte3);
-    if (mouseCycle == 0xffffffff)
-    {
-        if (byte == 0xfa)
-        {
+    if (mouseCycle == 0xffffffff) {
+        if (byte == 0xfa) {
             mouseCycle = 0;
         }
     }
-    if (mouseCycle == 0)
-    {
-        if ((byte & 0xc8) == 0x08)
-        {
+    if (mouseCycle == 0) {
+        if ((byte & 0xc8) == 0x08) {
             mouse1 = byte;
             mouseCycle = 1;
         }
-    }
-    else if (mouseCycle == 1)
-    {
+    } else if (mouseCycle == 1) {
         mouse2 = byte;
         mouseCycle = 2;
-    }
-    else if (mouseCycle == 2)
-    {
+    } else if (mouseCycle == 2) {
         int mouse3 = byte;
 
         int x = mouse2;
@@ -140,9 +121,9 @@ void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs)
     spin_unlock(&mouse_irq_lock);
 }
 
-void mouse_init()
-{
-    irq_regist_irq(PS2_MOUSE_INTERRUPT_VECTOR, mouse_handler, 12, NULL, &mouse_controller, "PS2 MOUSE");
+void mouse_init() {
+    irq_regist_irq(PS2_MOUSE_INTERRUPT_VECTOR, mouse_handler, 12, NULL,
+                   &mouse_controller, "PS2 MOUSE");
 
     mouse_wait(1);
     io_out8(0x64, 0xA8);
@@ -166,10 +147,9 @@ void mouse_init()
     mouse_write(0xF4);
     mouse_read();
 
-    for (uint64_t i = 0; i < MAX_DEV_NUM; i++)
-    {
-        if (devfs_handles[i] != NULL && !strncmp(devfs_handles[i]->name, "event1", MAX_DEV_NAME_LEN))
-        {
+    for (uint64_t i = 0; i < MAX_DEV_NUM; i++) {
+        if (devfs_handles[i] != NULL &&
+            !strncmp(devfs_handles[i]->name, "event1", MAX_DEV_NAME_LEN)) {
             devfs_handle_t handle = devfs_handles[i];
             mouse_event = (dev_input_event_t *)handle->data;
             break;
@@ -183,20 +163,17 @@ void mouse_init()
     mouse_event->devname = strdup("input/event1");
 }
 
-struct input_repeat_params
-{
+struct input_repeat_params {
     int delay;
     int period;
 };
 
-size_t mouse_event_bit(void *data, uint64_t request, void *arg)
-{
+size_t mouse_event_bit(void *data, uint64_t request, void *arg) {
     size_t number = _IOC_NR(request);
     size_t size = _IOC_SIZE(request);
 
     size_t ret = (size_t)-ENOSYS;
-    switch (number)
-    {
+    switch (number) {
     // case 0x03:
     // {
     //     struct input_repeat_params *params = arg;
@@ -204,8 +181,7 @@ size_t mouse_event_bit(void *data, uint64_t request, void *arg)
     //     params->period = 50;
     //     break;
     // }
-    case 0x20:
-    {
+    case 0x20: {
         size_t out = (1 << EV_KEY) | (1 << EV_REL);
         ret = MIN(sizeof(size_t), size);
         memcpy(arg, &out, ret);
@@ -215,27 +191,23 @@ size_t mouse_event_bit(void *data, uint64_t request, void *arg)
     case (0x20 + EV_MSC):
     case (0x20 + EV_SND):
     case (0x20 + EV_LED):
-    case (0x20 + EV_ABS):
-    {
+    case (0x20 + EV_ABS): {
         *(size_t *)arg = 0;
         ret = MIN(sizeof(size_t), size);
         break;
     }
-    case (0x20 + EV_FF):
-    {
+    case (0x20 + EV_FF): {
         *(size_t *)arg = 0;
         ret = MIN(16, size);
         break;
     }
-    case (0x20 + EV_REL):
-    {
+    case (0x20 + EV_REL): {
         size_t out = (1 << REL_X) | (1 << REL_Y);
         ret = MIN(sizeof(size_t), size);
         memcpy(arg, &out, ret);
         break;
     }
-    case (0x20 + EV_KEY):
-    {
+    case (0x20 + EV_KEY): {
         uint8_t map[96] = {0};
         map[BTN_RIGHT / 8] |= (1 << (BTN_RIGHT % 8));
         map[BTN_LEFT / 8] |= (1 << (BTN_LEFT % 8));
@@ -243,8 +215,7 @@ size_t mouse_event_bit(void *data, uint64_t request, void *arg)
         memcpy(arg, map, ret);
         break;
     }
-    case (0x40 + ABS_X):
-    {
+    case (0x40 + ABS_X): {
         struct input_absinfo *target = (struct input_absinfo *)arg;
         memset(target, 0, sizeof(struct input_absinfo));
         target->value = 0; // todo
@@ -253,8 +224,7 @@ size_t mouse_event_bit(void *data, uint64_t request, void *arg)
         ret = 0;
         break;
     }
-    case (0x40 + ABS_Y):
-    {
+    case (0x40 + ABS_Y): {
         struct input_absinfo *target = (struct input_absinfo *)arg;
         memset(target, 0, sizeof(struct input_absinfo));
         target->value = 0; // todo
@@ -278,7 +248,8 @@ size_t mouse_event_bit(void *data, uint64_t request, void *arg)
         ret = 0;
         break;
     default:
-        printk("mouse_event_bit(): Unsupported ioctl: request = %#018lx\n", request);
+        printk("mouse_event_bit(): Unsupported ioctl: request = %#018lx\n",
+               request);
         break;
     }
 

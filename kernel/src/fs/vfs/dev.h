@@ -6,38 +6,40 @@
 #define MAX_DEV_NUM 128
 #define MAX_DEV_NAME_LEN 128
 
-typedef struct devfs_handle
-{
+typedef struct devfs_handle {
     char name[MAX_DEV_NAME_LEN];
-    ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len, uint64_t flags);
-    ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len, uint64_t flags);
+    ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len,
+                    uint64_t flags);
+    ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len,
+                     uint64_t flags);
     ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg);
     ssize_t (*poll)(void *data, size_t event);
     void *(*map)(void *data, void *addr, uint64_t offset, uint64_t len);
     void *data;
 } *devfs_handle_t;
 
-typedef struct stdio_handle
-{
+typedef struct stdio_handle {
     int64_t at_process_group_id;
 } stdio_handle_t;
 
 extern devfs_handle_t devfs_handles[MAX_DEV_NUM];
 
-typedef struct partition_node
-{
+typedef struct partition_node {
     vfs_node_t node;
 } *partition_node_t;
 
 extern partition_node_t dev_nodes[MAX_PARTITIONS_NUM];
 
-vfs_node_t regist_dev(const char *name,
-                      ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len, uint64_t flags),
-                      ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len, uint64_t flags),
-                      ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg),
-                      ssize_t (*poll)(void *data, size_t event),
-                      void *(*map)(void *data, void *addr, uint64_t offset, uint64_t len),
-                      void *data);
+vfs_node_t
+regist_dev(const char *name,
+           ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len,
+                           uint64_t flags),
+           ssize_t (*write)(void *data, uint64_t offset, const void *buf,
+                            uint64_t len, uint64_t flags),
+           ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg),
+           ssize_t (*poll)(void *data, size_t event),
+           void *(*map)(void *data, void *addr, uint64_t offset, uint64_t len),
+           void *data);
 
 void dev_init();
 void dev_init_after_mount_root();
@@ -65,14 +67,12 @@ void dev_init_after_sysfs();
 #define VT_ACTIVATE 0x5606   /* make vt active */
 #define VT_WAITACTIVE 0x5607 /* wait for vt active */
 
-struct vt_state
-{
+struct vt_state {
     uint16_t v_active; // 活动终端号
     uint16_t v_state;  // 终端状态标志
 };
 
-struct vt_mode
-{
+struct vt_mode {
     char mode;    // 终端模式
     char waitv;   // 垂直同步
     short relsig; // 释放信号
@@ -134,16 +134,14 @@ typedef size_t (*event_bit_t)(void *data, uint64_t request, void *arg);
 #define ABS_MAX 0x3f
 #define ABS_CNT (ABS_MAX + 1)
 
-struct input_id
-{
+struct input_id {
     uint16_t bustype;
     uint16_t vendor;
     uint16_t product;
     uint16_t version;
 };
 
-struct input_absinfo
-{
+struct input_absinfo {
     int32_t value;
     int32_t minimum;
     int32_t maximum;
@@ -152,8 +150,7 @@ struct input_absinfo
     int32_t resolution;
 };
 
-struct input_event
-{
+struct input_event {
     uint64_t sec;
     uint64_t usec;
     uint16_t type;
@@ -164,8 +161,7 @@ struct input_event
 #define CIRC_READABLE(wr, rd, sz) ((wr - rd + sz) % sz)
 #define CIRC_WRITABLE(wr, rd, sz) ((rd - wr - 1 + sz) % sz)
 
-typedef struct circular_int
-{
+typedef struct circular_int {
     uint8_t *buff;
     size_t buff_size;
 
@@ -177,11 +173,11 @@ typedef struct circular_int
 
 void circular_int_init(circular_int_t *circ, size_t size);
 size_t circular_int_read(circular_int_t *circ, uint8_t *buff, size_t length);
-size_t circular_int_write(circular_int_t *circ, const uint8_t *buff, size_t length);
+size_t circular_int_write(circular_int_t *circ, const uint8_t *buff,
+                          size_t length);
 size_t circular_int_read_poll(circular_int_t *circ);
 
-typedef struct dev_input_event
-{
+typedef struct dev_input_event {
     char *devname;
     char *physloc;
 
@@ -213,6 +209,7 @@ typedef struct dev_input_event
 #define LED_MAX 0x0f
 #define LED_CNT (LED_MAX + 1)
 
-void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code, int32_t value, uint64_t sec, uint64_t usecs);
+void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code,
+                          int32_t value, uint64_t sec, uint64_t usecs);
 
 void stdio_init();

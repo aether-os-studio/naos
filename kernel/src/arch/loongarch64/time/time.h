@@ -2,8 +2,7 @@
 
 #include <libs/klibc.h>
 
-typedef struct
-{
+typedef struct {
     uint64_t timestamp;
 } tm;
 

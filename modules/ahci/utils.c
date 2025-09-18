@@ -1,7 +1,6 @@
 #include "ahci.h"
 
-int ahci_try_send(struct hba_port *port, int slot)
-{
+int ahci_try_send(struct hba_port *port, int slot) {
     int retries = 0, bitmask = 1 << slot;
 
     // 确保端口是空闲的
@@ -9,24 +8,21 @@ int ahci_try_send(struct hba_port *port, int slot)
 
     hba_clear_reg(port->regs[HBA_RPxIS]);
 
-    while (retries < MAX_RETRY)
-    {
+    while (retries < MAX_RETRY) {
         // PxCI寄存器置位，告诉HBA这儿有个数据需要发送到SATA端口
         port->regs[HBA_RPxCI] = bitmask;
 
-        uint64_t counter = wait_until_expire(!(port->regs[HBA_RPxCI] & bitmask), 10000);
+        uint64_t counter =
+            wait_until_expire(!(port->regs[HBA_RPxCI] & bitmask), 10000);
         if (counter <= 1)
             return false;
 
         port->regs[HBA_RPxCI] &= ~bitmask; // ensure CI bit is cleared
-        if ((port->regs[HBA_RPxTFD] & HBA_PxTFD_ERR))
-        {
+        if ((port->regs[HBA_RPxTFD] & HBA_PxTFD_ERR)) {
             // 有错误
             sata_read_error(port);
             retries++;
-        }
-        else
-        {
+        } else {
             break;
         }
     }
@@ -52,14 +48,13 @@ int ahci_try_send(struct hba_port *port, int slot)
 #define AHCI_CMD_FR (1 << 14) // FIS Receive Running
 #define AHCI_CMD_CR (1 << 15) // Command Running
 
-void ahci_post(struct hba_port *port, struct hba_cmd_state *state, int slot)
-{
+void ahci_post(struct hba_port *port, struct hba_cmd_state *state, int slot) {
     int bitmask = 1 << slot;
 
     // 确保端口是空闲的
-    uint64_t counter = wait_until_expire(!(port->regs[HBA_RPxTFD] & (HBA_PxTFD_BSY | HBA_PxTFD_DRQ)), 10000);
-    if (!counter)
-    {
+    uint64_t counter = wait_until_expire(
+        !(port->regs[HBA_RPxTFD] & (HBA_PxTFD_BSY | HBA_PxTFD_DRQ)), 10000);
+    if (!counter) {
         printk("AHCI wait timeout\n");
         return;
     }
@@ -70,18 +65,15 @@ void ahci_post(struct hba_port *port, struct hba_cmd_state *state, int slot)
     port->cmdctx.tracked_ci |= bitmask;
     port->regs[HBA_RPxCI] |= bitmask;
 
-    while (1)
-    {
+    while (1) {
         if ((port->regs[HBA_RPxCI] & (1 << slot)) == 0)
             break;
-        if (port->regs[HBA_RPxIS] & HBA_PxINTR_TFE)
-        {
+        if (port->regs[HBA_RPxIS] & HBA_PxINTR_TFE) {
             goto err;
         }
     }
 
-    if (port->regs[HBA_RPxIS] & HBA_PxINTR_TFE)
-    {
+    if (port->regs[HBA_RPxIS] & HBA_PxINTR_TFE) {
     err:
         printk("AHCI task file error\n");
 

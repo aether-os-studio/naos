@@ -20,9 +20,11 @@
 #define KBSTATUS_IBF 0x02
 #define KBSTATUS_OBF 0x01
 
-#define wait_KB_write() wait_until_expire(!(io_in8(PORT_KB_STATUS) & KBSTATUS_IBF), 1000000)
+#define wait_KB_write()                                                        \
+    wait_until_expire(!(io_in8(PORT_KB_STATUS) & KBSTATUS_IBF), 1000000)
 
-#define wait_KB_read() wait_until_expire(!(io_in8(PORT_KB_STATUS) & KBSTATUS_OBF), 1000000)
+#define wait_KB_read()                                                         \
+    wait_until_expire(!(io_in8(PORT_KB_STATUS) & KBSTATUS_OBF), 1000000)
 
 bool kb_is_ocupied();
 

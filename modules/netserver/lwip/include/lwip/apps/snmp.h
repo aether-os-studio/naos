@@ -8,8 +8,8 @@
  * Copyright (c) 2001, 2002 Axon Digital Design B.V., The Netherlands.
  * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without modification,
- * are permitted provided that the following conditions are met:
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
  *
  * 1. Redistributions of source code must retain the above copyright notice,
  *    this list of conditions and the following disclaimer.
@@ -21,14 +21,14 @@
  *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
  * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
- * SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
- * OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
- * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
- * OF SUCH DAMAGE.
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
+ * EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  * This file is part of the lwIP TCP/IP stack.
  *
@@ -51,20 +51,19 @@ extern "C" {
 #include "lwip/apps/snmp_core.h"
 
 /** SNMP variable binding descriptor (publicly needed for traps) */
-struct snmp_varbind
-{
-  /** pointer to next varbind, NULL for last in list */
-  struct snmp_varbind *next;
+struct snmp_varbind {
+    /** pointer to next varbind, NULL for last in list */
+    struct snmp_varbind *next;
 
-  /** object identifier */
-  struct snmp_obj_id oid;
+    /** object identifier */
+    struct snmp_obj_id oid;
 
-  /** value ASN1 type */
-  u8_t type;
-  /** object value length */
-  u16_t value_len;
-  /** object value */
-  void *value;
+    /** value ASN1 type */
+    u8_t type;
+    /** object value length */
+    u16_t value_len;
+    /** object value */
+    void *value;
 };
 
 /**
@@ -74,8 +73,9 @@ struct snmp_varbind
 void snmp_init(void);
 void snmp_set_mibs(const struct snmp_mib **mibs, u8_t num_mibs);
 
-void snmp_set_device_enterprise_oid(const struct snmp_obj_id* device_enterprise_oid);
-const struct snmp_obj_id* snmp_get_device_enterprise_oid(void);
+void snmp_set_device_enterprise_oid(
+    const struct snmp_obj_id *device_enterprise_oid);
+const struct snmp_obj_id *snmp_get_device_enterprise_oid(void);
 
 void snmp_trap_dst_enable(u8_t dst_idx, u8_t enable);
 void snmp_trap_dst_ip_set(u8_t dst_idx, const ip_addr_t *dst);
@@ -96,21 +96,31 @@ void snmp_trap_dst_ip_set(u8_t dst_idx, const ip_addr_t *dst);
 #define SNMP_GENTRAP_ENTERPRISE_SPECIFIC 6
 
 err_t snmp_send_trap_generic(s32_t generic_trap);
-err_t snmp_send_trap_specific(s32_t specific_trap, struct snmp_varbind *varbinds);
-err_t snmp_send_trap(const struct snmp_obj_id* oid, s32_t generic_trap, s32_t specific_trap, struct snmp_varbind *varbinds);
+err_t snmp_send_trap_specific(s32_t specific_trap,
+                              struct snmp_varbind *varbinds);
+err_t snmp_send_trap(const struct snmp_obj_id *oid, s32_t generic_trap,
+                     s32_t specific_trap, struct snmp_varbind *varbinds);
 
-err_t snmp_send_inform_generic(s32_t generic_trap, struct snmp_varbind *varbinds, s32_t *ptr_request_id);
-err_t snmp_send_inform_specific(s32_t specific_trap, struct snmp_varbind *varbinds, s32_t *ptr_request_id);
-err_t snmp_send_inform(const struct snmp_obj_id* oid, s32_t generic_trap, s32_t specific_trap, struct snmp_varbind *varbinds, s32_t *ptr_request_id);
+err_t snmp_send_inform_generic(s32_t generic_trap,
+                               struct snmp_varbind *varbinds,
+                               s32_t *ptr_request_id);
+err_t snmp_send_inform_specific(s32_t specific_trap,
+                                struct snmp_varbind *varbinds,
+                                s32_t *ptr_request_id);
+err_t snmp_send_inform(const struct snmp_obj_id *oid, s32_t generic_trap,
+                       s32_t specific_trap, struct snmp_varbind *varbinds,
+                       s32_t *ptr_request_id);
 struct snmp_request;
-typedef void (*snmp_inform_callback_fct)(struct snmp_request *request, void* callback_arg);
-void snmp_set_inform_callback(snmp_inform_callback_fct inform_callback, void* callback_arg);
+typedef void (*snmp_inform_callback_fct)(struct snmp_request *request,
+                                         void *callback_arg);
+void snmp_set_inform_callback(snmp_inform_callback_fct inform_callback,
+                              void *callback_arg);
 
 void snmp_set_default_trap_version(u8_t snmp_version);
 u8_t snmp_get_default_trap_version(void);
 
 #define SNMP_AUTH_TRAPS_DISABLED 0
-#define SNMP_AUTH_TRAPS_ENABLED  1
+#define SNMP_AUTH_TRAPS_ENABLED 1
 void snmp_set_auth_traps_enabled(u8_t enable);
 u8_t snmp_get_auth_traps_enabled(void);
 
@@ -121,18 +131,20 @@ void snmp_v1_enable(u8_t enable);
 void snmp_v2c_enable(u8_t enable);
 void snmp_v3_enable(u8_t enable);
 
-const char * snmp_get_community(void);
-const char * snmp_get_community_write(void);
-const char * snmp_get_community_trap(void);
-void snmp_set_community(const char * const community);
-void snmp_set_community_write(const char * const community);
-void snmp_set_community_trap(const char * const community);
+const char *snmp_get_community(void);
+const char *snmp_get_community_write(void);
+const char *snmp_get_community_trap(void);
+void snmp_set_community(const char *const community);
+void snmp_set_community_write(const char *const community);
+void snmp_set_community_trap(const char *const community);
 
 void snmp_coldstart_trap(void);
 void snmp_authfail_trap(void);
 
-typedef void (*snmp_write_callback_fct)(const u32_t* oid, u8_t oid_len, void* callback_arg);
-void snmp_set_write_callback(snmp_write_callback_fct write_callback, void* callback_arg);
+typedef void (*snmp_write_callback_fct)(const u32_t *oid, u8_t oid_len,
+                                        void *callback_arg);
+void snmp_set_write_callback(snmp_write_callback_fct write_callback,
+                             void *callback_arg);
 
 #endif /* LWIP_SNMP */
 

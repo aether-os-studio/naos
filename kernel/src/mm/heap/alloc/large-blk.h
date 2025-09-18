@@ -3,8 +3,7 @@
 #include "alloc.h"
 #include "freelist.h"
 
-struct large_blk
-{
+struct large_blk {
     large_blk_t next;
     large_blk_t prev;
     void *ptr;
@@ -20,14 +19,14 @@ static inline large_blk_t *large_blk_blokp(large_blks_t blks, void *ptr);
  *\param ptr      大内存块指针
  *\return 大块内存空闲链表指针
  */
-static inline large_blk_t *large_blk_blokp(large_blks_t blks, void *ptr)
-{
-    size_t hash = ((size_t)ptr / SIZE_4k | (size_t)ptr / SIZE_4k / LARGEBLKLIST_NUM / 2);
+static inline large_blk_t *large_blk_blokp(large_blks_t blks, void *ptr) {
+    size_t hash =
+        ((size_t)ptr / SIZE_4k | (size_t)ptr / SIZE_4k / LARGEBLKLIST_NUM / 2);
     return blks + hash % LARGEBLKLIST_NUM;
 }
 
-static inline large_blk_t large_blk_put(large_blks_t blks, void *ptr, size_t size)
-{
+static inline large_blk_t large_blk_put(large_blks_t blks, void *ptr,
+                                        size_t size) {
     large_blk_t *blk_p = large_blk_blokp(blks, ptr);
     large_blk_t blk = malloc(sizeof(struct large_blk));
     if (blk == NULL)
@@ -38,11 +37,9 @@ static inline large_blk_t large_blk_put(large_blks_t blks, void *ptr, size_t siz
     return blk;
 }
 
-static inline large_blk_t large_blk_find(large_blks_t blks, void *ptr)
-{
+static inline large_blk_t large_blk_find(large_blks_t blks, void *ptr) {
     large_blk_t *blk_p = large_blk_blokp(blks, ptr);
-    for (large_blk_t blk = *blk_p; blk; blk = blk->next)
-    {
+    for (large_blk_t blk = *blk_p; blk; blk = blk->next) {
         if (blk->ptr == ptr)
             return blk;
     }
@@ -58,16 +55,14 @@ static inline large_blk_t large_blk_find(large_blks_t blks, void *ptr)
  *\param delmem   释放内存的回调函数
  *\return 分配的内存地址
  */
-static inline void *large_blk_alloc(size_t size, large_blks_t blks, cb_reqmem_t reqmem,
-                                    cb_delmem_t delmem)
-{
+static inline void *large_blk_alloc(size_t size, large_blks_t blks,
+                                    cb_reqmem_t reqmem, cb_delmem_t delmem) {
     size = PADDING_4k(size);
     void *ptr = reqmem(NULL, size);
     if (ptr == NULL)
         return NULL;
     large_blk_t blk = large_blk_put(blks, ptr, size);
-    if (blk == NULL)
-    {
+    if (blk == NULL) {
         delmem(ptr, size);
         return NULL;
     }
@@ -87,8 +82,8 @@ static inline void *large_blk_alloc(size_t size, large_blks_t blks, cb_reqmem_t 
  *\param delmem   释放内存的回调函数
  *\return 是否释放成功
  */
-static inline bool large_blk_free(large_blks_t blks, void *ptr, cb_delmem_t delmem)
-{
+static inline bool large_blk_free(large_blks_t blks, void *ptr,
+                                  cb_delmem_t delmem) {
     large_blk_t *blk_p = large_blk_blokp(blks, ptr);
     large_blk_t blk = large_blk_find(blks, ptr);
     if (blk == NULL)

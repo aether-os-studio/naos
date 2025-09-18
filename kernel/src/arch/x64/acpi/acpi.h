@@ -2,8 +2,7 @@
 
 #include <libs/klibc.h>
 
-typedef struct
-{
+typedef struct {
     uint8_t addressid;
     uint8_t register_bitwidth;
     uint8_t register_bitoffset;
@@ -11,8 +10,7 @@ typedef struct
     uint64_t address;
 } acpi_address_t;
 
-struct ACPISDTheader
-{
+struct ACPISDTheader {
     char signature[4];
     uint32_t length;
     uint8_t revision;
@@ -24,8 +22,7 @@ struct ACPISDTheader
     uint32_t creator_revsion;
 };
 
-typedef struct
-{
+typedef struct {
     char signature[8];         // 签名
     uint8_t checksum;          // 校验和
     char oem_id[6];            // OEM ID
@@ -37,28 +34,24 @@ typedef struct
     uint8_t reserved[3];       // 保留字段
 } __attribute__((packed)) RSDP;
 
-typedef struct
-{
+typedef struct {
     struct ACPISDTheader h;
     uint64_t pointer_to_other_sdt;
 } __attribute__((packed)) XSDT;
 
-typedef struct
-{
+typedef struct {
     struct ACPISDTheader h;
     uint32_t local_apic_address;
     uint32_t flags;
     void *entries;
 } __attribute__((packed)) MADT;
 
-struct madt_header
-{
+struct madt_header {
     uint8_t entry_type;
     uint8_t length;
 } __attribute__((packed));
 
-struct madt_io_apic
-{
+struct madt_io_apic {
     struct madt_header h;
     uint8_t apic_id;
     uint8_t reserved;
@@ -66,22 +59,19 @@ struct madt_io_apic
     uint32_t gsib;
 } __attribute__((packed));
 
-struct madt_local_apic
-{
+struct madt_local_apic {
     struct madt_header h;
     uint8_t acpi_processor_uid;
     uint8_t local_apic_id;
     uint32_t flags;
 };
 
-typedef struct
-{
+typedef struct {
     struct ACPISDTheader h;
     uint8_t definition_block;
 } acpi_dsdt_t;
 
-struct generic_address
-{
+struct generic_address {
     uint8_t address_space;
     uint8_t bit_width;
     uint8_t bit_offset;
@@ -89,8 +79,7 @@ struct generic_address
     uint64_t address;
 } __attribute__((packed));
 
-struct hpet
-{
+struct hpet {
     struct ACPISDTheader h;
     uint32_t event_block_id;
     struct generic_address base_address;
@@ -98,16 +87,14 @@ struct hpet
     uint8_t page_oem_flags;
 } __attribute__((packed));
 
-typedef struct
-{
+typedef struct {
     uint64_t configurationAndCapability;
     uint64_t comparatorValue;
     uint64_t fsbInterruptRoute;
     uint64_t unused;
 } __attribute__((packed)) HpetTimer;
 
-typedef struct
-{
+typedef struct {
     uint64_t generalCapabilities;
     uint64_t reserved0;
     uint64_t generalConfiguration;
@@ -119,8 +106,7 @@ typedef struct
     HpetTimer timers[];
 } __attribute__((packed)) volatile HpetInfo;
 
-typedef struct dsdt_table
-{
+typedef struct dsdt_table {
     uint8_t signature[4];
     uint32_t length;
     uint8_t revision;
@@ -132,8 +118,7 @@ typedef struct dsdt_table
     uint8_t definition_block;
 } __attribute__((packed)) dsdt_table_t;
 
-typedef struct facp_table
-{
+typedef struct facp_table {
     struct ACPISDTheader h;
     uint32_t firmware_ctrl;
     uint32_t dsdt;
@@ -188,14 +173,12 @@ typedef struct facp_table
     struct generic_address x_gpe1_blk;
 } __attribute__((packed)) acpi_facp_t;
 
-typedef struct
-{
+typedef struct {
     struct ACPISDTheader header;
     uint64_t reserved;
 } __attribute__((packed)) MCFG;
 
-typedef struct
-{
+typedef struct {
     uint64_t base_address;
     uint16_t pci_segment_group;
     uint8_t start_bus;
@@ -210,8 +193,7 @@ typedef struct madt_io_apic MadtIOApic;
 typedef struct madt_local_apic MadtLocalApic;
 typedef struct facp_table acpi_facp_t;
 
-typedef struct madt_int_src_override
-{
+typedef struct madt_int_src_override {
     uint8_t bus_source;
     uint8_t irq_source;
     uint32_t gsi_base;

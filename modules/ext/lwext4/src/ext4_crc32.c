@@ -161,8 +161,7 @@ static const uint32_t crc32c_tab[256] = {
     0xAD7D5351L};
 
 static inline uint32_t crc32(uint32_t crc, const void *buf, uint32_t size,
-                             const uint32_t *tab)
-{
+                             const uint32_t *tab) {
     const uint8_t *p = (const uint8_t *)buf;
 
     while (size--)
@@ -171,13 +170,11 @@ static inline uint32_t crc32(uint32_t crc, const void *buf, uint32_t size,
     return (crc);
 }
 
-uint32_t ext4_crc32(uint32_t crc, const void *buf, uint32_t size)
-{
+uint32_t ext4_crc32(uint32_t crc, const void *buf, uint32_t size) {
     return crc32(crc, buf, size, crc32_tab);
 }
 
-uint32_t ext4_crc32c(uint32_t crc, const void *buf, uint32_t size)
-{
+uint32_t ext4_crc32c(uint32_t crc, const void *buf, uint32_t size) {
     return crc32(crc, buf, size, crc32c_tab);
 }
 

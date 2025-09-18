@@ -5,7 +5,7 @@
 #include <arch/aarch64/irq/ptrace.h>
 #include <libs/elf.h>
 
-#define __sysop_encode(op1, crn, crm, op2) \
+#define __sysop_encode(op1, crn, crm, op2)                                     \
     "#" #op1 ",C" #crn ",C" #crm ",#" #op2
 
 #define tlbi_alle1 __sysop_encode(4, 8, 7, 4)
@@ -17,15 +17,13 @@
 
 #define sys_a0(op) asm volatile("sys " op)
 
-typedef struct arch_context
-{
+typedef struct arch_context {
     struct pt_regs *ctx;
     task_mm_info_t *mm;
     bool usermode;
 } arch_context_t;
 
-typedef struct arch_signal_frame
-{
+typedef struct arch_signal_frame {
     uint64_t x30;
     uint64_t x28;
     uint64_t x29;
@@ -71,15 +69,20 @@ typedef struct arch_signal_frame
 struct task;
 typedef struct task task_t;
 
-void arch_context_init(arch_context_t *context, uint64_t page_table_addr, uint64_t entry, uint64_t stack, bool user_mode, uint64_t initial_arg);
-void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack, uint64_t clone_flags);
+void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
+                       uint64_t entry, uint64_t stack, bool user_mode,
+                       uint64_t initial_arg);
+void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
+                       uint64_t clone_flags);
 void arch_context_free(arch_context_t *context);
 task_t *arch_get_current();
 void arch_set_current(task_t *current);
 
-void arch_switch_with_context(arch_context_t *prev, arch_context_t *next, uint64_t kernel_stack);
+void arch_switch_with_context(arch_context_t *prev, arch_context_t *next,
+                              uint64_t kernel_stack);
 void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next);
-void arch_context_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack);
+void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
+                               uint64_t stack);
 void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack);
 
 void arch_yield();

@@ -15,22 +15,18 @@
  * +=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
  */
 
-void *LinkedListAllocate(void **LLfirstPtr, uint32_t structSize)
-{
+void *LinkedListAllocate(void **LLfirstPtr, uint32_t structSize) {
     LLheader *target = (LLheader *)malloc(structSize);
     memset(target, 0, structSize);
 
     LLheader *curr = (LLheader *)(*LLfirstPtr);
-    while (1)
-    {
-        if (curr == 0)
-        {
+    while (1) {
+        if (curr == 0) {
             // means this is our first one
             *LLfirstPtr = target;
             break;
         }
-        if (curr->next == 0)
-        {
+        if (curr->next == 0) {
             // next is non-existent (end of linked list)
             curr->next = target;
             break;
@@ -42,25 +38,21 @@ void *LinkedListAllocate(void **LLfirstPtr, uint32_t structSize)
     return target;
 }
 
-bool LinkedListUnregister(void **LLfirstPtr, const void *LLtarget)
-{
+bool LinkedListUnregister(void **LLfirstPtr, const void *LLtarget) {
     LLheader *LLfirstCopy = *LLfirstPtr;
 
     LLheader *curr = (LLheader *)(*LLfirstPtr);
-    while (curr)
-    {
+    while (curr) {
         if (curr->next && curr->next == LLtarget)
             break;
         curr = curr->next;
     }
 
-    if (LLfirstCopy == LLtarget)
-    {
+    if (LLfirstCopy == LLtarget) {
         // target is the first one
         *LLfirstPtr = LLfirstCopy->next;
         return true;
-    }
-    else if (!curr)
+    } else if (!curr)
         return false;
 
     LLheader *target = curr->next;
@@ -69,19 +61,16 @@ bool LinkedListUnregister(void **LLfirstPtr, const void *LLtarget)
     return true;
 }
 
-bool LinkedListRemove(void **LLfirstPtr, void *LLtarget)
-{
+bool LinkedListRemove(void **LLfirstPtr, void *LLtarget) {
     bool res = LinkedListUnregister(LLfirstPtr, LLtarget);
     free(LLtarget);
     return res;
 }
 
 bool LinkedListDuplicate(void **LLfirstPtrSource, void **LLfirstPtrTarget,
-                         uint32_t structSize)
-{
+                         uint32_t structSize) {
     LLheader *browse = (LLheader *)(LLfirstPtrSource);
-    while (browse)
-    {
+    while (browse) {
         LLheader *new = LinkedListAllocate(LLfirstPtrTarget, structSize);
         memcpy((void *)((size_t)new + sizeof(new->next)),
                (void *)((size_t)browse + sizeof(browse->next)),
@@ -92,10 +81,8 @@ bool LinkedListDuplicate(void **LLfirstPtrSource, void **LLfirstPtrTarget,
     return true;
 }
 
-void LinkedListPushFrontUnsafe(void **LLfirstPtr, void *LLtarget)
-{
-    if (*LLfirstPtr == 0)
-    {
+void LinkedListPushFrontUnsafe(void **LLfirstPtr, void *LLtarget) {
+    if (*LLfirstPtr == 0) {
         // todo: zero next (checks)
         *LLfirstPtr = LLtarget;
         return;

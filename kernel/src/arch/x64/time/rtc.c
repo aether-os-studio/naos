@@ -25,8 +25,7 @@ spinlock_t cmos_register_lock = {0};
 spinlock_t cmos_gettime_lock = {0};
 
 // 读 cmos 寄存器的值
-uint8_t cmos_read(uint8_t addr)
-{
+uint8_t cmos_read(uint8_t addr) {
     spin_lock(&cmos_register_lock);
     io_out8(CMOS_ADDR, CMOS_NMI | addr);
     uint8_t value = io_in8(CMOS_DATA);
@@ -35,8 +34,7 @@ uint8_t cmos_read(uint8_t addr)
 };
 
 // 写 cmos 寄存器的值
-void cmos_write(uint8_t addr, uint8_t value)
-{
+void cmos_write(uint8_t addr, uint8_t value) {
     spin_lock(&cmos_register_lock);
     io_out8(CMOS_ADDR, CMOS_NMI | addr);
     io_out8(CMOS_DATA, value);
@@ -48,13 +46,9 @@ int days_in_month[2][12] = {{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31},
 
 int century;
 
-bool is_leap_year(int year)
-{
-    return ((year % 4 == 0) && (year % 100 != 0));
-}
+bool is_leap_year(int year) { return ((year % 4 == 0) && (year % 100 != 0)); }
 
-int64_t mktime(tm *time)
-{
+int64_t mktime(tm *time) {
     int64_t seconds = 0;
     int leap;
 
@@ -64,15 +58,13 @@ int64_t mktime(tm *time)
     month -= (month > 11) ? 11 : 0;
     int day = time->tm_mday - 1; // Day is 1-based in the RTC structure
 
-    for (int y = 1970; y < year; y++)
-    {
+    for (int y = 1970; y < year; y++) {
         leap = is_leap_year(y);
         seconds += (365 + leap) * 86400;
     }
 
     leap = is_leap_year(year);
-    for (int m = 0; m < month; m++)
-    {
+    for (int m = 0; m < month; m++) {
         seconds += days_in_month[leap][m] * 86400;
     }
 
@@ -85,13 +77,11 @@ int64_t mktime(tm *time)
     return seconds;
 }
 
-void time_read_bcd(tm *time)
-{
+void time_read_bcd(tm *time) {
     // CMOS 的访问速度很慢。为了减小时间误差，在读取了下面循环中所有数值后，
     // 若此时 CMOS 中秒值发生了变化，那么就重新读取所有值。
     // 这样内核就能把与 CMOS 的时间误差控制在 1 秒之内。
-    do
-    {
+    do {
         time->tm_sec = cmos_read(CMOS_SECOND);
         time->tm_min = cmos_read(CMOS_MINUTE);
         time->tm_hour = cmos_read(CMOS_HOUR);
@@ -102,21 +92,16 @@ void time_read_bcd(tm *time)
     } while (time->tm_sec != cmos_read(CMOS_SECOND));
 }
 
-uint8_t bcd_to_bin(uint8_t value)
-{
-    return (value & 0xf) + (value >> 4) * 10;
-}
+uint8_t bcd_to_bin(uint8_t value) { return (value & 0xf) + (value >> 4) * 10; }
 
-void time_read(tm *time)
-{
+void time_read(tm *time) {
     spin_lock(&cmos_gettime_lock);
 
     time_read_bcd(time);
     uint8_t rb = cmos_read(0x0b);
     bool need_convert = !(rb & 0x04);
 
-    if (need_convert)
-    {
+    if (need_convert) {
         time->tm_sec = bcd_to_bin(time->tm_sec);
         time->tm_min = bcd_to_bin(time->tm_min);
         time->tm_hour = bcd_to_bin(time->tm_hour);

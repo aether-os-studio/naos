@@ -17,29 +17,24 @@ uint32_t kbCurr = 0;
 uint32_t kbMax = 0;
 task_t *kb_task = NULL;
 
-void kb_reset()
-{
+void kb_reset() {
     kbBuff = 0;
     kbCurr = 0;
     kbMax = 0;
     kb_task = NULL;
 }
 
-void kb_finalise_stream()
-{
+void kb_finalise_stream() {
     task_t *task = kb_task;
-    if (task)
-    {
+    if (task) {
         task->tmp_rec_v = kbCurr;
         task_unblock(kb_task, EOK);
     }
     kb_reset();
 }
 
-bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state)
-{
-    while (kb_is_ocupied())
-    {
+bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state) {
+    while (kb_is_ocupied()) {
         arch_enable_interrupt();
         arch_pause();
     }
@@ -54,7 +49,8 @@ bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state)
         uint32_t offset = (limit > 2) ? 2 : limit;
         memcpy(kbBuff, cache_buffer, offset);
         memset(cache_buffer, 0, offset);
-        memmove(cache_buffer, &cache_buffer[offset], sizeof(cache_buffer) - offset);
+        memmove(cache_buffer, &cache_buffer[offset],
+                sizeof(cache_buffer) - offset);
         kb_reset();
         return true;
     }
@@ -69,11 +65,12 @@ void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs);
 
 extern dev_input_event_t *kb_event;
 
-void kbd_init()
-{
+void kbd_init() {
     kb_reset();
 
-    irq_regist_irq(PS2_KBD_INTERRUPT_VECTOR, keyboard_handler, PS2_KBD_INTERRUPT_VECTOR - 32, NULL, &apic_controller, "PS2 KBD");
+    irq_regist_irq(PS2_KBD_INTERRUPT_VECTOR, keyboard_handler,
+                   PS2_KBD_INTERRUPT_VECTOR - 32, NULL, &apic_controller,
+                   "PS2 KBD");
 
     wait_KB_write();
     io_out8(PORT_KB_CMD, KBCMD_WRITE_CMD);
@@ -82,10 +79,9 @@ void kbd_init()
 
     memset(cache_buffer, 0, sizeof(cache_buffer));
 
-    for (uint64_t i = 0; i < MAX_DEV_NUM; i++)
-    {
-        if (devfs_handles[i] != NULL && !strncmp(devfs_handles[i]->name, "event0", MAX_DEV_NAME_LEN))
-        {
+    for (uint64_t i = 0; i < MAX_DEV_NUM; i++) {
+        if (devfs_handles[i] != NULL &&
+            !strncmp(devfs_handles[i]->name, "event0", MAX_DEV_NAME_LEN)) {
             devfs_handle_t handle = devfs_handles[i];
             kb_event = (dev_input_event_t *)handle->data;
             break;
@@ -99,8 +95,7 @@ void kbd_init()
     kb_event->devname = strdup("input/event0");
 }
 
-void kb_char(task_t *task, char out)
-{
+void kb_char(task_t *task, char out) {
     if (task->term.c_lflag & ECHO)
         printk("%c", out);
     if (kbCurr < kbMax)
@@ -111,8 +106,7 @@ void kb_char(task_t *task, char out)
 
 extern void send_sigint();
 
-void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
-{
+void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs) {
     (void)irq_num;
     (void)data;
     (void)regs;
@@ -124,14 +118,14 @@ void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
     if (scancode == 0xE0)
         out = handle_kb_event(scancode, io_in8(PORT_KB_DATA), 0);
     else if (scancode == 0xE1)
-        out = handle_kb_event(scancode, io_in8(PORT_KB_DATA), io_in8(PORT_KB_DATA));
+        out = handle_kb_event(scancode, io_in8(PORT_KB_DATA),
+                              io_in8(PORT_KB_DATA));
     else
         out = handle_kb_event(scancode, 0, 0);
     if (!out)
         return;
 
-    if (ctrled && out == 'c')
-    {
+    if (ctrled && out == 'c') {
         kb_finalise_stream();
         // send_sigint();
         return;
@@ -142,8 +136,7 @@ void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
     if (!task)
         return;
 
-    switch ((uint8_t)out)
-    {
+    switch ((uint8_t)out) {
     case CHARACTER_ENTER:
         if (task->term.c_lflag & ICANON)
             kb_finalise_stream();
@@ -151,68 +144,54 @@ void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
             kb_char(task, out);
         break;
     case CHARACTER_BACK:
-        if (task->term.c_lflag & ICANON && kbCurr > 0)
-        {
-            uint32_t back_steps = (kbCurr >= 3 &&
-                                   kbBuff[kbCurr - 3] == '\x1b' &&
-                                   kbBuff[kbCurr - 2] == '[')
-                                      ? 3
-                                      : 1;
+        if (task->term.c_lflag & ICANON && kbCurr > 0) {
+            uint32_t back_steps =
+                (kbCurr >= 3 && kbBuff[kbCurr - 3] == '\x1b' &&
+                 kbBuff[kbCurr - 2] == '[')
+                    ? 3
+                    : 1;
 
             kbCurr = (kbCurr >= back_steps) ? kbCurr - back_steps : 0;
             memset(&kbBuff[kbCurr], 0, back_steps);
-        }
-        else if (!(task->term.c_lflag & ICANON))
+        } else if (!(task->term.c_lflag & ICANON))
             kb_char(task, out);
         break;
     case KEY_BUTTON_UP:
         kb_char(task, '\x1b');
-        if (kbMax - kbCurr >= 2)
-        {
+        if (kbMax - kbCurr >= 2) {
             kb_char(task, '[');
             kb_char(task, 'A');
-        }
-        else
-        {
+        } else {
             cache_buffer[0] = '[';
             cache_buffer[1] = 'A';
         }
         break;
     case KEY_BUTTON_DOWN:
         kb_char(task, '\x1b');
-        if (kbMax - kbCurr >= 2)
-        {
+        if (kbMax - kbCurr >= 2) {
             kb_char(task, '[');
             kb_char(task, 'B');
-        }
-        else
-        {
+        } else {
             cache_buffer[0] = '[';
             cache_buffer[1] = 'B';
         }
         break;
     case KEY_BUTTON_LEFT:
         kb_char(task, '\x1b');
-        if (kbMax - kbCurr >= 2)
-        {
+        if (kbMax - kbCurr >= 2) {
             kb_char(task, '[');
             kb_char(task, 'D');
-        }
-        else
-        {
+        } else {
             cache_buffer[0] = '[';
             cache_buffer[1] = 'D';
         }
         break;
     case KEY_BUTTON_RIGHT:
         kb_char(task, '\x1b');
-        if (kbMax - kbCurr >= 2)
-        {
+        if (kbMax - kbCurr >= 2) {
             kb_char(task, '[');
             kb_char(task, 'C');
-        }
-        else
-        {
+        } else {
             cache_buffer[0] = '[';
             cache_buffer[1] = 'C';
         }
@@ -225,27 +204,21 @@ void keyboard_handler(uint64_t irq_num, void *data, struct pt_regs *regs)
     }
 }
 
-void push_kb_char(char c)
-{
-    kb_char(current_task, c);
-}
+void push_kb_char(char c) { kb_char(current_task, c); }
 
 bool kb_is_ocupied() { return !!kbBuff; }
 
-struct input_repeat_params
-{
+struct input_repeat_params {
     int delay;
     int period;
 };
 
-size_t kb_event_bit(void *data, uint64_t request, void *arg)
-{
+size_t kb_event_bit(void *data, uint64_t request, void *arg) {
     size_t number = _IOC_NR(request);
     size_t size = _IOC_SIZE(request);
 
     size_t ret = (size_t)-ENOSYS;
-    switch (number)
-    {
+    switch (number) {
     // case 0x03:
     // {
     //     struct input_repeat_params *params = arg;
@@ -253,8 +226,7 @@ size_t kb_event_bit(void *data, uint64_t request, void *arg)
     //     params->period = 50;
     //     break;
     // }
-    case 0x20:
-    {
+    case 0x20: {
         size_t out = (1 << EV_KEY);
         ret = MIN(sizeof(size_t), size);
         memcpy(arg, &out, ret);
@@ -265,20 +237,17 @@ size_t kb_event_bit(void *data, uint64_t request, void *arg)
     case (0x20 + EV_SND):
     case (0x20 + EV_LED):
     case (0x20 + EV_REL):
-    case (0x20 + EV_ABS):
-    {
+    case (0x20 + EV_ABS): {
         *(size_t *)arg = 0;
         ret = MIN(sizeof(size_t), size);
         break;
     }
-    case (0x20 + EV_FF):
-    {
+    case (0x20 + EV_FF): {
         *(size_t *)arg = 0;
         ret = MIN(16, size);
         break;
     }
-    case (0x20 + EV_KEY):
-    {
+    case (0x20 + EV_KEY): {
         uint8_t map[96] = {0};
         for (int i = KEY_ESC; i <= KEY_MENU; i++)
             map[i / 8] |= (1 << (i % 8));
@@ -308,7 +277,8 @@ size_t kb_event_bit(void *data, uint64_t request, void *arg)
         ret = 0;
         break;
     default:
-        printk("kb_event_bit(): Unsupported ioctl: request = %#018lx\n", request);
+        printk("kb_event_bit(): Unsupported ioctl: request = %#018lx\n",
+               request);
         break;
     }
 

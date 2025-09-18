@@ -7,8 +7,8 @@
  * Copyright (c) 2001-2004 Swedish Institute of Computer Science.
  * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without modification,
- * are permitted provided that the following conditions are met:
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
  *
  * 1. Redistributions of source code must retain the above copyright notice,
  *    this list of conditions and the following disclaimer.
@@ -20,14 +20,14 @@
  *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
  * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
- * SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
- * OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
- * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
- * OF SUCH DAMAGE.
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
+ * EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  * This file is part of the lwIP TCP/IP stack.
  *
@@ -54,7 +54,7 @@ typedef u8_t sys_mbox_t;
 #define sys_sem_new(s, c) ERR_OK
 #define sys_sem_signal(s)
 #define sys_sem_wait(s)
-#define sys_arch_sem_wait(s,t)
+#define sys_arch_sem_wait(s, t)
 #define sys_sem_free(s)
 #define sys_sem_valid(s) 0
 #define sys_sem_valid_val(s) 0
@@ -67,17 +67,17 @@ typedef u8_t sys_mbox_t;
 #define sys_mutex_valid(mu) 0
 #define sys_mutex_set_invalid(mu)
 #define sys_mbox_new(m, s) ERR_OK
-#define sys_mbox_fetch(m,d)
-#define sys_mbox_tryfetch(m,d)
-#define sys_mbox_post(m,d)
-#define sys_mbox_trypost(m,d)
+#define sys_mbox_fetch(m, d)
+#define sys_mbox_tryfetch(m, d)
+#define sys_mbox_post(m, d)
+#define sys_mbox_trypost(m, d)
 #define sys_mbox_free(m)
 #define sys_mbox_valid(m)
 #define sys_mbox_valid_val(m)
 #define sys_mbox_set_invalid(m)
 #define sys_mbox_set_invalid_val(m)
 
-#define sys_thread_new(n,t,a,s,p)
+#define sys_thread_new(n, t, a, s, p)
 
 #define sys_msleep(t)
 
@@ -110,13 +110,13 @@ typedef void (*lwip_thread_fn)(void *arg);
 
 #if LWIP_COMPAT_MUTEX
 /* for old ports that don't have mutexes: define them to binary semaphores */
-#define sys_mutex_t                   sys_sem_t
-#define sys_mutex_new(mutex)          sys_sem_new(mutex, 1)
-#define sys_mutex_lock(mutex)         sys_sem_wait(mutex)
-#define sys_mutex_unlock(mutex)       sys_sem_signal(mutex)
-#define sys_mutex_free(mutex)         sys_sem_free(mutex)
-#define sys_mutex_valid(mutex)        sys_sem_valid(mutex)
-#define sys_mutex_set_invalid(mutex)  sys_sem_set_invalid(mutex)
+#define sys_mutex_t sys_sem_t
+#define sys_mutex_new(mutex) sys_sem_new(mutex, 1)
+#define sys_mutex_lock(mutex) sys_sem_wait(mutex)
+#define sys_mutex_unlock(mutex) sys_sem_signal(mutex)
+#define sys_mutex_free(mutex) sys_sem_free(mutex)
+#define sys_mutex_valid(mutex) sys_sem_valid(mutex)
+#define sys_mutex_set_invalid(mutex) sys_sem_set_invalid(mutex)
 
 #else /* LWIP_COMPAT_MUTEX */
 
@@ -224,7 +224,7 @@ u32_t sys_arch_sem_wait(sys_sem_t *sem, u32_t timeout);
  */
 void sys_sem_free(sys_sem_t *sem);
 /** Wait for a semaphore - forever/no timeout */
-#define sys_sem_wait(sem)                  sys_arch_sem_wait(sem, 0)
+#define sys_sem_wait(sem) sys_arch_sem_wait(sem, 0)
 #ifndef sys_sem_valid
 /**
  * @ingroup sys_sem
@@ -249,7 +249,7 @@ void sys_sem_set_invalid(sys_sem_t *sem);
 /**
  * Same as sys_sem_valid() but taking a value, not a pointer
  */
-#define sys_sem_valid_val(sem)       sys_sem_valid(&(sem))
+#define sys_sem_valid_val(sem) sys_sem_valid(&(sem))
 #endif
 #ifndef sys_sem_set_invalid_val
 /**
@@ -330,11 +330,14 @@ err_t sys_mbox_trypost_fromisr(sys_mbox_t *mbox, void *msg);
  *
  * @param mbox mbox to get a message from
  * @param msg pointer where the message is stored
- * @param timeout maximum time (in milliseconds) to wait for a message (0 = wait forever)
- * @return SYS_ARCH_TIMEOUT on timeout, any other value if a message has been received
+ * @param timeout maximum time (in milliseconds) to wait for a message (0 = wait
+ * forever)
+ * @return SYS_ARCH_TIMEOUT on timeout, any other value if a message has been
+ * received
  */
 u32_t sys_arch_mbox_fetch(sys_mbox_t *mbox, void **msg, u32_t timeout);
-/* Allow port to override with a macro, e.g. special timeout for sys_arch_mbox_fetch() */
+/* Allow port to override with a macro, e.g. special timeout for
+ * sys_arch_mbox_fetch() */
 #ifndef sys_arch_mbox_tryfetch
 /**
  * @ingroup sys_mbox
@@ -392,7 +395,7 @@ void sys_mbox_set_invalid(sys_mbox_t *mbox);
 /**
  * Same as sys_mbox_valid() but taking a value, not a pointer
  */
-#define sys_mbox_valid_val(mbox)       sys_mbox_valid(&(mbox))
+#define sys_mbox_valid_val(mbox) sys_mbox_valid(&(mbox))
 #endif
 #ifndef sys_mbox_set_invalid_val
 /**
@@ -400,7 +403,6 @@ void sys_mbox_set_invalid(sys_mbox_t *mbox);
  */
 #define sys_mbox_set_invalid_val(mbox) sys_mbox_set_invalid(&(mbox))
 #endif
-
 
 /**
  * @ingroup sys_misc
@@ -410,14 +412,17 @@ void sys_mbox_set_invalid(sys_mbox_t *mbox);
  * argument to the thread() function. The stack size to used for this thread is
  * the "stacksize" parameter. The id of the new thread is returned. Both the id
  * and the priority are system dependent.
- * ATTENTION: although this function returns a value, it MUST NOT FAIL (ports have to assert this!)
+ * ATTENTION: although this function returns a value, it MUST NOT FAIL (ports
+ * have to assert this!)
  *
  * @param name human-readable name for the thread (used for debugging purposes)
  * @param thread thread-function
  * @param arg parameter passed to 'thread'
- * @param stacksize stack size in bytes for the new thread (may be ignored by ports)
+ * @param stacksize stack size in bytes for the new thread (may be ignored by
+ * ports)
  * @param prio priority of the new thread (may be ignored by ports) */
-sys_thread_t sys_thread_new(const char *name, lwip_thread_fn thread, void *arg, int stacksize, int prio);
+sys_thread_t sys_thread_new(const char *name, lwip_thread_fn thread, void *arg,
+                            int stacksize, int prio);
 
 #endif /* NO_SYS */
 
@@ -468,17 +473,17 @@ u32_t sys_now(void);
 #ifndef SYS_ARCH_PROTECT
 /** SYS_LIGHTWEIGHT_PROT
  * define SYS_LIGHTWEIGHT_PROT in lwipopts.h if you want inter-task protection
- * for certain critical regions during buffer allocation, deallocation and memory
- * allocation and deallocation.
+ * for certain critical regions during buffer allocation, deallocation and
+ * memory allocation and deallocation.
  */
 #if SYS_LIGHTWEIGHT_PROT
 
 /**
  * @ingroup sys_prot
  * SYS_ARCH_DECL_PROTECT
- * declare a protection variable. This macro will default to defining a variable of
- * type sys_prot_t. If a particular port needs a different implementation, then
- * this macro may be defined in sys_arch.h.
+ * declare a protection variable. This macro will default to defining a variable
+ * of type sys_prot_t. If a particular port needs a different implementation,
+ * then this macro may be defined in sys_arch.h.
  */
 #define SYS_ARCH_DECL_PROTECT(lev) sys_prot_t lev
 /**
@@ -523,50 +528,54 @@ void sys_arch_unprotect(sys_prot_t pval);
  */
 
 #ifndef SYS_ARCH_INC
-#define SYS_ARCH_INC(var, val) do { \
-                                SYS_ARCH_DECL_PROTECT(old_level); \
-                                SYS_ARCH_PROTECT(old_level); \
-                                var += val; \
-                                SYS_ARCH_UNPROTECT(old_level); \
-                              } while(0)
+#define SYS_ARCH_INC(var, val)                                                 \
+    do {                                                                       \
+        SYS_ARCH_DECL_PROTECT(old_level);                                      \
+        SYS_ARCH_PROTECT(old_level);                                           \
+        var += val;                                                            \
+        SYS_ARCH_UNPROTECT(old_level);                                         \
+    } while (0)
 #endif /* SYS_ARCH_INC */
 
 #ifndef SYS_ARCH_DEC
-#define SYS_ARCH_DEC(var, val) do { \
-                                SYS_ARCH_DECL_PROTECT(old_level); \
-                                SYS_ARCH_PROTECT(old_level); \
-                                var -= val; \
-                                SYS_ARCH_UNPROTECT(old_level); \
-                              } while(0)
+#define SYS_ARCH_DEC(var, val)                                                 \
+    do {                                                                       \
+        SYS_ARCH_DECL_PROTECT(old_level);                                      \
+        SYS_ARCH_PROTECT(old_level);                                           \
+        var -= val;                                                            \
+        SYS_ARCH_UNPROTECT(old_level);                                         \
+    } while (0)
 #endif /* SYS_ARCH_DEC */
 
 #ifndef SYS_ARCH_GET
-#define SYS_ARCH_GET(var, ret) do { \
-                                SYS_ARCH_DECL_PROTECT(old_level); \
-                                SYS_ARCH_PROTECT(old_level); \
-                                ret = var; \
-                                SYS_ARCH_UNPROTECT(old_level); \
-                              } while(0)
+#define SYS_ARCH_GET(var, ret)                                                 \
+    do {                                                                       \
+        SYS_ARCH_DECL_PROTECT(old_level);                                      \
+        SYS_ARCH_PROTECT(old_level);                                           \
+        ret = var;                                                             \
+        SYS_ARCH_UNPROTECT(old_level);                                         \
+    } while (0)
 #endif /* SYS_ARCH_GET */
 
 #ifndef SYS_ARCH_SET
-#define SYS_ARCH_SET(var, val) do { \
-                                SYS_ARCH_DECL_PROTECT(old_level); \
-                                SYS_ARCH_PROTECT(old_level); \
-                                var = val; \
-                                SYS_ARCH_UNPROTECT(old_level); \
-                              } while(0)
+#define SYS_ARCH_SET(var, val)                                                 \
+    do {                                                                       \
+        SYS_ARCH_DECL_PROTECT(old_level);                                      \
+        SYS_ARCH_PROTECT(old_level);                                           \
+        var = val;                                                             \
+        SYS_ARCH_UNPROTECT(old_level);                                         \
+    } while (0)
 #endif /* SYS_ARCH_SET */
 
 #ifndef SYS_ARCH_LOCKED
-#define SYS_ARCH_LOCKED(code) do { \
-                                SYS_ARCH_DECL_PROTECT(old_level); \
-                                SYS_ARCH_PROTECT(old_level); \
-                                code; \
-                                SYS_ARCH_UNPROTECT(old_level); \
-                              } while(0)
+#define SYS_ARCH_LOCKED(code)                                                  \
+    do {                                                                       \
+        SYS_ARCH_DECL_PROTECT(old_level);                                      \
+        SYS_ARCH_PROTECT(old_level);                                           \
+        code;                                                                  \
+        SYS_ARCH_UNPROTECT(old_level);                                         \
+    } while (0)
 #endif /* SYS_ARCH_LOCKED */
-
 
 #ifdef __cplusplus
 }

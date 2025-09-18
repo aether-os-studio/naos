@@ -17,16 +17,14 @@
 
 #define MAX_RETRY 2
 
-struct sata_fis_head
-{
+struct sata_fis_head {
     uint8_t type;
     uint8_t options;
     uint8_t status_cmd;
     uint8_t feat_err;
 } __HBA_PACKED__;
 
-struct sata_reg_fis
-{
+struct sata_reg_fis {
     struct sata_fis_head head;
 
     uint8_t lba0, lba8, lba16;
@@ -39,17 +37,14 @@ struct sata_reg_fis
     uint8_t reserved[6];
 } __HBA_PACKED__;
 
-struct sata_data_fis
-{
+struct sata_data_fis {
     struct sata_fis_head head;
 
     uint8_t data[0];
 } __HBA_PACKED__;
 
-void sata_create_fis(struct sata_reg_fis *cmd_fis,
-                     uint8_t command,
-                     uint64_t lba,
-                     uint16_t sector_count);
+void sata_create_fis(struct sata_reg_fis *cmd_fis, uint8_t command,
+                     uint64_t lba, uint16_t sector_count);
 
 void sata_submit(struct hba_device *dev, struct blkio_req *io_req);
 

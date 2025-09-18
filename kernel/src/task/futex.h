@@ -3,8 +3,7 @@
 #include <libs/klibc.h>
 #include <task/task.h>
 
-struct futex_wait
-{
+struct futex_wait {
     void *uaddr;
     task_t *task;
     struct futex_wait *next;
@@ -41,9 +40,9 @@ struct futex_wait
 #define FUTEX_TRYLOCK_PI_PRIVATE (FUTEX_TRYLOCK_PI | FUTEX_PRIVATE_FLAG)
 #define FUTEX_WAIT_BITSET_PRIVATE (FUTEX_WAIT_BITSET | FUTEX_PRIVATE_FLAG)
 #define FUTEX_WAKE_BITSET_PRIVATE (FUTEX_WAKE_BITSET | FUTEX_PRIVATE_FLAG)
-#define FUTEX_WAIT_REQUEUE_PI_PRIVATE (FUTEX_WAIT_REQUEUE_PI | \
-                                       FUTEX_PRIVATE_FLAG)
-#define FUTEX_CMP_REQUEUE_PI_PRIVATE (FUTEX_CMP_REQUEUE_PI | \
-                                      FUTEX_PRIVATE_FLAG)
+#define FUTEX_WAIT_REQUEUE_PI_PRIVATE                                          \
+    (FUTEX_WAIT_REQUEUE_PI | FUTEX_PRIVATE_FLAG)
+#define FUTEX_CMP_REQUEUE_PI_PRIVATE (FUTEX_CMP_REQUEUE_PI | FUTEX_PRIVATE_FLAG)
 
-uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout, int *uaddr2, int val3);
+uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
+                   int *uaddr2, int val3);

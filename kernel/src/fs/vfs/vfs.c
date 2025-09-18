@@ -16,10 +16,7 @@ fs_t *all_fs[256] = {
     [0] = NULL,
 };
 
-static int empty_func()
-{
-    return -ENOSYS;
-}
+static int empty_func() { return -ENOSYS; }
 
 static struct vfs_callback vfs_empty_callback;
 
@@ -30,8 +27,7 @@ int fs_nextid = 1;
 
 #define callbackof(node, _name_) (fs_callbacks[(node)->fsid]->_name_)
 
-vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name)
-{
+vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
     vfs_node_t node = malloc(sizeof(struct vfs_node));
     if (node == NULL)
         return NULL;
@@ -57,8 +53,7 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name)
     return node;
 }
 
-void vfs_free(vfs_node_t vfs)
-{
+void vfs_free(vfs_node_t vfs) {
     if (vfs == NULL)
         return;
     list_free_with(vfs->child, (free_t)vfs_free);
@@ -69,41 +64,35 @@ void vfs_free(vfs_node_t vfs)
     free(vfs);
 }
 
-void vfs_free_child(vfs_node_t vfs)
-{
+void vfs_free_child(vfs_node_t vfs) {
     if (vfs == NULL)
         return;
     list_free_with(vfs->child, (free_t)vfs_free);
 }
 
-static inline void do_open(vfs_node_t file)
-{
+static inline void do_open(vfs_node_t file) {
     spin_lock(&file->spin);
-    if (file->handle != NULL)
-    {
+    if (file->handle != NULL) {
         callbackof(file, stat)(file->handle, file);
-    }
-    else
-    {
+    } else {
         callbackof(file, open)(file->parent->handle, file->name, file);
     }
     spin_unlock(&file->spin);
 }
 
-static inline void do_update(vfs_node_t file)
-{
-    if (file->type & file_none || file->type & file_dir || file->type & file_symlink || file->handle == NULL)
+static inline void do_update(vfs_node_t file) {
+    if (file->type & file_none || file->type & file_dir ||
+        file->type & file_symlink || file->handle == NULL)
         do_open(file);
 }
 
-vfs_node_t vfs_child_find(vfs_node_t parent, const char *name)
-{
-    return list_first(parent->child, data, streq(name, ((vfs_node_t)data)->name));
+vfs_node_t vfs_child_find(vfs_node_t parent, const char *name) {
+    return list_first(parent->child, data,
+                      streq(name, ((vfs_node_t)data)->name));
 }
 
 // 一定要记得手动设置一下child的type
-vfs_node_t vfs_child_append(vfs_node_t parent, const char *name, void *handle)
-{
+vfs_node_t vfs_child_append(vfs_node_t parent, const char *name, void *handle) {
     vfs_node_t node = vfs_child_find(parent, name);
     if (node)
         return node;
@@ -114,56 +103,44 @@ vfs_node_t vfs_child_append(vfs_node_t parent, const char *name, void *handle)
     return node;
 }
 
-int vfs_mkdir(const char *name)
-{
+int vfs_mkdir(const char *name) {
     spin_lock(&global_rw_lock);
 
     vfs_node_t current = rootdir;
     char *path;
-    if (name[0] != '/')
-    {
+    if (name[0] != '/') {
         current = current_task->cwd;
         path = strdup(name);
-    }
-    else
-    {
+    } else {
         path = strdup(name + 1);
     }
 
     char *save_ptr = path;
     char *filename = path + strlen(path);
 
-    while (*--filename != '/' && filename != path)
-    {
+    while (*--filename != '/' && filename != path) {
     }
-    if (filename != path)
-    {
+    if (filename != path) {
         *filename++ = '\0';
-    }
-    else
-    {
+    } else {
         goto create;
     }
 
-    if (strlen(path) == 0)
-    {
+    if (strlen(path) == 0) {
         free(path);
         return -1;
     }
-    for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr))
-    {
+    for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr)) {
         if (streq(buf, "."))
             continue;
-        if (streq(buf, ".."))
-        {
+        if (streq(buf, "..")) {
             if (!current->parent || !(current->type & file_dir))
                 goto err;
             current = current->parent;
             continue;
         }
         vfs_node_t new_current = vfs_child_find(current, buf);
-        if (new_current == NULL)
-        {
+        if (new_current == NULL) {
             new_current = vfs_node_alloc(current, buf);
             new_current->type = file_dir;
             callbackof(current, mkdir)(current->handle, buf, new_current);
@@ -192,56 +169,44 @@ err:
     return -1;
 }
 
-int vfs_mkfile(const char *name)
-{
+int vfs_mkfile(const char *name) {
     spin_lock(&global_rw_lock);
 
     vfs_node_t current = rootdir;
     char *path;
-    if (name[0] != '/')
-    {
+    if (name[0] != '/') {
         current = current_task->cwd;
         path = strdup(name);
-    }
-    else
-    {
+    } else {
         path = strdup(name + 1);
     }
 
     char *save_ptr = path;
     char *filename = path + strlen(path);
 
-    while (*--filename != '/' && filename != path)
-    {
+    while (*--filename != '/' && filename != path) {
     }
-    if (filename != path)
-    {
+    if (filename != path) {
         *filename++ = '\0';
-    }
-    else
-    {
+    } else {
         goto create;
     }
 
-    if (strlen(path) == 0)
-    {
+    if (strlen(path) == 0) {
         free(path);
         return -1;
     }
-    for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr))
-    {
+    for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr)) {
         if (streq(buf, "."))
             continue;
-        if (streq(buf, ".."))
-        {
+        if (streq(buf, "..")) {
             if (!current->parent || !(current->type & file_dir))
                 goto err;
             current = current->parent;
             continue;
         }
         vfs_node_t new_current = vfs_child_find(current, buf);
-        if (new_current == NULL)
-        {
+        if (new_current == NULL) {
             new_current = vfs_node_alloc(current, buf);
             new_current->type = file_dir;
             callbackof(current, mkdir)(current->handle, buf, new_current);
@@ -275,55 +240,43 @@ err:
  *\param name     文件名
  *\return 0 成功，-1 失败
  */
-int vfs_link(const char *name, const char *target_name)
-{
+int vfs_link(const char *name, const char *target_name) {
     spin_lock(&global_rw_lock);
     vfs_node_t current = rootdir;
     char *path;
-    if (name[0] != '/')
-    {
+    if (name[0] != '/') {
         current = current_task->cwd;
         path = strdup(name);
-    }
-    else
-    {
+    } else {
         path = strdup(name + 1);
     }
 
     char *save_ptr = path;
     char *filename = path + strlen(path);
 
-    while (*--filename != '/' && filename != path)
-    {
+    while (*--filename != '/' && filename != path) {
     }
-    if (filename != path)
-    {
+    if (filename != path) {
         *filename++ = '\0';
-    }
-    else
-    {
+    } else {
         goto create;
     }
 
-    if (strlen(path) == 0)
-    {
+    if (strlen(path) == 0) {
         free(path);
         return -1;
     }
-    for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr))
-    {
+    for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr)) {
         if (streq(buf, "."))
             continue;
-        if (streq(buf, ".."))
-        {
+        if (streq(buf, "..")) {
             if (!current->parent || !(current->type & file_dir))
                 goto err;
             current = current->parent;
             continue;
         }
         vfs_node_t new_current = vfs_child_find(current, buf);
-        if (new_current == NULL)
-        {
+        if (new_current == NULL) {
             new_current = vfs_node_alloc(current, buf);
             new_current->type = file_dir;
             callbackof(current, mkdir)(current->handle, buf, new_current);
@@ -358,55 +311,43 @@ err:
  *\param name     文件名
  *\return 0 成功，-1 失败
  */
-int vfs_symlink(const char *name, const char *target_name)
-{
+int vfs_symlink(const char *name, const char *target_name) {
     spin_lock(&global_rw_lock);
     vfs_node_t current = rootdir;
     char *path;
-    if (name[0] != '/')
-    {
+    if (name[0] != '/') {
         current = current_task->cwd;
         path = strdup(name);
-    }
-    else
-    {
+    } else {
         path = strdup(name + 1);
     }
 
     char *save_ptr = path;
     char *filename = path + strlen(path);
 
-    while (*--filename != '/' && filename != path)
-    {
+    while (*--filename != '/' && filename != path) {
     }
-    if (filename != path)
-    {
+    if (filename != path) {
         *filename++ = '\0';
-    }
-    else
-    {
+    } else {
         goto create;
     }
 
-    if (strlen(path) == 0)
-    {
+    if (strlen(path) == 0) {
         free(path);
         return -1;
     }
-    for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr))
-    {
+    for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr)) {
         if (streq(buf, "."))
             continue;
-        if (streq(buf, ".."))
-        {
+        if (streq(buf, "..")) {
             if (!current->parent || !(current->type & file_dir))
                 goto err;
             current = current->parent;
             continue;
         }
         vfs_node_t new_current = vfs_child_find(current, buf);
-        if (new_current == NULL)
-        {
+        if (new_current == NULL) {
             new_current = vfs_node_alloc(current, buf);
             new_current->type = file_dir;
             callbackof(current, mkdir)(current->handle, buf, new_current);
@@ -421,9 +362,9 @@ int vfs_symlink(const char *name, const char *target_name)
 create:
     vfs_node_t node = vfs_child_append(current, filename, NULL);
     node->type = file_symlink;
-    ssize_t ret = callbackof(current, symlink)(current->handle, target_name, node);
-    if (ret < 0)
-    {
+    ssize_t ret =
+        callbackof(current, symlink)(current->handle, target_name, node);
+    if (ret < 0) {
         free(path);
         return ret;
     }
@@ -440,55 +381,43 @@ err:
     return -1;
 }
 
-int vfs_mknod(const char *name, uint16_t umode, int dev)
-{
+int vfs_mknod(const char *name, uint16_t umode, int dev) {
     spin_lock(&global_rw_lock);
     vfs_node_t current = rootdir;
     char *path;
-    if (name[0] != '/')
-    {
+    if (name[0] != '/') {
         current = current_task->cwd;
         path = strdup(name);
-    }
-    else
-    {
+    } else {
         path = strdup(name + 1);
     }
 
     char *save_ptr = path;
     char *filename = path + strlen(path);
 
-    while (*--filename != '/' && filename != path)
-    {
+    while (*--filename != '/' && filename != path) {
     }
-    if (filename != path)
-    {
+    if (filename != path) {
         *filename++ = '\0';
-    }
-    else
-    {
+    } else {
         goto create;
     }
 
-    if (strlen(path) == 0)
-    {
+    if (strlen(path) == 0) {
         free(path);
         return -1;
     }
-    for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr))
-    {
+    for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr)) {
         if (streq(buf, "."))
             continue;
-        if (streq(buf, ".."))
-        {
+        if (streq(buf, "..")) {
             if (!current->parent || !(current->type & file_dir))
                 goto err;
             current = current->parent;
             continue;
         }
         vfs_node_t new_current = vfs_child_find(current, buf);
-        if (new_current == NULL)
-        {
+        if (new_current == NULL) {
             new_current = vfs_node_alloc(current, buf);
             new_current->type = file_dir;
             callbackof(current, mkdir)(current->handle, buf, new_current);
@@ -503,8 +432,7 @@ int vfs_mknod(const char *name, uint16_t umode, int dev)
 create:
     vfs_node_t node = vfs_child_append(current, filename, NULL);
     int ftype = 0;
-    switch (umode & S_IFMT)
-    {
+    switch (umode & S_IFMT) {
     case S_IFBLK:
         node->type = file_block;
         break;
@@ -533,8 +461,7 @@ err:
     return -1;
 }
 
-int vfs_chmod(const char *path, uint16_t mode)
-{
+int vfs_chmod(const char *path, uint16_t mode) {
     vfs_node_t node = vfs_open(path);
     if (!node)
         return -ENOENT;
@@ -544,14 +471,12 @@ int vfs_chmod(const char *path, uint16_t mode)
     return ret;
 }
 
-int vfs_regist(fs_t *fs)
-{
+int vfs_regist(fs_t *fs) {
     vfs_callback_t callback = fs->callback;
 
     if (callback == NULL)
         return -1;
-    for (size_t i = 0; i < sizeof(struct vfs_callback) / sizeof(void *); i++)
-    {
+    for (size_t i = 0; i < sizeof(struct vfs_callback) / sizeof(void *); i++) {
         if (((void **)callback)[i] == NULL)
             return -1;
     }
@@ -561,13 +486,11 @@ int vfs_regist(fs_t *fs)
     return id;
 }
 
-static vfs_node_t vfs_do_search(vfs_node_t dir, const char *name)
-{
+static vfs_node_t vfs_do_search(vfs_node_t dir, const char *name) {
     return list_first(dir->child, data, streq(name, ((vfs_node_t)data)->name));
 }
 
-vfs_node_t vfs_open_at(vfs_node_t start, const char *_path)
-{
+vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
     if (!start)
         return NULL;
 
@@ -575,36 +498,29 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path)
         return NULL;
     vfs_node_t current = start;
     char *path;
-    if (_path[0] == '/')
-    {
-        if (_path[1] == '\0')
-        {
+    if (_path[0] == '/') {
+        if (_path[1] == '\0') {
             return rootdir;
         }
         current = rootdir;
         path = strdup(_path + 1);
-    }
-    else
-    {
+    } else {
         path = strdup(_path);
     }
 
     char *save_ptr = path;
 
-    for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr))
-    {
+    for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr)) {
         if (streq(buf, "."))
             continue;
-        if (streq(buf, ".."))
-        {
+        if (streq(buf, "..")) {
             if (current->parent == NULL)
                 goto err;
             current = current->parent;
             do_update(current);
             continue;
         }
-        if (!(current->type & file_dir))
-        {
+        if (!(current->type & file_dir)) {
             goto err;
         }
         current = vfs_child_find(current, buf);
@@ -612,8 +528,7 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path)
             goto err;
         do_update(current);
 
-        if (current->type & file_symlink)
-        {
+        if (current->type & file_symlink) {
             if (!current->parent || !current->linkto)
                 goto err;
 
@@ -634,13 +549,10 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path)
             current->root = target->root;
             current->mode = target->mode;
 
-            if (target->type & file_dir)
-            {
-                list_foreach(target->child, i)
-                {
+            if (target->type & file_dir) {
+                list_foreach(target->child, i) {
                     vfs_node_t child_node = (vfs_node_t)i->data;
-                    if (!vfs_child_find(current, child_node->name))
-                    {
+                    if (!vfs_child_find(current, child_node->name)) {
                         list_prepend(current->child, child_node);
                         child_node->refcount++;
                     }
@@ -661,31 +573,22 @@ err:
     return NULL;
 }
 
-vfs_node_t vfs_open(const char *_path)
-{
+vfs_node_t vfs_open(const char *_path) {
     vfs_node_t node = NULL;
 
-    if (current_task && current_task->cwd)
-    {
+    if (current_task && current_task->cwd) {
         node = vfs_open_at(current_task->cwd, _path);
-    }
-    else
-    {
+    } else {
         node = vfs_open_at(rootdir, _path);
     }
 
     return node;
 }
 
-void vfs_update(vfs_node_t node)
-{
-    do_update(node);
-}
+void vfs_update(vfs_node_t node) { do_update(node); }
 
-bool vfs_init()
-{
-    for (size_t i = 0; i < sizeof(struct vfs_callback) / sizeof(void *); i++)
-    {
+bool vfs_init() {
+    for (size_t i = 0; i < sizeof(struct vfs_callback) / sizeof(void *); i++) {
         ((void **)&vfs_empty_callback)[i] = &empty_func;
     }
 
@@ -695,16 +598,14 @@ bool vfs_init()
     return true;
 }
 
-int vfs_close(vfs_node_t node)
-{
+int vfs_close(vfs_node_t node) {
     if (node == NULL)
         return -1;
     if (node->handle == NULL)
         return 0;
     if (node == rootdir)
         return 0;
-    if (node->type & file_proxy)
-    {
+    if (node->type & file_proxy) {
         node->refcount--;
         return 0;
     }
@@ -713,17 +614,13 @@ int vfs_close(vfs_node_t node)
     spin_lock(&node->spin);
     if (node->refcount > 0)
         node->refcount--;
-    if (node->refcount == 0)
-    {
+    if (node->refcount == 0) {
         bool real_close = callbackof(node, close)(node->handle);
-        if (real_close)
-        {
+        if (real_close) {
             node->handle = NULL;
-            if (node->deleted)
-            {
+            if (node->deleted) {
                 int res = callbackof(node, delete)(node->parent->handle, node);
-                if (res < 0)
-                {
+                if (res < 0) {
                     spin_unlock(&node->spin);
                     return -1;
                 }
@@ -742,16 +639,14 @@ int vfs_close(vfs_node_t node)
     return 0;
 }
 
-int vfs_mount(vfs_node_t dev, vfs_node_t node, const char *type)
-{
+int vfs_mount(vfs_node_t dev, vfs_node_t node, const char *type) {
     if (node == NULL)
         return -1;
     if (!(node->type & file_dir))
         return -1;
-    for (int i = 1; i < fs_nextid; i++)
-    {
-        if (!strcmp(all_fs[i]->name, type) && fs_callbacks[i]->mount(dev, node) == 0)
-        {
+    for (int i = 1; i < fs_nextid; i++) {
+        if (!strcmp(all_fs[i]->name, type) &&
+            fs_callbacks[i]->mount(dev, node) == 0) {
             node->fsid = i;
             node->root = node;
             return 0;
@@ -760,8 +655,7 @@ int vfs_mount(vfs_node_t dev, vfs_node_t node, const char *type)
     return -1;
 }
 
-ssize_t vfs_read(vfs_node_t file, void *addr, size_t offset, size_t size)
-{
+ssize_t vfs_read(vfs_node_t file, void *addr, size_t offset, size_t size) {
     do_update(file);
     if (file->type & file_dir)
         return -1;
@@ -775,8 +669,7 @@ ssize_t vfs_read(vfs_node_t file, void *addr, size_t offset, size_t size)
     return ret;
 }
 
-ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size)
-{
+ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size) {
     do_update(fd->node);
     if (fd->node->type & file_dir)
         return -1;
@@ -786,16 +679,15 @@ ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size)
     return ret;
 }
 
-int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize)
-{
+int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize) {
     spin_lock(&node->spin);
     int ret = callbackof(node, readlink)(node, buf, 0, bufsize);
     spin_unlock(&node->spin);
     return ret;
 }
 
-ssize_t vfs_write(vfs_node_t file, const void *addr, size_t offset, size_t size)
-{
+ssize_t vfs_write(vfs_node_t file, const void *addr, size_t offset,
+                  size_t size) {
     do_update(file);
     if (file->type & file_dir)
         return -1;
@@ -806,32 +698,28 @@ ssize_t vfs_write(vfs_node_t file, const void *addr, size_t offset, size_t size)
     fd.offset = offset;
     ssize_t write_bytes = 0;
     write_bytes = callbackof(file, write)(&fd, addr, offset, size);
-    if (write_bytes > 0)
-    {
+    if (write_bytes > 0) {
         file->size = max(file->size, offset + write_bytes);
     }
     spin_unlock(&file->spin);
     return write_bytes;
 }
 
-ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size)
-{
+ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size) {
     do_update(fd->node);
     if (fd->node->type & file_dir)
         return -1;
     spin_lock(&fd->node->spin);
     ssize_t write_bytes = 0;
     write_bytes = callbackof(fd->node, write)(fd, addr, offset, size);
-    if (write_bytes > 0)
-    {
+    if (write_bytes > 0) {
         fd->node->size = max(fd->node->size, offset + write_bytes);
     }
     spin_unlock(&fd->node->spin);
     return write_bytes;
 }
 
-int vfs_unmount(const char *path)
-{
+int vfs_unmount(const char *path) {
     vfs_node_t node = vfs_open(path);
     if (node == NULL)
         return -1;
@@ -839,12 +727,10 @@ int vfs_unmount(const char *path)
         return -1;
     if (node->fsid == 0)
         return -1;
-    if (node->parent)
-    {
+    if (node->parent) {
         vfs_node_t cur = node;
         node = node->parent;
-        if (cur->root == cur)
-        {
+        if (cur->root == cur) {
             vfs_free_child(cur);
             callbackof(cur, unmount)(cur->handle);
             cur->fsid = node->fsid; // 交给上级
@@ -868,14 +754,11 @@ extern int pts_fsid;
 
 extern stdio_handle_t *global_stdio_handle;
 
-int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg)
-{
+int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
     do_update(node);
 
-    if (node->fsid != pts_fsid)
-    {
-        switch (cmd)
-        {
+    if (node->fsid != pts_fsid) {
+        switch (cmd) {
         case TIOCGWINSZ:
             *(struct winsize *)arg = (struct winsize){
                 .ws_xpixel = framebuffer->width,
@@ -894,22 +777,19 @@ int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg)
             global_stdio_handle->at_process_group_id = *(int *)arg;
             return 0;
         case TCGETS:
-            if (check_user_overflow(arg, sizeof(termios)))
-            {
+            if (check_user_overflow(arg, sizeof(termios))) {
                 return -EFAULT;
             }
             memcpy((void *)arg, &current_task->term, sizeof(termios));
             return 0;
         case TCSETS:
-            if (check_user_overflow(arg, sizeof(termios)))
-            {
+            if (check_user_overflow(arg, sizeof(termios))) {
                 return -EFAULT;
             }
             memcpy(&current_task->term, (void *)arg, sizeof(termios));
             return 0;
         case TCSETSW:
-            if (check_user_overflow(arg, sizeof(termios)))
-            {
+            if (check_user_overflow(arg, sizeof(termios))) {
                 return -EFAULT;
             }
             memcpy(&current_task->term, (void *)arg, sizeof(termios));
@@ -951,15 +831,12 @@ int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg)
         default:
             return callbackof(node, ioctl)(node->handle, cmd, arg);
         }
-    }
-    else
-    {
+    } else {
         return callbackof(node, ioctl)(node->handle, cmd, arg);
     }
 }
 
-int vfs_poll(vfs_node_t node, size_t event)
-{
+int vfs_poll(vfs_node_t node, size_t event) {
     if (node->type & file_dir)
         return -1;
     spin_lock(&node->spin);
@@ -971,28 +848,25 @@ int vfs_poll(vfs_node_t node, size_t event)
 spinlock_t get_path_lock = {0};
 
 // 使用请记得free掉返回的buff
-char *vfs_get_fullpath(vfs_node_t node)
-{
+char *vfs_get_fullpath(vfs_node_t node) {
     if (node == NULL)
         return NULL;
     int inital = 16;
     spin_lock(&get_path_lock);
     vfs_node_t *nodes = (vfs_node_t *)malloc(sizeof(vfs_node_t) * inital);
     int count = 0;
-    for (vfs_node_t cur = node; cur; cur = cur->parent)
-    {
-        if (count >= inital)
-        {
+    for (vfs_node_t cur = node; cur; cur = cur->parent) {
+        if (count >= inital) {
             inital *= 2;
-            nodes = (vfs_node_t *)realloc((void *)nodes, (size_t)(sizeof(vfs_node_t) * inital));
+            nodes = (vfs_node_t *)realloc(
+                (void *)nodes, (size_t)(sizeof(vfs_node_t) * inital));
         }
         nodes[count++] = cur;
     }
     // 正常的路径都不应该超过这个数值
     char *buff = (char *)malloc(2048);
     strcpy(buff, "/");
-    for (int j = count - 1; j >= 0; j--)
-    {
+    for (int j = count - 1; j >= 0; j--) {
         if (nodes[j] == rootdir)
             continue;
 
@@ -1005,8 +879,7 @@ char *vfs_get_fullpath(vfs_node_t node)
     return buff;
 }
 
-int vfs_delete(vfs_node_t node)
-{
+int vfs_delete(vfs_node_t node) {
     if (node == rootdir)
         return -1;
     spin_lock(&node->spin);
@@ -1015,12 +888,10 @@ int vfs_delete(vfs_node_t node)
     return 0;
 }
 
-int vfs_rename(vfs_node_t node, const char *new)
-{
+int vfs_rename(vfs_node_t node, const char *new) {
     spin_lock(&node->spin);
     int ret = callbackof(node, rename)(node->handle, new);
-    if (ret < 0)
-    {
+    if (ret < 0) {
         spin_unlock(&node->spin);
         return ret;
     }
@@ -1048,8 +919,7 @@ int vfs_rename(vfs_node_t node, const char *new)
     return ret;
 }
 
-fd_t *vfs_dup(fd_t *fd)
-{
+fd_t *vfs_dup(fd_t *fd) {
     fd_t *new_fd = malloc(sizeof(fd_t));
     vfs_node_t node = fd->node;
     node->refcount++;
@@ -1060,16 +930,16 @@ fd_t *vfs_dup(fd_t *fd)
     return new_fd;
 }
 
-void vfs_resize(vfs_node_t node, uint64_t size)
-{
+void vfs_resize(vfs_node_t node, uint64_t size) {
     if (!(node->type & file_none))
         return;
     callbackof(node, resize)(node->handle, size);
 }
 
-void *vfs_map(fd_t *fd, uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset)
-{
-    return callbackof(fd->node, map)(fd, (void *)addr, offset, len, prot, flags);
+void *vfs_map(fd_t *fd, uint64_t addr, uint64_t len, uint64_t prot,
+              uint64_t flags, uint64_t offset) {
+    return callbackof(fd->node, map)(fd, (void *)addr, offset, len, prot,
+                                     flags);
 }
 
 extern vfs_node_t devfs_root;

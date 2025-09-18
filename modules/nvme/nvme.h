@@ -5,8 +5,7 @@
 #include <libs/aether/pci.h>
 
 typedef struct _NVME_CONTROLLER NVME_CONTROLLER;
-typedef struct _NVME_CAPABILITY
-{
+typedef struct _NVME_CAPABILITY {
     uint64_t CAP; // Controller Capabilities
     uint32_t VER; // Version
     uint32_t IMS; // Interrupt Mask Set
@@ -20,8 +19,7 @@ typedef struct _NVME_CAPABILITY
     uint64_t ACQ; // Admin Completion Queue
 } NVME_CAPABILITY;
 
-typedef struct _NVME_SUBMISSION_QUEUE_ENTRY
-{
+typedef struct _NVME_SUBMISSION_QUEUE_ENTRY {
     uint32_t CDW0;
     uint32_t NSID; // Namespace ID
     uint32_t CDW2;
@@ -36,8 +34,7 @@ typedef struct _NVME_SUBMISSION_QUEUE_ENTRY
     uint32_t CDWF;
 } NVME_SUBMISSION_QUEUE_ENTRY;
 
-typedef struct _NVME_COMPLETION_QUEUE_ENTRY
-{
+typedef struct _NVME_COMPLETION_QUEUE_ENTRY {
     uint32_t DW0;
     uint32_t DW1;
     uint16_t QHD; // SQ Head Pointer
@@ -46,8 +43,7 @@ typedef struct _NVME_COMPLETION_QUEUE_ENTRY
     uint16_t STS; // Status
 } NVME_COMPLETION_QUEUE_ENTRY;
 
-typedef struct _NVME_QUEUE_COMMON
-{
+typedef struct _NVME_QUEUE_COMMON {
     NVME_CONTROLLER *CTR;
     uint32_t *DBL;
     uint16_t MSK;
@@ -56,21 +52,18 @@ typedef struct _NVME_QUEUE_COMMON
     uint16_t PHA;
 } NVME_QUEUE_COMMON;
 
-typedef struct _NVME_COMPLETION_QUEUE
-{
+typedef struct _NVME_COMPLETION_QUEUE {
     NVME_QUEUE_COMMON COM;
     NVME_COMPLETION_QUEUE_ENTRY *CQE;
 } NVME_COMPLETION_QUEUE;
 
-typedef struct _NVME_SUBMISSION_QUEUE
-{
+typedef struct _NVME_SUBMISSION_QUEUE {
     NVME_QUEUE_COMMON COM;
     NVME_SUBMISSION_QUEUE_ENTRY *SQE;
     NVME_COMPLETION_QUEUE *ICQ;
 } NVME_SUBMISSION_QUEUE;
 
-typedef struct _NVME_CONTROLLER
-{
+typedef struct _NVME_CONTROLLER {
     NVME_CAPABILITY *CAP;
     NVME_COMPLETION_QUEUE ACQ;
     NVME_SUBMISSION_QUEUE ASQ;
@@ -83,28 +76,26 @@ typedef struct _NVME_CONTROLLER
     uint8_t MOD[0x28];
 } NVME_CONTROLLER;
 
-typedef struct _NVME_LOGICAL_BLOCK_ADDRESS
-{
+typedef struct _NVME_LOGICAL_BLOCK_ADDRESS {
     uint16_t MS; // Metadata Size
     uint8_t DS;  // LBA Data Size
     uint8_t RP;  // Relative Performance
 } NVME_LOGICAL_BLOCK_ADDRESS;
 
-typedef struct _NVME_IDENTIFY_NAMESPACE
-{
-    uint64_t SIZE;    // Namespace Size
-    uint64_t CAPA;    // Namespace Capacity
-    uint64_t UTIL;    // Namespace Utilization
-    uint8_t FEAT;     // Namespace Features
-    uint8_t NLBA;     // Number of LBA Format
-    uint8_t FLBA;     // Formatted LBA size
-    uint8_t META;     // Metadata Capability
-    uint8_t DPCA;     // End-to-end Data Protection Capability
-    uint8_t DPTS;     // End-to-end Data Protection Type Settings
-    uint8_t NMIC;     // Namespace Multi-path I/O and Namespace Sharing Capabilities
-    uint8_t RSVC;     // Reservation Capabilities
-    uint8_t FPID;     // Format Prograss Indicator
-    uint8_t DLBF;     // Deallocate Logical Block Feature
+typedef struct _NVME_IDENTIFY_NAMESPACE {
+    uint64_t SIZE; // Namespace Size
+    uint64_t CAPA; // Namespace Capacity
+    uint64_t UTIL; // Namespace Utilization
+    uint8_t FEAT;  // Namespace Features
+    uint8_t NLBA;  // Number of LBA Format
+    uint8_t FLBA;  // Formatted LBA size
+    uint8_t META;  // Metadata Capability
+    uint8_t DPCA;  // End-to-end Data Protection Capability
+    uint8_t DPTS;  // End-to-end Data Protection Type Settings
+    uint8_t NMIC; // Namespace Multi-path I/O and Namespace Sharing Capabilities
+    uint8_t RSVC; // Reservation Capabilities
+    uint8_t FPID; // Format Prograss Indicator
+    uint8_t DLBF; // Deallocate Logical Block Feature
     uint16_t AWUN;    // Namespace Atomic Write Unit Normal
     uint16_t AWUP;    // Namespace Atomic Write Unit Power Fail
     uint16_t ACWU;    // Namespace Atomic Compare & Write Unit
@@ -132,8 +123,7 @@ typedef struct _NVME_IDENTIFY_NAMESPACE
     NVME_LOGICAL_BLOCK_ADDRESS LBAF[64];
 } NVME_IDENTIFY_NAMESPACE;
 
-typedef struct _NVME_IDENTIFY_CONTROLLER
-{
+typedef struct _NVME_IDENTIFY_CONTROLLER {
     uint16_t PVID;    // PCI Vendor ID
     uint16_t PSID;    // PCI Subsystem Vendor ID
     uint8_t SERN[20]; // Serial Number
@@ -141,15 +131,16 @@ typedef struct _NVME_IDENTIFY_CONTROLLER
     uint8_t FREV[8];  // Frimware revision
     uint8_t RCAB;     // Recommended Arbitration Burst
     uint8_t IEEE[3];  // IEEE OUI Identifier
-    uint8_t CMIC;     // Controller Multi-Path I/O and Namespace Sharing Capabilities
-    uint8_t MDTS;     // Maximum Data Transfer Size
-    uint16_t CTID;    // Controller ID
-    uint32_t VERS;    // Version
-    uint32_t RTDR;    // RTD3 Resume Latency
-    uint32_t RTDE;    // RTD3 Entry Latency
-    uint32_t OAES;    // Optional Asynchronous Events Supported
-    uint32_t CRTA;    // Controller Attributes
-    uint16_t RRLS;    // Read Recovery Levels Supported
+    uint8_t
+        CMIC; // Controller Multi-Path I/O and Namespace Sharing Capabilities
+    uint8_t MDTS;  // Maximum Data Transfer Size
+    uint16_t CTID; // Controller ID
+    uint32_t VERS; // Version
+    uint32_t RTDR; // RTD3 Resume Latency
+    uint32_t RTDE; // RTD3 Entry Latency
+    uint32_t OAES; // Optional Asynchronous Events Supported
+    uint32_t CRTA; // Controller Attributes
+    uint16_t RRLS; // Read Recovery Levels Supported
     uint8_t RSV0[9];
     uint8_t CTRT;     // Controller Type
     uint64_t GUID[2]; // FRU Globally Unique Identifier
@@ -204,13 +195,11 @@ typedef struct _NVME_IDENTIFY_CONTROLLER
     uint32_t NNAM; // Number of Namespaces
 } NVME_IDENTIFY_CONTROLLER;
 
-typedef struct _NVME_IDENTIFY_NAMESPACE_LIST
-{
+typedef struct _NVME_IDENTIFY_NAMESPACE_LIST {
     uint32_t NSID[1024];
 } NVME_IDENTIFY_NAMESPACE_LIST;
 
-typedef struct _NVME_NAMESPACE
-{
+typedef struct _NVME_NAMESPACE {
     NVME_CONTROLLER *CTRL;
     uint64_t NLBA; // Number of LBA
     uint32_t NSID;
@@ -221,8 +210,7 @@ typedef struct _NVME_NAMESPACE
 
 #define NVME_SQE_PRP_PTR ((uint32_t)1 << 13)
 
-typedef struct _NVME_PRP_LIST
-{
+typedef struct _NVME_PRP_LIST {
     uint64_t prp1;
     uint64_t prp2;
     bool UPRP;  // Use PRP list
@@ -232,6 +220,7 @@ typedef struct _NVME_PRP_LIST
 
 #define is_digit(c) ((c) >= '0' && (c) <= '9') // 用来判断是否是数字的宏
 
-uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba, uint32_t count, uint32_t write);
+uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba,
+                      uint32_t count, uint32_t write);
 
 NVME_CONTROLLER *nvme_driver_init(uint64_t bar0, uint64_t bar_size);

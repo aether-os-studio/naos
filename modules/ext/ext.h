@@ -5,11 +5,9 @@
 #include <lwext4/include/ext4_types.h>
 #include <lwext4/include/ext4.h>
 
-typedef struct ext_handle
-{
+typedef struct ext_handle {
     vfs_node_t node;
-    union
-    {
+    union {
         ext4_file *file;
         ext4_dir *dir;
     };

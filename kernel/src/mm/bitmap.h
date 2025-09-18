@@ -2,8 +2,7 @@
 
 #include "libs/klibc.h"
 
-typedef struct
-{
+typedef struct {
     spinlock_t lock;
     uint8_t *buffer;
     size_t length;
@@ -20,4 +19,5 @@ void bitmap_set_range(Bitmap *bitmap, size_t start, size_t end, bool value);
 
 size_t bitmap_find_range(const Bitmap *bitmap, size_t length, bool value);
 
-size_t bitmap_find_range_from(const Bitmap *bitmap, size_t length, bool value, size_t start_from);
+size_t bitmap_find_range_from(const Bitmap *bitmap, size_t length, bool value,
+                              size_t start_from);

@@ -19,8 +19,7 @@ static spinlock_t netlink_sockets_lock = {0};
 
 // Uevent message queue
 #define MAX_UEVENT_MESSAGES 32
-struct uevent_message
-{
+struct uevent_message {
     char buffer[NETLINK_BUFFER_SIZE];
     size_t length;
     uint64_t timestamp;
@@ -32,15 +31,13 @@ static size_t uevent_queue_tail = 0;
 static spinlock_t uevent_queue_lock = {0};
 
 // Function to deliver queued uevents to a new socket
-static void netlink_deliver_queued_uevents(struct netlink_sock *sock)
-{
+static void netlink_deliver_queued_uevents(struct netlink_sock *sock) {
     spin_lock(&uevent_queue_lock);
 
     struct uevent_message *msg = &uevent_queue[sock->uevent_message_pos++];
 
     spin_lock(&sock->lock);
-    if (sock->buffer_pos + msg->length <= NETLINK_BUFFER_SIZE)
-    {
+    if (sock->buffer_pos + msg->length <= NETLINK_BUFFER_SIZE) {
         memcpy(sock->buffer + sock->buffer_pos, msg->buffer, msg->length);
         sock->buffer_pos += msg->length;
     }
@@ -50,13 +47,11 @@ static void netlink_deliver_queued_uevents(struct netlink_sock *sock)
 }
 
 // Function to add uevent to queue
-static void netlink_queue_uevent(const char *message, size_t length)
-{
+static void netlink_queue_uevent(const char *message, size_t length) {
     spin_lock(&uevent_queue_lock);
 
     struct uevent_message *msg = &uevent_queue[uevent_queue_tail];
-    if (length <= NETLINK_BUFFER_SIZE)
-    {
+    if (length <= NETLINK_BUFFER_SIZE) {
         memcpy(msg->buffer, message, length);
         msg->length = length;
         msg->timestamp = 0; // TODO: Add timestamp support
@@ -64,8 +59,7 @@ static void netlink_queue_uevent(const char *message, size_t length)
         uevent_queue_tail = (uevent_queue_tail + 1) % MAX_UEVENT_MESSAGES;
 
         // If queue is full, overwrite oldest message
-        if (uevent_queue_tail == uevent_queue_head)
-        {
+        if (uevent_queue_tail == uevent_queue_head) {
             uevent_queue_head = (uevent_queue_head + 1) % MAX_UEVENT_MESSAGES;
         }
     }
@@ -73,10 +67,9 @@ static void netlink_queue_uevent(const char *message, size_t length)
     spin_unlock(&uevent_queue_lock);
 }
 
-int netlink_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen)
-{
-    if (addrlen < sizeof(struct sockaddr_nl))
-    {
+int netlink_bind(uint64_t fd, const struct sockaddr_un *addr,
+                 socklen_t addrlen) {
+    if (addrlen < sizeof(struct sockaddr_nl)) {
         return -EINVAL;
     }
 
@@ -85,8 +78,7 @@ int netlink_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen)
 
     struct sockaddr_nl *nl_addr = (struct sockaddr_nl *)addr;
 
-    if (nl_addr->nl_family != AF_NETLINK)
-    {
+    if (nl_addr->nl_family != AF_NETLINK) {
         return -EAFNOSUPPORT;
     }
 
@@ -99,35 +91,37 @@ int netlink_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen)
     return 0;
 }
 
-size_t netlink_getsockopt(uint64_t fd, int level, int optname, const void *optval, socklen_t *optlen)
-{
+size_t netlink_getsockopt(uint64_t fd, int level, int optname,
+                          const void *optval, socklen_t *optlen) {
     // TODO: Implement netlink socket options
     return 0;
 }
 
-size_t netlink_setsockopt(uint64_t fd, int level, int optname, const void *optval, socklen_t optlen)
-{
+size_t netlink_setsockopt(uint64_t fd, int level, int optname,
+                          const void *optval, socklen_t optlen) {
     // TODO: Implement netlink socket options
     return 0;
 }
 
-size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
-{
+size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     struct netlink_sock *nl_sk = handle->sock;
 
-    bool noblock = !!(flags & MSG_DONTWAIT) || !!(current_task->fd_info->fds[fd]->flags & O_NONBLOCK);
+    bool noblock = !!(flags & MSG_DONTWAIT) ||
+                   !!(current_task->fd_info->fds[fd]->flags & O_NONBLOCK);
     size_t total_copied = 0;
 
-    if ((nl_sk->uevent_message_pos == uevent_queue_tail && nl_sk->buffer_pos == 0) && noblock)
-    {
+    if ((nl_sk->uevent_message_pos == uevent_queue_tail &&
+         nl_sk->buffer_pos == 0) &&
+        noblock) {
         spin_unlock(&nl_sk->lock);
         return -EAGAIN;
     }
 
     // Wait for data if non-blocking and no data available
-    while ((nl_sk->uevent_message_pos == uevent_queue_tail && nl_sk->buffer_pos == 0) && !noblock)
-    {
+    while ((nl_sk->uevent_message_pos == uevent_queue_tail &&
+            nl_sk->buffer_pos == 0) &&
+           !noblock) {
         spin_unlock(&nl_sk->lock);
         arch_yield();
         spin_lock(&nl_sk->lock);
@@ -141,13 +135,11 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
     size_t remaining = nl_sk->buffer_pos;
     char *src = nl_sk->buffer;
 
-    for (int i = 0; i < msg->msg_iovlen && remaining > 0; i++)
-    {
+    for (int i = 0; i < msg->msg_iovlen && remaining > 0; i++) {
         struct iovec *curr = &msg->msg_iov[i];
         size_t to_copy = (remaining < curr->len) ? remaining : curr->len;
 
-        if (to_copy > 0)
-        {
+        if (to_copy > 0) {
             memcpy(curr->iov_base, src, to_copy);
             src += to_copy;
             remaining -= to_copy;
@@ -156,15 +148,13 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
     }
 
     // Move remaining data to beginning of buffer
-    if (remaining > 0)
-    {
+    if (remaining > 0) {
         memmove(nl_sk->buffer, src, remaining);
     }
     nl_sk->buffer_pos = remaining;
 
     struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
-    if (cmsg)
-    {
+    if (cmsg) {
         cmsg->cmsg_len = sizeof(struct ucred);
         cmsg->cmsg_level = SOL_SOCKET;
         cmsg->cmsg_type = SCM_CREDENTIALS;
@@ -179,21 +169,18 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags)
     return total_copied;
 }
 
-size_t netlink_sendmsg(uint64_t fd, const struct msghdr *msg, int flags)
-{
+size_t netlink_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     struct netlink_sock *nl_sk = handle->sock;
 
     size_t total_len = 0;
 
     // Calculate total message length
-    for (int i = 0; i < msg->msg_iovlen; i++)
-    {
+    for (int i = 0; i < msg->msg_iovlen; i++) {
         total_len += msg->msg_iov[i].len;
     }
 
-    if (total_len > NETLINK_BUFFER_SIZE)
-    {
+    if (total_len > NETLINK_BUFFER_SIZE) {
         return -EMSGSIZE;
     }
 
@@ -201,8 +188,7 @@ size_t netlink_sendmsg(uint64_t fd, const struct msghdr *msg, int flags)
     char *buffer = malloc(total_len);
     size_t copied = 0;
 
-    for (int i = 0; i < msg->msg_iovlen; i++)
-    {
+    for (int i = 0; i < msg->msg_iovlen; i++) {
         struct iovec *curr = &msg->msg_iov[i];
         memcpy(buffer + copied, curr->iov_base, curr->len);
         copied += curr->len;
@@ -211,14 +197,14 @@ size_t netlink_sendmsg(uint64_t fd, const struct msghdr *msg, int flags)
     // For now, just echo back the message for testing
     spin_lock(&nl_sk->lock);
 
-    if (nl_sk->buffer_pos + total_len > NETLINK_BUFFER_SIZE)
-    {
+    if (nl_sk->buffer_pos + total_len > NETLINK_BUFFER_SIZE) {
         spin_unlock(&nl_sk->lock);
         free(buffer);
         return -ENOBUFS;
     }
 
-    // for (struct nlmsghdr *nlmsg = (struct nlmsghdr *)buffer; NLMSG_OK(nlmsg, total_len); nlmsg = NLMSG_NEXT(nlmsg, total_len))
+    // for (struct nlmsghdr *nlmsg = (struct nlmsghdr *)buffer; NLMSG_OK(nlmsg,
+    // total_len); nlmsg = NLMSG_NEXT(nlmsg, total_len))
     // {
     //     serial_fprintk("Netlink message type: %d\n", nlmsg->nlmsg_type);
     // }
@@ -229,8 +215,8 @@ size_t netlink_sendmsg(uint64_t fd, const struct msghdr *msg, int flags)
     return total_len;
 }
 
-int netlink_getsockname(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen)
-{
+int netlink_getsockname(uint64_t fd, struct sockaddr_un *addr,
+                        socklen_t *addrlen) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     struct netlink_sock *nl_sk = handle->sock;
 
@@ -241,15 +227,13 @@ int netlink_getsockname(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrle
 }
 
 // Broadcast uevent to all listening netlink sockets
-static void netlink_broadcast_uevent(const char *buf, int len)
-{
+static void netlink_broadcast_uevent(const char *buf, int len) {
     // Add message to uevent queue first
     netlink_queue_uevent(buf, len);
 
     spin_lock(&netlink_sockets_lock);
 
-    for (int i = 0; i < MAX_NETLINK_SOCKETS; i++)
-    {
+    for (int i = 0; i < MAX_NETLINK_SOCKETS; i++) {
         if (netlink_sockets[i] == NULL)
             continue;
 
@@ -257,10 +241,8 @@ static void netlink_broadcast_uevent(const char *buf, int len)
         spin_lock(&sock->lock);
 
         // Check if socket is bound to uevent group
-        if (sock->groups & 1)
-        { // Group 1 for uevents
-            if (sock->buffer_pos + len <= NETLINK_BUFFER_SIZE)
-            {
+        if (sock->groups & 1) { // Group 1 for uevents
+            if (sock->buffer_pos + len <= NETLINK_BUFFER_SIZE) {
                 memcpy(sock->buffer + sock->buffer_pos, buf, len);
                 sock->buffer_pos += len;
             }
@@ -281,10 +263,8 @@ socket_op_t netlink_ops = {
     .sendmsg = netlink_sendmsg,
 };
 
-int netlink_socket(int domain, int type, int protocol)
-{
-    if (domain != AF_NETLINK)
-    {
+int netlink_socket(int domain, int type, int protocol) {
+    if (domain != AF_NETLINK) {
         return -EAFNOSUPPORT;
     }
 
@@ -316,15 +296,12 @@ int netlink_socket(int domain, int type, int protocol)
 
     // Add to global socket array
     spin_lock(&netlink_sockets_lock);
-    for (int i = 0; i < MAX_NETLINK_SOCKETS; i++)
-    {
-        if (netlink_sockets[i] == NULL)
-        {
+    for (int i = 0; i < MAX_NETLINK_SOCKETS; i++) {
+        if (netlink_sockets[i] == NULL) {
             netlink_sockets[i] = nl_sk;
 
             // Deliver queued uevents to new socket if it's for uevents
-            if (protocol == NETLINK_KOBJECT_UEVENT)
-            {
+            if (protocol == NETLINK_KOBJECT_UEVENT) {
                 nl_sk->groups = 1; // Automatically subscribe to uevent group
                 // netlink_deliver_queued_uevents(nl_sk);
             }
@@ -335,26 +312,21 @@ int netlink_socket(int domain, int type, int protocol)
     spin_unlock(&netlink_sockets_lock);
 
     uint64_t i = 0;
-    for (i = 3; i < MAX_FD_NUM; i++)
-    {
-        if (current_task->fd_info->fds[i] == NULL)
-        {
+    for (i = 3; i < MAX_FD_NUM; i++) {
+        if (current_task->fd_info->fds[i] == NULL) {
             break;
         }
     }
 
-    if (i == MAX_FD_NUM)
-    {
+    if (i == MAX_FD_NUM) {
         return -EBADF;
     }
 
     uint64_t flags = 0;
-    if (type & O_NONBLOCK)
-    {
+    if (type & O_NONBLOCK) {
         flags |= O_NONBLOCK;
     }
-    if (type & O_CLOEXEC)
-    {
+    if (type & O_CLOEXEC) {
         flags |= O_CLOEXEC;
     }
 
@@ -366,22 +338,19 @@ int netlink_socket(int domain, int type, int protocol)
     return i;
 }
 
-int netlink_socket_pair(int type, int protocol, int *sv)
-{
+int netlink_socket_pair(int type, int protocol, int *sv) {
     // Netlink doesn't support socket pairs
     return -EOPNOTSUPP;
 }
 
-int netlink_poll(void *file, size_t events)
-{
+int netlink_poll(void *file, size_t events) {
     socket_handle_t *handle = file;
     struct netlink_sock *nl_sk = handle->sock;
 
     int revents = 0;
-    if (events & EPOLLIN)
-    {
-        if (nl_sk->uevent_message_pos != uevent_queue_tail || nl_sk->buffer_pos > 0)
-        {
+    if (events & EPOLLIN) {
+        if (nl_sk->uevent_message_pos != uevent_queue_tail ||
+            nl_sk->buffer_pos > 0) {
             revents |= EPOLLIN;
         }
     }
@@ -389,23 +358,24 @@ int netlink_poll(void *file, size_t events)
     return revents;
 }
 
-ssize_t netlink_read(fd_t *fd, void *addr, size_t offset, size_t size)
-{
+ssize_t netlink_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     socket_handle_t *handle = fd->node->handle;
     struct netlink_sock *nl_sk = handle->sock;
 
     bool noblock = !!(fd->flags & O_NONBLOCK);
     size_t total_copied = 0;
 
-    if ((nl_sk->uevent_message_pos == uevent_queue_tail && nl_sk->buffer_pos == 0) && noblock)
-    {
+    if ((nl_sk->uevent_message_pos == uevent_queue_tail &&
+         nl_sk->buffer_pos == 0) &&
+        noblock) {
         spin_unlock(&nl_sk->lock);
         return -EAGAIN;
     }
 
     // Wait for data if non-blocking and no data available
-    while ((nl_sk->uevent_message_pos == uevent_queue_tail && nl_sk->buffer_pos == 0) && !noblock)
-    {
+    while ((nl_sk->uevent_message_pos == uevent_queue_tail &&
+            nl_sk->buffer_pos == 0) &&
+           !noblock) {
         spin_unlock(&nl_sk->lock);
         arch_yield();
         spin_lock(&nl_sk->lock);
@@ -423,8 +393,7 @@ ssize_t netlink_read(fd_t *fd, void *addr, size_t offset, size_t size)
     memcpy(addr, src, to_copy);
 
     // Move remaining data to beginning of buffer
-    if (remaining > 0)
-    {
+    if (remaining > 0) {
         memmove(nl_sk->buffer, src, remaining);
     }
     nl_sk->buffer_pos = remaining;
@@ -434,15 +403,11 @@ ssize_t netlink_read(fd_t *fd, void *addr, size_t offset, size_t size)
     return total_copied;
 }
 
-ssize_t netlink_write(fd_t *fd, const void *addr, size_t offset, size_t size)
-{
+ssize_t netlink_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     return 0;
 }
 
-static int dummy()
-{
-    return 0;
-}
+static int dummy() { return 0; }
 
 static struct vfs_callback netlink_callback = {
     .mount = (vfs_mount_t)dummy,
@@ -474,8 +439,7 @@ fs_t netlinksockfs = {
     .callback = &netlink_callback,
 };
 
-void netlink_init()
-{
+void netlink_init() {
     netlink_socket_fsid = vfs_regist(&netlinksockfs);
 
     // Initialize uevent queue
@@ -486,10 +450,8 @@ void netlink_init()
     spin_unlock(&uevent_queue_lock);
 }
 
-void netlink_kernel_uevent_send(const char *buf, int len)
-{
-    if (len <= 0 || len > NETLINK_BUFFER_SIZE)
-    {
+void netlink_kernel_uevent_send(const char *buf, int len) {
+    if (len <= 0 || len > NETLINK_BUFFER_SIZE) {
         return;
     }
 
@@ -504,6 +466,7 @@ void netlink_kernel_uevent_send(const char *buf, int len)
     // memcpy(message, &nlh, sizeof(nlh));
     memcpy(message, buf, len);
 
-    // Broadcast to all listening sockets (message will be added to queue automatically)
+    // Broadcast to all listening sockets (message will be added to queue
+    // automatically)
     netlink_broadcast_uevent(message, len);
 }

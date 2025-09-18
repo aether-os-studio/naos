@@ -17,15 +17,13 @@
  * @brief 判断符号是否需要被输出（只输出text段内的符号）
  *
  */
-#define symbol_to_write(vaddr, tv, etv) \
-    ((vaddr < tv || vaddr > etv) ? 0 : 1)
+#define symbol_to_write(vaddr, tv, etv) ((vaddr < tv || vaddr > etv) ? 0 : 1)
 
 /**
  * @brief 使用nm命令提取出来的信息存到这个结构体之中
  *
  */
-struct kernel_symbol_entry_t
-{
+struct kernel_symbol_entry_t {
     uint64_t vaddr;
     char type;
     char *symbol;
@@ -47,36 +45,31 @@ uint64_t text_vaddr, etext_vaddr;
  * @param entry 待填写的entry
  * @return int 返回码
  */
-int read_symbol(FILE *filp, struct kernel_symbol_entry_t *entry)
-{
+int read_symbol(FILE *filp, struct kernel_symbol_entry_t *entry) {
     // 本函数假设nm命令输出的结果中，每行最大512字节
     char str[512] = {0};
     char *s = fgets(str, sizeof(str), filp);
-    if (s != str)
-    {
+    if (s != str) {
         return -1;
     }
 
     char symbol_name[512] = {0};
-    int retval = sscanf(str, "%lx %c %512c", &entry->vaddr, &entry->type, symbol_name);
+    int retval =
+        sscanf(str, "%lx %c %512c", &entry->vaddr, &entry->type, symbol_name);
 
     // 如果当前行不符合要求
-    if (retval != 3)
-    {
+    if (retval != 3) {
         return -1;
     }
     // malloc一块内存，然后把str的内容拷贝进去，接着修改symbol指针
     size_t len = strlen(symbol_name);
-    if (len >= 1 && symbol_name[len - 1] == '\n')
-    {
+    if (len >= 1 && symbol_name[len - 1] == '\n') {
         symbol_name[len - 1] = '\0';
         len--;
     }
     // 转义双引号
-    for (int i = 0; i < len; i++)
-    {
-        if (symbol_name[i] == '"')
-        {
+    for (int i = 0; i < len; i++) {
+        if (symbol_name[i] == '"') {
             char temp[len - i];
             memcpy(temp, symbol_name + i, len - i);
             symbol_name[i] = '\\';
@@ -85,7 +78,8 @@ int read_symbol(FILE *filp, struct kernel_symbol_entry_t *entry)
         }
     }
     entry->symbol = strdup(symbol_name);
-    entry->symbol_length = len + 1; // +1的原因是.asciz指令会在字符串末尾自动添加结束符\0
+    entry->symbol_length =
+        len + 1; // +1的原因是.asciz指令会在字符串末尾自动添加结束符\0
     return 0;
 }
 
@@ -94,17 +88,16 @@ int read_symbol(FILE *filp, struct kernel_symbol_entry_t *entry)
  *
  * @param filp
  */
-void read_map(FILE *filp)
-{
+void read_map(FILE *filp) {
     // 循环读入数据直到输入流结束
-    while (!feof(filp))
-    {
+    while (!feof(filp)) {
         // 给符号表扩容
-        if (entry_count >= table_size)
-        {
+        if (entry_count >= table_size) {
             table_size += 100;
             // 由于使用了realloc，因此符号表原有的内容会被自动的copy过去
-            symbol_table = (struct kernel_symbol_entry_t *)realloc(symbol_table, sizeof(struct kernel_symbol_entry_t) * table_size);
+            symbol_table = (struct kernel_symbol_entry_t *)realloc(
+                symbol_table,
+                sizeof(struct kernel_symbol_entry_t) * table_size);
         }
 
         // 若成功读取符号表的内容，则将计数器+1
@@ -113,11 +106,11 @@ void read_map(FILE *filp)
     }
 
     // 查找符号表中的text和etext标签
-    for (uint64_t i = 0; i < entry_count; ++i)
-    {
+    for (uint64_t i = 0; i < entry_count; ++i) {
         if (text_vaddr == 0ULL && strcmp(symbol_table[i].symbol, "_text") == 0)
             text_vaddr = symbol_table[i].vaddr;
-        if (etext_vaddr == 0ULL && strcmp(symbol_table[i].symbol, "_etext") == 0)
+        if (etext_vaddr == 0ULL &&
+            strcmp(symbol_table[i].symbol, "_etext") == 0)
             etext_vaddr = symbol_table[i].vaddr;
         if (text_vaddr != 0ULL && etext_vaddr != 0ULL)
             break;
@@ -128,8 +121,7 @@ void read_map(FILE *filp)
  * @brief 输出最终的kallsyms汇编代码文件
  * 直接输出到stdout，通过命令行的 > 命令，写入文件
  */
-void generate_result()
-{
+void generate_result() {
     printf(".section .rodata\n\n");
     printf(".global kallsyms_address\n");
     printf(".align 8\n\n");
@@ -140,8 +132,7 @@ void generate_result()
     uint64_t total_syms_to_write = 0; // 真正输出的符号的数量
 
     // 循环写入地址数组
-    for (uint64_t i = 0; i < entry_count; ++i)
-    {
+    for (uint64_t i = 0; i < entry_count; ++i) {
         // 判断是否为text段的符号
         if (!symbol_to_write(symbol_table[i].vaddr, text_vaddr, etext_vaddr))
             continue;
@@ -172,8 +163,7 @@ void generate_result()
     printf("kallsyms_names_index:\n");
     uint64_t position = 0;
     last_vaddr = 0;
-    for (uint64_t i = 0; i < entry_count; ++i)
-    {
+    for (uint64_t i = 0; i < entry_count; ++i) {
         // 判断是否为text段的符号
         if (!symbol_to_write(symbol_table[i].vaddr, text_vaddr, etext_vaddr))
             continue;
@@ -195,8 +185,7 @@ void generate_result()
     printf("kallsyms_names:\n");
 
     last_vaddr = 0;
-    for (uint64_t i = 0; i < entry_count; ++i)
-    {
+    for (uint64_t i = 0; i < entry_count; ++i) {
         // 判断是否为text段的符号
         if (!symbol_to_write(symbol_table[i].vaddr, text_vaddr, etext_vaddr))
             continue;
@@ -212,8 +201,7 @@ void generate_result()
 
     putchar('\n');
 }
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
     read_map(stdin);
 
     generate_result();

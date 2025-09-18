@@ -7,8 +7,8 @@
  * Copyright (c) 2001-2004 Swedish Institute of Computer Science.
  * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without modification,
- * are permitted provided that the following conditions are met:
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
  *
  * 1. Redistributions of source code must retain the above copyright notice,
  *    this list of conditions and the following disclaimer.
@@ -20,14 +20,14 @@
  *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
  * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
- * SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
- * OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
- * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
- * OF SUCH DAMAGE.
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
+ * EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  * This file is part of the lwIP TCP/IP stack.
  *
@@ -63,15 +63,15 @@ extern "C" {
 
 /** Function prototype for a stack-internal timer function that has to be
  * called at a defined interval */
-typedef void (* lwip_cyclic_timer_handler)(void);
+typedef void (*lwip_cyclic_timer_handler)(void);
 
 /** This struct contains information about a stack-internal timer function
  that has to be called at a defined interval */
 struct lwip_cyclic_timer {
-  u32_t interval_ms;
-  lwip_cyclic_timer_handler handler;
+    u32_t interval_ms;
+    lwip_cyclic_timer_handler handler;
 #if LWIP_DEBUG_TIMERNAMES
-  const char* handler_name;
+    const char *handler_name;
 #endif /* LWIP_DEBUG_TIMERNAMES */
 };
 
@@ -86,26 +86,29 @@ extern const int lwip_num_cyclic_timers;
 /** Function prototype for a timeout callback function. Register such a function
  * using sys_timeout().
  *
- * @param arg Additional argument to pass to the function - set up by sys_timeout()
+ * @param arg Additional argument to pass to the function - set up by
+ * sys_timeout()
  */
-typedef void (* sys_timeout_handler)(void *arg);
+typedef void (*sys_timeout_handler)(void *arg);
 
 struct sys_timeo {
-  struct sys_timeo *next;
-  u32_t time;
-  sys_timeout_handler h;
-  void *arg;
+    struct sys_timeo *next;
+    u32_t time;
+    sys_timeout_handler h;
+    void *arg;
 #if LWIP_DEBUG_TIMERNAMES
-  const char* handler_name;
+    const char *handler_name;
 #endif /* LWIP_DEBUG_TIMERNAMES */
 };
 
 void sys_timeouts_init(void);
 
 #if LWIP_DEBUG_TIMERNAMES
-void sys_timeout_debug(u32_t msecs, sys_timeout_handler handler, void *arg, const char* handler_name);
-#define sys_timeout(msecs, handler, arg) sys_timeout_debug(msecs, handler, arg, #handler)
-#else /* LWIP_DEBUG_TIMERNAMES */
+void sys_timeout_debug(u32_t msecs, sys_timeout_handler handler, void *arg,
+                       const char *handler_name);
+#define sys_timeout(msecs, handler, arg)                                       \
+    sys_timeout_debug(msecs, handler, arg, #handler)
+#else  /* LWIP_DEBUG_TIMERNAMES */
 void sys_timeout(u32_t msecs, sys_timeout_handler handler, void *arg);
 #endif /* LWIP_DEBUG_TIMERNAMES */
 
@@ -115,7 +118,7 @@ void sys_check_timeouts(void);
 u32_t sys_timeouts_sleeptime(void);
 
 #if LWIP_TESTMODE
-struct sys_timeo** sys_timeouts_get_next_timeout(void);
+struct sys_timeo **sys_timeouts_get_next_timeout(void);
 void lwip_cyclic_timer(void *arg);
 #endif
 

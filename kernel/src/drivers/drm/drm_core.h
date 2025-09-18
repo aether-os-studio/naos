@@ -10,8 +10,7 @@
 #define DRM_MAX_FRAMEBUFFERS_PER_DEVICE 16
 #define DRM_MAX_PLANES_PER_DEVICE 4
 
-typedef enum
-{
+typedef enum {
     DRM_RESOURCE_CONNECTOR,
     DRM_RESOURCE_CRTC,
     DRM_RESOURCE_ENCODER,
@@ -19,8 +18,7 @@ typedef enum
     DRM_RESOURCE_PLANE
 } drm_resource_type_t;
 
-typedef struct drm_connector
-{
+typedef struct drm_connector {
     uint32_t id;
     uint32_t type;
     uint32_t connection;
@@ -38,8 +36,7 @@ typedef struct drm_connector
     uint32_t refcount;
 } drm_connector_t;
 
-typedef struct drm_crtc
-{
+typedef struct drm_crtc {
     uint32_t id;
     uint32_t fb_id;
     uint32_t x;
@@ -54,8 +51,7 @@ typedef struct drm_crtc
     uint32_t refcount;
 } drm_crtc_t;
 
-typedef struct drm_encoder
-{
+typedef struct drm_encoder {
     uint32_t id;
     uint32_t type;
     uint32_t crtc_id;
@@ -65,8 +61,7 @@ typedef struct drm_encoder
     uint32_t refcount;
 } drm_encoder_t;
 
-typedef struct drm_framebuffer
-{
+typedef struct drm_framebuffer {
     uint32_t id;
     uint32_t width;
     uint32_t height;
@@ -81,8 +76,7 @@ typedef struct drm_framebuffer
     uint32_t refcount;
 } drm_framebuffer_t;
 
-enum drm_plane_type
-{
+enum drm_plane_type {
     /**
      * @DRM_PLANE_TYPE_OVERLAY:
      *
@@ -112,8 +106,7 @@ enum drm_plane_type
     DRM_PLANE_TYPE_CURSOR,
 };
 
-typedef struct drm_plane
-{
+typedef struct drm_plane {
     uint32_t id;
     uint32_t crtc_id;
     uint32_t fb_id;
@@ -126,8 +119,7 @@ typedef struct drm_plane
     enum drm_plane_type plane_type;
 } drm_plane_t;
 
-typedef struct drm_resource_manager
-{
+typedef struct drm_resource_manager {
     drm_connector_t *connectors[DRM_MAX_CONNECTORS_PER_DEVICE];
     drm_crtc_t *crtcs[DRM_MAX_CRTCS_PER_DEVICE];
     drm_encoder_t *encoders[DRM_MAX_ENCODERS_PER_DEVICE];
@@ -144,7 +136,8 @@ typedef struct drm_resource_manager
 } drm_resource_manager_t;
 
 // Resource management functions
-drm_connector_t *drm_connector_alloc(drm_resource_manager_t *mgr, uint32_t type, void *driver_data);
+drm_connector_t *drm_connector_alloc(drm_resource_manager_t *mgr, uint32_t type,
+                                     void *driver_data);
 void drm_connector_free(drm_resource_manager_t *mgr, uint32_t id);
 drm_connector_t *drm_connector_get(drm_resource_manager_t *mgr, uint32_t id);
 
@@ -152,13 +145,16 @@ drm_crtc_t *drm_crtc_alloc(drm_resource_manager_t *mgr, void *driver_data);
 void drm_crtc_free(drm_resource_manager_t *mgr, uint32_t id);
 drm_crtc_t *drm_crtc_get(drm_resource_manager_t *mgr, uint32_t id);
 
-drm_encoder_t *drm_encoder_alloc(drm_resource_manager_t *mgr, uint32_t type, void *driver_data);
+drm_encoder_t *drm_encoder_alloc(drm_resource_manager_t *mgr, uint32_t type,
+                                 void *driver_data);
 void drm_encoder_free(drm_resource_manager_t *mgr, uint32_t id);
 drm_encoder_t *drm_encoder_get(drm_resource_manager_t *mgr, uint32_t id);
 
-drm_framebuffer_t *drm_framebuffer_alloc(drm_resource_manager_t *mgr, void *driver_data);
+drm_framebuffer_t *drm_framebuffer_alloc(drm_resource_manager_t *mgr,
+                                         void *driver_data);
 void drm_framebuffer_free(drm_resource_manager_t *mgr, uint32_t id);
-drm_framebuffer_t *drm_framebuffer_get(drm_resource_manager_t *mgr, uint32_t id);
+drm_framebuffer_t *drm_framebuffer_get(drm_resource_manager_t *mgr,
+                                       uint32_t id);
 
 drm_plane_t *drm_plane_alloc(drm_resource_manager_t *mgr, void *driver_data);
 void drm_plane_free(drm_resource_manager_t *mgr, uint32_t id);

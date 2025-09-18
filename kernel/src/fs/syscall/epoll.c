@@ -4,25 +4,18 @@ vfs_node_t epollfs_root;
 int epollfs_id;
 int epollfd_id = 0;
 
-static int dummy()
-{
-    return 0;
-}
+static int dummy() { return 0; }
 
 // epoll API
-size_t epoll_create1(int flags)
-{
+size_t epoll_create1(int flags) {
     int i = -1;
-    for (i = 3; i < MAX_FD_NUM; i++)
-    {
-        if (current_task->fd_info->fds[i] == NULL)
-        {
+    for (i = 3; i < MAX_FD_NUM; i++) {
+        if (current_task->fd_info->fds[i] == NULL) {
             break;
         }
     }
 
-    if (i == MAX_FD_NUM)
-    {
+    if (i == MAX_FD_NUM) {
         return -EBADF;
     }
 
@@ -47,13 +40,10 @@ size_t epoll_create1(int flags)
     return i;
 }
 
-uint64_t sys_epoll_create(int size)
-{
-    return epoll_create1(0);
-}
+uint64_t sys_epoll_create(int size) { return epoll_create1(0); }
 
-uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events, int maxevents, int timeout)
-{
+uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
+                    int maxevents, int timeout) {
     if (maxevents < 1)
         return (uint64_t)-EINVAL;
     epoll_t *epoll = epollFd->handle;
@@ -62,23 +52,19 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events, int maxevent
 
     int ready = 0;
     size_t target = nanoTime() + timeout;
-    do
-    {
+    do {
         spin_lock(&epoll->lock);
         epoll_watch_t *browse = epoll->firstEpollWatch;
 
         arch_disable_interrupt();
 
-        while (browse && ready < maxevents)
-        {
-            if (!browse->fd)
-            {
+        while (browse && ready < maxevents) {
+            if (!browse->fd) {
                 browse = browse->next;
                 continue;
             }
             int revents = vfs_poll(browse->fd, browse->watchEvents);
-            if (revents > 0 && ready < maxevents)
-            {
+            if (revents > 0 && ready < maxevents) {
                 events[ready].events = revents;
                 events[ready].data = (epoll_data_t)browse->userlandData;
                 ready++;
@@ -102,8 +88,8 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events, int maxevent
     return ready;
 }
 
-size_t epoll_ctl(vfs_node_t epollFd, int op, int fd, struct epoll_event *event)
-{
+size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
+                 struct epoll_event *event) {
     if (op != EPOLL_CTL_ADD && op != EPOLL_CTL_DEL && op != EPOLL_CTL_MOD)
         return (uint64_t)(-EINVAL);
 
@@ -113,8 +99,7 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd, struct epoll_event *event)
 
     size_t ret = 0;
 
-    if (!current_task->fd_info->fds[fd])
-    {
+    if (!current_task->fd_info->fds[fd]) {
         ret = (uint64_t)(-EBADF);
         goto cleanup;
     }
@@ -123,39 +108,31 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd, struct epoll_event *event)
 
     spin_lock(&epoll->lock);
 
-    switch (op & 3)
-    {
-    case EPOLL_CTL_ADD:
-    {
+    switch (op & 3) {
+    case EPOLL_CTL_ADD: {
         epoll_watch_t *epollWatch = malloc(sizeof(epoll_watch_t));
         epollWatch->fd = fdNode;
         epollWatch->watchEvents = event->events | (op & EPOLLET);
         epollWatch->userlandData = (uint64_t)event->data.ptr;
         epollWatch->next = NULL;
         epoll_watch_t *current = epoll->firstEpollWatch;
-        if (current)
-        {
+        if (current) {
             while (current->next)
                 current = current->next;
             current->next = epollWatch;
-        }
-        else
-        {
+        } else {
             epoll->firstEpollWatch = epollWatch;
         }
         break;
     }
-    case EPOLL_CTL_MOD:
-    {
+    case EPOLL_CTL_MOD: {
         epoll_watch_t *browse = epoll->firstEpollWatch;
-        while (browse)
-        {
+        while (browse) {
             if (browse->fd == fdNode)
                 break;
             browse = browse->next;
         }
-        if (!browse)
-        {
+        if (!browse) {
             ret = (uint64_t)(-ENOENT);
             goto cleanup;
         }
@@ -163,19 +140,16 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd, struct epoll_event *event)
         browse->userlandData = (uint64_t)event->data.ptr;
         break;
     }
-    case EPOLL_CTL_DEL:
-    {
+    case EPOLL_CTL_DEL: {
         epoll_watch_t *browse = epoll->firstEpollWatch;
         epoll_watch_t *prev = NULL;
-        while (browse)
-        {
+        while (browse) {
             if (browse->fd == fdNode)
                 break;
             prev = browse;
             browse = browse->next;
         }
-        if (!browse)
-        {
+        if (!browse) {
             ret = (uint64_t)(-ENOENT);
             goto cleanup;
         }
@@ -193,11 +167,11 @@ cleanup:
     return ret;
 }
 
-size_t epoll_pwait(vfs_node_t epollFd, struct epoll_event *events, int maxevents,
-                   int timeout, sigset_t *sigmask, size_t sigsetsize)
-{
-    if (check_user_overflow((uint64_t)events, maxevents * sizeof(struct epoll_event)))
-    {
+size_t epoll_pwait(vfs_node_t epollFd, struct epoll_event *events,
+                   int maxevents, int timeout, sigset_t *sigmask,
+                   size_t sigsetsize) {
+    if (check_user_overflow((uint64_t)events,
+                            maxevents * sizeof(struct epoll_event))) {
         return (uint64_t)-EFAULT;
     }
 
@@ -211,10 +185,10 @@ size_t epoll_pwait(vfs_node_t epollFd, struct epoll_event *events, int maxevents
     return epollRet;
 }
 
-uint64_t sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
-{
-    if (check_user_overflow((uint64_t)events, maxevents * sizeof(struct epoll_event)))
-    {
+uint64_t sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents,
+                        int timeout) {
+    if (check_user_overflow((uint64_t)events,
+                            maxevents * sizeof(struct epoll_event))) {
         return (uint64_t)-EFAULT;
     }
     vfs_node_t node = current_task->fd_info->fds[epfd]->node;
@@ -223,14 +197,11 @@ uint64_t sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int
     return epoll_wait(node, events, maxevents, timeout);
 }
 
-uint64_t sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)
-{
-    if (check_user_overflow((uint64_t)event, sizeof(struct epoll_event)))
-    {
+uint64_t sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
+    if (check_user_overflow((uint64_t)event, sizeof(struct epoll_event))) {
         return (uint64_t)-EFAULT;
     }
-    if (epfd >= MAX_FD_NUM || current_task->fd_info->fds[epfd] == NULL)
-    {
+    if (epfd >= MAX_FD_NUM || current_task->fd_info->fds[epfd] == NULL) {
         return (uint64_t)-EBADF;
     }
     vfs_node_t node = current_task->fd_info->fds[epfd]->node;
@@ -239,16 +210,13 @@ uint64_t sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)
     return epoll_ctl(node, op, fd, event);
 }
 
-uint64_t sys_epoll_pwait(int epfd, struct epoll_event *events,
-                         int maxevents, int timeout, sigset_t *sigmask,
-                         size_t sigsetsize)
-{
-    if (check_user_overflow((uint64_t)events, maxevents * sizeof(struct epoll_event)))
-    {
+uint64_t sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
+                         int timeout, sigset_t *sigmask, size_t sigsetsize) {
+    if (check_user_overflow((uint64_t)events,
+                            maxevents * sizeof(struct epoll_event))) {
         return (uint64_t)-EFAULT;
     }
-    if (epfd >= MAX_FD_NUM || current_task->fd_info->fds[epfd] == NULL)
-    {
+    if (epfd >= MAX_FD_NUM || current_task->fd_info->fds[epfd] == NULL) {
         return (uint64_t)-EBADF;
     }
     vfs_node_t node = current_task->fd_info->fds[epfd]->node;
@@ -259,8 +227,7 @@ uint64_t sys_epoll_pwait(int epfd, struct epoll_event *events,
 
 uint64_t sys_epoll_create1(int flags) { return epoll_create1(flags); }
 
-bool epollfs_close(void *current)
-{
+bool epollfs_close(void *current) {
     epoll_t *epoll = current;
     epoll->reference_count--;
     // if (!epoll->reference_count)
@@ -268,17 +235,14 @@ bool epollfs_close(void *current)
     return false;
 }
 
-static int epoll_poll(void *file, size_t event)
-{
+static int epoll_poll(void *file, size_t event) {
     epoll_t *epoll = file;
     int revents = 0;
 
     epoll_watch_t *current = epoll->firstEpollWatch;
-    while (current)
-    {
+    while (current) {
         int ret = vfs_poll(current->fd, event);
-        if (ret)
-        {
+        if (ret) {
             revents |= EPOLLIN;
             break;
         }
@@ -318,8 +282,7 @@ fs_t epollfs = {
     .callback = &epoll_callbacks,
 };
 
-void epoll_init()
-{
+void epoll_init() {
     epollfs_id = vfs_regist(&epollfs);
     epollfs_root = vfs_node_alloc(NULL, "epoll");
     epollfs_root->type = file_dir;

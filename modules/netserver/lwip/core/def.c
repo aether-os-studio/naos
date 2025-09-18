@@ -10,7 +10,8 @@
  * \#define lwip_htons(x) your_htons
  * \#define lwip_htonl(x) your_htonl
  *
- * Note lwip_ntohs() and lwip_ntohl() are merely references to the htonx counterparts.
+ * Note lwip_ntohs() and lwip_ntohl() are merely references to the htonx
+ counterparts.
  *
  * If you \#define them to htons() and htonl(), you should
  * \#define LWIP_DONT_PROVIDE_BYTEORDER_FUNCTIONS to prevent lwIP from
@@ -30,8 +31,8 @@
  * Copyright (c) 2001-2004 Swedish Institute of Computer Science.
  * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without modification,
- * are permitted provided that the following conditions are met:
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
  *
  * 1. Redistributions of source code must retain the above copyright notice,
  *    this list of conditions and the following disclaimer.
@@ -43,14 +44,14 @@
  *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
  * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
- * SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
- * OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
- * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
- * OF SUCH DAMAGE.
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
+ * EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  * This file is part of the lwIP TCP/IP stack.
  *
@@ -72,11 +73,7 @@
  * @param n u16_t in host byte order
  * @return n in network byte order
  */
-u16_t
-lwip_htons(u16_t n)
-{
-  return PP_HTONS(n);
-}
+u16_t lwip_htons(u16_t n) { return PP_HTONS(n); }
 #endif /* lwip_htons */
 
 #if !defined(lwip_htonl)
@@ -86,11 +83,7 @@ lwip_htons(u16_t n)
  * @param n u32_t in host byte order
  * @return n in network byte order
  */
-u32_t
-lwip_htonl(u32_t n)
-{
-  return PP_HTONL(n);
-}
+u32_t lwip_htonl(u32_t n) { return PP_HTONL(n); }
 #endif /* lwip_htonl */
 
 #endif /* BYTE_ORDER == LITTLE_ENDIAN */
@@ -101,20 +94,18 @@ lwip_htonl(u32_t n)
  * lwIP default implementation for strnstr() non-standard function.
  * This can be \#defined to strnstr() depending on your platform port.
  */
-char *
-lwip_strnstr(const char *buffer, const char *token, size_t n)
-{
-  const char *p;
-  size_t tokenlen = strlen(token);
-  if (tokenlen == 0) {
-    return LWIP_CONST_CAST(char *, buffer);
-  }
-  for (p = buffer; *p && (p + tokenlen <= buffer + n); p++) {
-    if ((*p == *token) && (strncmp(p, token, tokenlen) == 0)) {
-      return LWIP_CONST_CAST(char *, p);
+char *lwip_strnstr(const char *buffer, const char *token, size_t n) {
+    const char *p;
+    size_t tokenlen = strlen(token);
+    if (tokenlen == 0) {
+        return LWIP_CONST_CAST(char *, buffer);
     }
-  }
-  return NULL;
+    for (p = buffer; *p && (p + tokenlen <= buffer + n); p++) {
+        if ((*p == *token) && (strncmp(p, token, tokenlen) == 0)) {
+            return LWIP_CONST_CAST(char *, p);
+        }
+    }
+    return NULL;
 }
 #endif
 
@@ -124,20 +115,18 @@ lwip_strnstr(const char *buffer, const char *token, size_t n)
  * lwIP default implementation for strnistr() non-standard function.
  * This can be \#defined to strnistr() depending on your platform port.
  */
-char *
-lwip_strnistr(const char *buffer, const char *token, size_t n)
-{
-  const char *p;
-  size_t tokenlen = strlen(token);
-  if (tokenlen == 0) {
-    return LWIP_CONST_CAST(char *, buffer);
-  }
-  for (p = buffer; *p && (p + tokenlen <= buffer + n); p++) {
-    if (lwip_strnicmp(p, token, tokenlen) == 0) {
-      return LWIP_CONST_CAST(char *, p);
+char *lwip_strnistr(const char *buffer, const char *token, size_t n) {
+    const char *p;
+    size_t tokenlen = strlen(token);
+    if (tokenlen == 0) {
+        return LWIP_CONST_CAST(char *, buffer);
     }
-  }
-  return NULL;
+    for (p = buffer; *p && (p + tokenlen <= buffer + n); p++) {
+        if (lwip_strnicmp(p, token, tokenlen) == 0) {
+            return LWIP_CONST_CAST(char *, p);
+        }
+    }
+    return NULL;
 }
 #endif
 
@@ -147,32 +136,30 @@ lwip_strnistr(const char *buffer, const char *token, size_t n)
  * lwIP default implementation for stricmp() non-standard function.
  * This can be \#defined to stricmp() depending on your platform port.
  */
-int
-lwip_stricmp(const char *str1, const char *str2)
-{
-  char c1, c2;
+int lwip_stricmp(const char *str1, const char *str2) {
+    char c1, c2;
 
-  do {
-    c1 = *str1++;
-    c2 = *str2++;
-    if (c1 != c2) {
-      char c1_upc = c1 | 0x20;
-      if ((c1_upc >= 'a') && (c1_upc <= 'z')) {
-        /* characters are not equal an one is in the alphabet range:
-        downcase both chars and check again */
-        char c2_upc = c2 | 0x20;
-        if (c1_upc != c2_upc) {
-          /* still not equal */
-          /* don't care for < or > */
-          return 1;
+    do {
+        c1 = *str1++;
+        c2 = *str2++;
+        if (c1 != c2) {
+            char c1_upc = c1 | 0x20;
+            if ((c1_upc >= 'a') && (c1_upc <= 'z')) {
+                /* characters are not equal an one is in the alphabet range:
+                downcase both chars and check again */
+                char c2_upc = c2 | 0x20;
+                if (c1_upc != c2_upc) {
+                    /* still not equal */
+                    /* don't care for < or > */
+                    return 1;
+                }
+            } else {
+                /* characters are not equal but none is in the alphabet range */
+                return 1;
+            }
         }
-      } else {
-        /* characters are not equal but none is in the alphabet range */
-        return 1;
-      }
-    }
-  } while (c1 != 0);
-  return 0;
+    } while (c1 != 0);
+    return 0;
 }
 #endif
 
@@ -182,33 +169,31 @@ lwip_stricmp(const char *str1, const char *str2)
  * lwIP default implementation for strnicmp() non-standard function.
  * This can be \#defined to strnicmp() depending on your platform port.
  */
-int
-lwip_strnicmp(const char *str1, const char *str2, size_t len)
-{
-  char c1, c2;
+int lwip_strnicmp(const char *str1, const char *str2, size_t len) {
+    char c1, c2;
 
-  do {
-    c1 = *str1++;
-    c2 = *str2++;
-    if (c1 != c2) {
-      char c1_upc = c1 | 0x20;
-      if ((c1_upc >= 'a') && (c1_upc <= 'z')) {
-        /* characters are not equal an one is in the alphabet range:
-        downcase both chars and check again */
-        char c2_upc = c2 | 0x20;
-        if (c1_upc != c2_upc) {
-          /* still not equal */
-          /* don't care for < or > */
-          return 1;
+    do {
+        c1 = *str1++;
+        c2 = *str2++;
+        if (c1 != c2) {
+            char c1_upc = c1 | 0x20;
+            if ((c1_upc >= 'a') && (c1_upc <= 'z')) {
+                /* characters are not equal an one is in the alphabet range:
+                downcase both chars and check again */
+                char c2_upc = c2 | 0x20;
+                if (c1_upc != c2_upc) {
+                    /* still not equal */
+                    /* don't care for < or > */
+                    return 1;
+                }
+            } else {
+                /* characters are not equal but none is in the alphabet range */
+                return 1;
+            }
         }
-      } else {
-        /* characters are not equal but none is in the alphabet range */
-        return 1;
-      }
-    }
-    len--;
-  } while ((len != 0) && (c1 != 0));
-  return 0;
+        len--;
+    } while ((len != 0) && (c1 != 0));
+    return 0;
 }
 #endif
 
@@ -216,71 +201,68 @@ lwip_strnicmp(const char *str1, const char *str2, size_t len)
 /**
  * @ingroup sys_nonstandard
  * lwIP default implementation for itoa() non-standard function.
- * This can be \#defined to itoa() or snprintf(result, bufsize, "%d", number) depending on your platform port.
+ * This can be \#defined to itoa() or snprintf(result, bufsize, "%d", number)
+ * depending on your platform port.
  */
-void
-lwip_itoa(char *result, size_t bufsize, int number)
-{
-  char *res = result;
-  char *tmp = result + bufsize - 1;
-  int n = (number >= 0) ? number : -number;
+void lwip_itoa(char *result, size_t bufsize, int number) {
+    char *res = result;
+    char *tmp = result + bufsize - 1;
+    int n = (number >= 0) ? number : -number;
 
-  /* handle invalid bufsize */
-  if (bufsize < 2) {
-    if (bufsize == 1) {
-      *result = 0;
+    /* handle invalid bufsize */
+    if (bufsize < 2) {
+        if (bufsize == 1) {
+            *result = 0;
+        }
+        return;
     }
-    return;
-  }
 
-  /* First, add sign */
-  if (number < 0) {
-    *res++ = '-';
-  }
-  /* Then create the string from the end and stop if buffer full,
-     and ensure output string is zero terminated */
-  *tmp = 0;
-  while ((n != 0) && (tmp > res)) {
-    char val = (char)('0' + (n % 10));
-    tmp--;
-    *tmp = val;
-    n = n / 10;
-  }
-  if (n) {
-    /* buffer is too small */
-    *result = 0;
-    return;
-  }
-  if (*tmp == 0) {
-    /* Nothing added? */
-    *res++ = '0';
-    *res++ = 0;
-    return;
-  }
-  /* move from temporary buffer to output buffer (sign is not moved) */
-  memmove(res, tmp, (size_t)((result + bufsize) - tmp));
+    /* First, add sign */
+    if (number < 0) {
+        *res++ = '-';
+    }
+    /* Then create the string from the end and stop if buffer full,
+       and ensure output string is zero terminated */
+    *tmp = 0;
+    while ((n != 0) && (tmp > res)) {
+        char val = (char)('0' + (n % 10));
+        tmp--;
+        *tmp = val;
+        n = n / 10;
+    }
+    if (n) {
+        /* buffer is too small */
+        *result = 0;
+        return;
+    }
+    if (*tmp == 0) {
+        /* Nothing added? */
+        *res++ = '0';
+        *res++ = 0;
+        return;
+    }
+    /* move from temporary buffer to output buffer (sign is not moved) */
+    memmove(res, tmp, (size_t)((result + bufsize) - tmp));
 }
 #endif
 
 #ifndef lwip_memcmp_consttime
 /**
  * @ingroup sys_nonstandard
- * The goal of this function is to compare memory with constant runtime in order to prevent
- * timing attacks to various parts in the stack.
- * To do that, in contrast to memcmp(), it only returns:
- * 0: equal
+ * The goal of this function is to compare memory with constant runtime in order
+ * to prevent timing attacks to various parts in the stack. To do that, in
+ * contrast to memcmp(), it only returns: 0: equal
  * != 0: not equal
  */
-int lwip_memcmp_consttime(const void* s1, const void* s2, size_t len)
-{
-  size_t i;
-  const unsigned char* a1 = (const unsigned char*)s1;
-  const unsigned char* a2 = (const unsigned char*)s2;
-  unsigned char ret = 0;
+int lwip_memcmp_consttime(const void *s1, const void *s2, size_t len) {
+    size_t i;
+    const unsigned char *a1 = (const unsigned char *)s1;
+    const unsigned char *a2 = (const unsigned char *)s2;
+    unsigned char ret = 0;
 
-  for (i = 0; i < len; i++) {
-    ret |= a1[i] ^ a2[i];
-  }
-  return ret;
+    for (i = 0; i < len; i++) {
+        ret |= a1[i] ^ a2[i];
+    }
+    return ret;
 }
 #endif

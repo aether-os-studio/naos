@@ -2,8 +2,7 @@
 
 #include <libs/klibc.h>
 
-typedef struct
-{
+typedef struct {
     int tm_sec;   // 秒数 [0，59]
     int tm_min;   // 分钟数 [0，59]
     int tm_hour;  // 小时数 [0，59]

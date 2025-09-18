@@ -5,26 +5,25 @@
 
 uint64_t cpu_count = 0;
 
-__attribute__((used, section(".limine_requests"))) static volatile struct limine_mp_request mp_request = {
-    .id = LIMINE_MP_REQUEST,
-    .revision = 0,
+__attribute__((
+    used, section(".limine_requests"))) static volatile struct limine_mp_request
+    mp_request = {
+        .id = LIMINE_MP_REQUEST,
+        .revision = 0,
 };
 
 extern void ap_entry(struct limine_mp_info *cpu);
 
 uint64_t cpuid_to_mpidr[MAX_CPU_NUM];
 
-uint64_t current_mpidr()
-{
+uint64_t current_mpidr() {
     uint64_t mpidr;
-    asm volatile(
-        "mrs %0, mpidr_el1" // 读取MPIDR_EL1寄存器
-        : "=r"(mpidr));
+    asm volatile("mrs %0, mpidr_el1" // 读取MPIDR_EL1寄存器
+                 : "=r"(mpidr));
     return mpidr & 0xFF;
 }
 
-uint64_t get_cpuid_by_mpidr(uint64_t mpidr)
-{
+uint64_t get_cpuid_by_mpidr(uint64_t mpidr) {
     for (uint64_t i = 0; i < cpu_count; i++)
         if (cpuid_to_mpidr[i] == mpidr)
             return i;
@@ -34,14 +33,12 @@ uint64_t get_cpuid_by_mpidr(uint64_t mpidr)
     return 0;
 }
 
-void smp_init()
-{
+void smp_init() {
     memset(cpuid_to_mpidr, 0, sizeof(cpuid_to_mpidr));
 
     cpu_count = mp_request.response->cpu_count;
 
-    for (uint64_t i = 0; i < mp_request.response->cpu_count; i++)
-    {
+    for (uint64_t i = 0; i < mp_request.response->cpu_count; i++) {
         struct limine_mp_info *cpu = mp_request.response->cpus[i];
         cpuid_to_mpidr[cpu->processor_id] = cpu->mpidr;
 
@@ -54,14 +51,12 @@ void smp_init()
 
 extern bool task_initialized;
 
-void ap_kmain(struct limine_mp_info *cpu)
-{
+void ap_kmain(struct limine_mp_info *cpu) {
     arch_disable_interrupt();
 
     setup_vectors();
 
-    while (!task_initialized)
-    {
+    while (!task_initialized) {
         asm volatile("nop");
     }
 
@@ -71,8 +66,7 @@ void ap_kmain(struct limine_mp_info *cpu)
 
     timer_init_percpu();
 
-    while (1)
-    {
+    while (1) {
         arch_enable_interrupt();
         arch_pause();
     }

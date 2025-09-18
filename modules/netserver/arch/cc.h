@@ -7,8 +7,7 @@
 
 typedef uint32_t nfds_t;
 
-struct pollfd
-{
+struct pollfd {
     int fd;
     short events;
     short revents;

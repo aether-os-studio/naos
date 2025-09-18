@@ -5,30 +5,23 @@ int eventfdfs_id = 0;
 
 int eventfd_id = 0;
 
-static int dummy()
-{
-    return 0;
-}
+static int dummy() { return 0; }
 
-uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags)
-{
+uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags) {
     // 参数校验
     if (flags & ~(EFD_CLOEXEC | EFD_NONBLOCK | EFD_SEMAPHORE))
         return (uint64_t)-EINVAL;
 
     // 分配文件描述符
     int fd = -1;
-    for (int i = 3; i < MAX_FD_NUM; i++)
-    {
-        if (!current_task->fd_info->fds[i])
-        {
+    for (int i = 3; i < MAX_FD_NUM; i++) {
+        if (!current_task->fd_info->fds[i]) {
             fd = i;
             break;
         }
     }
 
-    if (fd == -1)
-    {
+    if (fd == -1) {
         return (uint64_t)-EMFILE;
     }
 
@@ -61,14 +54,12 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags)
 }
 
 // 实现读写操作
-static ssize_t eventfd_read(fd_t *fd, void *buf, size_t offset, size_t len)
-{
+static ssize_t eventfd_read(fd_t *fd, void *buf, size_t offset, size_t len) {
     eventfd_t *efd = fd->node->handle;
 
     uint64_t value;
 
-    while (efd->count == 0)
-    {
+    while (efd->count == 0) {
         if (efd->flags & EFD_NONBLOCK)
             return -EAGAIN;
 
@@ -82,8 +73,8 @@ static ssize_t eventfd_read(fd_t *fd, void *buf, size_t offset, size_t len)
     return sizeof(uint64_t);
 }
 
-static ssize_t eventfd_write(eventfd_t *efd, const void *buf, size_t offset, size_t len)
-{
+static ssize_t eventfd_write(eventfd_t *efd, const void *buf, size_t offset,
+                             size_t len) {
     uint64_t value;
     memcpy(&value, buf, sizeof(uint64_t));
 
@@ -95,8 +86,7 @@ static ssize_t eventfd_write(eventfd_t *efd, const void *buf, size_t offset, siz
     return sizeof(uint64_t);
 }
 
-bool eventfd_close(void *current)
-{
+bool eventfd_close(void *current) {
     eventfd_t *efd = current;
     free(efd->node);
     list_delete(eventfdfs_root->child, efd->node);
@@ -105,8 +95,7 @@ bool eventfd_close(void *current)
     return true;
 }
 
-static int eventfd_poll(void *file, size_t events)
-{
+static int eventfd_poll(void *file, size_t events) {
     eventfd_t *eventFd = file;
     int revents = 0;
 
@@ -149,8 +138,7 @@ fs_t eventfdfs = {
     .callback = &eventfd_callbacks,
 };
 
-void eventfd_init()
-{
+void eventfd_init() {
     eventfdfs_id = vfs_regist(&eventfdfs);
     eventfdfs_root = vfs_node_alloc(NULL, "event");
     eventfdfs_root->type = file_dir;

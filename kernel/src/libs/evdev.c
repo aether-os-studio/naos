@@ -7,289 +7,33 @@
 // Copyright (C) 2024 Panagiotis
 
 char character_table[140] = {
-    0,
-    27,
-    '1',
-    '2',
-    '3',
-    '4',
-    '5',
-    '6',
-    '7',
-    '8',
-    '9',
-    '0',
-    '-',
-    '=',
-    0,
-    9,
-    'q',
-    'w',
-    'e',
-    'r',
-    't',
-    'y',
-    'u',
-    'i',
-    'o',
-    'p',
-    '[',
-    ']',
-    0,
-    0,
-    'a',
-    's',
-    'd',
-    'f',
-    'g',
-    'h',
-    'j',
-    'k',
-    'l',
-    ';',
-    '\'',
-    '`',
-    0,
-    '\\',
-    'z',
-    'x',
-    'c',
-    'v',
-    'b',
-    'n',
-    'm',
-    ',',
-    '.',
-    '/',
-    0,
-    '*',
-    0,
-    ' ',
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0x1B,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0x0E,
-    0x1C,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    '/',
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0x1E,
-    0x1F,
-    0x20,
-    0x21,
-    0x22,
-    0x23,
-    0x24,
-    0x25,
-    0x26,
-    0x27,
-    0x28,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0x2C,
+    0,    27,   '1',  '2',  '3',  '4',  '5',  '6',  '7',  '8',  '9',  '0',
+    '-',  '=',  0,    9,    'q',  'w',  'e',  'r',  't',  'y',  'u',  'i',
+    'o',  'p',  '[',  ']',  0,    0,    'a',  's',  'd',  'f',  'g',  'h',
+    'j',  'k',  'l',  ';',  '\'', '`',  0,    '\\', 'z',  'x',  'c',  'v',
+    'b',  'n',  'm',  ',',  '.',  '/',  0,    '*',  0,    ' ',  0,    0,
+    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
+    0,    0,    0,    0,    0,    0,    0,    0,    0x1B, 0,    0,    0,
+    0,    0,    0,    0,    0,    0,    0,    0x0E, 0x1C, 0,    0,    0,
+    0,    0,    0,    0,    0,    '/',  0,    0,    0,    0,    0,    0,
+    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
+    0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0,
+    0,    0,    0,    0,    0,    0,    0,    0x2C,
 };
 
 char shifted_character_table[140] = {
-    0,
-    27,
-    '!',
-    '@',
-    '#',
-    '$',
-    '%',
-    '^',
-    '&',
-    '*',
-    '(',
-    ')',
-    '_',
-    '+',
-    0,
-    9,
-    'Q',
-    'W',
-    'E',
-    'R',
-    'T',
-    'Y',
-    'U',
-    'I',
-    'O',
-    'P',
-    '{',
-    '}',
-    0,
-    0,
-    'A',
-    'S',
-    'D',
-    'F',
-    'G',
-    'H',
-    'J',
-    'K',
-    'L',
-    ':',
-    '"',
-    '~',
-    0,
-    '|',
-    'Z',
-    'X',
-    'C',
-    'V',
-    'B',
-    'N',
-    'M',
-    '<',
-    '>',
-    '?',
-    0,
-    '*',
-    0,
-    ' ',
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0x1B,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0x0E,
-    0x1C,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    '?',
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0x1E,
-    0x1F,
-    0x20,
-    0x21,
-    0x22,
-    0x23,
-    0x24,
-    0x25,
-    0x26,
-    0x27,
-    0x28,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0x2C,
+    0,    27,   '!',  '@',  '#',  '$',  '%',  '^',  '&',  '*',  '(',  ')',
+    '_',  '+',  0,    9,    'Q',  'W',  'E',  'R',  'T',  'Y',  'U',  'I',
+    'O',  'P',  '{',  '}',  0,    0,    'A',  'S',  'D',  'F',  'G',  'H',
+    'J',  'K',  'L',  ':',  '"',  '~',  0,    '|',  'Z',  'X',  'C',  'V',
+    'B',  'N',  'M',  '<',  '>',  '?',  0,    '*',  0,    ' ',  0,    0,
+    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
+    0,    0,    0,    0,    0,    0,    0,    0,    0x1B, 0,    0,    0,
+    0,    0,    0,    0,    0,    0,    0,    0x0E, 0x1C, 0,    0,    0,
+    0,    0,    0,    0,    0,    '?',  0,    0,    0,    0,    0,    0,
+    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
+    0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0,
+    0,    0,    0,    0,    0,    0,    0,    0x2C,
 };
 
 const uint8_t evdevTable[89] = {
@@ -384,10 +128,8 @@ const uint8_t evdevTable[89] = {
     KEY_F12,
 };
 
-int scanSet1E0(uint8_t data)
-{
-    switch (data)
-    {
+int scanSet1E0(uint8_t data) {
+    switch (data) {
     case 0x1C:
         return KEY_KPENTER;
     case 0x1D:
@@ -429,47 +171,37 @@ int scanSet1E0(uint8_t data)
     }
 }
 
-int scanSet1E1(uint8_t data1, uint8_t data2)
-{
-    if (data1 == 0x1D && data2 == 0x45)
-    {
+int scanSet1E1(uint8_t data1, uint8_t data2) {
+    if (data1 == 0x1D && data2 == 0x45) {
         return KEY_PAUSE;
-    }
-    else
-    {
+    } else {
         return KEY_RESERVED;
     }
 }
 
 dev_input_event_t *kb_event = NULL;
 
-#define EVDEV_INTERNAL_SIZE (((sizeof(evdevTable) / sizeof(evdevTable[0]) + 7) / 8))
+#define EVDEV_INTERNAL_SIZE                                                    \
+    (((sizeof(evdevTable) / sizeof(evdevTable[0]) + 7) / 8))
 
 uint8_t evdevInternal[EVDEV_INTERNAL_SIZE] = {0};
 
-void kb_evdev_generate(uint8_t raw, uint8_t raw1, uint8_t raw2)
-{
+void kb_evdev_generate(uint8_t raw, uint8_t raw1, uint8_t raw2) {
     if (!kb_event || !kb_event->timesOpened)
         return;
 
     uint8_t index = 0;
-    if (raw & 0x80)
-    {
+    if (raw & 0x80) {
         index = raw - 0x80;
-    }
-    else
-    {
+    } else {
         index = raw;
     }
 
     uint8_t evdevCode = evdevTable[index];
 
-    if (raw == 0xE0)
-    {
+    if (raw == 0xE0) {
         evdevCode = scanSet1E0(raw1);
-    }
-    else if (raw == 0xE1)
-    {
+    } else if (raw == 0xE1) {
         evdevCode = scanSet1E1(raw1, raw2);
     }
 
@@ -479,26 +211,22 @@ void kb_evdev_generate(uint8_t raw, uint8_t raw1, uint8_t raw2)
     bool clicked = (raw & 0x80) == 0;
 
     bool oldstate = (evdevInternal[index / 8] & (1 << (index % 8))) != 0;
-    if (!oldstate && clicked)
-    {
-        input_generate_event(kb_event, EV_KEY, evdevCode, 1, now.tv_sec, now.tv_nsec / 1000);
+    if (!oldstate && clicked) {
+        input_generate_event(kb_event, EV_KEY, evdevCode, 1, now.tv_sec,
+                             now.tv_nsec / 1000);
+    } else if (oldstate && clicked) {
+        input_generate_event(kb_event, EV_KEY, evdevCode, 2, now.tv_sec,
+                             now.tv_nsec / 1000);
+    } else if (oldstate && !clicked) {
+        input_generate_event(kb_event, EV_KEY, evdevCode, 0, now.tv_sec,
+                             now.tv_nsec / 1000);
     }
-    else if (oldstate && clicked)
-    {
-        input_generate_event(kb_event, EV_KEY, evdevCode, 2, now.tv_sec, now.tv_nsec / 1000);
-    }
-    else if (oldstate && !clicked)
-    {
-        input_generate_event(kb_event, EV_KEY, evdevCode, 0, now.tv_sec, now.tv_nsec / 1000);
-    }
-    input_generate_event(kb_event, EV_SYN, SYN_REPORT, 0, now.tv_sec, now.tv_nsec / 1000);
+    input_generate_event(kb_event, EV_SYN, SYN_REPORT, 0, now.tv_sec,
+                         now.tv_nsec / 1000);
 
-    if (clicked)
-    {
+    if (clicked) {
         evdevInternal[index / 8] |= (1 << (index % 8));
-    }
-    else
-    {
+    } else {
         evdevInternal[index / 8] &= ~(1 << (index % 8));
     }
 }
@@ -508,14 +236,12 @@ bool ctrled = false;
 bool shifted = false;
 bool capsLocked = false;
 
-char handle_kb_event(uint8_t scan_code, uint8_t scan_code_1, uint8_t scan_code_2)
-{
+char handle_kb_event(uint8_t scan_code, uint8_t scan_code_1,
+                     uint8_t scan_code_2) {
     kb_evdev_generate(scan_code, scan_code_1, scan_code_2);
 
-    if (scan_code == 0xE0)
-    {
-        switch (scan_code_1)
-        {
+    if (scan_code == 0xE0) {
+        switch (scan_code_1) {
         case 0x48:
             return KEY_BUTTON_UP;
         case 0x50:
@@ -530,8 +256,7 @@ char handle_kb_event(uint8_t scan_code, uint8_t scan_code_1, uint8_t scan_code_2
     }
 
     // Shift checks
-    if (shifted == 1 && scan_code & 0x80)
-    {
+    if (shifted == 1 && scan_code & 0x80) {
         if ((scan_code & 0x7F) == 42) // & 0x7F clears the release
         {
             shifted = 0;
@@ -539,8 +264,7 @@ char handle_kb_event(uint8_t scan_code, uint8_t scan_code_1, uint8_t scan_code_2
         }
     }
 
-    if (ctrled == 1 && scan_code & 0x80)
-    {
+    if (ctrled == 1 && scan_code & 0x80) {
         if ((scan_code & 0x7F) == 0x1d) // & 0x7F clears the release
         {
             ctrled = false;
@@ -548,17 +272,16 @@ char handle_kb_event(uint8_t scan_code, uint8_t scan_code_1, uint8_t scan_code_2
         }
     }
 
-    if (scan_code < sizeof(character_table) && !(scan_code & 0x80))
-    {
-        char character = (shifted || capsLocked) ? shifted_character_table[scan_code] : character_table[scan_code];
+    if (scan_code < sizeof(character_table) && !(scan_code & 0x80)) {
+        char character = (shifted || capsLocked)
+                             ? shifted_character_table[scan_code]
+                             : character_table[scan_code];
 
-        if (character != 0)
-        { // Normal char
+        if (character != 0) { // Normal char
             return character;
         }
 
-        switch (scan_code)
-        {
+        switch (scan_code) {
         case SCANCODE_ENTER:
             return CHARACTER_ENTER;
             break;
@@ -585,8 +308,7 @@ bool clickedRight = false;
 
 dev_input_event_t *mouse_event = NULL;
 
-void handle_mouse_event(uint8_t flag, int8_t x, int8_t y)
-{
+void handle_mouse_event(uint8_t flag, int8_t x, int8_t y) {
     if (!mouse_event)
         return;
 
@@ -597,18 +319,25 @@ void handle_mouse_event(uint8_t flag, int8_t x, int8_t y)
     sys_clock_gettime(kb_event->clock_id, (uint64_t)&now, 0);
 
     if (clickedLeft && !click)
-        input_generate_event(mouse_event, EV_KEY, BTN_LEFT, 0, now.tv_sec, now.tv_nsec / 1000);
+        input_generate_event(mouse_event, EV_KEY, BTN_LEFT, 0, now.tv_sec,
+                             now.tv_nsec / 1000);
     if (!clickedLeft && click)
-        input_generate_event(mouse_event, EV_KEY, BTN_LEFT, 1, now.tv_sec, now.tv_nsec / 1000);
+        input_generate_event(mouse_event, EV_KEY, BTN_LEFT, 1, now.tv_sec,
+                             now.tv_nsec / 1000);
 
     if (clickedRight && !rclick)
-        input_generate_event(mouse_event, EV_KEY, BTN_RIGHT, 0, now.tv_sec, now.tv_nsec / 1000);
+        input_generate_event(mouse_event, EV_KEY, BTN_RIGHT, 0, now.tv_sec,
+                             now.tv_nsec / 1000);
     if (!clickedRight && rclick)
-        input_generate_event(mouse_event, EV_KEY, BTN_RIGHT, 1, now.tv_sec, now.tv_nsec / 1000);
+        input_generate_event(mouse_event, EV_KEY, BTN_RIGHT, 1, now.tv_sec,
+                             now.tv_nsec / 1000);
 
-    input_generate_event(mouse_event, EV_REL, REL_X, x, now.tv_sec, now.tv_nsec / 1000);
-    input_generate_event(mouse_event, EV_REL, REL_Y, y, now.tv_sec, now.tv_nsec / 1000);
-    input_generate_event(mouse_event, EV_SYN, SYN_REPORT, 0, now.tv_sec, now.tv_nsec / 1000);
+    input_generate_event(mouse_event, EV_REL, REL_X, x, now.tv_sec,
+                         now.tv_nsec / 1000);
+    input_generate_event(mouse_event, EV_REL, REL_Y, y, now.tv_sec,
+                         now.tv_nsec / 1000);
+    input_generate_event(mouse_event, EV_SYN, SYN_REPORT, 0, now.tv_sec,
+                         now.tv_nsec / 1000);
 
     clickedLeft = click;
     clickedRight = rclick;

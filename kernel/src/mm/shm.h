@@ -2,8 +2,7 @@
 
 #include <libs/klibc.h>
 
-typedef struct shm
-{
+typedef struct shm {
     struct shm *next;
     int key;
     int shmid;
@@ -13,8 +12,7 @@ typedef struct shm
     uint32_t gid;
 } shm_t;
 
-struct ipc_perm
-{
+struct ipc_perm {
     int __ipc_perm_key;
     uint32_t uid;
     uint32_t gid;
@@ -26,8 +24,7 @@ struct ipc_perm
     long __pad2;
 };
 
-struct shmid_ds
-{
+struct shmid_ds {
     struct ipc_perm shm_perm;
     size_t shm_segsz;
     long shm_atime;

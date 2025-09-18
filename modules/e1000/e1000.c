@@ -8,29 +8,24 @@ e1000_device_t *e1000_devices[MAX_E1000_DEVICES];
 int e1000_device_count = 0;
 
 // MMIO Read/Write functions
-static inline uint32_t e1000_read32(e1000_device_t *dev, uint32_t reg)
-{
+static inline uint32_t e1000_read32(e1000_device_t *dev, uint32_t reg) {
     return *((volatile uint32_t *)(dev->mmio_base + reg));
 }
 
 static inline void e1000_write32(e1000_device_t *dev, uint32_t reg,
-                                 uint32_t value)
-{
+                                 uint32_t value) {
     *((volatile uint32_t *)(dev->mmio_base + reg)) = value;
 }
 
 // Read from EEPROM
 static int e1000_read_eeprom(e1000_device_t *dev, uint16_t offset,
-                             uint16_t *data)
-{
+                             uint16_t *data) {
     e1000_write32(dev, E1000_EERD,
                   (offset << E1000_EERD_ADDR_SHIFT) | E1000_EERD_START);
 
-    for (int i = 0; i < 1000; i++)
-    {
+    for (int i = 0; i < 1000; i++) {
         uint32_t val = e1000_read32(dev, E1000_EERD);
-        if (val & E1000_EERD_DONE)
-        {
+        if (val & E1000_EERD_DONE) {
             *data = (val >> E1000_EERD_DATA_SHIFT) & 0xFFFF;
             return 0;
         }
@@ -39,23 +34,19 @@ static int e1000_read_eeprom(e1000_device_t *dev, uint16_t offset,
 }
 
 // Get MAC address from EEPROM or registers
-static int e1000_get_mac_address(e1000_device_t *dev)
-{
+static int e1000_get_mac_address(e1000_device_t *dev) {
     uint16_t data;
 
     // Try to read from EEPROM first
-    if (e1000_read_eeprom(dev, 0, &data) == 0)
-    {
+    if (e1000_read_eeprom(dev, 0, &data) == 0) {
         dev->mac[0] = data & 0xFF;
         dev->mac[1] = (data >> 8) & 0xFF;
 
-        if (e1000_read_eeprom(dev, 1, &data) == 0)
-        {
+        if (e1000_read_eeprom(dev, 1, &data) == 0) {
             dev->mac[2] = data & 0xFF;
             dev->mac[3] = (data >> 8) & 0xFF;
 
-            if (e1000_read_eeprom(dev, 2, &data) == 0)
-            {
+            if (e1000_read_eeprom(dev, 2, &data) == 0) {
                 dev->mac[4] = data & 0xFF;
                 dev->mac[5] = (data >> 8) & 0xFF;
                 return 0;
@@ -78,13 +69,11 @@ static int e1000_get_mac_address(e1000_device_t *dev)
 }
 
 // Initialize RX descriptors and buffers
-static int e1000_init_rx(e1000_device_t *dev)
-{
+static int e1000_init_rx(e1000_device_t *dev) {
     // Allocate RX descriptors (must be 16-byte aligned)
     dev->rx_descs = (struct e1000_rx_desc *)alloc_frames_bytes(
         E1000_NUM_RX_DESC * sizeof(struct e1000_rx_desc) + 15);
-    if (!dev->rx_descs)
-    {
+    if (!dev->rx_descs) {
         return -1;
     }
 
@@ -93,15 +82,14 @@ static int e1000_init_rx(e1000_device_t *dev)
         (struct e1000_rx_desc *)(((uintptr_t)dev->rx_descs + 15) & ~15);
 
     // Initialize RX descriptors and buffers
-    for (int i = 0; i < E1000_NUM_RX_DESC; i++)
-    {
+    for (int i = 0; i < E1000_NUM_RX_DESC; i++) {
         dev->rx_buffers[i] = alloc_frames_bytes(E1000_RX_BUFFER_SIZE);
-        if (!dev->rx_buffers[i])
-        {
+        if (!dev->rx_buffers[i]) {
             return -1;
         }
 
-        dev->rx_descs[i].buffer_addr = (uint64_t)virt_to_phys(dev->rx_buffers[i]);
+        dev->rx_descs[i].buffer_addr =
+            (uint64_t)virt_to_phys(dev->rx_buffers[i]);
         dev->rx_descs[i].status = 0;
         dev->rx_descs[i].errors = 0;
         dev->rx_descs[i].length = 0;
@@ -126,13 +114,11 @@ static int e1000_init_rx(e1000_device_t *dev)
 }
 
 // Initialize TX descriptors and buffers
-static int e1000_init_tx(e1000_device_t *dev)
-{
+static int e1000_init_tx(e1000_device_t *dev) {
     // Allocate TX descriptors (must be 16-byte aligned)
     dev->tx_descs = (struct e1000_tx_desc *)alloc_frames_bytes(
         E1000_NUM_TX_DESC * sizeof(struct e1000_tx_desc) + 15);
-    if (!dev->tx_descs)
-    {
+    if (!dev->tx_descs) {
         return -1;
     }
 
@@ -142,8 +128,7 @@ static int e1000_init_tx(e1000_device_t *dev)
 
     // Initialize TX descriptors
     memset(dev->tx_descs, 0, E1000_NUM_TX_DESC * sizeof(struct e1000_tx_desc));
-    for (int i = 0; i < E1000_NUM_TX_DESC; i++)
-    {
+    for (int i = 0; i < E1000_NUM_TX_DESC; i++) {
         dev->tx_buffers[i] = NULL;
     }
 
@@ -171,28 +156,23 @@ static int e1000_init_tx(e1000_device_t *dev)
 }
 
 // Reset the E1000 device
-static void e1000_reset(e1000_device_t *dev)
-{
+static void e1000_reset(e1000_device_t *dev) {
     // Set reset bit
     uint32_t ctrl = e1000_read32(dev, E1000_CTRL);
     e1000_write32(dev, E1000_CTRL, ctrl | E1000_CTRL_RST);
 
     // Wait for reset to complete
-    for (int i = 0; i < 1000; i++)
-    {
-        if (!(e1000_read32(dev, E1000_CTRL) & E1000_CTRL_RST))
-        {
+    for (int i = 0; i < 1000; i++) {
+        if (!(e1000_read32(dev, E1000_CTRL) & E1000_CTRL_RST)) {
             break;
         }
     }
 }
 
 // Initialize E1000 device
-int e1000_init(void *mmio_base)
-{
+int e1000_init(void *mmio_base) {
     e1000_device_t *dev = (e1000_device_t *)malloc(sizeof(e1000_device_t));
-    if (!dev)
-    {
+    if (!dev) {
         printk("e1000: Failed to allocate device structure\n");
         return -1;
     }
@@ -205,8 +185,7 @@ int e1000_init(void *mmio_base)
     e1000_reset(dev);
 
     // Get MAC address
-    if (e1000_get_mac_address(dev) != 0)
-    {
+    if (e1000_get_mac_address(dev) != 0) {
         printk("e1000: Failed to get MAC address\n");
         free(dev);
         return -1;
@@ -216,15 +195,13 @@ int e1000_init(void *mmio_base)
            dev->mac[1], dev->mac[2], dev->mac[3], dev->mac[4], dev->mac[5]);
 
     // Initialize RX and TX
-    if (e1000_init_rx(dev) != 0)
-    {
+    if (e1000_init_rx(dev) != 0) {
         printk("e1000: Failed to initialize RX\n");
         free(dev);
         return -1;
     }
 
-    if (e1000_init_tx(dev) != 0)
-    {
+    if (e1000_init_tx(dev) != 0) {
         printk("e1000: Failed to initialize TX\n");
         free(dev);
         return -1;
@@ -241,27 +218,23 @@ int e1000_init(void *mmio_base)
 }
 
 // Send packet (polling mode)
-int e1000_send(void *dev_desc, void *data, uint32_t len)
-{
+int e1000_send(void *dev_desc, void *data, uint32_t len) {
     e1000_device_t *dev = (e1000_device_t *)dev_desc;
 
-    if (len > E1000_MTU || len == 0)
-    {
+    if (len > E1000_MTU || len == 0) {
         return -1;
     }
 
     // Check if we have a free TX descriptor
     uint16_t next_tail = (dev->tx_tail + 1) % E1000_NUM_TX_DESC;
-    if (next_tail == dev->tx_head)
-    {
+    if (next_tail == dev->tx_head) {
         // TX queue full
         return -1;
     }
 
     // Allocate buffer for packet
     void *tx_buffer = alloc_frames_bytes(len);
-    if (!tx_buffer)
-    {
+    if (!tx_buffer) {
         return -1;
     }
 
@@ -271,7 +244,8 @@ int e1000_send(void *dev_desc, void *data, uint32_t len)
     // Setup TX descriptor
     dev->tx_descs[dev->tx_tail].buffer_addr = (uint64_t)virt_to_phys(tx_buffer);
     dev->tx_descs[dev->tx_tail].length = len;
-    dev->tx_descs[dev->tx_tail].cmd = E1000_TXD_CMD_EOP | E1000_TXD_CMD_IFCS | E1000_TXD_CMD_RS;
+    dev->tx_descs[dev->tx_tail].cmd =
+        E1000_TXD_CMD_EOP | E1000_TXD_CMD_IFCS | E1000_TXD_CMD_RS;
     dev->tx_descs[dev->tx_tail].status = 0;
 
     // Store buffer pointer for later cleanup
@@ -282,26 +256,20 @@ int e1000_send(void *dev_desc, void *data, uint32_t len)
     e1000_write32(dev, E1000_TDT, dev->tx_tail);
 
     // Poll for completion
-    while (!(dev->tx_descs[dev->tx_head].status & E1000_TXD_STAT_DD))
-    {
+    while (!(dev->tx_descs[dev->tx_head].status & E1000_TXD_STAT_DD)) {
         // Wait for transmission to complete
     }
 
     // Clean up completed descriptors
-    while (dev->tx_head != dev->tx_tail)
-    {
-        if (dev->tx_descs[dev->tx_head].status & E1000_TXD_STAT_DD)
-        {
-            if (dev->tx_buffers[dev->tx_head])
-            {
+    while (dev->tx_head != dev->tx_tail) {
+        if (dev->tx_descs[dev->tx_head].status & E1000_TXD_STAT_DD) {
+            if (dev->tx_buffers[dev->tx_head]) {
                 free_frames_bytes(dev->tx_buffers[dev->tx_head], len);
                 dev->tx_buffers[dev->tx_head] = NULL;
             }
             dev->tx_descs[dev->tx_head].status = 0;
             dev->tx_head = (dev->tx_head + 1) % E1000_NUM_TX_DESC;
-        }
-        else
-        {
+        } else {
             break;
         }
     }
@@ -310,8 +278,7 @@ int e1000_send(void *dev_desc, void *data, uint32_t len)
 }
 
 // Receive packet (polling mode)
-int e1000_receive(void *dev_desc, void *buffer, uint32_t buffer_size)
-{
+int e1000_receive(void *dev_desc, void *buffer, uint32_t buffer_size) {
     e1000_device_t *dev = (e1000_device_t *)dev_desc;
 
     uint16_t next_rx = (dev->rx_tail + 1) % E1000_NUM_RX_DESC;
@@ -319,22 +286,20 @@ int e1000_receive(void *dev_desc, void *buffer, uint32_t buffer_size)
 
     bool have_data = !!(desc->status & E1000_RXD_STAT_DD);
 
-    if (!have_data)
-    {
+    if (!have_data) {
         // No packet available
         return 0;
     }
 
-    if (desc->errors & (E1000_RXD_ERR_CE | E1000_RXD_ERR_SE | E1000_RXD_ERR_SEQ |
-                        E1000_RXD_ERR_CXE | E1000_RXD_ERR_RXE))
-    {
+    if (desc->errors &
+        (E1000_RXD_ERR_CE | E1000_RXD_ERR_SE | E1000_RXD_ERR_SEQ |
+         E1000_RXD_ERR_CXE | E1000_RXD_ERR_RXE)) {
         // Packet has errors, discard it
         goto cleanup;
     }
 
     uint32_t packet_len = desc->length;
-    if (packet_len > buffer_size)
-    {
+    if (packet_len > buffer_size) {
         packet_len = buffer_size;
     }
 
@@ -351,25 +316,21 @@ cleanup:
 }
 
 // Check if packets are available
-bool e1000_has_packets(void *dev_desc)
-{
+bool e1000_has_packets(void *dev_desc) {
     e1000_device_t *dev = (e1000_device_t *)dev_desc;
     uint16_t next_rx = (dev->rx_tail + 1) % E1000_NUM_RX_DESC;
     return (dev->rx_descs[next_rx].status & E1000_RXD_STAT_DD) != 0;
 }
 
 // Poll for received packets (can be called periodically)
-void e1000_poll(void *dev_desc)
-{
+void e1000_poll(void *dev_desc) {
     // This function can be implemented if needed for background polling
     // Currently, packets are checked on-demand in e1000_receive
 }
 
 // Get device by index (similar to virtio-net interface)
-e1000_device_t *e1000_get_device(uint32_t index)
-{
-    if (index >= e1000_device_count)
-    {
+e1000_device_t *e1000_get_device(uint32_t index) {
+    if (index >= e1000_device_count) {
         return NULL;
     }
     return e1000_devices[index];
@@ -379,10 +340,8 @@ e1000_device_t *e1000_get_device(uint32_t index)
 uint32_t e1000_get_device_count(void) { return e1000_device_count; }
 
 // PCI Driver Interface
-static int e1000_pci_probe(pci_device_t *pci_dev, uint32_t vendor_device_id)
-{
-    if (pci_dev->device_id != 0x100e && pci_dev->device_id != 0x100f)
-    {
+static int e1000_pci_probe(pci_device_t *pci_dev, uint32_t vendor_device_id) {
+    if (pci_dev->device_id != 0x100e && pci_dev->device_id != 0x100f) {
         return 0;
     }
 
@@ -391,18 +350,15 @@ static int e1000_pci_probe(pci_device_t *pci_dev, uint32_t vendor_device_id)
     // Find MMIO BAR
     uint64_t mmio_base = 0;
     uint64_t mmio_size = 0;
-    for (int i = 0; i < 6; i++)
-    {
-        if (pci_dev->bars[i].size > 0 && pci_dev->bars[i].mmio)
-        {
+    for (int i = 0; i < 6; i++) {
+        if (pci_dev->bars[i].size > 0 && pci_dev->bars[i].mmio) {
             mmio_base = pci_dev->bars[i].address;
             mmio_size = pci_dev->bars[i].size;
             break;
         }
     }
 
-    if (mmio_base == 0)
-    {
+    if (mmio_base == 0) {
         printk("e1000: No MMIO BAR found\n");
         return -1;
     }
@@ -416,46 +372,40 @@ static int e1000_pci_probe(pci_device_t *pci_dev, uint32_t vendor_device_id)
     return e1000_init(mmio_vaddr);
 }
 
-static void e1000_pci_remove(pci_device_t *pci_dev)
-{
+static void e1000_pci_remove(pci_device_t *pci_dev) {
     // Find and remove the device
-    for (int i = 0; i < e1000_device_count; i++)
-    {
+    for (int i = 0; i < e1000_device_count; i++) {
         e1000_device_t *dev = e1000_devices[i];
         // Compare MMIO base to identify the device
         if ((uint64_t)dev->mmio_base >= pci_dev->bars[0].address &&
-            (uint64_t)dev->mmio_base < pci_dev->bars[0].address + pci_dev->bars[0].size)
-        {
+            (uint64_t)dev->mmio_base <
+                pci_dev->bars[0].address + pci_dev->bars[0].size) {
             // Disable device
             e1000_write32(dev, E1000_RCTL, 0);
             e1000_write32(dev, E1000_TCTL, 0);
 
             // Free buffers
-            for (int j = 0; j < E1000_NUM_RX_DESC; j++)
-            {
-                if (dev->rx_buffers[j])
-                {
+            for (int j = 0; j < E1000_NUM_RX_DESC; j++) {
+                if (dev->rx_buffers[j]) {
                     free_frames_bytes(dev->rx_buffers[j], E1000_RX_BUFFER_SIZE);
                 }
             }
-            for (int j = 0; j < E1000_NUM_TX_DESC; j++)
-            {
-                if (dev->tx_buffers[j])
-                {
+            for (int j = 0; j < E1000_NUM_TX_DESC; j++) {
+                if (dev->tx_buffers[j]) {
                     free_frames_bytes(dev->tx_buffers[j], E1000_TX_BUFFER_SIZE);
                 }
             }
 
             // Free descriptors
-            if (dev->rx_descs)
-            {
+            if (dev->rx_descs) {
                 free_frames_bytes(dev->rx_descs,
-                                  E1000_NUM_RX_DESC * sizeof(struct e1000_rx_desc));
+                                  E1000_NUM_RX_DESC *
+                                      sizeof(struct e1000_rx_desc));
             }
-            if (dev->tx_descs)
-            {
+            if (dev->tx_descs) {
                 free_frames_bytes(dev->tx_descs,
-                                  E1000_NUM_TX_DESC * sizeof(struct e1000_tx_desc));
+                                  E1000_NUM_TX_DESC *
+                                      sizeof(struct e1000_tx_desc));
             }
 
             // Remove from device array
@@ -463,8 +413,7 @@ static void e1000_pci_remove(pci_device_t *pci_dev)
             e1000_devices[i] = NULL;
 
             // Shift remaining devices
-            for (int j = i; j < e1000_device_count - 1; j++)
-            {
+            for (int j = i; j < e1000_device_count - 1; j++) {
                 e1000_devices[j] = e1000_devices[j + 1];
             }
             e1000_device_count--;
@@ -473,8 +422,7 @@ static void e1000_pci_remove(pci_device_t *pci_dev)
     }
 }
 
-static void e1000_pci_shutdown(pci_device_t *pci_dev)
-{
+static void e1000_pci_shutdown(pci_device_t *pci_dev) {
     e1000_pci_remove(pci_dev);
 }
 
@@ -490,8 +438,7 @@ static pci_driver_t e1000_driver = {
 };
 
 // Module initialization function
-int dlmain(void)
-{
+int dlmain(void) {
     regist_pci_driver(&e1000_driver);
     return 0;
 }

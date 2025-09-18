@@ -5,8 +5,7 @@
 
 typedef struct LLheader LLheader;
 
-struct LLheader
-{
+struct LLheader {
     LLheader *next;
     // ...
 };

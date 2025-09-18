@@ -23,13 +23,13 @@
 
 #define NICE_0_LOAD_SHIFT (SCHED_FIXEDPOINT_SHIFT + SCHED_FIXEDPOINT_SHIFT)
 #define scale_load(w) ((w) << SCHED_FIXEDPOINT_SHIFT)
-#define scale_load_down(w)                                 \
-    ({                                                     \
-        unsigned long __w = (w);                           \
-                                                           \
-        if (__w)                                           \
-            __w = MAX(2UL, __w >> SCHED_FIXEDPOINT_SHIFT); \
-        __w;                                               \
+#define scale_load_down(w)                                                     \
+    ({                                                                         \
+        unsigned long __w = (w);                                               \
+                                                                               \
+        if (__w)                                                               \
+            __w = MAX(2UL, __w >> SCHED_FIXEDPOINT_SHIFT);                     \
+        __w;                                                                   \
     })
 
 #define WEIGHT_IDLEPRIO 3
@@ -46,14 +46,12 @@
 extern unsigned int sysctl_sched_base_slice;
 typedef struct eevdf_t eevdf_t;
 
-struct load_weight
-{
+struct load_weight {
     uint64_t weight;
     uint32_t inv_weight;
 };
 
-struct sched_entity
-{
+struct sched_entity {
     uint64_t prio;
     uint64_t vruntime;
     uint64_t slice;
@@ -71,8 +69,7 @@ struct sched_entity
     eevdf_t *handle; // EEVDF调度环境
 };
 
-struct eevdf_t
-{
+struct eevdf_t {
     struct rb_root *root;
     struct sched_entity *current;     // 当前调度单元
     struct sched_entity *idle_entity; // IDLE调度单元
@@ -117,7 +114,8 @@ struct sched_entity *pick_eevdf();
  */
 task_t *pick_next_task(eevdf_t *eevdf_sched);
 
-void add_eevdf_entity_with_prio(task_t *new_task, uint64_t prio, eevdf_t *eevdf_sched);
+void add_eevdf_entity_with_prio(task_t *new_task, uint64_t prio,
+                                eevdf_t *eevdf_sched);
 void remove_eevdf_entity(task_t *thread, eevdf_t *eevdf_sched);
 
 /**

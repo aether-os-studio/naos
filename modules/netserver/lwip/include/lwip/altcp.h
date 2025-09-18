@@ -10,8 +10,8 @@
  * Copyright (c) 2017 Simon Goldschmidt
  * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without modification,
- * are permitted provided that the following conditions are met:
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
  *
  * 1. Redistributions of source code must retain the above copyright notice,
  *    this list of conditions and the following disclaimer.
@@ -23,14 +23,14 @@
  *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
  * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
- * SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
- * OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
- * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
- * OF SUCH DAMAGE.
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
+ * EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  * This file is part of the lwIP TCP/IP stack.
  *
@@ -56,37 +56,40 @@ extern "C" {
 struct altcp_pcb;
 struct altcp_functions;
 
-typedef err_t (*altcp_accept_fn)(void *arg, struct altcp_pcb *new_conn, err_t err);
-typedef err_t (*altcp_connected_fn)(void *arg, struct altcp_pcb *conn, err_t err);
-typedef err_t (*altcp_recv_fn)(void *arg, struct altcp_pcb *conn, struct pbuf *p, err_t err);
+typedef err_t (*altcp_accept_fn)(void *arg, struct altcp_pcb *new_conn,
+                                 err_t err);
+typedef err_t (*altcp_connected_fn)(void *arg, struct altcp_pcb *conn,
+                                    err_t err);
+typedef err_t (*altcp_recv_fn)(void *arg, struct altcp_pcb *conn,
+                               struct pbuf *p, err_t err);
 typedef err_t (*altcp_sent_fn)(void *arg, struct altcp_pcb *conn, u16_t len);
 typedef err_t (*altcp_poll_fn)(void *arg, struct altcp_pcb *conn);
-typedef void  (*altcp_err_fn)(void *arg, err_t err);
+typedef void (*altcp_err_fn)(void *arg, err_t err);
 
-typedef struct altcp_pcb* (*altcp_new_fn)(void *arg, u8_t ip_type);
+typedef struct altcp_pcb *(*altcp_new_fn)(void *arg, u8_t ip_type);
 
 struct altcp_pcb {
-  const struct altcp_functions *fns;
-  struct altcp_pcb *inner_conn;
-  void *arg;
-  void *state;
-  /* application callbacks */
-  altcp_accept_fn     accept;
-  altcp_connected_fn  connected;
-  altcp_recv_fn       recv;
-  altcp_sent_fn       sent;
-  altcp_poll_fn       poll;
-  altcp_err_fn        err;
-  u8_t pollinterval;
+    const struct altcp_functions *fns;
+    struct altcp_pcb *inner_conn;
+    void *arg;
+    void *state;
+    /* application callbacks */
+    altcp_accept_fn accept;
+    altcp_connected_fn connected;
+    altcp_recv_fn recv;
+    altcp_sent_fn sent;
+    altcp_poll_fn poll;
+    altcp_err_fn err;
+    u8_t pollinterval;
 };
 
 /** @ingroup altcp
  *  Struct containing an allocator and its state. */
 typedef struct altcp_allocator_s {
-  /** Allocator function */
-  altcp_new_fn  alloc;
-  /** Argument to allocator function */
-  void         *arg;
+    /** Allocator function */
+    altcp_new_fn alloc;
+    /** Argument to allocator function */
+    void *arg;
 } altcp_allocator_t;
 
 struct altcp_pcb *altcp_new(altcp_allocator_t *allocator);
@@ -100,39 +103,46 @@ void altcp_sent(struct altcp_pcb *conn, altcp_sent_fn sent);
 void altcp_poll(struct altcp_pcb *conn, altcp_poll_fn poll, u8_t interval);
 void altcp_err(struct altcp_pcb *conn, altcp_err_fn err);
 
-void  altcp_recved(struct altcp_pcb *conn, u16_t len);
+void altcp_recved(struct altcp_pcb *conn, u16_t len);
 err_t altcp_bind(struct altcp_pcb *conn, const ip_addr_t *ipaddr, u16_t port);
-err_t altcp_connect(struct altcp_pcb *conn, const ip_addr_t *ipaddr, u16_t port, altcp_connected_fn connected);
+err_t altcp_connect(struct altcp_pcb *conn, const ip_addr_t *ipaddr, u16_t port,
+                    altcp_connected_fn connected);
 
 /* return conn for source code compatibility to tcp callback API only */
-struct altcp_pcb *altcp_listen_with_backlog_and_err(struct altcp_pcb *conn, u8_t backlog, err_t *err);
-#define altcp_listen_with_backlog(conn, backlog) altcp_listen_with_backlog_and_err(conn, backlog, NULL)
+struct altcp_pcb *altcp_listen_with_backlog_and_err(struct altcp_pcb *conn,
+                                                    u8_t backlog, err_t *err);
+#define altcp_listen_with_backlog(conn, backlog)                               \
+    altcp_listen_with_backlog_and_err(conn, backlog, NULL)
 /** @ingroup altcp */
-#define altcp_listen(conn) altcp_listen_with_backlog_and_err(conn, TCP_DEFAULT_LISTEN_BACKLOG, NULL)
+#define altcp_listen(conn)                                                     \
+    altcp_listen_with_backlog_and_err(conn, TCP_DEFAULT_LISTEN_BACKLOG, NULL)
 
 void altcp_abort(struct altcp_pcb *conn);
 err_t altcp_close(struct altcp_pcb *conn);
 err_t altcp_shutdown(struct altcp_pcb *conn, int shut_rx, int shut_tx);
 
-err_t altcp_write(struct altcp_pcb *conn, const void *dataptr, u16_t len, u8_t apiflags);
+err_t altcp_write(struct altcp_pcb *conn, const void *dataptr, u16_t len,
+                  u8_t apiflags);
 err_t altcp_output(struct altcp_pcb *conn);
 
 u16_t altcp_mss(struct altcp_pcb *conn);
 u16_t altcp_sndbuf(struct altcp_pcb *conn);
 u16_t altcp_sndqueuelen(struct altcp_pcb *conn);
-void  altcp_nagle_disable(struct altcp_pcb *conn);
-void  altcp_nagle_enable(struct altcp_pcb *conn);
-int   altcp_nagle_disabled(struct altcp_pcb *conn);
+void altcp_nagle_disable(struct altcp_pcb *conn);
+void altcp_nagle_enable(struct altcp_pcb *conn);
+int altcp_nagle_disabled(struct altcp_pcb *conn);
 
-void  altcp_setprio(struct altcp_pcb *conn, u8_t prio);
+void altcp_setprio(struct altcp_pcb *conn, u8_t prio);
 
-err_t altcp_get_tcp_addrinfo(struct altcp_pcb *conn, int local, ip_addr_t *addr, u16_t *port);
+err_t altcp_get_tcp_addrinfo(struct altcp_pcb *conn, int local, ip_addr_t *addr,
+                             u16_t *port);
 ip_addr_t *altcp_get_ip(struct altcp_pcb *conn, int local);
 u16_t altcp_get_port(struct altcp_pcb *conn, int local);
 
 #if LWIP_TCP_KEEPALIVE
-void  altcp_keepalive_disable(struct altcp_pcb *conn);
-void  altcp_keepalive_enable(struct altcp_pcb *conn, u32_t idle, u32_t intvl, u32_t count);
+void altcp_keepalive_disable(struct altcp_pcb *conn);
+void altcp_keepalive_enable(struct altcp_pcb *conn, u32_t idle, u32_t intvl,
+                            u32_t count);
 #endif
 
 #ifdef LWIP_DEBUG
@@ -145,7 +155,8 @@ enum tcp_state altcp_dbg_get_tcp_state(struct altcp_pcb *conn);
 
 #else /* LWIP_ALTCP */
 
-/* ALTCP disabled, define everything to link against tcp callback API (e.g. to get a small non-ssl httpd) */
+/* ALTCP disabled, define everything to link against tcp callback API (e.g. to
+ * get a small non-ssl httpd) */
 
 #include "lwip/tcp.h"
 
@@ -196,7 +207,8 @@ enum tcp_state altcp_dbg_get_tcp_state(struct altcp_pcb *conn);
 #define altcp_setprio tcp_setprio
 
 #define altcp_get_tcp_addrinfo tcp_get_tcp_addrinfo
-#define altcp_get_ip(pcb, local) ((local) ? (&(pcb)->local_ip) : (&(pcb)->remote_ip))
+#define altcp_get_ip(pcb, local)                                               \
+    ((local) ? (&(pcb)->local_ip) : (&(pcb)->remote_ip))
 
 #ifdef LWIP_DEBUG
 #define altcp_dbg_get_tcp_state tcp_dbg_get_tcp_state
