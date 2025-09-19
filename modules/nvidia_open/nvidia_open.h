@@ -4,6 +4,9 @@
 #include <libs/aether/pci.h>
 #include <libs/aether/drm.h>
 
+#define NV_FIRMWARE_FOR_NAME(name)                                             \
+    "/usr/lib/firmware/nvidia/575.51.02/" name ".bin"
+
 #include <nvtypes.h>
 #include <nv.h>
 #include <nv-reg.h>

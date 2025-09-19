@@ -168,7 +168,8 @@ void mpool_free(mpool_t pool, void *ptr) {
     pool->alloced_size -= blksize;
 
     ptr = blk_trymerge(ptr, (blk_detach_t)_detach, pool);
-    do_free(pool, ptr);
+    if (ptr)
+        do_free(pool, ptr);
 }
 
 size_t mpool_msize(mpool_t pool, void *ptr) {

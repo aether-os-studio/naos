@@ -2,19 +2,19 @@
 
 #include <libs/klibc.h>
 
-#include <nv.h>
-#include <nv-firmware.h>
-#include <os-interface.h>
-
 #include <libs/klibc.h>
 #include <libs/aether/mm.h>
 #include <libs/aether/stdio.h>
 #include <libs/aether/task.h>
 #include <libs/aether/time.h>
 
+#include <nv.h>
+#include <nv-firmware.h>
+#include <os-interface.h>
+
 #define STUBBED                                                                \
     {                                                                          \
-        ASSERT(!"unimplemented");                                              \
+        ASSERT(!"Unimplemented");                                              \
     }
 
 NvU32 os_page_size = 0x1000;
@@ -196,7 +196,7 @@ NV_STATUS NV_API_CALL os_pci_read_byte(void *handle, NvU32 offset,
     nvidia_device_t *gfx = (handle);
     ASSERT(gfx);
 
-    *pReturnValue = gfx->pci_dev->op->read(
+    *pReturnValue = (uint8_t)gfx->pci_dev->op->read(
         gfx->pci_dev->bus, gfx->pci_dev->slot, gfx->pci_dev->func,
         gfx->pci_dev->segment, offset);
     return NV_OK;
@@ -207,7 +207,7 @@ NV_STATUS NV_API_CALL os_pci_read_word(void *handle, NvU32 offset,
     nvidia_device_t *gfx = (handle);
     ASSERT(gfx);
 
-    *pReturnValue = gfx->pci_dev->op->read(
+    *pReturnValue = (uint16_t)gfx->pci_dev->op->read(
         gfx->pci_dev->bus, gfx->pci_dev->slot, gfx->pci_dev->func,
         gfx->pci_dev->segment, offset);
     return NV_OK;
@@ -250,7 +250,7 @@ NV_STATUS NV_API_CALL os_pci_write_word(void *handle, NvU32 offset,
 
     gfx->pci_dev->op->write(gfx->pci_dev->bus, gfx->pci_dev->slot,
                             gfx->pci_dev->func, gfx->pci_dev->segment, offset,
-                            value | (old & 0xFFFF00));
+                            value | (old & 0xFFFF0000));
     return NV_OK;
 }
 
@@ -270,41 +270,17 @@ void NV_API_CALL os_pci_remove(void *) STUBBED;
 
 void *NV_API_CALL os_map_kernel_space(NvU64 start, NvU64 size_bytes,
                                       NvU32 mode) {
-    ASSERT(size_bytes);
-
-    // auto [offset, memory] = GfxDevice::accessMmio(start, size_bytes);
-
-    // auto alignedOffset = offset & ~0xFFF;
-    // auto alignedSize = ((offset + size_bytes + 0xFFF) & ~0xFFF) -
-    // alignedOffset; auto mappingOffset = alignedOffset;
-
-    // HelHandle handle = memory.getHandle();
-    // if (mode == NV_MEMORY_DEFAULT || mode == NV_MEMORY_WRITECOMBINED) {
-    //     HEL_CHECK(helCreateSliceView(memory.getHandle(), alignedOffset,
-    //                                  alignedSize, kHelSliceCacheWriteCombine,
-    //                                  &handle));
-    //     mappingOffset = 0;
-    // }
-
-    // void *window;
-    // HEL_CHECK(helMapMemory(handle, kHelNullHandle, NULL, mappingOffset,
-    //                        alignedSize, kHelMapProtRead | kHelMapProtWrite,
-    //                        &window));
-    // ASSERT(window);
-
-    printk("os_map_kernel_space, start = %#018lx", start);
-
-    // map_page_range(get_current_page_dir(false), )
-
-    // return (void *)(uintptr_t(window) + (offset & 0xFFF));
+    uint64_t virt = phys_to_virt(start);
+    map_page_range(get_current_page_dir(false), virt, start, size_bytes,
+                   PT_FLAG_R | PT_FLAG_W);
+    return (void *)virt;
 }
 
 void NV_API_CALL os_unmap_kernel_space(void *ptr, NvU64 len) {
     uint64_t alignedAddr = (uintptr_t)ptr & ~0xFFF;
     uint64_t alignedSize =
         (((uintptr_t)ptr + len + 0xFFF) & ~0xFFF) - alignedAddr;
-    // HEL_CHECK(helUnmapMemory(
-    //     kHelNullHandle, (void *)(alignedAddr), alignedSize));
+    unmap_page_range(get_current_page_dir(false), alignedAddr, alignedSize);
 }
 
 NV_STATUS NV_API_CALL os_flush_cpu_cache_all(void) {
@@ -502,15 +478,13 @@ NV_STATUS NV_API_CALL os_cond_acquire_rwlock_write(void *) STUBBED;
 
 void NV_API_CALL os_release_rwlock_read(void *l) {
     spinlock_t *rwlock = (spinlock_t *)(l);
-    spin_unlock(rwlock);
 }
 
 void NV_API_CALL os_release_rwlock_write(void *l) {
     spinlock_t *rwlock = (spinlock_t *)(l);
-    spin_unlock(rwlock);
 }
 
-NvBool NV_API_CALL os_semaphore_may_sleep(void) { return false; }
+NvBool NV_API_CALL os_semaphore_may_sleep(void) { return true; }
 
 NV_STATUS NV_API_CALL os_get_version_info(os_version_info *) STUBBED;
 
@@ -700,6 +674,8 @@ NV_STATUS NV_API_CALL nv_free_pages(nv_state_t *, NvU32 page_count,
 
     free_frames_bytes((void *)info->base, page_count * DEFAULT_PAGE_SIZE);
 
+    free(info);
+
     return NV_OK;
 }
 
@@ -837,11 +813,20 @@ nv_get_firmware(nv_state_t *nv, nv_firmware_type_t fw_type,
     nvidia_device_t *gfx = nv->os_state;
     ASSERT(gfx);
 
-    *fw_size = 0;
+    const char *path = nv_firmware_for_chip_family(fw_type, fw_chip_family);
+    printk("NVIDIA_OPEN: Getting firmware %s\n", path);
 
-    *fw_buf = "";
+    vfs_node_t node = vfs_open(path);
+    if (!node) {
+        return NULL;
+    }
 
-    return *fw_buf;
+    *fw_size = node->size;
+    void *addr = malloc(node->size);
+    *fw_buf = addr;
+    vfs_read(node, addr, 0, node->size);
+
+    return (const void *)addr;
 }
 
 void NV_API_CALL nv_put_firmware(const void *handle) { free((void *)(handle)); }

@@ -80,7 +80,7 @@ void nvkms_log(const int level, const char *gpuPrefix, const char *msg) {
         break;
     case NVKMS_LOG_LEVEL_INFO:
     default:
-        levelPrefix = "";
+        levelPrefix = "INFO: ";
         break;
     }
 
@@ -89,7 +89,7 @@ void nvkms_log(const int level, const char *gpuPrefix, const char *msg) {
 
 void nvkms_call_rm(void *ops) { rm_kernel_rmapi_op(NULL, ops); }
 
-void nvkms_free(void *ptr, size_t) { free(ptr); }
+void nvkms_free(void *ptr, size_t) {}
 
 void *nvkms_alloc(size_t size, NvBool zero) {
     void *ptr = malloc(size);
@@ -274,7 +274,7 @@ void *nvkms_get_per_open_data(int fd) STUBBED;
 
 NvBool nvkms_open_gpu(NvU32 gpuId) { return NV_TRUE; }
 
-void nvkms_close_gpu(NvU32 gpuId) STUBBED;
+void nvkms_close_gpu(NvU32 gpuId) {}
 NvU32 nvkms_enumerate_gpus(nv_gpu_info_t *gpu_info) STUBBED;
 
 NvBool nvkms_allow_write_combining(void) { return NV_FALSE; }

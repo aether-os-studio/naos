@@ -133,13 +133,13 @@ void nvidia_eventCallback(const struct NvKmsKapiEvent *event) {
     return;
 }
 
+nvidia_stack_t *sp[5] = {NULL, NULL, NULL, NULL, NULL};
+
 int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
     uint16_t vendor = dev->vendor_id;
     uint16_t device = dev->device_id;
     uint16_t subsystem_vendor = dev->subsystem_vendor_id;
     uint16_t subsystem_device = dev->subsystem_device_id;
-
-    nvlink_lib_initialize();
 
     if (!rm_wait_for_bar_firewall(NULL, dev->segment, dev->bus, dev->slot,
                                   dev->func, device)) {
@@ -157,6 +157,7 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
     }
 
     nvidia_device_t *nv_dev = malloc(sizeof(nvidia_device_t));
+    memset(nv_dev, 0, sizeof(nvidia_device_t));
 
     nv_dev->pci_dev = dev;
     nv_dev->timerLock.lock = 0;
@@ -228,6 +229,11 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
     };
 
     nv_dev->kmsdev = nvKms->allocateDevice(&params);
+    if (!nv_dev->kmsdev) {
+        printk("Failed to allocate kms device!!!\n");
+        return -1;
+    }
+
     if (!nvKms->grabOwnership(nv_dev->kmsdev)) {
         return -1;
     }
@@ -328,6 +334,17 @@ pci_driver_t nvidia_pci_driver = {
 };
 
 __attribute__((visibility("default"))) int dlmain() {
+    NV_STATUS status = nvlink_lib_initialize();
+    if (status != NV_OK) {
+        printk("Failed to initialize nvlink lib\n");
+        return -1;
+    }
+
+    if (!rm_init_rm(*sp)) {
+        printk("NVIDIA_OPEN: rm_init_rm() failed!!!\n");
+        return -1;
+    }
+
     regist_pci_driver(&nvidia_pci_driver);
 
     return 0;
