@@ -22,7 +22,7 @@ int nvidia_get_fb(drm_device_t *drm_dev, uint32_t *width, uint32_t *height,
     *width = fb->width;
     *height = fb->height;
     *bpp = fb->bpp;
-    *addr = nv_dev->fb;
+    *addr = (uint64_t)fb->address;
 
     return 0;
 }
@@ -139,6 +139,8 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
     uint16_t subsystem_vendor = dev->subsystem_vendor_id;
     uint16_t subsystem_device = dev->subsystem_device_id;
 
+    nvlink_lib_initialize();
+
     if (!rm_wait_for_bar_firewall(NULL, dev->segment, dev->bus, dev->slot,
                                   dev->func, device)) {
         printk("NVRM: failed to wait for bar firewall to lower!!!\n");
@@ -146,15 +148,13 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
     }
 
     bool supported = rm_is_supported_pci_device(
-        (dev->class_code >> 24) & 0xFF, (dev->class_code >> 16) & 0xFF, vendor,
+        (dev->class_code >> 16) & 0xFF, (dev->class_code >> 8) & 0xFF, vendor,
         device, subsystem_vendor, subsystem_device, NV_TRUE);
 
     if (!supported) {
         printk("NVIDIA device not supported!!!\n");
         return -1;
     }
-
-    size_t nvBarIndex = 0;
 
     nvidia_device_t *nv_dev = malloc(sizeof(nvidia_device_t));
 
@@ -174,23 +174,21 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
     nv_dev->nv_.cpu_numa_node_id = -1;
     nv_dev->nv_.interrupt_line = 0;
 
+    size_t nvBarIndex = 0;
+
     for (size_t i = 0; i < 6; i++) {
-        if (dev->bars[i].mmio) {
-            nv_dev->nv_bars[nvBarIndex++] = &dev->bars[i];
+        if (dev->bars[i].address && dev->bars[i].mmio) {
+            nv_dev->nv_.bars[nvBarIndex].cpu_address = dev->bars[i].address;
+            nv_dev->nv_.bars[nvBarIndex].size = dev->bars[i].size;
+            nv_dev->nv_.bars[nvBarIndex].offset = 0;
+            nv_dev->nv_.bars[nvBarIndex].map = NULL;
+            nv_dev->nv_.bars[nvBarIndex].map_u = NULL;
+            nvBarIndex++;
         }
     }
 
-    nv_dev->regs =
-        phys_to_virt(nv_dev->nv_bars[NV_GPU_BAR_INDEX_REGS]->address);
-    map_page_range(get_current_page_dir(false), nv_dev->regs,
-                   nv_dev->nv_bars[NV_GPU_BAR_INDEX_REGS]->address,
-                   nv_dev->nv_bars[NV_GPU_BAR_INDEX_REGS]->size,
-                   PT_FLAG_R | PT_FLAG_W);
-    nv_dev->fb = phys_to_virt(nv_dev->nv_bars[NV_GPU_BAR_INDEX_FB]->address);
-    map_page_range(get_current_page_dir(false), nv_dev->fb,
-                   nv_dev->nv_bars[NV_GPU_BAR_INDEX_FB]->address,
-                   nv_dev->nv_bars[NV_GPU_BAR_INDEX_FB]->size,
-                   PT_FLAG_R | PT_FLAG_W);
+    nv_dev->nv_.regs = &nv_dev->nv_.bars[NV_GPU_BAR_INDEX_REGS];
+    nv_dev->nv_.fb = &nv_dev->nv_.bars[NV_GPU_BAR_INDEX_FB];
 
     NV_STATUS status = rm_is_supported_device(NULL, &nv_dev->nv_);
     if (status != NV_OK) {
@@ -321,7 +319,7 @@ void nvidia_shutdown(pci_device_t *dev) {}
 
 pci_driver_t nvidia_pci_driver = {
     .name = "nvidia_open",
-    .class_id = 0x030000,
+    .class_id = 0x00000000,
     .vendor_device_id = 0x10de0000,
     .probe = nvidia_probe,
     .remove = nvidia_remove,
@@ -330,7 +328,7 @@ pci_driver_t nvidia_pci_driver = {
 };
 
 __attribute__((visibility("default"))) int dlmain() {
-    nvlink_lib_initialize();
+    regist_pci_driver(&nvidia_pci_driver);
 
     return 0;
 }

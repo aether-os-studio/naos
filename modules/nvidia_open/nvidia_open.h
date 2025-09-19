@@ -22,11 +22,8 @@ typedef struct nvidia_fb {
 
 typedef struct nvidia_device {
     pci_device_t *pci_dev;
-    pci_bar_t *nv_bars[6];
     spinlock_t timerLock;
     nv_state_t nv_;
-    uint64_t regs;
-    uint64_t fb;
     struct NvKmsKapiDevice *kmsdev;
 
     // DRM resources

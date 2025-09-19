@@ -292,6 +292,10 @@ void *NV_API_CALL os_map_kernel_space(NvU64 start, NvU64 size_bytes,
     //                        &window));
     // ASSERT(window);
 
+    printk("os_map_kernel_space, start = %#018lx", start);
+
+    // map_page_range(get_current_page_dir(false), )
+
     // return (void *)(uintptr_t(window) + (offset & 0xFFF));
 }
 
