@@ -732,7 +732,7 @@ pci_driver_t vmware_svga_pci_driver = {
     .flags = PCI_DRIVER_FLAGS_NEED_SYSFS,
 };
 
-int dlmain() {
+__attribute__((visibility("default"))) int dlmain() {
     regist_pci_driver(&vmware_svga_pci_driver);
 
     return 0;

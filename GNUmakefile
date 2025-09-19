@@ -133,23 +133,6 @@ rootfs-$(ARCH).img: user/.build-stamp-$(ARCH)
 	sudo mkfs.ext4 -O ^metadata_csum -F -q -d user/rootfs-$(ARCH) rootfs-$(ARCH).img
 
 ifeq ($(ARCH),x86_64)
-EFI_FILE = assets/limine/BOOTX64.EFI:EFI/BOOT/BOOTX64.EFI
-else ifeq ($(ARCH),aarch64)
-EFI_FILE = assets/limine/BOOTAA64.EFI:EFI/BOOT/BOOTAA64.EFI
-else ifeq ($(ARCH),riscv64)
-EFI_FILE = assets/limine/BOOTRISCV64.EFI:EFI/BOOT/BOOTRISCV64.EFI
-else ifeq ($(ARCH),loongarch64)
-EFI_FILE = assets/limine/BOOTLOONGARCH64.EFI:EFI/BOOT/BOOTLOONGARCH64.EFI
-endif
-$(IMAGE_NAME).img: assets/limine assets/oib kernel modules
-	assets/oib -o $(IMAGE_NAME).img -f $(EFI_FILE) \
-		-d modules-$(ARCH):modules \
-		-f kernel/bin-$(ARCH)/kernel:boot/kernel \
-		-f limine.conf:boot/limine/limine.conf \
-		-f assets/limine/limine-bios.sys:boot/limine/limine-bios.sys
-
-
-ifeq ($(ARCH),x86_64)
 EFI_FILE_SINGLE = assets/limine/BOOTX64.EFI
 else ifeq ($(ARCH),aarch64)
 EFI_FILE_SINGLE = assets/limine/BOOTAA64.EFI
@@ -158,6 +141,17 @@ EFI_FILE_SINGLE = assets/limine/BOOTRISCV64.EFI
 else ifeq ($(ARCH),loongarch64)
 EFI_FILE_SINGLE = assets/limine/BOOTLOONGARCH64.EFI
 endif
+
+$(IMAGE_NAME).img: assets/limine kernel modules
+	dd if=/dev/zero of=$(IMAGE_NAME).img bs=1M count=512
+	sgdisk --new=1:1M:511M $(IMAGE_NAME).img
+	mkfs.vfat -F 32 --offset 2048 -S 512 $(IMAGE_NAME).img
+	mmd -i $(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
+	mcopy -i $(IMAGE_NAME).img@@1M modules-$(ARCH) ::/modules
+	mcopy -i $(IMAGE_NAME).img@@1M $(EFI_FILE_SINGLE) ::/EFI/BOOT
+	mcopy -i $(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/boot
+	mcopy -i $(IMAGE_NAME).img@@1M limine.conf ::/boot/limine
+
 single-$(IMAGE_NAME).img: assets/limine kernel rootfs-$(ARCH).img
 	dd if=/dev/zero of=single-$(IMAGE_NAME).img bs=1M count=$$(( $(ROOTFS_IMG_SIZE) + 1024 ))
 	sgdisk --new=1:1M:511M --new=2:512M:$$(( $$(($(ROOTFS_IMG_SIZE) + 1024 )) * 1024 )) single-$(IMAGE_NAME).img
@@ -189,7 +183,7 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-netdev user,id=net0 \
 		-device virtio-net-pci,netdev=net0 \
 		-rtc base=utc \
-		-vga vmware \
+		-vmware svga\
 		$(QEMUFLAGS)
 
 .PHONY: run-x86_64-single
@@ -259,17 +253,6 @@ run-loongarch64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-hda $(IMAGE_NAME).img \
 		$(QEMUFLAGS)
-
-OIB_VERSION = v0.3.0
-OIB_ARCH = $(shell uname -m)-unknown-linux-gnu
-OIB_URL = https://github.com/wenxuanjun/oib/releases/download/$(OIB_VERSION)/oib-$(OIB_ARCH).tar.gz
-
-assets/oib:
-	mkdir -p assets
-	curl -L $(OIB_URL) | tar -xz -C /tmp
-	mv /tmp/oib-$(OIB_ARCH)/oib assets/oib
-	rm -rf /tmp/oib-$(OIB_ARCH)
-	chmod +x assets/oib
 
 assets/limine:
 	rm -rf assets/limine

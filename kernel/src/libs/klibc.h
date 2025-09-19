@@ -5,6 +5,7 @@
 #include "../../freestnd-c-hdrs/stdint.h"
 #include "../../freestnd-c-hdrs/stddef.h"
 #include "../../freestnd-c-hdrs/stdbool.h"
+#include "../../freestnd-c-hdrs/limits.h"
 #include "../limine.h"
 
 #include "errno.h"

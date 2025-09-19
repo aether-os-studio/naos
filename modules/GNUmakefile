@@ -10,6 +10,7 @@ all:
 	$(MAKE) -C e1000
 	$(MAKE) -C virtio
 	$(MAKE) -C vmware_svga
+	$(MAKE) -C nvidia_open
 
 	$(MAKE) -C ext
 
