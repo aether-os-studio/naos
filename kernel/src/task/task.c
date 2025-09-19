@@ -269,10 +269,11 @@ void task_init() {
     memset(idle_tasks, 0, sizeof(idle_tasks));
 
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
-        schedulers[cpu] = malloc(sizeof(eevdf_t));
+        schedulers[cpu] = alloc_frames_bytes(sizeof(eevdf_t));
         memset(schedulers[cpu], 0, sizeof(eevdf_t));
-        schedulers[cpu]->root = malloc(sizeof(struct rb_root));
+        schedulers[cpu]->root = alloc_frames_bytes(sizeof(struct rb_root));
         memset(schedulers[cpu]->root, 0, sizeof(struct rb_root));
+        schedulers[cpu]->root->rb_node = NULL;
         schedulers[cpu]->min_vruntime = 0;
     }
 
