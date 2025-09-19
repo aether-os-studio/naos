@@ -3,6 +3,7 @@
 
 #include "net.h"
 #include "blk.h"
+#include "gpu.h"
 
 extern virtio_driver_op_t virtio_pci_driver_op;
 
@@ -38,6 +39,9 @@ int virtio_probe(pci_device_t *dev, uint32_t vendor_device_id) {
         case VIRTIO_DEVICE_TYPE_BLOCK:
             virtio_blk_init(driver);
             break;
+        case VIRTIO_DEVICE_TYPE_GPU:
+            virtio_gpu_init(driver);
+            break;
 
         default:
             break;
@@ -59,7 +63,7 @@ pci_driver_t virtio_driver = {
     .probe = virtio_probe,
     .remove = virtio_remove,
     .shutdown = virtio_shutdown,
-    .flags = 0,
+    .flags = PCI_DRIVER_FLAGS_NEED_SYSFS,
 };
 
 __attribute__((visibility("default"))) int dlmain() {
