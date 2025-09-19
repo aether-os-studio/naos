@@ -863,8 +863,10 @@ char *vfs_get_fullpath(vfs_node_t node) {
         }
         nodes[count++] = cur;
     }
+
     // 正常的路径都不应该超过这个数值
     char *buff = (char *)malloc(2048);
+    memset(buff, 0, 2048);
     strcpy(buff, "/");
     for (int j = count - 1; j >= 0; j--) {
         if (nodes[j] == rootdir)
@@ -874,8 +876,10 @@ char *vfs_get_fullpath(vfs_node_t node) {
         if (j != 0)
             strcat(buff, "/");
     }
+
     free(nodes);
     spin_unlock(&get_path_lock);
+
     return buff;
 }
 

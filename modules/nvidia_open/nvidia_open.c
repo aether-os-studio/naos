@@ -193,12 +193,14 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
 
     NV_STATUS status = rm_is_supported_device(NULL, &nv_dev->nv_);
     if (status != NV_OK) {
+        free(nv_dev);
         printk("Failed detect support device!!!\n");
         return -1;
     }
 
     bool success = rm_init_private_state(NULL, &nv_dev->nv_);
     if (!success) {
+        free(nv_dev);
         printk("Failed init private state!!!\n");
         return -1;
     }
@@ -219,6 +221,7 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
     nvKms = &nvKmsFuncsTable;
 
     if (!nvKmsKapiGetFunctionsTableInternal(&nvKmsFuncsTable)) {
+        free(nv_dev);
         return -1;
     }
 
@@ -230,16 +233,21 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
 
     nv_dev->kmsdev = nvKms->allocateDevice(&params);
     if (!nv_dev->kmsdev) {
+        free(nv_dev);
         printk("Failed to allocate kms device!!!\n");
         return -1;
     }
 
     if (!nvKms->grabOwnership(nv_dev->kmsdev)) {
+        free(nv_dev);
         return -1;
     }
 
+    nvKms->framebufferConsoleDisabled(nv_dev->kmsdev);
+
     struct NvKmsKapiDeviceResourcesInfo resInfo;
     if (!nvKms->getDeviceResourcesInfo(nv_dev->kmsdev, &resInfo)) {
+        free(nv_dev);
         return -1;
     }
 
@@ -255,6 +263,7 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
                          (1 << NVKMS_EVENT_TYPE_FLIP_OCCURRED)));
 
     if (!success) {
+        free(nv_dev);
         return -1;
     }
 
@@ -264,6 +273,7 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
     NvKmsKapiDisplay hDisplays[16];
     success = nvKms->getDisplays(nv_dev->kmsdev, &nDisplays, hDisplays);
     if (!success) {
+        free(nv_dev);
         return -1;
     }
 

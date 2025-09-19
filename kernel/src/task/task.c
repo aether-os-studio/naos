@@ -1014,6 +1014,8 @@ void task_exit_inner(task_t *task, int64_t code) {
                 task->should_free = true;
             }
         }
+    } else if (task->pid == task->ppid) {
+        task->should_free = true;
     }
 
     if (task->waitpid != 0 && task->waitpid < MAX_TASK_NUM &&

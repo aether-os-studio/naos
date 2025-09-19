@@ -183,7 +183,7 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-netdev user,id=net0 \
 		-device virtio-net-pci,netdev=net0 \
 		-rtc base=utc \
-		-vmware svga\
+		-vga vmware \
 		$(QEMUFLAGS)
 
 .PHONY: run-x86_64-single

@@ -20,7 +20,7 @@ static void delay(uint64_t ns) {
 void nvlink_sleep(unsigned int ms) { delay(ms * 1000000); }
 
 void *nvlink_malloc(NvLength s) { return malloc(s); }
-void nvlink_free(void *ptr) { return free(ptr); }
+void nvlink_free(void *ptr) {}
 
 void *nvlink_memset(void *dest, int c, NvLength len) {
     return memset(dest, c, len);

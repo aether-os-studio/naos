@@ -96,11 +96,12 @@ static inline bool try_split_and_free(mpool_t pool, void *ptr, size_t size) {
 }
 
 void *mpool_alloc(mpool_t pool, size_t size) {
-#if HEAP_CHECK
-    size += 8;
-#endif
     size = size == 0 ? 2 * sizeof(size_t)
                      : PADDING(size); // 保证最小分配 2 个字长且对齐到 2 倍字长
+
+#if HEAP_CHECK
+    size += 2 * sizeof(size_t);
+#endif
 
     // 优先从空闲链表中分配
     void *ptr = freelist_match(&pool->large_blk, size);
