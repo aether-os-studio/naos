@@ -213,6 +213,13 @@ struct xhci_portmap {
     uint8_t count;
 };
 
+struct xhci_slot_info {
+    uint32_t slotid;
+    struct usbdevice_s *usbdev;
+    struct xhci_pipe *pipes[32]; // Max 31 endpoints per device
+    bool enabled;
+};
+
 struct usb_xhci_s {
     struct usb_s usb;
 
@@ -239,7 +246,13 @@ struct usb_xhci_s {
     struct xhci_ring *evts;
     struct xhci_er_seg *eseg;
 
+    /* slot management */
+    struct xhci_slot_info *slot_info;
+
+    /* interrupt handling */
+    int irq_num;
     bool use_irq;
+    bool running;
 };
 
 struct xhci_pipe {
@@ -276,7 +289,13 @@ static const int speed_to_xhci[] = {
 };
 
 static int wait_bit(uint32_t *reg, uint32_t mask, int value, uint32_t timeout) {
+    uint64_t start_ns = nanoTime();
+    uint64_t timeout_ns = (uint64_t)timeout * 1000000; // Convert ms to ns
+
     while ((*reg & mask) != value) {
+        if ((nanoTime() - start_ns) > timeout_ns) {
+            return -1; // Timeout
+        }
         arch_pause();
     }
     return 0;
@@ -314,8 +333,27 @@ static int xhci_hub_reset(struct usbhub_s *hub, uint32_t port) {
         // A USB2 port - perform device reset
         xhci->pr[port].portsc = portsc | XHCI_PORTSC_PR;
         break;
+    case PLS_RX_DETECT:
+    case PLS_INACTIVE:
+    case PLS_RECOVERY:
+    case PLS_HOT_RESET:
+        // These states indicate the port is in some recovery process
+        // Wait a bit and check if it transitions to a stable state
+        arch_pause();
+        arch_pause();
+        break;
+    case PLS_DISABLED:
+        // Port is disabled, try to enable it
+        xhci->pr[port].portsc = portsc | XHCI_PORTSC_PP;
+        break;
+    case PLS_COMPILANCE_MODE:
+    case PLS_TEST_MODE:
+        // Special modes, not normal operation
+        printk("XHCI reset: port %d in special mode %d\n", port, pls);
+        return -1;
     default:
-        printk("XHCI reset: unknown pls %d\n", pls);
+        printk("XHCI reset: unknown pls %d on port %d\n", pls, port);
+        return -1;
     }
 
     uint64_t start_ns = nanoTime();
@@ -357,8 +395,63 @@ static int xhci_hub_portmap(struct usbhub_s *hub, uint32_t vport) {
     return pport;
 }
 
+static int xhci_cmd_disable_slot(struct usb_xhci_s *xhci, uint32_t slotid);
+
 static void xhci_hub_disconnect(struct usbhub_s *hub, uint32_t port) {
-    // XXX - should turn the port power off.
+    struct usb_xhci_s *xhci = container_of(hub->cntl, struct usb_xhci_s, usb);
+
+    // Find and remove any device associated with this port
+    for (uint32_t i = 1; i <= xhci->slots; i++) {
+        if (xhci->slot_info[i].enabled && xhci->slot_info[i].usbdev &&
+            xhci->slot_info[i].usbdev->port == port) {
+            struct usbdevice_s *usbdev = xhci->slot_info[i].usbdev;
+
+            printk("XHCI: Removing device from slot %d, port %d\n", i, port);
+
+            // Disable the slot
+            xhci_cmd_disable_slot(xhci, i);
+
+            // Free all pipes for this slot
+            for (uint32_t ep = 0; ep < 32; ep++) {
+                if (xhci->slot_info[i].pipes[ep]) {
+                    struct xhci_pipe *pipe = xhci->slot_info[i].pipes[ep];
+                    free(pipe->buf);
+                    free_frames_bytes(pipe, sizeof(*pipe));
+                    xhci->slot_info[i].pipes[ep] = NULL;
+                }
+            }
+
+            // Free device context
+            if (xhci->devs[i].ptr_low || xhci->devs[i].ptr_high) {
+                void *dev_ctx = (void *)phys_to_virt(
+                    xhci->devs[i].ptr_low | (uint64_t)xhci->devs[i].ptr_high
+                                                << 32);
+                free_frames_bytes(dev_ctx, (sizeof(struct xhci_slotctx) * 32)
+                                               << xhci->context64);
+                xhci->devs[i].ptr_low = 0;
+                xhci->devs[i].ptr_high = 0;
+            }
+
+            // Remove from global usbdevs array
+            for (int j = 0; j < MAX_USBDEV_NUM; j++) {
+                if (usbdevs[j] == usbdev) {
+                    usbdevs[j] = NULL;
+                    break;
+                }
+            }
+
+            // Free the device structure
+            free(usbdev);
+            xhci->slot_info[i].usbdev = NULL;
+            xhci->slot_info[i].enabled = false;
+
+            break;
+        }
+    }
+
+    // Turn off port power
+    uint32_t portsc = xhci->pr[port].portsc;
+    xhci->pr[port].portsc = portsc & ~XHCI_PORTSC_PP;
 }
 
 static struct usbhub_op_s xhci_hub_ops = {
@@ -373,24 +466,44 @@ static struct usbhub_op_s xhci_hub_ops = {
  ****************************************************************/
 
 static void xhci_free_pipes(struct usb_xhci_s *xhci) {
-    // XXX - should walk list of pipes and free unused pipes.
+    for (uint32_t slot = 1; slot <= xhci->slots; slot++) {
+        if (xhci->slot_info[slot].enabled) {
+            for (uint32_t ep = 0; ep < 32; ep++) {
+                if (xhci->slot_info[slot].pipes[ep]) {
+                    struct xhci_pipe *pipe = xhci->slot_info[slot].pipes[ep];
+                    free(pipe->buf);
+                    free_frames_bytes(pipe, sizeof(*pipe));
+                    xhci->slot_info[slot].pipes[ep] = NULL;
+                }
+            }
+        }
+    }
 }
 
-// void xhci_process_events(struct usb_xhci_s *xhci);
+void xhci_process_events(struct usb_xhci_s *xhci);
+static void xhci_handle_port_status_change(struct usb_xhci_s *xhci,
+                                           uint32_t port, uint32_t portsc);
 
-// void xhci_interrupt_handler(uint64_t irq_num, void *data,
-//                             struct pt_regs *regs) {
-//     struct usb_xhci_s *xhci = data;
-//     if (xhci->op->usbsts & XHCI_STS_EINT) {
-//         xhci->op->usbsts |= XHCI_STS_EINT;
-//         xhci->ir->iman &= ~(1 << 1);
-//         xhci_process_events(xhci);
-//         xhci->ir->erdp_low |= (1 << 3);
-//         xhci->ir->iman |= (1 << 1);
-//     } else {
-//         printk("XHCI: interrupt handler\n");
-//     }
-// }
+void xhci_interrupt_handler(uint64_t irq_num, void *data,
+                            struct pt_regs *regs) {
+    struct usb_xhci_s *xhci = data;
+
+    if (!xhci->running) {
+        return;
+    }
+
+    // Check if this interrupt is from our controller
+    if (xhci->op->usbsts & XHCI_STS_EINT) {
+        // Acknowledge the interrupt
+        xhci->op->usbsts = XHCI_STS_EINT;
+
+        // Process events
+        xhci_process_events(xhci);
+
+        // Re-enable interrupts
+        xhci->ir->iman |= (1 << 1);
+    }
+}
 
 static int configure_xhci(void *data) {
     struct usb_xhci_s *xhci = data;
@@ -400,13 +513,19 @@ static int configure_xhci(void *data) {
     xhci->eseg = alloc_frames_bytes(sizeof(*xhci->eseg));
     xhci->cmds = alloc_frames_bytes(sizeof(*xhci->cmds));
     xhci->evts = alloc_frames_bytes(sizeof(*xhci->evts));
-    if (!xhci->devs || !xhci->cmds || !xhci->evts || !xhci->eseg) {
+    xhci->slot_info = malloc(sizeof(struct xhci_slot_info) * (xhci->slots + 1));
+
+    if (!xhci->devs || !xhci->cmds || !xhci->evts || !xhci->eseg ||
+        !xhci->slot_info) {
         goto fail;
     }
+
     memset(xhci->devs, 0, sizeof(*xhci->devs) * (xhci->slots + 1));
     memset(xhci->cmds, 0, sizeof(*xhci->cmds));
     memset(xhci->evts, 0, sizeof(*xhci->evts));
     memset(xhci->eseg, 0, sizeof(*xhci->eseg));
+    memset(xhci->slot_info, 0,
+           sizeof(struct xhci_slot_info) * (xhci->slots + 1));
 
     reg = xhci->op->usbcmd;
     if (reg & XHCI_CMD_RS) {
@@ -447,36 +566,36 @@ static int configure_xhci(void *data) {
     xhci->ir->erstba_high = (uint32_t)(eseg_phys >> 32);
     xhci->evts->cs = 1;
 
-    xhci->use_irq = false;
+#if defined(__x86_64__)
+    int irq = irq_allocate_irqnum();
+    if (irq >= 0) {
+        struct msi_desc_t desc;
+        desc.irq_num = irq;
+        desc.processor = lapic_id();
+        desc.edge_trigger = 1;
+        desc.assert = 1;
+        desc.msi_index = 0;
+        desc.pci_dev = xhci->pci_dev;
+        desc.pci.msi_attribute.is_msix = true;
 
-    // #if defined(__x86_64__)
-    //     int irq = irq_allocate_irqnum();
+        int ret = pci_enable_msi(&desc);
+        if (ret >= 0) {
+            irq_regist_irq(irq, xhci_interrupt_handler, irq, xhci,
+                           get_apic_controller(), "XHCI");
 
-    //     struct msi_desc_t desc;
-    //     desc.irq_num = irq;
-    //     desc.processor = lapic_id();
-    //     desc.edge_trigger = 1;
-    //     desc.assert = 1;
-    //     desc.msi_index = 0;
-    //     desc.pci_dev = xhci->pci_dev;
-    //     desc.pci.msi_attribute.is_msix = true;
-    //     int ret = pci_enable_msi(&desc);
-    //     if (ret < 0)
-    //     {
-    //         printk("Failed to enable msi/msi-x\n");
-    //         goto irq_done;
-    //     }
+            xhci->irq_num = irq;
+            xhci->use_irq = true;
+            xhci->ir->imod = 4000;
+            xhci->ir->iman |= 3;
+            printk("XHCI: Using IRQ %d for interrupts\n", irq);
+        }
+    }
+#endif
 
-    //     irq_regist_irq(irq, xhci_interrupt_handler, irq, xhci,
-    //     get_apic_controller(), "XHCI");
+    if (!xhci->use_irq) {
+        printk("XHCI: Using polling mode (no IRQ)\n");
+    }
 
-    //     printk("XHCI: use irq\n");
-
-    //     xhci->ir->imod = 4000;
-    //     xhci->ir->iman |= 3;
-    //     xhci->use_irq = true;
-    // irq_done:
-    // #endif
     reg = xhci->caps->hcsparams2;
     uint32_t spb = (reg >> 21 & 0x1f) << 5 | reg >> 27;
     if (spb) {
@@ -503,6 +622,9 @@ static int configure_xhci(void *data) {
     reg |= XHCI_CMD_RS;
     xhci->op->usbcmd = reg;
 
+    xhci->running = true;
+
+    // Scan for connected devices
     for (uint32_t i = 0; i < xhci->ports; i++) {
         if (xhci->pr[i].portsc & XHCI_PORTSC_CCS) {
             struct usbhub_s hub;
@@ -525,20 +647,12 @@ static int configure_xhci(void *data) {
         }
     }
 
-    // xhci_free_pipes(xhci);
-    // if (count)
-    // Success
     return 0;
-
-    // // No devices found - shutdown and free controller.
-    // reg = xhci->op->usbcmd;
-    // reg &= ~XHCI_CMD_RS;
-    // xhci->op->usbcmd = reg;
-    // wait_bit(&xhci->op->usbsts, XHCI_STS_HCH, XHCI_STS_HCH, 32);
 
 fail:
     printk("Configure XHCI failed");
 
+    free(xhci->slot_info);
     free_frames_bytes(xhci->eseg, sizeof(*xhci->eseg));
     free_frames_bytes(xhci->evts, sizeof(*xhci->evts));
     free_frames_bytes(xhci->cmds, sizeof(*xhci->cmds));
@@ -568,6 +682,7 @@ static struct usb_xhci_s *xhci_controller_setup(void *baseaddr) {
     xhci->context64 = (hcc & 0x04) ? 1 : 0;
     xhci->usb.resetlock.lock = 0;
     xhci->usb.type = USB_TYPE_XHCI;
+    xhci->running = false;
 
     if (xhci->xcap) {
         uint32_t off;
@@ -640,6 +755,7 @@ void xhci_process_events(struct usb_xhci_s *xhci) {
         /* process event */
         uint32_t evt_type = TRB_TYPE(control);
         uint32_t evt_cc = (etrb->status >> 24) & 0xff;
+
         switch (evt_type) {
         case ER_TRANSFER:
         case ER_COMMAND_COMPLETE: {
@@ -654,24 +770,21 @@ void xhci_process_events(struct usb_xhci_s *xhci) {
         }
         case ER_PORT_STATUS_CHANGE: {
             uint32_t port = ((etrb->ptr_low >> 24) & 0xff) - 1;
-            // Read status, and clear port status chancge bits
+            // Read status, and clear port status change bits
             uint32_t portsc = xhci->pr[port].portsc;
-            uint32_t pclear =
-                (((portsc & ~(XHCI_PORTSC_PED | XHCI_PORTSC_PR)) &
-                  ~(XHCI_PORTSC_PLS_MASK << XHCI_PORTSC_PLS_SHIFT)) |
-                 (1 << XHCI_PORTSC_PLS_SHIFT));
+
+            // Clear change bits
+            uint32_t pclear = portsc;
+            pclear &= ~(XHCI_PORTSC_CSC | XHCI_PORTSC_PEC | XHCI_PORTSC_WRC |
+                        XHCI_PORTSC_OCC | XHCI_PORTSC_PRC | XHCI_PORTSC_PLC |
+                        XHCI_PORTSC_CEC);
             xhci->pr[port].portsc = pclear;
 
-            if (portsc & XHCI_PORTSC_CCS) {
-                printk("XHCI port %d connected!!!\n", port);
-            } else {
-                printk("XHCI port %d disconnected!!!\n", port);
-            }
-
+            xhci_handle_port_status_change(xhci, port, portsc);
             break;
         }
         default:
-            printk("%s: Unknown event type: %d\n", __func__, evt_type);
+            printk("XHCI: Unknown event type: %d, cc: %d\n", evt_type, evt_cc);
             break;
         }
 
@@ -1207,9 +1320,61 @@ int xhci_probe(pci_device_t *dev, uint32_t vendor_device_id) {
     return 0;
 }
 
-void xhci_remove(pci_device_t *dev) {}
+void xhci_remove(pci_device_t *dev) {
+    struct usb_xhci_s *xhci = dev->desc;
+    if (!xhci)
+        return;
 
-void xhci_shutdown(pci_device_t *dev) {}
+    printk("XHCI: Removing controller\n");
+
+    // Stop the controller
+    xhci->running = false;
+
+    // Disable interrupts
+    if (xhci->use_irq) {
+        xhci->ir->iman &= ~(1 << 1);
+        // irq_unregist_irq(xhci->irq_num);
+    }
+
+    // Stop the controller
+    xhci->op->usbcmd &= ~XHCI_CMD_RS;
+    wait_bit(&xhci->op->usbsts, XHCI_STS_HCH, XHCI_STS_HCH, 100);
+
+    // Free all resources
+    xhci_free_pipes(xhci);
+    free(xhci->slot_info);
+    free_frames_bytes(xhci->eseg, sizeof(*xhci->eseg));
+    free_frames_bytes(xhci->evts, sizeof(*xhci->evts));
+    free_frames_bytes(xhci->cmds, sizeof(*xhci->cmds));
+    free_frames_bytes(xhci->devs, sizeof(*xhci->devs) * (xhci->slots + 1));
+
+    // Unmap MMIO
+    unmap_page_range(get_current_page_dir(false), (uint64_t)xhci->caps,
+                     dev->bars[0].size);
+
+    free(xhci);
+    dev->desc = NULL;
+}
+
+void xhci_shutdown(pci_device_t *dev) {
+    struct usb_xhci_s *xhci = dev->desc;
+    if (!xhci)
+        return;
+
+    printk("XHCI: Shutting down controller\n");
+
+    // Stop the controller but don't free resources (system is shutting down)
+    xhci->running = false;
+
+    // Disable interrupts
+    if (xhci->use_irq) {
+        xhci->ir->iman &= ~(1 << 1);
+    }
+
+    // Stop the controller
+    xhci->op->usbcmd &= ~XHCI_CMD_RS;
+    wait_bit(&xhci->op->usbsts, XHCI_STS_HCH, XHCI_STS_HCH, 100);
+}
 
 pci_driver_t xhci_hcd_driver = {
     .name = "xhci_hcd",
@@ -1220,6 +1385,57 @@ pci_driver_t xhci_hcd_driver = {
     .shutdown = xhci_shutdown,
     .flags = 0,
 };
+
+// Handle port status change events
+static void xhci_handle_port_status_change(struct usb_xhci_s *xhci,
+                                           uint32_t port, uint32_t portsc) {
+    struct usbhub_s hub;
+    memset(&hub, 0, sizeof(hub));
+    hub.cntl = &xhci->usb;
+    hub.portcount = xhci->ports;
+    hub.op = &xhci_hub_ops;
+
+    if (portsc & XHCI_PORTSC_CSC) {
+        if (portsc & XHCI_PORTSC_CCS) {
+            printk("XHCI: Port %d connected\n", port);
+
+            // Handle device connection
+            struct usbdevice_s *usbdev = malloc(sizeof(*usbdev));
+            if (usbdev) {
+                memset(usbdev, 0, sizeof(*usbdev));
+                usbdev->hc_ops = &xhci_hcd_op;
+                usbdev->hub = &hub;
+                usbdev->port = port;
+                usb_hub_port_setup(usbdev);
+            }
+        } else {
+            printk("XHCI: Port %d disconnected\n", port);
+            // Handle device disconnection
+            xhci_hub_disconnect(&hub, port);
+        }
+    }
+
+    // Handle other port status changes
+    if (portsc & XHCI_PORTSC_PEC) {
+        printk("XHCI: Port %d enable/disable change\n", port);
+    }
+    if (portsc & XHCI_PORTSC_WRC) {
+        printk("XHCI: Port %d warm reset complete\n", port);
+    }
+    if (portsc & XHCI_PORTSC_OCC) {
+        printk("XHCI: Port %d over-current change\n", port);
+    }
+    if (portsc & XHCI_PORTSC_PRC) {
+        printk("XHCI: Port %d reset change\n", port);
+    }
+    if (portsc & XHCI_PORTSC_PLC) {
+        uint8_t pls = xhci_get_field(portsc, XHCI_PORTSC_PLS);
+        printk("XHCI: Port %d link state change to %d\n", port, pls);
+    }
+    if (portsc & XHCI_PORTSC_CEC) {
+        printk("XHCI: Port %d config error change\n", port);
+    }
+}
 
 __attribute__((visibility("default"))) int dlmain() {
     memset(usbdevs, 0, sizeof(usbdevs));
