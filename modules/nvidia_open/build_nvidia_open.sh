@@ -4,7 +4,7 @@ fi
 
 unset CFLAGS
 
-FLAGS="-g3 -O0 -fPIC -fvisibility=hidden"
+FLAGS="-g3 -O0 -fPIC -fvisibility=hidden -fno-stack-protector"
 
 if [ ! -d ${NVIDIA_OPEN_ROOT}/../../nvidia-open-install-dir ]; then
     cd ../../nvidia-open
