@@ -135,7 +135,7 @@ void do_divide_error(struct pt_regs *regs, uint64_t error_code) {
 // 1 #DB 调试异常
 void do_debug(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
-    dump_regs(regs, "do_debug(1)");
+    traceback(regs);
 }
 
 // 2 不可屏蔽中断

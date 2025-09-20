@@ -305,7 +305,7 @@ NvBool NV_API_CALL os_check_access(RsAccessRight) { return NV_FALSE; }
 
 void NV_API_CALL os_dbg_init(void) {}
 
-void NV_API_CALL os_dbg_breakpoint(void) {}
+void NV_API_CALL os_dbg_breakpoint(void) { asm volatile("int %0" ::"i"(1)); }
 
 void NV_API_CALL os_dbg_set_level(NvU32) STUBBED;
 
