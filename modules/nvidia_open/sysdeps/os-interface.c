@@ -17,8 +17,8 @@
         ASSERT(!"Unimplemented");                                              \
     }
 
-NvU32 os_page_size = 0x1000;
-NvU64 os_page_mask = ~0xFFF;
+NvU32 os_page_size = DEFAULT_PAGE_SIZE;
+NvU64 os_page_mask = ~0xFFFULL;
 NvU8 os_page_shift = 12;
 NvBool os_cc_enabled = 0;
 NvBool os_cc_sev_snp_enabled = 0;
@@ -277,9 +277,9 @@ void *NV_API_CALL os_map_kernel_space(NvU64 start, NvU64 size_bytes,
 }
 
 void NV_API_CALL os_unmap_kernel_space(void *ptr, NvU64 len) {
-    uint64_t alignedAddr = (uintptr_t)ptr & ~0xFFF;
+    uint64_t alignedAddr = (uintptr_t)ptr & ~0xFFFULL;
     uint64_t alignedSize =
-        (((uintptr_t)ptr + len + 0xFFF) & ~0xFFF) - alignedAddr;
+        (((uintptr_t)ptr + len + 0xFFFULL) & ~0xFFFULL) - alignedAddr;
     unmap_page_range(get_current_page_dir(false), alignedAddr, alignedSize);
 }
 
@@ -327,10 +327,14 @@ NV_STATUS NV_API_CALL os_registry_init(void) {
 
 NvU64 NV_API_CALL os_get_max_user_va(void) { return (1ULL << 47) - 0x1000; }
 
-NV_STATUS NV_API_CALL os_schedule(void) { return NV_OK; }
+NV_STATUS NV_API_CALL os_schedule(void) {
+    arch_yield();
+    return NV_OK;
+}
 
 NV_STATUS NV_API_CALL os_alloc_spinlock(void **spinlock) {
     *spinlock = malloc(sizeof(spinlock_t));
+    memset(*spinlock, 0, sizeof(spinlock_t));
     return NV_OK;
 }
 
@@ -440,7 +444,7 @@ NV_STATUS NV_API_CALL os_release_semaphore(void *s) {
 void *NV_API_CALL os_alloc_rwlock(void) {
     spinlock_t *rwlock = NULL;
 
-    NV_STATUS status = os_alloc_mem((void **)(&rwlock), sizeof(spin_lock));
+    NV_STATUS status = os_alloc_mem((void **)(&rwlock), sizeof(spinlock_t));
     if (status != NV_OK) {
         return NULL;
     }
@@ -907,7 +911,7 @@ NvBool NV_API_CALL nv_platform_supports_s0ix(void) STUBBED;
 NvBool NV_API_CALL nv_s2idle_pm_configured(void) STUBBED;
 
 NvBool NV_API_CALL nv_is_chassis_notebook(void) {
-    return NV_TRUE; // TODO: SMBIOS
+    return NV_FALSE; // TODO: SMBIOS
 }
 
 void NV_API_CALL nv_allow_runtime_suspend(nv_state_t *nv) STUBBED;

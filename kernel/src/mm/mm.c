@@ -131,7 +131,7 @@ retry:
         bitmap_find_range_from(bitmap, count, true, last_alloc_pos);
 
     if (frame_index != (size_t)-1) {
-        last_alloc_pos = frame_index + count;
+        last_alloc_pos = frame_index + count - 1;
         bitmap_set_range(bitmap, frame_index, frame_index + count, false);
         frame_allocator.usable_frames -= count;
         uint64_t addr = frame_index * DEFAULT_PAGE_SIZE;
