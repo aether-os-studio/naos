@@ -3,6 +3,7 @@
 #include <libs/aether/stdio.h>
 #include <libs/aether/pci.h>
 #include <libs/aether/drm.h>
+#include <libs/aether/task.h>
 
 #define NV_FIRMWARE_FOR_NAME(name)                                             \
     "/usr/lib/firmware/nvidia/575.51.02/" name ".bin"

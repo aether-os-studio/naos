@@ -341,6 +341,38 @@ void nvidia_remove(pci_device_t *dev) {}
 
 void nvidia_shutdown(pci_device_t *dev) {}
 
+void nvidia_open_rc_timer(uint64_t dev_ptr) {
+    nvidia_device_t *dev = (nvidia_device_t *)dev_ptr;
+
+    bool continueWaiting = true;
+
+    while (1) {
+        spin_lock(&dev->timerLock);
+        while (!dev->nv_.rc_timer_enabled || !continueWaiting) {
+            arch_yield();
+
+            if (dev->nv_.rc_timer_enabled) {
+                continueWaiting = true;
+            }
+        }
+        spin_unlock(&dev->timerLock);
+
+        os_delay(1000000000);
+
+        spin_lock(&dev->timerLock);
+        bool still_enabled = dev->nv_.rc_timer_enabled;
+        spin_unlock(&dev->timerLock);
+
+        if (!still_enabled)
+            continue;
+
+        NV_STATUS status = rm_run_rc_callback(NULL, &dev->nv_);
+        if (status != NV_OK) {
+            continueWaiting = false;
+        }
+    }
+}
+
 NvBool nvidia_open_do_open_gpu(nvidia_device_t *dev) {
     if (dev->nv_.flags & NV_FLAG_OPEN)
         return NV_FALSE;
@@ -348,9 +380,11 @@ NvBool nvidia_open_do_open_gpu(nvidia_device_t *dev) {
     if (!dev->adapterInitialized_) {
         rm_ref_dynamic_power(NULL, &dev->nv_, NV_DYNAMIC_PM_COARSE);
 
+        task_create("NVIDIA_OPEN_TIMER", nvidia_open_rc_timer, (uint64_t)dev,
+                    KTHREAD_PRIORITY);
+
         bool success = rm_init_adapter(NULL, &dev->nv_);
-        if (!success)
-            return NV_FALSE;
+        ASSERT(success);
 
         dev->adapterInitialized_ = true;
     }

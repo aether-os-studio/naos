@@ -645,6 +645,9 @@ NV_STATUS NV_API_CALL nv_alloc_pages(nv_state_t *, NvU32 page_count,
                               (uintptr_t)virt + i * DEFAULT_PAGE_SIZE);
     }
 
+    if (zeroed)
+        memset((void *)virt, 0, info->length);
+
     *(AllocInfo **)priv_data = info;
 
     return NV_OK;
