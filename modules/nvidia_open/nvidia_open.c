@@ -182,9 +182,11 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
 
     for (size_t i = 0; i < 6; i++) {
         if (dev->bars[i].address && dev->bars[i].mmio) {
-            nv_dev->nv_.bars[nvBarIndex].cpu_address = dev->bars[i].address;
+            nv_dev->nv_.bars[nvBarIndex].cpu_address =
+                dev->bars[i].address & ~(DEFAULT_PAGE_SIZE - 1);
             nv_dev->nv_.bars[nvBarIndex].size = dev->bars[i].size;
-            nv_dev->nv_.bars[nvBarIndex].offset = 0;
+            nv_dev->nv_.bars[nvBarIndex].offset =
+                dev->bars[i].address & (DEFAULT_PAGE_SIZE - 1);
             nv_dev->nv_.bars[nvBarIndex].map = NULL;
             nv_dev->nv_.bars[nvBarIndex].map_u = NULL;
             nvBarIndex++;

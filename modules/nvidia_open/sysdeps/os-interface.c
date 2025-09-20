@@ -272,7 +272,7 @@ void *NV_API_CALL os_map_kernel_space(NvU64 start, NvU64 size_bytes,
                                       NvU32 mode) {
     uint64_t virt = phys_to_virt(start);
     map_page_range(get_current_page_dir(false), virt, start, size_bytes,
-                   PT_FLAG_R | PT_FLAG_W);
+                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
     return (void *)virt;
 }
 
@@ -305,7 +305,7 @@ NvBool NV_API_CALL os_check_access(RsAccessRight) { return NV_FALSE; }
 
 void NV_API_CALL os_dbg_init(void) {}
 
-void NV_API_CALL os_dbg_breakpoint(void) { asm volatile("int %0" ::"i"(1)); }
+void NV_API_CALL os_dbg_breakpoint(void) {}
 
 void NV_API_CALL os_dbg_set_level(NvU32) STUBBED;
 
@@ -597,30 +597,12 @@ void *NV_API_CALL nv_alloc_kernel_mapping(nv_state_t *, void *pAllocPrivate,
                                           NvU64 pageIndex, NvU32 pageOffset,
                                           NvU64 size, void **pPrivate) {
     AllocInfo *info = (AllocInfo *)(pAllocPrivate);
-
-    size_t pages = (size + 0xFFF) / 0x1000;
-
-    uint64_t ptr = phys_to_virt(pageIndex << 12);
-    map_page_range(get_current_page_dir(false), ptr, pageIndex << 12,
-                   pages << 12, PT_FLAG_R | PT_FLAG_W);
-
-    info->base = ptr;
-    *pPrivate = (void *)pages;
-
-    return (void *)((uintptr_t)ptr + pageOffset);
+    return (void *)(info->base + pageOffset);
 }
 
 NV_STATUS NV_API_CALL nv_free_kernel_mapping(nv_state_t *, void *pAllocPrivate,
                                              void *address, void *pPrivate) {
     AllocInfo *info = (AllocInfo *)(pAllocPrivate);
-    size_t page_count = (uintptr_t)pPrivate;
-
-    uintptr_t alignedStart = ((uintptr_t)address + 0xFFF) & ~0xFFF;
-    uintptr_t alignedEnd = ((uintptr_t)address + (page_count << 12)) & ~0xFFF;
-
-    unmap_page_range(get_current_page_dir(false), alignedStart,
-                     alignedEnd - alignedStart);
-
     return NV_OK;
 }
 
@@ -675,9 +657,10 @@ NV_STATUS NV_API_CALL nv_free_pages(nv_state_t *, NvU32 page_count,
     (void)contiguous;
     (void)cache_type;
 
-    free_frames_bytes((void *)info->base, page_count * DEFAULT_PAGE_SIZE);
-
-    free(info);
+    if (page_count * DEFAULT_PAGE_SIZE == info->length) {
+        free_frames_bytes((void *)info->base, page_count * DEFAULT_PAGE_SIZE);
+        free(info);
+    }
 
     return NV_OK;
 }
