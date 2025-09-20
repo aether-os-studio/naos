@@ -272,7 +272,7 @@ void nvkms_event_queue_changed(nvkms_per_open_handle_t *pOpenKernel,
 
 void *nvkms_get_per_open_data(int fd) STUBBED;
 
-NvBool nvkms_open_gpu(NvU32 gpuId) { return NV_TRUE; }
+NvBool nvkms_open_gpu(NvU32 gpuId) { return nvidia_open_open_gpu(gpuId); }
 
 void nvkms_close_gpu(NvU32 gpuId) {}
 NvU32 nvkms_enumerate_gpus(nv_gpu_info_t *gpu_info) STUBBED;

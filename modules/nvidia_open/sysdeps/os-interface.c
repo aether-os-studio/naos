@@ -662,6 +662,9 @@ NV_STATUS NV_API_CALL nv_alloc_pages(nv_state_t *, NvU32 page_count,
             translate_address(get_current_page_dir(false),
                               (uintptr_t)virt + i * DEFAULT_PAGE_SIZE);
     }
+
+    *(AllocInfo **)priv_data = info;
+
     return NV_OK;
 }
 
@@ -800,11 +803,16 @@ NV_STATUS NV_API_CALL nv_acpi_mux_method(nv_state_t *, NvU32 *, NvU32,
 NV_STATUS NV_API_CALL nv_log_error(nv_state_t *, NvU32, const char *,
                                    va_list) STUBBED;
 
-NV_STATUS NV_API_CALL nv_set_primary_vga_status(nv_state_t *) STUBBED;
+NV_STATUS NV_API_CALL nv_set_primary_vga_status(nv_state_t *) { return NV_OK; };
 
 NvBool NV_API_CALL nv_requires_dma_remap(nv_state_t *) { return NV_FALSE; }
 
 NvBool NV_API_CALL nv_is_rm_firmware_active(nv_state_t *) STUBBED;
+
+typedef struct nv_firmware_handle {
+    void *addr;
+    uint64_t size;
+} nv_firmware_handle_t;
 
 const void *NV_API_CALL
 nv_get_firmware(nv_state_t *nv, nv_firmware_type_t fw_type,
@@ -822,14 +830,22 @@ nv_get_firmware(nv_state_t *nv, nv_firmware_type_t fw_type,
     }
 
     *fw_size = node->size;
-    void *addr = malloc(node->size);
+    void *addr = alloc_frames_bytes(node->size);
     *fw_buf = addr;
     vfs_read(node, addr, 0, node->size);
 
-    return (const void *)addr;
+    nv_firmware_handle_t *handle = malloc(sizeof(nv_firmware_handle_t));
+    handle->addr = addr;
+    handle->size = node->size;
+
+    return (const void *)handle;
 }
 
-void NV_API_CALL nv_put_firmware(const void *handle) { free((void *)(handle)); }
+void NV_API_CALL nv_put_firmware(const void *handle) {
+    nv_firmware_handle_t *h = (nv_firmware_handle_t *)handle;
+    free_frames_bytes((void *)h->addr, h->size);
+    free(h);
+}
 
 nv_file_private_t *NV_API_CALL nv_get_file_private(NvS32, NvBool,
                                                    void **) STUBBED;

@@ -1,4 +1,5 @@
 /.vscode
+/.zed
 /kernel-deps
 /assets
 /modules-*

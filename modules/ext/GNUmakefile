@@ -12,4 +12,4 @@ all: $(OBJ)
 # Compilation rules for *.c files.
 ../../obj-modules-$(ARCH)/$(KM_NAME)/%.c.o: %.c GNUmakefile
 	mkdir -p "$$(dirname $@)"
-	$(CC) $(CFLAGS) -I$(shell pwd)/ -I$(shell pwd)/lwext4/include -I../../src -I../../freestnd-c-hdrs -c $< -o $@
+	$(CC) $(CFLAGS) -I$(shell pwd)/ -I$(shell pwd)/lwext4/include -c $< -o $@

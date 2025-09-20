@@ -1,5 +1,8 @@
 #include "nvidia_open.h"
 
+nvidia_device_t *nvidia_gpus[MAX_NVIDIA_GPU_NUM];
+uint64_t nvidia_gpu_count = 0;
+
 extern spinlock_t nvKmsLock;
 
 const struct NvKmsKapiFunctionsTable *nvKms;
@@ -191,6 +194,9 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
     nv_dev->nv_.regs = &nv_dev->nv_.bars[NV_GPU_BAR_INDEX_REGS];
     nv_dev->nv_.fb = &nv_dev->nv_.bars[NV_GPU_BAR_INDEX_FB];
 
+    nvidia_gpus[nvidia_gpu_count] = nv_dev;
+    nvidia_gpu_count++;
+
     NV_STATUS status = rm_is_supported_device(NULL, &nv_dev->nv_);
     if (status != NV_OK) {
         free(nv_dev);
@@ -333,6 +339,37 @@ void nvidia_remove(pci_device_t *dev) {}
 
 void nvidia_shutdown(pci_device_t *dev) {}
 
+NvBool nvidia_open_do_open_gpu(nvidia_device_t *dev) {
+    if (dev->nv_.flags & NV_FLAG_OPEN)
+        return NV_FALSE;
+
+    if (!dev->adapterInitialized_) {
+        rm_ref_dynamic_power(NULL, &dev->nv_, NV_DYNAMIC_PM_COARSE);
+
+        bool success = rm_init_adapter(NULL, &dev->nv_);
+        if (!success)
+            return NV_FALSE;
+
+        dev->adapterInitialized_ = true;
+    }
+
+    dev->nv_.flags |= NV_FLAG_OPEN;
+
+    rm_request_dnotifier_state(NULL, &dev->nv_);
+
+    return NV_TRUE;
+}
+
+NvBool nvidia_open_open_gpu(NvU32 gpuId) {
+    for (uint64_t i = 0; i < nvidia_gpu_count; i++) {
+        if (nvidia_gpus[i]->nv_.gpu_id == gpuId) {
+            return nvidia_open_do_open_gpu(nvidia_gpus[i]);
+        }
+    }
+
+    return NV_FALSE;
+}
+
 pci_driver_t nvidia_pci_driver = {
     .name = "nvidia_open",
     .class_id = 0x00000000,
@@ -344,8 +381,8 @@ pci_driver_t nvidia_pci_driver = {
 };
 
 __attribute__((visibility("default"))) int dlmain() {
-    NV_STATUS status = nvlink_lib_initialize();
-    if (status != NV_OK) {
+    NvlStatus status = nvlink_lib_initialize();
+    if (status != NVL_SUCCESS) {
         printk("Failed to initialize nvlink lib\n");
         return -1;
     }

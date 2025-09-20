@@ -37,4 +37,4 @@ nvidia-open-install-dir:
 # Compilation rules for *.c files.
 ../../obj-modules-$(ARCH)/$(KM_NAME)/%.c.o: %.c nvidia-open-install-dir GNUmakefile
 	mkdir -p "$$(dirname $@)"
-	$(CC) $(CFLAGS) -I$(shell pwd)/ -I../../src -I../../freestnd-c-hdrs -c $< -o $@
+	$(CC) $(CFLAGS) -I$(shell pwd)/ -c $< -o $@

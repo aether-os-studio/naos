@@ -29,6 +29,8 @@ typedef struct nvidia_device {
     nv_state_t nv_;
     struct NvKmsKapiDevice *kmsdev;
 
+    bool adapterInitialized_;
+
     // DRM resources
     drm_connector_t *connectors[16];
     drm_crtc_t *crtcs[16];
@@ -37,3 +39,7 @@ typedef struct nvidia_device {
 
     nvidia_fb_t *framebuffers[16];
 } nvidia_device_t;
+
+extern NvBool nvidia_open_open_gpu(NvU32 gpuId);
+
+#define MAX_NVIDIA_GPU_NUM 4

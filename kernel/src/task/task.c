@@ -949,7 +949,8 @@ int task_block(task_t *task, task_state_t state, int timeout_ms) {
 
     remove_eevdf_entity(task, schedulers[task->cpu_id]);
 
-    if (current_task == task && state == TASK_BLOCKING) {
+    if (current_task == task &&
+        (state == TASK_BLOCKING || state == TASK_READING_STDIO)) {
         arch_yield();
     }
 
