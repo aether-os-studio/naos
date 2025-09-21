@@ -4,6 +4,7 @@
 #include <libs/keys.h>
 #include <arch/arch.h>
 #include <task/task.h>
+#include <task/eevdf.h>
 #include <fs/termios.h>
 
 char handle_kb_event(uint8_t scan_code, uint8_t scan_code_1,

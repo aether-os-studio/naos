@@ -1,5 +1,6 @@
 #include "xhci-hcd.h"
-#include "usb.h"
+
+extern struct usb_hcd_op_s xhci_hcd_op;
 
 // --------------------------------------------------------------
 // configuration
@@ -367,19 +368,6 @@ static struct usbhub_op_s xhci_hub_ops = {
     .disconnect = xhci_hub_disconnect,
 };
 
-extern void usb_check_key();
-
-// Find any devices connected to the root hub.
-static int xhci_check_ports(struct usb_xhci_s *xhci) {
-    struct usbhub_s hub;
-    memset(&hub, 0, sizeof(hub));
-    hub.cntl = &xhci->usb;
-    hub.portcount = xhci->ports;
-    hub.op = &xhci_hub_ops;
-    usb_enumerate(&hub);
-    return hub.devcount;
-}
-
 /****************************************************************
  * Setup
  ****************************************************************/
@@ -390,20 +378,16 @@ static void xhci_free_pipes(struct usb_xhci_s *xhci) {
 
 // void xhci_process_events(struct usb_xhci_s *xhci);
 
-// void xhci_interrupt_handler(uint64_t irq_num, void *data, struct pt_regs
-// *regs)
-// {
+// void xhci_interrupt_handler(uint64_t irq_num, void *data,
+//                             struct pt_regs *regs) {
 //     struct usb_xhci_s *xhci = data;
-//     if (xhci->op->usbsts & XHCI_STS_EINT)
-//     {
+//     if (xhci->op->usbsts & XHCI_STS_EINT) {
 //         xhci->op->usbsts |= XHCI_STS_EINT;
 //         xhci->ir->iman &= ~(1 << 1);
 //         xhci_process_events(xhci);
 //         xhci->ir->erdp_low |= (1 << 3);
 //         xhci->ir->iman |= (1 << 1);
-//     }
-//     else
-//     {
+//     } else {
 //         printk("XHCI: interrupt handler\n");
 //     }
 // }
@@ -519,10 +503,27 @@ static int configure_xhci(void *data) {
     reg |= XHCI_CMD_RS;
     xhci->op->usbcmd = reg;
 
-    // Find devices
-    int count = xhci_check_ports(xhci);
+    for (uint32_t i = 0; i < xhci->ports; i++) {
+        if (xhci->pr[i].portsc & XHCI_PORTSC_CCS) {
+            struct usbhub_s hub;
+            memset(&hub, 0, sizeof(hub));
+            hub.cntl = &xhci->usb;
+            hub.portcount = xhci->ports;
+            hub.op = &xhci_hub_ops;
 
-    printk("Found %d USB devices on XHCI controller\n", count);
+            struct usbdevice_s *usbdev = malloc(sizeof(*usbdev));
+            if (!usbdev) {
+                continue;
+            }
+
+            memset(usbdev, 0, sizeof(*usbdev));
+            usbdev->hc_ops = &xhci_hcd_op;
+            usbdev->hub = &hub;
+            usbdev->port = i;
+
+            usb_hub_port_setup(usbdev);
+        }
+    }
 
     // xhci_free_pipes(xhci);
     // if (count)
@@ -995,6 +996,7 @@ xhci_alloc_pipe(struct usbdevice_s *usbdev,
         }
     }
     free_frames_bytes(in, (sizeof(struct xhci_inctx) * 33) << xhci->context64);
+    pipe->pipe.hc_ops = &xhci_hcd_op;
     return &pipe->pipe;
 
 fail:
@@ -1151,6 +1153,14 @@ int xhci_poll_intr(struct usb_pipe *p, void *data) {
     return 0;
 }
 
+struct usb_hcd_op_s xhci_hcd_op = {
+    .hub_ops = &xhci_hub_ops,
+
+    .send_pipe = xhci_send_pipe,
+    .realloc_pipe = xhci_realloc_pipe,
+    .poll_intr = xhci_poll_intr,
+};
+
 int xhci_probe(pci_device_t *dev, uint32_t vendor_device_id) {
     printk("Found XHCI controller.\n");
 
@@ -1191,6 +1201,8 @@ int xhci_probe(pci_device_t *dev, uint32_t vendor_device_id) {
         return ret;
 
     dev->desc = xhci;
+
+    regist_usb_hcd(&xhci_hcd_op);
 
     return 0;
 }

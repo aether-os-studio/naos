@@ -3,12 +3,15 @@
 #define __USB_H
 
 #include <libs/klibc.h>
-#include "xhci-hcd.h"
+
+struct usb_endpoint_descriptor;
 
 struct usbdevice_s;
+struct usb_hcd_op_s;
 
 // Information on a USB end point.
 struct usb_pipe {
+    struct usb_hcd_op_s *hc_ops;
     union {
         struct usb_s *cntl;
         struct usb_pipe *freenext;
@@ -26,6 +29,7 @@ struct usb_pipe {
 // Common information for usb devices.
 struct usbdevice_s {
     struct usbhub_s *hub;
+    struct usb_hcd_op_s *hc_ops;
     struct usb_pipe *defpipe;
     uint32_t port;
     struct usb_config_descriptor *config;
@@ -71,6 +75,19 @@ struct usbhub_op_s {
     int (*portmap)(struct usbhub_s *hub, uint32_t port);
     void (*disconnect)(struct usbhub_s *hub, uint32_t port);
 };
+
+struct usb_hcd_op_s {
+    struct usbhub_op_s *hub_ops;
+
+    int (*send_pipe)(struct usb_pipe *pipe_fl, int dir, const void *cmd,
+                     void *data, int datasize);
+    struct usb_pipe *(*realloc_pipe)(struct usbdevice_s *usbdev,
+                                     struct usb_pipe *pipe,
+                                     struct usb_endpoint_descriptor *epdesc);
+    int (*poll_intr)(struct usb_pipe *pipe_fl, void *data);
+};
+
+void regist_usb_hcd(struct usb_hcd_op_s *op);
 
 #define USB_TYPE_UHCI 1
 #define USB_TYPE_OHCI 2
@@ -272,24 +289,16 @@ int usb_32bit_pipe(struct usb_pipe *pipe_fl);
 static inline struct usb_pipe *
 usb_realloc_pipe(struct usbdevice_s *usbdev, struct usb_pipe *pipe,
                  struct usb_endpoint_descriptor *epdesc) {
-    switch (usbdev->hub->cntl->type) {
-    default:
-    // case USB_TYPE_UHCI:
-    //     return uhci_realloc_pipe(usbdev, pipe, epdesc);
-    // case USB_TYPE_OHCI:
-    //     return ohci_realloc_pipe(usbdev, pipe, epdesc);
-    // case USB_TYPE_EHCI:
-    //     return ehci_realloc_pipe(usbdev, pipe, epdesc);
-    case USB_TYPE_XHCI:
-        return xhci_realloc_pipe(usbdev, pipe, epdesc);
-    }
+    struct usb_pipe *p = usbdev->hc_ops->realloc_pipe(usbdev, pipe, epdesc);
+    return p;
 }
 
 // Allocate a usb pipe.
 static inline struct usb_pipe *
 usb_alloc_pipe(struct usbdevice_s *usbdev,
                struct usb_endpoint_descriptor *epdesc) {
-    return usb_realloc_pipe(usbdev, NULL, epdesc);
+    struct usb_pipe *pipe = usb_realloc_pipe(usbdev, NULL, epdesc);
+    return pipe;
 }
 
 // Free an allocated control or bulk pipe.
@@ -348,6 +357,15 @@ static inline int usb_get_period(struct usbdevice_s *usbdev,
 int usb_xfer_time(struct usb_pipe *pipe, int datalen);
 struct usb_endpoint_descriptor *usb_find_desc(struct usbdevice_s *usbdev,
                                               int type, int dir);
-void usb_enumerate(struct usbhub_s *hub);
+void usb_hub_port_setup(struct usbdevice_s *usbdev);
+
+typedef struct usb_driver {
+    uint8_t class;
+    uint8_t subclass;
+    int (*probe)(struct usbdevice_s *usbdev);
+    int (*remove)(struct usbdevice_s *usbdev);
+} usb_driver_t;
+
+void regist_driver_usb(usb_driver_t *driver);
 
 #endif // usb.h

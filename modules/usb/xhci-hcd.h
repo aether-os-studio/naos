@@ -6,6 +6,7 @@
 #include <libs/aether/irq.h>
 #include <libs/aether/time.h>
 #include <libs/aether/task.h>
+#include <libs/aether/usb.h>
 
 #define ARRAY_SIZE(a) (sizeof((a)) / sizeof((a)[0]))
 

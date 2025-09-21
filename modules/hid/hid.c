@@ -6,7 +6,7 @@
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
 #include "hid.h"
-#include "usb.h"
+#include <libs/aether/usb.h>
 #include <libs/aether/evdev.h>
 
 struct pipe_node *keyboards = NULL;
@@ -169,13 +169,15 @@ struct usbkeyinfo {
 
 struct usbkeyinfo LastUSBkey;
 
+#define ARRAY_SIZE(a) (sizeof((a)) / sizeof((a)[0]))
+
 // Process USB keyboard data.
 static void handle_key(struct keyevent *data) {
     static bool ctrlPressed = false;
     static bool shiftPressed = false;
 
     struct usbkeyinfo old;
-    old.data = GET_LOW(LastUSBkey.data);
+    old.data = LastUSBkey.data;
 
     int addpos = 0;
     int i;
@@ -244,7 +246,7 @@ static void handle_key(struct keyevent *data) {
             old.repeatcount--;
     }
 
-    SET_LOW(LastUSBkey.data, old.data);
+    LastUSBkey.data = old.data;
 }
 
 // Check if a USB keyboard event is pending and process it if so.
@@ -361,4 +363,21 @@ int usb_hid_setup(struct usbdevice_s *usbdev) {
     if (iface->bInterfaceProtocol == USB_INTERFACE_PROTOCOL_MOUSE)
         return usb_mouse_setup(usbdev, epdesc);
     return -1;
+}
+
+int usb_hid_remove(struct usbdevice_s *usbdev) { return 0; }
+
+usb_driver_t hid_driver = {
+    .class = USB_CLASS_HID,
+    .subclass = 0,
+    .probe = usb_hid_setup,
+    .remove = usb_hid_remove,
+};
+
+__attribute__((visibility("default"))) int dlmain() {
+    memset(usbdevs, 0, sizeof(usbdevs));
+
+    regist_driver_usb(&hid_driver);
+
+    return 0;
 }

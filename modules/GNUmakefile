@@ -15,3 +15,5 @@ all:
 	$(MAKE) -C ext
 
 	$(MAKE) -C netserver
+
+	$(MAKE) -C hid

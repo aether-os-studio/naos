@@ -1,8 +1,12 @@
-#include "msc.h"
-#include "hid.h"
-#include "usb.h"
+#include <drivers/usb/usb.h>
+#include <mm/mm.h>
 
 struct usbdevice_s *usbdevs[MAX_USBDEV_NUM];
+
+usb_driver_t *usb_drivers[MAX_USBDEV_NUM] = {NULL};
+
+struct usb_hcd_op_s *usb_hcd_ops[8] = {NULL};
+size_t hcds_num = 0;
 
 /****************************************************************
  * Controller function wrappers
@@ -11,35 +15,11 @@ struct usbdevice_s *usbdevs[MAX_USBDEV_NUM];
 // Send a message on a control pipe using the default control descriptor.
 int usb_send_pipe(struct usb_pipe *pipe_fl, int dir, const void *cmd,
                   void *data, int datasize) {
-    switch (GET_LOWFLAT(pipe_fl->type)) {
-    default:
-    // case USB_TYPE_UHCI:
-    //     return uhci_send_pipe(pipe_fl, dir, cmd, data, datasize);
-    // case USB_TYPE_OHCI:
-    //     if (MODESEGMENT)
-    //         return -1;
-    //     return ohci_send_pipe(pipe_fl, dir, cmd, data, datasize);
-    // case USB_TYPE_EHCI:
-    //     return ehci_send_pipe(pipe_fl, dir, cmd, data, datasize);
-    case USB_TYPE_XHCI:
-        // if (MODESEGMENT)
-        //     return -1;
-        return xhci_send_pipe(pipe_fl, dir, cmd, data, datasize);
-    }
+    return pipe_fl->hc_ops->send_pipe(pipe_fl, dir, cmd, data, datasize);
 }
 
 int usb_poll_intr(struct usb_pipe *pipe_fl, void *data) {
-    switch (GET_LOWFLAT(pipe_fl->type)) {
-    default:
-    // case USB_TYPE_UHCI:
-    //     return uhci_poll_intr(pipe_fl, data);
-    // case USB_TYPE_OHCI:
-    //     return ohci_poll_intr(pipe_fl, data);
-    // case USB_TYPE_EHCI:
-    //     return ehci_poll_intr(pipe_fl, data);
-    case USB_TYPE_XHCI:;
-        return xhci_poll_intr(pipe_fl, data);
-    }
+    return pipe_fl->hc_ops->poll_intr(pipe_fl, data);
 }
 
 int usb_32bit_pipe(struct usb_pipe *pipe_fl) { return true; }
@@ -107,7 +87,7 @@ int usb_xfer_time(struct usb_pipe *pipe, int datalen) {
     // set_address commands where we don't want to stall the boot if
     // the device doesn't actually exist.  Add 100ms to account for
     // any controller delays.
-    if (!GET_LOWFLAT(pipe->devaddr))
+    if (!pipe->devaddr)
         return USB_TIME_STATUS + 100;
     return USB_TIME_COMMAND + 100;
 }
@@ -254,11 +234,29 @@ static int usb_set_address(struct usbdevice_s *usbdev) {
     return 0;
 }
 
-extern struct pipe_node *keyboards;
+usb_driver_t *usb_find_driver(struct usbdevice_s *usbdev) {
+    for (int i = 0; i < MAX_USBDEV_NUM; i++) {
+        if (usb_drivers[i] &&
+            usb_drivers[i]->class == usbdev->iface->bInterfaceClass) {
+            return usb_drivers[i];
+        }
+    }
+
+    return NULL;
+}
+
+void regist_driver_usb(usb_driver_t *driver) {
+    for (int i = 0; i < MAX_USBDEV_NUM; i++) {
+        if (!usb_drivers[i]) {
+            usb_drivers[i] = driver;
+            break;
+        }
+    }
+}
 
 // Called for every found device - see if a driver is available for
 // this device and do setup if so.
-static int configure_usb_device(struct usbdevice_s *usbdev) {
+int configure_usb_device(struct usbdevice_s *usbdev) {
     // Set the max packet size for endpoint 0 of this device.
     struct usb_device_descriptor dinfo;
     dinfo.idVendor = 0xFFFF;
@@ -280,36 +278,6 @@ static int configure_usb_device(struct usbdevice_s *usbdev) {
 
     usbdev->vendor_id = dinfo.idVendor;
     usbdev->product_id = dinfo.idProduct;
-
-    for (int i = 0; i < MAX_USBDEV_NUM; i++) {
-        if (usbdevs[i]) {
-            struct usbdevice_s *dev = usbdevs[i];
-            if (dev->vendor_id != 0xFFFF && dev->product_id != 0xFFFF &&
-                dev->vendor_id == usbdev->vendor_id &&
-                dev->product_id == usbdev->product_id &&
-                dev->port == usbdev->port) {
-                printk("Found duplicate usb device, vendor: %#04x, product: "
-                       "%#04x\n",
-                       dev->vendor_id, dev->product_id);
-                // The same usb device
-                if (dev->speed >= usbdev->speed) {
-                    return 0;
-                } else {
-                    if (dev->iface->bInterfaceClass == USB_CLASS_MASS_STORAGE) {
-                        if (dev->iface->bInterfaceProtocol == US_PR_BULK) {
-                            printk("Unregisting msc device\n");
-                            unregist_blkdev(dev->desc);
-                        }
-                    } else if (dev->iface->bInterfaceClass == USB_CLASS_HID) {
-                        if (dev->iface->bInterfaceProtocol ==
-                            USB_INTERFACE_PROTOCOL_KEYBOARD) {
-                            printk("Should Unregisting hid keyboard device\n");
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     struct usb_endpoint_descriptor epdesc = {
         .wMaxPacketSize = maxpacket,
@@ -360,26 +328,15 @@ static int configure_usb_device(struct usbdevice_s *usbdev) {
     usbdev->config = config;
     usbdev->iface = iface;
     usbdev->imax = (void *)config + config->wTotalLength - (void *)iface;
-    if (iface->bInterfaceClass == USB_CLASS_HUB) {
-        printk("hub device detected\n");
-        goto fail;
-    } else if (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE) {
-        printk("mass storage device detected\n");
-        if (iface->bInterfaceProtocol == US_PR_BULK)
-            ret = usb_msc_setup(usbdev);
-        if (iface->bInterfaceProtocol == US_PR_UAS) {
-            printk("unsupported USB device: UAS\n");
-            goto fail;
-        }
-        //     ret = usb_uas_setup(usbdev);
-    } else if (iface->bInterfaceClass == USB_CLASS_HID) {
-        printk("hid device detected\n");
-        ret = usb_hid_setup(usbdev);
-    } else {
+
+    usb_driver_t *driver = usb_find_driver(usbdev);
+    if (!driver) {
         goto fail;
     }
-    if (ret)
+
+    if (driver->probe(usbdev)) {
         goto fail;
+    }
 
     free(config);
     return 1;
@@ -388,8 +345,7 @@ fail:
     return 0;
 }
 
-static void usb_hub_port_setup(void *data) {
-    struct usbdevice_s *usbdev = data;
+void usb_hub_port_setup(struct usbdevice_s *usbdev) {
     struct usbhub_s *hub = usbdev->hub;
     uint32_t port = usbdev->port;
 
@@ -460,24 +416,4 @@ resetfail:
 
 static uint32_t usb_time_sigatt;
 
-void usb_enumerate(struct usbhub_s *hub) {
-    uint32_t portcount = hub->portcount;
-    hub->threads = portcount;
-
-    // Launch a thread for every port.
-    int i;
-    for (i = 0; i < portcount; i++) {
-        struct usbdevice_s *usbdev = malloc(sizeof(*usbdev));
-        if (!usbdev) {
-            continue;
-        }
-        memset(usbdev, 0, sizeof(*usbdev));
-        usbdev->hub = hub;
-        usbdev->port = i;
-        usb_hub_port_setup(usbdev);
-    }
-
-    // Wait for threads to complete.
-    while (hub->threads)
-        arch_pause();
-}
+void regist_usb_hcd(struct usb_hcd_op_s *op) { usb_hcd_ops[hcds_num++] = op; }
