@@ -17,3 +17,4 @@ all:
 	$(MAKE) -C netserver
 
 	$(MAKE) -C hid
+	$(MAKE) -C msc
