@@ -152,7 +152,7 @@ $(IMAGE_NAME).img: assets/limine kernel modules
 	mcopy -i $(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/boot
 	mcopy -i $(IMAGE_NAME).img@@1M limine.conf ::/boot/limine
 
-single-$(IMAGE_NAME).img: assets/limine kernel rootfs-$(ARCH).img
+single-$(IMAGE_NAME).img: assets/limine kernel rootfs-$(ARCH).img modules
 	dd if=/dev/zero of=single-$(IMAGE_NAME).img bs=1M count=$$(( $(ROOTFS_IMG_SIZE) + 1024 ))
 	sgdisk --new=1:1M:511M --new=2:512M:$$(( $$(($(ROOTFS_IMG_SIZE) + 1024 )) * 1024 )) single-$(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 single-$(IMAGE_NAME).img
