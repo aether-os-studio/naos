@@ -1404,25 +1404,25 @@ static void xhci_handle_port_status_change(struct usb_xhci_s *xhci,
     hub.portcount = xhci->ports;
     hub.op = &xhci_hub_ops;
 
-    if (portsc & XHCI_PORTSC_CSC) {
-        if (portsc & XHCI_PORTSC_CCS) {
-            printk("XHCI: Port %d connected\n", port);
+    // if ((portsc & XHCI_PORTSC_CSC)) {
+    //     if (portsc & XHCI_PORTSC_CCS) {
+    //         printk("XHCI: Port %d connected\n", port);
 
-            // Handle device connection
-            struct usbdevice_s *usbdev = malloc(sizeof(*usbdev));
-            if (usbdev) {
-                memset(usbdev, 0, sizeof(*usbdev));
-                usbdev->hc_ops = &xhci_hcd_op;
-                usbdev->hub = &hub;
-                usbdev->port = port;
-                usb_hub_port_setup(usbdev);
-            }
-        } else {
-            printk("XHCI: Port %d disconnected\n", port);
-            // Handle device disconnection
-            xhci_hub_disconnect(&hub, port);
-        }
-    }
+    //         // Handle device connection
+    //         struct usbdevice_s *usbdev = malloc(sizeof(*usbdev));
+    //         if (usbdev) {
+    //             memset(usbdev, 0, sizeof(*usbdev));
+    //             usbdev->hc_ops = &xhci_hcd_op;
+    //             usbdev->hub = &hub;
+    //             usbdev->port = port;
+    //             usb_hub_port_setup(usbdev);
+    //         }
+    //     } else {
+    //         printk("XHCI: Port %d disconnected\n", port);
+    //         // Handle device disconnection
+    //         xhci_hub_disconnect(&hub, port);
+    //     }
+    // }
 
     // Handle other port status changes
     if (portsc & XHCI_PORTSC_PEC) {
