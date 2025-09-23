@@ -256,7 +256,7 @@ run-loongarch64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
 
 assets/limine:
 	rm -rf assets/limine
-	git clone https://codeberg.org/Limine/Limine --branch=v9.0.0-binary --depth=1 assets/limine
+	git clone https://codeberg.org/Limine/Limine --branch=v10.0.0-binary --depth=1 assets/limine
 	$(MAKE) -C assets/limine \
 		CC="$(HOST_CC)" \
 		CFLAGS="$(HOST_CFLAGS)" \
