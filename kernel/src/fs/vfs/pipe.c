@@ -158,18 +158,19 @@ bool pipefs_close(void *current) {
         pipe->read_fds--;
     }
 
-    if (pipe->write_fds == 0 && pipe->read_fds == 0) {
-        free_frames_bytes(pipe->buf, PIPE_BUFF);
-        free(pipe);
-    }
-    spin_unlock(&pipe->lock);
-
     if (spec->write && pipe->write_fds == 0)
         free(spec);
     else if (pipe->read_fds == 0)
         free(spec);
 
     list_delete(pipefs_root->child, spec->node);
+
+    if (pipe->write_fds == 0 && pipe->read_fds == 0) {
+        free_frames_bytes(pipe->buf, PIPE_BUFF);
+        free(pipe);
+    }
+
+    spin_unlock(&pipe->lock);
 
     return true;
 }

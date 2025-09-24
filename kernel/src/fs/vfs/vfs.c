@@ -888,6 +888,20 @@ int vfs_delete(vfs_node_t node) {
         return -1;
     spin_lock(&node->spin);
     node->deleted = true;
+    if (!node->refcount) {
+        int res = callbackof(node, delete)(node->parent->handle, node);
+        if (res < 0) {
+            spin_unlock(&node->spin);
+            return -1;
+        }
+        list_delete(node->parent->child, node);
+        node->handle = NULL;
+        spin_unlock(&node->spin);
+        free(node->name);
+        free(node);
+
+        return 0;
+    }
     spin_unlock(&node->spin);
     return 0;
 }

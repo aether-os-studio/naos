@@ -1065,8 +1065,8 @@ uint64_t sys_sysinfo(struct sysinfo *info) {
     info->loads[0] = 0;
     info->loads[1] = 0;
     info->loads[2] = 0;
-    info->totalram = frame_allocator.origin_frames * DEFAULT_PAGE_SIZE;
-    info->freeram = frame_allocator.usable_frames * DEFAULT_PAGE_SIZE;
+    info->totalram = 0;
+    info->freeram = 0;
     int proc_count = 0;
     for (int i = 0; i < MAX_TASK_NUM; i++) {
         if (!tasks[i]) {

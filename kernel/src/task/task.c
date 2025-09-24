@@ -269,9 +269,9 @@ void task_init() {
     memset(idle_tasks, 0, sizeof(idle_tasks));
 
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
-        schedulers[cpu] = alloc_frames_bytes(sizeof(eevdf_t));
+        schedulers[cpu] = malloc(sizeof(eevdf_t));
         memset(schedulers[cpu], 0, sizeof(eevdf_t));
-        schedulers[cpu]->root = alloc_frames_bytes(sizeof(struct rb_root));
+        schedulers[cpu]->root = malloc(sizeof(struct rb_root));
         memset(schedulers[cpu]->root, 0, sizeof(struct rb_root));
         schedulers[cpu]->root->rb_node = NULL;
         schedulers[cpu]->min_vruntime = 0;
@@ -659,6 +659,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
     if (!current_task->mmap_regions->bitmap_refcount) {
         free_frames_bytes(current_task->mmap_regions->buffer, bitmap_size);
         free(current_task->mmap_regions);
+        current_task->mmap_regions = NULL;
     }
     current_task->mmap_regions = malloc(sizeof(Bitmap));
     void *data = alloc_frames_bytes(bitmap_size);
@@ -971,8 +972,6 @@ void task_exit_inner(task_t *task, int64_t code) {
     task->current_state = TASK_DIED;
     task->state = TASK_DIED;
 
-    arch_context_free(task->arch_context);
-
     task->status = (uint64_t)code;
 
     if (task->fd_info) {
@@ -997,6 +996,7 @@ void task_exit_inner(task_t *task, int64_t code) {
     if (task->mmap_regions->bitmap_refcount == 0) {
         free_frames_bytes(task->mmap_regions->buffer, bitmap_size);
         free(task->mmap_regions);
+        task->mmap_regions = NULL;
     }
 
     if (task->ppid != task->pid && tasks[task->ppid] &&

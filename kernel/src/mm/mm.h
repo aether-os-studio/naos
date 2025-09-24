@@ -13,14 +13,6 @@
 #define PROT_WRITE 0x02
 #define PROT_EXEC 0x04
 
-typedef struct {
-    Bitmap bitmap;
-    size_t origin_frames;
-    size_t usable_frames;
-} FrameAllocator;
-
-extern FrameAllocator frame_allocator;
-
 typedef struct task_mm_info {
     uint64_t page_table_addr;
     int ref_count;
@@ -28,8 +20,8 @@ typedef struct task_mm_info {
 
 void frame_init();
 
-void free_frames(uint64_t addr, uint64_t size);
-uint64_t alloc_frames(size_t count);
+uintptr_t alloc_frames(size_t count);
+void free_frames(uintptr_t addr, size_t count);
 
 void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
                     uint64_t size, uint64_t flags);
