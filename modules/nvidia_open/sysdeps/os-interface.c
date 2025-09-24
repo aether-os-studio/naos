@@ -3,6 +3,7 @@
 #include <libs/klibc.h>
 
 #include <libs/klibc.h>
+#include <libs/aether/acpi.h>
 #include <libs/aether/mm.h>
 #include <libs/aether/stdio.h>
 #include <libs/aether/task.h>
@@ -25,6 +26,8 @@ NvBool os_cc_sev_snp_enabled = 0;
 NvBool os_cc_snp_vtom_enabled = 0;
 NvBool os_cc_tdx_enabled = 0;
 NvBool os_cc_sme_enabled = 0;
+
+spinlock_t timerLock = {0};
 
 NV_STATUS NV_API_CALL os_alloc_mem(void **address, NvU64 size) {
     if (!address)
@@ -188,80 +191,75 @@ NvS32 os_mem_cmp(const NvU8 *a, const NvU8 *b, NvU32 l) {
 
 void *NV_API_CALL os_pci_init_handle(NvU32 domain, NvU8 bus, NvU8 slot,
                                      NvU8 func, NvU16 *vendor, NvU16 *dev) {
-    return NULL;
+    pci_device_t *pci_dev = pci_find_bdfs(bus, slot, func, domain);
+    if (!pci_dev)
+        return NULL;
+
+    if (vendor)
+        *vendor = pci_dev->vendor_id;
+    if (dev)
+        *dev = pci_dev->device_id;
+
+    return pci_dev;
 }
 
 NV_STATUS NV_API_CALL os_pci_read_byte(void *handle, NvU32 offset,
                                        NvU8 *pReturnValue) {
-    nvidia_device_t *gfx = (handle);
-    ASSERT(gfx);
+    pci_device_t *pci_dev = handle;
 
-    *pReturnValue = (uint8_t)gfx->pci_dev->op->read(
-        gfx->pci_dev->bus, gfx->pci_dev->slot, gfx->pci_dev->func,
-        gfx->pci_dev->segment, offset);
+    *pReturnValue = (uint8_t)pci_dev->op->read(
+        pci_dev->bus, pci_dev->slot, pci_dev->func, pci_dev->segment, offset);
     return NV_OK;
 }
 
 NV_STATUS NV_API_CALL os_pci_read_word(void *handle, NvU32 offset,
                                        NvU16 *pReturnValue) {
-    nvidia_device_t *gfx = (handle);
-    ASSERT(gfx);
+    pci_device_t *pci_dev = handle;
 
-    *pReturnValue = (uint16_t)gfx->pci_dev->op->read(
-        gfx->pci_dev->bus, gfx->pci_dev->slot, gfx->pci_dev->func,
-        gfx->pci_dev->segment, offset);
+    *pReturnValue = (uint16_t)pci_dev->op->read(
+        pci_dev->bus, pci_dev->slot, pci_dev->func, pci_dev->segment, offset);
     return NV_OK;
 }
 
 NV_STATUS NV_API_CALL os_pci_read_dword(void *handle, NvU32 offset,
                                         NvU32 *pReturnValue) {
-    nvidia_device_t *gfx = (handle);
-    ASSERT(gfx);
+    pci_device_t *pci_dev = handle;
 
-    *pReturnValue = gfx->pci_dev->op->read(
-        gfx->pci_dev->bus, gfx->pci_dev->slot, gfx->pci_dev->func,
-        gfx->pci_dev->segment, offset);
+    *pReturnValue = pci_dev->op->read(pci_dev->bus, pci_dev->slot,
+                                      pci_dev->func, pci_dev->segment, offset);
     return NV_OK;
 }
 
 NV_STATUS NV_API_CALL os_pci_write_byte(void *handle, NvU32 offset,
                                         NvU8 value) {
-    nvidia_device_t *gfx = (handle);
-    ASSERT(gfx);
+    pci_device_t *pci_dev = handle;
 
-    uint32_t old = gfx->pci_dev->op->read(gfx->pci_dev->bus, gfx->pci_dev->slot,
-                                          gfx->pci_dev->func,
-                                          gfx->pci_dev->segment, offset);
+    uint32_t old = pci_dev->op->read(pci_dev->bus, pci_dev->slot, pci_dev->func,
+                                     pci_dev->segment, offset);
 
-    gfx->pci_dev->op->write(gfx->pci_dev->bus, gfx->pci_dev->slot,
-                            gfx->pci_dev->func, gfx->pci_dev->segment, offset,
-                            value | (old & 0xFFFFFF00));
+    pci_dev->op->write(pci_dev->bus, pci_dev->slot, pci_dev->func,
+                       pci_dev->segment, offset, value | (old & 0xFFFFFF00));
     return NV_OK;
 }
 
 NV_STATUS NV_API_CALL os_pci_write_word(void *handle, NvU32 offset,
                                         NvU16 value) {
-    nvidia_device_t *gfx = (handle);
-    ASSERT(gfx);
+    pci_device_t *pci_dev = handle;
 
-    uint32_t old = gfx->pci_dev->op->read(gfx->pci_dev->bus, gfx->pci_dev->slot,
-                                          gfx->pci_dev->func,
-                                          gfx->pci_dev->segment, offset);
+    uint32_t old = pci_dev->op->read(pci_dev->bus, pci_dev->slot, pci_dev->func,
+                                     pci_dev->segment, offset);
 
-    gfx->pci_dev->op->write(gfx->pci_dev->bus, gfx->pci_dev->slot,
-                            gfx->pci_dev->func, gfx->pci_dev->segment, offset,
-                            value | (old & 0xFFFF0000));
+    pci_dev->op->write(pci_dev->bus, pci_dev->slot, pci_dev->func,
+                       pci_dev->segment, offset, value | (old & 0xFFFF0000));
     return NV_OK;
 }
 
 NV_STATUS NV_API_CALL os_pci_write_dword(void *handle, NvU32 offset,
                                          NvU32 value) {
-    nvidia_device_t *gfx = (handle);
-    ASSERT(gfx);
+    pci_device_t *pci_dev = handle;
 
-    gfx->pci_dev->op->write(gfx->pci_dev->bus, gfx->pci_dev->slot,
-                            gfx->pci_dev->func, gfx->pci_dev->segment, offset,
-                            value);
+    pci_dev->op->write(pci_dev->bus, pci_dev->slot, pci_dev->func,
+                       pci_dev->segment, offset, value);
     return NV_OK;
 }
 
@@ -270,6 +268,8 @@ void NV_API_CALL os_pci_remove(void *) STUBBED;
 
 void *NV_API_CALL os_map_kernel_space(NvU64 start, NvU64 size_bytes,
                                       NvU32 mode) {
+    if (start == 0)
+        return NULL;
     uint64_t virt = phys_to_virt(start);
     map_page_range(get_current_page_dir(false), virt, start, size_bytes,
                    PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
@@ -501,7 +501,7 @@ NvBool NV_API_CALL os_pat_supported(void) { return NV_FALSE; }
 
 void NV_API_CALL os_dump_stack(void) STUBBED;
 
-NvBool NV_API_CALL os_is_efi_enabled(void) { return NV_FALSE; }
+NvBool NV_API_CALL os_is_efi_enabled(void) { return NV_TRUE; }
 
 NvBool NV_API_CALL os_is_xen_dom0(void) { return NV_FALSE; }
 
@@ -522,7 +522,10 @@ NV_STATUS NV_API_CALL os_unlock_user_pages(NvU64, void *, NvU32) STUBBED;
 NV_STATUS NV_API_CALL os_match_mmap_offset(void *, NvU64, NvU64 *) STUBBED;
 NV_STATUS NV_API_CALL os_get_euid(NvU32 *) STUBBED;
 NV_STATUS NV_API_CALL os_get_smbios_header(NvU64 *pSmbsAddr) STUBBED;
-NV_STATUS NV_API_CALL os_get_acpi_rsdp_from_uefi(NvU32 *) STUBBED;
+NV_STATUS NV_API_CALL os_get_acpi_rsdp_from_uefi(NvU32 *pRsdpAddr) {
+    *pRsdpAddr = (NvU32)get_rsdp_paddr();
+    return NV_OK;
+};
 void NV_API_CALL os_add_record_for_crashLog(void *, NvU32) {}
 void NV_API_CALL os_delete_record_for_crashLog(void *) {}
 NV_STATUS NV_API_CALL os_call_vgpu_vfio(void *, NvU32) STUBBED;
@@ -712,32 +715,32 @@ void NV_API_CALL nv_dma_cache_invalidate(nv_dma_device_t *, void *) STUBBED;
 
 NvS32 NV_API_CALL nv_start_rc_timer(nv_state_t *nv) {
     nvidia_device_t *gfx = nv->os_state;
-    spin_lock(&gfx->timerLock);
+    spin_lock(&timerLock);
 
     if (nv->rc_timer_enabled) {
-        spin_unlock(&gfx->timerLock);
+        spin_unlock(&timerLock);
         return -1;
     }
 
     nv->rc_timer_enabled = 1;
 
-    spin_unlock(&gfx->timerLock);
+    spin_unlock(&timerLock);
 
     return 0;
 }
 
 NvS32 NV_API_CALL nv_stop_rc_timer(nv_state_t *nv) {
     nvidia_device_t *gfx = nv->os_state;
-    spin_lock(&gfx->timerLock);
+    spin_lock(&timerLock);
 
     if (!nv->rc_timer_enabled) {
-        spin_unlock(&gfx->timerLock);
+        spin_unlock(&timerLock);
         return -1;
     }
 
     nv->rc_timer_enabled = 0;
 
-    spin_unlock(&gfx->timerLock);
+    spin_unlock(&timerLock);
 
     return 0;
 }
@@ -799,10 +802,10 @@ NvBool NV_API_CALL nv_requires_dma_remap(nv_state_t *) { return NV_FALSE; }
 
 NvBool NV_API_CALL nv_is_rm_firmware_active(nv_state_t *) STUBBED;
 
-typedef struct nv_firmware_handle {
-    void *addr;
-    uint64_t size;
-} nv_firmware_handle_t;
+// typedef struct nv_firmware_handle {
+//     void *addr;
+//     uint64_t size;
+// } nv_firmware_handle_t;
 
 const void *NV_API_CALL
 nv_get_firmware(nv_state_t *nv, nv_firmware_type_t fw_type,
@@ -820,22 +823,14 @@ nv_get_firmware(nv_state_t *nv, nv_firmware_type_t fw_type,
     }
 
     *fw_size = node->size;
-    void *addr = alloc_frames_bytes(node->size);
+    void *addr = malloc(node->size);
     *fw_buf = addr;
     vfs_read(node, addr, 0, node->size);
 
-    nv_firmware_handle_t *handle = malloc(sizeof(nv_firmware_handle_t));
-    handle->addr = addr;
-    handle->size = node->size;
-
-    return (const void *)handle;
+    return (const void *)addr;
 }
 
-void NV_API_CALL nv_put_firmware(const void *handle) {
-    nv_firmware_handle_t *h = (nv_firmware_handle_t *)handle;
-    free_frames_bytes((void *)h->addr, h->size);
-    free(h);
-}
+void NV_API_CALL nv_put_firmware(const void *handle) { free((void *)handle); }
 
 nv_file_private_t *NV_API_CALL nv_get_file_private(NvS32, NvBool,
                                                    void **) STUBBED;

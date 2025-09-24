@@ -247,5 +247,7 @@ extern struct irq_controller apic_controller;
 
 #define current_cpu_id get_cpuid_by_lapic_id(lapic_id())
 
+extern volatile struct limine_rsdp_request rsdp_request;
+
 void smp_init();
 void tss_init();

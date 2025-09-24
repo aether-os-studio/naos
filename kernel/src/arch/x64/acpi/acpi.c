@@ -20,7 +20,7 @@ XSDT *xsdt;
 
 __attribute__((
     used,
-    section(".limine_requests"))) static volatile struct limine_rsdp_request
+    section(".limine_requests"))) volatile struct limine_rsdp_request
     rsdp_request = {.id = LIMINE_RSDP_REQUEST, .revision = 0, .response = NULL};
 
 void *find_table(const char *name) {

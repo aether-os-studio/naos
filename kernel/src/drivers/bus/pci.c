@@ -320,6 +320,18 @@ void pci_find_class(pci_device_t **result, uint32_t *n, uint32_t class_code) {
     *n = idx;
 }
 
+pci_device_t *pci_find_bdfs(uint8_t bus, uint8_t slot, uint8_t func,
+                            uint16_t segment) {
+    for (uint32_t i = 0; i < pci_device_number; i++) {
+        if ((pci_devices[i]->bus == bus) && (pci_devices[i]->slot == slot) &&
+            (pci_devices[i]->func == func) &&
+            (pci_devices[i]->segment == segment)) {
+            return pci_devices[i];
+        }
+    }
+    return NULL;
+}
+
 void pci_scan_bus(uint16_t segment_group, uint8_t bus);
 
 void pci_scan_function(uint16_t segment_group, uint8_t bus, uint8_t device,
@@ -355,22 +367,23 @@ void pci_scan_function(uint16_t segment_group, uint8_t bus, uint8_t device,
     pci_device->slot = device;
     pci_device->func = function;
 
-    uint32_t value =
-        pci_device->op->read(pci_device->bus, pci_device->slot,
-                             pci_device->func, pci_device->segment, 0x04);
-    value |= (1 << 2);
-    value |= (1 << 1);
-    value |= (1 << 0);
-    pci_device->op->write(pci_device->bus, pci_device->slot, pci_device->func,
-                          pci_device->segment, 0x04, value);
+    uint32_t class_code_24bit =
+        (device_class << 16) | (device_subclass << 8) | device_interface;
+    pci_device->class_code = class_code_24bit;
+    pci_device->name = pci_classname(class_code_24bit);
 
     switch (header_type) {
     // Endpoint
     case 0x00: {
-        uint32_t class_code_24bit =
-            (device_class << 16) | (device_subclass << 8) | device_interface;
-        pci_device->class_code = class_code_24bit;
-        pci_device->name = pci_classname(class_code_24bit);
+        uint32_t value =
+            pci_device->op->read(pci_device->bus, pci_device->slot,
+                                 pci_device->func, pci_device->segment, 0x04);
+        value |= (1 << 2);
+        value |= (1 << 1);
+        value |= (1 << 0);
+        pci_device->op->write(pci_device->bus, pci_device->slot,
+                              pci_device->func, pci_device->segment, 0x04,
+                              value);
         pci_device->vendor_id = vendor_id;
         pci_device->device_id = device_id;
 
@@ -510,6 +523,7 @@ void pci_scan_function(uint16_t segment_group, uint8_t bus, uint8_t device,
         }
 
         free(pci_device);
+
         break;
     }
         // CardBusBridge

@@ -174,7 +174,7 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
     nv_dev->nv_.subsystem_vendor = dev->subsystem_vendor_id;
     nv_dev->nv_.subsystem_id = dev->subsystem_device_id;
     nv_dev->nv_.os_state = nv_dev;
-    nv_dev->nv_.handle = nv_dev;
+    nv_dev->nv_.handle = nv_dev->pci_dev;
     nv_dev->nv_.cpu_numa_node_id = -1;
     nv_dev->nv_.interrupt_line = 0;
 
@@ -347,7 +347,6 @@ void nvidia_open_rc_timer(uint64_t dev_ptr) {
     bool continueWaiting = true;
 
     while (1) {
-        spin_lock(&dev->timerLock);
         while (!dev->nv_.rc_timer_enabled || !continueWaiting) {
             arch_yield();
 
@@ -355,7 +354,6 @@ void nvidia_open_rc_timer(uint64_t dev_ptr) {
                 continueWaiting = true;
             }
         }
-        spin_unlock(&dev->timerLock);
 
         os_delay(1000000000);
 

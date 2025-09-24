@@ -136,6 +136,9 @@ void do_divide_error(struct pt_regs *regs, uint64_t error_code) {
 void do_debug(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     traceback(regs);
+
+    while (1)
+        asm volatile("hlt");
 }
 
 // 2 不可屏蔽中断

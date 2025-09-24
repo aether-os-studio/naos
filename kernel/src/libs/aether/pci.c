@@ -16,6 +16,8 @@ int regist_pci_driver(pci_driver_t *driver) {
 
 EXPORT_SYMBOL(regist_pci_driver);
 
+EXPORT_SYMBOL(pci_find_bdfs);
+
 #if defined(__x86_64__)
 EXPORT_SYMBOL(pci_enable_msi);
 #endif

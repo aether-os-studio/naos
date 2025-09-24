@@ -165,10 +165,6 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
     pty_pair_t *pair = file;
     while (true) {
         spin_lock(&pair->lock);
-        if (!pair->slaveFds) {
-            spin_unlock(&pair->lock);
-            return 0;
-        }
         if ((pair->ptrSlave + limit) < PTY_BUFF_SIZE) {
             spin_unlock(&pair->lock);
             break;
@@ -189,10 +185,9 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
             if (pair->bufferSlave[pair->ptrSlave + i] == '\r')
                 pair->bufferSlave[pair->ptrSlave + i] = '\n';
         }
-    // if (pair->term.c_lflag & ICANON && pair->term.c_lflag & ECHO)
-    // {
-    //     pts_write_inner(pair, &pair->bufferSlave[pair->ptrSlave], limit);
-    // }
+    if (pair->term.c_lflag & ICANON && pair->term.c_lflag & ECHO) {
+        pts_write_inner(pair, &pair->bufferSlave[pair->ptrSlave], limit);
+    }
     pair->ptrSlave += limit;
 
     spin_unlock(&pair->lock);
@@ -538,17 +533,17 @@ int pts_poll(pty_pair_t *pair, int events) {
 
 vfs_node_t ptmx_dup(vfs_node_t node) {
     pty_pair_t *pair = node->handle;
-    spin_lock(&pair->lock);
-    pair->masterFds++;
-    spin_unlock(&pair->lock);
+    // spin_lock(&pair->lock);
+    // pair->masterFds++;
+    // spin_unlock(&pair->lock);
     return node;
 }
 
 vfs_node_t pts_dup(vfs_node_t node) {
     pty_pair_t *pair = node->handle;
-    spin_lock(&pair->lock);
-    pair->slaveFds++;
-    spin_unlock(&pair->lock);
+    // spin_lock(&pair->lock);
+    // pair->slaveFds++;
+    // spin_unlock(&pair->lock);
     return node;
 }
 
