@@ -70,9 +70,9 @@ void task_free_service(uint64_t arg) {
             if (ptr->should_free) {
                 tasks[ptr->pid] = NULL;
 
-                free_page_table(ptr->arch_context->mm);
-
                 arch_context_free(ptr->arch_context);
+
+                free_page_table(ptr->arch_context->mm);
 
                 free(ptr->arch_context);
 
@@ -176,10 +176,6 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->saved_signal = 0;
     task->status = 0;
     task->cwd = rootdir;
-    task->mmap_regions = malloc(sizeof(Bitmap));
-    bitmap_init(task->mmap_regions, alloc_frames_bytes(bitmap_size),
-                bitmap_size);
-    memset(task->mmap_regions->buffer, 0xff, bitmap_size);
     task->fd_info = malloc(sizeof(fd_info_t));
     memset(task->fd_info, 0, sizeof(task->fd_info));
     memset(task->fd_info->fds, 0, sizeof(task->fd_info->fds));
@@ -444,16 +440,6 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
     child->cwd = current_task->cwd;
     child->cmdline = strdup(current_task->cmdline);
 
-    child->mmap_regions =
-        vfork ? current_task->mmap_regions : malloc(sizeof(Bitmap));
-    if (vfork) {
-        child->mmap_regions->bitmap_refcount++;
-    } else {
-        void *data = alloc_frames_bytes(bitmap_size);
-        bitmap_init(child->mmap_regions, data, bitmap_size);
-        memcpy(data, current_task->mmap_regions->buffer, bitmap_size);
-    }
-
     child->load_start = current_task->load_start;
     child->load_end = current_task->load_end;
 
@@ -655,22 +641,14 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
         return task_execve((const char *)injected_argv[0], injected_argv, envp);
     }
 
-    current_task->mmap_regions->bitmap_refcount--;
-    if (!current_task->mmap_regions->bitmap_refcount) {
-        free_frames_bytes(current_task->mmap_regions->buffer, bitmap_size);
-        free(current_task->mmap_regions);
-        current_task->mmap_regions = NULL;
-    }
-    current_task->mmap_regions = malloc(sizeof(Bitmap));
-    void *data = alloc_frames_bytes(bitmap_size);
-    bitmap_init(current_task->mmap_regions, data, bitmap_size);
-    memset(current_task->mmap_regions->buffer, 0xff, bitmap_size);
-
     if (current_task->is_vfork ||
         current_task->arch_context->mm->page_table_addr ==
             (uint64_t)virt_to_phys(get_kernel_page_dir())) {
-        current_task->arch_context->mm =
+        task_mm_info_t *new_mm =
             clone_page_table(current_task->arch_context->mm, 0);
+        // free_page_table(current_task->arch_context->mm);
+        current_task->arch_context->mm->ref_count--;
+        current_task->arch_context->mm = new_mm;
     }
 
 #if defined(__x86_64__)
@@ -992,13 +970,6 @@ void task_exit_inner(task_t *task, int64_t code) {
     if (task->cmdline)
         free(task->cmdline);
 
-    task->mmap_regions->bitmap_refcount--;
-    if (task->mmap_regions->bitmap_refcount == 0) {
-        free_frames_bytes(task->mmap_regions->buffer, bitmap_size);
-        free(task->mmap_regions);
-        task->mmap_regions = NULL;
-    }
-
     if (task->ppid != task->pid && tasks[task->ppid] &&
         !tasks[task->ppid]->child_vfork_done) {
         tasks[task->ppid]->child_vfork_done = true;
@@ -1233,15 +1204,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     child->cwd = current_task->cwd;
     child->cmdline = strdup(current_task->cmdline);
 
-    child->mmap_regions = (flags & CLONE_VM) ? current_task->mmap_regions
-                                             : malloc(sizeof(Bitmap));
-    if (flags & CLONE_VM) {
-        child->mmap_regions->bitmap_refcount++;
-    } else {
-        void *data = alloc_frames_bytes(bitmap_size);
-        bitmap_init(child->mmap_regions, data, bitmap_size);
-        memcpy(data, current_task->mmap_regions->buffer, bitmap_size);
-    }
     child->load_start = current_task->load_start;
     child->load_end = current_task->load_end;
 

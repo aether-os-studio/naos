@@ -65,31 +65,41 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
         }
     }
 
+    vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
+
     if (!shmaddr) {
-        uint64_t page_count = shm->size / DEFAULT_PAGE_SIZE;
-        uint64_t idx =
-            bitmap_find_range(current_task->mmap_regions, page_count, true);
-        if (idx == (uint64_t)-1)
-            return (void *)-ENOMEM;
-        shmaddr = (void *)((idx * DEFAULT_PAGE_SIZE) + USER_MMAP_START);
+        uint64_t start_addr = USER_MMAP_START;
+        while (vma_find_intersection(mgr, start_addr, start_addr + shm->size)) {
+            start_addr += DEFAULT_PAGE_SIZE;
+            if (start_addr > USER_MMAP_END)
+                return (void *)-ENOMEM;
+        }
+        shmaddr = (void *)start_addr;
     }
 
     spin_lock(&mm_op_lock);
-
-    if ((uint64_t)shmaddr >= USER_MMAP_START &&
-        (uint64_t)shmaddr + shm->size <= USER_MMAP_END) {
-        bitmap_set_range(current_task->mmap_regions,
-                         ((uint64_t)shmaddr - USER_MMAP_START) /
-                             DEFAULT_PAGE_SIZE,
-                         ((uint64_t)shmaddr - USER_MMAP_START + shm->size) /
-                             DEFAULT_PAGE_SIZE,
-                         false);
-    }
 
     map_page_range(
         get_current_page_dir(true), (uint64_t)shmaddr,
         translate_address(get_current_page_dir(false), (uint64_t)shm->addr),
         shm->size, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+
+    vma_t *vma = vma_alloc();
+    if (!vma)
+        return (void *)-ENOMEM;
+
+    vma->vm_start = (uint64_t)shmaddr;
+    vma->vm_end = (uint64_t)shmaddr + shm->size;
+    vma->vm_flags = 0;
+
+    vma->vm_type = VMA_TYPE_SHM;
+    vma->vm_flags |= VMA_ANON;
+    vma->vm_fd = -1;
+
+    if (vma_insert(mgr, vma) != 0) {
+        vma_free(vma);
+        return (void *)-ENOMEM;
+    }
 
     spin_unlock(&mm_op_lock);
 

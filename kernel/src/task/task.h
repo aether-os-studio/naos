@@ -174,7 +174,6 @@ typedef struct task {
     uint64_t force_wakeup_ns;
     uint64_t load_start;
     uint64_t load_end;
-    Bitmap *mmap_regions;
     arch_context_t *arch_context;
     spinlock_t signal_lock;
     sigaction_t actions[MAXSIG];

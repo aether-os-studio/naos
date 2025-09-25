@@ -5,6 +5,7 @@
 #include <mm/hhdm.h>
 #include <mm/page_table.h>
 #include <arch/arch.h>
+#include <mm/vma.h>
 
 #define MAX_USABLE_REGIONS_COUNT 128
 
@@ -16,6 +17,7 @@
 typedef struct task_mm_info {
     uint64_t page_table_addr;
     int ref_count;
+    vma_manager_t task_vma_mgr;
 } task_mm_info_t;
 
 void frame_init();
