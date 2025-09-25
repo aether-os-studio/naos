@@ -5,6 +5,8 @@
 
 #define ARC_CACHE_CAPABILITY 1024
 
+#define ARC_CACHE_MAX_CACHE_SIZE (128 * 1024 * 1024)
+
 // 缓存节点结构
 typedef struct cache_node {
     char *key;

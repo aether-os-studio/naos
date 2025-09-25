@@ -58,7 +58,7 @@ uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode) {
     current_task->fd_info->fds[i]->flags = flags;
     node->refcount++;
 
-    if (node->size) {
+    if (node->type & file_none && node->size && node->size <= ARC_CACHE_MAX_CACHE_SIZE) {
         void *page_cache_addr = alloc_frames_bytes(node->size);
         vfs_read(node, page_cache_addr, 0, node->size);
         char *key = vfs_get_fullpath(node);
