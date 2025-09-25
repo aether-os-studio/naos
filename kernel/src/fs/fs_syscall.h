@@ -51,6 +51,7 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
 uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode);
 uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags,
                     uint64_t mode);
+uint64_t sys_fsync(uint64_t fd);
 uint64_t sys_close(uint64_t fd);
 uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags);
 uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t *offset_in,

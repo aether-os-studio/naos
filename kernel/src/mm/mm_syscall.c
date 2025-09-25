@@ -306,6 +306,21 @@ void *general_map(vfs_read_t read_callback, fd_t *file, uint64_t addr,
     if (prot & PROT_EXEC)
         pt_flags |= PT_FLAG_X;
 
+    vfs_node_t node = file->node;
+    size_t page_cache_data_size = 0;
+    char *key = vfs_get_fullpath(node);
+    void *page_cache =
+        arc_cache_get(global_page_cache, key, &page_cache_data_size);
+    free(key);
+
+    // if (page_cache) {
+    //     map_page_range(
+    //         get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)),
+    //         translate_address(get_current_page_dir(false),
+    //                           (uint64_t)page_cache + offset),
+    //         (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)),
+    //         pt_flags);
+    // } else {
     map_page_range(
         get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)), 0,
         (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
@@ -313,8 +328,9 @@ void *general_map(vfs_read_t read_callback, fd_t *file, uint64_t addr,
     ssize_t ret = read_callback(file, (void *)addr, offset, len);
     if (ret < 0) {
         printk("Failed read file for mmap\n");
-        return (void *)-ENOMEM;
+        return (void *)-EIO;
     }
+    // }
 
     return (void *)addr;
 }

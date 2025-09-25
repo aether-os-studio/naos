@@ -269,7 +269,7 @@ uint64_t map_change_attribute_range(uint64_t *pgdir, uint64_t vaddr,
 }
 
 // 基于 DEFAULT_PAGE_SIZE 的ORDER
-#define MAX_ORDER 18 // 最大阶数，支持最大 2^18 * DEFAULT_PAGE_SIZE = 1GB
+#define MAX_ORDER 30 // 最大阶数，支持最大 2^30 * DEFAULT_PAGE_SIZE
 #define MIN_ORDER 0  // 最小阶数，单页
 
 // 空闲块结构体 - 直接存储在空闲内存页的开头
