@@ -1,3 +1,5 @@
+use std::{fs::File, io::Read};
+
 fn main() {
     println!("aether-init is running...");
 
@@ -133,6 +135,28 @@ fn main() {
         )
     };
 
+    let mut init_process = None;
+    let mut init_process_arg = None;
+
+    let kernel_cmdline_file = File::open("/proc/cmdline");
+    if let Ok(mut cmdline_file) = kernel_cmdline_file {
+        let mut buf = [0u8; 512];
+        cmdline_file.read(&mut buf).unwrap();
+
+        let content = String::from_utf8(buf.to_vec()).unwrap();
+        println!("Got cmdline {}", content);
+        for key_value in content.split(' ') {
+            let mut iter = key_value.split('=');
+            let key = iter.next().unwrap();
+            let value = iter.next().unwrap();
+            if key == "init" {
+                init_process = Some(value.to_string());
+            } else if key == "init_arg" {
+                init_process_arg = Some(value.to_string());
+            }
+        }
+    }
+
     println!("init: Starting desktop process");
     let desktop = unsafe { libc::fork() };
     if desktop == 0 {
@@ -146,14 +170,29 @@ fn main() {
             // std::env::set_var("WESTON_LIBINPUT_LOG_PRIORITY", "debug");
         }
 
-        unsafe {
-            libc::execl(
-                b"/usr/bin/weston\0".as_ptr() as *const _,
-                b"weston\0".as_ptr() as *const _,
-                b"--xwayland\0".as_ptr() as *const _,
-                core::ptr::null::<core::ffi::c_char>(),
-            )
-        };
+        let init_process = init_process.unwrap_or("bash".to_string());
+
+        println!("Got desktop process {}", init_process);
+
+        if init_process_arg.is_some() {
+            unsafe {
+                libc::execl(
+                    init_process.as_ptr() as *const _,
+                    init_process.as_ptr() as *const _,
+                    init_process_arg.unwrap().as_ptr() as *const _,
+                    core::ptr::null::<core::ffi::c_char>(),
+                )
+            };
+        } else {
+            unsafe {
+                libc::execl(
+                    init_process.as_ptr() as *const _,
+                    init_process.as_ptr() as *const _,
+                    core::ptr::null::<core::ffi::c_char>(),
+                )
+            };
+        }
+
         panic!("Failed to exec desktop process");
     } else {
         assert_ne!(desktop, -1);
