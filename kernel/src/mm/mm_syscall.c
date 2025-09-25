@@ -103,6 +103,9 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
             (uint64_t)vfs_map(current_task->fd_info->fds[fd], start_addr,
                               aligned_len, prot, flags, offset);
 
+        region->vm_name =
+            vfs_get_fullpath(current_task->fd_info->fds[fd]->node);
+
         spin_unlock(&mm_op_lock);
         return ret;
     } else {

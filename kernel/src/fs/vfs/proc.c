@@ -18,6 +18,137 @@ const char filesystems_content[] = "nodev\tsysfs\n"
                                    "     \text3\n"
                                    "     \text2\n";
 
+const char *get_vma_permissions(vma_t *vma) {
+    static char perms[5];
+
+    perms[0] = (vma->vm_flags & VMA_READ) ? 'r' : '-';
+    perms[1] = (vma->vm_flags & VMA_WRITE) ? 'w' : '-';
+    perms[2] = (vma->vm_flags & VMA_EXEC) ? 'x' : '-';
+    perms[3] = (vma->vm_flags & VMA_SHARED) ? 's' : 'p';
+    perms[4] = '\0';
+
+    return perms;
+}
+
+char *proc_gen_maps_file(task_t *task, size_t *content_len) {
+    vma_t *vma = task->arch_context->mm->task_vma_mgr.vma_list;
+
+    size_t offset = 0;
+    size_t ctn_len = DEFAULT_PAGE_SIZE;
+    char *buf = malloc(ctn_len);
+
+    while (vma) {
+        vfs_node_t node = NULL;
+        if (vma->vm_fd != -1) {
+            node = current_task->fd_info->fds[vma->vm_fd]->node;
+        }
+
+        int len = sprintf(
+            buf + offset, "%012lx-%012lx %s %08lx %02x:%02x %lu", vma->vm_start,
+            vma->vm_end, get_vma_permissions(vma),
+            (unsigned long)vma->vm_offset, node ? ((node->dev >> 8) & 0xFF) : 0,
+            node ? (node->dev & 0xFF) : 0, node ? node->inode : 0);
+
+        if (offset + len > ctn_len) {
+            ctn_len = (offset + len + DEFAULT_PAGE_SIZE - 1) &
+                      ~(DEFAULT_PAGE_SIZE - 1);
+            buf = realloc(buf, ctn_len);
+        }
+        offset += len;
+
+        const char *pathname = vma->vm_name;
+        if (pathname && strlen(pathname) > 0) {
+            len = sprintf(buf + offset, "%*s%s", 15, "", pathname);
+            if (offset + len > ctn_len) {
+                ctn_len = (offset + len + DEFAULT_PAGE_SIZE - 1) &
+                          ~(DEFAULT_PAGE_SIZE - 1);
+                buf = realloc(buf, ctn_len);
+            }
+            offset += len;
+        }
+
+        len = sprintf(buf + offset, "\n");
+        if (offset + len > ctn_len) {
+            ctn_len = (offset + len + DEFAULT_PAGE_SIZE - 1) &
+                      ~(DEFAULT_PAGE_SIZE - 1);
+            buf = realloc(buf, ctn_len);
+        }
+        offset += len;
+
+        vma = vma->vm_next;
+    }
+
+    *content_len = offset;
+
+    return buf;
+}
+
+char *proc_gen_stat_file(task_t *task, size_t *content_len) {
+    char *buffer = malloc(DEFAULT_PAGE_SIZE);
+    int len = sprintf(
+        buffer,
+        "%d (%s) %c %d %d %d %d %d %u %lu %lu %lu %lu %lu %lu %ld %ld %ld %ld "
+        "%ld %ld %llu %lu %ld %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu "
+        "%lu %d %d %u %u %llu %lu %ld %lu %lu %lu %lu %lu %lu %lu %d\n",
+        task->pid,        // pid
+        task->name,       // name
+        'R',              // state
+        task->ppid,       // ppid
+        0,                // pgrp
+        0,                // session
+        0,                // tty_nr
+        0,                // tpgid
+        0,                // flags
+        0,                // minflt
+        0,                // cminflt
+        0,                // majflt
+        0,                // cmajflt
+        0,                // utime
+        0,                // stime
+        0,                // cutime
+        0,                // cstime
+        0,                // priority
+        0,                // nice
+        1,                // num_threads
+        0,                // itrealvalue
+        0,                // starttime
+        0,                // vsize
+        0,                // rss
+        0,                // rsslim
+        task->load_start, // startcode
+        task->load_end,   // endcode
+        USER_STACK_START, // startstack
+        0,                // kstkesp
+        0,                // ksteip
+        task->signal,     // signal
+        task->blocked,    // blocked
+        0,                // sigignore
+        0,                // sigcatch
+        0,                // wchan
+        0,                // nswap
+        0,                // cnswap
+        0,                // exit_signal
+        task->cpu_id,     // processor
+        0,                // rt_priority
+        0,                // policy
+        0,                // delayacct_blkio_ticks
+        0,                // guest_time
+        0,                // cguest_time
+        0,                // start_data
+        0,                // end_data
+        0,                // start_brk
+        0,                // arg_start
+        0,                // arg_end
+        0,                // env_start
+        0,                // env_end
+        task->state       // exit_code
+    );
+
+    *content_len = len;
+
+    return buffer;
+}
+
 ssize_t procfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     void *file = fd->node->handle;
     proc_handle_t *handle = (proc_handle_t *)file;
@@ -39,6 +170,32 @@ ssize_t procfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             return strlen(addr);
         } else
             return 0;
+    } else if (!strcmp(handle->name, "self/maps")) {
+        size_t content_len = 0;
+        char *content = proc_gen_maps_file(task, &content_len);
+        if (offset >= content_len) {
+            free(content);
+            return 0;
+        }
+        content_len = MIN(content_len, offset + size);
+        size_t to_copy = MIN(content_len, size);
+        memcpy(addr, content + offset, to_copy);
+        free(content);
+        ((char *)addr)[to_copy] = '\0';
+        return to_copy + 1;
+    } else if (!strcmp(handle->name, "self/stat")) {
+        size_t content_len = 0;
+        char *content = proc_gen_stat_file(task, &content_len);
+        if (offset >= content_len) {
+            free(content);
+            return 0;
+        }
+        content_len = MIN(content_len, offset + size);
+        size_t to_copy = MIN(content_len, size);
+        memcpy(addr, content + offset, to_copy);
+        free(content);
+        ((char *)addr)[to_copy] = '\0';
+        return to_copy + 1;
     } else if (!strcmp(handle->name, "filesystems")) {
         if (offset < strlen(filesystems_content)) {
             memcpy(addr, filesystems_content + offset, size);
@@ -161,6 +318,14 @@ void proc_init() {
     self_maps->handle = self_maps_handle;
     self_maps_handle->task = NULL;
     sprintf(self_maps_handle->name, "self/maps");
+
+    vfs_node_t self_stat = vfs_node_alloc(procfs_self, "stat");
+    self_stat->type = file_none;
+    self_stat->mode = 0700;
+    proc_handle_t *self_stat_handle = malloc(sizeof(proc_handle_t));
+    self_stat->handle = self_stat_handle;
+    self_stat_handle->task = NULL;
+    sprintf(self_stat_handle->name, "self/stat");
 
     cmdline = vfs_node_alloc(procfs_root, "cmdline");
     cmdline->type = file_none;

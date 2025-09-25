@@ -226,6 +226,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     memset(task->actions, 0, sizeof(task->actions));
 
     memset(task->rlim, 0, sizeof(task->rlim));
+    task->rlim[RLIMIT_STACK] =
+        (struct rlimit){0, USER_STACK_END - USER_STACK_START};
     task->rlim[RLIMIT_NPROC] = (struct rlimit){0, MAX_TASK_NUM};
     task->rlim[RLIMIT_NOFILE] = (struct rlimit){MAX_FD_NUM, MAX_FD_NUM};
     task->rlim[RLIMIT_CORE] = (struct rlimit){0, 0};
@@ -701,11 +703,17 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
 
     uint64_t load_start = UINT64_MAX;
     uint64_t load_end = 0;
+    uint64_t interpreter_load_start = UINT64_MAX;
+    uint64_t interpreter_load_end = 0;
+
+    char *interpreter_path = NULL;
 
     for (int i = 0; i < ehdr->e_phnum; ++i) {
         if (phdr[i].p_type == PT_INTERP) {
             const char *interpreter_name =
                 ((const char *)ehdr + phdr[i].p_offset);
+
+            interpreter_path = strdup(interpreter_name);
 
             vfs_node_t interpreter_node = vfs_open(interpreter_name);
             if (!interpreter_node) {
@@ -751,6 +759,11 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
                 uint64_t size_diff = seg_addr - aligned_addr;
                 uint64_t alloc_size =
                     (seg_size + size_diff + page_mask) & ~page_mask;
+
+                if (aligned_addr < load_start)
+                    interpreter_load_start = aligned_addr;
+                else if (aligned_addr + alloc_size > load_end)
+                    interpreter_load_end = aligned_addr + alloc_size;
 
                 uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W | PT_FLAG_X;
                 map_page_range(get_current_page_dir(true), aligned_addr, 0,
@@ -905,6 +918,58 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
     current_task->cmdline = strdup(cmdline);
     current_task->load_start = load_start;
     current_task->load_end = load_end;
+
+    if (interpreter_path) {
+        vma_t *ld_so_vma = vma_alloc();
+
+        ld_so_vma->vm_start = interpreter_load_start;
+        ld_so_vma->vm_end = interpreter_load_end;
+        ld_so_vma->vm_flags |= VMA_READ | VMA_WRITE | VMA_EXEC;
+
+        ld_so_vma->vm_type = VMA_TYPE_ANON;
+        ld_so_vma->vm_name = interpreter_path;
+
+        vma_t *region =
+            vma_find_intersection(&current_task->arch_context->mm->task_vma_mgr,
+                                  interpreter_load_start, interpreter_load_end);
+        if (!region) {
+            vma_insert(&current_task->arch_context->mm->task_vma_mgr,
+                       ld_so_vma);
+        }
+    } else {
+        free(interpreter_path);
+    }
+
+    vma_t *exec_vma = vma_alloc();
+
+    exec_vma->vm_start = load_start;
+    exec_vma->vm_end = load_end;
+    exec_vma->vm_flags |= VMA_READ | VMA_WRITE | VMA_EXEC;
+
+    exec_vma->vm_type = VMA_TYPE_ANON;
+    exec_vma->vm_name = strdup(path);
+
+    vma_t *region = vma_find_intersection(
+        &current_task->arch_context->mm->task_vma_mgr, load_start, load_end);
+    if (!region) {
+        vma_insert(&current_task->arch_context->mm->task_vma_mgr, exec_vma);
+    }
+
+    vma_t *stack_vma = vma_alloc();
+
+    stack_vma->vm_start = USER_STACK_START;
+    stack_vma->vm_end = USER_STACK_END;
+    stack_vma->vm_flags |= VMA_READ | VMA_WRITE;
+
+    stack_vma->vm_type = VMA_TYPE_ANON;
+    stack_vma->vm_name = strdup("[stack]");
+
+    region =
+        vma_find_intersection(&current_task->arch_context->mm->task_vma_mgr,
+                              USER_STACK_START, USER_STACK_END);
+    if (!region) {
+        vma_insert(&current_task->arch_context->mm->task_vma_mgr, stack_vma);
+    }
 
     spin_unlock(&execve_lock);
     can_schedule = true;

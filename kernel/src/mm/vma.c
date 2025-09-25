@@ -18,6 +18,8 @@ vma_t *vma_alloc(void) {
 // VMA释放
 void vma_free(vma_t *vma) {
     if (vma) {
+        if (vma->vm_name)
+            free(vma->vm_name);
         free(vma);
     }
 }
