@@ -190,10 +190,10 @@ struct sched_entity *new_entity(task_t *task, uint64_t prio,
 }
 
 void change_entity_weight(eevdf_t *eevdf_sched, task_t *thread, uint64_t prio) {
-    close_interrupt;
+    arch_disable_interrupt();
     struct sched_entity *entity = (struct sched_entity *)thread->sched_info;
     if (entity->prio == prio) {
-        open_interrupt;
+        arch_enable_interrupt();
         return;
     }
     entity->is_idle = prio == NICE_TO_PRIO(20);
@@ -203,7 +203,7 @@ void change_entity_weight(eevdf_t *eevdf_sched, task_t *thread, uint64_t prio) {
     spin_lock(&eevdf_sched->queue_lock);
     insert_sched_entity(eevdf_sched->root, entity);
     spin_unlock(&eevdf_sched->queue_lock);
-    open_interrupt;
+    arch_enable_interrupt();
 }
 
 struct sched_entity *pick_eevdf(eevdf_t *eevdf_sched) {

@@ -29,4 +29,6 @@ typedef uint64_t (*special_syscall_handle_t)(struct pt_regs *regs,
                                              uint64_t arg3, uint64_t arg4,
                                              uint64_t arg5, uint64_t arg6);
 
+uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3);
+
 void aarch64_do_syscall(struct pt_regs *frame);

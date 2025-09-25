@@ -52,7 +52,15 @@ uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
         }
         return 0;
     }
-    case 0: {
+    case 7: // CLOCK_BOOTTIME
+        if (arg2) {
+            struct timespec *ts = (struct timespec *)arg2;
+            ts->tv_sec = nanoTime() / 1000000000;
+            ts->tv_nsec = nanoTime() % 1000000000;
+        }
+        return 0;
+    case 0: // CLOCK_REALTIME
+    {
         tm time;
         time_read(&time);
         uint64_t timestamp = mktime(&time);
@@ -65,7 +73,7 @@ uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
         return 0;
     }
     default:
-        printk("clock not supported\n");
+        printk("clock not supported, clock_id = %d\n", arg1);
         return (uint64_t)-EINVAL;
     }
 }
@@ -118,7 +126,7 @@ void syscall_handlers_init() {
     syscall_handlers[SYS_MMAP] = (syscall_handle_t)sys_mmap;
     syscall_handlers[SYS_MPROTECT] = (syscall_handle_t)sys_mprotect;
     syscall_handlers[SYS_MUNMAP] = (syscall_handle_t)sys_munmap;
-    syscall_handlers[SYS_BRK] = (syscall_handle_t)sys_brk;
+    // syscall_handlers[SYS_BRK] = (syscall_handle_t)sys_brk;
     syscall_handlers[SYS_RT_SIGACTION] = (syscall_handle_t)sys_sigaction;
     syscall_handlers[SYS_RT_SIGPROCMASK] = (syscall_handle_t)sys_ssetmask;
     syscall_handlers[SYS_RT_SIGRETURN] = (syscall_handle_t)sys_sigreturn;

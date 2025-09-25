@@ -58,10 +58,17 @@ void init_thread(uint64_t arg) {
     can_schedule = true;
     arch_enable_interrupt();
 
+#if defined(__x86_64__)
     const char *argvs[2];
     memset(argvs, 0, sizeof(argvs));
     argvs[0] = "/sbin/init";
     task_execve("/sbin/init", argvs, NULL);
+#else
+    const char *argvs[2];
+    memset(argvs, 0, sizeof(argvs));
+    argvs[0] = "/bin/bash";
+    task_execve("/bin/bash", argvs, NULL);
+#endif
 
     printk("run init failed\n");
 

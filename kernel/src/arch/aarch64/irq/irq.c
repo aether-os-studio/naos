@@ -26,8 +26,6 @@ void aarch64_do_irq(struct pt_regs *regs) {
 }
 
 void timer_handler(uint64_t irq_num, void *parameter, struct pt_regs *regs) {
-    current_task->jiffies++;
-
     uint64_t ctrl;
     asm volatile("mrs %0, cntp_ctl_el0" : "=r"(ctrl));
     asm volatile(

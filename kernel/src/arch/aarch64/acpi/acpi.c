@@ -1,10 +1,10 @@
 #include <arch/aarch64/acpi/acpi.h>
 #include <drivers/bus/pci.h>
 #include <mm/mm.h>
+#include <arch/aarch64/time/time.h>
 
-__attribute__((
-    used,
-    section(".limine_requests"))) static volatile struct limine_rsdp_request
+__attribute__((used,
+               section(".limine_requests"))) volatile struct limine_rsdp_request
     rsdp_request = {.id = LIMINE_RSDP_REQUEST, .revision = 0, .response = NULL};
 
 uint64_t rsdp_paddr;
@@ -71,4 +71,4 @@ void acpi_init() {
     load_table(MCFG, pcie_setup);
 }
 
-uint64_t nanoTime() { return 0; }
+uint64_t nanoTime() { return get_counter() / get_freq(); }

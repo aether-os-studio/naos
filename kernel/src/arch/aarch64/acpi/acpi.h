@@ -139,6 +139,8 @@ typedef struct {
     uint16_t namespace_string_offset;
 } __attribute__((packed)) SPCR;
 
+extern volatile struct limine_rsdp_request rsdp_request;
+
 void acpi_init();
 
 void madt_setup(MADT *madt);
