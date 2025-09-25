@@ -491,12 +491,6 @@ void dev_init() {
 }
 
 void dev_init_after_mount_root() {
-    vfs_mkdir("/dev");
-    vfs_node_t new_devfs_root = vfs_open("/dev");
-    memcpy(new_devfs_root->child, devfs_root->child, sizeof(list_t));
-    free(devfs_root);
-    devfs_root = new_devfs_root;
-
     regist_dev("console", stdin_read, stdout_write, stdio_ioctl, stdio_poll,
                NULL, global_stdio_handle);
 
