@@ -987,12 +987,10 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
 
 void sys_yield() { arch_yield(); }
 
-int task_block(task_t *task, task_state_t state, int timeout_ms) {
-    uint64_t wakeup_ns = timeout_ms * 1000000;
-
+int task_block(task_t *task, task_state_t state, int timeout_ns) {
     task->state = state;
-    if (timeout_ms > 0)
-        task->force_wakeup_ns = nanoTime() + wakeup_ns;
+    if (timeout_ns > 0)
+        task->force_wakeup_ns = nanoTime() + timeout_ns;
     else
         task->force_wakeup_ns = UINT64_MAX;
 

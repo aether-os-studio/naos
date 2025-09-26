@@ -20,7 +20,7 @@ uint64_t sys_futex_wait(uint64_t addr, const struct timespec *timeout) {
 
     int tmo = -1;
     if (timeout) {
-        tmo = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000;
+        tmo = timeout->tv_sec * 1000000000 + timeout->tv_nsec;
     }
     task_block(current_task, TASK_BLOCKING, tmo);
 
@@ -59,6 +59,7 @@ uint64_t sys_futex_wake(uint64_t addr, int val) {
 uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
                    int *uaddr2, int val3) {
     switch (op) {
+    case FUTEX_WAIT_PRIVATE:
     case FUTEX_WAIT: {
 
         spin_lock(&futex_lock);
@@ -73,24 +74,11 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
             translate_address(get_current_page_dir(true), (uint64_t)uaddr),
             timeout);
     }
-    case FUTEX_WAIT_PRIVATE: {
-        spin_lock(&futex_lock);
-
-        int current = *(int *)uaddr;
-        if (current != val) {
-            spin_unlock(&futex_lock);
-            return -EWOULDBLOCK;
-        }
-
-        return sys_futex_wait((uint64_t)uaddr, timeout);
-    }
+    case FUTEX_WAKE_PRIVATE:
     case FUTEX_WAKE: {
         return sys_futex_wake(
             translate_address(get_current_page_dir(true), (uint64_t)uaddr),
             val);
-    }
-    case FUTEX_WAKE_PRIVATE: {
-        return sys_futex_wake((uint64_t)uaddr, val);
     }
     case FUTEX_LOCK_PI:
     case FUTEX_LOCK_PI_PRIVATE: {
@@ -114,7 +102,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
 
             int tmo = -1;
             if (timeout)
-                tmo = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000;
+                tmo = timeout->tv_sec * 1000000000 + timeout->tv_nsec;
             task_block(current_task, TASK_BLOCKING, tmo);
 
             goto retry;
@@ -151,6 +139,58 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
 
         return 0;
     }
+    // case FUTEX_REQUEUE_PRIVATE:
+    // case FUTEX_REQUEUE: {
+    //     spin_lock(&futex_lock);
+
+    //     struct futex_wait *curr = &futex_wait_list;
+    //     struct futex_wait *prev = NULL;
+    //     int wake_count = 0;
+    //     int requeue_count = 0;
+
+    //     // 遍历等待队列
+    //     while (curr) {
+    //         bool found = false;
+
+    //         // 检查是否匹配原始地址
+    //         if (curr->uaddr && curr->uaddr == (void *)translate_address(
+    //                                               get_current_page_dir(true),
+    //                                               (uint64_t)uaddr)) {
+    //             // 先唤醒val个线程
+    //             if (wake_count < val) {
+    //                 task_unblock(curr->task, EOK);
+    //                 if (prev) {
+    //                     prev->next = curr->next;
+    //                 }
+    //                 struct futex_wait *to_free = curr;
+    //                 curr = curr->next;
+    //                 free(to_free);
+    //                 wake_count++;
+    //                 found = true;
+    //             }
+    //             // 然后转移val3个线程到新地址
+    //             else if (requeue_count < val3) {
+    //                 // 修改等待地址为目标地址
+    //                 curr->uaddr = (void *)translate_address(
+    //                     get_current_page_dir(true), (uint64_t)uaddr2);
+    //                 requeue_count++;
+    //                 prev = curr;
+    //                 curr = curr->next;
+    //             } else {
+    //                 // 已经处理完所有需要的线程
+    //                 break;
+    //             }
+    //         }
+
+    //         if (!found) {
+    //             prev = curr;
+    //             curr = curr->next;
+    //         }
+    //     }
+
+    //     spin_unlock(&futex_lock);
+    //     return wake_count + requeue_count;
+    // }
     default:
         printk("futex: Unsupported op: %d\n", op);
         return -ENOSYS;

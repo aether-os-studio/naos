@@ -228,7 +228,7 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem);
 size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old);
 
 task_t *task_search(task_state_t state, uint32_t cpu_id);
-int task_block(task_t *task, task_state_t state, int timeout_ms);
+int task_block(task_t *task, task_state_t state, int timeout_ns);
 void task_unblock(task_t *task, int reason);
 
 #define PR_SET_NAME 15
