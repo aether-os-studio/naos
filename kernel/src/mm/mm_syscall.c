@@ -5,6 +5,58 @@
 
 spinlock_t mm_op_lock = {0};
 
+uint64_t sys_brk(uint64_t brk) {
+    brk = (brk + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1);
+
+    if (!brk) {
+        return current_task->arch_context->mm->brk_start;
+    }
+
+    if (brk > current_task->arch_context->mm->brk_current) {
+        map_page_range(get_current_page_dir(true),
+                       current_task->arch_context->mm->brk_current, 0,
+                       brk - current_task->arch_context->mm->brk_current,
+                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+
+        memset((void *)current_task->arch_context->mm->brk_current, 0,
+               brk - current_task->arch_context->mm->brk_current);
+
+        vma_t *vma = vma_alloc();
+
+        vma->vm_start = current_task->arch_context->mm->brk_current;
+        vma->vm_end = brk;
+        vma->vm_flags = 0;
+
+        vma->vm_flags |= VMA_READ | VMA_WRITE;
+
+        vma->vm_type = VMA_TYPE_ANON;
+        vma->vm_flags |= VMA_ANON;
+        vma->vm_fd = -1;
+
+        vma->vm_name = strdup("[heap]");
+
+        vma_t *region =
+            vma_find_intersection(&current_task->arch_context->mm->task_vma_mgr,
+                                  current_task->arch_context->mm->brk_start,
+                                  current_task->arch_context->mm->brk_end);
+
+        if (region) {
+            vma_remove(&current_task->arch_context->mm->task_vma_mgr, region);
+            vma_free(region);
+        }
+
+        if (vma_insert(&current_task->arch_context->mm->task_vma_mgr, vma) !=
+            0) {
+            vma_free(vma);
+            return (uint64_t)-ENOMEM;
+        }
+
+        current_task->arch_context->mm->brk_current = brk;
+    }
+
+    return current_task->arch_context->mm->brk_current;
+}
+
 uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
                   uint64_t fd, uint64_t offset) {
     addr = addr & (~(DEFAULT_PAGE_SIZE - 1));

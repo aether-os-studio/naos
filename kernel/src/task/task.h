@@ -43,7 +43,10 @@
 #define INTERPRETER_BASE_ADDR 0x0000000020000000
 
 #define USER_MMAP_START 0x0000000040000000
-#define USER_MMAP_END 0x0000000100000000
+#define USER_MMAP_END 0x0000000080000000
+
+#define USER_BRK_START 0x0000000080000000
+#define USER_BRK_END 0x0000000100000000
 
 #define TASK_NAME_MAX 128
 
@@ -307,6 +310,14 @@ static inline uint64_t sys_getgroups(int gidsetsize, uint32_t *gids) {
 
     gids[0] = 0;
     return 1;
+}
+
+static inline uint64_t sys_getcpu(unsigned *cpup, unsigned *nodep,
+                                  void *unused) {
+    *cpup = current_cpu_id;
+    *nodep = 0;
+
+    return 0;
 }
 
 extern task_t *tasks[MAX_TASK_NUM];

@@ -18,6 +18,7 @@
 #include "arch/x64/task/fsgsbase.h"
 #include "arch/x64/syscall/nr.h"
 #include "arch/x64/syscall/syscall.h"
+#include "arch/x64/syscall/cpu_info.h"
 #include "arch/x64/time/time.h"
 
 void arch_early_init();

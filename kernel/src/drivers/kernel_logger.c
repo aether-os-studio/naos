@@ -401,6 +401,14 @@ char *write_num(char *str, uint64_t num, int base, int field_width,
     return str;
 }
 
+char vsnprintf_buf[8192];
+int vsnprintf(char *buf, size_t size, const char *fmt, va_list args) {
+    int ret = vsprintf(vsnprintf_buf, fmt, args);
+    int to_copy = MIN((size_t)ret, size);
+    memcpy(buf, vsnprintf_buf, to_copy);
+    return to_copy;
+}
+
 spinlock_t printk_lock = {0};
 
 extern struct vt_mode current_vt_mode;

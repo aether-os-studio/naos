@@ -8,6 +8,7 @@
 extern struct flanterm_context *ft_ctx;
 
 int printk(const char *fmt, ...);
+int vsnprintf(char *buf, size_t size, const char *fmt, va_list args);
 int serial_fprintk(const char *fmt, ...);
 int sprintf(char *buf, const char *fmt, ...);
 

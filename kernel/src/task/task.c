@@ -653,6 +653,11 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
         current_task->arch_context->mm = new_mm;
     }
 
+    current_task->arch_context->mm->brk_start = USER_BRK_START;
+    current_task->arch_context->mm->brk_current =
+        current_task->arch_context->mm->brk_start;
+    current_task->arch_context->mm->brk_end = USER_BRK_END;
+
 #if defined(__x86_64__)
     asm volatile("movq %0, %%cr3" ::"r"(
         current_task->arch_context->mm->page_table_addr));
@@ -1519,6 +1524,7 @@ void sched_update_timerfd() {
 }
 
 void sched_check_wakeup() {
+    spin_lock(&task_queue_lock);
     uint64_t continue_ptr_count = 0;
     for (size_t i = 1; i < MAX_TASK_NUM; i++) {
         task_t *ptr = tasks[i];
@@ -1532,8 +1538,10 @@ void sched_check_wakeup() {
 
         if (ptr->state == TASK_BLOCKING && nanoTime() > ptr->force_wakeup_ns) {
             task_unblock(ptr, ETIMEDOUT);
+            ptr->force_wakeup_ns = UINT64_MAX;
         }
     }
+    spin_unlock(&task_queue_lock);
 }
 
 size_t sys_setitimer(int which, struct itimerval *value,

@@ -18,6 +18,9 @@ typedef struct task_mm_info {
     uint64_t page_table_addr;
     int ref_count;
     vma_manager_t task_vma_mgr;
+    uint64_t brk_start;
+    uint64_t brk_current;
+    uint64_t brk_end;
 } task_mm_info_t;
 
 void frame_init();

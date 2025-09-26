@@ -174,7 +174,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_MMAP] = (syscall_handle_t)sys_mmap;
     syscall_handlers[SYS_MPROTECT] = (syscall_handle_t)sys_mprotect;
     syscall_handlers[SYS_MUNMAP] = (syscall_handle_t)sys_munmap;
-    // syscall_handlers[SYS_BRK] = (syscall_handle_t)sys_brk;
+    syscall_handlers[SYS_BRK] = (syscall_handle_t)sys_brk;
     syscall_handlers[SYS_RT_SIGACTION] = (syscall_handle_t)sys_sigaction;
     syscall_handlers[SYS_RT_SIGPROCMASK] = (syscall_handle_t)sys_ssetmask;
     syscall_handlers[SYS_RT_SIGRETURN] = (syscall_handle_t)sys_sigreturn;
@@ -294,8 +294,8 @@ void syscall_handler_init() {
     syscall_handlers[SYS_RT_SIGTIMEDWAIT] =
         (syscall_handle_t)sys_rt_sigtimedwait;
     // syscall_handlers[SYS_RT_SIGQUEUEINFO] =
-    // (syscall_handle_t)sys_rt_sigqueueinfo;
-    // syscall_handlers[SYS_RT_SIGSUSPEND] = (syscall_handle_t)sys_sigsuspend;
+    //     (syscall_handle_t)sys_rt_sigqueueinfo;
+    syscall_handlers[SYS_RT_SIGSUSPEND] = (syscall_handle_t)sys_sigsuspend;
     syscall_handlers[SYS_SIGALTSTACK] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_UTIME] = (syscall_handle_t)sys_utime;
     syscall_handlers[SYS_MKNOD] = (syscall_handle_t)sys_mknod;
@@ -316,19 +316,19 @@ void syscall_handler_init() {
     syscall_handlers[SYS_SCHED_GETSCHEDULER] =
         (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_SCHED_GET_PRIORITY_MAX] =
-    // (syscall_handle_t)sys_sched_get_priority_max;
+    //     (syscall_handle_t)sys_sched_get_priority_max;
     // syscall_handlers[SYS_SCHED_GET_PRIORITY_MIN] =
-    // (syscall_handle_t)sys_sched_get_priority_min;
+    //     (syscall_handle_t)sys_sched_get_priority_min;
     // syscall_handlers[SYS_SCHED_RR_GET_INTERVAL] =
-    // (syscall_handle_t)sys_sched_rr_get_interval; syscall_handlers[SYS_MLOCK]
-    // = (syscall_handle_t)sys_mlock; syscall_handlers[SYS_MUNLOCK] =
-    // (syscall_handle_t)sys_munlock; syscall_handlers[SYS_MLOCKALL] =
-    // (syscall_handle_t)sys_mlockall; syscall_handlers[SYS_MUNLOCKALL] =
-    // (syscall_handle_t)sys_munlockall; syscall_handlers[SYS_VHANGUP] =
-    // (syscall_handle_t)sys_vhangup; syscall_handlers[SYS_MODIFY_LDT] =
-    // (syscall_handle_t)sys_modify_ldt; syscall_handlers[SYS_PIVOT_ROOT] =
-    // (syscall_handle_t)sys_pivot_root; syscall_handlers[SYS__SYSCTL] =
-    // (syscall_handle_t)sys__sysctl;
+    //     (syscall_handle_t)sys_sched_rr_get_interval;
+    // syscall_handlers[SYS_MLOCK] = (syscall_handle_t)sys_mlock;
+    // syscall_handlers[SYS_MUNLOCK] = (syscall_handle_t)sys_munlock;
+    // syscall_handlers[SYS_MLOCKALL] = (syscall_handle_t)sys_mlockall;
+    // syscall_handlers[SYS_MUNLOCKALL] = (syscall_handle_t)sys_munlockall;
+    // syscall_handlers[SYS_VHANGUP] = (syscall_handle_t)sys_vhangup;
+    // syscall_handlers[SYS_MODIFY_LDT] = (syscall_handle_t)sys_modify_ldt;
+    // syscall_handlers[SYS_PIVOT_ROOT] = (syscall_handle_t)sys_pivot_root;
+    // syscall_handlers[SYS__SYSCTL] = (syscall_handle_t)sys__sysctl;
     syscall_handlers[SYS_PRCTL] = (syscall_handle_t)sys_prctl;
     syscall_handlers[SYS_ARCH_PRCTL] = (syscall_handle_t)sys_arch_prctl;
     // syscall_handlers[SYS_ADJTIMEX] = (syscall_handle_t)sys_adjtimex;
@@ -351,15 +351,15 @@ void syscall_handler_init() {
     // (syscall_handle_t)sys_init_module; syscall_handlers[SYS_DELETE_MODULE] =
     // (syscall_handle_t)sys_delete_module;
     // syscall_handlers[SYS_GET_KERNEL_SYMS] =
-    // (syscall_handle_t)sys_get_kernel_syms; syscall_handlers[SYS_QUERY_MODULE]
-    // = (syscall_handle_t)sys_query_module; syscall_handlers[SYS_QUOTACTL] =
-    // (syscall_handle_t)sys_quotactl; syscall_handlers[SYS_NFSSERVCTL] =
-    // (syscall_handle_t)sys_nfsservctl; syscall_handlers[SYS_GETPMSG] =
-    // (syscall_handle_t)sys_getpmsg; syscall_handlers[SYS_PUTPMSG] =
-    // (syscall_handle_t)sys_putpmsg; syscall_handlers[SYS_AFS_SYSCALL] =
-    // (syscall_handle_t)sys_afs_syscall; syscall_handlers[SYS_TUXCALL] =
-    // (syscall_handle_t)sys_tuxcall; syscall_handlers[SYS_SECURITY] =
-    // (syscall_handle_t)sys_security;
+    //     (syscall_handle_t)sys_get_kernel_syms;
+    // syscall_handlers[SYS_QUERY_MODULE] = (syscall_handle_t)sys_query_module;
+    // syscall_handlers[SYS_QUOTACTL] = (syscall_handle_t)sys_quotactl;
+    // syscall_handlers[SYS_NFSSERVCTL] = (syscall_handle_t)sys_nfsservctl;
+    // syscall_handlers[SYS_GETPMSG] = (syscall_handle_t)sys_getpmsg;
+    // syscall_handlers[SYS_PUTPMSG] = (syscall_handle_t)sys_putpmsg;
+    // syscall_handlers[SYS_AFS_SYSCALL] = (syscall_handle_t)sys_afs_syscall;
+    // syscall_handlers[SYS_TUXCALL] = (syscall_handle_t)sys_tuxcall;
+    // syscall_handlers[SYS_SECURITY] = (syscall_handle_t)sys_security;
     syscall_handlers[SYS_GETTID] = (syscall_handle_t)sys_getpid;
     // syscall_handlers[SYS_READAHEAD] = (syscall_handle_t)sys_readahead;
     // syscall_handlers[SYS_SETXATTR] = (syscall_handle_t)sys_setxattr;
@@ -382,13 +382,14 @@ void syscall_handler_init() {
     syscall_handlers[SYS_SCHED_GETAFFINITY] =
         (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_SET_THREAD_AREA] =
-    // (syscall_handle_t)sys_set_thread_area; syscall_handlers[SYS_IO_SETUP] =
-    // (syscall_handle_t)sys_io_setup; syscall_handlers[SYS_IO_DESTROY] =
-    // (syscall_handle_t)sys_io_destroy; syscall_handlers[SYS_IO_GETEVENTS] =
-    // (syscall_handle_t)sys_io_getevents; syscall_handlers[SYS_IO_SUBMIT] =
-    // (syscall_handle_t)sys_io_submit; syscall_handlers[SYS_IO_CANCEL] =
-    // (syscall_handle_t)sys_io_cancel; syscall_handlers[SYS_GET_THREAD_AREA] =
-    // (syscall_handle_t)sys_get_thread_area;
+    //     (syscall_handle_t)sys_set_thread_area;
+    // syscall_handlers[SYS_IO_SETUP] = (syscall_handle_t)sys_io_setup;
+    // syscall_handlers[SYS_IO_DESTROY] = (syscall_handle_t)sys_io_destroy;
+    // syscall_handlers[SYS_IO_GETEVENTS] = (syscall_handle_t)sys_io_getevents;
+    // syscall_handlers[SYS_IO_SUBMIT] = (syscall_handle_t)sys_io_submit;
+    // syscall_handlers[SYS_IO_CANCEL] = (syscall_handle_t)sys_io_cancel;
+    // syscall_handlers[SYS_GET_THREAD_AREA] =
+    //     (syscall_handle_t)sys_get_thread_area;
     // syscall_handlers[SYS_LOOKUP_DCOOKIE] =
     // (syscall_handle_t)sys_lookup_dcookie;
     syscall_handlers[SYS_EPOLL_CREATE] = (syscall_handle_t)sys_epoll_create;
@@ -396,27 +397,27 @@ void syscall_handler_init() {
     // (syscall_handle_t)sys_epoll_ctl_old; syscall_handlers[SYS_EPOLL_WAIT_OLD]
     // = (syscall_handle_t)sys_epoll_wait_old;
     // syscall_handlers[SYS_REMAP_FILE_PAGES] =
-    // (syscall_handle_t)sys_remap_file_pages;
+    //     (syscall_handle_t)sys_remap_file_pages;
     syscall_handlers[SYS_GETDENTS64] = (syscall_handle_t)sys_getdents;
     syscall_handlers[SYS_SET_TID_ADDRESS] =
         (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_RESTART_SYSCALL] =
-    // (syscall_handle_t)sys_restart_syscall; syscall_handlers[SYS_SEMTIMEDOP] =
-    // (syscall_handle_t)sys_semtimedop;
+    //     (syscall_handle_t)sys_restart_syscall;
+    // syscall_handlers[SYS_SEMTIMEDOP] = (syscall_handle_t)sys_semtimedop;
     syscall_handlers[SYS_FADVISE64] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_TIMER_CREATE] = (syscall_handle_t)sys_timer_create;
     syscall_handlers[SYS_TIMER_SETTIME] = (syscall_handle_t)sys_timer_settime;
     // syscall_handlers[SYS_TIMER_GETTIME] =
     // (syscall_handle_t)sys_timer_gettime;
     // syscall_handlers[SYS_TIMER_GETOVERRUN] =
-    // (syscall_handle_t)sys_timer_getoverrun;
+    //     (syscall_handle_t)sys_timer_getoverrun;
     // syscall_handlers[SYS_TIMER_DELETE] = (syscall_handle_t)sys_timer_delete;
     // syscall_handlers[SYS_CLOCK_SETTIME] =
     // (syscall_handle_t)sys_clock_settime;
     syscall_handlers[SYS_CLOCK_GETTIME] = (syscall_handle_t)sys_clock_gettime;
     syscall_handlers[SYS_CLOCK_GETRES] = (syscall_handle_t)sys_clock_getres;
     // syscall_handlers[SYS_CLOCK_NANOSLEEP] =
-    // (syscall_handle_t)sys_clock_nanosleep;
+    //     (syscall_handle_t)sys_clock_nanosleep;
     syscall_handlers[SYS_EXIT_GROUP] = (syscall_handle_t)task_exit;
     syscall_handlers[SYS_EPOLL_WAIT] = (syscall_handle_t)sys_epoll_wait;
     syscall_handlers[SYS_EPOLL_CTL] = (syscall_handle_t)sys_epoll_ctl;
@@ -430,8 +431,10 @@ void syscall_handler_init() {
     // (syscall_handle_t)sys_mq_open; syscall_handlers[SYS_MQ_UNLINK] =
     // (syscall_handle_t)sys_mq_unlink; syscall_handlers[SYS_MQ_TIMEDSEND] =
     // (syscall_handle_t)sys_mq_timedsend; syscall_handlers[SYS_MQ_TIMEDRECEIVE]
-    // = (syscall_handle_t)sys_mq_timedreceive; syscall_handlers[SYS_MQ_NOTIFY]
-    // = (syscall_handle_t)sys_mq_notify; syscall_handlers[SYS_MQ_GETSETATTR] =
+    // =
+    //     (syscall_handle_t)sys_mq_timedreceive;
+    // syscall_handlers[SYS_MQ_NOTIFY] = (syscall_handle_t)sys_mq_notify;
+    // syscall_handlers[SYS_MQ_GETSETATTR] =
     // (syscall_handle_t)sys_mq_getsetattr; syscall_handlers[SYS_KEXEC_LOAD] =
     // (syscall_handle_t)sys_kexec_load; syscall_handlers[SYS_WAITID] =
     // (syscall_handle_t)sys_waitid; syscall_handlers[SYS_ADD_KEY] =
@@ -439,12 +442,13 @@ void syscall_handler_init() {
     // (syscall_handle_t)sys_request_key; syscall_handlers[SYS_KEYCTL] =
     // (syscall_handle_t)sys_keyctl; syscall_handlers[SYS_IOPRIO_SET] =
     // (syscall_handle_t)sys_ioprio_set; syscall_handlers[SYS_IOPRIO_GET] =
-    // (syscall_handle_t)sys_ioprio_get; syscall_handlers[SYS_INOTIFY_INIT] =
-    // (syscall_handle_t)dummy_syscall_handler;
+    // (syscall_handle_t)sys_ioprio_get;
+    syscall_handlers[SYS_INOTIFY_INIT] =
+        (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_INOTIFY_ADD_WATCH] =
-    // (syscall_handle_t)sys_inotify_add_watch;
+    //     (syscall_handle_t)sys_inotify_add_watch;
     // syscall_handlers[SYS_INOTIFY_RM_WATCH] =
-    // (syscall_handle_t)sys_inotify_rm_watch;
+    //     (syscall_handle_t)sys_inotify_rm_watch;
     // syscall_handlers[SYS_MIGRATE_PAGES] =
     // (syscall_handle_t)sys_migrate_pages;
     syscall_handlers[SYS_OPENAT] = (syscall_handle_t)sys_openat;
@@ -466,12 +470,13 @@ void syscall_handler_init() {
     syscall_handlers[SYS_SET_ROBUST_LIST] =
         (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_GET_ROBUST_LIST] =
-    // (syscall_handle_t)sys_get_robust_list; syscall_handlers[SYS_SPLICE] =
-    // (syscall_handle_t)sys_splice; syscall_handlers[SYS_TEE] =
-    // (syscall_handle_t)sys_tee; syscall_handlers[SYS_SYNC_FILE_RANGE] =
-    // (syscall_handle_t)sys_sync_file_range; syscall_handlers[SYS_VMSPLICE] =
-    // (syscall_handle_t)sys_vmsplice; syscall_handlers[SYS_MOVE_PAGES] =
-    // (syscall_handle_t)sys_move_pages;
+    //     (syscall_handle_t)sys_get_robust_list;
+    // syscall_handlers[SYS_SPLICE] = (syscall_handle_t)sys_splice;
+    // syscall_handlers[SYS_TEE] = (syscall_handle_t)sys_tee;
+    // syscall_handlers[SYS_SYNC_FILE_RANGE] =
+    //     (syscall_handle_t)sys_sync_file_range;
+    // syscall_handlers[SYS_VMSPLICE] = (syscall_handle_t)sys_vmsplice;
+    // syscall_handlers[SYS_MOVE_PAGES] = (syscall_handle_t)sys_move_pages;
     syscall_handlers[SYS_UTIMENSAT] = (syscall_handle_t)sys_utimensat;
     syscall_handlers[SYS_EPOLL_PWAIT] = (syscall_handle_t)sys_epoll_pwait;
     syscall_handlers[SYS_SIGNALFD] = (syscall_handle_t)sys_signalfd;
@@ -481,7 +486,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_TIMERFD_SETTIME] =
         (syscall_handle_t)sys_timerfd_settime;
     // syscall_handlers[SYS_TIMERFD_GETTIME] =
-    // (syscall_handle_t)sys_timerfd_gettime;
+    //     (syscall_handle_t)sys_timerfd_gettime;
     syscall_handlers[SYS_ACCEPT4] = (syscall_handle_t)sys_accept;
     syscall_handlers[SYS_SIGNALFD4] = (syscall_handle_t)sys_signalfd4;
     syscall_handlers[SYS_EVENTFD2] = (syscall_handle_t)sys_eventfd2;
@@ -493,28 +498,32 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_PREADV] = (syscall_handle_t)sys_preadv;
     // syscall_handlers[SYS_PWRITEV] = (syscall_handle_t)sys_pwritev;
     // syscall_handlers[SYS_RT_TGSIGQUEUEINFO] =
-    // (syscall_handle_t)sys_rt_tgsigqueueinfo;
+    //     (syscall_handle_t)sys_rt_tgsigqueueinfo;
     // syscall_handlers[SYS_PERF_EVENT_OPEN] =
-    // (syscall_handle_t)sys_perf_event_open; syscall_handlers[SYS_RECVMMSG] =
-    // (syscall_handle_t)sys_recvmmsg; syscall_handlers[SYS_FANOTIFY_INIT] =
+    //     (syscall_handle_t)sys_perf_event_open;
+    // syscall_handlers[SYS_RECVMMSG] = (syscall_handle_t)sys_recvmmsg;
+    // syscall_handlers[SYS_FANOTIFY_INIT] =
     // (syscall_handle_t)sys_fanotify_init; syscall_handlers[SYS_FANOTIFY_MARK]
     // = (syscall_handle_t)sys_fanotify_mark;
     syscall_handlers[SYS_PRLIMIT64] = (syscall_handle_t)sys_prlimit64;
-    // syscall_handlers[SYS_NAME_TO_HANDLE_AT] =
-    // (syscall_handle_t)sys_name_to_handle_at;
+    // syscall_handlers[SYS_NAME_TO_HANDLE_AT]
+    // =
+    //     (syscall_handle_t)sys_name_to_handle_at;
     // syscall_handlers[SYS_OPEN_BY_HANDLE_AT] =
-    // (syscall_handle_t)sys_open_by_handle_at;
+    //     (syscall_handle_t)sys_open_by_handle_at;
     // syscall_handlers[SYS_CLOCK_ADJTIME] =
     // (syscall_handle_t)sys_clock_adjtime; syscall_handlers[SYS_SYNCFS] =
     // (syscall_handle_t)sys_syncfs; syscall_handlers[SYS_SENDMMSG] =
     // (syscall_handle_t)sys_sendmmsg; syscall_handlers[SYS_SETNS] =
-    // (syscall_handle_t)sys_setns; syscall_handlers[SYS_GETCPU] =
-    // (syscall_handle_t)sys_getcpu; syscall_handlers[SYS_PROCESS_VM_READV] =
-    // (syscall_handle_t)sys_process_vm_readv;
+    // (syscall_handle_t)sys_setns;
+    syscall_handlers[SYS_GETCPU] = (syscall_handle_t)sys_getcpu;
+    // syscall_handlers[SYS_PROCESS_VM_READV] =
+    //     (syscall_handle_t)sys_process_vm_readv;
     // syscall_handlers[SYS_PROCESS_VM_WRITEV] =
-    // (syscall_handle_t)sys_process_vm_writev; syscall_handlers[SYS_KCMP] =
-    // (syscall_handle_t)sys_kcmp; syscall_handlers[SYS_FINIT_MODULE] =
-    // (syscall_handle_t)sys_finit_module; syscall_handlers[SYS_SCHED_SETATTR] =
+    //     (syscall_handle_t)sys_process_vm_writev;
+    // syscall_handlers[SYS_KCMP] = (syscall_handle_t)sys_kcmp;
+    // syscall_handlers[SYS_FINIT_MODULE] = (syscall_handle_t)sys_finit_module;
+    // syscall_handlers[SYS_SCHED_SETATTR] =
     // (syscall_handle_t)sys_sched_setattr; syscall_handlers[SYS_SCHED_GETATTR]
     // = (syscall_handle_t)sys_sched_getattr; syscall_handlers[SYS_RENAMEAT2] =
     // (syscall_handle_t)sys_renameat2; syscall_handlers[SYS_SECCOMP] =
@@ -522,10 +531,10 @@ void syscall_handler_init() {
     syscall_handlers[SYS_GETRANDOM] = (syscall_handle_t)sys_getrandom;
     syscall_handlers[SYS_MEMFD_CREATE] = (syscall_handle_t)sys_memfd_create;
     // syscall_handlers[SYS_KEXEC_FILE_LOAD] =
-    // (syscall_handle_t)sys_kexec_file_load; syscall_handlers[SYS_BPF] =
-    // (syscall_handle_t)sys_bpf; syscall_handlers[SYS_EXECVEAT] =
-    // (syscall_handle_t)sys_execveat; syscall_handlers[SYS_USERFAULTFD] =
-    // (syscall_handle_t)sys_userfaultfd;
+    //     (syscall_handle_t)sys_kexec_file_load;
+    // syscall_handlers[SYS_BPF] = (syscall_handle_t)sys_bpf;
+    // syscall_handlers[SYS_EXECVEAT] = (syscall_handle_t)sys_execveat;
+    // syscall_handlers[SYS_USERFAULTFD] = (syscall_handle_t)sys_userfaultfd;
     syscall_handlers[SYS_MEMBARRIER] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_MLOCK2] = (syscall_handle_t)sys_mlock2;
     syscall_handlers[SYS_COPY_FILE_RANGE] =
@@ -541,15 +550,15 @@ void syscall_handler_init() {
     // (syscall_handle_t)sys_io_pgetevents;
     syscall_handlers[SYS_RSEQ] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_PIDFD_SEND_SIGNAL] =
-    // (syscall_handle_t)sys_pidfd_send_signal;
+    //     (syscall_handle_t)sys_pidfd_send_signal;
     // syscall_handlers[SYS_IO_URING_SETUP] =
     // (syscall_handle_t)sys_io_uring_setup;
     // syscall_handlers[SYS_IO_URING_ENTER] =
     // (syscall_handle_t)sys_io_uring_enter;
     // syscall_handlers[SYS_IO_URING_REGISTER] =
-    // (syscall_handle_t)sys_io_uring_register; syscall_handlers[SYS_OPEN_TREE]
-    // = (syscall_handle_t)sys_open_tree; syscall_handlers[SYS_MOVE_MOUNT] =
-    // (syscall_handle_t)sys_move_mount;
+    //     (syscall_handle_t)sys_io_uring_register;
+    // syscall_handlers[SYS_OPEN_TREE] = (syscall_handle_t)sys_open_tree;
+    // syscall_handlers[SYS_MOVE_MOUNT] = (syscall_handle_t)sys_move_mount;
     syscall_handlers[SYS_FSOPEN] = (syscall_handle_t)sys_fsopen;
     // syscall_handlers[SYS_FSCONFIG] = (syscall_handle_t)sys_fsconfig;
     // syscall_handlers[SYS_FSMOUNT] = (syscall_handle_t)sys_fsmount;
@@ -561,21 +570,22 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_PIDFD_GETFD] = (syscall_handle_t)sys_pidfd_getfd;
     syscall_handlers[SYS_FACCESSAT2] = (syscall_handle_t)sys_faccessat2;
     // syscall_handlers[SYS_PROCESS_MADVISE] =
-    // (syscall_handle_t)sys_process_madvise; syscall_handlers[SYS_EPOLL_PWAIT2]
-    // = (syscall_handle_t)sys_epoll_pwait2; syscall_handlers[SYS_MOUNT_SETATTR]
-    // = (syscall_handle_t)sys_mount_setattr;
+    //     (syscall_handle_t)sys_process_madvise;
+    // syscall_handlers[SYS_EPOLL_PWAIT2] = (syscall_handle_t)sys_epoll_pwait2;
+    // syscall_handlers[SYS_MOUNT_SETATTR] =
+    // (syscall_handle_t)sys_mount_setattr;
     // syscall_handlers[SYS_LANDLOCK_CREATE_RULESET] =
-    // (syscall_handle_t)sys_landlock_create_ruleset;
+    //     (syscall_handle_t)sys_landlock_create_ruleset;
     // syscall_handlers[SYS_LANDLOCK_ADD_RULE] =
-    // (syscall_handle_t)sys_landlock_add_rule;
+    //     (syscall_handle_t)sys_landlock_add_rule;
     // syscall_handlers[SYS_LANDLOCK_RESTRICT_SELF] =
-    // (syscall_handle_t)sys_landlock_restrict_self;
+    //     (syscall_handle_t)sys_landlock_restrict_self;
     // syscall_handlers[SYS_MEMFD_SECRET] = (syscall_handle_t)sys_memfd_secret;
     // syscall_handlers[SYS_PROCESS_MRELEASE] =
-    // (syscall_handle_t)sys_process_mrelease; syscall_handlers[SYS_FUTEX_WAITV]
-    // = (syscall_handle_t)sys_futex_waitv;
+    //     (syscall_handle_t)sys_process_mrelease;
+    // syscall_handlers[SYS_FUTEX_WAITV] = (syscall_handle_t)sys_futex_waitv;
     // syscall_handlers[SYS_SET_MEMPOLICY_HOME_NODE] =
-    // (syscall_handle_t)sys_set_mempolicy_home_node;
+    //     (syscall_handle_t)sys_set_mempolicy_home_node;
     // syscall_handlers[SYS_CACHESTAT] = (syscall_handle_t)sys_cachestat;
     // syscall_handlers[SYS_FCHMODAT2] = (syscall_handle_t)sys_fchmodat2;
 }

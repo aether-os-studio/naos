@@ -19,6 +19,9 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->mm->page_table_addr = page_table_addr;
     context->mm->ref_count = 1;
     memset(&context->mm->task_vma_mgr, 0, sizeof(vma_manager_t));
+    context->mm->brk_start = USER_BRK_START;
+    context->mm->brk_current = context->mm->brk_start;
+    context->mm->brk_end = USER_BRK_END;
     context->ctx = (struct pt_regs *)(stack - 8) - 1;
     context->ctx->rip = entry;
     context->ctx->rsp = stack - 8;

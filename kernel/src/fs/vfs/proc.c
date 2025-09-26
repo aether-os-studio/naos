@@ -90,58 +90,58 @@ char *proc_gen_stat_file(task_t *task, size_t *content_len) {
         "%d (%s) %c %d %d %d %d %d %u %lu %lu %lu %lu %lu %lu %ld %ld %ld %ld "
         "%ld %ld %llu %lu %ld %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu "
         "%lu %d %d %u %u %llu %lu %ld %lu %lu %lu %lu %lu %lu %lu %d\n",
-        task->pid,        // pid
-        task->name,       // name
-        'R',              // state
-        task->ppid,       // ppid
-        0,                // pgrp
-        0,                // session
-        0,                // tty_nr
-        0,                // tpgid
-        0,                // flags
-        0,                // minflt
-        0,                // cminflt
-        0,                // majflt
-        0,                // cmajflt
-        0,                // utime
-        0,                // stime
-        0,                // cutime
-        0,                // cstime
-        0,                // priority
-        0,                // nice
-        1,                // num_threads
-        0,                // itrealvalue
-        0,                // starttime
-        0,                // vsize
-        0,                // rss
-        0,                // rsslim
-        task->load_start, // startcode
-        task->load_end,   // endcode
-        USER_STACK_START, // startstack
-        0,                // kstkesp
-        0,                // ksteip
-        task->signal,     // signal
-        task->blocked,    // blocked
-        0,                // sigignore
-        0,                // sigcatch
-        0,                // wchan
-        0,                // nswap
-        0,                // cnswap
-        0,                // exit_signal
-        task->cpu_id,     // processor
-        0,                // rt_priority
-        0,                // policy
-        0,                // delayacct_blkio_ticks
-        0,                // guest_time
-        0,                // cguest_time
-        0,                // start_data
-        0,                // end_data
-        0,                // start_brk
-        0,                // arg_start
-        0,                // arg_end
-        0,                // env_start
-        0,                // env_end
-        task->state       // exit_code
+        task->pid,                         // pid
+        task->name,                        // name
+        'R',                               // state
+        task->ppid,                        // ppid
+        0,                                 // pgrp
+        0,                                 // session
+        0,                                 // tty_nr
+        0,                                 // tpgid
+        0,                                 // flags
+        0,                                 // minflt
+        0,                                 // cminflt
+        0,                                 // majflt
+        0,                                 // cmajflt
+        0,                                 // utime
+        0,                                 // stime
+        0,                                 // cutime
+        0,                                 // cstime
+        0,                                 // priority
+        0,                                 // nice
+        1,                                 // num_threads
+        0,                                 // itrealvalue
+        0,                                 // starttime
+        0,                                 // vsize
+        0,                                 // rss
+        0,                                 // rsslim
+        task->load_start,                  // startcode
+        task->load_end,                    // endcode
+        USER_STACK_START,                  // startstack
+        0,                                 // kstkesp
+        0,                                 // ksteip
+        task->signal,                      // signal
+        task->blocked,                     // blocked
+        0,                                 // sigignore
+        0,                                 // sigcatch
+        0,                                 // wchan
+        0,                                 // nswap
+        0,                                 // cnswap
+        0,                                 // exit_signal
+        task->cpu_id,                      // processor
+        0,                                 // rt_priority
+        0,                                 // policy
+        0,                                 // delayacct_blkio_ticks
+        0,                                 // guest_time
+        0,                                 // cguest_time
+        0,                                 // start_data
+        0,                                 // end_data
+        task->arch_context->mm->brk_start, // start_brk
+        0,                                 // arg_start
+        0,                                 // arg_end
+        0,                                 // env_start
+        0,                                 // env_end
+        task->state                        // exit_code
     );
 
     *content_len = len;
@@ -182,7 +182,7 @@ ssize_t procfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         memcpy(addr, content + offset, to_copy);
         free(content);
         ((char *)addr)[to_copy] = '\0';
-        return to_copy + 1;
+        return to_copy;
     } else if (!strcmp(handle->name, "self/stat")) {
         size_t content_len = 0;
         char *content = proc_gen_stat_file(task, &content_len);
@@ -195,7 +195,20 @@ ssize_t procfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         memcpy(addr, content + offset, to_copy);
         free(content);
         ((char *)addr)[to_copy] = '\0';
-        return to_copy + 1;
+        return to_copy;
+    } else if (!strcmp(handle->name, "cpuinfo")) {
+        char *content = generate_cpuinfo_buffer_dynamic();
+        size_t content_len = strlen(content);
+        if (offset >= content_len) {
+            free(content);
+            return 0;
+        }
+        content_len = MIN(content_len, offset + size);
+        size_t to_copy = MIN(content_len, size);
+        memcpy(addr, content + offset, to_copy);
+        free(content);
+        ((char *)addr)[to_copy] = '\0';
+        return to_copy;
     } else if (!strcmp(handle->name, "filesystems")) {
         if (offset < strlen(filesystems_content)) {
             memcpy(addr, filesystems_content + offset, size);
@@ -289,6 +302,14 @@ void proc_init() {
     procfs_root->type = file_dir;
     procfs_root->mode = 0644;
     procfs_root->fsid = procfs_id;
+
+    vfs_node_t procfs_cpuinfo = vfs_node_alloc(procfs_root, "cpuinfo");
+    procfs_cpuinfo->type = file_none;
+    procfs_cpuinfo->mode = 0644;
+    proc_handle_t *procfs_cpuinfo_handle = malloc(sizeof(proc_handle_t));
+    procfs_cpuinfo->handle = procfs_cpuinfo_handle;
+    procfs_cpuinfo_handle->task = NULL;
+    sprintf(procfs_cpuinfo_handle->name, "cpuinfo");
 
     vfs_node_t procfs_self = vfs_node_alloc(procfs_root, "self");
     procfs_self->type = file_dir;
