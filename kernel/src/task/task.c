@@ -649,8 +649,11 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
             (uint64_t)virt_to_phys(get_kernel_page_dir())) {
         task_mm_info_t *new_mm =
             clone_page_table(current_task->arch_context->mm, 0);
-        // free_page_table(current_task->arch_context->mm);
-        current_task->arch_context->mm->ref_count--;
+        if (current_task->arch_context->mm->page_table_addr ==
+            (uint64_t)virt_to_phys(get_kernel_page_dir()))
+            current_task->arch_context->mm->ref_count--;
+        else
+            free_page_table(current_task->arch_context->mm);
         current_task->arch_context->mm = new_mm;
     }
 

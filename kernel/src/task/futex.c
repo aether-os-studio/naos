@@ -4,12 +4,13 @@
 spinlock_t futex_lock = {0};
 struct futex_wait futex_wait_list = {NULL, NULL, NULL, 0};
 
-uint64_t sys_futex_wait(uint64_t addr, const struct timespec *timeout) {
+uint64_t sys_futex_wait(uint64_t addr, const struct timespec *timeout,
+                        uint32_t bitset) {
     struct futex_wait *wait = malloc(sizeof(struct futex_wait));
     wait->uaddr = (void *)addr;
     wait->task = current_task;
     wait->next = NULL;
-    wait->bitset = 0xFFFFFFFF;
+    wait->bitset = bitset;
     struct futex_wait *curr = &futex_wait_list;
     while (curr && curr->next)
         curr = curr->next;
@@ -27,7 +28,7 @@ uint64_t sys_futex_wait(uint64_t addr, const struct timespec *timeout) {
     return 0;
 }
 
-uint64_t sys_futex_wake(uint64_t addr, int val) {
+uint64_t sys_futex_wake(uint64_t addr, int val, uint32_t bitset) {
     spin_lock(&futex_lock);
 
     struct futex_wait *curr = &futex_wait_list;
@@ -36,7 +37,8 @@ uint64_t sys_futex_wake(uint64_t addr, int val) {
     while (curr) {
         bool found = false;
 
-        if (curr->uaddr && curr->uaddr == (void *)addr && ++count <= val) {
+        if (curr->uaddr && curr->uaddr == (void *)addr &&
+            (curr->bitset & bitset) && ++count <= val) {
             task_unblock(curr->task, EOK);
             if (prev) {
                 prev->next = curr->next;
@@ -61,7 +63,6 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
     switch (op) {
     case FUTEX_WAIT_PRIVATE:
     case FUTEX_WAIT: {
-
         spin_lock(&futex_lock);
 
         int current = *(int *)uaddr;
@@ -72,13 +73,33 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
 
         return sys_futex_wait(
             translate_address(get_current_page_dir(true), (uint64_t)uaddr),
-            timeout);
+            timeout, 0xFFFFFFFF);
     }
     case FUTEX_WAKE_PRIVATE:
     case FUTEX_WAKE: {
         return sys_futex_wake(
+            translate_address(get_current_page_dir(true), (uint64_t)uaddr), val,
+            0xFFFFFFFF);
+    }
+    case FUTEX_WAIT_BITSET_PRIVATE:
+    case FUTEX_WAIT_BITSET: {
+        spin_lock(&futex_lock);
+
+        int current = *(int *)uaddr;
+        if (current != val) {
+            spin_unlock(&futex_lock);
+            return -EWOULDBLOCK;
+        }
+
+        return sys_futex_wait(
             translate_address(get_current_page_dir(true), (uint64_t)uaddr),
-            val);
+            timeout, val3);
+    }
+    case FUTEX_WAKE_BITSET_PRIVATE:
+    case FUTEX_WAKE_BITSET: {
+        return sys_futex_wake(
+            translate_address(get_current_page_dir(true), (uint64_t)uaddr), val,
+            val3);
     }
     case FUTEX_LOCK_PI:
     case FUTEX_LOCK_PI_PRIVATE: {
