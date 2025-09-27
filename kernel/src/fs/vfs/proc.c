@@ -405,6 +405,8 @@ void procfs_on_exit_task(task_t *task) {
     vfs_node_t node = vfs_open(name);
     if (node && node->parent) {
         list_delete(node->parent->child, node);
+        if (node->handle)
+            free(node->handle);
         vfs_free(node);
     }
 
