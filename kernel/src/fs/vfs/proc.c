@@ -231,7 +231,7 @@ ssize_t procfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         }
         len = MIN(len, offset + size);
         size_t to_copy = MIN(len, size);
-        memcpy(addr, executable_cmdline_request.response->cmdline, len);
+        memcpy(addr, executable_cmdline_request.response->cmdline, to_copy);
         return len;
     } else if (!strcmp(handle->name, "proc_cmdline")) {
         ssize_t len = strlen(task->cmdline);
@@ -242,7 +242,7 @@ ssize_t procfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         }
         len = MIN(len, offset + size);
         size_t to_copy = MIN(len, size);
-        memcpy(addr, task->cmdline, len);
+        memcpy(addr, task->cmdline, to_copy);
         return len;
     }
 
