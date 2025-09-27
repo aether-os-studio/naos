@@ -1,5 +1,6 @@
 #include <arch/arch.h>
 #include <task/task.h>
+#include <task/futex.h>
 #include <task/eevdf.h>
 #include <drivers/kernel_logger.h>
 #include <fs/vfs/dev.h>
@@ -1019,6 +1020,9 @@ void task_unblock(task_t *task, int reason) {
     }
 }
 
+extern spinlock_t futex_lock;
+extern struct futex_wait futex_wait_list;
+
 void task_exit_inner(task_t *task, int64_t code) {
     spin_lock(&task_queue_lock);
 
@@ -1026,6 +1030,31 @@ void task_exit_inner(task_t *task, int64_t code) {
 
     task->current_state = TASK_DIED;
     task->state = TASK_DIED;
+
+    spin_lock(&futex_lock);
+
+    struct futex_wait *curr = &futex_wait_list;
+    struct futex_wait *prev = NULL;
+    int count = 0;
+    while (curr) {
+        bool found = false;
+
+        if (curr->task == task) {
+            if (prev) {
+                prev->next = curr->next;
+            }
+            free(curr);
+            found = true;
+        }
+        if (found) {
+            curr = prev->next;
+        } else {
+            prev = curr;
+            curr = curr->next;
+        }
+    }
+
+    spin_unlock(&futex_lock);
 
     task->status = (uint64_t)code;
 
@@ -1082,38 +1111,25 @@ uint64_t task_exit(int64_t code) {
 
     can_schedule = false;
 
-    // spin_lock(&task_queue_lock);
-    // uint64_t continue_ptr_count = 0;
-    // for (int i = 0; i < MAX_TASK_NUM; i++)
-    // {
-    //     if (!tasks[i])
-    //     {
-    //         continue_ptr_count++;
-    //         if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
-    //             break;
-    //         continue;
-    //     }
-    //     continue_ptr_count = 0;
-    //     if ((tasks[i]->ppid != tasks[i]->pid) && (tasks[i]->ppid ==
-    //     current_task->pid))
-    //     {
-    //         task_exit_inner(tasks[i], SIGCHLD);
-
-    //         free_page_table(tasks[i]->arch_context->mm);
-
-    //         free(tasks[i]->arch_context);
-
-    //         free_frames_bytes((void *)(tasks[i]->kernel_stack - STACK_SIZE),
-    //         STACK_SIZE); free_frames_bytes((void *)(tasks[i]->syscall_stack -
-    //         STACK_SIZE), STACK_SIZE); free_frames_bytes((void
-    //         *)(tasks[i]->signal_syscall_stack - STACK_SIZE), STACK_SIZE);
-
-    //         free(tasks[i]);
-
-    //         tasks[i] = NULL;
-    //     }
-    // }
-    // spin_unlock(&task_queue_lock);
+    spin_lock(&task_queue_lock);
+    uint64_t continue_ptr_count = 0;
+    for (int i = 0; i < MAX_TASK_NUM; i++) {
+        if (!tasks[i]) {
+            continue_ptr_count++;
+            if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
+                break;
+            continue;
+        }
+        continue_ptr_count = 0;
+        if ((tasks[i]->ppid != tasks[i]->pid) &&
+            (tasks[i]->ppid == current_task->pid)) {
+            tasks[i]->signal |= SIGMASK(SIGKILL);
+            if (tasks[i]->state == TASK_BLOCKING ||
+                tasks[i]->state == TASK_READING_STDIO)
+                task_unblock(tasks[i], EOK);
+        }
+    }
+    spin_unlock(&task_queue_lock);
 
     task_exit_inner(current_task, code);
 
