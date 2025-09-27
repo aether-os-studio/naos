@@ -995,9 +995,11 @@ int task_block(task_t *task, task_state_t state, int timeout_ns) {
     else
         task->force_wakeup_ns = UINT64_MAX;
 
-    remove_eevdf_entity(task, schedulers[task->cpu_id]);
     struct sched_entity *entity = task->sched_info;
-    entity->on_rq = false;
+    if (entity->on_rq) {
+        remove_eevdf_entity(task, schedulers[task->cpu_id]);
+        entity->on_rq = false;
+    }
 
     if (current_task == task &&
         (state == TASK_BLOCKING || state == TASK_READING_STDIO)) {
@@ -1013,10 +1015,11 @@ void task_unblock(task_t *task, int reason) {
 
     struct sched_entity *entity = task->sched_info;
     if (!entity->on_rq) {
-        free(entity);
-        task->sched_info = NULL;
-        add_eevdf_entity_with_prio(task, task->priority,
-                                   schedulers[task->cpu_id]);
+        entity->on_rq = true;
+        spin_lock(&schedulers[task->cpu_id]->queue_lock);
+        insert_sched_entity(schedulers[task->cpu_id]->root, entity);
+        spin_unlock(&schedulers[task->cpu_id]->queue_lock);
+        schedulers[task->cpu_id]->task_count++;
     }
 }
 
