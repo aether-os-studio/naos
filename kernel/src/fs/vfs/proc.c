@@ -165,9 +165,16 @@ ssize_t procfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     if (!strcmp(handle->name, "self/exe")) {
         if (task->exec_node) {
             char *fullpath = vfs_get_fullpath(task->exec_node);
-            strncpy(addr, fullpath, size);
+            size_t content_len = strlen(fullpath);
+            if (offset >= content_len) {
+                free(fullpath);
+                return 0;
+            }
+            content_len = MIN(content_len, offset + size);
+            size_t to_copy = MIN(content_len, size);
+            memcpy(addr, fullpath + offset, to_copy);
             free(fullpath);
-            return strlen(addr);
+            ((char *)addr)[to_copy] = '\0';
         } else
             return 0;
     } else if (!strcmp(handle->name, "self/maps")) {
@@ -219,20 +226,23 @@ ssize_t procfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         ssize_t len = strlen(executable_cmdline_request.response->cmdline);
         if (len == 0)
             return 0;
-        len = (len + 1) > size ? size : len + 1;
+        if (offset >= len) {
+            return 0;
+        }
+        len = MIN(len, offset + size);
+        size_t to_copy = MIN(len, size);
         memcpy(addr, executable_cmdline_request.response->cmdline, len);
         return len;
     } else if (!strcmp(handle->name, "proc_cmdline")) {
         ssize_t len = strlen(task->cmdline);
         if (len == 0)
             return 0;
-        len = (len + 1) > size ? size : len + 1;
+        if (offset >= len) {
+            return 0;
+        }
+        len = MIN(len, offset + size);
+        size_t to_copy = MIN(len, size);
         memcpy(addr, task->cmdline, len);
-        return len;
-    } else if (!strcmp(handle->name, "dri_name")) {
-        char name[] = "naos_drm";
-        int len = strlen(name);
-        memcpy(addr, name, len);
         return len;
     }
 
