@@ -51,7 +51,7 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
     node->rw_hint = 0;
     node->deleted = false;
     if (parent)
-        list_prepend(parent->child, node);
+        list_append(parent->child, node);
     return node;
 }
 
@@ -555,7 +555,7 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
                 list_foreach(target->child, i) {
                     vfs_node_t child_node = (vfs_node_t)i->data;
                     if (!vfs_child_find(current, child_node->name)) {
-                        list_prepend(current->child, child_node);
+                        list_append(current->child, child_node);
                         child_node->refcount++;
                     }
                 }
@@ -934,9 +934,26 @@ int vfs_rename(vfs_node_t node, const char *new) {
         return ret;
     }
 
-    char *filename = strrchr(new, '/') + 1;
-    if (filename == (char *)1)
-        filename = (const char *)new;
+    char *filename;
+    char *last_slash = strrchr(new, '/');
+
+    if (last_slash == NULL) {
+        filename = (char *)new;
+    } else {
+        filename = last_slash + 1;
+
+        if (*filename == '\0') {
+            *last_slash = '\0';
+            char *prev_slash = strrchr(new, '/');
+            *last_slash = '/';
+
+            if (prev_slash == NULL) {
+                filename = (char *)new;
+            } else {
+                filename = prev_slash + 1;
+            }
+        }
+    }
 
     char buf[2048];
     memset(buf, 0, sizeof(buf));
@@ -948,7 +965,8 @@ int vfs_rename(vfs_node_t node, const char *new) {
         list_delete(node->parent->child, node);
     vfs_mkdir(buf);
     node->parent = vfs_open(buf);
-    list_prepend(node->parent->child, node);
+    if (node->parent)
+        list_append(node->parent->child, node);
     free(node->name);
     node->name = strdup(filename);
 
