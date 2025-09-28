@@ -8,13 +8,6 @@ vfs_node_t sysfs_root = NULL;
 
 extern uint32_t device_number;
 
-#define PCI_CLASS_DISPLAY 0x03
-#define PCI_SUBCLASS_DISPLAY_VGA 0x00
-
-#define IS_VGA(c)                                                              \
-    (((c) & 0x00ffff00) ==                                                     \
-     ((PCI_CLASS_DISPLAY << 16) | (PCI_SUBCLASS_DISPLAY_VGA << 8)))
-
 void sysfs_init() {
     vfs_mkdir("/sys");
     sysfs_root = vfs_open("/sys");

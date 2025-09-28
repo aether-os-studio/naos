@@ -3,16 +3,16 @@
 
 uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
                    void *data) {
-    // vfs_node_t dir = vfs_open((const char *)dir_name);
-    // if (!dir)
-    // {
-    //     return (uint64_t)-ENOENT;
-    // }
+    vfs_node_t dir = vfs_open((const char *)dir_name);
+    if (!dir) {
+        return (uint64_t)-ENOENT;
+    }
 
-    // if (!vfs_mount((const char *)dev_name, dir, (const char *)type))
-    // {
-    //     return -ENOENT;
-    // }
+    vfs_node_t dev = vfs_open((const char *)dev_name);
+
+    if (vfs_mount(dev, dir, (const char *)type)) {
+        return -ENOENT;
+    }
 
     return 0;
 }
@@ -58,7 +58,8 @@ uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode) {
     current_task->fd_info->fds[i]->flags = flags;
     node->refcount++;
 
-    if (node->type & file_none && node->size && node->size <= ARC_CACHE_MAX_CACHE_SIZE) {
+    if (node->type & file_none && node->size &&
+        node->size <= ARC_CACHE_MAX_CACHE_SIZE) {
         void *page_cache_addr = alloc_frames_bytes(node->size);
         vfs_read(node, page_cache_addr, 0, node->size);
         char *key = vfs_get_fullpath(node);
