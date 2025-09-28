@@ -759,23 +759,8 @@ int vfs_unmount(const char *path) {
         return -1;
     if (node->fsid == 0)
         return -1;
-    if (node->parent) {
-        vfs_node_t cur = node;
-        node = node->parent;
-        if (cur->root == cur) {
-            vfs_free_child(cur);
-            callbackof(cur, unmount)(cur->handle);
-            cur->fsid = node->fsid; // 交给上级
-            cur->root = node->root;
-            cur->handle = NULL;
-            cur->child = NULL;
-            // cur->type   = file_none;
-            if (cur->fsid)
-                do_update(cur);
-            return 0;
-        }
-    }
-    return -1;
+    callbackof(node, unmount)(node);
+    return 0;
 }
 
 int tty_mode = KD_TEXT;

@@ -45,7 +45,7 @@ typedef struct fd {
 } fd_t;
 
 typedef int (*vfs_mount_t)(vfs_node_t dev, vfs_node_t node);
-typedef void (*vfs_unmount_t)(void *root);
+typedef void (*vfs_unmount_t)(vfs_node_t node);
 
 /**
  *\brief 打开一个文件

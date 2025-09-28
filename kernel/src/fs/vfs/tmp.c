@@ -20,7 +20,7 @@ int tmp_mount(vfs_node_t dev, vfs_node_t node) {
     return 0;
 }
 
-void tmp_unmount(void *root) {}
+void tmp_unmount(vfs_node_t root) {}
 
 void tmp_open(void *parent, const char *name, vfs_node_t node) {
     node->handle = malloc(sizeof(struct tmpfs_node));

@@ -17,6 +17,11 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
     return 0;
 }
 
+uint64_t sys_umount2(const char *target, uint64_t flags) {
+    vfs_unmount(target);
+    return 0;
+}
+
 uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode) {
     uint64_t i = 0;
     for (i = 3; i < MAX_FD_NUM; i++) {

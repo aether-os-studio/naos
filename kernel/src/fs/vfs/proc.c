@@ -84,7 +84,7 @@ char *proc_gen_maps_file(task_t *task, size_t *content_len) {
 }
 
 char *proc_gen_stat_file(task_t *task, size_t *content_len) {
-    char *buffer = malloc(DEFAULT_PAGE_SIZE);
+    char *buffer = malloc(DEFAULT_PAGE_SIZE * 4);
     int len = sprintf(
         buffer,
         "%d (%s) %c %d %d %d %d %d %u %lu %lu %lu %lu %lu %lu %ld %ld %ld %ld "
@@ -247,8 +247,10 @@ ssize_t procfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     return size;
 }
 
+vfs_node_t fake_procfs_root = NULL;
 vfs_node_t procfs_root = NULL;
 int procfs_id = 0;
+static int mount_node_old_fsid = 0;
 
 static int dummy() { return 0; }
 
@@ -271,21 +273,90 @@ ssize_t procfs_readlink(vfs_node_t node, void *addr, size_t offset,
 }
 
 int procfs_mount(vfs_node_t dev, vfs_node_t node) {
-    list_foreach(procfs_root->child, i) {
-        vfs_node_t child = (vfs_node_t)i->data;
-        list_delete(procfs_root->child, child);
-        list_prepend(node->child, child);
-        child->parent = node;
-    }
-
+    if (procfs_root != fake_procfs_root)
+        return -EALREADY;
     if (procfs_root == node)
         return -EALREADY;
 
-    procfs_root = node;
+    spin_lock(&procfs_oplock);
 
-    procfs_root->type = file_dir;
-    procfs_root->mode = 0644;
-    procfs_root->fsid = procfs_id;
+    list_foreach(fake_procfs_root->child, i) {
+        vfs_node_t child = (vfs_node_t)i->data;
+        list_delete(fake_procfs_root->child, child);
+        list_append(node->child, child);
+        child->parent = node;
+    }
+
+    mount_node_old_fsid = node->fsid;
+
+    procfs_root = node;
+    node->fsid = procfs_id;
+
+    spin_unlock(&procfs_oplock);
+
+    return 0;
+}
+
+void procfs_unmount(vfs_node_t root) {
+    if (root == fake_procfs_root)
+        return;
+
+    if (root != procfs_root)
+        return;
+
+    spin_lock(&procfs_oplock);
+
+    list_foreach(root->child, i) {
+        vfs_node_t child = (vfs_node_t)i->data;
+        list_delete(root->child, child);
+        list_append(fake_procfs_root->child, child);
+        child->parent = fake_procfs_root;
+    }
+
+    root->fsid = mount_node_old_fsid;
+
+    procfs_root = fake_procfs_root;
+
+    spin_unlock(&procfs_oplock);
+}
+
+static struct vfs_callback callbacks = {
+    .open = (vfs_open_t)procfs_open,
+    .close = (vfs_close_t)dummy,
+    .read = procfs_read,
+    .write = (vfs_write_t)procfs_write,
+    .readlink = (vfs_readlink_t)procfs_readlink,
+    .mkdir = (vfs_mk_t)dummy,
+    .mkfile = (vfs_mk_t)dummy,
+    .link = (vfs_mk_t)dummy,
+    .symlink = (vfs_mk_t)dummy,
+    .mknod = (vfs_mknod_t)dummy,
+    .chmod = (vfs_chmod_t)dummy,
+    .delete = (vfs_del_t)dummy,
+    .rename = (vfs_rename_t)dummy,
+    .stat = (vfs_stat_t)dummy,
+    .ioctl = (vfs_ioctl_t)dummy,
+    .map = (vfs_mapfile_t)dummy,
+    .poll = (vfs_poll_t)dummy,
+    .mount = (vfs_mount_t)procfs_mount,
+    .unmount = (vfs_unmount_t)procfs_unmount,
+    .resize = (vfs_resize_t)dummy,
+    .dup = vfs_generic_dup,
+};
+
+fs_t procfs = {
+    .name = "proc",
+    .magic = 0x9fa0,
+    .callback = &callbacks,
+};
+
+void proc_init() {
+    procfs_id = vfs_regist(&procfs);
+
+    fake_procfs_root = vfs_node_alloc(NULL, "fakeproc");
+    fake_procfs_root->fsid = procfs_id;
+
+    procfs_root = fake_procfs_root;
 
     vfs_node_t procfs_cpuinfo = vfs_node_alloc(procfs_root, "cpuinfo");
     procfs_cpuinfo->type = file_none;
@@ -339,45 +410,6 @@ int procfs_mount(vfs_node_t dev, vfs_node_t node) {
     cmdline->handle = handle;
     handle->task = NULL;
     sprintf(handle->name, "cmdline");
-
-    return 0;
-}
-
-static struct vfs_callback callbacks = {
-    .open = (vfs_open_t)procfs_open,
-    .close = (vfs_close_t)dummy,
-    .read = procfs_read,
-    .write = (vfs_write_t)procfs_write,
-    .readlink = (vfs_readlink_t)procfs_readlink,
-    .mkdir = (vfs_mk_t)dummy,
-    .mkfile = (vfs_mk_t)dummy,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)dummy,
-    .mknod = (vfs_mknod_t)dummy,
-    .chmod = (vfs_chmod_t)dummy,
-    .delete = (vfs_del_t)dummy,
-    .rename = (vfs_rename_t)dummy,
-    .stat = (vfs_stat_t)dummy,
-    .ioctl = (vfs_ioctl_t)dummy,
-    .map = (vfs_mapfile_t)dummy,
-    .poll = (vfs_poll_t)dummy,
-    .mount = (vfs_mount_t)procfs_mount,
-    .unmount = (vfs_unmount_t)dummy,
-    .resize = (vfs_resize_t)dummy,
-    .dup = vfs_generic_dup,
-};
-
-fs_t procfs = {
-    .name = "proc",
-    .magic = 0x9fa0,
-    .callback = &callbacks,
-};
-
-void proc_init() {
-    procfs_id = vfs_regist(&procfs);
-
-    procfs_root = vfs_node_alloc(NULL, "proc");
-    procfs_root->fsid = procfs_id;
 }
 
 void procfs_on_new_task(task_t *task) {
@@ -404,12 +436,14 @@ void procfs_on_new_task(task_t *task) {
 void procfs_on_exit_task(task_t *task) {
     spin_lock(&procfs_oplock);
 
-    char name[6 + MAX_PID_NAME_LEN];
+    char name[6 + MAX_PID_NAME_LEN + 1];
+    memset(name, 0, sizeof(name));
     sprintf(name, "/proc/%d", task->pid);
 
     vfs_node_t node = vfs_open(name);
-    if (node && node->parent) {
-        list_delete(node->parent->child, node);
+    if (node) {
+        list_delete(procfs_root->child, node);
+        node->parent = NULL;
         if (node->handle)
             free(node->handle);
         vfs_free(node);

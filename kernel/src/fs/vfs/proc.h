@@ -11,7 +11,7 @@ typedef struct proc_handle {
 
 ssize_t procfs_read(fd_t *file, void *addr, size_t offset, size_t size);
 
-#define MAX_PID_NAME_LEN 4
+#define MAX_PID_NAME_LEN 16
 
 void proc_init();
 

@@ -47,6 +47,7 @@ struct stat {
 
 uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
                    void *data);
+uint64_t sys_umount2(const char *target, uint64_t flags);
 
 uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode);
 uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags,
