@@ -360,6 +360,8 @@ typedef struct procfs_self_handle {
     vfs_node_t self;
 } procfs_self_handle_t;
 
+vfs_node_t self_nodes_root = NULL;
+
 void procfs_self_open(void *parent, const char *name, vfs_node_t node) {
     procfs_self_handle_t *handle = malloc(sizeof(procfs_self_handle_t));
     handle->self = node;
@@ -370,6 +372,21 @@ void procfs_self_open(void *parent, const char *name, vfs_node_t node) {
     new_self_node->mode = 0644;
     new_self_node->fsid = procfs_self_id;
     list_delete(node->parent->child, node);
+
+    list_foreach(self_nodes_root->child, i) {
+        vfs_node_t self_node = (vfs_node_t)i->data;
+        if (self_node->deleted) {
+            list_delete(self_nodes_root->child, self_node);
+            self_node->handle = NULL;
+            char *key = vfs_get_fullpath(self_node);
+            arc_cache_delete(global_page_cache, key);
+            free(key);
+            free(self_node->name);
+            free(self_node);
+        }
+    }
+
+    list_append(self_nodes_root->child, new_self_node);
 }
 
 bool procfs_self_close(void *current) {
@@ -460,6 +477,10 @@ void proc_init() {
 
     procfs_root = fake_procfs_root;
 
+    self_nodes_root = vfs_node_alloc(NULL, "selfnodesroot");
+    self_nodes_root->type = file_dir;
+    self_nodes_root->mode = 0644;
+
     vfs_node_t procfs_cpuinfo = vfs_node_alloc(procfs_root, "cpuinfo");
     procfs_cpuinfo->type = file_none;
     procfs_cpuinfo->mode = 0644;
@@ -481,6 +502,8 @@ void proc_init() {
     procfs_self->mode = 0644;
     procfs_self->fsid = procfs_self_id;
     procfs_self->linkto = NULL;
+
+    list_append(self_nodes_root->child, procfs_self);
 
     // vfs_node_t self_exe = vfs_node_alloc(procfs_self, "exe");
     // self_exe->type = file_none;
