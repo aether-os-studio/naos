@@ -5,4 +5,3 @@ edition = "2024"
 
 [dependencies]
 libc = "0.2.175"
-udev = "0.9.3"

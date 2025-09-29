@@ -91,8 +91,6 @@ Restore_all:
     iretq
 
 ENTRY(ret_from_intr)
-    call task_signal
-
 ENTRY(ret_from_exception)
     cli
     jmp Restore_all

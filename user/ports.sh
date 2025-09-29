@@ -40,6 +40,9 @@ sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add xeyes xclock mesa-gl mesa-
 
 sudo ln -sf /usr/share/zoneinfo/Asia/Shanghai $SYSROOT/etc/localtime
 
+sudo rm -rf $SYSROOT/etc/conf.d/*
+sudo rm -rf $SYSROOT/etc/init.d/*
+
 sudo rm -rf $SYSROOT/bin/sh
 sudo ln -sf bash $SYSROOT/bin/sh
 
