@@ -27,8 +27,6 @@ vfs_callback_t fs_callbacks[256] = {
 };
 int fs_nextid = 1;
 
-#define callbackof(node, _name_) (fs_callbacks[(node)->fsid]->_name_)
-
 vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
     vfs_node_t node = malloc(sizeof(struct vfs_node));
     if (node == NULL)

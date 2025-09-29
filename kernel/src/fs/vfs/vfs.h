@@ -380,4 +380,6 @@ extern arc_cache_t *global_page_cache;
 
 extern vfs_callback_t fs_callbacks[256];
 
+#define callbackof(node, _name_) (fs_callbacks[(node)->fsid]->_name_)
+
 extern int fs_nextid;

@@ -65,7 +65,7 @@ int ext_mount(vfs_node_t dev, vfs_node_t node) {
     return ret;
 }
 
-void ext_unmount(void *root) {
+void ext_unmount(vfs_node_t node) {
     // TODO
 }
 

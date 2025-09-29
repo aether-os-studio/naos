@@ -14,7 +14,7 @@ typedef struct ext_handle {
 } ext_handle_t;
 
 int ext_mount(vfs_node_t dev, vfs_node_t node);
-void ext_unmount(void *root);
+void ext_unmount(vfs_node_t node);
 void ext_open(void *parent, const char *name, vfs_node_t node);
 bool ext_close(void *current);
 ssize_t ext_write(fd_t *file, const void *addr, size_t offset, size_t size);

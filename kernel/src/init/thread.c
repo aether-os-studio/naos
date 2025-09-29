@@ -12,7 +12,6 @@ extern void sysfs_init();
 extern void fs_syscall_init();
 extern void socketfs_init();
 extern void pipefs_init();
-extern void tmpfs_init();
 
 extern void mount_root();
 
@@ -35,7 +34,6 @@ void init_thread(uint64_t arg) {
     fs_syscall_init();
     socketfs_init();
     pipefs_init();
-    tmpfs_init();
 
     mount_root();
 
