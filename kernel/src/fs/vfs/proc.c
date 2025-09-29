@@ -352,6 +352,8 @@ static struct vfs_callback callbacks = {
     .unmount = (vfs_unmount_t)procfs_unmount,
     .resize = (vfs_resize_t)dummy,
     .dup = vfs_generic_dup,
+
+    .free_handle = vfs_generic_free_handle,
 };
 
 typedef struct procfs_self_handle {
@@ -409,6 +411,8 @@ ssize_t procfs_self_readlink(vfs_node_t file, void *addr, size_t offset,
     return len;
 }
 
+void procfs_self_free_handle(procfs_self_handle_t *handle) { free(handle); }
+
 static struct vfs_callback procfs_self_callbacks = {
     .open = (vfs_open_t)procfs_self_open,
     .close = (vfs_close_t)procfs_self_close,
@@ -431,6 +435,8 @@ static struct vfs_callback procfs_self_callbacks = {
     .unmount = (vfs_unmount_t)dummy,
     .resize = (vfs_resize_t)dummy,
     .dup = vfs_generic_dup,
+
+    .free_handle = (vfs_free_handle_t)procfs_self_free_handle,
 };
 
 fs_t procfs = {

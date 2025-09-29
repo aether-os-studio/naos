@@ -58,12 +58,11 @@ void vfs_free(vfs_node_t vfs) {
         return;
     list_free_with(vfs->child, (free_t)vfs_free);
     vfs_close(vfs);
+    callbackof(vfs, free_handle)(vfs->handle);
     free(vfs->name);
     if (vfs->linkto)
         vfs_close(vfs->linkto);
     // todo: add 'free' callback
-    if (vfs->handle)
-        free(vfs->handle);
     free(vfs);
 }
 

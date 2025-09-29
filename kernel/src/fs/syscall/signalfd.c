@@ -122,6 +122,8 @@ static struct vfs_callback signalfd_callbacks = {
     .poll = signalfd_poll,
     .resize = (vfs_resize_t)dummy,
     .dup = vfs_generic_dup,
+
+    .free_handle = vfs_generic_free_handle,
 };
 
 fs_t signalfdfs = {

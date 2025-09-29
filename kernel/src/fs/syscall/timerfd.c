@@ -225,6 +225,8 @@ static struct vfs_callback timerfd_callbacks = {
     .poll = (vfs_poll_t)timerfd_poll,
     .resize = (vfs_resize_t)dummy,
     .dup = vfs_generic_dup,
+
+    .free_handle = vfs_generic_free_handle,
 };
 
 fs_t timefdfs = {

@@ -391,6 +391,8 @@ void *ext_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
 
 vfs_node_t ext_dup(vfs_node_t node) { return node; }
 
+void ext_free_handle(ext_handle_t *handle) {}
+
 static struct vfs_callback callbacks = {
     .mount = ext_mount,
     .unmount = ext_unmount,
@@ -413,6 +415,8 @@ static struct vfs_callback callbacks = {
     .poll = ext_poll,
     .resize = (vfs_resize_t)ext_resize,
     .dup = (vfs_dup_t)ext_dup,
+
+    .free_handle = (vfs_free_handle_t)ext_free_handle,
 };
 
 fs_t extfs = {

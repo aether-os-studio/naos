@@ -116,6 +116,7 @@ bool ptmx_close(void *current) {
         pty_pair_cleanup(pair);
     else
         spin_unlock(&pair->lock);
+    free(pair->ptmx_node->name);
     free(pair->ptmx_node);
     return true;
 }
@@ -571,6 +572,8 @@ static struct vfs_callback ptmx_callbacks = {
     .poll = ptmx_poll,
     .resize = (vfs_resize_t)dummy,
     .dup = (vfs_dup_t)ptmx_dup,
+
+    .free_handle = vfs_generic_free_handle,
 };
 
 static struct vfs_callback pts_callbacks = {
@@ -595,6 +598,8 @@ static struct vfs_callback pts_callbacks = {
     .poll = (vfs_poll_t)pts_poll,
     .resize = (vfs_resize_t)dummy,
     .dup = (vfs_dup_t)pts_dup,
+
+    .free_handle = vfs_generic_free_handle,
 };
 
 fs_t ptmxfs = {

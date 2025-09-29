@@ -113,6 +113,8 @@ static struct vfs_callback callbacks = {
     .poll = (vfs_poll_t)devfs_poll,
     .resize = (vfs_resize_t)dummy,
     .dup = vfs_generic_dup,
+
+    .free_handle = vfs_generic_free_handle,
 };
 
 ssize_t inputdev_event_read(void *data, uint64_t offset, void *buf,

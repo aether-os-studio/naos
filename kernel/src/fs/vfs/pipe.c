@@ -234,6 +234,8 @@ static struct vfs_callback callbacks = {
     .poll = pipefs_poll,
     .resize = (vfs_resize_t)dummy,
     .dup = (vfs_dup_t)pipe_dup,
+
+    .free_handle = vfs_generic_free_handle,
 };
 
 fs_t pipefs = {

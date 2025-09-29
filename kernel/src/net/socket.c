@@ -1803,6 +1803,8 @@ static struct vfs_callback socket_callback = {
     .poll = (vfs_poll_t)socket_socket_poll,
     .resize = (vfs_resize_t)dummy,
     .dup = (vfs_dup_t)socket_dup,
+
+    .free_handle = vfs_generic_free_handle,
 };
 
 static struct vfs_callback accept_callback = {
@@ -1827,6 +1829,8 @@ static struct vfs_callback accept_callback = {
     .poll = (vfs_poll_t)socket_accept_poll,
     .resize = (vfs_resize_t)dummy,
     .dup = (vfs_dup_t)socket_accept_dup,
+
+    .free_handle = vfs_generic_free_handle,
 };
 
 fs_t sockfs = {
