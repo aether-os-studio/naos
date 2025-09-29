@@ -61,6 +61,9 @@ void vfs_free(vfs_node_t vfs) {
     free(vfs->name);
     if (vfs->linkto)
         vfs_close(vfs->linkto);
+    // todo: add 'free' callback
+    if (vfs->handle)
+        free(vfs->handle);
     free(vfs);
 }
 
@@ -544,8 +547,8 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
             current->size = target->size;
             current->blksz = target->blksz;
 
-            current->fsid = target->fsid;
-            current->handle = target->handle;
+            // current->fsid = target->fsid;
+            // current->handle = target->handle;
             current->root = target->root;
             current->mode = target->mode;
 
