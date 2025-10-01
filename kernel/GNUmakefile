@@ -166,9 +166,6 @@ ifeq ($(BOOT_PROTOCOL), limine)
 override SRCFILES += src/boot/limine_boot.c
 endif
 ifeq ($(BOOT_PROTOCOL), multiboot2)
-override SRCFILES += src/boot/multiboot2_boot.c
-override SRCFILES += src/boot/multiboot2/multiboot2_start.S
-override SRCFILES += src/boot/multiboot2/early_mappings.c
 endif
 override CFILES := $(filter %.c,$(SRCFILES))
 override ASFILES := $(filter %.S,$(SRCFILES))

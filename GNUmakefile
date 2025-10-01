@@ -155,10 +155,6 @@ ifeq ($(BOOT_PROTOCOL), limine)
 	mcopy -i $(IMAGE_NAME).img@@1M $(EFI_FILE_SINGLE) ::/EFI/BOOT
 	mcopy -i $(IMAGE_NAME).img@@1M limine.conf ::/limine
 endif
-ifeq ($(BOOT_PROTOCOL), multiboot2)
-	./make_grub_image.sh $(IMAGE_NAME).img
-	mcopy -i $(IMAGE_NAME).img@@1M grub.cfg ::/boot/grub
-endif
 
 single-$(IMAGE_NAME).img: assets/limine kernel rootfs-$(ARCH).img modules
 	dd if=/dev/zero of=single-$(IMAGE_NAME).img bs=1M count=$$(( $(ROOTFS_IMG_SIZE) + 1024 ))
@@ -170,10 +166,6 @@ ifeq ($(BOOT_PROTOCOL), limine)
 	mmd -i single-$(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/limine
 	mcopy -i single-$(IMAGE_NAME).img@@1M $(EFI_FILE_SINGLE) ::/EFI/BOOT
 	mcopy -i single-$(IMAGE_NAME).img@@1M limine.conf ::/limine
-endif
-ifeq ($(BOOT_PROTOCOL), multiboot2)
-	./make_grub_image.sh single-$(IMAGE_NAME).img
-	mcopy -i $(IMAGE_NAME).img@@1M grub.cfg ::/boot/grub
 endif
 
 	dd if=rootfs-$(ARCH).img of=single-$(IMAGE_NAME).img bs=1M count=$(ROOTFS_IMG_SIZE) seek=512
