@@ -4,17 +4,13 @@
 #include <arch/arch.h>
 #include <fs/fs_syscall.h>
 #include <fs/vfs/sys.h>
+#include <boot/boot.h>
 
-__attribute__((
-    used,
-    section(".limine_requests"))) volatile struct limine_framebuffer_request
-    framebuffer_request = {.id = LIMINE_FRAMEBUFFER_REQUEST, .revision = 0};
-
-struct limine_framebuffer *framebuffer = NULL;
+boot_framebuffer_t *framebuffer = NULL;
 
 ssize_t fb_read(void *data, uint64_t offset, void *buf, uint64_t len,
                 uint64_t flags) {
-    struct limine_framebuffer *fb = (struct limine_framebuffer *)data;
+    boot_framebuffer_t *fb = (boot_framebuffer_t *)data;
     (void)fb;
     (void)offset;
     (void)buf;
@@ -24,13 +20,13 @@ ssize_t fb_read(void *data, uint64_t offset, void *buf, uint64_t len,
 
 ssize_t fb_write(void *data, uint64_t offset, const void *buf, uint64_t len,
                  uint64_t flags) {
-    struct limine_framebuffer *fb = (struct limine_framebuffer *)data;
+    boot_framebuffer_t *fb = (boot_framebuffer_t *)data;
     memcpy((char *)fb->address + offset, buf, len);
     return len;
 }
 
 ssize_t fb_ioctl(void *data, ssize_t cmd, ssize_t arg) {
-    struct limine_framebuffer *framebuffer = (struct limine_framebuffer *)data;
+    boot_framebuffer_t *framebuffer = (boot_framebuffer_t *)data;
 
     cmd = cmd & 0xFFFFFFFF;
 
@@ -104,7 +100,7 @@ ssize_t fb_ioctl(void *data, ssize_t cmd, ssize_t arg) {
 }
 
 void *fb_map(void *data, void *addr, uint64_t offset, uint64_t len) {
-    struct limine_framebuffer *framebuffer = (struct limine_framebuffer *)data;
+    boot_framebuffer_t *framebuffer = (boot_framebuffer_t *)data;
 
     uint64_t fb_addr = translate_address(get_current_page_dir(false),
                                          (uint64_t)framebuffer->address) +

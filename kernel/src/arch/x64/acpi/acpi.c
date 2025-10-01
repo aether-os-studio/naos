@@ -1,6 +1,7 @@
 #include <drivers/kernel_logger.h>
 #include <drivers/bus/pci.h>
 #include <mm/mm.h>
+#include <boot/boot.h>
 #include <arch/x64/acpi/acpi.h>
 
 #define load_table(name, func)                                                 \
@@ -17,11 +18,6 @@
 uint64_t rsdp_paddr;
 
 XSDT *xsdt;
-
-__attribute__((
-    used,
-    section(".limine_requests"))) volatile struct limine_rsdp_request
-    rsdp_request = {.id = LIMINE_RSDP_REQUEST, .revision = 0, .response = NULL};
 
 void *find_table(const char *name) {
     uint64_t entry_count = (xsdt->h.length - 32) / 8;
@@ -42,9 +38,7 @@ void *find_table(const char *name) {
 }
 
 void acpi_init() {
-    struct limine_rsdp_response *response = rsdp_request.response;
-
-    rsdp_paddr = response->address;
+    rsdp_paddr = boot_get_acpi_rsdp();
 
     RSDP *rsdp = (RSDP *)rsdp_paddr;
     if (rsdp == NULL) {

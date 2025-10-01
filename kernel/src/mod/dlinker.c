@@ -1,6 +1,7 @@
 #include "dlinker.h"
 #include <mm/mm.h>
 #include <drivers/kernel_logger.h>
+#include <boot/boot.h>
 
 uint64_t kernel_modules_load_offset = 0;
 
@@ -297,25 +298,21 @@ void find_kernel_symbol() {
     }
 }
 
-__attribute__((
-    used,
-    section(".limine_requests"))) static volatile struct limine_module_request
-    modules_request = {
-        .id = LIMINE_MODULE_REQUEST,
-        .revision = 0,
-};
-
 void dlinker_init() {
     find_kernel_symbol();
 
-    for (uint64_t i = 0; i < modules_request.response->module_count; i++) {
+    boot_module_t *boot_modules[MAX_MODULES_NUM];
+    size_t modules_count = 0;
+    boot_get_modules(boot_modules, &modules_count);
+
+    for (uint64_t i = 0; i < modules_count; i++) {
+
         module_t module = {
             .is_use = false,
-            .path = modules_request.response->modules[i]->path,
-            .data = modules_request.response->modules[i]->address,
-            .size = modules_request.response->modules[i]->size,
+            .data = boot_modules[i]->data,
+            .size = boot_modules[i]->size,
         };
-        strcpy(module.module_name, module.path);
+        strcpy(module.module_name, boot_modules[i]->path);
 
         dlinker_load(&module);
     }

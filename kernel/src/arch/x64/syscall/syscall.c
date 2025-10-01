@@ -8,14 +8,6 @@
 #include <libs/strerror.h>
 #include <arch/x64/syscall/nr.h>
 
-__attribute__((
-    used,
-    section(".limine_requests"))) volatile struct limine_date_at_boot_request
-    boot_time_request = {
-        .id = LIMINE_DATE_AT_BOOT_REQUEST,
-        .revision = 0,
-};
-
 void syscall_init() {
     uint64_t efer;
 

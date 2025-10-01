@@ -1,11 +1,8 @@
+#include <boot/boot.h>
 #include <arch/aarch64/acpi/acpi.h>
 #include <drivers/bus/pci.h>
 #include <mm/mm.h>
 #include <arch/aarch64/time/time.h>
-
-__attribute__((used,
-               section(".limine_requests"))) volatile struct limine_rsdp_request
-    rsdp_request = {.id = LIMINE_RSDP_REQUEST, .revision = 0, .response = NULL};
 
 uint64_t rsdp_paddr;
 
@@ -41,11 +38,7 @@ void *find_table(const char *name) {
     } while (0);
 
 void acpi_init() {
-    struct limine_rsdp_response *response = rsdp_request.response;
-    if (response == NULL)
-        return;
-
-    rsdp_paddr = response->address;
+    rsdp_paddr = boot_get_acpi_rsdp();
 
     RSDP *rsdp = (RSDP *)rsdp_paddr;
     if (rsdp == NULL) {

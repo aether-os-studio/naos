@@ -2,6 +2,8 @@
 MAKEFLAGS += -rR
 .SUFFIXES:
 
+export BOOT_PROTOCOL ?= limine
+
 # Target architecture to build for. Default to x86_64.
 export ARCH ?= x86_64
 
@@ -146,21 +148,33 @@ $(IMAGE_NAME).img: assets/limine kernel modules
 	dd if=/dev/zero of=$(IMAGE_NAME).img bs=1M count=512
 	sgdisk --new=1:1M:511M $(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 $(IMAGE_NAME).img
-	mmd -i $(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
+	mcopy -i $(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/
 	mcopy -i $(IMAGE_NAME).img@@1M modules-$(ARCH) ::/modules
+ifeq ($(BOOT_PROTOCOL), limine)
+	mmd -i $(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/limine
 	mcopy -i $(IMAGE_NAME).img@@1M $(EFI_FILE_SINGLE) ::/EFI/BOOT
-	mcopy -i $(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/boot
-	mcopy -i $(IMAGE_NAME).img@@1M limine.conf ::/boot/limine
+	mcopy -i $(IMAGE_NAME).img@@1M limine.conf ::/limine
+endif
+ifeq ($(BOOT_PROTOCOL), multiboot2)
+	./make_grub_image.sh $(IMAGE_NAME).img
+	mcopy -i $(IMAGE_NAME).img@@1M grub.cfg ::/boot/grub
+endif
 
 single-$(IMAGE_NAME).img: assets/limine kernel rootfs-$(ARCH).img modules
 	dd if=/dev/zero of=single-$(IMAGE_NAME).img bs=1M count=$$(( $(ROOTFS_IMG_SIZE) + 1024 ))
 	sgdisk --new=1:1M:511M --new=2:512M:$$(( $$(($(ROOTFS_IMG_SIZE) + 1024 )) * 1024 )) single-$(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 single-$(IMAGE_NAME).img
-	mmd -i single-$(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
+	mcopy -i single-$(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/
 	mcopy -i single-$(IMAGE_NAME).img@@1M modules-$(ARCH) ::/modules
+ifeq ($(BOOT_PROTOCOL), limine)
+	mmd -i single-$(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/limine
 	mcopy -i single-$(IMAGE_NAME).img@@1M $(EFI_FILE_SINGLE) ::/EFI/BOOT
-	mcopy -i single-$(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/boot
-	mcopy -i single-$(IMAGE_NAME).img@@1M limine.conf ::/boot/limine
+	mcopy -i single-$(IMAGE_NAME).img@@1M limine.conf ::/limine
+endif
+ifeq ($(BOOT_PROTOCOL), multiboot2)
+	./make_grub_image.sh single-$(IMAGE_NAME).img
+	mcopy -i $(IMAGE_NAME).img@@1M grub.cfg ::/boot/grub
+endif
 
 	dd if=rootfs-$(ARCH).img of=single-$(IMAGE_NAME).img bs=1M count=$(ROOTFS_IMG_SIZE) seek=512
 
@@ -256,7 +270,7 @@ run-loongarch64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
 
 assets/limine:
 	rm -rf assets/limine
-	git clone https://codeberg.org/Limine/Limine --branch=v10.0.0-binary --depth=1 assets/limine
+	git clone https://codeberg.org/Limine/Limine --branch=v10.x-binary --depth=1 assets/limine
 	$(MAKE) -C assets/limine \
 		CC="$(HOST_CC)" \
 		CFLAGS="$(HOST_CFLAGS)" \

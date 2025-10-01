@@ -1,4 +1,5 @@
 #include <fs/fs_syscall.h>
+#include <boot/boot.h>
 #include <net/socket.h>
 
 uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
@@ -1082,14 +1083,12 @@ uint64_t sys_futimesat(int dfd, const char *pathname, struct timeval *utimes) {
     return 0;
 }
 
-extern volatile struct limine_date_at_boot_request boot_time_request;
-
 uint64_t sys_sysinfo(struct sysinfo *info) {
     if (check_user_overflow((uint64_t)info, sizeof(struct sysinfo)))
         return -EFAULT;
 
     memset(info, 0, sizeof(struct sysinfo));
-    info->uptime = boot_time_request.response->timestamp;
+    info->uptime = boot_get_boottime();
     info->loads[0] = 0;
     info->loads[1] = 0;
     info->loads[2] = 0;

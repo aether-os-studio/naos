@@ -1,17 +1,10 @@
 #include <arch/arch.h>
+#include <boot/boot.h>
 #include <mm/mm.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <drivers/kernel_logger.h>
-
-__attribute__((
-    used,
-    section(".limine_requests"))) static volatile struct limine_memmap_request
-    memmap_request = {
-        .id = LIMINE_MEMMAP_REQUEST,
-        .revision = 0,
-};
 
 spinlock_t frame_op_lock = {0};
 
@@ -33,12 +26,12 @@ uint64_t alloc_frames_early(size_t count) {
 
 uint64_t get_memory_size() {
     uint64_t all_memory_size = 0;
-    struct limine_memmap_response *memory_map = memmap_request.response;
+    boot_memory_map_t *memory_map = boot_get_memory_map();
 
     for (uint64_t i = memory_map->entry_count - 1; i > 0; i--) {
-        struct limine_memmap_entry *region = memory_map->entries[i];
+        boot_memory_map_entry_t *region = &memory_map->entries[i];
         if (region->type == LIMINE_MEMMAP_USABLE) {
-            all_memory_size = region->base + region->length;
+            all_memory_size = region->addr + region->len;
             break;
         }
     }
@@ -51,7 +44,7 @@ void add_free_region(uintptr_t addr, size_t size);
 void frame_init() {
     hhdm_init();
 
-    struct limine_memmap_response *memory_map = memmap_request.response;
+    boot_memory_map_t *memory_map = boot_get_memory_map();
 
     memory_size = get_memory_size();
 
@@ -59,14 +52,14 @@ void frame_init() {
     uint64_t bitmap_address = 0;
 
     for (uint64_t i = 0; i < memory_map->entry_count; i++) {
-        struct limine_memmap_entry *region = memory_map->entries[i];
+        boot_memory_map_entry_t *region = &memory_map->entries[i];
         if (region->type == LIMINE_MEMMAP_USABLE) {
             if (
 #if defined(__x86_64__)
-                region->base >= 0x100000 &&
+                region->addr >= 0x100000 &&
 #endif
-                region->length >= bitmap_size) {
-                bitmap_address = region->base;
+                region->len >= bitmap_size) {
+                bitmap_address = region->addr;
                 break;
             }
         }
@@ -77,10 +70,10 @@ void frame_init() {
 
     size_t origin_frames = 0;
     for (uint64_t i = 0; i < memory_map->entry_count; i++) {
-        struct limine_memmap_entry *region = memory_map->entries[i];
+        boot_memory_map_entry_t *region = &memory_map->entries[i];
 
-        size_t start_frame = region->base / DEFAULT_PAGE_SIZE;
-        size_t frame_count = region->length / DEFAULT_PAGE_SIZE;
+        size_t start_frame = region->addr / DEFAULT_PAGE_SIZE;
+        size_t frame_count = region->len / DEFAULT_PAGE_SIZE;
 
         if (region->type == LIMINE_MEMMAP_USABLE) {
             origin_frames += frame_count;
@@ -102,7 +95,7 @@ void frame_init() {
                      false);
 
     // for (uint64_t i = 0; i < memory_map->entry_count; i++) {
-    //     struct limine_memmap_entry *region = memory_map->entries[i];
+    //     boot_memory_map_entry_t *region = memory_map->entries[i];
 
     //     if (region->type == LIMINE_MEMMAP_USABLE &&
     //         region->base >= 0x100000000) {
@@ -153,19 +146,19 @@ void frame_init() {
     // }
 
     for (uint64_t i = 0; i < memory_map->entry_count; i++) {
-        struct limine_memmap_entry *region = memory_map->entries[i];
+        boot_memory_map_entry_t *region = &memory_map->entries[i];
 
-        if (region->base < 0x100000)
+        if (region->addr < 0x100000)
             continue;
 
         if (region->type == LIMINE_MEMMAP_USABLE) {
-            if (region->base == bitmap_address) {
+            if (region->addr == bitmap_address) {
                 add_free_region(
-                    (region->base + bitmap_size + DEFAULT_PAGE_SIZE - 1) &
+                    (region->addr + bitmap_size + DEFAULT_PAGE_SIZE - 1) &
                         ~(DEFAULT_PAGE_SIZE - 1),
-                    (region->length - bitmap_size) & ~(DEFAULT_PAGE_SIZE - 1));
+                    (region->len - bitmap_size) & ~(DEFAULT_PAGE_SIZE - 1));
             } else {
-                add_free_region(region->base, region->length);
+                add_free_region(region->addr, region->len);
             }
         }
     }

@@ -1,5 +1,6 @@
 #include <drivers/kernel_logger.h>
 #include <arch/x64/acpi/acpi.h>
+#include <boot/boot.h>
 #include <mm/mm.h>
 #include <arch/arch.h>
 #include <interrupt/irq_manager.h>
@@ -19,14 +20,6 @@ void tss_init() {
     set_tss_descriptor(offset, &tss[current_cpu_id]);
     load_TR(offset);
 }
-
-__attribute__((
-    used, section(".limine_requests"))) static volatile struct limine_mp_request
-    mp_request = {
-        .id = LIMINE_MP_REQUEST,
-        .revision = 0,
-        .flags = LIMINE_MP_X2APIC,
-};
 
 void disable_pic() {
     io_out8(0x21, 0xff);
@@ -66,7 +59,7 @@ uint64_t calibrated_timer_initial = 0;
 void lapic_timer_stop();
 
 void local_apic_init(bool is_print) {
-    x2apic_mode = !!(mp_request.response->flags & LIMINE_MP_X2APIC);
+    x2apic_mode = boot_cpu_support_x2apic();
 
     uint64_t value = rdmsr(0x1b);
     value |= (1UL << 11);
@@ -350,23 +343,7 @@ uint32_t get_cpuid_by_lapic_id(uint32_t lapic_id) {
     return 0;
 }
 
-void apu_startup(struct limine_mp_response *mp_response) {
-    cpu_count = mp_response->cpu_count;
-
-    for (uint64_t i = 0; i < mp_response->cpu_count; i++) {
-        struct limine_mp_info *cpu = mp_response->cpus[i];
-        cpuid_to_lapicid[i] = cpu->lapic_id;
-
-        if (cpu->lapic_id == mp_response->bsp_lapic_id)
-            continue;
-
-        spin_lock(&ap_startup_lock);
-
-        cpu->goto_address = ap_entry;
-    }
-}
-
-void smp_init() { apu_startup(mp_request.response); }
+void smp_init() { boot_smp_init((uintptr_t)ap_entry); }
 
 int64_t apic_mask(uint64_t irq) {
     ioapic_disable((uint8_t)irq);

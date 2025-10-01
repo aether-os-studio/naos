@@ -1,11 +1,7 @@
 #include <fs/vfs/proc.h>
 #include <arch/arch.h>
 #include <task/task.h>
-
-__attribute__((used, section(".limine_requests"))) static volatile struct
-    limine_executable_cmdline_request executable_cmdline_request = {
-        .id = LIMINE_EXECUTABLE_CMDLINE_REQUEST,
-};
+#include <boot/boot.h>
 
 spinlock_t procfs_oplock = {0};
 
@@ -217,7 +213,7 @@ ssize_t procfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         ((char *)addr)[to_copy] = '\0';
         return to_copy;
     } else if (!strcmp(handle->name, "cmdline")) {
-        ssize_t len = strlen(executable_cmdline_request.response->cmdline);
+        ssize_t len = strlen(boot_get_cmdline());
         if (len == 0)
             return 0;
         if (offset >= len) {
@@ -225,7 +221,7 @@ ssize_t procfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         }
         len = MIN(len, offset + size);
         size_t to_copy = MIN(len, size);
-        memcpy(addr, executable_cmdline_request.response->cmdline, to_copy);
+        memcpy(addr, boot_get_cmdline(), to_copy);
         return len;
     } else if (!strcmp(handle->name, "proc_cmdline")) {
         ssize_t len = strlen(task->cmdline);

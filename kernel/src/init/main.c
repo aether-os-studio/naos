@@ -1,4 +1,5 @@
 #include <libs/klibc.h>
+#include <boot/boot.h>
 #include <drivers/kernel_logger.h>
 #include <mm/mm.h>
 #include <arch/arch.h>
@@ -9,23 +10,6 @@
 #include <fs/vfs/dev.h>
 #include <fs/vfs/proc.h>
 
-__attribute__((used,
-               section(".limine_requests_"
-                       "start"))) static volatile LIMINE_REQUESTS_START_MARKER;
-
-__attribute__((
-    used, section(".limine_requests"))) static volatile LIMINE_BASE_REVISION(3);
-
-__attribute__((
-    used,
-    section(
-        ".limine_requests"))) static volatile struct limine_stack_size_request
-    stack_size_request = {
-        .id = LIMINE_STACK_SIZE_REQUEST,
-        .revision = 0,
-        .stack_size = STACK_SIZE,
-};
-
 __attribute__((
     used,
     section(
@@ -33,6 +17,8 @@ __attribute__((
 
 void kmain(void) {
     arch_disable_interrupt();
+
+    boot_init();
 
     frame_init();
 

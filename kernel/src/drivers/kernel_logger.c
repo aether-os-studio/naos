@@ -3,6 +3,7 @@
 #include <mm/mm.h>
 #include <drivers/fb.h>
 #include <fs/vfs/dev.h>
+#include <boot/boot.h>
 
 struct flanterm_context *ft_ctx = NULL;
 
@@ -419,10 +420,10 @@ int printk(const char *fmt, ...) {
     if (!printk_initialized) {
         init_serial();
 
-        framebuffer = framebuffer_request.response->framebuffers[0];
+        framebuffer = boot_get_framebuffer();
 
         ft_ctx = flanterm_fb_init(
-            NULL, NULL, framebuffer->address, framebuffer->width,
+            NULL, NULL, (void *)framebuffer->address, framebuffer->width,
             framebuffer->height, framebuffer->pitch, framebuffer->red_mask_size,
             framebuffer->red_mask_shift, framebuffer->green_mask_size,
             framebuffer->green_mask_shift, framebuffer->blue_mask_size,
