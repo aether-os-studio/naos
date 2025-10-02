@@ -44,14 +44,13 @@ bool arch_check_elf(const Elf64_Ehdr *ehdr) {
         return false;
     }
 
-    // // 检查架构和类型
-    // if (ehdr->e_ident[4] != 2 || // 64-bit
-    //     ehdr->e_machine != 0x3E  // x86_64
-    // )
-    // {
-    //     printk("Unsupported ELF format\n");
-    //     return false;
-    // }
+    // 检查架构和类型
+    if (ehdr->e_ident[4] != 2 || // 64-bit
+        ehdr->e_machine != 0xF3  // riscv64
+    ) {
+        printk("Unsupported ELF format\n");
+        return false;
+    }
 
     return true;
 }
