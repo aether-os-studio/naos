@@ -9,16 +9,15 @@ void handle_trap_c(struct pt_regs *regs) {
     uint64_t is_interrupt = regs->scause & (1UL << 63);
     uint64_t cause_code = regs->scause & 0x7FFFFFFFFFFFFFFF;
 
-    printk("Exception/Interrupt occurred:\n");
-    printk("  PC: 0x%lx\n", regs->sepc);
-    printk("  Cause: 0x%lx (%s)\n", regs->scause,
-           is_interrupt ? "interrupt" : "exception");
-    printk("  stval: 0x%lx\n", regs->stval);
-    printk("  sstatus: 0x%lx\n", regs->sstatus);
-
     if (is_interrupt) {
         handle_interrupt_c(regs, cause_code);
     } else {
+        printk("Exception occurred:\n");
+        printk("  PC: 0x%lx\n", regs->sepc);
+        printk("  Cause: 0x%lx (%s)\n", regs->scause, "exception");
+        printk("  stval: 0x%lx\n", regs->stval);
+        printk("  sstatus: 0x%lx\n", regs->sstatus);
+
         handle_exception_c(regs, cause_code);
     }
 }
@@ -56,14 +55,15 @@ void handle_exception_c(struct pt_regs *regs, uint64_t cause) {
     }
 }
 
+extern void riscv64_timer_handler(struct pt_regs *regs);
+
 void handle_interrupt_c(struct pt_regs *regs, uint64_t cause) {
     switch (cause) {
-    case 7: // Machine timer interrupt
-        printk("Machine timer interrupt\n");
-        break;
+    case 5: // timer interrupt
+        riscv64_timer_handler(regs);
 
-    case 11: // Machine external interrupt
-        printk("Machine external interrupt\n");
+        sbi_set_timer(get_timer() + TIMER_FREQ / SCHED_HZ);
+
         break;
 
     default:
@@ -83,14 +83,10 @@ int trap_init(void) {
         return result;
     }
 
-    // 验证mtvec设置
-    uint64_t stvec_val;
-    asm volatile("csrr %0, stvec" : "=r"(stvec_val));
-
     // 使能机器模式中断
     uint64_t sstatus;
     asm volatile("csrr %0, sstatus" : "=r"(sstatus));
-    sstatus |= (1 << 3); // 设置MIE位
+    sstatus |= (1 << 3); // 设置SIE位
     asm volatile("csrw sstatus, %0" ::"r"(sstatus));
 
     return 0;

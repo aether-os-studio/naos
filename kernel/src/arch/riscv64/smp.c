@@ -13,6 +13,8 @@ void ap_entry(struct limine_mp_info *cpu) {
 
     printk("cpu %d starting...\n", current_cpu_id);
 
+    timer_init_hart(get_hartid());
+
     spin_unlock(&ap_startup_lock);
 
     while (1)

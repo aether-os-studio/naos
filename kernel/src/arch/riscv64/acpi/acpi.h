@@ -66,6 +66,57 @@ struct madt_local_apic {
     uint32_t flags;
 };
 
+/* MADT子表类型定义 - RISC-V特定 */
+#define ACPI_MADT_TYPE_RINTC 0x18  /* RISC-V INTC */
+#define ACPI_MADT_TYPE_RIMSIC 0x19 /* RISC-V IMSIC */
+#define ACPI_MADT_TYPE_RAPLIC 0x1A /* RISC-V APLIC */
+#define ACPI_MADT_TYPE_RPLIC 0x1B  /* RISC-V PLIC */
+
+/* RISC-V INTC (Hart-Level Interrupt Controller) 结构 */
+struct acpi_madt_rintc {
+    struct madt_header header;
+    uint8_t version;
+    uint8_t reserved;
+    uint32_t flags;
+    uint64_t hart_id;     /* Hart ID */
+    uint32_t uid;         /* ACPI处理器UID */
+    uint32_t ext_intc_id; /* 外部中断控制器ID，指向IMSIC */
+    uint64_t imsic_addr;  /* IMSIC基地址（如果有） */
+    uint32_t imsic_size;  /* IMSIC大小 */
+} __attribute__((packed));
+
+/* RISC-V INTC标志位 */
+#define ACPI_MADT_RINTC_ENABLED (1 << 0)
+#define ACPI_MADT_RINTC_ONLINE_CAPABLE (1 << 1)
+
+/* RISC-V APLIC (Advanced Platform-Level Interrupt Controller) 结构 */
+struct acpi_madt_raplic {
+    struct madt_header header;
+    uint8_t version;
+    uint8_t id; /* APLIC ID */
+    uint32_t flags;
+    uint8_t hw_id[8];     /* 硬件ID */
+    uint16_t num_idcs;    /* 中断域配置数量 */
+    uint16_t num_sources; /* 中断源数量 */
+    uint32_t gsi_base;    /* 全局系统中断基址 */
+    uint64_t base_addr;   /* APLIC基地址 */
+    uint32_t size;        /* APLIC大小 */
+} __attribute__((packed));
+
+/* RISC-V PLIC (Platform-Level Interrupt Controller) 结构 */
+struct acpi_madt_rplic {
+    struct madt_header header;
+    uint8_t version;
+    uint8_t id;        /* PLIC ID */
+    uint8_t hw_id[8];  /* 硬件ID */
+    uint16_t num_irqs; /* 中断数量 */
+    uint16_t max_prio; /* 最大优先级 */
+    uint32_t flags;
+    uint32_t size;      /* PLIC大小 */
+    uint64_t base_addr; /* PLIC基地址 */
+    uint32_t gsi_base;  /* 全局系统中断基址 */
+} __attribute__((packed));
+
 typedef struct {
     struct ACPISDTheader h;
     uint8_t definition_block;

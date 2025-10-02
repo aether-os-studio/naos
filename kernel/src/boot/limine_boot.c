@@ -203,3 +203,20 @@ __attribute__((
         .mode = LIMINE_PAGING_MODE_DEFAULT,
 };
 #endif
+
+#if !defined(__x86_64__)
+
+__attribute__((
+    used,
+    section(".limine_requests"))) static volatile struct limine_dtb_request
+    dtb_request = {
+        .id = LIMINE_DTB_REQUEST,
+        .revision = 0,
+        .response = NULL,
+};
+
+uint64_t boot_get_dtb() {
+    return dtb_request.response ? (uint64_t)dtb_request.response->dtb_ptr : 0;
+}
+
+#endif

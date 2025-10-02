@@ -106,4 +106,4 @@ trap_handler:
     
     ld x2, 8(sp)     // 恢复原始sp值
     
-    mret
+    sret

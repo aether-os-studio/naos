@@ -58,3 +58,7 @@ typedef struct boot_module {
 #define MAX_MODULES_NUM 512
 
 void boot_get_modules(boot_module_t **modules, size_t *count);
+
+#if !defined(__x86_64__)
+uint64_t boot_get_dtb();
+#endif

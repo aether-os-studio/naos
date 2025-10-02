@@ -20,7 +20,9 @@ task_t *arch_get_current() { return NULL; }
 void arch_set_current(task_t *current) {}
 
 void arch_switch_with_context(arch_context_t *prev, arch_context_t *next,
-                              uint64_t kernel_stack) {}
+                              uint64_t kernel_stack) {
+    csr_write(sscratch, kernel_stack);
+}
 
 extern void task_signal();
 
