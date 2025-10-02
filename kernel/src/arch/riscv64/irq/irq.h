@@ -8,3 +8,5 @@
 
 void arch_enable_interrupt();
 void arch_disable_interrupt();
+
+int trap_init(void);

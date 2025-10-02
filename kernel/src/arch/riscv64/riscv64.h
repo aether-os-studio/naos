@@ -13,6 +13,7 @@
 #include "arch/riscv64/syscall/cpu_info.h"
 #include "arch/riscv64/syscall/syscall.h"
 #include "arch/riscv64/time/time.h"
+#include "arch/riscv64/smp.h"
 
 void arch_early_init();
 void arch_init();

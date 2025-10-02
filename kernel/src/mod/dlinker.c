@@ -16,10 +16,9 @@ void load_segment(Elf64_Phdr *phdr, void *elf, uint64_t offset) {
         PADDING_UP(phdr->p_vaddr + phdr->p_memsz, DEFAULT_PAGE_SIZE) + offset;
     size_t lo = PADDING_DOWN(phdr->p_vaddr, DEFAULT_PAGE_SIZE) + offset;
 
-    uint64_t flags = PT_FLAG_R | PT_FLAG_W;
+    uint64_t flags = PT_FLAG_R | PT_FLAG_W | PT_FLAG_X;
 
-    map_page_range(get_current_page_dir(false), lo, 0, hi - lo,
-                   (phdr->p_flags & PF_X) ? (PT_FLAG_X | flags) : flags);
+    map_page_range(get_current_page_dir(false), lo, 0, hi - lo, flags);
 
     uint64_t p_vaddr = (uint64_t)phdr->p_vaddr + offset;
     uint64_t p_filesz = (uint64_t)phdr->p_filesz;
@@ -104,15 +103,6 @@ void *find_symbol_address(const char *symbol_name, Elf64_Ehdr *ehdr,
     size_t symtabsz = 0;
 
     for (int i = 0; i < ehdr->e_shnum; i++) {
-        if (shdrs[i].sh_type == SHT_DYNSYM) {
-            symtab = (Elf64_Sym *)((char *)ehdr + shdrs[i].sh_offset);
-            symtabsz = shdrs[i].sh_size;
-            strtab = (char *)ehdr + shdrs[shdrs[i].sh_link].sh_offset;
-            break;
-        }
-    }
-
-    for (int i = 0; i < ehdr->e_shnum; i++) {
         if (shdrs[i].sh_type == SHT_SYMTAB) {
             symtab = (Elf64_Sym *)((char *)ehdr + shdrs[i].sh_offset);
             symtabsz = shdrs[i].sh_size;
@@ -132,7 +122,7 @@ void *find_symbol_address(const char *symbol_name, Elf64_Ehdr *ehdr,
                 printk("Symbol %s is undefined.\n", sym_name);
                 return NULL;
             }
-            void *addr = (void *)sym->st_value + offset;
+            void *addr = (void *)(offset + sym->st_value);
             return addr;
         }
     }
@@ -207,7 +197,6 @@ dlinit_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr, uint64_t offset) {
         }
     }
 #elif defined(__aarch64__)
-
     for (size_t i = 0; i < relsz / sizeof(Elf64_Rela); i++) {
         Elf64_Rela *r = &rel[i];
         uint64_t *reloc_addr = (uint64_t *)(r->r_offset + offset);
@@ -219,6 +208,26 @@ dlinit_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr, uint64_t offset) {
         } else if (type == R_AARCH64_RELATIVE) {
             *reloc_addr = (uint64_t)(offset + r->r_addend);
         } else if (type == R_AARCH64_ABS64) {
+            *reloc_addr = (uint64_t)resolve_symbol(symtab, sym_idx) +
+                          r->r_addend + offset;
+        }
+    }
+#elif defined(__riscv) && (__riscv_xlen == 64)
+    for (size_t i = 0; i < relsz / sizeof(Elf64_Rela); i++) {
+        Elf64_Rela *r = &rel[i];
+        uint64_t *reloc_addr = (uint64_t *)(r->r_offset + offset);
+        uint32_t sym_idx = ELF64_R_SYM(r->r_info);
+        uint32_t type = ELF64_R_TYPE(r->r_info);
+
+        if (type == R_RISCV_JUMP_SLOT) {
+            *reloc_addr = (uint64_t)resolve_symbol(symtab, sym_idx) + offset;
+        } else if (type == R_RISCV_COPY) {
+            memcpy(reloc_addr,
+                   (void *)((uint64_t)resolve_symbol(symtab, sym_idx) + offset),
+                   symtab[sym_idx].st_size);
+        } else if (type == R_RISCV_RELATIVE) {
+            *reloc_addr = (uint64_t)(offset + r->r_addend);
+        } else if (type == R_RISCV_64) {
             *reloc_addr = (uint64_t)resolve_symbol(symtab, sym_idx) +
                           r->r_addend + offset;
         }

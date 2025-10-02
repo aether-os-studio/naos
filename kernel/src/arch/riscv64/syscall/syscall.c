@@ -514,7 +514,7 @@ void syscall_handler_init() {
 
 spinlock_t syscall_debug_lock = {0};
 
-void syscall_handler(struct pt_regs *regs, uint64_t user_regs) {
+void syscall_handler(struct pt_regs *regs) {
     //     regs->rip = regs->rcx;
     //     regs->rflags = regs->r11;
     //     regs->cs = SELECTOR_USER_CS;

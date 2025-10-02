@@ -86,6 +86,15 @@ __attribute__((
 #endif
 };
 
+#if defined(__riscv__)
+
+__attribute__((used, section(".limine_requests"))) static volatile struct
+    limine_riscv_bsp_hartid_request bsp_hartid_request = {
+        .id = LIMINE_RISCV_BSP_HARTID_REQUEST,
+        .revision = 0,
+};
+#endif
+
 extern uint64_t cpu_count;
 
 extern spinlock_t ap_startup_lock;
@@ -102,6 +111,13 @@ void boot_smp_init(uintptr_t entry) {
         cpuid_to_lapicid[i] = cpu->lapic_id;
 
         if (cpu->lapic_id == mp_response->bsp_lapic_id)
+            continue;
+#endif
+#if defined(__riscv__)
+        extern uint64_t cpuid_to_hartid[MAX_CPU_NUM];
+        cpuid_to_hartid[i] = cpu->hartid;
+
+        if (cpu->hartid == bsp_hartid_request.response->bsp_hartid)
             continue;
 #endif
 

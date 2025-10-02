@@ -202,6 +202,6 @@ typedef struct madt_int_src_override {
 
 extern uint64_t rsdp_paddr;
 
-void *find_table(const char *name);
+void acpi_init();
 
-#define current_cpu_id 0 // TODO
+void *find_table(const char *name);
