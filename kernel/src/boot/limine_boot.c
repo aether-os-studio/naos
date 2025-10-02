@@ -81,7 +81,9 @@ __attribute__((
     mp_request = {
         .id = LIMINE_MP_REQUEST,
         .revision = 0,
+#if defined(__x86_64__)
         .flags = LIMINE_MP_X2APIC,
+#endif
 };
 
 extern uint64_t cpu_count;
@@ -173,3 +175,15 @@ void boot_get_modules(boot_module_t **modules, size_t *count) {
         (*count)++;
     }
 }
+
+#if defined(__riscv__)
+__attribute__((
+    used,
+    section(
+        ".limine_requests"))) static volatile struct limine_paging_mode_request
+    paging_mode_request = {
+        .id = LIMINE_PAGING_MODE_REQUEST,
+        .revision = 0,
+        .mode = LIMINE_PAGING_MODE_DEFAULT,
+};
+#endif

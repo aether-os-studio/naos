@@ -15,6 +15,10 @@
 
 #include <arch/aarch64/acpi/acpi.h>
 
+#elif defined(__riscv__)
+
+#include <arch/riscv64/acpi/acpi.h>
+
 #elif defined(__loongarch64)
 
 #include <arch/loongarch64/acpi/acpi.h>
@@ -90,7 +94,8 @@ extern uint32_t pci_device_number;
 uint32_t pci_enumerate_capability_list(pci_device_t *pci_dev,
                                        uint32_t cap_type);
 
-#if defined(__x86_64__) || defined(__aarch64__) || defined(__loongarch64)
+#if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv__) ||       \
+    defined(__loongarch64)
 
 #define PCI_MCFG_MAX_ENTRIES_LEN 1024
 
@@ -104,6 +109,7 @@ void pcie_setup(MCFG *mcfg);
 const char *pci_classname(uint32_t classcode);
 void pci_find_vid(pci_device_t **result, uint32_t *n, uint32_t vid);
 void pci_find_class(pci_device_t **result, uint32_t *n, uint32_t class_code);
-pci_device_t *pci_find_bdfs(uint8_t bus, uint8_t slot, uint8_t func, uint16_t segment);
+pci_device_t *pci_find_bdfs(uint8_t bus, uint8_t slot, uint8_t func,
+                            uint16_t segment);
 void pci_init();
 void pci_init_after_sysfs();

@@ -1,5 +1,6 @@
 #include <arch/arch.h>
 #include <boot/boot.h>
+#include <mm/bitmap.h>
 #include <mm/mm.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -30,7 +31,7 @@ uint64_t get_memory_size() {
 
     for (uint64_t i = memory_map->entry_count - 1; i > 0; i--) {
         boot_memory_map_entry_t *region = &memory_map->entries[i];
-        if (region->type == LIMINE_MEMMAP_USABLE) {
+        if (region->type == USABLE) {
             all_memory_size = region->addr + region->len;
             break;
         }
@@ -53,7 +54,7 @@ void frame_init() {
 
     for (uint64_t i = 0; i < memory_map->entry_count; i++) {
         boot_memory_map_entry_t *region = &memory_map->entries[i];
-        if (region->type == LIMINE_MEMMAP_USABLE) {
+        if (region->type == USABLE) {
             if (
 #if defined(__x86_64__)
                 region->addr >= 0x100000 &&
@@ -75,7 +76,7 @@ void frame_init() {
         size_t start_frame = region->addr / DEFAULT_PAGE_SIZE;
         size_t frame_count = region->len / DEFAULT_PAGE_SIZE;
 
-        if (region->type == LIMINE_MEMMAP_USABLE) {
+        if (region->type == USABLE) {
             origin_frames += frame_count;
             bitmap_set_range(&usable_regions, start_frame,
                              start_frame + frame_count, true);
@@ -97,7 +98,7 @@ void frame_init() {
     // for (uint64_t i = 0; i < memory_map->entry_count; i++) {
     //     boot_memory_map_entry_t *region = memory_map->entries[i];
 
-    //     if (region->type == LIMINE_MEMMAP_USABLE &&
+    //     if (region->type == USABLE &&
     //         region->base >= 0x100000000) {
 
     //         for (uintptr_t paddr = region->base;
@@ -151,7 +152,7 @@ void frame_init() {
         if (region->addr < 0x100000)
             continue;
 
-        if (region->type == LIMINE_MEMMAP_USABLE) {
+        if (region->type == USABLE) {
             if (region->addr == bitmap_address) {
                 add_free_region(
                     (region->addr + bitmap_size + DEFAULT_PAGE_SIZE - 1) &

@@ -3,7 +3,8 @@
 #include <drivers/bus/pci.h>
 #include <libs/aether/pci.h>
 
-#if defined(__x86_64__) || defined(__aarch64__) || defined(__loongarch64)
+#if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv__) ||       \
+    defined(__loongarch64)
 MCFG_ENTRY *mcfg_entries[PCI_MCFG_MAX_ENTRIES_LEN];
 uint64_t mcfg_entries_len = 0;
 

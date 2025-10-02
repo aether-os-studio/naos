@@ -1,7 +1,6 @@
 #pragma once
 
 #include <libs/klibc.h>
-#include <mm/bitmap.h>
 #include <mm/hhdm.h>
 #include <mm/page_table.h>
 #include <arch/arch.h>

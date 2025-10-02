@@ -572,31 +572,31 @@ static int configure_xhci(void *data) {
     xhci->ir->erstba_high = (uint32_t)(eseg_phys >> 32);
     xhci->evts->cs = 1;
 
-// #if defined(__x86_64__)
-//     int irq = irq_allocate_irqnum();
-//     if (irq >= 0) {
-//         struct msi_desc_t desc;
-//         desc.irq_num = irq;
-//         desc.processor = lapic_id();
-//         desc.edge_trigger = 1;
-//         desc.assert = 1;
-//         desc.msi_index = 0;
-//         desc.pci_dev = xhci->pci_dev;
-//         desc.pci.msi_attribute.is_msix = true;
+    // #if defined(__x86_64__)
+    //     int irq = irq_allocate_irqnum();
+    //     if (irq >= 0) {
+    //         struct msi_desc_t desc;
+    //         desc.irq_num = irq;
+    //         desc.processor = lapic_id();
+    //         desc.edge_trigger = 1;
+    //         desc.assert = 1;
+    //         desc.msi_index = 0;
+    //         desc.pci_dev = xhci->pci_dev;
+    //         desc.pci.msi_attribute.is_msix = true;
 
-//         int ret = pci_enable_msi(&desc);
-//         if (ret >= 0) {
-//             irq_regist_irq(irq, xhci_interrupt_handler, irq, xhci,
-//                            get_apic_controller(), "XHCI");
+    //         int ret = pci_enable_msi(&desc);
+    //         if (ret >= 0) {
+    //             irq_regist_irq(irq, xhci_interrupt_handler, irq, xhci,
+    //                            get_apic_controller(), "XHCI");
 
-//             xhci->irq_num = irq;
-//             xhci->use_irq = true;
-//             xhci->ir->imod = 4000;
-//             xhci->ir->iman |= 3;
-//             printk("XHCI: Using IRQ %d for interrupts\n", irq);
-//         }
-//     }
-// #endif
+    //             xhci->irq_num = irq;
+    //             xhci->use_irq = true;
+    //             xhci->ir->imod = 4000;
+    //             xhci->ir->iman |= 3;
+    //             printk("XHCI: Using IRQ %d for interrupts\n", irq);
+    //         }
+    //     }
+    // #endif
 
     if (!xhci->use_irq) {
         printk("XHCI: Using polling mode (no IRQ)\n");

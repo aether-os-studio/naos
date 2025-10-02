@@ -120,11 +120,14 @@ ifeq ($(ARCH),riscv64)
             -march=rv64imac_zicsr_zifencei
     endif
     override CFLAGS += \
-        -mabi=lp64 \
-        -mno-relax
+        -march=rv64imafd \
+        -mabi=lp64d \
+        -mno-relax \
+        -D__riscv__
     override LDFLAGS += \
         -Wl,-m,elf64lriscv \
         -Wl,--no-relax
+
 endif
 ifeq ($(ARCH),loongarch64)
     ifeq ($(CC_IS_CLANG),1)
@@ -178,6 +181,10 @@ all: bin-$(ARCH)/$(OUTPUT)
 
 # Include header dependencies.
 -include $(HEADER_DEPS)
+
+ifeq ($(ARCH), riscv64)
+override OBJ += $(shell find /usr/lib/gcc/riscv64-linux-gnu -name libgcc.a)
+endif
 
 .PHONY: bin-$(ARCH)/$(OUTPUT)
 # Link rules for the final executable.
