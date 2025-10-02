@@ -2,6 +2,8 @@
 
 #include <libs/klibc.h>
 
+#if !defined(__x86_64__)
+
 /* FDT魔数 */
 #define FDT_MAGIC 0xd00dfeed
 #define FDT_VERSION 17
@@ -73,3 +75,5 @@ const char *fdt_get_property_string(int node_offset, const char *prop_name);
 typedef void (*fdt_node_callback)(const char *path, int offset, int depth);
 
 void fdt_walk_nodes(fdt_node_callback callback);
+
+#endif
