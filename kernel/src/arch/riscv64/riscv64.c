@@ -3,6 +3,9 @@
 
 void arch_early_init() {
     trap_init();
+    uintptr_t sp;
+    asm volatile("mv %0, sp" : "=r"(sp));
+    csr_write(sscratch, sp);
     fdt_init();
     acpi_init();
     smp_init();

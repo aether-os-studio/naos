@@ -11,8 +11,6 @@ void timer_init_hart(uint32_t hart_id) {
     csr_set(sie, (1 << 5)); /* STIE */
 
     sbi_set_timer(get_timer() + TIMER_FREQ / SCHED_HZ);
-
-    csr_set(sstatus, (1 << 1)); /* SIE */
 }
 
 void riscv64_timer_handler(struct pt_regs *regs) {}

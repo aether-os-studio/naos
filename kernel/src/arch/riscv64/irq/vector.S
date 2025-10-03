@@ -15,10 +15,12 @@ init_trap_vector:
 
 .align 4
 trap_handler:
+    csrrw sp, sscratch, sp
+
     addi sp, sp, -280
     
     sd x1,  0(sp)    // ra
-    sd x2,  8(sp)    // sp (这里保存的是进入异常前的sp值)
+    // x2 (sp) 稍后保存
     sd x3,  16(sp)   // gp
     sd x4,  24(sp)   // tp
     sd x5,  32(sp)   // t0
@@ -49,8 +51,8 @@ trap_handler:
     sd x30, 232(sp)  // t5
     sd x31, 240(sp)  // t6
     
-    addi t0, sp, 280
-    sd t0, 8(sp)
+    csrr t0, sscratch
+    sd t0, 8(sp)     // 保存真正的用户 sp
     
     csrr t0, sepc
     sd t0, 248(sp)   // sepc
@@ -67,16 +69,21 @@ trap_handler:
     mv a0, sp
     call handle_trap_c
     
+.globl ret_from_trap_handler
+ret_from_trap_handler:
     ld t0, 248(sp)   // sepc
     csrw sepc, t0
     
     ld t0, 272(sp)   // sstatus  
     csrw sstatus, t0
     
+    ld t0, 8(sp)     // sp
+    csrw sscratch, t0
+    
     ld x1,  0(sp)    // ra
+    // x2 (sp) 最后恢复
     ld x3,  16(sp)   // gp
     ld x4,  24(sp)   // tp
-    ld x5,  32(sp)   // t0
     ld x6,  40(sp)   // t1
     ld x7,  48(sp)   // t2
     ld x8,  56(sp)   // s0/fp
@@ -104,6 +111,10 @@ trap_handler:
     ld x30, 232(sp)  // t5
     ld x31, 240(sp)  // t6
     
-    ld x2, 8(sp)     // 恢复原始sp值
+    ld x5, 32(sp)    // t0
+    
+    addi sp, sp, 280
+    
+    csrrw sp, sscratch, sp
     
     sret
