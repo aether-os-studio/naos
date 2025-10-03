@@ -1,3 +1,9 @@
+// Code for handling XHCI "Super speed" USB controllers.
+//
+// Copyright (C) 2013  Gerd Hoffmann <kraxel@redhat.com>
+// Copyright (C) 2014  Kevin O'Connor <kevin@koconnor.net>
+//
+// This file may be distributed under the terms of the GNU LGPLv3 license.
 #include "xhci-hcd.h"
 
 extern struct usb_hcd_op_s xhci_hcd_op;

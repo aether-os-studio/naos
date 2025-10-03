@@ -1,3 +1,4 @@
+// Copyright (C) 2025  lihanrui2913
 #include "netserver.h"
 
 extern void real_socket_init();

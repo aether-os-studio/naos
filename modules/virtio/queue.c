@@ -1,3 +1,4 @@
+// Copyright (C) 2025  lihanrui2913
 #include "queue.h"
 
 void queue_part_sizes(uint16_t queue_size, uint64_t *desc_size,

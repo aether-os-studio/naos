@@ -1,3 +1,4 @@
+// Copyright (C) 2025  lihanrui2913
 #include "gpu.h"
 #include "pci.h"
 #include <libs/aether/drm.h>
