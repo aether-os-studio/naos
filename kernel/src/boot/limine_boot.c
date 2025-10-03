@@ -47,6 +47,11 @@ __attribute__((
     section(".limine_requests"))) volatile struct limine_framebuffer_request
     framebuffer_request = {.id = LIMINE_FRAMEBUFFER_REQUEST, .revision = 0};
 
+__attribute__((
+    used,
+    section(
+        ".limine_requests_end"))) static volatile LIMINE_REQUESTS_END_MARKER;
+
 void boot_init() {}
 
 uint64_t boot_get_hhdm_offset() { return hhdm_request.response->offset; };

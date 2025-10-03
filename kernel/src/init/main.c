@@ -10,11 +10,6 @@
 #include <fs/vfs/dev.h>
 #include <fs/vfs/proc.h>
 
-__attribute__((
-    used,
-    section(
-        ".limine_requests_end"))) static volatile LIMINE_REQUESTS_END_MARKER;
-
 void kmain(void) {
     arch_disable_interrupt();
 
