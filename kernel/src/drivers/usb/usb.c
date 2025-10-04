@@ -3,6 +3,8 @@
 #include <drivers/kernel_logger.h>
 #include <mm/mm.h>
 
+usb_driver_t *usb_drivers[MAX_USB_DRIVERS_NUM];
+
 // 全局USB上下文
 static struct {
     usb_hcd_t *hcd_list;
@@ -94,6 +96,18 @@ void usb_free_device(usb_device_t *device) {
     free(device);
 }
 
+usb_driver_t *usb_find_driver(usb_device_t *device) {
+    for (int i = 0; i < MAX_USB_DRIVERS_NUM; i++) {
+        if (usb_drivers[i]) {
+            if (usb_drivers[i]->class == device->class) {
+                return usb_drivers[i];
+            }
+        }
+    }
+
+    return NULL;
+}
+
 // 添加USB设备
 int usb_add_device(usb_device_t *device) {
     if (!device || !device->hcd) {
@@ -106,6 +120,11 @@ int usb_add_device(usb_device_t *device) {
 
     printk("USB Device added: addr=%d, speed=%d\n", device->address,
            device->speed);
+
+    usb_driver_t *driver = usb_find_driver(device);
+    if (!driver || driver->probe(device))
+        return -1;
+
     return 0;
 }
 
@@ -286,4 +305,13 @@ int usb_set_configuration(usb_device_t *device, uint8_t config) {
     }
 
     return ret;
+}
+
+void register_usb_driver(usb_driver_t *driver) {
+    for (int i = 0; i < MAX_USB_DRIVERS_NUM; i++) {
+        if (!usb_drivers[i]) {
+            usb_drivers[i] = driver;
+            break;
+        }
+    }
 }

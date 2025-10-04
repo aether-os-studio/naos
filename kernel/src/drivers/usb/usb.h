@@ -166,10 +166,15 @@ struct usb_device {
     usb_device_descriptor_t descriptor;
     usb_config_descriptor_t *config_descriptor;
 
+    uint8_t class;
+    uint8_t subclass;
+
     usb_endpoint_t endpoints[32]; // 最多16 IN + 16 OUT
 
     usb_hcd_t *hcd;
     void *hcd_private; // HCD私有数据
+
+    void *private_data;
 
     struct usb_device *next;
 };
@@ -238,5 +243,16 @@ int usb_get_descriptor(usb_device_t *device, uint8_t type, uint8_t index,
                        void *buffer, uint16_t length);
 int usb_set_address(usb_device_t *device, uint8_t address);
 int usb_set_configuration(usb_device_t *device, uint8_t config);
+
+#define MAX_USB_DRIVERS_NUM 32
+
+typedef struct usb_driver {
+    uint8_t class;
+    uint8_t subclass;
+    int (*probe)(usb_device_t *usbdev);
+    int (*remove)(usb_device_t *usbdev);
+} usb_driver_t;
+
+void register_usb_driver(usb_driver_t *driver);
 
 #endif // USB_CORE_H

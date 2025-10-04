@@ -110,6 +110,8 @@ int usb_parse_config_descriptor(usb_device_t *device, uint8_t *buffer,
             printk("    SubClass: 0x%02x\n", iface->bInterfaceSubClass);
             printk("    Protocol: 0x%02x\n", iface->bInterfaceProtocol);
             printk("    Num Endpoints: %d\n", iface->bNumEndpoints);
+            device->class = iface->bInterfaceClass;
+            device->subclass = iface->bInterfaceSubClass;
         } break;
 
         case USB_DT_ENDPOINT: {
