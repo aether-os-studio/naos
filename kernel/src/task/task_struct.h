@@ -97,6 +97,7 @@ typedef struct task {
     uint64_t kernel_stack;
     uint64_t call_in_signal;
     struct pt_regs signal_saved_regs;
+    bool is_kernel;
     uint64_t pid;
     uint64_t ppid;
     int64_t uid;

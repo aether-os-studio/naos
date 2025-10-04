@@ -262,6 +262,7 @@ typedef struct {
     uint32_t completion_code;
     uint32_t transferred_length;
     usb_transfer_t *transfer;
+    enum { NORMAL_TRANSFER, INTR_TRANSFER } transfer_type;
     spinlock_t lock;
 } xhci_transfer_completion_t;
 

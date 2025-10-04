@@ -73,7 +73,8 @@ void task_free_service(uint64_t arg) {
 
                 arch_context_free(ptr->arch_context);
 
-                free_page_table(ptr->arch_context->mm);
+                if (!ptr->is_kernel)
+                    free_page_table(ptr->arch_context->mm);
 
                 free(ptr->arch_context);
 
@@ -149,6 +150,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->call_in_signal = 0;
     memset(&task->signal_saved_regs, 0, sizeof(struct pt_regs));
     task->cpu_id = alloc_cpu_id();
+    task->is_kernel = true;
     task->ppid = task->pid;
     task->uid = 0;
     task->gid = 0;
@@ -429,6 +431,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
     current_task->arch_context->ctx = regs;
     arch_context_copy(child->arch_context, current_task->arch_context,
                       child->kernel_stack, vfork ? CLONE_VM : 0);
+    child->is_kernel = false;
     child->ppid = current_task->pid;
     child->uid = current_task->uid;
     child->gid = current_task->gid;
@@ -981,6 +984,8 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
         vma_insert(&current_task->arch_context->mm->task_vma_mgr, stack_vma);
     }
 
+    current_task->is_kernel = false;
+
     spin_unlock(&execve_lock);
     can_schedule = true;
 
@@ -1032,6 +1037,8 @@ extern struct futex_wait futex_wait_list;
 
 void task_exit_inner(task_t *task, int64_t code) {
     spin_lock(&task_queue_lock);
+
+    can_schedule = false;
 
     remove_eevdf_entity(task, schedulers[task->cpu_id]);
 
@@ -1111,6 +1118,8 @@ void task_exit_inner(task_t *task, int64_t code) {
     procfs_on_exit_task(task);
 
     spin_unlock(&task_queue_lock);
+
+    can_schedule = true;
 }
 
 uint64_t task_exit(int64_t code) {
@@ -1289,6 +1298,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     if (newsp)
         child->arch_context->ctx->rsp = newsp;
 #endif
+    child->is_kernel = false;
     child->ppid = current_task->pid;
     child->uid = current_task->uid;
     child->gid = current_task->gid;

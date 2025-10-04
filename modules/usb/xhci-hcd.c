@@ -85,6 +85,8 @@ int xhci_queue_trb(xhci_ring_t *ring, uint64_t param, uint32_t status,
         return -1;
     }
 
+    spin_lock(&transfer_lock);
+
     uint32_t idx = ring->enqueue_index;
 
     // 检查是否需要 Link TRB
@@ -125,6 +127,8 @@ int xhci_queue_trb(xhci_ring_t *ring, uint64_t param, uint32_t status,
 
     // 更新 enqueue 指针
     ring->enqueue_index = (idx + 1) % ring->size;
+
+    spin_unlock(&transfer_lock);
 
     return 0;
 }
@@ -639,8 +643,6 @@ static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
         return -1;
     }
 
-    spin_lock(&transfer_lock);
-
     // 获取命令TRB指针（在入队之前）
     xhci_trb_t *cmd_trb = &xhci->cmd_ring->trbs[xhci->cmd_ring->enqueue_index];
 
@@ -656,8 +658,6 @@ static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
 
     // 等待命令完成（5秒超时）
     int ret = xhci_wait_for_command(completion, 5000);
-
-    spin_unlock(&transfer_lock);
 
     if (ret == 0) {
         // 命令成功，获取slot ID
@@ -703,8 +703,6 @@ static int xhci_disable_slot(usb_hcd_t *hcd, usb_device_t *device) {
         return -1;
     }
 
-    spin_lock(&transfer_lock);
-
     printk("XHCI: Disabling slot %d\n", dev_priv->slot_id);
 
     // 发送Disable Slot命令
@@ -713,8 +711,6 @@ static int xhci_disable_slot(usb_hcd_t *hcd, usb_device_t *device) {
                        ((uint32_t)dev_priv->slot_id << 24) | TRB_FLAG_IOC);
 
     xhci_ring_doorbell(xhci, 0, 0);
-
-    spin_unlock(&transfer_lock);
 
     // 清除DCBAA
     xhci->dcbaa[dev_priv->slot_id] = 0;
@@ -758,8 +754,6 @@ static int xhci_address_device(usb_hcd_t *hcd, usb_device_t *device,
         printk("XHCI: CRITICAL - EP0 transfer ring not allocated!\n");
         return -1;
     }
-
-    spin_lock(&transfer_lock);
 
     // 清零输入上下文
     memset(dev_priv->input_ctx, 0, sizeof(xhci_input_ctx_t));
@@ -845,7 +839,6 @@ static int xhci_address_device(usb_hcd_t *hcd, usb_device_t *device,
     xhci_command_completion_t *completion = xhci_alloc_command_completion();
     if (!completion) {
         printk("XHCI: Failed to allocate command completion\n");
-        spin_unlock(&transfer_lock);
         return -1;
     }
 
@@ -874,8 +867,6 @@ static int xhci_address_device(usb_hcd_t *hcd, usb_device_t *device,
 
     // 等待命令完成
     int ret = xhci_wait_for_command(completion, 5000);
-
-    spin_unlock(&transfer_lock);
 
     if (ret == 0) {
         device->address = address;
@@ -962,7 +953,7 @@ static int xhci_configure_endpoint(usb_hcd_t *hcd, usb_endpoint_t *endpoint) {
     // 保留 Root Hub Port Number
     uint32_t root_port = (dev_priv->input_ctx->slot.dev_info2 >> 16) & 0xFF;
     if (root_port == 0) {
-        root_port = 1; // 默认端口1
+        root_port = device->port + 1;
     }
 
     dev_priv->input_ctx->slot.dev_info2 = SLOT_CTX_ROOT_HUB_PORT(root_port);
@@ -1096,6 +1087,8 @@ static int xhci_configure_endpoint(usb_hcd_t *hcd, usb_endpoint_t *endpoint) {
     return ret;
 }
 
+spinlock_t control_transfer_lock = {0};
+
 // 控制传输 - 使用等待机制
 static int xhci_control_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer,
                                  usb_device_request_t *setup) {
@@ -1130,7 +1123,7 @@ static int xhci_control_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer,
     // 跟踪传输
     xhci_track_transfer(xhci, first_trb, completion, transfer);
 
-    spin_lock(&transfer_lock);
+    spin_lock(&control_transfer_lock);
 
     // Setup Stage TRB
     uint64_t setup_data = *(uint64_t *)setup;
@@ -1161,10 +1154,10 @@ static int xhci_control_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer,
     // 敲门铃
     xhci_ring_doorbell(xhci, dev_priv->slot_id, dci);
 
+    spin_unlock(&control_transfer_lock);
+
     // 等待传输完成（5秒超时）
     int ret = xhci_wait_for_transfer(completion, 5000);
-
-    spin_unlock(&transfer_lock);
 
     if (ret >= 0) {
         transfer->status = 0;
@@ -1175,8 +1168,11 @@ static int xhci_control_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer,
     }
 
     xhci_free_transfer_completion(completion);
+
     return ret;
 }
+
+spinlock_t bulk_transfer_lock = {0};
 
 // 批量传输 - 使用等待机制
 static int xhci_bulk_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
@@ -1198,8 +1194,9 @@ static int xhci_bulk_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
     if (!completion) {
         return -1;
     }
+    completion->transfer_type = NORMAL_TRANSFER;
 
-    spin_lock(&transfer_lock);
+    spin_lock(&bulk_transfer_lock);
 
     // 获取第一个TRB指针
     xhci_trb_t *first_trb = &ring->trbs[ring->enqueue_index];
@@ -1218,10 +1215,10 @@ static int xhci_bulk_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
     // 敲门铃
     xhci_ring_doorbell(xhci, dev_priv->slot_id, ep_priv->dci);
 
+    spin_unlock(&bulk_transfer_lock);
+
     // 等待传输完成
     int ret = xhci_wait_for_transfer(completion, 5000);
-
-    spin_unlock(&transfer_lock);
 
     if (ret >= 0) {
         transfer->status = 0;
@@ -1232,10 +1229,13 @@ static int xhci_bulk_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
     }
 
     xhci_free_transfer_completion(completion);
+
     return ret;
 }
 
-// 中断传输 - 使用等待机制
+spinlock_t intr_transfer_lock = {0};
+
+// 中断传输 - 无需等待
 static int xhci_interrupt_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
     xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
     usb_device_t *device = transfer->device;
@@ -1255,6 +1255,7 @@ static int xhci_interrupt_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
     if (!completion) {
         return -1;
     }
+    completion->transfer_type = INTR_TRANSFER;
 
     // 获取第一个TRB指针
     xhci_trb_t *first_trb = &ring->trbs[ring->enqueue_index];
@@ -1262,7 +1263,7 @@ static int xhci_interrupt_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
     // 跟踪传输
     xhci_track_transfer(xhci, first_trb, completion, transfer);
 
-    spin_lock(&transfer_lock);
+    spin_lock(&intr_transfer_lock);
 
     // Normal TRB
     uint64_t data_addr = translate_address(get_current_page_dir(false),
@@ -1275,21 +1276,9 @@ static int xhci_interrupt_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
     // 敲门铃
     xhci_ring_doorbell(xhci, dev_priv->slot_id, ep_priv->dci);
 
-    // 等待传输完成
-    int ret = xhci_wait_for_transfer(completion, 0);
+    spin_unlock(&intr_transfer_lock);
 
-    spin_unlock(&transfer_lock);
-
-    if (ret >= 0) {
-        transfer->status = 0;
-        transfer->actual_length = completion->transferred_length;
-    } else {
-        transfer->status = ret;
-        transfer->actual_length = 0;
-    }
-
-    xhci_free_transfer_completion(completion);
-    return ret;
+    return 0;
 }
 
 // 从端口状态获取设备速度

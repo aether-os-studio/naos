@@ -12,14 +12,14 @@ void usleep(uint64_t nano) {
     while (1) {
         uint64_t n = nanoTime();
         if (n < targetTime) {
-            after += 0xffffffff - targetTime + n;
+            after += UINT64_MAX - targetTime + n;
             targetTime = n;
         } else {
             after += n - targetTime;
             targetTime = n;
         }
 
-        asm volatile("pause");
+        arch_yield();
 
         if (after >= target) {
             return;

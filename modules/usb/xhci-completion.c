@@ -31,8 +31,9 @@ int xhci_wait_for_command(xhci_command_completion_t *completion,
         return -EINVAL;
     }
 
-    uint64_t timeout =
-        timeout_ms ? ((uint64_t)timeout_ms * 1000000ULL + nanoTime()) : UINT64_MAX;
+    uint64_t timeout = timeout_ms
+                           ? ((uint64_t)timeout_ms * 1000000ULL + nanoTime())
+                           : UINT64_MAX;
 
     spin_lock(&completion->lock);
 
@@ -96,8 +97,9 @@ int xhci_wait_for_transfer(xhci_transfer_completion_t *completion,
         return -EINVAL;
     }
 
-    uint64_t timeout =
-        timeout_ms ? ((uint64_t)timeout_ms * 1000000ULL + nanoTime()) : UINT64_MAX;
+    uint64_t timeout = timeout_ms
+                           ? ((uint64_t)timeout_ms * 1000000ULL + nanoTime())
+                           : UINT64_MAX;
 
     spin_lock(&completion->lock);
 
@@ -265,6 +267,10 @@ void xhci_complete_transfer(xhci_hcd_t *xhci, xhci_trb_t *event_trb) {
             // 调用用户回调
             if (tracker->transfer && tracker->transfer->callback) {
                 tracker->transfer->callback(tracker->transfer);
+            }
+
+            if (tracker->completion->transfer_type == INTR_TRANSFER) {
+                xhci_free_transfer_completion(tracker->completion);
             }
 
             // 从列表中移除
