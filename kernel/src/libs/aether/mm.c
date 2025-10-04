@@ -10,6 +10,7 @@ EXPORT_SYMBOL(alloc_frames_bytes);
 EXPORT_SYMBOL(free_frames_bytes);
 
 EXPORT_SYMBOL(malloc);
+EXPORT_SYMBOL(aligned_alloc);
 EXPORT_SYMBOL(realloc);
 EXPORT_SYMBOL(calloc);
 EXPORT_SYMBOL(free);
@@ -23,6 +24,7 @@ EXPORT_SYMBOL(general_map);
 
 EXPORT_SYMBOL(memset);
 EXPORT_SYMBOL(memcpy);
+EXPORT_SYMBOL(memmove);
 EXPORT_SYMBOL(strlen);
 EXPORT_SYMBOL(strnlen);
 EXPORT_SYMBOL(strcpy);

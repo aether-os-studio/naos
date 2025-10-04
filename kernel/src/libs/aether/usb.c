@@ -1,16 +1,14 @@
 #include <libs/aether/usb.h>
 #include <mod/dlinker.h>
 
-EXPORT_SYMBOL(regist_usb_hcd);
-EXPORT_SYMBOL(regist_driver_usb);
+EXPORT_SYMBOL(usb_register_hcd);
+EXPORT_SYMBOL(usb_unregister_hcd);
 
-EXPORT_SYMBOL(usb_hub_port_setup);
+EXPORT_SYMBOL(usb_alloc_device);
+EXPORT_SYMBOL(usb_free_device);
+EXPORT_SYMBOL(usb_alloc_transfer);
+EXPORT_SYMBOL(usb_free_transfer);
+EXPORT_SYMBOL(usb_add_device);
+EXPORT_SYMBOL(usb_remove_device);
 
-EXPORT_SYMBOL(usb_add_freelist);
-EXPORT_SYMBOL(usb_xfer_time);
-EXPORT_SYMBOL(usb_desc2pipe);
-
-EXPORT_SYMBOL(usb_find_desc);
-EXPORT_SYMBOL(usb_send_default_control);
-EXPORT_SYMBOL(usb_send_bulk);
-EXPORT_SYMBOL(usb_poll_intr);
+EXPORT_SYMBOL(usb_enumerate_device);
