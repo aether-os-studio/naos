@@ -325,7 +325,6 @@ regist_dev(const char *name,
             }
 
             child->mode = 0666;
-            child->handle = devfs_handles[i];
 
             return child;
         }
