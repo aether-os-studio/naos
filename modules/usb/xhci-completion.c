@@ -120,7 +120,6 @@ int xhci_wait_for_transfer(xhci_transfer_completion_t *completion,
     spin_unlock(&completion->lock);
 
     if (status == COMPLETION_STATUS_SUCCESS) {
-        printk("XHCI: Transfer completed: %d bytes\n", transferred);
         return 0;
     } else {
         printk("XHCI: Transfer failed (status=%d, code=%d)\n", status, code);

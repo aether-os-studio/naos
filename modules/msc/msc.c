@@ -47,6 +47,8 @@ int msc_receive_csw(usb_msc_device_t *msc, usb_msc_csw_t *csw) {
     return csw->status;
 }
 
+spinlock_t msc_transfer_lock = {0};
+
 // 执行 MSC 传输
 int msc_transfer(usb_msc_device_t *msc, uint8_t *cb, uint8_t cb_len, void *data,
                  uint32_t data_len, bool data_in) {
@@ -269,7 +271,9 @@ int msc_read_blocks(usb_msc_device_t *msc, uint32_t lba, uint32_t count,
         return -1;
     }
 
-    printk("MSC: Reading %u blocks from LBA %u\n", count, lba);
+    spin_lock(&msc_transfer_lock);
+
+    // printk("MSC: Reading %u blocks from LBA %u\n", count, lba);
 
     uint8_t cb[16] = {0};
     cb[0] = SCSI_READ_10;
@@ -285,10 +289,12 @@ int msc_read_blocks(usb_msc_device_t *msc, uint32_t lba, uint32_t count,
     int ret = msc_transfer(msc, cb, 10, buffer, transfer_size, true);
 
     if (ret == 0) {
-        printk("MSC: Read successful (%u bytes)\n", transfer_size);
+        // printk("MSC: Read successful (%u bytes)\n", transfer_size);
     } else {
         printk("MSC: Read failed\n");
     }
+
+    spin_unlock(&msc_transfer_lock);
 
     return ret;
 }
@@ -310,7 +316,9 @@ int msc_write_blocks(usb_msc_device_t *msc, uint32_t lba, uint32_t count,
         return -1;
     }
 
-    printk("MSC: Writing %u blocks to LBA %u\n", count, lba);
+    // printk("MSC: Writing %u blocks to LBA %u\n", count, lba);
+
+    spin_lock(&msc_transfer_lock);
 
     uint8_t cb[16] = {0};
     cb[0] = SCSI_WRITE_10;
@@ -326,10 +334,12 @@ int msc_write_blocks(usb_msc_device_t *msc, uint32_t lba, uint32_t count,
     int ret = msc_transfer(msc, cb, 10, (void *)buffer, transfer_size, false);
 
     if (ret == 0) {
-        printk("MSC: Write successful (%u bytes)\n", transfer_size);
+        // printk("MSC: Write successful (%u bytes)\n", transfer_size);
     } else {
         printk("MSC: Write failed\n");
     }
+
+    spin_unlock(&msc_transfer_lock);
 
     return ret;
 }
@@ -481,9 +491,11 @@ int usb_msc_probe(usb_device_t *device) {
     printk("Capacity: %d MB\n", msc->capacity / (1024 * 1024));
     printk("Block Size: %u bytes\n", msc->block_size);
 
-    regist_blkdev("USB MSC", msc, msc->block_size,
-                  msc->block_size * msc->block_count, UINT16_MAX, msc_read,
-                  msc_write);
+    // regist_blkdev("msc", msc, (uint64_t)msc->block_size,
+    //               (uint64_t)msc->block_size * (uint64_t)msc->block_count,
+    //               DEFAULT_PAGE_SIZE * 4, msc_read, msc_write);
+
+    // set_have_usb_storage(true);
 
     return 0;
 }

@@ -29,8 +29,6 @@ void init_thread(uint64_t arg) {
 
     pci_init();
 
-    partition_init();
-
     fs_syscall_init();
     socketfs_init();
     pipefs_init();

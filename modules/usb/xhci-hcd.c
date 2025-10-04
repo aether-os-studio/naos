@@ -1007,13 +1007,13 @@ static int xhci_control_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer,
     xhci_queue_trb(ring, 0, 0,
                    (TRB_TYPE_STATUS << 10) | status_dir | TRB_FLAG_IOC);
 
-    spin_unlock(&control_transfer_lock);
-
     // 敲门铃
     xhci_ring_doorbell(xhci, dev_priv->slot_id, dci);
 
     // 等待传输完成（5秒超时）
     int ret = xhci_wait_for_transfer(completion, 5000);
+
+    spin_unlock(&control_transfer_lock);
 
     if (ret >= 0) {
         transfer->status = 0;
@@ -1026,6 +1026,8 @@ static int xhci_control_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer,
     xhci_free_transfer_completion(completion);
     return ret;
 }
+
+spinlock_t bulk_transfer_lock = {0};
 
 // 批量传输 - 使用等待机制
 static int xhci_bulk_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
@@ -1048,6 +1050,8 @@ static int xhci_bulk_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
         return -1;
     }
 
+    spin_lock(&bulk_transfer_lock);
+
     // 获取第一个TRB指针
     xhci_trb_t *first_trb = &ring->trbs[ring->enqueue_index];
 
@@ -1065,6 +1069,8 @@ static int xhci_bulk_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
 
     // 等待传输完成
     int ret = xhci_wait_for_transfer(completion, 5000);
+
+    spin_unlock(&bulk_transfer_lock);
 
     if (ret >= 0) {
         transfer->status = 0;

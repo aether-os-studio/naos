@@ -18,3 +18,5 @@ EXPORT_SYMBOL(usb_enumerate_device);
 EXPORT_SYMBOL(usb_control_transfer);
 EXPORT_SYMBOL(usb_bulk_transfer);
 EXPORT_SYMBOL(usb_interrupt_transfer);
+
+EXPORT_SYMBOL(set_have_usb_storage);

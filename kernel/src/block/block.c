@@ -1,5 +1,7 @@
 #include <block/block.h>
 #include <mm/mm.h>
+#include <fs/partition.h>
+#include <fs/vfs/dev.h>
 
 blkdev_t blk_devs[MAX_BLKDEV_NUM];
 uint64_t blk_devnum = 0;
@@ -19,6 +21,119 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
     blk_devs[blk_devnum].size = size;
     blk_devs[blk_devnum].read = read;
     blk_devs[blk_devnum].write = write;
+
+    for (uint64_t i = blk_devnum; i <= blk_devnum; i++) {
+        partition_t *part = &partitions[partition_num];
+
+        struct GPT_DPT *buffer =
+            (struct GPT_DPT *)malloc(sizeof(struct GPT_DPT));
+        blkdev_read(i, 512, buffer, sizeof(struct GPT_DPT));
+
+        if (memcmp(buffer->signature, GPT_HEADER_SIGNATURE, 8) ||
+            buffer->num_partition_entries == 0 ||
+            buffer->partition_entry_lba == 0) {
+            free(buffer);
+            goto probe_mbr;
+        }
+
+        struct GPT_DPTE *dptes =
+            (struct GPT_DPTE *)malloc(128 * sizeof(struct GPT_DPTE));
+        blkdev_read(i, buffer->partition_entry_lba * 512, dptes,
+                    128 * sizeof(struct GPT_DPTE));
+
+        for (uint32_t j = 0; j < 128; j++) {
+            if (dptes[j].starting_lba == 0 || dptes[j].ending_lba == 0)
+                continue;
+
+            part->blkdev_id = i;
+            part->starting_lba = dptes[j].starting_lba;
+            part->ending_lba = dptes[j].ending_lba;
+            part->type = GPT;
+
+            // Register partition to devfs
+            char name[MAX_DEV_NAME_LEN];
+            sprintf(name, "part%d", i);
+            partitions[partition_num].node =
+                regist_dev(name, partition_read, partition_write, NULL, NULL,
+                           NULL, &partitions[partition_num]);
+
+            partition_num++;
+        }
+
+        free(dptes);
+        free(buffer);
+
+        continue;
+
+    probe_mbr:
+        char *iso9660_detect = (char *)malloc(5);
+        memset(iso9660_detect, 0, 5);
+        blkdev_read(i, 0x8001, iso9660_detect, 5);
+        if (!memcmp(iso9660_detect, "CD001", 5)) {
+            part->blkdev_id = i;
+            part->starting_lba = 0;
+            part->ending_lba = blkdev_ioctl(i, IOCTL_GETSIZE, 0) / 512;
+            part->type = RAW;
+
+            // Register partition to devfs
+            char name[MAX_DEV_NAME_LEN];
+            sprintf(name, "part%d", i);
+            partitions[partition_num].node =
+                regist_dev(name, partition_read, partition_write, NULL, NULL,
+                           NULL, &partitions[partition_num]);
+
+            partition_num++;
+
+            free(iso9660_detect);
+
+            continue;
+        }
+
+        struct MBR_DPT *boot_sector =
+            (struct MBR_DPT *)malloc(sizeof(struct MBR_DPT));
+        blkdev_read(i, 0, boot_sector, sizeof(struct MBR_DPT));
+
+        if (boot_sector->bs_trail_sig != 0xAA55) {
+            part->blkdev_id = i;
+            part->starting_lba = 0;
+            part->ending_lba = blkdev_ioctl(i, IOCTL_GETSIZE, 0) / 512 - 1;
+            part->type = RAW;
+
+            // Register partition to devfs
+            char name[MAX_DEV_NAME_LEN];
+            sprintf(name, "part%d", i);
+            partitions[partition_num].node =
+                regist_dev(name, partition_read, partition_write, NULL, NULL,
+                           NULL, &partitions[partition_num]);
+
+            partition_num++;
+            continue;
+        }
+
+        for (int j = 0; j < MBR_MAX_PARTITION_NUM; j++) {
+            if (boot_sector->dpte[j].start_lba == 0 ||
+                boot_sector->dpte[j].sectors_limit == 0)
+                continue;
+
+            part->blkdev_id = i;
+            part->starting_lba = boot_sector->dpte[j].start_lba;
+            part->ending_lba = boot_sector->dpte[j].sectors_limit;
+            part->type = MBR;
+
+            // Register partition to devfs
+            char name[MAX_DEV_NAME_LEN];
+            sprintf(name, "part%d", i);
+            partitions[partition_num].node =
+                regist_dev(name, partition_read, partition_write, NULL, NULL,
+                           NULL, &partitions[partition_num]);
+
+            partition_num++;
+        }
+
+        // ok:
+        free(boot_sector);
+    }
+
     blk_devnum++;
 }
 

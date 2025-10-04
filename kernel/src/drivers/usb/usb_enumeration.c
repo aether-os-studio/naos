@@ -508,6 +508,5 @@ int usb_enumerate_device(usb_hcd_t *hcd, uint8_t port_id, uint8_t speed) {
 
     usb_free_enum_context(ctx);
 
-    printk("=== USB Device Enumeration Complete ===\n\n");
     return result;
 }
