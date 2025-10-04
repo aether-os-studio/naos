@@ -78,42 +78,50 @@ void xhci_free_ring(xhci_ring_t *ring) {
 // 向环中添加TRB
 int xhci_queue_trb(xhci_ring_t *ring, uint64_t param, uint32_t status,
                    uint32_t control) {
-    if (!ring)
+    if (!ring || !ring->trbs) {
+        printk("XHCI: Invalid ring in queue_trb\n");
         return -1;
+    }
 
     uint32_t idx = ring->enqueue_index;
-    xhci_trb_t *trb = &ring->trbs[idx];
 
-    // 检查是否需要链接TRB
-    if (idx == ring->size - 1) {
-        // 最后一个TRB用作Link TRB
-        trb->parameter = ring->phys_addr;
-        trb->status = 0;
-        trb->control = (TRB_TYPE_LINK << 10) | TRB_FLAG_CH;
-        if (ring->cycle_state) {
-            trb->control |= TRB_FLAG_CYCLE;
+    // 检查是否需要 Link TRB
+    if (idx >= ring->size - 1) {
+        // 设置 Link TRB
+        xhci_trb_t *link = &ring->trbs[ring->size - 1];
+        link->parameter = ring->phys_addr;
+        link->status = 0;
+        link->control = (TRB_TYPE_LINK << 10);
+
+        // 设置 Toggle Chain bit
+        if (control & TRB_FLAG_CH) {
+            link->control |= TRB_FLAG_CH;
         }
 
-        // 翻转cycle state
+        // 设置 cycle bit
+        if (ring->cycle_state) {
+            link->control |= TRB_FLAG_CYCLE;
+        }
+
+        // 翻转 cycle state
         ring->cycle_state = !ring->cycle_state;
         ring->enqueue_index = 0;
         idx = 0;
-        trb = &ring->trbs[idx];
     }
 
-    // 填充TRB
+    xhci_trb_t *trb = &ring->trbs[idx];
+
+    // 填充 TRB（先不设置 cycle bit）
     trb->parameter = param;
     trb->status = status;
-    trb->control = control;
+    trb->control = control & ~TRB_FLAG_CYCLE;
 
-    // 设置cycle bit
+    // 设置 cycle bit（激活 TRB）
     if (ring->cycle_state) {
         trb->control |= TRB_FLAG_CYCLE;
-    } else {
-        trb->control &= ~TRB_FLAG_CYCLE;
     }
 
-    // 更新enqueue指针
+    // 更新 enqueue 指针
     ring->enqueue_index = (idx + 1) % ring->size;
 
     return 0;
@@ -222,6 +230,77 @@ int xhci_stop(xhci_hcd_t *xhci) {
     return -1;
 }
 
+// 扩展能力 ID
+#define XHCI_EXT_CAPS_PROTOCOL 2
+
+// 解析 Supported Protocol Capability
+static int xhci_parse_protocol_caps(xhci_hcd_t *xhci) {
+    uint32_t hccparams1 = xhci_readl(&xhci->cap_regs->hccparams1);
+    uint32_t ext_offset = (hccparams1 >> 16) & 0xFFFF;
+
+    if (ext_offset == 0) {
+        printk("XHCI: No extended capabilities\n");
+        return 0;
+    }
+
+    printk("XHCI: Parsing extended capabilities (offset: 0x%x)\n",
+           ext_offset * 4);
+
+    // 扩展能力在能力寄存器之后
+    uint32_t *ext_cap =
+        (uint32_t *)((uint8_t *)xhci->cap_regs + (ext_offset * 4));
+
+    while (ext_offset) {
+        uint32_t cap_header = xhci_readl(ext_cap);
+        uint32_t cap_id = cap_header & 0xFF;
+        uint32_t next_offset = (cap_header >> 8) & 0xFF;
+
+        printk("  Capability ID: %u, Next: %u\n", cap_id, next_offset);
+
+        if (cap_id == XHCI_EXT_CAPS_PROTOCOL) {
+            // Supported Protocol Capability
+            uint32_t cap_word0 = xhci_readl(ext_cap);
+            uint32_t cap_word1 = xhci_readl(ext_cap + 1);
+            uint32_t cap_word2 = xhci_readl(ext_cap + 2);
+
+            // 解析协议版本
+            uint8_t minor = (cap_word2 >> 16) & 0xFF;
+            uint8_t major = (cap_word2 >> 24) & 0xFF;
+
+            // 解析端口范围
+            uint8_t port_offset = cap_word2 & 0xFF;
+            uint8_t port_count = (cap_word2 >> 8) & 0xFF;
+
+            printk("  Protocol: USB %u.%u\n", major, minor);
+            printk("  Port Offset: %u\n", port_offset);
+            printk("  Port Count: %u\n", port_count);
+
+            // 标记端口协议
+            for (int i = 0;
+                 i < port_count && (port_offset + i - 1) < xhci->max_ports;
+                 i++) {
+                uint8_t port_idx = port_offset + i - 1; // 转换为 0-based
+
+                xhci->port_info[port_idx].port_num = port_idx;
+                xhci->port_info[port_idx].protocol = major;
+                xhci->port_info[port_idx].port_offset = i;
+                xhci->port_info[port_idx].port_count = port_count;
+
+                printk("    Port %u: USB%u\n", port_idx, major);
+            }
+        }
+
+        if (next_offset == 0) {
+            break;
+        }
+
+        ext_cap += next_offset;
+        ext_offset = next_offset;
+    }
+
+    return 0;
+}
+
 // 初始化XHCI HCD
 static int xhci_hcd_init(usb_hcd_t *hcd) {
     xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
@@ -325,9 +404,21 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
     iman |= 0x02; // Interrupt Enable
     xhci_writel(&xhci->intr_regs[0].iman, iman);
 
-    uint32_t cmd = xhci_readl(&xhci->op_regs->usbcmd);
-    cmd |= XHCI_CMD_INTE;
-    xhci_writel(&xhci->op_regs->usbcmd, cmd);
+    // 分配端口信息数组
+    xhci->port_info =
+        (xhci_port_info_t *)malloc(sizeof(xhci_port_info_t) * xhci->max_ports);
+    if (!xhci->port_info) {
+        printk("XHCI: Failed to allocate port info\n");
+        return -1;
+    }
+    memset(xhci->port_info, 0, sizeof(xhci_port_info_t) * xhci->max_ports);
+
+    // 解析端口协议
+    xhci_parse_protocol_caps(xhci);
+
+    // uint32_t cmd = xhci_readl(&xhci->op_regs->usbcmd);
+    // cmd |= XHCI_CMD_INTE;
+    // xhci_writel(&xhci->op_regs->usbcmd, cmd);
 
     // 启动控制器
     if (xhci_start(xhci) != 0) {
@@ -404,9 +495,47 @@ static int xhci_reset_port(usb_hcd_t *hcd, uint8_t port) {
         return -1;
     }
 
-    printk("XHCI: Resetting port %d\n", port);
+    xhci_port_info_t *port_info = &xhci->port_info[port];
+
+    if (port_info->protocol == XHCI_PROTOCOL_USB3) {
+        // 检查端口是否已经在 U0 状态
+        uint32_t portsc = xhci_readl(&xhci->port_regs[port].portsc);
+        uint32_t pls = (portsc >> 5) & 0xF; // Port Link State
+
+        printk("  Port Link State: %u\n", pls);
+
+        if (pls == 0) { // U0 - active
+            printk("  Port is in U0 (active) - ready for enumeration\n");
+        } else {
+            printk("  Port not in U0, waiting for link training...\n");
+
+            // 等待链路训练完成
+            int timeout = 100;
+            while (timeout-- > 0) {
+                portsc = xhci_readl(&xhci->port_regs[port].portsc);
+                pls = (portsc >> 5) & 0xF;
+
+                if (pls == 0) { // U0
+                    printk("  Link training complete, port in U0\n");
+                    break;
+                }
+
+                usleep(10000); // 10ms
+            }
+
+            if (pls != 0) {
+                printk("  WARNING: Port not in U0 after timeout (PLS=%u)\n",
+                       pls);
+                return -1;
+            }
+        }
+
+        return 0; // 成功，无需重置
+    }
 
     uint32_t portsc = xhci_readl(&xhci->port_regs[port].portsc);
+
+    // 发起端口重置
     portsc |= XHCI_PORTSC_PR;
     xhci_writel(&xhci->port_regs[port].portsc, portsc);
 
@@ -417,12 +546,20 @@ static int xhci_reset_port(usb_hcd_t *hcd, uint8_t port) {
         if (!(portsc & XHCI_PORTSC_PR)) {
             break;
         }
+        usleep(1000);
     }
 
-    // 清除端口变化状态
+    if (timeout <= 0) {
+        printk("XHCI: Port reset timeout\n");
+        return -1;
+    }
+
+    // 清除端口变化状态位
     portsc = xhci_readl(&xhci->port_regs[port].portsc);
     portsc |= XHCI_PORTSC_PRC | XHCI_PORTSC_PEC;
     xhci_writel(&xhci->port_regs[port].portsc, portsc);
+
+    printk("XHCI: USB2 port reset complete\n");
 
     return 0;
 }
@@ -943,7 +1080,7 @@ static int xhci_configure_endpoint(usb_hcd_t *hcd, usb_endpoint_t *endpoint) {
     return ret;
 }
 
-spinlock_t control_transfer_lock = {0};
+spinlock_t transfer_lock = {0};
 
 // 控制传输 - 使用等待机制
 static int xhci_control_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer,
@@ -979,7 +1116,7 @@ static int xhci_control_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer,
     // 跟踪传输
     xhci_track_transfer(xhci, first_trb, completion, transfer);
 
-    spin_lock(&control_transfer_lock);
+    spin_lock(&transfer_lock);
 
     // Setup Stage TRB
     uint64_t setup_data = *(uint64_t *)setup;
@@ -1013,7 +1150,7 @@ static int xhci_control_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer,
     // 等待传输完成（5秒超时）
     int ret = xhci_wait_for_transfer(completion, 5000);
 
-    spin_unlock(&control_transfer_lock);
+    spin_unlock(&transfer_lock);
 
     if (ret >= 0) {
         transfer->status = 0;
@@ -1026,8 +1163,6 @@ static int xhci_control_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer,
     xhci_free_transfer_completion(completion);
     return ret;
 }
-
-spinlock_t bulk_transfer_lock = {0};
 
 // 批量传输 - 使用等待机制
 static int xhci_bulk_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
@@ -1050,7 +1185,7 @@ static int xhci_bulk_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
         return -1;
     }
 
-    spin_lock(&bulk_transfer_lock);
+    spin_lock(&transfer_lock);
 
     // 获取第一个TRB指针
     xhci_trb_t *first_trb = &ring->trbs[ring->enqueue_index];
@@ -1061,8 +1196,10 @@ static int xhci_bulk_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
     // Normal TRB
     uint64_t data_addr = translate_address(get_current_page_dir(false),
                                            (uint64_t)transfer->buffer);
-    xhci_queue_trb(ring, data_addr, transfer->length,
-                   (TRB_TYPE_NORMAL << 10) | TRB_FLAG_IOC);
+
+    uint32_t control = (TRB_TYPE_NORMAL << 10) | TRB_FLAG_IOC;
+
+    xhci_queue_trb(ring, data_addr, transfer->length, control);
 
     // 敲门铃
     xhci_ring_doorbell(xhci, dev_priv->slot_id, ep_priv->dci);
@@ -1070,7 +1207,7 @@ static int xhci_bulk_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
     // 等待传输完成
     int ret = xhci_wait_for_transfer(completion, 5000);
 
-    spin_unlock(&bulk_transfer_lock);
+    spin_unlock(&transfer_lock);
 
     if (ret >= 0) {
         transfer->status = 0;
@@ -1111,17 +1248,23 @@ static int xhci_interrupt_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
     // 跟踪传输
     xhci_track_transfer(xhci, first_trb, completion, transfer);
 
+    spin_lock(&transfer_lock);
+
     // Normal TRB
     uint64_t data_addr = translate_address(get_current_page_dir(false),
                                            (uint64_t)transfer->buffer);
-    xhci_queue_trb(ring, data_addr, transfer->length,
-                   (TRB_TYPE_NORMAL << 10) | TRB_FLAG_IOC);
+
+    uint32_t control = (TRB_TYPE_NORMAL << 10) | TRB_FLAG_IOC;
+
+    xhci_queue_trb(ring, data_addr, transfer->length, control);
 
     // 敲门铃
     xhci_ring_doorbell(xhci, dev_priv->slot_id, ep_priv->dci);
 
     // 等待传输完成
     int ret = xhci_wait_for_transfer(completion, 5000);
+
+    spin_unlock(&transfer_lock);
 
     if (ret >= 0) {
         transfer->status = 0;

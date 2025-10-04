@@ -295,6 +295,28 @@ typedef struct {
     xhci_transfer_completion_t *completion;
 } xhci_transfer_private_t;
 
+// 端口速度 ID (Port Speed ID)
+#define XHCI_PSIV_FULL_SPEED 1
+#define XHCI_PSIV_LOW_SPEED 2
+#define XHCI_PSIV_HIGH_SPEED 3
+#define XHCI_PSIV_SUPER_SPEED 4
+
+// 端口协议
+typedef enum {
+    XHCI_PROTOCOL_USB2 = 2,
+    XHCI_PROTOCOL_USB3 = 3,
+} xhci_protocol_t;
+
+// 端口信息
+typedef struct {
+    uint8_t port_num;         // 端口号 (0-based)
+    xhci_protocol_t protocol; // USB2 or USB3
+    uint8_t port_offset;      // 在协议中的偏移
+    uint8_t port_count;       // 该协议的端口数
+    bool connected;           // 是否有设备连接
+    uint8_t speed;            // 当前速度
+} xhci_port_info_t;
+
 // XHCI主控制器数据
 struct xhci_hcd {
     usb_hcd_t *hcd;
@@ -307,6 +329,8 @@ struct xhci_hcd {
     uint32_t *doorbell_regs;
 
     bool connection[256];
+
+    xhci_port_info_t *port_info;
 
     uint8_t max_slots;
     uint8_t max_ports;

@@ -125,10 +125,6 @@ typedef struct usb_msc_device {
     bool ready;
     bool write_protected;
 
-    // 传输缓冲区
-    uint8_t *transfer_buffer;
-    uint32_t transfer_buffer_size;
-
     struct usb_msc_device *next;
 } usb_msc_device_t;
 

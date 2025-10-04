@@ -25,7 +25,6 @@ void init_thread(uint64_t arg) {
     printk("NAOS init thread is running...\n");
 
     arch_disable_interrupt();
-    can_schedule = false;
 
     pci_init();
 
@@ -53,7 +52,6 @@ void init_thread(uint64_t arg) {
 
     printk("System initialized, ready to go to userland.\n");
 
-    can_schedule = true;
     arch_enable_interrupt();
 
 #if defined(__x86_64__)

@@ -440,15 +440,6 @@ int usb_msc_probe(usb_device_t *device) {
     msc->bulk_out_ep = bulk_out->bEndpointAddress;
     msc->max_packet_size = bulk_in->wMaxPacketSize;
 
-    // 分配传输缓冲区（最大 64KB）
-    msc->transfer_buffer_size = 65536;
-    msc->transfer_buffer = (uint8_t *)malloc(msc->transfer_buffer_size);
-    if (!msc->transfer_buffer) {
-        printk("MSC: Failed to allocate transfer buffer\n");
-        free(msc);
-        return -1;
-    }
-
     // 获取 Max LUN
     msc_get_max_lun(msc, &msc->max_lun);
 
@@ -461,7 +452,6 @@ int usb_msc_probe(usb_device_t *device) {
     // Inquiry
     if (msc_inquiry(msc) != 0) {
         printk("MSC: Inquiry failed\n");
-        free(msc->transfer_buffer);
         free(msc);
         return -1;
     }
@@ -477,7 +467,6 @@ int usb_msc_probe(usb_device_t *device) {
     // Read Capacity
     if (msc_read_capacity(msc) != 0) {
         printk("MSC: Read Capacity failed\n");
-        free(msc->transfer_buffer);
         free(msc);
         return -1;
     }
@@ -515,10 +504,6 @@ void usb_msc_remove(usb_msc_device_t *msc) {
             break;
         }
         prev = &(*prev)->next;
-    }
-
-    if (msc->transfer_buffer) {
-        free(msc->transfer_buffer);
     }
 
     free(msc);
