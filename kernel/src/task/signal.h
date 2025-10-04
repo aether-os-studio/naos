@@ -1,6 +1,7 @@
 #pragma once
 
 #include <libs/klibc.h>
+#include <task/task_struct.h>
 
 #define SIGHUP 1
 #define SIGINT 2
@@ -37,9 +38,6 @@
 #define SIGSYS 31
 #define SIGUNUSED SIGSYS
 
-#define MINSIG 1
-#define MAXSIG 65
-
 #define SIGMASK(sig) (1UL << (sig))
 
 typedef enum signal_internal {
@@ -65,18 +63,6 @@ bool signals_pending_quick(task_t *task);
 #define SIG_UNBLOCK 1 /* for unblocking signals */
 #define SIG_SETMASK 2 /* for setting the signal mask */
 
-typedef uint64_t sigset_t;
-typedef void (*sighandler_t)(int);
-
-#define SIG_DFL ((sighandler_t)0) // 默认的信号处理程序（信号句柄）
-#define SIG_IGN ((sighandler_t)1) // 忽略信号的处理程序
-
-typedef struct sigaction {
-    sighandler_t sa_handler;
-    unsigned long sa_flags;
-    void (*sa_restorer)(void);
-    sigset_t sa_mask;
-} sigaction_t;
 
 typedef struct {
     int32_t si_signo; // Signal number
@@ -147,11 +133,6 @@ uint64_t sys_sigsuspend(const sigset_t *mask);
 uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
                              const struct timespec *uts, size_t sigsetsize);
 uint64_t sys_kill(int pid, int sig);
-
-union sigval {
-    int sival_int;
-    void *sival_ptr;
-};
 
 struct sigevent {
     union sigval sigev_value;

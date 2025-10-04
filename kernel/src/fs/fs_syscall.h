@@ -1,7 +1,6 @@
 #pragma once
 
 #include <libs/klibc.h>
-#include <task/signal.h>
 #include <fs/termios.h>
 #include <fs/vfs/pipe.h>
 #include <fs/vfs/vfs.h>

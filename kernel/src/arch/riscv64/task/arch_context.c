@@ -16,12 +16,16 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->mm->brk_current = context->mm->brk_start;
     context->mm->brk_end = USER_BRK_END;
     context->ctx = (struct pt_regs *)stack - 1;
+    memset(context->ctx, 0, sizeof(struct pt_regs));
     context->ctx->ra = entry;
+    context->ctx->sepc = entry;
     context->ctx->sp = stack;
     context->ctx->a0 = initial_arg;
     context->dead = false;
     if (user_mode) {
+        context->ctx->sstatus = 0x0;
     } else {
+        context->ctx->sstatus = 0x102;
     }
 }
 
@@ -30,20 +34,63 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
 
 void arch_context_free(arch_context_t *context) {}
 
-task_t *arch_get_current() { return NULL; }
+extern bool task_initialized;
 
-void arch_set_current(task_t *current) {}
+task_t *arch_get_current() {
+    if (task_initialized) {
+        task_t *current;
+        asm volatile("mv %0, tp\n\t" : "=r"(current));
+        return current;
+    } else
+        return NULL;
+}
+
+void arch_set_current(task_t *current) {
+    asm volatile("mv tp, %0\n\t" ::"r"(current));
+}
 
 extern void ret_from_trap_handler();
 
 void arch_switch_with_context(arch_context_t *prev, arch_context_t *next,
                               uint64_t kernel_stack) {
     csr_write(sscratch, kernel_stack);
+
+    asm volatile("mv sp, %0\n\t"
+                 "j ret_from_trap_handler\n\t" ::"r"(next->ctx));
 }
 
 extern void task_signal();
 
-void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next) {}
+void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next) {
+    if (prev == next) {
+        return;
+    }
+
+    if (next->signal & SIGMASK(SIGKILL)) {
+        return;
+    }
+
+    prev->arch_context->ctx = ctx;
+
+    sched_update_itimer();
+    sched_update_timerfd();
+
+    task_signal();
+
+    if (next->arch_context->dead)
+        return;
+
+    prev->current_state = prev->state;
+    next->current_state = TASK_RUNNING;
+
+    arch_set_current(next);
+
+    arch_switch_with_context(prev->arch_context, next->arch_context,
+                             next->kernel_stack);
+
+    next->current_state = next->state;
+    prev->current_state = TASK_RUNNING;
+}
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
                                uint64_t stack) {}

@@ -1,5 +1,6 @@
 #include <libs/klibc.h>
 #include <arch/arch.h>
+#include <task/task.h>
 
 void handle_exception_c(struct pt_regs *regs, uint64_t cause);
 void handle_interrupt_c(struct pt_regs *regs, uint64_t cause);
@@ -57,6 +58,10 @@ void handle_exception_c(struct pt_regs *regs, uint64_t cause) {
 
 extern void riscv64_timer_handler(struct pt_regs *regs);
 
+extern void do_irq(struct pt_regs *regs, uint64_t irq_num);
+
+extern bool can_schedule;
+
 void handle_interrupt_c(struct pt_regs *regs, uint64_t cause) {
     switch (cause) {
     case 5: // timer interrupt
@@ -64,10 +69,15 @@ void handle_interrupt_c(struct pt_regs *regs, uint64_t cause) {
 
         sbi_set_timer(get_timer() + TIMER_FREQ / SCHED_HZ);
 
+        if (can_schedule) {
+            // arch_task_switch_to(regs, current_task,
+            //                     task_search(TASK_READY, current_cpu_id));
+        }
+
         break;
 
     default:
-        printk("Unhandled interrupt: %lu\n", cause);
+        do_irq(regs, cause);
         break;
     }
 }

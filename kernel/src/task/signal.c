@@ -1,7 +1,7 @@
+#include <arch/arch.h>
 #include <task/signal.h>
 #include <fs/vfs/vfs.h>
 #include <fs/fs_syscall.h>
-#include <arch/arch.h>
 #include <task/task.h>
 
 #define SI_MAX_SIZE 128

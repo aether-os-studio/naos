@@ -1,19 +1,22 @@
 #include <arch/arch.h>
 #include <boot/boot.h>
 #include <arch/riscv64/irq/irq.h>
+#include <task/task.h>
 
 spinlock_t ap_startup_lock = {0};
 
 uint64_t cpu_count;
 
 void ap_entry(struct limine_mp_info *cpu) {
-    asm volatile("mv tp, %0" : : "r"(cpu->hartid));
+    task_t *fake_task = malloc(sizeof(task_t));
+    fake_task->cpu_id = hartid_to_cpuid(cpu->hartid);
+    asm volatile("mv tp, %0" : : "r"(fake_task));
 
     trap_init();
 
     printk("cpu %d starting...\n", current_cpu_id);
 
-    timer_init_hart(get_hartid());
+    timer_init_hart(cpu->hartid);
 
     spin_unlock(&ap_startup_lock);
 

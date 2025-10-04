@@ -219,6 +219,7 @@ void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size) {
     spin_unlock(&mem_map_op_lock);
 }
 
+#if !defined(__riscv__)
 uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
     for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++) {
@@ -248,6 +249,7 @@ uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
 
     return 0;
 }
+#endif
 
 uint64_t map_change_attribute_range(uint64_t *pgdir, uint64_t vaddr,
                                     uint64_t len, uint64_t flags) {

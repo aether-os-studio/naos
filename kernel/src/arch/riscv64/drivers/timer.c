@@ -1,4 +1,5 @@
 #include <arch/arch.h>
+#include <task/task.h>
 
 struct timer_context g_timer_ctx = {.timer_freq = TIMER_FREQ,
                                     .initialized = false};
@@ -13,4 +14,4 @@ void timer_init_hart(uint32_t hart_id) {
     sbi_set_timer(get_timer() + TIMER_FREQ / SCHED_HZ);
 }
 
-void riscv64_timer_handler(struct pt_regs *regs) {}
+void riscv64_timer_handler(struct pt_regs *regs) { sched_check_wakeup(); }

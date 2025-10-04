@@ -242,3 +242,71 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
 
     return 0;
 }
+
+uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
+
+    // 规范化虚拟地址并确保地址按页对齐
+    vaddr = canonicalize_va(vaddr) & ~(PAGE_SIZE - 1);
+
+    // 确保Valid位被设置
+    flags |= ARCH_PT_FLAG_VALID;
+
+    // 获取各级页表索引
+    uint64_t pgd_idx = PGD_INDEX(vaddr);
+    uint64_t pud_idx = PUD_INDEX(vaddr);
+    uint64_t pmd_idx = PMD_INDEX(vaddr);
+    uint64_t pte_idx = PTE_INDEX(vaddr);
+
+    pgd_t *pgd_entry = phys_to_virt(&pgdir[pgd_idx]);
+    pud_t *pud_table;
+
+    if (!pte_present(*pgd_entry)) {
+        return 0;
+    } else {
+        // 获取现有PUD表地址
+        uint64_t pud_pfn = pte_to_pfn(*pgd_entry);
+        pud_table = (pud_t *)(pud_pfn << PAGE_SHIFT);
+    }
+
+    pud_t *pud_entry = phys_to_virt(&pud_table[pud_idx]);
+    pmd_t *pmd_table;
+
+    if (!pte_present(*pud_entry)) {
+        return 0;
+    } else {
+        // 检查是否为1GB大页映射
+        if (pte_is_leaf(*pud_entry)) {
+            return 0; // 已存在1GB大页映射，冲突
+        }
+
+        // 获取现有PMD表地址
+        uint64_t pmd_pfn = pte_to_pfn(*pud_entry);
+        pmd_table = (pmd_t *)(pmd_pfn << PAGE_SHIFT);
+    }
+
+    pmd_t *pmd_entry = phys_to_virt(&pmd_table[pmd_idx]);
+    pte_t *pte_table;
+
+    if (!pte_present(*pmd_entry)) {
+        return 0;
+    } else {
+        // 检查是否为2MB大页映射
+        if (pte_is_leaf(*pmd_entry)) {
+            return 0; // 已存在2MB大页映射，冲突
+        }
+
+        // 获取现有PTE表地址
+        uint64_t pte_pfn = pte_to_pfn(*pmd_entry);
+        pte_table = (pte_t *)(pte_pfn << PAGE_SHIFT);
+    }
+
+    pte_t *pte_entry = phys_to_virt(&pte_table[pte_idx]);
+
+    // 创建页表项映射
+    uint64_t pfn = pte_to_pfn(*pte_entry);
+    *pte_entry = pfn_to_pte(pfn, flags);
+
+    arch_flush_tlb(vaddr);
+
+    return 0;
+}

@@ -283,9 +283,10 @@ void task_init() {
         schedulers[cpu]->current = idle_task->sched_info;
     }
 
-    arch_set_current(idle_tasks[0]);
     task_create("init", init_thread, 0, NORMAL_PRIORITY);
     task_create("task_free_service", task_free_service, 0, KTHREAD_PRIORITY);
+
+    arch_set_current(idle_tasks[0]);
 
     task_initialized = true;
 
