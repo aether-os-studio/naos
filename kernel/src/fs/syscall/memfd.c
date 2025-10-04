@@ -85,8 +85,6 @@ void memfd_resize(void *current, uint64_t size) {
     ctx->data = new_data;
     ctx->len = size;
     spin_unlock(&ctx->lock);
-
-    ctx->node->size = ctx->len;
 }
 
 void *memfd_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
@@ -166,7 +164,7 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags) {
     node->fsid = memfd_fsid;
     node->handle = ctx;
     node->refcount++;
-    node->size = ctx->len;
+    node->size = 0;
     current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
     current_task->fd_info->fds[fd]->node = node;
     current_task->fd_info->fds[fd]->flags =

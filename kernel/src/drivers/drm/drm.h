@@ -1172,7 +1172,5 @@ struct drm_device {
     drm_resource_manager_t resource_mgr;
 };
 
-extern void fast_copy_16(void *dst, const void *src, size_t size);
-
 drm_device_t *drm_regist_pci_dev(void *data, drm_device_op_t *op,
                                  pci_device_t *pci_dev);

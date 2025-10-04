@@ -298,7 +298,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_FSTATFS] = (syscall_handle_t)sys_fstatfs;
     // syscall_handlers[SYS_SYSFS] = (syscall_handle_t)sys_sysfs;
     syscall_handlers[SYS_GETPRIORITY] = (syscall_handle_t)dummy_syscall_handler;
-    syscall_handlers[SYS_SETPRIORITY] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_SETPRIORITY] = (syscall_handle_t)sys_setpriority;
     syscall_handlers[SYS_SCHED_SETPARAM] =
         (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_SCHED_GETPARAM] =

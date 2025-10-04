@@ -205,6 +205,12 @@ static inline uint64_t sys_getcpu(unsigned *cpup, unsigned *nodep,
     return 0;
 }
 
+#define PRIO_PROCESS 0
+#define PRIO_PGRP 1
+#define PRIO_USER 2
+
+uint64_t sys_setpriority(int which, int who, int niceval);
+
 extern task_t *tasks[MAX_TASK_NUM];
 extern task_t *idle_tasks[MAX_CPU_NUM];
 

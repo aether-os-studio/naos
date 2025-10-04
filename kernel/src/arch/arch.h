@@ -13,3 +13,5 @@
 #include <libs/elf.h>
 
 extern uint64_t cpu_count;
+
+extern void fast_copy_16(void *dst, const void *src, size_t size);

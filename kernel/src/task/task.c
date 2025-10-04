@@ -1708,3 +1708,22 @@ uint64_t sys_reboot(int magic1, int magic2, uint32_t cmd, void *arg) {
         break;
     }
 }
+
+uint64_t sys_setpriority(int which, int who, int niceval) {
+    task_t *task = NULL;
+    switch (which) {
+    case PRIO_PROCESS:
+        task = tasks[who];
+        if (!task)
+            return -ESRCH;
+
+        change_entity_weight(schedulers[task->cpu_id], task,
+                             NICE_TO_PRIO(niceval));
+
+        return 0;
+
+    default:
+        printk("sys_setpriority: Unsupported which: %d\n", which);
+        return (uint64_t)-EINVAL;
+    }
+}
