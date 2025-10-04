@@ -58,6 +58,7 @@ all:
 	$(MAKE) -C vmware_svga
 # 	$(MAKE) -C nvidia_open
 
+	$(MAKE) -C hid
 	$(MAKE) -C msc
 
 	$(MAKE) -C ext

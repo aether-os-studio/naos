@@ -1,6 +1,8 @@
 // Copyright (C) 2025  lihanrui2913
 #include "xhci-hcd.h"
 
+spinlock_t transfer_lock = {0};
+
 // 前向声明
 static int xhci_hcd_init(usb_hcd_t *hcd);
 static int xhci_hcd_shutdown(usb_hcd_t *hcd);
@@ -399,10 +401,10 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
     xhci_writeq(&xhci->intr_regs[0].erstba, xhci->erst_phys);
     xhci_writeq(&xhci->intr_regs[0].erdp, xhci->event_ring->phys_addr);
 
-    // 启用中断
-    uint32_t iman = xhci_readl(&xhci->intr_regs[0].iman);
-    iman |= 0x02; // Interrupt Enable
-    xhci_writel(&xhci->intr_regs[0].iman, iman);
+    // // 启用中断
+    // uint32_t iman = xhci_readl(&xhci->intr_regs[0].iman);
+    // iman |= 0x02; // Interrupt Enable
+    // xhci_writel(&xhci->intr_regs[0].iman, iman);
 
     // 分配端口信息数组
     xhci->port_info =
@@ -520,7 +522,7 @@ static int xhci_reset_port(usb_hcd_t *hcd, uint8_t port) {
                     break;
                 }
 
-                usleep(10000); // 10ms
+                arch_yield();
             }
 
             if (pls != 0) {
@@ -546,7 +548,8 @@ static int xhci_reset_port(usb_hcd_t *hcd, uint8_t port) {
         if (!(portsc & XHCI_PORTSC_PR)) {
             break;
         }
-        usleep(1000);
+
+        arch_yield();
     }
 
     if (timeout <= 0) {
@@ -636,6 +639,8 @@ static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
         return -1;
     }
 
+    spin_lock(&transfer_lock);
+
     // 获取命令TRB指针（在入队之前）
     xhci_trb_t *cmd_trb = &xhci->cmd_ring->trbs[xhci->cmd_ring->enqueue_index];
 
@@ -651,6 +656,8 @@ static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
 
     // 等待命令完成（5秒超时）
     int ret = xhci_wait_for_command(completion, 5000);
+
+    spin_unlock(&transfer_lock);
 
     if (ret == 0) {
         // 命令成功，获取slot ID
@@ -696,6 +703,8 @@ static int xhci_disable_slot(usb_hcd_t *hcd, usb_device_t *device) {
         return -1;
     }
 
+    spin_lock(&transfer_lock);
+
     printk("XHCI: Disabling slot %d\n", dev_priv->slot_id);
 
     // 发送Disable Slot命令
@@ -704,6 +713,8 @@ static int xhci_disable_slot(usb_hcd_t *hcd, usb_device_t *device) {
                        ((uint32_t)dev_priv->slot_id << 24) | TRB_FLAG_IOC);
 
     xhci_ring_doorbell(xhci, 0, 0);
+
+    spin_unlock(&transfer_lock);
 
     // 清除DCBAA
     xhci->dcbaa[dev_priv->slot_id] = 0;
@@ -748,6 +759,8 @@ static int xhci_address_device(usb_hcd_t *hcd, usb_device_t *device,
         return -1;
     }
 
+    spin_lock(&transfer_lock);
+
     // 清零输入上下文
     memset(dev_priv->input_ctx, 0, sizeof(xhci_input_ctx_t));
 
@@ -767,7 +780,7 @@ static int xhci_address_device(usb_hcd_t *hcd, usb_device_t *device,
 
     // dev_info2: Root Hub Port Number
     // 注意：如果设备连接在root hub的port N，这里应该设置为N+1
-    uint8_t root_port = 1; // 假设是第一个端口，根据实际情况调整
+    uint8_t root_port = device->port + 1;
     dev_priv->input_ctx->slot.dev_info2 = SLOT_CTX_ROOT_HUB_PORT(root_port);
 
     // tt_info: TT相关，对于高速设备为0
@@ -832,6 +845,7 @@ static int xhci_address_device(usb_hcd_t *hcd, usb_device_t *device,
     xhci_command_completion_t *completion = xhci_alloc_command_completion();
     if (!completion) {
         printk("XHCI: Failed to allocate command completion\n");
+        spin_unlock(&transfer_lock);
         return -1;
     }
 
@@ -860,6 +874,8 @@ static int xhci_address_device(usb_hcd_t *hcd, usb_device_t *device,
 
     // 等待命令完成
     int ret = xhci_wait_for_command(completion, 5000);
+
+    spin_unlock(&transfer_lock);
 
     if (ret == 0) {
         device->address = address;
@@ -1080,8 +1096,6 @@ static int xhci_configure_endpoint(usb_hcd_t *hcd, usb_endpoint_t *endpoint) {
     return ret;
 }
 
-spinlock_t transfer_lock = {0};
-
 // 控制传输 - 使用等待机制
 static int xhci_control_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer,
                                  usb_device_request_t *setup) {
@@ -1262,7 +1276,7 @@ static int xhci_interrupt_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
     xhci_ring_doorbell(xhci, dev_priv->slot_id, ep_priv->dci);
 
     // 等待传输完成
-    int ret = xhci_wait_for_transfer(completion, 5000);
+    int ret = xhci_wait_for_transfer(completion, 0);
 
     spin_unlock(&transfer_lock);
 
@@ -1357,9 +1371,6 @@ void xhci_handle_port_status(xhci_hcd_t *xhci, uint8_t port_id) {
         uint8_t speed = xhci_port_speed_to_usb_speed(portsc);
         printk("XHCI: Device speed: %s\n", usb_speed_name(speed));
 
-        // 清除连接状态变化位
-        xhci_writel(&xhci->port_regs[port_id].portsc, portsc | XHCI_PORTSC_CSC);
-
         // 等待端口稳定
         uint64_t target_time = 100000000ULL + nanoTime(); // 100ms
         while (nanoTime() < target_time) {
@@ -1380,7 +1391,7 @@ void xhci_handle_port_status(xhci_hcd_t *xhci, uint8_t port_id) {
 
         task_create("enumerater", (void (*)(uint64_t))xhci_device_enumerater,
                     (uint64_t)arg, KTHREAD_PRIORITY);
-    } else {
+    } else if (!(portsc & XHCI_PORTSC_CCS)) {
         printk("XHCI: Device disconnected on port %d\n", port_id);
         xhci->connection[port_id] = false;
     }
@@ -1403,8 +1414,6 @@ void xhci_handle_port_status(xhci_hcd_t *xhci, uint8_t port_id) {
 
 // 初始化XHCI驱动
 usb_hcd_t *xhci_init(void *mmio_base) {
-    printk("XHCI: Initializing driver at MMIO base 0x%p\n", mmio_base);
-
     // 分配XHCI上下文
     xhci_hcd_t *xhci = (xhci_hcd_t *)malloc(sizeof(xhci_hcd_t));
     if (!xhci) {

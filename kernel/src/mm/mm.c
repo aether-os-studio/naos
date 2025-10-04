@@ -412,8 +412,6 @@ static void split_block(uintptr_t addr, size_t current_order,
 
 // 添加空闲区域到buddy分配器
 void add_free_region(uintptr_t addr, size_t size) {
-    printk("Adding free region: addr = %#018lx, size = %#010x\n", addr, size);
-
     // 确保地址页对齐
     if (addr % DEFAULT_PAGE_SIZE != 0) {
         size_t offset = DEFAULT_PAGE_SIZE - (addr % DEFAULT_PAGE_SIZE);

@@ -159,6 +159,8 @@ struct usb_endpoint {
 
 // USB设备结构
 struct usb_device {
+    uint8_t port;
+
     uint8_t address;
     uint8_t speed;
     uint8_t state;

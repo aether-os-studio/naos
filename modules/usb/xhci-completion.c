@@ -31,7 +31,8 @@ int xhci_wait_for_command(xhci_command_completion_t *completion,
         return -EINVAL;
     }
 
-    uint64_t timeout = (uint64_t)timeout_ms * 1000000ULL + nanoTime();
+    uint64_t timeout =
+        timeout_ms ? ((uint64_t)timeout_ms * 1000000ULL + nanoTime()) : UINT64_MAX;
 
     spin_lock(&completion->lock);
 
@@ -95,7 +96,8 @@ int xhci_wait_for_transfer(xhci_transfer_completion_t *completion,
         return -EINVAL;
     }
 
-    uint64_t timeout = (uint64_t)timeout_ms * 1000000ULL + nanoTime();
+    uint64_t timeout =
+        timeout_ms ? ((uint64_t)timeout_ms * 1000000ULL + nanoTime()) : UINT64_MAX;
 
     spin_lock(&completion->lock);
 

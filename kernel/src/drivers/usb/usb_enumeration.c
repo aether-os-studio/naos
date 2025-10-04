@@ -259,8 +259,6 @@ int usb_enum_state_machine(usb_enum_context_t *ctx) {
         break;
 
     case USB_ENUM_STATE_ADDRESS_WAIT:
-        usleep(10000); // 10ms - 让设备稳定
-
         ctx->state = USB_ENUM_STATE_GET_DESC_8;
         break;
 
@@ -483,6 +481,7 @@ int usb_enumerate_device(usb_hcd_t *hcd, uint8_t port_id, uint8_t speed) {
         usb_free_enum_context(ctx);
         return -1;
     }
+    ctx->device->port = port_id;
     ctx->device->speed = speed;
 
     // 运行状态机
