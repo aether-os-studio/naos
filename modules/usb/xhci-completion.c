@@ -24,6 +24,8 @@ void xhci_free_command_completion(xhci_command_completion_t *completion) {
     free(completion);
 }
 
+extern void xhci_handle_events(xhci_hcd_t *xhci);
+
 // 等待命令完成
 int xhci_wait_for_command(xhci_command_completion_t *completion,
                           uint32_t timeout_ms) {
@@ -40,6 +42,7 @@ int xhci_wait_for_command(xhci_command_completion_t *completion,
     arch_enable_interrupt();
 
     while (completion->status == COMPLETION_STATUS_PENDING) {
+        xhci_handle_events(completion->hcd);
         if (nanoTime() > timeout) {
             completion->status = COMPLETION_STATUS_TIMEOUT;
             printk("XHCI: Command timeout\n");
@@ -47,7 +50,6 @@ int xhci_wait_for_command(xhci_command_completion_t *completion,
             spin_unlock(&completion->lock);
             return -ETIMEDOUT;
         }
-        arch_yield();
     }
 
     arch_disable_interrupt();
@@ -107,14 +109,14 @@ int xhci_wait_for_transfer(xhci_transfer_completion_t *completion,
     arch_enable_interrupt();
 
     while (completion->status == COMPLETION_STATUS_PENDING) {
+        xhci_handle_events(completion->hcd);
         if (nanoTime() > timeout) {
             completion->status = COMPLETION_STATUS_TIMEOUT;
-            printk("XHCI: Command timeout\n");
+            printk("XHCI: Transfer timeout\n");
             arch_disable_interrupt();
             spin_unlock(&completion->lock);
             return -ETIMEDOUT;
         }
-        arch_yield();
     }
 
     arch_disable_interrupt();
@@ -145,6 +147,8 @@ void xhci_track_command(xhci_hcd_t *xhci, xhci_trb_t *trb,
         return;
     }
 
+    completion->hcd = xhci;
+
     tracker->trb = trb;
     tracker->completion = completion;
     tracker->command_type = cmd_type;
@@ -168,6 +172,8 @@ void xhci_track_transfer(xhci_hcd_t *xhci, xhci_trb_t *first_trb, int trb_num,
         printk("XHCI: Failed to allocate transfer tracker\n");
         return;
     }
+
+    completion->hcd = xhci;
 
     tracker->first_trb = first_trb;
     tracker->trb_num = trb_num;

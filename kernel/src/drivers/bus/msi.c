@@ -133,7 +133,7 @@ static inline void __msix_set_entry(struct msi_desc_t *msi_desc) {
 
     // 设置数据字段和控制字段
     entry_ptr[2] = msi_desc->msg.data;
-    entry_ptr[3] = msi_desc->msg.vector_control;
+    entry_ptr[3] = msi_desc->msg.vector_control & ~1;
 }
 
 /**

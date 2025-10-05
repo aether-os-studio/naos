@@ -405,12 +405,12 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
     xhci_writeq(&xhci->intr_regs[0].erstba, xhci->erst_phys);
     xhci_writeq(&xhci->intr_regs[0].erdp, xhci->event_ring->phys_addr);
 
-    // xhci_writel(&xhci->intr_regs[0].imod, 0);
+    xhci_writel(&xhci->intr_regs[0].imod, 0);
 
-    // // // 启用中断
-    // uint32_t iman = xhci_readl(&xhci->intr_regs[0].iman);
-    // iman |= (1 << 1) | (1 << 0);
-    // xhci_writel(&xhci->intr_regs[0].iman, iman);
+    // // 启用中断
+    uint32_t iman = xhci_readl(&xhci->intr_regs[0].iman);
+    iman |= (1 << 1);
+    xhci_writel(&xhci->intr_regs[0].iman, iman);
 
     // 分配端口信息数组
     xhci->port_info =
@@ -424,9 +424,9 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
     // 解析端口协议
     xhci_parse_protocol_caps(xhci);
 
-    // uint32_t cmd = xhci_readl(&xhci->op_regs->usbcmd);
-    // cmd |= XHCI_CMD_INTE;
-    // xhci_writel(&xhci->op_regs->usbcmd, cmd);
+    uint32_t cmd = xhci_readl(&xhci->op_regs->usbcmd);
+    cmd |= XHCI_CMD_INTE;
+    xhci_writel(&xhci->op_regs->usbcmd, cmd);
 
     // 启动控制器
     if (xhci_start(xhci) != 0) {
@@ -446,6 +446,8 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
                             XHCI_PORTSC_PR);
         }
     }
+
+    xhci_handle_events(xhci);
 
     printk("XHCI: Initialization complete\n");
     return 0;
@@ -607,6 +609,8 @@ int xhci_setup_default_endpoint(usb_hcd_t *hcd, usb_device_t *device) {
     return 0;
 }
 
+spinlock_t xhci_command_lock = {0};
+
 // 启用槽位 - 使用等待机制
 static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
     xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
@@ -647,6 +651,10 @@ static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
         return -1;
     }
 
+    spin_lock(&xhci_command_lock);
+
+    arch_enable_interrupt();
+
     // 获取命令TRB指针（在入队之前）
     xhci_trb_t *cmd_trb = &xhci->cmd_ring->trbs[xhci->cmd_ring->enqueue_index];
 
@@ -662,6 +670,10 @@ static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
 
     // 等待命令完成（5秒超时）
     int ret = xhci_wait_for_command(completion, 5000);
+
+    arch_disable_interrupt();
+
+    spin_unlock(&xhci_command_lock);
 
     if (ret == 0) {
         // 命令成功，获取slot ID
@@ -709,12 +721,20 @@ static int xhci_disable_slot(usb_hcd_t *hcd, usb_device_t *device) {
 
     printk("XHCI: Disabling slot %d\n", dev_priv->slot_id);
 
+    spin_lock(&xhci_command_lock);
+
+    arch_enable_interrupt();
+
     // 发送Disable Slot命令
     xhci_queue_trb(xhci->cmd_ring, 0, 0,
                    (TRB_TYPE_DISABLE_SLOT << 10) |
                        ((uint32_t)dev_priv->slot_id << 24) | TRB_FLAG_IOC);
 
     xhci_ring_doorbell(xhci, 0, 0);
+
+    arch_disable_interrupt();
+
+    spin_unlock(&xhci_command_lock);
 
     // 清除DCBAA
     xhci->dcbaa[dev_priv->slot_id] = 0;
@@ -848,6 +868,10 @@ static int xhci_address_device(usb_hcd_t *hcd, usb_device_t *device,
 
     xhci_trb_t *cmd_trb = &xhci->cmd_ring->trbs[xhci->cmd_ring->enqueue_index];
 
+    spin_lock(&xhci_command_lock);
+
+    arch_enable_interrupt();
+
     xhci_track_command(xhci, cmd_trb, completion, TRB_TYPE_ADDRESS_DEV);
 
     // Address Device TRB:
@@ -871,6 +895,10 @@ static int xhci_address_device(usb_hcd_t *hcd, usb_device_t *device,
 
     // 等待命令完成
     int ret = xhci_wait_for_command(completion, 5000);
+
+    arch_disable_interrupt();
+
+    spin_unlock(&xhci_command_lock);
 
     if (ret == 0) {
         device->address = address;
@@ -1062,6 +1090,10 @@ static int xhci_configure_endpoint(usb_hcd_t *hcd, usb_endpoint_t *endpoint) {
         return -1;
     }
 
+    spin_lock(&xhci_command_lock);
+
+    arch_enable_interrupt();
+
     xhci_trb_t *cmd_trb = &xhci->cmd_ring->trbs[xhci->cmd_ring->enqueue_index];
 
     xhci_track_command(xhci, cmd_trb, completion, TRB_TYPE_CONFIG_EP);
@@ -1075,6 +1107,10 @@ static int xhci_configure_endpoint(usb_hcd_t *hcd, usb_endpoint_t *endpoint) {
 
     // 等待命令完成
     int ret = xhci_wait_for_command(completion, 5000);
+
+    arch_disable_interrupt();
+
+    spin_unlock(&xhci_command_lock);
 
     if (ret == 0) {
         endpoint->hcd_private = ep_priv;
@@ -1128,6 +1164,8 @@ static int xhci_control_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer,
 
     spin_lock(&control_transfer_lock);
 
+    arch_enable_interrupt();
+
     // Setup Stage TRB
     uint64_t setup_data = *(uint64_t *)setup;
     xhci_queue_trb(
@@ -1165,6 +1203,8 @@ static int xhci_control_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer,
 
     // 等待传输完成（5秒超时）
     int ret = xhci_wait_for_transfer(completion, 5000);
+
+    arch_disable_interrupt();
 
     spin_unlock(&control_transfer_lock);
 
@@ -1207,18 +1247,42 @@ static int xhci_bulk_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
 
     spin_lock(&bulk_transfer_lock);
 
+    arch_enable_interrupt();
+
     uint8_t first_index = ring->enqueue_index;
 
     // 获取第一个TRB指针
     xhci_trb_t *first_trb = &ring->trbs[first_index];
 
-    // Normal TRB
-    uint64_t data_addr = translate_address(get_current_page_dir(false),
-                                           (uint64_t)transfer->buffer);
+    uint16_t max_packet_size = transfer->endpoint->max_packet_size;
 
-    uint32_t control = (TRB_TYPE_NORMAL << 10) | TRB_FLAG_IOC;
+    size_t td_packet_count =
+        (transfer->length + max_packet_size - 1) / max_packet_size;
 
-    xhci_queue_trb(ring, data_addr, transfer->length, control);
+    size_t progress = 0;
+
+    while (progress < transfer->length) {
+        uint64_t data_addr = translate_address(
+            get_current_page_dir(false), (uint64_t)transfer->buffer + progress);
+
+        size_t chunk = MIN(transfer->length - progress,
+                           DEFAULT_PAGE_SIZE - (data_addr & 0xFFF));
+
+        bool chain = (progress + chunk) < transfer->length;
+
+        size_t td_size = td_packet_count - (progress + chunk) / max_packet_size;
+        if ((progress + chunk) == transfer->length)
+            td_size = 0;
+
+        // Normal TRB
+        if (td_size > 31)
+            td_size = 31;
+        xhci_queue_trb(ring, data_addr, chunk | (td_size << 17),
+                       (TRB_TYPE_NORMAL << 10) |
+                           (chain ? TRB_FLAG_CHAIN : TRB_FLAG_IOC));
+
+        progress += chunk;
+    }
 
     // 跟踪传输
     xhci_track_transfer(
@@ -1231,6 +1295,8 @@ static int xhci_bulk_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
 
     // 等待传输完成
     int ret = xhci_wait_for_transfer(completion, 5000);
+
+    arch_disable_interrupt();
 
     spin_unlock(&bulk_transfer_lock);
 

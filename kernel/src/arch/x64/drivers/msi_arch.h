@@ -13,5 +13,5 @@
  */
 #define ia64_pci_get_arch_msi_message_data(vector, processor, edge_trigger,    \
                                            assert)                             \
-    ((uint32_t)((vector & 0xff) | (edge_trigger == 1 ? 0 : (1 << 15)) |        \
+    ((uint32_t)((vector & 0xff) | ((edge_trigger == 1) ? 0 : (1 << 15)) |      \
                 ((assert == 0) ? 0 : (1 << 14))))

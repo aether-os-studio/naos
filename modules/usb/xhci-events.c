@@ -45,43 +45,20 @@ void xhci_handle_events(xhci_hcd_t *xhci) {
         }
 
         events_processed++;
-
-        // 更新ERDP (Event Ring Dequeue Pointer)
-        uint64_t erdp = event_ring->phys_addr +
-                        (event_ring->dequeue_index * sizeof(xhci_trb_t));
-        xhci_writeq(&xhci->intr_regs[0].erdp, erdp);
     }
 
     if (events_processed > 0) {
-        xhci_writeq(&xhci->intr_regs[0].erdp,
-                    xhci_readq(&xhci->intr_regs[0].erdp) | (1 << 3)); // Set EHB
+        // 更新ERDP (Event Ring Dequeue Pointer)
+        uint64_t erdp = event_ring->phys_addr +
+                        (event_ring->dequeue_index * sizeof(xhci_trb_t));
+        xhci_writeq(&xhci->intr_regs[0].erdp, erdp | (1 << 3)); // Set EHB
     }
-}
-
-// 事件处理线程
-void *xhci_event_handler_thread(void *arg) {
-    xhci_hcd_t *xhci = (xhci_hcd_t *)arg;
-
-    printk("XHCI: Event handler thread started\n");
-
-    while (xhci->event_thread.running) {
-        // 处理事件
-        xhci_handle_events(xhci);
-    }
-
-    printk("XHCI: Event handler thread stopped\n");
-
-    task_exit(0);
 }
 
 // 启动事件处理线程
 int xhci_start_event_handler(xhci_hcd_t *xhci) {
     xhci->event_thread.running = true;
     xhci->event_thread.xhci = xhci;
-
-    xhci->event_thread.task = task_create(
-        "xhci_events_thread", (void (*)(uint64_t))xhci_event_handler_thread,
-        (uint64_t)xhci, KTHREAD_PRIORITY);
 
     printk("XHCI: Event handler thread created\n");
     return 0;

@@ -258,6 +258,7 @@ typedef struct {
     uint32_t completion_code;
     uint64_t result;
     uint32_t slot_id;
+    xhci_hcd_t *hcd;
     spinlock_t lock;
     uint64_t timeout;
 } xhci_command_completion_t;
@@ -269,6 +270,7 @@ typedef struct {
     uint32_t transferred_length;
     usb_transfer_t *transfer;
     enum { NORMAL_TRANSFER, INTR_TRANSFER } transfer_type;
+    xhci_hcd_t *hcd;
     spinlock_t lock;
 } xhci_transfer_completion_t;
 
@@ -291,7 +293,6 @@ typedef struct xhci_transfer_tracker {
 
 // 事件处理线程数据
 typedef struct {
-    task_t *task;
     volatile bool running;
     xhci_hcd_t *xhci;
 } xhci_event_thread_t;
@@ -410,7 +411,6 @@ void xhci_track_transfer(xhci_hcd_t *xhci, xhci_trb_t *first_trb, int trb_num,
 void xhci_complete_command(xhci_hcd_t *xhci, xhci_trb_t *event_trb);
 void xhci_complete_transfer(xhci_hcd_t *xhci, xhci_trb_t *event_trb);
 
-void *xhci_event_handler_thread(void *arg);
 int xhci_start_event_handler(xhci_hcd_t *xhci);
 void xhci_stop_event_handler(xhci_hcd_t *xhci);
 
