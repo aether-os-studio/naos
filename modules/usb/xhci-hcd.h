@@ -110,15 +110,21 @@ typedef struct {
 #define TRB_TYPE_CMD_COMPLETE 33
 #define TRB_TYPE_PORT_STATUS 34
 
-// TRB标志
-#define TRB_FLAG_CYCLE (1 << 0)
-#define TRB_FLAG_ENT (1 << 1)
-#define TRB_FLAG_ISP (1 << 2)
-#define TRB_FLAG_NS (1 << 3)
-#define TRB_FLAG_CH (1 << 4)
-#define TRB_FLAG_IOC (1 << 5)
-#define TRB_FLAG_IDT (1 << 6)
-#define TRB_FLAG_BEI (1 << 9)
+// 通用TRB标志
+#define TRB_FLAG_CYCLE (1 << 0) // Cycle bit
+#define TRB_FLAG_ENT (1 << 1)   // Evaluate Next TRB (非Link TRB)
+#define TRB_FLAG_ISP (1 << 2)   // Interrupt on Short Packet
+#define TRB_FLAG_NS (1 << 3)    // No Snoop
+#define TRB_FLAG_CHAIN (1 << 4) // Chain bit
+#define TRB_FLAG_IOC (1 << 5)   // Interrupt on Completion
+#define TRB_FLAG_IDT (1 << 6)   // Immediate Data
+#define TRB_FLAG_BEI (1 << 9)   // Block Event Interrupt
+
+// Link TRB 特定标志
+#define TRB_LINK_TOGGLE_CYCLE (1 << 1) // Toggle Cycle (Link TRB专用)
+#define TRB_LINK_CHAIN (1 << 4)        // Chain bit (Link TRB中保持链)
+
+#define TRB_FLAG_TC TRB_LINK_TOGGLE_CYCLE // Toggle Cycle的别名
 
 // Slot Context - dev_info 字段
 #define SLOT_CTX_ROUTE_STRING(x) ((x) & 0xFFFFF)
@@ -277,6 +283,7 @@ typedef struct xhci_command_tracker {
 // 传输跟踪结构
 typedef struct xhci_transfer_tracker {
     xhci_trb_t *first_trb;
+    int trb_num;
     xhci_transfer_completion_t *completion;
     usb_transfer_t *transfer;
     struct xhci_transfer_tracker *next;
@@ -394,7 +401,7 @@ int xhci_wait_for_transfer(xhci_transfer_completion_t *completion,
 void xhci_track_command(xhci_hcd_t *xhci, xhci_trb_t *trb,
                         xhci_command_completion_t *completion,
                         uint32_t cmd_type);
-void xhci_track_transfer(xhci_hcd_t *xhci, xhci_trb_t *first_trb,
+void xhci_track_transfer(xhci_hcd_t *xhci, xhci_trb_t *first_trb, int trb_num,
                          xhci_transfer_completion_t *completion,
                          usb_transfer_t *transfer);
 
@@ -422,6 +429,11 @@ static inline uint64_t xhci_readq(volatile uint64_t *reg) { return *reg; }
 
 static inline void xhci_writeq(volatile uint64_t *reg, uint64_t value) {
     *reg = value;
+}
+
+static inline int xhci_calc_trbs_num(int new_index, int first_index,
+                                     uint32_t ring_size) {
+    return new_index - first_index;
 }
 
 #endif // XHCI_H

@@ -156,7 +156,7 @@ void xhci_track_command(xhci_hcd_t *xhci, xhci_trb_t *trb,
 }
 
 // 跟踪传输
-void xhci_track_transfer(xhci_hcd_t *xhci, xhci_trb_t *first_trb,
+void xhci_track_transfer(xhci_hcd_t *xhci, xhci_trb_t *first_trb, int trb_num,
                          xhci_transfer_completion_t *completion,
                          usb_transfer_t *transfer) {
     xhci_transfer_tracker_t *tracker =
@@ -168,6 +168,7 @@ void xhci_track_transfer(xhci_hcd_t *xhci, xhci_trb_t *first_trb,
     }
 
     tracker->first_trb = first_trb;
+    tracker->trb_num = trb_num;
     tracker->completion = completion;
     tracker->transfer = transfer;
 
@@ -236,49 +237,57 @@ void xhci_complete_transfer(xhci_hcd_t *xhci, xhci_trb_t *event_trb) {
     xhci_transfer_tracker_t **prev = &xhci->pending_transfers;
     xhci_transfer_tracker_t *tracker = xhci->pending_transfers;
 
+    xhci_trb_t *ring_trb = (xhci_trb_t *)phys_to_virt(transfer_trb_addr);
+
     while (tracker) {
         // 检查是否匹配（可能需要检查TRB范围）
         if (tracker->completion) {
-            tracker->completion->completion_code = completion_code;
+            if ((tracker->trb_num > 0 && ring_trb >= tracker->first_trb &&
+                 ring_trb <= tracker->first_trb + tracker->trb_num) ||
+                (tracker->trb_num < 0 &&
+                 ring_trb >= tracker->first_trb - (-tracker->trb_num + 1) &&
+                 ring_trb <= tracker->first_trb)) {
+                tracker->completion->completion_code = completion_code;
 
-            // transfer_length 是剩余未传输的字节数
-            if (tracker->transfer) {
-                tracker->completion->transferred_length =
-                    tracker->transfer->length - transfer_length;
-                tracker->transfer->actual_length =
-                    tracker->completion->transferred_length;
-            } else {
-                tracker->completion->transferred_length = 0;
-            }
-
-            if (completion_code == 1 ||
-                completion_code == 13) { // SUCCESS or SHORT_PACKET
-                tracker->completion->status = COMPLETION_STATUS_SUCCESS;
+                // transfer_length 是剩余未传输的字节数
                 if (tracker->transfer) {
-                    tracker->transfer->status = 0;
+                    tracker->completion->transferred_length =
+                        tracker->transfer->length - transfer_length;
+                    tracker->transfer->actual_length =
+                        tracker->completion->transferred_length;
+                } else {
+                    tracker->completion->transferred_length = 0;
                 }
-            } else {
-                tracker->completion->status = COMPLETION_STATUS_ERROR;
-                if (tracker->transfer) {
-                    tracker->transfer->status = -EIO;
+
+                if (completion_code == 1 ||
+                    completion_code == 13) { // SUCCESS or SHORT_PACKET
+                    tracker->completion->status = COMPLETION_STATUS_SUCCESS;
+                    if (tracker->transfer) {
+                        tracker->transfer->status = 0;
+                    }
+                } else {
+                    tracker->completion->status = COMPLETION_STATUS_ERROR;
+                    if (tracker->transfer) {
+                        tracker->transfer->status = -EIO;
+                    }
                 }
+
+                // 调用用户回调
+                if (tracker->transfer && tracker->transfer->callback) {
+                    tracker->transfer->callback(tracker->transfer);
+                }
+
+                if (tracker->completion->transfer_type == INTR_TRANSFER) {
+                    xhci_free_transfer_completion(tracker->completion);
+                }
+
+                // 从列表中移除
+                *prev = tracker->next;
+                free(tracker);
+
+                spin_unlock(&xhci->tracker_mutex);
+                return;
             }
-
-            // 调用用户回调
-            if (tracker->transfer && tracker->transfer->callback) {
-                tracker->transfer->callback(tracker->transfer);
-            }
-
-            if (tracker->completion->transfer_type == INTR_TRANSFER) {
-                xhci_free_transfer_completion(tracker->completion);
-            }
-
-            // 从列表中移除
-            *prev = tracker->next;
-            free(tracker);
-
-            spin_unlock(&xhci->tracker_mutex);
-            return;
         }
 
         prev = &tracker->next;
