@@ -1,12 +1,16 @@
 #include "xhci-hcd.h"
 #include <libs/aether/irq.h>
 
+spinlock_t xhci_event_handle_lock = {0};
+
 // 事件处理函数
 void xhci_handle_events(xhci_hcd_t *xhci) {
+    spin_lock(&xhci_event_handle_lock);
+
     xhci_ring_t *event_ring = xhci->event_ring;
     int events_processed = 0;
 
-    while (1) { // 无限循环
+    while (events_processed < 256) { // 避免无限循环
         xhci_trb_t *trb = &event_ring->trbs[event_ring->dequeue_index];
 
         // 检查cycle bit
@@ -45,20 +49,33 @@ void xhci_handle_events(xhci_hcd_t *xhci) {
         }
 
         events_processed++;
-    }
 
-    if (events_processed > 0) {
         // 更新ERDP (Event Ring Dequeue Pointer)
         uint64_t erdp = event_ring->phys_addr +
                         (event_ring->dequeue_index * sizeof(xhci_trb_t));
         xhci_writeq(&xhci->intr_regs[0].erdp, erdp | (1 << 3)); // Set EHB
     }
+
+    spin_unlock(&xhci_event_handle_lock);
+}
+
+void xhci_event_handler(xhci_hcd_t *xhci) {
+    while (xhci->event_thread.running) {
+        xhci_handle_events(xhci);
+
+        arch_yield();
+    }
+
+    task_exit(0);
 }
 
 // 启动事件处理线程
 int xhci_start_event_handler(xhci_hcd_t *xhci) {
     xhci->event_thread.running = true;
     xhci->event_thread.xhci = xhci;
+
+    task_create("xhci_event_handler", (void (*)(uint64_t))xhci_event_handler,
+                (uint64_t)xhci, KTHREAD_PRIORITY);
 
     printk("XHCI: Event handler thread created\n");
     return 0;

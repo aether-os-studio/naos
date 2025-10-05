@@ -384,8 +384,8 @@ int xhci_stop(xhci_hcd_t *xhci);
 
 xhci_ring_t *xhci_alloc_ring(uint32_t num_trbs);
 void xhci_free_ring(xhci_ring_t *ring);
-int xhci_queue_trb(xhci_ring_t *ring, uint64_t param, uint32_t status,
-                   uint32_t control);
+xhci_trb_t *xhci_queue_trb(xhci_ring_t *ring, uint64_t param, uint32_t status,
+                           uint32_t control);
 void xhci_ring_doorbell(xhci_hcd_t *xhci, uint8_t slot_id, uint8_t dci);
 
 void xhci_handle_events(xhci_hcd_t *xhci);

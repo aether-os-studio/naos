@@ -200,12 +200,7 @@ void xhci_complete_command(xhci_hcd_t *xhci, xhci_trb_t *event_trb) {
     xhci_command_tracker_t *tracker = xhci->pending_commands;
 
     while (tracker) {
-        uint64_t trb_addr = xhci_trb_phys(xhci->cmd_ring, tracker->trb);
-
-        if (trb_addr == cmd_trb_addr) {
-            // 找到匹配的命令
-            printk("XHCI: Found matching command tracker\n");
-
+        if (tracker->trb == (xhci_trb_t *)phys_to_virt(cmd_trb_addr)) {
             if (tracker->completion) {
                 tracker->completion->completion_code = completion_code;
                 tracker->completion->slot_id = slot_id;
@@ -248,7 +243,7 @@ void xhci_complete_transfer(xhci_hcd_t *xhci, xhci_trb_t *event_trb) {
     xhci_trb_t *ring_trb = (xhci_trb_t *)phys_to_virt(transfer_trb_addr);
 
     while (tracker) {
-        // 检查是否匹配（可能需要检查TRB范围）
+        // 检查是否匹配（需要检查TRB范围）
         if (tracker->completion) {
             if ((tracker->trb_num > 0 && ring_trb >= tracker->first_trb &&
                  ring_trb <= tracker->first_trb + tracker->trb_num) ||
