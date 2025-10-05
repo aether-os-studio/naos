@@ -1389,7 +1389,7 @@ void xhci_handle_port_status(xhci_hcd_t *xhci, uint8_t port_id) {
 
     uint32_t portsc = xhci_readl(&xhci->port_regs[port_id].portsc);
 
-    printk("XHCI: Port %d status: 0x%08x\n", port_id, portsc);
+    // printk("XHCI: Port %d status: 0x%08x\n", port_id, portsc);
 
     // 连接状态变化
     if ((portsc & XHCI_PORTSC_CCS) && !xhci->connection[port_id]) {
@@ -1434,11 +1434,12 @@ void xhci_handle_port_status(xhci_hcd_t *xhci, uint8_t port_id) {
         xhci_writel(&xhci->port_regs[port_id].portsc, portsc | XHCI_PORTSC_PEC);
     }
 
-    if (portsc & XHCI_PORTSC_PRC) {
-        // 端口重置完成
-        printk("XHCI: Port %d reset complete\n", port_id);
-        xhci_writel(&xhci->port_regs[port_id].portsc, portsc | XHCI_PORTSC_PRC);
-    }
+    // if (portsc & XHCI_PORTSC_PRC) {
+    //     // 端口重置完成
+    //     printk("XHCI: Port %d reset complete\n", port_id);
+    //     xhci_writel(&xhci->port_regs[port_id].portsc, portsc |
+    //     XHCI_PORTSC_PRC);
+    // }
 }
 
 // 初始化XHCI驱动

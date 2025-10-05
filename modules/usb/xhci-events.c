@@ -33,7 +33,7 @@ void xhci_handle_events(xhci_hcd_t *xhci) {
         case TRB_TYPE_PORT_STATUS: {
             uint32_t port_id = ((trb->parameter >> 24) & 0xFF) - 1;
             printk("XHCI: Port status change on port %d\n", port_id);
-            xhci_handle_port_status(xhci, port_id);
+            // xhci_handle_port_status(xhci, port_id);
         } break;
 
         default:
