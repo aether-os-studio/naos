@@ -1,7 +1,5 @@
 #include "ahci.h"
 
-void *op_buffer;
-
 void achi_register_ops(struct hba_port *port) {
     if (!(port->device->flags & HBA_DEV_FATAPI)) {
         port->device->ops.submit = sata_submit;
@@ -353,8 +351,6 @@ int ahci_probe(pci_device_t *dev, uint32_t vendor_device_id) {
     if (bar5->address == 0 || bar5->size == 0) {
         return -1;
     }
-
-    op_buffer = (void *)alloc_frames(0x400000UL / DEFAULT_PAGE_SIZE);
 
     drv = ahci_driver_init(bar5);
 

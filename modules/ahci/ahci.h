@@ -20,8 +20,6 @@ struct ahci_driver {
 
 #define ICEIL(x, y) ((x) / (y) + ((x) % (y) != 0))
 
-extern void *op_buffer;
-
 extern struct ahci_driver *drv;
 
 void sata_read_error(struct hba_port *port);
