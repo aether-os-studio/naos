@@ -1,5 +1,6 @@
 // Copyright (C) 2025  lihanrui2913
 #include "xhci-hcd.h"
+#include <libs/aether/irq.h>
 
 spinlock_t transfer_lock = {0};
 
@@ -308,6 +309,8 @@ static int xhci_parse_protocol_caps(xhci_hcd_t *xhci) {
 static int xhci_hcd_init(usb_hcd_t *hcd) {
     xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
 
+    xhci->hcd = hcd;
+
     printk("XHCI: Initializing controller\n");
 
     xhci->tracker_mutex.lock = 0;
@@ -402,9 +405,11 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
     xhci_writeq(&xhci->intr_regs[0].erstba, xhci->erst_phys);
     xhci_writeq(&xhci->intr_regs[0].erdp, xhci->event_ring->phys_addr);
 
-    // // 启用中断
+    // xhci_writel(&xhci->intr_regs[0].imod, 0);
+
+    // // // 启用中断
     // uint32_t iman = xhci_readl(&xhci->intr_regs[0].iman);
-    // iman |= 0x02; // Interrupt Enable
+    // iman |= (1 << 1) | (1 << 0);
     // xhci_writel(&xhci->intr_regs[0].iman, iman);
 
     // 分配端口信息数组
@@ -435,8 +440,10 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
     }
 
     for (uint8_t p = 0; p < xhci->max_ports; p++) {
-        if (xhci->port_regs[p].portsc & XHCI_PORTSC_CCS) {
-            xhci->port_regs[p].portsc |= XHCI_PORTSC_PR;
+        if (xhci_readl(&xhci->port_regs[p].portsc) & XHCI_PORTSC_CCS) {
+            xhci_writel(&xhci->port_regs[p].portsc,
+                        xhci_readl(&xhci->port_regs[p].portsc) |
+                            XHCI_PORTSC_PR);
         }
     }
 
@@ -1379,8 +1386,6 @@ void xhci_handle_port_status(xhci_hcd_t *xhci, uint8_t port_id) {
         }
 
         // 启动设备枚举
-        // 注意：这里应该在一个单独的线程中执行，避免阻塞事件处理
-        // 但为了简化，我们直接调用
         printk("XHCI: Starting device enumeration...\n");
 
         xhci->connection[port_id] = true;
@@ -1392,6 +1397,8 @@ void xhci_handle_port_status(xhci_hcd_t *xhci, uint8_t port_id) {
 
         task_create("enumerater", (void (*)(uint64_t))xhci_device_enumerater,
                     (uint64_t)arg, KTHREAD_PRIORITY);
+
+        arch_enable_interrupt();
     } else if (!(portsc & XHCI_PORTSC_CCS)) {
         printk("XHCI: Device disconnected on port %d\n", port_id);
         xhci->connection[port_id] = false;
@@ -1414,7 +1421,7 @@ void xhci_handle_port_status(xhci_hcd_t *xhci, uint8_t port_id) {
 }
 
 // 初始化XHCI驱动
-usb_hcd_t *xhci_init(void *mmio_base) {
+usb_hcd_t *xhci_init(void *mmio_base, pci_device_t *pci_dev) {
     // 分配XHCI上下文
     xhci_hcd_t *xhci = (xhci_hcd_t *)malloc(sizeof(xhci_hcd_t));
     if (!xhci) {
@@ -1440,6 +1447,8 @@ usb_hcd_t *xhci_init(void *mmio_base) {
 
     memset(xhci->connection, 0, sizeof(xhci->connection));
 
+    xhci->pci_dev = pci_dev;
+
     // 注册HCD
     usb_hcd_t *hcd = usb_register_hcd("xhci", &xhci_ops, mmio_base, xhci);
     if (!hcd) {
@@ -1447,7 +1456,6 @@ usb_hcd_t *xhci_init(void *mmio_base) {
         free(xhci);
         return NULL;
     }
-    xhci->hcd = hcd;
 
     return hcd;
 }
@@ -1481,9 +1489,7 @@ int xhci_hcd_driver_probe(pci_device_t *pci_dev, uint32_t vendor_device_id) {
     map_page_range(get_current_page_dir(false), (uint64_t)mmio_vaddr, mmio_base,
                    mmio_size, PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
 
-    usb_hcd_t *xhci_hcd = xhci_init(mmio_vaddr);
-
-    pci_dev->desc = xhci_hcd;
+    usb_hcd_t *xhci_hcd = xhci_init(mmio_vaddr, pci_dev);
 
     return 0;
 }

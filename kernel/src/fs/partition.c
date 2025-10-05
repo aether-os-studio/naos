@@ -41,7 +41,10 @@ void mount_root() {
         }
     }
 
+    printk("Mount root from harddisk failed\n");
+
     if (err) {
+    retry:
         while (!have_usb_device) {
             arch_pause();
         }
@@ -56,9 +59,10 @@ void mount_root() {
             }
         }
 
-        printk("Mount root failed\n");
-        while (1) {
-            arch_pause();
-        }
+        printk("Mount root from usb storage failed\n");
+
+        have_usb_device = false;
+
+        goto retry;
     }
 }

@@ -46,8 +46,18 @@
 #define SCSI_READ_CAPACITY_10 0x25
 #define SCSI_READ_10 0x28
 #define SCSI_WRITE_10 0x2A
+#define SCSI_READ_16 0x88
+#define SCSI_WRITE_16 0x8A
 #define SCSI_VERIFY_10 0x2F
 #define SCSI_MODE_SENSE_10 0x5A
+
+struct scsi_cdb_rwdata_16 {
+    uint8_t command;
+    uint8_t flags;
+    uint64_t lba;
+    uint32_t count;
+    uint16_t reserved_14;
+} __attribute__((packed));
 
 // Command Block Wrapper
 typedef struct {
@@ -129,7 +139,6 @@ typedef struct usb_msc_device {
 } usb_msc_device_t;
 
 // MSC 驱动 API
-int usb_msc_init(void);
 int usb_msc_probe(usb_device_t *device);
 void usb_msc_remove(usb_msc_device_t *msc);
 
@@ -140,9 +149,9 @@ int msc_request_sense(usb_msc_device_t *msc, scsi_sense_data_t *sense);
 int msc_read_capacity(usb_msc_device_t *msc);
 
 // 读写操作
-int msc_read_blocks(usb_msc_device_t *msc, uint32_t lba, uint32_t count,
+int msc_read_blocks(usb_msc_device_t *msc, uint64_t lba, uint32_t count,
                     void *buffer);
-int msc_write_blocks(usb_msc_device_t *msc, uint32_t lba, uint32_t count,
+int msc_write_blocks(usb_msc_device_t *msc, uint64_t lba, uint32_t count,
                      const void *buffer);
 
 // 辅助函数
@@ -162,6 +171,14 @@ static inline uint32_t be32_to_cpu(uint32_t val) {
 
 static inline uint32_t cpu_to_be32(uint32_t val) {
     return __builtin_bswap32(val);
+}
+
+static inline uint64_t be64_to_cpu(uint64_t val) {
+    return __builtin_bswap64(val);
+}
+
+static inline uint64_t cpu_to_be64(uint64_t val) {
+    return __builtin_bswap64(val);
 }
 
 static inline uint16_t be16_to_cpu(uint16_t val) {

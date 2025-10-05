@@ -1,11 +1,12 @@
 #include "xhci-hcd.h"
+#include <libs/aether/irq.h>
 
-// 改进的事件处理函数
+// 事件处理函数
 void xhci_handle_events(xhci_hcd_t *xhci) {
     xhci_ring_t *event_ring = xhci->event_ring;
     int events_processed = 0;
 
-    while (events_processed < 256) { // 防止无限循环
+    while (1) { // 无限循环
         xhci_trb_t *trb = &event_ring->trbs[event_ring->dequeue_index];
 
         // 检查cycle bit
@@ -44,13 +45,16 @@ void xhci_handle_events(xhci_hcd_t *xhci) {
         }
 
         events_processed++;
-    }
 
-    if (events_processed > 0) {
         // 更新ERDP (Event Ring Dequeue Pointer)
         uint64_t erdp = event_ring->phys_addr +
                         (event_ring->dequeue_index * sizeof(xhci_trb_t));
-        xhci_writeq(&xhci->intr_regs[0].erdp, erdp | (1 << 3)); // Set EHB
+        xhci_writeq(&xhci->intr_regs[0].erdp, erdp);
+    }
+
+    if (events_processed > 0) {
+        xhci_writeq(&xhci->intr_regs[0].erdp,
+                    xhci_readq(&xhci->intr_regs[0].erdp) | (1 << 3)); // Set EHB
     }
 }
 
@@ -61,18 +65,8 @@ void *xhci_event_handler_thread(void *arg) {
     printk("XHCI: Event handler thread started\n");
 
     while (xhci->event_thread.running) {
-        // // 检查是否有待处理的中断
-        // uint32_t usbsts = xhci_readl(&xhci->op_regs->usbsts);
-
-        // if (usbsts & XHCI_STS_EINT) {
         // 处理事件
         xhci_handle_events(xhci);
-
-        // 清除中断标志
-        // xhci_writel(&xhci->op_regs->usbsts, XHCI_STS_EINT);
-        // }
-
-        arch_yield();
     }
 
     printk("XHCI: Event handler thread stopped\n");

@@ -24,8 +24,6 @@ extern vfs_node_t devfs_root;
 void init_thread(uint64_t arg) {
     printk("NAOS init thread is running...\n");
 
-    arch_disable_interrupt();
-
     pci_init();
 
     fs_syscall_init();
@@ -51,8 +49,6 @@ void init_thread(uint64_t arg) {
     system_initialized = true;
 
     printk("System initialized, ready to go to userland.\n");
-
-    arch_enable_interrupt();
 
 #if defined(__x86_64__)
     const char *argvs[2];

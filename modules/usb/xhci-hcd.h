@@ -329,6 +329,8 @@ typedef struct {
 struct xhci_hcd {
     usb_hcd_t *hcd;
 
+    pci_device_t *pci_dev;
+
     xhci_cap_regs_t *cap_regs;
     xhci_op_regs_t *op_regs;
     xhci_port_regs_t *port_regs;
@@ -371,7 +373,7 @@ struct xhci_hcd {
 };
 
 // XHCI驱动API
-usb_hcd_t *xhci_init(void *mmio_base);
+usb_hcd_t *xhci_init(void *mmio_base, pci_device_t *pci_dev);
 void xhci_shutdown(usb_hcd_t *hcd);
 
 // 内部函数

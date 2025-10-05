@@ -56,6 +56,8 @@ int msc_transfer(usb_msc_device_t *msc, uint8_t *cb, uint8_t cb_len, void *data,
         return -1;
     }
 
+    spin_lock(&msc_transfer_lock);
+
     usb_msc_cbw_t cbw;
     usb_msc_csw_t csw;
 
@@ -73,6 +75,7 @@ int msc_transfer(usb_msc_device_t *msc, uint8_t *cb, uint8_t cb_len, void *data,
     int ret = msc_send_cbw(msc, &cbw);
     if (ret != 0) {
         printk("MSC: CBW send failed\n");
+        spin_unlock(&msc_transfer_lock);
         return ret;
     }
 
@@ -96,13 +99,17 @@ int msc_transfer(usb_msc_device_t *msc, uint8_t *cb, uint8_t cb_len, void *data,
     if (csw.tag != cbw.tag) {
         printk("MSC: CSW tag mismatch (expected 0x%08x, got 0x%08x)\n", cbw.tag,
                csw.tag);
+        spin_unlock(&msc_transfer_lock);
         return -1;
     }
 
     if (ret != CSW_STATUS_GOOD) {
         printk("MSC: Command failed with status %d\n", ret);
+        spin_unlock(&msc_transfer_lock);
         return -1;
     }
+
+    spin_unlock(&msc_transfer_lock);
 
     return 0;
 }
@@ -260,7 +267,7 @@ int msc_read_capacity(usb_msc_device_t *msc) {
 }
 
 // 读取块
-int msc_read_blocks(usb_msc_device_t *msc, uint32_t lba, uint32_t count,
+int msc_read_blocks(usb_msc_device_t *msc, uint64_t lba, uint32_t count,
                     void *buffer) {
     if (!msc || !buffer || count == 0) {
         return -1;
@@ -271,22 +278,17 @@ int msc_read_blocks(usb_msc_device_t *msc, uint32_t lba, uint32_t count,
         return -1;
     }
 
-    spin_lock(&msc_transfer_lock);
-
     // printk("MSC: Reading %u blocks from LBA %u\n", count, lba);
 
-    uint8_t cb[16] = {0};
-    cb[0] = SCSI_READ_10;
-    cb[2] = (lba >> 24) & 0xFF;
-    cb[3] = (lba >> 16) & 0xFF;
-    cb[4] = (lba >> 8) & 0xFF;
-    cb[5] = lba & 0xFF;
-    cb[7] = (count >> 8) & 0xFF;
-    cb[8] = count & 0xFF;
+    struct scsi_cdb_rwdata_16 cb;
+    memset(&cb, 0, sizeof(struct scsi_cdb_rwdata_16));
+    cb.command = SCSI_READ_16;
+    cb.lba = cpu_to_be64(lba);
+    cb.count = cpu_to_be32(count);
 
     uint32_t transfer_size = count * msc->block_size;
 
-    int ret = msc_transfer(msc, cb, 10, buffer, transfer_size, true);
+    int ret = msc_transfer(msc, (void *)&cb, 16, buffer, transfer_size, true);
 
     if (ret == 0) {
         // printk("MSC: Read successful (%u bytes)\n", transfer_size);
@@ -294,13 +296,11 @@ int msc_read_blocks(usb_msc_device_t *msc, uint32_t lba, uint32_t count,
         printk("MSC: Read failed\n");
     }
 
-    spin_unlock(&msc_transfer_lock);
-
     return ret;
 }
 
 // 写入块
-int msc_write_blocks(usb_msc_device_t *msc, uint32_t lba, uint32_t count,
+int msc_write_blocks(usb_msc_device_t *msc, uint64_t lba, uint32_t count,
                      const void *buffer) {
     if (!msc || !buffer || count == 0) {
         return -1;
@@ -318,28 +318,22 @@ int msc_write_blocks(usb_msc_device_t *msc, uint32_t lba, uint32_t count,
 
     // printk("MSC: Writing %u blocks to LBA %u\n", count, lba);
 
-    spin_lock(&msc_transfer_lock);
-
-    uint8_t cb[16] = {0};
-    cb[0] = SCSI_WRITE_10;
-    cb[2] = (lba >> 24) & 0xFF;
-    cb[3] = (lba >> 16) & 0xFF;
-    cb[4] = (lba >> 8) & 0xFF;
-    cb[5] = lba & 0xFF;
-    cb[7] = (count >> 8) & 0xFF;
-    cb[8] = count & 0xFF;
+    struct scsi_cdb_rwdata_16 cb;
+    memset(&cb, 0, sizeof(struct scsi_cdb_rwdata_16));
+    cb.command = SCSI_WRITE_16;
+    cb.lba = cpu_to_be64(lba);
+    cb.count = cpu_to_be32(count);
 
     uint32_t transfer_size = count * msc->block_size;
 
-    int ret = msc_transfer(msc, cb, 10, (void *)buffer, transfer_size, false);
+    int ret = msc_transfer(msc, (void *)&cb, 16, (void *)buffer, transfer_size,
+                           false);
 
     if (ret == 0) {
         // printk("MSC: Write successful (%u bytes)\n", transfer_size);
     } else {
         printk("MSC: Write failed\n");
     }
-
-    spin_unlock(&msc_transfer_lock);
 
     return ret;
 }
@@ -480,11 +474,11 @@ int usb_msc_probe(usb_device_t *device) {
     printk("Capacity: %d MB\n", msc->capacity / (1024 * 1024));
     printk("Block Size: %u bytes\n", msc->block_size);
 
-    // regist_blkdev("msc", msc, (uint64_t)msc->block_size,
-    //               (uint64_t)msc->block_size * (uint64_t)msc->block_count,
-    //               DEFAULT_PAGE_SIZE * 4, msc_read, msc_write);
+    regist_blkdev("msc", msc, (uint64_t)msc->block_size,
+                  (uint64_t)msc->block_size * (uint64_t)msc->block_count,
+                  DEFAULT_PAGE_SIZE * 4, msc_read, msc_write);
 
-    // set_have_usb_storage(true);
+    set_have_usb_storage(true);
 
     return 0;
 }
