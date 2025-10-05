@@ -200,7 +200,6 @@ run-x86_64-single: assets/ovmf-code-$(ARCH).fd all-single
 		-drive if=none,file=single-$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-device qemu-xhci,id=xhci \
 		-device usb-storage,drive=harddisk,bus=xhci.0 \
-		-device usb-kbd,id=kbd \
 		-vga vmware \
 		$(QEMUFLAGS)
 

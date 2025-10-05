@@ -29,16 +29,16 @@ void keyboard_callback(hid_event_t *event, void *user_data) {
 
     hid_key_event_t *key = &event->key;
 
-    if (event->type == HID_EVENT_KEY_PRESS) {
-        bool shift = (key->modifiers & (0x02 | 0x20)) != 0;
-        if (shift && !shiftPressed) {
-            handle_kb_event(0x2A, 0, 0);
-            shiftPressed = true;
-        } else if (!shift && shiftPressed) {
-            handle_kb_event(0xAA, 0, 0);
-            shiftPressed = false;
-        }
+    bool shift = (key->modifiers & (0x02 | 0x20)) != 0;
+    if (shift && !shiftPressed) {
+        handle_kb_event(0x2A, 0, 0);
+        shiftPressed = true;
+    } else if (!shift && shiftPressed) {
+        handle_kb_event(0xAA, 0, 0);
+        shiftPressed = false;
+    }
 
+    if (event->type == HID_EVENT_KEY_PRESS) {
         // New key pressed.
         uint16_t scancode = key_to_scan_code[key->keycode];
         char k = handle_kb_event(scancode, 0, 0);
