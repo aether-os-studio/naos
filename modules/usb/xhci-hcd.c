@@ -1268,7 +1268,7 @@ static int xhci_bulk_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
     return ret;
 }
 
-// 中断传输 - 无需等待
+// 中断传输 - 使用需放到单独线程
 static int xhci_interrupt_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
     xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
     usb_device_t *device = transfer->device;
@@ -1313,6 +1313,18 @@ static int xhci_interrupt_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
     xhci_ring_doorbell(xhci, dev_priv->slot_id, ep_priv->dci);
 
     spin_unlock(&xhci_transfer_lock);
+
+    int ret = xhci_wait_for_transfer(completion, 0);
+
+    if (ret >= 0) {
+        transfer->status = 0;
+        transfer->actual_length = completion->transferred_length;
+    } else {
+        transfer->status = ret;
+        transfer->actual_length = 0;
+    }
+
+    xhci_free_transfer_completion(completion);
 
     return 0;
 }

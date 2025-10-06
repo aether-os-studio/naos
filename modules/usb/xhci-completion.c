@@ -280,10 +280,6 @@ void xhci_complete_transfer(xhci_hcd_t *xhci, xhci_trb_t *event_trb) {
                     tracker->transfer->callback(tracker->transfer);
                 }
 
-                if (tracker->completion->transfer_type == INTR_TRANSFER) {
-                    xhci_free_transfer_completion(tracker->completion);
-                }
-
                 // 从列表中移除
                 *prev = tracker->next;
                 free(tracker);
