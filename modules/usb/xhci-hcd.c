@@ -1516,7 +1516,7 @@ int xhci_hcd_driver_probe(pci_device_t *pci_dev, uint32_t vendor_device_id) {
     }
 
     if (mmio_base == 0) {
-        printk("e1000: No MMIO BAR found\n");
+        printk("xhci: No MMIO BAR found\n");
         return -1;
     }
 
