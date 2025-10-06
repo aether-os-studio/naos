@@ -208,7 +208,6 @@ void acpi_init();
 
 void hpet_setup(Hpet *hpet);
 uint64_t nanoTime();
-void usleep(uint64_t nano);
 
 #define MADT_APIC_CPU 0x00
 #define MADT_APIC_IO 0x01

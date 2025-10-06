@@ -183,7 +183,7 @@ all: bin-$(ARCH)/$(OUTPUT)
 -include $(HEADER_DEPS)
 
 ifeq ($(ARCH), riscv64)
-override OBJ += $(shell find /usr/lib/gcc/riscv64-linux-gnu -name libgcc.a)
+override OBJ += $(PROJECT_ROOT)/libgcc_rv64.a
 endif
 
 .PHONY: bin-$(ARCH)/$(OUTPUT)

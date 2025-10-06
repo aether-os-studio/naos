@@ -8,9 +8,7 @@ spinlock_t ap_startup_lock = {0};
 uint64_t cpu_count;
 
 void ap_entry(struct limine_mp_info *cpu) {
-    task_t *fake_task = malloc(sizeof(task_t));
-    fake_task->cpu_id = hartid_to_cpuid(cpu->hartid);
-    asm volatile("mv tp, %0" : : "r"(fake_task));
+    asm volatile("mv tp, %0" : : "r"(cpu->hartid));
 
     trap_init();
 

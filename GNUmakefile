@@ -2,6 +2,8 @@
 MAKEFLAGS += -rR
 .SUFFIXES:
 
+export PROJECT_ROOT := $(shell pwd)
+
 export BOOT_PROTOCOL ?= limine
 
 # Target architecture to build for. Default to x86_64.

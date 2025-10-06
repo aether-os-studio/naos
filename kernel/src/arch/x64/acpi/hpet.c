@@ -5,28 +5,6 @@
 HpetInfo *hpet_addr;
 static uint64_t hpetPeriod = 0;
 
-void usleep(uint64_t nano) {
-    uint64_t target = nano * 1000;
-    uint64_t targetTime = nanoTime();
-    uint64_t after = 0;
-    while (1) {
-        uint64_t n = nanoTime();
-        if (n < targetTime) {
-            after += UINT64_MAX - targetTime + n;
-            targetTime = n;
-        } else {
-            after += n - targetTime;
-            targetTime = n;
-        }
-
-        arch_yield();
-
-        if (after >= target) {
-            return;
-        }
-    }
-}
-
 uint64_t nanoTime() {
     if (hpet_addr == NULL)
         return 0;

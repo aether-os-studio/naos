@@ -199,8 +199,6 @@ int usb_enum_state_machine(usb_enum_context_t *ctx) {
         break;
 
     case USB_ENUM_STATE_RESET_WAIT:
-        usleep(100000); // 100ms - USB规范要求重置后等待
-
         // ===== 步骤1：分配设备结构 =====
         if (!ctx->device) {
             ctx->device = usb_alloc_device(ctx->hcd);
@@ -277,7 +275,6 @@ int usb_enum_state_machine(usb_enum_context_t *ctx) {
             if (++ctx->retry_count < 3) {
                 printk("USB: Retrying... (attempt %d/3)\n",
                        ctx->retry_count + 1);
-                usleep(100000); // 等待后重试
                 break;
             }
             printk("USB: All retries exhausted\n");
@@ -311,7 +308,6 @@ int usb_enum_state_machine(usb_enum_context_t *ctx) {
         if (ret != 0) {
             printk("USB: Failed to get full device descriptor\n");
             if (++ctx->retry_count < 3) {
-                usleep(100000);
                 break;
             }
             ctx->state = USB_ENUM_STATE_ERROR;
@@ -332,7 +328,6 @@ int usb_enum_state_machine(usb_enum_context_t *ctx) {
         if (ret != 0) {
             printk("USB: Failed to get config descriptor header\n");
             if (++ctx->retry_count < 3) {
-                usleep(100000);
                 break;
             }
             ctx->state = USB_ENUM_STATE_ERROR;
@@ -366,7 +361,6 @@ int usb_enum_state_machine(usb_enum_context_t *ctx) {
             if (ret != 0) {
                 printk("USB: Failed to get full config descriptor\n");
                 if (++ctx->retry_count < 3) {
-                    usleep(100000);
                     break;
                 }
                 ctx->state = USB_ENUM_STATE_ERROR;
@@ -406,7 +400,6 @@ int usb_enum_state_machine(usb_enum_context_t *ctx) {
             if (ret != 0) {
                 printk("USB: Failed to set configuration\n");
                 if (++ctx->retry_count < 3) {
-                    usleep(100000);
                     break;
                 }
                 ctx->state = USB_ENUM_STATE_ERROR;
@@ -500,9 +493,6 @@ int usb_enumerate_device(usb_hcd_t *hcd, uint8_t port_id, uint8_t speed) {
             printk("USB: Enumeration failed\n");
             break;
         }
-
-        // 继续下一个状态
-        usleep(10000); // 10ms 延迟
     }
 
     usb_free_enum_context(ctx);
