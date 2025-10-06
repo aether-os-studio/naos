@@ -368,21 +368,6 @@ static void remove_from_list(free_block_t *block, size_t order) {
     memset(block, 0, sizeof(free_block_t));
 }
 
-// 添加块到链表头部
-static void add_to_list(uintptr_t addr, size_t order) {
-    free_block_t *block = addr_to_block(addr);
-    init_free_block(addr, order);
-
-    block->next = allocator.free_lists[order];
-    block->prev = NULL;
-
-    if (allocator.free_lists[order]) {
-        allocator.free_lists[order]->prev = block;
-    }
-
-    allocator.free_lists[order] = block;
-}
-
 // 在链表中查找指定地址的块
 static free_block_t *find_block_in_list(uintptr_t addr, size_t order) {
     free_block_t *current = allocator.free_lists[order];
@@ -396,6 +381,21 @@ static free_block_t *find_block_in_list(uintptr_t addr, size_t order) {
         current = current->next;
     }
     return NULL;
+}
+
+// 添加块到链表头部
+static void add_to_list(uintptr_t addr, size_t order) {
+    free_block_t *block = addr_to_block(addr);
+    init_free_block(addr, order);
+
+    block->next = allocator.free_lists[order];
+    block->prev = NULL;
+
+    if (allocator.free_lists[order]) {
+        allocator.free_lists[order]->prev = block;
+    }
+
+    allocator.free_lists[order] = block;
 }
 
 // 分割块

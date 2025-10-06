@@ -443,35 +443,35 @@ static int xhci_hcd_shutdown(usb_hcd_t *hcd) {
 
     xhci_stop(xhci);
 
-    // 释放资源
-    if (xhci->cmd_ring) {
-        xhci_free_ring(xhci->cmd_ring);
-    }
+    // // 释放资源
+    // if (xhci->cmd_ring) {
+    //     xhci_free_ring(xhci->cmd_ring);
+    // }
 
-    if (xhci->event_ring) {
-        xhci_free_ring(xhci->event_ring);
-    }
+    // if (xhci->event_ring) {
+    //     xhci_free_ring(xhci->event_ring);
+    // }
 
-    if (xhci->erst) {
-        free(xhci->erst);
-    }
+    // if (xhci->erst) {
+    //     free(xhci->erst);
+    // }
 
-    if (xhci->scratchpad_buffers) {
-        for (uint32_t i = 0; i < xhci->num_scratchpads; i++) {
-            if (xhci->scratchpad_buffers[i]) {
-                free(xhci->scratchpad_buffers[i]);
-            }
-        }
-        free(xhci->scratchpad_buffers);
-    }
+    // if (xhci->scratchpad_buffers) {
+    //     for (uint32_t i = 0; i < xhci->num_scratchpads; i++) {
+    //         if (xhci->scratchpad_buffers[i]) {
+    //             free(xhci->scratchpad_buffers[i]);
+    //         }
+    //     }
+    //     free(xhci->scratchpad_buffers);
+    // }
 
-    if (xhci->scratchpad_array) {
-        free(xhci->scratchpad_array);
-    }
+    // if (xhci->scratchpad_array) {
+    //     free(xhci->scratchpad_array);
+    // }
 
-    if (xhci->dcbaa) {
-        free(xhci->dcbaa);
-    }
+    // if (xhci->dcbaa) {
+    //     free(xhci->dcbaa);
+    // }
 
     free(xhci);
 
@@ -534,7 +534,9 @@ static int xhci_reset_port(usb_hcd_t *hcd, uint8_t port) {
     int timeout = 1000;
     while (timeout--) {
         portsc = xhci_readl(&xhci->port_regs[port].portsc);
-        if (portsc & XHCI_PORTSC_PRC) {
+        if (!(portsc & XHCI_PORTSC_CCS))
+            return -1;
+        if (portsc & XHCI_PORTSC_PED) {
             break;
         }
 
