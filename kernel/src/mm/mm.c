@@ -174,7 +174,7 @@ void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
         if (paddr == 0) {
             uint64_t phys = alloc_frames(1);
-            if (phys == (uint64_t)-1) {
+            if (phys == 0) {
                 printk("Cannot allocate frame\n");
                 break;
             }
@@ -195,7 +195,7 @@ void map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
         if (paddr == 0) {
             uint64_t phys = alloc_frames(1);
-            if (phys == (uint64_t)-1) {
+            if (phys == 0) {
                 printk("Cannot allocate frame\n");
                 break;
             }
@@ -473,7 +473,7 @@ uintptr_t alloc_frames(size_t count) {
         printk("Buddy: count too big!!!\n");
         spin_unlock(&frame_op_lock);
         // 没有足够大的块
-        return (uintptr_t)-1;
+        return 0;
     }
 
     // 取出块
@@ -481,7 +481,7 @@ uintptr_t alloc_frames(size_t count) {
     if (!is_valid_free_block(block)) {
         printk("Buddy: block metadata was broken!!!\n");
         spin_unlock(&frame_op_lock);
-        return (uintptr_t)-1; // 链表损坏
+        return 0; // 链表损坏
     }
 
     uintptr_t allocated_addr = block_to_addr(block);

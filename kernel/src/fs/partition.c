@@ -32,8 +32,7 @@ void mount_root() {
     bool err = true;
 
     for (uint64_t i = 0; i < partition_num; i++) {
-        char buf[16];
-        sprintf(buf, "/dev/part%d", i);
+        vfs_update(partitions[i].node);
 
         if (!vfs_mount(partitions[i].node, rootdir, ROOTFS_TYPE)) {
             err = false;
@@ -41,17 +40,16 @@ void mount_root() {
         }
     }
 
-    printk("Mount root from harddisk failed\n");
-
     if (err) {
+        printk("Mount root from harddisk failed\n");
+
     retry:
         while (!have_usb_device) {
             arch_pause();
         }
 
         for (uint64_t i = 0; i < partition_num; i++) {
-            char buf[16];
-            sprintf(buf, "/dev/part%d", i);
+            vfs_update(partitions[i].node);
 
             if (!vfs_mount(partitions[i].node, rootdir, ROOTFS_TYPE)) {
                 err = false;

@@ -712,6 +712,8 @@ drm_device_op_t vmware_drm_device_op = {
 #endif
 
 int vmware_svga_probe(pci_device_t *dev, uint32_t vendor_device_id) {
+    printk("Found VMWARE SVGA Controller.\n");
+
 #if defined(__x86_64__)
     vmware_gpu_pci_init(dev);
 #endif

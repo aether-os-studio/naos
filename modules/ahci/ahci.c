@@ -75,8 +75,6 @@ int hba_prepare_cmd(struct hba_port *port, struct hba_cmdt **cmdt,
     uint64_t phys = alloc_frames(1);
     struct hba_cmdt *cmd_table = (struct hba_cmdt *)phys_to_virt(phys);
 
-    memset(cmd_header, 0, sizeof(struct hba_cmdh));
-
     // 将命令表挂到命令头上
     cmd_header->cmd_table_base = (uint32_t)(phys & 0xFFFFFFFF);
     cmd_header->cmd_table_base_upper = (uint32_t)(phys >> 32);
@@ -110,7 +108,8 @@ int hba_bind_sbuf(struct hba_cmdh *cmdh, struct hba_cmdt *cmdt, void *buf,
         return -1;
     }
 
-    uint64_t buf_phys = virt_to_phys((uint64_t)buf);
+    uint64_t buf_phys =
+        translate_address(get_current_page_dir(false), (uint64_t)buf);
     if (buf_phys == 0) {
         printk("AHCI buffer not mapped\n");
         return -1;
@@ -252,11 +251,6 @@ struct ahci_driver *ahci_driver_init(pci_bar_t *bar5) {
     map_page_range(get_current_page_dir(false), (uint64_t)hba->base,
                    bar5->address, bar5->size,
                    PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
-    if (hba->base == NULL) {
-        printk("ahci driver init failed\n");
-        free(ahci_drv);
-        return NULL;
-    }
 
     // hba->base[HBA_RGHC] |= HBA_RGHC_RESET;
     // wait_until_expire(!(hba->base[HBA_RGHC] & HBA_RGHC_RESET), 100000);
@@ -289,11 +283,11 @@ struct ahci_driver *ahci_driver_init(pci_bar_t *bar5) {
 
         if (!clbp) {
             clb_pa = alloc_frames(1);
-            memset((void *)phys_to_virt(clb_pa), 0, 0x1000);
+            memset((void *)phys_to_virt(clb_pa), 0, DEFAULT_PAGE_SIZE);
         }
         if (!fisp) {
             fis_pa = alloc_frames(1);
-            memset((void *)phys_to_virt(fis_pa), 0, 0x1000);
+            memset((void *)phys_to_virt(fis_pa), 0, DEFAULT_PAGE_SIZE);
         }
 
         uint64_t addr = clb_pa + clbp * HBA_CLB_SIZE;
