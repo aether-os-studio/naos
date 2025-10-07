@@ -305,7 +305,7 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
     uint32_t hccparams1 = xhci_readl(&xhci->cap_regs->hccparams1);
 
     xhci->use_64byte_context = (hccparams1 & 0x04) != 0;
-    printk("XHCI: context size: %d", xhci->use_64byte_context ? "64" : "32");
+    printk("XHCI: context size: %s", xhci->use_64byte_context ? "64" : "32");
 
     xhci->max_slots = (hcsparams1 >> 0) & 0xFF;
     xhci->max_intrs = (hcsparams1 >> 8) & 0x7FF;
