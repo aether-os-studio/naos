@@ -229,11 +229,71 @@ typedef struct {
     xhci_ep_ctx_t endpoints[31];
 } __attribute__((packed)) xhci_input_ctx_t;
 
+// Slot上下文
+typedef struct {
+    uint32_t dev_info;
+    uint32_t dev_info2;
+    uint32_t tt_info;
+    uint32_t dev_state;
+    uint32_t reserved[12];
+} __attribute__((packed)) xhci_slot_ctx_64_t;
+
+// 端点上下文
+typedef struct {
+    uint32_t ep_info;
+    uint32_t ep_info2;
+    uint64_t tr_dequeue_ptr;
+    uint32_t tx_info;
+    uint32_t reserved[11];
+} __attribute__((packed)) xhci_ep_ctx_64_t;
+
+// 设备上下文
+typedef struct {
+    xhci_slot_ctx_64_t slot;
+    xhci_ep_ctx_64_t endpoints[31];
+} __attribute__((packed)) xhci_device_ctx_64_t;
+
+// 输入上下文
+typedef struct {
+    xhci_input_ctrl_ctx_t ctrl;
+    uint32_t reserved[8];
+    xhci_slot_ctx_64_t slot;
+    xhci_ep_ctx_64_t endpoints[31];
+} __attribute__((packed)) xhci_input_ctx_64_t;
+
+// 获取 Input Context 大小
+#define XHCI_INPUT_CTX_SIZE(xhci)                                              \
+    ((xhci)->use_64byte_context ? sizeof(xhci_input_ctx_64_t)                  \
+                                : sizeof(xhci_input_ctx_t))
+
+// 获取 Device Context 大小
+#define XHCI_DEVICE_CTX_SIZE(xhci)                                             \
+    ((xhci)->use_64byte_context ? sizeof(xhci_device_ctx_64_t)                 \
+                                : sizeof(xhci_device_ctx_t))
+
+// 获取 Slot Context 偏移（在Input Context中）
+#define XHCI_INPUT_SLOT_CTX_OFFSET(xhci)                                       \
+    ((xhci)->use_64byte_context ? 0x40 : 0x20)
+
+// 获取第一个 EP Context 偏移（在Input Context中）
+#define XHCI_INPUT_EP0_CTX_OFFSET(xhci)                                        \
+    ((xhci)->use_64byte_context ? 0x80 : 0x40)
+
+#define EP_CTX_AVG_TRB_LENGTH(x) ((x) & 0xFFFF) // Bits 0-15: Average TRB Length
+
 // XHCI设备私有数据
 typedef struct {
     uint8_t slot_id;
-    xhci_device_ctx_t *device_ctx;
-    xhci_input_ctx_t *input_ctx;
+    union {
+        xhci_device_ctx_t *device_ctx_32;
+        xhci_device_ctx_64_t *device_ctx_64;
+        void *device_ctx;
+    };
+    union {
+        xhci_input_ctx_t *input_ctx_32;
+        xhci_input_ctx_64_t *input_ctx_64;
+        void *input_ctx;
+    };
     uint64_t device_ctx_phys;
     uint64_t input_ctx_phys;
 } xhci_device_private_t;
@@ -371,6 +431,8 @@ struct xhci_hcd {
 
     // 事件处理线程
     xhci_event_thread_t event_thread;
+
+    bool use_64byte_context;
 };
 
 // XHCI驱动API
