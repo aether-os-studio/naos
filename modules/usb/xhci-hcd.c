@@ -468,39 +468,15 @@ static int xhci_reset_port(usb_hcd_t *hcd, uint8_t port) {
 
     xhci_port_info_t *port_info = &xhci->port_info[port];
 
-    if (port_info->protocol == XHCI_PROTOCOL_USB3) {
-        // 检查端口是否已经在 U0 状态
-        uint32_t portsc = xhci_readl(&xhci->port_regs[port].portsc);
-        uint32_t pls = (portsc >> 5) & 0xF; // Port Link State
+    // 检查端口是否已经在 U0 状态
+    uint32_t portsc = xhci_readl(&xhci->port_regs[port].portsc);
+    uint32_t pls = (portsc >> 5) & 0xF; // Port Link State
 
-        printk("  Port Link State: %u\n", pls);
-
-        if (pls == 0) { // U0 - active
-        } else {
-            // 等待链路训练完成
-            uint64_t time_ns = nanoTime() + 100ULL * 1000000ULL;
-            while (nanoTime() < time_ns) {
-                portsc = xhci_readl(&xhci->port_regs[port].portsc);
-                pls = (portsc >> 5) & 0xF;
-
-                if (pls == 0) { // U0
-                    break;
-                }
-
-                arch_yield();
-            }
-
-            if (pls != 0) {
-                printk("  WARNING: Port not in U0 after timeout (PLS=%u)\n",
-                       pls);
-                return -1;
-            }
-        }
-
+    if (pls == 0) {
         return 0; // 成功，无需重置
     }
 
-    uint32_t portsc = xhci_readl(&xhci->port_regs[port].portsc);
+    portsc = xhci_readl(&xhci->port_regs[port].portsc);
 
     // 发起端口重置
     portsc |= XHCI_PORTSC_PR;

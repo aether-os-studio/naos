@@ -399,11 +399,11 @@ int usb_msc_probe(usb_device_t *device) {
             usb_endpoint_descriptor_t *ep = (usb_endpoint_descriptor_t *)ptr;
 
             if ((ep->bmAttributes & 0x03) == USB_ENDPOINT_XFER_BULK) {
-                if (ep->bEndpointAddress & 0x80) {
+                if (!bulk_in && (ep->bEndpointAddress & 0x80)) {
                     bulk_in = ep;
                     printk("  Bulk IN: 0x%02x, MaxPacket=%d\n",
                            ep->bEndpointAddress, ep->wMaxPacketSize);
-                } else {
+                } else if (!bulk_out) {
                     bulk_out = ep;
                     printk("  Bulk OUT: 0x%02x, MaxPacket=%d\n",
                            ep->bEndpointAddress, ep->wMaxPacketSize);
