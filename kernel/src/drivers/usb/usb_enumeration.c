@@ -60,13 +60,6 @@ int usb_parse_config_descriptor(usb_device_t *device, uint8_t *buffer,
 
     usb_config_descriptor_t *config = (usb_config_descriptor_t *)buffer;
 
-    printk("USB: Parsing configuration descriptor:\n");
-    printk("  Total Length: %d\n", config->wTotalLength);
-    printk("  Num Interfaces: %d\n", config->bNumInterfaces);
-    printk("  Config Value: %d\n", config->bConfigurationValue);
-    printk("  Attributes: 0x%02x\n", config->bmAttributes);
-    printk("  Max Power: %d mA\n", config->bMaxPower * 2);
-
     // 保存配置描述符
     if (device->config_descriptor) {
         free(device->config_descriptor);
@@ -105,22 +98,12 @@ int usb_parse_config_descriptor(usb_device_t *device, uint8_t *buffer,
         case USB_DT_INTERFACE: {
             usb_interface_descriptor_t *iface =
                 (usb_interface_descriptor_t *)ptr;
-            printk("  Interface %d:\n", iface->bInterfaceNumber);
-            printk("    Class: 0x%02x\n", iface->bInterfaceClass);
-            printk("    SubClass: 0x%02x\n", iface->bInterfaceSubClass);
-            printk("    Protocol: 0x%02x\n", iface->bInterfaceProtocol);
-            printk("    Num Endpoints: %d\n", iface->bNumEndpoints);
             device->class = iface->bInterfaceClass;
             device->subclass = iface->bInterfaceSubClass;
         } break;
 
         case USB_DT_ENDPOINT: {
             usb_endpoint_descriptor_t *ep = (usb_endpoint_descriptor_t *)ptr;
-            printk("  Endpoint 0x%02x:\n", ep->bEndpointAddress);
-            printk("    Type: %d\n", ep->bmAttributes & 0x03);
-            printk("    Max Packet Size: %d\n", ep->wMaxPacketSize);
-            printk("    Interval: %d\n", ep->bInterval);
-
             // 保存端点信息
             if (endpoint_index < 32) {
                 device->endpoints[endpoint_index].address =
@@ -151,16 +134,11 @@ int usb_configure_device_endpoints(usb_device_t *device) {
         return -1;
     }
 
-    printk("USB: Configuring device endpoints\n");
-
     int configured = 0;
 
     // 跳过端点0（控制端点已经配置）
     for (int i = 1; i < 32; i++) {
         if (device->endpoints[i].address != 0) {
-            printk("USB: Configuring endpoint %d (address 0x%02x)\n", i,
-                   device->endpoints[i].address);
-
             int ret = device->hcd->ops->configure_endpoint(
                 device->hcd, &device->endpoints[i]);
             if (ret == 0) {
@@ -171,7 +149,6 @@ int usb_configure_device_endpoints(usb_device_t *device) {
         }
     }
 
-    printk("USB: Configured %d endpoints\n", configured);
     return configured;
 }
 
@@ -181,7 +158,6 @@ int usb_enum_state_machine(usb_enum_context_t *ctx) {
 
     switch (ctx->state) {
     case USB_ENUM_STATE_IDLE:
-        printk("USB: Starting enumeration\n");
         ctx->state = USB_ENUM_STATE_RESET;
         break;
 
@@ -207,10 +183,6 @@ int usb_enum_state_machine(usb_enum_context_t *ctx) {
                 ctx->state = USB_ENUM_STATE_ERROR;
                 return -1;
             }
-
-            // 设置设备速度（从端口状态检测得到）
-            // 这个speed应该在调用enumerate时就设置好了
-            printk("USB: Device speed: %d\n", ctx->device->speed);
         }
 
         // ===== 步骤2：Enable Slot (XHCI特定) =====
@@ -236,7 +208,6 @@ int usb_enum_state_machine(usb_enum_context_t *ctx) {
     case USB_ENUM_STATE_ADDRESS:
         // ===== 步骤3：分配地址并执行 Address Device 命令 =====
         ctx->address = allocate_device_address();
-        printk("USB: Assigning address %d to device\n", ctx->address);
 
         ret =
             ctx->hcd->ops->address_device(ctx->hcd, ctx->device, ctx->address);
@@ -341,71 +312,64 @@ int usb_enum_state_machine(usb_enum_context_t *ctx) {
         ctx->state = USB_ENUM_STATE_GET_CONFIG_DESC_FULL;
         break;
 
-    case USB_ENUM_STATE_GET_CONFIG_DESC_FULL:
-        printk("USB: Getting full configuration descriptor\n");
+    case USB_ENUM_STATE_GET_CONFIG_DESC_FULL: {
+        usb_config_descriptor_t *config =
+            (usb_config_descriptor_t *)ctx->buffer;
+        uint16_t total_length = config->wTotalLength;
 
-        {
-            usb_config_descriptor_t *config =
-                (usb_config_descriptor_t *)ctx->buffer;
-            uint16_t total_length = config->wTotalLength;
-
-            if (total_length > ctx->buffer_size) {
-                printk("USB: Config descriptor too large (%d > %d)\n",
-                       total_length, ctx->buffer_size);
-                ctx->state = USB_ENUM_STATE_ERROR;
-                return -1;
-            }
-
-            ret = usb_get_descriptor(ctx->device, USB_DT_CONFIG, 0, ctx->buffer,
-                                     total_length);
-            if (ret != 0) {
-                printk("USB: Failed to get full config descriptor\n");
-                if (++ctx->retry_count < 3) {
-                    break;
-                }
-                ctx->state = USB_ENUM_STATE_ERROR;
-                return -1;
-            }
-
-            printk("USB: Full configuration descriptor received (%d bytes)\n",
-                   total_length);
-
-            // 解析配置描述符
-            ret = usb_parse_config_descriptor(ctx->device, ctx->buffer,
-                                              total_length);
-            if (ret != 0) {
-                printk("USB: Failed to parse configuration descriptor\n");
-                ctx->state = USB_ENUM_STATE_ERROR;
-                return -1;
-            }
+        if (total_length > ctx->buffer_size) {
+            printk("USB: Config descriptor too large (%d > %d)\n", total_length,
+                   ctx->buffer_size);
+            ctx->state = USB_ENUM_STATE_ERROR;
+            return -1;
         }
+
+        ret = usb_get_descriptor(ctx->device, USB_DT_CONFIG, 0, ctx->buffer,
+                                 total_length);
+        if (ret != 0) {
+            printk("USB: Failed to get full config descriptor\n");
+            if (++ctx->retry_count < 3) {
+                break;
+            }
+            ctx->state = USB_ENUM_STATE_ERROR;
+            return -1;
+        }
+
+        printk("USB: Full configuration descriptor received (%d bytes)\n",
+               total_length);
+
+        // 解析配置描述符
+        ret =
+            usb_parse_config_descriptor(ctx->device, ctx->buffer, total_length);
+        if (ret != 0) {
+            printk("USB: Failed to parse configuration descriptor\n");
+            ctx->state = USB_ENUM_STATE_ERROR;
+            return -1;
+        }
+    }
 
         ctx->retry_count = 0;
         ctx->state = USB_ENUM_STATE_SET_CONFIG;
         break;
 
-    case USB_ENUM_STATE_SET_CONFIG:
-        printk("USB: Setting configuration\n");
-
-        {
-            usb_config_descriptor_t *config = ctx->device->config_descriptor;
-            if (!config) {
-                printk("USB: No configuration descriptor available\n");
-                ctx->state = USB_ENUM_STATE_ERROR;
-                return -1;
-            }
-
-            ret =
-                usb_set_configuration(ctx->device, config->bConfigurationValue);
-            if (ret != 0) {
-                printk("USB: Failed to set configuration\n");
-                if (++ctx->retry_count < 3) {
-                    break;
-                }
-                ctx->state = USB_ENUM_STATE_ERROR;
-                return -1;
-            }
+    case USB_ENUM_STATE_SET_CONFIG: {
+        usb_config_descriptor_t *config = ctx->device->config_descriptor;
+        if (!config) {
+            printk("USB: No configuration descriptor available\n");
+            ctx->state = USB_ENUM_STATE_ERROR;
+            return -1;
         }
+
+        ret = usb_set_configuration(ctx->device, config->bConfigurationValue);
+        if (ret != 0) {
+            printk("USB: Failed to set configuration\n");
+            if (++ctx->retry_count < 3) {
+                break;
+            }
+            ctx->state = USB_ENUM_STATE_ERROR;
+            return -1;
+        }
+    }
 
         ctx->retry_count = 0;
         ctx->state = USB_ENUM_STATE_CONFIGURE_ENDPOINTS;
@@ -419,7 +383,6 @@ int usb_enum_state_machine(usb_enum_context_t *ctx) {
             return -1;
         }
 
-        printk("USB: %d endpoints configured\n", ret);
         ctx->state = USB_ENUM_STATE_CONFIGURED;
         break;
 
@@ -458,9 +421,6 @@ int usb_enum_state_machine(usb_enum_context_t *ctx) {
 
 // 枚举设备主函数
 int usb_enumerate_device(usb_hcd_t *hcd, uint8_t port_id, uint8_t speed) {
-    printk("\n=== Starting USB Device Enumeration ===\n");
-    printk("Port: %d, Speed: %d\n", port_id, speed);
-
     usb_enum_context_t *ctx = usb_alloc_enum_context(hcd, port_id);
     if (!ctx) {
         printk("USB: Failed to allocate enumeration context\n");

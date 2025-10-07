@@ -33,7 +33,7 @@ static usb_hcd_ops_t xhci_ops = {
 
 // 分配DMA内存（对齐到64字节）
 static void *xhci_alloc_dma(size_t size, uint64_t *phys_addr) {
-    void *ptr = alloc_frames_bytes((size + 63) & ~63);
+    void *ptr = alloc_frames_bytes(size);
     if (ptr) {
         memset(ptr, 0, size);
         if (phys_addr) {
@@ -162,15 +162,12 @@ int xhci_reset(xhci_hcd_t *xhci) {
         return -1;
     }
 
-    printk("XHCI: Reset complete\n");
     return 0;
 }
 
 // 启动XHCI控制器
 int xhci_start(xhci_hcd_t *xhci) {
     uint32_t cmd;
-
-    printk("XHCI: Starting controller...\n");
 
     cmd = xhci_readl(&xhci->op_regs->usbcmd);
     cmd |= XHCI_CMD_RUN;
@@ -182,7 +179,6 @@ int xhci_start(xhci_hcd_t *xhci) {
     while (nanoTime() < time_ns) {
         uint32_t status = xhci_readl(&xhci->op_regs->usbsts);
         if (!(status & XHCI_STS_HCH)) {
-            printk("XHCI: Controller running\n");
             return 0;
         }
     }
@@ -195,8 +191,6 @@ int xhci_start(xhci_hcd_t *xhci) {
 int xhci_stop(xhci_hcd_t *xhci) {
     uint32_t cmd;
 
-    printk("XHCI: Stopping controller...\n");
-
     cmd = xhci_readl(&xhci->op_regs->usbcmd);
     cmd &= ~XHCI_CMD_RUN;
     xhci_writel(&xhci->op_regs->usbcmd, cmd);
@@ -207,7 +201,6 @@ int xhci_stop(xhci_hcd_t *xhci) {
     while (nanoTime() < time_ns) {
         uint32_t status = xhci_readl(&xhci->op_regs->usbsts);
         if (status & XHCI_STS_HCH) {
-            printk("XHCI: Controller stopped\n");
             return 0;
         }
     }
@@ -229,9 +222,6 @@ static int xhci_parse_protocol_caps(xhci_hcd_t *xhci) {
         return 0;
     }
 
-    printk("XHCI: Parsing extended capabilities (offset: 0x%x)\n",
-           ext_offset * 4);
-
     // 扩展能力在能力寄存器之后
     uint32_t *ext_cap =
         (uint32_t *)((uint8_t *)xhci->cap_regs + (ext_offset * 4));
@@ -240,8 +230,6 @@ static int xhci_parse_protocol_caps(xhci_hcd_t *xhci) {
         uint32_t cap_header = xhci_readl(ext_cap);
         uint32_t cap_id = cap_header & 0xFF;
         uint32_t next_offset = (cap_header >> 8) & 0xFF;
-
-        printk("  Capability ID: %u, Next: %u\n", cap_id, next_offset);
 
         if (cap_id == XHCI_EXT_CAPS_PROTOCOL) {
             // Supported Protocol Capability
@@ -257,10 +245,6 @@ static int xhci_parse_protocol_caps(xhci_hcd_t *xhci) {
             uint8_t port_offset = cap_word2 & 0xFF;
             uint8_t port_count = (cap_word2 >> 8) & 0xFF;
 
-            printk("  Protocol: USB %u.%u\n", major, minor);
-            printk("  Port Offset: %u\n", port_offset);
-            printk("  Port Count: %u\n", port_count);
-
             // 标记端口协议
             for (int i = 0;
                  i < port_count && (port_offset + i - 1) < xhci->max_ports;
@@ -271,8 +255,6 @@ static int xhci_parse_protocol_caps(xhci_hcd_t *xhci) {
                 xhci->port_info[port_idx].protocol = major;
                 xhci->port_info[port_idx].port_offset = i;
                 xhci->port_info[port_idx].port_count = port_count;
-
-                printk("    Port %u: USB%u\n", port_idx, major);
             }
         }
 
@@ -295,8 +277,6 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
 
     xhci->hcd = hcd;
 
-    printk("XHCI: Initializing controller\n");
-
     xhci->tracker_mutex.lock = 0;
 
     // 读取能力参数
@@ -310,9 +290,6 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
     xhci->max_slots = (hcsparams1 >> 0) & 0xFF;
     xhci->max_intrs = (hcsparams1 >> 8) & 0x7FF;
     xhci->max_ports = (hcsparams1 >> 24) & 0xFF;
-
-    printk("XHCI: Max slots=%d, ports=%d, interrupters=%d\n", xhci->max_slots,
-           xhci->max_ports, xhci->max_intrs);
 
     // 计算scratchpad数量
     uint32_t max_scratch_hi = (hcsparams2 >> 21) & 0x1F;
@@ -434,15 +411,12 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
 
     xhci_handle_events(xhci);
 
-    printk("XHCI: Initialization complete\n");
     return 0;
 }
 
 // 关闭XHCI HCD
 static int xhci_hcd_shutdown(usb_hcd_t *hcd) {
     xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
-
-    printk("XHCI: Shutting down controller\n");
 
     // 停止事件处理线程
     xhci_stop_event_handler(xhci);
@@ -502,10 +476,7 @@ static int xhci_reset_port(usb_hcd_t *hcd, uint8_t port) {
         printk("  Port Link State: %u\n", pls);
 
         if (pls == 0) { // U0 - active
-            printk("  Port is in U0 (active) - ready for enumeration\n");
         } else {
-            printk("  Port not in U0, waiting for link training...\n");
-
             // 等待链路训练完成
             uint64_t time_ns = nanoTime() + 100ULL * 1000000ULL;
             while (nanoTime() < time_ns) {
@@ -513,7 +484,6 @@ static int xhci_reset_port(usb_hcd_t *hcd, uint8_t port) {
                 pls = (portsc >> 5) & 0xF;
 
                 if (pls == 0) { // U0
-                    printk("  Link training complete, port in U0\n");
                     break;
                 }
 
@@ -606,8 +576,6 @@ spinlock_t xhci_command_lock = {0};
 static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
     xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
 
-    printk("XHCI: Enabling slot\n");
-
     // 分配设备私有数据
     xhci_device_private_t *dev_priv =
         (xhci_device_private_t *)malloc(sizeof(xhci_device_private_t));
@@ -617,18 +585,22 @@ static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
     memset(dev_priv, 0, sizeof(xhci_device_private_t));
 
     // 分配设备上下文
-    dev_priv->device_ctx = (xhci_device_ctx_t *)xhci_alloc_dma(
-        sizeof(xhci_device_ctx_t), &dev_priv->device_ctx_phys);
+    dev_priv->device_ctx = xhci_alloc_dma(
+        sizeof(xhci_device_ctx_t) * (xhci->use_64byte_context ? 2 : 1),
+        &dev_priv->device_ctx_phys);
     if (!dev_priv->device_ctx) {
         free(dev_priv);
         return -1;
     }
 
     // 分配输入上下文
-    dev_priv->input_ctx = (xhci_input_ctx_t *)xhci_alloc_dma(
-        sizeof(xhci_input_ctx_t), &dev_priv->input_ctx_phys);
+    dev_priv->input_ctx = xhci_alloc_dma(sizeof(xhci_input_ctx_t) *
+                                             (xhci->use_64byte_context ? 2 : 1),
+                                         &dev_priv->input_ctx_phys);
     if (!dev_priv->input_ctx) {
-        free_frames_bytes(dev_priv->device_ctx, sizeof(xhci_device_ctx_t));
+        free_frames_bytes(dev_priv->device_ctx,
+                          sizeof(xhci_device_ctx_t) *
+                              (xhci->use_64byte_context ? 2 : 1));
         free(dev_priv);
         return -1;
     }
@@ -636,8 +608,12 @@ static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
     // 分配完成结构
     xhci_command_completion_t *completion = xhci_alloc_command_completion();
     if (!completion) {
-        free_frames_bytes(dev_priv->input_ctx, sizeof(xhci_input_ctx_t));
-        free_frames_bytes(dev_priv->device_ctx, sizeof(xhci_device_ctx_t));
+        free_frames_bytes(dev_priv->input_ctx,
+                          sizeof(xhci_input_ctx_t) *
+                              (xhci->use_64byte_context ? 2 : 1));
+        free_frames_bytes(dev_priv->device_ctx,
+                          sizeof(xhci_device_ctx_t) *
+                              (xhci->use_64byte_context ? 2 : 1));
         free(dev_priv);
         return -1;
     }
@@ -667,8 +643,6 @@ static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
         xhci->dcbaa[dev_priv->slot_id] = dev_priv->device_ctx_phys;
 
         device->hcd_private = dev_priv;
-
-        printk("XHCI: Slot %d enabled\n", dev_priv->slot_id);
 
         // 初始化EP0
         ret = xhci_setup_default_endpoint(hcd, device);
@@ -1293,9 +1267,6 @@ static int xhci_configure_endpoint(usb_hcd_t *hcd, usb_endpoint_t *endpoint) {
 
     if (ret == 0) {
         endpoint->hcd_private = ep_priv;
-        printk("XHCI: Endpoint configured successfully\n");
-        printk("  DCI: %d\n", dci);
-        printk("  Transfer Ring: %p\n", ep_priv->transfer_ring);
     } else {
         printk("XHCI: Configure Endpoint failed\n");
         xhci_free_ring(ep_priv->transfer_ring);
@@ -1635,9 +1606,6 @@ void xhci_handle_port_status(xhci_hcd_t *xhci, uint8_t port_id) {
         while (nanoTime() < target_time) {
             arch_yield();
         }
-
-        // 启动设备枚举
-        printk("XHCI: Starting device enumeration...\n");
 
         xhci->connection[port_id] = true;
 

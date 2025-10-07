@@ -77,7 +77,6 @@ int xhci_start_event_handler(xhci_hcd_t *xhci) {
     task_create("xhci_event_handler", (void (*)(uint64_t))xhci_event_handler,
                 (uint64_t)xhci, KTHREAD_PRIORITY);
 
-    printk("XHCI: Event handler thread created\n");
     return 0;
 }
 
@@ -85,6 +84,5 @@ int xhci_start_event_handler(xhci_hcd_t *xhci) {
 void xhci_stop_event_handler(xhci_hcd_t *xhci) {
     if (xhci->event_thread.running) {
         xhci->event_thread.running = false;
-        printk("XHCI: Event handler thread joined\n");
     }
 }

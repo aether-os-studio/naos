@@ -127,31 +127,31 @@ typedef struct {
 #define TRB_FLAG_TC TRB_LINK_TOGGLE_CYCLE // Toggle Cycle的别名
 
 // Slot Context - dev_info 字段
-#define SLOT_CTX_ROUTE_STRING(x) ((x) & 0xFFFFF)
-#define SLOT_CTX_SPEED(x) (((x) & 0xF) << 20)
-#define SLOT_CTX_MTT(x) (((x) & 0x1) << 25)
-#define SLOT_CTX_HUB(x) (((x) & 0x1) << 26)
-#define SLOT_CTX_CONTEXT_ENTRIES(x) (((x) & 0x1F) << 27)
+#define SLOT_CTX_ROUTE_STRING(x) ((uint32_t)(x) & 0xFFFFF)
+#define SLOT_CTX_SPEED(x) (((uint32_t)(x) & 0xF) << 20)
+#define SLOT_CTX_MTT(x) (((uint32_t)(x) & 0x1) << 25)
+#define SLOT_CTX_HUB(x) (((uint32_t)(x) & 0x1) << 26)
+#define SLOT_CTX_CONTEXT_ENTRIES(x) (((uint32_t)(x) & 0x1F) << 27)
 
 // Slot Context - dev_info2 字段
-#define SLOT_CTX_MAX_EXIT_LATENCY(x) ((x) & 0xFFFF)
-#define SLOT_CTX_ROOT_HUB_PORT(x) (((x) & 0xFF) << 16)
-#define SLOT_CTX_NUM_PORTS(x) (((x) & 0xFF) << 24)
+#define SLOT_CTX_MAX_EXIT_LATENCY(x) ((uint32_t)(x) & 0xFFFF)
+#define SLOT_CTX_ROOT_HUB_PORT(x) (((uint32_t)(x) & 0xFF) << 16)
+#define SLOT_CTX_NUM_PORTS(x) (((uint32_t)(x) & 0xFF) << 24)
 
 // EP Context - ep_info 字段
-#define EP_CTX_EP_STATE(x) ((x) & 0x7)
-#define EP_CTX_MULT(x) (((x) & 0x3) << 8)
-#define EP_CTX_MAX_P_STREAMS(x) (((x) & 0x1F) << 10)
-#define EP_CTX_LSA(x) (((x) & 0x1) << 15)
-#define EP_CTX_INTERVAL(x) (((x) & 0xFF) << 16)
-#define EP_CTX_MAX_ESIT_HI(x) (((x) & 0xFF) << 24)
+#define EP_CTX_EP_STATE(x) ((uint32_t)(x) & 0x7)
+#define EP_CTX_MULT(x) (((uint32_t)(x) & 0x3) << 8)
+#define EP_CTX_MAX_P_STREAMS(x) (((uint32_t)(x) & 0x1F) << 10)
+#define EP_CTX_LSA(x) (((uint32_t)(x) & 0x1) << 15)
+#define EP_CTX_INTERVAL(x) (((uint32_t)(x) & 0xFF) << 16)
+#define EP_CTX_MAX_ESIT_HI(x) (((uint32_t)(x) & 0xFF) << 24)
 
 // EP Context - ep_info2 字段
-#define EP_CTX_ERROR_COUNT(x) (((x) & 0x3) << 1)
-#define EP_CTX_EP_TYPE(x) (((x) & 0x7) << 3)
-#define EP_CTX_HID(x) (((x) & 0x1) << 7)
-#define EP_CTX_MAX_BURST(x) (((x) & 0xFF) << 8)
-#define EP_CTX_MAX_PACKET_SIZE(x) (((x) & 0xFFFF) << 16)
+#define EP_CTX_ERROR_COUNT(x) (((uint32_t)(x) & 0x3) << 1)
+#define EP_CTX_EP_TYPE(x) (((uint32_t)(x) & 0x7) << 3)
+#define EP_CTX_HID(x) (((uint32_t)(x) & 0x1) << 7)
+#define EP_CTX_MAX_BURST(x) (((uint32_t)(x) & 0xFF) << 8)
+#define EP_CTX_MAX_PACKET_SIZE(x) (((uint32_t)(x) & 0xFFFF) << 16)
 
 // EP Context - tr_dequeue_ptr 字段
 #define EP_CTX_DCS (1ULL << 0)
