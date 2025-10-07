@@ -512,7 +512,7 @@ static int xhci_reset_port(usb_hcd_t *hcd, uint8_t port) {
     while (nanoTime() < time_ns) {
         portsc = xhci_readl(&xhci->port_regs[port].portsc);
         if (!(portsc & XHCI_PORTSC_CCS)) {
-            printk("XHCI: Port disconnected while resetting port");
+            printk("XHCI: Port disconnected while resetting port\n");
             return -1;
         }
         if (portsc & XHCI_PORTSC_PRC) {
