@@ -61,6 +61,10 @@ void keyboard_callback(hid_event_t *event, void *user_data) {
 
 void mouse_callback(hid_event_t *event, void *user_data) {
     usb_hid_device_t *hid = user_data;
+
+    hid_mouse_event_t *mouse = &event->mouse;
+
+    handle_mouse_event(mouse->buttons, mouse->x, mouse->y);
 }
 
 // 全局 HID 设备列表
@@ -227,27 +231,13 @@ static void hid_interrupt_callback(usb_transfer_t *transfer) {
 
         // 生成鼠标事件
         if (hid->event_callback) {
-            // 移动事件
-            if (report->x != 0 || report->y != 0 || report->wheel != 0) {
-                hid_event_t event = {.type = HID_EVENT_MOUSE_MOVE,
-                                     .mouse = {.x = report->x,
-                                               .y = report->y,
-                                               .wheel = report->wheel,
-                                               .buttons = report->buttons}};
+            hid_event_t event = {.type = HID_EVENT_MOUSE,
+                                 .mouse = {.x = report->x,
+                                           .y = report->y,
+                                           .wheel = report->wheel,
+                                           .buttons = report->buttons}};
 
-                hid->event_callback(&event, hid->callback_user_data);
-            }
-
-            // 按键事件
-            if (report->buttons != hid->prev_mouse_report.buttons) {
-                hid_event_t event = {.type = HID_EVENT_MOUSE_BUTTON,
-                                     .mouse = {.x = 0,
-                                               .y = 0,
-                                               .wheel = 0,
-                                               .buttons = report->buttons}};
-
-                hid->event_callback(&event, hid->callback_user_data);
-            }
+            hid->event_callback(&event, hid->callback_user_data);
         }
     }
 
@@ -260,7 +250,7 @@ static int hid_start_interrupt_transfer(usb_hid_device_t *hid) {
 
     hid->transfer_active = true;
 
-    task_create("hit resubmit agent", hid_resubmit_agent, (uint64_t)hid,
+    task_create("hid_resubmit_agent", hid_resubmit_agent, (uint64_t)hid,
                 KTHREAD_PRIORITY);
 
     printk("HID: Interrupt transfers started\n");

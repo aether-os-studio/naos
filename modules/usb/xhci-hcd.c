@@ -531,19 +531,23 @@ static int xhci_reset_port(usb_hcd_t *hcd, uint8_t port) {
     xhci_writel(&xhci->port_regs[port].portsc, portsc);
 
     // 等待重置完成
-    int timeout = 1000;
-    while (timeout--) {
+    bool timeout = true;
+    int time_ns = nanoTime() + 1ULL * 1000000000ULL;
+    while (nanoTime() < time_ns) {
         portsc = xhci_readl(&xhci->port_regs[port].portsc);
-        if (!(portsc & XHCI_PORTSC_CCS))
+        if (!(portsc & XHCI_PORTSC_CCS)) {
+            printk("XHCI: Port disconnected while resetting port");
             return -1;
-        if (portsc & XHCI_PORTSC_PED) {
+        }
+        if (portsc & XHCI_PORTSC_PRC) {
+            timeout = false;
             break;
         }
 
         arch_yield();
     }
 
-    if (timeout <= 0) {
+    if (timeout) {
         printk("XHCI: Port reset timeout\n");
         return -1;
     }
@@ -1434,7 +1438,7 @@ void xhci_handle_port_status(xhci_hcd_t *xhci, uint8_t port_id) {
                     (uint64_t)arg, KTHREAD_PRIORITY);
 
         arch_enable_interrupt();
-    } else if (!(portsc & XHCI_PORTSC_CCS)) {
+    } else if (!(portsc & XHCI_PORTSC_CCS) && xhci->connection[port_id]) {
         printk("XHCI: Device disconnected on port %d\n", port_id);
         xhci->connection[port_id] = false;
     }

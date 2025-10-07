@@ -63,7 +63,6 @@ bool signals_pending_quick(task_t *task);
 #define SIG_UNBLOCK 1 /* for unblocking signals */
 #define SIG_SETMASK 2 /* for setting the signal mask */
 
-
 typedef struct {
     int32_t si_signo; // Signal number
     int32_t si_errno; // Error number (if applicable)

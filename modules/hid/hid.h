@@ -92,8 +92,7 @@ typedef enum {
 typedef enum {
     HID_EVENT_KEY_PRESS,
     HID_EVENT_KEY_RELEASE,
-    HID_EVENT_MOUSE_MOVE,
-    HID_EVENT_MOUSE_BUTTON
+    HID_EVENT_MOUSE,
 } hid_event_type_t;
 
 // HID 键盘事件
