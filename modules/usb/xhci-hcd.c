@@ -139,7 +139,7 @@ void xhci_ring_doorbell(xhci_hcd_t *xhci, uint8_t slot_id, uint8_t dci) {
 // 重置XHCI控制器
 int xhci_reset(xhci_hcd_t *xhci) {
     uint32_t cmd, status;
-    int timeout = 1000;
+    uint64_t time_ns = nanoTime() + 1ULL * 1000000000ULL;
 
     // 重置控制器
     cmd = xhci_readl(&xhci->op_regs->usbcmd);
@@ -147,16 +147,17 @@ int xhci_reset(xhci_hcd_t *xhci) {
     xhci_writel(&xhci->op_regs->usbcmd, cmd);
 
     // 等待重置完成
-    timeout = 1000;
-    while (timeout--) {
+    bool timeout = true;
+    while (nanoTime() < time_ns) {
         cmd = xhci_readl(&xhci->op_regs->usbcmd);
         status = xhci_readl(&xhci->op_regs->usbsts);
         if (!(cmd & XHCI_CMD_RESET) && !(status & XHCI_STS_CNR)) {
+            timeout = false;
             break;
         }
     }
 
-    if (timeout <= 0) {
+    if (timeout) {
         printk("XHCI: Reset timeout\n");
         return -1;
     }
@@ -175,9 +176,10 @@ int xhci_start(xhci_hcd_t *xhci) {
     cmd |= XHCI_CMD_RUN;
     xhci_writel(&xhci->op_regs->usbcmd, cmd);
 
+    uint64_t time_ns = nanoTime() + 1ULL * 1000000000ULL;
+
     // 等待控制器运行
-    int timeout = 1000;
-    while (timeout--) {
+    while (nanoTime() < time_ns) {
         uint32_t status = xhci_readl(&xhci->op_regs->usbsts);
         if (!(status & XHCI_STS_HCH)) {
             printk("XHCI: Controller running\n");
@@ -200,8 +202,9 @@ int xhci_stop(xhci_hcd_t *xhci) {
     xhci_writel(&xhci->op_regs->usbcmd, cmd);
 
     // 等待控制器停止
-    int timeout = 1000;
-    while (timeout--) {
+    uint64_t time_ns = nanoTime() + 1ULL * 1000000000ULL;
+
+    while (nanoTime() < time_ns) {
         uint32_t status = xhci_readl(&xhci->op_regs->usbsts);
         if (status & XHCI_STS_HCH) {
             printk("XHCI: Controller stopped\n");
@@ -501,8 +504,8 @@ static int xhci_reset_port(usb_hcd_t *hcd, uint8_t port) {
             printk("  Port not in U0, waiting for link training...\n");
 
             // 等待链路训练完成
-            int timeout = 100;
-            while (timeout-- > 0) {
+            uint64_t time_ns = nanoTime() + 100ULL * 1000000ULL;
+            while (nanoTime() < time_ns) {
                 portsc = xhci_readl(&xhci->port_regs[port].portsc);
                 pls = (portsc >> 5) & 0xF;
 
@@ -532,7 +535,7 @@ static int xhci_reset_port(usb_hcd_t *hcd, uint8_t port) {
 
     // 等待重置完成
     bool timeout = true;
-    int time_ns = nanoTime() + 1ULL * 1000000000ULL;
+    uint64_t time_ns = nanoTime() + 1ULL * 1000000000ULL;
     while (nanoTime() < time_ns) {
         portsc = xhci_readl(&xhci->port_regs[port].portsc);
         if (!(portsc & XHCI_PORTSC_CCS)) {
