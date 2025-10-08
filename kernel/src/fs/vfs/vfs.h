@@ -3,7 +3,6 @@
 #include <libs/klibc.h>
 #include <fs/vfs/fcntl.h>
 #include <fs/vfs/utils.h>
-#include <mm/page_cache.h>
 
 // * 所有时间请使用 GMT 时间 *
 
@@ -380,8 +379,6 @@ fd_t *vfs_dup(fd_t *fd);
 
 void *vfs_map(fd_t *fd, uint64_t addr, uint64_t len, uint64_t prot,
               uint64_t flags, uint64_t offset);
-
-extern arc_cache_t *global_page_cache;
 
 extern vfs_callback_t fs_callbacks[256];
 

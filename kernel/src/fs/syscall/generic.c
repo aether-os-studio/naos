@@ -64,16 +64,6 @@ uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode) {
     current_task->fd_info->fds[i]->flags = flags;
     node->refcount++;
 
-    if (node->type & file_none && node->size &&
-        node->size <= ARC_CACHE_MAX_CACHE_SIZE) {
-        void *page_cache_addr = alloc_frames_bytes(node->size);
-        vfs_read(node, page_cache_addr, 0, node->size);
-        char *key = vfs_get_fullpath(node);
-        arc_cache_put(global_page_cache, key, page_cache_addr, node->size);
-        free(key);
-        free_frames_bytes(page_cache_addr, node->size);
-    }
-
     return i;
 }
 
@@ -99,9 +89,6 @@ uint64_t sys_fsync(uint64_t fd) {
     }
 
     vfs_node_t node = current_task->fd_info->fds[fd]->node;
-    char *key = vfs_get_fullpath(node);
-    arc_cache_flush(global_page_cache, key);
-    free(key);
 
     return 0;
 }

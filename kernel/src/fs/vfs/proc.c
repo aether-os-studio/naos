@@ -375,7 +375,6 @@ void procfs_self_open(void *parent, const char *name, vfs_node_t node) {
             list_delete(self_nodes_root->child, self_node);
             self_node->handle = NULL;
             char *key = vfs_get_fullpath(self_node);
-            arc_cache_delete(global_page_cache, key);
             free(key);
             free(self_node->name);
             free(self_node);

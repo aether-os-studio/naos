@@ -8,8 +8,6 @@
 #include "drivers/pty.h"
 #include "drivers/fb.h"
 
-arc_cache_t *global_page_cache = NULL;
-
 spinlock_t global_rw_lock = {0};
 
 vfs_node_t rootdir = NULL;
@@ -118,6 +116,8 @@ int vfs_mkdir(const char *name) {
 
     char *save_ptr = path;
     char *filename = path + strlen(path);
+    if (*filename == '/')
+        filename--;
 
     while (*--filename != '/' && filename != path) {
     }
@@ -184,6 +184,8 @@ int vfs_mkfile(const char *name) {
 
     char *save_ptr = path;
     char *filename = path + strlen(path);
+    if (*filename == '/')
+        filename--;
 
     while (*--filename != '/' && filename != path) {
     }
@@ -254,6 +256,8 @@ int vfs_link(const char *name, const char *target_name) {
 
     char *save_ptr = path;
     char *filename = path + strlen(path);
+    if (*filename == '/')
+        filename--;
 
     while (*--filename != '/' && filename != path) {
     }
@@ -325,6 +329,8 @@ int vfs_symlink(const char *name, const char *target_name) {
 
     char *save_ptr = path;
     char *filename = path + strlen(path);
+    if (*filename == '/')
+        filename--;
 
     while (*--filename != '/' && filename != path) {
     }
@@ -395,6 +401,8 @@ int vfs_mknod(const char *name, uint16_t umode, int dev) {
 
     char *save_ptr = path;
     char *filename = path + strlen(path);
+    if (*filename == '/')
+        filename--;
 
     while (*--filename != '/' && filename != path) {
     }
@@ -589,8 +597,6 @@ vfs_node_t vfs_open(const char *_path) {
 void vfs_update(vfs_node_t node) { do_update(node); }
 
 bool vfs_init() {
-    global_page_cache = arc_cache_create(ARC_CACHE_CAPABILITY);
-
     for (size_t i = 0; i < sizeof(struct vfs_callback) / sizeof(void *); i++) {
         ((void **)&vfs_empty_callback)[i] = &empty_func;
     }
@@ -631,7 +637,6 @@ int vfs_close(vfs_node_t node) {
                 list_delete(node->parent->child, node);
                 node->handle = NULL;
                 char *key = vfs_get_fullpath(node);
-                arc_cache_delete(global_page_cache, key);
                 free(key);
                 spin_unlock(&node->spin);
                 free(node->name);
@@ -675,23 +680,10 @@ ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size) {
     if (fd->node->type & file_dir)
         return -1;
 
-    size_t page_cache_data_size = 0;
-    char *key = vfs_get_fullpath(fd->node);
-
-    void *page_cache =
-        arc_cache_get(global_page_cache, key, &page_cache_data_size);
-
-    free(key);
-
-    if (page_cache && offset + size <= page_cache_data_size) {
-        memcpy(addr, page_cache + offset, size);
-        return size;
-    } else {
-        spin_lock(&fd->node->spin);
-        ssize_t ret = callbackof(fd->node, read)(fd, addr, offset, size);
-        spin_unlock(&fd->node->spin);
-        return ret;
-    }
+    spin_lock(&fd->node->spin);
+    ssize_t ret = callbackof(fd->node, read)(fd, addr, offset, size);
+    spin_unlock(&fd->node->spin);
+    return ret;
 }
 
 int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize) {
@@ -714,31 +706,6 @@ ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size) {
     do_update(fd->node);
     if (fd->node->type & file_dir)
         return -1;
-
-    size_t page_cache_data_size = 0;
-    char *key = vfs_get_fullpath(fd->node);
-
-    void *page_cache =
-        arc_cache_get(global_page_cache, key, &page_cache_data_size);
-
-    if (page_cache) {
-        if (offset + size > page_cache_data_size) {
-            size_t new_size = offset + size;
-            void *new_page_cache = alloc_frames_bytes(new_size);
-            memcpy(new_page_cache, page_cache, page_cache_data_size);
-            memcpy((char *)new_page_cache + offset, addr, size);
-            arc_cache_delete(global_page_cache, key);
-            arc_cache_put(global_page_cache, key, new_page_cache, new_size);
-            free_frames_bytes(new_page_cache, new_size);
-        } else {
-            memcpy(page_cache + offset, addr, size);
-        }
-
-        free(key);
-        return size;
-    }
-
-    free(key);
 
     spin_lock(&fd->node->spin);
     ssize_t write_bytes = 0;
@@ -913,7 +880,6 @@ int vfs_delete(vfs_node_t node) {
         list_delete(node->parent->child, node);
         node->handle = NULL;
         char *key = vfs_get_fullpath(node);
-        arc_cache_delete(global_page_cache, key);
         free(key);
         spin_unlock(&node->spin);
         free(node->name);

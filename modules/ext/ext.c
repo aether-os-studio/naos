@@ -159,17 +159,12 @@ ssize_t ext_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     ext_handle_t *handle = file;
     if (!handle || !handle->node || !handle->file)
         return -1;
-    if (handle->node->size < offset) {
-        char *zero_buf = malloc(offset - handle->node->size);
-        memset(zero_buf, 0, offset - handle->node->size);
-        ext4_fseek(handle->file, (int64_t)handle->node->size,
-                   (uint32_t)SEEK_SET);
-        ext4_fwrite(handle->file, zero_buf, offset - handle->node->size, NULL);
-        free(zero_buf);
-    }
+    if ((handle->node->type & file_symlink) && handle->node->linkto)
+        handle = handle->node->linkto->handle;
     ext4_fseek(handle->file, (int64_t)offset, (uint32_t)SEEK_SET);
     ext4_fwrite(handle->file, addr, size, (size_t *)&ret);
     handle->node->size = ext4_fsize(handle->file);
+    fd->node->size = ext4_fsize(handle->file);
 
     spin_unlock(&rwlock);
 
@@ -228,21 +223,18 @@ ssize_t ext_readlink(vfs_node_t node, void *addr, size_t offset, size_t size) {
 int ext_mkfile(void *parent, const char *name, vfs_node_t node) {
     spin_lock(&rwlock);
 
-    char buf[2048];
-
-    ext_handle_t *parent_handle = parent;
-    char *parent_path = vfs_get_fullpath(parent_handle->node);
-    if (!strcmp(parent_path, "/"))
-        sprintf(buf, "/%s", name);
-    else
-        sprintf(buf, "%s/%s", parent_path, name);
-    free(parent_path);
+    char *buf = vfs_get_fullpath(node);
 
     ext4_file f;
     int ret = ext4_fopen2(&f, (const char *)buf, O_CREAT);
     ext4_fclose(&f);
 
-    ext4_mode_set(buf, 0700);
+    if (!ret) {
+        ext4_mode_set(buf, 0700);
+        node->mode = 0700;
+    }
+
+    free(buf);
 
     spin_unlock(&rwlock);
 
@@ -259,6 +251,8 @@ int ext_symlink(void *parent, const char *name, vfs_node_t node) {
     int ret = ext4_fsymlink(name, fullpath);
 
     ext4_mode_set(name, 0700);
+
+    node->mode = 0700;
 
     free(fullpath);
 
@@ -293,6 +287,8 @@ int ext_mknod(void *parent, const char *name, vfs_node_t node, uint16_t mode,
 
     ext4_mode_set(fullpath, 0700);
 
+    node->mode = 0700;
+
     free(fullpath);
 
     spin_unlock(&rwlock);
@@ -303,19 +299,16 @@ int ext_mknod(void *parent, const char *name, vfs_node_t node, uint16_t mode,
 int ext_mkdir(void *parent, const char *name, vfs_node_t node) {
     spin_lock(&rwlock);
 
-    char buf[2048];
-
-    ext_handle_t *parent_handle = parent;
-    char *parent_path = vfs_get_fullpath(parent_handle->node);
-    if (!strcmp(parent_path, "/"))
-        sprintf(buf, "/%s", name);
-    else
-        sprintf(buf, "%s/%s", parent_path, name);
-    free(parent_path);
+    char *buf = vfs_get_fullpath(node);
 
     int ret = ext4_dir_mk((const char *)buf);
 
-    ext4_mode_set(buf, 0700);
+    if (!ret) {
+        ext4_mode_set(buf, 0700);
+        node->mode = 0700;
+    }
+
+    free(buf);
 
     spin_unlock(&rwlock);
 
