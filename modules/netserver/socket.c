@@ -148,7 +148,7 @@ size_t real_socket_sendto(uint64_t fd, uint8_t *buff, size_t len, int flags,
         arch_yield();
     }
 
-    sockaddrLwipToLinux(aligned, aligned, initialFamily);
+    sockaddrLwipToLinux((void *)dest_addr, aligned, initialFamily);
 
     free(aligned);
 
@@ -199,7 +199,7 @@ size_t real_socket_recvfrom(uint64_t fd, uint8_t *buff, size_t len, int flags,
     if (lwipOut < 0)
         return -errno;
 
-    *addrlen -= 1;
+    *addrlen -= sizeof(uint8_t);
 
     return lwipOut;
 }
@@ -353,8 +353,10 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
         return -errno;
 
     if (msg->msg_name) {
-        sockaddrLwipToLinux(msg->msg_name, a, 2);
+        sockaddrLwipToLinux(msg->msg_name, a, AF_INET);
         msg->msg_namelen = sizeof(struct sockaddr_in);
+    } else {
+        msg->msg_namelen = 0;
     }
 
     return lwip_out;
@@ -379,6 +381,11 @@ int real_socket_bind(uint64_t fd, const struct sockaddr_un *addr,
 int real_socket_listen(uint64_t fd, int backlog) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     real_socket_t *sock = handle->sock;
+
+    if (backlog == 0)
+        backlog = 1;
+    if (backlog < 0)
+        backlog = 128;
 
     int out = lwip_listen(sock->lwip_fd, backlog);
     if (out < 0)
@@ -599,7 +606,7 @@ static void delay(uint64_t ms) {
 
 void receiver_entry(uint64_t arg) {
     uint32_t mtu = ((netdev_t *)arg)->mtu;
-    char *buf = malloc(mtu);
+    char *buf = alloc_frames_bytes(mtu);
     memset(buf, 0, mtu);
 
     while (1) {
@@ -742,5 +749,5 @@ fs_t socket = {
 void real_socket_init() {
     realsock_fsid = vfs_regist(&socket);
 
-    regist_socket(2, real_socket_socket);
+    regist_socket(AF_INET, real_socket_socket);
 }

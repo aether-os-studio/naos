@@ -130,7 +130,7 @@ struct iovec {
 };
 #endif
 
-typedef int msg_iovlen_t;
+typedef size_t msg_iovlen_t;
 
 struct msghdr {
     void *msg_name;
