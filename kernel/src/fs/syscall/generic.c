@@ -961,6 +961,31 @@ uint64_t sys_fchmodat(int dfd, const char *name, uint16_t mode) {
     return ret;
 }
 
+uint64_t sys_chown(const char *filename, uint64_t uid, uint64_t gid) {
+    int ret = vfs_chown(filename, uid, gid);
+    return ret;
+}
+
+uint64_t sys_fchown(int fd, uint64_t uid, uint64_t gid) {
+    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
+        return -EBADF;
+
+    vfs_node_t node = current_task->fd_info->fds[fd]->node;
+
+    char *fullpath = vfs_get_fullpath(node);
+    int ret = vfs_chown(fullpath, uid, gid);
+    free(fullpath);
+    return ret;
+}
+
+uint64_t sys_fchownat(int dfd, const char *name, uint64_t uid, uint64_t gid,
+                      int flags) {
+    char *resolved = at_resolve_pathname(dfd, name);
+    vfs_chown((const char *)resolved, uid, gid);
+    free(resolved);
+    return 0;
+}
+
 uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
     if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;

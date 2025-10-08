@@ -266,6 +266,7 @@ static struct vfs_callback epoll_callbacks = {
     .symlink = (vfs_mk_t)dummy,
     .mknod = (vfs_mknod_t)dummy,
     .chmod = (vfs_chmod_t)dummy,
+    .chown = (vfs_chown_t)dummy,
     .rename = (vfs_rename_t)dummy,
     .delete = (vfs_del_t)dummy,
     .map = (vfs_mapfile_t)dummy,

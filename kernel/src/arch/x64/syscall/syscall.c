@@ -246,9 +246,9 @@ void syscall_handler_init() {
     syscall_handlers[SYS_READLINK] = (syscall_handle_t)sys_readlink;
     syscall_handlers[SYS_CHMOD] = (syscall_handle_t)sys_chmod;
     syscall_handlers[SYS_FCHMOD] = (syscall_handle_t)sys_fchmod;
-    syscall_handlers[SYS_CHOWN] = (syscall_handle_t)dummy_syscall_handler;
-    syscall_handlers[SYS_FCHOWN] = (syscall_handle_t)dummy_syscall_handler;
-    syscall_handlers[SYS_LCHOWN] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_CHOWN] = (syscall_handle_t)sys_chown;
+    syscall_handlers[SYS_FCHOWN] = (syscall_handle_t)sys_fchown;
+    syscall_handlers[SYS_LCHOWN] = (syscall_handle_t)sys_chown;
     syscall_handlers[SYS_UMASK] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_GETTIMEOFDAY] = (syscall_handle_t)sys_gettimeofday;
     syscall_handlers[SYS_GETRLIMIT] = (syscall_handle_t)sys_get_rlimit;
@@ -446,7 +446,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_OPENAT] = (syscall_handle_t)sys_openat;
     syscall_handlers[SYS_MKDIRAT] = (syscall_handle_t)sys_mkdirat;
     // syscall_handlers[SYS_MKNODAT] = (syscall_handle_t)sys_mknodat;
-    // syscall_handlers[SYS_FCHOWNAT] = (syscall_handle_t)sys_fchownat;
+    syscall_handlers[SYS_FCHOWNAT] = (syscall_handle_t)sys_fchownat;
     syscall_handlers[SYS_FUTIMESAT] = (syscall_handle_t)sys_futimesat;
     syscall_handlers[SYS_NEWFSTATAT] = (syscall_handle_t)sys_newfstatat;
     syscall_handlers[SYS_UNLINKAT] = (syscall_handle_t)sys_unlinkat;

@@ -312,6 +312,11 @@ uint64_t sys_chmod(const char *name, uint16_t mode);
 uint64_t sys_fchmod(int fd, uint16_t mode);
 uint64_t sys_fchmodat(int dfd, const char *name, uint16_t mode);
 
+uint64_t sys_chown(const char *filename, uint64_t uid, uint64_t gid);
+uint64_t sys_fchown(int fd, uint64_t uid, uint64_t gid);
+uint64_t sys_fchownat(int dfd, const char *filename, uint64_t uid, uint64_t gid,
+                      int flags);
+
 uint64_t sys_rename(const char *old, const char *new);
 uint64_t sys_renameat(uint64_t oldfd, const char *old, uint64_t newfd,
                       const char *new);

@@ -480,6 +480,8 @@ int vfs_chmod(const char *path, uint16_t mode) {
     return ret;
 }
 
+int vfs_chown(const char *path, uint64_t uid, uint64_t gid) {}
+
 int vfs_regist(fs_t *fs) {
     vfs_callback_t callback = fs->callback;
 

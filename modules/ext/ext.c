@@ -339,6 +339,23 @@ int ext_chmod(vfs_node_t node, uint16_t mode) {
     return ret;
 }
 
+int ext_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
+    spin_lock(&rwlock);
+
+    char *buf = vfs_get_fullpath(node);
+    int ret = ext4_owner_set(buf, uid, gid);
+    free(buf);
+
+    if (!ret) {
+        node->owner = uid;
+        node->group = gid;
+    }
+
+    spin_unlock(&rwlock);
+
+    return ret;
+}
+
 int ext_delete(void *parent, vfs_node_t node) {
     spin_lock(&rwlock);
 
@@ -410,6 +427,7 @@ static struct vfs_callback callbacks = {
     .symlink = ext_symlink,
     .mknod = ext_mknod,
     .chmod = ext_chmod,
+    .chown = ext_chown,
     .delete = (vfs_del_t)ext_delete,
     .rename = (vfs_rename_t)ext_rename,
     .map = (vfs_mapfile_t)ext_map,

@@ -109,6 +109,7 @@ typedef int (*vfs_mknod_t)(void *parent, const char *name, vfs_node_t node,
                            uint16_t mode, int dev);
 
 typedef int (*vfs_chmod_t)(vfs_node_t node, uint16_t mode);
+typedef int (*vfs_chown_t)(vfs_node_t node, uint64_t uid, uint64_t gid);
 
 typedef int (*vfs_del_t)(void *parent, vfs_node_t node);
 
@@ -147,6 +148,7 @@ typedef struct vfs_callback {
     vfs_mk_t symlink;
     vfs_mknod_t mknod;
     vfs_chmod_t chmod;
+    vfs_chown_t chown;
     vfs_del_t delete;
     vfs_rename_t rename;
     vfs_stat_t stat;
@@ -260,6 +262,8 @@ int vfs_symlink(const char *name, const char *target_name);
 int vfs_mknod(const char *name, uint16_t umode, int dev);
 
 int vfs_chmod(const char *path, uint16_t mode);
+
+int vfs_chown(const char *path, uint64_t uid, uint64_t gid);
 
 /**
  *\brief 读取文件
