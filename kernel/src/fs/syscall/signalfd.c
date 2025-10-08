@@ -14,7 +14,6 @@ static int signalfd_poll(void *file, size_t event) {
     return revents;
 }
 
-static vfs_node_t signalfdfs_root = NULL;
 int signalfdfs_id = 0;
 int signalfd_id = 0;
 
@@ -25,16 +24,12 @@ static ssize_t signalfd_read(fd_t *fd, uint64_t offset, void *buf,
     struct signalfd_ctx *ctx = data;
 
     while (ctx->queue_head == ctx->queue_tail) {
-#if defined(__x86_64__)
         arch_enable_interrupt();
-#endif
 
         arch_pause();
     }
 
-#if defined(__x86_64__)
     arch_disable_interrupt();
-#endif
 
     struct signalfd_siginfo *ev = &ctx->queue[ctx->queue_tail];
     size_t copy_len = len < sizeof(*ev) ? len : sizeof(*ev);
@@ -53,6 +48,14 @@ static int signalfd_ioctl(void *data, ssize_t cmd, ssize_t arg) {
     default:
         return -ENOTTY;
     }
+}
+
+bool signalfd_close(void *handle) {
+    struct signalfd_ctx *ctx = handle;
+    free(ctx->node->name);
+    free(ctx->node);
+    free(ctx);
+    return true;
 }
 
 uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask,
@@ -82,12 +85,13 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask,
     // 创建VFS节点
     char buf[256];
     sprintf(buf, "signalfd%d", signalfd_id++);
-    vfs_node_t node = vfs_node_alloc(signalfdfs_root, buf);
+    vfs_node_t node = vfs_node_alloc(NULL, buf);
     node->refcount++;
     node->mode = 0700;
     node->type = file_stream;
     node->fsid = signalfdfs_id;
     node->handle = ctx;
+    ctx->node = node;
     current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
     current_task->fd_info->fds[fd]->node = node;
     current_task->fd_info->fds[fd]->offset = 0;
@@ -104,7 +108,7 @@ static struct vfs_callback signalfd_callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
     .open = (vfs_open_t)dummy,
-    .close = (vfs_close_t)dummy,
+    .close = (vfs_close_t)signalfd_close,
     .read = (vfs_read_t)signalfd_read,
     .write = (vfs_write_t)dummy,
     .readlink = (vfs_readlink_t)dummy,
@@ -132,10 +136,4 @@ fs_t signalfdfs = {
     .callback = &signalfd_callbacks,
 };
 
-void signalfd_init() {
-    signalfdfs_id = vfs_regist(&signalfdfs);
-    signalfdfs_root = vfs_node_alloc(NULL, "signal");
-    signalfdfs_root->type = file_dir;
-    signalfdfs_root->mode = 0644;
-    signalfdfs_root->fsid = signalfdfs_id;
-}
+void signalfd_init() { signalfdfs_id = vfs_regist(&signalfdfs); }

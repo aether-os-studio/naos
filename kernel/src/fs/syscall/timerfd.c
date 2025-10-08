@@ -27,7 +27,6 @@ uint64_t sys_timerfd_create(int clockid, int flags) {
     timerfd_t *tfd = malloc(sizeof(timerfd_t));
     memset(tfd, 0, sizeof(timerfd_t));
     tfd->timer.clock_type = clockid;
-    tfd->flags = flags;
 
     char buf[32];
     sprintf(buf, "timerfd%d", timerfd_id++);
@@ -36,6 +35,7 @@ uint64_t sys_timerfd_create(int clockid, int flags) {
     node->type = file_stream;
     node->fsid = timerfdfs_id;
     node->handle = tfd;
+    tfd->node = node;
 
     current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
     current_task->fd_info->fds[fd]->node = node;
@@ -112,8 +112,10 @@ uint64_t sys_timerfd_settime(int fd, int flags,
 }
 
 bool sys_timerfd_close(void *current) {
-    if (current)
-        free(current);
+    timerfd_t *tfd = current;
+    free(tfd->node->name);
+    free(tfd->node);
+    free(tfd);
     return true;
 }
 

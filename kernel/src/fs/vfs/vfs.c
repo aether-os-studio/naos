@@ -62,7 +62,6 @@ void vfs_free(vfs_node_t vfs) {
     free(vfs->name);
     if (vfs->linkto)
         vfs_close(vfs->linkto);
-    // todo: add 'free' callback
     free(vfs);
 }
 

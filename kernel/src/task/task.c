@@ -257,7 +257,7 @@ task_t *task_search(task_state_t state, uint32_t cpu_id) {
 void idle_entry(uint64_t arg) {
     while (1) {
         arch_enable_interrupt();
-        arch_pause();
+        arch_wait_for_interrupt();
     }
 }
 

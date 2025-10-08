@@ -339,6 +339,7 @@ typedef struct {
     kernel_timer_t timer;
     uint64_t count;
     int flags;
+    vfs_node_t node;
 } timerfd_t;
 
 #define TFD_TIMER_ABSTIME (1 << 0)
