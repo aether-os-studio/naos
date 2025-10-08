@@ -161,6 +161,15 @@ ssize_t ext_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
         return -1;
     if ((handle->node->type & file_symlink) && handle->node->linkto)
         handle = handle->node->linkto->handle;
+    if (offset > handle->node->size) {
+        uint8_t *buffer = alloc_frames_bytes(offset - handle->node->size);
+        memset(buffer, 0, offset - handle->node->size);
+        ext4_fseek(handle->file, (int64_t)handle->node->size,
+                   (uint32_t)SEEK_SET);
+        ext4_fwrite(handle->file, addr, offset - handle->node->size,
+                    (size_t *)&ret);
+        free_frames_bytes(buffer, offset - handle->node->size);
+    }
     ext4_fseek(handle->file, (int64_t)offset, (uint32_t)SEEK_SET);
     ext4_fwrite(handle->file, addr, size, (size_t *)&ret);
     handle->node->size = ext4_fsize(handle->file);
