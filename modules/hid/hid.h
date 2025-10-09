@@ -157,6 +157,8 @@ typedef struct usb_hid_device {
     void *callback_user_data;
 
     struct usb_hid_device *next;
+
+    bool hid_transfer_done;
 } usb_hid_device_t;
 
 // HID 驱动 API

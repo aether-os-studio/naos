@@ -117,8 +117,6 @@ int hid_set_idle(usb_hid_device_t *hid, uint8_t duration) {
 
 static void hid_interrupt_callback(usb_transfer_t *transfer);
 
-bool hid_transfer_done = false;
-
 void hid_resubmit_agent(uint64_t arg) {
     usb_hid_device_t *hid = (usb_hid_device_t *)arg;
 
@@ -132,10 +130,10 @@ void hid_resubmit_agent(uint64_t arg) {
                                hid->input_buffer, hid->input_buffer_size,
                                hid_interrupt_callback, hid);
 
-        while (!hid_transfer_done)
+        while (!hid->hid_transfer_done)
             arch_yield();
 
-        hid_transfer_done = false;
+        hid->hid_transfer_done = false;
     }
 
     task_exit(0);
@@ -153,7 +151,7 @@ static void hid_interrupt_callback(usb_transfer_t *transfer) {
 
     if (transfer->actual_length == 0) {
         printk("HID: Empty interrupt transfer\n");
-        hid_transfer_done = true;
+        hid->hid_transfer_done = true;
     }
 
     // 根据设备类型处理数据
@@ -241,7 +239,7 @@ static void hid_interrupt_callback(usb_transfer_t *transfer) {
         }
     }
 
-    hid_transfer_done = true;
+    hid->hid_transfer_done = true;
 }
 
 // 启动中断传输
@@ -402,6 +400,8 @@ int usb_hid_probe(usb_device_t *device) {
 
     // 设置空闲时间（0 = 无限期）
     hid_set_idle(hid, 0);
+
+    hid->hid_transfer_done = false;
 
     // 启动中断传输
     if (hid_start_interrupt_transfer(hid) != 0) {
