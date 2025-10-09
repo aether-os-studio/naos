@@ -591,8 +591,8 @@ uint64_t sys_stat(const char *fn, struct stat *buf) {
              : ((node->type & file_symlink)
                     ? S_IFLNK
                     : ((node->type & file_stream) ? S_IFCHR : S_IFREG)));
-    buf->st_uid = current_task->uid;
-    buf->st_gid = current_task->gid;
+    buf->st_uid = node->owner;
+    buf->st_gid = node->group;
     buf->st_rdev = node->rdev;
     buf->st_blksize = node->blksz;
     buf->st_size = node->size;
@@ -621,8 +621,8 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf) {
              : ((node->type & file_symlink)
                     ? S_IFLNK
                     : ((node->type & file_stream) ? S_IFCHR : S_IFREG)));
-    buf->st_uid = current_task->uid;
-    buf->st_gid = current_task->gid;
+    buf->st_uid = node->owner;
+    buf->st_gid = node->group;
     buf->st_rdev = node->rdev;
     buf->st_blksize = node->blksz;
     buf->st_size = node->size;

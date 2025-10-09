@@ -45,7 +45,6 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
     node->refcount = 0;
     node->mode = 0777;
     node->rw_hint = 0;
-    node->deleted = false;
     if (parent)
         list_append(parent->child, node);
     return node;
@@ -646,21 +645,6 @@ int vfs_close(vfs_node_t node) {
         bool real_close = callbackof(node, close)(node->handle);
         if (real_close) {
             node->handle = NULL;
-            if (node->deleted) {
-                int res = callbackof(node, delete)(node->parent->handle, node);
-                if (res < 0) {
-                    spin_unlock(&node->spin);
-                    return -1;
-                }
-                list_delete(node->parent->child, node);
-                callbackof(node, free_handle)(node->handle);
-                node->handle = NULL;
-                spin_unlock(&node->spin);
-                free(node->name);
-                free(node);
-
-                return 0;
-            }
         }
     }
     spin_unlock(&node->spin);
@@ -887,23 +871,18 @@ int vfs_delete(vfs_node_t node) {
     if (node == rootdir)
         return -1;
     spin_lock(&node->spin);
-    node->deleted = true;
-    if (!node->refcount) {
-        int res = callbackof(node, delete)(node->parent->handle, node);
-        if (res < 0) {
-            spin_unlock(&node->spin);
-            return -1;
-        }
-        list_delete(node->parent->child, node);
-        callbackof(node, free_handle)(node->handle);
-        node->handle = NULL;
+    int res = callbackof(node, delete)(node->parent->handle, node);
+    if (res < 0) {
         spin_unlock(&node->spin);
-        free(node->name);
-        free(node);
-
-        return 0;
+        return -1;
     }
+    list_delete(node->parent->child, node);
+    callbackof(node, free_handle)(node->handle);
+    node->handle = NULL;
     spin_unlock(&node->spin);
+    free(node->name);
+    free(node);
+
     return 0;
 }
 
@@ -986,5 +965,3 @@ void *vfs_map(fd_t *fd, uint64_t addr, uint64_t len, uint64_t prot,
     return callbackof(fd->node, map)(fd, (void *)addr, offset, len, prot,
                                      flags);
 }
-
-extern vfs_node_t devfs_root;

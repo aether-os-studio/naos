@@ -355,6 +355,7 @@ static struct vfs_callback callbacks = {
 
 typedef struct procfs_self_handle {
     vfs_node_t self;
+    bool deleted;
 } procfs_self_handle_t;
 
 vfs_node_t self_nodes_root = NULL;
@@ -372,7 +373,8 @@ void procfs_self_open(void *parent, const char *name, vfs_node_t node) {
 
     list_foreach(self_nodes_root->child, i) {
         vfs_node_t self_node = (vfs_node_t)i->data;
-        if (self_node->deleted) {
+        procfs_self_handle_t *handle = self_node->handle;
+        if (handle->deleted) {
             list_delete(self_nodes_root->child, self_node);
             self_node->handle = NULL;
             char *key = vfs_get_fullpath(self_node);
@@ -387,7 +389,7 @@ void procfs_self_open(void *parent, const char *name, vfs_node_t node) {
 
 bool procfs_self_close(void *current) {
     procfs_self_handle_t *handle = current;
-    handle->self->deleted = true;
+    handle->deleted = true;
     free(handle);
 
     return true;

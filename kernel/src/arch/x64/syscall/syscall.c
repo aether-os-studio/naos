@@ -627,11 +627,9 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_regs) {
         (idx != SYS_SHMAT) && (int)regs->rax < 0 && !((int64_t)regs->rax < 0))
         regs->rax |= 0xffffffff00000000;
 
-    // if ((int64_t)regs->rax < 0)
-    // {
-    //     char buf[128];
-    //     int len = sprintf(buf, "syscall %d has error: %s\n", idx,
-    //     strerror(-(int)regs->rax)); serial_printk(buf, len);
+    // if ((int64_t)regs->rax < 0) {
+    //     serial_fprintk("syscall %d has error: %s\n", idx,
+    //                    strerror(-(int)regs->rax));
     // }
 
     bool usable = idx < (sizeof(linux_syscalls) / sizeof(linux_syscalls[0]));
