@@ -1174,3 +1174,5 @@ struct drm_device {
 
 drm_device_t *drm_regist_pci_dev(void *data, drm_device_op_t *op,
                                  pci_device_t *pci_dev);
+
+void drm_init_after_pci_sysfs();

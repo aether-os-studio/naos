@@ -40,6 +40,8 @@ void init_thread(uint64_t arg) {
 
     pci_init_after_sysfs();
 
+    drm_init_after_pci_sysfs();
+
     fbdev_init_sysfs();
 
     dev_init_after_sysfs();

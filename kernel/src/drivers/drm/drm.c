@@ -9,6 +9,7 @@
 #include <fs/vfs/proc.h>
 #include <arch/arch.h>
 #include <mm/mm.h>
+#include <drivers/drm/plainfb.h>
 
 #define HZ 60
 
@@ -968,8 +969,10 @@ drm_device_t *drm_regist_pci_dev(void *data, drm_device_op_t *op,
     char path[256];
     sprintf(path, "/sys/dev/char/226:%d/device/drm/card%d", drm_id, drm_id);
     vfs_node_t class_drm = vfs_open("/sys/class/drm");
+    char cardn_buf[8];
+    sprintf(cardn_buf, "card%d", drm_id);
     vfs_node_t class_drm_cardn =
-        sysfs_child_append_symlink(class_drm, "card0", path);
+        sysfs_child_append_symlink(class_drm, cardn_buf, path);
 
     vfs_node_t uevent = sysfs_child_append(cardn, "uevent", false);
     sprintf(content, "MAJOR=%d\nMINOR=%d\nDEVNAME=dri/card%d\nSUBSYSTEM=drm\n",
@@ -982,4 +985,11 @@ drm_device_t *drm_regist_pci_dev(void *data, drm_device_op_t *op,
     drm_id++;
 
     return drm_dev;
+}
+
+void drm_init_after_pci_sysfs() {
+    if (!vfs_open("/dev/dri/card0")) {
+        printk("Cannot found GPU device, using framebuffer.\n");
+        drm_plainfb_init();
+    }
 }
