@@ -1460,11 +1460,10 @@ uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
         return 0;
 
     case PR_SET_TIMERSLACK:
-        current_task->timer_slack_ns = arg2;
         return 0;
 
     default:
-        return -ENOSYS; // 未实现的功能返回不支持
+        return -EINVAL; // 未实现的功能返回不支持
     }
 }
 

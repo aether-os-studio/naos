@@ -458,6 +458,14 @@ static int xhci_hcd_shutdown(usb_hcd_t *hcd) {
     return 0;
 }
 
+static void delay(uint64_t ms) {
+    uint64_t ns = ms * 1000000;
+    uint64_t start = nanoTime();
+    while (nanoTime() - start < ns) {
+        arch_yield();
+    }
+}
+
 // 重置端口
 static int xhci_reset_port(usb_hcd_t *hcd, uint8_t port) {
     xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
@@ -468,12 +476,80 @@ static int xhci_reset_port(usb_hcd_t *hcd, uint8_t port) {
 
     xhci_port_info_t *port_info = &xhci->port_info[port];
 
+redetect:
     // 检查端口是否已经在 U0 状态
     uint32_t portsc = xhci_readl(&xhci->port_regs[port].portsc);
     uint32_t pls = (portsc >> 5) & 0xF; // Port Link State
 
-    if (pls == 0) {
-        return 0; // 成功，无需重置
+    switch (pls) {
+    case 0:
+        printk("USB port %d currently in PLS_U0 mode.\n", port);
+        return 0;
+    case 1:
+    case 2:
+    case 3:
+        printk("USB port %d currently in PLS_U1/2/3 mode.\n", port);
+        portsc &= ~(0xF << 5);
+        portsc |= (0 << 5);
+        portsc |= (1 << 16);
+        xhci_writel(&xhci->port_regs[port].portsc, portsc);
+    // Disabled
+    case 4:
+        printk("USB port %d currently in PLS_DISABLED mode.\n", port);
+        // portsc = xhci_readl(&xhci->port_regs[port].portsc);
+        // if (!(portsc & (1 << 9))) {
+        //     printk("Enabling port power\n ");
+        //     portsc = xhci_readl(&xhci->port_regs[port].portsc);
+        //     portsc |= (1 << 9); // PORTSC_PP
+        //     xhci_writel(&xhci->port_regs[port].portsc, portsc);
+        //     delay(20); // 等待电源稳定
+        // }
+
+        // // 默认只处理USB3的情况
+        // portsc = xhci_readl(&xhci->port_regs[port].portsc);
+        // portsc |= (1 << 31); // Warm reset
+        // xhci_writel(&xhci->port_regs[port].portsc, portsc);
+
+        // uint64_t timeout_ns = nanoTime() + 100ULL * 1000000ULL;
+        // while (nanoTime() < timeout_ns) {
+        //     portsc = xhci_readl(&xhci->port_regs[port].portsc);
+        //     if (portsc & (1 << 19))
+        //         break;
+        // }
+        // portsc = xhci_readl(&xhci->port_regs[port].portsc);
+        // if (!(portsc & (1 << 19))) {
+        //     printk("Failed to warm reset for PLS_DISABLED.\n");
+        //     return -1;
+        // }
+        // portsc = xhci_readl(&xhci->port_regs[port].portsc);
+        // portsc |= (1 << 19); // PORTSC_WRC
+        // xhci_writel(&xhci->port_regs[port].portsc, portsc);
+
+        // portsc = xhci_readl(&xhci->port_regs[port].portsc);
+        // if (!(portsc & (1 << 1))) {
+        //     printk("USB port %d not enabled after warm reset.\n", port);
+        //     return -1;
+        // }
+        return 0;
+    // Rx detect
+    case 5:
+        printk("USB port %d currently in PLS_RXDETECT mode.\n", port);
+        delay(100);
+        portsc = xhci_readl(&xhci->port_regs[port].portsc);
+        uint32_t pls = (portsc >> 5) & 0xF; // Port Link State
+        if (pls == 5) {
+            portsc |= (1 << 31); // Warm reset
+            xhci_writel(&xhci->port_regs[port].portsc, portsc);
+            delay(100);
+        }
+        goto redetect;
+    // Polling
+    case 7:
+        printk("USB port %d currently in PLS_POLLING mode.\n", port);
+        break;
+    default:
+        printk("USB port %d currently in unknown mode.\n", port);
+        return -1;
     }
 
     portsc = xhci_readl(&xhci->port_regs[port].portsc);

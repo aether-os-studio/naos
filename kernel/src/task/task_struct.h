@@ -130,7 +130,6 @@ typedef struct task {
     vfs_node_t cwd;
     fd_info_t *fd_info;
     vfs_node_t procfs_node;
-    uint64_t timer_slack_ns;
     termios term;
     uint32_t tmp_rec_v;
     char *cmdline;
