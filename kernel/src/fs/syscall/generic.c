@@ -56,6 +56,8 @@ uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode) {
         node = vfs_open(name);
         if (!node)
             return (uint64_t)-ENOENT;
+        if (mode)
+            vfs_chmod(name, mode ? mode : 0777);
     }
 
     current_task->fd_info->fds[i] = malloc(sizeof(fd_t));

@@ -116,8 +116,10 @@ int vfs_mkdir(const char *name) {
 
     char *save_ptr = path;
     char *filename = path + strlen(path);
-    if (*filename == '/')
+    if (*--filename == '/') {
+        *filename = '\0';
         filename--;
+    }
 
     while (*--filename != '/' && filename != path) {
     }
@@ -184,8 +186,10 @@ int vfs_mkfile(const char *name) {
 
     char *save_ptr = path;
     char *filename = path + strlen(path);
-    if (*filename == '/')
+    if (*--filename == '/') {
+        *filename = '\0';
         filename--;
+    }
 
     while (*--filename != '/' && filename != path) {
     }
@@ -210,9 +214,15 @@ int vfs_mkfile(const char *name) {
         }
         vfs_node_t new_current = vfs_child_find(current, buf);
         if (new_current == NULL) {
-            new_current = vfs_node_alloc(current, buf);
+            new_current = vfs_child_append(current, buf, NULL);
             new_current->type = file_dir;
-            callbackof(current, mkdir)(current->handle, buf, new_current);
+            int ret =
+                callbackof(current, mkdir)(current->handle, buf, new_current);
+            if (ret < 0) {
+                free(new_current->name);
+                free(new_current);
+                goto err;
+            }
         }
         current = new_current;
         do_update(current);
@@ -256,8 +266,10 @@ int vfs_link(const char *name, const char *target_name) {
 
     char *save_ptr = path;
     char *filename = path + strlen(path);
-    if (*filename == '/')
+    if (*--filename == '/') {
+        *filename = '\0';
         filename--;
+    }
 
     while (*--filename != '/' && filename != path) {
     }
@@ -329,8 +341,10 @@ int vfs_symlink(const char *name, const char *target_name) {
 
     char *save_ptr = path;
     char *filename = path + strlen(path);
-    if (*filename == '/')
+    if (*--filename == '/') {
+        *filename = '\0';
         filename--;
+    }
 
     while (*--filename != '/' && filename != path) {
     }
@@ -401,8 +415,10 @@ int vfs_mknod(const char *name, uint16_t umode, int dev) {
 
     char *save_ptr = path;
     char *filename = path + strlen(path);
-    if (*filename == '/')
+    if (*--filename == '/') {
+        *filename = '\0';
         filename--;
+    }
 
     while (*--filename != '/' && filename != path) {
     }
@@ -480,7 +496,7 @@ int vfs_chmod(const char *path, uint16_t mode) {
     return ret;
 }
 
-int vfs_chown(const char *path, uint64_t uid, uint64_t gid) {}
+int vfs_chown(const char *path, uint64_t uid, uint64_t gid) { return 0; }
 
 int vfs_regist(fs_t *fs) {
     vfs_callback_t callback = fs->callback;
@@ -637,9 +653,8 @@ int vfs_close(vfs_node_t node) {
                     return -1;
                 }
                 list_delete(node->parent->child, node);
+                callbackof(node, free_handle)(node->handle);
                 node->handle = NULL;
-                char *key = vfs_get_fullpath(node);
-                free(key);
                 spin_unlock(&node->spin);
                 free(node->name);
                 free(node);
@@ -880,9 +895,8 @@ int vfs_delete(vfs_node_t node) {
             return -1;
         }
         list_delete(node->parent->child, node);
+        callbackof(node, free_handle)(node->handle);
         node->handle = NULL;
-        char *key = vfs_get_fullpath(node);
-        free(key);
         spin_unlock(&node->spin);
         free(node->name);
         free(node);
@@ -894,12 +908,11 @@ int vfs_delete(vfs_node_t node) {
 }
 
 int vfs_rename(vfs_node_t node, const char *new) {
+    vfs_node_t new_node = vfs_open(new);
+    if (new_node)
+        vfs_delete(new_node);
+
     spin_lock(&node->spin);
-    int ret = callbackof(node, rename)(node->handle, new);
-    if (ret < 0) {
-        spin_unlock(&node->spin);
-        return ret;
-    }
 
     char *filename;
     char *last_slash = strrchr(new, '/');
@@ -928,10 +941,19 @@ int vfs_rename(vfs_node_t node, const char *new) {
     int dn_len = strlen(new) - fn_len;
     memcpy(buf, new, dn_len);
 
+    vfs_node_t new_parent = vfs_open(buf);
+    if (!new_parent)
+        return -ENOENT;
+
+    int ret = callbackof(node, rename)(node->handle, new);
+    if (ret < 0) {
+        spin_unlock(&node->spin);
+        return ret;
+    }
+
     if (node->parent)
         list_delete(node->parent->child, node);
-    vfs_mkdir(buf);
-    node->parent = vfs_open(buf);
+    node->parent = new_parent;
     if (node->parent)
         list_append(node->parent->child, node);
     free(node->name);
