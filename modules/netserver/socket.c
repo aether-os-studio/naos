@@ -125,9 +125,9 @@ size_t real_socket_sendto(uint64_t fd, uint8_t *buff, size_t len, int flags,
 
     arch_enable_interrupt();
 
-    struct sockaddr *aligned = malloc(addrlen);
-    memcpy(aligned, dest_addr, addrlen);
-    uint16_t initialFamily = sockaddrLinuxToLwip(aligned, dest_addr, addrlen);
+    struct sockaddr_in *aligned = malloc(sizeof(struct sockaddr_in));
+    uint16_t initialFamily =
+        sockaddrLinuxToLwip(aligned, dest_addr, sizeof(struct sockaddr_in));
 
     int lwipOut = -1;
     while (true) {
@@ -234,6 +234,23 @@ int real_socket_getsockname(uint64_t fd, struct sockaddr_un *addr,
     struct sockaddr_in *a = malloc(sizeof(struct sockaddr_in));
     int lwip_out = lwip_getsockname(sock->lwip_fd, (void *)a, addrlen);
     sockaddrLwipToLinux(addr, a, AF_INET);
+    *addrlen = sizeof(struct in_sockaddr);
+    free(a);
+    if (lwip_out < 0)
+        return -errno;
+
+    return lwip_out;
+}
+
+size_t real_socket_getpeername(uint64_t fd, struct sockaddr_un *addr,
+                               socklen_t *addrlen) {
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    real_socket_t *sock = handle->sock;
+
+    struct sockaddr_in *a = malloc(sizeof(struct sockaddr_in));
+    int lwip_out = lwip_getpeername(sock->lwip_fd, (void *)a, addrlen);
+    sockaddrLwipToLinux(addr, a, AF_INET);
+    *addrlen = sizeof(struct in_sockaddr);
     free(a);
     if (lwip_out < 0)
         return -errno;
@@ -271,11 +288,20 @@ size_t real_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
 
     int lwip_out = -1;
 
+    struct sockaddr_in *a = NULL;
+    socklen_t alen = 0;
+    if (msg->msg_name && msg->msg_namelen) {
+        alen = sizeof(struct sockaddr_in);
+        a = malloc(alen);
+        uint16_t initial_family =
+            sockaddrLinuxToLwip((void *)a, msg->msg_name, alen);
+    }
+
     arch_enable_interrupt();
 
     struct msghdr mh = {
-        .msg_name = NULL,
-        .msg_namelen = 0,
+        .msg_name = a,
+        .msg_namelen = alen,
         .msg_iov = msg->msg_iov,
         .msg_iovlen = msg->msg_iovlen,
         .msg_control = msg->msg_control,
@@ -354,7 +380,7 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
 
     if (msg->msg_name) {
         sockaddrLwipToLinux(msg->msg_name, a, AF_INET);
-        msg->msg_namelen = sizeof(struct sockaddr_in);
+        msg->msg_namelen = sizeof(struct in_sockaddr);
     } else {
         msg->msg_namelen = 0;
     }
@@ -465,6 +491,7 @@ int real_socket_accept(uint64_t fd, struct sockaddr_un *addr,
 
 socket_op_t real_socket_ops = {
     .getsockname = real_socket_getsockname,
+    .getpeername = real_socket_getpeername,
     .connect = real_socket_connect,
     .bind = real_socket_bind,
     .accept = real_socket_accept,
