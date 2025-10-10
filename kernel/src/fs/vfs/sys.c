@@ -4,13 +4,177 @@
 #include <drivers/bus/pci.h>
 #include <net/netlink.h>
 
+int sysfs_fsid = 0;
+
+spinlock_t sysfs_oplock = {0};
+
 vfs_node_t sysfs_root = NULL;
+vfs_node_t fake_sysfs_root = NULL;
+
+static int mount_node_old_fsid = 0;
 
 extern uint32_t device_number;
 
+static int dummy() { return -ENOSYS; }
+
+void sysfs_open(void *parent, const char *name, vfs_node_t node) {}
+
+bool sysfs_close(void *current) { return false; }
+
+ssize_t sysfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
+    sysfs_node_t *handle = fd->node->handle;
+    if (offset >= handle->size)
+        return 0;
+    ssize_t to_copy = MIN(handle->size - offset, size);
+    memcpy(addr, handle->content + offset, to_copy);
+    return to_copy;
+}
+
+ssize_t sysfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
+    sysfs_node_t *handle = fd->node->handle;
+    if (offset + size > handle->capability) {
+        handle->capability = offset + size;
+        handle->content = realloc(handle->content, handle->capability);
+    }
+    memcpy(handle->content + offset, addr, size);
+    handle->size = MAX(handle->size, offset + size);
+    return size;
+}
+
+ssize_t sysfs_readlink(vfs_node_t node, void *addr, size_t offset,
+                       size_t size) {
+    vfs_node_t linkto = node->linkto;
+
+    if (!linkto) {
+        return -ENOLINK;
+    }
+
+    char *current_path = vfs_get_fullpath(node);
+    char *linkto_path = vfs_get_fullpath(linkto);
+
+    char buf[2048];
+    memset(buf, 0, sizeof(buf));
+    rel_status status =
+        calculate_relative_path(buf, current_path, linkto_path, sizeof(buf));
+
+    free(current_path);
+    free(linkto_path);
+
+    int len = strnlen(buf, size);
+    memcpy(addr, buf, len);
+
+    return len;
+}
+
+int sysfs_mkdir(void *parent, const char *name, vfs_node_t node) {
+    node->mode = 0700;
+    return 0;
+}
+
+int sysfs_mkfile(void *parent, const char *name, vfs_node_t node) {
+    node->mode = 0700;
+    sysfs_node_t *handle = malloc(sizeof(sysfs_node_t));
+    handle->capability = DEFAULT_PAGE_SIZE;
+    handle->content = malloc(handle->capability);
+    handle->size = 0;
+    node->handle = handle;
+    return 0;
+}
+
+int sysfs_symlink(void *parent, const char *name, vfs_node_t node) {
+    node->mode = 0700;
+    node->linkto = vfs_open(name);
+    return 0;
+}
+
+int sysfs_mount(vfs_node_t dev, vfs_node_t node) {
+    if (sysfs_root != fake_sysfs_root)
+        return -EALREADY;
+    if (sysfs_root == node)
+        return -EALREADY;
+
+    spin_lock(&sysfs_oplock);
+
+    list_foreach(fake_sysfs_root->child, i) {
+        vfs_node_t child = (vfs_node_t)i->data;
+        list_delete(fake_sysfs_root->child, child);
+        list_append(node->child, child);
+        child->parent = node;
+    }
+
+    mount_node_old_fsid = node->fsid;
+
+    sysfs_root = node;
+    node->fsid = sysfs_fsid;
+
+    spin_unlock(&sysfs_oplock);
+
+    return 0;
+}
+
+void sysfs_unmount(vfs_node_t root) {
+    if (root == fake_sysfs_root)
+        return;
+
+    if (root != sysfs_root)
+        return;
+
+    spin_lock(&sysfs_oplock);
+
+    list_foreach(root->child, i) {
+        vfs_node_t child = (vfs_node_t)i->data;
+        list_delete(root->child, child);
+        list_append(fake_sysfs_root->child, child);
+        child->parent = fake_sysfs_root;
+    }
+
+    root->fsid = mount_node_old_fsid;
+
+    sysfs_root = fake_sysfs_root;
+
+    spin_unlock(&sysfs_oplock);
+}
+
+static struct vfs_callback callbacks = {
+    .open = (vfs_open_t)sysfs_open,
+    .close = (vfs_close_t)sysfs_close,
+    .read = (vfs_read_t)sysfs_read,
+    .write = (vfs_write_t)sysfs_write,
+    .readlink = (vfs_readlink_t)sysfs_readlink,
+    .mkdir = (vfs_mk_t)sysfs_mkdir,
+    .mkfile = (vfs_mk_t)sysfs_mkfile,
+    .link = (vfs_mk_t)dummy,
+    .symlink = (vfs_mk_t)sysfs_symlink,
+    .mknod = (vfs_mknod_t)dummy,
+    .chmod = (vfs_chmod_t)dummy,
+    .chown = (vfs_chown_t)dummy,
+    .delete = (vfs_del_t)dummy,
+    .rename = (vfs_rename_t)dummy,
+    .stat = (vfs_stat_t)dummy,
+    .ioctl = (vfs_ioctl_t)dummy,
+    .map = (vfs_mapfile_t)dummy,
+    .poll = (vfs_poll_t)dummy,
+    .mount = (vfs_mount_t)sysfs_mount,
+    .unmount = (vfs_unmount_t)sysfs_unmount,
+    .resize = (vfs_resize_t)dummy,
+    .dup = vfs_generic_dup,
+
+    .free_handle = vfs_generic_free_handle,
+};
+
+fs_t sysfs = {
+    .name = "sysfs",
+    .magic = 0,
+    .callback = &callbacks,
+};
+
 void sysfs_init() {
-    vfs_mkdir("/sys");
-    sysfs_root = vfs_open("/sys");
+    sysfs_fsid = vfs_regist(&sysfs);
+
+    fake_sysfs_root = vfs_child_append(rootdir, "sys", NULL);
+    fake_sysfs_root->type = file_dir;
+    fake_sysfs_root->fsid = sysfs_fsid;
+    sysfs_root = fake_sysfs_root;
 
     vfs_mkdir("/sys/devices");
 
@@ -155,6 +319,11 @@ void sysfs_init() {
     //     handle->node = uevent;
     //     uevent->handle = handle;
     // #endif
+}
+
+void sysfs_init_umount() {
+    list_delete(fake_sysfs_root->parent->child, fake_sysfs_root);
+    fake_sysfs_root->parent = NULL;
 }
 
 static int next_seq_num = 1;

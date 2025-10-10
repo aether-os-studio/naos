@@ -4,6 +4,16 @@ fn main() {
     println!("aether-init is running...");
 
     unsafe {
+        // Mount sysfs
+        assert!(
+            libc::mount(
+                b"sysfs\0".as_ptr() as *const _,
+                b"/sys\0".as_ptr() as *const _,
+                b"sysfs\0".as_ptr() as *const _,
+                0,
+                core::ptr::null() as *const _,
+            ) == 0
+        );
         // Mount procfs
         assert!(
             libc::mount(
@@ -13,7 +23,7 @@ fn main() {
                 0,
                 core::ptr::null() as *const _,
             ) == 0
-        )
+        );
     }
 
     unsafe { std::env::set_var("PATH", "/usr/local/bin:/usr/bin:/bin") };

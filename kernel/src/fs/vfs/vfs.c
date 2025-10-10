@@ -8,8 +8,6 @@
 #include "drivers/pty.h"
 #include "drivers/fb.h"
 
-spinlock_t global_rw_lock = {0};
-
 vfs_node_t rootdir = NULL;
 
 fs_t *all_fs[256] = {
@@ -102,8 +100,6 @@ vfs_node_t vfs_child_append(vfs_node_t parent, const char *name, void *handle) {
 }
 
 int vfs_mkdir(const char *name) {
-    spin_lock(&global_rw_lock);
-
     vfs_node_t current = rootdir;
     char *path;
     if (name[0] != '/') {
@@ -117,7 +113,6 @@ int vfs_mkdir(const char *name) {
     char *filename = path + strlen(path);
     if (*--filename == '/') {
         *filename = '\0';
-        filename--;
     }
 
     while (*--filename != '/' && filename != path) {
@@ -159,21 +154,16 @@ create:
     node->type = file_dir;
     callbackof(current, mkdir)(current->handle, filename, node);
 
-    spin_unlock(&global_rw_lock);
-
     free(path);
 
     return 0;
 
 err:
-    spin_unlock(&global_rw_lock);
     free(path);
     return -1;
 }
 
 int vfs_mkfile(const char *name) {
-    spin_lock(&global_rw_lock);
-
     vfs_node_t current = rootdir;
     char *path;
     if (name[0] != '/') {
@@ -187,7 +177,6 @@ int vfs_mkfile(const char *name) {
     char *filename = path + strlen(path);
     if (*--filename == '/') {
         *filename = '\0';
-        filename--;
     }
 
     while (*--filename != '/' && filename != path) {
@@ -235,13 +224,11 @@ create:
     node->type = file_none;
     callbackof(current, mkfile)(current->handle, filename, node);
 
-    spin_unlock(&global_rw_lock);
     free(path);
 
     return 0;
 
 err:
-    spin_unlock(&global_rw_lock);
     free(path);
     return -1;
 }
@@ -253,7 +240,6 @@ err:
  *\return 0 成功，-1 失败
  */
 int vfs_link(const char *name, const char *target_name) {
-    spin_lock(&global_rw_lock);
     vfs_node_t current = rootdir;
     char *path;
     if (name[0] != '/') {
@@ -267,7 +253,6 @@ int vfs_link(const char *name, const char *target_name) {
     char *filename = path + strlen(path);
     if (*--filename == '/') {
         *filename = '\0';
-        filename--;
     }
 
     while (*--filename != '/' && filename != path) {
@@ -310,13 +295,9 @@ create:
     callbackof(current, link)(current->handle, target_name, node);
     node->linkto = vfs_open(target_name);
 
-    spin_unlock(&global_rw_lock);
-    free(path);
-
     return 0;
 
 err:
-    spin_unlock(&global_rw_lock);
     free(path);
     return -1;
 }
@@ -328,7 +309,6 @@ err:
  *\return 0 成功，-1 失败
  */
 int vfs_symlink(const char *name, const char *target_name) {
-    spin_lock(&global_rw_lock);
     vfs_node_t current = rootdir;
     char *path;
     if (name[0] != '/') {
@@ -342,7 +322,6 @@ int vfs_symlink(const char *name, const char *target_name) {
     char *filename = path + strlen(path);
     if (*--filename == '/') {
         *filename = '\0';
-        filename--;
     }
 
     while (*--filename != '/' && filename != path) {
@@ -390,19 +369,16 @@ create:
     }
     node->linkto = vfs_open(target_name);
 
-    spin_unlock(&global_rw_lock);
     free(path);
 
     return 0;
 
 err:
-    spin_unlock(&global_rw_lock);
     free(path);
     return -1;
 }
 
 int vfs_mknod(const char *name, uint16_t umode, int dev) {
-    spin_lock(&global_rw_lock);
     vfs_node_t current = rootdir;
     char *path;
     if (name[0] != '/') {
@@ -416,7 +392,6 @@ int vfs_mknod(const char *name, uint16_t umode, int dev) {
     char *filename = path + strlen(path);
     if (*--filename == '/') {
         *filename = '\0';
-        filename--;
     }
 
     while (*--filename != '/' && filename != path) {
@@ -474,13 +449,11 @@ create:
     node->rdev = dev;
     callbackof(current, mknod)(current->handle, filename, node, umode, dev);
 
-    spin_unlock(&global_rw_lock);
     free(path);
 
     return 0;
 
 err:
-    spin_unlock(&global_rw_lock);
     free(path);
     return -1;
 }
@@ -712,7 +685,7 @@ ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size) {
     ssize_t write_bytes = 0;
     write_bytes = callbackof(fd->node, write)(fd, addr, offset, size);
     if (write_bytes > 0) {
-        fd->node->size = max(fd->node->size, offset + write_bytes);
+        fd->node->size = MAX(fd->node->size, offset + write_bytes);
     }
     spin_unlock(&fd->node->spin);
     return write_bytes;

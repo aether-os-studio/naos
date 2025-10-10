@@ -2,6 +2,17 @@
 
 #include <fs/vfs/vfs.h>
 
+typedef struct sysfs_node {
+    vfs_node_t node;
+    // for file type
+    char *content;
+    int size;
+    int capability;
+} sysfs_node_t;
+
+void sysfs_init();
+void sysfs_init_umount();
+
 int alloc_seq_num();
 
 vfs_node_t sysfs_regist_dev(char t, int major, int minor,

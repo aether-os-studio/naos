@@ -97,8 +97,6 @@ static inline char *pathtok(char **sp) {
     return s;   // 返回当前令牌
 }
 
-#define max(x, y) ((x > y) ? (x) : (y))
-
 /**
  * Status codes for relative path calculation
  */

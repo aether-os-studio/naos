@@ -9,6 +9,7 @@
 #include <drivers/fb.h>
 
 extern void sysfs_init();
+extern void sysfs_init_umount();
 extern void fs_syscall_init();
 extern void socketfs_init();
 extern void pipefs_init();
@@ -30,10 +31,6 @@ void init_thread(uint64_t arg) {
     socketfs_init();
     pipefs_init();
 
-    mount_root();
-
-    dev_init_after_mount_root();
-
     fbdev_init();
 
     sysfs_init();
@@ -47,6 +44,12 @@ void init_thread(uint64_t arg) {
     dev_init_after_sysfs();
 
     arch_input_dev_init();
+
+    sysfs_init_umount();
+
+    mount_root();
+
+    dev_init_after_mount_root();
 
     system_initialized = true;
 
