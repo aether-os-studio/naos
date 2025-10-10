@@ -236,6 +236,7 @@ static int xhci_parse_protocol_caps(xhci_hcd_t *xhci) {
             uint32_t cap_word0 = xhci_readl(ext_cap);
             uint32_t cap_word1 = xhci_readl(ext_cap + 1);
             uint32_t cap_word2 = xhci_readl(ext_cap + 2);
+            uint32_t cap_word3 = xhci_readl(ext_cap + 3);
 
             // 解析协议版本
             uint8_t minor = (cap_word2 >> 16) & 0xFF;
@@ -244,6 +245,8 @@ static int xhci_parse_protocol_caps(xhci_hcd_t *xhci) {
             // 解析端口范围
             uint8_t port_offset = cap_word2 & 0xFF;
             uint8_t port_count = (cap_word2 >> 8) & 0xFF;
+
+            uint8_t slot_type = cap_word3 & 0x1F;
 
             // 标记端口协议
             for (int i = 0;
@@ -255,6 +258,7 @@ static int xhci_parse_protocol_caps(xhci_hcd_t *xhci) {
                 xhci->port_info[port_idx].protocol = major;
                 xhci->port_info[port_idx].port_offset = i;
                 xhci->port_info[port_idx].port_count = port_count;
+                xhci->port_info[port_idx].slot_type = slot_type;
             }
         }
 
@@ -496,41 +500,62 @@ redetect:
     // Disabled
     case 4:
         printk("USB port %d currently in PLS_DISABLED mode.\n", port);
-        // portsc = xhci_readl(&xhci->port_regs[port].portsc);
-        // if (!(portsc & (1 << 9))) {
-        //     printk("Enabling port power\n ");
-        //     portsc = xhci_readl(&xhci->port_regs[port].portsc);
-        //     portsc |= (1 << 9); // PORTSC_PP
-        //     xhci_writel(&xhci->port_regs[port].portsc, portsc);
-        //     delay(20); // 等待电源稳定
-        // }
 
-        // // 默认只处理USB3的情况
-        // portsc = xhci_readl(&xhci->port_regs[port].portsc);
-        // portsc |= (1 << 31); // Warm reset
-        // xhci_writel(&xhci->port_regs[port].portsc, portsc);
+        portsc = xhci_readl(&xhci->port_regs[port].portsc);
+        portsc |= (1 << 31); // Warm reset
+        xhci_writel(&xhci->port_regs[port].portsc, portsc);
+        delay(100);
 
-        // uint64_t timeout_ns = nanoTime() + 100ULL * 1000000ULL;
-        // while (nanoTime() < timeout_ns) {
-        //     portsc = xhci_readl(&xhci->port_regs[port].portsc);
-        //     if (portsc & (1 << 19))
-        //         break;
-        // }
-        // portsc = xhci_readl(&xhci->port_regs[port].portsc);
-        // if (!(portsc & (1 << 19))) {
-        //     printk("Failed to warm reset for PLS_DISABLED.\n");
-        //     return -1;
-        // }
-        // portsc = xhci_readl(&xhci->port_regs[port].portsc);
-        // portsc |= (1 << 19); // PORTSC_WRC
-        // xhci_writel(&xhci->port_regs[port].portsc, portsc);
+        uint64_t timeout = nanoTime() + 1000ULL * 1000000ULL;
+        while (nanoTime() < timeout) {
+            portsc = xhci_readl(&xhci->port_regs[port].portsc);
+            pls = (portsc >> 5) & 0xF;
+            uint32_t speed = (portsc >> 10) & 0xF;
 
-        // portsc = xhci_readl(&xhci->port_regs[port].portsc);
-        // if (!(portsc & (1 << 1))) {
-        //     printk("USB port %d not enabled after warm reset.\n", port);
-        //     return -1;
-        // }
-        return 0;
+            // 成功
+            if (speed != 0 && pls == 0 && (portsc & XHCI_PORTSC_CCS)) {
+                printk("USB port %d in U0.\n", port);
+                if (portsc & XHCI_PORTSC_PED) {
+                    if (portsc & (1 << 19)) {
+                        portsc = xhci_readl(&xhci->port_regs[port].portsc);
+                        portsc |= (1 << 19);
+                        xhci_writel(&xhci->port_regs[port].portsc, portsc);
+                    }
+                    delay(1000);
+                    return 0;
+                } else {
+                    printk("USB port %d in U0 but PED not set.\n", port);
+                }
+            }
+
+            // RXDETECT or POLLING
+            if (pls == 5 || pls == 7) {
+                if (nanoTime() > timeout - 100ULL * 1000000ULL) {
+                    timeout += 200ULL * 1000000ULL;
+                    printk("USB port %d still in pls %d, extending timeout.\n",
+                           port, pls);
+                }
+            }
+
+            if (pls == 8) {
+                printk("USB port %d in recovery state, waiting...\n", port);
+                delay(10);
+                continue;
+            }
+
+            if (pls == 4) {
+                printk("USB port %d link training failed.\n", port);
+                return -1;
+            }
+
+            delay(5);
+        }
+
+        portsc = xhci_readl(&xhci->port_regs[port].portsc);
+        pls = (portsc >> 5) & 0xF;
+        printk("USB port %d link training timeout in pls %d\n", port, pls);
+
+        return -1;
     // Rx detect
     case 5:
         printk("USB port %d currently in PLS_RXDETECT mode.\n", port);
@@ -672,9 +697,13 @@ static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
 
     spin_lock(&xhci_command_lock);
 
+    xhci_port_info_t *port_info = &xhci->port_info[device->port];
+
     // 发送Enable Slot命令
-    xhci_trb_t *cmd_trb = xhci_queue_trb(
-        xhci->cmd_ring, 0, 0, (TRB_TYPE_ENABLE_SLOT << 10) | TRB_FLAG_IOC);
+    xhci_trb_t *cmd_trb =
+        xhci_queue_trb(xhci->cmd_ring, 0, 0,
+                       ((uint32_t)port_info->slot_type << 16) |
+                           (TRB_TYPE_ENABLE_SLOT << 10) | TRB_FLAG_IOC);
 
     // 跟踪命令
     xhci_track_command(xhci, cmd_trb, completion, TRB_TYPE_ENABLE_SLOT);
@@ -1615,6 +1644,8 @@ void xhci_device_enumerater(enumerater_arg_t *arg) {
     spin_lock(&enumerate_lock);
 
     usb_hcd_t *hcd = arg->hcd;
+
+    xhci_hcd_t *xhci = hcd->private_data;
 
     if (hcd) {
         int ret = usb_enumerate_device(hcd, arg->port_id, arg->speed);

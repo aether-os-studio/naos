@@ -383,6 +383,7 @@ typedef struct {
     uint8_t port_offset;      // 在协议中的偏移
     uint8_t port_count;       // 该协议的端口数
     bool connected;           // 是否有设备连接
+    uint8_t slot_type;        // PROTOCOL支持的SLOT类型
     uint8_t speed;            // 当前速度
 } xhci_port_info_t;
 

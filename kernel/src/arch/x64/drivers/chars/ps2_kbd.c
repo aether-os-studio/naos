@@ -72,11 +72,6 @@ void kbd_init() {
                    PS2_KBD_INTERRUPT_VECTOR - 32, NULL, &apic_controller,
                    "PS2 KBD");
 
-    wait_KB_write();
-    io_out8(PORT_KB_CMD, KBCMD_WRITE_CMD);
-    wait_KB_read();
-    io_out8(PORT_KB_DATA, KB_INIT_MODE);
-
     memset(cache_buffer, 0, sizeof(cache_buffer));
 
     for (uint64_t i = 0; i < MAX_DEV_NUM; i++) {

@@ -26,6 +26,30 @@ void xhci_free_command_completion(xhci_command_completion_t *completion) {
 
 extern void xhci_handle_events(xhci_hcd_t *xhci);
 
+void dump_xhci_states(xhci_hcd_t *xhci) {
+    uint64_t crcr = xhci_readq(&xhci->op_regs->crcr);
+
+    printk("CRCR Register: 0x%llx\n", crcr);
+    printk("  CS (Command Stop): %d\n", !!(crcr & (1 << 1)));
+    printk("  CA (Command Abort): %d\n", !!(crcr & (1 << 2)));
+    printk("  CRR (Command Ring Running): %d\n", !!(crcr & (1 << 3)));
+
+    if (!(crcr & (1 << 3))) {
+        printk("\n[X] Command Ring NOT RUNNING!\n");
+        printk("   Hardware stopped processing commands!\n");
+    }
+
+    uint32_t usbsts = xhci_readl(&xhci->op_regs->usbsts);
+
+    printk("\nUSBSTS: 0x%08x\n", usbsts);
+    printk("  HCHalted: %d %s\n", !!(usbsts & (1 << 0)),
+           (usbsts & (1 << 0)) ? "[X] HALTED" : "[V] RUNNING");
+    printk("  Host System Error: %d %s\n", !!(usbsts & (1 << 2)),
+           (usbsts & (1 << 2)) ? "[X] ERROR" : "[V]");
+    printk("  Event Interrupt: %d\n", !!(usbsts & (1 << 3)));
+    printk("  Port Change Detect: %d\n", !!(usbsts & (1 << 4)));
+}
+
 // 等待命令完成
 int xhci_wait_for_command(xhci_command_completion_t *completion,
                           uint32_t timeout_ms) {
@@ -46,6 +70,7 @@ int xhci_wait_for_command(xhci_command_completion_t *completion,
         if (nanoTime() > timeout) {
             completion->status = COMPLETION_STATUS_TIMEOUT;
             printk("XHCI: Command timeout\n");
+            dump_xhci_states(completion->hcd);
             arch_disable_interrupt();
             spin_unlock(&completion->lock);
             return -ETIMEDOUT;
@@ -60,10 +85,10 @@ int xhci_wait_for_command(xhci_command_completion_t *completion,
     spin_unlock(&completion->lock);
 
     if (status == COMPLETION_STATUS_SUCCESS) {
-        printk("XHCI: Command completed successfully (code=%d)\n", code);
         return 0;
     } else {
         printk("XHCI: Command failed (status=%d, code=%d)\n", status, code);
+        dump_xhci_states(completion->hcd);
         return -EIO;
     }
 }
@@ -113,6 +138,7 @@ int xhci_wait_for_transfer(xhci_transfer_completion_t *completion,
         if (nanoTime() > timeout) {
             completion->status = COMPLETION_STATUS_TIMEOUT;
             printk("XHCI: Transfer timeout\n");
+            dump_xhci_states(completion->hcd);
             arch_disable_interrupt();
             spin_unlock(&completion->lock);
             return -ETIMEDOUT;
@@ -131,6 +157,7 @@ int xhci_wait_for_transfer(xhci_transfer_completion_t *completion,
         return 0;
     } else {
         printk("XHCI: Transfer failed (status=%d, code=%d)\n", status, code);
+        dump_xhci_states(completion->hcd);
         return -EIO;
     }
 }
@@ -200,7 +227,8 @@ void xhci_complete_command(xhci_hcd_t *xhci, xhci_trb_t *event_trb) {
     xhci_command_tracker_t *tracker = xhci->pending_commands;
 
     while (tracker) {
-        if (tracker->trb == (xhci_trb_t *)phys_to_virt(cmd_trb_addr)) {
+        if (translate_address(get_current_page_dir(false),
+                              (uint64_t)tracker->trb) == cmd_trb_addr) {
             if (tracker->completion) {
                 tracker->completion->completion_code = completion_code;
                 tracker->completion->slot_id = slot_id;
