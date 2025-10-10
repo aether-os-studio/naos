@@ -4,10 +4,60 @@
 
 spinlock_t transfer_lock = {0};
 
+// 获取端口速度名称
+static const char *usb_speed_name(uint8_t speed) {
+    switch (speed) {
+    case USB_SPEED_LOW:
+        return "Low Speed (1.5 Mbps)";
+    case USB_SPEED_FULL:
+        return "Full Speed (12 Mbps)";
+    case USB_SPEED_HIGH:
+        return "High Speed (480 Mbps)";
+    case USB_SPEED_SUPER:
+        return "Super Speed (5 Gbps)";
+    default:
+        return "Unknown Speed";
+    }
+}
+
+static uint8_t usb_speed_to_xhci_port_speed(uint8_t speed) {
+    switch (speed) {
+    case USB_SPEED_FULL:
+        return 1; // Full Speed (12 Mbps)
+    case USB_SPEED_LOW:
+        return 2; // Low Speed (1.5 Mbps)
+    case USB_SPEED_HIGH:
+        return 3; // High Speed (480 Mbps)
+    case USB_SPEED_SUPER:
+        return 4; // Super Speed (5 Gbps)
+    default:
+        return 0;
+    }
+}
+
+// 从端口状态获取设备速度
+static uint8_t xhci_port_speed_to_usb_speed(uint32_t portsc) {
+    // XHCI PORTSC 的速度字段在 bits 10-13
+    uint32_t port_speed = (portsc >> 10) & 0x0F;
+
+    switch (port_speed) {
+    case 1:
+        return USB_SPEED_FULL; // Full Speed (12 Mbps)
+    case 2:
+        return USB_SPEED_LOW; // Low Speed (1.5 Mbps)
+    case 3:
+        return USB_SPEED_HIGH; // High Speed (480 Mbps)
+    case 4:
+        return USB_SPEED_SUPER; // Super Speed (5 Gbps)
+    default:
+        return USB_SPEED_UNKNOWN;
+    }
+}
+
 // 前向声明
 static int xhci_hcd_init(usb_hcd_t *hcd);
 static int xhci_hcd_shutdown(usb_hcd_t *hcd);
-static int xhci_reset_port(usb_hcd_t *hcd, uint8_t port);
+static int xhci_reset_port(usb_hcd_t *hcd, usb_device_t *device);
 static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device);
 static int xhci_disable_slot(usb_hcd_t *hcd, usb_device_t *device);
 static int xhci_address_device(usb_hcd_t *hcd, usb_device_t *device,
@@ -375,10 +425,10 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
 
     xhci_writel(&xhci->intr_regs[0].imod, 0);
 
-    // // 启用中断
-    // uint32_t iman = xhci_readl(&xhci->intr_regs[0].iman);
-    // iman |= (1 << 1);
-    // xhci_writel(&xhci->intr_regs[0].iman, iman);
+    // 启用中断
+    uint32_t iman = xhci_readl(&xhci->intr_regs[0].iman);
+    iman |= (1 << 1);
+    xhci_writel(&xhci->intr_regs[0].iman, iman);
 
     // 分配端口信息数组
     xhci->port_info =
@@ -392,9 +442,9 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
     // 解析端口协议
     xhci_parse_protocol_caps(xhci);
 
-    // uint32_t cmd = xhci_readl(&xhci->op_regs->usbcmd);
-    // cmd |= XHCI_CMD_INTE;
-    // xhci_writel(&xhci->op_regs->usbcmd, cmd);
+    uint32_t cmd = xhci_readl(&xhci->op_regs->usbcmd);
+    cmd |= XHCI_CMD_INTE;
+    xhci_writel(&xhci->op_regs->usbcmd, cmd);
 
     // 启动控制器
     if (xhci_start(xhci) != 0) {
@@ -471,8 +521,10 @@ static void delay(uint64_t ms) {
 }
 
 // 重置端口
-static int xhci_reset_port(usb_hcd_t *hcd, uint8_t port) {
+static int xhci_reset_port(usb_hcd_t *hcd, usb_device_t *device) {
     xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
+
+    uint8_t port = device->port;
 
     if (port >= xhci->max_ports) {
         return -1;
@@ -488,6 +540,10 @@ redetect:
     switch (pls) {
     case 0:
         printk("USB port %d currently in PLS_U0 mode.\n", port);
+        // 获取设备速度
+        uint8_t speed = xhci_port_speed_to_usb_speed(portsc);
+        printk("XHCI: Device speed: %s\n", usb_speed_name(speed));
+        device->speed = speed;
         return 0;
     case 1:
     case 2:
@@ -522,6 +578,11 @@ redetect:
                         xhci_writel(&xhci->port_regs[port].portsc, portsc);
                     }
                     delay(1000);
+                    // 获取设备速度
+                    portsc = xhci_readl(&xhci->port_regs[port].portsc);
+                    uint8_t speed = xhci_port_speed_to_usb_speed(portsc);
+                    printk("XHCI: Device speed: %s\n", usb_speed_name(speed));
+                    device->speed = speed;
                     return 0;
                 } else {
                     printk("USB port %d in U0 but PED not set.\n", port);
@@ -588,10 +649,6 @@ redetect:
     uint64_t time_ns = nanoTime() + 1ULL * 1000000000ULL;
     while (nanoTime() < time_ns) {
         portsc = xhci_readl(&xhci->port_regs[port].portsc);
-        if (!(portsc & XHCI_PORTSC_CCS)) {
-            printk("XHCI: Port disconnected while resetting port\n");
-            return -1;
-        }
         if (portsc & XHCI_PORTSC_PRC) {
             timeout = false;
             break;
@@ -611,6 +668,12 @@ redetect:
     xhci_writel(&xhci->port_regs[port].portsc, portsc);
 
     printk("XHCI: USB2 port reset complete\n");
+
+    // 获取设备速度
+    portsc = xhci_readl(&xhci->port_regs[port].portsc);
+    uint8_t speed = xhci_port_speed_to_usb_speed(portsc);
+    printk("XHCI: Device speed: %s\n", usb_speed_name(speed));
+    device->speed = speed;
 
     return 0;
 }
@@ -827,7 +890,7 @@ static int xhci_address_device(usb_hcd_t *hcd, usb_device_t *device,
 
         // ===== 2. 配置 Slot 上下文 =====
         uint32_t route_string = 0; // Root hub port
-        uint32_t speed = device->speed;
+        uint32_t speed = usb_speed_to_xhci_port_speed(device->speed);
         uint32_t context_entries = 1; // EP0的DCI是1
 
         // dev_info: Route String, Speed, Context Entries
@@ -900,7 +963,7 @@ static int xhci_address_device(usb_hcd_t *hcd, usb_device_t *device,
 
         // ===== 2. 配置 Slot 上下文 =====
         uint32_t route_string = 0; // Root hub port
-        uint32_t speed = device->speed;
+        uint32_t speed = usb_speed_to_xhci_port_speed(device->speed);
         uint32_t context_entries = 1; // EP0的DCI是1
 
         // dev_info: Route String, Speed, Context Entries
@@ -1085,7 +1148,7 @@ static int xhci_configure_endpoint(usb_hcd_t *hcd, usb_endpoint_t *endpoint) {
 
         // 如果这些值为0（没有初始化），使用设备的值
         if (speed == 0) {
-            speed = device->speed;
+            speed = usb_speed_to_xhci_port_speed(device->speed);
         }
 
         dev_priv->input_ctx_64->slot.dev_info =
@@ -1212,7 +1275,7 @@ static int xhci_configure_endpoint(usb_hcd_t *hcd, usb_endpoint_t *endpoint) {
 
         // 如果这些值为0（没有初始化），使用设备的值
         if (speed == 0) {
-            speed = device->speed;
+            speed = usb_speed_to_xhci_port_speed(device->speed);
         }
 
         dev_priv->input_ctx_32->slot.dev_info =
@@ -1597,45 +1660,9 @@ static int xhci_interrupt_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
     return 0;
 }
 
-// 从端口状态获取设备速度
-static uint8_t xhci_port_speed_to_usb_speed(uint32_t portsc) {
-    // XHCI PORTSC 的速度字段在 bits 10-13
-    uint32_t port_speed = (portsc >> 10) & 0x0F;
-
-    switch (port_speed) {
-    case 1:
-        return USB_SPEED_FULL; // Full Speed (12 Mbps)
-    case 2:
-        return USB_SPEED_LOW; // Low Speed (1.5 Mbps)
-    case 3:
-        return USB_SPEED_HIGH; // High Speed (480 Mbps)
-    case 4:
-        return USB_SPEED_SUPER; // Super Speed (5 Gbps)
-    default:
-        return USB_SPEED_UNKNOWN;
-    }
-}
-
-// 获取端口速度名称
-static const char *usb_speed_name(uint8_t speed) {
-    switch (speed) {
-    case USB_SPEED_LOW:
-        return "Low Speed (1.5 Mbps)";
-    case USB_SPEED_FULL:
-        return "Full Speed (12 Mbps)";
-    case USB_SPEED_HIGH:
-        return "High Speed (480 Mbps)";
-    case USB_SPEED_SUPER:
-        return "Super Speed (5 Gbps)";
-    default:
-        return "Unknown Speed";
-    }
-}
-
 typedef struct enumerater_arg {
     usb_hcd_t *hcd;
     uint8_t port_id;
-    uint8_t speed;
 } enumerater_arg_t;
 
 spinlock_t enumerate_lock = {0};
@@ -1648,7 +1675,7 @@ void xhci_device_enumerater(enumerater_arg_t *arg) {
     xhci_hcd_t *xhci = hcd->private_data;
 
     if (hcd) {
-        int ret = usb_enumerate_device(hcd, arg->port_id, arg->speed);
+        int ret = usb_enumerate_device(hcd, arg->port_id);
         if (ret == 1) {
             printk("XHCI: Device on port %d enumerated successfully\n",
                    arg->port_id);
@@ -1680,10 +1707,6 @@ void xhci_handle_port_status(xhci_hcd_t *xhci, uint8_t port_id) {
         // 设备连接
         printk("XHCI: Device connected on port %d\n", port_id);
 
-        // 获取设备速度
-        uint8_t speed = xhci_port_speed_to_usb_speed(portsc);
-        printk("XHCI: Device speed: %s\n", usb_speed_name(speed));
-
         // 等待端口稳定
         uint64_t target_time = 100000000ULL + nanoTime(); // 100ms
         while (nanoTime() < target_time) {
@@ -1695,12 +1718,9 @@ void xhci_handle_port_status(xhci_hcd_t *xhci, uint8_t port_id) {
         enumerater_arg_t *arg = malloc(sizeof(enumerater_arg_t));
         arg->hcd = xhci->hcd;
         arg->port_id = port_id;
-        arg->speed = speed;
 
         task_create("enumerater", (void (*)(uint64_t))xhci_device_enumerater,
                     (uint64_t)arg, KTHREAD_PRIORITY);
-
-        arch_enable_interrupt();
     } else if (!(portsc & XHCI_PORTSC_CCS) && xhci->connection[port_id]) {
         printk("XHCI: Device disconnected on port %d\n", port_id);
         xhci->connection[port_id] = false;

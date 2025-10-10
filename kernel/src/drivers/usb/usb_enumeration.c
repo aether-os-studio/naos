@@ -163,7 +163,7 @@ int usb_enum_state_machine(usb_enum_context_t *ctx) {
 
     case USB_ENUM_STATE_RESET:
         if (ctx->hcd->ops->reset_port) {
-            ret = ctx->hcd->ops->reset_port(ctx->hcd, ctx->port_id);
+            ret = ctx->hcd->ops->reset_port(ctx->hcd, ctx->device);
             if (ret != 0) {
                 printk("USB: Port reset failed\n");
                 ctx->state = USB_ENUM_STATE_ERROR;
@@ -420,7 +420,7 @@ int usb_enum_state_machine(usb_enum_context_t *ctx) {
 }
 
 // 枚举设备主函数
-int usb_enumerate_device(usb_hcd_t *hcd, uint8_t port_id, uint8_t speed) {
+int usb_enumerate_device(usb_hcd_t *hcd, uint8_t port_id) {
     usb_enum_context_t *ctx = usb_alloc_enum_context(hcd, port_id);
     if (!ctx) {
         printk("USB: Failed to allocate enumeration context\n");
@@ -435,7 +435,6 @@ int usb_enumerate_device(usb_hcd_t *hcd, uint8_t port_id, uint8_t speed) {
         return -1;
     }
     ctx->device->port = port_id;
-    ctx->device->speed = speed;
 
     // 运行状态机
     ctx->state = USB_ENUM_STATE_IDLE;

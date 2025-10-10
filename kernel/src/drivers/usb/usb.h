@@ -186,7 +186,7 @@ typedef struct {
     int (*init)(usb_hcd_t *hcd);
     int (*shutdown)(usb_hcd_t *hcd);
 
-    int (*reset_port)(usb_hcd_t *hcd, uint8_t port);
+    int (*reset_port)(usb_hcd_t *hcd, usb_device_t *device);
     int (*enable_slot)(usb_hcd_t *hcd, usb_device_t *device);
     int (*disable_slot)(usb_hcd_t *hcd, usb_device_t *device);
 
