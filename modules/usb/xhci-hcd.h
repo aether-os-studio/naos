@@ -253,10 +253,17 @@ typedef struct {
     xhci_ep_ctx_64_t endpoints[31];
 } __attribute__((packed)) xhci_device_ctx_64_t;
 
+// 输入控制上下文
+typedef struct {
+    uint32_t drop_flags;
+    uint32_t add_flags;
+    uint32_t reserved[13];
+    uint32_t config_value;
+} __attribute__((packed)) xhci_input_ctrl_ctx_64_t;
+
 // 输入上下文
 typedef struct {
-    xhci_input_ctrl_ctx_t ctrl;
-    uint32_t reserved[8];
+    xhci_input_ctrl_ctx_64_t ctrl;
     xhci_slot_ctx_64_t slot;
     xhci_ep_ctx_64_t endpoints[31];
 } __attribute__((packed)) xhci_input_ctx_64_t;
