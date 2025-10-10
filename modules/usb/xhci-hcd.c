@@ -842,10 +842,14 @@ static int xhci_disable_slot(usb_hcd_t *hcd, usb_device_t *device) {
 
     // 释放资源
     if (dev_priv->device_ctx) {
-        free(dev_priv->device_ctx);
+        free_frames_bytes(dev_priv->device_ctx,
+                          sizeof(xhci_device_ctx_t) *
+                              (xhci->use_64byte_context ? 2 : 1));
     }
     if (dev_priv->input_ctx) {
-        free(dev_priv->input_ctx);
+        free_frames_bytes(dev_priv->input_ctx,
+                          sizeof(xhci_input_ctx_t) *
+                              (xhci->use_64byte_context ? 2 : 1));
     }
     free(dev_priv);
 
