@@ -326,6 +326,7 @@ typedef struct {
     uint64_t result;
     uint32_t slot_id;
     xhci_hcd_t *hcd;
+    usb_device_t *device;
     spinlock_t lock;
     uint64_t timeout;
 } xhci_command_completion_t;

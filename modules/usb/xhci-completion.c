@@ -26,7 +26,7 @@ void xhci_free_command_completion(xhci_command_completion_t *completion) {
 
 extern void xhci_handle_events(xhci_hcd_t *xhci);
 
-void dump_xhci_states(xhci_hcd_t *xhci) {
+void dump_xhci_states(xhci_hcd_t *xhci, int port) {
     uint64_t crcr = xhci_readq(&xhci->op_regs->crcr);
 
     printk("CRCR Register: 0x%llx\n", crcr);
@@ -48,6 +48,9 @@ void dump_xhci_states(xhci_hcd_t *xhci) {
            (usbsts & (1 << 2)) ? "[X] ERROR" : "[V]");
     printk("  Event Interrupt: %d\n", !!(usbsts & (1 << 3)));
     printk("  Port Change Detect: %d\n", !!(usbsts & (1 << 4)));
+
+    printk("XHCI port %d caused\n", port);
+    printk("  portsc = %#010x\n", xhci->port_regs[port].portsc);
 }
 
 // 等待命令完成
@@ -70,7 +73,7 @@ int xhci_wait_for_command(xhci_command_completion_t *completion,
         if (nanoTime() > timeout) {
             completion->status = COMPLETION_STATUS_TIMEOUT;
             printk("XHCI: Command timeout\n");
-            dump_xhci_states(completion->hcd);
+            dump_xhci_states(completion->hcd, completion->device->port);
             arch_disable_interrupt();
             spin_unlock(&completion->lock);
             return -ETIMEDOUT;
@@ -89,7 +92,7 @@ int xhci_wait_for_command(xhci_command_completion_t *completion,
         return 0;
     } else {
         printk("XHCI: Command failed (status=%d, code=%d)\n", status, code);
-        dump_xhci_states(completion->hcd);
+        dump_xhci_states(completion->hcd, completion->device->port);
         return -EIO;
     }
 }
@@ -139,7 +142,8 @@ int xhci_wait_for_transfer(xhci_transfer_completion_t *completion,
         if (nanoTime() > timeout) {
             completion->status = COMPLETION_STATUS_TIMEOUT;
             printk("XHCI: Transfer timeout\n");
-            dump_xhci_states(completion->hcd);
+            dump_xhci_states(completion->hcd,
+                             completion->transfer->device->port);
             arch_disable_interrupt();
             spin_unlock(&completion->lock);
             return -ETIMEDOUT;
@@ -159,7 +163,7 @@ int xhci_wait_for_transfer(xhci_transfer_completion_t *completion,
         return 0;
     } else {
         printk("XHCI: Transfer failed (status=%d, code=%d)\n", status, code);
-        dump_xhci_states(completion->hcd);
+        dump_xhci_states(completion->hcd, completion->transfer->device->port);
         return -EIO;
     }
 }
