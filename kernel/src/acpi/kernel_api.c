@@ -13,13 +13,15 @@ uacpi_status uacpi_kernel_get_rsdp(uacpi_phys_addr *out_rsdp_address) {
 
 void *uacpi_kernel_map(uacpi_phys_addr addr, uacpi_size len) {
     void *vaddr = (void *)phys_to_virt(addr);
-    map_page_range(get_current_page_dir(false), (uint64_t)vaddr, addr, len,
-                   PT_FLAG_R | PT_FLAG_W);
+    map_page_range(get_current_page_dir(false),
+                   (uint64_t)vaddr & ~(DEFAULT_PAGE_SIZE - 1),
+                   addr & ~(DEFAULT_PAGE_SIZE - 1), len, PT_FLAG_R | PT_FLAG_W);
     return vaddr;
 }
 
 void uacpi_kernel_unmap(void *addr, uacpi_size len) {
-    unmap_page_range(get_current_page_dir(false), (uint64_t)addr, len);
+    unmap_page_range(get_current_page_dir(false),
+                     (uint64_t)addr & ~(DEFAULT_PAGE_SIZE - 1), len);
 }
 
 void uacpi_kernel_log(uacpi_log_level, const uacpi_char *str) { printk(str); }

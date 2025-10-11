@@ -641,6 +641,12 @@ redetect:
                         xhci_writel(&xhci->port_regs[port].portsc, portsc);
                     }
                     delay(1000);
+                    // 清除端口变化状态位
+                    portsc = xhci_readl(&xhci->port_regs[port].portsc);
+                    portsc &=
+                        ~(XHCI_PORTSC_CSC | XHCI_PORTSC_PEC | XHCI_PORTSC_WRC |
+                          XHCI_PORTSC_OCC | XHCI_PORTSC_PRC);
+                    xhci_writel(&xhci->port_regs[port].portsc, portsc);
                     // 获取设备速度
                     portsc = xhci_readl(&xhci->port_regs[port].portsc);
                     uint8_t speed = xhci_port_speed_to_usb_speed(portsc);
@@ -712,7 +718,7 @@ redetect:
     uint64_t time_ns = nanoTime() + 1ULL * 1000000000ULL;
     while (nanoTime() < time_ns) {
         portsc = xhci_readl(&xhci->port_regs[port].portsc);
-        if (portsc & XHCI_PORTSC_PRC) {
+        if (!(portsc & XHCI_PORTSC_PR) || portsc & XHCI_PORTSC_PRC) {
             timeout = false;
             break;
         }
@@ -725,9 +731,28 @@ redetect:
         return -1;
     }
 
+    // 等待端口重连（如果需要）
+    timeout = true;
+    time_ns = nanoTime() + 1ULL * 1000000000ULL;
+    while (nanoTime() < time_ns) {
+        portsc = xhci_readl(&xhci->port_regs[port].portsc);
+        if (portsc & XHCI_PORTSC_CCS) {
+            timeout = false;
+            break;
+        }
+
+        arch_yield();
+    }
+
+    if (timeout) {
+        printk("XHCI: Port disconnect while resetting\n");
+        return -1;
+    }
+
     // 清除端口变化状态位
     portsc = xhci_readl(&xhci->port_regs[port].portsc);
-    portsc |= XHCI_PORTSC_PRC | XHCI_PORTSC_PEC;
+    portsc &= ~(XHCI_PORTSC_CSC | XHCI_PORTSC_PEC | XHCI_PORTSC_WRC |
+                XHCI_PORTSC_OCC | XHCI_PORTSC_PRC);
     xhci_writel(&xhci->port_regs[port].portsc, portsc);
 
     printk("XHCI: USB2 port reset complete\n");
@@ -820,6 +845,8 @@ static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
         free(dev_priv);
         return -1;
     }
+
+    completion->device = device;
 
     spin_lock(&xhci_command_lock);
 
@@ -1108,6 +1135,8 @@ static int xhci_address_device(usb_hcd_t *hcd, usb_device_t *device,
         printk("XHCI: Failed to allocate command completion\n");
         return -1;
     }
+
+    completion->device = device;
 
     spin_lock(&xhci_command_lock);
 
@@ -1459,6 +1488,8 @@ static int xhci_configure_endpoint(usb_hcd_t *hcd, usb_endpoint_t *endpoint) {
         return -1;
     }
 
+    completion->device = device;
+
     spin_lock(&xhci_command_lock);
 
     // Configure Endpoint TRB
@@ -1526,7 +1557,9 @@ static int xhci_control_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer,
     xhci_trb_t *first_trb = xhci_queue_trb(
         ring, setup_data, 8,
         (TRB_TYPE_SETUP << 10) | TRB_FLAG_IDT |
-            ((setup->bmRequestType & USB_DIR_IN) ? (3 << 16) : (0 << 16)));
+            ((transfer->length > 0 && transfer->buffer)
+                 ? ((setup->bmRequestType & USB_DIR_IN) ? (3 << 16) : (2 << 16))
+                 : (0 << 16)));
 
     // Data Stage TRB
     if (transfer->length > 0 && transfer->buffer) {
