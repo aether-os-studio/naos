@@ -4,6 +4,8 @@ MAKEFLAGS += -rR
 
 export PROJECT_ROOT := $(shell pwd)
 
+export BUILD_MODE ?= debug
+
 export BOOT_PROTOCOL ?= limine
 
 # Target architecture to build for. Default to x86_64.

@@ -4,6 +4,7 @@
 #include <drivers/kernel_logger.h>
 #include <task/task.h>
 #include <mod/dlinker.h>
+#include <debug/gdbstub.h>
 
 extern const uint64_t kallsyms_address[] __attribute__((weak));
 extern const uint64_t kallsyms_num __attribute__((weak));
@@ -134,11 +135,9 @@ void do_divide_error(struct pt_regs *regs, uint64_t error_code) {
 
 // 1 #DB 调试异常
 void do_debug(struct pt_regs *regs, uint64_t error_code) {
-    (void)error_code;
-    traceback(regs);
-
-    while (1)
-        asm volatile("hlt");
+    struct hart_state hstate;
+    memcpy(&hstate.registers, regs, sizeof(struct pt_regs));
+    gdbstub_loop(&hstate, 5);
 }
 
 // 2 不可屏蔽中断
@@ -159,15 +158,10 @@ void do_nmi(struct pt_regs *regs, uint64_t error_code) {
 // 3 #BP 断点异常
 void do_int3(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
-    dump_regs(regs, "do_int3(3)");
 
-    if (regs->rsp <= get_physical_memory_offset()) {
-        can_schedule = true;
-        task_exit(-EFAULT);
-        return;
-    }
-
-    return;
+    struct hart_state hstate;
+    memcpy(&hstate.registers, regs, sizeof(struct pt_regs));
+    gdbstub_loop(&hstate, 5);
 }
 
 // 4 #OF 溢出异常

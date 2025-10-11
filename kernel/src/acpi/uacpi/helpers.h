@@ -6,7 +6,7 @@
 
 #define UACPI_BUILD_BUG_ON(expr)                                               \
     UACPI_BUILD_BUG_ON_WITH_MSG(expr, "BUILD BUG: " #expr " evaluated to "     \
-                                                          "true")
+                                      "true")
 
 #define UACPI_EXPECT_SIZEOF(type, size)                                        \
     UACPI_BUILD_BUG_ON_WITH_MSG(sizeof(type) != size,                          \
