@@ -25,6 +25,7 @@ EXPORT_SYMBOL(general_map);
 EXPORT_SYMBOL(memset);
 EXPORT_SYMBOL(memcpy);
 EXPORT_SYMBOL(memmove);
+EXPORT_SYMBOL(memcmp);
 EXPORT_SYMBOL(strlen);
 EXPORT_SYMBOL(strnlen);
 EXPORT_SYMBOL(strcpy);
