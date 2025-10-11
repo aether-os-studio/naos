@@ -2,16 +2,22 @@
 #include <drivers/kernel_logger.h>
 #include <drivers/bus/pci.h>
 #include <libs/aether/pci.h>
+#include <uacpi/acpi.h>
+#include <uacpi/tables.h>
 
 #if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv__) ||       \
     defined(__loongarch64)
-MCFG_ENTRY *mcfg_entries[PCI_MCFG_MAX_ENTRIES_LEN];
+struct acpi_mcfg_allocation *mcfg_entries[PCI_MCFG_MAX_ENTRIES_LEN];
 uint64_t mcfg_entries_len = 0;
 
-void mcfg_addr_to_entries(MCFG *mcfg, MCFG_ENTRY **entries, uint64_t *num) {
-    MCFG_ENTRY *entry = (MCFG_ENTRY *)((uint64_t)mcfg + sizeof(MCFG));
-    int length = mcfg->header.length - sizeof(MCFG);
-    *num = length / sizeof(MCFG_ENTRY);
+void mcfg_addr_to_entries(struct acpi_mcfg *mcfg,
+                          struct acpi_mcfg_allocation **entries,
+                          uint64_t *num) {
+    struct acpi_mcfg_allocation *entry =
+        (struct acpi_mcfg_allocation *)((uint64_t)mcfg +
+                                        sizeof(struct acpi_mcfg));
+    int length = mcfg->hdr.length - sizeof(struct acpi_mcfg);
+    *num = length / sizeof(struct acpi_mcfg_allocation);
     for (uint64_t i = 0; i < *num; i++) {
         entries[i] = entry + i;
     }
@@ -20,8 +26,8 @@ void mcfg_addr_to_entries(MCFG *mcfg, MCFG_ENTRY **entries, uint64_t *num) {
 uint64_t get_device_mmio_physical_address(uint16_t segment_group, uint8_t bus,
                                           uint8_t device, uint8_t function) {
     for (uint64_t i = 0; i < mcfg_entries_len; i++) {
-        if (mcfg_entries[i]->pci_segment_group == segment_group) {
-            return mcfg_entries[i]->base_address +
+        if (mcfg_entries[i]->segment == segment_group) {
+            return mcfg_entries[i]->address +
                    (((uint64_t)bus - (uint64_t)mcfg_entries[i]->start_bus)
                     << 20) +
                    ((uint64_t)device << 15) + ((uint64_t)function << 12);
@@ -679,26 +685,25 @@ static void pci_config0(uint32_t bus, uint32_t f, uint32_t equipment,
 
 #endif
 
-MCFG *mcfg_buffer = NULL;
-
-void pcie_setup(MCFG *mcfg) { mcfg_buffer = mcfg; }
-
 extern pci_driver_t *pci_drivers[MAX_PCI_DRIVERS];
 
 void pci_init() {
-#if defined(__x86_64__)
-    if (mcfg_buffer) {
-#endif
+    struct uacpi_table mcfg_table;
+    uacpi_status status = uacpi_table_find_by_signature("MCFG", &mcfg_table);
+
+    if (status == UACPI_STATUS_OK) {
         printk("Scanning PCIe bus\n");
         // Scan PCIe bus
-        mcfg_addr_to_entries(mcfg_buffer, mcfg_entries, &mcfg_entries_len);
+        mcfg_addr_to_entries((struct acpi_mcfg *)mcfg_table.ptr, mcfg_entries,
+                             &mcfg_entries_len);
 
         for (uint64_t i = 0; i < mcfg_entries_len; i++) {
-            uint16_t segment_group = mcfg_entries[i]->pci_segment_group;
+            uint16_t segment_group = mcfg_entries[i]->segment;
             pci_scan_segment(segment_group);
         }
+    }
 #if defined(__x86_64__)
-    } else {
+    else {
         printk("Scanning PCI bus\n");
 
         // Scan PCI bus

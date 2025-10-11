@@ -3,7 +3,7 @@
 #define ARCH_MAX_IRQ_NUM 256
 
 #include "arch/x64/asm.h"
-#include "arch/x64/acpi/acpi.h"
+#include "arch/x64/acpi/normal.h"
 #include "arch/x64/mm/arch.h"
 #include "arch/x64/irq/ptrace.h"
 #include "arch/x64/irq/gate.h"

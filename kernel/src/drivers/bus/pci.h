@@ -6,22 +6,8 @@
 
 #if defined(__x86_64__)
 
-#include <arch/x64/acpi/acpi.h>
-
 #define PCI_COMMAND_PORT 0xCF8
 #define PCI_DATA_PORT 0xCFC
-
-#elif defined(__aarch64__)
-
-#include <arch/aarch64/acpi/acpi.h>
-
-#elif defined(__riscv__)
-
-#include <arch/riscv64/acpi/acpi.h>
-
-#elif defined(__loongarch64)
-
-#include <arch/loongarch64/acpi/acpi.h>
 
 #endif
 
@@ -94,17 +80,9 @@ extern uint32_t pci_device_number;
 uint32_t pci_enumerate_capability_list(pci_device_t *pci_dev,
                                        uint32_t cap_type);
 
-#if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv__) ||       \
-    defined(__loongarch64)
-
 #define PCI_MCFG_MAX_ENTRIES_LEN 1024
 
-void mcfg_addr_to_entries(MCFG *mcfg, MCFG_ENTRY **entries, uint64_t *len);
 uint64_t get_mmio_address(uint32_t pci_address, uint16_t offset);
-
-void pcie_setup(MCFG *mcfg);
-
-#endif
 
 const char *pci_classname(uint32_t classcode);
 void pci_find_vid(pci_device_t **result, uint32_t *n, uint32_t vid);

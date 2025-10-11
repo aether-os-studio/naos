@@ -1,6 +1,6 @@
 #pragma once
 
-#include <arch/x64/acpi/acpi.h>
+#include <libs/klibc.h>
 #include <arch/x64/irq/irq.h>
 
 #define PORT_KB_DATA 0x60

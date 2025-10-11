@@ -1,10 +1,11 @@
 #include <drivers/kernel_logger.h>
-#include <arch/x64/acpi/acpi.h>
 #include <boot/boot.h>
 #include <mm/mm.h>
 #include <arch/arch.h>
 #include <interrupt/irq_manager.h>
 #include <task/task.h>
+#include <uacpi/acpi.h>
+#include <uacpi/tables.h>
 
 bool x2apic_mode = false;
 uint64_t lapic_address;
@@ -130,7 +131,7 @@ static uint32_t ioapic_read(ioapic_t *ioapic, uint32_t reg) {
     return *(uint32_t *)((uint64_t)ioapic->mmio_base + 0x10);
 }
 
-void apic_handle_ioapic(MadtIOApic *ioapic_madt) {
+void apic_handle_ioapic(struct acpi_madt_ioapic *ioapic_madt) {
     ioapic_t *ioapic = &ioapics[ioapic_count];
     ioapic_count++;
 
@@ -140,10 +141,10 @@ void apic_handle_ioapic(MadtIOApic *ioapic_madt) {
                    DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
     ioapic->mmio_base = mmio_virt;
 
-    ioapic->gsi_start = ioapic_madt->gsib;
+    ioapic->gsi_start = ioapic_madt->gsi_base;
     ioapic->count = (ioapic_read(ioapic, 0x01) & 0x00FF0000) >> 16;
 
-    ioapic->id = ioapic_madt->apic_id;
+    ioapic->id = ioapic_madt->id;
 }
 
 typedef struct override {
@@ -154,12 +155,13 @@ typedef struct override {
 override_t overrides[ARCH_MAX_IRQ_NUM];
 uint64_t overrides_count = 0;
 
-void apic_handle_override(madt_int_src_override_t *override_madt) {
+void apic_handle_override(
+    struct acpi_madt_interrupt_source_override *override_madt) {
     override_t *override = &overrides[overrides_count];
     overrides_count++;
 
-    override->bus_irq = override_madt->irq_source;
-    override->gsi = override_madt->gsi_base;
+    override->bus_irq = override_madt->source;
+    override->gsi = override_madt->gsi;
 }
 
 uint32_t apic_vector_to_gsi(uint8_t vector) {
@@ -243,40 +245,51 @@ void lapic_timer_stop() {
     lapic_write(LAPIC_REG_TIMER, (1 << 16));
 }
 
-void apic_setup(MADT *madt) {
-    lapic_address = phys_to_virt((uint64_t)madt->local_apic_address);
-    map_page_range(get_current_page_dir(false), lapic_address,
-                   madt->local_apic_address, DEFAULT_PAGE_SIZE,
-                   PT_FLAG_R | PT_FLAG_W);
+void apic_init() {
+    struct uacpi_table madt_table;
+    uacpi_status status = uacpi_table_find_by_signature("APIC", &madt_table);
 
-    printk("Setup Local apic: %#018lx\n", lapic_address);
+    if (status == UACPI_STATUS_OK) {
+        struct acpi_madt *madt = (struct acpi_madt *)madt_table.ptr;
 
-    memset(ioapics, 0, sizeof(ioapics));
-    memset(overrides, 0, sizeof(overrides));
+        lapic_address =
+            phys_to_virt((uint64_t)madt->local_interrupt_controller_address);
+        map_page_range(get_current_page_dir(false), lapic_address,
+                       madt->local_interrupt_controller_address,
+                       DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
 
-    uint64_t current = 0;
-    for (;;) {
-        if (current + ((uint32_t)sizeof(MADT) - 1) >= madt->h.length) {
-            break;
+        printk("Setup Local apic: %#018lx\n", lapic_address);
+
+        memset(ioapics, 0, sizeof(ioapics));
+        memset(overrides, 0, sizeof(overrides));
+
+        uint64_t current = 0;
+        for (;;) {
+            if (current + ((uint32_t)sizeof(struct acpi_madt) - 1) >=
+                madt->hdr.length) {
+                break;
+            }
+            struct acpi_entry_hdr *header =
+                (struct acpi_entry_hdr *)((uint64_t)(&madt->entries) + current);
+            if (header->type == ACPI_MADT_ENTRY_TYPE_IOAPIC) {
+                struct acpi_madt_ioapic *ioapic =
+                    (struct acpi_madt_ioapic *)((uint64_t)(&madt->entries) +
+                                                current);
+                apic_handle_ioapic(ioapic);
+            } else if (header->type ==
+                       ACPI_MADT_ENTRY_TYPE_INTERRUPT_SOURCE_OVERRIDE) {
+                struct acpi_madt_interrupt_source_override *override =
+                    (struct acpi_madt_interrupt_source_override
+                         *)((uint64_t)(&madt->entries) + current);
+                apic_handle_override(override);
+            }
+            current += (uint64_t)header->length;
         }
-        Madtheader *header =
-            (Madtheader *)((uint64_t)(&madt->entries) + current);
-        if (header->entry_type == MADT_APIC_IO) {
-            MadtIOApic *ioapic =
-                (MadtIOApic *)((uint64_t)(&madt->entries) + current);
-            apic_handle_ioapic(ioapic);
-        } else if (header->entry_type == MADT_APIC_INT) {
-            madt_int_src_override_t *override =
-                (madt_int_src_override_t *)((uint64_t)(&madt->entries) +
-                                            current);
-            apic_handle_override(override);
-        }
-        current += (uint64_t)header->length;
+
+        disable_pic();
+        local_apic_init(true);
+        io_apic_init();
     }
-
-    disable_pic();
-    local_apic_init(true);
-    io_apic_init();
 }
 
 void sse_init() {

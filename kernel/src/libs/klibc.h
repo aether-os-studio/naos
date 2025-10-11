@@ -74,18 +74,7 @@ void *memset(void *s, int c, size_t n);
 void *memcpy(void *dest, const void *src, size_t n);
 void *memmove(void *dest, const void *src, size_t n);
 
-static inline int memcmp(const void *s1, const void *s2, size_t n) {
-    const uint8_t *p1 = (const uint8_t *)s1;
-    const uint8_t *p2 = (const uint8_t *)s2;
-
-    for (size_t i = 0; i < n; i++) {
-        if (p1[i] != p2[i]) {
-            return p1[i] < p2[i] ? -1 : 1;
-        }
-    }
-
-    return 0;
-}
+int memcmp(const void *s1, const void *s2, size_t n);
 
 static inline void strcpy(char *dest, const char *src) {
     if (!dest || !src) {
@@ -395,6 +384,40 @@ static inline void spin_unlock(spinlock_t *lock) {
 #endif
 
 extern uint64_t nanoTime();
+
+typedef struct sem {
+    spinlock_t lock;
+    uint32_t cnt;
+    bool invalid;
+} sem_t;
+
+static inline bool sem_wait(sem_t *sem, uint32_t timeout) {
+    uint64_t timerStart = nanoTime();
+    bool ret = false;
+
+    while (true) {
+        if (timeout > 0 && nanoTime() > (timerStart + timeout))
+            goto just_return; // not under any lock atm
+        spin_lock(&sem->lock);
+        if (sem->cnt > 0) {
+            sem->cnt--;
+            ret = true;
+            goto cleanup;
+        }
+        spin_unlock(&sem->lock);
+    }
+
+cleanup:
+    spin_unlock(&sem->lock);
+just_return:
+    return ret;
+}
+
+static inline void sem_post(sem_t *sem) {
+    spin_lock(&sem->lock);
+    sem->cnt++;
+    spin_unlock(&sem->lock);
+}
 
 extern uint64_t get_physical_memory_offset();
 

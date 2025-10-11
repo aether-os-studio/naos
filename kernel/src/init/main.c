@@ -10,6 +10,8 @@
 #include <fs/vfs/dev.h>
 #include <fs/vfs/proc.h>
 
+extern void acpi_init();
+
 void kmain(void) {
     arch_disable_interrupt();
 
@@ -23,9 +25,11 @@ void kmain(void) {
 
     printk("Next Aether-OS starting...\n");
 
-    arch_early_init();
-
     irq_manager_init();
+
+    acpi_init();
+
+    arch_early_init();
 
     vfs_init();
 

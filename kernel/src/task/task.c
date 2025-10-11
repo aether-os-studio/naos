@@ -10,6 +10,7 @@
 #include <mm/mm.h>
 #include <fs/fs_syscall.h>
 #include <net/socket.h>
+#include <uacpi/sleep.h>
 
 eevdf_t *schedulers[MAX_CPU_NUM];
 
@@ -1705,12 +1706,38 @@ uint64_t sys_reboot(int magic1, int magic2, uint32_t cmd, void *arg) {
     if (magic1 != LINUX_REBOOT_MAGIC1 || magic2 != LINUX_REBOOT_MAGIC2)
         return (uint64_t)-EINVAL;
 
+    uacpi_status ret;
+
     switch (cmd) {
     case LINUX_REBOOT_CMD_CAD_OFF:
         cad_enabled = false;
         return 0;
     case LINUX_REBOOT_CMD_CAD_ON:
         cad_enabled = true;
+        return 0;
+    case LINUX_REBOOT_CMD_RESTART:
+    case LINUX_REBOOT_CMD_RESTART2:
+        uacpi_prepare_for_sleep_state(UACPI_SLEEP_STATE_S5);
+
+        ret = uacpi_reboot();
+        if (uacpi_unlikely_error(ret)) {
+            return (uint64_t)-EIO;
+        }
+
+        return 0;
+    case LINUX_REBOOT_CMD_POWER_OFF:
+        ret = uacpi_prepare_for_sleep_state(UACPI_SLEEP_STATE_S5);
+        if (uacpi_unlikely_error(ret)) {
+            return (uint64_t)-EIO;
+        }
+
+        arch_disable_interrupt();
+        ret = uacpi_enter_sleep_state(UACPI_SLEEP_STATE_S5);
+        if (uacpi_unlikely_error(ret)) {
+            arch_enable_interrupt();
+            return (uint64_t)-EIO;
+        }
+
         return 0;
     default:
         return (uint64_t)-EINVAL;

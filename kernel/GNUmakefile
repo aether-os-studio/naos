@@ -67,8 +67,9 @@ override CFLAGS += \
 # Internal C preprocessor flags that should not be changed by the user.
 override CPPFLAGS := \
     -I src \
+    -I src/acpi \
+    -I freestnd-c-hdrs \
     -DCONFIG_USE_DEFAULT_CFG \
-    -isystem freestnd-c-hdrs \
     $(CPPFLAGS) \
     -MMD \
     -MP
@@ -155,6 +156,7 @@ override LDFLAGS += \
 # Use "find" to glob all *.c, *.S, and *.asm files in the tree and obtain the
 # object and header dependency file names.
 override SRCFILES := $(shell find $(ARCH_DIR) -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/acpi -name "*.[Sc]" | LC_ALL=C sort)
 override SRCFILES += $(shell find src/drivers -name "*.c" | LC_ALL=C sort)
 override SRCFILES += $(shell find src/fs -name "*.c" | LC_ALL=C sort)
 override SRCFILES += $(shell find src/interrupt -name "*.c" | LC_ALL=C sort)
