@@ -295,6 +295,7 @@ int xhci_stop(xhci_hcd_t *xhci) {
 }
 
 // 扩展能力 ID
+#define XHCI_EXT_CAPS_LEGACY 1
 #define XHCI_EXT_CAPS_PROTOCOL 2
 
 // 解析 Supported Protocol Capability
@@ -316,7 +317,34 @@ static int xhci_parse_protocol_caps(xhci_hcd_t *xhci) {
         uint32_t cap_id = cap_header & 0xFF;
         uint32_t next_offset = (cap_header >> 8) & 0xFF;
 
-        if (cap_id == XHCI_EXT_CAPS_PROTOCOL) {
+        if (cap_id == XHCI_EXT_CAPS_LEGACY) {
+            uint32_t val = xhci_readl(ext_cap);
+
+            if (val & (1 << 16)) {
+                printk("XHCI is BIOS owned!!!\n");
+                xhci_writel(ext_cap, val | (1 << 24));
+
+                bool timeout = true;
+                uint64_t timeout_ns = nanoTime() + 5ULL * 1000000000ULL;
+                while (nanoTime() < timeout_ns) {
+                    val = xhci_readl(ext_cap);
+                    if (!(val & (1 << 16))) {
+                        timeout = false;
+                        break;
+                    }
+                }
+
+                if (timeout) {
+                    printk("Failed to hand over XHCI from BIOS!!!\n");
+                    xhci_writel(ext_cap, val & ~(1 << 16));
+                }
+            }
+
+            val = xhci_readl(ext_cap + 1);
+            val &= ((0x7 << 1) + (0xff << 5) + (0x7 << 17));
+            val |= (0x7 << 29);
+            xhci_writel(ext_cap + 1, val);
+        } else if (cap_id == XHCI_EXT_CAPS_PROTOCOL) {
             // Supported Protocol Capability
             uint32_t cap_word0 = xhci_readl(ext_cap);
             uint32_t cap_word1 = xhci_readl(ext_cap + 1);
