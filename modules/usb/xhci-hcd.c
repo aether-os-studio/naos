@@ -189,7 +189,44 @@ void xhci_ring_doorbell(xhci_hcd_t *xhci, uint8_t slot_id, uint8_t dci) {
 // 重置XHCI控制器
 int xhci_reset(xhci_hcd_t *xhci) {
     uint32_t cmd, status;
+    // 等待可以操作
+    bool timeout = true;
     uint64_t time_ns = nanoTime() + 1ULL * 1000000000ULL;
+    while (nanoTime() < time_ns) {
+        cmd = xhci_readl(&xhci->op_regs->usbcmd);
+        status = xhci_readl(&xhci->op_regs->usbsts);
+        if (!(status & XHCI_STS_CNR)) {
+            timeout = false;
+            break;
+        }
+    }
+
+    if (timeout) {
+        printk("XHCI: Reset timeout\n");
+        return -1;
+    }
+
+    // 停止
+    cmd = xhci_readl(&xhci->op_regs->usbcmd);
+    cmd &= ~XHCI_CMD_RUN;
+    xhci_writel(&xhci->op_regs->usbcmd, cmd);
+
+    // 等待停止
+    timeout = true;
+    time_ns = nanoTime() + 1ULL * 1000000000ULL;
+    while (nanoTime() < time_ns) {
+        cmd = xhci_readl(&xhci->op_regs->usbcmd);
+        status = xhci_readl(&xhci->op_regs->usbsts);
+        if (status & XHCI_STS_HCH) {
+            timeout = false;
+            break;
+        }
+    }
+
+    if (timeout) {
+        printk("XHCI: Reset timeout\n");
+        return -1;
+    }
 
     // 重置控制器
     cmd = xhci_readl(&xhci->op_regs->usbcmd);
@@ -197,11 +234,11 @@ int xhci_reset(xhci_hcd_t *xhci) {
     xhci_writel(&xhci->op_regs->usbcmd, cmd);
 
     // 等待重置完成
-    bool timeout = true;
+    timeout = true;
+    time_ns = nanoTime() + 1ULL * 1000000000ULL;
     while (nanoTime() < time_ns) {
         cmd = xhci_readl(&xhci->op_regs->usbcmd);
-        status = xhci_readl(&xhci->op_regs->usbsts);
-        if (!(cmd & XHCI_CMD_RESET) && !(status & XHCI_STS_CNR)) {
+        if (!(cmd & XHCI_CMD_RESET)) {
             timeout = false;
             break;
         }
@@ -223,10 +260,8 @@ int xhci_start(xhci_hcd_t *xhci) {
     cmd |= XHCI_CMD_RUN;
     xhci_writel(&xhci->op_regs->usbcmd, cmd);
 
-    uint64_t time_ns = nanoTime() + 1ULL * 1000000000ULL;
-
     // 等待控制器运行
-    while (nanoTime() < time_ns) {
+    while (1) {
         uint32_t status = xhci_readl(&xhci->op_regs->usbsts);
         if (!(status & XHCI_STS_HCH)) {
             return 0;
@@ -331,6 +366,11 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
 
     xhci->hcd = hcd;
 
+    // 重置控制器
+    if (xhci_reset(xhci) != 0) {
+        return -1;
+    }
+
     xhci->tracker_mutex.lock = 0;
 
     // 读取能力参数
@@ -350,15 +390,10 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
     uint32_t max_scratch_lo = (hcsparams2 >> 27) & 0x1F;
     xhci->num_scratchpads = (max_scratch_hi << 5) | max_scratch_lo;
 
-    // 重置控制器
-    if (xhci_reset(xhci) != 0) {
-        return -1;
-    }
-
     // 配置max slots
-    uint32_t config = xhci_readl(&xhci->op_regs->config);
-    config &= ~0xFF;
-    config |= xhci->max_slots;
+    uint32_t config = xhci->max_slots;
+    config |=
+        (xhci_readl(&xhci->cap_regs->hccparams2) & (1 << 5)) ? (1 << 9) : 0;
     xhci_writel(&xhci->op_regs->config, config);
 
     // 分配设备上下文基地址数组 (DCBAA)
