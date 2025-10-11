@@ -57,6 +57,7 @@ all:
 	$(MAKE) -C virtio
 	$(MAKE) -C vmware_svga
 # 	$(MAKE) -C nvidia_open
+	$(MAKE) -C initramfs
 
 	$(MAKE) -C hid
 	$(MAKE) -C msc
