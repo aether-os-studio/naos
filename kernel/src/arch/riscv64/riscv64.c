@@ -8,9 +8,8 @@ void arch_early_init() {
     trap_init();
     uintptr_t sp;
     asm volatile("mv %0, sp" : "=r"(sp));
-    csr_write(sscratch, sp & ~(STACK_SIZE - 1) + STACK_SIZE);
+    csr_write(sscratch, (sp & ~(STACK_SIZE - 1)) + STACK_SIZE);
     fdt_init();
-    acpi_init();
     smp_init();
     timer_init_hart(cpuid_to_hartid[current_cpu_id]);
 }

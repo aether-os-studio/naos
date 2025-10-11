@@ -4,7 +4,6 @@
 
 #include "arch/riscv64/io.h"
 #include "arch/riscv64/sbi.h"
-#include "arch/riscv64/acpi/acpi.h"
 #include "arch/riscv64/drivers/timer.h"
 #include "arch/riscv64/drivers/char/kb.h"
 #include "arch/riscv64/drivers/serial.h"
