@@ -10,17 +10,14 @@ void acpi_init() {
         printk("uacpi_initialize error: %s", uacpi_status_to_string(ret));
         ASSERT(false);
     }
+}
 
-#if defined(__x86_64__)
-    hpet_init();
-    apic_init();
-#endif
-
+void acpi_init_after_pci() {
     /*
      * Load the AML namespace. This feeds DSDT and all SSDTs to the interpreter
      * for execution.
      */
-    ret = uacpi_namespace_load();
+    uacpi_status ret = uacpi_namespace_load();
     if (uacpi_unlikely_error(ret)) {
         printk("uacpi_namespace_load error: %s", uacpi_status_to_string(ret));
         ASSERT(false);

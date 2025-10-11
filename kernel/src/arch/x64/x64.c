@@ -8,6 +8,8 @@ void arch_early_init() {
     sse_init();
     irq_init();
     generic_interrupt_table_init();
+    hpet_init();
+    apic_init();
     smp_init();
     tss_init();
 

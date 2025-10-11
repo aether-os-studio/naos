@@ -8,6 +8,8 @@
 #include <fs/partition.h>
 #include <drivers/fb.h>
 
+extern void acpi_init_after_pci();
+
 extern void sysfs_init();
 extern void sysfs_init_umount();
 extern void fs_syscall_init();
@@ -26,6 +28,8 @@ void init_thread(uint64_t arg) {
     printk("NAOS init thread is running...\n");
 
     pci_init();
+
+    acpi_init_after_pci();
 
     fs_syscall_init();
     socketfs_init();
