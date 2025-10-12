@@ -1,6 +1,6 @@
 #pragma once
 
-#define SERIAL_DEBUG 1
+#define SERIAL_DEBUG 0
 #define HEAP_CHECK 1
 
 #define LIMINE_API_REVISION 3
