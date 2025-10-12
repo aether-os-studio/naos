@@ -997,13 +997,3 @@ int gdb_sys_mem_writeb(struct gdb_state *state, ptr_t addr, char val) {
     *(volatile char *)phys_to_virt(addr) = val;
     return 0;
 }
-
-void gdb_server(uint64_t arg) {
-    while (1) {
-#if defined(__x86_64__)
-        asm volatile("int3");
-#endif
-
-        arch_yield();
-    }
-}

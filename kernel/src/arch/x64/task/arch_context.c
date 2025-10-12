@@ -191,9 +191,14 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry,
                  "jmp ret_from_exception" ::"r"(context->ctx));
 }
 
+extern bool task_initialized;
+
 void arch_yield() {
-    ((struct sched_entity *)current_task->sched_info)->is_yield = true;
-    asm volatile("sti\n\tint %0\n\tcli\n\t" ::"i"(APIC_TIMER_INTERRUPT_VECTOR));
+    if (task_initialized) {
+        ((struct sched_entity *)current_task->sched_info)->is_yield = true;
+        asm volatile(
+            "sti\n\tint %0\n\tcli\n\t" ::"i"(APIC_TIMER_INTERRUPT_VECTOR));
+    }
 }
 
 #define ARCH_SET_GS 0x1001

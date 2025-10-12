@@ -25,13 +25,13 @@ int init_serial() {
 
 char read_serial() {
     while ((io_in8(SERIAL_PORT + 5) & 1) == 0)
-        ;
+        arch_yield();
     return io_in8(SERIAL_PORT);
 }
 
 void write_serial(char a) {
     while ((io_in8(SERIAL_PORT + 5) & 0x20) == 0)
-        ;
+        arch_yield();
     io_out8(SERIAL_PORT, a);
 }
 

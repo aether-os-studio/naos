@@ -266,10 +266,6 @@ extern void init_thread(uint64_t arg);
 
 extern void futex_init();
 
-#if SERIAL_DEBUG
-extern void gdb_server(uint64_t arg);
-#endif
-
 void task_init() {
     memset(tasks, 0, sizeof(tasks));
     memset(idle_tasks, 0, sizeof(idle_tasks));
@@ -292,9 +288,6 @@ void task_init() {
 
     task_create("init", init_thread, 0, NORMAL_PRIORITY);
     task_create("task_free_service", task_free_service, 0, KTHREAD_PRIORITY);
-#if SERIAL_DEBUG
-    task_create("gdb_server", gdb_server, 0, KTHREAD_PRIORITY);
-#endif
 
     arch_set_current(idle_tasks[0]);
 

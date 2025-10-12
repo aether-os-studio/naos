@@ -45,7 +45,7 @@ void mount_root() {
 
     retry:
         while (!have_usb_device) {
-            arch_pause();
+            arch_yield();
         }
 
         for (uint64_t i = 0; i < partition_num; i++) {

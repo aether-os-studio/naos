@@ -595,6 +595,28 @@ static int xhci_reset_port(usb_hcd_t *hcd, usb_device_t *device) {
 
     xhci_port_info_t *port_info = &xhci->port_info[port];
 
+    if (port_info[port].protocol == XHCI_PROTOCOL_USB3) {
+        uint32_t portpmsc = xhci_readl(&xhci->port_regs[port].portpmsc);
+
+        // USB 3.0 相关字段
+        uint32_t u1_timeout = portpmsc & 0xFF;
+        uint32_t u2_timeout = (portpmsc >> 8) & 0xFF;
+        uint32_t fla = !!(portpmsc & (1 << 16)); // Force Link PM Accept
+
+        printk("U1 Timeout: %d\n", u1_timeout);
+        printk("U2 Timeout: %d\n", u2_timeout);
+        printk("FLA (Force Link PM Accept): %d\n", fla);
+
+        // 对于某些控制器，可能需要设置 FLA
+        if (!fla) {
+            printk("Trying to set FLA bit...\n");
+            portpmsc |= (1 << 16);
+            xhci_writel(&xhci->port_regs[port].portpmsc, portpmsc);
+        }
+    }
+
+    bool is_usb3 = false;
+
 redetect:
     // 检查端口是否已经在 U0 状态
     uint32_t portsc = xhci_readl(&xhci->port_regs[port].portsc);
@@ -607,6 +629,7 @@ redetect:
         uint8_t speed = xhci_port_speed_to_usb_speed(portsc);
         printk("XHCI: Device speed: %s\n", usb_speed_name(speed));
         device->speed = speed;
+
         return 0;
     case 1:
     case 2:
@@ -616,76 +639,31 @@ redetect:
         portsc |= (0 << 5);
         portsc |= (1 << 16);
         xhci_writel(&xhci->port_regs[port].portsc, portsc);
+
+        goto redetect;
     // Disabled
     case 4:
         printk("USB port %d currently in PLS_DISABLED mode.\n", port);
-
-        portsc = xhci_readl(&xhci->port_regs[port].portsc);
+        is_usb3 = true;
+        portsc &= ~(XHCI_PORTSC_CSC | XHCI_PORTSC_PEC | XHCI_PORTSC_WRC |
+                    XHCI_PORTSC_OCC | XHCI_PORTSC_PRC);
         portsc |= (1 << 31); // Warm reset
         xhci_writel(&xhci->port_regs[port].portsc, portsc);
         delay(100);
-
-        uint64_t timeout = nanoTime() + 1000ULL * 1000000ULL;
-        while (nanoTime() < timeout) {
-            portsc = xhci_readl(&xhci->port_regs[port].portsc);
-            pls = (portsc >> 5) & 0xF;
-            uint32_t speed = (portsc >> 10) & 0xF;
-
-            // 成功
-            if (speed != 0 && pls == 0 && (portsc & XHCI_PORTSC_CCS)) {
-                printk("USB port %d in U0.\n", port);
-                if (portsc & XHCI_PORTSC_PED) {
-                    if (portsc & (1 << 19)) {
-                        portsc = xhci_readl(&xhci->port_regs[port].portsc);
-                        portsc |= (1 << 19);
-                        xhci_writel(&xhci->port_regs[port].portsc, portsc);
-                    }
-                    delay(1000);
-                    // 清除端口变化状态位
-                    portsc = xhci_readl(&xhci->port_regs[port].portsc);
-                    portsc &=
-                        ~(XHCI_PORTSC_CSC | XHCI_PORTSC_PEC | XHCI_PORTSC_WRC |
-                          XHCI_PORTSC_OCC | XHCI_PORTSC_PRC);
-                    xhci_writel(&xhci->port_regs[port].portsc, portsc);
-                    // 获取设备速度
-                    portsc = xhci_readl(&xhci->port_regs[port].portsc);
-                    uint8_t speed = xhci_port_speed_to_usb_speed(portsc);
-                    printk("XHCI: Device speed: %s\n", usb_speed_name(speed));
-                    device->speed = speed;
-                    return 0;
-                } else {
-                    printk("USB port %d in U0 but PED not set.\n", port);
-                }
-            }
-
-            // RXDETECT or POLLING
-            if (pls == 5 || pls == 7) {
-                if (nanoTime() > timeout - 100ULL * 1000000ULL) {
-                    timeout += 200ULL * 1000000ULL;
-                    printk("USB port %d still in pls %d, extending timeout.\n",
-                           port, pls);
-                }
-            }
-
-            if (pls == 8) {
-                printk("USB port %d in recovery state, waiting...\n", port);
-                delay(10);
-                continue;
-            }
-
-            if (pls == 4) {
-                printk("USB port %d link training failed.\n", port);
-                return -1;
-            }
-
-            delay(5);
+        portsc = xhci_readl(&xhci->port_regs[port].portsc);
+        if (!(portsc & XHCI_PORTSC_WRC)) {
+            goto redetect;
         }
 
+        delay(500);
+        delay(1000);
         portsc = xhci_readl(&xhci->port_regs[port].portsc);
-        pls = (portsc >> 5) & 0xF;
-        printk("USB port %d link training timeout in pls %d\n", port, pls);
+        pls = (portsc >> 5) & 0xF; // Port Link State
+        if (pls == 0 && (portsc & XHCI_PORTSC_PED)) {
+            return 0;
+        }
 
-        return -1;
+        goto redetect;
     // Rx detect
     case 5:
         printk("USB port %d currently in PLS_RXDETECT mode.\n", port);
@@ -693,14 +671,45 @@ redetect:
         portsc = xhci_readl(&xhci->port_regs[port].portsc);
         uint32_t pls = (portsc >> 5) & 0xF; // Port Link State
         if (pls == 5) {
-            portsc |= (1 << 31); // Warm reset
+            portsc &= ~(XHCI_PORTSC_CSC | XHCI_PORTSC_PEC | XHCI_PORTSC_WRC |
+                        XHCI_PORTSC_OCC | XHCI_PORTSC_PRC);
+            portsc &= ~(0xF << 5);
+            portsc |= (7 << 5); // Polling
+            portsc |= (1 << 16);
             xhci_writel(&xhci->port_regs[port].portsc, portsc);
-            delay(100);
+
+            delay(500);
+            portsc = xhci_readl(&xhci->port_regs[port].portsc);
+            pls = (portsc >> 5) & 0xF; // Port Link State
+
+            if (pls == 5) {
+                portsc &=
+                    ~(XHCI_PORTSC_CSC | XHCI_PORTSC_PEC | XHCI_PORTSC_WRC |
+                      XHCI_PORTSC_OCC | XHCI_PORTSC_PRC);
+                portsc &= ~(0xF << 5);
+                portsc |= (8 << 5); // Recovery
+                portsc |= (1 << 16);
+            } else {
+                goto redetect;
+            }
+
+            delay(500);
+            portsc = xhci_readl(&xhci->port_regs[port].portsc);
+            pls = (portsc >> 5) & 0xF; // Port Link State
+
+            if (pls == 5) {
+                printk("XHCI: Port stuck in RXDETECT, cannot reset\n");
+                return -1;
+            }
         }
         goto redetect;
     // Polling
     case 7:
         printk("USB port %d currently in PLS_POLLING mode.\n", port);
+        if (is_usb3) {
+            delay(200);
+            goto redetect;
+        }
         break;
     default:
         printk("USB port %d currently in unknown mode.\n", port);
@@ -751,11 +760,11 @@ redetect:
 
     // 清除端口变化状态位
     portsc = xhci_readl(&xhci->port_regs[port].portsc);
-    portsc &= ~(XHCI_PORTSC_CSC | XHCI_PORTSC_PEC | XHCI_PORTSC_WRC |
-                XHCI_PORTSC_OCC | XHCI_PORTSC_PRC);
+    portsc |= (XHCI_PORTSC_CSC | XHCI_PORTSC_PEC | XHCI_PORTSC_WRC |
+               XHCI_PORTSC_OCC | XHCI_PORTSC_PRC);
     xhci_writel(&xhci->port_regs[port].portsc, portsc);
 
-    printk("XHCI: USB2 port reset complete\n");
+    printk("XHCI: port reset complete\n");
 
     // 获取设备速度
     portsc = xhci_readl(&xhci->port_regs[port].portsc);
