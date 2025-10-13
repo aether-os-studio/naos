@@ -2,11 +2,7 @@
 #include <mm/mm.h>
 #include <task/task.h>
 
-extern spinlock_t mem_map_op_lock;
-
 uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr) {
-    spin_lock(&mem_map_op_lock);
-
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
     for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++) {
         indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(vaddr, i + 1);
@@ -16,13 +12,11 @@ uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr) {
         uint64_t index = indexs[i];
         uint64_t addr = pgdir[index];
         if (ARCH_PT_IS_LARGE(addr)) {
-            spin_unlock(&mem_map_op_lock);
             return (pgdir[index] & (~PAGE_CALC_PAGE_TABLE_MASK(i + 1)) &
                     ~get_physical_memory_offset()) +
                    (vaddr & PAGE_CALC_PAGE_TABLE_MASK(i + 1));
         }
         if (!ARCH_PT_IS_TABLE(addr)) {
-            spin_unlock(&mem_map_op_lock);
             return 0;
         }
         pgdir = (uint64_t *)phys_to_virt(
@@ -31,7 +25,6 @@ uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr) {
     }
 
     uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
-    spin_unlock(&mem_map_op_lock);
     return (pgdir[index] & ARCH_ADDR_MASK) +
            (vaddr & PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL));
 }

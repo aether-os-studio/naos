@@ -61,7 +61,7 @@ SER ?= 0
 MON ?= 0
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
-QEMUFLAGS := -m $(MEM) -smp $(SMP) -cpu max
+QEMUFLAGS := -m $(MEM) -smp $(SMP)
 
 export EXTRA ?= 
 
@@ -72,7 +72,9 @@ override QEMUFLAGS := $(QEMUFLAGS) -s -S
 endif
 
 ifeq ($(KVM), 1)
-override QEMUFLAGS := $(QEMUFLAGS) --enable-kvm
+override QEMUFLAGS := $(QEMUFLAGS) -cpu host,migratable=off --enable-kvm
+else
+override QEMUFLAGS := $(QEMUFLAGS) -cpu max
 endif
 
 ifeq ($(SER), 1)

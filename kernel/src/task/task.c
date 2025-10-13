@@ -147,6 +147,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
                     uint64_t priority) {
     arch_disable_interrupt();
 
+    can_schedule = false;
+
     task_t *task = get_free_task();
     task->call_in_signal = 0;
     memset(&task->signal_saved_regs, 0, sizeof(struct pt_regs));
@@ -246,6 +248,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->current_state = TASK_READY;
 
     add_eevdf_entity_with_prio(task, task->priority, schedulers[task->cpu_id]);
+    can_schedule = true;
 
     return task;
 }
@@ -284,6 +287,7 @@ void task_init() {
         idle_task->cpu_id = cpu;
         idle_task->state = TASK_RUNNING;
         schedulers[cpu]->current = idle_task->sched_info;
+        schedulers[cpu]->idle_entity = idle_task->sched_info;
     }
 
     task_create("init", init_thread, 0, NORMAL_PRIORITY);
@@ -410,6 +414,8 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
         return (uint64_t)-ENOMEM;
     }
 
+    can_schedule = false;
+
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
     child->call_in_signal = current_task->call_in_signal;
 
@@ -513,6 +519,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
 
     add_eevdf_entity_with_prio(child, child->priority,
                                schedulers[child->cpu_id]);
+    can_schedule = true;
 
     if (vfork) {
         current_task->child_vfork_done = false;
@@ -529,17 +536,11 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
 
 char interpreter_name_global[256] = {0};
 
-spinlock_t execve_lock = {0};
-
 uint64_t task_execve(const char *path, const char **argv, const char **envp) {
-    arch_disable_interrupt();
-
-    spin_lock(&execve_lock);
     can_schedule = false;
 
     vfs_node_t node = vfs_open(path);
     if (!node) {
-        spin_unlock(&execve_lock);
         can_schedule = true;
         return (uint64_t)-ENOENT;
     }
@@ -618,8 +619,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
                 free(new_envp[i]);
         free(new_envp);
 
-        spin_unlock(&execve_lock);
-
         char *p = (char *)buffer + 2;
         const char *interpreter_name = NULL;
         while (*p != '\n') {
@@ -690,7 +689,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
                 free(new_envp[i]);
         free(new_envp);
         free(fullpath);
-        spin_unlock(&execve_lock);
         can_schedule = true;
         return (uint64_t)-EINVAL;
     }
@@ -707,7 +705,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
                 free(new_envp[i]);
         free(new_envp);
         free(fullpath);
-        spin_unlock(&execve_lock);
         can_schedule = true;
         return (uint64_t)-ENOEXEC;
     }
@@ -742,7 +739,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
                         free(new_envp[i]);
                 free(new_envp);
                 free(fullpath);
-                spin_unlock(&execve_lock);
                 can_schedule = true;
                 return (uint64_t)-ENOENT;
             }
@@ -986,8 +982,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
     }
 
     current_task->is_kernel = false;
-
-    spin_unlock(&execve_lock);
     can_schedule = true;
 
     arch_to_user_mode(current_task->arch_context,
@@ -1040,7 +1034,6 @@ void task_exit_inner(task_t *task, int64_t code) {
     spin_lock(&task_queue_lock);
 
     can_schedule = false;
-
     remove_eevdf_entity(task, schedulers[task->cpu_id]);
 
     task->current_state = TASK_DIED;
@@ -1225,6 +1218,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
                 break;
             } else {
                 found_alive = ptr;
+                break;
             }
         }
 
@@ -1272,6 +1266,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     if (child == NULL) {
         return (uint64_t)-ENOMEM;
     }
+
+    can_schedule = false;
 
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
     child->call_in_signal = current_task->call_in_signal;
@@ -1396,6 +1392,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     add_eevdf_entity_with_prio(child, child->priority,
                                schedulers[child->cpu_id]);
+    can_schedule = true;
 
     if ((flags & CLONE_VFORK)) {
         current_task->child_vfork_done = false;
@@ -1564,10 +1561,11 @@ void sched_update_timerfd() {
 }
 
 void sched_check_wakeup() {
-    spin_lock(&task_queue_lock);
     uint64_t continue_ptr_count = 0;
     for (size_t i = 1; i < MAX_TASK_NUM; i++) {
+        spin_lock(&task_queue_lock);
         task_t *ptr = tasks[i];
+        spin_unlock(&task_queue_lock);
         if (ptr == NULL) {
             continue_ptr_count++;
             if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
@@ -1581,7 +1579,6 @@ void sched_check_wakeup() {
             ptr->force_wakeup_ns = UINT64_MAX;
         }
     }
-    spin_unlock(&task_queue_lock);
 }
 
 size_t sys_setitimer(int which, struct itimerval *value,

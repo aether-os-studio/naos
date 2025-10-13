@@ -39,6 +39,16 @@ uint64_t sys_futex_wake(uint64_t addr, int val, uint32_t bitset) {
 
         if (curr->uaddr && curr->uaddr == (void *)addr &&
             (curr->bitset & bitset) && ++count <= val) {
+            if (!curr->task)
+                continue;
+            if (curr->task->state == TASK_DIED) {
+                if (prev) {
+                    prev->next = curr->next;
+                }
+                free(curr);
+                found = true;
+                continue;
+            }
             task_unblock(curr->task, EOK);
             if (prev) {
                 prev->next = curr->next;

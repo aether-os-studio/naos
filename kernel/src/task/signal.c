@@ -119,9 +119,9 @@ uint64_t sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction) {
 }
 
 void sys_sigreturn(struct pt_regs *regs) {
-#if defined(__x86_64__)
     arch_disable_interrupt();
 
+#if defined(__x86_64__)
     struct pt_regs *context =
         (struct pt_regs *)(current_task->kernel_stack - 8) - 1;
 
@@ -259,6 +259,7 @@ void task_signal() {
         return;
     }
 
+    spin_lock(&current_task->signal_lock);
     int sig = 1;
     for (; sig <= MAXSIG; sig++) {
         if (map & SIGMASK(sig)) {
@@ -270,6 +271,7 @@ void task_signal() {
     current_task->saved_signal = sig;
 
     if (sig == SIGKILL) {
+        spin_unlock(&current_task->signal_lock);
         task_exit(-sig);
         return;
     }
@@ -301,10 +303,12 @@ void task_signal() {
     sigaction_t *ptr = &current_task->actions[sig];
 
     if (ptr->sa_handler == SIG_IGN) {
+        spin_unlock(&current_task->signal_lock);
         return;
     }
 
     if (ptr->sa_handler == SIG_DFL) {
+        spin_unlock(&current_task->signal_lock);
         return;
     }
 
@@ -346,6 +350,8 @@ void task_signal() {
 
     current_task->saved_blocked = current_task->blocked;
     current_task->blocked |= (1 << sig) | ptr->sa_mask;
+
+    spin_unlock(&current_task->signal_lock);
 
     arch_switch_with_context(NULL, current_task->arch_context,
                              current_task->kernel_stack);

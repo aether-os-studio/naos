@@ -183,6 +183,8 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
 
 void arch_to_user_mode(arch_context_t *context, uint64_t entry,
                        uint64_t stack) {
+    arch_disable_interrupt();
+
     arch_context_to_user_mode(context, entry, stack);
 
     asm volatile("movq %0, %%cr3" ::"r"(context->mm->page_table_addr));

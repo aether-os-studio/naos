@@ -161,6 +161,8 @@ void FreePRPList(NVME_PRP_LIST *prpList) {
     }
 }
 
+spinlock_t nvme_transfer_lock = {0};
+
 uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba,
                       uint32_t count, uint32_t write) {
     if (!count || !ns || !buf)
@@ -171,6 +173,8 @@ uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba,
                count, ns->NLBA);
         return 0;
     }
+
+    spin_lock(&nvme_transfer_lock);
 
     uint32_t transferred = 0;
     uint8_t *currentBuf = (uint8_t *)buf;
@@ -186,6 +190,7 @@ uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba,
         NVME_PRP_LIST prpList;
         if (!BuildPRPList(currentBuf, size, &prpList)) {
             printf("NVME: Failed to build PRP list\n");
+            spin_unlock(&nvme_transfer_lock);
             return transferred;
         }
 
@@ -207,6 +212,7 @@ uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba,
         if ((cqe.STS >> 1) & 0xFF) {
             nvme_rwfail(cqe.STS);
             FreePRPList(&prpList);
+            spin_unlock(&nvme_transfer_lock);
             return transferred;
         }
 
@@ -217,6 +223,8 @@ uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba,
 
         FreePRPList(&prpList);
     }
+
+    spin_unlock(&nvme_transfer_lock);
 
     return transferred;
 }

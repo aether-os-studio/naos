@@ -92,8 +92,10 @@ void ext_open(void *parent, const char *name, vfs_node_t node) {
             if (!strcmp((const char *)entry->name, ".") ||
                 !strcmp((const char *)entry->name, ".."))
                 continue;
-            if (vfs_child_find(node, (const char *)entry->name))
+            if (vfs_child_find(node, (const char *)entry->name)) {
+                spin_lock(&node->spin);
                 continue;
+            }
             vfs_node_t child =
                 vfs_child_append(node, (const char *)entry->name, NULL);
             child->fsid = ext_fsid;

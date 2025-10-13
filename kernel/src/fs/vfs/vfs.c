@@ -83,8 +83,11 @@ static inline void do_update(vfs_node_t file) {
 }
 
 vfs_node_t vfs_child_find(vfs_node_t parent, const char *name) {
-    return list_first(parent->child, data,
-                      streq(name, ((vfs_node_t)data)->name));
+    if (!parent)
+        return NULL;
+    vfs_node_t child =
+        list_first(parent->child, data, streq(name, ((vfs_node_t)data)->name));
+    return child;
 }
 
 // 一定要记得手动设置一下child的type
