@@ -120,6 +120,7 @@ typedef struct {
 } __attribute__((packed)) usb_endpoint_descriptor_t;
 
 // 前向声明
+typedef struct usb_hub usb_hub_t;
 typedef struct usb_device usb_device_t;
 typedef struct usb_endpoint usb_endpoint_t;
 typedef struct usb_transfer usb_transfer_t;
@@ -157,8 +158,26 @@ struct usb_endpoint {
     void *hcd_private;
 };
 
+// USB集线器操作
+typedef struct usb_hub_ops {
+    int (*reset_port)(usb_hcd_t *hcd, usb_hub_t *hub, usb_device_t *device);
+    int (*disconnect_port)(usb_hcd_t *hcd, usb_hub_t *hub,
+                           usb_device_t *device);
+} usb_hub_ops_t;
+
+// USB集线器结构
+struct usb_hub {
+    usb_device_t *device;   // 集线器设备
+    struct usb_hub *parent; // 父集线器
+
+    usb_hub_ops_t *ops; // 集线器操作
+
+    void *hcd_private; // HCD私有数据
+};
+
 // USB设备结构
 struct usb_device {
+    usb_hub_t *hub;
     uint8_t port;
 
     uint8_t address;
@@ -186,7 +205,6 @@ typedef struct {
     int (*init)(usb_hcd_t *hcd);
     int (*shutdown)(usb_hcd_t *hcd);
 
-    int (*reset_port)(usb_hcd_t *hcd, usb_device_t *device);
     int (*enable_slot)(usb_hcd_t *hcd, usb_device_t *device);
     int (*disable_slot)(usb_hcd_t *hcd, usb_device_t *device);
 

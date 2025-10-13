@@ -37,7 +37,7 @@ typedef struct {
 } usb_enum_context_t;
 
 // 枚举函数
-int usb_enumerate_device(usb_hcd_t *hcd, uint8_t port_id);
+int usb_enumerate_device(usb_hcd_t *hcd, usb_hub_t *hub, uint8_t port_id);
 int usb_enum_state_machine(usb_enum_context_t *ctx);
 
 // 辅助函数
