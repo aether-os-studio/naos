@@ -315,12 +315,17 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
     }
 
     if (flags & MREMAP_MAYMOVE) {
-        // TODO: 修改这里与mmap的地址分配逻辑保持一致
-        uint64_t start_addr = USER_MMAP_START;
+    retry:
+        uint64_t start_addr = mgr->last_alloc_addr;
         while (vma_find_intersection(mgr, start_addr, start_addr + new_size)) {
             start_addr += DEFAULT_PAGE_SIZE;
-            if (start_addr > USER_MMAP_END)
+            if (start_addr > USER_MMAP_END) {
+                if (mgr->last_alloc_addr != USER_MMAP_START) {
+                    mgr->last_alloc_addr = USER_MMAP_START;
+                    goto retry;
+                }
                 return (uint64_t)-ENOMEM;
+            }
         }
 
         vma_t *new_vma = vma_alloc();
@@ -345,6 +350,8 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
             pt_flags |= PT_FLAG_W;
         if (new_vma->vm_flags & VMA_EXEC)
             pt_flags |= PT_FLAG_X;
+
+        mgr->last_alloc_addr = start_addr;
 
         map_page_range(get_current_page_dir(true), start_addr, old_addr_phys,
                        new_size, pt_flags);

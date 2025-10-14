@@ -85,8 +85,10 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
         shm->size, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
     vma_t *vma = vma_alloc();
-    if (!vma)
+    if (!vma) {
+        spin_unlock(&mm_op_lock);
         return (void *)-ENOMEM;
+    }
 
     vma->vm_start = (uint64_t)shmaddr;
     vma->vm_end = (uint64_t)shmaddr + shm->size;
@@ -98,6 +100,7 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
 
     if (vma_insert(mgr, vma) != 0) {
         vma_free(vma);
+        spin_unlock(&mm_op_lock);
         return (void *)-ENOMEM;
     }
 
