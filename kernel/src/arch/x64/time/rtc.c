@@ -22,7 +22,6 @@
 #define YEAR (365 * DAY)   // 每年的秒数，以 365 天算
 
 spinlock_t cmos_register_lock = {0};
-spinlock_t cmos_gettime_lock = {0};
 
 // 读 cmos 寄存器的值
 uint8_t cmos_read(uint8_t addr) {
@@ -95,8 +94,6 @@ void time_read_bcd(tm *time) {
 uint8_t bcd_to_bin(uint8_t value) { return (value & 0xf) + (value >> 4) * 10; }
 
 void time_read(tm *time) {
-    spin_lock(&cmos_gettime_lock);
-
     time_read_bcd(time);
     uint8_t rb = cmos_read(0x0b);
     bool need_convert = !(rb & 0x04);
@@ -116,6 +113,4 @@ void time_read(tm *time) {
 
     if (!(rb & 0x02) && (time->tm_hour & 0x80))
         time->tm_hour = ((time->tm_hour & 0x7F) + 12) % 24;
-
-    spin_unlock(&cmos_gettime_lock);
 }

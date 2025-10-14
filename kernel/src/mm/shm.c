@@ -43,8 +43,6 @@ uint64_t sys_shmget(int key, int size, int shmflg) {
     }
 }
 
-extern spinlock_t mm_op_lock;
-
 void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
     shm_t *shm = &shm_head;
     while (shm) {
@@ -77,8 +75,6 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
         shmaddr = (void *)start_addr;
     }
 
-    spin_lock(&mm_op_lock);
-
     map_page_range(
         get_current_page_dir(true), (uint64_t)shmaddr,
         translate_address(get_current_page_dir(false), (uint64_t)shm->addr),
@@ -86,7 +82,6 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
 
     vma_t *vma = vma_alloc();
     if (!vma) {
-        spin_unlock(&mm_op_lock);
         return (void *)-ENOMEM;
     }
 
@@ -100,11 +95,8 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
 
     if (vma_insert(mgr, vma) != 0) {
         vma_free(vma);
-        spin_unlock(&mm_op_lock);
         return (void *)-ENOMEM;
     }
-
-    spin_unlock(&mm_op_lock);
 
     return shmaddr;
 }

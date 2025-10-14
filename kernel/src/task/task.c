@@ -273,7 +273,6 @@ void task_init() {
         memset(schedulers[cpu], 0, sizeof(eevdf_t));
         schedulers[cpu]->root = malloc(sizeof(struct rb_root));
         memset(schedulers[cpu]->root, 0, sizeof(struct rb_root));
-        schedulers[cpu]->leftmost = NULL;
         schedulers[cpu]->root->rb_node = NULL;
         schedulers[cpu]->min_vruntime = 0;
     }
@@ -1044,6 +1043,8 @@ void task_exit_inner(task_t *task, int64_t code) {
 
     can_schedule = false;
     remove_eevdf_entity(task, schedulers[task->cpu_id]);
+    free(task->sched_info);
+    task->sched_info = NULL;
 
     task->current_state = TASK_DIED;
     task->state = TASK_DIED;
@@ -1252,7 +1253,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
     if (target) {
         if (status) {
             if (target->status < 128) {
-                *status = (target->status & 0xff) << 8;
+                *status = ((target->status & 0xff) << 8);
             } else {
                 int sig = target->status - 128;
                 *status = (sig & 0xff);
@@ -1494,10 +1495,7 @@ void sched_update_itimer() {
     uint64_t rtAt = current_task->itimer_real.at;
     uint64_t rtReset = current_task->itimer_real.reset;
 
-    tm time_now;
-    time_read(&time_now);
-
-    uint64_t now = mktime(&time_now) * 1000;
+    uint64_t now = nanoTime() / 1000000;
 
     if (rtAt && rtAt <= now) {
         spin_lock(&current_task->signal_lock);
@@ -1552,8 +1550,8 @@ void sched_update_timerfd() {
                 uint64_t now;
                 if (tfd->timer.clock_type == CLOCK_MONOTONIC) {
                     now = nanoTime();
-                } else // CLOCK_REALTIME
-                {
+                } else {
+                    // CLOCK_REALTIME
                     tm time;
                     time_read(&time);
                     now = (uint64_t)mktime(&time) * 1000000000ULL +
@@ -1607,7 +1605,7 @@ size_t sys_setitimer(int which, struct itimerval *value,
 
     tm time_now;
     time_read(&time_now);
-    uint64_t now = mktime(&time_now) * 1000;
+    uint64_t now = nanoTime() / 1000000;
 
     if (old) {
         uint64_t remaining = rt_at > now ? rt_at - now : 0;
@@ -1678,10 +1676,7 @@ uint64_t sys_timer_settime(timer_t timerid, const struct itimerval *new_value,
     uint64_t expires =
         new_value->it_value.tv_sec * 1000 + new_value->it_value.tv_usec / 1000;
 
-    tm time_now;
-    time_read(&time_now);
-
-    uint64_t now = mktime(&time_now) * 1000;
+    uint64_t now = nanoTime() / 1000000;
 
     if (old_value) {
         struct itimerval old;

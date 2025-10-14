@@ -274,7 +274,7 @@ void task_signal() {
 
     if (sig == SIGKILL) {
         spin_unlock(&current_task->signal_lock);
-        task_exit(-sig);
+        task_exit(128 + sig);
         return;
     }
 

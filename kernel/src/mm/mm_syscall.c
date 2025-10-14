@@ -3,8 +3,6 @@
 #include <fs/vfs/vfs.h>
 #include <task/task.h>
 
-spinlock_t mm_op_lock = {0};
-
 uint64_t sys_brk(uint64_t brk) {
     brk = (brk + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1);
 
@@ -114,8 +112,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
             return (uint64_t)-EBADF;
     }
 
-    spin_lock(&mm_op_lock);
-
     vma_t *vma = vma_alloc();
     if (!vma)
         return (uint64_t)-ENOMEM;
@@ -165,8 +161,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
 
         region->vm_name =
             vfs_get_fullpath(current_task->fd_info->fds[fd]->node);
-
-        spin_unlock(&mm_op_lock);
         return ret;
     } else {
         uint64_t pt_flags = PT_FLAG_U | PT_FLAG_W;
@@ -184,8 +178,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
                        pt_flags);
 
         memset((void *)start_addr, 0, aligned_len);
-
-        spin_unlock(&mm_op_lock);
 
         return start_addr;
     }
@@ -240,8 +232,6 @@ uint64_t sys_munmap(uint64_t addr, uint64_t size) {
     }
 
     unmap_page_range(get_current_page_dir(true), start, end - start);
-
-    spin_unlock(&mm_op_lock);
     return 0;
 }
 
@@ -406,8 +396,6 @@ uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
         return -EFAULT;
     }
 
-    spin_lock(&mm_op_lock);
-
     uint64_t *page_dir = get_current_page_dir(true);
     uint64_t current_addr = start_page;
 
@@ -421,6 +409,5 @@ uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
         current_addr += DEFAULT_PAGE_SIZE;
     }
 
-    spin_unlock(&mm_op_lock);
     return 0;
 }
