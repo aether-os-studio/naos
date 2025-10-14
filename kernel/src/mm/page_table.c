@@ -243,7 +243,7 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
            DEFAULT_PAGE_SIZE / 2);
 #endif
     new_mm->ref_count = 1;
-    vma_manager_fork(&new_mm->task_vma_mgr, &old->task_vma_mgr);
+    memset(&new_mm->task_vma_mgr, 0, sizeof(vma_manager_t));
     new_mm->brk_start = old->brk_start;
     new_mm->brk_current = old->brk_current;
     new_mm->brk_end = old->brk_end;

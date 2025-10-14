@@ -53,6 +53,7 @@ int mouseCycle = 0xffffffff;
 
 int mouse1 = 0;
 int mouse2 = 0;
+int mouse3 = 0;
 
 int gx = 0;
 int gy = 0;
@@ -64,7 +65,35 @@ extern dev_input_event_t *mouse_event;
 
 spinlock_t mouse_irq_lock = {0};
 
-extern void handle_mouse_event(uint8_t flag, int8_t x, int8_t y);
+bool has_wheel = false;
+
+extern void handle_mouse_event(uint8_t flag, int8_t x, int8_t y, int8_t z);
+
+// 提取的数据处理函数
+void process_mouse_packet(uint8_t b1, uint8_t b2, uint8_t b3, int8_t wheel) {
+    int x = b2;
+    int y = b3;
+
+    if (x && (b1 & (1 << 4)))
+        x |= 0xffffff00;
+    if (y && (b1 & (1 << 5)))
+        y |= 0xffffff00;
+
+    gx += x;
+    gy += -y;
+
+    // 边界检查...
+    if (gx < 0)
+        gx = 0;
+    if (gy < 0)
+        gy = 0;
+    if ((size_t)gx > framebuffer->width)
+        gx = framebuffer->width;
+    if ((size_t)gy > framebuffer->height)
+        gy = framebuffer->height;
+
+    handle_mouse_event(b1, x, -y, -wheel); // 添加 wheel 参数
+}
 
 void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs) {
     uint8_t byte = mouse_read();
@@ -74,16 +103,11 @@ void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs) {
 
     spin_lock(&mouse_irq_lock);
 
-    // return;
-    // rest are just for demonstration
-
-    // debugf("%d %d %d\n", byte1, byte2, byte3);
     if (mouseCycle == 0xffffffff) {
         if (byte == 0xfa) {
             mouseCycle = 0;
         }
-    }
-    if (mouseCycle == 0) {
+    } else if (mouseCycle == 0) {
         if ((byte & 0xc8) == 0x08) {
             mouse1 = byte;
             mouseCycle = 1;
@@ -92,33 +116,46 @@ void mouse_handler(uint64_t irq, void *param, struct pt_regs *regs) {
         mouse2 = byte;
         mouseCycle = 2;
     } else if (mouseCycle == 2) {
-        int mouse3 = byte;
+        mouse3 = byte;
+        mouseCycle = has_wheel ? 3 : 0; // 如果有滚轮，继续读取第4字节
 
-        int x = mouse2;
-        int y = mouse3;
-        if (x && (mouse1 & (1 << 4)))
-            x |= 0xffffff00;
-        if (y && (mouse1 & (1 << 5)))
-            y |= 0xffffff00;
+        if (!has_wheel) {
+            process_mouse_packet(mouse1, mouse2, mouse3, 0);
+        }
+    } else if (mouseCycle == 3) {    // 滚轮数据
+        int8_t wheel = (int8_t)byte; // 有符号的滚轮值
 
-        gx += x;
-        gy += -y;
-        if (gx < 0)
-            gx = 0;
-        if (gy < 0)
-            gy = 0;
-
-        if ((size_t)gx > framebuffer->width)
-            gx = framebuffer->width;
-        if ((size_t)gy > framebuffer->height)
-            gy = framebuffer->height;
-
-        handle_mouse_event(mouse1, x, -y);
-
+        process_mouse_packet(mouse1, mouse2, mouse3, wheel);
         mouseCycle = 0;
     }
 
     spin_unlock(&mouse_irq_lock);
+}
+
+// 在鼠标初始化函数中添加
+bool mouse_enable_wheel(void) {
+    // 发送魔术序列启用滚轮
+    mouse_write(0xf3); // Set Sample Rate
+    mouse_read();      // ACK
+    mouse_write(200);
+    mouse_read(); // ACK
+
+    mouse_write(0xf3);
+    mouse_read();
+    mouse_write(100);
+    mouse_read();
+
+    mouse_write(0xf3);
+    mouse_read();
+    mouse_write(80);
+    mouse_read();
+
+    // 读取设备 ID
+    mouse_write(0xf2); // Get Device ID
+    mouse_read();      // ACK
+    uint8_t id = mouse_read();
+
+    return (id == 0x03); // 0x03 表示支持滚轮
 }
 
 void mouse_init() {
@@ -146,6 +183,8 @@ void mouse_init() {
     // enable device
     mouse_write(0xF4);
     mouse_read();
+
+    has_wheel = mouse_enable_wheel();
 
     for (uint64_t i = 0; i < MAX_DEV_NUM; i++) {
         if (devfs_handles[i] != NULL &&

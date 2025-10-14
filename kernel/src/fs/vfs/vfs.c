@@ -616,11 +616,13 @@ int vfs_close(vfs_node_t node) {
         bool real_close = callbackof(node, close)(node->handle);
         if (real_close) {
             if (node->flags & VFS_NODE_FLAGS_DELETED) {
-                int res = callbackof(node, delete)(node->parent->handle, node);
+                int res = callbackof(node, delete)(
+                    node->parent ? node->parent->handle : NULL, node);
                 if (res < 0) {
                     return -1;
                 }
-                list_delete(node->parent->child, node);
+                if (node->parent)
+                    list_delete(node->parent->child, node);
                 callbackof(node, free_handle)(node->handle);
                 node->handle = NULL;
                 free(node->name);
@@ -847,11 +849,13 @@ int vfs_delete(vfs_node_t node) {
     node->flags |= VFS_NODE_FLAGS_DELETED;
     if (node->refcount > 0)
         return 0;
-    int res = callbackof(node, delete)(node->parent->handle, node);
+    int res = callbackof(node, delete)(
+        node->parent ? node->parent->handle : NULL, node);
     if (res < 0) {
         return -1;
     }
-    list_delete(node->parent->child, node);
+    if (node->parent)
+        list_delete(node->parent->child, node);
     callbackof(node, free_handle)(node->handle);
     node->handle = NULL;
     free(node->name);

@@ -64,7 +64,7 @@ void mouse_callback(hid_event_t *event, void *user_data) {
 
     hid_mouse_event_t *mouse = &event->mouse;
 
-    handle_mouse_event(mouse->buttons, mouse->x, mouse->y);
+    handle_mouse_event(mouse->buttons, mouse->x, mouse->y, mouse->wheel);
 }
 
 // 全局 HID 设备列表

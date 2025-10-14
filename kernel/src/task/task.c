@@ -21,12 +21,7 @@ spinlock_t task_queue_lock = {0};
 task_t *tasks[MAX_TASK_NUM];
 task_t *idle_tasks[MAX_CPU_NUM];
 
-extern stdio_handle_t *global_stdio_handle;
-
-void send_sigint() {
-    if (global_stdio_handle == NULL)
-        return;
-
+void send_sigint(int pgid) {
     uint64_t continue_ptr_count = 0;
     for (size_t i = 1; i < MAX_TASK_NUM; i++) {
         task_t *ptr = tasks[i];
@@ -38,7 +33,7 @@ void send_sigint() {
         }
         continue_ptr_count = 0;
 
-        if (tasks[i]->pgid == global_stdio_handle->at_process_group_id) {
+        if (tasks[i]->pgid == pgid) {
             if (tasks[i]->actions[SIGINT].sa_handler == SIG_DFL ||
                 tasks[i]->actions[SIGINT].sa_handler == SIG_IGN) {
                 spin_lock(&tasks[i]->signal_lock);
