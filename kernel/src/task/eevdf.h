@@ -71,7 +71,6 @@ struct sched_entity {
 
 struct eevdf_t {
     struct rb_root *root;
-    struct rb_node *leftmost;         // 最小值节点缓存
     struct sched_entity *current;     // 当前调度单元
     struct sched_entity *idle_entity; // IDLE调度单元
     size_t task_count;                // 当前调度单元数量
@@ -93,10 +92,10 @@ struct sched_entity *new_entity(task_t *task, uint64_t prio, eevdf_t *sched);
 
 /**
  * 将一个调度单元添加到树(会触发红黑树重排)
- * @param eevdf_sched 调度环境
+ * @param root 树根节点
  * @param se 调度单元
  */
-void insert_sched_entity(eevdf_t *eevdf_sched, struct sched_entity *se);
+void insert_sched_entity(struct rb_root *root, struct sched_entity *se);
 
 /**
  * 更新当前调度单元的信息 (deadline vruntime)

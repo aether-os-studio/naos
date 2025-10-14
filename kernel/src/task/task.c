@@ -69,6 +69,8 @@ void task_free_service(uint64_t arg) {
 
                 arch_context_free(ptr->arch_context);
 
+                vma_manager_exit_cleanup(&ptr->arch_context->mm->task_vma_mgr);
+
                 if (!ptr->is_kernel)
                     free_page_table(ptr->arch_context->mm);
 
@@ -650,16 +652,17 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
         return task_execve((const char *)injected_argv[0], injected_argv, envp);
     }
 
+    vma_manager_exit_cleanup(&current_task->arch_context->mm->task_vma_mgr);
+
     if (current_task->is_vfork ||
         current_task->arch_context->mm->page_table_addr ==
             (uint64_t)virt_to_phys(get_kernel_page_dir())) {
         task_mm_info_t *new_mm =
             clone_page_table(current_task->arch_context->mm, 0);
-        if (current_task->arch_context->mm->page_table_addr ==
-            (uint64_t)virt_to_phys(get_kernel_page_dir()))
-            current_task->arch_context->mm->ref_count--;
-        else
+        if (!(current_task->arch_context->mm->page_table_addr ==
+              (uint64_t)virt_to_phys(get_kernel_page_dir()))) {
             free_page_table(current_task->arch_context->mm);
+        }
         current_task->arch_context->mm = new_mm;
         new_mm->task_vma_mgr.last_alloc_addr = USER_MMAP_START;
     }
@@ -1029,7 +1032,7 @@ void task_unblock(task_t *task, int reason) {
     if (!entity->on_rq) {
         entity->on_rq = true;
         spin_lock(&schedulers[task->cpu_id]->queue_lock);
-        insert_sched_entity(schedulers[task->cpu_id], entity);
+        insert_sched_entity(schedulers[task->cpu_id]->root, entity);
         spin_unlock(&schedulers[task->cpu_id]->queue_lock);
         schedulers[task->cpu_id]->task_count++;
     }

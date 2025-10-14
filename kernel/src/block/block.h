@@ -10,6 +10,8 @@ typedef struct blkdev {
     uint64_t block_size;
     uint64_t size;
     uint64_t max_op_size;
+    spinlock_t rw_lock;
+    uint8_t *op_buffer;
     uint64_t (*read)(void *data, uint64_t lba, void *buffer, uint64_t size);
     uint64_t (*write)(void *data, uint64_t lba, void *buffer, uint64_t size);
 } blkdev_t;

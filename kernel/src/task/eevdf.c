@@ -58,34 +58,29 @@ static int vruntime_eligible(eevdf_t *eevdf_sched, uint64_t vruntime) {
     return avg >= (int64_t)(vruntime - eevdf_sched->min_vruntime) * load;
 }
 
-void insert_sched_entity(eevdf_t *eevdf_sched, struct sched_entity *se) {
-    struct rb_root *root = eevdf_sched->root;
+void insert_sched_entity(struct rb_root *root, struct sched_entity *se) {
     struct rb_node **link = &root->rb_node;
     struct rb_node *parent = NULL;
-    bool leftmost = true;
 
     while (*link) {
-        parent = *link;
-        struct sched_entity *entry =
-            container_of(parent, struct sched_entity, run_node);
+        struct sched_entity *entry;
 
-        if (se->deadline < entry->deadline) {
+        parent = *link;
+        entry = container_of(parent, struct sched_entity, run_node);
+
+        if (se->deadline < entry->deadline)
+            // if (se->vruntime < entry->vruntime)
             link = &(*link)->rb_left;
-        } else {
+        else
             link = &(*link)->rb_right;
-            leftmost = false;
-        }
     }
 
     rb_link_node(&se->run_node, parent, link);
     rb_insert_color(&se->run_node, root);
-
-    if (leftmost)
-        eevdf_sched->leftmost = &se->run_node;
 }
 
-struct sched_entity *pick_earliest_entity(eevdf_t *eevdf_sched) {
-    struct rb_node *node = eevdf_sched->leftmost;
+struct sched_entity *pick_earliest_entity(struct rb_root *root) {
+    struct rb_node *node = rb_first(root); // 最小值节点（最左）
     if (!node)
         return NULL;
     return container_of(node, struct sched_entity, run_node);
@@ -167,81 +162,12 @@ static inline uint64_t min_vruntime(uint64_t min_vruntime, uint64_t vruntime) {
     return min_vruntime;
 }
 
-static inline bool need_reinsert(struct rb_node *node, uint64_t new_deadline) {
-    struct rb_node *parent = rb_parent(node);
-    struct rb_node *left = node->rb_left;
-    struct rb_node *right = node->rb_right;
-
-    // 检查是否仍然满足红黑树顺序
-    if (parent) {
-        struct sched_entity *parent_se =
-            container_of(parent, struct sched_entity, run_node);
-        if (parent->rb_left == node) {
-            // 我是父节点的左子节点
-            if (new_deadline >= parent_se->deadline)
-                return true;
-        } else {
-            // 我是父节点的右子节点
-            if (new_deadline < parent_se->deadline)
-                return true;
-        }
-    }
-
-    // 检查左子节点
-    if (left) {
-        struct sched_entity *left_se =
-            container_of(left, struct sched_entity, run_node);
-        if (new_deadline < left_se->deadline)
-            return true;
-    }
-
-    // 检查右子节点
-    if (right) {
-        struct sched_entity *right_se =
-            container_of(right, struct sched_entity, run_node);
-        if (new_deadline >= right_se->deadline)
-            return true;
-    }
-
-    return false;
-}
-
-static bool update_deadline(eevdf_t *eevdf_sched, struct sched_entity *se) {
+static bool update_deadline(struct sched_entity *se) {
     if ((int64_t)(se->vruntime - se->deadline) < 0)
         return false;
-
     if (!se->custom_slice)
         se->slice = sysctl_sched_base_slice;
-
-    uint64_t old_deadline = se->deadline;
-    uint64_t new_deadline = se->vruntime + calc_delta_fair(se->slice, se);
-
-    // 如果deadline没变，直接返回
-    if (new_deadline == old_deadline) {
-        return false;
-    }
-
-    // 如果是leftmost且deadline增加，可能不需要重新插入
-    struct rb_node *node = &se->run_node;
-    if (eevdf_sched->leftmost == node && new_deadline > old_deadline) {
-        // 检查是否仍然是最小的
-        struct rb_node *next = rb_next(node);
-        if (!next) {
-            // 只有一个节点，不需要重新插入
-            se->deadline = new_deadline;
-            return false;
-        }
-
-        struct sched_entity *next_se =
-            container_of(next, struct sched_entity, run_node);
-        if (new_deadline < next_se->deadline) {
-            // 仍然是最小的，不需要重新插入
-            se->deadline = new_deadline;
-            return false;
-        }
-    }
-
-    se->deadline = new_deadline;
+    se->deadline = se->vruntime + calc_delta_fair(se->slice, se);
     return true;
 }
 
@@ -259,42 +185,30 @@ struct sched_entity *new_entity(task_t *task, uint64_t prio,
     entity->exec_start = nanoTime();
     entity->is_yield = false;
     set_load_weight(entity);
-    update_deadline(eevdf_sched, entity);
+    update_deadline(entity);
     entity->thread = task;
     return entity;
 }
 
 void change_entity_weight(eevdf_t *eevdf_sched, task_t *thread, uint64_t prio) {
+    arch_disable_interrupt();
     struct sched_entity *entity = (struct sched_entity *)thread->sched_info;
-    if (entity->prio == prio)
+    if (entity->prio == prio) {
+        arch_enable_interrupt();
         return;
-
-    spin_lock(&eevdf_sched->queue_lock);
-
+    }
     entity->is_idle = prio == NICE_TO_PRIO(20);
     entity->prio = prio;
-
-    unsigned long old_weight = entity->load.weight;
     set_load_weight(entity);
-
-    // 只有权重真正改变时才需要重新计算deadline
-    if (old_weight != entity->load.weight) {
-        bool was_leftmost = (eevdf_sched->leftmost == &entity->run_node);
-        rb_erase(&entity->run_node, eevdf_sched->root);
-
-        if (was_leftmost)
-            eevdf_sched->leftmost = NULL;
-
-        // 重新计算deadline
-        update_deadline(eevdf_sched, entity);
-        insert_sched_entity(eevdf_sched, entity);
-    }
-
+    rb_erase(&entity->run_node, eevdf_sched->root);
+    spin_lock(&eevdf_sched->queue_lock);
+    insert_sched_entity(eevdf_sched->root, entity);
     spin_unlock(&eevdf_sched->queue_lock);
+    arch_enable_interrupt();
 }
 
 struct sched_entity *pick_eevdf(eevdf_t *eevdf_sched) {
-    struct sched_entity *se = pick_earliest_entity(eevdf_sched);
+    struct sched_entity *se = pick_earliest_entity(eevdf_sched->root);
     struct sched_entity *curr = eevdf_sched->current;
     struct sched_entity *best = NULL;
     struct rb_node *node = eevdf_sched->root->rb_node;
@@ -339,18 +253,16 @@ static uint64_t __update_min_vruntime(eevdf_t *eevdf_sched, uint64_t vruntime) {
 }
 
 static void update_min_vruntime(eevdf_t *eevdf_sched) {
+    struct sched_entity *se =
+        container_of(eevdf_sched->root->rb_node, struct sched_entity, run_node);
     struct sched_entity *curr = eevdf_sched->current;
-    struct sched_entity *se = NULL;
     uint64_t vruntime = eevdf_sched->min_vruntime;
 
-    if (eevdf_sched->root->rb_node)
-        se = container_of(eevdf_sched->root->rb_node, struct sched_entity,
-                          run_node);
-
-    if (curr && curr->on_rq) {
-        vruntime = curr->vruntime;
-    } else {
-        curr = NULL;
+    if (curr) {
+        if (curr->on_rq)
+            vruntime = curr->vruntime;
+        else
+            curr = NULL;
     }
 
     if (se) {
@@ -359,7 +271,6 @@ static void update_min_vruntime(eevdf_t *eevdf_sched) {
         else
             vruntime = min_vruntime(vruntime, se->vruntime);
     }
-
     eevdf_sched->min_vruntime =
         MAX(__update_min_vruntime(eevdf_sched, vruntime), vruntime);
 }
@@ -381,32 +292,25 @@ void update_current_task(eevdf_t *eevdf_sched) {
     struct sched_entity *curr = eevdf_sched->current;
     if (!curr)
         return;
-
-    int64_t delta_exec;
-    bool need_reinsert = false;
-
+    bool resche;
     if (curr->is_yield) {
         curr->vruntime = curr->deadline;
-        need_reinsert = update_deadline(eevdf_sched, curr);
+        resche = update_deadline(curr);
         curr->is_yield = false;
-    } else {
-        delta_exec = update_curr_se(curr);
-        if (delta_exec <= 0)
-            return;
-
-        curr->vruntime += calc_delta_fair(delta_exec, curr);
-        need_reinsert = update_deadline(eevdf_sched, curr);
-        update_min_vruntime(eevdf_sched);
+        goto resche;
     }
+    int64_t delta_exec;
+    delta_exec = update_curr_se(curr);
+    if (delta_exec <= 0)
+        return;
+    curr->vruntime += calc_delta_fair(delta_exec, curr);
+    resche = update_deadline(curr);
+    update_min_vruntime(eevdf_sched);
 
-    if (need_reinsert) {
-        bool was_leftmost = (eevdf_sched->leftmost == &curr->run_node);
+resche:;
+    if (resche) {
         rb_erase(&curr->run_node, eevdf_sched->root);
-
-        if (was_leftmost)
-            eevdf_sched->leftmost = NULL;
-
-        insert_sched_entity(eevdf_sched, curr);
+        insert_sched_entity(eevdf_sched->root, curr);
     }
 }
 
@@ -415,56 +319,36 @@ void add_eevdf_entity_with_prio(task_t *new_task, uint64_t prio,
     struct sched_entity *entity = new_entity(new_task, prio, eevdf_sched);
     entity->handle = eevdf_sched;
     new_task->sched_info = entity;
-
     spin_lock(&eevdf_sched->queue_lock);
-    insert_sched_entity(eevdf_sched, entity);
+    insert_sched_entity(eevdf_sched->root, entity);
     spin_unlock(&eevdf_sched->queue_lock);
-
     eevdf_sched->task_count++;
 }
 
-void remove_sched_entity(eevdf_t *eevdf_sched, struct sched_entity *se) {
-    struct rb_root *root = eevdf_sched->root;
-    bool was_leftmost = (eevdf_sched->leftmost == &se->run_node);
-
+void remove_sched_entity(eevdf_t *eevdf_sched, struct rb_root *root,
+                         struct sched_entity *se) {
     rb_erase(&se->run_node, root);
-
-    if (was_leftmost)
-        eevdf_sched->leftmost = rb_first(root);
-
-    if (eevdf_sched->current == se)
+    struct sched_entity *current = eevdf_sched->current;
+    if (current == se)
         eevdf_sched->current = NULL;
+    eevdf_sched->current = pick_eevdf(eevdf_sched);
+    update_min_vruntime(eevdf_sched);
 }
 
 void remove_eevdf_entity(task_t *thread, eevdf_t *eevdf_sched) {
     struct sched_entity *entity = (struct sched_entity *)thread->sched_info;
-
     spin_lock(&eevdf_sched->queue_lock);
-    remove_sched_entity(eevdf_sched, entity);
+    remove_sched_entity(eevdf_sched, eevdf_sched->root, entity);
     spin_unlock(&eevdf_sched->queue_lock);
-
     eevdf_sched->task_count--;
 }
 
 task_t *pick_next_task(eevdf_t *eevdf_sched) {
     spin_lock(&eevdf_sched->queue_lock);
-
     update_current_task(eevdf_sched);
-
-    // 如果current被删除了，这里才pick
-    struct sched_entity *current = eevdf_sched->current;
-    if (!current)
-        current = pick_eevdf(eevdf_sched);
-    else
-        current = pick_eevdf(eevdf_sched); // 每次都要pick最合适的
-
+    struct sched_entity *current = pick_eevdf(eevdf_sched);
     spin_unlock(&eevdf_sched->queue_lock);
-
-    if (current) {
-        current->exec_start = nanoTime();
-        eevdf_sched->current = current;
-        return current->thread;
-    }
-
-    return NULL;
+    current->exec_start = nanoTime();
+    eevdf_sched->current = current;
+    return current->thread;
 }
