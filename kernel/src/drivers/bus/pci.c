@@ -76,7 +76,7 @@ uint32_t pci_read(uint32_t b, uint32_t d, uint32_t f, uint32_t s,
     if (mmio_address == 0) {
         printk("Cannot read pci: failed to get mmio address\n");
     }
-    return *(uint32_t *)mmio_address;
+    return *(volatile uint32_t *)mmio_address;
 }
 
 void pci_write(uint32_t b, uint32_t d, uint32_t f, uint32_t s, uint32_t offset,
@@ -87,7 +87,7 @@ void pci_write(uint32_t b, uint32_t d, uint32_t f, uint32_t s, uint32_t offset,
     if (mmio_address == 0) {
         printk("Cannot write pci: failed to get mmio address\n");
     }
-    *(uint32_t *)mmio_address = value;
+    *(volatile uint32_t *)mmio_address = value;
 }
 
 uint32_t pci_enumerate_capability_list(pci_device_t *pci_dev,
@@ -347,14 +347,14 @@ void pci_scan_function(uint16_t segment_group, uint8_t bus, uint8_t device,
         segment_group, bus, device, function);
 
     uint64_t id_mmio_addr = get_mmio_address(pci_address, 0x00);
-    uint16_t vendor_id = *(uint16_t *)id_mmio_addr;
+    uint16_t vendor_id = *(volatile uint16_t *)id_mmio_addr;
     if (vendor_id == 0xFFFF) {
         return;
     }
-    uint16_t device_id = *(uint16_t *)(id_mmio_addr + 2);
+    uint16_t device_id = *(volatile uint16_t *)(id_mmio_addr + 2);
 
     uint64_t field_mmio_addr = get_mmio_address(pci_address, PCI_CONF_REVISION);
-    uint8_t device_revision = EXPORT_BYTE(*(uint8_t *)field_mmio_addr, true);
+    uint8_t device_revision = EXPORT_BYTE(*(volatile uint8_t *)field_mmio_addr, true);
     uint8_t device_class = *((uint8_t *)field_mmio_addr + 3);
     uint8_t device_subclass = *((uint8_t *)field_mmio_addr + 2);
     uint8_t device_interface = *((uint8_t *)field_mmio_addr + 1);
@@ -549,7 +549,7 @@ void pci_scan_bus(uint16_t segment_group, uint8_t bus) {
         uint32_t pci_address =
             segment_bus_device_functon_to_pci_address(segment_group, bus, i, 0);
         uint64_t mmio_addr = get_mmio_address(pci_address, 0x0c);
-        if (*(uint32_t *)mmio_addr & (1UL << 23)) {
+        if (*(volatile uint32_t *)mmio_addr & (1UL << 23)) {
             for (int j = 1; j < 8; j++) {
                 pci_scan_function(segment_group, bus, i, j);
             }
@@ -562,7 +562,7 @@ void pci_scan_segment(uint16_t segment_group) {
     uint32_t pci_address =
         segment_bus_device_functon_to_pci_address(segment_group, 0, 0, 0);
     uint64_t mmio_addr = get_mmio_address(pci_address, 0x0c);
-    if (*(uint32_t *)mmio_addr & (1UL << 23)) {
+    if (*(volatile uint32_t *)mmio_addr & (1UL << 23)) {
         for (int i = 1; i < 8; i++) {
             pci_scan_bus(segment_group, i);
         }

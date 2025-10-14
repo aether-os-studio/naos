@@ -40,14 +40,14 @@ void lapic_write(uint32_t reg, uint32_t value) {
         wrmsr(0x800 + (reg >> 4), value);
         return;
     }
-    *(uint32_t *)((uint64_t)lapic_address + reg) = value;
+    *(volatile uint32_t *)((uint64_t)lapic_address + reg) = value;
 }
 
 uint32_t lapic_read(uint32_t reg) {
     if (x2apic_mode) {
         return rdmsr(0x800 + (reg >> 4));
     }
-    return *(uint32_t *)((uint64_t)lapic_address + reg);
+    return *(volatile uint32_t *)((uint64_t)lapic_address + reg);
 }
 
 uint64_t lapic_id() {
@@ -122,13 +122,13 @@ ioapic_t ioapics[MAX_IOAPICS_NUM];
 uint64_t ioapic_count = 0;
 
 static void ioapic_write(ioapic_t *ioapic, uint32_t reg, uint32_t value) {
-    *(uint32_t *)(ioapic->mmio_base) = reg;
-    *(uint32_t *)((uint64_t)ioapic->mmio_base + 0x10) = value;
+    *(volatile uint32_t *)(ioapic->mmio_base) = reg;
+    *(volatile uint32_t *)((uint64_t)ioapic->mmio_base + 0x10) = value;
 }
 
 static uint32_t ioapic_read(ioapic_t *ioapic, uint32_t reg) {
-    *(uint32_t *)(ioapic->mmio_base) = reg;
-    return *(uint32_t *)((uint64_t)ioapic->mmio_base + 0x10);
+    *(volatile uint32_t *)(ioapic->mmio_base) = reg;
+    return *(volatile uint32_t *)((uint64_t)ioapic->mmio_base + 0x10);
 }
 
 void apic_handle_ioapic(struct acpi_madt_ioapic *ioapic_madt) {
@@ -143,6 +143,9 @@ void apic_handle_ioapic(struct acpi_madt_ioapic *ioapic_madt) {
 
     ioapic->gsi_start = ioapic_madt->gsi_base;
     ioapic->count = (ioapic_read(ioapic, 0x01) & 0x00FF0000) >> 16;
+
+    printk("IOAPIC found: MMIO %p, GSI base %d, IRQs %d\n",
+           (void *)ioapic->mmio_base, ioapic->gsi_start, ioapic->count);
 
     ioapic->id = ioapic_madt->id;
 }
