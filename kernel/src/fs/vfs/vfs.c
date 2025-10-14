@@ -35,6 +35,7 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
     node->blksz = DEFAULT_PAGE_SIZE;
     node->name = name ? strdup(name) : NULL;
     node->linkto = NULL;
+    node->inode = alloc_fake_inode();
     node->type = file_none;
     node->fsid = parent ? parent->fsid : 0;
     node->root = parent ? parent->root : node;

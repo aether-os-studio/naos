@@ -390,3 +390,8 @@ extern vfs_callback_t fs_callbacks[256];
 #define callbackof(node, _name_) (fs_callbacks[(node)->fsid]->_name_)
 
 extern int fs_nextid;
+
+static inline uint32_t alloc_fake_inode() {
+    static uint32_t next_inode = 1;
+    return next_inode++;
+}
