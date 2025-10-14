@@ -278,6 +278,7 @@ void task_init() {
         memset(schedulers[cpu], 0, sizeof(eevdf_t));
         schedulers[cpu]->root = malloc(sizeof(struct rb_root));
         memset(schedulers[cpu]->root, 0, sizeof(struct rb_root));
+        schedulers[cpu]->leftmost = NULL;
         schedulers[cpu]->root->rb_node = NULL;
         schedulers[cpu]->min_vruntime = 0;
     }
@@ -493,9 +494,16 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
     }
 
     child->saved_signal = 0;
-    memcpy(child->actions, current_task->actions, sizeof(child->actions));
     child->signal = 0;
-    child->blocked = current_task->blocked;
+    if (vfork) {
+        spin_lock(&current_task->signal_lock);
+        memcpy(child->actions, current_task->actions, sizeof(child->actions));
+        child->blocked = current_task->blocked;
+        spin_unlock(&current_task->signal_lock);
+    } else {
+        memset(child->actions, 0, sizeof(child->actions));
+        child->blocked = 0;
+    }
 
     memcpy(&child->term, &current_task->term, sizeof(termios));
 
@@ -659,6 +667,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
         else
             free_page_table(current_task->arch_context->mm);
         current_task->arch_context->mm = new_mm;
+        new_mm->task_vma_mgr.last_alloc_addr = USER_MMAP_START;
     }
 
     current_task->arch_context->mm->brk_start = USER_BRK_START;
@@ -920,7 +929,12 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
     }
 
     for (int i = 1; i < MAXSIG; i++) {
-        if (i != SIGCHLD && current_task->actions[i].sa_handler != SIG_IGN) {
+        if (i == SIGCHLD) {
+            if (current_task->actions[i].sa_handler != (sighandler_t)SIG_IGN) {
+                memset(&current_task->actions[i], 0, sizeof(sigaction_t));
+            }
+            continue;
+        } else {
             memset(&current_task->actions[i], 0, sizeof(sigaction_t));
         }
     }
@@ -1021,7 +1035,7 @@ void task_unblock(task_t *task, int reason) {
     if (!entity->on_rq) {
         entity->on_rq = true;
         spin_lock(&schedulers[task->cpu_id]->queue_lock);
-        insert_sched_entity(schedulers[task->cpu_id]->root, entity);
+        insert_sched_entity(schedulers[task->cpu_id], entity);
         spin_unlock(&schedulers[task->cpu_id]->queue_lock);
         schedulers[task->cpu_id]->task_count++;
     }
@@ -1353,9 +1367,16 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     memcpy(&child->term, &current_task->term, sizeof(termios));
 
     child->saved_signal = 0;
-    memcpy(child->actions, current_task->actions, sizeof(child->actions));
     child->signal = 0;
-    child->blocked = current_task->blocked;
+    if (flags & CLONE_SIGHAND) {
+        memcpy(child->actions, current_task->actions, sizeof(child->actions));
+        spin_lock(&current_task->signal_lock);
+        child->blocked = current_task->blocked;
+        spin_unlock(&current_task->signal_lock);
+    } else {
+        memset(child->actions, 0, sizeof(child->actions));
+        child->blocked = 0;
+    }
 
     if (flags & CLONE_SETTLS) {
 #if defined(__x86_64__)

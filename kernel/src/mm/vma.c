@@ -245,3 +245,114 @@ void vma_manager_exit_cleanup(vma_manager_t *mgr) {
     mgr->vm_total = 0;
     mgr->vm_used = 0;
 }
+
+// 克隆单个VMA
+vma_t *vma_clone(vma_t *vma) {
+    if (!vma)
+        return NULL;
+
+    // 分配新的VMA结构体
+    vma_t *new_vma = vma_alloc();
+    if (!new_vma)
+        return NULL;
+
+    // 复制所有字段
+    new_vma->vm_start = vma->vm_start;
+    new_vma->vm_end = vma->vm_end;
+    new_vma->vm_flags = vma->vm_flags;
+    new_vma->vm_type = vma->vm_type;
+    new_vma->vm_offset = vma->vm_offset;
+    new_vma->shm_id = vma->shm_id;
+
+    // 文件描述符需要复制（如果有效）
+    if (vma->vm_fd >= 0) {
+        new_vma->vm_fd = vma->vm_fd;
+        if (new_vma->vm_fd < 0) {
+            // dup失败，清理并返回
+            vma_free(new_vma);
+            return NULL;
+        }
+    } else {
+        new_vma->vm_fd = -1;
+    }
+
+    // 深拷贝vm_name字符串
+    if (vma->vm_name) {
+        new_vma->vm_name = strdup(vma->vm_name);
+        if (!new_vma->vm_name) {
+            vma_free(new_vma);
+            return NULL;
+        }
+    } else {
+        new_vma->vm_name = NULL;
+    }
+
+    // 注意：vm_next 和 vm_prev 将在插入时设置，这里初始化为NULL
+    new_vma->vm_next = NULL;
+    new_vma->vm_prev = NULL;
+
+    return new_vma;
+}
+
+// 克隆整个VMA管理器（用于fork）
+int vma_manager_clone(vma_manager_t *src_mgr, vma_manager_t *dst_mgr) {
+    if (!src_mgr || !dst_mgr)
+        return -1;
+
+    // 初始化目标管理器
+    dst_mgr->vma_list = NULL;
+    dst_mgr->vm_total = src_mgr->vm_total;
+    dst_mgr->vm_used = 0; // 会在插入VMA时重新计算
+
+    vma_t *src_vma = src_mgr->vma_list;
+    vma_t *dst_prev = NULL;
+
+    // 遍历源管理器的所有VMA
+    while (src_vma) {
+        // 克隆当前VMA
+        vma_t *dst_vma = vma_clone(src_vma);
+        if (!dst_vma) {
+            // 克隆失败，清理已经创建的VMA
+            vma_manager_exit_cleanup(dst_mgr);
+            return -1;
+        }
+
+        // 将克隆的VMA插入到目标管理器
+        dst_vma->vm_prev = dst_prev;
+        dst_vma->vm_next = NULL;
+
+        if (dst_prev) {
+            dst_prev->vm_next = dst_vma;
+        } else {
+            // 第一个VMA
+            dst_mgr->vma_list = dst_vma;
+        }
+
+        // 更新vm_used统计
+        dst_mgr->vm_used += dst_vma->vm_end - dst_vma->vm_start;
+
+        dst_prev = dst_vma;
+        src_vma = src_vma->vm_next;
+    }
+
+    dst_mgr->last_alloc_addr = src_mgr->last_alloc_addr;
+
+    return 0;
+}
+
+// fork时调用的便捷函数
+int vma_manager_fork(vma_manager_t *dest_mgt, vma_manager_t *parent_mgr) {
+    if (!parent_mgr)
+        return -1;
+
+    // 分配新的管理器
+    if (!dest_mgt)
+        return -1;
+
+    // 克隆父进程的VMA
+    if (vma_manager_clone(parent_mgr, dest_mgt) < 0) {
+        return -1;
+    }
+
+    return 0;
+}

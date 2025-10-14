@@ -29,7 +29,7 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
         return NULL;
     memset(node, 0, sizeof(struct vfs_node));
     node->parent = parent;
-    node->spin.lock = 0;
+    node->flags = 0;
     node->dev = 0;
     node->rdev = 0;
     node->blksz = DEFAULT_PAGE_SIZE;
@@ -67,13 +67,11 @@ void vfs_free_child(vfs_node_t vfs) {
 }
 
 static inline void do_open(vfs_node_t file) {
-    spin_lock(&file->spin);
     if (file->handle != NULL) {
         callbackof(file, stat)(file->handle, file);
     } else {
         callbackof(file, open)(file->parent->handle, file->name, file);
     }
-    spin_unlock(&file->spin);
 }
 
 static inline void do_update(vfs_node_t file) {
@@ -465,9 +463,7 @@ int vfs_chmod(const char *path, uint16_t mode) {
     vfs_node_t node = vfs_open(path);
     if (!node)
         return -ENOENT;
-    spin_lock(&node->spin);
     int ret = callbackof(node, chmod)(node, mode);
-    spin_unlock(&node->spin);
     return ret;
 }
 
@@ -614,16 +610,26 @@ int vfs_close(vfs_node_t node) {
     }
     if (node->type & file_dir)
         return 0;
-    spin_lock(&node->spin);
     if (node->refcount > 0)
         node->refcount--;
-    if (node->refcount == 0) {
+    if (node->refcount <= 0) {
         bool real_close = callbackof(node, close)(node->handle);
         if (real_close) {
-            node->handle = NULL;
+            if (node->flags & VFS_NODE_FLAGS_DELETED) {
+                int res = callbackof(node, delete)(node->parent->handle, node);
+                if (res < 0) {
+                    return -1;
+                }
+                list_delete(node->parent->child, node);
+                callbackof(node, free_handle)(node->handle);
+                node->handle = NULL;
+                free(node->name);
+                free(node);
+            } else {
+                node->handle = NULL;
+            }
         }
     }
-    spin_unlock(&node->spin);
 
     return 0;
 }
@@ -657,16 +663,12 @@ ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size) {
     if (fd->node->type & file_dir)
         return -1;
 
-    spin_lock(&fd->node->spin);
     ssize_t ret = callbackof(fd->node, read)(fd, addr, offset, size);
-    spin_unlock(&fd->node->spin);
     return ret;
 }
 
 int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize) {
-    spin_lock(&node->spin);
     int ret = callbackof(node, readlink)(node, buf, 0, bufsize);
-    spin_unlock(&node->spin);
     return ret;
 }
 
@@ -684,13 +686,11 @@ ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size) {
     if (fd->node->type & file_dir)
         return -1;
 
-    spin_lock(&fd->node->spin);
     ssize_t write_bytes = 0;
     write_bytes = callbackof(fd->node, write)(fd, addr, offset, size);
     if (write_bytes > 0) {
         fd->node->size = MAX(fd->node->size, offset + write_bytes);
     }
-    spin_unlock(&fd->node->spin);
     return write_bytes;
 }
 
@@ -799,9 +799,7 @@ int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
 int vfs_poll(vfs_node_t node, size_t event) {
     if (node->type & file_dir)
         return -1;
-    spin_lock(&node->spin);
     int ret = callbackof(node, poll)(node->handle, event);
-    spin_unlock(&node->spin);
     return ret;
 }
 
@@ -846,16 +844,16 @@ char *vfs_get_fullpath(vfs_node_t node) {
 int vfs_delete(vfs_node_t node) {
     if (node == rootdir)
         return -1;
-    spin_lock(&node->spin);
+    node->flags |= VFS_NODE_FLAGS_DELETED;
+    if (node->refcount > 0)
+        return 0;
     int res = callbackof(node, delete)(node->parent->handle, node);
     if (res < 0) {
-        spin_unlock(&node->spin);
         return -1;
     }
     list_delete(node->parent->child, node);
     callbackof(node, free_handle)(node->handle);
     node->handle = NULL;
-    spin_unlock(&node->spin);
     free(node->name);
     free(node);
 
@@ -866,8 +864,6 @@ int vfs_rename(vfs_node_t node, const char *new) {
     vfs_node_t new_node = vfs_open(new);
     if (new_node)
         vfs_delete(new_node);
-
-    spin_lock(&node->spin);
 
     char *filename;
     char *last_slash = strrchr(new, '/');
@@ -902,7 +898,6 @@ int vfs_rename(vfs_node_t node, const char *new) {
 
     int ret = callbackof(node, rename)(node->handle, new);
     if (ret < 0) {
-        spin_unlock(&node->spin);
         return ret;
     }
 
@@ -913,8 +908,6 @@ int vfs_rename(vfs_node_t node, const char *new) {
         list_append(node->parent->child, node);
     free(node->name);
     node->name = strdup(filename);
-
-    spin_unlock(&node->spin);
 
     return ret;
 }

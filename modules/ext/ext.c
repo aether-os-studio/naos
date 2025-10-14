@@ -93,7 +93,6 @@ void ext_open(void *parent, const char *name, vfs_node_t node) {
                 !strcmp((const char *)entry->name, ".."))
                 continue;
             if (vfs_child_find(node, (const char *)entry->name)) {
-                spin_lock(&node->spin);
                 continue;
             }
             vfs_node_t child =

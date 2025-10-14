@@ -20,6 +20,8 @@ normal:
     jmp next
 
 next:
+    subq $0x08, %rsp
+
     subq $0x38, %rsp
 
     pushq %rax
@@ -77,6 +79,8 @@ ret_from_syscall:
     popq %rax
 
     addq $0x38, %rsp
+
+    addq $0x08, %rsp
 
     swapgs
 

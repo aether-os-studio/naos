@@ -138,10 +138,10 @@ bool BuildPRPList(void *vaddr, uint64_t size, NVME_PRP_LIST *prpList) {
     if (!prpArray)
         return false;
 
-    uint64_t currentPage = firstPage + DEFAULT_PAGE_SIZE;
+    uint64_t currentPage = translate_address(get_current_page_dir(false),
+                                             firstPage + DEFAULT_PAGE_SIZE);
     for (uint32_t i = 0; i < prpEntries; i++) {
-        prpArray[i] =
-            translate_address(get_current_page_dir(false), currentPage);
+        prpArray[i] = currentPage;
         currentPage += DEFAULT_PAGE_SIZE;
     }
 
@@ -204,9 +204,6 @@ uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba,
 
         sqe.DATA[0] = prpList.prp1;
         sqe.DATA[1] = prpList.prp2;
-        if (prpList.UPRP) {
-            sqe.CDW0 |= NVME_SQE_PRP_PTR;
-        }
 
         NVME_COMPLETION_QUEUE_ENTRY cqe = NVMEWaitingCMD(&ns->CTRL->ISQ, &sqe);
         if ((cqe.STS >> 1) & 0xFF) {

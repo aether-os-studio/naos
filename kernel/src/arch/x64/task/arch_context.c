@@ -19,6 +19,7 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->mm->page_table_addr = page_table_addr;
     context->mm->ref_count = 1;
     memset(&context->mm->task_vma_mgr, 0, sizeof(vma_manager_t));
+    context->mm->task_vma_mgr.last_alloc_addr = USER_MMAP_START;
     context->mm->brk_start = USER_BRK_START;
     context->mm->brk_current = context->mm->brk_start;
     context->mm->brk_end = USER_BRK_END;
@@ -80,8 +81,6 @@ void arch_context_free(arch_context_t *context) {
     if (context->fpu_ctx) {
         free_frames_bytes(context->fpu_ctx, DEFAULT_PAGE_SIZE);
     }
-    if (context->mm->ref_count <= 1)
-        vma_manager_exit_cleanup(&context->mm->task_vma_mgr);
 }
 
 task_t *arch_get_current() { return (task_t *)read_kgsbase(); }

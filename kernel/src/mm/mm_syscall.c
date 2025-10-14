@@ -93,13 +93,18 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
                 return (uint64_t)-ENOMEM;
             }
         } else {
-            // 简单的地址分配策略：从高地址开始
-            start_addr = USER_MMAP_START;
+        retry:
+            start_addr = mgr->last_alloc_addr;
             while (vma_find_intersection(mgr, start_addr,
                                          start_addr + aligned_len)) {
                 start_addr += DEFAULT_PAGE_SIZE;
-                if (start_addr > USER_MMAP_END)
+                if (start_addr > USER_MMAP_END) {
+                    if (mgr->last_alloc_addr != USER_MMAP_START) {
+                        mgr->last_alloc_addr = USER_MMAP_START;
+                        goto retry;
+                    }
                     return (uint64_t)-ENOMEM;
+                }
             }
         }
     }
@@ -149,6 +154,9 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         vma_free(vma);
         return (uint64_t)-ENOMEM;
     }
+
+    if (!addr)
+        mgr->last_alloc_addr = start_addr;
 
     if (!(flags & MAP_ANONYMOUS)) {
         uint64_t ret =
@@ -307,7 +315,7 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
     }
 
     if (flags & MREMAP_MAYMOVE) {
-        // 简单的地址分配策略：从高地址开始
+        // TODO: 修改这里与mmap的地址分配逻辑保持一致
         uint64_t start_addr = USER_MMAP_START;
         while (vma_find_intersection(mgr, start_addr, start_addr + new_size)) {
             start_addr += DEFAULT_PAGE_SIZE;

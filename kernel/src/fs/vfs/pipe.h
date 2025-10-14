@@ -2,7 +2,7 @@
 
 #include <libs/klibc.h>
 
-#define PIPE_BUFF 131072
+#define PIPE_BUFF 65536
 
 #define MAX_PIPES 32
 

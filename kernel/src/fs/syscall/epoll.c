@@ -56,8 +56,6 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
         spin_lock(&epoll->lock);
         epoll_watch_t *browse = epoll->firstEpollWatch;
 
-        arch_disable_interrupt();
-
         while (browse && ready < maxevents) {
             if (!browse->fd) {
                 browse = browse->next;
