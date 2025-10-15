@@ -963,6 +963,13 @@ uint64_t sys_fchmodat(int dfd, const char *name, uint16_t mode) {
     return ret;
 }
 
+uint64_t sys_fchmodat2(int dfd, const char *name, uint16_t mode, int flags) {
+    char *resolved = at_resolve_pathname(dfd, name);
+    int ret = vfs_chmod(name, mode);
+    free(resolved);
+    return ret;
+}
+
 uint64_t sys_chown(const char *filename, uint64_t uid, uint64_t gid) {
     int ret = vfs_chown(filename, uid, gid);
     return ret;
@@ -1053,9 +1060,9 @@ uint64_t sys_flock(int fd, uint64_t operation) {
             if (operation & LOCK_NB)
                 return -EWOULDBLOCK;
 
-            while (lock->lock) {
-                arch_enable_interrupt();
+            arch_enable_interrupt();
 
+            while (lock->lock) {
                 arch_pause();
             }
 

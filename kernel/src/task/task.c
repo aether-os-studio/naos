@@ -652,15 +652,16 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
         return task_execve((const char *)injected_argv[0], injected_argv, envp);
     }
 
-    vma_manager_exit_cleanup(&current_task->arch_context->mm->task_vma_mgr);
+    if (!current_task->is_vfork) {
+        vma_manager_exit_cleanup(&current_task->arch_context->mm->task_vma_mgr);
+    }
 
     if (current_task->is_vfork ||
-        current_task->arch_context->mm->page_table_addr ==
+        current_task->is_kernel ==
             (uint64_t)virt_to_phys(get_kernel_page_dir())) {
         task_mm_info_t *new_mm =
             clone_page_table(current_task->arch_context->mm, 0);
-        if (!(current_task->arch_context->mm->page_table_addr ==
-              (uint64_t)virt_to_phys(get_kernel_page_dir()))) {
+        if (!current_task->is_kernel) {
             free_page_table(current_task->arch_context->mm);
         }
         current_task->arch_context->mm = new_mm;

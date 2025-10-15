@@ -208,7 +208,7 @@ int vma_unmap_range(vma_manager_t *mgr, uintptr_t start, uintptr_t end) {
 }
 
 void vma_manager_exit_cleanup(vma_manager_t *mgr) {
-    if (!mgr)
+    if (!mgr || !mgr->initialized)
         return;
 
     vma_t *vma = mgr->vma_list;
@@ -267,13 +267,7 @@ vma_t *vma_copy(vma_t *src) {
 
     // 深度拷贝vm_name字符串
     if (src->vm_name) {
-        size_t name_len = strlen(src->vm_name);
-        dst->vm_name = (char *)malloc(name_len + 1);
-        if (!dst->vm_name) {
-            free(dst); // 注意这里直接用free，因为vm_name为NULL
-            return NULL;
-        }
-        memcpy(dst->vm_name, src->vm_name, name_len + 1);
+        dst->vm_name = strdup(src->vm_name);
     } else {
         dst->vm_name = NULL;
     }
@@ -328,6 +322,11 @@ vma_t *vma_list_copy(vma_t *src_list) {
 int vma_manager_copy(vma_manager_t *dst, vma_manager_t *src) {
     if (!dst || !src)
         return -1;
+
+    if (!src->initialized) {
+        memset(dst, 0, sizeof(vma_manager_t));
+        return 0;
+    }
 
     // 初始化目标管理器
     dst->vma_list = NULL;

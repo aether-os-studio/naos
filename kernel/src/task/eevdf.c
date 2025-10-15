@@ -175,6 +175,7 @@ struct sched_entity *new_entity(task_t *task, uint64_t prio,
                                 eevdf_t *eevdf_sched) {
     struct sched_entity *entity =
         (struct sched_entity *)malloc(sizeof(struct sched_entity));
+    memset(entity, 0, sizeof(struct sched_entity));
     entity->is_idle = prio == NICE_TO_PRIO(20);
     entity->prio = prio;
     entity->slice = sysctl_sched_base_slice;

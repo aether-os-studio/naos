@@ -247,6 +247,7 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
 #endif
     new_mm->ref_count = 1;
     vma_manager_copy(&new_mm->task_vma_mgr, &old->task_vma_mgr);
+    new_mm->task_vma_mgr.initialized = true;
     new_mm->brk_start = old->brk_start;
     new_mm->brk_current = old->brk_current;
     new_mm->brk_end = old->brk_end;

@@ -579,7 +579,7 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_SET_MEMPOLICY_HOME_NODE] =
     //     (syscall_handle_t)sys_set_mempolicy_home_node;
     // syscall_handlers[SYS_CACHESTAT] = (syscall_handle_t)sys_cachestat;
-    // syscall_handlers[SYS_FCHMODAT2] = (syscall_handle_t)sys_fchmodat2;
+    syscall_handlers[SYS_FCHMODAT2] = (syscall_handle_t)sys_fchmodat2;
 }
 
 spinlock_t syscall_debug_lock = {0};

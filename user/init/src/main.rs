@@ -24,6 +24,34 @@ fn main() {
                 core::ptr::null() as *const _,
             ) == 0
         );
+        // Mount tmpfs
+        assert!(
+            libc::mount(
+                b"tmpfs\0".as_ptr() as *const _,
+                b"/var\0".as_ptr() as *const _,
+                b"tmpfs\0".as_ptr() as *const _,
+                0,
+                core::ptr::null() as *const _,
+            ) == 0
+        );
+        assert!(
+            libc::mount(
+                b"tmpfs\0".as_ptr() as *const _,
+                b"/run\0".as_ptr() as *const _,
+                b"tmpfs\0".as_ptr() as *const _,
+                0,
+                core::ptr::null() as *const _,
+            ) == 0
+        );
+        assert!(
+            libc::mount(
+                b"tmpfs\0".as_ptr() as *const _,
+                b"/tmp\0".as_ptr() as *const _,
+                b"tmpfs\0".as_ptr() as *const _,
+                0,
+                core::ptr::null() as *const _,
+            ) == 0
+        );
     }
 
     unsafe { std::env::set_var("PATH", "/usr/local/bin:/usr/bin:/bin") };

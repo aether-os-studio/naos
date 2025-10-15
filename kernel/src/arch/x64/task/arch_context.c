@@ -20,6 +20,7 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->mm->ref_count = 1;
     memset(&context->mm->task_vma_mgr, 0, sizeof(vma_manager_t));
     context->mm->task_vma_mgr.last_alloc_addr = USER_MMAP_START;
+    context->mm->task_vma_mgr.initialized = false;
     context->mm->brk_start = USER_BRK_START;
     context->mm->brk_current = context->mm->brk_start;
     context->mm->brk_end = USER_BRK_END;
@@ -131,6 +132,9 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next) {
         return;
     }
 
+    if (!prev || !next)
+        return;
+
     if (next->signal & SIGMASK(SIGKILL)) {
         return;
     }
@@ -196,7 +200,6 @@ extern bool task_initialized;
 
 void arch_yield() {
     if (task_initialized) {
-        ((struct sched_entity *)current_task->sched_info)->is_yield = true;
         asm volatile(
             "sti\n\tint %0\n\tcli\n\t" ::"i"(APIC_TIMER_INTERRUPT_VECTOR));
     }

@@ -2,6 +2,7 @@
 #include <task/task.h>
 #include <fs/fs_syscall.h>
 #include <fs/vfs/dev.h>
+#include <drivers/fb.h>
 
 vfs_node_t pipefs_root;
 int pipefs_id = 0;
@@ -106,10 +107,85 @@ ssize_t pipefs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     return ret;
 }
 
+extern int tty_mode;
+extern int tty_kbmode;
+extern struct vt_mode current_vt_mode;
+
+extern stdio_handle_t *global_stdio_handle;
+
 int pipefs_ioctl(void *file, ssize_t cmd, ssize_t arg) {
     switch (cmd) {
+    case TIOCGWINSZ:
+        *(struct winsize *)arg = (struct winsize){
+            .ws_xpixel = framebuffer->width,
+            .ws_ypixel = framebuffer->height,
+            .ws_col = framebuffer->width / 8,
+            .ws_row = framebuffer->height / 16,
+        };
+        return 0;
+    case TIOCSCTTY:
+        return 0;
+    case TIOCGPGRP:
+        int *pid = (int *)arg;
+        *pid = global_stdio_handle->at_process_group_id;
+        return 0;
+    case TIOCSPGRP:
+        global_stdio_handle->at_process_group_id = *(int *)arg;
+        return 0;
+    case TCGETS:
+        if (check_user_overflow(arg, sizeof(termios))) {
+            return -EFAULT;
+        }
+        memcpy((void *)arg, &current_task->term, sizeof(termios));
+        return 0;
+    case TCSETS:
+        if (check_user_overflow(arg, sizeof(termios))) {
+            return -EFAULT;
+        }
+        memcpy(&current_task->term, (void *)arg, sizeof(termios));
+        return 0;
+    case TCSETSW:
+        if (check_user_overflow(arg, sizeof(termios))) {
+            return -EFAULT;
+        }
+        memcpy(&current_task->term, (void *)arg, sizeof(termios));
+        return 0;
+    case TIOCSWINSZ:
+        return 0;
+    case KDGETMODE:
+        *(int *)arg = tty_mode;
+        return 0;
+    case KDSETMODE:
+        tty_mode = *(int *)arg;
+        return 0;
+    case KDGKBMODE:
+        *(int *)arg = tty_kbmode;
+        return 0;
+    case KDSKBMODE:
+        tty_kbmode = *(int *)arg;
+        return 0;
+    case VT_SETMODE:
+        memcpy(&current_vt_mode, (void *)arg, sizeof(struct vt_mode));
+        return 0;
+    case VT_GETMODE:
+        memcpy((void *)arg, &current_vt_mode, sizeof(struct vt_mode));
+        return 0;
+    case VT_ACTIVATE:
+        return 0;
+    case VT_WAITACTIVE:
+        return 0;
+    case VT_GETSTATE:
+        struct vt_state *state = (struct vt_state *)arg;
+        state->v_active = 1; // 当前活动终端
+        state->v_state = 0;  // 状态标志
+        return 0;
+    case VT_OPENQRY:
+        *(int *)arg = 1;
+        return 0;
+    case TIOCNOTTY:
+        return 0;
     default:
-        return -ENOSYS;
+        return -EINVAL;
     }
 }
 
@@ -135,9 +211,10 @@ bool pipefs_close(void *current) {
         spin_unlock(&pipe->lock);
         free_frames_bytes(pipe->buf, PIPE_BUFF);
         free(pipe);
-    } else {
-        spin_unlock(&pipe->lock);
+        return true;
     }
+
+    spin_unlock(&pipe->lock);
 
     return true;
 }
@@ -171,6 +248,11 @@ vfs_node_t pipe_dup(vfs_node_t node) { return node; }
 int pipefs_stat(void *file, vfs_node_t node) {
     pipe_specific_t *spec = (pipe_specific_t *)file;
     pipe_info_t *pipe = spec->info;
+
+    if (!pipe)
+        return 0;
+
+    node->size = pipe->ptr;
 
     return 0;
 }
