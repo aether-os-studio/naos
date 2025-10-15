@@ -6,6 +6,8 @@ struct futex_wait futex_wait_list = {NULL, NULL, NULL, 0};
 
 uint64_t sys_futex_wait(uint64_t addr, const struct timespec *timeout,
                         uint32_t bitset) {
+    spin_lock(&futex_lock);
+
     struct futex_wait *wait = malloc(sizeof(struct futex_wait));
     wait->uaddr = (void *)addr;
     wait->task = current_task;
@@ -70,15 +72,19 @@ uint64_t sys_futex_wake(uint64_t addr, int val, uint32_t bitset) {
 
 uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
                    int *uaddr2, int val3) {
+    if (check_user_overflow((uint64_t)uaddr, sizeof(int)))
+        return (uint64_t)-EFAULT;
+    if (check_user_overflow((uint64_t)uaddr2, sizeof(int)))
+        return (uint64_t)-EFAULT;
+    if (check_user_overflow((uint64_t)timeout, sizeof(struct timespec)))
+        return (uint64_t)-EFAULT;
+
     switch (op) {
     case FUTEX_WAIT_PRIVATE:
     case FUTEX_WAIT: {
-        spin_lock(&futex_lock);
-
         int current = *(int *)uaddr;
         if (current != val) {
-            spin_unlock(&futex_lock);
-            return -EWOULDBLOCK;
+            return -EAGAIN;
         }
 
         return sys_futex_wait(
@@ -93,12 +99,9 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
     }
     case FUTEX_WAIT_BITSET_PRIVATE:
     case FUTEX_WAIT_BITSET: {
-        spin_lock(&futex_lock);
-
         int current = *(int *)uaddr;
         if (current != val) {
-            spin_unlock(&futex_lock);
-            return -EWOULDBLOCK;
+            return -EAGAIN;
         }
 
         return sys_futex_wait(
