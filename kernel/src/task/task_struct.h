@@ -9,7 +9,6 @@ typedef enum task_state {
     TASK_READY,
     TASK_BLOCKING,
     TASK_READING_STDIO,
-    TASK_HANDLING_SIGNAL,
     TASK_DIED,
 } task_state_t;
 
@@ -113,7 +112,7 @@ typedef struct task {
     uint32_t cpu_id;
     char name[TASK_NAME_MAX];
     vfs_node_t exec_node;
-    uint64_t priority;
+    int priority;
     void *sched_info;
     task_state_t state;
     task_state_t current_state;

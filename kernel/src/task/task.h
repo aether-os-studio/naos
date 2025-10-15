@@ -92,7 +92,7 @@ void sched_update_timerfd();
 void sched_check_wakeup();
 
 task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
-                    uint64_t priority);
+                    int priority);
 void task_init();
 
 struct pt_regs;
@@ -213,7 +213,3 @@ uint64_t sys_setpriority(int which, int who, int niceval);
 
 extern task_t *tasks[MAX_TASK_NUM];
 extern task_t *idle_tasks[MAX_CPU_NUM];
-
-struct eevdf_t;
-typedef struct eevdf_t eevdf_t;
-extern eevdf_t *schedulers[MAX_CPU_NUM];

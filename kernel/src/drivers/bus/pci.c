@@ -354,7 +354,8 @@ void pci_scan_function(uint16_t segment_group, uint8_t bus, uint8_t device,
     uint16_t device_id = *(volatile uint16_t *)(id_mmio_addr + 2);
 
     uint64_t field_mmio_addr = get_mmio_address(pci_address, PCI_CONF_REVISION);
-    uint8_t device_revision = EXPORT_BYTE(*(volatile uint8_t *)field_mmio_addr, true);
+    uint8_t device_revision =
+        EXPORT_BYTE(*(volatile uint8_t *)field_mmio_addr, true);
     uint8_t device_class = *((uint8_t *)field_mmio_addr + 3);
     uint8_t device_subclass = *((uint8_t *)field_mmio_addr + 2);
     uint8_t device_interface = *((uint8_t *)field_mmio_addr + 1);

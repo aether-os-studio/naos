@@ -2,7 +2,7 @@
 #include <mm/mm.h>
 #include <arch/arch.h>
 #include <task/task.h>
-#include <task/eevdf.h>
+#include <task/muqss.h>
 
 void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
                        uint64_t entry, uint64_t stack, bool user_mode,
@@ -200,6 +200,9 @@ extern bool task_initialized;
 
 void arch_yield() {
     if (task_initialized) {
+        struct sched_entity *curr_se =
+            (struct sched_entity *)current_task->sched_info;
+        curr_se->is_yield = true;
         asm volatile(
             "sti\n\tint %0\n\tcli\n\t" ::"i"(APIC_TIMER_INTERRUPT_VECTOR));
     }

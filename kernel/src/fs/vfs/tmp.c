@@ -11,7 +11,7 @@ spinlock_t tmpfs_oplock = {0};
 
 extern uint32_t device_number;
 
-static int dummy() { return -ENOSYS; }
+static int dummy() { return 0; }
 
 void tmpfs_open(void *parent, const char *name, vfs_node_t node) {}
 

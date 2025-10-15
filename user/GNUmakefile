@@ -4,7 +4,7 @@ export SYSROOT = $(CWD)/rootfs-$(ARCH)
 all:
 	sh ports.sh
 ifeq ($(ARCH), x86_64)
-	sh get_nvidia_firmware.sh
+# 	sh get_nvidia_firmware.sh
 	$(MAKE) -C init
 endif
 

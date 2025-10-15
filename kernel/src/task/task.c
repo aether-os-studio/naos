@@ -1,7 +1,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <task/futex.h>
-#include <task/eevdf.h>
+#include <task/muqss.h>
 #include <drivers/kernel_logger.h>
 #include <fs/vfs/dev.h>
 #include <fs/vfs/vfs.h>
@@ -12,7 +12,7 @@
 #include <net/socket.h>
 #include <uacpi/sleep.h>
 
-eevdf_t *schedulers[MAX_CPU_NUM];
+struct rq schedulers[MAX_CPU_NUM];
 
 const uint64_t bitmap_size =
     (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 8;
@@ -141,7 +141,7 @@ uint32_t alloc_cpu_id() {
 }
 
 task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
-                    uint64_t priority) {
+                    int priority) {
     arch_disable_interrupt();
 
     can_schedule = false;
@@ -244,15 +244,18 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->state = TASK_READY;
     task->current_state = TASK_READY;
 
-    add_eevdf_entity_with_prio(task, task->priority, schedulers[task->cpu_id]);
+    task->sched_info = sched_entity_create(task);
+    enqueue_task(&schedulers[task->cpu_id], task);
+
     can_schedule = true;
 
     return task;
 }
 
 task_t *task_search(task_state_t state, uint32_t cpu_id) {
-    task_t *task = pick_next_task(schedulers[cpu_id]);
-    return task;
+    schedule(&schedulers[cpu_id]);
+    return schedulers[cpu_id].curr ? schedulers[cpu_id].curr
+                                   : idle_tasks[cpu_id];
 }
 
 void idle_entry(uint64_t arg) {
@@ -271,20 +274,15 @@ void task_init() {
     memset(idle_tasks, 0, sizeof(idle_tasks));
 
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
-        schedulers[cpu] = malloc(sizeof(eevdf_t));
-        memset(schedulers[cpu], 0, sizeof(eevdf_t));
-        schedulers[cpu]->root = malloc(sizeof(struct rb_root));
-        memset(schedulers[cpu]->root, 0, sizeof(struct rb_root));
-        schedulers[cpu]->root->rb_node = NULL;
-        schedulers[cpu]->min_vruntime = 0;
+        rq_init(&schedulers[cpu]);
     }
 
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
         task_t *idle_task = task_create("idle", idle_entry, 0, IDLE_PRIORITY);
         idle_task->cpu_id = cpu;
         idle_task->state = TASK_RUNNING;
-        schedulers[cpu]->current = idle_task->sched_info;
-        schedulers[cpu]->idle_entity = idle_task->sched_info;
+        schedulers[cpu].curr = idle_task;
+        schedulers[cpu].idle = idle_task;
     }
 
     task_create("init", init_thread, 0, NORMAL_PRIORITY);
@@ -521,8 +519,9 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
     child->state = TASK_READY;
     child->current_state = TASK_READY;
 
-    add_eevdf_entity_with_prio(child, child->priority,
-                               schedulers[child->cpu_id]);
+    child->sched_info = sched_entity_create(child);
+    enqueue_task(&schedulers[child->cpu_id], child);
+
     can_schedule = true;
 
     if (vfork) {
@@ -1011,11 +1010,9 @@ int task_block(task_t *task, task_state_t state, int timeout_ns) {
     else
         task->force_wakeup_ns = UINT64_MAX;
 
-    struct sched_entity *entity = task->sched_info;
-    if (entity->on_rq) {
-        remove_eevdf_entity(task, schedulers[task->cpu_id]);
-        entity->on_rq = false;
-    }
+    struct sched_entity *curr_se = (struct sched_entity *)task->sched_info;
+    if (curr_se->rq)
+        dequeue_task(&schedulers[task->cpu_id], task);
 
     if (current_task == task &&
         (state == TASK_BLOCKING || state == TASK_READING_STDIO)) {
@@ -1029,14 +1026,9 @@ void task_unblock(task_t *task, int reason) {
     task->status = reason;
     task->state = TASK_READY;
 
-    struct sched_entity *entity = task->sched_info;
-    if (!entity->on_rq) {
-        entity->on_rq = true;
-        spin_lock(&schedulers[task->cpu_id]->queue_lock);
-        insert_sched_entity(schedulers[task->cpu_id]->root, entity);
-        spin_unlock(&schedulers[task->cpu_id]->queue_lock);
-        schedulers[task->cpu_id]->task_count++;
-    }
+    struct sched_entity *curr_se = (struct sched_entity *)task->sched_info;
+    if (!curr_se->rq)
+        enqueue_task(&schedulers[task->cpu_id], task);
 }
 
 extern spinlock_t futex_lock;
@@ -1046,7 +1038,9 @@ void task_exit_inner(task_t *task, int64_t code) {
     spin_lock(&task_queue_lock);
 
     can_schedule = false;
-    remove_eevdf_entity(task, schedulers[task->cpu_id]);
+    struct sched_entity *se = (struct sched_entity *)task->sched_info;
+    if (se->rq)
+        dequeue_task(&schedulers[task->cpu_id], task);
     free(task->sched_info);
     task->sched_info = NULL;
 
@@ -1411,8 +1405,9 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     child->state = TASK_READY;
     child->current_state = TASK_READY;
 
-    add_eevdf_entity_with_prio(child, child->priority,
-                               schedulers[child->cpu_id]);
+    child->sched_info = sched_entity_create(child);
+    enqueue_task(&schedulers[child->cpu_id], child);
+
     can_schedule = true;
 
     if ((flags & CLONE_VFORK)) {
@@ -1764,9 +1759,6 @@ uint64_t sys_setpriority(int which, int who, int niceval) {
         task = tasks[who];
         if (!task)
             return -ESRCH;
-
-        change_entity_weight(schedulers[task->cpu_id], task,
-                             NICE_TO_PRIO(niceval));
 
         return 0;
 

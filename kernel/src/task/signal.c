@@ -136,8 +136,6 @@ void sys_sigreturn(struct pt_regs *regs) {
 
     current_task->call_in_signal = 0;
 
-    task_unblock(current_task, EOK);
-
     asm volatile(
         "movq %0, %%rsp\n\t"
         "jmp ret_from_exception" ::"r"(current_task->arch_context->ctx));
@@ -311,8 +309,6 @@ void task_signal() {
         return;
     }
 
-    task_block(current_task, TASK_HANDLING_SIGNAL, -1);
-
 #if defined(__x86_64__)
     struct pt_regs *f = (struct pt_regs *)(current_task->syscall_stack - 8) - 1;
 
@@ -336,7 +332,7 @@ void task_signal() {
     current_task->arch_context->fs = SELECTOR_USER_DS;
     current_task->arch_context->gs = SELECTOR_USER_DS;
 
-    current_task->arch_context->ctx->rflags = (1UL << 12) | (0b10) | (1UL << 9);
+    current_task->arch_context->ctx->rflags = 0x0;
     current_task->arch_context->ctx->rsp = sigrsp;
 #elif defined(__aarch64__)
 #elif defined(__riscv)
