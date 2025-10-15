@@ -118,3 +118,5 @@ typedef enum {
  */
 rel_status calculate_relative_path(char *relative, const char *from,
                                    const char *to, size_t size);
+
+char *vfs_dirname(const char *path, char *result, size_t size);

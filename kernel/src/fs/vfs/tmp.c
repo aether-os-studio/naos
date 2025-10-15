@@ -81,11 +81,7 @@ int tmpfs_mkfile(void *parent, const char *name, vfs_node_t node) {
     return 0;
 }
 
-int tmpfs_symlink(void *parent, const char *name, vfs_node_t node) {
-    node->mode = 0700;
-    node->linkto = vfs_open(name);
-    return 0;
-}
+int tmpfs_symlink(void *parent, const char *name, vfs_node_t node) { return 0; }
 
 int tmpfs_mount(vfs_node_t dev, vfs_node_t node) {
     spin_lock(&tmpfs_oplock);

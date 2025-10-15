@@ -368,7 +368,7 @@ create:
         free(path);
         return ret;
     }
-    node->linkto = vfs_open(target_name);
+    node->linkto = vfs_open_at(node->parent, target_name);
 
     free(path);
 
@@ -376,7 +376,7 @@ create:
 
 err:
     free(path);
-    return -1;
+    return -EIO;
 }
 
 int vfs_mknod(const char *name, uint16_t umode, int dev) {
