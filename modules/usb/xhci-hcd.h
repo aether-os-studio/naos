@@ -87,6 +87,10 @@ typedef struct {
 #define XHCI_PORTSC_OCC (1 << 20)
 #define XHCI_PORTSC_PRC (1 << 21)
 
+#define XHCI_PORTSC_CHANGE_BITS                                                \
+    (XHCI_PORTSC_CSC | XHCI_PORTSC_PEC | XHCI_PORTSC_WRC | XHCI_PORTSC_OCC |   \
+     XHCI_PORTSC_PRC)
+
 // TRB类型
 #define TRB_TYPE_NORMAL 1
 #define TRB_TYPE_SETUP 2
