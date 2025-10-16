@@ -73,10 +73,7 @@ trap_handler:
 ret_from_trap_handler:
     ld t0, 248(sp)   // sepc
     csrw sepc, t0
-    
-    ld t0, 272(sp)   // sstatus  
-    csrw sstatus, t0
-    
+
     ld t0, 8(sp)     // sp
     csrw sscratch, t0
     
@@ -110,11 +107,14 @@ ret_from_trap_handler:
     ld x29, 224(sp)  // t4
     ld x30, 232(sp)  // t5
     ld x31, 240(sp)  // t6
+        
+    ld t0, 272(sp)   // sstatus  
+    csrw sstatus, t0    
     
     ld x5, 32(sp)    // t0
-    
+        
     addi sp, sp, 280
-    
+
     csrrw sp, sscratch, sp
     
     sret

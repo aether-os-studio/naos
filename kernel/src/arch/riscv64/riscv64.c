@@ -11,6 +11,7 @@ void arch_early_init() {
     csr_write(sscratch, (sp & ~(STACK_SIZE - 1)) + STACK_SIZE);
     fdt_init();
     smp_init();
+    asm volatile("mv tp, %0" ::"r"(cpuid_to_hartid[current_cpu_id]));
     timer_init_hart(cpuid_to_hartid[current_cpu_id]);
 }
 

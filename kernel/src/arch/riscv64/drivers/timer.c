@@ -1,9 +1,6 @@
 #include <arch/arch.h>
 #include <task/task.h>
 
-struct timer_context g_timer_ctx = {.timer_freq = TIMER_FREQ,
-                                    .initialized = false};
-
 /**
  * 初始化单个Hart的定时器
  */

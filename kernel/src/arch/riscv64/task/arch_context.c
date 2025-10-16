@@ -1,4 +1,5 @@
 #include <task/task.h>
+#include <task/eevdf.h>
 #include "arch_context.h"
 #include <mm/mm.h>
 #include <arch/arch.h>
@@ -23,7 +24,7 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->ctx->a0 = initial_arg;
     context->dead = false;
     if (user_mode) {
-        context->ctx->sstatus = 0x0;
+        context->ctx->sstatus = 0x2;
     } else {
         context->ctx->sstatus = 0x102;
     }
@@ -39,14 +40,14 @@ extern bool task_initialized;
 task_t *arch_get_current() {
     if (task_initialized) {
         task_t *current;
-        asm volatile("mv %0, tp\n\t" : "=r"(current));
+        asm volatile("mv %0, gp\n\t" : "=r"(current));
         return current;
     } else
         return NULL;
 }
 
 void arch_set_current(task_t *current) {
-    asm volatile("mv tp, %0\n\t" ::"r"(current));
+    asm volatile("mv gp, %0\n\t" ::"r"(current));
 }
 
 extern void ret_from_trap_handler();
@@ -98,7 +99,17 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
 void arch_to_user_mode(arch_context_t *context, uint64_t entry,
                        uint64_t stack) {}
 
-void arch_yield() {}
+extern bool task_initialized;
+
+extern uint64_t cpuid_to_hartid[MAX_CPU_NUM];
+
+void arch_yield() {
+    if (task_initialized) {
+        struct sched_entity *curr_se = current_task->sched_info;
+        curr_se->is_yield = true;
+        sbi_ecall(4, 0, cpuid_to_hartid[current_cpu_id], 0, 0, 0, 0, 0);
+    }
+}
 
 bool arch_check_elf(const Elf64_Ehdr *ehdr) {
     // 验证ELF魔数
