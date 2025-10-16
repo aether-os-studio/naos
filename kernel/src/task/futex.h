@@ -4,7 +4,7 @@
 #include <task/task.h>
 
 struct futex_wait {
-    void *uaddr;
+    uint64_t uaddr;
     task_t *task;
     struct futex_wait *next;
     uint32_t bitset; // For FUTEX_WAIT_BITSET
