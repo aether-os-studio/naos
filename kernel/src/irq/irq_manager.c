@@ -1,4 +1,4 @@
-#include <interrupt/irq_manager.h>
+#include <irq/irq_manager.h>
 #include <drivers/kernel_logger.h>
 #include <arch/arch.h>
 #include <task/task.h>

@@ -1,6 +1,6 @@
 #include <arch/aarch64/acpi/acpi.h>
 #include <arch/aarch64/acpi/gic.h>
-#include <interrupt/irq_manager.h>
+#include <irq/irq_manager.h>
 #include <mm/mm.h>
 
 uint64_t gicd_base_virt = 0;

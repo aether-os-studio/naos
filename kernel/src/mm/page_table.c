@@ -205,7 +205,7 @@ static page_table_t *copy_page_table_recursive(page_table_t *source_table,
 }
 
 static void free_page_table_recursive(page_table_t *table, int level) {
-    if (table == phys_to_virt(NULL))
+    if (!table || table == phys_to_virt(NULL))
         return;
     if (level == 0) {
         free_frames((uint64_t)virt_to_phys((uint64_t)table), 1);
@@ -213,7 +213,6 @@ static void free_page_table_recursive(page_table_t *table, int level) {
     }
 
     for (int i = 0; i <
-
 #if defined(__x86_64__)
                     (level == ARCH_MAX_PT_LEVEL ? 256 : 512);
 #else

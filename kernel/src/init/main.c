@@ -3,7 +3,7 @@
 #include <drivers/kernel_logger.h>
 #include <mm/mm.h>
 #include <arch/arch.h>
-#include <interrupt/irq_manager.h>
+#include <irq/irq_manager.h>
 #include <mod/dlinker.h>
 #include <task/task.h>
 #include <fs/vfs/vfs.h>

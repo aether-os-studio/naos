@@ -2,7 +2,7 @@
 #include <boot/boot.h>
 #include <mm/mm.h>
 #include <arch/arch.h>
-#include <interrupt/irq_manager.h>
+#include <irq/irq_manager.h>
 #include <task/task.h>
 #include <uacpi/acpi.h>
 #include <uacpi/tables.h>

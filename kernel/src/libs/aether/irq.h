@@ -1,7 +1,7 @@
 #pragma once
 
 #include <libs/klibc.h>
-#include <interrupt/irq_manager.h>
+#include <irq/irq_manager.h>
 #include <arch/arch.h>
 
 #if defined(__x86_64__)

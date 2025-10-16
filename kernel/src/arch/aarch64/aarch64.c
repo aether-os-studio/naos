@@ -1,5 +1,5 @@
 #include <arch/arch.h>
-#include <interrupt/irq_manager.h>
+#include <irq/irq_manager.h>
 #include <arch/aarch64/acpi/gic.h>
 
 void arch_early_init() {

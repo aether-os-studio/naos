@@ -21,7 +21,7 @@ uint64_t sys_futex_wait(uint64_t addr, const struct timespec *timeout,
 
     spin_unlock(&futex_lock);
 
-    int tmo = -1;
+    int64_t tmo = -1;
     if (timeout) {
         tmo = timeout->tv_sec * 1000000000 + timeout->tv_nsec;
     }

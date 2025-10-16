@@ -2,7 +2,7 @@
 #include <boot/boot.h>
 #include <mm/mm.h>
 #include <drivers/bus/pci.h>
-#include <interrupt/irq_manager.h>
+#include <irq/irq_manager.h>
 #include <arch/arch.h>
 #include <task/task.h>
 
