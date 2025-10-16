@@ -420,11 +420,61 @@ static inline void sem_post(sem_t *sem) {
 }
 
 extern uint64_t get_physical_memory_offset();
+extern uint64_t *get_current_page_dir(bool user);
+extern uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr);
 
 static inline bool check_user_overflow(uint64_t addr, uint64_t size) {
     if ((addr + size) > get_physical_memory_offset()) {
         return true;
     }
+    return false;
+}
+
+static inline bool check_unmapped(uint64_t addr, uint64_t len) {
+    if (translate_address(get_current_page_dir(true), addr) &&
+        translate_address(get_current_page_dir(true), addr + len))
+        return false;
+
+    return true;
+}
+
+static inline bool copy_to_user(void *dst, const void *src, size_t size) {
+    if (check_user_overflow((uint64_t)dst, size) ||
+        check_unmapped((uint64_t)dst, size))
+        return true;
+
+    memcpy(dst, src, size);
+
+    return false;
+}
+
+static inline bool copy_from_user(void *dst, const void *src, size_t size) {
+    if (check_user_overflow((uint64_t)src, size) ||
+        check_unmapped((uint64_t)src, size))
+        return true;
+
+    memcpy(dst, src, size);
+
+    return false;
+}
+static inline bool copy_to_user_str(char *dst, const char *src, size_t limit) {
+    if (!translate_address(get_current_page_dir(true), (uint64_t)dst) ||
+        check_unmapped((uint64_t)dst, strlen(src)))
+        return true;
+
+    strncpy(dst, src, limit);
+
+    return false;
+}
+
+static inline bool copy_from_user_str(char *dst, const char *src,
+                                      size_t limit) {
+    if (!translate_address(get_current_page_dir(true), (uint64_t)dst) ||
+        check_unmapped((uint64_t)dst, strlen(src)))
+        return true;
+
+    strncpy(dst, src, limit);
+
     return false;
 }
 
