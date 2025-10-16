@@ -1,6 +1,7 @@
 #include <arch/aarch64/task/arch_context.h>
 #include <mm/mm.h>
 #include <task/task.h>
+#include <task/eevdf.h>
 
 void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
                        uint64_t entry, uint64_t stack, bool user_mode,
@@ -88,6 +89,7 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next) {
     arch_set_current(next);
 
     sched_update_itimer();
+    sched_update_timerfd();
 
     arch_switch_with_context(prev->arch_context, next->arch_context,
                              next->kernel_stack);
@@ -122,6 +124,8 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry,
 
 void arch_yield() {
     // arch_enable_interrupt();
+    struct sched_entity *e = current_task->sched_info;
+    e->is_yield = true;
     arch_pause();
 }
 

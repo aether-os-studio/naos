@@ -2197,8 +2197,9 @@ int xhci_hcd_driver_probe(pci_device_t *pci_dev, uint32_t vendor_device_id) {
 
     // Map MMIO region
     void *mmio_vaddr = (void *)phys_to_virt(mmio_base);
-    map_page_range(get_current_page_dir(false), (uint64_t)mmio_vaddr, mmio_base,
-                   mmio_size, PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+    map_page_range(
+        get_current_page_dir(false), (uint64_t)mmio_vaddr, mmio_base, mmio_size,
+        PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE | PT_FLAG_DEVICE);
 
     usb_hcd_t *xhci_hcd = xhci_init(mmio_vaddr, pci_dev);
 

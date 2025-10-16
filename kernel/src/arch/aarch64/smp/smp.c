@@ -2,15 +2,9 @@
 #include <arch/aarch64/acpi/gic.h>
 #include <drivers/kernel_logger.h>
 #include <task/task.h>
+#include <boot/boot.h>
 
 uint64_t cpu_count = 0;
-
-__attribute__((
-    used, section(".limine_requests"))) static volatile struct limine_mp_request
-    mp_request = {
-        .id = LIMINE_MP_REQUEST,
-        .revision = 0,
-};
 
 extern void ap_entry(struct limine_mp_info *cpu);
 
@@ -33,21 +27,15 @@ uint64_t get_cpuid_by_mpidr(uint64_t mpidr) {
     return 0;
 }
 
+void ap_kmain(struct limine_mp_info *cpu);
+
 void smp_init() {
     memset(cpuid_to_mpidr, 0, sizeof(cpuid_to_mpidr));
 
-    cpu_count = mp_request.response->cpu_count;
-
-    for (uint64_t i = 0; i < mp_request.response->cpu_count; i++) {
-        struct limine_mp_info *cpu = mp_request.response->cpus[i];
-        cpuid_to_mpidr[cpu->processor_id] = cpu->mpidr;
-
-        if (cpu->mpidr == mp_request.response->bsp_mpidr)
-            continue;
-
-        cpu->goto_address = ap_entry;
-    }
+    boot_smp_init((uintptr_t)ap_kmain);
 }
+
+spinlock_t ap_startup_lock = {0};
 
 extern bool task_initialized;
 
@@ -55,6 +43,8 @@ void ap_kmain(struct limine_mp_info *cpu) {
     arch_disable_interrupt();
 
     setup_vectors();
+
+    spin_unlock(&ap_startup_lock);
 
     while (!task_initialized) {
         asm volatile("nop");

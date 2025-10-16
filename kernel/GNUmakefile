@@ -188,6 +188,9 @@ all: bin-$(ARCH)/$(OUTPUT)
 # Include header dependencies.
 -include $(HEADER_DEPS)
 
+ifeq ($(ARCH), aarch64)
+override OBJ += $(PROJECT_ROOT)/libgcc_aa64.a
+endif
 ifeq ($(ARCH), riscv64)
 override OBJ += $(PROJECT_ROOT)/libgcc_rv64.a
 endif

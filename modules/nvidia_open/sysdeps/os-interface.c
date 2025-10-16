@@ -272,7 +272,8 @@ void *NV_API_CALL os_map_kernel_space(NvU64 start, NvU64 size_bytes,
         return NULL;
     uint64_t virt = phys_to_virt(start);
     map_page_range(get_current_page_dir(false), virt, start, size_bytes,
-                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE |
+                       PT_FLAG_DEVICE);
     return (void *)virt;
 }
 

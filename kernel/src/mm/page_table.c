@@ -276,5 +276,8 @@ void page_table_init() {
            DEFAULT_PAGE_SIZE / 2);
     asm volatile("movq %0, %%cr3" ::"r"(new_page_table));
     kernel_page_dir = (uint64_t *)phys_to_virt(new_page_table);
+#elif defined(__aarch64__)
+    extern void setup_mair(void);
+    setup_mair();
 #endif
 }

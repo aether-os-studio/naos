@@ -2,6 +2,21 @@
 #include <mm/mm.h>
 #include <libs/klibc.h>
 
+// AArch64内存属性定义
+#define MAIR_ATTR_DEVICE_nGnRnE 0x00 // 设备内存，无聚集，无重排序，无早期确认
+#define MAIR_ATTR_DEVICE_nGnRE 0x04  // 设备内存，无聚集，无重排序
+#define MAIR_ATTR_NORMAL_NC 0x44     // 正常内存，非缓存
+#define MAIR_ATTR_NORMAL_WT 0xBB     // 正常内存，直写
+#define MAIR_ATTR_NORMAL_WB 0xFF     // 正常内存，回写
+
+// 设置MAIR寄存器
+void setup_mair(void) {
+    uint64_t mair_val = (MAIR_ATTR_NORMAL_WB << 0) | // 索引0: 回写正常内存
+                        (MAIR_ATTR_NORMAL_NC << 8) | // 索引1: 非缓存正常内存
+                        (MAIR_ATTR_DEVICE_nGnRnE << 16); // 索引2: 设备内存
+    __asm__ volatile("msr mair_el1, %0" : : "r"(mair_val));
+}
+
 uint64_t *get_current_page_dir(bool user) {
     uint64_t page_table_base = 0;
     if (user) {
@@ -18,8 +33,7 @@ uint64_t *get_current_page_dir(bool user) {
 
 uint64_t get_arch_page_table_flags(uint64_t flags) {
     uint64_t attr = ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_4K_PAGE |
-                    ARCH_PT_FLAG_INNER_SH | ARCH_PT_FLAG_ACCESS |
-                    ARCH_PT_FLAG_WB;
+                    ARCH_PT_FLAG_INNER_SH | ARCH_PT_FLAG_ACCESS;
 
     if ((flags & PT_FLAG_W) == 0)
         attr |= ARCH_PT_FLAG_READONLY;
@@ -27,6 +41,11 @@ uint64_t get_arch_page_table_flags(uint64_t flags) {
         attr |= ARCH_PT_FLAG_XN;
     if (flags & PT_FLAG_U)
         attr |= ARCH_PT_FLAG_USER;
+
+    if (flags & PT_FLAG_DEVICE)
+        attr |= (0x02 << 2);
+    else
+        attr |= (0x00 << 2);
 
     return attr;
 }

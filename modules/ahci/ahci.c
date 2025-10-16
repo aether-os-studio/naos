@@ -250,7 +250,8 @@ struct ahci_driver *ahci_driver_init(pci_bar_t *bar5) {
     hba->base = (hba_reg_t *)phys_to_virt(bar5->address);
     map_page_range(get_current_page_dir(false), (uint64_t)hba->base,
                    bar5->address, bar5->size,
-                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE |
+                       PT_FLAG_DEVICE);
 
     // hba->base[HBA_RGHC] |= HBA_RGHC_RESET;
     // wait_until_expire(!(hba->base[HBA_RGHC] & HBA_RGHC_RESET), 100000);
