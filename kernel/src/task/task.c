@@ -98,6 +98,14 @@ bool can_schedule = false;
 extern int unix_socket_fsid;
 extern int unix_accept_fsid;
 
+uint32_t cpu_idx = 0;
+
+uint32_t alloc_cpu_id() {
+    uint32_t idx = cpu_idx;
+    cpu_idx = (cpu_idx + 1) % cpu_count;
+    return idx;
+}
+
 task_t *get_free_task() {
     for (uint64_t i = 0; i < cpu_count; i++) {
         if (idle_tasks[i] == NULL) {
@@ -105,6 +113,7 @@ task_t *get_free_task() {
             memset(task, 0, sizeof(task_t));
             task->state = TASK_CREATING;
             task->pid = i;
+            task->cpu_id = i;
             idle_tasks[i] = task;
             can_schedule = true;
             spin_unlock(&task_queue_lock);
@@ -120,6 +129,7 @@ task_t *get_free_task() {
             memset(task, 0, sizeof(task_t));
             task->state = TASK_CREATING;
             task->pid = i;
+            task->cpu_id = alloc_cpu_id();
             tasks[i] = task;
             can_schedule = true;
             spin_unlock(&task_queue_lock);
@@ -132,14 +142,6 @@ task_t *get_free_task() {
     return NULL;
 }
 
-uint32_t cpu_idx = 0;
-
-uint32_t alloc_cpu_id() {
-    uint32_t idx = cpu_idx;
-    cpu_idx = (cpu_idx + 1) % cpu_count;
-    return idx;
-}
-
 task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
                     int priority) {
     arch_disable_interrupt();
@@ -149,7 +151,6 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task_t *task = get_free_task();
     task->call_in_signal = 0;
     memset(&task->signal_saved_regs, 0, sizeof(struct pt_regs));
-    task->cpu_id = alloc_cpu_id();
     task->is_kernel = true;
     task->ppid = task->pid;
     task->uid = 0;
@@ -294,7 +295,7 @@ void task_init() {
     task_create("init", init_thread, 0, NORMAL_PRIORITY);
     task_create("task_free_service", task_free_service, 0, KTHREAD_PRIORITY);
 
-    arch_set_current(idle_tasks[0]);
+    arch_set_current(idle_tasks[current_cpu_id]);
 
     task_initialized = true;
 

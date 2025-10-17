@@ -314,17 +314,17 @@ typedef struct spinlock {
 // 获取spinlock
 static inline void spin_lock(spinlock_t *sl) {
     uint64_t flags;
-    long tmp = 1;
+    long tmp;
 
-    // 原子获取锁
-    __asm__ volatile("1: amoswap.w.aq %0, %1, (%2)\n" // 原子交换，acquire语义
-                     "   bnez %0, 1b\n" // 如果获取到的值不为0，继续自旋
-                     : "=&r"(tmp)
-                     : "r"(tmp), "r"(&sl->lock)
-                     : "memory");
+    /* 自旋等待 */
+    while (__sync_lock_test_and_set(&sl->lock, 1)) {
+        while (sl->lock)
+            ;
+    }
 
-    // 禁用中断并保存当前中断状态
-    __asm__ volatile("csrrci %0, sstatus, 0x2" // 清除SIE位，禁用中断，返回原值
+    // 1. 保存当前中断状态并禁用中断
+    __asm__ volatile("csrr %0, sstatus\n\t"   // 读取sstatus寄存器到flags
+                     "csrci sstatus, 0x2\n\t" // 清除SIE位，禁用中断
                      : "=r"(flags)
                      :
                      : "memory");
@@ -336,21 +336,15 @@ static inline void spin_lock(spinlock_t *sl) {
 static inline void spin_unlock(spinlock_t *sl) {
     uint64_t flags = sl->flags;
 
-    // 原子释放锁
-    __asm__ volatile("amoswap.w.rl %0, zero, (%1)" // 原子写入0，release语义
-                     : "=r"(sl->lock)              // 占位输出
-                     : "r"(&sl->lock)
+    __sync_lock_release(&sl->lock);
+
+    // 2. 恢复中断状态（只恢复SIE位）
+    __asm__ volatile("andi %0, %0, 0x2\n\t"  // 只保留flags中的SIE位
+                     "csrc sstatus, 0x2\n\t" // 清除当前sstatus的SIE位
+                     "csrs sstatus, %0\n\t"  // 设置之前保存的SIE位
+                     : "+r"(flags)
+                     :
                      : "memory");
-
-    sl->lock = 0;
-
-    // 恢复中断状态
-    if (flags & 0x2) {                        // 检查原来的SIE位
-        __asm__ volatile("csrsi sstatus, 0x2" // 设置SIE位，重新启用中断
-                         :
-                         :
-                         : "memory");
-    }
 }
 
 #elif defined(__loongarch64)

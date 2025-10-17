@@ -14,6 +14,10 @@ void ap_entry(struct limine_mp_info *cpu) {
 
     trap_init();
 
+    uintptr_t sp;
+    asm volatile("mv %0, sp" : "=r"(sp));
+    csr_write(sscratch, (sp & ~(STACK_SIZE - 1)) + STACK_SIZE);
+
     printk("cpu %d starting...\n", current_cpu_id);
 
     timer_init_hart(cpu->hartid);

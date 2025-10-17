@@ -61,13 +61,17 @@ void arch_switch_with_context(arch_context_t *prev, arch_context_t *next,
 
     write_satp(satp);
 
-    asm volatile("mv a0, %0\n\t"
-                 "j arch_switch_with_next\n\t" ::"r"(next->ctx));
+    sbi_set_timer(get_timer() + TIMER_FREQ / SCHED_HZ);
+
+    asm volatile("mv sp, %0\n\t"
+                 "j ret_from_trap_handler\n\t" ::"r"(next->ctx));
 }
 
 extern void task_signal();
 
 void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next) {
+    prev->arch_context->ctx = ctx;
+
     if (prev == next) {
         return;
     }
@@ -75,8 +79,6 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next) {
     if (next->signal & SIGMASK(SIGKILL)) {
         return;
     }
-
-    prev->arch_context->ctx = ctx;
 
     sched_update_itimer();
     sched_update_timerfd();

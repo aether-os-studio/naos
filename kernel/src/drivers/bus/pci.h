@@ -30,6 +30,9 @@ uint32_t pci_read(uint32_t b, uint32_t d, uint32_t f, uint32_t s,
 void pci_write(uint32_t b, uint32_t d, uint32_t f, uint32_t s, uint32_t offset,
                uint32_t value);
 
+#define PCI_BAR_GET_SIZE 1
+#define PCI_BAR_GET_IS_MMIO 2
+
 typedef struct {
     uint64_t address;
     uint64_t size;

@@ -1,96 +1,3 @@
-#include <arch/riscv64/irq/context.h>
-
-/* x1 broken in this func */
-.macro SAVE_CONTEXT
-    /* reserved context stack */
-    addi sp, sp, -CONTEXT_REG_NR * REGBYTES
-
-    STORE x1, 1 * REGBYTES(sp)
-    STORE x3, 3 * REGBYTES(sp)
-    STORE x4, 4 * REGBYTES(sp)
-    STORE x5, 5 * REGBYTES(sp)
-    STORE x6, 6 * REGBYTES(sp)
-    STORE x7, 7 * REGBYTES(sp)
-    STORE x8, 8 * REGBYTES(sp)
-    STORE x9, 9 * REGBYTES(sp)
-    STORE x10, 10 * REGBYTES(sp)
-    STORE x11, 11 * REGBYTES(sp)
-    STORE x12, 12 * REGBYTES(sp)
-    STORE x13, 13 * REGBYTES(sp)
-    STORE x14, 14 * REGBYTES(sp)
-    STORE x15, 15 * REGBYTES(sp)
-    STORE x16, 16 * REGBYTES(sp)
-    STORE x17, 17 * REGBYTES(sp)
-    STORE x18, 18 * REGBYTES(sp)
-    STORE x19, 19 * REGBYTES(sp)
-    STORE x20, 20 * REGBYTES(sp)
-    STORE x21, 21 * REGBYTES(sp)
-    STORE x22, 22 * REGBYTES(sp)
-    STORE x23, 23 * REGBYTES(sp)
-    STORE x24, 24 * REGBYTES(sp)
-    STORE x25, 25 * REGBYTES(sp)
-    STORE x26, 26 * REGBYTES(sp)
-    STORE x27, 27 * REGBYTES(sp)
-    STORE x28, 28 * REGBYTES(sp)
-    STORE x29, 29 * REGBYTES(sp)
-    STORE x30, 30 * REGBYTES(sp)
-    STORE x31, 31 * REGBYTES(sp)
-    
-    csrr x1, sstatus
-    STORE x1, CTX_STATUS_OFF * REGBYTES(sp)
-    
-    csrr x1, sepc
-    STORE x1, CTX_PC_OFF * REGBYTES(sp)
-
-    csrr x1, sscratch
-    STORE x1, CTX_SP_OFF * REGBYTES(sp)
-
-.endm
-
-/* x1 broken in this func */
-.macro RESTORE_CONTEXT
-
-    LOAD x1, CTX_PC_OFF * REGBYTES(sp)
-    csrw sepc, x1
-
-    LOAD x1, CTX_STATUS_OFF * REGBYTES(sp)
-    csrw sstatus, x1
-    
-    LOAD x1, 1 * REGBYTES(sp)
-    LOAD x3, 3 * REGBYTES(sp)
-    LOAD x4, 4 * REGBYTES(sp)
-    LOAD x5, 5 * REGBYTES(sp)
-    LOAD x6, 6 * REGBYTES(sp)
-    LOAD x7, 7 * REGBYTES(sp)
-    LOAD x8, 8 * REGBYTES(sp)
-    LOAD x9, 9 * REGBYTES(sp)
-    LOAD x10, 10 * REGBYTES(sp)
-    LOAD x11, 11 * REGBYTES(sp)
-    LOAD x12, 12 * REGBYTES(sp)
-    LOAD x13, 13 * REGBYTES(sp)
-    LOAD x14, 14 * REGBYTES(sp)
-    LOAD x15, 15 * REGBYTES(sp)
-    LOAD x16, 16 * REGBYTES(sp)
-    LOAD x17, 17 * REGBYTES(sp)
-    LOAD x18, 18 * REGBYTES(sp)
-    LOAD x19, 19 * REGBYTES(sp)
-    LOAD x20, 20 * REGBYTES(sp)
-    LOAD x21, 21 * REGBYTES(sp)
-    LOAD x22, 22 * REGBYTES(sp)
-    LOAD x23, 23 * REGBYTES(sp)
-    LOAD x24, 24 * REGBYTES(sp)
-    LOAD x25, 25 * REGBYTES(sp)
-    LOAD x26, 26 * REGBYTES(sp)
-    LOAD x27, 27 * REGBYTES(sp)
-    LOAD x28, 28 * REGBYTES(sp)
-    LOAD x29, 29 * REGBYTES(sp)
-    LOAD x30, 30 * REGBYTES(sp)
-    LOAD x31, 31 * REGBYTES(sp)
-
-    /* restore sp from context sp */
-    LOAD sp, CTX_SP_OFF * REGBYTES(sp)
-.endm
-
 .section .text
 .globl _start
 .globl trap_vector
@@ -108,25 +15,109 @@ init_trap_vector:
 
 .align 4
 trap_handler:
-    SAVE_CONTEXT
+    csrrw sp, sscratch, sp
 
-    mv a0, sp
-    call trap_switch_stack
-
-    /* call handler */
+    addi sp, sp, -280
+    
+    sd x1,  0(sp)    // ra
+    // x2 (sp) 稍后保存
+    sd x3,  16(sp)   // gp
+    sd x4,  24(sp)   // tp
+    sd x5,  32(sp)   // t0
+    sd x6,  40(sp)   // t1
+    sd x7,  48(sp)   // t2
+    sd x8,  56(sp)   // s0/fp
+    sd x9,  64(sp)   // s1
+    sd x10, 72(sp)   // a0
+    sd x11, 80(sp)   // a1
+    sd x12, 88(sp)   // a2
+    sd x13, 96(sp)   // a3
+    sd x14, 104(sp)  // a4
+    sd x15, 112(sp)  // a5
+    sd x16, 120(sp)  // a6
+    sd x17, 128(sp)  // a7
+    sd x18, 136(sp)  // s2
+    sd x19, 144(sp)  // s3
+    sd x20, 152(sp)  // s4
+    sd x21, 160(sp)  // s5
+    sd x22, 168(sp)  // s6
+    sd x23, 176(sp)  // s7
+    sd x24, 184(sp)  // s8
+    sd x25, 192(sp)  // s9
+    sd x26, 200(sp)  // s10
+    sd x27, 208(sp)  // s11
+    sd x28, 216(sp)  // t3
+    sd x29, 224(sp)  // t4
+    sd x30, 232(sp)  // t5
+    sd x31, 240(sp)  // t6
+    
+    csrr t0, sscratch
+    sd t0, 8(sp)     // 保存真正的用户 sp
+    
+    csrr t0, sepc
+    sd t0, 248(sp)   // sepc
+    
+    csrr t0, scause
+    sd t0, 256(sp)   // scause
+    
+    csrr t0, stval
+    sd t0, 264(sp)   // stval
+    
+    csrr t0, sstatus
+    sd t0, 272(sp)   // sstatus
+    
     mv a0, sp
     call handle_trap_c
+    
+.globl ret_from_trap_handler
+ret_from_trap_handler:
+    ld t0, 248(sp)   // sepc
+    csrw sepc, t0
 
-    tail trap_return
+    ld t0, 8(sp)     // sp
+    csrw sscratch, t0
+    
+    ld x1,  0(sp)    // ra
+    // x2 (sp) 最后恢复
+    ld x3,  16(sp)   // gp
+    ld x4,  24(sp)   // tp
+    ld x7,  48(sp)   // t2
+    ld x8,  56(sp)   // s0/fp
+    ld x9,  64(sp)   // s1
+    ld x10, 72(sp)   // a0
+    ld x11, 80(sp)   // a1
+    ld x12, 88(sp)   // a2
+    ld x13, 96(sp)   // a3
+    ld x14, 104(sp)  // a4
+    ld x15, 112(sp)  // a5
+    ld x16, 120(sp)  // a6
+    ld x17, 128(sp)  // a7
+    ld x18, 136(sp)  // s2
+    ld x19, 144(sp)  // s3
+    ld x20, 152(sp)  // s4
+    ld x21, 160(sp)  // s5
+    ld x22, 168(sp)  // s6
+    ld x23, 176(sp)  // s7
+    ld x24, 184(sp)  // s8
+    ld x25, 192(sp)  // s9
+    ld x26, 200(sp)  // s10
+    ld x27, 208(sp)  // s11
+    ld x28, 216(sp)  // t3
+    ld x29, 224(sp)  // t4
+    ld x30, 232(sp)  // t5
+    ld x31, 240(sp)  // t6
+        
+    ld t0, 272(sp)   // sstatus  
+    li t1, 0x2       // SIE mask
+    not t1, t1       // ~SIE mask  
+    and t0, t0, t1   // 清除 SIE 位
+    csrw sstatus, t0    
+    
+    ld x5, 32(sp)    // t0
+    ld x6, 40(sp)   // t1
 
-trap_return:
-    RESTORE_CONTEXT
-    sret
+    addi sp, sp, 280
 
-.globl arch_switch_with_next
-arch_switch_with_next:
-    mv sp, a0
-
-    RESTORE_CONTEXT
-
+    csrrw sp, sscratch, sp
+    
     sret

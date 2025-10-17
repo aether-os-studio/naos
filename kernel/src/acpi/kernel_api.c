@@ -204,11 +204,15 @@ void uacpi_kernel_free_mutex(uacpi_handle lock) { free(lock); }
 
 uacpi_status uacpi_kernel_acquire_mutex(uacpi_handle lock, uacpi_u16 timeout) {
     (void)timeout;
-    spin_lock(lock);
+    if (lock)
+        spin_lock(lock);
     return UACPI_STATUS_OK;
 }
 
-void uacpi_kernel_release_mutex(uacpi_handle lock) { spin_unlock(lock); }
+void uacpi_kernel_release_mutex(uacpi_handle lock) {
+    if (lock)
+        spin_unlock(lock);
+}
 
 uacpi_handle uacpi_kernel_create_event(void) {
     sem_t *sem = malloc(sizeof(sem_t));
@@ -285,13 +289,15 @@ uacpi_handle uacpi_kernel_create_spinlock(void) {
 void uacpi_kernel_free_spinlock(uacpi_handle lock) { free(lock); }
 
 uacpi_cpu_flags uacpi_kernel_lock_spinlock(uacpi_handle lock) {
-    spin_lock(lock);
+    if (lock)
+        spin_lock(lock);
     return 0;
 }
 
 void uacpi_kernel_unlock_spinlock(uacpi_handle lock, uacpi_cpu_flags flags) {
     (void)flags;
-    spin_unlock(lock);
+    if (lock)
+        spin_unlock(lock);
 }
 
 uacpi_status uacpi_kernel_schedule_work(uacpi_work_type type,
