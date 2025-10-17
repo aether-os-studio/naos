@@ -176,8 +176,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
                       virt_to_phys((uint64_t)get_kernel_page_dir()),
                       (uint64_t)entry, task->kernel_stack, false, arg);
 #if defined(__riscv__)
-    task->arch_context->ctx->gp = (uint64_t)task;
-    task->arch_context->ctx->tp = cpuid_to_hartid[current_cpu_id];
+    task->arch_context->ctx->tp = (uint64_t)task;
+    task->arch_context->ctx->gp = cpuid_to_hartid[current_cpu_id];
 #endif
     task->signal = 0;
     task->saved_signal = 0;
@@ -1022,10 +1022,9 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns) {
         entity->on_rq = false;
     }
 
-    if (current_task == task &&
-        (state == TASK_BLOCKING || state == TASK_READING_STDIO)) {
+    while (current_task->state == TASK_BLOCKING ||
+           current_task->state == TASK_READING_STDIO)
         arch_yield();
-    }
 
     return task->status;
 }

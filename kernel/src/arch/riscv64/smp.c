@@ -10,7 +10,7 @@ uint64_t cpu_count;
 extern bool task_initialized;
 
 void ap_entry(struct limine_mp_info *cpu) {
-    asm volatile("mv tp, %0" : : "r"(cpu->hartid));
+    asm volatile("mv gp, %0" : : "r"(cpu->hartid));
 
     trap_init();
 

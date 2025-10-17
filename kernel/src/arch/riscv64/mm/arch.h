@@ -29,3 +29,45 @@
 
 uint64_t get_arch_page_table_flags(uint64_t flags);
 void arch_flush_tlb(uint64_t vaddr);
+
+// SV48模式下的SATP寄存器位字段定义
+#define SATP_MODE_SHIFT 60
+#define SATP_ASID_SHIFT 44
+#define SATP_PPN_MASK 0x00000FFFFFFFFFFFULL  // 44位PPN
+#define SATP_ASID_MASK 0x0FFFF00000000000ULL // 16位ASID
+#define SATP_MODE_MASK 0xF000000000000000ULL // 4位MODE
+
+// 页表模式
+#define SATP_MODE_BARE 0
+#define SATP_MODE_SV39 8
+#define SATP_MODE_SV48 9
+#define SATP_MODE_SV57 10
+
+// SV48虚拟地址空间划分（48位地址空间）
+#define SV48_VA_BITS 48
+#define SV48_USER_END 0x0000800000000000ULL     // 用户空间结束地址
+#define SV48_KERNEL_START 0xFFFF800000000000ULL // 内核空间起始地址（符号扩展）
+
+// 构建 SATP 值
+#define MAKE_SATP(mode, asid, ppn)                                             \
+    (((uint64_t)(mode) << SATP_MODE_SHIFT) |                                   \
+     ((uint64_t)(asid) << SATP_ASID_SHIFT) |                                   \
+     ((uint64_t)(ppn) & SATP_PPN_MASK))
+
+// 从物理地址构建 SATP
+#define MAKE_SATP_PADDR(mode, asid, paddr) MAKE_SATP(mode, asid, (paddr) >> 12)
+
+// 读取SATP寄存器
+static inline uint64_t read_satp(void) {
+    uint64_t satp;
+    __asm__ volatile("csrr %0, satp" : "=r"(satp) : : "memory");
+    return satp;
+}
+
+// 写入SATP寄存器
+static inline void write_satp(uint64_t satp) {
+    __asm__ volatile("csrw satp, %0" : : "r"(satp) : "memory");
+
+    // 刷新TLB以确保新的页表生效
+    __asm__ volatile("sfence.vma" : : : "memory");
+}

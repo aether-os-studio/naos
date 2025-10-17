@@ -316,17 +316,17 @@ static inline void spin_lock(spinlock_t *sl) {
     uint64_t flags;
     long tmp = 1;
 
-    // 禁用中断并保存当前中断状态
-    __asm__ volatile("csrrci %0, sstatus, 0x2" // 清除SIE位，禁用中断，返回原值
-                     : "=r"(flags)
-                     :
-                     : "memory");
-
     // 原子获取锁
     __asm__ volatile("1: amoswap.w.aq %0, %1, (%2)\n" // 原子交换，acquire语义
                      "   bnez %0, 1b\n" // 如果获取到的值不为0，继续自旋
                      : "=&r"(tmp)
                      : "r"(tmp), "r"(&sl->lock)
+                     : "memory");
+
+    // 禁用中断并保存当前中断状态
+    __asm__ volatile("csrrci %0, sstatus, 0x2" // 清除SIE位，禁用中断，返回原值
+                     : "=r"(flags)
+                     :
                      : "memory");
 
     sl->flags = flags;

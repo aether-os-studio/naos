@@ -12,7 +12,7 @@ extern uint64_t hartid_to_cpuid(uint64_t hartid);
 
 static inline uint64_t get_current_cpu_id() {
     uint64_t hartid = 0;
-    asm volatile("mv %0, tp" : "=r"(hartid));
+    asm volatile("mv %0, gp" : "=r"(hartid));
     return hartid_to_cpuid(hartid);
 }
 

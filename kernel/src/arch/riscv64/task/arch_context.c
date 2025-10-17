@@ -13,20 +13,22 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->mm->page_table_addr = page_table_addr;
     context->mm->ref_count = 1;
     memset(&context->mm->task_vma_mgr, 0, sizeof(vma_manager_t));
+    context->mm->task_vma_mgr.last_alloc_addr = USER_MMAP_START;
+    context->mm->task_vma_mgr.initialized = false;
     context->mm->brk_start = USER_BRK_START;
     context->mm->brk_current = context->mm->brk_start;
     context->mm->brk_end = USER_BRK_END;
     context->ctx = (struct pt_regs *)stack - 1;
     memset(context->ctx, 0, sizeof(struct pt_regs));
     context->ctx->ra = entry;
-    context->ctx->sepc = entry;
+    context->ctx->epc = entry;
     context->ctx->sp = stack;
     context->ctx->a0 = initial_arg;
     context->dead = false;
     if (user_mode) {
-        context->ctx->sstatus = 0x2;
+        context->ctx->sstatus = (2UL << 32) | (1UL << 5);
     } else {
-        context->ctx->sstatus = 0x102;
+        context->ctx->sstatus = (2UL << 32) | (1UL << 5) | (1UL << 8);
     }
 }
 
@@ -40,24 +42,27 @@ extern bool task_initialized;
 task_t *arch_get_current() {
     if (task_initialized) {
         task_t *current;
-        asm volatile("mv %0, gp\n\t" : "=r"(current));
+        asm volatile("mv %0, tp\n\t" : "=r"(current));
         return current;
     } else
         return NULL;
 }
 
 void arch_set_current(task_t *current) {
-    asm volatile("mv gp, %0\n\t" ::"r"(current));
+    asm volatile("mv tp, %0\n\t" ::"r"(current));
 }
-
-extern void ret_from_trap_handler();
 
 void arch_switch_with_context(arch_context_t *prev, arch_context_t *next,
                               uint64_t kernel_stack) {
     csr_write(sscratch, kernel_stack);
 
-    asm volatile("mv sp, %0\n\t"
-                 "j ret_from_trap_handler\n\t" ::"r"(next->ctx));
+    uint64_t satp =
+        MAKE_SATP_PADDR(SATP_MODE_SV48, 0, next->mm->page_table_addr);
+
+    write_satp(satp);
+
+    asm volatile("mv a0, %0\n\t"
+                 "j arch_switch_with_next\n\t" ::"r"(next->ctx));
 }
 
 extern void task_signal();
@@ -107,7 +112,6 @@ void arch_yield() {
     if (task_initialized) {
         struct sched_entity *curr_se = current_task->sched_info;
         curr_se->is_yield = true;
-        sbi_ecall(4, 0, cpuid_to_hartid[current_cpu_id], 0, 0, 0, 0, 0);
     }
 }
 
