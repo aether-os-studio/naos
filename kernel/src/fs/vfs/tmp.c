@@ -81,6 +81,18 @@ int tmpfs_mkfile(void *parent, const char *name, vfs_node_t node) {
     return 0;
 }
 
+int tmpfs_mknod(void *parent, const char *name, vfs_node_t node, uint16_t mode,
+                int dev) {
+    node->dev = dev;
+    node->mode = mode;
+    tmpfs_node_t *handle = malloc(sizeof(tmpfs_node_t));
+    handle->capability = DEFAULT_PAGE_SIZE;
+    handle->content = alloc_frames_bytes(handle->capability);
+    handle->size = 0;
+    node->handle = handle;
+    return 0;
+}
+
 int tmpfs_symlink(void *parent, const char *name, vfs_node_t node) { return 0; }
 
 int tmpfs_mount(vfs_node_t dev, vfs_node_t node) {
@@ -162,7 +174,7 @@ static struct vfs_callback callbacks = {
     .mkfile = (vfs_mk_t)tmpfs_mkfile,
     .link = (vfs_mk_t)dummy,
     .symlink = (vfs_mk_t)tmpfs_symlink,
-    .mknod = (vfs_mknod_t)dummy,
+    .mknod = (vfs_mknod_t)tmpfs_mknod,
     .chmod = (vfs_chmod_t)tmpfs_chmod,
     .chown = (vfs_chown_t)tmpfs_chown,
     .delete = (vfs_del_t)tmpfs_delete,
