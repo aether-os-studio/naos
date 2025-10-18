@@ -365,7 +365,11 @@ int ext_delete(void *parent, vfs_node_t node) {
     spin_lock(&rwlock);
 
     char *path = vfs_get_fullpath(node);
-    int ret = ext4_fremove((const char *)path);
+    int ret;
+    if (node->type & file_dir)
+        ret = ext4_dir_rm((const char *)path);
+    else
+        ret = ext4_fremove((const char *)path);
     free(path);
 
     spin_unlock(&rwlock);

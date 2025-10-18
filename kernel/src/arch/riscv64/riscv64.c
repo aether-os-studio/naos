@@ -6,9 +6,7 @@ extern uint64_t cpuid_to_hartid[MAX_CPU_NUM];
 
 void arch_early_init() {
     trap_init();
-    uintptr_t sp;
-    asm volatile("mv %0, sp" : "=r"(sp));
-    csr_write(sscratch, (sp & ~(STACK_SIZE - 1)) + STACK_SIZE);
+    csr_write(sscratch, (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE);
     fdt_init();
     smp_init();
     asm volatile("mv gp, %0" ::"r"(cpuid_to_hartid[current_cpu_id]));

@@ -528,15 +528,13 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
 
         if (current->type & file_symlink) {
             if (!current->parent || !current->linkto)
-                goto err;
+                continue;
 
             current->type = file_symlink | file_proxy;
 
             vfs_node_t target = current->linkto;
             if (!target)
                 goto err;
-
-            target->refcount++;
 
             current->type |= target->type;
             current->size = target->size;
@@ -552,7 +550,6 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
                     vfs_node_t child_node = (vfs_node_t)i->data;
                     if (!vfs_child_find(current, child_node->name)) {
                         list_append(current->child, child_node);
-                        child_node->refcount++;
                     }
                 }
             }
@@ -616,13 +613,6 @@ int vfs_close(vfs_node_t node) {
         bool real_close = callbackof(node, close)(node->handle);
         if (real_close) {
             if (node->flags & VFS_NODE_FLAGS_DELETED) {
-                int res = callbackof(node, delete)(
-                    node->parent ? node->parent->handle : NULL, node);
-                if (res < 0) {
-                    return -1;
-                }
-                if (node->parent)
-                    list_delete(node->parent->child, node);
                 callbackof(node, free_handle)(node->handle);
                 node->handle = NULL;
                 free(node->name);
@@ -763,8 +753,6 @@ int vfs_delete(vfs_node_t node) {
     if (node == rootdir)
         return -1;
     node->flags |= VFS_NODE_FLAGS_DELETED;
-    if (node->refcount > 0)
-        return 0;
     int res = callbackof(node, delete)(
         node->parent ? node->parent->handle : NULL, node);
     if (res < 0) {
@@ -772,10 +760,6 @@ int vfs_delete(vfs_node_t node) {
     }
     if (node->parent)
         list_delete(node->parent->child, node);
-    callbackof(node, free_handle)(node->handle);
-    node->handle = NULL;
-    free(node->name);
-    free(node);
 
     return 0;
 }

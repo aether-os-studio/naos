@@ -632,10 +632,10 @@ uint64_t do_stat_path(const char *path, struct stat *buf) {
     buf->st_nlink = 1;
     buf->st_mode =
         node->mode |
-        (node->type & file_dir
-             ? S_IFDIR
-             : ((node->type & file_symlink)
-                    ? S_IFLNK
+        ((node->type & file_symlink)
+             ? S_IFLNK
+             : ((node->type & file_dir)
+                    ? S_IFDIR
                     : ((node->type & file_stream) ? S_IFCHR : S_IFREG)));
     buf->st_uid = node->owner;
     buf->st_gid = node->group;
@@ -678,10 +678,10 @@ uint64_t sys_fstat(uint64_t fd, struct stat *user_buf) {
     buf->st_nlink = 1;
     buf->st_mode =
         node->mode |
-        (node->type & file_dir
-             ? S_IFDIR
-             : ((node->type & file_symlink)
-                    ? S_IFLNK
+        ((node->type & file_symlink)
+             ? S_IFLNK
+             : ((node->type & file_dir)
+                    ? S_IFDIR
                     : ((node->type & file_stream) ? S_IFCHR : S_IFREG)));
     buf->st_uid = node->owner;
     buf->st_gid = node->group;
@@ -921,8 +921,6 @@ uint64_t sys_rmdir(const char *name_user) {
         return -ENOENT;
     if (!(node->type & file_dir))
         return -ENOTDIR;
-
-    node->refcount++;
 
     uint64_t ret = vfs_delete(node);
 
