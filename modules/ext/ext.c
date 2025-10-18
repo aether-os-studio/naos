@@ -171,7 +171,7 @@ ssize_t ext_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
         memset(buffer, 0, offset - handle->node->size);
         ext4_fseek(handle->file, (int64_t)handle->node->size,
                    (uint32_t)SEEK_SET);
-        ext4_fwrite(handle->file, addr, offset - handle->node->size,
+        ext4_fwrite(handle->file, buffer, offset - handle->node->size,
                     (size_t *)&ret);
         free_frames_bytes(buffer, offset - handle->node->size);
     }
