@@ -63,6 +63,7 @@ void ptmx_open(void *parent, const char *name, vfs_node_t node) {
     pty_pair_t *pair = n->next;
     memset(pair, 0, sizeof(pty_pair_t));
     pair->id = id;
+    pair->frontProcessGroup = -1;
     pair->bufferMaster = alloc_frames_bytes(PTY_BUFF_SIZE);
     pair->bufferSlave = alloc_frames_bytes(PTY_BUFF_SIZE);
     pty_termios_default(&pair->term);
@@ -161,6 +162,8 @@ size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     return toCopy;
 }
 
+extern void send_sigint(int pgid);
+
 size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
     void *file = fd->node->handle;
     pty_pair_t *pair = file;
@@ -186,9 +189,9 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
             if (pair->bufferSlave[pair->ptrSlave + i] == '\r')
                 pair->bufferSlave[pair->ptrSlave + i] = '\n';
         }
-    if (pair->term.c_lflag & ICANON && pair->term.c_lflag & ECHO) {
-        pts_write_inner(pair, &pair->bufferSlave[pair->ptrSlave], limit);
-    }
+    // if (pair->term.c_lflag & ICANON && pair->term.c_lflag & ECHO) {
+    //     pts_write_inner(pair, &pair->bufferSlave[pair->ptrSlave], limit);
+    // }
     pair->ptrSlave += limit;
 
     spin_unlock(&pair->lock);
@@ -474,6 +477,7 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
         ret = 0;
         break;
     case TIOCSPGRP:
+        pair->frontProcessGroup = *(int *)arg;
         ret = 0;
         break;
     case KDGKBMODE:

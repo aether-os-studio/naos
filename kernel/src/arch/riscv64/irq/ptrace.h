@@ -37,7 +37,7 @@ struct pt_regs {
     uint64_t t6;  // x31 - temporary
 
     // CSR寄存器
-    uint64_t sepc;    // 异常发生时的PC
+    uint64_t epc;     // 异常发生时的PC
     uint64_t scause;  // 异常原因
     uint64_t stval;   // 异常值
     uint64_t sstatus; // 机器状态寄存器

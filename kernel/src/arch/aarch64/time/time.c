@@ -1,14 +1,6 @@
 #include <libs/klibc.h>
 #include <arch/aarch64/time/time.h>
-
-__attribute__((
-    used,
-    section(
-        ".limine_requests"))) static volatile struct limine_date_at_boot_request
-    boot_time_request = {
-        .id = LIMINE_DATE_AT_BOOT_REQUEST,
-        .revision = 0,
-};
+#include <boot/boot.h>
 
 uint64_t get_counter() {
     uint64_t val;
@@ -31,7 +23,7 @@ static int is_leap_year(int year) {
 }
 
 void time_read(tm *time) {
-    uint64_t timestrap_at_boot = boot_time_request.response->timestamp;
+    uint64_t timestrap_at_boot = boot_get_boottime();
     uint64_t timer_value = timestrap_at_boot + get_counter() / get_freq();
 
     time->tm_sec = timer_value % 60;
@@ -128,3 +120,5 @@ int64_t mktime(tm *time) {
 
     return res;
 }
+
+uint64_t nanoTime() { return get_counter() * 1000000000 / get_freq(); }

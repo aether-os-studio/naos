@@ -2,12 +2,14 @@
 #include <fs/fs_syscall.h>
 
 spinlock_t futex_lock = {0};
-struct futex_wait futex_wait_list = {NULL, NULL, NULL, 0};
+struct futex_wait futex_wait_list = {0, NULL, NULL, 0};
 
 uint64_t sys_futex_wait(uint64_t addr, const struct timespec *timeout,
                         uint32_t bitset) {
+    spin_lock(&futex_lock);
+
     struct futex_wait *wait = malloc(sizeof(struct futex_wait));
-    wait->uaddr = (void *)addr;
+    wait->uaddr = translate_address(get_current_page_dir(true), addr);
     wait->task = current_task;
     wait->next = NULL;
     wait->bitset = bitset;
@@ -19,7 +21,7 @@ uint64_t sys_futex_wait(uint64_t addr, const struct timespec *timeout,
 
     spin_unlock(&futex_lock);
 
-    int tmo = -1;
+    int64_t tmo = -1;
     if (timeout) {
         tmo = timeout->tv_sec * 1000000000 + timeout->tv_nsec;
     }
@@ -37,8 +39,20 @@ uint64_t sys_futex_wake(uint64_t addr, int val, uint32_t bitset) {
     while (curr) {
         bool found = false;
 
-        if (curr->uaddr && curr->uaddr == (void *)addr &&
+        if (curr->uaddr &&
+            curr->uaddr ==
+                translate_address(get_current_page_dir(true), addr) &&
             (curr->bitset & bitset) && ++count <= val) {
+            if (!curr->task)
+                continue;
+            if (curr->task->state == TASK_DIED) {
+                if (prev) {
+                    prev->next = curr->next;
+                }
+                free(curr);
+                found = true;
+                goto founded;
+            }
             task_unblock(curr->task, EOK);
             if (prev) {
                 prev->next = curr->next;
@@ -46,6 +60,7 @@ uint64_t sys_futex_wake(uint64_t addr, int val, uint32_t bitset) {
             free(curr);
             found = true;
         }
+    founded:
         if (found) {
             curr = prev->next;
         } else {
@@ -60,46 +75,39 @@ uint64_t sys_futex_wake(uint64_t addr, int val, uint32_t bitset) {
 
 uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
                    int *uaddr2, int val3) {
+    if (check_user_overflow((uint64_t)uaddr, sizeof(int)))
+        return (uint64_t)-EFAULT;
+    if (check_user_overflow((uint64_t)uaddr2, sizeof(int)))
+        return (uint64_t)-EFAULT;
+    if (check_user_overflow((uint64_t)timeout, sizeof(struct timespec)))
+        return (uint64_t)-EFAULT;
+
     switch (op) {
     case FUTEX_WAIT_PRIVATE:
     case FUTEX_WAIT: {
-        spin_lock(&futex_lock);
-
         int current = *(int *)uaddr;
         if (current != val) {
-            spin_unlock(&futex_lock);
-            return -EWOULDBLOCK;
+            return -EAGAIN;
         }
 
-        return sys_futex_wait(
-            translate_address(get_current_page_dir(true), (uint64_t)uaddr),
-            timeout, 0xFFFFFFFF);
+        return sys_futex_wait((uint64_t)uaddr, timeout, 0xFFFFFFFF);
     }
     case FUTEX_WAKE_PRIVATE:
     case FUTEX_WAKE: {
-        return sys_futex_wake(
-            translate_address(get_current_page_dir(true), (uint64_t)uaddr), val,
-            0xFFFFFFFF);
+        return sys_futex_wake((uint64_t)uaddr, val, 0xFFFFFFFF);
     }
     case FUTEX_WAIT_BITSET_PRIVATE:
     case FUTEX_WAIT_BITSET: {
-        spin_lock(&futex_lock);
-
         int current = *(int *)uaddr;
         if (current != val) {
-            spin_unlock(&futex_lock);
-            return -EWOULDBLOCK;
+            return -EAGAIN;
         }
 
-        return sys_futex_wait(
-            translate_address(get_current_page_dir(true), (uint64_t)uaddr),
-            timeout, val3);
+        return sys_futex_wait((uint64_t)uaddr, timeout, val3);
     }
     case FUTEX_WAKE_BITSET_PRIVATE:
     case FUTEX_WAKE_BITSET: {
-        return sys_futex_wake(
-            translate_address(get_current_page_dir(true), (uint64_t)uaddr), val,
-            val3);
+        return sys_futex_wake((uint64_t)uaddr, val, val3);
     }
     case FUTEX_LOCK_PI:
     case FUTEX_LOCK_PI_PRIVATE: {
@@ -109,7 +117,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
             return 0;
         } else {
             struct futex_wait *wait = malloc(sizeof(struct futex_wait));
-            wait->uaddr = uaddr;
+            wait->uaddr = (uint64_t)uaddr;
             wait->task = current_task;
             wait->next = NULL;
             wait->bitset = (uint32_t)val3;
@@ -142,7 +150,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
         while (curr) {
             bool found = false;
 
-            if (curr->uaddr && curr->uaddr == uaddr && ++count <= 1) {
+            if (curr->uaddr && curr->uaddr == (uint64_t)uaddr && ++count <= 1) {
                 task_unblock(curr->task, EOK);
                 if (prev) {
                     prev->next = curr->next;
@@ -174,7 +182,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
     //         bool found = false;
 
     //         // 检查是否匹配原始地址
-    //         if (curr->uaddr && curr->uaddr == (void *)translate_address(
+    //         if (curr->uaddr && curr->uaddr == translate_address(
     //                                               get_current_page_dir(true),
     //                                               (uint64_t)uaddr)) {
     //             // 先唤醒val个线程
@@ -192,7 +200,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
     //             // 然后转移val3个线程到新地址
     //             else if (requeue_count < val3) {
     //                 // 修改等待地址为目标地址
-    //                 curr->uaddr = (void *)translate_address(
+    //                 curr->uaddr = translate_address(
     //                     get_current_page_dir(true), (uint64_t)uaddr2);
     //                 requeue_count++;
     //                 prev = curr;

@@ -2,10 +2,9 @@
 #include <mm/mm.h>
 #include <task/task.h>
 
-extern spinlock_t mem_map_op_lock;
-
 uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr) {
-    spin_lock(&mem_map_op_lock);
+    if (!vaddr)
+        return 0;
 
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
     for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++) {
@@ -16,13 +15,11 @@ uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr) {
         uint64_t index = indexs[i];
         uint64_t addr = pgdir[index];
         if (ARCH_PT_IS_LARGE(addr)) {
-            spin_unlock(&mem_map_op_lock);
             return (pgdir[index] & (~PAGE_CALC_PAGE_TABLE_MASK(i + 1)) &
                     ~get_physical_memory_offset()) +
                    (vaddr & PAGE_CALC_PAGE_TABLE_MASK(i + 1));
         }
         if (!ARCH_PT_IS_TABLE(addr)) {
-            spin_unlock(&mem_map_op_lock);
             return 0;
         }
         pgdir = (uint64_t *)phys_to_virt(
@@ -31,7 +28,6 @@ uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr) {
     }
 
     uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
-    spin_unlock(&mem_map_op_lock);
     return (pgdir[index] & ARCH_ADDR_MASK) +
            (vaddr & PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL));
 }
@@ -209,7 +205,7 @@ static page_table_t *copy_page_table_recursive(page_table_t *source_table,
 }
 
 static void free_page_table_recursive(page_table_t *table, int level) {
-    if (table == phys_to_virt(NULL))
+    if (!table || table == phys_to_virt(NULL))
         return;
     if (level == 0) {
         free_frames((uint64_t)virt_to_phys((uint64_t)table), 1);
@@ -217,7 +213,6 @@ static void free_page_table_recursive(page_table_t *table, int level) {
     }
 
     for (int i = 0; i <
-
 #if defined(__x86_64__)
                     (level == ARCH_MAX_PT_LEVEL ? 256 : 512);
 #else
@@ -250,7 +245,8 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
            DEFAULT_PAGE_SIZE / 2);
 #endif
     new_mm->ref_count = 1;
-    memset(&new_mm->task_vma_mgr, 0, sizeof(vma_manager_t));
+    vma_manager_copy(&new_mm->task_vma_mgr, &old->task_vma_mgr);
+    new_mm->task_vma_mgr.initialized = true;
     new_mm->brk_start = old->brk_start;
     new_mm->brk_current = old->brk_current;
     new_mm->brk_end = old->brk_end;
@@ -280,5 +276,8 @@ void page_table_init() {
            DEFAULT_PAGE_SIZE / 2);
     asm volatile("movq %0, %%cr3" ::"r"(new_page_table));
     kernel_page_dir = (uint64_t *)phys_to_virt(new_page_table);
+#elif defined(__aarch64__)
+    extern void setup_mair(void);
+    setup_mair();
 #endif
 }

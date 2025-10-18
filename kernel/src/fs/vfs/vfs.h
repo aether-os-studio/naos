@@ -175,9 +175,11 @@ typedef struct flock {
     volatile uint64_t lock;
 } flock_t;
 
+#define VFS_NODE_FLAGS_DELETED (1ULL << 0)
+
 struct vfs_node {
     vfs_node_t parent;   // 父目录
-    spinlock_t spin;     // 自旋锁
+    uint64_t flags;      // 标志
     uint64_t dev;        // 设备号
     uint64_t rdev;       // 真实设备号
     char *name;          // 名称
@@ -197,7 +199,7 @@ struct vfs_node {
     flock_t lock;        // 锁
     list_t child;        // 子目录和子文件
     vfs_node_t root;     // 根目录
-    uint32_t refcount;   // 引用计数
+    int refcount;        // 引用计数
     uint16_t mode;       // 模式
     uint32_t rw_hint;    // 读写提示
 };
@@ -388,3 +390,8 @@ extern vfs_callback_t fs_callbacks[256];
 #define callbackof(node, _name_) (fs_callbacks[(node)->fsid]->_name_)
 
 extern int fs_nextid;
+
+static inline uint32_t alloc_fake_inode() {
+    static uint32_t next_inode = 1;
+    return next_inode++;
+}

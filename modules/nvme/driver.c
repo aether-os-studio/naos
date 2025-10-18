@@ -138,10 +138,10 @@ bool BuildPRPList(void *vaddr, uint64_t size, NVME_PRP_LIST *prpList) {
     if (!prpArray)
         return false;
 
-    uint64_t currentPage = firstPage + DEFAULT_PAGE_SIZE;
+    uint64_t currentPage = translate_address(get_current_page_dir(false),
+                                             firstPage + DEFAULT_PAGE_SIZE);
     for (uint32_t i = 0; i < prpEntries; i++) {
-        prpArray[i] =
-            translate_address(get_current_page_dir(false), currentPage);
+        prpArray[i] = currentPage;
         currentPage += DEFAULT_PAGE_SIZE;
     }
 
@@ -161,6 +161,8 @@ void FreePRPList(NVME_PRP_LIST *prpList) {
     }
 }
 
+spinlock_t nvme_transfer_lock = {0};
+
 uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba,
                       uint32_t count, uint32_t write) {
     if (!count || !ns || !buf)
@@ -171,6 +173,8 @@ uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba,
                count, ns->NLBA);
         return 0;
     }
+
+    spin_lock(&nvme_transfer_lock);
 
     uint32_t transferred = 0;
     uint8_t *currentBuf = (uint8_t *)buf;
@@ -186,6 +190,7 @@ uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba,
         NVME_PRP_LIST prpList;
         if (!BuildPRPList(currentBuf, size, &prpList)) {
             printf("NVME: Failed to build PRP list\n");
+            spin_unlock(&nvme_transfer_lock);
             return transferred;
         }
 
@@ -199,14 +204,12 @@ uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba,
 
         sqe.DATA[0] = prpList.prp1;
         sqe.DATA[1] = prpList.prp2;
-        if (prpList.UPRP) {
-            sqe.CDW0 |= NVME_SQE_PRP_PTR;
-        }
 
         NVME_COMPLETION_QUEUE_ENTRY cqe = NVMEWaitingCMD(&ns->CTRL->ISQ, &sqe);
         if ((cqe.STS >> 1) & 0xFF) {
             nvme_rwfail(cqe.STS);
             FreePRPList(&prpList);
+            spin_unlock(&nvme_transfer_lock);
             return transferred;
         }
 
@@ -217,6 +220,8 @@ uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba,
 
         FreePRPList(&prpList);
     }
+
+    spin_unlock(&nvme_transfer_lock);
 
     return transferred;
 }
@@ -255,7 +260,8 @@ uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t bytes) {
 NVME_CONTROLLER *nvme_driver_init(uint64_t bar0, uint64_t bar_size) {
     NVME_CAPABILITY *cap = (NVME_CAPABILITY *)phys_to_virt(bar0);
     map_page_range(get_current_page_dir(false), (uint64_t)cap, bar0, bar_size,
-                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE |
+                       PT_FLAG_DEVICE);
 
     if (!((cap->CAP >> 37) & 1)) {
         printf("NVME CONTROLLER DOES NOT SUPPORT NVME COMMAND SET\n");

@@ -158,6 +158,8 @@ size_t unix_socket_accept_recv_from(uint64_t fd, uint8_t *out, size_t limit,
             return -(EWOULDBLOCK);
         } else if (pair->serverBuffPos > 0)
             break;
+
+        arch_yield();
     }
 
     spin_lock(&pair->lock);
@@ -203,12 +205,8 @@ size_t unix_socket_accept_sendto(uint64_t fd, uint8_t *in, size_t limit,
             return -(EWOULDBLOCK);
         }
 
-        arch_enable_interrupt();
-
-        arch_pause();
+        arch_yield();
     }
-
-    arch_disable_interrupt();
 
     spin_lock(&pair->lock);
 
@@ -367,11 +365,8 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
         } else
             sock->acceptWouldBlock = false;
 
-        arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
-
-    arch_disable_interrupt();
 
     unix_socket_pair_t *pair = sock->backlog[0];
     pair->established = true;
@@ -381,7 +376,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
     vfs_node_t acceptFd = unix_socket_accept_create(pair);
     sock->backlog[0] = NULL;
     memmove(sock->backlog, &sock->backlog[1],
-            (sock->connCurr) * sizeof(unix_socket_pair_t *));
+            sock->connCurr * sizeof(unix_socket_pair_t *));
     sock->connCurr--;
 
     uint64_t i = 0;
@@ -441,7 +436,7 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
         return -(ENOENT);
 
     if (parent->acceptWouldBlock &&
-        current_task->fd_info->fds[fd]->flags & O_NONBLOCK) {
+        (current_task->fd_info->fds[fd]->flags & O_NONBLOCK)) {
         return -(EINPROGRESS);
     }
 
@@ -498,6 +493,8 @@ size_t unix_socket_recv_from(uint64_t fd, uint8_t *out, size_t limit, int flags,
             return -(EWOULDBLOCK);
         } else if (pair->clientBuffPos > 0)
             break;
+
+        arch_yield();
     }
 
     spin_lock(&pair->lock);

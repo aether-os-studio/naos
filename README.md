@@ -1,31 +1,31 @@
-# Next Aether-OS
+# The Neo Aether Operating system
 
-This repository will demonstrate how to set up a basic kernel in C using Limine.
+![Screenshot](./images/aether-xeyes-xclock.png?raw=true)
 
-## How to use this?
+## What is this about?
 
-### Dependencies
+This is the main repository of neo-aether-os, a linux compatable operating system.
 
-Any `make` command depends on GNU make (`gmake`) and is expected to be run using it. This usually means using `make` on most GNU/Linux distros, or `gmake` on other non-GNU systems.
+## Features
 
-It is recommended to build this project using a standard UNIX-like system, using a Clang/LLVM toolchain capable of cross compilation.
+* 64-bit operating system with SMP (i.e., multicore) and ACPI support.
+* Support for many modern hardware devices such as USB XHCI controllers.
+* Networking support.
+* POSIX and Linux API compatibility.
+* Support for Linux-style special files (epoll, signalfd, ...) and pseudo file systems (`/sys`, `/proc`, ...).
 
-Additionally, building an ISO with `make all` requires `xorriso`, and building a HDD/USB image with `make all-hdd` requires `sgdisk` (usually from `gdisk` or `gptfdisk` packages) and `mtools`.
+## Supported Software
 
-### Architectural targets
+Programs supported on aether-os include [Weston](https://gitlab.freedesktop.org/wayland/weston/) (the Wayland reference compositor), Busybox, Coreutils, Bash, nano, vim and others.
 
-The `ARCH` make variable determines the target architecture to build the kernel and image for.
+## Supported Hardware
 
-The default `ARCH` is `x86_64`. Other options include: `aarch64`, `loongarch64`, and `riscv64`.
+**General** USB (XHCI)\
+**Graphics** virtio GPU, VMWare SVGA\
+**Input** USB human interface devices, PS/2 keyboard and mouse\
+**Storage** USB mass storage devices, NVMe, AHCI, virtio block\
+**Network** E1000, virtio network
 
-### Makefile targets
+## Running aether-os
 
-Running `make all` will compile the kernel (from the `kernel/` directory) and then generate a bootable ISO image.
-
-Running `make all-hdd` will compile the kernel and then generate a raw image suitable to be flashed onto a USB stick or hard drive/SSD.
-
-Running `make run` will build the kernel and a bootable ISO (equivalent to make all) and then run it using `qemu` (if installed).
-
-Running `make run-hdd` will build the kernel and a raw HDD image (equivalent to make all-hdd) and then run it using `qemu` (if installed).
-
-For x86_64, the `run-bios` and `run-hdd-bios` targets are equivalent to their non `-bios` counterparts except that they boot `qemu` using the default SeaBIOS firmware instead of OVMF.
+Running `make run` will build the kernel and a bootable image and a rootfs image, and then run it using `qemu` (if installed).

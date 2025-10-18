@@ -106,6 +106,7 @@ uint64_t sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction) {
         return -EINVAL;
     }
 
+    spin_lock(&current_task->signal_lock);
     sigaction_t *ptr = &current_task->actions[sig];
     if (oldaction) {
         *oldaction = *ptr;
@@ -114,14 +115,15 @@ uint64_t sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction) {
     if (action) {
         *ptr = *action;
     }
+    spin_unlock(&current_task->signal_lock);
 
     return 0;
 }
 
 void sys_sigreturn(struct pt_regs *regs) {
-#if defined(__x86_64__)
     arch_disable_interrupt();
 
+#if defined(__x86_64__)
     struct pt_regs *context =
         (struct pt_regs *)(current_task->kernel_stack - 8) - 1;
 
@@ -133,8 +135,6 @@ void sys_sigreturn(struct pt_regs *regs) {
     current_task->arch_context->ctx = context;
 
     current_task->call_in_signal = 0;
-
-    task_unblock(current_task, EOK);
 
     asm volatile(
         "movq %0, %%rsp\n\t"
@@ -259,6 +259,7 @@ void task_signal() {
         return;
     }
 
+    spin_lock(&current_task->signal_lock);
     int sig = 1;
     for (; sig <= MAXSIG; sig++) {
         if (map & SIGMASK(sig)) {
@@ -270,27 +271,25 @@ void task_signal() {
     current_task->saved_signal = sig;
 
     if (sig == SIGKILL) {
-        task_exit(-sig);
+        spin_unlock(&current_task->signal_lock);
+        task_exit(128 + sig);
         return;
     }
 
-    // for (int i = 0; i < MAX_FD_NUM; i++)
-    // {
-    //     if (current_task->fd_info->fds[i])
-    //     {
+    // for (int i = 0; i < MAX_FD_NUM; i++) {
+    //     if (current_task->fd_info->fds[i]) {
     //         vfs_node_t node = current_task->fd_info->fds[i]->node;
-    //         if (node && node->fsid == signalfdfs_id)
-    //         {
+    //         if (node && node->fsid == signalfdfs_id) {
     //             struct signalfd_ctx *ctx = node->handle;
 
     //             struct signalfd_siginfo info;
     //             memset(&info, 0, sizeof(struct sigevent));
     //             info.ssi_signo = sig;
 
-    //             memcpy(&ctx->queue[ctx->queue_head], &info, sizeof(struct
-    //             signalfd_siginfo)); ctx->queue_head = (ctx->queue_head + 1) %
-    //             ctx->queue_size; if (ctx->queue_head == ctx->queue_tail)
-    //             {
+    //             memcpy(&ctx->queue[ctx->queue_head], &info,
+    //                    sizeof(struct signalfd_siginfo));
+    //             ctx->queue_head = (ctx->queue_head + 1) % ctx->queue_size;
+    //             if (ctx->queue_head == ctx->queue_tail) {
     //                 ctx->queue_tail = (ctx->queue_tail + 1) %
     //                 ctx->queue_size;
     //             }
@@ -301,17 +300,17 @@ void task_signal() {
     sigaction_t *ptr = &current_task->actions[sig];
 
     if (ptr->sa_handler == SIG_IGN) {
+        spin_unlock(&current_task->signal_lock);
         return;
     }
 
     if (ptr->sa_handler == SIG_DFL) {
+        spin_unlock(&current_task->signal_lock);
         return;
     }
 
-    task_block(current_task, TASK_HANDLING_SIGNAL, -1);
-
 #if defined(__x86_64__)
-    struct pt_regs *f = (struct pt_regs *)current_task->syscall_stack - 1;
+    struct pt_regs *f = (struct pt_regs *)(current_task->syscall_stack - 8) - 1;
 
     memcpy(&current_task->signal_saved_regs, current_task->arch_context->ctx,
            sizeof(struct pt_regs));
@@ -320,6 +319,8 @@ void task_signal() {
 
     sigrsp -= sizeof(void *);
     *((void **)sigrsp) = (void *)ptr->sa_restorer;
+
+    memset(current_task->arch_context->ctx, 0, sizeof(struct pt_regs));
 
     current_task->arch_context->ctx->rip = (uint64_t)ptr->sa_handler;
     current_task->arch_context->ctx->rdi = sig;
@@ -331,7 +332,7 @@ void task_signal() {
     current_task->arch_context->fs = SELECTOR_USER_DS;
     current_task->arch_context->gs = SELECTOR_USER_DS;
 
-    current_task->arch_context->ctx->rflags = 0;
+    current_task->arch_context->ctx->rflags = 0x0;
     current_task->arch_context->ctx->rsp = sigrsp;
 #elif defined(__aarch64__)
 #elif defined(__riscv)
@@ -346,6 +347,8 @@ void task_signal() {
 
     current_task->saved_blocked = current_task->blocked;
     current_task->blocked |= (1 << sig) | ptr->sa_mask;
+
+    spin_unlock(&current_task->signal_lock);
 
     arch_switch_with_context(NULL, current_task->arch_context,
                              current_task->kernel_stack);

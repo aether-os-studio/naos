@@ -165,12 +165,8 @@ void frame_init() {
     }
 }
 
-spinlock_t mem_map_op_lock = {0};
-
 void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
                     uint64_t size, uint64_t flags) {
-    spin_lock(&mem_map_op_lock);
-
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
         if (paddr == 0) {
             uint64_t phys = alloc_frames(1);
@@ -184,14 +180,10 @@ void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
                      get_arch_page_table_flags(flags), true);
         }
     }
-
-    spin_unlock(&mem_map_op_lock);
 }
 
 void map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
                             uint64_t size, uint64_t flags) {
-    spin_lock(&mem_map_op_lock);
-
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
         if (paddr == 0) {
             uint64_t phys = alloc_frames(1);
@@ -205,18 +197,12 @@ void map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
                      get_arch_page_table_flags(flags), false);
         }
     }
-
-    spin_unlock(&mem_map_op_lock);
 }
 
 void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size) {
-    spin_lock(&mem_map_op_lock);
-
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
         unmap_page(pml4, va);
     }
-
-    spin_unlock(&mem_map_op_lock);
 }
 
 #if !defined(__riscv__)
@@ -253,13 +239,9 @@ uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
 
 uint64_t map_change_attribute_range(uint64_t *pgdir, uint64_t vaddr,
                                     uint64_t len, uint64_t flags) {
-    spin_lock(&mem_map_op_lock);
-
     for (uint64_t va = vaddr; va < vaddr + len; va += DEFAULT_PAGE_SIZE) {
         map_change_attribute(pgdir, va, get_arch_page_table_flags(flags));
     }
-
-    spin_unlock(&mem_map_op_lock);
 
     return 0;
 }

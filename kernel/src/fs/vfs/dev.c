@@ -2,9 +2,11 @@
 #include <fs/fs_syscall.h>
 #include <fs/vfs/sys.h>
 #include <drivers/kernel_logger.h>
+#include <drivers/bus/pci.h>
 #include <arch/arch.h>
 #include <task/task.h>
 #include <drivers/pty.h>
+#include <drivers/fb.h>
 
 int devfs_id = 0;
 vfs_node_t devfs_root = NULL;
@@ -230,6 +232,44 @@ ssize_t inputdev_poll(void *data, size_t event) {
     return 0;
 }
 
+ssize_t pci_bar_dev_read(void *data, uint64_t offset, void *buf, uint64_t len,
+                         uint64_t flags) {
+    pci_bar_t *bar = data;
+    return -ENOSYS;
+}
+
+ssize_t pci_bar_dev_write(void *data, uint64_t offset, const void *buf,
+                          uint64_t len, uint64_t flags) {
+    pci_bar_t *bar = data;
+    return -ENOSYS;
+}
+
+ssize_t pci_bar_dev_ioctl(void *data, ssize_t cmd, ssize_t arg) {
+    pci_bar_t *bar = data;
+    switch (cmd) {
+    case PCI_BAR_GET_SIZE:
+        return bar->size;
+    case PCI_BAR_GET_IS_MMIO:
+        return bar->mmio ? 1 : 0;
+    default:
+        return -EINVAL;
+    }
+}
+
+ssize_t pci_bar_dev_poll(void *data, size_t event) {
+    pci_bar_t *bar = data;
+    return 0;
+}
+
+void *pci_bar_dev_map(void *data, void *addr, uint64_t offset, uint64_t len) {
+    pci_bar_t *bar = data;
+    map_page_range(get_current_page_dir(true), (uint64_t)addr, bar->address,
+                   bar->size,
+                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_U | PT_FLAG_UNCACHEABLE |
+                       PT_FLAG_DEVICE);
+    return addr;
+}
+
 vfs_node_t
 regist_dev(const char *name,
            ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len,
@@ -367,16 +407,90 @@ ssize_t stdout_write(void *data, uint64_t offset, const void *buf, uint64_t len,
     return (ssize_t)len;
 }
 
+int tty_mode = KD_TEXT;
+int tty_kbmode = K_XLATE;
+struct vt_mode current_vt_mode = {0};
+
+extern stdio_handle_t *global_stdio_handle;
+
 ssize_t stdio_ioctl(void *data, ssize_t cmd, ssize_t arg) {
     switch (cmd) {
+    case TIOCGWINSZ:
+        *(struct winsize *)arg = (struct winsize){
+            .ws_xpixel = framebuffer->width,
+            .ws_ypixel = framebuffer->height,
+            .ws_col = framebuffer->width / 8,
+            .ws_row = framebuffer->height / 16,
+        };
+        return 0;
+    case TIOCSCTTY:
+        return 0;
+    case TIOCGPGRP:
+        int *pid = (int *)arg;
+        *pid = global_stdio_handle->at_process_group_id;
+        return 0;
+    case TIOCSPGRP:
+        global_stdio_handle->at_process_group_id = *(int *)arg;
+        return 0;
+    case TCGETS:
+        if (check_user_overflow(arg, sizeof(termios))) {
+            return -EFAULT;
+        }
+        memcpy((void *)arg, &current_task->term, sizeof(termios));
+        return 0;
+    case TCSETS:
+        if (check_user_overflow(arg, sizeof(termios))) {
+            return -EFAULT;
+        }
+        memcpy(&current_task->term, (void *)arg, sizeof(termios));
+        return 0;
+    case TCSETSW:
+        if (check_user_overflow(arg, sizeof(termios))) {
+            return -EFAULT;
+        }
+        memcpy(&current_task->term, (void *)arg, sizeof(termios));
+        return 0;
+    case TIOCSWINSZ:
+        return 0;
+    case KDGETMODE:
+        *(int *)arg = tty_mode;
+        return 0;
+    case KDSETMODE:
+        tty_mode = *(int *)arg;
+        return 0;
+    case KDGKBMODE:
+        *(int *)arg = tty_kbmode;
+        return 0;
+    case KDSKBMODE:
+        tty_kbmode = *(int *)arg;
+        return 0;
+    case VT_SETMODE:
+        memcpy(&current_vt_mode, (void *)arg, sizeof(struct vt_mode));
+        return 0;
+    case VT_GETMODE:
+        memcpy((void *)arg, &current_vt_mode, sizeof(struct vt_mode));
+        return 0;
+    case VT_ACTIVATE:
+        return 0;
+    case VT_WAITACTIVE:
+        return 0;
+    case VT_GETSTATE:
+        struct vt_state *state = (struct vt_state *)arg;
+        state->v_active = 1; // 当前活动终端
+        state->v_state = 0;  // 状态标志
+        return 0;
+    case VT_OPENQRY:
+        *(int *)arg = 1;
+        return 0;
+    case TIOCNOTTY:
+        return 0;
     case TCSETSF:
         memcpy(&current_task->term, (void *)arg, sizeof(termios));
         return 0;
     case TCFLSH:
         return 0;
     default:
-        printk("stdio_ioctl(): Unsupported ioctl: %#018lx\n", cmd);
-        return -ENOTTY;
+        return -EINVAL;
     }
 }
 
@@ -436,6 +550,13 @@ ssize_t null_dev_write(void *data, uint64_t offset, const void *buf,
     (void)buf;
     (void)len;
     return len;
+}
+
+ssize_t null_dev_ioctl(void *data, ssize_t cmd, ssize_t arg) {
+    switch (cmd) {
+    default:
+        return -EINVAL;
+    }
 }
 
 static uint32_t simple_rand() {
@@ -505,6 +626,9 @@ void dev_init_after_mount_root() {
                global_stdio_handle);
 }
 
+extern pci_device_t *pci_devices[PCI_DEVICE_MAX];
+extern uint32_t pci_device_number;
+
 void dev_init_after_sysfs() {
     dev_input_event_t *kb_input_event = malloc(sizeof(dev_input_event_t));
     kb_input_event->inputid.bustype = 0x11;
@@ -533,7 +657,8 @@ void dev_init_after_sysfs() {
         regist_dev("input/event1", inputdev_event_read, inputdev_event_write,
                    inputdev_ioctl, inputdev_poll, NULL, mouse_input_event);
 
-    regist_dev("null", null_dev_read, null_dev_write, NULL, NULL, NULL, NULL);
+    regist_dev("null", null_dev_read, null_dev_write, null_dev_ioctl, NULL,
+               NULL, NULL);
     regist_dev("random", random_dev_read, NULL, NULL, NULL, NULL, NULL);
     regist_dev("urandom", urandom_dev_read, urandom_dev_write,
                urandom_dev_ioctl, NULL, NULL, NULL);
@@ -545,6 +670,18 @@ void dev_init_after_sysfs() {
     pty_init();
     ptmx_init();
     pts_init();
+
+    for (uint32_t i = 0; i < pci_device_number; i++) {
+        pci_device_t *dev = pci_devices[i];
+        for (uint32_t bar = 0; bar < 6; bar++) {
+            char devname[32];
+            sprintf(devname, "pci%04d:%02d:%02d.%d/bar%d", dev->segment,
+                    dev->bus, dev->slot, dev->func, bar);
+            regist_dev(devname, pci_bar_dev_read, pci_bar_dev_write,
+                       pci_bar_dev_ioctl, pci_bar_dev_poll, pci_bar_dev_map,
+                       &dev->bars[bar]);
+        }
+    }
 }
 
 void circular_int_init(circular_int_t *circ, size_t size) {

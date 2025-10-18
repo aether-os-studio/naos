@@ -12,7 +12,7 @@
 #include <net/socket.h>
 #include <uacpi/sleep.h>
 
-eevdf_t *schedulers[MAX_CPU_NUM];
+struct eevdf_t *schedulers[MAX_CPU_NUM];
 
 const uint64_t bitmap_size =
     (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 8;
@@ -21,12 +21,7 @@ spinlock_t task_queue_lock = {0};
 task_t *tasks[MAX_TASK_NUM];
 task_t *idle_tasks[MAX_CPU_NUM];
 
-extern stdio_handle_t *global_stdio_handle;
-
-void send_sigint() {
-    if (global_stdio_handle == NULL)
-        return;
-
+void send_sigint(int pgid) {
     uint64_t continue_ptr_count = 0;
     for (size_t i = 1; i < MAX_TASK_NUM; i++) {
         task_t *ptr = tasks[i];
@@ -38,7 +33,7 @@ void send_sigint() {
         }
         continue_ptr_count = 0;
 
-        if (tasks[i]->pgid == global_stdio_handle->at_process_group_id) {
+        if (tasks[i]->pgid == pgid) {
             if (tasks[i]->actions[SIGINT].sa_handler == SIG_DFL ||
                 tasks[i]->actions[SIGINT].sa_handler == SIG_IGN) {
                 spin_lock(&tasks[i]->signal_lock);
@@ -74,6 +69,8 @@ void task_free_service(uint64_t arg) {
 
                 arch_context_free(ptr->arch_context);
 
+                vma_manager_exit_cleanup(&ptr->arch_context->mm->task_vma_mgr);
+
                 if (!ptr->is_kernel)
                     free_page_table(ptr->arch_context->mm);
 
@@ -101,6 +98,14 @@ bool can_schedule = false;
 extern int unix_socket_fsid;
 extern int unix_accept_fsid;
 
+uint32_t cpu_idx = 0;
+
+uint32_t alloc_cpu_id() {
+    uint32_t idx = cpu_idx;
+    cpu_idx = (cpu_idx + 1) % cpu_count;
+    return idx;
+}
+
 task_t *get_free_task() {
     for (uint64_t i = 0; i < cpu_count; i++) {
         if (idle_tasks[i] == NULL) {
@@ -108,6 +113,7 @@ task_t *get_free_task() {
             memset(task, 0, sizeof(task_t));
             task->state = TASK_CREATING;
             task->pid = i;
+            task->cpu_id = i;
             idle_tasks[i] = task;
             can_schedule = true;
             spin_unlock(&task_queue_lock);
@@ -123,6 +129,7 @@ task_t *get_free_task() {
             memset(task, 0, sizeof(task_t));
             task->state = TASK_CREATING;
             task->pid = i;
+            task->cpu_id = alloc_cpu_id();
             tasks[i] = task;
             can_schedule = true;
             spin_unlock(&task_queue_lock);
@@ -135,22 +142,15 @@ task_t *get_free_task() {
     return NULL;
 }
 
-uint32_t cpu_idx = 0;
-
-uint32_t alloc_cpu_id() {
-    uint32_t idx = cpu_idx;
-    cpu_idx = (cpu_idx + 1) % cpu_count;
-    return idx;
-}
-
 task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
-                    uint64_t priority) {
+                    int priority) {
     arch_disable_interrupt();
+
+    can_schedule = false;
 
     task_t *task = get_free_task();
     task->call_in_signal = 0;
     memset(&task->signal_saved_regs, 0, sizeof(struct pt_regs));
-    task->cpu_id = alloc_cpu_id();
     task->is_kernel = true;
     task->ppid = task->pid;
     task->uid = 0;
@@ -176,6 +176,10 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     arch_context_init(task->arch_context,
                       virt_to_phys((uint64_t)get_kernel_page_dir()),
                       (uint64_t)entry, task->kernel_stack, false, arg);
+#if defined(__riscv__)
+    task->arch_context->ctx->tp = (uint64_t)task;
+    task->arch_context->ctx->gp = cpuid_to_hartid[current_cpu_id];
+#endif
     task->signal = 0;
     task->saved_signal = 0;
     task->status = 0;
@@ -247,12 +251,13 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
 
     add_eevdf_entity_with_prio(task, task->priority, schedulers[task->cpu_id]);
 
+    can_schedule = true;
+
     return task;
 }
 
 task_t *task_search(task_state_t state, uint32_t cpu_id) {
-    task_t *task = pick_next_task(schedulers[cpu_id]);
-    return task;
+    return pick_next_task(schedulers[cpu_id]);
 }
 
 void idle_entry(uint64_t arg) {
@@ -262,7 +267,7 @@ void idle_entry(uint64_t arg) {
     }
 }
 
-extern void init_thread(uint64_t);
+extern void init_thread(uint64_t arg);
 
 extern void futex_init();
 
@@ -284,12 +289,13 @@ void task_init() {
         idle_task->cpu_id = cpu;
         idle_task->state = TASK_RUNNING;
         schedulers[cpu]->current = idle_task->sched_info;
+        schedulers[cpu]->idle_entity = idle_task->sched_info;
     }
 
     task_create("init", init_thread, 0, NORMAL_PRIORITY);
     task_create("task_free_service", task_free_service, 0, KTHREAD_PRIORITY);
 
-    arch_set_current(idle_tasks[0]);
+    arch_set_current(idle_tasks[current_cpu_id]);
 
     task_initialized = true;
 
@@ -410,6 +416,8 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
         return (uint64_t)-ENOMEM;
     }
 
+    can_schedule = false;
+
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
     child->call_in_signal = current_task->call_in_signal;
 
@@ -487,9 +495,16 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
     }
 
     child->saved_signal = 0;
-    memcpy(child->actions, current_task->actions, sizeof(child->actions));
     child->signal = 0;
-    child->blocked = current_task->blocked;
+    if (vfork) {
+        spin_lock(&current_task->signal_lock);
+        memcpy(child->actions, current_task->actions, sizeof(child->actions));
+        child->blocked = current_task->blocked;
+        spin_unlock(&current_task->signal_lock);
+    } else {
+        memset(child->actions, 0, sizeof(child->actions));
+        child->blocked = 0;
+    }
 
     memcpy(&child->term, &current_task->term, sizeof(termios));
 
@@ -514,6 +529,8 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
     add_eevdf_entity_with_prio(child, child->priority,
                                schedulers[child->cpu_id]);
 
+    can_schedule = true;
+
     if (vfork) {
         current_task->child_vfork_done = false;
 
@@ -529,17 +546,11 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
 
 char interpreter_name_global[256] = {0};
 
-spinlock_t execve_lock = {0};
-
 uint64_t task_execve(const char *path, const char **argv, const char **envp) {
-    arch_disable_interrupt();
-
-    spin_lock(&execve_lock);
     can_schedule = false;
 
     vfs_node_t node = vfs_open(path);
     if (!node) {
-        spin_unlock(&execve_lock);
         can_schedule = true;
         return (uint64_t)-ENOENT;
     }
@@ -618,8 +629,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
                 free(new_envp[i]);
         free(new_envp);
 
-        spin_unlock(&execve_lock);
-
         char *p = (char *)buffer + 2;
         const char *interpreter_name = NULL;
         while (*p != '\n') {
@@ -649,17 +658,20 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
         return task_execve((const char *)injected_argv[0], injected_argv, envp);
     }
 
+    if (!current_task->is_vfork) {
+        vma_manager_exit_cleanup(&current_task->arch_context->mm->task_vma_mgr);
+    }
+
     if (current_task->is_vfork ||
-        current_task->arch_context->mm->page_table_addr ==
+        current_task->is_kernel ==
             (uint64_t)virt_to_phys(get_kernel_page_dir())) {
         task_mm_info_t *new_mm =
             clone_page_table(current_task->arch_context->mm, 0);
-        if (current_task->arch_context->mm->page_table_addr ==
-            (uint64_t)virt_to_phys(get_kernel_page_dir()))
-            current_task->arch_context->mm->ref_count--;
-        else
+        if (!current_task->is_kernel) {
             free_page_table(current_task->arch_context->mm);
+        }
         current_task->arch_context->mm = new_mm;
+        new_mm->task_vma_mgr.last_alloc_addr = USER_MMAP_START;
     }
 
     current_task->arch_context->mm->brk_start = USER_BRK_START;
@@ -690,7 +702,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
                 free(new_envp[i]);
         free(new_envp);
         free(fullpath);
-        spin_unlock(&execve_lock);
         can_schedule = true;
         return (uint64_t)-EINVAL;
     }
@@ -707,7 +718,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
                 free(new_envp[i]);
         free(new_envp);
         free(fullpath);
-        spin_unlock(&execve_lock);
         can_schedule = true;
         return (uint64_t)-ENOEXEC;
     }
@@ -742,7 +752,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
                         free(new_envp[i]);
                 free(new_envp);
                 free(fullpath);
-                spin_unlock(&execve_lock);
                 can_schedule = true;
                 return (uint64_t)-ENOENT;
             }
@@ -924,7 +933,12 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
     }
 
     for (int i = 1; i < MAXSIG; i++) {
-        if (i != SIGCHLD && current_task->actions[i].sa_handler != SIG_IGN) {
+        if (i == SIGCHLD) {
+            if (current_task->actions[i].sa_handler != (sighandler_t)SIG_IGN) {
+                memset(&current_task->actions[i], 0, sizeof(sigaction_t));
+            }
+            continue;
+        } else {
             memset(&current_task->actions[i], 0, sizeof(sigaction_t));
         }
     }
@@ -986,8 +1000,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
     }
 
     current_task->is_kernel = false;
-
-    spin_unlock(&execve_lock);
     can_schedule = true;
 
     arch_to_user_mode(current_task->arch_context,
@@ -998,7 +1010,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
 
 void sys_yield() { arch_yield(); }
 
-int task_block(task_t *task, task_state_t state, int timeout_ns) {
+int task_block(task_t *task, task_state_t state, int64_t timeout_ns) {
     task->state = state;
     if (timeout_ns > 0)
         task->force_wakeup_ns = nanoTime() + timeout_ns;
@@ -1011,10 +1023,9 @@ int task_block(task_t *task, task_state_t state, int timeout_ns) {
         entity->on_rq = false;
     }
 
-    if (current_task == task &&
-        (state == TASK_BLOCKING || state == TASK_READING_STDIO)) {
+    while (current_task->state == TASK_BLOCKING ||
+           current_task->state == TASK_READING_STDIO)
         arch_yield();
-    }
 
     return task->status;
 }
@@ -1040,8 +1051,8 @@ void task_exit_inner(task_t *task, int64_t code) {
     spin_lock(&task_queue_lock);
 
     can_schedule = false;
-
     remove_eevdf_entity(task, schedulers[task->cpu_id]);
+    task->sched_info = NULL;
 
     task->current_state = TASK_DIED;
     task->state = TASK_DIED;
@@ -1074,16 +1085,16 @@ void task_exit_inner(task_t *task, int64_t code) {
     task->status = (uint64_t)code;
 
     if (task->fd_info) {
+        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+            if (task->fd_info->fds[i]) {
+                vfs_close(task->fd_info->fds[i]->node);
+                free(task->fd_info->fds[i]);
+
+                task->fd_info->fds[i] = NULL;
+            }
+        }
         task->fd_info->ref_count--;
         if (task->fd_info->ref_count <= 0) {
-            for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-                if (task->fd_info->fds[i]) {
-                    vfs_close(task->fd_info->fds[i]->node);
-                    free(task->fd_info->fds[i]);
-
-                    task->fd_info->fds[i] = NULL;
-                }
-            }
             free(task->fd_info);
         }
     }
@@ -1225,6 +1236,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
                 break;
             } else {
                 found_alive = ptr;
+                break;
             }
         }
 
@@ -1249,7 +1261,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
     if (target) {
         if (status) {
             if (target->status < 128) {
-                *status = (target->status & 0xff) << 8;
+                *status = ((target->status & 0xff) << 8);
             } else {
                 int sig = target->status - 128;
                 *status = (sig & 0xff);
@@ -1272,6 +1284,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     if (child == NULL) {
         return (uint64_t)-ENOMEM;
     }
+
+    can_schedule = false;
 
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
     child->call_in_signal = current_task->call_in_signal;
@@ -1357,9 +1371,16 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     memcpy(&child->term, &current_task->term, sizeof(termios));
 
     child->saved_signal = 0;
-    memcpy(child->actions, current_task->actions, sizeof(child->actions));
     child->signal = 0;
-    child->blocked = current_task->blocked;
+    if (flags & CLONE_SIGHAND) {
+        memcpy(child->actions, current_task->actions, sizeof(child->actions));
+        spin_lock(&current_task->signal_lock);
+        child->blocked = current_task->blocked;
+        spin_unlock(&current_task->signal_lock);
+    } else {
+        memset(child->actions, 0, sizeof(child->actions));
+        child->blocked = 0;
+    }
 
     if (flags & CLONE_SETTLS) {
 #if defined(__x86_64__)
@@ -1396,6 +1417,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     add_eevdf_entity_with_prio(child, child->priority,
                                schedulers[child->cpu_id]);
+
+    can_schedule = true;
 
     if ((flags & CLONE_VFORK)) {
         current_task->child_vfork_done = false;
@@ -1481,10 +1504,7 @@ void sched_update_itimer() {
     uint64_t rtAt = current_task->itimer_real.at;
     uint64_t rtReset = current_task->itimer_real.reset;
 
-    tm time_now;
-    time_read(&time_now);
-
-    uint64_t now = mktime(&time_now) * 1000;
+    uint64_t now = nanoTime() / 1000000;
 
     if (rtAt && rtAt <= now) {
         spin_lock(&current_task->signal_lock);
@@ -1539,8 +1559,8 @@ void sched_update_timerfd() {
                 uint64_t now;
                 if (tfd->timer.clock_type == CLOCK_MONOTONIC) {
                     now = nanoTime();
-                } else // CLOCK_REALTIME
-                {
+                } else {
+                    // CLOCK_REALTIME
                     tm time;
                     time_read(&time);
                     now = (uint64_t)mktime(&time) * 1000000000ULL +
@@ -1564,10 +1584,11 @@ void sched_update_timerfd() {
 }
 
 void sched_check_wakeup() {
-    spin_lock(&task_queue_lock);
     uint64_t continue_ptr_count = 0;
     for (size_t i = 1; i < MAX_TASK_NUM; i++) {
+        spin_lock(&task_queue_lock);
         task_t *ptr = tasks[i];
+        spin_unlock(&task_queue_lock);
         if (ptr == NULL) {
             continue_ptr_count++;
             if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
@@ -1581,7 +1602,6 @@ void sched_check_wakeup() {
             ptr->force_wakeup_ns = UINT64_MAX;
         }
     }
-    spin_unlock(&task_queue_lock);
 }
 
 size_t sys_setitimer(int which, struct itimerval *value,
@@ -1594,7 +1614,7 @@ size_t sys_setitimer(int which, struct itimerval *value,
 
     tm time_now;
     time_read(&time_now);
-    uint64_t now = mktime(&time_now) * 1000;
+    uint64_t now = nanoTime() / 1000000;
 
     if (old) {
         uint64_t remaining = rt_at > now ? rt_at - now : 0;
@@ -1665,10 +1685,7 @@ uint64_t sys_timer_settime(timer_t timerid, const struct itimerval *new_value,
     uint64_t expires =
         new_value->it_value.tv_sec * 1000 + new_value->it_value.tv_usec / 1000;
 
-    tm time_now;
-    time_read(&time_now);
-
-    uint64_t now = mktime(&time_now) * 1000;
+    uint64_t now = nanoTime() / 1000000;
 
     if (old_value) {
         struct itimerval old;
@@ -1752,9 +1769,6 @@ uint64_t sys_setpriority(int which, int who, int niceval) {
         task = tasks[who];
         if (!task)
             return -ESRCH;
-
-        change_entity_weight(schedulers[task->cpu_id], task,
-                             NICE_TO_PRIO(niceval));
 
         return 0;
 

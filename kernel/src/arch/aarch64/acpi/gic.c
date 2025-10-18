@@ -1,6 +1,7 @@
-#include <arch/aarch64/acpi/acpi.h>
+#include <acpi/uacpi/acpi.h>
+#include <acpi/uacpi/tables.h>
 #include <arch/aarch64/acpi/gic.h>
-#include <interrupt/irq_manager.h>
+#include <irq/irq_manager.h>
 #include <mm/mm.h>
 
 uint64_t gicd_base_virt = 0;
@@ -8,71 +9,79 @@ uint64_t gicd_base_address = 0;
 uint64_t gicr_base_virt = 0;
 uint64_t gicr_base_address = 0;
 
-void madt_setup(MADT *madt) {
-    if (!madt)
-        return;
+void gic_init() {
+    struct uacpi_table madt_table;
+    uacpi_status status = uacpi_table_find_by_signature("APIC", &madt_table);
 
-    uint64_t current = 0;
-    for (;;) {
-        if (current + ((uint32_t)sizeof(MADT) - 1) >= madt->h.length) {
-            break;
+    if (status == UACPI_STATUS_OK) {
+        struct acpi_madt *madt = (struct acpi_madt *)madt_table.ptr;
+
+        uint64_t current = 0;
+        for (;;) {
+            if (current + ((uint32_t)sizeof(struct acpi_madt) - 1) >=
+                madt->hdr.length) {
+                break;
+            }
+            struct acpi_entry_hdr *header =
+                (struct acpi_entry_hdr *)((uint64_t)(&madt->entries) + current);
+            if (header->type == ACPI_MADT_ENTRY_TYPE_GICD) {
+                struct acpi_madt_gicd *gicd =
+                    (struct acpi_madt_gicd *)((uint64_t)(&madt->entries) +
+                                              current);
+                gicd_base_address = gicd->address;
+                break;
+            }
+            current += (uint64_t)header->length;
         }
-        MadtHeader *header =
-            (MadtHeader *)((uint64_t)(&madt->entries) + current);
-        if (header->entry_type == ACPI_MADT_TYPE_GICD) {
-            GicdEntry *gicd =
-                (GicdEntry *)((uint64_t)(&madt->entries) + current);
-            gicd_base_address = gicd->base_address;
-            break;
+
+        current = 0;
+        for (;;) {
+            if (current + ((uint32_t)sizeof(struct acpi_madt) - 1) >=
+                madt->hdr.length) {
+                break;
+            }
+            struct acpi_entry_hdr *header =
+                (struct acpi_entry_hdr *)((uint64_t)(&madt->entries) + current);
+            if (header->type == ACPI_MADT_ENTRY_TYPE_GICR) {
+
+                struct acpi_madt_gicr *gicr =
+                    (struct acpi_madt_gicr *)((uint64_t)(&madt->entries) +
+                                              current);
+                gicr_base_address = gicr->address;
+                break;
+            }
+            current += (uint64_t)header->length;
         }
-        current += (uint64_t)header->length;
-    }
 
-    current = 0;
-    for (;;) {
-        if (current + ((uint32_t)sizeof(MADT) - 1) >= madt->h.length) {
-            break;
+        // current = 0;
+        // for (;;)
+        // {
+        //     if (current + ((uint32_t)sizeof(MADT) - 1) >= madt->h.Length)
+        //     {
+        //         break;
+        //     }
+        //     MadtHeader *header = (MadtHeader *)((uint64_t)(&madt->entries) +
+        //     current); if (header->entry_type == ACPI_MADT_TYPE_GICC)
+        //     {
+
+        //         GiccEntry *gicc = (GiccEntry *)((uint64_t)(&madt->entries) +
+        //         current); gicr_base_address = gicc->gicr_base_address; break;
+        //     }
+        //     current += (uint64_t)header->length;
+        // }
+
+        if (gicd_base_address) {
+            gicd_base_virt = phys_to_virt(gicd_base_address);
+            map_page_range(get_current_page_dir(false), gicd_base_virt,
+                           gicd_base_address, 0x10000, PT_FLAG_R | PT_FLAG_W);
         }
-        MadtHeader *header =
-            (MadtHeader *)((uint64_t)(&madt->entries) + current);
-        if (header->entry_type == ACPI_MADT_TYPE_GICR) {
 
-            GicrEntry *gicr =
-                (GicrEntry *)((uint64_t)(&madt->entries) + current);
-            gicr_base_address = gicr->discovery_range_base_address;
-            break;
+        if (gicr_base_address) {
+            gicr_base_virt = phys_to_virt(gicr_base_address);
+            map_page_range(get_current_page_dir(false), gicr_base_virt,
+                           gicr_base_address, GICR_STRIDE * cpu_count,
+                           PT_FLAG_R | PT_FLAG_W);
         }
-        current += (uint64_t)header->length;
-    }
-
-    // current = 0;
-    // for (;;)
-    // {
-    //     if (current + ((uint32_t)sizeof(MADT) - 1) >= madt->h.Length)
-    //     {
-    //         break;
-    //     }
-    //     MadtHeader *header = (MadtHeader *)((uint64_t)(&madt->entries) +
-    //     current); if (header->entry_type == ACPI_MADT_TYPE_GICC)
-    //     {
-
-    //         GiccEntry *gicc = (GiccEntry *)((uint64_t)(&madt->entries) +
-    //         current); gicr_base_address = gicc->gicr_base_address; break;
-    //     }
-    //     current += (uint64_t)header->length;
-    // }
-
-    if (gicd_base_address) {
-        gicd_base_virt = phys_to_virt(gicd_base_address);
-        map_page_range(get_current_page_dir(false), gicd_base_virt,
-                       gicd_base_address, 0x10000, PT_FLAG_R | PT_FLAG_W);
-    }
-
-    if (gicr_base_address) {
-        gicr_base_virt = phys_to_virt(gicr_base_address);
-        map_page_range(get_current_page_dir(false), gicr_base_virt,
-                       gicr_base_address, GICR_STRIDE * cpu_count,
-                       PT_FLAG_R | PT_FLAG_W);
     }
 }
 

@@ -28,7 +28,11 @@ ifeq ($(filter $(ARCH),aarch64 loongarch64 riscv64 x86_64),)
 endif
 
 # User controllable C flags.
-CFLAGS := -g3 -O0 -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-cast-function-type -Wno-sign-compare -Wno-discarded-qualifiers -Wno-address-of-packed-member
+ifeq ($(BUILD_MODE), debug)
+CFLAGS := -g3 -O0 -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-cast-function-type -Wno-sign-compare -Wno-discarded-qualifiers -Wno-address-of-packed-member -DDEBUG
+else
+CFLAGS := -O2 -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-cast-function-type -Wno-sign-compare -Wno-discarded-qualifiers -Wno-address-of-packed-member
+endif
 
 # User controllable C preprocessor flags. We set none by default.
 CPPFLAGS :=
@@ -159,7 +163,7 @@ override SRCFILES := $(shell find $(ARCH_DIR) -name "*.[Sc]" | LC_ALL=C sort)
 override SRCFILES += $(shell find src/acpi -name "*.[Sc]" | LC_ALL=C sort)
 override SRCFILES += $(shell find src/drivers -name "*.c" | LC_ALL=C sort)
 override SRCFILES += $(shell find src/fs -name "*.c" | LC_ALL=C sort)
-override SRCFILES += $(shell find src/interrupt -name "*.c" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/irq -name "*.c" | LC_ALL=C sort)
 override SRCFILES += $(shell find src/libs -name "*.c" | LC_ALL=C sort)
 override SRCFILES += $(shell find src/mm -name "*.c" | LC_ALL=C sort)
 override SRCFILES += $(shell find src/mod -name "*.c" | LC_ALL=C sort)
@@ -184,6 +188,9 @@ all: bin-$(ARCH)/$(OUTPUT)
 # Include header dependencies.
 -include $(HEADER_DEPS)
 
+ifeq ($(ARCH), aarch64)
+override OBJ += $(PROJECT_ROOT)/libgcc_aa64.a
+endif
 ifeq ($(ARCH), riscv64)
 override OBJ += $(PROJECT_ROOT)/libgcc_rv64.a
 endif

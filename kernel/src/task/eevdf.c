@@ -3,7 +3,8 @@
  */
 #include <task/eevdf.h>
 
-unsigned int sysctl_sched_base_slice = 700000ULL; // 默认时间片长度
+unsigned int sysctl_sched_base_slice =
+    1000000000ULL / SCHED_HZ; // 默认时间片长度
 
 const int sched_prio_to_weight[40] = {
     /* -20 */ 88761, 71755, 56483, 46273, 36291,
@@ -174,6 +175,7 @@ struct sched_entity *new_entity(task_t *task, uint64_t prio,
                                 eevdf_t *eevdf_sched) {
     struct sched_entity *entity =
         (struct sched_entity *)malloc(sizeof(struct sched_entity));
+    memset(entity, 0, sizeof(struct sched_entity));
     entity->is_idle = prio == NICE_TO_PRIO(20);
     entity->prio = prio;
     entity->slice = sysctl_sched_base_slice;
@@ -181,6 +183,7 @@ struct sched_entity *new_entity(task_t *task, uint64_t prio,
     entity->on_rq = true;
     entity->deadline = 0;
     entity->vruntime = eevdf_sched->min_vruntime;
+    entity->min_vruntime = eevdf_sched->min_vruntime;
     entity->exec_start = nanoTime();
     entity->is_yield = false;
     set_load_weight(entity);

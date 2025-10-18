@@ -2,7 +2,6 @@
 
 #define ARCH_MAX_IRQ_NUM 1020
 
-#include "acpi/acpi.h"
 #include "drivers/chars/keyboard.h"
 #include "drivers/chars/mouse.h"
 #include "drivers/chars/serial.h"
@@ -14,6 +13,7 @@
 #include "task/arch_context.h"
 #include "smp/smp.h"
 #include "syscall/nr.h"
+#include "syscall/cpu_info.h"
 #include "syscall/syscall.h"
 #include "time/time.h"
 

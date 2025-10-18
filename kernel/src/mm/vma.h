@@ -33,9 +33,11 @@ typedef struct vma {
 
 // VMA管理器
 typedef struct {
-    vma_t *vma_list;        // VMA链表头
-    unsigned long vm_total; // 总虚拟内存大小
-    unsigned long vm_used;  // 已使用虚拟内存
+    vma_t *vma_list;           // VMA链表头
+    unsigned long vm_total;    // 总虚拟内存大小
+    unsigned long vm_used;     // 已使用虚拟内存
+    uintptr_t last_alloc_addr; // 上次分配地址
+    bool initialized;
 } vma_manager_t;
 
 // 函数声明
@@ -50,3 +52,4 @@ int vma_split(vma_t *vma, unsigned long addr);
 int vma_merge(vma_t *vma1, vma_t *vma2);
 int vma_unmap_range(vma_manager_t *mgr, uintptr_t start, uintptr_t end);
 void vma_manager_exit_cleanup(vma_manager_t *mgr);
+int vma_manager_copy(vma_manager_t *dst, vma_manager_t *src);

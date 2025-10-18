@@ -5,19 +5,61 @@
 void handle_exception_c(struct pt_regs *regs, uint64_t cause);
 void handle_interrupt_c(struct pt_regs *regs, uint64_t cause);
 
+spinlock_t dump_lock = {0};
+
+void dump_registers(struct pt_regs *regs) {
+    spin_lock(&dump_lock);
+
+    // 通用寄存器部分
+    printk("ra: 0x%016lx  sp: 0x%016lx\n", regs->ra, regs->sp);
+    printk("gp: 0x%016lx  tp: 0x%016lx\n", regs->gp, regs->tp);
+    printk("t0: 0x%016lx  t1: 0x%016lx\n", regs->t0, regs->t1);
+    printk("t2: 0x%016lx  s0: 0x%016lx\n", regs->t2, regs->s0);
+    printk("s1: 0x%016lx  a0: 0x%016lx\n", regs->s1, regs->a0);
+    printk("a1: 0x%016lx  a2: 0x%016lx\n", regs->a1, regs->a2);
+    printk("a3: 0x%016lx  a4: 0x%016lx\n", regs->a3, regs->a4);
+    printk("a5: 0x%016lx  a6: 0x%016lx\n", regs->a5, regs->a6);
+    printk("a7: 0x%016lx  s2: 0x%016lx\n", regs->a7, regs->s2);
+    printk("s3: 0x%016lx  s4: 0x%016lx\n", regs->s3, regs->s4);
+    printk("s5: 0x%016lx  s6: 0x%016lx\n", regs->s5, regs->s6);
+    printk("s7: 0x%016lx  s8: 0x%016lx\n", regs->s7, regs->s8);
+    printk("s9: 0x%016lx  s10: 0x%016lx\n", regs->s9, regs->s10);
+    printk("s11: 0x%016lx  t3: 0x%016lx\n", regs->s11, regs->t3);
+    printk("t4: 0x%016lx  t5: 0x%016lx\n", regs->t4, regs->t5);
+    printk("t6: 0x%016lx\n", regs->t6); // 最后一个单独一行
+
+    // CSR 寄存器部分
+    printk("epc: 0x%016lx  sstatus: 0x%016lx\n", regs->epc, regs->sstatus);
+    printk("stval: 0x%016lx\n", regs->stval);
+
+    spin_unlock(&dump_lock);
+}
+
+uint8_t trap_switch_stack(struct pt_regs *regs) {
+    uint64_t sstatus = csr_read(sstatus);
+    uint64_t sp;
+    if ((sstatus & (1 << 8)))
+        sp = csr_read(sscratch);
+    else
+        sp = current_task->kernel_stack;
+
+    sp -= sizeof(struct pt_regs);
+    memmove((void *)sp, regs, sizeof(struct pt_regs));
+
+    return sp;
+}
+
 // 异常处理函数
 void handle_trap_c(struct pt_regs *regs) {
-    uint64_t is_interrupt = regs->scause & (1UL << 63);
-    uint64_t cause_code = regs->scause & 0x7FFFFFFFFFFFFFFF;
+    uint64_t is_interrupt = csr_read(scause) & (1UL << 63);
+    uint64_t cause_code = csr_read(scause) & 0x7FFFFFFFFFFFFFFF;
 
     if (is_interrupt) {
         handle_interrupt_c(regs, cause_code);
     } else {
         printk("Exception occurred:\n");
-        printk("  PC: 0x%lx\n", regs->sepc);
-        printk("  Cause: 0x%lx (%s)\n", regs->scause, "exception");
-        printk("  stval: 0x%lx\n", regs->stval);
-        printk("  sstatus: 0x%lx\n", regs->sstatus);
+
+        dump_registers(regs);
 
         handle_exception_c(regs, cause_code);
     }
@@ -30,22 +72,22 @@ void handle_syscall(struct pt_regs *regs) { syscall_handler(regs); }
 void handle_exception_c(struct pt_regs *regs, uint64_t cause) {
     switch (cause) {
     case 2: // Illegal instruction
-        printk("Illegal instruction at PC: 0x%lx\n", regs->sepc);
+        printk("Illegal instruction at PC: 0x%lx\n", regs->epc);
         // 跳过非法指令
         while (1)
             arch_pause();
         break;
 
     case 3: // Breakpoint
-        printk("Breakpoint at PC: 0x%lx\n", regs->sepc);
+        printk("Breakpoint at PC: 0x%lx\n", regs->epc);
         // 跳过断点指令
         while (1)
             arch_pause();
         break;
 
-    case 11: // Machine ecall
+    case 11: // scall
         handle_syscall(regs);
-        regs->sepc += 4;
+        regs->epc += 4;
         break;
 
     default:
@@ -67,12 +109,12 @@ void handle_interrupt_c(struct pt_regs *regs, uint64_t cause) {
     case 5: // timer interrupt
         riscv64_timer_handler(regs);
 
-        sbi_set_timer(get_timer() + TIMER_FREQ / SCHED_HZ);
-
         if (can_schedule) {
-            // arch_task_switch_to(regs, current_task,
-            //                     task_search(TASK_READY, current_cpu_id));
+            arch_task_switch_to(regs, current_task,
+                                task_search(TASK_READY, current_cpu_id));
         }
+
+        sbi_set_timer(get_timer() + TIMER_FREQ / SCHED_HZ);
 
         break;
 

@@ -4,12 +4,20 @@
 
 uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
                    void *data) {
-    vfs_node_t dir = vfs_open((const char *)dir_name);
+    char devname[128];
+    char dirname[512];
+
+    if (copy_from_user_str(devname, dev_name, sizeof(devname)))
+        return (uint64_t)-EFAULT;
+    if (copy_from_user_str(dirname, dir_name, sizeof(dirname)))
+        return (uint64_t)-EFAULT;
+
+    vfs_node_t dir = vfs_open((const char *)dirname);
     if (!dir) {
         return (uint64_t)-ENOENT;
     }
 
-    vfs_node_t dev = vfs_open((const char *)dev_name);
+    vfs_node_t dev = vfs_open((const char *)devname);
 
     if (vfs_mount(dev, dir, (const char *)type)) {
         return -ENOENT;
@@ -19,11 +27,15 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
 }
 
 uint64_t sys_umount2(const char *target, uint64_t flags) {
-    vfs_unmount(target);
+    char target_k[512];
+    if (copy_from_user_str(target_k, target, sizeof(target_k)))
+        return (uint64_t)-EFAULT;
+
+    vfs_unmount(target_k);
     return 0;
 }
 
-uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode) {
+uint64_t do_open(const char *name, uint64_t flags, uint64_t mode) {
     uint64_t i = 0;
     for (i = 3; i < MAX_FD_NUM; i++) {
         if (current_task->fd_info->fds[i] == NULL) {
@@ -69,6 +81,14 @@ uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode) {
     return i;
 }
 
+uint64_t sys_open(const char *path, uint64_t flags, uint64_t mode) {
+    char name[512];
+    if (copy_from_user_str(name, path, sizeof(name)))
+        return (uint64_t)-EFAULT;
+
+    return do_open(name, flags, mode);
+}
+
 uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags,
                     uint64_t mode) {
     if (!name || check_user_overflow((uint64_t)name, strlen(name))) {
@@ -78,7 +98,7 @@ uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags,
     if (!path)
         return (uint64_t)-ENOMEM;
 
-    uint64_t ret = sys_open(path, flags, mode);
+    uint64_t ret = do_open(path, flags, mode);
 
     free(path);
 
@@ -132,8 +152,8 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
     return 0;
 }
 
-uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t *offset_in,
-                             uint64_t fd_out, uint64_t *offset_out,
+uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t *offset_in_user,
+                             uint64_t fd_out, uint64_t *offset_out_user,
                              uint64_t len, uint64_t flags) {
     if (fd_in >= MAX_FD_NUM || fd_out >= MAX_FD_NUM) {
         return (uint64_t)-EBADF;
@@ -148,8 +168,19 @@ uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t *offset_in,
     if (out_fd->offset >= out_fd->node->size && out_fd->node->size > 0)
         return 0;
 
-    uint64_t src_offset = offset_in ? *offset_in : in_fd->offset;
-    uint64_t dst_offset = offset_out ? *offset_out : out_fd->offset;
+    uint64_t offset_in = 0;
+    uint64_t offset_out = 0;
+    if (offset_in_user) {
+        if (copy_from_user(&offset_in, offset_in_user, sizeof(uint64_t)))
+            return (uint64_t)-EFAULT;
+    }
+    if (offset_out_user) {
+        if (copy_from_user(&offset_out, offset_out_user, sizeof(uint64_t)))
+            return (uint64_t)-EFAULT;
+    }
+
+    uint64_t src_offset = offset_in_user ? offset_in : in_fd->offset;
+    uint64_t dst_offset = offset_out_user ? offset_out : out_fd->offset;
 
     uint64_t length = in_fd->node->size > len ? len : in_fd->node->size;
     uint8_t *buffer = (uint8_t *)alloc_frames_bytes(length);
@@ -174,7 +205,8 @@ uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t *offset_in,
 }
 
 uint64_t sys_read(uint64_t fd, void *buf, uint64_t len) {
-    if (!buf || check_user_overflow((uint64_t)buf, len)) {
+    if (!buf || check_user_overflow((uint64_t)buf, len) ||
+        check_unmapped((uint64_t)buf, len)) {
         return (uint64_t)-EFAULT;
     }
     if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
@@ -204,7 +236,8 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len) {
 }
 
 uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
-    if (!buf || check_user_overflow((uint64_t)buf, len)) {
+    if (!buf || check_user_overflow((uint64_t)buf, len) ||
+        check_unmapped((uint64_t)buf, len)) {
         return (uint64_t)-EFAULT;
     }
     if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
@@ -294,6 +327,11 @@ uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count) {
         if (iovec[i].len == 0)
             continue;
 
+        if (check_user_overflow((uint64_t)iovec[i].iov_base, iovec[i].len) ||
+            check_unmapped((uint64_t)iovec[i].iov_base, iovec[i].len)) {
+            return (uint64_t)-EFAULT;
+        }
+
         ssize_t ret = sys_read(fd, iovec[i].iov_base, iovec[i].len);
         if (ret < 0) {
             return (uint64_t)ret;
@@ -319,6 +357,11 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count) {
         if (iovec[i].len == 0)
             continue;
 
+        if (check_user_overflow((uint64_t)iovec[i].iov_base, iovec[i].len) ||
+            check_unmapped((uint64_t)iovec[i].iov_base, iovec[i].len)) {
+            return (uint64_t)-EFAULT;
+        }
+
         ssize_t ret = sys_write(fd, iovec[i].iov_base, iovec[i].len);
         if (ret < 0) {
             return (uint64_t)ret;
@@ -331,7 +374,7 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count) {
 }
 
 uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size) {
-    if (check_user_overflow(buf, size)) {
+    if (check_user_overflow(buf, size) || check_unmapped(buf, size)) {
         return (uint64_t)-EFAULT;
     }
     if (fd >= MAX_FD_NUM)
@@ -381,10 +424,12 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size) {
     return read_count * sizeof(struct dirent);
 }
 
-uint64_t sys_chdir(const char *dirname) {
-    if (!dirname || check_user_overflow((uint64_t)dirname, strlen(dirname))) {
+uint64_t sys_chdir(const char *dname) {
+    char dirname[512];
+
+    if (copy_from_user_str(dirname, dname, sizeof(dirname)))
         return (uint64_t)-EFAULT;
-    }
+
     vfs_node_t new_cwd = vfs_open(dirname);
     if (!new_cwd)
         return (uint64_t)-ENOENT;
@@ -395,16 +440,17 @@ uint64_t sys_chdir(const char *dirname) {
 }
 
 uint64_t sys_getcwd(char *cwd, uint64_t size) {
-    if (!cwd || check_user_overflow((uint64_t)cwd, size)) {
-        return (uint64_t)-EFAULT;
-    }
     char *str = vfs_get_fullpath(current_task->cwd);
     if (size < (uint64_t)strlen(str)) {
         return (uint64_t)-ERANGE;
     }
-    strncpy(cwd, str, size);
+    uint64_t to_copy = strlen(str);
+    if (copy_to_user_str(cwd, str, size)) {
+        free(str);
+        return (uint64_t)-EFAULT;
+    }
     free(str);
-    return (uint64_t)strlen(cwd);
+    return to_copy;
 }
 
 extern int unix_socket_fsid;
@@ -574,8 +620,8 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
     }
 }
 
-uint64_t sys_stat(const char *fn, struct stat *buf) {
-    vfs_node_t node = vfs_open(fn);
+uint64_t do_stat_path(const char *path, struct stat *buf) {
+    vfs_node_t node = vfs_open(path);
     if (!node) {
         // serial_fprintk("Stating file %s failed\n", fn);
         return (uint64_t)-ENOENT;
@@ -586,10 +632,10 @@ uint64_t sys_stat(const char *fn, struct stat *buf) {
     buf->st_nlink = 1;
     buf->st_mode =
         node->mode |
-        (node->type & file_dir
-             ? S_IFDIR
-             : ((node->type & file_symlink)
-                    ? S_IFLNK
+        ((node->type & file_symlink)
+             ? S_IFLNK
+             : ((node->type & file_dir)
+                    ? S_IFDIR
                     : ((node->type & file_stream) ? S_IFCHR : S_IFREG)));
     buf->st_uid = node->owner;
     buf->st_gid = node->group;
@@ -601,25 +647,41 @@ uint64_t sys_stat(const char *fn, struct stat *buf) {
     return 0;
 }
 
-uint64_t sys_fstat(uint64_t fd, struct stat *buf) {
-    if (!buf || check_user_overflow((uint64_t)buf, sizeof(struct stat))) {
+uint64_t sys_stat(const char *fn, struct stat *user_buf) {
+    char path[512];
+    if (copy_from_user_str(path, fn, sizeof(path)))
         return (uint64_t)-EFAULT;
-    }
+
+    struct stat buf;
+    uint64_t ret = do_stat_path(path, &buf);
+    if ((int64_t)ret < 0)
+        return ret;
+
+    if (copy_to_user(user_buf, &buf, sizeof(struct stat)))
+        return (uint64_t)-EFAULT;
+
+    return 0;
+}
+
+uint64_t sys_fstat(uint64_t fd, struct stat *user_buf) {
     if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
     }
 
     vfs_node_t node = current_task->fd_info->fds[fd]->node;
 
+    struct stat res;
+    struct stat *buf = &res;
+
     buf->st_dev = node->dev;
     buf->st_ino = node->inode;
     buf->st_nlink = 1;
     buf->st_mode =
         node->mode |
-        (node->type & file_dir
-             ? S_IFDIR
-             : ((node->type & file_symlink)
-                    ? S_IFLNK
+        ((node->type & file_symlink)
+             ? S_IFLNK
+             : ((node->type & file_dir)
+                    ? S_IFDIR
                     : ((node->type & file_stream) ? S_IFCHR : S_IFREG)));
     buf->st_uid = node->owner;
     buf->st_gid = node->group;
@@ -628,38 +690,61 @@ uint64_t sys_fstat(uint64_t fd, struct stat *buf) {
     buf->st_size = node->size;
     buf->st_blocks = (buf->st_size + buf->st_blksize - 1) / buf->st_blksize;
 
+    if (copy_to_user(user_buf, buf, sizeof(struct stat)))
+        return (uint64_t)-EFAULT;
+
     return 0;
 }
 
-uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname, struct stat *buf,
-                        uint64_t flags) {
+uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname_user,
+                        struct stat *buf_user, uint64_t flags) {
+    char pathname[512];
+    if (copy_from_user_str(pathname, pathname_user, sizeof(pathname)))
+        return (uint64_t)-EFAULT;
+
     char *resolved = at_resolve_pathname(dirfd, (char *)pathname);
 
     if (!resolved) {
         return (uint64_t)-EINVAL;
     }
 
-    uint64_t ret = sys_stat(resolved, buf);
+    struct stat buf;
+    uint64_t ret = do_stat_path(resolved, &buf);
 
     free(resolved);
+
+    if ((int64_t)ret < 0)
+        return ret;
+
+    if (copy_to_user(buf_user, &buf, sizeof(struct stat)))
+        return (uint64_t)-EFAULT;
 
     return ret;
 }
 
-uint64_t sys_statx(uint64_t dirfd, const char *pathname, uint64_t flags,
-                   uint64_t mask, struct statx *buff) {
-    if (!pathname ||
-        check_user_overflow((uint64_t)pathname, strlen(pathname))) {
+uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
+                   uint64_t mask, struct statx *buff_user) {
+    char pathname[512];
+    if (copy_from_user_str(pathname, pathname_user, sizeof(pathname)))
         return (uint64_t)-EFAULT;
-    }
-    if (!buff || check_user_overflow((uint64_t)buff, sizeof(struct statx))) {
-        return (uint64_t)-EFAULT;
-    }
+
     struct stat simple;
-    memset(&simple, 0, sizeof(struct stat));
-    uint64_t ret = sys_newfstatat(dirfd, pathname, &simple, flags);
+
+    char *resolved = at_resolve_pathname(dirfd, (char *)pathname);
+
+    if (!resolved) {
+        return (uint64_t)-EINVAL;
+    }
+
+    uint64_t ret = do_stat_path(resolved, &simple);
+
+    free(resolved);
+
     if ((int64_t)ret < 0)
         return ret;
+
+    struct statx res;
+    struct statx *buff = &res;
 
     buff->stx_mask = mask;
     buff->stx_blksize = simple.st_blksize;
@@ -687,62 +772,70 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname, uint64_t flags,
 
     // todo: special devices
 
+    if (copy_to_user(buff_user, buff, sizeof(struct stat)))
+        return (uint64_t)-EFAULT;
+
     return 0;
 }
 
-size_t sys_access(char *filename, int mode) {
+size_t do_access(char *filename, int mode) {
     (void)mode;
     struct stat buf;
-    return sys_stat(filename, &buf);
+    return do_stat_path(filename, &buf);
 }
 
-uint64_t sys_faccessat(uint64_t dirfd, const char *pathname, uint64_t mode) {
+size_t sys_access(char *filename_user, int mode) {
+    (void)mode;
+    char filename[512];
+    if (copy_from_user_str(filename, filename_user, sizeof(filename)))
+        return (size_t)-EFAULT;
+
+    return do_access(filename, mode);
+}
+
+uint64_t sys_faccessat(uint64_t dirfd, const char *pathname_user,
+                       uint64_t mode) {
+    char pathname[512];
+    if (copy_from_user_str(pathname, pathname_user, sizeof(pathname)))
+        return (uint64_t)-EFAULT;
+
     if (pathname[0] == '\0') { // by fd
         return 0;
-    }
-    if (check_user_overflow((uint64_t)pathname, strlen(pathname))) {
-        return (uint64_t)-EFAULT;
     }
 
     char *resolved = at_resolve_pathname(dirfd, (char *)pathname);
     if (resolved == NULL)
         return (uint64_t)-ENOENT;
 
-    size_t ret = sys_access(resolved, mode);
+    size_t ret = do_access(resolved, mode);
 
     free(resolved);
 
     return ret;
 }
 
-uint64_t sys_faccessat2(uint64_t dirfd, const char *pathname, uint64_t mode,
-                        uint64_t flags) {
+uint64_t sys_faccessat2(uint64_t dirfd, const char *pathname_user,
+                        uint64_t mode, uint64_t flags) {
+    char pathname[512];
+    if (copy_from_user_str(pathname, pathname_user, sizeof(pathname)))
+        return (uint64_t)-EFAULT;
+
     if (pathname[0] == '\0') { // by fd
         return 0;
-    }
-    if (check_user_overflow((uint64_t)pathname, strlen(pathname))) {
-        return (uint64_t)-EFAULT;
     }
 
     char *resolved = at_resolve_pathname(dirfd, (char *)pathname);
     if (resolved == NULL)
         return (uint64_t)-ENOENT;
 
-    size_t ret = sys_access(resolved, mode);
+    size_t ret = do_access(resolved, mode);
 
     free(resolved);
 
     return ret;
 }
 
-uint64_t sys_readlink(char *path, char *buf, uint64_t size) {
-    if (path == NULL || buf == NULL || size == 0) {
-        return (uint64_t)-EFAULT;
-    }
-    if (check_user_overflow((uint64_t)buf, size)) {
-        return (uint64_t)-EFAULT;
-    }
-
+uint64_t do_readlink(char *path, char *buf, uint64_t size) {
     vfs_node_t node = vfs_open(path);
     if (node == NULL) {
         return (uint64_t)-ENOENT;
@@ -765,51 +858,76 @@ uint64_t sys_readlink(char *path, char *buf, uint64_t size) {
 
     ssize_t result = vfs_readlink(node, buf, (size_t)size);
 
+    return result;
+}
+
+uint64_t sys_readlink(char *path_user, char *buf_user, uint64_t size) {
+    if (path_user == NULL || buf_user == NULL || size == 0) {
+        return (uint64_t)-EFAULT;
+    }
+
+    char path[512];
+    if (copy_from_user_str(path, path_user, sizeof(path)))
+        return (uint64_t)-EFAULT;
+
+    vfs_node_t node = vfs_open(path);
+    if (node == NULL) {
+        return (uint64_t)-ENOENT;
+    }
+
+    char buf[512];
+
+    ssize_t result = do_readlink(path, buf, MIN(size, sizeof(buf)));
+
     if (result < 0) {
         return (uint64_t)-EINVAL;
     }
 
+    if (copy_to_user_str(buf_user, buf, size))
+        return (uint64_t)-EFAULT;
+
     return result;
 }
 
-uint64_t sys_readlinkat(int dfd, char *path, char *buf, uint64_t size) {
-    if (path == NULL || buf == NULL || size == 0) {
+uint64_t sys_readlinkat(int dfd, char *path_user, char *buf_user,
+                        uint64_t size) {
+    char path[512];
+
+    if (copy_from_user_str(path, path_user, sizeof(path)))
         return (uint64_t)-EFAULT;
-    }
-    if (check_user_overflow((uint64_t)path, strlen(path))) {
-        return (uint64_t)-EFAULT;
-    }
-    if (check_user_overflow((uint64_t)buf, size)) {
-        return (uint64_t)-EFAULT;
-    }
 
     char *resolved = at_resolve_pathname(dfd, path);
 
-    ssize_t res = sys_readlink(resolved, buf, (size_t)size);
+    char buf[512];
+
+    ssize_t res = do_readlink(resolved, buf, MIN(size, sizeof(buf)));
 
     free(resolved);
+
+    if (copy_to_user_str(buf_user, buf, sizeof(buf)))
+        return (uint64_t)-EFAULT;
 
     return res;
 }
 
-uint64_t sys_rmdir(const char *name) {
-    if (check_user_overflow((uint64_t)name, strlen(name))) {
+uint64_t sys_rmdir(const char *name_user) {
+    char name[512];
+    if (copy_from_user_str(name, name_user, sizeof(name))) {
         return (uint64_t)-EFAULT;
     }
+
     vfs_node_t node = vfs_open(name);
     if (!node)
         return -ENOENT;
     if (!(node->type & file_dir))
         return -ENOTDIR;
 
-    node->refcount++;
-
     uint64_t ret = vfs_delete(node);
 
     return ret;
 }
 
-uint64_t sys_unlink(const char *name) {
+uint64_t do_unlink(const char *name) {
     vfs_node_t node = vfs_open(name);
     if (!node)
         return -ENOENT;
@@ -819,22 +937,33 @@ uint64_t sys_unlink(const char *name) {
     return ret;
 }
 
-uint64_t sys_unlinkat(uint64_t dirfd, const char *name, uint64_t flags) {
-    if (check_user_overflow((uint64_t)name, strlen(name))) {
+uint64_t sys_unlink(const char *name_user) {
+    char name[512];
+    if (copy_from_user_str(name, name_user, sizeof(name))) {
         return (uint64_t)-EFAULT;
     }
+
+    return do_unlink(name);
+}
+
+uint64_t sys_unlinkat(uint64_t dirfd, const char *name_user, uint64_t flags) {
+    char name[512];
+    if (copy_from_user_str(name, name_user, sizeof(name))) {
+        return (uint64_t)-EFAULT;
+    }
+
     char *path = at_resolve_pathname(dirfd, (char *)name);
     if (!path)
         return -ENOENT;
 
-    uint64_t ret = sys_unlink((const char *)path);
+    uint64_t ret = do_unlink((const char *)path);
 
     free(path);
 
     return ret;
 }
 
-uint64_t sys_rename(const char *old, const char *new) {
+uint64_t do_rename(const char *old, const char *new) {
     vfs_node_t node = vfs_open(old);
     if (!node)
         return -ENOENT;
@@ -845,20 +974,32 @@ uint64_t sys_rename(const char *old, const char *new) {
     return 0;
 }
 
-uint64_t sys_renameat(uint64_t oldfd, const char *old, uint64_t newfd,
-                      const char *new) {
+uint64_t sys_rename(const char *old_user, const char *new_user) {
+    char old[512];
+    char new[512];
+
+    if (copy_from_user_str(old, old_user, sizeof(old)))
+        return (uint64_t)-EFAULT;
+    if (copy_from_user_str(new, new_user, sizeof(new)))
+        return (uint64_t)-EFAULT;
+
+    return do_rename(old, new);
+}
+
+uint64_t sys_renameat(uint64_t oldfd, const char *old_user, uint64_t newfd,
+                      const char *new_user) {
+    char old[512];
+    char new[512];
+
+    if (copy_from_user_str(old, old_user, sizeof(old)))
+        return (uint64_t)-EFAULT;
+    if (copy_from_user_str(new, new_user, sizeof(new)))
+        return (uint64_t)-EFAULT;
+
     char *old_path = at_resolve_pathname_fullpath(oldfd, (char *)old);
     char *new_path = at_resolve_pathname_fullpath(newfd, (char *)new);
 
-    vfs_node_t node = vfs_open(old_path);
-    if (!node)
-        return -ENOENT;
-    int ret = vfs_rename(node, new_path);
-    if (ret < 0) {
-        free(old_path);
-        free(new_path);
-        return ret;
-    }
+    int ret = do_rename(old_path, new_path);
 
     free(old_path);
     free(new_path);
@@ -879,7 +1020,7 @@ uint64_t sys_fchdir(uint64_t fd) {
     return 0;
 }
 
-uint64_t sys_mkdir(const char *name, uint64_t mode) {
+uint64_t do_mkdir(const char *name, uint64_t mode) {
     int ret = vfs_mkdir(name);
     if (ret < 0) {
         return (uint64_t)ret;
@@ -889,50 +1030,80 @@ uint64_t sys_mkdir(const char *name, uint64_t mode) {
     return 0;
 }
 
-uint64_t sys_mkdirat(int dfd, const char *name, uint64_t mode) {
+uint64_t sys_mkdir(const char *name_user, uint64_t mode) {
+    char name[512];
+    if (copy_from_user_str(name, name_user, sizeof(name)))
+        return (uint64_t)-EFAULT;
+
+    return do_mkdir(name, mode);
+}
+
+uint64_t sys_mkdirat(int dfd, const char *name_user, uint64_t mode) {
+    char name[512];
+    if (copy_from_user_str(name, name_user, sizeof(name)))
+        return (uint64_t)-EFAULT;
+
     char *path = at_resolve_pathname(dfd, name);
 
-    uint64_t ret = sys_mkdir((const char *)path, mode);
+    uint64_t ret = do_mkdir((const char *)path, mode);
 
     free(path);
 
     return ret;
 }
 
-uint64_t sys_link(const char *name, const char *new) {
-    if (check_user_overflow((uint64_t)name, strlen(name))) {
-        return (uint64_t)-EFAULT;
-    }
-    int ret = vfs_link(name, new);
-
-    return ret;
+uint64_t do_link(const char *name, const char *new) {
+    return vfs_link(name, new);
 }
 
-uint64_t sys_symlink(const char *name, const char *new) {
-    if (check_user_overflow((uint64_t)name, strlen(name))) {
+uint64_t sys_link(const char *name_user, const char *new_user) {
+    char name[512];
+    if (copy_from_user_str(name, name_user, sizeof(name)))
         return (uint64_t)-EFAULT;
-    }
-    int ret = vfs_symlink(new, name);
+    char new[512];
+    if (copy_from_user_str(new, new_user, sizeof(new)))
+        return (uint64_t)-EFAULT;
 
-    return ret;
+    return do_link(name, new);
 }
 
-uint64_t sys_symlinkat(const char *name, int dfd, const char *new) {
-    if (check_user_overflow((uint64_t)name, strlen(name)) ||
-        check_user_overflow((uint64_t)new, strlen(new))) {
+uint64_t do_symlink(const char *name, const char *new) {
+    return vfs_symlink(new, name);
+}
+
+uint64_t sys_symlink(const char *name_user, const char *target_name_user) {
+    char name[512];
+    if (copy_from_user_str(name, name_user, sizeof(name)))
         return (uint64_t)-EFAULT;
-    }
+    char target_name[512];
+    if (copy_from_user_str(target_name, target_name_user, sizeof(target_name)))
+        return (uint64_t)-EFAULT;
+
+    return do_symlink(name, target_name);
+}
+
+uint64_t sys_symlinkat(const char *name_user, int dfd, const char *new_user) {
+    char name[512];
+    if (copy_from_user_str(name, name_user, sizeof(name)))
+        return (uint64_t)-EFAULT;
+    char new[512];
+    if (copy_from_user_str(new, new_user, sizeof(new)))
+        return (uint64_t)-EFAULT;
 
     char *buf = at_resolve_pathname_fullpath(dfd, new);
 
-    int ret = vfs_symlink(name, buf);
+    int ret = do_symlink(name, buf);
 
     free(buf);
 
     return ret;
 }
 
-uint64_t sys_mknod(const char *name, uint16_t umode, int dev) {
+uint64_t sys_mknod(const char *name_user, uint16_t umode, int dev) {
+    char name[512];
+    if (copy_from_user_str(name, name_user, sizeof(name)))
+        return (uint64_t)-EFAULT;
+
     int ret = vfs_mknod(name, umode, dev);
     if (ret < 0)
         return (uint64_t)-EINVAL;
@@ -940,7 +1111,11 @@ uint64_t sys_mknod(const char *name, uint16_t umode, int dev) {
     return 0;
 }
 
-uint64_t sys_chmod(const char *name, uint16_t mode) {
+uint64_t sys_chmod(const char *name_user, uint16_t mode) {
+    char name[512];
+    if (copy_from_user_str(name, name_user, sizeof(name)))
+        return (uint64_t)-EFAULT;
+
     return vfs_chmod(name, mode);
 }
 
@@ -956,14 +1131,34 @@ uint64_t sys_fchmod(int fd, uint16_t mode) {
     return ret;
 }
 
-uint64_t sys_fchmodat(int dfd, const char *name, uint16_t mode) {
+uint64_t sys_fchmodat(int dfd, const char *name_user, uint16_t mode) {
+    char name[512];
+    if (copy_from_user_str(name, name_user, sizeof(name)))
+        return (uint64_t)-EFAULT;
+
     char *resolved = at_resolve_pathname(dfd, name);
     int ret = vfs_chmod(name, mode);
     free(resolved);
     return ret;
 }
 
-uint64_t sys_chown(const char *filename, uint64_t uid, uint64_t gid) {
+uint64_t sys_fchmodat2(int dfd, const char *name_user, uint16_t mode,
+                       int flags) {
+    char name[512];
+    if (copy_from_user_str(name, name_user, sizeof(name)))
+        return (uint64_t)-EFAULT;
+
+    char *resolved = at_resolve_pathname(dfd, name);
+    int ret = vfs_chmod(name, mode);
+    free(resolved);
+    return ret;
+}
+
+uint64_t sys_chown(const char *filename_user, uint64_t uid, uint64_t gid) {
+    char filename[512];
+    if (copy_from_user_str(filename, filename_user, sizeof(filename)))
+        return (uint64_t)-EFAULT;
+
     int ret = vfs_chown(filename, uid, gid);
     return ret;
 }
@@ -980,8 +1175,12 @@ uint64_t sys_fchown(int fd, uint64_t uid, uint64_t gid) {
     return ret;
 }
 
-uint64_t sys_fchownat(int dfd, const char *name, uint64_t uid, uint64_t gid,
-                      int flags) {
+uint64_t sys_fchownat(int dfd, const char *name_user, uint64_t uid,
+                      uint64_t gid, int flags) {
+    char name[512];
+    if (copy_from_user_str(name, name_user, sizeof(name)))
+        return (uint64_t)-EFAULT;
+
     char *resolved = at_resolve_pathname(dfd, name);
     vfs_chown((const char *)resolved, uid, gid);
     free(resolved);
@@ -999,7 +1198,11 @@ uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
     return 0;
 }
 
-uint64_t sys_truncate(const char *path, uint64_t length) {
+uint64_t sys_truncate(const char *path_user, uint64_t length) {
+    char path[512];
+    if (copy_from_user_str(path, path_user, sizeof(path)))
+        return (uint64_t)-EFAULT;
+
     vfs_node_t node = vfs_open(path);
     if (!node) {
         return (uint64_t)-ENOENT;
@@ -1053,9 +1256,9 @@ uint64_t sys_flock(int fd, uint64_t operation) {
             if (operation & LOCK_NB)
                 return -EWOULDBLOCK;
 
-            while (lock->lock) {
-                arch_enable_interrupt();
+            arch_enable_interrupt();
 
+            while (lock->lock) {
                 arch_pause();
             }
 
@@ -1097,9 +1300,9 @@ uint64_t sys_futimesat(int dfd, const char *pathname, struct timeval *utimes) {
     return 0;
 }
 
-uint64_t sys_sysinfo(struct sysinfo *info) {
-    if (check_user_overflow((uint64_t)info, sizeof(struct sysinfo)))
-        return -EFAULT;
+uint64_t sys_sysinfo(struct sysinfo *info_user) {
+    struct sysinfo res;
+    struct sysinfo *info = &res;
 
     memset(info, 0, sizeof(struct sysinfo));
     info->uptime = boot_get_boottime();
@@ -1115,6 +1318,9 @@ uint64_t sys_sysinfo(struct sysinfo *info) {
         }
     }
     info->procs = proc_count;
+
+    if (copy_to_user(info_user, info, sizeof(struct sysinfo)))
+        return (uint64_t)-EFAULT;
 
     return 0;
 }

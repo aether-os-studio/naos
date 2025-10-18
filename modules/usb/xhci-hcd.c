@@ -16,7 +16,7 @@ static const char *usb_speed_name(uint8_t speed) {
     case USB_SPEED_SUPER:
         return "Super Speed (5 Gbps)";
     default:
-        return "Unknown Speed";
+        return "Other Speed";
     }
 }
 
@@ -31,7 +31,7 @@ static uint8_t usb_speed_to_xhci_port_speed(uint8_t speed) {
     case USB_SPEED_SUPER:
         return 4; // Super Speed (5 Gbps)
     default:
-        return 0;
+        return speed;
     }
 }
 
@@ -50,14 +50,17 @@ static uint8_t xhci_port_speed_to_usb_speed(uint32_t portsc) {
     case 4:
         return USB_SPEED_SUPER; // Super Speed (5 Gbps)
     default:
-        return USB_SPEED_UNKNOWN;
+        return port_speed;
     }
 }
 
 // 前向声明
 static int xhci_hcd_init(usb_hcd_t *hcd);
 static int xhci_hcd_shutdown(usb_hcd_t *hcd);
-static int xhci_reset_port(usb_hcd_t *hcd, usb_device_t *device);
+static int xhci_reset_port(usb_hcd_t *hcd, usb_hub_t *hub,
+                           usb_device_t *device);
+static int xhci_disconnect_port(usb_hcd_t *hcd, usb_hub_t *hub,
+                                usb_device_t *device);
 static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device);
 static int xhci_disable_slot(usb_hcd_t *hcd, usb_device_t *device);
 static int xhci_address_device(usb_hcd_t *hcd, usb_device_t *device,
@@ -71,7 +74,6 @@ static int xhci_interrupt_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer);
 static usb_hcd_ops_t xhci_ops = {
     .init = xhci_hcd_init,
     .shutdown = xhci_hcd_shutdown,
-    .reset_port = xhci_reset_port,
     .enable_slot = xhci_enable_slot,
     .disable_slot = xhci_disable_slot,
     .address_device = xhci_address_device,
@@ -79,6 +81,11 @@ static usb_hcd_ops_t xhci_ops = {
     .control_transfer = xhci_control_transfer,
     .bulk_transfer = xhci_bulk_transfer,
     .interrupt_transfer = xhci_interrupt_transfer,
+};
+
+static usb_hub_ops_t xhci_root_hub_ops = {
+    .reset_port = xhci_reset_port,
+    .disconnect_port = xhci_disconnect_port, // TODO: 实现
 };
 
 // 分配DMA内存（对齐到64字节）
@@ -294,7 +301,44 @@ int xhci_stop(xhci_hcd_t *xhci) {
     return -1;
 }
 
+static void xhci_pair_ports(xhci_hcd_t *xhci) {
+    // 首先将所有 paired_port 初始化为 0xFF（表示未配对）
+    for (int i = 0; i < xhci->max_ports; i++) {
+        xhci->port_info[i].paired_port = 0xFF;
+    }
+
+    // 寻找配对的端口
+    for (int i = 0; i < xhci->max_ports; i++) {
+        if (xhci->port_info[i].protocol == XHCI_PROTOCOL_USB2) {
+            // 对于 USB2.0 端口，寻找对应的 USB3.0 端口
+            for (int j = 0; j < xhci->max_ports; j++) {
+                if (xhci->port_info[j].protocol == XHCI_PROTOCOL_USB3) {
+                    // 检查是否是配对的端口
+                    // 通常配对的端口有相同的物理位置索引
+                    // 计算在各自协议中的相对位置
+                    uint8_t usb2_relative_pos =
+                        i - (xhci->port_info[i].port_offset - 1);
+                    uint8_t usb3_relative_pos =
+                        j - (xhci->port_info[j].port_offset - 1);
+
+                    if (usb2_relative_pos == usb3_relative_pos) {
+                        xhci->port_info[i].paired_port = j;
+                        xhci->port_info[j].paired_port = i;
+
+                        printk("XHCI: Paired ports - USB2.0 port %d <-> USB3.0 "
+                               "port %d\n",
+                               i + 1, j + 1);
+
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
 // 扩展能力 ID
+#define XHCI_EXT_CAPS_LEGACY 1
 #define XHCI_EXT_CAPS_PROTOCOL 2
 
 // 解析 Supported Protocol Capability
@@ -308,15 +352,41 @@ static int xhci_parse_protocol_caps(xhci_hcd_t *xhci) {
     }
 
     // 扩展能力在能力寄存器之后
-    uint32_t *ext_cap =
-        (uint32_t *)((uint8_t *)xhci->cap_regs + (ext_offset * 4));
+    uint32_t *ext_cap = (uint32_t *)xhci->cap_regs + ext_offset;
 
     while (ext_offset) {
         uint32_t cap_header = xhci_readl(ext_cap);
         uint32_t cap_id = cap_header & 0xFF;
         uint32_t next_offset = (cap_header >> 8) & 0xFF;
 
-        if (cap_id == XHCI_EXT_CAPS_PROTOCOL) {
+        if (cap_id == XHCI_EXT_CAPS_LEGACY) {
+            uint32_t val = xhci_readl(ext_cap);
+
+            if (val & (1 << 16)) {
+                printk("XHCI is BIOS owned!!!\n");
+                xhci_writel(ext_cap, val | (1 << 24));
+
+                bool timeout = true;
+                uint64_t timeout_ns = nanoTime() + 5ULL * 1000000000ULL;
+                while (nanoTime() < timeout_ns) {
+                    val = xhci_readl(ext_cap);
+                    if (!(val & (1 << 16))) {
+                        timeout = false;
+                        break;
+                    }
+                }
+
+                if (timeout) {
+                    printk("Failed to hand over XHCI from BIOS!!!\n");
+                    xhci_writel(ext_cap, val & ~(1 << 16));
+                }
+            }
+
+            val = xhci_readl(ext_cap + 1);
+            val &= ((0x7 << 1) + (0xff << 5) + (0x7 << 17));
+            val |= (0x7 << 29);
+            xhci_writel(ext_cap + 1, val);
+        } else if (cap_id == XHCI_EXT_CAPS_PROTOCOL) {
             // Supported Protocol Capability
             uint32_t cap_word0 = xhci_readl(ext_cap);
             uint32_t cap_word1 = xhci_readl(ext_cap + 1);
@@ -324,14 +394,19 @@ static int xhci_parse_protocol_caps(xhci_hcd_t *xhci) {
             uint32_t cap_word3 = xhci_readl(ext_cap + 3);
 
             // 解析协议版本
-            uint8_t minor = (cap_word2 >> 16) & 0xFF;
-            uint8_t major = (cap_word2 >> 24) & 0xFF;
+            uint8_t minor = (cap_word0 >> 16) & 0xFF;
+            uint8_t major = (cap_word0 >> 24) & 0xFF;
 
             // 解析端口范围
             uint8_t port_offset = cap_word2 & 0xFF;
             uint8_t port_count = (cap_word2 >> 8) & 0xFF;
 
             uint8_t slot_type = cap_word3 & 0x1F;
+
+            printk("XHCI: Protocol Capability - Major: %d, Minor: %d, Ports: "
+                   "%d-%d, Slot Type: %d\n",
+                   major, minor, port_offset, port_offset + port_count - 1,
+                   slot_type);
 
             // 标记端口协议
             for (int i = 0;
@@ -341,7 +416,7 @@ static int xhci_parse_protocol_caps(xhci_hcd_t *xhci) {
 
                 xhci->port_info[port_idx].port_num = port_idx;
                 xhci->port_info[port_idx].protocol = major;
-                xhci->port_info[port_idx].port_offset = i;
+                xhci->port_info[port_idx].port_offset = port_offset;
                 xhci->port_info[port_idx].port_count = port_count;
                 xhci->port_info[port_idx].slot_type = slot_type;
             }
@@ -354,6 +429,8 @@ static int xhci_parse_protocol_caps(xhci_hcd_t *xhci) {
         ext_cap += next_offset;
         ext_offset = next_offset;
     }
+
+    xhci_pair_ports(xhci);
 
     return 0;
 }
@@ -460,10 +537,10 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
 
     xhci_writel(&xhci->intr_regs[0].imod, 0);
 
-    // 启用中断
-    uint32_t iman = xhci_readl(&xhci->intr_regs[0].iman);
-    iman |= (1 << 1);
-    xhci_writel(&xhci->intr_regs[0].iman, iman);
+    // // 启用中断
+    // uint32_t iman = xhci_readl(&xhci->intr_regs[0].iman);
+    // iman |= (1 << 1);
+    // xhci_writel(&xhci->intr_regs[0].iman, iman);
 
     // 分配端口信息数组
     xhci->port_info =
@@ -477,9 +554,19 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
     // 解析端口协议
     xhci_parse_protocol_caps(xhci);
 
-    uint32_t cmd = xhci_readl(&xhci->op_regs->usbcmd);
-    cmd |= XHCI_CMD_INTE;
-    xhci_writel(&xhci->op_regs->usbcmd, cmd);
+    xhci->root_hub = malloc(sizeof(struct usb_hub));
+    memset(xhci->root_hub, 0, sizeof(struct usb_hub));
+    xhci_hub_private_t *hub_priv = malloc(sizeof(xhci_hub_private_t));
+    hub_priv->hub = xhci->root_hub;
+    hub_priv->xhci = xhci;
+    xhci->root_hub->hcd_private = hub_priv;
+    xhci->root_hub->device = NULL;
+    xhci->root_hub->parent = NULL;
+    xhci->root_hub->ops = &xhci_root_hub_ops;
+
+    // uint32_t cmd = xhci_readl(&xhci->op_regs->usbcmd);
+    // cmd |= XHCI_CMD_INTE;
+    // xhci_writel(&xhci->op_regs->usbcmd, cmd);
 
     // 启动控制器
     if (xhci_start(xhci) != 0) {
@@ -492,13 +579,25 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
         return -1;
     }
 
+    // 先初始化USB3端口
     for (uint8_t p = 0; p < xhci->max_ports; p++) {
-        if (xhci_readl(&xhci->port_regs[p].portsc) & XHCI_PORTSC_CCS) {
+        xhci_port_info_t *port_info = &xhci->port_info[p];
+        if (port_info->protocol == XHCI_PROTOCOL_USB3 &&
+            (xhci_readl(&xhci->port_regs[p].portsc) & XHCI_PORTSC_CCS)) {
             xhci_handle_port_status(xhci, p);
         }
     }
 
-    xhci_handle_events(xhci);
+    // 再初始化USB2端口
+    for (uint8_t p = 0; p < xhci->max_ports; p++) {
+        xhci_port_info_t *port_info = &xhci->port_info[p];
+        if (port_info->protocol != XHCI_PROTOCOL_USB3 &&
+            (xhci_readl(&xhci->port_regs[p].portsc) & XHCI_PORTSC_CCS) &&
+            (port_info->paired_port == 0xFF ||
+             !xhci->connection[port_info->paired_port])) {
+            xhci_handle_port_status(xhci, p);
+        }
+    }
 
     return 0;
 }
@@ -555,162 +654,401 @@ static void delay(uint64_t ms) {
     }
 }
 
-// 重置端口
-static int xhci_reset_port(usb_hcd_t *hcd, usb_device_t *device) {
-    xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
+// USB 2.0 端口重置
+static int xhci_reset_port_usb2(xhci_hcd_t *xhci, uint8_t port,
+                                usb_device_t *device) {
+    uint32_t portsc;
 
+    printk("XHCI: USB2 port reset begin\n");
+
+    // 1. 清除所有状态变化位
+    portsc = xhci_readl(&xhci->port_regs[port].portsc);
+    portsc |= XHCI_PORTSC_CHANGE_BITS;
+    portsc &= ~(XHCI_PORTSC_PED | XHCI_PORTSC_PR);
+    xhci_writel(&xhci->port_regs[port].portsc, portsc);
+
+    delay(1); // 让硬件处理
+
+    // 2. 发起重置
+    portsc = xhci_readl(&xhci->port_regs[port].portsc);
+
+    // 保留所有非变化位，清除状态变化位（写0），设置 PR
+    portsc &= ~XHCI_PORTSC_CHANGE_BITS; // 写0保留状态变化位
+    portsc |= XHCI_PORTSC_PR;           // 设置重置位
+
+    xhci_writel(&xhci->port_regs[port].portsc, portsc);
+
+    printk("XHCI: Reset initiated, PORTSC=0x%08x\n", portsc);
+
+    // 3. 等待 PR 位清零
+    uint64_t timeout = nanoTime() + 100ULL * 1000000ULL; // 100ms 足够
+    bool pr_cleared = false;
+
+    while (nanoTime() < timeout) {
+        portsc = xhci_readl(&xhci->port_regs[port].portsc);
+
+        if (!(portsc & XHCI_PORTSC_PR)) {
+            pr_cleared = true;
+            printk("XHCI: PR cleared, PORTSC=0x%08x\n", portsc);
+            break;
+        }
+
+        delay(1);
+    }
+
+    if (!pr_cleared) {
+        printk("XHCI: Reset timeout (PR not cleared)\n");
+        return -1;
+    }
+
+    // 4. 等待 PRC（重置完成）
+    timeout = nanoTime() + 100ULL * 1000000ULL;
+    bool prc_set = false;
+
+    while (nanoTime() < timeout) {
+        portsc = xhci_readl(&xhci->port_regs[port].portsc);
+
+        if (portsc & XHCI_PORTSC_PRC) {
+            prc_set = true;
+            printk("XHCI: PRC set, PORTSC=0x%08x\n", portsc);
+            break;
+        }
+
+        delay(1);
+    }
+
+    if (!prc_set) {
+        printk("XHCI: PRC not set\n");
+        return -1;
+    }
+
+    // 5. 等待端口使能（PED）和链路进入 U0
+    timeout = nanoTime() + 100ULL * 1000000ULL; // 100ms
+    bool enabled = false;
+
+    while (nanoTime() < timeout) {
+        portsc = xhci_readl(&xhci->port_regs[port].portsc);
+
+        // 检查连接状态
+        if (!(portsc & XHCI_PORTSC_CCS)) {
+            printk("XHCI: Device disconnected\n");
+            return -1;
+        }
+
+        // 检查 PED 和 PLS
+        uint8_t pls = (portsc >> 5) & 0xF;
+
+        printk("XHCI: [wait] PORTSC=0x%08x PLS=%d PED=%d\n", portsc, pls,
+               !!(portsc & XHCI_PORTSC_PED));
+
+        if ((portsc & XHCI_PORTSC_PED) && (pls == 0)) {
+            enabled = true;
+            printk("XHCI: Port enabled! PLS=U0\n");
+            break;
+        }
+
+        delay(10);
+    }
+
+    if (!enabled) {
+        printk("XHCI: Port not enabled after reset\n");
+        printk("      Final PORTSC=0x%08x\n", portsc);
+
+        uint8_t pls = (portsc >> 5) & 0xF;
+        printk("      PLS=%d (should be 0 for U0)\n", pls);
+        printk("      PED=%d (should be 1)\n", !!(portsc & XHCI_PORTSC_PED));
+        printk("      CCS=%d\n", !!(portsc & XHCI_PORTSC_CCS));
+
+        return -1;
+    }
+
+    // 6. 现在才清除状态变化位
+    portsc = xhci_readl(&xhci->port_regs[port].portsc);
+    portsc &= ~XHCI_PORTSC_CHANGE_BITS; // 保留状态位
+    portsc |= XHCI_PORTSC_CHANGE_BITS;  // 设置变化位（写1清除）
+    xhci_writel(&xhci->port_regs[port].portsc, portsc);
+
+    printk("XHCI: Status bits cleared\n");
+
+    // 7. USB规范要求重置后恢复时间
+    delay(10);
+
+    // 8. 读取设备速度
+    portsc = xhci_readl(&xhci->port_regs[port].portsc);
+    uint8_t speed = xhci_port_speed_to_usb_speed(portsc);
+    device->speed = speed;
+
+    return 0;
+}
+
+// USB 3.0 端口重置
+static int xhci_reset_port_usb3(xhci_hcd_t *xhci, uint8_t port,
+                                usb_device_t *device) {
+    uint32_t portsc = xhci_readl(&xhci->port_regs[port].portsc);
+
+    while (1) {
+        portsc = xhci_readl(&xhci->port_regs[port].portsc);
+        if (portsc & XHCI_PORTSC_CCS) {
+            break;
+        }
+        printk("XHCI: Waiting for device connection on USB3 port...\n");
+        delay(1000);
+    }
+
+    uint32_t pls = (portsc >> 5) & 0xF;
+    bool disconnected = false;
+
+    printk("XHCI: USB3 port in Link State %d\n", pls);
+
+    // 1. 如果已在U0且已使能，无需重置
+    if (pls == 0 && (portsc & XHCI_PORTSC_PED) && (portsc & XHCI_PORTSC_CCS)) {
+        printk("XHCI: Already in U0 and enabled\n");
+        device->speed = xhci_port_speed_to_usb_speed(portsc);
+        return 0;
+    }
+
+    // 2. 从低功耗状态唤醒
+    if (pls >= 1 && pls <= 3) { // U1/U2/U3
+        printk("XHCI: Waking from U%d to U0\n", pls);
+
+        xhci_writel(&xhci->port_regs[port].portsc,
+                    XHCI_PORTSC_PP | (1 << 16) | (0 << 5));
+
+        uint64_t timeout = nanoTime() + 500ULL * 1000000ULL;
+        while (nanoTime() < timeout) {
+            portsc = xhci_readl(&xhci->port_regs[port].portsc);
+            pls = (portsc >> 5) & 0xF;
+            if (pls == 0 && (portsc & XHCI_PORTSC_PED)) {
+                device->speed = xhci_port_speed_to_usb_speed(portsc);
+                printk("XHCI: Wake complete\n");
+                return 0;
+            }
+            delay(1);
+        }
+
+        // 唤醒失败，继续尝试Warm Reset
+        printk("XHCI: Wake failed, trying Warm Reset\n");
+    }
+
+    // 3. Warm Reset（处理Disabled/RxDetect/Compliance等状态）
+    printk("XHCI: Performing Warm Reset (PLS=%d)\n", pls);
+
+    // 清除状态位
+    xhci_writel(&xhci->port_regs[port].portsc,
+                XHCI_PORTSC_CSC | XHCI_PORTSC_PEC | XHCI_PORTSC_WRC |
+                    XHCI_PORTSC_OCC | XHCI_PORTSC_PRC);
+
+    // 发起Warm Reset
+    xhci_writel(&xhci->port_regs[port].portsc, XHCI_PORTSC_PP | (1 << 31));
+
+    // 等待WPR清零
+    uint64_t timeout = nanoTime() + 500ULL * 1000000ULL;
+    while (nanoTime() < timeout) {
+        portsc = xhci_readl(&xhci->port_regs[port].portsc);
+
+        // 监测断开（不立即失败）
+        if (!(portsc & XHCI_PORTSC_CCS) && !disconnected) {
+            printk("XHCI: Device briefly disconnected during Warm Reset\n");
+            disconnected = true;
+        }
+
+        if (!(portsc & (1 << 31))) {
+            printk("XHCI: Warm Reset signal complete\n");
+            break;
+        }
+        delay(1);
+    }
+
+    // 等待WRC置位或设备重新连接
+    timeout = nanoTime() + 1000ULL * 1000000ULL;
+    bool wrc_set = false;
+
+    while (nanoTime() < timeout) {
+        portsc = xhci_readl(&xhci->port_regs[port].portsc);
+
+        if (portsc & XHCI_PORTSC_WRC) {
+            wrc_set = true;
+            printk("XHCI: WRC set\n");
+            break;
+        }
+
+        // 如果之前断开，检查是否重新连接
+        if (disconnected && (portsc & XHCI_PORTSC_CCS)) {
+            printk("XHCI: Device reconnected during Warm Reset\n");
+            delay(50); // 让连接稳定
+        }
+
+        delay(10);
+    }
+
+    if (wrc_set) {
+        // 清除WRC
+        xhci_writel(&xhci->port_regs[port].portsc, XHCI_PORTSC_WRC);
+    }
+
+    // 4. 如果检测到断开，等待稳定重连
+    portsc = xhci_readl(&xhci->port_regs[port].portsc);
+    if (!(portsc & XHCI_PORTSC_CCS)) {
+        printk("XHCI: Waiting for USB3 device reconnection...\n");
+
+        timeout = nanoTime() + 2000ULL * 1000000ULL; // USB3需要更长时间
+        bool reconnected = false;
+
+        while (nanoTime() < timeout) {
+            portsc = xhci_readl(&xhci->port_regs[port].portsc);
+
+            if (portsc & XHCI_PORTSC_CCS) {
+                delay(100); // 等待连接稳定
+
+                portsc = xhci_readl(&xhci->port_regs[port].portsc);
+                if (portsc & XHCI_PORTSC_CCS) {
+                    reconnected = true;
+                    printk("XHCI: USB3 device reconnected\n");
+                    break;
+                }
+            }
+
+            delay(10);
+        }
+
+        if (!reconnected) {
+            printk("XHCI: USB3 device did not reconnect\n");
+            return -1;
+        }
+    }
+
+    // 5. 等待链路训练到U0
+    printk("XHCI: Waiting for link training to U0...\n");
+    timeout = nanoTime() + 2000ULL * 1000000ULL; // 2秒
+
+    while (nanoTime() < timeout) {
+        portsc = xhci_readl(&xhci->port_regs[port].portsc);
+        pls = (portsc >> 5) & 0xF;
+
+        // 检查持续断开
+        if (!(portsc & XHCI_PORTSC_CCS)) {
+            printk("XHCI: Device disconnected during link training\n");
+            return -1;
+        }
+
+        // 到达U0且已使能
+        if (pls == 0 && (portsc & XHCI_PORTSC_PED)) {
+            printk("XHCI: Link training complete, in U0\n");
+            break;
+        }
+
+        // 打印链路状态变化
+        static uint32_t last_pls = 0xFF;
+        if (pls != last_pls) {
+            const char *pls_names[] = {"U0",
+                                       "U1",
+                                       "U2",
+                                       "U3",
+                                       "Disabled",
+                                       "RxDetect",
+                                       "Inactive",
+                                       "Polling",
+                                       "Recovery",
+                                       "HotReset",
+                                       "ComplianceMode",
+                                       "TestMode",
+                                       "Reserved",
+                                       "Reserved",
+                                       "Reserved",
+                                       "ResumeState"};
+            printk("XHCI:   Link State -> %s\n", pls_names[pls]);
+            last_pls = pls;
+        }
+
+        delay(10);
+    }
+
+    // 6. 最终检查
+    portsc = xhci_readl(&xhci->port_regs[port].portsc);
+    pls = (portsc >> 5) & 0xF;
+
+    printk("XHCI: Final PORTSC=0x%08x, PLS=%d\n", portsc, pls);
+
+    if (!(portsc & XHCI_PORTSC_CCS)) {
+        printk("XHCI: Device not connected\n");
+        return -1;
+    }
+
+    if (!(portsc & XHCI_PORTSC_PED)) {
+        printk("XHCI: Port not enabled\n");
+        return -1;
+    }
+
+    if (pls != 0) {
+        printk("XHCI: Not in U0 (still in PLS=%d)\n", pls);
+        return -1;
+    }
+
+    // 7. 清除所有状态变化位
+    xhci_writel(&xhci->port_regs[port].portsc,
+                XHCI_PORTSC_CSC | XHCI_PORTSC_PEC | XHCI_PORTSC_WRC |
+                    XHCI_PORTSC_OCC | XHCI_PORTSC_PRC);
+
+    device->speed = xhci_port_speed_to_usb_speed(portsc);
+    printk("XHCI: USB3 reset complete, speed=%s\n",
+           usb_speed_name(device->speed));
+
+    return 0;
+}
+
+// 主重置函数（添加重试机制）
+static int xhci_reset_port(usb_hcd_t *hcd, usb_hub_t *hub,
+                           usb_device_t *device) {
+    xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
     uint8_t port = device->port;
 
     if (port >= xhci->max_ports) {
+        printk("XHCI: Invalid port %d\n", port);
         return -1;
     }
 
     xhci_port_info_t *port_info = &xhci->port_info[port];
+    bool is_usb3 = (port_info->protocol == XHCI_PROTOCOL_USB3);
 
-redetect:
-    // 检查端口是否已经在 U0 状态
+    printk("XHCI: Resetting port %d (%s)\n", port, is_usb3 ? "USB3" : "USB2");
+
+    // 1. 检查设备连接
     uint32_t portsc = xhci_readl(&xhci->port_regs[port].portsc);
-    uint32_t pls = (portsc >> 5) & 0xF; // Port Link State
+    printk("XHCI: Initial PORTSC=0x%08x\n", portsc);
 
-    switch (pls) {
-    case 0:
-        printk("USB port %d currently in PLS_U0 mode.\n", port);
-        // 获取设备速度
-        uint8_t speed = xhci_port_speed_to_usb_speed(portsc);
-        printk("XHCI: Device speed: %s\n", usb_speed_name(speed));
-        device->speed = speed;
-        return 0;
-    case 1:
-    case 2:
-    case 3:
-        printk("USB port %d currently in PLS_U1/2/3 mode.\n", port);
-        portsc &= ~(0xF << 5);
-        portsc |= (0 << 5);
-        portsc |= (1 << 16);
-        xhci_writel(&xhci->port_regs[port].portsc, portsc);
-    // Disabled
-    case 4:
-        printk("USB port %d currently in PLS_DISABLED mode.\n", port);
-
-        portsc = xhci_readl(&xhci->port_regs[port].portsc);
-        portsc |= (1 << 31); // Warm reset
-        xhci_writel(&xhci->port_regs[port].portsc, portsc);
-        delay(100);
-
-        uint64_t timeout = nanoTime() + 1000ULL * 1000000ULL;
-        while (nanoTime() < timeout) {
-            portsc = xhci_readl(&xhci->port_regs[port].portsc);
-            pls = (portsc >> 5) & 0xF;
-            uint32_t speed = (portsc >> 10) & 0xF;
-
-            // 成功
-            if (speed != 0 && pls == 0 && (portsc & XHCI_PORTSC_CCS)) {
-                printk("USB port %d in U0.\n", port);
-                if (portsc & XHCI_PORTSC_PED) {
-                    if (portsc & (1 << 19)) {
-                        portsc = xhci_readl(&xhci->port_regs[port].portsc);
-                        portsc |= (1 << 19);
-                        xhci_writel(&xhci->port_regs[port].portsc, portsc);
-                    }
-                    delay(1000);
-                    // 获取设备速度
-                    portsc = xhci_readl(&xhci->port_regs[port].portsc);
-                    uint8_t speed = xhci_port_speed_to_usb_speed(portsc);
-                    printk("XHCI: Device speed: %s\n", usb_speed_name(speed));
-                    device->speed = speed;
-                    return 0;
-                } else {
-                    printk("USB port %d in U0 but PED not set.\n", port);
-                }
-            }
-
-            // RXDETECT or POLLING
-            if (pls == 5 || pls == 7) {
-                if (nanoTime() > timeout - 100ULL * 1000000ULL) {
-                    timeout += 200ULL * 1000000ULL;
-                    printk("USB port %d still in pls %d, extending timeout.\n",
-                           port, pls);
-                }
-            }
-
-            if (pls == 8) {
-                printk("USB port %d in recovery state, waiting...\n", port);
-                delay(10);
-                continue;
-            }
-
-            if (pls == 4) {
-                printk("USB port %d link training failed.\n", port);
-                return -1;
-            }
-
-            delay(5);
-        }
-
-        portsc = xhci_readl(&xhci->port_regs[port].portsc);
-        pls = (portsc >> 5) & 0xF;
-        printk("USB port %d link training timeout in pls %d\n", port, pls);
-
-        return -1;
-    // Rx detect
-    case 5:
-        printk("USB port %d currently in PLS_RXDETECT mode.\n", port);
-        delay(100);
-        portsc = xhci_readl(&xhci->port_regs[port].portsc);
-        uint32_t pls = (portsc >> 5) & 0xF; // Port Link State
-        if (pls == 5) {
-            portsc |= (1 << 31); // Warm reset
-            xhci_writel(&xhci->port_regs[port].portsc, portsc);
-            delay(100);
-        }
-        goto redetect;
-    // Polling
-    case 7:
-        printk("USB port %d currently in PLS_POLLING mode.\n", port);
-        break;
-    default:
-        printk("USB port %d currently in unknown mode.\n", port);
-        return -1;
+    // 2. 检查端口供电
+    if (!(portsc & XHCI_PORTSC_PP)) {
+        printk("XHCI: Enabling port power\n");
+        xhci_writel(&xhci->port_regs[port].portsc, XHCI_PORTSC_PP);
+        delay(20);
     }
 
-    portsc = xhci_readl(&xhci->port_regs[port].portsc);
-
-    // 发起端口重置
-    portsc |= XHCI_PORTSC_PR;
-    xhci_writel(&xhci->port_regs[port].portsc, portsc);
-
-    // 等待重置完成
-    bool timeout = true;
-    uint64_t time_ns = nanoTime() + 1ULL * 1000000000ULL;
-    while (nanoTime() < time_ns) {
-        portsc = xhci_readl(&xhci->port_regs[port].portsc);
-        if (portsc & XHCI_PORTSC_PRC) {
-            timeout = false;
-            break;
+    // 3. 重置（最多重试2次）
+    int ret = -1;
+    for (int retry = 0; retry < 2; retry++) {
+        if (retry > 0) {
+            printk("XHCI: Retry %d...\n", retry);
+            delay(500); // 重试前等待
         }
 
-        arch_yield();
+        if (is_usb3) {
+            ret = xhci_reset_port_usb3(xhci, port, device);
+        } else {
+            ret = xhci_reset_port_usb2(xhci, port, device);
+        }
+
+        if (ret == 0) {
+            return 0;
+        }
     }
 
-    if (timeout) {
-        printk("XHCI: Port reset timeout\n");
-        return -1;
-    }
+    printk("XHCI: Port reset failed after retries\n");
+    return -1;
+}
 
-    // 清除端口变化状态位
-    portsc = xhci_readl(&xhci->port_regs[port].portsc);
-    portsc |= XHCI_PORTSC_PRC | XHCI_PORTSC_PEC;
-    xhci_writel(&xhci->port_regs[port].portsc, portsc);
-
-    printk("XHCI: USB2 port reset complete\n");
-
-    // 获取设备速度
-    portsc = xhci_readl(&xhci->port_regs[port].portsc);
-    uint8_t speed = xhci_port_speed_to_usb_speed(portsc);
-    printk("XHCI: Device speed: %s\n", usb_speed_name(speed));
-    device->speed = speed;
-
-    return 0;
+static int xhci_disconnect_port(usb_hcd_t *hcd, usb_hub_t *hub,
+                                usb_device_t *device) {
+    return -1; // TODO: 实现
 }
 
 // 为设备初始化EP0（在enable_slot之后调用）
@@ -793,6 +1131,8 @@ static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
         return -1;
     }
 
+    completion->device = device;
+
     spin_lock(&xhci_command_lock);
 
     xhci_port_info_t *port_info = &xhci->port_info[device->port];
@@ -830,6 +1170,8 @@ static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
             xhci->dcbaa[dev_priv->slot_id] = 0;
             free_frames_bytes(dev_priv->input_ctx, sizeof(xhci_input_ctx_t));
             free_frames_bytes(dev_priv->device_ctx, sizeof(xhci_device_ctx_t));
+            dev_priv->input_ctx = NULL;
+            dev_priv->device_ctx = NULL;
             free(dev_priv);
             device->hcd_private = NULL;
             xhci_free_command_completion(completion);
@@ -1080,6 +1422,8 @@ static int xhci_address_device(usb_hcd_t *hcd, usb_device_t *device,
         printk("XHCI: Failed to allocate command completion\n");
         return -1;
     }
+
+    completion->device = device;
 
     spin_lock(&xhci_command_lock);
 
@@ -1431,6 +1775,8 @@ static int xhci_configure_endpoint(usb_hcd_t *hcd, usb_endpoint_t *endpoint) {
         return -1;
     }
 
+    completion->device = device;
+
     spin_lock(&xhci_command_lock);
 
     // Configure Endpoint TRB
@@ -1489,6 +1835,8 @@ static int xhci_control_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer,
     if (!completion) {
         return -1;
     }
+    completion->transfer_type = NORMAL_TRANSFER;
+    completion->transfer = transfer;
 
     spin_lock(&xhci_transfer_lock);
 
@@ -1498,7 +1846,9 @@ static int xhci_control_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer,
     xhci_trb_t *first_trb = xhci_queue_trb(
         ring, setup_data, 8,
         (TRB_TYPE_SETUP << 10) | TRB_FLAG_IDT |
-            ((setup->bmRequestType & USB_DIR_IN) ? (3 << 16) : (0 << 16)));
+            ((transfer->length > 0 && transfer->buffer)
+                 ? ((setup->bmRequestType & USB_DIR_IN) ? (3 << 16) : (2 << 16))
+                 : (0 << 16)));
 
     // Data Stage TRB
     if (transfer->length > 0 && transfer->buffer) {
@@ -1569,6 +1919,7 @@ static int xhci_bulk_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
         return -1;
     }
     completion->transfer_type = NORMAL_TRANSFER;
+    completion->transfer = transfer;
 
     spin_lock(&xhci_transfer_lock);
 
@@ -1587,12 +1938,12 @@ static int xhci_bulk_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
             get_current_page_dir(false), (uint64_t)transfer->buffer + progress);
 
         size_t chunk = MIN(transfer->length - progress,
-                           DEFAULT_PAGE_SIZE - (data_addr & 0xFFF));
+                           DEFAULT_PAGE_SIZE - (progress % DEFAULT_PAGE_SIZE));
 
         bool chain = (progress + chunk) < transfer->length;
 
         size_t td_size = td_packet_count - (progress + chunk) / max_packet_size;
-        if ((progress + chunk) == transfer->length)
+        if ((progress + chunk) >= transfer->length)
             td_size = 0;
 
         // Normal TRB
@@ -1659,6 +2010,7 @@ static int xhci_interrupt_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
         return -1;
     }
     completion->transfer_type = INTR_TRANSFER;
+    completion->transfer = transfer;
 
     spin_lock(&xhci_transfer_lock);
 
@@ -1714,7 +2066,7 @@ void xhci_device_enumerater(enumerater_arg_t *arg) {
     xhci_hcd_t *xhci = hcd->private_data;
 
     if (hcd) {
-        int ret = usb_enumerate_device(hcd, arg->port_id);
+        int ret = usb_enumerate_device(hcd, xhci->root_hub, arg->port_id);
         if (ret == 1) {
             printk("XHCI: Device on port %d enumerated successfully\n",
                    arg->port_id);
@@ -1764,9 +2116,6 @@ void xhci_handle_port_status(xhci_hcd_t *xhci, uint8_t port_id) {
         printk("XHCI: Device disconnected on port %d\n", port_id);
         xhci->connection[port_id] = false;
     }
-
-    // 清除CSC
-    xhci_writel(&xhci->port_regs[port_id].portsc, portsc | XHCI_PORTSC_CSC);
 
     if (portsc & XHCI_PORTSC_PEC) {
         // 端口使能变化
@@ -1848,8 +2197,9 @@ int xhci_hcd_driver_probe(pci_device_t *pci_dev, uint32_t vendor_device_id) {
 
     // Map MMIO region
     void *mmio_vaddr = (void *)phys_to_virt(mmio_base);
-    map_page_range(get_current_page_dir(false), (uint64_t)mmio_vaddr, mmio_base,
-                   mmio_size, PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+    map_page_range(
+        get_current_page_dir(false), (uint64_t)mmio_vaddr, mmio_base, mmio_size,
+        PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE | PT_FLAG_DEVICE);
 
     usb_hcd_t *xhci_hcd = xhci_init(mmio_vaddr, pci_dev);
 

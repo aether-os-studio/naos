@@ -73,10 +73,7 @@ trap_handler:
 ret_from_trap_handler:
     ld t0, 248(sp)   // sepc
     csrw sepc, t0
-    
-    ld t0, 272(sp)   // sstatus  
-    csrw sstatus, t0
-    
+
     ld t0, 8(sp)     // sp
     csrw sscratch, t0
     
@@ -84,7 +81,6 @@ ret_from_trap_handler:
     // x2 (sp) 最后恢复
     ld x3,  16(sp)   // gp
     ld x4,  24(sp)   // tp
-    ld x6,  40(sp)   // t1
     ld x7,  48(sp)   // t2
     ld x8,  56(sp)   // s0/fp
     ld x9,  64(sp)   // s1
@@ -110,11 +106,18 @@ ret_from_trap_handler:
     ld x29, 224(sp)  // t4
     ld x30, 232(sp)  // t5
     ld x31, 240(sp)  // t6
+        
+    ld t0, 272(sp)   // sstatus  
+    li t1, 0x2       // SIE mask
+    not t1, t1       // ~SIE mask  
+    and t0, t0, t1   // 清除 SIE 位
+    csrw sstatus, t0    
     
     ld x5, 32(sp)    // t0
-    
+    ld x6, 40(sp)   // t1
+
     addi sp, sp, 280
-    
+
     csrrw sp, sscratch, sp
     
     sret

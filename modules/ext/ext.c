@@ -92,8 +92,9 @@ void ext_open(void *parent, const char *name, vfs_node_t node) {
             if (!strcmp((const char *)entry->name, ".") ||
                 !strcmp((const char *)entry->name, ".."))
                 continue;
-            if (vfs_child_find(node, (const char *)entry->name))
+            if (vfs_child_find(node, (const char *)entry->name)) {
                 continue;
+            }
             vfs_node_t child =
                 vfs_child_append(node, (const char *)entry->name, NULL);
             child->fsid = ext_fsid;
@@ -141,12 +142,14 @@ void ext_open(void *parent, const char *name, vfs_node_t node) {
 }
 
 bool ext_close(void *current) {
+    spin_lock(&rwlock);
     ext_handle_t *handle = current;
     if (handle->node->type & file_dir)
         ext4_dir_close(handle->dir);
     else
         ext4_fclose(handle->file);
     free(current);
+    spin_unlock(&rwlock);
     return true;
 }
 
@@ -157,8 +160,10 @@ ssize_t ext_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
 
     ssize_t ret = 0;
     ext_handle_t *handle = file;
-    if (!handle || !handle->node || !handle->file)
+    if (!handle || !handle->node || !handle->file) {
+        spin_unlock(&rwlock);
         return -1;
+    }
     if ((handle->node->type & file_symlink) && handle->node->linkto)
         handle = handle->node->linkto->handle;
     if (offset > handle->node->size) {
@@ -360,7 +365,11 @@ int ext_delete(void *parent, vfs_node_t node) {
     spin_lock(&rwlock);
 
     char *path = vfs_get_fullpath(node);
-    int ret = ext4_fremove((const char *)path);
+    int ret;
+    if (node->type & file_dir)
+        ret = ext4_dir_rm((const char *)path);
+    else
+        ret = ext4_fremove((const char *)path);
     free(path);
 
     spin_unlock(&rwlock);
@@ -390,7 +399,7 @@ int ext_stat(void *file, vfs_node_t node) {
     return 0;
 }
 
-int ext_ioctl(void *file, ssize_t cmd, ssize_t arg) { return -EINVAL; }
+int ext_ioctl(void *file, ssize_t cmd, ssize_t arg) { return 0; }
 
 int ext_poll(void *file, size_t events) { return 0; }
 

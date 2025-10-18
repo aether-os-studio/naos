@@ -478,6 +478,17 @@ int sprintf(char *buf, const char *fmt, ...) {
     return len;
 }
 
+int snprintf(char *buffer, size_t capacity, const char *fmt, ...) {
+    va_list vlist;
+    int ret;
+
+    va_start(vlist, fmt);
+    ret = vsnprintf(buffer, capacity, fmt, vlist);
+    va_end(vlist);
+
+    return ret;
+}
+
 uint64_t sys_syslog(int type, const char *buf, size_t len) {
     serial_printk(buf, len);
     flanterm_write(ft_ctx, buf, len);

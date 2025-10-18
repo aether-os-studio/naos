@@ -32,6 +32,8 @@ typedef struct pty_pair {
     int ctrlPgid;
     // above not used by ptyIsAssigned() since they aren't cleared
 
+    int frontProcessGroup; // for job control
+
     int id;
     bool locked; // by default unlocked (hence 0)
 } pty_pair_t;

@@ -314,19 +314,19 @@ typedef struct spinlock {
 // 获取spinlock
 static inline void spin_lock(spinlock_t *sl) {
     uint64_t flags;
-    long tmp = 1;
+    long tmp;
 
-    // 禁用中断并保存当前中断状态
-    __asm__ volatile("csrrci %0, sstatus, 0x2" // 清除SIE位，禁用中断，返回原值
+    /* 自旋等待 */
+    while (__sync_lock_test_and_set(&sl->lock, 1)) {
+        while (sl->lock)
+            ;
+    }
+
+    // 1. 保存当前中断状态并禁用中断
+    __asm__ volatile("csrr %0, sstatus\n\t"   // 读取sstatus寄存器到flags
+                     "csrci sstatus, 0x2\n\t" // 清除SIE位，禁用中断
                      : "=r"(flags)
                      :
-                     : "memory");
-
-    // 原子获取锁
-    __asm__ volatile("1: amoswap.w.aq %0, %1, (%2)\n" // 原子交换，acquire语义
-                     "   bnez %0, 1b\n" // 如果获取到的值不为0，继续自旋
-                     : "=&r"(tmp)
-                     : "r"(tmp), "r"(&sl->lock)
                      : "memory");
 
     sl->flags = flags;
@@ -336,21 +336,15 @@ static inline void spin_lock(spinlock_t *sl) {
 static inline void spin_unlock(spinlock_t *sl) {
     uint64_t flags = sl->flags;
 
-    // 原子释放锁
-    __asm__ volatile("amoswap.w.rl %0, zero, (%1)" // 原子写入0，release语义
-                     : "=r"(sl->lock)              // 占位输出
-                     : "r"(&sl->lock)
+    __sync_lock_release(&sl->lock);
+
+    // 2. 恢复中断状态（只恢复SIE位）
+    __asm__ volatile("andi %0, %0, 0x2\n\t"  // 只保留flags中的SIE位
+                     "csrc sstatus, 0x2\n\t" // 清除当前sstatus的SIE位
+                     "csrs sstatus, %0\n\t"  // 设置之前保存的SIE位
+                     : "+r"(flags)
+                     :
                      : "memory");
-
-    sl->lock = 0;
-
-    // 恢复中断状态
-    if (flags & 0x2) {                        // 检查原来的SIE位
-        __asm__ volatile("csrsi sstatus, 0x2" // 设置SIE位，重新启用中断
-                         :
-                         :
-                         : "memory");
-    }
 }
 
 #elif defined(__loongarch64)
@@ -420,11 +414,61 @@ static inline void sem_post(sem_t *sem) {
 }
 
 extern uint64_t get_physical_memory_offset();
+extern uint64_t *get_current_page_dir(bool user);
+extern uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr);
 
 static inline bool check_user_overflow(uint64_t addr, uint64_t size) {
     if ((addr + size) > get_physical_memory_offset()) {
         return true;
     }
+    return false;
+}
+
+static inline bool check_unmapped(uint64_t addr, uint64_t len) {
+    if (translate_address(get_current_page_dir(true), addr) &&
+        translate_address(get_current_page_dir(true), addr + len))
+        return false;
+
+    return true;
+}
+
+static inline bool copy_to_user(void *dst, const void *src, size_t size) {
+    if (check_user_overflow((uint64_t)dst, size) ||
+        check_unmapped((uint64_t)dst, size))
+        return true;
+
+    memcpy(dst, src, size);
+
+    return false;
+}
+
+static inline bool copy_from_user(void *dst, const void *src, size_t size) {
+    if (check_user_overflow((uint64_t)src, size) ||
+        check_unmapped((uint64_t)src, size))
+        return true;
+
+    memcpy(dst, src, size);
+
+    return false;
+}
+static inline bool copy_to_user_str(char *dst, const char *src, size_t limit) {
+    if (!translate_address(get_current_page_dir(true), (uint64_t)dst) ||
+        check_unmapped((uint64_t)dst, strlen(src)))
+        return true;
+
+    strncpy(dst, src, limit);
+
+    return false;
+}
+
+static inline bool copy_from_user_str(char *dst, const char *src,
+                                      size_t limit) {
+    if (!translate_address(get_current_page_dir(true), (uint64_t)dst) ||
+        check_unmapped((uint64_t)dst, strlen(src)))
+        return true;
+
+    strncpy(dst, src, limit);
+
     return false;
 }
 

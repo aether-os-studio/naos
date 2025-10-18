@@ -7,19 +7,31 @@ spinlock_t ap_startup_lock = {0};
 
 uint64_t cpu_count;
 
+extern bool task_initialized;
+
 void ap_entry(struct limine_mp_info *cpu) {
-    asm volatile("mv tp, %0" : : "r"(cpu->hartid));
+    asm volatile("mv gp, %0" : : "r"(cpu->hartid));
 
     trap_init();
+
+    csr_write(sscratch, (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE);
 
     printk("cpu %d starting...\n", current_cpu_id);
 
     timer_init_hart(cpu->hartid);
 
-    spin_unlock(&ap_startup_lock);
+    ap_startup_lock.lock = 0;
 
-    while (1)
+    while (!task_initialized) {
         arch_pause();
+    }
+
+    arch_set_current(idle_tasks[current_cpu_id]);
+
+    while (1) {
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+    }
 }
 
 uint64_t cpuid_to_hartid[MAX_CPU_NUM] = {0};

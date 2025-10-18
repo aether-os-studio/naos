@@ -19,6 +19,8 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->mm->page_table_addr = page_table_addr;
     context->mm->ref_count = 1;
     memset(&context->mm->task_vma_mgr, 0, sizeof(vma_manager_t));
+    context->mm->task_vma_mgr.last_alloc_addr = USER_MMAP_START;
+    context->mm->task_vma_mgr.initialized = false;
     context->mm->brk_start = USER_BRK_START;
     context->mm->brk_current = context->mm->brk_start;
     context->mm->brk_end = USER_BRK_END;
@@ -80,8 +82,6 @@ void arch_context_free(arch_context_t *context) {
     if (context->fpu_ctx) {
         free_frames_bytes(context->fpu_ctx, DEFAULT_PAGE_SIZE);
     }
-    if (context->mm->ref_count <= 1)
-        vma_manager_exit_cleanup(&context->mm->task_vma_mgr);
 }
 
 task_t *arch_get_current() { return (task_t *)read_kgsbase(); }
@@ -128,6 +128,8 @@ void arch_switch_with_context(arch_context_t *prev, arch_context_t *next,
 extern void task_signal();
 
 void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next) {
+    prev->arch_context->ctx = ctx;
+
     if (prev == next) {
         return;
     }
@@ -135,8 +137,6 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next) {
     if (next->signal & SIGMASK(SIGKILL)) {
         return;
     }
-
-    prev->arch_context->ctx = ctx;
 
     sched_update_itimer();
     sched_update_timerfd();
@@ -183,6 +183,8 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
 
 void arch_to_user_mode(arch_context_t *context, uint64_t entry,
                        uint64_t stack) {
+    arch_disable_interrupt();
+
     arch_context_to_user_mode(context, entry, stack);
 
     asm volatile("movq %0, %%cr3" ::"r"(context->mm->page_table_addr));
@@ -191,9 +193,16 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry,
                  "jmp ret_from_exception" ::"r"(context->ctx));
 }
 
+extern bool task_initialized;
+
 void arch_yield() {
-    ((struct sched_entity *)current_task->sched_info)->is_yield = true;
-    asm volatile("sti\n\tint %0\n\tcli\n\t" ::"i"(APIC_TIMER_INTERRUPT_VECTOR));
+    if (task_initialized) {
+        struct sched_entity *curr_se =
+            (struct sched_entity *)current_task->sched_info;
+        curr_se->is_yield = true;
+        asm volatile(
+            "sti\n\tint %0\n\tcli\n\t" ::"i"(APIC_TIMER_INTERRUPT_VECTOR));
+    }
 }
 
 #define ARCH_SET_GS 0x1001

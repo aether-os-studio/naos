@@ -311,6 +311,7 @@ uint64_t sys_mknod(const char *name, uint16_t umode, int dev);
 uint64_t sys_chmod(const char *name, uint16_t mode);
 uint64_t sys_fchmod(int fd, uint16_t mode);
 uint64_t sys_fchmodat(int dfd, const char *name, uint16_t mode);
+uint64_t sys_fchmodat2(int dfd, const char *name, uint16_t mode, int flags);
 
 uint64_t sys_chown(const char *filename, uint64_t uid, uint64_t gid);
 uint64_t sys_fchown(int fd, uint64_t uid, uint64_t gid);

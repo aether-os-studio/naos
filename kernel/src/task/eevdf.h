@@ -106,7 +106,7 @@ void update_current_task(eevdf_t *eevdf_sched);
  * 选取下一个可调度的单元
  * @return 调度单元
  */
-struct sched_entity *pick_eevdf();
+struct sched_entity *pick_eevdf(eevdf_t *eevdf_sched);
 
 /**
  * 选取下一个可调度的任务

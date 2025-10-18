@@ -118,6 +118,14 @@ void boot_smp_init(uintptr_t entry) {
         if (cpu->lapic_id == mp_response->bsp_lapic_id)
             continue;
 #endif
+#if defined(__aarch64__)
+        extern uint64_t cpuid_to_mpidr[MAX_CPU_NUM];
+        cpuid_to_mpidr[i] = cpu->mpidr;
+
+        if (cpu->mpidr == mp_request.response->bsp_mpidr)
+            continue;
+
+#endif
 #if defined(__riscv__)
         extern uint64_t cpuid_to_hartid[MAX_CPU_NUM];
         cpuid_to_hartid[i] = cpu->hartid;

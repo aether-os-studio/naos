@@ -1,11 +1,13 @@
 #include <arch/arch.h>
-#include <interrupt/irq_manager.h>
+#include <irq/irq_manager.h>
 #include <arch/aarch64/acpi/gic.h>
+
+extern void gic_init();
 
 void arch_early_init() {
     setup_vectors();
     smp_init();
-    acpi_init();
+    gic_init();
     irq_init();
 }
 

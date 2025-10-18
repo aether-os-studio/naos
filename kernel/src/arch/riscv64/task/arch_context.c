@@ -1,4 +1,5 @@
 #include <task/task.h>
+#include <task/eevdf.h>
 #include "arch_context.h"
 #include <mm/mm.h>
 #include <arch/arch.h>
@@ -12,20 +13,22 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->mm->page_table_addr = page_table_addr;
     context->mm->ref_count = 1;
     memset(&context->mm->task_vma_mgr, 0, sizeof(vma_manager_t));
+    context->mm->task_vma_mgr.last_alloc_addr = USER_MMAP_START;
+    context->mm->task_vma_mgr.initialized = false;
     context->mm->brk_start = USER_BRK_START;
     context->mm->brk_current = context->mm->brk_start;
     context->mm->brk_end = USER_BRK_END;
     context->ctx = (struct pt_regs *)stack - 1;
     memset(context->ctx, 0, sizeof(struct pt_regs));
     context->ctx->ra = entry;
-    context->ctx->sepc = entry;
+    context->ctx->epc = entry;
     context->ctx->sp = stack;
     context->ctx->a0 = initial_arg;
     context->dead = false;
     if (user_mode) {
-        context->ctx->sstatus = 0x0;
+        context->ctx->sstatus = (2UL << 32) | (1UL << 5);
     } else {
-        context->ctx->sstatus = 0x102;
+        context->ctx->sstatus = (2UL << 32) | (1UL << 5) | (1UL << 8);
     }
 }
 
@@ -49,11 +52,16 @@ void arch_set_current(task_t *current) {
     asm volatile("mv tp, %0\n\t" ::"r"(current));
 }
 
-extern void ret_from_trap_handler();
-
 void arch_switch_with_context(arch_context_t *prev, arch_context_t *next,
                               uint64_t kernel_stack) {
     csr_write(sscratch, kernel_stack);
+
+    uint64_t satp =
+        MAKE_SATP_PADDR(SATP_MODE_SV48, 0, next->mm->page_table_addr);
+
+    write_satp(satp);
+
+    sbi_set_timer(get_timer() + TIMER_FREQ / SCHED_HZ);
 
     asm volatile("mv sp, %0\n\t"
                  "j ret_from_trap_handler\n\t" ::"r"(next->ctx));
@@ -62,6 +70,8 @@ void arch_switch_with_context(arch_context_t *prev, arch_context_t *next,
 extern void task_signal();
 
 void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next) {
+    prev->arch_context->ctx = ctx;
+
     if (prev == next) {
         return;
     }
@@ -69,8 +79,6 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next) {
     if (next->signal & SIGMASK(SIGKILL)) {
         return;
     }
-
-    prev->arch_context->ctx = ctx;
 
     sched_update_itimer();
     sched_update_timerfd();
@@ -98,7 +106,16 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
 void arch_to_user_mode(arch_context_t *context, uint64_t entry,
                        uint64_t stack) {}
 
-void arch_yield() {}
+extern bool task_initialized;
+
+extern uint64_t cpuid_to_hartid[MAX_CPU_NUM];
+
+void arch_yield() {
+    if (task_initialized) {
+        struct sched_entity *curr_se = current_task->sched_info;
+        curr_se->is_yield = true;
+    }
+}
 
 bool arch_check_elf(const Elf64_Ehdr *ehdr) {
     // 验证ELF魔数

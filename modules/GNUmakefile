@@ -1,4 +1,8 @@
+ifeq ($(BUILD_MODE), debug)
 CFLAGS := -g3 -O0 -fno-stack-protector -Wno-address-of-packed-member -fvisibility=hidden -fPIC -fno-builtin -nostdinc -nostdlib -I$(shell pwd)/../kernel/src -I$(shell pwd)/../kernel/freestnd-c-hdrs
+else
+CFLAGS := -O2 -fno-stack-protector -Wno-address-of-packed-member -fvisibility=hidden -fPIC -fno-builtin -nostdinc -nostdlib -I$(shell pwd)/../kernel/src -I$(shell pwd)/../kernel/freestnd-c-hdrs
+endif
 export CFLAGS
 
 ifeq ($(ARCH),x86_64)

@@ -6,7 +6,6 @@
 #include "task/task.h"
 #include "net/socket.h"
 #include "drivers/pty.h"
-#include "drivers/fb.h"
 
 vfs_node_t rootdir = NULL;
 
@@ -29,12 +28,13 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
         return NULL;
     memset(node, 0, sizeof(struct vfs_node));
     node->parent = parent;
-    node->spin.lock = 0;
+    node->flags = 0;
     node->dev = 0;
     node->rdev = 0;
     node->blksz = DEFAULT_PAGE_SIZE;
     node->name = name ? strdup(name) : NULL;
     node->linkto = NULL;
+    node->inode = alloc_fake_inode();
     node->type = file_none;
     node->fsid = parent ? parent->fsid : 0;
     node->root = parent ? parent->root : node;
@@ -67,13 +67,11 @@ void vfs_free_child(vfs_node_t vfs) {
 }
 
 static inline void do_open(vfs_node_t file) {
-    spin_lock(&file->spin);
     if (file->handle != NULL) {
         callbackof(file, stat)(file->handle, file);
     } else {
         callbackof(file, open)(file->parent->handle, file->name, file);
     }
-    spin_unlock(&file->spin);
 }
 
 static inline void do_update(vfs_node_t file) {
@@ -83,8 +81,11 @@ static inline void do_update(vfs_node_t file) {
 }
 
 vfs_node_t vfs_child_find(vfs_node_t parent, const char *name) {
-    return list_first(parent->child, data,
-                      streq(name, ((vfs_node_t)data)->name));
+    if (!parent)
+        return NULL;
+    vfs_node_t child =
+        list_first(parent->child, data, streq(name, ((vfs_node_t)data)->name));
+    return child;
 }
 
 // 一定要记得手动设置一下child的type
@@ -367,7 +368,7 @@ create:
         free(path);
         return ret;
     }
-    node->linkto = vfs_open(target_name);
+    node->linkto = vfs_open_at(node->parent, target_name);
 
     free(path);
 
@@ -375,7 +376,7 @@ create:
 
 err:
     free(path);
-    return -1;
+    return -EIO;
 }
 
 int vfs_mknod(const char *name, uint16_t umode, int dev) {
@@ -462,9 +463,7 @@ int vfs_chmod(const char *path, uint16_t mode) {
     vfs_node_t node = vfs_open(path);
     if (!node)
         return -ENOENT;
-    spin_lock(&node->spin);
     int ret = callbackof(node, chmod)(node, mode);
-    spin_unlock(&node->spin);
     return ret;
 }
 
@@ -529,15 +528,13 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
 
         if (current->type & file_symlink) {
             if (!current->parent || !current->linkto)
-                goto err;
+                continue;
 
             current->type = file_symlink | file_proxy;
 
             vfs_node_t target = current->linkto;
             if (!target)
                 goto err;
-
-            target->refcount++;
 
             current->type |= target->type;
             current->size = target->size;
@@ -553,7 +550,6 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
                     vfs_node_t child_node = (vfs_node_t)i->data;
                     if (!vfs_child_find(current, child_node->name)) {
                         list_append(current->child, child_node);
-                        child_node->refcount++;
                     }
                 }
             }
@@ -611,16 +607,21 @@ int vfs_close(vfs_node_t node) {
     }
     if (node->type & file_dir)
         return 0;
-    spin_lock(&node->spin);
     if (node->refcount > 0)
         node->refcount--;
-    if (node->refcount == 0) {
+    if (node->refcount <= 0) {
         bool real_close = callbackof(node, close)(node->handle);
         if (real_close) {
-            node->handle = NULL;
+            if (node->flags & VFS_NODE_FLAGS_DELETED) {
+                callbackof(node, free_handle)(node->handle);
+                node->handle = NULL;
+                free(node->name);
+                free(node);
+            } else {
+                node->handle = NULL;
+            }
         }
     }
-    spin_unlock(&node->spin);
 
     return 0;
 }
@@ -654,16 +655,12 @@ ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size) {
     if (fd->node->type & file_dir)
         return -1;
 
-    spin_lock(&fd->node->spin);
     ssize_t ret = callbackof(fd->node, read)(fd, addr, offset, size);
-    spin_unlock(&fd->node->spin);
     return ret;
 }
 
 int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize) {
-    spin_lock(&node->spin);
     int ret = callbackof(node, readlink)(node, buf, 0, bufsize);
-    spin_unlock(&node->spin);
     return ret;
 }
 
@@ -681,13 +678,11 @@ ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size) {
     if (fd->node->type & file_dir)
         return -1;
 
-    spin_lock(&fd->node->spin);
     ssize_t write_bytes = 0;
     write_bytes = callbackof(fd->node, write)(fd, addr, offset, size);
     if (write_bytes > 0) {
         fd->node->size = MAX(fd->node->size, offset + write_bytes);
     }
-    spin_unlock(&fd->node->spin);
     return write_bytes;
 }
 
@@ -703,102 +698,16 @@ int vfs_unmount(const char *path) {
     return 0;
 }
 
-int tty_mode = KD_TEXT;
-int tty_kbmode = K_XLATE;
-struct vt_mode current_vt_mode = {0};
-
-extern int pts_fsid;
-
-extern stdio_handle_t *global_stdio_handle;
-
 int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
     do_update(node);
 
-    if (node->fsid != pts_fsid) {
-        switch (cmd) {
-        case TIOCGWINSZ:
-            *(struct winsize *)arg = (struct winsize){
-                .ws_xpixel = framebuffer->width,
-                .ws_ypixel = framebuffer->height,
-                .ws_col = framebuffer->width / 8,
-                .ws_row = framebuffer->height / 16,
-            };
-            return 0;
-        case TIOCSCTTY:
-            return 0;
-        case TIOCGPGRP:
-            int *pid = (int *)arg;
-            *pid = global_stdio_handle->at_process_group_id;
-            return 0;
-        case TIOCSPGRP:
-            global_stdio_handle->at_process_group_id = *(int *)arg;
-            return 0;
-        case TCGETS:
-            if (check_user_overflow(arg, sizeof(termios))) {
-                return -EFAULT;
-            }
-            memcpy((void *)arg, &current_task->term, sizeof(termios));
-            return 0;
-        case TCSETS:
-            if (check_user_overflow(arg, sizeof(termios))) {
-                return -EFAULT;
-            }
-            memcpy(&current_task->term, (void *)arg, sizeof(termios));
-            return 0;
-        case TCSETSW:
-            if (check_user_overflow(arg, sizeof(termios))) {
-                return -EFAULT;
-            }
-            memcpy(&current_task->term, (void *)arg, sizeof(termios));
-            return 0;
-        case TIOCSWINSZ:
-            return 0;
-        case KDGETMODE:
-            *(int *)arg = tty_mode;
-            return 0;
-        case KDSETMODE:
-            tty_mode = *(int *)arg;
-            return 0;
-        case KDGKBMODE:
-            *(int *)arg = tty_kbmode;
-            return 0;
-        case KDSKBMODE:
-            tty_kbmode = *(int *)arg;
-            return 0;
-        case VT_SETMODE:
-            memcpy(&current_vt_mode, (void *)arg, sizeof(struct vt_mode));
-            return 0;
-        case VT_GETMODE:
-            memcpy((void *)arg, &current_vt_mode, sizeof(struct vt_mode));
-            return 0;
-        case VT_ACTIVATE:
-            return 0;
-        case VT_WAITACTIVE:
-            return 0;
-        case VT_GETSTATE:
-            struct vt_state *state = (struct vt_state *)arg;
-            state->v_active = 1; // 当前活动终端
-            state->v_state = 0;  // 状态标志
-            return 0;
-        case VT_OPENQRY:
-            *(int *)arg = 1;
-            return 0;
-        case TIOCNOTTY:
-            return 0;
-        default:
-            return callbackof(node, ioctl)(node->handle, cmd, arg);
-        }
-    } else {
-        return callbackof(node, ioctl)(node->handle, cmd, arg);
-    }
+    return callbackof(node, ioctl)(node->handle, cmd, arg);
 }
 
 int vfs_poll(vfs_node_t node, size_t event) {
     if (node->type & file_dir)
         return -1;
-    spin_lock(&node->spin);
     int ret = callbackof(node, poll)(node->handle, event);
-    spin_unlock(&node->spin);
     return ret;
 }
 
@@ -843,18 +752,14 @@ char *vfs_get_fullpath(vfs_node_t node) {
 int vfs_delete(vfs_node_t node) {
     if (node == rootdir)
         return -1;
-    spin_lock(&node->spin);
-    int res = callbackof(node, delete)(node->parent->handle, node);
+    node->flags |= VFS_NODE_FLAGS_DELETED;
+    int res = callbackof(node, delete)(
+        node->parent ? node->parent->handle : NULL, node);
     if (res < 0) {
-        spin_unlock(&node->spin);
         return -1;
     }
-    list_delete(node->parent->child, node);
-    callbackof(node, free_handle)(node->handle);
-    node->handle = NULL;
-    spin_unlock(&node->spin);
-    free(node->name);
-    free(node);
+    if (node->parent)
+        list_delete(node->parent->child, node);
 
     return 0;
 }
@@ -863,8 +768,6 @@ int vfs_rename(vfs_node_t node, const char *new) {
     vfs_node_t new_node = vfs_open(new);
     if (new_node)
         vfs_delete(new_node);
-
-    spin_lock(&node->spin);
 
     char *filename;
     char *last_slash = strrchr(new, '/');
@@ -899,7 +802,6 @@ int vfs_rename(vfs_node_t node, const char *new) {
 
     int ret = callbackof(node, rename)(node->handle, new);
     if (ret < 0) {
-        spin_unlock(&node->spin);
         return ret;
     }
 
@@ -910,8 +812,6 @@ int vfs_rename(vfs_node_t node, const char *new) {
         list_append(node->parent->child, node);
     free(node->name);
     node->name = strdup(filename);
-
-    spin_unlock(&node->spin);
 
     return ret;
 }

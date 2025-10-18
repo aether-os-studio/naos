@@ -208,8 +208,6 @@ typedef struct _NVME_NAMESPACE {
     uint32_t MXRS; // Max Request Size
 } NVME_NAMESPACE;
 
-#define NVME_SQE_PRP_PTR ((uint32_t)1 << 13)
-
 typedef struct _NVME_PRP_LIST {
     uint64_t prp1;
     uint64_t prp2;

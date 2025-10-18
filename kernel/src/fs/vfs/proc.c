@@ -36,7 +36,7 @@ char *proc_gen_maps_file(task_t *task, size_t *content_len) {
     while (vma) {
         vfs_node_t node = NULL;
         if (vma->vm_fd != -1) {
-            node = current_task->fd_info->fds[vma->vm_fd]->node;
+            node = task->fd_info->fds[vma->vm_fd]->node;
         }
 
         int len = sprintf(

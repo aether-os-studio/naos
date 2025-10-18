@@ -3,8 +3,6 @@
 #include <fs/vfs/vfs.h>
 #include <task/task.h>
 
-spinlock_t mm_op_lock = {0};
-
 uint64_t sys_brk(uint64_t brk) {
     brk = (brk + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1);
 
@@ -93,13 +91,18 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
                 return (uint64_t)-ENOMEM;
             }
         } else {
-            // 简单的地址分配策略：从高地址开始
-            start_addr = USER_MMAP_START;
+        retry:
+            start_addr = mgr->last_alloc_addr;
             while (vma_find_intersection(mgr, start_addr,
                                          start_addr + aligned_len)) {
                 start_addr += DEFAULT_PAGE_SIZE;
-                if (start_addr > USER_MMAP_END)
+                if (start_addr > USER_MMAP_END) {
+                    if (mgr->last_alloc_addr != USER_MMAP_START) {
+                        mgr->last_alloc_addr = USER_MMAP_START;
+                        goto retry;
+                    }
                     return (uint64_t)-ENOMEM;
+                }
             }
         }
     }
@@ -108,8 +111,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         if (fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
             return (uint64_t)-EBADF;
     }
-
-    spin_lock(&mm_op_lock);
 
     vma_t *vma = vma_alloc();
     if (!vma)
@@ -150,6 +151,9 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         return (uint64_t)-ENOMEM;
     }
 
+    if (!addr)
+        mgr->last_alloc_addr = start_addr;
+
     if (!(flags & MAP_ANONYMOUS)) {
         uint64_t ret =
             (uint64_t)vfs_map(current_task->fd_info->fds[fd], start_addr,
@@ -157,8 +161,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
 
         region->vm_name =
             vfs_get_fullpath(current_task->fd_info->fds[fd]->node);
-
-        spin_unlock(&mm_op_lock);
         return ret;
     } else {
         uint64_t pt_flags = PT_FLAG_U | PT_FLAG_W;
@@ -176,8 +178,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
                        pt_flags);
 
         memset((void *)start_addr, 0, aligned_len);
-
-        spin_unlock(&mm_op_lock);
 
         return start_addr;
     }
@@ -232,8 +232,6 @@ uint64_t sys_munmap(uint64_t addr, uint64_t size) {
     }
 
     unmap_page_range(get_current_page_dir(true), start, end - start);
-
-    spin_unlock(&mm_op_lock);
     return 0;
 }
 
@@ -307,12 +305,17 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
     }
 
     if (flags & MREMAP_MAYMOVE) {
-        // 简单的地址分配策略：从高地址开始
-        uint64_t start_addr = USER_MMAP_START;
+    retry:
+        uint64_t start_addr = mgr->last_alloc_addr;
         while (vma_find_intersection(mgr, start_addr, start_addr + new_size)) {
             start_addr += DEFAULT_PAGE_SIZE;
-            if (start_addr > USER_MMAP_END)
+            if (start_addr > USER_MMAP_END) {
+                if (mgr->last_alloc_addr != USER_MMAP_START) {
+                    mgr->last_alloc_addr = USER_MMAP_START;
+                    goto retry;
+                }
                 return (uint64_t)-ENOMEM;
+            }
         }
 
         vma_t *new_vma = vma_alloc();
@@ -337,6 +340,8 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
             pt_flags |= PT_FLAG_W;
         if (new_vma->vm_flags & VMA_EXEC)
             pt_flags |= PT_FLAG_X;
+
+        mgr->last_alloc_addr = start_addr;
 
         map_page_range(get_current_page_dir(true), start_addr, old_addr_phys,
                        new_size, pt_flags);
@@ -391,8 +396,6 @@ uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
         return -EFAULT;
     }
 
-    spin_lock(&mm_op_lock);
-
     uint64_t *page_dir = get_current_page_dir(true);
     uint64_t current_addr = start_page;
 
@@ -406,6 +409,5 @@ uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
         current_addr += DEFAULT_PAGE_SIZE;
     }
 
-    spin_unlock(&mm_op_lock);
     return 0;
 }

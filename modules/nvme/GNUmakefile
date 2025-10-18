@@ -7,6 +7,9 @@ override ASFILES := $(filter %.S,$(SRCFILES))
 override OBJ := $(addprefix ../../obj-modules-$(ARCH)/$(KM_NAME)/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o))
 
 all: $(OBJ)
+ifeq ($(ARCH), aarch64)
+	$(CC) $(CFLAGS) -shared $(OBJ) $(PROJECT_ROOT)/libgcc_aa64.a -o ../../modules-$(ARCH)/$(KM_NAME).ko
+endif
 ifeq ($(ARCH), riscv64)
 	$(CC) $(CFLAGS) -shared $(OBJ) $(PROJECT_ROOT)/libgcc_rv64.a -o ../../modules-$(ARCH)/$(KM_NAME).ko
 else

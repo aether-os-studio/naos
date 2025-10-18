@@ -87,6 +87,10 @@ typedef struct {
 #define XHCI_PORTSC_OCC (1 << 20)
 #define XHCI_PORTSC_PRC (1 << 21)
 
+#define XHCI_PORTSC_CHANGE_BITS                                                \
+    (XHCI_PORTSC_CSC | XHCI_PORTSC_PEC | XHCI_PORTSC_WRC | XHCI_PORTSC_OCC |   \
+     XHCI_PORTSC_PRC)
+
 // TRB类型
 #define TRB_TYPE_NORMAL 1
 #define TRB_TYPE_SETUP 2
@@ -311,6 +315,12 @@ typedef struct {
     xhci_ring_t *transfer_ring;
 } xhci_endpoint_private_t;
 
+// XHCI Hub 私有数据
+typedef struct {
+    usb_hub_t *hub;
+    xhci_hcd_t *xhci;
+} xhci_hub_private_t;
+
 // 完成状态
 typedef enum {
     COMPLETION_STATUS_PENDING = 0,
@@ -326,6 +336,7 @@ typedef struct {
     uint64_t result;
     uint32_t slot_id;
     xhci_hcd_t *hcd;
+    usb_device_t *device;
     spinlock_t lock;
     uint64_t timeout;
 } xhci_command_completion_t;
@@ -387,16 +398,17 @@ typedef enum {
 typedef struct {
     uint8_t port_num;         // 端口号 (0-based)
     xhci_protocol_t protocol; // USB2 or USB3
-    uint8_t port_offset;      // 在协议中的偏移
+    uint8_t port_offset;      // 在协议中的偏移（1-based）
     uint8_t port_count;       // 该协议的端口数
-    bool connected;           // 是否有设备连接
+    uint8_t paired_port;      // 对应的USB2/USB3端口号 (0-based)，无对应则为0xFF
     uint8_t slot_type;        // PROTOCOL支持的SLOT类型
-    uint8_t speed;            // 当前速度
 } xhci_port_info_t;
 
 // XHCI主控制器数据
 struct xhci_hcd {
     usb_hcd_t *hcd;
+
+    usb_hub_t *root_hub;
 
     pci_device_t *pci_dev;
 

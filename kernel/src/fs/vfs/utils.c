@@ -132,3 +132,63 @@ rel_status calculate_relative_path(char *relative, const char *from,
 
     return REL_SUCCESS;
 }
+
+/**
+ * 获取路径的目录名
+ * @param path 输入路径
+ * @param result 结果缓冲区
+ * @param size 缓冲区大小
+ * @return 成功返回result指针，失败返回NULL
+ */
+char *vfs_dirname(const char *path, char *result, size_t size) {
+    if (!path || !result || size == 0) {
+        return NULL;
+    }
+
+    // 处理空字符串或NULL
+    if (path[0] == '\0') {
+        snprintf(result, size, ".");
+        return result;
+    }
+
+    // 复制路径以便处理
+    size_t len = strlen(path);
+    char *temp = (char *)malloc(len + 1);
+    if (!temp)
+        return NULL;
+    strcpy(temp, path);
+
+    // 去除尾部的斜杠（除非是根目录）
+    while (len > 1 && temp[len - 1] == '/') {
+        temp[--len] = '\0';
+    }
+
+    // 如果只剩下斜杠，说明是根目录
+    if (temp[0] == '/' && len == 1) {
+        int str_len = snprintf(result, size, "/");
+        result[str_len] = '\0';
+        free(temp);
+        return result;
+    }
+
+    // 查找最后一个斜杠
+    char *last_slash = strrchr(temp, '/');
+
+    if (last_slash == NULL) {
+        // 没有斜杠，返回当前目录
+        int str_len = snprintf(result, size, ".");
+        result[str_len] = '\0';
+    } else if (last_slash == temp) {
+        // 斜杠在第一个字符，说明是根目录下的文件
+        int str_len = snprintf(result, size, "/");
+        result[str_len] = '\0';
+    } else {
+        // 截断到最后一个斜杠之前
+        *last_slash = '\0';
+        int str_len = snprintf(result, size, "%s", temp);
+        result[str_len] = '\0';
+    }
+
+    free(temp);
+    return result;
+}

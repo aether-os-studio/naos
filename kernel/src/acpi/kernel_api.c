@@ -2,7 +2,7 @@
 #include <boot/boot.h>
 #include <mm/mm.h>
 #include <drivers/bus/pci.h>
-#include <interrupt/irq_manager.h>
+#include <irq/irq_manager.h>
 #include <arch/arch.h>
 #include <task/task.h>
 
@@ -13,13 +13,16 @@ uacpi_status uacpi_kernel_get_rsdp(uacpi_phys_addr *out_rsdp_address) {
 
 void *uacpi_kernel_map(uacpi_phys_addr addr, uacpi_size len) {
     void *vaddr = (void *)phys_to_virt(addr);
-    map_page_range(get_current_page_dir(false), (uint64_t)vaddr, addr, len,
-                   PT_FLAG_R | PT_FLAG_W);
+    map_page_range(
+        get_current_page_dir(false), (uint64_t)vaddr & ~(DEFAULT_PAGE_SIZE - 1),
+        addr & ~(DEFAULT_PAGE_SIZE - 1), len,
+        PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE | PT_FLAG_DEVICE);
     return vaddr;
 }
 
 void uacpi_kernel_unmap(void *addr, uacpi_size len) {
-    unmap_page_range(get_current_page_dir(false), (uint64_t)addr, len);
+    unmap_page_range(get_current_page_dir(false),
+                     (uint64_t)addr & ~(DEFAULT_PAGE_SIZE - 1), len);
 }
 
 void uacpi_kernel_log(uacpi_log_level, const uacpi_char *str) { printk(str); }
@@ -201,11 +204,15 @@ void uacpi_kernel_free_mutex(uacpi_handle lock) { free(lock); }
 
 uacpi_status uacpi_kernel_acquire_mutex(uacpi_handle lock, uacpi_u16 timeout) {
     (void)timeout;
-    spin_lock(lock);
+    if (lock)
+        spin_lock(lock);
     return UACPI_STATUS_OK;
 }
 
-void uacpi_kernel_release_mutex(uacpi_handle lock) { spin_unlock(lock); }
+void uacpi_kernel_release_mutex(uacpi_handle lock) {
+    if (lock)
+        spin_unlock(lock);
+}
 
 uacpi_handle uacpi_kernel_create_event(void) {
     sem_t *sem = malloc(sizeof(sem_t));
@@ -282,13 +289,15 @@ uacpi_handle uacpi_kernel_create_spinlock(void) {
 void uacpi_kernel_free_spinlock(uacpi_handle lock) { free(lock); }
 
 uacpi_cpu_flags uacpi_kernel_lock_spinlock(uacpi_handle lock) {
-    spin_lock(lock);
+    if (lock)
+        spin_lock(lock);
     return 0;
 }
 
 void uacpi_kernel_unlock_spinlock(uacpi_handle lock, uacpi_cpu_flags flags) {
     (void)flags;
-    spin_unlock(lock);
+    if (lock)
+        spin_unlock(lock);
 }
 
 uacpi_status uacpi_kernel_schedule_work(uacpi_work_type type,

@@ -5,39 +5,6 @@
 #include <mm/mm.h>
 #include <task/task.h>
 
-// SV48模式下的SATP寄存器位字段定义
-#define SATP_MODE_SHIFT 60
-#define SATP_ASID_SHIFT 44
-#define SATP_PPN_MASK 0x00000FFFFFFFFFFFULL  // 44位PPN
-#define SATP_ASID_MASK 0x0FFFF00000000000ULL // 16位ASID
-#define SATP_MODE_MASK 0xF000000000000000ULL // 4位MODE
-
-// 页表模式
-#define SATP_MODE_BARE 0
-#define SATP_MODE_SV39 8
-#define SATP_MODE_SV48 9
-#define SATP_MODE_SV57 10
-
-// SV48虚拟地址空间划分（48位地址空间）
-#define SV48_VA_BITS 48
-#define SV48_USER_END 0x0000800000000000ULL     // 用户空间结束地址
-#define SV48_KERNEL_START 0xFFFF800000000000ULL // 内核空间起始地址（符号扩展）
-
-// 读取SATP寄存器
-static inline uint64_t read_satp(void) {
-    uint64_t satp;
-    __asm__ volatile("csrr %0, satp" : "=r"(satp) : : "memory");
-    return satp;
-}
-
-// 写入SATP寄存器
-static inline void write_satp(uint64_t satp) {
-    __asm__ volatile("csrw satp, %0" : : "r"(satp) : "memory");
-
-    // 刷新TLB以确保新的页表生效
-    __asm__ volatile("sfence.vma" : : : "memory");
-}
-
 uint64_t *get_current_page_dir(bool user) {
     (void)user;
     uint64_t satp = read_satp();
@@ -131,8 +98,13 @@ static inline uint64_t canonicalize_va(uint64_t vaddr) {
     return vaddr & VA_MASK;
 }
 
+extern uint64_t *kernel_page_dir;
+
 uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
                   uint64_t flags, bool force) {
+    if (!kernel_page_dir)
+        kernel_page_dir = pgdir;
+
     // 规范化虚拟地址并确保地址按页对齐
     vaddr = canonicalize_va(vaddr) & ~(PAGE_SIZE - 1);
     paddr &= ~(PAGE_SIZE - 1);

@@ -2,6 +2,7 @@
 #include <task/task.h>
 #include <fs/fs_syscall.h>
 #include <fs/vfs/dev.h>
+#include <drivers/fb.h>
 
 vfs_node_t pipefs_root;
 int pipefs_id = 0;
@@ -27,12 +28,7 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     if (!pipe)
         return -EINVAL;
 
-    spin_unlock(&spec->node->spin);
-
-    arch_enable_interrupt();
-
-    uint32_t available = (pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF;
-    while (available == 0) {
+    while (pipe->ptr == 0) {
         if (fd->flags & O_NONBLOCK) {
             return -EWOULDBLOCK;
         }
@@ -41,37 +37,22 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             return 0;
         }
 
-        available = (pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF;
+        arch_yield();
     }
 
-    arch_disable_interrupt();
-
-    spin_lock(&spec->node->spin);
-
-    spin_lock(&pipe->lock);
-
-    available = (pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF;
-
     // 实际读取量
-    uint32_t to_read = MIN(size, available);
+    uint32_t to_read = MIN(size, pipe->ptr);
 
-    if (available == 0) {
-        spin_unlock(&pipe->lock);
+    if (to_read == 0) {
         return 0;
     }
 
-    // 分两种情况拷贝数据
-    if (pipe->read_ptr + to_read <= PIPE_BUFF) {
-        memcpy(addr, &pipe->buf[pipe->read_ptr], to_read);
-    } else {
-        uint32_t first_chunk = PIPE_BUFF - pipe->read_ptr;
-        memcpy(addr, &pipe->buf[pipe->read_ptr], first_chunk);
-        memcpy(addr + first_chunk, pipe->buf, to_read - first_chunk);
-    }
+    spin_lock(&pipe->lock);
 
-    // 更新读指针
-    pipe->read_ptr = (pipe->read_ptr + to_read) % PIPE_BUFF;
-    pipe->assigned -= to_read;
+    memcpy(addr, pipe->buf, to_read);
+    memmove(pipe->buf, &pipe->buf[pipe->ptr], pipe->ptr - to_read);
+
+    pipe->ptr -= to_read;
 
     spin_unlock(&pipe->lock);
 
@@ -82,37 +63,19 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size) {
     pipe_specific_t *spec = (pipe_specific_t *)file;
     pipe_info_t *pipe = spec->info;
 
-    spin_unlock(&spec->node->spin);
-
-    arch_enable_interrupt();
-
-    uint32_t free_space =
-        PIPE_BUFF - ((pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF);
-    while (free_space < size) {
+    while ((PIPE_BUFF - pipe->ptr) < size) {
         if (pipe->read_fds == 0) {
             return -EPIPE;
         }
 
-        free_space =
-            PIPE_BUFF - ((pipe->write_ptr - pipe->read_ptr) % PIPE_BUFF);
+        arch_yield();
     }
-
-    arch_disable_interrupt();
-
-    spin_lock(&spec->node->spin);
 
     spin_lock(&pipe->lock);
 
-    if (pipe->write_ptr + size <= PIPE_BUFF) {
-        memcpy(&pipe->buf[pipe->write_ptr], addr, size);
-    } else {
-        uint32_t first_chunk = PIPE_BUFF - pipe->write_ptr;
-        memcpy(&pipe->buf[pipe->write_ptr], addr, first_chunk);
-        memcpy(pipe->buf, addr + first_chunk, size - first_chunk);
-    }
+    memcpy(&pipe->buf[pipe->ptr], addr, size);
 
-    pipe->write_ptr = (pipe->write_ptr + size) % PIPE_BUFF;
-    pipe->assigned += size;
+    pipe->ptr += size;
 
     spin_unlock(&pipe->lock);
 
@@ -147,7 +110,7 @@ ssize_t pipefs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
 int pipefs_ioctl(void *file, ssize_t cmd, ssize_t arg) {
     switch (cmd) {
     default:
-        return -ENOSYS;
+        return -EINVAL;
     }
 }
 
@@ -162,17 +125,18 @@ bool pipefs_close(void *current) {
         pipe->read_fds--;
     }
 
+    list_delete(pipefs_root->child, spec->node);
+
     if (spec->write && pipe->write_fds == 0)
         free(spec);
-    else if (pipe->read_fds == 0)
+    else if (!spec->write && pipe->read_fds == 0)
         free(spec);
-
-    list_delete(pipefs_root->child, spec->node);
 
     if (pipe->write_fds == 0 && pipe->read_fds == 0) {
         spin_unlock(&pipe->lock);
         free_frames_bytes(pipe->buf, PIPE_BUFF);
         free(pipe);
+        return true;
     }
 
     spin_unlock(&pipe->lock);
@@ -190,14 +154,14 @@ int pipefs_poll(void *file, size_t events) {
     if (events & EPOLLIN) {
         if (!pipe->write_fds)
             out |= EPOLLHUP;
-        if (pipe->assigned > 0)
+        if (pipe->ptr > 0)
             out |= EPOLLIN;
     }
 
     if (events & EPOLLOUT) {
         if (!pipe->read_fds)
             out |= EPOLLHUP;
-        if (pipe->assigned < PIPE_BUFF)
+        if (pipe->ptr < PIPE_BUFF)
             out |= EPOLLOUT;
     }
     spin_unlock(&pipe->lock);
@@ -209,10 +173,11 @@ vfs_node_t pipe_dup(vfs_node_t node) { return node; }
 int pipefs_stat(void *file, vfs_node_t node) {
     pipe_specific_t *spec = (pipe_specific_t *)file;
     pipe_info_t *pipe = spec->info;
-    if (spec->write)
-        node->size = pipe->write_ptr;
-    else
-        node->size = pipe->read_ptr;
+
+    if (!pipe)
+        return 0;
+
+    node->size = pipe->ptr;
 
     return 0;
 }
@@ -293,9 +258,7 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
     info->read_fds = 1;
     info->write_fds = 1;
     info->lock.lock = 0;
-    info->read_ptr = 0;
-    info->write_ptr = 0;
-    info->assigned = 0;
+    info->ptr = 0;
 
     pipe_specific_t *read_spec =
         (pipe_specific_t *)malloc(sizeof(pipe_specific_t));
