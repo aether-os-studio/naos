@@ -760,6 +760,12 @@ int vfs_delete(vfs_node_t node) {
     }
     if (node->parent)
         list_delete(node->parent->child, node);
+    if (node->refcount <= 0) {
+        callbackof(node, free_handle)(node->handle);
+        node->handle = NULL;
+        free(node->name);
+        free(node);
+    }
 
     return 0;
 }

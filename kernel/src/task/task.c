@@ -859,6 +859,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
 
     free(fullpath);
 
+    node->refcount++;
     current_task->exec_node = node;
 
     map_page_range(get_current_page_dir(true), USER_STACK_START, 0,
@@ -1036,11 +1037,11 @@ void task_unblock(task_t *task, int reason) {
 
     struct sched_entity *entity = task->sched_info;
     if (!entity->on_rq) {
-        entity->on_rq = true;
         spin_lock(&schedulers[task->cpu_id]->queue_lock);
         insert_sched_entity(schedulers[task->cpu_id]->root, entity);
         spin_unlock(&schedulers[task->cpu_id]->queue_lock);
         schedulers[task->cpu_id]->task_count++;
+        entity->on_rq = true;
     }
 }
 
@@ -1056,6 +1057,8 @@ void task_exit_inner(task_t *task, int64_t code) {
 
     task->current_state = TASK_DIED;
     task->state = TASK_DIED;
+
+    vfs_close(task->exec_node);
 
     spin_lock(&futex_lock);
 
