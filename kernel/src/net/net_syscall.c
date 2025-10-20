@@ -14,22 +14,53 @@ uint64_t sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen) {
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[fd];
 
+    void *kaddr = malloc(DEFAULT_PAGE_SIZE);
+    socklen_t kaddrlen = 0;
+
     socket_handle_t *handle = node->node->handle;
     if (handle->op->getpeername) {
-        return handle->op->getpeername(fd, addr, addrlen);
+        uint64_t ret = handle->op->getpeername(fd, kaddr, &kaddrlen);
+
+        if (copy_to_user(addr, kaddr, kaddrlen)) {
+            free(kaddr);
+            return (uint64_t)-EFAULT;
+        }
+
+        free(kaddr);
+
+        if (copy_to_user(addrlen, &kaddrlen, sizeof(socklen_t)))
+            return (uint64_t)-EFAULT;
+
+        return ret;
     }
     return -ENOSYS;
 }
 
 uint64_t sys_getsockname(int sockfd, struct sockaddr_un *addr,
                          socklen_t *addrlen) {
-    if (sockfd < 0 || sockfd > MAX_FD_NUM ||
-        !current_task->fd_info->fds[sockfd])
+    if (sockfd >= MAX_FD_NUM)
         return -EBADF;
+    fd_t *node = current_task->fd_info->fds[sockfd];
 
-    socket_handle_t *handle = current_task->fd_info->fds[sockfd]->node->handle;
-    if (handle->op->getsockname)
-        return handle->op->getsockname(sockfd, addr, addrlen);
+    void *kaddr = malloc(DEFAULT_PAGE_SIZE);
+    socklen_t kaddrlen = 0;
+
+    socket_handle_t *handle = node->node->handle;
+    if (handle->op->getsockname) {
+        uint64_t ret = handle->op->getsockname(sockfd, kaddr, &kaddrlen);
+
+        if (copy_to_user(addr, kaddr, kaddrlen)) {
+            free(kaddr);
+            return (uint64_t)-EFAULT;
+        }
+
+        free(kaddr);
+
+        if (copy_to_user(addrlen, &kaddrlen, sizeof(socklen_t)))
+            return (uint64_t)-EFAULT;
+
+        return ret;
+    }
     return -ENOSYS;
 }
 
@@ -60,16 +91,11 @@ uint64_t sys_getsockopt(int fd, int level, int optname, void *optval,
 
 uint64_t sys_socket(int domain, int type, int protocol) {
     int fd = -EAFNOSUPPORT;
-    if (domain == 1)
-        fd = socket_socket(domain, type, protocol);
-    else if (domain == 16)
-        fd = netlink_socket(domain, type, protocol);
-    else
-        for (int i = 0; i < socket_num; i++) {
-            if (real_sockets[i]->domain == domain) {
-                fd = real_sockets[i]->socket(domain, type & 0xff, protocol);
-            }
+    for (int i = 0; i < socket_num; i++) {
+        if (real_sockets[i]->domain == domain) {
+            fd = real_sockets[i]->socket(domain, type & 0xff, protocol);
         }
+    }
 
     if (!(fd < 0)) {
         if (type & O_CLOEXEC)
@@ -137,6 +163,11 @@ uint64_t sys_connect(int sockfd, const struct sockaddr_un *addr,
 
 int64_t sys_send(int sockfd, void *buff, size_t len, int flags,
                  struct sockaddr_un *dest_addr, socklen_t addrlen) {
+    if (!buff || check_user_overflow((uint64_t)buff, len) ||
+        check_unmapped((uint64_t)buff, len)) {
+        return (uint64_t)-EFAULT;
+    }
+
     if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[sockfd];
@@ -149,6 +180,11 @@ int64_t sys_send(int sockfd, void *buff, size_t len, int flags,
 
 int64_t sys_recv(int sockfd, void *buf, size_t len, int flags,
                  struct sockaddr_un *dest_addr, socklen_t *addrlen) {
+    if (!buf || check_user_overflow((uint64_t)buf, len) ||
+        check_unmapped((uint64_t)buf, len)) {
+        return (uint64_t)-EFAULT;
+    }
+
     if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[sockfd];
@@ -161,6 +197,11 @@ int64_t sys_recv(int sockfd, void *buf, size_t len, int flags,
 }
 
 int64_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
+    if (!msg || check_user_overflow((uint64_t)msg, sizeof(struct msghdr)) ||
+        check_unmapped((uint64_t)msg, sizeof(struct msghdr))) {
+        return (uint64_t)-EFAULT;
+    }
+
     if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[sockfd];
@@ -172,6 +213,11 @@ int64_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
 }
 
 int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
+    if (!msg || check_user_overflow((uint64_t)msg, sizeof(struct msghdr)) ||
+        check_unmapped((uint64_t)msg, sizeof(struct msghdr))) {
+        return (uint64_t)-EFAULT;
+    }
+
     if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[sockfd];

@@ -121,7 +121,7 @@ fn main() {
             // std::env::set_var("WESTON_LIBINPUT_LOG_PRIORITY", "debug");
         }
 
-        let init_process = init_process.unwrap_or("bash".to_string());
+        let init_process = init_process.unwrap_or("/bin/bash".to_string());
 
         println!("Got desktop process {}", init_process);
 

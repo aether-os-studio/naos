@@ -4,6 +4,7 @@
 
 // 全局 MSC 设备列表
 static usb_msc_device_t *msc_devices = NULL;
+spinlock_t msc_devices_lock = {0};
 
 // 发送 Command Block Wrapper
 int msc_send_cbw(usb_msc_device_t *msc, usb_msc_cbw_t *cbw) {
@@ -466,8 +467,10 @@ int usb_msc_probe(usb_device_t *device) {
     }
 
     // 添加到设备列表
+    spin_lock(&msc_devices_lock);
     msc->next = msc_devices;
     msc_devices = msc;
+    spin_unlock(&msc_devices_lock);
 
     printk("Vendor: %s\n", msc->vendor);
     printk("Product: %s\n", msc->product);
@@ -490,6 +493,8 @@ void usb_msc_remove(usb_msc_device_t *msc) {
 
     printk("MSC: Removing device\n");
 
+    spin_lock(&msc_devices_lock);
+
     // 从列表中移除
     usb_msc_device_t **prev = &msc_devices;
     while (*prev) {
@@ -499,6 +504,8 @@ void usb_msc_remove(usb_msc_device_t *msc) {
         }
         prev = &(*prev)->next;
     }
+
+    spin_unlock(&msc_devices_lock);
 
     free(msc);
 }

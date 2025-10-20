@@ -232,44 +232,6 @@ ssize_t inputdev_poll(void *data, size_t event) {
     return 0;
 }
 
-ssize_t pci_bar_dev_read(void *data, uint64_t offset, void *buf, uint64_t len,
-                         uint64_t flags) {
-    pci_bar_t *bar = data;
-    return -ENOSYS;
-}
-
-ssize_t pci_bar_dev_write(void *data, uint64_t offset, const void *buf,
-                          uint64_t len, uint64_t flags) {
-    pci_bar_t *bar = data;
-    return -ENOSYS;
-}
-
-ssize_t pci_bar_dev_ioctl(void *data, ssize_t cmd, ssize_t arg) {
-    pci_bar_t *bar = data;
-    switch (cmd) {
-    case PCI_BAR_GET_SIZE:
-        return bar->size;
-    case PCI_BAR_GET_IS_MMIO:
-        return bar->mmio ? 1 : 0;
-    default:
-        return -EINVAL;
-    }
-}
-
-ssize_t pci_bar_dev_poll(void *data, size_t event) {
-    pci_bar_t *bar = data;
-    return 0;
-}
-
-void *pci_bar_dev_map(void *data, void *addr, uint64_t offset, uint64_t len) {
-    pci_bar_t *bar = data;
-    map_page_range(get_current_page_dir(true), (uint64_t)addr, bar->address,
-                   bar->size,
-                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_U | PT_FLAG_UNCACHEABLE |
-                       PT_FLAG_DEVICE);
-    return addr;
-}
-
 vfs_node_t
 regist_dev(const char *name,
            ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len,
@@ -670,18 +632,6 @@ void dev_init_after_sysfs() {
     pty_init();
     ptmx_init();
     pts_init();
-
-    for (uint32_t i = 0; i < pci_device_number; i++) {
-        pci_device_t *dev = pci_devices[i];
-        for (uint32_t bar = 0; bar < 6; bar++) {
-            char devname[32];
-            sprintf(devname, "pci%04d:%02d:%02d.%d/bar%d", dev->segment,
-                    dev->bus, dev->slot, dev->func, bar);
-            regist_dev(devname, pci_bar_dev_read, pci_bar_dev_write,
-                       pci_bar_dev_ioctl, pci_bar_dev_poll, pci_bar_dev_map,
-                       &dev->bars[bar]);
-        }
-    }
 }
 
 void circular_int_init(circular_int_t *circ, size_t size) {

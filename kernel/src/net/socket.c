@@ -1853,5 +1853,7 @@ void socketfs_init() {
     sockfs_root->mode = 0644;
     memset(&first_unix_socket, 0, sizeof(socket_t));
 
+    regist_socket(1, socket_socket);
+
     netlink_init();
 }

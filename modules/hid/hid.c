@@ -69,6 +69,7 @@ void mouse_callback(hid_event_t *event, void *user_data) {
 
 // 全局 HID 设备列表
 static usb_hid_device_t *hid_devices = NULL;
+spinlock_t hid_devices_lock = {0};
 static int hid_device_count = 0;
 
 // 获取 HID 描述符
@@ -412,9 +413,11 @@ int usb_hid_probe(usb_device_t *device) {
     }
 
     // 添加到设备列表
+    spin_lock(&hid_devices_lock);
     hid->next = hid_devices;
     hid_devices = hid;
     hid_device_count++;
+    spin_unlock(&hid_devices_lock);
 
     return 0;
 }
@@ -429,6 +432,8 @@ void usb_hid_remove(usb_hid_device_t *hid) {
     // 停止传输
     hid->transfer_active = false;
 
+    spin_lock(&hid_devices_lock);
+
     // 从列表移除
     usb_hid_device_t **prev = &hid_devices;
     while (*prev) {
@@ -439,6 +444,8 @@ void usb_hid_remove(usb_hid_device_t *hid) {
         }
         prev = &(*prev)->next;
     }
+
+    spin_unlock(&hid_devices_lock);
 
     if (hid->input_buffer) {
         free(hid->input_buffer);

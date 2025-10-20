@@ -278,25 +278,20 @@ ssize_t procfs_readlink(vfs_node_t node, void *addr, size_t offset,
     return 0;
 }
 
-int procfs_mount(vfs_node_t dev, vfs_node_t node) {
+int procfs_mount(vfs_node_t dev, vfs_node_t mnt) {
     if (procfs_root != fake_procfs_root)
         return -EALREADY;
-    if (procfs_root == node)
+    if (procfs_root == mnt)
         return -EALREADY;
 
     spin_lock(&procfs_oplock);
 
-    list_foreach(fake_procfs_root->child, i) {
-        vfs_node_t child = (vfs_node_t)i->data;
-        list_delete(fake_procfs_root->child, child);
-        list_append(node->child, child);
-        child->parent = node;
-    }
+    vfs_merge_nodes_to(mnt, fake_procfs_root);
 
-    mount_node_old_fsid = node->fsid;
+    mount_node_old_fsid = mnt->fsid;
 
-    procfs_root = node;
-    node->fsid = procfs_id;
+    procfs_root = mnt;
+    mnt->fsid = procfs_id;
 
     spin_unlock(&procfs_oplock);
 
@@ -384,7 +379,7 @@ void procfs_self_open(void *parent, const char *name, vfs_node_t node) {
         }
     }
 
-    list_append(self_nodes_root->child, new_self_node);
+    list_append(self_nodes_root->child, node);
 }
 
 bool procfs_self_close(void *current) {
@@ -501,8 +496,6 @@ void proc_init() {
     procfs_self->mode = 0644;
     procfs_self->fsid = procfs_self_id;
     procfs_self->linkto = NULL;
-
-    list_append(self_nodes_root->child, procfs_self);
 
     // vfs_node_t self_exe = vfs_node_alloc(procfs_self, "exe");
     // self_exe->type = file_none;

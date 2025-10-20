@@ -274,6 +274,7 @@ static list_t list_delete(list_t list, void *data) {
         list_t temp = list;
         list = list->next;
         free(temp);
+        list->prev = NULL;
         return list;
     }
 

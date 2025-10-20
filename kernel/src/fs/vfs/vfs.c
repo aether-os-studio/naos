@@ -66,6 +66,19 @@ void vfs_free_child(vfs_node_t vfs) {
     list_free_with(vfs->child, (free_t)vfs_free);
 }
 
+void vfs_merge_nodes_to(vfs_node_t dest, vfs_node_t source) {
+    uint64_t nodes_count = 0;
+    list_foreach(source->child, i) { nodes_count++; }
+    vfs_node_t *nodes = calloc(nodes_count, sizeof(vfs_node_t));
+    uint64_t idx = 0;
+    list_foreach(source->child, i) { nodes[idx++] = (vfs_node_t)i->data; }
+    for (uint64_t i = 0; i < idx; i++) {
+        list_delete(source->child, nodes[i]);
+        list_append(dest->child, nodes[i]);
+    }
+    free(nodes);
+}
+
 static inline void do_open(vfs_node_t file) {
     if (file->handle != NULL) {
         callbackof(file, stat)(file->handle, file);

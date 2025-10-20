@@ -450,6 +450,7 @@ void netlink_init() {
     uevent_queue_head = 0;
     uevent_queue_tail = 0;
     memset(uevent_queue, 0, sizeof(uevent_queue));
+    regist_socket(16, netlink_socket);
     spin_unlock(&uevent_queue_lock);
 }
 

@@ -99,17 +99,9 @@ void *mpool_alloc(mpool_t pool, size_t size) {
     size = size == 0 ? 2 * sizeof(size_t)
                      : PADDING(size); // 保证最小分配 2 个字长且对齐到 2 倍字长
 
-#if HEAP_CHECK
-    size += 2 * sizeof(size_t);
-#endif
-
     // 优先从空闲链表中分配
-    void *ptr = freelist_match(&pool->large_blk, size);
-
-#if HEAP_CHECK
-    // magic number
-    *(uint64_t *)(ptr + size - 8) = 0x1010101001010101;
-#endif
+    void *ptr = freelist_match(pool->freed, size)
+                    ?: freelist_match(&pool->large_blk, size);
 
     if (ptr == NULL) { // 不足就分配
         if (!mpool_reqmem(pool, size))
@@ -163,9 +155,6 @@ void mpool_free(mpool_t pool, void *ptr) {
         return;
 
     size_t blksize = blk_size(ptr);
-#if HEAP_CHECK
-    ASSERT(*(uint64_t *)(ptr + blksize - 8) == 0x1010101001010101);
-#endif
     pool->alloced_size -= blksize;
 
     ptr = blk_trymerge(ptr, (blk_detach_t)_detach, pool);

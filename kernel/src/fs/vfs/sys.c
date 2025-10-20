@@ -95,12 +95,7 @@ int sysfs_mount(vfs_node_t dev, vfs_node_t node) {
 
     spin_lock(&sysfs_oplock);
 
-    list_foreach(fake_sysfs_root->child, i) {
-        vfs_node_t child = (vfs_node_t)i->data;
-        list_delete(fake_sysfs_root->child, child);
-        list_append(node->child, child);
-        child->parent = node;
-    }
+    vfs_merge_nodes_to(node, fake_sysfs_root);
 
     mount_node_old_fsid = node->fsid;
 

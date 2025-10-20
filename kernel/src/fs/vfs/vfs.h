@@ -395,3 +395,5 @@ static inline uint32_t alloc_fake_inode() {
     static uint32_t next_inode = 1;
     return next_inode++;
 }
+
+void vfs_merge_nodes_to(vfs_node_t dest, vfs_node_t source);

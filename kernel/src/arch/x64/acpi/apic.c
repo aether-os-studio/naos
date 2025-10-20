@@ -144,7 +144,7 @@ void apic_handle_ioapic(struct acpi_madt_ioapic *ioapic_madt) {
     ioapic->gsi_start = ioapic_madt->gsi_base;
     ioapic->count = (ioapic_read(ioapic, 0x01) & 0x00FF0000) >> 16;
 
-    printk("IOAPIC found: MMIO %p, GSI base %d, IRQs %d\n",
+    printk("IOAPIC found: MMIO %#018lx, GSI base %d, IRQs %d\n",
            (void *)ioapic->mmio_base, ioapic->gsi_start, ioapic->count);
 
     ioapic->id = ioapic_madt->id;
