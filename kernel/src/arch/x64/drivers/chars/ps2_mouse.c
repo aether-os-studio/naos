@@ -241,7 +241,7 @@ size_t mouse_event_bit(void *data, uint64_t request, void *arg) {
         break;
     }
     case (0x20 + EV_REL): {
-        size_t out = (1 << REL_X) | (1 << REL_Y);
+        size_t out = (1 << REL_X) | (1 << REL_Y) | (1 << REL_WHEEL);
         ret = MIN(sizeof(size_t), size);
         memcpy(arg, &out, ret);
         break;

@@ -322,12 +322,15 @@ void handle_mouse_event(uint8_t flag, int8_t x, int8_t y, int8_t z) {
     struct timespec now;
     sys_clock_gettime(kb_event->clock_id, (uint64_t)&now, 0);
 
-    input_generate_event(mouse_event, EV_REL, REL_X, x, now.tv_sec,
-                         now.tv_nsec / 1000);
-    input_generate_event(mouse_event, EV_REL, REL_Y, y, now.tv_sec,
-                         now.tv_nsec / 1000);
-    input_generate_event(mouse_event, EV_REL, REL_WHEEL, z, now.tv_sec,
-                         now.tv_nsec / 1000);
+    if (x)
+        input_generate_event(mouse_event, EV_REL, REL_X, x, now.tv_sec,
+                             now.tv_nsec / 1000);
+    if (y)
+        input_generate_event(mouse_event, EV_REL, REL_Y, y, now.tv_sec,
+                             now.tv_nsec / 1000);
+    if (z)
+        input_generate_event(mouse_event, EV_REL, REL_WHEEL, z, now.tv_sec,
+                             now.tv_nsec / 1000);
 
     if (clickedLeft && !click)
         input_generate_event(mouse_event, EV_KEY, BTN_LEFT, 0, now.tv_sec,
@@ -355,4 +358,5 @@ void handle_mouse_event(uint8_t flag, int8_t x, int8_t y, int8_t z) {
 
     clickedLeft = click;
     clickedRight = rclick;
+    clickedMiddle = mclick;
 }
