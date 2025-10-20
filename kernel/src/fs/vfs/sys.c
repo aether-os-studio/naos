@@ -116,12 +116,7 @@ void sysfs_unmount(vfs_node_t root) {
 
     spin_lock(&sysfs_oplock);
 
-    list_foreach(root->child, i) {
-        vfs_node_t child = (vfs_node_t)i->data;
-        list_delete(root->child, child);
-        list_append(fake_sysfs_root->child, child);
-        child->parent = fake_sysfs_root;
-    }
+    vfs_merge_nodes_to(fake_sysfs_root, root);
 
     root->fsid = mount_node_old_fsid;
 

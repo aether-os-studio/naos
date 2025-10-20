@@ -43,6 +43,7 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
     node->refcount = 0;
     node->mode = 0777;
     node->rw_hint = 0;
+    node->handle = NULL;
     if (parent)
         list_append(parent->child, node);
     return node;
@@ -74,6 +75,7 @@ void vfs_merge_nodes_to(vfs_node_t dest, vfs_node_t source) {
     list_foreach(source->child, i) { nodes[idx++] = (vfs_node_t)i->data; }
     for (uint64_t i = 0; i < idx; i++) {
         list_delete(source->child, nodes[i]);
+        nodes[i]->parent = dest;
         list_append(dest->child, nodes[i]);
     }
     free(nodes);
