@@ -33,7 +33,6 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
     node->rdev = 0;
     node->blksz = DEFAULT_PAGE_SIZE;
     node->name = name ? strdup(name) : NULL;
-    node->linkto = NULL;
     node->inode = alloc_fake_inode();
     node->type = file_none;
     node->fsid = parent ? parent->fsid : 0;
@@ -56,8 +55,6 @@ void vfs_free(vfs_node_t vfs) {
     vfs_close(vfs);
     callbackof(vfs, free_handle)(vfs->handle);
     free(vfs->name);
-    if (vfs->linkto)
-        vfs_close(vfs->linkto);
     free(vfs);
 }
 
@@ -309,7 +306,6 @@ create:
     vfs_node_t node = vfs_child_append(current, filename, NULL);
     node->type = file_none;
     callbackof(current, link)(current->handle, target_name, node);
-    node->linkto = vfs_open(target_name);
 
     return 0;
 
@@ -383,7 +379,6 @@ create:
         free(path);
         return ret;
     }
-    node->linkto = vfs_open_at(node->parent, target_name);
 
     free(path);
 
@@ -542,12 +537,24 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
         do_update(current);
 
         if (current->type & file_symlink) {
-            if (!current->parent || !current->linkto)
-                continue;
+            char *s = save_ptr;
+            char *next = pathtok(&s);
+            if (!next) {
+                goto done;
+            }
+
+            char target_path[1024];
+            int len = vfs_readlink(current, target_path, sizeof(target_path));
+            target_path[len] = '\0';
+            vfs_node_t target_node =
+                vfs_open_at(current->parent, (const char *)target_path);
+
+            if (!target_node)
+                goto done;
 
             current->type = file_symlink | file_proxy;
 
-            vfs_node_t target = current->linkto;
+            vfs_node_t target = target_node;
             if (!target)
                 goto err;
 
@@ -569,12 +576,11 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
                 }
             }
 
-            // current = current->linkto;
-
             continue;
         }
     }
 
+done:
     free(path);
     return current;
 

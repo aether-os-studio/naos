@@ -845,7 +845,7 @@ uint64_t do_readlink(char *path, char *buf, uint64_t size) {
         return (uint64_t)-ENOENT;
     }
 
-    if (!node->linkto) {
+    if (!(node->type & file_symlink)) {
         // char *p = vfs_get_fullpath(node);
         // int str_len = strlen(p);
         // int node_name_len = strlen(node->name);
@@ -879,12 +879,12 @@ uint64_t sys_readlink(char *path_user, char *buf_user, uint64_t size) {
         return (uint64_t)-ENOENT;
     }
 
-    char buf[512];
-
+    char buf[1024];
+    memset(buf, 0, sizeof(buf));
     ssize_t result = do_readlink(path, buf, MIN(size, sizeof(buf)));
 
     if (result < 0) {
-        return (uint64_t)-EINVAL;
+        return (uint64_t)result;
     }
 
     if (copy_to_user_str(buf_user, buf, size))

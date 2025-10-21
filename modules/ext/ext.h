@@ -10,6 +10,7 @@ typedef struct ext_handle {
     union {
         ext4_file *file;
         ext4_dir *dir;
+        void *ptr;
     };
 } ext_handle_t;
 

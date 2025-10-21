@@ -360,7 +360,6 @@ typedef struct procfs_self_handle {
 void procfs_self_open(void *parent, const char *name, vfs_node_t node) {
     procfs_self_handle_t *handle = malloc(sizeof(procfs_self_handle_t));
     handle->self = node;
-    node->linkto = current_task->procfs_node;
     node->handle = handle;
     list_delete(node->parent->child, node);
     vfs_node_t new_self_node = vfs_node_alloc(node->parent, "self");
@@ -380,13 +379,10 @@ bool procfs_self_close(void *current) {
 
 ssize_t procfs_self_readlink(vfs_node_t file, void *addr, size_t offset,
                              size_t size) {
-    procfs_self_handle_t *handle = file->handle;
-    if (offset >= strlen(handle->self->linkto->name))
-        return 0;
-    char *ptr = handle->self->linkto->name + offset;
-    ssize_t len = strlen(ptr);
+    char pid[32];
+    ssize_t len = sprintf(pid, "%d", current_task->pid);
     len = MIN(len, (ssize_t)size);
-    memcpy(addr, ptr, len);
+    memcpy(addr, pid, len);
     return len;
 }
 
@@ -460,7 +456,6 @@ void proc_init() {
     procfs_self->type = file_symlink;
     procfs_self->mode = 0644;
     procfs_self->fsid = procfs_self_id;
-    procfs_self->linkto = NULL;
 
     // vfs_node_t self_exe = vfs_node_alloc(procfs_self, "exe");
     // self_exe->type = file_none;
@@ -468,7 +463,6 @@ void proc_init() {
     // proc_handle_t *self_exe_handle = malloc(sizeof(proc_handle_t));
     // self_exe->handle = self_exe_handle;
     // self_exe_handle->task = NULL;
-    // self_exe->linkto = rootdir;
     // sprintf(self_exe_handle->name, "exe");
 }
 

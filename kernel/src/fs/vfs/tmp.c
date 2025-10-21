@@ -43,27 +43,29 @@ ssize_t tmpfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
 
 ssize_t tmpfs_readlink(vfs_node_t node, void *addr, size_t offset,
                        size_t size) {
-    vfs_node_t linkto = node->linkto;
+    tmpfs_node_t *handle = node->handle;
+    if (offset >= handle->size)
+        return 0;
+    char tmp[1024];
+    memset(tmp, 0, sizeof(tmp));
+    memcpy(tmp, handle->content, MIN(handle->size, sizeof(tmp)));
 
-    if (!linkto) {
-        return -ENOLINK;
-    }
+    vfs_node_t to_node = vfs_open_at(node->parent, (const char *)tmp);
+    if (!to_node)
+        return -ENOENT;
 
-    char *current_path = vfs_get_fullpath(node);
-    char *linkto_path = vfs_get_fullpath(linkto);
+    char *from_path = vfs_get_fullpath(node);
+    char *to_path = vfs_get_fullpath(to_node);
 
-    char buf[2048];
-    memset(buf, 0, sizeof(buf));
-    rel_status status =
-        calculate_relative_path(buf, current_path, linkto_path, sizeof(buf));
+    char output[1024];
+    memset(output, 0, sizeof(output));
+    calculate_relative_path(output, from_path, to_path, size);
+    free(from_path);
+    free(to_path);
 
-    free(current_path);
-    free(linkto_path);
-
-    int len = strnlen(buf, size);
-    memcpy(addr, buf, len);
-
-    return len;
+    ssize_t to_copy = MIN(size, strlen(output));
+    memcpy(addr, output, to_copy);
+    return to_copy;
 }
 
 int tmpfs_mkdir(void *parent, const char *name, vfs_node_t node) {
@@ -137,8 +139,7 @@ int tmpfs_rename(void *current, const char *new) { return 0; }
 
 void *tmpfs_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
                 size_t flags) {
-    return general_map((vfs_read_t)tmpfs_read, file, (uint64_t)addr, size, prot,
-                       flags, offset);
+    return general_map(file, (uint64_t)addr, size, prot, flags, offset);
 }
 
 void tmpfs_resize(void *current, uint64_t size) {

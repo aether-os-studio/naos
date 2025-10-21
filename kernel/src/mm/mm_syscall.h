@@ -37,5 +37,5 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
                     uint64_t flags, uint64_t new_addr);
 uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec);
 
-void *general_map(vfs_read_t read_callback, fd_t *file, uint64_t addr,
-                  uint64_t len, uint64_t prot, uint64_t flags, uint64_t offset);
+void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
+                  uint64_t flags, uint64_t offset);

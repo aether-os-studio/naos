@@ -553,6 +553,9 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
         return (uint64_t)-ENOENT;
     }
 
+    if (!node->size)
+        return (uint64_t)-EINVAL;
+
     uint64_t buf_len =
         (node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
 
@@ -612,10 +615,19 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
     new_envp[envp_count] = NULL;
 
     uint8_t *buffer = (uint8_t *)alloc_frames_bytes(node->size);
+    if (!buffer) {
+        for (int i = 0; i < argv_count; i++)
+            if (new_argv[i])
+                free(new_argv[i]);
+        free(new_argv);
+        for (int i = 0; i < envp_count; i++)
+            if (new_envp[i])
+                free(new_envp[i]);
+        free(new_envp);
+        return (uint64_t)-ENOMEM;
+    }
 
-    vfs_read(node, buffer, 0, node->size);
-
-    char *fullpath = vfs_get_fullpath(node);
+    ssize_t ret = vfs_read(node, buffer, 0, node->size);
 
     if (buffer[0] == '#' && buffer[1] == '!') {
         for (int i = 0; i < argv_count; i++)
@@ -649,7 +661,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
         injected_argv[1] = path;
 
         free_frames_bytes(buffer, node->size);
-        free(fullpath);
 
         return task_execve((const char *)injected_argv[0], injected_argv, envp);
     }
@@ -688,7 +699,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
 
     if (e_entry == 0) {
         free_frames_bytes(buffer, node->size);
-        free(fullpath);
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
                 free(new_argv[i]);
@@ -697,14 +707,12 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
             if (new_envp[i])
                 free(new_envp[i]);
         free(new_envp);
-        free(fullpath);
         can_schedule = true;
         return (uint64_t)-EINVAL;
     }
 
     if (!arch_check_elf(ehdr)) {
         free_frames_bytes(buffer, node->size);
-        free(fullpath);
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
                 free(new_argv[i]);
@@ -713,7 +721,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
             if (new_envp[i])
                 free(new_envp[i]);
         free(new_envp);
-        free(fullpath);
         can_schedule = true;
         return (uint64_t)-ENOEXEC;
     }
@@ -738,7 +745,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
             vfs_node_t interpreter_node = vfs_open(interpreter_name);
             if (!interpreter_node) {
                 free_frames_bytes(buffer, node->size);
-                free(fullpath);
                 for (int i = 0; i < argv_count; i++)
                     if (new_argv[i])
                         free(new_argv[i]);
@@ -747,7 +753,6 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
                     if (new_envp[i])
                         free(new_envp[i]);
                 free(new_envp);
-                free(fullpath);
                 can_schedule = true;
                 return (uint64_t)-ENOENT;
             }
@@ -850,6 +855,8 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
             }
         }
     }
+
+    char *fullpath = vfs_get_fullpath(node);
 
     strncpy(current_task->name, fullpath, TASK_NAME_MAX);
 

@@ -43,27 +43,29 @@ ssize_t sysfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
 
 ssize_t sysfs_readlink(vfs_node_t node, void *addr, size_t offset,
                        size_t size) {
-    vfs_node_t linkto = node->linkto;
+    sysfs_node_t *handle = node->handle;
+    if (offset >= handle->size)
+        return 0;
+    char tmp[1024];
+    memset(tmp, 0, sizeof(tmp));
+    memcpy(tmp, handle->content, MIN(handle->size, sizeof(tmp)));
 
-    if (!linkto) {
-        return -ENOLINK;
-    }
+    vfs_node_t to_node = vfs_open_at(node->parent, (const char *)tmp);
+    if (!to_node)
+        return -ENOENT;
 
-    char *current_path = vfs_get_fullpath(node);
-    char *linkto_path = vfs_get_fullpath(linkto);
+    char *from_path = vfs_get_fullpath(node);
+    char *to_path = vfs_get_fullpath(to_node);
 
-    char buf[2048];
-    memset(buf, 0, sizeof(buf));
-    rel_status status =
-        calculate_relative_path(buf, current_path, linkto_path, sizeof(buf));
+    char output[1024];
+    memset(output, 0, sizeof(output));
+    calculate_relative_path(output, from_path, to_path, size);
+    free(from_path);
+    free(to_path);
 
-    free(current_path);
-    free(linkto_path);
-
-    int len = strnlen(buf, size);
-    memcpy(addr, buf, len);
-
-    return len;
+    ssize_t to_copy = MIN(size, strlen(output));
+    memcpy(addr, output, to_copy);
+    return to_copy;
 }
 
 int sysfs_mkdir(void *parent, const char *name, vfs_node_t node) {
@@ -83,7 +85,14 @@ int sysfs_mkfile(void *parent, const char *name, vfs_node_t node) {
 
 int sysfs_symlink(void *parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
-    node->linkto = vfs_open(name);
+    sysfs_node_t *handle = malloc(sizeof(sysfs_node_t));
+    size_t len = strlen(name);
+    handle->capability =
+        (len + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1);
+    handle->content = malloc(handle->capability);
+    memcpy(handle->content, name, len);
+    handle->size = len;
+    node->handle = handle;
     return 0;
 }
 
@@ -221,94 +230,6 @@ void sysfs_init() {
         sprintf(content, "0x%04x", dev->device_id);
         vfs_write(vfs_open(name), content, 0, strlen(content));
     }
-
-    // #if defined(__x86_64__)
-    //     vfs_node_t devices_platform = vfs_child_append(devices_root,
-    //     "platform", NULL); devices_platform->type = file_dir;
-    //     devices_platform->mode = 0644;
-    //     vfs_node_t devices_platform_i8042 =
-    //     vfs_child_append(devices_platform, "i8042", NULL);
-    //     devices_platform_i8042->type = file_dir;
-    //     devices_platform_i8042->mode = 0644;
-
-    //     vfs_node_t serio0 = vfs_child_append(devices_platform_i8042,
-    //     "serio0", NULL); serio0->type = file_dir; serio0->mode = 0644;
-    //     vfs_node_t serio1 = vfs_child_append(devices_platform_i8042,
-    //     "serio1", NULL); serio1->type = file_dir; serio1->mode = 0644;
-
-    //     vfs_node_t serio0_input = vfs_child_append(serio0, "input", NULL);
-    //     serio0_input->type = file_dir;
-    //     serio0_input->mode = 0644;
-    //     vfs_node_t serio1_input = vfs_child_append(serio1, "input", NULL);
-    //     serio1_input->type = file_dir;
-    //     serio1_input->mode = 0644;
-
-    //     vfs_node_t input0 = vfs_child_append(serio0_input, "input0", NULL);
-    //     input0->type = file_dir;
-    //     input0->mode = 0644;
-    //     handle = malloc(sizeof(sysfs_handle_t));
-    //     handle->node = input0;
-    //     input0->handle = handle;
-    //     vfs_node_t input1 = vfs_child_append(serio1_input, "input1", NULL);
-    //     input1->type = file_dir;
-    //     input1->mode = 0644;
-    //     handle = malloc(sizeof(sysfs_handle_t));
-    //     handle->node = input1;
-    //     input1->handle = handle;
-
-    //     vfs_node_t event0 = vfs_child_append(input0, "event0", NULL);
-    //     event0->type = file_dir;
-    //     event0->mode = 0644;
-
-    //     vfs_node_t dev_node = vfs_child_append(char_dev, "13:0", NULL);
-    //     dev_node->type = file_dir;
-    //     dev_node->mode = 0644;
-    //     dev_node->linkto = event0;
-
-    //     vfs_node_t event1 = vfs_child_append(input1, "event1", NULL);
-    //     event1->type = file_dir;
-    //     event1->mode = 0644;
-
-    //     dev_node = vfs_child_append(char_dev, "13:1", NULL);
-    //     dev_node->type = file_dir;
-    //     dev_node->mode = 0644;
-    //     dev_node->linkto = event1;
-
-    //     vfs_node_t device = vfs_child_append(input0, "device", NULL);
-    //     device->type = file_dir | file_symlink;
-    //     device->mode = 0644;
-    //     device->linkto = input0;
-    //     device = vfs_child_append(input1, "device", NULL);
-    //     device->type = file_dir | file_symlink;
-    //     device->mode = 0644;
-    //     device->linkto = input1;
-
-    //     vfs_node_t subsystem = vfs_child_append(event0, "subsystem", NULL);
-    //     subsystem->type = file_dir | file_symlink;
-    //     subsystem->mode = 0644;
-    //     subsystem->linkto = input_root;
-    //     subsystem = vfs_child_append(event1, "subsystem", NULL);
-    //     subsystem->type = file_dir | file_symlink;
-    //     subsystem->mode = 0644;
-    //     subsystem->linkto = input_root;
-
-    //     vfs_node_t uevent = vfs_child_append(event0, "uevent", NULL);
-    //     uevent->type = file_none;
-    //     uevent->mode = 0644;
-    //     handle = malloc(sizeof(sysfs_handle_t));
-    //     sprintf(handle->content,
-    //     "MAJOR=13\nMINOR=0\nDEVNAME=input/event0\nID_INPUT=1\nID_INPUT_KEYBOARD=1\n");
-    //     handle->node = uevent;
-    //     uevent->handle = handle;
-    //     uevent = vfs_child_append(event1, "uevent", NULL);
-    //     uevent->type = file_none;
-    //     uevent->mode = 0644;
-    //     handle = malloc(sizeof(sysfs_handle_t));
-    //     sprintf(handle->content,
-    //     "MAJOR=13\nMINOR=1\nDEVNAME=input/event1\nID_INPUT=1\nID_INPUT_MOUSE=1\n");
-    //     handle->node = uevent;
-    //     uevent->handle = handle;
-    // #endif
 }
 
 void sysfs_init_umount() {

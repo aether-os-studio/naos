@@ -354,9 +354,8 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
     return (uint64_t)-ENOMEM;
 }
 
-void *general_map(vfs_read_t read_callback, fd_t *file, uint64_t addr,
-                  uint64_t len, uint64_t prot, uint64_t flags,
-                  uint64_t offset) {
+void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
+                  uint64_t flags, uint64_t offset) {
     uint64_t pt_flags = PT_FLAG_U | PT_FLAG_W;
 
     if (prot & PROT_READ)
@@ -370,10 +369,10 @@ void *general_map(vfs_read_t read_callback, fd_t *file, uint64_t addr,
         get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)), 0,
         (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
 
-    ssize_t ret = read_callback(file, (void *)addr, offset, len);
+    ssize_t ret = vfs_read_fd(file, (void *)addr, offset, len);
     if (ret < 0) {
         printk("Failed read file for mmap\n");
-        return (void *)-EIO;
+        return (void *)ret;
     }
 
     return (void *)addr;

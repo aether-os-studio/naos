@@ -109,26 +109,13 @@ void ext_open(void *parent, const char *name, vfs_node_t node) {
 
         ext4_dir_entry_rewind(handle->dir);
     } else if (node->type & file_symlink) {
-        char *path = vfs_get_fullpath(node);
-        char *buf = malloc(2048);
-        size_t rcnt = 0;
-        ext4_readlink((const char *)path, buf, 2048, &rcnt);
-        free(path);
-        buf[rcnt] = '\0';
-        spin_unlock(&rwlock);
-        node->linkto = vfs_open_at(node->parent, buf);
-        spin_lock(&rwlock);
-        if (node->linkto) {
-            node->linkto->refcount++;
-            node->size = node->linkto->size;
-
-            ext_handle_t *target_handle = node->linkto->handle;
-            handle->file = target_handle->file;
-        }
-    } else {
+        handle->ptr = NULL;
+    } else if (node->type & file_none) {
         handle->file = malloc(sizeof(ext4_file));
         ext4_fopen(handle->file, (const char *)path, "r+b");
         node->size = ext4_fsize(handle->file);
+    } else {
+        handle->ptr = NULL;
     }
 
     uint32_t mode = 0;
@@ -146,9 +133,11 @@ bool ext_close(void *current) {
     ext_handle_t *handle = current;
     if (handle->node->type & file_dir)
         ext4_dir_close(handle->dir);
-    else
+    else if (handle->node->type & file_none)
         ext4_fclose(handle->file);
-    free(current);
+    handle->ptr = NULL;
+    handle->node->handle = NULL;
+    free(handle);
     spin_unlock(&rwlock);
     return true;
 }
@@ -156,29 +145,66 @@ bool ext_close(void *current) {
 ssize_t ext_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     spin_lock(&rwlock);
 
-    void *file = fd->node->handle;
-
     ssize_t ret = 0;
-    ext_handle_t *handle = file;
-    if (!handle || !handle->node || !handle->file) {
-        spin_unlock(&rwlock);
-        return -1;
+    ext_handle_t *handle = fd->node->handle;
+    struct ext4_file *file = NULL;
+    if (!handle || !handle->node) {
+        ret = -ENOENT;
+        goto rollback;
     }
-    if ((handle->node->type & file_symlink) && handle->node->linkto)
-        handle = handle->node->linkto->handle;
+
+    if (handle->node->type & file_symlink) {
+        char *fpath = vfs_get_fullpath(handle->node);
+        char linkpath[1024];
+        memset(linkpath, 0, sizeof(linkpath));
+        int r = ext4_readlink(fpath, linkpath, sizeof(linkpath), NULL);
+        if (r) {
+            free(fpath);
+            ret = -r;
+            goto rollback;
+        }
+        free(fpath);
+
+        char *parent_path = vfs_get_fullpath(handle->node->parent);
+        int parent_path_len = strlen(parent_path);
+        memmove(&linkpath[parent_path_len + 1], linkpath,
+                sizeof(linkpath) - parent_path_len - 1);
+        memcpy(linkpath, parent_path, parent_path_len);
+        free(parent_path);
+        linkpath[parent_path_len] = '/';
+
+        file = malloc(sizeof(struct ext4_file));
+        r = ext4_fopen(file, linkpath, "r+b");
+        if (r) {
+            free(file);
+            ret = -r;
+            goto rollback;
+        }
+    } else {
+        file = handle->file;
+    }
+
     if (offset > handle->node->size) {
         uint8_t *buffer = alloc_frames_bytes(offset - handle->node->size);
         memset(buffer, 0, offset - handle->node->size);
-        ext4_fseek(handle->file, (int64_t)handle->node->size,
-                   (uint32_t)SEEK_SET);
-        ext4_fwrite(handle->file, buffer, offset - handle->node->size,
-                    (size_t *)&ret);
+        ext4_fseek(file, (int64_t)handle->node->size, (uint32_t)SEEK_SET);
+        ext4_fwrite(file, buffer, offset - handle->node->size, (size_t *)&ret);
         free_frames_bytes(buffer, offset - handle->node->size);
     }
-    ext4_fseek(handle->file, (int64_t)offset, (uint32_t)SEEK_SET);
-    ext4_fwrite(handle->file, addr, size, (size_t *)&ret);
-    handle->node->size = ext4_fsize(handle->file);
-    fd->node->size = ext4_fsize(handle->file);
+    ext4_fseek(file, (int64_t)offset, (uint32_t)SEEK_SET);
+    int r = ext4_fwrite(file, addr, size, (size_t *)&ret);
+    if (r) {
+        ret = -r;
+        goto rollback;
+    }
+    fd->node->size = ext4_fsize(file);
+
+rollback:
+    if (file && (handle->node->type & file_symlink)) {
+        ext4_fclose(file);
+        free(file);
+        file = NULL;
+    }
 
     spin_unlock(&rwlock);
 
@@ -188,50 +214,94 @@ ssize_t ext_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
 ssize_t ext_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     spin_lock(&rwlock);
 
-    void *file = fd->node->handle;
-
     ssize_t ret = 0;
-    ext_handle_t *handle = file;
-    if (!handle || !handle->node)
-        return -1;
-    if ((handle->node->type & file_symlink) && fd->node->linkto) {
-        ext_handle_t *target_handle = fd->node->linkto->handle;
-        if (target_handle && target_handle->file) {
-            ext4_fseek(target_handle->file, (int64_t)offset,
-                       (uint32_t)SEEK_SET);
-            ext4_fread(target_handle->file, addr, size, (size_t *)&ret);
-        } else {
-            printk("%s: symlink doesn't has a target file\n", __func__);
+    ext_handle_t *handle = fd->node->handle;
+    struct ext4_file *file = NULL;
+    if (!handle || !handle->node) {
+        ret = -ENOENT;
+        goto rollback;
+    }
+
+    if (handle->node->type & file_symlink) {
+        char *fpath = vfs_get_fullpath(handle->node);
+        char linkpath[1024];
+        memset(linkpath, 0, sizeof(linkpath));
+        int r = ext4_readlink(fpath, linkpath, sizeof(linkpath), NULL);
+        if (r) {
+            free(fpath);
+            ret = -r;
+            goto rollback;
+        }
+        free(fpath);
+
+        char *parent_path = vfs_get_fullpath(handle->node->parent);
+        int parent_path_len = strlen(parent_path);
+        memmove(&linkpath[parent_path_len + 1], linkpath,
+                sizeof(linkpath) - parent_path_len - 1);
+        memcpy(linkpath, parent_path, parent_path_len);
+        free(parent_path);
+        linkpath[parent_path_len] = '/';
+
+        file = malloc(sizeof(struct ext4_file));
+        r = ext4_fopen(file, linkpath, "r+b");
+        if (r) {
+            free(file);
+            ret = -r;
+            goto rollback;
         }
     } else {
-        ext4_fseek(handle->file, (int64_t)offset, (uint32_t)SEEK_SET);
-        ext4_fread(handle->file, addr, size, (size_t *)&ret);
+        file = handle->file;
     }
+
+    ext4_fseek(file, (int64_t)offset, (uint32_t)SEEK_SET);
+    int r = ext4_fread(file, addr, size, (size_t *)&ret);
+    if (r) {
+        ret = -r;
+        goto rollback;
+    }
+
+rollback:
+    if (file && (handle->node->type & file_symlink)) {
+        ext4_fclose(file);
+        free(file);
+        file = NULL;
+    }
+
     spin_unlock(&rwlock);
+
     return ret;
 }
 
 ssize_t ext_readlink(vfs_node_t node, void *addr, size_t offset, size_t size) {
-    vfs_node_t linkto = node->linkto;
+    spin_lock(&rwlock);
+    char tmp[1024];
+    memset(tmp, 0, sizeof(tmp));
+    char *node_path = vfs_get_fullpath(node);
+    ext4_readlink(node_path, tmp, sizeof(tmp), NULL);
+    free(node_path);
 
-    if (!linkto) {
-        return -ENOLINK;
+    spin_unlock(&rwlock);
+    vfs_node_t to_node = vfs_open_at(node->parent, (const char *)tmp);
+    if (!to_node) {
+        return -ENOENT;
     }
+    spin_lock(&rwlock);
 
-    char *current_path = vfs_get_fullpath(node);
-    char *linkto_path = vfs_get_fullpath(linkto);
+    char *from_path = vfs_get_fullpath(node);
+    char *to_path = vfs_get_fullpath(to_node);
 
-    char buf[2048];
-    memset(buf, 0, sizeof(buf));
-    rel_status status =
-        calculate_relative_path(buf, current_path, linkto_path, sizeof(buf));
+    char output[1024];
+    memset(output, 0, sizeof(output));
+    calculate_relative_path(output, from_path, to_path, size);
+    free(from_path);
+    free(to_path);
 
-    free(current_path);
-    free(linkto_path);
+    ssize_t to_copy = MIN(size, strlen(output));
+    memcpy(addr, output, to_copy);
 
-    int len = strnlen(buf, size);
-    memcpy(addr, buf, len);
-    return len;
+    spin_unlock(&rwlock);
+
+    return to_copy;
 }
 
 int ext_mkfile(void *parent, const char *name, vfs_node_t node) {
@@ -271,6 +341,11 @@ int ext_symlink(void *parent, const char *name, vfs_node_t node) {
     free(fullpath);
 
     spin_unlock(&rwlock);
+
+    vfs_node_t target = vfs_open_at(node->parent, name);
+    if (target) {
+        node->size = target->size;
+    }
 
     return ret;
 }
@@ -392,9 +467,23 @@ int ext_rename(void *current, const char *new) {
 
 int ext_stat(void *file, vfs_node_t node) {
     ext_handle_t *handle = file;
-    if (handle->node->type & file_none) {
-        handle->node->size = ext4_fsize(handle->file);
+    spin_lock(&rwlock);
+    if (node->type & file_symlink) {
+        char *fpath = vfs_get_fullpath(node);
+        char linkpath[1024];
+        memset(linkpath, 0, sizeof(linkpath));
+        int r = ext4_readlink(fpath, linkpath, sizeof(linkpath), NULL);
+        spin_unlock(&rwlock);
+        vfs_node_t target = vfs_open_at(node->parent, (const char *)linkpath);
+        spin_lock(&rwlock);
+        if (target) {
+            node->size = target->size;
+        }
+        free(fpath);
+    } else if (node->type & file_none) {
+        node->size = ext4_fsize(handle->file);
     }
+    spin_unlock(&rwlock);
 
     return 0;
 }
@@ -414,8 +503,7 @@ void ext_resize(void *current, uint64_t size) {
 
 void *ext_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
               size_t flags) {
-    return general_map((vfs_read_t)ext_read, file, (uint64_t)addr, size, prot,
-                       flags, offset);
+    return general_map(file, (uint64_t)addr, size, prot, flags, offset);
 }
 
 vfs_node_t ext_dup(vfs_node_t node) { return node; }

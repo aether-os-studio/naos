@@ -183,7 +183,6 @@ struct vfs_node {
     uint64_t dev;        // 设备号
     uint64_t rdev;       // 真实设备号
     char *name;          // 名称
-    vfs_node_t linkto;   // 符号链接节点
     uint64_t inode;      // 节点号
     uint64_t realsize;   // 项目真实占用的空间 (可选)
     uint64_t size;       // 文件大小或若是文件夹则填0
