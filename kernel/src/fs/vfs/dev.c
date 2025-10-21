@@ -273,10 +273,15 @@ regist_dev(const char *name,
             vfs_node_t child =
                 vfs_child_append(dev, devfs_handles[i]->name, NULL);
             child->refcount++;
-            child->type = file_block;
+            child->type = file_none;
             child->fsid = devfs_id;
-            if (!strncmp(devfs_handles[i]->name, "std", 3) ||
-                !strncmp(devfs_handles[i]->name, "tty", 3)) {
+            if (!strncmp(devfs_handles[i]->name, "part", 4)) {
+                child->type = file_block;
+                child->rdev = 0;
+                partition_t *part = data;
+                child->size = (part->ending_lba - part->starting_lba + 1) * 512;
+            } else if (!strncmp(devfs_handles[i]->name, "std", 3) ||
+                       !strncmp(devfs_handles[i]->name, "tty", 3)) {
                 child->type = file_stream;
                 child->rdev = (4 << 8) | 1;
             } else if (!strncmp(devfs_handles[i]->name, "fb", 2)) {

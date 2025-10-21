@@ -1117,12 +1117,15 @@ void task_exit_inner(task_t *task, int64_t code) {
                 task->should_free = true;
             }
         }
+        task_unblock(tasks[task->ppid], EOK);
     } else if (task->pid == task->ppid) {
         task->should_free = true;
     }
 
     if (task->waitpid != 0 && task->waitpid < MAX_TASK_NUM &&
-        tasks[task->waitpid] && tasks[task->waitpid]->state == TASK_BLOCKING) {
+        tasks[task->waitpid] &&
+        (tasks[task->waitpid]->state == TASK_BLOCKING ||
+         tasks[task->waitpid]->state == TASK_READING_STDIO)) {
         task_unblock(tasks[task->waitpid], EOK);
     }
 
@@ -1250,7 +1253,8 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
 
         if (found_alive) {
             found_alive->waitpid = current_task->pid;
-            task_block(current_task, TASK_BLOCKING, -1);
+            if (found_alive->state != TASK_DIED)
+                task_block(current_task, TASK_BLOCKING, -1);
             continue;
         }
 

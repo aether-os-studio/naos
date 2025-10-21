@@ -636,7 +636,9 @@ uint64_t do_stat_path(const char *path, struct stat *buf) {
              ? S_IFDIR
              : ((node->type & file_symlink)
                     ? S_IFLNK
-                    : ((node->type & file_stream) ? S_IFCHR : S_IFREG)));
+                    : ((node->type & file_stream)
+                           ? S_IFCHR
+                           : ((node->type & file_block) ? S_IFBLK : S_IFREG))));
     buf->st_uid = node->owner;
     buf->st_gid = node->group;
     buf->st_rdev = node->rdev;
@@ -682,7 +684,9 @@ uint64_t sys_fstat(uint64_t fd, struct stat *user_buf) {
              ? S_IFDIR
              : ((node->type & file_symlink)
                     ? S_IFLNK
-                    : ((node->type & file_stream) ? S_IFCHR : S_IFREG)));
+                    : ((node->type & file_stream)
+                           ? S_IFCHR
+                           : ((node->type & file_block) ? S_IFBLK : S_IFREG))));
     buf->st_uid = node->owner;
     buf->st_gid = node->group;
     buf->st_rdev = node->rdev;
