@@ -199,15 +199,6 @@ typedef struct _NVME_IDENTIFY_NAMESPACE_LIST {
     uint32_t NSID[1024];
 } NVME_IDENTIFY_NAMESPACE_LIST;
 
-typedef struct _NVME_NAMESPACE {
-    NVME_CONTROLLER *CTRL;
-    uint64_t NLBA; // Number of LBA
-    uint32_t NSID;
-    uint32_t BSZ;
-    uint32_t META;
-    uint32_t MXRS; // Max Request Size
-} NVME_NAMESPACE;
-
 typedef struct _NVME_PRP_LIST {
     uint64_t prp1;
     uint64_t prp2;
@@ -215,6 +206,16 @@ typedef struct _NVME_PRP_LIST {
     void *A;    //
     uint64_t S; //
 } NVME_PRP_LIST;
+
+typedef struct _NVME_NAMESPACE {
+    NVME_CONTROLLER *CTRL;
+    uint64_t NLBA; // Number of LBA
+    uint32_t NSID;
+    uint32_t BSZ;
+    uint32_t META;
+    uint32_t MXRS; // Max Request Size
+    NVME_PRP_LIST PRP;
+} NVME_NAMESPACE;
 
 #define is_digit(c) ((c) >= '0' && (c) <= '9') // 用来判断是否是数字的宏
 

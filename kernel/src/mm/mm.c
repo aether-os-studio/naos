@@ -339,7 +339,6 @@ static void remove_from_list(free_block_t *block, size_t order) {
     if (block->prev) {
         block->prev->next = block->next;
     } else {
-        // 当前节点是头节点，更新链表头
         allocator.free_lists[order] = block->next;
     }
 
@@ -347,7 +346,9 @@ static void remove_from_list(free_block_t *block, size_t order) {
         block->next->prev = block->prev;
     }
 
-    memset(block, 0, sizeof(free_block_t));
+    block->magic = 0;
+    block->next = NULL;
+    block->prev = NULL;
 }
 
 // 在链表中查找指定地址的块
@@ -386,6 +387,9 @@ static void split_block(uintptr_t addr, size_t current_order,
     while (current_order > target_order) {
         current_order--;
         uintptr_t buddy_addr = addr + (DEFAULT_PAGE_SIZE << current_order);
+
+        free_block_t *buddy = addr_to_block(buddy_addr);
+        memset(buddy, 0, sizeof(free_block_t)); // 清理垃圾
 
         // 将伙伴块添加到对应链表
         add_to_list(buddy_addr, current_order);
@@ -434,36 +438,38 @@ void add_free_region(uintptr_t addr, size_t size) {
     }
 }
 
-// 分配页框
-uintptr_t alloc_frames(size_t count) {
-    if (count == 0)
-        return (uintptr_t)-1;
+typedef struct {
+    uintptr_t addr;
+    size_t actual_count; // 实际分配的页数
+} alloc_result_t;
+
+alloc_result_t alloc_frames_ex(size_t count) {
+    alloc_result_t result = {0, 0};
+    if (count == 0) {
+        return result;
+    }
 
     spin_lock(&frame_op_lock);
 
-    // 计算需要的阶数（向上取整到2的幂次）
     size_t required_pages = next_power_of_2(count);
     size_t order = log2_floor(required_pages);
 
-    // 从当前阶数开始查找可用块
     size_t search_order = order;
     while (search_order <= MAX_ORDER && !allocator.free_lists[search_order]) {
         search_order++;
     }
 
     if (search_order > MAX_ORDER) {
-        printk("Buddy: count too big!!!\n");
+        printk("Buddy: no enough memory!\n");
         spin_unlock(&frame_op_lock);
-        // 没有足够大的块
-        return 0;
+        return result;
     }
 
-    // 取出块
     free_block_t *block = allocator.free_lists[search_order];
     if (!is_valid_free_block(block)) {
-        printk("Buddy: block metadata was broken!!!\n");
+        printk("Buddy: block metadata corrupted!\n");
         spin_unlock(&frame_op_lock);
-        return 0; // 链表损坏
+        return result;
     }
 
     uintptr_t allocated_addr = block_to_addr(block);
@@ -471,14 +477,19 @@ uintptr_t alloc_frames(size_t count) {
 
     remove_from_list(block, search_order);
 
-    // 如果块太大，分割它
     if (allocated_order > order) {
         split_block(allocated_addr, allocated_order, order);
     }
 
+    result.addr = allocated_addr;
+    result.actual_count = 1 << order; // 返回实际分配的页数
+
     spin_unlock(&frame_op_lock);
-    return allocated_addr;
+    return result;
 }
+
+// 分配页框
+uintptr_t alloc_frames(size_t count) { return alloc_frames_ex(count).addr; }
 
 // 释放页框
 void free_frames(uintptr_t addr, size_t count) {
@@ -490,7 +501,7 @@ void free_frames(uintptr_t addr, size_t count) {
     // 确保地址页对齐
     if (addr % DEFAULT_PAGE_SIZE != 0) {
         spin_unlock(&frame_op_lock);
-        return; // 地址未页对齐
+        return;
     }
 
     size_t idx = addr / DEFAULT_PAGE_SIZE;
@@ -499,50 +510,47 @@ void free_frames(uintptr_t addr, size_t count) {
         return;
     }
 
-    // 将要释放的区域按2的幂次大小分解
-    size_t remaining = count;
+    // count 必须是分配时的 2 的幂次
+    size_t required_pages = next_power_of_2(count);
+    size_t order = log2_floor(required_pages);
+
+    // 检查对齐
+    if (!is_aligned(addr, order)) {
+        spin_unlock(&frame_op_lock);
+        return;
+    }
+
+    // 尝试合并伙伴块
     uintptr_t current_addr = addr;
+    size_t current_order = order;
 
-    while (remaining > 0) {
-        // 找到当前地址对齐的最大块大小
-        size_t max_pages = 1;
-        size_t order = 0;
+    while (current_order < MAX_ORDER) {
+        uintptr_t buddy_addr = get_buddy_addr(current_addr, current_order);
 
-        while (order < MAX_ORDER && max_pages * 2 <= remaining &&
-               is_aligned(current_addr, order + 1)) {
-            max_pages *= 2;
-            order++;
-        }
-
-        // 尝试合并伙伴块
-        while (order < MAX_ORDER) {
-            uintptr_t buddy_addr = get_buddy_addr(current_addr, order);
-            free_block_t *buddy = find_block_in_list(buddy_addr, order);
-
-            if (!buddy)
-                break; // 伙伴不存在或不空闲
-
-            // 移除伙伴块
-            remove_from_list(buddy, order);
-
-            // 合并：使用较小的地址作为合并后的块地址
-            if (buddy_addr < current_addr) {
-                current_addr = buddy_addr;
-            }
-
-            order++;
-        }
-
-        // 添加释放的块到链表
-        add_to_list(current_addr, order);
-
-        size_t freed_pages = 1 << order;
-        current_addr += freed_pages * DEFAULT_PAGE_SIZE;
-        if (remaining <= freed_pages) {
+        // 检查 buddy 是否在有效范围内
+        if (buddy_addr < allocator.base_addr ||
+            buddy_addr >= allocator.base_addr + allocator.total_size) {
             break;
         }
-        remaining -= freed_pages;
+
+        free_block_t *buddy = find_block_in_list(buddy_addr, current_order);
+        if (!buddy || !is_valid_free_block(buddy)) {
+            break; // 伙伴不存在或已分配
+        }
+
+        // 移除伙伴块
+        remove_from_list(buddy, current_order);
+
+        // 合并后使用最小地址
+        if (buddy_addr < current_addr) {
+            current_addr = buddy_addr;
+        }
+
+        current_order++;
     }
+
+    // 添加合并后的块到链表
+    add_to_list(current_addr, current_order);
 
     spin_unlock(&frame_op_lock);
 }

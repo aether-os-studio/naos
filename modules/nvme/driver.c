@@ -31,6 +31,7 @@ void NVMEConfigureQ(NVME_CONTROLLER *ctrl, NVME_QUEUE_COMMON *q, uint32_t idx,
     q->DBL = (uint32_t *)(((uint8_t *)ctrl->CAP) + 0x1000 + idx * ctrl->DST);
     q->MSK = len - 1;
 }
+
 int NVMEConfigureCQ(NVME_CONTROLLER *ctrl, NVME_COMPLETION_QUEUE *cq,
                     uint32_t idx, uint32_t len) {
     NVMEConfigureQ(ctrl, &cq->COM, idx, len);
@@ -44,6 +45,7 @@ int NVMEConfigureCQ(NVME_CONTROLLER *ctrl, NVME_COMPLETION_QUEUE *cq,
     cq->COM.PHA = 1;
     return 0;
 }
+
 int NVMEConfigureSQ(NVME_CONTROLLER *ctrl, NVME_SUBMISSION_QUEUE *sq,
                     uint32_t idx, uint32_t len) {
     NVMEConfigureQ(ctrl, &sq->COM, idx, len);
@@ -56,6 +58,7 @@ int NVMEConfigureSQ(NVME_CONTROLLER *ctrl, NVME_SUBMISSION_QUEUE *sq,
     sq->COM.PHA = 0;
     return 0;
 }
+
 int NVMEWaitingRDY(NVME_CONTROLLER *ctrl, uint32_t rdy) {
     uint32_t csts;
     while (rdy != ((csts = ctrl->CAP->CST) & NVME_CSTS_RDY)) {
@@ -63,13 +66,14 @@ int NVMEWaitingRDY(NVME_CONTROLLER *ctrl, uint32_t rdy) {
     }
     return 0;
 }
+
 NVME_COMPLETION_QUEUE_ENTRY NVMEWaitingCMD(NVME_SUBMISSION_QUEUE *sq,
                                            NVME_SUBMISSION_QUEUE_ENTRY *e) {
     NVME_COMPLETION_QUEUE_ENTRY errcqe;
     memset(&errcqe, 0xFF, sizeof(NVME_COMPLETION_QUEUE_ENTRY));
 
     if (((sq->COM.TAL + 1) % (sq->COM.MSK + 1ULL)) == sq->COM.HAD) {
-        printf("SUBMISSION QUEUE IS FULL\n");
+        printk("SUBMISSION QUEUE IS FULL\n");
         return errcqe;
     }
 
@@ -106,11 +110,13 @@ NVME_COMPLETION_QUEUE_ENTRY NVMEWaitingCMD(NVME_SUBMISSION_QUEUE *sq,
 }
 
 void nvme_rwfail(uint16_t status) {
-    printf("Status: %#010lx, status code: %#010lx, status code type: %#010lx\n",
+    printk("Status: %#010lx, status code: %#010lx, status code type: %#010lx\n",
            status, status & 0xFF, (status >> 8) & 0x7);
 }
 
-bool BuildPRPList(void *vaddr, uint64_t size, NVME_PRP_LIST *prpList) {
+// 使用预分配的PRP列表构建当前传输的PRP
+bool BuildPRPListFromPreallocated(void *vaddr, uint64_t size,
+                                  NVME_PRP_LIST *prpList) {
     uint64_t vaddrStart = (uint64_t)vaddr;
     uint64_t vaddrEnd = vaddrStart + size;
     uint64_t pageMask = DEFAULT_PAGE_SIZE - 1;
@@ -128,16 +134,17 @@ bool BuildPRPList(void *vaddr, uint64_t size, NVME_PRP_LIST *prpList) {
             prpList->prp2 = translate_address(get_current_page_dir(false),
                                               firstPage + DEFAULT_PAGE_SIZE);
         }
-        prpList->UPRP = false;
-        prpList->A = NULL;
         return true;
     }
 
+    // 使用预分配的PRP数组
     uint32_t prpEntries = pageCount - 1;
-    uint64_t *prpArray = alloc_frames_bytes(prpEntries * sizeof(uint64_t));
-    if (!prpArray)
+    if (!prpList->A) {
+        printk("PRP array not preallocated\n");
         return false;
+    }
 
+    uint64_t *prpArray = (uint64_t *)prpList->A;
     uint64_t currentPage = translate_address(get_current_page_dir(false),
                                              firstPage + DEFAULT_PAGE_SIZE);
     for (uint32_t i = 0; i < prpEntries; i++) {
@@ -148,16 +155,56 @@ bool BuildPRPList(void *vaddr, uint64_t size, NVME_PRP_LIST *prpList) {
     prpList->prp1 = translate_address(get_current_page_dir(false), vaddrStart);
     prpList->prp2 =
         translate_address(get_current_page_dir(false), (uint64_t)prpArray);
-    prpList->UPRP = true;
-    prpList->A = prpArray;
-    prpList->S = prpEntries * sizeof(uint64_t);
+
     return true;
 }
 
-void FreePRPList(NVME_PRP_LIST *prpList) {
-    if (prpList->A) {
-        free_frames_bytes(prpList->A, prpList->S);
-        prpList->A = NULL;
+// 为namespace预分配PRP列表
+bool AllocatePRPList(NVME_NAMESPACE *ns) {
+    // 计算最大传输需要的PRP数组大小
+    uint64_t maxTransferSize;
+    if (ns->MXRS != (uint32_t)-1) {
+        maxTransferSize = ns->MXRS * ns->BSZ;
+    } else {
+        // 如果没有限制，使用一个合理的最大值 (例如 2MB)
+        maxTransferSize = 2 * 1024 * 1024;
+    }
+
+    // 计算最大页数
+    uint32_t maxPages =
+        (maxTransferSize + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE + 1;
+
+    // 如果只需要1-2页，不需要额外的PRP数组
+    if (maxPages <= 2) {
+        ns->PRP.A = NULL;
+        ns->PRP.S = 0;
+        ns->PRP.UPRP = false;
+        return true;
+    }
+
+    // 分配PRP数组 (需要 maxPages-1 个条目)
+    uint32_t prpEntries = maxPages - 1;
+    uint64_t prpArraySize = prpEntries * sizeof(uint64_t);
+
+    uint64_t *prpArray = (uint64_t *)alloc_frames_bytes(prpArraySize);
+    if (!prpArray) {
+        printk("Failed to allocate PRP array\n");
+        return false;
+    }
+
+    ns->PRP.A = prpArray;
+    ns->PRP.S = prpArraySize;
+    ns->PRP.UPRP = true;
+
+    return true;
+}
+
+// 释放namespace的PRP列表
+void FreePRPListNamespace(NVME_NAMESPACE *ns) {
+    if (ns->PRP.A) {
+        free_frames_bytes(ns->PRP.A, ns->PRP.S);
+        ns->PRP.A = NULL;
+        ns->PRP.S = 0;
     }
 }
 
@@ -169,7 +216,7 @@ uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba,
         return 0;
 
     if (lba + count > ns->NLBA) {
-        printf("NVME: LBA out of range (lba=%llu, count=%u, max=%llu)\n", lba,
+        printk("NVME: LBA out of range (lba=%llu, count=%u, max=%llu)\n", lba,
                count, ns->NLBA);
         return 0;
     }
@@ -187,9 +234,10 @@ uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba,
         }
 
         uint64_t size = chunk * ns->BSZ;
-        NVME_PRP_LIST prpList;
-        if (!BuildPRPList(currentBuf, size, &prpList)) {
-            printf("NVME: Failed to build PRP list\n");
+
+        // 使用预分配的PRP列表
+        if (!BuildPRPListFromPreallocated(currentBuf, size, &ns->PRP)) {
+            printk("NVME: Failed to build PRP list\n");
             spin_unlock(&nvme_transfer_lock);
             return transferred;
         }
@@ -202,13 +250,12 @@ uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba,
         sqe.CDWB = (uint32_t)(currentLBA >> 32);
         sqe.CDWC = (1UL << 31) | ((chunk - 1) & 0xFFFF);
 
-        sqe.DATA[0] = prpList.prp1;
-        sqe.DATA[1] = prpList.prp2;
+        sqe.DATA[0] = ns->PRP.prp1;
+        sqe.DATA[1] = ns->PRP.prp2;
 
         NVME_COMPLETION_QUEUE_ENTRY cqe = NVMEWaitingCMD(&ns->CTRL->ISQ, &sqe);
         if ((cqe.STS >> 1) & 0xFF) {
             nvme_rwfail(cqe.STS);
-            FreePRPList(&prpList);
             spin_unlock(&nvme_transfer_lock);
             return transferred;
         }
@@ -217,8 +264,6 @@ uint32_t NVMETransfer(NVME_NAMESPACE *ns, void *buf, uint64_t lba,
         currentLBA += chunk;
         transferred += chunk;
         count -= chunk;
-
-        FreePRPList(&prpList);
     }
 
     spin_unlock(&nvme_transfer_lock);
@@ -264,7 +309,7 @@ NVME_CONTROLLER *nvme_driver_init(uint64_t bar0, uint64_t bar_size) {
                        PT_FLAG_DEVICE);
 
     if (!((cap->CAP >> 37) & 1)) {
-        printf("NVME CONTROLLER DOES NOT SUPPORT NVME COMMAND SET\n");
+        printk("NVME CONTROLLER DOES NOT SUPPORT NVME COMMAND SET\n");
         return NULL;
     }
 
@@ -276,7 +321,7 @@ NVME_CONTROLLER *nvme_driver_init(uint64_t bar0, uint64_t bar_size) {
     // RST controller
     ctrl->CAP->CC = 0;
     if (NVMEWaitingRDY(ctrl, 0)) {
-        printf("NVME FATAL ERROR DURING CONTROLLER SHUTDOWN\n");
+        printk("NVME FATAL ERROR DURING CONTROLLER SHUTDOWN\n");
         failed_nvme(ctrl);
         return NULL;
     }
@@ -303,7 +348,7 @@ NVME_CONTROLLER *nvme_driver_init(uint64_t bar0, uint64_t bar_size) {
 
     ctrl->CAP->CC = 1 | (4 << 20) | (6 << 16);
     if (NVMEWaitingRDY(ctrl, 1)) {
-        printf("NVME FATAL ERROR DURING CONTROLLER ENABLING");
+        printk("NVME FATAL ERROR DURING CONTROLLER ENABLING");
         failed_nvme(ctrl);
         return NULL;
     }
@@ -312,8 +357,8 @@ NVME_CONTROLLER *nvme_driver_init(uint64_t bar0, uint64_t bar_size) {
        what namespaces we have. */
     // Identify Controller
     NVME_IDENTIFY_CONTROLLER *identify = 0;
-    identify = (NVME_IDENTIFY_CONTROLLER *)alloc_frames(1);
-    identify = (NVME_IDENTIFY_CONTROLLER *)phys_to_virt((uint64_t)identify);
+    identify =
+        (NVME_IDENTIFY_CONTROLLER *)alloc_frames_bytes(DEFAULT_PAGE_SIZE);
     memset(identify, 0, 0x1000);
 
     NVME_SUBMISSION_QUEUE_ENTRY sqe;
@@ -327,7 +372,7 @@ NVME_CONTROLLER *nvme_driver_init(uint64_t bar0, uint64_t bar_size) {
     sqe.CDWA = NVME_ADMIN_IDENTIFY_CNS_ID_CTRL;
     NVME_COMPLETION_QUEUE_ENTRY cqe = NVMEWaitingCMD(&ctrl->ASQ, &sqe);
     if ((cqe.STS >> 1) & 0xFF) {
-        printf("CANNOT IDENTIFY NVME CONTROLLER\n");
+        printk("CANNOT IDENTIFY NVME CONTROLLER\n");
         failed_nvme(ctrl);
         return NULL;
     }
@@ -337,21 +382,18 @@ NVME_CONTROLLER *nvme_driver_init(uint64_t bar0, uint64_t bar_size) {
     buf[sizeof(identify->SERN)] = 0;
     char *serialN = LeadingWhitespace(buf, buf + sizeof(identify->SERN));
     memcpy(ctrl->SER, serialN, strlen(serialN));
-    // kdebug(serialN);
-    // LINEFEED();
+
     memcpy(buf, identify->MODN, sizeof(identify->MODN));
     buf[sizeof(identify->MODN)] = 0;
     serialN = LeadingWhitespace(buf, buf + sizeof(identify->MODN));
     memcpy(ctrl->MOD, serialN, strlen(serialN));
-    // kdebug(serialN);
-    // LINEFEED();
 
     ctrl->NSC = identify->NNAM;
     uint8_t mdts = identify->MDTS;
-    free_frames(virt_to_phys((uint64_t)identify), 1);
+    free_frames_bytes(identify, DEFAULT_PAGE_SIZE);
 
     if (ctrl->NSC == 0) {
-        printf("NO NAMESPACE\n");
+        printk("NO NAMESPACE\n");
         failed_nvme(ctrl);
         return NULL;
     }
@@ -364,7 +406,7 @@ NVME_CONTROLLER *nvme_driver_init(uint64_t bar0, uint64_t bar_size) {
         if (entryCount > 0x1000 / sizeof(NVME_COMPLETION_QUEUE_ENTRY))
             entryCount = 0x1000 / sizeof(NVME_COMPLETION_QUEUE_ENTRY);
         if (NVMEConfigureCQ(ctrl, &ctrl->ICQ, qidx, entryCount)) {
-            printf("CANNOT INIT I/O CQ\n");
+            printk("CANNOT INIT I/O CQ\n");
             failed_nvme(ctrl);
             return NULL;
         }
@@ -379,7 +421,7 @@ NVME_CONTROLLER *nvme_driver_init(uint64_t bar0, uint64_t bar_size) {
 
         cqe = NVMEWaitingCMD(&ctrl->ASQ, &ccq);
         if ((cqe.STS >> 1) & 0xFF) {
-            printf("CANNOT CREATE I/O CQ\n");
+            printk("CANNOT CREATE I/O CQ\n");
             failed_nvme(ctrl);
             return NULL;
         }
@@ -392,7 +434,7 @@ NVME_CONTROLLER *nvme_driver_init(uint64_t bar0, uint64_t bar_size) {
         if (entryCount > 0x1000 / sizeof(NVME_SUBMISSION_QUEUE_ENTRY))
             entryCount = 0x1000 / sizeof(NVME_SUBMISSION_QUEUE_ENTRY);
         if (NVMEConfigureSQ(ctrl, &ctrl->ISQ, qidx, entryCount)) {
-            printf("CANNOT INIT I/O SQ\n");
+            printk("CANNOT INIT I/O SQ\n");
             failed_nvme(ctrl);
             return NULL;
         }
@@ -407,16 +449,12 @@ NVME_CONTROLLER *nvme_driver_init(uint64_t bar0, uint64_t bar_size) {
 
         cqe = NVMEWaitingCMD(&ctrl->ASQ, &csq);
         if ((cqe.STS >> 1) & 0xFF) {
-            printf("CANNOT CREATE I/O SQ");
+            printk("CANNOT CREATE I/O SQ");
             failed_nvme(ctrl);
             return NULL;
         }
         ctrl->ISQ.ICQ = &ctrl->ICQ;
     }
-
-    // /* Populate namespace IDs */
-    // for (uint32_t nsidx = 0; nsidx < ctrl->NSC; nsidx++)
-    // {
 
     uint32_t nsidx = 0;
 
@@ -437,20 +475,20 @@ NVME_CONTROLLER *nvme_driver_init(uint64_t bar0, uint64_t bar_size) {
     sqe.CDWA = NVME_ADMIN_IDENTIFY_CNS_ID_NS;
     cqe = NVMEWaitingCMD(&ctrl->ASQ, &sqe);
     if ((cqe.STS >> 1) & 0xFF) {
-        printf("CANNOT IDENTIFY NAMESPACE\n");
+        printk("CANNOT IDENTIFY NAMESPACE\n");
         failed_namespace(identifyNS);
         return NULL;
     }
 
     uint8_t currentLBAFormat = identifyNS->FLBA & 0xF;
     if (currentLBAFormat > identifyNS->NLBA) {
-        printf("Current LBA Format error\n");
+        printk("Current LBA Format error\n");
         failed_namespace(identifyNS);
         return NULL;
     }
 
     if (!identifyNS->SIZE) {
-        printf("Invalid namespace size\n");
+        printk("Invalid namespace size\n");
         failed_namespace(identifyNS);
         return NULL;
     }
@@ -466,7 +504,7 @@ NVME_CONTROLLER *nvme_driver_init(uint64_t bar0, uint64_t bar_size) {
     ns->BSZ = 1ULL << fmt->DS;
     ns->META = fmt->MS;
     if (ns->BSZ > 0x1000) {
-        printf("BLOCK SIZE > 0x1000 !!!\n");
+        printk("BLOCK SIZE > 0x1000 !!!\n");
         failed_namespace(identifyNS);
         free(ns);
         return NULL;
@@ -476,6 +514,13 @@ NVME_CONTROLLER *nvme_driver_init(uint64_t bar0, uint64_t bar_size) {
         ns->MXRS = ((1ULL << mdts) * 0x1000) / ns->BSZ;
     } else {
         ns->MXRS = -1;
+    }
+
+    if (!AllocatePRPList(ns)) {
+        printk("Failed to allocate PRP list for namespace\n");
+        failed_namespace(identifyNS);
+        free(ns);
+        return NULL;
     }
 
     regist_blkdev((char *)"nvme", ns, ns->BSZ, ns->NLBA * ns->BSZ,
