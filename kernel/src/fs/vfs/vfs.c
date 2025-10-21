@@ -676,6 +676,22 @@ ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size) {
     if (fd->node->type & file_dir)
         return -1;
 
+    if (fd->node->type & file_symlink) {
+        char linkpath[512];
+        memset(linkpath, 0, sizeof(linkpath));
+        ssize_t ret = vfs_readlink(fd->node, linkpath, sizeof(linkpath));
+        if (ret < 0)
+            return ret;
+
+        vfs_node_t linknode =
+            vfs_open_at(fd->node->parent, (const char *)linkpath);
+        if (!linknode)
+            return -ENOENT;
+        do_update(linknode);
+
+        return vfs_read(linknode, addr, offset, size);
+    }
+
     ssize_t ret = callbackof(fd->node, read)(fd, addr, offset, size);
     return ret;
 }
@@ -698,6 +714,22 @@ ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size) {
     do_update(fd->node);
     if (fd->node->type & file_dir)
         return -1;
+
+    if (fd->node->type & file_symlink) {
+        char linkpath[512];
+        memset(linkpath, 0, sizeof(linkpath));
+        ssize_t ret = vfs_readlink(fd->node, linkpath, sizeof(linkpath));
+        if (ret < 0)
+            return ret;
+
+        vfs_node_t linknode =
+            vfs_open_at(fd->node->parent, (const char *)linkpath);
+        if (!linknode)
+            return -ENOENT;
+        do_update(linknode);
+
+        return vfs_write(linknode, addr, offset, size);
+    }
 
     ssize_t write_bytes = 0;
     write_bytes = callbackof(fd->node, write)(fd, addr, offset, size);

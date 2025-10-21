@@ -298,16 +298,20 @@ void vmware_gpu_pci_init(pci_device_t *pci_dev) {
     drm_resource_manager_init(&device->resource_mgr);
 
     device->io_base = pci_dev->bars[0].address;
-    device->fb_mmio_base = phys_to_virt((uint64_t)pci_dev->bars[1].address);
-    device->fifo_mmio_base = phys_to_virt((uint64_t)pci_dev->bars[2].address);
+    device->fb_mmio_base = phys_to_virt((uint64_t)pci_dev->bars[1].address &
+                                        ~(DEFAULT_PAGE_SIZE - 1));
+    device->fifo_mmio_base = phys_to_virt((uint64_t)pci_dev->bars[2].address &
+                                          ~(DEFAULT_PAGE_SIZE - 1));
 
     // Map MMIO regions
-    map_page_range(get_current_page_dir(false), device->fb_mmio_base,
-                   pci_dev->bars[1].address, pci_dev->bars[1].size,
-                   PT_FLAG_R | PT_FLAG_W);
-    map_page_range(get_current_page_dir(false), device->fifo_mmio_base,
-                   pci_dev->bars[2].address, pci_dev->bars[2].size,
-                   PT_FLAG_R | PT_FLAG_W);
+    map_page_range(get_current_page_dir(false),
+                   device->fb_mmio_base & ~(DEFAULT_PAGE_SIZE - 1),
+                   pci_dev->bars[1].address & ~(DEFAULT_PAGE_SIZE - 1),
+                   pci_dev->bars[1].size, PT_FLAG_R | PT_FLAG_W);
+    map_page_range(get_current_page_dir(false),
+                   device->fifo_mmio_base & ~(DEFAULT_PAGE_SIZE - 1),
+                   pci_dev->bars[2].address & ~(DEFAULT_PAGE_SIZE - 1),
+                   pci_dev->bars[2].size, PT_FLAG_R | PT_FLAG_W);
 
     // Detect device version
     uint32_t device_version = VMWARE_GPU_VERSION_ID_2;
@@ -553,10 +557,10 @@ static int vmware_page_flip(drm_device_t *drm_dev,
     if (!fb)
         return -EINVAL;
 
-    // Copy framebuffer to display
-    fast_copy_16((void *)device->fb_mmio_base,
-                 (const void *)phys_to_virt(fb->addr),
-                 fb->width * fb->height * 4);
+    void *dst = (void *)device->fb_mmio_base;
+    const void *src = (const void *)phys_to_virt(fb->addr);
+
+    fast_copy_16(dst, src, fb->height * fb->pitch);
 
     // Update entire display
     vmware_gpu_update_display(device, flip->crtc_id, 0, 0, fb->width,

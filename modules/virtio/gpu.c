@@ -341,6 +341,11 @@ static int virtio_gpu_create_dumb(drm_device_t *drm_dev,
             gpu_dev->framebuffers[i].addr = alloc_frames(
                 (args->size + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE);
 
+            virtio_gpu_attach_backing(gpu_dev, RESOURCE_ID_FB,
+                                      gpu_dev->framebuffers[i].addr,
+                                      gpu_dev->framebuffers[i].pitch *
+                                          gpu_dev->framebuffers[i].height);
+
             args->handle = i;
             return 0;
         }
@@ -451,8 +456,6 @@ static int virtio_gpu_page_flip(drm_device_t *drm_dev,
     struct virtio_gpu_framebuffer *fb = &gpu_dev->framebuffers[flip->fb_id - 1];
 
     // Update resource with new data
-    virtio_gpu_attach_backing(gpu_dev, fb->resource_id, fb->addr,
-                              fb->pitch * fb->height);
     virtio_gpu_transfer_to_host(gpu_dev, fb->resource_id, fb->width, fb->height,
                                 0, 0);
     virtio_gpu_set_scanout(gpu_dev, 0, fb->resource_id, fb->width, fb->height,

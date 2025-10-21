@@ -35,7 +35,7 @@ uint64_t sys_umount2(const char *target, uint64_t flags) {
     return 0;
 }
 
-uint64_t do_open(const char *name, uint64_t flags, uint64_t mode) {
+uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
     uint64_t i = 0;
     for (i = 3; i < MAX_FD_NUM; i++) {
         if (current_task->fd_info->fds[i] == NULL) {
@@ -86,7 +86,7 @@ uint64_t sys_open(const char *path, uint64_t flags, uint64_t mode) {
     if (copy_from_user_str(name, path, sizeof(name)))
         return (uint64_t)-EFAULT;
 
-    return do_open(name, flags, mode);
+    return do_sys_open(name, flags, mode);
 }
 
 uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags,
@@ -98,7 +98,7 @@ uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags,
     if (!path)
         return (uint64_t)-ENOMEM;
 
-    uint64_t ret = do_open(path, flags, mode);
+    uint64_t ret = do_sys_open(path, flags, mode);
 
     free(path);
 
