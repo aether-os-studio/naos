@@ -544,8 +544,6 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
     return child->pid;
 }
 
-char interpreter_name_global[256] = {0};
-
 uint64_t task_execve(const char *path, const char **argv, const char **envp) {
     can_schedule = false;
 
@@ -647,10 +645,8 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
             ;
         const char *injected_argv[256];
         memcpy((char *)&injected_argv[1], argv, argc * sizeof(char *));
+        injected_argv[0] = interpreter_name;
         injected_argv[1] = path;
-        strncpy(interpreter_name_global, interpreter_name,
-                sizeof(interpreter_name_global));
-        injected_argv[0] = interpreter_name_global;
 
         free_frames_bytes(buffer, node->size);
         free(fullpath);
