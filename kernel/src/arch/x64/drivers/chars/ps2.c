@@ -234,7 +234,7 @@ void ps2_mouse_callback(ps2_mouse_event_t event) {
     if (event.middle_button)
         flags |= (1 << 2);
 
-    handle_mouse_event(flags, event.x, event.y, event.z);
+    handle_mouse_event(flags, event.x, event.y, -event.z);
 }
 
 // 初始化PS/2控制器

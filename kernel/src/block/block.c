@@ -54,8 +54,8 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             char name[32];
             sprintf(name, "part%d", i);
             partitions[partition_num].dev = device_install(
-                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0, partition_ioctl,
-                NULL, partition_read, partition_write, NULL);
+                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0,
+                partition_ioctl, NULL, partition_read, partition_write, NULL);
 
             partition_num++;
         }
@@ -79,8 +79,8 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             char name[32];
             sprintf(name, "part%d", i);
             partitions[partition_num].dev = device_install(
-                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0, partition_ioctl,
-                NULL, partition_read, partition_write, NULL);
+                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0,
+                partition_ioctl, NULL, partition_read, partition_write, NULL);
 
             partition_num++;
 
@@ -103,8 +103,8 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             char name[32];
             sprintf(name, "part%d", i);
             partitions[partition_num].dev = device_install(
-                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0, partition_ioctl,
-                NULL, partition_read, partition_write, NULL);
+                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0,
+                partition_ioctl, NULL, partition_read, partition_write, NULL);
 
             partition_num++;
             continue;
@@ -124,8 +124,8 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             char name[32];
             sprintf(name, "part%d", i);
             partitions[partition_num].dev = device_install(
-                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0, partition_ioctl,
-                NULL, partition_read, partition_write, NULL);
+                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0,
+                partition_ioctl, NULL, partition_read, partition_write, NULL);
 
             partition_num++;
         }

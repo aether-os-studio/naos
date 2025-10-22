@@ -1,6 +1,7 @@
 #include <fs/vfs/vfs.h>
 #include <fs/vfs/dev.h>
 #include <fs/vfs/sys.h>
+#include <fs/partition.h>
 #include <dev/device.h>
 #include <drivers/kernel_logger.h>
 #include <drivers/pty.h>
@@ -384,6 +385,18 @@ void devfs_register_device(device_t *device) {
 
     vfs_mknod(path, 0600 | (device->type == DEV_BLOCK ? S_IFBLK : S_IFCHR),
               device->dev);
+
+    if (device->type == DEV_BLOCK) {
+        vfs_node_t device_node = vfs_open((const char *)path);
+        if (!device_node)
+            return;
+        partition_t *part = device->ptr;
+
+        devtmpfs_node_t *device_tnode = device_node->handle;
+        device_tnode->size =
+            512ULL * (part->ending_lba - part->starting_lba + 1);
+        device_node->size = device_tnode->size;
+    }
 }
 
 bool devfs_initialized = false;

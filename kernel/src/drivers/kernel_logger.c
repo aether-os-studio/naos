@@ -430,11 +430,9 @@ int printk(const char *fmt, ...) {
 
     serial_printk(buf, len);
 
-    if (kernel_session && kernel_session->current_vt_mode.mode != VT_PROCESS) {
-        device_t *device = device_find(DEV_TTY, 0);
-        if (device)
-            device_write(device->dev, buf, 0, len, 0);
-    }
+    device_t *device = device_find(DEV_TTY, 0);
+    if (device)
+        device_write(device->dev, buf, 0, len, 0);
 
     spin_unlock(&printk_lock);
 
