@@ -437,8 +437,8 @@ void syscall_handler_init() {
     // (syscall_handle_t)sys_ioprio_get;
     syscall_handlers[SYS_INOTIFY_INIT] =
         (syscall_handle_t)dummy_syscall_handler;
-    // syscall_handlers[SYS_INOTIFY_ADD_WATCH] =
-    //     (syscall_handle_t)sys_inotify_add_watch;
+    syscall_handlers[SYS_INOTIFY_ADD_WATCH] =
+        (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_INOTIFY_RM_WATCH] =
     //     (syscall_handle_t)sys_inotify_rm_watch;
     // syscall_handlers[SYS_MIGRATE_PAGES] =

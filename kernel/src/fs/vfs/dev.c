@@ -420,6 +420,8 @@ void stdio_init() {
     vfs_symlink("/dev/stdout", "/dev/tty0");
     vfs_symlink("/dev/stderr", "/dev/tty0");
 
+    vfs_symlink("/dev/kmsg", "/dev/tty0");
+
     pty_init();
     ptmx_init();
     pts_init();

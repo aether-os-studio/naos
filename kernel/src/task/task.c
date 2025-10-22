@@ -553,11 +553,32 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
         return (uint64_t)-ENOENT;
     }
 
-    if (!node->size)
+    uint64_t size = node->size;
+
+    if (node->type & file_symlink) {
+        char linkpath[128];
+        int ret = vfs_readlink(node, linkpath, sizeof(linkpath));
+        if (ret < 0) {
+            can_schedule = true;
+            return (uint64_t)-ENOENT;
+        }
+
+        vfs_node_t linknode = vfs_open_at(node->parent, linkpath);
+        if (!linknode) {
+            can_schedule = true;
+            return (uint64_t)-ENOENT;
+        }
+
+        size = linknode->size;
+    }
+
+    if (!size) {
+        can_schedule = true;
         return (uint64_t)-EINVAL;
+    }
 
     uint64_t buf_len =
-        (node->size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
+        (size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
 
     int argv_count = 0;
     int envp_count = 0;
@@ -614,7 +635,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
     }
     new_envp[envp_count] = NULL;
 
-    uint8_t *buffer = (uint8_t *)alloc_frames_bytes(node->size);
+    uint8_t *buffer = (uint8_t *)alloc_frames_bytes(buf_len);
     if (!buffer) {
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
@@ -627,7 +648,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
         return (uint64_t)-ENOMEM;
     }
 
-    ssize_t ret = vfs_read(node, buffer, 0, node->size);
+    ssize_t ret = vfs_read(node, buffer, 0, size);
 
     if (buffer[0] == '#' && buffer[1] == '!') {
         for (int i = 0; i < argv_count; i++)
@@ -660,7 +681,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
         injected_argv[0] = interpreter_name;
         injected_argv[1] = path;
 
-        free_frames_bytes(buffer, node->size);
+        free_frames_bytes(buffer, buf_len);
 
         return task_execve((const char *)injected_argv[0], injected_argv, envp);
     }
@@ -698,7 +719,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
     uint64_t interpreter_entry = 0;
 
     if (e_entry == 0) {
-        free_frames_bytes(buffer, node->size);
+        free_frames_bytes(buffer, buf_len);
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
                 free(new_argv[i]);
@@ -712,7 +733,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
     }
 
     if (!arch_check_elf(ehdr)) {
-        free_frames_bytes(buffer, node->size);
+        free_frames_bytes(buffer, buf_len);
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
                 free(new_argv[i]);
@@ -744,7 +765,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
 
             vfs_node_t interpreter_node = vfs_open(interpreter_name);
             if (!interpreter_node) {
-                free_frames_bytes(buffer, node->size);
+                free_frames_bytes(buffer, buf_len);
                 for (int i = 0; i < argv_count; i++)
                     if (new_argv[i])
                         free(new_argv[i]);
@@ -876,7 +897,7 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
                    (uint64_t)(load_start + ehdr->e_phoff), ehdr->e_phnum,
                    interpreter_entry ? INTERPRETER_BASE_ADDR : load_start);
 
-    free_frames_bytes(buffer, node->size);
+    free_frames_bytes(buffer, buf_len);
 
     if (current_task->ppid != current_task->pid && tasks[current_task->ppid] &&
         !tasks[current_task->ppid]->child_vfork_done) {
@@ -1056,6 +1077,7 @@ void task_exit_inner(task_t *task, int64_t code) {
 
     can_schedule = false;
     remove_eevdf_entity(task, schedulers[task->cpu_id]);
+    free(task->sched_info);
     task->sched_info = NULL;
 
     task->current_state = TASK_DIED;
