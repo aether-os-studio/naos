@@ -428,8 +428,6 @@ int printk(const char *fmt, ...) {
 
     va_end(args);
 
-    serial_printk(buf, len);
-
     device_t *device = device_find(DEV_TTY, 0);
     if (device)
         device_write(device->dev, buf, 0, len, 0);
@@ -478,8 +476,4 @@ int snprintf(char *buffer, size_t capacity, const char *fmt, ...) {
     return ret;
 }
 
-uint64_t sys_syslog(int type, const char *buf, size_t len) {
-    serial_printk(buf, len);
-
-    return len;
-}
+uint64_t sys_syslog(int type, const char *buf, size_t len) { return len; }

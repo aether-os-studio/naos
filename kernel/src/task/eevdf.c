@@ -294,22 +294,22 @@ void update_current_task(eevdf_t *eevdf_sched) {
     struct sched_entity *curr = eevdf_sched->current;
     if (!curr)
         return;
+
     bool resche;
-    if (curr->is_yield) {
-        curr->vruntime = curr->deadline;
-        resche = update_deadline(curr);
-        curr->is_yield = false;
-        goto resche;
-    }
     int64_t delta_exec;
     delta_exec = update_curr_se(curr);
     if (delta_exec <= 0)
         return;
+
+    if (curr->is_yield) {
+        curr->vruntime = curr->deadline;
+        curr->is_yield = false;
+    }
     curr->vruntime += calc_delta_fair(delta_exec, curr);
     resche = update_deadline(curr);
+
     update_min_vruntime(eevdf_sched);
 
-resche:;
     if (resche) {
         rb_erase(&curr->run_node, eevdf_sched->root);
         insert_sched_entity(eevdf_sched->root, curr);
