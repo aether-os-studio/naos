@@ -8,18 +8,32 @@
 partition_t partitions[MAX_PARTITIONS_NUM] = {0};
 uint64_t partition_num = 0;
 
-ssize_t partition_read(void *data, uint64_t offset, void *buf, uint64_t len,
+ssize_t partition_read(void *data, void *buf, uint64_t offset, uint64_t len,
                        uint64_t flags) {
     partition_t *part = (partition_t *)data;
     return blkdev_read(part->blkdev_id, part->starting_lba * 512 + offset, buf,
                        len);
 }
 
-ssize_t partition_write(void *data, uint64_t offset, const void *buf,
+ssize_t partition_write(void *data, const void *buf, uint64_t offset,
                         uint64_t len, uint64_t flags) {
     partition_t *part = (partition_t *)data;
     return blkdev_write(part->blkdev_id, part->starting_lba * 512 + offset, buf,
                         len);
+}
+
+int partition_ioctl(void *data, int cmd, void *args) {
+    partition_t *part = (partition_t *)data;
+    switch (cmd) {
+    case DEV_CMD_SECTOR_START:
+        return part->starting_lba;
+    case DEV_CMD_SECTOR_COUNT:
+        return part->ending_lba - part->starting_lba + 1;
+    case DEV_CMD_SECTOR_SIZE:
+        return 512;
+    default:
+        return -EINVAL;
+    }
 }
 
 #define ROOTFS_TYPE "ext"
@@ -32,9 +46,7 @@ void mount_root() {
     bool err = true;
 
     for (uint64_t i = 0; i < partition_num; i++) {
-        vfs_update(partitions[i].node);
-
-        if (!vfs_mount(partitions[i].node, rootdir, ROOTFS_TYPE)) {
+        if (!vfs_mount(partitions[i].dev, rootdir, ROOTFS_TYPE)) {
             err = false;
             break;
         }
@@ -49,9 +61,7 @@ void mount_root() {
         }
 
         for (uint64_t i = 0; i < partition_num; i++) {
-            vfs_update(partitions[i].node);
-
-            if (!vfs_mount(partitions[i].node, rootdir, ROOTFS_TYPE)) {
+            if (!vfs_mount(partitions[i].dev, rootdir, ROOTFS_TYPE)) {
                 err = false;
                 return;
             }

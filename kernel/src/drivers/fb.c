@@ -115,15 +115,18 @@ void *fb_map(void *data, void *addr, uint64_t offset, uint64_t len) {
 }
 
 void fbdev_init() {
-    char name[MAX_DEV_NAME_LEN];
+    framebuffer = boot_get_framebuffer();
+
+    char name[16];
     sprintf(name, "fb%d", 0);
-    regist_dev(name, fb_read, fb_write, fb_ioctl, NULL, fb_map, framebuffer);
+    device_install(DEV_CHAR, DEV_FB, framebuffer, name, 0, fb_ioctl, NULL,
+                   fb_read, fb_write, fb_map);
 }
 
 void fbdev_init_sysfs() {
     vfs_node_t graphics = vfs_open("/sys/class/graphics");
 
-    char name[MAX_DEV_NAME_LEN];
+    char name[16];
     sprintf(name, "fb%d", 0);
     vfs_node_t node = sysfs_child_append(graphics, name, true);
 

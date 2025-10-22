@@ -287,7 +287,7 @@ ssize_t procfs_readlink(vfs_node_t node, void *addr, size_t offset,
     return 0;
 }
 
-int procfs_mount(vfs_node_t dev, vfs_node_t mnt) {
+int procfs_mount(uint64_t dev, vfs_node_t mnt) {
     if (procfs_root != fake_procfs_root)
         return -EALREADY;
     if (procfs_root == mnt)

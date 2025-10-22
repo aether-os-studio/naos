@@ -1,49 +1,21 @@
 #pragma once
 
-#include "../partition.h"
-#include "vfs.h"
+#include <fs/vfs/vfs.h>
+#include <dev/device.h>
 
-#define MAX_DEV_NUM 128
-#define MAX_DEV_NAME_LEN 128
-
-typedef struct devfs_handle {
-    char name[MAX_DEV_NAME_LEN];
-    ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len,
-                    uint64_t flags);
-    ssize_t (*write)(void *data, uint64_t offset, const void *buf, uint64_t len,
-                     uint64_t flags);
-    ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg);
-    ssize_t (*poll)(void *data, size_t event);
-    void *(*map)(void *data, void *addr, uint64_t offset, uint64_t len);
-    void *data;
-} *devfs_handle_t;
-
-typedef struct stdio_handle {
-    int64_t at_process_group_id;
-} stdio_handle_t;
-
-extern devfs_handle_t devfs_handles[MAX_DEV_NUM];
-
-typedef struct partition_node {
+typedef struct devtmpfs_node {
     vfs_node_t node;
-} *partition_node_t;
+    // for file type
+    char *content;
+    int size;
+    int capability;
+} devtmpfs_node_t;
 
-extern partition_node_t dev_nodes[MAX_PARTITIONS_NUM];
+extern bool devfs_initialized;
 
-vfs_node_t
-regist_dev(const char *name,
-           ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len,
-                           uint64_t flags),
-           ssize_t (*write)(void *data, uint64_t offset, const void *buf,
-                            uint64_t len, uint64_t flags),
-           ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg),
-           ssize_t (*poll)(void *data, size_t event),
-           void *(*map)(void *data, void *addr, uint64_t offset, uint64_t len),
-           void *data);
+void devtmpfs_init();
 
-void dev_init();
-void dev_init_after_mount_root();
-void dev_init_after_sysfs();
+void devfs_register_device(device_t *device);
 
 #define KDGETMODE 0x4B3B // 获取终端模式命令
 #define KDSETMODE 0x4B3A // 设置终端模式命令
@@ -213,3 +185,10 @@ void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code,
                           int32_t value, uint64_t sec, uint64_t usecs);
 
 void stdio_init();
+
+ssize_t inputdev_event_read(void *data, void *buf, uint64_t offset,
+                            uint64_t len, uint64_t flags);
+ssize_t inputdev_event_write(void *data, const void *buf, uint64_t offset,
+                             uint64_t len, uint64_t flags);
+ssize_t inputdev_ioctl(void *data, ssize_t request, ssize_t arg);
+ssize_t inputdev_poll(void *data, size_t event);

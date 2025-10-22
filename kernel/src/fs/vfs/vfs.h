@@ -43,7 +43,7 @@ typedef struct fd {
     uint64_t flags;
 } fd_t;
 
-typedef int (*vfs_mount_t)(vfs_node_t dev, vfs_node_t node);
+typedef int (*vfs_mount_t)(uint64_t dev, vfs_node_t node);
 typedef void (*vfs_unmount_t)(vfs_node_t node);
 
 /**
@@ -297,7 +297,7 @@ ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size);
  *\param node     挂载到的节点
  *\return 0 成功，-1 失败
  */
-int vfs_mount(vfs_node_t dev, vfs_node_t node, const char *type);
+int vfs_mount(uint64_t dev, vfs_node_t node, const char *type);
 /**
  *\brief 卸载文件系统
  *

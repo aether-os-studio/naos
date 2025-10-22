@@ -4,6 +4,8 @@
 #include <mm/mm.h>
 #include <arch/arch.h>
 #include <irq/irq_manager.h>
+#include <dev/device.h>
+#include <drivers/tty.h>
 #include <mod/dlinker.h>
 #include <task/task.h>
 #include <fs/vfs/vfs.h>
@@ -23,17 +25,22 @@ void kmain(void) {
 
     heap_init();
 
-    printk("Next Aether-OS starting...\n");
-
     irq_manager_init();
 
     acpi_init();
 
     arch_early_init();
 
+    device_init();
+
     vfs_init();
 
-    dev_init();
+    devtmpfs_init();
+
+    tty_init();
+    tty_init_session();
+
+    printk("Next Aether-OS starting...\n");
 
     stdio_init();
 

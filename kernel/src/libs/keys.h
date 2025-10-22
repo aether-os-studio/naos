@@ -448,6 +448,5 @@ enum {
     KEY_BUTTON_RIGHT = 0x84,
 };
 
-void kb_evdev_generate(uint8_t raw, uint8_t raw1, uint8_t raw2);
-char handle_kb_event(uint8_t scan_code, uint8_t scan_code_1,
-                     uint8_t scan_code_2);
+void kb_evdev_generate(uint8_t code, bool pressed);
+void handle_kb_event(uint8_t evcode, bool pressed);

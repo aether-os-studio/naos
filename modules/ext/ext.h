@@ -1,7 +1,7 @@
 #pragma once
 
 #include <fs/vfs/vfs.h>
-#include <lwext4/blockdev/vfs_dev.h>
+#include <lwext4/blockdev/device_dev.h>
 #include <lwext4/include/ext4_types.h>
 #include <lwext4/include/ext4.h>
 
@@ -14,7 +14,7 @@ typedef struct ext_handle {
     };
 } ext_handle_t;
 
-int ext_mount(vfs_node_t dev, vfs_node_t node);
+int ext_mount(uint64_t dev, vfs_node_t node);
 void ext_unmount(vfs_node_t node);
 void ext_open(void *parent, const char *name, vfs_node_t node);
 bool ext_close(void *current);

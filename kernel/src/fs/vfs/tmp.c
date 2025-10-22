@@ -1,5 +1,6 @@
 #include <fs/vfs/vfs.h>
 #include <fs/vfs/tmp.h>
+#include <dev/device.h>
 #include <drivers/kernel_logger.h>
 #include <drivers/bus/pci.h>
 #include <net/netlink.h>
@@ -18,6 +19,10 @@ void tmpfs_open(void *parent, const char *name, vfs_node_t node) {}
 bool tmpfs_close(void *current) { return false; }
 
 ssize_t tmpfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
+    if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
+        return device_read(fd->node->rdev, addr, offset, size, fd->flags);
+    }
+
     tmpfs_node_t *handle = fd->node->handle;
     if (offset >= handle->size)
         return 0;
@@ -27,6 +32,11 @@ ssize_t tmpfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
 }
 
 ssize_t tmpfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
+    if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
+        return device_write(fd->node->rdev, (void *)addr, offset, size,
+                            fd->flags);
+    }
+
     tmpfs_node_t *handle = fd->node->handle;
     if (offset + size > handle->capability) {
         size_t new_capability = offset + size;
@@ -79,6 +89,7 @@ int tmpfs_mkfile(void *parent, const char *name, vfs_node_t node) {
     handle->capability = DEFAULT_PAGE_SIZE;
     handle->content = alloc_frames_bytes(handle->capability);
     handle->size = 0;
+    handle->node = node;
     node->handle = handle;
     return 0;
 }
@@ -86,18 +97,24 @@ int tmpfs_mkfile(void *parent, const char *name, vfs_node_t node) {
 int tmpfs_mknod(void *parent, const char *name, vfs_node_t node, uint16_t mode,
                 int dev) {
     node->dev = dev;
-    node->mode = mode;
+    node->rdev = dev;
+    node->mode = mode & 0777;
+    if ((mode & S_IFMT) == S_IFBLK)
+        node->type = file_block;
+    if ((mode & S_IFMT) == S_IFCHR)
+        node->type = file_stream;
+    else
+        node->type = file_none;
     tmpfs_node_t *handle = malloc(sizeof(tmpfs_node_t));
-    handle->capability = DEFAULT_PAGE_SIZE;
-    handle->content = alloc_frames_bytes(handle->capability);
     handle->size = 0;
+    handle->node = node;
     node->handle = handle;
     return 0;
 }
 
 int tmpfs_symlink(void *parent, const char *name, vfs_node_t node) { return 0; }
 
-int tmpfs_mount(vfs_node_t dev, vfs_node_t node) {
+int tmpfs_mount(uint64_t dev, vfs_node_t node) {
     spin_lock(&tmpfs_oplock);
 
     node->flags = (uint64_t)node->fsid << 32;

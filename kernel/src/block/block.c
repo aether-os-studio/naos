@@ -51,11 +51,11 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             part->type = GPT;
 
             // Register partition to devfs
-            char name[MAX_DEV_NAME_LEN];
+            char name[32];
             sprintf(name, "part%d", i);
-            partitions[partition_num].node =
-                regist_dev(name, partition_read, partition_write, NULL, NULL,
-                           NULL, &partitions[partition_num]);
+            partitions[partition_num].dev = device_install(
+                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0, partition_ioctl,
+                NULL, partition_read, partition_write, NULL);
 
             partition_num++;
         }
@@ -76,11 +76,11 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             part->type = RAW;
 
             // Register partition to devfs
-            char name[MAX_DEV_NAME_LEN];
+            char name[32];
             sprintf(name, "part%d", i);
-            partitions[partition_num].node =
-                regist_dev(name, partition_read, partition_write, NULL, NULL,
-                           NULL, &partitions[partition_num]);
+            partitions[partition_num].dev = device_install(
+                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0, partition_ioctl,
+                NULL, partition_read, partition_write, NULL);
 
             partition_num++;
 
@@ -100,11 +100,11 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             part->type = RAW;
 
             // Register partition to devfs
-            char name[MAX_DEV_NAME_LEN];
+            char name[32];
             sprintf(name, "part%d", i);
-            partitions[partition_num].node =
-                regist_dev(name, partition_read, partition_write, NULL, NULL,
-                           NULL, &partitions[partition_num]);
+            partitions[partition_num].dev = device_install(
+                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0, partition_ioctl,
+                NULL, partition_read, partition_write, NULL);
 
             partition_num++;
             continue;
@@ -121,11 +121,11 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             part->type = MBR;
 
             // Register partition to devfs
-            char name[MAX_DEV_NAME_LEN];
+            char name[32];
             sprintf(name, "part%d", i);
-            partitions[partition_num].node =
-                regist_dev(name, partition_read, partition_write, NULL, NULL,
-                           NULL, &partitions[partition_num]);
+            partitions[partition_num].dev = device_install(
+                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0, partition_ioctl,
+                NULL, partition_read, partition_write, NULL);
 
             partition_num++;
         }

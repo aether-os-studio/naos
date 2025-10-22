@@ -96,7 +96,7 @@ int sysfs_symlink(void *parent, const char *name, vfs_node_t node) {
     return 0;
 }
 
-int sysfs_mount(vfs_node_t dev, vfs_node_t node) {
+int sysfs_mount(uint64_t dev, vfs_node_t node) {
     if (sysfs_root != fake_sysfs_root)
         return -EALREADY;
     if (sysfs_root == node)

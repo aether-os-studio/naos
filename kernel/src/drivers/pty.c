@@ -624,7 +624,7 @@ void ptmx_init() {
     ptmx->fsid = ptmx_fsid;
 }
 
-extern vfs_node_t devfs_root;
+extern vfs_node_t devtmpfs_root;
 
 fs_t ptsfs = {
     .name = "ptsfs",
@@ -637,7 +637,7 @@ void pts_init() {
 
     first_pair.id = 0xffffffff;
 
-    vfs_node_t pts_node = vfs_child_append(devfs_root, "pts", NULL);
+    vfs_node_t pts_node = vfs_child_append(devtmpfs_root, "pts", NULL);
     pts_node->fsid = pts_fsid;
     pts_node->type = file_dir;
     pts_node->mode = 0644;

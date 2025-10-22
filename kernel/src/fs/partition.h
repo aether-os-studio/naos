@@ -56,7 +56,7 @@ struct GPT_DPTE {
 };
 
 typedef struct partition {
-    vfs_node_t node;
+    uint64_t dev;
     uint64_t blkdev_id;
     uint64_t starting_lba;
     uint64_t ending_lba;
@@ -70,7 +70,8 @@ typedef struct partition {
 extern partition_t partitions[MAX_PARTITIONS_NUM];
 extern uint64_t partition_num;
 
-ssize_t partition_read(void *data, uint64_t offset, void *buf, uint64_t len,
+ssize_t partition_read(void *data, void *buf, uint64_t offset, uint64_t len,
                        uint64_t flags);
-ssize_t partition_write(void *data, uint64_t offset, const void *buf,
+ssize_t partition_write(void *data, const void *buf, uint64_t offset,
                         uint64_t len, uint64_t flags);
+int partition_ioctl(void *data, int cmd, void *args);

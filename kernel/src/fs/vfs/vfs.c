@@ -647,7 +647,7 @@ int vfs_close(vfs_node_t node) {
     return 0;
 }
 
-int vfs_mount(vfs_node_t dev, vfs_node_t node, const char *type) {
+int vfs_mount(uint64_t dev, vfs_node_t node, const char *type) {
     if (node == NULL)
         return -1;
     if (!(node->type & file_dir))

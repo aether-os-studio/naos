@@ -27,6 +27,8 @@ void arch_init() {
 }
 
 void arch_input_dev_init() {
-    kbd_init();
-    mouse_init();
+    if (ps2_init()) {
+        ps2_keyboard_init();
+        ps2_mouse_init();
+    }
 }

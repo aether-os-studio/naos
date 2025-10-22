@@ -1,11 +1,10 @@
 #include <drivers/kernel_logger.h>
+#include <drivers/tty.h>
 #include <arch/arch.h>
 #include <mm/mm.h>
 #include <drivers/fb.h>
 #include <fs/vfs/dev.h>
 #include <boot/boot.h>
-
-struct flanterm_context *ft_ctx = NULL;
 
 #define PAD_ZERO 1 // 0填充
 #define LEFT 2     // 靠左对齐
@@ -419,17 +418,6 @@ int printk(const char *fmt, ...) {
 
     if (!printk_initialized) {
         init_serial();
-
-        framebuffer = boot_get_framebuffer();
-
-        ft_ctx = flanterm_fb_init(
-            NULL, NULL, (void *)framebuffer->address, framebuffer->width,
-            framebuffer->height, framebuffer->pitch, framebuffer->red_mask_size,
-            framebuffer->red_mask_shift, framebuffer->green_mask_size,
-            framebuffer->green_mask_shift, framebuffer->blue_mask_size,
-            framebuffer->blue_mask_shift, NULL, NULL, NULL, NULL, NULL, NULL,
-            NULL, NULL, 0, 0, 0, 0, 0, 0);
-
         printk_initialized = true;
     }
 
@@ -442,8 +430,11 @@ int printk(const char *fmt, ...) {
 
     serial_printk(buf, len);
 
-    if (current_vt_mode.mode != VT_PROCESS)
-        flanterm_write(ft_ctx, buf, len);
+    if (kernel_session && kernel_session->current_vt_mode.mode != VT_PROCESS) {
+        device_t *device = device_find(DEV_TTY, 0);
+        if (device)
+            device_write(device->dev, buf, 0, len, 0);
+    }
 
     spin_unlock(&printk_lock);
 
@@ -491,7 +482,6 @@ int snprintf(char *buffer, size_t capacity, const char *fmt, ...) {
 
 uint64_t sys_syslog(int type, const char *buf, size_t len) {
     serial_printk(buf, len);
-    flanterm_write(ft_ctx, buf, len);
 
     return len;
 }

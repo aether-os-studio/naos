@@ -1,126 +1,272 @@
+#include <fs/vfs/vfs.h>
 #include <fs/vfs/dev.h>
-#include <fs/fs_syscall.h>
 #include <fs/vfs/sys.h>
+#include <dev/device.h>
 #include <drivers/kernel_logger.h>
-#include <drivers/bus/pci.h>
-#include <arch/arch.h>
-#include <task/task.h>
 #include <drivers/pty.h>
-#include <drivers/fb.h>
+#include <net/netlink.h>
+#include <mm/mm_syscall.h>
 
-int devfs_id = 0;
-vfs_node_t devfs_root = NULL;
-vfs_node_t input_root = NULL;
+int devtmpfs_fsid = 0;
 
-devfs_handle_t devfs_handles[MAX_DEV_NUM] = {NULL};
+spinlock_t devtmpfs_oplock = {0};
+
+vfs_node_t devtmpfs_root = NULL;
+vfs_node_t fake_devtmpfs_root = NULL;
 
 static int dummy() { return 0; }
 
-ssize_t devfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
-    void *file = fd->node->handle;
-    devfs_handle_t handle = (devfs_handle_t)file;
-    if (handle->read) {
-        return handle->read(handle->data, offset, addr, size, fd->flags);
+void devtmpfs_open(void *parent, const char *name, vfs_node_t node) {}
+
+bool devtmpfs_close(void *current) { return false; }
+
+ssize_t devtmpfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
+    if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
+        return device_read(fd->node->rdev, addr, offset, size, fd->flags);
     }
+
+    devtmpfs_node_t *handle = fd->node->handle;
+    if (offset >= handle->size)
+        return 0;
+    ssize_t to_copy = MIN(handle->size - offset, size);
+    memcpy(addr, handle->content + offset, to_copy);
+    return to_copy;
+}
+
+ssize_t devtmpfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
+    if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
+        return device_write(fd->node->rdev, (void *)addr, offset, size,
+                            fd->flags);
+    }
+
+    devtmpfs_node_t *handle = fd->node->handle;
+    if (offset + size > handle->capability) {
+        size_t new_capability = offset + size;
+        void *new_content = alloc_frames_bytes(new_capability);
+        memcpy(new_content, handle->content, handle->capability);
+        free_frames_bytes(handle->content, handle->capability);
+        handle->content = new_content;
+        handle->capability = new_capability;
+    }
+    memcpy(handle->content + offset, addr, size);
+    handle->size = MAX(handle->size, offset + size);
+    return size;
+}
+
+ssize_t devtmpfs_readlink(vfs_node_t node, void *addr, size_t offset,
+                          size_t size) {
+    devtmpfs_node_t *handle = node->handle;
+    if (offset >= handle->size)
+        return 0;
+    char tmp[1024];
+    memset(tmp, 0, sizeof(tmp));
+    memcpy(tmp, handle->content, MIN(handle->size, sizeof(tmp)));
+
+    vfs_node_t to_node = vfs_open_at(node->parent, (const char *)tmp);
+    if (!to_node)
+        return -ENOENT;
+
+    char *from_path = vfs_get_fullpath(node);
+    char *to_path = vfs_get_fullpath(to_node);
+
+    char output[1024];
+    memset(output, 0, sizeof(output));
+    calculate_relative_path(output, from_path, to_path, size);
+    free(from_path);
+    free(to_path);
+
+    ssize_t to_copy = MIN(size, strlen(output));
+    memcpy(addr, output, to_copy);
+    return to_copy;
+}
+
+int devtmpfs_mkdir(void *parent, const char *name, vfs_node_t node) {
+    node->mode = 0700;
+    return 0;
+}
+
+int devtmpfs_mkfile(void *parent, const char *name, vfs_node_t node) {
+    node->mode = 0700;
+    devtmpfs_node_t *handle = malloc(sizeof(devtmpfs_node_t));
+    handle->node = node;
+    handle->capability = DEFAULT_PAGE_SIZE;
+    handle->content = alloc_frames_bytes(handle->capability);
+    handle->size = 0;
+    node->handle = handle;
+    return 0;
+}
+
+int devtmpfs_mknod(void *parent, const char *name, vfs_node_t node,
+                   uint16_t mode, int dev) {
+    node->dev = dev;
+    node->rdev = dev;
+    node->mode = mode & 0777;
+    if ((mode & S_IFMT) == S_IFBLK)
+        node->type = file_block;
+    if ((mode & S_IFMT) == S_IFCHR)
+        node->type = file_stream;
+    else
+        node->type = file_none;
+    devtmpfs_node_t *handle = malloc(sizeof(devtmpfs_node_t));
+    handle->node = node;
+    handle->size = 0;
+    node->handle = handle;
+    return 0;
+}
+
+int devtmpfs_symlink(void *parent, const char *name, vfs_node_t node) {
+    node->mode = 0700;
+    devtmpfs_node_t *handle = malloc(sizeof(devtmpfs_node_t));
+    handle->capability = DEFAULT_PAGE_SIZE;
+    handle->content = alloc_frames_bytes(handle->capability);
+    int len = strlen(name);
+    memcpy(handle->content, name, len);
+    handle->size = len;
+    handle->node = node;
+    node->handle = handle;
+    vfs_node_t target = vfs_open_at(node->parent, name);
+    if (target) {
+        node->dev = target->dev;
+        node->rdev = target->rdev;
+        node->type |= target->type;
+    }
+    return 0;
+}
+
+int devtmpfs_mount(uint64_t dev, vfs_node_t node) {
+    if (devtmpfs_root != fake_devtmpfs_root)
+        return -EALREADY;
+    if (devtmpfs_root == node)
+        return -EALREADY;
+
+    spin_lock(&devtmpfs_oplock);
+
+    devtmpfs_root = node;
+    vfs_merge_nodes_to(devtmpfs_root, fake_devtmpfs_root);
+
+    node->flags = (uint64_t)node->fsid << 32;
+    node->fsid = devtmpfs_fsid;
+
+    spin_unlock(&devtmpfs_oplock);
 
     return 0;
 }
 
-ssize_t devfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
-    void *file = fd->node->handle;
-    devfs_handle_t handle = (devfs_handle_t)file;
-    if (handle->write) {
-        return handle->write(handle->data, offset, addr, size, fd->flags);
-    }
-
-    return 0;
-}
-
-void devfs_open(void *parent, const char *name, vfs_node_t node) {
-    (void)parent;
-
-    if (node->type & file_dir) {
+void devtmpfs_unmount(vfs_node_t root) {
+    root->fsid = (uint32_t)(root->flags >> 32);
+    if (root == fake_devtmpfs_root)
         return;
-    }
 
-    for (uint64_t i = 0; i < MAX_DEV_NUM; i++) {
-        if (devfs_handles[i] != NULL &&
-            !strncmp(devfs_handles[i]->name, name, MAX_DEV_NAME_LEN)) {
-            devfs_handle_t handle = devfs_handles[i];
-            node->handle = handle;
-            if (!strncmp(handle->name, "event", 5)) {
-                dev_input_event_t *event = handle->data;
-                event->timesOpened++;
-            }
-            break;
-        }
-    }
+    if (root != devtmpfs_root)
+        return;
+
+    spin_lock(&devtmpfs_oplock);
+
+    vfs_merge_nodes_to(fake_devtmpfs_root, root);
+
+    root->fsid = (uint32_t)(root->flags >> 32);
+
+    devtmpfs_root = fake_devtmpfs_root;
+
+    spin_unlock(&devtmpfs_oplock);
 }
 
-bool devfs_close(void *current) {
-    devfs_handle_t handle = (devfs_handle_t)current;
-    if (!strncmp(handle->name, "event", 5)) {
-        dev_input_event_t *event = handle->data;
-        event->timesOpened--;
-    }
-    return false;
-}
-
-int devfs_ioctl(devfs_handle_t handle, ssize_t cmd, ssize_t arg) {
-    if (handle->ioctl) {
-        return handle->ioctl(handle->data, cmd, arg);
-    }
-
+int devtmpfs_chmod(vfs_node_t node, uint16_t mode) {
+    node->mode = mode;
     return 0;
 }
 
-void *devfs_map(fd_t *fd, void *addr, size_t offset, size_t size, size_t prot,
-                size_t flags) {
-    devfs_handle_t handle = fd->node->handle;
-
-    if (handle->map) {
-        return handle->map(handle->data, addr, offset, size);
-    }
-
-    return NULL;
+int devtmpfs_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
+    node->owner = uid;
+    node->group = gid;
+    return 0;
 }
 
-int devfs_poll(devfs_handle_t handle, size_t event) {
-    if (handle->poll) {
-        return handle->poll(handle->data, event);
-    }
+int devtmpfs_delete(void *parent, vfs_node_t node) { return 0; }
 
+int devtmpfs_rename(void *current, const char *new) { return 0; }
+
+int devtmpfs_ioctl(void *file, ssize_t cmd, ssize_t arg) {
+    devtmpfs_node_t *tnode = file;
+    if ((tnode->node->type & file_block) || (tnode->node->type & file_stream)) {
+        return device_ioctl(tnode->node->rdev, cmd, (void *)arg);
+    }
+    return -ENOSYS;
+}
+
+void *devtmpfs_map(fd_t *file, void *addr, size_t offset, size_t size,
+                   size_t prot, size_t flags) {
+    if ((file->node->type & file_block) || (file->node->type & file_stream)) {
+        return device_map(file->node->rdev, addr, offset, size, prot, flags);
+    }
+    return general_map(file, (uint64_t)addr, size, prot, flags, offset);
+}
+
+int devtmpfs_poll(void *file, size_t events) {
+    devtmpfs_node_t *tnode = file;
+    if ((tnode->node->type & file_block) || (tnode->node->type & file_stream)) {
+        return device_poll(tnode->node->rdev, events);
+    }
+    return -ENOSYS;
+}
+
+void devtmpfs_resize(void *current, uint64_t size) {
+    devtmpfs_node_t *handle = current;
+    size_t new_capability = size;
+    void *new_content = alloc_frames_bytes(new_capability);
+    memcpy(new_content, handle->content,
+           MIN(new_capability, handle->capability));
+    free_frames_bytes(handle->content, handle->capability);
+    handle->content = new_content;
+    handle->capability = new_capability;
+}
+
+int devtmpfs_stat(void *file, vfs_node_t node) {
+    devtmpfs_node_t *tnode = file;
+    node->size = tnode->size;
     return 0;
+}
+
+void devtmpfs_free_handle(void *handle) {
+    devtmpfs_node_t *tnode = handle;
+    free_frames_bytes(tnode->content, tnode->capability);
+    free(tnode);
 }
 
 static struct vfs_callback callbacks = {
-    .mount = (vfs_mount_t)dummy,
-    .unmount = (vfs_unmount_t)dummy,
-    .open = devfs_open,
-    .close = devfs_close,
-    .read = devfs_read,
-    .write = devfs_write,
-    .readlink = (vfs_readlink_t)dummy,
-    .mkdir = (vfs_mk_t)dummy,
-    .mkfile = (vfs_mk_t)dummy,
+    .open = (vfs_open_t)devtmpfs_open,
+    .close = (vfs_close_t)devtmpfs_close,
+    .read = (vfs_read_t)devtmpfs_read,
+    .write = (vfs_write_t)devtmpfs_write,
+    .readlink = (vfs_readlink_t)devtmpfs_readlink,
+    .mkdir = (vfs_mk_t)devtmpfs_mkdir,
+    .mkfile = (vfs_mk_t)devtmpfs_mkfile,
     .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)dummy,
-    .mknod = (vfs_mknod_t)dummy,
-    .chmod = (vfs_chmod_t)dummy,
-    .chown = (vfs_chown_t)dummy,
-    .delete = (vfs_del_t)dummy,
-    .rename = (vfs_rename_t)dummy,
-    .map = (vfs_mapfile_t)devfs_map,
-    .stat = (vfs_stat_t)dummy,
-    .ioctl = (vfs_ioctl_t)devfs_ioctl,
-    .poll = (vfs_poll_t)devfs_poll,
-    .resize = (vfs_resize_t)dummy,
+    .symlink = (vfs_mk_t)devtmpfs_symlink,
+    .mknod = (vfs_mknod_t)devtmpfs_mknod,
+    .chmod = (vfs_chmod_t)devtmpfs_chmod,
+    .chown = (vfs_chown_t)devtmpfs_chown,
+    .delete = (vfs_del_t)devtmpfs_delete,
+    .rename = (vfs_rename_t)devtmpfs_rename,
+    .stat = (vfs_stat_t)devtmpfs_stat,
+    .ioctl = (vfs_ioctl_t)devtmpfs_ioctl,
+    .map = (vfs_mapfile_t)devtmpfs_map,
+    .poll = (vfs_poll_t)devtmpfs_poll,
+    .mount = (vfs_mount_t)devtmpfs_mount,
+    .unmount = (vfs_unmount_t)devtmpfs_unmount,
+    .resize = (vfs_resize_t)devtmpfs_resize,
     .dup = vfs_generic_dup,
 
-    .free_handle = vfs_generic_free_handle,
+    .free_handle = devtmpfs_free_handle,
 };
 
-ssize_t inputdev_event_read(void *data, uint64_t offset, void *buf,
+fs_t devtmpfs = {
+    .name = "devtmpfs",
+    .magic = 0x01021994,
+    .callback = &callbacks,
+};
+
+ssize_t inputdev_event_read(void *data, void *buf, uint64_t offset,
                             uint64_t len, uint64_t flags) {
     dev_input_event_t *event = data;
 
@@ -129,7 +275,7 @@ ssize_t inputdev_event_read(void *data, uint64_t offset, void *buf,
     return cnt;
 }
 
-ssize_t inputdev_event_write(void *data, uint64_t offset, const void *buf,
+ssize_t inputdev_event_write(void *data, const void *buf, uint64_t offset,
                              uint64_t len, uint64_t flags) {
     dev_input_event_t *event = data;
 
@@ -232,407 +378,34 @@ ssize_t inputdev_poll(void *data, size_t event) {
     return 0;
 }
 
-vfs_node_t
-regist_dev(const char *name,
-           ssize_t (*read)(void *data, uint64_t offset, void *buf, uint64_t len,
-                           uint64_t flags),
-           ssize_t (*write)(void *data, uint64_t offset, const void *buf,
-                            uint64_t len, uint64_t flags),
-           ssize_t (*ioctl)(void *data, ssize_t cmd, ssize_t arg),
-           ssize_t (*poll)(void *data, size_t event),
-           void *(*map)(void *data, void *addr, uint64_t offset, uint64_t len),
-           void *data) {
-    const char *new_name = name;
+void devfs_register_device(device_t *device) {
+    char path[128];
+    sprintf(path, "/dev/%s", device->name);
 
-    vfs_node_t dev = devfs_root;
-
-    if (strstr(name, "/") != NULL) {
-        new_name = strstr(name, "/") + 1;
-        uint64_t path_len = new_name - name;
-        char new_path[128];
-        strcpy(new_path, "/dev/");
-        strncpy(new_path + 5, name, path_len);
-        dev = vfs_open((const char *)new_path);
-        if (!dev) {
-            vfs_mkdir((const char *)new_path);
-            dev = vfs_open((const char *)new_path);
-            dev->mode = 0644;
-        }
-    }
-
-    for (uint64_t i = 0; i < MAX_DEV_NUM; i++) {
-        if (devfs_handles[i] == NULL) {
-            devfs_handles[i] = malloc(sizeof(struct devfs_handle));
-            strncpy(devfs_handles[i]->name, new_name, MAX_DEV_NAME_LEN);
-            devfs_handles[i]->read = read;
-            devfs_handles[i]->write = write;
-            devfs_handles[i]->ioctl = ioctl;
-            devfs_handles[i]->poll = poll;
-            devfs_handles[i]->map = map;
-            devfs_handles[i]->data = data;
-            vfs_node_t child =
-                vfs_child_append(dev, devfs_handles[i]->name, NULL);
-            child->refcount++;
-            child->type = file_none;
-            child->fsid = devfs_id;
-            if (!strncmp(devfs_handles[i]->name, "part", 4)) {
-                child->type = file_block;
-                child->rdev = 0;
-                partition_t *part = data;
-                child->size = (part->ending_lba - part->starting_lba + 1) * 512;
-            } else if (!strncmp(devfs_handles[i]->name, "std", 3) ||
-                       !strncmp(devfs_handles[i]->name, "tty", 3)) {
-                child->type = file_stream;
-                child->rdev = (4 << 8) | 1;
-            } else if (!strncmp(devfs_handles[i]->name, "fb", 2)) {
-                child->type = file_stream;
-                child->rdev = (29 << 8) | 0;
-            } else if (!strncmp(devfs_handles[i]->name, "card", 4)) {
-                child->type = file_stream;
-                child->rdev = (226 << 8) | 0;
-            } else if (!strncmp(devfs_handles[i]->name, "event0", 6)) {
-                child->type = file_stream;
-                child->rdev = (13 << 8) | 0;
-                child->mode = 0660;
-
-                sysfs_regist_dev(
-                    'c', 13, 0,
-                    "/sys/devices/platform/i8042/serio0/input/input0/event0",
-                    "input/event0",
-                    "ID_INPUT=1\nID_INPUT_KEYBOARD=1\nSUBSYSTEM=input\n");
-
-                vfs_node_t input_root = vfs_open("/sys/class/input");
-                vfs_node_t event0 = sysfs_child_append_symlink(
-                    input_root, "event0",
-                    "/sys/devices/platform/i8042/serio0/input/input0/event0");
-
-                event0 = vfs_open(
-                    "/sys/devices/platform/i8042/serio0/input/input0/event0");
-                sysfs_child_append_symlink(event0, "subsystem",
-                                           "/sys/class/input");
-            } else if (!strncmp(devfs_handles[i]->name, "event1", 6)) {
-                child->type = file_stream;
-                child->rdev = (13 << 8) | 1;
-                child->mode = 0660;
-
-                sysfs_regist_dev(
-                    'c', 13, 1,
-                    "/sys/devices/platform/i8042/serio1/input/input1/event1",
-                    "input/event1",
-                    "ID_INPUT=1\nID_INPUT_MOUSE=1\nSUBSYSTEM=input\n");
-
-                vfs_node_t input_root = vfs_open("/sys/class/input");
-                vfs_node_t event1 = sysfs_child_append_symlink(
-                    input_root, "event1",
-                    "/sys/devices/platform/i8042/serio1/input/input1/event1");
-
-                event1 = vfs_open(
-                    "/sys/devices/platform/i8042/serio1/input/input1/event1");
-                sysfs_child_append_symlink(event1, "subsystem",
-                                           "/sys/class/input");
-            }
-
-            child->mode = 0666;
-
-            return child;
-        }
-    }
-
-    return NULL;
+    vfs_mknod(path, 0600 | (device->type == DEV_BLOCK ? S_IFBLK : S_IFCHR),
+              device->dev);
 }
 
-ssize_t stdin_read(void *data, uint64_t offset, void *buf, uint64_t len,
-                   uint64_t flags) {
-    char *kernel_buff = malloc(len);
+bool devfs_initialized = false;
 
-    task_read(current_task, (char *)kernel_buff, len, true);
+void devtmpfs_init() {
+    devtmpfs_fsid = vfs_regist(&devtmpfs);
 
-    uint32_t fr = current_task->tmp_rec_v;
-    memcpy(buf, kernel_buff, fr);
+    fake_devtmpfs_root = vfs_child_append(rootdir, "dev", NULL);
+    fake_devtmpfs_root->mode = 0600;
+    fake_devtmpfs_root->type = file_dir;
+    fake_devtmpfs_root->fsid = devtmpfs_fsid;
+    devtmpfs_root = fake_devtmpfs_root;
 
-    free(kernel_buff);
-
-    return fr;
+    devfs_initialized = true;
 }
-
-#include <libs/flanterm/flanterm_backends/fb.h>
-#include <libs/flanterm/flanterm.h>
-
-extern struct flanterm_context *ft_ctx;
-extern struct vt_mode current_vt_mode;
-
-ssize_t stdout_write(void *data, uint64_t offset, const void *buf, uint64_t len,
-                     uint64_t flags) {
-    (void)data;
-    (void)offset;
-
-    serial_printk((char *)buf, len);
-
-    if (current_vt_mode.mode != VT_PROCESS)
-        flanterm_write(ft_ctx, buf, len);
-
-    return (ssize_t)len;
-}
-
-int tty_mode = KD_TEXT;
-int tty_kbmode = K_XLATE;
-struct vt_mode current_vt_mode = {0};
-
-extern stdio_handle_t *global_stdio_handle;
-
-ssize_t stdio_ioctl(void *data, ssize_t cmd, ssize_t arg) {
-    switch (cmd) {
-    case TIOCGWINSZ:
-        *(struct winsize *)arg = (struct winsize){
-            .ws_xpixel = framebuffer->width,
-            .ws_ypixel = framebuffer->height,
-            .ws_col = framebuffer->width / 8,
-            .ws_row = framebuffer->height / 16,
-        };
-        return 0;
-    case TIOCSCTTY:
-        return 0;
-    case TIOCGPGRP:
-        int *pid = (int *)arg;
-        *pid = global_stdio_handle->at_process_group_id;
-        return 0;
-    case TIOCSPGRP:
-        global_stdio_handle->at_process_group_id = *(int *)arg;
-        return 0;
-    case TCGETS:
-        if (check_user_overflow(arg, sizeof(termios))) {
-            return -EFAULT;
-        }
-        memcpy((void *)arg, &current_task->term, sizeof(termios));
-        return 0;
-    case TCSETS:
-        if (check_user_overflow(arg, sizeof(termios))) {
-            return -EFAULT;
-        }
-        memcpy(&current_task->term, (void *)arg, sizeof(termios));
-        return 0;
-    case TCSETSW:
-        if (check_user_overflow(arg, sizeof(termios))) {
-            return -EFAULT;
-        }
-        memcpy(&current_task->term, (void *)arg, sizeof(termios));
-        return 0;
-    case TIOCSWINSZ:
-        return 0;
-    case KDGETMODE:
-        *(int *)arg = tty_mode;
-        return 0;
-    case KDSETMODE:
-        tty_mode = *(int *)arg;
-        return 0;
-    case KDGKBMODE:
-        *(int *)arg = tty_kbmode;
-        return 0;
-    case KDSKBMODE:
-        tty_kbmode = *(int *)arg;
-        return 0;
-    case VT_SETMODE:
-        memcpy(&current_vt_mode, (void *)arg, sizeof(struct vt_mode));
-        return 0;
-    case VT_GETMODE:
-        memcpy((void *)arg, &current_vt_mode, sizeof(struct vt_mode));
-        return 0;
-    case VT_ACTIVATE:
-        return 0;
-    case VT_WAITACTIVE:
-        return 0;
-    case VT_GETSTATE:
-        struct vt_state *state = (struct vt_state *)arg;
-        state->v_active = 1; // 当前活动终端
-        state->v_state = 0;  // 状态标志
-        return 0;
-    case VT_OPENQRY:
-        *(int *)arg = 1;
-        return 0;
-    case TIOCNOTTY:
-        return 0;
-    case TCSETSF:
-        memcpy(&current_task->term, (void *)arg, sizeof(termios));
-        return 0;
-    case TCFLSH:
-        return 0;
-    default:
-        return -EINVAL;
-    }
-}
-
-bool ioSwitch = false;
-
-ssize_t stdio_poll(void *data, size_t events) {
-    ssize_t revents = 0;
-    if (events & EPOLLERR || events & EPOLLPRI)
-        return 0;
-
-    if (events & EPOLLIN && ioSwitch)
-        revents |= EPOLLIN;
-    if (events & EPOLLOUT)
-        revents |= EPOLLOUT;
-    ioSwitch = !ioSwitch;
-    return revents;
-}
-
-stdio_handle_t *global_stdio_handle = NULL;
 
 void stdio_init() {
-    global_stdio_handle = malloc(sizeof(stdio_handle_t));
-    memset(global_stdio_handle, 0, sizeof(stdio_handle_t));
+    vfs_symlink("/dev/tty1", "/dev/tty0");
 
-    regist_dev("stdin", stdin_read, NULL, stdio_ioctl, stdio_poll, NULL,
-               global_stdio_handle);
-    regist_dev("stdout", NULL, stdout_write, stdio_ioctl, stdio_poll, NULL,
-               global_stdio_handle);
-    regist_dev("stderr", NULL, stdout_write, stdio_ioctl, stdio_poll, NULL,
-               global_stdio_handle);
-}
-
-uint64_t next = 0;
-
-ssize_t random_dev_read(void *data, uint64_t offset, void *buf, uint64_t len,
-                        uint64_t flags) {
-    tm time;
-    time_read(&time);
-    next = mktime(&time);
-    next = next * 1103515245 + 12345;
-    return ((unsigned)(next / 65536) % 32768);
-}
-
-ssize_t null_dev_read(void *data, uint64_t offset, void *buf, uint64_t len,
-                      uint64_t flags) {
-    (void)data;
-    (void)offset;
-    (void)buf;
-    (void)len;
-    return len;
-}
-
-ssize_t null_dev_write(void *data, uint64_t offset, const void *buf,
-                       uint64_t len, uint64_t flags) {
-    (void)data;
-    (void)offset;
-    (void)buf;
-    (void)len;
-    return len;
-}
-
-ssize_t null_dev_ioctl(void *data, ssize_t cmd, ssize_t arg) {
-    switch (cmd) {
-    default:
-        return -EINVAL;
-    }
-}
-
-static uint32_t simple_rand() {
-    tm time;
-    time_read(&time);
-    uint32_t seed = mktime(&time);
-    seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
-    return seed;
-}
-
-ssize_t urandom_dev_read(void *data, uint64_t offset, void *buf, uint64_t len,
-                         uint64_t flags) {
-    for (uint64_t i = 0; i < len; i++) {
-        ((uint8_t *)buf)[i] = (uint8_t)(simple_rand() & 0xFF);
-    }
-    return len;
-}
-
-ssize_t urandom_dev_write(void *data, uint64_t offset, const void *buf,
-                          uint64_t len, uint64_t flags) {
-    return len;
-}
-
-ssize_t urandom_dev_ioctl(void *data, ssize_t cmd, ssize_t arg) {
-    switch (cmd) {
-    default:
-        return -ENOTTY;
-    }
-}
-ssize_t kmsg_read(void *data, uint64_t offset, void *buf, uint64_t len,
-                  uint64_t flags) {
-    return len;
-}
-
-ssize_t kmsg_write(void *data, uint64_t offset, const void *buf, uint64_t len,
-                   uint64_t flags) {
-    return len;
-}
-
-fs_t devfs = {
-    .name = "devfs",
-    .magic = 0,
-    .callback = &callbacks,
-};
-
-void dev_init() {
-    devfs_id = vfs_regist(&devfs);
-
-    devfs_root = vfs_node_alloc(rootdir, "dev");
-    devfs_root->type = file_dir;
-    devfs_root->mode = 0755;
-
-    memset(devfs_handles, 0, sizeof(devfs_handles));
-
-    regist_dev("kmsg", kmsg_read, kmsg_write, NULL, NULL, NULL, NULL);
-}
-
-void dev_init_after_mount_root() {
-    regist_dev("console", stdin_read, stdout_write, stdio_ioctl, stdio_poll,
-               NULL, global_stdio_handle);
-
-    regist_dev("tty", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL,
-               global_stdio_handle);
-    regist_dev("tty0", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL,
-               global_stdio_handle);
-    regist_dev("tty1", stdin_read, stdout_write, stdio_ioctl, stdio_poll, NULL,
-               global_stdio_handle);
-}
-
-extern pci_device_t *pci_devices[PCI_DEVICE_MAX];
-extern uint32_t pci_device_number;
-
-void dev_init_after_sysfs() {
-    dev_input_event_t *kb_input_event = malloc(sizeof(dev_input_event_t));
-    kb_input_event->inputid.bustype = 0x11;
-    kb_input_event->inputid.vendor = 0x0000;
-    kb_input_event->inputid.product = 0x0000;
-    kb_input_event->inputid.version = 0x0000;
-    kb_input_event->event_bit = kb_event_bit;
-    kb_input_event->device_events.read_ptr = 0;
-    kb_input_event->device_events.write_ptr = 0;
-    kb_input_event->clock_id = CLOCK_MONOTONIC;
-    circular_int_init(&kb_input_event->device_events, DEFAULT_PAGE_SIZE);
-    vfs_node_t kb_node =
-        regist_dev("input/event0", inputdev_event_read, inputdev_event_write,
-                   inputdev_ioctl, inputdev_poll, NULL, kb_input_event);
-    dev_input_event_t *mouse_input_event = malloc(sizeof(dev_input_event_t));
-    mouse_input_event->inputid.bustype = 0x11;
-    mouse_input_event->inputid.vendor = 0x0000;
-    mouse_input_event->inputid.product = 0x0000;
-    mouse_input_event->inputid.version = 0x0000;
-    mouse_input_event->event_bit = mouse_event_bit;
-    mouse_input_event->device_events.read_ptr = 0;
-    mouse_input_event->device_events.write_ptr = 0;
-    mouse_input_event->clock_id = CLOCK_MONOTONIC;
-    circular_int_init(&mouse_input_event->device_events, DEFAULT_PAGE_SIZE);
-    vfs_node_t mouse_node =
-        regist_dev("input/event1", inputdev_event_read, inputdev_event_write,
-                   inputdev_ioctl, inputdev_poll, NULL, mouse_input_event);
-
-    regist_dev("null", null_dev_read, null_dev_write, null_dev_ioctl, NULL,
-               NULL, NULL);
-    regist_dev("random", random_dev_read, NULL, NULL, NULL, NULL, NULL);
-    regist_dev("urandom", urandom_dev_read, urandom_dev_write,
-               urandom_dev_ioctl, NULL, NULL, NULL);
-
-    vfs_node_t shm_node = vfs_child_append(devfs_root, "shm", NULL);
-    shm_node->type = file_dir;
-    shm_node->mode = 0644;
+    vfs_symlink("/dev/stdin", "/dev/tty0");
+    vfs_symlink("/dev/stdout", "/dev/tty0");
+    vfs_symlink("/dev/stderr", "/dev/tty0");
 
     pty_init();
     ptmx_init();

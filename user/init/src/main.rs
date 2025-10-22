@@ -73,14 +73,14 @@ fn main() {
 
     unsafe {
         libc::open(
-            b"/run/udev/data/c13:0\0".as_ptr() as *const _,
+            b"/run/udev/data/+input:event0\0".as_ptr() as *const _,
             libc::O_CREAT,
             0,
         )
     };
     unsafe {
         libc::open(
-            b"/run/udev/data/c13:1\0".as_ptr() as *const _,
+            b"/run/udev/data/+input:event1\0".as_ptr() as *const _,
             libc::O_CREAT,
             0,
         )

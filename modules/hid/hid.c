@@ -4,6 +4,98 @@
 static bool ctrlPressed = false;
 static bool shiftPressed = false;
 
+const uint8_t evdevTable[89] = {
+    0,
+    KEY_ESC,
+    KEY_1,
+    KEY_2,
+    KEY_3,
+    KEY_4,
+    KEY_5,
+    KEY_6,
+    KEY_7,
+    KEY_8,
+    KEY_9,
+    KEY_0,
+    KEY_MINUS,
+    KEY_EQUAL,
+    KEY_BACKSPACE,
+    KEY_TAB,
+    KEY_Q,
+    KEY_W,
+    KEY_E,
+    KEY_R,
+    KEY_T,
+    KEY_Y,
+    KEY_U,
+    KEY_I,
+    KEY_O,
+    KEY_P,
+    KEY_LEFTBRACE,
+    KEY_RIGHTBRACE,
+    KEY_ENTER,
+    KEY_LEFTCTRL,
+    KEY_A,
+    KEY_S,
+    KEY_D,
+    KEY_F,
+    KEY_G,
+    KEY_H,
+    KEY_J,
+    KEY_K,
+    KEY_L,
+    KEY_SEMICOLON,
+    KEY_APOSTROPHE,
+    KEY_GRAVE,
+    KEY_LEFTSHIFT,
+    KEY_BACKSLASH,
+    KEY_Z,
+    KEY_X,
+    KEY_C,
+    KEY_V,
+    KEY_B,
+    KEY_N,
+    KEY_M,
+    KEY_COMMA,
+    KEY_DOT,
+    KEY_SLASH,
+    KEY_RIGHTSHIFT,
+    KEY_KPASTERISK,
+    KEY_LEFTALT,
+    KEY_SPACE,
+    KEY_CAPSLOCK,
+    KEY_F1,
+    KEY_F2,
+    KEY_F3,
+    KEY_F4,
+    KEY_F5,
+    KEY_F6,
+    KEY_F7,
+    KEY_F8,
+    KEY_F9,
+    KEY_F10,
+    KEY_NUMLOCK,
+    KEY_SCROLLLOCK,
+    KEY_KP7,
+    KEY_UP, // KEY_KP8
+    KEY_KP9,
+    KEY_KPMINUS,
+    KEY_LEFT, // KEY_KP4
+    KEY_KP5,
+    KEY_RIGHT, // KEY_KP6
+    KEY_KPPLUS,
+    KEY_KP1,
+    KEY_DOWN, // KEY_KP2
+    KEY_KP3,
+    KEY_INSERT, // KEY_KP0
+    KEY_DELETE, // KEY_KPDOT
+    0,
+    0,
+    0,
+    KEY_F11,
+    KEY_F12,
+};
+
 // Mapping from USB key id to ps2 key sequence.
 static uint16_t key_to_scan_code[] = {
     0x0000, 0x0000, 0x0000, 0x0000, 0x001e, 0x0030, 0x002e, 0x0020, 0x0012,
@@ -31,31 +123,22 @@ void keyboard_callback(hid_event_t *event, void *user_data) {
 
     bool shift = (key->modifiers & (0x02 | 0x20)) != 0;
     if (shift && !shiftPressed) {
-        handle_kb_event(0x2A, 0, 0);
+        handle_kb_event(KEY_LEFTSHIFT, true);
         shiftPressed = true;
     } else if (!shift && shiftPressed) {
-        handle_kb_event(0xAA, 0, 0);
+        handle_kb_event(KEY_LEFTSHIFT, false);
         shiftPressed = false;
     }
 
     if (event->type == HID_EVENT_KEY_PRESS) {
         // New key pressed.
         uint16_t scancode = key_to_scan_code[key->keycode];
-        char k = handle_kb_event(scancode, 0, 0);
-
-        if (get_kb_task()) {
-            if ((k == CHARACTER_ENTER)) {
-                if (get_kb_task()->term.c_lflag & ICANON)
-                    kb_finalise_stream();
-                else
-                    kb_char(get_kb_task(), k);
-            } else {
-                kb_char(get_kb_task(), k);
-            }
-        }
+        if (evdevTable[scancode])
+            handle_kb_event(evdevTable[scancode], true);
     } else if (event->type == HID_EVENT_KEY_RELEASE) {
         uint16_t scancode = key_to_scan_code[key->keycode];
-        char k = handle_kb_event(0x80 | scancode, 0, 0);
+        if (evdevTable[scancode])
+            handle_kb_event(evdevTable[scancode], false);
     }
 }
 

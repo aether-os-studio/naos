@@ -32,7 +32,8 @@
 #include <ext4_blockdev.h>
 #include <ext4_config.h>
 #include <ext4_errno.h>
-#include <lwext4/blockdev/vfs_dev.h>
+#include <lwext4/blockdev/device_dev.h>
+#include <dev/device.h>
 #include <stdbool.h>
 
 #include <libs/klibc.h>
@@ -41,42 +42,40 @@
 #define EXT4_FILEDEV_BSIZE 512
 
 /**@brief   Image file descriptor.*/
-vfs_node_t dev_node;
+uint64_t device_dev_nr;
 
 #define DROP_LINUXCACHE_BUFFERS 0
 
 /**********************BLOCKDEV INTERFACE**************************************/
-static int vfs_dev_open(struct ext4_blockdev *bdev);
-static int vfs_dev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
-                         uint32_t blk_cnt);
-static int vfs_dev_bwrite(struct ext4_blockdev *bdev, const void *buf,
-                          uint64_t blk_id, uint32_t blk_cnt);
-static int vfs_dev_close(struct ext4_blockdev *bdev);
+static int device_dev_open(struct ext4_blockdev *bdev);
+static int device_dev_bread(struct ext4_blockdev *bdev, void *buf,
+                            uint64_t blk_id, uint32_t blk_cnt);
+static int device_dev_bwrite(struct ext4_blockdev *bdev, const void *buf,
+                             uint64_t blk_id, uint32_t blk_cnt);
+static int device_dev_close(struct ext4_blockdev *bdev);
 
 /******************************************************************************/
-EXT4_BLOCKDEV_STATIC_INSTANCE(vfs_dev, EXT4_FILEDEV_BSIZE, 0, vfs_dev_open,
-                              vfs_dev_bread, vfs_dev_bwrite, vfs_dev_close, 0,
-                              0);
+EXT4_BLOCKDEV_STATIC_INSTANCE(device_dev, EXT4_FILEDEV_BSIZE, 0,
+                              device_dev_open, device_dev_bread,
+                              device_dev_bwrite, device_dev_close, 0, 0);
 
 /******************************************************************************/
-static int vfs_dev_open(struct ext4_blockdev *bdev) {
-    vfs_update(dev_node);
-
-    vfs_dev.part_offset = 0;
-    devfs_handle_t devfs_handle = dev_node->handle;
-    partition_t *part = devfs_handle->data;
-    vfs_dev.part_size = (part->ending_lba - part->starting_lba + 1) * 512;
-    vfs_dev.bdif->ph_bcnt = vfs_dev.part_size / vfs_dev.bdif->ph_bsize;
+static int device_dev_open(struct ext4_blockdev *bdev) {
+    device_dev.part_offset = 0;
+    device_dev.part_size =
+        device_ioctl(device_dev_nr, DEV_CMD_SECTOR_COUNT, NULL) *
+        device_ioctl(device_dev_nr, DEV_CMD_SECTOR_SIZE, NULL);
+    device_dev.bdif->ph_bcnt = device_dev.part_size / device_dev.bdif->ph_bsize;
 
     return EOK;
 }
 
 /******************************************************************************/
 
-static int vfs_dev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
-                         uint32_t blk_cnt) {
-    vfs_read(dev_node, buf, blk_id * vfs_dev.bdif->ph_bsize,
-             blk_cnt * vfs_dev.bdif->ph_bsize);
+static int device_dev_bread(struct ext4_blockdev *bdev, void *buf,
+                            uint64_t blk_id, uint32_t blk_cnt) {
+    device_read(device_dev_nr, buf, blk_id * device_dev.bdif->ph_bsize,
+                blk_cnt * device_dev.bdif->ph_bsize, 0);
 
     return EOK;
 }
@@ -84,23 +83,20 @@ static int vfs_dev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
 static void drop_cache(void) {}
 
 /******************************************************************************/
-static int vfs_dev_bwrite(struct ext4_blockdev *bdev, const void *buf,
-                          uint64_t blk_id, uint32_t blk_cnt) {
-    vfs_write(dev_node, buf, blk_id * vfs_dev.bdif->ph_bsize,
-              blk_cnt * vfs_dev.bdif->ph_bsize);
+static int device_dev_bwrite(struct ext4_blockdev *bdev, const void *buf,
+                             uint64_t blk_id, uint32_t blk_cnt) {
+    device_write(device_dev_nr, (void *)buf, blk_id * device_dev.bdif->ph_bsize,
+                 blk_cnt * device_dev.bdif->ph_bsize, 0);
 
     drop_cache();
     return EOK;
 }
 /******************************************************************************/
-static int vfs_dev_close(struct ext4_blockdev *bdev) {
-    vfs_close(dev_node);
-    return EOK;
-}
+static int device_dev_close(struct ext4_blockdev *bdev) { return EOK; }
 
 /******************************************************************************/
-struct ext4_blockdev *vfs_dev_get(void) { return &vfs_dev; }
+struct ext4_blockdev *device_dev_get(void) { return &device_dev; }
 /******************************************************************************/
 
-void vfs_dev_name_set(const char *n) {}
+void device_dev_name_set(const char *n) {}
 /******************************************************************************/

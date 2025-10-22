@@ -703,7 +703,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
     return -ENOSYS;
 }
 
-ssize_t drm_read(void *data, uint64_t offset, void *buf, uint64_t len,
+ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
                  uint64_t flags) {
     drm_device_t *dev = data;
 
@@ -759,7 +759,7 @@ ssize_t drm_poll(void *data, size_t event) {
 void *drm_map(void *data, void *addr, uint64_t offset, uint64_t len) {
     drm_device_t *dev = (drm_device_t *)data;
 
-    map_page_range(get_current_page_dir(false), (uint64_t)addr, offset, len,
+    map_page_range(get_current_page_dir(true), (uint64_t)addr, offset, len,
                    PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
     return addr;
@@ -922,12 +922,13 @@ drm_device_t *drm_regist_pci_dev(void *data, drm_device_op_t *op,
     framebuffer->pitch = width * sizeof(uint32_t);
     framebuffer->depth = 24;
 
-    regist_dev(buf, drm_read, NULL, drm_ioctl, drm_poll, drm_map, drm_dev);
-
     char dev_name[32];
     sprintf(dev_name, "dri/card%d", drm_id);
     vfs_node_t dev_root =
         sysfs_regist_dev('c', 226, drm_id, "", dev_name, "SUBSYSTEM=drm\n");
+
+    device_install(DEV_CHAR, DEV_GPU, drm_dev, dev_name, 0, drm_ioctl, drm_poll,
+                   drm_read, NULL, drm_map);
 
     vfs_node_t dev = sysfs_child_append(dev_root, "device", true);
 

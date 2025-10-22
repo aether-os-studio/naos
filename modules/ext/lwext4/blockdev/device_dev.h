@@ -25,8 +25,8 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-#ifndef VFS_DEV_H_
-#define VFS_DEV_H_
+#ifndef DEVICE_DEV_H_
+#define DEVICE_DEV_H_
 
 #include <ext4_blockdev.h>
 #include <ext4_config.h>
@@ -37,9 +37,9 @@
 #include <stdint.h>
 
 /**@brief   File blockdev get.*/
-struct ext4_blockdev *vfs_dev_get(void);
+struct ext4_blockdev *device_dev_get(void);
 
 /**@brief   Set filename to open.*/
-void vfs_dev_name_set(const char *n);
+void device_dev_name_set(const char *n);
 
-#endif /* VFS_DEV_H_ */
+#endif /* DEVICE_DEV_H_ */

@@ -48,15 +48,11 @@ void init_thread(uint64_t arg) {
 
     fbdev_init_sysfs();
 
-    dev_init_after_sysfs();
-
     arch_input_dev_init();
 
     sysfs_init_umount();
 
     mount_root();
-
-    dev_init_after_mount_root();
 
     system_initialized = true;
 

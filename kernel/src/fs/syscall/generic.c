@@ -17,9 +17,13 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
         return (uint64_t)-ENOENT;
     }
 
+    uint64_t dev_nr = 0;
     vfs_node_t dev = vfs_open((const char *)devname);
+    if (dev) {
+        dev_nr = dev->rdev;
+    }
 
-    if (vfs_mount(dev, dir, (const char *)type)) {
+    if (vfs_mount(dev_nr, dir, (const char *)type)) {
         return -ENOENT;
     }
 
