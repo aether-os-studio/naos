@@ -99,7 +99,7 @@ void handle_interrupt_c(struct pt_regs *regs, uint64_t cause) {
 
         if (can_schedule) {
             arch_task_switch_to(regs, current_task,
-                                task_search(TASK_READY, current_cpu_id));
+                                task_search(current_cpu_id));
         }
 
         break;

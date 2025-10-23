@@ -41,10 +41,10 @@
 #define AT_SYSINFO 32
 #define AT_SYSINFO_EHDR 33
 
-#define INTERPRETER_BASE_ADDR 0x0000000020000000
+#define INTERPRETER_BASE_ADDR 0x0000200000000000
 
-#define USER_MMAP_START 0x0000000040000000
-#define USER_MMAP_END 0x0000000080000000
+#define USER_MMAP_START 0x0000400000000000
+#define USER_MMAP_END 0x0000600000000000
 
 #define USER_BRK_START 0x0000000080000000
 #define USER_BRK_END 0x0000000100000000
@@ -112,7 +112,7 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem);
 
 size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old);
 
-task_t *task_search(task_state_t state, uint32_t cpu_id);
+task_t *task_search(uint32_t cpu_id);
 int task_block(task_t *task, task_state_t state, int64_t timeout_ns);
 void task_unblock(task_t *task, int reason);
 

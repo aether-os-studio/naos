@@ -378,6 +378,8 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
     return (void *)addr;
 }
 
+uint64_t sys_msync(uint64_t addr, uint64_t size, uint64_t flags) { return 0; }
+
 uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
     if (check_user_overflow(addr, size)) {
         return -EFAULT;

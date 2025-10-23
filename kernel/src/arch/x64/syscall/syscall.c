@@ -180,7 +180,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_SELECT] = (syscall_handle_t)sys_select;
     syscall_handlers[SYS_SCHED_YIELD] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_MREMAP] = (syscall_handle_t)sys_mremap;
-    syscall_handlers[SYS_MSYNC] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_MSYNC] = (syscall_handle_t)sys_msync;
     syscall_handlers[SYS_MINCORE] = (syscall_handle_t)sys_mincore;
     syscall_handlers[SYS_MADVISE] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_SHMGET] = (syscall_handle_t)sys_shmget;

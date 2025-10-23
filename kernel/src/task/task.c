@@ -256,8 +256,9 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     return task;
 }
 
-task_t *task_search(task_state_t state, uint32_t cpu_id) {
-    return pick_next_task(schedulers[cpu_id]);
+task_t *task_search(uint32_t cpu_id) {
+    task_t *task = pick_next_task(schedulers[cpu_id]);
+    return task ? task : idle_tasks[cpu_id];
 }
 
 void idle_entry(uint64_t arg) {
@@ -1195,7 +1196,7 @@ uint64_t task_exit(int64_t code) {
 
     can_schedule = true;
 
-    task_t *next = task_search(TASK_READY, current_task->cpu_id);
+    task_t *next = task_search(current_task->cpu_id);
 
     if (next) {
         arch_set_current(next);
