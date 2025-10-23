@@ -261,8 +261,9 @@ typedef struct {
 typedef struct {
     uint32_t drop_flags;
     uint32_t add_flags;
-    uint32_t reserved[13];
+    uint32_t reserved[5];
     uint32_t config_value;
+    uint32_t reserved64[8];
 } __attribute__((packed)) xhci_input_ctrl_ctx_64_t;
 
 // 输入上下文

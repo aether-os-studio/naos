@@ -14,6 +14,7 @@ EXPORT_SYMBOL(usb_add_device);
 EXPORT_SYMBOL(usb_remove_device);
 
 EXPORT_SYMBOL(usb_enumerate_device);
+EXPORT_SYMBOL(usb_get_descriptor);
 
 EXPORT_SYMBOL(usb_control_transfer);
 EXPORT_SYMBOL(usb_bulk_transfer);

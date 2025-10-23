@@ -2,6 +2,14 @@
 #include "xhci-hcd.h"
 #include <libs/aether/irq.h>
 
+static void delay(uint64_t ms) {
+    uint64_t ns = ms * 1000000;
+    uint64_t start = nanoTime();
+    while (nanoTime() - start < ns) {
+        arch_yield();
+    }
+}
+
 spinlock_t transfer_lock = {0};
 
 // 获取端口速度名称
@@ -443,6 +451,13 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
 
     xhci->hcd = hcd;
 
+    // 解析端口协议
+    xhci_parse_protocol_caps(xhci);
+
+    if (xhci_stop(xhci) != 0) {
+        return -1;
+    }
+
     // 重置控制器
     if (xhci_reset(xhci) != 0) {
         return -1;
@@ -551,9 +566,6 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
     }
     memset(xhci->port_info, 0, sizeof(xhci_port_info_t) * xhci->max_ports);
 
-    // 解析端口协议
-    xhci_parse_protocol_caps(xhci);
-
     xhci->root_hub = malloc(sizeof(struct usb_hub));
     memset(xhci->root_hub, 0, sizeof(struct usb_hub));
     xhci_hub_private_t *hub_priv = malloc(sizeof(xhci_hub_private_t));
@@ -644,14 +656,6 @@ static int xhci_hcd_shutdown(usb_hcd_t *hcd) {
     free(xhci);
 
     return 0;
-}
-
-static void delay(uint64_t ms) {
-    uint64_t ns = ms * 1000000;
-    uint64_t start = nanoTime();
-    while (nanoTime() - start < ns) {
-        arch_yield();
-    }
 }
 
 // USB 2.0 端口重置
