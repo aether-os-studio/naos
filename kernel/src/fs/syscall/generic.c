@@ -221,10 +221,6 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len) {
         return (uint64_t)-EISDIR; // 读取目录时返回正确错误码
     }
 
-    if (!buf) {
-        return (uint64_t)-EFAULT;
-    }
-
     ssize_t ret = vfs_read_fd(current_task->fd_info->fds[fd], buf,
                               current_task->fd_info->fds[fd]->offset, len);
 
@@ -250,10 +246,6 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
 
     if (current_task->fd_info->fds[fd]->node->type & file_dir) {
         return (uint64_t)-EISDIR; // 读取目录时返回正确错误码
-    }
-
-    if (!buf) {
-        return (uint64_t)-EFAULT;
     }
 
     ssize_t ret = vfs_write_fd(current_task->fd_info->fds[fd], buf,
@@ -322,21 +314,18 @@ uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count) {
         check_user_overflow((uint64_t)iovec, count * sizeof(struct iovec))) {
         return (uint64_t)-EFAULT;
     }
-    if ((uint64_t)iovec == 0) {
-        return -EINVAL;
-    }
 
     ssize_t total_read = 0;
     for (uint64_t i = 0; i < count; i++) {
-        if (iovec[i].len == 0)
+        if (iovec[i].iov_base == NULL || iovec[i].len == 0)
             continue;
 
-        if (check_user_overflow((uint64_t)iovec[i].iov_base, iovec[i].len) ||
-            check_unmapped((uint64_t)iovec[i].iov_base, iovec[i].len)) {
-            return (uint64_t)-EFAULT;
+        ssize_t ret =
+            vfs_read_fd(current_task->fd_info->fds[fd], iovec[i].iov_base,
+                        current_task->fd_info->fds[fd]->offset, iovec[i].len);
+        if (ret > 0) {
+            current_task->fd_info->fds[fd]->offset += ret;
         }
-
-        ssize_t ret = sys_read(fd, iovec[i].iov_base, iovec[i].len);
         if (ret < 0) {
             return (uint64_t)ret;
         }
@@ -352,21 +341,18 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count) {
         check_user_overflow((uint64_t)iovec, count * sizeof(struct iovec))) {
         return (uint64_t)-EFAULT;
     }
-    if ((uint64_t)iovec == 0) {
-        return -EINVAL;
-    }
 
     ssize_t total_written = 0;
     for (uint64_t i = 0; i < count; i++) {
-        if (iovec[i].len == 0)
+        if (iovec[i].iov_base == NULL || iovec[i].len == 0)
             continue;
 
-        if (check_user_overflow((uint64_t)iovec[i].iov_base, iovec[i].len) ||
-            check_unmapped((uint64_t)iovec[i].iov_base, iovec[i].len)) {
-            return (uint64_t)-EFAULT;
+        ssize_t ret =
+            vfs_write_fd(current_task->fd_info->fds[fd], iovec[i].iov_base,
+                         current_task->fd_info->fds[fd]->offset, iovec[i].len);
+        if (ret > 0) {
+            current_task->fd_info->fds[fd]->offset += ret;
         }
-
-        ssize_t ret = sys_write(fd, iovec[i].iov_base, iovec[i].len);
         if (ret < 0) {
             return (uint64_t)ret;
         }

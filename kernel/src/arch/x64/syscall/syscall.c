@@ -683,8 +683,9 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_regs) {
 
 done:
     if (idx != SYS_BRK && regs->rax == (uint64_t)-ENOSYS) {
-        char buf[32];
-        int len = sprintf(buf, "syscall %d not implemented\n", idx);
-        serial_printk(buf, len);
+        serial_fprintk("syscall %d not implemented\n", idx);
+    }
+    if (regs->rax == (uint64_t)-EFAULT) {
+        serial_fprintk("syscall %d accessed a invalid address\n", idx);
     }
 }

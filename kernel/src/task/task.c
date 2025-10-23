@@ -1075,7 +1075,9 @@ void task_exit_inner(task_t *task, int64_t code) {
     spin_lock(&task_queue_lock);
 
     can_schedule = false;
-    remove_eevdf_entity(task, schedulers[task->cpu_id]);
+    struct sched_entity *entity = (struct sched_entity *)task->sched_info;
+    if (entity->on_rq)
+        remove_eevdf_entity(task, schedulers[task->cpu_id]);
     free(task->sched_info);
     task->sched_info = NULL;
 

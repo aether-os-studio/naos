@@ -453,6 +453,7 @@ static inline bool copy_from_user(void *dst, const void *src, size_t size) {
 }
 static inline bool copy_to_user_str(char *dst, const char *src, size_t limit) {
     if (!translate_address(get_current_page_dir(true), (uint64_t)dst) ||
+        check_user_overflow((uint64_t)dst, strlen(src)) ||
         check_unmapped((uint64_t)dst, strlen(src)))
         return true;
 
@@ -463,8 +464,9 @@ static inline bool copy_to_user_str(char *dst, const char *src, size_t limit) {
 
 static inline bool copy_from_user_str(char *dst, const char *src,
                                       size_t limit) {
-    if (!translate_address(get_current_page_dir(true), (uint64_t)dst) ||
-        check_unmapped((uint64_t)dst, strlen(src)))
+    if (!translate_address(get_current_page_dir(true), (uint64_t)src) ||
+        check_user_overflow((uint64_t)src, strlen(src)) ||
+        check_unmapped((uint64_t)src, strlen(src)))
         return true;
 
     strncpy(dst, src, limit);
