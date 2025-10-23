@@ -21,6 +21,7 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
     blk_devs[blk_devnum].write = write;
 
     char n[32];
+    memset(n, 0, sizeof(n));
     snprintf(n, sizeof(n), "blk%d", blk_devnum);
 
     uint64_t blkdev_nr =
