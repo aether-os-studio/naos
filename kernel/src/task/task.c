@@ -544,6 +544,25 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
     return child->pid;
 }
 
+uint64_t get_node_size(vfs_node_t node) {
+    if (node->type & file_symlink) {
+        char linkpath[256];
+        int ret = vfs_readlink(node, linkpath, sizeof(linkpath));
+        if (ret < 0) {
+            return (uint64_t)-ENOENT;
+        }
+
+        vfs_node_t linknode = vfs_open_at(node->parent, linkpath);
+        if (!linknode) {
+            return (uint64_t)-ENOENT;
+        }
+
+        return get_node_size(linknode);
+    } else {
+        return node->size;
+    }
+}
+
 uint64_t task_execve(const char *path, const char **argv, const char **envp) {
     can_schedule = false;
 
@@ -553,29 +572,9 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
         return (uint64_t)-ENOENT;
     }
 
-    uint64_t size = node->size;
-
-    if (node->type & file_symlink) {
-        char linkpath[128];
-        int ret = vfs_readlink(node, linkpath, sizeof(linkpath));
-        if (ret < 0) {
-            can_schedule = true;
-            return (uint64_t)-ENOENT;
-        }
-
-        vfs_node_t linknode = vfs_open_at(node->parent, linkpath);
-        if (!linknode) {
-            can_schedule = true;
-            return (uint64_t)-ENOENT;
-        }
-
-        size = linknode->size;
-    }
-
-    if (!size) {
-        can_schedule = true;
-        return (uint64_t)-EINVAL;
-    }
+    uint64_t size = get_node_size(node);
+    if ((int64_t)size < 0)
+        return size;
 
     uint64_t buf_len =
         (size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));

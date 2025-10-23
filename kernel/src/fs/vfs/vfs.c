@@ -537,12 +537,6 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
         do_update(current);
 
         if (current->type & file_symlink) {
-            char *s = save_ptr;
-            char *next = pathtok(&s);
-            if (!next) {
-                goto done;
-            }
-
             char target_path[1024];
             int len = vfs_readlink(current, target_path, sizeof(target_path));
             target_path[len] = '\0';
@@ -558,13 +552,19 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
             if (!target)
                 goto err;
 
-            current->type |= target->type;
+            if (target->type & file_dir)
+                current->type |= file_dir;
+            if ((target->type & file_block) || (target->type & file_stream)) {
+                current->type |= target->type;
+                current->dev = target->dev;
+                current->rdev = target->rdev;
+            }
             current->size = target->size;
             current->blksz = target->blksz;
 
             // current->fsid = target->fsid;
             // current->handle = target->handle;
-            current->root = target->root;
+            // current->root = target->root;
             current->mode = target->mode;
 
             if (target->type & file_dir) {

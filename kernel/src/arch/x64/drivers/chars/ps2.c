@@ -361,6 +361,7 @@ bool ps2_keyboard_init(void) {
     uint64_t kbd_dev = device_install(
         DEV_CHAR, DEV_INPUT, kb_input_event, "input/event0", 0, inputdev_ioctl,
         inputdev_poll, inputdev_event_read, inputdev_event_write, NULL);
+    kb_input_event->timesOpened = 1;
 
     sysfs_regist_dev('c', 0, kbd_dev,
                      "/sys/devices/platform/i8042/serio0/input/input0/event0",
@@ -441,6 +442,7 @@ bool ps2_mouse_init(void) {
         device_install(DEV_CHAR, DEV_INPUT, mouse_input_event, "input/event1",
                        0, inputdev_ioctl, inputdev_poll, inputdev_event_read,
                        inputdev_event_write, NULL);
+    mouse_input_event->timesOpened = 1;
 
     sysfs_regist_dev('c', 0, mouse_dev,
                      "/sys/devices/platform/i8042/serio1/input/input1/event1",
