@@ -923,7 +923,13 @@ uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
     }
     arch_disable_interrupt();
     if (timeout) {
-        return 0;
+        while (nvme_process_queue_completions(
+            ns->ctrl, &ns->ctrl->io_queues[current_cpu_id]))
+            ;
+        if (!cb_ctx->completed) {
+            free(cb_ctx);
+            return 0;
+        }
     }
     uint64_t ret = 0;
     if (cb_ctx->success) {
