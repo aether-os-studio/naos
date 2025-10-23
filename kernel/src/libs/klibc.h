@@ -514,3 +514,48 @@ static inline void qsort(void *base, size_t nitems, size_t size,
 static inline int qsort_compare(const void *a, const void *b) {
     return (*(int *)a - *(int *)b);
 }
+
+static inline int isdigit(int c) {
+    return (c >= '0' && c <= '9');
+}
+
+static inline char *strchr(const char *s, int c) {
+    while (*s) {
+        if (*s == (char)c) { return (char *)s; }
+        s++;
+    }
+    return (*s == (char)c) ? (char *)s : NULL;
+}
+
+static inline char *strtok(char *str, const char *delim) {
+    static char *last = NULL;
+    if (str) {
+        last = str;
+    } else if (!last) {
+        return NULL;
+    }
+
+    char *start = last;
+    while (*start && strchr(delim, *start)) {
+        start++;
+    }
+
+    if (*start == '\0') {
+        last = NULL;
+        return NULL;
+    }
+
+    char *end = start;
+    while (*end && !strchr(delim, *end)) {
+        end++;
+    }
+
+    if (*end) {
+        *end = '\0';
+        last = end + 1;
+    } else {
+        last = NULL;
+    }
+
+    return start;
+}
