@@ -35,20 +35,6 @@ void dump_registers(struct pt_regs *regs) {
     spin_unlock(&dump_lock);
 }
 
-uint8_t trap_switch_stack(struct pt_regs *regs) {
-    uint64_t sstatus = csr_read(sstatus);
-    uint64_t sp;
-    if ((sstatus & (1 << 8)))
-        sp = csr_read(sscratch);
-    else
-        sp = current_task->kernel_stack;
-
-    sp -= sizeof(struct pt_regs);
-    memmove((void *)sp, regs, sizeof(struct pt_regs));
-
-    return sp;
-}
-
 // 异常处理函数
 void handle_trap_c(struct pt_regs *regs) {
     uint64_t is_interrupt = csr_read(scause) & (1UL << 63);
@@ -109,12 +95,12 @@ void handle_interrupt_c(struct pt_regs *regs, uint64_t cause) {
     case 5: // timer interrupt
         riscv64_timer_handler(regs);
 
+        sbi_set_timer(get_timer() + TIMER_FREQ / SCHED_HZ);
+
         if (can_schedule) {
             arch_task_switch_to(regs, current_task,
                                 task_search(TASK_READY, current_cpu_id));
         }
-
-        sbi_set_timer(get_timer() + TIMER_FREQ / SCHED_HZ);
 
         break;
 

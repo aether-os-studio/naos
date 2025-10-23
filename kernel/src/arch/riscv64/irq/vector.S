@@ -15,8 +15,21 @@ init_trap_vector:
 
 .align 4
 trap_handler:
+    // 检查sstatus的SPP位判断来源模式
+    csrr t0, sstatus
+    andi t0, t0, 0x100   // 提取SPP位（第8位）
+    bnez t0, kernel_trap  // SPP != 0 表示来自内核态
+    
+user_trap:
+    // 用户态陷阱：切换栈指针
     csrrw sp, sscratch, sp
+    j save_context
 
+kernel_trap:
+    // 内核态陷阱：不切换栈指针，sscratch保持原值
+    // 这里sscratch应该已经指向正确的内核栈或其他预定值
+
+save_context:
     addi sp, sp, -280
     
     sd x1,  0(sp)    // ra
@@ -51,8 +64,9 @@ trap_handler:
     sd x30, 232(sp)  // t5
     sd x31, 240(sp)  // t6
     
+    // 保存原来的栈指针
     csrr t0, sscratch
-    sd t0, 8(sp)     // 保存真正的用户 sp
+    sd t0, 8(sp)     // 保存进入陷阱前的sp
     
     csrr t0, sepc
     sd t0, 248(sp)   // sepc
@@ -68,15 +82,28 @@ trap_handler:
     
     mv a0, sp
     call handle_trap_c
-    
+
 .globl ret_from_trap_handler
 ret_from_trap_handler:
     ld t0, 248(sp)   // sepc
     csrw sepc, t0
 
-    ld t0, 8(sp)     // sp
-    csrw sscratch, t0
+    // 检查sstatus的SPP位决定是否恢复栈切换
+    ld t0, 272(sp)   // sstatus
+    andi t1, t0, 0x100   // 提取SPP位
+    bnez t1, kernel_ret   // 内核态返回时不切换
     
+user_ret:
+    // 用户态返回：恢复栈指针切换
+    ld t0, 8(sp)     // 用户栈指针
+    csrw sscratch, t0
+    j restore_context
+
+kernel_ret:
+    // 内核态返回：不切换sscratch
+    // sscratch保持原有值
+
+restore_context:
     ld x1,  0(sp)    // ra
     // x2 (sp) 最后恢复
     ld x3,  16(sp)   // gp
@@ -118,6 +145,16 @@ ret_from_trap_handler:
 
     addi sp, sp, 280
 
-    csrrw sp, sscratch, sp
+    // 根据来源模式决定是否切换栈指针
+    ld t0, 272-280(sp)   // 重新加载sstatus（因为sp已经改变）
+    andi t1, t0, 0x100   // 提取SPP位
+    bnez t1, kernel_sret   // 内核态返回时不切换
     
+user_sret:
+    // 用户态返回：切换栈指针
+    csrrw sp, sscratch, sp
+    sret
+
+kernel_sret:
+    // 内核态返回：直接sret，不切换栈指针
     sret

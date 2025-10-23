@@ -16,7 +16,7 @@ uint64_t *get_current_page_dir(bool user) {
 }
 
 uint64_t get_arch_page_table_flags(uint64_t flags) {
-    uint64_t result = ARCH_PT_FLAG_VALID;
+    uint64_t result = ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_DIRTY;
 
     if ((flags & PT_FLAG_R) != 0) {
         result |= ARCH_PT_FLAG_READ;

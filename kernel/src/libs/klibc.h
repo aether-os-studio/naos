@@ -317,17 +317,18 @@ static inline void spin_lock(spinlock_t *sl) {
     long tmp;
 
     /* 自旋等待 */
-    while (__sync_lock_test_and_set(&sl->lock, 1)) {
-        while (sl->lock)
-            ;
+    while (sl->lock) {
+        asm volatile("nop");
     }
 
+    sl->lock = 1;
+
     // 1. 保存当前中断状态并禁用中断
-    __asm__ volatile("csrr %0, sstatus\n\t"   // 读取sstatus寄存器到flags
-                     "csrci sstatus, 0x2\n\t" // 清除SIE位，禁用中断
-                     : "=r"(flags)
-                     :
-                     : "memory");
+    asm volatile("csrr %0, sstatus\n\t"   // 读取sstatus寄存器到flags
+                 "csrci sstatus, 0x2\n\t" // 清除SIE位，禁用中断
+                 : "=r"(flags)
+                 :
+                 : "memory");
 
     sl->flags = flags;
 }
@@ -336,15 +337,15 @@ static inline void spin_lock(spinlock_t *sl) {
 static inline void spin_unlock(spinlock_t *sl) {
     uint64_t flags = sl->flags;
 
-    __sync_lock_release(&sl->lock);
+    sl->lock = 0;
 
     // 2. 恢复中断状态（只恢复SIE位）
-    __asm__ volatile("andi %0, %0, 0x2\n\t"  // 只保留flags中的SIE位
-                     "csrc sstatus, 0x2\n\t" // 清除当前sstatus的SIE位
-                     "csrs sstatus, %0\n\t"  // 设置之前保存的SIE位
-                     : "+r"(flags)
-                     :
-                     : "memory");
+    asm volatile("andi %0, %0, 0x2\n\t"  // 只保留flags中的SIE位
+                 "csrc sstatus, 0x2\n\t" // 清除当前sstatus的SIE位
+                 "csrs sstatus, %0\n\t"  // 设置之前保存的SIE位
+                 : "+r"(flags)
+                 :
+                 : "memory");
 }
 
 #elif defined(__loongarch64)
@@ -358,10 +359,10 @@ static inline void spin_lock(spinlock_t *lock) {
     uint32_t tmp;
 
     uint64_t __crmd;
-    __asm__ __volatile__("csrrd %0, 0x1\n\t" : "=r"(__crmd));
+    asm __volatile__("csrrd %0, 0x1\n\t" : "=r"(__crmd));
     lock->crmd = __crmd;
     __crmd &= ~0x4UL;
-    __asm__ __volatile__("csrwr %0, 0x1" : : "r"(__crmd));
+    asm __volatile__("csrwr %0, 0x1" : : "r"(__crmd));
 
     /* 自旋等待 */
     while (__sync_lock_test_and_set(&lock->lock, 1)) {
@@ -372,7 +373,7 @@ static inline void spin_lock(spinlock_t *lock) {
 
 static inline void spin_unlock(spinlock_t *lock) {
     __sync_lock_release(&lock->lock);
-    __asm__ __volatile__("csrwr %0, 0x1" : : "r"(lock->crmd));
+    asm __volatile__("csrwr %0, 0x1" : : "r"(lock->crmd));
 }
 
 #endif

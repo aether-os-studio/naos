@@ -178,7 +178,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
                       (uint64_t)entry, task->kernel_stack, false, arg);
 #if defined(__riscv__)
     task->arch_context->ctx->tp = (uint64_t)task;
-    task->arch_context->ctx->gp = cpuid_to_hartid[current_cpu_id];
+    task->arch_context->ctx->gp = cpuid_to_hartid[task->cpu_id];
 #endif
     task->signal = 0;
     task->saved_signal = 0;

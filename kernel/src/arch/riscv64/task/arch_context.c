@@ -61,7 +61,7 @@ void arch_switch_with_context(arch_context_t *prev, arch_context_t *next,
 
     write_satp(satp);
 
-    sbi_set_timer(get_timer() + TIMER_FREQ / SCHED_HZ);
+    asm volatile("sfence.vma zero, zero\n\t");
 
     asm volatile("mv sp, %0\n\t"
                  "j ret_from_trap_handler\n\t" ::"r"(next->ctx));
@@ -114,6 +114,9 @@ void arch_yield() {
     if (task_initialized) {
         struct sched_entity *curr_se = current_task->sched_info;
         curr_se->is_yield = true;
+        arch_enable_interrupt();
+        sbi_set_timer(get_timer());
+        arch_disable_interrupt();
     }
 }
 

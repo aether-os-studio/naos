@@ -1,15 +1,9 @@
 #include "kb.h"
 #include <task/task.h>
+#include <fs/vfs/dev.h>
 
-task_t *kb_task = NULL;
-
-void kb_char(task_t *task, char ch) {}
-
-bool task_read(task_t *task, char *buff, uint32_t limit, bool change_state) {
-    return true;
-}
-
-void kb_finalise_stream() {}
+dev_input_event_t *kb_input_event = NULL;
+dev_input_event_t *mouse_input_event = NULL;
 
 size_t kb_event_bit(void *data, uint64_t request, void *arg) { return 0; }
 
