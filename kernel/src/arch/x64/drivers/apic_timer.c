@@ -12,5 +12,5 @@ void apic_timer_handler(uint64_t irq_num, void *data, struct pt_regs *regs) {
 void apic_timer_init() {
     irq_regist_irq(APIC_TIMER_INTERRUPT_VECTOR, apic_timer_handler,
                    APIC_TIMER_INTERRUPT_VECTOR - 32, NULL, &apic_controller,
-                   "APIC TIMER");
+                   "APIC TIMER", 0);
 }

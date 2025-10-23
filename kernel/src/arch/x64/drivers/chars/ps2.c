@@ -292,11 +292,11 @@ bool ps2_init(void) {
     irq_regist_irq(
         PS2_KBD_INTERRUPT_VECTOR,
         (void (*)(uint64_t, void *, struct pt_regs *))ps2_interrupt_handler, 1,
-        NULL, &apic_controller, "PS/2 Keyboard");
+        NULL, &apic_controller, "PS/2 Keyboard", 0);
     irq_regist_irq(
         PS2_MOUSE_INTERRUPT_VECTOR,
         (void (*)(uint64_t, void *, struct pt_regs *))ps2_interrupt_handler, 12,
-        NULL, &apic_controller, "PS/2 Mouse");
+        NULL, &apic_controller, "PS/2 Mouse", 0);
 
     return ps2_state.port1_available || ps2_state.port2_available;
 }

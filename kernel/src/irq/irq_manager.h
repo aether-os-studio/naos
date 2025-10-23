@@ -16,13 +16,17 @@ typedef struct irq_action {
     void *data;
     irq_controller_t *irq_controller;
     void (*handler)(uint64_t irq_num, void *data, struct pt_regs *regs);
+    uint64_t flags;
+    bool used;
 } irq_action_t;
+
+#define IRQ_FLAGS_MSIX (1UL << 0)
 
 void irq_regist_irq(uint64_t irq_num,
                     void (*handler)(uint64_t irq_num, void *data,
                                     struct pt_regs *regs),
                     uint64_t arg, void *data, irq_controller_t *controller,
-                    char *name);
+                    char *name, uint64_t flags);
 
 void irq_manager_init();
 

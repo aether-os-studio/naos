@@ -241,7 +241,11 @@ void ioapic_disable(uint8_t vector) {
     ioapic_write(ioapic, index + 1, (uint32_t)(value >> 32));
 }
 
-void send_eoi(uint32_t irq) { lapic_write(0xb0, 0); }
+void send_eoi(uint32_t irq) {
+    // ioapic_t *ioapic = apic_find_ioapic_by_vector(irq);
+    // *(uint32_t *)(ioapic->mmio_base + 0x40) = irq;
+    lapic_write(0xb0, 0);
+}
 
 void lapic_timer_stop() {
     lapic_write(LAPIC_REG_TIMER_INITCNT, 0);
@@ -339,7 +343,7 @@ void ap_entry(struct limine_mp_info *cpu) {
 
     while (1) {
         arch_enable_interrupt();
-        arch_wait_for_interrupt();
+        arch_yield();
     }
 }
 

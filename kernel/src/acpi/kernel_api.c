@@ -261,7 +261,7 @@ uacpi_status uacpi_kernel_install_interrupt_handler(
     arg->irq_handler = irq_handler;
     arg->ctx = ctx;
     irq_regist_irq(irq + 32, uacpi_irq_handler, irq, arg, &apic_controller,
-                   "uacpi_irq_handler");
+                   "uacpi_irq_handler", 0);
     return UACPI_STATUS_OK;
 }
 

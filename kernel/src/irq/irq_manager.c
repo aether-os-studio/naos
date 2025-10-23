@@ -4,7 +4,7 @@
 #include <task/task.h>
 #include <mm/bitmap.h>
 
-irq_action_t actions[ARCH_MAX_IRQ_NUM];
+irq_action_t actions[ARCH_MAX_IRQ_NUM] = {0};
 
 extern bool can_schedule;
 
@@ -33,8 +33,9 @@ void irq_regist_irq(uint64_t irq_num,
                     void (*handler)(uint64_t irq_num, void *data,
                                     struct pt_regs *regs),
                     uint64_t arg, void *data, irq_controller_t *controller,
-                    char *name) {
+                    char *name, uint64_t flags) {
     irq_action_t *action = &actions[irq_num];
+    memset(action, 0, sizeof(irq_action_t));
 
     action->handler = handler;
     action->data = data;
@@ -48,28 +49,22 @@ void irq_regist_irq(uint64_t irq_num,
     if (action->irq_controller && action->irq_controller->unmask) {
         action->irq_controller->unmask(irq_num);
     }
+
+    action->flags = flags;
+
+    action->used = true;
 }
 
-// true: used
-// false: unused
-Bitmap irq_bitmap;
-const int irq_bitmap_size = (ARCH_MAX_IRQ_NUM + 7) / 8;
+uint64_t irq = IRQ_ALLOCATE_NUM_BASE;
+spinlock_t irq_lock = {0};
 
-void irq_manager_init() {
-    bitmap_init(&irq_bitmap, malloc(irq_bitmap_size), irq_bitmap_size);
-    bitmap_set_range(&irq_bitmap, 0, IRQ_ALLOCATE_NUM_BASE, true);
-}
+void irq_manager_init() {}
 
 int irq_allocate_irqnum() {
-    int idx =
-        bitmap_find_range_from(&irq_bitmap, 1, false, IRQ_ALLOCATE_NUM_BASE);
-    if (idx < 0) {
-        printk("Failed to allocate irq");
-    }
-    bitmap_set(&irq_bitmap, idx, true);
+    spin_lock(&irq_lock);
+    uint64_t idx = irq++;
+    spin_unlock(&irq_lock);
     return idx;
 }
 
-void irq_deallocate_irqnum(int irq_num) {
-    bitmap_set(&irq_bitmap, irq_num, false);
-}
+void irq_deallocate_irqnum(int irq_num) {}

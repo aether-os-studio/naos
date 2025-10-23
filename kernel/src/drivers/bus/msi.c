@@ -125,7 +125,8 @@ static inline int __msix_map_table(pci_device_t *pci_dev,
 static inline void __msix_set_entry(struct msi_desc_t *msi_desc) {
     uint64_t table_base =
         msi_desc->pci_dev->msix_mmio_vaddr + msi_desc->pci_dev->msix_offset;
-    uint32_t *entry_ptr = (uint32_t *)(table_base + msi_desc->msi_index * 16);
+    volatile uint32_t *entry_ptr =
+        (volatile uint32_t *)(table_base + msi_desc->msi_index * 16);
 
     // 设置地址字段（低32位 + 高32位），使用小端格式
     entry_ptr[0] = msi_desc->msg.address_lo;
@@ -145,7 +146,8 @@ static inline void __msix_set_entry(struct msi_desc_t *msi_desc) {
 static inline void __msix_clear_entry(pci_device_t *pci_dev,
                                       uint16_t msi_index) {
     uint64_t table_base = pci_dev->msix_mmio_vaddr + pci_dev->msix_offset;
-    uint64_t *entry_ptr = (uint64_t *)(table_base + msi_index * 16);
+    volatile uint64_t *entry_ptr =
+        (volatile uint64_t *)(table_base + msi_index * 16);
 
     // 清除MSI-X表项
     entry_ptr[0] = 0;
@@ -196,22 +198,27 @@ int pci_enable_msi(struct msi_desc_t *msi_desc) {
 
     if (msi_desc->pci.msi_attribute.is_msix) // MSI-X
     {
-        // 读取msix的信息
-        struct pci_msix_cap_t cap = __msi_read_msix_cap_list(msi_desc, cap_ptr);
-        // 映射msix table
-        int ret = __msix_map_table(ptr, &cap);
-        if (ret < 0) {
-            return ret;
+        if (msi_desc->msi_index == 0) {
+            // 读取msix的信息
+            struct pci_msix_cap_t cap =
+                __msi_read_msix_cap_list(msi_desc, cap_ptr);
+            // 映射msix table
+            int ret = __msix_map_table(ptr, &cap);
+            if (ret < 0) {
+                return ret;
+            }
+
+            // 使能msi-x
+            tmp = ptr->op->read(ptr->bus, ptr->slot, ptr->func, ptr->segment,
+                                cap_ptr + 0x2); // 读取cap+0x2处的值
+            tmp &= ~(1U << 14);
+            tmp |= (1U << 15);
+            ptr->op->write(ptr->bus, ptr->slot, ptr->func, ptr->segment,
+                           cap_ptr + 0x2, tmp);
         }
+
         // 设置msix的中断
         __msix_set_entry(msi_desc);
-
-        // 使能msi-x
-        tmp = ptr->op->read(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                            cap_ptr + 0x2); // 读取cap+0x2处的值
-        tmp |= (1U << 15);
-        ptr->op->write(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                       cap_ptr + 0x2, tmp);
     } else {
         tmp = ptr->op->read(ptr->bus, ptr->slot, ptr->func, ptr->segment,
                             cap_ptr); // 读取cap+0x0处的值

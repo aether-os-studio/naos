@@ -11,7 +11,7 @@ void irq_init() {
     gic_v3_init();
     timer_init_percpu(current_cpu_id);
     irq_regist_irq(TIMER_IRQ, timer_handler, 0, NULL, &gic_controller,
-                   "GENERIC TIMER");
+                   "GENERIC TIMER", 0);
 }
 
 extern void do_irq(struct pt_regs *regs, uint64_t irq_num);
