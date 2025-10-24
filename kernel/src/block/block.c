@@ -21,6 +21,13 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
     blk_devs[blk_devnum].read = read;
     blk_devs[blk_devnum].write = write;
 
+    char n[32];
+    snprintf(n, sizeof(n), "blk%d", blk_devnum);
+
+    uint64_t blkdev_nr =
+        device_install(DEV_BLOCK, DEV_DISK, &blk_devs[blk_devnum], n, 0, NULL,
+                       NULL, NULL, NULL, NULL);
+
     for (uint64_t i = blk_devnum; i <= blk_devnum; i++) {
         partition_t *part = &partitions[partition_num];
 
@@ -52,9 +59,10 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             // Register partition to devfs
             char name[32];
             sprintf(name, "part%d", i);
-            partitions[partition_num].dev = device_install(
-                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0,
-                partition_ioctl, NULL, partition_read, partition_write, NULL);
+            partitions[partition_num].dev =
+                device_install(DEV_BLOCK, DEV_PART, &partitions[partition_num],
+                               name, blkdev_nr, partition_ioctl, NULL,
+                               partition_read, partition_write, NULL);
 
             partition_num++;
         }
@@ -77,9 +85,10 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             // Register partition to devfs
             char name[32];
             sprintf(name, "part%d", i);
-            partitions[partition_num].dev = device_install(
-                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0,
-                partition_ioctl, NULL, partition_read, partition_write, NULL);
+            partitions[partition_num].dev =
+                device_install(DEV_BLOCK, DEV_PART, &partitions[partition_num],
+                               name, blkdev_nr, partition_ioctl, NULL,
+                               partition_read, partition_write, NULL);
 
             partition_num++;
 
@@ -101,9 +110,10 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             // Register partition to devfs
             char name[32];
             sprintf(name, "part%d", i);
-            partitions[partition_num].dev = device_install(
-                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0,
-                partition_ioctl, NULL, partition_read, partition_write, NULL);
+            partitions[partition_num].dev =
+                device_install(DEV_BLOCK, DEV_PART, &partitions[partition_num],
+                               name, blkdev_nr, partition_ioctl, NULL,
+                               partition_read, partition_write, NULL);
 
             partition_num++;
             continue;
@@ -122,9 +132,10 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             // Register partition to devfs
             char name[32];
             sprintf(name, "part%d", i);
-            partitions[partition_num].dev = device_install(
-                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0,
-                partition_ioctl, NULL, partition_read, partition_write, NULL);
+            partitions[partition_num].dev =
+                device_install(DEV_BLOCK, DEV_PART, &partitions[partition_num],
+                               name, blkdev_nr, partition_ioctl, NULL,
+                               partition_read, partition_write, NULL);
 
             partition_num++;
         }
@@ -177,6 +188,24 @@ uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len) {
     uint64_t offset_in_block = offset % dev->block_size;
 
     uint8_t *tmp = dev->op_buffer;
+
+    if ((offset_in_block == 0) && ((len % dev->block_size) == 0)) {
+        uint64_t total_copied = 0;
+        uint64_t remaining_sectors = sector_count;
+        while (remaining_sectors > 0) {
+            uint64_t to_copy_sectors =
+                MIN(remaining_sectors, dev->max_op_size / dev->block_size);
+            uint64_t ret = dev->read(
+                dev->ptr, start_sector + total_copied / dev->block_size, tmp,
+                to_copy_sectors);
+            uint64_t to_copy_bytes = to_copy_sectors * dev->block_size;
+            memcpy(buf + total_copied, dev->op_buffer, to_copy_bytes);
+            total_copied += to_copy_bytes;
+            remaining_sectors -= to_copy_sectors;
+        }
+        return total_copied;
+    }
+
     uint64_t total_read = 0;
     uint64_t remaining = len;
     uint8_t *dest = (uint8_t *)buf;
@@ -231,6 +260,24 @@ uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf,
     uint64_t offset_in_block = offset % dev->block_size;
 
     uint8_t *tmp = dev->op_buffer;
+
+    if ((offset_in_block == 0) && ((len % dev->block_size) == 0)) {
+        uint64_t total_copied = 0;
+        uint64_t remaining_sectors = sector_count;
+        while (remaining_sectors > 0) {
+            uint64_t to_copy_sectors =
+                MIN(remaining_sectors, dev->max_op_size / dev->block_size);
+            uint64_t to_copy_bytes = to_copy_sectors * dev->block_size;
+            memcpy(dev->op_buffer, buf + total_copied, to_copy_bytes);
+            uint64_t ret = dev->write(
+                dev->ptr, start_sector + total_copied / dev->block_size, tmp,
+                to_copy_sectors);
+            total_copied += to_copy_bytes;
+            remaining_sectors -= to_copy_sectors;
+        }
+        return total_copied;
+    }
+
     uint64_t total_written = 0;
     uint64_t remaining = len;
     const uint8_t *src = (const uint8_t *)buf;
