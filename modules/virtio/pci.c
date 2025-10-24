@@ -34,8 +34,8 @@ virtio_driver_t *virtio_pci_init(void *data) {
     uint32_t cap_offset = device->capability_point;
     while (1) {
         old_tmp = tmp;
-        tmp = device->op->read(device->bus, device->slot, device->func,
-                               device->segment, cap_offset);
+        tmp = device->op->read32(device->bus, device->slot, device->func,
+                                 device->segment, cap_offset);
         if ((tmp & 0xff) != 0x09) {
             if (((tmp & 0xff00) >> 8)) {
                 cap_offset = (tmp & 0xff00) >> 8;
@@ -45,21 +45,21 @@ virtio_driver_t *virtio_pci_init(void *data) {
         }
 
         uint32_t capability_header =
-            device->op->read(device->bus, device->slot, device->func,
-                             device->segment, cap_offset);
+            device->op->read32(device->bus, device->slot, device->func,
+                               device->segment, cap_offset);
         uint16_t private_header = (capability_header >> 16);
 
         virtio_cap_info_t *cap_info = malloc(sizeof(virtio_cap_info_t));
         memset(cap_info, 0, sizeof(virtio_cap_info_t));
         cap_info->bar =
-            device->op->read(device->bus, device->slot, device->func,
-                             device->segment, cap_offset + 0x04);
+            device->op->read32(device->bus, device->slot, device->func,
+                               device->segment, cap_offset + 0x04);
         cap_info->offset =
-            device->op->read(device->bus, device->slot, device->func,
-                             device->segment, cap_offset + 0x08);
+            device->op->read32(device->bus, device->slot, device->func,
+                               device->segment, cap_offset + 0x08);
         cap_info->length =
-            device->op->read(device->bus, device->slot, device->func,
-                             device->segment, cap_offset + 0x0C);
+            device->op->read32(device->bus, device->slot, device->func,
+                               device->segment, cap_offset + 0x0C);
 
         if ((private_header >> 8) == 1) {
             common_cfg = cap_info;
@@ -68,8 +68,8 @@ virtio_driver_t *virtio_pci_init(void *data) {
         } else if ((private_header >> 8) == 2) {
             notify_cfg = cap_info;
             notify_off_multiplier =
-                device->op->read(device->bus, device->slot, device->func,
-                                 device->segment, cap_offset + 0x10);
+                device->op->read32(device->bus, device->slot, device->func,
+                                   device->segment, cap_offset + 0x10);
         }
 
         cap_offset = (tmp & 0xff00) >> 8;

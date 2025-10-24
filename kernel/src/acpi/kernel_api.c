@@ -44,57 +44,47 @@ void uacpi_kernel_pci_device_close(uacpi_handle) {}
 uacpi_status uacpi_kernel_pci_read8(uacpi_handle device, uacpi_size offset,
                                     uacpi_u8 *value) {
     pci_device_t *pci_device = device;
-    *value = (uacpi_u8)pci_device->op->read(pci_device->bus, pci_device->slot,
-                                            pci_device->func,
-                                            pci_device->segment, offset);
+    *value = (uacpi_u8)pci_device->op->read8(pci_device->bus, pci_device->slot,
+                                             pci_device->func,
+                                             pci_device->segment, offset);
     return UACPI_STATUS_OK;
 }
 uacpi_status uacpi_kernel_pci_read16(uacpi_handle device, uacpi_size offset,
                                      uacpi_u16 *value) {
     pci_device_t *pci_device = device;
-    *value = (uacpi_u16)pci_device->op->read(pci_device->bus, pci_device->slot,
-                                             pci_device->func,
-                                             pci_device->segment, offset);
+    *value = (uacpi_u16)pci_device->op->read16(
+        pci_device->bus, pci_device->slot, pci_device->func,
+        pci_device->segment, offset);
     return UACPI_STATUS_OK;
 }
 uacpi_status uacpi_kernel_pci_read32(uacpi_handle device, uacpi_size offset,
                                      uacpi_u32 *value) {
     pci_device_t *pci_device = device;
-    *value = (uacpi_u32)pci_device->op->read(pci_device->bus, pci_device->slot,
-                                             pci_device->func,
-                                             pci_device->segment, offset);
+    *value = (uacpi_u32)pci_device->op->read32(
+        pci_device->bus, pci_device->slot, pci_device->func,
+        pci_device->segment, offset);
     return UACPI_STATUS_OK;
 }
 
 uacpi_status uacpi_kernel_pci_write8(uacpi_handle device, uacpi_size offset,
                                      uacpi_u8 value) {
     pci_device_t *pci_device = device;
-    uint32_t v = (uacpi_u32)pci_device->op->read(
-        pci_device->bus, pci_device->slot, pci_device->func,
-        pci_device->segment, offset);
-    v &= ~0xFF;
-    v |= value;
-    pci_device->op->write(pci_device->bus, pci_device->slot, pci_device->func,
-                          pci_device->segment, offset, v);
+    pci_device->op->write8(pci_device->bus, pci_device->slot, pci_device->func,
+                           pci_device->segment, offset, value);
     return UACPI_STATUS_OK;
 }
 uacpi_status uacpi_kernel_pci_write16(uacpi_handle device, uacpi_size offset,
                                       uacpi_u16 value) {
     pci_device_t *pci_device = device;
-    uint32_t v = (uacpi_u32)pci_device->op->read(
-        pci_device->bus, pci_device->slot, pci_device->func,
-        pci_device->segment, offset);
-    v &= ~0xFFFF;
-    v |= value;
-    pci_device->op->write(pci_device->bus, pci_device->slot, pci_device->func,
-                          pci_device->segment, offset, v);
+    pci_device->op->write16(pci_device->bus, pci_device->slot, pci_device->func,
+                            pci_device->segment, offset, value);
     return UACPI_STATUS_OK;
 }
 uacpi_status uacpi_kernel_pci_write32(uacpi_handle device, uacpi_size offset,
                                       uacpi_u32 value) {
     pci_device_t *pci_device = device;
-    pci_device->op->write(pci_device->bus, pci_device->slot, pci_device->func,
-                          pci_device->segment, offset, value);
+    pci_device->op->write32(pci_device->bus, pci_device->slot, pci_device->func,
+                            pci_device->segment, offset, value);
     return UACPI_STATUS_OK;
 }
 

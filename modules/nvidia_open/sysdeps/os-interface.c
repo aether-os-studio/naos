@@ -207,7 +207,7 @@ NV_STATUS NV_API_CALL os_pci_read_byte(void *handle, NvU32 offset,
                                        NvU8 *pReturnValue) {
     pci_device_t *pci_dev = handle;
 
-    *pReturnValue = (uint8_t)pci_dev->op->read(
+    *pReturnValue = (uint8_t)pci_dev->op->read8(
         pci_dev->bus, pci_dev->slot, pci_dev->func, pci_dev->segment, offset);
     return NV_OK;
 }
@@ -216,7 +216,7 @@ NV_STATUS NV_API_CALL os_pci_read_word(void *handle, NvU32 offset,
                                        NvU16 *pReturnValue) {
     pci_device_t *pci_dev = handle;
 
-    *pReturnValue = (uint16_t)pci_dev->op->read(
+    *pReturnValue = (uint16_t)pci_dev->op->read16(
         pci_dev->bus, pci_dev->slot, pci_dev->func, pci_dev->segment, offset);
     return NV_OK;
 }
@@ -225,8 +225,8 @@ NV_STATUS NV_API_CALL os_pci_read_dword(void *handle, NvU32 offset,
                                         NvU32 *pReturnValue) {
     pci_device_t *pci_dev = handle;
 
-    *pReturnValue = pci_dev->op->read(pci_dev->bus, pci_dev->slot,
-                                      pci_dev->func, pci_dev->segment, offset);
+    *pReturnValue = pci_dev->op->read32(
+        pci_dev->bus, pci_dev->slot, pci_dev->func, pci_dev->segment, offset);
     return NV_OK;
 }
 
@@ -234,11 +234,8 @@ NV_STATUS NV_API_CALL os_pci_write_byte(void *handle, NvU32 offset,
                                         NvU8 value) {
     pci_device_t *pci_dev = handle;
 
-    uint32_t old = pci_dev->op->read(pci_dev->bus, pci_dev->slot, pci_dev->func,
-                                     pci_dev->segment, offset);
-
-    pci_dev->op->write(pci_dev->bus, pci_dev->slot, pci_dev->func,
-                       pci_dev->segment, offset, value | (old & 0xFFFFFF00));
+    pci_dev->op->write8(pci_dev->bus, pci_dev->slot, pci_dev->func,
+                        pci_dev->segment, offset, value);
     return NV_OK;
 }
 
@@ -249,8 +246,8 @@ NV_STATUS NV_API_CALL os_pci_write_word(void *handle, NvU32 offset,
     uint32_t old = pci_dev->op->read(pci_dev->bus, pci_dev->slot, pci_dev->func,
                                      pci_dev->segment, offset);
 
-    pci_dev->op->write(pci_dev->bus, pci_dev->slot, pci_dev->func,
-                       pci_dev->segment, offset, value | (old & 0xFFFF0000));
+    pci_dev->op->write16(pci_dev->bus, pci_dev->slot, pci_dev->func,
+                         pci_dev->segment, offset, value);
     return NV_OK;
 }
 
@@ -258,8 +255,8 @@ NV_STATUS NV_API_CALL os_pci_write_dword(void *handle, NvU32 offset,
                                          NvU32 value) {
     pci_device_t *pci_dev = handle;
 
-    pci_dev->op->write(pci_dev->bus, pci_dev->slot, pci_dev->func,
-                       pci_dev->segment, offset, value);
+    pci_dev->op->write32(pci_dev->bus, pci_dev->slot, pci_dev->func,
+                         pci_dev->segment, offset, value);
     return NV_OK;
 }
 

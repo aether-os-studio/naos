@@ -4,13 +4,6 @@
 #include <stdbool.h>
 #include <libs/klibc.h>
 
-#if defined(__x86_64__)
-
-#define PCI_COMMAND_PORT 0xCF8
-#define PCI_DATA_PORT 0xCFC
-
-#endif
-
 #define PCI_CONF_VENDOR 0X0   // Vendor ID
 #define PCI_CONF_DEVICE 0X2   // Device ID
 #define PCI_CONF_COMMAND 0x4  // Command
@@ -40,11 +33,21 @@ typedef struct {
 } pci_bar_t;
 
 typedef struct {
-    uint32_t (*read)(uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4,
+    uint8_t (*read8)(uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4,
                      uint32_t arg5);
-    void (*write)(uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4,
-                  uint32_t arg5, uint32_t value);
+    void (*write8)(uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4,
+                   uint32_t arg5, uint8_t value);
+    uint16_t (*read16)(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                       uint32_t arg4, uint32_t arg5);
+    void (*write16)(uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4,
+                    uint32_t arg5, uint16_t value);
+    uint32_t (*read32)(uint32_t arg1, uint32_t arg2, uint32_t arg3,
+                       uint32_t arg4, uint32_t arg5);
+    void (*write32)(uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4,
+                    uint32_t arg5, uint32_t value);
 } pci_device_op_t;
+
+struct pcie_info;
 
 typedef struct {
     const char *name;
@@ -63,6 +66,7 @@ typedef struct {
     pci_bar_t bars[6];
 
     uint32_t capability_point;
+    struct pcie_info *pcie;
 
     uint64_t msix_mmio_vaddr;
     uint64_t msix_mmio_size;
