@@ -18,7 +18,6 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
     blk_devs[blk_devnum].size = size;
     blk_devs[blk_devnum].max_op_size = max_op_size;
     blk_devs[blk_devnum].op_buffer = alloc_frames_bytes(max_op_size);
-    blk_devs[blk_devnum].rw_lock.lock = 0;
     blk_devs[blk_devnum].read = read;
     blk_devs[blk_devnum].write = write;
 
@@ -172,8 +171,6 @@ uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len) {
         return (uint64_t)-1;
     }
 
-    spin_lock(&dev->rw_lock);
-
     uint64_t start_sector = offset / dev->block_size;
     uint64_t end_sector = (offset + len - 1) / dev->block_size;
     uint64_t sector_count = end_sector - start_sector + 1;
@@ -202,7 +199,6 @@ uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len) {
         if (dev->read(dev->ptr, start_sector, tmp, chunk_sectors) !=
             chunk_sectors) {
             printk("Read block device failed!!!\n");
-            spin_unlock(&dev->rw_lock);
             return (uint64_t)-1;
         }
 
@@ -219,8 +215,6 @@ uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len) {
         offset_in_block = 0; // 第一次之后不需要再处理块内偏移
     }
 
-    spin_unlock(&dev->rw_lock);
-
     return total_read;
 }
 
@@ -230,8 +224,6 @@ uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf,
     if (!dev || !dev->ptr || !dev->write) {
         return (uint64_t)-1;
     }
-
-    spin_lock(&dev->rw_lock);
 
     uint64_t start_sector = offset / dev->block_size;
     uint64_t end_sector = (offset + len - 1) / dev->block_size;
@@ -263,7 +255,6 @@ uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf,
             if (dev->read(dev->ptr, start_sector, tmp, chunk_sectors) !=
                 chunk_sectors) {
                 printk("Read block device failed!!!\n");
-                spin_unlock(&dev->rw_lock);
                 return (uint64_t)-1;
             }
         }
@@ -277,7 +268,6 @@ uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf,
         if (dev->write(dev->ptr, start_sector, tmp, chunk_sectors) !=
             chunk_sectors) {
             printk("Write block device failed!!!\n");
-            spin_unlock(&dev->rw_lock);
             return (uint64_t)-1;
         }
 
@@ -288,8 +278,6 @@ uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf,
         start_sector += chunk_sectors;
         offset_in_block = 0; // 第一次之后不需要再处理块内偏移
     }
-
-    spin_unlock(&dev->rw_lock);
 
     return total_written;
 }

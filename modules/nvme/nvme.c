@@ -269,6 +269,8 @@ static int nvme_init_queue(nvme_controller_t *ctrl, nvme_queue_t *queue,
                            uint16_t queue_id, uint16_t queue_depth) {
     queue->ctrl = ctrl;
 
+    queue->lock.lock = 0;
+
     queue->queue_id = queue_id;
     queue->queue_depth = queue_depth;
     queue->sq_head = 0;
@@ -345,6 +347,8 @@ static int nvme_submit_cmd(nvme_queue_t *queue, nvme_sqe_t *cmd) {
         return -1;
     }
 
+    spin_lock_no_irqsave(&queue->lock);
+
     // Copy command to queue
     memcpy(&queue->sq[tail], cmd, sizeof(nvme_sqe_t));
 
@@ -359,6 +363,8 @@ static int nvme_submit_cmd(nvme_queue_t *queue, nvme_sqe_t *cmd) {
 
     // Memory barrier after doorbell
     g_nvme_platform_ops->mb();
+
+    spin_unlock_no_irqstore(&queue->lock);
 
     return 0;
 }
@@ -433,14 +439,16 @@ void nvme_interrupt_handler(uint64_t irq_num, void *data, struct pt_regs *r) {
 
 // Allocate command ID
 static uint16_t nvme_alloc_cid(nvme_controller_t *ctrl, nvme_request_t *req) {
+    spin_lock_no_irqsave(&ctrl->cid_alloc_lock);
     for (int i = 0; i < 65536; i++) {
-        uint16_t cid = ctrl->next_cid++;
-        if (ctrl->requests[cid] == NULL) {
-            ctrl->requests[cid] = req;
-            req->cid = cid;
-            return cid;
+        if (ctrl->requests[i] == NULL) {
+            ctrl->requests[i] = req;
+            req->cid = i;
+            spin_unlock_no_irqstore(&ctrl->cid_alloc_lock);
+            return i;
         }
     }
+    spin_unlock_no_irqstore(&ctrl->cid_alloc_lock);
     return 0xFFFF;
 }
 
@@ -842,6 +850,7 @@ int nvme_write_async(nvme_controller_t *ctrl, uint32_t nsid, uint64_t lba,
     nvme_request_t *req = (nvme_request_t *)g_nvme_platform_ops->dma_alloc(
         sizeof(nvme_request_t), NULL);
     if (!req) {
+        printk("NVMe: Failed allocate request!\n");
         return -1;
     }
 
@@ -850,6 +859,7 @@ int nvme_write_async(nvme_controller_t *ctrl, uint32_t nsid, uint64_t lba,
 
     uint16_t cid = nvme_alloc_cid(ctrl, req);
     if (cid == 0xFFFF) {
+        printk("NVMe: Failed allocate command id!\n");
         g_nvme_platform_ops->dma_free(req, sizeof(nvme_request_t));
         return -1;
     }
@@ -902,18 +912,22 @@ typedef struct nvme_ns {
 uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
     nvme_ns_t *ns = data;
 
+    nvme_queue_t *queue = &ns->ctrl->io_queues[current_cpu_id];
+
     nvme_callback_ctx_t *cb_ctx = malloc(sizeof(nvme_callback_ctx_t));
     cb_ctx->completed = false;
     cb_ctx->success = false;
+    arch_enable_interrupt();
     int r = nvme_read_async(
         ns->ctrl, ns->ns->nsid, lba, size, buffer,
         translate_address(get_current_page_dir(false), (uint64_t)buffer),
         nvme_io_callback, cb_ctx);
-    if (r < 0)
+    if (r < 0) {
+        printk("NVMe: submit command failure!\n");
         return 0;
-    arch_enable_interrupt();
+    }
     bool timeout = true;
-    uint64_t timeout_ns = nanoTime() + 250ULL * 1000000ULL;
+    uint64_t timeout_ns = nanoTime() + 500ULL * 1000000ULL;
     while (nanoTime() < timeout_ns) {
         if (cb_ctx->completed) {
             timeout = false;
@@ -923,10 +937,10 @@ uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
     }
     arch_disable_interrupt();
     if (timeout) {
-        while (nvme_process_queue_completions(
-            ns->ctrl, &ns->ctrl->io_queues[current_cpu_id]))
+        while (nvme_process_queue_completions(ns->ctrl, queue))
             ;
         if (!cb_ctx->completed) {
+            printk("NVMe: timeout!!!\n");
             free(cb_ctx);
             return 0;
         }
@@ -934,6 +948,8 @@ uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
     uint64_t ret = 0;
     if (cb_ctx->success) {
         ret = size;
+    } else {
+        printk("NVMe: Command not successful!\n");
     }
     free(cb_ctx);
     return ret;
@@ -942,18 +958,22 @@ uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
 uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
     nvme_ns_t *ns = data;
 
+    nvme_queue_t *queue = &ns->ctrl->io_queues[current_cpu_id];
+
     nvme_callback_ctx_t *cb_ctx = malloc(sizeof(nvme_callback_ctx_t));
     cb_ctx->completed = false;
     cb_ctx->success = false;
+    arch_enable_interrupt();
     int r = nvme_write_async(
         ns->ctrl, ns->ns->nsid, lba, size, buffer,
         translate_address(get_current_page_dir(false), (uint64_t)buffer),
         nvme_io_callback, cb_ctx);
-    if (r < 0)
+    if (r < 0) {
+        printk("NVMe: submit command failure!\n");
         return 0;
-    arch_enable_interrupt();
+    }
     bool timeout = true;
-    uint64_t timeout_ns = nanoTime() + 250ULL * 1000000ULL;
+    uint64_t timeout_ns = nanoTime() + 500ULL * 1000000ULL;
     while (nanoTime() < timeout_ns) {
         if (cb_ctx->completed) {
             timeout = false;
@@ -963,11 +983,19 @@ uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
     }
     arch_disable_interrupt();
     if (timeout) {
-        return 0;
+        while (nvme_process_queue_completions(ns->ctrl, queue))
+            ;
+        if (!cb_ctx->completed) {
+            printk("NVMe: timeout!!!\n");
+            free(cb_ctx);
+            return 0;
+        }
     }
     uint64_t ret = 0;
     if (cb_ctx->success) {
         ret = size;
+    } else {
+        printk("NVMe: Command not successful!\n");
     }
     free(cb_ctx);
     return ret;
@@ -990,6 +1018,8 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
         return -1;
     }
     memset(ctrl, 0, sizeof(nvme_controller_t));
+
+    ctrl->cid_alloc_lock.lock = 0;
 
     ctrl->pci_dev = device;
     ctrl->bar0 = phys_to_virt((volatile uint8_t *)device->bars[0].address);

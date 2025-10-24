@@ -248,6 +248,17 @@ static inline void spin_lock(spinlock_t *lock) {
     lock->rflags = flags; // 保存原始中断状态
 }
 
+static inline void spin_lock_no_irqsave(spinlock_t *lock) {
+    asm volatile("1:\n\t"
+                 "lock btsq $0, %0\n\t" // 测试并设置
+                 "   jc 1b\n\t"         // 如果已锁定则重试
+                 : "+m"(lock->lock)
+                 :
+                 : "memory", "cc");
+
+    asm volatile("mfence" ::: "memory");
+}
+
 static inline void spin_unlock(spinlock_t *lock) {
     asm volatile("lock btrq $0, %0\n\t" // 清除锁标志
                  : "+m"(lock->lock)
@@ -260,6 +271,15 @@ static inline void spin_unlock(spinlock_t *lock) {
                  :
                  : "r"(flags)
                  : "memory");
+
+    asm volatile("sfence" ::: "memory");
+}
+
+static inline void spin_unlock_no_irqstore(spinlock_t *lock) {
+    asm volatile("lock btrq $0, %0\n\t" // 清除锁标志
+                 : "+m"(lock->lock)
+                 :
+                 : "memory", "cc");
 
     asm volatile("sfence" ::: "memory");
 }
