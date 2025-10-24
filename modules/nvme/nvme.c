@@ -923,7 +923,6 @@ uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
     nvme_callback_ctx_t *cb_ctx = malloc(sizeof(nvme_callback_ctx_t));
     cb_ctx->completed = false;
     cb_ctx->success = false;
-    current_task->state = TASK_UNINTERRUPTABLE;
     arch_enable_interrupt();
     int r = nvme_read_async(
         ns->ctrl, ns->ns->nsid, lba, size, buffer,
@@ -943,7 +942,6 @@ uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
         arch_wait_for_interrupt();
     }
     arch_disable_interrupt();
-    current_task->state = TASK_READY;
     if (timeout) {
         while (nvme_process_queue_completions(ns->ctrl, queue))
             ;
@@ -973,7 +971,6 @@ uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
     nvme_callback_ctx_t *cb_ctx = malloc(sizeof(nvme_callback_ctx_t));
     cb_ctx->completed = false;
     cb_ctx->success = false;
-    current_task->state = TASK_UNINTERRUPTABLE;
     arch_enable_interrupt();
     int r = nvme_write_async(
         ns->ctrl, ns->ns->nsid, lba, size, buffer,
@@ -993,7 +990,6 @@ uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
         arch_wait_for_interrupt();
     }
     arch_disable_interrupt();
-    current_task->state = TASK_READY;
     if (timeout) {
         while (nvme_process_queue_completions(ns->ctrl, queue))
             ;
