@@ -57,8 +57,10 @@ void mount_root() {
 
     retry:
         while (!have_usb_device) {
-            arch_yield();
+            arch_enable_interrupt();
+            arch_wait_for_interrupt();
         }
+        arch_disable_interrupt();
 
         for (uint64_t i = 0; i < partition_num; i++) {
             if (!vfs_mount(partitions[i].dev, rootdir, ROOTFS_TYPE)) {

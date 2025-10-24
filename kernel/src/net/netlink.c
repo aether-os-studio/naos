@@ -123,9 +123,11 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
             nl_sk->buffer_pos == 0) &&
            !noblock) {
         spin_unlock(&nl_sk->lock);
-        arch_yield();
+        arch_enable_interrupt();
+        arch_pause();
         spin_lock(&nl_sk->lock);
     }
+    arch_disable_interrupt();
 
     netlink_deliver_queued_uevents(nl_sk);
 
@@ -377,9 +379,11 @@ ssize_t netlink_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             nl_sk->buffer_pos == 0) &&
            !noblock) {
         spin_unlock(&nl_sk->lock);
-        arch_yield();
+        arch_enable_interrupt();
+        arch_pause();
         spin_lock(&nl_sk->lock);
     }
+    arch_disable_interrupt();
 
     netlink_deliver_queued_uevents(nl_sk);
 

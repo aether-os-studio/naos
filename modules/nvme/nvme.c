@@ -235,7 +235,7 @@ static int nvme_bind_queue_interrupt(nvme_controller_t *ctrl,
                                      nvme_queue_t *queue, uint16_t vector) {
     // 注册中断处理程序
 #if defined(__x86_64__)
-    uint64_t cpu_id = queue->queue_id - 1;
+    uint64_t cpu_id = queue->queue_id ? (queue->queue_id - 1) : 0;
     struct msi_desc_t desc;
     memset(&desc, 0, sizeof(struct msi_desc_t));
     desc.irq_num = vector;
@@ -255,7 +255,6 @@ static int nvme_bind_queue_interrupt(nvme_controller_t *ctrl,
 
     irq_regist_irq(vector, nvme_interrupt_handler, vector, queue,
                    get_apic_controller(), "NVMe", IRQ_FLAGS_MSIX);
-
 #endif
 
     g_nvme_platform_ops->log("NVMe: Queue %u bound to interrupt vector %u\n",
@@ -499,6 +498,7 @@ static int nvme_admin_cmd_sync(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
         // nvme_process_completions(ctrl);
         arch_pause();
     }
+
     arch_disable_interrupt();
 
     if (result) {
@@ -810,8 +810,10 @@ int nvme_read_async(nvme_controller_t *ctrl, uint32_t nsid, uint64_t lba,
         return -1;
     }
 
+    uint64_t io_cpus = MIN(MAX_IO_CPU_NUM, get_cpu_count());
     // 提交命令
-    if (nvme_submit_cmd(&ctrl->io_queues[current_cpu_id], &cmd) != 0) {
+    if (nvme_submit_cmd(&ctrl->io_queues[current_cpu_id % io_cpus], &cmd) !=
+        0) {
         ctrl->requests[cid] = NULL;
         g_nvme_platform_ops->dma_free(req, sizeof(nvme_request_t));
         return -1;
@@ -883,8 +885,10 @@ int nvme_write_async(nvme_controller_t *ctrl, uint32_t nsid, uint64_t lba,
     // 确保数据写入内存
     g_nvme_platform_ops->wmb();
 
+    uint64_t io_cpus = MIN(MAX_IO_CPU_NUM, get_cpu_count());
     // 提交命令
-    if (nvme_submit_cmd(&ctrl->io_queues[current_cpu_id], &cmd) != 0) {
+    if (nvme_submit_cmd(&ctrl->io_queues[current_cpu_id % io_cpus], &cmd) !=
+        0) {
         ctrl->requests[cid] = NULL;
         g_nvme_platform_ops->dma_free(req, sizeof(nvme_request_t));
         return -1;
@@ -912,7 +916,8 @@ typedef struct nvme_ns {
 uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
     nvme_ns_t *ns = data;
 
-    nvme_queue_t *queue = &ns->ctrl->io_queues[current_cpu_id];
+    uint64_t io_cpus = MIN(MAX_IO_CPU_NUM, get_cpu_count());
+    nvme_queue_t *queue = &ns->ctrl->io_queues[current_cpu_id % io_cpus];
 
     nvme_callback_ctx_t *cb_ctx = malloc(sizeof(nvme_callback_ctx_t));
     cb_ctx->completed = false;
@@ -927,7 +932,7 @@ uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
         return 0;
     }
     bool timeout = true;
-    uint64_t timeout_ns = nanoTime() + 500ULL * 1000000ULL;
+    uint64_t timeout_ns = nanoTime() + 100ULL * 1000000ULL;
     while (nanoTime() < timeout_ns) {
         if (cb_ctx->completed) {
             timeout = false;
@@ -958,7 +963,8 @@ uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
 uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
     nvme_ns_t *ns = data;
 
-    nvme_queue_t *queue = &ns->ctrl->io_queues[current_cpu_id];
+    uint64_t io_cpus = MIN(MAX_IO_CPU_NUM, get_cpu_count());
+    nvme_queue_t *queue = &ns->ctrl->io_queues[current_cpu_id % io_cpus];
 
     nvme_callback_ctx_t *cb_ctx = malloc(sizeof(nvme_callback_ctx_t));
     cb_ctx->completed = false;
@@ -973,7 +979,7 @@ uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
         return 0;
     }
     bool timeout = true;
-    uint64_t timeout_ns = nanoTime() + 500ULL * 1000000ULL;
+    uint64_t timeout_ns = nanoTime() + 100ULL * 1000000ULL;
     while (nanoTime() < timeout_ns) {
         if (cb_ctx->completed) {
             timeout = false;
@@ -1087,7 +1093,7 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
     g_nvme_platform_ops->log("NVMe: Model=%.40s, Namespaces=%d\n", id_ctrl.mn,
                              ctrl->num_namespaces);
 
-    ctrl->num_io_queues = MIN(8, get_cpu_count());
+    ctrl->num_io_queues = MIN(MAX_IO_CPU_NUM, get_cpu_count());
 
     uint32_t num_prp_lists = NVME_IO_QUEUE_SIZE * ctrl->num_io_queues;
     if (nvme_init_prp_pool(ctrl, num_prp_lists) != 0) {

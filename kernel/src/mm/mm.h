@@ -44,6 +44,11 @@ void *calloc(size_t num, size_t size);
 void *realloc(void *ptr, size_t size);
 void free(void *ptr);
 
+typedef struct {
+    uintptr_t addr;
+    size_t actual_count; // 实际分配的页数
+} alloc_result_t;
+
 static inline void *alloc_frames_bytes(uint64_t bytes) {
     uint64_t addr = phys_to_virt(
         alloc_frames((bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE));

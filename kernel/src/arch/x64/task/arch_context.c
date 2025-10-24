@@ -78,10 +78,10 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
 }
 
 void arch_context_free(arch_context_t *context) {
-    context->dead = true;
     if (context->fpu_ctx) {
         free_frames_bytes(context->fpu_ctx, DEFAULT_PAGE_SIZE);
     }
+    context->dead = true;
 }
 
 task_t *arch_get_current() { return (task_t *)read_kgsbase(); }

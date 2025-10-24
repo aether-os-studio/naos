@@ -78,9 +78,9 @@ int xhci_wait_for_command(xhci_command_completion_t *completion,
             spin_unlock(&completion->lock);
             return -ETIMEDOUT;
         }
-        arch_yield();
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
     }
-
     arch_disable_interrupt();
 
     completion_status_t status = completion->status;
@@ -148,9 +148,9 @@ int xhci_wait_for_transfer(xhci_transfer_completion_t *completion,
             spin_unlock(&completion->lock);
             return -ETIMEDOUT;
         }
-        arch_yield();
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
     }
-
     arch_disable_interrupt();
 
     completion_status_t status = completion->status;

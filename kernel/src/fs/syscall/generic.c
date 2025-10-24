@@ -580,7 +580,8 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
 
             spin_unlock(&fcntl_lock);
 
-            arch_yield();
+            arch_enable_interrupt();
+            arch_wait_for_interrupt();
 
             spin_lock(&fcntl_lock);
         }

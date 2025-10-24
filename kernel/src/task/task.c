@@ -65,9 +65,10 @@ void task_free_service(uint64_t arg) {
             continue_ptr_count = 0;
 
             if (ptr->should_free) {
+                spin_lock(&task_queue_lock);
                 tasks[ptr->pid] = NULL;
-
                 arch_context_free(ptr->arch_context);
+                spin_unlock(&task_queue_lock);
 
                 vma_manager_exit_cleanup(&ptr->arch_context->mm->task_vma_mgr);
 
@@ -88,6 +89,7 @@ void task_free_service(uint64_t arg) {
             }
         }
 
+        arch_enable_interrupt();
         arch_yield();
     }
 }
@@ -536,8 +538,10 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
         current_task->child_vfork_done = false;
 
         while (!current_task->child_vfork_done) {
-            arch_yield();
+            arch_enable_interrupt();
+            arch_wait_for_interrupt();
         }
+        arch_disable_interrupt();
 
         current_task->child_vfork_done = false;
     }
@@ -1049,8 +1053,11 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns) {
     }
 
     while (current_task->state == TASK_BLOCKING ||
-           current_task->state == TASK_READING_STDIO)
-        arch_yield();
+           current_task->state == TASK_READING_STDIO) {
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+    }
+    arch_disable_interrupt();
 
     return task->status;
 }
@@ -1458,8 +1465,10 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         current_task->child_vfork_done = false;
 
         while (!current_task->child_vfork_done) {
-            arch_yield();
+            arch_enable_interrupt();
+            arch_wait_for_interrupt();
         }
+        arch_disable_interrupt();
 
         current_task->child_vfork_done = false;
     }
@@ -1489,8 +1498,10 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem) {
             return (uint64_t)-EINTR;
         }
 
-        arch_yield();
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
     } while (target > nanoTime());
+    arch_disable_interrupt();
 
     return 0;
 }

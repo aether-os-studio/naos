@@ -53,7 +53,6 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
     int ready = 0;
     size_t target = nanoTime() + timeout;
     do {
-        spin_lock(&epoll->lock);
         epoll_watch_t *browse = epoll->firstEpollWatch;
 
         while (browse && ready < maxevents) {
@@ -70,15 +69,17 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
             browse = browse->next;
         }
 
-        spin_unlock(&epoll->lock);
+        arch_enable_interrupt();
 
         sigexit = signals_pending_quick(current_task);
 
         if (ready > 0 || sigexit)
             break;
 
-        arch_yield();
+        arch_pause();
     } while (timeout != 0 && (timeout == -1 || nanoTime() < target));
+
+    arch_disable_interrupt();
 
     if (!ready && sigexit)
         return (uint64_t)-EINTR;

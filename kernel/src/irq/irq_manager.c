@@ -43,11 +43,11 @@ void irq_regist_irq(uint64_t irq_num,
     action->name = name;
 
     if (action->irq_controller && action->irq_controller->install) {
-        action->irq_controller->install(irq_num, arg);
+        action->irq_controller->install(irq_num, arg, flags);
     }
 
     if (action->irq_controller && action->irq_controller->unmask) {
-        action->irq_controller->unmask(irq_num);
+        action->irq_controller->unmask(irq_num, flags);
     }
 
     action->flags = flags;

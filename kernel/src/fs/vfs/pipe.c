@@ -37,8 +37,10 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             return 0;
         }
 
-        arch_yield();
+        arch_enable_interrupt();
+        arch_pause();
     }
+    arch_disable_interrupt();
 
     // 实际读取量
     uint32_t to_read = MIN(size, pipe->ptr);
@@ -68,8 +70,10 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size) {
             return -EPIPE;
         }
 
-        arch_yield();
+        arch_enable_interrupt();
+        arch_pause();
     }
+    arch_disable_interrupt();
 
     spin_lock(&pipe->lock);
 

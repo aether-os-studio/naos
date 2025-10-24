@@ -438,11 +438,6 @@ void add_free_region(uintptr_t addr, size_t size) {
     }
 }
 
-typedef struct {
-    uintptr_t addr;
-    size_t actual_count; // 实际分配的页数
-} alloc_result_t;
-
 alloc_result_t alloc_frames_ex(size_t count) {
     alloc_result_t result = {0, 0};
     if (count == 0) {

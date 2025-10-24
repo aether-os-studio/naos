@@ -191,47 +191,48 @@ uint64_t sys_munmap(uint64_t addr, uint64_t size) {
         return -EFAULT;
     }
 
-    vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
-    vma_t *vma = mgr->vma_list;
-    vma_t *next;
+    // vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
+    // vma_t *vma = mgr->vma_list;
+    // vma_t *next;
 
-    uint64_t start = addr;
-    uint64_t end = addr + size;
+    // uint64_t start = addr;
+    // uint64_t end = addr + size;
 
-    while (vma) {
-        next = vma->vm_next;
+    // while (vma) {
+    //     next = vma->vm_next;
 
-        // 完全包含在要取消映射的范围内
-        if (vma->vm_start >= start && vma->vm_end <= end) {
-            vma_remove(mgr, vma);
-            vma_free(vma);
-        }
-        // 部分重叠 - 需要分割
-        else if (!(vma->vm_end <= start || vma->vm_start >= end)) {
-            if (vma->vm_start < start && vma->vm_end > end) {
-                // VMA跨越整个取消映射范围 - 分割成两部分
-                vma_split(vma, end);
-                vma_split(vma, start);
-                // 移除中间部分
-                vma_t *middle = vma->vm_next;
-                vma_remove(mgr, middle);
-                vma_free(middle);
-            } else if (vma->vm_start < start) {
-                // 截断VMA的末尾
-                vma->vm_end = start;
-            } else if (vma->vm_end > end) {
-                // 截断VMA的开头
-                vma->vm_start = end;
-                if (vma->vm_type == VMA_TYPE_FILE) {
-                    vma->vm_offset += end - vma->vm_start;
-                }
-            }
-        }
+    //     // 完全包含在要取消映射的范围内
+    //     if (vma->vm_start >= start && vma->vm_end <= end) {
+    //         vma_remove(mgr, vma);
+    //         vma_free(vma);
+    //     }
+    //     // 部分重叠 - 需要分割
+    //     else if (!(vma->vm_end <= start || vma->vm_start >= end)) {
+    //         if (vma->vm_start < start && vma->vm_end > end) {
+    //             // VMA跨越整个取消映射范围 - 分割成两部分
+    //             vma_split(vma, end);
+    //             vma_split(vma, start);
+    //             // 移除中间部分
+    //             vma_t *middle = vma->vm_next;
+    //             vma_remove(mgr, middle);
+    //             vma_free(middle);
+    //         } else if (vma->vm_start < start) {
+    //             // 截断VMA的末尾
+    //             vma->vm_end = start;
+    //         } else if (vma->vm_end > end) {
+    //             // 截断VMA的开头
+    //             vma->vm_start = end;
+    //             if (vma->vm_type == VMA_TYPE_FILE) {
+    //                 vma->vm_offset += end - vma->vm_start;
+    //             }
+    //         }
+    //     }
 
-        vma = next;
-    }
+    //     vma = next;
+    // }
 
-    unmap_page_range(get_current_page_dir(true), start, end - start);
+    // unmap_page_range(get_current_page_dir(true), start, end - start);
+
     return 0;
 }
 

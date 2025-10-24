@@ -226,14 +226,11 @@ static void free_page_table_recursive(page_table_t *table, int level) {
     free_frames((uint64_t)virt_to_phys((uint64_t)table), 1);
 }
 
-spinlock_t clone_lock = {0};
-
 task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
     if ((clone_flags & CLONE_VM) && old) {
         old->ref_count++;
         return old;
     }
-    spin_lock(&clone_lock);
     task_mm_info_t *new_mm = (task_mm_info_t *)malloc(sizeof(task_mm_info_t));
     memset(new_mm, 0, sizeof(task_mm_info_t));
     new_mm->page_table_addr = virt_to_phys((uint64_t)copy_page_table_recursive(
@@ -250,21 +247,16 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
     new_mm->brk_start = old->brk_start;
     new_mm->brk_current = old->brk_current;
     new_mm->brk_end = old->brk_end;
-    spin_unlock(&clone_lock);
     return new_mm;
 }
 
 void free_page_table(task_mm_info_t *directory) {
-    spin_lock(&clone_lock);
-
     if (--directory->ref_count <= 0) {
         free_page_table_recursive(
             (page_table_t *)phys_to_virt(directory->page_table_addr),
             ARCH_MAX_PT_LEVEL);
         free(directory);
     }
-
-    spin_unlock(&clone_lock);
 }
 
 void page_table_init() {

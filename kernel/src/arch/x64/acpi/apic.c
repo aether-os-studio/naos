@@ -167,7 +167,7 @@ void apic_handle_override(
     override->gsi = override_madt->gsi;
 }
 
-uint32_t apic_vector_to_gsi(uint8_t vector) {
+bool apic_vector_to_gsi(uint8_t vector, uint32_t *out) {
     uint32_t irq = vector - 32;
     override_t *override = NULL;
     for (uint64_t i = 0; i < overrides_count; i++) {
@@ -177,13 +177,16 @@ uint32_t apic_vector_to_gsi(uint8_t vector) {
         }
     }
 
-    return (override != NULL) ? override->gsi : irq;
+    bool found = (override != NULL);
+    *out = found ? override->gsi : irq;
+    return found;
 }
 
 ioapic_t *apic_find_ioapic_by_vector(uint8_t vector) {
-    uint32_t gsi = apic_vector_to_gsi(vector);
+    uint32_t gsi;
+    bool found_override = apic_vector_to_gsi(vector, &gsi);
 
-    ioapic_t *ioapic = NULL;
+    ioapic_t *ioapic = found_override ? NULL : &ioapics[0];
     for (uint64_t i = 0; i < ioapic_count; i++) {
         if (gsi >= ioapics[i].gsi_start &&
             gsi < (ioapics[i].gsi_start + ioapics[i].count)) {
@@ -217,8 +220,10 @@ void ioapic_enable(uint8_t vector) {
         printk("Cannot found ioapic for vector %d\n", vector);
         return;
     }
-    uint64_t index =
-        0x10 + ((apic_vector_to_gsi(vector) - ioapic->gsi_start) * 2);
+
+    uint32_t gsi;
+    bool found = apic_vector_to_gsi(vector, &gsi);
+    uint64_t index = 0x10 + (((found ? (gsi - ioapic->gsi_start) : gsi)) * 2);
     uint64_t value = (uint64_t)ioapic_read(ioapic, index + 1) << 32 |
                      (uint64_t)ioapic_read(ioapic, index);
     value &= (~0x10000UL);
@@ -232,8 +237,10 @@ void ioapic_disable(uint8_t vector) {
         printk("Cannot found ioapic for vector %d\n", vector);
         return;
     }
-    uint64_t index =
-        0x10 + ((apic_vector_to_gsi(vector) - ioapic->gsi_start) * 2);
+
+    uint32_t gsi;
+    bool found = apic_vector_to_gsi(vector, &gsi);
+    uint64_t index = 0x10 + (((found ? (gsi - ioapic->gsi_start) : gsi)) * 2);
     uint64_t value = (uint64_t)ioapic_read(ioapic, index + 1) << 32 |
                      (uint64_t)ioapic_read(ioapic, index);
     value |= 0x10000UL;
@@ -343,7 +350,7 @@ void ap_entry(struct limine_mp_info *cpu) {
 
     while (1) {
         arch_enable_interrupt();
-        arch_yield();
+        arch_wait_for_interrupt();
     }
 }
 
@@ -365,20 +372,30 @@ uint32_t get_cpuid_by_lapic_id(uint32_t lapic_id) {
 
 void smp_init() { boot_smp_init((uintptr_t)ap_entry); }
 
-int64_t apic_mask(uint64_t irq) {
+int64_t apic_mask(uint64_t irq, uint64_t flags) {
+    if (flags & IRQ_FLAGS_MSIX)
+        return 0;
+
     ioapic_disable((uint8_t)irq);
 
     return 0;
 }
 
-int64_t apic_unmask(uint64_t irq) {
+int64_t apic_unmask(uint64_t irq, uint64_t flags) {
+    if (flags & IRQ_FLAGS_MSIX)
+        return 0;
+
     ioapic_enable((uint8_t)irq);
 
     return 0;
 }
 
-int64_t apic_install(uint64_t irq, uint64_t arg) {
+int64_t apic_install(uint64_t irq, uint64_t arg, uint64_t flags) {
+    if (flags & IRQ_FLAGS_MSIX)
+        return 0;
+
     ioapic_add(irq, arg);
+
     return 0;
 }
 

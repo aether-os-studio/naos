@@ -6,8 +6,10 @@ static void delay(uint64_t ms) {
     uint64_t ns = ms * 1000000;
     uint64_t start = nanoTime();
     while (nanoTime() - start < ns) {
-        arch_yield();
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
     }
+    arch_disable_interrupt();
 }
 
 spinlock_t transfer_lock = {0};
@@ -2105,8 +2107,10 @@ void xhci_handle_port_status(xhci_hcd_t *xhci, uint8_t port_id) {
         // 等待端口稳定
         uint64_t target_time = 100000000ULL + nanoTime(); // 100ms
         while (nanoTime() < target_time) {
-            arch_yield();
-        }
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+    }
+    arch_disable_interrupt();
 
         xhci->connection[port_id] = true;
 

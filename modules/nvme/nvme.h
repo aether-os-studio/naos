@@ -300,7 +300,7 @@ typedef struct nvme_controller {
     uint32_t page_size;          // Controller page size
 
     nvme_queue_t admin_queue;
-    nvme_queue_t io_queues[8]; // Support up to 16 I/O queue pairs
+    nvme_queue_t io_queues[MAX_IO_CPU_NUM]; // Support up to 16 I/O queue pairs
     uint32_t num_io_queues;
 
     spinlock_t cid_alloc_lock;

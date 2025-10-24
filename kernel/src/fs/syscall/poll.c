@@ -50,6 +50,8 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
         fds[i].revents = 0;
     }
 
+    arch_enable_interrupt();
+
     do {
         // 检查每个文件描述符
         for (int i = 0; i < nfds; i++) {
@@ -73,9 +75,11 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
         if (ready > 0 || sigexit)
             break;
 
-        arch_yield();
+        arch_pause();
     } while (timeout != 0 &&
              ((int)timeout == -1 || (nanoTime() - start_time) < timeout));
+
+    arch_disable_interrupt();
 
     if (!ready && sigexit)
         return (size_t)-EINTR;

@@ -159,8 +159,10 @@ size_t unix_socket_accept_recv_from(uint64_t fd, uint8_t *out, size_t limit,
         } else if (pair->serverBuffPos > 0)
             break;
 
-        arch_yield();
+        arch_enable_interrupt();
+        arch_pause();
     }
+    arch_disable_interrupt();
 
     spin_lock(&pair->lock);
 
@@ -205,8 +207,10 @@ size_t unix_socket_accept_sendto(uint64_t fd, uint8_t *in, size_t limit,
             return -(EWOULDBLOCK);
         }
 
-        arch_yield();
+        arch_enable_interrupt();
+        arch_pause();
     }
+    arch_disable_interrupt();
 
     spin_lock(&pair->lock);
 
@@ -365,8 +369,10 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
         } else
             sock->acceptWouldBlock = false;
 
-        arch_yield();
+        arch_enable_interrupt();
+        arch_pause();
     }
+    arch_disable_interrupt();
 
     unix_socket_pair_t *pair = sock->backlog[0];
     pair->established = true;
@@ -461,8 +467,10 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
     parent->connCurr++;
 
     while (!pair->established) {
-        arch_yield();
+        arch_enable_interrupt();
+        arch_pause();
     }
+    arch_disable_interrupt();
 
     return 0;
 }
@@ -494,8 +502,10 @@ size_t unix_socket_recv_from(uint64_t fd, uint8_t *out, size_t limit, int flags,
         } else if (pair->clientBuffPos > 0)
             break;
 
-        arch_yield();
+        arch_enable_interrupt();
+        arch_pause();
     }
+    arch_disable_interrupt();
 
     spin_lock(&pair->lock);
 
@@ -539,8 +549,10 @@ size_t unix_socket_send_to(uint64_t fd, uint8_t *in, size_t limit, int flags,
         } else if ((pair->serverBuffPos + limit) <= pair->serverBuffSize)
             break;
 
-        arch_yield();
+        arch_enable_interrupt();
+        arch_pause();
     }
+    arch_disable_interrupt();
 
     spin_lock(&pair->lock);
 
@@ -560,8 +572,10 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags) {
     while (
         !noblock && !(current_task->fd_info->fds[fd]->flags & O_NONBLOCK) &&
         !(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN)) {
-        arch_yield();
+        arch_enable_interrupt();
+        arch_pause();
     }
+    arch_disable_interrupt();
 
     if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN)) {
         return (size_t)-EWOULDBLOCK;
@@ -731,8 +745,10 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg, int flags) {
     while (
         !noblock && !(current_task->fd_info->fds[fd]->flags & O_NONBLOCK) &&
         !(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN)) {
-        arch_yield();
+        arch_enable_interrupt();
+        arch_pause();
     }
+    arch_disable_interrupt();
 
     if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN)) {
         return (size_t)-EWOULDBLOCK;
@@ -1640,8 +1656,10 @@ ssize_t socket_read(fd_t *fd, void *buf, size_t offset, size_t limit) {
         } else if (pair->clientBuffPos > 0)
             break;
 
-        arch_yield();
+        arch_enable_interrupt();
+        arch_pause();
     }
+    arch_disable_interrupt();
 
     spin_lock(&pair->lock);
 
@@ -1683,8 +1701,10 @@ ssize_t socket_write(fd_t *fd, const void *buf, size_t offset, size_t limit) {
         if ((pair->serverBuffPos + limit) <= pair->serverBuffSize)
             break;
 
-        arch_yield();
+        arch_enable_interrupt();
+        arch_pause();
     }
+    arch_disable_interrupt();
 
     arch_disable_interrupt();
 
@@ -1718,8 +1738,10 @@ ssize_t socket_accept_read(fd_t *fd, void *buf, size_t offset, size_t limit) {
         } else if (pair->serverBuffPos > 0)
             break;
 
-        arch_yield();
+        arch_enable_interrupt();
+        arch_pause();
     }
+    arch_disable_interrupt();
 
     spin_lock(&pair->lock);
 
@@ -1762,9 +1784,9 @@ ssize_t socket_accept_write(fd_t *fd, const void *buf, size_t offset,
             return -(EWOULDBLOCK);
         }
 
-        arch_yield();
+        arch_enable_interrupt();
+        arch_pause();
     }
-
     arch_disable_interrupt();
 
     spin_lock(&pair->lock);

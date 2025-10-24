@@ -5,9 +5,9 @@
 struct pt_regs;
 
 typedef struct irq_controller {
-    int64_t (*unmask)(uint64_t irq);
-    int64_t (*mask)(uint64_t irq);
-    int64_t (*install)(uint64_t irq, uint64_t arg);
+    int64_t (*unmask)(uint64_t irq, uint64_t flags);
+    int64_t (*mask)(uint64_t irq, uint64_t flags);
+    int64_t (*install)(uint64_t irq, uint64_t arg, uint64_t flags);
     int64_t (*ack)(uint64_t irq);
 } irq_controller_t;
 
@@ -21,6 +21,9 @@ typedef struct irq_action {
 } irq_action_t;
 
 #define IRQ_FLAGS_MSIX (1UL << 0)
+#if defined(__x86_64__)
+#define IRQ_FLAGS_LAPIC IRQ_FLAGS_MSIX
+#endif
 
 void irq_regist_irq(uint64_t irq_num,
                     void (*handler)(uint64_t irq_num, void *data,

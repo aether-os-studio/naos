@@ -60,11 +60,12 @@ void xhci_handle_events(xhci_hcd_t *xhci) {
 }
 
 void xhci_event_handler(xhci_hcd_t *xhci) {
+    arch_enable_interrupt();
     while (xhci->event_thread.running) {
         xhci_handle_events(xhci);
-
         arch_yield();
     }
+    arch_disable_interrupt();
 
     task_exit(0);
 }

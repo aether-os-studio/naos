@@ -164,8 +164,10 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
 
     while ((current_task->saved_signal == 0) &&
            (nanoTime() - start < wait_ns || wait_ns == 0)) {
-        arch_yield();
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
     }
+    arch_disable_interrupt();
 
     current_task->blocked = old;
 
@@ -187,8 +189,10 @@ uint64_t sys_sigsuspend(const sigset_t *mask) {
     current_task->blocked = *mask;
 
     while (!signals_pending_quick(current_task)) {
-        arch_yield();
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
     }
+    arch_disable_interrupt();
 
     current_task->blocked = old;
 
@@ -332,7 +336,7 @@ void task_signal() {
     current_task->arch_context->fs = SELECTOR_USER_DS;
     current_task->arch_context->gs = SELECTOR_USER_DS;
 
-    current_task->arch_context->ctx->rflags = 0x0;
+    current_task->arch_context->ctx->rflags = (1 << 9);
     current_task->arch_context->ctx->rsp = sigrsp;
 #elif defined(__aarch64__)
 #elif defined(__riscv)

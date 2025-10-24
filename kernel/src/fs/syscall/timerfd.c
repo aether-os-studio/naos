@@ -149,11 +149,13 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             } else {
                 // 阻塞模式，等待timerfd被设置
                 while (tfd->timer.expires == 0) {
-                    arch_yield();
+                    arch_enable_interrupt();
+                    arch_pause();
                     if (signals_pending_quick(current_task)) {
                         return -EINTR;
                     }
                 }
+                arch_disable_interrupt();
                 // 定时器被设置后，重新获取当前时间
                 now = get_current_time_ns(tfd->timer.clock_type);
             }
@@ -164,12 +166,14 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             !(fd->flags & O_NONBLOCK)) {
             // 阻塞等待直到超时
             while (now < tfd->timer.expires) {
-                arch_yield();
+                arch_enable_interrupt();
+                arch_pause();
                 now = get_current_time_ns(tfd->timer.clock_type);
                 if (signals_pending_quick(current_task)) {
                     return -EINTR;
                 }
             }
+            arch_disable_interrupt();
         } else if (now < tfd->timer.expires && (fd->flags & O_NONBLOCK)) {
             // 非阻塞模式且未超时
             return -EAGAIN;
