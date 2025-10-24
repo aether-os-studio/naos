@@ -165,7 +165,7 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
     while ((current_task->saved_signal == 0) &&
            (nanoTime() - start < wait_ns || wait_ns == 0)) {
         arch_enable_interrupt();
-        arch_wait_for_interrupt();
+        arch_pause();
     }
     arch_disable_interrupt();
 
@@ -190,7 +190,7 @@ uint64_t sys_sigsuspend(const sigset_t *mask) {
 
     while (!signals_pending_quick(current_task)) {
         arch_enable_interrupt();
-        arch_wait_for_interrupt();
+        arch_pause();
     }
     arch_disable_interrupt();
 

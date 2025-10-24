@@ -79,7 +79,7 @@ int xhci_wait_for_command(xhci_command_completion_t *completion,
             return -ETIMEDOUT;
         }
         arch_enable_interrupt();
-        arch_wait_for_interrupt();
+        arch_pause();
     }
     arch_disable_interrupt();
 
@@ -149,7 +149,7 @@ int xhci_wait_for_transfer(xhci_transfer_completion_t *completion,
             return -ETIMEDOUT;
         }
         arch_enable_interrupt();
-        arch_wait_for_interrupt();
+        arch_pause();
     }
     arch_disable_interrupt();
 

@@ -370,7 +370,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
             sock->acceptWouldBlock = false;
 
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -468,7 +468,7 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
 
     while (!pair->established) {
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 

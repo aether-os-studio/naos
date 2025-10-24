@@ -712,7 +712,7 @@ ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
             return -EWOULDBLOCK;
 
         arch_enable_interrupt();
-        arch_wait_for_interrupt();
+        arch_pause();
     }
     arch_disable_interrupt();
 

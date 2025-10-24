@@ -48,50 +48,25 @@ void send_sigint(int pgid) {
     }
 }
 
-void task_free_service(uint64_t arg) {
-    while (1) {
-        uint64_t continue_ptr_count = 0;
-        for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
-            spin_lock(&task_queue_lock);
-            task_t *ptr = tasks[i];
-            spin_unlock(&task_queue_lock);
+void free_task(task_t *ptr) {
+    spin_lock(&task_queue_lock);
+    tasks[ptr->pid] = NULL;
+    arch_context_free(ptr->arch_context);
+    spin_unlock(&task_queue_lock);
 
-            if (ptr == NULL) {
-                continue_ptr_count++;
-                if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
-                    break;
-                continue;
-            }
-            continue_ptr_count = 0;
+    vma_manager_exit_cleanup(&ptr->arch_context->mm->task_vma_mgr);
 
-            if (ptr->should_free) {
-                spin_lock(&task_queue_lock);
-                tasks[ptr->pid] = NULL;
-                arch_context_free(ptr->arch_context);
-                spin_unlock(&task_queue_lock);
+    if (!ptr->is_kernel)
+        free_page_table(ptr->arch_context->mm);
 
-                vma_manager_exit_cleanup(&ptr->arch_context->mm->task_vma_mgr);
+    free(ptr->arch_context);
 
-                if (!ptr->is_kernel)
-                    free_page_table(ptr->arch_context->mm);
+    free_frames_bytes((void *)(ptr->kernel_stack - STACK_SIZE), STACK_SIZE);
+    free_frames_bytes((void *)(ptr->syscall_stack - STACK_SIZE), STACK_SIZE);
+    free_frames_bytes((void *)(ptr->signal_syscall_stack - STACK_SIZE),
+                      STACK_SIZE);
 
-                free(ptr->arch_context);
-
-                free_frames_bytes((void *)(ptr->kernel_stack - STACK_SIZE),
-                                  STACK_SIZE);
-                free_frames_bytes((void *)(ptr->syscall_stack - STACK_SIZE),
-                                  STACK_SIZE);
-                free_frames_bytes(
-                    (void *)(ptr->signal_syscall_stack - STACK_SIZE),
-                    STACK_SIZE);
-
-                free(ptr);
-            }
-        }
-
-        arch_enable_interrupt();
-        arch_yield();
-    }
+    free(ptr);
 }
 
 bool task_initialized = false;
@@ -296,7 +271,6 @@ void task_init() {
     }
 
     task_create("init", init_thread, 0, NORMAL_PRIORITY);
-    task_create("task_free_service", task_free_service, 0, KTHREAD_PRIORITY);
 
     arch_set_current(idle_tasks[current_cpu_id]);
 
@@ -539,7 +513,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
 
         while (!current_task->child_vfork_done) {
             arch_enable_interrupt();
-            arch_wait_for_interrupt();
+            arch_pause();
         }
         arch_disable_interrupt();
 
@@ -1055,7 +1029,7 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns) {
     while (current_task->state == TASK_BLOCKING ||
            current_task->state == TASK_READING_STDIO) {
         arch_enable_interrupt();
-        arch_wait_for_interrupt();
+        arch_pause();
     }
     arch_disable_interrupt();
 
@@ -1314,6 +1288,25 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
         target->should_free = true;
     }
 
+    uint64_t continue_ptr_count = 0;
+    for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
+        spin_lock(&task_queue_lock);
+        task_t *ptr = tasks[i];
+        spin_unlock(&task_queue_lock);
+
+        if (ptr == NULL) {
+            continue_ptr_count++;
+            if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
+                break;
+            continue;
+        }
+        continue_ptr_count = 0;
+
+        if (ptr->should_free) {
+            free_task(ptr);
+        }
+    }
+
     return ret;
 }
 
@@ -1466,7 +1459,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
         while (!current_task->child_vfork_done) {
             arch_enable_interrupt();
-            arch_wait_for_interrupt();
+            arch_pause();
         }
         arch_disable_interrupt();
 
@@ -1499,7 +1492,7 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem) {
         }
 
         arch_enable_interrupt();
-        arch_wait_for_interrupt();
+        arch_pause();
     } while (target > nanoTime());
     arch_disable_interrupt();
 

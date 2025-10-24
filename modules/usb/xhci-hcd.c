@@ -7,7 +7,7 @@ static void delay(uint64_t ms) {
     uint64_t start = nanoTime();
     while (nanoTime() - start < ns) {
         arch_enable_interrupt();
-        arch_wait_for_interrupt();
+        arch_pause();
     }
     arch_disable_interrupt();
 }
@@ -2108,7 +2108,7 @@ void xhci_handle_port_status(xhci_hcd_t *xhci, uint8_t port_id) {
         uint64_t target_time = 100000000ULL + nanoTime(); // 100ms
         while (nanoTime() < target_time) {
         arch_enable_interrupt();
-        arch_wait_for_interrupt();
+        arch_pause();
     }
     arch_disable_interrupt();
 

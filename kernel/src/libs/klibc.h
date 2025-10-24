@@ -240,10 +240,11 @@ static inline void spin_lock(spinlock_t *lock) {
     long flags;
     asm volatile("pushfq\n\t" // 保存RFLAGS
                  "pop %0\n\t" // 存储到flags变量
-                 "cli\n\t"    // 禁用中断
                  : "=r"(flags)
                  :
                  : "memory");
+
+    asm volatile("cli\n\t");
 
     lock->rflags = flags; // 保存原始中断状态
 }

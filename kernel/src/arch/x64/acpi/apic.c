@@ -59,7 +59,7 @@ uint64_t calibrated_timer_initial = 0;
 
 void lapic_timer_stop();
 
-void local_apic_init(bool is_print) {
+void local_apic_init() {
     x2apic_mode = boot_cpu_support_x2apic();
 
     uint64_t value = rdmsr(0x1b);
@@ -81,30 +81,6 @@ void local_apic_init(bool is_print) {
             break;
     uint64_t lapic_timer = (~(uint32_t)0) - lapic_read(LAPIC_REG_TIMER_CURCNT);
     calibrated_timer_initial = (uint64_t)((uint64_t)(lapic_timer * 1000) / 250);
-    if (is_print) {
-        printk("Calibrated LAPIC timer: %d ticks per second\n",
-               calibrated_timer_initial);
-    }
-    lapic_write(LAPIC_REG_TIMER, lapic_read(LAPIC_REG_TIMER) | (1 << 17));
-    lapic_write(LAPIC_REG_TIMER_INITCNT, calibrated_timer_initial);
-    if (is_print) {
-        printk("Setup local %s\n", x2apic_mode ? "x2APIC" : "xAPIC");
-    }
-}
-
-void local_apic_ap_init() {
-    uint64_t value = rdmsr(0x1b);
-    value |= (1UL << 11);
-    if (x2apic_mode)
-        value |= (1UL << 10);
-    wrmsr(0x1b, value);
-
-    lapic_timer_stop();
-
-    lapic_write(LAPIC_REG_SPURIOUS, 0xff | (1 << 8));
-    lapic_write(LAPIC_REG_TIMER_DIV, 11);
-    lapic_write(LAPIC_REG_TIMER, APIC_TIMER_INTERRUPT_VECTOR);
-
     lapic_write(LAPIC_REG_TIMER, lapic_read(LAPIC_REG_TIMER) | (1 << 17));
     lapic_write(LAPIC_REG_TIMER_INITCNT, calibrated_timer_initial);
 }
@@ -301,7 +277,6 @@ void apic_init() {
         }
 
         disable_pic();
-        local_apic_init(true);
         io_apic_init();
     }
 }
@@ -336,7 +311,7 @@ void ap_entry(struct limine_mp_info *cpu) {
 
     fsgsbase_init();
 
-    local_apic_ap_init();
+    local_apic_init();
 
     syscall_init();
 

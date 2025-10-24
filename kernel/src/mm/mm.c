@@ -549,21 +549,3 @@ void free_frames(uintptr_t addr, size_t count) {
 
     spin_unlock(&frame_op_lock);
 }
-
-// 获取空闲页数统计
-size_t get_free_pages_count() {
-    size_t total = 0;
-    for (int order = 0; order <= MAX_ORDER; order++) {
-        size_t count = 0;
-        free_block_t *current = allocator.free_lists[order];
-        while (current) {
-            if (!is_valid_free_block(current)) {
-                break; // 链表损坏
-            }
-            count++;
-            current = current->next;
-        }
-        total += count * (1 << order);
-    }
-    return total;
-}

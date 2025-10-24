@@ -146,7 +146,7 @@ size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         }
         spin_unlock(&pair->lock);
         arch_enable_interrupt();
-        arch_wait_for_interrupt();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -181,7 +181,7 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
         }
         spin_unlock(&pair->lock);
         arch_enable_interrupt();
-        arch_wait_for_interrupt();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -372,7 +372,7 @@ size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit) {
         }
         spin_unlock(&pair->lock);
         arch_enable_interrupt();
-        arch_wait_for_interrupt();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -434,7 +434,7 @@ size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit) {
         }
         spin_unlock(&pair->lock);
         arch_enable_interrupt();
-        arch_wait_for_interrupt();
+        arch_yield();
     }
     arch_disable_interrupt();
 

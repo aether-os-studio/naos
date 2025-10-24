@@ -216,7 +216,7 @@ void hid_resubmit_agent(uint64_t arg) {
 
         arch_enable_interrupt();
         while (!hid->hid_transfer_done)
-            arch_wait_for_interrupt();
+            arch_pause();
         arch_disable_interrupt();
 
         hid->hid_transfer_done = false;

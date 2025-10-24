@@ -58,7 +58,7 @@ void mount_root() {
     retry:
         while (!have_usb_device) {
             arch_enable_interrupt();
-            arch_wait_for_interrupt();
+            arch_pause();
         }
         arch_disable_interrupt();
 

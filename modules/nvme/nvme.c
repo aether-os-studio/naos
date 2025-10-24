@@ -496,7 +496,7 @@ static int nvme_admin_cmd_sync(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
     // Poll for completion
     while (!sync_ctx.done) {
         // nvme_process_completions(ctrl);
-        arch_pause();
+        arch_wait_for_interrupt();
     }
 
     arch_disable_interrupt();
@@ -811,9 +811,9 @@ int nvme_read_async(nvme_controller_t *ctrl, uint32_t nsid, uint64_t lba,
     }
 
     uint64_t io_cpus = MIN(MAX_IO_CPU_NUM, get_cpu_count());
+    uint64_t queue_cpu_id = current_cpu_id % io_cpus;
     // 提交命令
-    if (nvme_submit_cmd(&ctrl->io_queues[current_cpu_id % io_cpus], &cmd) !=
-        0) {
+    if (nvme_submit_cmd(&ctrl->io_queues[queue_cpu_id], &cmd) != 0) {
         ctrl->requests[cid] = NULL;
         g_nvme_platform_ops->dma_free(req, sizeof(nvme_request_t));
         return -1;
@@ -886,8 +886,9 @@ int nvme_write_async(nvme_controller_t *ctrl, uint32_t nsid, uint64_t lba,
     g_nvme_platform_ops->wmb();
 
     uint64_t io_cpus = MIN(MAX_IO_CPU_NUM, get_cpu_count());
+    uint64_t queue_cpu_id = current_cpu_id % io_cpus;
     // 提交命令
-    if (nvme_submit_cmd(&ctrl->io_queues[current_cpu_id % io_cpus], &cmd) !=
+    if (nvme_submit_cmd(&ctrl->io_queues[queue_cpu_id], &cmd) !=
         0) {
         ctrl->requests[cid] = NULL;
         g_nvme_platform_ops->dma_free(req, sizeof(nvme_request_t));
@@ -917,7 +918,8 @@ uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
     nvme_ns_t *ns = data;
 
     uint64_t io_cpus = MIN(MAX_IO_CPU_NUM, get_cpu_count());
-    nvme_queue_t *queue = &ns->ctrl->io_queues[current_cpu_id % io_cpus];
+    uint64_t queue_cpu_id = current_cpu_id % io_cpus;
+    nvme_queue_t *queue = &ns->ctrl->io_queues[queue_cpu_id];
 
     nvme_callback_ctx_t *cb_ctx = malloc(sizeof(nvme_callback_ctx_t));
     cb_ctx->completed = false;
@@ -964,7 +966,8 @@ uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
     nvme_ns_t *ns = data;
 
     uint64_t io_cpus = MIN(MAX_IO_CPU_NUM, get_cpu_count());
-    nvme_queue_t *queue = &ns->ctrl->io_queues[current_cpu_id % io_cpus];
+    uint64_t queue_cpu_id = current_cpu_id % io_cpus;
+    nvme_queue_t *queue = &ns->ctrl->io_queues[queue_cpu_id];
 
     nvme_callback_ctx_t *cb_ctx = malloc(sizeof(nvme_callback_ctx_t));
     cb_ctx->completed = false;

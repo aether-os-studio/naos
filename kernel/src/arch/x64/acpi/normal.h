@@ -25,6 +25,8 @@ uint32_t lapic_read(uint32_t reg);
 
 uint32_t get_cpuid_by_lapic_id(uint32_t lapic_id);
 
+void local_apic_init();
+
 void ioapic_enable(uint8_t vector);
 void ioapic_disable(uint8_t vector);
 void ioapic_add(uint8_t vector, uint32_t irq);

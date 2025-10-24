@@ -90,7 +90,7 @@ void *vmware_fifo_reserve(vmware_gpu_device_t *device, size_t size) {
             vmware_write_register(device, register_index_sync, 1);
             while (vmware_read_register(device, register_index_busy)) {
                 arch_enable_interrupt();
-                arch_wait_for_interrupt();
+                arch_pause();
             }
             arch_disable_interrupt();
             return vmware_fifo_reserve(device, size);
@@ -146,7 +146,7 @@ int vmware_wait_fence(vmware_gpu_device_t *device, uint32_t sequence) {
         // Wait for interrupt
         while (!(device->pending_irqs & irq_mask_fence)) {
             arch_enable_interrupt();
-            arch_wait_for_interrupt();
+            arch_pause();
         }
         arch_disable_interrupt();
         device->pending_irqs &= ~irq_mask_fence;
@@ -154,7 +154,7 @@ int vmware_wait_fence(vmware_gpu_device_t *device, uint32_t sequence) {
         // Polling fallback
         while (vmware_fifo_read(device, fifo_index_fence) < sequence) {
             arch_enable_interrupt();
-            arch_wait_for_interrupt();
+            arch_pause();
         }
         arch_disable_interrupt();
     }
