@@ -120,9 +120,7 @@ uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr) {
 
     if ((pte & ARCH_PT_FLAG_VALID) && (pte & ARCH_ADDR_MASK) != 0) {
         uint64_t paddr = pte & ARCH_ADDR_MASK;
-        // if (bitmap_get(&frame_allocator.bitmap, paddr / DEFAULT_PAGE_SIZE) !=
-        // true)
-        //     free_frames(paddr, 1);
+        // free_frames(paddr, 1);
         table_ptrs[ARCH_MAX_PT_LEVEL - 1][index] = 0;
         arch_flush_tlb(vaddr);
 

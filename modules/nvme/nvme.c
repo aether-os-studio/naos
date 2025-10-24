@@ -888,8 +888,7 @@ int nvme_write_async(nvme_controller_t *ctrl, uint32_t nsid, uint64_t lba,
     uint64_t io_cpus = MIN(MAX_IO_CPU_NUM, get_cpu_count());
     uint64_t queue_cpu_id = current_cpu_id % io_cpus;
     // 提交命令
-    if (nvme_submit_cmd(&ctrl->io_queues[queue_cpu_id], &cmd) !=
-        0) {
+    if (nvme_submit_cmd(&ctrl->io_queues[queue_cpu_id], &cmd) != 0) {
         ctrl->requests[cid] = NULL;
         g_nvme_platform_ops->dma_free(req, sizeof(nvme_request_t));
         return -1;
@@ -924,6 +923,7 @@ uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
     nvme_callback_ctx_t *cb_ctx = malloc(sizeof(nvme_callback_ctx_t));
     cb_ctx->completed = false;
     cb_ctx->success = false;
+    current_task->state = TASK_UNINTERRUPTABLE;
     arch_enable_interrupt();
     int r = nvme_read_async(
         ns->ctrl, ns->ns->nsid, lba, size, buffer,
@@ -943,6 +943,7 @@ uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
         arch_wait_for_interrupt();
     }
     arch_disable_interrupt();
+    current_task->state = TASK_READY;
     if (timeout) {
         while (nvme_process_queue_completions(ns->ctrl, queue))
             ;
@@ -972,6 +973,7 @@ uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
     nvme_callback_ctx_t *cb_ctx = malloc(sizeof(nvme_callback_ctx_t));
     cb_ctx->completed = false;
     cb_ctx->success = false;
+    current_task->state = TASK_UNINTERRUPTABLE;
     arch_enable_interrupt();
     int r = nvme_write_async(
         ns->ctrl, ns->ns->nsid, lba, size, buffer,
@@ -991,6 +993,7 @@ uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
         arch_wait_for_interrupt();
     }
     arch_disable_interrupt();
+    current_task->state = TASK_READY;
     if (timeout) {
         while (nvme_process_queue_completions(ns->ctrl, queue))
             ;
