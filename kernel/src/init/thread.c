@@ -54,6 +54,8 @@ void init_thread(uint64_t arg) {
 
     mount_root();
 
+    pci_init_after_mount_root();
+
     system_initialized = true;
 
     printk("System initialized, ready to go to userland.\n");

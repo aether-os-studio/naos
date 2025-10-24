@@ -9,7 +9,7 @@ const struct NvKmsKapiFunctionsTable *nvKms;
 
 int nvidia_get_display_info(drm_device_t *drm_dev, uint32_t *width,
                             uint32_t *height, uint32_t *bpp) {
-    struct limine_framebuffer *fb = get_current_fb();
+    boot_framebuffer_t *fb = get_current_fb();
     *width = fb->width;
     *height = fb->height;
     *bpp = fb->bpp;
@@ -21,7 +21,7 @@ int nvidia_get_fb(drm_device_t *drm_dev, uint32_t *width, uint32_t *height,
                   uint32_t *bpp, uint64_t *addr) {
     nvidia_device_t *nv_dev = (nvidia_device_t *)drm_dev->data;
 
-    struct limine_framebuffer *fb = get_current_fb();
+    boot_framebuffer_t *fb = get_current_fb();
     *width = fb->width;
     *height = fb->height;
     *bpp = fb->bpp;
@@ -286,7 +286,7 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
     }
 
     for (size_t i = 0; i < nDisplays; i++) {
-        struct limine_framebuffer *fb = get_current_fb();
+        boot_framebuffer_t *fb = get_current_fb();
 
         // Create connector
         nv_dev->connectors[i] = drm_connector_alloc(
@@ -411,7 +411,7 @@ pci_driver_t nvidia_pci_driver = {
     .probe = nvidia_probe,
     .remove = nvidia_remove,
     .shutdown = nvidia_shutdown,
-    .flags = PCI_DRIVER_FLAGS_NEED_SYSFS,
+    .flags = PCI_DRIVER_FLAGS_NEED_ROOTFS,
 };
 
 __attribute__((visibility("default"))) int dlmain() {

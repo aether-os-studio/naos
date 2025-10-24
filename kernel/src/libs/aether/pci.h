@@ -7,6 +7,7 @@
 #endif
 
 #define PCI_DRIVER_FLAGS_NEED_SYSFS (1 << 0)
+#define PCI_DRIVER_FLAGS_NEED_ROOTFS (1 << 1)
 
 typedef struct pci_driver {
     const char *name;

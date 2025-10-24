@@ -243,9 +243,6 @@ NV_STATUS NV_API_CALL os_pci_write_word(void *handle, NvU32 offset,
                                         NvU16 value) {
     pci_device_t *pci_dev = handle;
 
-    uint32_t old = pci_dev->op->read(pci_dev->bus, pci_dev->slot, pci_dev->func,
-                                     pci_dev->segment, offset);
-
     pci_dev->op->write16(pci_dev->bus, pci_dev->slot, pci_dev->func,
                          pci_dev->segment, offset, value);
     return NV_OK;
