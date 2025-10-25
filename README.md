@@ -1,4 +1,4 @@
-# The Neo Aether Operating system
+# The Neo Aether Operating System
 
 ![Screenshot](./images/aether-xeyes-xclock.png?raw=true)
 

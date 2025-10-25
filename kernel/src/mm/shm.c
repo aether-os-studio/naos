@@ -61,6 +61,7 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
         if (!shm->addr) {
             return (void *)-ENOMEM;
         }
+        memset(shm->addr, 0, shm->size);
     }
 
     vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
