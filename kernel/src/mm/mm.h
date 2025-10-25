@@ -2,6 +2,7 @@
 
 #include <libs/klibc.h>
 #include <mm/hhdm.h>
+#include <mm/buddy.h>
 #include <mm/page_table.h>
 #include <arch/arch.h>
 #include <mm/vma.h>

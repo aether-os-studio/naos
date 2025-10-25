@@ -513,7 +513,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
 
         while (!current_task->child_vfork_done) {
             arch_enable_interrupt();
-            arch_pause();
+            arch_yield();
         }
         arch_disable_interrupt();
 
@@ -543,8 +543,12 @@ uint64_t get_node_size(vfs_node_t node) {
     }
 }
 
-uint64_t task_execve(const char *path, const char **argv, const char **envp) {
+uint64_t task_execve(const char *path_user, const char **argv,
+                     const char **envp) {
     can_schedule = false;
+
+    char path[1024];
+    strncpy(path, path_user, sizeof(path));
 
     vfs_node_t node = vfs_open(path);
     if (!node) {
@@ -666,7 +670,9 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
     }
 
     if (!current_task->is_vfork) {
-        vma_manager_exit_cleanup(&current_task->arch_context->mm->task_vma_mgr);
+        if (current_task->arch_context->mm->ref_count <= 1)
+            vma_manager_exit_cleanup(
+                &current_task->arch_context->mm->task_vma_mgr);
     }
 
     if (current_task->is_vfork ||
@@ -864,6 +870,9 @@ uint64_t task_execve(const char *path, const char **argv, const char **envp) {
 
     node->refcount++;
     current_task->exec_node = node;
+
+    unmap_page_range(get_current_page_dir(true), USER_STACK_START,
+                     USER_STACK_END - USER_STACK_START);
 
     map_page_range(get_current_page_dir(true), USER_STACK_START, 0,
                    USER_STACK_END - USER_STACK_START,
@@ -1460,7 +1469,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
         while (!current_task->child_vfork_done) {
             arch_enable_interrupt();
-            arch_pause();
+            arch_yield();
         }
         arch_disable_interrupt();
 
