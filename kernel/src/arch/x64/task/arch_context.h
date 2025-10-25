@@ -77,6 +77,7 @@ typedef struct arch_signal_frame {
     uint64_t oldmask;
     uint64_t cr2;
     struct fpstate *fpstate; /* zero when no FPU context */
+    uint64_t reserved[8];
 } __attribute__((packed)) arch_signal_frame_t;
 
 void arch_context_init(arch_context_t *context, uint64_t page_table_dir,

@@ -456,14 +456,6 @@ void proc_init() {
     procfs_self->type = file_symlink;
     procfs_self->mode = 0644;
     procfs_self->fsid = procfs_self_id;
-
-    // vfs_node_t self_exe = vfs_node_alloc(procfs_self, "exe");
-    // self_exe->type = file_none;
-    // self_exe->mode = 0700;
-    // proc_handle_t *self_exe_handle = malloc(sizeof(proc_handle_t));
-    // self_exe->handle = self_exe_handle;
-    // self_exe_handle->task = NULL;
-    // sprintf(self_exe_handle->name, "exe");
 }
 
 void procfs_on_new_task(task_t *task) {
@@ -507,6 +499,14 @@ void procfs_on_new_task(task_t *task) {
     self_stat->handle = self_stat_handle;
     self_stat_handle->task = task;
     sprintf(self_stat_handle->name, "stat");
+
+    vfs_node_t self_exe = vfs_node_alloc(node, "exe");
+    self_exe->type = file_symlink;
+    self_exe->mode = 0700;
+    proc_handle_t *self_exe_handle = malloc(sizeof(proc_handle_t));
+    self_exe->handle = self_exe_handle;
+    self_exe_handle->task = NULL;
+    sprintf(self_exe_handle->name, "exe");
 
     node->refcount++;
     task->procfs_node = node;

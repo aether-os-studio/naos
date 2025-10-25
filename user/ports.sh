@@ -43,9 +43,6 @@ sudo ln -sf /usr/share/zoneinfo/Asia/Shanghai $SYSROOT/etc/localtime
 sudo rm -rf $SYSROOT/etc/conf.d/*
 sudo rm -rf $SYSROOT/etc/init.d/*
 
-sudo rm -rf $SYSROOT/bin/sh
-sudo ln -sf bash $SYSROOT/bin/sh
-
 sudo cp -r $SCRIPTPATH/base/* $SYSROOT/
 
 sudo mkdir -p $SYSROOT/root/.cache/fontconfig

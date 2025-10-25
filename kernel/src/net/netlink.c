@@ -94,12 +94,14 @@ int netlink_bind(uint64_t fd, const struct sockaddr_un *addr,
 size_t netlink_getsockopt(uint64_t fd, int level, int optname,
                           const void *optval, socklen_t *optlen) {
     // TODO: Implement netlink socket options
+    printk("Netlink getsockopt not implemented!!!\n");
     return 0;
 }
 
 size_t netlink_setsockopt(uint64_t fd, int level, int optname,
                           const void *optval, socklen_t optlen) {
     // TODO: Implement netlink socket options
+    printk("Netlink setsockopt not implemented!!!\n");
     return 0;
 }
 
@@ -128,6 +130,8 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
         spin_lock(&nl_sk->lock);
     }
     arch_disable_interrupt();
+
+    spin_unlock(&nl_sk->lock);
 
     netlink_deliver_queued_uevents(nl_sk);
 
@@ -164,6 +168,12 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
         cred->pid = 0;
         cred->gid = 1;
         cred->uid = 0;
+    }
+
+    if (msg->msg_name) {
+        struct sockaddr_nl *nl_addr = (struct sockaddr_nl *)msg->msg_name;
+        nl_addr->nl_pid = 0;
+        nl_addr->nl_groups = 1;
     }
 
     spin_unlock(&nl_sk->lock);

@@ -123,6 +123,8 @@ uint64_t sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction) {
 void sys_sigreturn(struct pt_regs *regs) {
     arch_disable_interrupt();
 
+    current_task->state = TASK_RUNNING;
+
 #if defined(__x86_64__)
     struct pt_regs *context =
         (struct pt_regs *)(current_task->kernel_stack - 8) - 1;
@@ -313,6 +315,8 @@ void task_signal() {
         return;
     }
 
+    current_task->state = TASK_UNINTERRUPTABLE;
+
 #if defined(__x86_64__)
     struct pt_regs *f = (struct pt_regs *)(current_task->syscall_stack - 8) - 1;
 
@@ -320,6 +324,44 @@ void task_signal() {
            sizeof(struct pt_regs));
 
     uint64_t sigrsp = f->rsp;
+
+    sigrsp -= 128;
+
+    sigrsp -= DEFAULT_PAGE_SIZE;
+    sigrsp = (sigrsp / DEFAULT_PAGE_SIZE) * DEFAULT_PAGE_SIZE;
+
+    sigrsp -= sizeof(struct fpstate);
+    struct fpstate *fp = (struct fpstate *)sigrsp;
+    memcpy(fp, current_task->arch_context->fpu_ctx, sizeof(struct fpstate));
+
+    sigrsp -= sizeof(arch_signal_frame_t);
+    arch_signal_frame_t *sframe = (arch_signal_frame_t *)sigrsp;
+
+    sframe->r8 = f->r8;
+    sframe->r9 = f->r9;
+    sframe->r10 = f->r10;
+    sframe->r11 = f->r11;
+    sframe->r12 = f->r12;
+    sframe->r13 = f->r13;
+    sframe->r14 = f->r14;
+    sframe->r15 = f->r15;
+    sframe->rdi = f->rdi;
+    sframe->rsi = f->rsi;
+    sframe->rbp = f->rbp;
+    sframe->rbx = f->rbx;
+    sframe->rdx = f->rdx;
+    sframe->rax = f->rax;
+    sframe->rcx = f->rcx;
+    sframe->rsp = f->rsp;
+    sframe->rip = f->rip;
+    sframe->eflags = f->rflags;
+    sframe->cs = f->cs;
+    sframe->gs = current_task->arch_context->gs;
+    sframe->fs = current_task->arch_context->fs;
+    sframe->ss = f->ss;
+    sframe->oldmask = current_task->blocked;
+    sframe->fpstate = fp;
+    sframe->reserved[0] = (uint64_t)sig;
 
     sigrsp -= sizeof(void *);
     *((void **)sigrsp) = (void *)ptr->sa_restorer;
