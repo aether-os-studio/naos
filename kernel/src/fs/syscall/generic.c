@@ -1118,11 +1118,7 @@ uint64_t sys_fchmod(int fd, uint16_t mode) {
     if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
 
-    vfs_node_t node = current_task->fd_info->fds[fd]->node;
-
-    char *fullpath = vfs_get_fullpath(node);
-    int ret = vfs_chmod(fullpath, mode);
-    free(fullpath);
+    int ret = vfs_fchmod(current_task->fd_info->fds[fd], mode);
     return ret;
 }
 

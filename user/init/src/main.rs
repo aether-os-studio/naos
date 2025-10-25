@@ -70,17 +70,24 @@ fn main() {
     } else {
         assert_ne!(seatd, -1);
     }
-
+    
     unsafe {
         libc::open(
-            b"/run/udev/data/+input:event0\0".as_ptr() as *const _,
+            b"/run/udev/data/c226:0\0".as_ptr() as *const _,
             libc::O_CREAT,
             0,
         )
     };
     unsafe {
         libc::open(
-            b"/run/udev/data/+input:event1\0".as_ptr() as *const _,
+            b"/run/udev/data/c13:0\0".as_ptr() as *const _,
+            libc::O_CREAT,
+            0,
+        )
+    };
+    unsafe {
+        libc::open(
+            b"/run/udev/data/c13:1\0".as_ptr() as *const _,
             libc::O_CREAT,
             0,
         )
@@ -118,6 +125,7 @@ fn main() {
             std::env::set_var("MESA_SHADER_CACHE_DISABLE", "1");
             std::env::set_var("SDL_VIDEODRIVER", "x11");
             std::env::set_var("SDL_AUDIODRIVER", "dummy");
+            std::env::set_var("WLR_RENDERER_ALLOW_SOFTWARE", "1");
             // std::env::set_var("WESTON_LIBINPUT_LOG_PRIORITY", "debug");
         }
 

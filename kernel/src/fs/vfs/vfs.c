@@ -477,6 +477,11 @@ int vfs_chmod(const char *path, uint16_t mode) {
     return ret;
 }
 
+int vfs_fchmod(fd_t *fd, uint16_t mode) {
+    int ret = callbackof(fd->node, chmod)(fd->node, mode);
+    return ret;
+}
+
 int vfs_chown(const char *path, uint64_t uid, uint64_t gid) { return 0; }
 
 int vfs_regist(fs_t *fs) {
@@ -545,8 +550,6 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
 
             if (!target_node)
                 goto done;
-
-            current->type = file_symlink | file_proxy;
 
             vfs_node_t target = target_node;
             if (!target)
@@ -622,10 +625,6 @@ int vfs_close(vfs_node_t node) {
         return 0;
     if (node == rootdir)
         return 0;
-    if (node->type & file_proxy) {
-        node->refcount--;
-        return 0;
-    }
     if (node->type & file_dir)
         return 0;
     if (node->refcount > 0)

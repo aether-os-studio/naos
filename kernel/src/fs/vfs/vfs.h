@@ -32,7 +32,6 @@ enum {
     file_epoll = 0x0080UL,   // epoll 设备
     file_ptmx = 0x0100UL,    // ptmx 设备
     file_pts = 0x0200UL,     // pts 设备
-    file_proxy = 0x8000UL,   // 代理节点
 };
 
 typedef struct vfs_node *vfs_node_t;
@@ -262,6 +261,7 @@ int vfs_symlink(const char *name, const char *target_name);
 int vfs_mknod(const char *name, uint16_t umode, int dev);
 
 int vfs_chmod(const char *path, uint16_t mode);
+int vfs_fchmod(fd_t *fd, uint16_t mode);
 
 int vfs_chown(const char *path, uint64_t uid, uint64_t gid);
 

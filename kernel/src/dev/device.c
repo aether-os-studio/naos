@@ -3,6 +3,7 @@
 #include <mod/dlinker.h>
 
 static device_t devices[DEVICE_NR]; // 设备数组
+uint64_t devices_idxs[DEV_MAX];
 
 // 获取空设备
 static device_t *get_null_device() {
@@ -86,6 +87,9 @@ uint64_t device_install(int type, int subtype, void *ptr, char *name,
     device->parent = parent;
     device->type = type;
     device->subtype = subtype;
+    uint64_t dev_major = (uint64_t)subtype;
+    uint64_t dev_minor = devices_idxs[subtype]++;
+    device->dev = (dev_major << 8) | dev_minor;
     strncpy(device->name, name, NAMELEN);
     device->ioctl = ioctl;
     device->poll = poll;
@@ -97,12 +101,13 @@ uint64_t device_install(int type, int subtype, void *ptr, char *name,
 }
 
 void device_init() {
+    memset(devices_idxs, 0, sizeof(devices_idxs));
     for (size_t i = 0; i < DEVICE_NR; i++) {
         device_t *device = &devices[i];
         strcpy((char *)device->name, "null");
         device->type = DEV_NULL;
         device->subtype = DEV_NULL;
-        device->dev = i;
+        device->dev = 0;
         device->parent = 0;
         device->ioctl = NULL;
         device->read = NULL;

@@ -41,6 +41,12 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
         case DRM_CAP_CURSOR_HEIGHT:
             cap->value = 32;
             return 0;
+        // case DRM_CAP_CRTC_IN_VBLANK_EVENT:
+        //     cap->value = 1;
+        //     return 0;
+        // case DRM_CAP_PRIME:
+        //     cap->value = DRM_PRIME_CAP_IMPORT | DRM_PRIME_CAP_EXPORT;
+        //     return 0;
         default:
             printk("drm: Unsupported capability %d\n", cap->capability);
             cap->value = 0;
@@ -695,12 +701,26 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
         return 0;
     }
 
+    case DRM_IOCTL_GET_MAGIC: {
+        drm_auth_t *auth = (drm_auth_t *)arg;
+        auth->magic = 0x12345678;
+        return 0;
+    }
+
+    case DRM_IOCTL_AUTH_MAGIC: {
+        drm_auth_t *auth = (drm_auth_t *)arg;
+        if (auth->magic != 0x12345678)
+            return -EINVAL;
+
+        return 0;
+    }
+
     default:
         printk("drm: Unsupported ioctl: cmd = %#010lx\n", cmd);
         break;
     }
 
-    return -ENOSYS;
+    return -EINVAL;
 }
 
 ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
@@ -926,11 +946,13 @@ drm_device_t *drm_regist_pci_dev(void *data, drm_device_op_t *op,
 
     char dev_name[32];
     sprintf(dev_name, "dri/card%d", drm_id);
-    vfs_node_t dev_root =
-        sysfs_regist_dev('c', 226, drm_id, "", dev_name, "SUBSYSTEM=drm\n");
 
-    device_install(DEV_CHAR, DEV_GPU, drm_dev, dev_name, 0, drm_ioctl, drm_poll,
-                   drm_read, NULL, drm_map);
+    uint64_t dev_nr =
+        device_install(DEV_CHAR, DEV_GPU, drm_dev, dev_name, 0, drm_ioctl,
+                       drm_poll, drm_read, NULL, drm_map);
+    vfs_node_t dev_root =
+        sysfs_regist_dev('c', (dev_nr >> 8) & 0xFF, dev_nr & 0xFF, "", dev_name,
+                         "SUBSYSTEM=drm\n");
 
     vfs_node_t dev = sysfs_child_append(dev_root, "device", true);
 

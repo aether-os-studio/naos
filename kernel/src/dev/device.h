@@ -16,18 +16,14 @@ enum device_type_t {
 // 设备子类型
 enum device_subtype_t {
     DEV_CONSOLE = 1, // 控制台
-    DEV_INPUT,       // 输入设备
-    DEV_SERIAL,      // 串口
+    DEV_INPUT = 13,  // 输入设备
     DEV_FB,          // 帧缓冲
-    DEV_GPU,         // 显卡
     DEV_TTY,         // TTY 设备
-    DEV_SB16,        // 声霸卡
     DEV_DISK,        // 磁盘
     DEV_PART,        // 磁盘分区
-    DEV_CD,          // 光盘
-    DEV_RAMDISK,     // 虚拟磁盘
-    DEV_FLOPPY,      // 软盘
     DEV_NETIF,       // 网卡
+    DEV_GPU = 226,   // 显卡
+    DEV_MAX,
 };
 
 typedef struct device_t {

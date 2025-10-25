@@ -526,6 +526,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
 uint64_t get_node_size(vfs_node_t node) {
     if (node->type & file_symlink) {
         char linkpath[256];
+        memset(linkpath, 0, sizeof(linkpath));
         int ret = vfs_readlink(node, linkpath, sizeof(linkpath));
         if (ret < 0) {
             return (uint64_t)-ENOENT;

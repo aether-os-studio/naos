@@ -363,7 +363,7 @@ bool ps2_keyboard_init(void) {
         inputdev_poll, inputdev_event_read, inputdev_event_write, NULL);
     kb_input_event->timesOpened = 1;
 
-    sysfs_regist_dev('c', 0, kbd_dev,
+    sysfs_regist_dev('c', (kbd_dev >> 8) & 0xFF, kbd_dev & 0xFF,
                      "/sys/devices/platform/i8042/serio0/input/input0/event0",
                      "input/event0",
                      "ID_INPUT=1\nID_INPUT_KEYBOARD=1\nSUBSYSTEM=input\n");
@@ -444,7 +444,7 @@ bool ps2_mouse_init(void) {
                        inputdev_event_write, NULL);
     mouse_input_event->timesOpened = 1;
 
-    sysfs_regist_dev('c', 0, mouse_dev,
+    sysfs_regist_dev('c', (mouse_dev >> 8) & 0xFF, mouse_dev & 0xFF,
                      "/sys/devices/platform/i8042/serio1/input/input1/event1",
                      "input/event1",
                      "ID_INPUT=1\nID_INPUT_MOUSE=1\nSUBSYSTEM=input\n");
