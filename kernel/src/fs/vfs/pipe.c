@@ -28,17 +28,20 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     if (!pipe)
         return -EINVAL;
 
+    if (!size)
+        return 0;
+
     while (pipe->ptr == 0) {
         if (fd->flags & O_NONBLOCK) {
             return -EWOULDBLOCK;
         }
 
         if (pipe->write_fds == 0) {
-            return 0;
+            return -EPIPE;
         }
 
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -71,7 +74,7 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size) {
         }
 
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 

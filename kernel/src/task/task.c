@@ -89,7 +89,7 @@ task_t *get_free_task() {
             task_t *task = (task_t *)malloc(sizeof(task_t));
             memset(task, 0, sizeof(task_t));
             task->state = TASK_CREATING;
-            task->pid = i;
+            task->pid = 0;
             task->cpu_id = i;
             idle_tasks[i] = task;
             can_schedule = true;
@@ -247,8 +247,6 @@ void idle_entry(uint64_t arg) {
 
 extern void init_thread(uint64_t arg);
 
-extern void futex_init();
-
 void task_init() {
     memset(tasks, 0, sizeof(tasks));
     memset(idle_tasks, 0, sizeof(idle_tasks));
@@ -265,7 +263,8 @@ void task_init() {
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
         task_t *idle_task = task_create("idle", idle_entry, 0, IDLE_PRIORITY);
         idle_task->cpu_id = cpu;
-        idle_task->state = TASK_RUNNING;
+        idle_task->state = TASK_READY;
+        idle_task->current_state = TASK_RUNNING;
         schedulers[cpu]->current = idle_task->sched_info;
         schedulers[cpu]->idle_entity = idle_task->sched_info;
     }

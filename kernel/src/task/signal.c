@@ -123,7 +123,7 @@ uint64_t sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction) {
 void sys_sigreturn(struct pt_regs *regs) {
     arch_disable_interrupt();
 
-    current_task->state = TASK_RUNNING;
+    current_task->state = TASK_READY;
 
 #if defined(__x86_64__)
     struct pt_regs *context =

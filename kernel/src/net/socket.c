@@ -157,7 +157,7 @@ size_t unix_socket_accept_recv_from(uint64_t fd, uint8_t *out, size_t limit,
             break;
 
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -202,7 +202,7 @@ size_t unix_socket_accept_sendto(uint64_t fd, uint8_t *in, size_t limit,
         }
 
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -494,7 +494,7 @@ size_t unix_socket_recv_from(uint64_t fd, uint8_t *out, size_t limit, int flags,
             break;
 
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -538,7 +538,7 @@ size_t unix_socket_send_to(uint64_t fd, uint8_t *in, size_t limit, int flags,
             break;
 
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -561,7 +561,7 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags) {
         !noblock && !(current_task->fd_info->fds[fd]->flags & O_NONBLOCK) &&
         !(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN)) {
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -734,7 +734,7 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg, int flags) {
         !noblock && !(current_task->fd_info->fds[fd]->flags & O_NONBLOCK) &&
         !(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN)) {
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -1642,7 +1642,7 @@ ssize_t socket_read(fd_t *fd, void *buf, size_t offset, size_t limit) {
             break;
 
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -1684,7 +1684,7 @@ ssize_t socket_write(fd_t *fd, const void *buf, size_t offset, size_t limit) {
             break;
 
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -1718,7 +1718,7 @@ ssize_t socket_accept_read(fd_t *fd, void *buf, size_t offset, size_t limit) {
             break;
 
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -1761,7 +1761,7 @@ ssize_t socket_accept_write(fd_t *fd, const void *buf, size_t offset,
         }
 
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
