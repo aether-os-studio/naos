@@ -315,8 +315,9 @@ to_ret:
     movq $0x10, %rax
     movq %rax, %ds
     movq %rax, %es
+    movq %rax, %ss
+    movq $0x0, %rax
     movq %rax, %fs
     movq %rax, %gs
-    movq %rax, %ss
 
     ret

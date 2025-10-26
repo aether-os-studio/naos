@@ -211,9 +211,9 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     memset(task->actions, 0, sizeof(task->actions));
 
     memset(task->rlim, 0, sizeof(task->rlim));
-    task->rlim[RLIMIT_STACK] =
-        (struct rlimit){0, USER_STACK_END - USER_STACK_START};
-    task->rlim[RLIMIT_NPROC] = (struct rlimit){0, MAX_TASK_NUM};
+    task->rlim[RLIMIT_STACK] = (struct rlimit){
+        USER_STACK_END - USER_STACK_START, USER_STACK_END - USER_STACK_START};
+    task->rlim[RLIMIT_NPROC] = (struct rlimit){MAX_TASK_NUM, MAX_TASK_NUM};
     task->rlim[RLIMIT_NOFILE] = (struct rlimit){MAX_FD_NUM, MAX_FD_NUM};
     task->rlim[RLIMIT_CORE] = (struct rlimit){0, 0};
 
@@ -288,6 +288,14 @@ uint64_t push_slice(uint64_t ustack, uint8_t *slice, uint64_t len) {
     return tmp_stack;
 }
 
+static uint64_t simple_rand() {
+    tm time;
+    time_read(&time);
+    uint32_t seed = mktime(&time);
+    seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
+    return ((uint64_t)seed << 32) | seed;
+}
+
 uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
                     int argv_count, char *envp[], int envp_count,
                     uint64_t e_entry, uint64_t phdr, uint64_t phnum,
@@ -300,6 +308,11 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
         push_slice(tmp_stack, (uint8_t *)task->name, strlen(task->name) + 1);
 
     uint64_t execfn_ptr = tmp_stack;
+
+    uint64_t random_value = simple_rand();
+    tmp_stack =
+        push_slice(tmp_stack, (uint8_t *)&random_value, sizeof(uint64_t));
+    uint64_t random_ptr = tmp_stack;
 
     uint64_t *envps = (uint64_t *)malloc((1 + envp_count) * sizeof(uint64_t));
     memset(envps, 0, (1 + envp_count) * sizeof(uint64_t));
@@ -324,7 +337,7 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
         }
     }
 
-    uint64_t total_length = 2 * sizeof(uint64_t) + 7 * 2 * sizeof(uint64_t) +
+    uint64_t total_length = 2 * sizeof(uint64_t) + 8 * 2 * sizeof(uint64_t) +
                             (env_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) +
                             (argv_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) +
                             sizeof(uint64_t);
@@ -359,6 +372,10 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
     ((uint64_t *)tmp)[1] = at_base;
     tmp_stack = push_slice(tmp_stack, tmp, 2 * sizeof(uint64_t));
 
+    ((uint64_t *)tmp)[0] = AT_RANDOM;
+    ((uint64_t *)tmp)[1] = random_ptr;
+    tmp_stack = push_slice(tmp_stack, tmp, 2 * sizeof(uint64_t));
+
     ((uint64_t *)tmp)[0] = AT_PAGESZ;
     ((uint64_t *)tmp)[1] = DEFAULT_PAGE_SIZE;
     tmp_stack = push_slice(tmp_stack, tmp, 2 * sizeof(uint64_t));
@@ -385,141 +402,7 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
 }
 
 uint64_t task_fork(struct pt_regs *regs, bool vfork) {
-    arch_disable_interrupt();
-
-    task_t *child = get_free_task();
-    if (child == NULL) {
-        return (uint64_t)-ENOMEM;
-    }
-
-    can_schedule = false;
-
-    strncpy(child->name, current_task->name, TASK_NAME_MAX);
-    child->call_in_signal = current_task->call_in_signal;
-
-    memset(&child->signal_saved_regs, 0, sizeof(struct pt_regs));
-
-    child->cpu_id = alloc_cpu_id();
-
-    child->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
-    child->syscall_stack =
-        (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
-    child->signal_syscall_stack =
-        (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
-    child->syscall_stack_user = 0;
-    memset((void *)(child->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
-    memset((void *)(child->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
-    memset((void *)(child->signal_syscall_stack - STACK_SIZE), 0, STACK_SIZE);
-
-    child->arch_context = malloc(sizeof(arch_context_t));
-    memset(child->arch_context, 0, sizeof(arch_context_t));
-    current_task->arch_context->ctx = regs;
-    arch_context_copy(child->arch_context, current_task->arch_context,
-                      child->kernel_stack, vfork ? CLONE_VM : 0);
-    child->is_kernel = false;
-    child->ppid = current_task->pid;
-    child->uid = current_task->uid;
-    child->gid = current_task->gid;
-    child->euid = current_task->euid;
-    child->egid = current_task->egid;
-    child->ruid = current_task->ruid;
-    child->rgid = current_task->rgid;
-    child->pgid = current_task->pgid;
-    child->sid = current_task->sid;
-
-    child->priority = NORMAL_PRIORITY;
-
-    child->cwd = current_task->cwd;
-    child->cmdline = strdup(current_task->cmdline);
-
-    child->load_start = current_task->load_start;
-    child->load_end = current_task->load_end;
-
-    child->fd_info = vfork ? current_task->fd_info : malloc(sizeof(fd_info_t));
-
-    if (!vfork) {
-        memset(child->fd_info, 0, sizeof(fd_info_t));
-        memset(child->fd_info->fds, 0, sizeof(child->fd_info->fds));
-        // child->fd_info->fds[0] = malloc(sizeof(fd_t));
-        // child->fd_info->fds[0]->node = vfs_open("/dev/stdin");
-        // child->fd_info->fds[0]->offset = 0;
-        // child->fd_info->fds[0]->flags = 0;
-        // child->fd_info->fds[1] = malloc(sizeof(fd_t));
-        // child->fd_info->fds[1]->node = vfs_open("/dev/stdout");
-        // child->fd_info->fds[1]->offset = 0;
-        // child->fd_info->fds[1]->flags = 0;
-        // child->fd_info->fds[2] = malloc(sizeof(fd_t));
-        // child->fd_info->fds[2]->node = vfs_open("/dev/stderr");
-        // child->fd_info->fds[2]->offset = 0;
-        // child->fd_info->fds[2]->flags = 0;
-
-        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-            fd_t *fd = current_task->fd_info->fds[i];
-
-            if (fd) {
-                child->fd_info->fds[i] = malloc(sizeof(fd_t));
-                memcpy(child->fd_info->fds[i], fd, sizeof(fd_t));
-                fd->node->refcount++;
-            } else {
-                child->fd_info->fds[i] = NULL;
-            }
-        }
-
-        child->fd_info->ref_count++;
-    } else {
-        child->fd_info->ref_count++;
-    }
-
-    child->saved_signal = 0;
-    child->signal = 0;
-    if (vfork) {
-        spin_lock(&current_task->signal_lock);
-        memcpy(child->actions, current_task->actions, sizeof(child->actions));
-        child->blocked = current_task->blocked;
-        spin_unlock(&current_task->signal_lock);
-    } else {
-        memset(child->actions, 0, sizeof(child->actions));
-        child->blocked = 0;
-    }
-
-    memcpy(&child->term, &current_task->term, sizeof(termios));
-
-    child->tmp_rec_v = 0;
-
-    memcpy(child->rlim, current_task->rlim, sizeof(child->rlim));
-
-    child->child_vfork_done = false;
-
-    if (vfork) {
-        child->is_vfork = true;
-    } else {
-        child->is_vfork = false;
-    }
-    child->should_free = false;
-
-    procfs_on_new_task(child);
-
-    child->state = TASK_READY;
-    child->current_state = TASK_READY;
-
-    add_eevdf_entity_with_prio(child, child->priority,
-                               schedulers[child->cpu_id]);
-
-    can_schedule = true;
-
-    if (vfork) {
-        current_task->child_vfork_done = false;
-
-        while (!current_task->child_vfork_done) {
-            arch_enable_interrupt();
-            arch_yield();
-        }
-        arch_disable_interrupt();
-
-        current_task->child_vfork_done = false;
-    }
-
-    return child->pid;
+    return sys_clone(regs, vfork ? CLONE_VFORK : 0, 0, NULL, NULL, 0);
 }
 
 uint64_t get_node_size(vfs_node_t node) {
@@ -683,9 +566,10 @@ uint64_t task_execve(const char *path_user, const char **argv,
             free_page_table(current_task->arch_context->mm);
         }
         current_task->arch_context->mm = new_mm;
-        new_mm->task_vma_mgr.last_alloc_addr = USER_MMAP_START;
     }
 
+    current_task->arch_context->mm->task_vma_mgr.last_alloc_addr =
+        USER_MMAP_START;
     current_task->arch_context->mm->brk_start = USER_BRK_START;
     current_task->arch_context->mm->brk_current =
         current_task->arch_context->mm->brk_start;
@@ -1062,6 +946,8 @@ void task_unblock(task_t *task, int reason) {
 extern spinlock_t futex_lock;
 extern struct futex_wait futex_wait_list;
 
+extern uint64_t sys_futex_wake(uint64_t addr, int val, uint32_t bitset);
+
 void task_exit_inner(task_t *task, int64_t code) {
     can_schedule = false;
     struct sched_entity *entity = (struct sched_entity *)task->sched_info;
@@ -1099,6 +985,11 @@ void task_exit_inner(task_t *task, int64_t code) {
     }
 
     spin_unlock(&futex_lock);
+
+    if (task->tidptr) {
+        *task->tidptr = 0;
+        sys_futex_wake((uint64_t)task->tidptr, INT32_MAX, 0xFFFFFFFF);
+    }
 
     task->status = (uint64_t)code;
 
@@ -1349,13 +1240,13 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     memset((void *)(child->signal_syscall_stack - STACK_SIZE), 0, STACK_SIZE);
 
     child->arch_context = malloc(sizeof(arch_context_t));
-    memset(child->arch_context, 0, sizeof(arch_context_t));
-    current_task->arch_context->ctx = regs;
-    arch_context_copy(child->arch_context, current_task->arch_context,
-                      child->kernel_stack, flags);
+    arch_context_t orig_context;
+    memcpy(&orig_context, current_task->arch_context, sizeof(arch_context_t));
+    orig_context.ctx = regs;
+    arch_context_copy(child->arch_context, &orig_context, child->kernel_stack,
+                      flags);
 #if defined(__x86_64__)
-    if (newsp)
-        child->arch_context->ctx->rsp = newsp;
+    child->syscall_stack_user = newsp ? newsp : regs->rsp;
 #endif
     child->is_kernel = false;
     child->ppid = current_task->pid;
@@ -1436,14 +1327,22 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         *parent_tid = (int)child->pid;
     }
 
-    // if (child_tid && (flags & CLONE_CHILD_SETTID))
-    // {
-    //     *child_tid = (int)child->pid;
-    // }
+    if (child_tid && (flags & CLONE_CHILD_SETTID)) {
+        *child_tid = (int)child->pid;
+    }
+
+    if (child_tid && (flags & CLONE_CHILD_CLEARTID)) {
+        child->tidptr = child_tid;
+    }
 
     child->tmp_rec_v = 0;
 
-    memcpy(child->rlim, current_task->rlim, sizeof(child->rlim));
+    memset(child->rlim, 0, sizeof(child->rlim));
+    child->rlim[RLIMIT_STACK] = (struct rlimit){
+        USER_STACK_END - USER_STACK_START, USER_STACK_END - USER_STACK_START};
+    child->rlim[RLIMIT_NPROC] = (struct rlimit){MAX_TASK_NUM, MAX_TASK_NUM};
+    child->rlim[RLIMIT_NOFILE] = (struct rlimit){MAX_FD_NUM, MAX_FD_NUM};
+    child->rlim[RLIMIT_CORE] = (struct rlimit){0, 0};
 
     child->child_vfork_done = false;
 

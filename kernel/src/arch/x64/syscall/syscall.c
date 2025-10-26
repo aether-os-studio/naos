@@ -392,7 +392,7 @@ void syscall_handler_init() {
     //     (syscall_handle_t)sys_remap_file_pages;
     syscall_handlers[SYS_GETDENTS64] = (syscall_handle_t)sys_getdents;
     syscall_handlers[SYS_SET_TID_ADDRESS] =
-        (syscall_handle_t)dummy_syscall_handler;
+        (syscall_handle_t)sys_set_tid_address;
     // syscall_handlers[SYS_RESTART_SYSCALL] =
     //     (syscall_handle_t)sys_restart_syscall;
     // syscall_handlers[SYS_SEMTIMEDOP] = (syscall_handle_t)sys_semtimedop;

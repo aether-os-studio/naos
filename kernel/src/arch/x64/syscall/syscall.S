@@ -8,7 +8,7 @@ ENTRY(syscall_exception)
 
     movq %rsp, %gs:0x8 // syscall_stack_user
 
-    cmpq $0, %gs:0x20
+    cmpq $0, %gs:0x20 // call_in_signal
     je normal
 
 signal:
@@ -17,7 +17,6 @@ signal:
 
 normal:
     movq %gs:0x0, %rsp // syscall_stack
-    jmp next
 
 next:
     subq $0x08, %rsp
@@ -53,7 +52,7 @@ next:
 
     call syscall_handler
 
-ret_from_syscall:
+ENTRY(ret_from_syscall)
     cli
 
     popq %r15

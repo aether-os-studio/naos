@@ -4,7 +4,7 @@
 #include <libs/elf.h>
 #include <mm/mm.h>
 
-#define USER_STACK_START 0x00006fffff000000
+#define USER_STACK_START 0x00006fffff800000
 #define USER_STACK_END 0x0000700000000000
 
 struct task;
@@ -39,8 +39,6 @@ struct fpstate {
 } __attribute__((packed));
 
 typedef struct arch_context {
-    uint64_t fs;
-    uint64_t gs;
     uint64_t fsbase;
     uint64_t gsbase;
     task_mm_info_t *mm;

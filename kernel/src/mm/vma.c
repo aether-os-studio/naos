@@ -113,27 +113,40 @@ int vma_split(vma_t *vma, unsigned long addr) {
         return -1;
     }
 
-    // 创建新的VMA
     vma_t *new_vma = vma_alloc();
     if (!new_vma)
         return -1;
 
-    // 复制属性
-    *new_vma = *vma;
+    // 手动复制字段，避免浅拷贝
     new_vma->vm_start = addr;
-    new_vma->vm_next = vma->vm_next;
-    new_vma->vm_prev = vma;
+    new_vma->vm_end = vma->vm_end;
+    new_vma->vm_flags = vma->vm_flags;
+    new_vma->vm_type = vma->vm_type;
+    new_vma->vm_fd = vma->vm_fd;
+    new_vma->vm_offset = vma->vm_offset;
+    new_vma->shm_id = vma->shm_id;
+
+    // 深拷贝 vm_name
+    if (vma->vm_name) {
+        new_vma->vm_name = strdup(vma->vm_name);
+        if (!new_vma->vm_name) {
+            free(new_vma);
+            return -1;
+        }
+    }
 
     // 调整文件偏移量
     if (vma->vm_type == VMA_TYPE_FILE) {
         new_vma->vm_offset += addr - vma->vm_start;
     }
 
-    // 更新原VMA
+    // 更新链表
+    new_vma->vm_next = vma->vm_next;
+    new_vma->vm_prev = vma;
+
     vma->vm_end = addr;
     vma->vm_next = new_vma;
 
-    // 更新链表
     if (new_vma->vm_next) {
         new_vma->vm_next->vm_prev = new_vma;
     }
@@ -153,7 +166,12 @@ int vma_merge(vma_t *vma1, vma_t *vma2) {
         return -1;
     }
 
-    // 合并VMA
+    // 如果 vma1 没有 name 而 vma2 有，应该转移所有权
+    if (!vma1->vm_name && vma2->vm_name) {
+        vma1->vm_name = vma2->vm_name;
+        vma2->vm_name = NULL; // 转移所有权，避免 double free
+    }
+
     vma1->vm_end = vma2->vm_end;
     vma1->vm_next = vma2->vm_next;
 
@@ -323,6 +341,10 @@ int vma_manager_copy(vma_manager_t *dst, vma_manager_t *src) {
     if (!dst || !src)
         return -1;
 
+    memset(dst, 0, sizeof(vma_manager_t));
+
+    dst->last_alloc_addr = src->last_alloc_addr;
+
     if (!src->initialized) {
         memset(dst, 0, sizeof(vma_manager_t));
         return 0;
@@ -364,6 +386,8 @@ int vma_manager_copy(vma_manager_t *dst, vma_manager_t *src) {
         dst_prev = dst_vma;
         src_vma = src_vma->vm_next;
     }
+
+    dst->initialized = src->initialized;
 
     return 0;
 }

@@ -41,13 +41,13 @@
 #define AT_SYSINFO 32
 #define AT_SYSINFO_EHDR 33
 
-#define INTERPRETER_BASE_ADDR 0x0000200000000000
+#define INTERPRETER_BASE_ADDR 0x0000002000000000
 
-#define USER_MMAP_START 0x0000400000000000
-#define USER_MMAP_END 0x0000600000000000
+#define USER_MMAP_START 0x0000004000000000
+#define USER_MMAP_END 0x0000008000000000
 
-#define USER_BRK_START 0x0000000080000000
-#define USER_BRK_END 0x0000000100000000
+#define USER_BRK_START 0x0000080000000000
+#define USER_BRK_END 0x0000100000000000
 
 #define CLONE_VM 0x00000100 /* set if VM shared between processes */
 #define CLONE_FS 0x00000200 /* set if fs info shared between processes */
@@ -202,6 +202,11 @@ static inline uint64_t sys_getcpu(unsigned *cpup, unsigned *nodep,
     *cpup = current_cpu_id;
     *nodep = 0;
 
+    return 0;
+}
+
+static inline uint64_t sys_set_tid_address(int *ptr) {
+    current_task->tidptr = ptr;
     return 0;
 }
 

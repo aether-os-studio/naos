@@ -37,6 +37,7 @@ typedef struct {
     unsigned long vm_total;    // 总虚拟内存大小
     unsigned long vm_used;     // 已使用虚拟内存
     uintptr_t last_alloc_addr; // 上次分配地址
+    spinlock_t lock;
     bool initialized;
 } vma_manager_t;
 

@@ -256,7 +256,7 @@ extern int signalfdfs_id;
 void task_signal() {
     arch_disable_interrupt();
 
-    if (current_task->call_in_signal) {
+    if (current_task->state == TASK_UNINTERRUPTABLE) {
         return;
     }
 
@@ -356,8 +356,8 @@ void task_signal() {
     sframe->rip = f->rip;
     sframe->eflags = f->rflags;
     sframe->cs = f->cs;
-    sframe->gs = current_task->arch_context->gs;
-    sframe->fs = current_task->arch_context->fs;
+    sframe->gs = 0;
+    sframe->fs = 0;
     sframe->ss = f->ss;
     sframe->oldmask = current_task->blocked;
     sframe->fpstate = fp;
@@ -375,8 +375,6 @@ void task_signal() {
     current_task->arch_context->ctx->ss = SELECTOR_USER_DS;
     current_task->arch_context->ctx->ds = SELECTOR_USER_DS;
     current_task->arch_context->ctx->es = SELECTOR_USER_DS;
-    current_task->arch_context->fs = SELECTOR_USER_DS;
-    current_task->arch_context->gs = SELECTOR_USER_DS;
 
     current_task->arch_context->ctx->rflags = (1 << 9);
     current_task->arch_context->ctx->rsp = sigrsp;

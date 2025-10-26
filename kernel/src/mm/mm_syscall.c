@@ -72,10 +72,14 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
 
     vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
 
+    spin_lock(&mgr->lock);
+
     uint64_t start_addr;
     if (flags & MAP_FIXED) {
-        if (!addr)
+        if (!addr) {
+            spin_unlock(&mgr->lock);
             return (uint64_t)-EINVAL;
+        }
 
         start_addr = (uint64_t)addr;
         // 检查地址是否可用
@@ -88,6 +92,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
             // 检查地址是否可用
             if (vma_find_intersection(mgr, start_addr,
                                       start_addr + aligned_len)) {
+                spin_unlock(&mgr->lock);
                 return (uint64_t)-ENOMEM;
             }
         } else {
@@ -101,6 +106,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
                         mgr->last_alloc_addr = USER_MMAP_START;
                         goto retry;
                     }
+                    spin_unlock(&mgr->lock);
                     return (uint64_t)-ENOMEM;
                 }
             }
@@ -108,13 +114,17 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
     }
 
     if (!(flags & MAP_ANONYMOUS)) {
-        if (fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
+        if (fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd]) {
+            spin_unlock(&mgr->lock);
             return (uint64_t)-EBADF;
+        }
     }
 
     vma_t *vma = vma_alloc();
-    if (!vma)
+    if (!vma) {
+        spin_unlock(&mgr->lock);
         return (uint64_t)-ENOMEM;
+    }
 
     vma->vm_start = start_addr;
     vma->vm_end = start_addr + aligned_len;
@@ -148,6 +158,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
 
     if (vma_insert(mgr, vma) != 0) {
         vma_free(vma);
+        spin_unlock(&mgr->lock);
         return (uint64_t)-ENOMEM;
     }
 
@@ -161,23 +172,19 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
 
         region->vm_name =
             vfs_get_fullpath(current_task->fd_info->fds[fd]->node);
+
+        spin_unlock(&mgr->lock);
+
         return ret;
     } else {
-        uint64_t pt_flags = PT_FLAG_U | PT_FLAG_W;
-
-        if (prot != PROT_NONE) {
-            if (prot & PROT_READ)
-                pt_flags |= PT_FLAG_R;
-            if (prot & PROT_WRITE)
-                pt_flags |= PT_FLAG_W;
-            if (prot & PROT_EXEC)
-                pt_flags |= PT_FLAG_X;
-        }
+        uint64_t pt_flags = PT_FLAG_U | PT_FLAG_R | PT_FLAG_W;
 
         map_page_range(get_current_page_dir(true), start_addr, 0, aligned_len,
                        pt_flags);
 
         memset((void *)start_addr, 0, aligned_len);
+
+        spin_unlock(&mgr->lock);
 
         return start_addr;
     }
@@ -269,8 +276,11 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
 
     vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
 
+    spin_lock(&mgr->lock);
+
     vma_t *vma = vma_find(mgr, (unsigned long)old_addr);
     if (!vma || vma->vm_start != (unsigned long)old_addr) {
+        spin_unlock(&mgr->lock);
         return (uint64_t)-EINVAL;
     }
 
@@ -282,6 +292,7 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
         unmap_page_range(get_current_page_dir(true), vma->vm_end,
                          vma->vm_start + new_size - vma->vm_end);
         vma->vm_end = vma->vm_start + new_size;
+        spin_unlock(&mgr->lock);
         return old_addr;
     }
 
@@ -302,6 +313,7 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
                        new_end - vma->vm_end, vma->vm_flags);
 
         vma->vm_end = new_end;
+        spin_unlock(&mgr->lock);
         return old_addr;
     }
 
@@ -315,13 +327,16 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
                     mgr->last_alloc_addr = USER_MMAP_START;
                     goto retry;
                 }
+                spin_unlock(&mgr->lock);
                 return (uint64_t)-ENOMEM;
             }
         }
 
         vma_t *new_vma = vma_alloc();
-        if (!new_vma)
+        if (!new_vma) {
+            spin_unlock(&mgr->lock);
             return (uint64_t)-ENOMEM;
+        }
 
         memcpy(new_vma, vma, sizeof(vma_t));
         new_vma->vm_start = start_addr;
@@ -330,6 +345,7 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
 
         if (vma_insert(mgr, new_vma) != 0) {
             vma_free(new_vma);
+            spin_unlock(&mgr->lock);
             return (uint64_t)-ENOMEM;
         }
 
@@ -342,15 +358,20 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
         if (new_vma->vm_flags & VMA_EXEC)
             pt_flags |= PT_FLAG_X;
 
-        mgr->last_alloc_addr = start_addr;
+        if (!new_addr)
+            mgr->last_alloc_addr = start_addr;
 
         map_page_range(get_current_page_dir(true), start_addr, old_addr_phys,
                        new_size, pt_flags);
 
         sys_munmap(old_addr, old_size);
 
+        spin_unlock(&mgr->lock);
+
         return start_addr;
     }
+
+    spin_unlock(&mgr->lock);
 
     return (uint64_t)-ENOMEM;
 }
