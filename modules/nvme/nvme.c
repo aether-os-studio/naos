@@ -468,12 +468,16 @@ static void admin_sync_callback(void *ctx, bool success, uint32_t result) {
 static int nvme_admin_cmd_sync(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
                                uint32_t *result, uint32_t timeout_ms) {
     admin_sync_ctx_t sync_ctx = {0};
-    nvme_request_t req = {0};
+    nvme_request_t *req =
+        g_nvme_platform_ops->dma_alloc(sizeof(nvme_request_t), NULL);
+    if (!req) {
+        return -1;
+    }
 
-    req.callback = admin_sync_callback;
-    req.ctx = &sync_ctx;
+    req->callback = admin_sync_callback;
+    req->ctx = &sync_ctx;
 
-    uint16_t cid = nvme_alloc_cid(ctrl, &req);
+    uint16_t cid = nvme_alloc_cid(ctrl, req);
     if (cid == 0xFFFF) {
         g_nvme_platform_ops->log("NVMe: Failed to allocate CID\n");
         return -1;
