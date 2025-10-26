@@ -71,7 +71,7 @@ size_t real_socket_send(uint64_t fd, uint8_t *out, uint64_t limit, int flags) {
             break;
 
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -107,7 +107,7 @@ size_t real_socket_recv(uint64_t fd, uint8_t *out, uint64_t limit, int flags) {
             break;
 
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -148,7 +148,7 @@ size_t real_socket_sendto(uint64_t fd, uint8_t *buff, size_t len, int flags,
             break;
 
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -192,7 +192,7 @@ size_t real_socket_recvfrom(uint64_t fd, uint8_t *buff, size_t len, int flags,
             break;
 
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -331,7 +331,7 @@ size_t real_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
             break;
 
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -379,7 +379,7 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
             break;
 
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -560,7 +560,7 @@ ssize_t real_socket_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             break;
 
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -595,7 +595,7 @@ ssize_t real_socket_write(fd_t *fd, const void *addr, size_t offset,
             break;
 
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 
@@ -643,7 +643,7 @@ static void delay(uint64_t ms) {
     uint64_t start = nanoTime();
     while (nanoTime() - start < ns) {
         arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
     arch_disable_interrupt();
 }

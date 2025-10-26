@@ -43,7 +43,7 @@
 #include <libs/rbtree.h>
 #include <task/task.h>
 
-extern unsigned int sysctl_sched_base_slice;
+extern uint64_t sysctl_sched_base_slice;
 typedef struct eevdf_t eevdf_t;
 
 struct load_weight {

@@ -3,8 +3,7 @@
  */
 #include <task/eevdf.h>
 
-unsigned int sysctl_sched_base_slice =
-    1000000000ULL / SCHED_HZ; // 默认时间片长度
+uint64_t sysctl_sched_base_slice = 1000000000ULL / SCHED_HZ; // 默认时间片长度
 
 const int sched_prio_to_weight[40] = {
     /* -20 */ 88761, 71755, 56483, 46273, 36291,

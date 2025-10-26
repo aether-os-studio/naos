@@ -413,7 +413,22 @@ void devtmpfs_init() {
     devfs_initialized = true;
 }
 
+ssize_t nulldev_read(void *data, void *buf, uint64_t offset, uint64_t len,
+                     uint64_t flags) {
+    return 0;
+}
+
+ssize_t nulldev_write(void *data, const void *buf, uint64_t offset,
+                      uint64_t len, uint64_t flags) {
+    return 0;
+}
+
+ssize_t nulldev_ioctl(void *data, ssize_t request, ssize_t arg) { return 0; }
+
 void stdio_init() {
+    device_install(DEV_CHAR, DEV_NULL, NULL, "null", 0, nulldev_ioctl, NULL,
+                   nulldev_read, nulldev_write, NULL);
+
     vfs_symlink("/dev/tty1", "/dev/tty0");
 
     vfs_symlink("/dev/stdin", "/dev/tty0");

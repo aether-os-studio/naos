@@ -15,7 +15,7 @@ typedef struct {
     uint64_t reserved0;
     uint64_t generalConfiguration;
     uint64_t reserved1;
-    uint64_t generalIntrruptStatus;
+    uint64_t generalInterruptStatus;
     uint8_t reserved3[0xc8];
     uint64_t mainCounterValue;
     uint64_t reserved4;
@@ -45,8 +45,8 @@ void hpet_init() {
                        PT_FLAG_R | PT_FLAG_W);
         uint32_t counterClockPeriod = hpet_addr->generalCapabilities >> 32;
         hpetPeriod = counterClockPeriod / 1000000;
-        hpet_addr->generalConfiguration |= 1;
-        *(volatile uint64_t *)((uint64_t)hpet_addr + 0xf0) = 0;
+        hpet_addr->generalConfiguration |= 1UL;
+        hpet_addr->mainCounterValue = 0;
         printk("Setup acpi hpet table (nano_time: %#ld).\n", nanoTime());
     }
 }
