@@ -1064,8 +1064,6 @@ extern spinlock_t futex_lock;
 extern struct futex_wait futex_wait_list;
 
 void task_exit_inner(task_t *task, int64_t code) {
-    spin_lock(&task_queue_lock);
-
     can_schedule = false;
     struct sched_entity *entity = (struct sched_entity *)task->sched_info;
     if (entity->on_rq)
@@ -1106,16 +1104,16 @@ void task_exit_inner(task_t *task, int64_t code) {
     task->status = (uint64_t)code;
 
     if (task->fd_info) {
-        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-            if (task->fd_info->fds[i]) {
-                vfs_close(task->fd_info->fds[i]->node);
-                free(task->fd_info->fds[i]);
-
-                task->fd_info->fds[i] = NULL;
-            }
-        }
         task->fd_info->ref_count--;
         if (task->fd_info->ref_count <= 0) {
+            for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+                if (task->fd_info->fds[i]) {
+                    vfs_close(task->fd_info->fds[i]->node);
+                    free(task->fd_info->fds[i]);
+
+                    task->fd_info->fds[i] = NULL;
+                }
+            }
             free(task->fd_info);
         }
     }
@@ -1152,8 +1150,6 @@ void task_exit_inner(task_t *task, int64_t code) {
     }
 
     procfs_on_exit_task(task);
-
-    spin_unlock(&task_queue_lock);
 
     can_schedule = true;
 }
@@ -1323,6 +1319,11 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
 uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                    int *parent_tid, int *child_tid, uint64_t tls) {
     arch_disable_interrupt();
+
+    if (flags & CLONE_VFORK) {
+        flags |= CLONE_VM;
+        flags |= CLONE_FILES;
+    }
 
     task_t *child = get_free_task();
     if (child == NULL) {
