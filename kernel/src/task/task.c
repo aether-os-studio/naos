@@ -61,6 +61,9 @@ void free_task(task_t *ptr) {
 
     free(ptr->arch_context);
 
+    free(ptr->sched_info);
+    ptr->sched_info = NULL;
+
     free_frames_bytes((void *)(ptr->kernel_stack - STACK_SIZE), STACK_SIZE);
     free_frames_bytes((void *)(ptr->syscall_stack - STACK_SIZE), STACK_SIZE);
     free_frames_bytes((void *)(ptr->signal_syscall_stack - STACK_SIZE),
@@ -953,8 +956,6 @@ void task_exit_inner(task_t *task, int64_t code) {
     struct sched_entity *entity = (struct sched_entity *)task->sched_info;
     if (entity->on_rq)
         remove_eevdf_entity(task, schedulers[task->cpu_id]);
-    free(task->sched_info);
-    task->sched_info = NULL;
 
     task->current_state = TASK_DIED;
     task->state = TASK_DIED;

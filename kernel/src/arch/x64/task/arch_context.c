@@ -141,8 +141,9 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next) {
 
     task_signal();
 
-    if (next->arch_context->dead)
-        return;
+    if (next->arch_context->dead) {
+        next = idle_tasks[current_cpu_id];
+    }
 
     prev->current_state = prev->state;
     next->current_state = TASK_RUNNING;
