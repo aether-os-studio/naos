@@ -177,7 +177,7 @@ override SRCFILES += src/boot/limine_boot.c
 endif
 ifeq ($(BOOT_PROTOCOL), multiboot2)
 override SRCFILES += src/boot/multiboot2_boot.c
-override SRCFILES += $(shell find src/boot/x64/multiboot2 -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/boot/multiboot2/x64 -name "*.[Sc]" | LC_ALL=C sort)
 override CFLAGS += -DMULTIBOOT2
 endif
 override CFILES := $(filter %.c,$(SRCFILES))

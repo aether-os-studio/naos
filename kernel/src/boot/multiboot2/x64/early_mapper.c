@@ -1,5 +1,5 @@
 #include <libs/klibc.h>
-#include <boot/x64/multiboot2/multiboot2.h>
+#include <boot/multiboot2/x64/multiboot2.h>
 #include <boot/boot.h>
 
 #define PAGE_SIZE_4K 0x1000   // 4KB

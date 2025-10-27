@@ -1,5 +1,5 @@
 #include <boot/boot.h>
-#include <boot/x64/multiboot2/multiboot2.h>
+#include <boot/multiboot2/x64/multiboot2.h>
 
 uintptr_t mb2_info_addr;
 

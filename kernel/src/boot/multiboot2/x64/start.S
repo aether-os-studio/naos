@@ -1,5 +1,5 @@
 #include <settings.h>
-#include <boot/x64/multiboot2/multiboot2.h>
+#include <boot/multiboot2/x64/multiboot2.h>
 
 .code32
 
@@ -10,6 +10,24 @@ multiboot_header:
     .long MULTIBOOT_ARCHITECTURE_I386
     .long multiboot_header_end - multiboot_header
     .long -(MULTIBOOT2_HEADER_MAGIC + MULTIBOOT_ARCHITECTURE_I386 + (multiboot_header_end - multiboot_header))
+
+.align 8
+entry_address_tag_start:    
+        .short MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS
+        .short MULTIBOOT_HEADER_TAG_OPTIONAL
+        .long entry_address_tag_end - entry_address_tag_start
+        .long _mb2_start
+entry_address_tag_end:
+
+.align 8
+framebuffer_tag_start:
+    .short MULTIBOOT_HEADER_TAG_FRAMEBUFFER
+    .short MULTIBOOT_HEADER_TAG_OPTIONAL
+    .long framebuffer_tag_end - framebuffer_tag_start
+    .long 1280
+    .long 800
+    .long 32
+framebuffer_tag_end:
 
 .align 8
     .short MULTIBOOT_HEADER_TAG_END
