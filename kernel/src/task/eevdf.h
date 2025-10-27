@@ -40,6 +40,32 @@
 #define WMULT_CONST (~0U)
 #define WMULT_SHIFT 32
 
+#define ___PASTE(a, b) a##b
+#define __PASTE(a, b) ___PASTE(a, b)
+
+#define __UNIQUE_ID(prefix) __PASTE(__PASTE(__UNIQUE_ID_, prefix), __COUNTER__)
+
+#define TICK_NSEC ((1000000000ULL + SCHED_HZ / 2) / SCHED_HZ)
+
+#define __clamp(val, lo, hi)                                                   \
+    ((val) >= (hi) ? (hi) : ((val) <= (lo) ? (lo) : (val)))
+
+#define __clamp_once(type, val, lo, hi, uval, ulo, uhi)                        \
+    ({                                                                         \
+        type uval = (val);                                                     \
+        type ulo = (lo);                                                       \
+        type uhi = (hi);                                                       \
+        __clamp(uval, ulo, uhi);                                               \
+    })
+
+#define __careful_clamp(type, val, lo, hi)                                     \
+    __clamp_once(type, val, lo, hi, __UNIQUE_ID(v_), __UNIQUE_ID(l_),          \
+                 __UNIQUE_ID(h_))
+
+#define clamp(val, lo, hi) __careful_clamp(__auto_type, val, lo, hi)
+
+#define VRUNTIME_OFFSET_THRESHOLD 0xa000000000000000
+
 #include <libs/rbtree.h>
 #include <task/task.h>
 
@@ -60,6 +86,7 @@ struct sched_entity {
     uint64_t exec_start;
     uint64_t min_vruntime;
     uint64_t sum_exec_runtime;
+    int64_t vlag;
     bool is_idle; // 是否是IDLE进程
     struct load_weight load;
     struct rb_node run_node;

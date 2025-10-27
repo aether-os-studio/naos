@@ -192,20 +192,17 @@ struct sched_entity *new_entity(task_t *task, uint64_t prio,
 }
 
 void change_entity_weight(eevdf_t *eevdf_sched, task_t *thread, uint64_t prio) {
-    arch_disable_interrupt();
     struct sched_entity *entity = (struct sched_entity *)thread->sched_info;
     if (entity->prio == prio) {
-        arch_enable_interrupt();
         return;
     }
     entity->is_idle = prio == NICE_TO_PRIO(20);
     entity->prio = prio;
     set_load_weight(entity);
-    rb_erase(&entity->run_node, eevdf_sched->root);
     spin_lock(&eevdf_sched->queue_lock);
+    rb_erase(&entity->run_node, eevdf_sched->root);
     insert_sched_entity(eevdf_sched->root, entity);
     spin_unlock(&eevdf_sched->queue_lock);
-    arch_enable_interrupt();
 }
 
 struct sched_entity *pick_eevdf(eevdf_t *eevdf_sched) {
@@ -289,6 +286,37 @@ static int64_t update_curr_se(struct sched_entity *curr) {
     return delta_exec;
 }
 
+static void update_vlag(struct sched_entity *se, eevdf_t *eevdf_sched) {
+    int64_t vlag_raw = 0;
+    int64_t limit = 0;
+    vlag_raw = eevdf_sched->min_vruntime - se->vruntime;
+    limit = calc_delta_fair(MAX(2 * se->slice, TICK_NSEC), se);
+    se->vlag = clamp(vlag_raw, -limit, limit);
+}
+
+// 溢出检查
+static void wrap_vruntime(eevdf_t *eevdf_sched) {
+    if (eevdf_sched->min_vruntime < VRUNTIME_OFFSET_THRESHOLD)
+        return;
+    uint64_t offset = VRUNTIME_OFFSET_THRESHOLD;
+    eevdf_sched->min_vruntime -= offset;
+    struct sched_entity *curr = eevdf_sched->current;
+    if (curr) {
+        curr->vruntime -= offset;
+        curr->deadline -= offset;
+    }
+    struct rb_node *node;
+    for (node = rb_first(eevdf_sched->root); node; node = rb_next(node)) {
+        struct sched_entity *se =
+            container_of(node, struct sched_entity, run_node);
+        if (se->vruntime > offset)
+            se->vruntime -= offset;
+        if (se->deadline > offset)
+            se->deadline -= offset;
+    }
+    eevdf_sched->avg_vruntime -= offset;
+}
+
 void update_current_task(eevdf_t *eevdf_sched) {
     struct sched_entity *curr = eevdf_sched->current;
     if (!curr)
@@ -305,9 +333,12 @@ void update_current_task(eevdf_t *eevdf_sched) {
         curr->is_yield = false;
     }
     curr->vruntime += calc_delta_fair(delta_exec, curr);
+    update_vlag(curr, eevdf_sched);
     resche = update_deadline(curr);
-
     update_min_vruntime(eevdf_sched);
+    wrap_vruntime(eevdf_sched);
+
+    curr->min_vruntime = eevdf_sched->min_vruntime;
 
     if (resche) {
         rb_erase(&curr->run_node, eevdf_sched->root);
