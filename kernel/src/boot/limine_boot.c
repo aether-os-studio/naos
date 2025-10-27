@@ -1,4 +1,5 @@
 #include <boot/boot.h>
+#include <acpi/uacpi/acpi.h>
 
 __attribute__((used,
                section(".limine_requests_"
