@@ -44,7 +44,6 @@ static void *alloc_page_table(void) {
 // 获取已使用的内存大小
 static uint64_t get_allocated_size(void) { return g_page_alloc_offset; }
 
-// ==================== Multiboot2 辅助函数 ====================
 static struct multiboot_tag *next_tag(struct multiboot_tag *tag) {
     uint8_t *addr = (uint8_t *)tag;
     addr += ((tag->size + 7) & ~7); // 8字节对齐

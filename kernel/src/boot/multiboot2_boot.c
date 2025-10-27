@@ -28,7 +28,6 @@ boot_memory_map_t multiboot2_memory_map;
 
 boot_memory_map_t *boot_get_memory_map() { return &multiboot2_memory_map; };
 
-// ==================== Multiboot2 辅助函数 ====================
 static struct multiboot_tag *next_tag(struct multiboot_tag *tag) {
     uint8_t *addr = (uint8_t *)tag;
     addr += ((tag->size + 7) & ~7); // 8字节对齐
@@ -131,8 +130,47 @@ boot_framebuffer_t *boot_get_framebuffer() {
     return &multiboot2_fb;
 }
 
-char *boot_get_cmdline() { return (char *)""; }
+static void *find_string_tag(void *mb2_info_addr) {
+    struct multiboot_tag *tag =
+        (struct multiboot_tag *)((uint8_t *)mb2_info_addr + 8);
+
+    while (tag->type != MULTIBOOT_TAG_TYPE_END) {
+        if (tag->type == MULTIBOOT_TAG_TYPE_CMDLINE) {
+            return (void *)tag;
+        }
+        tag = next_tag(tag);
+    }
+
+    return NULL;
+}
+
+char *boot_get_cmdline() {
+    struct multiboot_tag_string *string_tag =
+        find_string_tag((void *)mb2_info_addr);
+    return (char *)string_tag->string;
+}
 
 boot_module_t multiboot2_modules[MAX_MODULES_NUM];
 
-void boot_get_modules(boot_module_t **modules, size_t *count) {}
+void boot_get_modules(boot_module_t **modules, size_t *count) {
+    *count = 0;
+
+    struct multiboot_tag *tag =
+        (struct multiboot_tag *)((uint8_t *)mb2_info_addr + 8);
+
+    while (tag->type != MULTIBOOT_TAG_TYPE_END) {
+        if (tag->type == MULTIBOOT_TAG_TYPE_MODULE) {
+            struct multiboot_tag_module *module =
+                (struct multiboot_tag_module *)tag;
+            multiboot2_modules[(*count)].data =
+                (void *)(module->mod_start + 0xffff800000000000);
+            multiboot2_modules[(*count)].size =
+                (size_t)(module->mod_end - module->mod_start);
+            memcpy(multiboot2_modules[(*count)].path, module->cmdline,
+                   strlen(module->cmdline));
+            modules[(*count)] = &multiboot2_modules[(*count)];
+            (*count)++;
+        }
+        tag = next_tag(tag);
+    }
+}
