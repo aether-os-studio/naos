@@ -61,7 +61,7 @@ SER ?= 0
 MON ?= 0
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
-QEMUFLAGS := -m $(MEM) -smp $(SMP)
+QEMUFLAGS := -m $(MEM) -smp $(SMP) -d cpu_reset
 
 export EXTRA ?= 
 
@@ -160,6 +160,11 @@ ifeq ($(BOOT_PROTOCOL), limine)
 	mmd -i $(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/limine
 	mcopy -i $(IMAGE_NAME).img@@1M $(EFI_FILE_SINGLE) ::/EFI/BOOT
 	mcopy -i $(IMAGE_NAME).img@@1M limine.conf ::/limine
+endif
+ifeq ($(BOOT_PROTOCOL), multiboot2)
+	mmd -i $(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/limine
+	mcopy -i $(IMAGE_NAME).img@@1M $(EFI_FILE_SINGLE) ::/EFI/BOOT
+	mcopy -i $(IMAGE_NAME).img@@1M limine_multiboot2.conf ::/limine/limine.conf
 endif
 
 single-$(IMAGE_NAME).img: assets/limine kernel rootfs-$(ARCH).img modules

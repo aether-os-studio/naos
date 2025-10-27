@@ -50,6 +50,9 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
     for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL - 1; i++) {
         uint64_t index = indexs[i];
         uint64_t addr = pgdir[index];
+        if (ARCH_PT_IS_LARGE(addr)) {
+            return 0;
+        }
         if (!ARCH_PT_IS_TABLE(addr) || !(addr & ARCH_ADDR_MASK)) {
             uint64_t a = alloc_frames(1);
             if (a == 0) {
@@ -58,9 +61,6 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
             memset((uint64_t *)phys_to_virt(a), 0, DEFAULT_PAGE_SIZE);
             pgdir[index] =
                 a | ARCH_PT_TABLE_FLAGS | (flags & ARCH_PT_FLAG_USER);
-        }
-        if (ARCH_PT_IS_LARGE(addr)) {
-            return 0;
         }
         pgdir = (uint64_t *)phys_to_virt(pgdir[index] & ARCH_ADDR_MASK);
     }
@@ -258,15 +258,7 @@ void free_page_table(task_mm_info_t *directory) {
 }
 
 void page_table_init() {
-#if defined(__x86_64__)
-    uint64_t new_page_table = alloc_frames(1);
-    memset((void *)phys_to_virt(new_page_table), 0, DEFAULT_PAGE_SIZE);
-    memcpy((uint64_t *)phys_to_virt(new_page_table) + 256,
-           (uint64_t *)get_current_page_dir(false) + 256,
-           DEFAULT_PAGE_SIZE / 2);
-    asm volatile("movq %0, %%cr3" ::"r"(new_page_table));
-    kernel_page_dir = (uint64_t *)phys_to_virt(new_page_table);
-#elif defined(__aarch64__)
+#if defined(__aarch64__)
     extern void setup_mair(void);
     setup_mair();
 #endif

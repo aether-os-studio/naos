@@ -626,7 +626,7 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
         case DRM_CLIENT_CAP_CURSOR_PLANE_HOTSPOT:
             return 0;
         default:
-            printk("drm: Invalid client type %d\n", cap->capability);
+            printk("drm: Invalid client capability %d\n", cap->capability);
             return -EINVAL;
         }
     }

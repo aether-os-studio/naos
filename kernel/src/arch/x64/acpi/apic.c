@@ -51,7 +51,7 @@ uint32_t lapic_read(uint32_t reg) {
 }
 
 uint64_t lapic_id() {
-    uint32_t phy_id = lapic_read(LAPIC_REG_ID);
+    uint32_t phy_id = lapic_read(LAPIC_ID);
     return x2apic_mode ? phy_id : (phy_id >> 24);
 }
 
@@ -70,19 +70,19 @@ void local_apic_init() {
 
     lapic_timer_stop();
 
-    lapic_write(LAPIC_REG_SPURIOUS, 0xff | (1 << 8));
-    lapic_write(LAPIC_REG_TIMER_DIV, 11);
-    lapic_write(LAPIC_REG_TIMER, APIC_TIMER_INTERRUPT_VECTOR);
+    lapic_write(LAPIC_SVR, 0xff | (1 << 8));
+    lapic_write(LAPIC_TIMER_DIV, 11);
+    lapic_write(LAPIC_TIMER, APIC_TIMER_INTERRUPT_VECTOR);
 
     uint64_t b = nanoTime();
-    lapic_write(LAPIC_REG_TIMER_INITCNT, ~((uint32_t)0));
+    lapic_write(LAPIC_TIMER_INIT, ~((uint32_t)0));
     for (;;)
         if (nanoTime() - b >= 100000000 / SCHED_HZ)
             break;
-    uint64_t lapic_timer = (~(uint32_t)0) - lapic_read(LAPIC_REG_TIMER_CURCNT);
+    uint64_t lapic_timer = (~(uint32_t)0) - lapic_read(LAPIC_TIMER_CURRENT);
     calibrated_timer_initial = (uint64_t)((uint64_t)(lapic_timer * 1000) / 250);
-    lapic_write(LAPIC_REG_TIMER, lapic_read(LAPIC_REG_TIMER) | (1 << 17));
-    lapic_write(LAPIC_REG_TIMER_INITCNT, calibrated_timer_initial);
+    lapic_write(LAPIC_TIMER, lapic_read(LAPIC_TIMER) | (1 << 17));
+    lapic_write(LAPIC_TIMER_INIT, calibrated_timer_initial);
 }
 
 #define MAX_IOAPICS_NUM 64
@@ -231,9 +231,12 @@ void send_eoi(uint32_t irq) {
 }
 
 void lapic_timer_stop() {
-    lapic_write(LAPIC_REG_TIMER_INITCNT, 0);
-    lapic_write(LAPIC_REG_TIMER, (1 << 16));
+    lapic_write(LAPIC_TIMER_INIT, 0);
+    lapic_write(LAPIC_TIMER, (1 << 16));
 }
+
+extern void apic_handle_lapic(struct acpi_madt_lapic *lapic);
+extern void apic_handle_lx2apic(struct acpi_madt_x2apic *lapic);
 
 void apic_init() {
     struct uacpi_table madt_table;
@@ -272,6 +275,16 @@ void apic_init() {
                     (struct acpi_madt_interrupt_source_override
                          *)((uint64_t)(&madt->entries) + current);
                 apic_handle_override(override);
+            } else if (header->type == ACPI_MADT_ENTRY_TYPE_LAPIC) {
+                struct acpi_madt_lapic *lapic =
+                    (struct acpi_madt_lapic *)((uint64_t)(&madt->entries) +
+                                               current);
+                apic_handle_lapic(lapic);
+            } else if (header->type == ACPI_MADT_ENTRY_TYPE_LOCAL_X2APIC) {
+                struct acpi_madt_x2apic *x2apic =
+                    (struct acpi_madt_x2apic *)((uint64_t)(&madt->entries) +
+                                                current);
+                apic_handle_lx2apic(x2apic);
             }
             current += (uint64_t)header->length;
         }
@@ -297,7 +310,7 @@ spinlock_t ap_startup_lock = {0};
 
 extern bool task_initialized;
 
-void ap_entry(struct limine_mp_info *cpu) {
+uint64_t general_ap_entry() {
     close_interrupt;
 
     uint64_t cr3 = (uint64_t)virt_to_phys(get_kernel_page_dir());
@@ -329,6 +342,18 @@ void ap_entry(struct limine_mp_info *cpu) {
     }
 }
 
+#if defined(MULTIBOOT2)
+void multiboot2_ap_entry() {
+    asm volatile("movq %0, %%cr3" ::"r"(virt_to_phys(get_kernel_page_dir())));
+    void *new_stack = alloc_frames_bytes(STACK_SIZE);
+    asm volatile("movq %0, %%rsp" ::"r"(new_stack));
+    asm volatile("movq %0, %%rbp" ::"r"(new_stack));
+    general_ap_entry();
+}
+#else
+void limine_ap_entry(struct limine_mp_info *cpu) { general_ap_entry(); }
+#endif
+
 uint64_t cpu_count;
 
 uint32_t cpuid_to_lapicid[MAX_CPU_NUM];
@@ -345,7 +370,13 @@ uint32_t get_cpuid_by_lapic_id(uint32_t lapic_id) {
     return 0;
 }
 
-void smp_init() { boot_smp_init((uintptr_t)ap_entry); }
+void smp_init() {
+#if defined(MULTIBOOT2)
+    boot_smp_init((uintptr_t)multiboot2_ap_entry);
+#else
+    boot_smp_init((uintptr_t)limine_ap_entry);
+#endif
+}
 
 int64_t apic_mask(uint64_t irq, uint64_t flags) {
     if (flags & IRQ_FLAGS_MSIX)

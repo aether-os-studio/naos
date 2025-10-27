@@ -162,20 +162,23 @@ override LDFLAGS += \
 override SRCFILES := $(shell find $(ARCH_DIR) -name "*.[Sc]" | LC_ALL=C sort)
 override SRCFILES += $(shell find src/acpi -name "*.[Sc]" | LC_ALL=C sort)
 override SRCFILES += $(shell find src/dev -name "*.[Sc]" | LC_ALL=C sort)
-override SRCFILES += $(shell find src/drivers -name "*.c" | LC_ALL=C sort)
-override SRCFILES += $(shell find src/fs -name "*.c" | LC_ALL=C sort)
-override SRCFILES += $(shell find src/irq -name "*.c" | LC_ALL=C sort)
-override SRCFILES += $(shell find src/libs -name "*.c" | LC_ALL=C sort)
-override SRCFILES += $(shell find src/mm -name "*.c" | LC_ALL=C sort)
-override SRCFILES += $(shell find src/mod -name "*.c" | LC_ALL=C sort)
-override SRCFILES += $(shell find src/init -name "*.c" | LC_ALL=C sort)
-override SRCFILES += $(shell find src/task -name "*.c" | LC_ALL=C sort)
-override SRCFILES += $(shell find src/block -name "*.c" | LC_ALL=C sort)
-override SRCFILES += $(shell find src/net -name "*.c" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/drivers -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/fs -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/irq -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/libs -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/mm -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/mod -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/init -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/task -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/block -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/net -name "*.[Sc]" | LC_ALL=C sort)
 ifeq ($(BOOT_PROTOCOL), limine)
 override SRCFILES += src/boot/limine_boot.c
 endif
 ifeq ($(BOOT_PROTOCOL), multiboot2)
+override SRCFILES += src/boot/multiboot2_boot.c
+override SRCFILES += $(shell find src/boot/x64/multiboot2 -name "*.[Sc]" | LC_ALL=C sort)
+override CFLAGS += -DMULTIBOOT2
 endif
 override CFILES := $(filter %.c,$(SRCFILES))
 override ASFILES := $(filter %.S,$(SRCFILES))
@@ -217,7 +220,7 @@ obj-$(ARCH)/src/%.c.o: src/%.c GNUmakefile
 # Compilation rules for *.S files.
 obj-$(ARCH)/src/%.S.o: src/%.S GNUmakefile
 	mkdir -p "$$(dirname $@)"
-	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(CPPFLAGS) -DASM_FILE -c $< -o $@
 
 # Remove object files and the final executable.
 .PHONY: clean

@@ -89,8 +89,6 @@ void dump_regs(struct pt_regs *regs, const char *error_str, ...) {
 
     spin_lock(&dump_lock);
 
-    traceback(regs);
-
     char buf[128];
     va_list args;
     va_start(args, error_str);
@@ -100,6 +98,8 @@ void dump_regs(struct pt_regs *regs, const char *error_str, ...) {
     // printk("\033[0;0H");
     // printk("\033[2J");
     printk("%s\n", buf);
+
+    traceback(regs);
 
     printk("current_task->pid = %d, current_task->name = %s\n",
            current_task->pid, current_task->name);

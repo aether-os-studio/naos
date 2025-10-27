@@ -52,6 +52,11 @@ __attribute__((
     section(
         ".limine_requests_end"))) static volatile LIMINE_REQUESTS_END_MARKER;
 
+#if defined(__x86_64__)
+void apic_handle_lapic(struct acpi_madt_lapic *lapic) { (void)lapic; }
+void apic_handle_lx2apic(struct acpi_madt_x2apic *lapic) { (void)lapic; }
+#endif
+
 void boot_init() {}
 
 uint64_t boot_get_hhdm_offset() { return hhdm_request.response->offset; };
