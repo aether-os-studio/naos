@@ -25,7 +25,7 @@
 #define scale_load(w) ((w) << SCHED_FIXEDPOINT_SHIFT)
 #define scale_load_down(w)                                                     \
     ({                                                                         \
-        unsigned long __w = (w);                                               \
+        uint64_t __w = (w);                                                    \
                                                                                \
         if (__w)                                                               \
             __w = MAX(2UL, __w >> SCHED_FIXEDPOINT_SHIFT);                     \
@@ -124,6 +124,9 @@ struct sched_entity *new_entity(task_t *task, uint64_t prio, eevdf_t *sched);
  */
 void insert_sched_entity(struct rb_root *root, struct sched_entity *se);
 
+void remove_sched_entity(eevdf_t *eevdf_sched, struct rb_root *root,
+                         struct sched_entity *se);
+
 /**
  * 更新当前调度单元的信息 (deadline vruntime)
  */
@@ -144,10 +147,3 @@ task_t *pick_next_task(eevdf_t *eevdf_sched);
 void add_eevdf_entity_with_prio(task_t *new_task, uint64_t prio,
                                 eevdf_t *eevdf_sched);
 void remove_eevdf_entity(task_t *thread, eevdf_t *eevdf_sched);
-
-/**
- * 调整指定线程的权重
- * @param thread 线程实体
- * @param prio 任务优先级
- */
-void change_entity_weight(eevdf_t *eevdf_sched, task_t *thread, uint64_t prio);

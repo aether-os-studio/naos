@@ -918,7 +918,8 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns) {
 
     struct sched_entity *entity = task->sched_info;
     if (entity->on_rq) {
-        remove_eevdf_entity(task, schedulers[task->cpu_id]);
+        remove_sched_entity(schedulers[task->cpu_id],
+                            schedulers[task->cpu_id]->root, entity);
         entity->on_rq = false;
     }
 
@@ -941,7 +942,6 @@ void task_unblock(task_t *task, int reason) {
         spin_lock(&schedulers[task->cpu_id]->queue_lock);
         insert_sched_entity(schedulers[task->cpu_id]->root, entity);
         spin_unlock(&schedulers[task->cpu_id]->queue_lock);
-        schedulers[task->cpu_id]->task_count++;
         entity->on_rq = true;
     }
 }
@@ -1074,16 +1074,10 @@ uint64_t task_exit(int64_t code) {
 
     can_schedule = true;
 
-    task_t *next = task_search(current_task->cpu_id);
+    task_t *next = task_search(current_cpu_id);
 
-    if (next) {
-        arch_set_current(next);
-        arch_switch_with_context(NULL, next->arch_context, next->kernel_stack);
-    } else {
-        arch_set_current(idle_tasks[current_cpu_id]);
-        arch_switch_with_context(NULL, idle_tasks[current_cpu_id]->arch_context,
-                                 idle_tasks[current_cpu_id]->kernel_stack);
-    }
+    arch_set_current(next);
+    arch_switch_with_context(NULL, next->arch_context, next->kernel_stack);
 
     // never return !!!
 

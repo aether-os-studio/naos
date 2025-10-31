@@ -27,12 +27,14 @@ const uint32_t sched_prio_to_wmult[40] = {
     /*  15 */ 119304647, 148102320, 186737708, 238609294, 286331153,
 };
 
+static uint64_t sched_clock() { return nanoTime(); }
+
 static uint64_t mul_u64_u32_shr(uint64_t a, uint32_t mul, unsigned int shift) {
     return (uint64_t)(((unsigned __int128)a * mul) >> shift);
 }
 
 static inline void avg_vruntime_update(eevdf_t *eevdf_sched, uint64_t delta) {
-    eevdf_sched->avg_vruntime -= eevdf_sched->avg_load * delta;
+    // eevdf_sched->avg_vruntime -= eevdf_sched->avg_load * delta;
 }
 
 static inline int64_t entity_key(eevdf_t *eevdf_sched,
@@ -50,7 +52,7 @@ static int vruntime_eligible(eevdf_t *eevdf_sched, uint64_t vruntime) {
     int64_t avg = eevdf_sched->avg_vruntime;
     long load = eevdf_sched->avg_load;
     if (curr && curr->on_rq) {
-        unsigned long weight = scale_load_down(curr->load.weight);
+        uint64_t weight = scale_load_down(curr->load.weight);
         avg += entity_key(eevdf_sched, curr) * weight;
         load += weight;
     }
@@ -99,7 +101,7 @@ void set_load_weight(struct sched_entity *entity) {
 }
 
 static void __update_inv_weight(struct load_weight *lw) {
-    unsigned long w;
+    uint64_t w;
 
     if (lw->inv_weight)
         return;
@@ -120,7 +122,7 @@ int fls(unsigned int x) {
     return 32 - __builtin_clz(x);
 }
 
-static uint64_t __calc_delta(uint64_t delta_exec, unsigned long weight,
+static uint64_t __calc_delta(uint64_t delta_exec, uint64_t weight,
                              struct load_weight *lw) {
     uint64_t fact = scale_load_down(weight);
     uint32_t fact_hi = (uint32_t)(fact >> 32);
@@ -183,26 +185,12 @@ struct sched_entity *new_entity(task_t *task, uint64_t prio,
     entity->deadline = 0;
     entity->vruntime = eevdf_sched->min_vruntime;
     entity->min_vruntime = eevdf_sched->min_vruntime;
-    entity->exec_start = nanoTime();
+    entity->exec_start = sched_clock();
     entity->is_yield = false;
     set_load_weight(entity);
     update_deadline(entity);
     entity->thread = task;
     return entity;
-}
-
-void change_entity_weight(eevdf_t *eevdf_sched, task_t *thread, uint64_t prio) {
-    struct sched_entity *entity = (struct sched_entity *)thread->sched_info;
-    if (entity->prio == prio) {
-        return;
-    }
-    entity->is_idle = prio == NICE_TO_PRIO(20);
-    entity->prio = prio;
-    set_load_weight(entity);
-    spin_lock(&eevdf_sched->queue_lock);
-    rb_erase(&entity->run_node, eevdf_sched->root);
-    insert_sched_entity(eevdf_sched->root, entity);
-    spin_unlock(&eevdf_sched->queue_lock);
 }
 
 struct sched_entity *pick_eevdf(eevdf_t *eevdf_sched) {
@@ -274,7 +262,7 @@ static void update_min_vruntime(eevdf_t *eevdf_sched) {
 }
 
 static int64_t update_curr_se(struct sched_entity *curr) {
-    uint64_t now = nanoTime();
+    uint64_t now = sched_clock();
     int64_t delta_exec;
 
     delta_exec = now - curr->exec_start;
@@ -328,10 +316,6 @@ void update_current_task(eevdf_t *eevdf_sched) {
     if (delta_exec <= 0)
         return;
 
-    if (curr->is_yield) {
-        curr->vruntime = curr->deadline;
-        curr->is_yield = false;
-    }
     curr->vruntime += calc_delta_fair(delta_exec, curr);
     update_vlag(curr, eevdf_sched);
     resche = update_deadline(curr);
@@ -339,6 +323,11 @@ void update_current_task(eevdf_t *eevdf_sched) {
     wrap_vruntime(eevdf_sched);
 
     curr->min_vruntime = eevdf_sched->min_vruntime;
+
+    if (curr->is_yield) {
+        curr->vruntime = curr->deadline;
+        curr->is_yield = false;
+    }
 
     if (resche) {
         rb_erase(&curr->run_node, eevdf_sched->root);
@@ -353,6 +342,10 @@ void add_eevdf_entity_with_prio(task_t *new_task, uint64_t prio,
     new_task->sched_info = entity;
     spin_lock(&eevdf_sched->queue_lock);
     insert_sched_entity(eevdf_sched->root, entity);
+    uint64_t weight = scale_load_down(entity->load.weight);
+    int64_t key = entity_key(eevdf_sched, entity);
+    eevdf_sched->avg_load += weight;
+    eevdf_sched->avg_vruntime += key * weight;
     spin_unlock(&eevdf_sched->queue_lock);
     eevdf_sched->task_count++;
 }
@@ -361,14 +354,17 @@ void remove_sched_entity(eevdf_t *eevdf_sched, struct rb_root *root,
                          struct sched_entity *se) {
     rb_erase(&se->run_node, root);
     if (eevdf_sched->current == se) {
-        eevdf_sched->current = NULL;
-        eevdf_sched->current = pick_eevdf(eevdf_sched);
+        eevdf_sched->current = eevdf_sched->idle_entity;
     }
     update_min_vruntime(eevdf_sched);
 }
 
 void remove_eevdf_entity(task_t *thread, eevdf_t *eevdf_sched) {
     struct sched_entity *entity = (struct sched_entity *)thread->sched_info;
+    uint64_t weight = scale_load_down(entity->load.weight);
+    int64_t key = entity_key(eevdf_sched, entity);
+    eevdf_sched->avg_load -= weight;
+    eevdf_sched->avg_vruntime -= key * weight;
     spin_lock(&eevdf_sched->queue_lock);
     remove_sched_entity(eevdf_sched, eevdf_sched->root, entity);
     spin_unlock(&eevdf_sched->queue_lock);
@@ -379,8 +375,10 @@ task_t *pick_next_task(eevdf_t *eevdf_sched) {
     spin_lock(&eevdf_sched->queue_lock);
     update_current_task(eevdf_sched);
     struct sched_entity *current = pick_eevdf(eevdf_sched);
-    spin_unlock(&eevdf_sched->queue_lock);
-    current->exec_start = nanoTime();
+    if (!current)
+        current = eevdf_sched->idle_entity;
+    current->exec_start = sched_clock();
     eevdf_sched->current = current;
+    spin_unlock(&eevdf_sched->queue_lock);
     return current->thread;
 }
