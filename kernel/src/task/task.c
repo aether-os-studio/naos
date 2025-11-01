@@ -184,34 +184,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
 
     memset(task->actions, 0, sizeof(task->actions));
 
-    memset(&task->term, 0, sizeof(termios));
-    task->term.c_iflag = BRKINT | ICRNL | INPCK | ISTRIP | IXON;
-    task->term.c_oflag = OPOST;
-    task->term.c_cflag = CS8 | CREAD | CLOCAL;
-    task->term.c_lflag = ECHO | ICANON | IEXTEN | ISIG;
-    task->term.c_line = 0;
-    task->term.c_cc[VINTR] = 3;   // Ctrl-C
-    task->term.c_cc[VQUIT] = 28;  // Ctrl-task->term.c_cc[VERASE] = 127; // DEL
-    task->term.c_cc[VKILL] = 21;  // Ctrl-U
-    task->term.c_cc[VEOF] = 4;    // Ctrl-D
-    task->term.c_cc[VTIME] = 0;   // No timer
-    task->term.c_cc[VMIN] = 1;    // Return each byte
-    task->term.c_cc[VSTART] = 17; // Ctrl-Q
-    task->term.c_cc[VSTOP] = 19;  // Ctrl-S
-    task->term.c_cc[VSUSP] = 26;  // Ctrl-Z
-    task->term.c_cc[VREPRINT] = 18; // Ctrl-R
-    task->term.c_cc[VDISCARD] = 15; // Ctrl-O
-    task->term.c_cc[VWERASE] = 23;  // Ctrl-W
-    task->term.c_cc[VLNEXT] = 22;   // Ctrl-V
-    // Initialize other control characters to 0
-    for (int i = 16; i < NCCS; i++) {
-        task->term.c_cc[i] = 0;
-    }
-
     task->tmp_rec_v = 0;
     task->cmdline = NULL;
-
-    memset(task->actions, 0, sizeof(task->actions));
 
     memset(task->rlim, 0, sizeof(task->rlim));
     task->rlim[RLIMIT_STACK] = (struct rlimit){
@@ -1208,6 +1182,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     if (flags & CLONE_VFORK) {
         flags |= CLONE_VM;
         flags |= CLONE_FILES;
+        flags |= CLONE_SIGHAND;
     }
 
     task_t *child = get_free_task();
@@ -1292,13 +1267,19 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                 child->fd_info->fds[i] = NULL;
             }
         }
-
-        child->fd_info->ref_count++;
     } else {
-        child->fd_info->ref_count++;
+        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+            fd_t *fd = child->fd_info->fds[i];
+
+            if (fd) {
+                child->fd_info->fds[i]->node->refcount++;
+            } else {
+                child->fd_info->fds[i] = NULL;
+            }
+        }
     }
 
-    memcpy(&child->term, &current_task->term, sizeof(termios));
+    child->fd_info->ref_count++;
 
     child->saved_signal = 0;
     child->signal = 0;

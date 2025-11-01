@@ -70,7 +70,7 @@ fn main() {
     } else {
         assert_ne!(seatd, -1);
     }
-    
+
     unsafe {
         libc::open(
             b"/run/udev/data/c226:0\0".as_ptr() as *const _,

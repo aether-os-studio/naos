@@ -172,6 +172,7 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
 
     if (msg->msg_name) {
         struct sockaddr_nl *nl_addr = (struct sockaddr_nl *)msg->msg_name;
+        nl_addr->nl_family = AF_NETLINK;
         nl_addr->nl_pid = 0;
         nl_addr->nl_groups = 1;
     }
