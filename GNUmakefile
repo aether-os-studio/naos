@@ -133,7 +133,7 @@ distclean:
 clippy:
 	$(MAKE) -C kernel clippy
 
-ROOTFS_IMG_SIZE ?= 2048
+ROOTFS_IMG_SIZE ?= 3072
 
 .PHONY: rootfs-$(ARCH).img
 rootfs-$(ARCH).img: user/.build-stamp-$(ARCH)
@@ -169,7 +169,7 @@ endif
 
 single-$(IMAGE_NAME).img: assets/limine kernel rootfs-$(ARCH).img modules
 	dd if=/dev/zero of=single-$(IMAGE_NAME).img bs=1M count=$$(( $(ROOTFS_IMG_SIZE) + 1024 ))
-	sgdisk --new=1:1M:511M --new=2:512M:$$(( $$(($(ROOTFS_IMG_SIZE) + 1024 )) * 1024 )) single-$(IMAGE_NAME).img
+	sgdisk --new=1:1M:1023M --new=2:1024M:$$(( $$(($(ROOTFS_IMG_SIZE) + 1024 )) * 1024 )) single-$(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 single-$(IMAGE_NAME).img
 	mcopy -i single-$(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/
 	mcopy -i single-$(IMAGE_NAME).img@@1M modules-$(ARCH) ::/modules
@@ -179,7 +179,7 @@ ifeq ($(BOOT_PROTOCOL), limine)
 	mcopy -i single-$(IMAGE_NAME).img@@1M limine.conf ::/limine
 endif
 
-	dd if=rootfs-$(ARCH).img of=single-$(IMAGE_NAME).img bs=1M count=$(ROOTFS_IMG_SIZE) seek=512
+	dd if=rootfs-$(ARCH).img of=single-$(IMAGE_NAME).img bs=1M count=$(ROOTFS_IMG_SIZE) seek=1024
 
 .PHONY: run
 run: run-$(ARCH)
