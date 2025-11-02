@@ -100,7 +100,7 @@ static usb_hub_ops_t xhci_root_hub_ops = {
 
 // 分配DMA内存（对齐到64字节）
 static void *xhci_alloc_dma(size_t size, uint64_t *phys_addr) {
-    void *ptr = alloc_frames_bytes(size);
+    void *ptr = alloc_frames_bytes_dma32(size);
     if (ptr) {
         memset(ptr, 0, size);
         if (phys_addr) {
@@ -140,7 +140,7 @@ void xhci_free_ring(xhci_ring_t *ring) {
         return;
 
     if (ring->trbs) {
-        free_frames_bytes(ring->trbs, ring->size * sizeof(xhci_trb_t));
+        free_frames_bytes_dma32(ring->trbs, ring->size * sizeof(xhci_trb_t));
     }
     free(ring);
 }
@@ -502,8 +502,8 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
     if (xhci->num_scratchpads > 0) {
         xhci->scratchpad_array = (uint64_t *)xhci_alloc_dma(
             xhci->num_scratchpads * sizeof(uint64_t), NULL);
-        xhci->scratchpad_buffers =
-            (void **)alloc_frames_bytes(xhci->num_scratchpads * sizeof(void *));
+        xhci->scratchpad_buffers = (void **)alloc_frames_bytes_dma32(
+            xhci->num_scratchpads * sizeof(void *));
 
         for (uint32_t i = 0; i < xhci->num_scratchpads; i++) {
             uint64_t phys;
@@ -554,6 +554,10 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
 
     xhci_writel(&xhci->intr_regs[0].imod, 0);
 
+    // uint32_t cmd = xhci_readl(&xhci->op_regs->usbcmd);
+    // cmd |= XHCI_CMD_INTE;
+    // xhci_writel(&xhci->op_regs->usbcmd, cmd);
+
     // // 启用中断
     // uint32_t iman = xhci_readl(&xhci->intr_regs[0].iman);
     // iman |= (1 << 1);
@@ -577,10 +581,6 @@ static int xhci_hcd_init(usb_hcd_t *hcd) {
     xhci->root_hub->device = NULL;
     xhci->root_hub->parent = NULL;
     xhci->root_hub->ops = &xhci_root_hub_ops;
-
-    // uint32_t cmd = xhci_readl(&xhci->op_regs->usbcmd);
-    // cmd |= XHCI_CMD_INTE;
-    // xhci_writel(&xhci->op_regs->usbcmd, cmd);
 
     // 启动控制器
     if (xhci_start(xhci) != 0) {
@@ -1002,7 +1002,7 @@ static int xhci_reset_port_usb3(xhci_hcd_t *xhci, uint8_t port,
     return 0;
 }
 
-// 主重置函数（添加重试机制）
+// 主重置函数
 static int xhci_reset_port(usb_hcd_t *hcd, usb_hub_t *hub,
                            usb_device_t *device) {
     xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
@@ -1014,6 +1014,9 @@ static int xhci_reset_port(usb_hcd_t *hcd, usb_hub_t *hub,
     }
 
     xhci_port_info_t *port_info = &xhci->port_info[port];
+    if (!port_info)
+        return -1;
+
     bool is_usb3 = (port_info->protocol == XHCI_PROTOCOL_USB3);
 
     printk("XHCI: Resetting port %d (%s)\n", port, is_usb3 ? "USB3" : "USB2");
@@ -1117,9 +1120,9 @@ static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
                                              (xhci->use_64byte_context ? 2 : 1),
                                          &dev_priv->input_ctx_phys);
     if (!dev_priv->input_ctx) {
-        free_frames_bytes(dev_priv->device_ctx,
-                          sizeof(xhci_device_ctx_t) *
-                              (xhci->use_64byte_context ? 2 : 1));
+        free_frames_bytes_dma32(dev_priv->device_ctx,
+                                sizeof(xhci_device_ctx_t) *
+                                    (xhci->use_64byte_context ? 2 : 1));
         free(dev_priv);
         return -1;
     }
@@ -1127,12 +1130,12 @@ static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
     // 分配完成结构
     xhci_command_completion_t *completion = xhci_alloc_command_completion();
     if (!completion) {
-        free_frames_bytes(dev_priv->input_ctx,
-                          sizeof(xhci_input_ctx_t) *
-                              (xhci->use_64byte_context ? 2 : 1));
-        free_frames_bytes(dev_priv->device_ctx,
-                          sizeof(xhci_device_ctx_t) *
-                              (xhci->use_64byte_context ? 2 : 1));
+        free_frames_bytes_dma32(dev_priv->input_ctx,
+                                sizeof(xhci_input_ctx_t) *
+                                    (xhci->use_64byte_context ? 2 : 1));
+        free_frames_bytes_dma32(dev_priv->device_ctx,
+                                sizeof(xhci_device_ctx_t) *
+                                    (xhci->use_64byte_context ? 2 : 1));
         free(dev_priv);
         return -1;
     }
@@ -1174,8 +1177,10 @@ static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
         if (ret != 0) {
             printk("XHCI: Failed to setup EP0\n");
             xhci->dcbaa[dev_priv->slot_id] = 0;
-            free_frames_bytes(dev_priv->input_ctx, sizeof(xhci_input_ctx_t));
-            free_frames_bytes(dev_priv->device_ctx, sizeof(xhci_device_ctx_t));
+            free_frames_bytes_dma32(dev_priv->input_ctx,
+                                    sizeof(xhci_input_ctx_t));
+            free_frames_bytes_dma32(dev_priv->device_ctx,
+                                    sizeof(xhci_device_ctx_t));
             dev_priv->input_ctx = NULL;
             dev_priv->device_ctx = NULL;
             free(dev_priv);
@@ -1185,8 +1190,9 @@ static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
         }
     } else {
         // 命令失败
-        free_frames_bytes(dev_priv->input_ctx, sizeof(xhci_input_ctx_t));
-        free_frames_bytes(dev_priv->device_ctx, sizeof(xhci_device_ctx_t));
+        free_frames_bytes_dma32(dev_priv->input_ctx, sizeof(xhci_input_ctx_t));
+        free_frames_bytes_dma32(dev_priv->device_ctx,
+                                sizeof(xhci_device_ctx_t));
         free(dev_priv);
     }
 
@@ -1225,14 +1231,14 @@ static int xhci_disable_slot(usb_hcd_t *hcd, usb_device_t *device) {
 
     // 释放资源
     if (dev_priv->device_ctx) {
-        free_frames_bytes(dev_priv->device_ctx,
-                          sizeof(xhci_device_ctx_t) *
-                              (xhci->use_64byte_context ? 2 : 1));
+        free_frames_bytes_dma32(dev_priv->device_ctx,
+                                sizeof(xhci_device_ctx_t) *
+                                    (xhci->use_64byte_context ? 2 : 1));
     }
     if (dev_priv->input_ctx) {
-        free_frames_bytes(dev_priv->input_ctx,
-                          sizeof(xhci_input_ctx_t) *
-                              (xhci->use_64byte_context ? 2 : 1));
+        free_frames_bytes_dma32(dev_priv->input_ctx,
+                                sizeof(xhci_input_ctx_t) *
+                                    (xhci->use_64byte_context ? 2 : 1));
     }
     free(dev_priv);
 
@@ -2107,10 +2113,10 @@ void xhci_handle_port_status(xhci_hcd_t *xhci, uint8_t port_id) {
         // 等待端口稳定
         uint64_t target_time = 100000000ULL + nanoTime(); // 100ms
         while (nanoTime() < target_time) {
-        arch_enable_interrupt();
-        arch_pause();
-    }
-    arch_disable_interrupt();
+            arch_enable_interrupt();
+            arch_pause();
+        }
+        arch_disable_interrupt();
 
         xhci->connection[port_id] = true;
 

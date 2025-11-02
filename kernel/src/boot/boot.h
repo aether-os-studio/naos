@@ -12,7 +12,7 @@ typedef struct boot_memory_map_entry {
 } boot_memory_map_entry_t;
 
 typedef struct boot_memory_map {
-    boot_memory_map_entry_t entries[512];
+    boot_memory_map_entry_t entries[2048];
     size_t entry_count;
 } boot_memory_map_t;
 

@@ -140,6 +140,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->ruid = 0;
     task->rgid = 0;
     task->pgid = 0;
+    task->tgid = 0;
     task->sid = 0;
     task->waitpid = 0;
     task->priority = priority;
@@ -806,13 +807,10 @@ uint64_t task_execve(const char *path_user, const char **argv,
     }
 
     for (int i = 1; i < MAXSIG; i++) {
-        if (i == SIGCHLD) {
-            if (current_task->actions[i].sa_handler != (sighandler_t)SIG_IGN) {
+        if (current_task->actions[i].sa_handler != (sighandler_t)SIG_IGN) {
+            if (i != SIGCHLD) {
                 memset(&current_task->actions[i], 0, sizeof(sigaction_t));
             }
-            continue;
-        } else {
-            memset(&current_task->actions[i], 0, sizeof(sigaction_t));
         }
     }
 
@@ -1215,9 +1213,24 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     orig_context.ctx = regs;
     arch_context_copy(child->arch_context, &orig_context, child->kernel_stack,
                       flags);
+
 #if defined(__x86_64__)
-    child->syscall_stack_user = newsp ? newsp : regs->rsp;
+    uint64_t user_sp = regs->rsp;
 #endif
+
+    if (newsp) {
+        user_sp = newsp;
+    } else {
+        if (flags & CLONE_VM) {
+            can_schedule = true;
+            return (uint64_t)-EINVAL;
+        }
+    }
+
+#if defined(__x86_64__)
+    child->arch_context->ctx->rsp = user_sp;
+#endif
+
     child->is_kernel = false;
     child->ppid = current_task->pid;
     child->uid = current_task->uid;
@@ -1297,6 +1310,10 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 #if defined(__x86_64__)
         child->arch_context->fsbase = tls;
 #endif
+    }
+
+    if (flags & CLONE_THREAD) {
+        child->tgid = current_task->tgid;
     }
 
     if (parent_tid && (flags & CLONE_PARENT_SETTID)) {

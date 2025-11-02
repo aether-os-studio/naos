@@ -6,8 +6,12 @@ EXPORT_SYMBOL(get_current_page_dir);
 
 EXPORT_SYMBOL(alloc_frames);
 EXPORT_SYMBOL(free_frames);
+EXPORT_SYMBOL(alloc_frames_dma32);
+EXPORT_SYMBOL(free_frames_dma32);
 EXPORT_SYMBOL(alloc_frames_bytes);
 EXPORT_SYMBOL(free_frames_bytes);
+EXPORT_SYMBOL(alloc_frames_bytes_dma32);
+EXPORT_SYMBOL(free_frames_bytes_dma32);
 
 EXPORT_SYMBOL(malloc);
 EXPORT_SYMBOL(aligned_alloc);

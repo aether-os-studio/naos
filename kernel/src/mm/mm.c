@@ -308,6 +308,32 @@ void free_frames(uintptr_t addr, size_t count) {
     size_t order = log2_floor(required_pages);
 
     uint64_t idx = addr / DEFAULT_PAGE_SIZE;
+    if (bitmap_get(&usable_regions, idx) == false)
+        return;
+
+    page_t *page = &mem_map[idx];
+
+    __free_pages(page, order);
+}
+
+uintptr_t alloc_frames_dma32(size_t count) {
+    size_t required_pages = next_power_of_2(count);
+    size_t order = log2_floor(required_pages);
+
+    page_t *page = alloc_pages(GFP_KERNEL_DMA32, order);
+
+    uint64_t idx = page - mem_map;
+
+    return idx * DEFAULT_PAGE_SIZE;
+}
+
+void free_frames_dma32(uintptr_t addr, size_t count) {
+    size_t required_pages = next_power_of_2(count);
+    size_t order = log2_floor(required_pages);
+
+    uint64_t idx = addr / DEFAULT_PAGE_SIZE;
+    if (bitmap_get(&usable_regions, idx) == false)
+        return;
 
     page_t *page = &mem_map[idx];
 

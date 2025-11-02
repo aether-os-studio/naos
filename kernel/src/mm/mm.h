@@ -27,6 +27,8 @@ void frame_init();
 
 uintptr_t alloc_frames(size_t count);
 void free_frames(uintptr_t addr, size_t count);
+uintptr_t alloc_frames_dma32(size_t count);
+void free_frames_dma32(uintptr_t addr, size_t count);
 
 void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
                     uint64_t size, uint64_t flags);
@@ -59,4 +61,15 @@ static inline void *alloc_frames_bytes(uint64_t bytes) {
 static inline void free_frames_bytes(void *ptr, uint64_t bytes) {
     free_frames(virt_to_phys((uint64_t)ptr),
                 (bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE);
+}
+
+static inline void *alloc_frames_bytes_dma32(uint64_t bytes) {
+    uint64_t addr = phys_to_virt(alloc_frames_dma32(
+        (bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE));
+    return (void *)addr;
+}
+
+static inline void free_frames_bytes_dma32(void *ptr, uint64_t bytes) {
+    free_frames_dma32(virt_to_phys((uint64_t)ptr),
+                      (bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE);
 }

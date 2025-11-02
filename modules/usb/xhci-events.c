@@ -59,11 +59,16 @@ void xhci_handle_events(xhci_hcd_t *xhci) {
     spin_unlock(&xhci_event_handle_lock);
 }
 
+void xhci_interrupt_handler(uint64_t irq_num, void *data, struct pt_regs *r) {
+    xhci_hcd_t *hcd = data;
+    xhci_handle_events(hcd);
+}
+
 void xhci_event_handler(xhci_hcd_t *xhci) {
     arch_enable_interrupt();
     while (xhci->event_thread.running) {
         xhci_handle_events(xhci);
-        arch_yield();
+        arch_pause();
     }
     arch_disable_interrupt();
 
@@ -74,6 +79,29 @@ void xhci_event_handler(xhci_hcd_t *xhci) {
 int xhci_start_event_handler(xhci_hcd_t *xhci) {
     xhci->event_thread.running = true;
     xhci->event_thread.xhci = xhci;
+
+    // #if defined(__x86_64__)
+    //     struct msi_desc_t desc;
+    //     memset(&desc, 0, sizeof(struct msi_desc_t));
+    //     desc.irq_num = irq_allocate_irqnum();
+    //     desc.processor = lapic_id();
+    //     desc.edge_trigger = 0;
+    //     desc.assert = 1;
+    //     desc.msi_index = 0;
+    //     desc.pci_dev = xhci->pci_dev;
+    //     desc.pci.msi_attribute.can_mask = false;
+    //     desc.pci.msi_attribute.is_64 = true;
+    //     desc.pci.msi_attribute.is_msix = true;
+    //     int ret = pci_enable_msi(&desc);
+    //     if (ret < 0) {
+    //         printk("Failed to enable MSI/MSI-X\n");
+    //         return -1;
+    //     }
+
+    //     irq_regist_irq(desc.irq_num, xhci_interrupt_handler, desc.irq_num,
+    //     xhci,
+    //                    get_apic_controller(), "XHCI", IRQ_FLAGS_MSIX);
+    // #endif
 
     task_create("xhci_event_handler", (void (*)(uint64_t))xhci_event_handler,
                 (uint64_t)xhci, KTHREAD_PRIORITY);

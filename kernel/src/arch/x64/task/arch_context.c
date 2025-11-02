@@ -59,14 +59,6 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
     }
     dst->ctx = (struct pt_regs *)(stack - 8) - 1;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
-    dst->ctx->rcx = dst->ctx->rip;
-    dst->ctx->r11 = dst->ctx->rflags;
-    dst->ctx->rip = (uint64_t)ret_from_syscall;
-    dst->ctx->cs = SELECTOR_KERNEL_CS;
-    dst->ctx->ss = SELECTOR_KERNEL_DS;
-    dst->ctx->ds = SELECTOR_KERNEL_DS;
-    dst->ctx->es = SELECTOR_KERNEL_DS;
-    dst->ctx->rsp = (uint64_t)dst->ctx;
     dst->ctx->rax = 0;
     dst->fpu_ctx = alloc_frames_bytes(DEFAULT_PAGE_SIZE);
     memset(dst->fpu_ctx, 0, DEFAULT_PAGE_SIZE);
@@ -172,6 +164,10 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
     context->ctx->ss = SELECTOR_USER_DS;
 
     context->ctx->rflags = (0UL << 12) | (0b10) | (1UL << 9);
+
+    memset(context->fpu_ctx, 0, sizeof(fpu_context_t));
+    context->fpu_ctx->mxscr = 0x1f80;
+    context->fpu_ctx->fcw = 0x037f;
 }
 
 void arch_to_user_mode(arch_context_t *context, uint64_t entry,
