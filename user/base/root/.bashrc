@@ -25,7 +25,16 @@ export SDL_AUDIODRIVER=dummy
 export XDG_RUNTIME_DIR=/run
 export XDG_CONFIG_HOME=$HOME/.config
 
-PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+NORMAL="\[\e[0m\]"
+RED="\[\e[1;31m\]"
+GREEN="\[\e[1;32m\]"
+if [[ $EUID == 0 ]]; then
+  	PS1="$RED\u@\h [ $NORMAL\w$RED ]# $NORMAL"
+else
+  	PS1="$GREEN\u@\h [ $NORMAL\w$GREEN ]\$ $NORMAL"
+fi
+
+unset RED GREEN NORMAL
 
 alias ls='ls --color=auto'
 alias grep='grep --color=auto'
