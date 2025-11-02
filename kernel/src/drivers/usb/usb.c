@@ -1,317 +1,422 @@
-// Copyright (C) 2025  lihanrui2913
+// Main code for handling USB controllers and devices.
+//
+// Copyright (C) 2009-2013  Kevin O'Connor <kevin@koconnor.net>
+//
+// This file may be distributed under the terms of the GNU LGPLv3 license.
+
 #include <drivers/usb/usb.h>
-#include <drivers/kernel_logger.h>
-#include <mm/mm.h>
+#include <arch/arch.h>
 
-usb_driver_t *usb_drivers[MAX_USB_DRIVERS_NUM];
+struct usbdevice_s *usbdevs[MAX_USBDEV_NUM] = {NULL};
+usb_driver_t *usb_drivers[MAX_USBDEV_NUM] = {NULL};
 
-// 全局USB上下文
-static struct {
-    usb_hcd_t *hcd_list;
-    usb_transfer_t *transfer_pool;
-} usb_context;
+void regist_usb_driver(usb_driver_t *driver) {
+    for (int i = 0; i < MAX_USBDEV_NUM; i++) {
+        if (!usb_drivers[i]) {
+            usb_drivers[i] = driver;
+            break;
+        }
+    }
+}
 
-// 初始化USB核心
-int usb_init(void) {
-    memset(&usb_context, 0, sizeof(usb_context));
-    printk("USB Core initialized\n");
+static inline void delay(uint64_t ms) {
+    uint64_t ns = ms * 1000000ULL;
+    uint64_t timeout = nanoTime() + ns;
+    while (nanoTime() < timeout) {
+        arch_pause();
+    }
+}
+
+// Allocate, update, or free a usb pipe.
+struct usb_pipe *usb_realloc_pipe(struct usbdevice_s *usbdev,
+                                  struct usb_pipe *pipe,
+                                  struct usb_endpoint_descriptor *epdesc) {
+    return usbdev->hub->op->realloc_pipe(usbdev, pipe, epdesc);
+}
+
+// Send a message on a control pipe using the default control descriptor.
+int usb_send_pipe(struct usb_pipe *pipe_fl, int dir, const void *cmd,
+                  void *data, int datasize) {
+    return pipe_fl->usbdev->hub->op->send_pipe(pipe_fl, dir, cmd, data,
+                                               datasize);
+}
+
+int usb_poll_intr(struct usb_pipe *pipe_fl, void *data) {
+    return pipe_fl->usbdev->hub->op->poll_intr(pipe_fl, data);
+}
+
+int usb_32bit_pipe(struct usb_pipe *pipe_fl) { return 1; }
+
+/****************************************************************
+ * Helper functions
+ ****************************************************************/
+
+// Allocate a usb pipe.
+struct usb_pipe *usb_alloc_pipe(struct usbdevice_s *usbdev,
+                                struct usb_endpoint_descriptor *epdesc) {
+    return usb_realloc_pipe(usbdev, NULL, epdesc);
+}
+
+// Free an allocated control or bulk pipe.
+void usb_free_pipe(struct usbdevice_s *usbdev, struct usb_pipe *pipe) {
+    if (!pipe)
+        return;
+    usb_realloc_pipe(usbdev, pipe, NULL);
+}
+
+// Send a message to the default control pipe of a device.
+int usb_send_default_control(struct usb_pipe *pipe,
+                             const struct usb_ctrlrequest *req, void *data) {
+    return usb_send_pipe(pipe, req->bRequestType & USB_DIR_IN, req, data,
+                         req->wLength);
+}
+
+// Send a message to a bulk endpoint
+int usb_send_bulk(struct usb_pipe *pipe_fl, int dir, void *data, int datasize) {
+    return usb_send_pipe(pipe_fl, dir, NULL, data, datasize);
+}
+
+// Check if a pipe for a given controller is on the freelist
+int usb_is_freelist(struct usb_s *cntl, struct usb_pipe *pipe) {
+    return pipe->cntl != cntl;
+}
+
+// Add a pipe to the controller's freelist
+void usb_add_freelist(struct usb_pipe *pipe) {
+    if (!pipe)
+        return;
+    struct usb_s *cntl = pipe->cntl;
+    pipe->freenext = cntl->freelist;
+    cntl->freelist = pipe;
+}
+
+// Check for an available pipe on the freelist.
+struct usb_pipe *usb_get_freelist(struct usb_s *cntl, uint8_t eptype) {
+    struct usb_pipe **pfree = &cntl->freelist;
+    for (;;) {
+        struct usb_pipe *pipe = *pfree;
+        if (!pipe)
+            return NULL;
+        if (pipe->eptype == eptype) {
+            *pfree = pipe->freenext;
+            return pipe;
+        }
+        pfree = &pipe->freenext;
+    }
+}
+
+// Fill "pipe" endpoint info from an endpoint descriptor.
+void usb_desc2pipe(struct usb_pipe *pipe, struct usbdevice_s *usbdev,
+                   struct usb_endpoint_descriptor *epdesc) {
+    pipe->cntl = usbdev->hub->cntl;
+    pipe->type = usbdev->hub->cntl->type;
+    pipe->ep = epdesc->bEndpointAddress & USB_ENDPOINT_NUMBER_MASK;
+    pipe->devaddr = usbdev->devaddr;
+    pipe->speed = usbdev->speed;
+    pipe->maxpacket = epdesc->wMaxPacketSize;
+    pipe->eptype = epdesc->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK;
+    pipe->usbdev = usbdev;
+}
+
+static inline int __fls(unsigned int x) {
+    if (x == 0)
+        return 0;
+    return 32 - __builtin_clz(x);
+}
+
+// Find the exponential period of the requested interrupt end point.
+int usb_get_period(struct usbdevice_s *usbdev,
+                   struct usb_endpoint_descriptor *epdesc) {
+    int period = epdesc->bInterval;
+    if (usbdev->speed != USB_HIGHSPEED)
+        return (period <= 0) ? 0 : __fls(period);
+    return (period <= 4) ? 0 : period - 4;
+}
+
+// Maximum time (in ms) a data transfer should take
+int usb_xfer_time(struct usb_pipe *pipe, int datalen) {
+    // Use the maximum command time (5 seconds), except for
+    // set_address commands where we don't want to stall the boot if
+    // the device doesn't actually exist.  Add 100ms to account for
+    // any controller delays.
+    if (!pipe->devaddr)
+        return USB_TIME_STATUS + 100;
+    return USB_TIME_COMMAND + 100;
+}
+
+// Find the first endpoint of a given type in an interface description.
+struct usb_endpoint_descriptor *usb_find_desc(struct usbdevice_s *usbdev,
+                                              int type, int dir) {
+    struct usb_endpoint_descriptor *epdesc = (void *)&usbdev->iface[1];
+    for (;;) {
+        if ((void *)epdesc >= (void *)usbdev->iface + usbdev->imax ||
+            epdesc->bDescriptorType == USB_DT_INTERFACE) {
+            return NULL;
+        }
+        if (epdesc->bDescriptorType == USB_DT_ENDPOINT &&
+            (epdesc->bEndpointAddress & USB_ENDPOINT_DIR_MASK) == dir &&
+            (epdesc->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK) == type)
+            return epdesc;
+        epdesc = (void *)epdesc + epdesc->bLength;
+    }
+}
+
+// Get the first 8 bytes of the device descriptor.
+static int get_device_info8(struct usb_pipe *pipe,
+                            struct usb_device_descriptor *dinfo) {
+    struct usb_ctrlrequest req;
+    req.bRequestType = USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_DEVICE;
+    req.bRequest = USB_REQ_GET_DESCRIPTOR;
+    req.wValue = USB_DT_DEVICE << 8;
+    req.wIndex = 0;
+    req.wLength = 8;
+    return usb_send_default_control(pipe, &req, dinfo);
+}
+
+static struct usb_config_descriptor *get_device_config(struct usb_pipe *pipe) {
+    struct usb_config_descriptor cfg;
+
+    struct usb_ctrlrequest req;
+    req.bRequestType = USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_DEVICE;
+    req.bRequest = USB_REQ_GET_DESCRIPTOR;
+    req.wValue = USB_DT_CONFIG << 8;
+    req.wIndex = 0;
+    req.wLength = sizeof(cfg);
+    int ret = usb_send_default_control(pipe, &req, &cfg);
+    if (ret)
+        return NULL;
+
+    struct usb_config_descriptor *config = malloc(cfg.wTotalLength);
+    if (!config) {
+        return NULL;
+    }
+    req.wLength = cfg.wTotalLength;
+    ret = usb_send_default_control(pipe, &req, config);
+    if (ret || config->wTotalLength != cfg.wTotalLength) {
+        free(config);
+        return NULL;
+    }
+    // hexdump(config, cfg.wTotalLength);
+    return config;
+}
+
+static int set_configuration(struct usb_pipe *pipe, uint16_t val) {
+    struct usb_ctrlrequest req;
+    req.bRequestType = USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_DEVICE;
+    req.bRequest = USB_REQ_SET_CONFIGURATION;
+    req.wValue = val;
+    req.wIndex = 0;
+    req.wLength = 0;
+    return usb_send_default_control(pipe, &req, NULL);
+}
+
+/****************************************************************
+ * Initialization and enumeration
+ ****************************************************************/
+
+static const int speed_to_ctlsize[] = {
+    [USB_FULLSPEED] = 8,
+    [USB_LOWSPEED] = 8,
+    [USB_HIGHSPEED] = 64,
+    [USB_SUPERSPEED] = 512,
+};
+
+// Assign an address to a device in the default state on the given
+// controller.
+static int usb_set_address(struct usbdevice_s *usbdev) {
+    struct usb_s *cntl = usbdev->hub->cntl;
+    if (cntl->maxaddr >= USB_MAXADDR)
+        return -1;
+
+    delay(USB_TIME_RSTRCY);
+
+    // Create a pipe for the default address.
+    struct usb_endpoint_descriptor epdesc = {
+        .wMaxPacketSize = speed_to_ctlsize[usbdev->speed],
+        .bmAttributes = USB_ENDPOINT_XFER_CONTROL,
+    };
+    usbdev->defpipe = usb_alloc_pipe(usbdev, &epdesc);
+    if (!usbdev->defpipe)
+        return -1;
+
+    // Send set_address command.
+    struct usb_ctrlrequest req;
+    req.bRequestType = USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_DEVICE;
+    req.bRequest = USB_REQ_SET_ADDRESS;
+    req.wValue = cntl->maxaddr + 1;
+    req.wIndex = 0;
+    req.wLength = 0;
+    int ret = usb_send_default_control(usbdev->defpipe, &req, NULL);
+    if (ret) {
+        usb_free_pipe(usbdev, usbdev->defpipe);
+        return -1;
+    }
+
+    delay(USB_TIME_SETADDR_RECOVERY);
+
+    cntl->maxaddr++;
+    usbdev->devaddr = cntl->maxaddr;
+    usbdev->defpipe = usb_realloc_pipe(usbdev, usbdev->defpipe, &epdesc);
+    if (!usbdev->defpipe)
+        return -1;
     return 0;
 }
 
-// 注册主机控制器驱动
-usb_hcd_t *usb_register_hcd(const char *name, usb_hcd_ops_t *ops, void *regs,
-                            void *data) {
-    usb_hcd_t *hcd = (usb_hcd_t *)malloc(sizeof(usb_hcd_t));
-    if (!hcd) {
-        return NULL;
-    }
-
-    memset(hcd, 0, sizeof(usb_hcd_t));
-    hcd->name = name;
-    hcd->ops = ops;
-    hcd->regs = regs;
-    hcd->private_data = data;
-
-    // 初始化HCD
-    if (hcd->ops->init) {
-        if (hcd->ops->init(hcd) != 0) {
-            free(hcd);
-            return NULL;
-        }
-    }
-
-    // 添加到HCD列表
-    hcd->next = usb_context.hcd_list;
-    usb_context.hcd_list = hcd;
-
-    printk("USB HCD \"%s\" registered\n", name);
-    return hcd;
-}
-
-// 注销主机控制器驱动
-void usb_unregister_hcd(usb_hcd_t *hcd) {
-    if (!hcd)
-        return;
-
-    if (hcd->ops->shutdown) {
-        hcd->ops->shutdown(hcd);
-    }
-
-    // 从列表中移除
-    usb_hcd_t **prev = &usb_context.hcd_list;
-    while (*prev) {
-        if (*prev == hcd) {
-            *prev = hcd->next;
-            break;
-        }
-        prev = &(*prev)->next;
-    }
-
-    free(hcd);
-}
-
-// 分配USB设备
-usb_device_t *usb_alloc_device(usb_hcd_t *hcd) {
-    usb_device_t *device = (usb_device_t *)malloc(sizeof(usb_device_t));
-    if (!device) {
-        return NULL;
-    }
-
-    memset(device, 0, sizeof(usb_device_t));
-    device->hcd = hcd;
-    device->state = USB_STATE_ATTACHED;
-
-    return device;
-}
-
-// 释放USB设备
-void usb_free_device(usb_device_t *device) {
-    if (!device)
-        return;
-
-    if (device->config_descriptor) {
-        free(device->config_descriptor);
-    }
-
-    free(device);
-}
-
-usb_driver_t *usb_find_driver(usb_device_t *device) {
-    for (int i = 0; i < MAX_USB_DRIVERS_NUM; i++) {
-        if (usb_drivers[i]) {
-            if (usb_drivers[i]->class == device->class) {
-                return usb_drivers[i];
-            }
+usb_driver_t *usb_find_driver(struct usbdevice_s *usbdev) {
+    for (int i = 0; i < MAX_USBDEV_NUM; i++) {
+        if (usb_drivers[i] &&
+            usb_drivers[i]->class == usbdev->iface->bInterfaceClass) {
+            return usb_drivers[i];
         }
     }
 
     return NULL;
 }
 
-// 添加USB设备
-int usb_add_device(usb_device_t *device) {
-    if (!device || !device->hcd) {
+// Called for every found device - see if a driver is available for
+// this device and do setup if so.
+static int configure_usb_device(struct usbdevice_s *usbdev) {
+    // Set the max packet size for endpoint 0 of this device.
+    struct usb_device_descriptor dinfo;
+    int ret = get_device_info8(usbdev->defpipe, &dinfo);
+    if (ret)
+        return 0;
+    uint16_t maxpacket = dinfo.bMaxPacketSize0;
+    if (dinfo.bcdUSB >= 0x0300)
+        maxpacket = 1 << dinfo.bMaxPacketSize0;
+    if (maxpacket < 8)
+        return 0;
+    struct usb_endpoint_descriptor epdesc = {
+        .wMaxPacketSize = maxpacket,
+        .bmAttributes = USB_ENDPOINT_XFER_CONTROL,
+    };
+    usbdev->defpipe = usb_realloc_pipe(usbdev, usbdev->defpipe, &epdesc);
+    if (!usbdev->defpipe)
         return -1;
+
+    // Get configuration
+    struct usb_config_descriptor *config = get_device_config(usbdev->defpipe);
+    if (!config)
+        return 0;
+
+    // Determine if a driver exists for this device - only look at the
+    // interfaces of the first configuration.
+    int num_iface = config->bNumInterfaces;
+    void *config_end = (void *)config + config->wTotalLength;
+    struct usb_interface_descriptor *iface = (void *)(&config[1]);
+    for (;;) {
+        if (!num_iface || (void *)iface + iface->bLength > config_end)
+            // Not a supported device.
+            goto fail;
+        if (iface->bDescriptorType == USB_DT_INTERFACE) {
+            num_iface--;
+            if (iface->bInterfaceClass == USB_CLASS_HUB ||
+                (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE &&
+                 (iface->bInterfaceProtocol == US_PR_BULK ||
+                  iface->bInterfaceProtocol == US_PR_UAS)) ||
+                (iface->bInterfaceClass == USB_CLASS_HID &&
+                 iface->bInterfaceSubClass == USB_INTERFACE_SUBCLASS_BOOT))
+                break;
+        }
+        iface = (void *)iface + iface->bLength;
     }
 
-    // 添加到HCD的设备列表
-    device->next = device->hcd->devices;
-    device->hcd->devices = device;
+    // Set the configuration.
+    ret = set_configuration(usbdev->defpipe, config->bConfigurationValue);
+    if (ret)
+        goto fail;
 
-    printk("USB Device added: addr=%d, speed=%d\n", device->address,
-           device->speed);
+    // Configure driver.
+    usbdev->config = config;
+    usbdev->iface = iface;
+    usbdev->imax = (void *)config + config->wTotalLength - (void *)iface;
+    // if (iface->bInterfaceClass == USB_CLASS_HUB)
+    //     ret = usb_hub_setup(usbdev);
+    // else if (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE) {
+    //     if (iface->bInterfaceProtocol == US_PR_BULK)
+    //         ret = usb_msc_setup(usbdev);
+    //     if (iface->bInterfaceProtocol == US_PR_UAS)
+    //         ret = usb_uas_setup(usbdev);
+    // } else
+    //     ret = usb_hid_setup(usbdev);
 
-    usb_driver_t *driver = usb_find_driver(device);
-    if (!driver || driver->probe(device))
-        return -1;
+    usb_driver_t *driver = usb_find_driver(usbdev);
+    if (!driver) {
+        goto fail;
+    }
 
+    if (driver->probe(usbdev)) {
+        goto fail;
+    }
+
+    free(config);
+    return 1;
+fail:
+    free(config);
     return 0;
 }
 
-// 移除USB设备
-void usb_remove_device(usb_device_t *device) {
-    if (!device || !device->hcd)
-        return;
+static void usb_hub_port_setup(struct usbdevice_s *usbdev) {
+    struct usbhub_s *hub = usbdev->hub;
+    uint32_t port = usbdev->port;
 
-    // 从HCD设备列表中移除
-    usb_device_t **prev = &device->hcd->devices;
-    while (*prev) {
-        if (*prev == device) {
-            *prev = device->next;
-            break;
-        }
-        prev = &(*prev)->next;
+    // Detect if device present (and possibly start reset)
+    int ret = hub->op->detect(hub, port);
+    if (!ret)
+        goto resetfail;
+
+    delay(USB_TIME_ATTDB);
+
+    // Reset port and determine device speed
+    spin_lock(&hub->cntl->resetlock);
+    ret = hub->op->reset(hub, port);
+    if (ret < 0)
+        // Reset failed
+        goto resetfail;
+    usbdev->speed = ret;
+
+    // Set address of port
+    ret = usb_set_address(usbdev);
+    if (ret) {
+        hub->op->disconnect(hub, port);
+        goto resetfail;
     }
+    spin_unlock(&hub->cntl->resetlock);
 
-    usb_free_device(device);
-}
-
-// 分配USB传输
-usb_transfer_t *usb_alloc_transfer(void) {
-    usb_transfer_t *transfer = (usb_transfer_t *)malloc(sizeof(usb_transfer_t));
-    if (!transfer) {
-        return NULL;
-    }
-
-    memset(transfer, 0, sizeof(usb_transfer_t));
-    return transfer;
-}
-
-// 释放USB传输
-void usb_free_transfer(usb_transfer_t *transfer) {
-    if (transfer) {
-        free(transfer);
-    }
-}
-
-// 控制传输
-int usb_control_transfer(usb_device_t *device, usb_device_request_t *setup,
-                         void *data, uint32_t length,
-                         usb_transfer_callback_t callback, void *user_data) {
-    if (!device || !device->hcd || !device->hcd->ops->control_transfer) {
-        return -1;
-    }
-
-    usb_transfer_t *transfer = usb_alloc_transfer();
-    if (!transfer) {
-        return -1;
-    }
-
-    transfer->device = device;
-    transfer->endpoint = &device->endpoints[0]; // 控制端点总是0
-    transfer->buffer = data;
-    transfer->length = length;
-    transfer->callback = callback;
-    transfer->user_data = user_data;
-
-    return device->hcd->ops->control_transfer(device->hcd, transfer, setup);
-}
-
-// 批量传输
-int usb_bulk_transfer(usb_device_t *device, uint8_t endpoint_addr, void *data,
-                      uint32_t length, usb_transfer_callback_t callback,
-                      void *user_data) {
-    if (!device || !device->hcd || !device->hcd->ops->bulk_transfer) {
-        return -1;
-    }
-
-    // 查找端点
-    usb_endpoint_t *endpoint = NULL;
-    for (int i = 0; i < 32; i++) {
-        if (device->endpoints[i].address == endpoint_addr) {
-            endpoint = &device->endpoints[i];
+    // Configure the device
+    int count = configure_usb_device(usbdev);
+    usb_free_pipe(usbdev, usbdev->defpipe);
+    if (!count)
+        hub->op->disconnect(hub, port);
+    hub->devcount += count;
+done:
+    for (int i = 0; i < MAX_USBDEV_NUM; i++) {
+        if (!usbdevs[i]) {
+            usbdevs[i] = usbdev;
             break;
         }
     }
 
-    if (!endpoint) {
-        return -1;
-    }
+    return;
 
-    usb_transfer_t *transfer = usb_alloc_transfer();
-    if (!transfer) {
-        return -1;
-    }
-
-    transfer->device = device;
-    transfer->endpoint = endpoint;
-    transfer->buffer = data;
-    transfer->length = length;
-    transfer->callback = callback;
-    transfer->user_data = user_data;
-
-    return device->hcd->ops->bulk_transfer(device->hcd, transfer);
+resetfail:
+    free(usbdev);
+    spin_unlock(&hub->cntl->resetlock);
+    goto done;
 }
 
-// 中断传输
-int usb_interrupt_transfer(usb_device_t *device, uint8_t endpoint_addr,
-                           void *data, uint32_t length,
-                           usb_transfer_callback_t callback, void *user_data) {
-    if (!device || !device->hcd || !device->hcd->ops->interrupt_transfer) {
-        return -1;
-    }
+void usb_enumerate(struct usbhub_s *hub) {
+    uint32_t portcount = hub->portcount;
 
-    // 查找端点
-    usb_endpoint_t *endpoint = NULL;
-    for (int i = 0; i < 32; i++) {
-        if (device->endpoints[i].address == endpoint_addr) {
-            endpoint = &device->endpoints[i];
-            break;
+    int i;
+    for (i = 0; i < portcount; i++) {
+        struct usbdevice_s *usbdev = malloc(sizeof(*usbdev));
+        if (!usbdev) {
+            continue;
         }
-    }
-
-    if (!endpoint) {
-        return -1;
-    }
-
-    usb_transfer_t *transfer = usb_alloc_transfer();
-    if (!transfer) {
-        return -1;
-    }
-
-    transfer->device = device;
-    transfer->endpoint = endpoint;
-    transfer->buffer = data;
-    transfer->length = length;
-    transfer->callback = callback;
-    transfer->user_data = user_data;
-
-    return device->hcd->ops->interrupt_transfer(device->hcd, transfer);
-}
-
-// 获取描述符
-int usb_get_descriptor(usb_device_t *device, uint8_t type, uint8_t index,
-                       void *buffer, uint16_t length) {
-    usb_device_request_t setup = {
-        .bmRequestType = USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_DEVICE,
-        .bRequest = USB_REQ_GET_DESCRIPTOR,
-        .wValue = (type << 8) | index,
-        .wIndex = 0,
-        .wLength = length};
-
-    return usb_control_transfer(device, &setup, buffer, length, NULL, NULL);
-}
-
-// 设置地址
-int usb_set_address(usb_device_t *device, uint8_t address) {
-    usb_device_request_t setup = {
-        .bmRequestType = USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_DEVICE,
-        .bRequest = USB_REQ_SET_ADDRESS,
-        .wValue = address,
-        .wIndex = 0,
-        .wLength = 0};
-
-    int ret = usb_control_transfer(device, &setup, NULL, 0, NULL, NULL);
-    if (ret == 0) {
-        device->address = address;
-        device->state = USB_STATE_ADDRESS;
-    }
-
-    return ret;
-}
-
-// 设置配置
-int usb_set_configuration(usb_device_t *device, uint8_t config) {
-    usb_device_request_t setup = {
-        .bmRequestType = USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_DEVICE,
-        .bRequest = USB_REQ_SET_CONFIGURATION,
-        .wValue = config,
-        .wIndex = 0,
-        .wLength = 0};
-
-    int ret = usb_control_transfer(device, &setup, NULL, 0, NULL, NULL);
-    if (ret == 0) {
-        device->state = USB_STATE_CONFIGURED;
-    }
-
-    return ret;
-}
-
-void register_usb_driver(usb_driver_t *driver) {
-    for (int i = 0; i < MAX_USB_DRIVERS_NUM; i++) {
-        if (!usb_drivers[i]) {
-            usb_drivers[i] = driver;
-            break;
-        }
+        memset(usbdev, 0, sizeof(*usbdev));
+        usbdev->hub = hub;
+        usbdev->port = i;
+        usb_hub_port_setup(usbdev);
     }
 }

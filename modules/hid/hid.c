@@ -1,103 +1,141 @@
-// hid.c
+// Code for handling USB Human Interface Devices (HID).
+//
+// Copyright (C) 2009  Kevin O'Connor <kevin@koconnor.net>
+// Copyright (C) 2024  Daniel Khodabakhsh <d.khodabakhsh@gmail.com>
+//
+// This file may be distributed under the terms of the GNU LGPLv3 license.
+
 #include "hid.h"
+#include <libs/aether/usb.h>
+#include <libs/aether/evdev.h>
 
-static bool ctrlPressed = false;
-static bool shiftPressed = false;
+struct pipe_node *keyboards = NULL;
+struct pipe_node *mice = NULL;
 
-const uint8_t evdevTable[89] = {
-    0,
-    KEY_ESC,
-    KEY_1,
-    KEY_2,
-    KEY_3,
-    KEY_4,
-    KEY_5,
-    KEY_6,
-    KEY_7,
-    KEY_8,
-    KEY_9,
-    KEY_0,
-    KEY_MINUS,
-    KEY_EQUAL,
-    KEY_BACKSPACE,
-    KEY_TAB,
-    KEY_Q,
-    KEY_W,
-    KEY_E,
-    KEY_R,
-    KEY_T,
-    KEY_Y,
-    KEY_U,
-    KEY_I,
-    KEY_O,
-    KEY_P,
-    KEY_LEFTBRACE,
-    KEY_RIGHTBRACE,
-    KEY_ENTER,
-    KEY_LEFTCTRL,
-    KEY_A,
-    KEY_S,
-    KEY_D,
-    KEY_F,
-    KEY_G,
-    KEY_H,
-    KEY_J,
-    KEY_K,
-    KEY_L,
-    KEY_SEMICOLON,
-    KEY_APOSTROPHE,
-    KEY_GRAVE,
-    KEY_LEFTSHIFT,
-    KEY_BACKSLASH,
-    KEY_Z,
-    KEY_X,
-    KEY_C,
-    KEY_V,
-    KEY_B,
-    KEY_N,
-    KEY_M,
-    KEY_COMMA,
-    KEY_DOT,
-    KEY_SLASH,
-    KEY_RIGHTSHIFT,
-    KEY_KPASTERISK,
-    KEY_LEFTALT,
-    KEY_SPACE,
-    KEY_CAPSLOCK,
-    KEY_F1,
-    KEY_F2,
-    KEY_F3,
-    KEY_F4,
-    KEY_F5,
-    KEY_F6,
-    KEY_F7,
-    KEY_F8,
-    KEY_F9,
-    KEY_F10,
-    KEY_NUMLOCK,
-    KEY_SCROLLLOCK,
-    KEY_KP7,
-    KEY_UP, // KEY_KP8
-    KEY_KP9,
-    KEY_KPMINUS,
-    KEY_LEFT, // KEY_KP4
-    KEY_KP5,
-    KEY_RIGHT, // KEY_KP6
-    KEY_KPPLUS,
-    KEY_KP1,
-    KEY_DOWN, // KEY_KP2
-    KEY_KP3,
-    KEY_INSERT, // KEY_KP0
-    KEY_DELETE, // KEY_KPDOT
-    0,
-    0,
-    0,
-    KEY_F11,
-    KEY_F12,
+static int add_pipe_node(struct pipe_node **list, struct usbdevice_s *usbdev,
+                         struct usb_endpoint_descriptor *epdesc) {
+    struct usb_pipe *pipe = usb_alloc_pipe(usbdev, epdesc);
+    if (!pipe)
+        return -1;
+
+    struct pipe_node *new_node = malloc(sizeof(struct pipe_node));
+    if (!new_node) {
+        return -1;
+    }
+
+    new_node->pipe = pipe;
+
+    new_node->next = *list;
+    *list = new_node;
+
+    return 0;
+}
+
+/****************************************************************
+ * Setup
+ ****************************************************************/
+
+// Send USB HID protocol message.
+static int set_protocol(struct usb_pipe *pipe, uint16_t val,
+                        uint16_t inferface) {
+    struct usb_ctrlrequest req;
+    req.bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE;
+    req.bRequest = HID_REQ_SET_PROTOCOL;
+    req.wValue = val;
+    req.wIndex = inferface;
+    req.wLength = 0;
+    return usb_send_default_control(pipe, &req, NULL);
+}
+
+// Send USB HID SetIdle request.
+static int set_idle(struct usb_pipe *pipe, int ms) {
+    struct usb_ctrlrequest req;
+    req.bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE;
+    req.bRequest = HID_REQ_SET_IDLE;
+    req.wValue = (ms / 4) << 8;
+    req.wIndex = 0;
+    req.wLength = 0;
+    return usb_send_default_control(pipe, &req, NULL);
+}
+
+#define KEYREPEATWAITMS 500
+#define KEYREPEATMS 33
+
+// Format of USB keyboard event data
+struct keyevent {
+    uint8_t modifiers;
+    uint8_t reserved;
+    uint8_t keys[6];
 };
 
+#define MAX_KBD_EVENT 16
+
+static void usb_check_key();
+
+bool kb_task_created = false;
+
+static int usb_kbd_setup(struct usbdevice_s *usbdev,
+                         struct usb_endpoint_descriptor *epdesc) {
+    if (epdesc->wMaxPacketSize < sizeof(struct keyevent) ||
+        epdesc->wMaxPacketSize > MAX_KBD_EVENT) {
+        return -1;
+    }
+
+    // Enable "boot" protocol.
+    if (set_protocol(usbdev->defpipe, 0, usbdev->iface->bInterfaceNumber)) {
+        return -1;
+    }
+
+    // Periodically send reports to enable key repeat.
+    if (set_idle(usbdev->defpipe, KEYREPEATMS))
+        return -1;
+
+    if (add_pipe_node(&keyboards, usbdev, epdesc))
+        return -1;
+
+    if (!kb_task_created) {
+        task_create("usb_check_key", (void (*)(uint64_t))usb_check_key, 0,
+                    KTHREAD_PRIORITY);
+        kb_task_created = true;
+    }
+
+    return 0;
+}
+
+// // Format of USB mouse event data
+// struct mouseevent
+// {
+//     uint8_t buttons;
+//     uint8_t x, y;
+// };
+
+// #define MAX_MOUSE_EVENT 8
+
+// static int usb_mouse_setup(struct usbdevice_s *usbdev, struct
+// usb_endpoint_descriptor *epdesc)
+// {
+//     if (epdesc->wMaxPacketSize < sizeof(struct mouseevent) ||
+//     epdesc->wMaxPacketSize > MAX_MOUSE_EVENT)
+//     {
+//         return -1;
+//     }
+
+//     // Enable "boot" protocol.
+//     if (set_protocol(usbdev->defpipe, 0, usbdev->iface->bInterfaceNumber))
+//         return -1;
+
+//     if (add_pipe_node(&mice, usbdev, epdesc))
+//         return -1;
+
+//     return 0;
+// }
+
+/****************************************************************
+ * Keyboard events
+ ****************************************************************/
+
 // Mapping from USB key id to ps2 key sequence.
-static uint16_t key_to_scan_code[] = {
+static uint16_t KeyToScanCode[] = {
     0x0000, 0x0000, 0x0000, 0x0000, 0x001e, 0x0030, 0x002e, 0x0020, 0x0012,
     0x0021, 0x0022, 0x0023, 0x0017, 0x0024, 0x0025, 0x0026, 0x0032, 0x0031,
     0x0018, 0x0019, 0x0010, 0x0013, 0x001f, 0x0014, 0x0016, 0x002f, 0x0011,
@@ -112,499 +150,224 @@ static uint16_t key_to_scan_code[] = {
     0x0053};
 
 // Mapping from USB modifier id to ps2 key sequence.
-static uint16_t modifier_to_scan_code[] = {
+static uint16_t ModifierToScanCode[] = {
     // lcntl, lshift, lalt, lgui, rcntl, rshift, ralt, rgui
     0x001d, 0x002a, 0x0038, 0xe05b, 0xe01d, 0x0036, 0xe038, 0xe05c};
 
-void keyboard_callback(hid_event_t *event, void *user_data) {
-    usb_hid_device_t *hid = user_data;
+#define RELEASEBIT 0x80
 
-    hid_key_event_t *key = &event->key;
+struct usbkeyinfo {
+    union {
+        struct {
+            uint8_t modifiers;
+            uint8_t repeatcount;
+            uint8_t keys[6];
+        };
+        uint64_t data;
+    };
+};
 
-    bool shift = (key->modifiers & (0x02 | 0x20)) != 0;
+struct usbkeyinfo LastUSBkey;
+
+#define ARRAY_SIZE(a) (sizeof((a)) / sizeof((a)[0]))
+
+// Process USB keyboard data.
+static void handle_key(struct keyevent *data) {
+    static bool ctrlPressed = false;
+    static bool shiftPressed = false;
+
+    struct usbkeyinfo old;
+    old.data = LastUSBkey.data;
+
+    int addpos = 0;
+    int i;
+    for (i = 0; i < ARRAY_SIZE(old.keys); i++) {
+        uint8_t key = old.keys[i];
+        if (!key)
+            break;
+        int j;
+        for (j = 0;; j++) {
+            if (j >= ARRAY_SIZE(data->keys)) {
+                // Key released.
+                // procscankey(key, RELEASEBIT, data->modifiers);
+                // printk("Key released\n");
+                if (i + 1 >= ARRAY_SIZE(old.keys) || !old.keys[i + 1])
+                    // Last pressed key released - disable repeat.
+                    old.repeatcount = 0xff;
+                break;
+            }
+            if (data->keys[j] == key) {
+                // Key still pressed.
+                data->keys[j] = 0;
+                old.keys[addpos++] = key;
+                break;
+            }
+        }
+    }
+
+    old.modifiers = data->modifiers;
+
+    bool shift = (data->modifiers & (0x02 | 0x20)) != 0;
     if (shift && !shiftPressed) {
-        handle_kb_event(KEY_LEFTSHIFT, true);
+        handle_kb_event(0x2A, true);
         shiftPressed = true;
     } else if (!shift && shiftPressed) {
-        handle_kb_event(KEY_LEFTSHIFT, false);
+        handle_kb_event(0x2A, false);
         shiftPressed = false;
     }
 
-    if (event->type == HID_EVENT_KEY_PRESS) {
+    for (i = 0; i < ARRAY_SIZE(data->keys); i++) {
+        uint8_t key = data->keys[i];
+        if (!key)
+            continue;
         // New key pressed.
-        uint16_t scancode = key_to_scan_code[key->keycode];
-        if (evdevTable[scancode])
-            handle_kb_event(evdevTable[scancode], true);
-    } else if (event->type == HID_EVENT_KEY_RELEASE) {
-        uint16_t scancode = key_to_scan_code[key->keycode];
-        if (evdevTable[scancode])
-            handle_kb_event(evdevTable[scancode], false);
+        uint16_t scancode = KeyToScanCode[key];
+        handle_kb_event(scancode, true);
+        handle_kb_event(scancode, false);
+
+        old.keys[addpos++] = key;
+        old.repeatcount = KEYREPEATWAITMS / KEYREPEATMS + 1;
     }
+    if (addpos < ARRAY_SIZE(old.keys))
+        old.keys[addpos] = 0;
+
+    // Check for key repeat event.
+    if (addpos) {
+        if (!old.repeatcount) {
+        } else if (old.repeatcount != 0xff)
+            old.repeatcount--;
+    }
+
+    LastUSBkey.data = old.data;
 }
 
-void mouse_callback(hid_event_t *event, void *user_data) {
-    usb_hid_device_t *hid = user_data;
-
-    hid_mouse_event_t *mouse = &event->mouse;
-
-    handle_mouse_event(mouse->buttons, mouse->x, mouse->y, mouse->wheel);
-}
-
-// 全局 HID 设备列表
-static usb_hid_device_t *hid_devices = NULL;
-spinlock_t hid_devices_lock = {0};
-static int hid_device_count = 0;
-
-// 获取 HID 描述符
-static int hid_get_descriptor(usb_hid_device_t *hid, uint8_t type, void *buffer,
-                              uint16_t length) {
-    usb_device_request_t setup = {
-        .bmRequestType = USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_INTERFACE,
-        .bRequest = USB_REQ_GET_DESCRIPTOR,
-        .wValue = (type << 8) | 0,
-        .wIndex = hid->interface_number,
-        .wLength = length};
-
-    return usb_control_transfer(hid->usb_device, &setup, buffer, length, NULL,
-                                NULL);
-}
-
-// 设置协议
-int hid_set_protocol(usb_hid_device_t *hid, uint8_t protocol) {
-    printk("HID: Setting protocol to %s\n",
-           protocol == HID_PROTOCOL_BOOT ? "Boot" : "Report");
-
-    usb_device_request_t setup = {
-        .bmRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
-        .bRequest = HID_REQ_SET_PROTOCOL,
-        .wValue = protocol,
-        .wIndex = hid->interface_number,
-        .wLength = 0};
-
-    return usb_control_transfer(hid->usb_device, &setup, NULL, 0, NULL, NULL);
-}
-
-// 设置空闲
-int hid_set_idle(usb_hid_device_t *hid, uint8_t duration) {
-    printk("HID: Setting idle duration to %d ms\n", duration * 4);
-
-    usb_device_request_t setup = {
-        .bmRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
-        .bRequest = HID_REQ_SET_IDLE,
-        .wValue =
-            (duration << 8) | 0, // Duration in high byte, Report ID in low
-        .wIndex = hid->interface_number,
-        .wLength = 0};
-
-    return usb_control_transfer(hid->usb_device, &setup, NULL, 0, NULL, NULL);
-}
-
-static void hid_interrupt_callback(usb_transfer_t *transfer);
-
-void hid_resubmit_agent(uint64_t arg) {
-    usb_hid_device_t *hid = (usb_hid_device_t *)arg;
-
+// Check if a USB keyboard event is pending and process it if so.
+static void usb_check_key() {
     while (1) {
-        // 重新提交传输以继续接收
-        if (!hid->transfer_active) {
-            break;
+        for (struct pipe_node *node = keyboards; node; node = node->next) {
+            struct usb_pipe *pipe = node->pipe;
+
+            for (;;) {
+                uint8_t data[MAX_KBD_EVENT];
+                int ret = usb_poll_intr(pipe, data);
+                if (ret)
+                    break;
+                handle_key((void *)data);
+            }
         }
 
-        usb_interrupt_transfer(hid->usb_device, hid->interrupt_in_ep,
-                               hid->input_buffer, hid->input_buffer_size,
-                               hid_interrupt_callback, hid);
-
-        arch_enable_interrupt();
-        while (!hid->hid_transfer_done)
-            arch_pause();
-        arch_disable_interrupt();
-
-        hid->hid_transfer_done = false;
+        arch_yield();
     }
-
-    task_exit(0);
 }
 
-// 中断传输回调
-static void hid_interrupt_callback(usb_transfer_t *transfer) {
-    usb_hid_device_t *hid = (usb_hid_device_t *)transfer->user_data;
+// Format of USB mouse event data
+struct mouseevent {
+    uint8_t buttons;
+    uint8_t x, y;
+};
 
-    if (transfer->status != 0) {
-        printk("HID: Interrupt transfer failed: %d\n", transfer->status);
-        hid->transfer_active = false;
-        return;
-    }
+#define MAX_MOUSE_EVENT 8
 
-    if (transfer->actual_length == 0) {
-        printk("HID: Empty interrupt transfer\n");
-        hid->hid_transfer_done = true;
-    }
+// // Handle a ps2 style keyboard command.
+// inline int
+// usb_kbd_command(int command, uint8_t *param)
+// {
+//     switch (command)
+//     {
+//     case ATKBD_CMD_GETID:
+//         // Return the id of a standard AT keyboard.
+//         param[0] = 0xab;
+//         param[1] = 0x83;
+//         return 0;
+//     default:
+//         return -1;
+//     }
+// }
 
-    // 根据设备类型处理数据
-    if (hid->device_type == HID_TYPE_KEYBOARD) {
-        hid_keyboard_report_t *report =
-            (hid_keyboard_report_t *)transfer->buffer;
+bool mice_task_created = false;
 
-        // 保存当前报告
-        memcpy(&hid->prev_keyboard_report, &hid->keyboard_report,
-               sizeof(hid_keyboard_report_t));
-        memcpy(&hid->keyboard_report, report, sizeof(hid_keyboard_report_t));
+static void handle_mouse(struct mouseevent *data) {
+    int8_t x = data->x, y = data->y;
+    uint8_t flag = data->buttons & 0x7;
 
-        // 检测按键变化并生成事件
-        if (hid->event_callback) {
-            // 检测新按下的键
-            for (int i = 0; i < 6; i++) {
-                uint8_t key = report->keys[i];
-                if (key == 0)
-                    continue;
-
-                // 检查是否是新按键
-                bool is_new = true;
-                for (int j = 0; j < 6; j++) {
-                    if (hid->prev_keyboard_report.keys[j] == key) {
-                        is_new = false;
-                        break;
-                    }
-                }
-
-                if (is_new) {
-                    hid_event_t event = {.type = HID_EVENT_KEY_PRESS,
-                                         .key = {.keycode = key,
-                                                 .modifiers = report->modifiers,
-                                                 .pressed = true}};
-
-                    hid->event_callback(&event, hid->callback_user_data);
-                }
-            }
-
-            // 检测释放的键
-            for (int i = 0; i < 6; i++) {
-                uint8_t key = hid->prev_keyboard_report.keys[i];
-                if (key == 0)
-                    continue;
-
-                // 检查键是否仍然按下
-                bool still_pressed = false;
-                for (int j = 0; j < 6; j++) {
-                    if (report->keys[j] == key) {
-                        still_pressed = true;
-                        break;
-                    }
-                }
-
-                if (!still_pressed) {
-                    hid_event_t event = {.type = HID_EVENT_KEY_RELEASE,
-                                         .key = {.keycode = key,
-                                                 .modifiers = report->modifiers,
-                                                 .pressed = false}};
-
-                    hid->event_callback(&event, hid->callback_user_data);
-                }
-            }
-        }
-    } else if (hid->device_type == HID_TYPE_MOUSE) {
-        hid_mouse_report_t *report = (hid_mouse_report_t *)transfer->buffer;
-
-        // 保存报告
-        memcpy(&hid->prev_mouse_report, &hid->mouse_report,
-               sizeof(hid_mouse_report_t));
-        memcpy(&hid->mouse_report, report,
-               transfer->actual_length < sizeof(hid_mouse_report_t)
-                   ? transfer->actual_length
-                   : sizeof(hid_mouse_report_t));
-
-        // 生成鼠标事件
-        if (hid->event_callback) {
-            hid_event_t event = {.type = HID_EVENT_MOUSE,
-                                 .mouse = {.x = report->x,
-                                           .y = report->y,
-                                           .wheel = report->wheel,
-                                           .buttons = report->buttons}};
-
-            hid->event_callback(&event, hid->callback_user_data);
-        }
-    }
-
-    hid->hid_transfer_done = true;
+    handle_mouse_event(flag, x, y, 0);
 }
 
-// 启动中断传输
-static int hid_start_interrupt_transfer(usb_hid_device_t *hid) {
-    printk("HID: Starting interrupt transfers\n");
+static void usb_check_mouse(void) {
+    while (1) {
+        for (struct pipe_node *node = mice; node; node = node->next) {
+            struct usb_pipe *pipe = node->pipe;
 
-    hid->transfer_active = true;
-
-    task_create("hid_resubmit_agent", hid_resubmit_agent, (uint64_t)hid,
-                KTHREAD_PRIORITY);
-
-    printk("HID: Interrupt transfers started\n");
-    return 0;
-}
-
-// 探测 HID 设备
-int usb_hid_probe(usb_device_t *device) {
-    if (!device) {
-        return -1;
-    }
-
-    printk("\n========== USB HID Device Probe ==========\n");
-
-    // 检查设备类
-    bool is_hid = false;
-
-    if (device->descriptor.bDeviceClass == USB_CLASS_HID) {
-        is_hid = true;
-        printk("HID: Device-level HID class\n");
-    }
-
-    // 解析配置描述符查找 HID 接口
-    if (!device->config_descriptor) {
-        printk("HID: No configuration descriptor\n");
-        return -1;
-    }
-
-    uint8_t *ptr = (uint8_t *)device->config_descriptor;
-    uint8_t *end = ptr + device->config_descriptor->wTotalLength;
-    ptr += sizeof(usb_config_descriptor_t);
-
-    usb_interface_descriptor_t *hid_iface = NULL;
-    hid_descriptor_t *hid_desc_ptr = NULL;
-    usb_endpoint_descriptor_t *interrupt_in = NULL;
-
-    while (ptr < end) {
-        uint8_t len = ptr[0];
-        uint8_t type = ptr[1];
-
-        if (len == 0)
-            break;
-        if (ptr + len > end)
-            break;
-
-        if (type == USB_DT_INTERFACE) {
-            usb_interface_descriptor_t *iface =
-                (usb_interface_descriptor_t *)ptr;
-
-            if (iface->bInterfaceClass == USB_CLASS_HID) {
-                hid_iface = iface;
-                is_hid = true;
-
-                printk("HID: Found HID interface %d\n",
-                       iface->bInterfaceNumber);
-                printk("  Subclass: 0x%02x (%s)\n", iface->bInterfaceSubClass,
-                       iface->bInterfaceSubClass == HID_SUBCLASS_BOOT ? "Boot"
-                                                                      : "None");
-                printk("  Protocol: 0x%02x (%s)\n", iface->bInterfaceProtocol,
-                       iface->bInterfaceProtocol == HID_PROTOCOL_KEYBOARD
-                           ? "Keyboard"
-                       : iface->bInterfaceProtocol == HID_PROTOCOL_MOUSE
-                           ? "Mouse"
-                           : "None");
-            }
-        } else if (type == HID_DT_HID && hid_iface) {
-            hid_desc_ptr = (hid_descriptor_t *)ptr;
-
-            printk("HID Descriptor:\n");
-            printk("  bcdHID: 0x%04x\n", hid_desc_ptr->bcdHID);
-            printk("  Country: %d\n", hid_desc_ptr->bCountryCode);
-            printk("  Descriptors: %d\n", hid_desc_ptr->bNumDescriptors);
-            printk("  Report Desc Type: 0x%02x\n",
-                   hid_desc_ptr->bDescriptorType2);
-            printk("  Report Desc Length: %d\n",
-                   hid_desc_ptr->wDescriptorLength);
-
-        } else if (type == USB_DT_ENDPOINT && hid_iface) {
-            usb_endpoint_descriptor_t *ep = (usb_endpoint_descriptor_t *)ptr;
-
-            if ((ep->bmAttributes & 0x03) == USB_ENDPOINT_XFER_INT) {
-                if (ep->bEndpointAddress & 0x80) {
-                    interrupt_in = ep;
-                    printk(
-                        "  Interrupt IN: 0x%02x, MaxPacket=%d, Interval=%d\n",
-                        ep->bEndpointAddress, ep->wMaxPacketSize,
-                        ep->bInterval);
-                }
+            for (;;) {
+                uint8_t data[MAX_MOUSE_EVENT];
+                int ret = usb_poll_intr(pipe, data);
+                if (ret)
+                    break;
+                handle_mouse((void *)data);
             }
         }
 
-        ptr += len;
+        arch_yield();
     }
+}
 
-    if (!is_hid || !hid_iface || !interrupt_in) {
-        printk("HID: Required descriptors not found\n");
+static int usb_mouse_setup(struct usbdevice_s *usbdev,
+                           struct usb_endpoint_descriptor *epdesc) {
+    if (epdesc->wMaxPacketSize < sizeof(struct mouseevent) ||
+        epdesc->wMaxPacketSize > MAX_MOUSE_EVENT) {
+        printk("USB mouse wMaxPacketSize=%d; aborting\n",
+               epdesc->wMaxPacketSize);
         return -1;
     }
 
-    // 创建 HID 设备结构
-    usb_hid_device_t *hid =
-        (usb_hid_device_t *)malloc(sizeof(usb_hid_device_t));
-    if (!hid) {
-        printk("HID: Failed to allocate device structure\n");
+    // Enable "boot" protocol.
+    if (set_protocol(usbdev->defpipe, 0, usbdev->iface->bInterfaceNumber))
         return -1;
-    }
 
-    memset(hid, 0, sizeof(usb_hid_device_t));
-    hid->usb_device = device;
-    hid->interface_number = hid_iface->bInterfaceNumber;
-    hid->interrupt_in_ep = interrupt_in->bEndpointAddress;
-    hid->interrupt_in_max_packet = interrupt_in->wMaxPacketSize;
-    hid->interrupt_interval = interrupt_in->bInterval;
-
-    if (hid_desc_ptr) {
-        memcpy(&hid->hid_desc, hid_desc_ptr, sizeof(hid_descriptor_t));
-    }
-
-    // 确定设备类型
-    if (hid_iface->bInterfaceProtocol == HID_PROTOCOL_KEYBOARD) {
-        hid->device_type = HID_TYPE_KEYBOARD;
-        hid->protocol = HID_PROTOCOL_KEYBOARD;
-        usb_hid_set_event_callback(hid, keyboard_callback, hid);
-        printk("HID: Device type: KEYBOARD\n");
-    } else if (hid_iface->bInterfaceProtocol == HID_PROTOCOL_MOUSE) {
-        hid->device_type = HID_TYPE_MOUSE;
-        hid->protocol = HID_PROTOCOL_MOUSE;
-        usb_hid_set_event_callback(hid, mouse_callback, hid);
-        printk("HID: Device type: MOUSE\n");
-    } else {
-        hid->device_type = HID_TYPE_GENERIC;
-        printk("HID: Device type: GENERIC\n");
-    }
-
-    // 分配输入缓冲区
-    hid->input_buffer_size = hid->interrupt_in_max_packet;
-    hid->input_buffer = (uint8_t *)malloc(hid->input_buffer_size);
-    if (!hid->input_buffer) {
-        printk("HID: Failed to allocate input buffer\n");
-        free(hid);
+    if (add_pipe_node(&mice, usbdev, epdesc))
         return -1;
+
+    if (!mice_task_created) {
+        task_create("usb_check_mouse", (void (*)(uint64_t))usb_check_mouse, 0,
+                    KTHREAD_PRIORITY);
+        mice_task_created = true;
     }
-
-    // 设置 Boot Protocol（如果支持）
-    if (hid_iface->bInterfaceSubClass == HID_SUBCLASS_BOOT) {
-        printk("HID: Setting Boot Protocol\n");
-        hid_set_protocol(hid, HID_PROTOCOL_BOOT);
-    }
-
-    // 设置空闲时间（0 = 无限期）
-    hid_set_idle(hid, 0);
-
-    hid->hid_transfer_done = false;
-
-    // 启动中断传输
-    if (hid_start_interrupt_transfer(hid) != 0) {
-        printk("HID: Failed to start interrupt transfers\n");
-        free(hid->input_buffer);
-        free(hid);
-        return -1;
-    }
-
-    // 添加到设备列表
-    spin_lock(&hid_devices_lock);
-    hid->next = hid_devices;
-    hid_devices = hid;
-    hid_device_count++;
-    spin_unlock(&hid_devices_lock);
 
     return 0;
 }
 
-// 移除 HID 设备
-void usb_hid_remove(usb_hid_device_t *hid) {
-    if (!hid)
-        return;
+// Initialize a found USB HID device (if applicable).
+int usb_hid_setup(struct usbdevice_s *usbdev) {
+    struct usb_interface_descriptor *iface = usbdev->iface;
+    if (iface->bInterfaceSubClass != USB_INTERFACE_SUBCLASS_BOOT)
+        // Doesn't support boot protocol.
+        return -1;
 
-    printk("HID: Removing device\n");
-
-    // 停止传输
-    hid->transfer_active = false;
-
-    spin_lock(&hid_devices_lock);
-
-    // 从列表移除
-    usb_hid_device_t **prev = &hid_devices;
-    while (*prev) {
-        if (*prev == hid) {
-            *prev = hid->next;
-            hid_device_count--;
-            break;
-        }
-        prev = &(*prev)->next;
+    // Find intr in endpoint.
+    struct usb_endpoint_descriptor *epdesc =
+        usb_find_desc(usbdev, USB_ENDPOINT_XFER_INT, USB_DIR_IN);
+    if (!epdesc) {
+        return -1;
     }
 
-    spin_unlock(&hid_devices_lock);
-
-    if (hid->input_buffer) {
-        free(hid->input_buffer);
-    }
-
-    free(hid);
+    if (iface->bInterfaceProtocol == USB_INTERFACE_PROTOCOL_KEYBOARD)
+        return usb_kbd_setup(usbdev, epdesc);
+    if (iface->bInterfaceProtocol == USB_INTERFACE_PROTOCOL_MOUSE)
+        return usb_mouse_setup(usbdev, epdesc);
+    return -1;
 }
 
-// 设置事件回调
-void usb_hid_set_event_callback(usb_hid_device_t *hid,
-                                hid_event_callback_t callback,
-                                void *user_data) {
-    if (!hid)
-        return;
-
-    hid->event_callback = callback;
-    hid->callback_user_data = user_data;
-}
-
-// 获取 HID 设备
-usb_hid_device_t *usb_hid_get_device(int index) {
-    usb_hid_device_t *hid = hid_devices;
-    int i = 0;
-
-    while (hid && i < index) {
-        hid = hid->next;
-        i++;
-    }
-
-    return hid;
-}
-
-usb_hid_device_t *usb_hid_get_keyboard(void) {
-    usb_hid_device_t *hid = hid_devices;
-
-    while (hid) {
-        if (hid->device_type == HID_TYPE_KEYBOARD) {
-            return hid;
-        }
-        hid = hid->next;
-    }
-
-    return NULL;
-}
-
-usb_hid_device_t *usb_hid_get_mouse(void) {
-    usb_hid_device_t *hid = hid_devices;
-
-    while (hid) {
-        if (hid->device_type == HID_TYPE_MOUSE) {
-            return hid;
-        }
-        hid = hid->next;
-    }
-
-    return NULL;
-}
-
-int hid_probe(usb_device_t *usbdev) { return usb_hid_probe(usbdev); }
-
-int hid_remove(usb_device_t *usbdev) {
-    usb_hid_remove((usb_hid_device_t *)usbdev->private_data);
-    return 0;
-}
+int usb_hid_remove(struct usbdevice_s *usbdev) { return 0; }
 
 usb_driver_t hid_driver = {
     .class = USB_CLASS_HID,
-    .subclass = 0x00,
-    .probe = hid_probe,
-    .remove = hid_remove,
+    .subclass = 0,
+    .probe = usb_hid_setup,
+    .remove = usb_hid_remove,
 };
 
 __attribute__((visibility("default"))) int dlmain() {
-    register_usb_driver(&hid_driver);
+    regist_usb_driver(&hid_driver);
 
     return 0;
 }

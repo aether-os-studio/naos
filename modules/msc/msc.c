@@ -1,531 +1,590 @@
-// msc.c
+#include <libs/aether/block.h>
+#include <libs/aether/stdio.h>
 #include "msc.h"
-#include <libs/aether/mm.h>
 
-// 全局 MSC 设备列表
-static usb_msc_device_t *msc_devices = NULL;
-spinlock_t msc_devices_lock = {0};
+spinlock_t usb_bulk_transfer_lock = {0};
 
-// 发送 Command Block Wrapper
-int msc_send_cbw(usb_msc_device_t *msc, usb_msc_cbw_t *cbw) {
-    if (!msc || !cbw) {
+int usb_bulk_transfer(struct usb_pipe *pipe, void *data, size_t len,
+                      bool is_read) {
+    if (!pipe || !pipe->cntl)
+        return -EINVAL;
+
+    spin_lock(&usb_bulk_transfer_lock);
+
+    int ret = (usb_send_bulk(pipe, is_read ? USB_DIR_IN : USB_DIR_OUT, data,
+                             len) == 0)
+                  ? len
+                  : -EIO;
+
+    spin_unlock(&usb_bulk_transfer_lock);
+
+    return ret;
+}
+
+// 重置USB MSC设备端点
+static int usb_msc_reset_recovery(usb_msc_device *dev) {
+    printk("USB MSC: Performing reset recovery\n");
+
+    struct usb_ctrlrequest req = {
+        .bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
+        .bRequest = 0xFF, // Bulk-Only Mass Storage Reset
+        .wValue = 0,
+        .wIndex = dev->udev->iface->bInterfaceNumber,
+        .wLength = 0};
+
+    int ret = usb_send_default_control(dev->udev->defpipe, &req, NULL);
+    if (ret != 0) {
+        printk("USB MSC: Reset recovery failed: %d\n", ret);
         return -1;
     }
 
-    int ret =
-        usb_bulk_transfer(msc->usb_device, msc->bulk_out_ep, (uint8_t *)cbw,
-                          sizeof(usb_msc_cbw_t), NULL, NULL);
+    // 等待设备恢复
+    arch_pause();
+    arch_pause();
+    arch_pause();
 
-    if (ret < 0) {
-        return ret;
-    }
-
+    printk("USB MSC: Reset recovery completed\n");
     return 0;
 }
 
-// 接收 Command Status Wrapper
-int msc_receive_csw(usb_msc_device_t *msc, usb_msc_csw_t *csw) {
-    if (!msc || !csw) {
-        return -1;
-    }
+spinlock_t usb_msc_transfer_lock = {0};
 
-    memset(csw, 0, sizeof(usb_msc_csw_t));
+static int usb_msc_transfer(usb_msc_device *dev, void *cmd, uint8_t cmd_length,
+                            void *data, size_t data_len, bool is_read) {
+    spin_lock(&usb_msc_transfer_lock);
 
-    int ret =
-        usb_bulk_transfer(msc->usb_device, msc->bulk_in_ep, (uint8_t *)csw,
-                          sizeof(usb_msc_csw_t), NULL, NULL);
-
-    if (ret < 0) {
-        return ret;
-    }
-
-    // 验证 CSW
-    if (csw->signature != CSW_SIGNATURE) {
-        printk("MSC: Invalid CSW signature: 0x%08x\n", csw->signature);
-        return -1;
-    }
-
-    return csw->status;
-}
-
-spinlock_t msc_transfer_lock = {0};
-
-// 执行 MSC 传输
-int msc_transfer(usb_msc_device_t *msc, uint8_t *cb, uint8_t cb_len, void *data,
-                 uint32_t data_len, bool data_in) {
-    if (!msc || !cb) {
-        return -1;
-    }
-
-    spin_lock(&msc_transfer_lock);
-
+    // 发送CBW
     usb_msc_cbw_t cbw;
-    usb_msc_csw_t csw;
+    memset(&cbw, 0, sizeof(usb_msc_cbw_t));
+    cbw.dCBWSignature = 0x43425355;
+    cbw.dCBWTag = 1;
+    cbw.dCBWDataTransferLength = data_len;
+    cbw.bmCBWFlags = is_read ? USB_DIR_IN : USB_DIR_OUT;
+    cbw.bCBWLUN = dev->lun;
+    cbw.bCBWCBLength = cmd_length;
 
-    // 准备 CBW
-    memset(&cbw, 0, sizeof(cbw));
-    cbw.signature = CBW_SIGNATURE;
-    cbw.tag = ++msc->tag;
-    cbw.data_length = data_len;
-    cbw.flags = data_in ? CBW_FLAGS_DATA_IN : CBW_FLAGS_DATA_OUT;
-    cbw.lun = 0;
-    cbw.cb_length = cb_len;
-    memcpy(cbw.cb, cb, cb_len);
+    memcpy(cbw.CBWCB, cmd, cmd_length);
 
-    // 发送 CBW
-    int ret = msc_send_cbw(msc, &cbw);
-    if (ret != 0) {
-        printk("MSC: CBW send failed\n");
-        spin_unlock(&msc_transfer_lock);
-        return ret;
+    if (usb_bulk_transfer(dev->bulk_out, &cbw, sizeof(cbw), false) < 0) {
+        spin_unlock(&usb_msc_transfer_lock);
+        printk("Failed to transfer cbw!!!\n");
+        return -1;
     }
 
-    // 数据阶段（如果有）
-    if (data_len > 0 && data) {
-        uint8_t ep = data_in ? msc->bulk_in_ep : msc->bulk_out_ep;
+    // 数据传输
+    if (data_len > 0) {
+        struct usb_pipe *pipe = is_read ? dev->bulk_in : dev->bulk_out;
+        int data_ret = usb_bulk_transfer(pipe, data, data_len, is_read);
+        if (data_ret < 0) {
+            spin_unlock(&usb_msc_transfer_lock);
+            printk("Failed to transfer data!!!\n");
 
-        ret = usb_bulk_transfer(msc->usb_device, ep, (uint8_t *)data, data_len,
-                                NULL, NULL);
+            // 数据传输失败时也尝试重置恢复
+            usb_msc_reset_recovery(dev);
+            return -1;
+        }
 
-        if (ret < 0) {
-            printk("MSC: Data transfer failed\n");
-            // 继续接收 CSW
+        // 检查实际传输的数据长度是否匹配
+        if ((size_t)data_ret != data_len) {
+            printk("Data transfer incomplete: expected %zu, got %d bytes\n",
+                   data_len, data_ret);
+            spin_unlock(&usb_msc_transfer_lock);
+
+            // 数据传输不完整时尝试重置恢复
+            usb_msc_reset_recovery(dev);
+            return -1;
         }
     }
 
-    // 接收 CSW
-    ret = msc_receive_csw(msc, &csw);
-
-    // 验证 tag
-    if (csw.tag != cbw.tag) {
-        printk("MSC: CSW tag mismatch (expected 0x%08x, got 0x%08x)\n", cbw.tag,
-               csw.tag);
-        spin_unlock(&msc_transfer_lock);
-        return -1;
-    }
-
-    if (ret != CSW_STATUS_GOOD) {
-        printk("MSC: Command failed with status %d\n", ret);
-        spin_unlock(&msc_transfer_lock);
-        return -1;
-    }
-
-    spin_unlock(&msc_transfer_lock);
-
-    return 0;
-}
-
-// Bulk-Only Mass Storage Reset
-int msc_bulk_only_reset(usb_msc_device_t *msc) {
-    printk("MSC: Performing Bulk-Only Reset\n");
-
-    usb_device_request_t setup = {
-        .bmRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
-        .bRequest = MSC_REQ_BULK_ONLY_RESET,
-        .wValue = 0,
-        .wIndex = msc->interface_number,
-        .wLength = 0};
-
-    return usb_control_transfer(msc->usb_device, &setup, NULL, 0, NULL, NULL);
-}
-
-// Get Max LUN
-int msc_get_max_lun(usb_msc_device_t *msc, uint8_t *max_lun) {
-    printk("MSC: Getting Max LUN\n");
-
-    uint8_t lun = 0;
-
-    usb_device_request_t setup = {.bmRequestType = USB_DIR_IN | USB_TYPE_CLASS |
-                                                   USB_RECIP_INTERFACE,
-                                  .bRequest = MSC_REQ_GET_MAX_LUN,
-                                  .wValue = 0,
-                                  .wIndex = msc->interface_number,
-                                  .wLength = 1};
-
-    int ret =
-        usb_control_transfer(msc->usb_device, &setup, &lun, 1, NULL, NULL);
-
-    if (ret == 0) {
-        *max_lun = lun;
-        printk("MSC: Max LUN = %d\n", lun);
-    } else {
-        // 如果失败，假设只有 LUN 0
-        *max_lun = 0;
-        printk("MSC: Get Max LUN failed, assuming 0\n");
-    }
-
-    return 0;
-}
-
-// SCSI Inquiry
-int msc_inquiry(usb_msc_device_t *msc) {
-    printk("\nMSC: SCSI Inquiry\n");
-
-    uint8_t cb[16] = {0};
-    cb[0] = SCSI_INQUIRY;
-    cb[4] = 36; // Allocation length
-
-    scsi_inquiry_data_t inquiry;
-    memset(&inquiry, 0, sizeof(inquiry));
-
-    int ret = msc_transfer(msc, cb, 6, &inquiry, 36, true);
-
-    if (ret == 0) {
-        printk("MSC: Inquiry successful\n");
-        printk("  Peripheral Type: 0x%02x\n", inquiry.peripheral & 0x1F);
-        printk("  Removable: %s\n", (inquiry.removable & 0x80) ? "Yes" : "No");
-
-        // 保存设备信息
-        memcpy(msc->vendor, inquiry.vendor_id, 8);
-        msc->vendor[8] = '\0';
-        memcpy(msc->product, inquiry.product_id, 16);
-        msc->product[16] = '\0';
-        memcpy(msc->revision, inquiry.revision, 4);
-        msc->revision[4] = '\0';
-
-        // 去除尾部空格
-        for (int i = 7; i >= 0 && msc->vendor[i] == ' '; i--)
-            msc->vendor[i] = '\0';
-        for (int i = 15; i >= 0 && msc->product[i] == ' '; i--)
-            msc->product[i] = '\0';
-        for (int i = 3; i >= 0 && msc->revision[i] == ' '; i--)
-            msc->revision[i] = '\0';
-
-        printk("  Vendor: '%s'\n", msc->vendor);
-        printk("  Product: '%s'\n", msc->product);
-        printk("  Revision: '%s'\n", msc->revision);
-    }
-
-    return ret;
-}
-
-// SCSI Test Unit Ready
-int msc_test_unit_ready(usb_msc_device_t *msc) {
-    printk("MSC: Test Unit Ready\n");
-
-    uint8_t cb[16] = {0};
-    cb[0] = SCSI_TEST_UNIT_READY;
-
-    int ret = msc_transfer(msc, cb, 6, NULL, 0, true);
-
-    if (ret == 0) {
-        printk("MSC: Unit is ready\n");
-        msc->ready = true;
-    } else {
-        printk("MSC: Unit is not ready\n");
-        msc->ready = false;
-    }
-
-    return ret;
-}
-
-// SCSI Request Sense
-int msc_request_sense(usb_msc_device_t *msc, scsi_sense_data_t *sense) {
-    printk("MSC: Request Sense\n");
-
-    uint8_t cb[16] = {0};
-    cb[0] = SCSI_REQUEST_SENSE;
-    cb[4] = 18; // Allocation length
-
-    memset(sense, 0, sizeof(scsi_sense_data_t));
-
-    int ret = msc_transfer(msc, cb, 6, sense, 18, true);
-
-    if (ret == 0) {
-        printk("MSC: Sense Key: 0x%02x, ASC: 0x%02x, ASCQ: 0x%02x\n",
-               sense->sense_key & 0x0F, sense->asc, sense->ascq);
-    }
-
-    return ret;
-}
-
-// SCSI Read Capacity
-int msc_read_capacity(usb_msc_device_t *msc) {
-    printk("\nMSC: Read Capacity\n");
-
-    uint8_t cb[16] = {0};
-    cb[0] = SCSI_READ_CAPACITY_10;
-
-    scsi_read_capacity_data_t capacity;
-    memset(&capacity, 0, sizeof(capacity));
-
-    int ret = msc_transfer(msc, cb, 10, &capacity, 8, true);
-
-    if (ret == 0) {
-        msc->block_count = be32_to_cpu(capacity.last_lba) + 1;
-        msc->block_size = be32_to_cpu(capacity.block_size);
-        msc->capacity = (uint64_t)msc->block_count * msc->block_size;
-
-        printk("MSC: Capacity information:\n");
-        printk("  Last LBA: %u\n", msc->block_count - 1);
-        printk("  Block Count: %u\n", msc->block_count);
-        printk("  Block Size: %u bytes\n", msc->block_size);
-        printk("  Total Capacity: %llu bytes (%d MB)\n", msc->capacity,
-               msc->capacity / (1024 * 1024));
-    }
-
-    return ret;
-}
-
-// 读取块
-int msc_read_blocks(usb_msc_device_t *msc, uint64_t lba, uint32_t count,
-                    void *buffer) {
-    if (!msc || !buffer || count == 0) {
-        return -1;
-    }
-
-    if (lba + count > msc->block_count) {
-        printk("MSC: Read beyond device capacity\n");
-        return -1;
-    }
-
-    // printk("MSC: Reading %u blocks from LBA %u\n", count, lba);
-
-    struct scsi_cdb_rwdata_16 cb;
-    memset(&cb, 0, sizeof(struct scsi_cdb_rwdata_16));
-    cb.command = SCSI_READ_16;
-    cb.lba = cpu_to_be64(lba);
-    cb.count = cpu_to_be32(count);
-
-    uint32_t transfer_size = count * msc->block_size;
-
-    int ret = msc_transfer(msc, (void *)&cb, 16, buffer, transfer_size, true);
-
-    if (ret == 0) {
-        // printk("MSC: Read successful (%u bytes)\n", transfer_size);
-    } else {
-        printk("MSC: Read failed\n");
-    }
-
-    return ret;
-}
-
-// 写入块
-int msc_write_blocks(usb_msc_device_t *msc, uint64_t lba, uint32_t count,
-                     const void *buffer) {
-    if (!msc || !buffer || count == 0) {
-        return -1;
-    }
-
-    if (msc->write_protected) {
-        printk("MSC: Device is write protected\n");
-        return -1;
-    }
-
-    if (lba + count > msc->block_count) {
-        printk("MSC: Write beyond device capacity\n");
-        return -1;
-    }
-
-    // printk("MSC: Writing %u blocks to LBA %u\n", count, lba);
-
-    struct scsi_cdb_rwdata_16 cb;
-    memset(&cb, 0, sizeof(struct scsi_cdb_rwdata_16));
-    cb.command = SCSI_WRITE_16;
-    cb.lba = cpu_to_be64(lba);
-    cb.count = cpu_to_be32(count);
-
-    uint32_t transfer_size = count * msc->block_size;
-
-    int ret = msc_transfer(msc, (void *)&cb, 16, (void *)buffer, transfer_size,
-                           false);
-
-    if (ret == 0) {
-        // printk("MSC: Write successful (%u bytes)\n", transfer_size);
-    } else {
-        printk("MSC: Write failed\n");
-    }
-
-    return ret;
-}
-
-uint64_t msc_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
-    return msc_read_blocks(data, lba, size, buffer) == 0 ? size : -EIO;
-}
-
-uint64_t msc_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
-    return msc_write_blocks(data, lba, size, buffer) == 0 ? size : -EIO;
-}
-
-// 探测 MSC 设备
-int usb_msc_probe(usb_device_t *device) {
-    if (!device) {
-        return -1;
-    }
-
-    // 检查设备类
-    if (device->descriptor.bDeviceClass != USB_CLASS_MASS_STORAGE &&
-        device->descriptor.bDeviceClass != 0x00) {
-        printk("MSC: Not a mass storage device (class=0x%02x)\n",
-               device->descriptor.bDeviceClass);
-        return -1;
-    }
-
-    // 解析配置描述符，查找 MSC 接口
-    if (!device->config_descriptor) {
-        printk("MSC: No configuration descriptor\n");
-        return -1;
-    }
-
-    uint8_t *ptr = (uint8_t *)device->config_descriptor;
-    uint8_t *end = ptr + device->config_descriptor->wTotalLength;
-    ptr += sizeof(usb_config_descriptor_t);
-
-    usb_interface_descriptor_t *msc_iface = NULL;
-    usb_endpoint_descriptor_t *bulk_in = NULL;
-    usb_endpoint_descriptor_t *bulk_out = NULL;
-
-    while (ptr < end) {
-        uint8_t len = ptr[0];
-        uint8_t type = ptr[1];
-
-        if (len == 0)
-            break;
-        if (ptr + len > end)
-            break;
-
-        if (type == USB_DT_INTERFACE) {
-            usb_interface_descriptor_t *iface =
-                (usb_interface_descriptor_t *)ptr;
-            if (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE &&
-                iface->bInterfaceProtocol == MSC_PROTOCOL_BBB) {
-                msc_iface = iface;
-                printk("MSC: Found MSC interface %d\n",
-                       iface->bInterfaceNumber);
-                printk("  Subclass: 0x%02x\n", iface->bInterfaceSubClass);
-                printk("  Protocol: 0x%02x (Bulk-Only)\n",
-                       iface->bInterfaceProtocol);
+    // 接收CSW
+    usb_msc_csw_t csw;
+    int retries = 3;
+    int csw_ret = -1;
+
+    while (retries-- > 0) {
+        csw_ret = usb_bulk_transfer(dev->bulk_in, &csw, sizeof(csw), true);
+        if (csw_ret < 0) {
+            printk("Failed to transfer csw (retries left: %d)!!!\n", retries);
+
+            // 如果CSW接收失败，尝试重置恢复
+            if (retries == 0) {
+                usb_msc_reset_recovery(dev);
             }
-        } else if (type == USB_DT_ENDPOINT && msc_iface) {
-            usb_endpoint_descriptor_t *ep = (usb_endpoint_descriptor_t *)ptr;
+            continue;
+        }
 
-            if ((ep->bmAttributes & 0x03) == USB_ENDPOINT_XFER_BULK) {
-                if (!bulk_in && (ep->bEndpointAddress & 0x80)) {
-                    bulk_in = ep;
-                    printk("  Bulk IN: 0x%02x, MaxPacket=%d\n",
-                           ep->bEndpointAddress, ep->wMaxPacketSize);
-                } else if (!bulk_out) {
-                    bulk_out = ep;
-                    printk("  Bulk OUT: 0x%02x, MaxPacket=%d\n",
-                           ep->bEndpointAddress, ep->wMaxPacketSize);
+        // 验证CSW签名
+        if (csw.dCSWSignature != 0x53425355) {
+            printk("Invalid CSW signature: 0x%08x, expected 0x53425355\n",
+                   csw.dCSWSignature);
+            continue;
+        }
+
+        // 验证CSW Tag是否匹配
+        if (csw.dCSWTag != cbw.dCBWTag) {
+            printk("CSW tag mismatch: got %u, expected %u\n", csw.dCSWTag,
+                   cbw.dCBWTag);
+            continue;
+        }
+
+        break;
+    }
+
+    if (csw_ret < 0) {
+        spin_unlock(&usb_msc_transfer_lock);
+        printk("CSW transfer failed after all retries!!!\n");
+        return -1;
+    }
+
+    // 检查CSW状态
+    if (csw.bCSWStatus == 0) {
+        spin_unlock(&usb_msc_transfer_lock);
+        return 0;
+    }
+
+    printk("Transfer failed! CSW status: %d, residue: %u\n", csw.bCSWStatus,
+           csw.dCSWDataResidue);
+
+    // 如果CSW状态不是成功，尝试重置恢复
+    if (csw.bCSWStatus != 0) {
+        usb_msc_reset_recovery(dev);
+    }
+
+    spin_unlock(&usb_msc_transfer_lock);
+    return -1;
+}
+
+// SCSI 10命令格式
+static int usb_msc_read_10(usb_msc_device *dev, uint64_t lba, void *buf,
+                           uint64_t count) {
+    uint8_t cmd[16] = {SCSI_READ_10,
+                       0,
+                       (lba >> 24) & 0xFF,
+                       (lba >> 16) & 0xFF,
+                       (lba >> 8) & 0xFF,
+                       lba & 0xFF,
+                       0,
+                       (count >> 8) & 0xFF,
+                       count & 0xFF,
+                       0};
+
+    return usb_msc_transfer(dev, cmd, 10, buf, count * dev->block_size, true) ==
+                   0
+               ? count
+               : 0;
+}
+
+static int usb_msc_write_10(usb_msc_device *dev, uint64_t lba, void *buf,
+                            uint64_t count) {
+    uint8_t cmd[16] = {SCSI_WRITE_10,
+                       0,
+                       (lba >> 24) & 0xFF,
+                       (lba >> 16) & 0xFF,
+                       (lba >> 8) & 0xFF,
+                       lba & 0xFF,
+                       0,
+                       (count >> 8) & 0xFF,
+                       count & 0xFF,
+                       0};
+
+    return usb_msc_transfer(dev, cmd, 10, buf, count * dev->block_size,
+                            false) == 0
+               ? count
+               : 0;
+}
+
+// SCSI 12命令格式
+static int usb_msc_read_12(usb_msc_device *dev, uint64_t lba, void *buf,
+                           uint64_t count) {
+    uint8_t cmd[16] = {SCSI_READ_12,
+                       0,
+                       (lba >> 24) & 0xFF,
+                       (lba >> 16) & 0xFF,
+                       (lba >> 8) & 0xFF,
+                       lba & 0xFF,
+                       (count >> 24) & 0xFF,
+                       (count >> 16) & 0xFF,
+                       (count >> 8) & 0xFF,
+                       count & 0xFF,
+                       0};
+
+    return usb_msc_transfer(dev, cmd, 12, buf, count * dev->block_size, true) ==
+                   0
+               ? count
+               : 0;
+}
+
+static int usb_msc_write_12(usb_msc_device *dev, uint64_t lba, void *buf,
+                            uint64_t count) {
+    uint8_t cmd[16] = {SCSI_WRITE_12,
+                       0,
+                       (lba >> 24) & 0xFF,
+                       (lba >> 16) & 0xFF,
+                       (lba >> 8) & 0xFF,
+                       lba & 0xFF,
+                       (count >> 24) & 0xFF,
+                       (count >> 16) & 0xFF,
+                       (count >> 8) & 0xFF,
+                       count & 0xFF,
+                       0};
+
+    return usb_msc_transfer(dev, cmd, 12, buf, count * dev->block_size,
+                            false) == 0
+               ? count
+               : 0;
+}
+
+// SCSI 16命令格式
+static int usb_msc_read_16(usb_msc_device *dev, uint64_t lba, void *buf,
+                           uint64_t count) {
+    uint8_t cmd[16] = {
+        SCSI_READ_16,
+        0,
+        (lba >> 56) & 0xFF,
+        (lba >> 48) & 0xFF,
+        (lba >> 40) & 0xFF,
+        (lba >> 32) & 0xFF,
+        (lba >> 24) & 0xFF,
+        (lba >> 16) & 0xFF,
+        (lba >> 8) & 0xFF,
+        lba & 0xFF,
+        (count >> 24) & 0xFF,
+        (count >> 16) & 0xFF,
+        (count >> 8) & 0xFF,
+        count & 0xFF,
+        0,
+        0,
+    };
+
+    return usb_msc_transfer(dev, cmd, 16, buf, count * dev->block_size, true) ==
+                   0
+               ? count
+               : 0;
+}
+
+static int usb_msc_write_16(usb_msc_device *dev, uint64_t lba, void *buf,
+                            uint64_t count) {
+    uint8_t cmd[16] = {
+        SCSI_WRITE_16,
+        0,
+        (lba >> 56) & 0xFF,
+        (lba >> 48) & 0xFF,
+        (lba >> 40) & 0xFF,
+        (lba >> 32) & 0xFF,
+        (lba >> 24) & 0xFF,
+        (lba >> 16) & 0xFF,
+        (lba >> 8) & 0xFF,
+        lba & 0xFF,
+        (count >> 24) & 0xFF,
+        (count >> 16) & 0xFF,
+        (count >> 8) & 0xFF,
+        count & 0xFF,
+        0,
+        0,
+    };
+
+    return usb_msc_transfer(dev, cmd, 16, buf, count * dev->block_size,
+                            false) == 0
+               ? count
+               : 0;
+}
+
+// INQUIRY命令响应数据结构
+typedef struct {
+    uint8_t peripheral_device_type;
+    uint8_t removable;
+    uint8_t version;
+    uint8_t response_data_format;
+    uint8_t additional_length;
+    uint8_t reserved[3];
+    uint8_t vendor_identification[8];
+    uint8_t product_identification[16];
+    uint8_t product_revision_level[4];
+} __attribute__((packed)) scsi_inquiry_data_t;
+
+// VPD页面支持数据结构
+typedef struct {
+    uint8_t peripheral_device_type;
+    uint8_t page_code;
+    uint16_t page_length;
+    uint8_t supported_vpd_pages[256];
+} __attribute__((packed)) scsi_vpd_supported_pages_t;
+
+typedef struct {
+    uint8_t peripheral_device_type;
+    uint8_t page_code;
+    uint16_t page_length;
+    uint8_t longest_transfer_length[4];
+    uint8_t max_transfer_length[4];
+    uint8_t optimal_transfer_length[4];
+    uint8_t max_prefetch_length[4];
+    uint8_t max_unmap_lba_count[4];
+    uint8_t max_unmap_block_descriptors[4];
+    uint8_t optimal_unmap_granularity[4];
+    uint8_t unmap_granularity_alignment[4];
+    uint8_t max_write_same_length[8];
+    uint8_t capabilities;
+} __attribute__((packed)) scsi_vpd_block_limits_t;
+
+static int usb_msc_fallback_detection(usb_msc_device *dev);
+
+// 检测设备支持的SCSI命令集
+static int usb_msc_detect_scsi_capability(usb_msc_device *dev) {
+    // 默认使用SCSI 10
+    dev->read_func = usb_msc_read_10;
+    dev->write_func = usb_msc_write_10;
+    dev->scsi_version = SCSI_VERSION_10;
+
+    // 发送INQUIRY命令获取设备信息
+    scsi_inquiry_data_t inquiry_data;
+    uint8_t inquiry_cmd[16] = {SCSI_INQUIRY, 0, 0, 0,
+                               0x24,         0}; // 限制为36字节，避免超过255
+
+    if (usb_msc_transfer(dev, inquiry_cmd, 6, &inquiry_data,
+                         sizeof(inquiry_data), true) != 0) {
+        printk("[USB MSC]: INQUIRY command failed, using fallback detection\n");
+
+        // INQUIRY失败，使用后备检测方法
+        return usb_msc_fallback_detection(dev);
+    }
+
+    printk("[USB MSC]: Starting SCSI capability detection\n");
+    printk("[USB MSC]: Device Vendor: %.8s, Product: %.16s, Revision: %.4s\n",
+           inquiry_data.vendor_identification,
+           inquiry_data.product_identification,
+           inquiry_data.product_revision_level);
+
+    // 检查SCSI版本支持
+    uint8_t scsi_version = inquiry_data.version;
+
+    printk("[USB MSC]: SCSI Version: 0x%02X (", scsi_version);
+    switch (scsi_version) {
+    case 0x00:
+        printk("SCSI-1/SPC");
+        break;
+    case 0x01:
+        printk("SCSI-2/SPC-1");
+        break;
+    case 0x02:
+        printk("SCSI-3/SPC-2");
+        break;
+    case 0x03:
+        printk("SPC-3");
+        break;
+    case 0x04:
+        printk("SPC-4");
+        break;
+    case 0x05:
+        printk("SPC-5");
+        break;
+    case 0x06:
+        printk("SPC-6");
+        break;
+    default:
+        printk("Unknown");
+        break;
+    }
+    printk(")\n");
+
+    // 查询支持的VPD页面以获取更详细的能力信息
+    scsi_vpd_supported_pages_t vpd_pages;
+    uint8_t vpd_cmd[16] = {SCSI_INQUIRY, 1, 0x00, 0, 0xFF, 0}; // 最大255字节
+
+    bool has_block_limits = false;
+    bool has_16byte_cdb = false;
+
+    if (usb_msc_transfer(dev, vpd_cmd, 6, &vpd_pages, sizeof(vpd_pages),
+                         true) == 0) {
+        for (int i = 0; i < vpd_pages.page_length; i++) {
+            if (vpd_pages.supported_vpd_pages[i] == 0xB0) {
+                has_block_limits = true;
+            }
+        }
+
+        // 检查是否支持16字节CDB
+        scsi_vpd_block_limits_t block_limits;
+        if (has_block_limits) {
+            uint8_t block_limits_cmd[16] = {
+                SCSI_INQUIRY, 1, 0xB0, 0,
+                0x3C,         0}; // Block Limits VPD页面通常60字节
+            if (usb_msc_transfer(dev, block_limits_cmd, 6, &block_limits,
+                                 sizeof(block_limits), true) == 0) {
+                // 检查Capabilities字段中的16字节CDB支持位
+                if (block_limits.capabilities & 0x01) {
+                    has_16byte_cdb = true;
+                    printk("[USB MSC]: Device explicitly supports 16-byte CDB "
+                           "(capability bit set)\n");
+                } else {
+                    printk("[USB MSC]: Device does not explicitly support "
+                           "16-byte CDB (capability bit not set)\n");
                 }
             }
         }
-
-        ptr += len;
     }
 
-    if (!msc_iface || !bulk_in || !bulk_out) {
-        printk("MSC: Required endpoints not found\n");
-        return -1;
+    // 根据设备能力选择最优命令集
+    if (has_16byte_cdb && scsi_version >= 0x04) {
+        // 设备明确支持16字节CDB且SCSI版本足够
+        printk("[USB MSC]: Using SCSI 16 (explicit 16-byte CDB support "
+               "detected)\n");
+        dev->read_func = usb_msc_read_16;
+        dev->write_func = usb_msc_write_16;
+        dev->scsi_version = SCSI_VERSION_16;
+    } else if (scsi_version >= 0x05) {
+        // SPC-4或更高版本，支持SCSI 16
+        printk("[USB MSC]: Using SCSI 16 (SPC-4 or later specification)\n");
+        dev->read_func = usb_msc_read_16;
+        dev->write_func = usb_msc_write_16;
+        dev->scsi_version = SCSI_VERSION_16;
+    } else if (scsi_version >= 0x03) {
+        // SPC-2或SPC-3，支持SCSI 12
+        printk("[USB MSC]: Using SCSI 12 (SPC-2/SPC-3 specification)\n");
+        dev->read_func = usb_msc_read_12;
+        dev->write_func = usb_msc_write_12;
+        dev->scsi_version = SCSI_VERSION_12;
+    } else {
+        // SPC/SPC-1或更低，使用SCSI 10
+        printk("[USB MSC]: Using SCSI 10 (legacy SCSI specification)\n");
+        dev->read_func = usb_msc_read_10;
+        dev->write_func = usb_msc_write_10;
+        dev->scsi_version = SCSI_VERSION_10;
     }
 
-    // 创建 MSC 设备结构
-    usb_msc_device_t *msc =
-        (usb_msc_device_t *)malloc(sizeof(usb_msc_device_t));
-    if (!msc) {
-        printk("MSC: Failed to allocate device structure\n");
-        return -1;
+    return 0;
+}
+
+// 后备检测方法（当INQUIRY命令失败时使用）
+static int usb_msc_fallback_detection(usb_msc_device *dev) {
+    printk(
+        "[USB MSC]: INQUIRY command failed, using fallback detection method\n");
+
+    // 尝试使用SCSI 16容量查询来检测支持
+    uint8_t capacity_16[16];
+    uint8_t cmd_16[16] = {
+        SCSI_READ_CAPACITY_16, 0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
+    if (usb_msc_transfer(dev, cmd_16, 16, capacity_16, sizeof(capacity_16),
+                         true) == 0) {
+        // SCSI 16容量查询成功，使用SCSI 16
+        printk("[USB MSC]: Fallback detection: SCSI 16 READ CAPACITY(16) "
+               "command succeeded\n");
+        dev->read_func = usb_msc_read_16;
+        dev->write_func = usb_msc_write_16;
+        dev->scsi_version = SCSI_VERSION_16;
+        return 0;
     }
 
-    memset(msc, 0, sizeof(usb_msc_device_t));
-    msc->usb_device = device;
-    msc->interface_number = msc_iface->bInterfaceNumber;
-    msc->bulk_in_ep = bulk_in->bEndpointAddress;
-    msc->bulk_out_ep = bulk_out->bEndpointAddress;
-    msc->max_packet_size = bulk_in->wMaxPacketSize;
+    // 尝试SCSI 12读写命令
+    uint8_t test_buffer[512];
+    uint8_t test_cmd[16] = {SCSI_READ_12, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0};
 
-    // 获取 Max LUN
-    msc_get_max_lun(msc, &msc->max_lun);
-
-    // 执行初始化命令
-    printk("\nMSC: Initializing device...\n");
-
-    // Test Unit Ready（可能失败，正常）
-    msc_test_unit_ready(msc);
-
-    // Inquiry
-    if (msc_inquiry(msc) != 0) {
-        printk("MSC: Inquiry failed\n");
-        free(msc);
-        return -1;
+    if (usb_msc_transfer(dev, test_cmd, 12, test_buffer, 512, true) == 0) {
+        // SCSI 12命令成功，使用SCSI 12
+        printk("[USB MSC]: Fallback detection: SCSI 12 READ(12) command "
+               "succeeded\n");
+        dev->read_func = usb_msc_read_12;
+        dev->write_func = usb_msc_write_12;
+        dev->scsi_version = SCSI_VERSION_12;
+        return 0;
     }
 
-    // 等待设备就绪
-    int retries = 5;
-    while (retries-- > 0) {
-        if (msc_test_unit_ready(msc) == 0) {
-            break;
-        }
+    // 使用默认的SCSI 10
+    printk("[USB MSC]: Fallback detection: No advanced SCSI commands "
+           "supported, using SCSI 10\n");
+    dev->read_func = usb_msc_read_10;
+    dev->write_func = usb_msc_write_10;
+    dev->scsi_version = SCSI_VERSION_10;
+
+    return 0;
+}
+
+uint64_t usb_msc_read_blocks(void *dev, uint64_t lba, void *buf,
+                             uint64_t count) {
+    usb_msc_device *msc_dev = (usb_msc_device *)dev;
+    return msc_dev->read_func(msc_dev, lba, buf, count);
+}
+
+uint64_t usb_msc_write_blocks(void *dev, uint64_t lba, void *buf,
+                              uint64_t count) {
+    usb_msc_device *msc_dev = (usb_msc_device *)dev;
+    return msc_dev->write_func(msc_dev, lba, buf, count);
+}
+
+int usb_msc_setup(struct usbdevice_s *usbdev) {
+    usb_msc_device *dev = malloc(sizeof(usb_msc_device));
+    if (!dev)
+        return -ENOMEM;
+
+    memset(dev, 0, sizeof(usb_msc_device));
+    dev->udev = usbdev;
+    dev->lun = 0;
+
+    usbdev->desc = dev;
+
+    struct usb_pipe *inpipe = NULL, *outpipe = NULL;
+    struct usb_endpoint_descriptor *indesc =
+        usb_find_desc(usbdev, USB_ENDPOINT_XFER_BULK, USB_DIR_IN);
+    struct usb_endpoint_descriptor *outdesc =
+        usb_find_desc(usbdev, USB_ENDPOINT_XFER_BULK, USB_DIR_OUT);
+
+    if (!indesc || !outdesc)
+        goto fail;
+
+    inpipe = usb_alloc_pipe(usbdev, indesc);
+    outpipe = usb_alloc_pipe(usbdev, outdesc);
+
+    if (!inpipe || !outpipe)
+        goto fail;
+
+    dev->bulk_in = inpipe;
+    dev->bulk_out = outpipe;
+
+    usb_msc_detect_scsi_capability(dev);
+
+    uint8_t test_cmd[16] = {0x00, dev->lun << 5 | 0, 0x00, 0x00, 0x00, 0x00};
+    int ret = 0;
+    do {
+        ret = usb_msc_transfer(dev, test_cmd, 6, NULL, 0, true);
+    } while (ret != 0);
+
+    uint8_t capacity[8];
+    uint8_t cmd[16] = {SCSI_READ_CAPACITY_10};
+    if (usb_msc_transfer(dev, cmd, 10, capacity, sizeof(capacity), true) == 0) {
+        dev->block_count = be32toh(*(uint32_t *)capacity) + 1;
+        dev->block_size = be32toh(*(uint32_t *)(capacity + 4));
+    } else {
+        dev->block_size = 512;
+        dev->block_count = UINT64_MAX / 512;
     }
 
-    // Read Capacity
-    if (msc_read_capacity(msc) != 0) {
-        printk("MSC: Read Capacity failed\n");
-        free(msc);
-        return -1;
-    }
-
-    // 添加到设备列表
-    spin_lock(&msc_devices_lock);
-    msc->next = msc_devices;
-    msc_devices = msc;
-    spin_unlock(&msc_devices_lock);
-
-    printk("Vendor: %s\n", msc->vendor);
-    printk("Product: %s\n", msc->product);
-    printk("Capacity: %d MB\n", msc->capacity / (1024 * 1024));
-    printk("Block Size: %u bytes\n", msc->block_size);
-
-    regist_blkdev("msc", msc, (uint64_t)msc->block_size,
-                  (uint64_t)msc->block_size * (uint64_t)msc->block_count,
-                  DEFAULT_PAGE_SIZE * 4, msc_read, msc_write);
+    regist_blkdev("MSC", dev, dev->block_size,
+                  dev->block_count * dev->block_size, INT16_MAX,
+                  usb_msc_read_blocks, usb_msc_write_blocks);
 
     set_have_usb_storage(true);
 
     return 0;
+
+fail:
+    printk("Failed initialize mass storage device!!!\n");
+
+    usb_free_pipe(usbdev, inpipe);
+    usb_free_pipe(usbdev, outpipe);
+    free(dev);
+    return -1;
 }
 
-// 移除 MSC 设备
-void usb_msc_remove(usb_msc_device_t *msc) {
-    if (!msc)
-        return;
-
-    printk("MSC: Removing device\n");
-
-    spin_lock(&msc_devices_lock);
-
-    // 从列表中移除
-    usb_msc_device_t **prev = &msc_devices;
-    while (*prev) {
-        if (*prev == msc) {
-            *prev = msc->next;
-            break;
-        }
-        prev = &(*prev)->next;
-    }
-
-    spin_unlock(&msc_devices_lock);
-
-    free(msc);
-}
-
-int msc_probe(usb_device_t *usbdev) { return usb_msc_probe(usbdev); }
-
-int msc_remove(usb_device_t *usbdev) {
-    usb_msc_remove((usb_msc_device_t *)usbdev->private_data);
-    return 0;
-}
+int usb_msc_remove(struct usbdevice_s *usbdev) { return 0; }
 
 usb_driver_t msc_driver = {
     .class = USB_CLASS_MASS_STORAGE,
-    .subclass = 0x00,
-    .probe = msc_probe,
-    .remove = msc_remove,
+    .subclass = 0,
+    .probe = usb_msc_setup,
+    .remove = usb_msc_remove,
 };
 
 __attribute__((visibility("default"))) int dlmain() {
-    register_usb_driver(&msc_driver);
+    regist_usb_driver(&msc_driver);
 
     return 0;
 }

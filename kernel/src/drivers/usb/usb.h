@@ -1,22 +1,123 @@
-// Copyright (C) 2025  lihanrui2913
-#ifndef USB_CORE_H
-#define USB_CORE_H
+#pragma once
 
 #include <libs/klibc.h>
 
-// USB标准定义
-#define USB_DIR_OUT 0
-#define USB_DIR_IN 0x80
+struct usbdevice_s;
 
+// Information on a USB end point.
+struct usb_pipe {
+    union {
+        struct usb_s *cntl;
+        struct usb_pipe *freenext;
+    };
+    struct usbdevice_s *usbdev;
+    uint8_t type;
+    uint8_t ep;
+    uint8_t devaddr;
+    uint8_t speed;
+    uint16_t maxpacket;
+    uint8_t eptype;
+};
+
+// Common information for usb devices.
+struct usbdevice_s {
+    struct usbhub_s *hub;
+    struct usb_pipe *defpipe;
+    uint32_t port;
+    struct usb_config_descriptor *config;
+    struct usb_interface_descriptor *iface;
+    int imax;
+    uint8_t speed;
+    uint8_t devaddr;
+    void *desc;
+};
+
+// Common information for usb controllers.
+struct usb_s {
+    struct usb_pipe *freelist;
+    spinlock_t resetlock;
+    struct pci_device *pci;
+    void *mmio;
+    uint8_t type;
+    uint8_t maxaddr;
+};
+
+// Information for enumerating USB hubs
+struct usbhub_s {
+    struct usbhub_op_s *op;
+    struct usbdevice_s *usbdev;
+    struct usb_s *cntl;
+    spinlock_t lock;
+    uint32_t port;
+    uint32_t portcount;
+    uint32_t devcount;
+};
+
+struct usb_endpoint_descriptor;
+
+// Hub callback (32bit) info
+struct usbhub_op_s {
+    struct usb_pipe *(*realloc_pipe)(struct usbdevice_s *usbdev,
+                                     struct usb_pipe *upipe,
+                                     struct usb_endpoint_descriptor *epdesc);
+    int (*send_pipe)(struct usb_pipe *p, int dir, const void *cmd, void *data,
+                     int datasize);
+    int (*poll_intr)(struct usb_pipe *p, void *data);
+
+    int (*detect)(struct usbhub_s *hub, uint32_t port);
+    int (*reset)(struct usbhub_s *hub, uint32_t port);
+    int (*portmap)(struct usbhub_s *hub, uint32_t port);
+    void (*disconnect)(struct usbhub_s *hub, uint32_t port);
+};
+
+#define USB_TYPE_UHCI 1
+#define USB_TYPE_OHCI 2
+#define USB_TYPE_EHCI 3
+#define USB_TYPE_XHCI 4
+
+#define USB_FULLSPEED 0
+#define USB_LOWSPEED 1
+#define USB_HIGHSPEED 2
+#define USB_SUPERSPEED 3
+
+#define USB_MAXADDR 127
+
+/****************************************************************
+ * usb structs and flags
+ ****************************************************************/
+
+// USB mandated timings (in ms)
+#define USB_TIME_SIGATT 100
+#define USB_TIME_ATTDB 100
+#define USB_TIME_DRST 10
+#define USB_TIME_DRSTR 50
+#define USB_TIME_RSTRCY 10
+
+#define USB_TIME_STATUS 50
+#define USB_TIME_DATAIN 500
+#define USB_TIME_COMMAND 5000
+
+#define USB_TIME_SETADDR_RECOVERY 2
+
+#define USB_PID_OUT 0xe1
+#define USB_PID_IN 0x69
+#define USB_PID_SETUP 0x2d
+
+#define USB_DIR_OUT 0   /* to device */
+#define USB_DIR_IN 0x80 /* to host */
+
+#define USB_TYPE_MASK (0x03 << 5)
 #define USB_TYPE_STANDARD (0x00 << 5)
 #define USB_TYPE_CLASS (0x01 << 5)
 #define USB_TYPE_VENDOR (0x02 << 5)
+#define USB_TYPE_RESERVED (0x03 << 5)
 
+#define USB_RECIP_MASK 0x1f
 #define USB_RECIP_DEVICE 0x00
 #define USB_RECIP_INTERFACE 0x01
 #define USB_RECIP_ENDPOINT 0x02
+#define USB_RECIP_OTHER 0x03
 
-// USB标准请求
 #define USB_REQ_GET_STATUS 0x00
 #define USB_REQ_CLEAR_FEATURE 0x01
 #define USB_REQ_SET_FEATURE 0x03
@@ -27,49 +128,29 @@
 #define USB_REQ_SET_CONFIGURATION 0x09
 #define USB_REQ_GET_INTERFACE 0x0A
 #define USB_REQ_SET_INTERFACE 0x0B
+#define USB_REQ_SYNCH_FRAME 0x0C
 
-// 描述符类型
+struct usb_ctrlrequest {
+    uint8_t bRequestType;
+    uint8_t bRequest;
+    uint16_t wValue;
+    uint16_t wIndex;
+    uint16_t wLength;
+} __attribute__((packed));
+
 #define USB_DT_DEVICE 0x01
 #define USB_DT_CONFIG 0x02
 #define USB_DT_STRING 0x03
 #define USB_DT_INTERFACE 0x04
 #define USB_DT_ENDPOINT 0x05
+#define USB_DT_DEVICE_QUALIFIER 0x06
+#define USB_DT_OTHER_SPEED_CONFIG 0x07
+#define USB_DT_ENDPOINT_COMPANION 0x30
 
-// 端点类型
-#define USB_ENDPOINT_XFER_CONTROL 0
-#define USB_ENDPOINT_XFER_ISOC 1
-#define USB_ENDPOINT_XFER_BULK 2
-#define USB_ENDPOINT_XFER_INT 3
-
-// 设备速度
-#define USB_SPEED_UNKNOWN 0
-#define USB_SPEED_LOW 1
-#define USB_SPEED_FULL 2
-#define USB_SPEED_HIGH 3
-#define USB_SPEED_SUPER 4
-
-// USB设备状态
-#define USB_STATE_NOTATTACHED 0
-#define USB_STATE_ATTACHED 1
-#define USB_STATE_POWERED 2
-#define USB_STATE_DEFAULT 3
-#define USB_STATE_ADDRESS 4
-#define USB_STATE_CONFIGURED 5
-#define USB_STATE_SUSPENDED 6
-
-// USB标准设备请求
-typedef struct {
-    uint8_t bmRequestType;
-    uint8_t bRequest;
-    uint16_t wValue;
-    uint16_t wIndex;
-    uint16_t wLength;
-} __attribute__((packed)) usb_device_request_t;
-
-// USB设备描述符
-typedef struct {
+struct usb_device_descriptor {
     uint8_t bLength;
     uint8_t bDescriptorType;
+
     uint16_t bcdUSB;
     uint8_t bDeviceClass;
     uint8_t bDeviceSubClass;
@@ -82,24 +163,34 @@ typedef struct {
     uint8_t iProduct;
     uint8_t iSerialNumber;
     uint8_t bNumConfigurations;
-} __attribute__((packed)) usb_device_descriptor_t;
+} __attribute__((packed));
 
-// USB配置描述符
-typedef struct {
+#define USB_CLASS_PER_INTERFACE 0 /* for DeviceClass */
+#define USB_CLASS_AUDIO 1
+#define USB_CLASS_COMM 2
+#define USB_CLASS_HID 3
+#define USB_CLASS_PHYSICAL 5
+#define USB_CLASS_STILL_IMAGE 6
+#define USB_CLASS_PRINTER 7
+#define USB_CLASS_MASS_STORAGE 8
+#define USB_CLASS_HUB 9
+
+struct usb_config_descriptor {
     uint8_t bLength;
     uint8_t bDescriptorType;
+
     uint16_t wTotalLength;
     uint8_t bNumInterfaces;
     uint8_t bConfigurationValue;
     uint8_t iConfiguration;
     uint8_t bmAttributes;
     uint8_t bMaxPower;
-} __attribute__((packed)) usb_config_descriptor_t;
+} __attribute__((packed));
 
-// USB接口描述符
-typedef struct {
+struct usb_interface_descriptor {
     uint8_t bLength;
     uint8_t bDescriptorType;
+
     uint8_t bInterfaceNumber;
     uint8_t bAlternateSetting;
     uint8_t bNumEndpoints;
@@ -107,172 +198,106 @@ typedef struct {
     uint8_t bInterfaceSubClass;
     uint8_t bInterfaceProtocol;
     uint8_t iInterface;
-} __attribute__((packed)) usb_interface_descriptor_t;
+} __attribute__((packed));
 
-// USB端点描述符
-typedef struct {
+struct usb_endpoint_descriptor {
     uint8_t bLength;
     uint8_t bDescriptorType;
+
     uint8_t bEndpointAddress;
     uint8_t bmAttributes;
     uint16_t wMaxPacketSize;
     uint8_t bInterval;
-} __attribute__((packed)) usb_endpoint_descriptor_t;
+} __attribute__((packed));
 
-// 前向声明
-typedef struct usb_hub usb_hub_t;
-typedef struct usb_device usb_device_t;
-typedef struct usb_endpoint usb_endpoint_t;
-typedef struct usb_transfer usb_transfer_t;
-typedef struct usb_hcd usb_hcd_t;
+#define USB_ENDPOINT_NUMBER_MASK 0x0f /* in bEndpointAddress */
+#define USB_ENDPOINT_DIR_MASK 0x80
 
-// USB传输完成回调
-typedef void (*usb_transfer_callback_t)(usb_transfer_t *transfer);
+#define USB_ENDPOINT_XFERTYPE_MASK 0x03 /* in bmAttributes */
+#define USB_ENDPOINT_XFER_CONTROL 0
+#define USB_ENDPOINT_XFER_ISOC 1
+#define USB_ENDPOINT_XFER_BULK 2
+#define USB_ENDPOINT_XFER_INT 3
+#define USB_ENDPOINT_MAX_ADJUSTABLE 0x80
 
-// USB传输结构
-struct usb_transfer {
-    usb_device_t *device;
-    usb_endpoint_t *endpoint;
+#define USB_CONTROL_SETUP_SIZE 8
 
-    void *buffer;
-    uint32_t length;
-    uint32_t actual_length;
+// usb mass storage flags
 
-    int status;
-    void *hcd_private; // HCD私有数据
+#define US_SC_ATAPI_8020 0x02
+#define US_SC_ATAPI_8070 0x05
+#define US_SC_SCSI 0x06
 
-    usb_transfer_callback_t callback;
-    void *user_data;
+#define US_PR_BULK 0x50 /* bulk-only transport */
+#define US_PR_UAS 0x62  /* usb attached scsi   */
 
-    struct usb_transfer *next;
+#define US_SC_ATAPI_8020 0x02
+#define US_SC_ATAPI_8070 0x05
+#define US_SC_SCSI 0x06
+
+#define US_PR_BULK 0x50 /* bulk-only transport */
+#define US_PR_UAS 0x62  /* usb attached scsi   */
+
+enum {
+    SCSI_INQUIRY = 0x12,
+    SCSI_READ_CAPACITY_10 = 0x25,
+    SCSI_READ_CAPACITY_16 = 0x9E,
+    SCSI_READ_10 = 0x28,
+    SCSI_READ_12 = 0xA8,
+    SCSI_READ_16 = 0x88,
+    SCSI_WRITE_10 = 0x2A,
+    SCSI_WRITE_12 = 0xAA,
+    SCSI_WRITE_16 = 0x8A,
 };
 
-// USB端点结构
-struct usb_endpoint {
-    uint8_t address;
-    uint8_t attributes;
-    uint16_t max_packet_size;
-    uint8_t interval;
-
-    usb_device_t *device;
-    void *hcd_private;
+// SCSI版本定义
+enum scsi_version {
+    SCSI_VERSION_10 = 0,
+    SCSI_VERSION_12 = 1,
+    SCSI_VERSION_16 = 2,
 };
 
-// USB集线器操作
-typedef struct usb_hub_ops {
-    int (*reset_port)(usb_hcd_t *hcd, usb_hub_t *hub, usb_device_t *device);
-    int (*disconnect_port)(usb_hcd_t *hcd, usb_hub_t *hub,
-                           usb_device_t *device);
-} usb_hub_ops_t;
+// usb hid flags
 
-// USB集线器结构
-struct usb_hub {
-    usb_device_t *device;   // 集线器设备
-    struct usb_hub *parent; // 父集线器
+#define USB_INTERFACE_SUBCLASS_BOOT 1
+#define USB_INTERFACE_PROTOCOL_KEYBOARD 1
+#define USB_INTERFACE_PROTOCOL_MOUSE 2
 
-    usb_hub_ops_t *ops; // 集线器操作
+#define HID_REQ_GET_REPORT 0x01
+#define HID_REQ_GET_IDLE 0x02
+#define HID_REQ_GET_PROTOCOL 0x03
+#define HID_REQ_SET_REPORT 0x09
+#define HID_REQ_SET_IDLE 0x0A
+#define HID_REQ_SET_PROTOCOL 0x0B
 
-    void *hcd_private; // HCD私有数据
-};
+// usb.c
+int usb_send_bulk(struct usb_pipe *pipe, int dir, void *data, int datasize);
+int usb_poll_intr(struct usb_pipe *pipe, void *data);
+int usb_32bit_pipe(struct usb_pipe *pipe_fl);
+struct usb_pipe *usb_alloc_pipe(struct usbdevice_s *usbdev,
+                                struct usb_endpoint_descriptor *epdesc);
+void usb_free_pipe(struct usbdevice_s *usbdev, struct usb_pipe *pipe);
+int usb_send_default_control(struct usb_pipe *pipe,
+                             const struct usb_ctrlrequest *req, void *data);
+int usb_is_freelist(struct usb_s *cntl, struct usb_pipe *pipe);
+void usb_add_freelist(struct usb_pipe *pipe);
+struct usb_pipe *usb_get_freelist(struct usb_s *cntl, uint8_t eptype);
+void usb_desc2pipe(struct usb_pipe *pipe, struct usbdevice_s *usbdev,
+                   struct usb_endpoint_descriptor *epdesc);
+int usb_get_period(struct usbdevice_s *usbdev,
+                   struct usb_endpoint_descriptor *epdesc);
+int usb_xfer_time(struct usb_pipe *pipe, int datalen);
+struct usb_endpoint_descriptor *usb_find_desc(struct usbdevice_s *usbdev,
+                                              int type, int dir);
+void usb_enumerate(struct usbhub_s *hub);
 
-// USB设备结构
-struct usb_device {
-    usb_hub_t *hub;
-    uint8_t port;
-
-    uint8_t address;
-    uint8_t speed;
-    uint8_t state;
-
-    usb_device_descriptor_t descriptor;
-    usb_config_descriptor_t *config_descriptor;
-
-    uint8_t class;
-    uint8_t subclass;
-
-    usb_endpoint_t endpoints[32]; // 最多16 IN + 16 OUT
-
-    usb_hcd_t *hcd;
-    void *hcd_private; // HCD私有数据
-
-    void *private_data;
-
-    struct usb_device *next;
-};
-
-// USB主机控制器驱动操作
-typedef struct {
-    int (*init)(usb_hcd_t *hcd);
-    int (*shutdown)(usb_hcd_t *hcd);
-
-    int (*enable_slot)(usb_hcd_t *hcd, usb_device_t *device);
-    int (*disable_slot)(usb_hcd_t *hcd, usb_device_t *device);
-
-    int (*address_device)(usb_hcd_t *hcd, usb_device_t *device,
-                          uint8_t address);
-    int (*configure_endpoint)(usb_hcd_t *hcd, usb_endpoint_t *endpoint);
-
-    int (*control_transfer)(usb_hcd_t *hcd, usb_transfer_t *transfer,
-                            usb_device_request_t *setup);
-    int (*bulk_transfer)(usb_hcd_t *hcd, usb_transfer_t *transfer);
-    int (*interrupt_transfer)(usb_hcd_t *hcd, usb_transfer_t *transfer);
-} usb_hcd_ops_t;
-
-// USB主机控制器驱动
-struct usb_hcd {
-    const char *name;
-    usb_hcd_ops_t *ops;
-
-    void *regs; // 寄存器基址
-    void *private_data;
-
-    usb_device_t *devices;
-    uint8_t num_ports;
-
-    struct usb_hcd *next;
-};
-
-// USB核心API
-int usb_init(void);
-usb_hcd_t *usb_register_hcd(const char *name, usb_hcd_ops_t *ops, void *regs,
-                            void *data);
-void usb_unregister_hcd(usb_hcd_t *hcd);
-
-usb_device_t *usb_alloc_device(usb_hcd_t *hcd);
-void usb_free_device(usb_device_t *device);
-int usb_add_device(usb_device_t *device);
-void usb_remove_device(usb_device_t *device);
-
-usb_transfer_t *usb_alloc_transfer(void);
-void usb_free_transfer(usb_transfer_t *transfer);
-
-int usb_control_transfer(usb_device_t *device, usb_device_request_t *setup,
-                         void *data, uint32_t length,
-                         usb_transfer_callback_t callback, void *user_data);
-
-int usb_bulk_transfer(usb_device_t *device, uint8_t endpoint, void *data,
-                      uint32_t length, usb_transfer_callback_t callback,
-                      void *user_data);
-
-int usb_interrupt_transfer(usb_device_t *device, uint8_t endpoint, void *data,
-                           uint32_t length, usb_transfer_callback_t callback,
-                           void *user_data);
-
-// 辅助函数
-int usb_get_descriptor(usb_device_t *device, uint8_t type, uint8_t index,
-                       void *buffer, uint16_t length);
-int usb_set_address(usb_device_t *device, uint8_t address);
-int usb_set_configuration(usb_device_t *device, uint8_t config);
-
-#define MAX_USB_DRIVERS_NUM 32
+#define MAX_USBDEV_NUM 256
 
 typedef struct usb_driver {
     uint8_t class;
     uint8_t subclass;
-    int (*probe)(usb_device_t *usbdev);
-    int (*remove)(usb_device_t *usbdev);
+    int (*probe)(struct usbdevice_s *usbdev);
+    int (*remove)(struct usbdevice_s *usbdev);
 } usb_driver_t;
 
-void register_usb_driver(usb_driver_t *driver);
-
-#endif // USB_CORE_H
+void regist_usb_driver(usb_driver_t *driver);

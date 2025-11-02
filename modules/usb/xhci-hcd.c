@@ -1,2195 +1,1051 @@
-// Copyright (C) 2025  lihanrui2913
-#include "xhci-hcd.h"
-#include <libs/aether/irq.h>
+// Code for handling XHCI "Super speed" USB controllers.
+//
+// Copyright (C) 2013  Gerd Hoffmann <kraxel@redhat.com>
+// Copyright (C) 2014  Kevin O'Connor <kevin@koconnor.net>
+//
+// This file may be distributed under the terms of the GNU LGPLv3 license.
 
-static void delay(uint64_t ms) {
-    uint64_t ns = ms * 1000000;
-    uint64_t start = nanoTime();
-    while (nanoTime() - start < ns) {
-        arch_enable_interrupt();
+#include "xhci-hcd.h"
+#include <libs/aether/mm.h>
+#include <libs/aether/pci.h>
+
+// --------------------------------------------------------------
+// configuration
+
+#define XHCI_RING_ITEMS 16
+#define XHCI_RING_SIZE (XHCI_RING_ITEMS * sizeof(struct xhci_trb))
+
+/*
+ *  xhci_ring structs are allocated with XHCI_RING_SIZE alignment,
+ *  then we can get it from a trb pointer (provided by evt ring).
+ */
+#define XHCI_RING(_trb)                                                        \
+    ((struct xhci_ring *)((uint64_t)(_trb) & ~(XHCI_RING_SIZE - 1)))
+
+// --------------------------------------------------------------
+// bit definitions
+
+#define XHCI_CMD_RS (1 << 0)
+#define XHCI_CMD_HCRST (1 << 1)
+#define XHCI_CMD_INTE (1 << 2)
+#define XHCI_CMD_HSEE (1 << 3)
+#define XHCI_CMD_LHCRST (1 << 7)
+#define XHCI_CMD_CSS (1 << 8)
+#define XHCI_CMD_CRS (1 << 9)
+#define XHCI_CMD_EWE (1 << 10)
+#define XHCI_CMD_EU3S (1 << 11)
+
+#define XHCI_STS_HCH (1 << 0)
+#define XHCI_STS_HSE (1 << 2)
+#define XHCI_STS_EINT (1 << 3)
+#define XHCI_STS_PCD (1 << 4)
+#define XHCI_STS_SSS (1 << 8)
+#define XHCI_STS_RSS (1 << 9)
+#define XHCI_STS_SRE (1 << 10)
+#define XHCI_STS_CNR (1 << 11)
+#define XHCI_STS_HCE (1 << 12)
+
+#define XHCI_PORTSC_CCS (1 << 0)
+#define XHCI_PORTSC_PED (1 << 1)
+#define XHCI_PORTSC_OCA (1 << 3)
+#define XHCI_PORTSC_PR (1 << 4)
+#define XHCI_PORTSC_PLS_SHIFT 5
+#define XHCI_PORTSC_PLS_MASK 0xf
+#define XHCI_PORTSC_PP (1 << 9)
+#define XHCI_PORTSC_SPEED_SHIFT 10
+#define XHCI_PORTSC_SPEED_MASK 0xf
+#define XHCI_PORTSC_SPEED_FULL (1 << 10)
+#define XHCI_PORTSC_SPEED_LOW (2 << 10)
+#define XHCI_PORTSC_SPEED_HIGH (3 << 10)
+#define XHCI_PORTSC_SPEED_SUPER (4 << 10)
+#define XHCI_PORTSC_PIC_SHIFT 14
+#define XHCI_PORTSC_PIC_MASK 0x3
+#define XHCI_PORTSC_LWS (1 << 16)
+#define XHCI_PORTSC_CSC (1 << 17)
+#define XHCI_PORTSC_PEC (1 << 18)
+#define XHCI_PORTSC_WRC (1 << 19)
+#define XHCI_PORTSC_OCC (1 << 20)
+#define XHCI_PORTSC_PRC (1 << 21)
+#define XHCI_PORTSC_PLC (1 << 22)
+#define XHCI_PORTSC_CEC (1 << 23)
+#define XHCI_PORTSC_CAS (1 << 24)
+#define XHCI_PORTSC_WCE (1 << 25)
+#define XHCI_PORTSC_WDE (1 << 26)
+#define XHCI_PORTSC_WOE (1 << 27)
+#define XHCI_PORTSC_DR (1 << 30)
+#define XHCI_PORTSC_WPR (1 << 31)
+
+#define TRB_C (1 << 0)
+#define TRB_TYPE_SHIFT 10
+#define TRB_TYPE_MASK 0x3f
+#define TRB_TYPE(t) (((t) >> TRB_TYPE_SHIFT) & TRB_TYPE_MASK)
+
+#define TRB_EV_ED (1 << 2)
+
+#define TRB_TR_ENT (1 << 1)
+#define TRB_TR_ISP (1 << 2)
+#define TRB_TR_NS (1 << 3)
+#define TRB_TR_CH (1 << 4)
+#define TRB_TR_IOC (1 << 5)
+#define TRB_TR_IDT (1 << 6)
+#define TRB_TR_TBC_SHIFT 7
+#define TRB_TR_TBC_MASK 0x3
+#define TRB_TR_BEI (1 << 9)
+#define TRB_TR_TLBPC_SHIFT 16
+#define TRB_TR_TLBPC_MASK 0xf
+#define TRB_TR_FRAMEID_SHIFT 20
+#define TRB_TR_FRAMEID_MASK 0x7ff
+#define TRB_TR_SIA (1 << 31)
+
+#define TRB_TR_DIR (1 << 16)
+
+#define TRB_CR_SLOTID_SHIFT 24
+#define TRB_CR_SLOTID_MASK 0xff
+#define TRB_CR_EPID_SHIFT 16
+#define TRB_CR_EPID_MASK 0x1f
+
+#define TRB_CR_BSR (1 << 9)
+#define TRB_CR_DC (1 << 9)
+
+#define TRB_LK_TC (1 << 1)
+
+#define TRB_INTR_SHIFT 22
+#define TRB_INTR_MASK 0x3ff
+#define TRB_INTR(t) (((t).status >> TRB_INTR_SHIFT) & TRB_INTR_MASK)
+
+typedef enum TRBType {
+    TRB_RESERVED = 0,
+    TR_NORMAL,
+    TR_SETUP,
+    TR_DATA,
+    TR_STATUS,
+    TR_ISOCH,
+    TR_LINK,
+    TR_EVDATA,
+    TR_NOOP,
+    CR_ENABLE_SLOT,
+    CR_DISABLE_SLOT,
+    CR_ADDRESS_DEVICE,
+    CR_CONFIGURE_ENDPOINT,
+    CR_EVALUATE_CONTEXT,
+    CR_RESET_ENDPOINT,
+    CR_STOP_ENDPOINT,
+    CR_SET_TR_DEQUEUE,
+    CR_RESET_DEVICE,
+    CR_FORCE_EVENT,
+    CR_NEGOTIATE_BW,
+    CR_SET_LATENCY_TOLERANCE,
+    CR_GET_PORT_BANDWIDTH,
+    CR_FORCE_HEADER,
+    CR_NOOP,
+    ER_TRANSFER = 32,
+    ER_COMMAND_COMPLETE,
+    ER_PORT_STATUS_CHANGE,
+    ER_BANDWIDTH_REQUEST,
+    ER_DOORBELL,
+    ER_HOST_CONTROLLER,
+    ER_DEVICE_NOTIFICATION,
+    ER_MFINDEX_WRAP,
+} TRBType;
+
+typedef enum TRBCCode {
+    CC_INVALID = 0,
+    CC_SUCCESS,
+    CC_DATA_BUFFER_ERROR,
+    CC_BABBLE_DETECTED,
+    CC_USB_TRANSACTION_ERROR,
+    CC_TRB_ERROR,
+    CC_STALL_ERROR,
+    CC_RESOURCE_ERROR,
+    CC_BANDWIDTH_ERROR,
+    CC_NO_SLOTS_ERROR,
+    CC_INVALID_STREAM_TYPE_ERROR,
+    CC_SLOT_NOT_ENABLED_ERROR,
+    CC_EP_NOT_ENABLED_ERROR,
+    CC_SHORT_PACKET,
+    CC_RING_UNDERRUN,
+    CC_RING_OVERRUN,
+    CC_VF_ER_FULL,
+    CC_PARAMETER_ERROR,
+    CC_BANDWIDTH_OVERRUN,
+    CC_CONTEXT_STATE_ERROR,
+    CC_NO_PING_RESPONSE_ERROR,
+    CC_EVENT_RING_FULL_ERROR,
+    CC_INCOMPATIBLE_DEVICE_ERROR,
+    CC_MISSED_SERVICE_ERROR,
+    CC_COMMAND_RING_STOPPED,
+    CC_COMMAND_ABORTED,
+    CC_STOPPED,
+    CC_STOPPED_LENGTH_INVALID,
+    CC_MAX_EXIT_LATENCY_TOO_LARGE_ERROR = 29,
+    CC_ISOCH_BUFFER_OVERRUN = 31,
+    CC_EVENT_LOST_ERROR,
+    CC_UNDEFINED_ERROR,
+    CC_INVALID_STREAM_ID_ERROR,
+    CC_SECONDARY_BANDWIDTH_ERROR,
+    CC_SPLIT_TRANSACTION_ERROR
+} TRBCCode;
+
+enum {
+    PLS_U0 = 0,
+    PLS_U1 = 1,
+    PLS_U2 = 2,
+    PLS_U3 = 3,
+    PLS_DISABLED = 4,
+    PLS_RX_DETECT = 5,
+    PLS_INACTIVE = 6,
+    PLS_POLLING = 7,
+    PLS_RECOVERY = 8,
+    PLS_HOT_RESET = 9,
+    PLS_COMPILANCE_MODE = 10,
+    PLS_TEST_MODE = 11,
+    PLS_RESUME = 15,
+};
+
+#define xhci_get_field(data, field) (((data) >> field##_SHIFT) & field##_MASK)
+
+// --------------------------------------------------------------
+// state structs
+
+struct xhci_ring {
+    struct xhci_trb ring[XHCI_RING_ITEMS];
+    struct xhci_trb evt;
+    uint32_t eidx;
+    uint32_t nidx;
+    uint32_t cs;
+    spinlock_t lock;
+};
+
+struct xhci_portmap {
+    uint8_t start;
+    uint8_t count;
+};
+
+struct usb_xhci_s {
+    struct usb_s usb;
+
+    /* devinfo */
+    uint32_t xcap;
+    uint32_t ports;
+    uint32_t slots;
+    uint8_t context64;
+    struct xhci_portmap usb2;
+    struct xhci_portmap usb3;
+
+    /* xhci registers */
+    struct xhci_caps *caps;
+    struct xhci_op *op;
+    struct xhci_pr *pr;
+    struct xhci_ir *ir;
+    struct xhci_db *db;
+
+    /* xhci data structures */
+    struct xhci_devlist *devs;
+    struct xhci_ring *cmds;
+    struct xhci_ring *evts;
+    struct xhci_er_seg *eseg;
+};
+
+struct xhci_pipe {
+    struct xhci_ring reqs;
+
+    struct usb_pipe pipe;
+    uint32_t slotid;
+    uint32_t epid;
+    void *buf;
+    int bufused;
+};
+
+// --------------------------------------------------------------
+// tables
+
+static const char *speed_name[16] = {
+    [0] = " - ", [1] = "Full", [2] = "Low", [3] = "High", [4] = "Super",
+};
+
+static const int speed_from_xhci[16] = {
+    [0] = -1,
+    [1] = USB_FULLSPEED,
+    [2] = USB_LOWSPEED,
+    [3] = USB_HIGHSPEED,
+    [4] = USB_SUPERSPEED,
+    [5 ... 15] = -1,
+};
+
+static const int speed_to_xhci[] = {
+    [USB_FULLSPEED] = 1,
+    [USB_LOWSPEED] = 2,
+    [USB_HIGHSPEED] = 3,
+    [USB_SUPERSPEED] = 4,
+};
+
+static int wait_bit(uint32_t *reg, uint32_t mask, int value, uint32_t timeout) {
+    while ((readl(reg) & mask) != value) {
         arch_pause();
     }
-    arch_disable_interrupt();
+    return 0;
 }
 
-spinlock_t transfer_lock = {0};
+// Root hub
 
-// 获取端口速度名称
-static const char *usb_speed_name(uint8_t speed) {
-    switch (speed) {
-    case USB_SPEED_LOW:
-        return "Low Speed (1.5 Mbps)";
-    case USB_SPEED_FULL:
-        return "Full Speed (12 Mbps)";
-    case USB_SPEED_HIGH:
-        return "High Speed (480 Mbps)";
-    case USB_SPEED_SUPER:
-        return "Super Speed (5 Gbps)";
+#define XHCI_TIME_POSTPOWER 20
+
+// Check if device attached to port
+static void xhci_print_port_state(int loglevel, const char *prefix,
+                                  uint32_t port, uint32_t portsc) {
+    uint32_t pls = xhci_get_field(portsc, XHCI_PORTSC_PLS);
+    uint32_t speed = xhci_get_field(portsc, XHCI_PORTSC_SPEED);
+
+    printk("%s port #%d: 0x%08x,%s%s pls %d, speed %d [%s]\n", prefix, port + 1,
+           portsc, (portsc & XHCI_PORTSC_PP) ? " powered," : "",
+           (portsc & XHCI_PORTSC_PED) ? " enabled," : "", pls, speed,
+           speed_name[speed]);
+}
+
+static int xhci_hub_detect(struct usbhub_s *hub, uint32_t port) {
+    struct usb_xhci_s *xhci = container_of(hub->cntl, struct usb_xhci_s, usb);
+    uint32_t portsc = readl(&xhci->pr[port].portsc);
+    return (portsc & XHCI_PORTSC_CCS) ? 1 : 0;
+}
+
+// Reset device on port
+static int xhci_hub_reset(struct usbhub_s *hub, uint32_t port) {
+    struct usb_xhci_s *xhci = container_of(hub->cntl, struct usb_xhci_s, usb);
+    uint32_t portsc = readl(&xhci->pr[port].portsc);
+    if (!(portsc & XHCI_PORTSC_CCS))
+        // Device no longer connected?!
+        return -1;
+
+    switch (xhci_get_field(portsc, XHCI_PORTSC_PLS)) {
+    case PLS_U0:
+        // A USB3 port - controller automatically performs reset
+        break;
+    case PLS_POLLING:
+        // A USB2 port - perform device reset
+        xhci_print_port_state(3, __func__, port, portsc);
+        writel(&xhci->pr[port].portsc, portsc | XHCI_PORTSC_PR);
+        break;
     default:
-        return "Other Speed";
+        printk("XHCI: Unknown PLS %d\n",
+               xhci_get_field(portsc, XHCI_PORTSC_PLS));
+        return -1;
     }
+
+    // Wait for device to complete reset and be enabled
+    for (;;) {
+        portsc = readl(&xhci->pr[port].portsc);
+        if (!(portsc & XHCI_PORTSC_CCS))
+            // Device disconnected during reset
+            return -1;
+        if (portsc & XHCI_PORTSC_PED)
+            // Reset complete
+            break;
+        arch_pause();
+    }
+
+    int rc = speed_from_xhci[xhci_get_field(portsc, XHCI_PORTSC_SPEED)];
+    xhci_print_port_state(1, "XHCI", port, portsc);
+    return rc;
 }
 
-static uint8_t usb_speed_to_xhci_port_speed(uint8_t speed) {
-    switch (speed) {
-    case USB_SPEED_FULL:
-        return 1; // Full Speed (12 Mbps)
-    case USB_SPEED_LOW:
-        return 2; // Low Speed (1.5 Mbps)
-    case USB_SPEED_HIGH:
-        return 3; // High Speed (480 Mbps)
-    case USB_SPEED_SUPER:
-        return 4; // Super Speed (5 Gbps)
-    default:
-        return speed;
-    }
+static int xhci_hub_portmap(struct usbhub_s *hub, uint32_t vport) {
+    struct usb_xhci_s *xhci = container_of(hub->cntl, struct usb_xhci_s, usb);
+    uint32_t pport = vport + 1;
+
+    if (vport + 1 >= xhci->usb3.start &&
+        vport + 1 < xhci->usb3.start + xhci->usb3.count)
+        pport = vport + 2 - xhci->usb3.start;
+
+    if (vport + 1 >= xhci->usb2.start &&
+        vport + 1 < xhci->usb2.start + xhci->usb2.count)
+        pport = vport + 2 - xhci->usb2.start;
+
+    return pport;
 }
 
-// 从端口状态获取设备速度
-static uint8_t xhci_port_speed_to_usb_speed(uint32_t portsc) {
-    // XHCI PORTSC 的速度字段在 bits 10-13
-    uint32_t port_speed = (portsc >> 10) & 0x0F;
-
-    switch (port_speed) {
-    case 1:
-        return USB_SPEED_FULL; // Full Speed (12 Mbps)
-    case 2:
-        return USB_SPEED_LOW; // Low Speed (1.5 Mbps)
-    case 3:
-        return USB_SPEED_HIGH; // High Speed (480 Mbps)
-    case 4:
-        return USB_SPEED_SUPER; // Super Speed (5 Gbps)
-    default:
-        return port_speed;
-    }
+static void xhci_hub_disconnect(struct usbhub_s *hub, uint32_t port) {
+    // XXX - should turn the port power off.
 }
 
-// 前向声明
-static int xhci_hcd_init(usb_hcd_t *hcd);
-static int xhci_hcd_shutdown(usb_hcd_t *hcd);
-static int xhci_reset_port(usb_hcd_t *hcd, usb_hub_t *hub,
-                           usb_device_t *device);
-static int xhci_disconnect_port(usb_hcd_t *hcd, usb_hub_t *hub,
-                                usb_device_t *device);
-static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device);
-static int xhci_disable_slot(usb_hcd_t *hcd, usb_device_t *device);
-static int xhci_address_device(usb_hcd_t *hcd, usb_device_t *device,
-                               uint8_t address);
-static int xhci_configure_endpoint(usb_hcd_t *hcd, usb_endpoint_t *endpoint);
-static int xhci_control_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer,
-                                 usb_device_request_t *setup);
-static int xhci_bulk_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer);
-static int xhci_interrupt_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer);
+static struct usbhub_op_s xhci_hub_ops = {
+    .detect = xhci_hub_detect,
+    .reset = xhci_hub_reset,
+    .portmap = xhci_hub_portmap,
+    .disconnect = xhci_hub_disconnect,
 
-static usb_hcd_ops_t xhci_ops = {
-    .init = xhci_hcd_init,
-    .shutdown = xhci_hcd_shutdown,
-    .enable_slot = xhci_enable_slot,
-    .disable_slot = xhci_disable_slot,
-    .address_device = xhci_address_device,
-    .configure_endpoint = xhci_configure_endpoint,
-    .control_transfer = xhci_control_transfer,
-    .bulk_transfer = xhci_bulk_transfer,
-    .interrupt_transfer = xhci_interrupt_transfer,
+    .realloc_pipe = xhci_realloc_pipe,
+    .send_pipe = xhci_send_pipe,
+    .poll_intr = xhci_poll_intr,
 };
 
-static usb_hub_ops_t xhci_root_hub_ops = {
-    .reset_port = xhci_reset_port,
-    .disconnect_port = xhci_disconnect_port, // TODO: 实现
-};
-
-// 分配DMA内存（对齐到64字节）
-static void *xhci_alloc_dma(size_t size, uint64_t *phys_addr) {
-    void *ptr = alloc_frames_bytes_dma32(size);
-    if (ptr) {
-        memset(ptr, 0, size);
-        if (phys_addr) {
-            *phys_addr =
-                translate_address(get_current_page_dir(false), (uint64_t)ptr);
-        }
+static inline void delay(uint64_t ms) {
+    uint64_t ns = ms * 1000000ULL;
+    uint64_t timeout = nanoTime() + ns;
+    while (nanoTime() < timeout) {
+        arch_pause();
     }
-    return ptr;
 }
 
-// 分配传输环
-xhci_ring_t *xhci_alloc_ring(uint32_t num_trbs) {
-    xhci_ring_t *ring = (xhci_ring_t *)malloc(sizeof(xhci_ring_t));
-    if (!ring) {
-        return NULL;
-    }
+// Find any devices connected to the root hub.
+static int xhci_check_ports(struct usb_xhci_s *xhci) {
+    // Wait for port power to stabilize.
+    delay(XHCI_TIME_POSTPOWER);
 
-    memset(ring, 0, sizeof(xhci_ring_t));
-    ring->size = num_trbs;
-    ring->trbs = (xhci_trb_t *)xhci_alloc_dma(sizeof(xhci_trb_t) * num_trbs,
-                                              &ring->phys_addr);
-    if (!ring->trbs) {
-        free(ring);
-        return NULL;
-    }
-
-    ring->cycle_state = 1;
-    ring->enqueue_index = 0;
-    ring->dequeue_index = 0;
-
-    return ring;
-}
-
-// 释放传输环
-void xhci_free_ring(xhci_ring_t *ring) {
-    if (!ring)
-        return;
-
-    if (ring->trbs) {
-        free_frames_bytes_dma32(ring->trbs, ring->size * sizeof(xhci_trb_t));
-    }
-    free(ring);
-}
-
-// 向环中添加TRB
-xhci_trb_t *xhci_queue_trb(xhci_ring_t *ring, uint64_t param, uint32_t status,
-                           uint32_t control) {
-    if (!ring || !ring->trbs) {
-        printk("XHCI: Invalid ring in queue_trb\n");
-        return NULL;
-    }
-
-    spin_lock(&transfer_lock);
-
-    uint32_t idx = ring->enqueue_index;
-
-    // 检查是否需要 Link TRB
-    if (idx >= ring->size - 1) {
-        // 设置 Link TRB
-        xhci_trb_t *link = &ring->trbs[ring->size - 1];
-        link->parameter = ring->phys_addr;
-        link->status = 0;
-        link->control = (TRB_TYPE_LINK << 10);
-
-        link->control |= TRB_LINK_TOGGLE_CYCLE;
-
-        // 设置 cycle bit
-        if (ring->cycle_state) {
-            link->control |= TRB_FLAG_CYCLE;
-        }
-
-        // 翻转 cycle state
-        ring->cycle_state = !ring->cycle_state;
-        ring->enqueue_index = 0;
-        idx = 0;
-    }
-
-    xhci_trb_t *trb = &ring->trbs[idx];
-
-    // 填充 TRB（先不设置 cycle bit）
-    trb->parameter = param;
-    trb->status = status;
-    trb->control = control & ~TRB_FLAG_CYCLE;
-
-    // 设置 cycle bit（激活 TRB）
-    if (ring->cycle_state) {
-        trb->control |= TRB_FLAG_CYCLE;
-    }
-
-    // 更新 enqueue 指针
-    ring->enqueue_index = (idx + 1) % ring->size;
-
-    spin_unlock(&transfer_lock);
-
-    return trb;
-}
-
-// 敲门铃寄存器
-void xhci_ring_doorbell(xhci_hcd_t *xhci, uint8_t slot_id, uint8_t dci) {
-    xhci_writel(&xhci->doorbell_regs[slot_id], dci);
-}
-
-// 重置XHCI控制器
-int xhci_reset(xhci_hcd_t *xhci) {
-    uint32_t cmd, status;
-    // 等待可以操作
-    bool timeout = true;
-    uint64_t time_ns = nanoTime() + 1ULL * 1000000000ULL;
-    while (nanoTime() < time_ns) {
-        cmd = xhci_readl(&xhci->op_regs->usbcmd);
-        status = xhci_readl(&xhci->op_regs->usbsts);
-        if (!(status & XHCI_STS_CNR)) {
-            timeout = false;
-            break;
-        }
-    }
-
-    if (timeout) {
-        printk("XHCI: Reset timeout\n");
-        return -1;
-    }
-
-    // 停止
-    cmd = xhci_readl(&xhci->op_regs->usbcmd);
-    cmd &= ~XHCI_CMD_RUN;
-    xhci_writel(&xhci->op_regs->usbcmd, cmd);
-
-    // 等待停止
-    timeout = true;
-    time_ns = nanoTime() + 1ULL * 1000000000ULL;
-    while (nanoTime() < time_ns) {
-        cmd = xhci_readl(&xhci->op_regs->usbcmd);
-        status = xhci_readl(&xhci->op_regs->usbsts);
-        if (status & XHCI_STS_HCH) {
-            timeout = false;
-            break;
-        }
-    }
-
-    if (timeout) {
-        printk("XHCI: Reset timeout\n");
-        return -1;
-    }
-
-    // 重置控制器
-    cmd = xhci_readl(&xhci->op_regs->usbcmd);
-    cmd |= XHCI_CMD_RESET;
-    xhci_writel(&xhci->op_regs->usbcmd, cmd);
-
-    // 等待重置完成
-    timeout = true;
-    time_ns = nanoTime() + 1ULL * 1000000000ULL;
-    while (nanoTime() < time_ns) {
-        cmd = xhci_readl(&xhci->op_regs->usbcmd);
-        if (!(cmd & XHCI_CMD_RESET)) {
-            timeout = false;
-            break;
-        }
-    }
-
-    if (timeout) {
-        printk("XHCI: Reset timeout\n");
-        return -1;
-    }
-
+    struct usbhub_s *hub = malloc(sizeof(struct usbhub_s));
+    memset(hub, 0, sizeof(struct usbhub_s));
+    hub->cntl = &xhci->usb;
+    hub->portcount = xhci->ports;
+    hub->op = &xhci_hub_ops;
+    usb_enumerate(hub);
+    int count = hub->devcount;
+    if (count > 0)
+        return count;
+    free(hub);
     return 0;
 }
 
-// 启动XHCI控制器
-int xhci_start(xhci_hcd_t *xhci) {
-    uint32_t cmd;
+/****************************************************************
+ * Setup
+ ****************************************************************/
 
-    cmd = xhci_readl(&xhci->op_regs->usbcmd);
-    cmd |= XHCI_CMD_RUN;
-    xhci_writel(&xhci->op_regs->usbcmd, cmd);
-
-    // 等待控制器运行
-    while (1) {
-        uint32_t status = xhci_readl(&xhci->op_regs->usbsts);
-        if (!(status & XHCI_STS_HCH)) {
-            return 0;
-        }
-    }
-
-    printk("XHCI: Failed to start controller\n");
-    return -1;
+static void xhci_free_pipes(struct usb_xhci_s *xhci) {
+    // XXX - should walk list of pipes and free unused pipes.
 }
 
-// 停止XHCI控制器
-int xhci_stop(xhci_hcd_t *xhci) {
-    uint32_t cmd;
+static void configure_xhci(void *data) {
+    struct usb_xhci_s *xhci = data;
+    uint32_t reg;
 
-    cmd = xhci_readl(&xhci->op_regs->usbcmd);
-    cmd &= ~XHCI_CMD_RUN;
-    xhci_writel(&xhci->op_regs->usbcmd, cmd);
+    xhci->devs =
+        alloc_frames_bytes_dma32(sizeof(*xhci->devs) * (xhci->slots + 1));
+    xhci->eseg = alloc_frames_bytes_dma32(sizeof(*xhci->eseg));
+    xhci->cmds = alloc_frames_bytes_dma32(sizeof(*xhci->cmds));
+    xhci->evts = alloc_frames_bytes_dma32(sizeof(*xhci->evts));
+    if (!xhci->devs || !xhci->cmds || !xhci->evts || !xhci->eseg) {
+        goto fail;
+    }
+    memset(xhci->devs, 0, sizeof(*xhci->devs) * (xhci->slots + 1));
+    memset(xhci->cmds, 0, sizeof(*xhci->cmds));
+    memset(xhci->evts, 0, sizeof(*xhci->evts));
+    memset(xhci->eseg, 0, sizeof(*xhci->eseg));
 
-    // 等待控制器停止
-    uint64_t time_ns = nanoTime() + 1ULL * 1000000000ULL;
+    reg = readl(&xhci->op->usbcmd);
+    if (reg & XHCI_CMD_RS) {
+        reg &= ~XHCI_CMD_RS;
+        writel(&xhci->op->usbcmd, reg);
+        if (wait_bit(&xhci->op->usbsts, XHCI_STS_HCH, XHCI_STS_HCH, 32) != 0)
+            goto fail;
+    }
 
-    while (nanoTime() < time_ns) {
-        uint32_t status = xhci_readl(&xhci->op_regs->usbsts);
-        if (status & XHCI_STS_HCH) {
-            return 0;
+    writel(&xhci->op->usbcmd, XHCI_CMD_HCRST);
+    if (wait_bit(&xhci->op->usbcmd, XHCI_CMD_HCRST, 0, 1000) != 0)
+        goto fail;
+    if (wait_bit(&xhci->op->usbsts, XHCI_STS_CNR, 0, 1000) != 0)
+        goto fail;
+
+    writel(&xhci->op->config, xhci->slots);
+    uint64_t dcbaap =
+        translate_address(get_current_page_dir(false), (uint64_t)xhci->devs);
+    writel(&xhci->op->dcbaap_low, dcbaap);
+    writel(&xhci->op->dcbaap_high, dcbaap >> 32);
+    uint64_t crcr =
+        translate_address(get_current_page_dir(false), (uint64_t)xhci->cmds);
+    writel(&xhci->op->crcr_low, crcr | 1);
+    writel(&xhci->op->crcr_high, crcr >> 32);
+    xhci->cmds->cs = 1;
+
+    uint64_t evts =
+        translate_address(get_current_page_dir(false), (uint64_t)xhci->evts);
+    xhci->eseg->ptr_low = evts;
+    xhci->eseg->ptr_high = evts >> 32;
+    xhci->eseg->size = XHCI_RING_ITEMS;
+    writel(&xhci->ir->erstsz, 1);
+    writel(&xhci->ir->erdp_low, evts);
+    writel(&xhci->ir->erdp_high, evts >> 32);
+    uint64_t erstba =
+        translate_address(get_current_page_dir(false), (uint64_t)xhci->eseg);
+    writel(&xhci->ir->erstba_low, erstba);
+    writel(&xhci->ir->erstba_high, erstba >> 32);
+    xhci->evts->cs = 1;
+
+    reg = readl(&xhci->caps->hcsparams2);
+    uint32_t spb = (reg >> 21 & 0x1f) << 5 | reg >> 27;
+    if (spb) {
+        uint64_t *spba = alloc_frames_bytes_dma32(sizeof(*spba) * spb);
+        void *pad = alloc_frames_bytes_dma32(DEFAULT_PAGE_SIZE * spb);
+        if (!spba || !pad) {
+            free_frames_bytes_dma32(spba, sizeof(*spba) * spb);
+            free_frames_bytes_dma32(pad, DEFAULT_PAGE_SIZE * spb);
+            goto fail;
         }
+        int i;
+        for (i = 0; i < spb; i++)
+            spba[i] =
+                translate_address(get_current_page_dir(false),
+                                  (uint64_t)pad + (i * DEFAULT_PAGE_SIZE));
+        uint64_t spbap =
+            translate_address(get_current_page_dir(false), (uint64_t)spba);
+        xhci->devs[0].ptr_low = spbap;
+        xhci->devs[0].ptr_high = spbap >> 32;
     }
 
-    printk("XHCI: Failed to stop controller\n");
-    return -1;
-}
-
-static void xhci_pair_ports(xhci_hcd_t *xhci) {
-    // 首先将所有 paired_port 初始化为 0xFF（表示未配对）
-    for (int i = 0; i < xhci->max_ports; i++) {
-        xhci->port_info[i].paired_port = 0xFF;
-    }
-
-    // 寻找配对的端口
-    for (int i = 0; i < xhci->max_ports; i++) {
-        if (xhci->port_info[i].protocol == XHCI_PROTOCOL_USB2) {
-            // 对于 USB2.0 端口，寻找对应的 USB3.0 端口
-            for (int j = 0; j < xhci->max_ports; j++) {
-                if (xhci->port_info[j].protocol == XHCI_PROTOCOL_USB3) {
-                    // 检查是否是配对的端口
-                    // 通常配对的端口有相同的物理位置索引
-                    // 计算在各自协议中的相对位置
-                    uint8_t usb2_relative_pos =
-                        i - (xhci->port_info[i].port_offset - 1);
-                    uint8_t usb3_relative_pos =
-                        j - (xhci->port_info[j].port_offset - 1);
-
-                    if (usb2_relative_pos == usb3_relative_pos) {
-                        xhci->port_info[i].paired_port = j;
-                        xhci->port_info[j].paired_port = i;
-
-                        printk("XHCI: Paired ports - USB2.0 port %d <-> USB3.0 "
-                               "port %d\n",
-                               i + 1, j + 1);
-
-                        break;
-                    }
-                }
-            }
-        }
-    }
-}
-
-// 扩展能力 ID
-#define XHCI_EXT_CAPS_LEGACY 1
-#define XHCI_EXT_CAPS_PROTOCOL 2
-
-// 解析 Supported Protocol Capability
-static int xhci_parse_protocol_caps(xhci_hcd_t *xhci) {
-    uint32_t hccparams1 = xhci_readl(&xhci->cap_regs->hccparams1);
-    uint32_t ext_offset = (hccparams1 >> 16) & 0xFFFF;
-
-    if (ext_offset == 0) {
-        printk("XHCI: No extended capabilities\n");
-        return 0;
-    }
-
-    // 扩展能力在能力寄存器之后
-    uint32_t *ext_cap = (uint32_t *)xhci->cap_regs + ext_offset;
-
-    while (ext_offset) {
-        uint32_t cap_header = xhci_readl(ext_cap);
-        uint32_t cap_id = cap_header & 0xFF;
-        uint32_t next_offset = (cap_header >> 8) & 0xFF;
-
-        if (cap_id == XHCI_EXT_CAPS_LEGACY) {
-            uint32_t val = xhci_readl(ext_cap);
-
-            if (val & (1 << 16)) {
-                printk("XHCI is BIOS owned!!!\n");
-                xhci_writel(ext_cap, val | (1 << 24));
-
-                bool timeout = true;
-                uint64_t timeout_ns = nanoTime() + 5ULL * 1000000000ULL;
-                while (nanoTime() < timeout_ns) {
-                    val = xhci_readl(ext_cap);
-                    if (!(val & (1 << 16))) {
-                        timeout = false;
-                        break;
-                    }
-                }
-
-                if (timeout) {
-                    printk("Failed to hand over XHCI from BIOS!!!\n");
-                    xhci_writel(ext_cap, val & ~(1 << 16));
-                }
-            }
-
-            val = xhci_readl(ext_cap + 1);
-            val &= ((0x7 << 1) + (0xff << 5) + (0x7 << 17));
-            val |= (0x7 << 29);
-            xhci_writel(ext_cap + 1, val);
-        } else if (cap_id == XHCI_EXT_CAPS_PROTOCOL) {
-            // Supported Protocol Capability
-            uint32_t cap_word0 = xhci_readl(ext_cap);
-            uint32_t cap_word1 = xhci_readl(ext_cap + 1);
-            uint32_t cap_word2 = xhci_readl(ext_cap + 2);
-            uint32_t cap_word3 = xhci_readl(ext_cap + 3);
-
-            // 解析协议版本
-            uint8_t minor = (cap_word0 >> 16) & 0xFF;
-            uint8_t major = (cap_word0 >> 24) & 0xFF;
-
-            // 解析端口范围
-            uint8_t port_offset = cap_word2 & 0xFF;
-            uint8_t port_count = (cap_word2 >> 8) & 0xFF;
-
-            uint8_t slot_type = cap_word3 & 0x1F;
-
-            printk("XHCI: Protocol Capability - Major: %d, Minor: %d, Ports: "
-                   "%d-%d, Slot Type: %d\n",
-                   major, minor, port_offset, port_offset + port_count - 1,
-                   slot_type);
-
-            // 标记端口协议
-            for (int i = 0;
-                 i < port_count && (port_offset + i - 1) < xhci->max_ports;
-                 i++) {
-                uint8_t port_idx = port_offset + i - 1; // 转换为 0-based
-
-                xhci->port_info[port_idx].port_num = port_idx;
-                xhci->port_info[port_idx].protocol = major;
-                xhci->port_info[port_idx].port_offset = port_offset;
-                xhci->port_info[port_idx].port_count = port_count;
-                xhci->port_info[port_idx].slot_type = slot_type;
-            }
-        }
-
-        if (next_offset == 0) {
-            break;
-        }
-
-        ext_cap += next_offset;
-        ext_offset = next_offset;
-    }
-
-    xhci_pair_ports(xhci);
-
-    return 0;
-}
-
-void xhci_handle_port_status(xhci_hcd_t *xhci, uint8_t port_id);
-
-// 初始化XHCI HCD
-static int xhci_hcd_init(usb_hcd_t *hcd) {
-    xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
-
-    xhci->hcd = hcd;
-
-    // 解析端口协议
-    xhci_parse_protocol_caps(xhci);
-
-    if (xhci_stop(xhci) != 0) {
-        return -1;
-    }
-
-    // 重置控制器
-    if (xhci_reset(xhci) != 0) {
-        return -1;
-    }
-
-    xhci->tracker_mutex.lock = 0;
-
-    // 读取能力参数
-    uint32_t hcsparams1 = xhci_readl(&xhci->cap_regs->hcsparams1);
-    uint32_t hcsparams2 = xhci_readl(&xhci->cap_regs->hcsparams2);
-    uint32_t hccparams1 = xhci_readl(&xhci->cap_regs->hccparams1);
-
-    xhci->use_64byte_context = (hccparams1 & 0x04) != 0;
-    printk("XHCI: context size: %s\n", xhci->use_64byte_context ? "64" : "32");
-
-    xhci->max_slots = (hcsparams1 >> 0) & 0xFF;
-    xhci->max_intrs = (hcsparams1 >> 8) & 0x7FF;
-    xhci->max_ports = (hcsparams1 >> 24) & 0xFF;
-
-    // 计算scratchpad数量
-    uint32_t max_scratch_hi = (hcsparams2 >> 21) & 0x1F;
-    uint32_t max_scratch_lo = (hcsparams2 >> 27) & 0x1F;
-    xhci->num_scratchpads = (max_scratch_hi << 5) | max_scratch_lo;
-
-    // 配置max slots
-    uint32_t config = xhci->max_slots;
-    config |=
-        (xhci_readl(&xhci->cap_regs->hccparams2) & (1 << 5)) ? (1 << 9) : 0;
-    xhci_writel(&xhci->op_regs->config, config);
-
-    // 分配设备上下文基地址数组 (DCBAA)
-    xhci->dcbaa = (uint64_t *)xhci_alloc_dma(
-        (xhci->max_slots + 1) * sizeof(uint64_t), &xhci->dcbaa_phys);
-    if (!xhci->dcbaa) {
-        printk("XHCI: Failed to allocate DCBAA\n");
-        return -1;
-    }
-
-    // 分配scratchpad buffers
-    if (xhci->num_scratchpads > 0) {
-        xhci->scratchpad_array = (uint64_t *)xhci_alloc_dma(
-            xhci->num_scratchpads * sizeof(uint64_t), NULL);
-        xhci->scratchpad_buffers = (void **)alloc_frames_bytes_dma32(
-            xhci->num_scratchpads * sizeof(void *));
-
-        for (uint32_t i = 0; i < xhci->num_scratchpads; i++) {
-            uint64_t phys;
-            xhci->scratchpad_buffers[i] = xhci_alloc_dma(4096, &phys);
-            xhci->scratchpad_array[i] = phys;
-        }
-
-        xhci->dcbaa[0] = translate_address(get_current_page_dir(false),
-                                           (uint64_t)xhci->scratchpad_array);
-    }
-
-    // 设置DCBAA指针
-    xhci_writeq(&xhci->op_regs->dcbaap, xhci->dcbaa_phys);
-
-    // 分配命令环
-    xhci->cmd_ring = xhci_alloc_ring(256);
-    if (!xhci->cmd_ring) {
-        printk("XHCI: Failed to allocate command ring\n");
-        return -1;
-    }
-
-    // 设置命令环指针
-    xhci_writeq(&xhci->op_regs->crcr, xhci->cmd_ring->phys_addr | 1);
-
-    // 分配事件环
-    xhci->event_ring = xhci_alloc_ring(256);
-    if (!xhci->event_ring) {
-        printk("XHCI: Failed to allocate event ring\n");
-        return -1;
-    }
-
-    // 分配事件环段表 (ERST)
-    xhci->erst = (xhci_erst_entry_t *)xhci_alloc_dma(sizeof(xhci_erst_entry_t),
-                                                     &xhci->erst_phys);
-    if (!xhci->erst) {
-        printk("XHCI: Failed to allocate ERST\n");
-        return -1;
-    }
-
-    xhci->erst[0].address = xhci->event_ring->phys_addr;
-    xhci->erst[0].size = xhci->event_ring->size;
-    xhci->erst[0].reserved = 0;
-
-    // 配置中断器0
-    xhci_writel(&xhci->intr_regs[0].erstsz, 1);
-    xhci_writeq(&xhci->intr_regs[0].erstba, xhci->erst_phys);
-    xhci_writeq(&xhci->intr_regs[0].erdp, xhci->event_ring->phys_addr);
-
-    xhci_writel(&xhci->intr_regs[0].imod, 0);
-
-    // uint32_t cmd = xhci_readl(&xhci->op_regs->usbcmd);
-    // cmd |= XHCI_CMD_INTE;
-    // xhci_writel(&xhci->op_regs->usbcmd, cmd);
-
-    // // 启用中断
-    // uint32_t iman = xhci_readl(&xhci->intr_regs[0].iman);
-    // iman |= (1 << 1);
-    // xhci_writel(&xhci->intr_regs[0].iman, iman);
-
-    // 分配端口信息数组
-    xhci->port_info =
-        (xhci_port_info_t *)malloc(sizeof(xhci_port_info_t) * xhci->max_ports);
-    if (!xhci->port_info) {
-        printk("XHCI: Failed to allocate port info\n");
-        return -1;
-    }
-    memset(xhci->port_info, 0, sizeof(xhci_port_info_t) * xhci->max_ports);
-
-    xhci->root_hub = malloc(sizeof(struct usb_hub));
-    memset(xhci->root_hub, 0, sizeof(struct usb_hub));
-    xhci_hub_private_t *hub_priv = malloc(sizeof(xhci_hub_private_t));
-    hub_priv->hub = xhci->root_hub;
-    hub_priv->xhci = xhci;
-    xhci->root_hub->hcd_private = hub_priv;
-    xhci->root_hub->device = NULL;
-    xhci->root_hub->parent = NULL;
-    xhci->root_hub->ops = &xhci_root_hub_ops;
-
-    // 启动控制器
-    if (xhci_start(xhci) != 0) {
-        return -1;
-    }
-
-    // 启动事件处理线程
-    if (xhci_start_event_handler(xhci) != 0) {
-        printk("XHCI: Failed to start event handler\n");
-        return -1;
-    }
-
-    // 先初始化USB3端口
-    for (uint8_t p = 0; p < xhci->max_ports; p++) {
-        xhci_port_info_t *port_info = &xhci->port_info[p];
-        if (port_info->protocol == XHCI_PROTOCOL_USB3 &&
-            (xhci_readl(&xhci->port_regs[p].portsc) & XHCI_PORTSC_CCS)) {
-            xhci_handle_port_status(xhci, p);
-        }
-    }
-
-    // 再初始化USB2端口
-    for (uint8_t p = 0; p < xhci->max_ports; p++) {
-        xhci_port_info_t *port_info = &xhci->port_info[p];
-        if (port_info->protocol != XHCI_PROTOCOL_USB3 &&
-            (xhci_readl(&xhci->port_regs[p].portsc) & XHCI_PORTSC_CCS) &&
-            (port_info->paired_port == 0xFF ||
-             !xhci->connection[port_info->paired_port])) {
-            xhci_handle_port_status(xhci, p);
-        }
-    }
-
-    return 0;
-}
-
-// 关闭XHCI HCD
-static int xhci_hcd_shutdown(usb_hcd_t *hcd) {
-    xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
-
-    // 停止事件处理线程
-    xhci_stop_event_handler(xhci);
-
-    xhci_stop(xhci);
-
-    // // 释放资源
-    // if (xhci->cmd_ring) {
-    //     xhci_free_ring(xhci->cmd_ring);
-    // }
-
-    // if (xhci->event_ring) {
-    //     xhci_free_ring(xhci->event_ring);
-    // }
-
-    // if (xhci->erst) {
-    //     free(xhci->erst);
-    // }
-
-    // if (xhci->scratchpad_buffers) {
-    //     for (uint32_t i = 0; i < xhci->num_scratchpads; i++) {
-    //         if (xhci->scratchpad_buffers[i]) {
-    //             free(xhci->scratchpad_buffers[i]);
-    //         }
-    //     }
-    //     free(xhci->scratchpad_buffers);
-    // }
-
-    // if (xhci->scratchpad_array) {
-    //     free(xhci->scratchpad_array);
-    // }
-
-    // if (xhci->dcbaa) {
-    //     free(xhci->dcbaa);
-    // }
-
+    reg = readl(&xhci->op->usbcmd);
+    reg |= XHCI_CMD_RS;
+    writel(&xhci->op->usbcmd, reg);
+
+    // Find devices
+    int count = xhci_check_ports(xhci);
+    // xhci_free_pipes(xhci);
+
+    // // No devices found - shutdown and free controller.
+    // reg = readl(&xhci->op->usbcmd);
+    // reg &= ~XHCI_CMD_RS;
+    // writel(&xhci->op->usbcmd, reg);
+    // wait_bit(&xhci->op->usbsts, XHCI_STS_HCH, XHCI_STS_HCH, 32);
+
+    return;
+
+fail:
+    free_frames_bytes_dma32(xhci->devs,
+                            sizeof(*xhci->devs) * (xhci->slots + 1));
+    free_frames_bytes_dma32(xhci->eseg, sizeof(*xhci->eseg));
+    free_frames_bytes_dma32(xhci->cmds, sizeof(*xhci->cmds));
+    free_frames_bytes_dma32(xhci->evts, sizeof(*xhci->evts));
     free(xhci);
-
-    return 0;
 }
 
-// USB 2.0 端口重置
-static int xhci_reset_port_usb2(xhci_hcd_t *xhci, uint8_t port,
-                                usb_device_t *device) {
-    uint32_t portsc;
-
-    printk("XHCI: USB2 port reset begin\n");
-
-    // 1. 清除所有状态变化位
-    portsc = xhci_readl(&xhci->port_regs[port].portsc);
-    portsc |= XHCI_PORTSC_CHANGE_BITS;
-    portsc &= ~(XHCI_PORTSC_PED | XHCI_PORTSC_PR);
-    xhci_writel(&xhci->port_regs[port].portsc, portsc);
-
-    delay(1); // 让硬件处理
-
-    // 2. 发起重置
-    portsc = xhci_readl(&xhci->port_regs[port].portsc);
-
-    // 保留所有非变化位，清除状态变化位（写0），设置 PR
-    portsc &= ~XHCI_PORTSC_CHANGE_BITS; // 写0保留状态变化位
-    portsc |= XHCI_PORTSC_PR;           // 设置重置位
-
-    xhci_writel(&xhci->port_regs[port].portsc, portsc);
-
-    printk("XHCI: Reset initiated, PORTSC=0x%08x\n", portsc);
-
-    // 3. 等待 PR 位清零
-    uint64_t timeout = nanoTime() + 100ULL * 1000000ULL; // 100ms 足够
-    bool pr_cleared = false;
-
-    while (nanoTime() < timeout) {
-        portsc = xhci_readl(&xhci->port_regs[port].portsc);
-
-        if (!(portsc & XHCI_PORTSC_PR)) {
-            pr_cleared = true;
-            printk("XHCI: PR cleared, PORTSC=0x%08x\n", portsc);
-            break;
-        }
-
-        delay(1);
-    }
-
-    if (!pr_cleared) {
-        printk("XHCI: Reset timeout (PR not cleared)\n");
-        return -1;
-    }
-
-    // 4. 等待 PRC（重置完成）
-    timeout = nanoTime() + 100ULL * 1000000ULL;
-    bool prc_set = false;
-
-    while (nanoTime() < timeout) {
-        portsc = xhci_readl(&xhci->port_regs[port].portsc);
-
-        if (portsc & XHCI_PORTSC_PRC) {
-            prc_set = true;
-            printk("XHCI: PRC set, PORTSC=0x%08x\n", portsc);
-            break;
-        }
-
-        delay(1);
-    }
-
-    if (!prc_set) {
-        printk("XHCI: PRC not set\n");
-        return -1;
-    }
-
-    // 5. 等待端口使能（PED）和链路进入 U0
-    timeout = nanoTime() + 100ULL * 1000000ULL; // 100ms
-    bool enabled = false;
-
-    while (nanoTime() < timeout) {
-        portsc = xhci_readl(&xhci->port_regs[port].portsc);
-
-        // 检查连接状态
-        if (!(portsc & XHCI_PORTSC_CCS)) {
-            printk("XHCI: Device disconnected\n");
-            return -1;
-        }
-
-        // 检查 PED 和 PLS
-        uint8_t pls = (portsc >> 5) & 0xF;
-
-        printk("XHCI: [wait] PORTSC=0x%08x PLS=%d PED=%d\n", portsc, pls,
-               !!(portsc & XHCI_PORTSC_PED));
-
-        if ((portsc & XHCI_PORTSC_PED) && (pls == 0)) {
-            enabled = true;
-            printk("XHCI: Port enabled! PLS=U0\n");
-            break;
-        }
-
-        delay(10);
-    }
-
-    if (!enabled) {
-        printk("XHCI: Port not enabled after reset\n");
-        printk("      Final PORTSC=0x%08x\n", portsc);
-
-        uint8_t pls = (portsc >> 5) & 0xF;
-        printk("      PLS=%d (should be 0 for U0)\n", pls);
-        printk("      PED=%d (should be 1)\n", !!(portsc & XHCI_PORTSC_PED));
-        printk("      CCS=%d\n", !!(portsc & XHCI_PORTSC_CCS));
-
-        return -1;
-    }
-
-    // 6. 现在才清除状态变化位
-    portsc = xhci_readl(&xhci->port_regs[port].portsc);
-    portsc &= ~XHCI_PORTSC_CHANGE_BITS; // 保留状态位
-    portsc |= XHCI_PORTSC_CHANGE_BITS;  // 设置变化位（写1清除）
-    xhci_writel(&xhci->port_regs[port].portsc, portsc);
-
-    printk("XHCI: Status bits cleared\n");
-
-    // 7. USB规范要求重置后恢复时间
-    delay(10);
-
-    // 8. 读取设备速度
-    portsc = xhci_readl(&xhci->port_regs[port].portsc);
-    uint8_t speed = xhci_port_speed_to_usb_speed(portsc);
-    device->speed = speed;
-
-    return 0;
-}
-
-// USB 3.0 端口重置
-static int xhci_reset_port_usb3(xhci_hcd_t *xhci, uint8_t port,
-                                usb_device_t *device) {
-    uint32_t portsc = xhci_readl(&xhci->port_regs[port].portsc);
-
-    while (1) {
-        portsc = xhci_readl(&xhci->port_regs[port].portsc);
-        if (portsc & XHCI_PORTSC_CCS) {
-            break;
-        }
-        printk("XHCI: Waiting for device connection on USB3 port...\n");
-        delay(1000);
-    }
-
-    uint32_t pls = (portsc >> 5) & 0xF;
-    bool disconnected = false;
-
-    printk("XHCI: USB3 port in Link State %d\n", pls);
-
-    // 1. 如果已在U0且已使能，无需重置
-    if (pls == 0 && (portsc & XHCI_PORTSC_PED) && (portsc & XHCI_PORTSC_CCS)) {
-        printk("XHCI: Already in U0 and enabled\n");
-        device->speed = xhci_port_speed_to_usb_speed(portsc);
-        return 0;
-    }
-
-    // 2. 从低功耗状态唤醒
-    if (pls >= 1 && pls <= 3) { // U1/U2/U3
-        printk("XHCI: Waking from U%d to U0\n", pls);
-
-        xhci_writel(&xhci->port_regs[port].portsc,
-                    XHCI_PORTSC_PP | (1 << 16) | (0 << 5));
-
-        uint64_t timeout = nanoTime() + 500ULL * 1000000ULL;
-        while (nanoTime() < timeout) {
-            portsc = xhci_readl(&xhci->port_regs[port].portsc);
-            pls = (portsc >> 5) & 0xF;
-            if (pls == 0 && (portsc & XHCI_PORTSC_PED)) {
-                device->speed = xhci_port_speed_to_usb_speed(portsc);
-                printk("XHCI: Wake complete\n");
-                return 0;
-            }
-            delay(1);
-        }
-
-        // 唤醒失败，继续尝试Warm Reset
-        printk("XHCI: Wake failed, trying Warm Reset\n");
-    }
-
-    // 3. Warm Reset（处理Disabled/RxDetect/Compliance等状态）
-    printk("XHCI: Performing Warm Reset (PLS=%d)\n", pls);
-
-    // 清除状态位
-    xhci_writel(&xhci->port_regs[port].portsc,
-                XHCI_PORTSC_CSC | XHCI_PORTSC_PEC | XHCI_PORTSC_WRC |
-                    XHCI_PORTSC_OCC | XHCI_PORTSC_PRC);
-
-    // 发起Warm Reset
-    xhci_writel(&xhci->port_regs[port].portsc, XHCI_PORTSC_PP | (1 << 31));
-
-    // 等待WPR清零
-    uint64_t timeout = nanoTime() + 500ULL * 1000000ULL;
-    while (nanoTime() < timeout) {
-        portsc = xhci_readl(&xhci->port_regs[port].portsc);
-
-        // 监测断开（不立即失败）
-        if (!(portsc & XHCI_PORTSC_CCS) && !disconnected) {
-            printk("XHCI: Device briefly disconnected during Warm Reset\n");
-            disconnected = true;
-        }
-
-        if (!(portsc & (1 << 31))) {
-            printk("XHCI: Warm Reset signal complete\n");
-            break;
-        }
-        delay(1);
-    }
-
-    // 等待WRC置位或设备重新连接
-    timeout = nanoTime() + 1000ULL * 1000000ULL;
-    bool wrc_set = false;
-
-    while (nanoTime() < timeout) {
-        portsc = xhci_readl(&xhci->port_regs[port].portsc);
-
-        if (portsc & XHCI_PORTSC_WRC) {
-            wrc_set = true;
-            printk("XHCI: WRC set\n");
-            break;
-        }
-
-        // 如果之前断开，检查是否重新连接
-        if (disconnected && (portsc & XHCI_PORTSC_CCS)) {
-            printk("XHCI: Device reconnected during Warm Reset\n");
-            delay(50); // 让连接稳定
-        }
-
-        delay(10);
-    }
-
-    if (wrc_set) {
-        // 清除WRC
-        xhci_writel(&xhci->port_regs[port].portsc, XHCI_PORTSC_WRC);
-    }
-
-    // 4. 如果检测到断开，等待稳定重连
-    portsc = xhci_readl(&xhci->port_regs[port].portsc);
-    if (!(portsc & XHCI_PORTSC_CCS)) {
-        printk("XHCI: Waiting for USB3 device reconnection...\n");
-
-        timeout = nanoTime() + 2000ULL * 1000000ULL; // USB3需要更长时间
-        bool reconnected = false;
-
-        while (nanoTime() < timeout) {
-            portsc = xhci_readl(&xhci->port_regs[port].portsc);
-
-            if (portsc & XHCI_PORTSC_CCS) {
-                delay(100); // 等待连接稳定
-
-                portsc = xhci_readl(&xhci->port_regs[port].portsc);
-                if (portsc & XHCI_PORTSC_CCS) {
-                    reconnected = true;
-                    printk("XHCI: USB3 device reconnected\n");
-                    break;
-                }
-            }
-
-            delay(10);
-        }
-
-        if (!reconnected) {
-            printk("XHCI: USB3 device did not reconnect\n");
-            return -1;
-        }
-    }
-
-    // 5. 等待链路训练到U0
-    printk("XHCI: Waiting for link training to U0...\n");
-    timeout = nanoTime() + 2000ULL * 1000000ULL; // 2秒
-
-    while (nanoTime() < timeout) {
-        portsc = xhci_readl(&xhci->port_regs[port].portsc);
-        pls = (portsc >> 5) & 0xF;
-
-        // 检查持续断开
-        if (!(portsc & XHCI_PORTSC_CCS)) {
-            printk("XHCI: Device disconnected during link training\n");
-            return -1;
-        }
-
-        // 到达U0且已使能
-        if (pls == 0 && (portsc & XHCI_PORTSC_PED)) {
-            printk("XHCI: Link training complete, in U0\n");
-            break;
-        }
-
-        // 打印链路状态变化
-        static uint32_t last_pls = 0xFF;
-        if (pls != last_pls) {
-            const char *pls_names[] = {"U0",
-                                       "U1",
-                                       "U2",
-                                       "U3",
-                                       "Disabled",
-                                       "RxDetect",
-                                       "Inactive",
-                                       "Polling",
-                                       "Recovery",
-                                       "HotReset",
-                                       "ComplianceMode",
-                                       "TestMode",
-                                       "Reserved",
-                                       "Reserved",
-                                       "Reserved",
-                                       "ResumeState"};
-            printk("XHCI:   Link State -> %s\n", pls_names[pls]);
-            last_pls = pls;
-        }
-
-        delay(10);
-    }
-
-    // 6. 最终检查
-    portsc = xhci_readl(&xhci->port_regs[port].portsc);
-    pls = (portsc >> 5) & 0xF;
-
-    printk("XHCI: Final PORTSC=0x%08x, PLS=%d\n", portsc, pls);
-
-    if (!(portsc & XHCI_PORTSC_CCS)) {
-        printk("XHCI: Device not connected\n");
-        return -1;
-    }
-
-    if (!(portsc & XHCI_PORTSC_PED)) {
-        printk("XHCI: Port not enabled\n");
-        return -1;
-    }
-
-    if (pls != 0) {
-        printk("XHCI: Not in U0 (still in PLS=%d)\n", pls);
-        return -1;
-    }
-
-    // 7. 清除所有状态变化位
-    xhci_writel(&xhci->port_regs[port].portsc,
-                XHCI_PORTSC_CSC | XHCI_PORTSC_PEC | XHCI_PORTSC_WRC |
-                    XHCI_PORTSC_OCC | XHCI_PORTSC_PRC);
-
-    device->speed = xhci_port_speed_to_usb_speed(portsc);
-    printk("XHCI: USB3 reset complete, speed=%s\n",
-           usb_speed_name(device->speed));
-
-    return 0;
-}
-
-// 主重置函数
-static int xhci_reset_port(usb_hcd_t *hcd, usb_hub_t *hub,
-                           usb_device_t *device) {
-    xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
-    uint8_t port = device->port;
-
-    if (port >= xhci->max_ports) {
-        printk("XHCI: Invalid port %d\n", port);
-        return -1;
-    }
-
-    xhci_port_info_t *port_info = &xhci->port_info[port];
-    if (!port_info)
-        return -1;
-
-    bool is_usb3 = (port_info->protocol == XHCI_PROTOCOL_USB3);
-
-    printk("XHCI: Resetting port %d (%s)\n", port, is_usb3 ? "USB3" : "USB2");
-
-    // 1. 检查设备连接
-    uint32_t portsc = xhci_readl(&xhci->port_regs[port].portsc);
-    printk("XHCI: Initial PORTSC=0x%08x\n", portsc);
-
-    // 2. 检查端口供电
-    if (!(portsc & XHCI_PORTSC_PP)) {
-        printk("XHCI: Enabling port power\n");
-        xhci_writel(&xhci->port_regs[port].portsc, XHCI_PORTSC_PP);
-        delay(20);
-    }
-
-    // 3. 重置（最多重试2次）
-    int ret = -1;
-    for (int retry = 0; retry < 2; retry++) {
-        if (retry > 0) {
-            printk("XHCI: Retry %d...\n", retry);
-            delay(500); // 重试前等待
-        }
-
-        if (is_usb3) {
-            ret = xhci_reset_port_usb3(xhci, port, device);
-        } else {
-            ret = xhci_reset_port_usb2(xhci, port, device);
-        }
-
-        if (ret == 0) {
-            return 0;
-        }
-    }
-
-    printk("XHCI: Port reset failed after retries\n");
-    return -1;
-}
-
-static int xhci_disconnect_port(usb_hcd_t *hcd, usb_hub_t *hub,
-                                usb_device_t *device) {
-    return -1; // TODO: 实现
-}
-
-// 为设备初始化EP0（在enable_slot之后调用）
-int xhci_setup_default_endpoint(usb_hcd_t *hcd, usb_device_t *device) {
-    // 为EP0分配端点私有数据
-    xhci_endpoint_private_t *ep0_priv =
-        (xhci_endpoint_private_t *)malloc(sizeof(xhci_endpoint_private_t));
-    if (!ep0_priv) {
-        printk("XHCI: Failed to allocate EP0 private data\n");
-        return -1;
-    }
-
-    memset(ep0_priv, 0, sizeof(xhci_endpoint_private_t));
-    ep0_priv->dci = 1; // EP0的DCI总是1
-
-    // 分配传输环
-    ep0_priv->transfer_ring = xhci_alloc_ring(256);
-    if (!ep0_priv->transfer_ring) {
-        printk("XHCI: Failed to allocate EP0 transfer ring\n");
-        free(ep0_priv);
-        return -1;
-    }
-
-    // 设置EP0基本信息
-    device->endpoints[0].address = 0;
-    device->endpoints[0].attributes = USB_ENDPOINT_XFER_CONTROL;
-    device->endpoints[0].max_packet_size = 8; // 默认最小值，后续会更新
-    device->endpoints[0].interval = 0;
-    device->endpoints[0].device = device;
-    device->endpoints[0].hcd_private = ep0_priv;
-
-    return 0;
-}
-
-spinlock_t xhci_command_lock = {0};
-
-// 启用槽位 - 使用等待机制
-static int xhci_enable_slot(usb_hcd_t *hcd, usb_device_t *device) {
-    xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
-
-    // 分配设备私有数据
-    xhci_device_private_t *dev_priv =
-        (xhci_device_private_t *)malloc(sizeof(xhci_device_private_t));
-    if (!dev_priv) {
-        return -1;
-    }
-    memset(dev_priv, 0, sizeof(xhci_device_private_t));
-
-    // 分配设备上下文
-    dev_priv->device_ctx = xhci_alloc_dma(
-        sizeof(xhci_device_ctx_t) * (xhci->use_64byte_context ? 2 : 1),
-        &dev_priv->device_ctx_phys);
-    if (!dev_priv->device_ctx) {
-        free(dev_priv);
-        return -1;
-    }
-
-    // 分配输入上下文
-    dev_priv->input_ctx = xhci_alloc_dma(sizeof(xhci_input_ctx_t) *
-                                             (xhci->use_64byte_context ? 2 : 1),
-                                         &dev_priv->input_ctx_phys);
-    if (!dev_priv->input_ctx) {
-        free_frames_bytes_dma32(dev_priv->device_ctx,
-                                sizeof(xhci_device_ctx_t) *
-                                    (xhci->use_64byte_context ? 2 : 1));
-        free(dev_priv);
-        return -1;
-    }
-
-    // 分配完成结构
-    xhci_command_completion_t *completion = xhci_alloc_command_completion();
-    if (!completion) {
-        free_frames_bytes_dma32(dev_priv->input_ctx,
-                                sizeof(xhci_input_ctx_t) *
-                                    (xhci->use_64byte_context ? 2 : 1));
-        free_frames_bytes_dma32(dev_priv->device_ctx,
-                                sizeof(xhci_device_ctx_t) *
-                                    (xhci->use_64byte_context ? 2 : 1));
-        free(dev_priv);
-        return -1;
-    }
-
-    completion->device = device;
-
-    spin_lock(&xhci_command_lock);
-
-    xhci_port_info_t *port_info = &xhci->port_info[device->port];
-
-    // 发送Enable Slot命令
-    xhci_trb_t *cmd_trb =
-        xhci_queue_trb(xhci->cmd_ring, 0, 0,
-                       ((uint32_t)port_info->slot_type << 16) |
-                           (TRB_TYPE_ENABLE_SLOT << 10) | TRB_FLAG_IOC);
-
-    // 跟踪命令
-    xhci_track_command(xhci, cmd_trb, completion, TRB_TYPE_ENABLE_SLOT);
-
-    // 敲门铃
-    xhci_ring_doorbell(xhci, 0, 0);
-
-    spin_unlock(&xhci_command_lock);
-
-    // 等待命令完成（5秒超时）
-    int ret = xhci_wait_for_command(completion, 5000);
-
-    if (ret == 0) {
-        // 命令成功，获取slot ID
-        dev_priv->slot_id = completion->slot_id;
-
-        // 更新DCBAA
-        xhci->dcbaa[dev_priv->slot_id] = dev_priv->device_ctx_phys;
-
-        device->hcd_private = dev_priv;
-
-        // 初始化EP0
-        ret = xhci_setup_default_endpoint(hcd, device);
-        if (ret != 0) {
-            printk("XHCI: Failed to setup EP0\n");
-            xhci->dcbaa[dev_priv->slot_id] = 0;
-            free_frames_bytes_dma32(dev_priv->input_ctx,
-                                    sizeof(xhci_input_ctx_t));
-            free_frames_bytes_dma32(dev_priv->device_ctx,
-                                    sizeof(xhci_device_ctx_t));
-            dev_priv->input_ctx = NULL;
-            dev_priv->device_ctx = NULL;
-            free(dev_priv);
-            device->hcd_private = NULL;
-            xhci_free_command_completion(completion);
-            return -1;
-        }
-    } else {
-        // 命令失败
-        free_frames_bytes_dma32(dev_priv->input_ctx, sizeof(xhci_input_ctx_t));
-        free_frames_bytes_dma32(dev_priv->device_ctx,
-                                sizeof(xhci_device_ctx_t));
-        free(dev_priv);
-    }
-
-    xhci_free_command_completion(completion);
-    return ret;
-}
-
-// 禁用槽位
-static int xhci_disable_slot(usb_hcd_t *hcd, usb_device_t *device) {
-    xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
-    xhci_device_private_t *dev_priv =
-        (xhci_device_private_t *)device->hcd_private;
-
-    if (!dev_priv) {
-        return -1;
-    }
-
-    printk("XHCI: Disabling slot %d\n", dev_priv->slot_id);
-
-    spin_lock(&xhci_command_lock);
-
-    // 发送Disable Slot命令
-    xhci_trb_t *trb =
-        xhci_queue_trb(xhci->cmd_ring, 0, 0,
-                       (TRB_TYPE_DISABLE_SLOT << 10) |
-                           ((uint32_t)dev_priv->slot_id << 24) | TRB_FLAG_IOC);
-
-    xhci_ring_doorbell(xhci, 0, 0);
-
-    spin_unlock(&xhci_command_lock);
-
-    xhci_handle_events(xhci);
-
-    // 清除DCBAA
-    xhci->dcbaa[dev_priv->slot_id] = 0;
-
-    // 释放资源
-    if (dev_priv->device_ctx) {
-        free_frames_bytes_dma32(dev_priv->device_ctx,
-                                sizeof(xhci_device_ctx_t) *
-                                    (xhci->use_64byte_context ? 2 : 1));
-    }
-    if (dev_priv->input_ctx) {
-        free_frames_bytes_dma32(dev_priv->input_ctx,
-                                sizeof(xhci_input_ctx_t) *
-                                    (xhci->use_64byte_context ? 2 : 1));
-    }
-    free(dev_priv);
-
-    device->hcd_private = NULL;
-
-    return 0;
-}
-
-// 地址设备 - 这是设备枚举的关键步骤
-static int xhci_address_device(usb_hcd_t *hcd, usb_device_t *device,
-                               uint8_t address) {
-    xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
-    xhci_device_private_t *dev_priv =
-        (xhci_device_private_t *)device->hcd_private;
-
-    if (!dev_priv) {
-        printk("XHCI: ERROR - Device private data is NULL\n");
-        return -1;
-    }
-
-    // 验证EP0已经初始化
-    if (!device->endpoints[0].hcd_private) {
-        printk("XHCI: CRITICAL - EP0 not initialized!\n");
-        return -1;
-    }
-
-    xhci_endpoint_private_t *ep0_priv =
-        (xhci_endpoint_private_t *)device->endpoints[0].hcd_private;
-
-    if (!ep0_priv->transfer_ring) {
-        printk("XHCI: CRITICAL - EP0 transfer ring not allocated!\n");
-        return -1;
-    }
-
-    if (xhci->use_64byte_context) {
-        // 清零输入上下文
-        memset(dev_priv->input_ctx_64, 0, sizeof(xhci_input_ctx_64_t));
-
-        // ===== 1. 设置输入控制上下文 =====
-        dev_priv->input_ctx_64->ctrl.drop_flags = 0;
-        dev_priv->input_ctx_64->ctrl.add_flags = 0x03; // A0 (Slot) | A1 (EP0)
-
-        // ===== 2. 配置 Slot 上下文 =====
-        uint32_t route_string = 0; // Root hub port
-        uint32_t speed = usb_speed_to_xhci_port_speed(device->speed);
-        uint32_t context_entries = 1; // EP0的DCI是1
-
-        // dev_info: Route String, Speed, Context Entries
-        dev_priv->input_ctx_64->slot.dev_info =
-            SLOT_CTX_ROUTE_STRING(route_string) | SLOT_CTX_SPEED(speed) |
-            SLOT_CTX_CONTEXT_ENTRIES(context_entries);
-
-        // dev_info2: Root Hub Port Number
-        // 注意：如果设备连接在root hub的port N，这里应该设置为N+1
-        uint8_t root_port = device->port + 1;
-        dev_priv->input_ctx_64->slot.dev_info2 =
-            SLOT_CTX_ROOT_HUB_PORT(root_port);
-
-        // tt_info: TT相关，对于高速设备为0
-        dev_priv->input_ctx_64->slot.tt_info = 0;
-
-        // dev_state: 由硬件设置
-        dev_priv->input_ctx_64->slot.dev_state = 0;
-
-        // ===== 3. 配置 EP0 上下文 =====
-
-        // 根据速度确定最大包大小
-        uint16_t max_packet_size;
-        switch (speed) {
-        case USB_SPEED_LOW:
-            max_packet_size = 8;
-            break;
-        case USB_SPEED_FULL:
-            max_packet_size = 8; // 初始值，后续可能更新为64
-            break;
-        case USB_SPEED_HIGH:
-            max_packet_size = 64;
-            break;
-        case USB_SPEED_SUPER:
-        case USB_SPEED_SUPER + 1: // Super Speed Plus
-            max_packet_size = 512;
-            break;
-        default:
-            max_packet_size = 8;
-            break;
-        }
-
-        // ep_info: EP State, Interval, etc.
-        // Control endpoints 没有 interval，设为0
-        dev_priv->input_ctx_64->endpoints[0].ep_info = 0;
-
-        // ep_info2: Error Count, EP Type, Max Burst, Max Packet Size
-        dev_priv->input_ctx_64->endpoints[0].ep_info2 =
-            EP_CTX_ERROR_COUNT(3) |           // CErr = 3
-            EP_CTX_EP_TYPE(EP_TYPE_CONTROL) | // Control endpoint
-            EP_CTX_MAX_BURST(0) |             // Max Burst = 0 for control
-            EP_CTX_MAX_PACKET_SIZE(max_packet_size);
-
-        // tr_dequeue_ptr: Transfer Ring地址 + DCS bit
-        dev_priv->input_ctx_64->endpoints[0].tr_dequeue_ptr =
-            ep0_priv->transfer_ring->phys_addr | EP_CTX_DCS;
-
-        // tx_info: Average TRB Length
-        // 对于控制端点，设置为8（setup packet大小）
-        dev_priv->input_ctx_64->endpoints[0].tx_info = 8;
-
-        device->endpoints[0].max_packet_size = max_packet_size;
-    } else {
-        // 清零输入上下文
-        memset(dev_priv->input_ctx_32, 0, sizeof(xhci_input_ctx_t));
-
-        // ===== 1. 设置输入控制上下文 =====
-        dev_priv->input_ctx_32->ctrl.drop_flags = 0;
-        dev_priv->input_ctx_32->ctrl.add_flags = 0x03; // A0 (Slot) | A1 (EP0)
-
-        // ===== 2. 配置 Slot 上下文 =====
-        uint32_t route_string = 0; // Root hub port
-        uint32_t speed = usb_speed_to_xhci_port_speed(device->speed);
-        uint32_t context_entries = 1; // EP0的DCI是1
-
-        // dev_info: Route String, Speed, Context Entries
-        dev_priv->input_ctx_32->slot.dev_info =
-            SLOT_CTX_ROUTE_STRING(route_string) | SLOT_CTX_SPEED(speed) |
-            SLOT_CTX_CONTEXT_ENTRIES(context_entries);
-
-        // dev_info2: Root Hub Port Number
-        // 注意：如果设备连接在root hub的port N，这里应该设置为N+1
-        uint8_t root_port = device->port + 1;
-        dev_priv->input_ctx_32->slot.dev_info2 =
-            SLOT_CTX_ROOT_HUB_PORT(root_port);
-
-        // tt_info: TT相关，对于高速设备为0
-        dev_priv->input_ctx_32->slot.tt_info = 0;
-
-        // dev_state: 由硬件设置
-        dev_priv->input_ctx_32->slot.dev_state = 0;
-
-        // ===== 3. 配置 EP0 上下文 =====
-
-        // 根据速度确定最大包大小
-        uint16_t max_packet_size;
-        switch (speed) {
-        case USB_SPEED_LOW:
-            max_packet_size = 8;
-            break;
-        case USB_SPEED_FULL:
-            max_packet_size = 8; // 初始值，后续可能更新为64
-            break;
-        case USB_SPEED_HIGH:
-            max_packet_size = 64;
-            break;
-        case USB_SPEED_SUPER:
-        case USB_SPEED_SUPER + 1: // Super Speed Plus
-            max_packet_size = 512;
-            break;
-        default:
-            max_packet_size = 8;
-            break;
-        }
-
-        // ep_info: EP State, Interval, etc.
-        // Control endpoints 没有 interval，设为0
-        dev_priv->input_ctx_32->endpoints[0].ep_info = 0;
-
-        // ep_info2: Error Count, EP Type, Max Burst, Max Packet Size
-        dev_priv->input_ctx_32->endpoints[0].ep_info2 =
-            EP_CTX_ERROR_COUNT(3) |           // CErr = 3
-            EP_CTX_EP_TYPE(EP_TYPE_CONTROL) | // Control endpoint
-            EP_CTX_MAX_BURST(0) |             // Max Burst = 0 for control
-            EP_CTX_MAX_PACKET_SIZE(max_packet_size);
-
-        // tr_dequeue_ptr: Transfer Ring地址 + DCS bit
-        dev_priv->input_ctx_32->endpoints[0].tr_dequeue_ptr =
-            ep0_priv->transfer_ring->phys_addr | EP_CTX_DCS;
-
-        // tx_info: Average TRB Length
-        // 对于控制端点，设置为8（setup packet大小）
-        dev_priv->input_ctx_32->endpoints[0].tx_info = 8;
-
-        device->endpoints[0].max_packet_size = max_packet_size;
-    }
-
-    // 验证输入上下文物理地址对齐
-    if (dev_priv->input_ctx_phys & 0x3F) {
-        printk("XHCI: WARNING - Input context not 64-byte aligned: 0x%lx\n",
-               dev_priv->input_ctx_phys);
-    }
-
-    // ===== 4. 发送 Address Device 命令 =====
-
-    xhci_command_completion_t *completion = xhci_alloc_command_completion();
-    if (!completion) {
-        printk("XHCI: Failed to allocate command completion\n");
-        return -1;
-    }
-
-    completion->device = device;
-
-    spin_lock(&xhci_command_lock);
-
-    // Address Device TRB:
-    // - Parameter: Input Context Pointer
-    // - Status: Reserved (0)
-    // - Control: TRB Type, Slot ID, BSR (Block Set Address Request)
-
-    // BSR=0 表示要真正分配地址（如果BSR=1，只是启用slot但不分配地址）
-    uint32_t control = (TRB_TYPE_ADDRESS_DEV << 10) |        // TRB Type
-                       ((uint32_t)dev_priv->slot_id << 24) | // Slot ID
-                       (0 << 9) |    // BSR = 0 (分配地址)
-                       TRB_FLAG_IOC; // Interrupt on Completion
-
-    xhci_trb_t *cmd_trb =
-        xhci_queue_trb(xhci->cmd_ring,
-                       dev_priv->input_ctx_phys, // Input Context pointer
-                       0,                        // Status (reserved)
-                       control);
-
-    xhci_track_command(xhci, cmd_trb, completion, TRB_TYPE_ADDRESS_DEV);
-
-    // 敲门铃
-    xhci_ring_doorbell(xhci, 0, 0);
-
-    spin_unlock(&xhci_command_lock);
-
-    // 等待命令完成
-    int ret = xhci_wait_for_command(completion, 5000);
-
-    if (ret == 0) {
-        device->address = address;
-        device->state = USB_STATE_ADDRESS;
-    } else {
-        printk("\n*** Address Device FAILED ***\n");
-        printk("Error Code: %d\n", ret);
-        printk("Completion Code: %d\n", completion->completion_code);
-    }
-
-    xhci_free_command_completion(completion);
-    return ret;
-}
-
-static int xhci_configure_endpoint(usb_hcd_t *hcd, usb_endpoint_t *endpoint) {
-    xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
-    usb_device_t *device = endpoint->device;
-    xhci_device_private_t *dev_priv =
-        (xhci_device_private_t *)device->hcd_private;
-
-    if (!dev_priv) {
-        printk("XHCI: Device private data is NULL\n");
-        return -1;
-    }
-
-    uint8_t ep_num = endpoint->address & 0x0F;
-    uint8_t is_in = (endpoint->address & 0x80) ? 1 : 0;
-
-    // 计算 DCI (Device Context Index)
-    // EP0 的 DCI 是 1
-    // 其他端点：OUT 端点 DCI = ep_num * 2, IN 端点 DCI = ep_num * 2 + 1
-    uint8_t dci;
-    if (ep_num == 0) {
-        dci = 1; // EP0
-    } else {
-        dci = (ep_num * 2) + (is_in ? 1 : 0);
-    }
-
-    // 分配端点私有数据
-    xhci_endpoint_private_t *ep_priv =
-        (xhci_endpoint_private_t *)malloc(sizeof(xhci_endpoint_private_t));
-    if (!ep_priv) {
-        printk("XHCI: Failed to allocate endpoint private data\n");
-        return -1;
-    }
-
-    memset(ep_priv, 0, sizeof(xhci_endpoint_private_t));
-    ep_priv->dci = dci;
-
-    // 分配传输环
-    ep_priv->transfer_ring = xhci_alloc_ring(256);
-    if (!ep_priv->transfer_ring) {
-        printk("XHCI: Failed to allocate transfer ring\n");
-        free(ep_priv);
-        return -1;
-    }
-
-    if (xhci->use_64byte_context) {
-        // 清空输入上下文
-        memset(dev_priv->input_ctx_64, 0, sizeof(xhci_input_ctx_64_t));
-
-        // 设置输入控制上下文
-        // A0 (Slot Context) 必须设置，因为我们要更新 Context Entries
-        // A[DCI] 设置我们要配置的端点
-        dev_priv->input_ctx_64->ctrl.add_flags =
-            (1 << dci) | (1 << 0); // A[DCI] | A0
-        dev_priv->input_ctx_64->ctrl.drop_flags = 0;
-
-        // 更新 Slot Context
-        // Context Entries 必须 >= DCI（包含所有活动端点）
-        uint32_t context_entries = dci; // 至少要包含这个端点
-
-        // 保留原有的 route string 和 speed
-        uint32_t route_string = dev_priv->input_ctx_64->slot.dev_info & 0xFFFFF;
-        uint32_t speed = (dev_priv->input_ctx_64->slot.dev_info >> 20) & 0xF;
-
-        // 如果这些值为0（没有初始化），使用设备的值
-        if (speed == 0) {
-            speed = usb_speed_to_xhci_port_speed(device->speed);
-        }
-
-        dev_priv->input_ctx_64->slot.dev_info =
-            SLOT_CTX_ROUTE_STRING(route_string) | SLOT_CTX_SPEED(speed) |
-            SLOT_CTX_CONTEXT_ENTRIES(context_entries);
-
-        // 保留 Root Hub Port Number
-        uint32_t root_port =
-            (dev_priv->input_ctx_64->slot.dev_info2 >> 16) & 0xFF;
-        if (root_port == 0) {
-            root_port = device->port + 1;
-        }
-
-        dev_priv->input_ctx_64->slot.dev_info2 =
-            SLOT_CTX_ROOT_HUB_PORT(root_port);
-
-        // 配置端点上下文
-
-        uint32_t ep_type_attr = endpoint->attributes & 0x03;
-        uint32_t xhci_ep_type;
-
-        // 确定 XHCI EP Type
-        switch (ep_type_attr) {
-        case USB_ENDPOINT_XFER_CONTROL:
-            xhci_ep_type = EP_TYPE_CONTROL; // 4
-            break;
-        case USB_ENDPOINT_XFER_ISOC:
-            xhci_ep_type = is_in ? EP_TYPE_ISOC_IN : EP_TYPE_ISOC_OUT; // 5 : 1
-            break;
-        case USB_ENDPOINT_XFER_BULK:
-            xhci_ep_type = is_in ? EP_TYPE_BULK_IN : EP_TYPE_BULK_OUT; // 6 : 2
-            break;
-        case USB_ENDPOINT_XFER_INT:
-            xhci_ep_type =
-                is_in ? EP_TYPE_INTERRUPT_IN : EP_TYPE_INTERRUPT_OUT; // 7 : 3
-            break;
-        default:
-            printk("XHCI: Unknown endpoint type: 0x%02x\n", ep_type_attr);
-            xhci_free_ring(ep_priv->transfer_ring);
-            free(ep_priv);
-            return -1;
-        }
-
-        // 计算 Interval（对于中断和等时端点）
-        uint32_t interval = 0;
-        if (ep_type_attr == USB_ENDPOINT_XFER_INT ||
-            ep_type_attr == USB_ENDPOINT_XFER_ISOC) {
-
-            // 将 USB bInterval 转换为 XHCI Interval
-            // XHCI Interval = log2(bInterval) for HS/SS
-            // 对于 FS/LS 中断端点，转换公式不同
-
-            uint8_t bInterval = endpoint->interval;
-
-            if (speed == USB_SPEED_HIGH || speed == USB_SPEED_SUPER) {
-                // 对于高速/超速，Interval = bInterval - 1
-                if (bInterval > 0) {
-                    interval = bInterval - 1;
-                }
-            } else {
-                // 对于全速/低速，需要转换
-                // bInterval 是毫秒数，需要转换为 2^n 微帧
-                if (bInterval > 0) {
-                    // 简化：取 log2
-                    uint32_t val = bInterval;
-                    interval = 0;
-                    while (val > 1) {
-                        val >>= 1;
-                        interval++;
-                    }
-                    interval += 3; // 转换到微帧（8微帧 = 1毫秒）
-                }
-            }
-
-            // 限制在有效范围内 (0-15)
-            if (interval > 15) {
-                interval = 15;
-            }
-        }
-
-        // ep_info: Interval, MaxPStreams, Mult, etc.
-        dev_priv->input_ctx_64->endpoints[dci - 1].ep_info =
-            EP_CTX_INTERVAL(interval) |
-            EP_CTX_MAX_P_STREAMS(0) | // 0 = Linear Stream Array
-            EP_CTX_MULT(0);           // 0 for non-SS, not isoc
-
-        // ep_info2: Error Count, EP Type, Max Burst Size, Max Packet Size
-        dev_priv->input_ctx_64->endpoints[dci - 1].ep_info2 =
-            EP_CTX_ERROR_COUNT(3) |        // CErr = 3 (retry count)
-            EP_CTX_EP_TYPE(xhci_ep_type) | // EP Type
-            EP_CTX_MAX_BURST(0) |          // 0 for non-SS endpoints
-            EP_CTX_MAX_PACKET_SIZE(endpoint->max_packet_size);
-
-        // tr_dequeue_ptr: Transfer Ring 物理地址 + DCS
-        dev_priv->input_ctx_64->endpoints[dci - 1].tr_dequeue_ptr =
-            ep_priv->transfer_ring->phys_addr | EP_CTX_DCS;
-
-        // tx_info: Average TRB Length (用于带宽计算)
-        // 对于批量端点，设置为典型值或 max packet size
-        uint32_t avg_trb_length = endpoint->max_packet_size;
-        if (ep_type_attr == USB_ENDPOINT_XFER_CONTROL) {
-            avg_trb_length = 8; // Control setup packet
-        }
-
-        dev_priv->input_ctx_64->endpoints[dci - 1].tx_info = avg_trb_length;
-    } else {
-        // 清空输入上下文
-        memset(dev_priv->input_ctx_32, 0, sizeof(xhci_input_ctx_t));
-
-        // 设置输入控制上下文
-        // A0 (Slot Context) 必须设置，因为我们要更新 Context Entries
-        // A[DCI] 设置我们要配置的端点
-        dev_priv->input_ctx_32->ctrl.add_flags =
-            (1 << dci) | (1 << 0); // A[DCI] | A0
-        dev_priv->input_ctx_32->ctrl.drop_flags = 0;
-
-        // 更新 Slot Context
-        // Context Entries 必须 >= DCI（包含所有活动端点）
-        uint32_t context_entries = dci; // 至少要包含这个端点
-
-        // 保留原有的 route string 和 speed
-        uint32_t route_string = dev_priv->input_ctx_32->slot.dev_info & 0xFFFFF;
-        uint32_t speed = (dev_priv->input_ctx_32->slot.dev_info >> 20) & 0xF;
-
-        // 如果这些值为0（没有初始化），使用设备的值
-        if (speed == 0) {
-            speed = usb_speed_to_xhci_port_speed(device->speed);
-        }
-
-        dev_priv->input_ctx_32->slot.dev_info =
-            SLOT_CTX_ROUTE_STRING(route_string) | SLOT_CTX_SPEED(speed) |
-            SLOT_CTX_CONTEXT_ENTRIES(context_entries);
-
-        // 保留 Root Hub Port Number
-        uint32_t root_port =
-            (dev_priv->input_ctx_32->slot.dev_info2 >> 16) & 0xFF;
-        if (root_port == 0) {
-            root_port = device->port + 1;
-        }
-
-        dev_priv->input_ctx_32->slot.dev_info2 =
-            SLOT_CTX_ROOT_HUB_PORT(root_port);
-
-        // 配置端点上下文
-
-        uint32_t ep_type_attr = endpoint->attributes & 0x03;
-        uint32_t xhci_ep_type;
-
-        // 确定 XHCI EP Type
-        switch (ep_type_attr) {
-        case USB_ENDPOINT_XFER_CONTROL:
-            xhci_ep_type = EP_TYPE_CONTROL; // 4
-            break;
-        case USB_ENDPOINT_XFER_ISOC:
-            xhci_ep_type = is_in ? EP_TYPE_ISOC_IN : EP_TYPE_ISOC_OUT; // 5 : 1
-            break;
-        case USB_ENDPOINT_XFER_BULK:
-            xhci_ep_type = is_in ? EP_TYPE_BULK_IN : EP_TYPE_BULK_OUT; // 6 : 2
-            break;
-        case USB_ENDPOINT_XFER_INT:
-            xhci_ep_type =
-                is_in ? EP_TYPE_INTERRUPT_IN : EP_TYPE_INTERRUPT_OUT; // 7 : 3
-            break;
-        default:
-            printk("XHCI: Unknown endpoint type: 0x%02x\n", ep_type_attr);
-            xhci_free_ring(ep_priv->transfer_ring);
-            free(ep_priv);
-            return -1;
-        }
-
-        // 计算 Interval（对于中断和等时端点）
-        uint32_t interval = 0;
-        if (ep_type_attr == USB_ENDPOINT_XFER_INT ||
-            ep_type_attr == USB_ENDPOINT_XFER_ISOC) {
-
-            // 将 USB bInterval 转换为 XHCI Interval
-            // XHCI Interval = log2(bInterval) for HS/SS
-            // 对于 FS/LS 中断端点，转换公式不同
-
-            uint8_t bInterval = endpoint->interval;
-
-            if (speed == USB_SPEED_HIGH || speed == USB_SPEED_SUPER) {
-                // 对于高速/超速，Interval = bInterval - 1
-                if (bInterval > 0) {
-                    interval = bInterval - 1;
-                }
-            } else {
-                // 对于全速/低速，需要转换
-                // bInterval 是毫秒数，需要转换为 2^n 微帧
-                if (bInterval > 0) {
-                    // 简化：取 log2
-                    uint32_t val = bInterval;
-                    interval = 0;
-                    while (val > 1) {
-                        val >>= 1;
-                        interval++;
-                    }
-                    interval += 3; // 转换到微帧（8微帧 = 1毫秒）
-                }
-            }
-
-            // 限制在有效范围内 (0-15)
-            if (interval > 15) {
-                interval = 15;
-            }
-        }
-
-        // ep_info: Interval, MaxPStreams, Mult, etc.
-        dev_priv->input_ctx_32->endpoints[dci - 1].ep_info =
-            EP_CTX_INTERVAL(interval) |
-            EP_CTX_MAX_P_STREAMS(0) | // 0 = Linear Stream Array
-            EP_CTX_MULT(0);           // 0 for non-SS, not isoc
-
-        // ep_info2: Error Count, EP Type, Max Burst Size, Max Packet Size
-        dev_priv->input_ctx_32->endpoints[dci - 1].ep_info2 =
-            EP_CTX_ERROR_COUNT(3) |        // CErr = 3 (retry count)
-            EP_CTX_EP_TYPE(xhci_ep_type) | // EP Type
-            EP_CTX_MAX_BURST(0) |          // 0 for non-SS endpoints
-            EP_CTX_MAX_PACKET_SIZE(endpoint->max_packet_size);
-
-        // tr_dequeue_ptr: Transfer Ring 物理地址 + DCS
-        dev_priv->input_ctx_32->endpoints[dci - 1].tr_dequeue_ptr =
-            ep_priv->transfer_ring->phys_addr | EP_CTX_DCS;
-
-        // tx_info: Average TRB Length (用于带宽计算)
-        // 对于批量端点，设置为典型值或 max packet size
-        uint32_t avg_trb_length = endpoint->max_packet_size;
-        if (ep_type_attr == USB_ENDPOINT_XFER_CONTROL) {
-            avg_trb_length = 8; // Control setup packet
-        }
-
-        dev_priv->input_ctx_32->endpoints[dci - 1].tx_info = avg_trb_length;
-    }
-    // 发送 Configure Endpoint 命令
-
-    xhci_command_completion_t *completion = xhci_alloc_command_completion();
-    if (!completion) {
-        printk("XHCI: Failed to allocate command completion\n");
-        xhci_free_ring(ep_priv->transfer_ring);
-        free(ep_priv);
-        return -1;
-    }
-
-    completion->device = device;
-
-    spin_lock(&xhci_command_lock);
-
-    // Configure Endpoint TRB
-    xhci_trb_t *cmd_trb =
-        xhci_queue_trb(xhci->cmd_ring, dev_priv->input_ctx_phys, 0,
-                       (TRB_TYPE_CONFIG_EP << 10) |
-                           ((uint32_t)dev_priv->slot_id << 24) | TRB_FLAG_IOC);
-
-    xhci_track_command(xhci, cmd_trb, completion, TRB_TYPE_CONFIG_EP);
-
-    xhci_ring_doorbell(xhci, 0, 0);
-
-    spin_unlock(&xhci_command_lock);
-
-    // 等待命令完成
-    int ret = xhci_wait_for_command(completion, 5000);
-
-    if (ret == 0) {
-        endpoint->hcd_private = ep_priv;
-    } else {
-        printk("XHCI: Configure Endpoint failed\n");
-        xhci_free_ring(ep_priv->transfer_ring);
-        free(ep_priv);
-    }
-
-    xhci_free_command_completion(completion);
-    return ret;
-}
-
-spinlock_t xhci_transfer_lock = {0};
-
-// 控制传输 - 使用等待机制
-static int xhci_control_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer,
-                                 usb_device_request_t *setup) {
-    xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
-    usb_device_t *device = transfer->device;
-    xhci_device_private_t *dev_priv =
-        (xhci_device_private_t *)device->hcd_private;
-
-    if (!dev_priv) {
-        return -1;
-    }
-
-    uint8_t dci = 1;
-    xhci_endpoint_private_t *ep_priv =
-        (xhci_endpoint_private_t *)device->endpoints[0].hcd_private;
-
-    if (!ep_priv) {
-        return -1;
-    }
-
-    xhci_ring_t *ring = ep_priv->transfer_ring;
-
-    // 分配完成结构
-    xhci_transfer_completion_t *completion = xhci_alloc_transfer_completion();
-    if (!completion) {
-        return -1;
-    }
-    completion->transfer_type = NORMAL_TRANSFER;
-    completion->transfer = transfer;
-
-    spin_lock(&xhci_transfer_lock);
-
-    // Setup Stage TRB
-    uint64_t setup_data = *(uint64_t *)setup;
-
-    xhci_trb_t *first_trb = xhci_queue_trb(
-        ring, setup_data, 8,
-        (TRB_TYPE_SETUP << 10) | TRB_FLAG_IDT |
-            ((transfer->length > 0 && transfer->buffer)
-                 ? ((setup->bmRequestType & USB_DIR_IN) ? (3 << 16) : (2 << 16))
-                 : (0 << 16)));
-
-    // Data Stage TRB
-    if (transfer->length > 0 && transfer->buffer) {
-        uint64_t data_addr = translate_address(get_current_page_dir(false),
-                                               (uint64_t)transfer->buffer);
-        uint32_t direction =
-            (setup->bmRequestType & USB_DIR_IN) ? (1 << 16) : 0;
-        xhci_queue_trb(ring, data_addr, transfer->length,
-                       (TRB_TYPE_DATA << 10) | direction);
-    }
-
-    // Status Stage TRB
-    uint32_t status_dir = (setup->bmRequestType & USB_DIR_IN) ? 0 : (1 << 16);
-    if (transfer->length == 0) {
-        status_dir = (setup->bmRequestType & USB_DIR_IN) ? (1 << 16) : 0;
-    }
-
-    xhci_queue_trb(ring, 0, 0,
-                   (TRB_TYPE_STATUS << 10) | status_dir | TRB_FLAG_IOC);
-
-    uint8_t first_index = first_trb - ring->trbs;
-
-    // 跟踪传输
-    xhci_track_transfer(
-        xhci, first_trb,
-        xhci_calc_trbs_num(ring->enqueue_index, first_index, ring->size),
-        completion, transfer);
-
-    // 敲门铃
-    xhci_ring_doorbell(xhci, dev_priv->slot_id, dci);
-
-    spin_unlock(&xhci_transfer_lock);
-
-    // 等待传输完成（5秒超时）
-    int ret = xhci_wait_for_transfer(completion, 5000);
-
-    if (ret >= 0) {
-        transfer->status = 0;
-        transfer->actual_length = completion->transferred_length;
-    } else {
-        transfer->status = ret;
-        transfer->actual_length = 0;
-    }
-
-    xhci_free_transfer_completion(completion);
-
-    return ret;
-}
-
-// 批量传输 - 使用等待机制
-static int xhci_bulk_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
-    xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
-    usb_device_t *device = transfer->device;
-    xhci_device_private_t *dev_priv =
-        (xhci_device_private_t *)device->hcd_private;
-    xhci_endpoint_private_t *ep_priv =
-        (xhci_endpoint_private_t *)transfer->endpoint->hcd_private;
-
-    if (!dev_priv || !ep_priv) {
-        return -1;
-    }
-
-    xhci_ring_t *ring = ep_priv->transfer_ring;
-
-    // 分配完成结构
-    xhci_transfer_completion_t *completion = xhci_alloc_transfer_completion();
-    if (!completion) {
-        return -1;
-    }
-    completion->transfer_type = NORMAL_TRANSFER;
-    completion->transfer = transfer;
-
-    spin_lock(&xhci_transfer_lock);
-
-    // 获取第一个TRB指针
-    xhci_trb_t *first_trb = NULL;
-
-    uint16_t max_packet_size = transfer->endpoint->max_packet_size;
-
-    size_t td_packet_count =
-        (transfer->length + max_packet_size - 1) / max_packet_size;
-
-    size_t progress = 0;
-
-    while (progress < transfer->length) {
-        uint64_t data_addr = translate_address(
-            get_current_page_dir(false), (uint64_t)transfer->buffer + progress);
-
-        size_t chunk = MIN(transfer->length - progress,
-                           DEFAULT_PAGE_SIZE - (progress % DEFAULT_PAGE_SIZE));
-
-        bool chain = (progress + chunk) < transfer->length;
-
-        size_t td_size = td_packet_count - (progress + chunk) / max_packet_size;
-        if ((progress + chunk) >= transfer->length)
-            td_size = 0;
-
-        // Normal TRB
-        if (td_size > 31)
-            td_size = 31;
-        xhci_trb_t *trb = xhci_queue_trb(
-            ring, data_addr, chunk | (td_size << 17),
-            (TRB_TYPE_NORMAL << 10) | (chain ? TRB_FLAG_CHAIN : TRB_FLAG_IOC));
-
-        if (!first_trb) {
-            first_trb = trb;
-        }
-
-        progress += chunk;
-    }
-
-    uint8_t first_index = first_trb - ring->trbs;
-
-    // 跟踪传输
-    xhci_track_transfer(
-        xhci, first_trb,
-        xhci_calc_trbs_num(ring->enqueue_index, first_index, ring->size),
-        completion, transfer);
-
-    // 敲门铃
-    xhci_ring_doorbell(xhci, dev_priv->slot_id, ep_priv->dci);
-
-    spin_unlock(&xhci_transfer_lock);
-
-    // 等待传输完成
-    int ret = xhci_wait_for_transfer(completion, 5000);
-
-    if (ret >= 0) {
-        transfer->status = 0;
-        transfer->actual_length = completion->transferred_length;
-    } else {
-        transfer->status = ret;
-        transfer->actual_length = 0;
-    }
-
-    xhci_free_transfer_completion(completion);
-
-    return ret;
-}
-
-// 中断传输 - 使用需放到单独线程
-static int xhci_interrupt_transfer(usb_hcd_t *hcd, usb_transfer_t *transfer) {
-    xhci_hcd_t *xhci = (xhci_hcd_t *)hcd->private_data;
-    usb_device_t *device = transfer->device;
-    xhci_device_private_t *dev_priv =
-        (xhci_device_private_t *)device->hcd_private;
-    xhci_endpoint_private_t *ep_priv =
-        (xhci_endpoint_private_t *)transfer->endpoint->hcd_private;
-
-    if (!dev_priv || !ep_priv) {
-        return -1;
-    }
-
-    xhci_ring_t *ring = ep_priv->transfer_ring;
-
-    // 分配完成结构
-    xhci_transfer_completion_t *completion = xhci_alloc_transfer_completion();
-    if (!completion) {
-        return -1;
-    }
-    completion->transfer_type = INTR_TRANSFER;
-    completion->transfer = transfer;
-
-    spin_lock(&xhci_transfer_lock);
-
-    // Normal TRB
-    uint64_t data_addr = translate_address(get_current_page_dir(false),
-                                           (uint64_t)transfer->buffer);
-
-    uint32_t control = (TRB_TYPE_NORMAL << 10) | TRB_FLAG_IOC;
-
-    xhci_trb_t *first_trb =
-        xhci_queue_trb(ring, data_addr, transfer->length, control);
-
-    uint8_t first_index = first_trb - ring->trbs;
-
-    // 跟踪传输
-    xhci_track_transfer(
-        xhci, first_trb,
-        xhci_calc_trbs_num(ring->enqueue_index, first_index, ring->size),
-        completion, transfer);
-
-    // 敲门铃
-    xhci_ring_doorbell(xhci, dev_priv->slot_id, ep_priv->dci);
-
-    spin_unlock(&xhci_transfer_lock);
-
-    int ret = xhci_wait_for_transfer(completion, 0);
-
-    if (ret >= 0) {
-        transfer->status = 0;
-        transfer->actual_length = completion->transferred_length;
-    } else {
-        transfer->status = ret;
-        transfer->actual_length = 0;
-    }
-
-    xhci_free_transfer_completion(completion);
-
-    return 0;
-}
-
-typedef struct enumerater_arg {
-    usb_hcd_t *hcd;
-    uint8_t port_id;
-} enumerater_arg_t;
-
-spinlock_t enumerate_lock = {0};
-
-void xhci_device_enumerater(enumerater_arg_t *arg) {
-    spin_lock(&enumerate_lock);
-
-    usb_hcd_t *hcd = arg->hcd;
-
-    xhci_hcd_t *xhci = hcd->private_data;
-
-    if (hcd) {
-        int ret = usb_enumerate_device(hcd, xhci->root_hub, arg->port_id);
-        if (ret == 1) {
-            printk("XHCI: Device on port %d enumerated successfully\n",
-                   arg->port_id);
-        } else {
-            printk("XHCI: Failed to enumerate device on port %d\n",
-                   arg->port_id);
-        }
-    }
-
-    free(arg);
-
-    spin_unlock(&enumerate_lock);
-
-    task_exit(0);
-}
-
-// 处理端口状态变化
-void xhci_handle_port_status(xhci_hcd_t *xhci, uint8_t port_id) {
-    if (port_id >= xhci->max_ports) {
-        return;
-    }
-
-    uint32_t portsc = xhci_readl(&xhci->port_regs[port_id].portsc);
-
-    // printk("XHCI: Port %d status: 0x%08x\n", port_id, portsc);
-
-    // 连接状态变化
-    if ((portsc & XHCI_PORTSC_CCS) && !xhci->connection[port_id]) {
-        // 设备连接
-        printk("XHCI: Device connected on port %d\n", port_id);
-
-        // 等待端口稳定
-        uint64_t target_time = 100000000ULL + nanoTime(); // 100ms
-        while (nanoTime() < target_time) {
-            arch_enable_interrupt();
-            arch_pause();
-        }
-        arch_disable_interrupt();
-
-        xhci->connection[port_id] = true;
-
-        enumerater_arg_t *arg = malloc(sizeof(enumerater_arg_t));
-        arg->hcd = xhci->hcd;
-        arg->port_id = port_id;
-
-        task_create("enumerater", (void (*)(uint64_t))xhci_device_enumerater,
-                    (uint64_t)arg, KTHREAD_PRIORITY);
-    } else if (!(portsc & XHCI_PORTSC_CCS) && xhci->connection[port_id]) {
-        printk("XHCI: Device disconnected on port %d\n", port_id);
-        xhci->connection[port_id] = false;
-    }
-
-    if (portsc & XHCI_PORTSC_PEC) {
-        // 端口使能变化
-        printk("XHCI: Port %d enable changed\n", port_id);
-        xhci_writel(&xhci->port_regs[port_id].portsc, portsc | XHCI_PORTSC_PEC);
-    }
-
-    // if (portsc & XHCI_PORTSC_PRC) {
-    //     // 端口重置完成
-    //     printk("XHCI: Port %d reset complete\n", port_id);
-    //     xhci_writel(&xhci->port_regs[port_id].portsc, portsc |
-    //     XHCI_PORTSC_PRC);
-    // }
-}
-
-// 初始化XHCI驱动
-usb_hcd_t *xhci_init(void *mmio_base, pci_device_t *pci_dev) {
-    // 分配XHCI上下文
-    xhci_hcd_t *xhci = (xhci_hcd_t *)malloc(sizeof(xhci_hcd_t));
+static struct usb_xhci_s *xhci_controller_setup(void *baseaddr) {
+    struct usb_xhci_s *xhci = malloc(sizeof(*xhci));
     if (!xhci) {
-        printk("XHCI: Failed to allocate context\n");
         return NULL;
     }
-    memset(xhci, 0, sizeof(xhci_hcd_t));
+    memset(xhci, 0, sizeof(*xhci));
+    xhci->caps = baseaddr;
+    xhci->op = baseaddr + readb(&xhci->caps->caplength);
+    xhci->pr = baseaddr + readb(&xhci->caps->caplength) + 0x400;
+    xhci->db = baseaddr + readl(&xhci->caps->dboff);
+    xhci->ir = baseaddr + readl(&xhci->caps->rtsoff) + 0x20;
 
-    // 初始化寄存器指针
-    xhci->cap_regs = (xhci_cap_regs_t *)mmio_base;
+    uint32_t hcs1 = readl(&xhci->caps->hcsparams1);
+    uint32_t hcc = readl(&xhci->caps->hccparams);
+    xhci->ports = (hcs1 >> 24) & 0xff;
+    xhci->slots = hcs1 & 0xff;
+    xhci->xcap = ((hcc >> 16) & 0xffff) << 2;
+    xhci->context64 = (hcc & 0x04) ? 1 : 0;
+    xhci->usb.type = USB_TYPE_XHCI;
 
-    uint8_t caplength = xhci->cap_regs->caplength;
-    uint32_t rtsoff = xhci_readl(&xhci->cap_regs->rtsoff);
-    uint32_t dboff = xhci_readl(&xhci->cap_regs->dboff);
+    if (xhci->xcap) {
+        uint32_t off;
+        void *addr = baseaddr + xhci->xcap;
+        do {
+            struct xhci_xcap *xcap = addr;
+            uint32_t ports, name, cap = readl(&xcap->cap);
+            switch (cap & 0xff) {
+            case 0x02:
+                name = readl(&xcap->data[0]);
+                ports = readl(&xcap->data[1]);
+                uint8_t major = (cap >> 24) & 0xff;
+                uint8_t minor = (cap >> 16) & 0xff;
+                uint8_t count = (ports >> 8) & 0xff;
+                uint8_t start = (ports >> 0) & 0xff;
+                printk("XHCI protocol %c%c%c%c %x.%02x"
+                       ", %d ports (offset %d), def %x\n",
+                       (name >> 0) & 0xff, (name >> 8) & 0xff,
+                       (name >> 16) & 0xff, (name >> 24) & 0xff, major, minor,
+                       count, start, ports >> 16);
+                if (name == 0x20425355) { /* "USB " */
+                    if (major == 2) {
+                        xhci->usb2.start = start;
+                        xhci->usb2.count = count;
+                    }
+                    if (major == 3) {
+                        xhci->usb3.start = start;
+                        xhci->usb3.count = count;
+                    }
+                }
+                break;
+            default:
+                printk("XHCI    extcap 0x%x @ %p\n", cap & 0xff, addr);
+                break;
+            }
+            off = (cap >> 8) & 0xff;
+            addr += off << 2;
+        } while (off > 0);
+    }
 
-    xhci->op_regs = (xhci_op_regs_t *)((uint8_t *)mmio_base + caplength);
-    xhci->runtime_regs = (xhci_runtime_regs_t *)((uint8_t *)mmio_base + rtsoff);
-    xhci->doorbell_regs = (uint32_t *)((uint8_t *)mmio_base + dboff);
-
-    xhci->port_regs = (xhci_port_regs_t *)((uint8_t *)xhci->op_regs + 0x400);
-    xhci->intr_regs =
-        (xhci_intr_regs_t *)((uint8_t *)xhci->runtime_regs + 0x20);
-
-    memset(xhci->connection, 0, sizeof(xhci->connection));
-
-    xhci->pci_dev = pci_dev;
-
-    // 注册HCD
-    usb_hcd_t *hcd = usb_register_hcd("xhci", &xhci_ops, mmio_base, xhci);
-    if (!hcd) {
-        printk("XHCI: Failed to register HCD\n");
+    uint32_t pagesize = readl(&xhci->op->pagesize);
+    if (DEFAULT_PAGE_SIZE != (pagesize << 12)) {
+        printk("XHCI driver does not support page size code %d\n",
+               pagesize << 12);
         free(xhci);
         return NULL;
     }
 
-    return hcd;
+    return xhci;
 }
 
-// 关闭XHCI驱动
-void xhci_shutdown(usb_hcd_t *hcd) {
-    if (hcd) {
-        usb_unregister_hcd(hcd);
+// Signal the hardware to process events on a TRB ring
+static void xhci_doorbell(struct usb_xhci_s *xhci, uint32_t slotid,
+                          uint32_t value) {
+    struct xhci_db *db = xhci->db;
+    void *addr = &db[slotid].doorbell;
+    writel(addr, value);
+}
+
+// Dequeue events on the XHCI command ring generated by the hardware
+static void xhci_process_events(struct usb_xhci_s *xhci) {
+    struct xhci_ring *evts = xhci->evts;
+
+    for (;;) {
+        /* check for event */
+        uint32_t nidx = evts->nidx;
+        uint32_t cs = evts->cs;
+        struct xhci_trb *etrb = evts->ring + nidx;
+        uint32_t control = etrb->control;
+        if ((control & TRB_C) != (cs ? 1 : 0))
+            return;
+
+        /* process event */
+        uint32_t evt_type = TRB_TYPE(control);
+        uint32_t evt_cc = (etrb->status >> 24) & 0xff;
+        switch (evt_type) {
+        case ER_TRANSFER:
+        case ER_COMMAND_COMPLETE: {
+            struct xhci_trb *rtrb = (void *)phys_to_virt(
+                ((uint64_t)etrb->ptr_high << 32) | etrb->ptr_low);
+            struct xhci_ring *ring = XHCI_RING(rtrb);
+            struct xhci_trb *evt = &ring->evt;
+            uint32_t eidx = rtrb - ring->ring + 1;
+            memcpy(evt, etrb, sizeof(*etrb));
+            ring->eidx = eidx;
+            break;
+        }
+        case ER_PORT_STATUS_CHANGE: {
+            uint32_t port = ((etrb->ptr_low >> 24) & 0xff) - 1;
+            // Read status, and clear port status change bits
+            uint32_t portsc = readl(&xhci->pr[port].portsc);
+            uint32_t pclear =
+                (((portsc & ~(XHCI_PORTSC_PED | XHCI_PORTSC_PR)) &
+                  ~(XHCI_PORTSC_PLS_MASK << XHCI_PORTSC_PLS_SHIFT)) |
+                 (1 << XHCI_PORTSC_PLS_SHIFT));
+            writel(&xhci->pr[port].portsc, pclear);
+
+            xhci_print_port_state(3, __func__, port, portsc);
+            break;
+        }
+        default:
+            printk("%s: unknown event, type %d, cc %d\n", __func__, evt_type,
+                   evt_cc);
+            break;
+        }
+
+        /* move ring index, notify xhci */
+        nidx++;
+        if (nidx == XHCI_RING_ITEMS) {
+            nidx = 0;
+            cs = cs ? 0 : 1;
+            evts->cs = cs;
+        }
+        evts->nidx = nidx;
+        struct xhci_ir *ir = xhci->ir;
+        uint64_t erdp = translate_address(get_current_page_dir(false),
+                                          (uint64_t)(evts->ring + nidx));
+        writel(&ir->erdp_low, erdp);
+        writel(&ir->erdp_high, erdp >> 32);
     }
+}
+
+// Check if a ring has any pending TRBs
+static int xhci_ring_busy(struct xhci_ring *ring) {
+    uint32_t eidx = ring->eidx;
+    uint32_t nidx = ring->nidx;
+    return (eidx != nidx);
+}
+
+// Wait for a ring to empty (all TRBs processed by hardware)
+static int xhci_event_wait(struct usb_xhci_s *xhci, struct xhci_ring *ring,
+                           uint32_t timeout) {
+    for (;;) {
+        xhci_process_events(xhci);
+        if (!xhci_ring_busy(ring)) {
+            uint32_t status = ring->evt.status;
+            return (status >> 24) & 0xff;
+        }
+        arch_pause();
+    }
+}
+
+// Add a TRB to the given ring
+static void xhci_trb_fill(struct xhci_ring *ring, void *data, uint32_t xferlen,
+                          uint32_t flags) {
+    struct xhci_trb *dst = &ring->ring[ring->nidx];
+    if (flags & TRB_TR_IDT) {
+        memcpy(&dst->ptr_low, data, xferlen);
+    } else {
+        uint64_t phys =
+            translate_address(get_current_page_dir(false), (uint64_t)data);
+        dst->ptr_low = phys;
+        dst->ptr_high = phys >> 32;
+    }
+    dst->status = xferlen;
+    dst->control = flags | (ring->cs ? TRB_C : 0);
+}
+
+// Queue a TRB onto a ring, wrapping ring as needed
+static void xhci_trb_queue(struct xhci_ring *ring, void *data, uint32_t xferlen,
+                           uint32_t flags) {
+    if (ring->nidx >= (sizeof(ring->ring) / sizeof(ring->ring[0])) - 1) {
+        xhci_trb_fill(ring, ring->ring, 0, (TR_LINK << 10) | TRB_LK_TC);
+        ring->nidx = 0;
+        ring->cs ^= 1;
+    }
+
+    xhci_trb_fill(ring, data, xferlen, flags);
+    ring->nidx++;
+}
+
+// Submit a command to the xhci controller ring
+static int xhci_cmd_submit(struct usb_xhci_s *xhci, struct xhci_inctx *inctx,
+                           uint32_t flags) {
+    if (inctx) {
+        struct xhci_slotctx *slot = (void *)&inctx[1 << xhci->context64];
+        uint32_t port = ((slot->ctx[1] >> 16) & 0xff) - 1;
+        uint32_t portsc = readl(&xhci->pr[port].portsc);
+        if (!(portsc & XHCI_PORTSC_CCS)) {
+            // Device no longer connected?!
+            xhci_print_port_state(1, __func__, port, portsc);
+            return -1;
+        }
+    }
+
+    spin_lock(&xhci->cmds->lock);
+    xhci_trb_queue(xhci->cmds, inctx, 0, flags);
+    xhci_doorbell(xhci, 0, 0);
+    int rc = xhci_event_wait(xhci, xhci->cmds, 1000);
+    spin_unlock(&xhci->cmds->lock);
+    return rc;
+}
+
+static int xhci_cmd_enable_slot(struct usb_xhci_s *xhci) {
+    int cc = xhci_cmd_submit(xhci, NULL, CR_ENABLE_SLOT << 10);
+    if (cc != CC_SUCCESS)
+        return -1;
+    return (xhci->cmds->evt.control >> 24) & 0xff;
+}
+
+static int xhci_cmd_disable_slot(struct usb_xhci_s *xhci, uint32_t slotid) {
+    return xhci_cmd_submit(xhci, NULL,
+                           (CR_DISABLE_SLOT << 10) | (slotid << 24));
+}
+
+static int xhci_cmd_address_device(struct usb_xhci_s *xhci, uint32_t slotid,
+                                   struct xhci_inctx *inctx) {
+    return xhci_cmd_submit(xhci, inctx,
+                           (CR_ADDRESS_DEVICE << 10) | (slotid << 24));
+}
+
+static int xhci_cmd_configure_endpoint(struct usb_xhci_s *xhci, uint32_t slotid,
+                                       struct xhci_inctx *inctx) {
+    return xhci_cmd_submit(xhci, inctx,
+                           (CR_CONFIGURE_ENDPOINT << 10) | (slotid << 24));
+}
+
+static int xhci_cmd_evaluate_context(struct usb_xhci_s *xhci, uint32_t slotid,
+                                     struct xhci_inctx *inctx) {
+    return xhci_cmd_submit(xhci, inctx,
+                           (CR_EVALUATE_CONTEXT << 10) | (slotid << 24));
+}
+
+static struct xhci_inctx *xhci_alloc_inctx(struct usbdevice_s *usbdev,
+                                           int maxepid) {
+    struct usb_xhci_s *xhci =
+        container_of(usbdev->hub->cntl, struct usb_xhci_s, usb);
+    int size = (sizeof(struct xhci_inctx) * 33) << xhci->context64;
+    struct xhci_inctx *in = alloc_frames_bytes_dma32(size);
+    if (!in) {
+        return NULL;
+    }
+    memset(in, 0, size);
+
+    struct xhci_slotctx *slot = (void *)&in[1 << xhci->context64];
+    slot->ctx[0] |= maxepid << 27; // context entries
+    slot->ctx[0] |= speed_to_xhci[usbdev->speed] << 20;
+
+    // Set high-speed hub flags.
+    struct usbdevice_s *hubdev = usbdev->hub->usbdev;
+    if (hubdev) {
+        if (usbdev->speed == USB_LOWSPEED || usbdev->speed == USB_FULLSPEED) {
+            struct xhci_pipe *hpipe =
+                container_of(hubdev->defpipe, struct xhci_pipe, pipe);
+            if (hubdev->speed == USB_HIGHSPEED) {
+                slot->ctx[2] |= hpipe->slotid;
+                slot->ctx[2] |= (usbdev->port + 1) << 8;
+            } else {
+                struct xhci_slotctx *hslot = (void *)phys_to_virt(
+                    ((uint64_t)xhci->devs[hpipe->slotid].ptr_high << 32) |
+                    xhci->devs[hpipe->slotid].ptr_low);
+                slot->ctx[2] = hslot->ctx[2];
+            }
+        }
+        uint32_t route = 0;
+        while (usbdev->hub->usbdev) {
+            route <<= 4;
+            route |= (usbdev->port + 1) & 0xf;
+            usbdev = usbdev->hub->usbdev;
+        }
+        slot->ctx[0] |= route;
+    }
+
+    slot->ctx[1] |= (usbdev->port + 1) << 16;
+
+    return in;
+}
+
+static int xhci_config_hub(struct usbhub_s *hub) {
+    struct usb_xhci_s *xhci = container_of(hub->cntl, struct usb_xhci_s, usb);
+    struct xhci_pipe *pipe =
+        container_of(hub->usbdev->defpipe, struct xhci_pipe, pipe);
+    struct xhci_slotctx *hdslot = (void *)phys_to_virt(
+        ((uint64_t)xhci->devs[pipe->slotid].ptr_high << 32) |
+        xhci->devs[pipe->slotid].ptr_low);
+    if ((hdslot->ctx[3] >> 27) == 3)
+        // Already configured
+        return 0;
+    struct xhci_inctx *in = xhci_alloc_inctx(hub->usbdev, 1);
+    if (!in)
+        return -1;
+    in->add = 0x01;
+    struct xhci_slotctx *slot = (void *)&in[1 << xhci->context64];
+    slot->ctx[0] |= 1 << 26;
+    slot->ctx[1] |= hub->portcount << 24;
+
+    int cc = xhci_cmd_configure_endpoint(xhci, pipe->slotid, in);
+    free(in);
+    if (cc != CC_SUCCESS) {
+        return -1;
+    }
+    return 0;
+}
+
+static struct usb_pipe *
+xhci_alloc_pipe(struct usbdevice_s *usbdev,
+                struct usb_endpoint_descriptor *epdesc) {
+    uint8_t eptype = epdesc->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK;
+    struct usb_xhci_s *xhci =
+        container_of(usbdev->hub->cntl, struct usb_xhci_s, usb);
+    struct xhci_pipe *pipe;
+    uint32_t epid;
+
+    if (epdesc->bEndpointAddress == 0) {
+        epid = 1;
+    } else {
+        epid = (epdesc->bEndpointAddress & 0x0f) * 2;
+        epid += (epdesc->bEndpointAddress & USB_DIR_IN) ? 1 : 0;
+    }
+
+    if (eptype == USB_ENDPOINT_XFER_CONTROL)
+        pipe = alloc_frames_bytes_dma32(sizeof(*pipe));
+    else
+        pipe = alloc_frames_bytes_dma32(sizeof(*pipe));
+    if (!pipe) {
+        return NULL;
+    }
+    memset(pipe, 0, sizeof(*pipe));
+
+    usb_desc2pipe(&pipe->pipe, usbdev, epdesc);
+    pipe->epid = epid;
+    pipe->reqs.cs = 1;
+    if (eptype == USB_ENDPOINT_XFER_INT) {
+        pipe->buf = alloc_frames_bytes_dma32(pipe->pipe.maxpacket);
+        if (!pipe->buf) {
+            free_frames_bytes_dma32(pipe, sizeof(*pipe));
+            return NULL;
+        }
+    }
+
+    // Allocate input context and initialize endpoint info.
+    struct xhci_inctx *in = xhci_alloc_inctx(usbdev, epid);
+    if (!in)
+        goto fail;
+    in->add = 0x01 | (1 << epid);
+    struct xhci_epctx *ep = (void *)&in[(pipe->epid + 1) << xhci->context64];
+    if (eptype == USB_ENDPOINT_XFER_INT)
+        ep->ctx[0] = (usb_get_period(usbdev, epdesc) + 3) << 16;
+    ep->ctx[1] |= eptype << 3;
+    if (epdesc->bEndpointAddress & USB_DIR_IN ||
+        eptype == USB_ENDPOINT_XFER_CONTROL)
+        ep->ctx[1] |= 1 << 5;
+    ep->ctx[1] |= pipe->pipe.maxpacket << 16;
+    uint64_t deq = translate_address(get_current_page_dir(false),
+                                     (uint64_t)&pipe->reqs.ring[0]);
+    ep->deq_low = deq;
+    ep->deq_high = deq >> 32;
+    ep->deq_low |= 1; // dcs
+    ep->length = pipe->pipe.maxpacket;
+
+    if (pipe->epid == 1) {
+        if (usbdev->hub->usbdev) {
+            // Make sure parent hub is configured.
+            int ret = xhci_config_hub(usbdev->hub);
+            if (ret)
+                goto fail;
+        }
+        // Enable slot.
+        uint32_t size = (sizeof(struct xhci_slotctx) * 32) << xhci->context64;
+        struct xhci_slotctx *dev = alloc_frames_bytes_dma32(size);
+        if (!dev) {
+            goto fail;
+        }
+        int slotid = xhci_cmd_enable_slot(xhci);
+        if (slotid < 0) {
+            free_frames_bytes_dma32(dev, size);
+            goto fail;
+        }
+        memset(dev, 0, size);
+        uint64_t dcba =
+            translate_address(get_current_page_dir(false), (uint64_t)dev);
+        xhci->devs[slotid].ptr_low = dcba;
+        xhci->devs[slotid].ptr_high = dcba >> 32;
+
+        // Send set_address command.
+        int cc = xhci_cmd_address_device(xhci, slotid, in);
+        if (cc != CC_SUCCESS) {
+            cc = xhci_cmd_disable_slot(xhci, slotid);
+            if (cc != CC_SUCCESS) {
+                goto fail;
+            }
+            xhci->devs[slotid].ptr_low = 0;
+            free_frames_bytes_dma32(dev, size);
+            goto fail;
+        }
+        pipe->slotid = slotid;
+    } else {
+        struct xhci_pipe *defpipe =
+            container_of(usbdev->defpipe, struct xhci_pipe, pipe);
+        pipe->slotid = defpipe->slotid;
+        // Send configure command.
+        int cc = xhci_cmd_configure_endpoint(xhci, pipe->slotid, in);
+        if (cc != CC_SUCCESS) {
+            goto fail;
+        }
+    }
+    int size = (sizeof(struct xhci_inctx) * 33) << xhci->context64;
+    free_frames_bytes_dma32(in, size);
+    return &pipe->pipe;
+
+fail:
+    free(pipe->buf);
+    free(pipe);
+    free(in);
+    return NULL;
+}
+
+struct usb_pipe *xhci_realloc_pipe(struct usbdevice_s *usbdev,
+                                   struct usb_pipe *upipe,
+                                   struct usb_endpoint_descriptor *epdesc) {
+    if (!epdesc) {
+        usb_add_freelist(upipe);
+        return NULL;
+    }
+    if (!upipe)
+        return xhci_alloc_pipe(usbdev, epdesc);
+    uint8_t eptype = epdesc->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK;
+    int oldmaxpacket = upipe->maxpacket;
+    usb_desc2pipe(upipe, usbdev, epdesc);
+    struct xhci_pipe *pipe = container_of(upipe, struct xhci_pipe, pipe);
+    struct usb_xhci_s *xhci =
+        container_of(pipe->pipe.cntl, struct usb_xhci_s, usb);
+    if (eptype != USB_ENDPOINT_XFER_CONTROL || upipe->maxpacket == oldmaxpacket)
+        return upipe;
+
+    // maxpacket has changed on control endpoint - update controller.
+    struct xhci_inctx *in = xhci_alloc_inctx(usbdev, 1);
+    if (!in)
+        return upipe;
+    in->add = (1 << 1);
+    struct xhci_epctx *ep = (void *)&in[2 << xhci->context64];
+    ep->ctx[1] |= (pipe->pipe.maxpacket << 16);
+    int cc = xhci_cmd_evaluate_context(xhci, pipe->slotid, in);
+    // if (cc != CC_SUCCESS) {
+    //     dprintf(1, "%s: reconf ctl endpoint: failed (cc %d)\n", __func__,
+    //     cc);
+    // }
+    int size = (sizeof(struct xhci_inctx) * 33) << xhci->context64;
+    free_frames_bytes_dma32(in, size);
+
+    return upipe;
+}
+
+// Submit a USB "setup" message request to the pipe's ring
+static void xhci_xfer_setup(struct xhci_pipe *pipe, int dir, void *cmd,
+                            void *data, int datalen) {
+    struct usb_xhci_s *xhci =
+        container_of(pipe->pipe.cntl, struct usb_xhci_s, usb);
+    xhci_trb_queue(&pipe->reqs, cmd, USB_CONTROL_SETUP_SIZE,
+                   (TR_SETUP << 10) | TRB_TR_IDT |
+                       ((datalen ? (dir ? 3 : 2) : 0) << 16));
+    if (datalen)
+        xhci_trb_queue(&pipe->reqs, data, datalen,
+                       (TR_DATA << 10) | ((dir ? 1 : 0) << 16));
+    xhci_trb_queue(&pipe->reqs, NULL, 0,
+                   (TR_STATUS << 10) | TRB_TR_IOC | ((dir ? 0 : 1) << 16));
+    xhci_doorbell(xhci, pipe->slotid, pipe->epid);
+}
+
+// Submit a USB transfer request to the pipe's ring
+static void xhci_xfer_normal(struct xhci_pipe *pipe, void *data, int datalen) {
+    struct usb_xhci_s *xhci =
+        container_of(pipe->pipe.cntl, struct usb_xhci_s, usb);
+    xhci_trb_queue(&pipe->reqs, data, datalen, (TR_NORMAL << 10) | TRB_TR_IOC);
+    xhci_doorbell(xhci, pipe->slotid, pipe->epid);
+}
+
+int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data,
+                   int datalen) {
+    struct xhci_pipe *pipe = container_of(p, struct xhci_pipe, pipe);
+    struct usb_xhci_s *xhci =
+        container_of(pipe->pipe.cntl, struct usb_xhci_s, usb);
+
+    if (cmd) {
+        const struct usb_ctrlrequest *req = cmd;
+        if (req->bRequest == USB_REQ_SET_ADDRESS)
+            // Set address command sent during xhci_alloc_pipe.
+            return 0;
+        xhci_xfer_setup(pipe, dir, (void *)req, data, datalen);
+    } else {
+        xhci_xfer_normal(pipe, data, datalen);
+    }
+
+    int cc = xhci_event_wait(xhci, &pipe->reqs, usb_xfer_time(p, datalen));
+    if (cc != CC_SUCCESS && cc != CC_SHORT_PACKET) {
+        printk("%s: xfer failed (cc %d)\n", __func__, cc);
+        return -1;
+    }
+
+    return 0;
+}
+
+int xhci_poll_intr(struct usb_pipe *p, void *data) {
+    struct xhci_pipe *pipe = container_of(p, struct xhci_pipe, pipe);
+    struct usb_xhci_s *xhci =
+        container_of(pipe->pipe.cntl, struct usb_xhci_s, usb);
+    uint32_t len = pipe->pipe.maxpacket;
+    void *buf = pipe->buf;
+    int bufused = pipe->bufused;
+
+    if (!bufused) {
+        xhci_xfer_normal(pipe, buf, len);
+        bufused = 1;
+        pipe->bufused = bufused;
+        return -1;
+    }
+
+    xhci_process_events(xhci);
+    if (xhci_ring_busy(&pipe->reqs))
+        return -1;
+    memcpy(data, buf, len);
+    xhci_xfer_normal(pipe, buf, len);
+    return 0;
 }
 
 int xhci_hcd_driver_probe(pci_device_t *pci_dev, uint32_t vendor_device_id) {
@@ -2215,14 +1071,16 @@ int xhci_hcd_driver_probe(pci_device_t *pci_dev, uint32_t vendor_device_id) {
         get_current_page_dir(false), (uint64_t)mmio_vaddr, mmio_base, mmio_size,
         PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE | PT_FLAG_DEVICE);
 
-    usb_hcd_t *xhci_hcd = xhci_init(mmio_vaddr, pci_dev);
+    struct usb_xhci_s *xhci = xhci_controller_setup(mmio_vaddr);
+    configure_xhci(xhci);
+    pci_dev->desc = xhci;
 
     return 0;
 }
 
-void xhci_hcd_driver_remove(pci_device_t *dev) { xhci_shutdown(dev->desc); }
+void xhci_hcd_driver_remove(pci_device_t *dev) {}
 
-void xhci_hcd_driver_shutdown(pci_device_t *dev) { xhci_shutdown(dev->desc); }
+void xhci_hcd_driver_shutdown(pci_device_t *dev) {}
 
 pci_driver_t xhci_hcd_driver = {
     .name = "xhci_hcd",

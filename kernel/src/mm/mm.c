@@ -304,6 +304,9 @@ uintptr_t alloc_frames(size_t count) {
 
 // 释放页框
 void free_frames(uintptr_t addr, size_t count) {
+    if (!addr)
+        return;
+
     size_t required_pages = next_power_of_2(count);
     size_t order = log2_floor(required_pages);
 
@@ -328,6 +331,9 @@ uintptr_t alloc_frames_dma32(size_t count) {
 }
 
 void free_frames_dma32(uintptr_t addr, size_t count) {
+    if (!addr)
+        return;
+
     size_t required_pages = next_power_of_2(count);
     size_t order = log2_floor(required_pages);
 
