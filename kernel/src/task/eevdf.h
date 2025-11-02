@@ -84,7 +84,6 @@ struct sched_entity {
     uint64_t custom_slice;
     uint64_t deadline;
     uint64_t exec_start;
-    uint64_t min_vruntime;
     uint64_t sum_exec_runtime;
     int64_t vlag;
     bool is_idle; // 是否是IDLE进程

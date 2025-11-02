@@ -251,8 +251,6 @@ void task_init() {
     arch_set_current(idle_tasks[current_cpu_id]);
 
     task_initialized = true;
-
-    can_schedule = true;
 }
 
 uint64_t push_slice(uint64_t ustack, uint8_t *slice, uint64_t len) {
@@ -404,14 +402,11 @@ uint64_t get_node_size(vfs_node_t node) {
 
 uint64_t task_execve(const char *path_user, const char **argv,
                      const char **envp) {
-    can_schedule = false;
-
     char path[1024];
     strncpy(path, path_user, sizeof(path));
 
     vfs_node_t node = vfs_open(path);
     if (!node) {
-        can_schedule = true;
         return (uint64_t)-ENOENT;
     }
 
@@ -573,7 +568,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
             if (new_envp[i])
                 free(new_envp[i]);
         free(new_envp);
-        can_schedule = true;
         return (uint64_t)-EINVAL;
     }
 
@@ -587,9 +581,10 @@ uint64_t task_execve(const char *path_user, const char **argv,
             if (new_envp[i])
                 free(new_envp[i]);
         free(new_envp);
-        can_schedule = true;
         return (uint64_t)-ENOEXEC;
     }
+
+    current_task->state = TASK_UNINTERRUPTABLE;
 
     // 处理程序头
     Elf64_Phdr *phdr = (Elf64_Phdr *)((char *)buffer + ehdr->e_phoff);
@@ -619,7 +614,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
                     if (new_envp[i])
                         free(new_envp[i]);
                 free(new_envp);
-                can_schedule = true;
                 return (uint64_t)-ENOENT;
             }
 
@@ -873,7 +867,10 @@ uint64_t task_execve(const char *path_user, const char **argv,
     }
 
     current_task->is_kernel = false;
-    can_schedule = true;
+
+    arch_disable_interrupt();
+
+    current_task->state = TASK_READY;
 
     arch_to_user_mode(current_task->arch_context,
                       interpreter_entry ? interpreter_entry : e_entry, stack);
@@ -1015,14 +1012,11 @@ void task_exit_inner(task_t *task, int64_t code) {
     }
 
     procfs_on_exit_task(task);
-
     can_schedule = true;
 }
 
 uint64_t task_exit(int64_t code) {
     arch_disable_interrupt();
-
-    can_schedule = false;
 
     spin_lock(&task_queue_lock);
     uint64_t continue_ptr_count = 0;
@@ -1177,6 +1171,8 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
 
 uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                    int *parent_tid, int *child_tid, uint64_t tls) {
+    current_task->state = TASK_UNINTERRUPTABLE;
+
     arch_disable_interrupt();
 
     if (flags & CLONE_VFORK) {
@@ -1187,10 +1183,9 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     task_t *child = get_free_task();
     if (child == NULL) {
+        current_task->state = TASK_READY;
         return (uint64_t)-ENOMEM;
     }
-
-    can_schedule = false;
 
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
     child->call_in_signal = current_task->call_in_signal;
@@ -1337,7 +1332,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     add_eevdf_entity_with_prio(child, child->priority,
                                schedulers[child->cpu_id]);
 
-    can_schedule = true;
+    current_task->state = TASK_READY;
 
     if ((flags & CLONE_VFORK)) {
         current_task->child_vfork_done = false;
