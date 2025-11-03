@@ -211,11 +211,6 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     return task;
 }
 
-task_t *task_search(uint32_t cpu_id) {
-    task_t *task = pick_next_task(schedulers[cpu_id]);
-    return task ? task : idle_tasks[cpu_id];
-}
-
 void idle_entry(uint64_t arg) {
     while (1) {
         arch_enable_interrupt();
@@ -1047,10 +1042,7 @@ uint64_t task_exit(int64_t code) {
 
     can_schedule = true;
 
-    task_t *next = task_search(current_cpu_id);
-
-    arch_set_current(next);
-    arch_switch_with_context(NULL, next->arch_context, next->kernel_stack);
+    schedule();
 
     // never return !!!
 
@@ -1718,4 +1710,37 @@ uint64_t sys_setpriority(int which, int who, int niceval) {
         printk("sys_setpriority: Unsupported which: %d\n", which);
         return (uint64_t)-EINVAL;
     }
+}
+
+extern void task_signal();
+
+void schedule() {
+    arch_disable_interrupt();
+
+    task_t *prev = current_task;
+    task_t *next = pick_next_task(schedulers[current_cpu_id]);
+
+    if (prev == next) {
+        return;
+    }
+
+    if (next->signal & SIGMASK(SIGKILL)) {
+        return;
+    }
+
+    sched_update_itimer();
+    sched_update_timerfd();
+
+    task_signal();
+
+    if (next->arch_context->dead) {
+        next = idle_tasks[current_cpu_id];
+    }
+
+    prev->current_state = prev->state;
+    next->current_state = TASK_RUNNING;
+
+    arch_set_current(next);
+
+    switch_to(prev, next);
 }

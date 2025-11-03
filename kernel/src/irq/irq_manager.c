@@ -25,8 +25,7 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num) {
 
     if ((irq_num == ARCH_TIMER_IRQ) && can_schedule &&
         current_task->state != TASK_UNINTERRUPTABLE) {
-        arch_task_switch_to(regs, current_task,
-                            task_search(current_task->cpu_id));
+        schedule();
     }
 }
 

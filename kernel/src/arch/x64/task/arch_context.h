@@ -39,6 +39,8 @@ struct fpstate {
 } __attribute__((packed));
 
 typedef struct arch_context {
+    uint64_t rip;
+    uint64_t rsp;
     uint64_t fsbase;
     uint64_t gsbase;
     task_mm_info_t *mm;
@@ -46,6 +48,26 @@ typedef struct arch_context {
     fpu_context_t *fpu_ctx;
     bool dead;
 } arch_context_t;
+
+#define switch_to(prev, next)                                                  \
+    do {                                                                       \
+        asm volatile("pushq %%rbp\n\t"                                         \
+                     "pushq %%rax\n\t"                                         \
+                     "movq %%rsp, %0\n\t"                                      \
+                     "movq %2, %%rsp\n\t"                                      \
+                     "leaq 1f(%%rip), %%rax\n\t"                               \
+                     "movq %%rax, %1\n\t"                                      \
+                     "pushq %3\n\t"                                            \
+                     "jmp __switch_to\n\t"                                     \
+                     "1:\n\t"                                                  \
+                     "popq %%rax\n\t"                                          \
+                     "popq %%rbp\n\t"                                          \
+                     : "=m"(prev->arch_context->rsp),                          \
+                       "=m"(prev->arch_context->rip)                           \
+                     : "m"(next->arch_context->rsp),                           \
+                       "m"(next->arch_context->rip), "D"(prev), "S"(next)      \
+                     : "memory");                                              \
+    } while (0)
 
 typedef struct arch_signal_frame {
     uint64_t r8;
@@ -87,8 +109,6 @@ void arch_context_free(arch_context_t *context);
 task_t *arch_get_current();
 void arch_set_current(task_t *current);
 
-void arch_switch_with_context(arch_context_t *prev, arch_context_t *next,
-                              uint64_t kernel_stack);
 void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next);
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
                                uint64_t stack);

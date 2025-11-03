@@ -112,7 +112,6 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem);
 
 size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old);
 
-task_t *task_search(uint32_t cpu_id);
 int task_block(task_t *task, task_state_t state, int64_t timeout_ns);
 void task_unblock(task_t *task, int reason);
 
@@ -220,3 +219,5 @@ extern task_t *tasks[MAX_TASK_NUM];
 extern task_t *idle_tasks[MAX_CPU_NUM];
 
 extern struct eevdf_t *schedulers[MAX_CPU_NUM];
+
+void schedule();

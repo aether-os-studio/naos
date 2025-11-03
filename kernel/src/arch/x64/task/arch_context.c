@@ -4,6 +4,35 @@
 #include <task/task.h>
 #include <task/eevdf.h>
 
+void kernel_thread_func();
+asm("kernel_thread_func:\n\t"
+    "    popq %r15\n\t"
+    "    popq %r14\n\t"
+    "    popq %r13\n\t"
+    "    popq %r12\n\t"
+    "    popq %r11\n\t"
+    "    popq %r10\n\t"
+    "    popq %r9\n\t"
+    "    popq %r8\n\t"
+    "    popq %rbx\n\t"
+    "    popq %rcx\n\t"
+    "    popq %rdx\n\t"
+    "    popq %rsi\n\t"
+    "    popq %rdi\n\t"
+    "    popq %rbp\n\t"
+    "    popq %rax\n\t"
+    "    movq %rax, %ds\n\t"
+    "    popq %rax \n\t"
+    "    movq %rax, %es\n\t"
+    "    popq %rax \n\t"
+    "    addq $0x38, %rsp\n\t"
+    "    movq %rdx, %rdi\n\t"
+    "    callq *%rbx\n\t"
+    "    movq $0, %rdi\n\t"
+    "    callq task_exit\n\t");
+
+extern void ret_from_exception();
+
 void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
                        uint64_t entry, uint64_t stack, bool user_mode,
                        uint64_t initial_arg) {
@@ -25,20 +54,26 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->mm->brk_current = context->mm->brk_start;
     context->mm->brk_end = USER_BRK_END;
     context->ctx = (struct pt_regs *)(stack - 8) - 1;
-    context->ctx->rip = entry;
     context->ctx->rsp = stack - 8;
     context->ctx->rbp = stack - 8;
     context->ctx->rflags = (0UL << 12) | (0b10) | (1UL << 9);
-    context->ctx->rdi = initial_arg;
     context->fsbase = 0;
     context->gsbase = 0;
     context->dead = false;
     if (user_mode) {
+        context->rip = (uint64_t)kernel_thread_func;
+        context->rsp = (uint64_t)context->ctx;
+        context->ctx->rbx = entry;
+        context->ctx->rdx = initial_arg;
         context->ctx->cs = SELECTOR_USER_CS;
         context->ctx->ds = SELECTOR_USER_DS;
         context->ctx->es = SELECTOR_USER_DS;
         context->ctx->ss = SELECTOR_USER_DS;
     } else {
+        context->rip = (uint64_t)ret_from_exception;
+        context->rsp = (uint64_t)context->ctx;
+        context->ctx->rip = entry;
+        context->ctx->rdi = initial_arg;
         context->ctx->cs = SELECTOR_KERNEL_CS;
         context->ctx->ds = SELECTOR_KERNEL_DS;
         context->ctx->es = SELECTOR_KERNEL_DS;
@@ -58,6 +93,8 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
         printk("dst->mm == NULL!!! dst = %#018lx", dst);
     }
     dst->ctx = (struct pt_regs *)(stack - 8) - 1;
+    dst->rip = (uint64_t)ret_from_exception;
+    dst->rsp = (uint64_t)dst->ctx;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
     dst->ctx->rax = 0;
     dst->fpu_ctx = alloc_frames_bytes(DEFAULT_PAGE_SIZE);
@@ -84,74 +121,38 @@ void arch_set_current(task_t *current) { write_kgsbase((uint64_t)current); }
 
 extern tss_t tss[MAX_CPU_NUM];
 
-void arch_switch_with_context(arch_context_t *prev, arch_context_t *next,
-                              uint64_t kernel_stack) {
-    arch_disable_interrupt();
-
+void __switch_to(task_t *prev, task_t *next) {
     if (prev) {
-        prev->fsbase = read_fsbase();
-        prev->gsbase = read_gsbase();
+        prev->arch_context->fsbase = read_fsbase();
+        prev->arch_context->gsbase = read_gsbase();
 
-        if (prev->fpu_ctx && ((uint64_t)prev->fpu_ctx & 15) == 0) {
-            asm volatile("fxsave (%0)" ::"r"(prev->fpu_ctx));
+        if (prev->arch_context->fpu_ctx) {
+            asm volatile("fxsave (%0)" ::"r"(prev->arch_context->fpu_ctx));
         }
     }
 
     // Start to switch
-    if (next->fpu_ctx && ((uint64_t)next->fpu_ctx & 15) == 0) {
-        asm volatile("fxrstor (%0)" ::"r"(next->fpu_ctx));
+    if (next->arch_context->fpu_ctx) {
+        asm volatile("fxrstor (%0)" ::"r"(next->arch_context->fpu_ctx));
     }
 
-    if (!prev || (prev->mm != next->mm)) {
-        asm volatile("movq %0, %%cr3" ::"r"(next->mm->page_table_addr));
+    if (!prev || (prev->arch_context->mm != next->arch_context->mm)) {
+        asm volatile(
+            "movq %0, %%cr3" ::"r"(next->arch_context->mm->page_table_addr));
     }
 
-    tss[current_cpu_id].rsp0 = kernel_stack - 8;
+    tss[current_cpu_id].rsp0 = next->kernel_stack - 8;
 
-    write_fsbase(next->fsbase);
-    write_gsbase(next->gsbase);
-
-    asm volatile("movq %0, %%rsp\n\t"
-                 "jmp ret_from_exception" ::"r"(next->ctx));
-}
-
-extern void task_signal();
-
-void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next) {
-    prev->arch_context->ctx = ctx;
-
-    if (prev == next) {
-        return;
-    }
-
-    if (next->signal & SIGMASK(SIGKILL)) {
-        return;
-    }
-
-    sched_update_itimer();
-    sched_update_timerfd();
-
-    task_signal();
-
-    if (next->arch_context->dead) {
-        next = idle_tasks[current_cpu_id];
-    }
-
-    prev->current_state = prev->state;
-    next->current_state = TASK_RUNNING;
-
-    arch_set_current(next);
-
-    arch_switch_with_context(prev->arch_context, next->arch_context,
-                             next->kernel_stack);
-
-    next->current_state = next->state;
-    prev->current_state = TASK_RUNNING;
+    write_fsbase(next->arch_context->fsbase);
+    write_gsbase(next->arch_context->gsbase);
 }
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
                                uint64_t stack) {
     context->ctx = (struct pt_regs *)(current_task->kernel_stack - 8) - 1;
+
+    context->rip = (uint64_t)ret_from_exception;
+    context->rsp = (uint64_t)context->ctx;
 
     memset(context->ctx, 0, sizeof(struct pt_regs));
 
@@ -187,8 +188,7 @@ extern bool task_initialized;
 void arch_yield() {
     if (task_initialized) {
         sched_yield(schedulers[current_cpu_id]);
-        asm volatile(
-            "sti\n\tint %0\n\tcli\n\t" ::"i"(APIC_TIMER_INTERRUPT_VECTOR));
+        schedule();
     }
 }
 

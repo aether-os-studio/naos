@@ -394,6 +394,12 @@ void task_signal() {
 
     spin_unlock(&current_task->signal_lock);
 
-    arch_switch_with_context(NULL, current_task->arch_context,
-                             current_task->kernel_stack);
+#if defined(__x86_64__)
+    asm volatile(
+        "movq %0, %%rsp\n\t"
+        "jmp ret_from_exception" ::"r"(current_task->arch_context->ctx));
+#elif defined(__aarch64__)
+#elif defined(__riscv)
+#elif defined(__loongarch64)
+#endif
 }
