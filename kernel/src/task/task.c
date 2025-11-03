@@ -912,7 +912,8 @@ void task_unblock(task_t *task, int reason) {
     struct sched_entity *entity = task->sched_info;
     if (!entity->on_rq) {
         spin_lock(&schedulers[task->cpu_id]->queue_lock);
-        insert_sched_entity(schedulers[task->cpu_id]->root, entity);
+        insert_sched_entity(schedulers[task->cpu_id],
+                            schedulers[task->cpu_id]->root, entity);
         spin_unlock(&schedulers[task->cpu_id]->queue_lock);
         entity->on_rq = true;
     }
@@ -990,6 +991,13 @@ void task_exit_inner(task_t *task, int64_t code) {
         task->is_vfork = false;
     }
 
+    if (task->waitpid != 0 && task->waitpid < MAX_TASK_NUM &&
+        tasks[task->waitpid] &&
+        (tasks[task->waitpid]->state == TASK_BLOCKING ||
+         tasks[task->waitpid]->state == TASK_READING_STDIO)) {
+        task_unblock(tasks[task->waitpid], EOK);
+    }
+
     if (task->ppid && task->pid != task->ppid && task->ppid < MAX_TASK_NUM &&
         tasks[task->ppid]) {
         void *handler = tasks[task->ppid]->actions[SIGCHLD].sa_handler;
@@ -1003,13 +1011,6 @@ void task_exit_inner(task_t *task, int64_t code) {
         task_unblock(tasks[task->ppid], EOK);
     } else if (task->pid == task->ppid) {
         task->should_free = true;
-    }
-
-    if (task->waitpid != 0 && task->waitpid < MAX_TASK_NUM &&
-        tasks[task->waitpid] &&
-        (tasks[task->waitpid]->state == TASK_BLOCKING ||
-         tasks[task->waitpid]->state == TASK_READING_STDIO)) {
-        task_unblock(tasks[task->waitpid], EOK);
     }
 
     procfs_on_exit_task(task);
@@ -1181,6 +1182,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         flags |= CLONE_VM;
         flags |= CLONE_FILES;
         flags |= CLONE_SIGHAND;
+        flags |= CLONE_THREAD;
     }
 
     task_t *child = get_free_task();
@@ -1351,14 +1353,14 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     child->state = TASK_READY;
     child->current_state = TASK_READY;
 
+    current_task->child_vfork_done = false;
+
     add_eevdf_entity_with_prio(child, child->priority,
                                schedulers[child->cpu_id]);
 
     can_schedule = true;
 
     if ((flags & CLONE_VFORK)) {
-        current_task->child_vfork_done = false;
-
         while (!current_task->child_vfork_done) {
             arch_enable_interrupt();
             arch_yield();

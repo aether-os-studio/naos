@@ -565,7 +565,7 @@ static struct usb_xhci_s *xhci_controller_setup(void *baseaddr) {
                 }
                 break;
             default:
-                printk("XHCI    extcap 0x%x @ %p\n", cap & 0xff, addr);
+                printk("XHCI extcap 0x%x @ %p\n", cap & 0xff, addr);
                 break;
             }
             off = (cap >> 8) & 0xff;

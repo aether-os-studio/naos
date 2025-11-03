@@ -122,7 +122,8 @@ struct sched_entity *new_entity(task_t *task, uint64_t prio, eevdf_t *sched);
  * @param root 树根节点
  * @param se 调度单元
  */
-void insert_sched_entity(struct rb_root *root, struct sched_entity *se);
+void insert_sched_entity(eevdf_t *eevdf_sched, struct rb_root *root,
+                         struct sched_entity *se);
 
 void remove_sched_entity(eevdf_t *eevdf_sched, struct rb_root *root,
                          struct sched_entity *se);
@@ -147,3 +148,5 @@ task_t *pick_next_task(eevdf_t *eevdf_sched);
 void add_eevdf_entity_with_prio(task_t *new_task, uint64_t prio,
                                 eevdf_t *eevdf_sched);
 void remove_eevdf_entity(task_t *thread, eevdf_t *eevdf_sched);
+
+void sched_yield(eevdf_t *eevdf_sched);

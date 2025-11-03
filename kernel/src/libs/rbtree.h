@@ -1,11 +1,6 @@
 #pragma once
 
-#undef NULL
-#if defined(__cplusplus)
-#define NULL 0
-#else
-#define NULL ((void *)0)
-#endif
+#include <libs/klibc.h>
 
 struct rb_node {
     unsigned long rb_parent_color;
@@ -80,6 +75,8 @@ extern struct rb_node *rb_last(const struct rb_root *);
 extern void rb_replace_node(struct rb_node *victim, struct rb_node *new,
                             struct rb_root *root);
 
+extern void rb_inorder_callback(struct rb_node *node,
+                                void (*cb)(struct rb_node *));
 extern void rb_traverse_with_callback(struct rb_root *root,
                                       void (*cb)(struct rb_node *));
 

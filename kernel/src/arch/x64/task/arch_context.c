@@ -186,9 +186,7 @@ extern bool task_initialized;
 
 void arch_yield() {
     if (task_initialized) {
-        struct sched_entity *curr_se =
-            (struct sched_entity *)current_task->sched_info;
-        curr_se->is_yield = true;
+        sched_yield(schedulers[current_cpu_id]);
         asm volatile(
             "sti\n\tint %0\n\tcli\n\t" ::"i"(APIC_TIMER_INTERRUPT_VECTOR));
     }
