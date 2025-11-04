@@ -179,7 +179,7 @@ static page_table_t *copy_page_table_recursive(page_table_t *source_table,
     page_table_t *new_table = (page_table_t *)phys_to_virt(phy_frame);
     for (uint64_t i = 0;
          i <
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__riscv__)
          (all_copy ? 512 : (level == ARCH_MAX_PT_LEVEL ? 256 : 512));
 #else
          512;
@@ -213,7 +213,7 @@ static void free_page_table_recursive(page_table_t *table, int level) {
     }
 
     for (int i = 0; i <
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__riscv__)
                     (level == ARCH_MAX_PT_LEVEL ? 256 : 512);
 #else
                     512;
@@ -236,7 +236,7 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
     new_mm->page_table_addr = virt_to_phys((uint64_t)copy_page_table_recursive(
         (page_table_t *)old->page_table_addr, ARCH_MAX_PT_LEVEL,
         !!(clone_flags & CLONE_VM), false));
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__riscv__)
     memcpy((uint64_t *)phys_to_virt(new_mm->page_table_addr) + 256,
            (uint64_t *)phys_to_virt(old->page_table_addr) + 256,
            DEFAULT_PAGE_SIZE / 2);

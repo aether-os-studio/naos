@@ -16,7 +16,8 @@ uint64_t *get_current_page_dir(bool user) {
 }
 
 uint64_t get_arch_page_table_flags(uint64_t flags) {
-    uint64_t result = ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_DIRTY;
+    uint64_t result =
+        ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_ACCESSED | ARCH_PT_FLAG_DIRTY;
 
     if ((flags & PT_FLAG_R) != 0) {
         result |= ARCH_PT_FLAG_READ;
@@ -118,7 +119,7 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
     uint64_t pmd_idx = PMD_INDEX(vaddr);
     uint64_t pte_idx = PTE_INDEX(vaddr);
 
-    pgd_t *pgd_entry = phys_to_virt(&pgdir[pgd_idx]);
+    pgd_t *pgd_entry = &pgdir[pgd_idx];
     pud_t *pud_table;
 
     if (!pte_present(*pgd_entry)) {
@@ -229,7 +230,7 @@ uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
     uint64_t pmd_idx = PMD_INDEX(vaddr);
     uint64_t pte_idx = PTE_INDEX(vaddr);
 
-    pgd_t *pgd_entry = phys_to_virt(&pgdir[pgd_idx]);
+    pgd_t *pgd_entry = &pgdir[pgd_idx];
     pud_t *pud_table;
 
     if (!pte_present(*pgd_entry)) {
@@ -296,7 +297,7 @@ uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr) {
     uint64_t pmd_idx = PMD_INDEX(vaddr);
     uint64_t pte_idx = PTE_INDEX(vaddr);
 
-    pgd_t *pgd_entry = phys_to_virt(&pgdir[pgd_idx]);
+    pgd_t *pgd_entry = &pgdir[pgd_idx];
     if (!pte_present(*pgd_entry)) {
         return 0; // PGD 表项无效，地址转换失败
     }

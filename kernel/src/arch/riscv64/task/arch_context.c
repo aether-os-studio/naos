@@ -103,8 +103,7 @@ void __switch_to(task_t *prev, task_t *next, uint64_t kernel_stack) {
                                     next->arch_context->mm->page_table_addr);
 
     asm volatile("csrw satp, %0" : : "r"(satp) : "memory");
-
-    asm volatile("sfence.vma zero, zero\n\t");
+    asm volatile("sfence.vma" : : : "memory");
 }
 
 extern void task_signal();
@@ -140,11 +139,29 @@ void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next) {
     prev->current_state = TASK_RUNNING;
 }
 
+extern void ret_from_trap_handler();
+
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
-                               uint64_t stack) {}
+                               uint64_t stack) {
+    context->ctx = (struct pt_regs *)current_task->kernel_stack - 1;
+
+    context->ra = (uint64_t)ret_from_trap_handler;
+    context->sp = (uint64_t)context->ctx;
+
+    memset(context->ctx, 0, sizeof(struct pt_regs));
+
+    context->ctx->epc = entry;
+    context->ctx->sp = stack;
+    context->ctx->sstatus = (2UL << 32) | (1UL << 5);
+}
 
 void arch_to_user_mode(arch_context_t *context, uint64_t entry,
-                       uint64_t stack) {}
+                       uint64_t stack) {
+    arch_context_to_user_mode(context, entry, stack);
+
+    asm volatile("mv sp, %0\n\t"
+                 "j ret_from_trap_handler\n\t" ::"r"(context->ctx));
+}
 
 extern bool task_initialized;
 

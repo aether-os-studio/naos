@@ -75,6 +75,7 @@ void init_thread(uint64_t arg) {
     printk("run init failed\n");
 
     while (1) {
-        arch_pause();
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
     }
 }

@@ -530,9 +530,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 &current_task->arch_context->mm->task_vma_mgr);
     }
 
-    if (current_task->is_vfork ||
-        current_task->is_kernel ==
-            (uint64_t)virt_to_phys(get_kernel_page_dir())) {
+    if (current_task->is_vfork || current_task->is_kernel) {
         task_mm_info_t *new_mm =
             clone_page_table(current_task->arch_context->mm, 0);
         if (!current_task->is_kernel) {
@@ -551,6 +549,11 @@ uint64_t task_execve(const char *path_user, const char **argv,
 #if defined(__x86_64__)
     asm volatile("movq %0, %%cr3" ::"r"(
         current_task->arch_context->mm->page_table_addr));
+#elif defined(__riscv__)
+    uint64_t satp = MAKE_SATP_PADDR(
+        SATP_MODE_SV48, 0, current_task->arch_context->mm->page_table_addr);
+    asm volatile("csrw satp, %0" : : "r"(satp) : "memory");
+    asm volatile("sfence.vma" : : : "memory");
 #endif
 
     const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)buffer;
