@@ -6,7 +6,9 @@
 #define MAX_ORDER 20
 
 enum zone_type {
-    ZONE_DMA,    // 0-16MB，用于传统 ISA DMA
+#if defined(__x86_64__)
+    ZONE_DMA, // 0-16MB，用于传统 ISA DMA
+#endif
     ZONE_DMA32,  // 0-4GB，用于 32 位 DMA
     ZONE_NORMAL, // 正常内存
     __MAX_NR_ZONES

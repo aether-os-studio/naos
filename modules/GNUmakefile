@@ -54,8 +54,10 @@ endif
 all:
 	mkdir -p ../modules-$(ARCH)
 
+ifeq ($(ARCH), x86_64)
 	$(MAKE) -C ahci
 	$(MAKE) -C nvme
+endif
 	$(MAKE) -C usb
 	$(MAKE) -C e1000
 	$(MAKE) -C virtio

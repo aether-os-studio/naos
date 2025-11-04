@@ -1,7 +1,11 @@
 #include <mm/buddy.h>
 #include <arch/arch.h>
 
-const char *zone_names[__MAX_NR_ZONES] = {"DMA", "DMA32", "Normal"};
+const char *zone_names[__MAX_NR_ZONES] = {
+#if defined(__x86_64__)
+    "DMA",
+#endif
+    "DMA32", "Normal"};
 
 page_t *mem_map = NULL;
 uint64_t max_pfn = 0;
@@ -23,9 +27,12 @@ static inline per_cpu_pages_t *this_cpu_zone_pcp(zone_t *zone) {
 enum zone_type pfn_to_zone_type(uint64_t pfn) {
     uint64_t phys = pfn * DEFAULT_PAGE_SIZE;
 
+#if defined(__x86_64__)
     if (phys < ZONE_DMA_END)
         return ZONE_DMA;
-    else if (phys < ZONE_DMA32_END)
+    else
+#endif
+        if (phys < ZONE_DMA32_END)
         return ZONE_DMA32;
     else
         return ZONE_NORMAL;
@@ -43,8 +50,10 @@ bool zone_has_memory(zone_t *zone) { return zone && zone->managed_pages > 0; }
 
 // GFP 标志到首选 zone 的映射
 static enum zone_type gfp_zone(uint32_t gfp_flags) {
+#if defined(__x86_64__)
     if (gfp_flags & GFP_DMA)
         return ZONE_DMA;
+#endif
     if (gfp_flags & GFP_DMA32)
         return ZONE_DMA32;
     return ZONE_NORMAL;
@@ -451,10 +460,12 @@ void zones_init(void) {
     uint64_t dma_end = MIN(max_pfn, ZONE_DMA_END / DEFAULT_PAGE_SIZE);
     uint64_t dma32_end = MIN(max_pfn, ZONE_DMA32_END / DEFAULT_PAGE_SIZE);
 
+#if defined(__x86_64__)
     if (min_pfn < dma_end) {
         init_zone(zones[ZONE_DMA], ZONE_DMA, min_pfn, dma_end);
         nr_zones++;
     }
+#endif
 
     if (dma_end < dma32_end) {
         init_zone(zones[ZONE_DMA32], ZONE_DMA32, dma_end, dma32_end);

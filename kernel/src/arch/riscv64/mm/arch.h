@@ -60,14 +60,14 @@ void arch_flush_tlb(uint64_t vaddr);
 // 读取SATP寄存器
 static inline uint64_t read_satp(void) {
     uint64_t satp;
-    __asm__ volatile("csrr %0, satp" : "=r"(satp) : : "memory");
+    asm volatile("csrr %0, satp" : "=r"(satp) : : "memory");
     return satp;
 }
 
 // 写入SATP寄存器
 static inline void write_satp(uint64_t satp) {
-    __asm__ volatile("csrw satp, %0" : : "r"(satp) : "memory");
+    asm volatile("csrw satp, %0" : : "r"(satp) : "memory");
 
     // 刷新TLB以确保新的页表生效
-    __asm__ volatile("sfence.vma" : : : "memory");
+    asm volatile("sfence.vma" : : : "memory");
 }

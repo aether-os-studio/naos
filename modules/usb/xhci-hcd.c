@@ -8,6 +8,7 @@
 #include "xhci-hcd.h"
 #include <libs/aether/mm.h>
 #include <libs/aether/pci.h>
+#include <libs/aether/irq.h>
 
 // --------------------------------------------------------------
 // configuration
@@ -224,6 +225,8 @@ struct xhci_portmap {
 struct usb_xhci_s {
     struct usb_s usb;
 
+    pci_device_t *pci_dev;
+
     /* devinfo */
     uint32_t xcap;
     uint32_t ports;
@@ -322,7 +325,6 @@ static int xhci_hub_reset(struct usbhub_s *hub, uint32_t port) {
         break;
     case PLS_POLLING:
         // A USB2 port - perform device reset
-        xhci_print_port_state(3, __func__, port, portsc);
         writel(&xhci->pr[port].portsc, portsc | XHCI_PORTSC_PR);
         break;
     default:
@@ -492,6 +494,34 @@ static void configure_xhci(void *data) {
     reg = readl(&xhci->op->usbcmd);
     reg |= XHCI_CMD_RS;
     writel(&xhci->op->usbcmd, reg);
+
+    writel(&xhci->ir->imod, 0);
+    uint32_t iman = readl(&xhci->ir->iman);
+    iman |= (1 << 1);
+    writel(&xhci->ir->iman, 0);
+
+    reg = readl(&xhci->op->usbcmd);
+    reg |= XHCI_CMD_INTE;
+    writel(&xhci->op->usbcmd, reg);
+
+    // #if defined(__x86_64__)
+    //     int irq = irq_allocate_irqnum();
+
+    //     struct msi_desc_t desc;
+    //     desc.irq_num = irq;
+    //     desc.processor = lapic_id();
+    //     desc.edge_trigger = 1;
+    //     desc.assert = 1;
+    //     desc.msi_index = 0;
+    //     desc.pci_dev = xhci->pci_dev;
+    //     desc.pci.msi_attribute.is_64 = true;
+    //     desc.pci.msi_attribute.is_msix = true;
+    //     int ret = pci_enable_msi(&desc);
+
+    //     irq_regist_irq(irq, xhci_interrupt_handler, 0, xhci,
+    //     get_apic_controller(),
+    //                    "XHCI", IRQ_FLAGS_MSIX);
+    // #endif
 
     // Find devices
     int count = xhci_check_ports(xhci);
@@ -1072,6 +1102,7 @@ int xhci_hcd_driver_probe(pci_device_t *pci_dev, uint32_t vendor_device_id) {
         PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE | PT_FLAG_DEVICE);
 
     struct usb_xhci_s *xhci = xhci_controller_setup(mmio_vaddr);
+    xhci->pci_dev = pci_dev;
     configure_xhci(xhci);
     pci_dev->desc = xhci;
 

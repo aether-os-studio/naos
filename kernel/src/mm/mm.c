@@ -48,8 +48,10 @@ uint64_t get_memory_size() {
 
 static uintptr_t get_zone_boundary(enum zone_type type) {
     switch (type) {
+#if defined(__x86_64__)
     case ZONE_DMA:
         return ZONE_DMA_END;
+#endif
     case ZONE_DMA32:
         return ZONE_DMA32_END;
     case ZONE_NORMAL:
@@ -320,6 +322,7 @@ void free_frames(uintptr_t addr, size_t count) {
 }
 
 uintptr_t alloc_frames_dma32(size_t count) {
+#if defined(__x86_64__)
     size_t required_pages = next_power_of_2(count);
     size_t order = log2_floor(required_pages);
 
@@ -328,9 +331,13 @@ uintptr_t alloc_frames_dma32(size_t count) {
     uint64_t idx = page - mem_map;
 
     return idx * DEFAULT_PAGE_SIZE;
+#else
+    return alloc_frames(count);
+#endif
 }
 
 void free_frames_dma32(uintptr_t addr, size_t count) {
+#if defined(__x86_64__)
     if (!addr)
         return;
 
@@ -344,4 +351,7 @@ void free_frames_dma32(uintptr_t addr, size_t count) {
     page_t *page = &mem_map[idx];
 
     __free_pages(page, order);
+#else
+    return free_frames(addr, count);
+#endif
 }

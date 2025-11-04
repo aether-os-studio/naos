@@ -2,6 +2,7 @@
 #include <mm/mm.h>
 #include <task/task.h>
 
+#if !defined(__riscv__)
 uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr) {
     if (!vaddr)
         return 0;
@@ -31,6 +32,7 @@ uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr) {
     return (pgdir[index] & ARCH_ADDR_MASK) +
            (vaddr & PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL));
 }
+#endif
 
 uint64_t *kernel_page_dir = NULL;
 

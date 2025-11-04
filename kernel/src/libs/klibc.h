@@ -369,6 +369,21 @@ static inline void spin_unlock(spinlock_t *sl) {
                  : "memory");
 }
 
+// 获取spinlock
+static inline void spin_lock_no_irqsave(spinlock_t *sl) {
+    /* 自旋等待 */
+    while (sl->lock) {
+        asm volatile("nop");
+    }
+
+    sl->lock = 1;
+
+    sl->flags = 0;
+}
+
+// 释放spinlock
+static inline void spin_unlock_no_irqstore(spinlock_t *sl) { sl->lock = 0; }
+
 #elif defined(__loongarch64)
 
 typedef struct spinlock {

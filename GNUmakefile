@@ -159,7 +159,11 @@ $(IMAGE_NAME).img: assets/limine kernel modules
 ifeq ($(BOOT_PROTOCOL), limine)
 	mmd -i $(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/limine
 	mcopy -i $(IMAGE_NAME).img@@1M $(EFI_FILE_SINGLE) ::/EFI/BOOT
+ifeq ($(ARCH), x86_64)
+	mcopy -i $(IMAGE_NAME).img@@1M limine_x86_64.conf ::/limine/limine.conf
+else
 	mcopy -i $(IMAGE_NAME).img@@1M limine.conf ::/limine
+endif
 endif
 ifeq ($(BOOT_PROTOCOL), multiboot2)
 	mmd -i $(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/limine
@@ -176,7 +180,11 @@ single-$(IMAGE_NAME).img: assets/limine kernel rootfs-$(ARCH).img modules
 ifeq ($(BOOT_PROTOCOL), limine)
 	mmd -i single-$(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/limine
 	mcopy -i single-$(IMAGE_NAME).img@@1M $(EFI_FILE_SINGLE) ::/EFI/BOOT
-	mcopy -i single-$(IMAGE_NAME).img@@1M limine.conf ::/limine
+ifeq ($(ARCH), x86_64)
+	mcopy -i $(IMAGE_NAME).img@@1M limine_x86_64.conf ::/limine/limine.conf
+else
+	mcopy -i $(IMAGE_NAME).img@@1M limine.conf ::/limine
+endif
 endif
 
 	dd if=rootfs-$(ARCH).img of=single-$(IMAGE_NAME).img bs=1M count=$(ROOTFS_IMG_SIZE) seek=1024
@@ -258,7 +266,7 @@ run-riscv64: assets/ovmf-code-$(ARCH).fd all
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
 		-device nvme,drive=harddisk,serial=1234 \
-		-device nvme,drive=rootdisk,serial=5678 \
+		-device usb-storage,drive=rootdisk \
 		$(QEMUFLAGS)
 
 .PHONY: run-loongarch64

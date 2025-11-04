@@ -885,8 +885,10 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns) {
 
     struct sched_entity *entity = task->sched_info;
     if (entity->on_rq) {
+        spin_lock(&schedulers[task->cpu_id]->queue_lock);
         remove_sched_entity(schedulers[task->cpu_id],
                             schedulers[task->cpu_id]->root, entity);
+        spin_unlock(&schedulers[task->cpu_id]->queue_lock);
         entity->on_rq = false;
     }
 
@@ -1210,6 +1212,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
 #if defined(__x86_64__)
     uint64_t user_sp = regs->rsp;
+#elif defined(__riscv__)
+    uint64_t user_sp = regs->sp;
 #endif
 
     if (newsp) {
@@ -1223,6 +1227,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
 #if defined(__x86_64__)
     child->arch_context->ctx->rsp = user_sp;
+#elif defined(__riscv__)
+    child->arch_context->ctx->sp = user_sp;
 #endif
 
     child->is_kernel = false;

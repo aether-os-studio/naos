@@ -42,7 +42,7 @@ void arch_flush_tlb(uint64_t vaddr) {
 }
 
 // RISC-V 页表相关常量定义
-#define PAGE_SIZE 4096
+#define PAGE_SIZE 4096ULL
 #define PAGE_SHIFT 12
 #define PTE_PPN_SHIFT 10
 #define PTE_FLAGS_MASK 0x3FF
@@ -281,4 +281,74 @@ uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
     arch_flush_tlb(vaddr);
 
     return 0;
+}
+
+uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr) {
+    // 规范化虚拟地址
+    vaddr = canonicalize_va(vaddr);
+
+    // 保存页内偏移（低12位）
+    uint64_t page_offset = vaddr & (PAGE_SIZE - 1);
+
+    // 获取各级页表索引
+    uint64_t pgd_idx = PGD_INDEX(vaddr);
+    uint64_t pud_idx = PUD_INDEX(vaddr);
+    uint64_t pmd_idx = PMD_INDEX(vaddr);
+    uint64_t pte_idx = PTE_INDEX(vaddr);
+
+    pgd_t *pgd_entry = phys_to_virt(&pgdir[pgd_idx]);
+    if (!pte_present(*pgd_entry)) {
+        return 0; // PGD 表项无效，地址转换失败
+    }
+
+    // 获取 PUD 表的物理地址
+    uint64_t pud_pfn = pte_to_pfn(*pgd_entry);
+    pud_t *pud_table = (pud_t *)(pud_pfn << PAGE_SHIFT);
+
+    pud_t *pud_entry = phys_to_virt(&pud_table[pud_idx]);
+    if (!pte_present(*pud_entry)) {
+        return 0; // PUD 表项无效
+    }
+
+    // 检查是否为 1GB 大页映射
+    if (pte_is_leaf(*pud_entry)) {
+        uint64_t pfn = pte_to_pfn(*pud_entry);
+        uint64_t paddr = (pfn << PAGE_SHIFT);
+        // 保留虚拟地址的低 30 位作为页内偏移
+        uint64_t offset_1gb = vaddr & ((1UL << PUD_SHIFT) - 1);
+        return paddr + offset_1gb;
+    }
+
+    // 获取 PMD 表的物理地址
+    uint64_t pmd_pfn = pte_to_pfn(*pud_entry);
+    pmd_t *pmd_table = (pmd_t *)(pmd_pfn << PAGE_SHIFT);
+
+    pmd_t *pmd_entry = phys_to_virt(&pmd_table[pmd_idx]);
+    if (!pte_present(*pmd_entry)) {
+        return 0; // PMD 表项无效
+    }
+
+    // 检查是否为 2MB 大页映射
+    if (pte_is_leaf(*pmd_entry)) {
+        uint64_t pfn = pte_to_pfn(*pmd_entry);
+        uint64_t paddr = (pfn << PAGE_SHIFT);
+        // 保留虚拟地址的低 21 位作为页内偏移
+        uint64_t offset_2mb = vaddr & ((1UL << PMD_SHIFT) - 1);
+        return paddr + offset_2mb;
+    }
+
+    // 获取 PTE 表的物理地址
+    uint64_t pte_pfn = pte_to_pfn(*pmd_entry);
+    pte_t *pte_table = (pte_t *)(pte_pfn << PAGE_SHIFT);
+
+    pte_t *pte_entry = phys_to_virt(&pte_table[pte_idx]);
+    if (!pte_present(*pte_entry)) {
+        return 0; // PTE 表项无效
+    }
+
+    // 计算最终物理地址（4KB 页）
+    uint64_t pfn = pte_to_pfn(*pte_entry);
+    uint64_t paddr = (pfn << PAGE_SHIFT) + page_offset;
+
+    return paddr;
 }
