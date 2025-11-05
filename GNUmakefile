@@ -181,9 +181,9 @@ ifeq ($(BOOT_PROTOCOL), limine)
 	mmd -i single-$(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/limine
 	mcopy -i single-$(IMAGE_NAME).img@@1M $(EFI_FILE_SINGLE) ::/EFI/BOOT
 ifeq ($(ARCH), x86_64)
-	mcopy -i $(IMAGE_NAME).img@@1M limine_x86_64.conf ::/limine/limine.conf
+	mcopy -i single-$(IMAGE_NAME).img@@1M limine_x86_64.conf ::/limine/limine.conf
 else
-	mcopy -i $(IMAGE_NAME).img@@1M limine.conf ::/limine
+	mcopy -i single-$(IMAGE_NAME).img@@1M limine.conf ::/limine
 endif
 endif
 
@@ -267,6 +267,20 @@ run-riscv64: assets/ovmf-code-$(ARCH).fd all
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
 		-device nvme,drive=harddisk,serial=1234 \
 		-device usb-storage,drive=rootdisk \
+		$(QEMUFLAGS)
+
+.PHONY: run-riscv64
+run-riscv64-single: assets/ovmf-code-$(ARCH).fd all-single
+	qemu-system-$(ARCH) \
+		-M virt \
+		-cpu rv64 \
+		-device ramfb \
+		-device qemu-xhci \
+		-device usb-kbd \
+		-device usb-mouse \
+		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
+		-drive if=none,file=single-$(IMAGE_NAME).img,format=raw,id=harddisk \
+		-device usb-storage,drive=harddisk \
 		$(QEMUFLAGS)
 
 .PHONY: run-loongarch64
