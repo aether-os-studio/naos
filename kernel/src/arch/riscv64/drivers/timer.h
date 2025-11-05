@@ -19,4 +19,6 @@ static inline void sbi_set_timer(uint64_t stime_value) {
     sbi_ecall(SBI_SET_TIMER, 0, stime_value, 0, 0, 0, 0, 0);
 }
 
+extern uint64_t timer_freq;
+
 void timer_init_hart(uint32_t hart_id);

@@ -554,7 +554,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     uint64_t satp = MAKE_SATP_PADDR(
         SATP_MODE_SV48, 0, current_task->arch_context->mm->page_table_addr);
     asm volatile("csrw satp, %0" : : "r"(satp) : "memory");
-    asm volatile("sfence.vma zero, zero");
+    asm volatile("sfence.vma");
 
     csr_set(sstatus, (1UL << 18));
 #endif
@@ -1211,8 +1211,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     memset((void *)(child->signal_syscall_stack - STACK_SIZE), 0, STACK_SIZE);
 
     child->arch_context = malloc(sizeof(arch_context_t));
-    arch_context_t orig_context;
-    memcpy(&orig_context, current_task->arch_context, sizeof(arch_context_t));
     current_task->arch_context->ctx = regs;
     arch_context_copy(child->arch_context, current_task->arch_context,
                       child->kernel_stack, flags);
@@ -1329,6 +1327,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     if (flags & CLONE_THREAD) {
         child->tgid = current_task->tgid;
+    } else {
+        child->tgid = 0;
     }
 
     if (parent_tid && (flags & CLONE_PARENT_SETTID)) {
@@ -1742,10 +1742,6 @@ void schedule() {
     task_t *next = pick_next_task(schedulers[current_cpu_id]);
 
     if (prev == next) {
-        return;
-    }
-
-    if (next->signal & SIGMASK(SIGKILL)) {
         return;
     }
 

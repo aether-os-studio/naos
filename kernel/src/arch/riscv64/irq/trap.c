@@ -104,7 +104,7 @@ void handle_interrupt_c(struct pt_regs *regs, uint64_t cause) {
     case 5: // timer interrupt
         riscv64_timer_handler(regs);
 
-        sbi_set_timer(get_timer() + TIMER_FREQ / SCHED_HZ);
+        sbi_set_timer(get_timer() + timer_freq / SCHED_HZ);
 
         if (can_schedule) {
             schedule();

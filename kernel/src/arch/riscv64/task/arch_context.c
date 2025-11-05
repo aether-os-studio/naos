@@ -114,7 +114,7 @@ void arch_set_current(task_t *current) {
     asm volatile("mv tp, %0\n\t" ::"r"(current));
 }
 
-void __switch_to(task_t *prev, task_t *next, uint64_t kernel_stack) {
+void __switch_to(task_t *prev, task_t *next) {
     csr_write(sscratch, next->kernel_stack);
 
     uint64_t satp = MAKE_SATP_PADDR(SATP_MODE_SV48, 0,

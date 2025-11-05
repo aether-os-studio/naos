@@ -218,7 +218,8 @@ static page_table_t *copy_page_table_recursive(page_table_t *source_table,
          512;
 #endif
          i++) {
-        if (ARCH_PT_IS_LARGE(phys_to_virt(source_table)->entries[i].value)) {
+        if (ARCH_PT_IS_LARGE(phys_to_virt(source_table)->entries[i].value) &&
+            level != 1) {
             new_table->entries[i].value =
                 phys_to_virt(source_table)->entries[i].value;
             continue;
