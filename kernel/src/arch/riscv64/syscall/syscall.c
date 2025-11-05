@@ -383,6 +383,7 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_MKNODAT] = (syscall_handle_t)sys_mknodat;
     // syscall_handlers[SYS_FCHOWNAT] = (syscall_handle_t)sys_fchownat;
     syscall_handlers[SYS_NEWFSTATAT] = (syscall_handle_t)sys_newfstatat;
+    syscall_handlers[SYS_NEWFSTAT] = (syscall_handle_t)sys_fstat;
     syscall_handlers[SYS_UNLINKAT] = (syscall_handle_t)sys_unlinkat;
     syscall_handlers[SYS_RENAMEAT] = (syscall_handle_t)sys_renameat;
     // syscall_handlers[SYS_LINKAT] = (syscall_handle_t)sys_linkat;
@@ -537,12 +538,16 @@ void syscall_handler(struct pt_regs *regs) {
 
     regs->a0 = 0;
 
+    csr_set(sstatus, (1UL << 18));
+
     if (idx == SYS_CLONE || idx == SYS_CLONE3) {
         special_syscall_handle_t h = (special_syscall_handle_t)handler;
         regs->a0 = h(regs, arg1, arg2, arg3, arg4, arg5, arg6);
     } else {
         regs->a0 = handler(arg1, arg2, arg3, arg4, arg5, arg6);
     }
+
+    csr_clear(sstatus, (1UL << 18));
 
     if ((idx != SYS_BRK) && (idx != SYS_MMAP) && (idx != SYS_MREMAP) &&
         (idx != SYS_SHMAT) && (int)regs->a0 < 0 && !((int64_t)regs->a0 < 0))

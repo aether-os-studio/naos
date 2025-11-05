@@ -555,6 +555,8 @@ uint64_t task_execve(const char *path_user, const char **argv,
         SATP_MODE_SV48, 0, current_task->arch_context->mm->page_table_addr);
     asm volatile("csrw satp, %0" : : "r"(satp) : "memory");
     asm volatile("sfence.vma zero, zero");
+
+    csr_set(sstatus, (1UL << 18));
 #endif
 
     const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)buffer;
@@ -655,16 +657,13 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 else if (aligned_addr + alloc_size > load_end)
                     interpreter_load_end = aligned_addr + alloc_size;
 
-                uint64_t flags = PT_FLAG_R | PT_FLAG_W | PT_FLAG_X;
+                uint64_t flags = PT_FLAG_U | PT_FLAG_R | PT_FLAG_W | PT_FLAG_X;
                 map_page_range(get_current_page_dir(true), aligned_addr, 0,
-                               alloc_size, flags);
+                               alloc_size, PT_FLAG_R | PT_FLAG_W);
                 memcpy((void *)seg_addr,
                        (void *)((char *)interpreter_buffer +
                                 interpreter_phdr[j].p_offset),
                        file_size);
-                map_change_attribute_range(get_current_page_dir(true),
-                                           aligned_addr, alloc_size,
-                                           flags | PT_FLAG_U);
 
                 if (seg_size > file_size) {
                     uint64_t bss_start = seg_addr + file_size;
@@ -678,6 +677,9 @@ uint64_t task_execve(const char *path_user, const char **argv,
                         memset((void *)align_start, 0, page_remain);
                     }
                 }
+
+                map_change_attribute_range(get_current_page_dir(true),
+                                           aligned_addr, alloc_size, flags);
             }
 
             interpreter_entry =
@@ -705,13 +707,12 @@ uint64_t task_execve(const char *path_user, const char **argv,
             else if (aligned_addr + alloc_size > load_end)
                 load_end = aligned_addr + alloc_size;
 
-            uint64_t flags = PT_FLAG_R | PT_FLAG_W | PT_FLAG_X;
+            bool exec = (phdr[i].p_flags & PF_X);
+            uint64_t flags = PT_FLAG_U | PT_FLAG_R | PT_FLAG_W | PT_FLAG_X;
             map_page_range(get_current_page_dir(true), aligned_addr, 0,
-                           alloc_size, flags);
+                           alloc_size, PT_FLAG_R | PT_FLAG_W);
             memcpy((void *)seg_addr,
                    (void *)((char *)buffer + phdr[i].p_offset), file_size);
-            map_change_attribute_range(get_current_page_dir(true), aligned_addr,
-                                       alloc_size, flags | PT_FLAG_U);
 
             if (seg_size > file_size) {
                 uint64_t bss_start = seg_addr + file_size;
@@ -724,6 +725,9 @@ uint64_t task_execve(const char *path_user, const char **argv,
                     memset((void *)align_start, 0, page_remain);
                 }
             }
+
+            map_change_attribute_range(get_current_page_dir(true), aligned_addr,
+                                       alloc_size, flags);
         }
     }
 
@@ -1258,6 +1262,10 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     child->cwd = current_task->cwd;
     child->cmdline = strdup(current_task->cmdline);
+
+    child->exec_node = current_task->exec_node;
+    if (child->exec_node)
+        child->exec_node->refcount++;
 
     child->load_start = current_task->load_start;
     child->load_end = current_task->load_end;

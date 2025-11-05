@@ -14,16 +14,10 @@ uint64_t sys_brk(uint64_t brk) {
         map_page_range(get_current_page_dir(true),
                        current_task->arch_context->mm->brk_current, 0,
                        brk - current_task->arch_context->mm->brk_current,
-                       PT_FLAG_R | PT_FLAG_W);
+                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
         memset((void *)current_task->arch_context->mm->brk_current, 0,
                brk - current_task->arch_context->mm->brk_current);
-
-        map_change_attribute_range(
-            get_current_page_dir(true),
-            current_task->arch_context->mm->brk_current,
-            brk - current_task->arch_context->mm->brk_current,
-            PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
         vma_t *vma = vma_alloc();
 
@@ -183,16 +177,12 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
 
         return ret;
     } else {
-        uint64_t pt_flags = PT_FLAG_R | PT_FLAG_W;
+        uint64_t pt_flags = PT_FLAG_R | PT_FLAG_W | PT_FLAG_U;
 
         map_page_range(get_current_page_dir(true), start_addr, 0, aligned_len,
                        pt_flags);
 
         memset((void *)start_addr, 0, aligned_len);
-
-        map_change_attribute_range(get_current_page_dir(true), start_addr,
-                                   aligned_len,
-                                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
         spin_unlock(&mgr->lock);
 
