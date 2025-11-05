@@ -64,11 +64,12 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     memset(context->ctx, 0, sizeof(struct pt_regs));
     context->dead = false;
     if (user_mode) {
-        // context->ctx->sstatus = (2UL << 32) | (1UL << 18) | (1UL << 5);
-        // todo
+        // context->ctx->sstatus = (2UL << 32) | (1UL << 18) | (3UL << 13) |
+        // (1UL
+        // << 5); todo
     } else {
         context->ctx->sstatus =
-            (2UL << 32) | (1UL << 18) | (1UL << 5) | (1UL << 8);
+            (2UL << 32) | (1UL << 18) | (3UL << 13) | (1UL << 5) | (1UL << 8);
         context->ra = (uint64_t)kernel_thread_func;
         context->sp = (uint64_t)context->ctx;
         context->ctx->s1 = entry;
@@ -151,9 +152,14 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
 
     memset(context->ctx, 0, sizeof(struct pt_regs));
 
+    context->ctx->ktp = (uint64_t)current_task;
+    context->ctx->tp = (uint64_t)current_task;
+    context->ctx->gp = cpuid_to_hartid[current_cpu_id];
+
     context->ctx->epc = entry;
     context->ctx->sp = stack;
-    context->ctx->sstatus = (2UL << 32) | (1UL << 18) | (1UL << 5);
+    context->ctx->sstatus =
+        (2UL << 32) | (1UL << 18) | (3UL << 13) | (1UL << 5);
 }
 
 void arch_to_user_mode(arch_context_t *context, uint64_t entry,

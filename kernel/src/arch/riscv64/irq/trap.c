@@ -43,9 +43,11 @@ void handle_trap_c(struct pt_regs *regs) {
     if (is_interrupt) {
         handle_interrupt_c(regs, cause_code);
     } else {
-        printk("Exception occurred:\n");
+        if (cause_code != 8 && cause_code != 11) {
+            printk("Exception occurred:\n");
 
-        dump_registers(regs);
+            dump_registers(regs);
+        }
 
         handle_exception_c(regs, cause_code);
     }
@@ -69,6 +71,11 @@ void handle_exception_c(struct pt_regs *regs, uint64_t cause) {
         // 跳过断点指令
         while (1)
             arch_pause();
+        break;
+
+    case 8: // ecall
+        handle_syscall(regs);
+        regs->epc += 4;
         break;
 
     case 11: // scall

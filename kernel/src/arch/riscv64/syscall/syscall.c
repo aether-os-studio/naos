@@ -327,7 +327,7 @@ void syscall_handler_init() {
     //     (syscall_handle_t)sys_remap_file_pages;
     syscall_handlers[SYS_GETDENTS64] = (syscall_handle_t)sys_getdents;
     syscall_handlers[SYS_SET_TID_ADDRESS] =
-        (syscall_handle_t)dummy_syscall_handler;
+        (syscall_handle_t)sys_set_tid_address;
     // syscall_handlers[SYS_RESTART_SYSCALL] =
     //     (syscall_handle_t)sys_restart_syscall;
     // syscall_handlers[SYS_SEMTIMEDOP] = (syscall_handle_t)sys_semtimedop;
@@ -515,58 +515,50 @@ void syscall_handler_init() {
 spinlock_t syscall_debug_lock = {0};
 
 void syscall_handler(struct pt_regs *regs) {
-    //     regs->rip = regs->rcx;
-    //     regs->rflags = regs->r11;
-    //     regs->cs = SELECTOR_USER_CS;
-    //     regs->ss = SELECTOR_USER_DS;
-    //     regs->ds = SELECTOR_USER_DS;
-    //     regs->es = SELECTOR_USER_DS;
-    //     regs->rsp = user_regs;
+    uint64_t idx = regs->a7 & 0xFFFFFFFF;
 
-    //     uint64_t idx = regs->rax & 0xFFFFFFFF;
+    uint64_t arg1 = regs->a0;
+    uint64_t arg2 = regs->a1;
+    uint64_t arg3 = regs->a2;
+    uint64_t arg4 = regs->a3;
+    uint64_t arg5 = regs->a4;
+    uint64_t arg6 = regs->a5;
 
-    //     uint64_t arg1 = regs->rdi;
-    //     uint64_t arg2 = regs->rsi;
-    //     uint64_t arg3 = regs->rdx;
-    //     uint64_t arg4 = regs->r10;
-    //     uint64_t arg5 = regs->r8;
-    //     uint64_t arg6 = regs->r9;
+    if (idx > MAX_SYSCALL_NUM) {
+        regs->a0 = (uint64_t)-ENOSYS;
+        goto done;
+    }
 
-    //     if (idx > MAX_SYSCALL_NUM) {
-    //         regs->rax = (uint64_t)-ENOSYS;
-    //         goto done;
-    //     }
+    syscall_handle_t handler = syscall_handlers[idx];
+    if (!handler) {
+        regs->a0 = (uint64_t)-ENOSYS;
+        goto done;
+    }
 
-    //     syscall_handle_t handler = syscall_handlers[idx];
-    //     if (!handler) {
-    //         regs->rax = (uint64_t)-ENOSYS;
-    //         goto done;
-    //     }
+    regs->a0 = 0;
 
-    //     regs->rax = 0;
+    if (idx == SYS_CLONE || idx == SYS_CLONE3) {
+        special_syscall_handle_t h = (special_syscall_handle_t)handler;
+        regs->a0 = h(regs, arg1, arg2, arg3, arg4, arg5, arg6);
+    } else {
+        regs->a0 = handler(arg1, arg2, arg3, arg4, arg5, arg6);
+    }
 
-    //     if (idx == SYS_CLONE || idx == SYS_CLONE3) {
-    //         special_syscall_handle_t h = (special_syscall_handle_t)handler;
-    //         regs->rax = h(regs, arg1, arg2, arg3, arg4, arg5, arg6);
-    //     } else {
-    //         regs->rax = handler(arg1, arg2, arg3, arg4, arg5, arg6);
-    //     }
+    if ((idx != SYS_BRK) && (idx != SYS_MMAP) && (idx != SYS_MREMAP) &&
+        (idx != SYS_SHMAT) && (int)regs->a0 < 0 && !((int64_t)regs->a0 < 0))
+        regs->a0 |= 0xffffffff00000000;
 
-    //     if ((idx != SYS_BRK) && (idx != SYS_MMAP) && (idx != SYS_MREMAP) &&
-    //         (idx != SYS_SHMAT) && (int)regs->rax < 0 && !((int64_t)regs->rax
-    //         < 0)) regs->rax |= 0xffffffff00000000;
+    // if ((int64_t)regs->a0 < 0)
+    // {
+    //     char buf[128];
+    //     int len = sprintf(buf, "syscall %d has error: %s\n", idx,
+    //     strerror(-(int)regs->a0)); serial_printk(buf, len);
+    // }
 
-    //     // if ((int64_t)regs->rax < 0)
-    //     // {
-    //     //     char buf[128];
-    //     //     int len = sprintf(buf, "syscall %d has error: %s\n", idx,
-    //     //     strerror(-(int)regs->rax)); serial_printk(buf, len);
-    //     // }
-
-    // done:
-    //     if (idx != SYS_BRK && regs->rax == (uint64_t)-ENOSYS) {
-    //         char buf[32];
-    //         int len = sprintf(buf, "syscall %d not implemented\n", idx);
-    //         serial_printk(buf, len);
-    //     }
+done:
+    if (idx != SYS_BRK && regs->a0 == (uint64_t)-ENOSYS) {
+        char buf[32];
+        int len = sprintf(buf, "syscall %d not implemented\n", idx);
+        serial_printk(buf, len);
+    }
 }

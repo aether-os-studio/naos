@@ -158,6 +158,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
                       virt_to_phys((uint64_t)get_kernel_page_dir()),
                       (uint64_t)entry, task->kernel_stack, false, arg);
 #if defined(__riscv__)
+    task->arch_context->ctx->ktp = (uint64_t)task;
     task->arch_context->ctx->tp = (uint64_t)task;
     task->arch_context->ctx->gp = cpuid_to_hartid[task->cpu_id];
 #endif
@@ -654,13 +655,16 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 else if (aligned_addr + alloc_size > load_end)
                     interpreter_load_end = aligned_addr + alloc_size;
 
-                uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W | PT_FLAG_X;
+                uint64_t flags = PT_FLAG_R | PT_FLAG_W | PT_FLAG_X;
                 map_page_range(get_current_page_dir(true), aligned_addr, 0,
                                alloc_size, flags);
                 memcpy((void *)seg_addr,
                        (void *)((char *)interpreter_buffer +
                                 interpreter_phdr[j].p_offset),
                        file_size);
+                map_change_attribute_range(get_current_page_dir(true),
+                                           aligned_addr, alloc_size,
+                                           flags | PT_FLAG_U);
 
                 if (seg_size > file_size) {
                     uint64_t bss_start = seg_addr + file_size;
@@ -701,11 +705,13 @@ uint64_t task_execve(const char *path_user, const char **argv,
             else if (aligned_addr + alloc_size > load_end)
                 load_end = aligned_addr + alloc_size;
 
-            uint64_t flags = PT_FLAG_R | PT_FLAG_U | PT_FLAG_W | PT_FLAG_X;
+            uint64_t flags = PT_FLAG_R | PT_FLAG_W | PT_FLAG_X;
             map_page_range(get_current_page_dir(true), aligned_addr, 0,
                            alloc_size, flags);
             memcpy((void *)seg_addr,
                    (void *)((char *)buffer + phdr[i].p_offset), file_size);
+            map_change_attribute_range(get_current_page_dir(true), aligned_addr,
+                                       alloc_size, flags | PT_FLAG_U);
 
             if (seg_size > file_size) {
                 uint64_t bss_start = seg_addr + file_size;
@@ -734,8 +740,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
                      USER_STACK_END - USER_STACK_START);
 
     map_page_range(get_current_page_dir(true), USER_STACK_START, 0,
-                   USER_STACK_END - USER_STACK_START,
-                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+                   USER_STACK_END - USER_STACK_START, PT_FLAG_R | PT_FLAG_W);
 
     memset((void *)USER_STACK_START, 0, USER_STACK_END - USER_STACK_START);
     uint64_t stack =
@@ -743,6 +748,10 @@ uint64_t task_execve(const char *path_user, const char **argv,
                    (char **)new_envp, envp_count, e_entry,
                    (uint64_t)(load_start + ehdr->e_phoff), ehdr->e_phnum,
                    interpreter_entry ? INTERPRETER_BASE_ADDR : load_start);
+
+    map_change_attribute_range(get_current_page_dir(true), USER_STACK_START,
+                               USER_STACK_END - USER_STACK_START,
+                               PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
     free_frames_bytes(buffer, buf_len);
 
