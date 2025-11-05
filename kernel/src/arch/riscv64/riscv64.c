@@ -9,14 +9,18 @@ extern void cpu_init();
 void arch_early_init() {
     trap_init();
     cpu_init();
-    csr_write(sscratch, (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE);
+    uint64_t sp;
+    asm volatile("mv %0, sp" : "=r"(sp));
+    sp &= ~(STACK_SIZE - 1);
+    csr_write(sscratch, sp);
+    asm volatile("mv gp, %0" ::"r"(cpuid_to_hartid[current_cpu_id]));
     fdt_init();
     smp_init();
-    asm volatile("mv gp, %0" ::"r"(cpuid_to_hartid[current_cpu_id]));
 }
 
 void arch_init() {
     syscall_handler_init();
+    arch_enable_interrupt();
     timer_init_hart(cpuid_to_hartid[current_cpu_id]);
 }
 

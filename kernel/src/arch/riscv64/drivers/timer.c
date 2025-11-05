@@ -11,6 +11,4 @@ void timer_init_hart(uint32_t hart_id) {
     sbi_set_timer(get_timer() + TIMER_FREQ / SCHED_HZ);
 }
 
-void riscv64_timer_handler(struct pt_regs *regs) {
-    // sched_check_wakeup();
-}
+void riscv64_timer_handler(struct pt_regs *regs) { sched_check_wakeup(); }

@@ -17,12 +17,16 @@ void cpu_init() {
 }
 
 void ap_entry(struct limine_mp_info *cpu) {
-    asm volatile("mv gp, %0" : : "r"(cpu->hartid));
-
     trap_init();
 
     cpu_init();
-    csr_write(sscratch, (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE);
+
+    uint64_t sp;
+    asm volatile("mv %0, sp" : "=r"(sp));
+    sp &= ~(STACK_SIZE - 1);
+    csr_write(sscratch, sp);
+
+    asm volatile("mv gp, %0" : : "r"(cpu->hartid));
 
     printk("cpu %d starting...\n", current_cpu_id);
 
@@ -33,6 +37,8 @@ void ap_entry(struct limine_mp_info *cpu) {
     }
 
     arch_set_current(idle_tasks[current_cpu_id]);
+
+    arch_enable_interrupt();
 
     timer_init_hart(cpu->hartid);
 

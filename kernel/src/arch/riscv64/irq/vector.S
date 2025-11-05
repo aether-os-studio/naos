@@ -144,12 +144,7 @@ restore_context:
     li t1, 0x2       // SIE mask
     not t1, t1       // ~SIE mask  
     and t0, t0, t1   // 清除 SIE 位
-    csrw sstatus, t0    
-    
-    ld x5, 32(sp)    // t0
-    ld x6, 40(sp)    // t1
-
-    addi sp, sp, 296
+    csrw sstatus, t0
 
     // 根据来源模式决定是否切换栈指针
     csrr t0, sstatus
@@ -157,10 +152,20 @@ restore_context:
     bnez t1, kernel_sret   // 内核态返回
     
 user_sret:
+    ld x5, 32(sp)    // t0
+    ld x6, 40(sp)    // t1
+
+    addi sp, sp, 296
+
     // 用户态返回：切换栈指针
     csrrw sp, sscratch, sp
     sret
 
 kernel_sret:
+    ld x5, 32(sp)    // t0
+    ld x6, 40(sp)    // t1
+
+    addi sp, sp, 296
+
     // 内核态返回：直接sret
     sret

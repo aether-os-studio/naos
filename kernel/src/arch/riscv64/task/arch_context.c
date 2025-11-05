@@ -89,10 +89,11 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
     if (!dst->mm) {
         printk("dst->mm == NULL!!! dst = %#018lx", dst);
     }
-    dst->ctx = (struct pt_regs *)(stack - 8) - 1;
+    dst->ctx = (struct pt_regs *)stack - 1;
     dst->ra = (uint64_t)ret_from_trap_handler;
     dst->sp = (uint64_t)dst->ctx;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
+    dst->ctx->epc += 4;
     dst->ctx->a0 = 0;
 }
 

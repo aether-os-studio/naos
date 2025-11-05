@@ -203,7 +203,7 @@ static page_table_t *copy_page_table_recursive(page_table_t *source_table,
 
         uint64_t frame = alloc_frames(1);
         page_table_t *new_page_table = (page_table_t *)phys_to_virt(frame);
-        memcpy(new_page_table, phys_to_virt(source_table)->entries,
+        memcpy(new_page_table, phys_to_virt((uint64_t *)source_table),
                DEFAULT_PAGE_SIZE);
         return new_page_table;
     }
@@ -224,15 +224,14 @@ static page_table_t *copy_page_table_recursive(page_table_t *source_table,
             continue;
         }
 
-        page_table_t *source_page_table_next =
-            (page_table_t *)(phys_to_virt(source_table)->entries[i].value &
-                             ARCH_ADDR_MASK);
+        page_table_t *source_page_table_next = (page_table_t *)ARCH_READ_PTE(
+            phys_to_virt(source_table)->entries[i].value);
         page_table_t *new_page_table = copy_page_table_recursive(
             source_page_table_next, level - 1, all_copy,
             level != ARCH_MAX_PT_LEVEL ? kernel_space : i >= 256);
         new_table->entries[i].value = ARCH_MAKE_PTE(
             (uint64_t)virt_to_phys((uint64_t)new_page_table),
-            phys_to_virt(source_table)->entries[i].value & ~ARCH_ADDR_MASK);
+            ARCH_READ_PTE_FLAG(phys_to_virt(source_table)->entries[i].value));
     }
     return new_table;
 }
@@ -267,8 +266,7 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
     task_mm_info_t *new_mm = (task_mm_info_t *)malloc(sizeof(task_mm_info_t));
     memset(new_mm, 0, sizeof(task_mm_info_t));
     new_mm->page_table_addr = virt_to_phys((uint64_t)copy_page_table_recursive(
-        (page_table_t *)old->page_table_addr, ARCH_MAX_PT_LEVEL,
-        !!(clone_flags & CLONE_VM), false));
+        (page_table_t *)old->page_table_addr, ARCH_MAX_PT_LEVEL, false, false));
 #if defined(__x86_64__) || defined(__riscv__)
     memcpy((uint64_t *)phys_to_virt(new_mm->page_table_addr) + 256,
            (uint64_t *)phys_to_virt(old->page_table_addr) + 256,

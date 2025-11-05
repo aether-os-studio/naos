@@ -1213,15 +1213,14 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     child->arch_context = malloc(sizeof(arch_context_t));
     arch_context_t orig_context;
     memcpy(&orig_context, current_task->arch_context, sizeof(arch_context_t));
-    orig_context.ctx = regs;
-    arch_context_copy(child->arch_context, &orig_context, child->kernel_stack,
-                      flags);
+    current_task->arch_context->ctx = regs;
+    arch_context_copy(child->arch_context, current_task->arch_context,
+                      child->kernel_stack, flags);
 
 #if defined(__x86_64__)
     uint64_t user_sp = regs->rsp;
 #elif defined(__riscv__)
     child->arch_context->ctx->ktp = (uint64_t)child;
-    child->arch_context->ctx->tp = (uint64_t)child;
     child->arch_context->ctx->gp = cpuid_to_hartid[child->cpu_id];
     uint64_t user_sp = regs->sp;
 #endif
@@ -1323,6 +1322,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     if (flags & CLONE_SETTLS) {
 #if defined(__x86_64__)
         child->arch_context->fsbase = tls;
+#elif defined(__riscv__)
+        child->arch_context->ctx->tp = tls;
 #endif
     }
 

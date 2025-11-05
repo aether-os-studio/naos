@@ -1,6 +1,8 @@
 #include <drivers/tty.h>
 #include <drivers/fbtty.h>
 #include <mm/mm.h>
+#include <libs/keys.h>
+#include <fs/fs_syscall.h>
 #define FLANTERM_IN_FLANTERM
 #include <libs/flanterm/flanterm_private.h>
 #include <libs/flanterm/flanterm.h>
@@ -9,7 +11,15 @@
 
 void terminal_flush(tty_t *session) { flanterm_flush(session->terminal); }
 
-size_t terminal_read(tty_t *device, char *buf, size_t count) { return 0; }
+size_t terminal_read(tty_t *device, char *buf, size_t count) {
+    while (kb_available() < count) {
+        arch_enable_interrupt();
+        arch_yield();
+    }
+    arch_disable_interrupt();
+
+    return kb_read(buf, count);
+}
 
 int terminal_ioctl(tty_t *device, uint32_t cmd, uint64_t arg) {
     struct flanterm_context *ft_ctx = device->terminal;
@@ -94,7 +104,15 @@ int terminal_ioctl(tty_t *device, uint32_t cmd, uint64_t arg) {
     }
 }
 
-int terminal_poll(tty_t *device, int events) { return 0; }
+int terminal_poll(tty_t *device, int events) {
+    int revents = 0;
+    if ((events & EPOLLIN) && kb_available()) {
+        revents |= EPOLLIN;
+    }
+    if (events & EPOLLOUT)
+        revents |= EPOLLOUT;
+    return revents;
+}
 
 spinlock_t terminal_write_lock = {0};
 

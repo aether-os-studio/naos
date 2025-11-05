@@ -46,13 +46,6 @@ typedef struct tty_virtual_device { // TTY 设备
     struct llist_header node;
 } tty_device_t;
 
-struct winsize {
-    unsigned short ws_row;
-    unsigned short ws_col;
-    unsigned short ws_xpixel;
-    unsigned short ws_ypixel;
-};
-
 typedef struct tty_session_ops {
     size_t (*write)(tty_t *device, const char *buf, size_t count);
     size_t (*read)(tty_t *device, char *buf, size_t count);
