@@ -17,6 +17,10 @@
 #define ARCH_PT_FLAG_PBMT_NC (0x1UL << 62)
 #define ARCH_ADDR_MASK ((uint64_t)0x003ffffffffffc00)
 
+#define ARCH_READ_PTE(pte) (((uint64_t)(pte) >> 10) << 12)
+#define ARCH_MAKE_PTE(paddr, flags)                                            \
+    ((((uint64_t)(paddr) >> 12) << 10) | (flags))
+
 #define ARCH_PT_TABLE_FLAGS ARCH_PT_FLAG_VALID
 
 #define ARCH_PT_FLAG_RWX                                                       \

@@ -2,7 +2,6 @@
 #include <mm/mm.h>
 #include <task/task.h>
 
-#if !defined(__riscv__)
 uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr) {
     if (!vaddr)
         return 0;
@@ -16,29 +15,25 @@ uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr) {
         uint64_t index = indexs[i];
         uint64_t addr = pgdir[index];
         if (ARCH_PT_IS_LARGE(addr)) {
-            return (pgdir[index] & (~PAGE_CALC_PAGE_TABLE_MASK(i + 1)) &
-                    ~get_physical_memory_offset()) +
+            return (ARCH_READ_PTE(pgdir[index]) &
+                    ~PAGE_CALC_PAGE_TABLE_MASK(i + 1)) +
                    (vaddr & PAGE_CALC_PAGE_TABLE_MASK(i + 1));
         }
         if (!ARCH_PT_IS_TABLE(addr)) {
             return 0;
         }
-        pgdir = (uint64_t *)phys_to_virt(
-            addr & (~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL)) &
-            ~get_physical_memory_offset());
+        pgdir = (uint64_t *)phys_to_virt(ARCH_READ_PTE(addr));
     }
 
     uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
-    return (pgdir[index] & ARCH_ADDR_MASK) +
+    return ARCH_READ_PTE(pgdir[index]) +
            (vaddr & PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL));
 }
-#endif
 
 uint64_t *kernel_page_dir = NULL;
 
 uint64_t *get_kernel_page_dir() { return kernel_page_dir; }
 
-#if !defined(__riscv__)
 uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
                   uint64_t flags, bool force) {
     if (!kernel_page_dir)
@@ -55,22 +50,31 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
         if (ARCH_PT_IS_LARGE(addr)) {
             return 0;
         }
-        if (!ARCH_PT_IS_TABLE(addr) || !(addr & ARCH_ADDR_MASK)) {
+
+        if (!ARCH_PT_IS_TABLE(addr)) {
             uint64_t a = alloc_frames(1);
             if (a == 0) {
                 return a;
             }
             memset((uint64_t *)phys_to_virt(a), 0, DEFAULT_PAGE_SIZE);
-            pgdir[index] =
-                a | ARCH_PT_TABLE_FLAGS | (flags & ARCH_PT_FLAG_USER);
+            pgdir[index] = ARCH_MAKE_PTE(a, ARCH_PT_TABLE_FLAGS |
+                                                (flags & ARCH_PT_FLAG_USER));
+        } else {
+            if ((flags & ARCH_PT_FLAG_USER) && !(addr & ARCH_PT_FLAG_USER)) {
+                uint64_t pa = ARCH_READ_PTE(addr);
+                uint64_t old_flags = addr & ~ARCH_ADDR_MASK;
+                pgdir[index] = ARCH_MAKE_PTE(pa, old_flags | ARCH_PT_FLAG_USER);
+                arch_flush_tlb(vaddr);
+            }
         }
-        pgdir = (uint64_t *)phys_to_virt(pgdir[index] & ARCH_ADDR_MASK);
+
+        pgdir = (uint64_t *)phys_to_virt(ARCH_READ_PTE(pgdir[index]));
     }
 
     uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
-    if ((pgdir[index] & ARCH_ADDR_MASK) != 0) {
+    if (pgdir[index] & ARCH_PT_FLAG_VALID) {
         if (force) {
-            uint64_t addr = pgdir[index] & ARCH_ADDR_MASK;
+            uint64_t addr = ARCH_READ_PTE(pgdir[index]);
             // if (bitmap_get(&frame_allocator.bitmap, addr / DEFAULT_PAGE_SIZE)
             // !=
             //     true)
@@ -79,13 +83,12 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
             return 0;
     }
 
-    pgdir[index] = (paddr & ARCH_ADDR_MASK) | flags;
+    pgdir[index] = ARCH_MAKE_PTE(paddr, flags);
 
     arch_flush_tlb(vaddr);
 
     return 0;
 }
-#endif
 
 uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr) {
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
@@ -110,9 +113,7 @@ uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr) {
         if (!ARCH_PT_IS_TABLE(addr)) {
             return 0; // 页表不存在
         }
-        table_ptrs[i + 1] = (uint64_t *)phys_to_virt(
-            addr & (~PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL)) &
-            ~get_physical_memory_offset());
+        table_ptrs[i + 1] = (uint64_t *)phys_to_virt(ARCH_READ_PTE(addr));
         table_indices[i + 1] = indexs[i + 1];
     }
 
@@ -121,7 +122,7 @@ uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr) {
     uint64_t pte = table_ptrs[ARCH_MAX_PT_LEVEL - 1][index];
 
     if ((pte & ARCH_PT_FLAG_VALID) && (pte & ARCH_ADDR_MASK) != 0) {
-        uint64_t paddr = pte & ARCH_ADDR_MASK;
+        uint64_t paddr = ARCH_READ_PTE(pte);
         free_frames(paddr, 1);
         table_ptrs[ARCH_MAX_PT_LEVEL - 1][index] = 0;
         arch_flush_tlb(vaddr);
@@ -154,6 +155,32 @@ uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr) {
             }
         }
     }
+
+    return 0;
+}
+
+uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
+    uint64_t indexs[ARCH_MAX_PT_LEVEL];
+    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++) {
+        indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(vaddr, i + 1);
+    }
+
+    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL - 1; i++) {
+        uint64_t index = indexs[i];
+        uint64_t addr = pgdir[index];
+        if (ARCH_PT_IS_LARGE(addr)) {
+            pgdir[index] = ARCH_MAKE_PTE(ARCH_READ_PTE(pgdir[index]), flags);
+        }
+        if (!ARCH_PT_IS_TABLE(addr)) {
+            return 0;
+        }
+        pgdir = (uint64_t *)phys_to_virt(ARCH_READ_PTE(addr));
+    }
+
+    uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
+    pgdir[index] = ARCH_MAKE_PTE(ARCH_READ_PTE(pgdir[index]), flags);
+
+    arch_flush_tlb(vaddr);
 
     return 0;
 }
@@ -197,9 +224,9 @@ static page_table_t *copy_page_table_recursive(page_table_t *source_table,
         page_table_t *new_page_table = copy_page_table_recursive(
             source_page_table_next, level - 1, all_copy,
             level != ARCH_MAX_PT_LEVEL ? kernel_space : i >= 256);
-        new_table->entries[i].value =
-            (uint64_t)virt_to_phys((uint64_t)new_page_table) |
-            (phys_to_virt(source_table)->entries[i].value & ~ARCH_ADDR_MASK);
+        new_table->entries[i].value = ARCH_MAKE_PTE(
+            (uint64_t)virt_to_phys((uint64_t)new_page_table),
+            phys_to_virt(source_table)->entries[i].value & ~ARCH_ADDR_MASK);
     }
     return new_table;
 }
@@ -220,7 +247,7 @@ static void free_page_table_recursive(page_table_t *table, int level) {
 #endif
          i++) {
         page_table_t *page_table_next = (page_table_t *)phys_to_virt(
-            table->entries[i].value & ARCH_ADDR_MASK);
+            ARCH_READ_PTE(table->entries[i].value));
         free_page_table_recursive(page_table_next, level - 1);
     }
     free_frames((uint64_t)virt_to_phys((uint64_t)table), 1);
@@ -263,5 +290,8 @@ void page_table_init() {
 #if defined(__aarch64__)
     extern void setup_mair(void);
     setup_mair();
+#endif
+#if defined(__x86_64__) || defined(__riscv__)
+    memset(get_current_page_dir(false), 0, DEFAULT_PAGE_SIZE / 2);
 #endif
 }

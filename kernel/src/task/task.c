@@ -553,7 +553,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     uint64_t satp = MAKE_SATP_PADDR(
         SATP_MODE_SV48, 0, current_task->arch_context->mm->page_table_addr);
     asm volatile("csrw satp, %0" : : "r"(satp) : "memory");
-    asm volatile("sfence.vma" : : : "memory");
+    asm volatile("sfence.vma zero, zero");
 #endif
 
     const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)buffer;

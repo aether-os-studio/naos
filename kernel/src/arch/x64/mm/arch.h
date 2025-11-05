@@ -16,6 +16,10 @@
 #define ARCH_PT_FLAG_NX (0x1UL << 63)
 #define ARCH_ADDR_MASK 0x00007FFFFFFFF000
 
+#define ARCH_READ_PTE(pte) ((uint64_t)(pte) & ARCH_ADDR_MASK)
+#define ARCH_MAKE_PTE(paddr, flags)                                            \
+    (((uint64_t)(paddr) & ARCH_ADDR_MASK) | (flags))
+
 #define ARCH_PT_TABLE_FLAGS (ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_WRITEABLE)
 
 #define ARCH_PT_IS_TABLE(x)                                                    \

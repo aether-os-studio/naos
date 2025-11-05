@@ -9,11 +9,14 @@ uint64_t cpu_count;
 
 extern bool task_initialized;
 
+void sum_init() { csr_set(sstatus, (1UL << 18)); }
+
 void ap_entry(struct limine_mp_info *cpu) {
     asm volatile("mv gp, %0" : : "r"(cpu->hartid));
 
     trap_init();
 
+    sum_init();
     csr_write(sscratch, (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE);
 
     printk("cpu %d starting...\n", current_cpu_id);
