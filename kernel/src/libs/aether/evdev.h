@@ -4,7 +4,7 @@
 #include <libs/keys.h>
 #include <arch/arch.h>
 #include <task/task.h>
-#include <task/eevdf.h>
+#include <task/rrs.h>
 #include <fs/termios.h>
 
 void handle_kb_event(uint8_t evcode, bool pressed);

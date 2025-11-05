@@ -6,9 +6,9 @@
 #include <fs/termios.h>
 #include <mm/bitmap.h>
 
-#define IDLE_PRIORITY NICE_TO_PRIO(20)
-#define NORMAL_PRIORITY NICE_TO_PRIO(0)
-#define KTHREAD_PRIORITY NICE_TO_PRIO(-1)
+#define IDLE_PRIORITY 0
+#define NORMAL_PRIORITY 0
+#define KTHREAD_PRIORITY 0
 
 #define AT_NULL 0
 #define AT_IGNORE 1
@@ -218,6 +218,6 @@ uint64_t sys_setpriority(int which, int who, int niceval);
 extern task_t *tasks[MAX_TASK_NUM];
 extern task_t *idle_tasks[MAX_CPU_NUM];
 
-extern struct eevdf_t *schedulers[MAX_CPU_NUM];
+extern struct rrs_scheduler *schedulers[MAX_CPU_NUM];
 
 void schedule();

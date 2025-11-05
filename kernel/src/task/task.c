@@ -1,7 +1,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <task/futex.h>
-#include <task/eevdf.h>
+#include <task/rrs.h>
 #include <drivers/kernel_logger.h>
 #include <fs/vfs/dev.h>
 #include <fs/vfs/vfs.h>
@@ -12,7 +12,7 @@
 #include <net/socket.h>
 #include <uacpi/sleep.h>
 
-struct eevdf_t *schedulers[MAX_CPU_NUM];
+rrs_t *schedulers[MAX_CPU_NUM];
 
 const uint64_t bitmap_size =
     (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 8;
@@ -205,7 +205,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->state = TASK_READY;
     task->current_state = TASK_READY;
 
-    add_eevdf_entity_with_prio(task, task->priority, schedulers[task->cpu_id]);
+    task->sched_info = calloc(1, sizeof(struct sched_entity));
+    add_rrs_entity(task, schedulers[task->cpu_id]);
 
     can_schedule = true;
 
@@ -226,12 +227,9 @@ void task_init() {
     memset(idle_tasks, 0, sizeof(idle_tasks));
 
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
-        schedulers[cpu] = malloc(sizeof(eevdf_t));
-        memset(schedulers[cpu], 0, sizeof(eevdf_t));
-        schedulers[cpu]->root = malloc(sizeof(struct rb_root));
-        memset(schedulers[cpu]->root, 0, sizeof(struct rb_root));
-        schedulers[cpu]->root->rb_node = NULL;
-        schedulers[cpu]->min_vruntime = 0;
+        schedulers[cpu] = malloc(sizeof(rrs_t));
+        memset(schedulers[cpu], 0, sizeof(rrs_t));
+        schedulers[cpu]->sched_queue = create_llist_queue();
     }
 
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
@@ -239,8 +237,8 @@ void task_init() {
         idle_task->cpu_id = cpu;
         idle_task->state = TASK_READY;
         idle_task->current_state = TASK_RUNNING;
-        schedulers[cpu]->current = idle_task->sched_info;
-        schedulers[cpu]->idle_entity = idle_task->sched_info;
+        schedulers[cpu]->curr = idle_task->sched_info;
+        schedulers[cpu]->idle = idle_task->sched_info;
     }
 
     task_create("init", init_thread, 0, NORMAL_PRIORITY);
@@ -890,14 +888,7 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns) {
     else
         task->force_wakeup_ns = UINT64_MAX;
 
-    struct sched_entity *entity = task->sched_info;
-    if (entity->on_rq) {
-        spin_lock(&schedulers[task->cpu_id]->queue_lock);
-        remove_sched_entity(schedulers[task->cpu_id],
-                            schedulers[task->cpu_id]->root, entity);
-        spin_unlock(&schedulers[task->cpu_id]->queue_lock);
-        entity->on_rq = false;
-    }
+    remove_rrs_entity(task, schedulers[task->cpu_id]);
 
     while (current_task->state == TASK_BLOCKING ||
            current_task->state == TASK_READING_STDIO) {
@@ -913,14 +904,7 @@ void task_unblock(task_t *task, int reason) {
     task->status = reason;
     task->state = TASK_READY;
 
-    struct sched_entity *entity = task->sched_info;
-    if (!entity->on_rq) {
-        spin_lock(&schedulers[task->cpu_id]->queue_lock);
-        insert_sched_entity(schedulers[task->cpu_id],
-                            schedulers[task->cpu_id]->root, entity);
-        spin_unlock(&schedulers[task->cpu_id]->queue_lock);
-        entity->on_rq = true;
-    }
+    add_rrs_entity(task, schedulers[task->cpu_id]);
 }
 
 extern spinlock_t futex_lock;
@@ -932,7 +916,7 @@ void task_exit_inner(task_t *task, int64_t code) {
     can_schedule = false;
     struct sched_entity *entity = (struct sched_entity *)task->sched_info;
     if (entity->on_rq)
-        remove_eevdf_entity(task, schedulers[task->cpu_id]);
+        remove_rrs_entity(task, schedulers[task->cpu_id]);
 
     task->current_state = TASK_DIED;
     task->state = TASK_DIED;
@@ -1368,8 +1352,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     current_task->child_vfork_done = false;
 
-    add_eevdf_entity_with_prio(child, child->priority,
-                               schedulers[child->cpu_id]);
+    child->sched_info = calloc(1, sizeof(struct sched_entity));
+    add_rrs_entity(child, schedulers[child->cpu_id]);
 
     can_schedule = true;
 
@@ -1739,7 +1723,7 @@ void schedule() {
     arch_disable_interrupt();
 
     task_t *prev = current_task;
-    task_t *next = pick_next_task(schedulers[current_cpu_id]);
+    task_t *next = rrs_pick_next_task(schedulers[current_cpu_id]);
 
     if (prev == next) {
         return;

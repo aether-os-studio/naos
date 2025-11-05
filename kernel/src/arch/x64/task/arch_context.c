@@ -2,7 +2,7 @@
 #include <mm/mm.h>
 #include <arch/arch.h>
 #include <task/task.h>
-#include <task/eevdf.h>
+#include <task/rrs.h>
 
 void kernel_thread_func();
 asm("kernel_thread_func:\n\t"
@@ -187,7 +187,6 @@ extern bool task_initialized;
 
 void arch_yield() {
     if (task_initialized) {
-        sched_yield(schedulers[current_cpu_id]);
         schedule();
     }
 }

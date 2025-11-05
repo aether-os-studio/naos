@@ -1,5 +1,5 @@
 #include <task/task.h>
-#include <task/eevdf.h>
+#include <task/rrs.h>
 #include "arch_context.h"
 #include <mm/mm.h>
 #include <arch/arch.h>
@@ -161,7 +161,6 @@ extern bool task_initialized;
 
 void arch_yield() {
     if (task_initialized) {
-        sched_yield(schedulers[current_cpu_id]);
         schedule();
     }
 }
