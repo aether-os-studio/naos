@@ -26,31 +26,32 @@ __msi_read_cap_list(struct msi_desc_t *msi_desc, uint32_t cap_off) {
     struct pci_msi_cap_t cap_list = {0};
     pci_device_t *ptr = msi_desc->pci_dev;
     uint32_t dw0;
-    dw0 = ptr->op->read32(ptr->bus, ptr->slot, ptr->func, ptr->segment, cap_off);
+    dw0 =
+        ptr->op->read32(ptr->bus, ptr->slot, ptr->func, ptr->segment, cap_off);
     cap_list.cap_id = dw0 & 0xff;
     cap_list.next_off = (dw0 >> 8) & 0xff;
     cap_list.msg_ctrl = (dw0 >> 16) & 0xffff;
 
     cap_list.msg_addr_lo = ptr->op->read32(ptr->bus, ptr->slot, ptr->func,
-                                         ptr->segment, cap_off + 0x4);
+                                           ptr->segment, cap_off + 0x4);
     uint16_t msg_data_off = 0xc;
     if (cap_list.msg_ctrl & (1 << 7)) // 64位
     {
         cap_list.msg_addr_hi = ptr->op->read32(ptr->bus, ptr->slot, ptr->func,
-                                             ptr->segment, cap_off + 0x8);
+                                               ptr->segment, cap_off + 0x8);
     } else {
         cap_list.msg_addr_hi = 0;
         msg_data_off = 0x8;
     }
 
     cap_list.msg_data = ptr->op->read32(ptr->bus, ptr->slot, ptr->func,
-                                      ptr->segment, cap_off + msg_data_off) &
+                                        ptr->segment, cap_off + msg_data_off) &
                         0xffff;
 
-    cap_list.mask = ptr->op->read32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                                  cap_off + 0x10);
+    cap_list.mask = ptr->op->read32(ptr->bus, ptr->slot, ptr->func,
+                                    ptr->segment, cap_off + 0x10);
     cap_list.pending = ptr->op->read32(ptr->bus, ptr->slot, ptr->func,
-                                     ptr->segment, cap_off + 0x14);
+                                       ptr->segment, cap_off + 0x14);
 
     return cap_list;
 }
@@ -67,15 +68,16 @@ __msi_read_msix_cap_list(struct msi_desc_t *msi_desc, uint32_t cap_off) {
     struct pci_msix_cap_t cap_list = {0};
     pci_device_t *ptr = msi_desc->pci_dev;
     uint32_t dw0;
-    dw0 = ptr->op->read32(ptr->bus, ptr->slot, ptr->func, ptr->segment, cap_off);
+    dw0 =
+        ptr->op->read32(ptr->bus, ptr->slot, ptr->func, ptr->segment, cap_off);
     cap_list.cap_id = dw0 & 0xff;
     cap_list.next_off = (dw0 >> 8) & 0xff;
     cap_list.msg_ctrl = (dw0 >> 16) & 0xffff;
 
     cap_list.dword1 = ptr->op->read32(ptr->bus, ptr->slot, ptr->func,
-                                    ptr->segment, cap_off + 0x4);
+                                      ptr->segment, cap_off + 0x4);
     cap_list.dword2 = ptr->op->read32(ptr->bus, ptr->slot, ptr->func,
-                                    ptr->segment, cap_off + 0x8);
+                                      ptr->segment, cap_off + 0x8);
     return cap_list;
 }
 
@@ -192,7 +194,7 @@ int pci_enable_msi(struct msi_desc_t *msi_desc) {
 
     // disable intx
     tmp = ptr->op->read32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                        0x04); // 读取cap+0x0处的值
+                          0x04); // 读取cap+0x0处的值
     tmp &= ~(1U << 10);
     ptr->op->write32(ptr->bus, ptr->slot, ptr->func, ptr->segment, 0x04, tmp);
 
@@ -210,48 +212,48 @@ int pci_enable_msi(struct msi_desc_t *msi_desc) {
 
             // 使能msi-x
             tmp = ptr->op->read32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                                cap_ptr + 0x2); // 读取cap+0x2处的值
+                                  cap_ptr + 0x2); // 读取cap+0x2处的值
             tmp &= ~(1U << 14);
             tmp |= (1U << 15);
             ptr->op->write32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                           cap_ptr + 0x2, tmp);
+                             cap_ptr + 0x2, tmp);
         }
 
         // 设置msix的中断
         __msix_set_entry(msi_desc);
     } else {
         tmp = ptr->op->read32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                            cap_ptr); // 读取cap+0x0处的值
+                              cap_ptr); // 读取cap+0x0处的值
         message_control = (tmp >> 16) & 0xffff;
 
         // 写入message address
         message_addr = ((((uint64_t)msi_desc->msg.address_hi) << 32) |
                         msi_desc->msg.address_lo); // 获取message address
         ptr->op->write32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                       cap_ptr + 0x4, (uint32_t)(message_addr & 0xffffffff));
+                         cap_ptr + 0x4, (uint32_t)(message_addr & 0xffffffff));
 
         if (message_control & (1 << 7)) // 64位
             ptr->op->write32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                           cap_ptr + 0x8,
-                           (uint32_t)((message_addr >> 32) & 0xffffffff));
+                             cap_ptr + 0x8,
+                             (uint32_t)((message_addr >> 32) & 0xffffffff));
 
         // 写入message data
 
         tmp = msi_desc->msg.data;
         if (message_control & (1 << 7)) // 64位
             ptr->op->write32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                           cap_ptr + 0xc, tmp);
+                             cap_ptr + 0xc, tmp);
         else
             ptr->op->write32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                           cap_ptr + 0x8, tmp);
+                             cap_ptr + 0x8, tmp);
 
         // 使能msi
         tmp = ptr->op->read32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                            cap_ptr + 0x2); // 读取cap+0x2处的值
+                              cap_ptr + 0x2); // 读取cap+0x2处的值
         tmp |= 1;
         tmp &= ~(7 << 4);
         ptr->op->write32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                       cap_ptr + 0x2, tmp);
+                         cap_ptr + 0x2, tmp);
     }
 
     return 0;

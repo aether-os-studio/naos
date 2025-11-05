@@ -192,25 +192,17 @@ all: bin-$(ARCH)/$(OUTPUT)
 # Include header dependencies.
 -include $(HEADER_DEPS)
 
-ifeq ($(ARCH), aarch64)
-override OBJ += $(PROJECT_ROOT)/libgcc_aa64.a
-endif
-ifeq ($(ARCH), riscv64)
-override OBJ += $(PROJECT_ROOT)/libgcc_rv64.a
-endif
-
 .PHONY: bin-$(ARCH)/$(OUTPUT)
 # Link rules for the final executable.
 bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH)-$(BOOT_PROTOCOL).ld $(OBJ)
 	mkdir -p "$$(dirname $@)"
-	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) -o $@.tmp
+	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a -o $@.tmp
 
 	gcc kallsyms.c -o kallsyms
 	$(NM) -n $@.tmp | ./kallsyms > kallsyms.S
 	@$(CC) $(CFLAGS) -c kallsyms.S -o kallsyms.o
 
-	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) kallsyms.o -o $@
-
+	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a kallsyms.o -o $@
 
 # Compilation rules for *.c files.
 obj-$(ARCH)/src/%.c.o: src/%.c GNUmakefile

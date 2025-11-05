@@ -57,9 +57,14 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
                 return a;
             }
             memset((uint64_t *)phys_to_virt(a), 0, DEFAULT_PAGE_SIZE);
-            pgdir[index] = ARCH_MAKE_PTE(a, ARCH_PT_TABLE_FLAGS |
-                                                (flags & ARCH_PT_FLAG_USER));
-        } else {
+            pgdir[index] = ARCH_MAKE_PTE(a, ARCH_PT_TABLE_FLAGS
+#if !defined(__riscv__)
+                                                | (flags & ARCH_PT_FLAG_USER)
+#endif
+            );
+        }
+#if !defined(__riscv__)
+        else {
             if ((flags & ARCH_PT_FLAG_USER) && !(addr & ARCH_PT_FLAG_USER)) {
                 uint64_t pa = ARCH_READ_PTE(addr);
                 uint64_t old_flags = addr & ~ARCH_ADDR_MASK;
@@ -67,6 +72,7 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
                 arch_flush_tlb(vaddr);
             }
         }
+#endif
 
         pgdir = (uint64_t *)phys_to_virt(ARCH_READ_PTE(pgdir[index]));
     }

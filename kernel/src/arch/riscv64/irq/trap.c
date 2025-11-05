@@ -76,11 +76,13 @@ void handle_exception_c(struct pt_regs *regs, uint64_t cause) {
     case 8: // ecall
         handle_syscall(regs);
         regs->epc += 4;
+        regs->sstatus |= (1UL << 5);
         break;
 
     case 11: // scall
         handle_syscall(regs);
         regs->epc += 4;
+        regs->sstatus |= (1UL << 5);
         break;
 
     default:

@@ -47,6 +47,8 @@ asm("kernel_thread_func:\n\t"
     "    li a0, 0\n\t"      // 参数设为 0
     "    j task_exit\n\t"); // 调用 task_exit
 
+extern void ret_from_trap_handler();
+
 void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
                        uint64_t entry, uint64_t stack, bool user_mode,
                        uint64_t initial_arg) {
@@ -79,7 +81,20 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
 }
 
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
-                       uint64_t clone_flags) {}
+                       uint64_t clone_flags) {
+    if (!src->mm) {
+        printk("src->mm == NULL!!! src = %#018lx", src);
+    }
+    dst->mm = clone_page_table(src->mm, clone_flags);
+    if (!dst->mm) {
+        printk("dst->mm == NULL!!! dst = %#018lx", dst);
+    }
+    dst->ctx = (struct pt_regs *)(stack - 8) - 1;
+    dst->ra = (uint64_t)ret_from_trap_handler;
+    dst->sp = (uint64_t)dst->ctx;
+    memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
+    dst->ctx->a0 = 0;
+}
 
 void arch_context_free(arch_context_t *context) {}
 
@@ -109,39 +124,6 @@ void __switch_to(task_t *prev, task_t *next, uint64_t kernel_stack) {
 }
 
 extern void task_signal();
-
-void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next) {
-    prev->arch_context->ctx = ctx;
-
-    if (prev == next) {
-        return;
-    }
-
-    if (next->signal & SIGMASK(SIGKILL)) {
-        return;
-    }
-
-    sched_update_itimer();
-    sched_update_timerfd();
-
-    task_signal();
-
-    if (next->arch_context->dead)
-        return;
-
-    prev->current_state = prev->state;
-    next->current_state = TASK_RUNNING;
-
-    arch_set_current(next);
-
-    arch_switch_with_context(prev->arch_context, next->arch_context,
-                             next->kernel_stack);
-
-    next->current_state = next->state;
-    prev->current_state = TASK_RUNNING;
-}
-
-extern void ret_from_trap_handler();
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
                                uint64_t stack) {

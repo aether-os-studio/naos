@@ -334,6 +334,8 @@ void syscall_handler_init() {
     syscall_handlers[SYS_FADVISE64_64] =
         (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_TIMER_CREATE] = (syscall_handle_t)sys_timer_create;
+    syscall_handlers[SYS_CLOCK_GETTIME_TIME32] =
+        (syscall_handle_t)sys_clock_gettime;
     syscall_handlers[SYS_TIMER_SETTIME] = (syscall_handle_t)sys_timer_settime;
     // syscall_handlers[SYS_TIMER_GETTIME] =
     // (syscall_handle_t)sys_timer_gettime;
@@ -420,6 +422,7 @@ void syscall_handler_init() {
         (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_PREADV] = (syscall_handle_t)sys_preadv;
     // syscall_handlers[SYS_PWRITEV] = (syscall_handle_t)sys_pwritev;
+    syscall_handlers[SYS_PSELECT6_TIME32] = (syscall_handle_t)sys_pselect6;
     // syscall_handlers[SYS_RT_TGSIGQUEUEINFO] =
     //     (syscall_handle_t)sys_rt_tgsigqueueinfo;
     // syscall_handlers[SYS_PERF_EVENT_OPEN] =

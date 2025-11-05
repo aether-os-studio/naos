@@ -659,7 +659,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
                 uint64_t flags = PT_FLAG_U | PT_FLAG_R | PT_FLAG_W | PT_FLAG_X;
                 map_page_range(get_current_page_dir(true), aligned_addr, 0,
-                               alloc_size, PT_FLAG_R | PT_FLAG_W);
+                               alloc_size, flags);
                 memcpy((void *)seg_addr,
                        (void *)((char *)interpreter_buffer +
                                 interpreter_phdr[j].p_offset),
@@ -677,9 +677,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
                         memset((void *)align_start, 0, page_remain);
                     }
                 }
-
-                map_change_attribute_range(get_current_page_dir(true),
-                                           aligned_addr, alloc_size, flags);
             }
 
             interpreter_entry =
@@ -710,7 +707,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
             bool exec = (phdr[i].p_flags & PF_X);
             uint64_t flags = PT_FLAG_U | PT_FLAG_R | PT_FLAG_W | PT_FLAG_X;
             map_page_range(get_current_page_dir(true), aligned_addr, 0,
-                           alloc_size, PT_FLAG_R | PT_FLAG_W);
+                           alloc_size, flags);
             memcpy((void *)seg_addr,
                    (void *)((char *)buffer + phdr[i].p_offset), file_size);
 
@@ -725,9 +722,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
                     memset((void *)align_start, 0, page_remain);
                 }
             }
-
-            map_change_attribute_range(get_current_page_dir(true), aligned_addr,
-                                       alloc_size, flags);
         }
     }
 
@@ -744,7 +738,8 @@ uint64_t task_execve(const char *path_user, const char **argv,
                      USER_STACK_END - USER_STACK_START);
 
     map_page_range(get_current_page_dir(true), USER_STACK_START, 0,
-                   USER_STACK_END - USER_STACK_START, PT_FLAG_R | PT_FLAG_W);
+                   USER_STACK_END - USER_STACK_START,
+                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
     memset((void *)USER_STACK_START, 0, USER_STACK_END - USER_STACK_START);
     uint64_t stack =
@@ -752,10 +747,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
                    (char **)new_envp, envp_count, e_entry,
                    (uint64_t)(load_start + ehdr->e_phoff), ehdr->e_phnum,
                    interpreter_entry ? INTERPRETER_BASE_ADDR : load_start);
-
-    map_change_attribute_range(get_current_page_dir(true), USER_STACK_START,
-                               USER_STACK_END - USER_STACK_START,
-                               PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
     free_frames_bytes(buffer, buf_len);
 
@@ -1229,6 +1220,9 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 #if defined(__x86_64__)
     uint64_t user_sp = regs->rsp;
 #elif defined(__riscv__)
+    child->arch_context->ctx->ktp = (uint64_t)child;
+    child->arch_context->ctx->tp = (uint64_t)child;
+    child->arch_context->ctx->gp = cpuid_to_hartid[child->cpu_id];
     uint64_t user_sp = regs->sp;
 #endif
 

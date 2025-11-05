@@ -78,9 +78,10 @@ uint64_t sys_sgetmask() { return current_task->blocked; }
 // 设置信号屏蔽位图
 uint64_t sys_ssetmask(int how, sigset_t *nset, sigset_t *oset) {
     if (oset)
-        *oset = current_task->blocked;
+        *oset = current_task->blocked >> 1;
     if (nset) {
         uint64_t safe = *nset;
+        safe <<= 1;
         safe &= ~(SIGMASK(SIGKILL) | SIGMASK(SIGSTOP)); // nuh uh!
         switch (how) {
         case SIG_BLOCK:
@@ -213,6 +214,10 @@ uint64_t sys_kill(int pid, int sig) {
             }
         }
 
+        return 0;
+    }
+
+    if (!pid) {
         return 0;
     }
 

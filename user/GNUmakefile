@@ -7,6 +7,9 @@ ifeq ($(ARCH), x86_64)
 # 	sh get_nvidia_firmware.sh
 	$(MAKE) -C init
 endif
+ifeq ($(ARCH), riscv64)
+	$(MAKE) -C init
+endif
 
 .PHONY: clean
 clean:

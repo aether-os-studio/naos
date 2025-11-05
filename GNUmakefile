@@ -100,6 +100,11 @@ HOST_CPPFLAGS :=
 HOST_LDFLAGS :=
 HOST_LIBS :=
 
+LIBGCC_VERSION ?= 2025-08-21
+
+libgcc_$(ARCH).a:
+	wget https://github.com/osdev0/libgcc-binaries/releases/download/$(LIBGCC_VERSION)/libgcc-riscv64.a -O libgcc_$(ARCH).a
+
 .PHONY: all
 all: $(IMAGE_NAME).img rootfs-$(ARCH).img
 
@@ -107,7 +112,7 @@ all: $(IMAGE_NAME).img rootfs-$(ARCH).img
 all-single: single-$(IMAGE_NAME).img
 
 .PHONY: kernel
-kernel:
+kernel: libgcc_$(ARCH).a
 	./kernel/get-deps
 	$(MAKE) -C kernel -j$(shell nproc)
 
