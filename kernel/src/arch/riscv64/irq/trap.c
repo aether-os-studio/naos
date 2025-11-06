@@ -61,16 +61,12 @@ void handle_exception_c(struct pt_regs *regs, uint64_t cause) {
     switch (cause) {
     case 2: // Illegal instruction
         printk("Illegal instruction at PC: 0x%lx\n", regs->epc);
-        // 跳过非法指令
-        while (1)
-            arch_pause();
+        task_exit(128 + SIGSEGV);
         break;
 
     case 3: // Breakpoint
         printk("Breakpoint at PC: 0x%lx\n", regs->epc);
-        // 跳过断点指令
-        while (1)
-            arch_pause();
+        task_exit(128 + SIGSEGV);
         break;
 
     case 8: // ecall

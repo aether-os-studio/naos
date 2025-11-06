@@ -29,6 +29,7 @@ int init_serial() {
         return 0;
     } else {
         // todo: fdt
+        return 0;
     }
 }
 
