@@ -105,8 +105,8 @@ uint64_t sys_gettimeofday(uint64_t arg1) {
     return 0;
 }
 
-uint64_t sys_uname(uint64_t arg1) {
-    struct utsname *utsname = (struct utsname *)arg1;
+uint64_t sys_newuname(uint64_t arg1) {
+    struct new_utsname *utsname = (struct new_utsname *)arg1;
     memcpy(utsname->sysname, sysname, sizeof(sysname));
     memcpy(utsname->nodename, nodename, sizeof(nodename));
     memcpy(utsname->release, release, sizeof(release));
@@ -217,6 +217,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_GETPGID] = (syscall_handle_t)sys_getpgid;
     syscall_handlers[SYS_SETFSUID] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_GETSID] = (syscall_handle_t)sys_getsid;
+    syscall_handlers[SYS_NEWUNAME] = (syscall_handle_t)sys_newuname;
     // syscall_handlers[SYS_CAPGET] = (syscall_handle_t)sys_capget;
     // syscall_handlers[SYS_CAPSET] = (syscall_handle_t)sys_capset;
     // syscall_handlers[SYS_RT_SIGPENDING] =

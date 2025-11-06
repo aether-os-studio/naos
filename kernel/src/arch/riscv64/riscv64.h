@@ -7,6 +7,7 @@
 #include "arch/riscv64/drivers/timer.h"
 #include "arch/riscv64/drivers/char/kb.h"
 #include "arch/riscv64/drivers/serial.h"
+#include "arch/riscv64/drivers/ns16550.h"
 #include "arch/riscv64/irq/ptrace.h"
 #include "arch/riscv64/irq/irq.h"
 #include "arch/riscv64/mm/arch.h"

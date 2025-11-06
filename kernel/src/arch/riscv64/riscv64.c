@@ -7,6 +7,7 @@ extern uint64_t cpuid_to_hartid[MAX_CPU_NUM];
 extern void cpu_init();
 
 void arch_early_init() {
+    init_serial();
     trap_init();
     cpu_init();
     uint64_t sp;

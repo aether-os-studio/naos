@@ -4,6 +4,8 @@
 #include <drivers/kernel_logger.h>
 #include <libs/klibc.h>
 
+#define __NEW_UTS_LEN 64
+
 struct utsname {
     char sysname[65];
     char nodename[65];
@@ -11,6 +13,15 @@ struct utsname {
     char version[65];
     char machine[65];
     char domainname[65];
+};
+
+struct new_utsname {
+    char sysname[__NEW_UTS_LEN + 1];
+    char nodename[__NEW_UTS_LEN + 1];
+    char release[__NEW_UTS_LEN + 1];
+    char version[__NEW_UTS_LEN + 1];
+    char machine[__NEW_UTS_LEN + 1];
+    char domainname[__NEW_UTS_LEN + 1];
 };
 
 typedef uint64_t (*syscall_handle_t)(uint64_t arg1, uint64_t arg2,
