@@ -1051,7 +1051,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
         spin_lock(&task_queue_lock);
         task_t *ptr = tasks[i];
         spin_unlock(&task_queue_lock);
-        if (ptr && ptr->ppid == current_task->pid) {
+        if (ptr && ptr->ppid != ptr->pid && ptr->ppid == current_task->pid) {
             has_children = true;
             break;
         }
@@ -1079,6 +1079,8 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
             }
             continue_ptr_count = 0;
 
+            if (ptr->ppid == ptr->pid)
+                continue;
             if (ptr->ppid != current_task->pid)
                 continue;
 

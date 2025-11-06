@@ -385,6 +385,10 @@ void task_signal() {
     current_task->arch_context->ctx->rsp = sigrsp;
 #elif defined(__aarch64__)
 #elif defined(__riscv)
+    struct pt_regs *f = (struct pt_regs *)current_task->kernel_stack - 1;
+
+    memcpy(&current_task->signal_saved_regs, current_task->arch_context->ctx,
+           sizeof(struct pt_regs));
 #elif defined(__loongarch64)
 #endif
 
@@ -405,6 +409,9 @@ void task_signal() {
         "jmp ret_from_exception" ::"r"(current_task->arch_context->ctx));
 #elif defined(__aarch64__)
 #elif defined(__riscv)
+    asm volatile(
+        "mv sp, %0\n\t"
+        "j ret_from_trap_handler\n\t" ::"r"(current_task->arch_context->ctx));
 #elif defined(__loongarch64)
 #endif
 }

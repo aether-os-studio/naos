@@ -272,6 +272,8 @@ run-riscv64: assets/ovmf-code-$(ARCH).fd all
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
 		-device nvme,drive=harddisk,serial=1234 \
 		-device usb-storage,drive=rootdisk \
+		-netdev user,id=net0 \
+		-device virtio-net-pci,netdev=net0 \
 		$(QEMUFLAGS)
 
 .PHONY: run-riscv64
