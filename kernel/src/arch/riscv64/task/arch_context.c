@@ -97,7 +97,7 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
     dst->ctx->a0 = 0;
 }
 
-void arch_context_free(arch_context_t *context) {}
+void arch_context_free(arch_context_t *context) { context->dead = true; }
 
 extern bool task_initialized;
 

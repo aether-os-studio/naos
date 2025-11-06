@@ -51,7 +51,6 @@ void send_sigint(int pgid) {
 void free_task(task_t *ptr) {
     spin_lock(&task_queue_lock);
     tasks[ptr->pid] = NULL;
-    arch_context_free(ptr->arch_context);
     spin_unlock(&task_queue_lock);
 
     vma_manager_exit_cleanup(&ptr->arch_context->mm->task_vma_mgr);
@@ -59,6 +58,7 @@ void free_task(task_t *ptr) {
     if (!ptr->is_kernel)
         free_page_table(ptr->arch_context->mm);
 
+    arch_context_free(ptr->arch_context);
     free(ptr->arch_context);
 
     free(ptr->sched_info);
@@ -186,7 +186,6 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
 
     memset(task->actions, 0, sizeof(task->actions));
 
-    task->tmp_rec_v = 0;
     task->cmdline = NULL;
 
     memset(task->rlim, 0, sizeof(task->rlim));
@@ -915,8 +914,7 @@ extern uint64_t sys_futex_wake(uint64_t addr, int val, uint32_t bitset);
 void task_exit_inner(task_t *task, int64_t code) {
     can_schedule = false;
     struct sched_entity *entity = (struct sched_entity *)task->sched_info;
-    if (entity->on_rq)
-        remove_rrs_entity(task, schedulers[task->cpu_id]);
+    remove_rrs_entity(task, schedulers[task->cpu_id]);
 
     task->current_state = TASK_DIED;
     task->state = TASK_DIED;
@@ -1011,25 +1009,25 @@ uint64_t task_exit(int64_t code) {
 
     can_schedule = false;
 
-    spin_lock(&task_queue_lock);
-    uint64_t continue_ptr_count = 0;
-    for (int i = 0; i < MAX_TASK_NUM; i++) {
-        if (!tasks[i]) {
-            continue_ptr_count++;
-            if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
-                break;
-            continue;
-        }
-        continue_ptr_count = 0;
-        if ((tasks[i]->ppid != tasks[i]->pid) &&
-            (tasks[i]->ppid == current_task->pid)) {
-            tasks[i]->signal |= SIGMASK(SIGKILL);
-            if (tasks[i]->state == TASK_BLOCKING ||
-                tasks[i]->state == TASK_READING_STDIO)
-                task_unblock(tasks[i], EOK);
-        }
-    }
-    spin_unlock(&task_queue_lock);
+    // spin_lock(&task_queue_lock);
+    // uint64_t continue_ptr_count = 0;
+    // for (int i = 0; i < MAX_TASK_NUM; i++) {
+    //     if (!tasks[i]) {
+    //         continue_ptr_count++;
+    //         if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
+    //             break;
+    //         continue;
+    //     }
+    //     continue_ptr_count = 0;
+    //     if ((tasks[i]->ppid != tasks[i]->pid) &&
+    //         (tasks[i]->ppid == current_task->pid)) {
+    //         tasks[i]->signal |= SIGMASK(SIGKILL);
+    //         if (tasks[i]->state == TASK_BLOCKING ||
+    //             tasks[i]->state == TASK_READING_STDIO)
+    //             task_unblock(tasks[i], EOK);
+    //     }
+    // }
+    // spin_unlock(&task_queue_lock);
 
     task_exit_inner(current_task, code);
 
@@ -1326,8 +1324,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     if (child_tid && (flags & CLONE_CHILD_CLEARTID)) {
         child->tidptr = child_tid;
     }
-
-    child->tmp_rec_v = 0;
 
     memset(child->rlim, 0, sizeof(child->rlim));
     child->rlim[RLIMIT_STACK] = (struct rlimit){
@@ -1734,7 +1730,7 @@ void schedule() {
 
     task_signal();
 
-    if (next->arch_context->dead) {
+    if (next->status == TASK_DIED || next->arch_context->dead) {
         next = idle_tasks[current_cpu_id];
     }
 

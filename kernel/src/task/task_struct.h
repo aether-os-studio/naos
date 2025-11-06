@@ -131,7 +131,6 @@ typedef struct task {
     vfs_node_t cwd;
     fd_info_t *fd_info;
     vfs_node_t procfs_node;
-    uint32_t tmp_rec_v;
     char *cmdline;
     int_timer_internal_t itimer_real;
     kernel_timer_t *timers[MAX_TIMERS_NUM];

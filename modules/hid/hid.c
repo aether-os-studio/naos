@@ -209,10 +209,10 @@ static void handle_key(struct keyevent *data) {
 
     bool shift = (data->modifiers & (0x02 | 0x20)) != 0;
     if (shift && !shiftPressed) {
-        handle_kb_event(0x2A, true);
+        handle_kb_scancode(0x2A, true);
         shiftPressed = true;
     } else if (!shift && shiftPressed) {
-        handle_kb_event(0x2A, false);
+        handle_kb_scancode(0x2A, false);
         shiftPressed = false;
     }
 
@@ -222,8 +222,8 @@ static void handle_key(struct keyevent *data) {
             continue;
         // New key pressed.
         uint16_t scancode = KeyToScanCode[key];
-        handle_kb_event(scancode, true);
-        handle_kb_event(scancode, false);
+        handle_kb_scancode(scancode, true);
+        handle_kb_scancode(scancode, false);
 
         old.keys[addpos++] = key;
         old.repeatcount = KEYREPEATWAITMS / KEYREPEATMS + 1;

@@ -68,13 +68,17 @@ void kb_evdev_generate(uint8_t code, bool pressed) {
 #define KB_QUEUE_SIZE 256
 
 typedef struct {
+    char tmp_buffer[KB_QUEUE_SIZE];
+    uint16_t tmp_head;
+    uint16_t tmp_tail;
+    uint16_t tmp_count;
     char buffer[KB_QUEUE_SIZE];
     uint16_t head;
     uint16_t tail;
     uint16_t count;
 } kb_queue_t;
 
-static kb_queue_t kb_queue = {{0}, 0, 0, 0};
+static kb_queue_t kb_queue = {{0}, 0, 0, 0, {0}, 0, 0, 0};
 
 // 修饰键状态
 static struct {
@@ -84,35 +88,40 @@ static struct {
     bool caps_lock;
 } kb_mods = {0, 0, 0, 0};
 
-static const char scancode_map[] = {
-    0,    0,   '1', '2',  '3',  '4', '5',  '6',  // 0x00-0x07
-    '7',  '8', '9', '0',  '-',  '=', '\b', '\t', // 0x08-0x0F
-    'q',  'w', 'e', 'r',  't',  'y', 'u',  'i',  // 0x10-0x17
-    'o',  'p', '[', ']',  '\n', 0,   'a',  's',  // 0x18-0x1F
-    'd',  'f', 'g', 'h',  'j',  'k', 'l',  ';',  // 0x20-0x27
-    '\'', '`', 0,   '\\', 'z',  'x', 'c',  'v',  // 0x28-0x2F
-    'b',  'n', 'm', ',',  '.',  '/', 0,    '*',  // 0x30-0x37
-    0,    ' ', 0                                 // 0x38-0x3A
-};
+char scancode_map[140] = {
+    0,   0,    '1',  '2', '3',  '4', '5', '6', '7', '8', '9', '0', '-',
+    '=', '\b', '\t', 'q', 'w',  'e', 'r', 't', 'y', 'u', 'i', 'o', 'p',
+    '[', ']',  '\n', 0,   'a',  's', 'd', 'f', 'g', 'h', 'j', 'k', 'l',
+    ';', '\'', '`',  0,   '\\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',',
+    '.', '/',  0,    '*', 0,    ' ', 0,   0,   0,   0,   0,   0,   0,
+    0,   0,    0,    0,   0,    0,   '7', '8', '9', '-', '4', '5', '6',
+    '+', '1',  '2',  '3', '0',  '.', 0,   0,   0,   0,   0};
 
-static const char scancode_map_shift[] = {
-    0,   0,   '!', '@', '#',  '$', '%',  '^',  // 0x00-0x07
-    '&', '*', '(', ')', '_',  '+', '\b', '\t', // 0x08-0x0F
-    'Q', 'W', 'E', 'R', 'T',  'Y', 'U',  'I',  // 0x10-0x17
-    'O', 'P', '{', '}', '\n', 0,   'A',  'S',  // 0x18-0x1F
-    'D', 'F', 'G', 'H', 'J',  'K', 'L',  ':',  // 0x20-0x27
-    '"', '~', 0,   '|', 'Z',  'X', 'C',  'V',  // 0x28-0x2F
-    'B', 'N', 'M', '<', '>',  '?', 0,    '*',  // 0x30-0x37
-    0,   ' ', 0                                // 0x38-0x3A
-};
+char scancode_map_shift[140] = {
+    0,   0,    '!',  '@', '#', '$', '%', '^', '&', '*', '(', ')', '_',
+    '+', '\b', '\t', 'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P',
+    '{', '}',  '\n', 0,   'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L',
+    ':', '\"', '~',  0,   '|', 'Z', 'X', 'C', 'V', 'B', 'N', 'M', '<',
+    '>', '?',  0,    '*', 0,   ' ', 0,   0,   0,   0,   0,   0,   0,
+    0,   0,    0,    0,   0,   0,   '7', '8', '9', '-', '4', '5', '6',
+    '+', '1',  '2',  '3', '0', '.', 0,   0,   0,   0,   0};
 
 static bool queue_push(char c) {
-    if (kb_queue.count >= KB_QUEUE_SIZE) {
+    if (kb_queue.tmp_count >= KB_QUEUE_SIZE) {
         return false;
     }
-    kb_queue.buffer[kb_queue.tail] = c;
-    kb_queue.tail = (kb_queue.tail + 1) % KB_QUEUE_SIZE;
-    kb_queue.count++;
+    kb_queue.tmp_buffer[kb_queue.tmp_tail] = c;
+    kb_queue.tmp_tail = (kb_queue.tmp_tail + 1) % KB_QUEUE_SIZE;
+    kb_queue.tmp_count++;
+    return true;
+}
+
+static bool queue_pop_tmp(char *c) {
+    if (kb_queue.tmp_count == 0) {
+        return false;
+    }
+    *c = kb_queue.tmp_buffer[kb_queue.tmp_head];
+    kb_queue.tmp_head = (kb_queue.tmp_head + 1) % KB_QUEUE_SIZE;
     return true;
 }
 
@@ -126,6 +135,23 @@ static bool queue_pop(char *c) {
     return true;
 }
 
+static bool queue_flush() {
+    if (kb_queue.tmp_count == 0) {
+        return false;
+    }
+
+    int i;
+    for (i = 0; i < kb_queue.tmp_count; i++) {
+        queue_pop_tmp(&kb_queue.buffer[kb_queue.tail]);
+        kb_queue.tail = (kb_queue.tail + 1) % KB_QUEUE_SIZE;
+    }
+
+    kb_queue.tmp_count -= i;
+    kb_queue.count += i;
+
+    return true;
+}
+
 static void queue_push_string(const char *str) {
     while (*str) {
         if (!queue_push(*str++)) {
@@ -134,7 +160,6 @@ static void queue_push_string(const char *str) {
     }
 }
 
-// ============ 特殊键处理 ============
 static const char *get_escape_sequence(uint8_t sc) {
     switch (sc) {
     case 0x48:
@@ -190,6 +215,103 @@ extern tty_t *kernel_session;
 
 void handle_kb_event(uint8_t scan_code, bool pressed) {
     kb_evdev_generate(scan_code, pressed);
+}
+
+const uint8_t evdevTable[89] = {
+    0,
+    KEY_ESC,
+    KEY_1,
+    KEY_2,
+    KEY_3,
+    KEY_4,
+    KEY_5,
+    KEY_6,
+    KEY_7,
+    KEY_8,
+    KEY_9,
+    KEY_0,
+    KEY_MINUS,
+    KEY_EQUAL,
+    KEY_BACKSPACE,
+    KEY_TAB,
+    KEY_Q,
+    KEY_W,
+    KEY_E,
+    KEY_R,
+    KEY_T,
+    KEY_Y,
+    KEY_U,
+    KEY_I,
+    KEY_O,
+    KEY_P,
+    KEY_LEFTBRACE,
+    KEY_RIGHTBRACE,
+    KEY_ENTER,
+    KEY_LEFTCTRL,
+    KEY_A,
+    KEY_S,
+    KEY_D,
+    KEY_F,
+    KEY_G,
+    KEY_H,
+    KEY_J,
+    KEY_K,
+    KEY_L,
+    KEY_SEMICOLON,
+    KEY_APOSTROPHE,
+    KEY_GRAVE,
+    KEY_LEFTSHIFT,
+    KEY_BACKSLASH,
+    KEY_Z,
+    KEY_X,
+    KEY_C,
+    KEY_V,
+    KEY_B,
+    KEY_N,
+    KEY_M,
+    KEY_COMMA,
+    KEY_DOT,
+    KEY_SLASH,
+    KEY_RIGHTSHIFT,
+    KEY_KPASTERISK,
+    KEY_LEFTALT,
+    KEY_SPACE,
+    KEY_CAPSLOCK,
+    KEY_F1,
+    KEY_F2,
+    KEY_F3,
+    KEY_F4,
+    KEY_F5,
+    KEY_F6,
+    KEY_F7,
+    KEY_F8,
+    KEY_F9,
+    KEY_F10,
+    KEY_NUMLOCK,
+    KEY_SCROLLLOCK,
+    KEY_KP7,
+    KEY_UP, // KEY_KP8
+    KEY_KP9,
+    KEY_KPMINUS,
+    KEY_LEFT, // KEY_KP4
+    KEY_KP5,
+    KEY_RIGHT, // KEY_KP6
+    KEY_KPPLUS,
+    KEY_KP1,
+    KEY_DOWN, // KEY_KP2
+    KEY_KP3,
+    KEY_INSERT, // KEY_KP0
+    KEY_DELETE, // KEY_KPDOT
+    0,
+    0,
+    0,
+    KEY_F11,
+    KEY_F12,
+};
+
+void handle_kb_scancode(uint8_t scan_code, bool pressed) {
+    if (evdevTable[scan_code])
+        handle_kb_event(evdevTable[scan_code], pressed);
 
     if (!pressed) {
         switch (scan_code) {
@@ -259,10 +381,17 @@ void handle_kb_event(uint8_t scan_code, bool pressed) {
         }
     }
 
-    if (kernel_session && kernel_session->termios.c_lflag & ECHO) {
-        printk("%c", c);
-    }
+    // if (kernel_session && (kernel_session->termios.c_lflag & ECHO)) {
+    printk("%c", c);
+    // }
     queue_push(c);
+
+    if (c == '\n') {
+        queue_flush();
+    } else {
+        if (kernel_session && !(kernel_session->termios.c_lflag & ICANON))
+            queue_flush();
+    }
 }
 
 int kb_read(char *buffer, int n) {

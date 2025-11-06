@@ -104,13 +104,19 @@ int terminal_ioctl(tty_t *device, uint32_t cmd, uint64_t arg) {
     }
 }
 
+bool io_switch = false;
+
 int terminal_poll(tty_t *device, int events) {
-    int revents = 0;
-    if ((events & EPOLLIN) && kb_available()) {
+    ssize_t revents = 0;
+    if ((events & EPOLLERR) || (events & EPOLLPRI))
+        return 0;
+
+    if ((events & EPOLLIN) && io_switch)
         revents |= EPOLLIN;
-    }
     if (events & EPOLLOUT)
         revents |= EPOLLOUT;
+    io_switch = !io_switch;
+
     return revents;
 }
 
