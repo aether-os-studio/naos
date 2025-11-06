@@ -423,6 +423,7 @@ void syscall_handler_init() {
         (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_PREADV] = (syscall_handle_t)sys_preadv;
     // syscall_handlers[SYS_PWRITEV] = (syscall_handle_t)sys_pwritev;
+    syscall_handlers[SYS_PPOLL_TIME32] = (syscall_handle_t)sys_ppoll;
     syscall_handlers[SYS_PSELECT6_TIME32] = (syscall_handle_t)sys_pselect6;
     // syscall_handlers[SYS_RT_TGSIGQUEUEINFO] =
     //     (syscall_handle_t)sys_rt_tgsigqueueinfo;
