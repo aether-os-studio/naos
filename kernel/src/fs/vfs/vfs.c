@@ -123,23 +123,28 @@ int vfs_mkdir(const char *name) {
     }
 
     char *save_ptr = path;
-    char *filename = path + strlen(path);
-    if (*--filename == '/') {
-        *filename = '\0';
-    }
+    char *filename = NULL;
+    if (strstr(path, "/")) {
+        int pathlen = strlen(path);
+        filename = path + pathlen;
+        if (*--filename == '/') {
+            *filename = '\0';
+        }
 
-    while (*--filename != '/' && filename != path) {
-    }
-    if (filename != path) {
-        *filename++ = '\0';
+        while (*--filename != '/' && filename != path) {
+        }
+
+        while (*filename == '/')
+            *filename++ = '\0';
+
+        if (filename == path) {
+            goto create;
+        }
     } else {
+        filename = (char *)name;
         goto create;
     }
 
-    if (strlen(path) == 0) {
-        free(path);
-        return -1;
-    }
     for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr)) {
         if (streq(buf, "."))
             continue;
@@ -187,23 +192,28 @@ int vfs_mkfile(const char *name) {
     }
 
     char *save_ptr = path;
-    char *filename = path + strlen(path);
-    if (*--filename == '/') {
-        *filename = '\0';
-    }
+    char *filename = NULL;
+    if (strstr(path, "/")) {
+        int pathlen = strlen(path);
+        filename = path + pathlen;
+        if (*--filename == '/') {
+            *filename = '\0';
+        }
 
-    while (*--filename != '/' && filename != path) {
-    }
-    if (filename != path) {
-        *filename++ = '\0';
+        while (*--filename != '/' && filename != path) {
+        }
+
+        while (*filename == '/')
+            *filename++ = '\0';
+
+        if (filename == path) {
+            goto create;
+        }
     } else {
+        filename = (char *)name;
         goto create;
     }
 
-    if (strlen(path) == 0) {
-        free(path);
-        return -1;
-    }
     for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr)) {
         if (streq(buf, "."))
             continue;
@@ -263,23 +273,28 @@ int vfs_link(const char *name, const char *target_name) {
     }
 
     char *save_ptr = path;
-    char *filename = path + strlen(path);
-    if (*--filename == '/') {
-        *filename = '\0';
-    }
+    char *filename = NULL;
+    if (strstr(path, "/")) {
+        int pathlen = strlen(path);
+        filename = path + pathlen;
+        if (*--filename == '/') {
+            *filename = '\0';
+        }
 
-    while (*--filename != '/' && filename != path) {
-    }
-    if (filename != path) {
-        *filename++ = '\0';
+        while (*--filename != '/' && filename != path) {
+        }
+
+        while (*filename == '/')
+            *filename++ = '\0';
+
+        if (filename == path) {
+            goto create;
+        }
     } else {
+        filename = (char *)name;
         goto create;
     }
 
-    if (strlen(path) == 0) {
-        free(path);
-        return -1;
-    }
     for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr)) {
         if (streq(buf, "."))
             continue;
@@ -331,23 +346,28 @@ int vfs_symlink(const char *name, const char *target_name) {
     }
 
     char *save_ptr = path;
-    char *filename = path + strlen(path);
-    if (*--filename == '/') {
-        *filename = '\0';
-    }
+    char *filename = NULL;
+    if (strstr(path, "/")) {
+        int pathlen = strlen(path);
+        filename = path + pathlen;
+        if (*--filename == '/') {
+            *filename = '\0';
+        }
 
-    while (*--filename != '/' && filename != path) {
-    }
-    if (filename != path) {
-        *filename++ = '\0';
+        while (*--filename != '/' && filename != path) {
+        }
+
+        while (*filename == '/')
+            *filename++ = '\0';
+
+        if (filename == path) {
+            goto create;
+        }
     } else {
+        filename = (char *)name;
         goto create;
     }
 
-    if (strlen(path) == 0) {
-        free(path);
-        return -1;
-    }
     for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr)) {
         if (streq(buf, "."))
             continue;
@@ -400,23 +420,28 @@ int vfs_mknod(const char *name, uint16_t umode, int dev) {
     }
 
     char *save_ptr = path;
-    char *filename = path + strlen(path);
-    if (*--filename == '/') {
-        *filename = '\0';
-    }
+    char *filename = NULL;
+    if (strstr(path, "/")) {
+        int pathlen = strlen(path);
+        filename = path + pathlen;
+        if (*--filename == '/') {
+            *filename = '\0';
+        }
 
-    while (*--filename != '/' && filename != path) {
-    }
-    if (filename != path) {
-        *filename++ = '\0';
+        while (*--filename != '/' && filename != path) {
+        }
+
+        while (*filename == '/')
+            *filename++ = '\0';
+
+        if (filename == path) {
+            goto create;
+        }
     } else {
+        filename = (char *)name;
         goto create;
     }
 
-    if (strlen(path) == 0) {
-        free(path);
-        return -1;
-    }
     for (const char *buf = pathtok(&save_ptr); buf; buf = pathtok(&save_ptr)) {
         if (streq(buf, "."))
             continue;
