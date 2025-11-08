@@ -4,6 +4,7 @@
 /freestnd-c-hdrs
 /src/cc-runtime
 /src/limine.h
+/src/embedded_modules.h
 /bin-*
 /obj-*
 /target

@@ -8,6 +8,9 @@ export BUILD_MODE ?= debug
 
 export BOOT_PROTOCOL ?= limine
 
+# mixed or monolithic
+export KERNEL_MODULE ?= mixed
+
 # Target architecture to build for. Default to x86_64.
 export ARCH ?= x86_64
 
@@ -155,40 +158,44 @@ else ifeq ($(ARCH),loongarch64)
 EFI_FILE_SINGLE = assets/limine/BOOTLOONGARCH64.EFI
 endif
 
-$(IMAGE_NAME).img: assets/limine kernel modules
+$(IMAGE_NAME).img: assets/limine modules kernel
 	dd if=/dev/zero of=$(IMAGE_NAME).img bs=1M count=512
 	sgdisk --new=1:1M:511M $(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 $(IMAGE_NAME).img
 	mcopy -i $(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/
+ifeq ($(KERNEL_MODULE), mixed)
 	mcopy -i $(IMAGE_NAME).img@@1M modules-$(ARCH) ::/modules
+endif
 ifeq ($(BOOT_PROTOCOL), limine)
 	mmd -i $(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/limine
 	mcopy -i $(IMAGE_NAME).img@@1M $(EFI_FILE_SINGLE) ::/EFI/BOOT
 ifeq ($(ARCH), x86_64)
-	mcopy -i $(IMAGE_NAME).img@@1M limine_x86_64.conf ::/limine/limine.conf
+	mcopy -i $(IMAGE_NAME).img@@1M limine_x86_64_$(KERNEL_MODULE).conf ::/limine/limine.conf
 else
-	mcopy -i $(IMAGE_NAME).img@@1M limine.conf ::/limine
+	mcopy -i $(IMAGE_NAME).img@@1M limine_$(KERNEL_MODULE).conf ::/limine/limine.conf
 endif
 endif
 ifeq ($(BOOT_PROTOCOL), multiboot2)
 	mmd -i $(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/limine
 	mcopy -i $(IMAGE_NAME).img@@1M $(EFI_FILE_SINGLE) ::/EFI/BOOT
-	mcopy -i $(IMAGE_NAME).img@@1M limine_multiboot2.conf ::/limine/limine.conf
+	mcopy -i $(IMAGE_NAME).img@@1M limine_multiboot2_$(KERNEL_MODULE).conf ::/limine/limine.conf
 endif
 
-single-$(IMAGE_NAME).img: assets/limine kernel rootfs-$(ARCH).img modules
+single-$(IMAGE_NAME).img: assets/limine modules kernel rootfs-$(ARCH).img
 	dd if=/dev/zero of=single-$(IMAGE_NAME).img bs=1M count=$$(( $(ROOTFS_IMG_SIZE) + 1024 ))
 	sgdisk --new=1:1M:1023M --new=2:1024M:$$(( $$(($(ROOTFS_IMG_SIZE) + 1024 )) * 1024 )) single-$(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 single-$(IMAGE_NAME).img
 	mcopy -i single-$(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/
+ifeq ($(KERNEL_MODULE), mixed)
 	mcopy -i single-$(IMAGE_NAME).img@@1M modules-$(ARCH) ::/modules
+endif
 ifeq ($(BOOT_PROTOCOL), limine)
 	mmd -i single-$(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/limine
 	mcopy -i single-$(IMAGE_NAME).img@@1M $(EFI_FILE_SINGLE) ::/EFI/BOOT
 ifeq ($(ARCH), x86_64)
-	mcopy -i single-$(IMAGE_NAME).img@@1M limine_x86_64.conf ::/limine/limine.conf
+	mcopy -i single-$(IMAGE_NAME).img@@1M limine_x86_64_$(KERNEL_MODULE).conf ::/limine/limine.conf
 else
-	mcopy -i single-$(IMAGE_NAME).img@@1M limine.conf ::/limine
+	mcopy -i single-$(IMAGE_NAME).img@@1M limine_$(KERNEL_MODULE).conf ::/limine/limine.conf
 endif
 endif
 
@@ -324,3 +331,7 @@ assets/ovmf-code-$(ARCH).fd:
 .PHONY: modules
 modules:
 	$(MAKE) -C modules -j$(shell nproc)
+
+ifeq ($(KERNEL_MODULE), monolithic)
+	$(MAKE) -C modules monolithic_modules
+endif

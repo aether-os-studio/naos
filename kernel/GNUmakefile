@@ -185,6 +185,10 @@ override ASFILES := $(filter %.S,$(SRCFILES))
 override OBJ := $(addprefix obj-$(ARCH)/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o))
 override HEADER_DEPS := $(addprefix obj-$(ARCH)/,$(CFILES:.c=.c.d) $(ASFILES:.S=.S.d))
 
+ifeq ($(KERNEL_MODULE), monolithic)
+override CFLAGS += -DMONOLITHIC
+endif
+
 # Default target. This must come first, before header dependencies.
 .PHONY: all
 all: bin-$(ARCH)/$(OUTPUT)
@@ -196,13 +200,22 @@ all: bin-$(ARCH)/$(OUTPUT)
 # Link rules for the final executable.
 bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH)-$(BOOT_PROTOCOL).ld $(OBJ)
 	mkdir -p "$$(dirname $@)"
+
+ifeq ($(KERNEL_MODULE), monolithic)
+	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a $(shell find $(PROJECT_ROOT)/./modules-$(ARCH)/generated/ -name "*.o") -o $@.tmp
+else
 	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a -o $@.tmp
+endif
 
 	gcc kallsyms.c -o kallsyms
 	$(NM) -n $@.tmp | ./kallsyms > kallsyms.S
 	@$(CC) $(CFLAGS) -c kallsyms.S -o kallsyms.o
 
+ifeq ($(KERNEL_MODULE), monolithic)
+	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a kallsyms.o $(shell find $(PROJECT_ROOT)/./modules-$(ARCH)/generated/ -name "*.o") -o $@
+else
 	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a kallsyms.o -o $@
+endif
 
 # Compilation rules for *.c files.
 obj-$(ARCH)/src/%.c.o: src/%.c GNUmakefile
