@@ -11,15 +11,51 @@
 
 void terminal_flush(tty_t *session) { flanterm_flush(session->terminal); }
 
-size_t terminal_read(tty_t *device, char *buf, size_t count) {
-    while (kb_available() < count) {
-        arch_enable_interrupt();
-        arch_yield();
-    }
-    arch_disable_interrupt();
+extern uart_device_t uart0;
+extern bool serial_initialized;
 
-    return kb_read(buf, count);
+size_t terminal_read(tty_t *device, char *buf, size_t count) {
+    size_t read = 0;
+
+    while (read < count) {
+        char c;
+        bool got = false;
+
+        // 优先从键盘读取
+        if (kb_available() > 0) {
+            int n = kb_read(&c, 1);
+            if (n > 0) {
+                got = true;
+            }
+        }
+        // 否则尝试从 UART 读取
+        else if (serial_initialized && uart_data_available(&uart0)) {
+            if (uart_try_getc(&uart0, &c) == 0) {
+                got = true;
+            }
+        }
+
+        // 有数据就写入缓冲区
+        if (got) {
+            buf[read++] = c;
+        } else {
+            // 都没数据，允许调度/等待
+            arch_enable_interrupt();
+            arch_yield();
+        }
+    }
+
+    return read;
 }
+// size_t terminal_read(tty_t *device, char *buf, size_t count) {
+//     while (kb_available() < count) {
+//         arch_enable_interrupt();
+//         arch_yield();
+//     }
+//     arch_disable_interrupt();
+
+//     return kb_read(buf, count);
+// }
 
 int terminal_ioctl(tty_t *device, uint32_t cmd, uint64_t arg) {
     struct flanterm_context *ft_ctx = device->terminal;
