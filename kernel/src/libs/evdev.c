@@ -347,9 +347,6 @@ void handle_kb_scancode(uint8_t scan_code, bool pressed) {
 
     const char *esc_seq = get_escape_sequence(scan_code);
     if (esc_seq) {
-        if (kernel_session && kernel_session->termios.c_lflag & ECHO) {
-            printk("%s", esc_seq);
-        }
         queue_push_string(esc_seq);
 
         return;
@@ -381,17 +378,12 @@ void handle_kb_scancode(uint8_t scan_code, bool pressed) {
         }
     }
 
-    // if (kernel_session && (kernel_session->termios.c_lflag & ECHO)) {
-    printk("%c", c);
-    // }
+    if (kernel_session && (kernel_session->termios.c_lflag & ECHO)) {
+        printk("%c", c);
+    }
     queue_push(c);
 
-    if (c == '\n') {
-        queue_flush();
-    } else {
-        if (kernel_session && !(kernel_session->termios.c_lflag & ICANON))
-            queue_flush();
-    }
+    queue_flush();
 }
 
 int kb_read(char *buffer, int n) {
