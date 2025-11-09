@@ -44,8 +44,8 @@ tty_device_t *get_tty_device(const char *name) {
 void tty_init() {
     llist_init_head(&tty_device_list);
     kernel_session = malloc(sizeof(tty_t));
-
-    tty_device_t *device = alloc_tty_device(TTY_DEVICE_GRAPHI);
+    /* ---------- 1. 注册图形终端(tty0) ---------- */
+    tty_device_t *fb_device = alloc_tty_device(TTY_DEVICE_GRAPHI);
     struct tty_graphics_ *graphics = malloc(sizeof(struct tty_graphics_));
 
     boot_framebuffer_t *framebuffer = boot_get_framebuffer();
@@ -63,16 +63,28 @@ void tty_init() {
     graphics->red_mask_size = framebuffer->red_mask_size;
     graphics->green_mask_size = framebuffer->green_mask_size;
 
-    device->private_data = graphics;
+    fb_device->private_data = graphics;
 
     char name[32];
-    sprintf(name, "tty%zu", 0);
-    strcpy(device->name, name);
-    register_tty_device(device);
+    //TDO:
+    // sprintf(name, "tty%zu", 0); 对zu解析不足。
+    
+    sprintf(name, "tty%lu", 0);
+    strcpy(fb_device->name, name);
+    register_tty_device(fb_device);
+
+    /* ---------- 2. 注册串口终端(ttyS0) ---------- */
+    tty_device_t *serial_dev = alloc_tty_device(TTY_DEVICE_SERIAL);
+    struct tty_serial_ *serial = malloc(sizeof(struct tty_serial_));
+    serial->port = 0; // 第一个串口
+
+    serial_dev->private_data = serial;
+    strcpy(serial_dev->name, "ttyS0");
+    register_tty_device(serial_dev);
 }
 
 extern void create_session_terminal(tty_t *tty);
-
+extern void create_session_terminal_serial(tty_t *tty);
 int tty_ioctl(void *dev, int cmd, void *args) {
     tty_t *tty = dev;
     return tty->ops.ioctl(tty, cmd, (uint64_t)args);
@@ -98,12 +110,33 @@ int tty_write(void *dev, void *buf, uint64_t offset, size_t size,
 void tty_init_session() {
     const char *tty_name = "tty0";
     tty_device_t *device = get_tty_device(tty_name);
-    device = device == NULL
-                 ? container_of(tty_device_list.prev, tty_device_t, node)
-                 : device;
-    kernel_session = calloc(1, sizeof(tty_t));
-    kernel_session->device = device;
-    create_session_terminal(kernel_session);
-    device_install(DEV_CHAR, DEV_TTY, kernel_session, tty_name, 0, tty_ioctl,
-                   tty_poll, tty_read, tty_write, NULL);
+    if (!device) {
+        printk("tty_init_session: no device '%s', fallback to last tty\n", tty_name);
+        device = container_of(tty_device_list.prev, tty_device_t, node);
+    }
+
+    tty_t *tty = calloc(1, sizeof(tty_t));
+    tty->device = device;
+    create_session_terminal(tty);
+    device_install(DEV_CHAR, DEV_TTY, tty, tty_name, 0,
+                   tty_ioctl, tty_poll, tty_read, tty_write, NULL);
+
+    kernel_session = tty;
+}
+
+void tty_init_serial() {
+    const char *tty_name = "ttyS0";
+    tty_device_t *device = get_tty_device(tty_name);
+    if (!device) {
+        printk("tty_init_serial: device not found: %s\n", tty_name);
+        return;
+    }
+
+    tty_t *tty = calloc(1, sizeof(tty_t));
+    tty->device = device;
+    create_session_terminal_serial(tty);
+    device_install(DEV_CHAR, DEV_TTY, tty, tty_name, 0,
+                   tty_ioctl, tty_poll, tty_read, tty_write, NULL);
+
+    kernel_session = tty;
 }

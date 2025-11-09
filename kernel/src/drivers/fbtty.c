@@ -45,7 +45,15 @@ size_t terminal_read(tty_t *device, char *buf, size_t count) {
 
     return read;
 }
+// size_t terminal_read(tty_t *device, char *buf, size_t count) {
+//     while (kb_available() < count) {
+//         arch_enable_interrupt();
+//         arch_yield();
+//     }
+//     arch_disable_interrupt();
 
+//     return kb_read(buf, count);
+// }
 int terminal_ioctl(tty_t *device, uint32_t cmd, uint64_t arg) {
     struct flanterm_context *ft_ctx = device->terminal;
     struct flanterm_fb_context *fb_ctx = device->terminal;
