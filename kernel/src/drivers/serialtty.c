@@ -1,20 +1,14 @@
 #include <drivers/tty.h>
-#include <drivers/fbtty.h>
+#include <drivers/serialtty.h>
 #include <mm/mm.h>
 #include <libs/keys.h>
 #include <fs/fs_syscall.h>
-#define FLANTERM_IN_FLANTERM
-#include <libs/flanterm/flanterm_private.h>
-#include <libs/flanterm/flanterm.h>
-#include <libs/flanterm/flanterm_backends/fb_private.h>
-#include <libs/flanterm/flanterm_backends/fb.h>
 
-void terminal_flush_serial(tty_t *session) { 
-    // flanterm_flush(session->terminal); 
-    return ;
+void terminal_flush_serial(tty_t *session) {
+    // flanterm_flush(session->terminal);
+    return;
 }
 
-extern uart_device_t uart0;
 extern bool serial_initialized;
 
 size_t terminal_read_serial(tty_t *device, char *buf, size_t count) {
@@ -23,7 +17,7 @@ size_t terminal_read_serial(tty_t *device, char *buf, size_t count) {
     while (read < count) {
         char c = read_serial();
         if (c) {
-            //非0表示读到了字符。
+            // 非0表示读到了字符。
             buf[read++] = c;
         } else {
             // 都没数据，允许调度/等待
@@ -39,8 +33,7 @@ int terminal_ioctl_serial(tty_t *device, uint32_t cmd, uint64_t arg) {
     switch (cmd) {
     case TIOCGWINSZ:
         *(struct winsize *)arg = (struct winsize){
-            .ws_row = 24, .ws_col = 80, .ws_xpixel = 0, .ws_ypixel = 0
-        };
+            .ws_row = 24, .ws_col = 80, .ws_xpixel = 0, .ws_ypixel = 0};
         return 0;
 
     case TIOCSCTTY:
@@ -95,10 +88,6 @@ spinlock_t terminal_write_serial_lock = {0};
 size_t terminal_write_serial(tty_t *device, const char *buf, size_t count) {
     spin_lock(&terminal_write_serial_lock);
     serial_printk(buf, count);
-
-    // if (device->current_vt_mode.mode != VT_PROCESS) {
-    //     flanterm_write(device->terminal, buf, count);
-    // }
     spin_unlock(&terminal_write_serial_lock);
     return count;
 }
@@ -143,5 +132,6 @@ uint64_t create_session_terminal_serial(tty_t *session) {
     session->ops.poll = terminal_poll_serial;
     session->ops.read = terminal_read_serial;
     session->ops.write = terminal_write_serial;
+
     return EOK;
 }

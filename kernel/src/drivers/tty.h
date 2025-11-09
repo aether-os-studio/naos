@@ -73,3 +73,4 @@ uint64_t register_tty_device(tty_device_t *device);
 uint64_t delete_tty_device(tty_device_t *device);
 void tty_init();
 void tty_init_session();
+void tty_init_session_serial();

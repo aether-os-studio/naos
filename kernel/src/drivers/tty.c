@@ -66,9 +66,9 @@ void tty_init() {
     fb_device->private_data = graphics;
 
     char name[32];
-    //TDO:
-    // sprintf(name, "tty%zu", 0); 对zu解析不足。
-    
+    // TDO:
+    //  sprintf(name, "tty%zu", 0); 对zu解析不足。
+
     sprintf(name, "tty%lu", 0);
     strcpy(fb_device->name, name);
     register_tty_device(fb_device);
@@ -85,6 +85,7 @@ void tty_init() {
 
 extern void create_session_terminal(tty_t *tty);
 extern void create_session_terminal_serial(tty_t *tty);
+
 int tty_ioctl(void *dev, int cmd, void *args) {
     tty_t *tty = dev;
     return tty->ops.ioctl(tty, cmd, (uint64_t)args);
@@ -111,20 +112,21 @@ void tty_init_session() {
     const char *tty_name = "tty0";
     tty_device_t *device = get_tty_device(tty_name);
     if (!device) {
-        printk("tty_init_session: no device '%s', fallback to last tty\n", tty_name);
+        printk("tty_init_session: no device '%s', fallback to last tty\n",
+               tty_name);
         device = container_of(tty_device_list.prev, tty_device_t, node);
     }
 
     tty_t *tty = calloc(1, sizeof(tty_t));
     tty->device = device;
     create_session_terminal(tty);
-    device_install(DEV_CHAR, DEV_TTY, tty, tty_name, 0,
-                   tty_ioctl, tty_poll, tty_read, tty_write, NULL);
+    device_install(DEV_CHAR, DEV_TTY, tty, tty_name, 0, tty_ioctl, tty_poll,
+                   tty_read, tty_write, NULL);
 
     kernel_session = tty;
 }
 
-void tty_init_serial() {
+void tty_init_session_serial() {
     const char *tty_name = "ttyS0";
     tty_device_t *device = get_tty_device(tty_name);
     if (!device) {
@@ -135,8 +137,8 @@ void tty_init_serial() {
     tty_t *tty = calloc(1, sizeof(tty_t));
     tty->device = device;
     create_session_terminal_serial(tty);
-    device_install(DEV_CHAR, DEV_TTY, tty, tty_name, 0,
-                   tty_ioctl, tty_poll, tty_read, tty_write, NULL);
+    device_install(DEV_CHAR, DEV_TTY, tty, tty_name, 0, tty_ioctl, tty_poll,
+                   tty_read, tty_write, NULL);
 
     kernel_session = tty;
 }

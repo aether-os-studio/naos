@@ -430,60 +430,61 @@ ssize_t nulldev_write(void *data, const void *buf, uint64_t offset,
 ssize_t nulldev_ioctl(void *data, ssize_t request, ssize_t arg) { return 0; }
 
 void parse_cmdline_console(const char *cmdline) {
-    if (!cmdline || !*cmdline)
-        return;
+    static char console_name[64];
+    memset(console_name, 0, sizeof(console_name));
+
+    if (!cmdline || !*cmdline) {
+        strcpy(console_name, DEFAULT_TTY);
+        goto next;
+    }
 
     // 查找 "console="
     const char *key = "console=";
     const char *pos = strstr(cmdline, key);
-    if (!pos)
-        return;
+    if (!pos) {
+        strcpy(console_name, DEFAULT_TTY);
+        goto next;
+    }
 
     pos += strlen(key);
 
     // 复制 console 设备名
-    static char console_name[64];
     size_t i = 0;
     while (*pos && *pos != ' ' && i < sizeof(console_name) - 1) {
         console_name[i++] = *pos++;
     }
     console_name[i] = '\0';
 
+next:
     // 输出调试信息
-    printk("[CMDLINE] detected console device: %s\n", console_name);
+    printk("Detected console device: %s\n", console_name);
 
-    // 更新默认控制台
-    if (strcmp(console_name, "ttyS0") == 0) {
-        default_console = "/dev/ttyS0";
-    } else if (strcmp(console_name, "tty0") == 0) {
-        default_console = "/dev/tty0";
-    } else if (strcmp(console_name, "tty1") == 0) {
-        default_console = "/dev/tty1";
-    } else {
-        
-        static char custom_console[64];
-        snprintf(custom_console, sizeof(custom_console), "/dev/%s", console_name);
-        default_console = custom_console;
-    }
+    char buf[64];
+    sprintf(buf, "/dev/%s", console_name);
 
-    printk("[CONSOLE] set default to %s\n", default_console);
+    default_console = strdup(buf);
+
+    printk("Set default to %s\n", default_console);
 }
+
 void setup_console_symlinks(const char *cmdline) {
     // 解析命令行 console 参数
     parse_cmdline_console(cmdline);
 
     // 建立符号链接
-    vfs_symlink("/dev/tty1", default_console );  // 主控制台
+    vfs_symlink("/dev/tty1", default_console); // 主控制台
 
     vfs_symlink("/dev/stdin", default_console);
     vfs_symlink("/dev/stdout", default_console);
     vfs_symlink("/dev/stderr", default_console);
-    
+
     vfs_symlink("/dev/kmsg", default_console);
 }
+
 void stdio_init() {
     device_install(DEV_CHAR, DEV_NULL, NULL, "null", 0, nulldev_ioctl, NULL,
                    nulldev_read, nulldev_write, NULL);
+
     const char *cmdline = boot_get_cmdline();
     setup_console_symlinks(cmdline);
 
