@@ -36,7 +36,13 @@ int init_serial() {
 char read_serial() {
     if (!serial_initialized)
         return 0;
-    return 0;
+    char c;
+    // 尝试非阻塞读取
+    if (uart_try_getc(&uart0, &c) == 0) {
+        return c;  // 成功读取
+    }
+
+    return 0;  // 没有数据返回0（代表“无输入”）
 }
 
 void write_serial(char a) {

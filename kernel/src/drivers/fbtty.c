@@ -11,9 +11,6 @@
 
 void terminal_flush(tty_t *session) { flanterm_flush(session->terminal); }
 
-extern uart_device_t uart0;
-extern bool serial_initialized;
-
 size_t terminal_read(tty_t *device, char *buf, size_t count) {
     size_t read = 0;
 
@@ -28,9 +25,10 @@ size_t terminal_read(tty_t *device, char *buf, size_t count) {
                 got = true;
             }
         }
-        // 否则尝试从 UART 读取
-        else if (serial_initialized && uart_data_available(&uart0)) {
-            if (uart_try_getc(&uart0, &c) == 0) {
+        // 否则尝试从串口读取（封装后的通用接口）
+        else {
+            c = read_serial();
+            if (c != 0) {
                 got = true;
             }
         }
@@ -47,15 +45,6 @@ size_t terminal_read(tty_t *device, char *buf, size_t count) {
 
     return read;
 }
-// size_t terminal_read(tty_t *device, char *buf, size_t count) {
-//     while (kb_available() < count) {
-//         arch_enable_interrupt();
-//         arch_yield();
-//     }
-//     arch_disable_interrupt();
-
-//     return kb_read(buf, count);
-// }
 
 int terminal_ioctl(tty_t *device, uint32_t cmd, uint64_t arg) {
     struct flanterm_context *ft_ctx = device->terminal;
