@@ -12,15 +12,48 @@
 void terminal_flush(tty_t *session) { flanterm_flush(session->terminal); }
 
 size_t terminal_read(tty_t *device, char *buf, size_t count) {
-    while (kb_available() < count) {
-        arch_enable_interrupt();
-        arch_yield();
+    size_t read = 0;
+
+    while (read < count) {
+        char c;
+        bool got = false;
+
+        // 优先从键盘读取
+        if (kb_available() > 0) {
+            int n = kb_read(&c, 1);
+            if (n > 0) {
+                got = true;
+            }
+        }
+        // 否则尝试从串口读取（封装后的通用接口）
+        else {
+            c = read_serial();
+            if (c != 0) {
+                got = true;
+            }
+        }
+
+        // 有数据就写入缓冲区
+        if (got) {
+            buf[read++] = c;
+        } else {
+            // 都没数据，允许调度/等待
+            arch_enable_interrupt();
+            arch_yield();
+        }
     }
-    arch_disable_interrupt();
 
-    return kb_read(buf, count);
+    return read;
 }
+// size_t terminal_read(tty_t *device, char *buf, size_t count) {
+//     while (kb_available() < count) {
+//         arch_enable_interrupt();
+//         arch_yield();
+//     }
+//     arch_disable_interrupt();
 
+//     return kb_read(buf, count);
+// }
 int terminal_ioctl(tty_t *device, uint32_t cmd, uint64_t arg) {
     struct flanterm_context *ft_ctx = device->terminal;
     struct flanterm_fb_context *fb_ctx = device->terminal;

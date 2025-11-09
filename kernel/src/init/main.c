@@ -41,6 +41,7 @@ void kmain(void) {
 
     tty_init();
     tty_init_session();
+    tty_init_serial();
 
     printk("Next Aether-OS starting...\n");
 
