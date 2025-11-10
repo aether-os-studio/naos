@@ -5,7 +5,7 @@
 
 #if !defined(__x86_64__)
 
-struct fdt_context g_fdt_ctx;
+struct fdt_context g_fdt_ctx = {0};
 
 /**
  * 获取属性名称
@@ -209,6 +209,8 @@ const char *fdt_get_property_string(int node_offset, const char *prop_name) {
  */
 void fdt_walk_nodes(fdt_node_callback callback) {
     uint32_t *p = (uint32_t *)g_fdt_ctx.dt_struct;
+    if (!p)
+        return;
     int depth = 0;
     char path_stack[10][128]; /* 路径栈 */
     char current_path[256];
