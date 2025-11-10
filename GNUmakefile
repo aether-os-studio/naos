@@ -267,6 +267,22 @@ run-aarch64-single: assets/ovmf-code-$(ARCH).fd all-single
 
 .PHONY: run-riscv64
 run-riscv64: assets/ovmf-code-$(ARCH).fd all
+ifeq ($(BOOT_PROTOCOL), opensbi)
+	qemu-system-$(ARCH) \
+		-M virt \
+		-cpu rv64 \
+		-device ramfb \
+		-device qemu-xhci \
+		-device usb-kbd \
+		-device usb-mouse \
+		-kernel kernel/bin-$(ARCH)/kernel \
+		-append "console=tty0" \
+		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
+		-device usb-storage,drive=rootdisk \
+		-netdev user,id=net0 \
+		-device virtio-net-pci,netdev=net0 \
+		$(QEMUFLAGS)
+else
 	qemu-system-$(ARCH) \
 		-M virt \
 		-cpu rv64 \
@@ -282,6 +298,7 @@ run-riscv64: assets/ovmf-code-$(ARCH).fd all
 		-netdev user,id=net0 \
 		-device virtio-net-pci,netdev=net0 \
 		$(QEMUFLAGS)
+endif
 
 .PHONY: run-riscv64
 run-riscv64-single: assets/ovmf-code-$(ARCH).fd all-single

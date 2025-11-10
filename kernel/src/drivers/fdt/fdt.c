@@ -3,6 +3,9 @@
 #include <mm/mm.h>
 
 #if !defined(__x86_64__)
+
+struct fdt_context g_fdt_ctx;
+
 /**
  * 初始化FDT解析器
  * @param dtb_phys_addr DTB的物理地址
@@ -315,4 +318,5 @@ void fdt_walk_nodes(fdt_node_callback callback) {
         }
     }
 }
+
 #endif

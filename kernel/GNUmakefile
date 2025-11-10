@@ -128,6 +128,7 @@ ifeq ($(ARCH),riscv64)
         -march=rv64imafd \
         -mabi=lp64d \
         -mno-relax \
+        -mcmodel=medany \
         -D__riscv__
     override LDFLAGS += \
         -Wl,-m,elf64lriscv \
@@ -179,6 +180,11 @@ ifeq ($(BOOT_PROTOCOL), multiboot2)
 override SRCFILES += src/boot/multiboot2_boot.c
 override SRCFILES += $(shell find src/boot/multiboot2/x64 -name "*.[Sc]" | LC_ALL=C sort)
 override CFLAGS += -DMULTIBOOT2
+endif
+ifeq ($(BOOT_PROTOCOL), opensbi)
+override SRCFILES += src/boot/opensbi_boot.c
+override SRCFILES += $(shell find src/boot/opensbi -name "*.[Sc]" | LC_ALL=C sort)
+override CFLAGS += -DOPENSBI
 endif
 override CFILES := $(filter %.c,$(SRCFILES))
 override ASFILES := $(filter %.S,$(SRCFILES))

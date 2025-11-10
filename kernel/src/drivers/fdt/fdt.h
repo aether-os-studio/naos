@@ -52,7 +52,7 @@ struct fdt_context {
 };
 
 /* 全局FDT上下文 */
-static struct fdt_context g_fdt_ctx;
+extern  struct fdt_context g_fdt_ctx;
 
 /* 大小端转换宏 */
 #define fdt32_to_cpu(x) __builtin_bswap32(x)

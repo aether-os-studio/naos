@@ -205,6 +205,18 @@ static inline const char *strstr(const char *haystack, const char *needle) {
     return NULL;
 }
 
+static inline char *strchr(const char *s, int c) {
+    if (!s)
+        return NULL;
+
+    do {
+        if (*s == (char)c)
+            return s;
+    } while (*s++);
+
+    return NULL;
+}
+
 static inline char *strrchr(const char *s, int c) {
     const char *last = NULL;
     if (!s)

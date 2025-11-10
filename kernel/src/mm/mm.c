@@ -182,7 +182,8 @@ void frame_init() {
         if (addr == bitmap_address) {
             addr += (bitmap_size + DEFAULT_PAGE_SIZE - 1) &
                     ~(DEFAULT_PAGE_SIZE - 1);
-            len -= (len + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1);
+            len -= (bitmap_size + DEFAULT_PAGE_SIZE - 1) &
+                   ~(DEFAULT_PAGE_SIZE - 1);
         }
 
         process_memory_region(addr, addr + len);
@@ -266,6 +267,9 @@ uintptr_t alloc_frames(size_t count) {
     size_t order = log2_floor(required_pages);
 
     page_t *page = alloc_pages(GFP_KERNEL_NORMAL, order);
+    if (!page) {
+        page = alloc_pages(GFP_KERNEL_DMA32, order);
+    }
 
     uint64_t idx = page - mem_map;
 
