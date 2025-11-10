@@ -21,26 +21,33 @@ virtqueue_t *virt_queue_new(virtio_driver_t *driver, uint16_t queue_idx,
     virtio_used_ring_t *used = NULL;
 
     if (driver->op->requires_legacy_layout(driver->data)) {
-        // TODO
+        queue->is_modern = false;
 
-        // queue->is_modern = false;
-        // uint64_t desc_size, avail_size, used_size;
-        // queue_part_sizes(SIZE, &desc_size, &avail_size, &used_size);
-        // uint64_t all_size = PADDING_UP(desc_size + avail_size,
-        // DEFAULT_PAGE_SIZE) + PADDING_UP(used_size, DEFAULT_PAGE_SIZE);
-        // queue->inner.legacy = malloc(sizeof(virtqueue_legacy_t));
-        // queue->inner.legacy->paddr =
-        // translate_address(get_current_page_dir(false),
-        // (uint64_t)alloc_frames_bytes(all_size)); queue->inner.legacy->size =
-        // all_size; queue->inner.legacy->avail_offset = desc_size;
-        // queue->inner.legacy->used_offset = PADDING_UP(desc_size + avail_size,
-        // DEFAULT_PAGE_SIZE);
+        uint64_t desc_size, avail_size, used_size;
+        queue_part_sizes(SIZE, &desc_size, &avail_size, &used_size);
 
-        // driver->op->queue_set(driver->data, queue_idx, SIZE,
-        // queue->inner.modern->driver_to_device_paddr,
-        // queue->inner.modern->driver_to_device_paddr +
-        // queue->inner.modern->avail_offset,
-        // queue->inner.modern->device_to_driver_paddr);
+        uint64_t size = PADDING_UP(desc_size + avail_size, DEFAULT_PAGE_SIZE) +
+                        PADDING_UP(used_size, DEFAULT_PAGE_SIZE);
+
+        queue->inner.legacy = malloc(sizeof(virtqueue_legacy_t));
+        memset(queue->inner.legacy, 0, sizeof(virtqueue_legacy_t));
+        queue->inner.legacy->paddr = translate_address(
+            get_current_page_dir(false),
+            (uint64_t)alloc_frames_bytes(PADDING_UP(size, DEFAULT_PAGE_SIZE)));
+        queue->inner.legacy->avail_offset = desc_size;
+        queue->inner.legacy->used_offset =
+            PADDING_UP(desc_size + avail_size, DEFAULT_PAGE_SIZE);
+
+        driver->op->queue_set(driver->data, queue_idx, SIZE,
+                              queue->inner.legacy->paddr, 0, 0);
+
+        desc = phys_to_virt((virtio_descriptor_t *)queue->inner.legacy->paddr);
+        avail = phys_to_virt(
+            (virtio_avail_ring_t *)(queue->inner.legacy->paddr +
+                                    queue->inner.legacy->avail_offset));
+        used = phys_to_virt(
+            (virtio_used_ring_t *)(queue->inner.legacy->paddr +
+                                   queue->inner.legacy->used_offset));
     } else {
         queue->is_modern = true;
         uint64_t desc_size, avail_size, used_size;

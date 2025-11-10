@@ -62,7 +62,7 @@ extern struct fdt_context g_fdt_ctx;
 /* 对齐宏 */
 #define ALIGN_UP(x, align) (((x) + (align) - 1) & ~((align) - 1))
 
-int fdt_init();
+void fdt_init();
 int fdt_find_node(const char *path);
 
 const void *fdt_get_property(int node_offset, const char *prop_name, int *len);

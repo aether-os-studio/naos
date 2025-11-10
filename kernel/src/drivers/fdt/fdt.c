@@ -1,49 +1,11 @@
 #include <boot/boot.h>
 #include <drivers/fdt/fdt.h>
 #include <mm/mm.h>
+#include <libs/aether/fdt.h>
 
 #if !defined(__x86_64__)
 
 struct fdt_context g_fdt_ctx;
-
-/**
- * 初始化FDT解析器
- * @param dtb_phys_addr DTB的物理地址
- * @return 0成功，负值失败
- */
-int fdt_init() {
-    struct fdt_header *header;
-    uint32_t totalsize;
-
-    header = (struct fdt_header *)boot_get_dtb();
-    if (!header) {
-        return -1;
-    }
-
-    /* 检查魔数 */
-    if (fdt32_to_cpu(header->magic) != FDT_MAGIC) {
-        return -2;
-    }
-
-    /* 获取DTB总大小 */
-    totalsize = fdt32_to_cpu(header->totalsize);
-    g_fdt_ctx.dtb_base = (void *)header;
-    if (!g_fdt_ctx.dtb_base) {
-        return -3;
-    }
-
-    /* 设置各个部分的指针 */
-    g_fdt_ctx.header = (struct fdt_header *)g_fdt_ctx.dtb_base;
-    g_fdt_ctx.dt_struct =
-        (uint8_t *)g_fdt_ctx.dtb_base + fdt32_to_cpu(header->off_dt_struct);
-    g_fdt_ctx.dt_strings =
-        (char *)g_fdt_ctx.dtb_base + fdt32_to_cpu(header->off_dt_strings);
-    g_fdt_ctx.rsv_map =
-        (struct fdt_reserve_entry *)((uint8_t *)g_fdt_ctx.dtb_base +
-                                     fdt32_to_cpu(header->off_mem_rsvmap));
-
-    return 0;
-}
 
 /**
  * 获取属性名称
@@ -318,5 +280,87 @@ void fdt_walk_nodes(fdt_node_callback callback) {
         }
     }
 }
+
+static int fdt_match_compatible(const char **driver_compat,
+                                const char *device_compat) {
+    for (int i = 0; driver_compat[i] != NULL; i++) {
+        if (strcmp(driver_compat[i], device_compat) == 0) {
+            return i; // 返回匹配的索引
+        }
+    }
+    return -1;
+}
+
+extern int fdt_driver_count;
+
+static fdt_driver_t *fdt_find_driver(int node_offset,
+                                     const char **matched_compat) {
+    int len;
+    const char *compatible = fdt_get_property(node_offset, "compatible", &len);
+
+    if (!compatible || len <= 0) {
+        return NULL;
+    }
+
+    /* compatible 可能包含多个以 null 分隔的字符串 */
+    const char *compat_str = compatible;
+    while (compat_str < compatible + len) {
+        /* 遍历所有注册的驱动 */
+        for (int i = 0; i < fdt_driver_count; i++) {
+            if (fdt_match_compatible(fdt_drivers[i]->compatible, compat_str) >=
+                0) {
+                if (matched_compat) {
+                    *matched_compat = compat_str;
+                }
+                return fdt_drivers[i];
+            }
+        }
+
+        /* 移动到下一个 compatible 字符串 */
+        compat_str += strlen(compat_str) + 1;
+    }
+
+    return NULL;
+}
+
+static void fdt_probe_node(const char *path, int offset, int depth) {
+    const char *matched_compat = NULL;
+    fdt_driver_t *driver = fdt_find_driver(offset, &matched_compat);
+
+    if (!driver) {
+        return; // 没有匹配的驱动
+    }
+
+    if (fdt_device_count >= MAX_FDT_DEVICES_NUM) {
+        printk("FDT: Too many devices\n");
+        return;
+    }
+
+    /* 创建设备实例 */
+    fdt_device_t *dev = &fdt_devices[fdt_device_count];
+    dev->name = path;
+    dev->node_offset = offset;
+    dev->fdt = g_fdt_ctx.dt_struct;
+    dev->driver = driver;
+    dev->driver_data = NULL;
+
+    /* 调用驱动的 probe 函数 */
+    printk("FDT: Probing device '%s' with driver '%s' (compatible: %s)\n", path,
+           driver->name, matched_compat);
+
+    if (driver->probe) {
+        int ret = driver->probe(dev, matched_compat);
+        if (ret == 0) {
+            fdt_device_count++;
+            printk("FDT: Device '%s' initialized successfully\n", path);
+        } else {
+            printk("FDT: Device '%s' probe failed: %d\n", path, ret);
+        }
+    } else {
+        fdt_device_count++;
+    }
+}
+
+void fdt_init() { fdt_walk_nodes(fdt_probe_node); }
 
 #endif

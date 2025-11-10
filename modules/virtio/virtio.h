@@ -7,11 +7,21 @@
 #include <libs/aether/pci.h>
 
 typedef enum virtio_device_type {
-    VIRTIO_DEVICE_TYPE_NETWORK = 1,
-    VIRTIO_DEVICE_TYPE_BLOCK = 2,
-    VIRTIO_DEVICE_TYPE_GPU = 16,
-    VIRTIO_DEVICE_INPUT = 18,
-    VIRTIO_DEVICE_SOUND = 25,
+    VIRTIO_DEVICE_TYPE_RESERVED = 0,
+    VIRTIO_DEVICE_TYPE_NETWORK = 1, // 网络设备
+    VIRTIO_DEVICE_TYPE_BLOCK = 2,   // 块设备
+    VIRTIO_DEVICE_TYPE_CONSOLE = 3, // 控制台
+    VIRTIO_DEVICE_TYPE_ENTROPY = 4, // 熵源（随机数）
+    VIRTIO_DEVICE_TYPE_BALLOON = 5, // 内存气球
+    VIRTIO_DEVICE_TYPE_SCSI = 8,    // SCSI 主机
+    VIRTIO_DEVICE_TYPE_9P = 9,      // 9P 传输
+    VIRTIO_DEVICE_TYPE_GPU = 16,    // GPU
+    VIRTIO_DEVICE_TYPE_INPUT = 18,  // 输入设备（键盘/鼠标/触摸板）
+    VIRTIO_DEVICE_TYPE_VSOCK = 19,  // Socket
+    VIRTIO_DEVICE_TYPE_CRYPTO = 20, // 加密设备
+    VIRTIO_DEVICE_TYPE_SOUND = 25,  // 音频设备
+    VIRTIO_DEVICE_TYPE_FS = 26,     // 文件系统
+    VIRTIO_DEVICE_TYPE_PMEM = 27,   // 持久内存
 } virtio_device_type_t;
 
 struct virtio_driver;

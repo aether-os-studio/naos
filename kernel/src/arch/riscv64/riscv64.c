@@ -14,7 +14,6 @@ void arch_early_init() {
     asm volatile("mv %0, sp" : "=r"(current_stack));
     current_stack &= ~(STACK_SIZE - 1);
     csr_write(sscratch, current_stack + STACK_SIZE);
-    fdt_init();
     smp_init();
 }
 

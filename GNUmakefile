@@ -278,9 +278,9 @@ ifeq ($(BOOT_PROTOCOL), opensbi)
 		-kernel kernel/bin-$(ARCH)/kernel \
 		-append "console=ttyS0" \
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
-		-device usb-storage,drive=rootdisk \
+		-device virtio-blk-device,drive=rootdisk,bus=virtio-mmio-bus.0 \
 		-netdev user,id=net0 \
-		-device virtio-net-pci,netdev=net0 \
+		-device virtio-net-device,netdev=net0,bus=virtio-mmio-bus.1 \
 		$(QEMUFLAGS)
 else
 	qemu-system-$(ARCH) \

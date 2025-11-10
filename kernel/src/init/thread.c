@@ -3,6 +3,7 @@
 
 #include <fs/vfs/dev.h>
 #include <drivers/bus/pci.h>
+#include <drivers/fdt/fdt.h>
 #include <drivers/drm/drm_core.h>
 #include <drivers/drm/drm.h>
 #include <fs/partition.h>
@@ -29,6 +30,10 @@ void init_thread(uint64_t arg) {
     printk("NAOS init thread is running...\n");
 
     pci_init();
+
+#if !defined(__x86_64__)
+    fdt_init();
+#endif
 
     acpi_init_after_pci();
 
