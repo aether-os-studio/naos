@@ -491,7 +491,7 @@ uint64_t sys_dup(uint64_t fd) {
     return sys_dup2(fd, i);
 }
 
-spinlock_t fcntl_lock = {0};
+spinlock_t fcntl_lock = SPIN_INIT;
 
 #define RWF_WRITE_LIFE_NOT_SET 0
 #define RWH_WRITE_LIFE_NONE 1

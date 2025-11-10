@@ -1,7 +1,7 @@
 #include <task/futex.h>
 #include <fs/fs_syscall.h>
 
-spinlock_t futex_lock = {0};
+spinlock_t futex_lock = SPIN_INIT;
 struct futex_wait futex_wait_list = {0, NULL, NULL, 0};
 
 uint64_t sys_futex_wait(uint64_t addr, const struct timespec *timeout,

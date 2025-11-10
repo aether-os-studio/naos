@@ -1,4 +1,5 @@
 #include <boot/boot.h>
+#include <boot/opensbi/opensbi_boot.h>
 #include <arch/arch.h>
 #include <drivers/fdt/fdt.h>
 
@@ -418,6 +419,8 @@ uint64_t bsp_hart_id = UINT64_MAX;
 uintptr_t opensbi_dtb_vaddr;
 
 void opensbi_c_start(uint64_t boot_hart_id, uintptr_t dtb_ptr) {
+    arch_disable_interrupt();
+
     if (bsp_hart_id == UINT64_MAX)
         bsp_hart_id = boot_hart_id;
 
@@ -460,7 +463,8 @@ void opensbi_c_start(uint64_t boot_hart_id, uintptr_t dtb_ptr) {
                                      fdt32_to_cpu(header->off_mem_rsvmap));
 
     setup_framebuffer(&opensbi_fb);
-    setup_memmap(&opensbi_memory_map, 0x80000000, 0x81000000, &opensbi_fb);
+    setup_memmap(&opensbi_memory_map, EARLY_MAP_BASE, EARLY_MAP_END,
+                 &opensbi_fb);
 
     opensbi_dtb_vaddr = dtb_ptr;
 

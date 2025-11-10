@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <drivers/kernel_logger.h>
 
-spinlock_t frame_op_lock = {0};
+spinlock_t frame_op_lock = SPIN_INIT;
 
 Bitmap usable_regions;
 uint64_t memory_size = 0;

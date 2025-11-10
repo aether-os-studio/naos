@@ -6,7 +6,7 @@
 
 int sysfs_fsid = 0;
 
-spinlock_t sysfs_oplock = {0};
+spinlock_t sysfs_oplock = SPIN_INIT;
 
 vfs_node_t sysfs_root = NULL;
 vfs_node_t fake_sysfs_root = NULL;

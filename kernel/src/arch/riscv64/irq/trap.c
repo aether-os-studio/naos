@@ -5,7 +5,7 @@
 void handle_exception_c(struct pt_regs *regs, uint64_t cause);
 void handle_interrupt_c(struct pt_regs *regs, uint64_t cause);
 
-spinlock_t dump_lock = {0};
+spinlock_t dump_lock = SPIN_INIT;
 
 void dump_registers(struct pt_regs *regs) {
     spin_lock(&dump_lock);

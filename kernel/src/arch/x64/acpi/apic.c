@@ -306,7 +306,7 @@ void sse_init() {
                  "movq %rax, %cr4\n\t");
 }
 
-spinlock_t ap_startup_lock = {0};
+spinlock_t ap_startup_lock = SPIN_INIT;
 
 extern bool task_initialized;
 

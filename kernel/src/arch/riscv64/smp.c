@@ -3,7 +3,7 @@
 #include <arch/riscv64/irq/irq.h>
 #include <task/task.h>
 
-spinlock_t ap_startup_lock = {0};
+spinlock_t ap_startup_lock = SPIN_INIT;
 
 uint64_t cpu_count = 0;
 

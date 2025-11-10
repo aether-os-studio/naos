@@ -83,7 +83,7 @@ int terminal_poll_serial(tty_t *device, int events) {
     return revents;
 }
 
-spinlock_t terminal_write_serial_lock = {0};
+spinlock_t terminal_write_serial_lock = SPIN_INIT;
 
 size_t terminal_write_serial(tty_t *device, const char *buf, size_t count) {
     spin_lock(&terminal_write_serial_lock);

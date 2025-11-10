@@ -1,7 +1,7 @@
 #include <drivers/pty.h>
 
 uint8_t *pty_bitmap = 0;
-spinlock_t pty_global_lock = {0};
+spinlock_t pty_global_lock = SPIN_INIT;
 
 pty_pair_t first_pair;
 

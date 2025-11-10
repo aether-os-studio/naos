@@ -35,7 +35,7 @@ void smp_init() {
     boot_smp_init((uintptr_t)ap_kmain);
 }
 
-spinlock_t ap_startup_lock = {0};
+spinlock_t ap_startup_lock = SPIN_INIT;
 
 extern bool task_initialized;
 

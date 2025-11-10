@@ -1,4 +1,5 @@
 #include <boot/boot.h>
+#include <boot/opensbi/opensbi_boot.h>
 #include <arch/arch.h>
 
 #define PAGE_SIZE 4096
@@ -186,8 +187,8 @@ int setup_sv48_page_table(boot_memory_map_t *mmap, uint64_t *satp_out) {
     }
 
     // 首先映射内核已经占用的区域（确保内核代码可继续执行）
-    uintptr_t kernel_low_start = 0x80000000UL;
-    uintptr_t kernel_low_end = 0x81000000UL; // 16MB内核区域
+    uintptr_t kernel_low_start = EARLY_MAP_BASE;
+    uintptr_t kernel_low_end = EARLY_MAP_END; // 16MB内核区域
 
     if (map_region((pte_t *)root_table, kernel_low_start, kernel_low_end,
                    PTE_R | PTE_W | PTE_X | PTE_G | PTE_A | PTE_D) < 0) {

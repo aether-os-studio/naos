@@ -1,4 +1,5 @@
 #include <boot/boot.h>
+#include <boot/opensbi/opensbi_boot.h>
 #include <arch/arch.h>
 #include <drivers/fdt/fdt.h>
 
@@ -29,9 +30,6 @@ extern uint64_t bsp_hart_id;
 
 extern void _opensbi_start_ap();
 
-#define EARLY_MAP_BASE 0x80000000
-#define EARLY_MAP_END 0x81000000
-
 void opensbi_smp_init(uintptr_t entry) {
     cpu_count = 0;
     cpuid_to_hartid[cpu_count++] = bsp_hart_id;
@@ -44,8 +42,6 @@ void opensbi_smp_init(uintptr_t entry) {
     map_page_range(get_current_page_dir(false), EARLY_MAP_BASE, EARLY_MAP_BASE,
                    EARLY_MAP_END - EARLY_MAP_BASE,
                    PT_FLAG_R | PT_FLAG_W | PT_FLAG_X);
-
-    uint64_t smp_startup_info[2];
 
     while (1) {
         uint32_t tag = fdt32_to_cpu(*p++);
@@ -64,14 +60,10 @@ void opensbi_smp_init(uintptr_t entry) {
                         continue;
                     }
                     cpuid_to_hartid[cpu_count++] = hartid;
-                    smp_startup_info[0] =
-                        (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
-                    smp_startup_info[1] =
-                        (uint64_t)virt_to_phys(get_current_page_dir(false));
-                    sbi_ecall(0x48534D, 0, hartid, 0x8020007c,
-                              translate_address(get_current_page_dir(false),
-                                                (uint64_t)smp_startup_info),
-                              0, 0, 0);
+                    sbi_ecall(
+                        0x48534D, 0, hartid, 0x80200088,
+                        (uint64_t)virt_to_phys(get_current_page_dir(false)), 0,
+                        0, 0);
                 }
             }
 

@@ -82,7 +82,7 @@ extern int vsprintf(char *buf, const char *fmt, va_list args);
 
 extern bool can_schedule;
 
-spinlock_t dump_lock = {0};
+spinlock_t dump_lock = SPIN_INIT;
 
 void dump_regs(struct pt_regs *regs, const char *error_str, ...) {
     can_schedule = false;

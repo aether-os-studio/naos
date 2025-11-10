@@ -11,7 +11,7 @@
 
 int devtmpfs_fsid = 0;
 
-spinlock_t devtmpfs_oplock = {0};
+spinlock_t devtmpfs_oplock = SPIN_INIT;
 
 vfs_node_t devtmpfs_root = NULL;
 vfs_node_t fake_devtmpfs_root = NULL;

@@ -7,7 +7,7 @@
 
 #define DEFAULT_PAGE_SIZE 4096UL
 
-#define MAX_CPU_NUM 256
+#define MAX_CPU_NUM 128
 #define MAX_IO_CPU_NUM 8
 #define STACK_SIZE 32768UL
 

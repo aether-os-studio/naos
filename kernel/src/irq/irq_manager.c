@@ -56,7 +56,7 @@ void irq_regist_irq(uint64_t irq_num,
 }
 
 uint64_t irq = IRQ_ALLOCATE_NUM_BASE;
-spinlock_t irq_lock = {0};
+spinlock_t irq_lock = SPIN_INIT;
 
 void irq_manager_init() {}
 

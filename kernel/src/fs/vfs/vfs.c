@@ -788,7 +788,7 @@ int vfs_poll(vfs_node_t node, size_t event) {
     return ret;
 }
 
-spinlock_t get_path_lock = {0};
+spinlock_t get_path_lock = SPIN_INIT;
 
 // 使用请记得free掉返回的buff
 char *vfs_get_fullpath(vfs_node_t node) {

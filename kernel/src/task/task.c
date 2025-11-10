@@ -17,7 +17,7 @@ rrs_t *schedulers[MAX_CPU_NUM];
 const uint64_t bitmap_size =
     (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 8;
 
-spinlock_t task_queue_lock = {0};
+spinlock_t task_queue_lock = SPIN_INIT;
 task_t *tasks[MAX_TASK_NUM];
 task_t *idle_tasks[MAX_CPU_NUM];
 

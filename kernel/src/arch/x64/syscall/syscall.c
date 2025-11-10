@@ -582,7 +582,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_FCHMODAT2] = (syscall_handle_t)sys_fchmodat2;
 }
 
-spinlock_t syscall_debug_lock = {0};
+spinlock_t syscall_debug_lock = SPIN_INIT;
 
 void syscall_handler(struct pt_regs *regs, uint64_t user_regs) {
     regs->rip = regs->rcx;

@@ -5,7 +5,7 @@
 
 static int ext_fsid = 0;
 
-spinlock_t rwlock = {0};
+spinlock_t rwlock = SPIN_INIT;
 
 extern uint64_t device_dev_nr;
 

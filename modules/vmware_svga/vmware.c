@@ -12,7 +12,7 @@ vmware_gpu_device_t *vmware_gpu_devices[MAX_VMWARE_GPU_DEVICES];
 uint32_t vmware_gpu_devices_count = 0;
 
 // Synchronization
-static spinlock_t register_lock = {0};
+static spinlock_t register_lock = SPIN_INIT;
 
 // Utility functions
 static inline uint32_t vmware_read_register(vmware_gpu_device_t *device,

@@ -9,7 +9,12 @@ _opensbi_start:
     mv s1, a1              // dtb_ptr
 
     // 设置临时栈
-    la sp, boot_stack_top
+    la sp, boot_stack
+    mv t0, tp
+    addi t0, t0, 1
+    li t1, STACK_SIZE
+    mul t0, t0, t1
+    add sp, sp, t0
     
     // 建立早期页表（s1 中有 dtb_ptr）
     call setup_early_page_table
@@ -24,7 +29,6 @@ _opensbi_start:
     sfence.vma zero, zero
 
     // 现在运行在高半核，重新设置栈到高地址
-    la sp, boot_stack_top
     li t0, 0xffff800000000000
     add sp, sp, t0
     
@@ -53,17 +57,28 @@ to_opensbi_c_start:
 // offset 8: page_table phys addr
 .global _opensbi_start_ap
 _opensbi_start_ap:
-    ld t0, 0(a1)           // stack
-    mv sp, t0
+    mv tp, a0              // hart_id
+
+    // 设置临时栈
+    la sp, boot_stack
+    mv t0, tp
+    addi t0, t0, 1
+    li t1, STACK_SIZE
+    mul t0, t0, t1
+    add sp, sp, t0
 
     // 启用分页 (SV48)
-    ld t0, 8(a1)           // page_table
+    mv t0, a1              // page_table
     srli t0, t0, 12        // 获取PPN
     li t1, 9               // SV48 mode = 9
     slli t1, t1, 60
     or t0, t0, t1
     csrw satp, t0
     sfence.vma zero, zero
+    
+    // 现在运行在高半核，重新设置栈到高地址
+    li t0, 0xffff800000000000
+    add sp, sp, t0
 
     // 直接计算 opensbi_c_start 的高地址
     ld t0, to_opensbi_c_start
@@ -76,7 +91,7 @@ _opensbi_start_ap:
 
 // 建立早期页表的函数
 // 映射：
-//   1. 0x80000000-0x81000000 (内核 16MB)
+//   1. 0x80000000-0x88000000 (内核 128MB)
 //   2. DTB 所在的 2MB 对齐页
 setup_early_page_table:
     // s1 = dtb_ptr
@@ -139,10 +154,10 @@ setup_early_page_table:
     
 .Lskip_dtb_l2:
     // ===== 设置 L1 页表（内核区域）=====
-    // 映射 0x80000000-0x81000000 (16MB = 8 个 2MB 页)
+    // 映射 0x80000000-0x88000000 (128MB = 64 个 2MB 页)
     la t0, boot_page_table_l1_kernel
     li t1, 0x80000000      // 起始物理地址
-    li t2, 8               // 页数量
+    li t2, 64              // 页数量
     li t3, 0xEF            // PTE flags
     
 .Lmap_kernel_loop:
@@ -212,7 +227,7 @@ memzero:
 .section .boot.data
 .align 15
 boot_stack:
-    .fill STACK_SIZE, 8, 0
+    .fill STACK_SIZE * MAX_CPU_NUM, 8, 0
 boot_stack_top:
 
 .align 12

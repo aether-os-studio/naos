@@ -5,7 +5,7 @@
 
 static struct mpool pool;
 
-static spinlock_t malloc_lock = {0};
+static spinlock_t malloc_lock = SPIN_INIT;
 
 uint64_t get_all_memusage() { return KERNEL_HEAP_SIZE; }
 

@@ -35,7 +35,7 @@ void write_serial(char a) {
     io_out8(SERIAL_PORT, a);
 }
 
-spinlock_t write_serial_lock = {0};
+spinlock_t write_serial_lock = SPIN_INIT;
 
 void serial_printk(char *buf, int len) {
 #if !SERIAL_DEBUG

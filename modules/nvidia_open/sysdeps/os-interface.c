@@ -27,7 +27,7 @@ NvBool os_cc_snp_vtom_enabled = 0;
 NvBool os_cc_tdx_enabled = 0;
 NvBool os_cc_sme_enabled = 0;
 
-spinlock_t timerLock = {0};
+spinlock_t timerlock = SPIN_INIT;
 
 NV_STATUS NV_API_CALL os_alloc_mem(void **address, NvU64 size) {
     if (!address)

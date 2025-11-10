@@ -8,7 +8,7 @@
 
 int tmpfs_fsid = 0;
 
-spinlock_t tmpfs_oplock = {0};
+spinlock_t tmpfs_oplock = SPIN_INIT;
 
 extern uint32_t device_number;
 

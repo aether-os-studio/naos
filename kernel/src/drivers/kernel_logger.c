@@ -407,7 +407,7 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list args) {
     return to_copy;
 }
 
-spinlock_t printk_lock = {0};
+spinlock_t printk_lock = SPIN_INIT;
 
 extern struct vt_mode current_vt_mode;
 

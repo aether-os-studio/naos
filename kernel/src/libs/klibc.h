@@ -232,6 +232,8 @@ static inline char *strrchr(const char *s, int c) {
 
 char *strdup(const char *s);
 
+#define SPIN_INIT (spinlock_t){0, 0}
+
 #if defined(__x86_64__)
 
 typedef struct spinlock {
@@ -350,11 +352,8 @@ static inline void spin_lock(spinlock_t *sl) {
     long tmp;
 
     /* 自旋等待 */
-    while (sl->lock) {
-        asm volatile("nop");
+    while (__sync_lock_test_and_set(&sl->lock, 1)) {
     }
-
-    sl->lock = 1;
 
     // 1. 保存当前中断状态并禁用中断
     asm volatile("csrr %0, sstatus\n\t"   // 读取sstatus寄存器到flags
@@ -370,7 +369,7 @@ static inline void spin_lock(spinlock_t *sl) {
 static inline void spin_unlock(spinlock_t *sl) {
     uint64_t flags = sl->flags;
 
-    sl->lock = 0;
+    __sync_lock_release(&sl->lock);
 
     // 2. 恢复中断状态（只恢复SIE位）
     asm volatile("andi %0, %0, 0x2\n\t"  // 只保留flags中的SIE位
@@ -384,17 +383,16 @@ static inline void spin_unlock(spinlock_t *sl) {
 // 获取spinlock
 static inline void spin_lock_no_irqsave(spinlock_t *sl) {
     /* 自旋等待 */
-    while (sl->lock) {
-        asm volatile("nop");
+    while (__sync_lock_test_and_set(&sl->lock, 1)) {
     }
-
-    sl->lock = 1;
 
     sl->flags = 0;
 }
 
 // 释放spinlock
-static inline void spin_unlock_no_irqstore(spinlock_t *sl) { sl->lock = 0; }
+static inline void spin_unlock_no_irqstore(spinlock_t *sl) {
+    __sync_lock_release(&sl->lock);
+}
 
 #elif defined(__loongarch64)
 
@@ -414,8 +412,6 @@ static inline void spin_lock(spinlock_t *lock) {
 
     /* 自旋等待 */
     while (__sync_lock_test_and_set(&lock->lock, 1)) {
-        while (lock->lock)
-            ;
     }
 }
 

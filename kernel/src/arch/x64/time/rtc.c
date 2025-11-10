@@ -21,7 +21,7 @@
 #define DAY (24 * HOUR)    // 每天的秒数
 #define YEAR (365 * DAY)   // 每年的秒数，以 365 天算
 
-spinlock_t cmos_register_lock = {0};
+spinlock_t cmos_register_lock = SPIN_INIT;
 
 // 读 cmos 寄存器的值
 uint8_t cmos_read(uint8_t addr) {

@@ -3,7 +3,7 @@
 #include <task/task.h>
 #include <boot/boot.h>
 
-spinlock_t procfs_oplock = {0};
+spinlock_t procfs_oplock = SPIN_INIT;
 
 vfs_node_t cmdline = NULL;
 

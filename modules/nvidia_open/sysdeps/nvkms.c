@@ -9,7 +9,7 @@
 #include "nvkms-kapi-internal.h"
 #include "nvidia-modeset-os-interface.h"
 
-spinlock_t nvKmsLock = {0};
+spinlock_t nvKmslock = SPIN_INIT;
 const char *const pNV_KMS_ID = "aether-os nvidia driver";
 
 #define STUBBED                                                                \
@@ -283,7 +283,7 @@ NvBool nvkms_kernel_supports_syncpts(void) { return NV_FALSE; }
 
 NvBool nvkms_fd_is_nvidia_chardev(int fd) STUBBED;
 
-spinlock_t pmRwLock = {0};
+spinlock_t pmRwlock = SPIN_INIT;
 
 void nvkms_read_lock_pm_lock() { spin_lock(&pmRwLock); }
 

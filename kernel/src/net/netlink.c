@@ -10,12 +10,12 @@ extern vfs_node_t sockfs_root;
 extern int sockfsfd_id;
 
 static int netlink_socket_fsid = 0;
-static spinlock_t netlink_lock = {0};
+static spinlock_t netlink_lock = SPIN_INIT;
 
 // Simple array for tracking netlink sockets (max 16 sockets for now)
 #define MAX_NETLINK_SOCKETS 16
 static struct netlink_sock *netlink_sockets[MAX_NETLINK_SOCKETS] = {0};
-static spinlock_t netlink_sockets_lock = {0};
+static spinlock_t netlink_sockets_lock = SPIN_INIT;
 
 // Uevent message queue
 #define MAX_UEVENT_MESSAGES 32
@@ -28,7 +28,7 @@ struct uevent_message {
 static struct uevent_message uevent_queue[MAX_UEVENT_MESSAGES];
 static size_t uevent_queue_head = 0;
 static size_t uevent_queue_tail = 0;
-static spinlock_t uevent_queue_lock = {0};
+static spinlock_t uevent_queue_lock = SPIN_INIT;
 
 // Function to deliver queued uevents to a new socket
 static void netlink_deliver_queued_uevents(struct netlink_sock *sock) {

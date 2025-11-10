@@ -2,7 +2,7 @@
 #include <libs/aether/stdio.h>
 #include "msc.h"
 
-spinlock_t usb_bulk_transfer_lock = {0};
+spinlock_t usb_bulk_transfer_lock = SPIN_INIT;
 
 int usb_bulk_transfer(struct usb_pipe *pipe, void *data, size_t len,
                       bool is_read) {
@@ -47,7 +47,7 @@ static int usb_msc_reset_recovery(usb_msc_device *dev) {
     return 0;
 }
 
-spinlock_t usb_msc_transfer_lock = {0};
+spinlock_t usb_msc_transfer_lock = SPIN_INIT;
 
 static int usb_msc_transfer(usb_msc_device *dev, void *cmd, uint8_t cmd_length,
                             void *data, size_t data_len, bool is_read) {
