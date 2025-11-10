@@ -48,6 +48,32 @@ _opensbi_start:
 to_opensbi_c_start:
     .quad opensbi_c_start
 
+// a1:
+// offset 0: stack top
+// offset 8: page_table phys addr
+.global _opensbi_start_ap
+_opensbi_start_ap:
+    ld t0, 0(a1)           // stack
+    mv sp, t0
+
+    // 启用分页 (SV48)
+    ld t0, 8(a1)           // page_table
+    srli t0, t0, 12        // 获取PPN
+    li t1, 9               // SV48 mode = 9
+    slli t1, t1, 60
+    or t0, t0, t1
+    csrw satp, t0
+    sfence.vma zero, zero
+
+    // 直接计算 opensbi_c_start 的高地址
+    ld t0, to_opensbi_c_start
+    jalr ra, t0, 0
+
+    // 如果返回，死循环
+.Lhalt_ap:
+    wfi
+    j .Lhalt_ap
+
 // 建立早期页表的函数
 // 映射：
 //   1. 0x80000000-0x81000000 (内核 16MB)
@@ -184,9 +210,9 @@ memzero:
     ret
 
 .section .boot.data
-.align 12
+.align 15
 boot_stack:
-    .skip STACK_SIZE
+    .fill STACK_SIZE, 8, 0
 boot_stack_top:
 
 .align 12

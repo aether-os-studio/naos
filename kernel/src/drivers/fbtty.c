@@ -150,7 +150,7 @@ spinlock_t terminal_write_lock = {0};
 size_t terminal_write(tty_t *device, const char *buf, size_t count) {
     spin_lock(&terminal_write_lock);
     serial_printk(buf, count);
-    if (device->current_vt_mode.mode != VT_PROCESS) {
+    if (device->current_vt_mode.mode != VT_PROCESS && device->terminal) {
         flanterm_write(device->terminal, buf, count);
     }
     spin_unlock(&terminal_write_lock);
@@ -163,13 +163,17 @@ uint64_t create_session_terminal(tty_t *session) {
     if (session->device->type != TTY_DEVICE_GRAPHI)
         return -EINVAL;
     struct tty_graphics_ *framebuffer = session->device->private_data;
-    struct flanterm_context *fl_context = flanterm_fb_init(
-        NULL, NULL, (void *)framebuffer->address, framebuffer->width,
-        framebuffer->height, framebuffer->pitch, framebuffer->red_mask_size,
-        framebuffer->red_mask_shift, framebuffer->green_mask_size,
-        framebuffer->green_mask_shift, framebuffer->blue_mask_size,
-        framebuffer->blue_mask_shift, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-        NULL, 0, 0, 0, 0, 0, 0);
+    struct flanterm_context *fl_context =
+        framebuffer->address
+            ? flanterm_fb_init(
+                  NULL, NULL, (void *)framebuffer->address, framebuffer->width,
+                  framebuffer->height, framebuffer->pitch,
+                  framebuffer->red_mask_size, framebuffer->red_mask_shift,
+                  framebuffer->green_mask_size, framebuffer->green_mask_shift,
+                  framebuffer->blue_mask_size, framebuffer->blue_mask_shift,
+                  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, 0, 0, 0, 0,
+                  0)
+            : NULL;
     memset(&session->termios, 0, sizeof(termios));
     session->termios.c_iflag = BRKINT | ICRNL | INPCK | ISTRIP | IXON;
     session->termios.c_oflag = OPOST;

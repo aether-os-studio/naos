@@ -10,11 +10,10 @@ void arch_early_init() {
     init_serial();
     trap_init();
     cpu_init();
-    uint64_t sp;
-    asm volatile("mv %0, sp" : "=r"(sp));
-    sp &= ~(STACK_SIZE - 1);
-    csr_write(sscratch, sp);
-    asm volatile("mv gp, %0" ::"r"(cpuid_to_hartid[current_cpu_id]));
+    uint64_t current_stack;
+    asm volatile("mv %0, sp" : "=r"(current_stack));
+    current_stack &= ~(STACK_SIZE - 1);
+    csr_write(sscratch, current_stack + STACK_SIZE);
     fdt_init();
     smp_init();
 }

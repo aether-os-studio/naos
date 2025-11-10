@@ -5,6 +5,8 @@ extern void sse_init();
 void arch_early_init() {
     close_interrupt;
 
+    init_serial();
+
     sse_init();
     irq_init();
     generic_interrupt_table_init();

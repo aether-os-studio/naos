@@ -17,8 +17,6 @@
 
 #define is_digit(c) ((c) >= '0' && (c) <= '9') // 用来判断是否是数字的宏
 
-bool printk_initialized = false;
-
 char buf[4096];
 
 char *write_num(char *str, uint64_t num, int base, int field_width,
@@ -415,11 +413,6 @@ extern struct vt_mode current_vt_mode;
 
 int printk(const char *fmt, ...) {
     spin_lock(&printk_lock);
-
-    if (!printk_initialized) {
-        init_serial();
-        printk_initialized = true;
-    }
 
     va_list args;
     va_start(args, fmt);
