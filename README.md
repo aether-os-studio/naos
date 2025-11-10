@@ -28,4 +28,4 @@ Programs supported on aether-os include [Weston](https://gitlab.freedesktop.org/
 
 ## Running aether-os
 
-Running `make run` will build the kernel and a bootable image and a rootfs image, and then run it using `qemu` (if installed).
+Running `make prepare` and `make run` will build the kernel and a bootable image and a rootfs image, and then run it using `qemu` (if installed).

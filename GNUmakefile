@@ -105,6 +105,9 @@ HOST_LIBS :=
 
 LIBGCC_VERSION ?= 2025-08-21
 
+prepare: libgcc_$(ARCH).a
+	./kernel/get-deps
+
 libgcc_$(ARCH).a:
 	wget https://github.com/osdev0/libgcc-binaries/releases/download/$(LIBGCC_VERSION)/libgcc-riscv64.a -O libgcc_$(ARCH).a
 
@@ -115,8 +118,7 @@ all: $(IMAGE_NAME).img rootfs-$(ARCH).img
 all-single: single-$(IMAGE_NAME).img
 
 .PHONY: kernel
-kernel: libgcc_$(ARCH).a
-	./kernel/get-deps
+kernel:
 	$(MAKE) -C kernel -j$(shell nproc)
 
 user: user/.build-stamp-$(ARCH)
@@ -347,6 +349,7 @@ assets/ovmf-code-$(ARCH).fd:
 
 .PHONY: modules
 modules:
+
 	$(MAKE) -C modules -j$(shell nproc)
 
 ifeq ($(KERNEL_MODULE), monolithic)
