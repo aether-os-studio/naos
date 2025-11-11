@@ -10,10 +10,45 @@
 struct task;
 typedef struct task task_t;
 
+#define FCSR_FRM_SHIFT 5
+#define FCSR_FRM_MASK (0x7U << FCSR_FRM_SHIFT)
+
+#define FRM_RNE 0 /* Round to Nearest, ties to Even (默认) */
+#define FRM_RTZ 1 /* Round Towards Zero (截断) */
+#define FRM_RDN 2 /* Round Down (向负无穷) */
+#define FRM_RUP 3 /* Round Up (向正无穷) */
+#define FRM_RMM 4 /* Round to Nearest, ties to Max Magnitude */
+#define FRM_DYN 7 /* Dynamic (由指令编码决定) */
+
+#define FFLAGS_NX (1 << 0) /* Inexact (不精确) */
+#define FFLAGS_UF (1 << 1) /* Underflow (下溢) */
+#define FFLAGS_OF (1 << 2) /* Overflow (上溢) */
+#define FFLAGS_DZ (1 << 3) /* Divide by Zero (除零) */
+#define FFLAGS_NV (1 << 4) /* Invalid Operation (无效操作) */
+
+#define FFLAGS_MASK 0x1F /* 所有异常标志掩码 */
+
+/* 标准初始值：RNE舍入，无异常 */
+#define FCSR_INIT_DEFAULT ((FRM_RNE << FCSR_FRM_SHIFT) | 0)
+
+/* 其他预定义配置 */
+#define FCSR_INIT_RTZ ((FRM_RTZ << FCSR_FRM_SHIFT) | 0) /* 截断模式 */
+#define FCSR_INIT_RDN ((FRM_RDN << FCSR_FRM_SHIFT) | 0) /* 向下舍入 */
+#define FCSR_INIT_RUP ((FRM_RUP << FCSR_FRM_SHIFT) | 0) /* 向上舍入 */
+
+typedef struct fpu_context {
+    uint64_t regs[32];
+    uint64_t fcsr;
+} fpu_context_t;
+
+extern void fpu_save_context(fpu_context_t *fpu_ctx);
+extern void fpu_restore_context(fpu_context_t *fpu_ctx);
+
 typedef struct arch_context {
     uint64_t ra;
     uint64_t sp;
     struct pt_regs *ctx;
+    fpu_context_t *fpu_ctx;
     task_mm_info_t *mm;
     bool dead;
 } arch_context_t;

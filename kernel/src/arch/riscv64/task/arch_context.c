@@ -64,6 +64,8 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->mm->brk_end = USER_BRK_END;
     context->ctx = (struct pt_regs *)stack - 1;
     memset(context->ctx, 0, sizeof(struct pt_regs));
+    context->fpu_ctx = alloc_frames_bytes(sizeof(fpu_context_t));
+    context->fpu_ctx->fcsr = FCSR_INIT_DEFAULT;
     context->dead = false;
     if (user_mode) {
         // context->ctx->sstatus = (2UL << 32) | (1UL << 18) | (3UL << 13) |
@@ -97,7 +99,10 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
     dst->ctx->a0 = 0;
 }
 
-void arch_context_free(arch_context_t *context) { context->dead = true; }
+void arch_context_free(arch_context_t *context) {
+    free_frames_bytes(context->fpu_ctx, sizeof(fpu_context_t));
+    context->dead = true;
+}
 
 extern bool task_initialized;
 
@@ -115,6 +120,9 @@ void arch_set_current(task_t *current) {
 }
 
 void __switch_to(task_t *prev, task_t *next) {
+    fpu_save_context(prev->arch_context->fpu_ctx);
+    fpu_restore_context(next->arch_context->fpu_ctx);
+
     uint64_t satp = MAKE_SATP_PADDR(SATP_MODE_SV48, 0,
                                     next->arch_context->mm->page_table_addr);
 
