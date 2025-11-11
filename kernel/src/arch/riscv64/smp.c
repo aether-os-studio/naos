@@ -19,6 +19,10 @@ void cpu_init() {
 atomic_t started_cpu_count = {0};
 
 void general_ap_entry(uint64_t hartid) {
+    asm volatile("mv gp, %0" : : "r"(hartid));
+
+    arch_set_current(NULL);
+
     atomic_inc(&started_cpu_count);
 
     trap_init();
@@ -30,8 +34,6 @@ void general_ap_entry(uint64_t hartid) {
     sp &= ~(STACK_SIZE - 1);
     csr_write(sscratch, sp + STACK_SIZE);
 
-    asm volatile("mv gp, %0" : : "r"(hartid));
-
     ap_startup_lock.lock = 0;
 
     while (!task_initialized) {
@@ -39,8 +41,6 @@ void general_ap_entry(uint64_t hartid) {
     }
 
     arch_set_current(idle_tasks[hartid_to_cpuid(hartid)]);
-
-    arch_enable_interrupt();
 
     timer_init_hart(hartid);
 

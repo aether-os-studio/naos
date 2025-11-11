@@ -115,31 +115,38 @@ void boot_smp_init(uintptr_t entry) {
 
     cpu_count = mp_response->cpu_count;
 
-    for (uint64_t i = 0; i < mp_response->cpu_count; i++) {
+    for (uint64_t i = 0; i < cpu_count; i++) {
         struct limine_mp_info *cpu = mp_response->cpus[i];
 #if defined(__x86_64__)
         extern uint32_t cpuid_to_lapicid[MAX_CPU_NUM];
         cpuid_to_lapicid[i] = cpu->lapic_id;
-
-        if (cpu->lapic_id == mp_response->bsp_lapic_id)
-            continue;
 #endif
 #if defined(__aarch64__)
         extern uint64_t cpuid_to_mpidr[MAX_CPU_NUM];
         cpuid_to_mpidr[i] = cpu->mpidr;
 
+#endif
+#if defined(__riscv__)
+        extern uint64_t cpuid_to_hartid[MAX_CPU_NUM];
+        cpuid_to_hartid[i] = cpu->hartid;
+#endif
+    }
+
+    for (uint64_t i = 0; i < cpu_count; i++) {
+        struct limine_mp_info *cpu = mp_response->cpus[i];
+#if defined(__x86_64__)
+        if (cpu->lapic_id == mp_response->bsp_lapic_id)
+            continue;
+#endif
+#if defined(__aarch64__)
         if (cpu->mpidr == mp_request.response->bsp_mpidr)
             continue;
 
 #endif
 #if defined(__riscv__)
-        extern uint64_t cpuid_to_hartid[MAX_CPU_NUM];
-        cpuid_to_hartid[i] = cpu->hartid;
-
         if (cpu->hartid == bsp_hartid_request.response->bsp_hartid)
             continue;
 #endif
-
         spin_lock(&ap_startup_lock);
 
         cpu->goto_address = (limine_goto_address)entry;

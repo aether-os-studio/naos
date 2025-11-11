@@ -296,7 +296,7 @@ else
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
 		-device nvme,drive=harddisk,serial=1234 \
-		-device usb-storage,drive=rootdisk \
+		-device virtio-blk-pci,drive=rootdisk \
 		-netdev user,id=net0 \
 		-device virtio-net-pci,netdev=net0 \
 		$(QEMUFLAGS)

@@ -72,13 +72,13 @@ void handle_exception_c(struct pt_regs *regs, uint64_t cause) {
     case 8: // ecall
         handle_syscall(regs);
         regs->epc += 4;
-        regs->sstatus |= (1UL << 5);
+        regs->sstatus |= (1UL << 5) | (1UL << 0);
         break;
 
     case 11: // scall
         handle_syscall(regs);
         regs->epc += 4;
-        regs->sstatus |= (1UL << 5);
+        regs->sstatus |= (1UL << 5) | (1UL << 0);
         break;
 
     default:
@@ -123,12 +123,6 @@ int trap_init(void) {
         printk("Failed to initialize trap vector: %d\n", result);
         return result;
     }
-
-    // 使能机器模式中断
-    uint64_t sstatus;
-    asm volatile("csrr %0, sstatus" : "=r"(sstatus));
-    sstatus |= (1 << 3); // 设置SIE位
-    asm volatile("csrw sstatus, %0" ::"r"(sstatus));
 
     return 0;
 }

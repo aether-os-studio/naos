@@ -216,6 +216,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_GETRESUID] = (syscall_handle_t)sys_getresuid;
     syscall_handlers[SYS_GETPGID] = (syscall_handle_t)sys_getpgid;
     syscall_handlers[SYS_SETFSUID] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_SETFSUID_] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_GETSID] = (syscall_handle_t)sys_getsid;
     syscall_handlers[SYS_NEWUNAME] = (syscall_handle_t)sys_newuname;
     // syscall_handlers[SYS_CAPGET] = (syscall_handle_t)sys_capget;
@@ -346,7 +347,11 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_TIMER_DELETE] = (syscall_handle_t)sys_timer_delete;
     // syscall_handlers[SYS_CLOCK_SETTIME] =
     // (syscall_handle_t)sys_clock_settime;
+    syscall_handlers[SYS_CLOCK_GETTIME_TIME32] =
+        (syscall_handle_t)sys_clock_gettime;
     syscall_handlers[SYS_CLOCK_GETTIME] = (syscall_handle_t)sys_clock_gettime;
+    syscall_handlers[SYS_CLOCK_GETRES_TIME32] =
+        (syscall_handle_t)sys_clock_getres;
     syscall_handlers[SYS_CLOCK_GETRES] = (syscall_handle_t)sys_clock_getres;
     // syscall_handlers[SYS_CLOCK_NANOSLEEP] =
     //     (syscall_handle_t)sys_clock_nanosleep;
@@ -410,6 +415,8 @@ void syscall_handler_init() {
     syscall_handlers[SYS_EPOLL_PWAIT] = (syscall_handle_t)sys_epoll_pwait;
     syscall_handlers[SYS_TIMERFD_CREATE] = (syscall_handle_t)sys_timerfd_create;
     syscall_handlers[SYS_FALLOCATE] = (syscall_handle_t)sys_fallocate;
+    syscall_handlers[SYS_TIMERFD_SETTIME_] =
+        (syscall_handle_t)sys_timerfd_settime;
     syscall_handlers[SYS_TIMERFD_SETTIME] =
         (syscall_handle_t)sys_timerfd_settime;
     // syscall_handlers[SYS_TIMERFD_GETTIME] =

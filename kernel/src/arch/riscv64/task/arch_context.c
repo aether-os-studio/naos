@@ -39,7 +39,7 @@ asm("kernel_thread_func:\n\t"
     "    ld t5, 232(sp)\n\t"  // 恢复 t5
     "    ld t6, 240(sp)\n\t"  // 恢复 t6
 
-    "    addi sp, sp, 288\n\t"
+    "    addi sp, sp, 296\n\t"
     // RISC-V: s1 存放函数指针（对应 rbx），a2 是参数（对应 rdx）
     "    mv a0, a2\n\t" // 将 a2 作为第一个参数传递
     "    jalr s1\n\t"   // 调用 s1 中的函数指针
@@ -68,15 +68,15 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     if (user_mode) {
         // context->ctx->sstatus = (2UL << 32) | (1UL << 18) | (3UL << 13) |
         // (1UL
-        // << 5); todo
+        // << 5) | (1UL << 0); todo
     } else {
-        context->ctx->sstatus =
-            (2UL << 32) | (1UL << 18) | (3UL << 13) | (1UL << 5) | (1UL << 8);
+        context->ctx->sstatus = (2UL << 32) | (1UL << 18) | (3UL << 13) |
+                                (1UL << 5) | (1UL << 0) | (1UL << 8);
         context->ra = (uint64_t)kernel_thread_func;
         context->sp = (uint64_t)context->ctx;
         context->ctx->s1 = entry;
         context->ctx->a2 = initial_arg;
-        context->ctx->sp = stack;
+        context->ctx->sp = (uint64_t)context->ctx;
     }
 }
 
@@ -115,13 +115,13 @@ void arch_set_current(task_t *current) {
 }
 
 void __switch_to(task_t *prev, task_t *next) {
-    csr_write(sscratch, next->kernel_stack);
-
     uint64_t satp = MAKE_SATP_PADDR(SATP_MODE_SV48, 0,
                                     next->arch_context->mm->page_table_addr);
 
     asm volatile("csrw satp, %0" : : "r"(satp) : "memory");
     asm volatile("sfence.vma" : : : "memory");
+
+    csr_write(sscratch, next->kernel_stack);
 }
 
 extern void task_signal();
@@ -142,7 +142,7 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
     context->ctx->epc = entry;
     context->ctx->sp = stack;
     context->ctx->sstatus =
-        (2UL << 32) | (1UL << 18) | (3UL << 13) | (1UL << 5);
+        (2UL << 32) | (1UL << 18) | (3UL << 13) | (1UL << 5) | (1UL << 0);
 }
 
 void arch_to_user_mode(arch_context_t *context, uint64_t entry,

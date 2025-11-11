@@ -20,9 +20,9 @@ void timer_init_hart(uint32_t hart_id) {
         timer_freq = rhct->timebase_frequency;
     }
 
+    arch_enable_interrupt();
+
     sbi_set_timer(get_timer() + timer_freq / SCHED_HZ);
 }
 
-void riscv64_timer_handler(struct pt_regs *regs) {
-    // sched_check_wakeup();
-}
+void riscv64_timer_handler(struct pt_regs *regs) { sched_check_wakeup(); }
