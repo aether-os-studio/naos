@@ -83,8 +83,7 @@ void handle_exception_c(struct pt_regs *regs, uint64_t cause) {
 
     default:
         printk("Unhandled exception: %lu\n", cause);
-        while (1)
-            arch_pause();
+        task_exit(128 + SIGSEGV);
         break;
     }
 }

@@ -304,6 +304,7 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_FREMOVEXATTR] = (syscall_handle_t)sys_fremovexattr;
     syscall_handlers[SYS_TKILL] = (syscall_handle_t)sys_kill;
     // syscall_handlers[SYS_TIME] = (syscall_handle_t)sys_time;
+    syscall_handlers[SYS_FUTEX_] = (syscall_handle_t)sys_futex;
     syscall_handlers[SYS_FUTEX] = (syscall_handle_t)sys_futex;
     syscall_handlers[SYS_SCHED_SETAFFINITY] =
         (syscall_handle_t)dummy_syscall_handler;

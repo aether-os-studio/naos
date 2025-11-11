@@ -269,6 +269,8 @@ uintptr_t alloc_frames(size_t count) {
     if (!page) {
         page = alloc_pages(GFP_KERNEL_DMA32, order);
     }
+    if (!page)
+        return 0;
 
     uint64_t idx = page - mem_map;
 
@@ -301,6 +303,8 @@ uintptr_t alloc_frames_dma32(size_t count) {
     if (!page) {
         page = alloc_pages(GFP_KERNEL_NORMAL, order);
     }
+    if (!page)
+        return 0;
 
     uint64_t idx = page - mem_map;
 

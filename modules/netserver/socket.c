@@ -75,8 +75,6 @@ size_t real_socket_send(uint64_t fd, uint8_t *out, uint64_t limit, int flags) {
     }
     arch_disable_interrupt();
 
-    arch_disable_interrupt();
-
     if (lwip_out < 0)
         return -errno;
 
@@ -335,8 +333,6 @@ size_t real_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
     }
     arch_disable_interrupt();
 
-    arch_disable_interrupt();
-
     if (lwip_out < 0)
         return -errno;
 
@@ -381,8 +377,6 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
         arch_enable_interrupt();
         arch_yield();
     }
-    arch_disable_interrupt();
-
     arch_disable_interrupt();
 
     if (lwip_out < 0)
@@ -564,8 +558,6 @@ ssize_t real_socket_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     }
     arch_disable_interrupt();
 
-    arch_disable_interrupt();
-
     if (lwip_out < 0)
         return -errno;
 
@@ -597,8 +589,6 @@ ssize_t real_socket_write(fd_t *fd, const void *addr, size_t offset,
         arch_enable_interrupt();
         arch_yield();
     }
-    arch_disable_interrupt();
-
     arch_disable_interrupt();
 
     if (lwip_out < 0)

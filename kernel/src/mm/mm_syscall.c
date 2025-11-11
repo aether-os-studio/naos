@@ -278,8 +278,15 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
 
     spin_lock(&mgr->lock);
 
-    vma_t *vma = vma_find(mgr, (unsigned long)old_addr);
-    if (!vma || vma->vm_start != (unsigned long)old_addr) {
+    vma_t *vma = vma_find(mgr, old_addr);
+    if (!vma) {
+        spin_unlock(&mgr->lock);
+        return (uint64_t)-EINVAL;
+    }
+
+    // 验证整个旧区域都在 VMA 内
+    uint64_t old_end = old_addr + old_size;
+    if (old_addr < vma->vm_start || old_end > vma->vm_end) {
         spin_unlock(&mgr->lock);
         return (uint64_t)-EINVAL;
     }
@@ -288,17 +295,32 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
         translate_address(get_current_page_dir(true), old_addr);
 
     // 如果新大小更小，直接截断
-    if (new_size <= vma->vm_end - vma->vm_start) {
-        unmap_page_range(get_current_page_dir(true), vma->vm_end,
-                         vma->vm_start + new_size - vma->vm_end);
-        vma->vm_end = vma->vm_start + new_size;
+    if (new_size <= old_size) {
+        if (new_size < old_size) {
+            unmap_page_range(get_current_page_dir(true), old_addr + new_size,
+                             old_size - new_size);
+        }
         spin_unlock(&mgr->lock);
         return old_addr;
     }
 
     // 如果需要扩大，检查是否有足够空间
-    uint64_t new_end = vma->vm_start + new_size;
-    if (!vma_find_intersection(mgr, vma->vm_end, new_end)) {
+    uint64_t new_end = old_addr + new_size;
+
+    // 尝试原地扩展
+    bool can_expand = false;
+
+    if (new_end <= vma->vm_end) {
+        // 扩展后仍在当前 VMA 范围内，直接允许
+        can_expand = true;
+    } else {
+        // 需要扩展超出当前 VMA，检查是否有空间
+        if (!vma_find_intersection(mgr, vma->vm_end, new_end)) {
+            can_expand = true;
+        }
+    }
+
+    if (can_expand) {
         uint64_t pt_flags = PT_FLAG_U | PT_FLAG_W;
 
         if (vma->vm_flags & VMA_READ)
@@ -308,11 +330,19 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
         if (vma->vm_flags & VMA_EXEC)
             pt_flags |= PT_FLAG_X;
 
-        map_page_range(get_current_page_dir(true), vma->vm_end,
-                       old_addr_phys + vma->vm_end - vma->vm_start,
-                       new_end - vma->vm_end, vma->vm_flags);
+        // 映射扩展的部分（从 old_end 到 new_end）
+        uint64_t expand_start = old_end;
+        uint64_t expand_size = new_end - old_end;
+        uint64_t expand_phys = old_addr_phys + old_size;
 
-        vma->vm_end = new_end;
+        map_page_range(get_current_page_dir(true), expand_start, expand_phys,
+                       expand_size, pt_flags);
+
+        // 如果扩展超出了原 VMA，更新 VMA 的结束地址
+        if (new_end > vma->vm_end) {
+            vma->vm_end = new_end;
+        }
+
         spin_unlock(&mgr->lock);
         return old_addr;
     }
@@ -341,7 +371,7 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
         memcpy(new_vma, vma, sizeof(vma_t));
         new_vma->vm_start = start_addr;
         new_vma->vm_end = start_addr + new_size;
-        new_vma->vm_flags = 0;
+        new_vma->vm_flags = vma->vm_flags;
 
         if (vma_insert(mgr, new_vma) != 0) {
             vma_free(new_vma);
@@ -351,20 +381,44 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
 
         uint64_t pt_flags = PT_FLAG_U | PT_FLAG_W;
 
-        if (new_vma->vm_flags & VMA_READ)
+        if (vma->vm_flags & VMA_READ)
             pt_flags |= PT_FLAG_R;
-        if (new_vma->vm_flags & VMA_WRITE)
+        if (vma->vm_flags & VMA_WRITE)
             pt_flags |= PT_FLAG_W;
-        if (new_vma->vm_flags & VMA_EXEC)
+        if (vma->vm_flags & VMA_EXEC)
             pt_flags |= PT_FLAG_X;
 
         if (!new_addr)
             mgr->last_alloc_addr = start_addr;
 
+        // 映射到原物理地址
         map_page_range(get_current_page_dir(true), start_addr, old_addr_phys,
                        new_size, pt_flags);
 
-        sys_munmap(old_addr, old_size);
+        // 处理旧 VMA 的分割
+        if (old_addr == vma->vm_start && old_end == vma->vm_end) {
+            // 整个 VMA 被移动，直接删除
+            sys_munmap(old_addr, old_size);
+        } else if (old_addr == vma->vm_start) {
+            // 移动了 VMA 的前部，调整 VMA 起始地址
+            unmap_page_range(get_current_page_dir(true), old_addr, old_size);
+            vma->vm_start = old_end;
+        } else if (old_end == vma->vm_end) {
+            // 移动了 VMA 的后部，调整 VMA 结束地址
+            unmap_page_range(get_current_page_dir(true), old_addr, old_size);
+            vma->vm_end = old_addr;
+        } else {
+            // 移动了 VMA 的中间部分，需要分割成两个 VMA
+            vma_t *tail_vma = vma_alloc();
+            if (tail_vma) {
+                memcpy(tail_vma, vma, sizeof(vma_t));
+                tail_vma->vm_start = old_end;
+                tail_vma->vm_end = vma->vm_end;
+                vma_insert(mgr, tail_vma);
+            }
+            unmap_page_range(get_current_page_dir(true), old_addr, old_size);
+            vma->vm_end = old_addr;
+        }
 
         spin_unlock(&mgr->lock);
 
