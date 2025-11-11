@@ -22,28 +22,6 @@ struct winsize {
     uint16_t ws_ypixel;
 };
 
-struct timespec {
-    long long tv_sec;
-    long tv_nsec;
-};
-
-struct stat {
-    long st_dev;
-    unsigned long st_ino;
-    unsigned long st_nlink;
-    int st_mode;
-    int st_uid;
-    int st_gid;
-    long st_rdev;
-    long long st_size;
-    long st_blksize;
-    unsigned long int st_blocks;
-    struct timespec st_atim;
-    struct timespec st_mtim;
-    struct timespec st_ctim;
-    char _pad[24];
-};
-
 uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
                    void *data);
 uint64_t sys_umount2(const char *target, uint64_t flags);
@@ -321,6 +299,8 @@ uint64_t sys_fchownat(int dfd, const char *filename, uint64_t uid, uint64_t gid,
 uint64_t sys_rename(const char *old, const char *new);
 uint64_t sys_renameat(uint64_t oldfd, const char *old, uint64_t newfd,
                       const char *new);
+uint64_t sys_renameat2(uint64_t oldfd, const char *old, uint64_t newfd,
+                       const char *new, uint64_t flags);
 
 uint64_t sys_fchdir(uint64_t fd);
 

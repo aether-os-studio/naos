@@ -5,6 +5,28 @@
 #include <drivers/kernel_logger.h>
 #include <libs/klibc.h>
 
+struct timespec {
+    long long tv_sec;
+    long tv_nsec;
+};
+
+struct stat {
+    long st_dev;
+    unsigned long st_ino;
+    unsigned long st_nlink;
+    int st_mode;
+    int st_uid;
+    int st_gid;
+    long st_rdev;
+    long long st_size;
+    long st_blksize;
+    unsigned long int st_blocks;
+    struct timespec st_atim;
+    struct timespec st_mtim;
+    struct timespec st_ctim;
+    char _pad[24];
+};
+
 #define __NEW_UTS_LEN 64
 
 struct utsname {

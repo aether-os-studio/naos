@@ -349,7 +349,6 @@ typedef struct spinlock {
 // 获取spinlock
 static inline void spin_lock(spinlock_t *sl) {
     uint64_t flags;
-    long tmp;
 
     /* 自旋等待 */
     while (__sync_lock_test_and_set(&sl->lock, 1)) {

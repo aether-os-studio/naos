@@ -808,8 +808,8 @@ char *vfs_get_fullpath(vfs_node_t node) {
     }
 
     // 正常的路径都不应该超过这个数值
-    char *buff = (char *)malloc(2048);
-    memset(buff, 0, 2048);
+    char *buff = (char *)malloc(512);
+    memset(buff, 0, 512);
     strcpy(buff, "/");
     for (int j = count - 1; j >= 0; j--) {
         if (nodes[j] == rootdir)
@@ -873,7 +873,7 @@ int vfs_rename(vfs_node_t node, const char *new) {
         }
     }
 
-    char buf[2048];
+    char buf[512];
     memset(buf, 0, sizeof(buf));
     int fn_len = strlen(filename);
     int dn_len = strlen(new) - fn_len;

@@ -86,17 +86,16 @@ static void process_memory_region(uintptr_t start, uintptr_t end) {
             zone_end = end;
 
         // 检查这段区域是否在 bitmap 中可用
-        bool is_usable = true;
+        uint64_t last_non_usable_addr = current;
         for (size_t frame = current / DEFAULT_PAGE_SIZE;
              frame < zone_end / DEFAULT_PAGE_SIZE; frame++) {
             if (!bitmap_get(&usable_regions, frame)) {
-                is_usable = false;
-                break;
+                last_non_usable_addr = (frame + 1) * DEFAULT_PAGE_SIZE;
             }
         }
 
-        if (is_usable && zone_end > current) {
-            add_memory_region(current, zone_end, zone_type);
+        if (zone_end > last_non_usable_addr) {
+            add_memory_region(last_non_usable_addr, zone_end, zone_type);
         }
 
         current = zone_end;
@@ -299,6 +298,9 @@ uintptr_t alloc_frames_dma32(size_t count) {
     size_t order = log2_floor(required_pages);
 
     page_t *page = alloc_pages(GFP_KERNEL_DMA32, order);
+    if (!page) {
+        page = alloc_pages(GFP_KERNEL_NORMAL, order);
+    }
 
     uint64_t idx = page - mem_map;
 
@@ -309,21 +311,5 @@ uintptr_t alloc_frames_dma32(size_t count) {
 }
 
 void free_frames_dma32(uintptr_t addr, size_t count) {
-#if defined(__x86_64__)
-    if (!addr)
-        return;
-
-    size_t required_pages = next_power_of_2(count);
-    size_t order = log2_floor(required_pages);
-
-    uint64_t idx = addr / DEFAULT_PAGE_SIZE;
-    if (bitmap_get(&usable_regions, idx) == false)
-        return;
-
-    page_t *page = &mem_map[idx];
-
-    __free_pages(page, order);
-#else
     return free_frames(addr, count);
-#endif
 }

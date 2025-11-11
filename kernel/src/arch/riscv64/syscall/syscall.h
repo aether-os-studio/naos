@@ -4,6 +4,31 @@
 #include <drivers/kernel_logger.h>
 #include <libs/klibc.h>
 
+struct timespec {
+    long long tv_sec;
+    long tv_nsec;
+};
+
+struct stat {
+    uint64_t st_dev;         // 设备 ID
+    uint64_t st_ino;         // inode 号
+    uint32_t st_mode;        // 文件类型和权限
+    uint32_t st_nlink;       // 硬链接数
+    uint32_t st_uid;         // 用户 ID
+    uint32_t st_gid;         // 组 ID
+    uint64_t st_rdev;        // 设备 ID（如果是特殊文件）
+    uint64_t __pad1;         // 填充字节（保留）
+    int64_t st_size;         // 文件大小（字节）
+    int32_t st_blksize;      // 块大小
+    int32_t __pad2;          // 填充字节（保留）
+    int64_t st_blocks;       // 分配的块数
+    struct timespec st_atim; // 最后访问时间
+    struct timespec st_mtim; // 最后修改时间
+    struct timespec st_ctim; // 最后状态改变时间
+    uint32_t __unused4;      // 保留字段
+    uint32_t __unused5;      // 保留字段
+};
+
 #define __NEW_UTS_LEN 64
 
 struct utsname {

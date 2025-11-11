@@ -612,6 +612,8 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
 }
 
 uint64_t do_stat_path(const char *path, struct stat *buf) {
+    memset(buf, 0, sizeof(struct stat));
+
     vfs_node_t node = vfs_open(path);
     if (!node) {
         // serial_fprintk("Stating file %s failed\n", fn);
@@ -714,7 +716,7 @@ uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname_user,
     if (copy_to_user(buf_user, &buf, sizeof(struct stat)))
         return (uint64_t)-EFAULT;
 
-    return ret;
+    return 0;
 }
 
 uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
@@ -983,6 +985,27 @@ uint64_t sys_rename(const char *old_user, const char *new_user) {
 
 uint64_t sys_renameat(uint64_t oldfd, const char *old_user, uint64_t newfd,
                       const char *new_user) {
+    char old[512];
+    char new[512];
+
+    if (copy_from_user_str(old, old_user, sizeof(old)))
+        return (uint64_t)-EFAULT;
+    if (copy_from_user_str(new, new_user, sizeof(new)))
+        return (uint64_t)-EFAULT;
+
+    char *old_path = at_resolve_pathname_fullpath(oldfd, (char *)old);
+    char *new_path = at_resolve_pathname_fullpath(newfd, (char *)new);
+
+    int ret = do_rename(old_path, new_path);
+
+    free(old_path);
+    free(new_path);
+
+    return 0;
+}
+
+uint64_t sys_renameat2(uint64_t oldfd, const char *old_user, uint64_t newfd,
+                       const char *new_user, uint64_t flags) {
     char old[512];
     char new[512];
 
