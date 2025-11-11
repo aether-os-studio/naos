@@ -567,17 +567,13 @@ void syscall_handler(struct pt_regs *regs) {
         (idx != SYS_SHMAT) && (int)regs->a0 < 0 && !((int64_t)regs->a0 < 0))
         regs->a0 |= 0xffffffff00000000;
 
-    // if ((int64_t)regs->a0 < 0)
-    // {
-    //     char buf[128];
-    //     int len = sprintf(buf, "syscall %d has error: %s\n", idx,
-    //     strerror(-(int)regs->a0)); serial_printk(buf, len);
+    // if ((int64_t)regs->a0 < 0) {
+    //     serial_fprintk("syscall %d has error: %s\n", idx,
+    //                    strerror(-(int)regs->a0));
     // }
 
 done:
     if (idx != SYS_BRK && regs->a0 == (uint64_t)-ENOSYS) {
-        char buf[32];
-        int len = sprintf(buf, "syscall %d not implemented\n", idx);
-        serial_printk(buf, len);
+        serial_fprintk("syscall %d not implemented\n", idx);
     }
 }

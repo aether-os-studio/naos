@@ -273,7 +273,6 @@ ifeq ($(BOOT_PROTOCOL), opensbi)
 	qemu-system-$(ARCH) \
 		-M virt \
 		-cpu rv64 \
-		-device ramfb \
 		-device qemu-xhci \
 		-device usb-kbd \
 		-device usb-mouse \
