@@ -3,20 +3,25 @@
 #include <task/task.h>
 #include <task/rrs.h>
 
+extern void kernel_thread_func();
+
 void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
                        uint64_t entry, uint64_t stack, bool user_mode,
                        uint64_t initial_arg) {
     context->ctx = (struct pt_regs *)((stack - sizeof(struct pt_regs)));
     memset(context->ctx, 0, sizeof(struct pt_regs));
-    context->ctx->pc = entry;
-    context->ctx->sp_el0 = stack;
-    context->ctx->x0 = initial_arg;
+
+    context->dead = false;
 
     uint32_t spsr = 0;
     if (user_mode) {
         // todo
         spsr = 0x800003c0;
     } else {
+        context->pc = (uint64_t)kernel_thread_func;
+        context->sp = (uint64_t)context->ctx;
+        context->ctx->x19 = entry;
+        context->ctx->x20 = initial_arg;
         spsr = 0x800003c5;
     }
 
@@ -55,50 +60,27 @@ extern void arch_context_switch_with_next(arch_context_t *next);
 extern void arch_context_switch_with_prev_next(arch_context_t *prev,
                                                arch_context_t *next);
 
-void arch_switch_with_context(arch_context_t *prev, arch_context_t *next,
-                              uint64_t kernel_stack) {
-    arch_context_switch_with_next(next);
-}
-
 extern void task_signal();
 
-void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next) {
-    if (prev == next) {
-        return;
-    }
-
-    prev->arch_context->ctx = ctx;
-
-    prev->current_state = prev->state;
-
-    task_signal();
-
-    next->current_state = TASK_RUNNING;
-
-    // 1. 更新TTBR0_EL1
+void __switch_to(task_t *prev, task_t *next) {
     asm volatile("msr TTBR0_EL1, %0"
                  :
                  : "r"(next->arch_context->mm->page_table_addr));
 
-    // 2. 刷新TLB
     asm volatile("dsb ishst\n\t"
                  "tlbi vmalle1is\n\t"
                  "dsb ish\n\t"
                  "isb\n\t");
-
-    arch_set_current(next);
-
-    sched_update_itimer();
-    sched_update_timerfd();
-
-    arch_switch_with_context(prev->arch_context, next->arch_context,
-                             next->kernel_stack);
 }
+
+extern void arch_context_switch_exit();
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
                                uint64_t stack) {
-    // context->mm = clone_page_table(context->mm);
+    memset(context->ctx, 0, sizeof(struct pt_regs));
     context->usermode = true;
+    context->pc = (uint64_t)arch_context_switch_exit;
+    context->sp = (uint64_t)context->ctx;
     context->ctx->pc = entry;
     context->ctx->sp_el0 = stack;
     context->ctx->cpsr = 0x800003c0;
@@ -110,10 +92,8 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry,
 
     arch_context_to_user_mode(context, entry, stack);
 
-    // 1. 更新TTBR0_EL1
     asm volatile("msr TTBR0_EL1, %0" : : "r"(context->mm->page_table_addr));
 
-    // 2. 刷新TLB
     asm volatile("dsb ishst\n\t"
                  "tlbi vmalle1is\n\t"
                  "dsb ish\n\t"
@@ -124,9 +104,7 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry,
 
 void arch_yield() {
     // arch_enable_interrupt();
-    struct sched_entity *e = current_task->sched_info;
-    e->is_yield = true;
-    arch_pause();
+    schedule();
 }
 
 bool arch_check_elf(const Elf64_Ehdr *ehdr) {

@@ -233,12 +233,12 @@ uint64_t gic_v3_get_current_irq() {
     return irq_num;
 }
 
-int64_t gic_unmask(uint64_t irq) {
+int64_t gic_unmask(uint64_t irq, uint64_t flags) {
     gic_enable_irq(irq);
     return 0;
 }
 
-int64_t gic_mask(uint64_t irq) {
+int64_t gic_mask(uint64_t irq, uint64_t flags) {
     gic_disable_irq(irq);
     return 0;
 }

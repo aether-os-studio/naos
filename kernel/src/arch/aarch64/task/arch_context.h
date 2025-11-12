@@ -19,9 +19,36 @@
 
 typedef struct arch_context {
     struct pt_regs *ctx;
+    uint64_t pc;
+    uint64_t sp;
     task_mm_info_t *mm;
     bool usermode;
+    bool dead;
 } arch_context_t;
+
+#define switch_to(prev, next)                                                  \
+    do {                                                                       \
+        asm volatile("stp x29, x30, [sp, #-16]!\n\t" /* 保存 fp 和 lr */       \
+                     "stp x0, x1, [sp, #-16]!\n\t"   /* 保存 x0 和 x1 */       \
+                     "mov x9, sp\n\t"                /* 保存当前栈指针 */      \
+                     "str x9, %0\n\t"                /* 保存到 prev->sp */     \
+                     "adr x9, 1f\n\t"                /* 获取返回地址 */        \
+                     "str x9, %1\n\t"                /* 保存到 prev->pc */     \
+                     "ldr x9, %2\n\t"                /* 加载 next->sp */       \
+                     "mov sp, x9\n\t"                /* 切换栈指针 */          \
+                     "mov x0, %4\n\t"                /* 第一个参数 prev */     \
+                     "mov x1, %5\n\t"                /* 第二个参数 next */     \
+                     "ldr x30, %3\n\t"               /* 加载 next->pc 到 lr */ \
+                     "b __switch_to\n\t"             /* 跳转到 __switch_to */  \
+                     "1:\n\t"                        /* 返回点 */              \
+                     "ldp x0, x1, [sp], #16\n\t"     /* 恢复 x0 和 x1 */       \
+                     "ldp x29, x30, [sp], #16\n\t"   /* 恢复 fp 和 lr */       \
+                     : "=m"(prev->arch_context->sp),                           \
+                       "=m"(prev->arch_context->pc)                            \
+                     : "m"(next->arch_context->sp),                            \
+                       "m"(next->arch_context->pc), "r"(prev), "r"(next)       \
+                     : "memory", "x9");                                        \
+    } while (0)
 
 typedef struct arch_signal_frame {
     uint64_t x30;

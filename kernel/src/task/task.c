@@ -547,6 +547,15 @@ uint64_t task_execve(const char *path_user, const char **argv,
 #if defined(__x86_64__)
     asm volatile("movq %0, %%cr3" ::"r"(
         current_task->arch_context->mm->page_table_addr));
+#elif defined(__aarch64__)
+    asm volatile("msr TTBR0_EL1, %0"
+                 :
+                 : "r"(current_task->arch_context->mm->page_table_addr));
+
+    asm volatile("dsb ishst\n\t"
+                 "tlbi vmalle1is\n\t"
+                 "dsb ish\n\t"
+                 "isb\n\t");
 #elif defined(__riscv__)
     uint64_t satp = MAKE_SATP_PADDR(
         SATP_MODE_SV48, 0, current_task->arch_context->mm->page_table_addr);
@@ -1201,6 +1210,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
 #if defined(__x86_64__)
     uint64_t user_sp = regs->rsp;
+#elif defined(__aarch64__)
+    uint64_t user_sp = regs->sp_el0;
 #elif defined(__riscv__)
     child->arch_context->ctx->ktp = (uint64_t)child;
     child->arch_context->ctx->gp = cpuid_to_hartid[child->cpu_id];
@@ -1218,6 +1229,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
 #if defined(__x86_64__)
     child->arch_context->ctx->rsp = user_sp;
+#elif defined(__aarch64__)
+    child->arch_context->ctx->sp_el0 = user_sp;
 #elif defined(__riscv__)
     child->arch_context->ctx->sp = user_sp;
 #endif

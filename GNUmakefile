@@ -109,7 +109,7 @@ prepare: libgcc_$(ARCH).a
 	./kernel/get-deps
 
 libgcc_$(ARCH).a:
-	wget https://github.com/osdev0/libgcc-binaries/releases/download/$(LIBGCC_VERSION)/libgcc-riscv64.a -O libgcc_$(ARCH).a
+	wget https://github.com/osdev0/libgcc-binaries/releases/download/$(LIBGCC_VERSION)/libgcc-$(ARCH).a -O libgcc_$(ARCH).a
 
 .PHONY: all
 all: $(IMAGE_NAME).img rootfs-$(ARCH).img
@@ -243,14 +243,11 @@ run-aarch64: assets/ovmf-code-$(ARCH).fd all
 		-M virt,gic-version=3 \
 		-cpu cortex-a76 \
 		-device ramfb \
-		-device qemu-xhci,id=xhci \
-		-device usb-kbd \
-		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
-		-device nvme,drive=harddisk,serial=1234 \
-		-device nvme,drive=rootdisk,serial=5678 \
+		-device virtio-blk-pci,drive=harddisk \
+		-device virtio-blk-pci,drive=rootdisk \
 		$(QEMUFLAGS)
 
 .PHONY: run-aarch64-single
@@ -264,7 +261,7 @@ run-aarch64-single: assets/ovmf-code-$(ARCH).fd all-single
 		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=single-$(IMAGE_NAME).img,format=raw,id=harddisk \
-		-device nvme,drive=harddisk,serial=1234 \
+		-device virtio-blk-pci,drive=harddisk \
 		$(QEMUFLAGS)
 
 .PHONY: run-riscv64

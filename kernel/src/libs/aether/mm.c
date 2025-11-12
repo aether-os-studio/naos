@@ -36,3 +36,4 @@ EXPORT_SYMBOL(strcpy);
 EXPORT_SYMBOL(strncpy);
 EXPORT_SYMBOL(strcmp);
 EXPORT_SYMBOL(strncmp);
+EXPORT_SYMBOL(strdup);
