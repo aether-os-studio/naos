@@ -1,6 +1,7 @@
 #pragma once
 
 #include <libs/klibc.h>
+#include <drivers/bus/pci.h>
 
 struct usbdevice_s;
 
@@ -36,7 +37,7 @@ struct usbdevice_s {
 struct usb_s {
     struct usb_pipe *freelist;
     spinlock_t resetlock;
-    struct pci_device *pci;
+    pci_device_t *pci;
     void *mmio;
     uint8_t type;
     uint8_t maxaddr;

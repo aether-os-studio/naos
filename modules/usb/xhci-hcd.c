@@ -13,7 +13,7 @@
 // --------------------------------------------------------------
 // configuration
 
-#define XHCI_RING_ITEMS 16
+#define XHCI_RING_ITEMS 64
 #define XHCI_RING_SIZE (XHCI_RING_ITEMS * sizeof(struct xhci_trb))
 
 /*
@@ -550,6 +550,7 @@ static struct usb_xhci_s *xhci_controller_setup(void *baseaddr) {
         return NULL;
     }
     memset(xhci, 0, sizeof(*xhci));
+    xhci->usb.mmio = baseaddr;
     xhci->caps = baseaddr;
     xhci->op = baseaddr + readb(&xhci->caps->caplength);
     xhci->pr = baseaddr + readb(&xhci->caps->caplength) + 0x400;
@@ -1102,6 +1103,7 @@ int xhci_hcd_driver_probe(pci_device_t *pci_dev, uint32_t vendor_device_id) {
         PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE | PT_FLAG_DEVICE);
 
     struct usb_xhci_s *xhci = xhci_controller_setup(mmio_vaddr);
+    xhci->usb.pci = pci_dev;
     xhci->pci_dev = pci_dev;
     configure_xhci(xhci);
     pci_dev->desc = xhci;

@@ -309,13 +309,6 @@ typedef struct spinlock {
 static inline void spin_lock(spinlock_t *lock) {
     long tmp, daif;
 
-    // 保存并禁用中断
-    asm volatile("mrs %0, daif\n\t"
-                 "msr daifset, #2\n\t"
-                 : "=r"(daif)
-                 :
-                 : "memory");
-
     // 获取锁
     asm volatile("1: ldaxr %w0, [%1]\n\t"
                  "   cbnz %w0, 1b\n\t"
@@ -324,6 +317,13 @@ static inline void spin_lock(spinlock_t *lock) {
                  "   cbnz %w0, 1b\n\t"
                  : "=&r"(tmp)
                  : "r"(&lock->lock)
+                 : "memory");
+
+    // 保存并禁用中断
+    asm volatile("mrs %0, daif\n\t"
+                 "msr daifset, #2\n\t"
+                 : "=r"(daif)
+                 :
                  : "memory");
 
     lock->daif = daif; // 保存原始DAIF状态
@@ -337,6 +337,27 @@ static inline void spin_unlock(spinlock_t *lock) {
 
     // 恢复中断状态
     asm volatile("msr daif, %0\n\t" : : "r"(daif) : "memory");
+}
+
+static inline void spin_lock_no_irqsave(spinlock_t *lock) {
+    long tmp;
+
+    // 获取锁
+    asm volatile("1: ldaxr %w0, [%1]\n\t"
+                 "   cbnz %w0, 1b\n\t"
+                 "   mov %w0, #1\n\t"
+                 "   stxr %w0, %w0, [%1]\n\t"
+                 "   cbnz %w0, 1b\n\t"
+                 : "=&r"(tmp)
+                 : "r"(&lock->lock)
+                 : "memory");
+
+    lock->daif = 0;
+}
+
+static inline void spin_unlock_no_irqstore(spinlock_t *lock) {
+    // 释放锁
+    asm volatile("stlr wzr, [%0]\n\t" : : "r"(&lock->lock) : "memory");
 }
 
 #elif defined(__riscv__)

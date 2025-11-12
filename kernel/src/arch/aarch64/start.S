@@ -22,8 +22,8 @@ ap_entry:
     msr     spsel, x1
     mov     sp, x2
 
-    mrs     x0, cpacr_el1
-    orr     x0, x0, #(0x3 << 20)
-    msr     cpacr_el1, x0
+    mrs     x1, cpacr_el1
+    orr     x1, x1, #(0x3 << 20)
+    msr     cpacr_el1, x1
 
     b ap_kmain

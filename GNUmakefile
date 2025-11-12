@@ -243,6 +243,9 @@ run-aarch64: assets/ovmf-code-$(ARCH).fd all
 		-M virt,gic-version=3 \
 		-cpu cortex-a76 \
 		-device ramfb \
+		-device qemu-xhci,id=xhci \
+		-device usb-kbd \
+		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \

@@ -29,10 +29,12 @@ uint64_t get_cpuid_by_mpidr(uint64_t mpidr) {
 
 void ap_kmain(struct limine_mp_info *cpu);
 
+extern void ap_entry();
+
 void smp_init() {
     memset(cpuid_to_mpidr, 0, sizeof(cpuid_to_mpidr));
 
-    boot_smp_init((uintptr_t)ap_kmain);
+    boot_smp_init((uintptr_t)ap_entry);
 }
 
 spinlock_t ap_startup_lock = SPIN_INIT;
@@ -41,6 +43,14 @@ extern bool task_initialized;
 
 void ap_kmain(struct limine_mp_info *cpu) {
     arch_disable_interrupt();
+
+    uint64_t kpgtable_phys = (uint64_t)virt_to_phys(get_kernel_page_dir());
+
+    asm volatile("msr TTBR1_EL1, %0" : : "r"(kpgtable_phys) : "memory");
+    asm volatile("dsb ishst\n\t"
+                 "tlbi vmalle1is\n\t"
+                 "dsb ish\n\t"
+                 "isb\n\t");
 
     setup_vectors();
 

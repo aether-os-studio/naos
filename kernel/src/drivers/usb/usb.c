@@ -356,9 +356,11 @@ fail:
     return 0;
 }
 
-static void usb_hub_port_setup(struct usbdevice_s *usbdev) {
+static bool usb_hub_port_setup(struct usbdevice_s *usbdev) {
     struct usbhub_s *hub = usbdev->hub;
     uint32_t port = usbdev->port;
+
+    spin_lock(&hub->cntl->resetlock);
 
     // Detect if device present (and possibly start reset)
     int ret = hub->op->detect(hub, port);
@@ -368,7 +370,6 @@ static void usb_hub_port_setup(struct usbdevice_s *usbdev) {
     delay(USB_TIME_ATTDB);
 
     // Reset port and determine device speed
-    spin_lock(&hub->cntl->resetlock);
     ret = hub->op->reset(hub, port);
     if (ret < 0)
         // Reset failed
@@ -389,7 +390,7 @@ static void usb_hub_port_setup(struct usbdevice_s *usbdev) {
     if (!count)
         hub->op->disconnect(hub, port);
     hub->devcount += count;
-done:
+
     for (int i = 0; i < MAX_USBDEV_NUM; i++) {
         if (!usbdevs[i]) {
             usbdevs[i] = usbdev;
@@ -397,12 +398,11 @@ done:
         }
     }
 
-    return;
+    return true;
 
 resetfail:
-    free(usbdev);
     spin_unlock(&hub->cntl->resetlock);
-    goto done;
+    return false;
 }
 
 void usb_enumerate(struct usbhub_s *hub) {
@@ -417,6 +417,7 @@ void usb_enumerate(struct usbhub_s *hub) {
         memset(usbdev, 0, sizeof(*usbdev));
         usbdev->hub = hub;
         usbdev->port = i;
-        usb_hub_port_setup(usbdev);
+        if (!usb_hub_port_setup(usbdev))
+            free(usbdev);
     }
 }

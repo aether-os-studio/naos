@@ -8,7 +8,6 @@ void arch_enable_interrupt() { asm volatile("msr daifclr, #3"); }
 void arch_disable_interrupt() { asm volatile("msr daifset, #3"); }
 
 void irq_init() {
-    gic_v3_init();
     timer_init_percpu(current_cpu_id);
     irq_regist_irq(TIMER_IRQ, timer_handler, 0, NULL, &gic_controller,
                    "GENERIC TIMER", 0);

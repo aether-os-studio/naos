@@ -7,6 +7,8 @@ extern void gic_init();
 void arch_early_init() {
     setup_vectors();
     smp_init();
+    gic_init();
+    gic_v3_init();
 }
 
 extern task_t *idle_tasks[MAX_CPU_NUM];
@@ -18,7 +20,6 @@ void arch_init() {
 
     syscall_handlers_init();
 
-    gic_init();
     irq_init();
 
     arch_enable_interrupt();
