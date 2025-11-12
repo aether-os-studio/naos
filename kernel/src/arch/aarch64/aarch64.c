@@ -6,6 +6,7 @@ extern void gic_init();
 
 void arch_early_init() {
     setup_vectors();
+    init_serial();
     smp_init();
     gic_init();
     gic_v3_init();

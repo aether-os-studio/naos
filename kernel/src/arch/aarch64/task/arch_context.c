@@ -4,6 +4,7 @@
 #include <task/rrs.h>
 
 extern void kernel_thread_func();
+extern void arch_context_switch_exit();
 
 void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
                        uint64_t entry, uint64_t stack, bool user_mode,
@@ -42,6 +43,8 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
     dst->usermode = src->usermode;
     dst->ctx = (struct pt_regs *)stack - 1;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
+    dst->pc = (uint64_t)arch_context_switch_exit;
+    dst->sp = (uint64_t)dst->ctx;
 }
 
 void arch_context_free(arch_context_t *context) {}
@@ -72,8 +75,6 @@ void __switch_to(task_t *prev, task_t *next) {
                  "dsb ish\n\t"
                  "isb\n\t");
 }
-
-extern void arch_context_switch_exit();
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
                                uint64_t stack) {
