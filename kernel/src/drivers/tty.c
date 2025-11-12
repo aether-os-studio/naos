@@ -41,6 +41,47 @@ tty_device_t *get_tty_device(const char *name) {
     return NULL;
 }
 
+// 全局默认控制台路径（初始为 /dev/tty0）
+char *default_console = NULL;
+
+void parse_cmdline_console(const char *cmdline) {
+    static char console_name[64];
+    memset(console_name, 0, sizeof(console_name));
+
+    if (!cmdline || !*cmdline) {
+        strcpy(console_name, DEFAULT_TTY);
+        goto next;
+    }
+
+    // 查找 "console="
+    const char *key = "console=";
+    const char *pos = strstr(cmdline, key);
+    if (!pos) {
+        strcpy(console_name, DEFAULT_TTY);
+        goto next;
+    }
+
+    pos += strlen(key);
+
+    // 复制 console 设备名
+    size_t i = 0;
+    while (*pos && *pos != ' ' && i < sizeof(console_name) - 1) {
+        console_name[i++] = *pos++;
+    }
+    console_name[i] = '\0';
+
+next:
+    // 输出调试信息
+    printk("Detected console device: %s\n", console_name);
+
+    char buf[64];
+    sprintf(buf, "/dev/%s", console_name);
+
+    default_console = strdup(buf);
+
+    printk("Set default to %s\n", default_console);
+}
+
 void tty_init() {
     llist_init_head(&tty_device_list);
     kernel_session = malloc(sizeof(tty_t));
@@ -81,6 +122,18 @@ void tty_init() {
     serial_dev->private_data = serial;
     strcpy(serial_dev->name, "ttyS0");
     register_tty_device(serial_dev);
+
+    // 解析命令行 console 参数
+    const char *cmdline = boot_get_cmdline();
+    parse_cmdline_console(cmdline);
+
+    if (!strncmp(default_console, "/dev/ttyS", 9)) {
+        // 如果是串口终端，初始化串口终端会话
+        tty_init_session_serial();
+    } else {
+        // 否则初始化普通终端会话
+        tty_init_session();
+    }
 }
 
 extern void create_session_terminal(tty_t *tty);

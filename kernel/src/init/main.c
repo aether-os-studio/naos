@@ -40,8 +40,6 @@ void kmain(void) {
     devtmpfs_init();
 
     tty_init();
-    tty_init_session();
-    tty_init_session_serial();
 
     printk("Next Aether-OS starting...\n");
 

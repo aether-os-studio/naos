@@ -38,7 +38,6 @@ size_t terminal_read(tty_t *device, char *buf, size_t count) {
             buf[read++] = c;
         } else {
             // 都没数据，允许调度/等待
-            arch_enable_interrupt();
             arch_yield();
         }
     }

@@ -60,11 +60,11 @@ int init_serial() {
 }
 
 char read_serial() {
-    if (serial_initialized) {
-        char c;
-        pl011_read(&uart0, (uint8_t *)&c, 1);
-        return c;
-    }
+    // if (serial_initialized) {
+    //     char c;
+    //     pl011_read(&uart0, (uint8_t *)&c, 1);
+    //     return c;
+    // }
     return 0;
 }
 

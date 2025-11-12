@@ -4,6 +4,7 @@
 #include <fs/partition.h>
 #include <dev/device.h>
 #include <drivers/kernel_logger.h>
+#include <drivers/tty.h>
 #include <drivers/pty.h>
 #include <net/netlink.h>
 #include <mm/mm_syscall.h>
@@ -15,9 +16,6 @@ spinlock_t devtmpfs_oplock = SPIN_INIT;
 
 vfs_node_t devtmpfs_root = NULL;
 vfs_node_t fake_devtmpfs_root = NULL;
-
-// 全局默认控制台路径（初始为 /dev/tty0）
-static const char *default_console = "/dev/tty0";
 
 static int dummy() { return 0; }
 
@@ -429,48 +427,9 @@ ssize_t nulldev_write(void *data, const void *buf, uint64_t offset,
 
 ssize_t nulldev_ioctl(void *data, ssize_t request, ssize_t arg) { return 0; }
 
-void parse_cmdline_console(const char *cmdline) {
-    static char console_name[64];
-    memset(console_name, 0, sizeof(console_name));
+extern char *default_console;
 
-    if (!cmdline || !*cmdline) {
-        strcpy(console_name, DEFAULT_TTY);
-        goto next;
-    }
-
-    // 查找 "console="
-    const char *key = "console=";
-    const char *pos = strstr(cmdline, key);
-    if (!pos) {
-        strcpy(console_name, DEFAULT_TTY);
-        goto next;
-    }
-
-    pos += strlen(key);
-
-    // 复制 console 设备名
-    size_t i = 0;
-    while (*pos && *pos != ' ' && i < sizeof(console_name) - 1) {
-        console_name[i++] = *pos++;
-    }
-    console_name[i] = '\0';
-
-next:
-    // 输出调试信息
-    printk("Detected console device: %s\n", console_name);
-
-    char buf[64];
-    sprintf(buf, "/dev/%s", console_name);
-
-    default_console = strdup(buf);
-
-    printk("Set default to %s\n", default_console);
-}
-
-void setup_console_symlinks(const char *cmdline) {
-    // 解析命令行 console 参数
-    parse_cmdline_console(cmdline);
-
+void setup_console_symlinks() {
     // 建立符号链接
     vfs_symlink("/dev/tty1", default_console); // 主控制台
 
@@ -485,8 +444,7 @@ void stdio_init() {
     device_install(DEV_CHAR, DEV_NULL, NULL, "null", 0, nulldev_ioctl, NULL,
                    nulldev_read, nulldev_write, NULL);
 
-    const char *cmdline = boot_get_cmdline();
-    setup_console_symlinks(cmdline);
+    setup_console_symlinks();
 
     pty_init();
     ptmx_init();

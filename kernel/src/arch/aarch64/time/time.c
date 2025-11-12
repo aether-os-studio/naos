@@ -14,6 +14,15 @@ uint32_t get_freq() {
     return freq;
 }
 
+uint64_t nanoTime() {
+    uint64_t cnt, freq;
+
+    asm volatile("mrs %0, CNTPCT_EL0" : "=r"(cnt));
+    asm volatile("mrs %0, CNTFRQ_EL0" : "=r"(freq));
+
+    return ((cnt * 1000000000ULL) / freq);
+}
+
 static int is_leap_year(int year) {
     if (year % 4 != 0)
         return 0;
@@ -120,5 +129,3 @@ int64_t mktime(tm *time) {
 
     return res;
 }
-
-uint64_t nanoTime() { return get_counter() * 1000000000 / get_freq(); }

@@ -122,11 +122,12 @@ void syscall_handlers_init() {
     syscall_handlers[SYS_WRITE] = (syscall_handle_t)sys_write;
     syscall_handlers[SYS_CLOSE] = (syscall_handle_t)sys_close;
     syscall_handlers[SYS_FSTAT] = (syscall_handle_t)sys_fstat;
+    syscall_handlers[SYS_FSTATAT] = (syscall_handle_t)sys_newfstatat;
     syscall_handlers[SYS_LSEEK] = (syscall_handle_t)sys_lseek;
     syscall_handlers[SYS_MMAP] = (syscall_handle_t)sys_mmap;
     syscall_handlers[SYS_MPROTECT] = (syscall_handle_t)sys_mprotect;
     syscall_handlers[SYS_MUNMAP] = (syscall_handle_t)sys_munmap;
-    // syscall_handlers[SYS_BRK] = (syscall_handle_t)sys_brk;
+    syscall_handlers[SYS_BRK] = (syscall_handle_t)sys_brk;
     syscall_handlers[SYS_RT_SIGACTION] = (syscall_handle_t)sys_sigaction;
     syscall_handlers[SYS_RT_SIGPROCMASK] = (syscall_handle_t)sys_ssetmask;
     syscall_handlers[SYS_RT_SIGRETURN] = (syscall_handle_t)sys_sigreturn;
@@ -331,7 +332,7 @@ void syscall_handlers_init() {
     // (syscall_handle_t)sys_remap_file_pages;
     syscall_handlers[SYS_GETDENTS64] = (syscall_handle_t)sys_getdents;
     syscall_handlers[SYS_SET_TID_ADDRESS] =
-        (syscall_handle_t)dummy_syscall_handler;
+        (syscall_handle_t)sys_set_tid_address;
     // syscall_handlers[SYS_RESTART_SYSCALL] =
     // (syscall_handle_t)sys_restart_syscall; syscall_handlers[SYS_SEMTIMEDOP] =
     // (syscall_handle_t)sys_semtimedop;

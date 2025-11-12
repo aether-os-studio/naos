@@ -68,8 +68,6 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
             }
         }
 
-        arch_enable_interrupt();
-
         sigexit = signals_pending_quick(current_task);
 
         if (ready > 0 || sigexit)
@@ -78,8 +76,6 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
         arch_yield();
     } while (timeout != 0 &&
              ((int)timeout == -1 || (nanoTime() - start_time) < timeout));
-
-    arch_disable_interrupt();
 
     if (!ready && sigexit)
         return (size_t)-EINTR;
