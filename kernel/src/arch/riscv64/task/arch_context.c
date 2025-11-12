@@ -65,6 +65,7 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->ctx = (struct pt_regs *)stack - 1;
     memset(context->ctx, 0, sizeof(struct pt_regs));
     context->fpu_ctx = alloc_frames_bytes(sizeof(fpu_context_t));
+    memset(context->fpu_ctx, 0, sizeof(fpu_context_t));
     context->fpu_ctx->fcsr = FCSR_INIT_DEFAULT;
     context->dead = false;
     if (user_mode) {
@@ -151,6 +152,9 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
     context->ctx->sp = stack;
     context->ctx->sstatus =
         (2UL << 32) | (1UL << 18) | (3UL << 13) | (1UL << 5) | (1UL << 0);
+
+    memset(context->fpu_ctx, 0, sizeof(fpu_context_t));
+    context->fpu_ctx->fcsr = FCSR_INIT_DEFAULT;
 }
 
 void arch_to_user_mode(arch_context_t *context, uint64_t entry,
