@@ -21,6 +21,9 @@ static const char *fdt_get_property_name(uint32_t nameoff) {
  */
 int fdt_find_node(const char *path) {
     uint32_t *p = (uint32_t *)g_fdt_ctx.dt_struct;
+    if (!p)
+        return -1;
+
     int depth = 0;
     char current_path[256] = "";
     char node_name[128];
@@ -98,6 +101,9 @@ int fdt_find_node(const char *path) {
  * @return 属性值指针，失败返回NULL
  */
 const void *fdt_get_property(int node_offset, const char *prop_name, int *len) {
+    if (!g_fdt_ctx.dt_struct)
+        return NULL;
+
     uint32_t *p = (uint32_t *)((uint8_t *)g_fdt_ctx.dt_struct + node_offset);
     uint32_t tag;
     int depth = 0;

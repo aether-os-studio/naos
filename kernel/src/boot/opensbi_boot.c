@@ -106,7 +106,8 @@ boot_framebuffer_t *boot_get_framebuffer() { return &opensbi_fb; }
 
 static void *find_string_tag(void *mb2_info_addr) { return NULL; }
 
-char *boot_get_cmdline() { return (char *)""; }
+extern char opensbi_cmdline[4096];
+char *boot_get_cmdline() { return (char *)opensbi_cmdline; }
 
 boot_module_t opensbi_modules[MAX_MODULES_NUM];
 

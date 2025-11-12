@@ -85,7 +85,7 @@ next:
 void tty_init() {
     llist_init_head(&tty_device_list);
     kernel_session = malloc(sizeof(tty_t));
-    /* ---------- 1. 注册图形终端(tty0) ---------- */
+
     tty_device_t *fb_device = alloc_tty_device(TTY_DEVICE_GRAPHI);
     struct tty_graphics_ *graphics = malloc(sizeof(struct tty_graphics_));
 
@@ -107,14 +107,10 @@ void tty_init() {
     fb_device->private_data = graphics;
 
     char name[32];
-    // TDO:
-    //  sprintf(name, "tty%zu", 0); 对zu解析不足。
-
     sprintf(name, "tty%lu", 0);
     strcpy(fb_device->name, name);
     register_tty_device(fb_device);
 
-    /* ---------- 2. 注册串口终端(ttyS0) ---------- */
     tty_device_t *serial_dev = alloc_tty_device(TTY_DEVICE_SERIAL);
     struct tty_serial_ *serial = malloc(sizeof(struct tty_serial_));
     serial->port = 0; // 第一个串口

@@ -14,6 +14,8 @@ void arch_early_init() {
     arch_set_current(NULL);
 
     init_serial();
+    fw_cfg_init();
+    ramfb_init();
     trap_init();
     cpu_init();
     uint64_t current_stack;

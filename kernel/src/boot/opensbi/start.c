@@ -13,54 +13,51 @@ static void setup_framebuffer(boot_framebuffer_t *fb) {
     // 初始化 framebuffer 结构
     memset(fb, 0, sizeof(*fb));
 
-    // 直接查找 simple-framebuffer 节点
-    int fb_off = fdt_find_node("/framebuffer");
-    if (fb_off < 0) {
-        // 失败的话查找 compatible 为 simple-framebuffer 的节点
-        uint32_t *p = (uint32_t *)g_fdt_ctx.dt_struct;
-        int depth = 0;
+    int fb_off = -1;
 
-        while (1) {
-            uint32_t tag = fdt32_to_cpu(*p++);
+    // 查找 compatible 为 simple-framebuffer 的节点
+    uint32_t *p = (uint32_t *)g_fdt_ctx.dt_struct;
+    int depth = 0;
 
-            switch (tag) {
-            case FDT_BEGIN_NODE: {
-                const char *name = (const char *)p;
-                int node_off =
-                    (uint8_t *)p - (uint8_t *)g_fdt_ctx.dt_struct - 4;
+    while (1) {
+        uint32_t tag = fdt32_to_cpu(*p++);
 
-                // 检查 compatible 属性
-                int len;
-                const char *compatible =
-                    fdt_get_property(node_off, "compatible", &len);
-                if (compatible && strstr(compatible, "simple-framebuffer")) {
-                    fb_off = node_off;
-                    goto found_fb;
-                }
+        switch (tag) {
+        case FDT_BEGIN_NODE: {
+            const char *name = (const char *)p;
+            int node_off = (uint8_t *)p - (uint8_t *)g_fdt_ctx.dt_struct - 4;
 
-                depth++;
-                p = (uint32_t *)ALIGN_UP((uintptr_t)p + strlen(name) + 1, 4);
-                break;
+            // 检查 compatible 属性
+            int len;
+            const char *compatible =
+                fdt_get_property(node_off, "compatible", &len);
+            if (compatible && strstr(compatible, "simple-framebuffer")) {
+                fb_off = node_off;
+                goto found_fb;
             }
 
-            case FDT_END_NODE:
-                depth--;
-                break;
+            depth++;
+            p = (uint32_t *)ALIGN_UP((uintptr_t)p + strlen(name) + 1, 4);
+            break;
+        }
 
-            case FDT_PROP: {
-                struct fdt_property *prop = (struct fdt_property *)p;
-                uint32_t len = fdt32_to_cpu(prop->len);
-                p = (uint32_t *)ALIGN_UP(
-                    (uintptr_t)p + sizeof(struct fdt_property) + len, 4);
-                break;
-            }
+        case FDT_END_NODE:
+            depth--;
+            break;
 
-            case FDT_END:
-                goto no_fb;
+        case FDT_PROP: {
+            struct fdt_property *prop = (struct fdt_property *)p;
+            uint32_t len = fdt32_to_cpu(prop->len);
+            p = (uint32_t *)ALIGN_UP(
+                (uintptr_t)p + sizeof(struct fdt_property) + len, 4);
+            break;
+        }
 
-            default:
-                break;
-            }
+        case FDT_END:
+            goto no_fb;
+
+        default:
+            break;
         }
     }
 
@@ -412,6 +409,78 @@ static void setup_memmap(boot_memory_map_t *mmap, uintptr_t kernel_start,
     }
 }
 
+static char *trim_end(char *str) {
+    char *end = str + strlen(str) - 1;
+    while (end > str &&
+           (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r')) {
+        *end = '\0';
+        end--;
+    }
+    return str;
+}
+
+char opensbi_cmdline[4096] = {0};
+
+static void setup_cmdline() {
+    int node_offset;
+    const char *bootargs;
+
+    uint32_t *p = (uint32_t *)g_fdt_ctx.dt_struct;
+    int depth = 0;
+
+    while (1) {
+        uint32_t tag = fdt32_to_cpu(*p++);
+
+        switch (tag) {
+        case FDT_BEGIN_NODE: {
+            const char *name = (const char *)p;
+            int node_off = (uint8_t *)p - (uint8_t *)g_fdt_ctx.dt_struct - 4;
+
+            if (!strcmp(name, "chosen")) {
+                node_offset = node_off;
+                goto found_cmdline;
+            }
+
+            depth++;
+            p = (uint32_t *)ALIGN_UP((uintptr_t)p + strlen(name) + 1, 4);
+            break;
+        }
+
+        case FDT_END_NODE:
+            depth--;
+            break;
+
+        case FDT_PROP: {
+            struct fdt_property *prop = (struct fdt_property *)p;
+            uint32_t len = fdt32_to_cpu(prop->len);
+            p = (uint32_t *)ALIGN_UP(
+                (uintptr_t)p + sizeof(struct fdt_property) + len, 4);
+            break;
+        }
+
+        case FDT_END:
+            return;
+
+        default:
+            break;
+        }
+    }
+
+found_cmdline:
+    /* 读取 bootargs 属性 */
+    bootargs = fdt_get_property_string(node_offset, "bootargs");
+    if (!bootargs) {
+        return;
+    }
+
+    /* 复制到缓冲区 */
+    strncpy(opensbi_cmdline, bootargs, sizeof(opensbi_cmdline) - 1);
+    opensbi_cmdline[sizeof(opensbi_cmdline) - 1] = '\0';
+
+    /* 去除末尾空格和换行 */
+    trim_end(opensbi_cmdline);
+}
+
 extern void init_early_paging();
 
 uint64_t bsp_hart_id = UINT64_MAX;
@@ -465,6 +534,7 @@ void opensbi_c_start(uint64_t boot_hart_id, uintptr_t dtb_ptr) {
     setup_framebuffer(&opensbi_fb);
     setup_memmap(&opensbi_memory_map, EARLY_MAP_BASE, EARLY_MAP_END,
                  &opensbi_fb);
+    setup_cmdline();
 
     opensbi_dtb_vaddr = dtb_ptr;
 

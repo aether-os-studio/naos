@@ -263,9 +263,10 @@ int init_serial() {
                            PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE |
                                PT_FLAG_UNCACHEABLE);
             uart_init(&uart0, (volatile void *)virt, NULL);
+
+            serial_initialized = true;
         }
 
-        serial_initialized = true;
         return 0;
     }
 }

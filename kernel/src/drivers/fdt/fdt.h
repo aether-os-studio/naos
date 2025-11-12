@@ -58,6 +58,7 @@ extern struct fdt_context g_fdt_ctx;
 #define fdt32_to_cpu(x) __builtin_bswap32(x)
 #define fdt64_to_cpu(x) __builtin_bswap64(x)
 #define cpu_to_fdt32(x) __builtin_bswap32(x)
+#define cpu_to_fdt64(x) __builtin_bswap64(x)
 
 /* 对齐宏 */
 #define ALIGN_UP(x, align) (((x) + (align) - 1) & ~((align) - 1))

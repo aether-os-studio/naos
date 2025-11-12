@@ -61,7 +61,7 @@ typedef struct arch_signal_frame {
         asm volatile("addi sp, sp, -24\n\t" /* 分配栈空间 */                   \
                      "sd s0, 0(sp)\n\t"     /* 保存帧指针 */                   \
                      "sd t0, 8(sp)\n\t"     /* 保存临时寄存器 */               \
-                     "sd ra, 16(sp)\n\t"    /* 保存临时寄存器 */               \
+                     "sd ra, 16(sp)\n\t"    /* 保存返回地址寄存器 */           \
                      "sd sp, %0\n\t"        /* 保存当前sp */                   \
                      "ld sp, %2\n\t"        /* 加载next的sp */                 \
                      "la t0, 1f\n\t"        /* 获取返回地址 */                 \
@@ -72,7 +72,7 @@ typedef struct arch_signal_frame {
                      "mv a1, %5\n\t"        /* 第二个参数 next */              \
                      "j __switch_to\n\t"    /* 跳转到__switch_to */            \
                      "1:\n\t"               /* 返回点 */                       \
-                     "ld ra, 16(sp)\n\t"    /* 恢复t0 */                       \
+                     "ld ra, 16(sp)\n\t"    /* 恢复ra */                       \
                      "ld t0, 8(sp)\n\t"     /* 恢复t0 */                       \
                      "ld s0, 0(sp)\n\t"     /* 恢复s0 */                       \
                      "addi sp, sp, 24\n\t"  /* 恢复栈指针 */                   \
