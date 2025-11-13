@@ -2,6 +2,7 @@
 
 #include "irq.h"
 #include <arch/arch.h>
+#include <task/task.h>
 
 void show_frame(struct pt_regs *regs) {
     printk("Execption:\r\n");
@@ -171,6 +172,8 @@ static void data_abort(unsigned long far, unsigned long iss) {
         printk("unknow abort\r\n");
         break;
     }
+
+    task_exit(SIGSEGV + 128);
 }
 
 void process_exception(struct pt_regs *frame, unsigned long esr,

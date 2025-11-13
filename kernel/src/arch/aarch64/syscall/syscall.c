@@ -188,6 +188,7 @@ void syscall_handlers_init() {
     syscall_handlers[SYS_FTRUNCATE] = (syscall_handle_t)sys_ftruncate;
     syscall_handlers[SYS_GETDENTS64] = (syscall_handle_t)sys_getdents;
     syscall_handlers[SYS_GETCWD] = (syscall_handle_t)sys_getcwd;
+    syscall_handlers[SYS_CHDIR] = (syscall_handle_t)sys_chdir;
     syscall_handlers[SYS_FCHDIR] = (syscall_handle_t)sys_fchdir;
     // syscall_handlers[SYS_CREAT] = (syscall_handle_t)sys_creat;
     syscall_handlers[SYS_FCHMOD] = (syscall_handle_t)dummy_syscall_handler;

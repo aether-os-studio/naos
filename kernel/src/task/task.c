@@ -898,12 +898,7 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns) {
 
     remove_rrs_entity(task, schedulers[task->cpu_id]);
 
-    while (current_task->state == TASK_BLOCKING ||
-           current_task->state == TASK_READING_STDIO) {
-        arch_enable_interrupt();
-        arch_pause();
-    }
-    arch_disable_interrupt();
+    schedule();
 
     return task->status;
 }

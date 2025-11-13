@@ -24,9 +24,9 @@ uint64_t *get_current_page_dir(bool user) {
         asm volatile("mrs %0, TTBR0_EL1" : "=r"(ttbr0_el1));
         page_table_base = ttbr0_el1 & 0xFFFFFFFFFFF0;
     } else {
-        uint64_t ttbr0_el1 = 0;
-        asm volatile("mrs %0, TTBR1_EL1" : "=r"(ttbr0_el1));
-        page_table_base = ttbr0_el1 & 0xFFFFFFFFFFF0;
+        uint64_t ttbr1_el1 = 0;
+        asm volatile("mrs %0, TTBR1_EL1" : "=r"(ttbr1_el1));
+        page_table_base = ttbr1_el1 & 0xFFFFFFFFFFF0;
     }
     return (uint64_t *)phys_to_virt(page_table_base);
 }

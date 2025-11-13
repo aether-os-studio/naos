@@ -32,9 +32,15 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     asm volatile("mrs %0, fpsr" : "=r"(context->ctx->fpsr));
     context->usermode = user_mode;
     context->mm = malloc(sizeof(task_mm_info_t));
-    context->mm->page_table_addr = page_table_addr;
+    context->mm->page_table_addr =
+        (uint64_t)virt_to_phys(get_current_page_dir(true));
     context->mm->ref_count = 1;
-    asm volatile("mrs %0, TTBR0_EL1" : "=r"(context->mm->page_table_addr));
+    memset(&context->mm->task_vma_mgr, 0, sizeof(vma_manager_t));
+    context->mm->task_vma_mgr.last_alloc_addr = USER_MMAP_START;
+    context->mm->task_vma_mgr.initialized = false;
+    context->mm->brk_start = USER_BRK_START;
+    context->mm->brk_current = context->mm->brk_start;
+    context->mm->brk_end = USER_BRK_END;
 }
 
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
@@ -43,11 +49,12 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
     dst->usermode = src->usermode;
     dst->ctx = (struct pt_regs *)stack - 1;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
+    dst->ctx->x0 = 0;
     dst->pc = (uint64_t)arch_context_switch_exit;
     dst->sp = (uint64_t)dst->ctx;
 }
 
-void arch_context_free(arch_context_t *context) {}
+void arch_context_free(arch_context_t *context) { context->dead = true; }
 
 task_t *arch_get_current() {
     uint64_t tpidr_el1;
