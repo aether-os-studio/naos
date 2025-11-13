@@ -240,8 +240,8 @@ run-x86_64-single: assets/ovmf-code-$(ARCH).fd all-single
 .PHONY: run-aarch64
 run-aarch64: assets/ovmf-code-$(ARCH).fd all
 	qemu-system-$(ARCH) \
-		-M virt,gic-version=3 \
-		-cpu cortex-a76 \
+		-M virt \
+		-cpu cortex-a72 \
 		-device ramfb \
 		-device qemu-xhci,id=xhci \
 		-device usb-kbd \

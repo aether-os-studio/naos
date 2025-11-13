@@ -62,7 +62,7 @@ void ap_kmain(struct limine_mp_info *cpu) {
 
     arch_set_current(idle_tasks[current_cpu_id]);
 
-    gic_v3_init_percpu();
+    gic_init_percpu();
 
     timer_init_percpu();
 

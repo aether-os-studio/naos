@@ -9,7 +9,6 @@ void arch_early_init() {
     init_serial();
     smp_init();
     gic_init();
-    gic_v3_init();
 }
 
 extern task_t *idle_tasks[MAX_CPU_NUM];

@@ -4,233 +4,411 @@
 #include <irq/irq_manager.h>
 #include <mm/mm.h>
 
+uint64_t gicc_base_virt = 0;
+uint64_t gicc_base_address = 0;
 uint64_t gicd_base_virt = 0;
 uint64_t gicd_base_address = 0;
 uint64_t gicr_base_virt = 0;
 uint64_t gicr_base_address = 0;
+gic_version_t gic_version = GIC_VERSION_UNKNOWN;
 
-void gic_init() {
+// 内存屏障
+#define dsb(op) asm volatile("dsb " #op : : : "memory")
+#define isb() asm volatile("isb" : : : "memory")
+#define dmb(op) asm volatile("dmb " #op : : : "memory")
+
+/* ==================== 版本检测 ==================== */
+
+gic_version_t gic_detect_version(void) {
     struct uacpi_table madt_table;
     uacpi_status status = uacpi_table_find_by_signature("APIC", &madt_table);
 
-    if (status == UACPI_STATUS_OK) {
-        struct acpi_madt *madt = (struct acpi_madt *)madt_table.ptr;
+    if (status != UACPI_STATUS_OK) {
+        return GIC_VERSION_UNKNOWN;
+    }
 
-        uint64_t current = 0;
-        for (;;) {
-            if (current + ((uint32_t)sizeof(struct acpi_madt) - 1) >=
-                madt->hdr.length) {
-                break;
-            }
-            struct acpi_entry_hdr *header =
-                (struct acpi_entry_hdr *)((uint64_t)(&madt->entries) + current);
-            if (header->type == ACPI_MADT_ENTRY_TYPE_GICD) {
-                struct acpi_madt_gicd *gicd =
-                    (struct acpi_madt_gicd *)((uint64_t)(&madt->entries) +
-                                              current);
-                gicd_base_address = gicd->address;
-                break;
-            }
-            current += (uint64_t)header->length;
+    struct acpi_madt *madt = (struct acpi_madt *)madt_table.ptr;
+    gic_version_t version = GIC_VERSION_UNKNOWN;
+    bool has_gicr = false;
+
+    uint64_t current = 0;
+    while (current + sizeof(struct acpi_madt) - 1 < madt->hdr.length) {
+        struct acpi_entry_hdr *header =
+            (struct acpi_entry_hdr *)((uint64_t)(&madt->entries) + current);
+
+        switch (header->type) {
+        case ACPI_MADT_ENTRY_TYPE_GICD: {
+            struct acpi_madt_gicd *gicd = (struct acpi_madt_gicd *)header;
+            version = gicd->gic_version;
+            break;
+        }
+        case ACPI_MADT_ENTRY_TYPE_GICR:
+            has_gicr = true;
+            break;
         }
 
-        current = 0;
-        for (;;) {
-            if (current + ((uint32_t)sizeof(struct acpi_madt) - 1) >=
-                madt->hdr.length) {
-                break;
-            }
-            struct acpi_entry_hdr *header =
-                (struct acpi_entry_hdr *)((uint64_t)(&madt->entries) + current);
-            if (header->type == ACPI_MADT_ENTRY_TYPE_GICR) {
+        current += header->length;
+    }
 
-                struct acpi_madt_gicr *gicr =
-                    (struct acpi_madt_gicr *)((uint64_t)(&madt->entries) +
-                                              current);
+    // 如果有GICR但版本未知，判断为v3
+    if (has_gicr && version < GIC_VERSION_V3) {
+        version = GIC_VERSION_V3;
+    }
+
+    return version;
+}
+
+/* ==================== ACPI解析 ==================== */
+
+static void gic_parse_acpi(void) {
+    struct uacpi_table madt_table;
+    uacpi_status status = uacpi_table_find_by_signature("APIC", &madt_table);
+
+    if (status != UACPI_STATUS_OK) {
+        return;
+    }
+
+    struct acpi_madt *madt = (struct acpi_madt *)madt_table.ptr;
+    uint64_t current = 0;
+
+    // 解析GICD
+    while (current + sizeof(struct acpi_madt) - 1 < madt->hdr.length) {
+        struct acpi_entry_hdr *header =
+            (struct acpi_entry_hdr *)((uint64_t)(&madt->entries) + current);
+
+        if (header->type == ACPI_MADT_ENTRY_TYPE_GICD) {
+            struct acpi_madt_gicd *gicd = (struct acpi_madt_gicd *)header;
+            gicd_base_address = gicd->address;
+            break;
+        }
+        current += header->length;
+    }
+
+    // 解析GICC (GICv2) 或 GICR (GICv3)
+    current = 0;
+    while (current + sizeof(struct acpi_madt) - 1 < madt->hdr.length) {
+        struct acpi_entry_hdr *header =
+            (struct acpi_entry_hdr *)((uint64_t)(&madt->entries) + current);
+
+        if (gic_version == GIC_VERSION_V2) {
+            if (header->type == ACPI_MADT_ENTRY_TYPE_GICC) {
+                struct acpi_madt_gicc *gicc = (struct acpi_madt_gicc *)header;
+                if (gicc_base_address == 0) {
+                    gicc_base_address = gicc->address;
+                }
+            }
+        } else if (gic_version >= GIC_VERSION_V3) {
+            if (header->type == ACPI_MADT_ENTRY_TYPE_GICR) {
+                struct acpi_madt_gicr *gicr = (struct acpi_madt_gicr *)header;
                 gicr_base_address = gicr->address;
                 break;
             }
-            current += (uint64_t)header->length;
         }
 
-        // current = 0;
-        // for (;;)
-        // {
-        //     if (current + ((uint32_t)sizeof(MADT) - 1) >= madt->h.Length)
-        //     {
-        //         break;
-        //     }
-        //     MadtHeader *header = (MadtHeader *)((uint64_t)(&madt->entries) +
-        //     current); if (header->entry_type == ACPI_MADT_TYPE_GICC)
-        //     {
+        current += header->length;
+    }
 
-        //         GiccEntry *gicc = (GiccEntry *)((uint64_t)(&madt->entries) +
-        //         current); gicr_base_address = gicc->gicr_base_address; break;
-        //     }
-        //     current += (uint64_t)header->length;
-        // }
+    // 映射内存
+    if (gicd_base_address) {
+        gicd_base_virt = phys_to_virt(gicd_base_address);
+        map_page_range(get_current_page_dir(false), gicd_base_virt,
+                       gicd_base_address, 0x10000, PT_FLAG_R | PT_FLAG_W);
+    }
 
-        if (gicd_base_address) {
-            gicd_base_virt = phys_to_virt(gicd_base_address);
-            map_page_range(get_current_page_dir(false), gicd_base_virt,
-                           gicd_base_address, 0x10000, PT_FLAG_R | PT_FLAG_W);
-        }
+    if (gic_version == GIC_VERSION_V2 && gicc_base_address) {
+        gicc_base_virt = phys_to_virt(gicc_base_address);
+        map_page_range(get_current_page_dir(false), gicc_base_virt,
+                       gicc_base_address, 0x2000, PT_FLAG_R | PT_FLAG_W);
+    }
 
-        if (gicr_base_address) {
-            gicr_base_virt = phys_to_virt(gicr_base_address);
-            map_page_range(get_current_page_dir(false), gicr_base_virt,
-                           gicr_base_address, GICR_STRIDE * cpu_count,
-                           PT_FLAG_R | PT_FLAG_W);
-        }
+    if (gic_version >= GIC_VERSION_V3 && gicr_base_address) {
+        gicr_base_virt = phys_to_virt(gicr_base_address);
+        map_page_range(get_current_page_dir(false), gicr_base_virt,
+                       gicr_base_address, GICR_STRIDE * cpu_count,
+                       PT_FLAG_R | PT_FLAG_W);
     }
 }
 
-// 内存屏障宏
-#define dsb(op) asm volatile("dsb " #op : : : "memory")
-#define isb() asm volatile("isb" : : : "memory")
+static void gicd_v2_init(void) {
+    uint32_t typer, max_irq;
 
-// 中断控制函数
-void gic_enable_irq(uint32_t irq);
-void gic_disable_irq(uint32_t irq);
-void gic_send_eoi(uint32_t irq);
+    // 禁用distributor
+    *(volatile uint32_t *)(gicd_base_virt + GICD_CTLR) = 0;
+    dsb(sy);
 
-// 初始化GICv3 Distributor
-static void gicd_init(void) {
-    // 1. 禁用GICD
-    *(volatile uint32_t *)(gicd_base_virt + GICD_CTLR) = 0x0;
+    // 读取支持的中断数量
+    typer = *(volatile uint32_t *)(gicd_base_virt + GICD_TYPER);
+    max_irq = ((typer & 0x1F) + 1) * 32;
+    if (max_irq > 1020)
+        max_irq = 1020;
 
-    // 2. 配置SPI中断路由
-    for (int intr = SPI_INTR_BASE; intr < 1020; intr += 4) {
-        volatile uint32_t *route_reg =
-            (uint32_t *)(gicd_base_virt + 0x6100 + (intr / 4) * 4);
-        *route_reg = 0xFFFFFFFF; // 路由到所有CPU[10](@ref)
+    // 配置所有中断为Group1（包括PPI）
+    for (int i = 0; i < (max_irq / 32); i++) { // 从0开始
+        *(volatile uint32_t *)(gicd_base_virt + GICD_IGROUPR + i * 4) = 0x0;
     }
 
-    // 3. 设置所有SPI中断优先级
-    for (int i = 0; i < 256; i++) {
-        volatile uint32_t *prio_reg =
-            (uint32_t *)(gicd_base_virt + GICD_IPRIORITYR + i * 4);
-        *prio_reg = 0xA0A0A0A0; // 默认优先级0xA0[8](@ref)
+    // 配置所有中断优先级（包括PPI）
+    for (int i = 0; i < (max_irq / 4); i++) { // 从0开始
+        *(volatile uint32_t *)(gicd_base_virt + GICD_IPRIORITYR + i * 4) =
+            0xA0A0A0A0;
     }
 
-    // 4. 启用GICD
+    // 配置所有SPI目标CPU（SPI从32开始）
+    for (int i = 32 / 4; i < (max_irq / 4); i++) {
+        *(volatile uint32_t *)(gicd_base_virt + GICD_ITARGETSR + i * 4) =
+            0x01010101;
+    }
+
+    // 禁用所有中断（稍后按需启用）
+    for (int i = 0; i < (max_irq / 32); i++) {
+        *(volatile uint32_t *)(gicd_base_virt + GICD_ICENABLER + i * 4) =
+            0xFFFFFFFF;
+    }
+
+    // 清除所有pending状态
+    for (int i = 0; i < (max_irq / 32); i++) {
+        *(volatile uint32_t *)(gicd_base_virt + GICD_ICPENDR + i * 4) =
+            0xFFFFFFFF;
+    }
+
+    // 启用Group0
+    *(volatile uint32_t *)(gicd_base_virt + GICD_CTLR) = GICD_CTLR_EN_GRP0;
+    dsb(sy);
+}
+
+static void gicc_v2_init(void) {
+    // 设置优先级掩码（允许所有优先级）
+    *(volatile uint32_t *)(gicc_base_virt + GICC_PMR) = 0xFF;
+
+    // 设置Binary Point为0（使用全部8位优先级）
+    *(volatile uint32_t *)(gicc_base_virt + GICC_BPR) = 0;
+
+    // 启用Group0
+    *(volatile uint32_t *)(gicc_base_virt + GICC_CTLR) = 0x1; // bit0=Grp0
+    dsb(sy);
+}
+
+static void gic_v2_enable_irq(uint32_t irq) {
+    uint32_t reg = irq / 32;
+    uint32_t bit = irq % 32;
+
+    // 所有中断都通过GICD使能（GICv2特性）
+    *(volatile uint32_t *)(gicd_base_virt + GICD_ISENABLER + reg * 4) =
+        (1U << bit);
+    dsb(sy);
+}
+
+static void gic_v2_disable_irq(uint32_t irq) {
+    uint32_t reg = irq / 32;
+    uint32_t bit = irq % 32;
+
+    *(volatile uint32_t *)(gicd_base_virt + GICD_ICENABLER + reg * 4) =
+        (1U << bit);
+    dsb(sy);
+}
+
+static uint64_t gic_v2_get_irq(void) {
+    uint32_t iar = *(volatile uint32_t *)(gicc_base_virt + GICC_IAR);
+    dsb(sy);
+
+    uint32_t irq = iar & 0x3FF;
+
+    if (irq >= 1020) {
+        return 1023; // 返回特殊值表示无效中断
+    }
+
+    return irq;
+}
+
+static void gic_v2_send_eoi(uint32_t irq) {
+    if (irq >= 1020) {
+        return;
+    }
+
+    *(volatile uint32_t *)(gicc_base_virt + GICC_EOIR) = irq;
+    dsb(sy);
+}
+
+static void gicd_v3_init(void) {
+    // 禁用GICD
+    *(volatile uint32_t *)(gicd_base_virt + GICD_CTLR) = 0;
+    dsb(sy);
+
+    // 配置SPI中断路由（Affinity routing）
+    for (int intr = SPI_INTR_BASE; intr < 1020; intr++) {
+        volatile uint64_t *route_reg =
+            (uint64_t *)(gicd_base_virt + GICD_IROUTER + intr * 8);
+        *route_reg = 0; // 路由到CPU0（可根据需要修改）
+    }
+
+    // 设置所有SPI中断优先级
+    for (int i = 8; i < 256; i++) {
+        *(volatile uint32_t *)(gicd_base_virt + GICD_IPRIORITYR + i * 4) =
+            0xA0A0A0A0;
+    }
+
+    // 启用GICD（Affinity Routing + Group1）
     *(volatile uint32_t *)(gicd_base_virt + GICD_CTLR) =
-        GICD_CTLR_EN_GRP0 | GICD_CTLR_EN_GRP1_ALL |
-        GICD_CTLR_DS; // 使能Group0/1
+        GICD_CTLR_ARE | GICD_CTLR_EN_GRP1NS | GICD_CTLR_DS;
+    dsb(sy);
 }
 
-// 初始化单个CPU的Redistributor
-static void gicr_init(uint32_t cpu_id) {
-    // 1. 唤醒Redistributor
-    volatile uint32_t *waker =
-        (uint32_t *)(gicr_base_virt + cpu_id * GICR_STRIDE + GICR_WAKER);
-    *waker &= ~(1 << 1); // 清除ProcessorSleep位
-    while (*waker & (1 << 2))
-        asm volatile("nop"); // 等待ChildrenAsleep清零
+static void gicr_v3_init(uint32_t cpu_id) {
+    uint64_t gicr_addr = gicr_base_virt + cpu_id * GICR_STRIDE;
 
-    // 2. 配置PPI/SGI中断组
-    *(volatile uint32_t *)(gicr_base_virt + cpu_id * GICR_STRIDE +
-                           GICR_IGROUPR0) = 0xFFFFFFFF; // Group1使能
+    // 唤醒Redistributor
+    volatile uint32_t *waker = (uint32_t *)(gicr_addr + GICR_WAKER);
+    *waker &= ~(1 << 1);
+    while (*waker & (1 << 2)) {
+        asm volatile("nop");
+    }
 
-    // 3. 启用私有中断
-    *(volatile uint32_t *)(gicr_base_virt + cpu_id * GICR_STRIDE +
-                           GICR_ISENABLER0) = 0xFFFFFFFF; // 全部使能[3](@ref)
-}
+    // 配置PPI/SGI中断组
+    *(volatile uint32_t *)(gicr_addr + GICR_IGROUPR0) = 0xFFFFFFFF;
 
-// 初始化CPU接口
-static void cpu_interface_init(void) {
-    // 1. 设置优先级掩码
-    asm volatile("msr ICC_PMR_EL1, %0" : : "r"(0xF0)); // 优先级阈值0xF0
-
-    // 2. 启用CPU接口
-    asm volatile("mov x0, #1\n\t" // EnableGrp1
-                 "msr ICC_IGRPEN1_EL1, x0"
-                 :
-                 :
-                 : "x0");
-}
-
-/* 初始化核心函数 */
-void gic_v3_init(void) {
-    gicd_init();
-
-    gicr_init(current_cpu_id);
-
-    cpu_interface_init();
-}
-
-void gic_v3_init_percpu() {
-    gicr_init(current_cpu_id);
-
-    cpu_interface_init();
-}
-
-// 定时器寄存器定义
-#define CNTP_CTL_EL0 "S3_3_C14_C2_1"  // 物理定时器控制寄存器
-#define CNTP_TVAL_EL0 "S3_3_C14_C2_0" // 物理定时器计数值寄存器
-
-// 定时器初始化函数
-void timer_init_percpu() {
-    // 1. 获取定时器频率并计算1ms间隔
-    uint64_t cntfrq;
-    asm volatile("mrs %0, CNTFRQ_EL0" : "=r"(cntfrq));
-
-    uint64_t ticks = cntfrq / 10; // 100ms
-
-    // 2. 配置物理定时器（CNTP）
-    asm volatile("msr S3_3_C14_C2_0, %0" : : "r"(ticks));
-
-    // 启用定时器（bit0:使能）
-    asm volatile("msr S3_3_C14_C2_1, %0" : : "r"(0x1));
-
-    // // 3. 配置PPI中断（TIMER_IRQ=30）
-    uint64_t gicr_addr = gicr_base_virt + current_cpu_id * GICR_STRIDE;
-
-    // 3.2 设置中断优先级（GICR_IPRIORITYR）
-    uint8_t *gicr_ipriority = (uint8_t *)(gicr_addr + GICR_IPRIORITYR);
-    gicr_ipriority[TIMER_IRQ - 16] = 0x80; // 中等优先级（0x8）
-
-    // 3.3 配置中断路由（GICD_ITARGETSR）
-    uint32_t *gicd_itargetsr =
-        (uint32_t *)(gicd_base_virt + GICD_ITARGETSR + ((TIMER_IRQ / 32) * 4));
-    *gicd_itargetsr = (1 << current_cpu_id); // 路由到当前CPU
-}
-
-/* 中断控制函数 */
-// 启用中断（支持SPI/PPI/SGI）
-void gic_enable_irq(uint32_t irq) {
-    if (irq < 32) {
-        uint64_t reg = gicr_base_virt + current_cpu_id * GICR_STRIDE +
-                       GICR_ISENABLER0 + (irq / 32) * 4;
-        *(uint32_t *)reg = (1 << (irq % 32));
-    } else if (irq < ARCH_MAX_IRQ_NUM) { // SPI（网页6）
-        uint64_t reg = gicd_base_virt + GICD_ISENABLER + (irq / 32) * 4;
-        *(uint32_t *)reg = (1 << (irq % 32));
+    // 设置PPI优先级
+    for (int i = 0; i < 8; i++) {
+        *(volatile uint32_t *)(gicr_addr + GICR_IPRIORITYR + i * 4) =
+            0xA0A0A0A0;
     }
 }
 
-// 禁用中断
-void gic_disable_irq(uint32_t irq) {
+static void cpu_interface_v3_init(void) {
+    // 设置优先级掩码
+    asm volatile("msr ICC_PMR_EL1, %0" : : "r"((uint64_t)0xF0));
+
+    // 启用Group1中断
+    asm volatile("msr ICC_IGRPEN1_EL1, %0" : : "r"((uint64_t)1));
+    isb();
+}
+
+static void gic_v3_enable_irq(uint32_t irq) {
     if (irq < 32) {
-        uint64_t reg = gicr_base_virt + current_cpu_id * GICR_STRIDE +
-                       GICR_ICENABLER0 + (irq / 32) * 4;
-        *(uint32_t *)reg = (1 << (irq % 32));
-    } else if (irq < ARCH_MAX_IRQ_NUM) {
-        uint64_t reg = gicd_base_virt + GICD_ICENABLER + (irq / 32) * 4;
-        *(uint32_t *)reg = (1 << (irq % 32));
+        // PPI/SGI
+        uint64_t reg =
+            gicr_base_virt + current_cpu_id * GICR_STRIDE + GICR_ISENABLER0;
+        *(volatile uint32_t *)reg = (1U << irq);
+    } else {
+        // SPI
+        uint32_t reg_idx = irq / 32;
+        uint32_t bit = irq % 32;
+        *(volatile uint32_t *)(gicd_base_virt + GICD_ISENABLER + reg_idx * 4) =
+            (1U << bit);
+    }
+    dsb(sy);
+}
+
+static void gic_v3_disable_irq(uint32_t irq) {
+    if (irq < 32) {
+        uint64_t reg =
+            gicr_base_virt + current_cpu_id * GICR_STRIDE + GICR_ICENABLER0;
+        *(volatile uint32_t *)reg = (1U << irq);
+    } else {
+        uint32_t reg_idx = irq / 32;
+        uint32_t bit = irq % 32;
+        *(volatile uint32_t *)(gicd_base_virt + GICD_ICENABLER + reg_idx * 4) =
+            (1U << bit);
+    }
+    dsb(sy);
+}
+
+static uint64_t gic_v3_get_irq(void) {
+    uint64_t irq_num = 0;
+    asm volatile("mrs %0, ICC_IAR1_EL1" : "=r"(irq_num));
+    return irq_num & 0xFFFFFF;
+}
+
+static void gic_v3_send_eoi(uint32_t irq) {
+    asm volatile("msr ICC_EOIR1_EL1, %0" : : "r"((uint64_t)irq));
+    isb();
+}
+
+void gic_init(void) {
+    // 检测版本
+    gic_version = gic_detect_version();
+
+    if (gic_version == GIC_VERSION_UNKNOWN) {
+        // 默认尝试GICv3
+        gic_version = GIC_VERSION_V3;
+    }
+
+    // 解析ACPI
+    gic_parse_acpi();
+
+    // 根据版本初始化
+    if (gic_version == GIC_VERSION_V2) {
+        gicd_v2_init();
+        gicc_v2_init();
+    } else {
+        gicd_v3_init();
+        gicr_v3_init(current_cpu_id);
+        cpu_interface_v3_init();
+    }
+}
+
+void gic_init_percpu(void) {
+    if (gic_version == GIC_VERSION_V2) {
+        gicc_v2_init();
+    } else {
+        gicr_v3_init(current_cpu_id);
+        cpu_interface_v3_init();
+    }
+}
+
+void gic_enable_irq(uint32_t irq) {
+    if (gic_version == GIC_VERSION_V2) {
+        gic_v2_enable_irq(irq);
+    } else {
+        gic_v3_enable_irq(irq);
+    }
+}
+
+void gic_disable_irq(uint32_t irq) {
+    if (gic_version == GIC_VERSION_V2) {
+        gic_v2_disable_irq(irq);
+    } else {
+        gic_v3_disable_irq(irq);
+    }
+}
+
+uint64_t gic_get_current_irq(void) {
+    if (gic_version == GIC_VERSION_V2) {
+        return gic_v2_get_irq();
+    } else {
+        return gic_v3_get_irq();
     }
 }
 
 void gic_send_eoi(uint32_t irq) {
-    // 发送EOI到CPU接口
-    asm volatile("msr ICC_EOIR1_EL1, %0" : : "r"(irq));
-    isb();
+    if (gic_version == GIC_VERSION_V2) {
+        gic_v2_send_eoi(irq);
+    } else {
+        gic_v3_send_eoi(irq);
+    }
 }
 
-uint64_t gic_v3_get_current_irq() {
-    uint64_t irq_num = 0;
-    asm volatile("mrs %0, ICC_IAR1_EL1" : "=r"(irq_num));
-    return irq_num;
+void timer_init_percpu(void) {
+    // 获取定时器频率
+    uint64_t cntfrq;
+    asm volatile("mrs %0, CNTFRQ_EL0" : "=r"(cntfrq));
+
+    uint64_t ticks = cntfrq / 1000 * SCHED_HZ;
+
+    // 配置物理定时器
+    asm volatile("msr CNTP_TVAL_EL0, %0" : : "r"(ticks));
+    asm volatile("msr CNTP_CTL_EL0, %0" : : "r"((uint64_t)0x1));
+
+    // 配置定时器中断
+    if (gic_version == GIC_VERSION_V2) {
+        // GICv2: 通过GICD配置PPI
+        uint8_t *priority = (uint8_t *)(gicd_base_virt + GICD_IPRIORITYR);
+        priority[TIMER_IRQ] = 0x80;
+    } else {
+        // GICv3: 通过GICR配置PPI
+        uint64_t gicr_addr = gicr_base_virt + current_cpu_id * GICR_STRIDE;
+        uint8_t *priority = (uint8_t *)(gicr_addr + GICR_IPRIORITYR);
+        priority[TIMER_IRQ - 16] = 0x80;
+    }
 }
 
 int64_t gic_unmask(uint64_t irq, uint64_t flags) {
