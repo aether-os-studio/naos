@@ -2,6 +2,41 @@
 
 .global _start
 _start:
+    mrs x0, CurrentEL
+    lsr x0, x0, #2
+    and x0, x0, #3
+    
+    cmp x0, #2
+    b.eq drop_from_el2
+    cmp x0, #1
+    b.eq already_el1
+    
+unexpected_el:
+    b .
+
+drop_from_el2:
+    // 配置HCR_EL2
+    mov x0, #(1 << 31)      // RW=1: EL1是AArch64
+    msr HCR_EL2, x0
+    
+    // 配置CNTHCTL_EL2
+    mov x0, #3              // EL1PCTEN | EL1PCEN
+    msr CNTHCTL_EL2, x0
+    
+    // 配置CNTVOFF_EL2
+    msr CNTVOFF_EL2, xzr
+    
+    // 配置SPSR_EL2
+    mov x0, #0x3c5          // EL1h + 屏蔽中断
+    msr SPSR_EL2, x0
+    
+    // 返回到el1
+    adr x0, already_el1
+    msr ELR_EL2, x0
+    
+    eret
+
+already_el1:
     mov     x1, sp
 
     mov     x0, #1
@@ -16,6 +51,41 @@ _start:
 
 .global ap_entry
 ap_entry:
+    mrs x0, CurrentEL
+    lsr x0, x0, #2
+    and x0, x0, #3
+    
+    cmp x0, #2
+    b.eq drop_from_el2_ap
+    cmp x0, #1
+    b.eq already_el1_ap
+    
+unexpected_el_ap:
+    b .
+
+drop_from_el2_ap:
+    // 配置HCR_EL2
+    mov x0, #(1 << 31)      // RW=1: EL1是AArch64
+    msr HCR_EL2, x0
+    
+    // 配置CNTHCTL_EL2
+    mov x0, #3              // EL1PCTEN | EL1PCEN
+    msr CNTHCTL_EL2, x0
+    
+    // 配置CNTVOFF_EL2
+    msr CNTVOFF_EL2, xzr
+    
+    // 配置SPSR_EL2
+    mov x0, #0x3c5          // EL1h + 屏蔽中断
+    msr SPSR_EL2, x0
+    
+    // 返回到el1
+    adr x0, already_el1_ap
+    msr ELR_EL2, x0
+    
+    eret
+
+already_el1_ap:
     mov     x2, sp
 
     mov     x1, #1

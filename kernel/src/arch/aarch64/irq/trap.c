@@ -5,7 +5,7 @@
 #include <task/task.h>
 
 void show_frame(struct pt_regs *regs) {
-    printk("Execption:\r\n");
+    printk("Exception:\r\n");
     printk("X00:%#018lx X01:%#018lx X02:%#018lx X03:%#018lx\r\n", regs->x0,
            regs->x1, regs->x2, regs->x3);
     printk("X04:%#018lx X05:%#018lx X06:%#018lx X07:%#018lx\r\n", regs->x4,
@@ -301,6 +301,15 @@ void handle_exception(struct pt_regs *frame) {
 }
 
 void bad_mode(struct pt_regs *frame, int reason, unsigned int esr) {
+    printk("bad mode:\n");
+    printk("reason = %d\n", reason);
+
+    uint8_t ec = (uint8_t)((esr >> 26) & 0x3fU);
+    uint32_t iss = (uint32_t)(esr & 0x00ffffffU);
+    printk("esr.EC :0x%02x\r\n", ec);
+    printk("esr.IL :0x%02x\r\n", (uint8_t)((esr >> 25) & 0x01U));
+    printk("esr.ISS:0x%08x\r\n", iss);
+
     show_frame(frame);
 
     arch_disable_interrupt();
@@ -314,6 +323,4 @@ void trap_dispatch(struct pt_regs *frame) {
     arch_disable_interrupt();
 
     handle_exception(frame);
-    // IRQ_OverCheck(frame);
-    // IRQ_OverCheck2(frame);
 }

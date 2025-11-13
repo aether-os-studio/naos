@@ -5,6 +5,7 @@ CFLAGS := -O2 -fno-stack-protector -Wno-address-of-packed-member -fvisibility=hi
 endif
 export CFLAGS
 
+# Architecture specific internal flags.
 ifeq ($(ARCH),x86_64)
     ifeq ($(CC_IS_CLANG),1)
         override CC += \
@@ -16,6 +17,14 @@ ifeq ($(ARCH),x86_64)
         -mno-red-zone \
         -mcmodel=large \
         -mno-80387 -mno-mmx -mno-sse -mno-sse2
+    override LDFLAGS += \
+        -Wl,-m,elf_x86_64
+    ifeq ($(CC_IS_CLANG),1)
+        override LDFLAGS += \
+            -lgcc
+    endif
+    override NASMFLAGS += \
+        -f elf64
 endif
 ifeq ($(ARCH),aarch64)
     ifeq ($(CC_IS_CLANG),1)
@@ -23,6 +32,8 @@ ifeq ($(ARCH),aarch64)
             -target aarch64-unknown-none
     endif
     override CFLAGS +=
+    override LDFLAGS += \
+        -Wl,-m,aarch64elf
 endif
 ifeq ($(ARCH),riscv64)
     ifeq ($(CC_IS_CLANG),1)
@@ -38,7 +49,12 @@ ifeq ($(ARCH),riscv64)
         -march=rv64imafd \
         -mabi=lp64d \
         -mno-relax \
+        -mcmodel=medany \
         -D__riscv__
+    override LDFLAGS += \
+        -Wl,-m,elf64lriscv \
+        -Wl,--no-relax
+
 endif
 ifeq ($(ARCH),loongarch64)
     ifeq ($(CC_IS_CLANG),1)
@@ -49,6 +65,9 @@ ifeq ($(ARCH),loongarch64)
         -march=loongarch64 \
         -mabi=lp64d \
         -gdwarf-2
+    override LDFLAGS += \
+        -Wl,-m,elf64loongarch \
+        -Wl,--no-relax
 endif
 
 all:
