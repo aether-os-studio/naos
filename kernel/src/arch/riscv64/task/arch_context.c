@@ -49,6 +49,10 @@ asm("kernel_thread_func:\n\t"
 
 extern void ret_from_trap_handler();
 
+#define SSTATUS_GET_FS(sstatus) (((sstatus) >> 13) & 0b11)
+#define SSTATUS_SET_FS(sstatus, fs)                                            \
+    ((sstatus) |= (((uint64_t)(fs) & 0b11) << 13))
+
 void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
                        uint64_t entry, uint64_t stack, bool user_mode,
                        uint64_t initial_arg) {
@@ -81,6 +85,7 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
         context->ctx->a2 = initial_arg;
         context->ctx->sp = (uint64_t)context->ctx;
     }
+    SSTATUS_SET_FS(context->ctx->sstatus, 2);
 }
 
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
@@ -98,6 +103,9 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
     dst->ctx->epc += 4;
     dst->ctx->a0 = 0;
+    dst->fpu_ctx = alloc_frames_bytes(sizeof(fpu_context_t));
+    memset(dst->fpu_ctx, 0, sizeof(fpu_context_t));
+    dst->fpu_ctx->fcsr = FCSR_INIT_DEFAULT;
 }
 
 void arch_context_free(arch_context_t *context) {
@@ -121,8 +129,16 @@ void arch_set_current(task_t *current) {
 }
 
 void __switch_to(task_t *prev, task_t *next) {
-    fpu_save_context(prev->arch_context->fpu_ctx);
-    fpu_restore_context(next->arch_context->fpu_ctx);
+    if (prev->arch_context->ctx->sstatus & (1UL << 63)) {
+        if (SSTATUS_GET_FS(prev->arch_context->ctx->sstatus) == 3) {
+            fpu_save_context(prev->arch_context->fpu_ctx);
+            SSTATUS_SET_FS(prev->arch_context->ctx->sstatus, 2);
+        }
+    }
+    if (SSTATUS_GET_FS(next->arch_context->ctx->sstatus) != 0) {
+        fpu_restore_context(next->arch_context->fpu_ctx);
+        SSTATUS_SET_FS(next->arch_context->ctx->sstatus, 2);
+    }
 
     uint64_t satp = MAKE_SATP_PADDR(SATP_MODE_SV48, 0,
                                     next->arch_context->mm->page_table_addr);
