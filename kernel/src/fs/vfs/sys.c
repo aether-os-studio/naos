@@ -3,6 +3,8 @@
 #include <drivers/kernel_logger.h>
 #include <drivers/bus/pci.h>
 #include <net/netlink.h>
+#include <acpi/uacpi/internal/tables.h>
+#include <acpi/uacpi/tables.h>
 
 int sysfs_fsid = 0;
 
@@ -167,6 +169,23 @@ fs_t sysfs = {
     .callback = &callbacks,
 };
 
+uacpi_iteration_decision
+sysfs_regist_acpi_table(void *user, struct uacpi_installed_table *tbl,
+                        uacpi_size idx) {
+    char name[5];
+    memcpy(name, tbl->hdr.signature, 4);
+    name[4] = '\0';
+    char path[256];
+    sprintf(path, "/sys/firmware/acpi/tables/%s", name);
+
+    vfs_mkfile(path);
+    vfs_node_t node = vfs_open(path);
+    vfs_write(node, (const void *)phys_to_virt(tbl->phys_addr), 0,
+              tbl->hdr.length);
+
+    return UACPI_ITERATION_DECISION_CONTINUE;
+}
+
 void sysfs_init() {
     sysfs_fsid = vfs_regist(&sysfs);
 
@@ -230,6 +249,9 @@ void sysfs_init() {
         sprintf(content, "0x%04x", dev->device_id);
         vfs_write(vfs_open(name), content, 0, strlen(content));
     }
+
+    vfs_mkdir("/sys/firmware/acpi/tables");
+    uacpi_for_each_table(0, sysfs_regist_acpi_table, NULL);
 }
 
 void sysfs_init_umount() {
