@@ -76,9 +76,10 @@ all:
 ifeq ($(ARCH), x86_64)
 	$(MAKE) -C ahci
 	$(MAKE) -C nvme
-endif
-	$(MAKE) -C usb
 	$(MAKE) -C e1000
+endif
+
+	$(MAKE) -C usb
 	$(MAKE) -C virtio
 	$(MAKE) -C vmware_svga
 # 	$(MAKE) -C nvidia_open
