@@ -88,7 +88,6 @@ void gic_enable_irq(uint32_t irq);
 void gic_disable_irq(uint32_t irq);
 void gic_send_eoi(uint32_t irq);
 uint64_t gic_get_current_irq(void);
-void timer_init_percpu(void);
 
 /* 版本检测 */
 gic_version_t gic_detect_version(void);

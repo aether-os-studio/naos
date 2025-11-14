@@ -178,20 +178,27 @@ static void gicd_v2_init(void) {
 }
 
 static void gicc_v2_init(void) {
-    // 先禁用本CPU的PPI（清理状态）
-    *(volatile uint32_t *)(gicd_base_virt + GICD_ICENABLER) = 0xFFFFFFFF;
+    uint64_t gicc_base = gicc_base_virts[current_cpu_id];
 
-    // 清除PPI的pending状态
-    *(volatile uint32_t *)(gicd_base_virt + GICD_ICPENDR) = 0xFFFFFFFF;
+    // 1. 先禁用CPU接口
+    *(volatile uint32_t *)(gicc_base + GICC_CTLR) = 0;
+    dsb(sy);
 
-    // 设置优先级掩码（允许所有优先级）
-    *(volatile uint32_t *)(gicc_base_virts[current_cpu_id] + GICC_PMR) = 0xFF;
+    // 2. 清除PPI的pending状态（只清除PPI部分，保留SGI）
+    //    对于GICv2，每个CPU访问GICD_ICPENDR[0]会操作自己的banked寄存器
+    *(volatile uint32_t *)(gicd_base_virt + GICD_ICPENDR) = 0xFFFF0000;
+    dsb(sy);
 
-    // 设置Binary Point为0（使用全部8位优先级）
-    *(volatile uint32_t *)(gicc_base_virts[current_cpu_id] + GICC_BPR) = 0;
+    // 3. 设置优先级掩码（0xFF = 最低优先级，允许所有中断）
+    *(volatile uint32_t *)(gicc_base + GICC_PMR) = 0xFF;
+    dsb(sy);
 
-    // 启用Group0
-    *(volatile uint32_t *)(gicc_base_virts[current_cpu_id] + GICC_CTLR) = 0x1;
+    // 4. 设置Binary Point为0（不分组抢占）
+    *(volatile uint32_t *)(gicc_base + GICC_BPR) = 0;
+    dsb(sy);
+
+    // 5. 启用CPU接口（Group0）
+    *(volatile uint32_t *)(gicc_base + GICC_CTLR) = 0x1;
     dsb(sy);
 }
 
@@ -199,7 +206,6 @@ static void gic_v2_enable_irq(uint32_t irq) {
     uint32_t reg = irq / 32;
     uint32_t bit = irq % 32;
 
-    // 所有中断都通过GICD使能（GICv2特性）
     *(volatile uint32_t *)(gicd_base_virt + GICD_ISENABLER + reg * 4) =
         (1U << bit);
     dsb(sy);

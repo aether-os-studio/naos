@@ -13,10 +13,10 @@ void irq_init() {
     if (timer_init()) {
         printk("timer init failure!!!\n");
     }
-    timer_init_percpu();
-    printk("timer initialized with irq %d\n", g_timer.irq_num);
     irq_regist_irq(g_timer.irq_num, timer_handler, 0, NULL, &gic_controller,
                    "GENERIC TIMER", 0);
+    timer_init_percpu();
+    printk("timer initialized with irq %d\n", g_timer.irq_num);
 }
 
 extern void do_irq(struct pt_regs *regs, uint64_t irq_num);

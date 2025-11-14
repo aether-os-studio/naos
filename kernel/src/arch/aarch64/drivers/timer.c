@@ -2,7 +2,7 @@
 #include <acpi/uacpi/acpi.h>
 #include <acpi/uacpi/tables.h>
 
-struct global_timer_state g_timer;
+struct global_timer_state g_timer = {0};
 
 // 频率
 static inline uint64_t read_cntfrq() {
@@ -127,6 +127,8 @@ void timer_init_percpu() {
     if (!g_timer.initialized || !g_timer.ops)
         return;
 
+    gic_enable_irq(g_timer.irq_num);
+
     timer_set_next_tick_ns(1000000000ULL / SCHED_HZ);
 }
 
@@ -142,7 +144,7 @@ void timer_set_next_tick_ns(uint64_t ns) {
 
     uint64_t target = g_timer.ops->read_counter() + delta_ticks;
     g_timer.ops->write_cval(target);
-    g_timer.ops->write_ctl(1 | (1 << 2)); // Enable & Clear Interrupt Pending
+    g_timer.ops->write_ctl(1); // Enable
 }
 
 timer_type_t timer_get_active_type() { return g_timer.active_type; }
