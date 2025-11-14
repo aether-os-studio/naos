@@ -901,6 +901,10 @@ uint64_t sys_readlinkat(int dfd, char *path_user, char *buf_user,
 
     free(resolved);
 
+    if (res < 0) {
+        return (uint64_t)res;
+    }
+
     if (copy_to_user_str(buf_user, buf, sizeof(buf)))
         return (uint64_t)-EFAULT;
 

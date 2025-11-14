@@ -427,6 +427,30 @@ ssize_t nulldev_write(void *data, const void *buf, uint64_t offset,
 
 ssize_t nulldev_ioctl(void *data, ssize_t request, ssize_t arg) { return 0; }
 
+static uint64_t simple_rand() {
+    tm time;
+    time_read(&time);
+    uint32_t seed = mktime(&time);
+    seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
+    return ((uint64_t)seed << 32) | seed;
+}
+
+ssize_t urandom_read(void *data, void *buf, uint64_t offset, uint64_t len,
+                     uint64_t flags) {
+    for (uint64_t i = 0; i < len; i++) {
+        uint64_t rand = simple_rand();
+        uint8_t byte = (rand >> 5) & 0xFF;
+        if (copy_to_user((char *)buf + i, &byte, 1))
+            return -EFAULT;
+    }
+    return len;
+}
+
+ssize_t urandom_write(void *data, const void *buf, uint64_t offset,
+                      uint64_t len, uint64_t flags) {
+    return 0;
+}
+
 extern char *default_console;
 
 void setup_console_symlinks() {
@@ -443,6 +467,8 @@ void setup_console_symlinks() {
 void stdio_init() {
     device_install(DEV_CHAR, DEV_NULL, NULL, "null", 0, nulldev_ioctl, NULL,
                    nulldev_read, nulldev_write, NULL);
+    device_install(DEV_CHAR, DEV_NULL, NULL, "urandom", 0, NULL, NULL,
+                   urandom_read, urandom_write, NULL);
 
     setup_console_symlinks();
 

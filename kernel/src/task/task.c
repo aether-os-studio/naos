@@ -1199,9 +1199,11 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     memset((void *)(child->signal_syscall_stack - STACK_SIZE), 0, STACK_SIZE);
 
     child->arch_context = malloc(sizeof(arch_context_t));
-    current_task->arch_context->ctx = regs;
-    arch_context_copy(child->arch_context, current_task->arch_context,
-                      child->kernel_stack, flags);
+    arch_context_t orig_context;
+    memcpy(&orig_context, current_task->arch_context, sizeof(arch_context_t));
+    orig_context.ctx = regs;
+    arch_context_copy(child->arch_context, &orig_context, child->kernel_stack,
+                      flags);
 
 #if defined(__x86_64__)
     uint64_t user_sp = regs->rsp;
@@ -1209,17 +1211,11 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     uint64_t user_sp = regs->sp_el0;
 #elif defined(__riscv__)
     child->arch_context->ctx->ktp = (uint64_t)child;
-    child->arch_context->ctx->gp = cpuid_to_hartid[child->cpu_id];
     uint64_t user_sp = regs->sp;
 #endif
 
     if (newsp) {
         user_sp = newsp;
-    } else {
-        if (flags & CLONE_VM) {
-            can_schedule = true;
-            return (uint64_t)-EINVAL;
-        }
     }
 
 #if defined(__x86_64__)

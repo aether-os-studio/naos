@@ -411,6 +411,7 @@ void syscall_handler_init() {
     //     (syscall_handle_t)sys_sync_file_range;
     // syscall_handlers[SYS_VMSPLICE] = (syscall_handle_t)sys_vmsplice;
     // syscall_handlers[SYS_MOVE_PAGES] = (syscall_handle_t)sys_move_pages;
+    syscall_handlers[SYS_UTIMENSAT_] = (syscall_handle_t)sys_utimensat;
     syscall_handlers[SYS_UTIMENSAT] = (syscall_handle_t)sys_utimensat;
     syscall_handlers[SYS_EPOLL_PWAIT] = (syscall_handle_t)sys_epoll_pwait;
     syscall_handlers[SYS_TIMERFD_CREATE] = (syscall_handle_t)sys_timerfd_create;
