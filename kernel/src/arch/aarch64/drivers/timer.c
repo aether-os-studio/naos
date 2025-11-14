@@ -121,11 +121,13 @@ int timer_init() {
     return 0;
 }
 
+extern void gic_enable_irq(uint32_t irq);
+
 void timer_init_percpu() {
     if (!g_timer.initialized || !g_timer.ops)
         return;
 
-    timer_set_next_tick_ns(nanoTime() + 1000000ULL * SCHED_HZ);
+    timer_set_next_tick_ns(1000000000ULL / SCHED_HZ);
 }
 
 uint64_t nanoTime() {
@@ -140,7 +142,7 @@ void timer_set_next_tick_ns(uint64_t ns) {
 
     uint64_t target = g_timer.ops->read_counter() + delta_ticks;
     g_timer.ops->write_cval(target);
-    g_timer.ops->write_ctl(1); // Enable
+    g_timer.ops->write_ctl(1 | (1 << 2)); // Enable & Clear Interrupt Pending
 }
 
 timer_type_t timer_get_active_type() { return g_timer.active_type; }

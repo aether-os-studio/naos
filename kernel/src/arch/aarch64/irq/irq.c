@@ -32,5 +32,5 @@ void aarch64_do_irq(struct pt_regs *regs) {
 
 void timer_handler(uint64_t irq_num, void *parameter, struct pt_regs *regs) {
     sched_check_wakeup();
-    timer_set_next_tick_ns(nanoTime() + 1000000ULL * SCHED_HZ);
+    timer_set_next_tick_ns(1000000000ULL / SCHED_HZ);
 }

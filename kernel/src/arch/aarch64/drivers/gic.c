@@ -4,8 +4,8 @@
 #include <irq/irq_manager.h>
 #include <mm/mm.h>
 
-uint64_t gicc_base_virt = 0;
-uint64_t gicc_base_address = 0;
+struct acpi_madt_gicc *giccs[MAX_CPU_NUM] = {0};
+uint64_t gicc_base_virts[MAX_CPU_NUM] = {0};
 uint64_t gicd_base_virt = 0;
 uint64_t gicd_base_address = 0;
 uint64_t gicr_base_virt = 0;
@@ -91,9 +91,8 @@ static void gic_parse_acpi(void) {
         if (gic_version == GIC_VERSION_V2) {
             if (header->type == ACPI_MADT_ENTRY_TYPE_GICC) {
                 struct acpi_madt_gicc *gicc = (struct acpi_madt_gicc *)header;
-                if (gicc_base_address == 0) {
-                    gicc_base_address = gicc->address;
-                }
+                uint64_t cpuid = get_cpuid_by_mpidr(gicc->mpidr);
+                giccs[cpuid] = gicc;
             }
         } else if (gic_version >= GIC_VERSION_V3) {
             if (header->type == ACPI_MADT_ENTRY_TYPE_GICR) {
@@ -113,10 +112,14 @@ static void gic_parse_acpi(void) {
                        gicd_base_address, 0x10000, PT_FLAG_R | PT_FLAG_W);
     }
 
-    if (gic_version == GIC_VERSION_V2 && gicc_base_address) {
-        gicc_base_virt = phys_to_virt(gicc_base_address);
-        map_page_range(get_current_page_dir(false), gicc_base_virt,
-                       gicc_base_address, 0x2000, PT_FLAG_R | PT_FLAG_W);
+    if (gic_version == GIC_VERSION_V2) {
+        for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
+            uint64_t gicc_base_virt = phys_to_virt(giccs[cpu]->address);
+            map_page_range(get_current_page_dir(false), gicc_base_virt,
+                           giccs[cpu]->address, DEFAULT_PAGE_SIZE,
+                           PT_FLAG_R | PT_FLAG_W);
+            gicc_base_virts[cpu] = gicc_base_virt;
+        }
     }
 
     if (gic_version >= GIC_VERSION_V3 && gicr_base_address) {
@@ -182,13 +185,13 @@ static void gicc_v2_init(void) {
     *(volatile uint32_t *)(gicd_base_virt + GICD_ICPENDR) = 0xFFFFFFFF;
 
     // 设置优先级掩码（允许所有优先级）
-    *(volatile uint32_t *)(gicc_base_virt + GICC_PMR) = 0xFF;
+    *(volatile uint32_t *)(gicc_base_virts[current_cpu_id] + GICC_PMR) = 0xFF;
 
     // 设置Binary Point为0（使用全部8位优先级）
-    *(volatile uint32_t *)(gicc_base_virt + GICC_BPR) = 0;
+    *(volatile uint32_t *)(gicc_base_virts[current_cpu_id] + GICC_BPR) = 0;
 
     // 启用Group0
-    *(volatile uint32_t *)(gicc_base_virt + GICC_CTLR) = 0x1;
+    *(volatile uint32_t *)(gicc_base_virts[current_cpu_id] + GICC_CTLR) = 0x1;
     dsb(sy);
 }
 
@@ -212,7 +215,8 @@ static void gic_v2_disable_irq(uint32_t irq) {
 }
 
 static uint64_t gic_v2_get_irq(void) {
-    uint32_t iar = *(volatile uint32_t *)(gicc_base_virt + GICC_IAR);
+    uint32_t iar =
+        *(volatile uint32_t *)(gicc_base_virts[current_cpu_id] + GICC_IAR);
     dsb(sy);
 
     uint32_t irq = iar & 0x3FF;
@@ -229,7 +233,7 @@ static void gic_v2_send_eoi(uint32_t irq) {
         return;
     }
 
-    *(volatile uint32_t *)(gicc_base_virt + GICC_EOIR) = irq;
+    *(volatile uint32_t *)(gicc_base_virts[current_cpu_id] + GICC_EOIR) = irq;
     dsb(sy);
 }
 

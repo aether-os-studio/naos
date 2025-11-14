@@ -16,8 +16,6 @@ extern uint64_t gicc_base_virt; // GICv2 only
 extern uint64_t gicr_base_virt; // GICv3 only
 extern gic_version_t gic_version;
 
-#define TIMER_IRQ 30
-
 // GIC寄存器基地址
 #define GICR_STRIDE 0x20000
 #define GICR_SGI_OFFSET 0x10000

@@ -3,8 +3,9 @@
 #include "ptrace.h"
 #include "esr.h"
 #include "arch/aarch64/drivers/gic.h"
+#include "arch/aarch64/drivers/timer.h"
 
-#define ARCH_TIMER_IRQ TIMER_IRQ
+#define ARCH_TIMER_IRQ g_timer.irq_num
 
 #define IRQ_ALLOCATE_NUM_BASE 0 // TODO
 
