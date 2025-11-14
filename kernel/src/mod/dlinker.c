@@ -68,27 +68,129 @@ bool mmap_phdr_segment(Elf64_Ehdr *ehdr, Elf64_Phdr *phdrs, uint64_t offset,
     return true;
 }
 
-void *resolve_symbol(Elf64_Sym *symtab, uint32_t sym_idx) {
-    return (void *)symtab[sym_idx].st_value;
+void *resolve_symbol(Elf64_Sym *symtab, char *strtab, uint32_t sym_idx) {
+    Elf64_Sym *sym = &symtab[sym_idx];
+
+    if (sym->st_shndx == SHN_UNDEF) {
+        char *sym_name = &strtab[sym->st_name];
+        dlfunc_t *func = find_func(sym_name);
+        if (func != NULL) {
+            return func->addr;
+        }
+        printk("Cannot resolve symbol: %s\n", sym_name);
+        return NULL;
+    }
+
+    return (void *)sym->st_value;
 }
 
 bool handle_relocations(Elf64_Rela *rela_start, Elf64_Sym *symtab, char *strtab,
                         size_t jmprel_sz, uint64_t offset) {
-    Elf64_Rela *rela_plt = rela_start;
+    if (!rela_start || jmprel_sz == 0) {
+        return true; // 没有重定位表是正常的
+    }
+
     size_t rela_count = jmprel_sz / sizeof(Elf64_Rela);
 
     for (size_t i = 0; i < rela_count; i++) {
-        Elf64_Rela *rela = &rela_plt[i];
-        Elf64_Sym *sym = &symtab[ELF64_R_SYM(rela->r_info)];
-        char *sym_name = &strtab[sym->st_name];
-        dlfunc_t *func = find_func(sym_name);
+        Elf64_Rela *rela = &rela_start[i];
         uint64_t *target_addr = (uint64_t *)(rela->r_offset + offset);
-        if (func != NULL) {
-            *target_addr = (uint64_t)func->addr;
-        } else {
-            printk("Failed relocating %s at %p\n", sym_name,
-                   rela->r_offset + offset);
+        uint32_t sym_idx = ELF64_R_SYM(rela->r_info);
+        uint32_t type = ELF64_R_TYPE(rela->r_info);
+
+        Elf64_Sym *sym = &symtab[sym_idx];
+        char *sym_name = &strtab[sym->st_name];
+
+#if defined(__x86_64__)
+        if (type == R_X86_64_JUMP_SLOT || type == R_X86_64_GLOB_DAT) {
+            // PLT/GOT 重定位：查找外部符号
+            void *sym_addr = resolve_symbol(symtab, strtab, sym_idx);
+            if (sym_addr == NULL) {
+                printk("Failed relocating %s at %p\n", sym_name, target_addr);
+                return false;
+            }
+
+            // 如果是内核符号（SHN_UNDEF），直接使用地址
+            // 如果是模块内符号，需要加 offset
+            if (sym->st_shndx == SHN_UNDEF) {
+                *target_addr = (uint64_t)sym_addr;
+            } else {
+                *target_addr = (uint64_t)sym_addr + offset;
+            }
+        } else if (type == R_X86_64_RELATIVE) {
+            // 相对重定位：基址 + addend
+            *target_addr = offset + rela->r_addend;
+        } else if (type == R_X86_64_64) {
+            // 64位绝对重定位
+            void *sym_addr = resolve_symbol(symtab, strtab, sym_idx);
+            if (sym_addr == NULL) {
+                printk("Failed relocating %s at %p\n", sym_name, target_addr);
+                return false;
+            }
+
+            if (sym->st_shndx == SHN_UNDEF) {
+                *target_addr = (uint64_t)sym_addr + rela->r_addend;
+            } else {
+                *target_addr = (uint64_t)sym_addr + offset + rela->r_addend;
+            }
         }
+#elif defined(__aarch64__)
+        if (type == R_AARCH64_JUMP_SLOT || type == R_AARCH64_GLOB_DAT) {
+            void *sym_addr = resolve_symbol(symtab, strtab, sym_idx);
+            if (sym_addr == NULL) {
+                printk("Failed relocating %s at %p\n", sym_name, target_addr);
+                return false;
+            }
+
+            if (sym->st_shndx == SHN_UNDEF) {
+                *target_addr = (uint64_t)sym_addr;
+            } else {
+                *target_addr = (uint64_t)sym_addr + offset;
+            }
+        } else if (type == R_AARCH64_RELATIVE) {
+            *target_addr = offset + rela->r_addend;
+        } else if (type == R_AARCH64_ABS64) {
+            void *sym_addr = resolve_symbol(symtab, strtab, sym_idx);
+            if (sym_addr == NULL) {
+                printk("Failed relocating %s at %p\n", sym_name, target_addr);
+                return false;
+            }
+
+            if (sym->st_shndx == SHN_UNDEF) {
+                *target_addr = (uint64_t)sym_addr + rela->r_addend;
+            } else {
+                *target_addr = (uint64_t)sym_addr + offset + rela->r_addend;
+            }
+        }
+#elif defined(__riscv) && (__riscv_xlen == 64)
+        if (type == R_RISCV_JUMP_SLOT) {
+            void *sym_addr = resolve_symbol(symtab, strtab, sym_idx);
+            if (sym_addr == NULL) {
+                printk("Failed relocating %s at %p\n", sym_name, target_addr);
+                return false;
+            }
+
+            if (sym->st_shndx == SHN_UNDEF) {
+                *target_addr = (uint64_t)sym_addr;
+            } else {
+                *target_addr = (uint64_t)sym_addr + offset;
+            }
+        } else if (type == R_RISCV_RELATIVE) {
+            *target_addr = offset + rela->r_addend;
+        } else if (type == R_RISCV_64) {
+            void *sym_addr = resolve_symbol(symtab, strtab, sym_idx);
+            if (sym_addr == NULL) {
+                printk("Failed relocating %s at %p\n", sym_name, target_addr);
+                return false;
+            }
+
+            if (sym->st_shndx == SHN_UNDEF) {
+                *target_addr = (uint64_t)sym_addr + rela->r_addend;
+            } else {
+                *target_addr = (uint64_t)sym_addr + offset + rela->r_addend;
+            }
+        }
+#endif
     }
     return true;
 }
@@ -117,7 +219,7 @@ void *find_symbol_address(const char *symbol_name, Elf64_Ehdr *ehdr,
 
     size_t num_symbols = symtabsz / sizeof(Elf64_Sym);
 
-    for (size_t i = 0; i < symtabsz; i++) {
+    for (size_t i = 0; i < num_symbols; i++) {
         Elf64_Sym *sym = &symtab[i];
         char *sym_name = &strtab[sym->st_name];
 
@@ -138,7 +240,7 @@ dlinit_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr, uint64_t offset) {
     Elf64_Dyn *dyn_entry = NULL;
     for (size_t i = 0; i < ehdr->e_phnum; i++) {
         if (phdrs[i].p_type == PT_DYNAMIC) {
-            dyn_entry = (Elf64_Dyn *)(phdrs[i].p_vaddr);
+            dyn_entry = (Elf64_Dyn *)(phdrs[i].p_vaddr + offset);
             break;
         }
     }
@@ -146,8 +248,6 @@ dlinit_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr, uint64_t offset) {
         printk("Dynamic section not found.\n");
         return NULL;
     }
-    uint64_t addr_dyn = ((uint64_t)dyn_entry) + offset;
-    dyn_entry = (Elf64_Dyn *)addr_dyn;
 
     Elf64_Sym *symtab = NULL;
     char *strtab = NULL;
@@ -158,95 +258,46 @@ dlinit_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr, uint64_t offset) {
     while (dyn_entry->d_tag != DT_NULL) {
         switch (dyn_entry->d_tag) {
         case DT_SYMTAB:
-            uint64_t symtab_addr = dyn_entry->d_un.d_ptr + offset;
-            symtab = (Elf64_Sym *)symtab_addr;
+            symtab = (Elf64_Sym *)(dyn_entry->d_un.d_ptr + offset);
             break;
         case DT_STRTAB:
-            strtab = (char *)dyn_entry->d_un.d_ptr + offset;
+            strtab = (char *)(dyn_entry->d_un.d_ptr + offset);
             break;
         case DT_RELA:
-            uint64_t rel_addr = dyn_entry->d_un.d_ptr + offset;
-            rel = (Elf64_Rela *)rel_addr;
+            rel = (Elf64_Rela *)(dyn_entry->d_un.d_ptr + offset);
             break;
         case DT_RELASZ:
             relsz = dyn_entry->d_un.d_val;
             break;
         case DT_JMPREL:
-            uint64_t jmprel_addr = dyn_entry->d_un.d_ptr + offset;
-            jmprel = (Elf64_Rela *)jmprel_addr;
+            jmprel = (Elf64_Rela *)(dyn_entry->d_un.d_ptr + offset);
             break;
         case DT_PLTRELSZ:
             jmprel_sz = dyn_entry->d_un.d_val;
-            break;
-        case DT_PLTGOT: /* 需要解析 PLT 表 */
             break;
         }
         dyn_entry++;
     }
 
-#if defined(__x86_64__)
-    for (size_t i = 0; i < relsz / sizeof(Elf64_Rela); i++) {
-        Elf64_Rela *r = &rel[i];
-        uint64_t *reloc_addr = (uint64_t *)(r->r_offset + offset);
-        uint32_t sym_idx = ELF64_R_SYM(r->r_info);
-        uint32_t type = ELF64_R_TYPE(r->r_info);
-
-        if (type == R_X86_64_GLOB_DAT || type == R_X86_64_JUMP_SLOT) {
-            *reloc_addr = (uint64_t)resolve_symbol(symtab, sym_idx) + offset;
-        } else if (type == R_X86_64_RELATIVE) {
-            *reloc_addr = (uint64_t)(offset + r->r_addend);
-        } else if (type == R_X86_64_64) {
-            *reloc_addr = (uint64_t)resolve_symbol(symtab, sym_idx) +
-                          r->r_addend + offset;
-        }
+    // 处理 DT_RELA 重定位（使用统一的 handle_relocations）
+    if (!handle_relocations(rel, symtab, strtab, relsz, offset)) {
+        printk("Failed to handle RELA relocations.\n");
+        return NULL;
     }
-#elif defined(__aarch64__)
-    for (size_t i = 0; i < relsz / sizeof(Elf64_Rela); i++) {
-        Elf64_Rela *r = &rel[i];
-        uint64_t *reloc_addr = (uint64_t *)(r->r_offset + offset);
-        uint32_t sym_idx = ELF64_R_SYM(r->r_info);
-        uint32_t type = ELF64_R_TYPE(r->r_info);
 
-        if (type == R_AARCH64_JUMP26 || type == R_AARCH64_CALL26) {
-            *reloc_addr = (uint64_t)resolve_symbol(symtab, sym_idx) + offset;
-        } else if (type == R_AARCH64_RELATIVE) {
-            *reloc_addr = (uint64_t)(offset + r->r_addend);
-        } else if (type == R_AARCH64_ABS64) {
-            *reloc_addr = (uint64_t)resolve_symbol(symtab, sym_idx) +
-                          r->r_addend + offset;
-        }
-    }
-#elif defined(__riscv) && (__riscv_xlen == 64)
-    for (size_t i = 0; i < relsz / sizeof(Elf64_Rela); i++) {
-        Elf64_Rela *r = &rel[i];
-        uint64_t *reloc_addr = (uint64_t *)(r->r_offset + offset);
-        uint32_t sym_idx = ELF64_R_SYM(r->r_info);
-        uint32_t type = ELF64_R_TYPE(r->r_info);
-
-        if (type == R_RISCV_JUMP_SLOT) {
-            *reloc_addr = (uint64_t)resolve_symbol(symtab, sym_idx) + offset;
-        } else if (type == R_RISCV_COPY) {
-            memcpy(reloc_addr,
-                   (void *)((uint64_t)resolve_symbol(symtab, sym_idx) + offset),
-                   symtab[sym_idx].st_size);
-        } else if (type == R_RISCV_RELATIVE) {
-            *reloc_addr = (uint64_t)(offset + r->r_addend);
-        } else if (type == R_RISCV_64) {
-            *reloc_addr = (uint64_t)resolve_symbol(symtab, sym_idx) +
-                          r->r_addend + offset;
-        }
-    }
-#endif
-
+    // 处理 DT_JMPREL 重定位（PLT）
     if (!handle_relocations(jmprel, symtab, strtab, jmprel_sz, offset)) {
-        printk("Failed to handle relocations.\n");
+        printk("Failed to handle PLT relocations.\n");
         return NULL;
     }
 
     void *entry = find_symbol_address("dlmain", ehdr, offset);
+    if (entry == NULL) {
+        printk("Cannot find dlmain symbol.\n");
+        return NULL;
+    }
 
-    dlinit_t dlinit_func = (dlinit_t)entry;
-    return dlinit_func;
+    return (dlinit_t)entry;
 }
 
 void dlinker_load(module_t *module) {

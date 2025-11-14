@@ -142,13 +142,13 @@ static void gicd_v2_init(void) {
     if (max_irq > 1020)
         max_irq = 1020;
 
-    // 配置所有中断为Group1（包括PPI）
-    for (int i = 0; i < (max_irq / 32); i++) { // 从0开始
+    // 配置所有中断为Group0（与GICC_CTLR一致）
+    for (int i = 0; i < (max_irq / 32); i++) {
         *(volatile uint32_t *)(gicd_base_virt + GICD_IGROUPR + i * 4) = 0x0;
     }
 
-    // 配置所有中断优先级（包括PPI）
-    for (int i = 0; i < (max_irq / 4); i++) { // 从0开始
+    // 配置所有中断优先级
+    for (int i = 0; i < (max_irq / 4); i++) {
         *(volatile uint32_t *)(gicd_base_virt + GICD_IPRIORITYR + i * 4) =
             0xA0A0A0A0;
     }
@@ -159,8 +159,8 @@ static void gicd_v2_init(void) {
             0x01010101;
     }
 
-    // 禁用所有中断（稍后按需启用）
-    for (int i = 0; i < (max_irq / 32); i++) {
+    // 只禁用SPI，不要禁用PPI（让每个CPU自己管理）
+    for (int i = 1; i < (max_irq / 32); i++) { // 从1开始，跳过PPI/SGI
         *(volatile uint32_t *)(gicd_base_virt + GICD_ICENABLER + i * 4) =
             0xFFFFFFFF;
     }
@@ -177,6 +177,12 @@ static void gicd_v2_init(void) {
 }
 
 static void gicc_v2_init(void) {
+    // 先禁用本CPU的PPI（清理状态）
+    *(volatile uint32_t *)(gicd_base_virt + GICD_ICENABLER) = 0xFFFFFFFF;
+
+    // 清除PPI的pending状态
+    *(volatile uint32_t *)(gicd_base_virt + GICD_ICPENDR) = 0xFFFFFFFF;
+
     // 设置优先级掩码（允许所有优先级）
     *(volatile uint32_t *)(gicc_base_virt + GICC_PMR) = 0xFF;
 
@@ -184,7 +190,7 @@ static void gicc_v2_init(void) {
     *(volatile uint32_t *)(gicc_base_virt + GICC_BPR) = 0;
 
     // 启用Group0
-    *(volatile uint32_t *)(gicc_base_virt + GICC_CTLR) = 0x1; // bit0=Grp0
+    *(volatile uint32_t *)(gicc_base_virt + GICC_CTLR) = 0x1;
     dsb(sy);
 }
 
@@ -263,7 +269,13 @@ static void gicr_v3_init(uint32_t cpu_id) {
         asm volatile("nop");
     }
 
-    // 配置PPI/SGI中断组
+    // 禁用所有PPI/SGI
+    *(volatile uint32_t *)(gicr_addr + GICR_ICENABLER0) = 0xFFFFFFFF;
+
+    // 清除pending状态
+    *(volatile uint32_t *)(gicr_addr + GICR_ICPENDR0) = 0xFFFFFFFF;
+
+    // 配置PPI/SGI中断组为Group1 NS
     *(volatile uint32_t *)(gicr_addr + GICR_IGROUPR0) = 0xFFFFFFFF;
 
     // 设置PPI优先级
@@ -409,6 +421,8 @@ void timer_init_percpu(void) {
         uint8_t *priority = (uint8_t *)(gicr_addr + GICR_IPRIORITYR);
         priority[TIMER_IRQ - 16] = 0x80;
     }
+
+    gic_enable_irq(TIMER_IRQ);
 }
 
 int64_t gic_unmask(uint64_t irq, uint64_t flags) {
