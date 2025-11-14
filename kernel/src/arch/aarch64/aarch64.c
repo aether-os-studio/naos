@@ -1,6 +1,6 @@
 #include <arch/arch.h>
 #include <irq/irq_manager.h>
-#include <arch/aarch64/acpi/gic.h>
+#include <arch/aarch64/drivers/gic.h>
 
 extern void gic_init();
 

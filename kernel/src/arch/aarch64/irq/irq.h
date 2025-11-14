@@ -2,7 +2,7 @@
 
 #include "ptrace.h"
 #include "esr.h"
-#include "arch/aarch64/acpi/gic.h"
+#include "arch/aarch64/drivers/gic.h"
 
 #define ARCH_TIMER_IRQ TIMER_IRQ
 

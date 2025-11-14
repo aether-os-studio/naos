@@ -1,5 +1,4 @@
 #include <arch/arch.h>
-#include <arch/aarch64/acpi/gic.h>
 #include <drivers/kernel_logger.h>
 #include <task/task.h>
 #include <boot/boot.h>

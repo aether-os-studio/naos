@@ -1,6 +1,6 @@
 #include <acpi/uacpi/acpi.h>
 #include <acpi/uacpi/tables.h>
-#include <arch/aarch64/acpi/gic.h>
+#include <arch/arch.h>
 #include <irq/irq_manager.h>
 #include <mm/mm.h>
 
