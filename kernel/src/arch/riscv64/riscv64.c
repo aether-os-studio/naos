@@ -30,6 +30,8 @@ void arch_init() {
     timer_init_hart(cpuid_to_hartid[current_cpu_id]);
 }
 
+void arch_init_after_thread() {}
+
 extern dev_input_event_t *kb_input_event;
 extern dev_input_event_t *mouse_input_event;
 

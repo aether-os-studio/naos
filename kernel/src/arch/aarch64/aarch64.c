@@ -26,4 +26,6 @@ void arch_init() {
     arch_enable_interrupt();
 }
 
+void arch_init_after_thread() {}
+
 void arch_input_dev_init() {}

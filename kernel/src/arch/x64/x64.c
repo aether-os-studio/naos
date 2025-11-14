@@ -30,6 +30,8 @@ void arch_init() {
     open_interrupt;
 }
 
+void arch_init_after_thread() {}
+
 void arch_input_dev_init() {
     if (ps2_init()) {
         ps2_keyboard_init();

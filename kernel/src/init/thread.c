@@ -29,6 +29,9 @@ extern vfs_node_t devfs_root;
 void init_thread(uint64_t arg) {
     printk("NAOS init thread is running...\n");
 
+    arch_init_after_thread();
+
+    pci_controller_init();
     pci_init();
 
 #if !defined(__x86_64__)

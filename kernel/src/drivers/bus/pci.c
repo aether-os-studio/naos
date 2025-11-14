@@ -596,7 +596,7 @@ void pci_scan_segment(uint16_t segment_group) {
 
 extern pci_driver_t *pci_drivers[MAX_PCI_DRIVERS];
 
-void pci_init() {
+void pci_controller_init() {
     struct uacpi_table mcfg_table;
     uacpi_status status = uacpi_table_find_by_signature("MCFG", &mcfg_table);
 
@@ -611,7 +611,9 @@ void pci_init() {
             pci_scan_segment(segment_group);
         }
     }
+}
 
+void pci_init() {
     for (uint64_t i = 0; i < pci_device_number; i++) {
         pci_device_t *device = pci_devices[i];
 
