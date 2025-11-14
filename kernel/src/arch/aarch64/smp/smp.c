@@ -61,13 +61,13 @@ void ap_kmain(struct limine_mp_info *cpu) {
         asm volatile("nop");
     }
 
-    gic_init_percpu();
-
     while (!g_timer.initialized) {
         asm volatile("nop");
     }
 
     arch_set_current(idle_tasks[current_cpu_id]);
+
+    gic_init_percpu();
 
     timer_init_percpu();
 

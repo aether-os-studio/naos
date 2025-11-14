@@ -8,7 +8,6 @@ void arch_early_init() {
     setup_vectors();
     init_serial();
     smp_init();
-    gic_init();
 }
 
 extern task_t *idle_tasks[MAX_CPU_NUM];
@@ -19,6 +18,8 @@ void arch_init() {
     arch_set_current(idle_tasks[current_cpu_id]);
 
     syscall_handlers_init();
+
+    gic_init();
 
     irq_init();
 
