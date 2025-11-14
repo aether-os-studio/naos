@@ -177,7 +177,7 @@ ioapic_t *apic_find_ioapic_by_vector(uint8_t vector) {
 void ioapic_add(uint8_t vector, uint32_t irq) {
     ioapic_t *ioapic = apic_find_ioapic_by_vector(vector);
     if (!ioapic) {
-        printk("Cannot found ioapic for vector %d\n", vector);
+        printk("Cannot find ioapic for vector %d\n", vector);
         return;
     }
     uint32_t ioredtbl =
@@ -193,7 +193,7 @@ void io_apic_init() {}
 void ioapic_enable(uint8_t vector) {
     ioapic_t *ioapic = apic_find_ioapic_by_vector(vector);
     if (!ioapic) {
-        printk("Cannot found ioapic for vector %d\n", vector);
+        printk("Cannot find ioapic for vector %d\n", vector);
         return;
     }
 
@@ -210,7 +210,7 @@ void ioapic_enable(uint8_t vector) {
 void ioapic_disable(uint8_t vector) {
     ioapic_t *ioapic = apic_find_ioapic_by_vector(vector);
     if (!ioapic) {
-        printk("Cannot found ioapic for vector %d\n", vector);
+        printk("Cannot find ioapic for vector %d\n", vector);
         return;
     }
 

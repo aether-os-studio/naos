@@ -1014,7 +1014,7 @@ drm_device_t *drm_regist_pci_dev(void *data, drm_device_op_t *op,
 
 void drm_init_after_pci_sysfs() {
     if (!vfs_open("/dev/dri/card0")) {
-        printk("Cannot found GPU device, using framebuffer.\n");
+        printk("Cannot find GPU device, using framebuffer.\n");
         drm_plainfb_init();
     }
 }
