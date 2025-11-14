@@ -4,6 +4,71 @@
 #include <arch/arch.h>
 #include <task/task.h>
 
+extern const uint64_t kallsyms_address[] __attribute__((weak));
+extern const uint64_t kallsyms_num __attribute__((weak));
+extern const uint64_t kallsyms_names_index[] __attribute__((weak));
+extern const char *kallsyms_names __attribute__((weak));
+
+int lookup_kallsyms(uint64_t addr, int level) {
+    const char *str = (const char *)&kallsyms_names;
+
+    uint64_t index = 0;
+    for (index = 0; index < kallsyms_num - 1; ++index) {
+        if (addr > kallsyms_address[index] &&
+            addr <= kallsyms_address[index + 1])
+            break;
+    }
+
+    if (index < kallsyms_num) {
+        printk("function:%s() \t(+) %04d address:%#018lx\n",
+               &str[kallsyms_names_index[index]],
+               addr - kallsyms_address[index], addr);
+        return 0;
+    } else
+        return -1;
+}
+
+void traceback(struct pt_regs *regs) {
+    uint64_t fp = regs->x29; // Frame Pointer (x29)
+    uint64_t pc = regs->pc;  // Program Counter
+
+    printk("======== Kernel traceback =======\n");
+
+    for (int i = 0; i < 32; ++i) {
+        // 检查 FP 有效性
+        if (fp == 0)
+            break;
+
+        // AArch64 要求栈帧 16 字节对齐
+        if (fp & 0xF) {
+            printk("  [!] Invalid FP alignment: %#018lx\n", fp);
+            break;
+        }
+
+        // 查找并打印当前地址的符号
+        if (lookup_kallsyms(pc, i) != 0)
+            break;
+
+        // 从栈帧读取数据
+        uint64_t *frame = (uint64_t *)fp;
+        uint64_t next_fp = frame[0]; // [FP + 0]: 前一个 FP
+        uint64_t next_pc = frame[1]; // [FP + 8]: 返回地址 (saved LR)
+
+        // 验证下一个 FP（应该在更高地址，因为是调用者的栈帧）
+        if (next_fp != 0 && next_fp <= fp) {
+            printk("  [!] Invalid FP chain: next=%#018lx, current=%#018lx\n",
+                   next_fp, fp);
+            break;
+        }
+
+        // 更新到下一个栈帧
+        fp = next_fp;
+        pc = next_pc;
+    }
+
+    printk("======== Kernel traceback end =======\n");
+}
+
 void show_frame(struct pt_regs *regs) {
     printk("Exception:\r\n");
     printk("X00:%#018lx X01:%#018lx X02:%#018lx X03:%#018lx\r\n", regs->x0,
@@ -25,6 +90,8 @@ void show_frame(struct pt_regs *regs) {
     printk("SP_EL0:%#018lx\r\n", regs->sp_el0);
     printk("SPSR  :%#018lx\r\n", regs->cpsr);
     printk("EPC   :%#018lx\r\n", regs->pc);
+
+    traceback(regs);
 }
 
 static void data_abort(unsigned long far, unsigned long iss) {

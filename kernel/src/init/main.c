@@ -41,7 +41,7 @@ void kmain(void) {
 
     tty_init();
 
-    printk("Next Aether-OS starting...\n");
+    printk("Aether-OS starting...\n");
 
     stdio_init();
 

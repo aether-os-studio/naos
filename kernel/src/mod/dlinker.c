@@ -19,7 +19,7 @@ void load_segment(Elf64_Phdr *phdr, void *elf, uint64_t offset) {
         PADDING_UP(phdr->p_vaddr + phdr->p_memsz, DEFAULT_PAGE_SIZE) + offset;
     size_t lo = PADDING_DOWN(phdr->p_vaddr, DEFAULT_PAGE_SIZE) + offset;
 
-    uint64_t flags = PT_FLAG_R | PT_FLAG_W;
+    uint64_t flags = PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE;
 
     map_page_range(get_current_page_dir(false), lo, 0, hi - lo,
                    flags | ((phdr->p_flags & PF_X) ? PT_FLAG_X : 0));
@@ -343,13 +343,14 @@ void dlinker_load(module_t *module) {
 }
 
 dlfunc_t *find_func(const char *name) {
+    if (strcmp(name, "printf") == 0) {
+        return &__printf;
+    }
+
     for (size_t i = 0; i < dlfunc_count; i++) {
         dlfunc_t *entry = &__ksymtab_start[i];
         if (strcmp(entry->name, name) == 0) {
             return entry;
-        }
-        if (strcmp(name, "printf") == 0) {
-            return &__printf;
         }
     }
     return NULL;

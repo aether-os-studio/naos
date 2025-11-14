@@ -10,9 +10,6 @@ extern const uint64_t kallsyms_num __attribute__((weak));
 extern const uint64_t kallsyms_names_index[] __attribute__((weak));
 extern const char *kallsyms_names __attribute__((weak));
 
-extern module_symbol_t **all_modules_symbols;
-extern int all_modules_symbols_num;
-
 void irq_init() {
     gdtidt_setup();
 

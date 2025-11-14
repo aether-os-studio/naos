@@ -42,10 +42,10 @@ uint64_t get_arch_page_table_flags(uint64_t flags) {
     if (flags & PT_FLAG_U)
         attr |= ARCH_PT_FLAG_USER;
 
+    if (flags & PT_FLAG_UNCACHEABLE)
+        attr |= (0x01 << 2);
     if (flags & PT_FLAG_DEVICE)
         attr |= (0x02 << 2);
-    else
-        attr |= (0x00 << 2);
 
     return attr;
 }
