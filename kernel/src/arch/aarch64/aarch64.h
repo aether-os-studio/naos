@@ -6,6 +6,7 @@
 #include "drivers/chars/mouse.h"
 #include "drivers/chars/serial.h"
 #include "drivers/gic.h"
+#include "drivers/timer.h"
 #include "mm/page_table.h"
 #include "irq/ptrace.h"
 #include "irq/irq.h"

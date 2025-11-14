@@ -58,8 +58,6 @@ gic_version_t gic_detect_version(void) {
     return version;
 }
 
-/* ==================== ACPI解析 ==================== */
-
 static void gic_parse_acpi(void) {
     struct uacpi_table madt_table;
     uacpi_status status = uacpi_table_find_by_signature("APIC", &madt_table);
@@ -340,8 +338,8 @@ void gic_init(void) {
     gic_version = gic_detect_version();
 
     if (gic_version == GIC_VERSION_UNKNOWN) {
-        // 默认尝试GICv3
-        gic_version = GIC_VERSION_V3;
+        // 默认尝试GICv2
+        gic_version = GIC_VERSION_V2;
     }
 
     // 解析ACPI
@@ -397,32 +395,6 @@ void gic_send_eoi(uint32_t irq) {
     } else {
         gic_v3_send_eoi(irq);
     }
-}
-
-void timer_init_percpu(void) {
-    // 获取定时器频率
-    uint64_t cntfrq;
-    asm volatile("mrs %0, CNTFRQ_EL0" : "=r"(cntfrq));
-
-    uint64_t ticks = cntfrq / 1000 * SCHED_HZ;
-
-    // 配置物理定时器
-    asm volatile("msr CNTP_TVAL_EL0, %0" : : "r"(ticks));
-    asm volatile("msr CNTP_CTL_EL0, %0" : : "r"((uint64_t)0x1));
-
-    // 配置定时器中断
-    if (gic_version == GIC_VERSION_V2) {
-        // GICv2: 通过GICD配置PPI
-        uint8_t *priority = (uint8_t *)(gicd_base_virt + GICD_IPRIORITYR);
-        priority[TIMER_IRQ] = 0x80;
-    } else {
-        // GICv3: 通过GICR配置PPI
-        uint64_t gicr_addr = gicr_base_virt + current_cpu_id * GICR_STRIDE;
-        uint8_t *priority = (uint8_t *)(gicr_addr + GICR_IPRIORITYR);
-        priority[TIMER_IRQ - 16] = 0x80;
-    }
-
-    gic_enable_irq(TIMER_IRQ);
 }
 
 int64_t gic_unmask(uint64_t irq, uint64_t flags) {

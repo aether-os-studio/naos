@@ -40,6 +40,8 @@ spinlock_t ap_startup_lock = SPIN_INIT;
 
 extern bool task_initialized;
 
+extern struct global_timer_state g_timer;
+
 void ap_kmain(struct limine_mp_info *cpu) {
     arch_disable_interrupt();
 
@@ -62,6 +64,10 @@ void ap_kmain(struct limine_mp_info *cpu) {
     arch_set_current(idle_tasks[current_cpu_id]);
 
     gic_init_percpu();
+
+    while (!g_timer.initialized) {
+        asm volatile("nop");
+    }
 
     timer_init_percpu();
 

@@ -7,9 +7,15 @@ void arch_enable_interrupt() { asm volatile("msr daifclr, #3"); }
 
 void arch_disable_interrupt() { asm volatile("msr daifset, #3"); }
 
+extern struct global_timer_state g_timer;
+
 void irq_init() {
+    if (timer_init()) {
+        printk("timer init failure!!!\n");
+    }
     timer_init_percpu();
-    irq_regist_irq(TIMER_IRQ, timer_handler, 0, NULL, &gic_controller,
+    printk("timer initialized with irq %d\n", g_timer.irq_num);
+    irq_regist_irq(g_timer.irq_num, timer_handler, 0, NULL, &gic_controller,
                    "GENERIC TIMER", 0);
 }
 
@@ -26,8 +32,5 @@ void aarch64_do_irq(struct pt_regs *regs) {
 
 void timer_handler(uint64_t irq_num, void *parameter, struct pt_regs *regs) {
     sched_check_wakeup();
-    uint64_t ctrl;
-    asm volatile("mrs %0, cntp_ctl_el0" : "=r"(ctrl));
-    asm volatile(
-        "msr cntp_ctl_el0, %0" ::"r"(ctrl | (1 << 2))); // 清除ISTATUS位
+    timer_set_next_tick_ns(nanoTime() + 1000000ULL * SCHED_HZ);
 }

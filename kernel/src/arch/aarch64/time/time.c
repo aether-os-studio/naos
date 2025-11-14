@@ -2,27 +2,6 @@
 #include <arch/aarch64/time/time.h>
 #include <boot/boot.h>
 
-uint64_t get_counter() {
-    uint64_t val;
-    asm volatile("mrs %0, CNTPCT_EL0" : "=r"(val));
-    return val;
-}
-
-uint32_t get_freq() {
-    uint32_t freq;
-    asm volatile("mrs %0, CNTFRQ_EL0" : "=r"(freq));
-    return freq;
-}
-
-uint64_t nanoTime() {
-    uint64_t cnt, freq;
-
-    asm volatile("mrs %0, CNTPCT_EL0" : "=r"(cnt));
-    asm volatile("mrs %0, CNTFRQ_EL0" : "=r"(freq));
-
-    return ((cnt * 1000000000ULL) / freq);
-}
-
 static int is_leap_year(int year) {
     if (year % 4 != 0)
         return 0;
@@ -33,7 +12,7 @@ static int is_leap_year(int year) {
 
 void time_read(tm *time) {
     uint64_t timestrap_at_boot = boot_get_boottime();
-    uint64_t timer_value = timestrap_at_boot + get_counter() / get_freq();
+    uint64_t timer_value = timestrap_at_boot + nanoTime() / 1000000000ULL;
 
     time->tm_sec = timer_value % 60;
     time->tm_min = (timer_value / 60) % 60;
