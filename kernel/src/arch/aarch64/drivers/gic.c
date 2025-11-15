@@ -3,6 +3,7 @@
 #include <arch/arch.h>
 #include <irq/irq_manager.h>
 #include <mm/mm.h>
+#include <boot/boot.h>
 #include <drivers/fdt/fdt.h>
 
 uint64_t gicc_base_virt = 0;
@@ -131,27 +132,124 @@ static void gic_parse_acpi(void) {
 }
 
 /**
- * 从 FDT 获取地址和大小
- * @param node_offset 节点偏移
- * @param index reg 属性中的索引
- * @param addr 输出地址
- * @param size 输出大小
- * @return 0成功，-1失败
+ * 读取多 cell 的地址/大小值
  */
-static int fdt_get_reg(int node_offset, int index, uint64_t *addr,
-                       uint64_t *size) {
+static uint64_t fdt_read_cells(const uint32_t **p, int cells) {
+    uint64_t value = 0;
+
+    if (cells == 1) {
+        value = fdt32_to_cpu(**p);
+        (*p)++;
+    } else if (cells == 2) {
+        uint64_t high = fdt32_to_cpu((*p)[0]);
+        uint64_t low = fdt32_to_cpu((*p)[1]);
+        value = (high << 32) | low;
+        (*p) += 2;
+    }
+
+    return value;
+}
+
+/**
+ * 通过 ranges 转换地址
+ */
+static uint64_t fdt_translate_address(void *fdt, int node_offset,
+                                      uint64_t addr) {
+    int parent = fdt_parent_offset(fdt, node_offset);
+
+    printk("Translating address 0x%llx for node %d\n", addr, node_offset);
+
+    while (parent >= 0) {
+        int len;
+        const uint32_t *ranges = fdt_getprop(fdt, parent, "ranges", &len);
+
+        if (!ranges) {
+            // 如果没有 ranges 属性，说明这个总线不进行地址转换
+            // 继续向上查找
+            int grandparent = fdt_parent_offset(fdt, parent);
+            if (grandparent < 0) {
+                break; // 到达根节点
+            }
+            parent = grandparent;
+            continue;
+        }
+
+        // 空的 ranges 表示 1:1 映射
+        if (len == 0) {
+            printk("  1:1 mapping at parent %d\n", parent);
+            parent = fdt_parent_offset(fdt, parent);
+            continue;
+        }
+
+        // 获取 cells 信息
+        int child_addr_cells = fdt_address_cells(fdt, parent);
+        int parent_parent = fdt_parent_offset(fdt, parent);
+        int parent_addr_cells =
+            (parent_parent >= 0) ? fdt_address_cells(fdt, parent_parent) : 2;
+        int size_cells = fdt_size_cells(fdt, parent);
+
+        printk("  Checking ranges at parent %d:\n", parent);
+        printk("    child_addr_cells=%d, parent_addr_cells=%d, size_cells=%d\n",
+               child_addr_cells, parent_addr_cells, size_cells);
+
+        // 遍历所有 ranges 条目
+        const uint32_t *p = ranges;
+        int cells_per_entry = child_addr_cells + parent_addr_cells + size_cells;
+        int num_entries = (len / sizeof(uint32_t)) / cells_per_entry;
+
+        bool found = false;
+        for (int i = 0; i < num_entries; i++) {
+            uint64_t child_addr = fdt_read_cells(&p, child_addr_cells);
+            uint64_t parent_addr = fdt_read_cells(&p, parent_addr_cells);
+            uint64_t range_size = fdt_read_cells(&p, size_cells);
+
+            printk(
+                "    range[%d]: child=0x%llx -> parent=0x%llx (size=0x%llx)\n",
+                i, child_addr, parent_addr, range_size);
+
+            // 检查地址是否在这个范围内
+            if (addr >= child_addr && addr < child_addr + range_size) {
+                uint64_t offset = addr - child_addr;
+                addr = parent_addr + offset;
+                printk("    MATCH! Translated to 0x%llx\n", addr);
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            printk("    No matching range found!\n");
+        }
+
+        parent = parent_parent;
+    }
+
+    printk("Final translated address: 0x%llx\n", addr);
+    return addr;
+}
+
+/**
+ * 获取 reg 并进行地址转换
+ */
+int fdt_get_reg(void *fdt, int node_offset, int index, uint64_t *addr,
+                uint64_t *size) {
     int len;
-    const uint32_t *reg = fdt_get_property(node_offset, "reg", &len);
+    const uint32_t *reg = fdt_getprop(fdt, node_offset, "reg", &len);
 
     if (!reg || len <= 0) {
         return -1;
     }
 
-    uint32_t addr_cells = fdt_get_address_cells(node_offset);
-    uint32_t size_cells = fdt_get_size_cells(node_offset);
+    int parent = fdt_parent_offset(fdt, node_offset);
+    int address_cells = (parent >= 0) ? fdt_address_cells(fdt, parent) : 2;
+    int size_cells = (parent >= 0) ? fdt_size_cells(fdt, parent) : 2;
 
-    int cells_per_entry = addr_cells + size_cells;
-    int total_entries = len / (cells_per_entry * sizeof(uint32_t));
+    printk("fdt_get_reg: address_cells=%d, size_cells=%d, len=%d\n",
+           address_cells, size_cells, len);
+
+    int cells_per_entry = address_cells + size_cells;
+    int total_cells = len / sizeof(uint32_t);
+    int total_entries = total_cells / cells_per_entry;
 
     if (index >= total_entries) {
         return -1;
@@ -159,161 +257,130 @@ static int fdt_get_reg(int node_offset, int index, uint64_t *addr,
 
     const uint32_t *entry = reg + (index * cells_per_entry);
 
-    /* 读取地址 */
-    if (addr_cells == 2) {
-        *addr =
-            ((uint64_t)fdt32_to_cpu(entry[0]) << 32) | fdt32_to_cpu(entry[1]);
-        entry += 2;
-    } else {
-        *addr = fdt32_to_cpu(entry[0]);
-        entry += 1;
+    /* 打印原始数据 */
+    printk("fdt_get_reg: raw data at index %d:\n", index);
+    for (int i = 0; i < cells_per_entry; i++) {
+        printk("  entry[%d] = 0x%08x (cpu: 0x%08x)\n", i, entry[i],
+               fdt32_to_cpu(entry[i]));
     }
 
-    /* 读取大小 */
-    if (size_cells == 2) {
-        *size =
-            ((uint64_t)fdt32_to_cpu(entry[0]) << 32) | fdt32_to_cpu(entry[1]);
-    } else {
-        *size = fdt32_to_cpu(entry[0]);
-    }
+    /* 解析地址 */
+    const uint32_t *p = entry;
+    *addr = fdt_read_cells(&p, address_cells);
+    *size = fdt_read_cells(&p, size_cells);
+
+    printk("fdt_get_reg: bus address=0x%llx, size=0x%llx\n", *addr, *size);
+
+    /* 进行地址转换 */
+    *addr = fdt_translate_address(fdt, node_offset, *addr);
+
+    printk("fdt_get_reg: physical address=0x%llx, size=0x%llx\n", *addr, *size);
 
     return 0;
 }
 
 static void gic_parse_dtb() {
-    int node_offset;
-    const void *prop;
-    int len;
+    void *fdt = (void *)boot_get_dtb();
 
-    node_offset = -1;
-    uint32_t *p = (uint32_t *)g_fdt_ctx.dt_struct;
-    int depth = 0;
+    if (fdt) {
+        int node;
+        int node_offset = -1;
 
-    if (!p)
-        return;
+        for (node = fdt_next_node(fdt, -1, NULL); node >= 0;
+             node = fdt_next_node(fdt, node, NULL)) {
 
-    while (1) {
-        uint32_t tag = fdt32_to_cpu(*p++);
-
-        switch (tag) {
-        case FDT_BEGIN_NODE: {
-            const char *name = (const char *)p;
-            int node_off = (uint8_t *)p - (uint8_t *)g_fdt_ctx.dt_struct - 4;
-
-            // 检查 compatible 属性
-            int len;
-            const char *compatible =
-                fdt_get_property(node_off, "compatible", &len);
-            if (compatible && strstr(compatible, "gic-400")) {
+            const char *compatible = fdt_getprop(fdt, node, "compatible", NULL);
+            if (!compatible)
+                continue;
+            if (strstr(compatible, "gic-400")) {
                 gic_version = GIC_VERSION_V2;
-                node_offset = node_off;
-                goto found_node;
+                node_offset = node;
+                break;
             }
-            if (compatible && strstr(compatible, "cortex-a15-gic")) {
+            if (strstr(compatible, "cortex-a15-gic")) {
                 gic_version = GIC_VERSION_V2;
-                node_offset = node_off;
-                goto found_node;
+                node_offset = node;
+                break;
             }
-            if (compatible && strstr(compatible, "cortex-a9-gic")) {
+            if (strstr(compatible, "cortex-a9-gic")) {
                 gic_version = GIC_VERSION_V2;
-                node_offset = node_off;
-                goto found_node;
+                node_offset = node;
+                break;
             }
-            if (compatible && strstr(compatible, "cortex-a7-gic")) {
+            if (strstr(compatible, "cortex-a7-gic")) {
                 gic_version = GIC_VERSION_V2;
-                node_offset = node_off;
-                goto found_node;
+                node_offset = node;
+                break;
             }
-            if (compatible && strstr(compatible, "arm,gic-v2")) {
+            if (strstr(compatible, "arm,gic-v2")) {
                 gic_version = GIC_VERSION_V2;
-                node_offset = node_off;
-                goto found_node;
+                node_offset = node;
+                break;
             }
-            if (compatible && strstr(compatible, "arm,gic-v3")) {
+            if (strstr(compatible, "arm,gic-v3")) {
                 gic_version = GIC_VERSION_V3;
-                node_offset = node_off;
-                goto found_node;
+                node_offset = node;
+                break;
             }
-            if (compatible && strstr(compatible, "gic-v3")) {
+            if (strstr(compatible, "gic-v3")) {
                 gic_version = GIC_VERSION_V3;
-                node_offset = node_off;
-                goto found_node;
+                node_offset = node;
+                break;
             }
-            if (compatible && strstr(compatible, "gic-v4")) {
+            if (strstr(compatible, "gic-v4")) {
                 gic_version = GIC_VERSION_V3;
-                node_offset = node_off;
-                goto found_node;
+                node_offset = node;
+                break;
             }
-
-            depth++;
-            p = (uint32_t *)ALIGN_UP((uintptr_t)p + strlen(name) + 1, 4);
-            break;
         }
 
-        case FDT_END_NODE:
-            depth--;
-            break;
-
-        case FDT_PROP: {
-            struct fdt_property *prop = (struct fdt_property *)p;
-            uint32_t len = fdt32_to_cpu(prop->len);
-            p = (uint32_t *)ALIGN_UP(
-                (uintptr_t)p + sizeof(struct fdt_property) + len, 4);
-            break;
-        }
-
-        case FDT_END:
+        if (node_offset < 0)
             return;
 
-        default:
-            break;
-        }
-    }
-
-found_node:
-    uint64_t gicd_base_size;
-
-    if (fdt_get_reg(node_offset, 0, &gicd_base_address, &gicd_base_size) != 0) {
-        printk("GIC: Failed to get GICD address\n");
-        return;
-    }
-
-    if (gic_version == GIC_VERSION_V2) {
-        uint64_t gicc_base_size;
-        if (fdt_get_reg(node_offset, 1, &gicc_base_address, &gicc_base_size) !=
-            0) {
-            printk("GIC: Failed to get GICC address\n");
+        uint64_t gicd_base_size = 0;
+        if (fdt_get_reg(fdt, node_offset, 0, &gicd_base_address,
+                        &gicd_base_size) != 0) {
+            printk("GIC: Failed to get GICD address\n");
             return;
         }
-    } else {
-        uint64_t gicr_base_size;
-        if (fdt_get_reg(node_offset, 1, &gicr_base_address, &gicr_base_size) !=
-            0) {
-            printk("GIC: Failed to get GICR address\n");
-            return;
+
+        uint64_t gicc_base_size = 0;
+        uint64_t gicr_base_size = 0;
+        if (gic_version == GIC_VERSION_V2) {
+            if (fdt_get_reg(fdt, node_offset, 1, &gicc_base_address,
+                            &gicc_base_size) != 0) {
+                printk("GIC: Failed to get GICC address\n");
+                return;
+            }
+        } else {
+            if (fdt_get_reg(fdt, node_offset, 1, &gicr_base_address,
+                            &gicr_base_size) != 0) {
+                printk("GIC: Failed to get GICR address\n");
+                return;
+            }
         }
-    }
 
-    // 映射内存
-    if (gicd_base_address) {
-        gicd_base_virt = phys_to_virt(gicd_base_address);
-        map_page_range(get_current_page_dir(false), gicd_base_virt,
-                       gicd_base_address, 0x10000,
-                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
-    }
+        // 映射内存
+        if (gicd_base_address) {
+            gicd_base_virt = phys_to_virt(gicd_base_address);
+            map_page_range(get_current_page_dir(false), gicd_base_virt,
+                           gicd_base_address, gicd_base_size,
+                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+        }
 
-    if (gic_version == GIC_VERSION_V2 && gicc_base_address) {
-        gicc_base_virt = phys_to_virt(gicc_base_address);
-        map_page_range(get_current_page_dir(false), gicc_base_virt,
-                       gicc_base_address, 0x2000,
-                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
-    }
+        if (gic_version == GIC_VERSION_V2 && gicc_base_address) {
+            gicc_base_virt = phys_to_virt(gicc_base_address);
+            map_page_range(get_current_page_dir(false), gicc_base_virt,
+                           gicc_base_address, gicc_base_size,
+                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+        }
 
-    if (gic_version >= GIC_VERSION_V3 && gicr_base_address) {
-        gicr_base_virt = phys_to_virt(gicr_base_address);
-        map_page_range(get_current_page_dir(false), gicr_base_virt,
-                       gicr_base_address, GICR_STRIDE * cpu_count,
-                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+        if (gic_version >= GIC_VERSION_V3 && gicr_base_address) {
+            gicr_base_virt = phys_to_virt(gicr_base_address);
+            map_page_range(get_current_page_dir(false), gicr_base_virt,
+                           gicr_base_address, gicr_base_size,
+                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+        }
     }
 }
 
@@ -550,6 +617,22 @@ void gic_init(void) {
 
     printk("GICD base: phys=0x%llx virt=0x%llx\n", gicd_base_address,
            gicd_base_virt);
+
+    if (gicd_base_virt) {
+        uint32_t gicd_typer =
+            *(volatile uint32_t *)(gicd_base_virt + GICD_TYPER);
+        printk("GICD_TYPER = 0x%x\n", gicd_typer);
+
+        if (gicd_typer == 0 || gicd_typer == 0xffffffff) {
+            printk("ERROR: GICD address invalid! Cannot read GICD_TYPER\n");
+            printk("  This means the physical address 0x%llx is wrong\n",
+                   gicd_base_address);
+            return;
+        }
+
+        uint32_t max_irq = ((gicd_typer & 0x1f) + 1) * 32;
+        printk("GIC supports %d interrupts\n", max_irq);
+    }
 
     // 根据版本初始化
     if (gic_version == GIC_VERSION_V2) {

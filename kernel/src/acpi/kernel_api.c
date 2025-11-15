@@ -7,8 +7,12 @@
 #include <task/task.h>
 
 uacpi_status uacpi_kernel_get_rsdp(uacpi_phys_addr *out_rsdp_address) {
-    *out_rsdp_address = boot_get_acpi_rsdp();
-    return UACPI_STATUS_OK;
+    if (boot_get_acpi_rsdp()) {
+        *out_rsdp_address = boot_get_acpi_rsdp();
+        return UACPI_STATUS_OK;
+    } else {
+        return UACPI_STATUS_NOT_FOUND;
+    }
 }
 
 void *uacpi_kernel_map(uacpi_phys_addr addr, uacpi_size len) {

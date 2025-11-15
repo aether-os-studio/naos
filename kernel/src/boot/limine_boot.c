@@ -82,7 +82,8 @@ boot_memory_map_t *boot_get_memory_map() {
 };
 
 uintptr_t boot_get_acpi_rsdp() {
-    return (uintptr_t)rsdp_request.response->address;
+    return rsdp_request.response ? (uintptr_t)rsdp_request.response->address
+                                 : 0;
 }
 
 uint64_t boot_get_boottime() { return boot_time_request.response->timestamp; }

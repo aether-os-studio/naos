@@ -24,11 +24,14 @@ void acpi_init_after_pci() {
         if (uacpi_unlikely_error(ret)) {
             printk("uacpi_namespace_load error: %s",
                    uacpi_status_to_string(ret));
-            ASSERT(false);
+            acpi_initialized = false;
+            return;
         }
 
+#if defined(__x86_64__)
         // set the interrupt model
         uacpi_set_interrupt_model(UACPI_INTERRUPT_MODEL_IOAPIC);
+#endif
 
         /*
          * Initialize the namespace. This calls all necessary _STA/_INI AML
@@ -38,7 +41,8 @@ void acpi_init_after_pci() {
         if (uacpi_unlikely_error(ret)) {
             printk("uacpi_namespace_initialize error: %s",
                    uacpi_status_to_string(ret));
-            ASSERT(false);
+            acpi_initialized = false;
+            return;
         }
     }
 }

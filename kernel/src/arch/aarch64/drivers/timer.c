@@ -104,10 +104,10 @@ int timer_init() {
         // 动态选择最佳定时器
         timer_select_best(gtdt);
     } else {
-        // 回退：使用虚拟定时器（最常见）
-        g_timer.active_type = TIMER_TYPE_VIRTUAL;
-        g_timer.ops = &timer_ops_virtual;
-        g_timer.irq_num = 27; // PPI 11
+        // 使用物理定时器
+        g_timer.active_type = TIMER_TYPE_PHYSICAL_NONSECURE;
+        g_timer.ops = &timer_ops_physical;
+        g_timer.irq_num = 30;
     }
 
     // 读取频率
