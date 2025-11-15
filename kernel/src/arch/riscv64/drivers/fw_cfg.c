@@ -1,6 +1,7 @@
 #include <arch/riscv64/drivers/fw_cfg.h>
 #include <drivers/fdt/fdt.h>
 #include <mm/mm.h>
+#include <boot/boot.h>
 
 /* 全局fw_cfg设备 */
 struct fw_cfg_device fw_cfg_dev = {0};
@@ -169,70 +170,41 @@ int fw_cfg_find_file(struct fw_cfg_device *dev, const char *name,
     return -1; /* 未找到 */
 }
 
+static bool fdt_getprop_u64(const void *fdt, int node, const char *name,
+                            int idx, uint64_t *out) {
+    int len;
+    const fdt64_t *p = fdt_getprop(fdt, node, name, &len);
+    if (!p || len < ((idx + 1) * sizeof(uint64_t)))
+        return false;
+    *out = fdt64_to_cpu(p[idx]);
+    return true;
+}
+
 /**
  * 从设备树检测MMIO fw_cfg
  */
 static int fw_cfg_detect_dt(struct fw_cfg_device *dev) {
-    int node_offset;
-    const void *prop;
-    int len;
+    void *fdt = (void *)boot_get_dtb();
+    int node;
 
-    node_offset = -1;
-    uint32_t *p = (uint32_t *)g_fdt_ctx.dt_struct;
-    int depth = 0;
+    for (node = fdt_next_node(fdt, -1, NULL); node >= 0;
+         node = fdt_next_node(fdt, node, NULL)) {
 
-    while (1) {
-        uint32_t tag = fdt32_to_cpu(*p++);
+        const char *compatible = fdt_getprop(fdt, node, "compatible", NULL);
+        if (!compatible)
+            continue;
 
-        switch (tag) {
-        case FDT_BEGIN_NODE: {
-            const char *name = (const char *)p;
-            int node_off = (uint8_t *)p - (uint8_t *)g_fdt_ctx.dt_struct - 4;
-
-            // 检查 compatible 属性
-            int len;
-            const char *compatible =
-                fdt_get_property(node_off, "compatible", &len);
-            if (compatible && strstr(compatible, "qemu,fw-cfg-mmio")) {
-                node_offset = node_off;
-                goto found_node;
-            }
-
-            depth++;
-            p = (uint32_t *)ALIGN_UP((uintptr_t)p + strlen(name) + 1, 4);
+        if (strstr(compatible, "qemu,fw-cfg-mmio"))
             break;
-        }
-
-        case FDT_END_NODE:
-            depth--;
-            break;
-
-        case FDT_PROP: {
-            struct fdt_property *prop = (struct fdt_property *)p;
-            uint32_t len = fdt32_to_cpu(prop->len);
-            p = (uint32_t *)ALIGN_UP(
-                (uintptr_t)p + sizeof(struct fdt_property) + len, 4);
-            break;
-        }
-
-        case FDT_END:
-            return -1;
-
-        default:
-            break;
-        }
     }
 
-found_node:
-    /* 读取寄存器基地址 */
-    prop = fdt_get_property(node_offset, "reg", &len);
-    if (!prop || len < 8) {
-        return -1;
-    }
+    if (node < 0)
+        return node;
 
-    const uint64_t *reg = (const uint64_t *)prop;
-    uint64_t base_addr = fdt64_to_cpu(reg[0]);
-    uint64_t size = len >= 16 ? fdt64_to_cpu(reg[1]) : 0x1000;
+    uint64_t base_addr;
+    uint64_t size;
+    fdt_getprop_u64((void *)boot_get_dtb(), node, "reg", 0, &base_addr);
+    fdt_getprop_u64((void *)boot_get_dtb(), node, "reg", 1, &size);
 
     dev->mmio_base = (volatile void *)phys_to_virt(base_addr);
     map_page_range(

@@ -3,6 +3,7 @@
 #include <acpi/uacpi/tables.h>
 #include <arch/riscv64/drivers/ns16550.h>
 #include <drivers/fdt/fdt.h>
+#include <boot/boot.h>
 
 bool serial_initialized = false;
 
@@ -23,195 +24,116 @@ struct fdt_serial_device {
     int found;
 };
 
-/**
- * 通过 compatible 属性查找串口设备
- */
+static int find_serial_by_chosen(struct fdt_serial_device *device) {
+    if (boot_get_dtb()) {
+        int chosen_off = fdt_path_offset((void *)boot_get_dtb(), "/chosen");
+        if (chosen_off < 0)
+            return -ENODEV;
+        int len = 0;
+        const char *stdout_path = fdt_getprop((void *)boot_get_dtb(),
+                                              chosen_off, "stdout-path", &len);
+        if (!stdout_path || len <= 0)
+            return -ENODEV;
+        char path_buf[128];
+
+        const char *colon = strchr(stdout_path, ':');
+        size_t path_len =
+            colon ? (size_t)(colon - stdout_path) : strlen(stdout_path);
+        if (path_len >= sizeof(path_buf))
+            return -ENAMETOOLONG;
+        memcpy(path_buf, stdout_path, path_len);
+        path_buf[path_len] = '\0';
+
+        int serial_off = fdt_path_offset((void *)boot_get_dtb(), path_buf);
+        if (serial_off < 0)
+            return -ENODEV;
+
+        const uint64_t *reg =
+            fdt_getprop((void *)boot_get_dtb(), serial_off, "reg", &len);
+        if (reg && len >= sizeof(uint64_t)) {
+            device->base_addr = fdt64_to_cpu(*reg);
+        }
+
+        const uint32_t *irq =
+            fdt_getprop((void *)boot_get_dtb(), serial_off, "interrupts", &len);
+        if (irq && len >= sizeof(uint32_t)) {
+            device->irq_num = fdt32_to_cpu(*irq);
+        }
+
+        const uint32_t *reg_shift =
+            fdt_getprop((void *)boot_get_dtb(), serial_off, "reg-shift", &len);
+        device->reg_shift = reg_shift ? fdt32_to_cpu(*reg_shift) : 0;
+
+        const uint32_t *reg_io_width = fdt_getprop(
+            (void *)boot_get_dtb(), serial_off, "reg-io-width", &len);
+        device->reg_io_width = reg_io_width ? fdt32_to_cpu(*reg_io_width) : 1;
+
+        const uint32_t *clock_freq = fdt_getprop(
+            (void *)boot_get_dtb(), serial_off, "clock-frequency", &len);
+        device->clock_freq = clock_freq ? fdt32_to_cpu(*clock_freq) : 0;
+
+        device->found = 1;
+
+        return EOK;
+    } else
+        return -1;
+}
+
 int find_serial_by_compatible(struct fdt_serial_device *serial) {
-    int node_offset;
-    int depth = 0;
-    uint32_t *p = (uint32_t *)g_fdt_ctx.dt_struct;
+    void *fdt = (void *)boot_get_dtb();
+    if (fdt) {
+        int node;
 
-    memset(serial, 0, sizeof(*serial));
+        memset(serial, 0, sizeof(*serial));
 
-    while (1) {
-        uint32_t tag = fdt32_to_cpu(*p++);
+        for (node = fdt_next_node(fdt, -1, NULL); node >= 0;
+             node = fdt_next_node(fdt, node, NULL)) {
 
-        switch (tag) {
-        case FDT_BEGIN_NODE: {
-            const char *name = (const char *)p;
-            node_offset = (uint8_t *)p - (uint8_t *)g_fdt_ctx.dt_struct - 4;
+            const char *compatible = fdt_getprop(fdt, node, "compatible", NULL);
+            if (!compatible)
+                continue;
 
-            // 检查节点的 compatible 属性
-            int len;
-            const char *compatible =
-                fdt_get_property(node_offset, "compatible", &len);
-            if (compatible && len > 0) {
-                // 检查是否匹配已知的串口设备
-                for (int i = 0; serial_compatibles[i]; i++) {
-                    if (strstr(compatible, serial_compatibles[i])) {
-                        // 找到串口设备，解析寄存器地址
-                        const void *reg =
-                            fdt_get_property(node_offset, "reg", &len);
-                        if (reg && len >= 8) {
-                            // 解析 reg 属性：通常包含地址和大小
-                            const uint64_t *reg_data = (const uint64_t *)reg;
-                            serial->base_addr = fdt64_to_cpu(reg_data[0]);
-                            serial->found = 1;
+            // 匹配已知串口类型
+            for (int i = 0; serial_compatibles[i]; i++) {
+                if (strstr(compatible, serial_compatibles[i])) {
+                    int len;
+                    const fdt64_t *reg = fdt_getprop(fdt, node, "reg", &len);
+                    if (reg && len >= sizeof(fdt64_t)) {
+                        serial->base_addr = fdt64_to_cpu(reg[0]);
+                        serial->found = 1;
 
-                            // 解析中断号
-                            const uint32_t *interrupts = fdt_get_property(
-                                node_offset, "interrupts", &len);
-                            if (interrupts && len >= 4) {
-                                serial->irq_num = fdt32_to_cpu(interrupts[0]);
-                            }
+                        // interrupts
+                        const fdt32_t *irq =
+                            fdt_getprop(fdt, node, "interrupts", &len);
+                        if (irq && len >= sizeof(fdt32_t))
+                            serial->irq_num = fdt32_to_cpu(irq[0]);
 
-                            // 解析寄存器移位
-                            const uint32_t *reg_shift = fdt_get_property(
-                                node_offset, "reg-shift", &len);
-                            if (reg_shift && len >= 4) {
-                                serial->reg_shift = fdt32_to_cpu(*reg_shift);
-                            }
+                        // reg-shift
+                        const fdt32_t *reg_shift =
+                            fdt_getprop(fdt, node, "reg-shift", &len);
+                        if (reg_shift && len >= sizeof(fdt32_t))
+                            serial->reg_shift = fdt32_to_cpu(*reg_shift);
 
-                            // 解析时钟频率
-                            const uint32_t *clock_freq = fdt_get_property(
-                                node_offset, "clock-frequency", &len);
-                            if (clock_freq && len >= 4) {
-                                serial->clock_freq = fdt32_to_cpu(*clock_freq);
-                            }
+                        // reg-io-width
+                        const fdt32_t *reg_io_width =
+                            fdt_getprop(fdt, node, "reg-io-width", &len);
+                        if (reg_io_width && len >= sizeof(fdt32_t))
+                            serial->reg_io_width = fdt32_to_cpu(*reg_io_width);
 
-                            // 解析寄存器IO宽度
-                            const uint32_t *reg_io_width = fdt_get_property(
-                                node_offset, "reg-io-width", &len);
-                            if (reg_io_width && len >= 4) {
-                                serial->reg_io_width =
-                                    fdt32_to_cpu(*reg_io_width);
-                            }
-                            return 0;
-                        }
+                        // clock-frequency
+                        const fdt32_t *clock =
+                            fdt_getprop(fdt, node, "clock-frequency", &len);
+                        if (clock && len >= sizeof(fdt32_t))
+                            serial->clock_freq = fdt32_to_cpu(*clock);
+
+                        return EOK;
                     }
                 }
             }
-
-            depth++;
-            p = (uint32_t *)ALIGN_UP((uintptr_t)p + strlen(name) + 1, 4);
-            break;
-        }
-
-        case FDT_END_NODE:
-            depth--;
-            if (depth < 0)
-                return -1;
-            break;
-
-        case FDT_PROP: {
-            struct fdt_property *prop = (struct fdt_property *)p;
-            uint32_t len = fdt32_to_cpu(prop->len);
-            p = (uint32_t *)ALIGN_UP(
-                (uintptr_t)p + sizeof(struct fdt_property) + len, 4);
-            break;
-        }
-
-        case FDT_NOP:
-            break;
-
-        case FDT_END:
-            return -1;
-
-        default:
-            return -1;
         }
     }
 
-    return -1;
-}
-
-/**
- * 通过 aliases 节点查找串口
- */
-int find_serial_by_alias(struct fdt_serial_device *serial) {
-    int aliases_offset = fdt_find_node("/aliases");
-    if (aliases_offset < 0) {
-        return -1;
-    }
-
-    // 尝试 serial0 别名
-    const char *alias = fdt_get_property_string(aliases_offset, "serial0");
-    if (!alias) {
-        // 尝试 uart0 别名
-        alias = fdt_get_property_string(aliases_offset, "uart0");
-    }
-
-    if (!alias) {
-        return -1;
-    }
-
-    // 根据别名找到对应的节点
-    int node_offset = fdt_find_node(alias);
-    if (node_offset < 0) {
-        return -1;
-    }
-
-    // 解析串口设备信息
-    int len;
-    const void *reg = fdt_get_property(node_offset, "reg", &len);
-    if (reg && len >= 8) {
-        const uint64_t *reg_data = (const uint64_t *)reg;
-        serial->base_addr = fdt64_to_cpu(reg_data[0]);
-        serial->found = 1;
-
-        // 解析其他属性
-        const uint32_t *interrupts =
-            fdt_get_property(node_offset, "interrupts", &len);
-        if (interrupts && len >= 4) {
-            serial->irq_num = fdt32_to_cpu(interrupts[0]);
-        }
-        return 0;
-    }
-
-    return -1;
-}
-
-/**
- * 通过 chosen 节点查找串口
- */
-int find_serial_by_chosen(struct fdt_serial_device *serial) {
-    int chosen_offset = fdt_find_node("/chosen");
-    if (chosen_offset < 0) {
-        return -1;
-    }
-
-    // 查找 stdout-path 属性
-    const char *stdout_path =
-        fdt_get_property_string(chosen_offset, "stdout-path");
-    if (!stdout_path) {
-        return -1;
-    }
-
-    // 解析 stdout-path，格式通常是 "serial0:115200n8" 或类似
-    char node_path[256];
-    const char *colon = strchr(stdout_path, ':');
-    if (colon) {
-        size_t len = colon - stdout_path;
-        if (len < sizeof(node_path)) {
-            strncpy(node_path, stdout_path, len);
-            node_path[len] = '\0';
-
-            // 找到对应的串口节点
-            int node_offset = fdt_find_node(node_path);
-            if (node_offset >= 0) {
-                int len;
-                const void *reg = fdt_get_property(node_offset, "reg", &len);
-                if (reg && len >= 8) {
-                    const uint64_t *reg_data = (const uint64_t *)reg;
-                    serial->base_addr = fdt64_to_cpu(reg_data[0]);
-                    serial->found = 1;
-                    return 0;
-                }
-            }
-        }
-    }
-
-    return -1;
+    return -ENODEV;
 }
 
 /**
@@ -220,10 +142,6 @@ int find_serial_by_chosen(struct fdt_serial_device *serial) {
 int find_serial_device(struct fdt_serial_device *serial) {
     // 按优先级尝试不同的查找方法
     if (find_serial_by_chosen(serial) == 0) {
-        return 0;
-    }
-
-    if (find_serial_by_alias(serial) == 0) {
         return 0;
     }
 

@@ -1,4 +1,5 @@
 #include <libs/aether/fdt.h>
+#include <boot/boot.h>
 #include <mod/dlinker.h>
 
 fdt_driver_t *fdt_drivers[MAX_FDT_DEVICES_NUM] = {NULL};
@@ -22,8 +23,10 @@ int regist_fdt_driver(fdt_driver_t *driver) {
 EXPORT_SYMBOL(regist_fdt_driver);
 
 #if !defined(__x86_64__)
-EXPORT_SYMBOL(fdt_get_property);
-EXPORT_SYMBOL(fdt_get_property_u32);
-EXPORT_SYMBOL(fdt_get_property_u64);
-EXPORT_SYMBOL(fdt_get_property_string);
+EXPORT_SYMBOL(fdt_getprop);
+EXPORT_SYMBOL(fdt_get_string);
+
+void *get_dtb_ptr() { return (void *)boot_get_dtb(); }
+EXPORT_SYMBOL(get_dtb_ptr);
+
 #endif

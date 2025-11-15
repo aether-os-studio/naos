@@ -72,6 +72,7 @@ override CFLAGS += \
 override CPPFLAGS := \
     -I src \
     -I src/acpi \
+    -I src/libs/fdt \
     -I freestnd-c-hdrs \
     -DCONFIG_USE_DEFAULT_CFG \
     $(CPPFLAGS) \

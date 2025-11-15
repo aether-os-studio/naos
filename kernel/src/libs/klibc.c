@@ -165,6 +165,64 @@ int memcmp(const void *s1, const void *s2, size_t n) {
     return 0;
 }
 
+#ifdef ALIGN
+#undef ALIGN
+#endif
+
+#define ONES ((size_t)-1 / UCHAR_MAX)
+#define HIGHS (ONES * (UCHAR_MAX / 2 + 1))
+#define HASZERO(x) ((x) - ONES & ~(x) & HIGHS)
+
+void *memchr(const void *src, int c, size_t n) {
+    const unsigned char *s = src;
+    c = (unsigned char)c;
+    for (; ((uintptr_t)s & sizeof(size_t)) && n && *s != c; s++, n--)
+        ;
+    if (n && *s != c) {
+        size_t *w = 0;
+        size_t k = ONES * c;
+        for (w = (void *)s; n >= sizeof(size_t) && !HASZERO(*w ^ k); w++, n -= sizeof(size_t))
+            ;
+        for (s = (const void *)w; n && *s != c; s++, n--)
+            ;
+    }
+    return n ? (void *)s : 0;
+}
+
+#define TOLOWER(x) ((x) | 0x20)
+#define isxdigit(c)                                                            \
+    (('0' <= (c) && (c) <= '9') || ('a' <= (c) && (c) <= 'f') ||               \
+     ('A' <= (c) && (c) <= 'F'))
+#define isdigit(c) (('0' <= (c) && (c) <= '9'))
+
+uint64_t strtoul(const char *restrict cp, char **restrict endp, int base) {
+    uint64_t result = 0, value;
+
+    if (!base) {
+        base = 10;
+        if (*cp == '0') {
+            base = 8;
+            cp++;
+            if ((TOLOWER(*cp) == 'x') && isxdigit(cp[1])) {
+                cp++;
+                base = 16;
+            }
+        }
+    } else if (base == 16) {
+        if (cp[0] == '0' && TOLOWER(cp[1]) == 'x')
+            cp += 2;
+    }
+    while (isxdigit(*cp) &&
+           (value = isdigit(*cp) ? *cp - '0' : TOLOWER(*cp) - 'a' + 10) <
+               base) {
+        result = result * base + value;
+        cp++;
+    }
+    if (endp)
+        *endp = (char *)cp;
+    return result;
+}
+
 void panic(const char *file, int line, const char *func, const char *cond) {
     printk("assert failed! %s\n", cond);
     printk("file: %s\nline %d\nfunc: %s\n", file, line, func);

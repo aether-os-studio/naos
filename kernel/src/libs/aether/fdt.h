@@ -6,8 +6,7 @@ struct fdt_driver;
 
 typedef struct fdt_device {
     const char *name;
-    int node_offset;           // 设备树节点偏移
-    const void *fdt;           // 指向设备树blob
+    int node;                  // 设备树节点偏移
     void *driver_data;         // 驱动私有数据
     struct fdt_driver *driver; // 关联的驱动
 } fdt_device_t;
@@ -28,3 +27,5 @@ typedef struct fdt_driver {
 extern fdt_driver_t *fdt_drivers[MAX_FDT_DEVICES_NUM];
 
 int regist_fdt_driver(fdt_driver_t *driver);
+
+void *get_dtb_ptr();
