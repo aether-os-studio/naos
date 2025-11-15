@@ -3,6 +3,30 @@
 #include <libs/aether/fdt.h>
 #include <drivers/bus/pci.h>
 
+static inline void mmio_write8(uint64_t addr, uint8_t data) {
+    *(volatile uint8_t *)addr = data;
+}
+
+static inline uint8_t mmio_read8(uint64_t addr) {
+    return *(volatile uint8_t *)addr;
+}
+
+static inline void mmio_write16(uint64_t addr, uint16_t data) {
+    *(volatile uint16_t *)addr = data;
+}
+
+static inline uint16_t mmio_read16(uint64_t addr) {
+    return *(volatile uint16_t *)addr;
+}
+
+static inline void mmio_write32(uint64_t addr, uint32_t data) {
+    *(volatile uint32_t *)addr = data;
+}
+
+static inline uint32_t mmio_read32(uint64_t addr) {
+    return *(volatile uint32_t *)addr;
+}
+
 pcie_brcmstb_config_t brcmstb_pcie = {0};
 
 static int fdt_get_reg_index_by_name(void *fdt, int node_offset,
@@ -171,179 +195,468 @@ static int fdt_get_reg(void *fdt, int node_offset, int index, uint64_t *addr,
 
 pcie_brcmstb_context_t brcmstb_pcie_context = {0};
 
-/**
- * 计算配置空间地址
- * BRCMSTB 使用特殊的地址格式
- */
-static inline uint32_t brcmstb_make_cfg_addr(uint8_t bus, uint8_t slot,
-                                             uint8_t func, uint16_t offset) {
-    return ((bus & 0xFF) << 20) | ((slot & 0x1F) << 15) |
-           ((func & 0x07) << 12) | (offset & 0xFFF);
+static void delay(uint64_t ns) {
+    uint64_t start = nanoTime();
+    while (nanoTime() - start < ns) {
+        asm volatile("nop");
+    }
 }
 
+static void delay_us(uint64_t us) { delay(us * 1000ULL); }
+
 /**
- * 通过索引/数据寄存器访问配置空间 (间接访问)
+ * 编码 BAR 大小
  */
-static uint32_t brcmstb_indirect_cfg_read32(uint8_t bus, uint8_t slot,
-                                            uint8_t func, uint16_t offset) {
-    uint64_t base = brcmstb_pcie_context.pcie_base_virt;
+static uint32_t rc_bar_encode_size(uint64_t size) {
+    if (size == 0)
+        return 0;
 
-    // 构造配置地址
-    uint32_t cfg_addr = brcmstb_make_cfg_addr(bus, slot, func, offset & ~0x3);
+    int n = 63 - __builtin_clzll(size);
 
-    // 写入索引寄存器
-    *(volatile uint32_t *)(base + PCIE_EXT_CFG_INDEX) = cfg_addr;
+    if (n >= 12 && n <= 15)
+        return (n - 12) + 0x1c;
+    else if (n >= 16 && n <= 35)
+        return n - 15;
 
-    // 从数据寄存器读取
-    return *(volatile uint32_t *)(base + PCIE_EXT_CFG_DATA);
-}
-
-static void brcmstb_indirect_cfg_write32(uint8_t bus, uint8_t slot,
-                                         uint8_t func, uint16_t offset,
-                                         uint32_t value) {
-    uint64_t base = brcmstb_pcie_context.pcie_base_virt;
-
-    uint32_t cfg_addr = brcmstb_make_cfg_addr(bus, slot, func, offset & ~0x3);
-
-    *(volatile uint32_t *)(base + PCIE_EXT_CFG_INDEX) = cfg_addr;
-    *(volatile uint32_t *)(base + PCIE_EXT_CFG_DATA) = value;
+    return 0;
 }
 
 /**
- * 直接通过 ECAM 窗口访问 (如果支持)
+ * MDIO 读取
  */
-static uint32_t brcmstb_direct_cfg_read32(uint8_t bus, uint8_t slot,
-                                          uint8_t func, uint16_t offset) {
-    // 计算在配置空间窗口中的偏移
-    uint32_t cfg_offset = brcmstb_make_cfg_addr(bus, slot, func, offset & ~0x3);
-    uint64_t addr = brcmstb_pcie_context.config_base_virt + cfg_offset;
+static uint32_t mdio_read(uint64_t base, uint8_t port, uint8_t reg) {
+    uint32_t cmd = (1 << MDIO_PKT_CMD_SHIFT) | (port << MDIO_PKT_PORT_SHIFT) |
+                   (reg << MDIO_PKT_REG_SHIFT);
 
-    return *(volatile uint32_t *)(addr);
-}
+    mmio_write32(base + PCIE_RC_DL_MDIO_ADDR, cmd);
+    mmio_read32(base + PCIE_RC_DL_MDIO_ADDR); // Flush
 
-static void brcmstb_direct_cfg_write32(uint8_t bus, uint8_t slot, uint8_t func,
-                                       uint16_t offset, uint32_t value) {
-    uint32_t cfg_offset = brcmstb_make_cfg_addr(bus, slot, func, offset & ~0x3);
-    uint64_t addr = brcmstb_pcie_context.config_base_virt + cfg_offset;
-
-    *(volatile uint32_t *)(addr) = value;
-}
-
-static bool brcmstb_link_up(void) {
-    if (!brcmstb_pcie_context.pcie_base_virt) {
-        return false;
+    for (int i = 0; i < 10; i++) {
+        uint32_t data = mmio_read32(base + PCIE_RC_DL_MDIO_RD_DATA);
+        if (data & MDIO_DATA_DONE) {
+            return data & MDIO_DATA_MASK;
+        }
+        delay_us(10000); // 10ms
     }
 
-    uint32_t status =
-        *(volatile uint32_t *)(brcmstb_pcie_context.pcie_base_virt +
-                               PCIE_MISC_PCIE_STATUS);
+    printk("PCIe: MDIO read timeout\n");
+    return 0;
+}
 
-    // 需要同时检查 PHYLINKUP 和 DL_ACTIVE
+/**
+ * MDIO 写入
+ */
+static void mdio_write(uint64_t base, uint8_t port, uint8_t reg, uint16_t val) {
+    uint32_t cmd = (0 << MDIO_PKT_CMD_SHIFT) | (port << MDIO_PKT_PORT_SHIFT) |
+                   (reg << MDIO_PKT_REG_SHIFT);
+
+    mmio_write32(base + PCIE_RC_DL_MDIO_ADDR, cmd);
+    mmio_read32(base + PCIE_RC_DL_MDIO_ADDR); // Flush
+
+    mmio_write32(base + PCIE_RC_DL_MDIO_WR_DATA, MDIO_DATA_DONE | val);
+
+    for (int i = 0; i < 10; i++) {
+        uint32_t data = mmio_read32(base + PCIE_RC_DL_MDIO_WR_DATA);
+        if (!(data & MDIO_DATA_DONE)) {
+            return;
+        }
+        delay_us(10000); // 10ms
+    }
+
+    printk("PCIe: MDIO write timeout\n");
+}
+
+/**
+ * 启用 SSC (Spread Spectrum Clocking)
+ */
+static void enable_ssc(uint64_t base) {
+    printk("PCIe: Enabling SSC\n");
+
+    mdio_write(base, 0, 0x1f, 0x1100);
+
+    uint32_t ctl = mdio_read(base, 0, 0x0002);
+    ctl |= 0x8000; // Enable SSC
+    ctl |= 0x4000; // Enable down-spreading
+    mdio_write(base, 0, 0x0002, ctl);
+
+    delay_us(2000); // 2ms
+
+    uint32_t status = mdio_read(base, 0, 0x0001);
+    if ((status & 0x400) && (status & 0x800)) {
+        printk("PCIe: SSC enabled successfully\n");
+    } else {
+        printk("PCIe: SSC enable check failed (status=0x%x)\n", status);
+    }
+}
+
+/**
+ * 配置 outbound window
+ */
+static void set_outbound_window(uint64_t base, int n, uint64_t cpu_addr,
+                                uint64_t pcie_addr, uint64_t size) {
+    printk("PCIe: Setting outbound window %d: CPU 0x%llx -> PCIe 0x%llx (size "
+           "0x%llx)\n",
+           n, cpu_addr, pcie_addr, size);
+
+    /* 设置 PCIe 侧地址 */
+    mmio_write32(base + PCIE_MISC_CPU_2_PCIE_MEM_WIN0_LO + n * 8,
+                 (uint32_t)pcie_addr);
+    mmio_write32(base + PCIE_MISC_CPU_2_PCIE_MEM_WIN0_HI + n * 8,
+                 (uint32_t)(pcie_addr >> 32));
+
+    /* 设置 CPU 侧地址范围 */
+    uint64_t base_mb = cpu_addr / 0x100000;
+    uint64_t limit_mb = (cpu_addr + size - 1) / 0x100000;
+
+    uint32_t base_limit = ((limit_mb & 0xfff) << 20) | ((base_mb & 0xfff) << 4);
+    mmio_write32(base + PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_LIMIT + n * 4,
+                 base_limit);
+
+    /* 设置高位 */
+    mmio_write32(base + PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_HI + n * 8,
+                 (base_mb >> 12) & 0xff);
+    mmio_write32(base + PCIE_MISC_CPU_2_PCIE_MEM_WIN0_LIMIT_HI + n * 8,
+                 (limit_mb >> 12) & 0xff);
+}
+
+/**
+ * 软复位
+ */
+static void brcmstb_pcie_reset(uint64_t base) {
+    printk("PCIe: Performing software reset\n");
+
+    /* Assert reset */
+    uint32_t val = mmio_read32(base + PCIE_RGR1_SW_INIT_1);
+    val |= PCIE_RGR1_SW_INIT_1_INIT;
+    mmio_write32(base + PCIE_RGR1_SW_INIT_1, val);
+
+    delay_us(200); // 200us
+
+    /* De-assert reset */
+    val &= ~PCIE_RGR1_SW_INIT_1_INIT;
+    mmio_write32(base + PCIE_RGR1_SW_INIT_1, val);
+
+    delay_us(200); // 200us
+
+    /* Disable SERDES IDDQ */
+    val = mmio_read32(base + PCIE_MISC_HARD_PCIE_HARD_DEBUG);
+    val &= ~PCIE_HARD_DEBUG_SERDES_IDDQ;
+    mmio_write32(base + PCIE_MISC_HARD_PCIE_HARD_DEBUG, val);
+
+    delay_us(100); // 100us
+}
+
+/**
+ * 使能控制器
+ */
+static void brcmstb_pcie_enable(uint64_t base) {
+    printk("PCIe: Enabling controller\n");
+
+    /* De-assert PERST# */
+    uint32_t val = mmio_read32(base + PCIE_MISC_PCIE_CTRL);
+    val |= PCIE_MISC_PCIE_CTRL_PCIE_PERSTB;
+    mmio_write32(base + PCIE_MISC_PCIE_CTRL, val);
+
+    delay_us(100); // 100us (PCIe spec 要求 100ms，但这里先用 100us)
+}
+
+/**
+ * 检查链路状态
+ */
+static bool brcmstb_pcie_link_up(uint64_t base) {
+    uint32_t status = mmio_read32(base + PCIE_MISC_PCIE_STATUS);
+
     return (status & PCIE_MISC_PCIE_STATUS_PCIE_PHYLINKUP) &&
            (status & PCIE_MISC_PCIE_STATUS_PCIE_DL_ACTIVE);
 }
 
-/**
- * 读取 8 位配置空间
- */
+int pcie_brcmstb_init(uint64_t base_virt, uint64_t base_phys, uint64_t size) {
+    uint32_t val;
+
+    printk("PCIe BRCMSTB: Base: phys=0x%llx virt=0x%llx size=0x%llx\n",
+           base_phys, base_virt, size);
+
+    brcmstb_pcie_context.pcie_base_phys = base_phys;
+    brcmstb_pcie_context.pcie_base_virt = base_virt;
+    brcmstb_pcie_context.pcie_size = size;
+
+    /* 复位 */
+    brcmstb_pcie_reset(base_virt);
+
+    /* 读取版本 */
+    uint32_t revision = mmio_read32(base_virt + PCIE_MISC_REVISION) & 0xFFFF;
+    printk("PCIe: Hardware revision = 0x%04x\n", revision);
+
+    if (revision == 0 || revision == 0xffff) {
+        printk("PCIe: ERROR - Cannot read revision register\n");
+        printk(
+            "  Firmware may not have enabled PCIe (missing dtparam=pciex1)\n");
+        return -1;
+    }
+
+    /* 配置 MISC_CTRL */
+    val = mmio_read32(base_virt + PCIE_MISC_MISC_CTRL);
+    val |= PCIE_MISC_MISC_CTRL_SCB_ACCESS_EN;
+    val |= PCIE_MISC_MISC_CTRL_CFG_READ_UR_MODE;
+    val |= PCIE_MISC_MISC_CTRL_BURST_ALIGN;
+    val &= ~(0x3 << PCIE_MISC_MISC_CTRL_MAX_BURST_SIZE_SHIFT);
+    val |= (PCIE_MISC_MISC_CTRL_MAX_BURST_SIZE_128
+            << PCIE_MISC_MISC_CTRL_MAX_BURST_SIZE_SHIFT);
+    mmio_write32(base_virt + PCIE_MISC_MISC_CTRL, val);
+
+    /* 配置 RC BAR2 (用于 inbound DMA) */
+    uint64_t rc_bar_size = 0x200000000ULL; // 8 GB (从 DT 读取)
+    mmio_write32(base_virt + PCIE_MISC_RC_BAR2_CONFIG_LO,
+                 rc_bar_encode_size(rc_bar_size));
+    mmio_write32(base_virt + PCIE_MISC_RC_BAR2_CONFIG_HI, 0);
+
+    /* 配置 SCB 大小 */
+    val = mmio_read32(base_virt + PCIE_MISC_MISC_CTRL);
+    val &= ~(0x1f << PCIE_MISC_MISC_CTRL_SCB_SIZE_0_SHIFT);
+    val |= ((63 - __builtin_clzll(rc_bar_size) - 15)
+            << PCIE_MISC_MISC_CTRL_SCB_SIZE_0_SHIFT);
+    mmio_write32(base_virt + PCIE_MISC_MISC_CTRL, val);
+
+    /* 禁用 RC BAR1 和 BAR3 */
+    val = mmio_read32(base_virt + PCIE_MISC_RC_BAR1_CONFIG_LO);
+    val &= ~PCIE_MISC_RC_BAR_CONFIG_LO_SIZE_MASK;
+    mmio_write32(base_virt + PCIE_MISC_RC_BAR1_CONFIG_LO, val);
+
+    val = mmio_read32(base_virt + PCIE_MISC_RC_BAR3_CONFIG_LO);
+    val &= ~PCIE_MISC_RC_BAR_CONFIG_LO_SIZE_MASK;
+    mmio_write32(base_virt + PCIE_MISC_RC_BAR3_CONFIG_LO, val);
+
+    /* 使能控制器 */
+    brcmstb_pcie_enable(base_virt);
+
+    /* 等待链路 */
+    printk("PCIe: Waiting for link up...\n");
+
+    int timeout = 100; // 100 * 5ms = 500ms
+    bool link_up = false;
+
+    while (timeout-- > 0) {
+        if (brcmstb_pcie_link_up(base_virt)) {
+            link_up = true;
+            break;
+        }
+
+        if (timeout % 20 == 0) {
+            uint32_t status = mmio_read32(base_virt + PCIE_MISC_PCIE_STATUS);
+            printk("  [%d] Status=0x%08x\n", timeout, status);
+        }
+
+        delay_us(5000); // 5ms
+    }
+
+    if (!link_up) {
+        printk("PCIe: Link failed to come up\n");
+        return -1;
+    }
+
+    printk("PCIe: Link up! (took %d ms)\n", (100 - timeout) * 5);
+
+    /* 检查 RC 模式 */
+    val = mmio_read32(base_virt + PCIE_MISC_PCIE_STATUS);
+    if (!(val & PCIE_MISC_PCIE_STATUS_RC_MODE)) {
+        printk("PCIe: ERROR - Controller is in EP mode!\n");
+        return -1;
+    }
+
+    /* 步骤 5: 配置 outbound window */
+    /* 这些值应该从 DTB 的 ranges 属性读取 */
+    set_outbound_window(base_virt, 0,
+                        0x600000000ULL, // CPU 地址
+                        0xC0000000,     // PCIe 地址
+                        0x40000000);    // 1GB 大小
+
+    /* 步骤 6: 配置链路能力 */
+    val = mmio_read32(base_virt + PCIE_RC_CFG_PRIV1_LINK_CAPABILITY);
+    val |= PRIV1_LINK_CAPABILITY_L1_L0S_MASK; // 启用 L1 & L0s
+    mmio_write32(base_virt + PCIE_RC_CFG_PRIV1_LINK_CAPABILITY, val);
+
+    /* 设置设备类代码为 PCI-PCI Bridge */
+    mmio_write32(base_virt + PCIE_RC_CFG_PRIV1_ID_VAL3, 0x060400);
+
+    /* 步骤 7: 启用 SSC */
+    enable_ssc(base_virt);
+
+    /* 步骤 8: 读取链路状态 */
+    uint16_t link_status = mmio_read16(base_virt + PCIE_RC_CFG_LINK_STATUS);
+    uint8_t link_speed = link_status & 0xf;
+    uint8_t link_width = (link_status >> 4) & 0x3f;
+
+    const char *speed_str;
+    switch (link_speed) {
+    case 1:
+        speed_str = "2.5 GT/s";
+        break;
+    case 2:
+        speed_str = "5.0 GT/s";
+        break;
+    case 4:
+        speed_str = "8.0 GT/s";
+        break;
+    default:
+        speed_str = "unknown";
+        break;
+    }
+
+    printk("PCIe: Link speed %s, x%d\n", speed_str, link_width);
+
+    /* 步骤 9: 配置字节序 */
+    val = mmio_read32(base_virt + PCIE_RC_CFG_VENDOR_VENDOR_SPECIFIC_REG1);
+    val &= ~VENDOR_SPECIFIC_REG1_ENDIAN_MODE_MASK;
+    val |= (0 << VENDOR_SPECIFIC_REG1_ENDIAN_MODE_SHIFT); // Little endian
+    mmio_write32(base_virt + PCIE_RC_CFG_VENDOR_VENDOR_SPECIFIC_REG1, val);
+
+    /* 步骤 10: 启用 CLKREQ# */
+    val = mmio_read32(base_virt + PCIE_MISC_HARD_PCIE_HARD_DEBUG);
+    val |= PCIE_HARD_DEBUG_CLKREQ_ENABLE;
+    mmio_write32(base_virt + PCIE_MISC_HARD_PCIE_HARD_DEBUG, val);
+
+    brcmstb_pcie_context.initialized = true;
+
+    printk("=== PCIe BRCMSTB Initialization Complete ===\n\n");
+
+    return 0;
+}
+
+static uint32_t brcmstb_make_cfg_addr(uint8_t bus, uint8_t slot, uint8_t func,
+                                      uint16_t offset) {
+    return ((bus & 0xFF) << 20) | ((slot & 0x1F) << 15) |
+           ((func & 0x07) << 12) | (offset & 0xFFC);
+}
+
 static uint8_t brcmstb_cfg_read8(uint32_t bus, uint32_t slot, uint32_t func,
                                  uint32_t segment, uint32_t offset) {
-    if (!brcmstb_link_up()) {
+    uint64_t base = brcmstb_pcie_context.pcie_base_virt;
+
+    if (!brcmstb_pcie_link_up(base)) {
         return 0xFF;
     }
 
-    // 读取 32 位，然后提取字节
-    uint32_t val = brcmstb_indirect_cfg_read32(bus, slot, func, offset & ~0x3);
+    /* Bus 0 访问 RC 配置空间 */
+    if (bus == 0) {
+        if (slot != 0 || func != 0)
+            return 0xFF;
+        return mmio_read8(base + offset);
+    }
 
-    // 提取对应字节
-    uint8_t byte_offset = offset & 0x3;
-    return (val >> (byte_offset * 8)) & 0xFF;
+    /* 其他 bus 通过索引/数据寄存器 */
+    uint32_t cfg_addr = brcmstb_make_cfg_addr(bus, slot, func, offset);
+    mmio_write32(base + PCIE_EXT_CFG_INDEX, cfg_addr);
+    return mmio_read8(base + PCIE_EXT_CFG_DATA);
 }
 
-/**
- * 写入 8 位配置空间
- */
 static void brcmstb_cfg_write8(uint32_t bus, uint32_t slot, uint32_t func,
                                uint32_t segment, uint32_t offset,
                                uint8_t value) {
-    if (!brcmstb_link_up()) {
+    uint64_t base = brcmstb_pcie_context.pcie_base_virt;
+
+    if (!brcmstb_pcie_link_up(base)) {
         return;
     }
 
-    // 读取 32 位
-    uint32_t val = brcmstb_indirect_cfg_read32(bus, slot, func, offset & ~0x3);
+    /* Bus 0 访问 RC 配置空间 */
+    if (bus == 0) {
+        if (slot != 0 || func != 0)
+            return;
+        mmio_write8(base + offset, value);
+    }
 
-    // 修改对应字节
-    uint8_t byte_offset = offset & 0x3;
-    uint32_t mask = 0xFF << (byte_offset * 8);
-    val = (val & ~mask) | ((uint32_t)value << (byte_offset * 8));
-
-    // 写回
-    brcmstb_indirect_cfg_write32(bus, slot, func, offset & ~0x3, val);
+    /* 其他 bus 通过索引/数据寄存器 */
+    uint32_t cfg_addr = brcmstb_make_cfg_addr(bus, slot, func, offset);
+    mmio_write32(base + PCIE_EXT_CFG_INDEX, cfg_addr);
+    mmio_write8(base + PCIE_EXT_CFG_DATA, value);
 }
 
-/**
- * 读取 16 位配置空间
- */
 static uint16_t brcmstb_cfg_read16(uint32_t bus, uint32_t slot, uint32_t func,
                                    uint32_t segment, uint32_t offset) {
-    if (!brcmstb_link_up()) {
+    uint64_t base = brcmstb_pcie_context.pcie_base_virt;
+
+    if (!brcmstb_pcie_link_up(base)) {
         return 0xFFFF;
     }
 
-    uint32_t val = brcmstb_indirect_cfg_read32(bus, slot, func, offset & ~0x3);
+    /* Bus 0 访问 RC 配置空间 */
+    if (bus == 0) {
+        if (slot != 0 || func != 0)
+            return 0xFFFF;
+        return mmio_read16(base + offset);
+    }
 
-    uint8_t word_offset = (offset & 0x2) >> 1;
-    return (val >> (word_offset * 16)) & 0xFFFF;
+    /* 其他 bus 通过索引/数据寄存器 */
+    uint32_t cfg_addr = brcmstb_make_cfg_addr(bus, slot, func, offset);
+    mmio_write32(base + PCIE_EXT_CFG_INDEX, cfg_addr);
+    return mmio_read16(base + PCIE_EXT_CFG_DATA);
 }
 
-/**
- * 写入 16 位配置空间
- */
 static void brcmstb_cfg_write16(uint32_t bus, uint32_t slot, uint32_t func,
                                 uint32_t segment, uint32_t offset,
                                 uint16_t value) {
-    if (!brcmstb_link_up()) {
+    uint64_t base = brcmstb_pcie_context.pcie_base_virt;
+
+    if (!brcmstb_pcie_link_up(base)) {
         return;
     }
 
-    uint32_t val = brcmstb_indirect_cfg_read32(bus, slot, func, offset & ~0x3);
+    /* Bus 0 访问 RC 配置空间 */
+    if (bus == 0) {
+        if (slot != 0 || func != 0)
+            return;
+        mmio_write16(base + offset, value);
+    }
 
-    uint8_t word_offset = (offset & 0x2) >> 1;
-    uint32_t mask = 0xFFFF << (word_offset * 16);
-    val = (val & ~mask) | ((uint32_t)value << (word_offset * 16));
-
-    brcmstb_indirect_cfg_write32(bus, slot, func, offset & ~0x3, val);
+    /* 其他 bus 通过索引/数据寄存器 */
+    uint32_t cfg_addr = brcmstb_make_cfg_addr(bus, slot, func, offset);
+    mmio_write32(base + PCIE_EXT_CFG_INDEX, cfg_addr);
+    mmio_write16(base + PCIE_EXT_CFG_DATA, value);
 }
 
-/**
- * 读取 32 位配置空间
- */
 static uint32_t brcmstb_cfg_read32(uint32_t bus, uint32_t slot, uint32_t func,
                                    uint32_t segment, uint32_t offset) {
-    if (!brcmstb_link_up()) {
+    uint64_t base = brcmstb_pcie_context.pcie_base_virt;
+
+    if (!brcmstb_pcie_link_up(base)) {
         return 0xFFFFFFFF;
     }
 
-    return brcmstb_indirect_cfg_read32(bus, slot, func, offset);
+    /* Bus 0 访问 RC 配置空间 */
+    if (bus == 0) {
+        if (slot != 0 || func != 0)
+            return 0xFFFFFFFF;
+        return mmio_read32(base + offset);
+    }
+
+    /* 其他 bus 通过索引/数据寄存器 */
+    uint32_t cfg_addr = brcmstb_make_cfg_addr(bus, slot, func, offset);
+    mmio_write32(base + PCIE_EXT_CFG_INDEX, cfg_addr);
+    return mmio_read32(base + PCIE_EXT_CFG_DATA);
 }
 
-/**
- * 写入 32 位配置空间
- */
 static void brcmstb_cfg_write32(uint32_t bus, uint32_t slot, uint32_t func,
                                 uint32_t segment, uint32_t offset,
                                 uint32_t value) {
-    if (!brcmstb_link_up()) {
+    uint64_t base = brcmstb_pcie_context.pcie_base_virt;
+
+    if (!brcmstb_pcie_link_up(base)) {
         return;
     }
 
-    brcmstb_indirect_cfg_write32(bus, slot, func, offset, value);
+    /* Bus 0 访问 RC 配置空间 */
+    if (bus == 0) {
+        if (slot != 0 || func != 0)
+            return;
+        mmio_write32(base + offset, value);
+    }
+
+    /* 其他 bus 通过索引/数据寄存器 */
+    uint32_t cfg_addr = brcmstb_make_cfg_addr(bus, slot, func, offset);
+    mmio_write32(base + PCIE_EXT_CFG_INDEX, cfg_addr);
+    mmio_write32(base + PCIE_EXT_CFG_DATA, value);
 }
 
-/**
- * 设备操作表
- */
 pci_device_op_t pcie_brcmstb_device_op = {
     .read8 = brcmstb_cfg_read8,
     .write8 = brcmstb_cfg_write8,
@@ -352,134 +665,6 @@ pci_device_op_t pcie_brcmstb_device_op = {
     .read32 = brcmstb_cfg_read32,
     .write32 = brcmstb_cfg_write32,
 };
-
-static void delay(uint64_t ns) {
-    uint64_t start = nanoTime();
-    while (nanoTime() - start < ns) {
-        asm volatile("nop");
-    }
-}
-
-static void brcmstb_pcie_perst_set(uint64_t base, bool assert_reset) {
-    uint32_t val = *(volatile uint32_t *)(base + PCIE_MISC_PCIE_CTRL);
-
-    if (assert_reset) {
-        val &= ~PCIE_MISC_PCIE_CTRL_PCIE_PERSTB; // Assert PERST#
-    } else {
-        val |= PCIE_MISC_PCIE_CTRL_PCIE_PERSTB; // De-assert PERST#
-    }
-
-    *(volatile uint32_t *)(base + PCIE_MISC_PCIE_CTRL) = val;
-}
-
-static int brcmstb_pcie_setup_bridge(uint64_t base) {
-    uint32_t val;
-
-    printk("PCIe BRCMSTB: Setting up bridge\n");
-
-    /* 禁用所有 RC BARs */
-    *(volatile uint32_t *)(base + PCIE_MISC_RC_BAR1_CONFIG_LO) = 0;
-    *(volatile uint32_t *)(base + PCIE_MISC_RC_BAR2_CONFIG_LO) = 0;
-    *(volatile uint32_t *)(base + PCIE_MISC_RC_BAR2_CONFIG_HI) = 0;
-    *(volatile uint32_t *)(base + PCIE_MISC_RC_BAR3_CONFIG_LO) = 0;
-
-    /* 配置 MISC_CTRL */
-    val = *(volatile uint32_t *)(base + PCIE_MISC_MISC_CTRL);
-    val |= PCIE_MISC_MISC_CTRL_SCB_ACCESS_EN;
-    val |= PCIE_MISC_MISC_CTRL_CFG_READ_UR_MODE;
-    val |= PCIE_MISC_MISC_CTRL_BURST_ALIGN;
-    val &= ~PCIE_MISC_MISC_CTRL_MAX_BURST_SIZE_MASK;
-    val |= PCIE_MISC_MISC_CTRL_MAX_BURST_SIZE_128;
-    *(volatile uint32_t *)(base + PCIE_MISC_MISC_CTRL) = val;
-
-    printk("  MISC_CTRL = 0x%08x\n", val);
-
-    return 0;
-}
-
-int pcie_brcmstb_init(uint64_t base_virt, uint64_t base_phys, uint64_t size) {
-    uint32_t val;
-
-    printk("PCIe BRCMSTB: Initializing BCM2711 controller\n");
-    printk("  Base: phys=0x%llx virt=0x%llx size=0x%llx\n", base_phys,
-           base_virt, size);
-
-    brcmstb_pcie_context.pcie_base_phys = base_phys;
-    brcmstb_pcie_context.pcie_base_virt = base_virt;
-    brcmstb_pcie_context.pcie_size = size;
-
-    /* 读取版本 */
-    uint32_t revision = *(volatile uint32_t *)(base_virt + PCIE_MISC_REVISION);
-    printk("PCIe BRCMSTB: Revision = 0x%08x\n", revision);
-
-    val = *(volatile uint32_t *)(base_virt + PCIE_RGR1_SW_INIT_1);
-    val |= PCIE_RGR1_SW_INIT_1_INIT; // Assert reset
-    *(volatile uint32_t *)(base_virt + PCIE_RGR1_SW_INIT_1) = val;
-
-    delay(100ULL * 1000ULL); // 100us
-
-    val &= ~PCIE_RGR1_SW_INIT_1_INIT; // De-assert reset
-    *(volatile uint32_t *)(base_virt + PCIE_RGR1_SW_INIT_1) = val;
-
-    delay(100ULL * 1000ULL);
-
-    brcmstb_pcie_perst_set(base_virt, true);
-    delay(100ULL * 1000ULL); // 100us
-
-    if (brcmstb_pcie_setup_bridge(base_virt) != 0) {
-        printk("PCIe BRCMSTB: Failed to setup bridge\n");
-        return -1;
-    }
-
-    brcmstb_pcie_perst_set(base_virt, false);
-
-    /* PCIe 规范要求等待 100ms */
-    printk("PCIe BRCMSTB: Waiting 100ms for PERST# to settle...\n");
-    delay(100ULL * 1000000ULL); // 100ms
-
-    printk("PCIe BRCMSTB: Waiting for link up...\n");
-
-    int timeout = 100; // 100 * 10ms = 1秒
-    bool link_up = false;
-
-    while (timeout-- > 0) {
-        if (brcmstb_link_up()) {
-            link_up = true;
-            break;
-        }
-
-        /* 每 100ms 打印一次状态 */
-        if (timeout % 10 == 0) {
-            uint32_t status =
-                *(volatile uint32_t *)(base_virt + PCIE_MISC_PCIE_STATUS);
-            printk("  [%d] Status=0x%08x PHY=%d DL=%d\n", timeout, status,
-                   !!(status & PCIE_MISC_PCIE_STATUS_PCIE_PHYLINKUP),
-                   !!(status & PCIE_MISC_PCIE_STATUS_PCIE_DL_ACTIVE));
-        }
-
-        delay(10ULL * 1000000ULL); // 10ms
-    }
-
-    if (!link_up) {
-        printk("PCIe BRCMSTB: WARNING - Link failed to come up\n");
-        printk("  This usually means:\n");
-        printk("  1. No PCIe device is connected\n");
-        printk("  2. PCIe is disabled in firmware (check config.txt)\n");
-        printk("  3. Hardware issue\n");
-        printk("  Continuing anyway (device scanning will be skipped)\n");
-    } else {
-        printk("PCIe BRCMSTB: Link up! (took %d ms)\n", (100 - timeout) * 10);
-
-        /* 读取 RC 信息 */
-        uint32_t vendor_dev =
-            *(volatile uint32_t *)(base_virt + PCIE_EXT_CFG_PCIE_EXT_CFG_DATA);
-        printk("PCIe BRCMSTB: RC Vendor:Device = 0x%04x:0x%04x\n",
-               vendor_dev & 0xFFFF, vendor_dev >> 16);
-    }
-
-    brcmstb_pcie_context.initialized = true;
-    return 0;
-}
 
 void pcie_brcmstb_scan_bus(uint16_t segment, uint8_t bus);
 
@@ -701,11 +886,6 @@ void pcie_brcmstb_scan_segment(uint16_t segment) {
         return;
     }
 
-    if (!brcmstb_link_up()) {
-        printk("PCIe BRCMSTB: Link is down, no devices to scan\n");
-        return;
-    }
-
     printk("PCIe BRCMSTB: Scanning segment %d\n", segment);
 
     // 从 bus 0 开始扫描
@@ -759,11 +939,6 @@ static int pcie_brcmstb_probe(fdt_device_t *dev, const char *compatible) {
         }
     }
 
-    // 映射内存
-    uint64_t pcie_virt = phys_to_virt(pcie_base);
-    map_page_range(get_current_page_dir(false), pcie_virt, pcie_base, pcie_size,
-                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
-
     // 保存配置
     brcmstb_pcie.pcie_base = pcie_base;
     brcmstb_pcie.pcie_size = pcie_size;
@@ -775,7 +950,8 @@ static int pcie_brcmstb_probe(fdt_device_t *dev, const char *compatible) {
     uint64_t pcie_base_virt = phys_to_virt(brcmstb_pcie.pcie_base);
     map_page_range(get_current_page_dir(false), pcie_base_virt,
                    brcmstb_pcie.pcie_base, brcmstb_pcie.pcie_size,
-                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE |
+                       PT_FLAG_DEVICE);
 
     // 初始化控制器
     if (pcie_brcmstb_init(pcie_base_virt, brcmstb_pcie.pcie_base,
