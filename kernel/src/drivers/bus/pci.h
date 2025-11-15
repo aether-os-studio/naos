@@ -96,6 +96,10 @@ void pci_find_vid(pci_device_t **result, uint32_t *n, uint32_t vid);
 void pci_find_class(pci_device_t **result, uint32_t *n, uint32_t class_code);
 pci_device_t *pci_find_bdfs(uint8_t bus, uint8_t slot, uint8_t func,
                             uint16_t segment);
+void pci_scan_segment(pci_device_op_t *op, uint16_t segment_group);
+void pci_scan_bus(pci_device_op_t *op, uint16_t segment_group, uint8_t bus);
+void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
+                       uint8_t device, uint8_t function);
 void pci_controller_init();
 void pci_init();
 void pci_init_after_sysfs();
