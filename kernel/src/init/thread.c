@@ -31,12 +31,13 @@ void init_thread(uint64_t arg) {
 
     arch_init_after_thread();
 
-    pci_controller_init();
-    pci_init();
-
 #if !defined(__x86_64__)
     fdt_init();
 #endif
+
+    pci_controller_init();
+
+    pci_init();
 
     acpi_init_after_pci();
 

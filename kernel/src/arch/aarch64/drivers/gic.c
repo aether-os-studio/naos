@@ -231,8 +231,8 @@ static uint64_t fdt_translate_address(void *fdt, int node_offset,
 /**
  * 获取 reg 并进行地址转换
  */
-int fdt_get_reg(void *fdt, int node_offset, int index, uint64_t *addr,
-                uint64_t *size) {
+static int fdt_get_reg(void *fdt, int node_offset, int index, uint64_t *addr,
+                       uint64_t *size) {
     int len;
     const uint32_t *reg = fdt_getprop(fdt, node_offset, "reg", &len);
 
@@ -256,13 +256,6 @@ int fdt_get_reg(void *fdt, int node_offset, int index, uint64_t *addr,
     }
 
     const uint32_t *entry = reg + (index * cells_per_entry);
-
-    /* 打印原始数据 */
-    printk("fdt_get_reg: raw data at index %d:\n", index);
-    for (int i = 0; i < cells_per_entry; i++) {
-        printk("  entry[%d] = 0x%08x (cpu: 0x%08x)\n", i, entry[i],
-               fdt32_to_cpu(entry[i]));
-    }
 
     /* 解析地址 */
     const uint32_t *p = entry;

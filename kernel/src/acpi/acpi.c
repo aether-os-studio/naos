@@ -22,7 +22,7 @@ void acpi_init_after_pci() {
          */
         uacpi_status ret = uacpi_namespace_load();
         if (uacpi_unlikely_error(ret)) {
-            printk("uacpi_namespace_load error: %s",
+            printk("uacpi_namespace_load error: %s\n",
                    uacpi_status_to_string(ret));
             acpi_initialized = false;
             return;
@@ -39,7 +39,7 @@ void acpi_init_after_pci() {
          */
         ret = uacpi_namespace_initialize();
         if (uacpi_unlikely_error(ret)) {
-            printk("uacpi_namespace_initialize error: %s",
+            printk("uacpi_namespace_initialize error: %s\n",
                    uacpi_status_to_string(ret));
             acpi_initialized = false;
             return;
