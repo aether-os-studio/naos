@@ -14,7 +14,7 @@ typedef enum {
 // 定时器抽象操作
 typedef struct {
     uint64_t (*read_counter)();
-    void (*write_cval)(uint64_t);
+    void (*write_tval)(uint64_t);
     void (*write_ctl)(uint64_t);
     uint64_t (*read_ctl)();
     const char *name;

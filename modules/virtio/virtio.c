@@ -108,8 +108,7 @@ static int virtio_mmio_fdt_probe(fdt_device_t *fdt_dev,
 
     volatile uint8_t *virt = (volatile uint8_t *)phys_to_virt(base_addr);
     map_page_range(get_current_page_dir(false), (uint64_t)virt, base_addr, size,
-                   PT_FLAG_R | PT_FLAG_W |
-                       PT_FLAG_UNCACHEABLE);
+                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
 
     mmio_dev->base = virt; // 或者通过 ioremap 映射
     mmio_dev->irq = irq;

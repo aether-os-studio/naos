@@ -416,10 +416,6 @@ static uint8_t brcmstb_cfg_read8(uint32_t bus, uint32_t slot, uint32_t func,
                                  uint32_t segment, uint32_t offset) {
     uint64_t base = brcmstb_ctx.pcie_base_virt;
 
-    if (!brcmstb_pcie_link_up(base)) {
-        return 0xFF;
-    }
-
     // Bus 0 (root bus) 直接访问控制器寄存器
     if (bus == brcmstb_ctx.bus_start) {
         if (slot != 0 || func != 0)
@@ -437,10 +433,6 @@ static void brcmstb_cfg_write8(uint32_t bus, uint32_t slot, uint32_t func,
                                uint8_t value) {
     uint64_t base = brcmstb_ctx.pcie_base_virt;
 
-    if (!brcmstb_pcie_link_up(base)) {
-        return;
-    }
-
     if (bus == brcmstb_ctx.bus_start) {
         if (slot != 0 || func != 0)
             return;
@@ -455,10 +447,6 @@ static void brcmstb_cfg_write8(uint32_t bus, uint32_t slot, uint32_t func,
 static uint16_t brcmstb_cfg_read16(uint32_t bus, uint32_t slot, uint32_t func,
                                    uint32_t segment, uint32_t offset) {
     uint64_t base = brcmstb_ctx.pcie_base_virt;
-
-    if (!brcmstb_pcie_link_up(base)) {
-        return 0xFFFF;
-    }
 
     if (bus == brcmstb_ctx.bus_start) {
         if (slot != 0 || func != 0)
@@ -475,10 +463,6 @@ static void brcmstb_cfg_write16(uint32_t bus, uint32_t slot, uint32_t func,
                                 uint16_t value) {
     uint64_t base = brcmstb_ctx.pcie_base_virt;
 
-    if (!brcmstb_pcie_link_up(base)) {
-        return;
-    }
-
     if (bus == brcmstb_ctx.bus_start) {
         if (slot != 0 || func != 0)
             return;
@@ -494,10 +478,6 @@ static uint32_t brcmstb_cfg_read32(uint32_t bus, uint32_t slot, uint32_t func,
                                    uint32_t segment, uint32_t offset) {
     uint64_t base = brcmstb_ctx.pcie_base_virt;
 
-    if (!brcmstb_pcie_link_up(base)) {
-        return 0xFFFFFFFF;
-    }
-
     if (bus == brcmstb_ctx.bus_start) {
         if (slot != 0 || func != 0)
             return 0xFFFFFFFF;
@@ -512,10 +492,6 @@ static void brcmstb_cfg_write32(uint32_t bus, uint32_t slot, uint32_t func,
                                 uint32_t segment, uint32_t offset,
                                 uint32_t value) {
     uint64_t base = brcmstb_ctx.pcie_base_virt;
-
-    if (!brcmstb_pcie_link_up(base)) {
-        return;
-    }
 
     if (bus == brcmstb_ctx.bus_start) {
         if (slot != 0 || func != 0)
@@ -579,9 +555,8 @@ static int pcie_brcmstb_probe(fdt_device_t *dev, const char *compatible) {
 
     // 映射寄存器空间
     uint64_t pcie_base_virt = phys_to_virt(pcie_base);
-    map_page_range(
-        get_current_page_dir(false), pcie_base_virt, pcie_base, pcie_size,
-        PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE | PT_FLAG_DEVICE);
+    map_page_range(get_current_page_dir(false), pcie_base_virt, pcie_base,
+                   pcie_size, PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
 
     brcmstb_ctx.pcie_base_phys = pcie_base;
     brcmstb_ctx.pcie_base_virt = pcie_base_virt;

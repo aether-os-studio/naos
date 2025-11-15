@@ -113,21 +113,21 @@ static void gic_parse_acpi(void) {
         gicd_base_virt = phys_to_virt(gicd_base_address);
         map_page_range(get_current_page_dir(false), gicd_base_virt,
                        gicd_base_address, 0x10000,
-                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
     }
 
     if (gic_version == GIC_VERSION_V2 && gicc_base_address) {
         gicc_base_virt = phys_to_virt(gicc_base_address);
         map_page_range(get_current_page_dir(false), gicc_base_virt,
                        gicc_base_address, 0x2000,
-                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
     }
 
     if (gic_version >= GIC_VERSION_V3 && gicr_base_address) {
         gicr_base_virt = phys_to_virt(gicr_base_address);
         map_page_range(get_current_page_dir(false), gicr_base_virt,
                        gicr_base_address, GICR_STRIDE * cpu_count,
-                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
     }
 }
 
@@ -358,21 +358,21 @@ static void gic_parse_dtb() {
             gicd_base_virt = phys_to_virt(gicd_base_address);
             map_page_range(get_current_page_dir(false), gicd_base_virt,
                            gicd_base_address, gicd_base_size,
-                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
         }
 
         if (gic_version == GIC_VERSION_V2 && gicc_base_address) {
             gicc_base_virt = phys_to_virt(gicc_base_address);
             map_page_range(get_current_page_dir(false), gicc_base_virt,
                            gicc_base_address, gicc_base_size,
-                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
         }
 
         if (gic_version >= GIC_VERSION_V3 && gicr_base_address) {
             gicr_base_virt = phys_to_virt(gicr_base_address);
             map_page_range(get_current_page_dir(false), gicr_base_virt,
                            gicr_base_address, gicr_base_size,
-                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
         }
     }
 }

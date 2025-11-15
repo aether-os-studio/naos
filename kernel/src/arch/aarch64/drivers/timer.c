@@ -20,8 +20,8 @@ static inline uint64_t read_cntvct() {
     return val;
 }
 
-static inline void write_cntv_cval(uint64_t val) {
-    __asm__ volatile("msr cntv_cval_el0, %0; isb" ::"r"(val) : "memory");
+static inline void write_cntv_tval(uint64_t val) {
+    __asm__ volatile("msr cntv_tval_el0, %0; isb" ::"r"(val) : "memory");
 }
 
 static inline void write_cntv_ctl(uint64_t val) {
@@ -41,8 +41,8 @@ static inline uint64_t read_cntpct() {
     return val;
 }
 
-static inline void write_cntp_cval(uint64_t val) {
-    __asm__ volatile("msr cntp_cval_el0, %0; isb" ::"r"(val) : "memory");
+static inline void write_cntp_tval(uint64_t val) {
+    __asm__ volatile("msr cntp_tval_el0, %0; isb" ::"r"(val) : "memory");
 }
 
 static inline void write_cntp_ctl(uint64_t val) {
@@ -56,13 +56,13 @@ static inline uint64_t read_cntp_ctl() {
 }
 
 static const timer_ops_t timer_ops_virtual = {.read_counter = read_cntvct,
-                                              .write_cval = write_cntv_cval,
+                                              .write_tval = write_cntv_tval,
                                               .write_ctl = write_cntv_ctl,
                                               .read_ctl = read_cntv_ctl,
                                               .name = "EL1 Virtual Timer"};
 
 static const timer_ops_t timer_ops_physical = {.read_counter = read_cntpct,
-                                               .write_cval = write_cntp_cval,
+                                               .write_tval = write_cntp_tval,
                                                .write_ctl = write_cntp_ctl,
                                                .read_ctl = read_cntp_ctl,
                                                .name = "EL1 Physical Timer"};
@@ -398,8 +398,7 @@ void timer_set_next_tick_ns(uint64_t ns) {
     __uint128_t temp = (__uint128_t)ns * g_timer.frequency;
     uint64_t delta_ticks = (uint64_t)(temp / 1000000000ULL);
 
-    uint64_t target = g_timer.ops->read_counter() + delta_ticks;
-    g_timer.ops->write_cval(target);
+    g_timer.ops->write_tval(delta_ticks);
     g_timer.ops->write_ctl(1); // Enable
 }
 

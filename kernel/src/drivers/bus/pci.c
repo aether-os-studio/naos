@@ -600,25 +600,68 @@ void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
         break;
     }
 }
+static bool pci_function_exists(pci_device_op_t *op, uint16_t segment,
+                                uint8_t bus, uint8_t slot, uint8_t func) {
+    printk("PCIe: Probing device %02x:%02x.%x\n", bus, slot, func);
 
-void pci_scan_bus(pci_device_op_t *op, uint16_t segment_group, uint8_t bus) {
-    for (int i = 0; i < 32; i++) {
-        pci_scan_function(op, segment_group, bus, i, 0);
-        if (op->read8(0, 0, 0, segment_group, 0x0e) & 0x80) {
-            for (int j = 1; j < 8; j++) {
-                pci_scan_function(op, segment_group, bus, i, j);
+    uint16_t vendor = op->read16(bus, slot, func, segment, 0x00);
+
+    // Vendor ID 必须有效
+    if (vendor == 0xFFFF || vendor == 0x0000) {
+        return false;
+    }
+
+    // 对于 function > 0，额外检查以防止误读
+    if (func > 0) {
+        // 读取 Device ID 确保不是全0xFF或全0x00
+        uint16_t device = op->read16(bus, slot, func, segment, 0x02);
+        if (device == 0xFFFF || device == 0x0000) {
+            return false;
+        }
+
+        // 读取 class code 再次验证
+        uint32_t class_rev = op->read32(bus, slot, func, segment, 0x08);
+        if (class_rev == 0xFFFFFFFF || class_rev == 0x00000000) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void pci_scan_slot(pci_device_op_t *op, uint16_t segment_group, uint8_t bus,
+                   uint8_t slot) {
+    // 先检查 function 0 是否存在
+    if (!pci_function_exists(op, segment_group, bus, slot, 0)) {
+        // Function 0 不存在，整个 slot 都不存在
+        return;
+    }
+
+    // 扫描 function 0
+    pci_scan_function(op, segment_group, bus, slot, 0);
+
+    // 检查是否是多功能设备
+    uint8_t header_type = op->read8(bus, slot, 0, segment_group, 0x0E);
+
+    if (header_type & 0x80) {
+        // 是多功能设备，逐个检查并扫描 function 1-7
+        for (uint8_t func = 1; func < 8; func++) {
+            if (pci_function_exists(op, segment_group, bus, slot, func)) {
+                pci_scan_function(op, segment_group, bus, slot, func);
             }
         }
     }
 }
 
+void pci_scan_bus(pci_device_op_t *op, uint16_t segment_group, uint8_t bus) {
+    // 扫描所有 32 个 slot
+    for (uint8_t slot = 0; slot < 32; slot++) {
+        pci_scan_slot(op, segment_group, bus, slot);
+    }
+}
+
 void pci_scan_segment(pci_device_op_t *op, uint16_t segment_group) {
     pci_scan_bus(op, segment_group, 0);
-    if (op->read8(0, 0, 0, segment_group, 0x0e) & 0x80) {
-        for (int i = 1; i < 8; i++) {
-            pci_scan_bus(op, segment_group, i);
-        }
-    }
 }
 
 extern pci_driver_t *pci_drivers[MAX_PCI_DRIVERS];
