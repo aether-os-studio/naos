@@ -65,6 +65,21 @@
 /* Link Status 寄存器 (PCIe 配置空间) */
 #define PCIE_RC_CFG_LINK_STATUS 0x00be
 
+/**
+ * PCIe ranges 条目
+ * 用于存储从设备树解析的地址映射范围
+ */
+typedef struct {
+    uint64_t pci_addr; // PCIe侧地址（设备看到的地址）
+    uint64_t cpu_addr; // CPU侧地址（物理地址）
+    uint64_t size;     // 范围大小
+    uint32_t flags;    // 标志位（包含空间类型等信息）
+} pcie_range_t;
+
+/**
+ * PCIe 控制器配置
+ * 从设备树读取的静态配置信息
+ */
 typedef struct {
     uint64_t pcie_base; // PCIe 配置寄存器基地址
     uint64_t pcie_size;
@@ -73,14 +88,22 @@ typedef struct {
     bool found;
 } pcie_brcmstb_config_t;
 
+/**
+ * PCIe 控制器运行时上下文
+ */
 typedef struct {
+    int fdt_node; // 设备树节点偏移
+
+    // PCIe 控制器寄存器地址
     uint64_t pcie_base_phys;
     uint64_t pcie_base_virt;
     uint64_t pcie_size;
 
-    uint64_t config_base_phys; // 配置空间基地址
-    uint64_t config_base_virt;
-    uint64_t config_size;
+    // BAR 地址分配池
+    uint64_t mem_pci_base; // PCIe侧内存基地址（写入BAR的地址）
+    uint64_t mem_cpu_base; // CPU侧内存基地址（用于映射）
+    uint64_t mem_size;     // 内存范围大小
+    uint64_t mem_current;  // 当前分配位置（PCIe侧地址）
 
     bool initialized;
 } pcie_brcmstb_context_t;

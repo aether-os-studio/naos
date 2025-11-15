@@ -370,6 +370,78 @@ static bool brcmstb_pcie_link_up(uint64_t base) {
            (status & PCIE_MISC_PCIE_STATUS_PCIE_DL_ACTIVE);
 }
 
+static int pcie_parse_ranges(void *fdt, int node, pcie_range_t *ranges,
+                             int max_ranges) {
+    int len;
+    const uint32_t *prop = fdt_getprop(fdt, node, "ranges", &len);
+    if (!prop || len <= 0) {
+        printk("PCIe: No ranges property found\n");
+        return 0;
+    }
+
+    int parent = fdt_parent_offset(fdt, node);
+    int na = 3;                               // PCI address cells 固定为3
+    int pna = fdt_address_cells(fdt, parent); // Parent address cells
+    int ns = fdt_size_cells(fdt, node);
+
+    printk("PCIe: Parsing ranges (na=%d, pna=%d, ns=%d, len=%d)\n", na, pna, ns,
+           len);
+
+    const uint32_t *p = prop;
+    const uint32_t *end = prop + (len / sizeof(uint32_t));
+    int count = 0;
+
+    while (p < end && count < max_ranges) {
+        // Read PCI address (3 cells: flags, addr_high, addr_low)
+        uint32_t flags = fdt32_to_cpu(*p++);
+        uint32_t pci_addr_hi = fdt32_to_cpu(*p++);
+        uint32_t pci_addr_lo = fdt32_to_cpu(*p++);
+        uint64_t pci_addr = ((uint64_t)pci_addr_hi << 32) | pci_addr_lo;
+
+        // Read CPU address
+        uint64_t cpu_addr = fdt_read_cells(&p, pna);
+
+        // Read size
+        uint64_t size = fdt_read_cells(&p, ns);
+
+        // Decode space code
+        uint32_t space_code = (flags >> 24) & 0x03;
+        bool prefetchable = (flags >> 30) & 0x01;
+
+        const char *type_str;
+        switch (space_code) {
+        case 0x00:
+            type_str = "Config";
+            break;
+        case 0x01:
+            type_str = "I/O";
+            break;
+        case 0x02:
+            type_str = "MEM32";
+            break;
+        case 0x03:
+            type_str = "MEM64";
+            break;
+        default:
+            type_str = "Unknown";
+            break;
+        }
+
+        ranges[count].flags = flags;
+        ranges[count].pci_addr = pci_addr;
+        ranges[count].cpu_addr = cpu_addr;
+        ranges[count].size = size;
+
+        printk("  Range[%d]: %s%s PCI 0x%llx -> CPU 0x%llx (size 0x%llx)\n",
+               count, type_str, prefetchable ? "-Pref" : "", pci_addr, cpu_addr,
+               size);
+
+        count++;
+    }
+
+    return count;
+}
+
 int pcie_brcmstb_init(uint64_t base_virt, uint64_t base_phys, uint64_t size) {
     uint32_t val;
 
@@ -463,14 +535,44 @@ int pcie_brcmstb_init(uint64_t base_virt, uint64_t base_phys, uint64_t size) {
         return -1;
     }
 
-    /* 步骤 5: 配置 outbound window */
-    /* 这些值应该从 DTB 的 ranges 属性读取 */
-    set_outbound_window(base_virt, 0,
-                        0x600000000ULL, // CPU 地址
-                        0xC0000000,     // PCIe 地址
-                        0x40000000);    // 1GB 大小
+    /* === 解析 ranges 并配置 outbound windows === */
+    void *fdt = (void *)boot_get_dtb();
+    int node = brcmstb_pcie_context.fdt_node; // 使用保存的节点
 
-    /* 步骤 6: 配置链路能力 */
+    pcie_range_t ranges[8];
+    int range_count = pcie_parse_ranges(fdt, node, ranges, 8);
+
+    if (range_count == 0) {
+        printk("PCIe: ERROR - No valid ranges found\n");
+        return -1;
+    }
+
+    int window_idx = 0;
+    for (int i = 0; i < range_count && window_idx < 4; i++) {
+        uint32_t space_code = (ranges[i].flags >> 24) & 0x03;
+
+        // 0x01 = I/O space, 0x02 = 32-bit Memory, 0x03 = 64-bit Memory
+        if (space_code == 0x02 || space_code == 0x03) {
+            set_outbound_window(base_virt, window_idx, ranges[i].cpu_addr,
+                                ranges[i].pci_addr, ranges[i].size);
+
+            // 保存第一个memory range用于BAR分配
+            if (window_idx == 0) {
+                brcmstb_pcie_context.mem_pci_base = ranges[i].pci_addr;
+                brcmstb_pcie_context.mem_cpu_base = ranges[i].cpu_addr;
+                brcmstb_pcie_context.mem_size = ranges[i].size;
+                brcmstb_pcie_context.mem_current = ranges[i].pci_addr;
+
+                printk("PCIe: BAR allocation pool: PCI 0x%llx, size 0x%llx\n",
+                       brcmstb_pcie_context.mem_pci_base,
+                       brcmstb_pcie_context.mem_size);
+            }
+
+            window_idx++;
+        }
+    }
+
+    /* 配置链路能力 */
     val = mmio_read32(base_virt + PCIE_RC_CFG_PRIV1_LINK_CAPABILITY);
     val |= PRIV1_LINK_CAPABILITY_L1_L0S_MASK; // 启用 L1 & L0s
     mmio_write32(base_virt + PCIE_RC_CFG_PRIV1_LINK_CAPABILITY, val);
@@ -478,10 +580,10 @@ int pcie_brcmstb_init(uint64_t base_virt, uint64_t base_phys, uint64_t size) {
     /* 设置设备类代码为 PCI-PCI Bridge */
     mmio_write32(base_virt + PCIE_RC_CFG_PRIV1_ID_VAL3, 0x060400);
 
-    /* 步骤 7: 启用 SSC */
+    /* 启用 SSC */
     enable_ssc(base_virt);
 
-    /* 步骤 8: 读取链路状态 */
+    /* 读取链路状态 */
     uint16_t link_status = mmio_read16(base_virt + PCIE_RC_CFG_LINK_STATUS);
     uint8_t link_speed = link_status & 0xf;
     uint8_t link_width = (link_status >> 4) & 0x3f;
@@ -504,20 +606,61 @@ int pcie_brcmstb_init(uint64_t base_virt, uint64_t base_phys, uint64_t size) {
 
     printk("PCIe: Link speed %s, x%d\n", speed_str, link_width);
 
-    /* 步骤 9: 配置字节序 */
+    /* 配置字节序 */
     val = mmio_read32(base_virt + PCIE_RC_CFG_VENDOR_VENDOR_SPECIFIC_REG1);
     val &= ~VENDOR_SPECIFIC_REG1_ENDIAN_MODE_MASK;
     val |= (0 << VENDOR_SPECIFIC_REG1_ENDIAN_MODE_SHIFT); // Little endian
     mmio_write32(base_virt + PCIE_RC_CFG_VENDOR_VENDOR_SPECIFIC_REG1, val);
 
-    /* 步骤 10: 启用 CLKREQ# */
+    /* 启用 CLKREQ# */
     val = mmio_read32(base_virt + PCIE_MISC_HARD_PCIE_HARD_DEBUG);
     val |= PCIE_HARD_DEBUG_CLKREQ_ENABLE;
     mmio_write32(base_virt + PCIE_MISC_HARD_PCIE_HARD_DEBUG, val);
 
-    brcmstb_pcie_context.initialized = true;
+    /* === 配置 RC Bridge === */
+    printk("PCIe: Configuring RC Bridge\n");
 
-    printk("=== PCIe BRCMSTB Initialization Complete ===\n\n");
+    // 配置 Bus Numbers: Primary=0, Secondary=1, Subordinate=255
+    mmio_write32(base_virt + 0x18, 0x00FF0100);
+    printk("  Bus numbers: Primary=0, Secondary=1, Subordinate=255\n");
+
+    // 配置 Memory Base/Limit
+    if (brcmstb_pcie_context.mem_size > 0) {
+        uint32_t mem_base = (brcmstb_pcie_context.mem_pci_base >> 16) & 0xFFF0;
+        uint64_t mem_end = brcmstb_pcie_context.mem_pci_base +
+                           brcmstb_pcie_context.mem_size - 1;
+        uint32_t mem_limit = (mem_end >> 16) & 0xFFF0;
+
+        uint32_t mem_reg = (mem_limit << 16) | mem_base;
+        mmio_write32(base_virt + 0x20, mem_reg);
+
+        printk("  Memory window: 0x%llx - 0x%llx\n",
+               brcmstb_pcie_context.mem_pci_base, mem_end);
+        printk("  Memory Base/Limit register: 0x%08x\n", mem_reg);
+    }
+
+    // 禁用 Prefetchable Memory
+    mmio_write32(base_virt + 0x24, 0x0000FFF0);
+    mmio_write32(base_virt + 0x28, 0x00000000);
+    mmio_write32(base_virt + 0x2C, 0x00000000);
+
+    // 禁用 I/O Space
+    mmio_write16(base_virt + 0x1C, 0x00F0);
+    mmio_write32(base_virt + 0x30, 0x00000000);
+
+    // 使能 Command register
+    uint32_t cmd = mmio_read32(base_virt + 0x04);
+    cmd |= 0x07; // I/O Space | Memory Space | Bus Master
+    mmio_write32(base_virt + 0x04, cmd);
+    printk("  Command register: 0x%04x\n", cmd);
+
+    // 验证配置
+    uint32_t buses_verify = mmio_read32(base_virt + 0x18);
+    uint32_t mem_verify = mmio_read32(base_virt + 0x20);
+    printk("  Verify - Buses: 0x%08x, Memory: 0x%08x\n", buses_verify,
+           mem_verify);
+
+    brcmstb_pcie_context.initialized = true;
 
     return 0;
 }
@@ -666,6 +809,42 @@ pci_device_op_t pcie_brcmstb_device_op = {
     .write32 = brcmstb_cfg_write32,
 };
 
+/**
+ * 分配BAR地址
+ */
+static uint64_t pcie_allocate_bar(uint64_t size, bool is_64bit) {
+    if (size == 0) {
+        return 0;
+    }
+
+    // 确保size是2的幂
+    if ((size & (size - 1)) != 0) {
+        printk("PCIe: WARNING - BAR size 0x%llx is not power of 2\n", size);
+        // 向上对齐到2的幂
+        size = 1ULL << (64 - __builtin_clzll(size));
+    }
+
+    // 对齐到size
+    uint64_t align_mask = size - 1;
+    uint64_t addr =
+        (brcmstb_pcie_context.mem_current + align_mask) & ~align_mask;
+
+    // 检查是否超出范围
+    uint64_t end =
+        brcmstb_pcie_context.mem_pci_base + brcmstb_pcie_context.mem_size;
+    if (addr + size > end) {
+        printk("PCIe: Out of memory space (need 0x%llx, have 0x%llx)\n",
+               addr + size, end);
+        return 0;
+    }
+
+    brcmstb_pcie_context.mem_current = addr + size;
+
+    printk("    Allocated: 0x%llx - 0x%llx (size 0x%llx)\n", addr,
+           addr + size - 1, size);
+    return addr;
+}
+
 void pcie_brcmstb_scan_bus(uint16_t segment, uint8_t bus);
 
 /**
@@ -719,12 +898,6 @@ void pcie_brcmstb_scan_function(uint16_t segment, uint8_t bus, uint8_t device,
         printk("PCIe: Endpoint device: %s (class 0x%06x)\n", pci_device->name,
                class_code);
 
-        // 使能 Bus Master, Memory Space, I/O Space
-        uint32_t cmd =
-            pci_device->op->read32(bus, device, function, segment, 0x04);
-        cmd |= (1 << 2) | (1 << 1) | (1 << 0);
-        pci_device->op->write32(bus, device, function, segment, 0x04, cmd);
-
         // 读取 subsystem IDs
         uint32_t subsys =
             pci_device->op->read32(bus, device, function, segment, 0x2C);
@@ -741,78 +914,150 @@ void pcie_brcmstb_scan_function(uint16_t segment, uint8_t bus, uint8_t device,
         pci_device->capability_point =
             pci_device->op->read8(bus, device, function, segment, 0x34);
 
-        // 解析 BARs
+        // === 扫描并分配 BARs ===
+        printk("  Scanning and allocating BARs:\n");
+
         for (int i = 0; i < 6; i++) {
             uint32_t bar_offset = 0x10 + i * 4;
-            uint32_t bar = pci_device->op->read32(bus, device, function,
-                                                  segment, bar_offset);
 
-            if (bar == 0) {
+            // 读取原始值
+            uint32_t bar_orig = pci_device->op->read32(bus, device, function,
+                                                       segment, bar_offset);
+
+            // 写入全1探测大小
+            pci_device->op->write32(bus, device, function, segment, bar_offset,
+                                    0xFFFFFFFF);
+
+            // 读回获取size mask
+            uint32_t bar_mask = pci_device->op->read32(bus, device, function,
+                                                       segment, bar_offset);
+
+            // 如果读回0或0xFFFFFFFF，说明BAR未实现
+            if (bar_mask == 0 || bar_mask == 0xFFFFFFFF) {
+                // 恢复原值
+                pci_device->op->write32(bus, device, function, segment,
+                                        bar_offset, bar_orig);
                 continue;
             }
 
-            if (bar & 0x1) {
-                // I/O BAR
-                pci_device->bars[i].address = bar & 0xFFFFFFFC;
+            if (bar_mask & 0x1) {
+                // I/O BAR - 跳过
+                printk("  BAR%d: I/O space (skipping)\n", i);
+                pci_device->op->write32(bus, device, function, segment,
+                                        bar_offset, bar_orig);
                 pci_device->bars[i].mmio = false;
-            } else {
-                // Memory BAR
-                uint32_t type = (bar >> 1) & 0x3;
+                continue;
+            }
 
-                if (type == 0x00) { // 32-bit
-                    pci_device->bars[i].address = bar & 0xFFFFFFF0;
-                    pci_device->bars[i].mmio = true;
+            // Memory BAR
+            uint32_t type = (bar_mask >> 1) & 0x3;
 
-                    // 读取大小
-                    uint32_t orig = bar;
+            if (type == 0x00) { // 32-bit Memory BAR
+                uint64_t size = ~(bar_mask & 0xFFFFFFF0) + 1;
+
+                if (size == 0) {
                     pci_device->op->write32(bus, device, function, segment,
-                                            bar_offset, 0xFFFFFFFF);
-                    uint32_t size_mask = pci_device->op->read32(
-                        bus, device, function, segment, bar_offset);
-                    pci_device->op->write32(bus, device, function, segment,
-                                            bar_offset, orig);
-
-                    pci_device->bars[i].size = ~(size_mask & 0xFFFFFFF0) + 1;
-
-                } else if (type == 0x02) { // 64-bit
-                    uint32_t bar_high = pci_device->op->read32(
-                        bus, device, function, segment, bar_offset + 4);
-                    uint64_t addr =
-                        ((uint64_t)bar_high << 32) | (bar & 0xFFFFFFF0);
-                    pci_device->bars[i].address = addr;
-                    pci_device->bars[i].mmio = true;
-
-                    // 读取大小
-                    uint32_t orig_low = bar;
-                    uint32_t orig_high = bar_high;
-
-                    pci_device->op->write32(bus, device, function, segment,
-                                            bar_offset, 0xFFFFFFFF);
-                    pci_device->op->write32(bus, device, function, segment,
-                                            bar_offset + 4, 0xFFFFFFFF);
-
-                    uint32_t size_low = pci_device->op->read32(
-                        bus, device, function, segment, bar_offset);
-                    uint32_t size_high = pci_device->op->read32(
-                        bus, device, function, segment, bar_offset + 4);
-
-                    pci_device->op->write32(bus, device, function, segment,
-                                            bar_offset, orig_low);
-                    pci_device->op->write32(bus, device, function, segment,
-                                            bar_offset + 4, orig_high);
-
-                    uint64_t size_mask =
-                        ((uint64_t)size_high << 32) | (size_low & 0xFFFFFFF0);
-                    pci_device->bars[i].size = ~size_mask + 1;
-
-                    i++; // 64-bit BAR 占用两个 BAR 槽位
+                                            bar_offset, bar_orig);
+                    continue;
                 }
 
-                printk("  BAR%d: addr=0x%llx size=0x%llx %s\n", i,
-                       pci_device->bars[i].address, pci_device->bars[i].size,
-                       pci_device->bars[i].mmio ? "MEM" : "I/O");
+                printk("  BAR%d: 32-bit Memory, size=0x%llx\n", i, size);
+
+                uint64_t addr = pcie_allocate_bar(size, false);
+                if (addr) {
+                    // 写入分配的地址
+                    pci_device->op->write32(bus, device, function, segment,
+                                            bar_offset, (uint32_t)addr);
+
+                    // 验证写入
+                    uint32_t verify = pci_device->op->read32(
+                        bus, device, function, segment, bar_offset);
+
+                    // 保存信息
+                    pci_device->bars[i].address = addr;
+                    pci_device->bars[i].size = size;
+                    pci_device->bars[i].mmio = true;
+
+                    printk("    Wrote 0x%llx, verified 0x%08x\n", addr, verify);
+                } else {
+                    // 分配失败，恢复原值
+                    pci_device->op->write32(bus, device, function, segment,
+                                            bar_offset, bar_orig);
+                }
+
+            } else if (type == 0x02) { // 64-bit Memory BAR
+                // 读取高32位的size mask
+                uint32_t bar_orig_hi = pci_device->op->read32(
+                    bus, device, function, segment, bar_offset + 4);
+
+                pci_device->op->write32(bus, device, function, segment,
+                                        bar_offset + 4, 0xFFFFFFFF);
+                uint32_t bar_mask_hi = pci_device->op->read32(
+                    bus, device, function, segment, bar_offset + 4);
+
+                uint64_t size_mask =
+                    ((uint64_t)bar_mask_hi << 32) | (bar_mask & 0xFFFFFFF0);
+                uint64_t size = ~size_mask + 1;
+
+                if (size == 0) {
+                    pci_device->op->write32(bus, device, function, segment,
+                                            bar_offset, bar_orig);
+                    pci_device->op->write32(bus, device, function, segment,
+                                            bar_offset + 4, bar_orig_hi);
+                    i++; // 跳过下一个BAR
+                    continue;
+                }
+
+                printk("  BAR%d: 64-bit Memory, size=0x%llx\n", i, size);
+
+                uint64_t addr = pcie_allocate_bar(size, true);
+                if (addr) {
+                    // 写入分配的地址（分两次写）
+                    pci_device->op->write32(bus, device, function, segment,
+                                            bar_offset, (uint32_t)addr);
+                    pci_device->op->write32(bus, device, function, segment,
+                                            bar_offset + 4,
+                                            (uint32_t)(addr >> 32));
+
+                    // 验证写入
+                    uint32_t verify_lo = pci_device->op->read32(
+                        bus, device, function, segment, bar_offset);
+                    uint32_t verify_hi = pci_device->op->read32(
+                        bus, device, function, segment, bar_offset + 4);
+
+                    // 保存信息
+                    pci_device->bars[i].address = addr;
+                    pci_device->bars[i].size = size;
+                    pci_device->bars[i].mmio = true;
+
+                    printk("    Wrote 0x%llx, verified 0x%08x%08x\n", addr,
+                           verify_hi, verify_lo);
+                } else {
+                    // 分配失败，恢复原值
+                    pci_device->op->write32(bus, device, function, segment,
+                                            bar_offset, bar_orig);
+                    pci_device->op->write32(bus, device, function, segment,
+                                            bar_offset + 4, bar_orig_hi);
+                }
+
+                i++; // 64-bit BAR 占用两个槽位
+
+            } else {
+                printk("  BAR%d: Reserved type 0x%x\n", i, type);
+                pci_device->op->write32(bus, device, function, segment,
+                                        bar_offset, bar_orig);
             }
         }
+
+        // BARs 配置完成后，使能设备
+        printk("  Enabling device...\n");
+        uint32_t cmd =
+            pci_device->op->read32(bus, device, function, segment, 0x04);
+        printk("    Command register before: 0x%04x\n", cmd);
+        cmd |= 0x06; // Memory Space Enable | Bus Master Enable
+        pci_device->op->write32(bus, device, function, segment, 0x04, cmd);
+        cmd = pci_device->op->read32(bus, device, function, segment, 0x04);
+        printk("    Command register after: 0x%04x\n", cmd);
 
         // 添加到设备列表
         pci_devices[pci_device_number++] = pci_device;
@@ -820,21 +1065,41 @@ void pcie_brcmstb_scan_function(uint16_t segment, uint8_t bus, uint8_t device,
     }
 
     case 0x01: { // PCI-PCI Bridge
-        printk("PCIe: Bridge device\n");
+        printk("PCIe: Bridge device at %02x:%02x.%x\n", bus, device, function);
 
+        // 读取总线配置
         uint32_t buses =
             pci_device->op->read32(bus, device, function, segment, 0x18);
+        uint8_t primary_bus = buses & 0xFF;
         uint8_t secondary_bus = (buses >> 8) & 0xFF;
         uint8_t subordinate_bus = (buses >> 16) & 0xFF;
 
-        printk("  Secondary bus: %d, Subordinate bus: %d\n", secondary_bus,
-               subordinate_bus);
+        printk("  Primary: %d, Secondary: %d, Subordinate: %d\n", primary_bus,
+               secondary_bus, subordinate_bus);
 
-        // 递归扫描子总线
-        for (uint8_t sub_bus = secondary_bus; sub_bus <= subordinate_bus;
-             sub_bus++) {
-            pcie_brcmstb_scan_bus(segment, sub_bus);
+        // 验证总线号合法性
+        if (secondary_bus == 0 || secondary_bus == 0xFF) {
+            printk("  WARNING: Invalid secondary bus number\n");
+            free(pci_device);
+            break;
         }
+
+        // 检查循环引用
+        if (secondary_bus <= bus) {
+            printk("  WARNING: Possible bus loop detected (sec %d <= cur %d)\n",
+                   secondary_bus, bus);
+            free(pci_device);
+            break;
+        }
+
+        // 使能桥设备
+        uint32_t cmd =
+            pci_device->op->read32(bus, device, function, segment, 0x04);
+        cmd |= 0x07; // I/O, Memory, Bus Master
+        pci_device->op->write32(bus, device, function, segment, 0x04, cmd);
+
+        // 递归扫描子总线（只扫描secondary bus）
+        pcie_brcmstb_scan_bus(segment, secondary_bus);
 
         free(pci_device);
         break;
@@ -910,11 +1175,15 @@ static int pcie_brcmstb_probe(fdt_device_t *dev, const char *compatible) {
 
     printk("PCIe: Probing brcmstb PCIe controller\n");
     printk("PCIe: Compatible: %s\n", compatible);
+    printk("PCIe: Node offset: %d\n", dev->node);
+
+    // 保存 node offset（重要！）
+    brcmstb_pcie_context.fdt_node = dev->node;
 
     uint64_t pcie_base, pcie_size;
     uint64_t msi_base, msi_size;
 
-    // 方法 1：通过 reg-names
+    // 通过 reg-names 查找索引
     int pcie_idx = fdt_get_reg_index_by_name(fdt, dev->node, "pcie");
     int msi_idx = fdt_get_reg_index_by_name(fdt, dev->node, "msi");
 

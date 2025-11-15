@@ -210,7 +210,7 @@ static int fw_cfg_detect_dt(struct fw_cfg_device *dev) {
     map_page_range(
         get_current_page_dir(false), (uint64_t)dev->mmio_base, base_addr,
         (size + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1),
-        PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE | PT_FLAG_DEVICE);
+        PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
     dev->selector =
         (volatile uint16_t *)((uint8_t *)dev->mmio_base + FW_CFG_MMIO_SELECTOR);
     dev->data =
