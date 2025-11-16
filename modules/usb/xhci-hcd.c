@@ -6,7 +6,6 @@
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
 #include "xhci-hcd.h"
-#include <libs/aether/mm.h>
 #include <libs/aether/pci.h>
 #include <libs/aether/irq.h>
 
@@ -282,8 +281,24 @@ static const int speed_to_xhci[] = {
     [USB_SUPERSPEED] = 4,
 };
 
-static int wait_bit(uint32_t *reg, uint32_t mask, int value, uint32_t timeout) {
+static inline void delay(uint64_t ms) {
+    uint64_t ns = ms * 1000000ULL;
+    uint64_t timeout = nanoTime() + ns;
+    while (nanoTime() < timeout) {
+        arch_pause();
+    }
+}
+
+static int wait_bit(volatile uint32_t *reg, uint32_t mask, uint32_t value,
+                    uint32_t timeout) {
+    uint64_t timeout_ns = nanoTime() + (uint64_t)timeout * 1000000ULL;
     while ((readl(reg) & mask) != value) {
+        if (nanoTime() > timeout_ns) {
+            printk("wait_bit timeout: reg=%p mask=0x%x expected=0x%x "
+                   "actual=0x%x\n",
+                   reg, mask, value, readl(reg) & mask);
+            return -1;
+        }
         arch_pause();
     }
     return 0;
@@ -316,15 +331,12 @@ static int xhci_hub_reset(struct usbhub_s *hub, uint32_t port) {
     struct usb_xhci_s *xhci = container_of(hub->cntl, struct usb_xhci_s, usb);
     uint32_t portsc = readl(&xhci->pr[port].portsc);
     if (!(portsc & XHCI_PORTSC_CCS))
-        // Device no longer connected?!
         return -1;
 
     switch (xhci_get_field(portsc, XHCI_PORTSC_PLS)) {
     case PLS_U0:
-        // A USB3 port - controller automatically performs reset
         break;
     case PLS_POLLING:
-        // A USB2 port - perform device reset
         writel(&xhci->pr[port].portsc, portsc | XHCI_PORTSC_PR);
         break;
     default:
@@ -333,17 +345,22 @@ static int xhci_hub_reset(struct usbhub_s *hub, uint32_t port) {
         return -1;
     }
 
-    // Wait for device to complete reset and be enabled
+    uint64_t timeout = nanoTime() + 2000000000ULL; // 2秒超时
     for (;;) {
+        if (nanoTime() > timeout) {
+            printk("XHCI: Port %d reset timeout\n", port);
+            return -1;
+        }
+
         portsc = readl(&xhci->pr[port].portsc);
         if (!(portsc & XHCI_PORTSC_CCS))
-            // Device disconnected during reset
             return -1;
         if (portsc & XHCI_PORTSC_PED)
-            // Reset complete
             break;
         arch_pause();
     }
+
+    delay(10);
 
     int rc = speed_from_xhci[xhci_get_field(portsc, XHCI_PORTSC_SPEED)];
     xhci_print_port_state(1, "XHCI", port, portsc);
@@ -380,14 +397,6 @@ static struct usbhub_op_s xhci_hub_ops = {
     .poll_intr = xhci_poll_intr,
 };
 
-static inline void delay(uint64_t ms) {
-    uint64_t ns = ms * 1000000ULL;
-    uint64_t timeout = nanoTime() + ns;
-    while (nanoTime() < timeout) {
-        arch_pause();
-    }
-}
-
 // Find any devices connected to the root hub.
 static int xhci_check_ports(struct usb_xhci_s *xhci) {
     // Wait for port power to stabilize.
@@ -418,58 +427,77 @@ static void configure_xhci(void *data) {
     struct usb_xhci_s *xhci = data;
     uint32_t reg;
 
+    // 分配内存
     xhci->devs =
         alloc_frames_bytes_dma32(sizeof(*xhci->devs) * (xhci->slots + 1));
     xhci->eseg = alloc_frames_bytes_dma32(sizeof(*xhci->eseg));
     xhci->cmds = alloc_frames_bytes_dma32(sizeof(*xhci->cmds));
     xhci->evts = alloc_frames_bytes_dma32(sizeof(*xhci->evts));
+
     if (!xhci->devs || !xhci->cmds || !xhci->evts || !xhci->eseg) {
         goto fail;
     }
+
     memset(xhci->devs, 0, sizeof(*xhci->devs) * (xhci->slots + 1));
     memset(xhci->cmds, 0, sizeof(*xhci->cmds));
     memset(xhci->evts, 0, sizeof(*xhci->evts));
     memset(xhci->eseg, 0, sizeof(*xhci->eseg));
 
+    dma_sync_cpu_to_device(xhci->devs, sizeof(*xhci->devs) * (xhci->slots + 1));
+    dma_sync_cpu_to_device(xhci->cmds, sizeof(*xhci->cmds));
+    dma_sync_cpu_to_device(xhci->evts, sizeof(*xhci->evts));
+
+    // 停止控制器
     reg = readl(&xhci->op->usbcmd);
     if (reg & XHCI_CMD_RS) {
         reg &= ~XHCI_CMD_RS;
         writel(&xhci->op->usbcmd, reg);
-        if (wait_bit(&xhci->op->usbsts, XHCI_STS_HCH, XHCI_STS_HCH, 32) != 0)
+        if (wait_bit(&xhci->op->usbsts, XHCI_STS_HCH, XHCI_STS_HCH, 3000) != 0)
             goto fail;
     }
 
+    // 重置控制器
     writel(&xhci->op->usbcmd, XHCI_CMD_HCRST);
-    if (wait_bit(&xhci->op->usbcmd, XHCI_CMD_HCRST, 0, 1000) != 0)
+    if (wait_bit(&xhci->op->usbcmd, XHCI_CMD_HCRST, 0, 3000) != 0)
         goto fail;
-    if (wait_bit(&xhci->op->usbsts, XHCI_STS_CNR, 0, 1000) != 0)
+    if (wait_bit(&xhci->op->usbsts, XHCI_STS_CNR, 0, 3000) != 0)
         goto fail;
 
+    // 配置槽位
     writel(&xhci->op->config, xhci->slots);
+
+    // 设置DCBAAP
     uint64_t dcbaap =
         translate_address(get_current_page_dir(false), (uint64_t)xhci->devs);
     writel(&xhci->op->dcbaap_low, dcbaap);
     writel(&xhci->op->dcbaap_high, dcbaap >> 32);
+
     uint64_t crcr =
         translate_address(get_current_page_dir(false), (uint64_t)xhci->cmds);
-    writel(&xhci->op->crcr_low, crcr | 1);
+    writel(&xhci->op->crcr_low, (crcr & ~0x3F) | 1); // 保留RCS=1
     writel(&xhci->op->crcr_high, crcr >> 32);
     xhci->cmds->cs = 1;
 
+    // 事件环
     uint64_t evts =
         translate_address(get_current_page_dir(false), (uint64_t)xhci->evts);
     xhci->eseg->ptr_low = evts;
     xhci->eseg->ptr_high = evts >> 32;
     xhci->eseg->size = XHCI_RING_ITEMS;
+
+    dma_sync_cpu_to_device(xhci->eseg, sizeof(*xhci->eseg));
+
     writel(&xhci->ir->erstsz, 1);
     writel(&xhci->ir->erdp_low, evts);
     writel(&xhci->ir->erdp_high, evts >> 32);
+
     uint64_t erstba =
         translate_address(get_current_page_dir(false), (uint64_t)xhci->eseg);
     writel(&xhci->ir->erstba_low, erstba);
     writel(&xhci->ir->erstba_high, erstba >> 32);
     xhci->evts->cs = 1;
 
+    // Scratchpad buffers
     reg = readl(&xhci->caps->hcsparams2);
     uint32_t spb = (reg >> 21 & 0x1f) << 5 | reg >> 27;
     if (spb) {
@@ -480,64 +508,49 @@ static void configure_xhci(void *data) {
             free_frames_bytes_dma32(pad, DEFAULT_PAGE_SIZE * spb);
             goto fail;
         }
-        int i;
-        for (i = 0; i < spb; i++)
+
+        for (int i = 0; i < spb; i++) {
             spba[i] =
                 translate_address(get_current_page_dir(false),
                                   (uint64_t)pad + (i * DEFAULT_PAGE_SIZE));
+        }
+
+        dma_sync_cpu_to_device(spba, sizeof(*spba) * spb);
+
         uint64_t spbap =
             translate_address(get_current_page_dir(false), (uint64_t)spba);
         xhci->devs[0].ptr_low = spbap;
         xhci->devs[0].ptr_high = spbap >> 32;
+
+        dma_sync_cpu_to_device(&xhci->devs[0], sizeof(xhci->devs[0]));
     }
 
+    // 启动控制器
     reg = readl(&xhci->op->usbcmd);
     reg |= XHCI_CMD_RS;
     writel(&xhci->op->usbcmd, reg);
 
+    if (wait_bit(&xhci->op->usbsts, XHCI_STS_HCH, 0, 1000) != 0) {
+        printk("xhci: Controller failed to start\n");
+        goto fail;
+    }
+
+    delay(10);
+
     writel(&xhci->ir->imod, 0);
-    uint32_t iman = readl(&xhci->ir->iman);
-    iman |= (1 << 1);
     writel(&xhci->ir->iman, 0);
 
     reg = readl(&xhci->op->usbcmd);
-    reg |= XHCI_CMD_INTE;
+    reg &= ~XHCI_CMD_INTE;
     writel(&xhci->op->usbcmd, reg);
 
-    // #if defined(__x86_64__)
-    //     int irq = irq_allocate_irqnum();
-
-    //     struct msi_desc_t desc;
-    //     desc.irq_num = irq;
-    //     desc.processor = lapic_id();
-    //     desc.edge_trigger = 1;
-    //     desc.assert = 1;
-    //     desc.msi_index = 0;
-    //     desc.pci_dev = xhci->pci_dev;
-    //     desc.pci.msi_attribute.is_64 = true;
-    //     desc.pci.msi_attribute.is_msix = true;
-    //     int ret = pci_enable_msi(&desc);
-
-    //     irq_regist_irq(irq, xhci_interrupt_handler, 0, xhci,
-    //     get_apic_controller(),
-    //                    "XHCI", IRQ_FLAGS_MSIX);
-    // #endif
-
-    // Find devices
+    // 查找设备
     int count = xhci_check_ports(xhci);
-    // xhci_free_pipes(xhci);
-
-    // // No devices found - shutdown and free controller.
-    // reg = readl(&xhci->op->usbcmd);
-    // reg &= ~XHCI_CMD_RS;
-    // writel(&xhci->op->usbcmd, reg);
-    // wait_bit(&xhci->op->usbsts, XHCI_STS_HCH, XHCI_STS_HCH, 32);
-
     return;
 
 fail:
     free_frames_bytes_dma32(xhci->devs,
-                                  sizeof(*xhci->devs) * (xhci->slots + 1));
+                            sizeof(*xhci->devs) * (xhci->slots + 1));
     free_frames_bytes_dma32(xhci->eseg, sizeof(*xhci->eseg));
     free_frames_bytes_dma32(xhci->cmds, sizeof(*xhci->cmds));
     free_frames_bytes_dma32(xhci->evts, sizeof(*xhci->evts));
@@ -620,7 +633,9 @@ static void xhci_doorbell(struct usb_xhci_s *xhci, uint32_t slotid,
                           uint32_t value) {
     struct xhci_db *db = xhci->db;
     void *addr = &db[slotid].doorbell;
+    __sync_synchronize();
     writel(addr, value);
+    __sync_synchronize();
 }
 
 // Dequeue events on the XHCI command ring generated by the hardware
@@ -628,17 +643,19 @@ static void xhci_process_events(struct usb_xhci_s *xhci) {
     struct xhci_ring *evts = xhci->evts;
 
     for (;;) {
-        /* check for event */
         uint32_t nidx = evts->nidx;
         uint32_t cs = evts->cs;
         struct xhci_trb *etrb = evts->ring + nidx;
+
+        dma_sync_device_to_cpu(etrb, sizeof(struct xhci_trb));
+
         uint32_t control = etrb->control;
         if ((control & TRB_C) != (cs ? 1 : 0))
             return;
 
-        /* process event */
         uint32_t evt_type = TRB_TYPE(control);
         uint32_t evt_cc = (etrb->status >> 24) & 0xff;
+
         switch (evt_type) {
         case ER_TRANSFER:
         case ER_COMMAND_COMPLETE: {
@@ -653,14 +670,12 @@ static void xhci_process_events(struct usb_xhci_s *xhci) {
         }
         case ER_PORT_STATUS_CHANGE: {
             uint32_t port = ((etrb->ptr_low >> 24) & 0xff) - 1;
-            // Read status, and clear port status change bits
             uint32_t portsc = readl(&xhci->pr[port].portsc);
             uint32_t pclear =
                 (((portsc & ~(XHCI_PORTSC_PED | XHCI_PORTSC_PR)) &
                   ~(XHCI_PORTSC_PLS_MASK << XHCI_PORTSC_PLS_SHIFT)) |
                  (1 << XHCI_PORTSC_PLS_SHIFT));
             writel(&xhci->pr[port].portsc, pclear);
-
             xhci_print_port_state(3, __func__, port, portsc);
             break;
         }
@@ -670,7 +685,6 @@ static void xhci_process_events(struct usb_xhci_s *xhci) {
             break;
         }
 
-        /* move ring index, notify xhci */
         nidx++;
         if (nidx == XHCI_RING_ITEMS) {
             nidx = 0;
@@ -678,10 +692,13 @@ static void xhci_process_events(struct usb_xhci_s *xhci) {
             evts->cs = cs;
         }
         evts->nidx = nidx;
+
         struct xhci_ir *ir = xhci->ir;
         uint64_t erdp = translate_address(get_current_page_dir(false),
-                                          (uint64_t)(evts->ring + nidx));
-        writel(&ir->erdp_low, erdp);
+                                          (uint64_t)&evts->ring[nidx]);
+
+        // 设置EHB (Event Handler Busy) bit - bit 3
+        writel(&ir->erdp_low, (erdp & ~0xF) | (1 << 3));
         writel(&ir->erdp_high, erdp >> 32);
     }
 }
@@ -698,13 +715,14 @@ static int xhci_event_wait(struct usb_xhci_s *xhci, struct xhci_ring *ring,
                            uint32_t timeout) {
     uint64_t timeout_ns = nanoTime() + (uint64_t)timeout * 1000000ULL;
     for (;;) {
-        if (nanoTime() > timeout_ns) {
-            return CC_USB_TRANSACTION_ERROR;
-        }
         xhci_process_events(xhci);
         if (!xhci_ring_busy(ring)) {
             uint32_t status = ring->evt.status;
             return (status >> 24) & 0xff;
+        }
+        if (nanoTime() > timeout_ns) {
+            printk("XHCI event wait timeout!!!\n");
+            return CC_USB_TRANSACTION_ERROR;
         }
         arch_pause();
     }
@@ -717,8 +735,9 @@ static void xhci_trb_fill(struct xhci_ring *ring, void *data, uint32_t xferlen,
     if (flags & TRB_TR_IDT) {
         memcpy(&dst->ptr_low, data, xferlen);
     } else {
-        uint64_t phys =
-            translate_address(get_current_page_dir(false), (uint64_t)data);
+        uint64_t phys = data ? translate_address(get_current_page_dir(false),
+                                                 (uint64_t)data)
+                             : 0;
         dst->ptr_low = phys;
         dst->ptr_high = phys >> 32;
     }
@@ -731,33 +750,42 @@ static void xhci_trb_queue(struct xhci_ring *ring, void *data, uint32_t xferlen,
                            uint32_t flags) {
     if (ring->nidx >= (sizeof(ring->ring) / sizeof(ring->ring[0])) - 1) {
         xhci_trb_fill(ring, ring->ring, 0, (TR_LINK << 10) | TRB_LK_TC);
+        dma_sync_cpu_to_device(&ring->ring[ring->nidx],
+                               sizeof(struct xhci_trb));
         ring->nidx = 0;
         ring->cs ^= 1;
     }
 
     xhci_trb_fill(ring, data, xferlen, flags);
+
+    dma_sync_cpu_to_device(&ring->ring[ring->nidx], sizeof(struct xhci_trb));
+
     ring->nidx++;
 }
 
 // Submit a command to the xhci controller ring
 static int xhci_cmd_submit(struct usb_xhci_s *xhci, struct xhci_inctx *inctx,
                            uint32_t flags) {
+    uint32_t cmd_type = (flags >> TRB_TYPE_SHIFT) & TRB_TYPE_MASK;
+
     if (inctx) {
-        struct xhci_slotctx *slot = (void *)&inctx[1 << xhci->context64];
-        uint32_t port = ((slot->ctx[1] >> 16) & 0xff) - 1;
-        uint32_t portsc = readl(&xhci->pr[port].portsc);
-        if (!(portsc & XHCI_PORTSC_CCS)) {
-            // Device no longer connected?!
-            xhci_print_port_state(1, __func__, port, portsc);
-            return -1;
-        }
+        dma_sync_cpu_to_device(inctx, (sizeof(struct xhci_inctx) * 33)
+                                          << xhci->context64);
     }
 
-    spin_lock(&xhci->cmds->lock);
+    // 填充TRB
+    uint32_t old_nidx = xhci->cmds->nidx;
     xhci_trb_queue(xhci->cmds, inctx, 0, flags);
+
+    // 敲门铃
     xhci_doorbell(xhci, 0, 0);
+
     int rc = xhci_event_wait(xhci, xhci->cmds, 1000);
-    spin_unlock(&xhci->cmds->lock);
+
+    if (rc != CC_SUCCESS) {
+        printk("XHCI cmd submit failed!!! rc = %d\n", rc);
+    }
+
     return rc;
 }
 
@@ -920,35 +948,39 @@ xhci_alloc_pipe(struct usbdevice_s *usbdev,
 
     if (pipe->epid == 1) {
         if (usbdev->hub->usbdev) {
-            // Make sure parent hub is configured.
             int ret = xhci_config_hub(usbdev->hub);
             if (ret)
                 goto fail;
         }
-        // Enable slot.
+
         uint32_t size = (sizeof(struct xhci_slotctx) * 32) << xhci->context64;
         struct xhci_slotctx *dev = alloc_frames_bytes_dma32(size);
         if (!dev) {
             goto fail;
         }
+
         int slotid = xhci_cmd_enable_slot(xhci);
         if (slotid < 0) {
             free_frames_bytes_dma32(dev, size);
             goto fail;
         }
+
         memset(dev, 0, size);
+
+        // 刷新设备上下文
+        dma_sync_cpu_to_device(dev, size);
+
         uint64_t dcba =
             translate_address(get_current_page_dir(false), (uint64_t)dev);
         xhci->devs[slotid].ptr_low = dcba;
         xhci->devs[slotid].ptr_high = dcba >> 32;
 
-        // Send set_address command.
+        // 刷新devs数组项
+        dma_sync_cpu_to_device(&xhci->devs[slotid], sizeof(xhci->devs[slotid]));
+
         int cc = xhci_cmd_address_device(xhci, slotid, in);
         if (cc != CC_SUCCESS) {
-            cc = xhci_cmd_disable_slot(xhci, slotid);
-            if (cc != CC_SUCCESS) {
-                goto fail;
-            }
+            xhci_cmd_disable_slot(xhci, slotid);
             xhci->devs[slotid].ptr_low = 0;
             free_frames_bytes_dma32(dev, size);
             goto fail;
@@ -965,10 +997,11 @@ xhci_alloc_pipe(struct usbdevice_s *usbdev,
         }
     }
     free_frames_bytes_dma32(in, (sizeof(struct xhci_inctx) * 33)
-                                          << xhci->context64);
+                                    << xhci->context64);
     return &pipe->pipe;
 
 fail:
+    printk("xhci alloc pipe failed!!!\n");
     free_frames_bytes_dma32(pipe->buf, pipe->pipe.maxpacket);
     free_frames_bytes_dma32(pipe, sizeof(*pipe));
     free_frames_bytes_dma32(in, (sizeof(struct xhci_inctx) * 33)
@@ -1017,14 +1050,39 @@ static void xhci_xfer_setup(struct xhci_pipe *pipe, int dir, void *cmd,
                             void *data, int datalen) {
     struct usb_xhci_s *xhci =
         container_of(pipe->pipe.cntl, struct usb_xhci_s, usb);
+
+    uint32_t trt;
+    if (datalen == 0) {
+        trt = 0;
+    } else if (dir) {
+        trt = 3; // IN
+    } else {
+        trt = 2; // OUT
+    }
+
+    // Setup Stage
     xhci_trb_queue(&pipe->reqs, cmd, USB_CONTROL_SETUP_SIZE,
-                   (TR_SETUP << 10) | TRB_TR_IDT |
-                       ((datalen ? (dir ? 3 : 2) : 0) << 16));
-    if (datalen)
-        xhci_trb_queue(&pipe->reqs, data, datalen,
-                       (TR_DATA << 10) | ((dir ? 1 : 0) << 16));
+                   (TR_SETUP << 10) | TRB_TR_IDT | (trt << 16));
+
+    // Data Stage
+    if (datalen && data) {
+        uint64_t data_phys =
+            translate_address(get_current_page_dir(false), (uint64_t)data);
+
+        uint32_t data_flags = (TR_DATA << 10) | (dir ? TRB_TR_DIR : 0);
+        if (dir) {
+            data_flags |= TRB_TR_IOC;
+        }
+
+        xhci_trb_queue(&pipe->reqs, data, datalen, data_flags);
+    }
+
+    // Status Stage
+    uint32_t status_dir = (datalen && !dir) ? 1 : 0;
     xhci_trb_queue(&pipe->reqs, NULL, 0,
-                   (TR_STATUS << 10) | TRB_TR_IOC | ((dir ? 0 : 1) << 16));
+                   (TR_STATUS << 10) | TRB_TR_IOC |
+                       (status_dir ? TRB_TR_DIR : 0));
+
     xhci_doorbell(xhci, pipe->slotid, pipe->epid);
 }
 
@@ -1042,23 +1100,97 @@ int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data,
     struct usb_xhci_s *xhci =
         container_of(pipe->pipe.cntl, struct usb_xhci_s, usb);
 
+    void *dma_cmd = NULL;
+    void *dma_data = NULL;
+    int ret = -1;
+
     if (cmd) {
         const struct usb_ctrlrequest *req = cmd;
-        if (req->bRequest == USB_REQ_SET_ADDRESS)
-            // Set address command sent during xhci_alloc_pipe.
+
+        if (req->bRequest == USB_REQ_SET_ADDRESS) {
             return 0;
-        xhci_xfer_setup(pipe, dir, (void *)req, data, datalen);
+        }
+
+        dma_cmd = alloc_frames_bytes_dma32(sizeof(struct usb_ctrlrequest));
+        if (!dma_cmd) {
+            printk("xhci: Failed to allocate DMA buffer for setup\n");
+            return -1;
+        }
+
+        // 复制setup packet
+        memcpy(dma_cmd, cmd, sizeof(struct usb_ctrlrequest));
+
+        // 刷新到内存
+        dma_sync_cpu_to_device(dma_cmd, sizeof(struct usb_ctrlrequest));
+
+        if (data && datalen > 0) {
+            dma_data = alloc_frames_bytes_dma32(datalen);
+            if (!dma_data) {
+                printk(
+                    "xhci: Failed to allocate DMA buffer for data (%d bytes)\n",
+                    datalen);
+                goto cleanup;
+            }
+
+            if (!dir) {
+                memcpy(dma_data, data, datalen);
+                dma_sync_cpu_to_device(dma_data, datalen);
+            }
+        }
+
+        xhci_xfer_setup(pipe, dir, dma_cmd, dma_data, datalen);
     } else {
-        xhci_xfer_normal(pipe, data, datalen);
+        int is_in = (pipe->pipe.ep & USB_DIR_IN) ? 1 : 0;
+
+        if (data && datalen > 0) {
+            dma_data = alloc_frames_bytes_dma32(datalen);
+            if (!dma_data) {
+                printk("xhci: Failed to allocate DMA buffer (%d bytes)\n",
+                       datalen);
+                return -1;
+            }
+
+            // OUT传输：复制数据
+            if (!is_in) {
+                memcpy(dma_data, data, datalen);
+                dma_sync_cpu_to_device(dma_data, datalen);
+            }
+        }
+
+        xhci_xfer_normal(pipe, dma_data, datalen);
     }
 
     int cc = xhci_event_wait(xhci, &pipe->reqs, usb_xfer_time(p, datalen));
+
     if (cc != CC_SUCCESS && cc != CC_SHORT_PACKET) {
         printk("%s: xfer failed (cc %d)\n", __func__, cc);
-        return -1;
+        goto cleanup;
     }
 
-    return 0;
+    if (dir && dma_data && data) {
+        uint32_t residue = pipe->reqs.evt.status & 0xFFFFFF;
+        int actual = datalen - residue;
+
+        if (actual > 0) {
+            // 刷新缓存
+            dma_sync_device_to_cpu(dma_data, actual);
+
+            memcpy(data, dma_data, actual);
+        }
+    }
+
+    ret = 0; // 成功
+
+cleanup:
+    if (dma_cmd) {
+        free_frames_bytes_dma32(dma_cmd, sizeof(struct usb_ctrlrequest));
+    }
+
+    if (dma_data) {
+        free_frames_bytes_dma32(dma_data, datalen);
+    }
+
+    return ret;
 }
 
 int xhci_poll_intr(struct usb_pipe *p, void *data) {
@@ -1079,6 +1211,7 @@ int xhci_poll_intr(struct usb_pipe *p, void *data) {
     xhci_process_events(xhci);
     if (xhci_ring_busy(&pipe->reqs))
         return -1;
+    dma_sync_device_to_cpu(buf, len);
     memcpy(data, buf, len);
     xhci_xfer_normal(pipe, buf, len);
     return 0;

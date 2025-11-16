@@ -82,6 +82,7 @@ endif
 	$(MAKE) -C vmware_svga
 # 	$(MAKE) -C nvidia_open
 
+	$(MAKE) -C hub
 	$(MAKE) -C hid
 	$(MAKE) -C msc
 

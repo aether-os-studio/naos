@@ -13,3 +13,8 @@ EXPORT_SYMBOL(__gmon_start__);
 #if defined(__riscv__)
 EXPORT_SYMBOL(hartid_to_cpuid);
 #endif
+
+EXPORT_SYMBOL(spin_lock);
+EXPORT_SYMBOL(spin_unlock);
+EXPORT_SYMBOL(spin_lock_no_irqsave);
+EXPORT_SYMBOL(spin_unlock_no_irqstore);

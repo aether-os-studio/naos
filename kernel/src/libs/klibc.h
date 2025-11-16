@@ -309,48 +309,58 @@ typedef struct spinlock {
 } spinlock_t;
 
 static inline void spin_lock(spinlock_t *lock) {
-    long tmp, daif;
+    long tmp, status, daif;
 
-    // 获取锁
-    asm volatile("1: ldaxr %w0, [%1]\n\t"
-                 "   cbnz %w0, 1b\n\t"
+    asm volatile("   prfm pstl1keep, [%2]\n\t"
+                 "1: ldaxr %w0, [%2]\n\t"
+                 "   cbnz %w0, 2f\n\t"
                  "   mov %w0, #1\n\t"
-                 "   stxr %w0, %w0, [%1]\n\t"
-                 "   cbnz %w0, 1b\n\t"
-                 : "=&r"(tmp)
+                 "   stxr %w1, %w0, [%2]\n\t"
+                 "   cbnz %w1, 1b\n\t"
+                 "   b 3f\n\t"
+                 "2: nop\n\t"
+                 "   b 1b\n\t"
+                 "3:\n\t"
+                 : "=&r"(tmp), "=&r"(status)
                  : "r"(&lock->lock)
                  : "memory");
 
-    // 保存并禁用中断
     asm volatile("mrs %0, daif\n\t"
                  "msr daifset, #2\n\t"
                  : "=r"(daif)
                  :
                  : "memory");
 
-    lock->daif = daif; // 保存原始DAIF状态
+    lock->daif = daif;
 }
 
 static inline void spin_unlock(spinlock_t *lock) {
     long daif = lock->daif;
 
-    // 释放锁
-    asm volatile("stlr wzr, [%0]\n\t" : : "r"(&lock->lock) : "memory");
+    asm volatile("   stlr wzr, [%0]\n\t"
+                 "   dsb sy\n\t"
+                 "   sev\n\t"
+                 :
+                 : "r"(&lock->lock)
+                 : "memory");
 
-    // 恢复中断状态
     asm volatile("msr daif, %0\n\t" : : "r"(daif) : "memory");
 }
 
 static inline void spin_lock_no_irqsave(spinlock_t *lock) {
-    long tmp;
+    long tmp, status;
 
-    // 获取锁
-    asm volatile("1: ldaxr %w0, [%1]\n\t"
-                 "   cbnz %w0, 1b\n\t"
+    asm volatile("   prfm pstl1keep, [%2]\n\t"
+                 "1: ldaxr %w0, [%2]\n\t"
+                 "   cbnz %w0, 2f\n\t"
                  "   mov %w0, #1\n\t"
-                 "   stxr %w0, %w0, [%1]\n\t"
-                 "   cbnz %w0, 1b\n\t"
-                 : "=&r"(tmp)
+                 "   stxr %w1, %w0, [%2]\n\t"
+                 "   cbnz %w1, 1b\n\t"
+                 "   b 3f\n\t"
+                 "2: nop\n\t"
+                 "   b 1b\n\t"
+                 "3:\n\t"
+                 : "=&r"(tmp), "=&r"(status)
                  : "r"(&lock->lock)
                  : "memory");
 
@@ -358,8 +368,12 @@ static inline void spin_lock_no_irqsave(spinlock_t *lock) {
 }
 
 static inline void spin_unlock_no_irqstore(spinlock_t *lock) {
-    // 释放锁
-    asm volatile("stlr wzr, [%0]\n\t" : : "r"(&lock->lock) : "memory");
+    asm volatile("   stlr wzr, [%0]\n\t"
+                 "   dsb sy\n\t"
+                 "   sev\n\t"
+                 :
+                 : "r"(&lock->lock)
+                 : "memory");
 }
 
 #elif defined(__riscv__)

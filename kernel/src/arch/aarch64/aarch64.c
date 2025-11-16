@@ -2,6 +2,7 @@
 #include <irq/irq_manager.h>
 #include <boot/boot.h>
 #include <drivers/fdt/fdt.h>
+#include <mod/dlinker.h>
 
 extern void gic_init();
 
@@ -30,3 +31,5 @@ void arch_init() {
 void arch_init_after_thread() { pci_brcmstb_init(); }
 
 void arch_input_dev_init() {}
+
+EXPORT_SYMBOL(get_cache_line_size);

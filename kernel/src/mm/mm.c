@@ -312,7 +312,6 @@ uintptr_t alloc_frames_dma32(size_t count) {
     map_change_attribute_range(get_current_page_dir(false), vaddr,
                                count * DEFAULT_PAGE_SIZE,
                                PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
-
     return paddr;
 }
 

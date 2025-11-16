@@ -1,6 +1,7 @@
 #pragma once
 
 #include <libs/aether/usb.h>
+#include <libs/aether/mm.h>
 
 struct usbdevice_s;
 struct usb_endpoint_descriptor;
@@ -127,27 +128,41 @@ struct xhci_er_seg {
 } __attribute__((packed));
 
 static inline void writel(void *addr, uint32_t val) {
+    dma_wmb();
     *(volatile uint32_t *)addr = val;
+    dma_wmb();
 }
 static inline void writew(void *addr, uint16_t val) {
+    dma_wmb();
     *(volatile uint16_t *)addr = val;
+    dma_wmb();
 }
 static inline void writeb(void *addr, uint8_t val) {
+    dma_wmb();
     *(volatile uint8_t *)addr = val;
+    dma_wmb();
 }
 static inline uint64_t readq(const void *addr) {
+    dma_rmb();
     uint64_t val = *(volatile const uint64_t *)addr;
+    dma_rmb();
     return val;
 }
 static inline uint32_t readl(const void *addr) {
+    dma_rmb();
     uint32_t val = *(volatile const uint32_t *)addr;
+    dma_rmb();
     return val;
 }
 static inline uint16_t readw(const void *addr) {
+    dma_rmb();
     uint16_t val = *(volatile const uint16_t *)addr;
+    dma_rmb();
     return val;
 }
 static inline uint8_t readb(const void *addr) {
+    dma_rmb();
     uint8_t val = *(volatile const uint8_t *)addr;
+    dma_rmb();
     return val;
 }

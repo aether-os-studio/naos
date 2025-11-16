@@ -278,26 +278,42 @@ usb_driver_t *usb_find_driver(struct usbdevice_s *usbdev) {
 static int configure_usb_device(struct usbdevice_s *usbdev) {
     // Set the max packet size for endpoint 0 of this device.
     struct usb_device_descriptor dinfo;
+    memset(&dinfo, 0, sizeof(struct usb_device_descriptor));
     int ret = get_device_info8(usbdev->defpipe, &dinfo);
-    if (ret)
+    if (ret) {
+        printk("Failed get device info 8\n");
         return 0;
+    }
+    printk("USB device descriptor:\n");
+    printk("  bLength = %d\n", dinfo.bLength);
+    printk("  bDescriptorType = %d\n", dinfo.bDescriptorType);
+    printk("  bcdUSB = %#06lx\n", dinfo.bcdUSB);
+    printk("  bDeviceClass = %#04lx\n", dinfo.bDeviceClass);
+    printk("  bDeviceSubClass = %#04lx\n", dinfo.bDeviceSubClass);
+    printk("  bMaxPacketSize0 = %#04lx\n", dinfo.bMaxPacketSize0);
     uint16_t maxpacket = dinfo.bMaxPacketSize0;
     if (dinfo.bcdUSB >= 0x0300)
         maxpacket = 1 << dinfo.bMaxPacketSize0;
-    if (maxpacket < 8)
+    if (maxpacket < 8) {
+        printk("Failed get max packet size, maxpacket = %d\n", maxpacket);
         return 0;
+    }
     struct usb_endpoint_descriptor epdesc = {
         .wMaxPacketSize = maxpacket,
         .bmAttributes = USB_ENDPOINT_XFER_CONTROL,
     };
     usbdev->defpipe = usb_realloc_pipe(usbdev, usbdev->defpipe, &epdesc);
-    if (!usbdev->defpipe)
-        return -1;
+    if (!usbdev->defpipe) {
+        printk("Failed realloc pipe\n");
+        return 0;
+    }
 
     // Get configuration
     struct usb_config_descriptor *config = get_device_config(usbdev->defpipe);
-    if (!config)
+    if (!config) {
+        printk("Failed get device configuration\n");
         return 0;
+    }
 
     // Determine if a driver exists for this device - only look at the
     // interfaces of the first configuration.
@@ -305,9 +321,10 @@ static int configure_usb_device(struct usbdevice_s *usbdev) {
     void *config_end = (void *)config + config->wTotalLength;
     struct usb_interface_descriptor *iface = (void *)(&config[1]);
     for (;;) {
-        if (!num_iface || (void *)iface + iface->bLength > config_end)
-            // Not a supported device.
+        if (!num_iface || (void *)iface + iface->bLength > config_end) {
+            printk("Device not support\n");
             goto fail;
+        }
         if (iface->bDescriptorType == USB_DT_INTERFACE) {
             num_iface--;
             if (iface->bInterfaceClass == USB_CLASS_HUB ||
@@ -323,8 +340,10 @@ static int configure_usb_device(struct usbdevice_s *usbdev) {
 
     // Set the configuration.
     ret = set_configuration(usbdev->defpipe, config->bConfigurationValue);
-    if (ret)
+    if (ret) {
+        printk("Failed set configuration\n");
         goto fail;
+    }
 
     // Configure driver.
     usbdev->config = config;
@@ -342,10 +361,12 @@ static int configure_usb_device(struct usbdevice_s *usbdev) {
 
     usb_driver_t *driver = usb_find_driver(usbdev);
     if (!driver) {
+        printk("Failed select best driver for usb device\n");
         goto fail;
     }
 
     if (driver->probe(usbdev)) {
+        printk("Failed probe usb device\n");
         goto fail;
     }
 
@@ -387,9 +408,13 @@ static bool usb_hub_port_setup(struct usbdevice_s *usbdev) {
     // Configure the device
     int count = configure_usb_device(usbdev);
     usb_free_pipe(usbdev, usbdev->defpipe);
-    if (!count)
+    if (!count) {
         hub->op->disconnect(hub, port);
+        printk("Configure device at port %d failed\n", port);
+        return false;
+    }
     hub->devcount += count;
+    printk("Configure device at port %d successfully\n", port);
 
     for (int i = 0; i < MAX_USBDEV_NUM; i++) {
         if (!usbdevs[i]) {

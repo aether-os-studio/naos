@@ -28,3 +28,27 @@ void arch_input_dev_init();
 static inline void arch_pause() { asm volatile("nop"); }
 
 static inline void arch_wait_for_interrupt() { asm volatile("wfi"); }
+
+static inline void dcache_clean_range(void *addr, size_t size) {
+    __asm__ volatile("" : : : "memory");
+}
+
+static inline void dcache_invalidate_range(void *addr, size_t size) {
+    __asm__ volatile("" : : : "memory");
+}
+
+static inline void dcache_flush_range(void *addr, size_t size) {
+    __asm__ volatile("" : : : "memory");
+}
+
+static inline void memory_barrier(void) {
+    __asm__ volatile("mfence" : : : "memory");
+}
+
+static inline void read_barrier(void) {
+    __asm__ volatile("lfence" : : : "memory");
+}
+
+static inline void write_barrier(void) {
+    __asm__ volatile("sfence" : : : "memory");
+}
