@@ -166,6 +166,7 @@ uint32_t pci_enumerate_capability_list(pci_device_t *pci_dev,
 }
 
 pci_device_op_t pcie_device_op = {
+    .convert_bar_address = NULL,
     .read8 = pci_read8,
     .write8 = pci_write8,
     .read16 = pci_read16,
@@ -483,6 +484,9 @@ void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
 
                     uint64_t size = ~(size_mask & 0xFFFFFFF0) + 1;
 
+                    if (op->convert_bar_address) {
+                        base = op->convert_bar_address(base);
+                    }
                     pci_device->bars[i].address = base;
                     pci_device->bars[i].size = size;
                     pci_device->bars[i].mmio = true;
@@ -525,6 +529,9 @@ void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
                         ((uint64_t)size_hi << 32) | (size_lo & 0xFFFFFFF0);
                     uint64_t size = ~size_mask + 1;
 
+                    if (op->convert_bar_address) {
+                        base = op->convert_bar_address(base);
+                    }
                     pci_device->bars[i].address = base;
                     pci_device->bars[i].size = size;
                     pci_device->bars[i].mmio = true;
@@ -600,6 +607,7 @@ void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
         break;
     }
 }
+
 static bool pci_function_exists(pci_device_op_t *op, uint16_t segment,
                                 uint8_t bus, uint8_t slot, uint8_t func) {
     printk("PCIe: Probing device %02x:%02x.%x\n", bus, slot, func);
@@ -643,7 +651,7 @@ void pci_scan_slot(pci_device_op_t *op, uint16_t segment_group, uint8_t bus,
     // 检查是否是多功能设备
     uint8_t header_type = op->read8(bus, slot, 0, segment_group, 0x0E);
 
-    if (header_type & 0x80) {
+    if (header_type != 0xFF && header_type & 0x80) {
         // 是多功能设备，逐个检查并扫描 function 1-7
         for (uint8_t func = 1; func < 8; func++) {
             if (pci_function_exists(op, segment_group, bus, slot, func)) {

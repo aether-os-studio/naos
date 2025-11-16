@@ -33,6 +33,7 @@ typedef struct {
 } pci_bar_t;
 
 typedef struct {
+    uint64_t (*convert_bar_address)(uint64_t bar_address);
     uint8_t (*read8)(uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4,
                      uint32_t arg5);
     void (*write8)(uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4,

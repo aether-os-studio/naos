@@ -258,6 +258,8 @@ static int pcie_parse_ranges(void *fdt, int node, pcie_range_t *ranges,
     return count;
 }
 
+pcie_range_t memory_ranges[MAX_PCIE_BRCMSTB_RANGE_COUNT] = {0};
+
 static int pcie_brcmstb_init(uint64_t base, uint64_t phys, uint64_t size) {
     uint32_t val;
 
@@ -282,6 +284,12 @@ static int pcie_brcmstb_init(uint64_t base, uint64_t phys, uint64_t size) {
     val &= ~MISC_CTRL_MAX_BURST_MASK;
     val |= (0 << MISC_CTRL_MAX_BURST_SHIFT); // 128 bytes
     mmio_write32(base + PCIE_MISC_CTRL, val);
+
+    val = mmio_read32(base + PCIE_MISC_CTRL);
+    printk("PCIe: MISC_CTRL = 0x%08x\n", val);
+    if (!(val & MISC_CTRL_READ_UR_MODE)) {
+        printk("PCIe: WARNING - READ_UR_MODE not set!\n");
+    }
 
     // 配置 RC BAR2
     uint64_t rc_bar_size = 0x200000000ULL; // 8GB
@@ -334,21 +342,22 @@ static int pcie_brcmstb_init(uint64_t base, uint64_t phys, uint64_t size) {
 
     // 解析和配置 outbound windows
     void *fdt = (void *)boot_get_dtb();
-    pcie_range_t ranges[8];
-    int range_count = pcie_parse_ranges(fdt, brcmstb_ctx.fdt_node, ranges, 8);
+    int range_count = pcie_parse_ranges(
+        fdt, brcmstb_ctx.fdt_node, memory_ranges, MAX_PCIE_BRCMSTB_RANGE_COUNT);
 
     int window_idx = 0;
     for (int i = 0; i < range_count && window_idx < 4; i++) {
-        uint32_t space_code = (ranges[i].flags >> 24) & 0x03;
+        uint32_t space_code = (memory_ranges[i].flags >> 24) & 0x03;
         if (space_code == 0x02 || space_code == 0x03) { // Memory space
-            set_outbound_window(base, window_idx, ranges[i].cpu_addr,
-                                ranges[i].pci_addr, ranges[i].size);
+            set_outbound_window(base, window_idx, memory_ranges[i].cpu_addr,
+                                memory_ranges[i].pci_addr,
+                                memory_ranges[i].size);
 
             if (window_idx == 0) {
-                brcmstb_ctx.mem_pci_base = ranges[i].pci_addr;
-                brcmstb_ctx.mem_cpu_base = ranges[i].cpu_addr;
-                brcmstb_ctx.mem_size = ranges[i].size;
-                brcmstb_ctx.mem_current = ranges[i].pci_addr;
+                brcmstb_ctx.mem_pci_base = memory_ranges[i].pci_addr;
+                brcmstb_ctx.mem_cpu_base = memory_ranges[i].cpu_addr;
+                brcmstb_ctx.mem_size = memory_ranges[i].size;
+                brcmstb_ctx.mem_current = memory_ranges[i].pci_addr;
             }
             window_idx++;
         }
@@ -403,6 +412,7 @@ static int pcie_brcmstb_init(uint64_t base, uint64_t phys, uint64_t size) {
     mmio_write32(base + PCIE_HARD_DEBUG, val);
 
     brcmstb_ctx.initialized = true;
+
     return 0;
 }
 
@@ -412,14 +422,29 @@ static uint32_t make_cfg_index(uint8_t bus, uint8_t slot, uint8_t func) {
            ((func << CFG_INDEX_FUNC_SHIFT) & CFG_INDEX_FUNC_MASK);
 }
 
+static bool is_valid_config_access(uint64_t base, uint8_t bus, uint8_t slot,
+                                   uint8_t func) {
+    if (!brcmstb_pcie_link_up(base)) {
+        return false;
+    }
+
+    if (bus == brcmstb_ctx.bus_start) {
+        return (slot == 0 && func == 0);
+    }
+
+    return true;
+}
+
 static uint8_t brcmstb_cfg_read8(uint32_t bus, uint32_t slot, uint32_t func,
                                  uint32_t segment, uint32_t offset) {
     uint64_t base = brcmstb_ctx.pcie_base_virt;
 
+    if (!is_valid_config_access(base, bus, slot, func)) {
+        return 0xFF;
+    }
+
     // Bus 0 (root bus) 直接访问控制器寄存器
     if (bus == brcmstb_ctx.bus_start) {
-        if (slot != 0 || func != 0)
-            return 0xFF;
         return mmio_read8(base + offset);
     }
 
@@ -433,9 +458,11 @@ static void brcmstb_cfg_write8(uint32_t bus, uint32_t slot, uint32_t func,
                                uint8_t value) {
     uint64_t base = brcmstb_ctx.pcie_base_virt;
 
+    if (!is_valid_config_access(base, bus, slot, func)) {
+        return;
+    }
+
     if (bus == brcmstb_ctx.bus_start) {
-        if (slot != 0 || func != 0)
-            return;
         mmio_write8(base + offset, value);
         return;
     }
@@ -448,9 +475,11 @@ static uint16_t brcmstb_cfg_read16(uint32_t bus, uint32_t slot, uint32_t func,
                                    uint32_t segment, uint32_t offset) {
     uint64_t base = brcmstb_ctx.pcie_base_virt;
 
+    if (!is_valid_config_access(base, bus, slot, func)) {
+        return 0xFFFF;
+    }
+
     if (bus == brcmstb_ctx.bus_start) {
-        if (slot != 0 || func != 0)
-            return 0xFFFF;
         return mmio_read16(base + offset);
     }
 
@@ -463,9 +492,11 @@ static void brcmstb_cfg_write16(uint32_t bus, uint32_t slot, uint32_t func,
                                 uint16_t value) {
     uint64_t base = brcmstb_ctx.pcie_base_virt;
 
+    if (!is_valid_config_access(base, bus, slot, func)) {
+        return;
+    }
+
     if (bus == brcmstb_ctx.bus_start) {
-        if (slot != 0 || func != 0)
-            return;
         mmio_write16(base + offset, value);
         return;
     }
@@ -478,9 +509,11 @@ static uint32_t brcmstb_cfg_read32(uint32_t bus, uint32_t slot, uint32_t func,
                                    uint32_t segment, uint32_t offset) {
     uint64_t base = brcmstb_ctx.pcie_base_virt;
 
+    if (!is_valid_config_access(base, bus, slot, func)) {
+        return 0xFFFFFFFF;
+    }
+
     if (bus == brcmstb_ctx.bus_start) {
-        if (slot != 0 || func != 0)
-            return 0xFFFFFFFF;
         return mmio_read32(base + offset);
     }
 
@@ -493,6 +526,10 @@ static void brcmstb_cfg_write32(uint32_t bus, uint32_t slot, uint32_t func,
                                 uint32_t value) {
     uint64_t base = brcmstb_ctx.pcie_base_virt;
 
+    if (!is_valid_config_access(base, bus, slot, func)) {
+        return;
+    }
+
     if (bus == brcmstb_ctx.bus_start) {
         if (slot != 0 || func != 0)
             return;
@@ -504,7 +541,30 @@ static void brcmstb_cfg_write32(uint32_t bus, uint32_t slot, uint32_t func,
     mmio_write32(base + PCIE_CFG_DATA + offset, value);
 }
 
+uint64_t brcmstb_convert_bar_address(uint64_t pci_addr) {
+    for (int i = 0; i < MAX_PCIE_BRCMSTB_RANGE_COUNT; i++) {
+        uint64_t pci_start = memory_ranges[i].pci_addr;
+        uint64_t pci_end = pci_start + memory_ranges[i].size;
+
+        if (!pci_start)
+            break;
+
+        if (pci_addr >= pci_start && pci_addr < pci_end) {
+            uint64_t offset = pci_addr - pci_start;
+            uint64_t cpu_addr = memory_ranges[i].cpu_addr + offset;
+
+            return cpu_addr;
+        }
+    }
+
+    // 如果没找到映射，假设1:1映射（可能不正确）
+    printk("WARNING: No PCI range mapping found for 0x%llx, assuming 1:1\n",
+           pci_addr);
+    return pci_addr;
+}
+
 pci_device_op_t pcie_brcmstb_device_op = {
+    .convert_bar_address = brcmstb_convert_bar_address,
     .read8 = brcmstb_cfg_read8,
     .write8 = brcmstb_cfg_write8,
     .read16 = brcmstb_cfg_read16,
@@ -556,7 +616,9 @@ static int pcie_brcmstb_probe(fdt_device_t *dev, const char *compatible) {
     // 映射寄存器空间
     uint64_t pcie_base_virt = phys_to_virt(pcie_base);
     map_page_range(get_current_page_dir(false), pcie_base_virt, pcie_base,
-                   pcie_size, PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
+                   (pcie_size + DEFAULT_PAGE_SIZE - 1) &
+                       ~(DEFAULT_PAGE_SIZE - 1),
+                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
 
     brcmstb_ctx.pcie_base_phys = pcie_base;
     brcmstb_ctx.pcie_base_virt = pcie_base_virt;
@@ -568,7 +630,8 @@ static int pcie_brcmstb_probe(fdt_device_t *dev, const char *compatible) {
         return -1;
     }
 
-    pci_scan_bus(&pcie_brcmstb_device_op, 0, brcmstb_ctx.bus_start);
+    // TODO: 全部扫描
+    pci_scan_function(&pcie_brcmstb_device_op, 0, 1, 0, 0);
 
     printk("PCIe BRCMSTB: Initialization successful\n");
     return 0;

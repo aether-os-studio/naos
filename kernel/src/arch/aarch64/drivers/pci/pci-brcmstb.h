@@ -96,6 +96,8 @@ typedef struct {
     uint64_t size;
 } pcie_range_t;
 
+#define MAX_PCIE_BRCMSTB_RANGE_COUNT 64
+
 typedef struct {
     uint64_t pcie_base_phys;
     uint64_t pcie_base_virt;

@@ -418,11 +418,10 @@ static void configure_xhci(void *data) {
     struct usb_xhci_s *xhci = data;
     uint32_t reg;
 
-    xhci->devs =
-        alloc_frames_bytes_dma32(sizeof(*xhci->devs) * (xhci->slots + 1));
-    xhci->eseg = alloc_frames_bytes_dma32(sizeof(*xhci->eseg));
-    xhci->cmds = alloc_frames_bytes_dma32(sizeof(*xhci->cmds));
-    xhci->evts = alloc_frames_bytes_dma32(sizeof(*xhci->evts));
+    xhci->devs = alloc_frames_bytes(sizeof(*xhci->devs) * (xhci->slots + 1));
+    xhci->eseg = alloc_frames_bytes(sizeof(*xhci->eseg));
+    xhci->cmds = alloc_frames_bytes(sizeof(*xhci->cmds));
+    xhci->evts = alloc_frames_bytes(sizeof(*xhci->evts));
     if (!xhci->devs || !xhci->cmds || !xhci->evts || !xhci->eseg) {
         goto fail;
     }
@@ -473,8 +472,8 @@ static void configure_xhci(void *data) {
     reg = readl(&xhci->caps->hcsparams2);
     uint32_t spb = (reg >> 21 & 0x1f) << 5 | reg >> 27;
     if (spb) {
-        uint64_t *spba = alloc_frames_bytes_dma32(sizeof(*spba) * spb);
-        void *pad = alloc_frames_bytes_dma32(DEFAULT_PAGE_SIZE * spb);
+        uint64_t *spba = alloc_frames_bytes(sizeof(*spba) * spb);
+        void *pad = alloc_frames_bytes(DEFAULT_PAGE_SIZE * spb);
         if (!spba || !pad) {
             free_frames_bytes_dma32(spba, sizeof(*spba) * spb);
             free_frames_bytes_dma32(pad, DEFAULT_PAGE_SIZE * spb);
@@ -792,7 +791,7 @@ static struct xhci_inctx *xhci_alloc_inctx(struct usbdevice_s *usbdev,
     struct usb_xhci_s *xhci =
         container_of(usbdev->hub->cntl, struct usb_xhci_s, usb);
     int size = (sizeof(struct xhci_inctx) * 33) << xhci->context64;
-    struct xhci_inctx *in = alloc_frames_bytes_dma32(size);
+    struct xhci_inctx *in = alloc_frames_bytes(size);
     if (!in) {
         return NULL;
     }
@@ -875,9 +874,9 @@ xhci_alloc_pipe(struct usbdevice_s *usbdev,
     }
 
     if (eptype == USB_ENDPOINT_XFER_CONTROL)
-        pipe = alloc_frames_bytes_dma32(sizeof(*pipe));
+        pipe = alloc_frames_bytes(sizeof(*pipe));
     else
-        pipe = alloc_frames_bytes_dma32(sizeof(*pipe));
+        pipe = alloc_frames_bytes(sizeof(*pipe));
     if (!pipe) {
         return NULL;
     }
@@ -887,7 +886,7 @@ xhci_alloc_pipe(struct usbdevice_s *usbdev,
     pipe->epid = epid;
     pipe->reqs.cs = 1;
     if (eptype == USB_ENDPOINT_XFER_INT) {
-        pipe->buf = alloc_frames_bytes_dma32(pipe->pipe.maxpacket);
+        pipe->buf = alloc_frames_bytes(pipe->pipe.maxpacket);
         if (!pipe->buf) {
             free_frames_bytes_dma32(pipe, sizeof(*pipe));
             return NULL;
@@ -923,7 +922,7 @@ xhci_alloc_pipe(struct usbdevice_s *usbdev,
         }
         // Enable slot.
         uint32_t size = (sizeof(struct xhci_slotctx) * 32) << xhci->context64;
-        struct xhci_slotctx *dev = alloc_frames_bytes_dma32(size);
+        struct xhci_slotctx *dev = alloc_frames_bytes(size);
         if (!dev) {
             goto fail;
         }
