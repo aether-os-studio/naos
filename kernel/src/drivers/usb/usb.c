@@ -308,6 +308,7 @@ static int configure_usb_device(struct usbdevice_s *usbdev) {
         return 0;
     }
 
+    delay(100ULL);
     // Get configuration
     struct usb_config_descriptor *config = get_device_config(usbdev->defpipe);
     if (!config) {
@@ -337,6 +338,9 @@ static int configure_usb_device(struct usbdevice_s *usbdev) {
         }
         iface = (void *)iface + iface->bLength;
     }
+
+    delay(100ULL);
+    printk("Setting configuration (value = %d)\n", config->bConfigurationValue);
 
     // Set the configuration.
     ret = set_configuration(usbdev->defpipe, config->bConfigurationValue);

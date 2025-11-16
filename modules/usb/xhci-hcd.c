@@ -1045,40 +1045,41 @@ struct usb_pipe *xhci_realloc_pipe(struct usbdevice_s *usbdev,
     return upipe;
 }
 
-// Submit a USB "setup" message request to the pipe's ring
 static void xhci_xfer_setup(struct xhci_pipe *pipe, int dir, void *cmd,
                             void *data, int datalen) {
     struct usb_xhci_s *xhci =
         container_of(pipe->pipe.cntl, struct usb_xhci_s, usb);
 
+    // Setup Stage TRT 字段
     uint32_t trt;
     if (datalen == 0) {
-        trt = 0;
+        trt = 0; // No Data Stage
     } else if (dir) {
-        trt = 3; // IN
+        trt = 3; // IN Data Stage
     } else {
-        trt = 2; // OUT
+        trt = 2; // OUT Data Stage
     }
 
-    // Setup Stage
     xhci_trb_queue(&pipe->reqs, cmd, USB_CONTROL_SETUP_SIZE,
                    (TR_SETUP << 10) | TRB_TR_IDT | (trt << 16));
 
-    // Data Stage
+    // Data Stage (如果有)
     if (datalen && data) {
-        uint64_t data_phys =
-            translate_address(get_current_page_dir(false), (uint64_t)data);
-
         uint32_t data_flags = (TR_DATA << 10) | (dir ? TRB_TR_DIR : 0);
-        if (dir) {
-            data_flags |= TRB_TR_IOC;
-        }
+        data_flags |= TRB_TR_IOC; // Data完成时也中断
 
         xhci_trb_queue(&pipe->reqs, data, datalen, data_flags);
     }
 
-    // Status Stage
-    uint32_t status_dir = (datalen && !dir) ? 1 : 0;
+    uint32_t status_dir;
+    if (datalen == 0) {
+        status_dir = 1;
+    } else if (dir) {
+        status_dir = 0;
+    } else {
+        status_dir = 1;
+    }
+
     xhci_trb_queue(&pipe->reqs, NULL, 0,
                    (TR_STATUS << 10) | TRB_TR_IOC |
                        (status_dir ? TRB_TR_DIR : 0));
