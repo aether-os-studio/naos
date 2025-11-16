@@ -263,6 +263,8 @@ static int usb_set_address(struct usbdevice_s *usbdev) {
 }
 
 usb_driver_t *usb_find_driver(struct usbdevice_s *usbdev) {
+    printk("Finding usb driver for class %#04lx\n",
+           usbdev->iface->bInterfaceClass);
     for (int i = 0; i < MAX_USBDEV_NUM; i++) {
         if (usb_drivers[i] &&
             usb_drivers[i]->class == usbdev->iface->bInterfaceClass) {

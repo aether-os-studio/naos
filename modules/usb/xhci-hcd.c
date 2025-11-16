@@ -409,10 +409,8 @@ static int xhci_check_ports(struct usb_xhci_s *xhci) {
     hub->op = &xhci_hub_ops;
     usb_enumerate(hub);
     int count = hub->devcount;
-    if (count > 0)
-        return count;
-    free(hub);
-    return 0;
+
+    return count;
 }
 
 /****************************************************************

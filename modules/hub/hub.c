@@ -133,19 +133,18 @@ int usb_hub_setup(struct usbdevice_s *usbdev) {
     usb_hub_op.realloc_pipe = usbdev->hub->op->realloc_pipe;
     usb_hub_op.send_pipe = usbdev->hub->op->send_pipe;
     usb_hub_op.poll_intr = usbdev->hub->op->poll_intr;
-    usb_hub_op.portmap = usbdev->hub->op->portmap;
 
     struct usb_hub_descriptor desc;
     int ret = get_hub_desc(usbdev->defpipe, &desc);
     if (ret)
         return ret;
 
-    struct usbhub_s hub;
-    memset(&hub, 0, sizeof(hub));
-    hub.usbdev = usbdev;
-    hub.cntl = usbdev->defpipe->cntl;
-    hub.portcount = desc.bNbrPorts;
-    hub.op = &usb_hub_op;
+    struct usbhub_s *hub = malloc(sizeof(struct usbhub_s));
+    memset(hub, 0, sizeof(struct usbhub_s));
+    hub->usbdev = usbdev;
+    hub->cntl = usbdev->defpipe->cntl;
+    hub->portcount = desc.bNbrPorts;
+    hub->op = &usb_hub_op;
 
     if (usbdev->speed == USB_SUPERSPEED) {
         int depth = 0;
@@ -163,7 +162,7 @@ int usb_hub_setup(struct usbdevice_s *usbdev) {
     // Turn on power to ports.
     int port;
     for (port = 0; port < desc.bNbrPorts; port++) {
-        ret = set_port_feature(&hub, port, USB_PORT_FEAT_POWER);
+        ret = set_port_feature(hub, port, USB_PORT_FEAT_POWER);
         if (ret)
             return ret;
     }
@@ -171,9 +170,9 @@ int usb_hub_setup(struct usbdevice_s *usbdev) {
     // Wait for port power to stabilize.
     delay(desc.bPwrOn2PwrGood * 2);
 
-    usb_enumerate(&hub);
+    usb_enumerate(hub);
 
-    printk("Initialized USB HUB (%d ports used)\n", hub.devcount);
+    printk("Initialized USB HUB (%d ports used)\n", hub->devcount);
 
     return 0;
 }

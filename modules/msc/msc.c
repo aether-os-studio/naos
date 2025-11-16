@@ -539,6 +539,8 @@ int usb_msc_setup(struct usbdevice_s *usbdev) {
     dev->bulk_in = inpipe;
     dev->bulk_out = outpipe;
 
+    printk("MSC: Detecting scsi capability...\n");
+
     usb_msc_detect_scsi_capability(dev);
 
     uint8_t test_cmd[16] = {0x00, dev->lun << 5 | 0, 0x00, 0x00, 0x00, 0x00};
@@ -556,6 +558,9 @@ int usb_msc_setup(struct usbdevice_s *usbdev) {
         dev->block_size = 512;
         dev->block_count = UINT64_MAX / 512;
     }
+
+    printk("MSC: block size %d, block count %d\n", dev->block_size,
+           dev->block_count);
 
     regist_blkdev("MSC", dev, dev->block_size,
                   dev->block_count * dev->block_size, INT16_MAX,
