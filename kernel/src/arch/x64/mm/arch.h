@@ -21,6 +21,10 @@
     (((uint64_t)(paddr) & ARCH_ADDR_MASK) | (flags))
 #define ARCH_READ_PTE_FLAG(pte) ((uint64_t)(pte) & ~ARCH_ADDR_MASK)
 
+#define ARCH_MAKE_HUGE_PTE(paddr, flags)                                       \
+    (((uint64_t)(paddr) & ARCH_ADDR_MASK) | ARCH_PT_FLAG_VALID |               \
+     ARCH_PT_FLAG_HUGE | (flags))
+
 #define ARCH_PT_TABLE_FLAGS (ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_WRITEABLE)
 
 #define ARCH_PT_IS_TABLE(x)                                                    \

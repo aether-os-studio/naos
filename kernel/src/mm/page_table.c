@@ -175,7 +175,9 @@ uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
         uint64_t index = indexs[i];
         uint64_t addr = pgdir[index];
         if (ARCH_PT_IS_LARGE(addr)) {
-            pgdir[index] = ARCH_MAKE_PTE(ARCH_READ_PTE(pgdir[index]), flags);
+            pgdir[index] = ARCH_MAKE_HUGE_PTE(ARCH_READ_PTE(pgdir[index]), flags);
+            arch_flush_tlb(vaddr);
+            return 0;
         }
         if (!ARCH_PT_IS_TABLE(addr)) {
             return 0;
