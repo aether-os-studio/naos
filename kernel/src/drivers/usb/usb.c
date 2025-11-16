@@ -376,7 +376,6 @@ static int configure_usb_device(struct usbdevice_s *usbdev) {
         goto fail;
     }
 
-    free(config);
     return 1;
 fail:
     free(config);
@@ -448,7 +447,6 @@ void usb_enumerate(struct usbhub_s *hub) {
         memset(usbdev, 0, sizeof(*usbdev));
         usbdev->hub = hub;
         usbdev->port = i;
-        if (!usb_hub_port_setup(usbdev))
-            free(usbdev);
+        usb_hub_port_setup(usbdev);
     }
 }
