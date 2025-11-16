@@ -412,7 +412,6 @@ static bool usb_hub_port_setup(struct usbdevice_s *usbdev) {
 
     // Configure the device
     int count = configure_usb_device(usbdev);
-    usb_free_pipe(usbdev, usbdev->defpipe);
     if (!count) {
         hub->op->disconnect(hub, port);
         printk("Configure device at port %d failed\n", port);

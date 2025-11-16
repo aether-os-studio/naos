@@ -265,7 +265,7 @@ run-aarch64-single: assets/ovmf-code-$(ARCH).fd all-single
 		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=single-$(IMAGE_NAME).img,format=raw,id=harddisk \
-		-device virtio-blk-pci,drive=harddisk \
+		-device usb-storage,drive=harddisk \
 		$(QEMUFLAGS)
 
 .PHONY: run-riscv64

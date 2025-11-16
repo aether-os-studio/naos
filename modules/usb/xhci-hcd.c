@@ -1096,8 +1096,7 @@ static void xhci_xfer_normal(struct xhci_pipe *pipe, void *data, int datalen) {
 int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data,
                    int datalen) {
     struct xhci_pipe *pipe = container_of(p, struct xhci_pipe, pipe);
-    struct usb_xhci_s *xhci =
-        container_of(pipe->pipe.cntl, struct usb_xhci_s, usb);
+    struct usb_xhci_s *xhci = container_of(p->cntl, struct usb_xhci_s, usb);
 
     void *dma_cmd = NULL;
     void *dma_data = NULL;
