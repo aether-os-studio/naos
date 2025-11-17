@@ -59,7 +59,7 @@ static inline void dcache_invalidate_range(void *addr, size_t size) {
     end = (end + line_size - 1) & ~(line_size - 1);
 
     for (uintptr_t va = start; va < end; va += line_size) {
-        __asm__ volatile("dc civac, %0" : : "r"(va) : "memory");
+        __asm__ volatile("dc ivac, %0" : : "r"(va) : "memory");
     }
 
     __asm__ volatile("dsb sy" : : : "memory");

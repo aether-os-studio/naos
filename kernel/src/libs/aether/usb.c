@@ -9,7 +9,7 @@ EXPORT_SYMBOL(usb_find_desc);
 
 EXPORT_SYMBOL(usb_send_bulk);
 EXPORT_SYMBOL(usb_send_default_control);
-EXPORT_SYMBOL(usb_poll_intr);
+EXPORT_SYMBOL(usb_send_intr_pipe);
 
 EXPORT_SYMBOL(usb_get_period);
 EXPORT_SYMBOL(usb_enumerate);

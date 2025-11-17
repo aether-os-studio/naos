@@ -251,7 +251,7 @@ run-aarch64: assets/ovmf-code-$(ARCH).fd assets/ovmf-vars-$(ARCH).fd all
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
 		-device virtio-blk-pci,drive=harddisk \
-		-device virtio-blk-pci,drive=rootdisk \
+		-device usb-storage,drive=rootdisk \
 		$(QEMUFLAGS)
 
 .PHONY: run-aarch64-single

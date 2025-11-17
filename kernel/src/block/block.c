@@ -183,8 +183,6 @@ uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len) {
         return (uint64_t)-1;
     }
 
-    current_task->state = TASK_UNINTERRUPTABLE;
-
     uint64_t start_sector = offset / dev->block_size;
     uint64_t end_sector = (offset + len - 1) / dev->block_size;
     uint64_t sector_count = end_sector - start_sector + 1;
@@ -207,7 +205,6 @@ uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len) {
             remaining_sectors -= to_copy_sectors;
         }
         free_frames_bytes(tmp, sector_count * dev->block_size);
-        current_task->state = TASK_READY;
 
         return total_copied;
     }
@@ -235,7 +232,6 @@ uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len) {
             chunk_sectors) {
             printk("Read block device failed!!!\n");
             free_frames_bytes(tmp, sector_count * dev->block_size);
-            current_task->state = TASK_READY;
             return (uint64_t)-1;
         }
 
@@ -253,7 +249,6 @@ uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len) {
     }
 
     free_frames_bytes(tmp, sector_count * dev->block_size);
-    current_task->state = TASK_READY;
 
     return total_read;
 }
@@ -264,8 +259,6 @@ uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf,
     if (!dev || !dev->ptr || !dev->write) {
         return (uint64_t)-1;
     }
-
-    current_task->state = TASK_UNINTERRUPTABLE;
 
     uint64_t start_sector = offset / dev->block_size;
     uint64_t end_sector = (offset + len - 1) / dev->block_size;
@@ -289,7 +282,6 @@ uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf,
             remaining_sectors -= to_copy_sectors;
         }
         free_frames_bytes(tmp, sector_count * dev->block_size);
-        current_task->state = TASK_READY;
         return total_copied;
     }
 
@@ -318,7 +310,6 @@ uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf,
                 chunk_sectors) {
                 printk("Read block device failed!!!\n");
                 free_frames_bytes(tmp, sector_count * dev->block_size);
-                current_task->state = TASK_READY;
                 return (uint64_t)-1;
             }
         }
@@ -333,7 +324,6 @@ uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf,
             chunk_sectors) {
             printk("Write block device failed!!!\n");
             free_frames_bytes(tmp, sector_count * dev->block_size);
-            current_task->state = TASK_READY;
             return (uint64_t)-1;
         }
 
@@ -346,7 +336,6 @@ uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf,
     }
 
     free_frames_bytes(tmp, sector_count * dev->block_size);
-    current_task->state = TASK_READY;
 
     return total_written;
 }

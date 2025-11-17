@@ -132,7 +132,7 @@ static struct usbhub_op_s usb_hub_op = {
 int usb_hub_setup(struct usbdevice_s *usbdev) {
     usb_hub_op.realloc_pipe = usbdev->hub->op->realloc_pipe;
     usb_hub_op.send_pipe = usbdev->hub->op->send_pipe;
-    usb_hub_op.poll_intr = usbdev->hub->op->poll_intr;
+    usb_hub_op.send_intr_pipe = usbdev->hub->op->send_intr_pipe;
 
     struct usb_hub_descriptor desc;
     int ret = get_hub_desc(usbdev->defpipe, &desc);

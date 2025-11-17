@@ -160,10 +160,12 @@ static int msc_transfer(usb_msc_device *dev, void *cmd, uint8_t cmd_len,
         return -EINVAL;
     }
 
+    memset(&cbw, 0, sizeof(cbw));
+    memset(&csw, 0, sizeof(usb_msc_csw_t));
+
     spin_lock(&usb_msc_lock);
 
     // 构建CBW
-    memset(&cbw, 0, sizeof(cbw));
     cbw.dCBWSignature = 0x43425355;
     cbw.dCBWTag = (uint32_t)(nanoTime() & 0xFFFFFFFF);
     cbw.dCBWDataTransferLength = data_len;

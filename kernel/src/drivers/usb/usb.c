@@ -7,7 +7,6 @@
 #include <drivers/usb/usb.h>
 #include <arch/arch.h>
 
-struct usbdevice_s *usbdevs[MAX_USBDEV_NUM] = {NULL};
 usb_driver_t *usb_drivers[MAX_USBDEV_NUM] = {NULL};
 
 void regist_usb_driver(usb_driver_t *driver) {
@@ -41,8 +40,10 @@ int usb_send_pipe(struct usb_pipe *pipe_fl, int dir, const void *cmd,
                                                datasize);
 }
 
-int usb_poll_intr(struct usb_pipe *pipe_fl, void *data) {
-    return pipe_fl->usbdev->hub->op->poll_intr(pipe_fl, data);
+int usb_send_intr_pipe(struct usb_pipe *pipe_fl, void *data_ptr, int len,
+                       intr_xfer_cb cb, void *user_data) {
+    return pipe_fl->usbdev->hub->op->send_intr_pipe(pipe_fl, data_ptr, len, cb,
+                                                    user_data);
 }
 
 int usb_32bit_pipe(struct usb_pipe *pipe_fl) { return 1; }
@@ -386,8 +387,6 @@ static bool usb_hub_port_setup(struct usbdevice_s *usbdev) {
     struct usbhub_s *hub = usbdev->hub;
     uint32_t port = usbdev->port;
 
-    spin_lock(&hub->cntl->resetlock);
-
     // Detect if device present (and possibly start reset)
     int ret = hub->op->detect(hub, port);
     if (!ret)
@@ -408,7 +407,6 @@ static bool usb_hub_port_setup(struct usbdevice_s *usbdev) {
         hub->op->disconnect(hub, port);
         goto resetfail;
     }
-    spin_unlock(&hub->cntl->resetlock);
 
     // Configure the device
     int count = configure_usb_device(usbdev);
@@ -420,17 +418,9 @@ static bool usb_hub_port_setup(struct usbdevice_s *usbdev) {
     hub->devcount += count;
     printk("Configure device at port %d successfully\n", port);
 
-    for (int i = 0; i < MAX_USBDEV_NUM; i++) {
-        if (!usbdevs[i]) {
-            usbdevs[i] = usbdev;
-            break;
-        }
-    }
-
     return true;
 
 resetfail:
-    spin_unlock(&hub->cntl->resetlock);
     return false;
 }
 
@@ -439,13 +429,14 @@ void usb_enumerate(struct usbhub_s *hub) {
 
     int i;
     for (i = 0; i < portcount; i++) {
-        struct usbdevice_s *usbdev = malloc(sizeof(*usbdev));
+        struct usbdevice_s *usbdev = malloc(sizeof(struct usbdevice_s));
         if (!usbdev) {
             continue;
         }
-        memset(usbdev, 0, sizeof(*usbdev));
+        memset(usbdev, 0, sizeof(struct usbdevice_s));
         usbdev->hub = hub;
         usbdev->port = i;
-        usb_hub_port_setup(usbdev);
+        if (!usb_hub_port_setup(usbdev))
+            free(usbdev);
     }
 }

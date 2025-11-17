@@ -9,28 +9,6 @@
 #include <libs/aether/usb.h>
 #include <libs/aether/evdev.h>
 
-struct pipe_node *keyboards = NULL;
-struct pipe_node *mice = NULL;
-
-static int add_pipe_node(struct pipe_node **list, struct usbdevice_s *usbdev,
-                         struct usb_endpoint_descriptor *epdesc) {
-    struct usb_pipe *pipe = usb_alloc_pipe(usbdev, epdesc);
-    if (!pipe)
-        return -1;
-
-    struct pipe_node *new_node = malloc(sizeof(struct pipe_node));
-    if (!new_node) {
-        return -1;
-    }
-
-    new_node->pipe = pipe;
-
-    new_node->next = *list;
-    *list = new_node;
-
-    return 0;
-}
-
 /****************************************************************
  * Setup
  ****************************************************************/
@@ -70,9 +48,7 @@ struct keyevent {
 
 #define MAX_KBD_EVENT 16
 
-static void usb_check_key();
-
-bool kb_task_created = false;
+static void usb_check_key(struct hiddevice_s *hid);
 
 static int usb_kbd_setup(struct usbdevice_s *usbdev,
                          struct usb_endpoint_descriptor *epdesc) {
@@ -90,14 +66,16 @@ static int usb_kbd_setup(struct usbdevice_s *usbdev,
     if (set_idle(usbdev->defpipe, KEYREPEATMS))
         return -1;
 
-    if (add_pipe_node(&keyboards, usbdev, epdesc))
+    struct hiddevice_s *hid = malloc(sizeof(struct hiddevice_s));
+    hid->upipe = usb_alloc_pipe(usbdev, epdesc);
+    if (!hid->upipe) {
+        free(hid);
         return -1;
-
-    if (!kb_task_created) {
-        task_create("usb_check_key", (void (*)(uint64_t))usb_check_key, 0,
-                    KTHREAD_PRIORITY);
-        kb_task_created = true;
     }
+    hid->xfer_ok = false;
+
+    task_create("usb_check_key", (void (*)(uint64_t))usb_check_key,
+                (uint64_t)hid, KTHREAD_PRIORITY);
 
     return 0;
 }
@@ -241,22 +219,28 @@ static void handle_key(struct keyevent *data) {
     LastUSBkey.data = old.data;
 }
 
+static void key_cb(int status, void *user_data) {
+    struct hiddevice_s *hid = user_data;
+    hid->xfer_ok = true;
+}
+
 // Check if a USB keyboard event is pending and process it if so.
-static void usb_check_key() {
-    while (1) {
-        for (struct pipe_node *node = keyboards; node; node = node->next) {
-            struct usb_pipe *pipe = node->pipe;
+static void usb_check_key(struct hiddevice_s *hid) {
+    uint8_t data[MAX_KBD_EVENT];
 
-            for (;;) {
-                uint8_t data[MAX_KBD_EVENT];
-                int ret = usb_poll_intr(pipe, data);
-                if (ret)
-                    break;
-                handle_key((void *)data);
-            }
+    for (;;) {
+        int ret =
+            usb_send_intr_pipe(hid->upipe, data, sizeof(data), key_cb, hid);
+        if (ret)
+            break;
+
+        while (!hid->xfer_ok) {
+            arch_enable_interrupt();
+            arch_yield();
         }
+        hid->xfer_ok = false;
 
-        arch_yield();
+        handle_key((void *)data);
     }
 }
 
@@ -268,24 +252,6 @@ struct mouseevent {
 
 #define MAX_MOUSE_EVENT 8
 
-// // Handle a ps2 style keyboard command.
-// inline int
-// usb_kbd_command(int command, uint8_t *param)
-// {
-//     switch (command)
-//     {
-//     case ATKBD_CMD_GETID:
-//         // Return the id of a standard AT keyboard.
-//         param[0] = 0xab;
-//         param[1] = 0x83;
-//         return 0;
-//     default:
-//         return -1;
-//     }
-// }
-
-bool mice_task_created = false;
-
 static void handle_mouse(struct mouseevent *data) {
     int8_t x = data->x, y = data->y;
     uint8_t flag = data->buttons & 0x7;
@@ -293,21 +259,27 @@ static void handle_mouse(struct mouseevent *data) {
     handle_mouse_event(flag, x, y, 0);
 }
 
-static void usb_check_mouse(void) {
-    while (1) {
-        for (struct pipe_node *node = mice; node; node = node->next) {
-            struct usb_pipe *pipe = node->pipe;
+static void mouse_cb(int status, void *user_data) {
+    struct hiddevice_s *hid = user_data;
+    hid->xfer_ok = true;
+}
 
-            for (;;) {
-                uint8_t data[MAX_MOUSE_EVENT];
-                int ret = usb_poll_intr(pipe, data);
-                if (ret)
-                    break;
-                handle_mouse((void *)data);
-            }
+static void usb_check_mouse(struct hiddevice_s *hid) {
+    uint8_t data[MAX_MOUSE_EVENT];
+
+    for (;;) {
+        int ret =
+            usb_send_intr_pipe(hid->upipe, data, sizeof(data), mouse_cb, hid);
+        if (ret)
+            break;
+
+        while (!hid->xfer_ok) {
+            arch_enable_interrupt();
+            arch_yield();
         }
+        hid->xfer_ok = false;
 
-        arch_yield();
+        handle_mouse((void *)data);
     }
 }
 
@@ -324,14 +296,16 @@ static int usb_mouse_setup(struct usbdevice_s *usbdev,
     if (set_protocol(usbdev->defpipe, 0, usbdev->iface->bInterfaceNumber))
         return -1;
 
-    if (add_pipe_node(&mice, usbdev, epdesc))
+    struct hiddevice_s *hid = malloc(sizeof(struct hiddevice_s));
+    hid->upipe = usb_alloc_pipe(usbdev, epdesc);
+    if (!hid->upipe) {
+        free(hid);
         return -1;
-
-    if (!mice_task_created) {
-        task_create("usb_check_mouse", (void (*)(uint64_t))usb_check_mouse, 0,
-                    KTHREAD_PRIORITY);
-        mice_task_created = true;
     }
+    hid->xfer_ok = false;
+
+    task_create("usb_check_mouse", (void (*)(uint64_t))usb_check_mouse,
+                (uint64_t)hid, KTHREAD_PRIORITY);
 
     return 0;
 }

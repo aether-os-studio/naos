@@ -1,7 +1,7 @@
 ifeq ($(BUILD_MODE), debug)
-CFLAGS := -g3 -O0 -Bsymbolic-functions -fno-stack-protector -Wno-address-of-packed-member -fPIC -fno-builtin -nostdinc -nostdlib -I$(shell pwd)/../kernel/src -I$(shell pwd)/../kernel/src/libs/fdt -I$(shell pwd)/../kernel/freestnd-c-hdrs
+CFLAGS := -g3 -O0 -fno-stack-protector -Wno-address-of-packed-member -fPIC -fno-builtin -nostdinc -nostdlib -I$(shell pwd)/../kernel/src -I$(shell pwd)/../kernel/src/libs/fdt -I$(shell pwd)/../kernel/freestnd-c-hdrs
 else
-CFLAGS := -O2 -Bsymbolic-functions -fno-stack-protector -Wno-address-of-packed-member -fPIC -fno-builtin -nostdinc -nostdlib -I$(shell pwd)/../kernel/src -I$(shell pwd)/../kernel/src/libs/fdt -I$(shell pwd)/../kernel/freestnd-c-hdrs
+CFLAGS := -O2 -fno-stack-protector -Wno-address-of-packed-member -fPIC -fno-builtin -nostdinc -nostdlib -I$(shell pwd)/../kernel/src -I$(shell pwd)/../kernel/src/libs/fdt -I$(shell pwd)/../kernel/freestnd-c-hdrs
 endif
 export CFLAGS
 

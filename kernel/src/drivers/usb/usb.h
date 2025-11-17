@@ -5,6 +5,16 @@
 
 struct usbdevice_s;
 
+#define EVENT_SUCCESS 0      // 成功
+#define EVENT_SHORT_PACKET 1 // 短包（部分成功）
+#define EVENT_STALL -1       // 端点Stall
+#define EVENT_BABBLE -2      // Babble错误
+#define EVENT_TIMEOUT -3     // 超时
+#define EVENT_ERROR -4       // 其他错误
+
+// 这个函数里面千万不要阻塞
+typedef void (*intr_xfer_cb)(int status, void *user_data);
+
 // Information on a USB end point.
 struct usb_pipe {
     union {
@@ -36,7 +46,6 @@ struct usbdevice_s {
 // Common information for usb controllers.
 struct usb_s {
     struct usb_pipe *freelist;
-    spinlock_t resetlock;
     pci_device_t *pci;
     void *mmio;
     uint8_t type;
@@ -63,7 +72,8 @@ struct usbhub_op_s {
                                      struct usb_endpoint_descriptor *epdesc);
     int (*send_pipe)(struct usb_pipe *p, int dir, const void *cmd, void *data,
                      int datasize);
-    int (*poll_intr)(struct usb_pipe *p, void *data);
+    int (*send_intr_pipe)(struct usb_pipe *p, void *data_ptr, int len,
+                          intr_xfer_cb cb, void *user_data);
 
     int (*detect)(struct usbhub_s *hub, uint32_t port);
     int (*reset)(struct usbhub_s *hub, uint32_t port);
@@ -273,7 +283,8 @@ enum scsi_version {
 
 // usb.c
 int usb_send_bulk(struct usb_pipe *pipe, int dir, void *data, int datasize);
-int usb_poll_intr(struct usb_pipe *pipe, void *data);
+int usb_send_intr_pipe(struct usb_pipe *pipe_fl, void *data_ptr, int len,
+                       intr_xfer_cb cb, void *user_data);
 int usb_32bit_pipe(struct usb_pipe *pipe_fl);
 struct usb_pipe *usb_alloc_pipe(struct usbdevice_s *usbdev,
                                 struct usb_endpoint_descriptor *epdesc);
