@@ -25,7 +25,7 @@ int ext_mount(uint64_t dev, vfs_node_t node) {
         ext4_device_unregister("dev");
         free(fullpath);
         spin_unlock(&rwlock);
-        return -1;
+        return -ret;
     }
 
     ext4_dir *dir = malloc(sizeof(ext4_dir));

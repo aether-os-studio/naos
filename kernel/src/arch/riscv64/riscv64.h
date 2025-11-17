@@ -42,13 +42,13 @@ static inline void dcache_flush_range(void *addr, size_t size) {
 }
 
 static inline void memory_barrier(void) {
-    __asm__ volatile("mfence" : : : "memory");
+    __asm__ volatile("" : : : "memory");
 }
 
 static inline void read_barrier(void) {
-    __asm__ volatile("lfence" : : : "memory");
+    __asm__ volatile("" : : : "memory");
 }
 
 static inline void write_barrier(void) {
-    __asm__ volatile("sfence" : : : "memory");
+    __asm__ volatile("" : : : "memory");
 }

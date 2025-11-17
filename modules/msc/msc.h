@@ -27,10 +27,10 @@ struct usb_msc_device;
 typedef struct usb_msc_device usb_msc_device;
 
 // 函数指针类型定义
-typedef int (*usb_msc_read_func_t)(usb_msc_device *dev, uint64_t lba, void *buf,
-                                   uint64_t count);
-typedef int (*usb_msc_write_func_t)(usb_msc_device *dev, uint64_t lba,
-                                    void *buf, uint64_t count);
+typedef uint64_t (*usb_msc_read_func_t)(usb_msc_device *dev, uint64_t lba,
+                                        void *buf, uint64_t count);
+typedef uint64_t (*usb_msc_write_func_t)(usb_msc_device *dev, uint64_t lba,
+                                         void *buf, uint64_t count);
 
 struct usb_msc_device {
     struct usbdevice_s *udev;

@@ -253,9 +253,9 @@ enum {
 
 // SCSI版本定义
 enum scsi_version {
-    SCSI_VERSION_10 = 0,
-    SCSI_VERSION_12 = 1,
-    SCSI_VERSION_16 = 2,
+    SCSI_VERSION_10 = 10,
+    SCSI_VERSION_12 = 12,
+    SCSI_VERSION_16 = 16,
 };
 
 // usb hid flags

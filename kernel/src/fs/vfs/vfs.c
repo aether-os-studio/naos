@@ -676,12 +676,16 @@ int vfs_mount(uint64_t dev, vfs_node_t node, const char *type) {
         return -1;
     if (!(node->type & file_dir))
         return -1;
+    int ret = 0;
     for (int i = 1; i < fs_nextid; i++) {
-        if (!strcmp(all_fs[i]->name, type) &&
-            fs_callbacks[i]->mount(dev, node) == 0) {
-            node->fsid = i;
-            node->root = node;
-            return 0;
+        if (!strcmp(all_fs[i]->name, type)) {
+            if (ret = fs_callbacks[i]->mount(dev, node), ret == 0) {
+                node->fsid = i;
+                node->root = node;
+                return 0;
+            } else {
+                printk("Mount fs %s failed, ret = %d\n", type, ret);
+            }
         }
     }
     return -1;
