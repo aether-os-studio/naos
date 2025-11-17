@@ -39,9 +39,6 @@ struct usb_msc_device {
     struct usb_pipe *bulk_out;
     uint32_t block_size;
     uint64_t block_count;
-    enum scsi_version scsi_version;
-    usb_msc_read_func_t read_func;
-    usb_msc_write_func_t write_func;
 };
 
 int usb_msc_setup(struct usbdevice_s *usbdev);

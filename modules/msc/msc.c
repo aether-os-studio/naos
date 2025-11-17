@@ -431,7 +431,7 @@ static int msc_read_capacity_16(usb_msc_device *dev) {
         dev->block_count = last_lba + 1;
         dev->block_size = block_size;
 
-        printk("MSC: %llu blocks × %u bytes = %llu MB\n", dev->block_count,
+        printk("MSC: %llu blocks x %u bytes = %llu MB\n", dev->block_count,
                dev->block_size,
                (dev->block_count * dev->block_size) / (1024 * 1024));
 
@@ -457,7 +457,11 @@ uint64_t usb_msc_read_blocks(void *dev_ptr, uint64_t lba, void *buf,
         count = dev->block_count - lba;
     }
 
-    return dev->read_func(dev, lba, buf, count);
+    if ((lba > 0xFFFFFFFF || count > 0xFFFF)) {
+        return msc_scsi_read_16(dev, lba, buf, count);
+    } else {
+        return msc_scsi_read_10(dev, lba, buf, count);
+    }
 }
 
 uint64_t usb_msc_write_blocks(void *dev_ptr, uint64_t lba, void *buf,
@@ -476,7 +480,11 @@ uint64_t usb_msc_write_blocks(void *dev_ptr, uint64_t lba, void *buf,
         count = dev->block_count - lba;
     }
 
-    return dev->write_func(dev, lba, buf, count);
+    if ((lba > 0xFFFFFFFF || count > 0xFFFF)) {
+        return msc_scsi_write_16(dev, lba, buf, count);
+    } else {
+        return msc_scsi_write_10(dev, lba, buf, count);
+    }
 }
 
 int usb_msc_setup(struct usbdevice_s *usbdev) {
@@ -541,19 +549,10 @@ int usb_msc_setup(struct usbdevice_s *usbdev) {
     // INQUIRY
     msc_inquiry(dev);
 
-    // 默认SCSI-10
-    dev->read_func = msc_scsi_read_10;
-    dev->write_func = msc_scsi_write_10;
-    dev->scsi_version = SCSI_VERSION_10;
-
     // READ CAPACITY
-    if (msc_read_capacity_10(dev) != 0) {
+    if (msc_read_capacity_16(dev) != 0) {
         printk("MSC: Trying READ CAPACITY(16)\n");
-        if (msc_read_capacity_16(dev) == 0) {
-            dev->read_func = msc_scsi_read_16;
-            dev->write_func = msc_scsi_write_16;
-            dev->scsi_version = SCSI_VERSION_16;
-        } else {
+        if (msc_read_capacity_10(dev) != 0) {
             printk("MSC: Both capacity commands failed\n");
             goto fail;
         }
@@ -569,7 +568,6 @@ int usb_msc_setup(struct usbdevice_s *usbdev) {
                   dev->block_count * dev->block_size, INT16_MAX,
                   usb_msc_read_blocks, usb_msc_write_blocks);
 
-    printk("MSC: Initialized (SCSI-%d)\n", dev->scsi_version);
     set_have_usb_storage(true);
 
     return 0;

@@ -24,8 +24,6 @@ bool system_initialized = false;
 
 extern bool can_schedule;
 
-extern vfs_node_t devfs_root;
-
 void init_thread(uint64_t arg) {
     printk("NAOS init thread is running...\n");
 

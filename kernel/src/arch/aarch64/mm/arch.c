@@ -11,9 +11,9 @@
 
 // 设置MAIR寄存器
 void setup_mair(void) {
-    uint64_t mair_val = (MAIR_ATTR_NORMAL_WB << 0) |    // 索引0: 回写正常内存
-                        (MAIR_ATTR_NORMAL_NC << 8) |    // 索引1: 非缓存正常内存
-                        (MAIR_ATTR_DEVICE_nGnRE << 16); // 索引2: 设备内存
+    uint64_t mair_val = (MAIR_ATTR_NORMAL_WB << 0) | // 索引0: 回写正常内存
+                        (MAIR_ATTR_NORMAL_NC << 8) | // 索引1: 非缓存正常内存
+                        (MAIR_ATTR_DEVICE_nGnRnE << 16); // 索引2: 设备内存
     __asm__ volatile("msr mair_el1, %0" : : "r"(mair_val));
 }
 

@@ -250,8 +250,8 @@ void sysfs_init() {
         vfs_write(vfs_open(name), content, 0, strlen(content));
     }
 
-    vfs_mkdir("/sys/firmware/acpi/tables");
-    uacpi_for_each_table(0, sysfs_regist_acpi_table, NULL);
+    // vfs_mkdir("/sys/firmware/acpi/tables");
+    // uacpi_for_each_table(0, sysfs_regist_acpi_table, NULL);
 }
 
 void sysfs_init_umount() {
