@@ -769,9 +769,14 @@ uint64_t task_execve(const char *path_user, const char **argv,
     char cmdline[DEFAULT_PAGE_SIZE * 4];
     memset(cmdline, 0, sizeof(cmdline));
     char *cmdline_ptr = cmdline;
+    int cmdline_len = 0;
     for (int i = 0; i < argv_count; i++) {
         int len = sprintf(cmdline_ptr, "%s ", new_argv[i]);
         cmdline_ptr += len;
+        cmdline_len += len;
+    }
+    if (cmdline_len > 1) {
+        cmdline[cmdline_len - 1] = '\0';
     }
 
     for (int i = 0; i < argv_count; i++) {

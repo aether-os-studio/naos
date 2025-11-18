@@ -769,7 +769,7 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
 
     // todo: special devices
 
-    if (copy_to_user(buff_user, buff, sizeof(struct stat)))
+    if (copy_to_user(buff_user, buff, sizeof(struct statx)))
         return (uint64_t)-EFAULT;
 
     return 0;
