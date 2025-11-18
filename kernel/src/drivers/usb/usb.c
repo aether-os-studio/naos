@@ -5,6 +5,7 @@
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
 #include <drivers/usb/usb.h>
+#include <drivers/kernel_logger.h>
 #include <arch/arch.h>
 
 usb_driver_t *usb_drivers[MAX_USBDEV_NUM] = {NULL};

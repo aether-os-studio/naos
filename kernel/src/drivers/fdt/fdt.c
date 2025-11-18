@@ -1,4 +1,5 @@
 #include <boot/boot.h>
+#include <drivers/kernel_logger.h>
 #include <drivers/fdt/fdt.h>
 #include <mm/mm.h>
 #include <libs/aether/fdt.h>

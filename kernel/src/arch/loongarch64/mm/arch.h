@@ -21,6 +21,15 @@
 
 #define ARCH_PT_TABLE_FLAGS 0
 
+#define ARCH_READ_PTE(pte) ((uint64_t)(pte) & ARCH_ADDR_MASK)
+#define ARCH_MAKE_PTE(paddr, flags)                                            \
+    (((uint64_t)(paddr) & ARCH_ADDR_MASK) | (flags))
+#define ARCH_READ_PTE_FLAG(pte) ((uint64_t)(pte) & ~ARCH_ADDR_MASK)
+
+#define ARCH_MAKE_HUGE_PTE(paddr, flags)                                       \
+    (((uint64_t)(paddr) & ARCH_ADDR_MASK) | ARCH_PT_FLAG_VALID |               \
+     ARCH_PT_FLAG_HGLOBAL | ARCH_PT_FLAG_HUGE | (flags))
+
 #define ARCH_PT_IS_TABLE(x) ((!((x) & (ARCH_PT_FLAG_VALID))) && ((x) != 0))
 #define ARCH_PT_IS_LARGE(x)                                                    \
     (((x) & (ARCH_PT_FLAG_HGLOBAL | ARCH_PT_FLAG_HUGE)) ==                     \

@@ -1218,6 +1218,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 #elif defined(__riscv__)
     child->arch_context->ctx->ktp = (uint64_t)child;
     uint64_t user_sp = regs->sp;
+#elif defined(__loongarch64__)
+    uint64_t user_sp = regs->usp;
 #endif
 
     if (newsp) {
@@ -1230,6 +1232,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     child->arch_context->ctx->sp_el0 = user_sp;
 #elif defined(__riscv__)
     child->arch_context->ctx->sp = user_sp;
+#elif defined(__loongarch64__)
+    regs->usp = user_sp;
 #endif
 
     child->is_kernel = false;

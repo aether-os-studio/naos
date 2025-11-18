@@ -456,6 +456,20 @@ static inline void spin_unlock(spinlock_t *lock) {
     asm __volatile__("csrwr %0, 0x1" : : "r"(lock->crmd));
 }
 
+// 获取spinlock
+static inline void spin_lock_no_irqsave(spinlock_t *sl) {
+    /* 自旋等待 */
+    while (__sync_lock_test_and_set(&sl->lock, 1)) {
+    }
+
+    sl->crmd = 0;
+}
+
+// 释放spinlock
+static inline void spin_unlock_no_irqstore(spinlock_t *sl) {
+    __sync_lock_release(&sl->lock);
+}
+
 #endif
 
 extern uint64_t nanoTime();

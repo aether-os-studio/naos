@@ -7,12 +7,15 @@
 #define USER_STACK_START 0x00006fffff000000
 #define USER_STACK_END 0x0000700000000000
 
+#define switch_to(prev, next)
+
 struct task;
 typedef struct task task_t;
 
 typedef struct arch_context {
     struct pt_regs *ctx;
     task_mm_info_t *mm;
+    bool dead;
 } arch_context_t;
 
 typedef struct arch_signal_frame {

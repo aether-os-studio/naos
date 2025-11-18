@@ -150,7 +150,9 @@ void boot_smp_init(uintptr_t entry) {
 #endif
         spin_lock(&ap_startup_lock);
 
+#if !defined(__loongarch64__)
         cpu->goto_address = (limine_goto_address)entry;
+#endif
     }
 }
 

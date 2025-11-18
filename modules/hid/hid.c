@@ -8,6 +8,7 @@
 #include "hid.h"
 #include <libs/aether/usb.h>
 #include <libs/aether/evdev.h>
+#include <libs/aether/stdio.h>
 
 /****************************************************************
  * Setup

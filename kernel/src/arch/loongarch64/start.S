@@ -4,4 +4,4 @@ _start:
     ori $t0, $t0, 0x2
     csrwr $t0, 0x2
 
-    bl kmain
+    b kmain

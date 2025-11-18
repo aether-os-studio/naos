@@ -1,6 +1,7 @@
 #include <uacpi/kernel_api.h>
 #include <boot/boot.h>
 #include <mm/mm.h>
+#include <drivers/kernel_logger.h>
 #include <drivers/bus/pci.h>
 #include <irq/irq_manager.h>
 #include <arch/arch.h>

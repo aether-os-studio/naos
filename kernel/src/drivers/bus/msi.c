@@ -1,6 +1,7 @@
 #include <drivers/bus/msi.h>
 #include <mm/mm.h>
 #include <arch/arch.h>
+#include <drivers/kernel_logger.h>
 
 /**
  * @brief 生成msi消息
