@@ -218,7 +218,7 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
 		-device qemu-xhci,id=xhci \
 		-device nvme,drive=harddisk,serial=1234 \
-  		-device nvme,drive=rootdisk,serial=5678 \
+		-device nvme,drive=rootdisk,serial=5678 \
 		-netdev user,id=net0 \
 		-device virtio-net-pci,netdev=net0 \
 		-rtc base=utc \

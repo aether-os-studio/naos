@@ -145,14 +145,10 @@ size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             return -(EWOULDBLOCK);
         }
         spin_unlock(&pair->lock);
-        arch_enable_interrupt();
         arch_yield();
     }
-    arch_disable_interrupt();
 
     spin_lock(&pair->lock);
-
-    arch_disable_interrupt();
 
     size_t toCopy = MIN(size, ptmx_data_avail(pair));
     memcpy(addr, pair->bufferMaster, toCopy);
@@ -180,10 +176,8 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
             return -(EWOULDBLOCK);
         }
         spin_unlock(&pair->lock);
-        arch_enable_interrupt();
         arch_yield();
     }
-    arch_disable_interrupt();
 
     spin_lock(&pair->lock);
 
@@ -371,14 +365,9 @@ size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit) {
             return -(EWOULDBLOCK);
         }
         spin_unlock(&pair->lock);
-        arch_enable_interrupt();
         arch_yield();
     }
-    arch_disable_interrupt();
-
     spin_lock(&pair->lock);
-
-    arch_disable_interrupt();
 
     size_t toCopy = MIN(limit, pts_data_avali(pair));
     memcpy(out, pair->bufferSlave, toCopy);
@@ -433,11 +422,8 @@ size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit) {
             return -(EWOULDBLOCK);
         }
         spin_unlock(&pair->lock);
-        arch_enable_interrupt();
         arch_yield();
     }
-    arch_disable_interrupt();
-
     spin_lock(&pair->lock);
 
     // we already have a lock in our hands

@@ -79,8 +79,6 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
         arch_yield();
     } while (timeout != 0 && (timeout == -1 || nanoTime() < target));
 
-    arch_disable_interrupt();
-
     if (!ready && sigexit)
         return (uint64_t)-EINTR;
 

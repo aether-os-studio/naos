@@ -246,7 +246,7 @@ typedef struct spinlock {
 static inline void spin_lock(spinlock_t *lock) {
     asm volatile("1:\n\t"
                  "lock btsq $0, %0\n\t" // 测试并设置
-                 "   jc 1b\n\t"         // 如果已锁定则重试
+                 "jc 1b\n\t"            // 如果已锁定则重试
                  : "+m"(lock->lock)
                  :
                  : "memory", "cc");
@@ -268,7 +268,7 @@ static inline void spin_lock(spinlock_t *lock) {
 static inline void spin_lock_no_irqsave(spinlock_t *lock) {
     asm volatile("1:\n\t"
                  "lock btsq $0, %0\n\t" // 测试并设置
-                 "   jc 1b\n\t"         // 如果已锁定则重试
+                 "jc 1b\n\t"            // 如果已锁定则重试
                  : "+m"(lock->lock)
                  :
                  : "memory", "cc");

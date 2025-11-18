@@ -58,10 +58,8 @@ uint32_t sys_arch_sem_wait(sys_sem_t *sem, uint32_t timeout) {
         }
         spin_unlock(&sem->lock);
 
-        arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
-    arch_disable_interrupt();
 
 cleanup:
     spin_unlock(&sem->lock);
@@ -145,10 +143,8 @@ void sys_mbox_post(sys_mbox_t *q, void *msg) {
             break;
         spin_unlock(&q->lock);
 
-        arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
-    arch_disable_interrupt();
 
     sys_mbox_post_unsafe(q, msg);
 }
@@ -179,10 +175,8 @@ u32_t sys_arch_mbox_fetch(sys_mbox_t *q, void **msg, u32_t timeout) {
         block->write = false;
         spin_unlock(&q->lock);
 
-        arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
-    arch_disable_interrupt();
 
     // spin_lock(&q->lock);
     *msg = q->msges[q->ptrRead];

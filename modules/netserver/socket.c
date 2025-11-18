@@ -70,10 +70,8 @@ size_t real_socket_send(uint64_t fd, uint8_t *out, uint64_t limit, int flags) {
         if (lwip_out >= 0 || errno != EAGAIN)
             break;
 
-        arch_enable_interrupt();
         arch_yield();
     }
-    arch_disable_interrupt();
 
     if (lwip_out < 0)
         return -errno;
@@ -104,10 +102,8 @@ size_t real_socket_recv(uint64_t fd, uint8_t *out, uint64_t limit, int flags) {
         if (lwip_out >= 0 || errno != EAGAIN)
             break;
 
-        arch_enable_interrupt();
         arch_yield();
     }
-    arch_disable_interrupt();
 
     if (lwip_out < 0)
         return -errno;
@@ -145,16 +141,12 @@ size_t real_socket_sendto(uint64_t fd, uint8_t *buff, size_t len, int flags,
         if (lwipOut >= 0 || errno != EAGAIN)
             break;
 
-        arch_enable_interrupt();
         arch_yield();
     }
-    arch_disable_interrupt();
 
     sockaddrLwipToLinux((void *)dest_addr, aligned, initialFamily);
 
     free(aligned);
-
-    arch_disable_interrupt();
 
     if (lwipOut < 0)
         return -errno;
@@ -189,16 +181,12 @@ size_t real_socket_recvfrom(uint64_t fd, uint8_t *buff, size_t len, int flags,
         if (lwipOut >= 0 || errno != EAGAIN)
             break;
 
-        arch_enable_interrupt();
         arch_yield();
     }
-    arch_disable_interrupt();
 
     sockaddrLwipToLinux(addr, a, AF_INET);
 
     free(a);
-
-    arch_disable_interrupt();
 
     if (lwipOut < 0)
         return -errno;
@@ -328,10 +316,8 @@ size_t real_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
         if (lwip_out >= 0 || errno != EAGAIN)
             break;
 
-        arch_enable_interrupt();
         arch_yield();
     }
-    arch_disable_interrupt();
 
     if (lwip_out < 0)
         return -errno;
@@ -374,10 +360,8 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
         if (lwip_out >= 0 || errno != EAGAIN)
             break;
 
-        arch_enable_interrupt();
         arch_yield();
     }
-    arch_disable_interrupt();
 
     if (lwip_out < 0)
         return -errno;
@@ -553,10 +537,8 @@ ssize_t real_socket_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         if (lwip_out >= 0 || errno != EAGAIN)
             break;
 
-        arch_enable_interrupt();
         arch_yield();
     }
-    arch_disable_interrupt();
 
     if (lwip_out < 0)
         return -errno;
@@ -586,10 +568,8 @@ ssize_t real_socket_write(fd_t *fd, const void *addr, size_t offset,
         if (lwip_out >= 0 || errno != EAGAIN)
             break;
 
-        arch_enable_interrupt();
         arch_yield();
     }
-    arch_disable_interrupt();
 
     if (lwip_out < 0)
         return -errno;
@@ -632,10 +612,8 @@ static void delay(uint64_t ms) {
     uint64_t ns = ms * 1000000;
     uint64_t start = nanoTime();
     while (nanoTime() - start < ns) {
-        arch_enable_interrupt();
         arch_yield();
     }
-    arch_disable_interrupt();
 }
 
 void receiver_entry(uint64_t arg) {

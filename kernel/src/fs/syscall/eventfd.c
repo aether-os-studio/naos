@@ -63,10 +63,8 @@ static ssize_t eventfd_read(fd_t *fd, void *buf, size_t offset, size_t len) {
         if (efd->flags & EFD_NONBLOCK)
             return -EAGAIN;
 
-        arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
-    arch_disable_interrupt();
 
     value = (efd->flags & EFD_SEMAPHORE) ? 1 : efd->count;
     memcpy(buf, &value, sizeof(uint64_t));

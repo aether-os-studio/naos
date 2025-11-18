@@ -19,8 +19,6 @@ normal:
     movq %gs:0x0, %rsp // syscall_stack
 
 next:
-    subq $0x08, %rsp
-
     subq $0x38, %rsp
 
     pushq %rax
@@ -78,8 +76,6 @@ ENTRY(ret_from_syscall)
     popq %rax
 
     addq $0x38, %rsp
-
-    addq $0x08, %rsp
 
     swapgs
 

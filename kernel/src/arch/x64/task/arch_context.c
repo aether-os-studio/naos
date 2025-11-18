@@ -53,9 +53,9 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->mm->brk_start = USER_BRK_START;
     context->mm->brk_current = context->mm->brk_start;
     context->mm->brk_end = USER_BRK_END;
-    context->ctx = (struct pt_regs *)(stack - 8) - 1;
-    context->ctx->rsp = stack - 8;
-    context->ctx->rbp = stack - 8;
+    context->ctx = (struct pt_regs *)stack - 1;
+    context->ctx->rsp = (uint64_t)context->ctx;
+    context->ctx->rbp = (uint64_t)context->ctx;
     context->ctx->rflags = (0UL << 12) | (0b10) | (1UL << 9);
     context->fsbase = 0;
     context->gsbase = 0;
@@ -92,7 +92,7 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
     if (!dst->mm) {
         printk("dst->mm == NULL!!! dst = %#018lx", dst);
     }
-    dst->ctx = (struct pt_regs *)(stack - 8) - 1;
+    dst->ctx = (struct pt_regs *)(stack)-1;
     dst->rip = (uint64_t)ret_from_exception;
     dst->rsp = (uint64_t)dst->ctx;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
@@ -141,7 +141,7 @@ void __switch_to(task_t *prev, task_t *next) {
             "movq %0, %%cr3" ::"r"(next->arch_context->mm->page_table_addr));
     }
 
-    tss[current_cpu_id].rsp0 = next->kernel_stack - 8;
+    tss[current_cpu_id].rsp0 = next->kernel_stack;
 
     write_fsbase(next->arch_context->fsbase);
     write_gsbase(next->arch_context->gsbase);
@@ -149,7 +149,7 @@ void __switch_to(task_t *prev, task_t *next) {
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
                                uint64_t stack) {
-    context->ctx = (struct pt_regs *)(current_task->kernel_stack - 8) - 1;
+    context->ctx = (struct pt_regs *)(current_task->kernel_stack) - 1;
 
     context->rip = (uint64_t)ret_from_exception;
     context->rsp = (uint64_t)context->ctx;

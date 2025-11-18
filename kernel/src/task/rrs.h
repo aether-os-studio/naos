@@ -13,6 +13,7 @@ typedef struct rrs_scheduler {
     list_queue_t *sched_queue;
     struct sched_entity *idle;
     struct sched_entity *curr;
+    spinlock_t queue_lock;
 } rrs_t;
 
 void add_rrs_entity(task_t *task, rrs_t *scheduler);

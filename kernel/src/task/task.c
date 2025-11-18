@@ -58,6 +58,9 @@ void free_task(task_t *ptr) {
     if (!ptr->is_kernel)
         free_page_table(ptr->arch_context->mm);
 
+    if (ptr->cmdline)
+        free(ptr->cmdline);
+
     arch_context_free(ptr->arch_context);
     free(ptr->arch_context);
 
@@ -973,9 +976,6 @@ void task_exit_inner(task_t *task, int64_t code) {
         }
     }
 
-    if (task->cmdline)
-        free(task->cmdline);
-
     if (task->ppid != task->pid && tasks[task->ppid] &&
         !tasks[task->ppid]->child_vfork_done) {
         tasks[task->ppid]->child_vfork_done = true;
@@ -1362,10 +1362,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     if ((flags & CLONE_VFORK)) {
         while (!current_task->child_vfork_done) {
-            arch_enable_interrupt();
             arch_yield();
         }
-        arch_disable_interrupt();
 
         current_task->child_vfork_done = false;
     }
@@ -1723,14 +1721,14 @@ uint64_t sys_setpriority(int which, int who, int niceval) {
 extern void task_signal();
 
 void schedule() {
-    arch_disable_interrupt();
-
     task_t *prev = current_task;
     task_t *next = rrs_pick_next_task(schedulers[current_cpu_id]);
 
     if (prev == next) {
         return;
     }
+
+    arch_disable_interrupt();
 
     sched_update_itimer();
     sched_update_timerfd();

@@ -24,12 +24,8 @@ static ssize_t signalfd_read(fd_t *fd, uint64_t offset, void *buf,
     struct signalfd_ctx *ctx = data;
 
     while (ctx->queue_head == ctx->queue_tail) {
-        arch_enable_interrupt();
-
-        arch_pause();
+        arch_yield();
     }
-
-    arch_disable_interrupt();
 
     struct signalfd_siginfo *ev = &ctx->queue[ctx->queue_tail];
     size_t copy_len = len < sizeof(*ev) ? len : sizeof(*ev);

@@ -731,10 +731,8 @@ ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
         if (flags & O_NONBLOCK)
             return -EWOULDBLOCK;
 
-        arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
-    arch_disable_interrupt();
 
     struct drm_event_vblank vbl = {
         .base.type = dev->drm_events[0]->type,

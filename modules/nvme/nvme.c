@@ -15,9 +15,11 @@ void *naos_dma_alloc(size_t size, uint64_t *phys_addr) {
 }
 void naos_dma_free(void *virt, size_t size) { free_frames_bytes(virt, size); }
 
-void naos_memory_barrier(void) {}
-void naos_read_barrier(void) {}
-void naos_write_barrier(void) {}
+void naos_memory_barrier(void) { dma_mb(); }
+
+void naos_read_barrier(void) { dma_rmb(); }
+
+void naos_write_barrier(void) { dma_wmb(); }
 
 void naos_udelay(uint32_t us) {
     uint64_t ns = nanoTime() + (uint64_t)us * 1000;
@@ -503,8 +505,6 @@ static int nvme_admin_cmd_sync(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
         // arch_wait_for_interrupt();
     }
 
-    // arch_disable_interrupt();
-
     if (result) {
         *result = sync_ctx.result;
     }
@@ -945,7 +945,6 @@ uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
         }
         arch_wait_for_interrupt();
     }
-    arch_disable_interrupt();
     if (timeout) {
         while (nvme_process_queue_completions(ns->ctrl, queue))
             ;
@@ -993,7 +992,6 @@ uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
         }
         arch_wait_for_interrupt();
     }
-    arch_disable_interrupt();
     if (timeout) {
         while (nvme_process_queue_completions(ns->ctrl, queue))
             ;

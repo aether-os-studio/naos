@@ -127,8 +127,7 @@ void sys_sigreturn(struct pt_regs *regs) {
     current_task->state = TASK_READY;
 
 #if defined(__x86_64__)
-    struct pt_regs *context =
-        (struct pt_regs *)(current_task->kernel_stack - 8) - 1;
+    struct pt_regs *context = (struct pt_regs *)current_task->kernel_stack - 1;
 
     memcpy(context, &current_task->signal_saved_regs, sizeof(struct pt_regs));
 
@@ -323,7 +322,7 @@ void task_signal() {
     current_task->state = TASK_UNINTERRUPTABLE;
 
 #if defined(__x86_64__)
-    struct pt_regs *f = (struct pt_regs *)(current_task->syscall_stack - 8) - 1;
+    struct pt_regs *f = (struct pt_regs *)current_task->syscall_stack - 1;
 
     memcpy(&current_task->signal_saved_regs, current_task->arch_context->ctx,
            sizeof(struct pt_regs));
@@ -378,8 +377,6 @@ void task_signal() {
 
     current_task->arch_context->ctx->cs = SELECTOR_USER_CS;
     current_task->arch_context->ctx->ss = SELECTOR_USER_DS;
-    current_task->arch_context->ctx->ds = SELECTOR_USER_DS;
-    current_task->arch_context->ctx->es = SELECTOR_USER_DS;
 
     current_task->arch_context->ctx->rflags = (1 << 9);
     current_task->arch_context->ctx->rsp = sigrsp;
