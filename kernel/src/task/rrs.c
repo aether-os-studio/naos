@@ -12,22 +12,46 @@ void add_rrs_entity(task_t *task, rrs_t *scheduler) {
 void remove_rrs_entity(task_t *thread, rrs_t *scheduler) {
     struct sched_entity *entity = thread->sched_info;
     if (entity->on_rq) {
+        if (entity == scheduler->curr) {
+            list_node_t *nextL = entity->node->next;
+
+            if (nextL == NULL) {
+                nextL = scheduler->sched_queue->head;
+            }
+
+            if (nextL == entity->node || scheduler->sched_queue->size == 1) {
+                scheduler->curr = scheduler->idle;
+            } else {
+                scheduler->curr = nextL->data;
+            }
+        }
+
         list_remove_node(scheduler->sched_queue, entity->node);
         entity->on_rq = false;
-        if (entity == scheduler->curr) {
-            scheduler->curr = scheduler->idle;
-        }
     }
 }
 
 task_t *rrs_pick_next_task(rrs_t *scheduler) {
     struct sched_entity *entity = scheduler->curr;
-    list_node_t *nextL = entity ? entity->node->next : NULL;
-    struct sched_entity *next;
-    if (nextL == NULL)
-        next = scheduler->idle;
-    else
-        next = nextL->data;
+    list_node_t *nextL = NULL;
+
+    if (!entity || entity == scheduler->idle) {
+        nextL = scheduler->sched_queue->head;
+    } else if (entity->on_rq) {
+        nextL = entity->node->next;
+        if (nextL == NULL) {
+            nextL = scheduler->sched_queue->head;
+        }
+    } else {
+        nextL = scheduler->sched_queue->head;
+    }
+
+    if (nextL == NULL) {
+        scheduler->curr = scheduler->idle;
+        return scheduler->idle->task;
+    }
+
+    struct sched_entity *next = nextL->data;
     scheduler->curr = next;
     return next->task;
 }

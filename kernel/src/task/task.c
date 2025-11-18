@@ -236,8 +236,9 @@ void task_init() {
         idle_task->cpu_id = cpu;
         idle_task->state = TASK_READY;
         idle_task->current_state = TASK_RUNNING;
-        schedulers[cpu]->curr = idle_task->sched_info;
         schedulers[cpu]->idle = idle_task->sched_info;
+        remove_rrs_entity(idle_task, schedulers[cpu]);
+        schedulers[cpu]->curr = idle_task->sched_info;
     }
 
     task_create("init", init_thread, 0, NORMAL_PRIORITY);

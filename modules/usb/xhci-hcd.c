@@ -834,7 +834,7 @@ static void xhci_event_handler(uint64_t arg) {
     while (1) {
         arch_enable_interrupt();
         xhci_process_events(xhci);
-        uint64_t time_to_rerun = nanoTime() + 1000000000ULL;
+        uint64_t time_to_rerun = nanoTime() + 100ULL * 1000000ULL;
         while (nanoTime() < time_to_rerun) {
             arch_yield();
         }
