@@ -490,7 +490,7 @@ static int nvme_admin_cmd_sync(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
         "NVMe: Submitting admin command - opcode=%d cid=%d cdw0=0x%08x\n",
         cmd->cdw0 & 0xFF, cid, cmd->cdw0);
 
-    arch_enable_interrupt();
+    // arch_enable_interrupt();
 
     if (nvme_submit_cmd(&ctrl->admin_queue, cmd) != 0) {
         ctrl->requests[cid] = NULL;
@@ -499,11 +499,11 @@ static int nvme_admin_cmd_sync(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
 
     // Poll for completion
     while (!sync_ctx.done) {
-        // nvme_process_completions(ctrl);
-        arch_wait_for_interrupt();
+        nvme_process_queue_completions(ctrl, &ctrl->admin_queue);
+        // arch_wait_for_interrupt();
     }
 
-    arch_disable_interrupt();
+    // arch_disable_interrupt();
 
     if (result) {
         *result = sync_ctx.result;
