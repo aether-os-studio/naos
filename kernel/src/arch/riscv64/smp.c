@@ -32,7 +32,7 @@ void general_ap_entry(uint64_t hartid) {
     uint64_t sp;
     asm volatile("mv %0, sp" : "=r"(sp));
     sp &= ~(STACK_SIZE - 1);
-    csr_write(sscratch, sp + STACK_SIZE);
+    csr_write(sscratch, 0);
 
     ap_startup_lock.lock = 0;
 

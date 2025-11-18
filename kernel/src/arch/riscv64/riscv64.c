@@ -18,10 +18,7 @@ void arch_early_init() {
     ramfb_init();
     trap_init();
     cpu_init();
-    uint64_t current_stack;
-    asm volatile("mv %0, sp" : "=r"(current_stack));
-    current_stack &= ~(STACK_SIZE - 1);
-    csr_write(sscratch, current_stack + STACK_SIZE);
+    csr_write(sscratch, 0);
     smp_init();
 }
 

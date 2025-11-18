@@ -5,47 +5,7 @@
 #include <arch/arch.h>
 #include <drivers/kernel_logger.h>
 
-void kernel_thread_func();
-asm("kernel_thread_func:\n\t"
-    "    ld ra, 0(sp)\n\t" // 恢复 ra
-    // sp 稍后恢复
-    "    ld gp, 16(sp)\n\t"   // 恢复 gp
-    "    ld tp, 24(sp)\n\t"   // 恢复 tp
-    "    ld t0, 32(sp)\n\t"   // 恢复 t0
-    "    ld t1, 40(sp)\n\t"   // 恢复 t1
-    "    ld t2, 48(sp)\n\t"   // 恢复 t2
-    "    ld s0, 56(sp)\n\t"   // 恢复 s0/fp
-    "    ld s1, 64(sp)\n\t"   // 恢复 s1
-    "    ld a0, 72(sp)\n\t"   // 恢复 a0
-    "    ld a1, 80(sp)\n\t"   // 恢复 a1
-    "    ld a2, 88(sp)\n\t"   // 恢复 a2
-    "    ld a3, 96(sp)\n\t"   // 恢复 a3
-    "    ld a4, 104(sp)\n\t"  // 恢复 a4
-    "    ld a5, 112(sp)\n\t"  // 恢复 a5
-    "    ld a6, 120(sp)\n\t"  // 恢复 a6
-    "    ld a7, 128(sp)\n\t"  // 恢复 a7
-    "    ld s2, 136(sp)\n\t"  // 恢复 s2
-    "    ld s3, 144(sp)\n\t"  // 恢复 s3
-    "    ld s4, 152(sp)\n\t"  // 恢复 s4
-    "    ld s5, 160(sp)\n\t"  // 恢复 s5
-    "    ld s6, 168(sp)\n\t"  // 恢复 s6
-    "    ld s7, 176(sp)\n\t"  // 恢复 s7
-    "    ld s8, 184(sp)\n\t"  // 恢复 s8
-    "    ld s9, 192(sp)\n\t"  // 恢复 s9
-    "    ld s10, 200(sp)\n\t" // 恢复 s10
-    "    ld s11, 208(sp)\n\t" // 恢复 s11
-    "    ld t3, 216(sp)\n\t"  // 恢复 t3
-    "    ld t4, 224(sp)\n\t"  // 恢复 t4
-    "    ld t5, 232(sp)\n\t"  // 恢复 t5
-    "    ld t6, 240(sp)\n\t"  // 恢复 t6
-
-    "    addi sp, sp, 296\n\t"
-    // RISC-V: s1 存放函数指针（对应 rbx），a2 是参数（对应 rdx）
-    "    mv a0, a2\n\t" // 将 a2 作为第一个参数传递
-    "    jalr s1\n\t"   // 调用 s1 中的函数指针
-    // 线程退出
-    "    li a0, 0\n\t"      // 参数设为 0
-    "    j task_exit\n\t"); // 调用 task_exit
+extern void kernel_thread_func();
 
 extern void ret_from_trap_handler();
 
@@ -73,19 +33,17 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->fpu_ctx->fcsr = FCSR_INIT_DEFAULT;
     context->dead = false;
     if (user_mode) {
-        // context->ctx->sstatus = (2UL << 32) | (1UL << 18) | (3UL << 13) |
-        // (1UL
-        // << 5) | (1UL << 0); todo
+        context->ctx->sstatus =
+            (2UL << 32) | (1UL << 18) | (1UL << 5) | (1UL << 0); // todo
     } else {
-        context->ctx->sstatus = (2UL << 32) | (1UL << 18) | (3UL << 13) |
-                                (1UL << 5) | (1UL << 0) | (1UL << 8);
+        context->ctx->sstatus =
+            (2UL << 32) | (1UL << 18) | (1UL << 5) | (1UL << 0) | (1UL << 8);
         context->ra = (uint64_t)kernel_thread_func;
         context->sp = (uint64_t)context->ctx;
         context->ctx->s1 = entry;
         context->ctx->a2 = initial_arg;
         context->ctx->sp = (uint64_t)context->ctx;
     }
-    SSTATUS_SET_FS(context->ctx->sstatus, 2);
 }
 
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
@@ -129,6 +87,8 @@ void arch_set_current(task_t *current) {
 }
 
 void __switch_to(task_t *prev, task_t *next) {
+    arch_disable_interrupt();
+
     if (prev->arch_context->ctx->sstatus & (1UL << 63)) {
         if (SSTATUS_GET_FS(prev->arch_context->ctx->sstatus) == 3) {
             fpu_save_context(prev->arch_context->fpu_ctx);
@@ -146,7 +106,7 @@ void __switch_to(task_t *prev, task_t *next) {
     asm volatile("csrw satp, %0" : : "r"(satp) : "memory");
     asm volatile("sfence.vma" : : : "memory");
 
-    csr_write(sscratch, next->kernel_stack);
+    csr_write(sscratch, next->is_kernel ? 0 : next->kernel_stack);
 }
 
 extern void task_signal();

@@ -203,6 +203,8 @@ static page_t *__rmqueue_smallest(zone_t *zone, uint32_t order) {
 // Per-CPU 缓存分配
 static page_t *rmqueue_pcplist(zone_t *zone) {
     per_cpu_pages_t *pcp = this_cpu_zone_pcp(zone);
+    if (!pcp)
+        return NULL;
 
     // 快速路径：从缓存获取
     if (pcp->count > 0) {

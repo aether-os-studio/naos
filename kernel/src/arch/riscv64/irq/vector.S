@@ -15,18 +15,16 @@ init_trap_vector:
 
 .align 4
 trap_handler:
-    // 检查sstatus的SPP位判断来源模式
-    csrr t0, sstatus
-    andi t0, t0, 0x100   // 提取SPP位（第8位）
-    bnez t0, kernel_trap  // SPP != 0 表示来自内核态
+    csrrw sp, sscratch, sp
+    beqz sp, kernel_trap
     
 user_trap:
-    // 用户态陷阱：切换栈指针
-    csrrw sp, sscratch, sp
+    // 用户态陷阱：设置sscratch为0
     j save_context
 
 kernel_trap:
-    // 内核态陷阱：不切换栈指针
+    // 内核态陷阱：换回来
+    csrrw sp, sscratch, sp
 
 save_context:
     addi sp, sp, -296
@@ -81,6 +79,8 @@ save_context:
     
     andi t0, t0, 0x100
     bnez t0, skip_tp_switch_in
+
+    csrw sscratch, zero
 
     ld t0, 280(sp)   // 尝试加载 ktp
     beqz t0, skip_tp_switch_in
@@ -166,6 +166,8 @@ kernel_sret:
     ld x6, 40(sp)    // t1
 
     addi sp, sp, 296
+
+    csrw sscratch, zero
 
     // 内核态返回：直接sret
     sret

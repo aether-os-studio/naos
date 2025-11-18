@@ -266,9 +266,6 @@ uintptr_t alloc_frames(size_t count) {
     size_t order = log2_floor(required_pages);
 
     page_t *page = alloc_pages(GFP_KERNEL_NORMAL, order);
-    if (!page) {
-        page = alloc_pages(GFP_KERNEL_DMA32, order);
-    }
     if (!page)
         return 0;
 
@@ -308,17 +305,9 @@ uintptr_t alloc_frames_dma32(size_t count) {
     uint64_t idx = page - mem_map;
 
     uint64_t paddr = idx * DEFAULT_PAGE_SIZE;
-    uint64_t vaddr = phys_to_virt(paddr);
-    map_change_attribute_range(get_current_page_dir(false), vaddr,
-                               count * DEFAULT_PAGE_SIZE,
-                               PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
     return paddr;
 }
 
 void free_frames_dma32(uintptr_t addr, size_t count) {
-    uint64_t vaddr = phys_to_virt(addr);
-    map_change_attribute_range(get_current_page_dir(false), vaddr,
-                               count * DEFAULT_PAGE_SIZE,
-                               PT_FLAG_R | PT_FLAG_W);
     return free_frames(addr, count);
 }
