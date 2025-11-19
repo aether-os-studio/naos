@@ -13,7 +13,7 @@
 // --------------------------------------------------------------
 // configuration
 
-#define XHCI_RING_ITEMS 32
+#define XHCI_RING_ITEMS 64
 #define XHCI_RING_SIZE (XHCI_RING_ITEMS * sizeof(struct xhci_trb))
 
 /*
@@ -832,7 +832,6 @@ static void xhci_process_events(struct usb_xhci_s *xhci) {
 static void xhci_event_handler(uint64_t arg) {
     struct usb_xhci_s *xhci = (struct usb_xhci_s *)arg;
     while (1) {
-        arch_enable_interrupt();
         xhci_process_events(xhci);
         uint64_t time_to_rerun = nanoTime() + 100ULL * 1000000ULL;
         while (nanoTime() < time_to_rerun) {
@@ -932,7 +931,6 @@ static void xhci_trb_queue_split(struct xhci_ring *ring, void *data,
                                  int datalen, uint32_t flags,
                                  bool is_last_in_td) {
     if (datalen == 0 || data == NULL) {
-        xhci_trb_queue(ring, data, datalen, flags);
         return;
     }
 
@@ -1443,8 +1441,10 @@ int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data,
             // OUT传输：复制数据
             if (!dir) {
                 memcpy(dma_data, data, datalen);
-                dma_sync_cpu_to_device(dma_data, datalen);
+            } else {
+                memset(dma_data, 0, datalen);
             }
+            dma_sync_cpu_to_device(dma_data, datalen);
         }
 
         xhci_xfer_normal(pipe, dma_data, datalen);

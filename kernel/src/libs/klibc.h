@@ -318,7 +318,10 @@ static inline void spin_lock(spinlock_t *lock) {
                  "   stxr %w1, %w0, [%2]\n\t"
                  "   cbnz %w1, 1b\n\t"
                  "   b 3f\n\t"
-                 "2: nop\n\t"
+                 "2: wfe\n\t"
+                 "   ldaxr %w0, [%2]\n\t"
+                 "   cbnz %w0, 2b\n\t"
+                 "   clrex\n\t"
                  "   b 1b\n\t"
                  "3:\n\t"
                  : "=&r"(tmp), "=&r"(status)
