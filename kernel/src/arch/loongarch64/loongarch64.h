@@ -2,10 +2,12 @@
 
 #define ARCH_MAX_IRQ_NUM 1024 // TODO
 
+#include "arch/loongarch64/csr.h"
 #include "arch/loongarch64/drivers/char/keyboard.h"
 #include "arch/loongarch64/drivers/char/mouse.h"
 #include "arch/loongarch64/drivers/serial.h"
 #include "arch/loongarch64/irq/irq.h"
+#include "arch/loongarch64/irq/trap.h"
 #include "arch/loongarch64/irq/ptrace.h"
 #include "arch/loongarch64/mm/arch.h"
 #include "arch/loongarch64/task/arch_context.h"

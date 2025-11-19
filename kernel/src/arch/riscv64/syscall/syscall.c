@@ -264,7 +264,7 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_ADJTIMEX] = (syscall_handle_t)sys_adjtimex;
     // syscall_handlers[SYS_SETRLIMIT] = (syscall_handle_t)sys_setrlimit;
     // syscall_handlers[SYS_CHROOT] = (syscall_handle_t)sys_chroot;
-    // syscall_handlers[SYS_SYNC] = (syscall_handle_t)sys_sync;
+    syscall_handlers[SYS_SYNC] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_ACCT] = (syscall_handle_t)sys_acct;
     // syscall_handlers[SYS_SETTIMEOFDAY] = (syscall_handle_t)sys_settimeofday;
     syscall_handlers[SYS_MOUNT] = (syscall_handle_t)sys_mount;
