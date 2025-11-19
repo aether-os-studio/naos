@@ -53,7 +53,7 @@ void signal_init() {
     signal_internal_decisions[SIGWINCH] = SIGNAL_INTERNAL_IGN;
 }
 
-bool signals_pending_quick(task_t *task) {
+int signals_pending_quick(task_t *task) {
     sigset_t pending_list = task->signal;
     sigset_t unblocked_list = pending_list & (~task->blocked);
     for (int i = MINSIG; i <= MAXSIG; i++) {
@@ -67,9 +67,12 @@ bool signals_pending_quick(task_t *task) {
             signal_internal_decisions[i] == SIGNAL_INTERNAL_IGN)
             continue;
 
-        return true;
+        task->signal &= (~SIGMASK(i));
+
+        return i;
     }
-    return false;
+
+    return 0;
 }
 
 // 获取信号屏蔽位图
@@ -136,7 +139,7 @@ void sys_sigreturn(struct pt_regs *regs) {
 
     current_task->arch_context->ctx = context;
 
-    current_task->call_in_signal = 0;
+    current_task->call_in_signal = false;
 
     asm volatile(
         "movq %0, %%rsp\n\t"
@@ -164,23 +167,20 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
         wait_ns = uts->tv_sec * 1000000000ULL + uts->tv_nsec;
     }
 
-    while ((current_task->saved_signal == 0) &&
+    int sig = 0;
+    while (!(sig = signals_pending_quick(current_task), sig) &&
            (nanoTime() - start < wait_ns || wait_ns == 0)) {
-        arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     }
-    arch_disable_interrupt();
 
     current_task->blocked = old;
 
     if (uinfo) {
         memset(uinfo, 0, sizeof(siginfo_t));
-        uinfo->si_signo = current_task->saved_signal;
+        uinfo->si_signo = sig;
         uinfo->si_errno = 0;
         uinfo->si_code = 0;
     }
-
-    current_task->saved_signal = 0;
 
     return 0;
 }
@@ -237,7 +237,7 @@ uint64_t sys_kill(int pid, int sig) {
     //     void *handler = parent->actions[SIGCHLD].sa_handler;
     //     if (!(handler == SIG_DFL || handler == SIG_IGN))
     //     {
-    //         parent->signal |= SIGMASK(SIGCHLD);
+    //         parent->pending_signal |= SIGMASK(SIGCHLD);
     //     }
 
     //     if (parent->state == TASK_BLOCKING)
@@ -247,7 +247,7 @@ uint64_t sys_kill(int pid, int sig) {
     // }
 
     spin_lock(&task->signal_lock);
-    task->signal |= SIGMASK(sig);
+    task->pending_signal |= SIGMASK(sig);
     spin_unlock(&task->signal_lock);
 
     task_unblock(task, 128 + sig);
@@ -264,7 +264,7 @@ void task_signal() {
         return;
     }
 
-    uint64_t map = current_task->signal & (~current_task->blocked);
+    uint64_t map = current_task->pending_signal & (~current_task->blocked);
     if (!map) {
         return;
     }
@@ -273,12 +273,11 @@ void task_signal() {
     int sig = 1;
     for (; sig <= MAXSIG; sig++) {
         if (map & SIGMASK(sig)) {
-            current_task->signal &= (~SIGMASK(sig));
+            current_task->signal |= SIGMASK(sig);
+            current_task->pending_signal &= (~SIGMASK(sig));
             break;
         }
     }
-
-    current_task->saved_signal = sig;
 
     if (sig == SIGKILL) {
         spin_unlock(&current_task->signal_lock);

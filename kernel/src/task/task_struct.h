@@ -125,9 +125,9 @@ typedef struct task {
     spinlock_t signal_lock;
     sigaction_t actions[MAXSIG];
     uint64_t signal;
+    uint64_t pending_signal;
     uint64_t blocked;
     uint64_t saved_blocked;
-    int saved_signal;
     vfs_node_t cwd;
     fd_info_t *fd_info;
     vfs_node_t procfs_node;

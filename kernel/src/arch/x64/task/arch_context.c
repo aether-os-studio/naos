@@ -122,21 +122,18 @@ void arch_set_current(task_t *current) { write_kgsbase((uint64_t)current); }
 extern tss_t tss[MAX_CPU_NUM];
 
 void __switch_to(task_t *prev, task_t *next) {
-    if (prev) {
-        prev->arch_context->fsbase = read_fsbase();
-        prev->arch_context->gsbase = read_gsbase();
+    prev->arch_context->fsbase = read_fsbase();
+    prev->arch_context->gsbase = read_gsbase();
 
-        if (prev->arch_context->fpu_ctx) {
-            asm volatile("fxsave (%0)" ::"r"(prev->arch_context->fpu_ctx));
-        }
+    if (prev->arch_context->fpu_ctx) {
+        asm volatile("fxsave (%0)" ::"r"(prev->arch_context->fpu_ctx));
     }
 
-    // Start to switch
     if (next->arch_context->fpu_ctx) {
         asm volatile("fxrstor (%0)" ::"r"(next->arch_context->fpu_ctx));
     }
 
-    if (!prev || (prev->arch_context->mm != next->arch_context->mm)) {
+    if (prev->arch_context->mm != next->arch_context->mm) {
         asm volatile(
             "movq %0, %%cr3" ::"r"(next->arch_context->mm->page_table_addr));
     }

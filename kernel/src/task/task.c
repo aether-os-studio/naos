@@ -37,11 +37,11 @@ void send_sigint(int pgid) {
             if (tasks[i]->actions[SIGINT].sa_handler == SIG_DFL ||
                 tasks[i]->actions[SIGINT].sa_handler == SIG_IGN) {
                 spin_lock(&tasks[i]->signal_lock);
-                tasks[i]->signal |= SIGMASK(SIGKILL);
+                tasks[i]->pending_signal |= SIGMASK(SIGKILL);
                 spin_unlock(&tasks[i]->signal_lock);
             } else if (tasks[i]->state != TASK_READING_STDIO) {
                 spin_lock(&tasks[i]->signal_lock);
-                tasks[i]->signal |= SIGMASK(SIGINT);
+                tasks[i]->pending_signal |= SIGMASK(SIGINT);
                 spin_unlock(&tasks[i]->signal_lock);
             }
         }
@@ -166,7 +166,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->arch_context->ctx->gp = cpuid_to_hartid[task->cpu_id];
 #endif
     task->signal = 0;
-    task->saved_signal = 0;
+    task->pending_signal = 0;
     task->status = 0;
     task->cwd = rootdir;
     task->fd_info = malloc(sizeof(fd_info_t));
@@ -999,7 +999,7 @@ void task_exit_inner(task_t *task, int64_t code) {
         void *handler = tasks[task->ppid]->actions[SIGCHLD].sa_handler;
         if (handler != SIG_DFL) {
             if (handler != SIG_IGN) {
-                // tasks[task->ppid]->signal |= SIGMASK(SIGCHLD);
+                // tasks[task->ppid]->pending_signal |= SIGMASK(SIGCHLD);
             } else {
                 task->should_free = true;
             }
@@ -1031,7 +1031,7 @@ uint64_t task_exit(int64_t code) {
     //     continue_ptr_count = 0;
     //     if ((tasks[i]->ppid != tasks[i]->pid) &&
     //         (tasks[i]->ppid == current_task->pid)) {
-    //         tasks[i]->signal |= SIGMASK(SIGKILL);
+    //         tasks[i]->pending_signal |= SIGMASK(SIGKILL);
     //         if (tasks[i]->state == TASK_BLOCKING ||
     //             tasks[i]->state == TASK_READING_STDIO)
     //             task_unblock(tasks[i], EOK);
@@ -1303,7 +1303,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     child->fd_info->ref_count++;
 
-    child->saved_signal = 0;
+    child->pending_signal = 0;
     child->signal = 0;
     if (flags & CLONE_SIGHAND) {
         memcpy(child->actions, current_task->actions, sizeof(child->actions));
@@ -1457,7 +1457,7 @@ void sched_update_itimer() {
 
     if (rtAt && rtAt <= now) {
         spin_lock(&current_task->signal_lock);
-        current_task->signal |= SIGMASK(SIGALRM);
+        current_task->pending_signal |= SIGMASK(SIGALRM);
         spin_unlock(&current_task->signal_lock);
 
         if (rtReset) {
@@ -1473,7 +1473,7 @@ void sched_update_itimer() {
         kernel_timer_t *kt = current_task->timers[j];
         if (kt->expires && now >= kt->expires) {
             spin_lock(&current_task->signal_lock);
-            current_task->signal |= SIGMASK(kt->sigev_signo);
+            current_task->pending_signal |= SIGMASK(kt->sigev_signo);
             spin_unlock(&current_task->signal_lock);
 
             if (kt->interval)

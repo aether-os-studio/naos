@@ -57,7 +57,7 @@ typedef enum signal_internal {
 struct task;
 typedef struct task task_t;
 
-bool signals_pending_quick(task_t *task);
+int signals_pending_quick(task_t *task);
 
 #define SIG_BLOCK 0   /* for blocking signals */
 #define SIG_UNBLOCK 1 /* for unblocking signals */
