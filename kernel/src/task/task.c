@@ -1489,17 +1489,10 @@ extern int timerfdfs_id;
 
 void sched_update_timerfd() {
     if (current_task->fd_info) {
-        uint64_t continue_null_fd_count = 0;
-
         for (int fd = 3; fd < MAX_FD_NUM; fd++) {
             if (current_task->fd_info->fds[fd] == NULL) {
-                continue_null_fd_count++;
-                if (continue_null_fd_count >= 5)
-                    break;
                 continue;
             }
-
-            continue_null_fd_count = 0;
 
             if (current_task->fd_info->fds[fd] &&
                 current_task->fd_info->fds[fd]->node->fsid == timerfdfs_id) {
@@ -1513,8 +1506,7 @@ void sched_update_timerfd() {
                     // CLOCK_REALTIME
                     tm time;
                     time_read(&time);
-                    now = (uint64_t)mktime(&time) * 1000000000ULL +
-                          nanoTime() % 1000000000ULL;
+                    now = (uint64_t)mktime(&time) * 1000000000ULL;
                 }
 
                 if (tfd->timer.expires && now >= tfd->timer.expires) {
@@ -1731,6 +1723,9 @@ uint64_t sys_setpriority(int which, int who, int niceval) {
 extern void task_signal();
 
 void schedule() {
+    sched_update_itimer();
+    sched_update_timerfd();
+
     task_t *prev = current_task;
     task_t *next = rrs_pick_next_task(schedulers[current_cpu_id]);
 
@@ -1739,9 +1734,6 @@ void schedule() {
     }
 
     arch_disable_interrupt();
-
-    sched_update_itimer();
-    sched_update_timerfd();
 
     task_signal();
 
@@ -1755,4 +1747,6 @@ void schedule() {
     arch_set_current(next);
 
     switch_to(prev, next);
+
+    arch_enable_interrupt();
 }

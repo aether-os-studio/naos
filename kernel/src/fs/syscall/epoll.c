@@ -69,8 +69,6 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
             browse = browse->next;
         }
 
-        arch_enable_interrupt();
-
         sigexit = signals_pending_quick(current_task);
 
         if (ready > 0 || sigexit)

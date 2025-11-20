@@ -22,8 +22,10 @@ SECTIONS {
     
     text_start_va = .;
     .text (text_start_va) : AT(text_start_va - KERNEL_VMA) {
+        _text = .;
         *(.text)
         *(.text.*)
+        _etext = .;
     }
     
     . = ALIGN(CONSTANT(MAXPAGESIZE));

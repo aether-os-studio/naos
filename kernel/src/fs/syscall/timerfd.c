@@ -53,8 +53,7 @@ static uint64_t get_current_time_ns(int clock_type) {
     {
         tm time;
         time_read(&time);
-        return (uint64_t)mktime(&time) * 1000000000ULL +
-               nanoTime() % 1000000000ULL;
+        return (uint64_t)mktime(&time) * 1000000000ULL;
     }
 }
 
