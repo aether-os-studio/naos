@@ -2,6 +2,7 @@
 #include <stdarg.h>
 #include <mm/mm.h>
 #include <drivers/kernel_logger.h>
+#include <drivers/tty.h>
 #include <task/task.h>
 #include <mod/dlinker.h>
 
@@ -81,8 +82,13 @@ extern bool can_schedule;
 
 spinlock_t dump_lock = SPIN_INIT;
 
+extern tty_t *kernel_session;
+
 void dump_regs(struct pt_regs *regs, const char *error_str, ...) {
     can_schedule = false;
+
+    if (kernel_session)
+        kernel_session->current_vt_mode.mode = VT_AUTO;
 
     spin_lock(&dump_lock);
 
