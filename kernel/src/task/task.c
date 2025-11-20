@@ -1205,6 +1205,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     memset((void *)(child->signal_syscall_stack - STACK_SIZE), 0, STACK_SIZE);
 
     child->arch_context = malloc(sizeof(arch_context_t));
+    memset(child->arch_context, 0, sizeof(arch_context_t));
     arch_context_t orig_context;
     memcpy(&orig_context, current_task->arch_context, sizeof(arch_context_t));
     orig_context.ctx = regs;
