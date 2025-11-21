@@ -65,6 +65,7 @@ typedef struct virtio_net_device {
     uint16_t mtu;
     virtqueue_t *send_queue;
     virtqueue_t *recv_queue;
+    spinlock_t send_recv_lock;
 } virtio_net_device_t;
 
 uint32_t virtio_begin_init(virtio_driver_t *driver,

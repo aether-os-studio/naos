@@ -612,13 +612,13 @@ static void delay(uint64_t ms) {
     uint64_t ns = ms * 1000000;
     uint64_t start = nanoTime();
     while (nanoTime() - start < ns) {
-        arch_yield();
+        arch_pause();
     }
 }
 
 void receiver_entry(uint64_t arg) {
     uint32_t mtu = ((netdev_t *)arg)->mtu;
-    char *buf = alloc_frames_bytes(mtu);
+    char *buf = malloc(mtu);
     memset(buf, 0, mtu);
 
     while (1) {

@@ -92,6 +92,8 @@ int virtio_net_send(virtio_net_device_t *net_dev, void *data, uint32_t len) {
         return -1;
     }
 
+    spin_lock(&net_dev->send_recv_lock);
+
     virtio_net_hdr_t *header = (virtio_net_hdr_t *)send_buffer;
     memset(header, 0, sizeof(virtio_net_hdr_t));
 
@@ -108,11 +110,14 @@ int virtio_net_send(virtio_net_device_t *net_dev, void *data, uint32_t len) {
         virt_queue_add_buf(net_dev->send_queue, bufs, 2, writable);
     if (desc_idx == 0xFFFF) {
         free_frames_bytes(send_buffer, RX_BUFFER_SIZE);
+        spin_unlock(&net_dev->send_recv_lock);
         return -1;
     }
 
     virt_queue_submit_buf(net_dev->send_queue, desc_idx);
     virt_queue_notify(net_dev->driver, net_dev->send_queue);
+
+    spin_unlock(&net_dev->send_recv_lock);
 
     return len;
 }
@@ -127,9 +132,12 @@ int virtio_net_receive(virtio_net_device_t *net_dev, void *buffer,
         return 0;
     }
 
+    spin_lock(&net_dev->send_recv_lock);
+
     uint32_t len;
     uint16_t desc_idx = virt_queue_get_used_buf(net_dev->recv_queue, &len);
     if (desc_idx == 0xFFFF) {
+        spin_unlock(&net_dev->send_recv_lock);
         return 0; // No packets available
     }
 
@@ -155,6 +163,8 @@ int virtio_net_receive(virtio_net_device_t *net_dev, void *buffer,
     }
 
     virt_queue_free_desc(net_dev->recv_queue, desc_idx);
+
+    spin_unlock(&net_dev->send_recv_lock);
 
     return data_len;
 }
