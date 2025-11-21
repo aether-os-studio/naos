@@ -105,7 +105,7 @@ void fbdev_init_sysfs();
 
 extern boot_framebuffer_t *framebuffer;
 
-static inline boot_framebuffer_t *get_current_fb() { return framebuffer; }
+boot_framebuffer_t *get_current_fb();
 
 #define FB_MAJOR 29
 

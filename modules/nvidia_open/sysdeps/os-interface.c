@@ -27,7 +27,7 @@ NvBool os_cc_snp_vtom_enabled = 0;
 NvBool os_cc_tdx_enabled = 0;
 NvBool os_cc_sme_enabled = 0;
 
-spinlock_t timerlock = SPIN_INIT;
+spinlock_t timerLock = SPIN_INIT;
 
 NV_STATUS NV_API_CALL os_alloc_mem(void **address, NvU64 size) {
     if (!address)
@@ -264,18 +264,18 @@ void *NV_API_CALL os_map_kernel_space(NvU64 start, NvU64 size_bytes,
                                       NvU32 mode) {
     if (start == 0)
         return NULL;
-    uint64_t virt = phys_to_virt(start);
-    map_page_range(get_current_page_dir(false), virt, start, size_bytes,
-                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE |
-                       PT_FLAG_DEVICE);
+    uint64_t virt = phys_to_virt(start & ~0xFFFULL);
+    map_page_range(get_current_page_dir(false), virt, start & ~0xFFFULL,
+                   ((size_bytes + 0xFFFULL) & ~0xFFFULL),
+                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
     return (void *)virt;
 }
 
 void NV_API_CALL os_unmap_kernel_space(void *ptr, NvU64 len) {
-    uint64_t alignedAddr = (uintptr_t)ptr & ~0xFFFULL;
-    uint64_t alignedSize =
-        (((uintptr_t)ptr + len + 0xFFFULL) & ~0xFFFULL) - alignedAddr;
-    unmap_page_range(get_current_page_dir(false), alignedAddr, alignedSize);
+    // uint64_t alignedAddr = (uintptr_t)ptr & ~0xFFFULL;
+    // uint64_t alignedSize =
+    //     (((uintptr_t)ptr + len + 0xFFFULL) & ~0xFFFULL) - alignedAddr;
+    // unmap_page_range(get_current_page_dir(false), alignedAddr, alignedSize);
 }
 
 NV_STATUS NV_API_CALL os_flush_cpu_cache_all(void) {
@@ -635,7 +635,7 @@ NV_STATUS NV_API_CALL nv_alloc_pages(nv_state_t *, NvU32 page_count,
     ASSERT(node_id == -1);
 
     uint64_t virt =
-        (uint64_t)alloc_frames_bytes(page_count * DEFAULT_PAGE_SIZE);
+        (uint64_t)alloc_frames_bytes_dma32(page_count * DEFAULT_PAGE_SIZE);
 
     AllocInfo *info = malloc(sizeof(AllocInfo));
     info->base = virt;
@@ -663,7 +663,8 @@ NV_STATUS NV_API_CALL nv_free_pages(nv_state_t *, NvU32 page_count,
     (void)cache_type;
 
     if (page_count * DEFAULT_PAGE_SIZE == info->length) {
-        free_frames_bytes((void *)info->base, page_count * DEFAULT_PAGE_SIZE);
+        free_frames_bytes_dma32((void *)info->base,
+                                page_count * DEFAULT_PAGE_SIZE);
         free(info);
     }
 
@@ -797,10 +798,10 @@ NvBool NV_API_CALL nv_requires_dma_remap(nv_state_t *) { return NV_FALSE; }
 
 NvBool NV_API_CALL nv_is_rm_firmware_active(nv_state_t *) STUBBED;
 
-// typedef struct nv_firmware_handle {
-//     void *addr;
-//     uint64_t size;
-// } nv_firmware_handle_t;
+typedef struct nv_firmware_handle {
+    void *addr;
+    uint64_t size;
+} nv_firmware_handle_t;
 
 const void *NV_API_CALL
 nv_get_firmware(nv_state_t *nv, nv_firmware_type_t fw_type,
@@ -818,14 +819,21 @@ nv_get_firmware(nv_state_t *nv, nv_firmware_type_t fw_type,
     }
 
     *fw_size = node->size;
-    void *addr = malloc(node->size);
+    void *addr = alloc_frames_bytes_dma32(node->size);
     *fw_buf = addr;
     vfs_read(node, addr, 0, node->size);
 
-    return (const void *)addr;
+    nv_firmware_handle_t *handle = malloc(sizeof(nv_firmware_handle_t));
+    handle->addr = addr;
+    handle->size = node->size;
+    return (const void *)handle;
 }
 
-void NV_API_CALL nv_put_firmware(const void *handle) { free((void *)handle); }
+void NV_API_CALL nv_put_firmware(const void *handle) {
+    nv_firmware_handle_t *fw_handle = (nv_firmware_handle_t *)handle;
+    free_frames_bytes_dma32(fw_handle->addr, fw_handle->size);
+    free((void *)fw_handle);
+}
 
 nv_file_private_t *NV_API_CALL nv_get_file_private(NvS32, NvBool,
                                                    void **) STUBBED;

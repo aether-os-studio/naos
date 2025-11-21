@@ -50,7 +50,8 @@ uint64_t get_mmio_address(uint32_t pci_address, uint16_t offset) {
     }
     uint64_t virt = phys_to_virt(phys);
     map_page_range(get_current_page_dir(false), virt, phys,
-                   DEFAULT_PAGE_SIZE * 4, PT_FLAG_R | PT_FLAG_W);
+                   DEFAULT_PAGE_SIZE * 8,
+                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
 
     return virt + offset;
 }

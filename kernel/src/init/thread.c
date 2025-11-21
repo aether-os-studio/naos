@@ -51,8 +51,6 @@ void init_thread(uint64_t arg) {
 
     pci_init_after_sysfs();
 
-    drm_init_after_pci_sysfs();
-
     fbdev_init_sysfs();
 
     arch_input_dev_init();
@@ -62,6 +60,8 @@ void init_thread(uint64_t arg) {
     mount_root();
 
     pci_init_after_mount_root();
+
+    drm_init_after_pci_sysfs();
 
     system_initialized = true;
 

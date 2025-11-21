@@ -355,7 +355,7 @@ void nvidia_open_rc_timer(uint64_t dev_ptr) {
             }
         }
 
-        os_delay(1000000000);
+        os_delay(1000);
 
         spin_lock(&dev->timerLock);
         bool still_enabled = dev->nv_.rc_timer_enabled;

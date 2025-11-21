@@ -9,7 +9,7 @@
 #include "nvkms-kapi-internal.h"
 #include "nvidia-modeset-os-interface.h"
 
-spinlock_t nvKmslock = SPIN_INIT;
+spinlock_t nvKmsLock = SPIN_INIT;
 const char *const pNV_KMS_ID = "aether-os nvidia driver";
 
 #define STUBBED                                                                \
@@ -285,11 +285,11 @@ NvBool nvkms_fd_is_nvidia_chardev(int fd) STUBBED;
 
 spinlock_t pmRwlock = SPIN_INIT;
 
-void nvkms_read_lock_pm_lock() { spin_lock(&pmRwLock); }
+void nvkms_read_lock_pm_lock() { spin_lock(&pmRwlock); }
 
-void nvkms_read_unlock_pm_lock() { spin_unlock(&pmRwLock); }
+void nvkms_read_unlock_pm_lock() { spin_unlock(&pmRwlock); }
 
-bool nvkms_read_trylock_pm_lock() { return pmRwLock.lock != 0; }
+bool nvkms_read_trylock_pm_lock() { return pmRwlock.lock != 0; }
 
 struct nvkms_per_open *nvkms_open_common(enum NvKmsClientType type,
                                          struct NvKmsKapiDevice *device,

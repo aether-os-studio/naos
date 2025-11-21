@@ -1,5 +1,6 @@
 #include <drivers/fb.h>
 #include <drivers/kernel_logger.h>
+#include <mod/dlinker.h>
 #include <fs/vfs/dev.h>
 #include <arch/arch.h>
 #include <fs/fs_syscall.h>
@@ -7,6 +8,9 @@
 #include <boot/boot.h>
 
 boot_framebuffer_t *framebuffer = NULL;
+
+boot_framebuffer_t *get_current_fb() { return framebuffer; }
+EXPORT_SYMBOL(get_current_fb);
 
 ssize_t fb_read(void *data, uint64_t offset, void *buf, uint64_t len,
                 uint64_t flags) {
