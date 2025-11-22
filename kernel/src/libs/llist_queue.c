@@ -37,6 +37,7 @@ void list_remove_node(list_queue_t *queue, list_node_t *node_to_remove) {
     if (!queue || !node_to_remove)
         return;
 
+    spin_lock(&queue->lock);
     if (node_to_remove->prev) {
         node_to_remove->prev->next = node_to_remove->next;
     } else {
@@ -53,6 +54,7 @@ void list_remove_node(list_queue_t *queue, list_node_t *node_to_remove) {
 
     free(node_to_remove);
     queue->size--;
+    spin_unlock(&queue->lock);
 }
 
 void free_llist_queue(list_queue_t *queue, data_free_func_t data_free_func,

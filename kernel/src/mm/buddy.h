@@ -142,8 +142,8 @@ extern int nr_cpu;
 
 #define pfn_to_page(pfn) (&mem_map[(pfn) - min_pfn])
 #define page_to_pfn(page) ((uint64_t)((page) - mem_map) + min_pfn)
-#define page_to_phys(page) (page_to_pfn(page) << PAGE_SHIFT)
-#define phys_to_page(phys) pfn_to_page((phys) >> PAGE_SHIFT)
+#define page_to_phys(page) (page_to_pfn(page) * DEFAULT_PAGE_SIZE)
+#define phys_to_page(phys) pfn_to_page((phys) / DEFAULT_PAGE_SIZE)
 #define virt_to_page(virt) phys_to_page(virt_to_phys(virt))
 #define page_to_virt(page) phys_to_virt(page_to_phys(page))
 

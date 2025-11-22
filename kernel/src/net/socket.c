@@ -148,6 +148,9 @@ size_t unix_socket_accept_recv_from(uint64_t fd, uint8_t *out, size_t limit,
     unix_socket_pair_t *pair = handle->sock;
     while (true) {
         if (!pair->clientFds && pair->serverBuffPos == 0) {
+            spin_lock(&current_task->signal_lock);
+            current_task->pending_signal |= SIGMASK(SIGPIPE);
+            spin_unlock(&current_task->signal_lock);
             return 0;
         } else if ((current_task->fd_info->fds[fd]->flags & O_NONBLOCK ||
                     flags & MSG_DONTWAIT) &&
@@ -188,6 +191,9 @@ size_t unix_socket_accept_sendto(uint64_t fd, uint8_t *in, size_t limit,
 
     while (true) {
         if (!pair->clientFds) {
+            spin_lock(&current_task->signal_lock);
+            current_task->pending_signal |= SIGMASK(SIGPIPE);
+            spin_unlock(&current_task->signal_lock);
             return -EPIPE;
         }
 
@@ -216,6 +222,11 @@ size_t unix_socket_accept_sendto(uint64_t fd, uint8_t *in, size_t limit,
 int socket_accept_poll(void *file, int events) {
     socket_handle_t *handle = file;
     unix_socket_pair_t *pair = handle->sock;
+    if (!pair)
+        return 0;
+
+    spin_lock(&pair->lock);
+
     int revents = 0;
 
     if (!pair->clientFds)
@@ -224,11 +235,11 @@ int socket_accept_poll(void *file, int events) {
     if ((events & EPOLLOUT) && pair->clientFds &&
         pair->clientBuffPos < pair->clientBuffSize)
         revents |= EPOLLOUT;
-    else if (events & EPOLLOUT)
-        printk("Warning: socket is full!!!\n");
 
     if ((events & EPOLLIN) && pair->serverBuffPos > 0)
         revents |= EPOLLIN;
+
+    spin_unlock(&pair->lock);
 
     return revents;
 }
@@ -473,10 +484,11 @@ size_t unix_socket_recv_from(uint64_t fd, uint8_t *out, size_t limit, int flags,
     if (!pair) {
         return -(ENOTCONN);
     }
-    if (!pair->serverFds && pair->clientBuffPos == 0)
-        return 0;
     while (true) {
         if (!pair->serverFds && pair->clientBuffPos == 0) {
+            spin_lock(&current_task->signal_lock);
+            current_task->pending_signal |= SIGMASK(SIGPIPE);
+            spin_unlock(&current_task->signal_lock);
             return 0;
         } else if ((current_task->fd_info->fds[fd]->flags & O_NONBLOCK ||
                     flags & MSG_DONTWAIT) &&
@@ -519,6 +531,9 @@ size_t unix_socket_send_to(uint64_t fd, uint8_t *in, size_t limit, int flags,
 
     while (true) {
         if (!pair->serverFds) {
+            spin_lock(&current_task->signal_lock);
+            current_task->pending_signal |= SIGMASK(SIGPIPE);
+            spin_unlock(&current_task->signal_lock);
             return -EPIPE;
         } else if ((current_task->fd_info->fds[fd]->flags & O_NONBLOCK ||
                     flags & MSG_DONTWAIT) &&
@@ -946,17 +961,17 @@ int socket_socket_poll(void *file, int events) {
     } else if (socket->pair) {
         // connect()
         unix_socket_pair_t *pair = socket->pair;
+        spin_lock(&pair->lock);
         if (!pair->serverFds)
             revents |= EPOLLHUP;
 
         if ((events & EPOLLOUT) && pair->serverFds &&
             pair->serverBuffPos < pair->serverBuffSize)
             revents |= EPOLLOUT;
-        else if (events & EPOLLOUT)
-            printk("Warning: socket is full!!!\n");
 
         if ((events & EPOLLIN) && pair->clientBuffPos > 0)
             revents |= EPOLLIN;
+        spin_unlock(&pair->lock);
     } else {
         revents |= EPOLLHUP;
     }
@@ -1618,6 +1633,9 @@ ssize_t socket_read(fd_t *fd, void *buf, size_t offset, size_t limit) {
     unix_socket_pair_t *pair = sock->pair;
     while (true) {
         if (!pair->serverFds && pair->clientBuffPos == 0) {
+            spin_lock(&current_task->signal_lock);
+            current_task->pending_signal |= SIGMASK(SIGPIPE);
+            spin_unlock(&current_task->signal_lock);
             return 0;
         } else if ((handle->fd->flags & O_NONBLOCK) &&
                    pair->clientBuffPos == 0) {
@@ -1656,6 +1674,9 @@ ssize_t socket_write(fd_t *fd, const void *buf, size_t offset, size_t limit) {
 
     while (true) {
         if (!pair->serverFds) {
+            spin_lock(&current_task->signal_lock);
+            current_task->pending_signal |= SIGMASK(SIGPIPE);
+            spin_unlock(&current_task->signal_lock);
             return -EPIPE;
         } else if ((handle->fd->flags & O_NONBLOCK) &&
                    (pair->serverBuffPos + limit) > pair->serverBuffSize) {
@@ -1688,6 +1709,9 @@ ssize_t socket_accept_read(fd_t *fd, void *buf, size_t offset, size_t limit) {
     unix_socket_pair_t *pair = handle->sock;
     while (true) {
         if (!pair->clientFds && pair->serverBuffPos == 0) {
+            spin_lock(&current_task->signal_lock);
+            current_task->pending_signal |= SIGMASK(SIGPIPE);
+            spin_unlock(&current_task->signal_lock);
             return 0;
         } else if ((handle->fd->flags & O_NONBLOCK) &&
                    pair->serverBuffPos == 0) {
@@ -1726,6 +1750,9 @@ ssize_t socket_accept_write(fd_t *fd, const void *buf, size_t offset,
 
     while (true) {
         if (!pair->clientFds) {
+            spin_lock(&current_task->signal_lock);
+            current_task->pending_signal |= SIGMASK(SIGPIPE);
+            spin_unlock(&current_task->signal_lock);
             return -EPIPE;
         }
 

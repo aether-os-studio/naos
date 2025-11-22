@@ -269,9 +269,8 @@ uintptr_t alloc_frames(size_t count) {
     if (!page)
         return 0;
 
-    uint64_t idx = page - mem_map;
-
-    return idx * DEFAULT_PAGE_SIZE;
+    uint64_t paddr = page_to_phys(page);
+    return paddr;
 }
 
 // 释放页框
@@ -286,7 +285,7 @@ void free_frames(uintptr_t addr, size_t count) {
     if (bitmap_get(&usable_regions, idx) == false)
         return;
 
-    page_t *page = &mem_map[idx];
+    page_t *page = phys_to_page(addr);
 
     __free_pages(page, order);
 }
@@ -302,9 +301,7 @@ uintptr_t alloc_frames_dma32(size_t count) {
     if (!page)
         return 0;
 
-    uint64_t idx = page - mem_map;
-
-    uint64_t paddr = idx * DEFAULT_PAGE_SIZE;
+    uint64_t paddr = page_to_phys(page);
     return paddr;
 }
 

@@ -258,9 +258,8 @@ uint64_t sys_kill(int pid, int sig) {
 extern int signalfdfs_id;
 
 void task_signal() {
-    arch_disable_interrupt();
-
-    if (current_task->state == TASK_UNINTERRUPTABLE) {
+    if (current_task->state == TASK_DIED || current_task->arch_context->dead ||
+        current_task->state == TASK_UNINTERRUPTABLE) {
         return;
     }
 
@@ -318,6 +317,8 @@ void task_signal() {
         return;
     }
 
+    arch_disable_interrupt();
+
     current_task->state = TASK_UNINTERRUPTABLE;
 
 #if defined(__x86_64__)
@@ -331,7 +332,7 @@ void task_signal() {
     sigrsp -= 128;
 
     sigrsp -= DEFAULT_PAGE_SIZE;
-    sigrsp = (sigrsp / DEFAULT_PAGE_SIZE) * DEFAULT_PAGE_SIZE;
+    sigrsp = sigrsp & ~(DEFAULT_PAGE_SIZE - 1);
 
     sigrsp -= sizeof(struct fpstate);
     struct fpstate *fp = (struct fpstate *)sigrsp;

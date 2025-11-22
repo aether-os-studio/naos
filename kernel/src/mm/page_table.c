@@ -175,7 +175,8 @@ uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
         uint64_t index = indexs[i];
         uint64_t addr = pgdir[index];
         if (ARCH_PT_IS_LARGE(addr)) {
-            pgdir[index] = ARCH_MAKE_HUGE_PTE(ARCH_READ_PTE(pgdir[index]), flags);
+            pgdir[index] =
+                ARCH_MAKE_HUGE_PTE(ARCH_READ_PTE(pgdir[index]), flags);
             arch_flush_tlb(vaddr);
             return 0;
         }
@@ -242,7 +243,7 @@ static page_table_t *copy_page_table_recursive(page_table_t *source_table,
 }
 
 static void free_page_table_recursive(page_table_t *table, int level) {
-    if (!table)
+    if (!virt_to_phys((uint64_t)table))
         return;
     if (level == 0) {
         free_frames((uint64_t)virt_to_phys((uint64_t)table), 1);

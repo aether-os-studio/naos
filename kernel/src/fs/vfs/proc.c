@@ -521,15 +521,15 @@ void procfs_on_exit_task(task_t *task) {
     memset(name, 0, sizeof(name));
     sprintf(name, "%d", task->pid);
 
+    vfs_close(task->procfs_node);
+    task->procfs_node = NULL;
+
     vfs_node_t node = vfs_open_at(procfs_root, name);
     if (node) {
         list_delete(procfs_root->child, node);
         node->parent = NULL;
         vfs_free(node);
     }
-
-    vfs_close(task->procfs_node);
-    task->procfs_node = NULL;
 
     spin_unlock(&procfs_oplock);
 }

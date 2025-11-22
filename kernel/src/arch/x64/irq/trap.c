@@ -87,8 +87,12 @@ extern tty_t *kernel_session;
 void dump_regs(struct pt_regs *regs, const char *error_str, ...) {
     can_schedule = false;
 
-    if (kernel_session)
+    char old_mode = VT_AUTO;
+
+    if (kernel_session) {
+        old_mode = kernel_session->current_vt_mode.mode;
         kernel_session->current_vt_mode.mode = VT_AUTO;
+    }
 
     spin_lock(&dump_lock);
 
@@ -117,6 +121,10 @@ void dump_regs(struct pt_regs *regs, const char *error_str, ...) {
     printk("R12 = %#018lx, R13 = %#018lx\n", regs->r12, regs->r13);
     printk("R14 = %#018lx, R15 = %#018lx\n", regs->r14, regs->r15);
 
+    if (kernel_session) {
+        kernel_session->current_vt_mode.mode = old_mode;
+    }
+
     spin_unlock(&dump_lock);
 }
 
@@ -125,7 +133,7 @@ void do_divide_error(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_divder_error(0)");
 
-    if (regs->rsp <= get_physical_memory_offset()) {
+    if ((regs->cs & 3) == 3) {
         can_schedule = true;
         task_exit(128 + SIGSEGV);
         return;
@@ -143,7 +151,7 @@ void do_nmi(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_nmi(2)");
 
-    if (regs->rsp <= get_physical_memory_offset()) {
+    if ((regs->cs & 3) == 3) {
         can_schedule = true;
         task_exit(128 + SIGSEGV);
         return;
@@ -161,7 +169,7 @@ void do_overflow(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_overflow(4)");
 
-    if (regs->rsp <= get_physical_memory_offset()) {
+    if ((regs->cs & 3) == 3) {
         can_schedule = true;
         task_exit(128 + SIGSEGV);
         return;
@@ -176,7 +184,7 @@ void do_bounds(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_bounds(5)");
 
-    if (regs->rsp <= get_physical_memory_offset()) {
+    if ((regs->cs & 3) == 3) {
         can_schedule = true;
         task_exit(128 + SIGSEGV);
         return;
@@ -191,7 +199,7 @@ void do_undefined_opcode(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_undefined_opcode(6)");
 
-    if (regs->rsp <= get_physical_memory_offset()) {
+    if ((regs->cs & 3) == 3) {
         can_schedule = true;
         task_exit(128 + SIGSEGV);
         return;
@@ -206,7 +214,7 @@ void do_dev_not_avaliable(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_dev_not_avaliable(7)");
 
-    if (regs->rsp <= get_physical_memory_offset()) {
+    if ((regs->cs & 3) == 3) {
         can_schedule = true;
         task_exit(128 + SIGSEGV);
         return;
@@ -230,7 +238,7 @@ void do_coprocessor_segment_overrun(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_coprocessor_segment_overrun(9)");
 
-    if (regs->rsp <= get_physical_memory_offset()) {
+    if ((regs->cs & 3) == 3) {
         can_schedule = true;
         task_exit(128 + SIGSEGV);
         return;
@@ -245,7 +253,7 @@ void do_invalid_TSS(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_invalid_TSS(10)");
 
-    if (regs->rsp <= get_physical_memory_offset()) {
+    if ((regs->cs & 3) == 3) {
         can_schedule = true;
         task_exit(128 + SIGSEGV);
         return;
@@ -260,7 +268,7 @@ void do_segment_not_exists(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_segment_not_exists(11");
 
-    if (regs->rsp <= get_physical_memory_offset()) {
+    if ((regs->cs & 3) == 3) {
         can_schedule = true;
         task_exit(128 + SIGSEGV);
         return;
@@ -275,7 +283,7 @@ void do_stack_segment_fault(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_stack_segment_fault(12)");
 
-    if (regs->rsp <= get_physical_memory_offset()) {
+    if ((regs->cs & 3) == 3) {
         can_schedule = true;
         task_exit(128 + SIGSEGV);
         return;
@@ -290,7 +298,7 @@ void do_general_protection(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_general_protection(13)");
 
-    if (regs->rsp <= get_physical_memory_offset()) {
+    if ((regs->cs & 3) == 3) {
         can_schedule = true;
         task_exit(128 + SIGSEGV);
         return;
@@ -310,7 +318,7 @@ void do_page_fault(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_page_fault(14) cr2 = %#018lx", cr2);
 
-    if (regs->rsp <= get_physical_memory_offset()) {
+    if ((regs->cs & 3) == 3) {
         can_schedule = true;
         task_exit(128 + SIGSEGV);
         return;
@@ -327,7 +335,7 @@ void do_x87_FPU_error(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_x87_FPU_error(16)");
 
-    if (regs->rsp <= get_physical_memory_offset()) {
+    if ((regs->cs & 3) == 3) {
         can_schedule = true;
         task_exit(128 + SIGSEGV);
         return;
@@ -342,7 +350,7 @@ void do_alignment_check(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_alignment_check(17)");
 
-    if (regs->rsp <= get_physical_memory_offset()) {
+    if ((regs->cs & 3) == 3) {
         can_schedule = true;
         task_exit(128 + SIGSEGV);
         return;
@@ -357,7 +365,7 @@ void do_machine_check(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_machine_check(18)");
 
-    if (regs->rsp <= get_physical_memory_offset()) {
+    if ((regs->cs & 3) == 3) {
         can_schedule = true;
         task_exit(128 + SIGSEGV);
         return;
@@ -372,7 +380,7 @@ void do_SIMD_exception(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_SIMD_exception(19)");
 
-    if (regs->rsp <= get_physical_memory_offset()) {
+    if ((regs->cs & 3) == 3) {
         can_schedule = true;
         task_exit(128 + SIGSEGV);
         return;
@@ -387,7 +395,7 @@ void do_virtualization_exception(struct pt_regs *regs, uint64_t error_code) {
     (void)error_code;
     dump_regs(regs, "do_virtualization_exception(20)");
 
-    if (regs->rsp <= get_physical_memory_offset()) {
+    if ((regs->cs & 3) == 3) {
         can_schedule = true;
         task_exit(128 + SIGSEGV);
         return;

@@ -1,20 +1,21 @@
 #include "task/rrs.h"
 
 void add_rrs_entity(task_t *task, rrs_t *scheduler) {
-    spin_lock(&scheduler->queue_lock);
     struct sched_entity *entity = task->sched_info;
     if (!entity->on_rq) {
+        entity->on_rq = true;
         entity->task = task;
         entity->node = list_enqueue(scheduler->sched_queue, entity);
-        entity->on_rq = true;
     }
-    spin_unlock(&scheduler->queue_lock);
 }
 
 void remove_rrs_entity(task_t *thread, rrs_t *scheduler) {
-    spin_lock(&scheduler->queue_lock);
     struct sched_entity *entity = thread->sched_info;
     if (entity->on_rq) {
+        entity->on_rq = false;
+
+        spin_lock(&scheduler->sched_queue->lock);
+
         if (entity == scheduler->curr) {
             list_node_t *nextL = entity->node->next;
 
@@ -29,13 +30,15 @@ void remove_rrs_entity(task_t *thread, rrs_t *scheduler) {
             }
         }
 
+        spin_unlock(&scheduler->sched_queue->lock);
+
         list_remove_node(scheduler->sched_queue, entity->node);
-        entity->on_rq = false;
+        entity->node = NULL;
     }
-    spin_unlock(&scheduler->queue_lock);
 }
 
 task_t *rrs_pick_next_task(rrs_t *scheduler) {
+    spin_lock(&scheduler->sched_queue->lock);
     struct sched_entity *entity = scheduler->curr;
     list_node_t *nextL = NULL;
 
@@ -50,16 +53,18 @@ task_t *rrs_pick_next_task(rrs_t *scheduler) {
 
     if (nextL == NULL || scheduler->sched_queue->size == 0) {
         scheduler->curr = scheduler->idle;
+        spin_unlock(&scheduler->sched_queue->lock);
         return scheduler->idle->task;
     }
 
     list_node_t *start = nextL;
-
     do {
         struct sched_entity *next = nextL->data;
 
-        if (next && next->task && next->task->state == TASK_READY) {
+        if (next && next->on_rq && next->task &&
+            next->task->state == TASK_READY) {
             scheduler->curr = next;
+            spin_unlock(&scheduler->sched_queue->lock);
             return next->task;
         }
 
@@ -70,5 +75,6 @@ task_t *rrs_pick_next_task(rrs_t *scheduler) {
     } while (nextL != start && nextL != NULL);
 
     scheduler->curr = scheduler->idle;
+    spin_unlock(&scheduler->sched_queue->lock);
     return scheduler->idle->task;
 }

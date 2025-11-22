@@ -1,4 +1,4 @@
-#! /bin/sh
+#!/bin/sh
 
 xsetroot -solid "#006666" &
 st &

@@ -75,12 +75,8 @@ ENTRY(ret_from_syscall)
 
     popq %rax
 
-    addq $0x38, %rsp
+    addq $0x28, %rsp
 
-    swapgs
-
-    movq %gs:0x8, %rsp // syscall_stack_user
-
-    swapgs
+    popq %rsp
 
     sysretq

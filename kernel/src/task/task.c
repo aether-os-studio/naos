@@ -287,6 +287,8 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
     uint64_t random_value = simple_rand();
     tmp_stack =
         push_slice(tmp_stack, (uint8_t *)&random_value, sizeof(uint64_t));
+    tmp_stack =
+        push_slice(tmp_stack, (uint8_t *)&random_value, sizeof(uint64_t));
     uint64_t random_ptr = tmp_stack;
 
     uint64_t *envps = (uint64_t *)malloc((1 + envp_count) * sizeof(uint64_t));
@@ -312,10 +314,10 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
         }
     }
 
-    uint64_t total_length = 2 * sizeof(uint64_t) + 8 * 2 * sizeof(uint64_t) +
-                            (env_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) +
-                            (argv_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) +
-                            sizeof(uint64_t);
+    uint64_t total_length =
+        2 * sizeof(uint64_t) + (1 + 8) * 2 * sizeof(uint64_t) +
+        (env_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) +
+        (argv_i + 0) * sizeof(uint64_t) + sizeof(uint64_t) + sizeof(uint64_t);
     tmp_stack -= (tmp_stack - total_length) % 0x10;
 
     // push auxv
@@ -485,6 +487,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
             if (new_envp[i])
                 free(new_envp[i]);
         free(new_envp);
+        can_schedule = true;
         return (uint64_t)-ENOMEM;
     }
 
@@ -987,6 +990,8 @@ void task_exit_inner(task_t *task, int64_t code) {
         task->is_vfork = false;
     }
 
+    procfs_on_exit_task(task);
+
     if (task->waitpid != 0 && task->waitpid < MAX_TASK_NUM &&
         tasks[task->waitpid] &&
         (tasks[task->waitpid]->state == TASK_BLOCKING ||
@@ -1008,8 +1013,6 @@ void task_exit_inner(task_t *task, int64_t code) {
     } else if (task->pid == task->ppid) {
         task->should_free = true;
     }
-
-    procfs_on_exit_task(task);
 
     can_schedule = true;
 }
@@ -1043,7 +1046,9 @@ uint64_t task_exit(int64_t code) {
 
     can_schedule = true;
 
-    schedule();
+    while (1) {
+        schedule();
+    }
 
     // never return !!!
 
@@ -1199,7 +1204,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     child->signal_syscall_stack =
         (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
-    child->syscall_stack_user = 0;
+    child->syscall_stack_user = current_task->syscall_stack_user;
     memset((void *)(child->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(child->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(child->signal_syscall_stack - STACK_SIZE), 0, STACK_SIZE);
@@ -1729,22 +1734,20 @@ uint64_t sys_setpriority(int which, int who, int niceval) {
 extern void task_signal();
 
 void schedule() {
+    arch_disable_interrupt();
+
     sched_update_itimer();
     sched_update_timerfd();
 
     task_t *prev = current_task;
     task_t *next = rrs_pick_next_task(schedulers[current_cpu_id]);
 
-    if (prev == next) {
-        return;
+    if (next->state == TASK_DIED || next->arch_context->dead) {
+        next = idle_tasks[current_cpu_id];
     }
 
-    arch_disable_interrupt();
-
-    task_signal();
-
-    if (next->status == TASK_DIED || next->arch_context->dead) {
-        next = idle_tasks[current_cpu_id];
+    if (prev == next) {
+        goto ret;
     }
 
     prev->current_state = prev->state;
@@ -1754,5 +1757,6 @@ void schedule() {
 
     switch_to(prev, next);
 
-    arch_enable_interrupt();
+ret:
+    task_signal();
 }
