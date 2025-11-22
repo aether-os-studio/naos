@@ -127,8 +127,6 @@ uint64_t sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction) {
 void sys_sigreturn(struct pt_regs *regs) {
     arch_disable_interrupt();
 
-    current_task->state = TASK_READY;
-
 #if defined(__x86_64__)
     struct pt_regs *context = (struct pt_regs *)current_task->kernel_stack - 1;
 
@@ -138,8 +136,6 @@ void sys_sigreturn(struct pt_regs *regs) {
     current_task->saved_blocked = 0;
 
     current_task->arch_context->ctx = context;
-
-    current_task->call_in_signal = false;
 
     asm volatile(
         "movq %0, %%rsp\n\t"
@@ -273,7 +269,7 @@ void task_signal() {
     for (; sig <= MAXSIG; sig++) {
         if (map & SIGMASK(sig)) {
             current_task->signal |= SIGMASK(sig);
-            current_task->pending_signal &= (~SIGMASK(sig));
+            current_task->pending_signal &= ~SIGMASK(sig);
             break;
         }
     }
@@ -393,12 +389,12 @@ void task_signal() {
         ptr->sa_handler = SIG_DFL;
     }
 
-    current_task->call_in_signal = true;
-
     current_task->saved_blocked = current_task->blocked;
     current_task->blocked |= (1 << sig) | ptr->sa_mask;
 
     spin_unlock(&current_task->signal_lock);
+
+    current_task->state = TASK_READY;
 
 #if defined(__x86_64__)
     asm volatile(

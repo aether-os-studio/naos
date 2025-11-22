@@ -69,8 +69,6 @@ void free_task(task_t *ptr) {
 
     free_frames_bytes((void *)(ptr->kernel_stack - STACK_SIZE), STACK_SIZE);
     free_frames_bytes((void *)(ptr->syscall_stack - STACK_SIZE), STACK_SIZE);
-    free_frames_bytes((void *)(ptr->signal_syscall_stack - STACK_SIZE),
-                      STACK_SIZE);
 
     free(ptr);
 }
@@ -132,7 +130,6 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     can_schedule = false;
 
     task_t *task = get_free_task();
-    task->call_in_signal = 0;
     memset(&task->signal_saved_regs, 0, sizeof(struct pt_regs));
     task->is_kernel = true;
     task->ppid = task->pid;
@@ -149,12 +146,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->priority = priority;
     task->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     task->syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
-    task->signal_syscall_stack =
-        (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
-    task->syscall_stack_user = 0;
     memset((void *)(task->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(task->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
-    memset((void *)(task->signal_syscall_stack - STACK_SIZE), 0, STACK_SIZE);
     task->arch_context = malloc(sizeof(arch_context_t));
     memset(task->arch_context, 0, sizeof(arch_context_t));
     arch_context_init(task->arch_context,
@@ -827,10 +820,12 @@ uint64_t task_execve(const char *path_user, const char **argv,
     }
 
     for (int i = 1; i < MAXSIG; i++) {
-        if (current_task->actions[i].sa_handler != (sighandler_t)SIG_IGN) {
-            if (i != SIGCHLD) {
+        if (i == SIGCHLD) {
+            if (current_task->actions[i].sa_handler != SIG_IGN) {
                 memset(&current_task->actions[i], 0, sizeof(sigaction_t));
             }
+        } else {
+            memset(&current_task->actions[i], 0, sizeof(sigaction_t));
         }
     }
 
@@ -1193,7 +1188,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     can_schedule = false;
 
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
-    child->call_in_signal = current_task->call_in_signal;
 
     memset(&child->signal_saved_regs, 0, sizeof(struct pt_regs));
 
@@ -1202,12 +1196,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     child->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     child->syscall_stack =
         (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
-    child->signal_syscall_stack =
-        (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
-    child->syscall_stack_user = current_task->syscall_stack_user;
     memset((void *)(child->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(child->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
-    memset((void *)(child->signal_syscall_stack - STACK_SIZE), 0, STACK_SIZE);
 
     child->arch_context = malloc(sizeof(arch_context_t));
     memset(child->arch_context, 0, sizeof(arch_context_t));

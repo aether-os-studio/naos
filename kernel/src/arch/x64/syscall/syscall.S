@@ -6,19 +6,10 @@ ENTRY(syscall_exception)
 
     swapgs
 
-    movq %rsp, %gs:0x8 // syscall_stack_user
+    movq %rsp, %cr2
 
-    cmpq $0, %gs:0x20 // call_in_signal
-    je normal
-
-signal:
-    movq %gs:0x10, %rsp // signal_syscall_stack
-    jmp next
-
-normal:
     movq %gs:0x0, %rsp // syscall_stack
 
-next:
     subq $0x38, %rsp
 
     pushq %rax
@@ -44,7 +35,7 @@ next:
     pushq %r15
 
     movq %rsp, %rdi
-    movq %gs:0x8, %rsi
+    movq %cr2, %rsi
 
     swapgs
 
