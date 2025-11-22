@@ -81,10 +81,6 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
     if (pgdir[index] & ARCH_PT_FLAG_VALID) {
         if (force) {
             uint64_t addr = ARCH_READ_PTE(pgdir[index]);
-            // if (bitmap_get(&frame_allocator.bitmap, addr / DEFAULT_PAGE_SIZE)
-            // !=
-            //     true)
-            //     free_frames(addr, 1);
         } else
             return 0;
     }

@@ -306,5 +306,5 @@ uintptr_t alloc_frames_dma32(size_t count) {
 }
 
 void free_frames_dma32(uintptr_t addr, size_t count) {
-    return free_frames(addr, count);
+    free_frames(addr, count);
 }
