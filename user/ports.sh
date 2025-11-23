@@ -35,9 +35,10 @@ sudo cp -r $SCRIPTPATH/base/etc/resolv.conf $SYSROOT/etc/
 
 sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add musl-dev seatd eudev gcompat gzip xz make file tar pciutils tzdata nano vim lua5.1 gcc binutils fastfetch libdrm-dev libdrm-tests bind-tools curl evtest"
 sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add weston weston-clients weston-backend-drm weston-xwayland xwayland weston-shell-desktop weston-terminal ttf-dejavu"
-# sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add xorg-server xf86-video-fbdev xf86-input-evdev xinit twm xsetroot nedit st"
 sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add xeyes xclock"
 
+sudo rm -rf $SYSROOT/bin/sh
+sudo ln -sf /bin/bash $SYSROOT/bin/sh
 sudo ln -sf /usr/share/zoneinfo/Asia/Shanghai $SYSROOT/etc/localtime
 
 sudo rm -rf $SYSROOT/etc/conf.d/*

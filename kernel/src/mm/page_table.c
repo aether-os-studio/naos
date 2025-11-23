@@ -36,9 +36,6 @@ uint64_t *get_kernel_page_dir() { return kernel_page_dir; }
 
 uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
                   uint64_t flags, bool force) {
-    if (!kernel_page_dir)
-        kernel_page_dir = pgdir;
-
     uint64_t indexs[ARCH_MAX_PT_LEVEL] = {0};
     for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++) {
         indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(vaddr, i + 1);
@@ -301,4 +298,5 @@ void page_table_init() {
 #if defined(__x86_64__) || defined(__riscv__)
     memset(get_current_page_dir(false), 0, DEFAULT_PAGE_SIZE / 2);
 #endif
+    kernel_page_dir = get_current_page_dir(false);
 }

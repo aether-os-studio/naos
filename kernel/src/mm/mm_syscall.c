@@ -82,10 +82,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         }
 
         start_addr = (uint64_t)addr;
-        // 检查地址是否可用
-        if (vma_find_intersection(mgr, start_addr, start_addr + aligned_len)) {
-            vma_unmap_range(mgr, start_addr, start_addr + aligned_len);
-        }
     } else {
         if (addr) {
             start_addr = (uint64_t)addr;
@@ -120,6 +116,12 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         }
     }
 
+    vma_t *region;
+    while ((region = vma_find_intersection(mgr, start_addr,
+                                           start_addr + aligned_len))) {
+        vma_unmap_range(mgr, start_addr, start_addr + aligned_len);
+    }
+
     vma_t *vma = vma_alloc();
     if (!vma) {
         spin_unlock(&mgr->lock);
@@ -149,13 +151,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         vma->vm_offset = offset;
     }
 
-    vma_t *region =
-        vma_find_intersection(mgr, start_addr, start_addr + aligned_len);
-    if (region) {
-        vma_remove(mgr, region);
-        vma_free(region);
-    }
-
     if (vma_insert(mgr, vma) != 0) {
         vma_free(vma);
         spin_unlock(&mgr->lock);
@@ -165,15 +160,14 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
     if (!addr)
         mgr->last_alloc_addr = start_addr;
 
+    spin_unlock(&mgr->lock);
+
     if (!(flags & MAP_ANONYMOUS)) {
         uint64_t ret =
             (uint64_t)vfs_map(current_task->fd_info->fds[fd], start_addr,
                               aligned_len, prot, flags, offset);
 
-        region->vm_name =
-            vfs_get_fullpath(current_task->fd_info->fds[fd]->node);
-
-        spin_unlock(&mgr->lock);
+        vma->vm_name = vfs_get_fullpath(current_task->fd_info->fds[fd]->node);
 
         return ret;
     } else {
@@ -183,8 +177,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
                        pt_flags);
 
         memset((void *)start_addr, 0, aligned_len);
-
-        spin_unlock(&mgr->lock);
 
         return start_addr;
     }

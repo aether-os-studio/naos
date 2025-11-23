@@ -65,12 +65,12 @@ void traceback(struct pt_regs *regs) {
         if (lookup_kallsyms(ret_addr, i) != 0)
             break;
 
-        if (rbp == 0 || ((uint64_t)rbp < regs->rsp))
+        if (!rbp || ((uint64_t)rbp < regs->rsp))
             break;
 
         ret_addr = *(rbp + 1);
         rbp = (uint64_t *)(*rbp);
-        if (rbp == 0)
+        if (!rbp)
             break;
     }
     printk("======== Kernel traceback end =======\n");

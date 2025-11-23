@@ -509,12 +509,16 @@ uint64_t task_execve(const char *path_user, const char **argv,
         if (!interpreter_name)
             return -EINVAL;
 
+        char interpreter_name_buf[256];
+        strncpy(interpreter_name_buf, interpreter_name,
+                sizeof(interpreter_name_buf));
+
         int argc = 0;
         while (argv[argc++])
             ;
         const char *injected_argv[256];
         memcpy((char *)&injected_argv[1], argv, argc * sizeof(char *));
-        injected_argv[0] = interpreter_name;
+        injected_argv[0] = interpreter_name_buf;
         injected_argv[1] = path;
 
         free_frames_bytes(buffer, buf_len);
@@ -528,42 +532,46 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 &current_task->arch_context->mm->task_vma_mgr);
     }
 
-    if (current_task->is_vfork || current_task->is_kernel) {
-        task_mm_info_t *new_mm =
-            clone_page_table(current_task->arch_context->mm, 0);
-        if (!current_task->is_kernel) {
-            free_page_table(current_task->arch_context->mm);
-        }
-        current_task->arch_context->mm = new_mm;
-    }
+    task_mm_info_t *old_mm = current_task->arch_context->mm;
+    task_mm_info_t *new_mm = (task_mm_info_t *)malloc(sizeof(task_mm_info_t));
+    memset(new_mm, 0, sizeof(task_mm_info_t));
+    new_mm->page_table_addr = alloc_frames(1);
+    memset((void *)phys_to_virt(new_mm->page_table_addr), 0, DEFAULT_PAGE_SIZE);
+#if defined(__x86_64__) || defined(__riscv__)
+    memcpy((uint64_t *)phys_to_virt(new_mm->page_table_addr) + 256,
+           get_kernel_page_dir() + 256, DEFAULT_PAGE_SIZE / 2);
+#endif
+    new_mm->ref_count = 1;
+    memset(&new_mm->task_vma_mgr, 0, sizeof(vma_manager_t));
+    new_mm->task_vma_mgr.initialized = true;
 
-    current_task->arch_context->mm->task_vma_mgr.last_alloc_addr =
-        USER_MMAP_START;
-    current_task->arch_context->mm->brk_start = USER_BRK_START;
-    current_task->arch_context->mm->brk_current =
-        current_task->arch_context->mm->brk_start;
-    current_task->arch_context->mm->brk_end = USER_BRK_END;
+    new_mm->task_vma_mgr.last_alloc_addr = USER_MMAP_START;
+    new_mm->brk_start = USER_BRK_START;
+    new_mm->brk_current = new_mm->brk_start;
+    new_mm->brk_end = USER_BRK_END;
 
 #if defined(__x86_64__)
-    asm volatile("movq %0, %%cr3" ::"r"(
-        current_task->arch_context->mm->page_table_addr));
+    asm volatile("movq %0, %%cr3" ::"r"(new_mm->page_table_addr));
 #elif defined(__aarch64__)
-    asm volatile("msr TTBR0_EL1, %0"
-                 :
-                 : "r"(current_task->arch_context->mm->page_table_addr));
+    asm volatile("msr TTBR0_EL1, %0" : : "r"(new_mm->page_table_addr));
 
     asm volatile("dsb ishst\n\t"
                  "tlbi vmalle1is\n\t"
                  "dsb ish\n\t"
                  "isb\n\t");
 #elif defined(__riscv__)
-    uint64_t satp = MAKE_SATP_PADDR(
-        SATP_MODE_SV48, 0, current_task->arch_context->mm->page_table_addr);
+    uint64_t satp = MAKE_SATP_PADDR(SATP_MODE_SV48, 0, new_mm->page_table_addr);
     asm volatile("csrw satp, %0" : : "r"(satp) : "memory");
     asm volatile("sfence.vma");
 
     csr_set(sstatus, (1UL << 18));
 #endif
+
+    current_task->arch_context->mm = new_mm;
+
+    if (!current_task->is_kernel) {
+        free_page_table(old_mm);
+    }
 
     const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)buffer;
 
@@ -739,9 +747,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
     node->refcount++;
     current_task->exec_node = node;
-
-    unmap_page_range(get_current_page_dir(true), USER_STACK_START,
-                     USER_STACK_END - USER_STACK_START);
 
     map_page_range(get_current_page_dir(true), USER_STACK_START, 0,
                    USER_STACK_END - USER_STACK_START,
