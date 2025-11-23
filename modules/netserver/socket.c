@@ -333,11 +333,16 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
 
     arch_enable_interrupt();
 
-    struct sockaddr_in *a = malloc(sizeof(struct sockaddr_in));
+    struct sockaddr_in *a = NULL;
+    int alen = 0;
+    if (msg->msg_name) {
+        a = malloc(sizeof(struct sockaddr_in));
+        alen = sizeof(struct sockaddr_in);
+    }
 
     struct msghdr mh = {
         .msg_name = a,
-        .msg_namelen = sizeof(struct sockaddr_in),
+        .msg_namelen = alen,
         .msg_iov = msg->msg_iov,
         .msg_iovlen = msg->msg_iovlen,
         .msg_control = msg->msg_control,
@@ -617,19 +622,19 @@ static void delay(uint64_t ms) {
 }
 
 void receiver_entry(uint64_t arg) {
-    uint32_t mtu = ((netdev_t *)arg)->mtu;
+    netdev_t *netdev = (netdev_t *)arg;
+    uint32_t mtu = netdev->mtu;
     char *buf = malloc(mtu);
     memset(buf, 0, mtu);
 
     while (1) {
-        int len = netdev_recv((netdev_t *)arg, buf, mtu);
+        int len = netdev_recv(netdev, buf, mtu);
         if (len > 0) {
             struct pbuf *p = pbuf_alloc(PBUF_RAW, len, PBUF_RAM);
             pbuf_take(p, buf, len);
             global_netif.input(p, &global_netif);
             memset(buf, 0, mtu);
         }
-        delay(100);
     }
 }
 

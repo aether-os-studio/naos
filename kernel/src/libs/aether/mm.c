@@ -14,7 +14,6 @@ EXPORT_SYMBOL(alloc_frames_bytes_dma32);
 EXPORT_SYMBOL(free_frames_bytes_dma32);
 
 EXPORT_SYMBOL(malloc);
-EXPORT_SYMBOL(aligned_alloc);
 EXPORT_SYMBOL(realloc);
 EXPORT_SYMBOL(calloc);
 EXPORT_SYMBOL(free);

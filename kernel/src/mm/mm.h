@@ -1,6 +1,7 @@
 #pragma once
 
 #include <libs/klibc.h>
+#include <mm/heap.h>
 #include <mm/hhdm.h>
 #include <mm/buddy.h>
 #include <mm/page_table.h>
@@ -40,12 +41,6 @@ uint64_t map_change_attribute_range(uint64_t *pgdir, uint64_t vaddr,
                                     uint64_t len, uint64_t flags);
 
 void heap_init();
-
-void *malloc(size_t size);
-void *aligned_alloc(size_t align, size_t size);
-void *calloc(size_t num, size_t size);
-void *realloc(void *ptr, size_t size);
-void free(void *ptr);
 
 typedef struct {
     uintptr_t addr;
