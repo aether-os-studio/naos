@@ -56,11 +56,11 @@ uint64_t sys_fstatfs(int fd, struct statfs *buf) {
     if (fd < 0 && fd > MAX_FD_NUM && !current_task->fd_info->fds[fd])
         return -EBADF;
 
-    vfs_node_t node = current_task->fd_info->fds[fd]->node;
+    // vfs_node_t node = current_task->fd_info->fds[fd]->node;
 
-    fsfd_ctx_t *ctx = node->handle;
+    // fsfd_ctx_t *ctx = node->handle;
 
-    buf->f_type = ctx->fs->magic;
+    // buf->f_type = ctx->fs->magic;
 
     return -ENOENT;
 }

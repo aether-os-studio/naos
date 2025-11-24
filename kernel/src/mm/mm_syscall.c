@@ -10,6 +10,14 @@ uint64_t sys_brk(uint64_t brk) {
         return current_task->arch_context->mm->brk_start;
     }
 
+    if (brk < current_task->arch_context->mm->brk_start) {
+        return current_task->arch_context->mm->brk_current;
+    }
+
+    if (brk == current_task->arch_context->mm->brk_current) {
+        return current_task->arch_context->mm->brk_current;
+    }
+
     if (brk > current_task->arch_context->mm->brk_current) {
         map_page_range(get_current_page_dir(true),
                        current_task->arch_context->mm->brk_current, 0,
@@ -20,18 +28,20 @@ uint64_t sys_brk(uint64_t brk) {
                brk - current_task->arch_context->mm->brk_current);
 
         vma_t *vma = vma_alloc();
+        if (!vma) {
+            return (uint64_t)-ENOMEM;
+        }
 
         vma->vm_start = current_task->arch_context->mm->brk_current;
         vma->vm_end = brk;
-        vma->vm_flags = 0;
-
-        vma->vm_flags |= VMA_READ | VMA_WRITE;
-
+        vma->vm_flags = VMA_READ | VMA_WRITE | VMA_ANON;
         vma->vm_type = VMA_TYPE_ANON;
-        vma->vm_flags |= VMA_ANON;
         vma->vm_fd = -1;
-
         vma->vm_name = strdup("[heap]");
+        if (!vma->vm_name) {
+            vma_free(vma);
+            return (uint64_t)-ENOMEM;
+        }
 
         vma_t *region =
             vma_find_intersection(&current_task->arch_context->mm->task_vma_mgr,
@@ -50,6 +60,42 @@ uint64_t sys_brk(uint64_t brk) {
         }
 
         current_task->arch_context->mm->brk_current = brk;
+    } else {
+        // unmap_page_range(get_current_page_dir(true), brk,
+        //                  current_task->arch_context->mm->brk_current - brk);
+
+        // vma_t *region =
+        //     vma_find_intersection(&current_task->arch_context->mm->task_vma_mgr,
+        //                           current_task->arch_context->mm->brk_start,
+        //                           current_task->arch_context->mm->brk_end);
+
+        // if (region) {
+        //     vma_remove(&current_task->arch_context->mm->task_vma_mgr,
+        //     region); vma_free(region);
+        // }
+
+        // if (brk > current_task->arch_context->mm->brk_start) {
+        //     vma_t *vma = vma_alloc();
+        //     if (!vma) {
+        //         current_task->arch_context->mm->brk_current = brk;
+        //         return current_task->arch_context->mm->brk_current;
+        //     }
+
+        //     vma->vm_start = current_task->arch_context->mm->brk_start;
+        //     vma->vm_end = brk;
+        //     vma->vm_flags = VMA_READ | VMA_WRITE | VMA_ANON;
+        //     vma->vm_type = VMA_TYPE_ANON;
+        //     vma->vm_fd = -1;
+        //     vma->vm_name = strdup("[heap]");
+
+        //     if (vma_insert(&current_task->arch_context->mm->task_vma_mgr,
+        //                    vma) != 0) {
+        //         vma_free(vma);
+        //         // 继续执行，即使VMA插入失败
+        //     }
+        // }
+
+        // current_task->arch_context->mm->brk_current = brk;
     }
 
     return current_task->arch_context->mm->brk_current;

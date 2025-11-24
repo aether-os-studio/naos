@@ -3,7 +3,7 @@
 #include <libs/klibc.h>
 
 #define KERNEL_HEAP_START 0xffffffffc0000000
-#define KERNEL_HEAP_SIZE (16 * 1024 * 1024)
+#define KERNEL_HEAP_SIZE (32 * 1024 * 1024)
 
 void heap_init();
 

@@ -67,6 +67,20 @@ void free_task(task_t *ptr) {
     free(ptr->sched_info);
     ptr->sched_info = NULL;
 
+    if (ptr->fd_info) {
+        if (ptr->fd_info->ref_count <= 0) {
+            for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+                if (ptr->fd_info->fds[i]) {
+                    vfs_close(ptr->fd_info->fds[i]->node);
+                    free(ptr->fd_info->fds[i]);
+
+                    ptr->fd_info->fds[i] = NULL;
+                }
+            }
+            free(ptr->fd_info);
+        }
+    }
+
     free_frames_bytes((void *)(ptr->kernel_stack - STACK_SIZE), STACK_SIZE);
     free_frames_bytes((void *)(ptr->syscall_stack - STACK_SIZE), STACK_SIZE);
 
@@ -964,20 +978,8 @@ void task_exit_inner(task_t *task, int64_t code) {
 
     task->status = (uint64_t)code;
 
-    if (task->fd_info) {
+    if (task->fd_info)
         task->fd_info->ref_count--;
-        if (task->fd_info->ref_count <= 0) {
-            for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-                if (task->fd_info->fds[i]) {
-                    vfs_close(task->fd_info->fds[i]->node);
-                    free(task->fd_info->fds[i]);
-
-                    task->fd_info->fds[i] = NULL;
-                }
-            }
-            free(task->fd_info);
-        }
-    }
 
     if (task->ppid != task->pid && tasks[task->ppid] &&
         !tasks[task->ppid]->child_vfork_done) {
@@ -1483,7 +1485,7 @@ void sched_update_itimer() {
 extern int timerfdfs_id;
 
 void sched_update_timerfd() {
-    if (current_task->fd_info) {
+    if (current_task->fd_info && current_task->fd_info->ref_count) {
         uint64_t continue_null_fd_count = 0;
         for (int fd = 3; fd < MAX_FD_NUM; fd++) {
             if (current_task->fd_info->fds[fd] == NULL) {

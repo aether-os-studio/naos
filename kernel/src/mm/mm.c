@@ -227,6 +227,7 @@ void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size) {
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
         uint64_t paddr = unmap_page(pml4, va);
         if (paddr) {
+            // free_frames(paddr, 1);
         }
     }
 }
