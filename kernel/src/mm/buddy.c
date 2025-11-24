@@ -351,6 +351,9 @@ void __free_pages(page_t *page, uint32_t order) {
     if (!page || page->magic != PAGE_MAGIC)
         return;
 
+    if (PageReserved(page))
+        return;
+
     if (!put_page_testzero(page))
         return;
 

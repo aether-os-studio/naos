@@ -120,9 +120,9 @@ uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr) {
     uint64_t index = table_indices[ARCH_MAX_PT_LEVEL - 1];
     uint64_t pte = table_ptrs[ARCH_MAX_PT_LEVEL - 1][index];
 
+    uint64_t paddr = 0;
     if ((pte & ARCH_PT_FLAG_VALID) && (pte & ARCH_ADDR_MASK) != 0) {
-        uint64_t paddr = ARCH_READ_PTE(pte);
-        free_frames(paddr, 1);
+        paddr = ARCH_READ_PTE(pte);
         table_ptrs[ARCH_MAX_PT_LEVEL - 1][index] = 0;
         arch_flush_tlb(vaddr);
 
@@ -155,7 +155,7 @@ uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr) {
         }
     }
 
-    return 0;
+    return paddr;
 }
 
 uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {

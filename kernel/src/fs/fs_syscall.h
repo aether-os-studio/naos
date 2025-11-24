@@ -32,9 +32,8 @@ uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags,
 uint64_t sys_fsync(uint64_t fd);
 uint64_t sys_close(uint64_t fd);
 uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags);
-uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t *offset_in,
-                             uint64_t fd_out, uint64_t *offset_out,
-                             uint64_t len, uint64_t flags);
+uint64_t sys_copy_file_range(uint64_t fd_in, int *offset_in, uint64_t fd_out,
+                             int *offset_out, uint64_t len, uint64_t flags);
 uint64_t sys_read(uint64_t fd, void *buf, uint64_t len);
 uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len);
 uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence);

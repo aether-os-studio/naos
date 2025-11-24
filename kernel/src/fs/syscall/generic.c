@@ -156,8 +156,8 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
     return 0;
 }
 
-uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t *offset_in_user,
-                             uint64_t fd_out, uint64_t *offset_out_user,
+uint64_t sys_copy_file_range(uint64_t fd_in, int *offset_in_user,
+                             uint64_t fd_out, int *offset_out_user,
                              uint64_t len, uint64_t flags) {
     if (fd_in >= MAX_FD_NUM || fd_out >= MAX_FD_NUM) {
         return (uint64_t)-EBADF;
@@ -172,14 +172,14 @@ uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t *offset_in_user,
     if (out_fd->offset >= out_fd->node->size && out_fd->node->size > 0)
         return 0;
 
-    uint64_t offset_in = 0;
-    uint64_t offset_out = 0;
+    int offset_in = 0;
+    int offset_out = 0;
     if (offset_in_user) {
-        if (copy_from_user(&offset_in, offset_in_user, sizeof(uint64_t)))
+        if (copy_from_user(&offset_in, offset_in_user, sizeof(int)))
             return (uint64_t)-EFAULT;
     }
     if (offset_out_user) {
-        if (copy_from_user(&offset_out, offset_out_user, sizeof(uint64_t)))
+        if (copy_from_user(&offset_out, offset_out_user, sizeof(int)))
             return (uint64_t)-EFAULT;
     }
 

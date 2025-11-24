@@ -86,16 +86,16 @@ static void process_memory_region(uintptr_t start, uintptr_t end) {
             zone_end = end;
 
         // 检查这段区域是否在 bitmap 中可用
-        uint64_t last_non_usable_addr = current;
+        uint64_t last_usable_addr = current;
         for (size_t frame = current / DEFAULT_PAGE_SIZE;
              frame < zone_end / DEFAULT_PAGE_SIZE; frame++) {
             if (!bitmap_get(&usable_regions, frame)) {
-                last_non_usable_addr = (frame + 1) * DEFAULT_PAGE_SIZE;
+                last_usable_addr = (frame + 1) * DEFAULT_PAGE_SIZE;
             }
         }
 
-        if (zone_end > last_non_usable_addr) {
-            add_memory_region(last_non_usable_addr, zone_end, zone_type);
+        if (zone_end > last_usable_addr) {
+            add_memory_region(last_usable_addr, zone_end, zone_type);
         }
 
         current = zone_end;
@@ -225,7 +225,9 @@ void map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
 
 void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size) {
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
-        unmap_page(pml4, va);
+        uint64_t paddr = unmap_page(pml4, va);
+        if (paddr) {
+        }
     }
 }
 
@@ -281,12 +283,7 @@ void free_frames(uintptr_t addr, size_t count) {
     size_t required_pages = next_power_of_2(count);
     size_t order = log2_floor(required_pages);
 
-    uint64_t idx = addr / DEFAULT_PAGE_SIZE;
-    if (bitmap_get(&usable_regions, idx) == false)
-        return;
-
     page_t *page = phys_to_page(addr);
-
     __free_pages(page, order);
 }
 

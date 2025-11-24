@@ -97,6 +97,8 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
     dst->rsp = (uint64_t)dst->ctx;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
     dst->ctx->rax = 0;
+
+    asm volatile("fxsave (%0)" ::"r"(src->fpu_ctx));
     dst->fpu_ctx = alloc_frames_bytes(DEFAULT_PAGE_SIZE);
     memset(dst->fpu_ctx, 0, DEFAULT_PAGE_SIZE);
     if (src->fpu_ctx) {
@@ -104,6 +106,7 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
         dst->fpu_ctx->mxscr = 0x1f80;
         dst->fpu_ctx->fcw = 0x037f;
     }
+
     dst->fsbase = src->fsbase;
     dst->gsbase = src->gsbase;
 }

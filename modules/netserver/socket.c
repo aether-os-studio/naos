@@ -582,7 +582,7 @@ ssize_t real_socket_write(fd_t *fd, const void *addr, size_t offset,
     return lwip_out;
 }
 
-static int dummy() { return 0; }
+static int dummy() { return -ENOSYS; }
 
 static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)dummy,

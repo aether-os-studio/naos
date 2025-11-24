@@ -149,8 +149,7 @@ static inline uint64_t sys_geteuid() { return current_task->euid; }
 
 static inline uint64_t sys_getegid() { return current_task->egid; }
 
-static inline uint64_t sys_getresuid(uint64_t *ruid, uint64_t *euid,
-                                     uint64_t *suid) {
+static inline uint64_t sys_getresuid(int *ruid, int *euid, int *suid) {
     *ruid = current_task->ruid;
     *euid = current_task->euid;
     *suid = current_task->uid;
@@ -158,8 +157,7 @@ static inline uint64_t sys_getresuid(uint64_t *ruid, uint64_t *euid,
     return 0;
 }
 
-static inline uint64_t sys_getresgid(uint64_t *rgid, uint64_t *egid,
-                                     uint64_t *sgid) {
+static inline uint64_t sys_getresgid(int *rgid, int *egid, int *sgid) {
     *rgid = current_task->rgid;
     *egid = current_task->egid;
     *sgid = current_task->gid;
@@ -188,7 +186,7 @@ static inline uint64_t sys_getpid() { return current_task->pid; }
 
 static inline uint64_t sys_getppid() { return current_task->ppid; }
 
-static inline uint64_t sys_getgroups(int gidsetsize, uint32_t *gids) {
+static inline uint64_t sys_getgroups(int gidsetsize, int *gids) {
     if (!gidsetsize)
         return 1;
 
