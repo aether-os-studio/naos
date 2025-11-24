@@ -49,9 +49,6 @@ uint64_t get_mmio_address(uint32_t pci_address, uint16_t offset) {
         return 0;
     }
     uint64_t virt = phys_to_virt(phys);
-    map_page_range(get_current_page_dir(false), virt, phys,
-                   DEFAULT_PAGE_SIZE * 8,
-                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
 
     return virt + offset;
 }
@@ -686,6 +683,16 @@ void pci_controller_init() {
                              &mcfg_entries_len);
 
         for (uint64_t i = 0; i < mcfg_entries_len; i++) {
+            uint64_t region_base_addr = mcfg_entries[i]->address;
+            uint64_t bus_count =
+                mcfg_entries[i]->end_bus - mcfg_entries[i]->start_bus + 1;
+            uint64_t region_size = bus_count * (1 << 20);
+
+            map_page_range(get_kernel_page_dir(),
+                           phys_to_virt(region_base_addr), region_base_addr,
+                           region_size,
+                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+
             uint16_t segment_group = mcfg_entries[i]->segment;
             pci_scan_segment(&pcie_device_op, segment_group);
         }
