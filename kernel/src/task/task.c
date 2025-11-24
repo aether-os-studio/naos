@@ -1731,6 +1731,8 @@ void schedule() {
     sched_update_itimer();
     sched_update_timerfd();
 
+    task_signal();
+
     task_t *prev = current_task;
     task_t *next = rrs_pick_next_task(schedulers[current_cpu_id]);
 
@@ -1739,7 +1741,7 @@ void schedule() {
     }
 
     if (prev == next) {
-        goto ret;
+        return;
     }
 
     prev->current_state = prev->state;
@@ -1748,7 +1750,4 @@ void schedule() {
     arch_set_current(next);
 
     switch_to(prev, next);
-
-ret:
-    task_signal();
 }

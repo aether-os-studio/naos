@@ -56,6 +56,8 @@ void signal_init() {
 int signals_pending_quick(task_t *task) {
     sigset_t pending_list = task->signal;
     sigset_t unblocked_list = pending_list & (~task->blocked);
+    if (!unblocked_list)
+        return 0;
     for (int i = MINSIG; i <= MAXSIG; i++) {
         if (!(unblocked_list & SIGMASK(i)))
             continue;
@@ -128,14 +130,11 @@ void sys_sigreturn(struct pt_regs *regs) {
     arch_disable_interrupt();
 
 #if defined(__x86_64__)
-    struct pt_regs *context = (struct pt_regs *)current_task->kernel_stack - 1;
-
-    memcpy(context, &current_task->signal_saved_regs, sizeof(struct pt_regs));
+    memcpy(current_task->arch_context->ctx, &current_task->signal_saved_regs,
+           sizeof(struct pt_regs));
 
     current_task->blocked = current_task->saved_blocked;
     current_task->saved_blocked = 0;
-
-    current_task->arch_context->ctx = context;
 
     asm volatile(
         "movq %0, %%rsp\n\t"
@@ -319,6 +318,8 @@ void task_signal() {
 
 #if defined(__x86_64__)
     struct pt_regs *f = (struct pt_regs *)current_task->syscall_stack - 1;
+    if ((current_task->arch_context->ctx->cs & 3) == 3)
+        f = current_task->arch_context->ctx;
 
     memcpy(&current_task->signal_saved_regs, current_task->arch_context->ctx,
            sizeof(struct pt_regs));
@@ -328,13 +329,15 @@ void task_signal() {
     sigrsp -= 128;
 
     sigrsp -= DEFAULT_PAGE_SIZE;
-    sigrsp = sigrsp & ~(DEFAULT_PAGE_SIZE - 1);
+    sigrsp &= ~(DEFAULT_PAGE_SIZE - 1);
 
     sigrsp -= sizeof(struct fpstate);
+    sigrsp &= ~15UL;
     struct fpstate *fp = (struct fpstate *)sigrsp;
     memcpy(fp, current_task->arch_context->fpu_ctx, sizeof(struct fpstate));
 
     sigrsp -= sizeof(arch_signal_frame_t);
+    sigrsp &= ~15UL;
     arch_signal_frame_t *sframe = (arch_signal_frame_t *)sigrsp;
 
     sframe->r8 = f->r8;
@@ -364,12 +367,14 @@ void task_signal() {
     sframe->reserved[0] = (uint64_t)sig;
 
     sigrsp -= sizeof(void *);
+    sigrsp &= ~15UL;
     *((void **)sigrsp) = (void *)ptr->sa_restorer;
 
     memset(current_task->arch_context->ctx, 0, sizeof(struct pt_regs));
 
     current_task->arch_context->ctx->rip = (uint64_t)ptr->sa_handler;
     current_task->arch_context->ctx->rdi = sig;
+    current_task->arch_context->ctx->rsi = 0;
 
     current_task->arch_context->ctx->cs = SELECTOR_USER_CS;
     current_task->arch_context->ctx->ss = SELECTOR_USER_DS;
@@ -390,7 +395,7 @@ void task_signal() {
     }
 
     current_task->saved_blocked = current_task->blocked;
-    current_task->blocked |= (1 << sig) | ptr->sa_mask;
+    current_task->blocked |= SIGMASK(sig) | ptr->sa_mask;
 
     spin_unlock(&current_task->signal_lock);
 

@@ -447,7 +447,7 @@ void zones_init(void) {
     // 初始化所有页
     for (uint64_t i = 0; i < total_pages; i++) {
         page_t *page = &mem_map[i];
-        atomic_set(&page->_refcount, 1);
+        atomic_set(&page->_refcount, 0);
         SetPageReserved(page);
         page->magic = PAGE_MAGIC;
 

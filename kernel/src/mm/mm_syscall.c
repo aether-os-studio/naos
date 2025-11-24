@@ -18,6 +18,8 @@ uint64_t sys_brk(uint64_t brk) {
         return current_task->arch_context->mm->brk_current;
     }
 
+    spin_lock(&current_task->arch_context->mm->task_vma_mgr.lock);
+
     if (brk > current_task->arch_context->mm->brk_current) {
         map_page_range(get_current_page_dir(true),
                        current_task->arch_context->mm->brk_current, 0,
@@ -29,6 +31,7 @@ uint64_t sys_brk(uint64_t brk) {
 
         vma_t *vma = vma_alloc();
         if (!vma) {
+            spin_unlock(&current_task->arch_context->mm->task_vma_mgr.lock);
             return (uint64_t)-ENOMEM;
         }
 
@@ -40,6 +43,7 @@ uint64_t sys_brk(uint64_t brk) {
         vma->vm_name = strdup("[heap]");
         if (!vma->vm_name) {
             vma_free(vma);
+            spin_unlock(&current_task->arch_context->mm->task_vma_mgr.lock);
             return (uint64_t)-ENOMEM;
         }
 
@@ -53,9 +57,9 @@ uint64_t sys_brk(uint64_t brk) {
             vma_free(region);
         }
 
-        if (vma_insert(&current_task->arch_context->mm->task_vma_mgr, vma) !=
-            0) {
+        if (vma_insert(&current_task->arch_context->mm->task_vma_mgr, vma)) {
             vma_free(vma);
+            spin_unlock(&current_task->arch_context->mm->task_vma_mgr.lock);
             return (uint64_t)-ENOMEM;
         }
 
@@ -97,6 +101,8 @@ uint64_t sys_brk(uint64_t brk) {
 
         // current_task->arch_context->mm->brk_current = brk;
     }
+
+    spin_unlock(&current_task->arch_context->mm->task_vma_mgr.lock);
 
     return current_task->arch_context->mm->brk_current;
 }

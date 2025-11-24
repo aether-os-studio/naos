@@ -70,8 +70,6 @@ extern void arch_context_switch_with_next(arch_context_t *next);
 extern void arch_context_switch_with_prev_next(arch_context_t *prev,
                                                arch_context_t *next);
 
-extern void task_signal();
-
 void __switch_to(task_t *prev, task_t *next) {
     asm volatile("msr TTBR0_EL1, %0"
                  :

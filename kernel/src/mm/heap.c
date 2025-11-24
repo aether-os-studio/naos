@@ -615,10 +615,10 @@ void *realloc(void *old_ptr, size_t new_size) {
             spin_unlock(&heap_lock);
             return old_ptr;
         } else {
+            spin_unlock(&heap_lock);
             void *new_ptr = malloc(new_size);
             memcpy(new_ptr, old_ptr, new_size);
             free(old_ptr);
-            spin_unlock(&heap_lock);
             return new_ptr;
         }
     }

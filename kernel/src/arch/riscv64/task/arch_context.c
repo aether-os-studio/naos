@@ -109,8 +109,6 @@ void __switch_to(task_t *prev, task_t *next) {
     csr_write(sscratch, next->is_kernel ? 0 : next->kernel_stack);
 }
 
-extern void task_signal();
-
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
                                uint64_t stack) {
     context->ctx = (struct pt_regs *)current_task->kernel_stack - 1;
