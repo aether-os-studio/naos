@@ -1,4 +1,7 @@
 #include <mm/buddy.h>
+#include <mm/bitmap.h>
+
+extern Bitmap usable_regions;
 
 const char *zone_names[__MAX_NR_ZONES] = {
 #if defined(__x86_64__)
@@ -586,6 +589,10 @@ uintptr_t alloc_frames(size_t count) {
 
 void free_frames(uintptr_t addr, size_t count) {
     if (addr == 0 || count == 0)
+        return;
+
+    uint64_t idx = addr / DEFAULT_PAGE_SIZE;
+    if (bitmap_get(&usable_regions, idx) == false)
         return;
 
     // 确定地址属于哪个 zone

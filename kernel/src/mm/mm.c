@@ -27,8 +27,10 @@ uint64_t alloc_frames_early(size_t count) {
 }
 
 void *early_alloc(size_t size) {
-    return (void *)phys_to_virt(
+    void *ptr = (void *)phys_to_virt(
         alloc_frames_early((size + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE));
+    memset(ptr, 0, (size + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1));
+    return ptr;
 }
 
 uint64_t get_memory_size() {
@@ -61,71 +63,101 @@ static uintptr_t get_zone_boundary(enum zone_type type) {
     }
 }
 
-enum zone_type pfn_to_zone_type(uint64_t pfn) {
-    uint64_t phys = pfn * DEFAULT_PAGE_SIZE;
-
-#if defined(__x86_64__)
-    if (phys < ZONE_DMA_END)
-        return ZONE_DMA;
-    else
-#endif
-        if (phys < ZONE_DMA32_END)
-        return ZONE_DMA32;
-    else
-        return ZONE_NORMAL;
-}
-
+// 处理单个内存区域，正确处理不连续的可用帧
 static void process_memory_region(uintptr_t start, uintptr_t end) {
-    // 对齐
-    start = (start + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1);
-    end = end & ~(DEFAULT_PAGE_SIZE - 1);
+    // 页对齐
+    start = PADDING_UP(start, DEFAULT_PAGE_SIZE);
+    end = PADDING_DOWN(end, DEFAULT_PAGE_SIZE);
 
     if (start >= end)
         return;
-
-    // 检查是否在 bitmap 中标记为可用
-    size_t start_frame = start / DEFAULT_PAGE_SIZE;
-    size_t end_frame = end / DEFAULT_PAGE_SIZE;
 
     uintptr_t current = start;
 
     while (current < end) {
         // 确定当前位置所属的 zone
-        enum zone_type zone_type =
-            pfn_to_zone_type(current / DEFAULT_PAGE_SIZE);
+        enum zone_type type = phys_to_zone_type(current);
 
-        // 找到同一 zone 的连续区域
-        uintptr_t zone_end = get_zone_boundary(zone_type);
-        if (zone_end > end)
-            zone_end = end;
+        // 找到同一 zone 的边界
+        uintptr_t zone_boundary = get_zone_boundary(type);
+        uintptr_t zone_end = MIN(zone_boundary, end);
 
-        // 检查这段区域是否在 bitmap 中可用
-        uint64_t last_usable_addr = current;
-        for (size_t frame = current / DEFAULT_PAGE_SIZE;
-             frame < zone_end / DEFAULT_PAGE_SIZE; frame++) {
-            if (!bitmap_get(&usable_regions, frame)) {
-                last_usable_addr = (frame + 1) * DEFAULT_PAGE_SIZE;
+        // 在当前 zone 内查找连续的可用区域
+        uintptr_t region_current = current;
+
+        while (region_current < zone_end) {
+            size_t frame = region_current / DEFAULT_PAGE_SIZE;
+
+            // 跳过不可用的帧
+            while (region_current < zone_end &&
+                   !bitmap_get(&usable_regions,
+                               region_current / DEFAULT_PAGE_SIZE)) {
+                region_current += DEFAULT_PAGE_SIZE;
             }
-        }
 
-        if (zone_end > last_usable_addr) {
-            add_memory_region(last_usable_addr, zone_end, zone_type);
+            if (region_current >= zone_end)
+                break;
+
+            // 找到连续可用区域的起始
+            uintptr_t usable_start = region_current;
+
+            // 找到连续可用区域的结束
+            while (region_current < zone_end &&
+                   bitmap_get(&usable_regions,
+                              region_current / DEFAULT_PAGE_SIZE)) {
+                region_current += DEFAULT_PAGE_SIZE;
+            }
+
+            uintptr_t usable_end = region_current;
+
+            // 添加这段连续可用的区域到 buddy 分配器
+            if (usable_end > usable_start) {
+                add_memory_region(usable_start, usable_end, type);
+            }
         }
 
         current = zone_end;
     }
 }
 
-void frame_init() {
+void frame_init(void) {
     hhdm_init();
 
     boot_memory_map_t *memory_map = boot_get_memory_map();
-
     memory_size = get_memory_size();
 
-    size_t bitmap_size = (memory_size / DEFAULT_PAGE_SIZE + 7) / 8;
+    // 计算 bitmap 大小
+    size_t total_frames = memory_size / DEFAULT_PAGE_SIZE;
+    size_t bitmap_size = (total_frames + 7) / 8;
+    size_t bitmap_size_aligned = PADDING_UP(bitmap_size, DEFAULT_PAGE_SIZE);
+
     uint64_t bitmap_address = 0;
 
+    // 查找存放 bitmap 的位置
+    for (uint64_t i = 0; i < memory_map->entry_count; i++) {
+        boot_memory_map_entry_t *region = &memory_map->entries[i];
+
+#if defined(__x86_64__)
+        if (region->addr < 0x100000)
+            continue;
+#endif
+
+        if (region->type == USABLE && region->len >= bitmap_size_aligned) {
+            bitmap_address = region->addr;
+            break;
+        }
+    }
+
+    if (bitmap_address == 0) {
+        // 无法找到足够大的区域存放 bitmap
+        ASSERT(!"Cannot find memory for frame bitmap");
+    }
+
+    // 初始化 bitmap（所有位初始为 0 = 不可用）
+    bitmap_init(&usable_regions, (uint8_t *)phys_to_virt(bitmap_address),
+                bitmap_size);
+
+    // 标记可用区域
     for (uint64_t i = 0; i < memory_map->entry_count; i++) {
         boot_memory_map_entry_t *region = &memory_map->entries[i];
 
@@ -135,49 +167,33 @@ void frame_init() {
 #endif
 
         if (region->type == USABLE) {
-            if (region->len >= bitmap_size) {
-                bitmap_address = region->addr;
-                break;
+            size_t start_frame = region->addr / DEFAULT_PAGE_SIZE;
+            size_t end_frame = (region->addr + region->len) / DEFAULT_PAGE_SIZE;
+
+            if (end_frame > start_frame) {
+                bitmap_set_range(&usable_regions, start_frame, end_frame, true);
             }
         }
     }
 
-    bitmap_init(&usable_regions, (uint8_t *)phys_to_virt(bitmap_address),
-                bitmap_size);
-
-    size_t origin_frames = 0;
-    for (uint64_t i = 0; i < memory_map->entry_count; i++) {
-        boot_memory_map_entry_t *region = &memory_map->entries[i];
-
-        size_t start_frame = region->addr / DEFAULT_PAGE_SIZE;
-        size_t frame_count = region->len / DEFAULT_PAGE_SIZE;
-
 #if defined(__x86_64__)
-        if (region->addr < 0x100000)
-            continue;
+    // 保留低 1MB
+    size_t low_1M_frames = 0x100000 / DEFAULT_PAGE_SIZE;
+    bitmap_set_range(&usable_regions, 0, low_1M_frames, false);
 #endif
 
-        if (region->type == USABLE) {
-            origin_frames += frame_count;
-            bitmap_set_range(&usable_regions, start_frame,
-                             start_frame + frame_count, true);
-        }
-    }
-
-#if defined(__x86_64__)
-    size_t low_1M_frame_count = 0x100000 / DEFAULT_PAGE_SIZE;
-    bitmap_set_range(&usable_regions, 0, low_1M_frame_count, false);
-#endif
-
+    // 标记 bitmap 自身占用的区域为不可用
     size_t bitmap_frame_start = bitmap_address / DEFAULT_PAGE_SIZE;
     size_t bitmap_frame_end =
-        (bitmap_address + bitmap_size + DEFAULT_PAGE_SIZE - 1) /
+        PADDING_UP(bitmap_address + bitmap_size, DEFAULT_PAGE_SIZE) /
         DEFAULT_PAGE_SIZE;
     bitmap_set_range(&usable_regions, bitmap_frame_start, bitmap_frame_end,
                      false);
 
+    // 初始化 buddy 分配器
     buddy_init();
 
+    // 将可用内存添加到 buddy 分配器
     for (uint64_t i = 0; i < memory_map->entry_count; i++) {
         boot_memory_map_entry_t *region = &memory_map->entries[i];
 
@@ -189,17 +205,27 @@ void frame_init() {
         if (region->type != USABLE)
             continue;
 
-        uint64_t addr = region->addr;
-        uint64_t len = region->len;
+        uintptr_t addr = region->addr;
+        uintptr_t region_end = region->addr + region->len;
 
-        if (addr == bitmap_address) {
-            addr += (bitmap_size + DEFAULT_PAGE_SIZE - 1) &
-                    ~(DEFAULT_PAGE_SIZE - 1);
-            len -= (bitmap_size + DEFAULT_PAGE_SIZE - 1) &
-                   ~(DEFAULT_PAGE_SIZE - 1);
+        // 跳过 bitmap 占用的部分
+        if (addr <= bitmap_address && bitmap_address < region_end) {
+            // bitmap 在这个区域内
+            uintptr_t bitmap_end =
+                PADDING_UP(bitmap_address + bitmap_size, DEFAULT_PAGE_SIZE);
+
+            // 处理 bitmap 之前的部分
+            if (addr < bitmap_address) {
+                process_memory_region(addr, bitmap_address);
+            }
+
+            // 处理 bitmap 之后的部分
+            if (bitmap_end < region_end) {
+                process_memory_region(bitmap_end, region_end);
+            }
+        } else {
+            process_memory_region(addr, region_end);
         }
-
-        process_memory_region(addr, addr + len);
     }
 }
 
