@@ -633,19 +633,3 @@ uintptr_t alloc_frames_dma32(size_t count) {
 void free_frames_dma32(uintptr_t addr, size_t count) {
     free_frames(addr, count); // 自动识别 zone
 }
-
-uintptr_t alloc_frames_bytes(size_t bytes) {
-    if (bytes == 0)
-        return 0;
-
-    size_t pages = (bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE;
-    return alloc_frames(pages);
-}
-
-void free_frames_bytes(uintptr_t addr, size_t bytes) {
-    if (bytes == 0)
-        return;
-
-    size_t pages = (bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE;
-    free_frames(addr, pages);
-}
