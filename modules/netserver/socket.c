@@ -53,8 +53,6 @@ size_t real_socket_send(uint64_t fd, uint8_t *out, uint64_t limit, int flags) {
 
     int lwip_out = -1;
 
-    arch_enable_interrupt();
-
     while (true) {
         if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLOUT) &
               EPOLLOUT)) {
@@ -84,8 +82,6 @@ size_t real_socket_recv(uint64_t fd, uint8_t *out, uint64_t limit, int flags) {
     real_socket_t *sock = handle->sock;
 
     int lwip_out = -1;
-
-    arch_enable_interrupt();
 
     while (true) {
         if (!(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) &
@@ -118,8 +114,6 @@ size_t real_socket_sendto(uint64_t fd, uint8_t *buff, size_t len, int flags,
 
     if (!addrlen || !dest_addr)
         return real_socket_send(fd, buff, len, flags);
-
-    arch_enable_interrupt();
 
     struct sockaddr_in *aligned = malloc(sizeof(struct sockaddr_in));
     uint16_t initialFamily =
@@ -160,8 +154,6 @@ size_t real_socket_recvfrom(uint64_t fd, uint8_t *buff, size_t len, int flags,
 
     if (!addrlen || !addr)
         return real_socket_recv(fd, buff, len, flags);
-
-    arch_enable_interrupt();
 
     struct sockaddr_in *a = malloc(sizeof(struct sockaddr_in));
 
@@ -289,8 +281,6 @@ size_t real_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
             sockaddrLinuxToLwip((void *)a, msg->msg_name, alen);
     }
 
-    arch_enable_interrupt();
-
     struct msghdr mh = {
         .msg_name = a,
         .msg_namelen = alen,
@@ -330,8 +320,6 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
     real_socket_t *sock = handle->sock;
 
     int lwip_out = -1;
-
-    arch_enable_interrupt();
 
     struct sockaddr_in *a = NULL;
     int alen = 0;
@@ -527,8 +515,6 @@ ssize_t real_socket_read(fd_t *fd, void *addr, size_t offset, size_t size) {
 
     int lwip_out = -1;
 
-    arch_enable_interrupt();
-
     while (true) {
         if (!(vfs_poll(fd->node, EPOLLIN) & EPOLLIN)) {
             if (fd->flags & O_NONBLOCK) {
@@ -557,8 +543,6 @@ ssize_t real_socket_write(fd_t *fd, const void *addr, size_t offset,
     real_socket_t *sock = handle->sock;
 
     int lwip_out = -1;
-
-    arch_enable_interrupt();
 
     while (true) {
         if (!(vfs_poll(fd->node, EPOLLOUT) & EPOLLOUT)) {
@@ -633,7 +617,6 @@ void receiver_entry(uint64_t arg) {
             struct pbuf *p = pbuf_alloc(PBUF_RAW, len, PBUF_RAM);
             pbuf_take(p, buf, len);
             global_netif.input(p, &global_netif);
-            memset(buf, 0, mtu);
         }
     }
 }
@@ -645,7 +628,10 @@ err_t lwip_output(struct netif *netif, struct pbuf *p) {
 
     pbuf_copy_partial(p, complete, p->tot_len, 0);
 
-    netdev_send(get_default_netdev(), complete, p->tot_len);
+    int ret = netdev_send(get_default_netdev(), complete, p->tot_len);
+    if (ret != p->tot_len) {
+        printk("netdev_send failed\n");
+    }
 
     free(complete);
 
