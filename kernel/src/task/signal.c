@@ -328,9 +328,6 @@ void task_signal() {
 
     sigrsp -= 128;
 
-    sigrsp -= DEFAULT_PAGE_SIZE;
-    sigrsp &= ~(DEFAULT_PAGE_SIZE - 1);
-
     uint64_t total_len =
         sizeof(struct fpstate) + sizeof(arch_signal_frame_t) + sizeof(void *);
     sigrsp -= (sigrsp - total_len) % 0x10;

@@ -209,7 +209,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         return (uint64_t)-ENOMEM;
     }
 
-    if (!addr)
+    if (!(flags & MAP_FIXED) && !addr)
         mgr->last_alloc_addr = start_addr;
 
     spin_unlock(&mgr->lock);

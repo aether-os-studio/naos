@@ -177,7 +177,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->status = 0;
     task->cwd = rootdir;
     task->fd_info = malloc(sizeof(fd_info_t));
-    memset(task->fd_info, 0, sizeof(task->fd_info));
+    memset(task->fd_info, 0, sizeof(fd_info_t));
     memset(task->fd_info->fds, 0, sizeof(task->fd_info->fds));
     task->fd_info->fds[0] = malloc(sizeof(fd_t));
     task->fd_info->fds[0]->node = vfs_open("/dev/stdin");

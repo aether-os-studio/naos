@@ -75,12 +75,12 @@ uint64_t sys_futex_wake(uint64_t addr, int val, uint32_t bitset) {
 
 uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
                    int *uaddr2, int val3) {
-    if (check_user_overflow((uint64_t)uaddr, sizeof(int)))
-        return (uint64_t)-EFAULT;
-    if (check_user_overflow((uint64_t)uaddr2, sizeof(int)))
-        return (uint64_t)-EFAULT;
-    if (check_user_overflow((uint64_t)timeout, sizeof(struct timespec)))
-        return (uint64_t)-EFAULT;
+    // if (check_user_overflow((uint64_t)uaddr, sizeof(int)))
+    //     return (uint64_t)-EFAULT;
+    // if (check_user_overflow((uint64_t)uaddr2, sizeof(int)))
+    //     return (uint64_t)-EFAULT;
+    // if (check_user_overflow((uint64_t)timeout, sizeof(struct timespec)))
+    //     return (uint64_t)-EFAULT;
 
     switch (op) {
     case FUTEX_WAIT_PRIVATE:
