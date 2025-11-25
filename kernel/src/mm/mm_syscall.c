@@ -435,8 +435,6 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
         if (!new_addr)
             mgr->last_alloc_addr = start_addr;
 
-        get_page(phys_to_page(old_addr_phys));
-
         // 映射到原物理地址
         map_page_range(get_current_page_dir(true), start_addr, old_addr_phys,
                        new_size, pt_flags);

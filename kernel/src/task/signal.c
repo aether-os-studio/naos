@@ -331,13 +331,15 @@ void task_signal() {
     sigrsp -= DEFAULT_PAGE_SIZE;
     sigrsp &= ~(DEFAULT_PAGE_SIZE - 1);
 
+    uint64_t total_len =
+        sizeof(struct fpstate) + sizeof(arch_signal_frame_t) + sizeof(void *);
+    sigrsp -= (sigrsp - total_len) % 0x10;
+
     sigrsp -= sizeof(struct fpstate);
-    sigrsp &= ~15UL;
     struct fpstate *fp = (struct fpstate *)sigrsp;
     memcpy(fp, current_task->arch_context->fpu_ctx, sizeof(struct fpstate));
 
     sigrsp -= sizeof(arch_signal_frame_t);
-    sigrsp &= ~15UL;
     arch_signal_frame_t *sframe = (arch_signal_frame_t *)sigrsp;
 
     sframe->r8 = f->r8;
@@ -367,7 +369,6 @@ void task_signal() {
     sframe->reserved[0] = (uint64_t)sig;
 
     sigrsp -= sizeof(void *);
-    sigrsp &= ~15UL;
     *((void **)sigrsp) = (void *)ptr->sa_restorer;
 
     memset(current_task->arch_context->ctx, 0, sizeof(struct pt_regs));

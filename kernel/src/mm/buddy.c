@@ -1,5 +1,4 @@
 #include <mm/buddy.h>
-#include <arch/arch.h>
 
 const char *zone_names[__MAX_NR_ZONES] = {
 #if defined(__x86_64__)
@@ -7,49 +6,85 @@ const char *zone_names[__MAX_NR_ZONES] = {
 #endif
     "DMA32", "Normal"};
 
-page_t *mem_map = NULL;
-uint64_t max_pfn = 0;
-uint64_t min_pfn = 0;
 zone_t *zones[__MAX_NR_ZONES] = {NULL};
 int nr_zones = 0;
 
-bool percpu_pagecache_initialized = false;
+extern uint64_t memory_size;
+extern void *early_alloc(size_t size);
 
-static inline per_cpu_pages_t *zone_pcp(zone_t *zone, int cpu) {
-    return &zone->per_cpu_pageset[cpu];
+static inline size_t log2_floor(size_t x) {
+    if (x == 0)
+        return 0;
+    size_t leading_zeros = __builtin_clzl(x);
+    return 63 - leading_zeros;
 }
 
-static inline per_cpu_pages_t *this_cpu_zone_pcp(zone_t *zone) {
-    return zone_pcp(zone, current_cpu_id);
+static inline size_t next_power_of_2(size_t x) {
+    if (x == 0)
+        return 1;
+    if ((x & (x - 1)) == 0)
+        return x;
+    return 1UL << (log2_floor(x) + 1);
 }
 
-// 根据物理地址确定所属 zone
-enum zone_type pfn_to_zone_type(uint64_t pfn) {
-    uint64_t phys = pfn * DEFAULT_PAGE_SIZE;
+static inline size_t order_to_index(size_t order) { return order - MIN_ORDER; }
 
+static inline size_t index_to_order(size_t index) { return index + MIN_ORDER; }
+
+// 获取页面列表中第 j 个条目的物理地址
+static inline uintptr_t entry_phys_addr(uintptr_t page_list_paddr, size_t j) {
+    return page_list_paddr + sizeof(page_list_t) + j * sizeof(uintptr_t);
+}
+
+// 获取页面列表中第 j 个条目的虚拟地址
+static inline void *entry_virt_addr(uintptr_t page_list_paddr, size_t j) {
+    return (void *)phys_to_virt(entry_phys_addr(page_list_paddr, j));
+}
+
+// 读取物理地址处的数据
+static inline page_list_t read_page_list(uintptr_t paddr) {
+    page_list_t *ptr = (page_list_t *)phys_to_virt(paddr);
+    return *ptr;
+}
+
+// 写入 page_list 到物理地址
+static inline void write_page_list(uintptr_t paddr, page_list_t list) {
+    page_list_t *ptr = (page_list_t *)phys_to_virt(paddr);
+    *ptr = list;
+}
+
+// 读取条目
+static inline uintptr_t read_entry(uintptr_t page_list_paddr, size_t j) {
+    uintptr_t *ptr = (uintptr_t *)entry_virt_addr(page_list_paddr, j);
+    return *ptr;
+}
+
+// 写入条目
+static inline void write_entry(uintptr_t page_list_paddr, size_t j,
+                               uintptr_t value) {
+    uintptr_t *ptr = (uintptr_t *)entry_virt_addr(page_list_paddr, j);
+    *ptr = value;
+}
+
+enum zone_type phys_to_zone_type(uintptr_t phys) {
 #if defined(__x86_64__)
     if (phys < ZONE_DMA_END)
         return ZONE_DMA;
-    else
 #endif
-        if (phys < ZONE_DMA32_END)
+    if (phys < ZONE_DMA32_END)
         return ZONE_DMA32;
-    else
-        return ZONE_NORMAL;
+    return ZONE_NORMAL;
 }
 
-// 获取指定类型的 zone
 zone_t *get_zone(enum zone_type type) {
     if (type >= __MAX_NR_ZONES)
         return NULL;
     return zones[type];
 }
 
-// 检查 zone 是否有内存
 bool zone_has_memory(zone_t *zone) { return zone && zone->managed_pages > 0; }
 
-// GFP 标志到首选 zone 的映射
-static enum zone_type gfp_zone(uint32_t gfp_flags) {
+static enum zone_type gfp_to_zone(uint32_t gfp_flags) {
 #if defined(__x86_64__)
     if (gfp_flags & GFP_DMA)
         return ZONE_DMA;
@@ -59,355 +94,340 @@ static enum zone_type gfp_zone(uint32_t gfp_flags) {
     return ZONE_NORMAL;
 }
 
-// 构建 zone fallback 列表
-void build_zonelist(zonelist_t *zl, uint32_t gfp_flags) {
-    enum zone_type start_zone = gfp_zone(gfp_flags);
-    int idx = 0;
+// 从指定 order 的空闲列表中弹出一个块
+static uintptr_t pop_front(buddy_allocator_t *alloc, size_t order) {
+    if (order < MIN_ORDER || order >= MAX_ORDER)
+        return 0;
 
-    // 从首选 zone 开始，向低端 zone fallback
-    for (int i = start_zone; i >= 0; i--) {
-        zone_t *zone = zones[i];
-        if (zone_has_memory(zone)) {
-            zl->zones[idx++] = zone;
+    // 尝试从指定 order 分配
+    size_t index = order_to_index(order);
+    uintptr_t page_list_paddr = alloc->free_area[index];
+
+    if (page_list_paddr == 0)
+        goto try_split;
+
+    page_list_t page_list = read_page_list(page_list_paddr);
+
+    // 跳过空的页面列表
+    while (page_list.entry_num == 0) {
+        uintptr_t next = page_list.next_page;
+        if (next == 0)
+            goto try_split;
+
+        page_list_paddr = next;
+        page_list = read_page_list(page_list_paddr);
+    }
+
+    // 从列表中取出一个条目
+    if (page_list.entry_num > 0) {
+        uintptr_t entry = read_entry(page_list_paddr, page_list.entry_num - 1);
+        write_entry(page_list_paddr, page_list.entry_num - 1, 0);
+
+        if (entry == 0) {
+            // 不应该发生
+            goto try_split;
         }
+
+        page_list.entry_num--;
+        write_page_list(page_list_paddr, page_list);
+
+        return entry;
     }
 
-    zl->nr_zones = idx;
-}
+try_split:
+    // 尝试从更高 order 分裂
+    for (size_t current_order = order + 1; current_order < MAX_ORDER;
+         current_order++) {
+        index = order_to_index(current_order);
+        page_list_paddr = alloc->free_area[index];
 
-static inline uint64_t __find_buddy_pfn(uint64_t pfn, uint32_t order) {
-    return pfn ^ (1UL << order);
-}
-
-static inline page_t *find_buddy_page(page_t *page, uint32_t order) {
-    uint64_t pfn = page_to_pfn(page);
-    uint64_t buddy_pfn = __find_buddy_pfn(pfn, order);
-
-    if (buddy_pfn < min_pfn || buddy_pfn >= max_pfn)
-        return NULL;
-
-    page_t *buddy = pfn_to_page(buddy_pfn);
-
-    // 伙伴必须在同一个 zone 中
-    if (buddy->zone_id != page->zone_id)
-        return NULL;
-
-    return buddy;
-}
-
-static inline bool page_is_buddy(page_t *page, page_t *buddy, uint32_t order) {
-    if (!PageBuddy(buddy))
-        return false;
-    if (buddy->order != order)
-        return false;
-    if (buddy->zone_id != page->zone_id)
-        return false;
-    return true;
-}
-
-static inline void del_page_from_free_list(page_t *page, zone_t *zone,
-                                           uint32_t order) {
-    if (page->lru.prev) {
-        page->lru.prev->lru.next = page->lru.next;
-    } else {
-        zone->free_area[order].free_list = page->lru.next;
-    }
-
-    if (page->lru.next) {
-        page->lru.next->lru.prev = page->lru.prev;
-    }
-
-    page->lru.next = NULL;
-    page->lru.prev = NULL;
-    zone->free_area[order].nr_free--;
-}
-
-static inline void add_to_free_list(page_t *page, zone_t *zone,
-                                    uint32_t order) {
-    page->lru.next = zone->free_area[order].free_list;
-    page->lru.prev = NULL;
-
-    if (zone->free_area[order].free_list) {
-        zone->free_area[order].free_list->lru.prev = page;
-    }
-
-    zone->free_area[order].free_list = page;
-    zone->free_area[order].nr_free++;
-
-    page->order = order;
-    SetPageBuddy(page);
-}
-
-static inline void prep_new_page(page_t *page, uint32_t order) {
-    page->flags = 0;
-    set_page_refcounted(page);
-
-    if (order > 0) {
-        SetPageHead(page);
-        set_compound_order(page, order);
-
-        for (uint32_t i = 1; i < (1U << order); i++) {
-            page_t *p = page + i;
-            p->flags = 0;
-            SetPageCompound(p);
-            atomic_set(&p->_refcount, 0);
-            p->zone_id = page->zone_id; // 继承 zone_id
-        }
-    }
-
-    page->magic = PAGE_MAGIC;
-}
-
-static page_t *expand(zone_t *zone, page_t *page, uint32_t low_order,
-                      uint32_t high_order) {
-    uint64_t size = 1UL << high_order;
-
-    while (high_order > low_order) {
-        high_order--;
-        size >>= 1;
-
-        page_t *buddy = page + size;
-        add_to_free_list(buddy, zone, high_order);
-    }
-
-    return page;
-}
-
-static page_t *__rmqueue_smallest(zone_t *zone, uint32_t order) {
-    uint32_t current_order;
-
-    for (current_order = order; current_order < MAX_ORDER; current_order++) {
-        free_area_t *area = &zone->free_area[current_order];
-        page_t *page = area->free_list;
-
-        if (!page)
+        if (page_list_paddr == 0)
             continue;
 
-        del_page_from_free_list(page, zone, current_order);
-        ClearPageBuddy(page);
+        page_list = read_page_list(page_list_paddr);
 
-        if (current_order > order) {
-            expand(zone, page, order, current_order);
+        // 跳过空的页面列表
+        while (page_list.entry_num == 0 && page_list.next_page != 0) {
+            page_list_paddr = page_list.next_page;
+            page_list = read_page_list(page_list_paddr);
         }
 
-        // 更新统计
-        zone_page_state_add(-(1 << order), zone, NR_FREE_PAGES);
-        zone_page_state_add(1 << order, zone, NR_ALLOC_PAGES);
+        if (page_list.entry_num == 0)
+            continue;
 
-        return page;
+        // 取出一个大块
+        uintptr_t block = read_entry(page_list_paddr, page_list.entry_num - 1);
+        write_entry(page_list_paddr, page_list.entry_num - 1, 0);
+        page_list.entry_num--;
+        write_page_list(page_list_paddr, page_list);
+
+        if (block == 0)
+            continue;
+
+        // 分裂大块，将 buddy 放回较小的 order
+        while (current_order > order) {
+            current_order--;
+            uintptr_t buddy = block + (1UL << current_order);
+
+            // 将 buddy 放入对应 order 的空闲列表
+            buddy_free_zone(container_of(alloc, zone_t, allocator), buddy,
+                            current_order);
+        }
+
+        return block;
     }
 
-    return NULL;
+    return 0; // 分配失败
 }
 
-// Per-CPU 缓存分配
-static page_t *rmqueue_pcplist(zone_t *zone) {
-    per_cpu_pages_t *pcp = this_cpu_zone_pcp(zone);
-    if (!pcp)
-        return NULL;
+// 释放一个块（带合并）
+void buddy_free_zone(zone_t *zone, uintptr_t base, size_t order) {
+    if (base == 0 || order < MIN_ORDER || order >= MAX_ORDER)
+        return;
 
-    // 快速路径：从缓存获取
-    if (pcp->count > 0) {
-        pcp->count--;
-        pcp->alloc_hits++;
-        page_t *page = pcp->pages[pcp->count];
+    buddy_allocator_t *alloc = &zone->allocator;
 
-        // 更新统计
-        zone_page_state_add(-1, zone, NR_FREE_PAGES);
-        zone_page_state_add(1, zone, NR_ALLOC_PAGES);
-
-        return page;
-    }
-
-    pcp->alloc_misses++;
-
-    // 慢速路径：批量补充
-    spin_lock(&zone->lock);
-
-    int target = MIN(pcp->batch, pcp->high - pcp->count);
-    for (int i = 0; i < target; i++) {
-        page_t *page = __rmqueue_smallest(zone, 0);
-        if (!page)
+    while (order < MAX_ORDER) {
+        // 检查对齐
+        if ((base & ((1UL << order) - 1)) != 0) {
+            // 对齐错误，直接插入不合并
             break;
+        }
 
-        pcp->pages[pcp->count++] = page;
+        // 计算 buddy 地址
+        uintptr_t buddy_addr = base ^ (1UL << order);
 
-        // __rmqueue_smallest 已更新统计，需要回调
-        zone_page_state_add(1, zone, NR_FREE_PAGES);
-        zone_page_state_add(-1, zone, NR_ALLOC_PAGES);
+        // 检查 buddy 是否在 zone 范围内
+        if (buddy_addr < zone->zone_start_pfn * DEFAULT_PAGE_SIZE ||
+            buddy_addr >= zone->zone_end_pfn * DEFAULT_PAGE_SIZE) {
+            break; // buddy 不在范围内，停止合并
+        }
+
+        size_t index = order_to_index(order);
+        uintptr_t first_page_list_paddr = alloc->free_area[index];
+
+        if (first_page_list_paddr == 0)
+            break; // 该 order 没有空闲列表，无法查找 buddy
+
+        // 在空闲列表中查找 buddy
+        uintptr_t page_list_paddr = first_page_list_paddr;
+        page_list_t page_list = read_page_list(page_list_paddr);
+        page_list_t first_page_list = page_list;
+
+        uintptr_t buddy_entry_page_paddr = 0;
+        size_t buddy_entry_index = 0;
+        bool buddy_found = false;
+
+        // 不在最高 order 时才查找 buddy
+        if (order != MAX_ORDER - 1) {
+            while (true) {
+                for (size_t i = 0; i < page_list.entry_num; i++) {
+                    uintptr_t entry = read_entry(page_list_paddr, i);
+                    if (entry == buddy_addr) {
+                        buddy_entry_page_paddr = page_list_paddr;
+                        buddy_entry_index = i;
+                        buddy_found = true;
+                        break;
+                    }
+                }
+
+                if (buddy_found)
+                    break;
+
+                if (page_list.next_page == 0)
+                    break;
+
+                page_list_paddr = page_list.next_page;
+                page_list = read_page_list(page_list_paddr);
+            }
+        }
+
+        if (buddy_found) {
+            // 从空闲列表中移除 buddy
+            // 找到第一个非空的页面列表
+            page_list_paddr = alloc->free_area[index];
+            page_list = read_page_list(page_list_paddr);
+
+            while (page_list.entry_num == 0 && page_list.next_page != 0) {
+                page_list_paddr = page_list.next_page;
+                page_list = read_page_list(page_list_paddr);
+            }
+
+            if (page_list.entry_num == 0) {
+                // 不应该发生
+                break;
+            }
+
+            // 用最后一个条目替换 buddy 的位置
+            if (page_list_paddr != buddy_entry_page_paddr) {
+                // buddy 在另一个页面列表中
+                uintptr_t last_entry =
+                    read_entry(page_list_paddr, page_list.entry_num - 1);
+                write_entry(buddy_entry_page_paddr, buddy_entry_index,
+                            last_entry);
+                write_entry(page_list_paddr, page_list.entry_num - 1, 0);
+                page_list.entry_num--;
+                write_page_list(page_list_paddr, page_list);
+            } else {
+                // buddy 在同一个页面列表中
+                uintptr_t last_entry =
+                    read_entry(page_list_paddr, page_list.entry_num - 1);
+
+                if (buddy_entry_index != page_list.entry_num - 1) {
+                    write_entry(page_list_paddr, buddy_entry_index, last_entry);
+                }
+                write_entry(page_list_paddr, page_list.entry_num - 1, 0);
+                page_list.entry_num--;
+                write_page_list(page_list_paddr, page_list);
+            }
+
+            // 合并：选择较小的地址作为新块
+            base = (base < buddy_addr) ? base : buddy_addr;
+            order++;
+
+            // 更新统计
+            zone->free_pages -= (1UL << (order - 1 - MIN_ORDER));
+
+            continue; // 继续尝试更高 order 的合并
+        }
+
+        // buddy 不在空闲列表中，停止合并
+        break;
     }
 
-    spin_unlock(&zone->lock);
+    // 将块插入空闲列表
+    size_t index = order_to_index(order);
+    uintptr_t first_page_list_paddr = alloc->free_area[index];
 
-    // 再次尝试分配
-    if (pcp->count > 0) {
-        pcp->count--;
-        zone_page_state_add(-1, zone, NR_FREE_PAGES);
-        zone_page_state_add(1, zone, NR_ALLOC_PAGES);
-        return pcp->pages[pcp->count];
+    if (first_page_list_paddr == 0) {
+        // 该 order 还没有页面列表，分配一个
+        // 对于 MIN_ORDER，可以使用要释放的块本身
+        uintptr_t new_page_paddr;
+        if (order == MIN_ORDER) {
+            new_page_paddr = base;
+        } else {
+            // 从 MIN_ORDER 分配一个页面作为元数据
+            new_page_paddr = (uintptr_t)early_alloc(DEFAULT_PAGE_SIZE);
+            if (new_page_paddr == 0) {
+                // 分配失败，丢弃这个块
+                return;
+            }
+        }
+
+        memset((void *)phys_to_virt(new_page_paddr), 0, DEFAULT_PAGE_SIZE);
+        page_list_t new_list = {0, 0};
+        write_page_list(new_page_paddr, new_list);
+        alloc->free_area[index] = new_page_paddr;
+
+        if (new_page_paddr == base) {
+            // 使用了要释放的块本身作为元数据页
+            return;
+        }
+
+        first_page_list_paddr = new_page_paddr;
     }
 
-    return NULL;
-}
+    page_list_t first_page_list = read_page_list(first_page_list_paddr);
 
-// 从单个 zone 分配
-static page_t *rmqueue(zone_t *zone, uint32_t order, uint32_t gfp_flags) {
-    page_t *page;
+    // 如果第一个页面列表已满，创建新的
+    if (first_page_list.entry_num >= BUDDY_ENTRIES) {
+        uintptr_t new_page_paddr;
+        if (order == MIN_ORDER) {
+            new_page_paddr = base;
+        } else {
+            // 尝试从 buddy 分配
+            new_page_paddr = pop_front(alloc, MIN_ORDER);
+            if (new_page_paddr == 0) {
+                new_page_paddr = (uintptr_t)early_alloc(DEFAULT_PAGE_SIZE);
+            }
+        }
 
-    if (!zone_has_memory(zone))
-        return NULL;
+        if (new_page_paddr == 0) {
+            // 无法分配元数据页，丢弃
+            return;
+        }
 
-    // 单页分配：优先 per-CPU 缓存
-    if (percpu_pagecache_initialized) {
-        if (order == 0) {
-            page = rmqueue_pcplist(zone);
-            if (page)
-                return page;
+        memset((void *)phys_to_virt(new_page_paddr), 0, DEFAULT_PAGE_SIZE);
+        page_list_t new_list = {0, first_page_list_paddr};
+        write_page_list(new_page_paddr, new_list);
+        alloc->free_area[index] = new_page_paddr;
+
+        if (new_page_paddr == base) {
+            return;
+        }
+
+        first_page_list_paddr = new_page_paddr;
+        first_page_list = new_list;
+    }
+
+    // 找到有空间的页面列表
+    uintptr_t target_paddr = first_page_list_paddr;
+    page_list_t target_list = first_page_list;
+
+    if (target_list.entry_num >= BUDDY_ENTRIES && target_list.next_page != 0) {
+        uintptr_t second_paddr = target_list.next_page;
+        page_list_t second_list = read_page_list(second_paddr);
+        if (second_list.entry_num < BUDDY_ENTRIES) {
+            target_paddr = second_paddr;
+            target_list = second_list;
         }
     }
 
-    // 多页或缓存失败：从 buddy
-    spin_lock(&zone->lock);
-    page = __rmqueue_smallest(zone, order);
-    spin_unlock(&zone->lock);
+    if (target_list.entry_num >= BUDDY_ENTRIES) {
+        // 不应该发生
+        return;
+    }
 
-    return page;
+    // 插入条目
+    write_entry(target_paddr, target_list.entry_num, base);
+    target_list.entry_num++;
+    write_page_list(target_paddr, target_list);
+
+    // 更新统计
+    zone->free_pages += (1UL << (order - MIN_ORDER));
 }
 
-page_t *alloc_pages(uint32_t gfp_flags, uint32_t order) {
-    page_t *page = NULL;
-    zonelist_t zl;
+// 从 zone 分配
+uintptr_t buddy_alloc_zone(zone_t *zone, size_t count) {
+    if (!zone || count == 0)
+        return 0;
+
+    size_t required_pages = next_power_of_2(count);
+    size_t order = log2_floor(required_pages) + MIN_ORDER;
 
     if (order >= MAX_ORDER)
-        return NULL;
+        return 0;
 
-    // 构建 zonelist
-    build_zonelist(&zl, gfp_flags);
+    spin_lock(&zone->allocator.lock);
+    uintptr_t addr = pop_front(&zone->allocator, order);
+    if (addr != 0) {
+        zone->free_pages -= required_pages;
+    }
+    spin_unlock(&zone->allocator.lock);
 
-    // 按优先级尝试从各个 zone 分配
-    for (int i = 0; i < zl.nr_zones; i++) {
-        zone_t *zone = zl.zones[i];
-        page = rmqueue(zone, order, gfp_flags);
-        if (page) {
-            prep_new_page(page, order);
-            return page;
+    return addr;
+}
+
+static void init_zone_allocator(zone_t *zone) {
+    buddy_allocator_t *alloc = &zone->allocator;
+
+    alloc->lock.lock = 0;
+
+    for (size_t i = 0; i < ORDER_COUNT; i++) {
+        // 为每个 order 分配一个初始页面列表
+        uintptr_t page_paddr = (uintptr_t)early_alloc(DEFAULT_PAGE_SIZE);
+        if (page_paddr == 0) {
+            alloc->free_area[i] = 0;
+            continue;
         }
-    }
 
-    // 所有 zone 都失败
-    if (!(gfp_flags & GFP_NOWAIT)) {
-        // TODO: 触发内存回收
+        memset((void *)phys_to_virt(page_paddr), 0, DEFAULT_PAGE_SIZE);
+        page_list_t list = {0, 0};
+        write_page_list(page_paddr, list);
+        alloc->free_area[i] = page_paddr;
     }
-
-    return NULL;
 }
 
-static inline uint64_t __free_one_page(page_t *page, uint64_t pfn, zone_t *zone,
-                                       uint32_t order) {
-    uint64_t combined_pfn;
-    page_t *buddy;
-
-    while (order < MAX_ORDER - 1) {
-        buddy = find_buddy_page(page, order);
-
-        if (!buddy || !page_is_buddy(page, buddy, order))
-            break;
-
-        del_page_from_free_list(buddy, zone, order);
-        ClearPageBuddy(buddy);
-
-        combined_pfn = pfn & ~(1UL << order);
-        page = pfn_to_page(combined_pfn);
-        pfn = combined_pfn;
-        order++;
-    }
-
-    add_to_free_list(page, zone, order);
-
-    return pfn;
-}
-
-static void free_pcppages_bulk(zone_t *zone, per_cpu_pages_t *pcp, int count) {
-    spin_lock(&zone->lock);
-
-    while (count > 0 && pcp->count > 0) {
-        pcp->count--;
-        count--;
-
-        page_t *page = pcp->pages[pcp->count];
-        uint64_t pfn = page_to_pfn(page);
-
-        __free_one_page(page, pfn, zone, 0);
-
-        // 更新统计
-        zone_page_state_add(1, zone, NR_FREE_PAGES);
-        zone_page_state_add(-1, zone, NR_ALLOC_PAGES);
-    }
-
-    spin_unlock(&zone->lock);
-}
-
-void __free_pages(page_t *page, uint32_t order) {
-    if (!page || page->magic != PAGE_MAGIC)
-        return;
-
-    if (PageReserved(page))
-        return;
-
-    if (!put_page_testzero(page))
-        return;
-
-    zone_t *zone = page_zone(page);
-    if (!zone)
-        return;
-
-    // 清除复合页标记
-    if (order > 0) {
-        ClearPageHead(page);
-        for (uint32_t i = 1; i < (1U << order); i++) {
-            ClearPageCompound(page + i);
-        }
-    }
-
-    // 单页：优先放入 per-CPU 缓存
-    if (percpu_pagecache_initialized) {
-        if (order == 0) {
-            per_cpu_pages_t *pcp = this_cpu_zone_pcp(zone);
-
-            if (pcp->count < pcp->high) {
-                pcp->pages[pcp->count++] = page;
-                pcp->free_hits++;
-
-                zone_page_state_add(1, zone, NR_FREE_PAGES);
-                zone_page_state_add(-1, zone, NR_ALLOC_PAGES);
-                return;
-            }
-
-            pcp->free_misses++;
-
-            // 缓存满，批量释放
-            free_pcppages_bulk(zone, pcp, pcp->batch);
-
-            if (pcp->count < pcp->high) {
-                pcp->pages[pcp->count++] = page;
-                zone_page_state_add(1, zone, NR_FREE_PAGES);
-                zone_page_state_add(-1, zone, NR_ALLOC_PAGES);
-                return;
-            }
-        }
-    }
-
-    // 多页：直接归还 buddy
-    uint64_t pfn = page_to_pfn(page);
-
-    spin_lock(&zone->lock);
-    __free_one_page(page, pfn, zone, order);
-    zone_page_state_add(1 << order, zone, NR_FREE_PAGES);
-    zone_page_state_add(-(1 << order), zone, NR_ALLOC_PAGES);
-    spin_unlock(&zone->lock);
-}
-
-// 初始化单个 zone
 static void init_zone(zone_t *zone, enum zone_type type, uint64_t start_pfn,
                       uint64_t end_pfn) {
     memset(zone, 0, sizeof(zone_t));
@@ -416,156 +436,216 @@ static void init_zone(zone_t *zone, enum zone_type type, uint64_t start_pfn,
     zone->name = zone_names[type];
     zone->zone_start_pfn = start_pfn;
     zone->zone_end_pfn = end_pfn;
-    zone->spanned_pages = end_pfn - start_pfn;
-    zone->present_pages = 0; // 稍后添加内存时更新
     zone->managed_pages = 0;
+    zone->free_pages = 0;
 
-    zone->lock.lock = 0;
-
-    // 初始化统计
-    for (int i = 0; i < NR_ZONE_STATS; i++) {
-        atomic_set(&zone->vm_stat.count[i], 0);
-    }
+    init_zone_allocator(zone);
 }
 
-extern uint64_t memory_size;
+void buddy_init(void) {
+    uint64_t max_pfn = memory_size / DEFAULT_PAGE_SIZE;
 
-extern void *early_alloc(size_t size);
-
-// 全局初始化
-void zones_init(void) {
-    min_pfn = 0;
-    max_pfn = memory_size / DEFAULT_PAGE_SIZE;
-
-    uint64_t total_pages = max_pfn - min_pfn;
-
-    // 分配 mem_map
-    size_t mem_map_size = total_pages * sizeof(page_t);
-    mem_map = (page_t *)early_alloc(mem_map_size);
-    memset(mem_map, 0, mem_map_size);
-
-    // 初始化所有页
-    for (uint64_t i = 0; i < total_pages; i++) {
-        page_t *page = &mem_map[i];
-        atomic_set(&page->_refcount, 0);
-        SetPageReserved(page);
-        page->magic = PAGE_MAGIC;
-
-        // 设置 zone_id
-        uint64_t pfn = min_pfn + i;
-        page->zone_id = pfn_to_zone_type(pfn);
-    }
-
-    // 为每个可能的 zone 类型分配结构
-    for (int i = 0; i < __MAX_NR_ZONES; i++) {
-        zones[i] = (zone_t *)early_alloc(sizeof(zone_t));
-    }
-
-    // 初始化 zone（根据系统内存范围）
-    uint64_t dma_end = MIN(max_pfn, ZONE_DMA_END / DEFAULT_PAGE_SIZE);
-    uint64_t dma32_end = MIN(max_pfn, ZONE_DMA32_END / DEFAULT_PAGE_SIZE);
+    uint64_t dma_end_pfn = MIN(max_pfn, ZONE_DMA_END / DEFAULT_PAGE_SIZE);
+    uint64_t dma32_end_pfn = MIN(max_pfn, ZONE_DMA32_END / DEFAULT_PAGE_SIZE);
 
 #if defined(__x86_64__)
-    if (min_pfn < dma_end) {
-        init_zone(zones[ZONE_DMA], ZONE_DMA, min_pfn, dma_end);
+    // ZONE_DMA
+    zones[ZONE_DMA] = (zone_t *)early_alloc(sizeof(zone_t));
+    init_zone(zones[ZONE_DMA], ZONE_DMA, 0, dma_end_pfn);
+    nr_zones++;
+
+    // ZONE_DMA32
+    if (dma_end_pfn < dma32_end_pfn) {
+        zones[ZONE_DMA32] = (zone_t *)early_alloc(sizeof(zone_t));
+        init_zone(zones[ZONE_DMA32], ZONE_DMA32, dma_end_pfn, dma32_end_pfn);
+        nr_zones++;
+    }
+
+    // ZONE_NORMAL
+    if (dma32_end_pfn < max_pfn) {
+        zones[ZONE_NORMAL] = (zone_t *)early_alloc(sizeof(zone_t));
+        init_zone(zones[ZONE_NORMAL], ZONE_NORMAL, dma32_end_pfn, max_pfn);
+        nr_zones++;
+    }
+#else
+    // ZONE_DMA32
+    zones[ZONE_DMA32] = (zone_t *)early_alloc(sizeof(zone_t));
+    init_zone(zones[ZONE_DMA32], ZONE_DMA32, 0, dma32_end_pfn);
+    nr_zones++;
+
+    // ZONE_NORMAL
+    if (dma32_end_pfn < max_pfn) {
+        zones[ZONE_NORMAL] = (zone_t *)early_alloc(sizeof(zone_t));
+        init_zone(zones[ZONE_NORMAL], ZONE_NORMAL, dma32_end_pfn, max_pfn);
         nr_zones++;
     }
 #endif
-
-    if (dma_end < dma32_end) {
-        init_zone(zones[ZONE_DMA32], ZONE_DMA32, dma_end, dma32_end);
-        nr_zones++;
-    }
-
-    init_zone(zones[ZONE_NORMAL], ZONE_NORMAL, dma32_end, memory_size);
-    nr_zones++;
 }
 
-// 添加内存区域到指定 zone
 void add_memory_region(uintptr_t start, uintptr_t end, enum zone_type type) {
     zone_t *zone = zones[type];
-    if (!zone) {
+    if (!zone)
         return;
-    }
 
-    uint64_t start_pfn = start / DEFAULT_PAGE_SIZE;
-    uint64_t end_pfn = end / DEFAULT_PAGE_SIZE;
+    // 对齐到页边界
+    start = PADDING_UP(start, DEFAULT_PAGE_SIZE);
+    end = PADDING_DOWN(end, DEFAULT_PAGE_SIZE);
 
-    spin_lock(&zone->lock);
+    if (start >= end)
+        return;
 
-    for (uint64_t pfn = start_pfn; pfn < end_pfn;) {
-        page_t *page = pfn_to_page(pfn);
+    // 确保在 zone 范围内
+    uintptr_t zone_start = zone->zone_start_pfn * DEFAULT_PAGE_SIZE;
+    uintptr_t zone_end = zone->zone_end_pfn * DEFAULT_PAGE_SIZE;
 
-        if (PageReserved(page)) {
-            ClearPageReserved(page);
-            atomic_set(&page->_refcount, 0);
-        }
+    if (start < zone_start)
+        start = zone_start;
+    if (end > zone_end)
+        end = zone_end;
+    if (start >= end)
+        return;
 
-        // 确保 zone_id 正确
-        page->zone_id = type;
+    spin_lock(&zone->allocator.lock);
 
-        // 找到最大对齐块
-        uint32_t order = 0;
-        uint64_t size = 1;
+    uintptr_t paddr = start;
+    size_t remain_bytes = end - start;
 
-        while (order < MAX_ORDER - 1) {
-            if ((pfn & ((1UL << (order + 1)) - 1)) != 0)
-                break;
-            if (pfn + (size << 1) > end_pfn)
-                break;
+    // 阶段 1：处理低位对齐（向上对齐到更高 order）
+    for (size_t order = MIN_ORDER; order < MAX_ORDER && remain_bytes > 0;
+         order++) {
+        size_t block_size = 1UL << order;
 
-            order++;
-            size <<= 1;
-        }
+        if (remain_bytes < block_size)
+            break;
 
-        // 添加到 buddy
-        __free_one_page(page, pfn, zone, order);
-
-        zone->managed_pages += size;
-        zone->present_pages += size;
-        zone_page_state_add(size, zone, NR_FREE_PAGES);
-
-        pfn += size;
-    }
-
-    spin_unlock(&zone->lock);
-}
-
-// Per-CPU 缓存初始化
-void percpu_pagecache_init() {
-    for (int i = 0; i < __MAX_NR_ZONES; i++) {
-        zone_t *zone = zones[i];
-        if (!zone_has_memory(zone))
-            continue;
-
-        zone->per_cpu_pageset = (per_cpu_pages_t *)alloc_frames_bytes(
-            sizeof(per_cpu_pages_t) * cpu_count);
-
-        for (int cpu = 0; cpu < cpu_count; cpu++) {
-            per_cpu_pages_t *pcp = zone_pcp(zone, cpu);
-            memset(pcp, 0, sizeof(per_cpu_pages_t));
-
-            pcp->low = PCPU_CACHE_LOW;
-            pcp->high = PCPU_CACHE_HIGH;
-            pcp->batch = PCPU_BATCH;
-        }
-    }
-
-    percpu_pagecache_initialized = true;
-}
-
-// 清空所有缓存
-void drain_all_pages(void) {
-    for (int i = 0; i < __MAX_NR_ZONES; i++) {
-        zone_t *zone = zones[i];
-        if (!zone_has_memory(zone))
-            continue;
-
-        for (int cpu = 0; cpu < nr_cpu; cpu++) {
-            per_cpu_pages_t *pcp = zone_pcp(zone, cpu);
-            if (pcp->count > 0) {
-                free_pcppages_bulk(zone, pcp, pcp->count);
+        // 检查当前地址是否对齐到下一个 order
+        if (order != MAX_ORDER - 1) {
+            if ((paddr & (1UL << order)) != 0) {
+                // 需要释放一个当前 order 的块来对齐
+                buddy_free_zone(zone, paddr, order);
+                zone->managed_pages += block_size / DEFAULT_PAGE_SIZE;
+                paddr += block_size;
+                remain_bytes -= block_size;
+            }
+        } else {
+            // 最高 order，尽可能多地释放
+            while (remain_bytes >= block_size) {
+                buddy_free_zone(zone, paddr, order);
+                zone->managed_pages += block_size / DEFAULT_PAGE_SIZE;
+                paddr += block_size;
+                remain_bytes -= block_size;
             }
         }
     }
+
+    // 阶段 2：处理剩余字节（从高 order 到低 order）
+    for (int order = MAX_ORDER - 1; order >= (int)MIN_ORDER && remain_bytes > 0;
+         order--) {
+        size_t block_size = 1UL << order;
+
+        if (remain_bytes >= block_size && (paddr & (block_size - 1)) == 0) {
+            buddy_free_zone(zone, paddr, order);
+            zone->managed_pages += block_size / DEFAULT_PAGE_SIZE;
+            paddr += block_size;
+            remain_bytes -= block_size;
+        }
+    }
+
+    spin_unlock(&zone->allocator.lock);
+}
+
+uintptr_t alloc_frames(size_t count) {
+    if (count == 0)
+        return 0;
+
+    // 优先尝试 NORMAL zone
+    if (zones[ZONE_NORMAL] && zone_has_memory(zones[ZONE_NORMAL])) {
+        uintptr_t addr = buddy_alloc_zone(zones[ZONE_NORMAL], count);
+        if (addr != 0)
+            return addr;
+    }
+
+    // 回退到 DMA32
+    if (zones[ZONE_DMA32] && zone_has_memory(zones[ZONE_DMA32])) {
+        uintptr_t addr = buddy_alloc_zone(zones[ZONE_DMA32], count);
+        if (addr != 0)
+            return addr;
+    }
+
+#if defined(__x86_64__)
+    // 回退到 DMA
+    if (zones[ZONE_DMA] && zone_has_memory(zones[ZONE_DMA])) {
+        uintptr_t addr = buddy_alloc_zone(zones[ZONE_DMA], count);
+        if (addr != 0)
+            return addr;
+    }
+#endif
+
+    return 0;
+}
+
+void free_frames(uintptr_t addr, size_t count) {
+    if (addr == 0 || count == 0)
+        return;
+
+    // 确定地址属于哪个 zone
+    enum zone_type type = phys_to_zone_type(addr);
+    zone_t *zone = zones[type];
+
+    if (!zone)
+        return;
+
+    size_t required_pages = next_power_of_2(count);
+    size_t order = log2_floor(required_pages) + MIN_ORDER;
+
+    if (order >= MAX_ORDER)
+        order = MAX_ORDER - 1;
+
+    spin_lock(&zone->allocator.lock);
+    buddy_free_zone(zone, addr, order);
+    spin_unlock(&zone->allocator.lock);
+}
+
+uintptr_t alloc_frames_dma32(size_t count) {
+    if (count == 0)
+        return 0;
+
+    // 优先 DMA32
+    if (zones[ZONE_DMA32] && zone_has_memory(zones[ZONE_DMA32])) {
+        uintptr_t addr = buddy_alloc_zone(zones[ZONE_DMA32], count);
+        if (addr != 0)
+            return addr;
+    }
+
+#if defined(__x86_64__)
+    // 回退到 DMA
+    if (zones[ZONE_DMA] && zone_has_memory(zones[ZONE_DMA])) {
+        uintptr_t addr = buddy_alloc_zone(zones[ZONE_DMA], count);
+        if (addr != 0)
+            return addr;
+    }
+#endif
+
+    // 不能从 NORMAL 分配（地址可能超过 4GB）
+    return 0;
+}
+
+void free_frames_dma32(uintptr_t addr, size_t count) {
+    free_frames(addr, count); // 自动识别 zone
+}
+
+uintptr_t alloc_frames_bytes(size_t bytes) {
+    if (bytes == 0)
+        return 0;
+
+    size_t pages = (bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE;
+    return alloc_frames(pages);
+}
+
+void free_frames_bytes(uintptr_t addr, size_t bytes) {
+    if (bytes == 0)
+        return;
+
+    size_t pages = (bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE;
+    free_frames(addr, pages);
 }

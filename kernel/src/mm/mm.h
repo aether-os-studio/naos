@@ -26,6 +26,7 @@ typedef struct task_mm_info {
 
 void frame_init();
 
+// 分配/释放（高层接口）
 uintptr_t alloc_frames(size_t count);
 void free_frames(uintptr_t addr, size_t count);
 uintptr_t alloc_frames_dma32(size_t count);

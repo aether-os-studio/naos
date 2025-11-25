@@ -31,8 +31,6 @@ void kmain(void) {
 
     arch_early_init();
 
-    percpu_pagecache_init();
-
     device_init();
 
     vfs_init();

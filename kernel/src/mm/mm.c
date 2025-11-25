@@ -61,6 +61,20 @@ static uintptr_t get_zone_boundary(enum zone_type type) {
     }
 }
 
+enum zone_type pfn_to_zone_type(uint64_t pfn) {
+    uint64_t phys = pfn * DEFAULT_PAGE_SIZE;
+
+#if defined(__x86_64__)
+    if (phys < ZONE_DMA_END)
+        return ZONE_DMA;
+    else
+#endif
+        if (phys < ZONE_DMA32_END)
+        return ZONE_DMA32;
+    else
+        return ZONE_NORMAL;
+}
+
 static void process_memory_region(uintptr_t start, uintptr_t end) {
     // 对齐
     start = (start + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1);
@@ -162,7 +176,7 @@ void frame_init() {
     bitmap_set_range(&usable_regions, bitmap_frame_start, bitmap_frame_end,
                      false);
 
-    zones_init();
+    buddy_init();
 
     for (uint64_t i = 0; i < memory_map->entry_count; i++) {
         boot_memory_map_entry_t *region = &memory_map->entries[i];
@@ -239,70 +253,4 @@ uint64_t map_change_attribute_range(uint64_t *pgdir, uint64_t vaddr,
     }
 
     return 0;
-}
-
-static size_t next_power_of_2(size_t n) {
-    if (n == 0)
-        return 1;
-    if ((n & (n - 1)) == 0)
-        return n; // 已经是2的幂次
-
-    size_t power = 1;
-    while (power < n) {
-        power <<= 1;
-    }
-    return power;
-}
-
-static size_t log2_floor(size_t n) {
-    size_t log = 0;
-    while (n > 1) {
-        n >>= 1;
-        log++;
-    }
-    return log;
-}
-
-// 分配页框
-uintptr_t alloc_frames(size_t count) {
-    size_t required_pages = next_power_of_2(count);
-    size_t order = log2_floor(required_pages);
-
-    page_t *page = alloc_pages(GFP_KERNEL_NORMAL, order);
-    if (!page)
-        return 0;
-
-    uint64_t paddr = page_to_phys(page);
-    return paddr;
-}
-
-// 释放页框
-void free_frames(uintptr_t addr, size_t count) {
-    if (!addr)
-        return;
-
-    size_t required_pages = next_power_of_2(count);
-    size_t order = log2_floor(required_pages);
-
-    page_t *page = phys_to_page(addr);
-    __free_pages(page, order);
-}
-
-uintptr_t alloc_frames_dma32(size_t count) {
-    size_t required_pages = next_power_of_2(count);
-    size_t order = log2_floor(required_pages);
-
-    page_t *page = alloc_pages(GFP_KERNEL_DMA32, order);
-    if (!page) {
-        page = alloc_pages(GFP_KERNEL_NORMAL, order);
-    }
-    if (!page)
-        return 0;
-
-    uint64_t paddr = page_to_phys(page);
-    return paddr;
-}
-
-void free_frames_dma32(uintptr_t addr, size_t count) {
-    free_frames(addr, count);
 }

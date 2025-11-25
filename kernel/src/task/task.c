@@ -1019,25 +1019,25 @@ uint64_t task_exit(int64_t code) {
 
     can_schedule = false;
 
-    // spin_lock(&task_queue_lock);
-    // uint64_t continue_ptr_count = 0;
-    // for (int i = 0; i < MAX_TASK_NUM; i++) {
-    //     if (!tasks[i]) {
-    //         continue_ptr_count++;
-    //         if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
-    //             break;
-    //         continue;
-    //     }
-    //     continue_ptr_count = 0;
-    //     if ((tasks[i]->ppid != tasks[i]->pid) &&
-    //         (tasks[i]->ppid == current_task->pid)) {
-    //         tasks[i]->pending_signal |= SIGMASK(SIGKILL);
-    //         if (tasks[i]->state == TASK_BLOCKING ||
-    //             tasks[i]->state == TASK_READING_STDIO)
-    //             task_unblock(tasks[i], EOK);
-    //     }
-    // }
-    // spin_unlock(&task_queue_lock);
+    spin_lock(&task_queue_lock);
+    uint64_t continue_ptr_count = 0;
+    for (int i = 0; i < MAX_TASK_NUM; i++) {
+        if (!tasks[i]) {
+            continue_ptr_count++;
+            if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
+                break;
+            continue;
+        }
+        continue_ptr_count = 0;
+        if (tasks[i] != current_task && (tasks[i]->ppid != tasks[i]->pid) &&
+            (tasks[i]->ppid == current_task->pid)) {
+            tasks[i]->pending_signal |= SIGMASK(SIGKILL);
+            if (tasks[i]->state == TASK_BLOCKING ||
+                tasks[i]->state == TASK_READING_STDIO)
+                task_unblock(tasks[i], EOK);
+        }
+    }
+    spin_unlock(&task_queue_lock);
 
     task_exit_inner(current_task, code);
 
