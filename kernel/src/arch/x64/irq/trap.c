@@ -62,6 +62,9 @@ void traceback(struct pt_regs *regs) {
 
     uint64_t ret_addr = regs->rip;
     for (int i = 0; i < 32; ++i) {
+        if (ret_addr < get_physical_memory_offset())
+            break;
+
         if (lookup_kallsyms(ret_addr, i) != 0)
             break;
 
@@ -70,7 +73,7 @@ void traceback(struct pt_regs *regs) {
 
         ret_addr = *(rbp + 1);
         rbp = (uint64_t *)(*rbp);
-        if (!rbp)
+        if ((uint64_t)rbp < get_physical_memory_offset())
             break;
     }
     printk("======== Kernel traceback end =======\n");

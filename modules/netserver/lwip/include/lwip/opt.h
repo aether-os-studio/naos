@@ -199,7 +199,7 @@
  * interrupt context!
  */
 #if !defined LWIP_TCPIP_CORE_LOCKING_INPUT || defined __DOXYGEN__
-#define LWIP_TCPIP_CORE_LOCKING_INPUT 0
+#define LWIP_TCPIP_CORE_LOCKING_INPUT 1
 #endif
 
 /**
@@ -2004,7 +2004,7 @@
  * timers running in tcpip_thread from another thread.
  */
 #if !defined LWIP_TCPIP_TIMEOUT || defined __DOXYGEN__
-#define LWIP_TCPIP_TIMEOUT 0
+#define LWIP_TCPIP_TIMEOUT 1
 #endif
 
 /** LWIP_NETCONN_SEM_PER_THREAD==1: Use one (thread-local) semaphore per

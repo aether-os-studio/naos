@@ -696,6 +696,8 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags) {
                         if (pair->server_pending_files[j] == NULL) {
                             pair->server_pending_files[j] =
                                 malloc(sizeof(fd_t));
+                            if (!current_task->fd_info->fds[fds[i]])
+                                continue;
                             memcpy(pair->server_pending_files[j],
                                    current_task->fd_info->fds[fds[i]],
                                    sizeof(fd_t));
@@ -862,6 +864,8 @@ size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg,
                         if (pair->client_pending_files[j] == NULL) {
                             pair->client_pending_files[j] =
                                 malloc(sizeof(fd_t));
+                            if (!current_task->fd_info->fds[fds[i]])
+                                continue;
                             memcpy(pair->client_pending_files[j],
                                    current_task->fd_info->fds[fds[i]],
                                    sizeof(fd_t));

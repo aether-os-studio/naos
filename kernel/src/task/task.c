@@ -1488,7 +1488,8 @@ void sched_update_timerfd() {
     if (current_task->fd_info && current_task->fd_info->ref_count) {
         uint64_t continue_null_fd_count = 0;
         for (int fd = 3; fd < MAX_FD_NUM; fd++) {
-            if (current_task->fd_info->fds[fd] == NULL) {
+            fd_t *file = current_task->fd_info->fds[fd];
+            if (file == NULL) {
                 continue_null_fd_count++;
                 if (continue_null_fd_count >= 20)
                     break;
@@ -1497,9 +1498,8 @@ void sched_update_timerfd() {
 
             continue_null_fd_count = 0;
 
-            if (current_task->fd_info->fds[fd] &&
-                current_task->fd_info->fds[fd]->node->fsid == timerfdfs_id) {
-                timerfd_t *tfd = current_task->fd_info->fds[fd]->node->handle;
+            if (file && file->node->fsid == timerfdfs_id) {
+                timerfd_t *tfd = file->node->handle;
 
                 // 根据时钟类型获取当前时间
                 uint64_t now;
