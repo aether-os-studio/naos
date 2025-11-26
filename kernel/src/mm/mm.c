@@ -238,6 +238,7 @@ void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
                 printk("Cannot allocate frame\n");
                 break;
             }
+            memset((void *)phys_to_virt(phys), 0, DEFAULT_PAGE_SIZE);
             map_page(pml4, va, phys, get_arch_page_table_flags(flags), true);
         } else {
             map_page(pml4, va, paddr + (va - vaddr),
@@ -267,7 +268,7 @@ void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size) {
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
         uint64_t paddr = unmap_page(pml4, va);
         if (paddr) {
-            // free_frames(paddr, 1);
+            free_frames(paddr, 1);
         }
     }
 }

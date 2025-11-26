@@ -77,7 +77,8 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
     uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
     if (pgdir[index] & ARCH_PT_FLAG_VALID) {
         if (force) {
-            uint64_t addr = ARCH_READ_PTE(pgdir[index]);
+            uint64_t paddr = ARCH_READ_PTE(pgdir[index]);
+            // free_frames(paddr, 1);
         } else
             return 0;
     }

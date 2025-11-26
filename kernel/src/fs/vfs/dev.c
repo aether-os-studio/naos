@@ -90,6 +90,9 @@ int devtmpfs_mkdir(void *parent, const char *name, vfs_node_t node) {
 
 int devtmpfs_mkfile(void *parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
+    if (node->handle) {
+        return -EEXIST;
+    }
     devtmpfs_node_t *handle = malloc(sizeof(devtmpfs_node_t));
     handle->node = node;
     handle->capability = DEFAULT_PAGE_SIZE;
@@ -110,6 +113,9 @@ int devtmpfs_mknod(void *parent, const char *name, vfs_node_t node,
         node->type = file_stream;
     else
         node->type = file_none;
+    if (node->handle) {
+        return -EEXIST;
+    }
     devtmpfs_node_t *handle = malloc(sizeof(devtmpfs_node_t));
     handle->node = node;
     handle->size = 0;
@@ -119,6 +125,9 @@ int devtmpfs_mknod(void *parent, const char *name, vfs_node_t node,
 
 int devtmpfs_symlink(void *parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
+    if (node->handle) {
+        return -EEXIST;
+    }
     devtmpfs_node_t *handle = malloc(sizeof(devtmpfs_node_t));
     handle->capability = DEFAULT_PAGE_SIZE;
     handle->content = alloc_frames_bytes(handle->capability);
@@ -454,7 +463,6 @@ ssize_t urandom_write(void *data, const void *buf, uint64_t offset,
 extern char *default_console;
 
 void setup_console_symlinks() {
-    // 建立符号链接
     vfs_symlink("/dev/tty1", default_console); // 主控制台
 
     vfs_symlink("/dev/stdin", default_console);

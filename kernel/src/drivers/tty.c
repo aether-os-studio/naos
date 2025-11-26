@@ -41,7 +41,7 @@ tty_device_t *get_tty_device(const char *name) {
     return NULL;
 }
 
-// 全局默认控制台路径（初始为 /dev/tty0）
+// 全局默认控制台路径（初始为 /dev/ttyS0）
 char *default_console = NULL;
 
 void parse_cmdline_console(const char *cmdline) {

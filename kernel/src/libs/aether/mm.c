@@ -19,6 +19,7 @@ EXPORT_SYMBOL(calloc);
 EXPORT_SYMBOL(free);
 
 EXPORT_SYMBOL(map_page_range);
+EXPORT_SYMBOL(map_page_range_unforce);
 EXPORT_SYMBOL(unmap_page_range);
 
 EXPORT_SYMBOL(translate_address);

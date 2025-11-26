@@ -642,7 +642,7 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_regs) {
 #if SYSCALL_DEBUG
     spin_lock(&syscall_debug_lock);
 
-    len = sprintf(buf, "%d [syscall] %s(", current_task->pid,
+    len = sprintf(buf, "%d [syscall %d] %s(", current_task->pid, idx,
                   usable ? info->name : "???");
     serial_printk(buf, len);
     if (usable) {
@@ -674,7 +674,7 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_regs) {
     if ((int64_t)regs->rax < 0) {
         len = sprintf(buf, "\b) = %s%s%s\n", "ERR(", strerror(-regs->rax), ")");
     } else {
-        len = sprintf(buf, "\b) = %d\n", regs->rax);
+        len = sprintf(buf, "\b) = %#018lx\n", regs->rax);
     }
     serial_printk(buf, len);
 

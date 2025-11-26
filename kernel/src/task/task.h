@@ -47,7 +47,7 @@
 #define USER_MMAP_END 0x0000060000000000
 
 #define USER_BRK_START 0x0000700000000000
-#define USER_BRK_END 0x00007fffefffffff
+#define USER_BRK_END 0x00007ffff0000000
 
 #define CLONE_VM 0x00000100 /* set if VM shared between processes */
 #define CLONE_FS 0x00000200 /* set if fs info shared between processes */

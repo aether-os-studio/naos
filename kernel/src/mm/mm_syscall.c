@@ -26,9 +26,6 @@ uint64_t sys_brk(uint64_t brk) {
                        brk - current_task->arch_context->mm->brk_current,
                        PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
-        memset((void *)current_task->arch_context->mm->brk_current, 0,
-               brk - current_task->arch_context->mm->brk_current);
-
         vma_t *vma = vma_alloc();
         if (!vma) {
             spin_unlock(&current_task->arch_context->mm->task_vma_mgr.lock);
@@ -228,8 +225,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         map_page_range(get_current_page_dir(true), start_addr, 0, aligned_len,
                        pt_flags);
 
-        memset((void *)start_addr, 0, aligned_len);
-
         return start_addr;
     }
 }
@@ -242,7 +237,11 @@ uint64_t sys_munmap(uint64_t addr, uint64_t size) {
         return -EFAULT;
     }
 
-    // vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
+    vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
+    if (!vma_find_intersection(mgr, addr, addr + size)) {
+        return -EINVAL;
+    }
+
     // vma_t *vma = mgr->vma_list;
     // vma_t *next;
 
@@ -283,6 +282,8 @@ uint64_t sys_munmap(uint64_t addr, uint64_t size) {
     // }
 
     // unmap_page_range(get_current_page_dir(true), start, end - start);
+
+    // mgr->last_alloc_addr = addr;
 
     return 0;
 }
