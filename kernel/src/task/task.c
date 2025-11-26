@@ -386,7 +386,7 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
 
 uint64_t get_node_size(vfs_node_t node) {
     if (node->type & file_symlink) {
-        char linkpath[256];
+        char linkpath[128];
         memset(linkpath, 0, sizeof(linkpath));
         int ret = vfs_readlink(node, linkpath, sizeof(linkpath));
         if (ret < 0) {
@@ -408,7 +408,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
                      const char **envp) {
     can_schedule = false;
 
-    char path[1024];
+    char path[128];
     strncpy(path, path_user, sizeof(path));
 
     vfs_node_t node = vfs_open(path);
@@ -421,9 +421,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     if ((int64_t)size < 0)
         return size;
 
-    uint64_t buf_len =
-        (size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
-
+    // argv/envp 处理代码保持不变
     int argv_count = 0;
     int envp_count = 0;
 
@@ -479,8 +477,9 @@ uint64_t task_execve(const char *path_user, const char **argv,
     }
     new_envp[envp_count] = NULL;
 
-    uint8_t *buffer = (uint8_t *)alloc_frames_bytes(buf_len);
-    if (!buffer) {
+    uint8_t header_buf[256];
+    ssize_t header_read = vfs_read(node, header_buf, 0, sizeof(header_buf));
+    if (header_read < sizeof(Elf64_Ehdr)) {
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
                 free(new_argv[i]);
@@ -490,12 +489,11 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 free(new_envp[i]);
         free(new_envp);
         can_schedule = true;
-        return (uint64_t)-ENOMEM;
+        return (uint64_t)-ENOEXEC;
     }
 
-    ssize_t ret = vfs_read(node, buffer, 0, size);
-
-    if (buffer[0] == '#' && buffer[1] == '!') {
+    // 检查 shebang
+    if (header_buf[0] == '#' && header_buf[1] == '!') {
         for (int i = 0; i < argv_count; i++)
             if (new_argv[i])
                 free(new_argv[i]);
@@ -505,9 +503,9 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 free(new_envp[i]);
         free(new_envp);
 
-        char *p = (char *)buffer + 2;
+        char *p = (char *)header_buf + 2;
         const char *interpreter_name = NULL;
-        while (*p != '\n') {
+        while (*p != '\n' && p < (char *)header_buf + header_read) {
             if (!interpreter_name && *p != ' ') {
                 interpreter_name = (const char *)p;
             }
@@ -518,21 +516,60 @@ uint64_t task_execve(const char *path_user, const char **argv,
         if (!interpreter_name)
             return -EINVAL;
 
-        char interpreter_name_buf[256];
+        char interpreter_name_buf[128];
         strncpy(interpreter_name_buf, interpreter_name,
                 sizeof(interpreter_name_buf));
 
         int argc = 0;
         while (argv[argc++])
             ;
-        const char *injected_argv[256];
+        const char *injected_argv[128];
         memcpy((char *)&injected_argv[1], argv, argc * sizeof(char *));
         injected_argv[0] = interpreter_name_buf;
         injected_argv[1] = path;
 
-        free_frames_bytes(buffer, buf_len);
-
         return task_execve((const char *)injected_argv[0], injected_argv, envp);
+    }
+
+    const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)header_buf;
+
+    uint64_t e_entry = ehdr->e_entry;
+    if (e_entry == 0) {
+        for (int i = 0; i < argv_count; i++)
+            if (new_argv[i])
+                free(new_argv[i]);
+        free(new_argv);
+        for (int i = 0; i < envp_count; i++)
+            if (new_envp[i])
+                free(new_envp[i]);
+        free(new_envp);
+        can_schedule = true;
+        return (uint64_t)-EINVAL;
+    }
+
+    if (!arch_check_elf(ehdr)) {
+        for (int i = 0; i < argv_count; i++)
+            if (new_argv[i])
+                free(new_argv[i]);
+        free(new_argv);
+        for (int i = 0; i < envp_count; i++)
+            if (new_envp[i])
+                free(new_envp[i]);
+        free(new_envp);
+        can_schedule = true;
+        return (uint64_t)-ENOEXEC;
+    }
+
+    Elf64_Phdr *phdr;
+    size_t phdr_size = ehdr->e_phnum * sizeof(Elf64_Phdr);
+    bool phdr_allocated = false;
+
+    if (ehdr->e_phoff + phdr_size <= sizeof(header_buf)) {
+        phdr = (Elf64_Phdr *)(header_buf + ehdr->e_phoff);
+    } else {
+        phdr = (Elf64_Phdr *)malloc(phdr_size);
+        phdr_allocated = true;
+        vfs_read(node, phdr, ehdr->e_phoff, phdr_size);
     }
 
     if (!current_task->is_vfork) {
@@ -563,7 +600,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
     asm volatile("movq %0, %%cr3" ::"r"(new_mm->page_table_addr));
 #elif defined(__aarch64__)
     asm volatile("msr TTBR0_EL1, %0" : : "r"(new_mm->page_table_addr));
-
     asm volatile("dsb ishst\n\t"
                  "tlbi vmalle1is\n\t"
                  "dsb ish\n\t"
@@ -572,7 +608,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
     uint64_t satp = MAKE_SATP_PADDR(SATP_MODE_SV48, 0, new_mm->page_table_addr);
     asm volatile("csrw satp, %0" : : "r"(satp) : "memory");
     asm volatile("sfence.vma");
-
     csr_set(sstatus, (1UL << 18));
 #endif
 
@@ -582,60 +617,26 @@ uint64_t task_execve(const char *path_user, const char **argv,
         free_page_table(old_mm);
     }
 
-    const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)buffer;
-
-    uint64_t e_entry = ehdr->e_entry;
-
-    uint64_t interpreter_entry = 0;
-
-    if (e_entry == 0) {
-        free_frames_bytes(buffer, buf_len);
-        for (int i = 0; i < argv_count; i++)
-            if (new_argv[i])
-                free(new_argv[i]);
-        free(new_argv);
-        for (int i = 0; i < envp_count; i++)
-            if (new_envp[i])
-                free(new_envp[i]);
-        free(new_envp);
-        can_schedule = true;
-        return (uint64_t)-EINVAL;
-    }
-
-    if (!arch_check_elf(ehdr)) {
-        free_frames_bytes(buffer, buf_len);
-        for (int i = 0; i < argv_count; i++)
-            if (new_argv[i])
-                free(new_argv[i]);
-        free(new_argv);
-        for (int i = 0; i < envp_count; i++)
-            if (new_envp[i])
-                free(new_envp[i]);
-        free(new_envp);
-        can_schedule = true;
-        return (uint64_t)-ENOEXEC;
-    }
-
-    // 处理程序头
-    Elf64_Phdr *phdr = (Elf64_Phdr *)((char *)buffer + ehdr->e_phoff);
-
     uint64_t load_start = UINT64_MAX;
     uint64_t load_end = 0;
+    uint64_t interpreter_entry = 0;
     uint64_t interpreter_load_start = UINT64_MAX;
     uint64_t interpreter_load_end = 0;
-
     char *interpreter_path = NULL;
 
     for (int i = 0; i < ehdr->e_phnum; ++i) {
         if (phdr[i].p_type == PT_INTERP) {
-            const char *interpreter_name =
-                ((const char *)ehdr + phdr[i].p_offset);
+            char interp_name[256];
+            vfs_read(node, interp_name, phdr[i].p_offset,
+                     phdr[i].p_filesz < 256 ? phdr[i].p_filesz : 255);
+            interp_name[phdr[i].p_filesz < 256 ? phdr[i].p_filesz : 255] = '\0';
 
-            interpreter_path = strdup(interpreter_name);
+            interpreter_path = strdup(interp_name);
 
-            vfs_node_t interpreter_node = vfs_open(interpreter_name);
+            vfs_node_t interpreter_node = vfs_open(interp_name);
             if (!interpreter_node) {
-                free_frames_bytes(buffer, buf_len);
+                if (phdr_allocated)
+                    free(phdr);
                 for (int i = 0; i < argv_count; i++)
                     if (new_argv[i])
                         free(new_argv[i]);
@@ -648,75 +649,58 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 return (uint64_t)-ENOENT;
             }
 
-            uint8_t *interpreter_buffer =
-                (uint8_t *)alloc_frames_bytes(interpreter_node->size);
+            Elf64_Ehdr interp_ehdr;
+            vfs_read(interpreter_node, &interp_ehdr, 0, sizeof(Elf64_Ehdr));
 
-            vfs_read(interpreter_node, interpreter_buffer, 0,
-                     interpreter_node->size);
+            size_t interp_phdr_size = interp_ehdr.e_phnum * sizeof(Elf64_Phdr);
+            Elf64_Phdr *interp_phdr = (Elf64_Phdr *)malloc(interp_phdr_size);
+            vfs_read(interpreter_node, interp_phdr, interp_ehdr.e_phoff,
+                     interp_phdr_size);
 
-            Elf64_Ehdr *interpreter_ehdr = (Elf64_Ehdr *)interpreter_buffer;
-            Elf64_Phdr *interpreter_phdr =
-                (Elf64_Phdr *)(interpreter_buffer + interpreter_ehdr->e_phoff);
-
-            for (int j = 0; j < interpreter_ehdr->e_phnum; j++) {
-                if (interpreter_phdr[j].p_type != PT_LOAD)
+            for (int j = 0; j < interp_ehdr.e_phnum; j++) {
+                if (interp_phdr[j].p_type != PT_LOAD)
                     continue;
 
                 uint64_t seg_addr =
-                    INTERPRETER_BASE_ADDR + interpreter_phdr[j].p_vaddr;
-                uint64_t seg_size = interpreter_phdr[j].p_memsz;
-                uint64_t file_size = interpreter_phdr[j].p_filesz;
+                    INTERPRETER_BASE_ADDR + interp_phdr[j].p_vaddr;
+                uint64_t seg_size = interp_phdr[j].p_memsz;
+                uint64_t file_size = interp_phdr[j].p_filesz;
                 uint64_t page_size = DEFAULT_PAGE_SIZE;
                 uint64_t page_mask = page_size - 1;
 
-                // 计算对齐后的地址和大小
                 uint64_t aligned_addr = seg_addr & ~page_mask;
                 uint64_t size_diff = seg_addr - aligned_addr;
                 uint64_t alloc_size =
                     (seg_size + size_diff + page_mask) & ~page_mask;
 
-                if (aligned_addr < load_start)
+                if (aligned_addr < interpreter_load_start)
                     interpreter_load_start = aligned_addr;
-                else if (aligned_addr + alloc_size > load_end)
+                if (aligned_addr + alloc_size > interpreter_load_end)
                     interpreter_load_end = aligned_addr + alloc_size;
 
                 uint64_t flags = PT_FLAG_U | PT_FLAG_R | PT_FLAG_W | PT_FLAG_X;
                 map_page_range(get_current_page_dir(true), aligned_addr, 0,
                                alloc_size, flags);
-                memcpy((void *)seg_addr,
-                       (void *)((char *)interpreter_buffer +
-                                interpreter_phdr[j].p_offset),
-                       file_size);
+
+                vfs_read(interpreter_node, (void *)seg_addr,
+                         interp_phdr[j].p_offset, file_size);
 
                 if (seg_size > file_size) {
-                    uint64_t bss_start = seg_addr + file_size;
-                    uint64_t bss_size = seg_size - file_size;
-                    memset((void *)bss_start, 0, bss_size);
-
-                    uint64_t page_remain = (bss_size % DEFAULT_PAGE_SIZE);
-                    if (page_remain) {
-                        uint64_t align_start =
-                            bss_start + bss_size - page_remain;
-                        memset((void *)align_start, 0, page_remain);
-                    }
+                    memset((void *)(seg_addr + file_size), 0,
+                           seg_size - file_size);
                 }
             }
 
-            interpreter_entry =
-                INTERPRETER_BASE_ADDR + interpreter_ehdr->e_entry;
+            interpreter_entry = INTERPRETER_BASE_ADDR + interp_ehdr.e_entry;
+            free(interp_phdr);
 
-            free_frames_bytes(interpreter_buffer, interpreter_node->size);
-        } else {
-            if (phdr[i].p_type != PT_LOAD)
-                continue;
-
+        } else if (phdr[i].p_type == PT_LOAD) {
             uint64_t seg_addr = phdr[i].p_vaddr;
             uint64_t seg_size = phdr[i].p_memsz;
             uint64_t file_size = phdr[i].p_filesz;
             uint64_t page_size = DEFAULT_PAGE_SIZE;
             uint64_t page_mask = page_size - 1;
 
-            // 计算对齐后的地址和大小
             uint64_t aligned_addr = seg_addr & ~page_mask;
             uint64_t size_diff = seg_addr - aligned_addr;
             uint64_t alloc_size =
@@ -724,28 +708,23 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
             if (aligned_addr < load_start)
                 load_start = aligned_addr;
-            else if (aligned_addr + alloc_size > load_end)
+            if (aligned_addr + alloc_size > load_end)
                 load_end = aligned_addr + alloc_size;
 
-            bool exec = (phdr[i].p_flags & PF_X);
             uint64_t flags = PT_FLAG_U | PT_FLAG_R | PT_FLAG_W | PT_FLAG_X;
             map_page_range(get_current_page_dir(true), aligned_addr, 0,
                            alloc_size, flags);
-            memcpy((void *)seg_addr,
-                   (void *)((char *)buffer + phdr[i].p_offset), file_size);
+
+            vfs_read(node, (void *)seg_addr, phdr[i].p_offset, file_size);
 
             if (seg_size > file_size) {
-                uint64_t bss_start = seg_addr + file_size;
-                uint64_t bss_size = seg_size - file_size;
-                memset((void *)bss_start, 0, bss_size);
-
-                uint64_t page_remain = (bss_size % DEFAULT_PAGE_SIZE);
-                if (page_remain) {
-                    uint64_t align_start = bss_start + bss_size - page_remain;
-                    memset((void *)align_start, 0, page_remain);
-                }
+                memset((void *)(seg_addr + file_size), 0, seg_size - file_size);
             }
         }
+    }
+
+    if (phdr_allocated) {
+        free(phdr);
     }
 
     char *fullpath = vfs_get_fullpath(node);
@@ -767,8 +746,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
                    (char **)new_envp, envp_count, e_entry,
                    (uint64_t)(load_start + ehdr->e_phoff), ehdr->e_phnum,
                    interpreter_entry ? INTERPRETER_BASE_ADDR : load_start);
-
-    free_frames_bytes(buffer, buf_len);
 
     if (current_task->ppid != current_task->pid && tasks[current_task->ppid] &&
         !tasks[current_task->ppid]->child_vfork_done) {

@@ -138,7 +138,8 @@ void __switch_to(task_t *prev, task_t *next) {
 
     if (prev->arch_context->mm != next->arch_context->mm) {
         asm volatile(
-            "movq %0, %%cr3" ::"r"(next->arch_context->mm->page_table_addr));
+            "movq %0, %%cr3" ::"r"(next->arch_context->mm->page_table_addr)
+            : "memory");
     }
 
     tss[current_cpu_id].rsp0 = next->kernel_stack;
@@ -177,7 +178,8 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry,
 
     arch_context_to_user_mode(context, entry, stack);
 
-    asm volatile("movq %0, %%cr3" ::"r"(context->mm->page_table_addr));
+    asm volatile("movq %0, %%cr3" ::"r"(context->mm->page_table_addr)
+                 : "memory");
 
     asm volatile("movq %0, %%rsp\n\t"
                  "jmp ret_from_exception" ::"r"(context->ctx));
