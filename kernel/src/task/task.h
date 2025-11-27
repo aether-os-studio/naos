@@ -132,9 +132,8 @@ uint64_t sys_timer_settime(timer_t timerid, const struct itimerval *new_value,
 
 uint64_t sys_reboot(int magic1, int magic2, uint32_t cmd, void *arg);
 
-static inline uint64_t sys_getpgid(uint64_t pid) { return 0; }
-
-static inline uint64_t sys_setpgid(uint64_t pid, uint64_t pgid) { return 0; }
+uint64_t sys_getpgid(uint64_t pid);
+uint64_t sys_setpgid(uint64_t pid, uint64_t pgid);
 
 static inline uint64_t sys_getuid() { return current_task->uid; }
 

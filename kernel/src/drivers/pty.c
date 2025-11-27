@@ -63,7 +63,7 @@ void ptmx_open(void *parent, const char *name, vfs_node_t node) {
     pty_pair_t *pair = n->next;
     memset(pair, 0, sizeof(pty_pair_t));
     pair->id = id;
-    pair->frontProcessGroup = -1;
+    pair->frontProcessGroup = 0;
     pair->bufferMaster = alloc_frames_bytes(PTY_BUFF_SIZE);
     pair->bufferSlave = alloc_frames_bytes(PTY_BUFF_SIZE);
     pty_termios_default(&pair->term);
@@ -122,10 +122,7 @@ bool ptmx_close(void *current) {
     return true;
 }
 
-// todo: control + d stuff
-size_t ptmx_data_avail(pty_pair_t *pair) {
-    return pair->ptrMaster; // won't matter here
-}
+size_t ptmx_data_avail(pty_pair_t *pair) { return pair->ptrMaster; }
 
 size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     void *file = fd->node->handle;
@@ -160,8 +157,6 @@ size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     return toCopy;
 }
 
-extern void send_sigint(int pgid);
-
 size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
     void *file = fd->node->handle;
     pty_pair_t *pair = file;
@@ -187,9 +182,9 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
             if (pair->bufferSlave[pair->ptrSlave + i] == '\r')
                 pair->bufferSlave[pair->ptrSlave + i] = '\n';
         }
-    // if (pair->term.c_lflag & ICANON && pair->term.c_lflag & ECHO) {
-    //     pts_write_inner(pair, &pair->bufferSlave[pair->ptrSlave], limit);
-    // }
+    if ((pair->term.c_lflag & ICANON) && (pair->term.c_lflag & ECHO)) {
+        pts_write_inner(pair, &pair->bufferSlave[pair->ptrSlave], limit);
+    }
     pair->ptrSlave += limit;
 
     spin_unlock(&pair->lock);
@@ -379,12 +374,31 @@ size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit) {
     return toCopy;
 }
 
+extern void send_process_group_signal(int pgid, int sig);
+
 size_t pts_write_inner(pty_pair_t *pair, uint8_t *in, size_t limit) {
     size_t written = 0;
     bool doTranslate =
         (pair->term.c_oflag & OPOST) && (pair->term.c_oflag & ONLCR);
     for (size_t i = 0; i < limit; ++i) {
         uint8_t ch = in[i];
+        if (pair->term.c_lflag & ISIG) {
+            uint64_t pgid = pair->frontProcessGroup;
+            if (pgid) {
+                if (ch == pair->term.c_cc[VINTR]) {
+                    send_process_group_signal(pgid, SIGINT);
+                }
+                if (ch == pair->term.c_cc[VQUIT]) {
+                    send_process_group_signal(pgid, SIGQUIT);
+                }
+                if (ch == pair->term.c_cc[VSTOP]) {
+                    send_process_group_signal(pgid, SIGSTOP);
+                }
+                if (ch == pair->term.c_cc[VKILL]) {
+                    send_process_group_signal(pgid, SIGKILL);
+                }
+            }
+        }
         if (doTranslate && ch == '\n') {
             if ((pair->ptrMaster + 2) >= PTY_BUFF_SIZE)
                 break;
@@ -466,13 +480,16 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
         break;
     }
     case TIOCGPGRP:
-        int *pid = (int *)arg;
-        *pid = current_task->pid;
-        ret = 0;
+        ret = copy_to_user(arg, (const void *)&pair->frontProcessGroup,
+                           sizeof(int))
+                  ? -EFAULT
+                  : 0;
         break;
     case TIOCSPGRP:
-        pair->frontProcessGroup = *(int *)arg;
-        ret = 0;
+        ret = copy_from_user(&pair->frontProcessGroup, (const void *)arg,
+                             sizeof(int))
+                  ? -EFAULT
+                  : 0;
         break;
     case KDGKBMODE:
         *(int *)arg = pair->tty_kbmode;

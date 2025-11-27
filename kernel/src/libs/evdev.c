@@ -4,9 +4,6 @@
 #include <fs/fs_syscall.h>
 #include <drivers/tty.h>
 
-// Very bare bones, and basic keyboard driver
-// Copyright (C) 2024 Panagiotis
-
 char character_table[140] = {
     0,    27,   '1',  '2',  '3',  '4',  '5',  '6',  '7',  '8',  '9',  '0',
     '-',  '=',  0,    9,    'q',  'w',  'e',  'r',  't',  'y',  'u',  'i',
@@ -39,26 +36,13 @@ char shifted_character_table[140] = {
 
 extern dev_input_event_t *kb_input_event;
 
-void kb_evdev_generate(uint8_t code, bool pressed) {
+void kb_evdev_generate(uint8_t code, bool clicked) {
     if (!kb_input_event || !kb_input_event->timesOpened)
         return;
 
     struct timespec now;
     sys_clock_gettime(kb_input_event->clock_id, (uint64_t)&now, 0);
 
-    bool clicked = pressed;
-
-    // bool oldstate = (evdevInternal[index / 8] & (1 << (index % 8))) != 0;
-    // if (!oldstate && clicked) {
-    //     input_generate_event(kb_event, EV_KEY, evdevCode, 1, now.tv_sec,
-    //                          now.tv_nsec / 1000);
-    // } else if (oldstate && clicked) {
-    //     input_generate_event(kb_event, EV_KEY, evdevCode, 2, now.tv_sec,
-    //                          now.tv_nsec / 1000);
-    // } else if (oldstate && !clicked) {
-    //     input_generate_event(kb_event, EV_KEY, evdevCode, 0, now.tv_sec,
-    //                          now.tv_nsec / 1000);
-    // }
     input_generate_event(kb_input_event, EV_KEY, code, clicked ? 1 : 0,
                          now.tv_sec, now.tv_nsec / 1000);
     input_generate_event(kb_input_event, EV_SYN, SYN_REPORT, 0, now.tv_sec,
@@ -310,7 +294,8 @@ const uint8_t evdevTable[89] = {
 };
 
 void handle_kb_scancode(uint8_t scan_code, bool pressed) {
-    if (evdevTable[scan_code])
+    if ((scan_code < (sizeof(evdevTable) / sizeof(evdevTable[0]))) &&
+        evdevTable[scan_code])
         handle_kb_event(evdevTable[scan_code], pressed);
 
     if (!pressed) {

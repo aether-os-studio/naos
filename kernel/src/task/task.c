@@ -21,7 +21,7 @@ spinlock_t task_queue_lock = SPIN_INIT;
 task_t *tasks[MAX_TASK_NUM];
 task_t *idle_tasks[MAX_CPU_NUM];
 
-void send_sigint(int pgid) {
+void send_process_group_signal(int pgid, int signal) {
     uint64_t continue_ptr_count = 0;
     for (size_t i = 1; i < MAX_TASK_NUM; i++) {
         task_t *ptr = tasks[i];
@@ -34,15 +34,10 @@ void send_sigint(int pgid) {
         continue_ptr_count = 0;
 
         if (tasks[i]->pgid == pgid) {
-            if (tasks[i]->actions[SIGINT].sa_handler == SIG_DFL ||
-                tasks[i]->actions[SIGINT].sa_handler == SIG_IGN) {
-                spin_lock(&tasks[i]->signal_lock);
-                tasks[i]->pending_signal |= SIGMASK(SIGKILL);
-                spin_unlock(&tasks[i]->signal_lock);
-            } else if (tasks[i]->state != TASK_READING_STDIO) {
-                spin_lock(&tasks[i]->signal_lock);
-                tasks[i]->pending_signal |= SIGMASK(SIGINT);
-                spin_unlock(&tasks[i]->signal_lock);
+            if (tasks[i]->actions[signal].sa_handler == SIG_DFL) {
+                sys_kill(tasks[i]->pid, SIGKILL);
+            } else {
+                sys_kill(tasks[i]->pid, signal);
             }
         }
     }
@@ -1684,6 +1679,24 @@ uint64_t sys_reboot(int magic1, int magic2, uint32_t cmd, void *arg) {
     }
 }
 
+uint64_t sys_getpgid(uint64_t pid) {
+    if (pid) {
+        return tasks[pid] ? tasks[pid]->pgid : -ESRCH;
+    } else
+        return current_task->pgid;
+}
+
+uint64_t sys_setpgid(uint64_t pid, uint64_t pgid) {
+    if (pid) {
+        if (!tasks[pid])
+            return -ESRCH;
+        tasks[pid]->pgid = pgid ? pgid : tasks[pid]->pgid;
+    } else {
+        current_task->pgid = pgid ? pgid : current_task->pgid;
+    }
+    return 0;
+}
+
 uint64_t sys_setpriority(int which, int who, int niceval) {
     task_t *task = NULL;
     switch (which) {
@@ -1718,7 +1731,7 @@ void schedule() {
     }
 
     if (prev == next) {
-        return;
+        goto ret;
     }
 
     prev->current_state = prev->state;
@@ -1727,4 +1740,7 @@ void schedule() {
     arch_set_current(next);
 
     switch_to(prev, next);
+
+ret:
+    arch_enable_interrupt();
 }

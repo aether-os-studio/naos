@@ -939,11 +939,11 @@ uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
     bool timeout = true;
     uint64_t timeout_ns = nanoTime() + 100ULL * 1000000ULL;
     while (nanoTime() < timeout_ns) {
+        arch_pause();
         if (cb_ctx->completed) {
             timeout = false;
             break;
         }
-        arch_wait_for_interrupt();
     }
     if (timeout) {
         while (nvme_process_queue_completions(ns->ctrl, queue))
@@ -986,11 +986,11 @@ uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
     bool timeout = true;
     uint64_t timeout_ns = nanoTime() + 100ULL * 1000000ULL;
     while (nanoTime() < timeout_ns) {
+        arch_pause();
         if (cb_ctx->completed) {
             timeout = false;
             break;
         }
-        arch_wait_for_interrupt();
     }
     if (timeout) {
         while (nvme_process_queue_completions(ns->ctrl, queue))
