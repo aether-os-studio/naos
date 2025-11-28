@@ -37,6 +37,8 @@ struct usbdevice_s {
     uint32_t port;
     struct usb_config_descriptor *config;
     struct usb_interface_descriptor *iface;
+    uint16_t productid;
+    uint16_t vendorid;
     int imax;
     uint8_t speed;
     uint8_t devaddr;
@@ -185,6 +187,22 @@ struct usb_device_descriptor {
 #define USB_CLASS_PRINTER 7
 #define USB_CLASS_MASS_STORAGE 8
 #define USB_CLASS_HUB 9
+#define USB_CLASS_CDC_DATA 0x0a
+#define USB_CLASS_CSCID 0x0b       /* chip+ smart card */
+#define USB_CLASS_CONTENT_SEC 0x0d /* content security */
+#define USB_CLASS_VIDEO 0x0e
+#define USB_CLASS_WIRELESS_CONTROLLER 0xe0
+#define USB_CLASS_PERSONAL_HEALTHCARE 0x0f
+#define USB_CLASS_AUDIO_VIDEO 0x10
+#define USB_CLASS_BILLBOARD 0x11
+#define USB_CLASS_USB_TYPE_C_BRIDGE 0x12
+#define USB_CLASS_MCTP 0x14
+#define USB_CLASS_MISC 0xef
+#define USB_CLASS_APP_SPEC 0xfe
+#define USB_SUBCLASS_DFU 0x01
+
+#define USB_CLASS_VENDOR_SPEC 0xff
+#define USB_SUBCLASS_VENDOR_SPEC 0xff
 
 struct usb_config_descriptor {
     uint8_t bLength;
@@ -308,6 +326,8 @@ void usb_enumerate(struct usbhub_s *hub);
 typedef struct usb_driver {
     uint8_t class;
     uint8_t subclass;
+    uint16_t vendorid;
+    uint16_t productid;
     int (*probe)(struct usbdevice_s *usbdev);
     int (*remove)(struct usbdevice_s *usbdev);
 } usb_driver_t;

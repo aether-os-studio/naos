@@ -833,10 +833,6 @@ static void xhci_event_handler(uint64_t arg) {
     struct usb_xhci_s *xhci = (struct usb_xhci_s *)arg;
     while (1) {
         xhci_process_events(xhci);
-        uint64_t time_to_rerun = nanoTime() + 100ULL * 1000000ULL;
-        while (nanoTime() < time_to_rerun) {
-            arch_yield();
-        }
         arch_pause();
     }
 }
@@ -870,6 +866,7 @@ static int xhci_event_wait(struct usb_xhci_s *xhci, struct xhci_ring *ring,
                 }
             }
             printk("Event ring nidx = %d\n", evts->nidx);
+            ring->eidx = ring->nidx;
             return CC_USB_TRANSACTION_ERROR;
         }
         arch_pause();
