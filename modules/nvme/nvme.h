@@ -304,7 +304,8 @@ typedef struct nvme_controller {
     uint32_t num_io_queues;
 
     spinlock_t cid_alloc_lock;
-    nvme_request_t *requests[65536]; // Track requests by CID
+    uint16_t cid_alloc_pos;
+    nvme_request_t *requests[256]; // Track requests by CID
 
     nvme_prp_list_t *prp_list_pool;
     uint64_t prp_list_pool_phys;

@@ -1,7 +1,5 @@
 #include "nvme.h"
 
-void nvme_interrupt_handler(uint64_t irq_num, void *data, struct pt_regs *r);
-
 // Memory allocation (DMA-capable)
 void *naos_dma_alloc(size_t size, uint64_t *phys_addr) {
     void *addr = alloc_frames_bytes(size);
@@ -232,38 +230,39 @@ static int nvme_enable_controller(nvme_controller_t *ctrl) {
     return nvme_wait_ready(ctrl, true, 10000); // Increased timeout to 10s
 }
 
-// 为队列绑定中断向量
-static int nvme_bind_queue_interrupt(nvme_controller_t *ctrl,
-                                     nvme_queue_t *queue, uint16_t vector) {
-    // 注册中断处理程序
-#if defined(__x86_64__)
-    uint64_t cpu_id = queue->queue_id ? (queue->queue_id - 1) : 0;
-    struct msi_desc_t desc;
-    memset(&desc, 0, sizeof(struct msi_desc_t));
-    desc.irq_num = vector;
-    desc.processor = get_lapicid_by_cpuid(cpu_id);
-    desc.edge_trigger = 0;
-    desc.assert = 1;
-    desc.msi_index = queue->queue_id;
-    desc.pci_dev = ctrl->pci_dev;
-    desc.pci.msi_attribute.can_mask = false;
-    desc.pci.msi_attribute.is_64 = true;
-    desc.pci.msi_attribute.is_msix = true;
-    int ret = pci_enable_msi(&desc);
-    if (ret < 0) {
-        printk("Failed to enable MSI/MSI-X\n");
-        return -1;
-    }
+// // 为队列绑定中断向量
+// static int nvme_bind_queue_interrupt(nvme_controller_t *ctrl,
+//                                      nvme_queue_t *queue, uint16_t vector) {
+//     //     // 注册中断处理程序
+//     // #if defined(__x86_64__)
+//     //     uint64_t cpu_id = queue->queue_id ? (queue->queue_id - 1) : 0;
+//     //     struct msi_desc_t desc;
+//     //     memset(&desc, 0, sizeof(struct msi_desc_t));
+//     //     desc.irq_num = vector;
+//     //     desc.processor = get_lapicid_by_cpuid(cpu_id);
+//     //     desc.edge_trigger = 0;
+//     //     desc.assert = 1;
+//     //     desc.msi_index = queue->queue_id;
+//     //     desc.pci_dev = ctrl->pci_dev;
+//     //     desc.pci.msi_attribute.can_mask = false;
+//     //     desc.pci.msi_attribute.is_64 = true;
+//     //     desc.pci.msi_attribute.is_msix = true;
+//     //     int ret = pci_enable_msi(&desc);
+//     //     if (ret < 0) {
+//     //         printk("Failed to enable MSI/MSI-X\n");
+//     //         return -1;
+//     //     }
 
-    irq_regist_irq(vector, nvme_interrupt_handler, vector, queue,
-                   get_apic_controller(), "NVMe", IRQ_FLAGS_MSIX);
-#endif
+//     //     irq_regist_irq(vector, nvme_interrupt_handler, vector, queue,
+//     //                    get_apic_controller(), "NVMe", IRQ_FLAGS_MSIX);
+//     // #endif
 
-    g_nvme_platform_ops->log("NVMe: Queue %u bound to interrupt vector %u\n",
-                             queue->queue_id, vector);
+//     //     g_nvme_platform_ops->log("NVMe: Queue %u bound to interrupt vector
+//     //     %u\n",
+//     //                              queue->queue_id, vector);
 
-    return 0;
-}
+//     return 0;
+// }
 
 // Initialize queue with alignment checks
 static int nvme_init_queue(nvme_controller_t *ctrl, nvme_queue_t *queue,
@@ -329,9 +328,10 @@ static int nvme_init_queue(nvme_controller_t *ctrl, nvme_queue_t *queue,
         "NVMe: Queue %d doorbells - SQ offset=0x%x CQ offset=0x%x\n", queue_id,
         doorbell_offset, doorbell_offset + ctrl->doorbell_stride);
 
-    int irq = irq_allocate_irqnum();
-    nvme_bind_queue_interrupt(ctrl, queue, irq);
-    queue->vector = irq;
+    // int irq = irq_allocate_irqnum();
+    // nvme_bind_queue_interrupt(ctrl, queue, irq);
+    // queue->vector = irq;
+    queue->vector = 0;
 
     return 0;
 }
@@ -400,7 +400,8 @@ static int nvme_process_queue_completions(nvme_controller_t *ctrl,
 
         // Find and invoke callback
         uint16_t cid = cqe->cid;
-        if (cid < 65536 && ctrl->requests[cid]) {
+        if (cid < (sizeof(ctrl->requests) / sizeof(ctrl->requests[0])) &&
+            ctrl->requests[cid]) {
             nvme_request_t *req = ctrl->requests[cid];
             if (req->callback) {
                 req->callback(req->ctx, success, cqe->dw0);
@@ -432,25 +433,28 @@ static int nvme_process_queue_completions(nvme_controller_t *ctrl,
     return count;
 }
 
-void nvme_interrupt_handler(uint64_t irq_num, void *data, struct pt_regs *r) {
-    nvme_queue_t *queue = (nvme_queue_t *)data;
-    while (nvme_process_queue_completions(queue->ctrl, queue))
-        ;
-}
+// void nvme_interrupt_handler(uint64_t irq_num, void *data, struct pt_regs *r)
+// {
+//     nvme_queue_t *queue = (nvme_queue_t *)data;
+//     while (nvme_process_queue_completions(queue->ctrl, queue))
+//         ;
+// }
 
-// Allocate command ID
+// 循环使用
 static uint16_t nvme_alloc_cid(nvme_controller_t *ctrl, nvme_request_t *req) {
     spin_lock_no_irqsave(&ctrl->cid_alloc_lock);
-    for (int i = 0; i < 65536; i++) {
-        if (ctrl->requests[i] == NULL) {
-            ctrl->requests[i] = req;
-            req->cid = i;
-            spin_unlock_no_irqstore(&ctrl->cid_alloc_lock);
-            return i;
-        }
+
+    if (ctrl->cid_alloc_pos >=
+        (sizeof(ctrl->requests) / sizeof(ctrl->requests[0]))) {
+        ctrl->cid_alloc_pos = 0;
     }
+
+    uint16_t cid = ctrl->cid_alloc_pos++;
+    ctrl->requests[cid] = req;
+
     spin_unlock_no_irqstore(&ctrl->cid_alloc_lock);
-    return 0xFFFF;
+
+    return cid;
 }
 
 // Execute admin command (synchronous helper)
@@ -488,12 +492,6 @@ static int nvme_admin_cmd_sync(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
     // CID 在 bits 31:16，Opcode 已经在 bits 7:0
     cmd->cdw0 = (cmd->cdw0 & 0x0000FFFF) | (cid << 16);
 
-    g_nvme_platform_ops->log(
-        "NVMe: Submitting admin command - opcode=%d cid=%d cdw0=0x%08x\n",
-        cmd->cdw0 & 0xFF, cid, cmd->cdw0);
-
-    // arch_enable_interrupt();
-
     if (nvme_submit_cmd(&ctrl->admin_queue, cmd) != 0) {
         ctrl->requests[cid] = NULL;
         return -1;
@@ -501,16 +499,14 @@ static int nvme_admin_cmd_sync(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
 
     // Poll for completion
     while (!sync_ctx.done) {
-        nvme_process_queue_completions(ctrl, &ctrl->admin_queue);
-        // arch_wait_for_interrupt();
+        while (nvme_process_queue_completions(ctrl, &ctrl->admin_queue))
+            ;
     }
 
     if (result) {
         *result = sync_ctx.result;
     }
 
-    g_nvme_platform_ops->log("NVMe: Admin command completed - success=%d\n",
-                             sync_ctx.success);
     return sync_ctx.success ? 0 : -1;
 }
 
@@ -573,12 +569,14 @@ static int nvme_create_io_cq(nvme_controller_t *ctrl, nvme_queue_t *queue) {
     cmd.prp1 = queue->cq_phys;
     cmd.cdw10 = ((queue->queue_depth - 1) << 16) | queue->queue_id;
 
-    uint16_t vector = queue->vector;
+    // uint16_t vector = queue->vector;
     uint32_t cdw11 = 0;
 
     cdw11 |= (1 << 0); // PC (Physically Contiguous) = 1
-    cdw11 |= (1 << 1); // IEN (Interrupts Enabled) = 1
-    cdw11 |= ((uint32_t)queue->queue_id << 16); // IV (Interrupt Vector)
+    // if (vector) {
+    //     cdw11 |= (1 << 1); // IEN (Interrupts Enabled) = 1
+    //     cdw11 |= ((uint32_t)queue->queue_id << 16); // IV (Interrupt Vector)
+    // }
 
     cmd.cdw11 = cdw11;
 
@@ -664,7 +662,7 @@ static int nvme_init_prp_pool(nvme_controller_t *ctrl, uint32_t num_lists) {
     return 0;
 }
 
-// 分配 PRP List（简单的循环分配）
+// 分配 PRP List
 static nvme_prp_list_t *nvme_alloc_prp_list(nvme_controller_t *ctrl,
                                             uint64_t *phys_addr) {
     if (ctrl->prp_list_next_free >= ctrl->prp_list_pool_size) {
@@ -704,7 +702,7 @@ static int nvme_setup_prp(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
     cmd->prp1 = phys_addr;
     cmd->prp2 = 0;
 
-    // 情况 1: 单页传输（最常见的小 I/O）
+    // 1: 单页传输（最常见的小 I/O）
     if (num_pages == 1) {
         return 0;
     }
@@ -714,13 +712,13 @@ static int nvme_setup_prp(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
     uint64_t next_addr = phys_addr + first_page_size;
     uint32_t remaining = size - first_page_size;
 
-    // 情况 2: 双页传输（PRP1 指向第一页，PRP2 指向第二页）
+    // 2: 双页传输（PRP1 指向第一页，PRP2 指向第二页）
     if (num_pages == 2) {
         cmd->prp2 = next_addr;
         return 0;
     }
 
-    // 情况 3: 多页传输（需要 PRP List）
+    // 3: 多页传输（需要 PRP List）
 
     uint64_t prp_list_phys;
     nvme_prp_list_t *prp_list = nvme_alloc_prp_list(ctrl, &prp_list_phys);
@@ -757,7 +755,7 @@ static int nvme_setup_prp(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
     return 0;
 }
 
-// 优化的异步读取（支持 PRP）
+// 异步读取
 int nvme_read_async(nvme_controller_t *ctrl, uint32_t nsid, uint64_t lba,
                     uint32_t block_count, void *buffer, uint64_t buffer_phys,
                     nvme_io_callback_t callback, void *ctx) {
@@ -826,7 +824,7 @@ int nvme_read_async(nvme_controller_t *ctrl, uint32_t nsid, uint64_t lba,
     return 0;
 }
 
-// 优化的异步写入（支持 PRP）
+// 异步写入
 int nvme_write_async(nvme_controller_t *ctrl, uint32_t nsid, uint64_t lba,
                      uint32_t block_count, const void *buffer,
                      uint64_t buffer_phys, nvme_io_callback_t callback,
@@ -917,6 +915,7 @@ typedef struct nvme_ns {
     nvme_namespace_t *ns;
 } nvme_ns_t;
 
+// 务必确保buffer是从frame中分配出来的
 uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
     nvme_ns_t *ns = data;
 
@@ -924,46 +923,30 @@ uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
     uint64_t queue_cpu_id = current_cpu_id % io_cpus;
     nvme_queue_t *queue = &ns->ctrl->io_queues[queue_cpu_id];
 
-    nvme_callback_ctx_t *cb_ctx = malloc(sizeof(nvme_callback_ctx_t));
-    cb_ctx->completed = false;
-    cb_ctx->success = false;
-    arch_enable_interrupt();
-    int r = nvme_read_async(
-        ns->ctrl, ns->ns->nsid, lba, size, buffer,
-        translate_address(get_current_page_dir(false), (uint64_t)buffer),
-        nvme_io_callback, cb_ctx);
+    nvme_callback_ctx_t cb_ctx;
+    cb_ctx.completed = false;
+    cb_ctx.success = false;
+    int r = nvme_read_async(ns->ctrl, ns->ns->nsid, lba, size, buffer,
+                            virt_to_phys((uint64_t)buffer), nvme_io_callback,
+                            &cb_ctx);
     if (r < 0) {
         printk("NVMe: submit command failure!\n");
         return 0;
     }
-    bool timeout = true;
-    uint64_t timeout_ns = nanoTime() + 100ULL * 1000000ULL;
-    while (nanoTime() < timeout_ns) {
-        arch_pause();
-        if (cb_ctx->completed) {
-            timeout = false;
-            break;
-        }
-    }
-    if (timeout) {
+    while (!cb_ctx.completed) {
         while (nvme_process_queue_completions(ns->ctrl, queue))
             ;
-        if (!cb_ctx->completed) {
-            printk("NVMe: timeout!!!\n");
-            free(cb_ctx);
-            return 0;
-        }
     }
     uint64_t ret = 0;
-    if (cb_ctx->success) {
+    if (cb_ctx.success) {
         ret = size;
     } else {
         printk("NVMe: Command not successful!\n");
     }
-    free(cb_ctx);
     return ret;
 }
 
+// 务必确保buffer是从frame中分配出来的
 uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
     nvme_ns_t *ns = data;
 
@@ -971,43 +954,26 @@ uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
     uint64_t queue_cpu_id = current_cpu_id % io_cpus;
     nvme_queue_t *queue = &ns->ctrl->io_queues[queue_cpu_id];
 
-    nvme_callback_ctx_t *cb_ctx = malloc(sizeof(nvme_callback_ctx_t));
-    cb_ctx->completed = false;
-    cb_ctx->success = false;
-    arch_enable_interrupt();
-    int r = nvme_write_async(
-        ns->ctrl, ns->ns->nsid, lba, size, buffer,
-        translate_address(get_current_page_dir(false), (uint64_t)buffer),
-        nvme_io_callback, cb_ctx);
+    nvme_callback_ctx_t cb_ctx;
+    cb_ctx.completed = false;
+    cb_ctx.success = false;
+    int r = nvme_write_async(ns->ctrl, ns->ns->nsid, lba, size, buffer,
+                             virt_to_phys((uint64_t)buffer), nvme_io_callback,
+                             &cb_ctx);
     if (r < 0) {
         printk("NVMe: submit command failure!\n");
         return 0;
     }
-    bool timeout = true;
-    uint64_t timeout_ns = nanoTime() + 100ULL * 1000000ULL;
-    while (nanoTime() < timeout_ns) {
-        arch_pause();
-        if (cb_ctx->completed) {
-            timeout = false;
-            break;
-        }
-    }
-    if (timeout) {
+    while (!cb_ctx.completed) {
         while (nvme_process_queue_completions(ns->ctrl, queue))
             ;
-        if (!cb_ctx->completed) {
-            printk("NVMe: timeout!!!\n");
-            free(cb_ctx);
-            return 0;
-        }
     }
     uint64_t ret = 0;
-    if (cb_ctx->success) {
+    if (cb_ctx.success) {
         ret = size;
     } else {
         printk("NVMe: Command not successful!\n");
     }
-    free(cb_ctx);
     return ret;
 }
 
@@ -1130,8 +1096,7 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
     ctrl->initialized = true;
 
     // Identify namespaces
-    // for (uint32_t i = 1; i <= ctrl->num_namespaces && i <= 256; i++) {
-    for (uint32_t i = 1; i <= 1 && i <= 256; i++) {
+    for (uint32_t i = 1; i <= ctrl->num_namespaces && i <= 256; i++) {
         nvme_identify_ns_t id_ns;
         if (nvme_identify_namespace(ctrl, i, &id_ns) == 0 && id_ns.nsze > 0) {
             ctrl->namespaces[i - 1].nsid = i;
