@@ -530,7 +530,7 @@ int usb_msc_setup(struct usbdevice_s *usbdev) {
     msc_delay(100);
 
     // Reset
-    msc_reset_recovery(dev);
+    // msc_reset_recovery(dev);
 
     // 等待就绪
     for (int i = 0; i < 10; i++) {

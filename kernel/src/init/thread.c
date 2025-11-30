@@ -55,13 +55,13 @@ void init_thread(uint64_t arg) {
 
     arch_input_dev_init();
 
+    drm_init_after_pci_sysfs();
+
     sysfs_init_umount();
 
     mount_root();
 
     pci_init_after_mount_root();
-
-    drm_init_after_pci_sysfs();
 
     system_initialized = true;
 
