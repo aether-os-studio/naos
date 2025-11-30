@@ -143,7 +143,7 @@ distclean:
 clippy:
 	$(MAKE) -C kernel clippy
 
-ROOTFS_IMG_SIZE ?= 3072
+ROOTFS_IMG_SIZE ?= 1024
 
 .PHONY: rootfs-$(ARCH).img
 rootfs-$(ARCH).img: user/.build-stamp-$(ARCH)
@@ -183,9 +183,11 @@ ifeq ($(BOOT_PROTOCOL), multiboot2)
 	mcopy -i $(IMAGE_NAME).img@@1M limine_multiboot2_$(KERNEL_MODULE).conf ::/limine/limine.conf
 endif
 
+TOTAL_IMG_SIZE=$$(( $(ROOTFS_IMG_SIZE) + 1024 ))
+
 single-$(IMAGE_NAME).img: assets/limine modules kernel rootfs-$(ARCH).img
-	dd if=/dev/zero of=single-$(IMAGE_NAME).img bs=1M count=$$(( $(ROOTFS_IMG_SIZE) + 1024 ))
-	sgdisk --new=1:1M:1023M --new=2:1024M:$$(( $$(($(ROOTFS_IMG_SIZE) + 1024 )) * 1024 )) single-$(IMAGE_NAME).img
+	dd if=/dev/zero of=single-$(IMAGE_NAME).img bs=1M count=$(TOTAL_IMG_SIZE)
+	sgdisk --new=1:1M:1022M --new=2:1024M:0 single-$(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 single-$(IMAGE_NAME).img
 	mcopy -i single-$(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/
 ifeq ($(KERNEL_MODULE), mixed)
