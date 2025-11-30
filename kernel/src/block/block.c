@@ -22,14 +22,6 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
     blk_devs[blk_devnum].read = read;
     blk_devs[blk_devnum].write = write;
 
-    char n[32];
-    memset(n, 0, sizeof(n));
-    snprintf(n, sizeof(n), "blk%d", blk_devnum);
-
-    uint64_t blkdev_nr =
-        device_install(DEV_BLOCK, DEV_DISK, &blk_devs[blk_devnum], n, 0, NULL,
-                       NULL, NULL, NULL, NULL);
-
     for (uint64_t i = blk_devnum; i <= blk_devnum; i++) {
         partition_t *part = &partitions[partition_num];
 
@@ -61,10 +53,9 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             // Register partition to devfs
             char name[32];
             sprintf(name, "part%d", i);
-            partitions[partition_num].dev =
-                device_install(DEV_BLOCK, DEV_PART, &partitions[partition_num],
-                               name, blkdev_nr, partition_ioctl, NULL,
-                               partition_read, partition_write, NULL);
+            partitions[partition_num].dev = device_install(
+                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0,
+                partition_ioctl, NULL, partition_read, partition_write, NULL);
 
             partition_num++;
         }
@@ -87,10 +78,9 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             // Register partition to devfs
             char name[32];
             sprintf(name, "part%d", i);
-            partitions[partition_num].dev =
-                device_install(DEV_BLOCK, DEV_PART, &partitions[partition_num],
-                               name, blkdev_nr, partition_ioctl, NULL,
-                               partition_read, partition_write, NULL);
+            partitions[partition_num].dev = device_install(
+                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0,
+                partition_ioctl, NULL, partition_read, partition_write, NULL);
 
             partition_num++;
 
@@ -112,10 +102,9 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             // Register partition to devfs
             char name[32];
             sprintf(name, "part%d", i);
-            partitions[partition_num].dev =
-                device_install(DEV_BLOCK, DEV_PART, &partitions[partition_num],
-                               name, blkdev_nr, partition_ioctl, NULL,
-                               partition_read, partition_write, NULL);
+            partitions[partition_num].dev = device_install(
+                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0,
+                partition_ioctl, NULL, partition_read, partition_write, NULL);
 
             partition_num++;
             continue;
@@ -134,10 +123,9 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             // Register partition to devfs
             char name[32];
             sprintf(name, "part%d", i);
-            partitions[partition_num].dev =
-                device_install(DEV_BLOCK, DEV_PART, &partitions[partition_num],
-                               name, blkdev_nr, partition_ioctl, NULL,
-                               partition_read, partition_write, NULL);
+            partitions[partition_num].dev = device_install(
+                DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0,
+                partition_ioctl, NULL, partition_read, partition_write, NULL);
 
             partition_num++;
         }

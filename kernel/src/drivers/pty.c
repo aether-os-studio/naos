@@ -404,13 +404,12 @@ size_t pts_write_inner(pty_pair_t *pair, uint8_t *in, size_t limit) {
                 break;
             pair->bufferMaster[pair->ptrMaster++] = '\r';
             pair->bufferMaster[pair->ptrMaster++] = '\n';
-            written++;
         } else {
             if ((pair->ptrMaster + 1) >= PTY_BUFF_SIZE)
                 break;
             pair->bufferMaster[pair->ptrMaster++] = ch;
-            written++;
         }
+        written++;
     }
     return written;
 }
@@ -438,12 +437,11 @@ size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit) {
         spin_unlock(&pair->lock);
         arch_yield();
     }
+
     spin_lock(&pair->lock);
-
-    // we already have a lock in our hands
     size_t written = pts_write_inner(pair, in, limit);
-
     spin_unlock(&pair->lock);
+
     return written;
 }
 

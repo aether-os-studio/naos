@@ -38,10 +38,10 @@ void send_process_group_signal(int pgid, int signal) {
                 return;
 
             if (tasks[i]->signal->actions[signal].sa_handler == SIG_DFL) {
-                return;
+                sys_kill(tasks[i]->pid, SIGKILL);
+            } else {
+                sys_kill(tasks[i]->pid, signal);
             }
-
-            sys_kill(tasks[i]->pid, signal);
         }
     }
 }
