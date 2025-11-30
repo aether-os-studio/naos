@@ -125,8 +125,8 @@ char *proc_gen_stat_file(task_t *task, size_t *content_len) {
         USER_STACK_START,                  // startstack
         0,                                 // kstkesp
         0,                                 // ksteip
-        task->signal,                      // signal
-        task->blocked,                     // blocked
+        task->signal->signal,              // signal
+        task->signal->blocked,             // blocked
         0,                                 // sigignore
         0,                                 // sigcatch
         0,                                 // wchan

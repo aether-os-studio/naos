@@ -217,4 +217,5 @@ extern task_t *idle_tasks[MAX_CPU_NUM];
 
 extern struct rrs_scheduler *schedulers[MAX_CPU_NUM];
 
-void schedule();
+#define SCHED_FLAG_YIELD (1 << 0)
+void schedule(uint64_t sched_flags);

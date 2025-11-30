@@ -34,11 +34,14 @@ void send_process_group_signal(int pgid, int signal) {
         continue_ptr_count = 0;
 
         if (tasks[i]->pgid == pgid) {
-            if (tasks[i]->actions[signal].sa_handler == SIG_DFL) {
-                sys_kill(tasks[i]->pid, SIGKILL);
-            } else {
-                sys_kill(tasks[i]->pid, signal);
+            if (tasks[i]->signal->actions[signal].sa_handler == SIG_IGN)
+                return;
+
+            if (tasks[i]->signal->actions[signal].sa_handler == SIG_DFL) {
+                return;
             }
+
+            sys_kill(tasks[i]->pid, signal);
         }
     }
 }
@@ -139,7 +142,10 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     can_schedule = false;
 
     task_t *task = get_free_task();
-    memset(&task->signal_saved_regs, 0, sizeof(struct pt_regs));
+    task->signal = malloc(sizeof(task_signal_info_t));
+    memset(task->signal, 0, sizeof(task_signal_info_t));
+    task->signal->signal_lock = SPIN_INIT;
+    memset(&task->signal->signal_saved_regs, 0, sizeof(struct pt_regs));
     task->is_kernel = true;
     task->ppid = task->pid;
     task->uid = 0;
@@ -167,8 +173,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->arch_context->ctx->tp = (uint64_t)task;
     task->arch_context->ctx->gp = cpuid_to_hartid[task->cpu_id];
 #endif
-    task->signal = 0;
-    task->pending_signal = 0;
+    task->signal->signal = 0;
     task->status = 0;
     task->cwd = rootdir;
     task->fd_info = malloc(sizeof(fd_info_t));
@@ -189,7 +194,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->fd_info->ref_count++;
     strncpy(task->name, name, TASK_NAME_MAX);
 
-    memset(task->actions, 0, sizeof(task->actions));
+    memset(task->signal->actions, 0, sizeof(task->signal->actions));
 
     task->cmdline = NULL;
 
@@ -202,6 +207,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
 
     task->child_vfork_done = false;
     task->is_vfork = false;
+    task->is_clone = false;
     task->should_free = false;
 
     procfs_on_new_task(task);
@@ -805,15 +811,16 @@ uint64_t task_execve(const char *path_user, const char **argv,
         }
     }
 
-    for (int i = 1; i < MAXSIG; i++) {
-        if (i == SIGCHLD) {
-            if (current_task->actions[i].sa_handler != SIG_IGN) {
-                memset(&current_task->actions[i], 0, sizeof(sigaction_t));
-            }
-        } else {
-            memset(&current_task->actions[i], 0, sizeof(sigaction_t));
-        }
-    }
+    sigaction_t old_sigchld_handler;
+    memcpy(&old_sigchld_handler, &current_task->signal->actions[SIGCHLD],
+           sizeof(sigaction_t));
+    if (current_task->signal)
+        free(current_task->signal);
+    current_task->signal = malloc(sizeof(task_signal_info_t));
+    memset(current_task->signal, 0, sizeof(task_signal_info_t));
+    current_task->signal->signal_lock = SPIN_INIT;
+    memcpy(&current_task->signal->actions[SIGCHLD], &old_sigchld_handler,
+           sizeof(sigaction_t));
 
     current_task->cmdline = strdup(cmdline);
     current_task->load_start = load_start;
@@ -871,6 +878,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
         vma_insert(&current_task->arch_context->mm->task_vma_mgr, stack_vma);
     }
 
+    current_task->is_clone = false;
     current_task->is_kernel = false;
     can_schedule = true;
 
@@ -891,7 +899,7 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns) {
 
     remove_rrs_entity(task, schedulers[task->cpu_id]);
 
-    schedule();
+    schedule(SCHED_FLAG_YIELD);
 
     return task->status;
 }
@@ -909,7 +917,6 @@ extern struct futex_wait futex_wait_list;
 extern uint64_t sys_futex_wake(uint64_t addr, int val, uint32_t bitset);
 
 void task_exit_inner(task_t *task, int64_t code) {
-    can_schedule = false;
     struct sched_entity *entity = (struct sched_entity *)task->sched_info;
     remove_rrs_entity(task, schedulers[task->cpu_id]);
 
@@ -968,22 +975,46 @@ void task_exit_inner(task_t *task, int64_t code) {
         task_unblock(tasks[task->waitpid], EOK);
     }
 
-    if (task->ppid && task->pid != task->ppid && task->ppid < MAX_TASK_NUM &&
-        tasks[task->ppid]) {
-        void *handler = tasks[task->ppid]->actions[SIGCHLD].sa_handler;
-        if (handler != SIG_DFL) {
-            if (handler != SIG_IGN) {
-                // tasks[task->ppid]->pending_signal |= SIGMASK(SIGCHLD);
-            } else {
-                task->should_free = true;
-            }
-        }
-        task_unblock(tasks[task->ppid], EOK);
+    if (!task->is_clone && task->ppid && task->pid != task->ppid &&
+        task->ppid < MAX_TASK_NUM && tasks[task->ppid]) {
+        task_t *parent = tasks[task->ppid];
+        // sigaction_t *sa = &parent->signal->actions[SIGCHLD];
+
+        // if (code > 128) {
+        //     return;
+        // }
+
+        // if (sa->sa_handler != SIG_IGN || (sa->sa_flags & SA_NOCLDWAIT)) {
+        //     if (sa->sa_handler != SIG_IGN && sa->sa_handler != SIG_DFL) {
+        //         siginfo_t sigchld_info;
+        //         sigchld_info.si_signo = SIGCHLD;
+        //         sigchld_info.__si_fields.__si_common.__first.__piduid.si_pid
+        //         =
+        //             task->pid;
+        //         sigchld_info.__si_fields.__si_common.__first.__piduid.si_uid
+        //         =
+        //             task->uid;
+        //         sigchld_info.si_code = code;
+        //         sigchld_info.__si_fields.__si_common.__second.__sigchld
+        //             .si_status = CLD_EXITED;
+        //         sigchld_info.__si_fields.__si_common.__second.__sigchld
+        //             .si_utime = nanoTime();
+        //         sigchld_info.__si_fields.__si_common.__second.__sigchld
+        //             .si_stime = nanoTime();
+        //         task_commit_signal(parent, SIGCHLD, &sigchld_info);
+        //     }
+
+        //     if (sa->sa_flags & SA_NOCLDWAIT) {
+        //         task->should_free = true;
+        //     } else if (sa->sa_handler == SIG_IGN) {
+        //         // 只是忽略信号，不立即释放
+        //     }
+        // }
+
+        task_unblock(parent, 128 + SIGCHLD);
     } else if (task->pid == task->ppid) {
         task->should_free = true;
     }
-
-    can_schedule = true;
 }
 
 uint64_t task_exit(int64_t code) {
@@ -1003,7 +1034,7 @@ uint64_t task_exit(int64_t code) {
         continue_ptr_count = 0;
         if (tasks[i] != current_task && (tasks[i]->ppid != tasks[i]->pid) &&
             (tasks[i]->ppid == current_task->pid)) {
-            tasks[i]->pending_signal |= SIGMASK(SIGKILL);
+            task_commit_signal(tasks[i], SIGKILL, NULL);
             if (tasks[i]->state == TASK_BLOCKING ||
                 tasks[i]->state == TASK_READING_STDIO)
                 task_unblock(tasks[i], EOK);
@@ -1016,7 +1047,7 @@ uint64_t task_exit(int64_t code) {
     can_schedule = true;
 
     while (1) {
-        schedule();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     // never return !!!
@@ -1163,7 +1194,11 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
 
-    memset(&child->signal_saved_regs, 0, sizeof(struct pt_regs));
+    child->signal = malloc(sizeof(task_signal_info_t));
+    memset(child->signal, 0, sizeof(task_signal_info_t));
+    child->signal->signal_lock = SPIN_INIT;
+
+    memset(&child->signal->signal_saved_regs, 0, sizeof(struct pt_regs));
 
     child->cpu_id = alloc_cpu_id();
 
@@ -1273,16 +1308,16 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     child->fd_info->ref_count++;
 
-    child->pending_signal = 0;
-    child->signal = 0;
+    child->signal->signal = 0;
     if (flags & CLONE_SIGHAND) {
-        memcpy(child->actions, current_task->actions, sizeof(child->actions));
-        spin_lock(&current_task->signal_lock);
-        child->blocked = current_task->blocked;
-        spin_unlock(&current_task->signal_lock);
+        memcpy(child->signal->actions, current_task->signal->actions,
+               sizeof(child->signal->actions));
+        spin_lock(&current_task->signal->signal_lock);
+        child->signal->blocked = current_task->signal->blocked;
+        spin_unlock(&current_task->signal->signal_lock);
     } else {
-        memset(child->actions, 0, sizeof(child->actions));
-        child->blocked = 0;
+        memset(child->signal->actions, 0, sizeof(child->signal->actions));
+        child->signal->blocked = 0;
     }
 
     if (flags & CLONE_SETTLS) {
@@ -1325,6 +1360,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     } else {
         child->is_vfork = false;
     }
+    child->is_clone = true;
     child->should_free = false;
 
     procfs_on_new_task(child);
@@ -1426,9 +1462,7 @@ void sched_update_itimer() {
     uint64_t now = nanoTime() / 1000000;
 
     if (rtAt && rtAt <= now) {
-        spin_lock(&current_task->signal_lock);
-        current_task->pending_signal |= SIGMASK(SIGALRM);
-        spin_unlock(&current_task->signal_lock);
+        task_commit_signal(current_task, SIGALRM, NULL);
 
         if (rtReset) {
             current_task->itimer_real.at = now + rtReset;
@@ -1442,9 +1476,7 @@ void sched_update_itimer() {
             break;
         kernel_timer_t *kt = current_task->timers[j];
         if (kt->expires && now >= kt->expires) {
-            spin_lock(&current_task->signal_lock);
-            current_task->pending_signal |= SIGMASK(kt->sigev_signo);
-            spin_unlock(&current_task->signal_lock);
+            task_commit_signal(current_task, kt->sigev_signo, NULL);
 
             if (kt->interval)
                 kt->expires += kt->interval;
@@ -1715,13 +1747,11 @@ uint64_t sys_setpriority(int which, int who, int niceval) {
 
 extern void task_signal();
 
-void schedule() {
+void schedule(uint64_t sched_flags) {
     arch_disable_interrupt();
 
     sched_update_itimer();
     sched_update_timerfd();
-
-    task_signal();
 
     task_t *prev = current_task;
     task_t *next = rrs_pick_next_task(schedulers[current_cpu_id]);
@@ -1742,5 +1772,8 @@ void schedule() {
     switch_to(prev, next);
 
 ret:
+    if (!(sched_flags & SCHED_FLAG_YIELD))
+        task_signal();
+
     arch_enable_interrupt();
 }

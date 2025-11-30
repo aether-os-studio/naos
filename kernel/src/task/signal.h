@@ -63,62 +63,57 @@ int signals_pending_quick(task_t *task);
 #define SIG_UNBLOCK 1 /* for unblocking signals */
 #define SIG_SETMASK 2 /* for setting the signal mask */
 
+#define CLD_EXITED 1
+#define CLD_KILLED 2
+#define CLD_DUMPED 3
+#define CLD_TRAPPED 4
+#define CLD_STOPPED 5
+#define CLD_CONTINUED 6
+
 typedef struct {
-    int32_t si_signo; // Signal number
-    int32_t si_errno; // Error number (if applicable)
-    int32_t si_code;  // Signal code
-
+    int si_signo, si_errno, si_code;
     union {
-        int32_t _pad[128 - 3 * sizeof(int32_t) / sizeof(int32_t)];
-
-        // Kill
+        char __pad[128 - 2 * sizeof(int) - sizeof(long)];
         struct {
-            int32_t si_pid;  // Sending process ID
-            uint32_t si_uid; // Real user ID of sending process
-        } _kill;
-
-        // Timer
+            union {
+                struct {
+                    int32_t si_pid;
+                    uint32_t si_uid;
+                } __piduid;
+                struct {
+                    int si_timerid;
+                    int si_overrun;
+                } __timer;
+            } __first;
+            union {
+                union sigval si_value;
+                struct {
+                    int si_status;
+                    long si_utime, si_stime;
+                } __sigchld;
+            } __second;
+        } __si_common;
         struct {
-            int32_t si_tid;     // Timer ID
-            int32_t si_overrun; // Overrun count
-            int32_t si_sigval;  // Signal value
-        } _timer;
-
-        // POSIX.1b signals
+            void *si_addr;
+            short si_addr_lsb;
+            union {
+                struct {
+                    void *si_lower;
+                    void *si_upper;
+                } __addr_bnd;
+                unsigned si_pkey;
+            } __first;
+        } __sigfault;
         struct {
-            int32_t si_pid;    // Sending process ID
-            uint32_t si_uid;   // Real user ID of sending process
-            int32_t si_sigval; // Signal value
-        } _rt;
-
-        // SIGCHLD
+            long si_band;
+            int si_fd;
+        } __sigpoll;
         struct {
-            int32_t si_pid;    // Sending process ID
-            uint32_t si_uid;   // Real user ID of sending process
-            int32_t si_status; // Exit value or signal
-            int32_t si_utime;  // User time consumed
-            int32_t si_stime;  // System time consumed
-        } _sigchld;
-
-        // SIGILL, SIGFPE, SIGSEGV, SIGBUS
-        struct {
-            uintptr_t si_addr;   // Faulting instruction or data address
-            int32_t si_addr_lsb; // LSB of the address (if applicable)
-        } _sigfault;
-
-        // SIGPOLL
-        struct {
-            int32_t si_band; // Band event
-            int32_t si_fd;   // File descriptor
-        } _sigpoll;
-
-        // SIGSYS
-        struct {
-            uintptr_t si_call_addr; // Calling user insn
-            int32_t si_syscall;     // Number of syscall
-            uint32_t si_arch;       // Architecture
-        } _sigsys;
-    } _sifields;
+            void *si_call_addr;
+            int si_syscall;
+            unsigned si_arch;
+        } __sigsys;
+    } __si_fields;
 } siginfo_t;
 
 struct timespec;
@@ -175,3 +170,23 @@ struct signalfd_ctx {
     size_t queue_tail;
     vfs_node_t node;
 };
+
+struct pt_regs;
+
+typedef struct pending_signal {
+    int sig;
+    siginfo_t info;
+} pending_signal_t;
+
+typedef struct task_signal_info {
+    spinlock_t signal_lock;
+    struct pt_regs signal_saved_regs;
+    fpu_context_t signal_saved_fpu;
+    uint64_t signal;
+    pending_signal_t pending_signal;
+    uint64_t blocked;
+    uint64_t saved_blocked;
+    sigaction_t actions[MAXSIG];
+} task_signal_info_t;
+
+void task_commit_signal(task_t *task, int sig, siginfo_t *info);

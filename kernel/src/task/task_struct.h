@@ -78,6 +78,15 @@ typedef void (*sighandler_t)(int);
 #define SIG_DFL ((sighandler_t)0) // 默认的信号处理程序（信号句柄）
 #define SIG_IGN ((sighandler_t)1) // 忽略信号的处理程序
 
+#define SA_NOCLDSTOP 1
+#define SA_NOCLDWAIT 2
+#define SA_SIGINFO 4
+#define SA_ONSTACK 0x08000000
+#define SA_RESTART 0x10000000
+#define SA_NODEFER 0x40000000
+#define SA_RESETHAND 0x80000000
+#define SA_RESTORER 0x04000000
+
 typedef struct sigaction {
     sighandler_t sa_handler;
     unsigned long sa_flags;
@@ -88,12 +97,12 @@ typedef struct sigaction {
 #define MINSIG 1
 #define MAXSIG 65
 
-struct pt_regs;
+struct task_signal_info;
+typedef struct task_signal_info task_signal_info_t;
 
 typedef struct task {
     uint64_t syscall_stack;
     uint64_t kernel_stack;
-    struct pt_regs signal_saved_regs;
     bool is_kernel;
     uint64_t pid;
     uint64_t ppid;
@@ -119,12 +128,7 @@ typedef struct task {
     uint64_t load_start;
     uint64_t load_end;
     arch_context_t *arch_context;
-    spinlock_t signal_lock;
-    sigaction_t actions[MAXSIG];
-    uint64_t signal;
-    uint64_t pending_signal;
-    uint64_t blocked;
-    uint64_t saved_blocked;
+    task_signal_info_t *signal;
     vfs_node_t cwd;
     fd_info_t *fd_info;
     vfs_node_t procfs_node;
@@ -135,5 +139,6 @@ typedef struct task {
     int *tidptr;
     bool child_vfork_done;
     bool is_vfork;
+    bool is_clone;
     bool should_free;
 } task_t;

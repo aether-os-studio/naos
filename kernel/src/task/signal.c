@@ -6,11 +6,6 @@
 
 #define SI_MAX_SIZE 128
 
-struct sigcontext {
-    arch_signal_frame_t arch;
-    uint64_t reserved1[8];
-};
-
 signal_internal_t signal_internal_decisions[MAXSIG] = {0};
 
 void signal_init() {
@@ -54,14 +49,14 @@ void signal_init() {
 }
 
 int signals_pending_quick(task_t *task) {
-    sigset_t pending_list = task->signal;
-    sigset_t unblocked_list = pending_list & (~task->blocked);
+    sigset_t pending_list = task->signal->signal;
+    sigset_t unblocked_list = pending_list & (~task->signal->blocked);
     if (!unblocked_list)
         return 0;
     for (int i = MINSIG; i <= MAXSIG; i++) {
         if (!(unblocked_list & SIGMASK(i)))
             continue;
-        sigaction_t *action = &task->actions[i];
+        sigaction_t *action = &task->signal->actions[i];
         sighandler_t user_handler = action->sa_handler;
         if (user_handler == SIG_IGN)
             continue;
@@ -69,7 +64,7 @@ int signals_pending_quick(task_t *task) {
             signal_internal_decisions[i] == SIGNAL_INTERNAL_IGN)
             continue;
 
-        task->signal &= (~SIGMASK(i));
+        task->signal->signal &= (~SIGMASK(i));
 
         return i;
     }
@@ -77,26 +72,40 @@ int signals_pending_quick(task_t *task) {
     return 0;
 }
 
+void task_commit_signal(task_t *task, int sig, siginfo_t *info) {
+    spin_lock(&task->signal->signal_lock);
+    pending_signal_t signal;
+    memset(&signal, 0, sizeof(pending_signal_t));
+    signal.sig = sig;
+    if (info) {
+        memcpy(&signal.info, info, sizeof(siginfo_t));
+    } else {
+        memset(&signal.info, 0, sizeof(siginfo_t));
+    }
+    memcpy(&task->signal->pending_signal, &signal, sizeof(pending_signal_t));
+    spin_unlock(&task->signal->signal_lock);
+}
+
 // 获取信号屏蔽位图
-uint64_t sys_sgetmask() { return current_task->blocked; }
+uint64_t sys_sgetmask() { return current_task->signal->blocked; }
 
 // 设置信号屏蔽位图
 uint64_t sys_ssetmask(int how, sigset_t *nset, sigset_t *oset) {
     if (oset)
-        *oset = current_task->blocked >> 1;
+        *oset = current_task->signal->blocked >> 1;
     if (nset) {
         uint64_t safe = *nset;
         safe <<= 1;
         safe &= ~(SIGMASK(SIGKILL) | SIGMASK(SIGSTOP)); // nuh uh!
         switch (how) {
         case SIG_BLOCK:
-            current_task->blocked |= safe;
+            current_task->signal->blocked |= safe;
             break;
         case SIG_UNBLOCK:
-            current_task->blocked &= ~(safe);
+            current_task->signal->blocked &= ~(safe);
             break;
         case SIG_SETMASK:
-            current_task->blocked = safe;
+            current_task->signal->blocked = safe;
             break;
         default:
             return -EINVAL;
@@ -112,8 +121,8 @@ uint64_t sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction) {
         return -EINVAL;
     }
 
-    spin_lock(&current_task->signal_lock);
-    sigaction_t *ptr = &current_task->actions[sig];
+    spin_lock(&current_task->signal->signal_lock);
+    sigaction_t *ptr = &current_task->signal->actions[sig];
     if (oldaction) {
         *oldaction = *ptr;
     }
@@ -121,7 +130,7 @@ uint64_t sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction) {
     if (action) {
         *ptr = *action;
     }
-    spin_unlock(&current_task->signal_lock);
+    spin_unlock(&current_task->signal->signal_lock);
 
     return 0;
 }
@@ -130,11 +139,13 @@ void sys_sigreturn(struct pt_regs *regs) {
     arch_disable_interrupt();
 
 #if defined(__x86_64__)
-    memcpy(current_task->arch_context->ctx, &current_task->signal_saved_regs,
-           sizeof(struct pt_regs));
+    memcpy(current_task->arch_context->ctx,
+           &current_task->signal->signal_saved_regs, sizeof(struct pt_regs));
+    memcpy(current_task->arch_context->fpu_ctx,
+           &current_task->signal->signal_saved_fpu, sizeof(fpu_context_t));
 
-    current_task->blocked = current_task->saved_blocked;
-    current_task->saved_blocked = 0;
+    current_task->signal->blocked = current_task->signal->saved_blocked;
+    current_task->signal->saved_blocked = 0;
 
     asm volatile(
         "movq %0, %%rsp\n\t"
@@ -152,9 +163,9 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
         return -EINVAL;
     }
 
-    sigset_t old = current_task->blocked;
+    sigset_t old = current_task->signal->blocked;
 
-    current_task->blocked = *uthese;
+    current_task->signal->blocked = *uthese;
 
     uint64_t start = nanoTime();
     uint64_t wait_ns = 0;
@@ -168,7 +179,7 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
         arch_yield();
     }
 
-    current_task->blocked = old;
+    current_task->signal->blocked = old;
 
     if (uinfo) {
         memset(uinfo, 0, sizeof(siginfo_t));
@@ -181,9 +192,9 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
 }
 
 uint64_t sys_sigsuspend(const sigset_t *mask) {
-    sigset_t old = current_task->blocked;
+    sigset_t old = current_task->signal->blocked;
 
-    current_task->blocked = *mask;
+    current_task->signal->blocked = *mask;
 
     while (!signals_pending_quick(current_task)) {
         arch_enable_interrupt();
@@ -191,7 +202,7 @@ uint64_t sys_sigsuspend(const sigset_t *mask) {
     }
     arch_disable_interrupt();
 
-    current_task->blocked = old;
+    current_task->signal->blocked = old;
 
     return -EINTR;
 }
@@ -221,29 +232,7 @@ uint64_t sys_kill(int pid, int sig) {
         return -ESRCH;
     }
 
-    // if (task->ppid != 0 && task->ppid != task->pid)
-    // {
-    //     task_t *parent = tasks[task->ppid];
-    //     if (!parent)
-    //     {
-    //         return 0;
-    //     }
-
-    //     void *handler = parent->actions[SIGCHLD].sa_handler;
-    //     if (!(handler == SIG_DFL || handler == SIG_IGN))
-    //     {
-    //         parent->pending_signal |= SIGMASK(SIGCHLD);
-    //     }
-
-    //     if (parent->state == TASK_BLOCKING)
-    //     {
-    //         task_unblock(parent, SIGCHLD);
-    //     }
-    // }
-
-    spin_lock(&task->signal_lock);
-    task->pending_signal |= SIGMASK(sig);
-    spin_unlock(&task->signal_lock);
+    task_commit_signal(task, sig, NULL);
 
     task_unblock(task, 128 + sig);
 
@@ -253,62 +242,67 @@ uint64_t sys_kill(int pid, int sig) {
 extern int signalfdfs_id;
 
 void task_signal() {
-    if (current_task->state == TASK_DIED || current_task->arch_context->dead ||
+    if (!current_task->signal->pending_signal.sig ||
+        current_task->state == TASK_DIED || current_task->arch_context->dead ||
         current_task->state == TASK_UNINTERRUPTABLE) {
         return;
     }
 
-    uint64_t map = current_task->pending_signal & (~current_task->blocked);
+    uint64_t map = SIGMASK(current_task->signal->pending_signal.sig) &
+                   (~current_task->signal->blocked);
     if (!map) {
         return;
     }
 
-    spin_lock(&current_task->signal_lock);
-    int sig = 1;
-    for (; sig <= MAXSIG; sig++) {
+    spin_lock(&current_task->signal->signal_lock);
+    int sig;
+    for (sig = MINSIG; sig <= MAXSIG; sig++) {
         if (map & SIGMASK(sig)) {
-            current_task->signal |= SIGMASK(sig);
-            current_task->pending_signal &= ~SIGMASK(sig);
+            current_task->signal->signal |= SIGMASK(sig);
+            current_task->signal->pending_signal.sig = 0;
             break;
         }
     }
 
     if (sig == SIGKILL) {
-        spin_unlock(&current_task->signal_lock);
+        spin_unlock(&current_task->signal->signal_lock);
         task_exit(128 + sig);
         return;
     }
 
     // for (int i = 0; i < MAX_FD_NUM; i++) {
-    //     if (current_task->fd_info->fds[i]) {
-    //         vfs_node_t node = current_task->fd_info->fds[i]->node;
+    //     fd_t *fd = current_task->fd_info->fds[i];
+    //     if (fd) {
+    //         vfs_node_t node = fd->node;
     //         if (node && node->fsid == signalfdfs_id) {
     //             struct signalfd_ctx *ctx = node->handle;
+    //             if (ctx) {
+    //                 struct signalfd_siginfo info;
+    //                 memset(&info, 0, sizeof(struct sigevent));
+    //                 info.ssi_signo = sig;
 
-    //             struct signalfd_siginfo info;
-    //             memset(&info, 0, sizeof(struct sigevent));
-    //             info.ssi_signo = sig;
-
-    //             memcpy(&ctx->queue[ctx->queue_head], &info,
-    //                    sizeof(struct signalfd_siginfo));
-    //             ctx->queue_head = (ctx->queue_head + 1) % ctx->queue_size;
-    //             if (ctx->queue_head == ctx->queue_tail) {
-    //                 ctx->queue_tail = (ctx->queue_tail + 1) %
-    //                 ctx->queue_size;
+    //                 memcpy(&ctx->queue[ctx->queue_head], &info,
+    //                        sizeof(struct signalfd_siginfo));
+    //                 ctx->queue_head = (ctx->queue_head + 1) %
+    //                 ctx->queue_size; if (ctx->queue_head == ctx->queue_tail)
+    //                 {
+    //                     ctx->queue_tail =
+    //                         (ctx->queue_tail + 1) % ctx->queue_size;
+    //                 }
     //             }
     //         }
     //     }
     // }
 
-    sigaction_t *ptr = &current_task->actions[sig];
+    sigaction_t *ptr = &current_task->signal->actions[sig];
 
     if (ptr->sa_handler == SIG_IGN) {
-        spin_unlock(&current_task->signal_lock);
+        spin_unlock(&current_task->signal->signal_lock);
         return;
     }
 
     if (ptr->sa_handler == SIG_DFL) {
-        spin_unlock(&current_task->signal_lock);
+        spin_unlock(&current_task->signal->signal_lock);
         return;
     }
 
@@ -317,53 +311,34 @@ void task_signal() {
     current_task->state = TASK_UNINTERRUPTABLE;
 
 #if defined(__x86_64__)
-    struct pt_regs *f = (struct pt_regs *)current_task->syscall_stack - 1;
-    if ((current_task->arch_context->ctx->cs & 3) == 3)
-        f = current_task->arch_context->ctx;
+    memcpy(&current_task->signal->signal_saved_regs,
+           current_task->arch_context->ctx, sizeof(struct pt_regs));
+    memcpy(&current_task->signal->signal_saved_fpu,
+           current_task->arch_context->fpu_ctx, sizeof(fpu_context_t));
 
-    memcpy(&current_task->signal_saved_regs, current_task->arch_context->ctx,
-           sizeof(struct pt_regs));
+    uint64_t sigrsp = USER_STACK_START + DEFAULT_PAGE_SIZE;
 
-    uint64_t sigrsp = f->rsp;
-
-    sigrsp -= 128;
+    sigrsp -= sizeof(fpu_context_t);
+    fpu_context_t *fp = (fpu_context_t *)sigrsp;
+    memcpy(fp, current_task->arch_context->fpu_ctx, sizeof(fpu_context_t));
 
     uint64_t total_len =
-        sizeof(struct fpstate) + sizeof(arch_signal_frame_t) + sizeof(void *);
+        sizeof(siginfo_t) + sizeof(ucontext_t) + sizeof(void *);
     sigrsp -= (sigrsp - total_len) % 0x10;
 
-    sigrsp -= sizeof(struct fpstate);
-    struct fpstate *fp = (struct fpstate *)sigrsp;
-    memcpy(fp, current_task->arch_context->fpu_ctx, sizeof(struct fpstate));
+    sigrsp -= sizeof(siginfo_t);
+    siginfo_t *siginfo = (siginfo_t *)sigrsp;
+    memcpy(siginfo, (const void *)&current_task->signal->pending_signal.info,
+           sizeof(siginfo_t));
+    memset(&current_task->signal->pending_signal.info, 0, sizeof(siginfo_t));
 
-    sigrsp -= sizeof(arch_signal_frame_t);
-    arch_signal_frame_t *sframe = (arch_signal_frame_t *)sigrsp;
+    sigrsp -= sizeof(ucontext_t);
+    ucontext_t *ucontext = (ucontext_t *)sigrsp;
 
-    sframe->r8 = f->r8;
-    sframe->r9 = f->r9;
-    sframe->r10 = f->r10;
-    sframe->r11 = f->r11;
-    sframe->r12 = f->r12;
-    sframe->r13 = f->r13;
-    sframe->r14 = f->r14;
-    sframe->r15 = f->r15;
-    sframe->rdi = f->rdi;
-    sframe->rsi = f->rsi;
-    sframe->rbp = f->rbp;
-    sframe->rbx = f->rbx;
-    sframe->rdx = f->rdx;
-    sframe->rax = f->rax;
-    sframe->rcx = f->rcx;
-    sframe->rsp = f->rsp;
-    sframe->rip = f->rip;
-    sframe->eflags = f->rflags;
-    sframe->cs = f->cs;
-    sframe->gs = 0;
-    sframe->fs = 0;
-    sframe->ss = f->ss;
-    sframe->oldmask = current_task->blocked;
-    sframe->fpstate = fp;
-    sframe->reserved[0] = (uint64_t)sig;
+    ucontext->uc_flags = 0;
+    ucontext->uc_link = ucontext;
+    ucontext->uc_mcontext.fpregs = fp;
+    ucontext->uc_sigmask = ptr->sa_mask;
 
     sigrsp -= sizeof(void *);
     *((void **)sigrsp) = (void *)ptr->sa_restorer;
@@ -371,20 +346,23 @@ void task_signal() {
     memset(current_task->arch_context->ctx, 0, sizeof(struct pt_regs));
 
     current_task->arch_context->ctx->rip = (uint64_t)ptr->sa_handler;
+    current_task->arch_context->ctx->rax = 0;
     current_task->arch_context->ctx->rdi = sig;
-    current_task->arch_context->ctx->rsi = 0;
+    current_task->arch_context->ctx->rsi = (uint64_t)siginfo;
+    current_task->arch_context->ctx->rdx = (uint64_t)ucontext;
 
     current_task->arch_context->ctx->cs = SELECTOR_USER_CS;
     current_task->arch_context->ctx->ss = SELECTOR_USER_DS;
 
     current_task->arch_context->ctx->rflags = (1 << 9);
     current_task->arch_context->ctx->rsp = sigrsp;
+    current_task->arch_context->ctx->rbp = sigrsp;
 #elif defined(__aarch64__)
 #elif defined(__riscv)
     struct pt_regs *f = (struct pt_regs *)current_task->kernel_stack - 1;
 
-    memcpy(&current_task->signal_saved_regs, current_task->arch_context->ctx,
-           sizeof(struct pt_regs));
+    memcpy(&current_task->signal->signal_saved_regs,
+           current_task->arch_context->ctx, sizeof(struct pt_regs));
 #elif defined(__loongarch64)
 #endif
 
@@ -392,10 +370,10 @@ void task_signal() {
         ptr->sa_handler = SIG_DFL;
     }
 
-    current_task->saved_blocked = current_task->blocked;
-    current_task->blocked |= SIGMASK(sig) | ptr->sa_mask;
+    current_task->signal->saved_blocked = current_task->signal->blocked;
+    current_task->signal->blocked |= SIGMASK(sig) | ptr->sa_mask;
 
-    spin_unlock(&current_task->signal_lock);
+    spin_unlock(&current_task->signal->signal_lock);
 
     current_task->state = TASK_READY;
 

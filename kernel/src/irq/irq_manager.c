@@ -24,7 +24,7 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num) {
     }
 
     if ((irq_num == ARCH_TIMER_IRQ) && can_schedule && current_task) {
-        schedule();
+        schedule(0);
     }
 }
 

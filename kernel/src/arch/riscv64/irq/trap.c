@@ -102,7 +102,7 @@ void handle_interrupt_c(struct pt_regs *regs, uint64_t cause) {
         sbi_set_timer(get_timer() + timer_freq / SCHED_HZ);
 
         if (can_schedule) {
-            schedule();
+            schedule(0);
         }
 
         break;

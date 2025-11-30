@@ -166,7 +166,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_MMAP] = (syscall_handle_t)sys_mmap;
     syscall_handlers[SYS_MPROTECT] = (syscall_handle_t)sys_mprotect;
     syscall_handlers[SYS_MUNMAP] = (syscall_handle_t)sys_munmap;
-    // syscall_handlers[SYS_BRK] = (syscall_handle_t)sys_brk;
+    syscall_handlers[SYS_BRK] = (syscall_handle_t)sys_brk;
     syscall_handlers[SYS_RT_SIGACTION] = (syscall_handle_t)sys_sigaction;
     syscall_handlers[SYS_RT_SIGPROCMASK] = (syscall_handle_t)sys_ssetmask;
     syscall_handlers[SYS_RT_SIGRETURN] = (syscall_handle_t)sys_sigreturn;
@@ -584,14 +584,14 @@ void syscall_handler_init() {
 
 spinlock_t syscall_debug_lock = SPIN_INIT;
 
-void syscall_handler(struct pt_regs *regs, uint64_t user_regs) {
+void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
     regs->rip = regs->rcx;
     regs->rflags = regs->r11;
     regs->cs = SELECTOR_USER_CS;
     regs->ss = SELECTOR_USER_DS;
     regs->ds = SELECTOR_USER_DS;
     regs->es = SELECTOR_USER_DS;
-    regs->rsp = user_regs;
+    regs->rsp = user_rsp;
 
     uint64_t idx = regs->rax & 0xFFFFFFFF;
 

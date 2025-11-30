@@ -24,19 +24,28 @@ typedef struct fpu_context {
     uint64_t rest[12];
 } __attribute__((aligned(16))) fpu_context_t;
 
-struct fpstate {
-    uint16_t cwd;
-    uint16_t swd;
-    uint16_t twd; /* Note this is not the same as the 32bit/x87/FSAVE twd */
-    uint16_t fop;
-    uint64_t rip;
-    uint64_t rdp;
-    uint32_t mxcsr;
-    uint32_t mxcsr_mask;
-    uint32_t st_space[32];  /* 8*16 bytes for each FP-reg */
-    uint32_t xmm_space[64]; /* 16*16 bytes for each XMM-reg  */
-    uint32_t reserved2[24];
-} __attribute__((packed));
+typedef struct sigaltstack {
+    void *ss_sp;
+    int ss_flags;
+    size_t ss_size;
+} stack_t;
+
+typedef uint64_t gregset_t[23];
+
+typedef struct {
+    gregset_t gregs;
+    fpu_context_t *fpregs;
+    uint64_t __reserved1[8];
+} mcontext_t;
+
+typedef struct __ucontext {
+    uint64_t uc_flags;
+    struct __ucontext *uc_link;
+    stack_t uc_stack;
+    mcontext_t uc_mcontext;
+    uint64_t uc_sigmask;
+    uint64_t __fpregs_mem[64];
+} ucontext_t;
 
 typedef struct arch_context {
     uint64_t rip;
@@ -68,37 +77,6 @@ typedef struct arch_context {
                        "m"(next->arch_context->rip), "D"(prev), "S"(next)      \
                      : "memory");                                              \
     } while (0)
-
-typedef struct arch_signal_frame {
-    uint64_t r8;
-    uint64_t r9;
-    uint64_t r10;
-    uint64_t r11;
-    uint64_t r12;
-    uint64_t r13;
-    uint64_t r14;
-    uint64_t r15;
-    uint64_t rdi;
-    uint64_t rsi;
-    uint64_t rbp;
-    uint64_t rbx;
-    uint64_t rdx;
-    uint64_t rax;
-    uint64_t rcx;
-    uint64_t rsp;
-    uint64_t rip;
-    uint64_t eflags; /* RFLAGS */
-    uint16_t cs;
-    uint16_t gs;
-    uint16_t fs;
-    uint16_t ss; /* __pad0 */
-    uint64_t err;
-    uint64_t trapno;
-    uint64_t oldmask;
-    uint64_t cr2;
-    struct fpstate *fpstate; /* zero when no FPU context */
-    uint64_t reserved[8];
-} __attribute__((packed)) arch_signal_frame_t;
 
 void arch_context_init(arch_context_t *context, uint64_t page_table_dir,
                        uint64_t entry, uint64_t stack, bool user_mode,

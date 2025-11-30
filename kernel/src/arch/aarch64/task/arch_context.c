@@ -112,7 +112,7 @@ extern bool task_initialized;
 
 void arch_yield() {
     if (task_initialized) {
-        schedule();
+        schedule(SCHED_FLAG_YIELD);
     }
 }
 
