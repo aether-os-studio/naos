@@ -66,7 +66,7 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size) {
     pipe_specific_t *spec = (pipe_specific_t *)file;
     pipe_info_t *pipe = spec->info;
 
-    while ((PIPE_BUFF - pipe->ptr) < size) {
+    while ((PIPE_BUFF - pipe->ptr) <= size) {
         if (pipe->read_fds == 0) {
             return -EPIPE;
         }

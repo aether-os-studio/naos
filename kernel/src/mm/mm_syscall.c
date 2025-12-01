@@ -36,7 +36,7 @@ uint64_t sys_brk(uint64_t brk) {
         vma->vm_end = brk;
         vma->vm_flags = VMA_READ | VMA_WRITE | VMA_ANON;
         vma->vm_type = VMA_TYPE_ANON;
-        vma->vm_fd = -1;
+        vma->node = NULL;
         vma->vm_name = strdup("[heap]");
         if (!vma->vm_name) {
             vma_free(vma);
@@ -193,10 +193,12 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
     if (flags & MAP_ANONYMOUS) {
         vma->vm_type = VMA_TYPE_ANON;
         vma->vm_flags |= VMA_ANON;
-        vma->vm_fd = -1;
+        vma->node = NULL;
     } else {
         vma->vm_type = VMA_TYPE_FILE;
-        vma->vm_fd = fd;
+        vfs_node_t node = current_task->fd_info->fds[fd]->node;
+        vma->node = node;
+        node->refcount++;
         vma->vm_offset = offset;
     }
 

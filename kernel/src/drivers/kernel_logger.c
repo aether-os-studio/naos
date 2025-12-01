@@ -403,7 +403,8 @@ char vsnprintf_buf[8192];
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list args) {
     int ret = vsprintf(vsnprintf_buf, fmt, args);
     int to_copy = MIN((size_t)ret, size);
-    memcpy(buf, vsnprintf_buf, to_copy);
+    if (buf)
+        memcpy(buf, vsnprintf_buf, to_copy);
     return to_copy;
 }
 

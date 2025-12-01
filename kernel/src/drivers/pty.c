@@ -8,7 +8,7 @@ pty_pair_t first_pair;
 static int ptmx_fsid = 0;
 int pts_fsid = 0;
 
-size_t pts_write_inner(pty_pair_t *pair, uint8_t *in, size_t limit);
+size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit);
 
 int pty_bitmap_decide() {
     int ret = -1;
@@ -182,12 +182,12 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
             if (pair->bufferSlave[pair->ptrSlave + i] == '\r')
                 pair->bufferSlave[pair->ptrSlave + i] = '\n';
         }
+    spin_unlock(&pair->lock);
     if ((pair->term.c_lflag & ICANON) && (pair->term.c_lflag & ECHO)) {
-        pts_write_inner(pair, &pair->bufferSlave[pair->ptrSlave], limit);
+        pts_write_inner(fd, &pair->bufferSlave[pair->ptrSlave], limit);
     }
     pair->ptrSlave += limit;
 
-    spin_unlock(&pair->lock);
     return limit;
 }
 
@@ -376,7 +376,24 @@ size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit) {
 
 extern void send_process_group_signal(int pgid, int sig);
 
-size_t pts_write_inner(pty_pair_t *pair, uint8_t *in, size_t limit) {
+size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
+    pty_pair_t *pair = fd->node->handle;
+
+    while (true) {
+        if (!pair->masterFds) {
+            return -EIO;
+        }
+        if ((pair->ptrMaster + limit) <= PTY_BUFF_SIZE)
+            break;
+        if (fd->flags & O_NONBLOCK) {
+            return -EWOULDBLOCK;
+        }
+
+        arch_yield();
+    }
+
+    spin_lock(&pair->lock);
+
     size_t written = 0;
     bool doTranslate =
         (pair->term.c_oflag & OPOST) && (pair->term.c_oflag & ONLCR);
@@ -411,38 +428,44 @@ size_t pts_write_inner(pty_pair_t *pair, uint8_t *in, size_t limit) {
         }
         written++;
     }
+
+    spin_unlock(&pair->lock);
+
     return written;
 }
 
 size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit) {
-    void *file = fd->node->handle;
-    pty_pair_t *pair = file;
+    int ret = 0;
+    pty_pair_t *pair = fd->node->handle;
+    size_t chunks = limit / PTY_BUFF_SIZE;
+    size_t remainder = limit % PTY_BUFF_SIZE;
+    if (chunks)
+        for (size_t i = 0; i < chunks; i++) {
+            int cycle = 0;
+            while (cycle < PTY_BUFF_SIZE) {
+                size_t r = pts_write_inner(fd, in + i * PTY_BUFF_SIZE + cycle,
+                                           PTY_BUFF_SIZE - cycle);
+                if ((ssize_t)r < 0)
+                    return r;
+                cycle += r;
+            }
 
-    while (true) {
-        spin_lock(&pair->lock);
-        if (!pair->masterFds) {
-            spin_unlock(&pair->lock);
-            // todo: send SIGHUP when master is closed, check controlling
-            // term/group
-            return (size_t)-EIO;
+            ret += cycle;
         }
-        if ((pair->ptrMaster + limit) < PTY_BUFF_SIZE) {
-            spin_unlock(&pair->lock);
-            break;
+
+    if (remainder) {
+        size_t cycle = 0;
+        while (cycle < remainder) {
+            size_t r = pts_write_inner(fd, in + chunks * PTY_BUFF_SIZE + cycle,
+                                       remainder - cycle);
+            if ((ssize_t)r < 0)
+                return r;
+            cycle += r;
         }
-        if (fd->flags & O_NONBLOCK) {
-            spin_unlock(&pair->lock);
-            return -(EWOULDBLOCK);
-        }
-        spin_unlock(&pair->lock);
-        arch_yield();
+        ret += cycle;
     }
 
-    spin_lock(&pair->lock);
-    size_t written = pts_write_inner(pair, in, limit);
-    spin_unlock(&pair->lock);
-
-    return written;
+    return ret;
 }
 
 size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {

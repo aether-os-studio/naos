@@ -92,7 +92,7 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
 
     vma->vm_type = VMA_TYPE_SHM;
     vma->vm_flags |= VMA_ANON;
-    vma->vm_fd = -1;
+    vma->node = NULL;
 
     if (vma_insert(mgr, vma) != 0) {
         vma_free(vma);

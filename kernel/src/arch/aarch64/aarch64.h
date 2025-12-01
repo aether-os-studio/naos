@@ -14,7 +14,6 @@
 #include "arch/aarch64/task/arch_context.h"
 #include "arch/aarch64/smp/smp.h"
 #include "arch/aarch64/syscall/nr.h"
-#include "arch/aarch64/syscall/cpu_info.h"
 #include "arch/aarch64/syscall/syscall.h"
 #include "arch/aarch64/time/time.h"
 #include "mm/page_table.h"

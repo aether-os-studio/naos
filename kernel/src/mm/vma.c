@@ -1,4 +1,5 @@
 #include <mm/vma.h>
+#include <fs/vfs/vfs.h>
 
 void *malloc(size_t size);
 void free(void *ptr);
@@ -10,7 +11,7 @@ vma_t *vma_alloc(void) {
         return NULL;
 
     memset(vma, 0, sizeof(vma_t));
-    vma->vm_fd = -1;
+    vma->node = NULL;
     vma->shm_id = -1;
     return vma;
 }
@@ -122,7 +123,9 @@ int vma_split(vma_t *vma, unsigned long addr) {
     new_vma->vm_end = vma->vm_end;
     new_vma->vm_flags = vma->vm_flags;
     new_vma->vm_type = vma->vm_type;
-    new_vma->vm_fd = vma->vm_fd;
+    new_vma->node = vma->node;
+    if (new_vma->node)
+        new_vma->node->refcount++;
     new_vma->vm_offset = vma->vm_offset;
     new_vma->shm_id = vma->shm_id;
 
@@ -162,7 +165,7 @@ int vma_merge(vma_t *vma1, vma_t *vma2) {
 
     // 检查是否可以合并（相同属性）
     if (vma1->vm_flags != vma2->vm_flags || vma1->vm_type != vma2->vm_type ||
-        vma1->vm_fd != vma2->vm_fd) {
+        vma1->node != vma2->node) {
         return -1;
     }
 
@@ -279,7 +282,9 @@ vma_t *vma_copy(vma_t *src) {
     dst->vm_end = src->vm_end;
     dst->vm_flags = src->vm_flags;
     dst->vm_type = src->vm_type;
-    dst->vm_fd = src->vm_fd;
+    dst->node = src->node;
+    if (dst->node)
+        dst->node->refcount++;
     dst->vm_offset = src->vm_offset;
     dst->shm_id = src->shm_id;
 

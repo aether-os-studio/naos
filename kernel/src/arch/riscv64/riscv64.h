@@ -15,7 +15,6 @@
 #include "arch/riscv64/mm/arch.h"
 #include "arch/riscv64/task/arch_context.h"
 #include "arch/riscv64/syscall/nr.h"
-#include "arch/riscv64/syscall/cpu_info.h"
 #include "arch/riscv64/syscall/syscall.h"
 #include "arch/riscv64/time/time.h"
 #include "arch/riscv64/smp.h"
