@@ -7,6 +7,7 @@
 #include <dev/device.h>
 #include <drivers/tty.h>
 #include <mod/dlinker.h>
+#include <task/signal.h>
 #include <task/task.h>
 #include <fs/vfs/vfs.h>
 #include <fs/vfs/dev.h>
@@ -46,6 +47,8 @@ void kmain(void) {
     proc_init();
 
     dlinker_init();
+
+    signal_init();
 
     task_init();
 

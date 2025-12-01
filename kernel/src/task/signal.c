@@ -301,6 +301,13 @@ void task_signal() {
         return;
     }
 
+    if ((ptr->sa_handler == SIG_DFL) &&
+        signal_internal_decisions[sig] == SIGNAL_INTERNAL_TERM) {
+        spin_unlock(&current_task->signal->signal_lock);
+        task_exit(128 + sig);
+        return;
+    }
+
     if (ptr->sa_handler == SIG_DFL) {
         spin_unlock(&current_task->signal->signal_lock);
         return;

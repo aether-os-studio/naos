@@ -189,4 +189,6 @@ typedef struct task_signal_info {
     sigaction_t actions[MAXSIG];
 } task_signal_info_t;
 
+void signal_init();
+
 void task_commit_signal(task_t *task, int sig, siginfo_t *info);

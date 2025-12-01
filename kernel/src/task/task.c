@@ -34,14 +34,7 @@ void send_process_group_signal(int pgid, int signal) {
         continue_ptr_count = 0;
 
         if (tasks[i]->pgid == pgid) {
-            if (tasks[i]->signal->actions[signal].sa_handler == SIG_IGN)
-                return;
-
-            if (tasks[i]->signal->actions[signal].sa_handler == SIG_DFL) {
-                sys_kill(tasks[i]->pid, SIGKILL);
-            } else {
-                sys_kill(tasks[i]->pid, signal);
-            }
+            sys_kill(tasks[i]->pid, signal);
         }
     }
 }
