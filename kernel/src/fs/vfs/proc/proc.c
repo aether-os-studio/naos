@@ -135,6 +135,7 @@ void procfs_self_open(void *parent, const char *name, vfs_node_t node) {
     node->handle = handle;
     list_delete(node->parent->child, node);
     vfs_node_t new_self_node = vfs_node_alloc(node->parent, "self");
+    new_self_node->flags |= VFS_NODE_FLAGS_FREE_AFTER_USE;
     new_self_node->type = file_symlink;
     new_self_node->mode = 0644;
     new_self_node->fsid = procfs_self_id;
@@ -217,6 +218,7 @@ void proc_init() {
     sprintf(cmdline_handle->name, "cmdline");
 
     vfs_node_t procfs_self = vfs_node_alloc(procfs_root, "self");
+    procfs_self->flags |= VFS_NODE_FLAGS_FREE_AFTER_USE;
     procfs_self->type = file_symlink;
     procfs_self->mode = 0644;
     procfs_self->fsid = procfs_self_id;

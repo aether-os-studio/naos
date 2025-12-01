@@ -175,6 +175,7 @@ typedef struct flock {
 } flock_t;
 
 #define VFS_NODE_FLAGS_DELETED (1ULL << 0)
+#define VFS_NODE_FLAGS_FREE_AFTER_USE (1ULL << 1)
 
 struct vfs_node {
     vfs_node_t parent;   // 父目录

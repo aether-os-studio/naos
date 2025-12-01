@@ -561,7 +561,15 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
         if (!(current->type & file_dir)) {
             goto err;
         }
+        vfs_node_t free_node = NULL;
+        if (current->flags & VFS_NODE_FLAGS_FREE_AFTER_USE) {
+            free_node = current;
+        }
         current = vfs_child_find(current, buf);
+        if (free_node) {
+            free(free_node->name);
+            free(free_node);
+        }
         if (current == NULL)
             goto err;
         do_update(current);
@@ -657,6 +665,11 @@ int vfs_close(vfs_node_t node) {
     if (node->refcount <= 0) {
         bool real_close = callbackof(node, close)(node->handle);
         if (real_close) {
+            if (node->flags & VFS_NODE_FLAGS_FREE_AFTER_USE) {
+                free(node->name);
+                free(node);
+                return 0;
+            }
             if (node->flags & VFS_NODE_FLAGS_DELETED) {
                 callbackof(node, free_handle)(node->handle);
                 node->handle = NULL;
