@@ -3,6 +3,7 @@
 #include <fs/fs_syscall.h>
 #include <fs/vfs/dev.h>
 #include <fs/vfs/sys.h>
+#include <drivers/input.h>
 #include <libs/keys.h>
 
 extern void handle_kb_event(uint8_t scan_code, bool pressed);
@@ -253,35 +254,9 @@ bool ps2_keyboard_init(void) {
 
     ps2_keyboard_set_callback(ps2_keyboard_callback);
 
-    kb_input_event = malloc(sizeof(dev_input_event_t));
-    kb_input_event->inputid.bustype = 0x11;
-    kb_input_event->inputid.vendor = 0x0000;
-    kb_input_event->inputid.product = 0x0000;
-    kb_input_event->inputid.version = 0x0000;
-    kb_input_event->event_bit = kb_event_bit;
-    kb_input_event->device_events.read_ptr = 0;
-    kb_input_event->device_events.write_ptr = 0;
-    kb_input_event->clock_id = CLOCK_MONOTONIC;
-    strncpy(kb_input_event->uniq, "ps2kbd", sizeof(kb_input_event->uniq));
-    kb_input_event->devname = strdup("input/event0");
-    circular_int_init(&kb_input_event->device_events, DEFAULT_PAGE_SIZE);
-    uint64_t kbd_dev = device_install(
-        DEV_CHAR, DEV_INPUT, kb_input_event, "input/event0", 0, inputdev_ioctl,
-        inputdev_poll, inputdev_event_read, inputdev_event_write, NULL);
-    kb_input_event->timesOpened = 1;
-
-    sysfs_regist_dev('c', (kbd_dev >> 8) & 0xFF, kbd_dev & 0xFF,
-                     "/sys/devices/platform/i8042/serio0/input/input0/event0",
-                     "input/event0",
-                     "ID_INPUT=1\nID_INPUT_KEYBOARD=1\nSUBSYSTEM=input\n");
-
-    vfs_node_t input_root = vfs_open("/sys/class/input");
-    vfs_node_t event0 = sysfs_child_append_symlink(
-        input_root, "event0",
-        "/sys/devices/platform/i8042/serio0/input/input0/event0");
-
-    event0 = vfs_open("/sys/devices/platform/i8042/serio0/input/input0/event0");
-    sysfs_child_append_symlink(event0, "subsystem", "/sys/class/input");
+    kb_input_event = regist_input_dev(
+        "ps2kbd", "/sys/devices/platform/i8042/serio0/input0/event0",
+        "ID_INPUT_KEYBOARD=1", kb_event_bit);
 
     return true;
 }
@@ -332,37 +307,9 @@ bool ps2_mouse_init(void) {
 
     ps2_mouse_set_callback(ps2_mouse_callback);
 
-    mouse_input_event = malloc(sizeof(dev_input_event_t));
-    mouse_input_event->inputid.bustype = 0x11;
-    mouse_input_event->inputid.vendor = 0x0000;
-    mouse_input_event->inputid.product = 0x0000;
-    mouse_input_event->inputid.version = 0x0000;
-    mouse_input_event->event_bit = mouse_event_bit;
-    mouse_input_event->device_events.read_ptr = 0;
-    mouse_input_event->device_events.write_ptr = 0;
-    mouse_input_event->clock_id = CLOCK_MONOTONIC;
-    strncpy(mouse_input_event->uniq, "ps2mouse",
-            sizeof(mouse_input_event->uniq));
-    mouse_input_event->devname = strdup("input/event1");
-    circular_int_init(&mouse_input_event->device_events, DEFAULT_PAGE_SIZE);
-    uint64_t mouse_dev =
-        device_install(DEV_CHAR, DEV_INPUT, mouse_input_event, "input/event1",
-                       0, inputdev_ioctl, inputdev_poll, inputdev_event_read,
-                       inputdev_event_write, NULL);
-    mouse_input_event->timesOpened = 1;
-
-    sysfs_regist_dev('c', (mouse_dev >> 8) & 0xFF, mouse_dev & 0xFF,
-                     "/sys/devices/platform/i8042/serio1/input/input1/event1",
-                     "input/event1",
-                     "ID_INPUT=1\nID_INPUT_MOUSE=1\nSUBSYSTEM=input\n");
-
-    vfs_node_t input_root = vfs_open("/sys/class/input");
-    vfs_node_t event1 = sysfs_child_append_symlink(
-        input_root, "event1",
-        "/sys/devices/platform/i8042/serio1/input/input1/event1");
-
-    event1 = vfs_open("/sys/devices/platform/i8042/serio1/input/input1/event1");
-    sysfs_child_append_symlink(event1, "subsystem", "/sys/class/input");
+    mouse_input_event = regist_input_dev(
+        "ps2mouse", "/sys/devices/platform/i8042/serio1/input1/event1",
+        "ID_INPUT_MOUSE=1", mouse_event_bit);
 
     return true;
 }

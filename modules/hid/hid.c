@@ -8,6 +8,7 @@
 #include "hid.h"
 #include <libs/aether/usb.h>
 #include <libs/aether/evdev.h>
+#include <libs/aether/input.h>
 #include <libs/aether/stdio.h>
 
 /****************************************************************
@@ -74,6 +75,11 @@ static int usb_kbd_setup(struct usbdevice_s *usbdev,
         return -1;
     }
     hid->xfer_ok = false;
+
+    dev_input_event_t *event =
+        regist_input_dev("usbkbd", "/sys/devices/usb/input0",
+                         "ID_INPUT_KEYBOARD=1", kb_event_bit);
+    set_kb_input_event(event);
 
     task_create("usb_check_key", (void (*)(uint64_t))usb_check_key,
                 (uint64_t)hid, KTHREAD_PRIORITY);
@@ -304,6 +310,11 @@ static int usb_mouse_setup(struct usbdevice_s *usbdev,
         return -1;
     }
     hid->xfer_ok = false;
+
+    dev_input_event_t *event =
+        regist_input_dev("usbmouse", "/sys/devices/usb/input1",
+                         "ID_INPUT_MOUSE=1", mouse_event_bit);
+    set_mouse_input_event(event);
 
     task_create("usb_check_mouse", (void (*)(uint64_t))usb_check_mouse,
                 (uint64_t)hid, KTHREAD_PRIORITY);
