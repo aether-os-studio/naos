@@ -197,15 +197,6 @@ bool ps2_init(void) {
         }
     }
 
-    irq_regist_irq(
-        PS2_KBD_INTERRUPT_VECTOR,
-        (void (*)(uint64_t, void *, struct pt_regs *))ps2_interrupt_handler, 1,
-        NULL, &apic_controller, "PS/2 Keyboard", 0);
-    irq_regist_irq(
-        PS2_MOUSE_INTERRUPT_VECTOR,
-        (void (*)(uint64_t, void *, struct pt_regs *))ps2_interrupt_handler, 12,
-        NULL, &apic_controller, "PS/2 Mouse", 0);
-
     return ps2_state.port1_available || ps2_state.port2_available;
 }
 
@@ -254,9 +245,13 @@ bool ps2_keyboard_init(void) {
 
     ps2_keyboard_set_callback(ps2_keyboard_callback);
 
-    kb_input_event = regist_input_dev(
-        "ps2kbd", "/sys/devices/platform/i8042/serio0/input0/event0",
-        "ID_INPUT_KEYBOARD=1", kb_event_bit);
+    kb_input_event = regist_input_dev("ps2kbd", "ID_INPUT_KEYBOARD=1",
+                                      INPUT_FROM_PS2, kb_event_bit);
+
+    irq_regist_irq(
+        PS2_KBD_INTERRUPT_VECTOR,
+        (void (*)(uint64_t, void *, struct pt_regs *))ps2_interrupt_handler, 1,
+        NULL, &apic_controller, "PS/2 Keyboard", 0);
 
     return true;
 }
@@ -307,9 +302,13 @@ bool ps2_mouse_init(void) {
 
     ps2_mouse_set_callback(ps2_mouse_callback);
 
-    mouse_input_event = regist_input_dev(
-        "ps2mouse", "/sys/devices/platform/i8042/serio1/input1/event1",
-        "ID_INPUT_MOUSE=1", mouse_event_bit);
+    mouse_input_event = regist_input_dev("ps2mouse", "ID_INPUT_MOUSE=1",
+                                         INPUT_FROM_PS2, mouse_event_bit);
+
+    irq_regist_irq(
+        PS2_MOUSE_INTERRUPT_VECTOR,
+        (void (*)(uint64_t, void *, struct pt_regs *))ps2_interrupt_handler, 12,
+        NULL, &apic_controller, "PS/2 Mouse", 0);
 
     return true;
 }

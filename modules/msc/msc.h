@@ -34,6 +34,7 @@ typedef uint64_t (*usb_msc_write_func_t)(usb_msc_device *dev, uint64_t lba,
 
 struct usb_msc_device {
     struct usbdevice_s *udev;
+    struct usbdevice_a_interface *iface;
     uint8_t lun;
     struct usb_pipe *bulk_in;
     struct usb_pipe *bulk_out;
@@ -41,7 +42,6 @@ struct usb_msc_device {
     uint64_t block_count;
 };
 
-int usb_msc_setup(struct usbdevice_s *usbdev);
 uint64_t usb_msc_read_blocks(void *dev, uint64_t lba, void *buf,
                              uint64_t count);
 uint64_t usb_msc_write_blocks(void *dev, uint64_t lba, void *buf,

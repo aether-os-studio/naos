@@ -466,8 +466,8 @@ static void configure_xhci(void *data) {
     xhci->pipes = malloc(sizeof(struct xhci_pipe **) * (xhci->slots + 1));
     memset(xhci->pipes, 0, sizeof(struct xhci_pipe **) * (xhci->slots + 1));
     for (uint32_t slot = 0; slot < xhci->slots; slot++) {
-        xhci->pipes[slot] = malloc(sizeof(struct xhci_pipe *) * 32);
-        memset(xhci->pipes[slot], 0, sizeof(struct xhci_pipe *) * 32);
+        xhci->pipes[slot] = malloc(sizeof(struct xhci_pipe *) * 33);
+        memset(xhci->pipes[slot], 0, sizeof(struct xhci_pipe *) * 33);
     }
 
     // 停止控制器
@@ -853,16 +853,6 @@ static int xhci_event_wait(struct usb_xhci_s *xhci, struct xhci_ring *ring,
             printk("XHCI event wait timeout!!!\n");
             printk("ring->eidx = %d\n", ring->eidx);
             printk("ring->nidx = %d\n", ring->nidx);
-            struct xhci_ring *evts = xhci->evts;
-            for (int i = 0; i < XHCI_RING_ITEMS; i++) {
-                struct xhci_trb *e = &evts->ring[i];
-                if (e->control || e->status || e->ptr_low || e->ptr_high) {
-                    printk("Event[%d]: [%08x %08x %08x %08x] C=%d\n", i,
-                           e->ptr_low, e->ptr_high, e->status, e->control,
-                           !!(e->control & TRB_C));
-                }
-            }
-            printk("Event ring nidx = %d\n", evts->nidx);
             ring->eidx = ring->nidx;
             return CC_USB_TRANSACTION_ERROR;
         }
@@ -1170,10 +1160,7 @@ xhci_alloc_pipe(struct usbdevice_s *usbdev,
         epid += (epdesc->bEndpointAddress & USB_DIR_IN) ? 1 : 0;
     }
 
-    if (eptype == USB_ENDPOINT_XFER_CONTROL)
-        pipe = alloc_frames_bytes_dma32(sizeof(*pipe));
-    else
-        pipe = alloc_frames_bytes_dma32(sizeof(*pipe));
+    pipe = alloc_frames_bytes_dma32(sizeof(*pipe));
     if (!pipe) {
         return NULL;
     }
@@ -1195,10 +1182,10 @@ xhci_alloc_pipe(struct usbdevice_s *usbdev,
     if (eptype == USB_ENDPOINT_XFER_INT)
         ep->ctx[0] = (usb_get_period(usbdev, epdesc) + 3) << 16;
     ep->ctx[1] |= eptype << 3;
-    if (epdesc->bEndpointAddress & USB_DIR_IN ||
+    if ((epdesc->bEndpointAddress & USB_DIR_IN) ||
         eptype == USB_ENDPOINT_XFER_CONTROL)
         ep->ctx[1] |= 1 << 5;
-    ep->ctx[1] |= pipe->pipe.maxpacket << 16;
+    ep->ctx[1] |= (uint32_t)pipe->pipe.maxpacket << 16;
     uint64_t deq = translate_address(get_current_page_dir(false),
                                      (uint64_t)&pipe->reqs.ring[0]);
     ep->deq_low = deq;
@@ -1240,6 +1227,7 @@ xhci_alloc_pipe(struct usbdevice_s *usbdev,
 
         int cc = xhci_cmd_address_device(xhci, slotid, in);
         if (cc != CC_SUCCESS) {
+            printk("XHCI address device failed!!!\n");
             xhci_cmd_disable_slot(xhci, slotid);
             xhci->devs[slotid].ptr_low = 0;
             xhci->devs[slotid].ptr_high = 0;
@@ -1254,6 +1242,7 @@ xhci_alloc_pipe(struct usbdevice_s *usbdev,
         // Send configure command.
         int cc = xhci_cmd_configure_endpoint(xhci, pipe->slotid, in);
         if (cc != CC_SUCCESS) {
+            printk("XHCI configure endpoint failed!!!\n");
             goto fail;
         }
     }
@@ -1395,7 +1384,7 @@ int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data,
             return 0;
         }
 
-        xhci_xfer_setup(pipe, dir, cmd, data, datalen);
+        xhci_xfer_setup(pipe, dir, (void *)cmd, data, datalen);
     } else {
         xhci_xfer_normal(pipe, data, datalen);
     }

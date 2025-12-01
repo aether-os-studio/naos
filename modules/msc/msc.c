@@ -70,7 +70,7 @@ static int msc_reset_recovery(usb_msc_device *dev) {
         .bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
         .bRequest = 0xFF,
         .wValue = 0,
-        .wIndex = dev->udev->iface->bInterfaceNumber,
+        .wIndex = dev->iface->iface->bInterfaceNumber,
         .wLength = 0};
 
     int ret = usb_send_default_control(dev->udev->defpipe, &reset_req, NULL);
@@ -536,7 +536,8 @@ uint64_t usb_msc_write_blocks(void *dev_ptr, uint64_t lba, void *buf,
     }
 }
 
-int usb_msc_setup(struct usbdevice_s *usbdev) {
+int usb_msc_setup(struct usbdevice_s *usbdev,
+                  struct usbdevice_a_interface *iface) {
     printk("MSC: Initializing device\n");
 
     usb_msc_device *dev = malloc(sizeof(usb_msc_device));
@@ -547,13 +548,14 @@ int usb_msc_setup(struct usbdevice_s *usbdev) {
 
     memset(dev, 0, sizeof(*dev));
     dev->udev = usbdev;
+    dev->iface = iface;
     dev->lun = 0;
     usbdev->desc = dev;
 
     struct usb_endpoint_descriptor *indesc =
-        usb_find_desc(usbdev, USB_ENDPOINT_XFER_BULK, USB_DIR_IN);
+        usb_find_desc(iface, USB_ENDPOINT_XFER_BULK, USB_DIR_IN);
     struct usb_endpoint_descriptor *outdesc =
-        usb_find_desc(usbdev, USB_ENDPOINT_XFER_BULK, USB_DIR_OUT);
+        usb_find_desc(iface, USB_ENDPOINT_XFER_BULK, USB_DIR_OUT);
 
     if (!indesc || !outdesc) {
         printk("MSC: Endpoints not found\n");
@@ -627,8 +629,10 @@ int usb_msc_setup(struct usbdevice_s *usbdev) {
 
 fail:
     if (dev) {
-        usb_free_pipe(usbdev, dev->bulk_in);
-        usb_free_pipe(usbdev, dev->bulk_out);
+        if (dev->bulk_in)
+            usb_free_pipe(usbdev, dev->bulk_in);
+        if (dev->bulk_out)
+            usb_free_pipe(usbdev, dev->bulk_out);
         free(dev);
     }
     return -1;

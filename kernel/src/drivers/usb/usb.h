@@ -30,16 +30,20 @@ struct usb_pipe {
     uint8_t eptype;
 };
 
+struct usbdevice_a_interface {
+    struct usb_interface_descriptor *iface;
+};
+
 // Common information for usb devices.
 struct usbdevice_s {
     struct usbhub_s *hub;
     struct usb_pipe *defpipe;
     uint32_t port;
+    struct usbdevice_a_interface *ifaces;
+    int ifaces_num;
     struct usb_config_descriptor *config;
-    struct usb_interface_descriptor *iface;
     uint16_t productid;
     uint16_t vendorid;
-    int imax;
     uint8_t speed;
     uint8_t devaddr;
     void *desc;
@@ -317,8 +321,8 @@ void usb_desc2pipe(struct usb_pipe *pipe, struct usbdevice_s *usbdev,
 int usb_get_period(struct usbdevice_s *usbdev,
                    struct usb_endpoint_descriptor *epdesc);
 int usb_xfer_time(struct usb_pipe *pipe, int datalen);
-struct usb_endpoint_descriptor *usb_find_desc(struct usbdevice_s *usbdev,
-                                              int type, int dir);
+struct usb_endpoint_descriptor *
+usb_find_desc(struct usbdevice_a_interface *iface, int type, int dir);
 void usb_enumerate(struct usbhub_s *hub);
 
 #define MAX_USBDEV_NUM 256
@@ -328,7 +332,8 @@ typedef struct usb_driver {
     uint8_t subclass;
     uint16_t vendorid;
     uint16_t productid;
-    int (*probe)(struct usbdevice_s *usbdev);
+    int (*probe)(struct usbdevice_s *usbdev,
+                 struct usbdevice_a_interface *iface);
     int (*remove)(struct usbdevice_s *usbdev);
 } usb_driver_t;
 

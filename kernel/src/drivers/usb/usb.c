@@ -147,11 +147,14 @@ int usb_xfer_time(struct usb_pipe *pipe, int datalen) {
 }
 
 // Find the first endpoint of a given type in an interface description.
-struct usb_endpoint_descriptor *usb_find_desc(struct usbdevice_s *usbdev,
-                                              int type, int dir) {
-    struct usb_endpoint_descriptor *epdesc = (void *)&usbdev->iface[1];
+struct usb_endpoint_descriptor *
+usb_find_desc(struct usbdevice_a_interface *iface, int type, int dir) {
+    struct usb_interface_descriptor *iface_desc = iface->iface;
+    struct usb_endpoint_descriptor *epdesc = (void *)&iface_desc[1];
     for (;;) {
-        if ((void *)epdesc >= (void *)usbdev->iface + usbdev->imax ||
+        if ((void *)epdesc >=
+                (void *)epdesc + iface->iface->bNumEndpoints *
+                                     sizeof(struct usb_endpoint_descriptor) ||
             epdesc->bDescriptorType == USB_DT_INTERFACE) {
             return NULL;
         }
@@ -276,24 +279,35 @@ static int usb_set_address(struct usbdevice_s *usbdev) {
     return 0;
 }
 
-usb_driver_t *usb_find_driver(struct usbdevice_s *usbdev) {
-    printk("Finding usb driver for class %#04lx\n",
-           usbdev->iface->bInterfaceClass);
-    for (int i = 0; i < MAX_USBDEV_NUM; i++) {
-        if (usb_drivers[i]) {
-            if (usbdev->iface->bInterfaceClass == USB_CLASS_VENDOR_SPEC) {
-                if (usb_drivers[i]->vendorid == usbdev->vendorid) {
-                    return usb_drivers[i];
-                }
-            } else {
-                if (usb_drivers[i]->class == usbdev->iface->bInterfaceClass) {
-                    return usb_drivers[i];
+int usb_init_driver(struct usbdevice_s *usbdev) {
+    int iface_n;
+    for (iface_n = 0; iface_n < usbdev->ifaces_num; iface_n++) {
+        struct usbdevice_a_interface *iface = &usbdev->ifaces[iface_n];
+
+        for (int i = 0; i < MAX_USBDEV_NUM; i++) {
+            if (usb_drivers[i]) {
+                if (iface->iface->bInterfaceClass == USB_CLASS_VENDOR_SPEC) {
+                    if (usb_drivers[i]->vendorid == usbdev->vendorid) {
+                        if (usb_drivers[i]->probe(usbdev, iface) < 0)
+                            return -1;
+                        break;
+                    }
+                } else {
+                    if (usb_drivers[i]->class ==
+                        iface->iface->bInterfaceClass) {
+                        if (usb_drivers[i]->probe(usbdev, iface) < 0)
+                            return -1;
+                        break;
+                    }
                 }
             }
         }
     }
 
-    return NULL;
+    if (iface_n != usbdev->ifaces_num)
+        return -1;
+
+    return 0;
 }
 
 // Called for every found device - see if a driver is available for
@@ -355,24 +369,25 @@ static int configure_usb_device(struct usbdevice_s *usbdev) {
     // Determine if a driver exists for this device - only look at the
     // interfaces of the first configuration.
     int num_iface = config->bNumInterfaces;
+    usbdev->ifaces = malloc(sizeof(struct usbdevice_a_interface) * num_iface);
+    usbdev->ifaces_num = 0;
     void *config_end = (void *)config + config->wTotalLength;
     struct usb_interface_descriptor *iface = (void *)(&config[1]);
     for (;;) {
-        if (!num_iface || (void *)iface + iface->bLength > config_end) {
-            printk("Device not support\n");
-            goto fail;
+        if (!num_iface || (void *)iface > config_end) {
+            break;
         }
         if (iface->bDescriptorType == USB_DT_INTERFACE) {
             num_iface--;
             if (iface->bInterfaceClass == USB_CLASS_VENDOR_SPEC ||
                 iface->bInterfaceClass == USB_CLASS_HUB ||
                 (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE &&
-                 (iface->bInterfaceProtocol == US_PR_BULK ||
-                  iface->bInterfaceProtocol == US_PR_UAS)) ||
+                 iface->bInterfaceProtocol == US_PR_BULK) ||
                 (iface->bInterfaceClass == USB_CLASS_HID &&
-                 iface->bInterfaceSubClass == USB_INTERFACE_SUBCLASS_BOOT))
-                break;
-            else {
+                 iface->bInterfaceSubClass == USB_INTERFACE_SUBCLASS_BOOT)) {
+                usbdev->ifaces[usbdev->ifaces_num].iface = iface;
+                usbdev->ifaces_num++;
+            } else {
                 printk("Unupported interface class %d\n",
                        iface->bInterfaceClass);
             }
@@ -392,8 +407,6 @@ static int configure_usb_device(struct usbdevice_s *usbdev) {
 
     // Configure driver.
     usbdev->config = config;
-    usbdev->iface = iface;
-    usbdev->imax = (void *)config + config->wTotalLength - (void *)iface;
     // if (iface->bInterfaceClass == USB_CLASS_HUB)
     //     ret = usb_hub_setup(usbdev);
     // else if (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE) {
@@ -404,15 +417,7 @@ static int configure_usb_device(struct usbdevice_s *usbdev) {
     // } else
     //     ret = usb_hid_setup(usbdev);
 
-    usb_driver_t *driver = usb_find_driver(usbdev);
-    if (!driver) {
-        printk("Failed select best driver for usb device, "
-               "usbdev->iface->bInterfaceClass = %d\n",
-               usbdev->iface->bInterfaceClass);
-        goto fail;
-    }
-
-    if (driver->probe(usbdev)) {
+    if (usb_init_driver(usbdev) < 0) {
         printk("Failed probe usb device\n");
         goto fail;
     }

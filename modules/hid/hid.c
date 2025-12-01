@@ -53,6 +53,7 @@ struct keyevent {
 static void usb_check_key(struct hiddevice_s *hid);
 
 static int usb_kbd_setup(struct usbdevice_s *usbdev,
+                         struct usbdevice_a_interface *iface,
                          struct usb_endpoint_descriptor *epdesc) {
     if (epdesc->wMaxPacketSize < sizeof(struct keyevent) ||
         epdesc->wMaxPacketSize > MAX_KBD_EVENT) {
@@ -60,7 +61,7 @@ static int usb_kbd_setup(struct usbdevice_s *usbdev,
     }
 
     // Enable "boot" protocol.
-    if (set_protocol(usbdev->defpipe, 0, usbdev->iface->bInterfaceNumber)) {
+    if (set_protocol(usbdev->defpipe, 0, iface->iface->bInterfaceNumber)) {
         return -1;
     }
 
@@ -76,9 +77,10 @@ static int usb_kbd_setup(struct usbdevice_s *usbdev,
     }
     hid->xfer_ok = false;
 
-    dev_input_event_t *event =
-        regist_input_dev("usbkbd", "/sys/devices/usb/input0",
-                         "ID_INPUT_KEYBOARD=1", kb_event_bit);
+    printk("Setting up USB keyboard\n");
+
+    dev_input_event_t *event = regist_input_dev(
+        "input-usb-hid", "ID_INPUT_KEYBOARD=1", INPUT_FROM_USB, kb_event_bit);
     set_kb_input_event(event);
 
     task_create("usb_check_key", (void (*)(uint64_t))usb_check_key,
@@ -86,34 +88,6 @@ static int usb_kbd_setup(struct usbdevice_s *usbdev,
 
     return 0;
 }
-
-// // Format of USB mouse event data
-// struct mouseevent
-// {
-//     uint8_t buttons;
-//     uint8_t x, y;
-// };
-
-// #define MAX_MOUSE_EVENT 8
-
-// static int usb_mouse_setup(struct usbdevice_s *usbdev, struct
-// usb_endpoint_descriptor *epdesc)
-// {
-//     if (epdesc->wMaxPacketSize < sizeof(struct mouseevent) ||
-//     epdesc->wMaxPacketSize > MAX_MOUSE_EVENT)
-//     {
-//         return -1;
-//     }
-
-//     // Enable "boot" protocol.
-//     if (set_protocol(usbdev->defpipe, 0, usbdev->iface->bInterfaceNumber))
-//         return -1;
-
-//     if (add_pipe_node(&mice, usbdev, epdesc))
-//         return -1;
-
-//     return 0;
-// }
 
 /****************************************************************
  * Keyboard events
@@ -158,14 +132,30 @@ struct usbkeyinfo LastUSBkey;
 
 // Process USB keyboard data.
 static void handle_key(struct keyevent *data) {
-    static bool ctrlPressed = false;
-    static bool shiftPressed = false;
+    // 修饰键状态追踪
+    typedef struct {
+        bool pressed;        // 当前是否按下
+        uint8_t repeatcount; // 重复计数器
+        uint16_t scancode;   // 对应的扫描码
+    } ModifierState;
+
+    static ModifierState modifiers[8] = {
+        {false, 0xff, 0x1D},   // [0] Left Ctrl
+        {false, 0xff, 0x2A},   // [1] Left Shift
+        {false, 0xff, 0x38},   // [2] Left Alt
+        {false, 0xff, 0xE05B}, // [3] Left GUI (Win/Cmd)
+        {false, 0xff, 0xE01D}, // [4] Right Ctrl
+        {false, 0xff, 0x36},   // [5] Right Shift
+        {false, 0xff, 0xE038}, // [6] Right Alt
+        {false, 0xff, 0xE05C}, // [7] Right GUI
+    };
 
     struct usbkeyinfo old;
     old.data = LastUSBkey.data;
 
     int addpos = 0;
     int i;
+
     for (i = 0; i < ARRAY_SIZE(old.keys); i++) {
         uint8_t key = old.keys[i];
         if (!key)
@@ -173,16 +163,16 @@ static void handle_key(struct keyevent *data) {
         int j;
         for (j = 0;; j++) {
             if (j >= ARRAY_SIZE(data->keys)) {
-                // Key released.
-                // procscankey(key, RELEASEBIT, data->modifiers);
-                // printk("Key released\n");
+                // 按键已释放 - 发送释放事件
+                uint16_t scancode = KeyToScanCode[key];
+                handle_kb_scancode(scancode, false);
+
                 if (i + 1 >= ARRAY_SIZE(old.keys) || !old.keys[i + 1])
-                    // Last pressed key released - disable repeat.
                     old.repeatcount = 0xff;
                 break;
             }
             if (data->keys[j] == key) {
-                // Key still pressed.
+                // 按键仍在按下
                 data->keys[j] = 0;
                 old.keys[addpos++] = key;
                 break;
@@ -192,35 +182,63 @@ static void handle_key(struct keyevent *data) {
 
     old.modifiers = data->modifiers;
 
-    bool shift = (data->modifiers & (0x02 | 0x20)) != 0;
-    if (shift && !shiftPressed) {
-        handle_kb_scancode(0x2A, true);
-        shiftPressed = true;
-    } else if (!shift && shiftPressed) {
-        handle_kb_scancode(0x2A, false);
-        shiftPressed = false;
+    for (i = 0; i < 8; i++) {
+        bool currentPressed = (data->modifiers & (1 << i)) != 0;
+        ModifierState *mod = &modifiers[i];
+
+        if (currentPressed && !mod->pressed) {
+            // 修饰键按下
+            handle_kb_scancode(mod->scancode, true);
+            mod->pressed = true;
+            mod->repeatcount = KEYREPEATWAITMS / KEYREPEATMS + 1;
+
+        } else if (!currentPressed && mod->pressed) {
+            // 修饰键释放
+            handle_kb_scancode(mod->scancode, false);
+            mod->pressed = false;
+            mod->repeatcount = 0xff;
+
+        } else if (currentPressed && mod->pressed) {
+            // 修饰键持续按下 - 处理重复
+            if (mod->repeatcount == 0) {
+                // 触发重复事件
+                handle_kb_scancode(mod->scancode, true);
+                mod->repeatcount = 1; // 连续重复间隔
+            } else if (mod->repeatcount != 0xff) {
+                mod->repeatcount--;
+            }
+        }
     }
 
     for (i = 0; i < ARRAY_SIZE(data->keys); i++) {
         uint8_t key = data->keys[i];
         if (!key)
             continue;
-        // New key pressed.
+        // 新按键按下
         uint16_t scancode = KeyToScanCode[key];
         handle_kb_scancode(scancode, true);
-        handle_kb_scancode(scancode, false);
 
         old.keys[addpos++] = key;
         old.repeatcount = KEYREPEATWAITMS / KEYREPEATMS + 1;
     }
+
     if (addpos < ARRAY_SIZE(old.keys))
         old.keys[addpos] = 0;
 
-    // Check for key repeat event.
     if (addpos) {
-        if (!old.repeatcount) {
-        } else if (old.repeatcount != 0xff)
+        if (old.repeatcount == 0) {
+            // 触发重复事件 - 重复最后一个按键
+            uint8_t repeat_key = old.keys[addpos - 1];
+            uint16_t scancode = KeyToScanCode[repeat_key];
+
+            // 发送重复按键事件
+            handle_kb_scancode(scancode, true);
+
+            // 重置计数器用于连续重复
+            old.repeatcount = 1;
+        } else if (old.repeatcount != 0xff) {
             old.repeatcount--;
+        }
     }
 
     LastUSBkey.data = old.data;
@@ -242,7 +260,6 @@ static void usb_check_key(struct hiddevice_s *hid) {
             break;
 
         while (!hid->xfer_ok) {
-            arch_enable_interrupt();
             arch_yield();
         }
         hid->xfer_ok = false;
@@ -281,7 +298,6 @@ static void usb_check_mouse(struct hiddevice_s *hid) {
             break;
 
         while (!hid->xfer_ok) {
-            arch_enable_interrupt();
             arch_yield();
         }
         hid->xfer_ok = false;
@@ -291,6 +307,7 @@ static void usb_check_mouse(struct hiddevice_s *hid) {
 }
 
 static int usb_mouse_setup(struct usbdevice_s *usbdev,
+                           struct usbdevice_a_interface *iface,
                            struct usb_endpoint_descriptor *epdesc) {
     if (epdesc->wMaxPacketSize < sizeof(struct mouseevent) ||
         epdesc->wMaxPacketSize > MAX_MOUSE_EVENT) {
@@ -300,7 +317,7 @@ static int usb_mouse_setup(struct usbdevice_s *usbdev,
     }
 
     // Enable "boot" protocol.
-    if (set_protocol(usbdev->defpipe, 0, usbdev->iface->bInterfaceNumber))
+    if (set_protocol(usbdev->defpipe, 0, iface->iface->bInterfaceNumber))
         return -1;
 
     struct hiddevice_s *hid = malloc(sizeof(struct hiddevice_s));
@@ -311,9 +328,10 @@ static int usb_mouse_setup(struct usbdevice_s *usbdev,
     }
     hid->xfer_ok = false;
 
-    dev_input_event_t *event =
-        regist_input_dev("usbmouse", "/sys/devices/usb/input1",
-                         "ID_INPUT_MOUSE=1", mouse_event_bit);
+    printk("Setting up USB mouse\n");
+
+    dev_input_event_t *event = regist_input_dev(
+        "input-usb-hid", "ID_INPUT_MOUSE=1", INPUT_FROM_USB, mouse_event_bit);
     set_mouse_input_event(event);
 
     task_create("usb_check_mouse", (void (*)(uint64_t))usb_check_mouse,
@@ -323,23 +341,26 @@ static int usb_mouse_setup(struct usbdevice_s *usbdev,
 }
 
 // Initialize a found USB HID device (if applicable).
-int usb_hid_setup(struct usbdevice_s *usbdev) {
-    struct usb_interface_descriptor *iface = usbdev->iface;
-    if (iface->bInterfaceSubClass != USB_INTERFACE_SUBCLASS_BOOT)
+int usb_hid_setup(struct usbdevice_s *usbdev,
+                  struct usbdevice_a_interface *iface) {
+    struct usb_interface_descriptor *i = iface->iface;
+    if (i->bInterfaceSubClass != USB_INTERFACE_SUBCLASS_BOOT)
         // Doesn't support boot protocol.
         return -1;
 
     // Find intr in endpoint.
     struct usb_endpoint_descriptor *epdesc =
-        usb_find_desc(usbdev, USB_ENDPOINT_XFER_INT, USB_DIR_IN);
+        usb_find_desc(iface, USB_ENDPOINT_XFER_INT, USB_DIR_IN);
     if (!epdesc) {
+        printk("HID: Cannot find epdesc for interrupt transfer\n");
         return -1;
     }
 
-    if (iface->bInterfaceProtocol == USB_INTERFACE_PROTOCOL_KEYBOARD)
-        return usb_kbd_setup(usbdev, epdesc);
-    if (iface->bInterfaceProtocol == USB_INTERFACE_PROTOCOL_MOUSE)
-        return usb_mouse_setup(usbdev, epdesc);
+    if (i->bInterfaceProtocol == USB_INTERFACE_PROTOCOL_KEYBOARD)
+        return usb_kbd_setup(usbdev, iface, epdesc);
+    if (i->bInterfaceProtocol == USB_INTERFACE_PROTOCOL_MOUSE)
+        return usb_mouse_setup(usbdev, iface, epdesc);
+
     return -1;
 }
 
