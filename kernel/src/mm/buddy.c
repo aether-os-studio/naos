@@ -3,6 +3,8 @@
 
 extern Bitmap usable_regions;
 
+Bitmap using_regions;
+
 const char *zone_names[__MAX_NR_ZONES] = {
 #if defined(__x86_64__)
     "DMA",
@@ -451,6 +453,9 @@ void buddy_init(void) {
     uint64_t dma_end_pfn = MIN(max_pfn, ZONE_DMA_END / DEFAULT_PAGE_SIZE);
     uint64_t dma32_end_pfn = MIN(max_pfn, ZONE_DMA32_END / DEFAULT_PAGE_SIZE);
 
+    void *ptr = early_alloc((max_pfn + 7) / 8);
+    bitmap_init(&using_regions, ptr, (max_pfn + 7) / 8);
+
 #if defined(__x86_64__)
     // ZONE_DMA
     zones[ZONE_DMA] = (zone_t *)early_alloc(sizeof(zone_t));
@@ -561,30 +566,34 @@ uintptr_t alloc_frames(size_t count) {
     if (count == 0)
         return 0;
 
+    uintptr_t addr = 0;
+
     // 优先尝试 NORMAL zone
     if (zones[ZONE_NORMAL] && zone_has_memory(zones[ZONE_NORMAL])) {
-        uintptr_t addr = buddy_alloc_zone(zones[ZONE_NORMAL], count);
+        addr = buddy_alloc_zone(zones[ZONE_NORMAL], count);
         if (addr != 0)
-            return addr;
+            goto ret;
     }
 
     // 回退到 DMA32
     if (zones[ZONE_DMA32] && zone_has_memory(zones[ZONE_DMA32])) {
-        uintptr_t addr = buddy_alloc_zone(zones[ZONE_DMA32], count);
+        addr = buddy_alloc_zone(zones[ZONE_DMA32], count);
         if (addr != 0)
-            return addr;
+            goto ret;
     }
 
 #if defined(__x86_64__)
     // 回退到 DMA
     if (zones[ZONE_DMA] && zone_has_memory(zones[ZONE_DMA])) {
-        uintptr_t addr = buddy_alloc_zone(zones[ZONE_DMA], count);
+        addr = buddy_alloc_zone(zones[ZONE_DMA], count);
         if (addr != 0)
-            return addr;
+            goto ret;
     }
 #endif
 
-    return 0;
+ret:
+    bitmap_set(&usable_regions, addr / DEFAULT_PAGE_SIZE, true);
+    return addr;
 }
 
 void free_frames(uintptr_t addr, size_t count) {
@@ -593,6 +602,8 @@ void free_frames(uintptr_t addr, size_t count) {
 
     uint64_t idx = addr / DEFAULT_PAGE_SIZE;
     if (bitmap_get(&usable_regions, idx) == false)
+        return;
+    if (bitmap_get(&using_regions, idx) == false)
         return;
 
     // 确定地址属于哪个 zone
@@ -610,6 +621,7 @@ void free_frames(uintptr_t addr, size_t count) {
 
     spin_lock(&zone->allocator.lock);
     buddy_free_zone(zone, addr, order);
+    bitmap_set(&using_regions, idx, false);
     spin_unlock(&zone->allocator.lock);
 }
 
@@ -617,24 +629,27 @@ uintptr_t alloc_frames_dma32(size_t count) {
     if (count == 0)
         return 0;
 
-    // 优先 DMA32
+    uintptr_t addr = 0;
+
+    // DMA32
     if (zones[ZONE_DMA32] && zone_has_memory(zones[ZONE_DMA32])) {
-        uintptr_t addr = buddy_alloc_zone(zones[ZONE_DMA32], count);
+        addr = buddy_alloc_zone(zones[ZONE_DMA32], count);
         if (addr != 0)
-            return addr;
+            goto ret;
     }
 
 #if defined(__x86_64__)
     // 回退到 DMA
     if (zones[ZONE_DMA] && zone_has_memory(zones[ZONE_DMA])) {
-        uintptr_t addr = buddy_alloc_zone(zones[ZONE_DMA], count);
+        addr = buddy_alloc_zone(zones[ZONE_DMA], count);
         if (addr != 0)
-            return addr;
+            goto ret;
     }
 #endif
 
-    // 不能从 NORMAL 分配（地址可能超过 4GB）
-    return 0;
+ret:
+    bitmap_set(&usable_regions, addr / DEFAULT_PAGE_SIZE, true);
+    return addr;
 }
 
 void free_frames_dma32(uintptr_t addr, size_t count) {

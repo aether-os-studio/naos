@@ -3,6 +3,59 @@
 #include <fs/vfs/vfs.h>
 #include <task/task.h>
 
+static uint64_t find_unmapped_area(vma_manager_t *mgr, uint64_t hint,
+                                   uint64_t len) {
+    uint64_t addr;
+
+    if (hint) {
+        hint = PADDING_UP(hint, DEFAULT_PAGE_SIZE);
+        if (hint + len <= USER_MMAP_END &&
+            !vma_find_intersection(mgr, hint, hint + len)) {
+            return hint;
+        }
+    }
+
+    addr = mgr->last_alloc_addr;
+    if (addr < USER_MMAP_START)
+        addr = USER_MMAP_START;
+
+    vma_t *vma = mgr->vma_list;
+
+    // 跳到第一个可能相关的 VMA
+    while (vma && vma->vm_end <= addr) {
+        vma = vma->vm_next;
+    }
+
+    while (vma) {
+        uint64_t gap_start =
+            vma->vm_prev ? vma->vm_prev->vm_end : USER_MMAP_START;
+        uint64_t gap_end = vma->vm_start;
+
+        if (gap_start < addr)
+            gap_start = addr;
+
+        if (gap_end > gap_start && gap_end - gap_start >= len) {
+            return gap_start;
+        }
+
+        addr = vma->vm_end;
+        vma = vma->vm_next;
+    }
+
+    vma_t *last = mgr->vma_list;
+    while (last && last->vm_next)
+        last = last->vm_next;
+
+    addr = last ? last->vm_end : USER_MMAP_START;
+    if (addr < mgr->last_alloc_addr)
+        addr = mgr->last_alloc_addr;
+
+    if (addr + len <= USER_MMAP_END)
+        return addr;
+
+    return (uint64_t)-ENOMEM;
+}
+
 uint64_t sys_brk(uint64_t brk) {
     brk = (brk + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1);
 
@@ -86,7 +139,7 @@ uint64_t sys_brk(uint64_t brk) {
         //     vma->vm_end = brk;
         //     vma->vm_flags = VMA_READ | VMA_WRITE | VMA_ANON;
         //     vma->vm_type = VMA_TYPE_ANON;
-        //     vma->vm_fd = -1;
+        //     vma->node = NULL;
         //     vma->vm_name = strdup("[heap]");
 
         //     if (vma_insert(&current_task->arch_context->mm->task_vma_mgr,
@@ -123,6 +176,9 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
 
     spin_lock(&mgr->lock);
 
+    if (flags & MAP_FIXED_NOREPLACE)
+        flags |= MAP_FIXED;
+
     uint64_t start_addr;
     if (flags & MAP_FIXED) {
         if (!addr) {
@@ -131,31 +187,18 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         }
 
         start_addr = (uint64_t)addr;
-    } else {
-        if (addr) {
-            start_addr = (uint64_t)addr;
-            // 检查地址是否可用
-            if (vma_find_intersection(mgr, start_addr,
-                                      start_addr + aligned_len)) {
-                spin_unlock(&mgr->lock);
-                return (uint64_t)-ENOMEM;
-            }
-        } else {
-        retry:
-            start_addr = mgr->last_alloc_addr;
-            while (vma_find_intersection(mgr, start_addr,
-                                         start_addr + aligned_len)) {
-                start_addr += DEFAULT_PAGE_SIZE;
-                if (start_addr > USER_MMAP_END) {
-                    if (mgr->last_alloc_addr != USER_MMAP_START) {
-                        mgr->last_alloc_addr = USER_MMAP_START;
-                        goto retry;
-                    }
-                    spin_unlock(&mgr->lock);
-                    return (uint64_t)-ENOMEM;
-                }
-            }
+
+        vma_t *region =
+            vma_find_intersection(mgr, start_addr, start_addr + aligned_len);
+        if (region) {
+            if (flags & MAP_FIXED_NOREPLACE)
+                return (uint64_t)-EEXIST;
+            sys_munmap(start_addr, aligned_len);
         }
+    } else {
+        start_addr = find_unmapped_area(mgr, addr, aligned_len);
+        if (start_addr > (uint64_t)-4095UL)
+            return start_addr;
     }
 
     if (!(flags & MAP_ANONYMOUS)) {
@@ -163,12 +206,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
             spin_unlock(&mgr->lock);
             return (uint64_t)-EBADF;
         }
-    }
-
-    vma_t *region;
-    while ((region = vma_find_intersection(mgr, start_addr,
-                                           start_addr + aligned_len))) {
-        vma_unmap_range(mgr, start_addr, start_addr + aligned_len);
     }
 
     vma_t *vma = vma_alloc();
@@ -199,6 +236,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         vfs_node_t node = current_task->fd_info->fds[fd]->node;
         vma->node = node;
         node->refcount++;
+        vma->vm_name = vfs_get_fullpath(node);
         vma->vm_offset = offset;
     }
 
@@ -209,7 +247,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
     }
 
     if (!(flags & MAP_FIXED) && !addr)
-        mgr->last_alloc_addr = start_addr;
+        mgr->last_alloc_addr = start_addr + aligned_len;
 
     spin_unlock(&mgr->lock);
 
@@ -217,8 +255,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         uint64_t ret =
             (uint64_t)vfs_map(current_task->fd_info->fds[fd], start_addr,
                               aligned_len, prot, flags, offset);
-
-        vma->vm_name = vfs_get_fullpath(current_task->fd_info->fds[fd]->node);
 
         return ret;
     } else {
@@ -244,48 +280,46 @@ uint64_t sys_munmap(uint64_t addr, uint64_t size) {
         return -EINVAL;
     }
 
-    // vma_t *vma = mgr->vma_list;
-    // vma_t *next;
+    vma_t *vma = mgr->vma_list;
+    vma_t *next;
 
-    // uint64_t start = addr;
-    // uint64_t end = addr + size;
+    uint64_t start = addr;
+    uint64_t end = addr + size;
 
-    // while (vma) {
-    //     next = vma->vm_next;
+    while (vma) {
+        next = vma->vm_next;
 
-    //     // 完全包含在要取消映射的范围内
-    //     if (vma->vm_start >= start && vma->vm_end <= end) {
-    //         vma_remove(mgr, vma);
-    //         vma_free(vma);
-    //     }
-    //     // 部分重叠 - 需要分割
-    //     else if (!(vma->vm_end <= start || vma->vm_start >= end)) {
-    //         if (vma->vm_start < start && vma->vm_end > end) {
-    //             // VMA跨越整个取消映射范围 - 分割成两部分
-    //             vma_split(vma, end);
-    //             vma_split(vma, start);
-    //             // 移除中间部分
-    //             vma_t *middle = vma->vm_next;
-    //             vma_remove(mgr, middle);
-    //             vma_free(middle);
-    //         } else if (vma->vm_start < start) {
-    //             // 截断VMA的末尾
-    //             vma->vm_end = start;
-    //         } else if (vma->vm_end > end) {
-    //             // 截断VMA的开头
-    //             vma->vm_start = end;
-    //             if (vma->vm_type == VMA_TYPE_FILE) {
-    //                 vma->vm_offset += end - vma->vm_start;
-    //             }
-    //         }
-    //     }
+        // 完全包含在要取消映射的范围内
+        if (vma->vm_start >= start && vma->vm_end <= end) {
+            vma_remove(mgr, vma);
+            vma_free(vma);
+        }
+        // 部分重叠 - 需要分割
+        else if (!(vma->vm_end <= start || vma->vm_start >= end)) {
+            if (vma->vm_start < start && vma->vm_end > end) {
+                // VMA跨越整个取消映射范围 - 分割成两部分
+                vma_split(vma, end);
+                vma_split(vma, start);
+                // 移除中间部分
+                vma_t *middle = vma->vm_next;
+                vma_remove(mgr, middle);
+                vma_free(middle);
+            } else if (vma->vm_start < start) {
+                // 截断VMA的末尾
+                vma->vm_end = start;
+            } else if (vma->vm_end > end) {
+                // 截断VMA的开头
+                vma->vm_start = end;
+                if (vma->vm_type == VMA_TYPE_FILE) {
+                    vma->vm_offset += end - vma->vm_start;
+                }
+            }
+        }
 
-    //     vma = next;
-    // }
+        vma = next;
+    }
 
-    // unmap_page_range(get_current_page_dir(true), start, end - start);
-
-    // mgr->last_alloc_addr = addr;
+    unmap_page_range(get_current_page_dir(true), start, end - start);
 
     return 0;
 }
@@ -314,167 +348,335 @@ uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
     return 0;
 }
 
-uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
-                    uint64_t flags, uint64_t new_addr) {
-    old_addr = old_addr & (~(DEFAULT_PAGE_SIZE - 1));
-    new_addr = new_addr & (~(DEFAULT_PAGE_SIZE - 1));
-    old_size = (old_size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
-    new_size = (new_size + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
-
-    vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
-
-    spin_lock(&mgr->lock);
-
-    vma_t *vma = vma_find(mgr, old_addr);
-    if (!vma) {
-        spin_unlock(&mgr->lock);
-        return (uint64_t)-EINVAL;
+static uint64_t mremap_shrink(vma_manager_t *mgr, vma_t *vma, uint64_t old_addr,
+                              uint64_t old_size, uint64_t new_size) {
+    if (new_size == 0) {
+        // 完全删除
+        vma_remove(mgr, vma);
+        unmap_page_range(get_current_page_dir(true), old_addr, old_size);
+        vma_free(vma);
+        return 0;
     }
 
-    // 验证整个旧区域都在 VMA 内
+    // 解除尾部映射
+    uint64_t unmap_start = old_addr + new_size;
+    uint64_t unmap_size = old_size - new_size;
+
+    unmap_page_range(get_current_page_dir(true), unmap_start, unmap_size);
+
+    // 调整 VMA（如果整个 VMA 就是这个映射）
+    if (vma->vm_start == old_addr && vma->vm_end == old_addr + old_size) {
+        mgr->vm_used -= unmap_size;
+        vma->vm_end = old_addr + new_size;
+    } else if (vma->vm_end == old_addr + old_size) {
+        // 缩小了 VMA 的一部分（末尾）
+        mgr->vm_used -= unmap_size;
+        // 需要分割或调整
+    }
+
+    return old_addr;
+}
+
+static uint64_t mremap_expand_inplace(vma_manager_t *mgr, vma_t *vma,
+                                      uint64_t old_addr, uint64_t old_size,
+                                      uint64_t new_size) {
     uint64_t old_end = old_addr + old_size;
-    if (old_addr < vma->vm_start || old_end > vma->vm_end) {
-        spin_unlock(&mgr->lock);
-        return (uint64_t)-EINVAL;
-    }
-
-    uint64_t old_addr_phys =
-        translate_address(get_current_page_dir(true), old_addr);
-
-    // 如果新大小更小，直接截断
-    if (new_size <= old_size) {
-        if (new_size < old_size) {
-            unmap_page_range(get_current_page_dir(true), old_addr + new_size,
-                             old_size - new_size);
-        }
-        spin_unlock(&mgr->lock);
-        return old_addr;
-    }
-
-    // 如果需要扩大，检查是否有足够空间
     uint64_t new_end = old_addr + new_size;
+    uint64_t expand_size = new_size - old_size;
 
-    // 尝试原地扩展
+    // 检查是否可以原地扩展
     bool can_expand = false;
 
+    // 情况1：扩展后仍在当前 VMA 内
     if (new_end <= vma->vm_end) {
-        // 扩展后仍在当前 VMA 范围内，直接允许
         can_expand = true;
-    } else {
-        // 需要扩展超出当前 VMA，检查是否有空间
-        if (!vma_find_intersection(mgr, vma->vm_end, new_end)) {
+    }
+    // 情况2：需要扩展超出 VMA，但后面没有其他映射
+    else if (old_end == vma->vm_end) {
+        if (!vma_find_intersection(mgr, old_end, new_end)) {
             can_expand = true;
         }
     }
 
-    if (can_expand) {
-        uint64_t pt_flags = PT_FLAG_U | PT_FLAG_W;
+    if (!can_expand)
+        return (uint64_t)-ENOMEM;
+
+    // 执行扩展
+    if (vma->vm_type == VMA_TYPE_FILE) {
+        // 文件映射：使用 vfs_map
+        uint64_t file_offset = vma->vm_offset + old_size;
+        uint64_t prot = 0;
 
         if (vma->vm_flags & VMA_READ)
-            pt_flags |= PT_FLAG_R;
+            prot |= PROT_READ;
+        if (vma->vm_flags & VMA_WRITE)
+            prot |= PROT_WRITE;
+        if (vma->vm_flags & VMA_EXEC)
+            prot |= PROT_EXEC;
+
+        // unmap_page_range(get_current_page_dir(true), old_addr, old_size);
+
+        fd_t fd;
+        fd.node = vma->node;
+        fd.flags = 0;
+        fd.offset = 0;
+
+        uint64_t ret = (uint64_t)vfs_map(
+            &fd, old_addr, new_size, prot,
+            (vma->vm_flags & VMA_SHARED) ? MAP_SHARED : MAP_PRIVATE, 0);
+        if (ret > (uint64_t)-4095UL)
+            return ret;
+
+    } else {
+        // 匿名映射：分配新物理页
+        uint64_t pt_flags = PT_FLAG_U;
+
         if (vma->vm_flags & VMA_WRITE)
             pt_flags |= PT_FLAG_W;
+        if (vma->vm_flags & VMA_READ)
+            pt_flags |= PT_FLAG_R;
         if (vma->vm_flags & VMA_EXEC)
             pt_flags |= PT_FLAG_X;
 
-        // 映射扩展的部分（从 old_end 到 new_end）
-        uint64_t expand_start = old_end;
-        uint64_t expand_size = new_end - old_end;
-        uint64_t expand_phys = old_addr_phys + old_size;
-
-        map_page_range(get_current_page_dir(true), expand_start, expand_phys,
-                       expand_size, pt_flags);
-
-        // 如果扩展超出了原 VMA，更新 VMA 的结束地址
-        if (new_end > vma->vm_end) {
-            vma->vm_end = new_end;
-        }
-
-        spin_unlock(&mgr->lock);
-        return old_addr;
+        // 映射新页（物理地址为 0 表示分配新页）
+        map_page_range(get_current_page_dir(true), old_end, 0, expand_size,
+                       pt_flags);
     }
 
-    if (flags & MREMAP_MAYMOVE) {
-    retry:
-        uint64_t start_addr = mgr->last_alloc_addr;
-        while (vma_find_intersection(mgr, start_addr, start_addr + new_size)) {
-            start_addr += DEFAULT_PAGE_SIZE;
-            if (start_addr > USER_MMAP_END) {
-                if (mgr->last_alloc_addr != USER_MMAP_START) {
-                    mgr->last_alloc_addr = USER_MMAP_START;
-                    goto retry;
-                }
-                spin_unlock(&mgr->lock);
-                return (uint64_t)-ENOMEM;
-            }
-        }
+    // 更新 VMA
+    if (new_end > vma->vm_end) {
+        mgr->vm_used += new_end - vma->vm_end;
+        vma->vm_end = new_end;
+    }
 
-        vma_t *new_vma = vma_alloc();
-        if (!new_vma) {
-            spin_unlock(&mgr->lock);
+    return old_addr;
+}
+
+static uint64_t mremap_move(vma_manager_t *mgr, vma_t *old_vma,
+                            uint64_t old_addr, uint64_t old_size,
+                            uint64_t new_size, uint64_t flags,
+                            uint64_t new_addr_hint) {
+    uint64_t new_addr;
+
+    // 1. 确定新地址
+    if (flags & MREMAP_FIXED) {
+        new_addr = new_addr_hint;
+
+        if (new_addr + new_size > USER_MMAP_END)
             return (uint64_t)-ENOMEM;
-        }
 
-        memcpy(new_vma, vma, sizeof(vma_t));
-        new_vma->vm_start = start_addr;
-        new_vma->vm_end = start_addr + new_size;
-        new_vma->vm_flags = vma->vm_flags;
+        // 类似 MAP_FIXED，需要先 unmap 冲突区域
+        vma_unmap_range(mgr, new_addr, new_addr + new_size);
 
-        if (vma_insert(mgr, new_vma) != 0) {
+    } else {
+        // 查找空闲地址
+        new_addr = find_unmapped_area(mgr, new_addr_hint, new_size);
+        if (new_addr > (uint64_t)-4095UL)
+            return new_addr;
+    }
+
+    // 2. 创建新 VMA
+    vma_t *new_vma = vma_alloc();
+    if (!new_vma)
+        return (uint64_t)-ENOMEM;
+
+    new_vma->vm_start = new_addr;
+    new_vma->vm_end = new_addr + new_size;
+    new_vma->vm_flags = old_vma->vm_flags;
+    new_vma->vm_type = old_vma->vm_type;
+    new_vma->node = old_vma->node;
+    new_vma->shm_id = old_vma->shm_id;
+    new_vma->vm_offset = old_vma->vm_offset;
+
+    // 增加引用计数
+    if (new_vma->node)
+        new_vma->node->refcount++;
+
+    // 复制名称
+    if (old_vma->vm_name)
+        new_vma->vm_name = strdup(old_vma->vm_name);
+
+    // 3. 插入新 VMA
+    if (vma_insert(mgr, new_vma) != 0) {
+        if (new_vma->node)
+            new_vma->node->refcount--;
+        if (new_vma->vm_name)
+            free(new_vma->vm_name);
+        vma_free(new_vma);
+        return (uint64_t)-ENOMEM;
+    }
+
+    // 4. 映射新区域并复制数据
+    uint64_t prot = 0;
+    if (old_vma->vm_flags & VMA_READ)
+        prot |= PROT_READ;
+    if (old_vma->vm_flags & VMA_WRITE)
+        prot |= PROT_WRITE;
+    if (old_vma->vm_flags & VMA_EXEC)
+        prot |= PROT_EXEC;
+
+    if (old_vma->vm_type == VMA_TYPE_FILE) {
+        // 文件映射：重新映射文件
+        fd_t fd;
+        fd.node = old_vma->node;
+        fd.flags = 0;
+        fd.offset = old_vma->vm_offset;
+
+        uint64_t ret = (uint64_t)vfs_map(
+            &fd, new_addr, new_size, prot,
+            (old_vma->vm_flags & VMA_SHARED) ? MAP_SHARED : MAP_PRIVATE,
+            old_vma->vm_offset);
+        if (ret > (uint64_t)-4095UL) {
+            vma_remove(mgr, new_vma);
+            if (new_vma->node)
+                new_vma->node->refcount--;
+            if (new_vma->vm_name)
+                free(new_vma->vm_name);
             vma_free(new_vma);
-            spin_unlock(&mgr->lock);
-            return (uint64_t)-ENOMEM;
+            return ret;
         }
 
-        uint64_t pt_flags = PT_FLAG_U | PT_FLAG_W;
-
-        if (vma->vm_flags & VMA_READ)
-            pt_flags |= PT_FLAG_R;
-        if (vma->vm_flags & VMA_WRITE)
+    } else {
+        // 匿名映射：分配新物理页并复制数据
+        uint64_t pt_flags = PT_FLAG_U;
+        if (old_vma->vm_flags & VMA_WRITE)
             pt_flags |= PT_FLAG_W;
-        if (vma->vm_flags & VMA_EXEC)
+        if (old_vma->vm_flags & VMA_READ)
+            pt_flags |= PT_FLAG_R;
+        if (old_vma->vm_flags & VMA_EXEC)
             pt_flags |= PT_FLAG_X;
 
-        if (!new_addr)
-            mgr->last_alloc_addr = start_addr;
+        // 分配新物理页
+        map_page_range(get_current_page_dir(true), new_addr, 0, new_size,
+                       pt_flags);
 
-        // 映射到原物理地址
-        map_page_range(get_current_page_dir(true), start_addr, old_addr_phys,
-                       new_size, pt_flags);
+        // 复制旧数据（只复制 old_size，新扩展部分保持清零）
+        memcpy((void *)new_addr, (void *)old_addr, old_size);
+    }
 
-        // 处理旧 VMA 的分割
-        if (old_addr == vma->vm_start && old_end == vma->vm_end) {
-            // 整个 VMA 被移动，直接删除
-            sys_munmap(old_addr, old_size);
-        } else if (old_addr == vma->vm_start) {
-            // 移动了 VMA 的前部，调整 VMA 起始地址
-            unmap_page_range(get_current_page_dir(true), old_addr, old_size);
-            vma->vm_start = old_end;
-        } else if (old_end == vma->vm_end) {
-            // 移动了 VMA 的后部，调整 VMA 结束地址
-            unmap_page_range(get_current_page_dir(true), old_addr, old_size);
-            vma->vm_end = old_addr;
+    // 5. 更新 last_alloc_addr
+    if (!(flags & MREMAP_FIXED)) {
+        mgr->last_alloc_addr = new_addr + new_size;
+    }
+
+    // 6. 处理旧区域
+    // 注意：这里需要考虑旧区域可能只是 VMA 的一部分
+    if (old_vma->vm_start == old_addr &&
+        old_vma->vm_end == old_addr + old_size) {
+        // 整个 VMA 被移动，直接删除
+        unmap_page_range(get_current_page_dir(true), old_addr, old_size);
+        vma_remove(mgr, old_vma);
+        vma_free(old_vma);
+
+    } else {
+        // 只移动了 VMA 的一部分，需要分割
+        unmap_page_range(get_current_page_dir(true), old_addr, old_size);
+
+        if (old_addr == old_vma->vm_start) {
+            // 移动了前部
+            mgr->vm_used -= old_size;
+            old_vma->vm_start = old_addr + old_size;
+            if (old_vma->vm_type == VMA_TYPE_FILE) {
+                old_vma->vm_offset += old_size;
+            }
+        } else if (old_addr + old_size == old_vma->vm_end) {
+            // 移动了尾部
+            mgr->vm_used -= old_size;
+            old_vma->vm_end = old_addr;
         } else {
-            // 移动了 VMA 的中间部分，需要分割成两个 VMA
+            // 移动了中间部分，分成两个 VMA
             vma_t *tail_vma = vma_alloc();
             if (tail_vma) {
-                memcpy(tail_vma, vma, sizeof(vma_t));
-                tail_vma->vm_start = old_end;
-                tail_vma->vm_end = vma->vm_end;
+                tail_vma->vm_start = old_addr + old_size;
+                tail_vma->vm_end = old_vma->vm_end;
+                tail_vma->vm_flags = old_vma->vm_flags;
+                tail_vma->vm_type = old_vma->vm_type;
+                tail_vma->node = old_vma->node;
+                tail_vma->shm_id = old_vma->shm_id;
+
+                if (tail_vma->node)
+                    tail_vma->node->refcount++;
+
+                if (old_vma->vm_type == VMA_TYPE_FILE) {
+                    tail_vma->vm_offset =
+                        old_vma->vm_offset +
+                        (old_addr + old_size - old_vma->vm_start);
+                }
+
+                if (old_vma->vm_name)
+                    tail_vma->vm_name = strdup(old_vma->vm_name);
+
                 vma_insert(mgr, tail_vma);
             }
-            unmap_page_range(get_current_page_dir(true), old_addr, old_size);
-            vma->vm_end = old_addr;
+
+            mgr->vm_used -= old_size;
+            old_vma->vm_end = old_addr;
         }
-
-        spin_unlock(&mgr->lock);
-
-        return start_addr;
     }
 
-    spin_unlock(&mgr->lock);
+    return new_addr;
+}
 
-    return (uint64_t)-ENOMEM;
+uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
+                    uint64_t flags, uint64_t new_addr) {
+    // 页对齐
+    uint64_t old_addr_aligned = old_addr & ~(DEFAULT_PAGE_SIZE - 1);
+    uint64_t new_addr_aligned = new_addr & ~(DEFAULT_PAGE_SIZE - 1);
+    uint64_t old_size_aligned = PADDING_UP(old_size, DEFAULT_PAGE_SIZE);
+    uint64_t new_size_aligned = PADDING_UP(new_size, DEFAULT_PAGE_SIZE);
+
+    // 参数检查
+    if (old_size == 0 || new_size == 0)
+        return (uint64_t)-EINVAL;
+
+    if (old_addr != old_addr_aligned)
+        return (uint64_t)-EINVAL;
+
+    // MREMAP_FIXED 必须配合 MREMAP_MAYMOVE
+    if ((flags & MREMAP_FIXED) && !(flags & MREMAP_MAYMOVE))
+        return (uint64_t)-EINVAL;
+
+    vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
+    spin_lock(&mgr->lock);
+
+    vma_t *vma = vma_find(mgr, old_addr_aligned);
+    if (!vma || vma->vm_start != old_addr_aligned) {
+        spin_unlock(&mgr->lock);
+        return (uint64_t)-EINVAL;
+    }
+
+    // 验证整个区域都在 VMA 内
+    if (old_addr_aligned + old_size_aligned > vma->vm_end) {
+        spin_unlock(&mgr->lock);
+        return (uint64_t)-EINVAL;
+    }
+
+    if (new_size_aligned <= old_size_aligned) {
+        uint64_t result = mremap_shrink(mgr, vma, old_addr_aligned,
+                                        old_size_aligned, new_size_aligned);
+        spin_unlock(&mgr->lock);
+        return result;
+    }
+
+    if (!(flags & MREMAP_FIXED)) {
+        uint64_t result = mremap_expand_inplace(
+            mgr, vma, old_addr_aligned, old_size_aligned, new_size_aligned);
+        if (result != (uint64_t)-ENOMEM) {
+            spin_unlock(&mgr->lock);
+            return result;
+        }
+    }
+
+    if (!(flags & MREMAP_MAYMOVE)) {
+        spin_unlock(&mgr->lock);
+        return (uint64_t)-ENOMEM;
+    }
+
+    uint64_t result = mremap_move(mgr, vma, old_addr_aligned, old_size_aligned,
+                                  new_size_aligned, flags, new_addr_aligned);
+
+    spin_unlock(&mgr->lock);
+    return result;
 }
 
 void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
@@ -512,23 +714,25 @@ uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
         return 0;
     }
 
-    uint64_t start_page = addr & (~(DEFAULT_PAGE_SIZE - 1));
-    uint64_t end_page = (addr + size - 1) & (~(DEFAULT_PAGE_SIZE - 1));
-    uint64_t num_pages = ((end_page - start_page) / DEFAULT_PAGE_SIZE) + 1;
+    uint64_t start_page_addr = addr & (~(DEFAULT_PAGE_SIZE - 1));
+    uint64_t end_page_addr = (addr + size - 1) & (~(DEFAULT_PAGE_SIZE - 1));
+    uint64_t num_pages =
+        ((end_page_addr - start_page_addr) / DEFAULT_PAGE_SIZE) + 1;
 
     if (check_user_overflow(vec, num_pages)) {
         return -EFAULT;
     }
 
     uint64_t *page_dir = get_current_page_dir(true);
-    uint64_t current_addr = start_page;
+    uint64_t current_addr = start_page_addr;
 
     for (uint64_t i = 0; i < num_pages; i++) {
         uint64_t phys_addr = translate_address(page_dir, current_addr);
 
         uint8_t resident = (phys_addr != 0) ? 1 : 0;
 
-        memcpy((void *)(vec + i), &resident, sizeof(uint8_t));
+        if (copy_to_user((void *)(vec + i), &resident, sizeof(uint8_t)))
+            return -EFAULT;
 
         current_addr += DEFAULT_PAGE_SIZE;
     }
