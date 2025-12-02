@@ -49,16 +49,14 @@ RDX =   0x50
 RSI =   0x58
 RDI	=	0x60
 RBP	=	0x68
-DS	=	0x70
-ES	=	0x78
-RAX	=	0x80
-FUNC	=	0x88
-ERRCODE	=	0x90
-RIP	    =	0x98
-CS	    =	0xa0
-RFLAGS	=	0xa8
-OLD_RSP	=	0xb0
-OLDSS	=	0xb8
+RAX	=	0x70
+FUNC	=	0x78
+ERRCODE	=	0x80
+RIP	    =	0x88
+CS	    =	0x90
+RFLAGS	=	0x98
+OLD_RSP	=	0xa0
+OLDSS	=	0xa8
 
 .section .text
 
@@ -80,12 +78,6 @@ Restore_all:
     popq %rbp
 
     popq %rax
-    movq %rax, %ds
-
-    popq %rax
-    movq %rax, %es
-
-    popq %rax
     addq $0x10, %rsp // 弹出变量FUNC和errcode
 
     iretq
@@ -98,10 +90,6 @@ ENTRY(ret_from_exception)
 Err_Code:
     cli
 
-    pushq %rax
-    movq %es, %rax
-    pushq %rax
-    movq %ds, %rax
     pushq %rax
 
     xorq %rax, %rax
@@ -125,10 +113,6 @@ Err_Code:
 
     movq ERRCODE(%rsp), %rsi    // 把错误码装进rsi，作为函数的第二个参数
     movq FUNC(%rsp), %rdx
-
-    movq $0x10, %rdi    // 加载内核段的地址
-    movq %rdi, %ds
-    movq %rdi, %es
 
     movq %rsp, %rdi // 把栈指针装入rdi，作为函数的第一个的参数
 

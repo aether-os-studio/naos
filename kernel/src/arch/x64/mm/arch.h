@@ -13,6 +13,8 @@
 #define ARCH_PT_FLAG_PWT (0x1UL << 3)
 #define ARCH_PT_FLAG_PCD (0x1UL << 4)
 #define ARCH_PT_FLAG_HUGE (0x1UL << 7)
+#define ARCH_PT_FLAG_COW (0x1UL << 9)
+#define ARCH_PT_FLAG_ALLOC (0x1UL << 10)
 #define ARCH_PT_FLAG_NX (0x1UL << 63)
 #define ARCH_ADDR_MASK 0x00007FFFFFFFF000
 
@@ -27,9 +29,7 @@
 
 #define ARCH_PT_TABLE_FLAGS (ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_WRITEABLE)
 
-#define ARCH_PT_IS_TABLE(x)                                                    \
-    (((x) & (ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_WRITEABLE)) ==                  \
-     (ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_WRITEABLE))
+#define ARCH_PT_IS_TABLE(x) (((x) & ARCH_PT_TABLE_FLAGS) == ARCH_PT_TABLE_FLAGS)
 #define ARCH_PT_IS_LARGE(x)                                                    \
     (((x) & (ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_HUGE)) ==                       \
      (ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_HUGE))

@@ -66,8 +66,6 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
         context->ctx->rbx = entry;
         context->ctx->rdx = initial_arg;
         context->ctx->cs = SELECTOR_USER_CS;
-        context->ctx->ds = SELECTOR_USER_DS;
-        context->ctx->es = SELECTOR_USER_DS;
         context->ctx->ss = SELECTOR_USER_DS;
     } else {
         context->rip = (uint64_t)ret_from_exception;
@@ -75,8 +73,6 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
         context->ctx->rip = entry;
         context->ctx->rdi = initial_arg;
         context->ctx->cs = SELECTOR_KERNEL_CS;
-        context->ctx->ds = SELECTOR_KERNEL_DS;
-        context->ctx->es = SELECTOR_KERNEL_DS;
         context->ctx->ss = SELECTOR_KERNEL_DS;
     }
 }
@@ -150,7 +146,7 @@ void __switch_to(task_t *prev, task_t *next) {
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
                                uint64_t stack) {
-    context->ctx = (struct pt_regs *)(current_task->kernel_stack) - 1;
+    context->ctx = (struct pt_regs *)current_task->kernel_stack - 1;
 
     context->rip = (uint64_t)ret_from_exception;
     context->rsp = (uint64_t)context->ctx;
@@ -161,8 +157,6 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
     context->ctx->rsp = stack;
     context->ctx->rbp = stack;
     context->ctx->cs = SELECTOR_USER_CS;
-    context->ctx->ds = SELECTOR_USER_DS;
-    context->ctx->es = SELECTOR_USER_DS;
     context->ctx->ss = SELECTOR_USER_DS;
 
     context->ctx->rflags = (0UL << 12) | (0b10) | (1UL << 9);

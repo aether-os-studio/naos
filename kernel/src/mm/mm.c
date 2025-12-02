@@ -3,6 +3,7 @@
 #include <mm/bitmap.h>
 #include <mm/buddy.h>
 #include <mm/mm.h>
+#include <mm/page.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -190,6 +191,8 @@ void frame_init(void) {
     bitmap_set_range(&usable_regions, bitmap_frame_start, bitmap_frame_end,
                      false);
 
+    page_init();
+
     // 初始化 buddy 分配器
     buddy_init();
 
@@ -233,13 +236,7 @@ void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
                     uint64_t size, uint64_t flags) {
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
         if (paddr == 0) {
-            uint64_t phys = alloc_frames(1);
-            if (phys == 0) {
-                printk("Cannot allocate frame\n");
-                break;
-            }
-            memset((void *)phys_to_virt(phys), 0, DEFAULT_PAGE_SIZE);
-            map_page(pml4, va, phys, get_arch_page_table_flags(flags), true);
+            map_page(pml4, va, 0, get_arch_page_table_flags(flags), true);
         } else {
             map_page(pml4, va, paddr + (va - vaddr),
                      get_arch_page_table_flags(flags), true);
@@ -251,12 +248,7 @@ void map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
                             uint64_t size, uint64_t flags) {
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
         if (paddr == 0) {
-            uint64_t phys = alloc_frames(1);
-            if (phys == 0) {
-                printk("Cannot allocate frame\n");
-                break;
-            }
-            map_page(pml4, va, phys, get_arch_page_table_flags(flags), false);
+            map_page(pml4, va, 0, get_arch_page_table_flags(flags), false);
         } else {
             map_page(pml4, va, paddr + (va - vaddr),
                      get_arch_page_table_flags(flags), false);
@@ -266,10 +258,7 @@ void map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
 
 void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size) {
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
-        uint64_t paddr = unmap_page(pml4, va);
-        if (paddr) {
-            free_frames(paddr, 1);
-        }
+        unmap_page(pml4, va);
     }
 }
 

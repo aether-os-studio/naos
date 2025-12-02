@@ -5,6 +5,7 @@
 #include <drivers/tty.h>
 #include <task/task.h>
 #include <mod/dlinker.h>
+#include <mm/fault.h>
 
 extern const uint64_t kallsyms_address[] __attribute__((weak));
 extern const uint64_t kallsyms_num __attribute__((weak));
@@ -317,6 +318,9 @@ void do_page_fault(struct pt_regs *regs, uint64_t error_code) {
     // 先保存cr2寄存器的值，避免由于再次触发页故障而丢失值
     // cr2存储着触发异常的线性地址
     asm volatile("movq %%cr2, %0" : "=r"(cr2)::"memory");
+
+    if (handle_page_fault(current_task, cr2) == PF_RES_OK)
+        return;
 
     (void)error_code;
     dump_regs(regs, "do_page_fault(14) cr2 = %#018lx", cr2);

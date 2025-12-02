@@ -1210,6 +1210,18 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                       flags);
 
 #if defined(__x86_64__)
+    uint64_t tmp;
+    asm volatile("movq %%cr3, %0\n\tmovq %0, %%cr3" : "=r"(tmp)::"memory");
+#elif defined(__aarch64__)
+    asm volatile("dsb ishst\n\t"
+                 "tlbi vmalle1is\n\t"
+                 "dsb ish\n\t"
+                 "isb\n\t");
+#elif defined(__riscv__)
+    asm volatile("sfence.vma");
+#endif
+
+#if defined(__x86_64__)
     uint64_t user_sp = regs->rsp;
 #elif defined(__aarch64__)
     uint64_t user_sp = regs->sp_el0;

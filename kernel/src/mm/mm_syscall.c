@@ -3,6 +3,8 @@
 #include <fs/vfs/vfs.h>
 #include <task/task.h>
 
+uint64_t do_munmap(uint64_t addr, uint64_t size);
+
 static uint64_t find_unmapped_area(vma_manager_t *mgr, uint64_t hint,
                                    uint64_t len) {
     uint64_t addr;
@@ -115,41 +117,41 @@ uint64_t sys_brk(uint64_t brk) {
 
         current_task->arch_context->mm->brk_current = brk;
     } else {
-        // unmap_page_range(get_current_page_dir(true), brk,
-        //                  current_task->arch_context->mm->brk_current - brk);
+        unmap_page_range(get_current_page_dir(true), brk,
+                         current_task->arch_context->mm->brk_current - brk);
 
-        // vma_t *region =
-        //     vma_find_intersection(&current_task->arch_context->mm->task_vma_mgr,
-        //                           current_task->arch_context->mm->brk_start,
-        //                           current_task->arch_context->mm->brk_end);
+        vma_t *region =
+            vma_find_intersection(&current_task->arch_context->mm->task_vma_mgr,
+                                  current_task->arch_context->mm->brk_start,
+                                  current_task->arch_context->mm->brk_end);
 
-        // if (region) {
-        //     vma_remove(&current_task->arch_context->mm->task_vma_mgr,
-        //     region); vma_free(region);
-        // }
+        if (region) {
+            vma_remove(&current_task->arch_context->mm->task_vma_mgr, region);
+            vma_free(region);
+        }
 
-        // if (brk > current_task->arch_context->mm->brk_start) {
-        //     vma_t *vma = vma_alloc();
-        //     if (!vma) {
-        //         current_task->arch_context->mm->brk_current = brk;
-        //         return current_task->arch_context->mm->brk_current;
-        //     }
+        if (brk > current_task->arch_context->mm->brk_start) {
+            vma_t *vma = vma_alloc();
+            if (!vma) {
+                current_task->arch_context->mm->brk_current = brk;
+                return current_task->arch_context->mm->brk_current;
+            }
 
-        //     vma->vm_start = current_task->arch_context->mm->brk_start;
-        //     vma->vm_end = brk;
-        //     vma->vm_flags = VMA_READ | VMA_WRITE | VMA_ANON;
-        //     vma->vm_type = VMA_TYPE_ANON;
-        //     vma->node = NULL;
-        //     vma->vm_name = strdup("[heap]");
+            vma->vm_start = current_task->arch_context->mm->brk_start;
+            vma->vm_end = brk;
+            vma->vm_flags = VMA_READ | VMA_WRITE | VMA_ANON;
+            vma->vm_type = VMA_TYPE_ANON;
+            vma->node = NULL;
+            vma->vm_name = strdup("[heap]");
 
-        //     if (vma_insert(&current_task->arch_context->mm->task_vma_mgr,
-        //                    vma) != 0) {
-        //         vma_free(vma);
-        //         // 继续执行，即使VMA插入失败
-        //     }
-        // }
+            if (vma_insert(&current_task->arch_context->mm->task_vma_mgr,
+                           vma) != 0) {
+                vma_free(vma);
+                // 继续执行，即使VMA插入失败
+            }
+        }
 
-        // current_task->arch_context->mm->brk_current = brk;
+        current_task->arch_context->mm->brk_current = brk;
     }
 
     spin_unlock(&current_task->arch_context->mm->task_vma_mgr.lock);
@@ -193,7 +195,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         if (region) {
             if (flags & MAP_FIXED_NOREPLACE)
                 return (uint64_t)-EEXIST;
-            sys_munmap(start_addr, aligned_len);
+            do_munmap(start_addr, aligned_len);
         }
     } else {
         start_addr = find_unmapped_area(mgr, addr, aligned_len);
@@ -267,7 +269,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
     }
 }
 
-uint64_t sys_munmap(uint64_t addr, uint64_t size) {
+uint64_t do_munmap(uint64_t addr, uint64_t size) {
     addr = addr & (~(DEFAULT_PAGE_SIZE - 1));
     size = (size + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1);
 
@@ -322,6 +324,14 @@ uint64_t sys_munmap(uint64_t addr, uint64_t size) {
     unmap_page_range(get_current_page_dir(true), start, end - start);
 
     return 0;
+}
+
+uint64_t sys_munmap(uint64_t addr, uint64_t size) {
+    vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
+    spin_lock(&mgr->lock);
+    uint64_t ret = do_munmap(addr, size);
+    spin_unlock(&mgr->lock);
+    return ret;
 }
 
 uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
@@ -414,16 +424,17 @@ static uint64_t mremap_expand_inplace(vma_manager_t *mgr, vma_t *vma,
         if (vma->vm_flags & VMA_EXEC)
             prot |= PROT_EXEC;
 
-        // unmap_page_range(get_current_page_dir(true), old_addr, old_size);
+        unmap_page_range(get_current_page_dir(true), old_addr, old_size);
 
         fd_t fd;
         fd.node = vma->node;
         fd.flags = 0;
-        fd.offset = 0;
+        fd.offset = vma->vm_offset;
 
         uint64_t ret = (uint64_t)vfs_map(
             &fd, old_addr, new_size, prot,
-            (vma->vm_flags & VMA_SHARED) ? MAP_SHARED : MAP_PRIVATE, 0);
+            (vma->vm_flags & VMA_SHARED) ? MAP_SHARED : MAP_PRIVATE,
+            vma->vm_offset);
         if (ret > (uint64_t)-4095UL)
             return ret;
 
@@ -681,7 +692,7 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
 
 void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
                   uint64_t flags, uint64_t offset) {
-    uint64_t pt_flags = PT_FLAG_U | PT_FLAG_W;
+    uint64_t pt_flags = PT_FLAG_U | PT_FLAG_R | PT_FLAG_W;
 
     if (prot & PROT_READ)
         pt_flags |= PT_FLAG_R;

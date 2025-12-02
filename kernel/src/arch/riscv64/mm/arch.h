@@ -14,6 +14,8 @@
 #define ARCH_PT_FLAG_USER (0x1UL << 4)
 #define ARCH_PT_FLAG_ACCESSED (0x1UL << 6)
 #define ARCH_PT_FLAG_DIRTY (0x1UL << 7)
+#define ARCH_PT_FLAG_COW (0x1UL << 8)
+#define ARCH_PT_FLAG_ALLOC (0x1UL << 9)
 #define ARCH_PT_FLAG_PBMT_NC (0x1UL << 62)
 #define ARCH_ADDR_MASK ((uint64_t)0x003ffffffffffc00)
 

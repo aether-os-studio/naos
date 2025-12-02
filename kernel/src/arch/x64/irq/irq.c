@@ -6,10 +6,6 @@
     "cld; \n\t"                                                                \
     "pushq %rax;    \n\t"                                                      \
     "pushq %rax;     \n\t"                                                     \
-    "movq %es, %rax; \n\t"                                                     \
-    "pushq %rax;     \n\t"                                                     \
-    "movq %ds, %rax; \n\t"                                                     \
-    "pushq %rax;     \n\t"                                                     \
     "xorq %rax, %rax;\n\t"                                                     \
     "pushq %rbp;     \n\t"                                                     \
     "pushq %rdi;     \n\t"                                                     \
@@ -24,10 +20,7 @@
     "pushq %r12;     \n\t"                                                     \
     "pushq %r13;     \n\t"                                                     \
     "pushq %r14;     \n\t"                                                     \
-    "pushq %r15;     \n\t"                                                     \
-    "movq $0x10, %rdx;\n\t"                                                    \
-    "movq %rdx, %ds; \n\t"                                                     \
-    "movq %rdx, %es; \n\t"
+    "pushq %r15;     \n\t"
 
 // 定义IRQ处理函数的名字格式：IRQ+中断号+interrupt
 #define IRQ_NAME2(name1) name1##interrupt(void)

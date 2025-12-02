@@ -1,5 +1,7 @@
 #include <mm/buddy.h>
 #include <mm/bitmap.h>
+#include <mm/page.h>
+#include <drivers/kernel_logger.h>
 
 extern Bitmap usable_regions;
 
@@ -453,9 +455,6 @@ void buddy_init(void) {
     uint64_t dma_end_pfn = MIN(max_pfn, ZONE_DMA_END / DEFAULT_PAGE_SIZE);
     uint64_t dma32_end_pfn = MIN(max_pfn, ZONE_DMA32_END / DEFAULT_PAGE_SIZE);
 
-    void *ptr = early_alloc((max_pfn + 7) / 8);
-    bitmap_init(&using_regions, ptr, (max_pfn + 7) / 8);
-
 #if defined(__x86_64__)
     // ZONE_DMA
     zones[ZONE_DMA] = (zone_t *)early_alloc(sizeof(zone_t));
@@ -488,6 +487,9 @@ void buddy_init(void) {
         nr_zones++;
     }
 #endif
+
+    void *ptr = early_alloc((max_pfn + 7) / 8);
+    bitmap_init(&using_regions, ptr, (max_pfn + 7) / 8);
 }
 
 void add_memory_region(uintptr_t start, uintptr_t end, enum zone_type type) {
@@ -592,7 +594,13 @@ uintptr_t alloc_frames(size_t count) {
 #endif
 
 ret:
-    bitmap_set(&usable_regions, addr / DEFAULT_PAGE_SIZE, true);
+    bitmap_set_range(&using_regions, addr / DEFAULT_PAGE_SIZE,
+                     addr / DEFAULT_PAGE_SIZE + count, true);
+    for (uint64_t a = addr; a < (addr + count * DEFAULT_PAGE_SIZE);
+         a += DEFAULT_PAGE_SIZE) {
+        page_t *p = get_page(a);
+        page_ref(p);
+    }
     return addr;
 }
 
@@ -601,10 +609,12 @@ void free_frames(uintptr_t addr, size_t count) {
         return;
 
     uint64_t idx = addr / DEFAULT_PAGE_SIZE;
-    if (bitmap_get(&usable_regions, idx) == false)
-        return;
-    if (bitmap_get(&using_regions, idx) == false)
-        return;
+    for (size_t off = 0; off < count; off++) {
+        if (bitmap_get(&using_regions, idx + off) == false)
+            return;
+        if (bitmap_get(&usable_regions, idx + off) == false)
+            return;
+    }
 
     // 确定地址属于哪个 zone
     enum zone_type type = phys_to_zone_type(addr);
@@ -612,6 +622,16 @@ void free_frames(uintptr_t addr, size_t count) {
 
     if (!zone)
         return;
+
+    for (uint64_t a = addr; a < (addr + count * DEFAULT_PAGE_SIZE);
+         a += DEFAULT_PAGE_SIZE) {
+        address_unref(a);
+    }
+    for (uint64_t a = addr; a < (addr + count * DEFAULT_PAGE_SIZE);
+         a += DEFAULT_PAGE_SIZE) {
+        if (!address_can_free(a))
+            return;
+    }
 
     size_t required_pages = next_power_of_2(count);
     size_t order = log2_floor(required_pages) + MIN_ORDER;
@@ -621,7 +641,7 @@ void free_frames(uintptr_t addr, size_t count) {
 
     spin_lock(&zone->allocator.lock);
     buddy_free_zone(zone, addr, order);
-    bitmap_set(&using_regions, idx, false);
+    bitmap_set_range(&using_regions, idx, idx + count, false);
     spin_unlock(&zone->allocator.lock);
 }
 

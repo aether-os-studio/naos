@@ -589,8 +589,6 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
     regs->rflags = regs->r11;
     regs->cs = SELECTOR_USER_CS;
     regs->ss = SELECTOR_USER_DS;
-    regs->ds = SELECTOR_USER_DS;
-    regs->es = SELECTOR_USER_DS;
     regs->rsp = user_rsp;
 
     uint64_t idx = regs->rax & 0xFFFFFFFF;

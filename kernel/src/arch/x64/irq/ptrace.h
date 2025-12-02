@@ -17,8 +17,6 @@ struct pt_regs {
     uint64_t rsi;
     uint64_t rdi;
     uint64_t rbp;
-    uint64_t ds;
-    uint64_t es;
     uint64_t rax;
     uint64_t func;
     uint64_t errcode;

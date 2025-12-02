@@ -14,11 +14,6 @@ ENTRY(syscall_exception)
 
     pushq %rax
 
-    movq %es, %rax
-    pushq %rax
-    movq %ds, %rax
-    pushq %rax
-
     pushq %rbp
     pushq %rdi
     pushq %rsi
@@ -58,11 +53,6 @@ ENTRY(ret_from_syscall)
     popq %rsi
     popq %rdi
     popq %rbp
-
-    popq %rax
-    movq %rax, %ds
-    popq %rax
-    movq %rax, %es
 
     popq %rax
 

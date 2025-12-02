@@ -1,5 +1,6 @@
 #include <fs/vfs/vfs.h>
 #include <mm/mm_syscall.h>
+#include <mm/page.h>
 #include <task/task.h>
 
 static int memfd_fsid = 0;

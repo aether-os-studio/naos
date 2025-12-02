@@ -19,14 +19,6 @@ uint64_t *get_current_page_dir(bool user);
 struct task_mm_info;
 typedef struct task_mm_info task_mm_info_t;
 
-typedef struct page_table_entry {
-    uint64_t value;
-} __attribute__((packed)) page_table_entry_t;
-
-typedef struct {
-    page_table_entry_t entries[512];
-} __attribute__((packed)) page_table_t;
-
 task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags);
 void free_page_table(task_mm_info_t *directory);
 
