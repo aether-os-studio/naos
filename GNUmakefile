@@ -183,11 +183,11 @@ ifeq ($(BOOT_PROTOCOL), multiboot2)
 	mcopy -i $(IMAGE_NAME).img@@1M limine_multiboot2_$(KERNEL_MODULE).conf ::/limine/limine.conf
 endif
 
-TOTAL_IMG_SIZE=$$(( $(ROOTFS_IMG_SIZE) + 1024 ))
+TOTAL_IMG_SIZE=$$(( $(ROOTFS_IMG_SIZE) + 32 ))
 
 single-$(IMAGE_NAME).img: assets/limine modules kernel rootfs-$(ARCH).img
 	dd if=/dev/zero of=single-$(IMAGE_NAME).img bs=1M count=$(TOTAL_IMG_SIZE)
-	sgdisk --new=1:1M:1022M --new=2:1024M:0 single-$(IMAGE_NAME).img
+	sgdisk --new=1:1M:31M --new=2:32M:0 single-$(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 single-$(IMAGE_NAME).img
 	mcopy -i single-$(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/
 ifeq ($(KERNEL_MODULE), mixed)
@@ -203,7 +203,7 @@ else
 endif
 endif
 
-	dd if=rootfs-$(ARCH).img of=single-$(IMAGE_NAME).img bs=1M count=$(ROOTFS_IMG_SIZE) seek=1024
+	dd if=rootfs-$(ARCH).img of=single-$(IMAGE_NAME).img bs=1M count=$(ROOTFS_IMG_SIZE) seek=32
 
 .PHONY: run
 run: run-$(ARCH)
@@ -359,7 +359,6 @@ assets/ovmf-vars-$(ARCH).fd:
 
 .PHONY: modules
 modules:
-
 	$(MAKE) -C modules -j$(shell nproc)
 
 ifeq ($(KERNEL_MODULE), monolithic)
