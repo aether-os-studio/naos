@@ -148,7 +148,8 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
             ret = (uint64_t)(-ENOENT);
             goto cleanup;
         }
-        prev->next = browse->next;
+        if (prev)
+            prev->next = browse->next;
         free(browse);
         break;
     }
