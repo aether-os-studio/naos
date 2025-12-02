@@ -11,8 +11,8 @@
 void nvlink_assert(int expression) { ASSERT(expression); }
 
 static void delay(uint64_t ns) {
-    uint64_t start = nanoTime();
-    while (nanoTime() - start < ns) {
+    uint64_t start = nano_time();
+    while (nano_time() - start < ns) {
         arch_yield();
     }
 }
@@ -109,4 +109,4 @@ void nvlink_freeLock(void *s) {
 
 int nvlink_is_admin(void) { return NV_TRUE; }
 
-NvU64 nvlink_get_platform_time(void) { return (NvU64)nanoTime(); }
+NvU64 nvlink_get_platform_time(void) { return (NvU64)nano_time(); }

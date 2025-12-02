@@ -65,8 +65,8 @@ static void lapic_send_ipi(uint32_t dest_apic_id, uint32_t flags) {
 }
 
 static void delay(uint64_t ns) {
-    uint64_t start = nanoTime();
-    while (nanoTime() - start < ns) {
+    uint64_t start = nano_time();
+    while (nano_time() - start < ns) {
         arch_pause();
     }
 }

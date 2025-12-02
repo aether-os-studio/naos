@@ -64,9 +64,9 @@ bool pci_detect_pcie_info(pci_device_t *dev, pcie_info_t *info) {
 // 等待链路训练完成
 static bool pci_wait_for_link_training(pci_device_t *dev, uint8_t cap_offset,
                                        uint32_t timeout_ms) {
-    uint64_t timeout_ns = nanoTime() + (uint64_t)timeout_ms * 1000000;
+    uint64_t timeout_ns = nano_time() + (uint64_t)timeout_ms * 1000000;
 
-    while (nanoTime() < timeout_ns) {
+    while (nano_time() < timeout_ns) {
         uint16_t link_status =
             dev->op->read16(dev->bus, dev->slot, dev->func, dev->segment,
                             cap_offset + PCIE_CAP_LINK_STATUS);

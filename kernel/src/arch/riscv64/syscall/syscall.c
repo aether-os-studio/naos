@@ -48,7 +48,7 @@ uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
     {
         if (arg2) {
             struct timespec *ts = (struct timespec *)arg2;
-            uint64_t nano = nanoTime();
+            uint64_t nano = nano_time();
             ts->tv_sec = nano / 1000000000ULL;
             ts->tv_nsec = nano % 1000000000ULL;
         }
@@ -57,8 +57,8 @@ uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
     case 7: // CLOCK_BOOTTIME
         if (arg2) {
             struct timespec *ts = (struct timespec *)arg2;
-            ts->tv_sec = nanoTime() / 1000000000;
-            ts->tv_nsec = nanoTime() % 1000000000;
+            ts->tv_sec = nano_time() / 1000000000;
+            ts->tv_nsec = nano_time() % 1000000000;
         }
         return 0;
     case 0: // CLOCK_REALTIME

@@ -1,4 +1,4 @@
-#include "task/rrs.h"
+#include "task/sched.h"
 
 void add_rrs_entity(task_t *task, rrs_t *scheduler) {
     struct sched_entity *entity = task->sched_info;

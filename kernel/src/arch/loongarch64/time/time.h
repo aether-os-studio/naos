@@ -9,4 +9,4 @@ typedef struct {
 void time_read(tm *time);
 int64_t mktime(tm *time);
 
-uint64_t nanoTime();
+uint64_t nano_time();

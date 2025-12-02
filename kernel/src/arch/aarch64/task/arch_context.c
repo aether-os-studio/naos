@@ -1,7 +1,7 @@
 #include <arch/aarch64/task/arch_context.h>
 #include <mm/mm.h>
 #include <task/task.h>
-#include <task/rrs.h>
+#include <task/sched.h>
 
 extern void kernel_thread_func();
 extern void arch_context_switch_exit();

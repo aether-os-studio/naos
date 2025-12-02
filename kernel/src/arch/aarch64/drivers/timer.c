@@ -377,7 +377,7 @@ void timer_init_percpu() {
     timer_set_next_tick_ns(1000000000ULL / SCHED_HZ);
 }
 
-uint64_t nanoTime() {
+uint64_t nano_time() {
     if (!g_timer.ops) {
         return 0;
     }

@@ -27,8 +27,8 @@ static struct {
 
 // 等待可以写入
 static bool ps2_wait_write(void) {
-    uint32_t timeout = nanoTime() + 1000ULL * 1000000ULL;
-    while (timeout > nanoTime()) {
+    uint32_t timeout = nano_time() + 1000ULL * 1000000ULL;
+    while (timeout > nano_time()) {
         if ((io_in8(PS2_STATUS_PORT) & 0x02) == 0) {
             return true;
         }
@@ -38,8 +38,8 @@ static bool ps2_wait_write(void) {
 
 // 等待可以读取
 static bool ps2_wait_read(void) {
-    uint32_t timeout = nanoTime() + 1000ULL * 1000000ULL;
-    while (timeout > nanoTime()) {
+    uint32_t timeout = nano_time() + 1000ULL * 1000000ULL;
+    while (timeout > nano_time()) {
         if (io_in8(PS2_STATUS_PORT) & 0x01) {
             return true;
         }

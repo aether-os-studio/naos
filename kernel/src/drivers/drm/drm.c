@@ -674,8 +674,8 @@ static ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
             vbl->request.sequence = seq;
 
         vbl->reply.sequence = vbl->request.sequence;
-        vbl->reply.tval_sec = nanoTime() / 1000000000ULL;
-        vbl->reply.tval_usec = (nanoTime() % 1000000000ULL) / 1000ULL;
+        vbl->reply.tval_sec = nano_time() / 1000000000ULL;
+        vbl->reply.tval_usec = (nano_time() % 1000000000ULL) / 1000ULL;
 
         return 0;
     }
@@ -738,8 +738,8 @@ ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
         .base.type = dev->drm_events[0]->type,
         .base.length = sizeof(vbl),
         .user_data = dev->drm_events[0]->user_data,
-        .tv_sec = nanoTime() / 1000000000,
-        .tv_usec = (nanoTime() % 1000000000) / 1000,
+        .tv_sec = nano_time() / 1000000000,
+        .tv_usec = (nano_time() % 1000000000) / 1000,
         .crtc_id = dev->resource_mgr.crtcs[0]->id,
     };
 

@@ -18,4 +18,4 @@ void timer_handler(uint64_t irq_num, void *parameter, struct pt_regs *regs);
 
 extern void setup_vectors();
 
-extern uint64_t nanoTime();
+extern uint64_t nano_time();

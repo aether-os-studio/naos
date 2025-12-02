@@ -50,6 +50,7 @@ typedef struct __ucontext {
 typedef struct arch_context {
     uint64_t rip;
     uint64_t rsp;
+    uint64_t rbp;
     uint64_t fsbase;
     uint64_t gsbase;
     task_mm_info_t *mm;

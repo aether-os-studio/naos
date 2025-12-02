@@ -25,7 +25,7 @@ typedef struct {
 HpetInfo *hpet_addr;
 static uint64_t hpetPeriod = 0;
 
-uint64_t nanoTime() {
+uint64_t nano_time() {
     if (hpet_addr == NULL)
         return 0;
     uint64_t mcv = hpet_addr->mainCounterValue;
@@ -47,6 +47,6 @@ void hpet_init() {
         hpetPeriod = counterClockPeriod / 1000000;
         hpet_addr->generalConfiguration |= 1UL;
         hpet_addr->mainCounterValue = 0;
-        printk("Setup acpi hpet table (nano_time: %#ld).\n", nanoTime());
+        printk("Setup acpi hpet table (nano_time: %#ld).\n", nano_time());
     }
 }

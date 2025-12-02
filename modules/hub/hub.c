@@ -2,8 +2,8 @@
 
 static inline void delay(uint64_t ms) {
     uint64_t ns = ms * 1000000ULL;
-    uint64_t timeout = nanoTime() + ns;
-    while (nanoTime() < timeout) {
+    uint64_t timeout = nano_time() + ns;
+    while (nano_time() < timeout) {
         arch_pause();
     }
 }
@@ -92,7 +92,7 @@ static int usb_hub_reset(struct usbhub_s *hub, uint32_t port) {
 
     // Wait for reset to complete.
     struct usb_port_status sts;
-    uint64_t timeout = nanoTime() + 1000000ULL * USB_TIME_DRST * 2;
+    uint64_t timeout = nano_time() + 1000000ULL * USB_TIME_DRST * 2;
     for (;;) {
         ret = get_port_status(hub, port, &sts);
         if (ret)
@@ -101,7 +101,7 @@ static int usb_hub_reset(struct usbhub_s *hub, uint32_t port) {
             (hub->usbdev->speed != USB_SUPERSPEED ||
              !(sts.wPortStatus & USB_PORT_STAT_LINK_MASK)))
             break;
-        if (nanoTime() > timeout) {
+        if (nano_time() > timeout) {
             goto fail;
         }
         delay(5);

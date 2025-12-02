@@ -48,7 +48,7 @@ uint64_t sys_timerfd_create(int clockid, int flags) {
 // 统一的当前时间获取函数
 static uint64_t get_current_time_ns(int clock_type) {
     if (clock_type == CLOCK_MONOTONIC) {
-        return nanoTime(); // 单调时钟，直接返回纳秒
+        return nano_time(); // 单调时钟，直接返回纳秒
     } else                 // CLOCK_REALTIME
     {
         tm time;

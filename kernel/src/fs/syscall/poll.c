@@ -42,7 +42,7 @@ uint32_t poll_to_epoll_comp(uint32_t poll_events) {
 
 size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
     int ready = 0;
-    uint64_t start_time = nanoTime();
+    uint64_t start_time = nano_time();
 
     bool sigexit = false;
 
@@ -75,7 +75,7 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
 
         arch_yield();
     } while (timeout != 0 &&
-             ((int)timeout == -1 || (nanoTime() - start_time) < timeout));
+             ((int)timeout == -1 || (nano_time() - start_time) < timeout));
 
     if (!ready && sigexit)
         return (size_t)-EINTR;

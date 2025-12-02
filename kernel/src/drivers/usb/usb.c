@@ -21,8 +21,8 @@ void regist_usb_driver(usb_driver_t *driver) {
 
 static inline void delay(uint64_t ms) {
     uint64_t ns = ms * 1000000ULL;
-    uint64_t timeout = nanoTime() + ns;
-    while (nanoTime() < timeout) {
+    uint64_t timeout = nano_time() + ns;
+    while (nano_time() < timeout) {
         arch_pause();
     }
 }

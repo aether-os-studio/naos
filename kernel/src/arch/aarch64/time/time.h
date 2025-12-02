@@ -20,4 +20,4 @@ uint32_t get_freq();
 void time_read(tm *time);
 int64_t mktime(tm *time);
 
-uint64_t nanoTime();
+uint64_t nano_time();

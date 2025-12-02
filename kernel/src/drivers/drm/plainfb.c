@@ -141,9 +141,9 @@ static int plainfb_page_flip(drm_device_t *drm_dev,
             drm_dev->drm_events[i]->type = DRM_EVENT_FLIP_COMPLETE;
             drm_dev->drm_events[i]->user_data = flip->user_data;
             drm_dev->drm_events[i]->timestamp.tv_sec =
-                nanoTime() / 1000000000ULL;
+                nano_time() / 1000000000ULL;
             drm_dev->drm_events[i]->timestamp.tv_nsec =
-                nanoTime() % 1000000000ULL;
+                nano_time() % 1000000000ULL;
             break;
         }
     }

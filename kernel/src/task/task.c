@@ -1,7 +1,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <task/futex.h>
-#include <task/rrs.h>
+#include <task/sched.h>
 #include <drivers/kernel_logger.h>
 #include <fs/vfs/dev.h>
 #include <fs/vfs/vfs.h>
@@ -886,7 +886,7 @@ void sys_yield() { arch_yield(); }
 int task_block(task_t *task, task_state_t state, int64_t timeout_ns) {
     task->state = state;
     if (timeout_ns > 0)
-        task->force_wakeup_ns = nanoTime() + timeout_ns;
+        task->force_wakeup_ns = nano_time() + timeout_ns;
     else
         task->force_wakeup_ns = UINT64_MAX;
 
@@ -991,9 +991,9 @@ void task_exit_inner(task_t *task, int64_t code) {
         //         sigchld_info.__si_fields.__si_common.__second.__sigchld
         //             .si_status = CLD_EXITED;
         //         sigchld_info.__si_fields.__si_common.__second.__sigchld
-        //             .si_utime = nanoTime();
+        //             .si_utime = nano_time();
         //         sigchld_info.__si_fields.__si_common.__second.__sigchld
-        //             .si_stime = nanoTime();
+        //             .si_stime = nano_time();
         //         task_commit_signal(parent, SIGCHLD, &sigchld_info);
         //     }
 
@@ -1399,13 +1399,13 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem) {
         return (uint64_t)-EINVAL;
     }
 
-    uint64_t start = nanoTime();
+    uint64_t start = nano_time();
     uint64_t target = start + (req->tv_sec * 1000000000ULL) + req->tv_nsec;
 
     do {
         if (signals_pending_quick(current_task)) {
             if (rem) {
-                uint64_t remaining = target - nanoTime();
+                uint64_t remaining = target - nano_time();
                 struct timespec remain_ts = {.tv_sec = remaining / 1000000000,
                                              .tv_nsec = remaining % 1000000000};
                 memcpy(rem, &remain_ts, sizeof(struct timespec));
@@ -1415,7 +1415,7 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem) {
 
         arch_enable_interrupt();
         arch_pause();
-    } while (target > nanoTime());
+    } while (target > nano_time());
     arch_disable_interrupt();
 
     return 0;
@@ -1464,7 +1464,7 @@ void sched_update_itimer() {
     uint64_t rtAt = current_task->itimer_real.at;
     uint64_t rtReset = current_task->itimer_real.reset;
 
-    uint64_t now = nanoTime() / 1000000;
+    uint64_t now = nano_time() / 1000000;
 
     if (rtAt && rtAt <= now) {
         task_commit_signal(current_task, SIGALRM, NULL);
@@ -1513,7 +1513,7 @@ void sched_update_timerfd() {
                 // 根据时钟类型获取当前时间
                 uint64_t now;
                 if (tfd->timer.clock_type == CLOCK_MONOTONIC) {
-                    now = nanoTime();
+                    now = nano_time();
                 } else {
                     // CLOCK_REALTIME
                     tm time;
@@ -1551,7 +1551,7 @@ void sched_check_wakeup() {
         }
         continue_ptr_count = 0;
 
-        if (ptr->state == TASK_BLOCKING && nanoTime() > ptr->force_wakeup_ns) {
+        if (ptr->state == TASK_BLOCKING && nano_time() > ptr->force_wakeup_ns) {
             task_unblock(ptr, ETIMEDOUT);
             ptr->force_wakeup_ns = UINT64_MAX;
         }
@@ -1568,7 +1568,7 @@ size_t sys_setitimer(int which, struct itimerval *value,
 
     tm time_now;
     time_read(&time_now);
-    uint64_t now = nanoTime() / 1000000;
+    uint64_t now = nano_time() / 1000000;
 
     if (old) {
         uint64_t remaining = rt_at > now ? rt_at - now : 0;
@@ -1639,7 +1639,7 @@ uint64_t sys_timer_settime(timer_t timerid, const struct itimerval *new_value,
     uint64_t expires =
         new_value->it_value.tv_sec * 1000 + new_value->it_value.tv_usec / 1000;
 
-    uint64_t now = nanoTime() / 1000000;
+    uint64_t now = nano_time() / 1000000;
 
     if (old_value) {
         struct itimerval old;

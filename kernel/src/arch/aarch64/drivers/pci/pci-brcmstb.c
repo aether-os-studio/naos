@@ -30,8 +30,8 @@ static inline uint8_t mmio_read8(uint64_t addr) {
 }
 
 static void delay_us(uint64_t us) {
-    uint64_t start = nanoTime();
-    while ((nanoTime() - start) < us * 1000ULL) {
+    uint64_t start = nano_time();
+    while ((nano_time() - start) < us * 1000ULL) {
         asm volatile("nop");
     }
 }

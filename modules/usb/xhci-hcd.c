@@ -292,17 +292,17 @@ static const int speed_to_xhci[] = {
 
 static inline void delay(uint64_t ms) {
     uint64_t ns = ms * 1000000ULL;
-    uint64_t timeout = nanoTime() + ns;
-    while (nanoTime() < timeout) {
+    uint64_t timeout = nano_time() + ns;
+    while (nano_time() < timeout) {
         arch_pause();
     }
 }
 
 static int wait_bit(volatile uint32_t *reg, uint32_t mask, uint32_t value,
                     uint32_t timeout) {
-    uint64_t timeout_ns = nanoTime() + (uint64_t)timeout * 1000000ULL;
+    uint64_t timeout_ns = nano_time() + (uint64_t)timeout * 1000000ULL;
     while ((readl((const void *)reg) & mask) != value) {
-        if (nanoTime() > timeout_ns) {
+        if (nano_time() > timeout_ns) {
             printk("wait_bit timeout: reg=%p mask=0x%x expected=0x%x "
                    "actual=0x%x\n",
                    reg, mask, value, readl((const void *)reg) & mask);
@@ -354,9 +354,9 @@ static int xhci_hub_reset(struct usbhub_s *hub, uint32_t port) {
         return -1;
     }
 
-    uint64_t timeout = nanoTime() + 2000000000ULL; // 2秒超时
+    uint64_t timeout = nano_time() + 2000000000ULL; // 2秒超时
     for (;;) {
-        if (nanoTime() > timeout) {
+        if (nano_time() > timeout) {
             printk("XHCI: Port %d reset timeout\n", port);
             return -1;
         }
@@ -842,14 +842,14 @@ static bool xhci_ring_busy(struct xhci_ring *ring) {
 // Wait for a ring to empty (all TRBs processed by hardware)
 static int xhci_event_wait(struct usb_xhci_s *xhci, struct xhci_ring *ring,
                            uint32_t timeout) {
-    uint64_t timeout_ns = nanoTime() + (uint64_t)timeout * 1000000ULL;
+    uint64_t timeout_ns = nano_time() + (uint64_t)timeout * 1000000ULL;
     for (;;) {
         xhci_process_events(xhci);
         if (!xhci_ring_busy(ring)) {
             uint32_t status = ring->evt.status;
             return (status >> 24) & 0xff;
         }
-        if (nanoTime() > timeout_ns) {
+        if (nano_time() > timeout_ns) {
             printk("XHCI event wait timeout!!!\n");
             printk("ring->eidx = %d\n", ring->eidx);
             printk("ring->nidx = %d\n", ring->nidx);

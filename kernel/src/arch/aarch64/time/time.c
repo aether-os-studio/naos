@@ -12,7 +12,7 @@ static int is_leap_year(int year) {
 
 void time_read(tm *time) {
     uint64_t timestrap_at_boot = boot_get_boottime();
-    uint64_t timer_value = timestrap_at_boot + nanoTime() / 1000000000ULL;
+    uint64_t timer_value = timestrap_at_boot + nano_time() / 1000000000ULL;
 
     time->tm_sec = timer_value % 60;
     time->tm_min = (timer_value / 60) % 60;

@@ -10,7 +10,7 @@ void time_read(tm *time) {
 
 int64_t mktime(tm *time) { return time->timestamp; }
 
-uint64_t nanoTime() {
+uint64_t nano_time() {
     uint64_t current_ns;
     asm volatile("rdtime.d %0, $r0\n" : "=r"(current_ns)::"memory");
 

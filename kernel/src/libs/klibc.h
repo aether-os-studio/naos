@@ -64,7 +64,7 @@ typedef void *timer_t;
 #define container_of_or_null(ptr, type, member)                                \
     ({                                                                         \
         uint64_t __mptr = ((uint64_t)(ptr));                                   \
-        (type *)((char *)__mptr - offsetof(type, member)) : NULL;              \
+        (type *)((char *)__mptr - offsetof(type, member)) ?: NULL;             \
     })
 
 // 四舍五入成整数
@@ -475,7 +475,7 @@ static inline void spin_unlock_no_irqstore(spinlock_t *sl) {
 
 #endif
 
-extern uint64_t nanoTime();
+extern uint64_t nano_time();
 
 typedef struct sem {
     spinlock_t lock;
@@ -484,11 +484,11 @@ typedef struct sem {
 } sem_t;
 
 static inline bool sem_wait(sem_t *sem, uint32_t timeout) {
-    uint64_t timerStart = nanoTime();
+    uint64_t timerStart = nano_time();
     bool ret = false;
 
     while (true) {
-        if (timeout > 0 && nanoTime() > (timerStart + timeout))
+        if (timeout > 0 && nano_time() > (timerStart + timeout))
             goto just_return; // not under any lock atm
         spin_lock(&sem->lock);
         if (sem->cnt > 0) {

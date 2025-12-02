@@ -47,15 +47,15 @@ NV_STATUS NV_API_CALL os_get_current_time(NvU32 *sec, NvU32 *usec) {
     return NV_OK;
 }
 
-NvU64 NV_API_CALL os_get_current_tick(void) { return nanoTime(); }
+NvU64 NV_API_CALL os_get_current_tick(void) { return nano_time(); }
 
-NvU64 NV_API_CALL os_get_current_tick_hr(void) { return nanoTime(); }
+NvU64 NV_API_CALL os_get_current_tick_hr(void) { return nano_time(); }
 
 NvU64 NV_API_CALL os_get_tick_resolution(void) { return 1; }
 
 static void delay(uint64_t ns) {
-    uint64_t start = nanoTime();
-    while (nanoTime() - start < ns) {
+    uint64_t start = nano_time();
+    while (nano_time() - start < ns) {
         arch_yield();
     }
 }

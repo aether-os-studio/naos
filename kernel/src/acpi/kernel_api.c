@@ -176,11 +176,11 @@ uacpi_status uacpi_kernel_io_write32(uacpi_handle, uacpi_size offset,
 void *uacpi_kernel_alloc(uacpi_size size) { return malloc(size); }
 void uacpi_kernel_free(void *mem) { free(mem); }
 
-uacpi_u64 uacpi_kernel_get_nanoseconds_since_boot(void) { return nanoTime(); }
+uacpi_u64 uacpi_kernel_get_nanoseconds_since_boot(void) { return nano_time(); }
 
 static void delay(uint64_t ns) {
-    uint64_t start = nanoTime();
-    while (nanoTime() - start < ns) {
+    uint64_t start = nano_time();
+    while (nano_time() - start < ns) {
         arch_pause();
     }
 }

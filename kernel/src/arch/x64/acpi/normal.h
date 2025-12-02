@@ -5,7 +5,7 @@
 void apic_init();
 
 void hpet_init();
-uint64_t nanoTime();
+uint64_t nano_time();
 
 #define LAPIC_ID 0x020
 #define LAPIC_VERSION 0x030

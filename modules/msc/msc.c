@@ -14,8 +14,8 @@
 
 static inline void msc_delay_us(uint64_t us) {
     uint64_t ns = us * 1000ULL;
-    uint64_t timeout = nanoTime() + ns;
-    while (nanoTime() < timeout) {
+    uint64_t timeout = nano_time() + ns;
+    while (nano_time() < timeout) {
         arch_pause();
     }
 }
@@ -150,7 +150,7 @@ static int msc_transfer(usb_msc_device *dev, void *cmd, uint8_t cmd_len,
 
     // 构建CBW
     cbw.dCBWSignature = 0x43425355;
-    cbw.dCBWTag = (uint32_t)(nanoTime() & 0xFFFFFFFF);
+    cbw.dCBWTag = (uint32_t)(nano_time() & 0xFFFFFFFF);
     cbw.dCBWDataTransferLength = data_len;
     cbw.bmCBWFlags = (data_len > 0 && is_read) ? USB_DIR_IN : USB_DIR_OUT;
     cbw.bCBWLUN = dev->lun;

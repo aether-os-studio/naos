@@ -24,8 +24,8 @@ struct nvkms_per_open {
 };
 
 static void delay(uint64_t ns) {
-    uint64_t start = nanoTime();
-    while (nanoTime() - start < ns) {
+    uint64_t start = nano_time();
+    while (nano_time() - start < ns) {
         arch_yield();
     }
 }
@@ -175,7 +175,7 @@ struct nvkmsTimer {
 void *handleTimer(void *arg) {
     struct nvkmsTimer *timer = (struct nvkmsTimer *)arg;
 
-    while (nanoTime() < timer->tick) {
+    while (nano_time() < timer->tick) {
         arch_yield();
     }
 
@@ -210,7 +210,7 @@ nvkms_timer_handle_t *nvkms_alloc_timer(nvkms_timer_proc_t *proc, void *dataPtr,
     timer->proc = proc;
     timer->dataPtr = dataPtr;
     timer->dataU32 = dataU32;
-    timer->tick = nanoTime() + usec * 1000;
+    timer->tick = nano_time() + usec * 1000;
     timer->isRefPtr = false;
     timer->cancel = false;
 
@@ -233,7 +233,7 @@ NvBool nvkms_alloc_timer_with_ref_ptr(nvkms_timer_proc_t *proc,
     timer->proc = proc;
     timer->dataPtr = ref_ptr;
     timer->dataU32 = dataU32;
-    timer->tick = nanoTime() + usec * 1000;
+    timer->tick = nano_time() + usec * 1000;
     timer->isRefPtr = false;
     timer->cancel = false;
 

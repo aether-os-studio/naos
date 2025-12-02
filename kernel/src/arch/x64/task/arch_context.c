@@ -2,7 +2,7 @@
 #include <mm/mm.h>
 #include <arch/arch.h>
 #include <task/task.h>
-#include <task/rrs.h>
+#include <task/sched.h>
 
 void kernel_thread_func();
 asm("kernel_thread_func:\n\t"

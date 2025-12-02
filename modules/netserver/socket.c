@@ -599,8 +599,8 @@ bool real_socket_initialized = false;
 
 static void delay(uint64_t ms) {
     uint64_t ns = ms * 1000000;
-    uint64_t start = nanoTime();
-    while (nanoTime() - start < ns) {
+    uint64_t start = nano_time();
+    while (nano_time() - start < ns) {
         arch_pause();
     }
 }

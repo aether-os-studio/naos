@@ -20,12 +20,12 @@ void naos_read_barrier(void) { dma_rmb(); }
 void naos_write_barrier(void) { dma_wmb(); }
 
 void naos_udelay(uint32_t us) {
-    uint64_t ns = nanoTime() + (uint64_t)us * 1000;
-    while (nanoTime() < ns) {
+    uint64_t ns = nano_time() + (uint64_t)us * 1000;
+    while (nano_time() < ns) {
         arch_pause();
     }
 }
-uint64_t naos_get_time_ms(void) { return nanoTime() / 1000000; }
+uint64_t naos_get_time_ms(void) { return nano_time() / 1000000; }
 
 // Locking (for multi-threaded environments)
 void *naos_mutex_create(void) {}

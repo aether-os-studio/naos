@@ -35,7 +35,7 @@ extern struct global_timer_state g_timer;
 
 int timer_init();
 void timer_init_percpu();
-uint64_t nanoTime();
+uint64_t nano_time();
 
 // 新增接口
 timer_type_t timer_get_active_type();
