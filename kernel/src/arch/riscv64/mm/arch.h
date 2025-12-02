@@ -9,7 +9,7 @@
 
 #define ARCH_PT_FLAG_VALID (0x1UL << 0)
 #define ARCH_PT_FLAG_READ (0x1UL << 1)
-#define ARCH_PT_FLAG_WRITE (0x1UL << 2)
+#define ARCH_PT_FLAG_WRITEABLE (0x1UL << 2)
 #define ARCH_PT_FLAG_EXEC (0x1UL << 3)
 #define ARCH_PT_FLAG_USER (0x1UL << 4)
 #define ARCH_PT_FLAG_ACCESSED (0x1UL << 6)
@@ -30,7 +30,7 @@
 #define ARCH_PT_TABLE_FLAGS ARCH_PT_FLAG_VALID
 
 #define ARCH_PT_FLAG_RWX                                                       \
-    (ARCH_PT_FLAG_READ | ARCH_PT_FLAG_WRITE | ARCH_PT_FLAG_EXEC)
+    (ARCH_PT_FLAG_READ | ARCH_PT_FLAG_WRITEABLE | ARCH_PT_FLAG_EXEC)
 
 #define ARCH_PT_IS_TABLE(x)                                                    \
     (((x) & (ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_RWX)) == ARCH_PT_FLAG_VALID)

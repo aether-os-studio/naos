@@ -1,6 +1,7 @@
 #include <libs/klibc.h>
 #include <arch/arch.h>
 #include <task/task.h>
+#include <mm/fault.h>
 
 void handle_exception_c(struct pt_regs *regs, uint64_t cause);
 void handle_interrupt_c(struct pt_regs *regs, uint64_t cause);
@@ -43,7 +44,8 @@ void handle_trap_c(struct pt_regs *regs) {
     if (is_interrupt) {
         handle_interrupt_c(regs, cause_code);
     } else {
-        if (cause_code != 8 && cause_code != 11) {
+        if (cause_code != 8 && cause_code != 11 && cause_code != 12 &&
+            cause_code != 13 && cause_code != 15) {
             printk("Exception occurred:\n");
 
             dump_registers(regs);
@@ -55,7 +57,13 @@ void handle_trap_c(struct pt_regs *regs) {
 
 extern void syscall_handler(struct pt_regs *regs);
 
-void handle_syscall(struct pt_regs *regs) { syscall_handler(regs); }
+void handle_syscall(struct pt_regs *regs) {
+    struct pt_regs *syscall_regs =
+        (struct pt_regs *)current_task->syscall_stack - 1;
+    memcpy(syscall_regs, regs, sizeof(struct pt_regs));
+    syscall_handler(syscall_regs);
+    memcpy(regs, syscall_regs, sizeof(struct pt_regs));
+}
 
 void handle_exception_c(struct pt_regs *regs, uint64_t cause) {
     switch (cause) {
@@ -81,10 +89,26 @@ void handle_exception_c(struct pt_regs *regs, uint64_t cause) {
         regs->sstatus |= (1UL << 5) | (1UL << 0);
         break;
 
+    case 12:
+    case 13:
+    case 15: {
+        page_fault_result_t res = handle_page_fault(current_task, regs->stval);
+        if (res != PF_RES_OK) {
+            printk("Exception occurred:\n");
+
+            dump_registers(regs);
+
+            task_exit(128 + SIGSEGV);
+
+            return;
+        }
+        break;
+    }
+
     default:
         printk("Unhandled exception: %lu\n", cause);
         task_exit(128 + SIGSEGV);
-        break;
+        return;
     }
 }
 
