@@ -4,7 +4,6 @@
 #include <fs/vfs/dev.h>
 #include <drivers/bus/pci.h>
 #include <drivers/fdt/fdt.h>
-#include <drivers/drm/drm_core.h>
 #include <drivers/drm/drm.h>
 #include <fs/partition.h>
 #include <drivers/fb.h>

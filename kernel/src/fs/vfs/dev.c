@@ -109,7 +109,7 @@ int devtmpfs_mknod(void *parent, const char *name, vfs_node_t node,
     node->mode = mode & 0777;
     if ((mode & S_IFMT) == S_IFBLK)
         node->type = file_block;
-    if ((mode & S_IFMT) == S_IFCHR)
+    else if ((mode & S_IFMT) == S_IFCHR)
         node->type = file_stream;
     else
         node->type = file_none;

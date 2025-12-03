@@ -1,17 +1,26 @@
 #include <drivers/drm/plainfb.h>
+#include <drivers/drm/drm_ioctl.h>
+#include <drivers/drm/drm_core.h>
+#include <drivers/drm/drm.h>
 
 int plainfb_get_display_info(drm_device_t *drm_dev, uint32_t *width,
                              uint32_t *height, uint32_t *bpp) {
     plainfb_device_t *dev = drm_dev->data;
-    *width = dev->framebuffer->width;
-    *height = dev->framebuffer->height;
-    *bpp = dev->framebuffer->bpp;
-    return 0;
+    if (dev && dev->framebuffer) {
+        *width = dev->framebuffer->width;
+        *height = dev->framebuffer->height;
+        *bpp = dev->framebuffer->bpp;
+        return 0;
+    }
+    return -ENODEV;
 }
 
 int plainfb_create_dumb(drm_device_t *drm_dev,
                         struct drm_mode_create_dumb *args) {
     plainfb_device_t *gpu_dev = drm_dev->data;
+    if (!gpu_dev) {
+        return -ENODEV;
+    }
 
     args->pitch = args->width * (args->bpp / 8);
     args->size = args->height * args->pitch;
@@ -39,6 +48,9 @@ int plainfb_create_dumb(drm_device_t *drm_dev,
 
 static int plainfb_destroy_dumb(drm_device_t *drm_dev, uint32_t handle) {
     plainfb_device_t *gpu_dev = drm_dev->data;
+    if (!gpu_dev) {
+        return -ENODEV;
+    }
 
     if (handle >= 32 || !gpu_dev->dumbbuffers[handle].used) {
         return -EINVAL;
@@ -61,9 +73,15 @@ static int plainfb_destroy_dumb(drm_device_t *drm_dev, uint32_t handle) {
 static int plainfb_add_fb(drm_device_t *drm_dev,
                           struct drm_mode_fb_cmd *fb_cmd) {
     plainfb_device_t *device = drm_dev->data;
+    if (!device) {
+        return -ENODEV;
+    }
 
     drm_framebuffer_t *fb =
         drm_framebuffer_alloc(&device->resource_mgr, device);
+    if (!fb) {
+        return -ENOMEM;
+    }
 
     fb->width = fb_cmd->width;
     fb->height = fb_cmd->height;
@@ -81,6 +99,9 @@ static int plainfb_add_fb(drm_device_t *drm_dev,
 static int plainfb_add_fb2(drm_device_t *drm_dev,
                            struct drm_mode_fb_cmd2 *fb_cmd) {
     plainfb_device_t *device = drm_dev->data;
+    if (!device) {
+        return -ENODEV;
+    }
 
     drm_framebuffer_t *fb =
         drm_framebuffer_alloc(&device->resource_mgr, device);
@@ -104,6 +125,9 @@ static int plainfb_add_fb2(drm_device_t *drm_dev,
 
 int plainfb_map_dumb(drm_device_t *drm_dev, struct drm_mode_map_dumb *args) {
     plainfb_device_t *gpu_dev = drm_dev->data;
+    if (!gpu_dev) {
+        return -ENODEV;
+    }
 
     if (args->handle >= 32 || !gpu_dev->dumbbuffers[args->handle].used) {
         return -EINVAL;
@@ -115,6 +139,8 @@ int plainfb_map_dumb(drm_device_t *drm_dev, struct drm_mode_map_dumb *args) {
 }
 
 static int plainfb_set_crtc(drm_device_t *drm_dev, struct drm_mode_crtc *crtc) {
+    (void)drm_dev;
+    (void)crtc;
     // CRTC configuration handled by page flip
     return 0;
 }
@@ -122,6 +148,9 @@ static int plainfb_set_crtc(drm_device_t *drm_dev, struct drm_mode_crtc *crtc) {
 static int plainfb_page_flip(drm_device_t *drm_dev,
                              struct drm_mode_crtc_page_flip *flip) {
     plainfb_device_t *gpu_dev = drm_dev->data;
+    if (!gpu_dev || !gpu_dev->framebuffer) {
+        return -ENODEV;
+    }
 
     if (flip->crtc_id > 1 || flip->fb_id >= 32 ||
         !gpu_dev->dumbbuffers[flip->fb_id - 1].used) {
@@ -135,18 +164,7 @@ static int plainfb_page_flip(drm_device_t *drm_dev,
             gpu_dev->dumbbuffers[flip->fb_id - 1].height);
 
     // Create flip complete event
-    for (int i = 0; i < DRM_MAX_EVENTS_COUNT; i++) {
-        if (!drm_dev->drm_events[i]) {
-            drm_dev->drm_events[i] = malloc(sizeof(struct k_drm_event));
-            drm_dev->drm_events[i]->type = DRM_EVENT_FLIP_COMPLETE;
-            drm_dev->drm_events[i]->user_data = flip->user_data;
-            drm_dev->drm_events[i]->timestamp.tv_sec =
-                nano_time() / 1000000000ULL;
-            drm_dev->drm_events[i]->timestamp.tv_nsec =
-                nano_time() % 1000000000ULL;
-            break;
-        }
-    }
+    drm_post_event(drm_dev, DRM_EVENT_FLIP_COMPLETE, flip->user_data);
 
     return 0;
 }
@@ -155,6 +173,11 @@ static int plainfb_get_connectors(drm_device_t *drm_dev,
                                   drm_connector_t **connectors,
                                   uint32_t *count) {
     plainfb_device_t *gpu_dev = drm_dev->data;
+    if (!gpu_dev) {
+        *count = 0;
+        return -ENODEV;
+    }
+
     *count = 0;
 
     for (uint32_t i = 0; i < 1; i++) {
@@ -169,6 +192,11 @@ static int plainfb_get_connectors(drm_device_t *drm_dev,
 static int plainfb_get_crtcs(drm_device_t *drm_dev, drm_crtc_t **crtcs,
                              uint32_t *count) {
     plainfb_device_t *gpu_dev = drm_dev->data;
+    if (!gpu_dev) {
+        *count = 0;
+        return -ENODEV;
+    }
+
     *count = 0;
 
     for (uint32_t i = 0; i < 1; i++) {
@@ -183,6 +211,11 @@ static int plainfb_get_crtcs(drm_device_t *drm_dev, drm_crtc_t **crtcs,
 static int plainfb_get_encoders(drm_device_t *drm_dev, drm_encoder_t **encoders,
                                 uint32_t *count) {
     plainfb_device_t *gpu_dev = drm_dev->data;
+    if (!gpu_dev) {
+        *count = 0;
+        return -ENODEV;
+    }
+
     *count = 0;
 
     for (uint32_t i = 0; i < 1; i++) {
@@ -197,16 +230,27 @@ static int plainfb_get_encoders(drm_device_t *drm_dev, drm_encoder_t **encoders,
 int plainfb_get_planes(drm_device_t *drm_dev, drm_plane_t **planes,
                        uint32_t *count) {
     plainfb_device_t *device = drm_dev->data;
+    if (!device) {
+        *count = 0;
+        return -ENODEV;
+    }
 
     *count = 1;
     planes[0] = drm_plane_alloc(&device->resource_mgr, drm_dev->data);
-    planes[0]->crtc_id = device->crtcs[0]->id;
-    planes[0]->fb_id = device->crtcs[0]->fb_id;
+    if (!planes[0]) {
+        *count = 0;
+        return -ENOMEM;
+    }
+
+    planes[0]->crtc_id = device->crtcs[0] ? device->crtcs[0]->id : 0;
+    planes[0]->fb_id = device->crtcs[0] ? device->crtcs[0]->fb_id : 0;
     planes[0]->possible_crtcs = 1;
     planes[0]->count_format_types = 1;
     planes[0]->format_types =
         malloc(sizeof(uint32_t) * planes[0]->count_format_types);
-    planes[0]->format_types[0] = DRM_FORMAT_BGRA8888;
+    if (planes[0]->format_types) {
+        planes[0]->format_types[0] = DRM_FORMAT_BGRA8888;
+    }
     planes[0]->plane_type = DRM_PLANE_TYPE_PRIMARY;
     return 0;
 }
@@ -235,11 +279,19 @@ drm_device_op_t plainfb_drm_device_op = {
 
 void drm_plainfb_init() {
     boot_framebuffer_t *fb = boot_get_framebuffer();
+    if (!fb) {
+        printk("plainfb: No framebuffer found\n");
+        return;
+    }
 
     // Create GPU device structure
     plainfb_device_t *gpu_device = malloc(sizeof(plainfb_device_t));
-    memset(gpu_device, 0, sizeof(plainfb_device_t));
+    if (!gpu_device) {
+        printk("plainfb: Failed to allocate device\n");
+        return;
+    }
 
+    memset(gpu_device, 0, sizeof(plainfb_device_t));
     gpu_device->framebuffer = fb;
 
     // Initialize DRM resource manager
@@ -257,21 +309,24 @@ void drm_plainfb_init() {
         // Add display mode
         gpu_device->connectors[i]->modes =
             malloc(sizeof(struct drm_mode_modeinfo));
-        struct drm_mode_modeinfo mode = {
-            .clock = fb->width * 60,
-            .hdisplay = fb->width,
-            .hsync_start = fb->width + 16,
-            .hsync_end = fb->width + 16 + 96,
-            .htotal = fb->width + 16 + 96 + 48,
-            .vdisplay = fb->height,
-            .vsync_start = fb->height + 10,
-            .vsync_end = fb->height + 10 + 2,
-            .vtotal = fb->height + 10 + 2 + 33,
-            .vrefresh = 60,
-        };
-        memcpy(gpu_device->connectors[i]->modes, &mode,
-               sizeof(struct drm_mode_modeinfo));
-        gpu_device->connectors[i]->count_modes = 1;
+        if (gpu_device->connectors[i]->modes) {
+            struct drm_mode_modeinfo mode = {
+                .clock = fb->width * 60,
+                .hdisplay = fb->width,
+                .hsync_start = fb->width + 16,
+                .hsync_end = fb->width + 16 + 96,
+                .htotal = fb->width + 16 + 96 + 48,
+                .vdisplay = fb->height,
+                .vsync_start = fb->height + 10,
+                .vsync_end = fb->height + 10 + 2,
+                .vtotal = fb->height + 10 + 2 + 33,
+                .vrefresh = 60,
+            };
+            sprintf(mode.name, "%dx%d", fb->width, fb->height);
+            memcpy(gpu_device->connectors[i]->modes, &mode,
+                   sizeof(struct drm_mode_modeinfo));
+            gpu_device->connectors[i]->count_modes = 1;
+        }
     }
 
     // Create CRTC
@@ -296,8 +351,8 @@ void drm_plainfb_init() {
     pci_find_class(vga_pci_devices, &count, 0x00020000);
 
     if (count > 0) {
-        // Register with DRM subsystem
+        // Register with DRM subsystem using PCI device
         drm_regist_pci_dev(gpu_device, &plainfb_drm_device_op,
                            vga_pci_devices[0]);
-    }
+    };
 }

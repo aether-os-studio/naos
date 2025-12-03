@@ -59,7 +59,7 @@ void free_task(task_t *ptr) {
     ptr->sched_info = NULL;
 
     if (ptr->fd_info) {
-        if (ptr->fd_info->ref_count <= 0) {
+        if (--ptr->fd_info->ref_count <= 0) {
             for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
                 if (ptr->fd_info->fds[i]) {
                     vfs_close(ptr->fd_info->fds[i]->node);
@@ -69,6 +69,7 @@ void free_task(task_t *ptr) {
                 }
             }
             free(ptr->fd_info);
+            ptr->fd_info = NULL;
         }
     }
 
@@ -949,9 +950,6 @@ void task_exit_inner(task_t *task, int64_t code) {
     }
 
     task->status = (uint64_t)code;
-
-    if (task->fd_info)
-        task->fd_info->ref_count--;
 
     if (task->ppid != task->pid && tasks[task->ppid] &&
         !tasks[task->ppid]->child_vfork_done) {

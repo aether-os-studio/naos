@@ -755,6 +755,11 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
     buff->stx_blocks = simple.st_blocks;
     buff->stx_attributes_mask = 0;
 
+    buff->stx_dev_major = (simple.st_dev >> 8) & 0xFF;
+    buff->stx_dev_minor = simple.st_dev & 0xFF;
+    buff->stx_rdev_major = (simple.st_rdev >> 8) & 0xFF;
+    buff->stx_rdev_minor = simple.st_rdev & 0xFF;
+
     buff->stx_atime.tv_sec = simple.st_atim.tv_sec;
     buff->stx_atime.tv_nsec = simple.st_atim.tv_nsec;
 

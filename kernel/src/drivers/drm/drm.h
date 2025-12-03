@@ -1,7 +1,32 @@
 #pragma once
 
-#include "drm_mode.h"
+#include <drivers/drm/drm_core.h>
+#include <drivers/drm/drm_mode.h>
 #include <drivers/bus/pci.h>
+
+#define HZ 60
+
+#define fourcc_code(a, b, c, d)                                                \
+    ((__u32)(a) | ((__u32)(b) << 8) | ((__u32)(c) << 16) | ((__u32)(d) << 24))
+
+/* 32 bpp RGB */
+#define DRM_FORMAT_XRGB8888                                                    \
+    fourcc_code('X', 'R', '2', '4') /* [31:0] x:R:G:B 8:8:8:8 little endian */
+#define DRM_FORMAT_XBGR8888                                                    \
+    fourcc_code('X', 'B', '2', '4') /* [31:0] x:B:G:R 8:8:8:8 little endian */
+#define DRM_FORMAT_RGBX8888                                                    \
+    fourcc_code('R', 'X', '2', '4') /* [31:0] R:G:B:x 8:8:8:8 little endian */
+#define DRM_FORMAT_BGRX8888                                                    \
+    fourcc_code('B', 'X', '2', '4') /* [31:0] B:G:R:x 8:8:8:8 little endian */
+
+#define DRM_FORMAT_ARGB8888                                                    \
+    fourcc_code('A', 'R', '2', '4') /* [31:0] A:R:G:B 8:8:8:8 little endian */
+#define DRM_FORMAT_ABGR8888                                                    \
+    fourcc_code('A', 'B', '2', '4') /* [31:0] A:B:G:R 8:8:8:8 little endian */
+#define DRM_FORMAT_RGBA8888                                                    \
+    fourcc_code('R', 'A', '2', '4') /* [31:0] R:G:B:A 8:8:8:8 little endian */
+#define DRM_FORMAT_BGRA8888                                                    \
+    fourcc_code('B', 'A', '2', '4') /* [31:0] B:G:R:A 8:8:8:8 little endian */
 
 /**
  * \file drm.h
@@ -1172,7 +1197,22 @@ struct drm_device {
     drm_resource_manager_t resource_mgr;
 };
 
+#include <drivers/drm/drm_core.h>
+#include <drivers/drm/drm_ioctl.h>
+
+/* Core driver functions */
 drm_device_t *drm_regist_pci_dev(void *data, drm_device_op_t *op,
                                  pci_device_t *pci_dev);
-
+drm_device_t *drm_register_device(void *data, drm_device_op_t *op,
+                                  const char *name, pci_device_t *pci_dev);
+void drm_unregister_device(drm_device_t *dev);
 void drm_init_after_pci_sysfs();
+
+/* File operations */
+ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
+                 uint64_t flags);
+ssize_t drm_poll(void *data, size_t event);
+void *drm_map(void *data, void *addr, uint64_t offset, uint64_t len);
+
+/* Event handling */
+int drm_post_event(drm_device_t *dev, uint32_t type, uint64_t user_data);
