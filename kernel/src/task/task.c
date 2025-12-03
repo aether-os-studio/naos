@@ -137,7 +137,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task_t *task = get_free_task();
     task->signal = malloc(sizeof(task_signal_info_t));
     memset(task->signal, 0, sizeof(task_signal_info_t));
-    task->signal->signal_lock = SPIN_INIT;
+    spin_init(&task->signal->signal_lock);
     memset(&task->signal->signal_saved_regs, 0, sizeof(struct pt_regs));
     task->is_kernel = true;
     task->ppid = task->pid;
@@ -811,7 +811,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
         free(current_task->signal);
     current_task->signal = malloc(sizeof(task_signal_info_t));
     memset(current_task->signal, 0, sizeof(task_signal_info_t));
-    current_task->signal->signal_lock = SPIN_INIT;
+    spin_init(&current_task->signal->signal_lock);
     memcpy(&current_task->signal->actions[SIGCHLD], &old_sigchld_handler,
            sizeof(sigaction_t));
 
@@ -1189,7 +1189,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     child->signal = malloc(sizeof(task_signal_info_t));
     memset(child->signal, 0, sizeof(task_signal_info_t));
-    child->signal->signal_lock = SPIN_INIT;
+    spin_init(&child->signal->signal_lock);
 
     memset(&child->signal->signal_saved_regs, 0, sizeof(struct pt_regs));
 

@@ -127,20 +127,19 @@ static inline void set_system_trap_gate(unsigned int n, unsigned char ist,
  * @brief 初始化TSS表的内容
  *
  */
+static inline void set_tss64(tss_t *table, uint64_t rsp0, uint64_t rsp1,
+                             uint64_t rsp2, uint64_t ist1, uint64_t ist2,
+                             uint64_t ist3, uint64_t ist4, uint64_t ist5,
+                             uint64_t ist6, uint64_t ist7) {
+    table->rsp0 = rsp0;
+    table->rsp1 = rsp1;
+    table->rsp2 = rsp2;
 
-static inline void set_tss64(volatile uint32_t *Table, uint64_t rsp0,
-                             uint64_t rsp1, uint64_t rsp2, uint64_t ist1,
-                             uint64_t ist2, uint64_t ist3, uint64_t ist4,
-                             uint64_t ist5, uint64_t ist6, uint64_t ist7) {
-    *((volatile uint64_t *)&Table[1]) = rsp0;
-    *((volatile uint64_t *)&Table[3]) = rsp1;
-    *((volatile uint64_t *)&Table[5]) = rsp2;
-
-    *((volatile uint64_t *)&Table[9]) = ist1;
-    *((volatile uint64_t *)&Table[11]) = ist2;
-    *((volatile uint64_t *)&Table[13]) = ist3;
-    *((volatile uint64_t *)&Table[15]) = ist4;
-    *((volatile uint64_t *)&Table[17]) = ist5;
-    *((volatile uint64_t *)&Table[19]) = ist6;
-    *((volatile uint64_t *)&Table[21]) = ist7;
+    table->ist1 = ist1;
+    table->ist2 = ist2;
+    table->ist3 = ist3;
+    table->ist4 = ist4;
+    table->ist5 = ist5;
+    table->ist6 = ist6;
+    table->ist7 = ist7;
 }

@@ -243,6 +243,10 @@ typedef struct spinlock {
     long rflags;
 } spinlock_t;
 
+static inline void spin_init(spinlock_t *lock) {
+    memset(lock, 0, sizeof(spinlock_t));
+}
+
 static inline void spin_lock(spinlock_t *lock) {
     asm volatile("1:\n\t"
                  "lock btsq $0, %0\n\t" // 测试并设置
@@ -307,6 +311,10 @@ typedef struct spinlock {
     volatile long lock;
     long daif;
 } spinlock_t;
+
+static inline void spin_init(spinlock_t *lock) {
+    memset(lock, 0, sizeof(spinlock_t));
+}
 
 static inline void spin_lock(spinlock_t *lock) {
     long tmp, status, daif;
@@ -386,6 +394,10 @@ typedef struct spinlock {
     uint64_t flags;
 } spinlock_t;
 
+static inline void spin_init(spinlock_t *lock) {
+    memset(lock, 0, sizeof(spinlock_t));
+}
+
 // 获取spinlock
 static inline void spin_lock(spinlock_t *sl) {
     uint64_t flags;
@@ -439,6 +451,10 @@ typedef struct spinlock {
     volatile long lock;
     uint64_t crmd;
 } spinlock_t;
+
+static inline void spin_init(spinlock_t *lock) {
+    memset(lock, 0, sizeof(spinlock_t));
+}
 
 static inline void spin_lock(spinlock_t *lock) {
     uint32_t tmp;

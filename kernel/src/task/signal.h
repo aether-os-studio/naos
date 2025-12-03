@@ -63,59 +63,6 @@ int signals_pending_quick(task_t *task);
 #define SIG_UNBLOCK 1 /* for unblocking signals */
 #define SIG_SETMASK 2 /* for setting the signal mask */
 
-#define CLD_EXITED 1
-#define CLD_KILLED 2
-#define CLD_DUMPED 3
-#define CLD_TRAPPED 4
-#define CLD_STOPPED 5
-#define CLD_CONTINUED 6
-
-typedef struct {
-    int si_signo, si_errno, si_code;
-    union {
-        char __pad[128 - 2 * sizeof(int) - sizeof(long)];
-        struct {
-            union {
-                struct {
-                    int32_t si_pid;
-                    uint32_t si_uid;
-                } __piduid;
-                struct {
-                    int si_timerid;
-                    int si_overrun;
-                } __timer;
-            } __first;
-            union {
-                union sigval si_value;
-                struct {
-                    int si_status;
-                    long si_utime, si_stime;
-                } __sigchld;
-            } __second;
-        } __si_common;
-        struct {
-            void *si_addr;
-            short si_addr_lsb;
-            union {
-                struct {
-                    void *si_lower;
-                    void *si_upper;
-                } __addr_bnd;
-                unsigned si_pkey;
-            } __first;
-        } __sigfault;
-        struct {
-            long si_band;
-            int si_fd;
-        } __sigpoll;
-        struct {
-            void *si_call_addr;
-            int si_syscall;
-            unsigned si_arch;
-        } __sigsys;
-    } __si_fields;
-} siginfo_t;
-
 struct timespec;
 
 uint64_t sys_sgetmask();
@@ -170,24 +117,6 @@ struct signalfd_ctx {
     size_t queue_tail;
     vfs_node_t node;
 };
-
-struct pt_regs;
-
-typedef struct pending_signal {
-    int sig;
-    siginfo_t info;
-} pending_signal_t;
-
-typedef struct task_signal_info {
-    spinlock_t signal_lock;
-    struct pt_regs signal_saved_regs;
-    fpu_context_t signal_saved_fpu;
-    uint64_t signal;
-    pending_signal_t pending_signal;
-    uint64_t blocked;
-    uint64_t saved_blocked;
-    sigaction_t actions[MAXSIG];
-} task_signal_info_t;
 
 void signal_init();
 

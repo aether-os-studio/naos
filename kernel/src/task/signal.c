@@ -242,7 +242,7 @@ uint64_t sys_kill(int pid, int sig) {
 extern int signalfdfs_id;
 
 void task_signal() {
-    if (!current_task->signal->pending_signal.sig ||
+    if (current_task->signal->pending_signal.sig == 0 ||
         current_task->state == TASK_DIED || current_task->arch_context->dead ||
         current_task->state == TASK_UNINTERRUPTABLE) {
         return;

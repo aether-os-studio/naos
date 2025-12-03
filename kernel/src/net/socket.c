@@ -345,7 +345,7 @@ int socket_listen(uint64_t fd, int backlog) {
 
     // maybe do a typical array here
     sock->connMax = backlog;
-    sock->backlog = calloc(sizeof(unix_socket_pair_t *), sock->connMax);
+    sock->backlog = calloc(sock->connMax, sizeof(unix_socket_pair_t *));
     return 0;
 }
 

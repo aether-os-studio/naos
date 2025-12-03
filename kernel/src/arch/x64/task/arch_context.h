@@ -22,7 +22,7 @@ typedef struct fpu_context {
     uint64_t mm[16];
     uint64_t xmm[32];
     uint64_t rest[12];
-} __attribute__((aligned(16))) fpu_context_t;
+} fpu_context_t;
 
 typedef struct sigaltstack {
     void *ss_sp;
