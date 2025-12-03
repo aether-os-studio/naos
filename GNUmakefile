@@ -166,7 +166,7 @@ $(IMAGE_NAME).img: assets/limine modules kernel
 	mkfs.vfat -F 32 --offset 2048 -S 512 $(IMAGE_NAME).img
 	mcopy -i $(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/
 ifeq ($(KERNEL_MODULE), mixed)
-	mcopy -i $(IMAGE_NAME).img@@1M modules-$(ARCH) ::/modules
+	mcopy -i $(IMAGE_NAME).img@@1M initramfs-$(ARCH).img ::/initramfs.img
 endif
 ifeq ($(BOOT_PROTOCOL), limine)
 	mmd -i $(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/limine
@@ -191,7 +191,7 @@ single-$(IMAGE_NAME).img: assets/limine modules kernel rootfs-$(ARCH).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 single-$(IMAGE_NAME).img
 	mcopy -i single-$(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/
 ifeq ($(KERNEL_MODULE), mixed)
-	mcopy -i single-$(IMAGE_NAME).img@@1M modules-$(ARCH) ::/modules
+	mcopy -i single-$(IMAGE_NAME).img@@1M initramfs-$(ARCH).img ::/initramfs.img
 endif
 ifeq ($(BOOT_PROTOCOL), limine)
 	mmd -i single-$(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/limine
@@ -361,6 +361,4 @@ assets/ovmf-vars-$(ARCH).fd:
 modules:
 	$(MAKE) -C modules -j$(shell nproc)
 
-ifeq ($(KERNEL_MODULE), monolithic)
-	$(MAKE) -C modules monolithic_modules
-endif
+	sh mkinitcpio.sh

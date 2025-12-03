@@ -3,6 +3,7 @@
 /kernel-deps
 /assets
 /modules-*
+/initramfs-*
 /obj-modules-*
 /nvidia-open
 /nvidia-open-install-dir

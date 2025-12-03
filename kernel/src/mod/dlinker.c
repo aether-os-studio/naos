@@ -3,9 +3,6 @@
 #include <drivers/kernel_logger.h>
 #include <boot/boot.h>
 #include <libs/aether/mm.h>
-#ifdef MONOLITHIC
-#include <embedded_modules.h>
-#endif
 
 uint64_t kernel_modules_load_offset = 0;
 
@@ -368,32 +365,20 @@ void find_kernel_symbol() {
 void dlinker_init() {
     find_kernel_symbol();
 
-#ifdef MONOLITHIC
-    for (uint64_t i = 0;
-         i < sizeof(embedded_modules) / sizeof(embedded_modules[0]); i++) {
-        module_t module = {
-            .is_use = false,
-            .data = embedded_modules[i].data,
-            .size = *embedded_modules[i].size,
-        };
-        strcpy(module.module_name, embedded_modules[i].name);
+    vfs_node_t modules_root = vfs_open("/lib/modules");
+    if (!modules_root)
+        return;
 
+    list_foreach(modules_root->child, i) {
+        vfs_node_t node = i->data;
+
+        module_t module;
+        strncpy(module.module_name, node->name, sizeof(module.module_name));
+        module.path = node->name;
+        module.size = node->size;
+        module.data = alloc_frames_bytes(module.size);
+        vfs_read(node, module.data, 0, module.size);
         dlinker_load(&module);
+        free_frames_bytes(module.data, module.size);
     }
-#else
-    boot_module_t *boot_modules[MAX_MODULES_NUM];
-    size_t modules_count = 0;
-    boot_get_modules(boot_modules, &modules_count);
-
-    for (uint64_t i = 0; i < modules_count; i++) {
-        module_t module = {
-            .is_use = false,
-            .data = boot_modules[i]->data,
-            .size = boot_modules[i]->size,
-        };
-        strcpy(module.module_name, boot_modules[i]->path);
-
-        dlinker_load(&module);
-    }
-#endif
 }

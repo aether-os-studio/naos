@@ -116,7 +116,7 @@ int vfs_mkdir(const char *name) {
     vfs_node_t current = rootdir;
     char *path;
     if (name[0] != '/') {
-        current = current_task->cwd;
+        current = current_task ? current_task->cwd : rootdir;
         path = strdup(name);
     } else {
         path = strdup(name + 1);
@@ -185,7 +185,7 @@ int vfs_mkfile(const char *name) {
     vfs_node_t current = rootdir;
     char *path;
     if (name[0] != '/') {
-        current = current_task->cwd;
+        current = current_task ? current_task->cwd : rootdir;
         path = strdup(name);
     } else {
         path = strdup(name + 1);
@@ -266,7 +266,7 @@ int vfs_link(const char *name, const char *target_name) {
     vfs_node_t current = rootdir;
     char *path;
     if (name[0] != '/') {
-        current = current_task->cwd;
+        current = current_task ? current_task->cwd : rootdir;
         path = strdup(name);
     } else {
         path = strdup(name + 1);
@@ -339,7 +339,7 @@ int vfs_symlink(const char *name, const char *target_name) {
     vfs_node_t current = rootdir;
     char *path;
     if (name[0] != '/') {
-        current = current_task->cwd;
+        current = current_task ? current_task->cwd : rootdir;
         path = strdup(name);
     } else {
         path = strdup(name + 1);
@@ -413,7 +413,7 @@ int vfs_mknod(const char *name, uint16_t umode, int dev) {
     vfs_node_t current = rootdir;
     char *path;
     if (name[0] != '/') {
-        current = current_task->cwd;
+        current = current_task ? current_task->cwd : rootdir;
         path = strdup(name);
     } else {
         path = strdup(name + 1);
@@ -628,8 +628,8 @@ err:
 vfs_node_t vfs_open(const char *_path) {
     vfs_node_t node = NULL;
 
-    if (current_task && current_task->cwd) {
-        node = vfs_open_at(current_task->cwd, _path);
+    if (current_task && current_task ? current_task->cwd : rootdir) {
+        node = vfs_open_at(current_task ? current_task->cwd : rootdir, _path);
     } else {
         node = vfs_open_at(rootdir, _path);
     }

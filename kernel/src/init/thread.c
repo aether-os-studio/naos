@@ -11,7 +11,6 @@
 
 extern void acpi_init_after_pci();
 
-extern void tmpfs_init();
 extern void sysfs_init();
 extern void sysfs_init_umount();
 extern void fs_syscall_init();
@@ -44,8 +43,6 @@ void init_thread(uint64_t arg) {
     pipefs_init();
 
     fbdev_init();
-
-    tmpfs_init();
 
     sysfs_init();
 
