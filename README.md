@@ -1,6 +1,6 @@
 # The Neo Aether Operating System
 
-![Screenshot](./images/aether-xeyes-xclock.png?raw=true)
+![Screenshot](./images/naos.png?raw=true)
 
 ## What is this about?
 
