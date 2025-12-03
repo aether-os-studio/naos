@@ -1,7 +1,6 @@
 #include <mm/mm.h>
 #include <drivers/kernel_logger.h>
 #include <drivers/bus/pci.h>
-#include <drivers/bus/pcie.h>
 #include <libs/aether/pci.h>
 #include <uacpi/acpi.h>
 #include <uacpi/tables.h>
@@ -547,8 +546,6 @@ void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
                 }
             }
         }
-
-        pcie_optimize_link(pci_device);
 
         // 添加到设备列表
         if (pci_device_number < PCI_DEVICE_MAX) {
