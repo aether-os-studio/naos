@@ -243,7 +243,7 @@ run-x86_64-single: assets/ovmf-code-$(ARCH).fd all-single
 		$(QEMUFLAGS)
 
 .PHONY: run-aarch64
-run-aarch64: assets/ovmf-code-$(ARCH).fd assets/ovmf-vars-$(ARCH).fd all
+run-aarch64: assets/ovmf-code-$(ARCH).fd all
 	qemu-system-$(ARCH) \
 		-M virt \
 		-cpu cortex-a72 \
@@ -252,7 +252,6 @@ run-aarch64: assets/ovmf-code-$(ARCH).fd assets/ovmf-vars-$(ARCH).fd all
 		-device usb-kbd \
 		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
-		-drive if=pflash,unit=1,format=raw,file=assets/ovmf-vars-$(ARCH).fd \
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
 		-device virtio-blk-pci,drive=harddisk \
@@ -347,15 +346,15 @@ assets/limine:
 
 assets/ovmf-code-$(ARCH).fd:
 	mkdir -p assets
-	curl -Lo $@ https://github.com/osdev0/edk2-ovmf-nightly/releases/latest/download/ovmf-code-$(ARCH).fd
+	curl -Lo assets/edk2-ovmf.tar.gz https://github.com/osdev0/edk2-ovmf-nightly/releases/download/nightly-20251204T012528Z/edk2-ovmf.tar.gz
+	tar -zxvf assets/edk2-ovmf.tar.gz -C assets/
+
+	cp -r assets/edk2-ovmf/ovmf-code-$(ARCH).fd $@
+
 	case "$(ARCH)" in \
 		aarch64) dd if=/dev/zero of=$@ bs=1 count=0 seek=67108864 2>/dev/null;; \
 		riscv64) dd if=/dev/zero of=$@ bs=1 count=0 seek=33554432 2>/dev/null;; \
 	esac
-
-assets/ovmf-vars-$(ARCH).fd:
-	mkdir -p assets
-	curl -Lo $@ https://github.com/osdev0/edk2-ovmf-nightly/releases/latest/download/ovmf-vars-$(ARCH).fd
 
 .PHONY: modules
 modules:
