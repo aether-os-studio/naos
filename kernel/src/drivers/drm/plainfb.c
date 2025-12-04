@@ -89,7 +89,7 @@ static int plainfb_add_fb(drm_device_t *drm_dev,
     fb->bpp = fb_cmd->bpp;
     fb->depth = fb_cmd->depth;
     fb->handle = fb_cmd->handle;
-    fb->format = DRM_FORMAT_BGRA8888;
+    fb->format = DRM_FORMAT_XRGB8888;
 
     fb_cmd->fb_id = fb->id;
 
@@ -160,8 +160,7 @@ static int plainfb_page_flip(drm_device_t *drm_dev,
     fast_copy_16(
         (void *)gpu_dev->framebuffer->address,
         (const void *)phys_to_virt(gpu_dev->dumbbuffers[flip->fb_id - 1].addr),
-        gpu_dev->dumbbuffers[flip->fb_id - 1].pitch *
-            gpu_dev->dumbbuffers[flip->fb_id - 1].height);
+        gpu_dev->framebuffer->pitch * gpu_dev->framebuffer->height);
 
     // Create flip complete event
     drm_post_event(drm_dev, DRM_EVENT_FLIP_COMPLETE, flip->user_data);
@@ -249,7 +248,7 @@ int plainfb_get_planes(drm_device_t *drm_dev, drm_plane_t **planes,
     planes[0]->format_types =
         malloc(sizeof(uint32_t) * planes[0]->count_format_types);
     if (planes[0]->format_types) {
-        planes[0]->format_types[0] = DRM_FORMAT_BGRA8888;
+        planes[0]->format_types[0] = DRM_FORMAT_XRGB8888;
     }
     planes[0]->plane_type = DRM_PLANE_TYPE_PRIMARY;
     return 0;
@@ -332,6 +331,10 @@ void drm_plainfb_init() {
     // Create CRTC
     gpu_device->crtcs[i] =
         drm_crtc_alloc(&gpu_device->resource_mgr, gpu_device);
+    gpu_device->crtcs[i]->x = 0;
+    gpu_device->crtcs[i]->y = 0;
+    gpu_device->crtcs[i]->w = fb->width;
+    gpu_device->crtcs[i]->h = fb->height;
 
     // Create encoder
     gpu_device->encoders[i] = drm_encoder_alloc(

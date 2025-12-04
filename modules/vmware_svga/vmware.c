@@ -391,6 +391,10 @@ void vmware_gpu_pci_init(pci_device_t *pci_dev) {
 
             // Create CRTC
             device->crtcs[i] = drm_crtc_alloc(&device->resource_mgr, device);
+            device->crtcs[i]->x = 0;
+            device->crtcs[i]->y = 0;
+            device->crtcs[i]->w = device->displays[i].width;
+            device->crtcs[i]->h = device->displays[i].height;
 
             // Create encoder
             device->encoders[i] = drm_encoder_alloc(

@@ -658,6 +658,10 @@ int virtio_gpu_init(virtio_driver_t *driver) {
         // Create CRTC
         gpu_device->crtcs[i] =
             drm_crtc_alloc(&gpu_device->resource_mgr, gpu_device);
+        gpu_device->crtcs[i]->x = 0;
+        gpu_device->crtcs[i]->y = 0;
+        gpu_device->crtcs[i]->w = gpu_device->displays[i].rect.width;
+        gpu_device->crtcs[i]->h = gpu_device->displays[i].rect.height;
 
         // Create encoder
         gpu_device->encoders[i] = drm_encoder_alloc(

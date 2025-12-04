@@ -41,6 +41,8 @@ typedef struct drm_crtc {
     uint32_t fb_id;
     uint32_t x;
     uint32_t y;
+    uint32_t w;
+    uint32_t h;
     uint32_t gamma_size;
     uint32_t mode_valid;
     struct drm_mode_modeinfo mode;

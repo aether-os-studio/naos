@@ -457,60 +457,86 @@ int drm_ioctl_mode_getproperty(drm_device_t *dev, void *arg) {
 
     switch (prop->prop_id) {
     case DRM_PROPERTY_ID_PLANE_TYPE:
-        prop->flags = DRM_MODE_PROP_ENUM;
+        prop->flags = DRM_MODE_PROP_ENUM | DRM_MODE_PROP_IMMUTABLE;
         strncpy((char *)prop->name, "type", DRM_PROP_NAME_LEN);
-        prop->count_enum_blobs = 1;
+        prop->name[DRM_PROP_NAME_LEN - 1] = '\0'; // 确保 null 终止
 
+        prop->count_enum_blobs = 3; // Primary, Overlay, Cursor
         if (prop->enum_blob_ptr) {
             struct drm_mode_property_enum *enums =
                 (struct drm_mode_property_enum *)prop->enum_blob_ptr;
+
             strncpy(enums[0].name, "Primary", DRM_PROP_NAME_LEN);
             enums[0].value = DRM_PLANE_TYPE_PRIMARY;
+
+            strncpy(enums[1].name, "Overlay", DRM_PROP_NAME_LEN);
+            enums[1].value = DRM_PLANE_TYPE_OVERLAY;
+
+            strncpy(enums[2].name, "Cursor", DRM_PROP_NAME_LEN);
+            enums[2].value = DRM_PLANE_TYPE_CURSOR;
         }
 
-        prop->count_values = 1;
-
-        if (prop->values_ptr) {
-            uint64_t *values = (uint64_t *)(uintptr_t)prop->values_ptr;
-            values[0] = DRM_PLANE_TYPE_PRIMARY;
-        }
+        // ENUM 属性不需要设置 values (除非有默认值范围)
+        prop->count_values = 0;
         return 0;
 
     case DRM_CRTC_MODE_ID_PROP_ID:
-        prop->flags = DRM_MODE_PROP_BLOB;
+        prop->flags = DRM_MODE_PROP_BLOB | DRM_MODE_PROP_ATOMIC;
         strncpy((char *)prop->name, "MODE_ID", DRM_PROP_NAME_LEN);
+        prop->name[DRM_PROP_NAME_LEN - 1] = '\0';
 
-        prop->count_enum_blobs = 1;
-        if (prop->count_enum_blobs) {
-            uint64_t *values = (uint64_t *)(uintptr_t)prop->count_enum_blobs;
-            values[0] = 1; // Assume current mode ID is 1
-        }
+        // BLOB 属性不设置 count_enum_blobs
+        prop->count_enum_blobs = 0;
+
+        // 对于 BLOB 属性，count_values 通常为 0
+        prop->count_values = 0;
         return 0;
 
     case DRM_CRTC_ACTIVE_PROP_ID:
-        prop->flags = DRM_MODE_PROP_BLOB;
+        prop->flags = DRM_MODE_PROP_RANGE | DRM_MODE_PROP_ATOMIC;
         strncpy((char *)prop->name, "ACTIVE", DRM_PROP_NAME_LEN);
-        break;
+        prop->name[DRM_PROP_NAME_LEN - 1] = '\0';
+
+        prop->count_enum_blobs = 0;
+
+        prop->count_values = 2;
+        if (prop->values_ptr) {
+            uint64_t *values = (uint64_t *)(uintptr_t)prop->values_ptr;
+            values[0] = 0; // min
+            values[1] = 1; // max
+        }
+        return 0;
 
     case DRM_CONNECTOR_DPMS_PROP_ID:
         prop->flags = DRM_MODE_PROP_ENUM;
         strncpy((char *)prop->name, "DPMS", DRM_PROP_NAME_LEN);
+        prop->name[DRM_PROP_NAME_LEN - 1] = '\0';
+
         prop->count_enum_blobs = 4;
         if (prop->enum_blob_ptr) {
-            uint64_t *values = (uint64_t *)(uintptr_t)prop->enum_blob_ptr;
-            values[0] = DRM_MODE_DPMS_ON;
-            values[1] = DRM_MODE_DPMS_STANDBY;
-            values[2] = DRM_MODE_DPMS_SUSPEND;
-            values[3] = DRM_MODE_DPMS_OFF;
+            struct drm_mode_property_enum *enums =
+                (struct drm_mode_property_enum *)prop->enum_blob_ptr;
+
+            strncpy(enums[0].name, "On", DRM_PROP_NAME_LEN);
+            enums[0].value = DRM_MODE_DPMS_ON;
+
+            strncpy(enums[1].name, "Standby", DRM_PROP_NAME_LEN);
+            enums[1].value = DRM_MODE_DPMS_STANDBY;
+
+            strncpy(enums[2].name, "Suspend", DRM_PROP_NAME_LEN);
+            enums[2].value = DRM_MODE_DPMS_SUSPEND;
+
+            strncpy(enums[3].name, "Off", DRM_PROP_NAME_LEN);
+            enums[3].value = DRM_MODE_DPMS_OFF;
         }
-        break;
+
+        prop->count_values = 0;
+        return 0;
 
     default:
-        printk("drm: Unsupported mode property: %#010lx\n", prop->prop_id);
+        printk("drm: Unsupported property ID: %u\n", prop->prop_id);
         return -EINVAL;
     }
-
-    return 0;
 }
 
 /**
@@ -539,100 +565,105 @@ int drm_ioctl_mode_obj_getproperties(drm_device_t *dev, void *arg) {
         (struct drm_mode_obj_get_properties *)arg;
 
     switch (props->obj_type) {
-    case DRM_MODE_OBJECT_ANY: {
-        int i = 0;
-        for (int idx = 0; idx < DRM_MAX_FRAMEBUFFERS_PER_DEVICE; idx++) {
-            if (dev->resource_mgr.framebuffers[idx]) {
-                i++;
-            }
-        }
+    case DRM_MODE_OBJECT_PLANE: {
+        // 查找对应的 plane
+        drm_plane_t *plane = NULL;
         for (int idx = 0; idx < DRM_MAX_PLANES_PER_DEVICE; idx++) {
-            if (dev->resource_mgr.planes[idx]) {
-                i++;
-            }
-        }
-        for (int idx = 0; idx < DRM_MAX_CRTCS_PER_DEVICE; idx++) {
-            if (dev->resource_mgr.crtcs[idx]) {
-                i++;
+            if (dev->resource_mgr.planes[idx] &&
+                dev->resource_mgr.planes[idx]->id == props->obj_id) {
+                plane = dev->resource_mgr.planes[idx];
+                break;
             }
         }
 
-        props->count_props = i;
+        if (!plane) {
+            return -ENOENT;
+        }
 
-        i = 0;
+        // Plane 通常有多个属性
+        props->count_props =
+            7; // type, FB_ID, CRTC_ID, CRTC_X, CRTC_Y, CRTC_W, CRTC_H 等
+
         if (props->props_ptr) {
             uint32_t *prop_ids = (uint32_t *)(uintptr_t)props->props_ptr;
-            for (int idx = 0; idx < DRM_MAX_FRAMEBUFFERS_PER_DEVICE; idx++) {
-                if (dev->resource_mgr.framebuffers[idx]) {
-                    prop_ids[i++] = DRM_PROPERTY_ID_FB_ID;
-                }
-            }
-            for (int idx = 0; idx < DRM_MAX_PLANES_PER_DEVICE; idx++) {
-                if (dev->resource_mgr.planes[idx]) {
-                    prop_ids[i++] = DRM_PROPERTY_ID_PLANE_TYPE;
-                }
-            }
-            for (int idx = 0; idx < DRM_MAX_CRTCS_PER_DEVICE; idx++) {
-                if (dev->resource_mgr.crtcs[idx]) {
-                    prop_ids[i++] = DRM_PROPERTY_ID_CRTC_ID;
-                }
-            }
-        }
 
-        i = 0;
+            prop_ids[0] = DRM_PROPERTY_ID_PLANE_TYPE;
+            prop_ids[1] = DRM_PROPERTY_ID_FB_ID;
+            prop_ids[2] = DRM_PROPERTY_ID_CRTC_ID;
+            drm_crtc_t *crtc = drm_crtc_get(&dev->resource_mgr, plane->crtc_id);
+            prop_ids[3] = DRM_PROPERTY_ID_CRTC_X;
+            prop_ids[4] = DRM_PROPERTY_ID_CRTC_Y;
+            prop_ids[5] = DRM_PROPERTY_ID_CRTC_W;
+            prop_ids[6] = DRM_PROPERTY_ID_CRTC_H;
+            drm_crtc_free(&dev->resource_mgr, crtc->id);
+        }
         if (props->prop_values_ptr) {
             uint64_t *prop_values =
                 (uint64_t *)(uintptr_t)props->prop_values_ptr;
-            for (int idx = 0; idx < DRM_MAX_FRAMEBUFFERS_PER_DEVICE; idx++) {
-                if (dev->resource_mgr.framebuffers[idx]) {
-                    prop_values[i++] = dev->resource_mgr.framebuffers[idx]->id;
-                }
-            }
-            for (int idx = 0; idx < DRM_MAX_PLANES_PER_DEVICE; idx++) {
-                if (dev->resource_mgr.planes[idx]) {
-                    prop_values[i++] =
-                        dev->resource_mgr.planes[idx]->plane_type;
-                }
-            }
-            for (int idx = 0; idx < DRM_MAX_CRTCS_PER_DEVICE; idx++) {
-                if (dev->resource_mgr.crtcs[idx]) {
-                    prop_values[i++] = dev->resource_mgr.crtcs[idx]->id;
-                }
-            }
+
+            prop_values[0] = plane->plane_type;
+            prop_values[1] = plane->fb_id;   // 当前关联的 framebuffer
+            prop_values[2] = plane->crtc_id; // 当前关联的 CRTC
+            drm_crtc_t *crtc = drm_crtc_get(&dev->resource_mgr, plane->crtc_id);
+            prop_values[3] = crtc->x;
+            prop_values[4] = crtc->y;
+            prop_values[5] = crtc->w;
+            prop_values[6] = crtc->h;
+            drm_crtc_free(&dev->resource_mgr, crtc->id);
         }
+
         break;
     }
 
-    case DRM_MODE_OBJECT_PLANE:
-        props->count_props = 1;
-        if (props->props_ptr) {
-            uint32_t *prop_ids = (uint32_t *)(uintptr_t)props->props_ptr;
-            prop_ids[0] = DRM_PROPERTY_ID_PLANE_TYPE;
+    case DRM_MODE_OBJECT_CRTC: {
+        drm_crtc_t *crtc = NULL;
+        for (int idx = 0; idx < DRM_MAX_CRTCS_PER_DEVICE; idx++) {
+            if (dev->resource_mgr.crtcs[idx] &&
+                dev->resource_mgr.crtcs[idx]->id == props->obj_id) {
+                crtc = dev->resource_mgr.crtcs[idx];
+                break;
+            }
         }
-        if (props->prop_values_ptr) {
-            uint64_t *prop_values =
-                (uint64_t *)(uintptr_t)props->prop_values_ptr;
-            prop_values[0] = DRM_PLANE_TYPE_PRIMARY;
-        }
-        break;
 
-    case DRM_MODE_OBJECT_CRTC:
+        if (!crtc) {
+            return -ENOENT;
+        }
+
         props->count_props = 2;
+
         if (props->props_ptr) {
             uint32_t *prop_ids = (uint32_t *)(uintptr_t)props->props_ptr;
+
             prop_ids[0] = DRM_CRTC_ACTIVE_PROP_ID;
+
             prop_ids[1] = DRM_CRTC_MODE_ID_PROP_ID;
         }
         if (props->prop_values_ptr) {
             uint64_t *prop_values =
                 (uint64_t *)(uintptr_t)props->prop_values_ptr;
-            prop_values[0] = 1; // Assume CRTC is active
-            prop_values[1] = 1; // Current mode ID = 1
+
+            prop_values[0] = 1; // CRTC 的实际状态
+            prop_values[1] = 1; // 指向 mode blob 的 ID
         }
         break;
+    }
 
-    case DRM_MODE_OBJECT_CONNECTOR:
+    case DRM_MODE_OBJECT_CONNECTOR: {
+        drm_connector_t *connector = NULL;
+        for (int idx = 0; idx < DRM_MAX_CONNECTORS_PER_DEVICE; idx++) {
+            if (dev->resource_mgr.connectors[idx] &&
+                dev->resource_mgr.connectors[idx]->id == props->obj_id) {
+                connector = dev->resource_mgr.connectors[idx];
+                break;
+            }
+        }
+
+        if (!connector) {
+            return -ENOENT;
+        }
+
         props->count_props = 3;
+
         if (props->props_ptr) {
             uint32_t *prop_ids = (uint32_t *)(uintptr_t)props->props_ptr;
             prop_ids[0] = DRM_CONNECTOR_DPMS_PROP_ID;
@@ -644,13 +675,13 @@ int drm_ioctl_mode_obj_getproperties(drm_device_t *dev, void *arg) {
                 (uint64_t *)(uintptr_t)props->prop_values_ptr;
             prop_values[0] = DRM_MODE_DPMS_ON;
             prop_values[1] = 0;
-            prop_values[2] = 1;
+            prop_values[2] = connector->crtc_id;
         }
         break;
+    }
 
     default:
-        printk("drm: Unsupported mode obj property: %#010lx\n",
-               props->obj_type);
+        printk("drm: Unsupported object type: %u\n", props->obj_type);
         return -EINVAL;
     }
 
