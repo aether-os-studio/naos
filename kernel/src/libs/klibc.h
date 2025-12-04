@@ -539,8 +539,11 @@ static inline bool check_user_overflow(uint64_t addr, uint64_t size) {
 }
 
 static inline bool check_unmapped(uint64_t addr, uint64_t len) {
-    if (translate_address(get_current_page_dir(true), addr) &&
-        translate_address(get_current_page_dir(true), addr + len))
+    if (len > DEFAULT_PAGE_SIZE
+            ? (translate_address(get_current_page_dir(true), addr) &&
+               translate_address(get_current_page_dir(true),
+                                 addr + len - DEFAULT_PAGE_SIZE))
+            : translate_address(get_current_page_dir(true), addr))
         return false;
 
     return true;
