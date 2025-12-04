@@ -9,8 +9,8 @@ mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/tmp/
 mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/var/
 mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/lib/modules/
 
-cp -r ${PROJECT_ROOT}/user/rootfs-${ARCH}/bin/busybox ${PROJECT_ROOT}/initramfs-${ARCH}/bin
-cp -r ${PROJECT_ROOT}/user/rootfs-${ARCH}/lib/ld-musl-x86_64.so.1 ${PROJECT_ROOT}/initramfs-${ARCH}/lib
+sudo cp -r ${PROJECT_ROOT}/user/rootfs-${ARCH}/bin/busybox ${PROJECT_ROOT}/initramfs-${ARCH}/bin
+sudo cp -r ${PROJECT_ROOT}/user/rootfs-${ARCH}/lib/ld-musl-x86_64.so.1 ${PROJECT_ROOT}/initramfs-${ARCH}/lib
 
 # Create /bin/*
 ln -sf /bin/busybox "${PROJECT_ROOT}/initramfs-${ARCH}/bin/arch"
