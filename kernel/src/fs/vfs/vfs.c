@@ -81,7 +81,7 @@ void vfs_merge_nodes_to(vfs_node_t dest, vfs_node_t source) {
 static inline void do_open(vfs_node_t file) {
     if (file->handle != NULL) {
         callbackof(file, stat)(file->handle, file);
-    } else {
+    } else if (file->parent) {
         callbackof(file, open)(file->parent->handle, file->name, file);
     }
 }

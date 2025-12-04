@@ -56,25 +56,9 @@ ssize_t tmpfs_readlink(vfs_node_t node, void *addr, size_t offset,
     tmpfs_node_t *handle = node->handle;
     if (offset >= handle->size)
         return 0;
-    char tmp[1024];
-    memset(tmp, 0, sizeof(tmp));
-    memcpy(tmp, handle->content, MIN(handle->size, sizeof(tmp)));
 
-    vfs_node_t to_node = vfs_open_at(node->parent, (const char *)tmp);
-    if (!to_node)
-        return -ENOENT;
-
-    char *from_path = vfs_get_fullpath(node);
-    char *to_path = vfs_get_fullpath(to_node);
-
-    char output[1024];
-    memset(output, 0, sizeof(output));
-    calculate_relative_path(output, from_path, to_path, size);
-    free(from_path);
-    free(to_path);
-
-    ssize_t to_copy = MIN(size, strlen(output));
-    memcpy(addr, output, to_copy);
+    ssize_t to_copy = MIN(handle->size, size);
+    memcpy(addr, handle->content, to_copy);
     return to_copy;
 }
 
@@ -112,7 +96,21 @@ int tmpfs_mknod(void *parent, const char *name, vfs_node_t node, uint16_t mode,
     return 0;
 }
 
-int tmpfs_symlink(void *parent, const char *name, vfs_node_t node) { return 0; }
+int tmpfs_symlink(void *parent, const char *name, vfs_node_t node) {
+    node->mode = 0700;
+    if (node->handle) {
+        return -EEXIST;
+    }
+    tmpfs_node_t *handle = malloc(sizeof(tmpfs_node_t));
+    handle->capability = DEFAULT_PAGE_SIZE;
+    handle->content = alloc_frames_bytes(handle->capability);
+    int len = strlen(name) + 1;
+    memcpy(handle->content, name, len);
+    handle->size = len;
+    handle->node = node;
+    node->handle = handle;
+    return 0;
+}
 
 int tmpfs_mount(uint64_t dev, vfs_node_t node) {
     spin_lock(&tmpfs_oplock);
@@ -213,6 +211,7 @@ fs_t tmpfs = {
     .name = "tmpfs",
     .magic = 0x01021994,
     .callback = &callbacks,
+    .flags = FS_FLAGS_VIRTUAL,
 };
 
 void tmpfs_init() { tmpfs_fsid = vfs_regist(&tmpfs); }

@@ -167,6 +167,7 @@ fs_t sysfs = {
     .name = "sysfs",
     .magic = 0,
     .callback = &callbacks,
+    .flags = FS_FLAGS_VIRTUAL,
 };
 
 uacpi_iteration_decision

@@ -160,10 +160,13 @@ typedef struct vfs_callback {
     vfs_free_handle_t free_handle;
 } *vfs_callback_t;
 
+#define FS_FLAGS_HIDDEN (1UL << 0)
+#define FS_FLAGS_VIRTUAL (1UL << 1)
 typedef struct fs {
     const char *name;
     uint64_t magic;
     vfs_callback_t callback;
+    uint64_t flags;
 } fs_t;
 
 extern fs_t *all_fs[256];

@@ -59,7 +59,7 @@ void free_task(task_t *ptr) {
     ptr->sched_info = NULL;
 
     if (ptr->fd_info) {
-        if (--ptr->fd_info->ref_count <= 0) {
+        if (ptr->fd_info->ref_count <= 0) {
             for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
                 if (ptr->fd_info->fds[i]) {
                     vfs_close(ptr->fd_info->fds[i]->node);
@@ -957,6 +957,9 @@ void task_exit_inner(task_t *task, int64_t code) {
         task->is_vfork = false;
     }
 
+    if (task->fd_info)
+        task->fd_info->ref_count--;
+
     procfs_on_exit_task(task);
 
     if (task->waitpid != 0 && task->waitpid < MAX_TASK_NUM &&
@@ -1459,6 +1462,9 @@ uint64_t timeval_to_ms(struct timeval tv) {
 }
 
 void sched_update_itimer() {
+    if (current_task->state == TASK_DIED)
+        return;
+
     uint64_t rtAt = current_task->itimer_real.at;
     uint64_t rtReset = current_task->itimer_real.reset;
 
@@ -1492,6 +1498,9 @@ void sched_update_itimer() {
 extern int timerfdfs_id;
 
 void sched_update_timerfd() {
+    if (current_task->state == TASK_DIED)
+        return;
+
     if (current_task->fd_info && current_task->fd_info->ref_count) {
         uint64_t continue_null_fd_count = 0;
         for (int fd = 3; fd < MAX_FD_NUM; fd++) {

@@ -235,6 +235,7 @@ fs_t timefdfs = {
     .name = "timefdfs",
     .magic = 0,
     .callback = &timerfd_callbacks,
+    .flags = FS_FLAGS_HIDDEN,
 };
 
 void timerfd_init() {

@@ -279,6 +279,7 @@ fs_t epollfs = {
     .name = "epollfs",
     .magic = 0,
     .callback = &epoll_callbacks,
+    .flags = FS_FLAGS_HIDDEN,
 };
 
 void epoll_init() {

@@ -46,13 +46,15 @@ static void create_procfs_node(char *name, read_entry_t read_entry,
 }
 
 void procfs_nodes_init() {
+    create_procfs_node("filesystems", proc_filesystems_read,
+                       proc_filesystems_stat);
     create_procfs_node("cmdline", proc_cmdline_read, proc_cmdline_stat);
     create_procfs_node("mounts", proc_mounts_read, proc_mounts_stat);
     create_procfs_node("meminfo", proc_meminfo_read, proc_meminfo_stat);
 
     create_procfs_handle("proc_cmdline", proc_pcmdline_read,
                          proc_pcmdline_stat);
-    create_procfs_handle("proc_maps", proc_pmaps_read, proc_pmaps_stat);
+    create_procfs_handle("proc_maps", proc_pmaps_read, NULL);
     create_procfs_handle("proc_stat", proc_pstat_read, proc_pstat_stat);
 }
 

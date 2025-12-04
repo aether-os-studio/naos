@@ -88,6 +88,8 @@ void initramfs_init() {
         if ((mode & type_mask) == directory_type) {
             vfs_mkdir(name);
             vfs_chmod(name, mode & 0777);
+        } else if ((mode & 0120000) == 0120000) {
+            vfs_symlink(name, data);
         } else {
             vfs_mkfile(name);
             vfs_chmod(name, mode & 0777);

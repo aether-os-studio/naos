@@ -94,6 +94,7 @@ uint64_t sys_socket(int domain, int type, int protocol) {
     for (int i = 0; i < socket_num; i++) {
         if (real_sockets[i]->domain == domain) {
             fd = real_sockets[i]->socket(domain, type & 0xff, protocol);
+            break;
         }
     }
 

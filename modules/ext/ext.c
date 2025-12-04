@@ -481,6 +481,7 @@ fs_t extfs = {
     .name = "ext",
     .magic = 0,
     .callback = &callbacks,
+    .flags = 0,
 };
 
 __attribute__((visibility("default"))) void dlmain() {

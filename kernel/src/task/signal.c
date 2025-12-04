@@ -168,14 +168,14 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
     current_task->signal->blocked = *uthese;
 
     uint64_t start = nano_time();
-    uint64_t wait_ns = 0;
+    uint64_t wait_ns = UINT64_MAX;
     if (uts) {
         wait_ns = uts->tv_sec * 1000000000ULL + uts->tv_nsec;
     }
 
     int sig = 0;
     while (!(sig = signals_pending_quick(current_task), sig) &&
-           (nano_time() - start < wait_ns || wait_ns == 0)) {
+           (nano_time() - start < wait_ns || wait_ns == UINT64_MAX)) {
         arch_yield();
     }
 
@@ -188,7 +188,7 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
         uinfo->si_code = 0;
     }
 
-    return 0;
+    return sig;
 }
 
 uint64_t sys_sigsuspend(const sigset_t *mask) {

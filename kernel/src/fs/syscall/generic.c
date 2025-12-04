@@ -40,8 +40,8 @@ uint64_t sys_umount2(const char *target, uint64_t flags) {
 }
 
 uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
-    uint64_t i = 0;
-    for (i = 3; i < MAX_FD_NUM; i++) {
+    uint64_t i;
+    for (i = 0; i < MAX_FD_NUM; i++) {
         if (current_task->fd_info->fds[i] == NULL) {
             break;
         }

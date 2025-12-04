@@ -747,6 +747,7 @@ fs_t socket = {
     .name = "socket",
     .magic = 0,
     .callback = &callbacks,
+    .flags = FS_FLAGS_HIDDEN,
 };
 
 void real_socket_init() {

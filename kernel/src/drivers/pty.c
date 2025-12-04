@@ -644,6 +644,7 @@ fs_t ptmxfs = {
     .name = "ptmx",
     .magic = 0,
     .callback = &ptmx_callbacks,
+    .flags = FS_FLAGS_HIDDEN,
 };
 
 void ptmx_init() {
@@ -662,6 +663,7 @@ fs_t ptsfs = {
     .name = "ptsfs",
     .magic = 0,
     .callback = &pts_callbacks,
+    .flags = FS_FLAGS_HIDDEN,
 };
 
 void pts_init() {

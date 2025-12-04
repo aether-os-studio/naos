@@ -140,6 +140,7 @@ fs_t eventfdfs = {
     .name = "eventfdfs",
     .magic = 0,
     .callback = &eventfd_callbacks,
+    .flags = FS_FLAGS_HIDDEN,
 };
 
 void eventfd_init() {

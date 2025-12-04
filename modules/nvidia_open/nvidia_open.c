@@ -411,7 +411,7 @@ pci_driver_t nvidia_pci_driver = {
     .probe = nvidia_probe,
     .remove = nvidia_remove,
     .shutdown = nvidia_shutdown,
-    .flags = PCI_DRIVER_FLAGS_NEED_ROOTFS,
+    .flags = PCI_DRIVER_FLAGS_NEED_SYSFS,
 };
 
 __attribute__((visibility("default"))) int dlmain() {

@@ -6,6 +6,7 @@
 spinlock_t procfs_oplock = SPIN_INIT;
 
 vfs_node_t cmdline = NULL;
+vfs_node_t filesystems = NULL;
 
 ssize_t procfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     void *file = fd->node->handle;
@@ -37,7 +38,7 @@ int procfs_stat(void *file, vfs_node_t node) {
     if (file == NULL)
         return 0;
     proc_handle_t *handle = file;
-    // procfs_stat_dispatch(handle, node);
+    procfs_stat_dispatch(handle, node);
     return 0;
 }
 
@@ -141,7 +142,6 @@ void procfs_self_open(void *parent, const char *name, vfs_node_t node) {
     new_self_node->fsid = procfs_self_id;
 }
 
-// TODO: 释放self_node占用的内存
 bool procfs_self_close(void *current) {
     procfs_self_handle_t *handle = current;
     handle->deleted = true;
@@ -192,12 +192,14 @@ fs_t procfs = {
     .name = "proc",
     .magic = 0x9fa0,
     .callback = &callbacks,
+    .flags = FS_FLAGS_VIRTUAL,
 };
 
 fs_t procfs_self = {
     .name = "proc_self",
     .magic = 0,
     .callback = &procfs_self_callbacks,
+    .flags = FS_FLAGS_HIDDEN,
 };
 
 void proc_init() {
@@ -216,6 +218,14 @@ void proc_init() {
     cmdline->handle = cmdline_handle;
     cmdline_handle->task = NULL;
     sprintf(cmdline_handle->name, "cmdline");
+
+    filesystems = vfs_node_alloc(procfs_root, "filesystems");
+    filesystems->type = file_none;
+    filesystems->mode = 0700;
+    proc_handle_t *filesystems_handle = malloc(sizeof(proc_handle_t));
+    filesystems->handle = filesystems_handle;
+    filesystems_handle->task = NULL;
+    sprintf(filesystems_handle->name, "filesystems");
 
     vfs_node_t procfs_self = vfs_node_alloc(procfs_root, "self");
     procfs_self->flags |= VFS_NODE_FLAGS_FREE_AFTER_USE;

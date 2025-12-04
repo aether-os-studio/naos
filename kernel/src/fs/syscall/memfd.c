@@ -181,6 +181,7 @@ fs_t memfdfs = {
     .name = "memfdfs",
     .magic = 0,
     .callback = &callbacks,
+    .flags = FS_FLAGS_HIDDEN,
 };
 
 void memfd_init() { memfd_fsid = vfs_regist(&memfdfs); }

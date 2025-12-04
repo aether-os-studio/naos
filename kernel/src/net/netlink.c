@@ -455,6 +455,7 @@ fs_t netlinksockfs = {
     .name = "netlinksockfs",
     .magic = 0,
     .callback = &netlink_callback,
+    .flags = FS_FLAGS_HIDDEN,
 };
 
 void netlink_init() {

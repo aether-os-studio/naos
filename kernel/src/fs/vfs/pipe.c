@@ -216,6 +216,7 @@ fs_t pipefs = {
     .name = "pipefs",
     .magic = 0,
     .callback = &callbacks,
+    .flags = FS_FLAGS_HIDDEN,
 };
 
 void pipefs_init() {

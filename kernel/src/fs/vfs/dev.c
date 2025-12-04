@@ -276,6 +276,7 @@ fs_t devtmpfs = {
     .name = "devtmpfs",
     .magic = 0x01021994,
     .callback = &callbacks,
+    .flags = FS_FLAGS_VIRTUAL,
 };
 
 ssize_t inputdev_event_read(void *data, void *buf, uint64_t offset,
@@ -463,7 +464,8 @@ ssize_t urandom_write(void *data, const void *buf, uint64_t offset,
 extern char *default_console;
 
 void setup_console_symlinks() {
-    vfs_symlink("/dev/tty1", default_console); // 主控制台
+    // 主控制台
+    vfs_symlink("/dev/tty1", default_console);
 
     vfs_symlink("/dev/stdin", default_console);
     vfs_symlink("/dev/stdout", default_console);

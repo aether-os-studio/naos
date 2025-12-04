@@ -106,6 +106,7 @@ fs_t socketv6 = {
     .name = "socketv6",
     .magic = 0,
     .callback = &callbacks,
+    .flags = FS_FLAGS_HIDDEN,
 };
 
 void real_socket_v6_init() {

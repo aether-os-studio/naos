@@ -34,6 +34,10 @@ void procfs_stat_dispatch(proc_handle_t *handle, vfs_node_t node);
 size_t procfs_read_dispatch(proc_handle_t *handle, void *addr, size_t offset,
                             size_t size);
 
+size_t proc_filesystems_stat(proc_handle_t *handle);
+size_t proc_filesystems_read(proc_handle_t *handle, void *addr, size_t offset,
+                             size_t size);
+
 size_t proc_cmdline_stat(proc_handle_t *handle);
 size_t proc_cmdline_read(proc_handle_t *handle, void *addr, size_t offset,
                          size_t size);

@@ -30,11 +30,10 @@ char *unix_socket_addr_safe(const struct sockaddr_un *addr, size_t len) {
     bool abstract = (addr->sun_path[0] == '\0');
     int skip = abstract ? 1 : 0;
 
-    char *safe = calloc(addrLen + 2, 1);
+    char *safe = malloc(addrLen + 3);
     if (!safe)
         return (void *)-(ENOMEM);
-
-    memset(safe, 0, addrLen + 2);
+    memset(safe, 0, addrLen + 3);
 
     if (abstract && addr->sun_path[1] == '\0') {
         free(safe);
@@ -102,6 +101,9 @@ void unix_socket_free_pair(unix_socket_pair_t *pair) {
 }
 
 bool socket_accept_close(socket_handle_t *handle) {
+    if (!handle)
+        return true;
+
     unix_socket_pair_t *pair = handle->sock;
     pair->serverFds--;
 
@@ -112,6 +114,9 @@ bool socket_accept_close(socket_handle_t *handle) {
 }
 
 bool socket_socket_close(socket_handle_t *socket_handle) {
+    if (!socket_handle)
+        return true;
+
     socket_t *unixSocket = socket_handle->sock;
     if (unixSocket->timesOpened >= 1) {
         unixSocket->timesOpened--;
@@ -330,7 +335,9 @@ int socket_bind(uint64_t fd, const struct sockaddr_un *addr,
         }
     }
 
-    sock->bindAddr = safe;
+    sock->bindAddr = strdup(safe);
+    free(safe);
+
     return 0;
 }
 
@@ -1823,12 +1830,14 @@ fs_t sockfs = {
     .name = "sockfs",
     .magic = 0,
     .callback = &socket_callback,
+    .flags = FS_FLAGS_HIDDEN,
 };
 
 fs_t acceptfs = {
     .name = "acceptfs",
     .magic = 0,
     .callback = &accept_callback,
+    .flags = FS_FLAGS_HIDDEN,
 };
 
 void socketfs_init() {
