@@ -160,7 +160,7 @@ else ifeq ($(ARCH),loongarch64)
 EFI_FILE_SINGLE = assets/limine/BOOTLOONGARCH64.EFI
 endif
 
-$(IMAGE_NAME).img: assets/limine modules kernel
+$(IMAGE_NAME).img: assets/limine modules kernel initramfs-$(ARCH).img
 	dd if=/dev/zero of=$(IMAGE_NAME).img bs=1M count=512
 	sgdisk --new=1:1M:511M $(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 $(IMAGE_NAME).img
@@ -185,7 +185,7 @@ endif
 
 TOTAL_IMG_SIZE=$$(( $(ROOTFS_IMG_SIZE) + 32 ))
 
-single-$(IMAGE_NAME).img: assets/limine modules kernel rootfs-$(ARCH).img
+single-$(IMAGE_NAME).img: assets/limine modules kernel rootfs-$(ARCH).img initramfs-$(ARCH).img
 	dd if=/dev/zero of=single-$(IMAGE_NAME).img bs=1M count=$(TOTAL_IMG_SIZE)
 	sgdisk --new=1:1M:31M --new=2:32M:0 single-$(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 single-$(IMAGE_NAME).img
@@ -361,4 +361,6 @@ assets/ovmf-vars-$(ARCH).fd:
 modules:
 	$(MAKE) -C modules -j$(shell nproc)
 
+.PHONY: initramfs-$(ARCH).img
+initramfs-$(ARCH).img: rootfs-$(ARCH).img
 	sh mkinitcpio.sh

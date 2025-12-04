@@ -97,6 +97,8 @@ void procfs_unmount(vfs_node_t root) {
     vfs_merge_nodes_to(fake_procfs_root, root);
 
     root->fsid = mount_node_old_fsid;
+    root->dev = root->parent ? root->parent->dev : 0;
+    root->rdev = root->parent ? root->parent->rdev : 0;
 
     procfs_root = fake_procfs_root;
 

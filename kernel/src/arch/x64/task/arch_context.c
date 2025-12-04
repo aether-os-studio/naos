@@ -88,13 +88,12 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
     if (!dst->mm) {
         printk("dst->mm == NULL!!! dst = %#018lx", dst);
     }
-    dst->ctx = (struct pt_regs *)(stack)-1;
+    dst->ctx = (struct pt_regs *)stack - 1;
     dst->rip = (uint64_t)ret_from_exception;
     dst->rsp = (uint64_t)dst->ctx;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
     dst->ctx->rax = 0;
 
-    asm volatile("fxsave (%0)" ::"r"(src->fpu_ctx));
     dst->fpu_ctx = alloc_frames_bytes(DEFAULT_PAGE_SIZE);
     memset(dst->fpu_ctx, 0, DEFAULT_PAGE_SIZE);
     if (src->fpu_ctx) {

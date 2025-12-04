@@ -53,9 +53,10 @@ void init_thread(uint64_t arg) {
 
     drm_init_after_pci_sysfs();
 
+    devtmpfs_init_umount();
     sysfs_init_umount();
 
-    mount_root();
+    // mount_root();
 
     system_initialized = true;
 
@@ -64,8 +65,8 @@ void init_thread(uint64_t arg) {
 #if defined(__x86_64__)
     const char *argvs[2];
     memset(argvs, 0, sizeof(argvs));
-    argvs[0] = "/sbin/init";
-    task_execve("/sbin/init", argvs, NULL);
+    argvs[0] = "/init";
+    task_execve("/init", argvs, NULL);
 #else
     const char *argvs[2];
     memset(argvs, 0, sizeof(argvs));

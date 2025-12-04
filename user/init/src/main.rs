@@ -4,65 +4,75 @@ fn main() {
     println!("aether-init is running...");
 
     unsafe {
+        // Mount devtmpfs
+        assert!(
+            libc::mount(
+                c"devtmpfs".as_ptr(),
+                c"/dev".as_ptr(),
+                c"devtmpfs".as_ptr(),
+                0,
+                core::ptr::null() as *const _
+            ) == 0
+        );
         // Mount sysfs
         assert!(
             libc::mount(
-                b"sysfs\0".as_ptr() as *const _,
-                b"/sys\0".as_ptr() as *const _,
-                b"sysfs\0".as_ptr() as *const _,
+                c"sysfs".as_ptr(),
+                c"/sys".as_ptr(),
+                c"sysfs".as_ptr(),
                 0,
-                core::ptr::null() as *const _,
+                core::ptr::null() as *const _
             ) == 0
         );
         // Mount procfs
         assert!(
             libc::mount(
-                b"proc\0".as_ptr() as *const _,
-                b"/proc\0".as_ptr() as *const _,
-                b"proc\0".as_ptr() as *const _,
+                c"proc".as_ptr(),
+                c"/proc".as_ptr(),
+                c"proc".as_ptr(),
                 0,
-                core::ptr::null() as *const _,
+                core::ptr::null() as *const _
             ) == 0
         );
         // Mount tmpfs
         assert!(
             libc::mount(
-                b"tmpfs\0".as_ptr() as *const _,
-                b"/var\0".as_ptr() as *const _,
-                b"tmpfs\0".as_ptr() as *const _,
+                c"tmpfs".as_ptr(),
+                c"/var".as_ptr(),
+                c"tmpfs".as_ptr(),
                 0,
-                core::ptr::null() as *const _,
+                core::ptr::null() as *const _
             ) == 0
         );
         assert!(
             libc::mount(
-                b"tmpfs\0".as_ptr() as *const _,
-                b"/run\0".as_ptr() as *const _,
-                b"tmpfs\0".as_ptr() as *const _,
+                c"tmpfs".as_ptr(),
+                c"/run".as_ptr(),
+                c"tmpfs".as_ptr(),
                 0,
-                core::ptr::null() as *const _,
+                core::ptr::null() as *const _
             ) == 0
         );
         assert!(
             libc::mount(
-                b"tmpfs\0".as_ptr() as *const _,
-                b"/tmp\0".as_ptr() as *const _,
-                b"tmpfs\0".as_ptr() as *const _,
+                c"tmpfs".as_ptr(),
+                c"/tmp".as_ptr(),
+                c"tmpfs".as_ptr(),
                 0,
-                core::ptr::null() as *const _,
+                core::ptr::null() as *const _
             ) == 0
         );
     }
 
-    unsafe { std::env::set_var("PATH", "/usr/local/bin:/usr/bin:/bin") };
+    unsafe { std::env::set_var("PATH", "/usr/bin:/bin:/sbin") };
 
     println!("init: Starting seatd");
     let seatd = unsafe { libc::fork() };
     if seatd == 0 {
         unsafe {
             libc::execl(
-                b"/usr/bin/seatd\0".as_ptr() as *const _,
-                b"seatd\0".as_ptr() as *const _,
+                c"/usr/bin/seatd".as_ptr(),
+                c"seatd".as_ptr(),
                 core::ptr::null::<core::ffi::c_char>(),
             )
         };
@@ -73,21 +83,21 @@ fn main() {
 
     unsafe {
         libc::open(
-            b"/run/udev/data/c226:0\0".as_ptr() as *const _,
+            c"/run/udev/data/c226:0".as_ptr(),
             libc::O_CREAT,
             0,
         )
     };
     unsafe {
         libc::open(
-            b"/run/udev/data/c13:0\0".as_ptr() as *const _,
+            c"/run/udev/data/c13:0".as_ptr(),
             libc::O_CREAT,
             0,
         )
     };
     unsafe {
         libc::open(
-            b"/run/udev/data/c13:1\0".as_ptr() as *const _,
+            c"/run/udev/data/c13:1".as_ptr(),
             libc::O_CREAT,
             0,
         )
@@ -185,8 +195,8 @@ fn main() {
     if shell == 0 {
         unsafe {
             libc::execl(
-                b"/bin/bash\0".as_ptr() as *const _,
-                b"bash\0".as_ptr() as *const _,
+                c"/bin/bash".as_ptr(),
+                c"bash".as_ptr(),
                 core::ptr::null::<core::ffi::c_char>(),
             )
         };

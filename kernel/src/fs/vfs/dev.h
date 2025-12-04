@@ -14,6 +14,7 @@ typedef struct devtmpfs_node {
 extern bool devfs_initialized;
 
 void devtmpfs_init();
+void devtmpfs_init_umount();
 
 void devfs_register_device(device_t *device);
 

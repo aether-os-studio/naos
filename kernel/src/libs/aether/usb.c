@@ -16,5 +16,3 @@ EXPORT_SYMBOL(usb_enumerate);
 EXPORT_SYMBOL(usb_add_freelist);
 EXPORT_SYMBOL(usb_xfer_time);
 EXPORT_SYMBOL(usb_desc2pipe);
-
-EXPORT_SYMBOL(set_have_usb_storage);

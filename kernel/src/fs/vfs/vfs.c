@@ -29,8 +29,8 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
     memset(node, 0, sizeof(struct vfs_node));
     node->parent = parent;
     node->flags = 0;
-    node->dev = 0;
-    node->rdev = 0;
+    node->dev = parent ? parent->dev : 0;
+    node->rdev = parent ? parent->rdev : 0;
     node->blksz = DEFAULT_PAGE_SIZE;
     node->name = name ? strdup(name) : NULL;
     node->inode = alloc_fake_inode();
@@ -52,7 +52,6 @@ void vfs_free(vfs_node_t vfs) {
     if (vfs == NULL)
         return;
     list_free_with(vfs->child, (free_t)vfs_free);
-    vfs_close(vfs);
     callbackof(vfs, free_handle)(vfs->handle);
     free(vfs->name);
     free(vfs);
@@ -141,7 +140,7 @@ int vfs_mkdir(const char *name) {
             goto create;
         }
     } else {
-        filename = (char *)name;
+        filename = path;
         goto create;
     }
 
@@ -168,6 +167,9 @@ int vfs_mkdir(const char *name) {
     }
 
 create:
+    if (!strlen(filename))
+        return 0;
+
     vfs_node_t node = vfs_child_append(current, filename, NULL);
     node->type = file_dir;
     callbackof(current, mkdir)(current->handle, filename, node);
@@ -210,7 +212,7 @@ int vfs_mkfile(const char *name) {
             goto create;
         }
     } else {
-        filename = (char *)name;
+        filename = path;
         goto create;
     }
 
@@ -291,7 +293,7 @@ int vfs_link(const char *name, const char *target_name) {
             goto create;
         }
     } else {
-        filename = (char *)name;
+        filename = path;
         goto create;
     }
 
@@ -318,6 +320,9 @@ int vfs_link(const char *name, const char *target_name) {
     }
 
 create:
+    if (!strlen(filename))
+        return 0;
+
     vfs_node_t node = vfs_child_append(current, filename, NULL);
     node->type = file_none;
     callbackof(current, link)(current->handle, target_name, node);
@@ -364,7 +369,7 @@ int vfs_symlink(const char *name, const char *target_name) {
             goto create;
         }
     } else {
-        filename = (char *)name;
+        filename = path;
         goto create;
     }
 
@@ -391,6 +396,9 @@ int vfs_symlink(const char *name, const char *target_name) {
     }
 
 create:
+    if (!strlen(filename))
+        return 0;
+
     vfs_node_t node = vfs_child_append(current, filename, NULL);
     node->type = file_symlink;
     ssize_t ret =
@@ -438,7 +446,7 @@ int vfs_mknod(const char *name, uint16_t umode, int dev) {
             goto create;
         }
     } else {
-        filename = (char *)name;
+        filename = path;
         goto create;
     }
 
@@ -465,6 +473,9 @@ int vfs_mknod(const char *name, uint16_t umode, int dev) {
     }
 
 create:
+    if (!strlen(filename))
+        return 0;
+
     vfs_node_t node = vfs_child_append(current, filename, NULL);
     int ftype = 0;
     switch (umode & S_IFMT) {
@@ -628,8 +639,8 @@ err:
 vfs_node_t vfs_open(const char *_path) {
     vfs_node_t node = NULL;
 
-    if (current_task && current_task ? current_task->cwd : rootdir) {
-        node = vfs_open_at(current_task ? current_task->cwd : rootdir, _path);
+    if (current_task && current_task->cwd) {
+        node = vfs_open_at(current_task->cwd, _path);
     } else {
         node = vfs_open_at(rootdir, _path);
     }
@@ -686,22 +697,26 @@ int vfs_close(vfs_node_t node) {
 
 int vfs_mount(uint64_t dev, vfs_node_t node, const char *type) {
     if (node == NULL)
-        return -1;
+        return -EINVAL;
     if (!(node->type & file_dir))
-        return -1;
+        return -ENOTDIR;
     int ret = 0;
     for (int i = 1; i < fs_nextid; i++) {
         if (!strcmp(all_fs[i]->name, type)) {
-            if (ret = fs_callbacks[i]->mount(dev, node), ret == 0) {
+            ret = fs_callbacks[i]->mount(dev, node);
+            if (!ret) {
                 node->fsid = i;
                 node->root = node;
+                node->dev = dev;
+                node->rdev = dev;
                 return 0;
             } else {
                 printk("Mount fs %s failed, ret = %d\n", type, ret);
+                return ret;
             }
         }
     }
-    return -1;
+    return -ENOENT;
 }
 
 ssize_t vfs_read(vfs_node_t file, void *addr, size_t offset, size_t size) {
@@ -788,6 +803,14 @@ int vfs_unmount(const char *path) {
         return -1;
     if (node->fsid == 0)
         return -1;
+    list_foreach(node->child, i) {
+        vfs_node_t child = i->data;
+        if (child == child->root) {
+            char *child_path = vfs_get_fullpath(child);
+            vfs_unmount((const char *)child_path);
+            free(child_path);
+        }
+    }
     callbackof(node, unmount)(node);
     return 0;
 }
@@ -829,7 +852,7 @@ char *vfs_get_fullpath(vfs_node_t node) {
     memset(buff, 0, 512);
     strcpy(buff, "/");
     for (int j = count - 1; j >= 0; j--) {
-        if (nodes[j] == rootdir)
+        if (nodes[j] == (rootdir))
             continue;
 
         strcat(buff, nodes[j]->name);
@@ -846,12 +869,12 @@ char *vfs_get_fullpath(vfs_node_t node) {
 int vfs_delete(vfs_node_t node) {
     if (node == rootdir)
         return -1;
-    node->flags |= VFS_NODE_FLAGS_DELETED;
     int res = callbackof(node, delete)(
         node->parent ? node->parent->handle : NULL, node);
     if (res < 0) {
         return -1;
     }
+    node->flags |= VFS_NODE_FLAGS_DELETED;
     if (node->parent)
         list_delete(node->parent->child, node);
     if (node->refcount <= 0) {

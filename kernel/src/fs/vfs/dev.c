@@ -165,7 +165,6 @@ int devtmpfs_mount(uint64_t dev, vfs_node_t node) {
 }
 
 void devtmpfs_unmount(vfs_node_t root) {
-    root->fsid = (uint32_t)(root->flags >> 32);
     if (root == fake_devtmpfs_root)
         return;
 
@@ -194,7 +193,7 @@ int devtmpfs_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
     return 0;
 }
 
-int devtmpfs_delete(void *parent, vfs_node_t node) { return 0; }
+int devtmpfs_delete(void *parent, vfs_node_t node) { return -ENOSYS; }
 
 int devtmpfs_rename(void *current, const char *new) { return 0; }
 
@@ -425,6 +424,11 @@ void devtmpfs_init() {
     devfs_initialized = true;
 }
 
+void devtmpfs_init_umount() {
+    list_delete(devtmpfs_root->parent->child, devtmpfs_root);
+    devtmpfs_root->parent = NULL;
+}
+
 ssize_t nulldev_read(void *data, void *buf, uint64_t offset, uint64_t len,
                      uint64_t flags) {
     return 0;
@@ -464,14 +468,17 @@ ssize_t urandom_write(void *data, const void *buf, uint64_t offset,
 extern char *default_console;
 
 void setup_console_symlinks() {
-    // 主控制台
-    vfs_symlink("/dev/tty1", default_console);
+    vfs_node_t tty_node = vfs_open(default_console);
+    if (!tty_node)
+        return;
 
-    vfs_symlink("/dev/stdin", default_console);
-    vfs_symlink("/dev/stdout", default_console);
-    vfs_symlink("/dev/stderr", default_console);
+    vfs_mknod("/dev/tty1", 0600 | S_IFCHR, tty_node->rdev);
 
-    vfs_symlink("/dev/kmsg", default_console);
+    vfs_mknod("/dev/stdin", 0600 | S_IFCHR, tty_node->rdev);
+    vfs_mknod("/dev/stdout", 0600 | S_IFCHR, tty_node->rdev);
+    vfs_mknod("/dev/stderr", 0600 | S_IFCHR, tty_node->rdev);
+
+    vfs_mknod("/dev/kmsg", 0600 | S_IFCHR, tty_node->rdev);
 }
 
 void stdio_init() {

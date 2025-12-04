@@ -192,6 +192,8 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
 }
 
 size_t ptmx_ioctl(void *file, uint64_t request, uint64_t arg) {
+    if (!file)
+        return (size_t)-EINVAL;
     pty_pair_t *pair = file;
     size_t ret = 0; // todo ERR(ENOTTY)
     size_t number = _IOC_NR(request);
@@ -655,6 +657,8 @@ void ptmx_init() {
     ptmx->type = file_ptmx;
     ptmx->mode = 0700;
     ptmx->fsid = ptmx_fsid;
+    ptmx->dev = (5 << 8) | 2;
+    ptmx->rdev = (5 << 8) | 2;
 }
 
 extern vfs_node_t devtmpfs_root;

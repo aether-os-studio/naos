@@ -17,17 +17,44 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
         return (uint64_t)-ENOENT;
     }
 
+    if (flags & MS_MOVE) {
+        if (flags & (MS_REMOUNT | MS_BIND)) {
+            return (uint64_t)-EINVAL;
+        }
+
+        if (dir != rootdir)
+            return (uint64_t)-EINVAL;
+
+        vfs_node_t old_mount = vfs_open((const char *)devname);
+        if (!old_mount)
+            return (uint64_t)-EINVAL;
+
+        if (!old_mount->root || old_mount->root != old_mount) {
+            return (uint64_t)-EINVAL;
+        }
+
+        uint64_t dev = old_mount->rdev;
+        uint32_t fsid = old_mount->fsid;
+        const char *fs_name = all_fs[fsid]->name;
+
+        if (vfs_unmount((const char *)devname)) {
+            return (uint64_t)-EINVAL;
+        }
+
+        int ret = vfs_mount(dev, dir, fs_name);
+        if (ret)
+            return ret;
+
+        return 0;
+    }
+
     uint64_t dev_nr = 0;
     vfs_node_t dev = vfs_open((const char *)devname);
     if (dev) {
         dev_nr = dev->rdev;
     }
 
-    if (vfs_mount(dev_nr, dir, (const char *)type)) {
-        return -ENOENT;
-    }
-
-    return 0;
+    return vfs_mount(dev_nr, dir, (const char *)type);
 }
 
 uint64_t sys_umount2(const char *target, uint64_t flags) {
@@ -428,6 +455,8 @@ uint64_t sys_chdir(const char *dname) {
 
     return 0;
 }
+
+uint64_t sys_chroot(const char *dname) { return 0; }
 
 uint64_t sys_getcwd(char *cwd, uint64_t size) {
     char *str = vfs_get_fullpath(current_task->cwd);

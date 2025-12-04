@@ -78,18 +78,22 @@ void initramfs_init() {
         void *data = p + ((sizeof(struct header) + name_size + 3) & ~3);
 
         char name[name_size];
+        memset(name, 0, name_size);
         memcpy(name, p + sizeof(struct header), name_size - 1);
-        name[name_size - 1] = '\0';
         if (!strcmp(name, "TRAILER!!!"))
             break;
-        if (!strcmp(name, "/."))
-            continue;
+        if (!strcmp(name, "."))
+            goto next;
 
         if ((mode & type_mask) == directory_type) {
             vfs_mkdir(name);
             vfs_chmod(name, mode & 0777);
         } else if ((mode & 0120000) == 0120000) {
-            vfs_symlink(name, data);
+            char target_name[file_size + 1];
+            memcpy(target_name, data, file_size);
+            target_name[file_size] = '\0';
+            vfs_symlink(name, target_name);
+            vfs_chmod(name, mode & 0777);
         } else {
             vfs_mkfile(name);
             vfs_chmod(name, mode & 0777);
@@ -97,6 +101,7 @@ void initramfs_init() {
             vfs_write(node, data, 0, file_size);
         }
 
+    next:
         p = data + ((file_size + 3) & ~3);
     }
 }

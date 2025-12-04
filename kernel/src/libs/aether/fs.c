@@ -4,6 +4,7 @@
 EXPORT_SYMBOL(vfs_regist);
 
 EXPORT_SYMBOL(vfs_update);
+EXPORT_SYMBOL(vfs_free);
 EXPORT_SYMBOL(vfs_read);
 EXPORT_SYMBOL(vfs_write);
 EXPORT_SYMBOL(vfs_poll);

@@ -80,8 +80,6 @@ int tmpfs_mkfile(void *parent, const char *name, vfs_node_t node) {
 
 int tmpfs_mknod(void *parent, const char *name, vfs_node_t node, uint16_t mode,
                 int dev) {
-    node->dev = dev;
-    node->rdev = dev;
     node->mode = mode & 0777;
     if ((mode & S_IFMT) == S_IFBLK)
         node->type = file_block;
@@ -134,6 +132,9 @@ void tmpfs_unmount(vfs_node_t root) {
         list_delete(root->child, node);
     }
 
+    root->dev = root->parent ? root->parent->dev : 0;
+    root->rdev = root->parent ? root->parent->rdev : 0;
+
     spin_unlock(&tmpfs_oplock);
 }
 
@@ -148,7 +149,7 @@ int tmpfs_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
     return 0;
 }
 
-int tmpfs_delete(void *parent, vfs_node_t node) { return 0; }
+int tmpfs_delete(void *parent, vfs_node_t node) { return -ENOSYS; }
 
 int tmpfs_rename(void *current, const char *new) { return 0; }
 

@@ -130,6 +130,8 @@ void sysfs_unmount(vfs_node_t root) {
     vfs_merge_nodes_to(fake_sysfs_root, root);
 
     root->fsid = mount_node_old_fsid;
+    root->dev = root->parent ? root->parent->dev : 0;
+    root->rdev = root->parent ? root->parent->rdev : 0;
 
     sysfs_root = fake_sysfs_root;
 
@@ -256,8 +258,8 @@ void sysfs_init() {
 }
 
 void sysfs_init_umount() {
-    list_delete(fake_sysfs_root->parent->child, fake_sysfs_root);
-    fake_sysfs_root->parent = NULL;
+    list_delete(sysfs_root->parent->child, sysfs_root);
+    sysfs_root->parent = NULL;
 }
 
 static int next_seq_num = 1;

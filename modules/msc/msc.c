@@ -622,8 +622,6 @@ int usb_msc_setup(struct usbdevice_s *usbdev,
                   MSC_MAX_TRANSFER_SIZE, // 使用128KB
                   usb_msc_read_blocks, usb_msc_write_blocks);
 
-    set_have_usb_storage(true);
-
     printk("MSC: Device initialized successfully\n");
     return 0;
 

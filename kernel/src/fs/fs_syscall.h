@@ -22,6 +22,50 @@ struct winsize {
     uint16_t ws_ypixel;
 };
 
+/*
+ * These are the fs-independent mount-flags: up to 32 flags are supported
+ *
+ * Usage of these is restricted within the kernel to core mount(2) code and
+ * callers of sys_mount() only.  Filesystems should be using the SB_*
+ * equivalent instead.
+ */
+#define MS_RDONLY 1        /* Mount read-only */
+#define MS_NOSUID 2        /* Ignore suid and sgid bits */
+#define MS_NODEV 4         /* Disallow access to device special files */
+#define MS_NOEXEC 8        /* Disallow program execution */
+#define MS_SYNCHRONOUS 16  /* Writes are synced at once */
+#define MS_REMOUNT 32      /* Alter flags of a mounted FS */
+#define MS_MANDLOCK 64     /* Allow mandatory locks on an FS */
+#define MS_DIRSYNC 128     /* Directory modifications are synchronous */
+#define MS_NOSYMFOLLOW 256 /* Do not follow symlinks */
+#define MS_NOATIME 1024    /* Do not update access times. */
+#define MS_NODIRATIME 2048 /* Do not update directory access times */
+#define MS_BIND 4096
+#define MS_MOVE 8192
+#define MS_REC 16384
+#define MS_VERBOSE                                                             \
+    32768 /* War is peace. Verbosity is silence.                               \
+             MS_VERBOSE is deprecated. */
+#define MS_SILENT 32768
+#define MS_POSIXACL (1 << 16)    /* VFS does not apply the umask */
+#define MS_UNBINDABLE (1 << 17)  /* change to unbindable */
+#define MS_PRIVATE (1 << 18)     /* change to private */
+#define MS_SLAVE (1 << 19)       /* change to slave */
+#define MS_SHARED (1 << 20)      /* change to shared */
+#define MS_RELATIME (1 << 21)    /* Update atime relative to mtime/ctime. */
+#define MS_KERNMOUNT (1 << 22)   /* this is a kern_mount call */
+#define MS_I_VERSION (1 << 23)   /* Update inode I_version field */
+#define MS_STRICTATIME (1 << 24) /* Always perform atime updates */
+#define MS_LAZYTIME (1 << 25)    /* Update the on-disk [acm]times lazily */
+
+/* These sb flags are internal to the kernel */
+#define MS_SUBMOUNT (1 << 26)
+#define MS_NOREMOTELOCK (1 << 27)
+#define MS_NOSEC (1 << 28)
+#define MS_BORN (1 << 29)
+#define MS_ACTIVE (1 << 30)
+#define MS_NOUSER (1 << 31)
+
 uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
                    void *data);
 uint64_t sys_umount2(const char *target, uint64_t flags);
@@ -43,6 +87,7 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count);
 
 uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size);
 uint64_t sys_chdir(const char *dirname);
+uint64_t sys_chroot(const char *dname);
 uint64_t sys_getcwd(char *cwd, uint64_t size);
 
 uint64_t sys_dup(uint64_t fd);

@@ -60,6 +60,9 @@ int ext_mount(uint64_t dev, vfs_node_t node) {
     handle->node = node;
 
     node->inode = EXT4_ROOT_INO;
+    node->fsid = ext_fsid;
+    node->dev = device_dev_nr;
+    node->rdev = device_dev_nr;
     node->handle = handle;
 
     spin_unlock(&rwlock);
@@ -68,7 +71,13 @@ int ext_mount(uint64_t dev, vfs_node_t node) {
 }
 
 void ext_unmount(vfs_node_t node) {
-    // TODO
+    if (node) {
+        char *mp_path = vfs_get_fullpath(node);
+        ext4_umount((const char *)mp_path);
+        node->dev = node->parent ? node->parent->dev : 0;
+        node->rdev = node->parent ? node->parent->rdev : 0;
+        list_foreach(node->child, i) { vfs_free(i->data); }
+    }
 }
 
 void ext_open(void *parent, const char *name, vfs_node_t node) {
