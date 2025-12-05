@@ -4,8 +4,8 @@
 
 typedef struct rbnode rbnode_t;
 
-#define RB_RED 0
-#define RB_BLACK 1
+#define KRB_RED 0
+#define KRB_BLACK 1
 
 typedef struct rb_node {
     uint64_t rb_parent_color;
@@ -17,8 +17,7 @@ typedef struct rb_root {
     struct rb_node *rb_node;
 } rb_root_t;
 
-#define RB_ROOT                                                                \
-    (rb_root_t) { NULL, }
+#define RB_ROOT_INIT ((rb_root_t){NULL})
 #define rb_parent(r) ((struct rb_node *)((r)->rb_parent_color & ~3))
 #define rb_color(r) ((r)->rb_parent_color & 1)
 #define rb_is_red(r) (!rb_color(r))

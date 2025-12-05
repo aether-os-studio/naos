@@ -1,3 +1,4 @@
+#include <libs/string_builder.h>
 #include <arch/arch.h>
 #include <task/task.h>
 #include <task/futex.h>
@@ -747,18 +748,14 @@ uint64_t task_execve(const char *path_user, const char **argv,
         current_task->is_vfork = false;
     }
 
-    char cmdline[DEFAULT_PAGE_SIZE * 4];
-    memset(cmdline, 0, sizeof(cmdline));
-    char *cmdline_ptr = cmdline;
-    int cmdline_len = 0;
+    string_builder_t *builder = create_string_builder(DEFAULT_PAGE_SIZE);
     for (int i = 0; i < argv_count; i++) {
-        int len = sprintf(cmdline_ptr, "%s ", new_argv[i]);
-        cmdline_ptr += len;
-        cmdline_len += len;
+        string_builder_append(builder, new_argv[i]);
+        if (i != argv_count - 1)
+            string_builder_append(builder, " ");
     }
-    if (cmdline_len > 1) {
-        cmdline[cmdline_len - 1] = '\0';
-    }
+    char *cmdline = builder->data;
+    free(builder);
 
     for (int i = 0; i < argv_count; i++) {
         if (new_argv[i]) {
@@ -816,6 +813,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
            sizeof(sigaction_t));
 
     current_task->cmdline = strdup(cmdline);
+    free(cmdline);
     current_task->load_start = load_start;
     current_task->load_end = load_end;
 
