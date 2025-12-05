@@ -193,7 +193,7 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_ALARM] = (syscall_handle_t)sys_alarm;
     syscall_handlers[SYS_SETITIMER] = (syscall_handle_t)sys_setitimer;
     syscall_handlers[SYS_GETPID] = (syscall_handle_t)sys_getpid;
-    // syscall_handlers[SYS_SENDFILE] = (syscall_handle_t)sys_sendfile;
+    syscall_handlers[SYS_SENDFILE] = (syscall_handle_t)sys_sendfile;
     syscall_handlers[SYS_SOCKET] = (syscall_handle_t)sys_socket;
     syscall_handlers[SYS_CONNECT] = (syscall_handle_t)sys_connect;
     syscall_handlers[SYS_ACCEPT] = (syscall_handle_t)sys_accept;

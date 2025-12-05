@@ -327,7 +327,9 @@ found:
         return ptr;
     }
 
+    spin_unlock(&slab_lock);
     void *new_ptr = malloc(size);
+    spin_lock(&slab_lock);
     if (new_ptr == NULL) {
         spin_unlock(&slab_lock);
         return NULL;
@@ -335,9 +337,8 @@ found:
 
     size_t copy_size = MIN(kmalloc_cache_size[old_cache_index].size, size);
     memcpy(new_ptr, ptr, copy_size);
-    free(ptr);
-
     spin_unlock(&slab_lock);
+    free(ptr);
 
     return new_ptr;
 }

@@ -203,13 +203,13 @@ typedef struct ppp_settings_s {
 
 #if PPP_SERVER && PPP_AUTH_SUPPORT
     unsigned int auth_required : 1; /* Peer is required to authenticate */
-    unsigned int null_login
-        : 1; /* Username of "" and a password of "" are acceptable */
-#endif       /* PPP_SERVER && PPP_AUTH_SUPPORT */
+    unsigned int
+        null_login : 1; /* Username of "" and a password of "" are acceptable */
+#endif                  /* PPP_SERVER && PPP_AUTH_SUPPORT */
 #if PPP_REMOTENAME
-    unsigned int explicit_remote
-        : 1; /* remote_name specified with remotename opt */
-#endif       /* PPP_REMOTENAME */
+    unsigned int
+        explicit_remote : 1; /* remote_name specified with remotename opt */
+#endif                       /* PPP_REMOTENAME */
 #if PAP_SUPPORT
     unsigned int refuse_pap : 1; /* Don't proceed auth. with PAP */
 #endif                           /* PAP_SUPPORT */
@@ -226,8 +226,8 @@ typedef struct ppp_settings_s {
 #if LWIP_DNS
     unsigned int usepeerdns : 1; /* Ask peer for DNS adds */
 #endif                           /* LWIP_DNS */
-    unsigned int persist
-        : 1; /* Persist mode, always try to open the connection */
+    unsigned int
+        persist : 1; /* Persist mode, always try to open the connection */
 #if PRINTPKT_SUPPORT
     unsigned int hide_password : 1; /* Hide password in dumped packets */
 #endif                              /* PRINTPKT_SUPPORT */
@@ -235,9 +235,9 @@ typedef struct ppp_settings_s {
     unsigned int lax_recv : 1;      /* accept control chars in asyncmap */
     unsigned int noendpoint : 1; /* don't send/accept endpoint discriminator */
 #if PPP_LCP_ADAPTIVE
-    unsigned int lcp_echo_adaptive
-        : 1; /* request echo only if the link was idle */
-#endif       /* PPP_LCP_ADAPTIVE */
+    unsigned int
+        lcp_echo_adaptive : 1; /* request echo only if the link was idle */
+#endif                         /* PPP_LCP_ADAPTIVE */
 #if MPPE_SUPPORT
     unsigned int require_mppe : 1;    /* Require MPPE (Microsoft Point to Point
                                          Encryption) */

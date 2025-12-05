@@ -129,7 +129,8 @@ static struct usbhub_op_s usb_hub_op = {
     .disconnect = usb_hub_disconnect,
 };
 
-int usb_hub_setup(struct usbdevice_s *usbdev, struct usbdevice_a_interface *iface) {
+int usb_hub_setup(struct usbdevice_s *usbdev,
+                  struct usbdevice_a_interface *iface) {
     usb_hub_op.realloc_pipe = usbdev->hub->op->realloc_pipe;
     usb_hub_op.send_pipe = usbdev->hub->op->send_pipe;
     usb_hub_op.send_intr_pipe = usbdev->hub->op->send_intr_pipe;

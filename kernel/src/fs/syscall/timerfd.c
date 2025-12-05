@@ -49,7 +49,7 @@ uint64_t sys_timerfd_create(int clockid, int flags) {
 static uint64_t get_current_time_ns(int clock_type) {
     if (clock_type == CLOCK_MONOTONIC) {
         return nano_time(); // 单调时钟，直接返回纳秒
-    } else                 // CLOCK_REALTIME
+    } else                  // CLOCK_REALTIME
     {
         tm time;
         time_read(&time);

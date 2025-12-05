@@ -160,8 +160,7 @@ int init_serial() {
         uint64_t virt = phys_to_virt(spcr->base_address.address);
         map_page_range(get_current_page_dir(false), virt,
                        spcr->base_address.address, DEFAULT_PAGE_SIZE,
-                       PT_FLAG_R | PT_FLAG_W |
-                           PT_FLAG_UNCACHEABLE);
+                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
         switch (spcr->interface_type) {
         case ACPI_DBG2_SUBTYPE_SERIAL_NS16550_GAS:
             uart_init(&uart0, (volatile void *)virt, NULL);
@@ -178,8 +177,7 @@ int init_serial() {
             uint64_t virt = phys_to_virt(fdt_serial.base_addr);
             map_page_range(get_current_page_dir(false), virt,
                            fdt_serial.base_addr, DEFAULT_PAGE_SIZE,
-                           PT_FLAG_R | PT_FLAG_W |
-                               PT_FLAG_UNCACHEABLE);
+                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
             uart_init(&uart0, (volatile void *)virt, NULL);
 
             serial_initialized = true;

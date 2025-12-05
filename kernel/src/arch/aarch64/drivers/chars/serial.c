@@ -16,8 +16,7 @@ int init_serial() {
         uint64_t virt = phys_to_virt(spcr->base_address.address);
         map_page_range(get_current_page_dir(false), virt,
                        spcr->base_address.address, DEFAULT_PAGE_SIZE,
-                       PT_FLAG_R | PT_FLAG_W |
-                           PT_FLAG_UNCACHEABLE);
+                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
         switch (spcr->interface_type) {
         case ACPI_DBG2_SUBTYPE_SERIAL_PL011:
             uart_baudrate_t baudrate;

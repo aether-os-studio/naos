@@ -13,22 +13,23 @@ const char *get_vma_permissions(vma_t *vma) {
 
     return perms;
 }
-
 char *proc_gen_maps_file(task_t *task, size_t *content_len) {
-    vma_t *vma = task->arch_context->mm->task_vma_mgr.vma_list;
+    vma_manager_t *mgr = &task->arch_context->mm->task_vma_mgr;
 
-    size_t offset = 0;
-    size_t ctn_len = DEFAULT_PAGE_SIZE;
     string_builder_t *builder = create_string_builder(4096);
 
-    while (vma) {
-        vfs_node_t node = vma->node;
+    rb_node_t *node = rb_first(&mgr->vma_tree);
 
-        string_builder_append(
-            builder, "%012lx-%012lx %s %08lx %02x:%02x %lu", vma->vm_start,
-            vma->vm_end, get_vma_permissions(vma), vma->vm_offset,
-            node ? (node->rdev >> 8) & 0xFF : 0, node ? node->rdev & 0xFF : 0,
-            node ? node->inode : 0);
+    while (node) {
+        vma_t *vma = rb_entry(node, vma_t, vm_rb);
+        vfs_node_t vfs_node = vma->node;
+
+        string_builder_append(builder, "%012lx-%012lx %s %08lx %02x:%02x %lu",
+                              vma->vm_start, vma->vm_end,
+                              get_vma_permissions(vma), vma->vm_offset,
+                              vfs_node ? (vfs_node->rdev >> 8) & 0xFF : 0,
+                              vfs_node ? vfs_node->rdev & 0xFF : 0,
+                              vfs_node ? vfs_node->inode : 0);
 
         const char *pathname = vma->vm_name;
         if (pathname && strlen(pathname) > 0) {
@@ -37,13 +38,12 @@ char *proc_gen_maps_file(task_t *task, size_t *content_len) {
 
         string_builder_append(builder, "\n");
 
-        vma = vma->vm_next;
+        node = rb_next(node);
     }
 
     *content_len = builder->size;
 
     void *data = builder->data;
-
     free(builder);
 
     return data;

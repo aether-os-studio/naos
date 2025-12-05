@@ -40,14 +40,8 @@ static inline void dcache_flush_range(void *addr, size_t size) {
     __asm__ volatile("" : : : "memory");
 }
 
-static inline void memory_barrier(void) {
-    __asm__ volatile("" : : : "memory");
-}
+static inline void memory_barrier(void) { __asm__ volatile("" : : : "memory"); }
 
-static inline void read_barrier(void) {
-    __asm__ volatile("" : : : "memory");
-}
+static inline void read_barrier(void) { __asm__ volatile("" : : : "memory"); }
 
-static inline void write_barrier(void) {
-    __asm__ volatile("" : : : "memory");
-}
+static inline void write_barrier(void) { __asm__ volatile("" : : : "memory"); }

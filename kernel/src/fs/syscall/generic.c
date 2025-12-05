@@ -289,6 +289,66 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
     return ret;
 }
 
+uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, uint64_t *offset_ptr,
+                      size_t count) {
+    if (out_fd > MAX_FD_NUM || in_fd > MAX_FD_NUM)
+        return -EBADF;
+    fd_t *out_handle = current_task->fd_info->fds[out_fd];
+    fd_t *in_handle = current_task->fd_info->fds[in_fd];
+    if (out_handle == NULL || in_handle == NULL)
+        return -EBADF;
+
+    uint64_t current_offset =
+        offset_ptr == NULL ? in_handle->offset : *offset_ptr;
+    size_t total_sent = 0;
+
+    size_t remaining = count;
+
+    char *buffer = (char *)alloc_frames_bytes(DEFAULT_PAGE_SIZE);
+    if (buffer == NULL) {
+        return -ENOMEM;
+    }
+
+    while (remaining > 0) {
+        size_t bytes_to_read =
+            remaining < DEFAULT_PAGE_SIZE ? remaining : DEFAULT_PAGE_SIZE;
+        size_t bytes_read;
+        size_t bytes_written;
+        bytes_read =
+            vfs_read(in_handle->node, buffer, current_offset, bytes_to_read);
+        if (bytes_read <= 0) {
+            if (bytes_read == (size_t)-1 && total_sent == 0) {
+                free_frames_bytes(buffer, DEFAULT_PAGE_SIZE);
+                return -EIO;
+            }
+            break;
+        }
+        bytes_written =
+            vfs_write(out_handle->node, buffer, out_handle->offset, bytes_read);
+        if (bytes_written == (size_t)-1) {
+            if (total_sent == 0) {
+                free_frames_bytes(buffer, DEFAULT_PAGE_SIZE);
+                return -EIO;
+            }
+            break;
+        }
+        if (bytes_written < bytes_read) {
+            bytes_read = bytes_written;
+        }
+        current_offset += bytes_read;
+        out_handle->offset += bytes_read;
+        total_sent += bytes_read;
+        remaining -= bytes_read;
+    }
+    free_frames_bytes(buffer, DEFAULT_PAGE_SIZE);
+    if (offset_ptr != NULL) {
+        *offset_ptr = current_offset;
+    } else {
+        in_handle->offset = current_offset;
+    }
+    return total_sent;
+}
+
 uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
     if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
