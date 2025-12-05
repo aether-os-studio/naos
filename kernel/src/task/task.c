@@ -586,7 +586,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
     memset(&new_mm->task_vma_mgr, 0, sizeof(vma_manager_t));
     new_mm->task_vma_mgr.initialized = true;
 
-    new_mm->task_vma_mgr.last_alloc_addr = USER_MMAP_START;
     new_mm->brk_start = USER_BRK_START;
     new_mm->brk_current = new_mm->brk_start;
     new_mm->brk_end = USER_BRK_END;

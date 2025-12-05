@@ -1,399 +1,256 @@
 #include <libs/rbtree.h>
 
-void rbtree_init(rbtree_t *tree, rbnode_compare_t compare) {
-    tree->root = NULL;
-    tree->size = 0;
-    tree->compare = compare;
+static void __rb_rotate_left(rb_node_t *node, rb_root_t *root) {
+    rb_node_t *right = node->rb_right;
+    rb_node_t *parent = rb_parent(node);
+
+    if ((node->rb_right = right->rb_left))
+        rb_set_parent(right->rb_left, node);
+    right->rb_left = node;
+
+    rb_set_parent(right, parent);
+
+    if (parent) {
+        if (node == parent->rb_left)
+            parent->rb_left = right;
+        else
+            parent->rb_right = right;
+    } else
+        root->rb_node = right;
+    rb_set_parent(node, right);
 }
 
-rbnode_t *rbtree_rotate(rbtree_t *tree, rbnode_t *node,
-                        rbnode_direction_t direction) {
-    rbnode_direction_t opposite = RBNODE_OPPOSITE(direction);
+static void __rb_rotate_right(rb_node_t *node, rb_root_t *root) {
+    rb_node_t *left = node->rb_left;
+    rb_node_t *parent = rb_parent(node);
 
-    rbnode_t *parent = node->parent;
-    rbnode_t *newRoot = node->children[opposite];
-    rbnode_t *newChild = newRoot->children[direction];
+    if ((node->rb_left = left->rb_right))
+        rb_set_parent(left->rb_right, node);
+    left->rb_right = node;
 
-    node->children[opposite] = newChild;
-    if (newChild != NULL) {
-        newChild->parent = node;
-    }
+    rb_set_parent(left, parent);
 
-    newRoot->children[direction] = node;
-
-    newRoot->parent = parent;
-    node->parent = newRoot;
-    if (parent != NULL) {
-        if (node == parent->children[RBNODE_RIGHT]) {
-            parent->children[RBNODE_RIGHT] = newRoot;
-        } else {
-            parent->children[RBNODE_LEFT] = newRoot;
-        }
-    } else {
-        tree->root = newRoot;
-    }
-
-    return newRoot;
+    if (parent) {
+        if (node == parent->rb_right)
+            parent->rb_right = left;
+        else
+            parent->rb_left = left;
+    } else
+        root->rb_node = left;
+    rb_set_parent(node, left);
 }
 
-static void rbtree_insert_at(rbtree_t *tree, rbnode_t *parent, rbnode_t *node,
-                             rbnode_direction_t direction) {
-    node->color = RBNODE_RED;
-    node->parent = parent;
+void __rb_erase_color(rb_node_t *node, rb_node_t *parent, rb_root_t *root) {
+    rb_node_t *other;
 
-    if (parent == NULL) {
-        tree->root = node;
-        return;
-    }
-
-    parent->children[direction] = node;
-
-    while (true) {
-        if (parent->color == RBNODE_BLACK) {
-            break;
-        }
-
-        rbnode_t *grandparent = parent->parent;
-        if (grandparent == NULL) {
-            parent->color = RBNODE_BLACK;
-            return;
-        }
-
-        rbnode_direction_t fromParent = RBNODE_FROM_PARENT(parent);
-        rbnode_t *uncle = grandparent->children[RBNODE_OPPOSITE(fromParent)];
-        if (uncle == NULL || uncle->color == RBNODE_BLACK) {
-            if (node == parent->children[RBNODE_OPPOSITE(fromParent)]) {
-                rbtree_rotate(tree, parent, fromParent);
-                parent = grandparent->children[fromParent];
+    while ((!node || rb_is_black(node)) && node != root->rb_node) {
+        if (parent->rb_left == node) {
+            other = parent->rb_right;
+            if (rb_is_red(other)) {
+                rb_set_black(other);
+                rb_set_red(parent);
+                __rb_rotate_left(parent, root);
+                other = parent->rb_right;
             }
-
-            rbtree_rotate(tree, grandparent, RBNODE_OPPOSITE(fromParent));
-            parent->color = RBNODE_BLACK;
-            grandparent->color = RBNODE_RED;
-            break;
-        }
-
-        parent->color = RBNODE_BLACK;
-        uncle->color = RBNODE_BLACK;
-        grandparent->color = RBNODE_RED;
-        node = grandparent;
-
-        parent = node->parent;
-        if (parent == NULL) {
-            break;
-        }
-    }
-}
-
-void rbtree_insert(rbtree_t *tree, rbnode_t *node) {
-    rbnode_t *current = tree->root;
-    rbnode_t *parent = NULL;
-
-    rbnode_direction_t direction = RBNODE_LEFT;
-    while (current != NULL) {
-        parent = current;
-        if (tree->compare(node, current) < 0) {
-            direction = RBNODE_LEFT;
-            current = current->children[RBNODE_LEFT];
-        } else {
-            direction = RBNODE_RIGHT;
-            current = current->children[RBNODE_RIGHT];
-        }
-    }
-
-    rbtree_insert_at(tree, parent, node, direction);
-    tree->size++;
-
-    if (tree->root != NULL) {
-        tree->root->color = RBNODE_BLACK;
-    }
-}
-
-rbnode_t *rbtree_find_min(rbnode_t *node) {
-    if (node == NULL) {
-        return NULL;
-    }
-
-    rbnode_t *current = node;
-    while (current->children[RBNODE_LEFT] != NULL) {
-        current = current->children[RBNODE_LEFT];
-    }
-    return current;
-}
-
-rbnode_t *rbtree_find_max(rbnode_t *node) {
-    if (node == NULL) {
-        return NULL;
-    }
-
-    rbnode_t *current = node;
-    while (current->children[RBNODE_RIGHT] != NULL) {
-        current = current->children[RBNODE_RIGHT];
-    }
-    return current;
-}
-
-void rbtree_swap(rbtree_t *tree, rbnode_t *a, rbnode_t *b) {
-    if (a == b) {
-        return;
-    }
-
-    rbnode_color_t tempColor = a->color;
-    a->color = b->color;
-    b->color = tempColor;
-
-    if (a->parent == b) {
-        rbnode_t *temp = a;
-        a = b;
-        b = temp;
-    }
-
-    if (b->parent == a) {
-        rbnode_t *aParent = a->parent;
-
-        rbnode_direction_t sideB =
-            (a->children[RBNODE_RIGHT] == b) ? RBNODE_RIGHT : RBNODE_LEFT;
-
-        rbnode_t *otherChild = a->children[RBNODE_OPPOSITE(sideB)];
-        rbnode_t *bLeft = b->children[RBNODE_LEFT];
-        rbnode_t *bRight = b->children[RBNODE_RIGHT];
-
-        b->parent = aParent;
-        if (aParent != NULL) {
-            if (aParent->children[RBNODE_LEFT] == a) {
-                aParent->children[RBNODE_LEFT] = b;
+            if ((!other->rb_left || rb_is_black(other->rb_left)) &&
+                (!other->rb_right || rb_is_black(other->rb_right))) {
+                rb_set_red(other);
+                node = parent;
+                parent = rb_parent(node);
             } else {
-                aParent->children[RBNODE_RIGHT] = b;
-            }
-        } else {
-            tree->root = b;
-        }
-
-        b->children[sideB] = a;
-        a->parent = b;
-
-        b->children[RBNODE_OPPOSITE(sideB)] = otherChild;
-        if (otherChild != NULL) {
-            otherChild->parent = b;
-        }
-
-        a->children[RBNODE_LEFT] = bLeft;
-        if (bLeft != NULL) {
-            bLeft->parent = a;
-        }
-
-        a->children[RBNODE_RIGHT] = bRight;
-        if (bRight != NULL) {
-            bRight->parent = a;
-        }
-    } else {
-        rbnode_t *aParent = a->parent;
-        rbnode_t *bParent = b->parent;
-        rbnode_t *aLeft = a->children[RBNODE_LEFT];
-        rbnode_t *aRight = a->children[RBNODE_RIGHT];
-        rbnode_t *bLeft = b->children[RBNODE_LEFT];
-        rbnode_t *bRight = b->children[RBNODE_RIGHT];
-
-        a->parent = bParent;
-        if (bParent != NULL) {
-            if (bParent->children[RBNODE_LEFT] == b) {
-                bParent->children[RBNODE_LEFT] = a;
-            } else {
-                bParent->children[RBNODE_RIGHT] = a;
-            }
-        } else {
-            tree->root = a;
-        }
-        a->children[RBNODE_LEFT] = bLeft;
-        if (bLeft != NULL) {
-            bLeft->parent = a;
-        }
-        a->children[RBNODE_RIGHT] = bRight;
-        if (bRight != NULL) {
-            bRight->parent = a;
-        }
-
-        b->parent = aParent;
-        if (aParent != NULL) {
-            if (aParent->children[RBNODE_LEFT] == a) {
-                aParent->children[RBNODE_LEFT] = b;
-            } else {
-                aParent->children[RBNODE_RIGHT] = b;
-            }
-        } else {
-            tree->root = b;
-        }
-        b->children[RBNODE_LEFT] = aLeft;
-        if (aLeft != NULL) {
-            aLeft->parent = b;
-        }
-        b->children[RBNODE_RIGHT] = aRight;
-        if (aRight != NULL) {
-            aRight->parent = b;
-        }
-    }
-}
-
-static void rbtree_remove_sanitize(rbtree_t *tree, rbnode_t *node) {
-    node->parent = NULL;
-    node->children[RBNODE_LEFT] = NULL;
-    node->children[RBNODE_RIGHT] = NULL;
-    node->color = RBNODE_RED;
-
-    tree->size--;
-}
-
-void rbtree_remove(rbtree_t *tree, rbnode_t *node) {
-    if (tree->size == 0 || (node != tree->root && node->parent == NULL)) {
-        return;
-    }
-
-    if (node->children[RBNODE_LEFT] != NULL &&
-        node->children[RBNODE_RIGHT] != NULL) {
-        rbnode_t *successor = rbtree_find_min(node->children[RBNODE_RIGHT]);
-        rbtree_swap(tree, node, successor);
-        rbtree_remove(tree, node);
-        return;
-    }
-
-    rbnode_t *child = node->children[RBNODE_LEFT] != NULL
-                          ? node->children[RBNODE_LEFT]
-                          : node->children[RBNODE_RIGHT];
-
-    if (node->color == RBNODE_RED) {
-        if (node->parent == NULL) {
-            tree->root = NULL;
-        } else {
-            rbnode_direction_t fromParent = RBNODE_FROM_PARENT(node);
-            node->parent->children[fromParent] = NULL;
-        }
-
-        rbtree_remove_sanitize(tree, node);
-        return;
-    }
-
-    if (child != NULL) {
-        if (node->parent == NULL) {
-            tree->root = child;
-        } else {
-            node->parent->children[RBNODE_FROM_PARENT(node)] = child;
-        }
-
-        child->parent = node->parent;
-        child->color = RBNODE_BLACK;
-
-        rbtree_remove_sanitize(tree, node);
-        return;
-    }
-
-    rbnode_t *parent = node->parent;
-
-    if (parent == NULL) {
-        tree->root = NULL;
-        rbtree_remove_sanitize(tree, node);
-        return;
-    }
-
-    rbnode_direction_t fromParent = RBNODE_FROM_PARENT(node);
-    parent->children[fromParent] = NULL;
-
-    rbtree_remove_sanitize(tree, node);
-
-    // Do this very complex fixup stuff
-    rbnode_t *curr = NULL;
-    while (true) {
-        rbnode_t *sibling = parent->children[RBNODE_OPPOSITE(fromParent)];
-
-        if (sibling->color == RBNODE_RED) {
-            rbtree_rotate(tree, parent, fromParent);
-            parent->color = RBNODE_RED;
-            sibling->color = RBNODE_BLACK;
-            sibling = parent->children[RBNODE_OPPOSITE(fromParent)];
-        }
-
-        rbnode_t *distantNephew =
-            sibling->children[RBNODE_OPPOSITE(fromParent)];
-        rbnode_t *closeNephew = sibling->children[fromParent];
-
-        if ((distantNephew == NULL || distantNephew->color == RBNODE_BLACK) &&
-            (closeNephew == NULL || closeNephew->color == RBNODE_BLACK)) {
-            sibling->color = RBNODE_RED;
-            curr = parent;
-            parent = curr->parent;
-
-            if (parent == NULL) {
+                if (!other->rb_right || rb_is_black(other->rb_right)) {
+                    rb_set_black(other->rb_left);
+                    rb_set_red(other);
+                    __rb_rotate_right(other, root);
+                    other = parent->rb_right;
+                }
+                rb_set_color(other, rb_color(parent));
+                rb_set_black(parent);
+                rb_set_black(other->rb_right);
+                __rb_rotate_left(parent, root);
+                node = root->rb_node;
                 break;
             }
-
-            if (curr->color == RBNODE_RED) {
-                curr->color = RBNODE_BLACK;
+        } else {
+            other = parent->rb_left;
+            if (rb_is_red(other)) {
+                rb_set_black(other);
+                rb_set_red(parent);
+                __rb_rotate_right(parent, root);
+                other = parent->rb_left;
+            }
+            if ((!other->rb_left || rb_is_black(other->rb_left)) &&
+                (!other->rb_right || rb_is_black(other->rb_right))) {
+                rb_set_red(other);
+                node = parent;
+                parent = rb_parent(node);
+            } else {
+                if (!other->rb_left || rb_is_black(other->rb_left)) {
+                    rb_set_black(other->rb_right);
+                    rb_set_red(other);
+                    __rb_rotate_left(other, root);
+                    other = parent->rb_left;
+                }
+                rb_set_color(other, rb_color(parent));
+                rb_set_black(parent);
+                rb_set_black(other->rb_left);
+                __rb_rotate_right(parent, root);
+                node = root->rb_node;
                 break;
             }
-
-            fromParent = RBNODE_FROM_PARENT(curr);
-            continue;
         }
-
-        if (distantNephew == NULL || distantNephew->color == RBNODE_BLACK) {
-            rbtree_rotate(tree, sibling, RBNODE_OPPOSITE(fromParent));
-            sibling->color = RBNODE_RED;
-            closeNephew->color = RBNODE_BLACK;
-
-            distantNephew = sibling; // For clarity
-            sibling = closeNephew;
-        }
-
-        rbtree_rotate(tree, parent, fromParent);
-        sibling->color = parent->color;
-        parent->color = RBNODE_BLACK;
-        if (sibling->children[RBNODE_OPPOSITE(fromParent)] != NULL) {
-            sibling->children[RBNODE_OPPOSITE(fromParent)]->color =
-                RBNODE_BLACK;
-        }
-        break;
     }
-
-    if (tree->root != NULL) {
-        tree->root->color = RBNODE_BLACK;
-    }
+    if (node)
+        rb_set_black(node);
 }
 
-bool rbtree_is_empty(const rbtree_t *tree) {
-    return tree->size == 0;
+void rb_insert_color(rb_node_t *node, rb_root_t *root) {
+    rb_node_t *parent, *gparent;
+
+    while ((parent = rb_parent(node)) && rb_is_red(parent)) {
+        gparent = rb_parent(parent);
+
+        if (parent == gparent->rb_left) {
+            {
+                register rb_node_t *uncle = gparent->rb_right;
+                if (uncle && rb_is_red(uncle)) {
+                    rb_set_black(uncle);
+                    rb_set_black(parent);
+                    rb_set_red(gparent);
+                    node = gparent;
+                    continue;
+                }
+            }
+
+            if (parent->rb_right == node) {
+                register rb_node_t *tmp;
+                __rb_rotate_left(parent, root);
+                tmp = parent;
+                parent = node;
+                node = tmp;
+            }
+
+            rb_set_black(parent);
+            rb_set_red(gparent);
+            __rb_rotate_right(gparent, root);
+        } else {
+            {
+                register rb_node_t *uncle = gparent->rb_left;
+                if (uncle && rb_is_red(uncle)) {
+                    rb_set_black(uncle);
+                    rb_set_black(parent);
+                    rb_set_red(gparent);
+                    node = gparent;
+                    continue;
+                }
+            }
+
+            if (parent->rb_left == node) {
+                register rb_node_t *tmp;
+                __rb_rotate_right(parent, root);
+                tmp = parent;
+                parent = node;
+                node = tmp;
+            }
+
+            rb_set_black(parent);
+            rb_set_red(gparent);
+            __rb_rotate_left(gparent, root);
+        }
+    }
+
+    rb_set_black(root->rb_node);
 }
 
-rbnode_t *rbtree_next(const rbnode_t *node) {
-    if (node == NULL) {
+void rb_erase(rb_node_t *node, rb_root_t *root) {
+    rb_node_t *child, *parent;
+    int color;
+
+    if (!node->rb_left)
+        child = node->rb_right;
+    else if (!node->rb_right)
+        child = node->rb_left;
+    else {
+        rb_node_t *old = node, *left;
+
+        node = node->rb_right;
+        while ((left = node->rb_left) != NULL)
+            node = left;
+
+        if (rb_parent(old)) {
+            if (rb_parent(old)->rb_left == old)
+                rb_parent(old)->rb_left = node;
+            else
+                rb_parent(old)->rb_right = node;
+        } else
+            root->rb_node = node;
+
+        child = node->rb_right;
+        parent = rb_parent(node);
+        color = rb_color(node);
+
+        if (parent == old) {
+            parent = node;
+        } else {
+            if (child)
+                rb_set_parent(child, parent);
+            parent->rb_left = child;
+
+            node->rb_right = old->rb_right;
+            rb_set_parent(old->rb_right, node);
+        }
+
+        node->rb_parent_color = old->rb_parent_color;
+        node->rb_left = old->rb_left;
+        rb_set_parent(old->rb_left, node);
+
+        goto color;
+    }
+
+    parent = rb_parent(node);
+    color = rb_color(node);
+
+    if (child)
+        rb_set_parent(child, parent);
+    if (parent) {
+        if (parent->rb_left == node)
+            parent->rb_left = child;
+        else
+            parent->rb_right = child;
+    } else
+        root->rb_node = child;
+
+color:
+    if (color == RB_BLACK)
+        __rb_erase_color(child, parent, root);
+}
+
+rb_node_t *rb_first(const rb_root_t *root) {
+    rb_node_t *n;
+
+    n = root->rb_node;
+    if (!n)
         return NULL;
-    }
-
-    if (node->children[RBNODE_RIGHT] != NULL) {
-        return rbtree_find_min(node->children[RBNODE_RIGHT]);
-    }
-
-    rbnode_t *parent = node->parent;
-    while (parent != NULL && node == parent->children[RBNODE_RIGHT]) {
-        node = parent;
-        parent = parent->parent;
-    }
-
-    return parent;
+    while (n->rb_left)
+        n = n->rb_left;
+    return n;
 }
 
-rbnode_t *rbtree_prev(const rbnode_t *node) {
-    if (node == NULL) {
+rb_node_t *rb_next(const rb_node_t *node) {
+    rb_node_t *parent;
+
+    if (rb_parent(node) == node)
         return NULL;
+
+    if (node->rb_right) {
+        node = node->rb_right;
+        while (node->rb_left)
+            node = node->rb_left;
+        return (rb_node_t *)node;
     }
 
-    if (node->children[RBNODE_LEFT] != NULL) {
-        return rbtree_find_max(node->children[RBNODE_LEFT]);
-    }
-
-    rbnode_t *parent = node->parent;
-    while (parent != NULL && node == parent->children[RBNODE_LEFT]) {
+    while ((parent = rb_parent(node)) && node == parent->rb_right)
         node = parent;
-        parent = parent->parent;
-    }
 
     return parent;
 }

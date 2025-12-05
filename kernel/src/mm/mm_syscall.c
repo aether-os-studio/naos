@@ -7,53 +7,55 @@ uint64_t do_munmap(uint64_t addr, uint64_t size);
 
 static uint64_t find_unmapped_area(vma_manager_t *mgr, uint64_t hint,
                                    uint64_t len) {
-    uint64_t addr;
+    vma_t *vma;
 
+    // 参数校验
+    if (len == 0 || len > USER_MMAP_END - USER_MMAP_START) {
+        return (uint64_t)-ENOMEM;
+    }
+
+    // 尝试hint
     if (hint) {
         hint = PADDING_UP(hint, DEFAULT_PAGE_SIZE);
-        if (hint + len <= USER_MMAP_END &&
+        if (hint >= USER_MMAP_START && hint <= USER_MMAP_END - len &&
             !vma_find_intersection(mgr, hint, hint + len)) {
             return hint;
         }
     }
 
-    addr = mgr->last_alloc_addr;
-    if (addr < USER_MMAP_START)
-        addr = USER_MMAP_START;
+    // 使用红黑树找到第一个VMA
+    rb_node_t *node = rb_first(&mgr->vma_tree);
 
-    vma_t *vma = mgr->vma_list;
-
-    // 跳到第一个可能相关的 VMA
-    while (vma && vma->vm_end <= addr) {
-        vma = vma->vm_next;
+    if (!node) {
+        // 没有VMA，整个空间可用
+        return USER_MMAP_START + len <= USER_MMAP_END ? USER_MMAP_START
+                                                      : (uint64_t)-ENOMEM;
     }
 
-    while (vma) {
-        uint64_t gap_start =
-            vma->vm_prev ? vma->vm_prev->vm_end : USER_MMAP_START;
-        uint64_t gap_end = vma->vm_start;
+    vma = rb_entry(node, vma_t, vm_rb);
 
-        if (gap_start < addr)
-            gap_start = addr;
+    // 检查第一个VMA之前的gap
+    if (vma->vm_start >= USER_MMAP_START + len) {
+        return USER_MMAP_START;
+    }
 
-        if (gap_end > gap_start && gap_end - gap_start >= len) {
+    // 扫描VMA间的gaps
+    while ((node = rb_next(node)) != NULL) {
+        vma_t *next_vma = rb_entry(node, vma_t, vm_rb);
+        uint64_t gap_start = vma->vm_end;
+        uint64_t gap_end = next_vma->vm_start;
+
+        if (gap_end >= gap_start + len) {
             return gap_start;
         }
 
-        addr = vma->vm_end;
-        vma = vma->vm_next;
+        vma = next_vma;
     }
 
-    vma_t *last = mgr->vma_list;
-    while (last && last->vm_next)
-        last = last->vm_next;
-
-    addr = last ? last->vm_end : USER_MMAP_START;
-    if (addr < mgr->last_alloc_addr)
-        addr = mgr->last_alloc_addr;
-
-    if (addr + len <= USER_MMAP_END)
-        return addr;
+    // 检查最后一个VMA之后
+    if (vma->vm_end <= USER_MMAP_END - len) {
+        return vma->vm_end;
+    }
 
     return (uint64_t)-ENOMEM;
 }
@@ -248,9 +250,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         return (uint64_t)-ENOMEM;
     }
 
-    if (!(flags & MAP_FIXED) && !addr)
-        mgr->last_alloc_addr = start_addr + aligned_len;
-
     spin_unlock(&mgr->lock);
 
     if (!(flags & MAP_ANONYMOUS)) {
@@ -300,8 +299,8 @@ uint64_t do_munmap(uint64_t addr, uint64_t size) {
         else if (!(vma->vm_end <= start || vma->vm_start >= end)) {
             if (vma->vm_start < start && vma->vm_end > end) {
                 // VMA跨越整个取消映射范围 - 分割成两部分
-                vma_split(vma, end);
-                vma_split(vma, start);
+                vma_split(mgr, vma, end);
+                vma_split(mgr, vma, start);
                 // 移除中间部分
                 vma_t *middle = vma->vm_next;
                 vma_remove(mgr, middle);
@@ -469,7 +468,7 @@ static uint64_t mremap_move(vma_manager_t *mgr, vma_t *old_vma,
                             uint64_t new_addr_hint) {
     uint64_t new_addr;
 
-    // 1. 确定新地址
+    // 确定新地址
     if (flags & MREMAP_FIXED) {
         new_addr = new_addr_hint;
 
@@ -477,8 +476,7 @@ static uint64_t mremap_move(vma_manager_t *mgr, vma_t *old_vma,
             return (uint64_t)-ENOMEM;
 
         // 类似 MAP_FIXED，需要先 unmap 冲突区域
-        vma_unmap_range(mgr, new_addr, new_addr + new_size);
-
+        do_munmap(new_addr, new_size);
     } else {
         // 查找空闲地址
         new_addr = find_unmapped_area(mgr, new_addr_hint, new_size);
@@ -486,7 +484,7 @@ static uint64_t mremap_move(vma_manager_t *mgr, vma_t *old_vma,
             return new_addr;
     }
 
-    // 2. 创建新 VMA
+    // 创建新 VMA
     vma_t *new_vma = vma_alloc();
     if (!new_vma)
         return (uint64_t)-ENOMEM;
@@ -507,7 +505,7 @@ static uint64_t mremap_move(vma_manager_t *mgr, vma_t *old_vma,
     if (old_vma->vm_name)
         new_vma->vm_name = strdup(old_vma->vm_name);
 
-    // 3. 插入新 VMA
+    // 插入新 VMA
     if (vma_insert(mgr, new_vma) != 0) {
         if (new_vma->node)
             new_vma->node->refcount--;
@@ -517,7 +515,7 @@ static uint64_t mremap_move(vma_manager_t *mgr, vma_t *old_vma,
         return (uint64_t)-ENOMEM;
     }
 
-    // 4. 映射新区域并复制数据
+    // 映射新区域并复制数据
     uint64_t prot = 0;
     if (old_vma->vm_flags & VMA_READ)
         prot |= PROT_READ;
@@ -565,12 +563,7 @@ static uint64_t mremap_move(vma_manager_t *mgr, vma_t *old_vma,
         memcpy((void *)new_addr, (void *)old_addr, old_size);
     }
 
-    // 5. 更新 last_alloc_addr
-    if (!(flags & MREMAP_FIXED)) {
-        mgr->last_alloc_addr = new_addr + new_size;
-    }
-
-    // 6. 处理旧区域
+    // 处理旧区域
     // 注意：这里需要考虑旧区域可能只是 VMA 的一部分
     if (old_vma->vm_start == old_addr &&
         old_vma->vm_end == old_addr + old_size) {
@@ -705,6 +698,7 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
         get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)), 0,
         (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
 
+    file->offset = offset;
     ssize_t ret = vfs_read_fd(file, (void *)addr, offset, len);
     if (ret < 0) {
         printk("Failed read file for mmap\n");

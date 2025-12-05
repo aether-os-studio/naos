@@ -64,8 +64,7 @@ uint64_t sys_getrandom(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
 
     for (size_t i = 0; i < get_len; i++) {
         tm time;
-        time_read(&time);
-        uint64_t next = mktime(&time);
+        uint64_t next = nano_time();
         next = next * 1103515245 + 12345;
         uint8_t rand_byte = ((uint8_t)(next / 65536) % 32768);
         memcpy(buffer + i, &rand_byte, 1);
@@ -645,34 +644,34 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
     serial_printk(buf, len);
     if (usable) {
         if (info->arg1[0]) {
-            len = sprintf(buf, "%s:%lx,", info->arg1, arg1);
+            len = sprintf(buf, "%s:0x%lx,", info->arg1, arg1);
             serial_printk(buf, len);
         }
         if (info->arg2[0]) {
-            len = sprintf(buf, "%s:%lx,", info->arg2, arg2);
+            len = sprintf(buf, "%s:0x%lx,", info->arg2, arg2);
             serial_printk(buf, len);
         }
         if (info->arg3[0]) {
-            len = sprintf(buf, "%s:%lx,", info->arg3, arg3);
+            len = sprintf(buf, "%s:0x%lx,", info->arg3, arg3);
             serial_printk(buf, len);
         }
         if (info->arg4[0]) {
-            len = sprintf(buf, "%s:%lx,", info->arg4, arg4);
+            len = sprintf(buf, "%s:0x%lx,", info->arg4, arg4);
             serial_printk(buf, len);
         }
         if (info->arg5[0]) {
-            len = sprintf(buf, "%s:%lx,", info->arg5, arg5);
+            len = sprintf(buf, "%s:0x%lx,", info->arg5, arg5);
             serial_printk(buf, len);
         }
         if (info->arg6[0]) {
-            len = sprintf(buf, "%s:%lx,", info->arg6, arg6);
+            len = sprintf(buf, "%s:0x%lx,", info->arg6, arg6);
             serial_printk(buf, len);
         }
     }
     if ((int64_t)regs->rax < 0) {
-        len = sprintf(buf, "\b) = %s%s%s\n", "ERR(", strerror(-regs->rax), ")");
+        len = sprintf(buf, ") = %s%s%s\n", "ERR(", strerror(-regs->rax), ")");
     } else {
-        len = sprintf(buf, "\b) = %#018lx\n", regs->rax);
+        len = sprintf(buf, ") = %#018lx\n", regs->rax);
     }
     serial_printk(buf, len);
 

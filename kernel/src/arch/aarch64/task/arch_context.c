@@ -36,7 +36,6 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
         (uint64_t)virt_to_phys(get_current_page_dir(true));
     context->mm->ref_count = 1;
     memset(&context->mm->task_vma_mgr, 0, sizeof(vma_manager_t));
-    context->mm->task_vma_mgr.last_alloc_addr = USER_MMAP_START;
     context->mm->task_vma_mgr.initialized = false;
     context->mm->brk_start = USER_BRK_START;
     context->mm->brk_current = context->mm->brk_start;

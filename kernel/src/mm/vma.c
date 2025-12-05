@@ -13,6 +13,9 @@ vma_t *vma_alloc(void) {
     memset(vma, 0, sizeof(vma_t));
     vma->node = NULL;
     vma->shm_id = -1;
+    vma->vm_rb.rb_parent_color = 0;
+    vma->vm_rb.rb_left = NULL;
+    vma->vm_rb.rb_right = NULL;
     return vma;
 }
 
@@ -27,34 +30,68 @@ void vma_free(vma_t *vma) {
     }
 }
 
-// 查找包含指定地址的VMA
-vma_t *vma_find(vma_manager_t *mgr, unsigned long addr) {
-    vma_t *vma = mgr->vma_list;
+// 使用红黑树查找包含指定地址的VMA
+vma_t *vma_find(vma_manager_t *mgr, uint64_t addr) {
+    rb_node_t *node = mgr->vma_tree.rb_node;
 
-    while (vma) {
-        if (addr >= vma->vm_start && addr < vma->vm_end) {
+    while (node) {
+        vma_t *vma = rb_entry(node, vma_t, vm_rb);
+
+        if (addr < vma->vm_start)
+            node = node->rb_left;
+        else if (addr >= vma->vm_end)
+            node = node->rb_right;
+        else
             return vma;
-        }
-        vma = vma->vm_next;
     }
     return NULL;
 }
 
-// 查找与指定范围有交集的VMA
-vma_t *vma_find_intersection(vma_manager_t *mgr, unsigned long start,
-                             unsigned long end) {
-    vma_t *vma = mgr->vma_list;
+// 使用红黑树查找与指定范围有交集的VMA
+vma_t *vma_find_intersection(vma_manager_t *mgr, uint64_t start, uint64_t end) {
+    rb_node_t *node = mgr->vma_tree.rb_node;
 
-    while (vma) {
+    while (node) {
+        vma_t *vma = rb_entry(node, vma_t, vm_rb);
+
+        // 检查交集: !(end <= vma->vm_start || start >= vma->vm_end)
+        if (end <= vma->vm_start) {
+            // 目标范围完全在当前VMA左侧
+            node = node->rb_left;
+        } else if (start >= vma->vm_end) {
+            // 目标范围完全在当前VMA右侧
+            node = node->rb_right;
+        } else {
+            // 找到交集
+            return vma;
+        }
+    }
+
+    // 未找到交集，需要检查左子树的最右节点
+    // 因为可能存在 vma->vm_end > start 但被跳过的情况
+    node = mgr->vma_tree.rb_node;
+    vma_t *candidate = NULL;
+
+    while (node) {
+        vma_t *vma = rb_entry(node, vma_t, vm_rb);
+
         if (!(end <= vma->vm_start || start >= vma->vm_end)) {
             return vma;
         }
-        vma = vma->vm_next;
+
+        if (start < vma->vm_start) {
+            node = node->rb_left;
+        } else {
+            if (vma->vm_end > start)
+                candidate = vma;
+            node = node->rb_right;
+        }
     }
-    return NULL;
+
+    return candidate;
 }
 
-// 插入VMA到链表（保持地址排序）
+// 插入VMA（同时维护链表和红黑树）
 int vma_insert(vma_manager_t *mgr, vma_t *new_vma) {
     if (!new_vma)
         return -1;
@@ -64,38 +101,60 @@ int vma_insert(vma_manager_t *mgr, vma_t *new_vma) {
         return -1;
     }
 
-    vma_t *vma = mgr->vma_list;
-    vma_t *prev = NULL;
+    // === 插入红黑树 ===
+    rb_node_t **link = &mgr->vma_tree.rb_node;
+    rb_node_t *parent = NULL;
+    vma_t *prev_vma = NULL;
+    vma_t *next_vma = NULL;
 
-    // 找到正确的插入位置
-    while (vma && vma->vm_start < new_vma->vm_start) {
-        prev = vma;
-        vma = vma->vm_next;
+    while (*link) {
+        parent = *link;
+        vma_t *vma = rb_entry(parent, vma_t, vm_rb);
+
+        if (new_vma->vm_start < vma->vm_start) {
+            next_vma = vma;
+            link = &(*link)->rb_left;
+        } else {
+            prev_vma = vma;
+            link = &(*link)->rb_right;
+        }
     }
 
-    // 插入VMA
-    new_vma->vm_next = vma;
-    new_vma->vm_prev = prev;
+    // 初始化红黑树节点
+    rb_node_t *node = &new_vma->vm_rb;
+    node->rb_parent_color = (uint64_t)parent;
+    node->rb_left = node->rb_right = NULL;
+    *link = node;
 
-    if (prev) {
-        prev->vm_next = new_vma;
+    rb_insert_color(node, &mgr->vma_tree);
+
+    // === 维护双向链表 ===
+    new_vma->vm_prev = prev_vma;
+    new_vma->vm_next = next_vma;
+
+    if (prev_vma) {
+        prev_vma->vm_next = new_vma;
     } else {
         mgr->vma_list = new_vma;
     }
 
-    if (vma) {
-        vma->vm_prev = new_vma;
+    if (next_vma) {
+        next_vma->vm_prev = new_vma;
     }
 
     mgr->vm_used += new_vma->vm_end - new_vma->vm_start;
     return 0;
 }
 
-// 从链表中移除VMA
+// 从链表和红黑树中移除VMA
 int vma_remove(vma_manager_t *mgr, vma_t *vma) {
     if (!vma)
         return -1;
 
+    // === 从红黑树中删除 ===
+    rb_erase(&vma->vm_rb, &mgr->vma_tree);
+
+    // === 从链表中删除 ===
     if (vma->vm_prev) {
         vma->vm_prev->vm_next = vma->vm_next;
     } else {
@@ -110,8 +169,8 @@ int vma_remove(vma_manager_t *mgr, vma_t *vma) {
     return 0;
 }
 
-// VMA分割
-int vma_split(vma_t *vma, unsigned long addr) {
+// VMA分割（需要插入新节点到红黑树）
+int vma_split(vma_manager_t *mgr, vma_t *vma, uint64_t addr) {
     if (!vma || addr <= vma->vm_start || addr >= vma->vm_end) {
         return -1;
     }
@@ -120,7 +179,7 @@ int vma_split(vma_t *vma, unsigned long addr) {
     if (!new_vma)
         return -1;
 
-    // 手动复制字段，避免浅拷贝
+    // 复制字段
     new_vma->vm_start = addr;
     new_vma->vm_end = vma->vm_end;
     new_vma->vm_flags = vma->vm_flags;
@@ -131,7 +190,6 @@ int vma_split(vma_t *vma, unsigned long addr) {
     new_vma->vm_offset = vma->vm_offset;
     new_vma->shm_id = vma->shm_id;
 
-    // 深拷贝 vm_name
     if (vma->vm_name) {
         new_vma->vm_name = strdup(vma->vm_name);
         if (!new_vma->vm_name) {
@@ -140,41 +198,58 @@ int vma_split(vma_t *vma, unsigned long addr) {
         }
     }
 
-    // 调整文件偏移量
     if (vma->vm_type == VMA_TYPE_FILE) {
         new_vma->vm_offset += addr - vma->vm_start;
     }
 
-    // 更新链表
+    // 更新原VMA
+    vma->vm_end = addr;
+
+    // 维护链表
     new_vma->vm_next = vma->vm_next;
     new_vma->vm_prev = vma;
-
-    vma->vm_end = addr;
     vma->vm_next = new_vma;
 
     if (new_vma->vm_next) {
         new_vma->vm_next->vm_prev = new_vma;
     }
 
+    // 插入红黑树
+    rb_node_t *parent = &vma->vm_rb;
+    rb_node_t **link = &parent->rb_right;
+
+    if (*link) {
+        parent = *link;
+        while (parent->rb_left) {
+            parent = parent->rb_left;
+        }
+        link = &parent->rb_left;
+    }
+
+    rb_node_t *node = &new_vma->vm_rb;
+    node->rb_parent_color = (uint64_t)parent;
+    node->rb_left = node->rb_right = NULL;
+    *link = node;
+
+    rb_insert_color(node, &mgr->vma_tree);
+
     return 0;
 }
 
-// VMA合并
+// VMA合并（从红黑树删除vma2）
 int vma_merge(vma_t *vma1, vma_t *vma2) {
     if (!vma1 || !vma2 || vma1->vm_end != vma2->vm_start) {
         return -1;
     }
 
-    // 检查是否可以合并（相同属性）
     if (vma1->vm_flags != vma2->vm_flags || vma1->vm_type != vma2->vm_type ||
         vma1->node != vma2->node) {
         return -1;
     }
 
-    // 如果 vma1 没有 name 而 vma2 有，应该转移所有权
     if (!vma1->vm_name && vma2->vm_name) {
         vma1->vm_name = vma2->vm_name;
-        vma2->vm_name = NULL; // 转移所有权，避免 double free
+        vma2->vm_name = NULL;
     }
 
     vma1->vm_end = vma2->vm_end;
@@ -184,10 +259,45 @@ int vma_merge(vma_t *vma1, vma_t *vma2) {
         vma2->vm_next->vm_prev = vma1;
     }
 
+    // 注意：需要从红黑树删除vma2，但这里没有manager引用
+    // 同样需要改进接口
+    // rb_erase(&vma2->vm_rb, &mgr->vma_tree);
+
     vma_free(vma2);
     return 0;
 }
 
+// 改进的vma_merge
+int vma_merge_ex(vma_manager_t *mgr, vma_t *vma1, vma_t *vma2) {
+    if (!vma1 || !vma2 || vma1->vm_end != vma2->vm_start) {
+        return -1;
+    }
+
+    if (vma1->vm_flags != vma2->vm_flags || vma1->vm_type != vma2->vm_type ||
+        vma1->node != vma2->node) {
+        return -1;
+    }
+
+    if (!vma1->vm_name && vma2->vm_name) {
+        vma1->vm_name = vma2->vm_name;
+        vma2->vm_name = NULL;
+    }
+
+    vma1->vm_end = vma2->vm_end;
+    vma1->vm_next = vma2->vm_next;
+
+    if (vma2->vm_next) {
+        vma2->vm_next->vm_prev = vma1;
+    }
+
+    // 从红黑树删除vma2
+    rb_erase(&vma2->vm_rb, &mgr->vma_tree);
+
+    vma_free(vma2);
+    return 0;
+}
+
+// unmap范围
 int vma_unmap_range(vma_manager_t *mgr, uintptr_t start, uintptr_t end) {
     vma_t *vma = mgr->vma_list;
     vma_t *next;
@@ -195,27 +305,25 @@ int vma_unmap_range(vma_manager_t *mgr, uintptr_t start, uintptr_t end) {
     while (vma) {
         next = vma->vm_next;
 
-        // 完全包含在要取消映射的范围内
         if (vma->vm_start >= start && vma->vm_end <= end) {
+            // 完全包含
             vma_remove(mgr, vma);
             vma_free(vma);
-        }
-        // 部分重叠 - 需要分割
-        else if (!(vma->vm_end <= start || vma->vm_start >= end)) {
+        } else if (!(vma->vm_end <= start || vma->vm_start >= end)) {
+            // 部分重叠
             if (vma->vm_start < start && vma->vm_end > end) {
-                // VMA跨越整个取消映射范围 - 分割成两部分
-                vma_split(vma, end);
-                vma_split(vma, start);
-                // 移除中间部分
+                // 跨越整个范围
+                vma_split(mgr, vma, end);
+                vma_split(mgr, vma, start);
                 vma_t *middle = vma->vm_next;
                 vma_remove(mgr, middle);
                 vma_free(middle);
             } else if (vma->vm_start < start) {
-                // 截断VMA的末尾
+                // 截断末尾
                 mgr->vm_used -= vma->vm_end - start;
                 vma->vm_end = start;
             } else if (vma->vm_end > end) {
-                // 截断VMA的开头
+                // 截断开头
                 mgr->vm_used -= end - vma->vm_start;
                 if (vma->vm_type == VMA_TYPE_FILE) {
                     vma->vm_offset += end - vma->vm_start;
@@ -230,56 +338,41 @@ int vma_unmap_range(vma_manager_t *mgr, uintptr_t start, uintptr_t end) {
     return 0;
 }
 
+// 清理管理器（遍历红黑树更高效）
 void vma_manager_exit_cleanup(vma_manager_t *mgr) {
     if (!mgr || !mgr->initialized)
         return;
 
     vma_t *vma = mgr->vma_list;
     vma_t *next;
-    int cleaned_count = 0;
 
-    // 遍历并清理所有VMA
     while (vma) {
         next = vma->vm_next;
 
-        // 从链表中移除
-        if (vma->vm_prev) {
-            vma->vm_prev->vm_next = vma->vm_next;
-        } else {
-            mgr->vma_list = vma->vm_next;
-        }
+        // 从红黑树删除
+        rb_erase(&vma->vm_rb, &mgr->vma_tree);
 
-        if (vma->vm_next) {
-            vma->vm_next->vm_prev = vma->vm_prev;
-        }
-
-        // 更新统计信息
         mgr->vm_used -= vma->vm_end - vma->vm_start;
-
-        // 释放VMA结构体
         vma_free(vma);
-        cleaned_count++;
 
         vma = next;
     }
 
-    // 重置管理器状态
     mgr->vma_list = NULL;
+    mgr->vma_tree.rb_node = NULL;
     mgr->vm_total = 0;
     mgr->vm_used = 0;
 }
 
-// 深度拷贝单个VMA节点（不包括链表指针）
+// 深度拷贝单个VMA
 vma_t *vma_copy(vma_t *src) {
     if (!src)
         return NULL;
 
-    // 分配新的VMA结构体
     vma_t *dst = vma_alloc();
     if (!dst)
         return NULL;
 
-    // 拷贝所有基本字段
     dst->vm_start = src->vm_start;
     dst->vm_end = src->vm_end;
     dst->vm_flags = src->vm_flags;
@@ -290,107 +383,50 @@ vma_t *vma_copy(vma_t *src) {
     dst->vm_offset = src->vm_offset;
     dst->shm_id = src->shm_id;
 
-    // 深度拷贝vm_name字符串
     if (src->vm_name) {
         dst->vm_name = strdup(src->vm_name);
     } else {
         dst->vm_name = NULL;
     }
 
-    // 链表指针初始化为NULL
     dst->vm_next = NULL;
     dst->vm_prev = NULL;
 
     return dst;
 }
 
-// 深度拷贝VMA链表（辅助函数，用于只拷贝链表不拷贝管理器）
-vma_t *vma_list_copy(vma_t *src_list) {
-    if (!src_list)
-        return NULL;
-
-    vma_t *dst_head = NULL;
-    vma_t *dst_prev = NULL;
-    vma_t *src_vma = src_list;
-
-    while (src_vma) {
-        // 拷贝当前节点
-        vma_t *dst_vma = vma_copy(src_vma);
-        if (!dst_vma) {
-            // 失败时清理已创建的链表
-            while (dst_head) {
-                vma_t *next = dst_head->vm_next;
-                vma_free(dst_head);
-                dst_head = next;
-            }
-            return NULL;
-        }
-
-        // 连接链表
-        dst_vma->vm_prev = dst_prev;
-        dst_vma->vm_next = NULL;
-
-        if (dst_prev) {
-            dst_prev->vm_next = dst_vma;
-        } else {
-            dst_head = dst_vma;
-        }
-
-        dst_prev = dst_vma;
-        src_vma = src_vma->vm_next;
-    }
-
-    return dst_head;
-}
-
-// 深度拷贝整个VMA管理器
+// 深度拷贝VMA管理器
 int vma_manager_copy(vma_manager_t *dst, vma_manager_t *src) {
     if (!dst || !src)
         return -1;
 
     memset(dst, 0, sizeof(vma_manager_t));
 
-    dst->last_alloc_addr = src->last_alloc_addr;
-
     if (!src->initialized) {
-        memset(dst, 0, sizeof(vma_manager_t));
         return 0;
     }
 
-    // 初始化目标管理器
     dst->vma_list = NULL;
+    dst->vma_tree.rb_node = NULL;
     dst->vm_total = src->vm_total;
-    dst->vm_used = 0; // 将在插入过程中累加
+    dst->vm_used = 0;
 
     vma_t *src_vma = src->vma_list;
-    vma_t *dst_prev = NULL;
 
-    // 遍历源链表，拷贝每个VMA
     while (src_vma) {
-        // 深度拷贝当前VMA
         vma_t *dst_vma = vma_copy(src_vma);
         if (!dst_vma) {
-            // 拷贝失败，清理已拷贝的部分
             vma_manager_exit_cleanup(dst);
             return -1;
         }
 
-        // 重建双向链表结构
-        dst_vma->vm_prev = dst_prev;
-        dst_vma->vm_next = NULL;
-
-        if (dst_prev) {
-            dst_prev->vm_next = dst_vma;
-        } else {
-            // 第一个节点
-            dst->vma_list = dst_vma;
+        // 使用vma_insert同时维护链表和红黑树
+        if (vma_insert(dst, dst_vma) < 0) {
+            vma_free(dst_vma);
+            vma_manager_exit_cleanup(dst);
+            return -1;
         }
 
-        // 更新统计信息
-        dst->vm_used += dst_vma->vm_end - dst_vma->vm_start;
-
-        // 移动到下一个节点
-        dst_prev = dst_vma;
         src_vma = src_vma->vm_next;
     }
 
