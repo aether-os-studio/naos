@@ -435,11 +435,9 @@ static int msc_request_sense(usb_msc_device *dev, uint8_t *sense_data) {
 }
 
 static int msc_inquiry(usb_msc_device *dev) {
-    uint8_t *buf = malloc(36);
-    if (!buf)
-        return -1;
+    uint8_t buf[36];
 
-    memset(buf, 0, 36);
+    memset(buf, 0, sizeof(buf));
     uint8_t cmd[6] = {0x12, 0, 0, 0, 36, 0};
 
     int ret = msc_transfer_with_retry(dev, cmd, 6, buf, 36, true);
@@ -450,7 +448,6 @@ static int msc_inquiry(usb_msc_device *dev) {
         printk("MSC: Revision: %.4s\n", &buf[32]);
     }
 
-    free(buf);
     return ret;
 }
 

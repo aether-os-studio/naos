@@ -2,6 +2,7 @@
 #include <boot/boot.h>
 #include <drivers/kernel_logger.h>
 #include <mm/mm.h>
+#include <mm/slab.h>
 #include <arch/arch.h>
 #include <irq/irq_manager.h>
 #include <dev/device.h>
@@ -26,7 +27,7 @@ void kmain(void) {
 
     page_table_init();
 
-    heap_init();
+    slab_init();
 
     irq_manager_init();
 

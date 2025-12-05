@@ -53,6 +53,8 @@ void vfs_free(vfs_node_t vfs) {
         return;
     list_free_with(vfs->child, (free_t)vfs_free);
     callbackof(vfs, free_handle)(vfs->handle);
+    if (vfs->parent)
+        list_delete(vfs->parent->child, vfs);
     free(vfs->name);
     free(vfs);
 }
@@ -828,14 +830,11 @@ int vfs_poll(vfs_node_t node, size_t event) {
     return ret;
 }
 
-spinlock_t get_path_lock = SPIN_INIT;
-
 // 使用请记得free掉返回的buff
 char *vfs_get_fullpath(vfs_node_t node) {
     if (node == NULL)
         return NULL;
     int inital = 16;
-    spin_lock(&get_path_lock);
     vfs_node_t *nodes = (vfs_node_t *)malloc(sizeof(vfs_node_t) * inital);
     int count = 0;
     for (vfs_node_t cur = node; cur; cur = cur->parent) {
@@ -861,7 +860,6 @@ char *vfs_get_fullpath(vfs_node_t node) {
     }
 
     free(nodes);
-    spin_unlock(&get_path_lock);
 
     return buff;
 }

@@ -592,7 +592,7 @@ fail:
 }
 
 static struct usb_xhci_s *xhci_controller_setup(void *baseaddr) {
-    struct usb_xhci_s *xhci = malloc(sizeof(*xhci));
+    struct usb_xhci_s *xhci = malloc(sizeof(struct usb_xhci_s));
     if (!xhci) {
         return NULL;
     }

@@ -369,7 +369,8 @@ static int configure_usb_device(struct usbdevice_s *usbdev) {
     // Determine if a driver exists for this device - only look at the
     // interfaces of the first configuration.
     int num_iface = config->bNumInterfaces;
-    usbdev->ifaces = malloc(sizeof(struct usbdevice_a_interface) * num_iface);
+    usbdev->ifaces =
+        calloc(config->bNumInterfaces, sizeof(struct usbdevice_a_interface));
     usbdev->ifaces_num = 0;
     void *config_end = (void *)config + config->wTotalLength;
     struct usb_interface_descriptor *iface = (void *)(&config[1]);

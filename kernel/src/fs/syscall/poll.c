@@ -117,7 +117,6 @@ static inline struct pollfd *select_add(struct pollfd **comp, size_t *compIndex,
                                         size_t *complength, int fd,
                                         int events) {
     if ((*compIndex + 1) * sizeof(struct pollfd) >= *complength) {
-        *complength *= 2;
         *comp = realloc(*comp, *complength);
     }
 
