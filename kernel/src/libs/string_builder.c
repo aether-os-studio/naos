@@ -15,7 +15,7 @@ string_builder_t *create_string_builder(size_t initial_capacity) {
 
     buf->size = 0;
     buf->capacity = initial_capacity;
-    buf->data[0] = '\0';
+    memset(buf->data, 0, initial_capacity);
 
     return buf;
 }
@@ -44,6 +44,7 @@ bool string_builder_append(string_builder_t *buf, const char *format, ...) {
         if (!new_data)
             return false;
 
+        memset(new_data + buf->capacity, 0, new_capacity - buf->capacity);
         buf->data = new_data;
         buf->capacity = new_capacity;
     }

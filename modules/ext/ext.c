@@ -38,9 +38,11 @@ int ext_mount(uint64_t dev, vfs_node_t node) {
         if (!strcmp((const char *)entry->name, ".") ||
             !strcmp((const char *)entry->name, ".."))
             continue;
-        if (vfs_child_find(node, (const char *)entry->name) &&
-            entry->inode_type != EXT4_DE_DIR)
-            continue;
+        if (vfs_child_find(node, (const char *)entry->name)) {
+            if (entry->inode_type != EXT4_DE_DIR) {
+                continue;
+            }
+        }
         vfs_node_t child =
             vfs_child_append(node, (const char *)entry->name, NULL);
         child->inode = (uint64_t)entry->inode;

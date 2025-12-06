@@ -1,4 +1,5 @@
 #include <mm/fault.h>
+#include <mm/page.h>
 
 page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
     if (!vaddr)
@@ -48,7 +49,7 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
                 return PF_RES_NOMEM;
             memcpy((void *)phys_to_virt(new_paddr),
                    (const void *)phys_to_virt(paddr), DEFAULT_PAGE_SIZE);
-            free_frames(paddr, 1);
+            address_unref(paddr);
             paddr = new_paddr;
         }
 

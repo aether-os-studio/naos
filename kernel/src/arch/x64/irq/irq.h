@@ -9,7 +9,7 @@
 
 #define IRQ_ALLOCATE_NUM_BASE 40
 
-void generic_interrupt_table_init();
+void generic_interrupt_table_init_early();
 
 static inline void arch_enable_interrupt() { open_interrupt; }
 

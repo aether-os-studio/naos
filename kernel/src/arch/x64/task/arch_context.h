@@ -61,7 +61,12 @@ typedef struct arch_context {
 
 #define switch_to(prev, next)                                                  \
     do {                                                                       \
-        asm volatile("pushq %%rbp\n\t"                                         \
+        asm volatile("pushq %%rbx\n\t"                                         \
+                     "pushq %%rbp\n\t"                                         \
+                     "pushq %%r12\n\t"                                         \
+                     "pushq %%r13\n\t"                                         \
+                     "pushq %%r14\n\t"                                         \
+                     "pushq %%r15\n\t"                                         \
                      "pushq %%rax\n\t"                                         \
                      "movq %%rsp, %0\n\t"                                      \
                      "movq %2, %%rsp\n\t"                                      \
@@ -71,7 +76,12 @@ typedef struct arch_context {
                      "jmp __switch_to\n\t"                                     \
                      "1:\n\t"                                                  \
                      "popq %%rax\n\t"                                          \
+                     "popq %%r15\n\t"                                          \
+                     "popq %%r14\n\t"                                          \
+                     "popq %%r13\n\t"                                          \
+                     "popq %%r12\n\t"                                          \
                      "popq %%rbp\n\t"                                          \
+                     "popq %%rbx\n\t"                                          \
                      : "=m"(prev->arch_context->rsp),                          \
                        "=m"(prev->arch_context->rip)                           \
                      : "m"(next->arch_context->rsp),                           \

@@ -669,7 +669,6 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
 
             spin_unlock(&fcntl_lock);
 
-            arch_enable_interrupt();
             arch_pause();
 
             spin_lock(&fcntl_lock);
@@ -1368,13 +1367,9 @@ uint64_t sys_flock(int fd, uint64_t operation) {
             if (operation & LOCK_NB)
                 return -EWOULDBLOCK;
 
-            arch_enable_interrupt();
-
             while (lock->lock) {
                 arch_pause();
             }
-
-            arch_disable_interrupt();
         }
         lock->l_type = (operation & LOCK_EX) ? F_WRLCK : F_RDLCK;
         lock->l_pid = pid;

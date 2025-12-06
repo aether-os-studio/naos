@@ -201,20 +201,18 @@ uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
     return 0;
 }
 
-static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level,
-                                           bool all_copy, bool kernel_space) {
+static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level) {
     if (source_table == NULL)
         return NULL;
 
     uint64_t phy_frame = alloc_frames(1);
     uint64_t *new_table = (uint64_t *)phys_to_virt(phy_frame);
     memset(new_table, 0, DEFAULT_PAGE_SIZE);
-    for (uint64_t i = 0;
-         i <
+    for (uint64_t i = 0; i <
 #if defined(__x86_64__) || defined(__riscv__)
-         (all_copy ? 512 : (level == ARCH_MAX_PT_LEVEL ? 256 : 512))
+                         (level == ARCH_MAX_PT_LEVEL ? 256 : 512)
 #else
-         512
+                         512
 #endif
              ;
          i++) {
@@ -241,9 +239,8 @@ static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level,
                 (uint64_t *)ARCH_READ_PTE(phys_to_virt(source_table)[i]);
             uint64_t flags = ARCH_READ_PTE_FLAG(phys_to_virt(source_table)[i]);
 
-            uint64_t *new_page_table = copy_page_table_recursive(
-                source_page_table_next, level - 1, all_copy,
-                level != ARCH_MAX_PT_LEVEL ? kernel_space : i >= 256);
+            uint64_t *new_page_table =
+                copy_page_table_recursive(source_page_table_next, level - 1);
 
             if (new_page_table) {
                 uint64_t paddr = virt_to_phys((uint64_t)new_page_table);
@@ -287,7 +284,7 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
     task_mm_info_t *new_mm = (task_mm_info_t *)malloc(sizeof(task_mm_info_t));
     memset(new_mm, 0, sizeof(task_mm_info_t));
     new_mm->page_table_addr = virt_to_phys((uint64_t)copy_page_table_recursive(
-        (uint64_t *)old->page_table_addr, ARCH_MAX_PT_LEVEL, false, false));
+        (uint64_t *)old->page_table_addr, ARCH_MAX_PT_LEVEL));
 #if defined(__x86_64__) || defined(__riscv__)
     memcpy((uint64_t *)phys_to_virt(new_mm->page_table_addr) + 256,
            (uint64_t *)phys_to_virt(old->page_table_addr) + 256,

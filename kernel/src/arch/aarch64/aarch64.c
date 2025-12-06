@@ -24,8 +24,6 @@ void arch_init() {
     gic_init();
 
     irq_init();
-
-    arch_enable_interrupt();
 }
 
 void arch_init_after_thread() { pci_brcmstb_init(); }

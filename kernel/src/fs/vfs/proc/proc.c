@@ -213,28 +213,6 @@ void proc_init() {
 
     procfs_root = fake_procfs_root;
 
-    cmdline = vfs_node_alloc(procfs_root, "cmdline");
-    cmdline->type = file_none;
-    cmdline->mode = 0700;
-    proc_handle_t *cmdline_handle = malloc(sizeof(proc_handle_t));
-    cmdline->handle = cmdline_handle;
-    cmdline_handle->task = NULL;
-    sprintf(cmdline_handle->name, "cmdline");
-
-    filesystems = vfs_node_alloc(procfs_root, "filesystems");
-    filesystems->type = file_none;
-    filesystems->mode = 0700;
-    proc_handle_t *filesystems_handle = malloc(sizeof(proc_handle_t));
-    filesystems->handle = filesystems_handle;
-    filesystems_handle->task = NULL;
-    sprintf(filesystems_handle->name, "filesystems");
-
-    vfs_node_t procfs_self = vfs_node_alloc(procfs_root, "self");
-    procfs_self->flags |= VFS_NODE_FLAGS_FREE_AFTER_USE;
-    procfs_self->type = file_symlink;
-    procfs_self->mode = 0644;
-    procfs_self->fsid = procfs_self_id;
-
     procfs_nodes_init();
 }
 
@@ -283,7 +261,7 @@ void procfs_on_new_task(task_t *task) {
     self_stat_handle->task = task;
     sprintf(self_stat_handle->name, "proc_stat");
 
-    vfs_node_t self_exe = vfs_node_alloc(node, "exe");
+    vfs_node_t self_exe = vfs_child_append(node, "exe", NULL);
     self_exe->type = file_symlink;
     self_exe->mode = 0700;
     proc_handle_t *self_exe_handle = malloc(sizeof(proc_handle_t));

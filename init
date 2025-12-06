@@ -27,4 +27,7 @@ fi
 
 /bin/echo "Ready to switch root..."
 
+/bin/rm -rf /bin/sh
+/bin/ln -sf /bin/bash /bin/sh
+
 exec /sbin/switch_root /mnt/ /sbin/init

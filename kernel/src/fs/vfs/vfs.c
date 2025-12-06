@@ -830,10 +830,13 @@ int vfs_poll(vfs_node_t node, size_t event) {
     return ret;
 }
 
+spinlock_t get_fullpath_lock = SPIN_INIT;
+
 // 使用请记得free掉返回的buff
 char *vfs_get_fullpath(vfs_node_t node) {
     if (node == NULL)
         return NULL;
+    spin_lock(&get_fullpath_lock);
     int inital = 16;
     vfs_node_t *nodes = (vfs_node_t *)malloc(sizeof(vfs_node_t) * inital);
     int count = 0;
@@ -860,17 +863,18 @@ char *vfs_get_fullpath(vfs_node_t node) {
     }
 
     free(nodes);
+    spin_unlock(&get_fullpath_lock);
 
     return buff;
 }
 
 int vfs_delete(vfs_node_t node) {
     if (node == rootdir)
-        return -1;
+        return -EOPNOTSUPP;
     int res = callbackof(node, delete)(
         node->parent ? node->parent->handle : NULL, node);
     if (res < 0) {
-        return -1;
+        return res;
     }
     node->flags |= VFS_NODE_FLAGS_DELETED;
     if (node->parent)

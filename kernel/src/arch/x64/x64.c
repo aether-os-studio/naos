@@ -9,7 +9,7 @@ void arch_early_init() {
 
     sse_init();
     irq_init();
-    generic_interrupt_table_init();
+    generic_interrupt_table_init_early();
     hpet_init();
     apic_init();
     tss_init();
@@ -26,8 +26,6 @@ void arch_init() {
     syscall_init();
 
     syscall_handler_init();
-
-    open_interrupt;
 }
 
 void arch_init_after_thread() {}

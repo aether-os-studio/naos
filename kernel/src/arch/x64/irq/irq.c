@@ -88,7 +88,7 @@ void (*interrupt_table[])(void) = {
     IRQ0x40interrupt,
 };
 
-void generic_interrupt_table_init() {
+void generic_interrupt_table_init_early() {
     for (int i = 0x20; i <= 0x40; ++i) {
         set_intr_gate(i, 0, interrupt_table[i - 0x20]);
     }

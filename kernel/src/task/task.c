@@ -1411,10 +1411,8 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem) {
             return (uint64_t)-EINTR;
         }
 
-        arch_enable_interrupt();
-        arch_pause();
+        arch_yield();
     } while (target > nano_time());
-    arch_disable_interrupt();
 
     return 0;
 }
@@ -1709,7 +1707,6 @@ uint64_t sys_reboot(int magic1, int magic2, uint32_t cmd, void *arg) {
         arch_disable_interrupt();
         ret = uacpi_enter_sleep_state(UACPI_SLEEP_STATE_S5);
         if (uacpi_unlikely_error(ret)) {
-            arch_enable_interrupt();
             return (uint64_t)-EIO;
         }
 
@@ -1781,8 +1778,5 @@ void schedule(uint64_t sched_flags) {
     switch_to(prev, next);
 
 ret:
-    if (!(sched_flags & SCHED_FLAG_YIELD))
-        task_signal();
-
-    arch_enable_interrupt();
+    task_signal();
 }

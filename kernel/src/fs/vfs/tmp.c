@@ -149,7 +149,7 @@ int tmpfs_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
     return 0;
 }
 
-int tmpfs_delete(void *parent, vfs_node_t node) { return -ENOSYS; }
+int tmpfs_delete(void *parent, vfs_node_t node) { return 0; }
 
 int tmpfs_rename(void *current, const char *new) { return 0; }
 
