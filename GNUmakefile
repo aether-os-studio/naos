@@ -283,7 +283,6 @@ ifeq ($(BOOT_PROTOCOL), opensbi)
 		-device usb-kbd \
 		-device usb-mouse \
 		-kernel kernel/bin-$(ARCH)/kernel \
-		-append "console=tty0 init=/usr/bin/weston init_arg=--xwayland" \
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
 		-device virtio-blk-device,drive=rootdisk,bus=virtio-mmio-bus.0 \
 		-netdev user,id=net0 \
