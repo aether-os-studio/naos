@@ -66,6 +66,8 @@ void vfs_free_child(vfs_node_t vfs) {
 }
 
 void vfs_merge_nodes_to(vfs_node_t dest, vfs_node_t source) {
+    if (dest == source)
+        return;
     uint64_t nodes_count = 0;
     list_foreach(source->child, i) { nodes_count++; }
     vfs_node_t *nodes = calloc(nodes_count, sizeof(vfs_node_t));
@@ -104,8 +106,13 @@ vfs_node_t vfs_child_find(vfs_node_t parent, const char *name) {
 // 一定要记得手动设置一下child的type
 vfs_node_t vfs_child_append(vfs_node_t parent, const char *name, void *handle) {
     vfs_node_t node = vfs_child_find(parent, name);
-    if (node)
+    if (node) {
+        if (node != node->root) {
+            node->dev = parent->dev;
+            node->rdev = parent->rdev;
+        }
         return node;
+    }
     node = vfs_node_alloc(parent, name);
     if (node == NULL)
         return NULL;
@@ -588,7 +595,7 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
         do_update(current);
 
         if (current->type & file_symlink) {
-            char target_path[1024];
+            char target_path[256];
             int len = vfs_readlink(current, target_path, sizeof(target_path));
             target_path[len] = '\0';
             vfs_node_t target_node =
@@ -805,14 +812,14 @@ int vfs_unmount(const char *path) {
         return -1;
     if (node->fsid == 0)
         return -1;
-    list_foreach(node->child, i) {
-        vfs_node_t child = i->data;
-        if (child == child->root) {
-            char *child_path = vfs_get_fullpath(child);
-            vfs_unmount((const char *)child_path);
-            free(child_path);
-        }
-    }
+    // list_foreach(node->child, i) {
+    //     vfs_node_t child = i->data;
+    //     if (child == child->root) {
+    //         char *child_path = vfs_get_fullpath(child);
+    //         vfs_unmount((const char *)child_path);
+    //         free(child_path);
+    //     }
+    // }
     callbackof(node, unmount)(node);
     return 0;
 }

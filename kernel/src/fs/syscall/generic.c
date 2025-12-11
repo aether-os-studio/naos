@@ -37,13 +37,26 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
         uint32_t fsid = old_mount->fsid;
         const char *fs_name = all_fs[fsid]->name;
 
-        if (vfs_unmount((const char *)devname)) {
-            return (uint64_t)-EINVAL;
+        bool old_mount_in_dir = false;
+        list_foreach(dir->child, i) {
+            vfs_node_t child = (vfs_node_t)i->data;
+            if (child == child->root)
+                continue;
+            if (child != old_mount) {
+                vfs_free(child);
+            } else {
+                old_mount_in_dir = true;
+            }
         }
 
-        int ret = vfs_mount(dev, dir, fs_name);
+        int ret = vfs_unmount(dev_name);
         if (ret)
             return ret;
+
+        if (old_mount_in_dir)
+            vfs_free(old_mount);
+
+        vfs_mount(dev, dir, fs_name);
 
         return 0;
     }

@@ -38,8 +38,9 @@ int ext_mount(uint64_t dev, vfs_node_t node) {
         if (!strcmp((const char *)entry->name, ".") ||
             !strcmp((const char *)entry->name, ".."))
             continue;
-        if (vfs_child_find(node, (const char *)entry->name)) {
-            if (entry->inode_type != EXT4_DE_DIR) {
+        vfs_node_t exist = vfs_child_find(node, (const char *)entry->name);
+        if (exist) {
+            if (exist == exist->root) {
                 continue;
             }
         }

@@ -128,8 +128,8 @@ void tmpfs_unmount(vfs_node_t root) {
 
     list_foreach(root->child, i) {
         vfs_node_t node = i->data;
-        vfs_free(node);
-        list_delete(root->child, node);
+        if (node != node->root)
+            vfs_free(node);
     }
 
     root->dev = root->parent ? root->parent->dev : 0;
