@@ -353,18 +353,20 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_SECURITY] = (syscall_handle_t)sys_security;
     syscall_handlers[SYS_GETTID] = (syscall_handle_t)sys_getpid;
     // syscall_handlers[SYS_READAHEAD] = (syscall_handle_t)sys_readahead;
-    // syscall_handlers[SYS_SETXATTR] = (syscall_handle_t)sys_setxattr;
-    // syscall_handlers[SYS_LSETXATTR] = (syscall_handle_t)sys_lsetxattr;
-    // syscall_handlers[SYS_FSETXATTR] = (syscall_handle_t)sys_fsetxattr;
-    // syscall_handlers[SYS_GETXATTR] = (syscall_handle_t)sys_getxattr;
-    // syscall_handlers[SYS_LGETXATTR] = (syscall_handle_t)sys_lgetxattr;
-    // syscall_handlers[SYS_FGETXATTR] = (syscall_handle_t)sys_fgetxattr;
-    // syscall_handlers[SYS_LISTXATTR] = (syscall_handle_t)sys_listxattr;
-    // syscall_handlers[SYS_LLISTXATTR] = (syscall_handle_t)sys_llistxattr;
-    // syscall_handlers[SYS_FLISTXATTR] = (syscall_handle_t)sys_flistxattr;
-    // syscall_handlers[SYS_REMOVEXATTR] = (syscall_handle_t)sys_removexattr;
-    // syscall_handlers[SYS_LREMOVEXATTR] = (syscall_handle_t)sys_lremovexattr;
-    // syscall_handlers[SYS_FREMOVEXATTR] = (syscall_handle_t)sys_fremovexattr;
+    syscall_handlers[SYS_SETXATTR] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_LSETXATTR] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_FSETXATTR] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_GETXATTR] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_LGETXATTR] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_FGETXATTR] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_LISTXATTR] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_LLISTXATTR] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_FLISTXATTR] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_REMOVEXATTR] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_LREMOVEXATTR] =
+        (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_FREMOVEXATTR] =
+        (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_TKILL] = (syscall_handle_t)sys_kill;
     // syscall_handlers[SYS_TIME] = (syscall_handle_t)sys_time;
     syscall_handlers[SYS_FUTEX] = (syscall_handle_t)sys_futex;

@@ -5,8 +5,6 @@
 #include <uacpi/acpi.h>
 #include <uacpi/tables.h>
 
-#if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv__) ||       \
-    defined(__loongarch64)
 struct acpi_mcfg_allocation *mcfg_entries[PCI_MCFG_MAX_ENTRIES_LEN];
 uint64_t mcfg_entries_len = 0;
 
@@ -51,12 +49,6 @@ uint64_t get_mmio_address(uint32_t pci_address, uint16_t offset) {
 
     return virt + offset;
 }
-
-#else
-
-uint64_t get_mmio_address(uint32_t pci_address, uint16_t offset) { return 0; }
-
-#endif
 
 uint32_t segment_bus_device_functon_to_pci_address(uint16_t segment,
                                                    uint8_t bus, uint8_t device,
@@ -634,20 +626,15 @@ static bool pci_function_exists(pci_device_op_t *op, uint16_t segment,
 
 void pci_scan_slot(pci_device_op_t *op, uint16_t segment_group, uint8_t bus,
                    uint8_t slot) {
-    // 先检查 function 0 是否存在
     if (!pci_function_exists(op, segment_group, bus, slot, 0)) {
-        // Function 0 不存在，整个 slot 都不存在
         return;
     }
 
-    // 扫描 function 0
     pci_scan_function(op, segment_group, bus, slot, 0);
 
-    // 检查是否是多功能设备
     uint8_t header_type = op->read8(bus, slot, 0, segment_group, 0x0E);
 
     if (header_type != 0xFF && header_type & 0x80) {
-        // 是多功能设备，逐个检查并扫描 function 1-7
         for (uint8_t func = 1; func < 8; func++) {
             if (pci_function_exists(op, segment_group, bus, slot, func)) {
                 pci_scan_function(op, segment_group, bus, slot, func);
@@ -657,7 +644,6 @@ void pci_scan_slot(pci_device_op_t *op, uint16_t segment_group, uint8_t bus,
 }
 
 void pci_scan_bus(pci_device_op_t *op, uint16_t segment_group, uint8_t bus) {
-    // 扫描所有 32 个 slot
     for (uint8_t slot = 0; slot < 32; slot++) {
         pci_scan_slot(op, segment_group, bus, slot);
     }

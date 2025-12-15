@@ -67,7 +67,10 @@ just_return:
     return ret ? 0 : SYS_ARCH_TIMEOUT;
 }
 
-void sys_sem_free(sys_sem_t *sem) { sys_sem_new(sem, 0); }
+void sys_sem_free(sys_sem_t *sem) {
+    sem->invalid = true;
+    sem->cnt = 0;
+}
 
 void sys_sem_set_invalid(sys_sem_t *sem) { sem->invalid = true; }
 
@@ -102,7 +105,18 @@ err_t sys_mbox_new(sys_mbox_t *mbox, int size) {
 
 void sys_mbox_free(sys_mbox_t *mbox) {
     spin_lock(&mbox->lock);
+
+    // 释放所有待处理的mboxBlock
+    mboxBlock *browse = mbox->firstBlock;
+    while (browse) {
+        mboxBlock *next = browse->next;
+        free(browse);
+        browse = next;
+    }
+    mbox->firstBlock = NULL;
+
     free(mbox->msges);
+    mbox->msges = NULL;
     spin_unlock(&mbox->lock); // for set_invalid()!
 }
 
@@ -120,7 +134,6 @@ int sys_mbox_valid(sys_mbox_t *mbox) {
 }
 
 void sys_mbox_post_unsafe(sys_mbox_t *q, void *msg) {
-    // spin_lock(&q->lock);
     q->msges[q->ptrWrite] = msg;
     q->ptrWrite = (q->ptrWrite + 1) % q->size;
 
@@ -129,11 +142,10 @@ void sys_mbox_post_unsafe(sys_mbox_t *q, void *msg) {
         mboxBlock *next = browse->next;
         if (browse->write == false) {
             LinkedListRemove((void **)&q->firstBlock, browse);
+            free(browse); // 释放移除的block
         }
         browse = next;
     }
-
-    spin_unlock(&q->lock);
 }
 
 void sys_mbox_post(sys_mbox_t *q, void *msg) {
@@ -147,6 +159,7 @@ void sys_mbox_post(sys_mbox_t *q, void *msg) {
     }
 
     sys_mbox_post_unsafe(q, msg);
+    spin_unlock(&q->lock); // sys_mbox_post_unsafe不再解锁
 }
 
 err_t sys_mbox_trypost(sys_mbox_t *q, void *msg) {
@@ -157,6 +170,7 @@ err_t sys_mbox_trypost(sys_mbox_t *q, void *msg) {
     }
 
     sys_mbox_post_unsafe(q, msg);
+    spin_unlock(&q->lock); // sys_mbox_post_unsafe不再解锁
     return ERR_OK;
 }
 
@@ -165,20 +179,32 @@ err_t sys_mbox_trypost_fromisr(sys_mbox_t *q, void *msg) {
 }
 
 u32_t sys_arch_mbox_fetch(sys_mbox_t *q, void **msg, u32_t timeout) {
+    mboxBlock *myBlock = NULL;
+
     while (true) {
         spin_lock(&q->lock);
-        if (q->ptrRead != q->ptrWrite)
+        if (q->ptrRead != q->ptrWrite) {
+            // 如果之前分配过block，需要先清理
+            if (myBlock) {
+                LinkedListRemove((void **)&q->firstBlock, myBlock);
+                free(myBlock);
+                myBlock = NULL;
+            }
             break;
-        mboxBlock *block =
-            LinkedListAllocate((void **)&q->firstBlock, sizeof(mboxBlock));
-        block->task = current_task;
-        block->write = false;
+        }
+
+        // 只在第一次分配block
+        if (!myBlock) {
+            myBlock =
+                LinkedListAllocate((void **)&q->firstBlock, sizeof(mboxBlock));
+            myBlock->task = current_task;
+            myBlock->write = false;
+        }
         spin_unlock(&q->lock);
 
         arch_yield();
     }
 
-    // spin_lock(&q->lock);
     *msg = q->msges[q->ptrRead];
     q->ptrRead = (q->ptrRead + 1) % q->size;
     spin_unlock(&q->lock);

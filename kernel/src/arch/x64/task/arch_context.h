@@ -61,32 +61,30 @@ typedef struct arch_context {
 
 #define switch_to(prev, next)                                                  \
     do {                                                                       \
-        asm volatile("pushq %%rbx\n\t"                                         \
-                     "pushq %%rbp\n\t"                                         \
-                     "pushq %%r12\n\t"                                         \
-                     "pushq %%r13\n\t"                                         \
-                     "pushq %%r14\n\t"                                         \
-                     "pushq %%r15\n\t"                                         \
-                     "pushq %%rax\n\t"                                         \
-                     "movq %%rsp, %0\n\t"                                      \
-                     "movq %2, %%rsp\n\t"                                      \
-                     "leaq 1f(%%rip), %%rax\n\t"                               \
-                     "movq %%rax, %1\n\t"                                      \
-                     "pushq %3\n\t"                                            \
-                     "jmp __switch_to\n\t"                                     \
-                     "1:\n\t"                                                  \
-                     "popq %%rax\n\t"                                          \
-                     "popq %%r15\n\t"                                          \
-                     "popq %%r14\n\t"                                          \
-                     "popq %%r13\n\t"                                          \
-                     "popq %%r12\n\t"                                          \
-                     "popq %%rbp\n\t"                                          \
-                     "popq %%rbx\n\t"                                          \
-                     : "=m"(prev->arch_context->rsp),                          \
-                       "=m"(prev->arch_context->rip)                           \
-                     : "m"(next->arch_context->rsp),                           \
-                       "m"(next->arch_context->rip), "D"(prev), "S"(next)      \
-                     : "memory");                                              \
+        asm volatile(                                                          \
+            "pushq %%rbx\n\t"                                                  \
+            "pushq %%rbp\n\t"                                                  \
+            "pushq %%r12\n\t"                                                  \
+            "pushq %%r13\n\t"                                                  \
+            "pushq %%r14\n\t"                                                  \
+            "pushq %%r15\n\t"                                                  \
+            "movq %%rsp, %0\n\t"                                               \
+            "movq %2, %%rsp\n\t"                                               \
+            "leaq 1f(%%rip), %%rax\n\t"                                        \
+            "movq %%rax, %1\n\t"                                               \
+            "pushq %3\n\t"                                                     \
+            "jmp __switch_to\n\t"                                              \
+            "1:\n\t"                                                           \
+            "popq %%r15\n\t"                                                   \
+            "popq %%r14\n\t"                                                   \
+            "popq %%r13\n\t"                                                   \
+            "popq %%r12\n\t"                                                   \
+            "popq %%rbp\n\t"                                                   \
+            "popq %%rbx\n\t"                                                   \
+            : "=m"(prev->arch_context->rsp), "=m"(prev->arch_context->rip)     \
+            : "m"(next->arch_context->rsp), "m"(next->arch_context->rip),      \
+              "D"(prev), "S"(next)                                             \
+            : "memory", "rax", "rcx", "rdx", "r8", "r9", "r10", "r11", "cc");  \
     } while (0)
 
 void arch_context_init(arch_context_t *context, uint64_t page_table_dir,
