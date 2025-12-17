@@ -80,7 +80,7 @@ uint64_t sys_copy_file_range(uint64_t fd_in, int *offset_in, uint64_t fd_out,
                              int *offset_out, uint64_t len, uint64_t flags);
 uint64_t sys_read(uint64_t fd, void *buf, uint64_t len);
 uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len);
-uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, uint64_t *offset_ptr,
+uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
                       size_t count);
 uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence);
 uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg);
@@ -403,9 +403,68 @@ struct statfs {
     uint64_t f_spare[4];
 };
 
+enum fsconfig_command {
+    FSCONFIG_SET_FLAG = 0, /* Set parameter, supplying no value */
+#define FSCONFIG_SET_FLAG FSCONFIG_SET_FLAG
+    FSCONFIG_SET_STRING = 1, /* Set parameter, supplying a string value */
+#define FSCONFIG_SET_STRING FSCONFIG_SET_STRING
+    FSCONFIG_SET_BINARY = 2, /* Set parameter, supplying a binary blob value */
+#define FSCONFIG_SET_BINARY FSCONFIG_SET_BINARY
+    FSCONFIG_SET_PATH = 3, /* Set parameter, supplying an object by path */
+#define FSCONFIG_SET_PATH FSCONFIG_SET_PATH
+    FSCONFIG_SET_PATH_EMPTY =
+        4, /* Set parameter, supplying an object by (empty) path */
+#define FSCONFIG_SET_PATH_EMPTY FSCONFIG_SET_PATH_EMPTY
+    FSCONFIG_SET_FD = 5, /* Set parameter, supplying an object by fd */
+#define FSCONFIG_SET_FD FSCONFIG_SET_FD
+    FSCONFIG_CMD_CREATE = 6, /* Invoke superblock creation */
+#define FSCONFIG_CMD_CREATE FSCONFIG_CMD_CREATE
+    FSCONFIG_CMD_RECONFIGURE = 7, /* Invoke superblock reconfiguration */
+#define FSCONFIG_CMD_RECONFIGURE FSCONFIG_CMD_RECONFIGURE
+    FSCONFIG_CMD_CREATE_EXCL =
+        8, /* Create new superblock, fail if reusing existing superblock */
+#define FSCONFIG_CMD_CREATE_EXCL FSCONFIG_CMD_CREATE_EXCL
+};
+
+/* FSMOUNT flags */
+#define FSMOUNT_CLOEXEC 0x00000001
+
+/* Mount attributes for fsmount */
+#define MOUNT_ATTR_RDONLY 0x00000001
+#define MOUNT_ATTR_NOSUID 0x00000002
+#define MOUNT_ATTR_NODEV 0x00000004
+#define MOUNT_ATTR_NOEXEC 0x00000008
+#define MOUNT_ATTR_RELATIME 0x00000000
+#define MOUNT_ATTR_NOATIME 0x00000010
+#define MOUNT_ATTR_STRICTATIME 0x00000020
+#define MOUNT_ATTR_NODIRATIME 0x00000080
+#define MOUNT_ATTR_NOSYMFOLLOW 0x00200000
+
+/* move_mount flags */
+#define MOVE_MOUNT_F_SYMLINKS 0x00000001
+#define MOVE_MOUNT_F_AUTOMOUNTS 0x00000002
+#define MOVE_MOUNT_F_EMPTY_PATH 0x00000004
+#define MOVE_MOUNT_T_SYMLINKS 0x00000010
+#define MOVE_MOUNT_T_AUTOMOUNTS 0x00000020
+#define MOVE_MOUNT_T_EMPTY_PATH 0x00000040
+#define MOVE_MOUNT_SET_GROUP 0x00000100
+#define MOVE_MOUNT_BENEATH 0x00000200
+
+/* FS context state */
+#define FC_STATE_INIT 0    /* Context created but not configured */
+#define FC_STATE_CONFIG 1  /* Being configured */
+#define FC_STATE_CREATED 2 /* Superblock created (FSCONFIG_CMD_CREATE done) */
+#define FC_STATE_MOUNTED 3 /* Already mounted via fsmount */
+
 uint64_t sys_fsopen(const char *fsname, unsigned int flags);
 uint64_t sys_statfs(const char *fsname, struct statfs *buf);
 uint64_t sys_fstatfs(int fd, struct statfs *buf);
+uint64_t sys_fsconfig(int fd, uint32_t cmd, const char *key, const void *value,
+                      int aux);
+uint64_t sys_fsmount(int fd, uint32_t flags, uint32_t attr_flags);
+uint64_t sys_move_mount(int from_dfd, const char *from_pathname_user,
+                        int to_dfd, const char *to_pathname_user,
+                        uint32_t flags);
 
 uint64_t sys_truncate(const char *path, uint64_t length);
 uint64_t sys_ftruncate(int fd, uint64_t length);

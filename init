@@ -1,9 +1,11 @@
 #!/bin/sh
 
-/bin/mkdir -p /dev
+/bin/mkdir -p /dev/
 /bin/mount -t devtmpfs devtmpfs /dev
 
 /bin/echo "Aether-OS init script is running..."
+
+/bin/mkdir -p /mnt/
 
 root_mounted=0
 
@@ -26,8 +28,5 @@ if [ $root_mounted -eq 0 ]; then
 fi
 
 /bin/echo "Ready to switch root..."
-
-/bin/rm -rf /bin/sh
-/bin/ln -sf /bin/bash /bin/sh
 
 exec /sbin/switch_root /mnt/ /sbin/init

@@ -101,10 +101,22 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork);
 uint64_t task_execve(const char *path, const char **argv, const char **envp);
 uint64_t task_exit(int64_t code);
 
-#define WNOHANG 1
-#define WUNTRACED 2
+#define WNOHANG 0x00000001
+#define WUNTRACED 0x00000002
+#define WSTOPPED WUNTRACED
+#define WEXITED 0x00000004
+#define WCONTINUED 0x00000008
+#define WNOWAIT 0x01000000
+
+/* idtype for waitid */
+#define P_ALL 0
+#define P_PID 1
+#define P_PGID 2
+#define P_PIDFD 3
 
 uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options);
+uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
+                    void *rusage);
 uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                    int *parent_tid, int *child_tid, uint64_t tls);
 struct timespec;
@@ -184,6 +196,8 @@ static inline uint64_t sys_vfork(struct pt_regs *regs) {
 static inline uint64_t sys_getpid() { return current_task->pid; }
 
 static inline uint64_t sys_getppid() { return current_task->ppid; }
+
+static inline uint64_t sys_getpgrp() { return current_task->pgid; }
 
 static inline uint64_t sys_getgroups(int gidsetsize, int *gids) {
     if (!gidsetsize)

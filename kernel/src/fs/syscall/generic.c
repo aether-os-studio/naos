@@ -22,9 +22,6 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
             return (uint64_t)-EINVAL;
         }
 
-        if (dir != rootdir)
-            return (uint64_t)-EINVAL;
-
         vfs_node_t old_mount = vfs_open((const char *)devname);
         if (!old_mount)
             return (uint64_t)-EINVAL;
@@ -33,32 +30,20 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
             return (uint64_t)-EINVAL;
         }
 
+        if (old_mount == dir)
+            return (uint64_t)-EINVAL;
+
         uint64_t dev = old_mount->rdev;
         uint32_t fsid = old_mount->fsid;
+        if (fsid == 0 || fsid >= 256 || !all_fs[fsid])
+            return (uint64_t)-EINVAL;
         const char *fs_name = all_fs[fsid]->name;
 
-        bool old_mount_in_dir = false;
-        list_foreach(dir->child, i) {
-            vfs_node_t child = (vfs_node_t)i->data;
-            if (child == child->root)
-                continue;
-            if (child != old_mount) {
-                vfs_free(child);
-            } else {
-                old_mount_in_dir = true;
-            }
-        }
-
-        int ret = vfs_unmount(dev_name);
+        int ret = vfs_unmount(devname);
         if (ret)
             return ret;
 
-        if (old_mount_in_dir)
-            vfs_free(old_mount);
-
-        vfs_mount(dev, dir, fs_name);
-
-        return 0;
+        return vfs_mount(dev, dir, fs_name);
     }
 
     uint64_t dev_nr = 0;
@@ -302,7 +287,7 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
     return ret;
 }
 
-uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, uint64_t *offset_ptr,
+uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
                       size_t count) {
     if (out_fd > MAX_FD_NUM || in_fd > MAX_FD_NUM)
         return -EBADF;

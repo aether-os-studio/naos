@@ -498,7 +498,7 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_OPEN_TREE] = (syscall_handle_t)sys_open_tree;
     // syscall_handlers[SYS_MOVE_MOUNT] = (syscall_handle_t)sys_move_mount;
     syscall_handlers[SYS_FSOPEN] = (syscall_handle_t)sys_fsopen;
-    // syscall_handlers[SYS_FSCONFIG] = (syscall_handle_t)sys_fsconfig;
+    syscall_handlers[SYS_FSCONFIG] = (syscall_handle_t)sys_fsconfig;
     // syscall_handlers[SYS_FSMOUNT] = (syscall_handle_t)sys_fsmount;
     // syscall_handlers[SYS_FSPICK] = (syscall_handle_t)sys_fspick;
     // syscall_handlers[SYS_PIDFD_OPEN] = (syscall_handle_t)sys_pidfd_open;

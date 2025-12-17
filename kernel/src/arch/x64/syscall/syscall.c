@@ -264,7 +264,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_GETEGID] = (syscall_handle_t)sys_getegid;
     syscall_handlers[SYS_SETPGID] = (syscall_handle_t)sys_setpgid;
     syscall_handlers[SYS_GETPPID] = (syscall_handle_t)sys_getppid;
-    // syscall_handlers[SYS_GETPGRP] = (syscall_handle_t)sys_getpgrp;
+    syscall_handlers[SYS_GETPGRP] = (syscall_handle_t)sys_getpgrp;
     syscall_handlers[SYS_SETSID] = (syscall_handle_t)sys_setsid;
     // syscall_handlers[SYS_SETREUID] = (syscall_handle_t)sys_setreuid;
     // syscall_handlers[SYS_SETREGID] = (syscall_handle_t)sys_setregid;
@@ -325,7 +325,7 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_ADJTIMEX] = (syscall_handle_t)sys_adjtimex;
     // syscall_handlers[SYS_SETRLIMIT] = (syscall_handle_t)sys_setrlimit;
     syscall_handlers[SYS_CHROOT] = (syscall_handle_t)sys_chroot;
-    // syscall_handlers[SYS_SYNC] = (syscall_handle_t)sys_sync;
+    syscall_handlers[SYS_SYNC] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_ACCT] = (syscall_handle_t)sys_acct;
     // syscall_handlers[SYS_SETTIMEOFDAY] = (syscall_handle_t)sys_settimeofday;
     syscall_handlers[SYS_MOUNT] = (syscall_handle_t)sys_mount;
@@ -429,8 +429,9 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_MQ_NOTIFY] = (syscall_handle_t)sys_mq_notify;
     // syscall_handlers[SYS_MQ_GETSETATTR] =
     // (syscall_handle_t)sys_mq_getsetattr; syscall_handlers[SYS_KEXEC_LOAD] =
-    // (syscall_handle_t)sys_kexec_load; syscall_handlers[SYS_WAITID] =
-    // (syscall_handle_t)sys_waitid; syscall_handlers[SYS_ADD_KEY] =
+    // (syscall_handle_t)sys_kexec_load;
+    syscall_handlers[SYS_WAITID] = (syscall_handle_t)sys_waitid;
+    // syscall_handlers[SYS_ADD_KEY] =
     // (syscall_handle_t)sys_add_key; syscall_handlers[SYS_REQUEST_KEY] =
     // (syscall_handle_t)sys_request_key; syscall_handlers[SYS_KEYCTL] =
     // (syscall_handle_t)sys_keyctl; syscall_handlers[SYS_IOPRIO_SET] =
@@ -551,10 +552,10 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_IO_URING_REGISTER] =
     //     (syscall_handle_t)sys_io_uring_register;
     // syscall_handlers[SYS_OPEN_TREE] = (syscall_handle_t)sys_open_tree;
-    // syscall_handlers[SYS_MOVE_MOUNT] = (syscall_handle_t)sys_move_mount;
+    syscall_handlers[SYS_MOVE_MOUNT] = (syscall_handle_t)sys_move_mount;
     syscall_handlers[SYS_FSOPEN] = (syscall_handle_t)sys_fsopen;
-    // syscall_handlers[SYS_FSCONFIG] = (syscall_handle_t)sys_fsconfig;
-    // syscall_handlers[SYS_FSMOUNT] = (syscall_handle_t)sys_fsmount;
+    syscall_handlers[SYS_FSCONFIG] = (syscall_handle_t)sys_fsconfig;
+    syscall_handlers[SYS_FSMOUNT] = (syscall_handle_t)sys_fsmount;
     // syscall_handlers[SYS_FSPICK] = (syscall_handle_t)sys_fspick;
     // syscall_handlers[SYS_PIDFD_OPEN] = (syscall_handle_t)sys_pidfd_open;
     // syscall_handlers[SYS_CLONE3] = (syscall_handle_t)sys_clone3;
@@ -634,11 +635,14 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
     bool usable = idx < (sizeof(linux_syscalls) / sizeof(linux_syscalls[0]));
     const LINUX_SYSCALL *info = &linux_syscalls[idx];
 
+#define SYSCALL_DEBUG 0
+#if SYSCALL_DEBUG
+    if (idx == SYS_PAUSE || idx == SYS_SCHED_YIELD)
+        goto done;
+
     char buf[256];
     int len;
 
-#define SYSCALL_DEBUG 0
-#if SYSCALL_DEBUG
     spin_lock(&syscall_debug_lock);
 
     len = sprintf(buf, "%d [syscall %d] %s(", current_task->pid, idx,

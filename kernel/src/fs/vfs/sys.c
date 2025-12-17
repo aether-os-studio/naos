@@ -177,7 +177,7 @@ static struct vfs_callback callbacks = {
 
 fs_t sysfs = {
     .name = "sysfs",
-    .magic = 0,
+    .magic = 0x62656572,
     .callback = &callbacks,
     .flags = FS_FLAGS_VIRTUAL,
 };

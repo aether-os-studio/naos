@@ -79,7 +79,16 @@ void ext_unmount(vfs_node_t node) {
         ext4_umount((const char *)mp_path);
         node->dev = node->parent ? node->parent->dev : 0;
         node->rdev = node->parent ? node->parent->rdev : 0;
-        list_foreach(node->child, i) { vfs_free(i->data); }
+
+        uint64_t nodes_count = 0;
+        list_foreach(node->child, i) { nodes_count++; }
+        vfs_node_t *nodes = calloc(nodes_count, sizeof(vfs_node_t));
+        uint64_t idx = 0;
+        list_foreach(node->child, i) { nodes[idx++] = (vfs_node_t)i->data; }
+        for (uint64_t i = 0; i < idx; i++) {
+            vfs_free(nodes[i]);
+            list_delete(node->child, nodes[i]);
+        }
     }
 }
 

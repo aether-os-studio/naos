@@ -1165,6 +1165,158 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
     return ret;
 }
 
+uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
+                    void *rusage) {
+    arch_disable_interrupt();
+    task_t *target = NULL;
+    uint64_t ret = 0;
+
+    if (idtype < P_ALL || idtype > P_PIDFD)
+        return -EINVAL;
+
+    if (!(options & (WEXITED | WSTOPPED | WCONTINUED)))
+        return -EINVAL;
+
+    bool has_children = false;
+    for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
+        spin_lock(&task_queue_lock);
+        task_t *ptr = tasks[i];
+        spin_unlock(&task_queue_lock);
+        if (ptr && ptr->ppid != ptr->pid && ptr->ppid == current_task->pid) {
+            has_children = true;
+            break;
+        }
+    }
+
+    if (!has_children)
+        return -ECHILD;
+
+    while (1) {
+        task_t *found_alive = NULL;
+        task_t *found_dead = NULL;
+
+        uint64_t continue_ptr_count = 0;
+        for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
+            spin_lock(&task_queue_lock);
+            task_t *ptr = tasks[i];
+            spin_unlock(&task_queue_lock);
+
+            if (ptr == NULL) {
+                continue_ptr_count++;
+                if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
+                    break;
+                continue;
+            }
+            continue_ptr_count = 0;
+
+            if (ptr->ppid == ptr->pid)
+                continue;
+            if (ptr->ppid != current_task->pid)
+                continue;
+
+            /* Filter by idtype */
+            switch (idtype) {
+            case P_PID:
+                if (ptr->pid != id)
+                    continue;
+                break;
+            case P_PGID:
+                if (ptr->pgid != id)
+                    continue;
+                break;
+            case P_ALL:
+                /* Match any child */
+                break;
+            default:
+                continue;
+            }
+
+            /* Check state based on options */
+            if (ptr->state == TASK_DIED && (options & WEXITED)) {
+                found_dead = ptr;
+                break;
+            } else {
+                found_alive = ptr;
+            }
+        }
+
+        if (found_dead) {
+            target = found_dead;
+            break;
+        }
+
+        if (found_alive && (options & WNOHANG)) {
+            /* No state change, but child exists - return 0 with zeroed infop */
+            if (infop) {
+                memset(infop, 0, sizeof(siginfo_t));
+            }
+            return 0;
+        }
+
+        if (found_alive) {
+            found_alive->waitpid = current_task->pid;
+            if (found_alive->state != TASK_DIED)
+                task_block(current_task, TASK_BLOCKING, -1);
+            continue;
+        }
+
+        return -ECHILD;
+    }
+
+    if (target) {
+        if (infop) {
+            memset(infop, 0, sizeof(siginfo_t));
+            infop->si_signo = SIGCHLD;
+            infop->si_errno = 0;
+            infop->__si_fields.__si_common.__first.__piduid.si_pid =
+                target->pid;
+            infop->__si_fields.__si_common.__first.__piduid.si_uid =
+                target->uid;
+
+            if (target->state == TASK_DIED) {
+                if (target->status < 128) {
+                    infop->si_code = CLD_EXITED;
+                    infop->__si_fields.__si_common.__second.__sigchld
+                        .si_status = target->status;
+                } else {
+                    infop->si_code = CLD_KILLED;
+                    infop->__si_fields.__si_common.__second.__sigchld
+                        .si_status = target->status - 128;
+                }
+            }
+        }
+
+        ret = 0;
+
+        if (!(options & WNOWAIT) && target->state == TASK_DIED) {
+            target->should_free = true;
+        }
+    }
+
+    if (!(options & WNOWAIT)) {
+        uint64_t continue_ptr_count = 0;
+        for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
+            spin_lock(&task_queue_lock);
+            task_t *ptr = tasks[i];
+            spin_unlock(&task_queue_lock);
+
+            if (ptr == NULL) {
+                continue_ptr_count++;
+                if (continue_ptr_count >= MAX_CONTINUE_NULL_TASKS)
+                    break;
+                continue;
+            }
+            continue_ptr_count = 0;
+
+            if (ptr->should_free) {
+                free_task(ptr);
+            }
+        }
+    }
+
+    return ret;
+}
+
 uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                    int *parent_tid, int *child_tid, uint64_t tls) {
     arch_disable_interrupt();
