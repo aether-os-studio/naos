@@ -93,7 +93,7 @@ ssize_t pipefs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     if (chunks)
         for (size_t i = 0; i < chunks; i++) {
             int cycle = 0;
-            while (cycle != PIPE_BUFF)
+            while (cycle < PIPE_BUFF)
                 cycle += pipe_write_inner(file, addr + i * PIPE_BUFF + cycle,
                                           PIPE_BUFF - cycle);
             ret += cycle;
@@ -101,7 +101,7 @@ ssize_t pipefs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
 
     if (remainder) {
         size_t cycle = 0;
-        while (cycle != remainder)
+        while (cycle < remainder)
             cycle += pipe_write_inner(file, addr + chunks * PIPE_BUFF + cycle,
                                       remainder - cycle);
         ret += cycle;
@@ -171,8 +171,6 @@ int pipefs_poll(void *file, size_t events) {
     return out;
 }
 
-vfs_node_t pipe_dup(vfs_node_t node) { return node; }
-
 int pipefs_stat(void *file, vfs_node_t node) {
     pipe_specific_t *spec = (pipe_specific_t *)file;
     pipe_info_t *pipe = spec->info;
@@ -207,7 +205,6 @@ static struct vfs_callback callbacks = {
     .ioctl = (vfs_ioctl_t)pipefs_ioctl,
     .poll = pipefs_poll,
     .resize = (vfs_resize_t)dummy,
-    .dup = (vfs_dup_t)pipe_dup,
 
     .free_handle = vfs_generic_free_handle,
 };

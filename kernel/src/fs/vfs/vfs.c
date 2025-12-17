@@ -952,7 +952,7 @@ fd_t *vfs_dup(fd_t *fd) {
     fd_t *new_fd = malloc(sizeof(fd_t));
     vfs_node_t node = fd->node;
     node->refcount++;
-    new_fd->node = callbackof(node, dup)(node);
+    new_fd->node = node;
     new_fd->offset = fd->offset;
     new_fd->flags = fd->flags;
 

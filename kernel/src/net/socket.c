@@ -1608,24 +1608,6 @@ socket_op_t accept_ops = {
     .setsockopt = unix_socket_accept_setsockopt,
 };
 
-vfs_node_t socket_dup(vfs_node_t node) {
-    socket_handle_t *handle = node->handle;
-    socket_t *socket = handle->sock;
-    // socket->timesOpened++;
-    // if (socket->pair)
-    // {
-    //     socket->pair->clientFds++;
-    // }
-    return node;
-}
-
-vfs_node_t socket_accept_dup(vfs_node_t node) {
-    socket_handle_t *handle = node->handle;
-    unix_socket_pair_t *pair = handle->sock;
-    // pair->serverFds++;
-    return node;
-}
-
 ssize_t socket_read(fd_t *fd, void *buf, size_t offset, size_t limit) {
     (void)offset;
 
@@ -1794,7 +1776,6 @@ static struct vfs_callback socket_callback = {
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = (vfs_poll_t)socket_socket_poll,
     .resize = (vfs_resize_t)dummy,
-    .dup = (vfs_dup_t)socket_dup,
 
     .free_handle = vfs_generic_free_handle,
 };
@@ -1821,7 +1802,6 @@ static struct vfs_callback accept_callback = {
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = (vfs_poll_t)socket_accept_poll,
     .resize = (vfs_resize_t)dummy,
-    .dup = (vfs_dup_t)socket_accept_dup,
 
     .free_handle = vfs_generic_free_handle,
 };

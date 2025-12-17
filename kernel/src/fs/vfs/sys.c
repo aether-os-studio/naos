@@ -35,8 +35,12 @@ ssize_t sysfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
 ssize_t sysfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     sysfs_node_t *handle = fd->node->handle;
     if (offset + size > handle->capability) {
-        handle->capability = offset + size;
-        handle->content = realloc(handle->content, handle->capability);
+        size_t new_capability = offset + size;
+        void *new_content = alloc_frames_bytes(new_capability);
+        memcpy(new_content, handle->content, handle->capability);
+        free_frames_bytes(handle->content, handle->capability);
+        handle->content = new_content;
+        handle->capability = new_capability;
     }
     memcpy(handle->content + offset, addr, size);
     handle->size = MAX(handle->size, offset + size);
@@ -79,8 +83,9 @@ int sysfs_mkfile(void *parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
     sysfs_node_t *handle = malloc(sizeof(sysfs_node_t));
     handle->capability = DEFAULT_PAGE_SIZE;
-    handle->content = malloc(handle->capability);
+    handle->content = alloc_frames_bytes(handle->capability);
     handle->size = 0;
+    handle->node = node;
     node->handle = handle;
     return 0;
 }
@@ -88,12 +93,12 @@ int sysfs_mkfile(void *parent, const char *name, vfs_node_t node) {
 int sysfs_symlink(void *parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
     sysfs_node_t *handle = malloc(sizeof(sysfs_node_t));
-    size_t len = strlen(name);
-    handle->capability =
-        (len + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1);
-    handle->content = malloc(handle->capability);
+    size_t len = strlen(name) + 1;
+    handle->capability = PADDING_UP(len, DEFAULT_PAGE_SIZE);
+    handle->content = alloc_frames_bytes(handle->capability);
     memcpy(handle->content, name, len);
     handle->size = len;
+    handle->node = node;
     node->handle = handle;
     return 0;
 }
@@ -138,6 +143,12 @@ void sysfs_unmount(vfs_node_t root) {
     spin_unlock(&sysfs_oplock);
 }
 
+void sysfs_free_handle(void *handle) {
+    sysfs_node_t *snode = handle;
+    free_frames_bytes(snode->content, snode->capability);
+    free(snode);
+}
+
 static struct vfs_callback callbacks = {
     .open = (vfs_open_t)sysfs_open,
     .close = (vfs_close_t)sysfs_close,
@@ -160,9 +171,8 @@ static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)sysfs_mount,
     .unmount = (vfs_unmount_t)sysfs_unmount,
     .resize = (vfs_resize_t)dummy,
-    .dup = vfs_generic_dup,
 
-    .free_handle = vfs_generic_free_handle,
+    .free_handle = sysfs_free_handle,
 };
 
 fs_t sysfs = {

@@ -610,7 +610,6 @@ static struct vfs_callback ptmx_callbacks = {
     .ioctl = (vfs_ioctl_t)ptmx_ioctl,
     .poll = ptmx_poll,
     .resize = (vfs_resize_t)dummy,
-    .dup = (vfs_dup_t)ptmx_dup,
 
     .free_handle = vfs_generic_free_handle,
 };
@@ -637,7 +636,6 @@ static struct vfs_callback pts_callbacks = {
     .ioctl = (vfs_ioctl_t)pts_ioctl,
     .poll = (vfs_poll_t)pts_poll,
     .resize = (vfs_resize_t)dummy,
-    .dup = (vfs_dup_t)pts_dup,
 
     .free_handle = vfs_generic_free_handle,
 };

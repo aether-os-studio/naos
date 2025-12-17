@@ -270,7 +270,6 @@ static struct vfs_callback epoll_callbacks = {
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = epoll_poll,
     .resize = (vfs_resize_t)dummy,
-    .dup = vfs_generic_dup,
 
     .free_handle = vfs_generic_free_handle,
 };

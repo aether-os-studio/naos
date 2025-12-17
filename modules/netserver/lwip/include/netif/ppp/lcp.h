@@ -130,8 +130,8 @@ typedef struct lcp_options {
 #endif                                 /* EAP_SUPPORT */
     unsigned int neg_magicnumber : 1;  /* Ask for magic number? */
     unsigned int neg_pcompression : 1; /* HDLC Protocol Field Compression? */
-    unsigned int
-        neg_accompression : 1; /* HDLC Address/Control Field Compression? */
+    unsigned int neg_accompression
+        : 1; /* HDLC Address/Control Field Compression? */
 #if LQR_SUPPORT
     unsigned int neg_lqr : 1;  /* Negotiate use of Link Quality Reports */
 #endif                         /* LQR_SUPPORT */

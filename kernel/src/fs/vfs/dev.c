@@ -266,7 +266,6 @@ static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)devtmpfs_mount,
     .unmount = (vfs_unmount_t)devtmpfs_unmount,
     .resize = (vfs_resize_t)devtmpfs_resize,
-    .dup = vfs_generic_dup,
 
     .free_handle = devtmpfs_free_handle,
 };

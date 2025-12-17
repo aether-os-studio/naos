@@ -100,9 +100,9 @@ int tmpfs_symlink(void *parent, const char *name, vfs_node_t node) {
         return -EEXIST;
     }
     tmpfs_node_t *handle = malloc(sizeof(tmpfs_node_t));
-    handle->capability = DEFAULT_PAGE_SIZE;
+    size_t len = strlen(name) + 1;
+    handle->capability = PADDING_UP(len, DEFAULT_PAGE_SIZE);
     handle->content = alloc_frames_bytes(handle->capability);
-    int len = strlen(name) + 1;
     memcpy(handle->content, name, len);
     handle->size = len;
     handle->node = node;
@@ -203,7 +203,6 @@ static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)tmpfs_mount,
     .unmount = (vfs_unmount_t)tmpfs_unmount,
     .resize = (vfs_resize_t)tmpfs_resize,
-    .dup = vfs_generic_dup,
 
     .free_handle = tmpfs_free_handle,
 };

@@ -62,7 +62,6 @@ static struct vfs_callback callbacks = {
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = (vfs_poll_t)dummy,
     .resize = (vfs_resize_t)dummy,
-    .dup = (vfs_dup_t)vfs_generic_dup,
 
     .free_handle = vfs_generic_free_handle,
 };

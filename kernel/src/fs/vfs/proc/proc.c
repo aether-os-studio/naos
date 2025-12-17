@@ -127,7 +127,6 @@ static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)procfs_mount,
     .unmount = (vfs_unmount_t)procfs_unmount,
     .resize = (vfs_resize_t)dummy,
-    .dup = vfs_generic_dup,
 
     .free_handle = vfs_generic_free_handle,
 };
@@ -185,7 +184,6 @@ static struct vfs_callback procfs_self_callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
     .resize = (vfs_resize_t)dummy,
-    .dup = vfs_generic_dup,
 
     .free_handle = (vfs_free_handle_t)procfs_self_free_handle,
 };

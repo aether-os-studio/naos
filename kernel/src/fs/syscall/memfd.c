@@ -100,12 +100,6 @@ void *memfd_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
     return addr;
 }
 
-vfs_node_t memfd_dup(vfs_node_t node) {
-    struct memfd_ctx *ctx = node->handle;
-    ctx->refcount++;
-    return node;
-}
-
 static int dummy() { return 0; }
 
 static struct vfs_callback callbacks = {
@@ -130,7 +124,6 @@ static struct vfs_callback callbacks = {
     .ioctl = (vfs_ioctl_t)dummy,
     .poll = (vfs_poll_t)dummy,
     .resize = (vfs_resize_t)memfd_resize,
-    .dup = (vfs_dup_t)memfd_dup,
 
     .free_handle = vfs_generic_free_handle,
 };
