@@ -156,6 +156,13 @@ typedef struct vfs_callback {
     vfs_free_handle_t free_handle;
 } *vfs_callback_t;
 
+enum {
+    TMPFS_DEV_MAJOR = 1,
+    DEVFS_DEV_MAJOR,
+    PROCFS_DEV_MAJOR,
+    SYSFS_DEV_MAJOR,
+};
+
 #define FS_FLAGS_HIDDEN (1UL << 0)
 #define FS_FLAGS_VIRTUAL (1UL << 1)
 typedef struct fs {
@@ -396,3 +403,4 @@ static inline uint32_t alloc_fake_inode() {
 }
 
 void vfs_merge_nodes_to(vfs_node_t dest, vfs_node_t source);
+vfs_node_t vfs_get_real_node(vfs_node_t node);

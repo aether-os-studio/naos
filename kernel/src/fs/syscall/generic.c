@@ -1,4 +1,5 @@
 #include <fs/fs_syscall.h>
+#include <fs/vfs/proc.h>
 #include <boot/boot.h>
 #include <net/socket.h>
 
@@ -16,6 +17,7 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
     if (!dir) {
         return (uint64_t)-ENOENT;
     }
+    dir = vfs_get_real_node(dir);
 
     if (flags & MS_MOVE) {
         if (flags & (MS_REMOUNT | MS_BIND)) {
@@ -43,6 +45,7 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
         if (ret)
             return ret;
 
+        vfs_unmount(dirname);
         return vfs_mount(dev, dir, fs_name);
     }
 
@@ -107,6 +110,8 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
     current_task->fd_info->fds[i]->flags = flags;
     node->refcount++;
 
+    procfs_on_open_file(current_task, i);
+
     return i;
 }
 
@@ -157,6 +162,8 @@ uint64_t sys_close(uint64_t fd) {
 
     vfs_close(current_task->fd_info->fds[fd]->node);
     free(current_task->fd_info->fds[fd]);
+
+    procfs_on_close_file(current_task, fd);
 
     current_task->fd_info->fds[fd] = NULL;
 

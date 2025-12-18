@@ -85,6 +85,10 @@ ssize_t devtmpfs_readlink(vfs_node_t node, void *addr, size_t offset,
 
 int devtmpfs_mkdir(void *parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
+    devtmpfs_node_t *handle = malloc(sizeof(devtmpfs_node_t));
+    handle->node = node;
+    handle->size = 0;
+    node->handle = handle;
     return 0;
 }
 
@@ -158,6 +162,8 @@ int devtmpfs_mount(uint64_t dev, vfs_node_t node) {
 
     node->flags = (uint64_t)node->fsid << 32;
     node->fsid = devtmpfs_fsid;
+    node->dev = (DEVFS_DEV_MAJOR << 8) | 0;
+    node->rdev = (DEVFS_DEV_MAJOR << 8) | 0;
 
     spin_unlock(&devtmpfs_oplock);
 
@@ -176,6 +182,8 @@ void devtmpfs_unmount(vfs_node_t root) {
     vfs_merge_nodes_to(fake_devtmpfs_root, root);
 
     root->fsid = (uint32_t)(root->flags >> 32);
+    root->dev = root->parent ? root->parent->dev : 0;
+    root->rdev = root->parent ? root->parent->rdev : 0;
 
     devtmpfs_root = fake_devtmpfs_root;
 

@@ -117,6 +117,8 @@ int sysfs_mount(uint64_t dev, vfs_node_t node) {
 
     sysfs_root = node;
     node->fsid = sysfs_fsid;
+    node->dev = (SYSFS_DEV_MAJOR << 8) | 0;
+    node->rdev = (SYSFS_DEV_MAJOR << 8) | 0;
 
     spin_unlock(&sysfs_oplock);
 

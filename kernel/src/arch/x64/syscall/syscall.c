@@ -327,7 +327,8 @@ void syscall_handler_init() {
     syscall_handlers[SYS_CHROOT] = (syscall_handle_t)sys_chroot;
     syscall_handlers[SYS_SYNC] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_ACCT] = (syscall_handle_t)sys_acct;
-    // syscall_handlers[SYS_SETTIMEOFDAY] = (syscall_handle_t)sys_settimeofday;
+    syscall_handlers[SYS_SETTIMEOFDAY] =
+        (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_MOUNT] = (syscall_handle_t)sys_mount;
     syscall_handlers[SYS_UMOUNT2] = (syscall_handle_t)sys_umount2;
     // syscall_handlers[SYS_SWAPON] = (syscall_handle_t)sys_swapon;

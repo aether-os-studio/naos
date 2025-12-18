@@ -61,5 +61,7 @@ size_t procfs_node_read(size_t len, size_t offset, size_t size, char *addr,
                         char *contect);
 
 void procfs_on_new_task(task_t *task);
+void procfs_on_open_file(task_t *task, int fd);
+void procfs_on_close_file(task_t *task, int fd);
 void procfs_on_exit_task(task_t *task);
 void proc_init();

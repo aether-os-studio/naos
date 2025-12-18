@@ -177,8 +177,8 @@ typedef struct task {
     int64_t gid;
     int64_t euid;
     int64_t egid;
-    int64_t ruid;
-    int64_t rgid;
+    int64_t suid;
+    int64_t sgid;
     int64_t pgid;
     int64_t tgid;
     int64_t sid;

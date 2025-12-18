@@ -161,17 +161,17 @@ static inline uint64_t sys_geteuid() { return current_task->euid; }
 static inline uint64_t sys_getegid() { return current_task->egid; }
 
 static inline uint64_t sys_getresuid(int *ruid, int *euid, int *suid) {
-    *ruid = current_task->ruid;
+    *ruid = current_task->uid;
     *euid = current_task->euid;
-    *suid = current_task->uid;
+    *suid = current_task->suid;
 
     return 0;
 }
 
 static inline uint64_t sys_getresgid(int *rgid, int *egid, int *sgid) {
-    *rgid = current_task->rgid;
+    *rgid = current_task->gid;
     *egid = current_task->egid;
-    *sgid = current_task->gid;
+    *sgid = current_task->sgid;
 
     return 0;
 }

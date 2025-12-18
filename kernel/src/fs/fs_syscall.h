@@ -450,12 +450,6 @@ enum fsconfig_command {
 #define MOVE_MOUNT_SET_GROUP 0x00000100
 #define MOVE_MOUNT_BENEATH 0x00000200
 
-/* FS context state */
-#define FC_STATE_INIT 0    /* Context created but not configured */
-#define FC_STATE_CONFIG 1  /* Being configured */
-#define FC_STATE_CREATED 2 /* Superblock created (FSCONFIG_CMD_CREATE done) */
-#define FC_STATE_MOUNTED 3 /* Already mounted via fsmount */
-
 uint64_t sys_fsopen(const char *fsname, unsigned int flags);
 uint64_t sys_statfs(const char *fsname, struct statfs *buf);
 uint64_t sys_fstatfs(int fd, struct statfs *buf);

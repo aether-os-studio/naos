@@ -61,6 +61,12 @@ ssize_t procfs_readlink(vfs_node_t node, void *addr, size_t offset,
         memcpy(addr, fullpath, len);
         return len;
     }
+    if (!strcmp(handle->name, "fd")) {
+        int len = strlen(handle->content);
+        len = MIN(len, size);
+        memcpy(addr, handle->content, len);
+        return len;
+    }
 
     return 0;
 }
@@ -79,6 +85,8 @@ int procfs_mount(uint64_t dev, vfs_node_t mnt) {
 
     procfs_root = mnt;
     mnt->fsid = procfs_id;
+    mnt->dev = (PROCFS_DEV_MAJOR << 8) | 0;
+    mnt->rdev = (PROCFS_DEV_MAJOR << 8) | 0;
 
     spin_unlock(&procfs_oplock);
 
@@ -211,6 +219,12 @@ void proc_init() {
 
     procfs_root = fake_procfs_root;
 
+    vfs_node_t self_node = vfs_child_append(procfs_root, "self", NULL);
+    self_node->flags |= VFS_NODE_FLAGS_FREE_AFTER_USE;
+    self_node->type = file_symlink;
+    self_node->mode = 0644;
+    self_node->fsid = procfs_self_id;
+
     procfs_nodes_init();
 }
 
@@ -267,10 +281,47 @@ void procfs_on_new_task(task_t *task) {
     self_exe_handle->task = task;
     sprintf(self_exe_handle->name, "exe");
 
+    vfs_node_t self_fd = vfs_child_append(node, "fd", NULL);
+    self_fd->type = file_dir;
+    self_fd->mode = 0700;
+
     node->refcount++;
     task->procfs_node = node;
 
     spin_unlock(&procfs_oplock);
+}
+
+void procfs_on_open_file(task_t *task, int fd) {
+    vfs_node_t fd_root = vfs_open_at(task->procfs_node, "fd");
+    if (!fd_root)
+        return;
+
+    if (!task->fd_info->fds[fd])
+        return;
+
+    char fd_name[4];
+    sprintf(fd_name, "%d", fd);
+    vfs_node_t fd_node = vfs_child_append(fd_root, fd_name, NULL);
+    fd_node->type = file_symlink;
+    fd_node->mode = 0700;
+    proc_handle_t *fd_node_handle = malloc(sizeof(proc_handle_t));
+    fd_node->handle = fd_node_handle;
+    fd_node_handle->node = fd_node;
+    fd_node_handle->task = task;
+    char *link_name = vfs_get_fullpath(task->fd_info->fds[fd]->node);
+    strcpy(fd_node_handle->content, link_name);
+    free(link_name);
+    sprintf(fd_node_handle->name, "fd");
+}
+
+void procfs_on_close_file(task_t *task, int fd) {
+    char name[3 + 4];
+    sprintf(name, "fd/%d", task->pid, fd);
+    vfs_node_t fd_node = vfs_open_at(task->procfs_node, name);
+    if (!fd_node)
+        return;
+
+    vfs_free(fd_node);
 }
 
 void procfs_on_exit_task(task_t *task) {
@@ -279,19 +330,18 @@ void procfs_on_exit_task(task_t *task) {
 
     spin_lock(&procfs_oplock);
 
-    char name[6 + MAX_PID_NAME_LEN + 1];
-    memset(name, 0, sizeof(name));
+    char name[MAX_PID_NAME_LEN];
     sprintf(name, "%d", task->pid);
 
     vfs_close(task->procfs_node);
     task->procfs_node = NULL;
 
     vfs_node_t node = vfs_open_at(procfs_root, name);
-    if (node) {
-        list_delete(procfs_root->child, node);
-        node->parent = NULL;
-        vfs_free(node);
-    }
+    if (!node)
+        goto done;
 
+    vfs_free(node);
+
+done:
     spin_unlock(&procfs_oplock);
 }

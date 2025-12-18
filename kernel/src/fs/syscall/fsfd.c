@@ -5,30 +5,6 @@
 static int fsfd_id = 0;
 static int mntfd_id = 0;
 
-/* FSMOUNT flags */
-#define FSMOUNT_CLOEXEC 0x00000001
-
-/* Mount attributes for fsmount */
-#define MOUNT_ATTR_RDONLY 0x00000001
-#define MOUNT_ATTR_NOSUID 0x00000002
-#define MOUNT_ATTR_NODEV 0x00000004
-#define MOUNT_ATTR_NOEXEC 0x00000008
-#define MOUNT_ATTR_RELATIME 0x00000000
-#define MOUNT_ATTR_NOATIME 0x00000010
-#define MOUNT_ATTR_STRICTATIME 0x00000020
-#define MOUNT_ATTR_NODIRATIME 0x00000080
-#define MOUNT_ATTR_NOSYMFOLLOW 0x00200000
-
-/* move_mount flags */
-#define MOVE_MOUNT_F_SYMLINKS 0x00000001
-#define MOVE_MOUNT_F_AUTOMOUNTS 0x00000002
-#define MOVE_MOUNT_F_EMPTY_PATH 0x00000004
-#define MOVE_MOUNT_T_SYMLINKS 0x00000010
-#define MOVE_MOUNT_T_AUTOMOUNTS 0x00000020
-#define MOVE_MOUNT_T_EMPTY_PATH 0x00000040
-#define MOVE_MOUNT_SET_GROUP 0x00000100
-#define MOVE_MOUNT_BENEATH 0x00000200
-
 /* FS context state */
 #define FC_STATE_INIT 0    /* Context created but not configured */
 #define FC_STATE_CONFIG 1  /* Being configured */
@@ -46,11 +22,6 @@ typedef struct fs_context {
     uint64_t source_dev;    /* Source device number */
 } fs_context_t;
 
-/*
- * Mount handle - represents a "detached" mount that hasn't been attached yet.
- * Unlike Linux, we don't actually mount anything until move_mount is called.
- * This handle just stores the information needed to perform the mount.
- */
 typedef struct mount_handle {
     fs_t *fs;             /* Filesystem type */
     char *source;         /* Source device/path (copied) */

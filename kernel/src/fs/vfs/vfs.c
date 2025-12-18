@@ -51,7 +51,9 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
 void vfs_free(vfs_node_t vfs) {
     if (vfs == NULL)
         return;
-    list_free_with(vfs->child, (free_t)vfs_free);
+    if (!(vfs->type & file_symlink)) {
+        list_free_with(vfs->child, (free_t)vfs_free);
+    }
     callbackof(vfs, free_handle)(vfs->handle);
     if (vfs->parent)
         list_delete(vfs->parent->child, vfs);
@@ -79,6 +81,22 @@ void vfs_merge_nodes_to(vfs_node_t dest, vfs_node_t source) {
         list_append(dest->child, nodes[i]);
     }
     free(nodes);
+}
+
+vfs_node_t vfs_get_real_node(vfs_node_t node) {
+    if (!node)
+        return NULL;
+    if (!(node->type & file_symlink))
+        return node;
+
+    char target_path[256];
+    memset(target_path, 0, sizeof(target_path));
+    int len = vfs_readlink(node, target_path, sizeof(target_path));
+    target_path[len] = '\0';
+    vfs_node_t target_node =
+        vfs_open_at(node->parent, (const char *)target_path);
+
+    return target_node ?: node;
 }
 
 static inline void do_open(vfs_node_t file) {

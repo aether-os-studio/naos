@@ -87,8 +87,8 @@ void ext_unmount(vfs_node_t node) {
         list_foreach(node->child, i) { nodes[idx++] = (vfs_node_t)i->data; }
         for (uint64_t i = 0; i < idx; i++) {
             vfs_free(nodes[i]);
-            list_delete(node->child, nodes[i]);
         }
+        free(nodes);
     }
 }
 

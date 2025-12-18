@@ -147,8 +147,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->gid = 0;
     task->euid = 0;
     task->egid = 0;
-    task->ruid = 0;
-    task->rgid = 0;
+    task->suid = 0;
+    task->sgid = 0;
     task->pgid = 0;
     task->tgid = 0;
     task->sid = 0;
@@ -1402,8 +1402,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     child->gid = current_task->gid;
     child->euid = current_task->euid;
     child->egid = current_task->egid;
-    child->ruid = current_task->ruid;
-    child->rgid = current_task->rgid;
+    child->suid = current_task->suid;
+    child->sgid = current_task->sgid;
     child->pgid = current_task->pgid;
     child->sid = current_task->sid;
 
