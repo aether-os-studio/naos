@@ -188,6 +188,8 @@ int tmpfs_stat(void *file, vfs_node_t node) {
 
 void tmpfs_free_handle(void *handle) {
     tmpfs_node_t *tnode = handle;
+    if (!tnode)
+        return;
     free_frames_bytes(tnode->content, tnode->capability);
     free(tnode);
 }

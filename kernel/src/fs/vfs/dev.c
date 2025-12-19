@@ -248,6 +248,8 @@ int devtmpfs_stat(void *file, vfs_node_t node) {
 
 void devtmpfs_free_handle(void *handle) {
     devtmpfs_node_t *tnode = handle;
+    if (!tnode)
+        return;
     free_frames_bytes(tnode->content, tnode->capability);
     free(tnode);
 }
