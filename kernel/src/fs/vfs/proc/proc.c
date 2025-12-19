@@ -273,6 +273,14 @@ void procfs_on_new_task(task_t *task) {
     self_stat_handle->task = task;
     sprintf(self_stat_handle->name, "proc_stat");
 
+    vfs_node_t self_cgroup = vfs_child_append(node, "cgroup", NULL);
+    self_cgroup->type = file_none;
+    self_cgroup->mode = 0700;
+    proc_handle_t *self_cgroup_handle = malloc(sizeof(proc_handle_t));
+    self_cgroup->handle = self_cgroup_handle;
+    self_cgroup_handle->task = task;
+    sprintf(self_cgroup_handle->name, "proc_cgroup");
+
     vfs_node_t self_exe = vfs_child_append(node, "exe", NULL);
     self_exe->type = file_symlink;
     self_exe->mode = 0700;
@@ -308,9 +316,12 @@ void procfs_on_open_file(task_t *task, int fd) {
     fd_node->handle = fd_node_handle;
     fd_node_handle->node = fd_node;
     fd_node_handle->task = task;
-    char *link_name = vfs_get_fullpath(task->fd_info->fds[fd]->node);
-    strcpy(fd_node_handle->content, link_name);
-    free(link_name);
+    vfs_node_t node = task->fd_info->fds[fd]->node;
+    if (node->name) {
+        char *link_name = vfs_get_fullpath(node);
+        strcpy(fd_node_handle->content, link_name);
+        free(link_name);
+    }
     sprintf(fd_node_handle->name, "fd");
 }
 

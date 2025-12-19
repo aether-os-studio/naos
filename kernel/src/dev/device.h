@@ -22,6 +22,7 @@ enum device_subtype_t {
     DEV_DISK,        // 磁盘
     DEV_PART,        // 磁盘分区
     DEV_NETIF,       // 网卡
+    DEV_SYSDEV,      // 系统设备
     DEV_GPU = 226,   // 显卡
     DEV_MAX,
 };

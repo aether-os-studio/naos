@@ -56,6 +56,7 @@ void procfs_nodes_init() {
                          proc_pcmdline_stat);
     create_procfs_handle("proc_maps", proc_pmaps_read, NULL);
     create_procfs_handle("proc_stat", proc_pstat_read, proc_pstat_stat);
+    create_procfs_handle("proc_cgroup", proc_pcgroup_read, proc_pcgroup_stat);
 }
 
 size_t procfs_read_dispatch(proc_handle_t *handle, void *addr, size_t offset,

@@ -438,12 +438,11 @@ void syscall_handler_init() {
     // (syscall_handle_t)sys_keyctl; syscall_handlers[SYS_IOPRIO_SET] =
     // (syscall_handle_t)sys_ioprio_set; syscall_handlers[SYS_IOPRIO_GET] =
     // (syscall_handle_t)sys_ioprio_get;
-    syscall_handlers[SYS_INOTIFY_INIT] =
-        (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_INOTIFY_INIT] = (syscall_handle_t)sys_inotify_init;
     syscall_handlers[SYS_INOTIFY_ADD_WATCH] =
         (syscall_handle_t)dummy_syscall_handler;
-    // syscall_handlers[SYS_INOTIFY_RM_WATCH] =
-    //     (syscall_handle_t)sys_inotify_rm_watch;
+    syscall_handlers[SYS_INOTIFY_RM_WATCH] =
+        (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_MIGRATE_PAGES] =
     // (syscall_handle_t)sys_migrate_pages;
     syscall_handlers[SYS_OPENAT] = (syscall_handle_t)sys_openat;
@@ -488,8 +487,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_EPOLL_CREATE1] = (syscall_handle_t)sys_epoll_create1;
     syscall_handlers[SYS_DUP3] = (syscall_handle_t)sys_dup3;
     syscall_handlers[SYS_PIPE2] = (syscall_handle_t)sys_pipe;
-    syscall_handlers[SYS_INOTIFY_INIT1] =
-        (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_INOTIFY_INIT1] = (syscall_handle_t)sys_inotify_init1;
     // syscall_handlers[SYS_PREADV] = (syscall_handle_t)sys_preadv;
     // syscall_handlers[SYS_PWRITEV] = (syscall_handle_t)sys_pwritev;
     // syscall_handlers[SYS_RT_TGSIGQUEUEINFO] =

@@ -150,6 +150,9 @@ uint64_t sys_fsync(uint64_t fd) {
 }
 
 uint64_t sys_close(uint64_t fd) {
+    if (fd == SPECIAL_FD)
+        return 0;
+
     if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
     }

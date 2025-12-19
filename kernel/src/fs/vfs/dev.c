@@ -491,9 +491,9 @@ void setup_console_symlinks() {
 }
 
 void stdio_init() {
-    device_install(DEV_CHAR, DEV_NULL, NULL, "null", 0, nulldev_ioctl, NULL,
+    device_install(DEV_CHAR, DEV_SYSDEV, NULL, "null", 0, nulldev_ioctl, NULL,
                    nulldev_read, nulldev_write, NULL);
-    device_install(DEV_CHAR, DEV_NULL, NULL, "urandom", 0, NULL, NULL,
+    device_install(DEV_CHAR, DEV_SYSDEV, NULL, "urandom", 0, NULL, NULL,
                    urandom_read, urandom_write, NULL);
 
     setup_console_symlinks();

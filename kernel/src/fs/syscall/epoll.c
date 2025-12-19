@@ -90,11 +90,17 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
     if (op != EPOLL_CTL_ADD && op != EPOLL_CTL_DEL && op != EPOLL_CTL_MOD)
         return (uint64_t)(-EINVAL);
 
+    if (epollFd->fsid != epollfs_id)
+        return (uint64_t)(-EINVAL);
+
     epoll_t *epoll = epollFd->handle;
     if (!epoll)
         return -EINVAL;
 
     size_t ret = 0;
+
+    if (fd == SPECIAL_FD)
+        goto cleanup;
 
     if (!current_task->fd_info->fds[fd]) {
         ret = (uint64_t)(-EBADF);
@@ -150,13 +156,15 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
             ret = (uint64_t)(-ENOENT);
             goto cleanup;
         }
-        if (prev)
+        if (browse == epoll->firstEpollWatch)
+            epoll->firstEpollWatch = browse->next;
+        else if (prev)
             prev->next = browse->next;
         free(browse);
         break;
     }
     default:
-        printk("[epoll] Unhandled opcode %d\n", op);
+        ret = (uint64_t)-ENOSYS;
         break;
     }
 

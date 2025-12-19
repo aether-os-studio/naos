@@ -66,6 +66,8 @@ struct winsize {
 #define MS_ACTIVE (1 << 30)
 #define MS_NOUSER (1 << 31)
 
+#define SPECIAL_FD 0x2025
+
 uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
                    void *data);
 uint64_t sys_umount2(const char *target, uint64_t flags);
@@ -73,6 +75,8 @@ uint64_t sys_umount2(const char *target, uint64_t flags);
 uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode);
 uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags,
                     uint64_t mode);
+uint64_t sys_inotify_init();
+uint64_t sys_inotify_init1(uint64_t flags);
 uint64_t sys_fsync(uint64_t fd);
 uint64_t sys_close(uint64_t fd);
 uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags);
