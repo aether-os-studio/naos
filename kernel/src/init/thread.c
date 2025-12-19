@@ -13,6 +13,7 @@ extern void acpi_init_after_pci();
 extern void sysfs_init();
 extern void sysfs_init_umount();
 extern void fsfdfs_init();
+extern void cgroupfs_init();
 extern void fs_syscall_init();
 extern void socketfs_init();
 extern void pipefs_init();
@@ -42,6 +43,7 @@ void init_thread(uint64_t arg) {
     socketfs_init();
     pipefs_init();
     fsfdfs_init();
+    cgroupfs_init();
 
     fbdev_init();
 

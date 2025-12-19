@@ -151,9 +151,9 @@ int devtmpfs_symlink(void *parent, const char *name, vfs_node_t node) {
 
 int devtmpfs_mount(uint64_t dev, vfs_node_t node) {
     if (devtmpfs_root != fake_devtmpfs_root)
-        return -EALREADY;
+        return 0;
     if (devtmpfs_root == node)
-        return -EALREADY;
+        return 0;
 
     spin_lock(&devtmpfs_oplock);
 

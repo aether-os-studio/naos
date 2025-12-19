@@ -1,14 +1,10 @@
 export CWD = $(shell pwd)
-export SYSROOT = $(CWD)/rootfs-$(ARCH)
+export SYSROOT = $(CWD)/initramfs-$(ARCH)
 
 all:
 	sh ports.sh
 ifeq ($(ARCH), x86_64)
 # 	sh get_nvidia_firmware.sh
-	$(MAKE) -C init
-endif
-ifeq ($(ARCH), riscv64)
-	$(MAKE) -C init
 endif
 
 .PHONY: clean
@@ -18,5 +14,5 @@ clean:
 distclean:
 	rm -rf xbps-bin xbps
 	rm -rf .build-stamp-*
-	sudo rm -rf $(CWD)/rootfs-$(ARCH)
+	sudo rm -rf $(CWD)/initramfs-$(ARCH)
 	rm -rf $(CWD)/ports/cache

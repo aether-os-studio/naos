@@ -334,7 +334,7 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_SWAPON] = (syscall_handle_t)sys_swapon;
     // syscall_handlers[SYS_SWAPOFF] = (syscall_handle_t)sys_swapoff;
     syscall_handlers[SYS_REBOOT] = (syscall_handle_t)sys_reboot;
-    // syscall_handlers[SYS_SETHOSTNAME] = (syscall_handle_t)sys_sethostname;
+    syscall_handlers[SYS_SETHOSTNAME] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_SETDOMAINNAME] =
     // (syscall_handle_t)sys_setdomainname; syscall_handlers[SYS_IOPL] =
     // (syscall_handle_t)sys_iopl; syscall_handlers[SYS_IOPERM] =
@@ -448,7 +448,7 @@ void syscall_handler_init() {
     // (syscall_handle_t)sys_migrate_pages;
     syscall_handlers[SYS_OPENAT] = (syscall_handle_t)sys_openat;
     syscall_handlers[SYS_MKDIRAT] = (syscall_handle_t)sys_mkdirat;
-    // syscall_handlers[SYS_MKNODAT] = (syscall_handle_t)sys_mknodat;
+    syscall_handlers[SYS_MKNODAT] = (syscall_handle_t)sys_mknodat;
     syscall_handlers[SYS_FCHOWNAT] = (syscall_handle_t)sys_fchownat;
     syscall_handlers[SYS_FUTIMESAT] = (syscall_handle_t)sys_futimesat;
     syscall_handlers[SYS_NEWFSTATAT] = (syscall_handle_t)sys_newfstatat;

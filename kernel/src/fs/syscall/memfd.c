@@ -1,4 +1,5 @@
 #include <fs/vfs/vfs.h>
+#include <fs/vfs/proc.h>
 #include <mm/mm_syscall.h>
 #include <mm/page.h>
 #include <task/task.h>
@@ -164,6 +165,7 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags) {
     current_task->fd_info->fds[fd]->node = node;
     current_task->fd_info->fds[fd]->flags =
         (flags & MFD_CLOEXEC) ? O_CLOEXEC : 0;
+    procfs_on_open_file(current_task, fd);
 
     ctx->node = node;
 

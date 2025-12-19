@@ -1,4 +1,5 @@
 #include <fs/fs_syscall.h>
+#include <fs/vfs/proc.h>
 #include <arch/arch.h>
 #include <libs/klibc.h>
 #include <task/signal.h>
@@ -41,6 +42,7 @@ uint64_t sys_timerfd_create(int clockid, int flags) {
     current_task->fd_info->fds[fd]->node = node;
     current_task->fd_info->fds[fd]->offset = 0;
     current_task->fd_info->fds[fd]->flags = flags;
+    procfs_on_open_file(current_task, fd);
 
     return fd;
 }

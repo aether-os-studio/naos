@@ -1,4 +1,5 @@
 #include <fs/fs_syscall.h>
+#include <fs/vfs/proc.h>
 
 static int dummy() { return 0; }
 
@@ -92,6 +93,7 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask,
     current_task->fd_info->fds[fd]->node = node;
     current_task->fd_info->fds[fd]->offset = 0;
     current_task->fd_info->fds[fd]->flags = 0;
+    procfs_on_open_file(current_task, fd);
 
     return fd;
 }

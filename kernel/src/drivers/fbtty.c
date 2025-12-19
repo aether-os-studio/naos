@@ -90,13 +90,13 @@ int terminal_ioctl(tty_t *device, uint32_t cmd, uint64_t arg) {
         *(int *)arg = device->tty_mode;
         return 0;
     case KDSETMODE:
-        device->tty_mode = *(int *)arg;
+        device->tty_mode = arg;
         return 0;
     case KDGKBMODE:
         *(int *)arg = device->tty_kbmode;
         return 0;
     case KDSKBMODE:
-        device->tty_kbmode = *(int *)arg;
+        device->tty_kbmode = arg;
         return 0;
     case VT_SETMODE:
         memcpy(&device->current_vt_mode, (void *)arg, sizeof(struct vt_mode));
@@ -122,6 +122,8 @@ int terminal_ioctl(tty_t *device, uint32_t cmd, uint64_t arg) {
         memcpy(&device->termios, (void *)arg, sizeof(termios));
         return 0;
     case TCFLSH:
+        return 0;
+    case TIOCNXCL:
         return 0;
     default:
         return -EINVAL;

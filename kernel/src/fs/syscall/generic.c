@@ -398,7 +398,12 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
         return (uint64_t)-EBADF;
     }
 
-    return vfs_ioctl(current_task->fd_info->fds[fd]->node, cmd, arg);
+    int ret = vfs_ioctl(current_task->fd_info->fds[fd]->node, cmd, arg);
+    if (cmd == TIOCGWINSZ && ret < 0) {
+        return (uint64_t)-ENOTTY;
+    }
+
+    return ret;
 }
 
 uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count) {
@@ -466,44 +471,43 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size) {
     if (!(current_task->fd_info->fds[fd]->node->type & file_dir))
         return (uint64_t)-ENOTDIR;
 
-    struct dirent *dents = (struct dirent *)buf;
-    fd_t *filedescriptor = current_task->fd_info->fds[fd];
-    vfs_node_t node = filedescriptor->node;
+    fd_t *f = current_task->fd_info->fds[fd];
+    vfs_node_t node = f->node;
 
-    uint64_t child_count = (uint64_t)list_length(node->child);
+    uint64_t total_len = 0;
 
-    int64_t max_dents_num = size / sizeof(struct dirent);
-
-    int64_t read_count = 0;
-
-    uint64_t offset = 0;
+    void *dents = (void *)buf;
     list_foreach(node->child, i) {
-        if (offset < filedescriptor->offset)
-            goto next;
-        if (filedescriptor->offset >= (child_count * sizeof(struct dirent)))
+        uint64_t curr_off = (uint64_t)dents - buf;
+        if (curr_off < f->offset)
+            goto cont;
+        vfs_node_t child = (vfs_node_t)i->data;
+        uint64_t name_len = child->name ? strlen(child->name) : 0;
+        uint64_t fill_len = name_len + 1 + sizeof(struct dirent);
+        if (curr_off + fill_len > size)
             break;
-        if (read_count >= max_dents_num)
-            break;
-        vfs_node_t child_node = (vfs_node_t)i->data;
-        dents[read_count].d_ino = child_node->inode;
-        dents[read_count].d_off = filedescriptor->offset;
-        dents[read_count].d_reclen = sizeof(struct dirent);
-        if (child_node->type & file_symlink)
-            dents[read_count].d_type = DT_LNK;
-        else if (child_node->type & file_none)
-            dents[read_count].d_type = DT_REG;
-        else if (child_node->type & file_dir)
-            dents[read_count].d_type = DT_DIR;
+        struct dirent *dent = dents;
+        dent->d_ino = child->inode;
+        dent->d_off = (uint64_t)dents - buf;
+        dent->d_reclen = fill_len;
+        if (child->type & file_symlink)
+            dent->d_type = DT_LNK;
+        else if (child->type & file_none)
+            dent->d_type = DT_REG;
+        else if (child->type & file_dir)
+            dent->d_type = DT_DIR;
         else
-            dents[read_count].d_type = DT_UNKNOWN;
-        strncpy(dents[read_count].d_name, child_node->name, 256);
-        filedescriptor->offset += sizeof(struct dirent);
-        read_count++;
-    next:
-        offset += sizeof(struct dirent);
+            dent->d_type = DT_UNKNOWN;
+        if (child->name)
+            strcpy(dent->d_name, child->name);
+        dent->d_name[name_len] = '\0';
+        f->offset += fill_len;
+        total_len += fill_len;
+    cont:
+        dents += fill_len;
     }
 
-    return read_count * sizeof(struct dirent);
+    return total_len;
 }
 
 uint64_t sys_chdir(const char *dname) {
@@ -1231,6 +1235,21 @@ uint64_t sys_mknod(const char *name_user, uint16_t umode, int dev) {
     return 0;
 }
 
+uint64_t sys_mknodat(uint64_t fd, const char *path_user, uint16_t umode,
+                     int dev) {
+    char path[512];
+    if (copy_from_user_str(path, path_user, sizeof(path)))
+        return (uint64_t)-EFAULT;
+
+    char *fullpath = at_resolve_pathname(fd, path);
+    int ret = vfs_mknod(fullpath, umode, dev);
+    free(fullpath);
+    if (ret < 0)
+        return (uint64_t)-EINVAL;
+
+    return 0;
+}
+
 uint64_t sys_chmod(const char *name_user, uint16_t mode) {
     char name[512];
     if (copy_from_user_str(name, name_user, sizeof(name)))
@@ -1412,6 +1431,8 @@ uint64_t sys_futimesat(int dfd, const char *pathname, struct timeval *utimes) {
     return 0;
 }
 
+extern uint64_t memory_size;
+
 uint64_t sys_sysinfo(struct sysinfo *info_user) {
     struct sysinfo res;
     struct sysinfo *info = &res;
@@ -1421,7 +1442,8 @@ uint64_t sys_sysinfo(struct sysinfo *info_user) {
     info->loads[0] = 0;
     info->loads[1] = 0;
     info->loads[2] = 0;
-    info->totalram = 0;
+    info->totalram = memory_size / DEFAULT_PAGE_SIZE;
+    info->mem_unit = DEFAULT_PAGE_SIZE;
     info->freeram = 0;
     int proc_count = 0;
     for (int i = 0; i < MAX_TASK_NUM; i++) {

@@ -145,10 +145,8 @@ clippy:
 
 ROOTFS_IMG_SIZE ?= 2048
 
-.PHONY: rootfs-$(ARCH).img
 rootfs-$(ARCH).img: user/.build-stamp-$(ARCH)
-	dd if=/dev/zero bs=1M count=0 seek=$(ROOTFS_IMG_SIZE) of=rootfs-$(ARCH).img
-	sudo mkfs.ext4 -O ^metadata_csum  -F -q -d user/rootfs-$(ARCH) rootfs-$(ARCH).img
+#	TODO: get rootfs image from server
 
 ifeq ($(ARCH),x86_64)
 EFI_FILE_SINGLE = assets/limine/BOOTX64.EFI

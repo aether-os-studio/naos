@@ -4,6 +4,7 @@
 #include <drivers/kernel_logger.h>
 #include <fs/fs_syscall.h>
 #include <fs/vfs/vfs.h>
+#include <fs/vfs/proc.h>
 #include <task/task.h>
 #include <net/netlink.h>
 #include <libs/strerror.h>
@@ -290,6 +291,7 @@ int socket_socket(int domain, int type, int protocol) {
     current_task->fd_info->fds[i]->node = socknode;
     current_task->fd_info->fds[i]->offset = 0;
     current_task->fd_info->fds[i]->flags = 0;
+    procfs_on_open_file(current_task, i);
 
     handle->fd = current_task->fd_info->fds[i];
 
@@ -402,6 +404,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
     current_task->fd_info->fds[i]->node = acceptFd;
     current_task->fd_info->fds[i]->offset = 0;
     current_task->fd_info->fds[i]->flags = flags;
+    procfs_on_open_file(current_task, i);
 
     socket_handle_t *accept_handle = acceptFd->handle;
     accept_handle->fd = current_task->fd_info->fds[i];
@@ -643,6 +646,7 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags) {
             free(pair->client_pending_files[i]);
             pair->client_pending_files[i] = NULL;
             fds[received_fds] = fd;
+            procfs_on_open_file(current_task, fd);
 
             if (received_fds + 1 >= max_fds)
                 break;
@@ -813,6 +817,7 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg, int flags) {
             free(pair->server_pending_files[i]);
             pair->server_pending_files[i] = NULL;
             fds[received_fds] = fd;
+            procfs_on_open_file(current_task, fd);
 
             if (received_fds + 1 >= max_fds)
                 break;
@@ -940,6 +945,7 @@ int unix_socket_pair(int type, int protocol, int *sv) {
     current_task->fd_info->fds[i]->node = sock2Fd;
     current_task->fd_info->fds[i]->offset = 0;
     current_task->fd_info->fds[i]->flags = 0;
+    procfs_on_open_file(current_task, i);
 
     new_handle->fd = current_task->fd_info->fds[i];
 

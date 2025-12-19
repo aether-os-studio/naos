@@ -105,9 +105,9 @@ int sysfs_symlink(void *parent, const char *name, vfs_node_t node) {
 
 int sysfs_mount(uint64_t dev, vfs_node_t node) {
     if (sysfs_root != fake_sysfs_root)
-        return -EALREADY;
+        return 0;
     if (sysfs_root == node)
-        return -EALREADY;
+        return 0;
 
     spin_lock(&sysfs_oplock);
 

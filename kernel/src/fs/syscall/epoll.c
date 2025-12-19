@@ -1,4 +1,5 @@
 #include <fs/fs_syscall.h>
+#include <fs/vfs/proc.h>
 
 vfs_node_t epollfs_root;
 int epollfs_id;
@@ -36,6 +37,7 @@ size_t epoll_create1(int flags) {
     current_task->fd_info->fds[i]->node = node;
     current_task->fd_info->fds[i]->offset = 0;
     current_task->fd_info->fds[i]->flags = flags;
+    procfs_on_open_file(current_task, i);
 
     return i;
 }

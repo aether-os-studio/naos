@@ -31,24 +31,11 @@ $APK_CMD -X "$MIRROR/main" -U --initdb add alpine-base bash coreutils grep musl 
 
 printf "${MIRROR}/main\n${MIRROR}/community\n" | sudo tee $SYSROOT/etc/apk/repositories
 
-sudo cp -r $SCRIPTPATH/base/etc/resolv.conf $SYSROOT/etc/
-
-sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add musl-dev seatd eudev gcompat gzip xz make file tar pciutils tzdata nano vim lua5.1 gcc binutils fastfetch libdrm-dev libdrm-tests bind-tools curl evtest"
-sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add weston weston-clients weston-backend-drm weston-xwayland xwayland weston-shell-desktop weston-terminal ttf-dejavu"
-sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add xeyes xclock"
-
 sudo rm -rf $SYSROOT/bin/sh
 sudo ln -sf /bin/bash $SYSROOT/bin/sh
 sudo ln -sf /usr/share/zoneinfo/Asia/Shanghai $SYSROOT/etc/localtime
 
 sudo rm -rf $SYSROOT/etc/conf.d/*
 sudo rm -rf $SYSROOT/etc/init.d/*
-
-sudo cp -r $SCRIPTPATH/base/* $SYSROOT/
-
-sudo mkdir -p $SYSROOT/root/.cache/fontconfig
-sudo mkdir -p $SYSROOT/var/cache/fontconfig
-sudo chmod -R 755 $SYSROOT/root/.cache/fontconfig
-sudo chmod -R 755 $SYSROOT/var/cache/fontconfig
 
 sudo chmod -R 700 $SYSROOT/run

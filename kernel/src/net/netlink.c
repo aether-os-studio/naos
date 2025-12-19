@@ -4,6 +4,7 @@
 #include <arch/arch.h>
 #include <libs/klibc.h>
 #include <fs/fs_syscall.h>
+#include <fs/vfs/proc.h>
 #include <net/real_socket.h>
 
 extern vfs_node_t sockfs_root;
@@ -346,6 +347,7 @@ int netlink_socket(int domain, int type, int protocol) {
     current_task->fd_info->fds[i]->node = socknode;
     current_task->fd_info->fds[i]->offset = 0;
     current_task->fd_info->fds[i]->flags = flags;
+    procfs_on_open_file(current_task, i);
 
     return i;
 }

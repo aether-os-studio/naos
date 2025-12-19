@@ -1,4 +1,5 @@
 #include <fs/fs_syscall.h>
+#include <fs/vfs/proc.h>
 
 vfs_node_t eventfdfs_root = NULL;
 int eventfdfs_id = 0;
@@ -49,6 +50,7 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags) {
     current_task->fd_info->fds[fd]->node = node;
     current_task->fd_info->fds[fd]->offset = 0;
     current_task->fd_info->fds[fd]->flags = 0;
+    procfs_on_open_file(current_task, fd);
 
     return fd;
 }

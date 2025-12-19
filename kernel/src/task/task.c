@@ -67,12 +67,16 @@ void free_task(task_t *ptr) {
                     free(ptr->fd_info->fds[i]);
 
                     ptr->fd_info->fds[i] = NULL;
+
+                    procfs_on_close_file(ptr, i);
                 }
             }
             free(ptr->fd_info);
             ptr->fd_info = NULL;
         }
     }
+
+    procfs_on_exit_task(ptr);
 
     free_frames_bytes((void *)(ptr->kernel_stack - STACK_SIZE), STACK_SIZE);
     free_frames_bytes((void *)(ptr->syscall_stack - STACK_SIZE), STACK_SIZE);
@@ -942,7 +946,7 @@ void task_exit_inner(task_t *task, int64_t code) {
     spin_unlock(&futex_lock);
 
     if (task->tidptr) {
-        *task->tidptr = 0;
+        // *task->tidptr = 0;
         sys_futex_wake((uint64_t)task->tidptr, INT32_MAX, 0xFFFFFFFF);
     }
 
@@ -956,8 +960,6 @@ void task_exit_inner(task_t *task, int64_t code) {
 
     if (task->fd_info)
         task->fd_info->ref_count--;
-
-    procfs_on_exit_task(task);
 
     if (task->waitpid != 0 && task->waitpid < MAX_TASK_NUM &&
         tasks[task->waitpid] &&

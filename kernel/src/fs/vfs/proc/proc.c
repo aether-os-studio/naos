@@ -73,9 +73,9 @@ ssize_t procfs_readlink(vfs_node_t node, void *addr, size_t offset,
 
 int procfs_mount(uint64_t dev, vfs_node_t mnt) {
     if (procfs_root != fake_procfs_root)
-        return -EALREADY;
+        return 0;
     if (procfs_root == mnt)
-        return -EALREADY;
+        return 0;
 
     spin_lock(&procfs_oplock);
 
@@ -316,7 +316,7 @@ void procfs_on_open_file(task_t *task, int fd) {
 
 void procfs_on_close_file(task_t *task, int fd) {
     char name[3 + 4];
-    sprintf(name, "fd/%d", task->pid, fd);
+    sprintf(name, "fd/%d", fd);
     vfs_node_t fd_node = vfs_open_at(task->procfs_node, name);
     if (!fd_node)
         return;
