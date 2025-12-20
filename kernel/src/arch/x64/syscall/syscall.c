@@ -278,8 +278,8 @@ void syscall_handler_init() {
     syscall_handlers[SYS_SETFSUID] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_SETFSGID] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_GETSID] = (syscall_handle_t)sys_getsid;
-    // syscall_handlers[SYS_CAPGET] = (syscall_handle_t)sys_capget;
-    // syscall_handlers[SYS_CAPSET] = (syscall_handle_t)sys_capset;
+    syscall_handlers[SYS_CAPGET] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_CAPSET] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_RT_SIGPENDING] =
     // (syscall_handle_t)sys_rt_sigpending;
     syscall_handlers[SYS_RT_SIGTIMEDWAIT] =

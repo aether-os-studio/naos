@@ -159,16 +159,10 @@ uint64_t sys_name_to_handle_at(int dfd, const char *name,
         return (uint64_t)-ENOENT;
     }
 
-    char *fullpath = vfs_get_fullpath(node);
-    if (!fullpath) {
-        return (uint64_t)-ENOMEM;
-    }
-
-    const unsigned int required_size = strlen(fullpath);
+    const unsigned int required_size = sizeof(uint64_t);
 
     if (handle->handle_bytes < required_size) {
         handle->handle_bytes = required_size;
-        free(fullpath);
         return (uint64_t)-EOVERFLOW;
     }
 
@@ -176,16 +170,12 @@ uint64_t sys_name_to_handle_at(int dfd, const char *name,
     handle->handle_type = 1; // Generic file handle type
 
     if (check_user_overflow((uint64_t)handle->f_handle, required_size)) {
-        free(fullpath);
         return (uint64_t)-EFAULT;
     }
 
-    if (copy_to_user(handle->f_handle, fullpath, required_size)) {
-        free(fullpath);
+    if (copy_to_user(handle->f_handle, &node->inode, sizeof(uint64_t))) {
         return (uint64_t)-EFAULT;
     }
-
-    free(fullpath);
 
     if (mnt_id) {
         if (check_user_overflow((uint64_t)mnt_id, sizeof(int))) {
@@ -217,13 +207,13 @@ uint64_t sys_open_by_handle_at(int mountdirfd, struct file_handle *handle,
         return (uint64_t)-EFAULT;
     }
 
-    char path[256];
-    if (copy_from_user_str(path, (const char *)handle->f_handle,
-                           sizeof(path))) {
+    uint64_t inode;
+    if (copy_from_user(&inode, (const char *)handle->f_handle,
+                       sizeof(uint64_t))) {
         return (uint64_t)-EFAULT;
     }
 
-    vfs_node_t node = vfs_open((const char *)path);
+    vfs_node_t node = vfs_find_node_by_inode(inode);
     if (!node) {
         return -ESTALE;
     }

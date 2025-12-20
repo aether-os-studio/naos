@@ -702,25 +702,3 @@ void pci_init() {
         }
     }
 }
-
-void pci_init_after_sysfs() {
-    for (uint64_t i = 0; i < pci_device_number; i++) {
-        pci_device_t *device = pci_devices[i];
-
-        for (uint64_t d = 0; d < MAX_PCI_DRIVERS; d++) {
-            if (pci_drivers[d] &&
-                (pci_drivers[d]->flags & PCI_DRIVER_FLAGS_NEED_SYSFS) &&
-                ((pci_drivers[d]->class_id == device->class_code) ||
-                 ((pci_drivers[d]->vendor_device_id & 0xFFFF0000) ==
-                  ((uint32_t)device->vendor_id << 16)))) {
-                int ret = pci_drivers[d]->probe(
-                    device,
-                    ((uint32_t)device->vendor_id << 16) | (device->device_id));
-                if (ret < 0) {
-                    printk("PCI driver %s probe failed!!!\n",
-                           pci_drivers[d]->name);
-                }
-            }
-        }
-    }
-}

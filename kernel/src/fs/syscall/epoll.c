@@ -184,7 +184,7 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
         }
 
         new_watch->fd = fdNode;
-        new_watch->events = event->events;
+        new_watch->events = event->events & ~EPOLLET;
         new_watch->data = event->data.u64;
         new_watch->edge_trigger = (event->events & EPOLLET) != 0;
         new_watch->last_events = 0;
@@ -217,7 +217,7 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
             break;
         }
 
-        existing->events = event->events & ~EPOLLET; // 移除EPOLLET标志
+        existing->events = event->events & ~EPOLLET;
         existing->data = event->data.u64;
         existing->edge_trigger = (event->events & EPOLLET) != 0;
         existing->last_events = 0; // 重置状态

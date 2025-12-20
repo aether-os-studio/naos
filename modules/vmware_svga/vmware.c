@@ -741,7 +741,7 @@ pci_driver_t vmware_svga_pci_driver = {
     .probe = vmware_svga_probe,
     .remove = vmware_svga_remove,
     .shutdown = vmware_svga_shutdown,
-    .flags = PCI_DRIVER_FLAGS_NEED_SYSFS,
+    .flags = 0,
 };
 
 __attribute__((visibility("default"))) int dlmain() {

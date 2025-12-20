@@ -16,11 +16,11 @@ enum device_type_t {
 // 设备子类型
 enum device_subtype_t {
     DEV_CONSOLE = 1, // 控制台
+    DEV_PART = 8,    // 磁盘分区
     DEV_INPUT = 13,  // 输入设备
     DEV_FB,          // 帧缓冲
     DEV_TTY,         // TTY 设备
     DEV_DISK,        // 磁盘
-    DEV_PART,        // 磁盘分区
     DEV_NETIF,       // 网卡
     DEV_SYSDEV,      // 系统设备
     DEV_GPU = 226,   // 显卡

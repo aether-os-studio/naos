@@ -103,4 +103,3 @@ void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
                        uint8_t device, uint8_t function);
 void pci_controller_init();
 void pci_init();
-void pci_init_after_sysfs();

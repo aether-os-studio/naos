@@ -1,6 +1,7 @@
 #pragma once
 
 #include <libs/klibc.h>
+#include <libs/llist.h>
 #include <fs/vfs/fcntl.h>
 #include <fs/vfs/utils.h>
 
@@ -185,29 +186,30 @@ typedef struct flock {
 #define VFS_NODE_FLAGS_FREE_AFTER_USE (1ULL << 1)
 
 struct vfs_node {
-    vfs_node_t parent;   // 父目录
-    uint64_t flags;      // 标志
-    uint64_t dev;        // 设备号
-    uint64_t rdev;       // 真实设备号
-    char *name;          // 名称
-    uint64_t inode;      // 节点号
-    uint64_t realsize;   // 项目真实占用的空间 (可选)
-    uint64_t size;       // 文件大小或若是文件夹则填0
-    uint64_t blksz;      // 块大小
-    uint64_t createtime; // 创建时间
-    uint64_t readtime;   // 最后读取时间
-    uint64_t writetime;  // 最后写入时间
-    uint32_t owner;      // 所有者
-    uint32_t group;      // 所有组
-    uint32_t type;       // 类型
-    uint32_t fsid;       // 文件系统的 id
-    void *handle;        // 操作文件的句柄
-    flock_t lock;        // 锁
-    list_t child;        // 子目录和子文件
-    vfs_node_t root;     // 根目录
-    int refcount;        // 引用计数
-    uint16_t mode;       // 模式
-    uint32_t rw_hint;    // 读写提示
+    vfs_node_t parent;        // 父目录
+    uint64_t flags;           // 标志
+    uint64_t dev;             // 设备号
+    uint64_t rdev;            // 真实设备号
+    char *name;               // 名称
+    uint64_t inode;           // 节点号
+    uint64_t realsize;        // 项目真实占用的空间 (可选)
+    uint64_t size;            // 文件大小或若是文件夹则填0
+    uint64_t blksz;           // 块大小
+    uint64_t createtime;      // 创建时间
+    uint64_t readtime;        // 最后读取时间
+    uint64_t writetime;       // 最后写入时间
+    uint32_t owner;           // 所有者
+    uint32_t group;           // 所有组
+    uint32_t type;            // 类型
+    uint32_t fsid;            // 文件系统的 id
+    void *handle;             // 操作文件的句柄
+    flock_t lock;             // 锁
+    struct llist_header node; // 所有vfs_node的链表
+    list_t child;             // 子目录和子文件
+    vfs_node_t root;          // 根目录
+    int refcount;             // 引用计数
+    uint16_t mode;            // 模式
+    uint32_t rw_hint;         // 读写提示
 };
 
 extern vfs_node_t rootdir; // vfs 根目录
@@ -236,6 +238,8 @@ int vfs_regist(fs_t *fs);
 vfs_node_t vfs_open_at(vfs_node_t start, const char *_path);
 
 vfs_node_t vfs_open(const char *_path);
+
+vfs_node_t vfs_find_node_by_inode(uint64_t inode);
 
 /**
  *\brief 创建文件夹
@@ -399,7 +403,7 @@ extern vfs_callback_t fs_callbacks[256];
 extern int fs_nextid;
 
 static inline uint32_t alloc_fake_inode() {
-    static uint32_t next_inode = 1;
+    static uint32_t next_inode = 0x80000001;
     return next_inode++;
 }
 

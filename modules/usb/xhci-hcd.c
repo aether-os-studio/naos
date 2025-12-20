@@ -1469,7 +1469,7 @@ pci_driver_t xhci_hcd_driver = {
     .probe = xhci_hcd_driver_probe,
     .remove = xhci_hcd_driver_remove,
     .shutdown = xhci_hcd_driver_shutdown,
-    .flags = PCI_DRIVER_FLAGS_NEED_SYSFS,
+    .flags = 0,
 };
 
 __attribute__((visibility("default"))) int dlmain() {

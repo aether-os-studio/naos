@@ -65,7 +65,7 @@ pci_driver_t virtio_pci_driver = {
     .probe = virtio_probe,
     .remove = virtio_remove,
     .shutdown = virtio_shutdown,
-    .flags = PCI_DRIVER_FLAGS_NEED_SYSFS,
+    .flags = 0,
 };
 
 #if !defined(__x86_64__)

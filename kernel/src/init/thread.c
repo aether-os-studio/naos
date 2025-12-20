@@ -30,16 +30,6 @@ void init_thread(uint64_t arg) {
 
     arch_init_after_thread();
 
-#if !defined(__x86_64__)
-    fdt_init();
-#endif
-
-    pci_controller_init();
-
-    pci_init();
-
-    acpi_init_after_pci();
-
     fs_syscall_init();
     socketfs_init();
     pipefs_init();
@@ -49,9 +39,17 @@ void init_thread(uint64_t arg) {
 
     fbdev_init();
 
+    pci_controller_init();
+
     sysfs_init();
 
-    pci_init_after_sysfs();
+#if !defined(__x86_64__)
+    fdt_init();
+#endif
+
+    pci_init();
+
+    acpi_init_after_pci();
 
     fbdev_init_sysfs();
 

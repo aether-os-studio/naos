@@ -2,6 +2,7 @@
 #include <mm/mm.h>
 #include <fs/partition.h>
 #include <fs/vfs/dev.h>
+#include <fs/vfs/sys.h>
 #include <arch/arch.h>
 #include <task/task.h>
 
@@ -56,6 +57,14 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             partitions[partition_num].dev = device_install(
                 DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0,
                 partition_ioctl, NULL, partition_read, partition_write, NULL);
+            char uevent[256];
+            sprintf(
+                uevent,
+                "SUBSYSTEM=block\nDEVTYPE=partition\nDEVNAME=%s\nDISKSEQ=%d\n",
+                name, partition_num + 1);
+            sysfs_regist_dev('b', (partitions[partition_num].dev >> 8) & 0xFF,
+                             partitions[partition_num].dev & 0xFF, "", name,
+                             uevent);
 
             partition_num++;
         }
@@ -81,6 +90,14 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             partitions[partition_num].dev = device_install(
                 DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0,
                 partition_ioctl, NULL, partition_read, partition_write, NULL);
+            char uevent[256];
+            sprintf(
+                uevent,
+                "SUBSYSTEM=block\nDEVTYPE=partition\nDEVNAME=%s\nDISKSEQ=%d\n",
+                name, partition_num + 1);
+            sysfs_regist_dev('b', (partitions[partition_num].dev >> 8) & 0xFF,
+                             partitions[partition_num].dev & 0xFF, "", name,
+                             uevent);
 
             partition_num++;
 
@@ -105,6 +122,14 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             partitions[partition_num].dev = device_install(
                 DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0,
                 partition_ioctl, NULL, partition_read, partition_write, NULL);
+            char uevent[256];
+            sprintf(
+                uevent,
+                "SUBSYSTEM=block\nDEVTYPE=partition\nDEVNAME=%s\nDISKSEQ=%d\n",
+                name, partition_num + 1);
+            sysfs_regist_dev('b', (partitions[partition_num].dev >> 8) & 0xFF,
+                             partitions[partition_num].dev & 0xFF, "", name,
+                             uevent);
 
             partition_num++;
             continue;
@@ -126,6 +151,14 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
             partitions[partition_num].dev = device_install(
                 DEV_BLOCK, DEV_PART, &partitions[partition_num], name, 0,
                 partition_ioctl, NULL, partition_read, partition_write, NULL);
+            char uevent[256];
+            sprintf(
+                uevent,
+                "SUBSYSTEM=block\nDEVTYPE=partition\nDEVNAME=%s\nDISKSEQ=%d\n",
+                name, partition_num + 1);
+            sysfs_regist_dev('b', (partitions[partition_num].dev >> 8) & 0xFF,
+                             partitions[partition_num].dev & 0xFF, "", name,
+                             uevent);
 
             partition_num++;
         }

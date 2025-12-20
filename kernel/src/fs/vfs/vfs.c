@@ -7,6 +7,7 @@
 #include "net/socket.h"
 #include "drivers/pty.h"
 
+struct llist_header vfs_nodes;
 vfs_node_t rootdir = NULL;
 
 fs_t *all_fs[256] = {
@@ -39,6 +40,7 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
     node->root = parent ? parent->root : node;
     node->lock.l_pid = 0;
     node->lock.l_type = F_UNLCK;
+    llist_prepend(&vfs_nodes, &node->node);
     node->refcount = 0;
     node->mode = 0777;
     node->rw_hint = 0;
@@ -57,6 +59,7 @@ void vfs_free(vfs_node_t vfs) {
     callbackof(vfs, free_handle)(vfs->handle);
     if (vfs->parent)
         list_delete(vfs->parent->child, vfs);
+    llist_delete(&vfs->node);
     free(vfs->name);
     free(vfs);
 }
@@ -686,9 +689,20 @@ vfs_node_t vfs_open(const char *_path) {
     return node;
 }
 
+vfs_node_t vfs_find_node_by_inode(uint64_t inode) {
+    vfs_node_t pos, tmp;
+    llist_for_each(pos, tmp, &vfs_nodes, node) {
+        if (pos->inode == inode)
+            return pos;
+    }
+    return NULL;
+}
+
 void vfs_update(vfs_node_t node) { do_update(node); }
 
 bool vfs_init() {
+    llist_init_head(&vfs_nodes);
+
     for (size_t i = 0; i < sizeof(struct vfs_callback) / sizeof(void *); i++) {
         ((void **)&vfs_empty_callback)[i] = &empty_func;
     }
@@ -715,6 +729,7 @@ int vfs_close(vfs_node_t node) {
         bool real_close = callbackof(node, close)(node->handle);
         if (real_close) {
             if (node->flags & VFS_NODE_FLAGS_FREE_AFTER_USE) {
+                llist_delete(&node->node);
                 free(node->name);
                 free(node);
                 return 0;
@@ -722,6 +737,7 @@ int vfs_close(vfs_node_t node) {
             if (node->flags & VFS_NODE_FLAGS_DELETED) {
                 callbackof(node, free_handle)(node->handle);
                 node->handle = NULL;
+                llist_delete(&node->node);
                 free(node->name);
                 free(node);
             } else {
@@ -918,6 +934,7 @@ int vfs_delete(vfs_node_t node) {
     if (node->refcount <= 0) {
         callbackof(node, free_handle)(node->handle);
         node->handle = NULL;
+        llist_delete(&node->node);
         free(node->name);
         free(node);
     }

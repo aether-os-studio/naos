@@ -695,7 +695,7 @@ void netlink_free_handle(vfs_node_t node) {
     free(handle);
 }
 
-static int dummy() { return -ENOSYS; }
+static int dummy() { return 0; }
 
 static struct vfs_callback netlink_callback = {
     .mount = (vfs_mount_t)dummy,
