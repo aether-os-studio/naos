@@ -47,6 +47,8 @@ typedef void *timer_t;
         __wcounter__;                                                          \
     })
 
+#define is_digit(c) ((c) >= '0' && (c) <= '9') // 用来判断是否是数字的宏
+
 #define ABS(x) ((x) > 0 ? (x) : -(x)) // 绝对值
 // 最大最小值
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))

@@ -246,6 +246,7 @@ void procfs_on_new_task(task_t *task) {
     cmdline->mode = 0700;
     proc_handle_t *handle = malloc(sizeof(proc_handle_t));
     cmdline->handle = handle;
+    handle->node = cmdline;
     handle->task = task;
     sprintf(handle->name, "proc_cmdline");
 
@@ -254,6 +255,7 @@ void procfs_on_new_task(task_t *task) {
     self_environ->mode = 0700;
     proc_handle_t *self_environ_handle = malloc(sizeof(proc_handle_t));
     self_environ->handle = self_environ_handle;
+    self_environ_handle->node = self_environ;
     self_environ_handle->task = task;
     sprintf(self_environ_handle->name, "environ");
 
@@ -262,6 +264,7 @@ void procfs_on_new_task(task_t *task) {
     self_maps->mode = 0700;
     proc_handle_t *self_maps_handle = malloc(sizeof(proc_handle_t));
     self_maps->handle = self_maps_handle;
+    self_maps_handle->node = self_maps;
     self_maps_handle->task = task;
     sprintf(self_maps_handle->name, "proc_maps");
 
@@ -270,6 +273,7 @@ void procfs_on_new_task(task_t *task) {
     self_stat->mode = 0700;
     proc_handle_t *self_stat_handle = malloc(sizeof(proc_handle_t));
     self_stat->handle = self_stat_handle;
+    self_stat_handle->node = self_stat;
     self_stat_handle->task = task;
     sprintf(self_stat_handle->name, "proc_stat");
 
@@ -278,14 +282,25 @@ void procfs_on_new_task(task_t *task) {
     self_cgroup->mode = 0700;
     proc_handle_t *self_cgroup_handle = malloc(sizeof(proc_handle_t));
     self_cgroup->handle = self_cgroup_handle;
+    self_cgroup_handle->node = self_cgroup;
     self_cgroup_handle->task = task;
     sprintf(self_cgroup_handle->name, "proc_cgroup");
+
+    // vfs_node_t self_mountinfo = vfs_child_append(node, "mountinfo", NULL);
+    // self_mountinfo->type = file_none;
+    // self_mountinfo->mode = 0700;
+    // proc_handle_t *self_mountinfo_handle = malloc(sizeof(proc_handle_t));
+    // self_mountinfo->handle = self_mountinfo_handle;
+    // self_mountinfo_handle->node = self_mountinfo;
+    // self_mountinfo_handle->task = task;
+    // sprintf(self_mountinfo_handle->name, "proc_pmountinfo");
 
     vfs_node_t self_exe = vfs_child_append(node, "exe", NULL);
     self_exe->type = file_symlink;
     self_exe->mode = 0700;
     proc_handle_t *self_exe_handle = malloc(sizeof(proc_handle_t));
     self_exe->handle = self_exe_handle;
+    self_exe_handle->node = self_exe;
     self_exe_handle->task = task;
     sprintf(self_exe_handle->name, "exe");
 

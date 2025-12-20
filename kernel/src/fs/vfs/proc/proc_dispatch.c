@@ -41,6 +41,7 @@ static void create_procfs_node(char *name, read_entry_t read_entry,
     node->mode = 0700;
     proc_handle_t *handle0 = malloc(sizeof(proc_handle_t));
     node->handle = handle0;
+    handle0->node = node;
     handle0->task = NULL;
     sprintf(handle0->name, "%s", name);
 }
@@ -69,7 +70,7 @@ size_t procfs_read_dispatch(proc_handle_t *handle, void *addr, size_t offset,
                                                      size);
         }
     }
-    return 0;
+    return (size_t)-ENOENT;
 }
 
 void procfs_stat_dispatch(proc_handle_t *handle, vfs_node_t node) {

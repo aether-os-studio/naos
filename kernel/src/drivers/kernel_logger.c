@@ -15,8 +15,6 @@
 #define SMALL 64   // 十进制以上数字显示小写字母
 #define SIGN 128   // 显示符号位
 
-#define is_digit(c) ((c) >= '0' && (c) <= '9') // 用来判断是否是数字的宏
-
 char buf[4096];
 
 char *write_num(char *str, uint64_t num, int base, int field_width,

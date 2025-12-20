@@ -277,7 +277,8 @@ struct msghdr {
 };
 
 struct cmsghdr {
-    uint64_t cmsg_len;
+    unsigned cmsg_len;
+    int __pad;
     int cmsg_level;
     int cmsg_type;
 };

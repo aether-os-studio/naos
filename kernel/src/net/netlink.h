@@ -84,7 +84,12 @@ struct sockaddr_nl {
     uint32_t nl_groups;
 };
 
-#define NETLINK_BUFFER_SIZE 32768
+// Out defines
+
+#define NETLINK_BUFFER_SIZE 8192
+
+// Opaque netlink buffer structure
+struct netlink_buffer;
 
 // Netlink socket structure
 struct netlink_sock {
@@ -93,10 +98,16 @@ struct netlink_sock {
     uint32_t dst_portid;
     uint32_t dst_groups;
     struct sockaddr_nl *bind_addr;
-    int uevent_message_pos;
-    char *buffer;
-    size_t buffer_size;
-    size_t buffer_pos;
+    struct netlink_buffer *buffer; // Circular buffer for messages
+    spinlock_t lock;
+};
+
+// Netlink socket buffer management
+struct netlink_buffer {
+    char data[NETLINK_BUFFER_SIZE];
+    size_t head;
+    size_t tail;
+    size_t size;
     spinlock_t lock;
 };
 
