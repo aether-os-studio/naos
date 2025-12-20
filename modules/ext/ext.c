@@ -18,20 +18,29 @@ int ext_mount(uint64_t dev, vfs_node_t node) {
 
     device_dev_name_set("dev");
 
-    char *fullpath = vfs_get_fullpath(node);
-    int ret = ext4_mount("dev", (const char *)fullpath, false);
+    char *mount_point = vfs_get_fullpath(node);
+    size_t mp_len = strlen(mount_point);
+    if (mount_point[mp_len - 1] != '/') {
+        char *new_mount_point = malloc(mp_len + 2);
+        strcpy(new_mount_point, mount_point);
+        new_mount_point[mp_len] = '/';
+        new_mount_point[mp_len + 1] = '\0';
+        free(mount_point);
+        mount_point = new_mount_point;
+    }
+    int ret = ext4_mount("dev", (const char *)mount_point, false);
 
     if (ret != 0) {
         ext4_device_unregister("dev");
-        free(fullpath);
+        free(mount_point);
         spin_unlock(&rwlock);
         return -ret;
     }
 
     ext4_dir *dir = malloc(sizeof(ext4_dir));
-    ext4_dir_open(dir, (const char *)fullpath);
+    ext4_dir_open(dir, (const char *)mount_point);
 
-    free(fullpath);
+    free(mount_point);
 
     const ext4_direntry *entry;
     while ((entry = ext4_dir_entry_next(dir))) {

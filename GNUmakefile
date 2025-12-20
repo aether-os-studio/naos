@@ -77,7 +77,7 @@ endif
 ifeq ($(KVM), 1)
 override QEMUFLAGS := $(QEMUFLAGS) -cpu host,migratable=off --enable-kvm
 else
-override QEMUFLAGS := $(QEMUFLAGS)
+override QEMUFLAGS := $(QEMUFLAGS) -cpu max
 endif
 
 ifeq ($(SER), 1)
@@ -235,7 +235,6 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 run-x86_64-single: assets/ovmf-code-$(ARCH).fd all-single
 	qemu-system-$(ARCH) \
 		-M q35 \
-		-cpu max \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=single-$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-device qemu-xhci,id=xhci \
@@ -327,7 +326,6 @@ run-riscv64-single: assets/ovmf-code-$(ARCH).fd all-single
 run-loongarch64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
 	qemu-system-$(ARCH) \
 		-M virt \
-		-cpu max \
 		-device ramfb \
 		-device qemu-xhci \
 		-device usb-kbd \

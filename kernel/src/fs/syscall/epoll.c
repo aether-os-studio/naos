@@ -59,8 +59,7 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
 
         while (browse && ready < maxevents) {
             if (!browse->fd) {
-                browse = browse->next;
-                continue;
+                goto next;
             }
             int revents = vfs_poll(browse->fd, browse->watchEvents);
             if (revents > 0 && ready < maxevents) {
@@ -68,6 +67,7 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
                 events[ready].data = (epoll_data_t)browse->userlandData;
                 ready++;
             }
+        next:
             browse = browse->next;
         }
 
@@ -128,21 +128,6 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
         }
         break;
     }
-    case EPOLL_CTL_MOD: {
-        epoll_watch_t *browse = epoll->firstEpollWatch;
-        while (browse) {
-            if (browse->fd == fdNode)
-                break;
-            browse = browse->next;
-        }
-        if (!browse) {
-            ret = (uint64_t)(-ENOENT);
-            goto cleanup;
-        }
-        browse->watchEvents = event->events;
-        browse->userlandData = (uint64_t)event->data.ptr;
-        break;
-    }
     case EPOLL_CTL_DEL: {
         epoll_watch_t *browse = epoll->firstEpollWatch;
         epoll_watch_t *prev = NULL;
@@ -161,6 +146,21 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
         else if (prev)
             prev->next = browse->next;
         free(browse);
+        break;
+    }
+    case EPOLL_CTL_MOD: {
+        epoll_watch_t *browse = epoll->firstEpollWatch;
+        while (browse) {
+            if (browse->fd == fdNode)
+                break;
+            browse = browse->next;
+        }
+        if (!browse) {
+            ret = (uint64_t)(-ENOENT);
+            goto cleanup;
+        }
+        browse->watchEvents = event->events;
+        browse->userlandData = (uint64_t)event->data.ptr;
         break;
     }
     default:

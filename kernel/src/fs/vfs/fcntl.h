@@ -49,7 +49,7 @@ struct dirent {
     long d_off;
     unsigned short d_reclen;
     unsigned char d_type;
-    char d_name[];
+    char d_name[256];
 };
 
 #define EPOLLIN 0x001

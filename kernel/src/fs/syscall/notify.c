@@ -6,6 +6,8 @@ static int notifyfs_id = 0;
 
 static int dummy() { return 0; }
 
+static int notifyfs_poll(void *file, size_t events) { return 0; }
+
 static struct vfs_callback notifyfs_callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
@@ -26,7 +28,7 @@ static struct vfs_callback notifyfs_callbacks = {
     .map = (vfs_mapfile_t)dummy,
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)dummy,
-    .poll = (vfs_poll_t)dummy,
+    .poll = (vfs_poll_t)notifyfs_poll,
     .resize = (vfs_resize_t)dummy,
 
     .free_handle = vfs_generic_free_handle,
