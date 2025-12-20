@@ -28,7 +28,6 @@ size_t epoll_create1(int flags) {
     epoll_t *epoll = malloc(sizeof(epoll_t));
     epoll->lock.lock = 0;
     epoll->firstEpollWatch = NULL;
-    epoll->reference_count = 1;
     node->mode = 0700;
     node->handle = epoll;
     node->fsid = epollfs_id;
@@ -48,38 +47,87 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
                     int maxevents, int timeout) {
     if (maxevents < 1)
         return (uint64_t)-EINVAL;
-    epoll_t *epoll = epollFd->handle;
+    if (!epollFd || epollFd->fsid != epollfs_id)
+        return (uint64_t)-EBADF;
 
-    bool sigexit = false;
+    epoll_t *epoll = epollFd->handle;
+    if (!epoll)
+        return -EINVAL;
 
     int ready = 0;
-    size_t target = nano_time() + timeout;
-    do {
+    uint64_t target_timeout = 0;
+
+    if (timeout > 0) {
+        target_timeout = nano_time() + timeout * 1000000; // ms转ns
+    } else if (timeout == 0) {
+        goto check_events;
+    }
+
+    bool timed_out = false;
+    bool interrupted = false;
+
+    while (ready == 0 && !timed_out && !interrupted) {
+        if (signals_pending_quick(current_task)) {
+            interrupted = true;
+            break;
+        }
+
+        if (timeout > 0 && nano_time() >= target_timeout) {
+            timed_out = true;
+            break;
+        }
+
+    check_events:
+        spin_lock(&epoll->lock);
+
         epoll_watch_t *browse = epoll->firstEpollWatch;
+        ready = 0;
 
         while (browse && ready < maxevents) {
             if (!browse->fd) {
-                goto next;
+                browse = browse->next;
+                continue;
             }
-            int revents = vfs_poll(browse->fd, browse->watchEvents);
-            if (revents > 0 && ready < maxevents) {
-                events[ready].events = revents;
-                events[ready].data = (epoll_data_t)browse->userlandData;
-                ready++;
+
+            uint32_t current_events = vfs_poll(browse->fd, browse->events);
+
+            uint32_t ready_events = current_events & browse->events;
+
+            if (ready_events) {
+                // 处理边缘触发逻辑
+                if (browse->edge_trigger) {
+                    // 只返回新出现的事件
+                    uint32_t new_events = ready_events & ~browse->last_events;
+                    if (new_events) {
+                        events[ready].events = new_events;
+                        events[ready].data.u64 = browse->data;
+                        ready++;
+                        browse->last_events = ready_events; // 更新状态
+                    }
+                } else {
+                    // 水平触发：只要事件存在就返回
+                    events[ready].events = ready_events;
+                    events[ready].data.u64 = browse->data;
+                    ready++;
+                }
+            } else if (!browse->edge_trigger) {
+                browse->last_events = 0;
             }
-        next:
+
             browse = browse->next;
         }
 
-        sigexit = signals_pending_quick(current_task);
+        spin_unlock(&epoll->lock);
 
-        if (ready > 0 || sigexit)
+        if (ready > 0)
             break;
 
-        arch_yield();
-    } while (timeout != 0 && (timeout == -1 || nano_time() < target));
+        if (timeout != 0) {
+            arch_yield();
+        }
+    }
 
-    if (!ready && sigexit)
+    if (interrupted)
         return (uint64_t)-EINTR;
 
     return ready;
@@ -90,85 +138,96 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
     if (op != EPOLL_CTL_ADD && op != EPOLL_CTL_DEL && op != EPOLL_CTL_MOD)
         return (uint64_t)(-EINVAL);
 
-    if (epollFd->fsid != epollfs_id)
+    if (!epollFd || epollFd->fsid != epollfs_id)
         return (uint64_t)(-EINVAL);
 
     epoll_t *epoll = epollFd->handle;
     if (!epoll)
         return -EINVAL;
 
-    size_t ret = 0;
-
-    if (fd == SPECIAL_FD)
-        goto cleanup;
-
-    if (!current_task->fd_info->fds[fd]) {
-        ret = (uint64_t)(-EBADF);
-        goto cleanup;
+    // 检查文件描述符有效性
+    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd]) {
+        return (uint64_t)(-EBADF);
     }
 
     vfs_node_t fdNode = current_task->fd_info->fds[fd]->node;
 
     spin_lock(&epoll->lock);
 
-    switch (op & 3) {
-    case EPOLL_CTL_ADD: {
-        epoll_watch_t *epollWatch = malloc(sizeof(epoll_watch_t));
-        epollWatch->fd = fdNode;
-        epollWatch->watchEvents = event->events | (op & EPOLLET);
-        epollWatch->userlandData = (uint64_t)event->data.ptr;
-        epollWatch->next = NULL;
-        epoll_watch_t *current = epoll->firstEpollWatch;
-        if (current) {
-            while (current->next)
-                current = current->next;
-            current->next = epollWatch;
+    epoll_watch_t *existing = NULL;
+    epoll_watch_t *prev = NULL;
+    epoll_watch_t *browse = epoll->firstEpollWatch;
+
+    // 查找现有监视器
+    while (browse) {
+        if (browse->fd == fdNode) {
+            existing = browse;
+            break;
+        }
+        prev = browse;
+        browse = browse->next;
+    }
+
+    int ret = 0;
+
+    switch (op) {
+    case EPOLL_CTL_ADD:
+        if (existing) {
+            ret = -EEXIST;
+            break;
+        }
+
+        epoll_watch_t *new_watch = malloc(sizeof(epoll_watch_t));
+        if (!new_watch) {
+            ret = -ENOMEM;
+            break;
+        }
+
+        new_watch->fd = fdNode;
+        new_watch->events = event->events;
+        new_watch->data = event->data.u64;
+        new_watch->edge_trigger = (event->events & EPOLLET) != 0;
+        new_watch->last_events = 0;
+        new_watch->next = epoll->firstEpollWatch;
+
+        // 移除EPOLLET标志，因为它不是真正的事件
+        new_watch->events &= ~EPOLLET;
+
+        epoll->firstEpollWatch = new_watch;
+        break;
+
+    case EPOLL_CTL_DEL:
+        if (!existing) {
+            ret = -ENOENT;
+            break;
+        }
+
+        if (prev) {
+            prev->next = existing->next;
         } else {
-            epoll->firstEpollWatch = epollWatch;
+            epoll->firstEpollWatch = existing->next;
         }
+
+        free(existing);
         break;
-    }
-    case EPOLL_CTL_DEL: {
-        epoll_watch_t *browse = epoll->firstEpollWatch;
-        epoll_watch_t *prev = NULL;
-        while (browse) {
-            if (browse->fd == fdNode)
-                break;
-            prev = browse;
-            browse = browse->next;
+
+    case EPOLL_CTL_MOD:
+        if (!existing) {
+            ret = -ENOENT;
+            break;
         }
-        if (!browse) {
-            ret = (uint64_t)(-ENOENT);
-            goto cleanup;
-        }
-        if (browse == epoll->firstEpollWatch)
-            epoll->firstEpollWatch = browse->next;
-        else if (prev)
-            prev->next = browse->next;
-        free(browse);
+
+        existing->events = event->events & ~EPOLLET; // 移除EPOLLET标志
+        existing->data = event->data.u64;
+        existing->edge_trigger = (event->events & EPOLLET) != 0;
+        existing->last_events = 0; // 重置状态
         break;
-    }
-    case EPOLL_CTL_MOD: {
-        epoll_watch_t *browse = epoll->firstEpollWatch;
-        while (browse) {
-            if (browse->fd == fdNode)
-                break;
-            browse = browse->next;
-        }
-        if (!browse) {
-            ret = (uint64_t)(-ENOENT);
-            goto cleanup;
-        }
-        browse->watchEvents = event->events;
-        browse->userlandData = (uint64_t)event->data.ptr;
-        break;
-    }
+
     default:
-        ret = (uint64_t)-ENOSYS;
+        ret = -EINVAL;
         break;
     }
 
-cleanup:
     spin_unlock(&epoll->lock);
     return ret;
 }
@@ -234,8 +293,6 @@ uint64_t sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
 uint64_t sys_epoll_create1(int flags) { return epoll_create1(flags); }
 
 bool epollfs_close(void *current) {
-    epoll_t *epoll = current;
-    epoll->reference_count--;
     // if (!epoll->reference_count)
     //     return true;
     return false;

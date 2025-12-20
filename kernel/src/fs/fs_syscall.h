@@ -267,22 +267,17 @@ __attribute__((__packed__))
 ;
 
 typedef struct epoll_watch {
-    struct epoll_watch *next;
-
     vfs_node_t fd;
-    int watchEvents;
-
-    uint64_t userlandData;
+    uint32_t events;
+    uint32_t data;
+    bool edge_trigger;
+    uint32_t last_events;
+    struct epoll_watch *next;
 } epoll_watch_t;
 
 typedef struct epoll {
-    spinlock_t lock;
-
-    struct epoll *next;
-
     epoll_watch_t *firstEpollWatch;
-
-    uint64_t reference_count;
+    spinlock_t lock;
 } epoll_t;
 
 uint32_t poll_to_epoll_comp(uint32_t poll_events);

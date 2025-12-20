@@ -490,6 +490,10 @@ size_t unix_socket_recv_from(uint64_t fd, uint8_t *out, size_t limit, int flags,
     if (!pair) {
         return -(ENOTCONN);
     }
+
+    if (flags & MSG_PEEK)
+        return pair->clientBuffPos;
+
     while (true) {
         if (!pair->serverFds && pair->clientBuffPos == 0) {
             task_commit_signal(current_task, SIGPIPE, NULL);

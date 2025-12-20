@@ -164,11 +164,6 @@ uint64_t sys_connect(int sockfd, const struct sockaddr_un *addr,
 
 int64_t sys_send(int sockfd, void *buff, size_t len, int flags,
                  struct sockaddr_un *dest_addr, socklen_t addrlen) {
-    if (!buff || check_user_overflow((uint64_t)buff, len) ||
-        check_unmapped((uint64_t)buff, len)) {
-        return (uint64_t)-EFAULT;
-    }
-
     if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[sockfd];
@@ -181,11 +176,6 @@ int64_t sys_send(int sockfd, void *buff, size_t len, int flags,
 
 int64_t sys_recv(int sockfd, void *buf, size_t len, int flags,
                  struct sockaddr_un *dest_addr, socklen_t *addrlen) {
-    if (!buf || check_user_overflow((uint64_t)buf, len) ||
-        check_unmapped((uint64_t)buf, len)) {
-        return (uint64_t)-EFAULT;
-    }
-
     if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[sockfd];
