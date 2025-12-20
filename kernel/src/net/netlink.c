@@ -355,7 +355,7 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
 
     // Copy the message to user iovec(s)
     size_t total_copied = 0;
-    size_t remaining = bytes_read;
+    size_t remaining = bytes_read - 1;
     char *src = temp_buf;
 
     for (int i = 0; i < msg->msg_iovlen && remaining > 0; i++) {
@@ -475,7 +475,7 @@ size_t netlink_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
         char temp_buf[NETLINK_BUFFER_SIZE];
         size_t bytes_read = netlink_buffer_read_msg(nl_sk->buffer, temp_buf,
                                                     sizeof(temp_buf), true);
-        return bytes_read;
+        return bytes_read - 1;
     }
 
     // Read the complete message directly into the user buffer
@@ -505,7 +505,7 @@ size_t netlink_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
         }
     }
 
-    return bytes_read;
+    return bytes_read - 1;
 }
 
 // Broadcast uevent to all listening netlink sockets

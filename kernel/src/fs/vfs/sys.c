@@ -314,7 +314,7 @@ vfs_node_t sysfs_regist_dev(char t, int major, int minor,
     free(fullpath);
 
     char buffer[256];
-    sprintf(buffer, "add@/%s\nACTION=add\nSEQNUM=%d\n%s\n",
+    sprintf(buffer, "add@/%s\nACTION=add\nSEQNUM=%d\nTAGS=:systemd:\n%s\n",
             dev_root_is_real ? dev_root_path : real_device_path,
             alloc_seq_num(), uevent_content);
     int len = strlen(buffer);
