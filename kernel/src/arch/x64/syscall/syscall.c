@@ -499,11 +499,10 @@ void syscall_handler_init() {
     // (syscall_handle_t)sys_fanotify_init; syscall_handlers[SYS_FANOTIFY_MARK]
     // = (syscall_handle_t)sys_fanotify_mark;
     syscall_handlers[SYS_PRLIMIT64] = (syscall_handle_t)sys_prlimit64;
-    // syscall_handlers[SYS_NAME_TO_HANDLE_AT]
-    // =
-    //     (syscall_handle_t)sys_name_to_handle_at;
-    // syscall_handlers[SYS_OPEN_BY_HANDLE_AT] =
-    //     (syscall_handle_t)sys_open_by_handle_at;
+    syscall_handlers[SYS_NAME_TO_HANDLE_AT] =
+        (syscall_handle_t)sys_name_to_handle_at;
+    syscall_handlers[SYS_OPEN_BY_HANDLE_AT] =
+        (syscall_handle_t)sys_open_by_handle_at;
     // syscall_handlers[SYS_CLOCK_ADJTIME] =
     // (syscall_handle_t)sys_clock_adjtime; syscall_handlers[SYS_SYNCFS] =
     // (syscall_handle_t)sys_syncfs; syscall_handlers[SYS_SENDMMSG] =

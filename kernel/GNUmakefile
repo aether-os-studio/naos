@@ -209,21 +209,13 @@ all: bin-$(ARCH)/$(OUTPUT)
 bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH)-$(BOOT_PROTOCOL).ld $(OBJ)
 	mkdir -p "$$(dirname $@)"
 
-ifeq ($(KERNEL_MODULE), monolithic)
-	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a $(shell find $(PROJECT_ROOT)/./modules-$(ARCH)/generated/ -name "*.o") -o $@.tmp
-else
-	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a -o $@.tmp
-endif
+	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a $(PROJECT_ROOT)/liballoc-$(ARCH).a -o $@.tmp
 
 	gcc kallsyms.c -o kallsyms
 	$(NM) -n $@.tmp | ./kallsyms > kallsyms.S
 	@$(CC) $(CFLAGS) -c kallsyms.S -o kallsyms.o
 
-ifeq ($(KERNEL_MODULE), monolithic)
-	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a kallsyms.o $(shell find $(PROJECT_ROOT)/./modules-$(ARCH)/generated/ -name "*.o") -o $@
-else
-	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a kallsyms.o -o $@
-endif
+	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a $(PROJECT_ROOT)/liballoc-$(ARCH).a kallsyms.o -o $@
 
 # Compilation rules for *.c files.
 obj-$(ARCH)/src/%.c.o: src/%.c GNUmakefile

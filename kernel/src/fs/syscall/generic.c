@@ -139,6 +139,117 @@ uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags,
     return ret;
 }
 
+uint64_t sys_name_to_handle_at(int dfd, const char *name,
+                               struct file_handle *handle, int *mnt_id,
+                               int flag) {
+    if (!name || !handle || check_user_overflow((uint64_t)name, 1) ||
+        check_user_overflow((uint64_t)handle, sizeof(struct file_handle))) {
+        return (uint64_t)-EFAULT;
+    }
+
+    char *path = at_resolve_pathname(dfd, (char *)name);
+    if (!path) {
+        return (uint64_t)-ENOMEM;
+    }
+
+    vfs_node_t node = vfs_open(path);
+    free(path);
+
+    if (!node) {
+        return (uint64_t)-ENOENT;
+    }
+
+    char *fullpath = vfs_get_fullpath(node);
+    if (!fullpath) {
+        return (uint64_t)-ENOMEM;
+    }
+
+    const unsigned int required_size = strlen(fullpath);
+
+    if (handle->handle_bytes < required_size) {
+        handle->handle_bytes = required_size;
+        free(fullpath);
+        return (uint64_t)-EOVERFLOW;
+    }
+
+    handle->handle_bytes = required_size;
+    handle->handle_type = 1; // Generic file handle type
+
+    if (check_user_overflow((uint64_t)handle->f_handle, required_size)) {
+        free(fullpath);
+        return (uint64_t)-EFAULT;
+    }
+
+    if (copy_to_user(handle->f_handle, fullpath, required_size)) {
+        free(fullpath);
+        return (uint64_t)-EFAULT;
+    }
+
+    free(fullpath);
+
+    if (mnt_id) {
+        if (check_user_overflow((uint64_t)mnt_id, sizeof(int))) {
+            return (uint64_t)-EFAULT;
+        }
+        int mount_id = (int)node->fsid;
+        if (copy_to_user(mnt_id, &mount_id, sizeof(int))) {
+            return (uint64_t)-EFAULT;
+        }
+    }
+
+    return 0;
+}
+
+uint64_t sys_open_by_handle_at(int mountdirfd, struct file_handle *handle,
+                               int flags) {
+    if (!handle ||
+        check_user_overflow((uint64_t)handle, sizeof(struct file_handle))) {
+        return (uint64_t)-EFAULT;
+    }
+
+    struct file_handle user_handle;
+    if (copy_from_user(&user_handle, handle, sizeof(struct file_handle))) {
+        return (uint64_t)-EFAULT;
+    }
+
+    if (check_user_overflow((uint64_t)handle->f_handle,
+                            user_handle.handle_bytes)) {
+        return (uint64_t)-EFAULT;
+    }
+
+    char path[256];
+    if (copy_from_user_str(path, (const char *)handle->f_handle,
+                           sizeof(path))) {
+        return (uint64_t)-EFAULT;
+    }
+
+    vfs_node_t node = vfs_open((const char *)path);
+    if (!node) {
+        return -ESTALE;
+    }
+
+    uint64_t i;
+    for (i = 0; i < MAX_FD_NUM; i++) {
+        if (current_task->fd_info->fds[i] == NULL) {
+            break;
+        }
+    }
+
+    if (i == MAX_FD_NUM) {
+        return (uint64_t)-EMFILE;
+    }
+
+    current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
+    current_task->fd_info->fds[i]->node = node;
+    current_task->fd_info->fds[i]->offset = 0;
+    current_task->fd_info->fds[i]->flags = flags;
+    node->refcount++;
+
+    procfs_on_open_file(current_task, i);
+
+    return i;
+}
+
 uint64_t sys_fsync(uint64_t fd) {
     if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
@@ -164,6 +275,7 @@ uint64_t sys_close(uint64_t fd) {
     }
 
     vfs_close(current_task->fd_info->fds[fd]->node);
+
     free(current_task->fd_info->fds[fd]);
 
     procfs_on_close_file(current_task, fd);
@@ -985,7 +1097,7 @@ uint64_t sys_readlink(char *path_user, char *buf_user, uint64_t size) {
         return (uint64_t)result;
     }
 
-    if (copy_to_user_str(buf_user, buf, size))
+    if (copy_to_user(buf_user, buf, MIN(sizeof(buf), result)))
         return (uint64_t)-EFAULT;
 
     return result;
@@ -1001,7 +1113,7 @@ uint64_t sys_readlinkat(int dfd, char *path_user, char *buf_user,
     char *resolved = at_resolve_pathname(dfd, path);
 
     char buf[512];
-
+    memset(buf, 0, sizeof(buf));
     ssize_t res = do_readlink(resolved, buf, MIN(size, sizeof(buf)));
 
     free(resolved);
@@ -1010,7 +1122,7 @@ uint64_t sys_readlinkat(int dfd, char *path_user, char *buf_user,
         return (uint64_t)res;
     }
 
-    if (copy_to_user_str(buf_user, buf, sizeof(buf)))
+    if (copy_to_user(buf_user, buf, MIN(sizeof(buf), res)))
         return (uint64_t)-EFAULT;
 
     return res;

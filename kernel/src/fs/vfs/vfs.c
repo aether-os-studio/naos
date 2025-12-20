@@ -52,7 +52,7 @@ void vfs_free(vfs_node_t vfs) {
     if (vfs == NULL)
         return;
     if (!(vfs->type & file_symlink)) {
-        list_free_with(vfs->child, (free_t)vfs_free);
+        vfs->child = list_free_with(vfs->child, (free_t)vfs_free);
     }
     callbackof(vfs, free_handle)(vfs->handle);
     if (vfs->parent)
@@ -64,7 +64,7 @@ void vfs_free(vfs_node_t vfs) {
 void vfs_free_child(vfs_node_t vfs) {
     if (vfs == NULL)
         return;
-    list_free_with(vfs->child, (free_t)vfs_free);
+    vfs->child = list_free_with(vfs->child, (free_t)vfs_free);
 }
 
 void vfs_merge_nodes_to(vfs_node_t dest, vfs_node_t source) {
@@ -175,6 +175,8 @@ int vfs_mkdir(const char *name) {
         if (streq(buf, "."))
             continue;
         if (streq(buf, "..")) {
+            if (current == rootdir)
+                continue;
             if (!current->parent || !(current->type & file_dir))
                 goto err;
             current = current->parent;
@@ -247,6 +249,8 @@ int vfs_mkfile(const char *name) {
         if (streq(buf, "."))
             continue;
         if (streq(buf, "..")) {
+            if (current == rootdir)
+                continue;
             if (!current->parent || !(current->type & file_dir))
                 goto err;
             current = current->parent;
@@ -328,6 +332,8 @@ int vfs_link(const char *name, const char *target_name) {
         if (streq(buf, "."))
             continue;
         if (streq(buf, "..")) {
+            if (current == rootdir)
+                continue;
             if (!current->parent || !(current->type & file_dir))
                 goto err;
             current = current->parent;
@@ -404,6 +410,8 @@ int vfs_symlink(const char *name, const char *target_name) {
         if (streq(buf, "."))
             continue;
         if (streq(buf, "..")) {
+            if (current == rootdir)
+                continue;
             if (!current->parent || !(current->type & file_dir))
                 goto err;
             current = current->parent;
@@ -481,6 +489,8 @@ int vfs_mknod(const char *name, uint16_t umode, int dev) {
         if (streq(buf, "."))
             continue;
         if (streq(buf, "..")) {
+            if (current == rootdir)
+                continue;
             if (!current->parent || !(current->type & file_dir))
                 goto err;
             current = current->parent;
@@ -590,10 +600,11 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
         if (streq(buf, "."))
             continue;
         if (streq(buf, "..")) {
-            if (current->parent == NULL)
+            if (current == rootdir)
+                continue;
+            if (!current->parent || !(current->type & file_dir))
                 goto err;
             current = current->parent;
-            do_update(current);
             continue;
         }
         if (!(current->type & file_dir)) {

@@ -19,6 +19,9 @@
 #define DT_WHT 14
 
 #define AT_FDCWD (-100)
+#define AT_SYMLINK_NOFOLLOW 0x100
+#define AT_SYMLINK_FOLLOW 0x400
+#define AT_EMPTY_PATH 0x1000
 
 #define O_CREAT 0100
 #define O_EXCL 0200
@@ -163,3 +166,9 @@ struct dirent {
 #define TIOCM_OUT1 0x2000
 #define TIOCM_OUT2 0x4000
 #define TIOCM_LOOP 0x8000
+
+struct file_handle {
+    unsigned int handle_bytes;
+    int handle_type;
+    unsigned char f_handle[0];
+};

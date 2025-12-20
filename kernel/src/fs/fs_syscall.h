@@ -75,6 +75,11 @@ uint64_t sys_umount2(const char *target, uint64_t flags);
 uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode);
 uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags,
                     uint64_t mode);
+uint64_t sys_name_to_handle_at(int dfd, const char *name,
+                               struct file_handle *handle, int *mnt_id,
+                               int flag);
+uint64_t sys_open_by_handle_at(int mountdirfd, struct file_handle *handle,
+                               int flags);
 uint64_t sys_inotify_init();
 uint64_t sys_inotify_init1(uint64_t flags);
 uint64_t sys_fsync(uint64_t fd);
