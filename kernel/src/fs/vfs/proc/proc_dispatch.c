@@ -24,18 +24,21 @@ static uint64_t hash_dp(const char *s) {
 }
 
 static void create_procfs_handle(char *name, read_entry_t read_entry,
-                                 stat_entry_t stat_entry) {
+                                 stat_entry_t stat_entry,
+                                 poll_entry_t poll_entry) {
     proc_handle_node_t *handle = malloc(sizeof(proc_handle_node_t));
     handle->name = strdup(name);
     handle->hash = hash_dp(handle->name);
     handle->read_entry = read_entry;
     handle->stat_entry = stat_entry;
+    handle->poll_entry = poll_entry;
     dispatch_array[dp_index++] = handle;
 }
 
 static void create_procfs_node(char *name, read_entry_t read_entry,
-                               stat_entry_t stat_entry) {
-    create_procfs_handle(name, read_entry, stat_entry);
+                               stat_entry_t stat_entry,
+                               poll_entry_t poll_entry) {
+    create_procfs_handle(name, read_entry, stat_entry, poll_entry);
     vfs_node_t node = vfs_node_alloc(procfs_root, name);
     node->type = file_none;
     node->mode = 0700;
@@ -48,16 +51,19 @@ static void create_procfs_node(char *name, read_entry_t read_entry,
 
 void procfs_nodes_init() {
     create_procfs_node("filesystems", proc_filesystems_read,
-                       proc_filesystems_stat);
-    create_procfs_node("cmdline", proc_cmdline_read, proc_cmdline_stat);
-    create_procfs_node("mounts", proc_mounts_read, proc_mounts_stat);
-    create_procfs_node("meminfo", proc_meminfo_read, proc_meminfo_stat);
+                       proc_filesystems_stat, NULL);
+    create_procfs_node("cmdline", proc_cmdline_read, proc_cmdline_stat, NULL);
+    create_procfs_node("mounts", proc_mounts_read, proc_mounts_stat, NULL);
+    create_procfs_node("meminfo", proc_meminfo_read, proc_meminfo_stat, NULL);
 
-    create_procfs_handle("proc_cmdline", proc_pcmdline_read,
-                         proc_pcmdline_stat);
-    create_procfs_handle("proc_maps", proc_pmaps_read, NULL);
-    create_procfs_handle("proc_stat", proc_pstat_read, proc_pstat_stat);
-    create_procfs_handle("proc_cgroup", proc_pcgroup_read, proc_pcgroup_stat);
+    create_procfs_handle("proc_cmdline", proc_pcmdline_read, proc_pcmdline_stat,
+                         NULL);
+    create_procfs_handle("proc_maps", proc_pmaps_read, NULL, NULL);
+    create_procfs_handle("proc_stat", proc_pstat_read, proc_pstat_stat, NULL);
+    create_procfs_handle("proc_cgroup", proc_pcgroup_read, proc_pcgroup_stat,
+                         NULL);
+    create_procfs_handle("proc_mountinfo", proc_pmountinfo_read,
+                         proc_pmountinfo_stat, proc_pmountinfo_poll);
 }
 
 size_t procfs_read_dispatch(proc_handle_t *handle, void *addr, size_t offset,
@@ -82,4 +88,16 @@ void procfs_stat_dispatch(proc_handle_t *handle, vfs_node_t node) {
             return;
         }
     }
+}
+
+int procfs_poll_dispatch(proc_handle_t *handle, vfs_node_t node, int events) {
+    uint64_t hash = hash_dp(handle->name);
+    for (size_t i = 0; i < dp_index; i++) {
+        if (hash == dispatch_array[i]->hash) {
+            if (dispatch_array[i]->poll_entry)
+                return dispatch_array[i]->poll_entry(handle, events);
+            return 0;
+        }
+    }
+    return 0;
 }

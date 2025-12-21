@@ -4,6 +4,10 @@
 #include <libs/klibc.h>
 #include <task/signal.h>
 
+struct llist_header timerfds;
+
+bool timerfd_initialized = false;
+
 int timerfdfs_id = 0;
 static vfs_node_t timerfdfs_root = NULL;
 
@@ -28,6 +32,7 @@ uint64_t sys_timerfd_create(int clockid, int flags) {
     timerfd_t *tfd = malloc(sizeof(timerfd_t));
     memset(tfd, 0, sizeof(timerfd_t));
     tfd->timer.clock_type = clockid;
+    llist_init_head(&tfd->node_for_timerfds);
 
     char buf[32];
     sprintf(buf, "timerfd%d", timerfd_id++);
@@ -114,6 +119,7 @@ uint64_t sys_timerfd_settime(int fd, int flags,
 
 bool sys_timerfd_close(void *current) {
     timerfd_t *tfd = current;
+    llist_delete(&tfd->node_for_timerfds);
     free(tfd->node->name);
     free(tfd->node);
     free(tfd);
@@ -240,9 +246,11 @@ fs_t timefdfs = {
 };
 
 void timerfd_init() {
+    llist_init_head(&timerfds);
     timerfdfs_id = vfs_regist(&timefdfs);
     timerfdfs_root = vfs_node_alloc(NULL, "timer");
     timerfdfs_root->type = file_dir;
     timerfdfs_root->mode = 0644;
     timerfdfs_root->fsid = timerfdfs_id;
+    timerfd_initialized = true;
 }

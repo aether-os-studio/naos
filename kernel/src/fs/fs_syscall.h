@@ -80,8 +80,37 @@ uint64_t sys_name_to_handle_at(int dfd, const char *name,
                                int flag);
 uint64_t sys_open_by_handle_at(int mountdirfd, struct file_handle *handle,
                                int flags);
+
+#define IN_ACCESS 0x1
+#define IN_ATTRIB 0x4
+#define IN_CLOSE_WRITE 0x8
+#define IN_CLOSE_NOWRITE 0x10
+#define IN_CREATE 0x100
+#define IN_DELETE 0x200
+#define IN_DELETE_SELF 0x400
+#define IN_MODIFY 0x2
+#define IN_MOVE_SELF 0x800
+#define IN_MOVED_FROM 0x40
+#define IN_MOVED_TO 0x80
+#define IN_OPEN 0x20
+#define IN_MOVE (IN_MOVED_FROM | IN_MOVED_TO)
+#define IN_CLOSE (IN_CLOSE_WRITE | IN_CLOSE_NOWRITE)
+#define IN_DONT_FOLLOW 0x2000000
+#define IN_EXCL_UNLINK 0x4000000
+#define IN_MASK_ADD 0x20000000
+#define IN_ONESHOT 0x80000000
+#define IN_ONLYDIR 0x1000000
+#define IN_IGNORED 0x8000
+#define IN_ISDIR 0x40000000
+#define IN_Q_OVERFLOW 0x4000
+#define IN_UNMOUNT 0x2000
+
 uint64_t sys_inotify_init();
 uint64_t sys_inotify_init1(uint64_t flags);
+uint64_t sys_inotify_add_watch(uint64_t notifyfd, const char *path,
+                               uint64_t mask);
+uint64_t sys_inotify_rm_watch(uint64_t watchfd, uint64_t mask);
+
 uint64_t sys_fsync(uint64_t fd);
 uint64_t sys_close(uint64_t fd);
 uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags);
@@ -374,6 +403,7 @@ uint64_t sys_unlinkat(uint64_t dirfd, const char *name, uint64_t flags);
 #define CLOCK_TAI 11
 
 typedef struct {
+    struct llist_header node_for_timerfds;
     kernel_timer_t timer;
     uint64_t count;
     int flags;

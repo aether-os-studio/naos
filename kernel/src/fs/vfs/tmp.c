@@ -126,8 +126,8 @@ int tmpfs_mount(uint64_t dev, vfs_node_t node) {
 void tmpfs_unmount(vfs_node_t root) {
     root->fsid = (uint32_t)(root->flags >> 32);
 
-    list_foreach(root->child, i) {
-        vfs_node_t node = i->data;
+    vfs_node_t node, tmp;
+    llist_for_each(node, tmp, &root->childs, node_for_childs) {
         if (node == node->root) {
             char *node_path = vfs_get_fullpath(node);
             vfs_unmount((const char *)node_path);
@@ -139,10 +139,12 @@ void tmpfs_unmount(vfs_node_t root) {
     root->rdev = root->parent ? root->parent->rdev : 0;
 
     uint64_t nodes_count = 0;
-    list_foreach(root->child, i) { nodes_count++; }
+    llist_for_each(node, tmp, &root->childs, node_for_childs) { nodes_count++; }
     vfs_node_t *nodes = calloc(nodes_count, sizeof(vfs_node_t));
     uint64_t idx = 0;
-    list_foreach(root->child, i) { nodes[idx++] = (vfs_node_t)i->data; }
+    llist_for_each(node, tmp, &root->childs, node_for_childs) {
+        nodes[idx++] = node;
+    }
     for (uint64_t i = 0; i < idx; i++) {
         vfs_free(nodes[i]);
     }

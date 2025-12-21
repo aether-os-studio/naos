@@ -22,8 +22,6 @@ vma_t *vma_alloc(void) {
 // VMA释放
 void vma_free(vma_t *vma) {
     if (vma) {
-        if (vma->node)
-            vfs_close(vma->node);
         if (vma->vm_name)
             free(vma->vm_name);
         free(vma);
@@ -185,8 +183,6 @@ int vma_split(vma_manager_t *mgr, vma_t *vma, uint64_t addr) {
     new_vma->vm_flags = vma->vm_flags;
     new_vma->vm_type = vma->vm_type;
     new_vma->node = vma->node;
-    if (new_vma->node)
-        new_vma->node->refcount++;
     new_vma->vm_offset = vma->vm_offset;
     new_vma->shm_id = vma->shm_id;
 

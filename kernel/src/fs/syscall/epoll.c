@@ -103,6 +103,9 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
                         events[ready].data.u64 = browse->data;
                         ready++;
                         browse->last_events = ready_events; // 更新状态
+                    } else {
+                        spin_unlock(&epoll->lock);
+                        goto ret;
                     }
                 } else {
                     // 水平触发：只要事件存在就返回
@@ -130,6 +133,7 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
     if (interrupted)
         return (uint64_t)-EINTR;
 
+ret:
     return ready;
 }
 

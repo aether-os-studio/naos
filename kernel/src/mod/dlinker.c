@@ -369,9 +369,8 @@ void dlinker_init() {
     if (!modules_root)
         return;
 
-    list_foreach(modules_root->child, i) {
-        vfs_node_t node = i->data;
-
+    vfs_node_t node, tmp;
+    llist_for_each(node, tmp, &modules_root->childs, node_for_childs) {
         module_t module;
         strncpy(module.module_name, node->name, sizeof(module.module_name));
         module.path = node->name;

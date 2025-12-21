@@ -128,7 +128,7 @@ bool pipefs_close(void *current) {
         pipe->read_fds--;
     }
 
-    list_delete(pipefs_root->child, spec->node);
+    llist_delete(&spec->node->node_for_childs);
 
     if (spec->write && pipe->write_fds == 0)
         free(spec);

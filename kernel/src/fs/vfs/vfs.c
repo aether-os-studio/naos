@@ -8,6 +8,7 @@
 #include "drivers/pty.h"
 
 struct llist_header vfs_nodes;
+struct llist_header mount_points;
 vfs_node_t rootdir = NULL;
 
 fs_t *all_fs[256] = {
@@ -40,13 +41,16 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
     node->root = parent ? parent->root : node;
     node->lock.l_pid = 0;
     node->lock.l_type = F_UNLCK;
-    llist_prepend(&vfs_nodes, &node->node);
+    llist_init_head(&node->node);
+    llist_init_head(&node->childs);
+    llist_init_head(&node->node_for_childs);
     node->refcount = 0;
     node->mode = 0777;
     node->rw_hint = 0;
     node->handle = NULL;
     if (parent)
-        list_append(parent->child, node);
+        llist_append(&parent->childs, &node->node_for_childs);
+    llist_append(&vfs_nodes, &node->node);
     return node;
 }
 
@@ -54,11 +58,14 @@ void vfs_free(vfs_node_t vfs) {
     if (vfs == NULL)
         return;
     if (!(vfs->type & file_symlink)) {
-        vfs->child = list_free_with(vfs->child, (free_t)vfs_free);
+        vfs_node_t child, tmp;
+        llist_for_each(child, tmp, &vfs->childs, node_for_childs) {
+            vfs_free(child);
+        }
     }
     callbackof(vfs, free_handle)(vfs->handle);
     if (vfs->parent)
-        list_delete(vfs->parent->child, vfs);
+        llist_delete(&vfs->node_for_childs);
     llist_delete(&vfs->node);
     free(vfs->name);
     free(vfs);
@@ -67,21 +74,29 @@ void vfs_free(vfs_node_t vfs) {
 void vfs_free_child(vfs_node_t vfs) {
     if (vfs == NULL)
         return;
-    vfs->child = list_free_with(vfs->child, (free_t)vfs_free);
+    vfs_node_t child, tmp;
+    llist_for_each(child, tmp, &vfs->childs, node_for_childs) {
+        vfs_free(child);
+    }
 }
 
 void vfs_merge_nodes_to(vfs_node_t dest, vfs_node_t source) {
     if (dest == source)
         return;
     uint64_t nodes_count = 0;
-    list_foreach(source->child, i) { nodes_count++; }
+    vfs_node_t node, tmp;
+    llist_for_each(node, tmp, &source->childs, node_for_childs) {
+        nodes_count++;
+    }
     vfs_node_t *nodes = calloc(nodes_count, sizeof(vfs_node_t));
     uint64_t idx = 0;
-    list_foreach(source->child, i) { nodes[idx++] = (vfs_node_t)i->data; }
+    llist_for_each(node, tmp, &source->childs, node_for_childs) {
+        nodes[idx++] = node;
+    }
     for (uint64_t i = 0; i < idx; i++) {
-        list_delete(source->child, nodes[i]);
+        llist_delete(&nodes[i]->node_for_childs);
         nodes[i]->parent = dest;
-        list_append(dest->child, nodes[i]);
+        llist_append(&dest->childs, &nodes[i]->node_for_childs);
     }
     free(nodes);
 }
@@ -117,11 +132,14 @@ static inline void do_update(vfs_node_t file) {
 }
 
 vfs_node_t vfs_child_find(vfs_node_t parent, const char *name) {
-    if (!parent)
+    if (!parent || !name)
         return NULL;
-    vfs_node_t child =
-        list_first(parent->child, data, streq(name, ((vfs_node_t)data)->name));
-    return child;
+    vfs_node_t child_node, tmp;
+    llist_for_each(child_node, tmp, &parent->childs, node_for_childs) {
+        if (streq(child_node->name, name))
+            return child_node;
+    }
+    return NULL;
 }
 
 // 一定要记得手动设置一下child的type
@@ -208,6 +226,12 @@ create:
 
     free(path);
 
+    vfs_node_t p = node->parent;
+    while (p->parent) {
+        p->parent->flags |= VFS_NODE_FLAGS_CHILD_CREATED;
+        p = p->parent;
+    }
+
     return 0;
 
 err:
@@ -284,6 +308,12 @@ create:
     callbackof(current, mkfile)(current->handle, filename, node);
 
     free(path);
+
+    vfs_node_t p = node->parent;
+    while (p->parent) {
+        p->parent->flags |= VFS_NODE_FLAGS_CHILD_CREATED;
+        p = p->parent;
+    }
 
     return 0;
 
@@ -362,6 +392,12 @@ create:
     vfs_node_t node = vfs_child_append(current, filename, NULL);
     node->type = file_none;
     callbackof(current, link)(current->handle, target_name, node);
+
+    vfs_node_t p = node->parent;
+    while (p->parent) {
+        p->parent->flags |= VFS_NODE_FLAGS_CHILD_CREATED;
+        p = p->parent;
+    }
 
     return 0;
 
@@ -447,6 +483,12 @@ create:
     }
 
     free(path);
+
+    vfs_node_t p = node->parent;
+    while (p->parent) {
+        p->parent->flags |= VFS_NODE_FLAGS_CHILD_CREATED;
+        p = p->parent;
+    }
 
     return 0;
 
@@ -538,6 +580,12 @@ create:
 
     free(path);
 
+    vfs_node_t p = node->parent;
+    while (p->parent) {
+        p->parent->flags |= VFS_NODE_FLAGS_CHILD_CREATED;
+        p = p->parent;
+    }
+
     return 0;
 
 err:
@@ -573,10 +621,6 @@ int vfs_regist(fs_t *fs) {
     fs_callbacks[id] = callback;
     all_fs[id] = fs;
     return id;
-}
-
-static vfs_node_t vfs_do_search(vfs_node_t dir, const char *name) {
-    return list_first(dir->child, data, streq(name, ((vfs_node_t)data)->name));
 }
 
 vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
@@ -656,11 +700,17 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
             current->mode = target->mode;
 
             if (target->type & file_dir) {
-                list_foreach(target->child, i) {
-                    vfs_node_t child_node = (vfs_node_t)i->data;
-                    if (!vfs_child_find(current, child_node->name)) {
-                        list_append(current->child, child_node);
-                    }
+                char *ptr = save_ptr;
+
+                char *s = ptr;
+                char *e = ptr;
+
+                while (*e == '/') {
+                    e++;
+                }
+
+                if (*e != '\0') {
+                    current = target;
                 }
             }
 
@@ -702,6 +752,7 @@ void vfs_update(vfs_node_t node) { do_update(node); }
 
 bool vfs_init() {
     llist_init_head(&vfs_nodes);
+    llist_init_head(&mount_points);
 
     for (size_t i = 0; i < sizeof(struct vfs_callback) / sizeof(void *); i++) {
         ((void **)&vfs_empty_callback)[i] = &empty_func;
@@ -771,6 +822,33 @@ int vfs_mount(uint64_t dev, vfs_node_t node, const char *type) {
         }
     }
     return -ENOENT;
+}
+
+void vfs_add_mount_point(vfs_node_t dir, char *devname) {
+    struct mount_point *mnt = malloc(sizeof(struct mount_point));
+    mnt->fs = all_fs[dir->fsid];
+    mnt->dir = dir;
+    mnt->devname = strdup(devname);
+    llist_init_head(&mnt->node);
+    llist_prepend(&mount_points, &mnt->node);
+}
+
+void vfs_delete_mount_point_by_dir(vfs_node_t dir) {
+    struct mount_point *target = NULL;
+    struct mount_point *mnt, *tmp;
+    llist_for_each(mnt, tmp, &mount_points, node) {
+        if (mnt->dir == dir) {
+            target = mnt;
+            break;
+        }
+    }
+
+    if (!target)
+        return;
+
+    llist_delete(&target->node);
+    free(target->devname);
+    free(target);
 }
 
 ssize_t vfs_read(vfs_node_t file, void *addr, size_t offset, size_t size) {
@@ -866,6 +944,7 @@ int vfs_unmount(const char *path) {
     //     }
     // }
     callbackof(node, unmount)(node);
+    vfs_delete_mount_point_by_dir(node);
     return 0;
 }
 
@@ -930,7 +1009,7 @@ int vfs_delete(vfs_node_t node) {
     }
     node->flags |= VFS_NODE_FLAGS_DELETED;
     if (node->parent)
-        list_delete(node->parent->child, node);
+        llist_delete(&node->node_for_childs);
     if (node->refcount <= 0) {
         callbackof(node, free_handle)(node->handle);
         node->handle = NULL;
@@ -984,10 +1063,10 @@ int vfs_rename(vfs_node_t node, const char *new) {
     }
 
     if (node->parent)
-        list_delete(node->parent->child, node);
+        llist_delete(&node->node_for_childs);
     node->parent = new_parent;
     if (node->parent)
-        list_append(node->parent->child, node);
+        llist_append(&node->parent->childs, &node->node_for_childs);
     free(node->name);
     node->name = strdup(filename);
 

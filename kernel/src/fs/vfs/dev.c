@@ -434,7 +434,7 @@ void devtmpfs_init() {
 }
 
 void devtmpfs_init_umount() {
-    list_delete(devtmpfs_root->parent->child, devtmpfs_root);
+    llist_delete(&devtmpfs_root->node_for_childs);
     devtmpfs_root->parent = NULL;
 }
 

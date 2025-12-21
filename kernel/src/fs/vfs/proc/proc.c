@@ -71,6 +71,13 @@ ssize_t procfs_readlink(vfs_node_t node, void *addr, size_t offset,
     return 0;
 }
 
+int procfs_poll(void *file, size_t events) {
+    if (file == NULL)
+        return 0;
+    proc_handle_t *handle = file;
+    return procfs_poll_dispatch(handle, handle->node, events);
+}
+
 int procfs_mount(uint64_t dev, vfs_node_t mnt) {
     if (procfs_root != fake_procfs_root)
         return 0;
@@ -131,7 +138,7 @@ static struct vfs_callback callbacks = {
     .stat = (vfs_stat_t)procfs_stat,
     .ioctl = (vfs_ioctl_t)dummy,
     .map = (vfs_mapfile_t)dummy,
-    .poll = (vfs_poll_t)dummy,
+    .poll = (vfs_poll_t)procfs_poll,
     .mount = (vfs_mount_t)procfs_mount,
     .unmount = (vfs_unmount_t)procfs_unmount,
     .resize = (vfs_resize_t)dummy,
@@ -143,7 +150,7 @@ void procfs_self_open(void *parent, const char *name, vfs_node_t node) {
     procfs_self_handle_t *handle = malloc(sizeof(procfs_self_handle_t));
     handle->self = node;
     node->handle = handle;
-    list_delete(node->parent->child, node);
+    llist_delete(&node->node_for_childs);
     vfs_node_t new_self_node = vfs_node_alloc(node->parent, "self");
     new_self_node->flags |= VFS_NODE_FLAGS_FREE_AFTER_USE;
     new_self_node->type = file_symlink;
@@ -210,6 +217,10 @@ fs_t procfs_self = {
     .flags = FS_FLAGS_HIDDEN,
 };
 
+extern struct llist_header mount_points;
+
+int procfs_mount_point_count = 0;
+
 void proc_init() {
     procfs_id = vfs_regist(&procfs);
     procfs_self_id = vfs_regist(&procfs_self);
@@ -226,6 +237,11 @@ void proc_init() {
     self_node->fsid = procfs_self_id;
 
     procfs_nodes_init();
+
+    struct mount_point *tmp1, *tmp2;
+    llist_for_each(tmp1, tmp2, &mount_points, node) {
+        procfs_mount_point_count++;
+    }
 }
 
 void procfs_on_new_task(task_t *task) {
@@ -286,14 +302,14 @@ void procfs_on_new_task(task_t *task) {
     self_cgroup_handle->task = task;
     sprintf(self_cgroup_handle->name, "proc_cgroup");
 
-    // vfs_node_t self_mountinfo = vfs_child_append(node, "mountinfo", NULL);
-    // self_mountinfo->type = file_none;
-    // self_mountinfo->mode = 0700;
-    // proc_handle_t *self_mountinfo_handle = malloc(sizeof(proc_handle_t));
-    // self_mountinfo->handle = self_mountinfo_handle;
-    // self_mountinfo_handle->node = self_mountinfo;
-    // self_mountinfo_handle->task = task;
-    // sprintf(self_mountinfo_handle->name, "proc_pmountinfo");
+    vfs_node_t self_mountinfo = vfs_child_append(node, "mountinfo", NULL);
+    self_mountinfo->type = file_none;
+    self_mountinfo->mode = 0700;
+    proc_handle_t *self_mountinfo_handle = malloc(sizeof(proc_handle_t));
+    self_mountinfo->handle = self_mountinfo_handle;
+    self_mountinfo_handle->node = self_mountinfo;
+    self_mountinfo_handle->task = task;
+    sprintf(self_mountinfo_handle->name, "proc_mountinfo");
 
     vfs_node_t self_exe = vfs_child_append(node, "exe", NULL);
     self_exe->type = file_symlink;

@@ -18,9 +18,6 @@ static inline char tolower(char ch) {
 size_t strspn(const char *s, const char *accept);
 size_t strcspn(const char *s, const char *reject);
 
-#define ALL_IMPLEMENTATION
-#include "list.h"
-
 static inline bool streq(const char *str1, const char *str2) {
     int ret = 0;
     while (!(ret = *(unsigned char *)str1 - *(unsigned char *)str2) && *str1) {

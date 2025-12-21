@@ -398,11 +398,16 @@ char *write_num(char *str, uint64_t num, int base, int field_width,
 }
 
 char vsnprintf_buf[8192];
+spinlock_t vsnprintf_lock = SPIN_INIT;
+
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list args) {
+    spin_lock(&vsnprintf_lock);
+    memset(vsnprintf_buf, 0, sizeof(vsnprintf_buf));
     int ret = vsprintf(vsnprintf_buf, fmt, args);
     int to_copy = MIN((size_t)ret, size);
     if (buf)
         memcpy(buf, vsnprintf_buf, to_copy);
+    spin_unlock(&vsnprintf_lock);
     return to_copy;
 }
 

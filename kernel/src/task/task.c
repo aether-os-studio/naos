@@ -1596,6 +1596,9 @@ uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
     case PR_SET_TIMERSLACK:
         return 0;
 
+    case PR_SET_PDEATHSIG:
+        return 0;
+
     default:
         return -EINVAL; // 未实现的功能返回不支持
     }
@@ -1644,50 +1647,35 @@ void sched_update_itimer() {
     }
 }
 
-extern int timerfdfs_id;
+extern bool timerfd_initialized;
+extern struct llist_header timerfds;
 
 void sched_update_timerfd() {
-    if (current_task->state == TASK_DIED)
+    if (!timerfd_initialized)
         return;
 
-    if (current_task->fd_info && current_task->fd_info->ref_count) {
-        uint64_t continue_null_fd_count = 0;
-        for (int fd = 3; fd < MAX_FD_NUM; fd++) {
-            fd_t *file = current_task->fd_info->fds[fd];
-            if (file == NULL) {
-                continue_null_fd_count++;
-                if (continue_null_fd_count >= 20)
-                    break;
-                continue;
-            }
+    timerfd_t *tfd, *tmp;
+    llist_for_each(tfd, tmp, &timerfds, node_for_timerfds) {
+        // 根据时钟类型获取当前时间
+        uint64_t now;
+        if (tfd->timer.clock_type == CLOCK_MONOTONIC) {
+            now = nano_time();
+        } else {
+            // CLOCK_REALTIME
+            tm time;
+            time_read(&time);
+            now = (uint64_t)mktime(&time) * 1000000000ULL;
+        }
 
-            continue_null_fd_count = 0;
-
-            if (file && file->node->fsid == timerfdfs_id) {
-                timerfd_t *tfd = file->node->handle;
-
-                // 根据时钟类型获取当前时间
-                uint64_t now;
-                if (tfd->timer.clock_type == CLOCK_MONOTONIC) {
-                    now = nano_time();
-                } else {
-                    // CLOCK_REALTIME
-                    tm time;
-                    time_read(&time);
-                    now = (uint64_t)mktime(&time) * 1000000000ULL;
-                }
-
-                if (tfd->timer.expires && now >= tfd->timer.expires) {
-                    if (tfd->timer.interval) {
-                        uint64_t delta = now - tfd->timer.expires;
-                        uint64_t periods = delta / tfd->timer.interval + 1;
-                        tfd->count += periods;
-                        tfd->timer.expires += periods * tfd->timer.interval;
-                    } else {
-                        tfd->count++;
-                        tfd->timer.expires = 0;
-                    }
-                }
+        if (tfd->timer.expires && now >= tfd->timer.expires) {
+            if (tfd->timer.interval) {
+                uint64_t delta = now - tfd->timer.expires;
+                uint64_t periods = delta / tfd->timer.interval + 1;
+                tfd->count += periods;
+                tfd->timer.expires += periods * tfd->timer.interval;
+            } else {
+                tfd->count++;
+                tfd->timer.expires = 0;
             }
         }
     }

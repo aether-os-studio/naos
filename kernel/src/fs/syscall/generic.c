@@ -55,7 +55,11 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
         dev_nr = dev->rdev;
     }
 
-    return vfs_mount(dev_nr, dir, (const char *)type);
+    int ret = vfs_mount(dev_nr, dir, (const char *)type);
+    if (ret < 0)
+        return ret;
+    vfs_add_mount_point(dir, devname);
+    return ret;
 }
 
 uint64_t sys_umount2(const char *target, uint64_t flags) {
@@ -580,21 +584,25 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size) {
     fd_t *filedescriptor = current_task->fd_info->fds[fd];
     vfs_node_t node = filedescriptor->node;
 
-    uint64_t child_count = (uint64_t)list_length(node->child);
+    vfs_node_t tmp1, tmp2;
+    uint64_t child_count = 0;
+    llist_for_each(tmp1, tmp2, &node->childs, node_for_childs) {
+        child_count++;
+    }
 
     int64_t max_dents_num = size / sizeof(struct dirent);
 
     int64_t read_count = 0;
 
     uint64_t offset = 0;
-    list_foreach(node->child, i) {
+    vfs_node_t child_node, tmp;
+    llist_for_each(child_node, tmp, &node->childs, node_for_childs) {
         if (offset < filedescriptor->offset)
             goto next;
         if (filedescriptor->offset >= (child_count * sizeof(struct dirent)))
             break;
         if (read_count >= max_dents_num)
             break;
-        vfs_node_t child_node = (vfs_node_t)i->data;
         dents[read_count].d_ino = child_node->inode;
         dents[read_count].d_off = filedescriptor->offset;
         dents[read_count].d_reclen = sizeof(struct dirent);

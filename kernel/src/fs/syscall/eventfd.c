@@ -90,7 +90,7 @@ static ssize_t eventfd_write(eventfd_t *efd, const void *buf, size_t offset,
 
 bool eventfd_close(void *current) {
     eventfd_t *efd = current;
-    list_delete(eventfdfs_root->child, efd->node);
+    llist_delete(&efd->node->node_for_childs);
     free(efd->node->name);
     free(efd->node);
     free(efd);

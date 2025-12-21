@@ -7,6 +7,7 @@
 typedef struct proc_handle proc_handle_t;
 
 typedef size_t (*stat_entry_t)(proc_handle_t *handle);
+typedef int (*poll_entry_t)(proc_handle_t *handle, int events);
 typedef size_t (*read_entry_t)(proc_handle_t *handle, void *addr, size_t offset,
                                size_t size);
 
@@ -22,6 +23,7 @@ typedef struct proc_handle_node {
     uint64_t hash;
     read_entry_t read_entry;
     stat_entry_t stat_entry;
+    poll_entry_t poll_entry;
 } proc_handle_node_t;
 
 typedef struct procfs_self_handle {
@@ -31,6 +33,7 @@ typedef struct procfs_self_handle {
 
 void procfs_nodes_init();
 void procfs_stat_dispatch(proc_handle_t *handle, vfs_node_t node);
+int procfs_poll_dispatch(proc_handle_t *handle, vfs_node_t node, int events);
 size_t procfs_read_dispatch(proc_handle_t *handle, void *addr, size_t offset,
                             size_t size);
 
@@ -59,7 +62,10 @@ size_t proc_pcgroup_read(proc_handle_t *handle, void *addr, size_t offset,
 size_t proc_meminfo_stat(proc_handle_t *handle);
 size_t proc_meminfo_read(proc_handle_t *handle, void *addr, size_t offset,
                          size_t size);
-
+size_t proc_pmountinfo_stat(proc_handle_t *handle);
+int proc_pmountinfo_poll(proc_handle_t *handle, int events);
+size_t proc_pmountinfo_read(proc_handle_t *handle, void *addr, size_t offset,
+                            size_t size);
 size_t procfs_node_read(size_t len, size_t offset, size_t size, char *addr,
                         char *contect);
 

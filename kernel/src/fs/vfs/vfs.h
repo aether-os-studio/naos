@@ -129,7 +129,10 @@ typedef void (*vfs_free_handle_t)(void *handle);
 uint32_t poll_to_epoll_comp(uint32_t poll_events);
 uint32_t epoll_to_poll_comp(uint32_t epoll_events);
 
-static inline void vfs_generic_free_handle(void *handle) { free(handle); }
+static inline void vfs_generic_free_handle(void *handle) {
+    if (handle)
+        free(handle);
+}
 
 typedef struct vfs_callback {
     vfs_mount_t mount;
@@ -182,35 +185,49 @@ typedef struct flock {
     volatile uint64_t lock;
 } flock_t;
 
-#define VFS_NODE_FLAGS_DELETED (1ULL << 0)
-#define VFS_NODE_FLAGS_FREE_AFTER_USE (1ULL << 1)
+#define VFS_NODE_FLAGS_DELETED (1UL << 0)
+#define VFS_NODE_FLAGS_FREE_AFTER_USE (1UL << 1)
+#define VFS_NODE_FLAGS_CHILD_CREATED (1UL << 2)
+
+#define VFS_NODE_FLAGS_NOTIFY_MASK (VFS_NODE_FLAGS_CHILD_CREATED)
 
 struct vfs_node {
-    vfs_node_t parent;        // 父目录
-    uint64_t flags;           // 标志
-    uint64_t dev;             // 设备号
-    uint64_t rdev;            // 真实设备号
-    char *name;               // 名称
-    uint64_t inode;           // 节点号
-    uint64_t realsize;        // 项目真实占用的空间 (可选)
-    uint64_t size;            // 文件大小或若是文件夹则填0
-    uint64_t blksz;           // 块大小
-    uint64_t createtime;      // 创建时间
-    uint64_t readtime;        // 最后读取时间
-    uint64_t writetime;       // 最后写入时间
-    uint32_t owner;           // 所有者
-    uint32_t group;           // 所有组
-    uint32_t type;            // 类型
-    uint32_t fsid;            // 文件系统的 id
-    void *handle;             // 操作文件的句柄
-    flock_t lock;             // 锁
-    struct llist_header node; // 所有vfs_node的链表
-    list_t child;             // 子目录和子文件
-    vfs_node_t root;          // 根目录
-    int refcount;             // 引用计数
-    uint16_t mode;            // 模式
-    uint32_t rw_hint;         // 读写提示
+    vfs_node_t parent;                   // 父目录
+    uint64_t flags;                      // 标志
+    uint64_t dev;                        // 设备号
+    uint64_t rdev;                       // 真实设备号
+    char *name;                          // 名称
+    uint64_t inode;                      // 节点号
+    uint64_t realsize;                   // 项目真实占用的空间 (可选)
+    uint64_t size;                       // 文件大小或若是文件夹则填0
+    uint64_t blksz;                      // 块大小
+    uint64_t createtime;                 // 创建时间
+    uint64_t readtime;                   // 最后读取时间
+    uint64_t writetime;                  // 最后写入时间
+    uint32_t owner;                      // 所有者
+    uint32_t group;                      // 所有组
+    uint32_t type;                       // 类型
+    uint32_t fsid;                       // 文件系统的 id
+    void *handle;                        // 操作文件的句柄
+    flock_t lock;                        // 锁
+    struct llist_header node;            // 所有vfs_node的链表
+    struct llist_header childs;          // 子目录和子文件
+    struct llist_header node_for_childs; // 为子目录和子文件添加的节点
+    vfs_node_t root;                     // 根目录
+    int refcount;                        // 引用计数
+    uint16_t mode;                       // 模式
+    uint32_t rw_hint;                    // 读写提示
 };
+
+struct mount_point {
+    struct llist_header node;
+    fs_t *fs;
+    vfs_node_t dir;
+    char *devname;
+};
+
+void vfs_add_mount_point(vfs_node_t dir, char *devname);
+void vfs_delete_mount_point_by_dir(vfs_node_t dir);
 
 extern vfs_node_t rootdir; // vfs 根目录
 
