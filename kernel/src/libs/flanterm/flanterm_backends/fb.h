@@ -42,14 +42,19 @@ extern "C" {
 
 #endif
 
+#define FLANTERM_FB_ROTATE_0 0
+#define FLANTERM_FB_ROTATE_90 1
+#define FLANTERM_FB_ROTATE_180 2
+#define FLANTERM_FB_ROTATE_270 3
+
 struct flanterm_context *flanterm_fb_init(
     /* If _malloc and _free are nulled, use the bump allocated instance (1 use
        only). */
-    void *(*_malloc)(size_t size), void (*_free)(void *ptr, size_t size),
-    uint32_t *framebuffer, size_t width, size_t height, size_t pitch,
-    uint8_t red_mask_size, uint8_t red_mask_shift, uint8_t green_mask_size,
-    uint8_t green_mask_shift, uint8_t blue_mask_size, uint8_t blue_mask_shift,
-    uint32_t *canvas, /* If nulled, no canvas. */
+    void *(*_malloc)(size_t size),
+    void (*_free)(void *ptr, size_t size), uint32_t *framebuffer, size_t width,
+    size_t height, size_t pitch, uint8_t red_mask_size, uint8_t red_mask_shift,
+    uint8_t green_mask_size, uint8_t green_mask_shift, uint8_t blue_mask_size,
+    uint8_t blue_mask_shift, uint32_t *canvas, /* If nulled, no canvas. */
     uint32_t *ansi_colours,
     uint32_t *ansi_bright_colours,              /* If nulled, default. */
     uint32_t *default_bg, uint32_t *default_fg, /* If nulled, default. */
@@ -60,7 +65,13 @@ struct flanterm_context *flanterm_fb_init(
     void *font, size_t font_width, size_t font_height, size_t font_spacing,
     /* If scale_x and scale_y are 0, automatically scale font based on
        resolution. */
-    size_t font_scale_x, size_t font_scale_y, size_t margin);
+    size_t font_scale_x, size_t font_scale_y, size_t margin,
+    /* One of FLANTERM_FB_ROTATE_* values. */
+    int rotation);
+
+void flanterm_fb_set_flush_callback(
+    struct flanterm_context *ctx,
+    void (*flush_callback)(volatile void *address, size_t length));
 
 #ifdef __cplusplus
 }

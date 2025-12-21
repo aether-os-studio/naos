@@ -36,7 +36,9 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#ifndef FLANTERM_IN_FLANTERM
 #define FLANTERM_IN_FLANTERM
+#endif
 
 #include "flanterm.h"
 
@@ -99,6 +101,7 @@ void flanterm_context_reinit(struct flanterm_context *ctx) {
     ctx->reverse_video = false;
     ctx->dec_private = false;
     ctx->insert_mode = false;
+    ctx->csi_unhandled = false;
     ctx->unicode_remaining = 0;
     ctx->g_select = 0;
     ctx->charsets[0] = CHARSET_DEFAULT;
@@ -479,26 +482,37 @@ static void mode_toggle(struct flanterm_context *ctx, uint8_t c) {
     }
 }
 
-static void osc_parse(struct flanterm_context *ctx, uint8_t c) {
-    if (ctx->osc_escape && c == '\\') {
-        goto cleanup;
+static bool osc_parse(struct flanterm_context *ctx, uint8_t c) {
+    // ESC \ terminates an OSC sequence cleanly
+    // but if ESC is followed by non-\, report failure from osc_parse and
+    // try parsing the character as another escape code
+    if (ctx->osc_escape) {
+        if (c == '\\') {
+            ctx->osc = false;
+            ctx->osc_escape = false;
+            ctx->escape = false;
+            return true;
+        } else {
+            ctx->osc_escape = false;
+            ctx->osc = false;
+            // escape stays true here
+            return false;
+        }
     }
-
-    ctx->osc_escape = false;
-
     switch (c) {
     case 0x1b:
         ctx->osc_escape = true;
-        return;
+        break;
+    // BEL is the other terminator
     case '\a':
+        ctx->osc_escape = false;
+        ctx->osc = false;
+        ctx->escape = false;
+        break;
     default:
         break;
     }
-
-cleanup:
-    ctx->osc_escape = false;
-    ctx->osc = false;
-    ctx->escape = false;
+    return true;
 }
 
 static void control_sequence_parse(struct flanterm_context *ctx, uint8_t c) {
@@ -563,7 +577,20 @@ static void control_sequence_parse(struct flanterm_context *ctx, uint8_t c) {
     size_t x, y;
     ctx->get_cursor_pos(ctx, &x, &y);
 
+    // CSI sequences are terminated by a byte in [0x40,0x7E]
+    // so skip all bytes until the terminator byte
+    if (ctx->csi_unhandled) {
+        if (c >= 0x40 && c <= 0x7E) {
+            ctx->csi_unhandled = false;
+            goto cleanup;
+        }
+        return;
+    }
+
     switch (c) {
+    // Got ESC in the middle of an escape sequence, start a new one
+    case 0x1B:
+        return;
     case 'F':
         x = 0;
         // FALLTHRU
@@ -809,6 +836,9 @@ static void control_sequence_parse(struct flanterm_context *ctx, uint8_t c) {
     case ']':
         linux_private_parse(ctx);
         break;
+    default:
+        ctx->csi_unhandled = true;
+        return;
     }
 
     ctx->scroll_enabled = r;
@@ -844,8 +874,14 @@ static void escape_parse(struct flanterm_context *ctx, uint8_t c) {
     ctx->escape_offset++;
 
     if (ctx->osc == true) {
-        osc_parse(ctx, c);
-        return;
+        // ESC \ is one of the two possible terminators of OSC sequences,
+        // so osc_parse consumes ESC.
+        // If it is then followed by \ it cleans correctly,
+        // otherwise it returns false, and it tries parsing it as another escape
+        // sequence
+        if (osc_parse(ctx, c)) {
+            return;
+        }
     }
 
     if (ctx->control_sequence == true) {
@@ -866,6 +902,7 @@ static void escape_parse(struct flanterm_context *ctx, uint8_t c) {
             ctx->esc_values[i] = 0;
         ctx->esc_values_i = 0;
         ctx->rrr = false;
+        ctx->csi_unhandled = false;
         ctx->control_sequence = true;
         return;
     case '7':

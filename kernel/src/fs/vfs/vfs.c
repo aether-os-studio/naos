@@ -159,6 +159,38 @@ vfs_node_t vfs_child_append(vfs_node_t parent, const char *name, void *handle) {
     return node;
 }
 
+extern struct llist_header all_watches;
+extern spinlock_t all_watches_lock;
+extern bool notifyfs_initialized;
+
+void vfs_on_new_event(vfs_node_t node, uint64_t mask) {
+    if (!notifyfs_initialized)
+        return;
+
+    spin_lock(&all_watches_lock);
+
+    notifyfs_watch_t *pos, *tmp;
+    llist_for_each(pos, tmp, &all_watches, all_watches_node) {
+        if (pos->mask & mask) {
+            if (node != pos->watch_node) {
+                goto ret;
+            }
+            struct vfs_notify_event *event =
+                malloc(sizeof(struct vfs_notify_event));
+            memset(event, 0, sizeof(struct vfs_notify_event));
+            llist_init_head(&event->node);
+            event->changed_node = node;
+            event->mask = mask;
+            spin_lock(&pos->events_lock);
+            llist_append(&pos->events, &event->node);
+            spin_unlock(&pos->events_lock);
+        }
+    }
+
+ret:
+    spin_unlock(&all_watches_lock);
+}
+
 int vfs_mkdir(const char *name) {
     vfs_node_t current = rootdir;
     char *path;
@@ -208,6 +240,7 @@ int vfs_mkdir(const char *name) {
             new_current = vfs_node_alloc(current, buf);
             new_current->type = file_dir;
             callbackof(current, mkdir)(current->handle, buf, new_current);
+            vfs_on_new_event(current, IN_CREATE);
         }
         current = new_current;
         do_update(current);
@@ -226,11 +259,7 @@ create:
 
     free(path);
 
-    vfs_node_t p = node->parent;
-    while (p->parent) {
-        p->parent->flags |= VFS_NODE_FLAGS_CHILD_CREATED;
-        p = p->parent;
-    }
+    vfs_on_new_event(current, IN_CREATE);
 
     return 0;
 
@@ -289,11 +318,7 @@ int vfs_mkfile(const char *name) {
             new_current->type = file_dir;
             int ret =
                 callbackof(current, mkdir)(current->handle, buf, new_current);
-            if (ret < 0) {
-                free(new_current->name);
-                free(new_current);
-                goto err;
-            }
+            vfs_on_new_event(current, IN_CREATE);
         }
         current = new_current;
         do_update(current);
@@ -309,11 +334,7 @@ create:
 
     free(path);
 
-    vfs_node_t p = node->parent;
-    while (p->parent) {
-        p->parent->flags |= VFS_NODE_FLAGS_CHILD_CREATED;
-        p = p->parent;
-    }
+    vfs_on_new_event(current, IN_CREATE);
 
     return 0;
 
@@ -377,6 +398,7 @@ int vfs_link(const char *name, const char *target_name) {
             new_current = vfs_node_alloc(current, buf);
             new_current->type = file_dir;
             callbackof(current, mkdir)(current->handle, buf, new_current);
+            vfs_on_new_event(current, IN_CREATE);
         }
         current = new_current;
         do_update(current);
@@ -393,11 +415,7 @@ create:
     node->type = file_none;
     callbackof(current, link)(current->handle, target_name, node);
 
-    vfs_node_t p = node->parent;
-    while (p->parent) {
-        p->parent->flags |= VFS_NODE_FLAGS_CHILD_CREATED;
-        p = p->parent;
-    }
+    vfs_on_new_event(current, IN_CREATE);
 
     return 0;
 
@@ -461,6 +479,7 @@ int vfs_symlink(const char *name, const char *target_name) {
             new_current = vfs_node_alloc(current, buf);
             new_current->type = file_dir;
             callbackof(current, mkdir)(current->handle, buf, new_current);
+            vfs_on_new_event(current, IN_CREATE);
         }
         current = new_current;
         do_update(current);
@@ -484,11 +503,7 @@ create:
 
     free(path);
 
-    vfs_node_t p = node->parent;
-    while (p->parent) {
-        p->parent->flags |= VFS_NODE_FLAGS_CHILD_CREATED;
-        p = p->parent;
-    }
+    vfs_on_new_event(current, IN_CREATE);
 
     return 0;
 
@@ -546,6 +561,7 @@ int vfs_mknod(const char *name, uint16_t umode, int dev) {
             new_current = vfs_node_alloc(current, buf);
             new_current->type = file_dir;
             callbackof(current, mkdir)(current->handle, buf, new_current);
+            vfs_on_new_event(current, IN_CREATE);
         }
         current = new_current;
         do_update(current);
@@ -580,11 +596,7 @@ create:
 
     free(path);
 
-    vfs_node_t p = node->parent;
-    while (p->parent) {
-        p->parent->flags |= VFS_NODE_FLAGS_CHILD_CREATED;
-        p = p->parent;
-    }
+    vfs_on_new_event(current, IN_CREATE);
 
     return 0;
 

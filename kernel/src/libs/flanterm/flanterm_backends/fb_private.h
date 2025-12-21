@@ -56,6 +56,7 @@ struct flanterm_fb_context {
 
     void (*plot_char)(struct flanterm_context *ctx, struct flanterm_fb_char *c,
                       size_t x, size_t y);
+    void (*flush_callback)(volatile void *address, size_t length);
 
     size_t font_width;
     size_t font_height;
@@ -76,6 +77,8 @@ struct flanterm_fb_context {
     uint8_t red_mask_size, red_mask_shift;
     uint8_t green_mask_size, green_mask_shift;
     uint8_t blue_mask_size, blue_mask_shift;
+
+    int rotation;
 
     size_t font_bits_size;
     uint8_t *font_bits;

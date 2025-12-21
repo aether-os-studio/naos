@@ -187,9 +187,6 @@ typedef struct flock {
 
 #define VFS_NODE_FLAGS_DELETED (1UL << 0)
 #define VFS_NODE_FLAGS_FREE_AFTER_USE (1UL << 1)
-#define VFS_NODE_FLAGS_CHILD_CREATED (1UL << 2)
-
-#define VFS_NODE_FLAGS_NOTIFY_MASK (VFS_NODE_FLAGS_CHILD_CREATED)
 
 struct vfs_node {
     vfs_node_t parent;                   // 父目录
@@ -225,6 +222,53 @@ struct mount_point {
     vfs_node_t dir;
     char *devname;
 };
+
+#define IN_ACCESS 0x1
+#define IN_ATTRIB 0x4
+#define IN_CLOSE_WRITE 0x8
+#define IN_CLOSE_NOWRITE 0x10
+#define IN_CREATE 0x100
+#define IN_DELETE 0x200
+#define IN_DELETE_SELF 0x400
+#define IN_MODIFY 0x2
+#define IN_MOVE_SELF 0x800
+#define IN_MOVED_FROM 0x40
+#define IN_MOVED_TO 0x80
+#define IN_OPEN 0x20
+#define IN_MOVE (IN_MOVED_FROM | IN_MOVED_TO)
+#define IN_CLOSE (IN_CLOSE_WRITE | IN_CLOSE_NOWRITE)
+#define IN_DONT_FOLLOW 0x2000000
+#define IN_EXCL_UNLINK 0x4000000
+#define IN_MASK_ADD 0x20000000
+#define IN_ONESHOT 0x80000000
+#define IN_ONLYDIR 0x1000000
+#define IN_IGNORED 0x8000
+#define IN_ISDIR 0x40000000
+#define IN_Q_OVERFLOW 0x4000
+#define IN_UNMOUNT 0x2000
+
+struct vfs_notify_event {
+    struct llist_header node;
+    vfs_node_t changed_node;
+    uint64_t mask;
+};
+
+typedef struct notifyfs_watch {
+    uint64_t wd;
+    vfs_node_t watch_node;
+    uint64_t mask;
+    struct llist_header node;
+    struct llist_header all_watches_node;
+    spinlock_t events_lock;
+    struct llist_header events;
+} notifyfs_watch_t;
+
+typedef struct notifyfs_handle {
+    struct llist_header watches;
+    vfs_node_t node;
+} notifyfs_handle_t;
+
+void vfs_on_new_event(vfs_node_t node, uint64_t mask);
 
 void vfs_add_mount_point(vfs_node_t dir, char *devname);
 void vfs_delete_mount_point_by_dir(vfs_node_t dir);

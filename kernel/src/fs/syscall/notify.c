@@ -8,20 +8,7 @@ static int notifyfs_id = 0;
 static int watch_desc = 1;
 
 struct llist_header all_watches;
-
-typedef struct notifyfs_watch {
-    uint64_t wd;
-    vfs_node_t watch_node;
-    uint64_t mask;
-    uint64_t event;
-    struct llist_header node;
-    struct llist_header all_watches_node;
-} notifyfs_watch_t;
-
-typedef struct notifyfs_handle {
-    struct llist_header watches;
-    vfs_node_t node;
-} notifyfs_handle_t;
+spinlock_t all_watches_lock = SPIN_INIT;
 
 static int dummy() { return 0; }
 
@@ -44,24 +31,23 @@ ssize_t notifyfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
 
     notifyfs_watch_t *pos, *tmp;
     llist_for_each(pos, tmp, &handle->watches, node) {
-        if (pos->event) {
-            char *node_path = vfs_get_fullpath(pos->watch_node);
-            size_t path_len = strlen(node_path) + 1;
-            size_t total_len = sizeof(struct inotify_event) + path_len;
-            if ((uint64_t)write_pos - (uint64_t)addr + total_len > size)
+        struct vfs_notify_event *p, *t;
+        llist_for_each(p, t, &pos->events, node) {
+            int str_len = strlen(p->changed_node->name) + 1;
+            int tot_len = str_len + sizeof(struct inotify_event);
+            if ((uint64_t)write_pos - (uint64_t)addr + tot_len > size)
                 break;
-            pos->event = 0;
-            strcpy(write_pos->name, node_path);
-            write_pos->name[path_len] = '\0';
+            llist_delete(&p->node);
             write_pos->wd = pos->wd;
-            write_pos->mask = pos->event;
-            write_pos->len = path_len;
+            write_pos->mask = p->mask;
             write_pos->cookie = 0;
-            total_write += total_len;
+            write_pos->len = str_len;
+            memcpy(write_pos->name, p->changed_node->name, str_len + 1);
+            total_write += tot_len;
         }
     }
 
-    return total_write;
+    return total_write ?: -EWOULDBLOCK;
 }
 
 static int notifyfs_poll(void *file, size_t events) {
@@ -71,24 +57,12 @@ static int notifyfs_poll(void *file, size_t events) {
     notifyfs_watch_t *pos, *tmp;
     if (events & EPOLLIN) {
         llist_for_each(pos, tmp, &handle->watches, node) {
-            vfs_node_t node = pos->watch_node;
-            if (!node)
-                continue;
-            if (pos->mask & IN_MODIFY) {
-                // TODO: Check content
-                uint64_t old_size = node->size;
-                vfs_update(node);
-                if (node->size != old_size) {
-                    pos->event |= IN_MODIFY;
-                    revents |= EPOLLIN;
-                }
-            }
-            if (pos->mask & IN_CREATE) {
-                if (node->flags & VFS_NODE_FLAGS_CHILD_CREATED) {
-                    node->flags &= ~VFS_NODE_FLAGS_CHILD_CREATED;
-                    pos->event |= IN_CREATE;
-                    revents |= EPOLLIN;
-                }
+            int event_count = 0;
+            struct vfs_notify_event *p, *t;
+            llist_for_each(p, t, &pos->events, node) { event_count++; }
+            if (event_count > 0) {
+                revents |= EPOLLIN;
+                break;
             }
         }
     }
@@ -198,23 +172,32 @@ uint64_t sys_inotify_add_watch(uint64_t notifyfd, const char *path_user,
     if (!node)
         return (uint64_t)-ENOENT;
 
+    node->refcount++;
+
+    spin_lock(&all_watches_lock);
+
     notifyfs_watch_t *watch = malloc(sizeof(notifyfs_watch_t));
     watch->watch_node = node;
-    node->flags &= ~VFS_NODE_FLAGS_NOTIFY_MASK;
     watch->wd = watch_desc++;
     watch->mask = mask;
-    watch->event = 0;
 
     llist_init_head(&watch->node);
     llist_prepend(&handle->watches, &watch->node);
 
+    spin_init(&watch->events_lock);
+    llist_init_head(&watch->events);
+
     llist_init_head(&watch->all_watches_node);
     llist_prepend(&all_watches, &watch->all_watches_node);
+
+    spin_unlock(&all_watches_lock);
 
     return 0;
 }
 
 uint64_t sys_inotify_rm_watch(uint64_t watchdesc, uint64_t mask) {
+    spin_lock(&all_watches_lock);
+
     notifyfs_watch_t *watch = NULL;
     notifyfs_watch_t *pos, *tmp;
     llist_for_each(pos, tmp, &all_watches, all_watches_node) {
@@ -224,17 +207,30 @@ uint64_t sys_inotify_rm_watch(uint64_t watchdesc, uint64_t mask) {
         }
     }
 
-    if (!watch)
+    if (!watch) {
+        spin_unlock(&all_watches_lock);
         return (uint64_t)-EBADF;
+    }
 
+    vfs_close(watch->watch_node);
     llist_delete(&watch->node);
     llist_delete(&watch->all_watches_node);
+    struct vfs_notify_event *p, *t;
+    llist_for_each(p, t, &watch->events, node) {
+        llist_delete(&p->node);
+        free(p);
+    }
     free(watch);
+
+    spin_unlock(&all_watches_lock);
 
     return 0;
 }
 
+bool notifyfs_initialized = false;
+
 void notifyfs_init() {
     llist_init_head(&all_watches);
     notifyfs_id = vfs_regist(&notifyfs_fs);
+    notifyfs_initialized = true;
 }

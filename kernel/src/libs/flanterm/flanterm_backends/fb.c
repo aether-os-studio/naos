@@ -44,7 +44,9 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#ifndef FLANTERM_IN_FLANTERM
 #define FLANTERM_IN_FLANTERM
+#endif
 
 #include "../flanterm.h"
 #include "fb.h"
@@ -483,11 +485,39 @@ static void plot_char_scaled_canvas(struct flanterm_context *_ctx,
     y = ctx->offset_y + y * ctx->glyph_height;
 
     bool *glyph = &ctx->font_bool[c->c * ctx->font_height * ctx->font_width];
+
+    volatile uint32_t *dest;
+    int outer_stride, inner_stride;
+
+    switch (ctx->rotation) {
+    default:
+    case FLANTERM_FB_ROTATE_0:
+        dest = ctx->framebuffer + x + y * (ctx->pitch / 4);
+        outer_stride = ctx->pitch / 4;
+        inner_stride = 1;
+        break;
+    case FLANTERM_FB_ROTATE_90:
+        dest = ctx->framebuffer + (ctx->height - 1 - y) + x * (ctx->pitch / 4);
+        outer_stride = -1;
+        inner_stride = ctx->pitch / 4;
+        break;
+    case FLANTERM_FB_ROTATE_180:
+        dest = ctx->framebuffer + (ctx->width - 1 - x) +
+               (ctx->height - 1 - y) * (ctx->pitch / 4);
+        outer_stride = -(ctx->pitch / 4);
+        inner_stride = -1;
+        break;
+    case FLANTERM_FB_ROTATE_270:
+        dest = ctx->framebuffer + y + (ctx->width - 1 - x) * (ctx->pitch / 4);
+        outer_stride = 1;
+        inner_stride = -(ctx->pitch / 4);
+        break;
+    }
+
     // naming: fx,fy for font coordinates, gx,gy for glyph coordinates
     for (size_t gy = 0; gy < ctx->glyph_height; gy++) {
         uint8_t fy = gy / ctx->font_scale_y;
-        volatile uint32_t *fb_line =
-            ctx->framebuffer + x + (y + gy) * (ctx->pitch / 4);
+        volatile uint32_t *fb_line = dest;
         uint32_t *canvas_line = ctx->canvas + x + (y + gy) * ctx->width;
         bool *glyph_pointer = glyph + (fy * ctx->font_width);
         for (size_t fx = 0; fx < ctx->font_width; fx++) {
@@ -495,10 +525,12 @@ static void plot_char_scaled_canvas(struct flanterm_context *_ctx,
                 size_t gx = ctx->font_scale_x * fx + i;
                 uint32_t bg = c->bg == 0xffffffff ? canvas_line[gx] : c->bg;
                 uint32_t fg = c->fg == 0xffffffff ? canvas_line[gx] : c->fg;
-                fb_line[gx] = *glyph_pointer ? fg : bg;
+                *fb_line = *glyph_pointer ? fg : bg;
+                fb_line += inner_stride;
             }
             glyph_pointer++;
         }
+        dest += outer_stride;
     }
 }
 
@@ -520,19 +552,48 @@ static void plot_char_scaled_uncanvas(struct flanterm_context *_ctx,
     y = ctx->offset_y + y * ctx->glyph_height;
 
     bool *glyph = &ctx->font_bool[c->c * ctx->font_height * ctx->font_width];
+
+    volatile uint32_t *dest;
+    int outer_stride, inner_stride;
+
+    switch (ctx->rotation) {
+    default:
+    case FLANTERM_FB_ROTATE_0:
+        dest = ctx->framebuffer + x + y * (ctx->pitch / 4);
+        outer_stride = ctx->pitch / 4;
+        inner_stride = 1;
+        break;
+    case FLANTERM_FB_ROTATE_90:
+        dest = ctx->framebuffer + (ctx->height - 1 - y) + x * (ctx->pitch / 4);
+        outer_stride = -1;
+        inner_stride = ctx->pitch / 4;
+        break;
+    case FLANTERM_FB_ROTATE_180:
+        dest = ctx->framebuffer + (ctx->width - 1 - x) +
+               (ctx->height - 1 - y) * (ctx->pitch / 4);
+        outer_stride = -(ctx->pitch / 4);
+        inner_stride = -1;
+        break;
+    case FLANTERM_FB_ROTATE_270:
+        dest = ctx->framebuffer + y + (ctx->width - 1 - x) * (ctx->pitch / 4);
+        outer_stride = 1;
+        inner_stride = -(ctx->pitch / 4);
+        break;
+    }
+
     // naming: fx,fy for font coordinates, gx,gy for glyph coordinates
     for (size_t gy = 0; gy < ctx->glyph_height; gy++) {
         uint8_t fy = gy / ctx->font_scale_y;
-        volatile uint32_t *fb_line =
-            ctx->framebuffer + x + (y + gy) * (ctx->pitch / 4);
+        volatile uint32_t *fb_line = dest;
         bool *glyph_pointer = glyph + (fy * ctx->font_width);
         for (size_t fx = 0; fx < ctx->font_width; fx++) {
             for (size_t i = 0; i < ctx->font_scale_x; i++) {
-                size_t gx = ctx->font_scale_x * fx + i;
-                fb_line[gx] = *glyph_pointer ? fg : bg;
+                *fb_line = *glyph_pointer ? fg : bg;
+                fb_line += inner_stride;
             }
             glyph_pointer++;
         }
+        dest += outer_stride;
     }
 }
 
@@ -549,17 +610,47 @@ static void plot_char_unscaled_canvas(struct flanterm_context *_ctx,
     y = ctx->offset_y + y * ctx->glyph_height;
 
     bool *glyph = &ctx->font_bool[c->c * ctx->font_height * ctx->font_width];
+
+    volatile uint32_t *dest;
+    int outer_stride, inner_stride;
+
+    switch (ctx->rotation) {
+    default:
+    case FLANTERM_FB_ROTATE_0:
+        dest = ctx->framebuffer + x + y * (ctx->pitch / 4);
+        outer_stride = ctx->pitch / 4;
+        inner_stride = 1;
+        break;
+    case FLANTERM_FB_ROTATE_90:
+        dest = ctx->framebuffer + (ctx->height - 1 - y) + x * (ctx->pitch / 4);
+        outer_stride = -1;
+        inner_stride = ctx->pitch / 4;
+        break;
+    case FLANTERM_FB_ROTATE_180:
+        dest = ctx->framebuffer + (ctx->width - 1 - x) +
+               (ctx->height - 1 - y) * (ctx->pitch / 4);
+        outer_stride = -(ctx->pitch / 4);
+        inner_stride = -1;
+        break;
+    case FLANTERM_FB_ROTATE_270:
+        dest = ctx->framebuffer + y + (ctx->width - 1 - x) * (ctx->pitch / 4);
+        outer_stride = 1;
+        inner_stride = -(ctx->pitch / 4);
+        break;
+    }
+
     // naming: fx,fy for font coordinates, gx,gy for glyph coordinates
     for (size_t gy = 0; gy < ctx->glyph_height; gy++) {
-        volatile uint32_t *fb_line =
-            ctx->framebuffer + x + (y + gy) * (ctx->pitch / 4);
+        volatile uint32_t *fb_line = dest;
         uint32_t *canvas_line = ctx->canvas + x + (y + gy) * ctx->width;
         bool *glyph_pointer = glyph + (gy * ctx->font_width);
         for (size_t fx = 0; fx < ctx->font_width; fx++) {
             uint32_t bg = c->bg == 0xffffffff ? canvas_line[fx] : c->bg;
             uint32_t fg = c->fg == 0xffffffff ? canvas_line[fx] : c->fg;
-            fb_line[fx] = *(glyph_pointer++) ? fg : bg;
+            *fb_line = *(glyph_pointer++) ? fg : bg;
+            fb_line += inner_stride;
         }
+        dest += outer_stride;
     }
 }
 
@@ -581,14 +672,44 @@ static void plot_char_unscaled_uncanvas(struct flanterm_context *_ctx,
     y = ctx->offset_y + y * ctx->glyph_height;
 
     bool *glyph = &ctx->font_bool[c->c * ctx->font_height * ctx->font_width];
+
+    volatile uint32_t *dest;
+    int outer_stride, inner_stride;
+
+    switch (ctx->rotation) {
+    default:
+    case FLANTERM_FB_ROTATE_0:
+        dest = ctx->framebuffer + x + y * (ctx->pitch / 4);
+        outer_stride = ctx->pitch / 4;
+        inner_stride = 1;
+        break;
+    case FLANTERM_FB_ROTATE_90:
+        dest = ctx->framebuffer + (ctx->height - 1 - y) + x * (ctx->pitch / 4);
+        outer_stride = -1;
+        inner_stride = ctx->pitch / 4;
+        break;
+    case FLANTERM_FB_ROTATE_180:
+        dest = ctx->framebuffer + (ctx->width - 1 - x) +
+               (ctx->height - 1 - y) * (ctx->pitch / 4);
+        outer_stride = -(ctx->pitch / 4);
+        inner_stride = -1;
+        break;
+    case FLANTERM_FB_ROTATE_270:
+        dest = ctx->framebuffer + y + (ctx->width - 1 - x) * (ctx->pitch / 4);
+        outer_stride = 1;
+        inner_stride = -(ctx->pitch / 4);
+        break;
+    }
+
     // naming: fx,fy for font coordinates, gx,gy for glyph coordinates
     for (size_t gy = 0; gy < ctx->glyph_height; gy++) {
-        volatile uint32_t *fb_line =
-            ctx->framebuffer + x + (y + gy) * (ctx->pitch / 4);
+        volatile uint32_t *fb_line = dest;
         bool *glyph_pointer = glyph + (gy * ctx->font_width);
         for (size_t fx = 0; fx < ctx->font_width; fx++) {
-            fb_line[fx] = *(glyph_pointer++) ? fg : bg;
+            *fb_line = *(glyph_pointer++) ? fg : bg;
+            fb_line += inner_stride;
         }
+        dest += outer_stride;
     }
 }
 
@@ -872,6 +993,10 @@ static void flanterm_fb_double_buffer_flush(struct flanterm_context *_ctx) {
     ctx->old_cursor_y = ctx->cursor_y;
 
     ctx->queue_i = 0;
+
+    if (ctx->flush_callback) {
+        ctx->flush_callback(ctx->framebuffer, ctx->pitch * ctx->height);
+    }
 }
 
 static void flanterm_fb_raw_putchar(struct flanterm_context *_ctx, uint8_t c) {
@@ -905,11 +1030,32 @@ static void flanterm_fb_full_refresh(struct flanterm_context *_ctx) {
 
     for (size_t y = 0; y < ctx->height; y++) {
         for (size_t x = 0; x < ctx->width; x++) {
+            size_t px, py;
+            switch (ctx->rotation) {
+            default:
+            case FLANTERM_FB_ROTATE_0:
+                px = x;
+                py = y;
+                break;
+            case FLANTERM_FB_ROTATE_90:
+                px = ctx->height - 1 - y;
+                py = x;
+                break;
+            case FLANTERM_FB_ROTATE_180:
+                px = ctx->width - 1 - x;
+                py = ctx->height - 1 - y;
+                break;
+            case FLANTERM_FB_ROTATE_270:
+                px = y;
+                py = ctx->width - 1 - x;
+                break;
+            }
+
             if (ctx->canvas != NULL) {
-                ctx->framebuffer[y * (ctx->pitch / sizeof(uint32_t)) + x] =
+                ctx->framebuffer[py * (ctx->pitch / sizeof(uint32_t)) + px] =
                     ctx->canvas[y * ctx->width + x];
             } else {
-                ctx->framebuffer[y * (ctx->pitch / sizeof(uint32_t)) + x] =
+                ctx->framebuffer[py * (ctx->pitch / sizeof(uint32_t)) + px] =
                     default_bg;
             }
         }
@@ -924,6 +1070,10 @@ static void flanterm_fb_full_refresh(struct flanterm_context *_ctx) {
 
     if (_ctx->cursor_enabled) {
         draw_cursor(_ctx);
+    }
+
+    if (ctx->flush_callback) {
+        ctx->flush_callback(ctx->framebuffer, ctx->pitch * ctx->height);
     }
 }
 
@@ -963,7 +1113,14 @@ struct flanterm_context *flanterm_fb_init(
     uint32_t *default_bg, uint32_t *default_fg, uint32_t *default_bg_bright,
     uint32_t *default_fg_bright, void *font, size_t font_width,
     size_t font_height, size_t font_spacing, size_t font_scale_x,
-    size_t font_scale_y, size_t margin) {
+    size_t font_scale_y, size_t margin, int rotation) {
+    if (rotation == FLANTERM_FB_ROTATE_90 ||
+        rotation == FLANTERM_FB_ROTATE_270) {
+        size_t tmp = width;
+        width = height;
+        height = tmp;
+    }
+
     if (font_scale_x == 0 || font_scale_y == 0) {
         font_scale_x = 1;
         font_scale_y = 1;
@@ -1090,6 +1247,8 @@ struct flanterm_context *flanterm_fb_init(
 
     ctx->text_fg = ctx->default_fg;
     ctx->text_bg = 0xffffffff;
+
+    ctx->rotation = rotation;
 
     ctx->framebuffer = (void *)framebuffer;
     ctx->width = width;
@@ -1301,4 +1460,11 @@ fail:
     }
 
     return NULL;
+}
+
+void flanterm_fb_set_flush_callback(
+    struct flanterm_context *_ctx,
+    void (*flush_callback)(volatile void *address, size_t length)) {
+    struct flanterm_fb_context *ctx = (void *)_ctx;
+    ctx->flush_callback = flush_callback;
 }

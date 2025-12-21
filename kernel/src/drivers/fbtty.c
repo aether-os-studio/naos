@@ -173,7 +173,7 @@ uint64_t create_session_terminal(tty_t *session) {
                   framebuffer->green_mask_size, framebuffer->green_mask_shift,
                   framebuffer->blue_mask_size, framebuffer->blue_mask_shift,
                   NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, 0, 0, 0, 0,
-                  0)
+                  0, FLANTERM_FB_ROTATE_0)
             : NULL;
     memset(&session->termios, 0, sizeof(termios));
     session->termios.c_iflag = BRKINT | ICRNL | INPCK | ISTRIP | IXON;
