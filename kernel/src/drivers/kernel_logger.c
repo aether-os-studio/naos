@@ -404,9 +404,12 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list args) {
     spin_lock(&vsnprintf_lock);
     memset(vsnprintf_buf, 0, sizeof(vsnprintf_buf));
     int ret = vsprintf(vsnprintf_buf, fmt, args);
+    if (!size) {
+        spin_unlock(&vsnprintf_lock);
+        return ret;
+    }
     int to_copy = MIN((size_t)ret, size);
-    if (buf)
-        memcpy(buf, vsnprintf_buf, to_copy);
+    memcpy(buf, vsnprintf_buf, to_copy);
     spin_unlock(&vsnprintf_lock);
     return to_copy;
 }
