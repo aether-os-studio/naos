@@ -101,22 +101,22 @@ struct sigevent {
 #define SI_ASYNCNL -60 /* sent by glibc async name lookup completion */
 
 struct signalfd_siginfo {
-    uint32_t ssi_signo;   // 信号编号
-    int32_t ssi_errno;    // 错误代码（通常为0）
-    int32_t ssi_code;     // 信号来源（如SI_USER）
-    uint32_t ssi_pid;     // 发送进程PID
-    uint32_t ssi_uid;     // 发送用户UID
-    int32_t ssi_fd;       // 相关文件描述符（若适用）
-    uint32_t ssi_tid;     // 内核定时器ID（若适用）
-    uint32_t ssi_band;    // 带宽事件（用于SIGPOLL）
-    uint32_t ssi_overrun; // 定时器超限计数
-    uint32_t ssi_trapno;  // 陷阱号（SIGSEGV等）
-    int32_t ssi_status;   // 退出状态（SIGCHLD）
-    int32_t ssi_int;      // 信号携带的整数值
-    uint64_t ssi_ptr;     // 信号携带的指针值
-    uint64_t ssi_utime;   // 用户时间（SIGCHLD）
-    uint64_t ssi_stime;   // 系统时间（SIGCHLD）
-    uint64_t ssi_addr;    // 触发地址（SIGSEGV/SIGBUS）
+    uint32_t ssi_signo;   // 信号号
+    int32_t ssi_errno;    // errno 值
+    int32_t ssi_code;     // 信号代码 (CLD_EXITED, CLD_KILLED 等)
+    uint32_t ssi_pid;     // 发送进程 PID
+    uint32_t ssi_uid;     // 发送进程 UID
+    int32_t ssi_fd;       // 文件描述符 (SIGIO)
+    uint32_t ssi_tid;     // 内核定时器 ID
+    uint32_t ssi_band;    // Band event (SIGIO)
+    uint32_t ssi_overrun; // POSIX 定时器溢出计数
+    uint32_t ssi_trapno;  // Trap 号
+    int32_t ssi_status;   // 退出状态或信号
+    int32_t ssi_int;      // sigqueue() 发送的整数
+    uint64_t ssi_ptr;     // sigqueue() 发送的指针
+    uint64_t ssi_utime;   // 用户 CPU 时间
+    uint64_t ssi_stime;   // 系统 CPU 时间
+    uint64_t ssi_addr;    // 产生信号的地址 (SIGSEGV 等)
     uint8_t __pad[48];    // 填充至128字节
 };
 

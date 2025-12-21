@@ -224,6 +224,8 @@ void sysfs_init() {
 
     vfs_mkdir("/sys/devices");
 
+    vfs_mkdir("/sys/module");
+
     vfs_mkdir("/sys/dev");
     vfs_mkdir("/sys/dev/char");
     vfs_mkdir("/sys/dev/block");
@@ -231,6 +233,8 @@ void sysfs_init() {
     vfs_mkdir("/sys/bus");
     vfs_mkdir("/sys/bus/pci");
     vfs_mkdir("/sys/bus/pci/devices");
+    vfs_mkdir("/sys/bus/usb");
+    vfs_mkdir("/sys/bus/usb/devices");
 
     vfs_mkdir("/sys/class");
     vfs_mkdir("/sys/class/graphics");

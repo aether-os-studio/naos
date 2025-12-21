@@ -18,8 +18,7 @@ static int signalfd_poll(void *file, size_t event) {
 int signalfdfs_id = 0;
 int signalfd_id = 0;
 
-static ssize_t signalfd_read(fd_t *fd, uint64_t offset, void *buf,
-                             uint64_t len) {
+static ssize_t signalfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     void *data = fd->node->handle;
 
     struct signalfd_ctx *ctx = data;
@@ -31,9 +30,8 @@ static ssize_t signalfd_read(fd_t *fd, uint64_t offset, void *buf,
     }
 
     struct signalfd_siginfo *ev = &ctx->queue[ctx->queue_tail];
-    size_t copy_len = len < sizeof(*ev) ? len : sizeof(*ev);
-    memcpy(buf, ev, copy_len);
-
+    size_t copy_len = size < sizeof(*ev) ? size : sizeof(*ev);
+    memcpy(addr, ev, copy_len);
     ctx->queue_tail = (ctx->queue_tail + 1) % ctx->queue_size;
     return copy_len;
 }
@@ -66,10 +64,11 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask,
     if (!ctx)
         return -ENOMEM;
 
-    memcpy(&ctx->sigmask, mask, sizeof(sigset_t));
+    if (copy_from_user(&ctx->sigmask, mask, sizeof(sigset_t)))
+        return (uint64_t)-EFAULT;
 
-    ctx->queue_size = 32;
-    ctx->queue = malloc(ctx->queue_size * sizeof(struct sigevent));
+    ctx->queue_size = 64;
+    ctx->queue = calloc(ctx->queue_size, sizeof(struct signalfd_siginfo));
     ctx->queue_head = ctx->queue_tail = 0;
 
     // 分配文件描述符

@@ -293,6 +293,15 @@ void procfs_on_new_task(task_t *task) {
     self_stat_handle->task = task;
     sprintf(self_stat_handle->name, "proc_stat");
 
+    vfs_node_t self_status = vfs_child_append(node, "status", NULL);
+    self_status->type = file_none;
+    self_status->mode = 0700;
+    proc_handle_t *self_status_handle = malloc(sizeof(proc_handle_t));
+    self_status->handle = self_status_handle;
+    self_status_handle->node = self_status;
+    self_status_handle->task = task;
+    sprintf(self_status_handle->name, "proc_status");
+
     vfs_node_t self_cgroup = vfs_child_append(node, "cgroup", NULL);
     self_cgroup->type = file_none;
     self_cgroup->mode = 0700;

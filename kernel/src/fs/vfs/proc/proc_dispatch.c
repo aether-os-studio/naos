@@ -60,6 +60,8 @@ void procfs_nodes_init() {
                          NULL);
     create_procfs_handle("proc_maps", proc_pmaps_read, NULL, NULL);
     create_procfs_handle("proc_stat", proc_pstat_read, proc_pstat_stat, NULL);
+    create_procfs_handle("proc_status", proc_pstatus_read, proc_pstatus_stat,
+                         NULL);
     create_procfs_handle("proc_cgroup", proc_pcgroup_read, proc_pcgroup_stat,
                          NULL);
     create_procfs_handle("proc_mountinfo", proc_pmountinfo_read,

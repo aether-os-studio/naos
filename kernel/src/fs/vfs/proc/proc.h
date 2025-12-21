@@ -56,6 +56,9 @@ size_t proc_pmaps_read(proc_handle_t *handle, void *addr, size_t offset,
 size_t proc_pstat_stat(proc_handle_t *handle);
 size_t proc_pstat_read(proc_handle_t *handle, void *addr, size_t offset,
                        size_t size);
+size_t proc_pstatus_stat(proc_handle_t *handle);
+size_t proc_pstatus_read(proc_handle_t *handle, void *addr, size_t offset,
+                       size_t size);
 size_t proc_pcgroup_stat(proc_handle_t *handle);
 size_t proc_pcgroup_read(proc_handle_t *handle, void *addr, size_t offset,
                          size_t size);

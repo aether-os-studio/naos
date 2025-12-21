@@ -272,9 +272,9 @@ uint64_t sys_close(uint64_t fd) {
 
     free(current_task->fd_info->fds[fd]);
 
-    procfs_on_close_file(current_task, fd);
-
     current_task->fd_info->fds[fd] = NULL;
+
+    procfs_on_close_file(current_task, fd);
 
     return 0;
 }
