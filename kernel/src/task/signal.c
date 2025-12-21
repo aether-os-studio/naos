@@ -48,6 +48,8 @@ void signal_init() {
     signal_internal_decisions[SIGWINCH] = SIGNAL_INTERNAL_IGN;
 }
 
+extern int signalfdfs_id;
+
 int signals_pending_quick(task_t *task) {
     sigset_t pending_list = task->signal->signal;
     sigset_t unblocked_list = pending_list & (~task->signal->blocked);
@@ -232,12 +234,34 @@ uint64_t sys_kill(int pid, int sig) {
 
     task_commit_signal(task, sig, NULL);
 
+    for (int i = 0; i < MAX_FD_NUM; i++) {
+        fd_t *fd = task->fd_info->fds[i];
+        if (fd) {
+            vfs_node_t node = fd->node;
+            if (node && node->fsid == signalfdfs_id) {
+                struct signalfd_ctx *ctx = node->handle;
+                if (ctx) {
+                    struct signalfd_siginfo info;
+                    memset(&info, 0, sizeof(struct sigevent));
+                    info.ssi_signo = sig;
+                    info.ssi_code = SI_USER;
+
+                    memcpy(&ctx->queue[ctx->queue_head], &info,
+                           sizeof(struct signalfd_siginfo));
+                    ctx->queue_head = (ctx->queue_head + 1) % ctx->queue_size;
+                    if (ctx->queue_head == ctx->queue_tail) {
+                        ctx->queue_tail =
+                            (ctx->queue_tail + 1) % ctx->queue_size;
+                    }
+                }
+            }
+        }
+    }
+
     task_unblock(task, 128 + sig);
 
     return 0;
 }
-
-extern int signalfdfs_id;
 
 void task_signal() {
     if (current_task->signal->pending_signal.sig == 0 ||
@@ -267,30 +291,6 @@ void task_signal() {
         task_exit(128 + sig);
         return;
     }
-
-    // for (int i = 0; i < MAX_FD_NUM; i++) {
-    //     fd_t *fd = current_task->fd_info->fds[i];
-    //     if (fd) {
-    //         vfs_node_t node = fd->node;
-    //         if (node && node->fsid == signalfdfs_id) {
-    //             struct signalfd_ctx *ctx = node->handle;
-    //             if (ctx) {
-    //                 struct signalfd_siginfo info;
-    //                 memset(&info, 0, sizeof(struct sigevent));
-    //                 info.ssi_signo = sig;
-
-    //                 memcpy(&ctx->queue[ctx->queue_head], &info,
-    //                        sizeof(struct signalfd_siginfo));
-    //                 ctx->queue_head = (ctx->queue_head + 1) %
-    //                 ctx->queue_size; if (ctx->queue_head == ctx->queue_tail)
-    //                 {
-    //                     ctx->queue_tail =
-    //                         (ctx->queue_tail + 1) % ctx->queue_size;
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
 
     sigaction_t *ptr = &current_task->signal->actions[sig];
 

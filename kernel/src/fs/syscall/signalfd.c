@@ -25,6 +25,8 @@ static ssize_t signalfd_read(fd_t *fd, uint64_t offset, void *buf,
     struct signalfd_ctx *ctx = data;
 
     while (ctx->queue_head == ctx->queue_tail) {
+        if (fd->flags & O_NONBLOCK)
+            return -EWOULDBLOCK;
         arch_yield();
     }
 
@@ -92,7 +94,7 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask,
     current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
     current_task->fd_info->fds[fd]->node = node;
     current_task->fd_info->fds[fd]->offset = 0;
-    current_task->fd_info->fds[fd]->flags = 0;
+    current_task->fd_info->fds[fd]->flags = flags;
     procfs_on_open_file(current_task, fd);
 
     return fd;

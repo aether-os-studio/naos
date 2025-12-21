@@ -517,8 +517,9 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_FINIT_MODULE] = (syscall_handle_t)sys_finit_module;
     // syscall_handlers[SYS_SCHED_SETATTR] =
     // (syscall_handle_t)sys_sched_setattr; syscall_handlers[SYS_SCHED_GETATTR]
-    // = (syscall_handle_t)sys_sched_getattr; syscall_handlers[SYS_RENAMEAT2] =
-    // (syscall_handle_t)sys_renameat2; syscall_handlers[SYS_SECCOMP] =
+    // = (syscall_handle_t)sys_sched_getattr;
+    syscall_handlers[SYS_RENAMEAT2] = (syscall_handle_t)sys_renameat2;
+    // syscall_handlers[SYS_SECCOMP] =
     // (syscall_handle_t)sys_seccomp;
     syscall_handlers[SYS_GETRANDOM] = (syscall_handle_t)sys_getrandom;
     syscall_handlers[SYS_MEMFD_CREATE] = (syscall_handle_t)sys_memfd_create;

@@ -127,6 +127,8 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
 
         if (timeout != 0) {
             arch_yield();
+        } else {
+            goto ret;
         }
     }
 

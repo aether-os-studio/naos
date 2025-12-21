@@ -159,6 +159,11 @@ void ext_open(void *parent, const char *name, vfs_node_t node) {
     ext4_mode_get((const char *)path, &mode);
     node->mode = mode;
     node->handle = handle;
+    uint32_t t = 0;
+    ext4_ctime_get((const char *)path, &t);
+    node->createtime = t;
+    ext4_mtime_get((const char *)path, &t);
+    node->readtime = t;
 
     free(path);
 
