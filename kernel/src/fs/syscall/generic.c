@@ -948,7 +948,12 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
 
     uint64_t ret = do_stat_path(resolved, &simple);
 
+    vfs_node_t node = vfs_open(resolved);
+
     free(resolved);
+
+    if (!node)
+        return (uint64_t)-ENOENT;
 
     if ((int64_t)ret < 0)
         return ret;
@@ -984,6 +989,8 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
 
     buff->stx_mtime.tv_sec = simple.st_mtim.tv_sec;
     buff->stx_mtime.tv_nsec = simple.st_mtim.tv_nsec;
+
+    buff->stx_mnt_id = node->fsid;
 
     // todo: special devices
 
