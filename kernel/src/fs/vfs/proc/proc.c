@@ -340,7 +340,7 @@ void procfs_on_new_task(task_t *task) {
 }
 
 void procfs_on_open_file(task_t *task, int fd) {
-    vfs_node_t fd_root = vfs_open_at(task->procfs_node, "fd");
+    vfs_node_t fd_root = vfs_open_at(task->procfs_node, "fd", 0);
     if (!fd_root)
         return;
 
@@ -368,7 +368,7 @@ void procfs_on_open_file(task_t *task, int fd) {
 void procfs_on_close_file(task_t *task, int fd) {
     char name[3 + 4];
     sprintf(name, "fd/%d", fd);
-    vfs_node_t fd_node = vfs_open_at(task->procfs_node, name);
+    vfs_node_t fd_node = vfs_open_at(task->procfs_node, name, O_NOFOLLOW);
     if (!fd_node)
         return;
 
@@ -387,7 +387,7 @@ void procfs_on_exit_task(task_t *task) {
     vfs_close(task->procfs_node);
     task->procfs_node = NULL;
 
-    vfs_node_t node = vfs_open_at(procfs_root, name);
+    vfs_node_t node = vfs_open_at(procfs_root, name, O_NOFOLLOW);
     if (!node)
         goto done;
 

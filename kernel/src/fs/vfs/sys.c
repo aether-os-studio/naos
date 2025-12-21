@@ -69,7 +69,7 @@ ssize_t sysfs_readlink(vfs_node_t node, void *addr, size_t offset,
     memset(tmp, 0, sizeof(tmp));
     memcpy(tmp, handle->content, MIN(handle->size, sizeof(tmp)));
 
-    vfs_node_t to_node = vfs_open_at(node->parent, (const char *)tmp);
+    vfs_node_t to_node = vfs_open_at(node->parent, (const char *)tmp, 0);
     if (!to_node)
         return -ENOENT;
 
@@ -207,7 +207,7 @@ sysfs_regist_acpi_table(void *user, struct uacpi_installed_table *tbl,
     sprintf(path, "/sys/firmware/acpi/tables/%s", name);
 
     vfs_mkfile(path);
-    vfs_node_t node = vfs_open(path);
+    vfs_node_t node = vfs_open(path, 0);
     vfs_write(node, (const void *)phys_to_virt(tbl->phys_addr), 0,
               tbl->hdr.length);
 
@@ -258,28 +258,28 @@ void sysfs_init() {
 
         char content[64];
         sprintf(content, "0x%x", dev->class_code);
-        vfs_write(vfs_open(name), content, 0, strlen(content));
+        vfs_write(vfs_open(name, 0), content, 0, strlen(content));
 
         sprintf(name, "/sys/bus/pci/devices/%04d:%02d:%02d.%d/revision",
                 dev->segment, dev->bus, dev->slot, dev->func);
         vfs_mkfile(name);
 
         sprintf(content, "0x%02x", dev->revision_id);
-        vfs_write(vfs_open(name), content, 0, strlen(content));
+        vfs_write(vfs_open(name, 0), content, 0, strlen(content));
 
         sprintf(name, "/sys/bus/pci/devices/%04d:%02d:%02d.%d/vendor",
                 dev->segment, dev->bus, dev->slot, dev->func);
         vfs_mkfile(name);
 
         sprintf(content, "0x%04x", dev->vendor_id);
-        vfs_write(vfs_open(name), content, 0, strlen(content));
+        vfs_write(vfs_open(name, 0), content, 0, strlen(content));
 
         sprintf(name, "/sys/bus/pci/devices/%04d:%02d:%02d.%d/device",
                 dev->segment, dev->bus, dev->slot, dev->func);
         vfs_mkfile(name);
 
         sprintf(content, "0x%04x", dev->device_id);
-        vfs_write(vfs_open(name), content, 0, strlen(content));
+        vfs_write(vfs_open(name, 0), content, 0, strlen(content));
     }
 
     // vfs_mkdir("/sys/firmware/acpi/tables");
@@ -308,11 +308,11 @@ vfs_node_t sysfs_regist_dev(char t, int major, int minor,
     vfs_node_t real_device_node = NULL;
     if (dev_root_is_real) {
         vfs_mkdir(dev_root_path);
-        real_device_node = vfs_open(dev_root_path);
+        real_device_node = vfs_open(dev_root_path, 0);
     } else {
         vfs_mkdir(real_device_path);
         vfs_symlink(dev_root_path, real_device_path);
-        real_device_node = vfs_open(real_device_path);
+        real_device_node = vfs_open(real_device_path, 0);
     }
 
     char *fullpath = vfs_get_fullpath(real_device_node);
@@ -321,7 +321,7 @@ vfs_node_t sysfs_regist_dev(char t, int major, int minor,
     sprintf(uevent_path, "%s/uevent", fullpath);
 
     vfs_mkfile(uevent_path);
-    vfs_node_t uevent_node = vfs_open(uevent_path);
+    vfs_node_t uevent_node = vfs_open(uevent_path, 0);
 
     char uevent_content[256];
     sprintf(uevent_content, "MAJOR=%d\nMINOR=%d\nDEVNAME=%s\nDEVPATH=%s\n%s",
@@ -358,7 +358,7 @@ vfs_node_t sysfs_child_append(vfs_node_t parent, const char *name,
 
     free(parent_path);
 
-    return vfs_open(path);
+    return vfs_open(path, 0);
 }
 
 vfs_node_t sysfs_child_append_symlink(vfs_node_t parent, const char *name,
@@ -372,5 +372,5 @@ vfs_node_t sysfs_child_append_symlink(vfs_node_t parent, const char *name,
 
     free(parent_path);
 
-    return vfs_open(path);
+    return vfs_open(path, 0);
 }

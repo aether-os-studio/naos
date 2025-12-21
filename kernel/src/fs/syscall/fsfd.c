@@ -123,7 +123,7 @@ found:;
 }
 
 uint64_t sys_statfs(const char *path, struct statfs *buf) {
-    vfs_node_t node = vfs_open(path);
+    vfs_node_t node = vfs_open(path, 0);
     if (!node)
         return -ENOENT;
 
@@ -281,7 +281,7 @@ static int fsconfig_set_string(fs_context_t *ctx, const char *key,
             return -ENOMEM;
 
         /* Try to resolve the source to get device number */
-        vfs_node_t source_node = vfs_open(value);
+        vfs_node_t source_node = vfs_open(value, 0);
         if (source_node) {
             ctx->source_node = source_node;
             ctx->source_dev = source_node->rdev;
@@ -658,7 +658,7 @@ uint64_t sys_move_mount(int from_dfd, const char *from_pathname_user,
     } else {
         /* Resolve path to get existing mount */
         char *resolved = at_resolve_pathname(from_dfd, from_pathname);
-        source_mount = vfs_open(resolved ? resolved : from_pathname);
+        source_mount = vfs_open(resolved ? resolved : from_pathname, 0);
         if (!source_mount)
             return -ENOENT;
 
@@ -674,7 +674,7 @@ uint64_t sys_move_mount(int from_dfd, const char *from_pathname_user,
         target_dir = current_task->fd_info->fds[to_dfd]->node;
     } else {
         char *resolved = at_resolve_pathname(to_dfd, to_pathname);
-        target_dir = vfs_open(resolved ? resolved : to_pathname);
+        target_dir = vfs_open(resolved ? resolved : to_pathname, 0);
     }
 
     if (!target_dir)

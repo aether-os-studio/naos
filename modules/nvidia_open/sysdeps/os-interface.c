@@ -813,7 +813,7 @@ nv_get_firmware(nv_state_t *nv, nv_firmware_type_t fw_type,
     const char *path = nv_firmware_for_chip_family(fw_type, fw_chip_family);
     printk("NVIDIA_OPEN: Getting firmware %s\n", path);
 
-    vfs_node_t node = vfs_open(path);
+    vfs_node_t node = vfs_open(path, 0);
     if (!node) {
         return NULL;
     }

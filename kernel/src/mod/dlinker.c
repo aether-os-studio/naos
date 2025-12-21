@@ -365,7 +365,7 @@ void find_kernel_symbol() {
 void dlinker_init() {
     find_kernel_symbol();
 
-    vfs_node_t modules_root = vfs_open("/lib/modules");
+    vfs_node_t modules_root = vfs_open("/lib/modules", 0);
     if (!modules_root)
         return;
 

@@ -26,13 +26,11 @@ enum {
     file_none = 0x0001UL,    // 普通文件
     file_dir = 0x0002UL,     // 文件夹
     file_symlink = 0x0004UL, // 符号链接
-    file_block = 0x0008UL,   // 块设备，如硬盘
+    file_block = 0x00008UL,  // 块设备，如硬盘
     file_stream = 0x0010UL,  // 流式设备，如终端
     file_pipe = 0x0020UL,    // 管道设备
     file_socket = 0x0040UL,  // 套接字设备
     file_epoll = 0x0080UL,   // epoll 设备
-    file_ptmx = 0x0100UL,    // ptmx 设备
-    file_pts = 0x0200UL,     // pts 设备
 };
 
 typedef struct vfs_node *vfs_node_t;
@@ -296,9 +294,9 @@ int vfs_regist(fs_t *fs);
 #define PATH_MAX 4096    // 路径最大长度
 #define FILENAME_MAX 256 // 文件名最大长度
 
-vfs_node_t vfs_open_at(vfs_node_t start, const char *_path);
+vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, uint64_t flags);
 
-vfs_node_t vfs_open(const char *_path);
+vfs_node_t vfs_open(const char *_path, uint64_t flags);
 
 vfs_node_t vfs_find_node_by_inode(uint64_t inode);
 

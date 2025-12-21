@@ -261,7 +261,7 @@ ssize_t ext_readlink(vfs_node_t node, void *addr, size_t offset, size_t size) {
     free(node_path);
 
     spin_unlock(&rwlock);
-    vfs_node_t to_node = vfs_open_at(node->parent, (const char *)tmp);
+    vfs_node_t to_node = vfs_open_at(node->parent, (const char *)tmp, 0);
     if (!to_node) {
         return -ENOENT;
     }
@@ -322,7 +322,7 @@ int ext_symlink(void *parent, const char *name, vfs_node_t node) {
 
     spin_unlock(&rwlock);
 
-    vfs_node_t target = vfs_open_at(node->parent, name);
+    vfs_node_t target = vfs_open_at(node->parent, name, 0);
     if (target) {
         node->size = target->size;
     }
@@ -454,7 +454,8 @@ int ext_stat(void *file, vfs_node_t node) {
         memset(linkpath, 0, sizeof(linkpath));
         int r = ext4_readlink(fpath, linkpath, sizeof(linkpath), NULL);
         spin_unlock(&rwlock);
-        vfs_node_t target = vfs_open_at(node->parent, (const char *)linkpath);
+        vfs_node_t target =
+            vfs_open_at(node->parent, (const char *)linkpath, 0);
         spin_lock(&rwlock);
         if (target) {
             node->size = target->size;

@@ -13,7 +13,7 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
     if (copy_from_user_str(dirname, dir_name, sizeof(dirname)))
         return (uint64_t)-EFAULT;
 
-    vfs_node_t dir = vfs_open((const char *)dirname);
+    vfs_node_t dir = vfs_open((const char *)dirname, 0);
     if (!dir) {
         return (uint64_t)-ENOENT;
     }
@@ -24,7 +24,7 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
             return (uint64_t)-EINVAL;
         }
 
-        vfs_node_t old_mount = vfs_open((const char *)devname);
+        vfs_node_t old_mount = vfs_open((const char *)devname, 0);
         if (!old_mount)
             return (uint64_t)-EINVAL;
 
@@ -50,7 +50,7 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
     }
 
     uint64_t dev_nr = 0;
-    vfs_node_t dev = vfs_open((const char *)devname);
+    vfs_node_t dev = vfs_open((const char *)devname, 0);
     if (dev) {
         dev_nr = dev->rdev;
     }
@@ -85,7 +85,7 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
 
     int create_mode = (flags & O_CREAT);
 
-    vfs_node_t node = vfs_open(name);
+    vfs_node_t node = vfs_open(name, flags & O_NOFOLLOW);
     if (!node && !create_mode) {
         // serial_fprintk("Opening file %s failed\n", name);
         return (uint64_t)-ENOENT;
@@ -101,7 +101,7 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
         if (ret < 0)
             return (uint64_t)-ENOSPC;
 
-        node = vfs_open(name);
+        node = vfs_open(name, flags & O_NOFOLLOW);
         if (!node)
             return (uint64_t)-ENOENT;
         if (mode)
@@ -111,7 +111,7 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
     current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
     current_task->fd_info->fds[i]->node = node;
     current_task->fd_info->fds[i]->offset = 0;
-    current_task->fd_info->fds[i]->flags = flags;
+    current_task->fd_info->fds[i]->flags = flags & (O_CLOEXEC | O_NONBLOCK);
     node->refcount++;
 
     procfs_on_open_file(current_task, i);
@@ -156,7 +156,7 @@ uint64_t sys_name_to_handle_at(int dfd, const char *name,
         return (uint64_t)-ENOMEM;
     }
 
-    vfs_node_t node = vfs_open(path);
+    vfs_node_t node = vfs_open(path, flag);
     free(path);
 
     if (!node) {
@@ -632,7 +632,7 @@ uint64_t sys_chdir(const char *dname) {
     if (copy_from_user_str(dirname, dname, sizeof(dirname)))
         return (uint64_t)-EFAULT;
 
-    vfs_node_t new_cwd = vfs_open(dirname);
+    vfs_node_t new_cwd = vfs_open(dirname, 0);
     if (!new_cwd)
         return (uint64_t)-ENOENT;
 
@@ -664,8 +664,8 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd) {
     if (!current_task->fd_info->fds[fd])
         return (uint64_t)-EBADF;
 
-    fd_t *new = vfs_dup(current_task->fd_info->fds[fd]);
-    if (!new)
+    fd_t *newf = vfs_dup(current_task->fd_info->fds[fd]);
+    if (!newf)
         return (uint64_t)-ENOSPC;
 
     if (current_task->fd_info->fds[newfd]) {
@@ -673,7 +673,7 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd) {
         free(current_task->fd_info->fds[newfd]);
     }
 
-    current_task->fd_info->fds[newfd] = new;
+    current_task->fd_info->fds[newfd] = newf;
 
     return newfd;
 }
@@ -733,7 +733,9 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         return 0;
     case F_DUPFD_CLOEXEC:
         uint64_t newfd = sys_dup(fd);
-        current_task->fd_info->fds[newfd]->flags |= O_CLOEXEC;
+        if ((int64_t)newfd >= 0) {
+            current_task->fd_info->fds[newfd]->flags |= O_CLOEXEC;
+        }
         spin_unlock(&fcntl_lock);
         return newfd;
     case F_DUPFD:
@@ -827,7 +829,7 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
 uint64_t do_stat_path(const char *path, struct stat *buf) {
     memset(buf, 0, sizeof(struct stat));
 
-    vfs_node_t node = vfs_open(path);
+    vfs_node_t node = vfs_open(path, O_NOFOLLOW);
     if (!node) {
         // serial_fprintk("Stating file %s failed\n", fn);
         return (uint64_t)-ENOENT;
@@ -948,7 +950,7 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
 
     uint64_t ret = do_stat_path(resolved, &simple);
 
-    vfs_node_t node = vfs_open(resolved);
+    vfs_node_t node = vfs_open(resolved, 0);
 
     free(resolved);
 
@@ -1058,7 +1060,7 @@ uint64_t sys_faccessat2(uint64_t dirfd, const char *pathname_user,
 }
 
 uint64_t do_readlink(char *path, char *buf, uint64_t size) {
-    vfs_node_t node = vfs_open(path);
+    vfs_node_t node = vfs_open(path, O_NOFOLLOW);
     if (node == NULL) {
         return (uint64_t)-ENOENT;
     }
@@ -1137,7 +1139,7 @@ uint64_t sys_rmdir(const char *name_user) {
         return (uint64_t)-EFAULT;
     }
 
-    vfs_node_t node = vfs_open(name);
+    vfs_node_t node = vfs_open(name, 0);
     if (!node)
         return -ENOENT;
     if (!(node->type & file_dir))
@@ -1149,7 +1151,7 @@ uint64_t sys_rmdir(const char *name_user) {
 }
 
 uint64_t do_unlink(const char *name) {
-    vfs_node_t node = vfs_open(name);
+    vfs_node_t node = vfs_open(name, 0);
     if (!node)
         return -ENOENT;
 
@@ -1185,7 +1187,7 @@ uint64_t sys_unlinkat(uint64_t dirfd, const char *name_user, uint64_t flags) {
 }
 
 uint64_t do_rename(const char *old, const char *new) {
-    vfs_node_t node = vfs_open(old);
+    vfs_node_t node = vfs_open(old, 0);
     if (!node)
         return -ENOENT;
     int ret = vfs_rename(node, new);
@@ -1456,7 +1458,7 @@ uint64_t sys_truncate(const char *path_user, uint64_t length) {
     if (copy_from_user_str(path, path_user, sizeof(path)))
         return (uint64_t)-EFAULT;
 
-    vfs_node_t node = vfs_open(path);
+    vfs_node_t node = vfs_open(path, 0);
     if (!node) {
         return (uint64_t)-ENOENT;
     }

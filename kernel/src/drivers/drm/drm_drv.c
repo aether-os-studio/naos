@@ -174,7 +174,7 @@ static void drm_device_setup_sysfs(int major, int minor, drm_device_t *dev,
         sprintf(path, "/sys/dev/char/%d:%d/device/drm/card%d", major, minor,
                 minor);
 
-        vfs_node_t class_drm = vfs_open("/sys/class/drm");
+        vfs_node_t class_drm = vfs_open("/sys/class/drm", 0);
         sprintf(buf, "card%d", minor);
         vfs_node_t class_drm_cardn =
             sysfs_child_append_symlink(class_drm, buf, path);
@@ -418,7 +418,7 @@ void drm_unregister_device(drm_device_t *dev) {
  * This provides basic display functionality even without hardware acceleration.
  */
 void drm_init_after_pci_sysfs() {
-    if (!vfs_open("/dev/dri/card0")) {
+    if (!vfs_open("/dev/dri/card0", 0)) {
         printk("Cannot find GPU device, using framebuffer.\n");
         extern void drm_plainfb_init(void);
         drm_plainfb_init();

@@ -55,13 +55,14 @@ void arch_input_dev_init() {
                      "input/event0",
                      "ID_INPUT=1\nID_INPUT_KEYBOARD=1\nSUBSYSTEM=input\n");
 
-    vfs_node_t input_root = vfs_open("/sys/class/input");
+    vfs_node_t input_root = vfs_open("/sys/class/input", 0);
     vfs_node_t event0 = sysfs_child_append_symlink(
         input_root, "event0",
         "/sys/devices/platform/i8042/serio0/input/input0/event0");
 
-    event0 = vfs_open("/sys/devices/platform/i8042/serio0/input/input0/event0");
-    sysfs_child_append_symlink(event0, "subsystem", "/sys/class/input");
+    event0 =
+        vfs_open("/sys/devices/platform/i8042/serio0/input/input0/event0", 0);
+    sysfs_child_append_symlink(event0, "subsystem", "/sys/class/input", 0);
 
     mouse_input_event = malloc(sizeof(dev_input_event_t));
     mouse_input_event->inputid.bustype = 0x11;
@@ -87,11 +88,12 @@ void arch_input_dev_init() {
                      "input/event1",
                      "ID_INPUT=1\nID_INPUT_MOUSE=1\nSUBSYSTEM=input\n");
 
-    input_root = vfs_open("/sys/class/input");
+    input_root = vfs_open("/sys/class/input", 0);
     vfs_node_t event1 = sysfs_child_append_symlink(
         input_root, "event1",
         "/sys/devices/platform/i8042/serio1/input/input1/event1");
 
-    event1 = vfs_open("/sys/devices/platform/i8042/serio1/input/input1/event1");
+    event1 =
+        vfs_open("/sys/devices/platform/i8042/serio1/input/input1/event1", 0);
     sysfs_child_append_symlink(event1, "subsystem", "/sys/class/input");
 }

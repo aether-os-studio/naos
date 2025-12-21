@@ -65,7 +65,7 @@ ssize_t devtmpfs_readlink(vfs_node_t node, void *addr, size_t offset,
     memset(tmp, 0, sizeof(tmp));
     memcpy(tmp, handle->content, MIN(handle->size, sizeof(tmp)));
 
-    vfs_node_t to_node = vfs_open_at(node->parent, (const char *)tmp);
+    vfs_node_t to_node = vfs_open_at(node->parent, (const char *)tmp, 0);
     if (!to_node)
         return -ENOENT;
 
@@ -140,7 +140,7 @@ int devtmpfs_symlink(void *parent, const char *name, vfs_node_t node) {
     handle->size = len;
     handle->node = node;
     node->handle = handle;
-    vfs_node_t target = vfs_open_at(node->parent, name);
+    vfs_node_t target = vfs_open_at(node->parent, name, 0);
     if (target) {
         node->dev = target->dev;
         node->rdev = target->rdev;
@@ -407,7 +407,7 @@ void devfs_register_device(device_t *device) {
               device->dev);
 
     if (device->type == DEV_BLOCK) {
-        vfs_node_t device_node = vfs_open((const char *)path);
+        vfs_node_t device_node = vfs_open((const char *)path, 0);
         if (!device_node)
             return;
         partition_t *part = device->ptr;
@@ -477,7 +477,7 @@ ssize_t urandom_write(void *data, const void *buf, uint64_t offset,
 extern char *default_console;
 
 void setup_console_symlinks() {
-    vfs_node_t tty_node = vfs_open(default_console);
+    vfs_node_t tty_node = vfs_open(default_console, 0);
     if (!tty_node)
         return;
 

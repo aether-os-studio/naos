@@ -97,7 +97,7 @@ void initramfs_init() {
         } else {
             vfs_mkfile(name);
             vfs_chmod(name, mode & 0777);
-            vfs_node_t node = vfs_open(name);
+            vfs_node_t node = vfs_open(name, 0);
             vfs_write(node, data, 0, file_size);
         }
 

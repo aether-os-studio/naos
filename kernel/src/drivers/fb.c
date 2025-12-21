@@ -128,7 +128,7 @@ void fbdev_init() {
 }
 
 void fbdev_init_sysfs() {
-    vfs_node_t graphics = vfs_open("/sys/class/graphics");
+    vfs_node_t graphics = vfs_open("/sys/class/graphics",0);
 
     char name[16];
     sprintf(name, "fb%d", 0);

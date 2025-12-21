@@ -83,7 +83,7 @@ void ptmx_open(void *parent, const char *name, vfs_node_t node) {
     new_node->fsid = ptmx_fsid;
     new_node->handle = NULL;
 
-    vfs_node_t pts_node = vfs_open("/dev/pts");
+    vfs_node_t pts_node = vfs_open("/dev/pts", 0);
     pts_node->fsid = pts_fsid;
     char nm[4];
     sprintf(nm, "%d", id);
@@ -119,6 +119,7 @@ bool ptmx_close(void *current) {
         spin_unlock(&pair->lock);
     free(pair->ptmx_node->name);
     free(pair->ptmx_node);
+    free(pair);
     return true;
 }
 
@@ -309,7 +310,7 @@ void pts_open(void *parent, const char *name, vfs_node_t node) {
     }
 
     node->handle = browse;
-    node->type = file_pts;
+    node->type = file_stream;
     node->fsid = pts_fsid;
     browse->slaveFds++;
 
@@ -650,9 +651,9 @@ fs_t ptmxfs = {
 void ptmx_init() {
     ptmx_fsid = vfs_regist(&ptmxfs);
 
-    vfs_node_t dev_node = vfs_open("/dev");
+    vfs_node_t dev_node = vfs_open("/dev", 0);
     vfs_node_t ptmx = vfs_child_append(dev_node, "ptmx", NULL);
-    ptmx->type = file_ptmx;
+    ptmx->type = file_stream;
     ptmx->mode = 0700;
     ptmx->fsid = ptmx_fsid;
     ptmx->dev = (5 << 8) | 2;

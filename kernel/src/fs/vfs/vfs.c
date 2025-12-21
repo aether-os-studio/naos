@@ -112,7 +112,7 @@ vfs_node_t vfs_get_real_node(vfs_node_t node) {
     int len = vfs_readlink(node, target_path, sizeof(target_path));
     target_path[len] = '\0';
     vfs_node_t target_node =
-        vfs_open_at(node->parent, (const char *)target_path);
+        vfs_open_at(node->parent, (const char *)target_path, 0);
 
     return target_node ?: node;
 }
@@ -606,7 +606,7 @@ err:
 }
 
 int vfs_chmod(const char *path, uint16_t mode) {
-    vfs_node_t node = vfs_open(path);
+    vfs_node_t node = vfs_open(path, 0);
     if (!node)
         return -ENOENT;
     int ret = callbackof(node, chmod)(node, mode);
@@ -635,7 +635,7 @@ int vfs_regist(fs_t *fs) {
     return id;
 }
 
-vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
+vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, uint64_t flags) {
     if (!start)
         return NULL;
 
@@ -687,7 +687,7 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
             int len = vfs_readlink(current, target_path, sizeof(target_path));
             target_path[len] = '\0';
             vfs_node_t target_node =
-                vfs_open_at(current->parent, (const char *)target_path);
+                vfs_open_at(current->parent, (const char *)target_path, 0);
 
             if (!target_node)
                 goto done;
@@ -711,22 +711,10 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path) {
             // current->root = target->root;
             current->mode = target->mode;
 
-            if (target->type & file_dir) {
-                char *ptr = save_ptr;
+            if (flags & O_NOFOLLOW)
+                break;
 
-                char *s = ptr;
-                char *e = ptr;
-
-                while (*e == '/') {
-                    e++;
-                }
-
-                if (*e != '\0') {
-                    current = target;
-                }
-            }
-
-            continue;
+            current = target;
         }
     }
 
@@ -739,13 +727,13 @@ err:
     return NULL;
 }
 
-vfs_node_t vfs_open(const char *_path) {
+vfs_node_t vfs_open(const char *_path, uint64_t flags) {
     vfs_node_t node = NULL;
 
     if (current_task && current_task->cwd) {
-        node = vfs_open_at(current_task->cwd, _path);
+        node = vfs_open_at(current_task->cwd, _path, flags);
     } else {
-        node = vfs_open_at(rootdir, _path);
+        node = vfs_open_at(rootdir, _path, flags);
     }
 
     return node;
@@ -884,7 +872,7 @@ ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size) {
             return ret;
 
         vfs_node_t linknode =
-            vfs_open_at(fd->node->parent, (const char *)linkpath);
+            vfs_open_at(fd->node->parent, (const char *)linkpath, 0);
         if (!linknode)
             return -ENOENT;
         do_update(linknode);
@@ -923,7 +911,7 @@ ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size) {
             return ret;
 
         vfs_node_t linknode =
-            vfs_open_at(fd->node->parent, (const char *)linkpath);
+            vfs_open_at(fd->node->parent, (const char *)linkpath, 0);
         if (!linknode)
             return -ENOENT;
         do_update(linknode);
@@ -940,7 +928,7 @@ ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size) {
 }
 
 int vfs_unmount(const char *path) {
-    vfs_node_t node = vfs_open(path);
+    vfs_node_t node = vfs_open(path, 0);
     if (node == NULL)
         return -1;
     if (!(node->type & file_dir))
@@ -1034,7 +1022,7 @@ int vfs_delete(vfs_node_t node) {
 }
 
 int vfs_rename(vfs_node_t node, const char *new) {
-    vfs_node_t new_node = vfs_open(new);
+    vfs_node_t new_node = vfs_open(new, 0);
     if (new_node)
         vfs_delete(new_node);
 
@@ -1065,7 +1053,7 @@ int vfs_rename(vfs_node_t node, const char *new) {
     int dn_len = strlen(new) - fn_len;
     memcpy(buf, new, dn_len);
 
-    vfs_node_t new_parent = vfs_open(buf);
+    vfs_node_t new_parent = vfs_open(buf, 0);
     if (!new_parent)
         return -ENOENT;
 
@@ -1087,6 +1075,7 @@ int vfs_rename(vfs_node_t node, const char *new) {
 
 fd_t *vfs_dup(fd_t *fd) {
     fd_t *new_fd = malloc(sizeof(fd_t));
+    memset(new_fd, 0, sizeof(fd_t));
     vfs_node_t node = fd->node;
     node->refcount++;
     new_fd->node = node;

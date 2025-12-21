@@ -337,7 +337,7 @@ int socket_bind(uint64_t fd, const struct sockaddr_un *addr,
     }
 
     if (!is_abstract) {
-        vfs_node_t new_node = vfs_open(safe);
+        vfs_node_t new_node = vfs_open(safe, 0);
         if (new_node) {
             // free(safe);
             // return -(EADDRINUSE);

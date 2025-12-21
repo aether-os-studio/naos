@@ -179,15 +179,18 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     memset(task->fd_info, 0, sizeof(fd_info_t));
     memset(task->fd_info->fds, 0, sizeof(task->fd_info->fds));
     task->fd_info->fds[0] = malloc(sizeof(fd_t));
-    task->fd_info->fds[0]->node = vfs_open("/dev/stdin");
+    task->fd_info->fds[0]->node = vfs_open("/dev/stdin", 0);
+    task->fd_info->fds[0]->node->refcount++;
     task->fd_info->fds[0]->offset = 0;
     task->fd_info->fds[0]->flags = 0;
     task->fd_info->fds[1] = malloc(sizeof(fd_t));
-    task->fd_info->fds[1]->node = vfs_open("/dev/stdout");
+    task->fd_info->fds[1]->node = vfs_open("/dev/stdout", 0);
+    task->fd_info->fds[1]->node->refcount++;
     task->fd_info->fds[1]->offset = 0;
     task->fd_info->fds[1]->flags = 0;
     task->fd_info->fds[2] = malloc(sizeof(fd_t));
-    task->fd_info->fds[2]->node = vfs_open("/dev/stderr");
+    task->fd_info->fds[2]->node = vfs_open("/dev/stderr", 0);
+    task->fd_info->fds[2]->node->refcount++;
     task->fd_info->fds[2]->offset = 0;
     task->fd_info->fds[2]->flags = 0;
     task->fd_info->ref_count++;
@@ -393,7 +396,7 @@ uint64_t get_node_size(vfs_node_t node) {
             return (uint64_t)-ENOENT;
         }
 
-        vfs_node_t linknode = vfs_open_at(node->parent, linkpath);
+        vfs_node_t linknode = vfs_open_at(node->parent, linkpath, 0);
         if (!linknode) {
             return (uint64_t)-ENOENT;
         }
@@ -411,12 +414,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     char path[128];
     strncpy(path, path_user, sizeof(path));
 
-    vfs_node_t node = vfs_open(path);
-    if (!node) {
-        can_schedule = true;
-        return (uint64_t)-ENOENT;
-    }
-    node = vfs_get_real_node(node);
+    vfs_node_t node = vfs_open(path, 0);
     if (!node) {
         can_schedule = true;
         return (uint64_t)-ENOENT;
@@ -634,7 +632,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
             interpreter_path = strdup(interp_name);
 
-            vfs_node_t interpreter_node = vfs_open(interp_name);
+            vfs_node_t interpreter_node = vfs_open(interp_name, 0);
             if (!interpreter_node) {
                 if (phdr_allocated)
                     free(phdr);
@@ -1446,15 +1444,18 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     memset(child->fd_info, 0, sizeof(fd_info_t));
     memset(child->fd_info->fds, 0, sizeof(child->fd_info->fds));
     // child->fd_info->fds[0] = malloc(sizeof(fd_t));
-    // child->fd_info->fds[0]->node = vfs_open("/dev/stdin");
+    // child->fd_info->fds[0]->node = vfs_open("/dev/stdin", 0);
+    // child->fd_info->fds[0]->node->refcount++;
     // child->fd_info->fds[0]->offset = 0;
     // child->fd_info->fds[0]->flags = 0;
     // child->fd_info->fds[1] = malloc(sizeof(fd_t));
-    // child->fd_info->fds[1]->node = vfs_open("/dev/stdout");
+    // child->fd_info->fds[1]->node = vfs_open("/dev/stdout", 0);
+    // child->fd_info->fds[1]->node->refcount++;
     // child->fd_info->fds[1]->offset = 0;
     // child->fd_info->fds[1]->flags = 0;
     // child->fd_info->fds[2] = malloc(sizeof(fd_t));
-    // child->fd_info->fds[2]->node = vfs_open("/dev/stderr");
+    // child->fd_info->fds[2]->node = vfs_open("/dev/stderr", 0);
+    // child->fd_info->fds[2]->node->refcount++;
     // child->fd_info->fds[2]->offset = 0;
     // child->fd_info->fds[2]->flags = 0;
 

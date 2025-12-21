@@ -165,7 +165,7 @@ uint64_t sys_inotify_add_watch(uint64_t notifyfd, const char *path_user,
     if (copy_from_user_str(path, path_user, sizeof(path)))
         return (uint64_t)-EFAULT;
 
-    vfs_node_t node = vfs_open(path);
+    vfs_node_t node = vfs_open(path, O_NOFOLLOW);
     if (!node)
         return (uint64_t)-ENOENT;
     node = vfs_get_real_node(node);
