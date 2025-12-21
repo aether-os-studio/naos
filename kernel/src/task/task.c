@@ -416,10 +416,12 @@ uint64_t task_execve(const char *path_user, const char **argv,
         can_schedule = true;
         return (uint64_t)-ENOENT;
     }
-
-    uint64_t size = get_node_size(node);
-    if ((int64_t)size < 0)
-        return size;
+    node = vfs_get_real_node(node);
+    if (!node) {
+        can_schedule = true;
+        return (uint64_t)-ENOENT;
+    }
+    uint64_t size = node->size;
 
     // argv/envp 处理代码保持不变
     int argv_count = 0;
@@ -802,6 +804,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
             vfs_close(current_task->fd_info->fds[i]->node);
             free(current_task->fd_info->fds[i]);
             current_task->fd_info->fds[i] = NULL;
+            procfs_on_close_file(current_task, i);
         }
     }
 
@@ -1521,6 +1524,11 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     child->should_free = false;
 
     procfs_on_new_task(child);
+    for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+        if (child->fd_info->fds[i]) {
+            procfs_on_open_file(child, i);
+        }
+    }
 
     child->state = TASK_READY;
     child->current_state = TASK_READY;

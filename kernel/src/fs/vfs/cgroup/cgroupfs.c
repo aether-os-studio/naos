@@ -101,6 +101,8 @@ ssize_t cgroupfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     return size;
 }
 
+int cgroupfs_delete(void *parent, vfs_node_t node) { return 0; }
+
 void cgroupfs_free_handle(void *handle) {
     cgroupfs_node_t *tnode = handle;
     free_frames_bytes(tnode->content, tnode->capability);
@@ -122,7 +124,7 @@ static struct vfs_callback callbacks = {
     .mknod = (vfs_mknod_t)dummy,
     .chmod = (vfs_chmod_t)dummy,
     .chown = (vfs_chown_t)dummy,
-    .delete = (vfs_del_t)dummy,
+    .delete = (vfs_del_t)cgroupfs_delete,
     .rename = (vfs_rename_t)dummy,
     .stat = (vfs_stat_t)dummy,
     .ioctl = (vfs_ioctl_t)dummy,

@@ -87,6 +87,10 @@ unix_socket_pair_t *unix_socket_allocate_pair() {
            MAX_PENDING_FILES_COUNT * sizeof(fd_t *));
     memset(pair->server_pending_files, 0,
            MAX_PENDING_FILES_COUNT * sizeof(fd_t *));
+    memset(&pair->client_pending_cred, 0, sizeof(struct ucred));
+    pair->has_client_pending_cred = false;
+    memset(&pair->server_pending_cred, 0, sizeof(struct ucred));
+    pair->has_server_pending_cred = true;
     pair->pending_fds_size = MAX_PENDING_FILES_COUNT;
     return pair;
 }
@@ -389,6 +393,10 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
             sock->connCurr * sizeof(unix_socket_pair_t *));
     sock->connCurr--;
 
+    pair->cred.uid = current_task->uid;
+    pair->cred.gid = current_task->gid;
+    pair->cred.pid = current_task->pid;
+
     uint64_t i = 0;
     for (i = 3; i < MAX_FD_NUM; i++) {
         if (current_task->fd_info->fds[i] == NULL) {
@@ -566,6 +574,9 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags) {
     size_t cnt = 0;
     bool noblock = !!(flags & MSG_DONTWAIT);
 
+    // 初始化消息标志
+    msg->msg_flags = 0;
+
     while (
         !noblock && !(current_task->fd_info->fds[fd]->flags & O_NONBLOCK) &&
         !(vfs_poll(current_task->fd_info->fds[fd]->node, EPOLLIN) & EPOLLIN)) {
@@ -576,18 +587,17 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags) {
         return (size_t)-EWOULDBLOCK;
     }
 
-    int iov_len_total = 0;
+    int len_total = 0;
 
+    // 使用正确的类型转换
     for (int i = 0; i < msg->msg_iovlen; i++) {
-        struct iovec *curr =
-            (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
-
-        iov_len_total += curr->len;
+        struct iovec *curr = &msg->msg_iov[i];
+        len_total += curr->len;
     }
 
-    char *buffer = malloc(iov_len_total);
+    char *buffer = malloc(len_total);
 
-    cnt = unix_socket_recv_from(fd, (uint8_t *)buffer, iov_len_total,
+    cnt = unix_socket_recv_from(fd, (uint8_t *)buffer, len_total,
                                 noblock ? MSG_DONTWAIT : 0, NULL, 0);
     if ((int64_t)cnt < 0) {
         free(buffer);
@@ -595,77 +605,144 @@ size_t unix_socket_recv_msg(uint64_t fd, struct msghdr *msg, int flags) {
     }
 
     char *b = buffer;
-
     uint64_t remain = cnt;
 
-    for (int i = 0; i < msg->msg_iovlen; i++) {
-        struct iovec *curr =
-            (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
+    for (int i = 0; i < msg->msg_iovlen && remain > 0; i++) {
+        struct iovec *curr = &msg->msg_iov[i];
+        size_t copy_len = MIN(curr->len, remain);
 
-        memcpy(curr->iov_base, b, MIN(curr->len, remain));
-
-        b += MIN(curr->len, remain);
-        remain -= MIN(curr->len, remain);
+        memcpy(curr->iov_base, b, copy_len);
+        b += copy_len;
+        remain -= copy_len;
     }
 
     free(buffer);
 
+    // 处理控制消息
     if (msg->msg_control && msg->msg_controllen >= sizeof(struct cmsghdr)) {
         socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
         socket_t *sock = handle->sock;
         unix_socket_pair_t *pair = sock->pair;
-        if (!pair)
+        if (!pair) {
             return (size_t)-ENOTCONN;
-
-        size_t max_fds =
-            (msg->msg_controllen - sizeof(struct cmsghdr)) / sizeof(int);
-        size_t received_fds = 0;
-
-        struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
-        if (!cmsg) {
-            msg->msg_controllen = 0;
-            return cnt;
         }
-        cmsg->cmsg_level = SOL_SOCKET;
-        cmsg->cmsg_type = SCM_RIGHTS;
 
-        int *fds = (int *)CMSG_DATA(cmsg);
+        size_t controllen_used = 0;
+        struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
 
         spin_lock(&pair->lock);
 
+        // 处理SCM_RIGHTS（文件描述符）
+        bool has_pending_fds = false;
         for (int i = 0; i < MAX_PENDING_FILES_COUNT; i++) {
-            if (pair->client_pending_files[i] == NULL)
-                continue;
-
-            int fd;
-            for (fd = 0; fd < MAX_FD_NUM; fd++) {
-                if (current_task->fd_info->fds[fd] == NULL) {
-                    break;
-                }
-            }
-
-            current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
-            memcpy(current_task->fd_info->fds[fd],
-                   pair->client_pending_files[i], sizeof(fd_t));
-            free(pair->client_pending_files[i]);
-            pair->client_pending_files[i] = NULL;
-            fds[received_fds] = fd;
-            procfs_on_open_file(current_task, fd);
-
-            if (received_fds + 1 >= max_fds)
+            if (pair->client_pending_files[i] != NULL) {
+                has_pending_fds = true;
                 break;
-
-            received_fds++;
+            }
         }
 
-        if (received_fds > 0) {
-            cmsg->cmsg_len = CMSG_LEN(received_fds * sizeof(int));
-            msg->msg_controllen = cmsg->cmsg_len;
-        } else {
-            msg->msg_controllen = 0;
+        if (has_pending_fds && cmsg) {
+            // 计算可以接收的文件描述符数量
+            size_t space_left = msg->msg_controllen - controllen_used;
+            size_t max_fds = 0;
+
+            if (space_left >= CMSG_SPACE(sizeof(int))) {
+                max_fds = (space_left - sizeof(struct cmsghdr)) / sizeof(int);
+
+                if (max_fds > 0) {
+                    cmsg->cmsg_level = SOL_SOCKET;
+                    cmsg->cmsg_type = SCM_RIGHTS;
+
+                    int *fds_out = (int *)CMSG_DATA(cmsg);
+                    size_t received_fds = 0;
+
+                    for (int i = 0;
+                         i < MAX_PENDING_FILES_COUNT && received_fds < max_fds;
+                         i++) {
+                        if (pair->client_pending_files[i] == NULL) {
+                            continue;
+                        }
+
+                        // 查找可用的文件描述符
+                        int new_fd = -1;
+                        for (int fd_idx = 0; fd_idx < MAX_FD_NUM; fd_idx++) {
+                            if (current_task->fd_info->fds[fd_idx] == NULL) {
+                                new_fd = fd_idx;
+                                break;
+                            }
+                        }
+
+                        if (new_fd == -1) {
+                            // 没有可用的文件描述符，设置截断标志
+                            msg->msg_flags |= MSG_CTRUNC;
+                            break;
+                        }
+
+                        // 分配并复制文件描述符
+                        current_task->fd_info->fds[new_fd] =
+                            malloc(sizeof(fd_t));
+                        if (!current_task->fd_info->fds[new_fd]) {
+                            msg->msg_flags |= MSG_CTRUNC;
+                            break;
+                        }
+
+                        memcpy(current_task->fd_info->fds[new_fd],
+                               pair->client_pending_files[i], sizeof(fd_t));
+                        free(pair->client_pending_files[i]);
+                        pair->client_pending_files[i] = NULL;
+
+                        fds_out[received_fds] = new_fd;
+                        procfs_on_open_file(current_task, new_fd);
+                        received_fds++;
+                    }
+
+                    if (received_fds > 0) {
+                        cmsg->cmsg_len = CMSG_LEN(received_fds * sizeof(int));
+                        controllen_used +=
+                            CMSG_SPACE(received_fds * sizeof(int));
+
+                        // 移动到下一个控制消息头
+                        cmsg = CMSG_NXTHDR(msg, cmsg);
+                    }
+                }
+            } else {
+                // 空间不足，设置截断标志
+                msg->msg_flags |= MSG_CTRUNC;
+            }
+        }
+
+        // 处理SCM_CREDENTIALS（凭据）
+        bool should_send_cred =
+            (pair->passcred || sock->passcred || pair->has_client_pending_cred);
+        if (should_send_cred && cmsg) {
+            size_t space_left = msg->msg_controllen - controllen_used;
+
+            if (space_left >= CMSG_SPACE(sizeof(struct ucred))) {
+                cmsg->cmsg_level = SOL_SOCKET;
+                cmsg->cmsg_type = SCM_CREDENTIALS;
+                cmsg->cmsg_len = CMSG_LEN(sizeof(struct ucred));
+
+                struct ucred *cred_out = (struct ucred *)CMSG_DATA(cmsg);
+
+                if (pair->has_client_pending_cred) {
+                    memcpy(cred_out, &pair->client_pending_cred,
+                           sizeof(struct ucred));
+                    pair->has_client_pending_cred = false;
+                } else {
+                    // 使用对端凭据
+                    memcpy(cred_out, &pair->peercred, sizeof(struct ucred));
+                }
+
+                controllen_used += CMSG_SPACE(sizeof(struct ucred));
+            } else {
+                // 空间不足，设置截断标志
+                msg->msg_flags |= MSG_CTRUNC;
+            }
         }
 
         spin_unlock(&pair->lock);
+
+        msg->msg_controllen = controllen_used;
     } else {
         msg->msg_controllen = 0;
     }
@@ -677,42 +754,72 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags) {
     size_t cnt = 0;
     bool noblock = !!(flags & MSG_DONTWAIT);
 
-    if (msg->msg_control) {
+    if (msg->msg_control && msg->msg_controllen > 0) {
         socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
         socket_t *socket = handle->sock;
         unix_socket_pair_t *pair = socket->pair;
-        if (!pair)
+        if (!pair) {
             return (size_t)-ENOTCONN;
+        }
 
         struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
-        if (!cmsg) {
-            goto no_cmsg;
-        }
 
         spin_lock(&pair->lock);
 
         for (; cmsg != NULL; cmsg = CMSG_NXTHDR((struct msghdr *)msg, cmsg)) {
-            if (cmsg->cmsg_level == SOL_SOCKET &&
-                cmsg->cmsg_type == SCM_RIGHTS) {
-                int *fds = (int *)CMSG_DATA(cmsg);
-                int num_fds =
-                    (cmsg->cmsg_len - sizeof(struct cmsghdr)) / sizeof(int);
+            if (cmsg->cmsg_level == SOL_SOCKET) {
+                if (cmsg->cmsg_type == SCM_RIGHTS) {
+                    int *fds = (int *)CMSG_DATA(cmsg);
+                    int num_fds =
+                        (cmsg->cmsg_len - sizeof(struct cmsghdr)) / sizeof(int);
 
-                for (int i = 0; i < num_fds; i++) {
-                    for (int j = 0; j < MAX_PENDING_FILES_COUNT; j++) {
-                        if (pair->server_pending_files[j] == NULL) {
-                            pair->server_pending_files[j] =
-                                malloc(sizeof(fd_t));
-                            if (!current_task->fd_info->fds[fds[i]])
-                                continue;
-                            memcpy(pair->server_pending_files[j],
-                                   current_task->fd_info->fds[fds[i]],
-                                   sizeof(fd_t));
-                            current_task->fd_info->fds[fds[i]]
-                                ->node->refcount++;
-                            break;
+                    for (int i = 0; i < num_fds; i++) {
+                        // 查找可用的pending槽位
+                        for (int j = 0; j < MAX_PENDING_FILES_COUNT; j++) {
+                            if (pair->client_pending_files[j] == NULL) {
+                                pair->client_pending_files[j] =
+                                    malloc(sizeof(fd_t));
+                                if (!pair->client_pending_files[j]) {
+                                    spin_unlock(&pair->lock);
+                                    return (size_t)-ENOMEM;
+                                }
+
+                                if (!current_task->fd_info->fds[fds[i]]) {
+                                    free(pair->client_pending_files[j]);
+                                    pair->client_pending_files[j] = NULL;
+                                    continue;
+                                }
+
+                                memcpy(pair->client_pending_files[j],
+                                       current_task->fd_info->fds[fds[i]],
+                                       sizeof(fd_t));
+                                current_task->fd_info->fds[fds[i]]
+                                    ->node->refcount++;
+                                break;
+                            }
                         }
                     }
+                } else if (cmsg->cmsg_type == SCM_CREDENTIALS) {
+                    if (cmsg->cmsg_len < CMSG_LEN(sizeof(struct ucred))) {
+                        spin_unlock(&pair->lock);
+                        return (size_t)-EINVAL;
+                    }
+
+                    struct ucred *cred = (struct ucred *)CMSG_DATA(cmsg);
+
+                    // 验证凭据（非root用户只能发送自己的凭据）
+                    if (current_task->euid != 0) {
+                        if (cred->pid != current_task->pid ||
+                            cred->uid != current_task->uid ||
+                            cred->gid != current_task->gid) {
+                            spin_unlock(&pair->lock);
+                            return (size_t)-EPERM;
+                        }
+                    }
+
+                    memcpy(&pair->client_pending_cred, cred,
+                           sizeof(struct ucred));
+                    pair->has_client_pending_cred = true;
                 }
             }
         }
@@ -720,25 +827,29 @@ size_t unix_socket_send_msg(uint64_t fd, const struct msghdr *msg, int flags) {
         spin_unlock(&pair->lock);
     }
 
-no_cmsg:
+    // 发送数据部分
     for (int i = 0; i < msg->msg_iovlen; i++) {
-        struct iovec *curr =
-            (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
+        struct iovec *curr = &((struct iovec *)msg->msg_iov)[i];
 
         size_t singleCnt = unix_socket_send_to(
             fd, curr->iov_base, curr->len, noblock ? MSG_DONTWAIT : 0, NULL, 0);
 
-        if ((int64_t)singleCnt < 0)
+        if ((int64_t)singleCnt < 0) {
             return singleCnt;
+        }
 
         cnt += singleCnt;
     }
+
     return cnt;
 }
 
 size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg, int flags) {
     size_t cnt = 0;
     bool noblock = !!(flags & MSG_DONTWAIT);
+
+    // 初始化消息标志
+    msg->msg_flags = 0;
 
     while (
         !noblock && !(current_task->fd_info->fds[fd]->flags & O_NONBLOCK) &&
@@ -750,18 +861,16 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg, int flags) {
         return (size_t)-EWOULDBLOCK;
     }
 
-    int iov_len_total = 0;
+    int len_total = 0;
 
     for (int i = 0; i < msg->msg_iovlen; i++) {
-        struct iovec *curr =
-            (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
-
-        iov_len_total += curr->len;
+        struct iovec *curr = &msg->msg_iov[i];
+        len_total += curr->len;
     }
 
-    char *buffer = malloc(iov_len_total);
+    char *buffer = malloc(len_total);
 
-    cnt = unix_socket_accept_recv_from(fd, (uint8_t *)buffer, iov_len_total,
+    cnt = unix_socket_accept_recv_from(fd, (uint8_t *)buffer, len_total,
                                        noblock ? MSG_DONTWAIT : 0, NULL, 0);
     if ((int64_t)cnt < 0) {
         free(buffer);
@@ -769,74 +878,131 @@ size_t unix_socket_accept_recv_msg(uint64_t fd, struct msghdr *msg, int flags) {
     }
 
     char *b = buffer;
-
     uint32_t remain = cnt;
 
-    for (int i = 0; i < msg->msg_iovlen; i++) {
-        struct iovec *curr =
-            (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
+    for (int i = 0; i < msg->msg_iovlen && remain > 0; i++) {
+        struct iovec *curr = &msg->msg_iov[i];
+        size_t copy_len = MIN(curr->len, remain);
 
-        memcpy(curr->iov_base, b, MIN(curr->len, remain));
-
-        b += MIN(curr->len, remain);
-        remain -= MIN(curr->len, remain);
+        memcpy(curr->iov_base, b, copy_len);
+        b += copy_len;
+        remain -= copy_len;
     }
 
     free(buffer);
 
+    // 处理控制消息
     if (msg->msg_control && msg->msg_controllen >= sizeof(struct cmsghdr)) {
         socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
         unix_socket_pair_t *pair = handle->sock;
 
-        size_t max_fds =
-            (msg->msg_controllen - sizeof(struct cmsghdr)) / sizeof(int);
-        size_t received_fds = 0;
-
+        size_t controllen_used = 0;
         struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
-        if (!cmsg) {
-            msg->msg_controllen = 0;
-            return cnt;
-        }
-        cmsg->cmsg_level = SOL_SOCKET;
-        cmsg->cmsg_type = SCM_RIGHTS;
-
-        int *fds = (int *)CMSG_DATA(cmsg);
 
         spin_lock(&pair->lock);
 
+        // 处理SCM_RIGHTS（文件描述符）
+        bool has_pending_fds = false;
         for (int i = 0; i < MAX_PENDING_FILES_COUNT; i++) {
-            if (pair->server_pending_files[i] == NULL)
-                continue;
-
-            int fd;
-            for (fd = 0; fd < MAX_FD_NUM; fd++) {
-                if (current_task->fd_info->fds[fd] == NULL) {
-                    break;
-                }
-            }
-
-            current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
-            memcpy(current_task->fd_info->fds[fd],
-                   pair->server_pending_files[i], sizeof(fd_t));
-            free(pair->server_pending_files[i]);
-            pair->server_pending_files[i] = NULL;
-            fds[received_fds] = fd;
-            procfs_on_open_file(current_task, fd);
-
-            if (received_fds + 1 >= max_fds)
+            if (pair->server_pending_files[i] != NULL) {
+                has_pending_fds = true;
                 break;
-
-            received_fds++;
+            }
         }
 
-        if (received_fds > 0) {
-            cmsg->cmsg_len = CMSG_LEN(received_fds * sizeof(int));
-            msg->msg_controllen = cmsg->cmsg_len;
-        } else {
-            msg->msg_controllen = 0;
+        if (has_pending_fds && cmsg) {
+            size_t space_left = msg->msg_controllen - controllen_used;
+            size_t max_fds = 0;
+
+            if (space_left >= CMSG_SPACE(sizeof(int))) {
+                max_fds = (space_left - sizeof(struct cmsghdr)) / sizeof(int);
+
+                if (max_fds > 0) {
+                    cmsg->cmsg_level = SOL_SOCKET;
+                    cmsg->cmsg_type = SCM_RIGHTS;
+
+                    int *fds_out = (int *)CMSG_DATA(cmsg);
+                    size_t received_fds = 0;
+
+                    for (int i = 0;
+                         i < MAX_PENDING_FILES_COUNT && received_fds < max_fds;
+                         i++) {
+                        if (pair->server_pending_files[i] == NULL) {
+                            continue;
+                        }
+
+                        int new_fd = -1;
+                        for (int fd_idx = 0; fd_idx < MAX_FD_NUM; fd_idx++) {
+                            if (current_task->fd_info->fds[fd_idx] == NULL) {
+                                new_fd = fd_idx;
+                                break;
+                            }
+                        }
+
+                        if (new_fd == -1) {
+                            msg->msg_flags |= MSG_CTRUNC;
+                            break;
+                        }
+
+                        current_task->fd_info->fds[new_fd] =
+                            malloc(sizeof(fd_t));
+                        if (!current_task->fd_info->fds[new_fd]) {
+                            msg->msg_flags |= MSG_CTRUNC;
+                            break;
+                        }
+
+                        memcpy(current_task->fd_info->fds[new_fd],
+                               pair->server_pending_files[i], sizeof(fd_t));
+                        free(pair->server_pending_files[i]);
+                        pair->server_pending_files[i] = NULL;
+
+                        fds_out[received_fds] = new_fd;
+                        procfs_on_open_file(current_task, new_fd);
+                        received_fds++;
+                    }
+
+                    if (received_fds > 0) {
+                        cmsg->cmsg_len = CMSG_LEN(received_fds * sizeof(int));
+                        controllen_used +=
+                            CMSG_SPACE(received_fds * sizeof(int));
+                        cmsg = CMSG_NXTHDR(msg, cmsg);
+                    }
+                }
+            } else {
+                msg->msg_flags |= MSG_CTRUNC;
+            }
+        }
+
+        // 处理SCM_CREDENTIALS（凭据）
+        bool should_send_cred =
+            (pair->passcred || pair->has_server_pending_cred);
+        if (should_send_cred && cmsg) {
+            size_t space_left = msg->msg_controllen - controllen_used;
+
+            if (space_left >= CMSG_SPACE(sizeof(struct ucred))) {
+                cmsg->cmsg_level = SOL_SOCKET;
+                cmsg->cmsg_type = SCM_CREDENTIALS;
+                cmsg->cmsg_len = CMSG_LEN(sizeof(struct ucred));
+
+                struct ucred *cred_out = (struct ucred *)CMSG_DATA(cmsg);
+
+                if (pair->has_server_pending_cred) {
+                    memcpy(cred_out, &pair->server_pending_cred,
+                           sizeof(struct ucred));
+                    pair->has_server_pending_cred = false;
+                } else {
+                    memcpy(cred_out, &pair->cred, sizeof(struct ucred));
+                }
+
+                controllen_used += CMSG_SPACE(sizeof(struct ucred));
+            } else {
+                msg->msg_flags |= MSG_CTRUNC;
+            }
         }
 
         spin_unlock(&pair->lock);
+
+        msg->msg_controllen = controllen_used;
     } else {
         msg->msg_controllen = 0;
     }
@@ -849,7 +1015,7 @@ size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg,
     size_t cnt = 0;
     bool noblock = !!(flags & MSG_DONTWAIT);
 
-    if (msg->msg_control) {
+    if (msg->msg_control && msg->msg_controllen > 0) {
         socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
         unix_socket_pair_t *pair = handle->sock;
 
@@ -861,27 +1027,57 @@ size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg,
         spin_lock(&pair->lock);
 
         for (; cmsg != NULL; cmsg = CMSG_NXTHDR((struct msghdr *)msg, cmsg)) {
-            if (cmsg->cmsg_level == SOL_SOCKET &&
-                cmsg->cmsg_type == SCM_RIGHTS) {
-                int *fds = (int *)CMSG_DATA(cmsg);
-                int num_fds =
-                    (cmsg->cmsg_len - sizeof(struct cmsghdr)) / sizeof(int);
+            if (cmsg->cmsg_level == SOL_SOCKET) {
+                if (cmsg->cmsg_type == SCM_RIGHTS) {
+                    int *fds = (int *)CMSG_DATA(cmsg);
+                    int num_fds =
+                        (cmsg->cmsg_len - sizeof(struct cmsghdr)) / sizeof(int);
 
-                for (int i = 0; i < num_fds; i++) {
-                    for (int j = 0; j < MAX_PENDING_FILES_COUNT; j++) {
-                        if (pair->client_pending_files[j] == NULL) {
-                            pair->client_pending_files[j] =
-                                malloc(sizeof(fd_t));
-                            if (!current_task->fd_info->fds[fds[i]])
-                                continue;
-                            memcpy(pair->client_pending_files[j],
-                                   current_task->fd_info->fds[fds[i]],
-                                   sizeof(fd_t));
-                            current_task->fd_info->fds[fds[i]]
-                                ->node->refcount++;
-                            break;
+                    for (int i = 0; i < num_fds; i++) {
+                        for (int j = 0; j < MAX_PENDING_FILES_COUNT; j++) {
+                            if (pair->server_pending_files[j] == NULL) {
+                                pair->server_pending_files[j] =
+                                    malloc(sizeof(fd_t));
+                                if (!pair->server_pending_files[j]) {
+                                    spin_unlock(&pair->lock);
+                                    return (size_t)-ENOMEM;
+                                }
+
+                                if (!current_task->fd_info->fds[fds[i]]) {
+                                    free(pair->server_pending_files[j]);
+                                    pair->server_pending_files[j] = NULL;
+                                    continue;
+                                }
+
+                                memcpy(pair->server_pending_files[j],
+                                       current_task->fd_info->fds[fds[i]],
+                                       sizeof(fd_t));
+                                current_task->fd_info->fds[fds[i]]
+                                    ->node->refcount++;
+                                break;
+                            }
                         }
                     }
+                } else if (cmsg->cmsg_type == SCM_CREDENTIALS) {
+                    if (cmsg->cmsg_len < CMSG_LEN(sizeof(struct ucred))) {
+                        spin_unlock(&pair->lock);
+                        return (size_t)-EINVAL;
+                    }
+
+                    struct ucred *cred = (struct ucred *)CMSG_DATA(cmsg);
+
+                    if (current_task->euid != 0) {
+                        if (cred->pid != current_task->pid ||
+                            cred->uid != current_task->uid ||
+                            cred->gid != current_task->gid) {
+                            spin_unlock(&pair->lock);
+                            return (size_t)-EPERM;
+                        }
+                    }
+
+                    memcpy(&pair->server_pending_cred, cred,
+                           sizeof(struct ucred));
+                    pair->has_server_pending_cred = true;
                 }
             }
         }
@@ -891,17 +1087,18 @@ size_t unix_socket_accept_send_msg(uint64_t fd, const struct msghdr *msg,
 
 no_cmsg:
     for (int i = 0; i < msg->msg_iovlen; i++) {
-        struct iovec *curr =
-            (struct iovec *)((size_t)msg->msg_iov + i * sizeof(struct iovec));
+        struct iovec *curr = &((struct iovec *)msg->msg_iov)[i];
 
         size_t singleCnt = unix_socket_accept_sendto(
             fd, curr->iov_base, curr->len, noblock ? MSG_DONTWAIT : 0, NULL, 0);
 
-        if ((int64_t)singleCnt < 0)
+        if ((int64_t)singleCnt < 0) {
             return singleCnt;
+        }
 
         cnt += singleCnt;
     }
+
     return cnt;
 }
 
@@ -997,8 +1194,11 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
     if (level != SOL_SOCKET) {
         return -ENOPROTOOPT;
     }
-    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
 
+    if (!current_task->fd_info->fds[fd])
+        return (size_t)-EBADF;
+
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     socket_t *sock = handle->sock;
     unix_socket_pair_t *pair = sock->pair;
 
@@ -1010,8 +1210,9 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
         if (pair)
             pair->reuseaddr = *(int *)optval;
         else
-            return (size_t)-ENOTCONN;
+            return -ENOTCONN;
         break;
+
     case SO_KEEPALIVE:
         if (optlen < sizeof(int)) {
             return -EINVAL;
@@ -1019,22 +1220,31 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
         if (pair)
             pair->keepalive = *(int *)optval;
         else
-            return (size_t)-ENOTCONN;
+            return -ENOTCONN;
         break;
+
     case SO_SNDTIMEO_OLD:
     case SO_SNDTIMEO_NEW:
         if (optlen < sizeof(struct timeval)) {
             return -EINVAL;
         }
-        memcpy(&pair->sndtimeo, optval, sizeof(struct timeval));
+        if (pair)
+            memcpy(&pair->sndtimeo, optval, sizeof(struct timeval));
+        else
+            return -ENOTCONN;
         break;
+
     case SO_RCVTIMEO_OLD:
     case SO_RCVTIMEO_NEW:
         if (optlen < sizeof(struct timeval)) {
             return -EINVAL;
         }
-        memcpy(&pair->rcvtimeo, optval, sizeof(struct timeval));
+        if (pair)
+            memcpy(&pair->rcvtimeo, optval, sizeof(struct timeval));
+        else
+            return -ENOTCONN;
         break;
+
     case SO_BINDTODEVICE:
         if (optlen > IFNAMSIZ) {
             return -EINVAL;
@@ -1042,15 +1252,21 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
         if (pair) {
             strncpy(pair->bind_to_dev, optval, optlen);
             pair->bind_to_dev[IFNAMSIZ - 1] = '\0';
-        } else
-            return (size_t)-ENOTCONN;
+        } else {
+            return -ENOTCONN;
+        }
         break;
+
     case SO_LINGER:
         if (optlen < sizeof(struct linger)) {
             return -EINVAL;
         }
-        memcpy(&pair->linger_opt, optval, sizeof(struct linger));
+        if (pair)
+            memcpy(&pair->linger_opt, optval, sizeof(struct linger));
+        else
+            return -ENOTCONN;
         break;
+
     case SO_SNDBUF:
         if (optlen < sizeof(int)) {
             return -EINVAL;
@@ -1060,15 +1276,19 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
             if (new_size < BUFFER_SIZE) {
                 new_size = BUFFER_SIZE;
             }
+            spin_lock(&pair->lock);
             void *newBuff = alloc_frames_bytes(new_size);
             memcpy(newBuff, pair->serverBuff,
                    MIN(new_size, pair->serverBuffSize));
             free_frames_bytes(pair->serverBuff, pair->serverBuffSize);
             pair->serverBuff = newBuff;
             pair->serverBuffSize = new_size;
-        } else
-            return (size_t)-ENOTCONN;
+            spin_unlock(&pair->lock);
+        } else {
+            return -ENOTCONN;
+        }
         break;
+
     case SO_RCVBUF:
         if (optlen < sizeof(int)) {
             return -EINVAL;
@@ -1078,41 +1298,33 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
             if (new_size < BUFFER_SIZE) {
                 new_size = BUFFER_SIZE;
             }
+            spin_lock(&pair->lock);
             void *newBuff = alloc_frames_bytes(new_size);
             memcpy(newBuff, pair->clientBuff,
                    MIN(new_size, pair->clientBuffSize));
             free_frames_bytes(pair->clientBuff, pair->clientBuffSize);
             pair->clientBuff = newBuff;
             pair->clientBuffSize = new_size;
-        } else
-            return (size_t)-ENOTCONN;
+            spin_unlock(&pair->lock);
+        } else {
+            return -ENOTCONN;
+        }
         break;
+
     case SO_PASSCRED:
         if (optlen < sizeof(int)) {
             return -EINVAL;
         }
+        // SO_PASSCRED 可以在连接前后设置
+        sock->passcred = *(int *)optval;
         if (pair)
             pair->passcred = *(int *)optval;
-        else
-            sock->passcred = *(int *)optval;
         break;
-    case SO_ATTACH_FILTER: {
-        struct sock_fprog fprog;
-        if (optlen < sizeof(fprog)) {
-            return -EINVAL;
-        }
-        memcpy(&fprog, optval, sizeof(fprog));
-        if (fprog.len > 64 || fprog.len == 0) {
-            return -EINVAL;
-        }
 
-        // 分配内存保存过滤器
-        pair->filter = malloc(sizeof(struct sock_filter) * fprog.len);
-        memcpy(pair->filter, fprog.filter,
-               sizeof(struct sock_filter) * fprog.len);
-        pair->filter_len = fprog.len;
-        break;
-    }
+    case SO_PEERCRED:
+        // SO_PEERCRED 是只读的
+        return -ENOPROTOOPT;
+
     default:
         return -ENOPROTOOPT;
     }
@@ -1125,13 +1337,14 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname,
     if (level != SOL_SOCKET) {
         return -ENOPROTOOPT;
     }
+
+    if (!current_task->fd_info->fds[fd])
+        return (size_t)-EBADF;
+
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
-
     socket_t *sock = handle->sock;
-
     unix_socket_pair_t *pair = sock->pair;
 
-    // 获取选项值
     switch (optname) {
     case SO_REUSEADDR:
         if (*optlen < sizeof(int)) {
@@ -1140,9 +1353,10 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname,
         if (pair)
             *(int *)optval = pair->reuseaddr;
         else
-            return (size_t)-ENOTCONN;
+            return -ENOTCONN;
         *optlen = sizeof(int);
         break;
+
     case SO_KEEPALIVE:
         if (*optlen < sizeof(int)) {
             return -EINVAL;
@@ -1150,35 +1364,47 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname,
         if (pair)
             *(int *)optval = pair->keepalive;
         else
-            return (size_t)-ENOTCONN;
+            return -ENOTCONN;
         *optlen = sizeof(int);
         break;
+
     case SO_SNDTIMEO_OLD:
     case SO_SNDTIMEO_NEW:
         if (*optlen < sizeof(struct timeval)) {
             return -EINVAL;
         }
-        memcpy(optval, &pair->sndtimeo, sizeof(struct timeval));
+        if (pair)
+            memcpy(optval, &pair->sndtimeo, sizeof(struct timeval));
+        else
+            return -ENOTCONN;
+
         *optlen = sizeof(struct timeval);
         break;
+
     case SO_RCVTIMEO_OLD:
     case SO_RCVTIMEO_NEW:
         if (*optlen < sizeof(struct timeval)) {
             return -EINVAL;
         }
-        memcpy(optval, &pair->rcvtimeo, sizeof(struct timeval));
+        if (pair)
+            memcpy(optval, &pair->rcvtimeo, sizeof(struct timeval));
+        else
+            return -ENOTCONN;
         *optlen = sizeof(struct timeval);
         break;
+
     case SO_BINDTODEVICE:
         if (*optlen < IFNAMSIZ) {
             return -EINVAL;
         }
         if (pair) {
             strncpy(optval, pair->bind_to_dev, IFNAMSIZ);
-            *optlen = strlen(pair->bind_to_dev);
-        } else
-            return (size_t)-ENOTCONN;
+            *optlen = strlen(pair->bind_to_dev) + 1;
+        } else {
+            return -ENOTCONN;
+        }
         break;
+
     case SO_PROTOCOL:
         if (*optlen < sizeof(int)) {
             return -EINVAL;
@@ -1186,13 +1412,26 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname,
         *(int *)optval = sock->protocol;
         *optlen = sizeof(int);
         break;
+
+    case SO_DOMAIN:
+        if (*optlen < sizeof(int)) {
+            return -EINVAL;
+        }
+        *(int *)optval = sock->domain;
+        *optlen = sizeof(int);
+        break;
+
     case SO_LINGER:
         if (*optlen < sizeof(struct linger)) {
             return -EINVAL;
         }
-        memcpy(optval, &pair->linger_opt, sizeof(struct linger));
+        if (pair)
+            memcpy(optval, &pair->linger_opt, sizeof(struct linger));
+        else
+            return -ENOTCONN;
         *optlen = sizeof(struct linger);
         break;
+
     case SO_SNDBUF:
         if (*optlen < sizeof(int)) {
             return -EINVAL;
@@ -1200,51 +1439,55 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname,
         if (pair)
             *(int *)optval = pair->serverBuffSize;
         else
-            return (size_t)-ENOTCONN;
+            return -ENOTCONN;
         *optlen = sizeof(int);
         break;
+
     case SO_RCVBUF:
         if (*optlen < sizeof(int)) {
             return -EINVAL;
         }
         if (pair)
-            *(int *)optval = sock->pair->clientBuffSize;
+            *(int *)optval = pair->clientBuffSize;
         else
-            return (size_t)-ENOTCONN;
+            return -ENOTCONN;
         *optlen = sizeof(int);
         break;
+
     case SO_PASSCRED:
         if (*optlen < sizeof(int)) {
             return -EINVAL;
         }
+        // 返回当前 passcred 设置
         if (pair)
             *(int *)optval = pair->passcred;
-        else
-            return (size_t)-ENOTCONN;
         *optlen = sizeof(int);
         break;
+
     case SO_PEERCRED:
+        // SO_PEERCRED 需要已连接
+        if (!pair) {
+            return -ENOTCONN;
+        }
         if (!pair->has_peercred) {
             return -ENODATA;
         }
         if (*optlen < sizeof(struct ucred)) {
             return -EINVAL;
         }
-        if (pair)
-            memcpy(optval, &pair->peercred, sizeof(struct ucred));
-        else
-            return (size_t)-ENOTCONN;
+        // 客户端获取的是服务端的凭据
+        memcpy(optval, &pair->cred, sizeof(struct ucred));
         *optlen = sizeof(struct ucred);
         break;
-    case SO_ATTACH_FILTER:
-        if (*optlen < sizeof(struct sock_fprog)) {
+
+    case SO_ACCEPTCONN:
+        if (*optlen < sizeof(int)) {
             return -EINVAL;
         }
-        struct sock_fprog fprog = {.len = pair->filter_len,
-                                   .filter = pair->filter};
-        memcpy(optval, &fprog, sizeof(fprog));
-        *optlen = sizeof(fprog);
+        *(int *)optval = (sock->connMax > 0) ? 1 : 0;
+        *optlen = sizeof(int);
         break;
+
     default:
         return -ENOPROTOOPT;
     }
@@ -1257,28 +1500,31 @@ size_t unix_socket_accept_setsockopt(uint64_t fd, int level, int optname,
     if (level != SOL_SOCKET) {
         return -ENOPROTOOPT;
     }
+
+    if (!current_task->fd_info->fds[fd])
+        return (size_t)-EBADF;
+
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     unix_socket_pair_t *pair = handle->sock;
+
+    if (!pair)
+        return (size_t)-ENOTCONN;
 
     switch (optname) {
     case SO_REUSEADDR:
         if (optlen < sizeof(int)) {
             return -EINVAL;
         }
-        if (pair)
-            pair->reuseaddr = *(int *)optval;
-        else
-            return (size_t)-ENOTCONN;
+        pair->reuseaddr = *(int *)optval;
         break;
+
     case SO_KEEPALIVE:
         if (optlen < sizeof(int)) {
             return -EINVAL;
         }
-        if (pair)
-            pair->keepalive = *(int *)optval;
-        else
-            return (size_t)-ENOTCONN;
+        pair->keepalive = *(int *)optval;
         break;
+
     case SO_SNDTIMEO_OLD:
     case SO_SNDTIMEO_NEW:
         if (optlen < sizeof(struct timeval)) {
@@ -1286,6 +1532,7 @@ size_t unix_socket_accept_setsockopt(uint64_t fd, int level, int optname,
         }
         memcpy(&pair->sndtimeo, optval, sizeof(struct timeval));
         break;
+
     case SO_RCVTIMEO_OLD:
     case SO_RCVTIMEO_NEW:
         if (optlen < sizeof(struct timeval)) {
@@ -1293,65 +1540,73 @@ size_t unix_socket_accept_setsockopt(uint64_t fd, int level, int optname,
         }
         memcpy(&pair->rcvtimeo, optval, sizeof(struct timeval));
         break;
+
     case SO_BINDTODEVICE:
         if (optlen > IFNAMSIZ) {
             return -EINVAL;
         }
-        if (pair) {
-            strncpy(pair->bind_to_dev, optval, optlen);
-            pair->bind_to_dev[IFNAMSIZ - 1] = '\0';
-        } else
-            return (size_t)-ENOTCONN;
+        strncpy(pair->bind_to_dev, optval, optlen);
+        pair->bind_to_dev[IFNAMSIZ - 1] = '\0';
         break;
+
     case SO_LINGER:
         if (optlen < sizeof(struct linger)) {
             return -EINVAL;
         }
         memcpy(&pair->linger_opt, optval, sizeof(struct linger));
         break;
+
     case SO_SNDBUF:
         if (optlen < sizeof(int)) {
             return -EINVAL;
         }
-        if (pair) {
+        {
             int new_size = *(int *)optval;
             if (new_size < BUFFER_SIZE) {
                 new_size = BUFFER_SIZE;
             }
+            spin_lock(&pair->lock);
             void *newBuff = alloc_frames_bytes(new_size);
             memcpy(newBuff, pair->clientBuff,
                    MIN(new_size, pair->clientBuffSize));
             free_frames_bytes(pair->clientBuff, pair->clientBuffSize);
             pair->clientBuff = newBuff;
             pair->clientBuffSize = new_size;
-        } else
-            return (size_t)-ENOTCONN;
+            spin_unlock(&pair->lock);
+        }
         break;
+
     case SO_RCVBUF:
         if (optlen < sizeof(int)) {
             return -EINVAL;
         }
-        if (pair) {
+        {
             int new_size = *(int *)optval;
             if (new_size < BUFFER_SIZE) {
                 new_size = BUFFER_SIZE;
             }
+            spin_lock(&pair->lock);
             void *newBuff = alloc_frames_bytes(new_size);
             memcpy(newBuff, pair->serverBuff,
                    MIN(new_size, pair->serverBuffSize));
             free_frames_bytes(pair->serverBuff, pair->serverBuffSize);
             pair->serverBuff = newBuff;
             pair->serverBuffSize = new_size;
-        } else
-            return (size_t)-ENOTCONN;
+            spin_unlock(&pair->lock);
+        }
         break;
+
     case SO_PASSCRED:
         if (optlen < sizeof(int)) {
             return -EINVAL;
         }
-        if (pair)
-            pair->passcred = *(int *)optval;
+        pair->passcred = *(int *)optval;
         break;
+
+    case SO_PEERCRED:
+        // SO_PEERCRED 是只读的
+        return -ENOPROTOOPT;
+
     case SO_ATTACH_FILTER: {
         struct sock_fprog fprog;
         if (optlen < sizeof(fprog)) {
@@ -1361,14 +1616,27 @@ size_t unix_socket_accept_setsockopt(uint64_t fd, int level, int optname,
         if (fprog.len > 64 || fprog.len == 0) {
             return -EINVAL;
         }
-
-        // 分配内存保存过滤器
+        spin_lock(&pair->lock);
+        if (pair->filter)
+            free(pair->filter);
         pair->filter = malloc(sizeof(struct sock_filter) * fprog.len);
         memcpy(pair->filter, fprog.filter,
                sizeof(struct sock_filter) * fprog.len);
         pair->filter_len = fprog.len;
+        spin_unlock(&pair->lock);
         break;
     }
+
+    case SO_DETACH_FILTER:
+        spin_lock(&pair->lock);
+        if (pair->filter) {
+            free(pair->filter);
+            pair->filter = NULL;
+            pair->filter_len = 0;
+        }
+        spin_unlock(&pair->lock);
+        break;
+
     default:
         return -ENOPROTOOPT;
     }
@@ -1381,31 +1649,33 @@ size_t unix_socket_accept_getsockopt(uint64_t fd, int level, int optname,
     if (level != SOL_SOCKET) {
         return -ENOPROTOOPT;
     }
+
+    if (!current_task->fd_info->fds[fd])
+        return (size_t)-EBADF;
+
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     unix_socket_pair_t *pair = handle->sock;
 
-    // 获取选项值
+    if (!pair)
+        return (size_t)-ENOTCONN;
+
     switch (optname) {
     case SO_REUSEADDR:
         if (*optlen < sizeof(int)) {
             return -EINVAL;
         }
-        if (pair)
-            *(int *)optval = pair->reuseaddr;
-        else
-            return (size_t)-ENOTCONN;
+        *(int *)optval = pair->reuseaddr;
         *optlen = sizeof(int);
         break;
+
     case SO_KEEPALIVE:
         if (*optlen < sizeof(int)) {
             return -EINVAL;
         }
-        if (pair)
-            *(int *)optval = pair->keepalive;
-        else
-            return (size_t)-ENOTCONN;
+        *(int *)optval = pair->keepalive;
         *optlen = sizeof(int);
         break;
+
     case SO_SNDTIMEO_OLD:
     case SO_SNDTIMEO_NEW:
         if (*optlen < sizeof(struct timeval)) {
@@ -1414,6 +1684,7 @@ size_t unix_socket_accept_getsockopt(uint64_t fd, int level, int optname,
         memcpy(optval, &pair->sndtimeo, sizeof(struct timeval));
         *optlen = sizeof(struct timeval);
         break;
+
     case SO_RCVTIMEO_OLD:
     case SO_RCVTIMEO_NEW:
         if (*optlen < sizeof(struct timeval)) {
@@ -1422,16 +1693,15 @@ size_t unix_socket_accept_getsockopt(uint64_t fd, int level, int optname,
         memcpy(optval, &pair->rcvtimeo, sizeof(struct timeval));
         *optlen = sizeof(struct timeval);
         break;
+
     case SO_BINDTODEVICE:
         if (*optlen < IFNAMSIZ) {
             return -EINVAL;
         }
-        if (pair) {
-            strncpy(optval, pair->bind_to_dev, IFNAMSIZ);
-            *optlen = strlen(pair->bind_to_dev);
-        } else
-            return (size_t)-ENOTCONN;
+        strncpy(optval, pair->bind_to_dev, IFNAMSIZ);
+        *optlen = strlen(pair->bind_to_dev) + 1;
         break;
+
     case SO_LINGER:
         if (*optlen < sizeof(struct linger)) {
             return -EINVAL;
@@ -1439,36 +1709,31 @@ size_t unix_socket_accept_getsockopt(uint64_t fd, int level, int optname,
         memcpy(optval, &pair->linger_opt, sizeof(struct linger));
         *optlen = sizeof(struct linger);
         break;
+
     case SO_SNDBUF:
         if (*optlen < sizeof(int)) {
             return -EINVAL;
         }
-        if (pair)
-            *(int *)optval = pair->clientBuffSize;
-        else
-            return (size_t)-ENOTCONN;
+        *(int *)optval = pair->clientBuffSize;
         *optlen = sizeof(int);
         break;
+
     case SO_RCVBUF:
         if (*optlen < sizeof(int)) {
             return -EINVAL;
         }
-        if (pair)
-            *(int *)optval = pair->serverBuffSize;
-        else
-            return (size_t)-ENOTCONN;
+        *(int *)optval = pair->serverBuffSize;
         *optlen = sizeof(int);
         break;
+
     case SO_PASSCRED:
         if (*optlen < sizeof(int)) {
             return -EINVAL;
         }
-        if (pair)
-            *(int *)optval = pair->passcred;
-        else
-            return (size_t)-ENOTCONN;
+        *(int *)optval = pair->passcred;
         *optlen = sizeof(int);
         break;
+
     case SO_PEERCRED:
         if (!pair->has_peercred) {
             return -ENODATA;
@@ -1476,21 +1741,23 @@ size_t unix_socket_accept_getsockopt(uint64_t fd, int level, int optname,
         if (*optlen < sizeof(struct ucred)) {
             return -EINVAL;
         }
-        if (pair)
-            memcpy(optval, &pair->peercred, sizeof(struct ucred));
-        else
-            return (size_t)-ENOTCONN;
+        // 服务端获取的是客户端的凭据
+        memcpy(optval, &pair->peercred, sizeof(struct ucred));
         *optlen = sizeof(struct ucred);
         break;
+
     case SO_ATTACH_FILTER:
         if (*optlen < sizeof(struct sock_fprog)) {
             return -EINVAL;
         }
-        struct sock_fprog fprog = {.len = pair->filter_len,
-                                   .filter = pair->filter};
-        memcpy(optval, &fprog, sizeof(fprog));
-        *optlen = sizeof(fprog);
+        {
+            struct sock_fprog fprog = {.len = pair->filter_len,
+                                       .filter = pair->filter};
+            memcpy(optval, &fprog, sizeof(fprog));
+        }
+        *optlen = sizeof(struct sock_fprog);
         break;
+
     default:
         return -ENOPROTOOPT;
     }

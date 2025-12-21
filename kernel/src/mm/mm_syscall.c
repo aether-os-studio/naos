@@ -502,8 +502,6 @@ static uint64_t mremap_move(vma_manager_t *mgr, vma_t *old_vma,
 
     // 插入新 VMA
     if (vma_insert(mgr, new_vma) != 0) {
-        if (new_vma->node)
-            new_vma->node->refcount--;
         if (new_vma->vm_name)
             free(new_vma->vm_name);
         vma_free(new_vma);
@@ -532,8 +530,6 @@ static uint64_t mremap_move(vma_manager_t *mgr, vma_t *old_vma,
             old_vma->vm_offset);
         if (ret > (uint64_t)-4095UL) {
             vma_remove(mgr, new_vma);
-            if (new_vma->node)
-                new_vma->node->refcount--;
             if (new_vma->vm_name)
                 free(new_vma->vm_name);
             vma_free(new_vma);

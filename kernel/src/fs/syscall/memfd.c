@@ -163,6 +163,7 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags) {
     node->size = 0;
     current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
     current_task->fd_info->fds[fd]->node = node;
+    current_task->fd_info->fds[fd]->offset = 0;
     current_task->fd_info->fds[fd]->flags =
         (flags & MFD_CLOEXEC) ? O_CLOEXEC : 0;
     procfs_on_open_file(current_task, fd);

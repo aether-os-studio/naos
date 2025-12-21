@@ -77,8 +77,13 @@ typedef struct unix_socket_pair {
     int passcred;
     struct sock_filter *filter;
     size_t filter_len;
+    struct ucred cred;
     struct ucred peercred;
     bool has_peercred;
+    struct ucred client_pending_cred; // 客户端发送的凭据，服务端接收
+    bool has_client_pending_cred;
+    struct ucred server_pending_cred; // 服务端发送的凭据，客户端接收
+    bool has_server_pending_cred;
 } unix_socket_pair_t;
 
 #define MAX_CONNECTIONS 16

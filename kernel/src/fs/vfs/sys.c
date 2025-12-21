@@ -34,6 +34,19 @@ ssize_t sysfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
 
 ssize_t sysfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     sysfs_node_t *handle = fd->node->handle;
+    if (!strcmp(fd->node->name, "uevent") && !strcmp(addr, "add")) {
+        char buffer[256];
+        sprintf(buffer, "add@/%s\nACTION=add\nSEQNUM=%d\nTAGS=:systemd:\n%s\n",
+                strstr(handle->content, "DEVPATH=") + 8, alloc_seq_num(),
+                handle->content);
+        int len = strlen(buffer);
+        for (int i = 0; i < len; i++) {
+            if (buffer[i] == '\n')
+                buffer[i] = '\0';
+        }
+        netlink_kernel_uevent_send(buffer, len);
+        return size;
+    }
     if (offset + size > handle->capability) {
         size_t new_capability = offset + size;
         void *new_content = alloc_frames_bytes(new_capability);
