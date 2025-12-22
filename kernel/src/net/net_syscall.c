@@ -10,7 +10,7 @@
 uint64_t sys_shutdown(uint64_t fd, uint64_t how) { return 0; }
 
 uint64_t sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen) {
-    if (fd >= MAX_FD_NUM)
+    if (fd < 0 || fd > MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[fd];
 
@@ -38,7 +38,8 @@ uint64_t sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen) {
 
 uint64_t sys_getsockname(int sockfd, struct sockaddr_un *addr,
                          socklen_t *addrlen) {
-    if (sockfd >= MAX_FD_NUM)
+    if (sockfd < 0 || sockfd > MAX_FD_NUM ||
+        !current_task->fd_info->fds[sockfd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[sockfd];
 
@@ -117,7 +118,8 @@ uint64_t sys_socketpair(int family, int type, int protocol, int *sv) {
 
 uint64_t sys_bind(int sockfd, const struct sockaddr_un *addr,
                   socklen_t addrlen) {
-    if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
+    if (sockfd < 0 || sockfd >= MAX_FD_NUM ||
+        !current_task->fd_info->fds[sockfd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[sockfd];
 
@@ -128,7 +130,8 @@ uint64_t sys_bind(int sockfd, const struct sockaddr_un *addr,
 }
 
 uint64_t sys_listen(int sockfd, int backlog) {
-    if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
+    if (sockfd < 0 || sockfd >= MAX_FD_NUM ||
+        !current_task->fd_info->fds[sockfd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[sockfd];
 
@@ -140,7 +143,8 @@ uint64_t sys_listen(int sockfd, int backlog) {
 
 uint64_t sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen,
                     uint64_t flags) {
-    if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
+    if (sockfd < 0 || sockfd >= MAX_FD_NUM ||
+        !current_task->fd_info->fds[sockfd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[sockfd];
 
@@ -152,7 +156,8 @@ uint64_t sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen,
 
 uint64_t sys_connect(int sockfd, const struct sockaddr_un *addr,
                      socklen_t addrlen) {
-    if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
+    if (sockfd < 0 || sockfd >= MAX_FD_NUM ||
+        !current_task->fd_info->fds[sockfd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[sockfd];
 
@@ -164,7 +169,8 @@ uint64_t sys_connect(int sockfd, const struct sockaddr_un *addr,
 
 int64_t sys_send(int sockfd, void *buff, size_t len, int flags,
                  struct sockaddr_un *dest_addr, socklen_t addrlen) {
-    if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
+    if (sockfd < 0 || sockfd >= MAX_FD_NUM ||
+        !current_task->fd_info->fds[sockfd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[sockfd];
 
@@ -176,7 +182,8 @@ int64_t sys_send(int sockfd, void *buff, size_t len, int flags,
 
 int64_t sys_recv(int sockfd, void *buf, size_t len, int flags,
                  struct sockaddr_un *dest_addr, socklen_t *addrlen) {
-    if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
+    if (sockfd < 0 || sockfd >= MAX_FD_NUM ||
+        !current_task->fd_info->fds[sockfd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[sockfd];
 
@@ -193,7 +200,8 @@ int64_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         return (uint64_t)-EFAULT;
     }
 
-    if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
+    if (sockfd < 0 || sockfd >= MAX_FD_NUM ||
+        !current_task->fd_info->fds[sockfd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[sockfd];
 
@@ -209,7 +217,8 @@ int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         return (uint64_t)-EFAULT;
     }
 
-    if (sockfd >= MAX_FD_NUM || !current_task->fd_info->fds[sockfd])
+    if (sockfd < 0 || sockfd >= MAX_FD_NUM ||
+        !current_task->fd_info->fds[sockfd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[sockfd];
 

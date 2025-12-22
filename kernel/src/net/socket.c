@@ -234,7 +234,7 @@ int socket_accept_poll(void *file, int events) {
     return revents;
 }
 
-int socket_socket(int domain, int type, int protocol) {
+uint64_t socket_socket(int domain, int type, int protocol) {
     // if (!(type & 1))
     // {
     //     return -ENOSYS;

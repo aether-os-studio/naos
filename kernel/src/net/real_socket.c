@@ -5,7 +5,7 @@ spinlock_t real_sockets_lock = SPIN_INIT;
 int socket_num = 0;
 
 void regist_socket(int domain,
-                   int (*socket)(int domain, int type, int protocol)) {
+                   uint64_t (*socket)(int domain, int type, int protocol)) {
     spin_lock(&real_sockets_lock);
     real_sockets[socket_num] = malloc(sizeof(real_socket_socket_t));
     real_sockets[socket_num]->domain = domain;

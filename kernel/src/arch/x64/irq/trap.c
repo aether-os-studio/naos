@@ -57,12 +57,16 @@ int lookup_kallsyms(uint64_t addr, int level) {
         return -1;
 }
 
+#define TRACEBACK_MAX_DEPTH 32
+
 void traceback(struct pt_regs *regs) {
     uint64_t *rbp = (uint64_t *)regs->rbp;
-    printk("======== Kernel traceback =======\n");
-
     uint64_t ret_addr = regs->rip;
-    for (int i = 0; i < 32; ++i) {
+    if (ret_addr < get_physical_memory_offset())
+        goto check_user_fault;
+
+    printk("======== Kernel traceback =======\n");
+    for (int i = 0; i < TRACEBACK_MAX_DEPTH; ++i) {
         if (ret_addr < get_physical_memory_offset())
             break;
 
@@ -78,6 +82,31 @@ void traceback(struct pt_regs *regs) {
             break;
     }
     printk("======== Kernel traceback end =======\n");
+
+check_user_fault:
+    if (current_task) {
+        rb_node_t *node =
+            rb_first(&current_task->arch_context->mm->task_vma_mgr.vma_tree);
+
+        while (node) {
+            vma_t *vma = rb_entry(node, vma_t, vm_rb);
+            vfs_node_t vfs_node = vma->node;
+
+            if (vma->vm_name) {
+                if (ret_addr >= vma->vm_start && ret_addr <= vma->vm_end) {
+                    printk("Fault in this vma: %s, vma->vm_start = %#018lx, "
+                           "offset_in_vma = %#018lx\n",
+                           vma->vm_name, vma->vm_start,
+                           ret_addr - vma->vm_start);
+                } else {
+                    printk("Faulting task vma: %s, vma->vm_start = %#018lx\n",
+                           vma->vm_name, vma->vm_start);
+                }
+            }
+
+            node = rb_next(node);
+        }
+    }
 }
 
 extern int vsprintf(char *buf, const char *fmt, va_list args);

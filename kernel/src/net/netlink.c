@@ -10,12 +10,12 @@
 static int netlink_socket_fsid = 0;
 
 // Global netlink socket tracking
-#define MAX_NETLINK_SOCKETS 64
+#define MAX_NETLINK_SOCKETS 256
 static struct netlink_sock *netlink_sockets[MAX_NETLINK_SOCKETS] = {0};
 static spinlock_t netlink_sockets_lock = SPIN_INIT;
 
 // Uevent message pool for persistent storage
-#define MAX_UEVENT_POOL_SIZE 256
+#define MAX_UEVENT_POOL_SIZE 1024
 struct uevent_pool_entry {
     char message[NETLINK_BUFFER_SIZE];
     size_t length;
@@ -288,32 +288,49 @@ int netlink_bind(uint64_t fd, const struct sockaddr_un *addr,
 
 size_t netlink_getsockopt(uint64_t fd, int level, int optname,
                           const void *optval, socklen_t *optlen) {
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    struct netlink_sock *nl_sk = handle->sock;
+
     if (level != SOL_SOCKET) {
         return -ENOPROTOOPT;
     }
-
-    if (!current_task->fd_info->fds[fd])
-        return (size_t)-EBADF;
-
-    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
-    struct netlink_sock *nl_sk = handle->sock;
 
     switch (optname) {
     case SO_TYPE:
         *(int *)optval = nl_sk->type;
         *optlen = sizeof(int);
         break;
-
-    default:
+    case SO_PROTOCOL:
+        *(int *)optval = nl_sk->protocol;
+        *optlen = sizeof(int);
         break;
+    case SO_PASSCRED:
+        break;
+    default:
+        return -ENOPROTOOPT;
     }
-    // TODO: Implement netlink socket options
+
     return 0;
 }
 
 size_t netlink_setsockopt(uint64_t fd, int level, int optname,
                           const void *optval, socklen_t optlen) {
-    // TODO: Implement netlink socket options
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    struct netlink_sock *nl_sk = handle->sock;
+
+    if (level != SOL_SOCKET) {
+        return -ENOPROTOOPT;
+    }
+
+    switch (optname) {
+    case SO_ATTACH_FILTER:
+        break;
+    case SO_PASSCRED:
+        break;
+    default:
+        return -ENOPROTOOPT;
+    }
+
     return 0;
 }
 
@@ -451,9 +468,60 @@ size_t netlink_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
         offset += curr->len;
     }
 
-    // For uevent protocol, broadcast the message
-    // TODO: Handle other netlink protocols
-    printk("netlink sendmsg: received %d bytes for uevent\n", total_len);
+    struct sockaddr_nl *addr = msg->msg_name;
+    if (addr) {
+        if (addr->nl_pid) {
+            printk("netlink sendmsg: nl_pid has been set\n");
+
+            spin_lock(&netlink_sockets_lock);
+            for (int i = 0; i < MAX_NETLINK_SOCKETS; i++) {
+                if (netlink_sockets[i] == NULL)
+                    continue;
+
+                struct netlink_sock *sock = netlink_sockets[i];
+                if (sock->bind_addr &&
+                    sock->bind_addr->nl_pid == addr->nl_pid) {
+                    spin_lock(&sock->lock);
+
+                    // Check if socket is bound to uevent group (group 1)
+                    if (sock->groups & 1) {
+                        netlink_buffer_write_msg(sock->buffer, buffer,
+                                                 total_len);
+                    }
+
+                    spin_unlock(&sock->lock);
+                    break;
+                }
+            }
+            spin_unlock(&netlink_sockets_lock);
+        } else if (addr->nl_groups) {
+            printk("netlink sendmsg: nl_groups has been set\n");
+
+            spin_lock(&netlink_sockets_lock);
+            for (int i = 0; i < MAX_NETLINK_SOCKETS; i++) {
+                if (netlink_sockets[i] == NULL)
+                    continue;
+
+                struct netlink_sock *sock = netlink_sockets[i];
+                if (sock->bind_addr &&
+                    sock->bind_addr->nl_groups == addr->nl_groups) {
+                    spin_lock(&sock->lock);
+
+                    // Check if socket is bound to uevent group (group 1)
+                    if (sock->groups & 1) {
+                        netlink_buffer_write_msg(sock->buffer, buffer,
+                                                 total_len);
+                    }
+
+                    spin_unlock(&sock->lock);
+                }
+            }
+            spin_unlock(&netlink_sockets_lock);
+        }
+    } else {
+        printk("netlink sendmsg: received %d bytes for uevent\n", total_len);
+        return 0;
+    }
 
     return total_len;
 }
@@ -565,7 +633,7 @@ socket_op_t netlink_ops = {
     .sendmsg = netlink_sendmsg,
 };
 
-int netlink_socket(int domain, int type, int protocol) {
+uint64_t netlink_socket(int domain, int type, int protocol) {
     if (domain != AF_NETLINK) {
         return -EAFNOSUPPORT;
     }
@@ -620,7 +688,7 @@ int netlink_socket(int domain, int type, int protocol) {
     }
     spin_unlock(&netlink_sockets_lock);
 
-    uint64_t i = 0;
+    uint64_t i;
     for (i = 0; i < MAX_FD_NUM; i++) {
         if (current_task->fd_info->fds[i] == NULL) {
             break;
@@ -631,7 +699,7 @@ int netlink_socket(int domain, int type, int protocol) {
         free(nl_sk->buffer);
         free(nl_sk);
         free(handle);
-        return -EBADF;
+        return -EMFILE;
     }
 
     uint64_t flags = 0;
@@ -686,6 +754,8 @@ ssize_t netlink_write(uint64_t fd, const char *buf, size_t count) {
     return netlink_sendto(fd, (const uint8_t *)buf, count, 0, NULL, 0);
 }
 
+int netlink_ioctl(void *file, ssize_t cmd, ssize_t arg) { return -EINVAL; }
+
 void netlink_free_handle(vfs_node_t node) {
     socket_handle_t *handle = node->handle;
     if (handle == NULL)
@@ -736,7 +806,7 @@ static struct vfs_callback netlink_callback = {
     .rename = (vfs_rename_t)dummy,
     .map = (vfs_mapfile_t)dummy,
     .stat = (vfs_stat_t)dummy,
-    .ioctl = (vfs_ioctl_t)dummy,
+    .ioctl = (vfs_ioctl_t)netlink_ioctl,
     .poll = (vfs_poll_t)netlink_poll,
     .resize = (vfs_resize_t)dummy,
 

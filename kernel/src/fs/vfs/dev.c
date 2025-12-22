@@ -439,6 +439,7 @@ ssize_t nulldev_read(void *data, void *buf, uint64_t offset, uint64_t len,
 
 ssize_t nulldev_write(void *data, const void *buf, uint64_t offset,
                       uint64_t len, uint64_t flags) {
+    printk("Writing to /dev/null: %s\n", buf);
     return 0;
 }
 

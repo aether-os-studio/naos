@@ -1465,7 +1465,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         if (fd) {
             child->fd_info->fds[i] = malloc(sizeof(fd_t));
             memcpy(child->fd_info->fds[i], fd, sizeof(fd_t));
-            fd->node->refcount++;
+            child->fd_info->fds[i]->node->refcount++;
         } else {
             child->fd_info->fds[i] = NULL;
         }

@@ -310,14 +310,7 @@ struct cmsghdr {
 #define CMSG_SPACE(len) (CMSG_ALIGN(len) + CMSG_ALIGN(sizeof(struct cmsghdr)))
 #define CMSG_LEN(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
 
-extern void socket_on_new_task(uint64_t pid);
-extern void socket_on_exit_task(uint64_t pid);
-extern void socket_on_dup_file(uint64_t fd, uint64_t newfd);
-
-uint64_t unix_socket_shutdown(uint64_t fd, uint64_t how);
-size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr,
-                               uint32_t *len);
-int socket_socket(int domain, int type, int protocol);
+uint64_t socket_socket(int domain, int type, int protocol);
 int unix_socket_pair(int type, int protocol, int *sv);
 int socket_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen);
 int socket_listen(uint64_t fd, int backlog);
