@@ -238,6 +238,22 @@ void proc_init() {
 
     procfs_nodes_init();
 
+    vfs_node_t sys_node = vfs_child_append(procfs_root, "sys", NULL);
+    sys_node->type = file_dir;
+    sys_node->mode = 0644;
+    vfs_node_t sys_kernel_node = vfs_child_append(sys_node, "kernel", NULL);
+    sys_kernel_node->type = file_dir;
+    sys_kernel_node->mode = 0644;
+    vfs_node_t sys_kernel_osrelease_node =
+        vfs_child_append(sys_kernel_node, "osrelease", NULL);
+    sys_kernel_osrelease_node->type = file_dir;
+    sys_kernel_osrelease_node->mode = 0644;
+    proc_handle_t *sys_kernel_osrelease_handle = malloc(sizeof(proc_handle_t));
+    sys_kernel_osrelease_node->handle = sys_kernel_osrelease_handle;
+    sys_kernel_osrelease_handle->node = sys_kernel_osrelease_node;
+    sys_kernel_osrelease_handle->task = NULL;
+    sprintf(sys_kernel_osrelease_node->name, "proc_sys_kernel_osrelease");
+
     struct mount_point *tmp1, *tmp2;
     llist_for_each(tmp1, tmp2, &mount_points, node) {
         procfs_mount_point_count++;
@@ -353,6 +369,7 @@ void procfs_on_open_file(task_t *task, int fd) {
     fd_node->type = file_symlink;
     fd_node->mode = 0700;
     proc_handle_t *fd_node_handle = malloc(sizeof(proc_handle_t));
+    memset(fd_node_handle, 0, sizeof(proc_handle_t));
     fd_node->handle = fd_node_handle;
     fd_node_handle->node = fd_node;
     fd_node_handle->task = task;

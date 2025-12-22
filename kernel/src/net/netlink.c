@@ -291,6 +291,25 @@ int netlink_bind(uint64_t fd, const struct sockaddr_un *addr,
 
 size_t netlink_getsockopt(uint64_t fd, int level, int optname,
                           const void *optval, socklen_t *optlen) {
+    if (level != SOL_SOCKET) {
+        return -ENOPROTOOPT;
+    }
+
+    if (!current_task->fd_info->fds[fd])
+        return (size_t)-EBADF;
+
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    struct netlink_sock *nl_sk = handle->sock;
+
+    switch (optname) {
+    case SO_TYPE:
+        *(int *)optval = nl_sk->type;
+        *optlen = sizeof(int);
+        break;
+
+    default:
+        break;
+    }
     // TODO: Implement netlink socket options
     return 0;
 }
@@ -561,7 +580,7 @@ int netlink_socket(int domain, int type, int protocol) {
     memset(nl_sk, 0, sizeof(struct netlink_sock));
 
     nl_sk->domain = domain;
-    nl_sk->type = type;
+    nl_sk->type = type & 0xF;
     nl_sk->protocol = protocol;
 
     nl_sk->portid = (uint32_t)current_task->pid;

@@ -66,6 +66,9 @@ void procfs_nodes_init() {
                          NULL);
     create_procfs_handle("proc_mountinfo", proc_pmountinfo_read,
                          proc_pmountinfo_stat, proc_pmountinfo_poll);
+    create_procfs_handle("proc_sys_kernel_osrelease",
+                         proc_sys_kernel_osrelease_read,
+                         proc_sys_kernel_osrelease_stat, NULL);
 }
 
 size_t procfs_read_dispatch(proc_handle_t *handle, void *addr, size_t offset,

@@ -871,6 +871,8 @@ uint64_t do_stat_path(const char *path, struct stat *buf) {
         buf->st_mode |= S_IFCHR;
     else if (node->type & file_fifo)
         buf->st_mode |= S_IFIFO;
+    else if (node->type & file_socket)
+        buf->st_mode |= S_IFSOCK;
     else if (node->type & file_dir)
         buf->st_mode |= S_IFDIR;
     else if (node->type & file_none)
@@ -901,15 +903,10 @@ uint64_t sys_stat(const char *fn, struct stat *user_buf) {
     return 0;
 }
 
-uint64_t sys_fstat(uint64_t fd, struct stat *user_buf) {
-    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
-        return (uint64_t)-EBADF;
-    }
+uint64_t do_stat_fd(int fd, struct stat *buf) {
+    memset(buf, 0, sizeof(struct stat));
 
     vfs_node_t node = current_task->fd_info->fds[fd]->node;
-
-    struct stat res;
-    struct stat *buf = &res;
 
     buf->st_dev = node->dev;
     buf->st_ino = node->inode;
@@ -923,6 +920,8 @@ uint64_t sys_fstat(uint64_t fd, struct stat *user_buf) {
         buf->st_mode |= S_IFCHR;
     else if (node->type & file_fifo)
         buf->st_mode |= S_IFIFO;
+    else if (node->type & file_socket)
+        buf->st_mode |= S_IFSOCK;
     else if (node->type & file_dir)
         buf->st_mode |= S_IFDIR;
     else if (node->type & file_none)
@@ -934,7 +933,20 @@ uint64_t sys_fstat(uint64_t fd, struct stat *user_buf) {
     buf->st_size = node->size;
     buf->st_blocks = (buf->st_size + buf->st_blksize - 1) / buf->st_blksize;
 
-    if (copy_to_user(user_buf, buf, sizeof(struct stat)))
+    return 0;
+}
+
+uint64_t sys_fstat(uint64_t fd, struct stat *user_buf) {
+    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
+        return (uint64_t)-EBADF;
+    }
+
+    struct stat res;
+    int ret = do_stat_fd(fd, &res);
+    if (ret < 0)
+        return ret;
+
+    if (copy_to_user(user_buf, &res, sizeof(struct stat)))
         return (uint64_t)-EFAULT;
 
     return 0;
@@ -945,6 +957,10 @@ uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname_user,
     char pathname[512];
     if (copy_from_user_str(pathname, pathname_user, sizeof(pathname)))
         return (uint64_t)-EFAULT;
+
+    if (flags & AT_EMPTY_PATH) {
+        return sys_fstat(dirfd, buf_user);
+    }
 
     char *resolved = at_resolve_pathname(dirfd, (char *)pathname);
 
@@ -971,29 +987,40 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
     char pathname[512];
     if (copy_from_user_str(pathname, pathname_user, sizeof(pathname)))
         return (uint64_t)-EFAULT;
+    if (dirfd > MAX_FD_NUM || !current_task->fd_info->fds[dirfd])
+        return (uint64_t)-EBADF;
 
     struct stat simple;
 
-    char *resolved = at_resolve_pathname(dirfd, (char *)pathname);
-
-    if (!resolved) {
-        return (uint64_t)-EINVAL;
-    }
-
-    uint64_t ret = do_stat_path(resolved, &simple);
-
-    vfs_node_t node = vfs_open(resolved, 0);
-
-    free(resolved);
-
-    if (!node)
-        return (uint64_t)-ENOENT;
-
-    if ((int64_t)ret < 0)
-        return ret;
-
     struct statx res;
     struct statx *buff = &res;
+
+    if (flags & AT_EMPTY_PATH) {
+        int ret = do_stat_fd(dirfd, &simple);
+        if (ret < 0)
+            return ret;
+        buff->stx_mnt_id = current_task->fd_info->fds[dirfd]->node->fsid;
+    } else {
+        char *resolved = at_resolve_pathname(dirfd, (char *)pathname);
+
+        if (!resolved) {
+            return (uint64_t)-EINVAL;
+        }
+
+        uint64_t ret = do_stat_path(resolved, &simple);
+
+        vfs_node_t node = vfs_open(resolved, 0);
+
+        free(resolved);
+
+        if (!node)
+            return (uint64_t)-ENOENT;
+
+        if ((int64_t)ret < 0)
+            return ret;
+
+        buff->stx_mnt_id = node->fsid;
+    }
 
     buff->stx_mask = mask;
     buff->stx_blksize = simple.st_blksize;
@@ -1023,8 +1050,6 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
 
     buff->stx_mtime.tv_sec = simple.st_mtim.tv_sec;
     buff->stx_mtime.tv_nsec = simple.st_mtim.tv_nsec;
-
-    buff->stx_mnt_id = node->fsid;
 
     // todo: special devices
 
@@ -1171,7 +1196,7 @@ uint64_t sys_rmdir(const char *name_user) {
         return (uint64_t)-EFAULT;
     }
 
-    vfs_node_t node = vfs_open(name, 0);
+    vfs_node_t node = vfs_open(name, O_NOFOLLOW);
     if (!node)
         return -ENOENT;
     if (!(node->type & file_dir))
@@ -1183,7 +1208,7 @@ uint64_t sys_rmdir(const char *name_user) {
 }
 
 uint64_t do_unlink(const char *name) {
-    vfs_node_t node = vfs_open(name, 0);
+    vfs_node_t node = vfs_open(name, O_NOFOLLOW);
     if (!node)
         return -ENOENT;
 

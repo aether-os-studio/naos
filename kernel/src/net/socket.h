@@ -95,8 +95,6 @@ typedef struct socket {
     int type;
     int protocol;
 
-    int timesOpened;
-
     // accept()
     bool acceptWouldBlock;
 
@@ -109,12 +107,6 @@ typedef struct socket {
     unix_socket_pair_t **backlog;
 
     int passcred;
-
-    // SOCK_DGRAM
-    spinlock_t dgram_lock;
-    uint8_t *dgramBuf;
-    int dgramBuffPos;
-    int dgramBuffSize;
 
     // connect()
     unix_socket_pair_t *pair;

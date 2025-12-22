@@ -125,7 +125,6 @@ uint64_t sys_inotify_init1(uint64_t flags) {
     vfs_node_t node = vfs_node_alloc(NULL, NULL);
     node->type = file_none;
     node->fsid = notifyfs_id;
-    node->handle = NULL;
     node->refcount++;
     node->size = 0;
     notifyfs_handle_t *handle = malloc(sizeof(notifyfs_handle_t));

@@ -123,29 +123,23 @@ bool socket_socket_close(socket_handle_t *socket_handle) {
         return true;
 
     socket_t *unixSocket = socket_handle->sock;
-    if (unixSocket->timesOpened >= 1) {
-        unixSocket->timesOpened--;
-    }
     if (unixSocket->pair) {
         unixSocket->pair->clientFds--;
         if (!unixSocket->pair->clientFds && !unixSocket->pair->serverFds)
             unix_socket_free_pair(unixSocket->pair);
     }
-    if (unixSocket->timesOpened == 0) {
-        socket_t *browse = &first_unix_socket;
 
-        while (browse && browse->next != unixSocket) {
-            browse = browse->next;
-        }
+    socket_t *browse = &first_unix_socket;
 
-        browse->next = unixSocket->next;
-        free(unixSocket);
-        free(socket_handle);
-
-        return true;
+    while (browse && browse->next != unixSocket) {
+        browse = browse->next;
     }
 
-    return false;
+    browse->next = unixSocket->next;
+    free(unixSocket);
+    free(socket_handle);
+
+    return true;
 }
 
 size_t unix_socket_accept_recv_from(uint64_t fd, uint8_t *out, size_t limit,
@@ -274,16 +268,9 @@ int socket_socket(int domain, int type, int protocol) {
     handle->op = &socket_ops;
     socknode->handle = handle;
 
-    unix_socket->timesOpened = 1;
     unix_socket->domain = domain;
-    unix_socket->type = type;
+    unix_socket->type = type & 0xF;
     unix_socket->protocol = protocol;
-
-    if (unix_socket->type & 2) {
-        unix_socket->dgramBuffPos = 0;
-        unix_socket->dgramBuffSize = BUFFER_SIZE;
-        unix_socket->dgramBuf = alloc_frames_bytes(unix_socket->dgramBuffSize);
-    }
 
     uint64_t i = 0;
     for (i = 0; i < MAX_FD_NUM; i++) {
@@ -500,60 +487,6 @@ size_t unix_socket_recv_from(uint64_t fd, uint8_t *out, size_t limit, int flags,
                              struct sockaddr_un *addr, uint32_t *len) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     socket_t *socket = handle->sock;
-
-    // if (socket->type & 2) {
-    //     uint32_t addrlen;
-    //     if (copy_from_user(&addrlen, len, sizeof(uint32_t)))
-    //         return (size_t)-EFAULT;
-    //     char *safe = unix_socket_addr_safe(addr, addrlen);
-    //     if (((uint64_t)safe & ERRNO_MASK) == ERRNO_MASK)
-    //         return (uint64_t)safe;
-    //     size_t safeLen = strlen(safe);
-
-    //     socket_t *parent = &first_unix_socket;
-    //     while (parent) {
-    //         if (parent == socket) {
-    //             parent = parent->next;
-    //             continue;
-    //         }
-
-    //         if (parent->bindAddr && strlen(parent->bindAddr) == safeLen &&
-    //             memcmp(safe, parent->bindAddr, safeLen) == 0)
-    //             break;
-
-    //         parent = parent->next;
-    //     }
-    //     free(safe);
-
-    //     if (!parent)
-    //         return -(ENOENT);
-
-    //     if (flags & MSG_PEEK)
-    //         return parent->dgramBuffPos;
-
-    //     while (true) {
-    //         if ((current_task->fd_info->fds[fd]->flags & O_NONBLOCK ||
-    //              flags & MSG_DONTWAIT) &&
-    //             parent->dgramBuffPos == 0) {
-    //             return -(EWOULDBLOCK);
-    //         } else if (parent->dgramBuffPos > 0)
-    //             break;
-
-    //         arch_yield();
-    //     }
-
-    //     spin_lock(&parent->dgram_lock);
-
-    //     size_t toCopy = MIN(limit, parent->dgramBuffPos);
-    //     memcpy(out, parent->dgramBuf, toCopy);
-    //     memmove(parent->dgramBuf, &parent->dgramBuf[toCopy],
-    //             parent->dgramBuffPos - toCopy);
-    //     parent->dgramBuffPos -= toCopy;
-
-    //     spin_unlock(&parent->dgram_lock);
-
-    //     return toCopy;
-    // }
 
     unix_socket_pair_t *pair = socket->pair;
     if (!pair) {
@@ -1223,8 +1156,8 @@ int unix_socket_pair(int type, int protocol, int *sv) {
     }
 
     if (i == MAX_FD_NUM) {
-        unix_socket_free_pair(pair);
         sys_close(sock1);
+        unix_socket_free_pair(pair);
         vfs_free(sock2Fd);
         return -EMFILE;
     }
@@ -1577,7 +1510,13 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname,
         *(int *)optval = (sock->connMax > 0) ? 1 : 0;
         *optlen = sizeof(int);
         break;
-
+    case SO_TYPE:
+        if (*optlen < sizeof(int)) {
+            return -EINVAL;
+        }
+        *(int *)optval = sock->type;
+        *optlen = sizeof(int);
+        break;
     default:
         return -ENOPROTOOPT;
     }
@@ -1920,12 +1859,13 @@ int unix_socket_getsockname(uint64_t fd, struct sockaddr_un *addr,
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     socket_t *socket = handle->sock;
     unix_socket_pair_t *pair = socket->pair;
-    if (!pair)
-        return -(ENOTCONN);
 
     addr->sun_family = 1;
-    strcpy(addr->sun_path, pair->filename);
-    *addrlen = sizeof(addr->sun_family) + strlen(pair->filename);
+    *addrlen = sizeof(addr->sun_family);
+    if (pair) {
+        strcpy(addr->sun_path, pair->filename);
+        *addrlen += strlen(pair->filename);
+    }
 
     return 0;
 }
