@@ -185,7 +185,7 @@ typedef struct dev_input_event {
 void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code,
                           int32_t value, uint64_t sec, uint64_t usecs);
 
-void stdio_init();
+void devfs_nodes_init();
 
 ssize_t inputdev_event_read(void *data, void *buf, uint64_t offset,
                             uint64_t len, uint64_t flags);

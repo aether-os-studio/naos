@@ -81,12 +81,6 @@ int tmpfs_mkfile(void *parent, const char *name, vfs_node_t node) {
 int tmpfs_mknod(void *parent, const char *name, vfs_node_t node, uint16_t mode,
                 int dev) {
     node->mode = mode & 0777;
-    if ((mode & S_IFMT) == S_IFBLK)
-        node->type = file_block;
-    if ((mode & S_IFMT) == S_IFCHR)
-        node->type = file_stream;
-    else
-        node->type = file_none;
     tmpfs_node_t *handle = malloc(sizeof(tmpfs_node_t));
     handle->size = 0;
     handle->node = node;

@@ -45,7 +45,7 @@ void kmain(void) {
 
     printk("Aether-OS starting...\n");
 
-    stdio_init();
+    devfs_nodes_init();
 
     proc_init();
 

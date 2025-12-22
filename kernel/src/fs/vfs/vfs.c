@@ -584,7 +584,7 @@ create:
         node->type = file_stream;
         break;
     case S_IFIFO:
-        node->type = file_stream;
+        node->type = file_fifo;
         break;
     default:
         node->type = file_none;
@@ -683,6 +683,9 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, uint64_t flags) {
         do_update(current);
 
         if (current->type & file_symlink) {
+            if (flags & O_NOFOLLOW)
+                break;
+
             char target_path[256];
             int len = vfs_readlink(current, target_path, sizeof(target_path));
             target_path[len] = '\0';
@@ -710,9 +713,6 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, uint64_t flags) {
             // current->handle = target->handle;
             // current->root = target->root;
             current->mode = target->mode;
-
-            if (flags & O_NOFOLLOW)
-                break;
 
             current = target;
         }

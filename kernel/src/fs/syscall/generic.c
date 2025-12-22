@@ -862,15 +862,19 @@ uint64_t do_stat_path(const char *path, struct stat *buf) {
     buf->st_dev = node->dev;
     buf->st_ino = node->inode;
     buf->st_nlink = 1;
-    buf->st_mode =
-        node->mode |
-        (node->type & file_dir
-             ? S_IFDIR
-             : ((node->type & file_symlink)
-                    ? S_IFLNK
-                    : ((node->type & file_stream)
-                           ? S_IFCHR
-                           : ((node->type & file_block) ? S_IFBLK : S_IFREG))));
+    buf->st_mode = node->mode;
+    if (node->type & file_symlink)
+        buf->st_mode |= S_IFLNK;
+    else if (node->type & file_block)
+        buf->st_mode |= S_IFBLK;
+    else if (node->type & file_stream)
+        buf->st_mode |= S_IFCHR;
+    else if (node->type & file_fifo)
+        buf->st_mode |= S_IFIFO;
+    else if (node->type & file_dir)
+        buf->st_mode |= S_IFDIR;
+    else if (node->type & file_none)
+        buf->st_mode |= S_IFREG;
     buf->st_uid = node->owner;
     buf->st_gid = node->group;
     buf->st_rdev = node->rdev;
@@ -910,15 +914,19 @@ uint64_t sys_fstat(uint64_t fd, struct stat *user_buf) {
     buf->st_dev = node->dev;
     buf->st_ino = node->inode;
     buf->st_nlink = 1;
-    buf->st_mode =
-        node->mode |
-        (node->type & file_dir
-             ? S_IFDIR
-             : ((node->type & file_symlink)
-                    ? S_IFLNK
-                    : ((node->type & file_stream)
-                           ? S_IFCHR
-                           : ((node->type & file_block) ? S_IFBLK : S_IFREG))));
+    buf->st_mode = node->mode;
+    if (node->type & file_symlink)
+        buf->st_mode |= S_IFLNK;
+    else if (node->type & file_block)
+        buf->st_mode |= S_IFBLK;
+    else if (node->type & file_stream)
+        buf->st_mode |= S_IFCHR;
+    else if (node->type & file_fifo)
+        buf->st_mode |= S_IFIFO;
+    else if (node->type & file_dir)
+        buf->st_mode |= S_IFDIR;
+    else if (node->type & file_none)
+        buf->st_mode |= S_IFREG;
     buf->st_uid = node->owner;
     buf->st_gid = node->group;
     buf->st_rdev = node->rdev;

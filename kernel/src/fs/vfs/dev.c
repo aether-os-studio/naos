@@ -111,12 +111,6 @@ int devtmpfs_mknod(void *parent, const char *name, vfs_node_t node,
     node->dev = dev;
     node->rdev = dev;
     node->mode = mode & 0777;
-    if ((mode & S_IFMT) == S_IFBLK)
-        node->type = file_block;
-    else if ((mode & S_IFMT) == S_IFCHR)
-        node->type = file_stream;
-    else
-        node->type = file_none;
     if (node->handle) {
         return -EEXIST;
     }
@@ -492,7 +486,9 @@ void setup_console_symlinks() {
     vfs_mknod("/dev/kmsg", 0600 | S_IFCHR, tty_node->rdev);
 }
 
-void stdio_init() {
+void devfs_nodes_init() {
+    vfs_mkdir("/dev/shm");
+
     device_install(DEV_CHAR, DEV_SYSDEV, NULL, "null", 0, nulldev_ioctl, NULL,
                    nulldev_read, nulldev_write, NULL);
     device_install(DEV_CHAR, DEV_SYSDEV, NULL, "urandom", 0, NULL, NULL,
