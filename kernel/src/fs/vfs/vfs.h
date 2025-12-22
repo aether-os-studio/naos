@@ -187,6 +187,8 @@ typedef struct flock {
 #define VFS_NODE_FLAGS_DELETED (1UL << 0)
 #define VFS_NODE_FLAGS_FREE_AFTER_USE (1UL << 1)
 
+struct epoll_watch;
+
 struct vfs_node {
     vfs_node_t parent;                   // 父目录
     uint64_t flags;                      // 标志
@@ -213,6 +215,7 @@ struct vfs_node {
     int refcount;                        // 引用计数
     uint16_t mode;                       // 模式
     uint32_t rw_hint;                    // 读写提示
+    struct epoll_watch *ep_watch;        // 所对应的 epoll watch
 };
 
 struct mount_point {

@@ -12,13 +12,9 @@
 extern socket_op_t socket_ops;
 extern socket_op_t accept_ops;
 
-vfs_node_t sockfs_root = NULL;
-
 int sockfsfd_id = 0;
 
 socket_t first_unix_socket;
-
-socket_t sockets[MAX_SOCKETS];
 
 int unix_socket_fsid = 0;
 int unix_accept_fsid = 0;
@@ -52,9 +48,7 @@ char *unix_socket_addr_safe(const struct sockaddr_un *addr, size_t len) {
 }
 
 vfs_node_t unix_socket_accept_create(unix_socket_pair_t *dir) {
-    char buf[128];
-    sprintf(buf, "sock%d", sockfsfd_id++);
-    vfs_node_t socknode = vfs_child_append(sockfs_root, buf, NULL);
+    vfs_node_t socknode = vfs_node_alloc(NULL, NULL);
     socknode->refcount++;
     socknode->type = file_socket;
     socknode->mode = 0700;
@@ -246,9 +240,7 @@ int socket_socket(int domain, int type, int protocol) {
     //     return -ENOSYS;
     // }
 
-    char buf[128];
-    sprintf(buf, "sock%d", sockfsfd_id++);
-    vfs_node_t socknode = vfs_node_alloc(sockfs_root, buf);
+    vfs_node_t socknode = vfs_node_alloc(NULL, NULL);
     socknode->type = file_socket;
     socknode->fsid = unix_socket_fsid;
     socknode->refcount++;
@@ -2117,23 +2109,19 @@ fs_t sockfs = {
     .name = "sockfs",
     .magic = 0,
     .callback = &socket_callback,
-    .flags = FS_FLAGS_HIDDEN,
+    .flags = FS_FLAGS_HIDDEN | FS_FLAGS_VIRTUAL,
 };
 
 fs_t acceptfs = {
     .name = "acceptfs",
     .magic = 0,
     .callback = &accept_callback,
-    .flags = FS_FLAGS_HIDDEN,
+    .flags = FS_FLAGS_HIDDEN | FS_FLAGS_VIRTUAL,
 };
 
 void socketfs_init() {
-    memset(sockets, 0, sizeof(sockets));
     unix_socket_fsid = vfs_regist(&sockfs);
     unix_accept_fsid = vfs_regist(&acceptfs);
-    sockfs_root = vfs_node_alloc(NULL, "sock");
-    sockfs_root->type = file_dir;
-    sockfs_root->mode = 0644;
     memset(&first_unix_socket, 0, sizeof(socket_t));
 
     regist_socket(1, socket_socket);

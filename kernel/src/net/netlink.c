@@ -7,9 +7,6 @@
 #include <fs/vfs/proc.h>
 #include <net/real_socket.h>
 
-extern vfs_node_t sockfs_root;
-extern int sockfsfd_id;
-
 static int netlink_socket_fsid = 0;
 
 // Global netlink socket tracking
@@ -573,9 +570,6 @@ int netlink_socket(int domain, int type, int protocol) {
         return -EAFNOSUPPORT;
     }
 
-    char buf[128];
-    sprintf(buf, "sock%d", sockfsfd_id++);
-
     struct netlink_sock *nl_sk = malloc(sizeof(struct netlink_sock));
     memset(nl_sk, 0, sizeof(struct netlink_sock));
 
@@ -598,7 +592,7 @@ int netlink_socket(int domain, int type, int protocol) {
     socket_handle_t *handle = malloc(sizeof(socket_handle_t));
     memset(handle, 0, sizeof(socket_handle_t));
 
-    vfs_node_t socknode = vfs_node_alloc(sockfs_root, buf);
+    vfs_node_t socknode = vfs_node_alloc(NULL, NULL);
     socknode->type = file_socket;
     socknode->fsid = netlink_socket_fsid;
     socknode->refcount++;

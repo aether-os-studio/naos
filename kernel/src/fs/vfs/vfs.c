@@ -779,18 +779,18 @@ int vfs_close(vfs_node_t node) {
     if (node->refcount <= 0) {
         bool real_close = callbackof(node, close)(node->handle);
         if (real_close) {
+            if (node->ep_watch) {
+                llist_delete(&node->ep_watch->node);
+                node->ep_watch->fd = NULL;
+                free(node->ep_watch);
+                node->ep_watch = NULL;
+            }
             if (node->flags & VFS_NODE_FLAGS_FREE_AFTER_USE) {
-                llist_delete(&node->node);
-                free(node->name);
-                free(node);
+                vfs_free(node);
                 return 0;
             }
             if (node->flags & VFS_NODE_FLAGS_DELETED) {
-                callbackof(node, free_handle)(node->handle);
-                node->handle = NULL;
-                llist_delete(&node->node);
-                free(node->name);
-                free(node);
+                vfs_free(node);
             } else {
                 node->handle = NULL;
             }
@@ -1013,9 +1013,7 @@ int vfs_delete(vfs_node_t node) {
     if (node->refcount <= 0) {
         callbackof(node, free_handle)(node->handle);
         node->handle = NULL;
-        llist_delete(&node->node);
-        free(node->name);
-        free(node);
+        vfs_free(node);
     }
 
     return 0;

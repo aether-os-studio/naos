@@ -78,7 +78,7 @@ uint64_t sys_setsockopt(int fd, int level, int optname, const void *optval,
 
 uint64_t sys_getsockopt(int fd, int level, int optname, void *optval,
                         socklen_t *optlen) {
-    if (fd >= MAX_FD_NUM)
+    if (fd < 0 || fd > MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[fd];
 
