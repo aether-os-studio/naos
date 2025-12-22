@@ -111,7 +111,7 @@ fs_t notifyfs_fs = {
 
 uint64_t sys_inotify_init1(uint64_t flags) {
     int fd = -1;
-    for (int i = 3; i < MAX_FD_NUM; i++) {
+    for (int i = 0; i < MAX_FD_NUM; i++) {
         if (!current_task->fd_info->fds[i]) {
             fd = i;
             break;

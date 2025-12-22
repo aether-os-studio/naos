@@ -93,6 +93,9 @@ struct netlink_buffer;
 
 // Netlink socket structure
 struct netlink_sock {
+    int domain;
+    int type;
+    int protocol;
     uint32_t portid;
     uint32_t groups;
     uint32_t dst_portid;

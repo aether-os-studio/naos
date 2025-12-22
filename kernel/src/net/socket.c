@@ -286,7 +286,7 @@ int socket_socket(int domain, int type, int protocol) {
     }
 
     uint64_t i = 0;
-    for (i = 3; i < MAX_FD_NUM; i++) {
+    for (i = 0; i < MAX_FD_NUM; i++) {
         if (current_task->fd_info->fds[i] == NULL) {
             break;
         }
@@ -402,7 +402,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
     sock->connCurr--;
 
     uint64_t i = 0;
-    for (i = 3; i < MAX_FD_NUM; i++) {
+    for (i = 0; i < MAX_FD_NUM; i++) {
         if (current_task->fd_info->fds[i] == NULL) {
             break;
         }
@@ -1216,7 +1216,7 @@ int unix_socket_pair(int type, int protocol, int *sv) {
     vfs_node_t sock2Fd = unix_socket_accept_create(pair);
 
     uint64_t i = 0;
-    for (i = 3; i < MAX_FD_NUM; i++) {
+    for (i = 0; i < MAX_FD_NUM; i++) {
         if (current_task->fd_info->fds[i] == NULL) {
             break;
         }

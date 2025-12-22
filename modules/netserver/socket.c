@@ -445,7 +445,7 @@ int real_socket_accept(uint64_t fd, struct sockaddr_un *addr,
     // socknode->handle = new_handle;
 
     // uint64_t i = 0;
-    // for (i = 3; i < MAX_FD_NUM; i++)
+    // for (i = 0; i < MAX_FD_NUM; i++)
     // {
     //     if (current_task->fd_info->fds[i] == NULL)
     //     {
@@ -722,7 +722,7 @@ int real_socket_socket(int domain, int type, int protocol) {
     socknode->handle = handle;
 
     uint64_t i = 0;
-    for (i = 3; i < MAX_FD_NUM; i++) {
+    for (i = 0; i < MAX_FD_NUM; i++) {
         if (current_task->fd_info->fds[i] == NULL) {
             break;
         }

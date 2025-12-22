@@ -774,7 +774,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     }
     free(new_envp);
 
-    for (uint64_t i = 3; i < MAX_FD_NUM; i++) {
+    for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
         if (!current_task->fd_info->fds[i])
             continue;
 

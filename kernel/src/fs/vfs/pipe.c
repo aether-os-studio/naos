@@ -2,6 +2,7 @@
 #include <task/task.h>
 #include <fs/fs_syscall.h>
 #include <fs/vfs/dev.h>
+#include <fs/vfs/proc.h>
 #include <drivers/fb.h>
 
 vfs_node_t pipefs_root;
@@ -280,6 +281,7 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
     current_task->fd_info->fds[i1]->node = node_input;
     current_task->fd_info->fds[i1]->offset = 0;
     current_task->fd_info->fds[i1]->flags = flags;
+    procfs_on_open_file(current_task, i1);
 
     int i2 = -1;
     for (i2 = 3; i2 < MAX_FD_NUM; i2++) {
@@ -296,6 +298,7 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
     current_task->fd_info->fds[i2]->node = node_output;
     current_task->fd_info->fds[i2]->offset = 0;
     current_task->fd_info->fds[i2]->flags = flags;
+    procfs_on_open_file(current_task, i2);
 
     pipefd[0] = i1;
     pipefd[1] = i2;

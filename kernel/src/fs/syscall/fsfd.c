@@ -85,7 +85,7 @@ uint64_t sys_fsopen(const char *fsname_user, unsigned int flags) {
 
 found:;
     int fd = -1;
-    for (int i = 3; i < MAX_FD_NUM; i++) {
+    for (int i = 0; i < MAX_FD_NUM; i++) {
         if (!current_task->fd_info->fds[i]) {
             fd = i;
             break;
@@ -550,7 +550,7 @@ uint64_t sys_fsmount(int fd, uint32_t flags, uint32_t attr_flags) {
 
     /* Allocate new fd for the mount */
     int mnt_fd = -1;
-    for (int i = 3; i < MAX_FD_NUM; i++) {
+    for (int i = 0; i < MAX_FD_NUM; i++) {
         if (!current_task->fd_info->fds[i]) {
             mnt_fd = i;
             break;
@@ -592,6 +592,7 @@ uint64_t sys_fsmount(int fd, uint32_t flags, uint32_t attr_flags) {
     current_task->fd_info->fds[mnt_fd]->offset = 0;
     current_task->fd_info->fds[mnt_fd]->flags =
         (flags & FSMOUNT_CLOEXEC) ? O_CLOEXEC : 0;
+    procfs_on_open_file(current_task, mnt_fd);
 
     /* Mark context as mounted */
     ctx->state = FC_STATE_MOUNTED;

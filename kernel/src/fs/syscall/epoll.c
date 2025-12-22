@@ -10,7 +10,7 @@ static int dummy() { return 0; }
 // epoll API
 size_t epoll_create1(int flags) {
     int i = -1;
-    for (i = 3; i < MAX_FD_NUM; i++) {
+    for (i = 0; i < MAX_FD_NUM; i++) {
         if (current_task->fd_info->fds[i] == NULL) {
             break;
         }

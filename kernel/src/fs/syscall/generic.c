@@ -17,7 +17,6 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
     if (!dir) {
         return (uint64_t)-ENOENT;
     }
-    dir = vfs_get_real_node(dir);
 
     if (flags & MS_MOVE) {
         if (flags & (MS_REMOUNT | MS_BIND)) {
@@ -671,9 +670,12 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd) {
     if (current_task->fd_info->fds[newfd]) {
         vfs_close(current_task->fd_info->fds[newfd]->node);
         free(current_task->fd_info->fds[newfd]);
+        current_task->fd_info->fds[newfd] = NULL;
+        procfs_on_close_file(current_task, newfd);
     }
 
     current_task->fd_info->fds[newfd] = newf;
+    procfs_on_open_file(current_task, newfd);
 
     return newfd;
 }
@@ -681,9 +683,11 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd) {
 // Implement the sys_dup3 function
 uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
     uint64_t fd = sys_dup2(oldfd, newfd);
+    if ((int64_t)fd < 0)
+        return fd;
     current_task->fd_info->fds[fd]->flags = flags;
 
-    return newfd;
+    return fd;
 }
 
 uint64_t sys_dup(uint64_t fd) {
@@ -692,7 +696,7 @@ uint64_t sys_dup(uint64_t fd) {
         return (uint64_t)-EBADF;
 
     uint64_t i;
-    for (i = 3; i < MAX_FD_NUM; i++) {
+    for (i = 0; i < MAX_FD_NUM; i++) {
         if (current_task->fd_info->fds[i] == NULL) {
             break;
         }
@@ -720,10 +724,12 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
 
     spin_lock(&fcntl_lock);
 
+    uint64_t i;
+
     switch (command) {
     case F_GETFD:
         spin_unlock(&fcntl_lock);
-        return !!(current_task->fd_info->fds[fd]->flags & O_CLOEXEC);
+        return (current_task->fd_info->fds[fd]->flags & O_CLOEXEC) ? 1 : 0;
     case F_SETFD:
         current_task->fd_info->fds[fd]->flags =
             (arg & 1) // FD_CLOEXEC
@@ -732,15 +738,33 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         spin_unlock(&fcntl_lock);
         return 0;
     case F_DUPFD_CLOEXEC:
-        uint64_t newfd = sys_dup(fd);
+        for (i = arg; i < MAX_FD_NUM; i++) {
+            if (current_task->fd_info->fds[i] == NULL) {
+                break;
+            }
+        }
+
+        if (i == MAX_FD_NUM) {
+            return (uint64_t)-EMFILE;
+        }
+        uint64_t newfd = sys_dup2(fd, i);
         if ((int64_t)newfd >= 0) {
             current_task->fd_info->fds[newfd]->flags |= O_CLOEXEC;
         }
         spin_unlock(&fcntl_lock);
         return newfd;
     case F_DUPFD:
+        for (i = arg; i < MAX_FD_NUM; i++) {
+            if (current_task->fd_info->fds[i] == NULL) {
+                break;
+            }
+        }
+
+        if (i == MAX_FD_NUM) {
+            return (uint64_t)-EMFILE;
+        }
         spin_unlock(&fcntl_lock);
-        return sys_dup(fd);
+        return sys_dup2(fd, i);
     case F_GETFL:
         spin_unlock(&fcntl_lock);
         return current_task->fd_info->fds[fd]->flags;

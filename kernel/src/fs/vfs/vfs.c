@@ -136,7 +136,7 @@ vfs_node_t vfs_child_find(vfs_node_t parent, const char *name) {
         return NULL;
     vfs_node_t child_node, tmp;
     llist_for_each(child_node, tmp, &parent->childs, node_for_childs) {
-        if (streq(child_node->name, name))
+        if (child_node->name && streq(child_node->name, name))
             return child_node;
     }
     return NULL;

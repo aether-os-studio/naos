@@ -146,7 +146,7 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags) {
     ctx->lock.lock = 0;
 
     int fd = -1;
-    for (int i = 3; i < MAX_FD_NUM; i++) {
+    for (int i = 0; i < MAX_FD_NUM; i++) {
         if (!current_task->fd_info->fds[i]) {
             fd = i;
             break;

@@ -15,7 +15,7 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags) {
 
     // 分配文件描述符
     int fd = -1;
-    for (int i = 3; i < MAX_FD_NUM; i++) {
+    for (int i = 0; i < MAX_FD_NUM; i++) {
         if (!current_task->fd_info->fds[i]) {
             fd = i;
             break;

@@ -81,7 +81,7 @@ int real_socket_v6_socket(int domain, int type, int protocol) {
     socknode->handle = handle;
 
     uint64_t i = 0;
-    for (i = 3; i < MAX_FD_NUM; i++) {
+    for (i = 0; i < MAX_FD_NUM; i++) {
         if (current_task->fd_info->fds[i] == NULL) {
             break;
         }

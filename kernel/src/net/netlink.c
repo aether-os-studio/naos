@@ -324,6 +324,10 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     struct netlink_sock *nl_sk = handle->sock;
 
+    if (nl_sk->protocol != NETLINK_KOBJECT_UEVENT) {
+        return (size_t)-EINVAL;
+    }
+
     bool noblock = !!(flags & MSG_DONTWAIT) ||
                    !!(current_task->fd_info->fds[fd]->flags & O_NONBLOCK);
 
@@ -407,6 +411,10 @@ size_t netlink_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     struct netlink_sock *nl_sk = handle->sock;
 
+    if (nl_sk->protocol != NETLINK_KOBJECT_UEVENT) {
+        return (size_t)-EINVAL;
+    }
+
     // Calculate total message length
     size_t total_len = 0;
     for (int i = 0; i < msg->msg_iovlen; i++) {
@@ -427,14 +435,9 @@ size_t netlink_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
         offset += curr->len;
     }
 
-    // Ensure null termination for uevent messages
-    if (offset > 0 && offset < NETLINK_BUFFER_SIZE) {
-        buffer[offset] = '\0';
-    }
-
     // For uevent protocol, broadcast the message
     // TODO: Handle other netlink protocols
-    printk("netlink sendmsg: received %zu bytes for uevent\n", total_len);
+    printk("netlink sendmsg: received %d bytes for uevent\n", total_len);
 
     return total_len;
 }
@@ -557,6 +560,10 @@ int netlink_socket(int domain, int type, int protocol) {
     struct netlink_sock *nl_sk = malloc(sizeof(struct netlink_sock));
     memset(nl_sk, 0, sizeof(struct netlink_sock));
 
+    nl_sk->domain = domain;
+    nl_sk->type = type;
+    nl_sk->protocol = protocol;
+
     nl_sk->portid = (uint32_t)current_task->pid;
     nl_sk->bind_addr = NULL;
     nl_sk->lock = SPIN_INIT;
@@ -601,7 +608,7 @@ int netlink_socket(int domain, int type, int protocol) {
     spin_unlock(&netlink_sockets_lock);
 
     uint64_t i = 0;
-    for (i = 3; i < MAX_FD_NUM; i++) {
+    for (i = 0; i < MAX_FD_NUM; i++) {
         if (current_task->fd_info->fds[i] == NULL) {
             break;
         }

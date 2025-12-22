@@ -141,6 +141,10 @@ uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags);
 #define F_SEAL_GROW 0x0004   /* 禁止增大文件 */
 #define F_SEAL_WRITE 0x0008  /* 禁止写操作 */
 
+#define F_OFD_GETLK 36
+#define F_OFD_SETLK 37
+#define F_OFD_SETLKW 38
+
 uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg);
 uint64_t sys_pipe(int fd[2], uint64_t flags);
 uint64_t sys_stat(const char *fd, struct stat *buf);
