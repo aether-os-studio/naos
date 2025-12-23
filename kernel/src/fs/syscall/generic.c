@@ -1021,7 +1021,7 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
 
         uint64_t ret = do_stat_path(resolved, &simple);
 
-        vfs_node_t node = vfs_open(resolved, 0);
+        vfs_node_t node = vfs_open(resolved, O_NOFOLLOW);
 
         free(resolved);
 
@@ -1256,7 +1256,7 @@ uint64_t sys_unlinkat(uint64_t dirfd, const char *name_user, uint64_t flags) {
 }
 
 uint64_t do_rename(const char *old, const char *new) {
-    vfs_node_t node = vfs_open(old, 0);
+    vfs_node_t node = vfs_open(old, O_NOFOLLOW);
     if (!node)
         return -ENOENT;
     int ret = vfs_rename(node, new);

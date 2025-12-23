@@ -236,12 +236,12 @@ void sysfs_init() {
             continue;
 
         char name[128];
-        sprintf(name, "/sys/bus/pci/devices/%04d:%02d:%02d.%d", dev->segment,
+        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%x", dev->segment,
                 dev->bus, dev->slot, dev->func);
 
         vfs_mkdir(name);
 
-        sprintf(name, "/sys/bus/pci/devices/%04d:%02d:%02d.%d/class",
+        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%x/class",
                 dev->segment, dev->bus, dev->slot, dev->func);
         vfs_mkfile(name);
 
@@ -249,21 +249,21 @@ void sysfs_init() {
         sprintf(content, "0x%x", dev->class_code);
         vfs_write(vfs_open(name, 0), content, 0, strlen(content));
 
-        sprintf(name, "/sys/bus/pci/devices/%04d:%02d:%02d.%d/revision",
+        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%x/revision",
                 dev->segment, dev->bus, dev->slot, dev->func);
         vfs_mkfile(name);
 
         sprintf(content, "0x%02x", dev->revision_id);
         vfs_write(vfs_open(name, 0), content, 0, strlen(content));
 
-        sprintf(name, "/sys/bus/pci/devices/%04d:%02d:%02d.%d/vendor",
+        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%x/vendor",
                 dev->segment, dev->bus, dev->slot, dev->func);
         vfs_mkfile(name);
 
         sprintf(content, "0x%04x", dev->vendor_id);
         vfs_write(vfs_open(name, 0), content, 0, strlen(content));
 
-        sprintf(name, "/sys/bus/pci/devices/%04d:%02d:%02d.%d/device",
+        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%x/device",
                 dev->segment, dev->bus, dev->slot, dev->func);
         vfs_mkfile(name);
 
@@ -361,5 +361,5 @@ vfs_node_t sysfs_child_append_symlink(vfs_node_t parent, const char *name,
 
     free(parent_path);
 
-    return vfs_open(path, 0);
+    return vfs_open(path, O_NOFOLLOW);
 }

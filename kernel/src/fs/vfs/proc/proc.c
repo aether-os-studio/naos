@@ -363,7 +363,9 @@ void procfs_on_open_file(task_t *task, int fd) {
     if (!task->fd_info->fds[fd])
         return;
 
-    char fd_name[4];
+    spin_lock(&procfs_oplock);
+
+    char fd_name[8];
     sprintf(fd_name, "%d", fd);
     vfs_node_t fd_node = vfs_child_append(fd_root, fd_name, NULL);
     fd_node->type = file_symlink;
@@ -380,16 +382,22 @@ void procfs_on_open_file(task_t *task, int fd) {
         free(link_name);
     }
     sprintf(fd_node_handle->name, "fd");
+
+    spin_unlock(&procfs_oplock);
 }
 
 void procfs_on_close_file(task_t *task, int fd) {
-    char name[3 + 4];
+    spin_lock(&procfs_oplock);
+
+    char name[3 + 8];
     sprintf(name, "fd/%d", fd);
     vfs_node_t fd_node = vfs_open_at(task->procfs_node, name, O_NOFOLLOW);
     if (!fd_node)
-        return;
+        goto done;
 
     vfs_free(fd_node);
+done:
+    spin_unlock(&procfs_oplock);
 }
 
 void procfs_on_exit_task(task_t *task) {

@@ -1,10 +1,43 @@
 #include <fs/vfs/proc/proc.h>
 #include <task/task.h>
+#include <libs/string_builder.h>
 
 char *proc_gen_status_file(task_t *task, size_t *content_len) {
-    char *buffer = calloc(1, 1);
-    *content_len = 1;
-    return buffer;
+    string_builder_t *builder = create_string_builder(1024);
+    string_builder_append(builder, "NStgid: N/A\n"
+                                   "NSpid: N/A\n"
+                                   "NSpgid: N/A\n"
+                                   "NSsid: N/A\n"
+                                   "VmPeak: N/A kB\n"
+                                   "VmSize: N/A kB\n"
+                                   "VmLck: 0 kB\n"
+                                   "VmPin: 0 kB\n"
+                                   "VmHWM: N/A kB\n"
+                                   "VmRSS: N/A kB\n"
+                                   "RssAnon: N/A kB\n"
+                                   "RssFile: N/A kB\n"
+                                   "RssShmem: N/A kB\n"
+                                   "VmData: N/A kB\n"
+                                   "VmStk: N/A kB\n"
+                                   "VmExe: N/A kB\n"
+                                   "VmLib: N/A kB\n"
+                                   "VmPTE: N/A kB\n"
+                                   "VmSwap: 0 kB\n"
+                                   "HugetlbPages: N/A kB\n"
+                                   "SigPnd: 0000000000000000\n"
+                                   "ShdPnd: 0000000000000000\n"
+                                   "SigBlk: 0000000000000000\n"
+                                   "SigIgn: 0000000000000000\n"
+                                   "SigCgt: 0000000000000000\n"
+                                   "CapInh: 0000000000000000\n"
+                                   "CapPrm: 0000000000000000\n"
+                                   "CapEff: 0000000000000000\n"
+                                   "CapBnd: 0000000000000000\n"
+                                   "CapAmb: 0000000000000000\n");
+    char *data = builder->data;
+    *content_len = builder->size;
+    free(builder);
+    return data;
 }
 
 size_t proc_pstatus_stat(proc_handle_t *handle) {

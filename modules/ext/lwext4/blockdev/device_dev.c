@@ -63,7 +63,7 @@ EXT4_BLOCKDEV_STATIC_INSTANCE(device_dev, EXT4_FILEDEV_BSIZE, 0,
 static int device_dev_open(struct ext4_blockdev *bdev) {
     device_dev.part_offset = 0;
     device_dev.part_size =
-        device_ioctl(device_dev_nr, DEV_CMD_SECTOR_COUNT, NULL) *
+        (uint64_t)device_ioctl(device_dev_nr, DEV_CMD_SECTOR_COUNT, NULL) *
         device_ioctl(device_dev_nr, DEV_CMD_SECTOR_SIZE, NULL);
     device_dev.bdif->ph_bcnt = device_dev.part_size / device_dev.bdif->ph_bsize;
 

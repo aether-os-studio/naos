@@ -41,7 +41,7 @@ size_t proc_pmountinfo_stat(proc_handle_t *handle) {
 
 int proc_pmountinfo_poll(proc_handle_t *handle, int events) {
     int revents = 0;
-    if (events)
+    if (events & EPOLLIN)
         revents |= EPOLLIN;
     return revents;
 }

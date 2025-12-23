@@ -689,14 +689,6 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, uint64_t flags) {
         do_update(current);
 
         if (current->type & file_symlink) {
-            if (current->parent == procfs_root && current->name &&
-                !strcmp(current->name, "self"))
-                goto ignore_flags_symlink;
-
-            if (flags & O_NOFOLLOW)
-                break;
-
-        ignore_flags_symlink:
             char target_path[256];
             int len = vfs_readlink(current, target_path, sizeof(target_path));
             target_path[len] = '\0';
@@ -724,6 +716,15 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, uint64_t flags) {
             // current->handle = target->handle;
             // current->root = target->root;
             current->mode = target->mode;
+
+            char *p = strdup(save_ptr);
+            char *ptr = p;
+            const char *buf = pathtok(&ptr);
+            free(p);
+            if (!buf) {
+                if (flags & O_NOFOLLOW)
+                    goto done;
+            }
 
             current = target;
         }
@@ -873,7 +874,7 @@ ssize_t vfs_read(vfs_node_t file, void *addr, size_t offset, size_t size) {
 ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size) {
     do_update(fd->node);
     if (fd->node->type & file_dir)
-        return -1;
+        return -EISDIR;
 
     if (fd->node->type & file_symlink) {
         char linkpath[512];
@@ -912,7 +913,7 @@ ssize_t vfs_write(vfs_node_t file, const void *addr, size_t offset,
 ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size) {
     do_update(fd->node);
     if (fd->node->type & file_dir)
-        return -1;
+        return -EISDIR;
 
     if (fd->node->type & file_symlink) {
         char linkpath[512];

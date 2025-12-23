@@ -6,7 +6,7 @@ ENTRY(syscall_exception)
 
     swapgs
 
-    movq %rsp, %cr2
+    movq %rsp, %gs:0x8
 
     movq %gs:0x0, %rsp // syscall_stack
 
@@ -30,7 +30,7 @@ ENTRY(syscall_exception)
     pushq %r15
 
     movq %rsp, %rdi
-    movq %cr2, %rsi
+    movq %gs:0x8, %rsi
 
     swapgs
 

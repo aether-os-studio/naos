@@ -590,6 +590,14 @@ done:
         spin_unlock(&peer->lock);
     }
 
+    if (sock->passcred || peer->passcred) {
+        struct ucred cred;
+        cred.pid = current_task->pid;
+        cred.uid = current_task->uid;
+        cred.gid = current_task->gid;
+        unix_socket_send_cred_to_peer(peer, &cred);
+    }
+
     // 发送数据
     size_t cnt = 0;
     bool noblock = !!(flags & MSG_DONTWAIT);
