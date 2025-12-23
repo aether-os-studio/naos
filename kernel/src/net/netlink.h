@@ -77,16 +77,16 @@ struct nlmsghdr {
     ((len) >= (int)sizeof(struct nlmsghdr) &&                                  \
      (nlh)->nlmsg_len >= sizeof(struct nlmsghdr) && (nlh)->nlmsg_len <= (len))
 
+// Out defines
+
+#define NETLINK_BUFFER_SIZE 8192
+
 struct sockaddr_nl {
     uint16_t nl_family;
     unsigned short nl_pad;
     uint32_t nl_pid;
     uint32_t nl_groups;
 };
-
-// Out defines
-
-#define NETLINK_BUFFER_SIZE 8192
 
 // Opaque netlink buffer structure
 struct netlink_buffer;

@@ -14,39 +14,48 @@ static int netlink_socket_fsid = 0;
 static struct netlink_sock *netlink_sockets[MAX_NETLINK_SOCKETS] = {0};
 static spinlock_t netlink_sockets_lock = SPIN_INIT;
 
-// Uevent message pool for persistent storage
-#define MAX_UEVENT_POOL_SIZE 1024
-struct uevent_pool_entry {
+#define MAX_NETLINK_MSG_POOL_SIZE 1024
+
+struct netlink_msg_pool_entry {
     char message[NETLINK_BUFFER_SIZE];
     size_t length;
     uint64_t timestamp;
-    uint32_t seqnum;
-    char devpath[256];
-    uint32_t nl_pid;
-    uint32_t nl_groups;
+    uint32_t seqnum;    // For uevent, 0 for others
+    char devpath[256];  // For uevent, empty for others
+    uint32_t nl_pid;    // Sender's port ID
+    uint32_t nl_groups; // Target groups (bitmask)
+    int protocol;       // Netlink protocol (NETLINK_KOBJECT_UEVENT, etc.)
     bool valid;
 };
 
-static struct uevent_pool_entry uevent_pool[MAX_UEVENT_POOL_SIZE];
-static uint32_t uevent_pool_next = 0;
-static spinlock_t uevent_pool_lock = SPIN_INIT;
+static struct netlink_msg_pool_entry
+    netlink_msg_pool[MAX_NETLINK_MSG_POOL_SIZE];
+static uint32_t netlink_msg_pool_next = 0;
+static spinlock_t netlink_msg_pool_lock = SPIN_INIT;
 
-// Function to add uevent to persistent pool
-static void uevent_pool_add(const char *message, size_t length, uint32_t seqnum,
-                            const char *devpath, uint32_t nl_pid,
-                            uint32_t nl_groups) {
-    spin_lock(&uevent_pool_lock);
+// Function to add message to persistent pool
+static void netlink_msg_pool_add(const char *message, size_t length,
+                                 uint32_t nl_pid, uint32_t nl_groups,
+                                 int protocol, uint32_t seqnum,
+                                 const char *devpath) {
+    if (message == NULL || length == 0 || nl_groups == 0) {
+        return;
+    }
 
-    struct uevent_pool_entry *entry = &uevent_pool[uevent_pool_next];
+    spin_lock(&netlink_msg_pool_lock);
+
+    struct netlink_msg_pool_entry *entry =
+        &netlink_msg_pool[netlink_msg_pool_next];
     entry->valid = true;
     entry->length =
         (length < NETLINK_BUFFER_SIZE) ? length : NETLINK_BUFFER_SIZE - 1;
     memcpy(entry->message, message, entry->length);
     entry->message[entry->length] = '\0';
     entry->timestamp = 0; // TODO: Get current time
-    entry->seqnum = seqnum;
     entry->nl_pid = nl_pid;
     entry->nl_groups = nl_groups;
+    entry->protocol = protocol;
+    entry->seqnum = seqnum;
 
     if (devpath) {
         strncpy(entry->devpath, devpath, sizeof(entry->devpath) - 1);
@@ -55,20 +64,21 @@ static void uevent_pool_add(const char *message, size_t length, uint32_t seqnum,
         entry->devpath[0] = '\0';
     }
 
-    uevent_pool_next = (uevent_pool_next + 1) % MAX_UEVENT_POOL_SIZE;
+    netlink_msg_pool_next =
+        (netlink_msg_pool_next + 1) % MAX_NETLINK_MSG_POOL_SIZE;
 
-    spin_unlock(&uevent_pool_lock);
+    spin_unlock(&netlink_msg_pool_lock);
 }
 
-// Function to retrieve uevent from pool by seqnum
-static bool uevent_pool_get_by_seqnum(uint32_t seqnum, char *buffer,
-                                      size_t *length, uint32_t *nl_pid,
-                                      uint32_t *nl_groups) {
-    spin_lock(&uevent_pool_lock);
+// Function to retrieve message from pool by seqnum (for uevent)
+static bool netlink_msg_pool_get_by_seqnum(uint32_t seqnum, char *buffer,
+                                           size_t *length, uint32_t *nl_pid,
+                                           uint32_t *nl_groups) {
+    spin_lock(&netlink_msg_pool_lock);
     bool found = false;
 
-    for (int i = 0; i < MAX_UEVENT_POOL_SIZE; i++) {
-        struct uevent_pool_entry *entry = &uevent_pool[i];
+    for (int i = 0; i < MAX_NETLINK_MSG_POOL_SIZE; i++) {
+        struct netlink_msg_pool_entry *entry = &netlink_msg_pool[i];
         if (entry->valid && entry->seqnum == seqnum) {
             size_t copy_len =
                 (entry->length < *length) ? entry->length : *length;
@@ -83,19 +93,19 @@ static bool uevent_pool_get_by_seqnum(uint32_t seqnum, char *buffer,
         }
     }
 
-    spin_unlock(&uevent_pool_lock);
+    spin_unlock(&netlink_msg_pool_lock);
     return found;
 }
 
-// Function to retrieve uevent from pool by devpath
-static bool uevent_pool_get_by_devpath(const char *devpath, char *buffer,
-                                       size_t *length, uint32_t *nl_pid,
-                                       uint32_t *nl_groups) {
-    spin_lock(&uevent_pool_lock);
+// Function to retrieve message from pool by devpath (for uevent)
+static bool netlink_msg_pool_get_by_devpath(const char *devpath, char *buffer,
+                                            size_t *length, uint32_t *nl_pid,
+                                            uint32_t *nl_groups) {
+    spin_lock(&netlink_msg_pool_lock);
     bool found = false;
 
-    for (int i = 0; i < MAX_UEVENT_POOL_SIZE; i++) {
-        struct uevent_pool_entry *entry = &uevent_pool[i];
+    for (int i = 0; i < MAX_NETLINK_MSG_POOL_SIZE; i++) {
+        struct netlink_msg_pool_entry *entry = &netlink_msg_pool[i];
         if (entry->valid && strcmp(entry->devpath, devpath) == 0) {
             size_t copy_len =
                 (entry->length < *length) ? entry->length : *length;
@@ -110,7 +120,7 @@ static bool uevent_pool_get_by_devpath(const char *devpath, char *buffer,
         }
     }
 
-    spin_unlock(&uevent_pool_lock);
+    spin_unlock(&netlink_msg_pool_lock);
     return found;
 }
 
@@ -320,31 +330,6 @@ static size_t netlink_buffer_peek_msg_len(struct netlink_buffer *buf) {
     return hdr.length;
 }
 
-// Function to deliver historical uevents to a new socket
-static void netlink_deliver_historical_uevents(struct netlink_sock *sock) {
-    if (sock == NULL || sock->buffer == NULL) {
-        return;
-    }
-
-    spin_lock(&uevent_pool_lock);
-
-    for (int i = 0; i < MAX_UEVENT_POOL_SIZE; i++) {
-        struct uevent_pool_entry *entry = &uevent_pool[i];
-        if (!entry->valid)
-            continue;
-
-        size_t written = netlink_buffer_write_packet(
-            sock->buffer, entry->message, entry->length, entry->nl_pid,
-            entry->nl_groups);
-
-        if (written == 0) {
-            break;
-        }
-    }
-
-    spin_unlock(&uevent_pool_lock);
-}
-
 static size_t netlink_buffer_available(struct netlink_buffer *buf) {
     if (buf == NULL) {
         return 0;
@@ -361,7 +346,96 @@ static size_t netlink_buffer_available(struct netlink_buffer *buf) {
     return avail;
 }
 
-// Netlink socket operations
+static void netlink_deliver_historical_messages(struct netlink_sock *sock) {
+    if (sock == NULL || sock->buffer == NULL || sock->groups == 0) {
+        return;
+    }
+
+    spin_lock(&netlink_msg_pool_lock);
+
+    int start = netlink_msg_pool_next;
+    for (int count = 0; count < MAX_NETLINK_MSG_POOL_SIZE; count++) {
+        int i = (start + count) % MAX_NETLINK_MSG_POOL_SIZE;
+        struct netlink_msg_pool_entry *entry = &netlink_msg_pool[i];
+
+        if (!entry->valid)
+            continue;
+
+        // 检查 protocol 和 groups 是否匹配
+        if (entry->protocol != sock->protocol)
+            continue;
+
+        // 使用按位与检查 groups 是否有交集
+        if ((entry->nl_groups & sock->groups) == 0)
+            continue;
+
+        // 投递消息到 socket buffer
+        size_t written = netlink_buffer_write_packet(
+            sock->buffer, entry->message, entry->length, entry->nl_pid,
+            entry->nl_groups);
+
+        if (written == 0) {
+            // Buffer 满了，停止投递
+            break;
+        }
+    }
+
+    spin_unlock(&netlink_msg_pool_lock);
+}
+
+// 内部发送函数，用于向指定 socket 发送消息
+static size_t netlink_deliver_to_socket(struct netlink_sock *target,
+                                        const char *data, size_t len,
+                                        uint32_t sender_pid,
+                                        uint32_t sender_groups) {
+    if (target == NULL || target->buffer == NULL) {
+        return 0;
+    }
+
+    return netlink_buffer_write_packet(target->buffer, data, len, sender_pid,
+                                       sender_groups);
+}
+
+// Broadcast message to all listening netlink sockets and save to pool
+static void netlink_broadcast_to_group(const char *buf, size_t len,
+                                       uint32_t sender_pid,
+                                       uint32_t target_groups, int protocol,
+                                       uint32_t seqnum, const char *devpath) {
+    if (buf == NULL || len == 0 || target_groups == 0) {
+        return;
+    }
+
+    // Add to persistent pool
+    netlink_msg_pool_add(buf, len, sender_pid, target_groups, protocol, seqnum,
+                         devpath);
+
+    // Broadcast to all sockets subscribed to matching groups
+    spin_lock(&netlink_sockets_lock);
+
+    for (int i = 0; i < MAX_NETLINK_SOCKETS; i++) {
+        if (netlink_sockets[i] == NULL)
+            continue;
+
+        struct netlink_sock *sock = netlink_sockets[i];
+
+        // 检查 protocol 是否匹配
+        if (sock->protocol != protocol)
+            continue;
+
+        spin_lock(&sock->lock);
+
+        // 使用按位与检查 groups 是否有交集
+        if (sock->groups & target_groups) {
+            netlink_buffer_write_packet(sock->buffer, buf, len, sender_pid,
+                                        target_groups);
+        }
+
+        spin_unlock(&sock->lock);
+    }
+
+    spin_unlock(&netlink_sockets_lock);
+}
+
 int netlink_bind(uint64_t fd, const struct sockaddr_un *addr,
                  socklen_t addrlen) {
     if (current_task->fd_info->fds[fd] == NULL ||
@@ -383,7 +457,6 @@ int netlink_bind(uint64_t fd, const struct sockaddr_un *addr,
 
     spin_lock(&sock->lock);
 
-    // 如果 nl_pid 为 0，使用进程 pid
     sock->portid = nl_addr->nl_pid;
     sock->groups = nl_addr->nl_groups;
 
@@ -395,6 +468,9 @@ int netlink_bind(uint64_t fd, const struct sockaddr_un *addr,
         }
     }
     memcpy(sock->bind_addr, nl_addr, sizeof(struct sockaddr_nl));
+    sock->bind_addr->nl_pid = sock->portid;
+
+    netlink_deliver_historical_messages(sock);
 
     spin_unlock(&sock->lock);
 
@@ -511,6 +587,12 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
         has_msg = netlink_buffer_has_msg(nl_sk->buffer);
     }
 
+    // 判断是否需要 peek
+    bool peek = !!(flags & MSG_PEEK);
+
+    if (peek)
+        return netlink_buffer_peek_msg_len(nl_sk->buffer);
+
     // 计算用户缓冲区总大小
     size_t total_user_len = 0;
     for (int i = 0; i < msg->msg_iovlen; i++) {
@@ -521,16 +603,10 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
     uint32_t sender_pid = 0;
     uint32_t sender_groups = 0;
 
-    // 判断是否需要 peek
-    bool peek = !!(flags & MSG_PEEK);
-
-    if (peek)
-        return netlink_buffer_peek_msg_len(nl_sk->buffer);
-
     // Read the complete message into a temporary buffer with sender info
     size_t bytes_read =
         netlink_buffer_read_packet(nl_sk->buffer, temp_buf, sizeof(temp_buf),
-                                   &sender_pid, &sender_groups, peek);
+                                   &sender_pid, &sender_groups, false);
     if (bytes_read == 0) {
         return -EAGAIN;
     }
@@ -592,19 +668,6 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
     return ret_len;
 }
 
-// 内部发送函数，用于向指定 socket 发送消息
-static size_t netlink_deliver_to_socket(struct netlink_sock *target,
-                                        const char *data, size_t len,
-                                        uint32_t sender_pid,
-                                        uint32_t sender_groups) {
-    if (target == NULL || target->buffer == NULL) {
-        return 0;
-    }
-
-    return netlink_buffer_write_packet(target->buffer, data, len, sender_pid,
-                                       sender_groups);
-}
-
 size_t netlink_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
     if (current_task->fd_info->fds[fd] == NULL) {
         return -EBADF;
@@ -647,55 +710,33 @@ size_t netlink_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
     if (!addr)
         return 0;
 
-    size_t delivered = 0;
-
     if (addr->nl_pid != 0) {
-        // Unicast to specific pid
+        // Unicast to specific pid - 不保存到 pool
         spin_lock(&netlink_sockets_lock);
         for (int i = 0; i < MAX_NETLINK_SOCKETS; i++) {
             if (netlink_sockets[i] == NULL)
                 continue;
 
             struct netlink_sock *sock = netlink_sockets[i];
-            if (sock->bind_addr && sock->bind_addr->nl_pid == addr->nl_pid) {
+            if (sock->portid == addr->nl_pid) {
                 spin_lock(&sock->lock);
-                delivered = netlink_deliver_to_socket(
-                    sock, buffer, total_len, sender_pid, sender_groups);
+                netlink_deliver_to_socket(sock, buffer, total_len, sender_pid,
+                                          sender_groups);
                 spin_unlock(&sock->lock);
                 break;
             }
         }
         spin_unlock(&netlink_sockets_lock);
 
-        if (delivered == 0) {
-            return total_len;
-        }
+        // Unicast 如果目标不存在，静默成功（类似 UDP 行为）
     } else if (addr->nl_groups != 0) {
-        // Multicast to groups
-        spin_lock(&netlink_sockets_lock);
-        for (int i = 0; i < MAX_NETLINK_SOCKETS; i++) {
-            if (netlink_sockets[i] == NULL)
-                continue;
-
-            struct netlink_sock *sock = netlink_sockets[i];
-            if (sock == nl_sk)
-                continue; // 不发给自己
-
-            // 检查目标 socket 是否订阅了任何目标 group
-            if (sock->bind_addr &&
-                sock->bind_addr->nl_groups == addr->nl_groups) {
-                spin_lock(&sock->lock);
-                netlink_deliver_to_socket(sock, buffer, total_len, sender_pid,
-                                          addr->nl_groups);
-                spin_unlock(&sock->lock);
-                delivered++;
-            }
-        }
-        spin_unlock(&netlink_sockets_lock);
+        // Multicast to groups - 保存到 pool 并广播
+        netlink_broadcast_to_group(buffer, total_len, sender_pid,
+                                   addr->nl_groups, nl_sk->protocol, 0, NULL);
     } else {
         // nl_pid == 0 && nl_groups == 0，发送给内核
-        // 这里返回0
-        return 0;
+        // 这里返回成功但不做任何事
+        return total_len;
     }
 
     return total_len;
@@ -732,7 +773,7 @@ size_t netlink_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
     }
 
     if (nl_addr->nl_pid != 0) {
-        // Unicast
+        // Unicast - 不保存到 pool
         spin_lock(&netlink_sockets_lock);
         for (int i = 0; i < MAX_NETLINK_SOCKETS; i++) {
             if (netlink_sockets[i] == NULL)
@@ -749,24 +790,10 @@ size_t netlink_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
         }
         spin_unlock(&netlink_sockets_lock);
     } else if (nl_addr->nl_groups != 0) {
-        // Multicast
-        spin_lock(&netlink_sockets_lock);
-        for (int i = 0; i < MAX_NETLINK_SOCKETS; i++) {
-            if (netlink_sockets[i] == NULL)
-                continue;
-
-            struct netlink_sock *sock = netlink_sockets[i];
-            if (sock == nl_sk)
-                continue;
-
-            if (sock->groups == nl_addr->nl_groups) {
-                spin_lock(&sock->lock);
-                netlink_deliver_to_socket(sock, (char *)in, limit, sender_pid,
-                                          nl_addr->nl_groups);
-                spin_unlock(&sock->lock);
-            }
-        }
-        spin_unlock(&netlink_sockets_lock);
+        // Multicast to groups - 保存到 pool 并广播
+        netlink_broadcast_to_group((char *)in, limit, sender_pid,
+                                   nl_addr->nl_groups, nl_sk->protocol, 0,
+                                   NULL);
     }
 
     return limit;
@@ -791,7 +818,7 @@ size_t netlink_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
     bool peek = !!(flags & MSG_PEEK);
 
     size_t msg_len = netlink_buffer_peek_msg_len(nl_sk->buffer);
-    if (peek)
+    if (peek && msg_len > 0)
         return msg_len;
 
     // Check if there's a complete message available
@@ -809,9 +836,12 @@ size_t netlink_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
     uint32_t sender_pid = 0;
     uint32_t sender_groups = 0;
 
+    // 重新获取消息长度（用于 MSG_TRUNC）
+    msg_len = netlink_buffer_peek_msg_len(nl_sk->buffer);
+
     // Read the complete message directly into the user buffer
     size_t bytes_read = netlink_buffer_read_packet(
-        nl_sk->buffer, (char *)out, limit, &sender_pid, &sender_groups, peek);
+        nl_sk->buffer, (char *)out, limit, &sender_pid, &sender_groups, false);
     if (bytes_read == 0) {
         return -EAGAIN;
     }
@@ -840,39 +870,6 @@ size_t netlink_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
     return (flags & MSG_TRUNC) ? msg_len : bytes_read;
 }
 
-// Broadcast uevent to all listening netlink sockets
-static void netlink_broadcast_uevent(const char *buf, int len, uint32_t seqnum,
-                                     const char *devpath, uint32_t nl_pid,
-                                     uint32_t nl_groups) {
-    if (buf == NULL || len <= 0) {
-        return;
-    }
-
-    // Add to persistent pool with sender info
-    uevent_pool_add(buf, len, seqnum, devpath, nl_pid, nl_groups);
-
-    // Broadcast to all sockets subscribed to uevent group
-    spin_lock(&netlink_sockets_lock);
-
-    for (int i = 0; i < MAX_NETLINK_SOCKETS; i++) {
-        if (netlink_sockets[i] == NULL)
-            continue;
-
-        struct netlink_sock *sock = netlink_sockets[i];
-        spin_lock(&sock->lock);
-
-        // Check if socket is subscribed to any matching groups
-        if (sock->groups == nl_groups) {
-            netlink_buffer_write_packet(sock->buffer, buf, len, nl_pid,
-                                        nl_groups);
-        }
-
-        spin_unlock(&sock->lock);
-    }
-
-    spin_unlock(&netlink_sockets_lock);
-}
-
 socket_op_t netlink_ops = {
     .bind = netlink_bind,
     .getsockopt = netlink_getsockopt,
@@ -898,7 +895,6 @@ uint64_t netlink_socket(int domain, int type, int protocol) {
     nl_sk->domain = domain;
     nl_sk->type = type & 0xF;
     nl_sk->protocol = protocol;
-
     nl_sk->portid = (uint32_t)current_task->pid;
     nl_sk->groups = 0;
     nl_sk->bind_addr = NULL;
@@ -942,13 +938,6 @@ uint64_t netlink_socket(int domain, int type, int protocol) {
         if (netlink_sockets[i] == NULL) {
             netlink_sockets[i] = nl_sk;
             slot = i;
-
-            // If this is a uevent socket (NETLINK_KOBJECT_UEVENT protocol),
-            // automatically subscribe to uevent group
-            if (protocol == NETLINK_KOBJECT_UEVENT) {
-                nl_sk->groups = 1; // Subscribe to uevent group
-            }
-
             break;
         }
     }
@@ -959,13 +948,18 @@ uint64_t netlink_socket(int domain, int type, int protocol) {
         free(nl_sk->buffer);
         free(nl_sk);
         free(handle);
-        // Note: socknode should also be freed properly
         return -ENOMEM;
     }
 
-    // Deliver historical uevents after adding to socket array
+    // If this is a uevent socket (NETLINK_KOBJECT_UEVENT protocol),
+    // automatically subscribe to uevent group and deliver historical messages
     if (protocol == NETLINK_KOBJECT_UEVENT) {
-        netlink_deliver_historical_uevents(nl_sk);
+        spin_lock(&nl_sk->lock);
+        nl_sk->groups = 1; // Subscribe to uevent group
+
+        // Deliver historical messages
+        netlink_deliver_historical_messages(nl_sk);
+        spin_unlock(&nl_sk->lock);
     }
 
     uint64_t i;
@@ -1033,20 +1027,18 @@ int netlink_poll(void *h, int events) {
         }
     }
 
-    revents |= EPOLLOUT;
+    if (events & EPOLLOUT) {
+        revents |= EPOLLOUT;
+    }
 
     return revents;
 }
 
 ssize_t netlink_read(uint64_t fd, char *buf, size_t count) {
-    // 对于 netlink socket，read 等价于 recv without address
     return netlink_recvfrom(fd, (uint8_t *)buf, count, 0, NULL, NULL);
 }
 
 ssize_t netlink_write(uint64_t fd, const char *buf, size_t count) {
-    // 对于 netlink socket，没有地址的 write 需要特殊处理
-    // 通常需要已经连接或者有默认目标
-    // 这里返回错误，因为 netlink 通常需要目标地址
     if (current_task->fd_info->fds[fd] == NULL) {
         return -EBADF;
     }
@@ -1054,9 +1046,7 @@ ssize_t netlink_write(uint64_t fd, const char *buf, size_t count) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     struct netlink_sock *nl_sk = handle->sock;
 
-    // 如果是 NETLINK_KOBJECT_UEVENT，可能是发给内核的请求
     if (nl_sk->protocol == NETLINK_KOBJECT_UEVENT) {
-        // 假设发给内核（pid=0），但实际上内核不处理来自用户的 uevent
         return count;
     }
 
@@ -1137,13 +1127,13 @@ fs_t netlinksockfs = {
 void netlink_init() {
     netlink_socket_fsid = vfs_regist(&netlinksockfs);
 
-    // Initialize uevent pool
-    spin_lock(&uevent_pool_lock);
-    for (int i = 0; i < MAX_UEVENT_POOL_SIZE; i++) {
-        uevent_pool[i].valid = false;
+    // Initialize message pool
+    spin_lock(&netlink_msg_pool_lock);
+    for (int i = 0; i < MAX_NETLINK_MSG_POOL_SIZE; i++) {
+        netlink_msg_pool[i].valid = false;
     }
-    uevent_pool_next = 0;
-    spin_unlock(&uevent_pool_lock);
+    netlink_msg_pool_next = 0;
+    spin_unlock(&netlink_msg_pool_lock);
 
     regist_socket(16, netlink_socket);
 }
@@ -1167,8 +1157,8 @@ void netlink_uevent_resend_by_devpath(const char *devpath) {
     uint32_t nl_pid = 0;
     uint32_t nl_groups = 0;
 
-    if (uevent_pool_get_by_devpath(devpath, buffer, &length, &nl_pid,
-                                   &nl_groups)) {
+    if (netlink_msg_pool_get_by_devpath(devpath, buffer, &length, &nl_pid,
+                                        &nl_groups)) {
         // Parse seqnum from the retrieved message
         uint32_t seqnum = 0;
         const char *ptr = buffer;
@@ -1180,8 +1170,9 @@ void netlink_uevent_resend_by_devpath(const char *devpath) {
             ptr += strlen(ptr) + 1;
         }
 
-        netlink_broadcast_uevent(buffer, length, seqnum, devpath, nl_pid,
-                                 nl_groups);
+        // Re-broadcast to group
+        netlink_broadcast_to_group(buffer, length, nl_pid, nl_groups,
+                                   NETLINK_KOBJECT_UEVENT, seqnum, devpath);
     }
 }
 
@@ -1190,7 +1181,7 @@ void netlink_kernel_uevent_send(const char *buf, int len) {
         return;
     }
 
-    // Extract seqnum from uevent message
+    // Extract seqnum and devpath from uevent message
     uint32_t seqnum = 0;
     char devpath[256] = {0};
 
@@ -1214,5 +1205,7 @@ void netlink_kernel_uevent_send(const char *buf, int len) {
     }
 
     // Kernel sends with pid=0 and groups=1 (uevent group)
-    netlink_broadcast_uevent(buf, len, seqnum, devpath, 0, 1);
+    // This will save to pool and broadcast to existing sockets
+    netlink_broadcast_to_group(buf, len, 0, 1, NETLINK_KOBJECT_UEVENT, seqnum,
+                               devpath);
 }
