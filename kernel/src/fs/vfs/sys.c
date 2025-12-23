@@ -328,6 +328,8 @@ vfs_node_t sysfs_regist_dev(char t, int major, int minor,
         if (buffer[i] == '\n')
             buffer[i] = '\0';
     }
+    if (!memcmp(buffer + len - 2, "\0\0", 2))
+        len--;
     netlink_kernel_uevent_send(buffer, len);
 
     return real_device_node;

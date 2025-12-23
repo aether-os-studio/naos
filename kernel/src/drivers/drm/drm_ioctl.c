@@ -17,6 +17,21 @@ int drm_ioctl_version(drm_device_t *dev, void *arg) {
     version->version_major = 2;
     version->version_minor = 2;
     version->version_patchlevel = 0;
+    version->name_len = sizeof(DRM_NAME);
+    if (version->name) {
+        if (copy_to_user_str(version->name, DRM_NAME, version->name_len))
+            return -EFAULT;
+    }
+    version->date_len = sizeof(DRM_NAME);
+    if (version->date) {
+        if (copy_to_user_str(version->date, DRM_NAME, version->date_len))
+            return -EFAULT;
+    }
+    version->desc_len = sizeof(DRM_NAME);
+    if (version->desc) {
+        if (copy_to_user_str(version->desc, DRM_NAME, version->desc_len))
+            return -EFAULT;
+    }
     return 0;
 }
 
@@ -733,7 +748,8 @@ int drm_ioctl_get_unique(drm_device_t *dev, void *arg) {
     struct drm_unique *u = (struct drm_unique *)arg;
     (void)dev;
 
-    strcpy(u->unique, "pci:0000:00:00.0");
+    if (u->unique)
+        strcpy(u->unique, "pci:0000:00:00.0");
     u->unique_len = 17;
 
     return 0;

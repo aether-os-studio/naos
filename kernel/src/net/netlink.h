@@ -91,6 +91,13 @@ struct sockaddr_nl {
 // Opaque netlink buffer structure
 struct netlink_buffer;
 
+// Netlink packet header for storing sender information in buffer
+struct netlink_packet_hdr {
+    uint32_t nl_pid;    // Sender's port ID
+    uint32_t nl_groups; // Multicast groups mask
+    uint32_t length;    // Message data length (excluding header)
+};
+
 // Netlink socket structure
 struct netlink_sock {
     int domain;
@@ -98,8 +105,6 @@ struct netlink_sock {
     int protocol;
     uint32_t portid;
     uint32_t groups;
-    uint32_t dst_portid;
-    uint32_t dst_groups;
     struct sockaddr_nl *bind_addr;
     struct netlink_buffer *buffer; // Circular buffer for messages
     spinlock_t lock;
