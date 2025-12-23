@@ -165,7 +165,13 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
     spin_lock(&epoll->lock);
 
     epoll_watch_t *existing = NULL;
-    epoll_watch_t *prev = NULL;
+    epoll_watch_t *b, *t;
+    llist_for_each(b, t, &epoll->watches, node) {
+        if (b->fd == fd_node) {
+            existing = b;
+            break;
+        }
+    }
 
     int ret = 0;
 
@@ -201,7 +207,7 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
             break;
         }
 
-        llist_delete(&new_watch->node);
+        llist_delete(&existing->node);
 
         existing->fd->ep_watch = NULL;
 

@@ -135,6 +135,7 @@ uint64_t sys_statfs(const char *path, struct statfs *buf) {
         return -ENOENT;
 
     buf->f_type = fs->magic;
+    buf->f_flags = 0;
 
     return 0;
 }
@@ -150,6 +151,7 @@ uint64_t sys_fstatfs(int fd, struct statfs *buf) {
         return -ENOENT;
 
     buf->f_type = fs->magic;
+    buf->f_flags = 0;
 
     return 0;
 }

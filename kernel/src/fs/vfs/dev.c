@@ -116,6 +116,8 @@ int devtmpfs_mknod(void *parent, const char *name, vfs_node_t node,
     }
     devtmpfs_node_t *handle = malloc(sizeof(devtmpfs_node_t));
     handle->node = node;
+    handle->capability = DEFAULT_PAGE_SIZE;
+    handle->content = alloc_frames_bytes(handle->capability);
     handle->size = 0;
     node->handle = handle;
     return 0;

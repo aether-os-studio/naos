@@ -32,8 +32,8 @@ typedef struct socket_op {
                        struct sockaddr_un *addr, uint32_t *len);
     size_t (*recvmsg)(uint64_t fd, struct msghdr *msg, int flags);
     size_t (*sendmsg)(uint64_t fd, const struct msghdr *msg, int flags);
-    size_t (*getsockopt)(uint64_t fd, int level, int optname,
-                         const void *optval, socklen_t *optlen);
+    size_t (*getsockopt)(uint64_t fd, int level, int optname, void *optval,
+                         socklen_t *optlen);
     size_t (*setsockopt)(uint64_t fd, int level, int optname,
                          const void *optval, socklen_t optlen);
 } socket_op_t;

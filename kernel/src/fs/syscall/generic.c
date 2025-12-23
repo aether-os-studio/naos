@@ -18,6 +18,17 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
         return (uint64_t)-ENOENT;
     }
 
+    // if (flags & MS_BIND) {
+    //     vfs_node_t source = vfs_open((const char *)devname, 0);
+    //     if (!source) {
+    //         return (uint64_t)-ENOENT;
+    //     }
+    //     dir->flags |= VFS_NODE_FLAGS_BIND_MOUNT;
+    //     dir->fsid = source->fsid;
+    //     dir->handle = source->handle;
+    //     return 0;
+    // }
+
     if (flags & MS_MOVE) {
         if (flags & (MS_REMOUNT | MS_BIND)) {
             return (uint64_t)-EINVAL;
@@ -71,6 +82,9 @@ uint64_t sys_umount2(const char *target, uint64_t flags) {
 }
 
 uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
+    if ((flags & O_TMPFILE) == O_TMPFILE)
+        return (uint64_t)-EINVAL;
+
     uint64_t i;
     for (i = 0; i < MAX_FD_NUM; i++) {
         if (current_task->fd_info->fds[i] == NULL) {
@@ -358,18 +372,17 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len) {
     }
 
     if (current_task->fd_info->fds[fd]->node->type & file_dir) {
-        return (uint64_t)-EISDIR; // 读取目录时返回正确错误码
+        return (uint64_t)-EISDIR;
     }
 
     ssize_t ret = vfs_read_fd(current_task->fd_info->fds[fd], buf,
                               current_task->fd_info->fds[fd]->offset, len);
 
+    if (ret < 0)
+        return ret;
+
     if (ret > 0) {
         current_task->fd_info->fds[fd]->offset += ret;
-    }
-
-    if (ret == -EAGAIN) {
-        return (uint64_t)-EAGAIN; // 保持非阻塞I/O语义
     }
 
     return ret;
@@ -385,18 +398,17 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
     }
 
     if (current_task->fd_info->fds[fd]->node->type & file_dir) {
-        return (uint64_t)-EISDIR; // 读取目录时返回正确错误码
+        return (uint64_t)-EISDIR;
     }
 
     ssize_t ret = vfs_write_fd(current_task->fd_info->fds[fd], buf,
                                current_task->fd_info->fds[fd]->offset, len);
 
+    if (ret < 0)
+        return ret;
+
     if (ret > 0) {
         current_task->fd_info->fds[fd]->offset += ret;
-    }
-
-    if (ret == -EAGAIN) {
-        return (uint64_t)-EAGAIN; // 保持非阻塞I/O语义
     }
 
     return ret;
@@ -508,7 +520,7 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
 
     int ret = vfs_ioctl(current_task->fd_info->fds[fd]->node, cmd, arg);
     if (cmd == TIOCGWINSZ && ret < 0) {
-        return (uint64_t)-ENOTTY;
+        ret = -ENOTTY;
     }
 
     return ret;

@@ -5,7 +5,6 @@
 #include <net/real_socket.h>
 
 #define MAX_SOCKETS 256
-#define BUFFER_SIZE 8 * 1024 * 1024
 
 typedef enum {
     SOCKET_TYPE_UNUSED,
@@ -42,50 +41,8 @@ struct ucred {
 #define SCM_RIGHTS 0x01
 #define SCM_CREDENTIALS 0x02
 
-typedef struct unix_socket_pair {
-    spinlock_t lock;
-
-    // accept()/server
-    bool established;
-    int serverFds;
-    uint8_t *serverBuff;
-    size_t serverBuffPos;
-    size_t serverBuffSize;
-
-    struct ucred server;
-    struct ucred client;
-
-    char *filename;
-
-    // connect()/client
-    int clientFds;
-    uint8_t *clientBuff;
-    int clientBuffPos;
-    int clientBuffSize;
-
-    // msg_control/msg_controllen
-    fd_t **client_pending_files;
-    fd_t **server_pending_files;
-    int pending_fds_size;
-
-    int reuseaddr;
-    int keepalive;
-    struct timeval sndtimeo;
-    struct timeval rcvtimeo;
-    char bind_to_dev[IFNAMSIZ];
-    struct linger linger_opt;
-    int passcred;
-    struct sock_filter *filter;
-    size_t filter_len;
-    struct ucred cred;
-    struct ucred peercred;
-    bool has_peercred;
-    struct ucred client_pending_cred; // 客户端发送的凭据，服务端接收
-    bool has_client_pending_cred;
-    struct ucred server_pending_cred; // 服务端发送的凭据，客户端接收
-    bool has_server_pending_cred;
-} unix_socket_pair_t;
-
+#define MAX_PENDING_FILES_COUNT 64
+#define BUFFER_SIZE 65536
 #define MAX_CONNECTIONS 16
 
 typedef struct socket {
@@ -95,21 +52,48 @@ typedef struct socket {
     int type;
     int protocol;
 
-    // accept()
-    bool acceptWouldBlock;
+    // 接收 buffer（别人发给我的数据存在这里）
+    spinlock_t lock;
+    uint8_t *recv_buff;
+    size_t recv_pos;
+    size_t recv_size;
+
+    // pending files/creds（别人发给我的，待接收）
+    fd_t *pending_files[MAX_PENDING_FILES_COUNT];
+    struct ucred pending_cred;
+    bool has_pending_cred;
+
+    // 我自己的凭据
+    struct ucred cred;
+
+    // 对端指针 (SOCK_STREAM 连接后设置)
+    struct socket *peer;
 
     // bind()
     char *bindAddr;
 
     // listen()
-    int connMax; // if 0, listen() hasn't ran
+    int connMax;
     int connCurr;
-    unix_socket_pair_t **backlog;
+    struct socket **backlog;
 
+    // accept 产生的 socket 记录文件名
+    char *filename;
+
+    bool acceptWouldBlock;
+    bool established;
+    bool closed; // 标记是否已关闭
+
+    // 选项
     int passcred;
-
-    // connect()
-    unix_socket_pair_t *pair;
+    int reuseaddr;
+    int keepalive;
+    struct timeval sndtimeo;
+    struct timeval rcvtimeo;
+    char bind_to_dev[IFNAMSIZ];
+    struct linger linger_opt;
+    struct sock_filter *filter;
+    size_t filter_len;
 } socket_t;
 
 bool sys_socket_close(void *current);
@@ -319,8 +303,8 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
 int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
                    socklen_t addrlen);
 
-size_t unix_socket_getsockopt(uint64_t fd, int level, int optname,
-                              const void *optval, socklen_t *optlen);
+size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, void *optval,
+                              socklen_t *optlen);
 size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
                               const void *optval, socklen_t optlen);
 size_t unix_socket_getpeername(uint64_t fdet, struct sockaddr_un *addr,

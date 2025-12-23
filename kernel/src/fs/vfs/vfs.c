@@ -54,6 +54,10 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
     return node;
 }
 
+void vfs_free_handle(vfs_node_t node) {
+    callbackof(node, free_handle)(node->handle);
+}
+
 void vfs_free(vfs_node_t vfs) {
     if (vfs == NULL)
         return;
@@ -63,7 +67,7 @@ void vfs_free(vfs_node_t vfs) {
             vfs_free(child);
         }
     }
-    callbackof(vfs, free_handle)(vfs->handle);
+    vfs_free_handle(vfs);
     if (vfs->parent)
         llist_delete(&vfs->node_for_childs);
     llist_delete(&vfs->node);
@@ -635,6 +639,8 @@ int vfs_regist(fs_t *fs) {
     return id;
 }
 
+extern vfs_node_t procfs_root;
+
 vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, uint64_t flags) {
     if (!start)
         return NULL;
@@ -683,9 +689,14 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, uint64_t flags) {
         do_update(current);
 
         if (current->type & file_symlink) {
+            if (current->parent == procfs_root && current->name &&
+                !strcmp(current->name, "self"))
+                goto ignore_flags_symlink;
+
             if (flags & O_NOFOLLOW)
                 break;
 
+        ignore_flags_symlink:
             char target_path[256];
             int len = vfs_readlink(current, target_path, sizeof(target_path));
             target_path[len] = '\0';
@@ -1011,7 +1022,7 @@ int vfs_delete(vfs_node_t node) {
     if (node->parent)
         llist_delete(&node->node_for_childs);
     if (node->refcount <= 0) {
-        callbackof(node, free_handle)(node->handle);
+        vfs_free_handle(node);
         node->handle = NULL;
         vfs_free(node);
     }

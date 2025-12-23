@@ -286,8 +286,8 @@ int netlink_bind(uint64_t fd, const struct sockaddr_un *addr,
     return 0;
 }
 
-size_t netlink_getsockopt(uint64_t fd, int level, int optname,
-                          const void *optval, socklen_t *optlen) {
+size_t netlink_getsockopt(uint64_t fd, int level, int optname, void *optval,
+                          socklen_t *optlen) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     struct netlink_sock *nl_sk = handle->sock;
 
@@ -303,6 +303,8 @@ size_t netlink_getsockopt(uint64_t fd, int level, int optname,
     case SO_PROTOCOL:
         *(int *)optval = nl_sk->protocol;
         *optlen = sizeof(int);
+        break;
+    case SO_REUSEADDR:
         break;
     case SO_PASSCRED:
         break;
@@ -324,6 +326,8 @@ size_t netlink_setsockopt(uint64_t fd, int level, int optname,
 
     switch (optname) {
     case SO_ATTACH_FILTER:
+        break;
+    case SO_REUSEADDR:
         break;
     case SO_PASSCRED:
         break;

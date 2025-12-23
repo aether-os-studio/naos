@@ -82,6 +82,8 @@ int tmpfs_mknod(void *parent, const char *name, vfs_node_t node, uint16_t mode,
                 int dev) {
     node->mode = mode & 0777;
     tmpfs_node_t *handle = malloc(sizeof(tmpfs_node_t));
+    handle->capability = DEFAULT_PAGE_SIZE;
+    handle->content = alloc_frames_bytes(handle->capability);
     handle->size = 0;
     handle->node = node;
     node->handle = handle;

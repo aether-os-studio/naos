@@ -294,6 +294,11 @@ int ext_mkfile(void *parent, const char *name, vfs_node_t node) {
     ext4_fclose(&f);
 
     if (!ret) {
+        tm time;
+        time_read(&time);
+        int64_t timespec = mktime(&time);
+        ext4_ctime_set(buf, timespec);
+        ext4_mtime_set(buf, timespec);
         ext4_mode_set(buf, 0700);
         node->mode = 0700;
     }
@@ -315,6 +320,12 @@ int ext_symlink(void *parent, const char *name, vfs_node_t node) {
     int ret = ext4_fsymlink(name, fullpath);
 
     ext4_mode_set(name, 0700);
+
+    tm time;
+    time_read(&time);
+    int64_t timespec = mktime(&time);
+    ext4_ctime_set(fullpath, timespec);
+    ext4_mtime_set(fullpath, timespec);
 
     node->mode = 0700;
 
@@ -356,6 +367,12 @@ int ext_mknod(void *parent, const char *name, vfs_node_t node, uint16_t mode,
 
     ext4_mode_set(fullpath, 0700);
 
+    tm time;
+    time_read(&time);
+    int64_t timespec = mktime(&time);
+    ext4_ctime_set(fullpath, timespec);
+    ext4_mtime_set(fullpath, timespec);
+
     node->mode = 0700;
 
     free(fullpath);
@@ -373,6 +390,11 @@ int ext_mkdir(void *parent, const char *name, vfs_node_t node) {
     int ret = ext4_dir_mk((const char *)buf);
 
     if (!ret) {
+        tm time;
+        time_read(&time);
+        int64_t timespec = mktime(&time);
+        ext4_ctime_set(buf, timespec);
+        ext4_mtime_set(buf, timespec);
         ext4_mode_set(buf, 0700);
         node->mode = 0700;
     }
