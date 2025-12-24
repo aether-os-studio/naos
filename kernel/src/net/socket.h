@@ -96,11 +96,6 @@ typedef struct socket {
     size_t filter_len;
 } socket_t;
 
-bool sys_socket_close(void *current);
-
-int socket_getsockname(uint64_t fd, struct sockaddr_un *addr,
-                       socklen_t *addrlen);
-
 // 套接字层级
 #define SOL_SOCKET 1
 
@@ -294,7 +289,7 @@ struct cmsghdr {
 #define CMSG_SPACE(len) (CMSG_ALIGN(len) + CMSG_ALIGN(sizeof(struct cmsghdr)))
 #define CMSG_LEN(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
 
-uint64_t socket_socket(int domain, int type, int protocol);
+int socket_socket(int domain, int type, int protocol);
 int unix_socket_pair(int type, int protocol, int *sv);
 int socket_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen);
 int socket_listen(uint64_t fd, int backlog);

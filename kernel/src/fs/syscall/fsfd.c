@@ -109,6 +109,7 @@ found:;
     node->handle = handle;
 
     current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
+    memset(current_task->fd_info->fds[fd], 0, sizeof(fd_t));
     if (!current_task->fd_info->fds[fd]) {
         vfs_free(node);
         free(handle);
@@ -582,6 +583,7 @@ uint64_t sys_fsmount(int fd, uint32_t flags, uint32_t attr_flags) {
     mnt_node->handle = mnt_handle;
 
     current_task->fd_info->fds[mnt_fd] = malloc(sizeof(fd_t));
+    memset(current_task->fd_info->fds[mnt_fd], 0, sizeof(fd_t));
     if (!current_task->fd_info->fds[mnt_fd]) {
         vfs_free(mnt_node);
         if (mnt_handle->source)

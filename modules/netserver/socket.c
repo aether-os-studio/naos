@@ -733,6 +733,7 @@ int real_socket_socket(int domain, int type, int protocol) {
     }
 
     current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
+    memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
     current_task->fd_info->fds[i]->node = socknode;
     current_task->fd_info->fds[i]->offset = 0;
     current_task->fd_info->fds[i]->flags = 0;

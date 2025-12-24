@@ -919,7 +919,7 @@ socket_op_t netlink_ops = {
     .sendmsg = netlink_sendmsg,
 };
 
-uint64_t netlink_socket(int domain, int type, int protocol) {
+int netlink_socket(int domain, int type, int protocol) {
     if (domain != AF_NETLINK) {
         return -EAFNOSUPPORT;
     }
@@ -1024,6 +1024,7 @@ uint64_t netlink_socket(int domain, int type, int protocol) {
         free(handle);
         return -ENOMEM;
     }
+    memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
     current_task->fd_info->fds[i]->node = socknode;
     current_task->fd_info->fds[i]->offset = 0;
     current_task->fd_info->fds[i]->flags = flags;

@@ -791,12 +791,6 @@ int vfs_close(vfs_node_t node) {
     if (node->refcount <= 0) {
         bool real_close = callbackof(node, close)(node->handle);
         if (real_close) {
-            if (node->ep_watch) {
-                llist_delete(&node->ep_watch->node);
-                node->ep_watch->fd = NULL;
-                free(node->ep_watch);
-                node->ep_watch = NULL;
-            }
             if (node->flags & VFS_NODE_FLAGS_FREE_AFTER_USE) {
                 vfs_free(node);
                 return 0;

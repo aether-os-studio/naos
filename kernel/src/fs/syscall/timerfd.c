@@ -4,14 +4,7 @@
 #include <libs/klibc.h>
 #include <task/signal.h>
 
-struct llist_header timerfds;
-
-bool timerfd_initialized = false;
-
 int timerfdfs_id = 0;
-static vfs_node_t timerfdfs_root = NULL;
-
-static int timerfd_id = 0;
 
 uint64_t sys_timerfd_create(int clockid, int flags) {
     // 参数检查
@@ -32,11 +25,8 @@ uint64_t sys_timerfd_create(int clockid, int flags) {
     timerfd_t *tfd = malloc(sizeof(timerfd_t));
     memset(tfd, 0, sizeof(timerfd_t));
     tfd->timer.clock_type = clockid;
-    llist_init_head(&tfd->node_for_timerfds);
 
-    char buf[32];
-    sprintf(buf, "timerfd%d", timerfd_id++);
-    vfs_node_t node = vfs_node_alloc(timerfdfs_root, buf);
+    vfs_node_t node = vfs_node_alloc(NULL, NULL);
     node->refcount++;
     node->type = file_stream;
     node->fsid = timerfdfs_id;
@@ -44,6 +34,7 @@ uint64_t sys_timerfd_create(int clockid, int flags) {
     tfd->node = node;
 
     current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
+    memset(current_task->fd_info->fds[fd], 0, sizeof(fd_t));
     current_task->fd_info->fds[fd]->node = node;
     current_task->fd_info->fds[fd]->offset = 0;
     current_task->fd_info->fds[fd]->flags = flags;
@@ -56,15 +47,12 @@ uint64_t sys_timerfd_create(int clockid, int flags) {
 static uint64_t get_current_time_ns(int clock_type) {
     if (clock_type == CLOCK_MONOTONIC) {
         return nano_time(); // 单调时钟，直接返回纳秒
-    } else                  // CLOCK_REALTIME
-    {
+    } else {                // CLOCK_REALTIME
         tm time;
         time_read(&time);
         return (uint64_t)mktime(&time) * 1000000000ULL;
     }
 }
-
-extern volatile struct limine_date_at_boot_request boot_time_request;
 
 uint64_t sys_timerfd_settime(int fd, int flags,
                              const struct itimerval *new_value,
@@ -117,13 +105,9 @@ uint64_t sys_timerfd_settime(int fd, int flags,
     return 0;
 }
 
-bool sys_timerfd_close(void *current) {
+bool timerfd_close(void *current) {
     timerfd_t *tfd = current;
-    llist_delete(&tfd->node_for_timerfds);
-    free(tfd->node->name);
-    free(tfd->node);
-    free(tfd);
-    return true;
+    return false;
 }
 
 int timerfd_poll(void *file, size_t events) {
@@ -216,7 +200,7 @@ static struct vfs_callback timerfd_callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
     .open = (vfs_open_t)dummy,
-    .close = (vfs_close_t)sys_timerfd_close,
+    .close = (vfs_close_t)timerfd_close,
     .read = (vfs_read_t)timerfd_read,
     .write = (vfs_write_t)dummy,
     .readlink = (vfs_readlink_t)dummy,
@@ -245,12 +229,4 @@ fs_t timefdfs = {
     .flags = FS_FLAGS_HIDDEN,
 };
 
-void timerfd_init() {
-    llist_init_head(&timerfds);
-    timerfdfs_id = vfs_regist(&timefdfs);
-    timerfdfs_root = vfs_node_alloc(NULL, "timer");
-    timerfdfs_root->type = file_dir;
-    timerfdfs_root->mode = 0644;
-    timerfdfs_root->fsid = timerfdfs_id;
-    timerfd_initialized = true;
-}
+void timerfd_init() { timerfdfs_id = vfs_regist(&timefdfs); }

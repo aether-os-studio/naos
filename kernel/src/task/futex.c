@@ -9,7 +9,7 @@ uint64_t sys_futex_wait(uint64_t addr, const struct timespec *timeout,
     spin_lock(&futex_lock);
 
     struct futex_wait *wait = malloc(sizeof(struct futex_wait));
-    wait->uaddr = translate_address(get_current_page_dir(true), addr);
+    wait->uaddr = addr;
     wait->task = current_task;
     wait->next = NULL;
     wait->bitset = bitset;
@@ -39,10 +39,8 @@ uint64_t sys_futex_wake(uint64_t addr, int val, uint32_t bitset) {
     while (curr) {
         bool found = false;
 
-        if (curr->uaddr &&
-            curr->uaddr ==
-                translate_address(get_current_page_dir(true), addr) &&
-            (curr->bitset & bitset) && ++count <= val) {
+        if (curr->uaddr && curr->uaddr == addr && (curr->bitset & bitset) &&
+            ++count <= val) {
             if (!curr->task)
                 continue;
             if (curr->task->state == TASK_DIED) {

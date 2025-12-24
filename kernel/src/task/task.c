@@ -179,16 +179,19 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     memset(task->fd_info, 0, sizeof(fd_info_t));
     memset(task->fd_info->fds, 0, sizeof(task->fd_info->fds));
     task->fd_info->fds[0] = malloc(sizeof(fd_t));
+    memset(task->fd_info->fds[0], 0, sizeof(fd_t));
     task->fd_info->fds[0]->node = vfs_open("/dev/stdin", 0);
     task->fd_info->fds[0]->node->refcount++;
     task->fd_info->fds[0]->offset = 0;
     task->fd_info->fds[0]->flags = 0;
     task->fd_info->fds[1] = malloc(sizeof(fd_t));
+    memset(task->fd_info->fds[1], 0, sizeof(fd_t));
     task->fd_info->fds[1]->node = vfs_open("/dev/stdout", 0);
     task->fd_info->fds[1]->node->refcount++;
     task->fd_info->fds[1]->offset = 0;
     task->fd_info->fds[1]->flags = 0;
     task->fd_info->fds[2] = malloc(sizeof(fd_t));
+    memset(task->fd_info->fds[2], 0, sizeof(fd_t));
     task->fd_info->fds[2]->node = vfs_open("/dev/stderr", 0);
     task->fd_info->fds[2]->node->refcount++;
     task->fd_info->fds[2]->offset = 0;
@@ -1671,35 +1674,45 @@ void sched_update_itimer() {
     }
 }
 
-extern bool timerfd_initialized;
-extern struct llist_header timerfds;
+extern int timerfdfs_id;
 
 void sched_update_timerfd() {
-    if (!timerfd_initialized)
-        return;
-
-    timerfd_t *tfd, *tmp;
-    llist_for_each(tfd, tmp, &timerfds, node_for_timerfds) {
-        // 根据时钟类型获取当前时间
-        uint64_t now;
-        if (tfd->timer.clock_type == CLOCK_MONOTONIC) {
-            now = nano_time();
-        } else {
-            // CLOCK_REALTIME
-            tm time;
-            time_read(&time);
-            now = (uint64_t)mktime(&time) * 1000000000ULL;
+    uint64_t continue_null_fd_count = 0;
+    for (int i = 0; i < MAX_FD_NUM; i++) {
+        fd_t *fd = current_task->fd_info->fds[i];
+        if (!fd) {
+            continue_null_fd_count++;
+            if (continue_null_fd_count >= 8)
+                break;
+            continue;
         }
+        continue_null_fd_count = 0;
 
-        if (tfd->timer.expires && now >= tfd->timer.expires) {
-            if (tfd->timer.interval) {
-                uint64_t delta = now - tfd->timer.expires;
-                uint64_t periods = delta / tfd->timer.interval + 1;
-                tfd->count += periods;
-                tfd->timer.expires += periods * tfd->timer.interval;
+        vfs_node_t node = fd->node;
+        if (node && node->fsid == timerfdfs_id) {
+            timerfd_t *tfd = node->handle;
+
+            // 根据时钟类型获取当前时间
+            uint64_t now;
+            if (tfd->timer.clock_type == CLOCK_MONOTONIC) {
+                now = nano_time();
             } else {
-                tfd->count++;
-                tfd->timer.expires = 0;
+                // CLOCK_REALTIME
+                tm time;
+                time_read(&time);
+                now = (uint64_t)mktime(&time) * 1000000000ULL;
+            }
+
+            if (tfd->timer.expires && now >= tfd->timer.expires) {
+                if (tfd->timer.interval) {
+                    uint64_t delta = now - tfd->timer.expires;
+                    uint64_t periods = delta / tfd->timer.interval + 1;
+                    tfd->count += periods;
+                    tfd->timer.expires += periods * tfd->timer.interval;
+                } else {
+                    tfd->count++;
+                    tfd->timer.expires = 0;
+                }
             }
         }
     }

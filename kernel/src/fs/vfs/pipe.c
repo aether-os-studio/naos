@@ -278,6 +278,7 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
     node_output->handle = write_spec;
 
     current_task->fd_info->fds[i1] = malloc(sizeof(fd_t));
+    memset(current_task->fd_info->fds[i1], 0, sizeof(fd_t));
     current_task->fd_info->fds[i1]->node = node_input;
     current_task->fd_info->fds[i1]->offset = 0;
     current_task->fd_info->fds[i1]->flags = flags;
@@ -295,6 +296,7 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
     }
 
     current_task->fd_info->fds[i2] = malloc(sizeof(fd_t));
+    memset(current_task->fd_info->fds[i2], 0, sizeof(fd_t));
     current_task->fd_info->fds[i2]->node = node_output;
     current_task->fd_info->fds[i2]->offset = 0;
     current_task->fd_info->fds[i2]->flags = flags;

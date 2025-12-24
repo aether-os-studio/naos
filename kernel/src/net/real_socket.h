@@ -38,9 +38,6 @@ typedef struct socket_op {
                          const void *optval, socklen_t optlen);
 } socket_op_t;
 
-extern socket_op_t socket_ops;
-extern socket_op_t accept_ops;
-
 typedef struct socket_handle {
     fd_t *fd;
     void *sock;
@@ -49,13 +46,13 @@ typedef struct socket_handle {
 
 typedef struct real_socket_socket {
     int domain;
-    uint64_t (*socket)(int domain, int type, int protocol);
+    int (*socket)(int domain, int type, int protocol);
 } real_socket_socket_t;
 
 #define MAX_SOCKETS_NUM 16
 
 void regist_socket(int domain,
-                   uint64_t (*socket)(int domain, int type, int protocol));
+                   int (*socket)(int domain, int type, int protocol));
 
 extern real_socket_socket_t *real_sockets[MAX_SOCKETS_NUM];
 extern int socket_num;

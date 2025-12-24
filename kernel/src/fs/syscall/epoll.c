@@ -33,6 +33,7 @@ size_t epoll_create1(int flags) {
     node->fsid = epollfs_id;
 
     current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
+    memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
     current_task->fd_info->fds[i]->node = node;
     current_task->fd_info->fds[i]->offset = 0;
     current_task->fd_info->fds[i]->flags = flags;
@@ -88,8 +89,12 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
                 if (!browse->fd) {
                     continue;
                 }
+                if (!browse->fd->node->handle) {
+                    continue;
+                }
 
-                uint32_t current_events = vfs_poll(browse->fd, browse->events);
+                uint32_t current_events =
+                    vfs_poll(browse->fd->node, browse->events);
 
                 uint32_t ready_events = current_events & browse->events;
 
@@ -160,14 +165,14 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
         return (uint64_t)(-EBADF);
     }
 
-    vfs_node_t fd_node = current_task->fd_info->fds[fd]->node;
+    fd_t *f = current_task->fd_info->fds[fd];
 
     spin_lock(&epoll->lock);
 
     epoll_watch_t *existing = NULL;
     epoll_watch_t *b, *t;
     llist_for_each(b, t, &epoll->watches, node) {
-        if (b->fd == fd_node) {
+        if (b->fd && (b->fd->node == f->node)) {
             existing = b;
             break;
         }
@@ -188,8 +193,7 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
             break;
         }
 
-        new_watch->fd = fd_node;
-        fd_node->ep_watch = new_watch;
+        new_watch->fd = f;
         new_watch->events = event->events & ~EPOLLET;
         new_watch->data = event->data.u64;
         new_watch->edge_trigger = (event->events & EPOLLET) != 0;
@@ -208,8 +212,6 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
         }
 
         llist_delete(&existing->node);
-
-        existing->fd->ep_watch = NULL;
 
         free(existing);
         break;
@@ -307,7 +309,11 @@ static int epoll_poll(void *file, size_t event) {
 
     epoll_watch_t *browse, *tmp;
     llist_for_each(browse, tmp, &epoll->watches, node) {
-        int ret = vfs_poll(browse->fd, event);
+        if (!browse->fd)
+            continue;
+        if (!browse->fd->node->handle)
+            continue;
+        int ret = vfs_poll(browse->fd->node, event);
         if (ret) {
             revents |= EPOLLIN;
             break;

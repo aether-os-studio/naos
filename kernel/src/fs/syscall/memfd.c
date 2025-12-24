@@ -162,6 +162,7 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags) {
     node->refcount++;
     node->size = 0;
     current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
+    memset(current_task->fd_info->fds[fd], 0, sizeof(fd_t));
     current_task->fd_info->fds[fd]->node = node;
     current_task->fd_info->fds[fd]->offset = 0;
     current_task->fd_info->fds[fd]->flags =

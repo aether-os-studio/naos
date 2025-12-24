@@ -276,7 +276,7 @@ __attribute__((__packed__))
 
 typedef struct epoll_watch {
     struct llist_header node;
-    vfs_node_t fd;
+    fd_t *fd;
     uint32_t events;
     uint64_t data;
     bool edge_trigger;
@@ -382,7 +382,6 @@ uint64_t sys_unlinkat(uint64_t dirfd, const char *name, uint64_t flags);
 #define CLOCK_TAI 11
 
 typedef struct {
-    struct llist_header node_for_timerfds;
     kernel_timer_t timer;
     uint64_t count;
     int flags;

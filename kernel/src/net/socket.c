@@ -10,7 +10,6 @@
 #include <libs/strerror.h>
 
 extern socket_op_t socket_ops;
-extern socket_op_t accept_ops;
 
 int sockfsfd_id = 0;
 
@@ -271,7 +270,7 @@ vfs_node_t unix_socket_create_node(socket_t *sock) {
     return socknode;
 }
 
-uint64_t socket_socket(int domain, int type, int protocol) {
+int socket_socket(int domain, int type, int protocol) {
     socket_t *sock = unix_socket_alloc();
 
     sock->domain = domain;
@@ -294,6 +293,7 @@ uint64_t socket_socket(int domain, int type, int protocol) {
     }
 
     current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
+    memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
     current_task->fd_info->fds[i]->node = socknode;
     current_task->fd_info->fds[i]->offset = 0;
     current_task->fd_info->fds[i]->flags = type & O_CLOEXEC;
@@ -412,6 +412,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
     }
 
     current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
+    memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
     current_task->fd_info->fds[i]->node = acceptFd;
     current_task->fd_info->fds[i]->offset = 0;
     current_task->fd_info->fds[i]->flags = flags;
@@ -604,9 +605,9 @@ done:
 
     for (int i = 0; i < msg->msg_iovlen; i++) {
         struct iovec *curr = &((struct iovec *)msg->msg_iov)[i];
-        size_t ret =
-            unix_socket_send_to_peer(sock, peer, curr->iov_base, curr->len,
-                                     noblock ? MSG_DONTWAIT : 0, handle->fd);
+        size_t ret = unix_socket_send_to_peer(
+            sock, peer, curr->iov_base, curr->len,
+            noblock ? (flags | MSG_DONTWAIT) : flags, handle->fd);
         if ((int64_t)ret < 0)
             return ret;
         cnt += ret;
@@ -639,9 +640,9 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
         len_total += msg->msg_iov[i].len;
 
     char *buffer = malloc(len_total);
-    size_t cnt =
-        unix_socket_recv_from_self(sock, peer, (uint8_t *)buffer, len_total,
-                                   noblock ? MSG_DONTWAIT : 0, handle->fd);
+    size_t cnt = unix_socket_recv_from_self(
+        sock, peer, (uint8_t *)buffer, len_total,
+        noblock ? (flags | MSG_DONTWAIT) : flags, handle->fd);
 
     if ((int64_t)cnt < 0) {
         free(buffer);
@@ -742,24 +743,28 @@ int socket_poll(void *file, int events) {
             revents |= (events & EPOLLOUT) ? EPOLLOUT : 0;
         if (sock->connCurr > 0)
             revents |= (events & EPOLLIN) ? EPOLLIN : 0;
-    } else if (sock->type == 2 || sock->peer) {
+    } else if (sock->peer) {
         spin_lock(&sock->lock);
 
-        if (sock->type != 2) {
-            if (sock->peer->closed)
-                revents |= EPOLLHUP;
+        if (sock->peer->closed)
+            revents |= EPOLLHUP;
 
-            // 可写：对端有空间
-            if ((events & EPOLLOUT) && !sock->peer->closed &&
-                sock->peer->recv_pos < sock->peer->recv_size)
-                revents |= EPOLLOUT;
-        }
+        // 可写：对端有空间
+        if ((events & EPOLLOUT) && !sock->peer->closed &&
+            sock->peer->recv_pos < sock->peer->recv_size)
+            revents |= EPOLLOUT;
 
         // 可读：自己有数据
         if ((events & EPOLLIN) && sock->recv_pos > 0)
             revents |= EPOLLIN;
 
         spin_unlock(&sock->lock);
+    } else if (sock->type == 2) {
+        if (events & EPOLLOUT)
+            revents |= EPOLLOUT;
+
+        if ((events & EPOLLIN) && sock->recv_pos > 0)
+            revents |= EPOLLIN;
     } else {
         revents |= EPOLLHUP;
     }
@@ -813,11 +818,11 @@ int unix_socket_pair(int type, int protocol, int *sv) {
     socket_t *sock2 = unix_socket_alloc();
 
     sock1->domain = 1;
-    sock1->type = type;
+    sock1->type = type & 0xF;
     sock1->protocol = protocol;
 
     sock2->domain = 1;
-    sock2->type = type;
+    sock2->type = type & 0xF;
     sock2->protocol = protocol;
 
     // 双向连接
@@ -851,15 +856,17 @@ int unix_socket_pair(int type, int protocol, int *sv) {
     }
 
     current_task->fd_info->fds[fd1] = malloc(sizeof(fd_t));
+    memset(current_task->fd_info->fds[fd1], 0, sizeof(fd_t));
     current_task->fd_info->fds[fd1]->node = node1;
     current_task->fd_info->fds[fd1]->offset = 0;
-    current_task->fd_info->fds[fd1]->flags = 0;
+    current_task->fd_info->fds[fd1]->flags = type & O_CLOEXEC;
     procfs_on_open_file(current_task, fd1);
 
     current_task->fd_info->fds[fd2] = malloc(sizeof(fd_t));
+    memset(current_task->fd_info->fds[fd2], 0, sizeof(fd_t));
     current_task->fd_info->fds[fd2]->node = node2;
     current_task->fd_info->fds[fd2]->offset = 0;
-    current_task->fd_info->fds[fd2]->flags = 0;
+    current_task->fd_info->fds[fd2]->flags = type & O_CLOEXEC;
     procfs_on_open_file(current_task, fd2);
 
     socket_handle_t *h1 = node1->handle;

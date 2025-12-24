@@ -91,6 +91,7 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask,
     node->handle = ctx;
     ctx->node = node;
     current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
+    memset(current_task->fd_info->fds[fd], 0, sizeof(fd_t));
     current_task->fd_info->fds[fd]->node = node;
     current_task->fd_info->fds[fd]->offset = 0;
     current_task->fd_info->fds[fd]->flags = flags;

@@ -122,6 +122,7 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
     }
 
     current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
+    memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
     current_task->fd_info->fds[i]->node = node;
     current_task->fd_info->fds[i]->offset = 0;
     current_task->fd_info->fds[i]->flags = flags & (O_CLOEXEC | O_NONBLOCK);
@@ -247,6 +248,7 @@ uint64_t sys_open_by_handle_at(int mountdirfd, struct file_handle *handle,
     }
 
     current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
+    memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
     current_task->fd_info->fds[i]->node = node;
     current_task->fd_info->fds[i]->offset = 0;
     current_task->fd_info->fds[i]->flags = flags;
