@@ -356,18 +356,21 @@ void procfs_on_new_task(task_t *task) {
 }
 
 void procfs_on_open_file(task_t *task, int fd) {
+    if (!task->procfs_node) {
+        return;
+    }
     vfs_node_t fd_root = vfs_open_at(task->procfs_node, "fd", 0);
     if (!fd_root)
         return;
 
-    if (!task->fd_info->fds[fd])
+    if (!task->fd_info || !task->fd_info->fds[fd])
         return;
 
     spin_lock(&procfs_oplock);
 
     char fd_name[8];
     sprintf(fd_name, "%d", fd);
-    vfs_node_t fd_node = vfs_child_append(fd_root, fd_name, NULL);
+    vfs_node_t fd_node = vfs_node_alloc(fd_root, fd_name);
     fd_node->type = file_symlink;
     fd_node->mode = 0700;
     proc_handle_t *fd_node_handle = malloc(sizeof(proc_handle_t));
@@ -377,10 +380,20 @@ void procfs_on_open_file(task_t *task, int fd) {
     fd_node_handle->task = task;
     vfs_node_t node = task->fd_info->fds[fd]->node;
     if (node->name) {
+        vfs_node_t parent = node->parent;
+        if (!parent)
+            goto done;
+        while (parent->parent) {
+            parent = parent->parent;
+        }
+        if (parent != rootdir)
+            goto done;
         char *link_name = vfs_get_fullpath(node);
         strcpy(fd_node_handle->content, link_name);
         free(link_name);
     }
+
+done:
     sprintf(fd_node_handle->name, "fd");
 
     spin_unlock(&procfs_oplock);
@@ -406,18 +419,11 @@ void procfs_on_exit_task(task_t *task) {
 
     spin_lock(&procfs_oplock);
 
-    char name[MAX_PID_NAME_LEN];
-    sprintf(name, "%d", task->pid);
-
-    vfs_close(task->procfs_node);
+    vfs_node_t procfs_node = task->procfs_node;
     task->procfs_node = NULL;
+    if (procfs_node) {
+        vfs_free(procfs_node);
+    }
 
-    vfs_node_t node = vfs_open_at(procfs_root, name, O_NOFOLLOW);
-    if (!node)
-        goto done;
-
-    vfs_free(node);
-
-done:
     spin_unlock(&procfs_oplock);
 }

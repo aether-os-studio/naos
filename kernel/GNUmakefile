@@ -164,6 +164,7 @@ override LDFLAGS += \
 # object and header dependency file names.
 override SRCFILES := $(shell find $(ARCH_DIR) -name "*.[Sc]" | LC_ALL=C sort)
 override SRCFILES += $(shell find src/acpi -name "*.[Sc]" | LC_ALL=C sort)
+override SRCFILES += $(shell find src/bpf -name "*.[Sc]" | LC_ALL=C sort)
 override SRCFILES += $(shell find src/dev -name "*.[Sc]" | LC_ALL=C sort)
 override SRCFILES += $(shell find src/drivers -name "*.[Sc]" | LC_ALL=C sort)
 override SRCFILES += $(shell find src/fs -name "*.[Sc]" | LC_ALL=C sort)

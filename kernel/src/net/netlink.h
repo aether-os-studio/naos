@@ -107,6 +107,7 @@ struct netlink_sock {
     uint32_t groups;
     struct sockaddr_nl *bind_addr;
     struct netlink_buffer *buffer; // Circular buffer for messages
+    struct sock_fprog *filter;
     spinlock_t lock;
 };
 

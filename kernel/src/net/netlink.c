@@ -6,6 +6,7 @@
 #include <fs/fs_syscall.h>
 #include <fs/vfs/proc.h>
 #include <net/real_socket.h>
+#include <bpf/socket_filter.h>
 
 static int netlink_socket_fsid = 0;
 
@@ -131,11 +132,21 @@ static void netlink_buffer_init(struct netlink_buffer *buf) {
 }
 
 // Circular buffer operations for netlink packets with sender info
-static size_t netlink_buffer_write_packet(struct netlink_buffer *buf,
+static size_t netlink_buffer_write_packet(struct netlink_sock *sock,
                                           const char *data, size_t len,
                                           uint32_t nl_pid, uint32_t nl_groups) {
+    struct netlink_buffer *buf = sock->buffer;
+
     if (buf == NULL || data == NULL || len == 0) {
         return 0;
+    }
+
+    if (sock->filter) {
+        uint32_t accept_bytes = bpf_run(sock->filter->filter, sock->filter->len,
+                                        (const uint8_t *)data, (uint32_t)len);
+        if (!accept_bytes)
+            return 0;
+        len = MIN(len, accept_bytes);
     }
 
     spin_lock(&buf->lock);
@@ -180,9 +191,11 @@ static size_t netlink_buffer_write_packet(struct netlink_buffer *buf,
 }
 
 // Read data from buffer with sender info
-static size_t netlink_buffer_read_packet(struct netlink_buffer *buf, char *out,
+static size_t netlink_buffer_read_packet(struct netlink_sock *sock, char *out,
                                          size_t out_len, uint32_t *nl_pid,
                                          uint32_t *nl_groups, bool peek) {
+    struct netlink_buffer *buf = sock->buffer;
+
     if (buf == NULL) {
         return 0;
     }
@@ -257,7 +270,9 @@ static size_t netlink_buffer_read_packet(struct netlink_buffer *buf, char *out,
 }
 
 // Check if a complete message is available
-static bool netlink_buffer_has_msg(struct netlink_buffer *buf) {
+static bool netlink_buffer_has_msg(struct netlink_sock *sock) {
+    struct netlink_buffer *buf = sock->buffer;
+
     if (buf == NULL) {
         return false;
     }
@@ -293,7 +308,9 @@ static bool netlink_buffer_has_msg(struct netlink_buffer *buf) {
 }
 
 // Get the length of next message without consuming it
-static size_t netlink_buffer_peek_msg_len(struct netlink_buffer *buf) {
+static size_t netlink_buffer_peek_msg_len(struct netlink_sock *sock) {
+    struct netlink_buffer *buf = sock->buffer;
+
     if (buf == NULL) {
         return 0;
     }
@@ -365,14 +382,13 @@ static void netlink_deliver_historical_messages(struct netlink_sock *sock) {
         if (entry->protocol != sock->protocol)
             continue;
 
-        // 使用按位与检查 groups 是否有交集
-        if ((entry->nl_groups & sock->groups) == 0)
+        if (entry->nl_groups != sock->groups)
             continue;
 
         // 投递消息到 socket buffer
-        size_t written = netlink_buffer_write_packet(
-            sock->buffer, entry->message, entry->length, entry->nl_pid,
-            entry->nl_groups);
+        size_t written =
+            netlink_buffer_write_packet(sock, entry->message, entry->length,
+                                        entry->nl_pid, entry->nl_groups);
 
         if (written == 0) {
             // Buffer 满了，停止投递
@@ -392,7 +408,7 @@ static size_t netlink_deliver_to_socket(struct netlink_sock *target,
         return 0;
     }
 
-    return netlink_buffer_write_packet(target->buffer, data, len, sender_pid,
+    return netlink_buffer_write_packet(target, data, len, sender_pid,
                                        sender_groups);
 }
 
@@ -425,8 +441,8 @@ static void netlink_broadcast_to_group(const char *buf, size_t len,
         spin_lock(&sock->lock);
 
         // 使用按位与检查 groups 是否有交集
-        if (sock->groups & target_groups) {
-            netlink_buffer_write_packet(sock->buffer, buf, len, sender_pid,
+        if (sock->groups == target_groups) {
+            netlink_buffer_write_packet(sock, buf, len, sender_pid,
                                         target_groups);
         }
 
@@ -525,6 +541,31 @@ size_t netlink_setsockopt(uint64_t fd, int level, int optname,
 
     switch (optname) {
     case SO_ATTACH_FILTER:
+        struct sock_fprog *fprog = malloc(optlen);
+        if (copy_from_user(fprog, optval, optlen))
+            return (size_t)-EFAULT;
+        if (!fprog->len)
+            return (size_t)-EINVAL;
+        nl_sk->filter = malloc(sizeof(struct sock_fprog));
+        nl_sk->filter->len = fprog->len;
+        nl_sk->filter->filter =
+            malloc(nl_sk->filter->len * sizeof(struct sock_filter));
+        memset(nl_sk->filter->filter, 0,
+               nl_sk->filter->len * sizeof(struct sock_filter));
+        if (copy_from_user(nl_sk->filter->filter, fprog->filter,
+                           nl_sk->filter->len * sizeof(struct sock_filter))) {
+            free(fprog);
+            free(nl_sk->filter->filter);
+            free(nl_sk->filter);
+            return (size_t)-EFAULT;
+        }
+        free(fprog);
+        break;
+    case SO_DETACH_FILTER:
+        if (nl_sk->filter) {
+            free(nl_sk->filter->filter);
+            free(nl_sk->filter);
+        }
         break;
     case SO_REUSEADDR:
         break;
@@ -576,7 +617,7 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
                    !!(current_task->fd_info->fds[fd]->flags & O_NONBLOCK);
 
     // Check if there's a complete message available
-    bool has_msg = netlink_buffer_has_msg(nl_sk->buffer);
+    bool has_msg = netlink_buffer_has_msg(nl_sk);
     if (!has_msg && noblock) {
         return -EAGAIN;
     }
@@ -584,14 +625,8 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
     // Wait for a complete message if blocking
     while (!has_msg) {
         arch_yield();
-        has_msg = netlink_buffer_has_msg(nl_sk->buffer);
+        has_msg = netlink_buffer_has_msg(nl_sk);
     }
-
-    // 判断是否需要 peek
-    bool peek = !!(flags & MSG_PEEK);
-
-    if (peek)
-        return netlink_buffer_peek_msg_len(nl_sk->buffer);
 
     // 计算用户缓冲区总大小
     size_t total_user_len = 0;
@@ -604,9 +639,8 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
     uint32_t sender_groups = 0;
 
     // Read the complete message into a temporary buffer with sender info
-    size_t bytes_read =
-        netlink_buffer_read_packet(nl_sk->buffer, temp_buf, sizeof(temp_buf),
-                                   &sender_pid, &sender_groups, false);
+    size_t bytes_read = netlink_buffer_read_packet(
+        nl_sk, temp_buf, sizeof(temp_buf), &sender_pid, &sender_groups, false);
     if (bytes_read == 0) {
         return -EAGAIN;
     }
@@ -817,12 +851,12 @@ size_t netlink_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
 
     bool peek = !!(flags & MSG_PEEK);
 
-    size_t msg_len = netlink_buffer_peek_msg_len(nl_sk->buffer);
+    size_t msg_len = netlink_buffer_peek_msg_len(nl_sk);
     if (peek && msg_len > 0)
         return msg_len;
 
     // Check if there's a complete message available
-    bool has_msg = netlink_buffer_has_msg(nl_sk->buffer);
+    bool has_msg = netlink_buffer_has_msg(nl_sk);
     if (!has_msg && noblock) {
         return -EAGAIN;
     }
@@ -830,21 +864,25 @@ size_t netlink_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
     // Wait for a complete message if blocking
     while (!has_msg) {
         arch_yield();
-        has_msg = netlink_buffer_has_msg(nl_sk->buffer);
+        has_msg = netlink_buffer_has_msg(nl_sk);
     }
 
     uint32_t sender_pid = 0;
     uint32_t sender_groups = 0;
 
     // 重新获取消息长度（用于 MSG_TRUNC）
-    msg_len = netlink_buffer_peek_msg_len(nl_sk->buffer);
+    msg_len = netlink_buffer_peek_msg_len(nl_sk);
 
+    char temp_buffer[NETLINK_BUFFER_SIZE];
     // Read the complete message directly into the user buffer
     size_t bytes_read = netlink_buffer_read_packet(
-        nl_sk->buffer, (char *)out, limit, &sender_pid, &sender_groups, false);
+        nl_sk, temp_buffer, limit, &sender_pid, &sender_groups, false);
     if (bytes_read == 0) {
         return -EAGAIN;
     }
+
+    if (copy_to_user(out, temp_buffer, bytes_read))
+        return (size_t)-EFAULT;
 
     // Fill in socket address if requested
     if (addr) {
@@ -951,17 +989,6 @@ uint64_t netlink_socket(int domain, int type, int protocol) {
         return -ENOMEM;
     }
 
-    // If this is a uevent socket (NETLINK_KOBJECT_UEVENT protocol),
-    // automatically subscribe to uevent group and deliver historical messages
-    if (protocol == NETLINK_KOBJECT_UEVENT) {
-        spin_lock(&nl_sk->lock);
-        nl_sk->groups = 1; // Subscribe to uevent group
-
-        // Deliver historical messages
-        netlink_deliver_historical_messages(nl_sk);
-        spin_unlock(&nl_sk->lock);
-    }
-
     uint64_t i;
     for (i = 0; i < MAX_FD_NUM; i++) {
         if (current_task->fd_info->fds[i] == NULL) {
@@ -1021,7 +1048,7 @@ int netlink_poll(void *h, int events) {
     int revents = 0;
 
     if (events & EPOLLIN) {
-        bool has_msg = netlink_buffer_has_msg(nl_sk->buffer);
+        bool has_msg = netlink_buffer_has_msg(nl_sk);
         if (has_msg) {
             revents |= EPOLLIN;
         }
