@@ -1001,8 +1001,6 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
     char pathname[512];
     if (copy_from_user_str(pathname, pathname_user, sizeof(pathname)))
         return (uint64_t)-EFAULT;
-    if (dirfd > MAX_FD_NUM || !current_task->fd_info->fds[dirfd])
-        return (uint64_t)-EBADF;
 
     struct stat simple;
 
@@ -1010,6 +1008,8 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
     struct statx *buff = &res;
 
     if (flags & AT_EMPTY_PATH) {
+        if (dirfd > MAX_FD_NUM || !current_task->fd_info->fds[dirfd])
+            return (uint64_t)-EBADF;
         int ret = do_stat_fd(dirfd, &simple);
         if (ret < 0)
             return ret;

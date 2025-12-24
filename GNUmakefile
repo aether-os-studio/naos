@@ -136,22 +136,23 @@ clean:
 	$(MAKE) -C kernel clean
 	$(MAKE) -C user clean
 	rm -rf $(IMAGE_NAME).img
-	rm -rf initramfs-$(ARCH) obj-modules-$(ARCH) modules-$(ARCH)
+	rm -rf rootfs-$(ARCH) obj-modules-$(ARCH) modules-$(ARCH)
 
 .PHONY: distclean
 distclean:
 	$(MAKE) -C kernel distclean
 	$(MAKE) -C user distclean
 	rm -rf *.img assets
-	rm -rf initramfs-$(ARCH) obj-modules-$(ARCH) modules-$(ARCH)
+	rm -rf rootfs-$(ARCH) obj-modules-$(ARCH) modules-$(ARCH)
 
 clippy:
 	$(MAKE) -C kernel clippy
 
-ROOTFS_IMG_SIZE ?= 2048
+ROOTFS_IMG_SIZE ?= 4096
 
 rootfs-$(ARCH).img: user/.build-stamp-$(ARCH)
-#	TODO: get rootfs image from server
+	dd if=/dev/zero bs=1M count=0 seek=$(ROOTFS_IMG_SIZE) of=rootfs-$(ARCH).img
+	sudo mkfs.ext4 -O ^metadata_csum  -F -q -d user/rootfs-$(ARCH) rootfs-$(ARCH).img
 
 ifeq ($(ARCH),x86_64)
 EFI_FILE_SINGLE = assets/limine/BOOTX64.EFI
@@ -163,7 +164,7 @@ else ifeq ($(ARCH),loongarch64)
 EFI_FILE_SINGLE = assets/limine/BOOTLOONGARCH64.EFI
 endif
 
-$(IMAGE_NAME).img: assets/limine modules kernel initramfs-$(ARCH).img
+$(IMAGE_NAME).img: assets/limine modules kernel initramfs-$(ARCH).img rootfs-$(ARCH).img
 	dd if=/dev/zero of=$(IMAGE_NAME).img bs=1M count=512
 	sgdisk --new=1:1M:511M $(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 $(IMAGE_NAME).img
@@ -188,7 +189,7 @@ endif
 
 TOTAL_IMG_SIZE=$$(( $(ROOTFS_IMG_SIZE) + 32 ))
 
-single-$(IMAGE_NAME).img: assets/limine modules kernel rootfs-$(ARCH).img initramfs-$(ARCH).img
+single-$(IMAGE_NAME).img: assets/limine modules kernel initramfs-$(ARCH).img rootfs-$(ARCH).img
 	dd if=/dev/zero of=single-$(IMAGE_NAME).img bs=1M count=$(TOTAL_IMG_SIZE)
 	sgdisk --new=1:1M:31M --new=2:32M:0 single-$(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 single-$(IMAGE_NAME).img

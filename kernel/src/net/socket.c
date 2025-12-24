@@ -106,7 +106,7 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
                                        const uint8_t *data, size_t len,
                                        int flags, fd_t *fd_handle) {
     if (!peer || peer->closed) {
-        task_commit_signal(current_task, SIGPIPE, NULL);
+        // task_commit_signal(current_task, SIGPIPE, NULL);
         return -EPIPE;
     }
 
@@ -116,7 +116,7 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
     // 等待对端有空间
     while (true) {
         if (peer->closed) {
-            task_commit_signal(current_task, SIGPIPE, NULL);
+            // task_commit_signal(current_task, SIGPIPE, NULL);
             return -EPIPE;
         }
 

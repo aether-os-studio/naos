@@ -178,7 +178,7 @@ fs_t memfdfs = {
     .name = "memfdfs",
     .magic = 0,
     .callback = &callbacks,
-    .flags = FS_FLAGS_HIDDEN,
+    .flags = FS_FLAGS_HIDDEN | FS_FLAGS_VIRTUAL,
 };
 
 void memfd_init() { memfd_fsid = vfs_regist(&memfdfs); }

@@ -84,6 +84,8 @@ void initramfs_init() {
             break;
         if (!strcmp(name, "."))
             goto next;
+        if (vfs_open(name, 0))
+            goto next;
 
         if ((mode & type_mask) == directory_type) {
             vfs_mkdir(name);

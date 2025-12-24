@@ -29,4 +29,4 @@ fi
 
 /bin/echo "Ready to switch root..."
 
-exec /sbin/switch_root /mnt/ /usr/lib/systemd/systemd
+exec /sbin/switch_root /mnt/ /usr/lib/aether/init

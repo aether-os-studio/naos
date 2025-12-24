@@ -77,7 +77,7 @@ void ptmx_open(void *parent, const char *name, vfs_node_t node) {
     node->fsid = ptmx_fsid;
 
     vfs_node_t dev_root = node->parent;
-    llist_delete(&dev_root->node_for_childs);
+    llist_delete(&node->node_for_childs);
     node->parent = NULL;
     vfs_node_t new_node = vfs_node_alloc(dev_root, "ptmx");
     new_node->fsid = ptmx_fsid;
@@ -117,9 +117,7 @@ bool ptmx_close(void *current) {
         pty_pair_cleanup(pair);
     else
         spin_unlock(&pair->lock);
-    free(pair->ptmx_node->name);
-    free(pair->ptmx_node);
-    free(pair);
+    vfs_free(pair->ptmx_node);
     return true;
 }
 

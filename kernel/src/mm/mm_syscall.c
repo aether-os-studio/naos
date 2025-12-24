@@ -239,6 +239,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         vma->vm_type = VMA_TYPE_FILE;
         vfs_node_t node = current_task->fd_info->fds[fd]->node;
         vma->node = node;
+        node->refcount++;
         vma->vm_name = vfs_get_fullpath(node);
         vma->vm_offset = offset;
     }
@@ -496,12 +497,18 @@ static uint64_t mremap_move(vma_manager_t *mgr, vma_t *old_vma,
     new_vma->shm_id = old_vma->shm_id;
     new_vma->vm_offset = old_vma->vm_offset;
 
+    // 增加引用计数
+    if (new_vma->node)
+        new_vma->node->refcount++;
+
     // 复制名称
     if (old_vma->vm_name)
         new_vma->vm_name = strdup(old_vma->vm_name);
 
     // 插入新 VMA
     if (vma_insert(mgr, new_vma) != 0) {
+        if (new_vma->node)
+            new_vma->node->refcount--;
         if (new_vma->vm_name)
             free(new_vma->vm_name);
         vma_free(new_vma);
@@ -530,6 +537,8 @@ static uint64_t mremap_move(vma_manager_t *mgr, vma_t *old_vma,
             old_vma->vm_offset);
         if (ret > (uint64_t)-4095UL) {
             vma_remove(mgr, new_vma);
+            if (new_vma->node)
+                new_vma->node->refcount--;
             if (new_vma->vm_name)
                 free(new_vma->vm_name);
             vma_free(new_vma);
@@ -588,6 +597,9 @@ static uint64_t mremap_move(vma_manager_t *mgr, vma_t *old_vma,
                 tail_vma->vm_type = old_vma->vm_type;
                 tail_vma->node = old_vma->node;
                 tail_vma->shm_id = old_vma->shm_id;
+
+                if (tail_vma->node)
+                    tail_vma->node->refcount++;
 
                 if (old_vma->vm_type == VMA_TYPE_FILE) {
                     tail_vma->vm_offset =

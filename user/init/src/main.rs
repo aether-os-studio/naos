@@ -1,0 +1,264 @@
+use std::{fs::File, io::Read};
+
+fn parse_kernel_cmdline(cmdline: String) -> Option<(String, Vec<String>)> {
+    let mut tokens = Vec::new();
+    let mut current_token = String::new();
+    let mut in_quotes = false;
+    let mut quote_char = '\0';
+
+    for c in cmdline.chars() {
+        match c {
+            '"' | '\'' => {
+                if !in_quotes {
+                    in_quotes = true;
+                    quote_char = c;
+                } else if c == quote_char {
+                    in_quotes = false;
+                    if !current_token.is_empty() {
+                        tokens.push(current_token.clone());
+                        current_token.clear();
+                    }
+                } else {
+                    current_token.push(c);
+                }
+            }
+            ' ' | '\t' if !in_quotes => {
+                if !current_token.is_empty() {
+                    tokens.push(current_token.clone());
+                    current_token.clear();
+                }
+            }
+            _ => {
+                current_token.push(c);
+            }
+        }
+    }
+
+    if !current_token.is_empty() {
+        tokens.push(current_token);
+    }
+
+    for token in tokens {
+        if token.starts_with("init=") {
+            let init_value = &token[5..];
+
+            return parse_command_line(init_value);
+        }
+    }
+
+    None
+}
+
+fn parse_command_line(cmd: &str) -> Option<(String, Vec<String>)> {
+    let cmd = cmd.trim();
+    let cmd = if (cmd.starts_with('"') && cmd.ends_with('"'))
+        || (cmd.starts_with('\'') && cmd.ends_with('\''))
+    {
+        &cmd[1..cmd.len() - 1]
+    } else {
+        cmd
+    };
+
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut quote_char = '\0';
+
+    for c in cmd.chars() {
+        match c {
+            '"' | '\'' => {
+                if !in_quotes {
+                    in_quotes = true;
+                    quote_char = c;
+                } else if c == quote_char {
+                    in_quotes = false;
+                    if !current.is_empty() {
+                        parts.push(current.clone());
+                        current.clear();
+                    }
+                }
+            }
+            ' ' | '\t' if !in_quotes => {
+                if !current.is_empty() {
+                    parts.push(current.clone());
+                    current.clear();
+                }
+            }
+            _ => {
+                current.push(c);
+            }
+        }
+    }
+
+    if !current.is_empty() {
+        parts.push(current);
+    }
+
+    if parts.is_empty() {
+        return None;
+    }
+
+    let program = parts[0].clone();
+    let args = parts[1..].to_vec();
+
+    Some((program, args))
+}
+
+fn main() {
+    println!("aether-init is running...");
+
+    unsafe {
+        // Mount devtmpfs
+        assert!(
+            libc::mount(
+                c"devtmpfs".as_ptr(),
+                c"/dev".as_ptr(),
+                c"devtmpfs".as_ptr(),
+                0,
+                core::ptr::null() as *const _
+            ) == 0
+        );
+        // Mount sysfs
+        assert!(
+            libc::mount(
+                c"sysfs".as_ptr(),
+                c"/sys".as_ptr(),
+                c"sysfs".as_ptr(),
+                0,
+                core::ptr::null() as *const _
+            ) == 0
+        );
+        // Mount procfs
+        assert!(
+            libc::mount(
+                c"proc".as_ptr(),
+                c"/proc".as_ptr(),
+                c"proc".as_ptr(),
+                0,
+                core::ptr::null() as *const _
+            ) == 0
+        );
+        // Mount tmpfs
+        assert!(
+            libc::mount(
+                c"tmpfs".as_ptr(),
+                c"/var".as_ptr(),
+                c"tmpfs".as_ptr(),
+                0,
+                core::ptr::null() as *const _
+            ) == 0
+        );
+        assert!(
+            libc::mount(
+                c"tmpfs".as_ptr(),
+                c"/run".as_ptr(),
+                c"tmpfs".as_ptr(),
+                0,
+                core::ptr::null() as *const _
+            ) == 0
+        );
+        assert!(
+            libc::mount(
+                c"tmpfs".as_ptr(),
+                c"/tmp".as_ptr(),
+                c"tmpfs".as_ptr(),
+                0,
+                core::ptr::null() as *const _
+            ) == 0
+        );
+    }
+
+    unsafe { std::env::set_var("PATH", "/usr/bin:/bin:/sbin") };
+
+    println!("init: Starting seatd");
+    let seatd = unsafe { libc::fork() };
+    if seatd == 0 {
+        unsafe {
+            libc::execl(
+                c"/usr/bin/seatd".as_ptr(),
+                c"seatd".as_ptr(),
+                core::ptr::null::<core::ffi::c_char>(),
+            )
+        };
+        panic!("Failed to exec seatd");
+    } else {
+        assert_ne!(seatd, -1);
+    }
+
+    unsafe { libc::open(c"/run/udev/data/c226:0".as_ptr(), libc::O_CREAT, 0) };
+    unsafe { libc::open(c"/run/udev/data/c13:0".as_ptr(), libc::O_CREAT, 0) };
+    unsafe { libc::open(c"/run/udev/data/c13:1".as_ptr(), libc::O_CREAT, 0) };
+
+    let mut init_cmdline = None;
+
+    let kernel_cmdline_file = File::open("/proc/cmdline");
+    if let Ok(mut cmdline_file) = kernel_cmdline_file {
+        let mut content = String::new();
+        cmdline_file.read_to_string(&mut content).unwrap();
+
+        println!("Got cmdline {}", content);
+        init_cmdline = Some(content)
+    }
+
+    println!("init: Starting init process");
+
+    let init_cmdline = init_cmdline.unwrap_or("init=/bin/bash".to_string());
+
+    let (program, args) = parse_kernel_cmdline(init_cmdline).expect("Invalid kernel cmdline");
+
+    unsafe {
+        std::env::set_var("HOME", "/root");
+        std::env::set_var("XDG_RUNTIME_DIR", "/run");
+        std::env::set_var("SHELL", "/bin/bash");
+        std::env::set_var("MESA_SHADER_CACHE_DISABLE", "1");
+        std::env::set_var("SDL_VIDEODRIVER", "x11");
+        std::env::set_var("SDL_AUDIODRIVER", "dummy");
+        std::env::set_var("WLR_RENDERER_ALLOW_SOFTWARE", "1");
+        // std::env::set_var("WESTON_LIBINPUT_LOG_PRIORITY", "debug");
+    }
+
+    let mut command = std::process::Command::new(program);
+    for arg in args {
+        command.arg(arg);
+    }
+    let mut child = command.spawn().unwrap();
+    let _ = child.wait();
+
+    #[allow(unused)]
+    #[derive(Default)]
+    #[repr(C)]
+    struct VtMode {
+        pub mode: u8,    // 终端模式
+        pub waitv: u8,   // 垂直同步
+        pub relsig: u16, // 释放信号
+        pub acqsig: u16, // 获取信号
+        pub frsig: u16,  // 强制释放信号
+    }
+
+    let mut vt: VtMode = VtMode::default();
+    unsafe {
+        libc::ioctl(1, 0x5601, &mut vt as *mut _);
+        vt.mode = 0;
+        libc::ioctl(1, 0x5602, &mut vt as *mut _);
+    }
+
+    println!("init: Starting shell");
+    let shell = unsafe { libc::fork() };
+    if shell == 0 {
+        unsafe {
+            libc::execl(
+                c"/bin/bash".as_ptr(),
+                c"bash".as_ptr(),
+                core::ptr::null::<core::ffi::c_char>(),
+            )
+        };
+        panic!("Failed to exec shell");
+    } else {
+        assert_ne!(shell, -1);
+    }
+
+    let mut status: i32 = 0;
+    unsafe { libc::waitpid(shell, &mut status as *mut i32, 0) };
+
+    println!("init: shell exited with status: {}", status);
+}

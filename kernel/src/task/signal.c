@@ -248,8 +248,9 @@ uint64_t sys_kill(int pid, int sig) {
 
                     memcpy(&ctx->queue[ctx->queue_head], &info,
                            sizeof(struct signalfd_siginfo));
-                    ctx->queue_head = (ctx->queue_head + 1) % ctx->queue_size;
-                    if (ctx->queue_head == ctx->queue_tail) {
+                    ctx->queue_head = (ctx->queue_head + 1) %
+                    ctx->queue_size; if (ctx->queue_head == ctx->queue_tail)
+                    {
                         ctx->queue_tail =
                             (ctx->queue_tail + 1) % ctx->queue_size;
                     }

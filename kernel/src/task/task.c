@@ -777,6 +777,27 @@ uint64_t task_execve(const char *path_user, const char **argv,
     }
     free(new_envp);
 
+    // if (current_task->ppid != current_task->pid && tasks[current_task->ppid]
+    // &&
+    //     (tasks[current_task->ppid]->fd_info == current_task->fd_info)) {
+    //     current_task->fd_info->ref_count--;
+    //     current_task->fd_info = malloc(sizeof(fd_info_t));
+
+    //     for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+    //         fd_t *fd = tasks[current_task->ppid]->fd_info->fds[i];
+
+    //         if (fd) {
+    //             current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
+    //             memcpy(current_task->fd_info->fds[i], fd, sizeof(fd_t));
+    //             current_task->fd_info->fds[i]->node->refcount++;
+    //         } else {
+    //             current_task->fd_info->fds[i] = NULL;
+    //         }
+    //     }
+
+    //     current_task->fd_info->ref_count++;
+    // }
+
     for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
         if (!current_task->fd_info->fds[i])
             continue;
@@ -1440,7 +1461,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     // child->fd_info = (flags & CLONE_FILES) ? current_task->fd_info
     //                                        : malloc(sizeof(fd_info_t));
-
     child->fd_info = malloc(sizeof(fd_info_t));
 
     // if (!(flags & CLONE_FILES)) {
