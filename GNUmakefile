@@ -9,7 +9,7 @@ export BUILD_MODE ?= debug
 export BOOT_PROTOCOL ?= limine
 
 # mixed or monolithic
-export KERNEL_MODULE ?= mixed
+export KERNEL_MODEL ?= mixed
 
 # Target architecture to build for. Default to x86_64.
 export ARCH ?= x86_64
@@ -148,7 +148,7 @@ distclean:
 clippy:
 	$(MAKE) -C kernel clippy
 
-ROOTFS_IMG_SIZE ?= 4096
+ROOTFS_IMG_SIZE ?= 1024
 
 rootfs-$(ARCH).img: user/.build-stamp-$(ARCH)
 	dd if=/dev/zero bs=1M count=0 seek=$(ROOTFS_IMG_SIZE) of=rootfs-$(ARCH).img
@@ -169,22 +169,22 @@ $(IMAGE_NAME).img: assets/limine modules kernel initramfs-$(ARCH).img rootfs-$(A
 	sgdisk --new=1:1M:511M $(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 $(IMAGE_NAME).img
 	mcopy -i $(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/
-ifeq ($(KERNEL_MODULE), mixed)
+ifeq ($(KERNEL_MODEL), mixed)
 	mcopy -i $(IMAGE_NAME).img@@1M initramfs-$(ARCH).img ::/initramfs.img
 endif
 ifeq ($(BOOT_PROTOCOL), limine)
 	mmd -i $(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/limine
 	mcopy -i $(IMAGE_NAME).img@@1M $(EFI_FILE_SINGLE) ::/EFI/BOOT
 ifeq ($(ARCH), x86_64)
-	mcopy -i $(IMAGE_NAME).img@@1M limine_x86_64_$(KERNEL_MODULE).conf ::/limine/limine.conf
+	mcopy -i $(IMAGE_NAME).img@@1M limine_x86_64_$(KERNEL_MODEL).conf ::/limine/limine.conf
 else
-	mcopy -i $(IMAGE_NAME).img@@1M limine_$(KERNEL_MODULE).conf ::/limine/limine.conf
+	mcopy -i $(IMAGE_NAME).img@@1M limine_$(KERNEL_MODEL).conf ::/limine/limine.conf
 endif
 endif
 ifeq ($(BOOT_PROTOCOL), multiboot2)
 	mmd -i $(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/limine
 	mcopy -i $(IMAGE_NAME).img@@1M $(EFI_FILE_SINGLE) ::/EFI/BOOT
-	mcopy -i $(IMAGE_NAME).img@@1M limine_multiboot2_$(KERNEL_MODULE).conf ::/limine/limine.conf
+	mcopy -i $(IMAGE_NAME).img@@1M limine_multiboot2_$(KERNEL_MODEL).conf ::/limine/limine.conf
 endif
 
 TOTAL_IMG_SIZE=$$(( $(ROOTFS_IMG_SIZE) + 32 ))
@@ -194,16 +194,16 @@ single-$(IMAGE_NAME).img: assets/limine modules kernel initramfs-$(ARCH).img roo
 	sgdisk --new=1:1M:31M --new=2:32M:0 single-$(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 single-$(IMAGE_NAME).img
 	mcopy -i single-$(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/
-ifeq ($(KERNEL_MODULE), mixed)
+ifeq ($(KERNEL_MODEL), mixed)
 	mcopy -i single-$(IMAGE_NAME).img@@1M initramfs-$(ARCH).img ::/initramfs.img
 endif
 ifeq ($(BOOT_PROTOCOL), limine)
 	mmd -i single-$(IMAGE_NAME).img@@1M ::/EFI ::/EFI/BOOT ::/limine
 	mcopy -i single-$(IMAGE_NAME).img@@1M $(EFI_FILE_SINGLE) ::/EFI/BOOT
 ifeq ($(ARCH), x86_64)
-	mcopy -i single-$(IMAGE_NAME).img@@1M limine_x86_64_$(KERNEL_MODULE).conf ::/limine/limine.conf
+	mcopy -i single-$(IMAGE_NAME).img@@1M limine_x86_64_$(KERNEL_MODEL).conf ::/limine/limine.conf
 else
-	mcopy -i single-$(IMAGE_NAME).img@@1M limine_$(KERNEL_MODULE).conf ::/limine/limine.conf
+	mcopy -i single-$(IMAGE_NAME).img@@1M limine_$(KERNEL_MODEL).conf ::/limine/limine.conf
 endif
 endif
 

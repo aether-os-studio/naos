@@ -194,7 +194,7 @@ override ASFILES := $(filter %.S,$(SRCFILES))
 override OBJ := $(addprefix obj-$(ARCH)/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o))
 override HEADER_DEPS := $(addprefix obj-$(ARCH)/,$(CFILES:.c=.c.d) $(ASFILES:.S=.S.d))
 
-ifeq ($(KERNEL_MODULE), monolithic)
+ifeq ($(KERNEL_MODEL), monolithic)
 override CFLAGS += -DMONOLITHIC
 endif
 
