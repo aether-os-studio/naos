@@ -26,6 +26,10 @@ typedef struct arch_context {
     bool dead;
 } arch_context_t;
 
+typedef struct fpu_context {
+
+} fpu_context_t;
+
 #define switch_to(prev, next)                                                  \
     do {                                                                       \
         asm volatile("stp x29, x30, [sp, #-16]!\n\t" /* 保存 fp 和 lr */       \

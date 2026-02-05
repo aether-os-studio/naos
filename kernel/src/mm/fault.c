@@ -35,7 +35,11 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
     vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
 
     if (flags & ARCH_PT_FLAG_COW) {
+#if defined(__aarch64__)
+        flags &= ~ARCH_PT_FLAG_READONLY;
+#else
         flags |= ARCH_PT_FLAG_WRITEABLE;
+#endif
         // flags &= ~ARCH_PT_FLAG_COW;
 
         vma_t *vma =

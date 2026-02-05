@@ -209,7 +209,7 @@ void syscall_handlers_init() {
     syscall_handlers[SYS_GETEGID] = (syscall_handle_t)sys_getegid;
     syscall_handlers[SYS_SETPGID] = (syscall_handle_t)sys_setpgid;
     syscall_handlers[SYS_GETPPID] = (syscall_handle_t)sys_getppid;
-    syscall_handlers[SYS_GETPGRP] = (syscall_handle_t)sys_getpgrp;
+    // syscall_handlers[SYS_GETPGRP] = (syscall_handle_t)sys_getpgrp;
     syscall_handlers[SYS_SETSID] = (syscall_handle_t)sys_setsid;
     // syscall_handlers[SYS_SETREUID] = (syscall_handle_t)sys_setreuid;
     // syscall_handlers[SYS_SETREGID] = (syscall_handle_t)sys_setregid;

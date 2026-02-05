@@ -227,7 +227,11 @@ static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level) {
                     ARCH_READ_PTE_FLAG(phys_to_virt(source_table)[i]);
                 uint64_t paddr = ARCH_READ_PTE(phys_to_virt(source_table)[i]);
                 flags |= ARCH_PT_FLAG_COW;
+#if defined(__aarch64__)
+                flags |= ARCH_PT_FLAG_READONLY;
+#else
                 flags &= ~ARCH_PT_FLAG_WRITEABLE;
+#endif
                 new_table[i] = ARCH_MAKE_PTE(paddr, flags);
                 address_ref(paddr);
                 phys_to_virt(source_table)[i] = ARCH_MAKE_PTE(paddr, flags);

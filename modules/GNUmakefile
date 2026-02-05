@@ -74,13 +74,13 @@ all:
 
 ifeq ($(ARCH), x86_64)
 	$(MAKE) -C e1000
+	$(MAKE) -C vmware_svga
 endif
 
 	$(MAKE) -C nvme
 
 	$(MAKE) -C usb
 	$(MAKE) -C virtio
-	$(MAKE) -C vmware_svga
 # 	$(MAKE) -C nvidia_open
 
 	$(MAKE) -C hub

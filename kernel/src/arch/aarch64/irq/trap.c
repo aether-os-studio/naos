@@ -3,6 +3,7 @@
 #include "irq.h"
 #include <arch/arch.h>
 #include <task/task.h>
+#include <mm/fault.h>
 
 extern const uint64_t kallsyms_address[] __attribute__((weak));
 extern const uint64_t kallsyms_num __attribute__((weak));
@@ -356,7 +357,20 @@ void handle_exception(struct pt_regs *frame) {
 
     if (ec == ESR_ELx_EC_DABT_LOW || ec == ESR_ELx_EC_DABT_CUR) {
         asm volatile("mrs %0, far_el1" : "=r"(fault_addr));
-        printk("fault address = %#018lx", fault_addr);
+        page_fault_result_t result =
+            handle_page_fault(current_task, fault_addr);
+        if (result == PF_RES_OK) {
+            return;
+        } else if (result == PF_RES_SEGF) {
+            printk("Segmentation fault in user space\r\n");
+            task_exit(SIGSEGV + 128);
+        } else if (result == PF_RES_NOMEM) {
+            printk("Out of memory in kernel space\r\n");
+            task_exit(SIGKILL + 128);
+        } else {
+            printk("Unknown page fault result\r\n");
+            task_exit(SIGKILL + 128);
+        }
     }
 
     process_exception(frame, esr, frame->pc);
