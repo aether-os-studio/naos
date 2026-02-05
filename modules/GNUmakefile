@@ -73,7 +73,6 @@ all:
 	mkdir -p ../modules-$(ARCH)
 
 ifeq ($(ARCH), x86_64)
-	$(MAKE) -C ahci
 	$(MAKE) -C e1000
 endif
 
