@@ -115,6 +115,7 @@ static int eventfd_poll(void *file, size_t events) {
 static struct vfs_callback eventfd_callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
+    .remount = (vfs_remount_t)dummy,
     .open = (vfs_open_t)dummy,
     .close = (vfs_close_t)eventfd_close,
     .read = (vfs_read_t)eventfd_read,

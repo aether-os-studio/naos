@@ -187,6 +187,7 @@ int pipefs_stat(void *file, vfs_node_t node) {
 static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
+    .remount = (vfs_remount_t)dummy,
     .open = (vfs_open_t)pipefs_open,
     .close = (vfs_close_t)pipefs_close,
     .read = pipefs_read,

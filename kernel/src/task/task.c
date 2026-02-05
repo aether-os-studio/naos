@@ -414,7 +414,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
                      const char **envp) {
     can_schedule = false;
 
-    char path[128];
+    char path[512];
     strncpy(path, path_user, sizeof(path));
 
     vfs_node_t node = vfs_open(path, 0);
@@ -1364,6 +1364,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     if (flags & CLONE_VFORK) {
         flags |= CLONE_VM;
+        flags |= CLONE_FS;
         flags |= CLONE_FILES;
         flags |= CLONE_SIGHAND;
         flags |= CLONE_THREAD;

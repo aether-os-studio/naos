@@ -63,7 +63,7 @@ typedef struct kernel_timer {
 struct fd;
 typedef struct fd fd_t;
 
-#define MAX_FD_NUM 256
+#define MAX_FD_NUM 512
 
 typedef struct fd_info {
     fd_t *fds[MAX_FD_NUM];

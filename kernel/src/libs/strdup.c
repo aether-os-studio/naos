@@ -6,6 +6,7 @@ char *strdup(const char *s) {
     char *ptr = (char *)malloc(len + 1);
     if (ptr == NULL)
         return NULL;
-    memcpy(ptr, (void *)s, len + 1);
+    memcpy(ptr, (void *)s, len);
+    ptr[len] = '\0';
     return ptr;
 }

@@ -326,6 +326,7 @@ static int epoll_poll(void *file, size_t event) {
 static struct vfs_callback epoll_callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
+    .remount = (vfs_remount_t)dummy,
     .open = (vfs_open_t)dummy,
     .close = epollfs_close,
     .read = (vfs_read_t)dummy,

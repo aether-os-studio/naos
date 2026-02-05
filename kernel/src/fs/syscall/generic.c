@@ -38,25 +38,7 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
         if (!old_mount)
             return (uint64_t)-EINVAL;
 
-        if (!old_mount->root || old_mount->root != old_mount) {
-            return (uint64_t)-EINVAL;
-        }
-
-        if (old_mount == dir)
-            return (uint64_t)-EINVAL;
-
-        uint64_t dev = old_mount->rdev;
-        uint32_t fsid = old_mount->fsid;
-        if (fsid == 0 || fsid >= 256 || !all_fs[fsid])
-            return (uint64_t)-EINVAL;
-        const char *fs_name = all_fs[fsid]->name;
-
-        int ret = vfs_unmount(devname);
-        if (ret)
-            return ret;
-
-        vfs_unmount(dirname);
-        return vfs_mount(dev, dir, fs_name);
+        return vfs_remount(old_mount, dir);
     }
 
     uint64_t dev_nr = 0;

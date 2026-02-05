@@ -6,6 +6,7 @@
 #include <mm/page_table.h>
 #include <arch/arch.h>
 #include <mm/vma.h>
+#include <mm/alloc.h>
 
 #define MAX_USABLE_REGIONS_COUNT 128
 
@@ -39,11 +40,6 @@ void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size);
 uint64_t map_change_attribute(uint64_t *pml4, uint64_t vaddr, uint64_t flags);
 uint64_t map_change_attribute_range(uint64_t *pgdir, uint64_t vaddr,
                                     uint64_t len, uint64_t flags);
-
-void *malloc(size_t size);
-void *calloc(size_t num, size_t size);
-void free(void *ptr);
-void *realloc(void *ptr, size_t size);
 
 typedef struct {
     uintptr_t addr;

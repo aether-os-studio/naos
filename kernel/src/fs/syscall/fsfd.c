@@ -772,6 +772,7 @@ static int dummy() { return 0; }
 static struct vfs_callback fsfd_callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
+    .remount = (vfs_remount_t)dummy,
     .open = (vfs_open_t)dummy,
     .close = (vfs_close_t)fsfdfs_close,
     .read = (vfs_read_t)fsfdfs_read,
@@ -798,6 +799,7 @@ static struct vfs_callback fsfd_callbacks = {
 static struct vfs_callback mntfd_callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
+    .remount = (vfs_remount_t)dummy,
     .open = (vfs_open_t)dummy,
     .close = (vfs_close_t)mntfd_close,
     .read = (vfs_read_t)fsfdfs_read,

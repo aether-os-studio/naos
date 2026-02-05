@@ -132,6 +132,7 @@ static struct vfs_callback callbacks = {
     .poll = (vfs_poll_t)dummy,
     .mount = (vfs_mount_t)cgroupfs_mount,
     .unmount = (vfs_unmount_t)cgroupfs_unmount,
+    .remount = (vfs_remount_t)dummy,
     .resize = (vfs_resize_t)dummy,
 
     .free_handle = cgroupfs_free_handle,

@@ -106,6 +106,7 @@ static int dummy() { return 0; }
 static struct vfs_callback callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
+    .remount = (vfs_remount_t)dummy,
     .open = (vfs_open_t)dummy,
     .close = (vfs_close_t)memfd_close,
     .read = (vfs_read_t)memfd_read,

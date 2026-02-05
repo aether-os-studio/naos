@@ -17,16 +17,28 @@ extern "C" {
 #endif // __cplusplus
 
 /**
- * Initializes the heap memory arena.
+ * Initializes (or RESETS) the heap memory arena.
  *
- * # Safety
- * - `address` must be a valid pointer to the start of a memory block.
- * - `size` must be the correct size of that memory block.
- * - This function should only be called once.
- * - The memory block should ideally be aligned to at least
- * `align_of::<Metadata>()`.
+ * # Warning
+ * Calling this function a second time will **wipe** the allocator state.
+ * Any pointers allocated before the reset will become "leaked" (safe to use,
+ * but calling free() on them later is Undefined Behavior/Double Free because
+ * the new allocator doesn't know about them).
  */
 bool heap_init(uint8_t *address, size_t size);
+
+/**
+ * Extends the heap with a new memory block.
+ *
+ * # Safety
+ * - `address` must be a valid pointer to the start of a new, available memory
+ * block.
+ * - `size` must be the correct size of that memory block.
+ * - The memory block must not overlap with currently managed memory (unless
+ * extending the end).
+ * - Thread safety is handled internally by the allocator lock.
+ */
+bool heap_extend(uint8_t *address, size_t size);
 
 /**
  * Sets a custom error handler function to be called on heap errors.
@@ -61,6 +73,16 @@ size_t usable_size(void *ptr);
  * null) and eventually freeing it with `free`.
  */
 void *malloc(size_t size);
+
+/**
+ * Allocates memory for an array of `nmemb` elements of `size` bytes each
+ * and initializes all bytes in the allocated storage to zero.
+ *
+ * # Safety
+ * Caller is responsible for handling the returned pointer and freeing it.
+ * Returns NULL on integer overflow or allocation failure.
+ */
+void *calloc(size_t nmemb, size_t size);
 
 /**
  * Allocates memory with specified alignment.

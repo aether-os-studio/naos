@@ -182,9 +182,9 @@ void syscall_handler_init() {
     syscall_handlers[SYS_MSYNC] = (syscall_handle_t)sys_msync;
     syscall_handlers[SYS_MINCORE] = (syscall_handle_t)sys_mincore;
     syscall_handlers[SYS_MADVISE] = (syscall_handle_t)dummy_syscall_handler;
-    syscall_handlers[SYS_SHMGET] = (syscall_handle_t)sys_shmget;
-    syscall_handlers[SYS_SHMAT] = (syscall_handle_t)sys_shmat;
-    syscall_handlers[SYS_SHMCTL] = (syscall_handle_t)sys_shmctl;
+    // syscall_handlers[SYS_SHMGET] = (syscall_handle_t)sys_shmget;
+    // syscall_handlers[SYS_SHMAT] = (syscall_handle_t)sys_shmat;
+    // syscall_handlers[SYS_SHMCTL] = (syscall_handle_t)sys_shmctl;
     syscall_handlers[SYS_DUP] = (syscall_handle_t)sys_dup;
     syscall_handlers[SYS_DUP2] = (syscall_handle_t)sys_dup2;
     syscall_handlers[SYS_PAUSE] = (syscall_handle_t)dummy_syscall_handler;
@@ -220,7 +220,7 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_SEMGET] = (syscall_handle_t)sys_semget;
     // syscall_handlers[SYS_SEMOP] = (syscall_handle_t)sys_semop;
     // syscall_handlers[SYS_SEMCTL] = (syscall_handle_t)sys_semctl;
-    syscall_handlers[SYS_SHMDT] = (syscall_handle_t)sys_shmdt;
+    // syscall_handlers[SYS_SHMDT] = (syscall_handle_t)sys_shmdt;
     // syscall_handlers[SYS_MSGGET] = (syscall_handle_t)sys_msgget;
     // syscall_handlers[SYS_MSGSND] = (syscall_handle_t)sys_msgsnd;
     // syscall_handlers[SYS_MSGRCV] = (syscall_handle_t)sys_msgrcv;

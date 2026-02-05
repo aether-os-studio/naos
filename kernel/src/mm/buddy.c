@@ -668,7 +668,8 @@ uintptr_t alloc_frames_dma32(size_t count) {
 #endif
 
 ret:
-    bitmap_set(&usable_regions, addr / DEFAULT_PAGE_SIZE, true);
+    bitmap_set_range(&using_regions, addr / DEFAULT_PAGE_SIZE,
+                     addr / DEFAULT_PAGE_SIZE + count, true);
     for (uint64_t a = addr; a < (addr + count * DEFAULT_PAGE_SIZE);
          a += DEFAULT_PAGE_SIZE) {
         page_t *p = get_page(a);

@@ -590,6 +590,7 @@ static int dummy() { return 0; }
 static struct vfs_callback ptmx_callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
+    .remount = (vfs_remount_t)dummy,
     .open = (vfs_open_t)ptmx_open,
     .close = (vfs_close_t)ptmx_close,
     .read = (vfs_read_t)ptmx_read,
@@ -616,6 +617,7 @@ static struct vfs_callback ptmx_callbacks = {
 static struct vfs_callback pts_callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
+    .remount = (vfs_remount_t)dummy,
     .open = (vfs_open_t)pts_open,
     .close = (vfs_close_t)pts_close,
     .read = (vfs_read_t)pts_read,

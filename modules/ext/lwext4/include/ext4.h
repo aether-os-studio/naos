@@ -148,6 +148,8 @@ int ext4_mount(const char *dev_name, const char *mount_point, bool read_only);
  * @return  Standard error code */
 int ext4_umount(const char *mount_point);
 
+int ext4_remount(const char *old_mount_point, const char *new_mount_point);
+
 /**@brief   Starts journaling. Journaling start/stop functions are transparent
  *          and might be used on filesystems without journaling support.
  * @warning Usage:

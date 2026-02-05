@@ -9,15 +9,15 @@ spinlock_t rwlock = SPIN_INIT;
 
 extern uint64_t device_dev_nr;
 
-int ext_mount(uint64_t dev, vfs_node_t node) {
-    spin_lock(&rwlock);
+void mp_lock(void) {}
+void mp_unlock(void) {}
 
-    device_dev_nr = dev;
+const struct ext4_lock mp_os_lock = {
+    .lock = mp_lock,
+    .unlock = mp_unlock,
+};
 
-    ext4_device_register(device_dev_get(), "dev");
-
-    device_dev_name_set("dev");
-
+char *get_mp(vfs_node_t node) {
     char *mount_point = vfs_get_fullpath(node);
     size_t mp_len = strlen(mount_point);
     if (mount_point[mp_len - 1] != '/') {
@@ -28,8 +28,29 @@ int ext_mount(uint64_t dev, vfs_node_t node) {
         free(mount_point);
         mount_point = new_mount_point;
     }
-    int ret = ext4_mount("dev", (const char *)mount_point, false);
+    return mount_point;
+}
 
+int ext_mount(uint64_t dev, vfs_node_t node) {
+    spin_lock(&rwlock);
+
+    device_dev_nr = dev;
+
+    ext4_device_register(device_dev_get(), "dev");
+
+    device_dev_name_set("dev");
+
+    char *mount_point = get_mp(node);
+
+    int ret = ext4_mount("dev", (const char *)mount_point, false);
+    if (ret != 0) {
+        ext4_device_unregister("dev");
+        free(mount_point);
+        spin_unlock(&rwlock);
+        return -ret;
+    }
+
+    ret = ext4_mount_setup_locks((const char *)mount_point, &mp_os_lock);
     if (ret != 0) {
         ext4_device_unregister("dev");
         free(mount_point);
@@ -106,6 +127,57 @@ void ext_unmount(vfs_node_t node) {
     }
 }
 
+int ext_remount(vfs_node_t old, vfs_node_t node) {
+    spin_lock(&rwlock);
+
+    char *old_mp_path = get_mp(old);
+    char *new_mp_path = get_mp(node);
+
+    int ret =
+        ext4_remount((const char *)old_mp_path, (const char *)new_mp_path);
+    if (ret != 0) {
+        free(old_mp_path);
+        free(new_mp_path);
+        spin_unlock(&rwlock);
+        return -ret;
+    }
+
+    vfs_merge_nodes_to(node, old);
+
+    ext4_dir *dir = malloc(sizeof(ext4_dir));
+    ext4_dir_open(dir, (const char *)new_mp_path);
+
+    const ext4_direntry *entry;
+    while ((entry = ext4_dir_entry_next(dir))) {
+        if (!strcmp((const char *)entry->name, ".") ||
+            !strcmp((const char *)entry->name, ".."))
+            continue;
+        vfs_node_t exist = vfs_child_find(node, (const char *)entry->name);
+        if (exist) {
+            vfs_free(exist);
+        }
+        vfs_node_t child =
+            vfs_child_append(node, (const char *)entry->name, NULL);
+        child->inode = (uint64_t)entry->inode;
+        child->fsid = ext_fsid;
+        if (entry->inode_type == EXT4_DE_SYMLINK)
+            child->type = file_symlink;
+        else if (entry->inode_type == EXT4_DE_DIR)
+            child->type = file_dir;
+        else
+            child->type = file_none;
+    }
+
+    ext4_dir_close(dir);
+
+    free(old_mp_path);
+    free(new_mp_path);
+
+    spin_unlock(&rwlock);
+
+    return ret;
+}
+
 void ext_open(void *parent, const char *name, vfs_node_t node) {
     spin_lock(&rwlock);
 
@@ -116,9 +188,10 @@ void ext_open(void *parent, const char *name, vfs_node_t node) {
         handle->dir = malloc(sizeof(ext4_dir));
         int ret = ext4_dir_open(handle->dir, (const char *)path);
         if (ret != 0) {
-            printk("Failed to open dir %s\n", path);
-            free(path);
+            printk("Failed to open directory: %s\n", path);
+            free(handle->dir);
             free(handle);
+            free(path);
             spin_unlock(&rwlock);
             return;
         }
@@ -149,7 +222,15 @@ void ext_open(void *parent, const char *name, vfs_node_t node) {
         handle->ptr = NULL;
     } else if (node->type & file_none) {
         handle->file = malloc(sizeof(ext4_file));
-        ext4_fopen(handle->file, (const char *)path, "r+b");
+        int ret = ext4_fopen(handle->file, (const char *)path, "r+b");
+        if (ret != 0) {
+            printk("Failed to open file: %s\n", path);
+            free(handle->file);
+            free(handle);
+            free(path);
+            spin_unlock(&rwlock);
+            return;
+        }
         node->size = ext4_fsize(handle->file);
     } else {
         handle->ptr = NULL;
@@ -177,6 +258,7 @@ bool ext_close(void *current) {
         ext4_dir_close(handle->dir);
     else if (handle->node->type & file_none)
         ext4_fclose(handle->file);
+    free(handle->ptr);
     handle->ptr = NULL;
     handle->node->handle = NULL;
     free(handle);
@@ -516,6 +598,7 @@ void ext_free_handle(ext_handle_t *handle) { free(handle); }
 static struct vfs_callback callbacks = {
     .mount = ext_mount,
     .unmount = ext_unmount,
+    .remount = ext_remount,
     .open = ext_open,
     .close = (vfs_close_t)ext_close,
     .read = (vfs_read_t)ext_read,

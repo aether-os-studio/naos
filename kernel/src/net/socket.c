@@ -1157,6 +1157,7 @@ socket_op_t socket_ops = {
 static struct vfs_callback socket_callback = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
+    .remount = (vfs_remount_t)dummy,
     .open = (vfs_open_t)dummy,
     .close = (vfs_close_t)socket_close,
     .read = (vfs_read_t)socket_read,

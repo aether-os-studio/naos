@@ -44,6 +44,7 @@ typedef struct fd {
 
 typedef int (*vfs_mount_t)(uint64_t dev, vfs_node_t node);
 typedef void (*vfs_unmount_t)(vfs_node_t node);
+typedef int (*vfs_remount_t)(vfs_node_t old, vfs_node_t node);
 
 /**
  *\brief 打开一个文件
@@ -136,6 +137,7 @@ static inline void vfs_generic_free_handle(void *handle) {
 typedef struct vfs_callback {
     vfs_mount_t mount;
     vfs_unmount_t unmount;
+    vfs_remount_t remount;
     vfs_open_t open;
     vfs_close_t close;
     vfs_read_t read;
@@ -377,6 +379,7 @@ int vfs_mount(uint64_t dev, vfs_node_t node, const char *type);
  *\return 0 成功，-1 失败
  */
 int vfs_unmount(const char *path);
+int vfs_remount(vfs_node_t old, vfs_node_t node);
 
 /**
  *\brief 关闭文件

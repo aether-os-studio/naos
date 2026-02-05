@@ -55,7 +55,8 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
 }
 
 void vfs_free_handle(vfs_node_t node) {
-    callbackof(node, free_handle)(node->handle);
+    if (node->handle)
+        callbackof(node, free_handle)(node->handle);
 }
 
 void vfs_free(vfs_node_t vfs) {
@@ -67,10 +68,10 @@ void vfs_free(vfs_node_t vfs) {
             vfs_free(child);
         }
     }
+    llist_delete(&vfs->node);
     vfs_free_handle(vfs);
     if (vfs->parent)
         llist_delete(&vfs->node_for_childs);
-    llist_delete(&vfs->node);
     free(vfs->name);
     free(vfs);
 }
@@ -829,6 +830,28 @@ int vfs_mount(uint64_t dev, vfs_node_t node, const char *type) {
         }
     }
     return -ENOENT;
+}
+
+int vfs_remount(vfs_node_t old, vfs_node_t node) {
+    int ret = callbackof(old, remount)(old, node);
+    if (ret < 0) {
+        return ret;
+    }
+    struct mount_point *target = NULL;
+    struct mount_point *mnt, *tmp;
+    llist_for_each(mnt, tmp, &mount_points, node) {
+        if (mnt->dir == old) {
+            target = mnt;
+            break;
+        }
+    }
+    if (!target)
+        return -ENOENT;
+    char *devname = strdup(target->devname);
+    vfs_delete_mount_point_by_dir(old);
+    vfs_add_mount_point(node, devname);
+    free(devname);
+    return 0;
 }
 
 void vfs_add_mount_point(vfs_node_t dir, char *devname) {

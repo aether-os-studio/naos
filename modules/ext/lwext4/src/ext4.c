@@ -456,7 +456,6 @@ Finish:
 
 static struct ext4_mountpoint *ext4_get_mount(const char *path) {
     for (size_t i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT; ++i) {
-
         if (!s_mp[i].mounted)
             continue;
 
@@ -465,6 +464,17 @@ static struct ext4_mountpoint *ext4_get_mount(const char *path) {
     }
 
     return NULL;
+}
+
+int ext4_remount(const char *old_mount_point, const char *new_mount_point) {
+    struct ext4_mountpoint *mp = ext4_get_mount(old_mount_point);
+    if (!mp)
+        return ENOENT;
+    if (strlen(new_mount_point) > CONFIG_EXT4_MAX_MP_NAME)
+        return EINVAL;
+    memset(mp->name, 0, CONFIG_EXT4_MAX_MP_NAME + 1);
+    strncpy(mp->name, new_mount_point, CONFIG_EXT4_MAX_MP_NAME);
+    return EOK;
 }
 
 __unused static int __ext4_journal_start(const char *mount_point) {

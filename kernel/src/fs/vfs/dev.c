@@ -271,6 +271,7 @@ static struct vfs_callback callbacks = {
     .poll = (vfs_poll_t)devtmpfs_poll,
     .mount = (vfs_mount_t)devtmpfs_mount,
     .unmount = (vfs_unmount_t)devtmpfs_unmount,
+    .remount = (vfs_remount_t)dummy,
     .resize = (vfs_resize_t)devtmpfs_resize,
 
     .free_handle = devtmpfs_free_handle,
@@ -455,6 +456,17 @@ static uint64_t simple_rand() {
     return ((uint64_t)seed << 32) | seed;
 }
 
+ssize_t zerodev_read(void *data, void *buf, uint64_t offset, uint64_t len,
+                     uint64_t flags) {
+    memset(buf, 0, len);
+    return len;
+}
+
+ssize_t zerodev_write(void *data, const void *buf, uint64_t offset,
+                      uint64_t len, uint64_t flags) {
+    return 0;
+}
+
 ssize_t urandom_read(void *data, void *buf, uint64_t offset, uint64_t len,
                      uint64_t flags) {
     for (uint64_t i = 0; i < len; i++) {
@@ -495,6 +507,8 @@ void devfs_nodes_init() {
 
     device_install(DEV_CHAR, DEV_SYSDEV, NULL, "null", 0, nulldev_ioctl, NULL,
                    nulldev_read, nulldev_write, NULL);
+    device_install(DEV_CHAR, DEV_SYSDEV, NULL, "zero", 0, NULL, NULL,
+                   zerodev_read, zerodev_write, NULL);
     device_install(DEV_CHAR, DEV_SYSDEV, NULL, "urandom", 0, NULL, NULL,
                    urandom_read, urandom_write, NULL);
 
