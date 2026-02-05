@@ -978,38 +978,37 @@ void task_exit_inner(task_t *task, int64_t code) {
     if (!task->is_clone && task->ppid && task->pid != task->ppid &&
         task->ppid < MAX_TASK_NUM && tasks[task->ppid]) {
         task_t *parent = tasks[task->ppid];
-        // sigaction_t *sa = &parent->signal->actions[SIGCHLD];
 
-        // if (code > 128) {
-        //     return;
-        // }
+        sigaction_t *sa = &parent->signal->actions[SIGCHLD];
 
-        // if (sa->sa_handler != SIG_IGN || (sa->sa_flags & SA_NOCLDWAIT)) {
-        //     if (sa->sa_handler != SIG_IGN && sa->sa_handler != SIG_DFL) {
-        //         siginfo_t sigchld_info;
-        //         sigchld_info.si_signo = SIGCHLD;
-        //         sigchld_info.__si_fields.__si_common.__first.__piduid.si_pid
-        //         =
-        //             task->pid;
-        //         sigchld_info.__si_fields.__si_common.__first.__piduid.si_uid
-        //         =
-        //             task->uid;
-        //         sigchld_info.si_code = code;
-        //         sigchld_info.__si_fields.__si_common.__second.__sigchld
-        //             .si_status = CLD_EXITED;
-        //         sigchld_info.__si_fields.__si_common.__second.__sigchld
-        //             .si_utime = nano_time();
-        //         sigchld_info.__si_fields.__si_common.__second.__sigchld
-        //             .si_stime = nano_time();
-        //         task_commit_signal(parent, SIGCHLD, &sigchld_info);
-        //     }
+        if (code > 128) {
+            return;
+        }
 
-        //     if (sa->sa_flags & SA_NOCLDWAIT) {
-        //         task->should_free = true;
-        //     } else if (sa->sa_handler == SIG_IGN) {
-        //         // 只是忽略信号，不立即释放
-        //     }
-        // }
+        if (sa->sa_handler != SIG_IGN || (sa->sa_flags & SA_NOCLDWAIT)) {
+            if (sa->sa_handler != SIG_IGN && sa->sa_handler != SIG_DFL) {
+                siginfo_t sigchld_info;
+                sigchld_info.si_signo = SIGCHLD;
+                sigchld_info.__si_fields.__si_common.__first.__piduid.si_pid =
+                    task->pid;
+                sigchld_info.__si_fields.__si_common.__first.__piduid.si_uid =
+                    task->uid;
+                sigchld_info.si_code = code;
+                sigchld_info.__si_fields.__si_common.__second.__sigchld
+                    .si_status = CLD_EXITED;
+                sigchld_info.__si_fields.__si_common.__second.__sigchld
+                    .si_utime = nano_time();
+                sigchld_info.__si_fields.__si_common.__second.__sigchld
+                    .si_stime = nano_time();
+                task_commit_signal(parent, SIGCHLD, &sigchld_info);
+            }
+
+            if (sa->sa_flags & SA_NOCLDWAIT) {
+                task->should_free = true;
+            } else if (sa->sa_handler == SIG_IGN) {
+                // 只是忽略信号，不立即释放
+            }
+        }
 
         for (int i = 0; i < MAX_FD_NUM; i++) {
             fd_t *fd = parent->fd_info->fds[i];

@@ -242,8 +242,8 @@ size_t real_socket_getpeername(uint64_t fd, struct sockaddr_un *addr,
     return lwip_out;
 }
 
-size_t real_socket_getsockopt(uint64_t fd, int level, int optname,
-                              const void *optval, socklen_t *optlen) {
+size_t real_socket_getsockopt(uint64_t fd, int level, int optname, void *optval,
+                              socklen_t *optlen) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     real_socket_t *sock = handle->sock;
 

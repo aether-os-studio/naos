@@ -111,7 +111,7 @@ vfs_node_t vfs_get_real_node(vfs_node_t node) {
     if (!(node->type & file_symlink))
         return node;
 
-    char target_path[256];
+    char target_path[512];
     memset(target_path, 0, sizeof(target_path));
     int len = vfs_readlink(node, target_path, sizeof(target_path));
     target_path[len] = '\0';
@@ -130,8 +130,9 @@ static inline void do_open(vfs_node_t file) {
 }
 
 static inline void do_update(vfs_node_t file) {
-    if (file->type & file_none || file->type & file_dir ||
-        file->type & file_symlink || file->handle == NULL)
+    if ((file->type & file_none || file->type & file_dir ||
+         file->type & file_symlink) &&
+        file->handle == NULL)
         do_open(file);
 }
 
@@ -689,7 +690,7 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, uint64_t flags) {
         do_update(current);
 
         if (current->type & file_symlink) {
-            char target_path[256];
+            char target_path[512];
             int len = vfs_readlink(current, target_path, sizeof(target_path));
             target_path[len] = '\0';
             vfs_node_t target_node =
@@ -967,14 +968,12 @@ int vfs_poll(vfs_node_t node, size_t event) {
     return ret;
 }
 
-spinlock_t get_fullpath_lock = SPIN_INIT;
-
 // 使用请记得free掉返回的buff
 char *vfs_get_fullpath(vfs_node_t node) {
     if (node == NULL)
         return NULL;
-    spin_lock(&get_fullpath_lock);
-    int inital = 16;
+
+    int inital = 32;
     vfs_node_t *nodes = (vfs_node_t *)malloc(sizeof(vfs_node_t) * inital);
     int count = 0;
     for (vfs_node_t cur = node; cur; cur = cur->parent) {
@@ -986,9 +985,8 @@ char *vfs_get_fullpath(vfs_node_t node) {
         nodes[count++] = cur;
     }
 
-    // 正常的路径都不应该超过这个数值
-    char *buff = (char *)malloc(256);
-    memset(buff, 0, 256);
+    char *buff = (char *)malloc(512);
+    memset(buff, 0, 512);
     strcpy(buff, "/");
     for (int j = count - 1; j >= 0; j--) {
         if (nodes[j] == (rootdir))
@@ -1000,7 +998,6 @@ char *vfs_get_fullpath(vfs_node_t node) {
     }
 
     free(nodes);
-    spin_unlock(&get_fullpath_lock);
 
     return buff;
 }

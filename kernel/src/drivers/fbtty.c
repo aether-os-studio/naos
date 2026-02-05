@@ -18,26 +18,16 @@ size_t terminal_read(tty_t *device, char *buf, size_t count) {
         char c;
         bool got = false;
 
-        // 优先从键盘读取
         if (kb_available() > 0) {
             int n = kb_read(&c, 1);
             if (n > 0) {
                 got = true;
             }
         }
-        // 否则尝试从串口读取（封装后的通用接口）
-        else {
-            c = read_serial();
-            if (c != 0) {
-                got = true;
-            }
-        }
 
-        // 有数据就写入缓冲区
         if (got) {
             buf[read++] = c;
         } else {
-            // 都没数据，允许调度/等待
             arch_yield();
         }
     }
