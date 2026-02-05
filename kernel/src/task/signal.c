@@ -193,6 +193,25 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
     return sig;
 }
 
+uint64_t sys_rt_sigqueueinfo(uint64_t tgid, uint64_t sig, siginfo_t *info) {
+    if (tgid >= MAX_TASK_NUM) {
+        return -EINVAL;
+    }
+    task_t *task = tasks[tgid];
+    if (!task) {
+        return -ESRCH;
+    }
+    siginfo_t kinfo;
+    if (copy_from_user(&kinfo, info, sizeof(siginfo_t))) {
+        return -EFAULT;
+    }
+    if (task->signal->pending_signal.sig != 0) {
+        return -EAGAIN;
+    }
+    task_commit_signal(task, sig, &kinfo);
+    return 0;
+}
+
 uint64_t sys_sigsuspend(const sigset_t *mask) {
     sigset_t old = current_task->signal->blocked;
 

@@ -73,6 +73,7 @@ void sys_sigreturn(struct pt_regs *regs);
 uint64_t sys_sigsuspend(const sigset_t *mask);
 uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
                              const struct timespec *uts, size_t sigsetsize);
+uint64_t sys_rt_sigqueueinfo(uint64_t tgid, uint64_t sig, siginfo_t *info);
 uint64_t sys_kill(int pid, int sig);
 
 struct sigevent {
