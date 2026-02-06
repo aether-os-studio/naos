@@ -23,6 +23,8 @@ void devtmpfs_open(void *parent, const char *name, vfs_node_t node) {}
 
 bool devtmpfs_close(void *current) { return false; }
 
+#define MAX_DEVTMPFS_FILE_SIZE (128 * 1024 * 1024) // 128MB
+
 ssize_t devtmpfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
         return device_read(fd->node->rdev, addr, offset, size, fd->flags);
@@ -45,7 +47,13 @@ ssize_t devtmpfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     devtmpfs_node_t *handle = fd->node->handle;
     if (offset + size > handle->capability) {
         size_t new_capability = offset + size;
+        if (new_capability > MAX_DEVTMPFS_FILE_SIZE) {
+            return -EFBIG;
+        }
         void *new_content = alloc_frames_bytes(new_capability);
+        if (!new_content) {
+            return -ENOMEM;
+        }
         memcpy(new_content, handle->content, handle->capability);
         free_frames_bytes(handle->content, handle->capability);
         handle->content = new_content;

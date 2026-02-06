@@ -6,6 +6,8 @@
 #include <net/netlink.h>
 #include <mm/mm_syscall.h>
 
+#define MAX_TMPFS_FILE_SIZE (128 * 1024 * 1024) // 128MB
+
 int tmpfs_fsid = 0;
 
 spinlock_t tmpfs_oplock = SPIN_INIT;
@@ -41,6 +43,10 @@ ssize_t tmpfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     tmpfs_node_t *handle = fd->node->handle;
     if (offset + size > handle->capability) {
         size_t new_capability = offset + size;
+        if (new_capability > MAX_TMPFS_FILE_SIZE) {
+            spin_unlock(&tmpfs_oplock);
+            return -EFBIG;
+        }
         void *new_content = alloc_frames_bytes(new_capability);
         if (!new_content) {
             spin_unlock(&tmpfs_oplock);
