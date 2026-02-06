@@ -246,28 +246,38 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         vma->vm_offset = offset;
     }
 
-    if (vma_insert(mgr, vma) != 0) {
-        vma_free(vma);
-        spin_unlock(&mgr->lock);
-        return (uint64_t)-ENOMEM;
-    }
-
     spin_unlock(&mgr->lock);
 
-    if (!(flags & MAP_ANONYMOUS)) {
-        uint64_t ret =
-            (uint64_t)vfs_map(current_task->fd_info->fds[fd], start_addr,
-                              aligned_len, prot, flags, offset);
+    uint64_t ret = 0;
 
-        return ret;
+    if (!(flags & MAP_ANONYMOUS)) {
+        if (current_task->fd_info->fds[fd]->node->type & file_dir) {
+            vma_free(vma);
+            return (uint64_t)-EISDIR;
+        }
+
+        ret = (uint64_t)vfs_map(current_task->fd_info->fds[fd], start_addr,
+                                aligned_len, prot, flags, offset);
     } else {
         uint64_t pt_flags = PT_FLAG_R | PT_FLAG_W | PT_FLAG_U;
 
         map_page_range(get_current_page_dir(true), start_addr, 0, aligned_len,
                        pt_flags);
 
-        return start_addr;
+        ret = start_addr;
     }
+
+    if ((int64_t)ret < 0) {
+        vma_free(vma);
+        return ret;
+    }
+
+    if (vma_insert(mgr, vma) != 0) {
+        vma_free(vma);
+        return (uint64_t)-ENOMEM;
+    }
+
+    return ret;
 }
 
 uint64_t do_munmap(uint64_t addr, uint64_t size) {
