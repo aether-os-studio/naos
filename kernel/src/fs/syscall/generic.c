@@ -47,6 +47,19 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
         dev_nr = dev->rdev;
     }
 
+    int child_count = 0;
+    vfs_node_t pos, tmp;
+    llist_for_each(pos, tmp, &dir->childs, node_for_childs) { child_count++; }
+    vfs_node_t *childs = calloc(child_count, sizeof(vfs_node_t));
+    int i = 0;
+    llist_for_each(pos, tmp, &dir->childs, node_for_childs) {
+        childs[i++] = pos;
+    }
+    for (i = 0; i < child_count; i++) {
+        vfs_free(childs[i]);
+    }
+    free(childs);
+
     int ret = vfs_mount(dev_nr, dir, (const char *)type);
     if (ret < 0)
         return ret;
@@ -568,7 +581,6 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count) {
 
 #define DIRENT_HEADER_SIZE offsetof(struct dirent, d_name)
 
-// 对齐到 8 字节（Linux 要求）
 static inline size_t dirent_reclen(size_t name_len) {
     return (DIRENT_HEADER_SIZE + name_len + 1 + 7) & ~7;
 }

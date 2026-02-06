@@ -111,9 +111,6 @@ int sysfs_mount(uint64_t dev, vfs_node_t node) {
 
     spin_lock(&sysfs_oplock);
 
-    vfs_node_t pos, tmp;
-    llist_for_each(pos, tmp, &node->childs, node_for_childs) { vfs_free(pos); }
-
     vfs_merge_nodes_to(node, fake_sysfs_root);
 
     mount_node_old_fsid = node->fsid;

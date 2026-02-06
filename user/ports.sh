@@ -15,7 +15,7 @@ mkdir -p "$(dirname "$APK_PATH")"
 [ -f "$APK_PATH" ] || wget "$APK_URI" -O "$APK_PATH"
 chmod +x "$APK_PATH"
 
-ALPINE_VERSION=v3.22
+ALPINE_VERSION=latest-stable
 
 # Export variables needed for the unshare'd environment
 export APK_PATH ARCH SYSROOT ALPINE_VERSION

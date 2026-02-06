@@ -86,9 +86,6 @@ int procfs_mount(uint64_t dev, vfs_node_t mnt) {
 
     spin_lock(&procfs_oplock);
 
-    vfs_node_t pos, tmp;
-    llist_for_each(pos, tmp, &mnt->childs, node_for_childs) { vfs_free(pos); }
-
     vfs_merge_nodes_to(mnt, fake_procfs_root);
 
     mount_node_old_fsid = mnt->fsid;

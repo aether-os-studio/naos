@@ -777,26 +777,25 @@ uint64_t task_execve(const char *path_user, const char **argv,
     }
     free(new_envp);
 
-    // if (current_task->ppid != current_task->pid && tasks[current_task->ppid]
-    // &&
-    //     (tasks[current_task->ppid]->fd_info == current_task->fd_info)) {
-    //     current_task->fd_info->ref_count--;
-    //     current_task->fd_info = malloc(sizeof(fd_info_t));
+    if (current_task->ppid != current_task->pid && tasks[current_task->ppid] &&
+        (tasks[current_task->ppid]->fd_info == current_task->fd_info)) {
+        current_task->fd_info->ref_count--;
+        current_task->fd_info = malloc(sizeof(fd_info_t));
 
-    //     for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-    //         fd_t *fd = tasks[current_task->ppid]->fd_info->fds[i];
+        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+            fd_t *fd = tasks[current_task->ppid]->fd_info->fds[i];
 
-    //         if (fd) {
-    //             current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
-    //             memcpy(current_task->fd_info->fds[i], fd, sizeof(fd_t));
-    //             current_task->fd_info->fds[i]->node->refcount++;
-    //         } else {
-    //             current_task->fd_info->fds[i] = NULL;
-    //         }
-    //     }
+            if (fd) {
+                current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
+                memcpy(current_task->fd_info->fds[i], fd, sizeof(fd_t));
+                current_task->fd_info->fds[i]->node->refcount++;
+            } else {
+                current_task->fd_info->fds[i] = NULL;
+            }
+        }
 
-    //     current_task->fd_info->ref_count++;
-    // }
+        current_task->fd_info->ref_count++;
+    }
 
     for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
         if (!current_task->fd_info->fds[i])
@@ -1461,51 +1460,50 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     child->load_start = current_task->load_start;
     child->load_end = current_task->load_end;
 
-    // child->fd_info = (flags & CLONE_FILES) ? current_task->fd_info
-    //                                        : malloc(sizeof(fd_info_t));
-    child->fd_info = malloc(sizeof(fd_info_t));
+    child->fd_info = (flags & CLONE_FILES) ? current_task->fd_info
+                                           : malloc(sizeof(fd_info_t));
 
-    // if (!(flags & CLONE_FILES)) {
-    memset(child->fd_info, 0, sizeof(fd_info_t));
-    memset(child->fd_info->fds, 0, sizeof(child->fd_info->fds));
-    // child->fd_info->fds[0] = malloc(sizeof(fd_t));
-    // child->fd_info->fds[0]->node = vfs_open("/dev/stdin", 0);
-    // child->fd_info->fds[0]->node->refcount++;
-    // child->fd_info->fds[0]->offset = 0;
-    // child->fd_info->fds[0]->flags = 0;
-    // child->fd_info->fds[1] = malloc(sizeof(fd_t));
-    // child->fd_info->fds[1]->node = vfs_open("/dev/stdout", 0);
-    // child->fd_info->fds[1]->node->refcount++;
-    // child->fd_info->fds[1]->offset = 0;
-    // child->fd_info->fds[1]->flags = 0;
-    // child->fd_info->fds[2] = malloc(sizeof(fd_t));
-    // child->fd_info->fds[2]->node = vfs_open("/dev/stderr", 0);
-    // child->fd_info->fds[2]->node->refcount++;
-    // child->fd_info->fds[2]->offset = 0;
-    // child->fd_info->fds[2]->flags = 0;
+    if (!(flags & CLONE_FILES)) {
+        // memset(child->fd_info, 0, sizeof(fd_info_t));
+        // memset(child->fd_info->fds, 0, sizeof(child->fd_info->fds));
+        // child->fd_info->fds[0] = malloc(sizeof(fd_t));
+        // child->fd_info->fds[0]->node = vfs_open("/dev/stdin", 0);
+        // child->fd_info->fds[0]->node->refcount++;
+        // child->fd_info->fds[0]->offset = 0;
+        // child->fd_info->fds[0]->flags = 0;
+        // child->fd_info->fds[1] = malloc(sizeof(fd_t));
+        // child->fd_info->fds[1]->node = vfs_open("/dev/stdout", 0);
+        // child->fd_info->fds[1]->node->refcount++;
+        // child->fd_info->fds[1]->offset = 0;
+        // child->fd_info->fds[1]->flags = 0;
+        // child->fd_info->fds[2] = malloc(sizeof(fd_t));
+        // child->fd_info->fds[2]->node = vfs_open("/dev/stderr", 0);
+        // child->fd_info->fds[2]->node->refcount++;
+        // child->fd_info->fds[2]->offset = 0;
+        // child->fd_info->fds[2]->flags = 0;
 
-    for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-        fd_t *fd = current_task->fd_info->fds[i];
+        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+            fd_t *fd = current_task->fd_info->fds[i];
 
-        if (fd) {
-            child->fd_info->fds[i] = malloc(sizeof(fd_t));
-            memcpy(child->fd_info->fds[i], fd, sizeof(fd_t));
-            child->fd_info->fds[i]->node->refcount++;
-        } else {
-            child->fd_info->fds[i] = NULL;
+            if (fd) {
+                child->fd_info->fds[i] = malloc(sizeof(fd_t));
+                memcpy(child->fd_info->fds[i], fd, sizeof(fd_t));
+                child->fd_info->fds[i]->node->refcount++;
+            } else {
+                child->fd_info->fds[i] = NULL;
+            }
+        }
+    } else {
+        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+            fd_t *fd = child->fd_info->fds[i];
+
+            if (fd) {
+                child->fd_info->fds[i]->node->refcount++;
+            } else {
+                child->fd_info->fds[i] = NULL;
+            }
         }
     }
-    // } else {
-    //     for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-    //         fd_t *fd = child->fd_info->fds[i];
-
-    //         if (fd) {
-    //             child->fd_info->fds[i]->node->refcount++;
-    //         } else {
-    //             child->fd_info->fds[i] = NULL;
-    //         }
-    //     }
-    // }
 
     child->fd_info->ref_count++;
 

@@ -522,6 +522,59 @@ int drm_ioctl_mode_getproperty(drm_device_t *dev, void *arg) {
         }
         return 0;
 
+    case DRM_FB_WIDTH_PROP_ID:
+        prop->flags = DRM_MODE_PROP_RANGE | DRM_MODE_PROP_ATOMIC;
+        strncpy((char *)prop->name, "WIDTH", DRM_PROP_NAME_LEN);
+        prop->name[DRM_PROP_NAME_LEN - 1] = '\0';
+
+        prop->count_enum_blobs = 0;
+        prop->count_values = 2;
+        if (prop->values_ptr) {
+            uint64_t *values = (uint64_t *)(uintptr_t)prop->values_ptr;
+            values[0] = 1;    // min
+            values[1] = 8192; // max
+        }
+        return 0;
+    case DRM_FB_HEIGHT_PROP_ID:
+        prop->flags = DRM_MODE_PROP_RANGE | DRM_MODE_PROP_ATOMIC;
+        strncpy((char *)prop->name, "HEIGHT", DRM_PROP_NAME_LEN);
+        prop->name[DRM_PROP_NAME_LEN - 1] = '\0';
+
+        prop->count_enum_blobs = 0;
+        prop->count_values = 2;
+        if (prop->values_ptr) {
+            uint64_t *values = (uint64_t *)(uintptr_t)prop->values_ptr;
+            values[0] = 1;    // min
+            values[1] = 8192; // max
+        }
+        return 0;
+    case DRM_FB_BPP_PROP_ID:
+        prop->flags = DRM_MODE_PROP_RANGE | DRM_MODE_PROP_ATOMIC;
+        strncpy((char *)prop->name, "BPP", DRM_PROP_NAME_LEN);
+        prop->name[DRM_PROP_NAME_LEN - 1] = '\0';
+
+        prop->count_enum_blobs = 0;
+        prop->count_values = 2;
+        if (prop->values_ptr) {
+            uint64_t *values = (uint64_t *)(uintptr_t)prop->values_ptr;
+            values[0] = 8;  // min
+            values[1] = 32; // max
+        }
+        return 0;
+    case DRM_FB_DEPTH_PROP_ID:
+        prop->flags = DRM_MODE_PROP_RANGE | DRM_MODE_PROP_ATOMIC;
+        strncpy((char *)prop->name, "DEPTH", DRM_PROP_NAME_LEN);
+        prop->name[DRM_PROP_NAME_LEN - 1] = '\0';
+
+        prop->count_enum_blobs = 0;
+        prop->count_values = 2;
+        if (prop->values_ptr) {
+            uint64_t *values = (uint64_t *)(uintptr_t)prop->values_ptr;
+            values[0] = 8;  // min
+            values[1] = 32; // max
+        }
+        return 0;
+
     case DRM_CONNECTOR_DPMS_PROP_ID:
         prop->flags = DRM_MODE_PROP_ENUM;
         strncpy((char *)prop->name, "DPMS", DRM_PROP_NAME_LEN);
@@ -650,7 +703,6 @@ int drm_ioctl_mode_obj_getproperties(drm_device_t *dev, void *arg) {
             uint32_t *prop_ids = (uint32_t *)(uintptr_t)props->props_ptr;
 
             prop_ids[0] = DRM_CRTC_ACTIVE_PROP_ID;
-
             prop_ids[1] = DRM_CRTC_MODE_ID_PROP_ID;
         }
         if (props->prop_values_ptr) {
@@ -660,6 +712,43 @@ int drm_ioctl_mode_obj_getproperties(drm_device_t *dev, void *arg) {
             prop_values[0] = 1; // CRTC 的实际状态
             prop_values[1] = 1; // 指向 mode blob 的 ID
         }
+        break;
+    }
+
+    case DRM_MODE_OBJECT_FB: {
+        drm_framebuffer_t *fb = NULL;
+        for (int idx = 0; idx < DRM_MAX_FRAMEBUFFERS_PER_DEVICE; idx++) {
+            if (dev->resource_mgr.framebuffers[idx] &&
+                dev->resource_mgr.framebuffers[idx]->id == props->obj_id) {
+                fb = dev->resource_mgr.framebuffers[idx];
+                break;
+            }
+        }
+
+        if (!fb) {
+            return -ENOENT;
+        }
+
+        props->count_props = 4;
+
+        if (props->props_ptr) {
+            uint32_t *prop_ids = (uint32_t *)(uintptr_t)props->props_ptr;
+
+            prop_ids[0] = DRM_FB_WIDTH_PROP_ID;
+            prop_ids[1] = DRM_FB_HEIGHT_PROP_ID;
+            prop_ids[2] = DRM_FB_BPP_PROP_ID;
+            prop_ids[3] = DRM_FB_DEPTH_PROP_ID;
+        }
+        if (props->prop_values_ptr) {
+            uint64_t *prop_values =
+                (uint64_t *)(uintptr_t)props->prop_values_ptr;
+
+            prop_values[0] = fb->width;
+            prop_values[1] = fb->height;
+            prop_values[2] = fb->bpp;
+            prop_values[3] = fb->depth;
+        }
+
         break;
     }
 
@@ -775,6 +864,20 @@ int drm_ioctl_cursor(drm_device_t *dev, void *arg) {
     } else if (cmd->flags & DRM_MODE_CURSOR_MOVE) {
         return 0;
     }
+
+    return 0;
+}
+
+/**
+ * drm_ioctl_atomic - Handle DRM_IOCTL_MODE_ATOMIC
+ */
+int drm_ioctl_atomic(drm_device_t *dev, void *arg) {
+    // struct drm_mode_atomic *cmd = (struct drm_mode_atomic *)arg;
+    // if (cmd->flags & DRM_MODE_ATOMIC_TEST_ONLY) {
+    //     return 0;
+    // } else if (cmd->flags & DRM_MODE_CURSOR_MOVE) {
+    //     return 0;
+    // }
 
     return 0;
 }
@@ -943,6 +1046,9 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
         break;
     case DRM_IOCTL_MODE_CURSOR:
         ret = drm_ioctl_cursor(dev, (void *)arg);
+        break;
+    case DRM_IOCTL_MODE_ATOMIC:
+        ret = drm_ioctl_atomic(dev, (void *)arg);
         break;
     case DRM_IOCTL_WAIT_VBLANK:
         ret = drm_ioctl_wait_vblank(dev, (void *)arg);

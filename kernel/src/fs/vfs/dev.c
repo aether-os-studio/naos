@@ -161,9 +161,6 @@ int devtmpfs_mount(uint64_t dev, vfs_node_t node) {
 
     spin_lock(&devtmpfs_oplock);
 
-    vfs_node_t pos, tmp;
-    llist_for_each(pos, tmp, &node->childs, node_for_childs) { vfs_free(pos); }
-
     devtmpfs_root = node;
     vfs_merge_nodes_to(devtmpfs_root, fake_devtmpfs_root);
 

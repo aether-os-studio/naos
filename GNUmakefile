@@ -148,7 +148,7 @@ distclean:
 clippy:
 	$(MAKE) -C kernel clippy
 
-ROOTFS_IMG_SIZE ?= 1024
+ROOTFS_IMG_SIZE ?= 1536
 
 rootfs-$(ARCH).img: user/.build-stamp-$(ARCH)
 	dd if=/dev/zero bs=1M count=0 seek=$(ROOTFS_IMG_SIZE) of=rootfs-$(ARCH).img
