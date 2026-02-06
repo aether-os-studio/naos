@@ -153,6 +153,9 @@ int devtmpfs_mount(uint64_t dev, vfs_node_t node) {
 
     spin_lock(&devtmpfs_oplock);
 
+    vfs_node_t pos, tmp;
+    llist_for_each(pos, tmp, &node->childs, node_for_childs) { vfs_free(pos); }
+
     devtmpfs_root = node;
     vfs_merge_nodes_to(devtmpfs_root, fake_devtmpfs_root);
 
@@ -446,8 +449,6 @@ ssize_t nulldev_write(void *data, const void *buf, uint64_t offset,
     return len;
 }
 
-ssize_t nulldev_ioctl(void *data, ssize_t request, ssize_t arg) { return 0; }
-
 static uint64_t simple_rand() {
     tm time;
     time_read(&time);
@@ -505,7 +506,7 @@ void setup_console_symlinks() {
 void devfs_nodes_init() {
     vfs_mkdir("/dev/shm");
 
-    device_install(DEV_CHAR, DEV_SYSDEV, NULL, "null", 0, nulldev_ioctl, NULL,
+    device_install(DEV_CHAR, DEV_SYSDEV, NULL, "null", 0, NULL, NULL,
                    nulldev_read, nulldev_write, NULL);
     device_install(DEV_CHAR, DEV_SYSDEV, NULL, "zero", 0, NULL, NULL,
                    zerodev_read, zerodev_write, NULL);

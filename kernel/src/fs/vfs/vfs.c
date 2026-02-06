@@ -816,10 +816,7 @@ int vfs_mount(uint64_t dev, vfs_node_t node, const char *type) {
         if (!strcmp(all_fs[i]->name, type)) {
             ret = fs_callbacks[i]->mount(dev, node);
             if (!ret) {
-                node->fsid = i;
                 node->root = node;
-                node->dev = dev;
-                node->rdev = dev;
                 return 0;
             } else {
                 printk("Mount fs %s failed, ret = %d\n", type, ret);

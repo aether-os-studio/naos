@@ -564,6 +564,13 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count) {
     return total_written;
 }
 
+#define DIRENT_HEADER_SIZE offsetof(struct dirent, d_name)
+
+// 对齐到 8 字节（Linux 要求）
+static inline size_t dirent_reclen(size_t name_len) {
+    return (DIRENT_HEADER_SIZE + name_len + 1 + 7) & ~7;
+}
+
 uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size) {
     if (check_user_overflow(buf, size) || check_unmapped(buf, size)) {
         return (uint64_t)-EFAULT;
@@ -575,50 +582,62 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size) {
     if (!(current_task->fd_info->fds[fd]->node->type & file_dir))
         return (uint64_t)-ENOTDIR;
 
-    struct dirent *dents = (struct dirent *)buf;
     fd_t *filedescriptor = current_task->fd_info->fds[fd];
     vfs_node_t node = filedescriptor->node;
 
-    vfs_node_t tmp1, tmp2;
-    uint64_t child_count = 0;
-    llist_for_each(tmp1, tmp2, &node->childs, node_for_childs) {
-        child_count++;
-    }
+    uint8_t *buf_ptr = (uint8_t *)buf;
+    uint64_t bytes_written = 0;
 
-    int64_t max_dents_num = size / sizeof(struct dirent);
+    uint64_t entry_index = 0;
 
-    int64_t read_count = 0;
-
-    uint64_t offset = 0;
     vfs_node_t child_node, tmp;
     llist_for_each(child_node, tmp, &node->childs, node_for_childs) {
-        if (offset < filedescriptor->offset)
-            goto next;
-        if (filedescriptor->offset >= (child_count * sizeof(struct dirent)))
+        if (entry_index < filedescriptor->offset) {
+            entry_index++;
+            continue;
+        }
+
+        size_t name_len = strlen(child_node->name);
+        if (name_len > 255)
+            name_len = 255;
+        size_t reclen = dirent_reclen(name_len);
+
+        if (bytes_written + reclen > size) {
+            if (bytes_written == 0)
+                return (uint64_t)-EINVAL;
             break;
-        if (read_count >= max_dents_num)
-            break;
-        dents[read_count].d_ino = child_node->inode;
-        dents[read_count].d_off = filedescriptor->offset;
-        dents[read_count].d_reclen = sizeof(struct dirent);
+        }
+
+        struct dirent *dent = (struct dirent *)(buf_ptr + bytes_written);
+
+        memset(dent, 0, reclen);
+
+        dent->d_ino = child_node->inode;
+        dent->d_reclen = reclen;
+
+        dent->d_off = entry_index + 1;
+
         if (child_node->type & file_symlink)
-            dents[read_count].d_type = DT_LNK;
+            dent->d_type = DT_LNK;
         else if (child_node->type & file_none)
-            dents[read_count].d_type = DT_REG;
+            dent->d_type = DT_REG;
         else if (child_node->type & file_dir)
-            dents[read_count].d_type = DT_DIR;
+            dent->d_type = DT_DIR;
         else if (child_node->type & file_block)
-            dents[read_count].d_type = DT_BLK;
+            dent->d_type = DT_BLK;
         else
-            dents[read_count].d_type = DT_UNKNOWN;
-        strncpy(dents[read_count].d_name, child_node->name, 256);
-        filedescriptor->offset += sizeof(struct dirent);
-        read_count++;
-    next:
-        offset += sizeof(struct dirent);
+            dent->d_type = DT_UNKNOWN;
+
+        memcpy(dent->d_name, child_node->name, name_len + 1);
+
+        bytes_written += reclen;
+
+        filedescriptor->offset = entry_index + 1;
+
+        entry_index++;
     }
 
-    return read_count * sizeof(struct dirent);
+    return bytes_written;
 }
 
 uint64_t sys_chdir(const char *dname) {
