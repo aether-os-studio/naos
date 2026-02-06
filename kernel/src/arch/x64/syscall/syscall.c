@@ -38,7 +38,7 @@ void syscall_init() {
     wrmsr(MSR_STAR, star);
 
     // 3. 设置 LSTAR MSR (系统调用入口点)
-    wrmsr(MSR_LSTAR, (uint64_t)syscall_exception);
+    wrmsr(MSR_LSTAR, (uint64_t)syscall_handler_asm);
 
     // 4. 设置 SYSCALL_MASK MSR (RFLAGS 掩码)
     wrmsr(MSR_SYSCALL_MASK, (1 << 9));

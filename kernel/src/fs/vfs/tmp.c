@@ -37,10 +37,15 @@ ssize_t tmpfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
                             fd->flags);
     }
 
+    spin_lock(&tmpfs_oplock);
     tmpfs_node_t *handle = fd->node->handle;
     if (offset + size > handle->capability) {
         size_t new_capability = offset + size;
         void *new_content = alloc_frames_bytes(new_capability);
+        if (!new_content) {
+            spin_unlock(&tmpfs_oplock);
+            return -ENOMEM;
+        }
         memcpy(new_content, handle->content, handle->capability);
         free_frames_bytes(handle->content, handle->capability);
         handle->content = new_content;
@@ -48,6 +53,7 @@ ssize_t tmpfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     }
     memcpy(handle->content + offset, addr, size);
     handle->size = MAX(handle->size, offset + size);
+    spin_unlock(&tmpfs_oplock);
     return size;
 }
 

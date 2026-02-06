@@ -994,7 +994,7 @@ char *vfs_get_fullpath(vfs_node_t node) {
     int inital = 32;
     vfs_node_t *nodes = (vfs_node_t *)malloc(sizeof(vfs_node_t) * inital);
     int count = 0;
-    for (vfs_node_t cur = node; cur; cur = cur->parent) {
+    for (vfs_node_t cur = node; cur && cur != cur->parent; cur = cur->parent) {
         if (count >= inital) {
             inital *= 2;
             nodes = (vfs_node_t *)realloc(
@@ -1007,7 +1007,10 @@ char *vfs_get_fullpath(vfs_node_t node) {
     memset(buff, 0, 512);
     strcpy(buff, "/");
     for (int j = count - 1; j >= 0; j--) {
-        if (nodes[j] == (rootdir))
+        if (nodes[j] == rootdir)
+            continue;
+
+        if (!nodes[j]->name)
             continue;
 
         strcat(buff, nodes[j]->name);

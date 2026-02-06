@@ -240,7 +240,9 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         vfs_node_t node = current_task->fd_info->fds[fd]->node;
         vma->node = node;
         node->refcount++;
-        vma->vm_name = vfs_get_fullpath(node);
+        char *fp = vfs_get_fullpath(node);
+        vma->vm_name = strdup(fp);
+        free(fp);
         vma->vm_offset = offset;
     }
 

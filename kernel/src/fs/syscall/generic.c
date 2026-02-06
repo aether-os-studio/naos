@@ -347,6 +347,9 @@ uint64_t sys_copy_file_range(uint64_t fd_in, int *offset_in_user,
 }
 
 uint64_t sys_read(uint64_t fd, void *buf, uint64_t len) {
+    if (!len) {
+        return 0;
+    }
     if (!buf || check_user_overflow((uint64_t)buf, len) ||
         check_unmapped((uint64_t)buf, len)) {
         return (uint64_t)-EFAULT;
@@ -373,6 +376,9 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len) {
 }
 
 uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
+    if (!len) {
+        return 0;
+    }
     if (!buf || check_user_overflow((uint64_t)buf, len) ||
         check_unmapped((uint64_t)buf, len)) {
         return (uint64_t)-EFAULT;
@@ -521,9 +527,7 @@ uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count) {
         if (iovec[i].iov_base == NULL || iovec[i].len == 0)
             continue;
 
-        ssize_t ret =
-            vfs_read_fd(current_task->fd_info->fds[fd], iovec[i].iov_base,
-                        current_task->fd_info->fds[fd]->offset, iovec[i].len);
+        ssize_t ret = sys_read(fd, iovec[i].iov_base, iovec[i].len);
         if (ret > 0) {
             current_task->fd_info->fds[fd]->offset += ret;
         }
@@ -548,9 +552,7 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count) {
         if (iovec[i].iov_base == NULL || iovec[i].len == 0)
             continue;
 
-        ssize_t ret =
-            vfs_write_fd(current_task->fd_info->fds[fd], iovec[i].iov_base,
-                         current_task->fd_info->fds[fd]->offset, iovec[i].len);
+        ssize_t ret = sys_write(fd, iovec[i].iov_base, iovec[i].len);
         if (ret > 0) {
             current_task->fd_info->fds[fd]->offset += ret;
         }

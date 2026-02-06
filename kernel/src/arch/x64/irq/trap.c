@@ -36,6 +36,8 @@ void irq_init() {
     set_trap_gate(18, 0, machine_check);
     set_trap_gate(19, 0, SIMD_exception);
     set_trap_gate(20, 0, virtualization_exception);
+
+    set_system_trap_gate(0x80, 0, syscall_exception);
 }
 
 int lookup_kallsyms(uint64_t addr, int level) {
@@ -439,6 +441,10 @@ void do_virtualization_exception(struct pt_regs *regs, uint64_t error_code) {
 
     while (1)
         asm volatile("hlt");
+}
+
+void do_syscall_exception(struct pt_regs *regs, uint64_t error_code) {
+    regs->rax = (uint64_t)-ENOSYS;
 }
 
 void arch_make_trap() { asm volatile("int %0" ::"i"(1)); }

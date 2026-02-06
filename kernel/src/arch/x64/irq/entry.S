@@ -282,6 +282,14 @@ ENTRY(virtualization_exception)
     xchgq %rax, (%rsp)  // 把FUNC的地址换入栈中
     jmp Err_Code
 
+// 0x80 系统调用异常
+ENTRY(syscall_exception)
+    pushq $0
+    pushq %rax
+    leaq do_syscall_exception(%rip), %rax    // 获取中断服务程序的地址
+    xchgq %rax, (%rsp)  // 把FUNC的地址换入栈中
+    jmp Err_Code
+
 ENTRY(gdtidt_setup)
     lidt IDT_POINTER(%rip)
 

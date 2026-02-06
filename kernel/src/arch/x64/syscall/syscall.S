@@ -1,7 +1,7 @@
 #include "arch/x64/asm.h"
 #include "settings.h"
 
-ENTRY(syscall_exception)
+ENTRY(syscall_handler_asm)
     cli
 
     swapgs

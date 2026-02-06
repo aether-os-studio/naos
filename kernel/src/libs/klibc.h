@@ -534,7 +534,8 @@ extern uint64_t *get_current_page_dir(bool user);
 extern uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr);
 
 static inline bool check_user_overflow(uint64_t addr, uint64_t size) {
-    if ((addr + size) > get_physical_memory_offset()) {
+    if (addr >= (UINT64_MAX - size) ||
+        (addr + size) > get_physical_memory_offset()) {
         return true;
     }
     return false;
@@ -574,6 +575,10 @@ static inline bool copy_from_user(void *dst, const void *src, size_t size) {
 static inline bool copy_from_user_str(char *dst, const char *src,
                                       size_t limit) {
     if (!src || !dst || limit == 0)
+        return true;
+
+    if (check_user_overflow((uint64_t)src, 1) ||
+        check_unmapped((uint64_t)src, 1))
         return true;
 
     size_t len = strlen(src);
