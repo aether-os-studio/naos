@@ -8,6 +8,8 @@ pty_pair_t first_pair;
 static int ptmx_fsid = 0;
 int pts_fsid = 0;
 
+extern vfs_node_t devtmpfs_root;
+
 size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit);
 
 int pty_bitmap_decide() {
@@ -73,17 +75,16 @@ void ptmx_open(void *parent, const char *name, vfs_node_t node) {
     memset(&pair->vt_mode, 0, sizeof(struct vt_mode));
     pair->masterFds = 1;
     pair->ptmx_node = node;
-    node->handle = n->next;
+    node->handle = pair;
     node->fsid = ptmx_fsid;
 
-    vfs_node_t dev_root = node->parent;
     llist_delete(&node->node_for_childs);
     node->parent = NULL;
-    vfs_node_t new_node = vfs_node_alloc(dev_root, "ptmx");
+    vfs_node_t new_node = vfs_node_alloc(devtmpfs_root, "ptmx");
     new_node->fsid = ptmx_fsid;
     new_node->handle = NULL;
 
-    vfs_node_t pts_node = vfs_open("/dev/pts", 0);
+    vfs_node_t pts_node = vfs_open_at(devtmpfs_root, "pts", 0);
     pts_node->fsid = pts_fsid;
     char nm[4];
     sprintf(nm, "%d", id);
@@ -107,6 +108,26 @@ void pty_pair_cleanup(pty_pair_t *pair) {
         n->next = pair->next;
     }
     spin_unlock(&pty_global_lock);
+}
+
+void ptmx_free_handle(void *handle) {
+    pty_pair_t *pair = handle;
+    spin_lock(&pair->lock);
+    pair->masterFds--;
+    if (!pair->masterFds && !pair->slaveFds)
+        pty_pair_cleanup(pair);
+    else
+        spin_unlock(&pair->lock);
+}
+
+void pts_free_handle(void *handle) {
+    pty_pair_t *pair = handle;
+    spin_lock(&pair->lock);
+    pair->slaveFds--;
+    if (!pair->masterFds && !pair->slaveFds)
+        pty_pair_cleanup(pair);
+    else
+        spin_unlock(&pair->lock);
 }
 
 bool ptmx_close(void *current) {
@@ -194,7 +215,7 @@ size_t ptmx_ioctl(void *file, uint64_t request, uint64_t arg) {
     if (!file)
         return (size_t)-EINVAL;
     pty_pair_t *pair = file;
-    size_t ret = 0; // todo ERR(ENOTTY)
+    size_t ret = -ENOTTY;
     size_t number = _IOC_NR(request);
 
     spin_lock(&pair->lock);
@@ -217,17 +238,17 @@ size_t ptmx_ioctl(void *file, uint64_t request, uint64_t arg) {
     case TIOCGWINSZ: {
         memcpy((void *)arg, &pair->win, sizeof(struct winsize));
         ret = 0;
-        break;
+        goto done;
     }
     case TIOCSWINSZ: {
         memcpy(&pair->win, (const void *)arg, sizeof(struct winsize));
         ret = 0;
-        break;
+        goto done;
     }
     default:
         printk("ptmx_ioctl: Unsupported request %#010lx\n",
                request & 0xFFFFFFFF);
-        break;
+        goto done;
     }
 done:
     spin_unlock(&pair->lock);
@@ -346,6 +367,8 @@ size_t pts_data_avali(pty_pair_t *pair) {
 size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit) {
     void *file = fd->node->handle;
     pty_pair_t *pair = file;
+    if (!pair)
+        return (size_t)-EINVAL;
     while (true) {
         spin_lock(&pair->lock);
         if (pts_data_avali(pair) > 0) {
@@ -438,6 +461,8 @@ size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
 size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit) {
     int ret = 0;
     pty_pair_t *pair = fd->node->handle;
+    if (!pair)
+        return (size_t)-EINVAL;
     size_t chunks = limit / PTY_BUFF_SIZE;
     size_t remainder = limit % PTY_BUFF_SIZE;
     if (chunks)
@@ -470,6 +495,9 @@ size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit) {
 }
 
 size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
+    if (!pair)
+        return (size_t)-EINVAL;
+
     size_t ret = -ENOTTY;
 
     spin_lock(&pair->lock);
@@ -611,7 +639,7 @@ static struct vfs_callback ptmx_callbacks = {
     .poll = ptmx_poll,
     .resize = (vfs_resize_t)dummy,
 
-    .free_handle = vfs_generic_free_handle,
+    .free_handle = ptmx_free_handle,
 };
 
 static struct vfs_callback pts_callbacks = {
@@ -638,7 +666,7 @@ static struct vfs_callback pts_callbacks = {
     .poll = (vfs_poll_t)pts_poll,
     .resize = (vfs_resize_t)dummy,
 
-    .free_handle = vfs_generic_free_handle,
+    .free_handle = pts_free_handle,
 };
 
 fs_t ptmxfs = {
@@ -651,16 +679,13 @@ fs_t ptmxfs = {
 void ptmx_init() {
     ptmx_fsid = vfs_regist(&ptmxfs);
 
-    vfs_node_t dev_node = vfs_open("/dev", 0);
-    vfs_node_t ptmx = vfs_child_append(dev_node, "ptmx", NULL);
+    vfs_node_t ptmx = vfs_child_append(devtmpfs_root, "ptmx", NULL);
     ptmx->type = file_stream;
     ptmx->mode = 0700;
     ptmx->fsid = ptmx_fsid;
     ptmx->dev = (5 << 8) | 2;
     ptmx->rdev = (5 << 8) | 2;
 }
-
-extern vfs_node_t devtmpfs_root;
 
 fs_t ptsfs = {
     .name = "ptsfs",
@@ -678,5 +703,4 @@ void pts_init() {
     pts_node->fsid = pts_fsid;
     pts_node->type = file_dir;
     pts_node->mode = 0644;
-    pts_node->handle = pts_node;
 }
