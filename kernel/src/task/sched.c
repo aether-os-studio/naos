@@ -38,7 +38,7 @@ void remove_rrs_entity(task_t *thread, rrs_t *scheduler) {
 }
 
 task_t *rrs_pick_next_task(rrs_t *scheduler) {
-    spin_lock(&scheduler->sched_queue->lock);
+    spin_lock_no_irqsave(&scheduler->sched_queue->lock);
     struct sched_entity *entity = scheduler->curr;
     list_node_t *nextL = NULL;
 
@@ -53,7 +53,7 @@ task_t *rrs_pick_next_task(rrs_t *scheduler) {
 
     if (nextL == NULL || scheduler->sched_queue->size == 0) {
         scheduler->curr = scheduler->idle;
-        spin_unlock(&scheduler->sched_queue->lock);
+        spin_unlock_no_irqstore(&scheduler->sched_queue->lock);
         return scheduler->idle->task;
     }
 
@@ -64,7 +64,7 @@ task_t *rrs_pick_next_task(rrs_t *scheduler) {
         if (next && next->on_rq && next->task &&
             next->task->state == TASK_READY) {
             scheduler->curr = next;
-            spin_unlock(&scheduler->sched_queue->lock);
+            spin_unlock_no_irqstore(&scheduler->sched_queue->lock);
             return next->task;
         }
 
@@ -75,6 +75,6 @@ task_t *rrs_pick_next_task(rrs_t *scheduler) {
     } while (nextL != start && nextL != NULL);
 
     scheduler->curr = scheduler->idle;
-    spin_unlock(&scheduler->sched_queue->lock);
+    spin_unlock_no_irqstore(&scheduler->sched_queue->lock);
     return scheduler->idle->task;
 }

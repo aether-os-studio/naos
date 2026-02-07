@@ -440,7 +440,6 @@ static void netlink_broadcast_to_group(const char *buf, size_t len,
 
         spin_lock(&sock->lock);
 
-        // 使用按位与检查 groups 是否有交集
         if (sock->groups == target_groups) {
             netlink_buffer_write_packet(sock, buf, len, sender_pid,
                                         target_groups);
@@ -502,24 +501,26 @@ size_t netlink_getsockopt(uint64_t fd, int level, int optname, void *optval,
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     struct netlink_sock *nl_sk = handle->sock;
 
-    if (level != SOL_SOCKET) {
-        return -ENOPROTOOPT;
-    }
-
-    switch (optname) {
-    case SO_TYPE:
-        *(int *)optval = nl_sk->type;
-        *optlen = sizeof(int);
-        break;
-    case SO_PROTOCOL:
-        *(int *)optval = nl_sk->protocol;
-        *optlen = sizeof(int);
-        break;
-    case SO_REUSEADDR:
-        break;
-    case SO_PASSCRED:
-        break;
-    default:
+    if (level == SOL_SOCKET) {
+        switch (optname) {
+        case SO_TYPE:
+            *(int *)optval = nl_sk->type;
+            *optlen = sizeof(int);
+            break;
+        case SO_PROTOCOL:
+            *(int *)optval = nl_sk->protocol;
+            *optlen = sizeof(int);
+            break;
+        case SO_REUSEADDR:
+            break;
+        case SO_PASSCRED:
+            break;
+        default:
+            return -ENOPROTOOPT;
+        }
+    } else if (level == SOL_NETLINK) {
+        return 0;
+    } else {
         return -ENOPROTOOPT;
     }
 
@@ -535,43 +536,46 @@ size_t netlink_setsockopt(uint64_t fd, int level, int optname,
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     struct netlink_sock *nl_sk = handle->sock;
 
-    if (level != SOL_SOCKET) {
-        return -ENOPROTOOPT;
-    }
-
-    switch (optname) {
-    case SO_ATTACH_FILTER:
-        struct sock_fprog *fprog = malloc(optlen);
-        if (copy_from_user(fprog, optval, optlen))
-            return (size_t)-EFAULT;
-        if (!fprog->len)
-            return (size_t)-EINVAL;
-        nl_sk->filter = malloc(sizeof(struct sock_fprog));
-        nl_sk->filter->len = fprog->len;
-        nl_sk->filter->filter =
-            malloc(nl_sk->filter->len * sizeof(struct sock_filter));
-        memset(nl_sk->filter->filter, 0,
-               nl_sk->filter->len * sizeof(struct sock_filter));
-        if (copy_from_user(nl_sk->filter->filter, fprog->filter,
-                           nl_sk->filter->len * sizeof(struct sock_filter))) {
+    if (level == SOL_SOCKET) {
+        switch (optname) {
+        case SO_ATTACH_FILTER:
+            struct sock_fprog *fprog = malloc(optlen);
+            if (copy_from_user(fprog, optval, optlen))
+                return (size_t)-EFAULT;
+            if (!fprog->len)
+                return (size_t)-EINVAL;
+            nl_sk->filter = malloc(sizeof(struct sock_fprog));
+            nl_sk->filter->len = fprog->len;
+            nl_sk->filter->filter =
+                malloc(nl_sk->filter->len * sizeof(struct sock_filter));
+            memset(nl_sk->filter->filter, 0,
+                   nl_sk->filter->len * sizeof(struct sock_filter));
+            if (copy_from_user(nl_sk->filter->filter, fprog->filter,
+                               nl_sk->filter->len *
+                                   sizeof(struct sock_filter))) {
+                free(fprog);
+                free(nl_sk->filter->filter);
+                free(nl_sk->filter);
+                return (size_t)-EFAULT;
+            }
             free(fprog);
-            free(nl_sk->filter->filter);
-            free(nl_sk->filter);
-            return (size_t)-EFAULT;
+            break;
+        case SO_DETACH_FILTER:
+            if (nl_sk->filter) {
+                free(nl_sk->filter->filter);
+                free(nl_sk->filter);
+            }
+            break;
+        case SO_REUSEADDR:
+            break;
+        case SO_PASSCRED:
+            break;
+        default:
+            return -ENOPROTOOPT;
         }
-        free(fprog);
-        break;
-    case SO_DETACH_FILTER:
-        if (nl_sk->filter) {
-            free(nl_sk->filter->filter);
-            free(nl_sk->filter);
-        }
-        break;
-    case SO_REUSEADDR:
-        break;
-    case SO_PASSCRED:
-        break;
-    default:
+    } else if (level == SOL_NETLINK) {
+        return 0;
+    } else {
         return -ENOPROTOOPT;
     }
 
@@ -624,7 +628,7 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
 
     // Wait for a complete message if blocking
     while (!has_msg) {
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
         has_msg = netlink_buffer_has_msg(nl_sk);
     }
 
@@ -863,7 +867,7 @@ size_t netlink_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
 
     // Wait for a complete message if blocking
     while (!has_msg) {
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
         has_msg = netlink_buffer_has_msg(nl_sk);
     }
 

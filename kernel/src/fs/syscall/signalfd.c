@@ -26,7 +26,7 @@ static ssize_t signalfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     while (ctx->queue_head == ctx->queue_tail) {
         if (fd->flags & O_NONBLOCK)
             return -EWOULDBLOCK;
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     struct signalfd_siginfo *ev = &ctx->queue[ctx->queue_tail];

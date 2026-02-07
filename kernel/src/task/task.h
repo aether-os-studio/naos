@@ -121,6 +121,9 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                    int *parent_tid, int *child_tid, uint64_t tls);
 struct timespec;
 uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem);
+uint64_t sys_clock_nanosleep(int clock_id, int flags,
+                             const struct timespec *request,
+                             struct timespec *remain);
 
 size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old);
 

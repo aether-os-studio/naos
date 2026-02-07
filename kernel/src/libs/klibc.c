@@ -138,132 +138,131 @@ void *memcpy(void *restrict dest, const void *restrict src, size_t n) {
     return dest;
 }
 
-void *memset(void *s, int c, size_t n) {
-    uint8_t *p = (uint8_t *)s;
-    uint8_t val = (uint8_t)c;
+void *memset(void *dest, int c, size_t n) {
+    unsigned char *s = dest;
+    size_t k;
 
-    while (n > 0 && ((uintptr_t)p & 7)) {
-        *p++ = val;
-        n--;
+    /* Fill head and tail with minimal branching. Each
+     * conditional ensures that all the subsequently used
+     * offsets are well-defined and in the dest region. */
+
+    if (!n)
+        return dest;
+    s[0] = c;
+    s[n - 1] = c;
+    if (n <= 2)
+        return dest;
+    s[1] = c;
+    s[2] = c;
+    s[n - 2] = c;
+    s[n - 3] = c;
+    if (n <= 6)
+        return dest;
+    s[3] = c;
+    s[n - 4] = c;
+    if (n <= 8)
+        return dest;
+
+    /* Advance pointer to align it at a 4-byte boundary,
+     * and truncate n to a multiple of 4. The previous code
+     * already took care of any head/tail that get cut off
+     * by the alignment. */
+
+    k = -(uintptr_t)s & 3;
+    s += k;
+    n -= k;
+    n &= -4;
+
+    typedef uint32_t __attribute__((__may_alias__)) u32;
+    typedef uint64_t __attribute__((__may_alias__)) u64;
+
+    u32 c32 = ((u32)-1) / 255 * (unsigned char)c;
+
+    /* In preparation to copy 32 bytes at a time, aligned on
+     * an 8-byte bounary, fill head/tail up to 28 bytes each.
+     * As in the initial byte-based head/tail fill, each
+     * conditional below ensures that the subsequent offsets
+     * are valid (e.g. !(n<=24) implies n>=28). */
+
+    *(u32 *)(s + 0) = c32;
+    *(u32 *)(s + n - 4) = c32;
+    if (n <= 8)
+        return dest;
+    *(u32 *)(s + 4) = c32;
+    *(u32 *)(s + 8) = c32;
+    *(u32 *)(s + n - 12) = c32;
+    *(u32 *)(s + n - 8) = c32;
+    if (n <= 24)
+        return dest;
+    *(u32 *)(s + 12) = c32;
+    *(u32 *)(s + 16) = c32;
+    *(u32 *)(s + 20) = c32;
+    *(u32 *)(s + 24) = c32;
+    *(u32 *)(s + n - 28) = c32;
+    *(u32 *)(s + n - 24) = c32;
+    *(u32 *)(s + n - 20) = c32;
+    *(u32 *)(s + n - 16) = c32;
+
+    /* Align to a multiple of 8 so we can fill 64 bits at a time,
+     * and avoid writing the same bytes twice as much as is
+     * practical without introducing additional branching. */
+
+    k = 24 + ((uintptr_t)s & 4);
+    s += k;
+    n -= k;
+
+    /* If this loop is reached, 28 tail bytes have already been
+     * filled, so any remainder when n drops below 32 can be
+     * safely ignored. */
+
+    u64 c64 = c32 | ((u64)c32 << 32);
+    for (; n >= 32; n -= 32, s += 32) {
+        *(u64 *)(s + 0) = c64;
+        *(u64 *)(s + 8) = c64;
+        *(u64 *)(s + 16) = c64;
+        *(u64 *)(s + 24) = c64;
     }
 
-    if (n >= 8) {
-        uint64_t word = val;
-        word |= word << 8;
-        word |= word << 16;
-        word |= word << 32;
-
-        uint64_t *p64 = (uint64_t *)p;
-        while (n >= 8) {
-            *p64++ = word;
-            n -= 8;
-        }
-        p = (uint8_t *)p64;
-    }
-
-    while (n--) {
-        *p++ = val;
-    }
-
-    return s;
+    return dest;
 }
 
 void *memmove(void *dest, const void *src, size_t n) {
-    unsigned char *d = (unsigned char *)dest;
-    const unsigned char *s = (const unsigned char *)src;
 
-    // 特殊情况处理
-    if (d == s || n == 0) {
-        return dest;
-    }
+    typedef __attribute__((__may_alias__)) size_t WT;
+#define WS (sizeof(WT))
+
+    char *d = dest;
+    const char *s = src;
+
+    if (d == s)
+        return d;
+    if ((uintptr_t)s - (uintptr_t)d - n <= -2 * n)
+        return memcpy(d, s, n);
 
     if (d < s) {
-        // 前向复制：dest在src前面，从前往后复制
-
-        // 小块数据直接逐字节复制
-        if (n < 16) {
-            while (n--) {
+        if ((uintptr_t)s % WS == (uintptr_t)d % WS) {
+            while ((uintptr_t)d % WS) {
+                if (!n--)
+                    return dest;
                 *d++ = *s++;
             }
-            return dest;
+            for (; n >= WS; n -= WS, d += WS, s += WS)
+                *(WT *)d = *(WT *)s;
         }
-
-        // 对齐优化：先处理未对齐的前导字节
-        size_t align = (uintptr_t)d & (sizeof(size_t) - 1);
-        if (align) {
-            align = sizeof(size_t) - align;
-            n -= align;
-            while (align--) {
-                *d++ = *s++;
-            }
-        }
-
-        // 按字（word）复制 - 提升效率
-        while (n >= sizeof(size_t) * 4) {
-            ((size_t *)d)[0] = ((const size_t *)s)[0];
-            ((size_t *)d)[1] = ((const size_t *)s)[1];
-            ((size_t *)d)[2] = ((const size_t *)s)[2];
-            ((size_t *)d)[3] = ((const size_t *)s)[3];
-            d += sizeof(size_t) * 4;
-            s += sizeof(size_t) * 4;
-            n -= sizeof(size_t) * 4;
-        }
-
-        while (n >= sizeof(size_t)) {
-            *(size_t *)d = *(const size_t *)s;
-            d += sizeof(size_t);
-            s += sizeof(size_t);
-            n -= sizeof(size_t);
-        }
-
-        // 复制剩余字节
-        while (n--) {
+        for (; n; n--)
             *d++ = *s++;
-        }
     } else {
-        // 后向复制：dest在src后面，从后往前复制（处理重叠）
-        d += n;
-        s += n;
-
-        // 小块数据直接逐字节复制
-        if (n < 16) {
-            while (n--) {
-                *--d = *--s;
+        if ((uintptr_t)s % WS == (uintptr_t)d % WS) {
+            while ((uintptr_t)(d + n) % WS) {
+                if (!n--)
+                    return dest;
+                d[n] = s[n];
             }
-            return dest;
+            while (n >= WS)
+                n -= WS, *(WT *)(d + n) = *(WT *)(s + n);
         }
-
-        // 对齐优化：先处理未对齐的后导字节
-        size_t align = (uintptr_t)d & (sizeof(size_t) - 1);
-        if (align) {
-            n -= align;
-            while (align--) {
-                *--d = *--s;
-            }
-        }
-
-        // 按字（word）复制
-        while (n >= sizeof(size_t) * 4) {
-            d -= sizeof(size_t) * 4;
-            s -= sizeof(size_t) * 4;
-            ((size_t *)d)[3] = ((const size_t *)s)[3];
-            ((size_t *)d)[2] = ((const size_t *)s)[2];
-            ((size_t *)d)[1] = ((const size_t *)s)[1];
-            ((size_t *)d)[0] = ((const size_t *)s)[0];
-            n -= sizeof(size_t) * 4;
-        }
-
-        while (n >= sizeof(size_t)) {
-            d -= sizeof(size_t);
-            s -= sizeof(size_t);
-            *(size_t *)d = *(const size_t *)s;
-            n -= sizeof(size_t);
-        }
-
-        // 复制剩余字节
-        while (n--) {
-            *--d = *--s;
-        }
+        while (n)
+            n--, d[n] = s[n];
     }
 
     return dest;

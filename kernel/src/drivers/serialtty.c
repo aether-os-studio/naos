@@ -17,12 +17,9 @@ size_t terminal_read_serial(tty_t *device, char *buf, size_t count) {
     while (read < count) {
         char c = read_serial();
         if (c) {
-            // 非0表示读到了字符。
             buf[read++] = c;
         } else {
-            // 都没数据，允许调度/等待
-            arch_enable_interrupt();
-            arch_yield();
+            schedule(SCHED_FLAG_YIELD);
         }
     }
 

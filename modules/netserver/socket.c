@@ -68,7 +68,7 @@ size_t real_socket_send(uint64_t fd, uint8_t *out, uint64_t limit, int flags) {
         if (lwip_out >= 0 || errno != EAGAIN)
             break;
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     if (lwip_out < 0)
@@ -98,7 +98,7 @@ size_t real_socket_recv(uint64_t fd, uint8_t *out, uint64_t limit, int flags) {
         if (lwip_out >= 0 || errno != EAGAIN)
             break;
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     if (lwip_out < 0)
@@ -135,7 +135,7 @@ size_t real_socket_sendto(uint64_t fd, uint8_t *buff, size_t len, int flags,
         if (lwipOut >= 0 || errno != EAGAIN)
             break;
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     sockaddrLwipToLinux((void *)dest_addr, aligned, initialFamily);
@@ -173,7 +173,7 @@ size_t real_socket_recvfrom(uint64_t fd, uint8_t *buff, size_t len, int flags,
         if (lwipOut >= 0 || errno != EAGAIN)
             break;
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     sockaddrLwipToLinux(addr, a, AF_INET);
@@ -306,7 +306,7 @@ size_t real_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
         if (lwip_out >= 0 || errno != EAGAIN)
             break;
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     if (lwip_out < 0)
@@ -353,7 +353,7 @@ size_t real_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
         if (lwip_out >= 0 || errno != EAGAIN)
             break;
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     if (lwip_out < 0)
@@ -528,7 +528,7 @@ ssize_t real_socket_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         if (lwip_out >= 0 || errno != EAGAIN)
             break;
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     if (lwip_out < 0)
@@ -557,7 +557,7 @@ ssize_t real_socket_write(fd_t *fd, const void *addr, size_t offset,
         if (lwip_out >= 0 || errno != EAGAIN)
             break;
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     if (lwip_out < 0)
@@ -687,12 +687,11 @@ void lwip_check_timeout() {
             task_exit(0);
         }
         sys_check_timeouts();
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
         delay(1000);
     }
 
     real_socket_initialized = true;
-    printk("DHCP succeeded to obtain an address\n");
     current_task->should_free = true;
     task_exit(0);
 }

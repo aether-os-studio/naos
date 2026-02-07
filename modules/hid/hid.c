@@ -260,7 +260,7 @@ static void usb_check_key(struct hiddevice_s *hid) {
             break;
 
         while (!hid->xfer_ok) {
-            arch_yield();
+            schedule(SCHED_FLAG_YIELD);
         }
         hid->xfer_ok = false;
 
@@ -298,7 +298,7 @@ static void usb_check_mouse(struct hiddevice_s *hid) {
             break;
 
         while (!hid->xfer_ok) {
-            arch_yield();
+            schedule(SCHED_FLAG_YIELD);
         }
         hid->xfer_ok = false;
 

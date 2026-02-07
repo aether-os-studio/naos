@@ -28,7 +28,7 @@ size_t terminal_read(tty_t *device, char *buf, size_t count) {
         if (got) {
             buf[read++] = c;
         } else {
-            arch_yield();
+            schedule(SCHED_FLAG_YIELD);
         }
     }
 

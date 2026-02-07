@@ -20,13 +20,24 @@ for path in /dev/*; do
     fi
 done
 
-/bin/umount /dev/
-
 if [ $root_mounted -eq 0 ]; then
     /bin/echo "Mount root failed..."
-    exit 1
+    exit 127
 fi
+
+/bin/mkdir -p /proc/
+/bin/mount -t proc proc /proc
+/bin/mkdir -p /sys/
+/bin/mount -t sysfs sysfs /sys
+/bin/mkdir -p /var/
+/bin/mount -t tmpfs tmpfs /var
+/bin/mkdir -p /run/
+/bin/mount -t tmpfs tmpfs /run
+/bin/mkdir -p /tmp/
+/bin/mount -t tmpfs tmpfs /tmp
 
 /bin/echo "Ready to switch root..."
 
-exec /sbin/switch_root /mnt/ /usr/lib/aether/init
+export HOME="/root"
+export SHELL="/bin/bash"
+exec /sbin/switch_root /mnt/ /usr/bin/xinit

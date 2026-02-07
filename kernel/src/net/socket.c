@@ -126,12 +126,13 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
             (flags & MSG_DONTWAIT))
             return -(EWOULDBLOCK);
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
+
+    size_t to_copy = MIN(len, peer->recv_size - peer->recv_pos);
 
     spin_lock(&peer->lock);
 
-    size_t to_copy = MIN(len, peer->recv_size - peer->recv_pos);
     memcpy(&peer->recv_buff[peer->recv_pos], data, to_copy);
     peer->recv_pos += to_copy;
 
@@ -160,12 +161,13 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
             (flags & MSG_DONTWAIT))
             return -(EWOULDBLOCK);
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
+
+    size_t to_copy = MIN(len, self->recv_pos);
 
     spin_lock(&self->lock);
 
-    size_t to_copy = MIN(len, self->recv_pos);
     memcpy(buf, self->recv_buff, to_copy);
     memmove(self->recv_buff, &self->recv_buff[to_copy],
             self->recv_pos - to_copy);
@@ -367,7 +369,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
         if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK) {
             return -(EWOULDBLOCK);
         }
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     // 取出等待的 client socket
@@ -463,7 +465,7 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
 
     // 等待 accept
     while (!sock->established)
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
 
     return 0;
 }
@@ -628,7 +630,7 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
     while (!noblock && !(handle->fd->flags & O_NONBLOCK)) {
         if (sock->recv_pos > 0 || !peer || peer->closed)
             break;
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     // 计算总长度并读取数据

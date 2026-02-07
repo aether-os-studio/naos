@@ -154,6 +154,9 @@ int ext_remount(vfs_node_t old, vfs_node_t node) {
             continue;
         vfs_node_t exist = vfs_child_find(node, (const char *)entry->name);
         if (exist) {
+            if (exist == exist->root) {
+                continue;
+            }
             vfs_free(exist);
         }
         vfs_node_t child =

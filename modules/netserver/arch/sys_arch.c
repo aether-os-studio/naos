@@ -58,7 +58,7 @@ uint32_t sys_arch_sem_wait(sys_sem_t *sem, uint32_t timeout) {
         }
         spin_unlock(&sem->lock);
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
 cleanup:
@@ -155,7 +155,7 @@ void sys_mbox_post(sys_mbox_t *q, void *msg) {
             break;
         spin_unlock(&q->lock);
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     sys_mbox_post_unsafe(q, msg);
@@ -202,7 +202,7 @@ u32_t sys_arch_mbox_fetch(sys_mbox_t *q, void **msg, u32_t timeout) {
         }
         spin_unlock(&q->lock);
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     *msg = q->msges[q->ptrRead];

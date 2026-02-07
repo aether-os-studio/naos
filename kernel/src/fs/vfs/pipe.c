@@ -41,7 +41,7 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             return 0;
         }
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     // 实际读取量
@@ -72,7 +72,7 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size) {
             return -EPIPE;
         }
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     spin_lock(&pipe->lock);

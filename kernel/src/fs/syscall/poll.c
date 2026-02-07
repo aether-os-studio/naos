@@ -73,7 +73,7 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
         if (ready > 0 || sigexit)
             break;
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     } while (timeout != 0 &&
              ((int)timeout == -1 || (nano_time() - start_time) < timeout));
 

@@ -71,7 +71,7 @@ typedef uint8_t sys_prot_t;
         serial_fprintk("Assertion \"%s\" failed at line %d in %s\n", x,        \
                        __LINE__, __FILE__);                                    \
         while (1) {                                                            \
-            arch_yield();                                                      \
+            schedule(SCHED_FLAG_YIELD);                                                      \
         }                                                                      \
     } while (0)
 

@@ -3,10 +3,6 @@ export SYSROOT = $(CWD)/rootfs-$(ARCH)
 
 all:
 	sh ports.sh
-ifeq ($(ARCH), x86_64)
-# 	sh get_nvidia_firmware.sh
-endif
-	$(MAKE) -C init
 
 .PHONY: clean
 clean:

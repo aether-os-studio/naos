@@ -140,7 +140,7 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             } else {
                 // 阻塞模式，等待timerfd被设置
                 while (tfd->timer.expires == 0) {
-                    arch_yield();
+                    schedule(SCHED_FLAG_YIELD);
                     if (signals_pending_quick(current_task)) {
                         return -EINTR;
                     }
@@ -155,7 +155,7 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             !(fd->flags & O_NONBLOCK)) {
             // 阻塞等待直到超时
             while (now < tfd->timer.expires) {
-                arch_yield();
+                schedule(SCHED_FLAG_YIELD);
                 now = get_current_time_ns(tfd->timer.clock_type);
                 if (signals_pending_quick(current_task)) {
                     return -EINTR;

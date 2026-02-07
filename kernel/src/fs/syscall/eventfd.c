@@ -66,7 +66,7 @@ static ssize_t eventfd_read(fd_t *fd, void *buf, size_t offset, size_t len) {
         if (efd->flags & EFD_NONBLOCK)
             return -EAGAIN;
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     value = (efd->flags & EFD_SEMAPHORE) ? 1 : efd->count;

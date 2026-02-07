@@ -179,7 +179,7 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
     int sig = 0;
     while (!(sig = signals_pending_quick(current_task), sig) &&
            (nano_time() - start < wait_ns || wait_ns == UINT64_MAX)) {
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     current_task->signal->blocked = old;
@@ -219,7 +219,7 @@ uint64_t sys_sigsuspend(const sigset_t *mask) {
     current_task->signal->blocked = *mask;
 
     while (!signals_pending_quick(current_task)) {
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     current_task->signal->blocked = old;

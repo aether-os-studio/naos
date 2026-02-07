@@ -5,7 +5,7 @@
 EXPORT_SYMBOL(lapic_id);
 #endif
 
-EXPORT_SYMBOL(arch_yield);
+EXPORT_SYMBOL(schedule);
 EXPORT_SYMBOL(arch_get_current);
 
 EXPORT_SYMBOL(task_block);

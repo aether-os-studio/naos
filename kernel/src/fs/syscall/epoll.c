@@ -135,7 +135,7 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
             break;
 
         if (timeout != 0) {
-            arch_yield();
+            schedule(SCHED_FLAG_YIELD);
         } else {
             goto ret;
         }

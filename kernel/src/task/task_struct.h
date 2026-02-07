@@ -173,7 +173,6 @@ typedef struct task_signal_info {
 
 typedef struct task {
     uint64_t syscall_stack;
-    uint64_t syscall_stack_user;
     uint64_t kernel_stack;
     uint64_t pid;
     uint64_t ppid;

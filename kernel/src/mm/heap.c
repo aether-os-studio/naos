@@ -4,13 +4,13 @@
 void heap_err(enum HeapError error, void *ptr) {
     switch (error) {
     case InvalidFree:
-        printk("Heap Error: Invalid Free at %p", ptr);
+        printk("Heap Error: Invalid Free at %p\n", ptr);
         break;
     case LayoutError:
-        printk("Heap Error: Layout Error at %p", ptr);
+        printk("Heap Error: Layout Error at %p\n", ptr);
         break;
     default:
-        printk("Heap Error: Unknown Error at %p", ptr);
+        printk("Heap Error: Unknown Error at %p\n", ptr);
         break;
     }
 }

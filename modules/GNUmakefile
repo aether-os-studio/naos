@@ -80,7 +80,6 @@ endif
 
 	$(MAKE) -C usb
 	$(MAKE) -C virtio
-# 	$(MAKE) -C nvidia_open
 
 	$(MAKE) -C hub
 	$(MAKE) -C hid

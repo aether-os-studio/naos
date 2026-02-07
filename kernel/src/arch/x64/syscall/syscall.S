@@ -6,7 +6,7 @@ ENTRY(syscall_handler_asm)
 
     swapgs
 
-    movq %rsp, %gs:0x8
+    movq %rsp, %cr2
 
     movq %gs:0x0, %rsp // syscall_stack
 
@@ -30,7 +30,7 @@ ENTRY(syscall_handler_asm)
     pushq %r15
 
     movq %rsp, %rdi
-    movq %gs:0x8, %rsi
+    movq %cr2, %rsi
 
     swapgs
 

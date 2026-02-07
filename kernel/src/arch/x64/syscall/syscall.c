@@ -119,6 +119,17 @@ uint64_t sys_clock_getres(uint64_t arg1, uint64_t arg2) {
     return 0;
 }
 
+uint64_t sys_time(uint64_t arg1) {
+    tm time;
+    time_read(&time);
+    uint64_t timestamp = mktime(&time);
+    if (arg1) {
+        uint64_t *t = (uint64_t *)arg1;
+        *t = timestamp;
+    }
+    return timestamp;
+}
+
 uint64_t sys_accept_normal(uint64_t arg1, struct sockaddr_un *arg2,
                            socklen_t *arg3) {
     return sys_accept(arg1, arg2, arg3, 0);
@@ -369,7 +380,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_FREMOVEXATTR] =
         (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_TKILL] = (syscall_handle_t)sys_kill;
-    // syscall_handlers[SYS_TIME] = (syscall_handle_t)sys_time;
+    syscall_handlers[SYS_TIME] = (syscall_handle_t)sys_time;
     syscall_handlers[SYS_FUTEX] = (syscall_handle_t)sys_futex;
     syscall_handlers[SYS_SCHED_SETAFFINITY] =
         (syscall_handle_t)dummy_syscall_handler;
@@ -410,8 +421,8 @@ void syscall_handler_init() {
     // (syscall_handle_t)sys_clock_settime;
     syscall_handlers[SYS_CLOCK_GETTIME] = (syscall_handle_t)sys_clock_gettime;
     syscall_handlers[SYS_CLOCK_GETRES] = (syscall_handle_t)sys_clock_getres;
-    // syscall_handlers[SYS_CLOCK_NANOSLEEP] =
-    //     (syscall_handle_t)sys_clock_nanosleep;
+    syscall_handlers[SYS_CLOCK_NANOSLEEP] =
+        (syscall_handle_t)sys_clock_nanosleep;
     syscall_handlers[SYS_EXIT_GROUP] = (syscall_handle_t)task_exit;
     syscall_handlers[SYS_EPOLL_WAIT] = (syscall_handle_t)sys_epoll_wait;
     syscall_handlers[SYS_EPOLL_CTL] = (syscall_handle_t)sys_epoll_ctl;

@@ -114,6 +114,4 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
                                uint64_t stack);
 void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack);
 
-void arch_yield();
-
 bool arch_check_elf(const Elf64_Ehdr *elf);

@@ -5,8 +5,6 @@
 /modules-*
 /initramfs-*
 /obj-modules-*
-/nvidia-open
-/nvidia-open-install-dir
 *.iso
 *.img
 *.vmdk

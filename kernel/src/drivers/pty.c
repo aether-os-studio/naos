@@ -162,7 +162,7 @@ size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             return -(EWOULDBLOCK);
         }
         spin_unlock(&pair->lock);
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     spin_lock(&pair->lock);
@@ -191,7 +191,7 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
             return -(EWOULDBLOCK);
         }
         spin_unlock(&pair->lock);
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     spin_lock(&pair->lock);
@@ -384,7 +384,7 @@ size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit) {
             return -(EWOULDBLOCK);
         }
         spin_unlock(&pair->lock);
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
     spin_lock(&pair->lock);
 
@@ -413,7 +413,7 @@ size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
             return -EWOULDBLOCK;
         }
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     spin_lock(&pair->lock);

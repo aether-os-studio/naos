@@ -62,7 +62,7 @@ void free_task(task_t *ptr) {
     ptr->sched_info = NULL;
 
     if (ptr->fd_info) {
-        if (ptr->fd_info->ref_count <= 0) {
+        if (--ptr->fd_info->ref_count <= 0) {
             for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
                 if (ptr->fd_info->fds[i]) {
                     vfs_close(ptr->fd_info->fds[i]->node);
@@ -892,7 +892,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     return (uint64_t)-EAGAIN;
 }
 
-void sys_yield() { arch_yield(); }
+void sys_yield() { schedule(SCHED_FLAG_YIELD); }
 
 int task_block(task_t *task, task_state_t state, int64_t timeout_ns) {
     task->state = state;
@@ -968,9 +968,6 @@ void task_exit_inner(task_t *task, int64_t code) {
         tasks[task->ppid]->child_vfork_done = true;
         task->is_vfork = false;
     }
-
-    if (task->fd_info)
-        task->fd_info->ref_count--;
 
     if (task->waitpid != 0 && task->waitpid < MAX_TASK_NUM &&
         tasks[task->waitpid] &&
@@ -1589,7 +1586,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     if ((flags & CLONE_VFORK)) {
         while (!current_task->child_vfork_done) {
-            arch_yield();
+            schedule(SCHED_FLAG_YIELD);
         }
 
         current_task->child_vfork_done = false;
@@ -1620,8 +1617,59 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem) {
             return (uint64_t)-EINTR;
         }
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     } while (target > nano_time());
+
+    return 0;
+}
+
+uint64_t get_nanotime_by_clockid(int clock_id) {
+    if (clock_id == CLOCK_REALTIME) {
+        tm time;
+        time_read(&time);
+        return (uint64_t)mktime(&time) * 1000000000ULL;
+    } else if (clock_id == CLOCK_MONOTONIC) {
+        return nano_time();
+    } else {
+        return (uint64_t)-EINVAL;
+    }
+}
+
+uint64_t sys_clock_nanosleep(int clock_id, int flags,
+                             const struct timespec *request,
+                             struct timespec *remain) {
+    if (clock_id != CLOCK_REALTIME && clock_id != CLOCK_MONOTONIC) {
+        return (uint64_t)-EINVAL;
+    }
+
+    if (request->tv_sec < 0 || request->tv_nsec >= 1000000000L) {
+        return (uint64_t)-EINVAL;
+    }
+
+    uint64_t start;
+    if (clock_id == CLOCK_REALTIME) {
+        tm time;
+        time_read(&time);
+        start = (uint64_t)mktime(&time) * 1000000000ULL;
+    } else {
+        start = nano_time();
+    }
+    uint64_t target =
+        start + (request->tv_sec * 1000000000ULL) + request->tv_nsec;
+
+    do {
+        if (signals_pending_quick(current_task)) {
+            if (remain) {
+                uint64_t remaining = target - get_nanotime_by_clockid(clock_id);
+                struct timespec remain_ts = {.tv_sec = remaining / 1000000000,
+                                             .tv_nsec = remaining % 1000000000};
+                memcpy(remain, &remain_ts, sizeof(struct timespec));
+            }
+            return (uint64_t)-EINTR;
+        }
+
+        schedule(SCHED_FLAG_YIELD);
+    } while (target > get_nanotime_by_clockid(clock_id));
 
     return 0;
 }
@@ -1961,8 +2009,6 @@ uint64_t sys_setpriority(int which, int who, int niceval) {
 extern void task_signal();
 
 void schedule(uint64_t sched_flags) {
-    arch_disable_interrupt();
-
     sched_update_itimer();
     sched_update_timerfd();
 

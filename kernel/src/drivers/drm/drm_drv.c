@@ -26,7 +26,7 @@ ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
         if (flags & O_NONBLOCK)
             return -EWOULDBLOCK;
 
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     struct drm_event_vblank vbl = {

@@ -830,7 +830,7 @@ static void xhci_event_handler(uint64_t arg) {
     struct usb_xhci_s *xhci = (struct usb_xhci_s *)arg;
     while (1) {
         xhci_process_events(xhci);
-        arch_yield();
+        schedule(SCHED_FLAG_YIELD);
     }
 }
 
