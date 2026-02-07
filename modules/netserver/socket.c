@@ -640,7 +640,6 @@ err_t lwip_output(struct netif *netif, struct pbuf *p) {
 
 void lwip_init_in_thread(void *nicPre) {
     netdev_t *nic = (netdev_t *)nicPre;
-    // struct ethernetif *ethernetif;
 
     struct netif *this_netif = &global_netif;
 
@@ -650,12 +649,12 @@ void lwip_init_in_thread(void *nicPre) {
     this_netif->next = NULL;
 
     netif_add(this_netif, IP4_ADDR_ANY, IP4_ADDR_ANY, IP4_ADDR_ANY, NULL,
-              lwip_dummy_init, tcpip_input); // ethernetif_init_low
+              lwip_dummy_init, tcpip_input);
 
     this_netif->output = etharp_output;
     this_netif->linkoutput = lwip_output;
     this_netif->hwaddr_len = ETHARP_HWADDR_LEN;
-    this_netif->hwaddr[0] = nic->mac[0]; // or whatever u like
+    this_netif->hwaddr[0] = nic->mac[0];
     this_netif->hwaddr[1] = nic->mac[1];
     this_netif->hwaddr[2] = nic->mac[2];
     this_netif->hwaddr[3] = nic->mac[3];
@@ -677,8 +676,19 @@ void lwip_init_in_thread(void *nicPre) {
 
     delay(1000);
 
-    sys_check_timeouts();
-    dhcp_supplied_address(this_netif);
+    arch_enable_interrupt();
+    int try_bound = 0;
+    while (!dhcp_supplied_address(&global_netif)) {
+        try_bound++;
+        if (try_bound >= 10) {
+            printk("DHCP failed to obtain an address\n");
+            task_exit(0);
+        }
+        sys_check_timeouts();
+        delay(1000);
+    }
+
+    real_socket_initialized = true;
 }
 
 void real_socket_init_global_netif() {
@@ -690,20 +700,8 @@ void real_socket_init_global_netif() {
 }
 
 int real_socket_socket(int domain, int type, int protocol) {
-    if (!real_socket_initialized) {
-        real_socket_init_global_netif();
-        real_socket_initialized = true;
-    }
-
-    int try_bound = 0;
-    while (!dhcp_supplied_address(&global_netif)) {
-        try_bound++;
-        if (try_bound >= 10)
-            return -EHOSTUNREACH;
-        sys_check_timeouts();
-        delay(1000);
-    }
-
+    if (!real_socket_initialized)
+        return -EHOSTUNREACH;
     int lwip_fd = lwip_socket(domain, type, protocol);
     if (lwip_fd < 0)
         return -errno;
@@ -744,6 +742,11 @@ int real_socket_socket(int domain, int type, int protocol) {
     return i;
 }
 
+int real_socket_v4_init() {
+    real_socket_init_global_netif();
+    return 0;
+}
+
 fs_t socket = {
     .name = "socket",
     .magic = 0,
@@ -754,5 +757,5 @@ fs_t socket = {
 void real_socket_init() {
     realsock_fsid = vfs_regist(&socket);
 
-    regist_socket(AF_INET, real_socket_socket);
+    regist_socket(AF_INET, real_socket_v4_init, real_socket_socket);
 }

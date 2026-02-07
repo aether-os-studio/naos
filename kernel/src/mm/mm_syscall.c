@@ -372,6 +372,8 @@ uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
 static uint64_t mremap_shrink(vma_manager_t *mgr, vma_t *vma, uint64_t old_addr,
                               uint64_t old_size, uint64_t new_size) {
     if (new_size == 0) {
+        if (vma->vm_type == VMA_TYPE_SHM)
+            return (uint64_t)-EINVAL;
         // 完全删除
         vma_remove(mgr, vma);
         unmap_page_range(get_current_page_dir(true), old_addr, old_size);
@@ -667,16 +669,23 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
         return (uint64_t)-EINVAL;
     }
 
+    if (vma->vm_type == VMA_TYPE_SHM) {
+        spin_unlock(&mgr->lock);
+        return (uint64_t)-EINVAL;
+    }
+
+    uint64_t result;
+
     if (new_size_aligned <= old_size_aligned) {
-        uint64_t result = mremap_shrink(mgr, vma, old_addr_aligned,
-                                        old_size_aligned, new_size_aligned);
+        result = mremap_shrink(mgr, vma, old_addr_aligned, old_size_aligned,
+                               new_size_aligned);
         spin_unlock(&mgr->lock);
         return result;
     }
 
     if (!(flags & MREMAP_FIXED)) {
-        uint64_t result = mremap_expand_inplace(
-            mgr, vma, old_addr_aligned, old_size_aligned, new_size_aligned);
+        result = mremap_expand_inplace(mgr, vma, old_addr_aligned,
+                                       old_size_aligned, new_size_aligned);
         if (result != (uint64_t)-ENOMEM) {
             spin_unlock(&mgr->lock);
             return result;
@@ -688,9 +697,8 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
         return (uint64_t)-ENOMEM;
     }
 
-    uint64_t result = mremap_move(mgr, vma, old_addr_aligned, old_size_aligned,
-                                  new_size_aligned, flags, new_addr_aligned);
-
+    result = mremap_move(mgr, vma, old_addr_aligned, old_size_aligned,
+                         new_size_aligned, flags, new_addr_aligned);
     spin_unlock(&mgr->lock);
     return result;
 }

@@ -416,8 +416,6 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list args) {
 
 spinlock_t printk_lock = SPIN_INIT;
 
-extern struct vt_mode current_vt_mode;
-
 int printk(const char *fmt, ...) {
     spin_lock(&printk_lock);
 
@@ -431,6 +429,8 @@ int printk(const char *fmt, ...) {
     device_t *device = device_find(DEV_TTY, 0);
     if (device)
         device_write(device->dev, buf, 0, len, 0);
+
+    serial_printk(buf, len);
 
     spin_unlock(&printk_lock);
 

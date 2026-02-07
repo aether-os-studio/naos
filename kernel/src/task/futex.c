@@ -107,6 +107,140 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
     case FUTEX_WAKE_BITSET: {
         return sys_futex_wake((uint64_t)uaddr, val, val3);
     }
+    case FUTEX_WAKE_OP:
+    case FUTEX_WAKE_OP_PRIVATE: {
+        int op_type = (val3 >> 28) & 0xf;
+        int cmp_type = (val3 >> 24) & 0xf;
+        int oparg = (val3 >> 12) & 0xfff;
+        int cmparg = val3 & 0xfff;
+
+        if (oparg & 0x800)
+            oparg |= 0xFFFFF000;
+        if (cmparg & 0x800)
+            cmparg |= 0xFFFFF000;
+
+        if (op_type & FUTEX_OP_OPARG_SHIFT) {
+            oparg = 1 << (oparg & 0x1f);
+            op_type &= ~FUTEX_OP_OPARG_SHIFT;
+        }
+
+        spin_lock(&futex_lock);
+
+        int oldval = *uaddr2;
+        int newval;
+
+        switch (op_type) {
+        case FUTEX_OP_SET:
+            newval = oparg;
+            break;
+        case FUTEX_OP_ADD:
+            newval = oldval + oparg;
+            break;
+        case FUTEX_OP_OR:
+            newval = oldval | oparg;
+            break;
+        case FUTEX_OP_ANDN:
+            newval = oldval & ~oparg;
+            break;
+        case FUTEX_OP_XOR:
+            newval = oldval ^ oparg;
+            break;
+        default:
+            spin_unlock(&futex_lock);
+            return -ENOSYS;
+        }
+        *uaddr2 = newval;
+
+        int ret = 0;
+
+        struct futex_wait *curr = &futex_wait_list;
+        struct futex_wait *prev = NULL;
+        int count = 0;
+
+        while (curr) {
+            bool found = false;
+
+            if (curr->uaddr && curr->uaddr == (uint64_t)uaddr && count < val) {
+                if (curr->task && curr->task->state != TASK_DIED) {
+                    task_unblock(curr->task, EOK);
+                }
+                if (prev) {
+                    prev->next = curr->next;
+                }
+                free(curr);
+                count++;
+                ret++;
+                found = true;
+            }
+
+            if (found) {
+                curr = prev ? prev->next : futex_wait_list.next;
+            } else {
+                prev = curr;
+                curr = curr->next;
+            }
+        }
+
+        bool wake_uaddr2 = false;
+        switch (cmp_type) {
+        case FUTEX_OP_CMP_EQ:
+            wake_uaddr2 = (oldval == cmparg);
+            break;
+        case FUTEX_OP_CMP_NE:
+            wake_uaddr2 = (oldval != cmparg);
+            break;
+        case FUTEX_OP_CMP_LT:
+            wake_uaddr2 = (oldval < cmparg);
+            break;
+        case FUTEX_OP_CMP_LE:
+            wake_uaddr2 = (oldval <= cmparg);
+            break;
+        case FUTEX_OP_CMP_GT:
+            wake_uaddr2 = (oldval > cmparg);
+            break;
+        case FUTEX_OP_CMP_GE:
+            wake_uaddr2 = (oldval >= cmparg);
+            break;
+        default:
+            break;
+        }
+
+        if (wake_uaddr2) {
+            int val2 = (int)(uintptr_t)timeout;
+
+            curr = &futex_wait_list;
+            prev = NULL;
+            count = 0;
+
+            while (curr) {
+                bool found = false;
+
+                if (curr->uaddr && curr->uaddr == (uint64_t)uaddr2 &&
+                    count < val2) {
+                    if (curr->task && curr->task->state != TASK_DIED) {
+                        task_unblock(curr->task, EOK);
+                    }
+                    if (prev) {
+                        prev->next = curr->next;
+                    }
+                    free(curr);
+                    count++;
+                    ret++;
+                    found = true;
+                }
+
+                if (found) {
+                    curr = prev ? prev->next : futex_wait_list.next;
+                } else {
+                    prev = curr;
+                    curr = curr->next;
+                }
+            }
+        }
+
+        spin_unlock(&futex_lock);
+        return ret;
+    }
     case FUTEX_LOCK_PI:
     case FUTEX_LOCK_PI_PRIVATE: {
     retry:

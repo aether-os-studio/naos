@@ -196,7 +196,8 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
         new_watch->fd = f;
         new_watch->events = event->events & ~EPOLLET;
         new_watch->data = event->data.u64;
-        new_watch->edge_trigger = (event->events & EPOLLET) != 0;
+        // new_watch->edge_trigger = (event->events & EPOLLET) != 0;
+        new_watch->edge_trigger = false;
         new_watch->last_events = 0;
         llist_init_head(&new_watch->node);
         llist_append(&epoll->watches, &new_watch->node);
@@ -224,7 +225,8 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
 
         existing->events = event->events & ~EPOLLET;
         existing->data = event->data.u64;
-        existing->edge_trigger = (event->events & EPOLLET) != 0;
+        // existing->edge_trigger = (event->events & EPOLLET) != 0;
+        new_watch->edge_trigger = false;
         existing->last_events = 0; // 重置状态
         break;
 

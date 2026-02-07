@@ -85,6 +85,7 @@ void task_commit_signal(task_t *task, int sig, siginfo_t *info) {
         memset(&signal.info, 0, sizeof(siginfo_t));
     }
     memcpy(&task->signal->pending_signal, &signal, sizeof(pending_signal_t));
+    task->signal->pending_signal.processed = false;
     spin_unlock(&task->signal->signal_lock);
 }
 
@@ -285,6 +286,7 @@ uint64_t sys_kill(int pid, int sig) {
 void task_signal() {
     if (current_task->signal->pending_signal.sig == 0 ||
         current_task->state == TASK_DIED || current_task->arch_context->dead ||
+        current_task->signal->pending_signal.processed ||
         current_task->state == TASK_UNINTERRUPTABLE) {
         return;
     }
@@ -333,6 +335,7 @@ void task_signal() {
     arch_disable_interrupt();
 
     current_task->state = TASK_UNINTERRUPTABLE;
+    current_task->signal->signal |= SIGMASK(sig);
 
 #if defined(__x86_64__)
     memcpy(&current_task->signal->signal_saved_regs,
@@ -396,6 +399,8 @@ void task_signal() {
 
     current_task->signal->saved_blocked = current_task->signal->blocked;
     current_task->signal->blocked |= SIGMASK(sig) | ptr->sa_mask;
+
+    current_task->signal->pending_signal.processed = true;
 
     spin_unlock(&current_task->signal->signal_lock);
 

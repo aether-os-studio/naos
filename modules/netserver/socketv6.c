@@ -113,5 +113,5 @@ fs_t socketv6 = {
 void real_socket_v6_init() {
     realsockv6_fsid = vfs_regist(&socketv6);
 
-    regist_socket(10, real_socket_v6_socket);
+    regist_socket(10, NULL, real_socket_v6_socket);
 }

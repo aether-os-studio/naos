@@ -106,7 +106,7 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
                                        const uint8_t *data, size_t len,
                                        int flags, fd_t *fd_handle) {
     if (!peer || peer->closed) {
-        // task_commit_signal(current_task, SIGPIPE, NULL);
+        task_commit_signal(current_task, SIGPIPE, NULL);
         return -EPIPE;
     }
 
@@ -116,7 +116,7 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
     // 等待对端有空间
     while (true) {
         if (peer->closed) {
-            // task_commit_signal(current_task, SIGPIPE, NULL);
+            task_commit_signal(current_task, SIGPIPE, NULL);
             return -EPIPE;
         }
 
@@ -366,10 +366,8 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
         if (listen_sock->connCurr > 0)
             break;
         if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK) {
-            listen_sock->acceptWouldBlock = true;
             return -(EWOULDBLOCK);
         }
-        listen_sock->acceptWouldBlock = false;
         arch_yield();
     }
 
@@ -911,26 +909,25 @@ size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr,
     socket_t *sock = handle->sock;
 
     if (!sock->peer)
-        return -(ENOTCONN);
+        return -ENOTCONN;
 
-    char *filename = sock->filename;
+    char *filename = sock->peer->filename;
     if (!filename)
         filename = "";
 
-    size_t actualLen = sizeof(addr->sun_family) + strlen(filename);
-    int toCopy = MIN(*len, actualLen);
+    socklen_t actualLen = sizeof(addr->sun_family) + strlen(filename);
+    *len = actualLen;
+    int toCopy = actualLen;
 
     if (toCopy < sizeof(addr->sun_family))
-        return -(EINVAL);
+        return -EINVAL;
 
     addr->sun_family = 1;
     if (filename[0] == '@') {
         memcpy(addr->sun_path, filename + 1,
                toCopy - sizeof(addr->sun_family) - 1);
-        *len = toCopy - 1;
     } else {
         memcpy(addr->sun_path, filename, toCopy - sizeof(addr->sun_family));
-        *len = toCopy;
     }
 
     return 0;
@@ -1190,6 +1187,6 @@ fs_t sockfs = {
 void socketfs_init() {
     unix_socket_fsid = vfs_regist(&sockfs);
     memset(&first_unix_socket, 0, sizeof(socket_t));
-    regist_socket(1, socket_socket);
-    netlink_init();
+    regist_socket(1, NULL, socket_socket);
+    // netlink_init();
 }

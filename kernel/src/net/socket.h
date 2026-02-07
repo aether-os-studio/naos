@@ -80,7 +80,6 @@ typedef struct socket {
     // accept 产生的 socket 记录文件名
     char *filename;
 
-    bool acceptWouldBlock;
     bool established;
     bool closed; // 标记是否已关闭
 

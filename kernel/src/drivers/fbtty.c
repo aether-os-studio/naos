@@ -140,7 +140,6 @@ spinlock_t terminal_write_lock = SPIN_INIT;
 
 size_t terminal_write(tty_t *device, const char *buf, size_t count) {
     spin_lock(&terminal_write_lock);
-    serial_printk(buf, count);
     if (device->current_vt_mode.mode != VT_PROCESS && device->terminal) {
         flanterm_write(device->terminal, buf, count);
     }

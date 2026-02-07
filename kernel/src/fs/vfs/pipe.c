@@ -94,17 +94,24 @@ ssize_t pipefs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     if (chunks)
         for (size_t i = 0; i < chunks; i++) {
             int cycle = 0;
-            while (cycle < PIPE_BUFF)
-                cycle += pipe_write_inner(file, addr + i * PIPE_BUFF + cycle,
-                                          PIPE_BUFF - cycle);
-            ret += cycle;
+            while (cycle < PIPE_BUFF) {
+                ssize_t ret = pipe_write_inner(
+                    file, addr + i * PIPE_BUFF + cycle, PIPE_BUFF - cycle);
+                if (ret < 0)
+                    return ret;
+                cycle += ret;
+            }
         }
 
     if (remainder) {
         size_t cycle = 0;
-        while (cycle < remainder)
-            cycle += pipe_write_inner(file, addr + chunks * PIPE_BUFF + cycle,
-                                      remainder - cycle);
+        while (cycle < remainder) {
+            ssize_t ret = pipe_write_inner(
+                file, addr + chunks * PIPE_BUFF + cycle, remainder - cycle);
+            if (ret < 0)
+                return ret;
+            cycle += ret;
+        }
         ret += cycle;
     }
 
@@ -228,7 +235,7 @@ void pipefs_init() {
 
 uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
     int i1 = -1;
-    for (i1 = 3; i1 < MAX_FD_NUM; i1++) {
+    for (i1 = 0; i1 < MAX_FD_NUM; i1++) {
         if (current_task->fd_info->fds[i1] == NULL) {
             break;
         }
@@ -286,7 +293,7 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
     procfs_on_open_file(current_task, i1);
 
     int i2 = -1;
-    for (i2 = 3; i2 < MAX_FD_NUM; i2++) {
+    for (i2 = 0; i2 < MAX_FD_NUM; i2++) {
         if (current_task->fd_info->fds[i2] == NULL) {
             break;
         }

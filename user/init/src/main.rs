@@ -170,20 +170,20 @@ fn main() {
 
     unsafe { std::env::set_var("PATH", "/usr/bin:/bin:/sbin") };
 
-    println!("init: Starting seatd");
-    let seatd = unsafe { libc::fork() };
-    if seatd == 0 {
-        unsafe {
-            libc::execl(
-                c"/usr/bin/seatd".as_ptr(),
-                c"seatd".as_ptr(),
-                core::ptr::null::<core::ffi::c_char>(),
-            )
-        };
-        panic!("Failed to exec seatd");
-    } else {
-        assert_ne!(seatd, -1);
-    }
+    // println!("init: Starting seatd");
+    // let seatd = unsafe { libc::fork() };
+    // if seatd == 0 {
+    //     unsafe {
+    //         libc::execl(
+    //             c"/usr/bin/seatd".as_ptr(),
+    //             c"seatd".as_ptr(),
+    //             core::ptr::null::<core::ffi::c_char>(),
+    //         )
+    //     };
+    //     panic!("Failed to exec seatd");
+    // } else {
+    //     assert_ne!(seatd, -1);
+    // }
 
     unsafe { libc::open(c"/run/udev/data/c226:0".as_ptr(), libc::O_CREAT, 0) };
     unsafe { libc::open(c"/run/udev/data/c13:0".as_ptr(), libc::O_CREAT, 0) };
@@ -211,7 +211,7 @@ fn main() {
         std::env::set_var("XDG_RUNTIME_DIR", "/run");
         std::env::set_var("SHELL", "/bin/bash");
         std::env::set_var("MESA_SHADER_CACHE_DISABLE", "1");
-        std::env::set_var("SDL_VIDEODRIVER", "x11");
+        std::env::set_var("SDL_VIDEODRIVER", "wayland");
         std::env::set_var("SDL_AUDIODRIVER", "dummy");
         std::env::set_var("WLR_RENDERER_ALLOW_SOFTWARE", "1");
         // std::env::set_var("WESTON_LIBINPUT_LOG_PRIORITY", "debug");

@@ -46,13 +46,16 @@ typedef struct socket_handle {
 
 typedef struct real_socket_socket {
     int domain;
+    int (*init)();
     int (*socket)(int domain, int type, int protocol);
 } real_socket_socket_t;
 
 #define MAX_SOCKETS_NUM 16
 
-void regist_socket(int domain,
+void regist_socket(int domain, int (*init)(),
                    int (*socket)(int domain, int type, int protocol));
 
 extern real_socket_socket_t *real_sockets[MAX_SOCKETS_NUM];
 extern int socket_num;
+
+void real_socket_init();

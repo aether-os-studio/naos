@@ -2,6 +2,7 @@
 
 #include <libs/klibc.h>
 #include <fs/termios.h>
+#include <mm/shm.h>
 
 typedef enum task_state {
     TASK_CREATING = 1,
@@ -64,6 +65,7 @@ struct fd;
 typedef struct fd fd_t;
 
 #define MAX_FD_NUM 512
+#define MAX_SHM_NUM 32
 
 typedef struct fd_info {
     fd_t *fds[MAX_FD_NUM];
@@ -153,6 +155,7 @@ typedef struct siginfo {
 typedef struct pending_signal {
     int sig;
     siginfo_t info;
+    bool processed;
 } pending_signal_t;
 
 struct pt_regs;
@@ -199,6 +202,7 @@ typedef struct task {
     task_signal_info_t *signal;
     vfs_node_t cwd;
     fd_info_t *fd_info;
+    shm_mapping_t *shm_ids;
     vfs_node_t procfs_node;
     char *cmdline;
     int_timer_internal_t itimer_real;

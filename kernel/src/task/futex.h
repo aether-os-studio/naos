@@ -10,6 +10,20 @@ struct futex_wait {
     uint32_t bitset; // For FUTEX_WAIT_BITSET
 };
 
+#define FUTEX_OP_SET 0         // *uaddr2 = oparg
+#define FUTEX_OP_ADD 1         // *uaddr2 += oparg
+#define FUTEX_OP_OR 2          // *uaddr2 |= oparg
+#define FUTEX_OP_ANDN 3        // *uaddr2 &= ~oparg
+#define FUTEX_OP_XOR 4         // *uaddr2 ^= oparg
+#define FUTEX_OP_OPARG_SHIFT 8 // 使用 (1 << oparg) 替代 oparg
+
+#define FUTEX_OP_CMP_EQ 0 // oldval == cmparg
+#define FUTEX_OP_CMP_NE 1 // oldval != cmparg
+#define FUTEX_OP_CMP_LT 2 // oldval < cmparg
+#define FUTEX_OP_CMP_LE 3 // oldval <= cmparg
+#define FUTEX_OP_CMP_GT 4 // oldval > cmparg
+#define FUTEX_OP_CMP_GE 5 // oldval >= cmparg
+
 #define FUTEX_WAIT 0
 #define FUTEX_WAKE 1
 #define FUTEX_FD 2

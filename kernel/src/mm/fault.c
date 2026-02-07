@@ -2,6 +2,8 @@
 #include <mm/page.h>
 
 page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
+    if (!task)
+        return PF_RES_SEGF;
     if (!vaddr)
         return PF_RES_SEGF;
 

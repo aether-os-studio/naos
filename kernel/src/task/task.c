@@ -9,6 +9,7 @@
 #include <fs/vfs/proc.h>
 #include <arch/arch.h>
 #include <mm/mm.h>
+#include <mm/shm.h>
 #include <fs/fs_syscall.h>
 #include <net/socket.h>
 #include <uacpi/sleep.h>
@@ -53,6 +54,7 @@ void free_task(task_t *ptr) {
     if (ptr->cmdline)
         free(ptr->cmdline);
 
+    shm_exit(ptr);
     arch_context_free(ptr->arch_context);
     free(ptr->arch_context);
 
@@ -198,6 +200,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->fd_info->fds[2]->flags = 0;
     task->fd_info->ref_count++;
     strncpy(task->name, name, TASK_NAME_MAX);
+    task->shm_ids = NULL;
 
     memset(task->signal->actions, 0, sizeof(task->signal->actions));
 
@@ -580,6 +583,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
             vma_manager_exit_cleanup(
                 &current_task->arch_context->mm->task_vma_mgr);
     }
+    shm_exec(current_task);
 
     task_mm_info_t *old_mm = current_task->arch_context->mm;
     task_mm_info_t *new_mm = (task_mm_info_t *)malloc(sizeof(task_mm_info_t));
@@ -781,6 +785,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
         (tasks[current_task->ppid]->fd_info == current_task->fd_info)) {
         current_task->fd_info->ref_count--;
         current_task->fd_info = malloc(sizeof(fd_info_t));
+        memset(current_task->fd_info, 0, sizeof(fd_info_t));
 
         for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
             fd_t *fd = tasks[current_task->ppid]->fd_info->fds[i];
@@ -1011,36 +1016,36 @@ void task_exit_inner(task_t *task, int64_t code) {
         //     }
         // }
 
-        for (int i = 0; i < MAX_FD_NUM; i++) {
-            fd_t *fd = parent->fd_info->fds[i];
-            if (fd) {
-                vfs_node_t node = fd->node;
-                if (node && node->fsid == signalfdfs_id) {
-                    struct signalfd_ctx *ctx = node->handle;
-                    if (ctx) {
-                        struct signalfd_siginfo info;
-                        memset(&info, 0, sizeof(struct sigevent));
-                        info.ssi_signo = SIGCHLD;
-                        if (code > 128) {
-                            info.ssi_code = CLD_KILLED;
-                            info.ssi_status = code - 128;
-                        } else {
-                            info.ssi_code = CLD_EXITED;
-                            info.ssi_status = code;
-                        }
+        // for (int i = 0; i < MAX_FD_NUM; i++) {
+        //     fd_t *fd = parent->fd_info->fds[i];
+        //     if (fd) {
+        //         vfs_node_t node = fd->node;
+        //         if (node && node->fsid == signalfdfs_id) {
+        //             struct signalfd_ctx *ctx = node->handle;
+        //             if (ctx) {
+        //                 struct signalfd_siginfo info;
+        //                 memset(&info, 0, sizeof(struct sigevent));
+        //                 info.ssi_signo = SIGCHLD;
+        //                 if (code > 128) {
+        //                     info.ssi_code = CLD_KILLED;
+        //                     info.ssi_status = code - 128;
+        //                 } else {
+        //                     info.ssi_code = CLD_EXITED;
+        //                     info.ssi_status = code;
+        //                 }
 
-                        memcpy(&ctx->queue[ctx->queue_head], &info,
-                               sizeof(struct signalfd_siginfo));
-                        ctx->queue_head =
-                            (ctx->queue_head + 1) % ctx->queue_size;
-                        if (ctx->queue_head == ctx->queue_tail) {
-                            ctx->queue_tail =
-                                (ctx->queue_tail + 1) % ctx->queue_size;
-                        }
-                    }
-                }
-            }
-        }
+        //                 memcpy(&ctx->queue[ctx->queue_head], &info,
+        //                        sizeof(struct signalfd_siginfo));
+        //                 ctx->queue_head =
+        //                     (ctx->queue_head + 1) % ctx->queue_size;
+        //                 if (ctx->queue_head == ctx->queue_tail) {
+        //                     ctx->queue_tail =
+        //                         (ctx->queue_tail + 1) % ctx->queue_size;
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
 
         task_unblock(parent, 128 + SIGCHLD);
     } else if (task->pid == task->ppid) {
@@ -1399,6 +1404,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     orig_context.ctx = regs;
     arch_context_copy(child->arch_context, &orig_context, child->kernel_stack,
                       flags);
+    shm_fork(current_task, child);
 
 #if defined(__x86_64__)
     uint64_t tmp;
@@ -1506,6 +1512,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     }
 
     child->fd_info->ref_count++;
+
+    child->shm_ids = NULL;
 
     child->signal->signal = 0;
     if (flags & CLONE_SIGHAND) {
@@ -1977,5 +1985,6 @@ void schedule(uint64_t sched_flags) {
     switch_to(prev, next);
 
 ret:
-    task_signal();
+    if (!(sched_flags & SCHED_FLAG_YIELD))
+        task_signal();
 }

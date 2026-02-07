@@ -47,15 +47,6 @@ SECTIONS
         *(.rodata .rodata.*)
     } :rodata
 
-    /* Move to the next memory page for .ksymtab */
-    . = ALIGN(CONSTANT(MAXPAGESIZE));
-
-    .ksymtab : {
-        __ksymtab_start = .;
-        KEEP(*(.ksymtab))
-        __ksymtab_end = .;
-    } : ksymtab
-
     /* Move to the next memory page for .data */
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
@@ -67,10 +58,20 @@ SECTIONS
     /* unnecessary zeros will be written to the binary. */
     /* If you need, for example, .init_array and .fini_array, those should be placed */
     /* above this. */
+    . = ALIGN(CONSTANT(MAXPAGESIZE));
     .bss : {
         *(.bss .bss.*)
         *(COMMON)
     } :data
+
+    /* Move to the next memory page for .ksymtab */
+    . = ALIGN(CONSTANT(MAXPAGESIZE));
+
+    .ksymtab : {
+        __ksymtab_start = .;
+        KEEP(*(.ksymtab))
+        __ksymtab_end = .;
+    } :ksymtab
 
     /* Discard .note.* and .eh_frame* since they may cause issues on some hosts. */
     /DISCARD/ : {

@@ -4,7 +4,7 @@
 #include <fs/termios.h>
 
 #define PTY_MAX 1024
-#define PTY_BUFF_SIZE 16384
+#define PTY_BUFF_SIZE (1 * 1024 * 1024)
 
 typedef struct pty_pair {
     vfs_node_t ptmx_node;

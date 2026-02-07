@@ -2,6 +2,7 @@
 
 #include <libs/klibc.h>
 #include <libs/rbtree.h>
+#include <mm/shm.h>
 
 // VMA标志定义
 #define VMA_READ 0x1
@@ -20,13 +21,14 @@ typedef enum {
 
 struct vfs_node;
 
-// VMA结构体（添加红黑树节点）
+// VMA结构体
 typedef struct vma {
     unsigned long vm_start; // 起始地址
     unsigned long vm_end;   // 结束地址
     unsigned long vm_flags; // 权限标志
     vma_type_t vm_type;     // VMA类型
     struct vfs_node *node;  // 文件描述符
+    shm_t *shm;             // 共享内存指针
     int64_t vm_offset;      // 文件偏移量
     int shm_id;             // 共享内存ID
     char *vm_name;          // VMA名

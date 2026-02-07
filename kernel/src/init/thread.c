@@ -7,6 +7,7 @@
 #include <drivers/drm/drm.h>
 #include <fs/partition.h>
 #include <drivers/fb.h>
+#include <net/real_socket.h>
 
 extern void acpi_init_after_pci();
 
@@ -55,7 +56,9 @@ void init_thread(uint64_t arg) {
 
     arch_input_dev_init();
 
-    drm_init_after_pci_sysfs();
+    // drm_init_after_pci_sysfs();
+
+    real_socket_init();
 
     devtmpfs_init_umount();
     sysfs_init_umount();

@@ -4,6 +4,7 @@
 
 static device_t devices[DEVICE_NR]; // 设备数组
 uint64_t devices_idxs[DEV_MAX];
+spinlock_t device_lock = SPIN_INIT;
 
 // 获取空设备
 static device_t *get_null_device() {
@@ -82,6 +83,7 @@ EXPORT_SYMBOL(device_map);
 uint64_t device_install(int type, int subtype, void *ptr, char *name,
                         uint64_t parent, void *ioctl, void *poll, void *read,
                         void *write, void *map) {
+    spin_lock(&device_lock);
     device_t *device = get_null_device();
     device->ptr = ptr;
     device->parent = parent;
@@ -97,6 +99,7 @@ uint64_t device_install(int type, int subtype, void *ptr, char *name,
     device->write = write;
     device->map = map;
     devfs_register_device(device);
+    spin_unlock(&device_lock);
     return device->dev;
 }
 

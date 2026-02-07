@@ -541,9 +541,6 @@ uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count) {
             continue;
 
         ssize_t ret = sys_read(fd, iovec[i].iov_base, iovec[i].len);
-        if (ret > 0) {
-            current_task->fd_info->fds[fd]->offset += ret;
-        }
         if (ret < 0) {
             return (uint64_t)ret;
         }
@@ -566,9 +563,6 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count) {
             continue;
 
         ssize_t ret = sys_write(fd, iovec[i].iov_base, iovec[i].len);
-        if (ret > 0) {
-            current_task->fd_info->fds[fd]->offset += ret;
-        }
         if (ret < 0) {
             return (uint64_t)ret;
         }
@@ -893,19 +887,19 @@ uint64_t do_stat_path(const char *path, struct stat *buf) {
     buf->st_nlink = 1;
     buf->st_mode = node->mode;
     if (node->type & file_symlink)
-        buf->st_mode |= S_IFLNK;
+        buf->st_mode = S_IFLNK;
     else if (node->type & file_block)
-        buf->st_mode |= S_IFBLK;
+        buf->st_mode = S_IFBLK;
     else if (node->type & file_stream)
-        buf->st_mode |= S_IFCHR;
+        buf->st_mode = S_IFCHR;
     else if (node->type & file_fifo)
-        buf->st_mode |= S_IFIFO;
+        buf->st_mode = S_IFIFO;
     else if (node->type & file_socket)
-        buf->st_mode |= S_IFSOCK;
+        buf->st_mode = S_IFSOCK;
     else if (node->type & file_dir)
-        buf->st_mode |= S_IFDIR;
+        buf->st_mode = S_IFDIR;
     else if (node->type & file_none)
-        buf->st_mode |= S_IFREG;
+        buf->st_mode = S_IFREG;
     buf->st_uid = node->owner;
     buf->st_gid = node->group;
     buf->st_rdev = node->rdev;
@@ -942,19 +936,19 @@ uint64_t do_stat_fd(int fd, struct stat *buf) {
     buf->st_nlink = 1;
     buf->st_mode = node->mode;
     if (node->type & file_symlink)
-        buf->st_mode |= S_IFLNK;
+        buf->st_mode = S_IFLNK;
     else if (node->type & file_block)
-        buf->st_mode |= S_IFBLK;
+        buf->st_mode = S_IFBLK;
     else if (node->type & file_stream)
-        buf->st_mode |= S_IFCHR;
+        buf->st_mode = S_IFCHR;
     else if (node->type & file_fifo)
-        buf->st_mode |= S_IFIFO;
+        buf->st_mode = S_IFIFO;
     else if (node->type & file_socket)
-        buf->st_mode |= S_IFSOCK;
+        buf->st_mode = S_IFSOCK;
     else if (node->type & file_dir)
-        buf->st_mode |= S_IFDIR;
+        buf->st_mode = S_IFDIR;
     else if (node->type & file_none)
-        buf->st_mode |= S_IFREG;
+        buf->st_mode = S_IFREG;
     buf->st_uid = node->owner;
     buf->st_gid = node->group;
     buf->st_rdev = node->rdev;

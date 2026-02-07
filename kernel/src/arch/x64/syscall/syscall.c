@@ -165,7 +165,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_MMAP] = (syscall_handle_t)sys_mmap;
     syscall_handlers[SYS_MPROTECT] = (syscall_handle_t)sys_mprotect;
     syscall_handlers[SYS_MUNMAP] = (syscall_handle_t)sys_munmap;
-    syscall_handlers[SYS_BRK] = (syscall_handle_t)sys_brk;
+    // syscall_handlers[SYS_BRK] = (syscall_handle_t)sys_brk;
     syscall_handlers[SYS_RT_SIGACTION] = (syscall_handle_t)sys_sigaction;
     syscall_handlers[SYS_RT_SIGPROCMASK] = (syscall_handle_t)sys_ssetmask;
     syscall_handlers[SYS_RT_SIGRETURN] = (syscall_handle_t)sys_sigreturn;
@@ -182,9 +182,9 @@ void syscall_handler_init() {
     syscall_handlers[SYS_MSYNC] = (syscall_handle_t)sys_msync;
     syscall_handlers[SYS_MINCORE] = (syscall_handle_t)sys_mincore;
     syscall_handlers[SYS_MADVISE] = (syscall_handle_t)dummy_syscall_handler;
-    // syscall_handlers[SYS_SHMGET] = (syscall_handle_t)sys_shmget;
-    // syscall_handlers[SYS_SHMAT] = (syscall_handle_t)sys_shmat;
-    // syscall_handlers[SYS_SHMCTL] = (syscall_handle_t)sys_shmctl;
+    syscall_handlers[SYS_SHMGET] = (syscall_handle_t)sys_shmget;
+    syscall_handlers[SYS_SHMAT] = (syscall_handle_t)sys_shmat;
+    syscall_handlers[SYS_SHMCTL] = (syscall_handle_t)sys_shmctl;
     syscall_handlers[SYS_DUP] = (syscall_handle_t)sys_dup;
     syscall_handlers[SYS_DUP2] = (syscall_handle_t)sys_dup2;
     syscall_handlers[SYS_PAUSE] = (syscall_handle_t)dummy_syscall_handler;
@@ -220,7 +220,7 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_SEMGET] = (syscall_handle_t)sys_semget;
     // syscall_handlers[SYS_SEMOP] = (syscall_handle_t)sys_semop;
     // syscall_handlers[SYS_SEMCTL] = (syscall_handle_t)sys_semctl;
-    // syscall_handlers[SYS_SHMDT] = (syscall_handle_t)sys_shmdt;
+    syscall_handlers[SYS_SHMDT] = (syscall_handle_t)sys_shmdt;
     // syscall_handlers[SYS_MSGGET] = (syscall_handle_t)sys_msgget;
     // syscall_handlers[SYS_MSGSND] = (syscall_handle_t)sys_msgsnd;
     // syscall_handlers[SYS_MSGRCV] = (syscall_handle_t)sys_msgrcv;
@@ -286,7 +286,7 @@ void syscall_handler_init() {
         (syscall_handle_t)sys_rt_sigtimedwait;
     syscall_handlers[SYS_RT_SIGQUEUEINFO] =
         (syscall_handle_t)sys_rt_sigqueueinfo;
-    syscall_handlers[SYS_RT_SIGSUSPEND] = (syscall_handle_t)sys_sigsuspend;
+    // syscall_handlers[SYS_RT_SIGSUSPEND] = (syscall_handle_t)sys_sigsuspend;
     syscall_handlers[SYS_SIGALTSTACK] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_UTIME] = (syscall_handle_t)sys_utime;
     syscall_handlers[SYS_MKNOD] = (syscall_handle_t)sys_mknod;
@@ -625,63 +625,6 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
     if ((idx != SYS_BRK) && (idx != SYS_MMAP) && (idx != SYS_MREMAP) &&
         (idx != SYS_SHMAT) && (int)regs->rax < 0 && !((int64_t)regs->rax < 0))
         regs->rax |= 0xffffffff00000000;
-
-    // if ((int64_t)regs->rax < 0) {
-    //     serial_fprintk("syscall %d has error: %s\n", idx,
-    //                    strerror(-(int)regs->rax));
-    // }
-
-    bool usable = idx < (sizeof(linux_syscalls) / sizeof(linux_syscalls[0]));
-    const LINUX_SYSCALL *info = &linux_syscalls[idx];
-
-#define SYSCALL_DEBUG 0
-#if SYSCALL_DEBUG
-    if (idx == SYS_PAUSE || idx == SYS_SCHED_YIELD)
-        goto done;
-
-    char buf[256];
-    int len;
-
-    spin_lock(&syscall_debug_lock);
-
-    len = sprintf(buf, "%d [syscall %d] %s(", current_task->pid, idx,
-                  usable ? info->name : "???");
-    serial_printk(buf, len);
-    if (usable) {
-        if (info->arg1[0]) {
-            len = sprintf(buf, "%s:0x%lx,", info->arg1, arg1);
-            serial_printk(buf, len);
-        }
-        if (info->arg2[0]) {
-            len = sprintf(buf, "%s:0x%lx,", info->arg2, arg2);
-            serial_printk(buf, len);
-        }
-        if (info->arg3[0]) {
-            len = sprintf(buf, "%s:0x%lx,", info->arg3, arg3);
-            serial_printk(buf, len);
-        }
-        if (info->arg4[0]) {
-            len = sprintf(buf, "%s:0x%lx,", info->arg4, arg4);
-            serial_printk(buf, len);
-        }
-        if (info->arg5[0]) {
-            len = sprintf(buf, "%s:0x%lx,", info->arg5, arg5);
-            serial_printk(buf, len);
-        }
-        if (info->arg6[0]) {
-            len = sprintf(buf, "%s:0x%lx,", info->arg6, arg6);
-            serial_printk(buf, len);
-        }
-    }
-    if ((int64_t)regs->rax < 0) {
-        len = sprintf(buf, ") = %s%s%s\n", "ERR(", strerror(-regs->rax), ")");
-    } else {
-        len = sprintf(buf, ") = %#018lx\n", regs->rax);
-    }
-    serial_printk(buf, len);
-
-    spin_unlock(&syscall_debug_lock);
-#endif
 
 done:
     if (idx != SYS_BRK && regs->rax == (uint64_t)-ENOSYS) {
