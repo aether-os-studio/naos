@@ -608,7 +608,7 @@ static void delay(uint64_t ms) {
 void receiver_entry(uint64_t arg) {
     netdev_t *netdev = (netdev_t *)arg;
     uint32_t mtu = netdev->mtu;
-    char *buf = malloc(mtu);
+    char *buf = alloc_frames_bytes(mtu);
     memset(buf, 0, mtu);
 
     while (1) {
@@ -675,27 +675,36 @@ void lwip_init_in_thread(void *nicPre) {
     }
 
     delay(1000);
+}
 
-    arch_enable_interrupt();
+void lwip_check_timeout() {
     int try_bound = 0;
     while (!dhcp_supplied_address(&global_netif)) {
         try_bound++;
-        if (try_bound >= 10) {
+        if (try_bound >= 5) {
             printk("DHCP failed to obtain an address\n");
+            current_task->should_free = true;
             task_exit(0);
         }
         sys_check_timeouts();
+        arch_yield();
         delay(1000);
     }
 
     real_socket_initialized = true;
+    printk("DHCP succeeded to obtain an address\n");
+    current_task->should_free = true;
+    task_exit(0);
 }
 
 void real_socket_init_global_netif() {
-    if (get_default_netdev()) {
-        task_create("net_receiver", receiver_entry,
-                    (uint64_t)get_default_netdev(), KTHREAD_PRIORITY);
-        tcpip_init(lwip_init_in_thread, get_default_netdev());
+    netdev_t *dev = get_default_netdev();
+    if (dev) {
+        task_create("net_receiver", receiver_entry, (uint64_t)dev,
+                    KTHREAD_PRIORITY);
+        tcpip_init(lwip_init_in_thread, dev);
+        task_create("net_checker", (void *)lwip_check_timeout, 0,
+                    KTHREAD_PRIORITY);
     }
 }
 

@@ -601,6 +601,24 @@ int drm_ioctl_mode_getproperty(drm_device_t *dev, void *arg) {
         prop->count_values = 0;
         return 0;
 
+    case DRM_CONNECTOR_EDID_PROP_ID:
+        prop->flags = DRM_MODE_PROP_BLOB;
+        strncpy((char *)prop->name, "EDID", DRM_PROP_NAME_LEN);
+        prop->name[DRM_PROP_NAME_LEN - 1] = '\0';
+
+        prop->count_enum_blobs = 0;
+        prop->count_values = 0;
+        return 0;
+
+    case DRM_CONNECTOR_CRTC_ID_PROP_ID:
+        prop->flags = DRM_MODE_PROP_OBJECT | DRM_MODE_PROP_ATOMIC;
+        strncpy((char *)prop->name, "CRTC_ID", DRM_PROP_NAME_LEN);
+        prop->name[DRM_PROP_NAME_LEN - 1] = '\0';
+
+        prop->count_enum_blobs = 0;
+        prop->count_values = 0;
+        return 0;
+
     default:
         printk("drm: Unsupported property ID: %u\n", prop->prop_id);
         return -EINVAL;
@@ -869,6 +887,20 @@ int drm_ioctl_cursor(drm_device_t *dev, void *arg) {
 }
 
 /**
+ * drm_ioctl_cursor2 - Handle DRM_IOCTL_MODE_CURSOR2
+ */
+int drm_ioctl_cursor2(drm_device_t *dev, void *arg) {
+    struct drm_mode_cursor2 *cmd = (struct drm_mode_cursor2 *)arg;
+    if (cmd->flags & DRM_MODE_CURSOR_BO) {
+        return 0;
+    } else if (cmd->flags & DRM_MODE_CURSOR_MOVE) {
+        return 0;
+    }
+
+    return 0;
+}
+
+/**
  * drm_ioctl_atomic - Handle DRM_IOCTL_MODE_ATOMIC
  */
 int drm_ioctl_atomic(drm_device_t *dev, void *arg) {
@@ -1046,6 +1078,9 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
         break;
     case DRM_IOCTL_MODE_CURSOR:
         ret = drm_ioctl_cursor(dev, (void *)arg);
+        break;
+    case DRM_IOCTL_MODE_CURSOR2:
+        ret = drm_ioctl_cursor2(dev, (void *)arg);
         break;
     case DRM_IOCTL_MODE_ATOMIC:
         ret = drm_ioctl_atomic(dev, (void *)arg);

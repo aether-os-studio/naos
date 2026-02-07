@@ -183,6 +183,13 @@ int drm_ioctl_page_flip(drm_device_t *dev, void *arg);
 int drm_ioctl_cursor(drm_device_t *dev, void *arg);
 
 /**
+ * drm_ioctl_curso2r - Handle DRM_IOCTL_MODE_CURSOR2
+ * @dev: DRM device
+ * @arg: ioctl argument
+ */
+int drm_ioctl_cursor2(drm_device_t *dev, void *arg);
+
+/**
  * drm_ioctl_get_magic - Handle DRM_IOCTL_GET_MAGIC
  * @dev: DRM device
  * @arg: ioctl argument

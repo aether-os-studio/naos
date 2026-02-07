@@ -15,7 +15,6 @@ int sockfsfd_id = 0;
 
 socket_t first_unix_socket;
 
-socket_t first_unix_socket;
 int unix_socket_fsid = 0;
 
 char *unix_socket_addr_safe(const struct sockaddr_un *addr, size_t len) {
