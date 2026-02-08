@@ -301,6 +301,9 @@ uint64_t sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents,
 uint64_t sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
 uint64_t sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
                          int timeout, sigset_t *sigmask, size_t sigsetsize);
+uint64_t sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
+                          struct timespec *timeout, sigset_t *sigmask,
+                          size_t sigsetsize);
 uint64_t sys_epoll_create1(int flags);
 
 #define EFD_CLOEXEC 02000000

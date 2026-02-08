@@ -45,7 +45,7 @@ size_t epoll_create1(int flags) {
 uint64_t sys_epoll_create(int size) { return epoll_create1(0); }
 
 uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
-                    int maxevents, int timeout) {
+                    int maxevents, int64_t timeout) {
     if (maxevents < 1)
         return (uint64_t)-EINVAL;
     if (!epollFd || epollFd->fsid != epollfs_id)
@@ -59,7 +59,7 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
     uint64_t target_timeout = 0;
 
     if (timeout > 0) {
-        target_timeout = nano_time() + timeout * 1000000; // ms转ns
+        target_timeout = nano_time() + timeout;
     } else if (timeout == 0) {
         goto check_events;
     }
@@ -240,7 +240,7 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
 }
 
 size_t epoll_pwait(vfs_node_t epollFd, struct epoll_event *events,
-                   int maxevents, int timeout, sigset_t *sigmask,
+                   int maxevents, int64_t timeout, sigset_t *sigmask,
                    size_t sigsetsize) {
     if (check_user_overflow((uint64_t)events,
                             maxevents * sizeof(struct epoll_event))) {
@@ -250,7 +250,7 @@ size_t epoll_pwait(vfs_node_t epollFd, struct epoll_event *events,
     sigset_t origmask;
     if (sigmask)
         sys_ssetmask(SIG_SETMASK, sigmask, &origmask);
-    size_t epollRet = epoll_wait(epollFd, events, maxevents, timeout);
+    size_t epollRet = epoll_wait(epollFd, events, maxevents, timeout * 1000000);
     if (sigmask)
         sys_ssetmask(SIG_SETMASK, &origmask, 0);
 
@@ -295,6 +295,33 @@ uint64_t sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
     if (!node)
         return (uint64_t)-EBADF;
     return epoll_pwait(node, events, maxevents, timeout, sigmask, sigsetsize);
+}
+
+uint64_t sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
+                          struct timespec *timeout, sigset_t *sigmask,
+                          size_t sigsetsize) {
+    if (check_user_overflow((uint64_t)events,
+                            maxevents * sizeof(struct epoll_event))) {
+        return (uint64_t)-EFAULT;
+    }
+    if (epfd >= MAX_FD_NUM || current_task->fd_info->fds[epfd] == NULL) {
+        return (uint64_t)-EBADF;
+    }
+    vfs_node_t node = current_task->fd_info->fds[epfd]->node;
+    if (!node)
+        return (uint64_t)-EBADF;
+    uint64_t timeout_ns;
+    if (!timeout) {
+        timeout_ns = -1;
+    } else {
+        if (timeout->tv_sec < 0 || timeout->tv_nsec < 0 ||
+            timeout->tv_nsec >= 1000000000LL) {
+            return (uint64_t)-EINVAL;
+        }
+        timeout_ns = timeout->tv_sec * 1000000000LL + timeout->tv_nsec;
+    }
+    return epoll_pwait(node, events, maxevents, timeout_ns, sigmask,
+                       sigsetsize);
 }
 
 uint64_t sys_epoll_create1(int flags) { return epoll_create1(flags); }

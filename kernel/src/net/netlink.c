@@ -1,4 +1,5 @@
 #include <net/netlink.h>
+#include <net/rtnl.h>
 #include <task/task.h>
 #include <mm/mm.h>
 #include <arch/arch.h>
@@ -132,9 +133,9 @@ static void netlink_buffer_init(struct netlink_buffer *buf) {
 }
 
 // Circular buffer operations for netlink packets with sender info
-static size_t netlink_buffer_write_packet(struct netlink_sock *sock,
-                                          const char *data, size_t len,
-                                          uint32_t nl_pid, uint32_t nl_groups) {
+size_t netlink_buffer_write_packet(struct netlink_sock *sock, const char *data,
+                                   size_t len, uint32_t nl_pid,
+                                   uint32_t nl_groups) {
     struct netlink_buffer *buf = sock->buffer;
 
     if (buf == NULL || data == NULL || len == 0) {
@@ -413,11 +414,11 @@ static size_t netlink_deliver_to_socket(struct netlink_sock *target,
 }
 
 // Broadcast message to all listening netlink sockets and save to pool
-static void netlink_broadcast_to_group(const char *buf, size_t len,
-                                       uint32_t sender_pid,
-                                       uint32_t target_groups, int protocol,
-                                       uint32_t seqnum, const char *devpath) {
-    if (buf == NULL || len == 0 || target_groups == 0) {
+void netlink_broadcast_to_group(const char *buf, size_t len,
+                                uint32_t sender_pid, uint32_t target_groups,
+                                int protocol, uint32_t seqnum,
+                                const char *devpath) {
+    if (buf == NULL || len == 0) {
         return;
     }
 
@@ -772,8 +773,11 @@ size_t netlink_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
         netlink_broadcast_to_group(buffer, total_len, sender_pid,
                                    addr->nl_groups, nl_sk->protocol, 0, NULL);
     } else {
-        // nl_pid == 0 && nl_groups == 0，发送给内核
-        // 这里返回成功但不做任何事
+        // nl_pid == 0 && nl_groups == 0, sending to kernel
+        if (nl_sk->protocol == NETLINK_ROUTE) {
+            // Route to RTNL subsystem for processing
+            rtnl_process_msg(nl_sk, buffer, total_len, sender_pid);
+        }
         return total_len;
     }
 
@@ -810,6 +814,12 @@ size_t netlink_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
         return -EAFNOSUPPORT;
     }
 
+    if (nl_addr->nl_pid == 0 && nl_addr->nl_groups == 0) {
+        if (nl_sk->protocol == NETLINK_ROUTE) {
+            rtnl_process_msg(nl_sk, (char *)in, limit, sender_pid);
+        }
+        return limit;
+    }
     if (nl_addr->nl_pid != 0) {
         // Unicast - 不保存到 pool
         spin_lock(&netlink_sockets_lock);
@@ -1169,6 +1179,8 @@ void netlink_init() {
     spin_unlock(&netlink_msg_pool_lock);
 
     regist_socket(16, NULL, netlink_socket);
+
+    rtnl_init();
 }
 
 static int atoi(const char *s) {

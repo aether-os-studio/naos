@@ -375,19 +375,12 @@ int setup_2m_page_tables(void *mb2_info_addr, pte_t **out_pml4) {
                     pos = next_reserved;
                 }
             }
-
-#undef ADD_REGION
-
         } else {
             // 非AVAILABLE类型，直接标记为RESERVED
-            multiboot2_memory_map.entries[multiboot2_memory_map.entry_count]
-                .addr = entry->addr;
-            multiboot2_memory_map.entries[multiboot2_memory_map.entry_count]
-                .len = entry->len;
-            multiboot2_memory_map.entries[multiboot2_memory_map.entry_count]
-                .type = RESERVED;
-            multiboot2_memory_map.entry_count++;
+            ADD_REGION(entry->addr, entry->len, RESERVED);
         }
+
+#undef ADD_REGION
 
         entries++;
     }

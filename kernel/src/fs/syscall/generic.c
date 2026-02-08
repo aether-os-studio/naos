@@ -3,13 +3,20 @@
 #include <boot/boot.h>
 #include <net/socket.h>
 
-uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
-                   void *data) {
-    char devname[128];
-    char dirname[512];
+uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
+                   uint64_t flags, void *data) {
+    char devname[128] = {0};
+    char dirname[512] = {0};
+    char type[128] = {0};
 
-    if (copy_from_user_str(devname, dev_name, sizeof(devname)))
-        return (uint64_t)-EFAULT;
+    if (type_user) {
+        if (copy_from_user_str(type, type_user, sizeof(type)))
+            return (uint64_t)-EFAULT;
+    }
+    if (dev_name) {
+        if (copy_from_user_str(devname, dev_name, sizeof(devname)))
+            return (uint64_t)-EFAULT;
+    }
     if (copy_from_user_str(dirname, dir_name, sizeof(dirname)))
         return (uint64_t)-EFAULT;
 
@@ -28,6 +35,10 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
     //     dir->handle = source->handle;
     //     return 0;
     // }
+
+    if (flags & MS_REC) {
+        return 0;
+    }
 
     if (flags & MS_MOVE) {
         if (flags & (MS_REMOUNT | MS_BIND)) {
@@ -120,7 +131,7 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
     memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
     current_task->fd_info->fds[i]->node = node;
     current_task->fd_info->fds[i]->offset = 0;
-    current_task->fd_info->fds[i]->flags = flags & (O_CLOEXEC | O_NONBLOCK);
+    current_task->fd_info->fds[i]->flags = flags;
     node->refcount++;
 
     procfs_on_open_file(current_task, i);

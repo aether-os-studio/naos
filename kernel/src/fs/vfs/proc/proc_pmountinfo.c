@@ -12,12 +12,16 @@ char *proc_gen_mountinfo_file(task_t *task, size_t *context_len) {
     struct mount_point *mnt, *tmp;
     llist_for_each(mnt, tmp, &mount_points, node) {
         vfs_node_t node = mnt->dir;
+        if (!node || !node->name || !mnt->fs || !mnt->devname ||
+            !mnt->fs->name) {
+            continue;
+        }
         char *mount_path = vfs_get_fullpath(node);
-        string_builder_append(
-            builder, "%d %d %d:%d %s %s rw - %s %s rw\n", node->fsid,
-            node->parent ? node->parent->fsid : node->fsid,
-            (node->rdev >> 8) & 0xFF, node->rdev & 0xFF, "/", mount_path,
-            all_fs[node->fsid]->name, mnt->devname);
+        string_builder_append(builder, "%d %d %d:%d %s %s rw - %s %s rw\n",
+                              node->fsid,
+                              node->parent ? node->parent->fsid : node->fsid,
+                              (node->rdev >> 8) & 0xFF, node->rdev & 0xFF, "/",
+                              mount_path, mnt->fs->name, mnt->devname);
         free(mount_path);
     }
     char *data = builder->data;

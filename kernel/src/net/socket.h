@@ -42,7 +42,7 @@ struct ucred {
 #define SCM_CREDENTIALS 0x02
 
 #define MAX_PENDING_FILES_COUNT 64
-#define BUFFER_SIZE (8 * 1024 * 1024)
+#define BUFFER_SIZE (2 * 1024 * 1024)
 #define MAX_CONNECTIONS 16
 
 typedef struct socket {

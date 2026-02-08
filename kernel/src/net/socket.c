@@ -1189,5 +1189,5 @@ void socketfs_init() {
     unix_socket_fsid = vfs_regist(&sockfs);
     memset(&first_unix_socket, 0, sizeof(socket_t));
     regist_socket(1, NULL, socket_socket);
-    // netlink_init();
+    netlink_init();
 }

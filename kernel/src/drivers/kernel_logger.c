@@ -409,7 +409,8 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list args) {
         return ret;
     }
     int to_copy = MIN((size_t)ret, size);
-    memcpy(buf, vsnprintf_buf, to_copy);
+    if (buf)
+        memcpy(buf, vsnprintf_buf, to_copy);
     spin_unlock(&vsnprintf_lock);
     return to_copy;
 }
@@ -430,7 +431,9 @@ int printk(const char *fmt, ...) {
     if (device)
         device_write(device->dev, buf, 0, len, 0);
 
+#if !SERIAL_DEBUG
     serial_printk(buf, len);
+#endif
 
     spin_unlock(&printk_lock);
 

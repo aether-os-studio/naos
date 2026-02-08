@@ -1,6 +1,6 @@
 #pragma once
 
-#define SERIAL_DEBUG 0
+#define SERIAL_DEBUG 1
 #define DEFAULT_TTY "ttyS0"
 
 #define LIMINE_API_REVISION 3
@@ -11,7 +11,7 @@
 #define MAX_IO_CPU_NUM 8
 #define STACK_SIZE 32768UL
 
-#define BUILD_VERSION "4.15.2"
+#define BUILD_VERSION "0.10.0"
 
 #define MAX_TASK_NUM 4096
 #define MAX_CONTINUE_NULL_TASKS 16

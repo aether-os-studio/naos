@@ -78,6 +78,19 @@ int virtio_net_init(virtio_driver_t *driver) {
                   (netdev_send_t)virtio_net_send,
                   (netdev_recv_t)virtio_net_receive);
 
+    struct net_device *rtnl_dev = rtnl_dev_alloc("virtio_net", ARPHRD_ETHER);
+
+    memcpy(rtnl_dev->addr, net_device->mac, 6);
+    rtnl_dev->addr_len = 6;
+
+    memset(rtnl_dev->broadcast, 0xFF, 6);
+
+    rtnl_dev->mtu = net_device->mtu;
+
+    rtnl_dev_register(rtnl_dev);
+
+    rtnl_notify_link(rtnl_dev, RTM_NEWLINK);
+
     return 0;
 }
 

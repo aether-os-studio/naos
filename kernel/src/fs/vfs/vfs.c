@@ -196,6 +196,8 @@ ret:
 }
 
 int vfs_mkdir(const char *name) {
+    int ret = 0;
+
     vfs_node_t current = rootdir;
     char *path;
     if (name[0] != '/') {
@@ -257,6 +259,11 @@ create:
     if (!strlen(filename))
         return 0;
 
+    if (vfs_child_find(current, filename)) {
+        ret = -EEXIST;
+        goto err;
+    }
+
     vfs_node_t node = vfs_child_append(current, filename, NULL);
     node->type = file_dir;
     callbackof(current, mkdir)(current->handle, filename, node);
@@ -265,11 +272,11 @@ create:
 
     vfs_on_new_event(current, IN_CREATE);
 
-    return 0;
+    return ret;
 
 err:
     free(path);
-    return -1;
+    return ret;
 }
 
 int vfs_mkfile(const char *name) {
@@ -827,8 +834,8 @@ int vfs_mount(uint64_t dev, vfs_node_t node, const char *type) {
     return -ENOENT;
 }
 
-int vfs_remount(vfs_node_t old, vfs_node_t node) {
-    int ret = callbackof(old, remount)(old, node);
+int vfs_remount(vfs_node_t old, vfs_node_t dir) {
+    int ret = callbackof(old, remount)(old, dir);
     if (ret < 0) {
         return ret;
     }
@@ -844,7 +851,7 @@ int vfs_remount(vfs_node_t old, vfs_node_t node) {
         return -ENOENT;
     char *devname = strdup(target->devname);
     vfs_delete_mount_point_by_dir(old);
-    vfs_add_mount_point(node, devname);
+    vfs_add_mount_point(dir, devname);
     free(devname);
     return 0;
 }
