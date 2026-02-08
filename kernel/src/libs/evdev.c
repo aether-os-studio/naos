@@ -106,6 +106,7 @@ static bool queue_pop_tmp(char *c) {
     }
     *c = kb_queue.tmp_buffer[kb_queue.tmp_head];
     kb_queue.tmp_head = (kb_queue.tmp_head + 1) % KB_QUEUE_SIZE;
+    kb_queue.tmp_count--;
     return true;
 }
 
@@ -124,14 +125,19 @@ static bool queue_flush() {
         return false;
     }
 
-    int i;
-    for (i = 0; i < kb_queue.tmp_count; i++) {
+    int i = 0;
+    while (kb_queue.tmp_count > 0) {
         queue_pop_tmp(&kb_queue.buffer[kb_queue.tail]);
         kb_queue.tail = (kb_queue.tail + 1) % KB_QUEUE_SIZE;
+        if (kb_queue.count < KB_QUEUE_SIZE) {
+            kb_queue.count++;
+        } else {
+            kb_queue.head = (kb_queue.head + 1) % KB_QUEUE_SIZE;
+        }
+        i++;
     }
 
-    kb_queue.tmp_count -= i;
-    kb_queue.count += i;
+    (void)i;
 
     return true;
 }
@@ -142,6 +148,7 @@ static void queue_push_string(const char *str) {
             break;
         }
     }
+    queue_flush();
 }
 
 static const char *get_escape_sequence(uint8_t sc) {

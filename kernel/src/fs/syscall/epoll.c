@@ -226,7 +226,7 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
         existing->events = event->events & ~EPOLLET;
         existing->data = event->data.u64;
         // existing->edge_trigger = (event->events & EPOLLET) != 0;
-        new_watch->edge_trigger = false;
+        existing->edge_trigger = false;
         existing->last_events = 0; // 重置状态
         break;
 
@@ -249,10 +249,10 @@ size_t epoll_pwait(vfs_node_t epollFd, struct epoll_event *events,
 
     sigset_t origmask;
     if (sigmask)
-        sys_ssetmask(SIG_SETMASK, sigmask, &origmask);
+        sys_ssetmask(SIG_SETMASK, sigmask, &origmask, sizeof(sigset_t));
     size_t epollRet = epoll_wait(epollFd, events, maxevents, timeout * 1000000);
     if (sigmask)
-        sys_ssetmask(SIG_SETMASK, &origmask, 0);
+        sys_ssetmask(SIG_SETMASK, &origmask, 0, sizeof(sigset_t));
 
     return epollRet;
 }

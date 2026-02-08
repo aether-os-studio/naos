@@ -106,48 +106,67 @@ typedef struct sigaction {
 #define CLD_STOPPED 5
 #define CLD_CONTINUED 6
 
-typedef struct siginfo {
-    int si_signo, si_errno, si_code;
+typedef struct {
+    int si_signo; /* 信号编号 */
+    int si_errno; /* errno值 */
+    int si_code;  /* 信号代码 */
+
     union {
-        char __pad[128 - 2 * sizeof(int) - sizeof(long)];
+        int _pad[29]; /* 为兼容性保留的空间 */
+
+        /* SIGKILL, SIGTERM, SIGINT, ... */
         struct {
-            union {
-                struct {
-                    int32_t si_pid;
-                    uint32_t si_uid;
-                } __piduid;
-                struct {
-                    int si_timerid;
-                    int si_overrun;
-                } __timer;
-            } __first;
-            union {
-                union sigval si_value;
-                struct {
-                    int si_status;
-                    long si_utime, si_stime;
-                } __sigchld;
-            } __second;
-        } __si_common;
+            int64_t si_pid; /* 发送进程的PID */
+            int64_t si_uid; /* 发送进程的真实UID */
+        } __kill;
+
+        /* POSIX.1b 计时器 */
         struct {
-            void *si_addr;
+            int si_tid;      /* 定时器ID */
+            int si_overrun;  /* 超过次数 */
+            void *si_sigval; /* 信号值 */
+        } __timer;
+
+        /* POSIX.1b 实时信号 */
+        struct {
+            int64_t si_pid;  /* 发送进程的PID */
+            int64_t si_uid;  /* 发送进程的真实UID */
+            void *si_sigval; /* 信号值 */
+        } __rt;
+
+        /* SIGCHLD */
+        struct {
+            int64_t si_pid; /* 终止的子进程PID */
+            int64_t si_uid; /* 子进程的真实UID */
+            int si_status;  /* 退出状态 */
+            int64_t si_utime;
+            int64_t si_stime;
+        } __sigchld;
+
+        /* SIGILL, SIGFPE, SIGSEGV, SIGBUS, SIGTRAP */
+        struct {
+            void *si_addr; /* 导致错误的地址 */
             short si_addr_lsb;
             union {
                 struct {
                     void *si_lower;
                     void *si_upper;
                 } __addr_bnd;
-                unsigned si_pkey;
-            } __first;
+                unsigned int si_pkey;
+            } __bounds;
         } __sigfault;
+
+        /* SIGPOLL/SIGIO */
         struct {
-            long si_band;
+            long si_band; /* POLL_IN, POLL_OUT, POLL_MSG */
             int si_fd;
         } __sigpoll;
+
+        /* SIGSYS */
         struct {
-            void *si_call_addr;
-            int si_syscall;
-            unsigned si_arch;
+            void *si_call_addr;   /* 系统调用指令地址 */
+            int si_syscall;       /* 系统调用编号 */
+            unsigned int si_arch; /* 体系结构 */
         } __sigsys;
     } __si_fields;
 } siginfo_t;

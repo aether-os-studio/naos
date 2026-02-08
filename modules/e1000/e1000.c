@@ -4,6 +4,7 @@
 #include <libs/aether/pci.h>
 #include <libs/aether/net.h>
 #include <libs/klibc.h>
+#include <net/rtnl.h>
 
 // Global device array
 e1000_device_t *e1000_devices[MAX_E1000_DEVICES];

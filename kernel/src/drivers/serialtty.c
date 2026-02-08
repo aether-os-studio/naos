@@ -1,4 +1,5 @@
 #include <drivers/tty.h>
+#include <task/signal.h>
 #include <drivers/serialtty.h>
 #include <mm/mm.h>
 #include <libs/keys.h>
@@ -10,14 +11,48 @@ void terminal_flush_serial(tty_t *session) {
 }
 
 extern bool serial_initialized;
+extern void send_process_group_signal(int pgid, int sig);
 
 size_t terminal_read_serial(tty_t *device, char *buf, size_t count) {
     size_t read = 0;
+    bool canonical = (device->termios.c_lflag & ICANON) != 0;
+    char eofc = device->termios.c_cc[VEOF];
+    int vmin = device->termios.c_cc[VMIN];
 
     while (read < count) {
         char c = read_serial();
         if (c) {
-            buf[read++] = c;
+            if (device->termios.c_lflag & ISIG) {
+                uint64_t pgid = device->at_process_group_id;
+                if (pgid) {
+                    if (c == device->termios.c_cc[VINTR]) {
+                        send_process_group_signal(pgid, SIGINT);
+                        continue;
+                    }
+                    if (c == device->termios.c_cc[VQUIT]) {
+                        send_process_group_signal(pgid, SIGQUIT);
+                        continue;
+                    }
+                    if (c == device->termios.c_cc[VSUSP]) {
+                        send_process_group_signal(pgid, SIGTSTP);
+                        continue;
+                    }
+                }
+            }
+            if ((device->termios.c_iflag & ICRNL) && c == '\r')
+                c = '\n';
+            if (canonical) {
+                if (c == eofc) {
+                    break;
+                }
+                buf[read++] = c;
+                if (c == '\n')
+                    break;
+            } else {
+                buf[read++] = c;
+                if (vmin == 0 || read >= (size_t)vmin)
+                    break;
+            }
         } else {
             schedule(SCHED_FLAG_YIELD);
         }

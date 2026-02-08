@@ -1,0 +1,15 @@
+#!/bin/sh
+
+export PATH="/bin:/usr/bin"
+export HOME="/root"
+export SHELL="/bin/bash"
+export XDG_RUNTIME_DIR="/run"
+
+touch /run/udev/data/c226:0
+touch /run/udev/data/c13:0
+touch /run/udev/data/c13:1
+touch /run/udev/data/c13:2
+touch /run/udev/data/c13:3
+
+# seatd &
+exec xinit

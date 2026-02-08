@@ -66,11 +66,13 @@ int signals_pending_quick(task_t *task);
 struct timespec;
 
 uint64_t sys_sgetmask();
-uint64_t sys_ssetmask(int how, sigset_t *nset, sigset_t *oset);
-uint64_t sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction);
+uint64_t sys_ssetmask(int how, const sigset_t *nset, sigset_t *oset,
+                      size_t sigsetsize);
+uint64_t sys_sigaction(int sig, const sigaction_t *action,
+                       sigaction_t *oldaction, size_t sigsetsize);
 struct pt_regs;
 void sys_sigreturn(struct pt_regs *regs);
-uint64_t sys_sigsuspend(const sigset_t *mask);
+uint64_t sys_sigsuspend(const sigset_t *mask, size_t sigsetsize);
 uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
                              const struct timespec *uts, size_t sigsetsize);
 uint64_t sys_rt_sigqueueinfo(uint64_t tgid, uint64_t sig, siginfo_t *info);

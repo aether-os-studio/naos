@@ -485,18 +485,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
     uint8_t header_buf[256];
     ssize_t header_read = vfs_read(node, header_buf, 0, sizeof(header_buf));
-    if (header_read < sizeof(Elf64_Ehdr)) {
-        for (int i = 0; i < argv_count; i++)
-            if (new_argv[i])
-                free(new_argv[i]);
-        free(new_argv);
-        for (int i = 0; i < envp_count; i++)
-            if (new_envp[i])
-                free(new_envp[i]);
-        free(new_envp);
-        can_schedule = true;
-        return (uint64_t)-ENOEXEC;
-    }
 
     // 检查 shebang
     if (header_buf[0] == '#' && header_buf[1] == '!') {
@@ -535,6 +523,19 @@ uint64_t task_execve(const char *path_user, const char **argv,
         injected_argv[1] = path;
 
         return task_execve((const char *)injected_argv[0], injected_argv, envp);
+    }
+
+    if (header_read < sizeof(Elf64_Ehdr)) {
+        for (int i = 0; i < argv_count; i++)
+            if (new_argv[i])
+                free(new_argv[i]);
+        free(new_argv);
+        for (int i = 0; i < envp_count; i++)
+            if (new_envp[i])
+                free(new_envp[i]);
+        free(new_envp);
+        can_schedule = true;
+        return (uint64_t)-ENOEXEC;
     }
 
     const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)header_buf;
@@ -974,70 +975,64 @@ void task_exit_inner(task_t *task, int64_t code) {
     if (!task->is_clone && task->ppid && task->pid != task->ppid &&
         task->ppid < MAX_TASK_NUM && tasks[task->ppid]) {
         task_t *parent = tasks[task->ppid];
+        sigaction_t *sa = &parent->signal->actions[SIGCHLD];
+        bool ignore_sigchld = (sa->sa_handler == SIG_IGN);
 
-        // sigaction_t *sa = &parent->signal->actions[SIGCHLD];
-
-        // if (code > 128) {
-        //     return;
-        // }
-
-        // if (sa->sa_handler != SIG_IGN || (sa->sa_flags & SA_NOCLDWAIT)) {
-        //     if (sa->sa_handler != SIG_IGN && sa->sa_handler != SIG_DFL) {
-        //         siginfo_t sigchld_info;
-        //         sigchld_info.si_signo = SIGCHLD;
-        //         sigchld_info.__si_fields.__si_common.__first.__piduid.si_pid
-        //         =
-        //             task->pid;
-        //         sigchld_info.__si_fields.__si_common.__first.__piduid.si_uid
-        //         =
-        //             task->uid;
-        //         sigchld_info.si_code = code;
-        //         sigchld_info.__si_fields.__si_common.__second.__sigchld
-        //             .si_status = CLD_EXITED;
-        //         sigchld_info.__si_fields.__si_common.__second.__sigchld
-        //             .si_utime = nano_time();
-        //         sigchld_info.__si_fields.__si_common.__second.__sigchld
-        //             .si_stime = nano_time();
-        //         task_commit_signal(parent, SIGCHLD, &sigchld_info);
+        // if (!ignore_sigchld) {
+        //     siginfo_t sigchld_info;
+        //     memset(&sigchld_info, 0, sizeof(siginfo_t));
+        //     sigchld_info.si_signo = SIGCHLD;
+        //     sigchld_info.si_errno = 0;
+        //     sigchld_info.__si_fields.__sigchld.si_pid = task->pid;
+        //     sigchld_info.__si_fields.__sigchld.si_uid = task->uid;
+        //     sigchld_info.__si_fields.__sigchld.si_utime = 0;
+        //     sigchld_info.__si_fields.__sigchld.si_stime = 0;
+        //     if (code >= 128) {
+        //         sigchld_info.si_code = CLD_KILLED;
+        //         sigchld_info.__si_fields.__sigchld.si_status = code - 128;
+        //     } else {
+        //         sigchld_info.si_code = CLD_EXITED;
+        //         sigchld_info.__si_fields.__sigchld.si_status = code;
         //     }
+        //     task_commit_signal(parent, SIGCHLD, &sigchld_info);
 
-        //     if (sa->sa_flags & SA_NOCLDWAIT) {
-        //         task->should_free = true;
-        //     } else if (sa->sa_handler == SIG_IGN) {
-        //         // 只是忽略信号，不立即释放
-        //     }
-        // }
+        //     for (int i = 0; i < MAX_FD_NUM; i++) {
+        //         fd_t *fd = parent->fd_info->fds[i];
+        //         if (fd) {
+        //             vfs_node_t node = fd->node;
+        //             if (node && node->fsid == signalfdfs_id) {
+        //                 struct signalfd_ctx *ctx = node->handle;
+        //                 if (ctx) {
+        //                     struct signalfd_siginfo info;
+        //                     memset(&info, 0, sizeof(struct
+        //                     signalfd_siginfo)); info.ssi_signo = SIGCHLD;
+        //                     info.ssi_pid = task->pid;
+        //                     info.ssi_uid = task->uid;
+        //                     if (code >= 128) {
+        //                         info.ssi_code = CLD_KILLED;
+        //                         info.ssi_status = code - 128;
+        //                     } else {
+        //                         info.ssi_code = CLD_EXITED;
+        //                         info.ssi_status = code;
+        //                     }
 
-        // for (int i = 0; i < MAX_FD_NUM; i++) {
-        //     fd_t *fd = parent->fd_info->fds[i];
-        //     if (fd) {
-        //         vfs_node_t node = fd->node;
-        //         if (node && node->fsid == signalfdfs_id) {
-        //             struct signalfd_ctx *ctx = node->handle;
-        //             if (ctx) {
-        //                 struct signalfd_siginfo info;
-        //                 memset(&info, 0, sizeof(struct sigevent));
-        //                 info.ssi_signo = SIGCHLD;
-        //                 if (code > 128) {
-        //                     info.ssi_code = CLD_KILLED;
-        //                     info.ssi_status = code - 128;
-        //                 } else {
-        //                     info.ssi_code = CLD_EXITED;
-        //                     info.ssi_status = code;
-        //                 }
-
-        //                 memcpy(&ctx->queue[ctx->queue_head], &info,
-        //                        sizeof(struct signalfd_siginfo));
-        //                 ctx->queue_head =
-        //                     (ctx->queue_head + 1) % ctx->queue_size;
-        //                 if (ctx->queue_head == ctx->queue_tail) {
-        //                     ctx->queue_tail =
-        //                         (ctx->queue_tail + 1) % ctx->queue_size;
+        //                     memcpy(&ctx->queue[ctx->queue_head], &info,
+        //                            sizeof(struct signalfd_siginfo));
+        //                     ctx->queue_head =
+        //                         (ctx->queue_head + 1) % ctx->queue_size;
+        //                     if (ctx->queue_head == ctx->queue_tail) {
+        //                         ctx->queue_tail =
+        //                             (ctx->queue_tail + 1) % ctx->queue_size;
+        //                     }
         //                 }
         //             }
         //         }
         //     }
         // }
+
+        if (ignore_sigchld || (sa->sa_flags & SA_NOCLDWAIT)) {
+            task->should_free = true;
+        }
 
         task_unblock(parent, 128 + SIGCHLD);
     } else if (task->pid == task->ppid) {
@@ -1305,20 +1300,17 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
             memset(infop, 0, sizeof(siginfo_t));
             infop->si_signo = SIGCHLD;
             infop->si_errno = 0;
-            infop->__si_fields.__si_common.__first.__piduid.si_pid =
-                target->pid;
-            infop->__si_fields.__si_common.__first.__piduid.si_uid =
-                target->uid;
+            infop->__si_fields.__sigchld.si_pid = target->pid;
+            infop->__si_fields.__sigchld.si_uid = target->uid;
 
             if (target->state == TASK_DIED) {
                 if (target->status < 128) {
                     infop->si_code = CLD_EXITED;
-                    infop->__si_fields.__si_common.__second.__sigchld
-                        .si_status = target->status;
+                    infop->__si_fields.__sigchld.si_status = target->status;
                 } else {
                     infop->si_code = CLD_KILLED;
-                    infop->__si_fields.__si_common.__second.__sigchld
-                        .si_status = target->status - 128;
+                    infop->__si_fields.__sigchld.si_status =
+                        target->status - 128;
                 }
             }
         }

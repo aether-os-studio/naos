@@ -1,6 +1,7 @@
 // Copyright (C) 2025  lihanrui2913
 #include "net.h"
 #include <libs/aether/mm.h>
+#include <net/rtnl.h>
 
 virtio_net_device_t *virtio_net_devices[MAX_NETDEV_NUM];
 int virtio_net_idx = 0;

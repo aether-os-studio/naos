@@ -96,7 +96,7 @@ uint64_t sys_ppoll(struct pollfd *fds, uint64_t nfds,
 
     sigset_t origmask;
     if (sigmask) {
-        sys_ssetmask(SIG_SETMASK, sigmask, &origmask);
+        sys_ssetmask(SIG_SETMASK, sigmask, &origmask, sizeof(sigset_t));
     }
 
     int timeout = -1;
@@ -107,7 +107,7 @@ uint64_t sys_ppoll(struct pollfd *fds, uint64_t nfds,
     uint64_t ret = sys_poll(fds, nfds, timeout);
 
     if (sigmask) {
-        sys_ssetmask(SIG_SETMASK, &origmask, NULL);
+        sys_ssetmask(SIG_SETMASK, &origmask, NULL, sizeof(sigset_t));
     }
 
     return ret;
@@ -236,7 +236,7 @@ uint64_t sys_pselect6(uint64_t nfds, fd_set *readfds, fd_set *writefds,
 
     sigset_t origmask;
     if (sigmask)
-        sys_ssetmask(SIG_SETMASK, sigmask, &origmask);
+        sys_ssetmask(SIG_SETMASK, sigmask, &origmask, sigsetsize);
 
     struct timeval timeoutConv;
     if (timeout) {
@@ -252,7 +252,7 @@ uint64_t sys_pselect6(uint64_t nfds, fd_set *readfds, fd_set *writefds,
                             (uint8_t *)exceptfds, &timeoutConv);
 
     if (sigmask)
-        sys_ssetmask(SIG_SETMASK, &origmask, NULL);
+        sys_ssetmask(SIG_SETMASK, &origmask, NULL, sigsetsize);
 
     return ret;
 }

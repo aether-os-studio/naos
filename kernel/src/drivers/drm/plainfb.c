@@ -123,6 +123,292 @@ static int plainfb_add_fb2(drm_device_t *drm_dev,
     return 0;
 }
 
+int plainfb_atomic_commit(drm_device_t *drm_dev,
+                          struct drm_mode_atomic *atomic) {
+    plainfb_device_t *gpu_dev = drm_dev->data;
+    if (!gpu_dev || !gpu_dev->framebuffer || !atomic) {
+        return -ENODEV;
+    }
+
+    if (atomic->flags & ~DRM_MODE_ATOMIC_FLAGS) {
+        return -EINVAL;
+    }
+
+    if (atomic->count_objs == 0) {
+        return 0;
+    }
+
+    uint32_t *obj_ids = (uint32_t *)(uintptr_t)atomic->objs_ptr;
+    uint32_t *obj_prop_counts = (uint32_t *)(uintptr_t)atomic->count_props_ptr;
+    uint32_t *prop_ids = (uint32_t *)(uintptr_t)atomic->props_ptr;
+    uint64_t *prop_values = (uint64_t *)(uintptr_t)atomic->prop_values_ptr;
+
+    if (!obj_ids || !obj_prop_counts || !prop_ids || !prop_values) {
+        return -EINVAL;
+    }
+
+    bool test_only = (atomic->flags & DRM_MODE_ATOMIC_TEST_ONLY) != 0;
+    uint64_t prop_idx = 0;
+    uint32_t committed_fb_id = 0;
+    bool has_committed_fb = false;
+
+    for (uint32_t i = 0; i < atomic->count_objs; i++) {
+        uint32_t obj_id = obj_ids[i];
+        uint32_t count = obj_prop_counts[i];
+
+        enum {
+            ATOMIC_OBJ_UNKNOWN = 0,
+            ATOMIC_OBJ_PLANE,
+            ATOMIC_OBJ_CRTC,
+            ATOMIC_OBJ_CONNECTOR,
+        } obj_type = ATOMIC_OBJ_UNKNOWN;
+
+        for (uint32_t j = 0; j < count; j++) {
+            switch (prop_ids[prop_idx + j]) {
+            case DRM_PROPERTY_ID_PLANE_TYPE:
+            case DRM_PROPERTY_ID_FB_ID:
+            case DRM_PROPERTY_ID_CRTC_X:
+            case DRM_PROPERTY_ID_CRTC_Y:
+            case DRM_PROPERTY_ID_CRTC_W:
+            case DRM_PROPERTY_ID_CRTC_H:
+            case DRM_PROPERTY_ID_CRTC_ID:
+                obj_type = ATOMIC_OBJ_PLANE;
+                break;
+            case DRM_CRTC_ACTIVE_PROP_ID:
+            case DRM_CRTC_MODE_ID_PROP_ID:
+                obj_type = ATOMIC_OBJ_CRTC;
+                break;
+            case DRM_CONNECTOR_DPMS_PROP_ID:
+            case DRM_CONNECTOR_CRTC_ID_PROP_ID:
+                obj_type = ATOMIC_OBJ_CONNECTOR;
+                break;
+            default:
+                break;
+            }
+
+            if (obj_type != ATOMIC_OBJ_UNKNOWN) {
+                break;
+            }
+        }
+
+        drm_plane_t *plane = NULL;
+        drm_crtc_t *crtc = NULL;
+        drm_connector_t *connector = NULL;
+
+        if (obj_type == ATOMIC_OBJ_PLANE) {
+            plane = drm_plane_get(&gpu_dev->resource_mgr, obj_id);
+            if (!plane) {
+                return -ENOENT;
+            }
+        } else if (obj_type == ATOMIC_OBJ_CRTC) {
+            crtc = drm_crtc_get(&gpu_dev->resource_mgr, obj_id);
+            if (!crtc) {
+                return -ENOENT;
+            }
+        } else if (obj_type == ATOMIC_OBJ_CONNECTOR) {
+            connector = drm_connector_get(&gpu_dev->resource_mgr, obj_id);
+            if (!connector) {
+                return -ENOENT;
+            }
+        }
+
+        for (uint32_t j = 0; j < count; j++, prop_idx++) {
+            uint32_t prop_id = prop_ids[prop_idx];
+            uint64_t value = prop_values[prop_idx];
+
+            switch (prop_id) {
+            case DRM_PROPERTY_ID_PLANE_TYPE:
+                // Immutable: userspace may query it, but must not set it.
+                if (value != plane->plane_type) {
+                    if (connector) {
+                        drm_connector_free(&gpu_dev->resource_mgr,
+                                           connector->id);
+                    }
+                    if (crtc) {
+                        drm_crtc_free(&gpu_dev->resource_mgr, crtc->id);
+                    }
+                    if (plane) {
+                        drm_plane_free(&gpu_dev->resource_mgr, plane->id);
+                    }
+                    return -EINVAL;
+                }
+                break;
+
+            case DRM_PROPERTY_ID_FB_ID: {
+                if (!plane) {
+                    continue;
+                }
+
+                if (value != 0) {
+                    drm_framebuffer_t *fb = drm_framebuffer_get(
+                        &gpu_dev->resource_mgr, (uint32_t)value);
+                    if (!fb) {
+                        if (connector) {
+                            drm_connector_free(&gpu_dev->resource_mgr,
+                                               connector->id);
+                        }
+                        if (crtc) {
+                            drm_crtc_free(&gpu_dev->resource_mgr, crtc->id);
+                        }
+                        drm_plane_free(&gpu_dev->resource_mgr, plane->id);
+                        return -ENOENT;
+                    }
+
+                    if (fb->handle >= 32 ||
+                        !gpu_dev->dumbbuffers[fb->handle].used) {
+                        drm_framebuffer_free(&gpu_dev->resource_mgr, fb->id);
+                        if (connector) {
+                            drm_connector_free(&gpu_dev->resource_mgr,
+                                               connector->id);
+                        }
+                        if (crtc) {
+                            drm_crtc_free(&gpu_dev->resource_mgr, crtc->id);
+                        }
+                        drm_plane_free(&gpu_dev->resource_mgr, plane->id);
+                        return -EINVAL;
+                    }
+
+                    drm_framebuffer_free(&gpu_dev->resource_mgr, fb->id);
+                }
+
+                if (!test_only) {
+                    plane->fb_id = (uint32_t)value;
+                }
+
+                committed_fb_id = (uint32_t)value;
+                has_committed_fb = (value != 0);
+                break;
+            }
+
+            case DRM_PROPERTY_ID_CRTC_ID:
+                if (plane && !test_only) {
+                    plane->crtc_id = (uint32_t)value;
+                }
+                break;
+
+            case DRM_PROPERTY_ID_CRTC_X:
+            case DRM_PROPERTY_ID_CRTC_Y:
+            case DRM_PROPERTY_ID_CRTC_W:
+            case DRM_PROPERTY_ID_CRTC_H:
+                if (plane) {
+                    uint32_t target_crtc_id = plane->crtc_id;
+                    if (target_crtc_id) {
+                        drm_crtc_t *target_crtc = drm_crtc_get(
+                            &gpu_dev->resource_mgr, target_crtc_id);
+                        if (!target_crtc) {
+                            if (connector) {
+                                drm_connector_free(&gpu_dev->resource_mgr,
+                                                   connector->id);
+                            }
+                            if (crtc) {
+                                drm_crtc_free(&gpu_dev->resource_mgr, crtc->id);
+                            }
+                            drm_plane_free(&gpu_dev->resource_mgr, plane->id);
+                            return -ENOENT;
+                        }
+
+                        if (!test_only) {
+                            if (prop_id == DRM_PROPERTY_ID_CRTC_X) {
+                                target_crtc->x = (uint32_t)value;
+                            } else if (prop_id == DRM_PROPERTY_ID_CRTC_Y) {
+                                target_crtc->y = (uint32_t)value;
+                            } else if (prop_id == DRM_PROPERTY_ID_CRTC_W) {
+                                target_crtc->w = (uint32_t)value;
+                            } else {
+                                target_crtc->h = (uint32_t)value;
+                            }
+                        }
+
+                        drm_crtc_free(&gpu_dev->resource_mgr, target_crtc->id);
+                    }
+                }
+                break;
+
+            case DRM_CRTC_ACTIVE_PROP_ID:
+                if (crtc && !test_only) {
+                    crtc->mode_valid = (value != 0);
+                }
+                break;
+
+            case DRM_CRTC_MODE_ID_PROP_ID:
+                // plainfb has no mode blob store, so we validate presence only.
+                break;
+
+            case DRM_CONNECTOR_DPMS_PROP_ID:
+                if (value > DRM_MODE_DPMS_OFF) {
+                    if (connector) {
+                        drm_connector_free(&gpu_dev->resource_mgr,
+                                           connector->id);
+                    }
+                    if (crtc) {
+                        drm_crtc_free(&gpu_dev->resource_mgr, crtc->id);
+                    }
+                    if (plane) {
+                        drm_plane_free(&gpu_dev->resource_mgr, plane->id);
+                    }
+                    return -EINVAL;
+                }
+                break;
+
+            case DRM_CONNECTOR_CRTC_ID_PROP_ID:
+                if (connector && !test_only) {
+                    connector->crtc_id = (uint32_t)value;
+                }
+                break;
+
+            default:
+                // Accept unknown properties to stay permissive for userspace.
+                break;
+            }
+        }
+
+        if (connector) {
+            drm_connector_free(&gpu_dev->resource_mgr, connector->id);
+        }
+        if (crtc) {
+            drm_crtc_free(&gpu_dev->resource_mgr, crtc->id);
+        }
+        if (plane) {
+            drm_plane_free(&gpu_dev->resource_mgr, plane->id);
+        }
+    }
+
+    if (test_only || !has_committed_fb) {
+        return 0;
+    }
+
+    drm_framebuffer_t *scanout_fb =
+        drm_framebuffer_get(&gpu_dev->resource_mgr, committed_fb_id);
+    if (!scanout_fb) {
+        return -ENOENT;
+    }
+
+    if (scanout_fb->handle >= 32 ||
+        !gpu_dev->dumbbuffers[scanout_fb->handle].used) {
+        drm_framebuffer_free(&gpu_dev->resource_mgr, scanout_fb->id);
+        return -EINVAL;
+    }
+
+    size_t dst_size = (size_t)gpu_dev->framebuffer->pitch *
+                      (size_t)gpu_dev->framebuffer->height;
+    size_t src_size = (size_t)gpu_dev->dumbbuffers[scanout_fb->handle].pitch *
+                      (size_t)gpu_dev->dumbbuffers[scanout_fb->handle].height;
+    size_t copy_size = src_size < dst_size ? src_size : dst_size;
+
+    fast_copy_16((void *)gpu_dev->framebuffer->address,
+                 (const void *)phys_to_virt(
+                     gpu_dev->dumbbuffers[scanout_fb->handle].addr),
+                 copy_size);
+
+    drm_framebuffer_free(&gpu_dev->resource_mgr, scanout_fb->id);
+
+    if (atomic->flags & DRM_MODE_PAGE_FLIP_EVENT) {
+        drm_post_event(drm_dev, DRM_EVENT_FLIP_COMPLETE, atomic->user_data);
+    }
+
+    return 0;
+}
+
 int plainfb_map_dumb(drm_device_t *drm_dev, struct drm_mode_map_dumb *args) {
     plainfb_device_t *gpu_dev = drm_dev->data;
     if (!gpu_dev) {
@@ -264,7 +550,7 @@ drm_device_op_t plainfb_drm_device_op = {
     .add_fb = plainfb_add_fb,
     .add_fb2 = plainfb_add_fb2,
     .set_plane = NULL,
-    .atomic_commit = NULL,
+    .atomic_commit = plainfb_atomic_commit,
     .map_dumb = plainfb_map_dumb,
     .set_crtc = plainfb_set_crtc,
     .page_flip = plainfb_page_flip,

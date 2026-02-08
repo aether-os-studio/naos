@@ -11,6 +11,7 @@ int pts_fsid = 0;
 extern vfs_node_t devtmpfs_root;
 
 size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit);
+extern void send_process_group_signal(int pgid, int sig);
 
 int pty_bitmap_decide() {
     int ret = -1;
@@ -196,19 +197,46 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
 
     spin_lock(&pair->lock);
 
-    memcpy(&pair->bufferSlave[pair->ptrSlave], addr, limit);
-    if (pair->term.c_iflag & ICRNL)
-        for (size_t i = 0; i < limit; i++) {
-            if (pair->bufferSlave[pair->ptrSlave + i] == '\r')
-                pair->bufferSlave[pair->ptrSlave + i] = '\n';
+    const uint8_t *in = addr;
+    size_t written = 0;
+    for (size_t i = 0; i < limit; i++) {
+        uint8_t ch = in[i];
+        if (pair->term.c_lflag & ISIG) {
+            uint64_t pgid = pair->frontProcessGroup;
+            if (!pgid)
+                pgid = pair->ctrlPgid;
+            if (pgid) {
+                if (ch == pair->term.c_cc[VINTR]) {
+                    send_process_group_signal(pgid, SIGINT);
+                    written++;
+                    continue;
+                }
+                if (ch == pair->term.c_cc[VQUIT]) {
+                    send_process_group_signal(pgid, SIGQUIT);
+                    written++;
+                    continue;
+                }
+                if (ch == pair->term.c_cc[VSUSP]) {
+                    send_process_group_signal(pgid, SIGTSTP);
+                    written++;
+                    continue;
+                }
+            }
         }
+        if ((pair->term.c_iflag & ICRNL) && ch == '\r')
+            ch = '\n';
+        if ((pair->ptrSlave + 1) >= PTY_BUFF_SIZE)
+            break;
+        pair->bufferSlave[pair->ptrSlave++] = ch;
+        written++;
+    }
     spin_unlock(&pair->lock);
     if ((pair->term.c_lflag & ICANON) && (pair->term.c_lflag & ECHO)) {
-        pts_write_inner(fd, &pair->bufferSlave[pair->ptrSlave], limit);
+        if (written > 0)
+            pts_write_inner(fd, &pair->bufferSlave[pair->ptrSlave - written],
+                            written);
     }
-    pair->ptrSlave += limit;
-
-    return limit;
+    return written;
 }
 
 size_t ptmx_ioctl(void *file, uint64_t request, uint64_t arg) {
@@ -398,8 +426,6 @@ size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit) {
     return toCopy;
 }
 
-extern void send_process_group_signal(int pgid, int sig);
-
 size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
     pty_pair_t *pair = fd->node->handle;
 
@@ -423,23 +449,6 @@ size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
         (pair->term.c_oflag & OPOST) && (pair->term.c_oflag & ONLCR);
     for (size_t i = 0; i < limit; ++i) {
         uint8_t ch = in[i];
-        if (pair->term.c_lflag & ISIG) {
-            uint64_t pgid = pair->frontProcessGroup;
-            if (pgid) {
-                if (ch == pair->term.c_cc[VINTR]) {
-                    send_process_group_signal(pgid, SIGINT);
-                }
-                if (ch == pair->term.c_cc[VQUIT]) {
-                    send_process_group_signal(pgid, SIGQUIT);
-                }
-                if (ch == pair->term.c_cc[VSTOP]) {
-                    send_process_group_signal(pgid, SIGSTOP);
-                }
-                if (ch == pair->term.c_cc[VKILL]) {
-                    send_process_group_signal(pgid, SIGKILL);
-                }
-            }
-        }
         if (doTranslate && ch == '\n') {
             if ((pair->ptrMaster + 2) >= PTY_BUFF_SIZE)
                 break;

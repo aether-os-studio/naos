@@ -8,6 +8,16 @@
 
 signal_internal_t signal_internal_decisions[MAXSIG] = {0};
 
+static inline sigset_t sigset_user_to_kernel(sigset_t user_mask) {
+    sigset_t k = user_mask << 1;
+    k &= ~(SIGMASK(SIGKILL) | SIGMASK(SIGSTOP));
+    return k;
+}
+
+static inline sigset_t sigset_kernel_to_user(sigset_t kernel_mask) {
+    return kernel_mask >> 1;
+}
+
 void signal_init() {
     signal_internal_decisions[SIGABRT] = SIGNAL_INTERNAL_CORE;
     signal_internal_decisions[SIGALRM] = SIGNAL_INTERNAL_TERM;
@@ -51,6 +61,20 @@ void signal_init() {
 extern int signalfdfs_id;
 
 int signals_pending_quick(task_t *task) {
+    if (task->signal->pending_signal.sig != 0) {
+        int psig = task->signal->pending_signal.sig;
+        if (!(task->signal->blocked & SIGMASK(psig))) {
+            sigaction_t *paction = &task->signal->actions[psig];
+            sighandler_t phandler = paction->sa_handler;
+            if (phandler == SIG_IGN ||
+                (phandler == SIG_DFL &&
+                 signal_internal_decisions[psig] == SIGNAL_INTERNAL_IGN)) {
+                task->signal->pending_signal.sig = 0;
+            } else {
+                return psig;
+            }
+        }
+    }
     sigset_t pending_list = task->signal->signal;
     sigset_t unblocked_list = pending_list & (~task->signal->blocked);
     if (!unblocked_list)
@@ -60,11 +84,15 @@ int signals_pending_quick(task_t *task) {
             continue;
         sigaction_t *action = &task->signal->actions[i];
         sighandler_t user_handler = action->sa_handler;
-        if (user_handler == SIG_IGN)
+        if (user_handler == SIG_IGN) {
+            task->signal->signal &= (~SIGMASK(i));
             continue;
+        }
         if (user_handler == SIG_DFL &&
-            signal_internal_decisions[i] == SIGNAL_INTERNAL_IGN)
+            signal_internal_decisions[i] == SIGNAL_INTERNAL_IGN) {
+            task->signal->signal &= (~SIGMASK(i));
             continue;
+        }
 
         task->signal->signal &= (~SIGMASK(i));
 
@@ -83,6 +111,8 @@ void task_commit_signal(task_t *task, int sig, siginfo_t *info) {
         memcpy(&signal.info, info, sizeof(siginfo_t));
     } else {
         memset(&signal.info, 0, sizeof(siginfo_t));
+        signal.info.si_signo = sig;
+        signal.info.si_code = SI_KERNEL;
     }
     memcpy(&task->signal->pending_signal, &signal, sizeof(pending_signal_t));
     task->signal->pending_signal.processed = false;
@@ -90,16 +120,20 @@ void task_commit_signal(task_t *task, int sig, siginfo_t *info) {
 }
 
 // 获取信号屏蔽位图
-uint64_t sys_sgetmask() { return current_task->signal->blocked; }
+uint64_t sys_sgetmask() {
+    return sigset_kernel_to_user(current_task->signal->blocked);
+}
 
 // 设置信号屏蔽位图
-uint64_t sys_ssetmask(int how, sigset_t *nset, sigset_t *oset) {
+uint64_t sys_ssetmask(int how, const sigset_t *nset, sigset_t *oset,
+                      size_t sigsetsize) {
+    if (sigsetsize != sizeof(sigset_t)) {
+        return -EINVAL;
+    }
     if (oset)
-        *oset = current_task->signal->blocked >> 1;
+        *oset = sigset_kernel_to_user(current_task->signal->blocked);
     if (nset) {
-        uint64_t safe = *nset;
-        safe <<= 1;
-        safe &= ~(SIGMASK(SIGKILL) | SIGMASK(SIGSTOP)); // nuh uh!
+        uint64_t safe = sigset_user_to_kernel(*nset);
         switch (how) {
         case SIG_BLOCK:
             current_task->signal->blocked |= safe;
@@ -119,8 +153,12 @@ uint64_t sys_ssetmask(int how, sigset_t *nset, sigset_t *oset) {
     return 0;
 }
 
-uint64_t sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction) {
-    if (sig < MINSIG || sig > MAXSIG || sig == SIGKILL) {
+uint64_t sys_sigaction(int sig, const sigaction_t *action,
+                       sigaction_t *oldaction, size_t sigsetsize) {
+    if (sigsetsize != sizeof(sigset_t)) {
+        return -EINVAL;
+    }
+    if (sig < MINSIG || sig > MAXSIG || sig == SIGKILL || sig == SIGSTOP) {
         return -EINVAL;
     }
 
@@ -128,10 +166,12 @@ uint64_t sys_sigaction(int sig, sigaction_t *action, sigaction_t *oldaction) {
     sigaction_t *ptr = &current_task->signal->actions[sig];
     if (oldaction) {
         *oldaction = *ptr;
+        oldaction->sa_mask = sigset_kernel_to_user(ptr->sa_mask);
     }
 
     if (action) {
         *ptr = *action;
+        ptr->sa_mask = sigset_user_to_kernel(action->sa_mask);
     }
     spin_unlock(&current_task->signal->signal_lock);
 
@@ -166,9 +206,7 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
         return -EINVAL;
     }
 
-    sigset_t old = current_task->signal->blocked;
-
-    current_task->signal->blocked = *uthese;
+    sigset_t wait_mask = sigset_user_to_kernel(*uthese);
 
     uint64_t start = nano_time();
     uint64_t wait_ns = UINT64_MAX;
@@ -177,14 +215,53 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
     }
 
     int sig = 0;
-    while (!(sig = signals_pending_quick(current_task), sig) &&
-           (nano_time() - start < wait_ns || wait_ns == UINT64_MAX)) {
+    while ((nano_time() - start < wait_ns || wait_ns == UINT64_MAX)) {
+        if (current_task->signal->pending_signal.sig != 0) {
+            int psig = current_task->signal->pending_signal.sig;
+            if (wait_mask & SIGMASK(psig)) {
+                sig = psig;
+                break;
+            }
+        }
+
+        sigset_t pending_list = current_task->signal->signal & wait_mask;
+        if (pending_list) {
+            for (int i = MINSIG; i <= MAXSIG; i++) {
+                if (!(pending_list & SIGMASK(i)))
+                    continue;
+                sigaction_t *action = &current_task->signal->actions[i];
+                sighandler_t user_handler = action->sa_handler;
+                if (user_handler == SIG_IGN) {
+                    current_task->signal->signal &= (~SIGMASK(i));
+                    continue;
+                }
+                if (user_handler == SIG_DFL &&
+                    signal_internal_decisions[i] == SIGNAL_INTERNAL_IGN) {
+                    current_task->signal->signal &= (~SIGMASK(i));
+                    continue;
+                }
+                current_task->signal->signal &= (~SIGMASK(i));
+                sig = i;
+                break;
+            }
+            if (sig != 0)
+                break;
+        }
+
         schedule(SCHED_FLAG_YIELD);
     }
 
-    current_task->signal->blocked = old;
+    if (sig == 0) {
+        return -EAGAIN;
+    }
 
-    if (uinfo) {
+    if (current_task->signal->pending_signal.sig == sig) {
+        if (uinfo) {
+            memcpy(uinfo, &current_task->signal->pending_signal.info,
+                   sizeof(siginfo_t));
+        }
+        current_task->signal->pending_signal.sig = 0;
+    } else if (uinfo) {
         memset(uinfo, 0, sizeof(siginfo_t));
         uinfo->si_signo = sig;
         uinfo->si_errno = 0;
@@ -195,6 +272,9 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
 }
 
 uint64_t sys_rt_sigqueueinfo(uint64_t tgid, uint64_t sig, siginfo_t *info) {
+    if (sig < MINSIG || sig > MAXSIG) {
+        return -EINVAL;
+    }
     if (tgid >= MAX_TASK_NUM) {
         return -EINVAL;
     }
@@ -213,10 +293,13 @@ uint64_t sys_rt_sigqueueinfo(uint64_t tgid, uint64_t sig, siginfo_t *info) {
     return 0;
 }
 
-uint64_t sys_sigsuspend(const sigset_t *mask) {
+uint64_t sys_sigsuspend(const sigset_t *mask, size_t sigsetsize) {
+    if (sigsetsize != sizeof(sigset_t)) {
+        return -EINVAL;
+    }
     sigset_t old = current_task->signal->blocked;
 
-    current_task->signal->blocked = *mask;
+    current_task->signal->blocked = sigset_user_to_kernel(*mask);
 
     while (!signals_pending_quick(current_task)) {
         schedule(SCHED_FLAG_YIELD);
@@ -227,32 +310,21 @@ uint64_t sys_sigsuspend(const sigset_t *mask) {
     return -EINTR;
 }
 
-uint64_t sys_kill(int pid, int sig) {
-    if (sig < MINSIG || sig > MAXSIG) {
-        return 0;
-    }
+static void task_fill_siginfo(siginfo_t *info, int sig, int code) {
+    memset(info, 0, sizeof(siginfo_t));
+    info->si_signo = sig;
+    info->si_errno = 0;
+    info->si_code = code;
+    info->__si_fields.__kill.si_pid = current_task->pid;
+    info->__si_fields.__kill.si_uid = current_task->uid;
+}
 
-    if (pid < 0) {
-        for (uint64_t i = cpu_count; i < MAX_TASK_NUM; i++) {
-            if (tasks[i] && tasks[i]->ppid == current_task->pid) {
-                sys_kill(tasks[i]->pid, sig);
-            }
-        }
-
-        return 0;
-    }
-
-    if (!pid) {
-        return 0;
-    }
-
-    task_t *task = tasks[pid];
-
-    if (!task) {
-        return -ESRCH;
-    }
-
-    task_commit_signal(task, sig, NULL);
+static void task_send_signal(task_t *task, int sig, int code) {
+    if (!task)
+        return;
+    siginfo_t info;
+    task_fill_siginfo(&info, sig, code);
+    task_commit_signal(task, sig, &info);
 
     for (int i = 0; i < MAX_FD_NUM; i++) {
         fd_t *fd = task->fd_info->fds[i];
@@ -261,12 +333,12 @@ uint64_t sys_kill(int pid, int sig) {
             if (node && node->fsid == signalfdfs_id) {
                 struct signalfd_ctx *ctx = node->handle;
                 if (ctx) {
-                    struct signalfd_siginfo info;
-                    memset(&info, 0, sizeof(struct sigevent));
-                    info.ssi_signo = sig;
-                    info.ssi_code = SI_USER;
+                    struct signalfd_siginfo sinfo;
+                    memset(&sinfo, 0, sizeof(struct signalfd_siginfo));
+                    sinfo.ssi_signo = sig;
+                    sinfo.ssi_code = code;
 
-                    memcpy(&ctx->queue[ctx->queue_head], &info,
+                    memcpy(&ctx->queue[ctx->queue_head], &sinfo,
                            sizeof(struct signalfd_siginfo));
                     ctx->queue_head = (ctx->queue_head + 1) % ctx->queue_size;
                     if (ctx->queue_head == ctx->queue_tail) {
@@ -278,8 +350,88 @@ uint64_t sys_kill(int pid, int sig) {
         }
     }
 
-    task_unblock(task, 128 + sig);
+    if (sig != SIGSTOP && sig != SIGTSTP && sig != SIGTTIN && sig != SIGTTOU) {
+        task_unblock(task, 128 + sig);
+    }
+}
 
+uint64_t sys_kill(int pid, int sig) {
+    if (sig < 0 || sig > MAXSIG) {
+        return -EINVAL;
+    }
+    if (sig == 0) {
+        if (pid > 0) {
+            return tasks[pid] ? 0 : -ESRCH;
+        }
+        if (pid == 0) {
+            int pgid = current_task->pgid;
+            for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
+                task_t *task = tasks[i];
+                if (task && task->pgid == pgid)
+                    return 0;
+            }
+            return -ESRCH;
+        }
+        if (pid == -1) {
+            for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
+                task_t *task = tasks[i];
+                if (task && !task->is_kernel)
+                    return 0;
+            }
+            return -ESRCH;
+        }
+        int pgid = -pid;
+        for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
+            task_t *task = tasks[i];
+            if (task && task->pgid == pgid)
+                return 0;
+        }
+        return -ESRCH;
+    }
+
+    if (pid < 0) {
+        if (pid == -1) {
+            for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
+                task_t *task = tasks[i];
+                if (!task || task->is_kernel)
+                    continue;
+                task_send_signal(task, sig, SI_USER);
+            }
+            return 0;
+        }
+
+        int pgid = -pid;
+        for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
+            task_t *task = tasks[i];
+            if (!task || task->is_kernel)
+                continue;
+            if (task->pgid == pgid) {
+                task_send_signal(task, sig, SI_USER);
+            }
+        }
+        return 0;
+    }
+
+    if (pid == 0) {
+        int pgid = current_task->pgid;
+        for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
+            task_t *task = tasks[i];
+            if (!task || task->is_kernel)
+                continue;
+            if (task->pgid == pgid) {
+                task_send_signal(task, sig, SI_USER);
+            }
+        }
+        return 0;
+    }
+
+    task_t *task = tasks[pid];
+
+    if (!task) {
+        return -ESRCH;
+    }
+
+    task_send_signal(task, sig, SI_USER);
     return 0;
 }
 
@@ -291,8 +443,10 @@ void task_signal() {
         return;
     }
 
-    uint64_t map = SIGMASK(current_task->signal->pending_signal.sig) &
-                   (~current_task->signal->blocked);
+    int psig = current_task->signal->pending_signal.sig;
+    uint64_t map = SIGMASK(psig) & (~current_task->signal->blocked);
+    if (psig == SIGKILL || psig == SIGSTOP)
+        map = SIGMASK(psig);
     if (!map) {
         return;
     }
@@ -316,6 +470,7 @@ void task_signal() {
     sigaction_t *ptr = &current_task->signal->actions[sig];
 
     if (ptr->sa_handler == SIG_IGN) {
+        current_task->signal->signal &= ~SIGMASK(sig);
         spin_unlock(&current_task->signal->signal_lock);
         return;
     }
@@ -327,7 +482,31 @@ void task_signal() {
         return;
     }
 
+    if ((ptr->sa_handler == SIG_DFL) &&
+        signal_internal_decisions[sig] == SIGNAL_INTERNAL_CORE) {
+        spin_unlock(&current_task->signal->signal_lock);
+        task_exit(128 + sig);
+        return;
+    }
+
+    if ((ptr->sa_handler == SIG_DFL) &&
+        signal_internal_decisions[sig] == SIGNAL_INTERNAL_STOP) {
+        current_task->state = TASK_BLOCKING;
+        current_task->signal->signal &= ~SIGMASK(sig);
+        spin_unlock(&current_task->signal->signal_lock);
+        return;
+    }
+
+    if ((ptr->sa_handler == SIG_DFL) &&
+        signal_internal_decisions[sig] == SIGNAL_INTERNAL_CONT) {
+        current_task->state = TASK_READY;
+        current_task->signal->signal &= ~SIGMASK(sig);
+        spin_unlock(&current_task->signal->signal_lock);
+        return;
+    }
+
     if (ptr->sa_handler == SIG_DFL) {
+        current_task->signal->signal &= ~SIGMASK(sig);
         spin_unlock(&current_task->signal->signal_lock);
         return;
     }
@@ -365,7 +544,7 @@ void task_signal() {
     ucontext->uc_flags = 0;
     ucontext->uc_link = ucontext;
     ucontext->uc_mcontext.fpregs = fp;
-    ucontext->uc_sigmask = ptr->sa_mask;
+    ucontext->uc_sigmask = sigset_kernel_to_user(current_task->signal->blocked);
 
     sigrsp -= sizeof(void *);
     *((void **)sigrsp) = (void *)ptr->sa_restorer;

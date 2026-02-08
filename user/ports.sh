@@ -34,10 +34,9 @@ printf "${MIRROR}/main\n${MIRROR}/community\n${MIRROR_ROOT}/edge/testing\n" | su
 sudo cp -r $SCRIPTPATH/base/etc/resolv.conf $SYSROOT/etc/
 
 sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add musl-dev seatd eudev gcompat gzip xz make file tar pciutils tzdata nano vim lua5.1 gcc binutils fastfetch libdrm-dev libdrm-tests bind-tools curl evtest"
-# sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add weston weston-clients weston-backend-drm weston-xwayland xwayland weston-shell-desktop weston-terminal ttf-dejavu"
-# sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add xeyes xclock"
-sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add openbox xorg-server xf86-video-fbdev xf86-input-evdev xinit xsetroot xeyes xclock st"
-sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add mesa-gl mesa-utils mesa-vulkan-swrast mesa-dri-gallium"
+# sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add xwayland weston weston-clients weston-backend-drm weston-xwayland weston-shell-desktop weston-terminal ttf-dejavu"
+sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add mesa-gl mesa-utils mesa-vulkan-swrast mesa-dri-gallium xclock xeyes"
+sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add xorg-server xinit xf86-input-evdev xf86-video-fbdev openbox st"
 
 sudo rm -rf $SYSROOT/bin/sh
 sudo ln -sf /bin/bash $SYSROOT/bin/sh

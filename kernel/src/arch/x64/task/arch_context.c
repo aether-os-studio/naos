@@ -27,7 +27,7 @@ asm("kernel_thread_func:\n\t"
     "    movq $0, %rdi\n\t"
     "    callq task_exit\n\t");
 
-extern void ret_from_exception();
+extern void ret_to_user();
 
 void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
                        uint64_t entry, uint64_t stack, bool user_mode,
@@ -63,7 +63,7 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
         context->ctx->cs = SELECTOR_USER_CS;
         context->ctx->ss = SELECTOR_USER_DS;
     } else {
-        context->rip = (uint64_t)ret_from_exception;
+        context->rip = (uint64_t)ret_to_user;
         context->rsp = (uint64_t)context->ctx;
         context->ctx->rip = entry;
         context->ctx->rdi = initial_arg;
@@ -84,7 +84,7 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
         printk("dst->mm == NULL!!! dst = %#018lx", dst);
     }
     dst->ctx = (struct pt_regs *)stack - 1;
-    dst->rip = (uint64_t)ret_from_exception;
+    dst->rip = (uint64_t)ret_to_user;
     dst->rsp = (uint64_t)dst->ctx;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
     dst->ctx->rax = 0;
@@ -142,7 +142,7 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
                                uint64_t stack) {
     context->ctx = (struct pt_regs *)current_task->kernel_stack - 1;
 
-    context->rip = (uint64_t)ret_from_exception;
+    context->rip = (uint64_t)ret_to_user;
     context->rsp = (uint64_t)context->ctx;
 
     memset(context->ctx, 0, sizeof(struct pt_regs));
