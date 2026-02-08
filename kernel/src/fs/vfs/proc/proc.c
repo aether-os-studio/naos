@@ -338,6 +338,16 @@ void procfs_on_new_task(task_t *task) {
     self_mountinfo_handle->task = task;
     sprintf(self_mountinfo_handle->name, "proc_mountinfo");
 
+    vfs_node_t self_oom_score_adj =
+        vfs_child_append(node, "oom_score_adj", NULL);
+    self_oom_score_adj->type = file_none;
+    self_oom_score_adj->mode = 0700;
+    proc_handle_t *self_oom_score_adj_handle = malloc(sizeof(proc_handle_t));
+    self_oom_score_adj->handle = self_oom_score_adj_handle;
+    self_oom_score_adj_handle->node = self_oom_score_adj;
+    self_oom_score_adj_handle->task = task;
+    sprintf(self_oom_score_adj_handle->name, "proc_oom_score_adj");
+
     vfs_node_t self_exe = vfs_child_append(node, "exe", NULL);
     self_exe->type = file_symlink;
     self_exe->mode = 0700;

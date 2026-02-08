@@ -297,7 +297,7 @@ int socket_socket(int domain, int type, int protocol) {
     memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
     current_task->fd_info->fds[i]->node = socknode;
     current_task->fd_info->fds[i]->offset = 0;
-    current_task->fd_info->fds[i]->flags = type & O_CLOEXEC;
+    current_task->fd_info->fds[i]->close_on_exec = !!(type & O_CLOEXEC);
     procfs_on_open_file(current_task, i);
 
     handle->fd = current_task->fd_info->fds[i];
@@ -854,18 +854,24 @@ int unix_socket_pair(int type, int protocol, int *sv) {
         return -EMFILE;
     }
 
+    uint64_t flags = 0;
+    if (type & O_NONBLOCK)
+        flags |= O_NONBLOCK;
+
     current_task->fd_info->fds[fd1] = malloc(sizeof(fd_t));
     memset(current_task->fd_info->fds[fd1], 0, sizeof(fd_t));
     current_task->fd_info->fds[fd1]->node = node1;
     current_task->fd_info->fds[fd1]->offset = 0;
-    current_task->fd_info->fds[fd1]->flags = type & O_CLOEXEC;
+    current_task->fd_info->fds[fd1]->flags = flags;
+    current_task->fd_info->fds[fd1]->close_on_exec = !!(type & O_CLOEXEC);
     procfs_on_open_file(current_task, fd1);
 
     current_task->fd_info->fds[fd2] = malloc(sizeof(fd_t));
     memset(current_task->fd_info->fds[fd2], 0, sizeof(fd_t));
     current_task->fd_info->fds[fd2]->node = node2;
     current_task->fd_info->fds[fd2]->offset = 0;
-    current_task->fd_info->fds[fd2]->flags = type & O_CLOEXEC;
+    current_task->fd_info->fds[fd2]->flags = flags;
+    current_task->fd_info->fds[fd2]->close_on_exec = !!(type & O_CLOEXEC);
     procfs_on_open_file(current_task, fd2);
 
     socket_handle_t *h1 = node1->handle;

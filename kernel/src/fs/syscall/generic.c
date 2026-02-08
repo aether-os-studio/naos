@@ -763,12 +763,9 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
     switch (command) {
     case F_GETFD:
         spin_unlock(&fcntl_lock);
-        return (current_task->fd_info->fds[fd]->flags & O_CLOEXEC) ? 1 : 0;
+        return (current_task->fd_info->fds[fd]->close_on_exec) ? 1 : 0;
     case F_SETFD:
-        current_task->fd_info->fds[fd]->flags =
-            (arg & 1) // FD_CLOEXEC
-                ? (current_task->fd_info->fds[fd]->flags | O_CLOEXEC)
-                : (current_task->fd_info->fds[fd]->flags & (~O_CLOEXEC));
+        current_task->fd_info->fds[fd]->close_on_exec = !!(arg & 1);
         spin_unlock(&fcntl_lock);
         return 0;
     case F_DUPFD_CLOEXEC:
@@ -783,7 +780,7 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         }
         uint64_t newfd = sys_dup2(fd, i);
         if ((int64_t)newfd >= 0) {
-            current_task->fd_info->fds[newfd]->flags |= O_CLOEXEC;
+            current_task->fd_info->fds[newfd]->close_on_exec = true;
         }
         spin_unlock(&fcntl_lock);
         return newfd;
@@ -801,7 +798,8 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         return sys_dup2(fd, i);
     case F_GETFL:
         spin_unlock(&fcntl_lock);
-        return current_task->fd_info->fds[fd]->flags;
+        return current_task->fd_info->fds[fd]->flags |
+               (current_task->fd_info->fds[fd]->close_on_exec ? FD_CLOEXEC : 0);
     case F_SETFL:
         uint32_t valid_flags = O_APPEND | O_DIRECT | O_NOATIME | O_NONBLOCK;
         current_task->fd_info->fds[fd]->flags &= ~valid_flags;
@@ -1235,6 +1233,10 @@ uint64_t sys_rmdir(const char *name_user) {
         return -ENOENT;
     if (!(node->type & file_dir))
         return -ENOTDIR;
+
+    if (node == node->root) {
+        return -EBUSY;
+    }
 
     uint64_t ret = vfs_delete(node);
 

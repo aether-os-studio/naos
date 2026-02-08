@@ -727,11 +727,13 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, uint64_t flags) {
             char *p = strdup(save_ptr);
             char *ptr = p;
             const char *buf = pathtok(&ptr);
-            free(p);
             if (!buf) {
-                if (flags & O_NOFOLLOW)
+                if (flags & O_NOFOLLOW) {
+                    free(p);
                     goto done;
+                }
             }
+            free(p);
 
             current = target;
         }
@@ -1110,6 +1112,7 @@ fd_t *vfs_dup(fd_t *fd) {
     new_fd->node = node;
     new_fd->offset = fd->offset;
     new_fd->flags = fd->flags;
+    new_fd->close_on_exec = fd->close_on_exec;
 
     return new_fd;
 }

@@ -594,8 +594,8 @@ uint64_t sys_fsmount(int fd, uint32_t flags, uint32_t attr_flags) {
 
     current_task->fd_info->fds[mnt_fd]->node = mnt_node;
     current_task->fd_info->fds[mnt_fd]->offset = 0;
-    current_task->fd_info->fds[mnt_fd]->flags =
-        (flags & FSMOUNT_CLOEXEC) ? O_CLOEXEC : 0;
+    current_task->fd_info->fds[mnt_fd]->close_on_exec =
+        !!(flags & FSMOUNT_CLOEXEC);
     procfs_on_open_file(current_task, mnt_fd);
 
     /* Mark context as mounted */
@@ -706,31 +706,8 @@ uint64_t sys_move_mount(int from_dfd, const char *from_pathname_user,
      * Similar to MS_MOVE in sys_mount
      */
     if (source_mount) {
-        uint64_t dev = source_mount->rdev;
-        uint32_t fsid = source_mount->fsid;
-
-        if (fsid == 0 || fsid >= 256 || !all_fs[fsid])
-            return -EINVAL;
-
-        const char *fs_name = all_fs[fsid]->name;
-
-        /* Get path of old mount for unmounting */
-        char *old_path = vfs_get_fullpath(source_mount);
-        if (!old_path)
-            return -ENOMEM;
-
-        /* Unmount from old location */
-        int ret = vfs_unmount(old_path);
-        free(old_path);
-        if (ret < 0)
-            return ret;
-
-        /* Mount at new location */
-        ret = vfs_mount(dev, target_dir, fs_name);
-        if (ret < 0)
-            return ret;
-
-        return 0;
+        int ret = vfs_remount(source_mount, target_dir);
+        return ret;
     }
 
     return -EINVAL;

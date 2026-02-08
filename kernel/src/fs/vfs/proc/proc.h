@@ -72,6 +72,10 @@ size_t proc_pmountinfo_stat(proc_handle_t *handle);
 int proc_pmountinfo_poll(proc_handle_t *handle, int events);
 size_t proc_pmountinfo_read(proc_handle_t *handle, void *addr, size_t offset,
                             size_t size);
+size_t proc_oom_score_adj_stat(proc_handle_t *handle);
+int proc_oom_score_adj_poll(proc_handle_t *handle, int events);
+size_t proc_oom_score_adj_read(proc_handle_t *handle, void *addr, size_t offset,
+                               size_t size);
 size_t procfs_node_read(size_t len, size_t offset, size_t size, char *addr,
                         char *contect);
 

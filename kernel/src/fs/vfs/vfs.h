@@ -40,6 +40,7 @@ typedef struct fd {
     vfs_node_t node;
     uint64_t offset;
     uint64_t flags;
+    bool close_on_exec;
 } fd_t;
 
 typedef int (*vfs_mount_t)(uint64_t dev, vfs_node_t node);

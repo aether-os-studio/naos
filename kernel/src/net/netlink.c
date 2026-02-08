@@ -1024,9 +1024,6 @@ int netlink_socket(int domain, int type, int protocol) {
     if (type & O_NONBLOCK) {
         flags |= O_NONBLOCK;
     }
-    if (type & O_CLOEXEC) {
-        flags |= O_CLOEXEC;
-    }
 
     current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
     if (current_task->fd_info->fds[i] == NULL) {
@@ -1042,6 +1039,9 @@ int netlink_socket(int domain, int type, int protocol) {
     current_task->fd_info->fds[i]->node = socknode;
     current_task->fd_info->fds[i]->offset = 0;
     current_task->fd_info->fds[i]->flags = flags;
+    if (type & O_CLOEXEC) {
+        current_task->fd_info->fds[i]->close_on_exec = true;
+    }
     procfs_on_open_file(current_task, i);
 
     return i;

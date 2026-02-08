@@ -40,4 +40,4 @@ fi
 
 export HOME="/root"
 export SHELL="/bin/bash"
-exec /sbin/switch_root /mnt/ /usr/bin/xinit
+exec /sbin/switch_root /mnt/ /bin/bash

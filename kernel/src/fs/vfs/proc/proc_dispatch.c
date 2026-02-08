@@ -66,6 +66,8 @@ void procfs_nodes_init() {
                          NULL);
     create_procfs_handle("proc_mountinfo", proc_pmountinfo_read,
                          proc_pmountinfo_stat, proc_pmountinfo_poll);
+    create_procfs_handle("proc_oom_score_adj", proc_oom_score_adj_read,
+                         proc_oom_score_adj_stat, proc_oom_score_adj_poll);
     create_procfs_handle("proc_sys_kernel_osrelease",
                          proc_sys_kernel_osrelease_read,
                          proc_sys_kernel_osrelease_stat, NULL);

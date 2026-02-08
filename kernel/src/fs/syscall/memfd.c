@@ -133,18 +133,17 @@ static struct vfs_callback callbacks = {
 #define MFD_CLOEXEC 0x0001U
 #define MFD_ALLOW_SEALING 0x0002U
 #define MFD_HUGETLB 0x0004U
-
-static int memfd_idx = 0;
+#define MFD_NOEXEC_SEAL 0x0008U
+#define MFD_EXEC 0x0010U
 
 uint64_t sys_memfd_create(const char *name, unsigned int flags) {
-    struct memfd_ctx *ctx = malloc(sizeof(struct memfd_ctx));
-    strncpy(ctx->name, name, 63);
-    ctx->name[63] = '\0';
-    ctx->len = DEFAULT_PAGE_SIZE;
-    ctx->data = alloc_frames_bytes(ctx->len);
-    ctx->flags = flags;
-    ctx->refcount = 1;
-    ctx->lock.lock = 0;
+    if ((flags & MFD_HUGETLB)) {
+        return -EINVAL;
+    }
+
+    if ((flags & MFD_NOEXEC_SEAL) || (flags & MFD_EXEC)) {
+        return -EINVAL;
+    }
 
     int fd = -1;
     for (int i = 0; i < MAX_FD_NUM; i++) {
@@ -154,9 +153,20 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags) {
         }
     }
 
-    char fn[16];
-    sprintf(fn, "memfd%d", memfd_idx++);
-    vfs_node_t node = vfs_node_alloc(NULL, fn);
+    if (fd == -1) {
+        return -EMFILE;
+    }
+
+    struct memfd_ctx *ctx = malloc(sizeof(struct memfd_ctx));
+    strncpy(ctx->name, name, 63);
+    ctx->name[63] = '\0';
+    ctx->len = DEFAULT_PAGE_SIZE;
+    ctx->data = alloc_frames_bytes(ctx->len);
+    ctx->flags = flags;
+    ctx->refcount = 1;
+    ctx->lock.lock = 0;
+
+    vfs_node_t node = vfs_node_alloc(NULL, NULL);
     node->type = file_none;
     node->fsid = memfd_fsid;
     node->handle = ctx;
@@ -167,7 +177,8 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags) {
     current_task->fd_info->fds[fd]->node = node;
     current_task->fd_info->fds[fd]->offset = 0;
     current_task->fd_info->fds[fd]->flags =
-        (flags & MFD_CLOEXEC) ? O_CLOEXEC : 0;
+        O_RDWR | ((flags & MFD_CLOEXEC) ? FD_CLOEXEC : 0);
+    current_task->fd_info->fds[fd]->close_on_exec = !!(flags & MFD_CLOEXEC);
     procfs_on_open_file(current_task, fd);
 
     ctx->node = node;

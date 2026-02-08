@@ -1,4 +1,5 @@
 #include <libs/aether/net.h>
+#include <net/rtnl.h>
 #include <mod/dlinker.h>
 
 EXPORT_SYMBOL(regist_netdev);

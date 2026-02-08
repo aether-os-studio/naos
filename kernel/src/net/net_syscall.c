@@ -100,8 +100,9 @@ uint64_t sys_socket(int domain, int type, int protocol) {
     }
 
     if (!(fd < 0)) {
-        if (type & O_CLOEXEC)
-            current_task->fd_info->fds[fd]->flags |= O_CLOEXEC;
+        if (type & O_CLOEXEC) {
+            current_task->fd_info->fds[fd]->close_on_exec = true;
+        }
         if (type & O_NONBLOCK)
             current_task->fd_info->fds[fd]->flags |= O_NONBLOCK;
     }
