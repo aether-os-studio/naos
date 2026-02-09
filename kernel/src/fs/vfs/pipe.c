@@ -33,16 +33,22 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         return 0;
 
     while (pipe->ptr == 0) {
+        arch_enable_interrupt();
+
         if (fd->flags & O_NONBLOCK) {
+            arch_disable_interrupt();
             return -EWOULDBLOCK;
         }
 
         if (pipe->write_fds == 0) {
+            arch_disable_interrupt();
             return 0;
         }
 
         schedule(SCHED_FLAG_YIELD);
     }
+
+    arch_disable_interrupt();
 
     // 实际读取量
     uint32_t to_read = MIN(size, pipe->ptr);

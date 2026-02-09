@@ -712,6 +712,7 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd) {
     }
 
     current_task->fd_info->fds[newfd] = newf;
+    newf->close_on_exec = false;
     procfs_on_open_file(current_task, newfd);
 
     return newfd;

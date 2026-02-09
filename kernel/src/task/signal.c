@@ -18,6 +18,79 @@ static inline sigset_t sigset_kernel_to_user(sigset_t kernel_mask) {
     return kernel_mask >> 1;
 }
 
+#if defined(__x86_64__)
+enum {
+    X64_REG_R8 = 0,
+    X64_REG_R9,
+    X64_REG_R10,
+    X64_REG_R11,
+    X64_REG_R12,
+    X64_REG_R13,
+    X64_REG_R14,
+    X64_REG_R15,
+    X64_REG_RDI,
+    X64_REG_RSI,
+    X64_REG_RBP,
+    X64_REG_RBX,
+    X64_REG_RDX,
+    X64_REG_RAX,
+    X64_REG_RCX,
+    X64_REG_RSP,
+    X64_REG_RIP,
+    X64_REG_EFL,
+    X64_REG_CSGSFS,
+    X64_REG_ERR,
+    X64_REG_TRAPNO,
+    X64_REG_OLDMASK,
+    X64_REG_CR2,
+};
+
+static inline uint64_t signal_x64_frame_rsp(uint64_t user_rsp,
+                                             uint64_t frame_size) {
+    uint64_t sp = user_rsp - 128;
+    sp = (sp - frame_size) & ~0xFUL;
+    return sp - sizeof(void *);
+}
+
+static inline void signal_x64_fill_ucontext(ucontext_t *ucontext,
+                                             const struct pt_regs *regs,
+                                             uint64_t fpregs_addr,
+                                             sigset_t blocked_mask) {
+    memset(ucontext, 0, sizeof(*ucontext));
+
+    ucontext->uc_flags = 0;
+    ucontext->uc_link = NULL;
+    ucontext->uc_mcontext.fpregs = (fpu_context_t *)fpregs_addr;
+
+    ucontext->uc_mcontext.gregs[X64_REG_R8] = regs->r8;
+    ucontext->uc_mcontext.gregs[X64_REG_R9] = regs->r9;
+    ucontext->uc_mcontext.gregs[X64_REG_R10] = regs->r10;
+    ucontext->uc_mcontext.gregs[X64_REG_R11] = regs->r11;
+    ucontext->uc_mcontext.gregs[X64_REG_R12] = regs->r12;
+    ucontext->uc_mcontext.gregs[X64_REG_R13] = regs->r13;
+    ucontext->uc_mcontext.gregs[X64_REG_R14] = regs->r14;
+    ucontext->uc_mcontext.gregs[X64_REG_R15] = regs->r15;
+    ucontext->uc_mcontext.gregs[X64_REG_RDI] = regs->rdi;
+    ucontext->uc_mcontext.gregs[X64_REG_RSI] = regs->rsi;
+    ucontext->uc_mcontext.gregs[X64_REG_RBP] = regs->rbp;
+    ucontext->uc_mcontext.gregs[X64_REG_RBX] = regs->rbx;
+    ucontext->uc_mcontext.gregs[X64_REG_RDX] = regs->rdx;
+    ucontext->uc_mcontext.gregs[X64_REG_RAX] = regs->rax;
+    ucontext->uc_mcontext.gregs[X64_REG_RCX] = regs->rcx;
+    ucontext->uc_mcontext.gregs[X64_REG_RSP] = regs->rsp;
+    ucontext->uc_mcontext.gregs[X64_REG_RIP] = regs->rip;
+    ucontext->uc_mcontext.gregs[X64_REG_EFL] = regs->rflags;
+    ucontext->uc_mcontext.gregs[X64_REG_CSGSFS] =
+        (regs->cs & 0xFFFFUL) | ((regs->ss & 0xFFFFUL) << 48);
+    ucontext->uc_mcontext.gregs[X64_REG_ERR] = regs->errcode;
+    ucontext->uc_mcontext.gregs[X64_REG_TRAPNO] = 0;
+    ucontext->uc_mcontext.gregs[X64_REG_OLDMASK] = 0;
+    ucontext->uc_mcontext.gregs[X64_REG_CR2] = 0;
+
+    ucontext->uc_sigmask = sigset_kernel_to_user(blocked_mask);
+}
+#endif
+
 void signal_init() {
     signal_internal_decisions[SIGABRT] = SIGNAL_INTERNAL_CORE;
     signal_internal_decisions[SIGALRM] = SIGNAL_INTERNAL_TERM;
@@ -318,8 +391,10 @@ uint64_t sys_sigsuspend(const sigset_t *mask, size_t sigsetsize) {
     current_task->signal->blocked = mask_k;
 
     while (!signals_pending_quick(current_task)) {
+        arch_enable_interrupt();
         schedule(SCHED_FLAG_YIELD);
     }
+    arch_disable_interrupt();
 
     current_task->signal->blocked = old;
 
@@ -452,14 +527,16 @@ uint64_t sys_kill(int pid, int sig) {
 }
 
 void task_signal() {
-    if (current_task->signal->pending_signal.sig == 0 ||
-        current_task->state == TASK_DIED || current_task->arch_context->dead ||
+    if ((current_task->signal->pending_signal.sig == 0) ||
+        current_task->is_kernel || current_task->arch_context->dead ||
         current_task->signal->pending_signal.processed ||
-        current_task->state == TASK_UNINTERRUPTABLE) {
+        (current_task->state == TASK_DIED) ||
+        (current_task->state == TASK_UNINTERRUPTABLE)) {
         return;
     }
 
     int psig = current_task->signal->pending_signal.sig;
+
     uint64_t map = SIGMASK(psig) & (~current_task->signal->blocked);
     if (psig == SIGKILL || psig == SIGSTOP)
         map = SIGMASK(psig);
@@ -468,14 +545,9 @@ void task_signal() {
     }
 
     spin_lock(&current_task->signal->signal_lock);
-    int sig;
-    for (sig = MINSIG; sig <= MAXSIG; sig++) {
-        if (map & SIGMASK(sig)) {
-            current_task->signal->signal |= SIGMASK(sig);
-            current_task->signal->pending_signal.sig = 0;
-            break;
-        }
-    }
+    int sig = psig;
+    current_task->signal->signal |= SIGMASK(sig);
+    current_task->signal->pending_signal.sig = 0;
 
     if (sig == SIGKILL) {
         spin_unlock(&current_task->signal->signal_lock);
@@ -530,7 +602,7 @@ void task_signal() {
     arch_disable_interrupt();
 
     current_task->state = TASK_UNINTERRUPTABLE;
-    current_task->signal->signal |= SIGMASK(sig);
+    current_task->signal->signal &= ~SIGMASK(sig);
 
 #if defined(__x86_64__)
     memcpy(&current_task->signal->signal_saved_regs,
@@ -538,47 +610,58 @@ void task_signal() {
     memcpy(&current_task->signal->signal_saved_fpu,
            current_task->arch_context->fpu_ctx, sizeof(fpu_context_t));
 
-    uint64_t sigrsp = USER_STACK_START + DEFAULT_PAGE_SIZE;
+    if (!(ptr->sa_flags & SA_RESTORER) || !ptr->sa_restorer) {
+        spin_unlock(&current_task->signal->signal_lock);
+        task_exit(128 + SIGSEGV);
+        return;
+    }
 
-    sigrsp -= sizeof(fpu_context_t);
-    fpu_context_t *fp = (fpu_context_t *)sigrsp;
-    memcpy(fp, current_task->arch_context->fpu_ctx, sizeof(fpu_context_t));
-
-    uint64_t total_len =
-        sizeof(siginfo_t) + sizeof(ucontext_t) + sizeof(void *);
-    sigrsp -= (sigrsp - total_len) % 0x10;
-
-    sigrsp -= sizeof(siginfo_t);
-    siginfo_t *siginfo = (siginfo_t *)sigrsp;
-    memcpy(siginfo, (const void *)&current_task->signal->pending_signal.info,
+    siginfo_t frame_siginfo;
+    memcpy(&frame_siginfo, &current_task->signal->pending_signal.info,
            sizeof(siginfo_t));
     memset(&current_task->signal->pending_signal.info, 0, sizeof(siginfo_t));
 
-    sigrsp -= sizeof(ucontext_t);
-    ucontext_t *ucontext = (ucontext_t *)sigrsp;
+    uint64_t frame_size =
+        sizeof(ucontext_t) + sizeof(siginfo_t) + sizeof(fpu_context_t);
+    uint64_t frame_rsp = signal_x64_frame_rsp(
+        current_task->signal->signal_saved_regs.rsp, frame_size);
 
-    ucontext->uc_flags = 0;
-    ucontext->uc_link = ucontext;
-    ucontext->uc_mcontext.fpregs = fp;
-    ucontext->uc_sigmask = sigset_kernel_to_user(current_task->signal->blocked);
+    uint64_t ucontext_addr = frame_rsp + sizeof(void *);
+    uint64_t siginfo_addr = ucontext_addr + sizeof(ucontext_t);
+    uint64_t fp_addr = siginfo_addr + sizeof(siginfo_t);
 
-    sigrsp -= sizeof(void *);
-    *((void **)sigrsp) = (void *)ptr->sa_restorer;
+    ucontext_t frame_ucontext;
+    signal_x64_fill_ucontext(&frame_ucontext,
+                             &current_task->signal->signal_saved_regs, fp_addr,
+                             current_task->signal->blocked);
+
+    void *frame_restorer = (void *)ptr->sa_restorer;
+    if (copy_to_user((void *)fp_addr, &current_task->signal->signal_saved_fpu,
+                     sizeof(fpu_context_t)) ||
+        copy_to_user((void *)siginfo_addr, &frame_siginfo, sizeof(siginfo_t)) ||
+        copy_to_user((void *)ucontext_addr, &frame_ucontext,
+                     sizeof(ucontext_t)) ||
+        copy_to_user((void *)frame_rsp, &frame_restorer, sizeof(void *))) {
+        spin_unlock(&current_task->signal->signal_lock);
+        task_exit(128 + SIGSEGV);
+        return;
+    }
 
     memset(current_task->arch_context->ctx, 0, sizeof(struct pt_regs));
 
     current_task->arch_context->ctx->rip = (uint64_t)ptr->sa_handler;
     current_task->arch_context->ctx->rax = 0;
     current_task->arch_context->ctx->rdi = sig;
-    current_task->arch_context->ctx->rsi = (uint64_t)siginfo;
-    current_task->arch_context->ctx->rdx = (uint64_t)ucontext;
+    current_task->arch_context->ctx->rsi = siginfo_addr;
+    current_task->arch_context->ctx->rdx = ucontext_addr;
 
     current_task->arch_context->ctx->cs = SELECTOR_USER_CS;
     current_task->arch_context->ctx->ss = SELECTOR_USER_DS;
 
-    current_task->arch_context->ctx->rflags = (1 << 9);
-    current_task->arch_context->ctx->rsp = sigrsp;
-    current_task->arch_context->ctx->rbp = sigrsp;
+    current_task->arch_context->ctx->rflags =
+        current_task->signal->signal_saved_regs.rflags | (1 << 9);
+    current_task->arch_context->ctx->rsp = frame_rsp;
+    current_task->arch_context->ctx->rbp = frame_rsp;
 #elif defined(__aarch64__)
 #elif defined(__riscv)
     struct pt_regs *f = (struct pt_regs *)current_task->kernel_stack - 1;
@@ -588,12 +671,15 @@ void task_signal() {
 #elif defined(__loongarch64)
 #endif
 
-    if (ptr->sa_flags & SIG_ONESHOT) {
+    if (ptr->sa_flags & SA_RESETHAND) {
         ptr->sa_handler = SIG_DFL;
     }
 
     current_task->signal->saved_blocked = current_task->signal->blocked;
-    current_task->signal->blocked |= SIGMASK(sig) | ptr->sa_mask;
+    current_task->signal->blocked |= ptr->sa_mask;
+    if (!(ptr->sa_flags & SA_NODEFER)) {
+        current_task->signal->blocked |= SIGMASK(sig);
+    }
 
     current_task->signal->pending_signal.processed = true;
 

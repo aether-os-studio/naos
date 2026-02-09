@@ -3,6 +3,7 @@
 #include <libs/klibc.h>
 #include <fs/fs_syscall.h>
 #include <net/real_socket.h>
+#include <libs/mutex.h>
 
 #define MAX_SOCKETS 256
 
@@ -53,7 +54,7 @@ typedef struct socket {
     int protocol;
 
     // 接收 buffer（别人发给我的数据存在这里）
-    spinlock_t lock;
+    mutex_t lock;
     uint8_t *recv_buff;
     size_t recv_pos;
     size_t recv_size;

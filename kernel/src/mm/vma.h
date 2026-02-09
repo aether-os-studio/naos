@@ -56,7 +56,7 @@ vma_t *vma_find_intersection(vma_manager_t *mgr, unsigned long start,
 int vma_insert(vma_manager_t *mgr, vma_t *vma);
 int vma_remove(vma_manager_t *mgr, vma_t *vma);
 int vma_split(vma_manager_t *mgr, vma_t *vma, unsigned long addr);
-int vma_merge(vma_t *vma1, vma_t *vma2);
+int vma_merge(vma_manager_t *mgr, vma_t *vma1, vma_t *vma2);
 int vma_unmap_range(vma_manager_t *mgr, uintptr_t start, uintptr_t end);
 void vma_manager_exit_cleanup(vma_manager_t *mgr);
 int vma_manager_copy(vma_manager_t *dst, vma_manager_t *src);

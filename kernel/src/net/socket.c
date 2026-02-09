@@ -114,8 +114,11 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
 
     // 等待对端有空间
     while (true) {
+        arch_enable_interrupt();
+
         if (peer->closed) {
             task_commit_signal(current_task, SIGPIPE, NULL);
+            arch_disable_interrupt();
             return -EPIPE;
         }
 
@@ -123,20 +126,24 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
             break;
 
         if ((fd_handle && fd_handle->flags & O_NONBLOCK) ||
-            (flags & MSG_DONTWAIT))
+            (flags & MSG_DONTWAIT)) {
+            arch_disable_interrupt();
             return -(EWOULDBLOCK);
+        }
 
         schedule(SCHED_FLAG_YIELD);
     }
 
+    arch_disable_interrupt();
+
     size_t to_copy = MIN(len, peer->recv_size - peer->recv_pos);
 
-    spin_lock(&peer->lock);
+    mutex_lock(&peer->lock);
 
     memcpy(&peer->recv_buff[peer->recv_pos], data, to_copy);
     peer->recv_pos += to_copy;
 
-    spin_unlock(&peer->lock);
+    mutex_unlock(&peer->lock);
 
     return to_copy;
 }
@@ -150,30 +157,37 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
 
     // 等待数据
     while (true) {
+        arch_enable_interrupt();
+
         // 对端关闭且没有数据 = EOF
         if (self->type != 2 && (!peer || peer->closed) && self->recv_pos == 0)
-            return 0;
+            arch_disable_interrupt();
+        return 0;
 
         if (self->recv_pos > 0)
             break;
 
         if ((fd_handle && fd_handle->flags & O_NONBLOCK) ||
-            (flags & MSG_DONTWAIT))
+            (flags & MSG_DONTWAIT)) {
+            arch_disable_interrupt();
             return -(EWOULDBLOCK);
+        }
 
         schedule(SCHED_FLAG_YIELD);
     }
 
+    arch_disable_interrupt();
+
     size_t to_copy = MIN(len, self->recv_pos);
 
-    spin_lock(&self->lock);
+    mutex_lock(&self->lock);
 
     memcpy(buf, self->recv_buff, to_copy);
     memmove(self->recv_buff, &self->recv_buff[to_copy],
             self->recv_pos - to_copy);
     self->recv_pos -= to_copy;
 
-    spin_unlock(&self->lock);
+    mutex_unlock(&self->lock);
 
     return to_copy;
 }
@@ -554,7 +568,7 @@ done:
     if (msg->msg_control && msg->msg_controllen > 0) {
         struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
 
-        spin_lock(&peer->lock);
+        mutex_lock(&peer->lock);
 
         for (; cmsg != NULL; cmsg = CMSG_NXTHDR((struct msghdr *)msg, cmsg)) {
             if (cmsg->cmsg_level != SOL_SOCKET)
@@ -567,7 +581,7 @@ done:
                 unix_socket_send_files_to_peer(peer, fds, num_fds);
             } else if (cmsg->cmsg_type == SCM_CREDENTIALS) {
                 if (cmsg->cmsg_len < CMSG_LEN(sizeof(struct ucred))) {
-                    spin_unlock(&peer->lock);
+                    mutex_unlock(&peer->lock);
                     return (size_t)-EINVAL;
                 }
 
@@ -578,7 +592,7 @@ done:
                     if (cred->pid != current_task->pid ||
                         cred->uid != current_task->uid ||
                         cred->gid != current_task->gid) {
-                        spin_unlock(&peer->lock);
+                        mutex_unlock(&peer->lock);
                         return (size_t)-EPERM;
                     }
                 }
@@ -587,7 +601,7 @@ done:
             }
         }
 
-        spin_unlock(&peer->lock);
+        mutex_unlock(&peer->lock);
     }
 
     if (sock->passcred || peer->passcred) {
@@ -665,7 +679,7 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
         size_t controllen_used = 0;
         struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
 
-        spin_lock(&sock->lock);
+        mutex_lock(&sock->lock);
 
         // 处理 SCM_RIGHTS
         bool has_pending_fds = false;
@@ -722,7 +736,7 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
             }
         }
 
-        spin_unlock(&sock->lock);
+        mutex_unlock(&sock->lock);
         msg->msg_controllen = controllen_used;
     } else {
         msg->msg_controllen = 0;
@@ -743,7 +757,7 @@ int socket_poll(void *file, int events) {
         if (sock->connCurr > 0)
             revents |= (events & EPOLLIN) ? EPOLLIN : 0;
     } else if (sock->peer) {
-        spin_lock(&sock->lock);
+        mutex_lock(&sock->lock);
 
         if (sock->peer->closed)
             revents |= EPOLLHUP;
@@ -757,7 +771,7 @@ int socket_poll(void *file, int events) {
         if ((events & EPOLLIN) && sock->recv_pos > 0)
             revents |= EPOLLIN;
 
-        spin_unlock(&sock->lock);
+        mutex_unlock(&sock->lock);
     } else if (sock->type == 2) {
         if (events & EPOLLOUT)
             revents |= EPOLLOUT;
@@ -1000,13 +1014,13 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
             if (new_size < BUFFER_SIZE)
                 new_size = BUFFER_SIZE;
 
-            spin_lock(&sock->lock);
+            mutex_lock(&sock->lock);
             void *newBuff = alloc_frames_bytes(new_size);
             memcpy(newBuff, sock->recv_buff, MIN(new_size, sock->recv_size));
             free_frames_bytes(sock->recv_buff, sock->recv_size);
             sock->recv_buff = newBuff;
             sock->recv_size = new_size;
-            spin_unlock(&sock->lock);
+            mutex_unlock(&sock->lock);
         }
         break;
 

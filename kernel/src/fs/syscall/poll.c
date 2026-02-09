@@ -51,6 +51,8 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
     }
 
     do {
+        arch_enable_interrupt();
+
         // 检查每个文件描述符
         for (int i = 0; i < nfds; i++) {
             if (fds[i].fd < 0 || fds[i].fd > MAX_FD_NUM ||
@@ -79,6 +81,8 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
 
     if (!ready && sigexit)
         return (size_t)-EINTR;
+
+    arch_disable_interrupt();
 
     return ready;
 }

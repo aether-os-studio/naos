@@ -21,6 +21,8 @@ size_t terminal_read(tty_t *device, char *buf, size_t count) {
     int vmin = device->termios.c_cc[VMIN];
 
     while (read < count) {
+        arch_enable_interrupt();
+
         char c;
         bool got = false;
 
@@ -68,6 +70,8 @@ size_t terminal_read(tty_t *device, char *buf, size_t count) {
 
         schedule(SCHED_FLAG_YIELD);
     }
+
+    arch_disable_interrupt();
 
     return read;
 }

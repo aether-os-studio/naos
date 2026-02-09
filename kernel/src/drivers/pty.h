@@ -11,7 +11,7 @@ typedef struct pty_pair {
 
     struct pty_pair *next;
 
-    spinlock_t lock;
+    mutex_t lock;
 
     int masterFds;
     int slaveFds;

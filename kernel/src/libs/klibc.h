@@ -242,69 +242,60 @@ char *strdup(const char *s);
 
 typedef struct spinlock {
     volatile long lock;
-    long rflags;
+    long flags;
 } spinlock_t;
 
-static inline void spin_init(spinlock_t *lock) {
-    memset(lock, 0, sizeof(spinlock_t));
-}
+static inline void spin_init(spinlock_t *lock) { lock->lock = 0; }
 
 static inline void spin_lock(spinlock_t *lock) {
-    asm volatile("1:\n\t"
-                 "lock btsq $0, %0\n\t" // 测试并设置
-                 "jc 1b\n\t"            // 如果已锁定则重试
-                 : "+m"(lock->lock)
-                 :
-                 : "memory", "cc");
-
-    asm volatile("mfence" ::: "memory");
-
-    long flags;
-    asm volatile("pushfq\n\t" // 保存RFLAGS
-                 "pop %0\n\t" // 存储到flags变量
-                 : "=r"(flags)
+    asm volatile("pushfq\n\t"
+                 "pop %0\n\t"
+                 "cli\n\t"
+                 : "=r"(lock->flags)
                  :
                  : "memory");
 
-    asm volatile("cli\n\t");
+    asm volatile("1:\n\t"
+                 "lock btsq $0, %0\n\t"
+                 "jnc 2f\n\t" /* 成功获取，跳出 */
+                 "3:\n\t"
+                 "pause\n\t"        /* 降低总线压力 */
+                 "testq $1, %0\n\t" /* 只读检测，不产生总线锁 */
+                 "jnz 3b\n\t"       /* 仍被占用，继续自旋 */
+                 "jmp 1b\n\t"       /* 可能释放了，尝试获取 */
+                 "2:\n\t"
+                 : "+m"(lock->lock)
+                 :
+                 : "memory", "cc");
+}
 
-    lock->rflags = flags; // 保存原始中断状态
+static inline void spin_unlock(spinlock_t *lock) {
+    asm volatile("lock btrq $0, %0\n\t" : "+m"(lock->lock) : : "memory", "cc");
+
+    asm volatile("push %0\n\t"
+                 "popfq\n\t"
+                 :
+                 : "r"(lock->flags)
+                 : "memory", "cc");
 }
 
 static inline void spin_lock_no_irqsave(spinlock_t *lock) {
     asm volatile("1:\n\t"
-                 "lock btsq $0, %0\n\t" // 测试并设置
-                 "jc 1b\n\t"            // 如果已锁定则重试
+                 "lock btsq $0, %0\n\t"
+                 "jnc 2f\n\t"
+                 "3:\n\t"
+                 "pause\n\t"
+                 "testq $1, %0\n\t"
+                 "jnz 3b\n\t"
+                 "jmp 1b\n\t"
+                 "2:\n\t"
                  : "+m"(lock->lock)
                  :
                  : "memory", "cc");
-
-    asm volatile("mfence" ::: "memory");
-}
-
-static inline void spin_unlock(spinlock_t *lock) {
-    asm volatile("lock btrq $0, %0\n\t" // 清除锁标志
-                 : "+m"(lock->lock)
-                 :
-                 : "memory", "cc");
-
-    long flags = lock->rflags;
-    asm volatile("push %0\n\t" // 恢复原始RFLAGS
-                 "popfq"
-                 :
-                 : "r"(flags)
-                 : "memory");
-
-    asm volatile("sfence" ::: "memory");
 }
 
 static inline void spin_unlock_no_irqstore(spinlock_t *lock) {
-    asm volatile("lock btrq $0, %0\n\t" // 清除锁标志
-                 : "+m"(lock->lock)
-                 :
-                 : "memory", "cc");
-
-    asm volatile("sfence" ::: "memory");
+    asm volatile("lock btrq $0, %0\n\t" : "+m"(lock->lock) : : "memory", "cc");
 }
 
 #elif defined(__aarch64__)

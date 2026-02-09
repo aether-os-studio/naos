@@ -237,7 +237,7 @@ int vma_split(vma_manager_t *mgr, vma_t *vma, uint64_t addr) {
 }
 
 // VMA合并（从红黑树删除vma2）
-int vma_merge(vma_t *vma1, vma_t *vma2) {
+int vma_merge(vma_manager_t *mgr, vma_t *vma1, vma_t *vma2) {
     if (!vma1 || !vma2 || vma1->vm_end != vma2->vm_start) {
         return -1;
     }
@@ -259,9 +259,7 @@ int vma_merge(vma_t *vma1, vma_t *vma2) {
         vma2->vm_next->vm_prev = vma1;
     }
 
-    // 注意：需要从红黑树删除vma2，但这里没有manager引用
-    // 同样需要改进接口
-    // rb_erase(&vma2->vm_rb, &mgr->vma_tree);
+    rb_erase(&vma2->vm_rb, &mgr->vma_tree);
 
     vma_free(vma2);
     return 0;

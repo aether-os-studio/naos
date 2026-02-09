@@ -7,6 +7,17 @@ void arch_enable_interrupt() { asm volatile("msr daifclr, #3"); }
 
 void arch_disable_interrupt() { asm volatile("msr daifset, #3"); }
 
+bool arch_interrupt_enabled() {
+
+    long daif;
+    asm volatile("mrs %0, daif\n\t"
+                 "msr daifset, #2\n\t"
+                 : "=r"(daif)
+                 :
+                 : "memory");
+    return (daif & (1 << 1));
+}
+
 extern struct global_timer_state g_timer;
 
 void irq_init() {

@@ -181,6 +181,7 @@ err_t sys_mbox_trypost_fromisr(sys_mbox_t *q, void *msg) {
 u32_t sys_arch_mbox_fetch(sys_mbox_t *q, void **msg, u32_t timeout) {
     mboxBlock *myBlock = NULL;
 
+    arch_enable_interrupt();
     while (true) {
         spin_lock(&q->lock);
         if (q->ptrRead != q->ptrWrite) {
@@ -204,6 +205,7 @@ u32_t sys_arch_mbox_fetch(sys_mbox_t *q, void **msg, u32_t timeout) {
 
         schedule(SCHED_FLAG_YIELD);
     }
+    arch_disable_interrupt();
 
     *msg = q->msges[q->ptrRead];
     q->ptrRead = (q->ptrRead + 1) % q->size;

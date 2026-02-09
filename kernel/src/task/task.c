@@ -418,6 +418,8 @@ uint64_t task_execve(const char *path_user, const char **argv,
                      const char **envp) {
     can_schedule = false;
 
+    arch_disable_interrupt();
+
     char path[512];
     strncpy(path, path_user, sizeof(path));
 

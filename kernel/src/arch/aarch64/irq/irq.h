@@ -11,6 +11,7 @@
 
 void arch_enable_interrupt();
 void arch_disable_interrupt();
+bool arch_interrupt_enabled();
 
 void irq_init();
 

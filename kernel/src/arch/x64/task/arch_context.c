@@ -49,6 +49,7 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->mm->brk_current = context->mm->brk_start;
     context->mm->brk_end = USER_BRK_END;
     context->ctx = (struct pt_regs *)stack - 1;
+    memset(context->ctx, 0, sizeof(struct pt_regs));
     context->ctx->rsp = (uint64_t)context->ctx;
     context->ctx->rbp = (uint64_t)context->ctx;
     context->ctx->rflags = (1UL << 9);
@@ -56,17 +57,17 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->gsbase = 0;
     context->dead = false;
     if (user_mode) {
-        context->rip = (uint64_t)kernel_thread_func;
-        context->rsp = (uint64_t)context->ctx;
-        context->ctx->rbx = entry;
-        context->ctx->rdx = initial_arg;
-        context->ctx->cs = SELECTOR_USER_CS;
-        context->ctx->ss = SELECTOR_USER_DS;
-    } else {
         context->rip = (uint64_t)ret_to_user;
         context->rsp = (uint64_t)context->ctx;
         context->ctx->rip = entry;
         context->ctx->rdi = initial_arg;
+        context->ctx->cs = SELECTOR_USER_CS;
+        context->ctx->ss = SELECTOR_USER_DS;
+    } else {
+        context->rip = (uint64_t)kernel_thread_func;
+        context->rsp = (uint64_t)context->ctx;
+        context->ctx->rbx = entry;
+        context->ctx->rdx = initial_arg;
         context->ctx->cs = SELECTOR_KERNEL_CS;
         context->ctx->ss = SELECTOR_KERNEL_DS;
     }
@@ -132,7 +133,7 @@ void __switch_to(task_t *prev, task_t *next) {
             : "memory");
     }
 
-    tss[current_cpu_id].rsp0 = next->kernel_stack;
+    tss[next->cpu_id].rsp0 = next->kernel_stack;
 
     write_fsbase(next->arch_context->fsbase);
     write_gsbase(next->arch_context->gsbase);

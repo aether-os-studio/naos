@@ -22,7 +22,7 @@ size_t epoll_create1(int flags) {
     node->type = file_epoll;
     node->refcount++;
     epoll_t *epoll = malloc(sizeof(epoll_t));
-    epoll->lock.lock = 0;
+    mutex_init(&epoll->lock);
     llist_init_head(&epoll->watches);
     node->mode = 0700;
     node->handle = epoll;
@@ -64,6 +64,8 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
     bool interrupted = false;
 
     while (ready == 0 && !timed_out && !interrupted) {
+        arch_enable_interrupt();
+
         if (signals_pending_quick(current_task)) {
             interrupted = true;
             break;
@@ -75,7 +77,7 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
         }
 
     check_events:
-        spin_lock(&epoll->lock);
+        mutex_lock(&epoll->lock);
 
         ready = 0;
 
@@ -106,7 +108,7 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
                             ready++;
                             browse->last_events = ready_events; // 更新状态
                         } else {
-                            spin_unlock(&epoll->lock);
+                            mutex_unlock(&epoll->lock);
                             goto ret;
                         }
                     } else {
@@ -125,7 +127,7 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
             }
         }
 
-        spin_unlock(&epoll->lock);
+        mutex_unlock(&epoll->lock);
 
         if (ready > 0)
             break;
@@ -141,6 +143,7 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
         return (uint64_t)-EINTR;
 
 ret:
+    arch_disable_interrupt();
     return ready;
 }
 
@@ -163,7 +166,7 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
 
     fd_t *f = current_task->fd_info->fds[fd];
 
-    spin_lock(&epoll->lock);
+    mutex_lock(&epoll->lock);
 
     epoll_watch_t *existing = NULL;
     epoll_watch_t *b, *t;
@@ -231,7 +234,7 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
         break;
     }
 
-    spin_unlock(&epoll->lock);
+    mutex_unlock(&epoll->lock);
     return ret;
 }
 

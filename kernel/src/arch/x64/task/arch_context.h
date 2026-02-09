@@ -74,7 +74,8 @@ typedef struct arch_context {
                        "=m"(prev->arch_context->rip)                           \
                      : "m"(next->arch_context->rsp),                           \
                        "m"(next->arch_context->rip), "D"(prev), "S"(next)      \
-                     : "rax");                                                 \
+                     : "rax", "rcx", "rdx", "r8", "r9", "r10", "r11",   \
+                       "cc", "memory");                                       \
     } while (0)
 
 void arch_context_init(arch_context_t *context, uint64_t page_table_dir,
