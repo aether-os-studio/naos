@@ -14,7 +14,7 @@
 #include <net/socket.h>
 #include <uacpi/sleep.h>
 
-rrs_t *schedulers[MAX_CPU_NUM];
+sched_rq_t *schedulers[MAX_CPU_NUM];
 
 const uint64_t bitmap_size =
     (USER_MMAP_END - USER_MMAP_START) / DEFAULT_PAGE_SIZE / 8;
@@ -224,7 +224,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->current_state = TASK_READY;
 
     task->sched_info = calloc(1, sizeof(struct sched_entity));
-    add_rrs_entity(task, schedulers[task->cpu_id]);
+    add_sched_entity(task, schedulers[task->cpu_id]);
 
     can_schedule = true;
 
@@ -245,9 +245,10 @@ void task_init() {
     memset(idle_tasks, 0, sizeof(idle_tasks));
 
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
-        schedulers[cpu] = malloc(sizeof(rrs_t));
-        memset(schedulers[cpu], 0, sizeof(rrs_t));
-        schedulers[cpu]->sched_queue = create_llist_queue();
+        schedulers[cpu] = malloc(sizeof(sched_rq_t));
+        memset(schedulers[cpu], 0, sizeof(sched_rq_t));
+        schedulers[cpu]->task_tree = RB_ROOT_INIT;
+        schedulers[cpu]->lock = SPIN_INIT;
     }
 
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
@@ -256,7 +257,7 @@ void task_init() {
         idle_task->state = TASK_READY;
         idle_task->current_state = TASK_RUNNING;
         schedulers[cpu]->idle = idle_task->sched_info;
-        remove_rrs_entity(idle_task, schedulers[cpu]);
+        remove_sched_entity(idle_task, schedulers[cpu]);
         schedulers[cpu]->curr = idle_task->sched_info;
     }
 
@@ -897,7 +898,7 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns) {
     else
         task->force_wakeup_ns = UINT64_MAX;
 
-    remove_rrs_entity(task, schedulers[task->cpu_id]);
+    remove_sched_entity(task, schedulers[task->cpu_id]);
 
     schedule(SCHED_FLAG_YIELD);
 
@@ -908,7 +909,7 @@ void task_unblock(task_t *task, int reason) {
     task->status = reason;
     task->state = TASK_READY;
 
-    add_rrs_entity(task, schedulers[task->cpu_id]);
+    add_sched_entity(task, schedulers[task->cpu_id]);
 }
 
 extern spinlock_t futex_lock;
@@ -920,7 +921,7 @@ extern int signalfdfs_id;
 
 void task_exit_inner(task_t *task, int64_t code) {
     struct sched_entity *entity = (struct sched_entity *)task->sched_info;
-    remove_rrs_entity(task, schedulers[task->cpu_id]);
+    remove_sched_entity(task, schedulers[task->cpu_id]);
 
     task->current_state = TASK_DIED;
     task->state = TASK_DIED;
@@ -978,57 +979,57 @@ void task_exit_inner(task_t *task, int64_t code) {
         sigaction_t *sa = &parent->signal->actions[SIGCHLD];
         bool ignore_sigchld = (sa->sa_handler == SIG_IGN);
 
-        // if (!ignore_sigchld) {
-        //     siginfo_t sigchld_info;
-        //     memset(&sigchld_info, 0, sizeof(siginfo_t));
-        //     sigchld_info.si_signo = SIGCHLD;
-        //     sigchld_info.si_errno = 0;
-        //     sigchld_info.__si_fields.__sigchld.si_pid = task->pid;
-        //     sigchld_info.__si_fields.__sigchld.si_uid = task->uid;
-        //     sigchld_info.__si_fields.__sigchld.si_utime = 0;
-        //     sigchld_info.__si_fields.__sigchld.si_stime = 0;
-        //     if (code >= 128) {
-        //         sigchld_info.si_code = CLD_KILLED;
-        //         sigchld_info.__si_fields.__sigchld.si_status = code - 128;
-        //     } else {
-        //         sigchld_info.si_code = CLD_EXITED;
-        //         sigchld_info.__si_fields.__sigchld.si_status = code;
-        //     }
-        //     task_commit_signal(parent, SIGCHLD, &sigchld_info);
+        if (!ignore_sigchld) {
+            siginfo_t sigchld_info;
+            memset(&sigchld_info, 0, sizeof(siginfo_t));
+            sigchld_info.si_signo = SIGCHLD;
+            sigchld_info.si_errno = 0;
+            sigchld_info.__si_fields.__sigchld.si_pid = task->pid;
+            sigchld_info.__si_fields.__sigchld.si_uid = task->uid;
+            sigchld_info.__si_fields.__sigchld.si_utime = 0;
+            sigchld_info.__si_fields.__sigchld.si_stime = 0;
+            if (code >= 128) {
+                sigchld_info.si_code = CLD_KILLED;
+                sigchld_info.__si_fields.__sigchld.si_status = code - 128;
+            } else {
+                sigchld_info.si_code = CLD_EXITED;
+                sigchld_info.__si_fields.__sigchld.si_status = code;
+            }
+            task_commit_signal(parent, SIGCHLD, &sigchld_info);
 
-        //     for (int i = 0; i < MAX_FD_NUM; i++) {
-        //         fd_t *fd = parent->fd_info->fds[i];
-        //         if (fd) {
-        //             vfs_node_t node = fd->node;
-        //             if (node && node->fsid == signalfdfs_id) {
-        //                 struct signalfd_ctx *ctx = node->handle;
-        //                 if (ctx) {
-        //                     struct signalfd_siginfo info;
-        //                     memset(&info, 0, sizeof(struct
-        //                     signalfd_siginfo)); info.ssi_signo = SIGCHLD;
-        //                     info.ssi_pid = task->pid;
-        //                     info.ssi_uid = task->uid;
-        //                     if (code >= 128) {
-        //                         info.ssi_code = CLD_KILLED;
-        //                         info.ssi_status = code - 128;
-        //                     } else {
-        //                         info.ssi_code = CLD_EXITED;
-        //                         info.ssi_status = code;
-        //                     }
+            for (int i = 0; i < MAX_FD_NUM; i++) {
+                fd_t *fd = parent->fd_info->fds[i];
+                if (fd) {
+                    vfs_node_t node = fd->node;
+                    if (node && node->fsid == signalfdfs_id) {
+                        struct signalfd_ctx *ctx = node->handle;
+                        if (ctx) {
+                            struct signalfd_siginfo info;
+                            memset(&info, 0, sizeof(struct signalfd_siginfo));
+                            info.ssi_signo = SIGCHLD;
+                            info.ssi_pid = task->pid;
+                            info.ssi_uid = task->uid;
+                            if (code >= 128) {
+                                info.ssi_code = CLD_KILLED;
+                                info.ssi_status = code - 128;
+                            } else {
+                                info.ssi_code = CLD_EXITED;
+                                info.ssi_status = code;
+                            }
 
-        //                     memcpy(&ctx->queue[ctx->queue_head], &info,
-        //                            sizeof(struct signalfd_siginfo));
-        //                     ctx->queue_head =
-        //                         (ctx->queue_head + 1) % ctx->queue_size;
-        //                     if (ctx->queue_head == ctx->queue_tail) {
-        //                         ctx->queue_tail =
-        //                             (ctx->queue_tail + 1) % ctx->queue_size;
-        //                     }
-        //                 }
-        //             }
-        //         }
-        //     }
-        // }
+                            memcpy(&ctx->queue[ctx->queue_head], &info,
+                                   sizeof(struct signalfd_siginfo));
+                            ctx->queue_head =
+                                (ctx->queue_head + 1) % ctx->queue_size;
+                            if (ctx->queue_head == ctx->queue_tail) {
+                                ctx->queue_tail =
+                                    (ctx->queue_tail + 1) % ctx->queue_size;
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         if (ignore_sigchld || (sa->sa_flags & SA_NOCLDWAIT)) {
             task->should_free = true;
@@ -1363,8 +1364,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         return (uint64_t)-ENOMEM;
     }
 
-    can_schedule = false;
-
     strncpy(child->name, current_task->name, TASK_NAME_MAX);
 
     child->signal = malloc(sizeof(task_signal_info_t));
@@ -1547,9 +1546,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     current_task->child_vfork_done = false;
 
     child->sched_info = calloc(1, sizeof(struct sched_entity));
-    add_rrs_entity(child, schedulers[child->cpu_id]);
-
-    can_schedule = true;
+    add_sched_entity(child, schedulers[child->cpu_id]);
 
     if ((flags & CLONE_VFORK)) {
         while (!current_task->child_vfork_done) {
@@ -1976,11 +1973,15 @@ uint64_t sys_setpriority(int which, int who, int niceval) {
 extern void task_signal();
 
 void schedule(uint64_t sched_flags) {
+    if (!can_schedule) {
+        goto ret;
+    }
+
     sched_update_itimer();
     sched_update_timerfd();
 
     task_t *prev = current_task;
-    task_t *next = rrs_pick_next_task(schedulers[current_cpu_id]);
+    task_t *next = sched_pick_next_task(schedulers[current_cpu_id]);
 
     if (next->state == TASK_DIED || next->arch_context->dead) {
         next = idle_tasks[current_cpu_id];

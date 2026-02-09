@@ -137,8 +137,12 @@ uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr) {
     if (paddr != 0) {
         table_ptrs[ARCH_MAX_PT_LEVEL - 1][index] = 0;
         arch_flush_tlb(vaddr);
-        if (flags & ARCH_PT_FLAG_ALLOC)
-            free_frames(paddr, 1);
+        if (flags & ARCH_PT_FLAG_ALLOC) {
+            address_unref(paddr);
+            if (address_can_free(paddr)) {
+                free_frames(paddr, 1);
+            }
+        }
 
         // 从底层向上检查并释放空页表
         for (int level = ARCH_MAX_PT_LEVEL - 1; level > 0; level--) {

@@ -7,6 +7,7 @@
 #include <drivers/drm/drm.h>
 #include <fs/partition.h>
 #include <drivers/fb.h>
+#include <net/rtnl.h>
 #include <net/real_socket.h>
 
 extern void acpi_init_after_pci();
@@ -30,6 +31,8 @@ void init_thread(uint64_t arg) {
     printk("NAOS init thread is running...\n");
 
     arch_init_after_thread();
+
+    rtnl_init();
 
     fs_syscall_init();
     socketfs_init();

@@ -1,10 +1,7 @@
 #include <fs/fs_syscall.h>
 #include <fs/vfs/proc.h>
 
-vfs_node_t eventfdfs_root = NULL;
 int eventfdfs_id = 0;
-
-int eventfd_id = 0;
 
 static int dummy() { return 0; }
 
@@ -35,9 +32,7 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags) {
     efd->flags = flags;
 
     // 创建VFS节点
-    char buf[256];
-    sprintf(buf, "eventfd%d", eventfd_id++);
-    vfs_node_t node = vfs_node_alloc(eventfdfs_root, buf);
+    vfs_node_t node = vfs_node_alloc(NULL, NULL);
     node->refcount++;
     node->mode = 0700;
     node->type = file_stream;
@@ -146,10 +141,4 @@ fs_t eventfdfs = {
     .flags = FS_FLAGS_HIDDEN,
 };
 
-void eventfd_init() {
-    eventfdfs_id = vfs_regist(&eventfdfs);
-    eventfdfs_root = vfs_node_alloc(NULL, "event");
-    eventfdfs_root->type = file_dir;
-    eventfdfs_root->mode = 0644;
-    eventfdfs_root->fsid = eventfdfs_id;
-}
+void eventfd_init() { eventfdfs_id = vfs_regist(&eventfdfs); }

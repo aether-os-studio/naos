@@ -1179,8 +1179,6 @@ void netlink_init() {
     spin_unlock(&netlink_msg_pool_lock);
 
     regist_socket(16, NULL, netlink_socket);
-
-    rtnl_init();
 }
 
 static int atoi(const char *s) {

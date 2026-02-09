@@ -1,9 +1,7 @@
 #include <fs/fs_syscall.h>
 #include <fs/vfs/proc.h>
 
-vfs_node_t epollfs_root;
 int epollfs_id;
-int epollfd_id = 0;
 
 static int dummy() { return 0; }
 
@@ -20,9 +18,7 @@ size_t epoll_create1(int flags) {
         return -EBADF;
     }
 
-    char buf[256];
-    sprintf(buf, "epoll%d", epollfd_id++);
-    vfs_node_t node = vfs_node_alloc(epollfs_root, buf);
+    vfs_node_t node = vfs_node_alloc(NULL, NULL);
     node->type = file_epoll;
     node->refcount++;
     epoll_t *epoll = malloc(sizeof(epoll_t));
@@ -386,10 +382,4 @@ fs_t epollfs = {
     .flags = FS_FLAGS_HIDDEN,
 };
 
-void epoll_init() {
-    epollfs_id = vfs_regist(&epollfs);
-    epollfs_root = vfs_node_alloc(NULL, "epoll");
-    epollfs_root->type = file_dir;
-    epollfs_root->mode = 0644;
-    epollfs_root->fsid = epollfs_id;
-}
+void epoll_init() { epollfs_id = vfs_regist(&epollfs); }

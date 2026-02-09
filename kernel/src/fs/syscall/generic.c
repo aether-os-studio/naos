@@ -36,8 +36,8 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
     //     return 0;
     // }
 
-    if (flags & MS_REC) {
-        return 0;
+    if (flags & MS_BIND) {
+        return -EINVAL;
     }
 
     if (flags & MS_MOVE) {
@@ -51,6 +51,9 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
 
         return vfs_remount(old_mount, dir);
     }
+
+    if (!type_user)
+        return -EINVAL;
 
     uint64_t dev_nr = 0;
     vfs_node_t dev = vfs_open((const char *)devname, 0);

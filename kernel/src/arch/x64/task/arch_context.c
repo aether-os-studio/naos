@@ -51,7 +51,7 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->ctx = (struct pt_regs *)stack - 1;
     context->ctx->rsp = (uint64_t)context->ctx;
     context->ctx->rbp = (uint64_t)context->ctx;
-    context->ctx->rflags = (0UL << 12) | (0b10) | (1UL << 9);
+    context->ctx->rflags = (1UL << 9);
     context->fsbase = 0;
     context->gsbase = 0;
     context->dead = false;
@@ -153,7 +153,7 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
     context->ctx->cs = SELECTOR_USER_CS;
     context->ctx->ss = SELECTOR_USER_DS;
 
-    context->ctx->rflags = (0UL << 12) | (0b10) | (1UL << 9);
+    context->ctx->rflags = (1UL << 9);
 
     memset(context->fpu_ctx, 0, sizeof(fpu_context_t));
     context->fpu_ctx->mxscr = 0x1f80;

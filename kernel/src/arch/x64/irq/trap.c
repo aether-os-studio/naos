@@ -85,16 +85,17 @@ void traceback(struct pt_regs *regs) {
     }
     printk("======== Kernel traceback end =======\n");
 
+    return;
+
 check_user_fault:
+    printk("======== User traceback =======\n");
     if (current_task) {
         rb_node_t *node =
             rb_first(&current_task->arch_context->mm->task_vma_mgr.vma_tree);
 
         while (node) {
             vma_t *vma = rb_entry(node, vma_t, vm_rb);
-            vfs_node_t vfs_node = vma->node;
-
-            if (vma->vm_name) {
+            if (vma->vm_name && vma->node) {
                 if (ret_addr >= vma->vm_start && ret_addr <= vma->vm_end) {
                     printk("Fault in this vma: %s, vma->vm_start = %#018lx, "
                            "offset_in_vma = %#018lx\n",
@@ -109,6 +110,7 @@ check_user_fault:
             node = rb_next(node);
         }
     }
+    printk("======== User traceback end =======\n");
 }
 
 extern int vsprintf(char *buf, const char *fmt, va_list args);

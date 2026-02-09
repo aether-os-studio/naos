@@ -568,6 +568,7 @@ uintptr_t alloc_frames(size_t count) {
     if (count == 0)
         return 0;
 
+    size_t required_pages = next_power_of_2(count);
     uintptr_t addr = 0;
 
     // 优先尝试 NORMAL zone
@@ -594,9 +595,13 @@ uintptr_t alloc_frames(size_t count) {
 #endif
 
 ret:
+    if (addr == 0)
+        return 0;
+
     bitmap_set_range(&using_regions, addr / DEFAULT_PAGE_SIZE,
-                     addr / DEFAULT_PAGE_SIZE + count, true);
-    for (uint64_t a = addr; a < (addr + count * DEFAULT_PAGE_SIZE);
+                     addr / DEFAULT_PAGE_SIZE + required_pages, true);
+    for (uint64_t a = addr;
+         a < (addr + required_pages * DEFAULT_PAGE_SIZE);
          a += DEFAULT_PAGE_SIZE) {
         page_t *p = get_page(a);
         page_ref(p);
@@ -608,8 +613,9 @@ void free_frames(uintptr_t addr, size_t count) {
     if (addr == 0 || count == 0)
         return;
 
+    size_t required_pages = next_power_of_2(count);
     uint64_t idx = addr / DEFAULT_PAGE_SIZE;
-    for (size_t off = 0; off < count; off++) {
+    for (size_t off = 0; off < required_pages; off++) {
         if (bitmap_get(&using_regions, idx + off) == false)
             return;
         if (bitmap_get(&usable_regions, idx + off) == false)
@@ -623,25 +629,27 @@ void free_frames(uintptr_t addr, size_t count) {
     if (!zone)
         return;
 
-    for (uint64_t a = addr; a < (addr + count * DEFAULT_PAGE_SIZE);
+    for (uint64_t a = addr;
+         a < (addr + required_pages * DEFAULT_PAGE_SIZE);
          a += DEFAULT_PAGE_SIZE) {
-        address_unref(a);
-    }
-    for (uint64_t a = addr; a < (addr + count * DEFAULT_PAGE_SIZE);
-         a += DEFAULT_PAGE_SIZE) {
-        if (!address_can_free(a))
+        page_t *p = get_page(a);
+        if (!p || p->refcount != 1)
             return;
     }
 
-    size_t required_pages = next_power_of_2(count);
     size_t order = log2_floor(required_pages) + MIN_ORDER;
 
     if (order >= MAX_ORDER)
         order = MAX_ORDER - 1;
 
     spin_lock(&zone->allocator.lock);
+    for (uint64_t a = addr;
+         a < (addr + required_pages * DEFAULT_PAGE_SIZE);
+         a += DEFAULT_PAGE_SIZE) {
+        address_unref(a);
+    }
     buddy_free_zone(zone, addr, order);
-    bitmap_set_range(&using_regions, idx, idx + count, false);
+    bitmap_set_range(&using_regions, idx, idx + required_pages, false);
     spin_unlock(&zone->allocator.lock);
 }
 
@@ -649,6 +657,7 @@ uintptr_t alloc_frames_dma32(size_t count) {
     if (count == 0)
         return 0;
 
+    size_t required_pages = next_power_of_2(count);
     uintptr_t addr = 0;
 
     // DMA32
@@ -668,9 +677,13 @@ uintptr_t alloc_frames_dma32(size_t count) {
 #endif
 
 ret:
+    if (addr == 0)
+        return 0;
+
     bitmap_set_range(&using_regions, addr / DEFAULT_PAGE_SIZE,
-                     addr / DEFAULT_PAGE_SIZE + count, true);
-    for (uint64_t a = addr; a < (addr + count * DEFAULT_PAGE_SIZE);
+                     addr / DEFAULT_PAGE_SIZE + required_pages, true);
+    for (uint64_t a = addr;
+         a < (addr + required_pages * DEFAULT_PAGE_SIZE);
          a += DEFAULT_PAGE_SIZE) {
         page_t *p = get_page(a);
         page_ref(p);

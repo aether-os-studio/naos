@@ -129,7 +129,7 @@ void syscall_handlers_init() {
     syscall_handlers[SYS_MUNMAP] = (syscall_handle_t)sys_munmap;
     syscall_handlers[SYS_BRK] = (syscall_handle_t)sys_brk;
     syscall_handlers[SYS_RT_SIGACTION] = (syscall_handle_t)sys_sigaction;
-    syscall_handlers[SYS_RT_SIGPROCMASK] = (syscall_handle_t)sys_ssetmask;
+    syscall_handlers[SYS_RT_SIGPROCMASK] = (syscall_handle_t)sys_sigprocmask;
     syscall_handlers[SYS_RT_SIGRETURN] = (syscall_handle_t)sys_sigreturn;
     syscall_handlers[SYS_IOCTL] = (syscall_handle_t)sys_ioctl;
     syscall_handlers[SYS_PREAD64] = (syscall_handle_t)sys_pread64;

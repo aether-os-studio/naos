@@ -57,14 +57,15 @@ bool signalfd_close(void *handle) {
 
 uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask,
                        int flags) {
-    if (sizemask != sizeof(sigset_t))
+    if (sizemask < sizeof(uint32_t) || sizemask > sizeof(uint64_t)) {
         return -EINVAL;
+    }
 
     struct signalfd_ctx *ctx = malloc(sizeof(struct signalfd_ctx));
     if (!ctx)
         return -ENOMEM;
 
-    if (copy_from_user(&ctx->sigmask, mask, sizeof(sigset_t)))
+    if (copy_from_user(&ctx->sigmask, mask, sizemask))
         return (uint64_t)-EFAULT;
 
     ctx->queue_size = 64;

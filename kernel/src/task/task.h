@@ -332,7 +332,7 @@ uint64_t sys_setpriority(int which, int who, int niceval);
 extern task_t *tasks[MAX_TASK_NUM];
 extern task_t *idle_tasks[MAX_CPU_NUM];
 
-extern struct rrs_scheduler *schedulers[MAX_CPU_NUM];
+extern struct sched_rq *schedulers[MAX_CPU_NUM];
 
 #define SCHED_FLAG_YIELD (1 << 0)
 void schedule(uint64_t sched_flags);

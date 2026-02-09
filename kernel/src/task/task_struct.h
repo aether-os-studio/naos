@@ -183,10 +183,10 @@ typedef struct task_signal_info {
     spinlock_t signal_lock;
     struct pt_regs signal_saved_regs;
     fpu_context_t signal_saved_fpu;
-    uint64_t signal;
+    sigset_t signal;
     pending_signal_t pending_signal;
-    uint64_t blocked;
-    uint64_t saved_blocked;
+    sigset_t blocked;
+    sigset_t saved_blocked;
     sigaction_t actions[MAXSIG];
 } task_signal_info_t;
 

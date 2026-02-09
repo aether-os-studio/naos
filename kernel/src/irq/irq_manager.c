@@ -23,7 +23,7 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num) {
         printk("Intr vector [%d] does not have an ack\n", irq_num);
     }
 
-    if ((irq_num == ARCH_TIMER_IRQ) && can_schedule && current_task) {
+    if ((irq_num == ARCH_TIMER_IRQ) && current_task) {
         schedule(0);
     }
 }

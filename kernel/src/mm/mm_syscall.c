@@ -259,8 +259,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
 
     if (!(flags & MAP_ANONYMOUS)) {
         if (current_task->fd_info->fds[fd]->node->type & file_dir) {
-            if (vma->node)
-                vma->node->refcount--;
             vma_free(vma);
             return (uint64_t)-EISDIR;
         }
@@ -277,8 +275,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
     }
 
     if ((int64_t)ret < 0) {
-        if (vma->node)
-            vma->node->refcount--;
         vma_free(vma);
         return ret;
     }
@@ -287,8 +283,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
     if (vma_insert(mgr, vma) != 0) {
         spin_unlock(&mgr->lock);
         unmap_page_range(get_current_page_dir(true), start_addr, aligned_len);
-        if (vma->node)
-            vma->node->refcount--;
         vma_free(vma);
         return (uint64_t)-ENOMEM;
     }
@@ -618,10 +612,6 @@ static uint64_t mremap_move(vma_manager_t *mgr, vma_t *old_vma,
 
     // 插入新 VMA
     if (vma_insert(mgr, new_vma) != 0) {
-        if (new_vma->node)
-            new_vma->node->refcount--;
-        if (new_vma->vm_name)
-            free(new_vma->vm_name);
         vma_free(new_vma);
         return (uint64_t)-ENOMEM;
     }
@@ -648,10 +638,6 @@ static uint64_t mremap_move(vma_manager_t *mgr, vma_t *old_vma,
             old_vma->vm_offset);
         if (ret > (uint64_t)-4095UL) {
             vma_remove(mgr, new_vma);
-            if (new_vma->node)
-                new_vma->node->refcount--;
-            if (new_vma->vm_name)
-                free(new_vma->vm_name);
             vma_free(new_vma);
             return ret;
         }
@@ -815,12 +801,15 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
         get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)), 0,
         (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
 
+    uint64_t origin_offset = file->offset;
     file->offset = offset;
     ssize_t ret = vfs_read_fd(file, (void *)addr, offset, len);
     if (ret < 0) {
+        file->offset = origin_offset;
         printk("Failed read file for mmap\n");
         return (void *)ret;
     }
+    file->offset = origin_offset;
 
     return (void *)addr;
 }

@@ -119,21 +119,17 @@ void task_commit_signal(task_t *task, int sig, siginfo_t *info) {
     spin_unlock(&task->signal->signal_lock);
 }
 
-// 获取信号屏蔽位图
-uint64_t sys_sgetmask() {
-    return sigset_kernel_to_user(current_task->signal->blocked);
-}
-
 // 设置信号屏蔽位图
 uint64_t sys_ssetmask(int how, const sigset_t *nset, sigset_t *oset,
                       size_t sigsetsize) {
-    if (sigsetsize != sizeof(sigset_t)) {
+    if (sigsetsize < sizeof(uint32_t) || sigsetsize > sizeof(uint64_t)) {
         return -EINVAL;
     }
-    if (oset)
+    if (oset) {
         *oset = sigset_kernel_to_user(current_task->signal->blocked);
+    }
     if (nset) {
-        uint64_t safe = sigset_user_to_kernel(*nset);
+        sigset_t safe = sigset_user_to_kernel(*nset);
         switch (how) {
         case SIG_BLOCK:
             current_task->signal->blocked |= safe;
@@ -153,11 +149,26 @@ uint64_t sys_ssetmask(int how, const sigset_t *nset, sigset_t *oset,
     return 0;
 }
 
-uint64_t sys_sigaction(int sig, const sigaction_t *action,
-                       sigaction_t *oldaction, size_t sigsetsize) {
-    if (sigsetsize != sizeof(sigset_t)) {
+uint64_t sys_sigprocmask(int how, const sigset_t *nset_u, sigset_t *oset_u,
+                         size_t sigsetsize) {
+    if (sigsetsize < sizeof(uint32_t) || sigsetsize > sizeof(uint64_t)) {
         return -EINVAL;
     }
+    sigset_t nset = 0;
+    sigset_t oset = 0;
+    if (nset_u && copy_from_user(&nset, nset_u, sigsetsize)) {
+        return (uint64_t)-EFAULT;
+    }
+    uint64_t ret = sys_ssetmask(how, nset_u ? &nset : NULL,
+                                oset_u ? &oset : NULL, sigsetsize);
+    if (oset_u && copy_to_user(oset_u, &oset, sigsetsize)) {
+        return (uint64_t)-EFAULT;
+    }
+    return ret;
+}
+
+uint64_t sys_sigaction(int sig, const sigaction_t *action,
+                       sigaction_t *oldaction) {
     if (sig < MINSIG || sig > MAXSIG || sig == SIGKILL || sig == SIGSTOP) {
         return -EINVAL;
     }
@@ -202,7 +213,7 @@ void sys_sigreturn(struct pt_regs *regs) {
 
 uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
                              const struct timespec *uts, size_t sigsetsize) {
-    if (sigsetsize != sizeof(sigset_t)) {
+    if (sigsetsize < sizeof(uint32_t) || sigsetsize > sizeof(uint64_t)) {
         return -EINVAL;
     }
 
@@ -294,12 +305,17 @@ uint64_t sys_rt_sigqueueinfo(uint64_t tgid, uint64_t sig, siginfo_t *info) {
 }
 
 uint64_t sys_sigsuspend(const sigset_t *mask, size_t sigsetsize) {
-    if (sigsetsize != sizeof(sigset_t)) {
+    if (sigsetsize < sizeof(uint32_t) || sigsetsize > sizeof(uint64_t)) {
         return -EINVAL;
     }
     sigset_t old = current_task->signal->blocked;
 
-    current_task->signal->blocked = sigset_user_to_kernel(*mask);
+    sigset_t mask_k;
+    if (copy_from_user(&mask_k, mask, sigsetsize)) {
+        return -EFAULT;
+    }
+
+    current_task->signal->blocked = mask_k;
 
     while (!signals_pending_quick(current_task)) {
         schedule(SCHED_FLAG_YIELD);
