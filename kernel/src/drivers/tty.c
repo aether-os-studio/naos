@@ -169,8 +169,8 @@ void tty_init_session() {
     tty_t *tty = calloc(1, sizeof(tty_t));
     tty->device = device;
     create_session_terminal(tty);
-    device_install(DEV_CHAR, DEV_TTY, tty, tty_name, 0, tty_ioctl, tty_poll,
-                   tty_read, tty_write, NULL);
+    device_install(DEV_CHAR, DEV_TTY, tty, tty_name, 0, NULL, NULL, tty_ioctl,
+                   tty_poll, tty_read, tty_write, NULL);
 
     kernel_session = tty;
 }
@@ -186,8 +186,8 @@ void tty_init_session_serial() {
     tty_t *tty = calloc(1, sizeof(tty_t));
     tty->device = device;
     create_session_terminal_serial(tty);
-    device_install(DEV_CHAR, DEV_TTY, tty, tty_name, 0, tty_ioctl, tty_poll,
-                   tty_read, tty_write, NULL);
+    device_install(DEV_CHAR, DEV_TTY, tty, tty_name, 0, NULL, NULL, tty_ioctl,
+                   tty_poll, tty_read, tty_write, NULL);
 
     kernel_session = tty;
 }

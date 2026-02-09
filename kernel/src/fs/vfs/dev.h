@@ -187,6 +187,9 @@ void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code,
 
 void devfs_nodes_init();
 
+ssize_t inputdev_open(void *data, void *arg);
+ssize_t inputdev_close(void *data, void *arg);
+
 ssize_t inputdev_event_read(void *data, void *buf, uint64_t offset,
                             uint64_t len, uint64_t flags);
 ssize_t inputdev_event_write(void *data, const void *buf, uint64_t offset,

@@ -16,6 +16,30 @@ static device_t *get_null_device() {
     return NULL;
 }
 
+int device_open(uint64_t dev, void *arg) {
+    device_t *device = device_get(dev);
+    if (!device)
+        return -ENODEV;
+    if (device->open) {
+        return device->open(device->ptr, arg);
+    }
+    return -ENOSYS;
+}
+
+EXPORT_SYMBOL(device_open);
+
+int device_close(uint64_t dev) {
+    device_t *device = device_get(dev);
+    if (!device)
+        return -ENODEV;
+    if (device->close) {
+        return device->close(device->ptr);
+    }
+    return -ENOSYS;
+}
+
+EXPORT_SYMBOL(device_close);
+
 int device_ioctl(uint64_t dev, int cmd, void *args) {
     device_t *device = device_get(dev);
     if (!device)
@@ -81,8 +105,8 @@ EXPORT_SYMBOL(device_map);
 
 // 安装设备
 uint64_t device_install(int type, int subtype, void *ptr, char *name,
-                        uint64_t parent, void *ioctl, void *poll, void *read,
-                        void *write, void *map) {
+                        uint64_t parent, void *open, void *close, void *ioctl,
+                        void *poll, void *read, void *write, void *map) {
     spin_lock(&device_lock);
     device_t *device = get_null_device();
     device->ptr = ptr;
@@ -93,6 +117,8 @@ uint64_t device_install(int type, int subtype, void *ptr, char *name,
     uint64_t dev_minor = devices_idxs[subtype]++;
     device->dev = (dev_major << 8) | dev_minor;
     strncpy(device->name, name, NAMELEN);
+    device->open = open;
+    device->close = close;
     device->ioctl = ioctl;
     device->poll = poll;
     device->read = read;
@@ -107,14 +133,12 @@ void device_init() {
     memset(devices_idxs, 0, sizeof(devices_idxs));
     for (size_t i = 0; i < DEVICE_NR; i++) {
         device_t *device = &devices[i];
+        memset(device, 0, sizeof(device_t));
         strcpy((char *)device->name, "null");
         device->type = DEV_NULL;
         device->subtype = DEV_NULL;
         device->dev = 0;
         device->parent = 0;
-        device->ioctl = NULL;
-        device->read = NULL;
-        device->write = NULL;
     }
 }
 

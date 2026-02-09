@@ -35,6 +35,8 @@ typedef struct device_t {
     uint64_t parent;    // 父设备号
     void *ptr;          // 设备指针
 
+    int (*open)(void *dev, void *arg);
+    int (*close)(void *dev);
     // 设备控制
     int (*ioctl)(void *dev, int cmd, void *args);
     // 轮询
@@ -58,14 +60,17 @@ enum device_cmd_t {
 
 // 安装设备
 uint64_t device_install(int type, int subtype, void *ptr, char *name,
-                        uint64_t parent, void *ioctl, void *poll, void *read,
-                        void *write, void *map);
+                        uint64_t parent, void *open, void *close, void *ioctl,
+                        void *poll, void *read, void *write, void *map);
 
 // 根据子类型查找设备
 device_t *device_find(int type, uint64_t idx);
 
 // 根据设备号查找设备
 device_t *device_get(uint64_t dev);
+
+int device_open(uint64_t dev, void *arg);
+int device_close(uint64_t dev);
 
 // 控制设备
 int device_ioctl(uint64_t dev, int cmd, void *args);

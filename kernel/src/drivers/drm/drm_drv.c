@@ -216,8 +216,8 @@ drm_device_t *drm_register_device(void *data, drm_device_op_t *op,
 
     // Register character device
     uint64_t dev_nr =
-        device_install(DEV_CHAR, DEV_GPU, dev, dev_name, 0, drm_ioctl, drm_poll,
-                       drm_read, NULL, drm_map);
+        device_install(DEV_CHAR, DEV_GPU, dev, dev_name, 0, NULL, NULL,
+                       drm_ioctl, drm_poll, drm_read, NULL, drm_map);
 
     drm_device_init(dev, data, op);
     dev->id = dev_nr & 0xFF;

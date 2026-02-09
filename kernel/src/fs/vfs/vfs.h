@@ -172,6 +172,7 @@ enum {
 
 #define FS_FLAGS_HIDDEN (1UL << 0)
 #define FS_FLAGS_VIRTUAL (1UL << 1)
+#define FS_FLAGS_NEED_OPEN (1UL << 2)
 typedef struct fs {
     const char *name;
     uint64_t magic;
@@ -187,8 +188,9 @@ typedef struct flock {
     volatile uint64_t lock;
 } flock_t;
 
-#define VFS_NODE_FLAGS_DELETED (1UL << 0)
-#define VFS_NODE_FLAGS_FREE_AFTER_USE (1UL << 1)
+#define VFS_NODE_FLAGS_OPENED (1UL << 0)
+#define VFS_NODE_FLAGS_DELETED (1UL << 1)
+#define VFS_NODE_FLAGS_FREE_AFTER_USE (1UL << 2)
 
 struct vfs_node {
     vfs_node_t parent;                   // 父目录

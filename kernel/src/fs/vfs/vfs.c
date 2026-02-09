@@ -693,7 +693,15 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, uint64_t flags) {
         }
         if (current == NULL)
             goto err;
-        do_update(current);
+        fs_t *fs = all_fs[current->fsid];
+        if (fs && (fs->flags & FS_FLAGS_NEED_OPEN) &&
+            !(current->flags & VFS_NODE_FLAGS_OPENED)) {
+            callbackof(current, open)(current->parent->handle, current->name,
+                                      current);
+            current->flags |= VFS_NODE_FLAGS_OPENED;
+        } else {
+            do_update(current);
+        }
 
         if (current->type & file_symlink) {
             char target_path[512];
@@ -798,6 +806,7 @@ int vfs_close(vfs_node_t node) {
     if (node->refcount > 0)
         node->refcount--;
     if (node->refcount <= 0) {
+        node->flags &= ~VFS_NODE_FLAGS_OPENED;
         bool real_close = callbackof(node, close)(node->handle);
         if (real_close) {
             if (node->flags & VFS_NODE_FLAGS_FREE_AFTER_USE) {

@@ -48,7 +48,6 @@ void arch_input_dev_init() {
     uint64_t kbd_dev = device_install(
         DEV_CHAR, DEV_INPUT, kb_input_event, "input/event0", 0, inputdev_ioctl,
         inputdev_poll, inputdev_event_read, inputdev_event_write, NULL);
-    kb_input_event->timesOpened = 1;
 
     sysfs_regist_dev('c', (kbd_dev >> 8) & 0xFF, kbd_dev & 0xFF,
                      "/sys/devices/platform/i8042/serio0/input/input0/event0",
@@ -81,7 +80,6 @@ void arch_input_dev_init() {
         device_install(DEV_CHAR, DEV_INPUT, mouse_input_event, "input/event1",
                        0, inputdev_ioctl, inputdev_poll, inputdev_event_read,
                        inputdev_event_write, NULL);
-    mouse_input_event->timesOpened = 1;
 
     sysfs_regist_dev('c', (mouse_dev >> 8) & 0xFF, mouse_dev & 0xFF,
                      "/sys/devices/platform/i8042/serio1/input/input1/event1",

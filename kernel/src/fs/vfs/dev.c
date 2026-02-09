@@ -19,9 +19,21 @@ vfs_node_t fake_devtmpfs_root = NULL;
 
 static int dummy() { return 0; }
 
-void devtmpfs_open(void *parent, const char *name, vfs_node_t node) {}
+void devtmpfs_open(void *parent, const char *name, vfs_node_t node) {
+    if ((node->type & file_block) || (node->type & file_stream)) {
+        device_open(node->rdev, NULL);
+    }
+}
 
-bool devtmpfs_close(void *current) { return false; }
+bool devtmpfs_close(void *current) {
+    devtmpfs_node_t *dnode = current;
+    if (!dnode)
+        return false;
+    if ((dnode->node->type & file_block) || (dnode->node->type & file_stream)) {
+        device_close(dnode->node->rdev);
+    }
+    return false;
+}
 
 #define MAX_DEVTMPFS_FILE_SIZE (128 * 1024 * 1024) // 128MB
 
@@ -289,8 +301,20 @@ fs_t devtmpfs = {
     .name = "devtmpfs",
     .magic = 0x01021994,
     .callback = &callbacks,
-    .flags = FS_FLAGS_VIRTUAL,
+    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_NEED_OPEN,
 };
+
+ssize_t inputdev_open(void *data, void *arg) {
+    dev_input_event_t *event = data;
+    event->timesOpened++;
+    return 0;
+}
+
+ssize_t inputdev_close(void *data, void *arg) {
+    dev_input_event_t *event = data;
+    event->timesOpened--;
+    return 0;
+}
 
 ssize_t inputdev_event_read(void *data, void *buf, uint64_t offset,
                             uint64_t len, uint64_t flags) {
@@ -510,12 +534,12 @@ void setup_console_symlinks() {
 void devfs_nodes_init() {
     vfs_mkdir("/dev/shm");
 
-    device_install(DEV_CHAR, DEV_SYSDEV, NULL, "null", 0, NULL, NULL,
-                   nulldev_read, nulldev_write, NULL);
-    device_install(DEV_CHAR, DEV_SYSDEV, NULL, "zero", 0, NULL, NULL,
-                   zerodev_read, zerodev_write, NULL);
-    device_install(DEV_CHAR, DEV_SYSDEV, NULL, "urandom", 0, NULL, NULL,
-                   urandom_read, urandom_write, NULL);
+    device_install(DEV_CHAR, DEV_SYSDEV, NULL, "null", 0, NULL, NULL, NULL,
+                   NULL, nulldev_read, nulldev_write, NULL);
+    device_install(DEV_CHAR, DEV_SYSDEV, NULL, "zero", 0, NULL, NULL, NULL,
+                   NULL, zerodev_read, zerodev_write, NULL);
+    device_install(DEV_CHAR, DEV_SYSDEV, NULL, "urandom", 0, NULL, NULL, NULL,
+                   NULL, urandom_read, urandom_write, NULL);
 
     setup_console_symlinks();
 

@@ -123,8 +123,8 @@ void fbdev_init() {
 
     char name[16];
     sprintf(name, "fb%d", 0);
-    device_install(DEV_CHAR, DEV_FB, framebuffer, name, 0, fb_ioctl, NULL,
-                   fb_read, fb_write, fb_map);
+    device_install(DEV_CHAR, DEV_FB, framebuffer, name, 0, NULL, NULL, fb_ioctl,
+                   NULL, fb_read, fb_write, fb_map);
 }
 
 void fbdev_init_sysfs() {

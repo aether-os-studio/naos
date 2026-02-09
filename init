@@ -38,4 +38,8 @@ fi
 
 /bin/echo "Ready to switch root..."
 
-exec /sbin/switch_root /mnt/ /usr/lib/aether/init
+export HOME="/root"
+export SHELL="/bin/bash"
+export XDG_RUNTIME_DIR="/run"
+exec /sbin/switch_root /mnt/ /bin/bash
+

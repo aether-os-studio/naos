@@ -29,10 +29,11 @@ dev_input_event_t *regist_input_dev(const char *device_name,
     strncpy(input_event->uniq, device_name, sizeof(input_event->uniq));
     input_event->devname = strdup(dirpath);
     circular_int_init(&input_event->device_events, DEFAULT_PAGE_SIZE);
-    uint64_t dev = device_install(
-        DEV_CHAR, DEV_INPUT, input_event, dirpath, 0, inputdev_ioctl,
-        inputdev_poll, inputdev_event_read, inputdev_event_write, NULL);
-    input_event->timesOpened = 1;
+    uint64_t dev = device_install(DEV_CHAR, DEV_INPUT, input_event, dirpath, 0,
+                                  inputdev_open, inputdev_close, inputdev_ioctl,
+                                  inputdev_poll, inputdev_event_read,
+                                  inputdev_event_write, NULL);
+    input_event->timesOpened = 0;
 
     char uevent[128];
     sprintf(uevent, "ID_INPUT=1\n%s\nSUBSYSTEM=input\n", uevent_append);
