@@ -6,7 +6,7 @@
 #include <drivers/input.h>
 #include <libs/keys.h>
 
-extern void handle_kb_event(uint8_t scan_code, bool pressed);
+extern void handle_kb_event(uint8_t scan_code, bool pressed, bool is_extended);
 extern void handle_mouse_event(uint8_t flag, int8_t x, int8_t y, int8_t z);
 
 static struct {
@@ -136,7 +136,7 @@ static bool ps2_mouse_detect_wheel(void) {
 }
 
 void ps2_keyboard_callback(ps2_keyboard_event_t event) {
-    handle_kb_scancode(event.scancode, event.pressed);
+    handle_kb_scancode(event.scancode, event.pressed, event.is_extended);
 }
 
 void ps2_mouse_callback(ps2_mouse_event_t event) {

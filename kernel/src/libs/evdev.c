@@ -204,11 +204,7 @@ static const char *get_escape_sequence(uint8_t sc) {
 
 extern tty_t *kernel_session;
 
-void handle_kb_event(uint8_t scan_code, bool pressed) {
-    kb_evdev_generate(scan_code, pressed);
-}
-
-const uint8_t evdevTable[89] = {
+static const uint8_t evdev_base_table[89] = {
     0,
     KEY_ESC,
     KEY_1,
@@ -281,18 +277,18 @@ const uint8_t evdevTable[89] = {
     KEY_NUMLOCK,
     KEY_SCROLLLOCK,
     KEY_KP7,
-    KEY_UP, // KEY_KP8
+    KEY_KP8,
     KEY_KP9,
     KEY_KPMINUS,
-    KEY_LEFT, // KEY_KP4
+    KEY_KP4,
     KEY_KP5,
-    KEY_RIGHT, // KEY_KP6
+    KEY_KP6,
     KEY_KPPLUS,
     KEY_KP1,
-    KEY_DOWN, // KEY_KP2
+    KEY_KP2,
     KEY_KP3,
-    KEY_INSERT, // KEY_KP0
-    KEY_DELETE, // KEY_KPDOT
+    KEY_KP0,
+    KEY_KPDOT,
     0,
     0,
     0,
@@ -300,10 +296,35 @@ const uint8_t evdevTable[89] = {
     KEY_F12,
 };
 
-void handle_kb_scancode(uint8_t scan_code, bool pressed) {
-    if ((scan_code < (sizeof(evdevTable) / sizeof(evdevTable[0]))) &&
-        evdevTable[scan_code])
-        handle_kb_event(evdevTable[scan_code], pressed);
+static const uint8_t evdev_ext_table[128] = {
+    [0x1C] = KEY_KPENTER,  [0x1D] = KEY_RIGHTCTRL, [0x35] = KEY_KPSLASH,
+    [0x37] = KEY_SYSRQ,    [0x38] = KEY_RIGHTALT,  [0x47] = KEY_HOME,
+    [0x48] = KEY_UP,       [0x49] = KEY_PAGEUP,    [0x4B] = KEY_LEFT,
+    [0x4D] = KEY_RIGHT,    [0x4F] = KEY_END,       [0x50] = KEY_DOWN,
+    [0x51] = KEY_PAGEDOWN, [0x52] = KEY_INSERT,    [0x53] = KEY_DELETE,
+    [0x5B] = KEY_LEFTMETA, [0x5C] = KEY_RIGHTMETA, [0x5D] = KEY_MENU,
+};
+
+void handle_kb_event(uint8_t scan_code, bool pressed, bool is_extended) {
+    uint8_t code = 0;
+
+    if (is_extended) {
+        if (scan_code < sizeof(evdev_ext_table)) {
+            code = evdev_ext_table[scan_code];
+        }
+    } else {
+        if (scan_code < sizeof(evdev_base_table)) {
+            code = evdev_base_table[scan_code];
+        }
+    }
+
+    if (code) {
+        kb_evdev_generate(code, pressed);
+    }
+}
+
+void handle_kb_scancode(uint8_t scan_code, bool pressed, bool is_extended) {
+    handle_kb_event(scan_code, pressed, is_extended);
 
     if (!pressed) {
         switch (scan_code) {

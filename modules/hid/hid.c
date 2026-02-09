@@ -165,7 +165,7 @@ static void handle_key(struct keyevent *data) {
             if (j >= ARRAY_SIZE(data->keys)) {
                 // 按键已释放 - 发送释放事件
                 uint16_t scancode = KeyToScanCode[key];
-                handle_kb_scancode(scancode, false);
+                handle_kb_scancode(scancode, false, false);
 
                 if (i + 1 >= ARRAY_SIZE(old.keys) || !old.keys[i + 1])
                     old.repeatcount = 0xff;
@@ -188,13 +188,13 @@ static void handle_key(struct keyevent *data) {
 
         if (currentPressed && !mod->pressed) {
             // 修饰键按下
-            handle_kb_scancode(mod->scancode, true);
+            handle_kb_scancode(mod->scancode, true, false);
             mod->pressed = true;
             mod->repeatcount = KEYREPEATWAITMS / KEYREPEATMS + 1;
 
         } else if (!currentPressed && mod->pressed) {
             // 修饰键释放
-            handle_kb_scancode(mod->scancode, false);
+            handle_kb_scancode(mod->scancode, false, false);
             mod->pressed = false;
             mod->repeatcount = 0xff;
 
@@ -202,7 +202,7 @@ static void handle_key(struct keyevent *data) {
             // 修饰键持续按下 - 处理重复
             if (mod->repeatcount == 0) {
                 // 触发重复事件
-                handle_kb_scancode(mod->scancode, true);
+                handle_kb_scancode(mod->scancode, true, false);
                 mod->repeatcount = 1; // 连续重复间隔
             } else if (mod->repeatcount != 0xff) {
                 mod->repeatcount--;
@@ -216,7 +216,7 @@ static void handle_key(struct keyevent *data) {
             continue;
         // 新按键按下
         uint16_t scancode = KeyToScanCode[key];
-        handle_kb_scancode(scancode, true);
+        handle_kb_scancode(scancode, true, false);
 
         old.keys[addpos++] = key;
         old.repeatcount = KEYREPEATWAITMS / KEYREPEATMS + 1;
@@ -232,7 +232,7 @@ static void handle_key(struct keyevent *data) {
             uint16_t scancode = KeyToScanCode[repeat_key];
 
             // 发送重复按键事件
-            handle_kb_scancode(scancode, true);
+            handle_kb_scancode(scancode, true, false);
 
             // 重置计数器用于连续重复
             old.repeatcount = 1;

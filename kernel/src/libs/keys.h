@@ -449,8 +449,8 @@ enum {
 };
 
 void kb_evdev_generate(uint8_t code, bool pressed);
-void handle_kb_event(uint8_t evcode, bool pressed);
-void handle_kb_scancode(uint8_t scan_code, bool pressed);
+void handle_kb_event(uint8_t scan_code, bool pressed, bool is_extended);
+void handle_kb_scancode(uint8_t scan_code, bool pressed, bool is_extended);
 
 int kb_read(char *buffer, int n);
 int kb_available();
