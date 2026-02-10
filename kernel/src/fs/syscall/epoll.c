@@ -64,8 +64,6 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
     bool interrupted = false;
 
     while (ready == 0 && !timed_out && !interrupted) {
-        arch_enable_interrupt();
-
         if (signals_pending_quick(current_task)) {
             interrupted = true;
             break;
@@ -85,6 +83,9 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
         llist_for_each(browse, tmp, &epoll->watches, node) {
             if (ready < maxevents) {
                 if (!browse->fd) {
+                    continue;
+                }
+                if (!browse->fd->node) {
                     continue;
                 }
                 if (!browse->fd->node->handle) {
@@ -338,6 +339,8 @@ static int epoll_poll(void *file, size_t event) {
     epoll_watch_t *browse, *tmp;
     llist_for_each(browse, tmp, &epoll->watches, node) {
         if (!browse->fd)
+            continue;
+        if (!browse->fd->node)
             continue;
         if (!browse->fd->node->handle)
             continue;
