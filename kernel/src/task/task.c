@@ -146,8 +146,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->signal = malloc(sizeof(task_signal_info_t));
     memset(task->signal, 0, sizeof(task_signal_info_t));
     spin_init(&task->signal->signal_lock);
-    memset(&task->signal->signal_saved_regs, 0, sizeof(struct pt_regs));
-    task->is_kernel = true;
+    task->preempt = 0;
     task->ppid = task->pid;
     task->uid = 0;
     task->gid = 0;
@@ -162,6 +161,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->priority = priority;
     task->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     task->syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
+    task->signal_syscall_stack =
+        (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     memset((void *)(task->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(task->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
     task->arch_context = malloc(sizeof(arch_context_t));
@@ -216,6 +217,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->child_vfork_done = false;
     task->is_vfork = false;
     task->is_clone = false;
+    task->is_kernel = true;
+    task->ignore_signal = false;
     task->should_free = false;
 
     procfs_on_new_task(task);
@@ -247,8 +250,7 @@ void task_init() {
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
         schedulers[cpu] = malloc(sizeof(sched_rq_t));
         memset(schedulers[cpu], 0, sizeof(sched_rq_t));
-        schedulers[cpu]->task_tree = RB_ROOT_INIT;
-        schedulers[cpu]->lock = SPIN_INIT;
+        schedulers[cpu]->sched_queue = create_llist_queue();
     }
 
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
@@ -1372,12 +1374,12 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     memset(child->signal, 0, sizeof(task_signal_info_t));
     spin_init(&child->signal->signal_lock);
 
-    memset(&child->signal->signal_saved_regs, 0, sizeof(struct pt_regs));
-
     child->cpu_id = alloc_cpu_id();
 
     child->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     child->syscall_stack =
+        (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
+    child->signal_syscall_stack =
         (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     memset((void *)(child->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(child->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
@@ -1429,6 +1431,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 #endif
 
     child->is_kernel = false;
+    child->preempt = 0;
     child->ppid = current_task->pid;
     child->uid = current_task->uid;
     child->gid = current_task->gid;
@@ -1540,6 +1543,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         child->is_vfork = false;
     }
     child->is_clone = true;
+    child->ignore_signal = false;
     child->should_free = false;
 
     child->state = TASK_READY;
@@ -1975,12 +1979,20 @@ uint64_t sys_setpriority(int which, int who, int niceval) {
 extern void task_signal();
 
 void schedule(uint64_t sched_flags) {
+    bool state = arch_interrupt_enabled();
+
+    arch_disable_interrupt();
+
     if (!can_schedule) {
         goto ret;
     }
 
     sched_update_itimer();
     sched_update_timerfd();
+
+    if (current_task->preempt > 0) {
+        goto ret;
+    }
 
     task_t *prev = current_task;
     task_t *next = sched_pick_next_task(schedulers[current_cpu_id]);
@@ -2001,6 +2013,9 @@ void schedule(uint64_t sched_flags) {
     switch_to(prev, next);
 
 ret:
-    if (!(sched_flags & SCHED_FLAG_YIELD))
-        task_signal();
+    if (state) {
+        arch_enable_interrupt();
+    } else {
+        arch_disable_interrupt();
+    }
 }

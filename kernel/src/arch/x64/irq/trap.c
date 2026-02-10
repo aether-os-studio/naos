@@ -23,7 +23,7 @@ void irq_init() {
     set_system_trap_gate(5, 0, bounds);
     set_trap_gate(6, 0, undefined_opcode);
     set_trap_gate(7, 0, dev_not_avaliable);
-    set_trap_gate(8, 0, double_fault);
+    set_trap_gate(8, 1, double_fault);
     set_trap_gate(9, 0, coprocessor_segment_overrun);
     set_trap_gate(10, 0, invalid_TSS);
     set_trap_gate(11, 0, segment_not_exists);

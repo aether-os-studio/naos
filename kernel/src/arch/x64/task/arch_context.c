@@ -176,12 +176,6 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry,
 
 extern bool task_initialized;
 
-void arch_yield() {
-    if (task_initialized) {
-        schedule(SCHED_FLAG_YIELD);
-    }
-}
-
 #define ARCH_SET_GS 0x1001
 #define ARCH_SET_FS 0x1002
 #define ARCH_GET_FS 0x1003

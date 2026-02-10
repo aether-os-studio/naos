@@ -2,6 +2,7 @@
 
 #include <fs/vfs/vfs.h>
 #include <dev/device.h>
+#include <libs/mutex.h>
 
 typedef struct devtmpfs_node {
     vfs_node_t node;
@@ -141,7 +142,7 @@ typedef struct circular_int {
     size_t read_ptr;
     size_t write_ptr;
 
-    spinlock_t lock_read;
+    mutex_t lock;
 } circular_int_t;
 
 void circular_int_init(circular_int_t *circ, size_t size);

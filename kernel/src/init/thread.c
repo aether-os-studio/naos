@@ -34,6 +34,7 @@ void init_thread(uint64_t arg) {
 
     rtnl_init();
 
+    futex_init();
     fs_syscall_init();
     socketfs_init();
     pipefs_init();

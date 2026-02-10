@@ -1,12 +1,12 @@
 #include <task/futex.h>
 #include <fs/fs_syscall.h>
 
-spinlock_t futex_lock = SPIN_INIT;
+mutex_t futex_lock;
 struct futex_wait futex_wait_list = {0, NULL, NULL, 0};
 
 uint64_t sys_futex_wait(uint64_t addr, const struct timespec *timeout,
                         uint32_t bitset) {
-    spin_lock(&futex_lock);
+    mutex_lock(&futex_lock);
 
     struct futex_wait *wait = malloc(sizeof(struct futex_wait));
     wait->uaddr = addr;
@@ -19,7 +19,7 @@ uint64_t sys_futex_wait(uint64_t addr, const struct timespec *timeout,
 
     curr->next = wait;
 
-    spin_unlock(&futex_lock);
+    mutex_unlock(&futex_lock);
 
     int64_t tmo = -1;
     if (timeout) {
@@ -31,7 +31,7 @@ uint64_t sys_futex_wait(uint64_t addr, const struct timespec *timeout,
 }
 
 uint64_t sys_futex_wake(uint64_t addr, int val, uint32_t bitset) {
-    spin_lock(&futex_lock);
+    mutex_lock(&futex_lock);
 
     struct futex_wait *curr = &futex_wait_list;
     struct futex_wait *prev = NULL;
@@ -67,7 +67,7 @@ uint64_t sys_futex_wake(uint64_t addr, int val, uint32_t bitset) {
         }
     }
 
-    spin_unlock(&futex_lock);
+    mutex_unlock(&futex_lock);
     return count;
 }
 
@@ -124,7 +124,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
             op_type &= ~FUTEX_OP_OPARG_SHIFT;
         }
 
-        spin_lock(&futex_lock);
+        mutex_lock(&futex_lock);
 
         int oldval = *uaddr2;
         int newval;
@@ -146,7 +146,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
             newval = oldval ^ oparg;
             break;
         default:
-            spin_unlock(&futex_lock);
+            mutex_unlock(&futex_lock);
             return -ENOSYS;
         }
         *uaddr2 = newval;
@@ -238,7 +238,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
             }
         }
 
-        spin_unlock(&futex_lock);
+        mutex_unlock(&futex_lock);
         return ret;
     }
     case FUTEX_LOCK_PI:
@@ -259,7 +259,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
 
             curr->next = wait;
 
-            spin_unlock(&futex_lock);
+            mutex_unlock(&futex_lock);
 
             int tmo = -1;
             if (timeout)
@@ -302,7 +302,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
     }
     // case FUTEX_REQUEUE_PRIVATE:
     // case FUTEX_REQUEUE: {
-    //     spin_lock(&futex_lock);
+    //     mutex_lock(&futex_lock);
 
     //     struct futex_wait *curr = &futex_wait_list;
     //     struct futex_wait *prev = NULL;
@@ -349,7 +349,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
     //         }
     //     }
 
-    //     spin_unlock(&futex_lock);
+    //     mutex_unlock(&futex_lock);
     //     return wake_count + requeue_count;
     // }
     default:
@@ -357,3 +357,5 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
         return -ENOSYS;
     }
 }
+
+void futex_init() { mutex_init(&futex_lock); }

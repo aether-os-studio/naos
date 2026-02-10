@@ -115,9 +115,10 @@ void ptmx_free_handle(void *handle) {
     pty_pair_t *pair = handle;
     mutex_lock(&pair->lock);
     pair->masterFds--;
-    if (!pair->masterFds && !pair->slaveFds)
+    if (!pair->masterFds && !pair->slaveFds) {
+        pair->lock.owner->preempt--;
         pty_pair_cleanup(pair);
-    else
+    } else
         mutex_unlock(&pair->lock);
 }
 
@@ -125,9 +126,10 @@ void pts_free_handle(void *handle) {
     pty_pair_t *pair = handle;
     mutex_lock(&pair->lock);
     pair->slaveFds--;
-    if (!pair->masterFds && !pair->slaveFds)
+    if (!pair->masterFds && !pair->slaveFds) {
+        pair->lock.owner->preempt--;
         pty_pair_cleanup(pair);
-    else
+    } else
         mutex_unlock(&pair->lock);
 }
 
@@ -135,9 +137,10 @@ bool ptmx_close(void *current) {
     pty_pair_t *pair = current;
     mutex_lock(&pair->lock);
     pair->masterFds--;
-    if (!pair->masterFds && !pair->slaveFds)
+    if (!pair->masterFds && !pair->slaveFds) {
+        pair->lock.owner->preempt--;
         pty_pair_cleanup(pair);
-    else
+    } else
         mutex_unlock(&pair->lock);
     vfs_free(pair->ptmx_node);
     return true;
@@ -148,16 +151,20 @@ size_t ptmx_data_avail(pty_pair_t *pair) { return pair->ptrMaster; }
 size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     void *file = fd->node->handle;
     pty_pair_t *pair = file;
-    while (true) {
-        arch_enable_interrupt();
+    if (!pair)
+        return (size_t)-EINVAL;
 
+    arch_enable_interrupt();
+    while (true) {
         if (ptmx_data_avail(pair) > 0) {
             break;
         }
         if (!pair->slaveFds) {
+            arch_disable_interrupt();
             return 0;
         }
         if (fd->flags & O_NONBLOCK) {
+            arch_disable_interrupt();
             return -(EWOULDBLOCK);
         }
         schedule(SCHED_FLAG_YIELD);
@@ -173,12 +180,15 @@ size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     pair->ptrMaster -= toCopy;
 
     mutex_unlock(&pair->lock);
+
     return toCopy;
 }
 
 size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
     void *file = fd->node->handle;
     pty_pair_t *pair = file;
+    if (!pair)
+        return (size_t)-EINVAL;
 
     while (true) {
         arch_enable_interrupt();
@@ -286,12 +296,10 @@ int ptmx_poll(void *file, size_t events) {
     pty_pair_t *pair = file;
     int revents = 0;
 
-    mutex_lock(&pair->lock);
     if (ptmx_data_avail(pair) > 0 && events & EPOLLIN)
         revents |= EPOLLIN;
     if (pair->ptrSlave < PTY_BUFF_SIZE && events & EPOLLOUT)
         revents |= EPOLLOUT;
-    mutex_unlock(&pair->lock);
 
     return revents;
 }
@@ -335,12 +343,16 @@ void pts_open(void *parent, const char *name, vfs_node_t node) {
     int res = str_to_int(name, &id);
     if (res < 0)
         return;
+
+    arch_disable_interrupt();
     spin_lock(&pty_global_lock);
     pty_pair_t *browse = &first_pair;
     while (browse) {
         mutex_lock(&browse->lock);
-        if (browse->id == id)
+        if (browse->id == id) {
+            mutex_unlock(&browse->lock);
             break;
+        }
         mutex_unlock(&browse->lock);
         browse = browse->next;
     }
@@ -354,6 +366,8 @@ void pts_open(void *parent, const char *name, vfs_node_t node) {
         return;
     }
 
+    mutex_lock(&browse->lock);
+
     node->handle = browse;
     node->type = file_stream;
     node->fsid = pts_fsid;
@@ -366,9 +380,10 @@ bool pts_close(void *fd) {
     pty_pair_t *pair = fd;
     mutex_lock(&pair->lock);
     pair->slaveFds--;
-    if (!pair->masterFds && !pair->slaveFds)
+    if (!pair->masterFds && !pair->slaveFds) {
+        pair->lock.owner->preempt--;
         pty_pair_cleanup(pair);
-    else
+    } else
         mutex_unlock(&pair->lock);
     return true;
 }
@@ -426,6 +441,8 @@ size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit) {
 
 size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
     pty_pair_t *pair = fd->node->handle;
+    if (!pair)
+        return (size_t)-EINVAL;
 
     while (true) {
         arch_enable_interrupt();
@@ -533,8 +550,8 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
         break;
     }
     case TCSETS:
-    case TCSETSW:   // this drains(?), idek man
-    case TCSETSF: { // idek anymore man
+    case TCSETSW:
+    case TCSETSF: {
         memcpy(&pair->term, arg, sizeof(termios));
         ret = 0;
         break;
@@ -553,7 +570,7 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
         break;
     case KDGKBMODE:
         *(int *)arg = pair->tty_kbmode;
-        return 0;
+        break;
     case KDSKBMODE:
         pair->tty_kbmode = *(int *)arg;
         ret = 0;
@@ -597,12 +614,10 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
 int pts_poll(pty_pair_t *pair, int events) {
     int revents = 0;
 
-    mutex_lock(&pair->lock);
     if ((!pair->masterFds || pts_data_avali(pair) > 0) && events & EPOLLIN)
         revents |= EPOLLIN;
     if (pair->ptrMaster < PTY_BUFF_SIZE && events & EPOLLOUT)
         revents |= EPOLLOUT;
-    mutex_unlock(&pair->lock);
 
     return revents;
 }

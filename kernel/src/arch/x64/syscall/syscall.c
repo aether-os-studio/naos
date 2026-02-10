@@ -623,8 +623,16 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
         goto done;
     }
 
-    regs->rax = 0;
+    if (idx != SYS_READ && idx != SYS_WRITE && idx != SYS_WRITEV &&
+        idx != SYS_READV && idx != SYS_IOCTL && idx != SYS_WAIT4 &&
+        idx != SYS_WAITID && idx != SYS_FUTEX && idx != SYS_SENDTO &&
+        idx != SYS_SENDMSG && idx != SYS_RECVFROM && idx != SYS_RECVMSG) {
+        current_task->ignore_signal = true;
+    }
 
+    if (idx != SYS_RT_SIGRETURN) {
+        current_task->is_in_syscall = true;
+    }
     if (idx == SYS_FORK || idx == SYS_VFORK || idx == SYS_CLONE ||
         idx == SYS_CLONE3 || idx == SYS_RT_SIGRETURN) {
         special_syscall_handle_t h = (special_syscall_handle_t)handler;
@@ -632,10 +640,15 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
     } else {
         regs->rax = handler(arg1, arg2, arg3, arg4, arg5, arg6);
     }
+    if (idx != SYS_RT_SIGRETURN) {
+        current_task->is_in_syscall = false;
+    }
 
     if ((idx != SYS_BRK) && (idx != SYS_MMAP) && (idx != SYS_MREMAP) &&
         (idx != SYS_SHMAT) && (int)regs->rax < 0 && !((int64_t)regs->rax < 0))
         regs->rax |= 0xffffffff00000000;
+
+    current_task->ignore_signal = false;
 
 #define SYSCALL_DEBUG 0
 #if SYSCALL_DEBUG

@@ -13,8 +13,11 @@ extern void (*write_fsbase)(uint64_t value);
 extern uint64_t (*read_gsbase)();
 extern void (*write_gsbase)(uint64_t value);
 
-uint64_t read_kgsbase();
-void write_kgsbase(uint64_t value);
+static inline uint64_t read_kgsbase() { return rdmsr(IA32_KERNEL_GS_BASE); }
+
+static inline void write_kgsbase(uint64_t value) {
+    wrmsr(IA32_KERNEL_GS_BASE, value);
+}
 
 static inline uint32_t has_fsgsbase() {
     uint32_t eax, ebx, ecx, edx;

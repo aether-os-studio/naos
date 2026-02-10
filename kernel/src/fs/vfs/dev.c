@@ -553,18 +553,18 @@ void circular_int_init(circular_int_t *circ, size_t size) {
     circ->write_ptr = 0;
     circ->buff_size = size;
     circ->buff = malloc(size);
-    circ->lock_read.lock = 0;
+    mutex_init(&circ->lock);
     memset(circ->buff, 0, size);
 }
 
 size_t circular_int_read(circular_int_t *circ, uint8_t *buff, size_t length) {
-    spin_lock(&circ->lock_read);
     ssize_t write = circ->write_ptr;
     ssize_t read = circ->read_ptr;
     if (write == read) {
-        spin_unlock(&circ->lock_read);
         return 0;
     }
+
+    mutex_lock(&circ->lock);
 
     size_t toCopy = MIN(CIRC_READABLE(write, read, circ->buff_size), length);
 
@@ -576,19 +576,19 @@ size_t circular_int_read(circular_int_t *circ, uint8_t *buff, size_t length) {
 
     circ->read_ptr = read;
 
-    spin_unlock(&circ->lock_read);
+    mutex_unlock(&circ->lock);
 
     return toCopy;
 }
 
 size_t circular_int_write(circular_int_t *circ, const uint8_t *buff,
                           size_t length) {
-    spin_lock(&circ->lock_read);
+    mutex_lock(&circ->lock);
     ssize_t write = circ->write_ptr;
     ssize_t read = circ->read_ptr;
     size_t writable = CIRC_WRITABLE(write, read, circ->buff_size);
     if (length > writable) {
-        spin_unlock(&circ->lock_read);
+        mutex_unlock(&circ->lock);
         return 0; // cannot do this
     }
 
@@ -600,18 +600,18 @@ size_t circular_int_write(circular_int_t *circ, const uint8_t *buff,
 
     circ->write_ptr = write;
 
-    spin_unlock(&circ->lock_read);
+    mutex_unlock(&circ->lock);
 
     return length;
 }
 
 size_t circular_int_read_poll(circular_int_t *circ) {
     size_t ret = 0;
-    spin_lock(&circ->lock_read);
+    mutex_lock(&circ->lock);
     ssize_t write = circ->write_ptr;
     ssize_t read = circ->read_ptr;
     ret = CIRC_READABLE(write, read, circ->buff_size);
-    spin_unlock(&circ->lock_read);
+    mutex_unlock(&circ->lock);
     return ret;
 }
 

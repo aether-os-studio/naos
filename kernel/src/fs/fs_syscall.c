@@ -82,6 +82,8 @@ char *at_resolve_pathname_fullpath(int dirfd, char *pathname) {
     return NULL;
 }
 
+extern mutex_t fcntl_lock;
+
 extern void epoll_init();
 extern void eventfd_init();
 extern void signalfd_init();
@@ -89,6 +91,7 @@ extern void timerfd_init();
 extern void memfd_init();
 
 void fs_syscall_init() {
+    mutex_init(&fcntl_lock);
     epoll_init();
     eventfd_init();
     signalfd_init();

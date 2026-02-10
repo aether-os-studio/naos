@@ -130,6 +130,8 @@ size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old);
 int task_block(task_t *task, task_state_t state, int64_t timeout_ns);
 void task_unblock(task_t *task, int reason);
 
+void futex_init();
+
 #define PR_SET_PDEATHSIG 1
 #define PR_GET_PDEATHSIG 2
 #define PR_GET_DUMPABLE 3
@@ -334,5 +336,5 @@ extern task_t *idle_tasks[MAX_CPU_NUM];
 
 extern struct sched_rq *schedulers[MAX_CPU_NUM];
 
-#define SCHED_FLAG_YIELD (1 << 0)
+#define SCHED_FLAG_YIELD (1UL << 0)
 void schedule(uint64_t sched_flags);

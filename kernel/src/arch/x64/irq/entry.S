@@ -60,10 +60,11 @@ OLDSS	=	0xa8
 
 .section .text
 
+ENTRY(ret_to_user)
+ENTRY(ret_from_exception)
 Restore_all:
     cli
 
-    // === 恢复调用现场 ===
     popq %r15
     popq %r14
     popq %r13
@@ -85,8 +86,7 @@ Restore_all:
     iretq
 
 ENTRY(ret_from_intr)
-ENTRY(ret_from_exception)
-ENTRY(ret_to_user)
+    call task_signal
     jmp Restore_all
     
 Err_Code:

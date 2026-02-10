@@ -181,18 +181,17 @@ struct pt_regs;
 
 typedef struct task_signal_info {
     spinlock_t signal_lock;
-    struct pt_regs signal_saved_regs;
-    fpu_context_t signal_saved_fpu;
     sigset_t signal;
     pending_signal_t pending_signal;
     sigset_t blocked;
-    sigset_t saved_blocked;
     sigaction_t actions[MAXSIG];
 } task_signal_info_t;
 
 typedef struct task {
     uint64_t syscall_stack;
     uint64_t kernel_stack;
+    uint64_t signal_syscall_stack;
+    uint64_t preempt;
     uint64_t pid;
     uint64_t ppid;
     int64_t uid;
@@ -228,8 +227,10 @@ typedef struct task {
     struct rlimit rlim[16];
     int *tidptr;
     bool is_kernel;
-    bool child_vfork_done;
     bool is_vfork;
     bool is_clone;
+    bool is_in_syscall;
+    bool ignore_signal;
+    bool child_vfork_done;
     bool should_free;
 } task_t;

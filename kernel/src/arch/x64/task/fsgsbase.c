@@ -29,10 +29,6 @@ uint64_t rdgsbase() {
 
 void wrgsbase(uint64_t value) { asm volatile("wrgsbase %0" ::"r"(value)); }
 
-uint64_t read_kgsbase() { return rdmsr(IA32_KERNEL_GS_BASE); }
-
-void write_kgsbase(uint64_t value) { wrmsr(IA32_KERNEL_GS_BASE, value); }
-
 uint64_t fsgsbase_init() {
     uint32_t support = has_fsgsbase();
     if (support) {

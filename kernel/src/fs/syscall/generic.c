@@ -712,6 +712,7 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd) {
     }
 
     current_task->fd_info->fds[newfd] = newf;
+    newf->flags &= ~(uint64_t)FD_CLOEXEC;
     newf->close_on_exec = false;
     procfs_on_open_file(current_task, newfd);
 
@@ -747,7 +748,7 @@ uint64_t sys_dup(uint64_t fd) {
     return sys_dup2(fd, i);
 }
 
-spinlock_t fcntl_lock = SPIN_INIT;
+mutex_t fcntl_lock;
 
 #define RWF_WRITE_LIFE_NOT_SET 0
 #define RWH_WRITE_LIFE_NONE 1
@@ -760,17 +761,17 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
     if (fd > MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return (uint64_t)-EBADF;
 
-    spin_lock(&fcntl_lock);
+    mutex_lock(&fcntl_lock);
 
     uint64_t i;
 
     switch (command) {
     case F_GETFD:
-        spin_unlock(&fcntl_lock);
+        mutex_unlock(&fcntl_lock);
         return (current_task->fd_info->fds[fd]->close_on_exec) ? 1 : 0;
     case F_SETFD:
         current_task->fd_info->fds[fd]->close_on_exec = !!(arg & 1);
-        spin_unlock(&fcntl_lock);
+        mutex_unlock(&fcntl_lock);
         return 0;
     case F_DUPFD_CLOEXEC:
         for (i = arg; i < MAX_FD_NUM; i++) {
@@ -786,7 +787,7 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         if ((int64_t)newfd >= 0) {
             current_task->fd_info->fds[newfd]->close_on_exec = true;
         }
-        spin_unlock(&fcntl_lock);
+        mutex_unlock(&fcntl_lock);
         return newfd;
     case F_DUPFD:
         for (i = arg; i < MAX_FD_NUM; i++) {
@@ -796,25 +797,26 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         }
 
         if (i == MAX_FD_NUM) {
+            mutex_unlock(&fcntl_lock);
             return (uint64_t)-EMFILE;
         }
-        spin_unlock(&fcntl_lock);
+        mutex_unlock(&fcntl_lock);
         return sys_dup2(fd, i);
     case F_GETFL:
-        spin_unlock(&fcntl_lock);
+        mutex_unlock(&fcntl_lock);
         return current_task->fd_info->fds[fd]->flags |
                (current_task->fd_info->fds[fd]->close_on_exec ? FD_CLOEXEC : 0);
     case F_SETFL:
         uint32_t valid_flags = O_APPEND | O_DIRECT | O_NOATIME | O_NONBLOCK;
         current_task->fd_info->fds[fd]->flags &= ~valid_flags;
         current_task->fd_info->fds[fd]->flags |= arg & valid_flags;
-        spin_unlock(&fcntl_lock);
+        mutex_unlock(&fcntl_lock);
         return 0;
     case F_SETLKW:
     case F_SETLK: {
         struct flock lock;
         if (check_user_overflow(arg, sizeof(struct flock))) {
-            spin_unlock(&fcntl_lock);
+            mutex_unlock(&fcntl_lock);
             return -EFAULT;
         }
         memcpy(&lock, (void *)arg, sizeof(struct flock));
@@ -824,18 +826,18 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
 
         if (lock.l_type != F_RDLCK && lock.l_type != F_WRLCK &&
             lock.l_type != F_UNLCK) {
-            spin_unlock(&fcntl_lock);
+            mutex_unlock(&fcntl_lock);
             return -EINVAL;
         }
 
         if (lock.l_type == F_UNLCK) {
             if (file_lock->l_pid != current_task->pid) {
-                spin_unlock(&fcntl_lock);
+                mutex_unlock(&fcntl_lock);
                 return -EACCES;
             }
             file_lock->l_type = F_UNLCK;
             file_lock->l_pid = 0;
-            spin_unlock(&fcntl_lock);
+            mutex_unlock(&fcntl_lock);
             return 0;
         }
 
@@ -845,28 +847,30 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
                  !(lock.l_type == F_WRLCK && file_lock->l_type == F_RDLCK))) {
                 file_lock->l_type = lock.l_type;
                 file_lock->l_pid = current_task->pid;
-                spin_unlock(&fcntl_lock);
+                mutex_unlock(&fcntl_lock);
                 return 0;
             }
 
             if (command == F_SETLK) {
-                spin_unlock(&fcntl_lock);
+                mutex_unlock(&fcntl_lock);
                 return -EAGAIN;
             }
 
-            spin_unlock(&fcntl_lock);
+            mutex_unlock(&fcntl_lock);
 
-            arch_pause();
+            arch_enable_interrupt();
+            schedule(SCHED_FLAG_YIELD);
+            arch_disable_interrupt();
 
-            spin_lock(&fcntl_lock);
+            mutex_lock(&fcntl_lock);
         }
     }
     case F_GET_SEALS:
     case F_ADD_SEALS:
-        spin_unlock(&fcntl_lock);
+        mutex_unlock(&fcntl_lock);
         return 0;
     case F_GET_RW_HINT:
-        spin_unlock(&fcntl_lock);
+        mutex_unlock(&fcntl_lock);
         if (!current_task->fd_info->fds[fd]->node->rw_hint) {
             return 0;
         }
@@ -874,15 +878,16 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
 
     case F_SET_RW_HINT:
         if (arg < RWH_WRITE_LIFE_NONE || arg > RWH_WRITE_LIFE_EXTREME) {
-            spin_unlock(&fcntl_lock);
+            mutex_unlock(&fcntl_lock);
             return -EINVAL;
         }
         current_task->fd_info->fds[fd]->node->rw_hint = arg;
-        spin_unlock(&fcntl_lock);
+        mutex_unlock(&fcntl_lock);
         return 0;
     default:
-        spin_unlock(&fcntl_lock);
-        return (uint64_t)-ENOSYS;
+        printk("Unsupported fcntl command %#010lx\n", command);
+        mutex_unlock(&fcntl_lock);
+        return (uint64_t)-EINVAL;
     }
 }
 
