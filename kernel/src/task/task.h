@@ -127,7 +127,8 @@ uint64_t sys_clock_nanosleep(int clock_id, int flags,
 
 size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old);
 
-int task_block(task_t *task, task_state_t state, int64_t timeout_ns);
+int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
+               const char *blocking_reason);
 void task_unblock(task_t *task, int reason);
 
 void futex_init();

@@ -251,6 +251,9 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
             free(fp);
         }
         vma->vm_offset = offset;
+        if ((node->type & file_stream) || (node->type & file_block)) {
+            vma->vm_flags |= VMA_DEVICE;
+        }
     }
 
     spin_unlock(&mgr->lock);

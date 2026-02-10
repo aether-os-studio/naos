@@ -1,5 +1,6 @@
 #include <mm/fault.h>
 #include <mm/page.h>
+#include <fs/vfs/vfs.h>
 
 page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
     if (!task)
@@ -47,7 +48,8 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
         vma_t *vma =
             vma_find_intersection(mgr, vaddr, vaddr + DEFAULT_PAGE_SIZE);
 
-        if (vma && (vma->vm_flags & VMA_SHARED)) {
+        if (vma &&
+            ((vma->vm_flags & VMA_SHM) || (vma->vm_flags & VMA_DEVICE))) {
             goto ok;
         } else {
             uint64_t new_paddr = alloc_frames(1);

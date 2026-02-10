@@ -56,15 +56,17 @@ void pty_init() { pty_bitmap = calloc(PTY_MAX / 8, 1); }
 
 void ptmx_open(void *parent, const char *name, vfs_node_t node) {
     int id = pty_bitmap_decide(); // here to avoid double locks
-    spin_lock(&pty_global_lock);
-    pty_pair_t *n = &first_pair;
-    while (n->next) {
-        n = n->next;
+    if (id < 0)
+        return;
+
+    pty_pair_t *pair = malloc(sizeof(pty_pair_t));
+    if (!pair) {
+        pty_bitmap_remove(id);
+        return;
     }
 
-    n->next = malloc(sizeof(pty_pair_t));
-    pty_pair_t *pair = n->next;
     memset(pair, 0, sizeof(pty_pair_t));
+    mutex_init(&pair->lock);
     pair->id = id;
     pair->frontProcessGroup = 0;
     pair->bufferMaster = alloc_frames_bytes(PTY_BUFF_SIZE);
@@ -79,6 +81,14 @@ void ptmx_open(void *parent, const char *name, vfs_node_t node) {
     node->handle = pair;
     node->fsid = ptmx_fsid;
 
+    spin_lock(&pty_global_lock);
+    pty_pair_t *n = &first_pair;
+    while (n->next) {
+        n = n->next;
+    }
+    n->next = pair;
+    spin_unlock(&pty_global_lock);
+
     llist_delete(&node->node_for_childs);
     node->parent = NULL;
     vfs_node_t new_node = vfs_node_alloc(devtmpfs_root, "ptmx");
@@ -87,12 +97,10 @@ void ptmx_open(void *parent, const char *name, vfs_node_t node) {
 
     vfs_node_t pts_node = vfs_open_at(devtmpfs_root, "pts", 0);
     pts_node->fsid = pts_fsid;
-    char nm[4];
+    char nm[12];
     sprintf(nm, "%d", id);
     vfs_node_t pty_slave_node = vfs_node_alloc(pts_node, nm);
     pty_slave_node->fsid = pts_fsid;
-
-    spin_unlock(&pty_global_lock);
 }
 
 void pty_pair_cleanup(pty_pair_t *pair) {
@@ -113,35 +121,26 @@ void pty_pair_cleanup(pty_pair_t *pair) {
 
 void ptmx_free_handle(void *handle) {
     pty_pair_t *pair = handle;
-    mutex_lock(&pair->lock);
     pair->masterFds--;
     if (!pair->masterFds && !pair->slaveFds) {
-        pair->lock.owner->preempt--;
         pty_pair_cleanup(pair);
-    } else
-        mutex_unlock(&pair->lock);
+    }
 }
 
 void pts_free_handle(void *handle) {
     pty_pair_t *pair = handle;
-    mutex_lock(&pair->lock);
     pair->slaveFds--;
     if (!pair->masterFds && !pair->slaveFds) {
-        pair->lock.owner->preempt--;
         pty_pair_cleanup(pair);
-    } else
-        mutex_unlock(&pair->lock);
+    }
 }
 
 bool ptmx_close(void *current) {
     pty_pair_t *pair = current;
-    mutex_lock(&pair->lock);
     pair->masterFds--;
     if (!pair->masterFds && !pair->slaveFds) {
-        pair->lock.owner->preempt--;
         pty_pair_cleanup(pair);
-    } else
-        mutex_unlock(&pair->lock);
+    }
     vfs_free(pair->ptmx_node);
     return true;
 }
@@ -165,7 +164,7 @@ size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         }
         if (fd->flags & O_NONBLOCK) {
             arch_disable_interrupt();
-            return -(EWOULDBLOCK);
+            return -EWOULDBLOCK;
         }
         schedule(SCHED_FLAG_YIELD);
     }
@@ -193,11 +192,12 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
     while (true) {
         arch_enable_interrupt();
 
-        if ((pair->ptrSlave + limit) < PTY_BUFF_SIZE) {
+        if ((pair->ptrSlave + limit) <= PTY_BUFF_SIZE) {
             break;
         }
         if (fd->flags & O_NONBLOCK) {
-            return -(EWOULDBLOCK);
+            arch_disable_interrupt();
+            return -EWOULDBLOCK;
         }
         schedule(SCHED_FLAG_YIELD);
     }
@@ -233,7 +233,7 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
         }
         if ((pair->term.c_iflag & ICRNL) && ch == '\r')
             ch = '\n';
-        if ((pair->ptrSlave + 1) >= PTY_BUFF_SIZE)
+        if ((pair->ptrSlave + 1) > PTY_BUFF_SIZE)
             break;
         pair->bufferSlave[pair->ptrSlave++] = ch;
         written++;
@@ -337,23 +337,17 @@ int str_to_int(const char *str, int *result) {
 }
 
 void pts_open(void *parent, const char *name, vfs_node_t node) {
-    int length = strlen(name);
-
     int id;
     int res = str_to_int(name, &id);
     if (res < 0)
         return;
 
-    arch_disable_interrupt();
     spin_lock(&pty_global_lock);
     pty_pair_t *browse = &first_pair;
     while (browse) {
-        mutex_lock(&browse->lock);
         if (browse->id == id) {
-            mutex_unlock(&browse->lock);
             break;
         }
-        mutex_unlock(&browse->lock);
         browse = browse->next;
     }
     spin_unlock(&pty_global_lock);
@@ -361,12 +355,11 @@ void pts_open(void *parent, const char *name, vfs_node_t node) {
     if (!browse)
         return;
 
+    mutex_lock(&browse->lock);
     if (browse->locked) {
-        spin_unlock(&pty_global_lock);
+        mutex_unlock(&browse->lock);
         return;
     }
-
-    mutex_lock(&browse->lock);
 
     node->handle = browse;
     node->type = file_stream;
@@ -378,13 +371,10 @@ void pts_open(void *parent, const char *name, vfs_node_t node) {
 
 bool pts_close(void *fd) {
     pty_pair_t *pair = fd;
-    mutex_lock(&pair->lock);
     pair->slaveFds--;
     if (!pair->masterFds && !pair->slaveFds) {
-        pair->lock.owner->preempt--;
         pty_pair_cleanup(pair);
-    } else
-        mutex_unlock(&pair->lock);
+    }
     return true;
 }
 
@@ -418,10 +408,12 @@ size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit) {
             break;
         }
         if (!pair->masterFds) {
+            arch_disable_interrupt();
             return 0;
         }
         if (fd->flags & O_NONBLOCK) {
-            return -(EWOULDBLOCK);
+            arch_disable_interrupt();
+            return -EWOULDBLOCK;
         }
         schedule(SCHED_FLAG_YIELD);
     }
@@ -468,12 +460,12 @@ size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
     for (size_t i = 0; i < limit; ++i) {
         uint8_t ch = in[i];
         if (doTranslate && ch == '\n') {
-            if ((pair->ptrMaster + 2) >= PTY_BUFF_SIZE)
+            if ((pair->ptrMaster + 2) > PTY_BUFF_SIZE)
                 break;
             pair->bufferMaster[pair->ptrMaster++] = '\r';
             pair->bufferMaster[pair->ptrMaster++] = '\n';
         } else {
-            if ((pair->ptrMaster + 1) >= PTY_BUFF_SIZE)
+            if ((pair->ptrMaster + 1) > PTY_BUFF_SIZE)
                 break;
             pair->bufferMaster[pair->ptrMaster++] = ch;
         }

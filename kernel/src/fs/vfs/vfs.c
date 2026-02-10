@@ -803,6 +803,11 @@ int vfs_close(vfs_node_t node) {
         return 0;
     if (node->type & file_dir)
         return 0;
+    fs_t *fs = all_fs[node->fsid];
+    if (node->refcount > 1 && fs && fs->flags & FS_FLAGS_NEED_OPEN) {
+        callbackof(node, close)(node->handle);
+        return 0;
+    }
     if (node->refcount > 0)
         node->refcount--;
     if (node->refcount <= 0) {

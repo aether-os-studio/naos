@@ -1,52 +1,39 @@
 #include <boot/boot.h>
 #include <acpi/uacpi/acpi.h>
 
+#define LIMINE_REQUEST __attribute__((used, section(".limine_requests")))
+
 __attribute__((used,
                section(".limine_requests_"
                        "start"))) static volatile LIMINE_REQUESTS_START_MARKER;
 
-__attribute__((
-    used, section(".limine_requests"))) static volatile LIMINE_BASE_REVISION(3);
+LIMINE_REQUEST static volatile LIMINE_BASE_REVISION(3);
 
-__attribute__((
-    used,
-    section(
-        ".limine_requests"))) static volatile struct limine_stack_size_request
+LIMINE_REQUEST static volatile struct limine_stack_size_request
     stack_size_request = {
         .id = LIMINE_STACK_SIZE_REQUEST,
         .revision = 0,
         .stack_size = STACK_SIZE,
 };
 
-__attribute__((
-    used,
-    section(".limine_requests"))) static volatile struct limine_hhdm_request
-    hhdm_request = {.id = LIMINE_HHDM_REQUEST, .revision = 0};
+LIMINE_REQUEST static volatile struct limine_hhdm_request hhdm_request = {
+    .id = LIMINE_HHDM_REQUEST, .revision = 0};
 
-__attribute__((
-    used,
-    section(".limine_requests"))) static volatile struct limine_memmap_request
-    memmap_request = {
-        .id = LIMINE_MEMMAP_REQUEST,
-        .revision = 0,
+LIMINE_REQUEST static volatile struct limine_memmap_request memmap_request = {
+    .id = LIMINE_MEMMAP_REQUEST,
+    .revision = 0,
 };
 
-__attribute__((used,
-               section(".limine_requests"))) volatile struct limine_rsdp_request
-    rsdp_request = {.id = LIMINE_RSDP_REQUEST, .revision = 0, .response = NULL};
+LIMINE_REQUEST volatile struct limine_rsdp_request rsdp_request = {
+    .id = LIMINE_RSDP_REQUEST, .revision = 0, .response = NULL};
 
-__attribute__((
-    used,
-    section(".limine_requests"))) volatile struct limine_date_at_boot_request
-    boot_time_request = {
-        .id = LIMINE_DATE_AT_BOOT_REQUEST,
-        .revision = 0,
+LIMINE_REQUEST volatile struct limine_date_at_boot_request boot_time_request = {
+    .id = LIMINE_DATE_AT_BOOT_REQUEST,
+    .revision = 0,
 };
 
-__attribute__((
-    used,
-    section(".limine_requests"))) volatile struct limine_framebuffer_request
-    framebuffer_request = {.id = LIMINE_FRAMEBUFFER_REQUEST, .revision = 0};
+LIMINE_REQUEST volatile struct limine_framebuffer_request framebuffer_request =
+    {.id = LIMINE_FRAMEBUFFER_REQUEST, .revision = 0};
 
 __attribute__((
     used,
@@ -188,8 +175,8 @@ boot_framebuffer_t *boot_get_framebuffer() {
     return &limine_boot_fb;
 }
 
-__attribute__((used, section(".limine_requests"))) static volatile struct
-    limine_executable_cmdline_request executable_cmdline_request = {
+LIMINE_REQUEST static volatile struct limine_executable_cmdline_request
+    executable_cmdline_request = {
         .id = LIMINE_EXECUTABLE_CMDLINE_REQUEST,
 };
 
@@ -197,12 +184,9 @@ char *boot_get_cmdline() {
     return executable_cmdline_request.response->cmdline;
 }
 
-__attribute__((
-    used,
-    section(".limine_requests"))) static volatile struct limine_module_request
-    modules_request = {
-        .id = LIMINE_MODULE_REQUEST,
-        .revision = 0,
+LIMINE_REQUEST static volatile struct limine_module_request modules_request = {
+    .id = LIMINE_MODULE_REQUEST,
+    .revision = 0,
 };
 
 boot_module_t limine_boot_modules[MAX_MODULES_NUM];
@@ -222,10 +206,7 @@ void boot_get_modules(boot_module_t **modules, size_t *count) {
 }
 
 #if defined(__riscv__)
-__attribute__((
-    used,
-    section(
-        ".limine_requests"))) static volatile struct limine_paging_mode_request
+LIMINE_REQUEST static volatile struct limine_paging_mode_request
     paging_mode_request = {
         .id = LIMINE_PAGING_MODE_REQUEST,
         .revision = 0,
@@ -234,14 +215,10 @@ __attribute__((
 #endif
 
 #if !defined(__x86_64__)
-
-__attribute__((
-    used,
-    section(".limine_requests"))) static volatile struct limine_dtb_request
-    dtb_request = {
-        .id = LIMINE_DTB_REQUEST,
-        .revision = 0,
-        .response = NULL,
+LIMINE_REQUEST static volatile struct limine_dtb_request dtb_request = {
+    .id = LIMINE_DTB_REQUEST,
+    .revision = 0,
+    .response = NULL,
 };
 
 uint64_t boot_get_dtb() {

@@ -4,6 +4,7 @@ void mutex_init(mutex_t *mtx) {
     spin_init(&mtx->guard);
     mtx->locked = false;
     mtx->owner = NULL;
+    mtx->recursion = 0;
     mtx->wait_head = NULL;
     mtx->wait_tail = NULL;
 }
@@ -20,7 +21,7 @@ void mutex_lock(mutex_t *mtx) {
         spin_lock(&mtx->guard);
 
         if (mtx->locked && mtx->owner == self) {
-            self->preempt++;
+            mtx->recursion++;
 
             spin_unlock(&mtx->guard);
             if (node) {
@@ -32,6 +33,7 @@ void mutex_lock(mutex_t *mtx) {
         if (!mtx->locked) {
             mtx->locked = true;
             mtx->owner = self;
+            mtx->recursion = 1;
             self->preempt++;
 
             spin_unlock(&mtx->guard);
@@ -56,7 +58,7 @@ void mutex_lock(mutex_t *mtx) {
             continue;
         }
 
-        task_block(self, TASK_BLOCKING, -1);
+        task_block(self, TASK_BLOCKING, -1, "mutex");
     }
 
 ret:
@@ -74,6 +76,7 @@ bool mutex_trylock(mutex_t *mtx) {
     spin_lock(&mtx->guard);
 
     if (mtx->locked && mtx->owner == self) {
+        mtx->recursion++;
         locked = true;
         goto out;
     }
@@ -81,6 +84,7 @@ bool mutex_trylock(mutex_t *mtx) {
     if (!mtx->locked) {
         mtx->locked = true;
         mtx->owner = self;
+        mtx->recursion = 1;
         self->preempt++;
         locked = true;
         goto out;
@@ -103,29 +107,34 @@ void mutex_unlock(mutex_t *mtx) {
         return;
     }
 
+    if (mtx->recursion > 1) {
+        mtx->recursion--;
+        spin_unlock(&mtx->guard);
+        return;
+    }
+
+    mtx->locked = false;
+    mtx->owner = NULL;
+    mtx->recursion = 0;
+
+    if (self->preempt > 0) {
+        self->preempt--;
+    }
+
     while ((node = wait_queue_dequeue(mtx))) {
         waiter = node->task;
         if (!waiter || waiter->state == TASK_DIED) {
             free(node);
+            waiter = NULL;
             continue;
         }
 
         break;
     }
 
-    if (waiter) {
-        mtx->locked = true;
-        mtx->owner = waiter;
-
-        task_unblock(waiter, EOK);
-    } else {
-        mtx->locked = false;
-        mtx->owner = NULL;
-    }
-
-    if (self->preempt > 0) {
-        self->preempt--;
-    }
-
     spin_unlock(&mtx->guard);
+
+    if (waiter) {
+        task_unblock(waiter, EOK);
+    }
 }

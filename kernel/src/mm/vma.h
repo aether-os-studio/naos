@@ -11,6 +11,7 @@
 #define VMA_SHARED 0x8
 #define VMA_ANON 0x10
 #define VMA_SHM 0x20
+#define VMA_DEVICE 0x40
 
 // VMA类型
 typedef enum {

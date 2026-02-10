@@ -895,12 +895,15 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
 void sys_yield() { schedule(SCHED_FLAG_YIELD); }
 
-int task_block(task_t *task, task_state_t state, int64_t timeout_ns) {
+int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
+               const char *blocking_reason) {
     task->state = state;
     if (timeout_ns > 0)
         task->force_wakeup_ns = nano_time() + timeout_ns;
     else
         task->force_wakeup_ns = UINT64_MAX;
+
+    task->blocking_reason = blocking_reason;
 
     remove_sched_entity(task, schedulers[task->cpu_id]);
 
@@ -912,6 +915,8 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns) {
 void task_unblock(task_t *task, int reason) {
     task->status = reason;
     task->state = TASK_READY;
+
+    task->blocking_reason = NULL;
 
     add_sched_entity(task, schedulers[task->cpu_id]);
 }
@@ -1158,7 +1163,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
         if (found_alive) {
             found_alive->waitpid = current_task->pid;
             if (found_alive->state != TASK_DIED)
-                task_block(current_task, TASK_BLOCKING, -1);
+                task_block(current_task, TASK_BLOCKING, -1, "waitpid");
             continue;
         }
 
@@ -1293,7 +1298,7 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
         if (found_alive) {
             found_alive->waitpid = current_task->pid;
             if (found_alive->state != TASK_DIED)
-                task_block(current_task, TASK_BLOCKING, -1);
+                task_block(current_task, TASK_BLOCKING, -1, "waitid");
             continue;
         }
 
@@ -1990,12 +1995,13 @@ void schedule(uint64_t sched_flags) {
     sched_update_itimer();
     sched_update_timerfd();
 
-    if (current_task->preempt > 0) {
+    task_t *prev = current_task;
+
+    if (prev->preempt > 0) {
         goto ret;
     }
 
-    task_t *prev = current_task;
-    task_t *next = sched_pick_next_task(schedulers[current_cpu_id]);
+    task_t *next = sched_pick_next_task(schedulers[prev->cpu_id]);
 
     if (next->state == TASK_DIED || next->arch_context->dead) {
         next = idle_tasks[current_cpu_id];

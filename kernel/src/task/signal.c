@@ -648,7 +648,6 @@ void task_signal() {
 
     if ((ptr->sa_handler == SIG_DFL) &&
         signal_internal_decisions[sig] == SIGNAL_INTERNAL_STOP) {
-        self->state = TASK_BLOCKING;
         self->signal->signal &= ~SIGMASK(sig);
         spin_unlock(&self->signal->signal_lock);
         return;

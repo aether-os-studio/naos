@@ -94,9 +94,11 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
     if ((flags & O_TMPFILE) == O_TMPFILE)
         return (uint64_t)-EINVAL;
 
+    task_t *self = current_task;
+
     uint64_t i;
     for (i = 0; i < MAX_FD_NUM; i++) {
-        if (current_task->fd_info->fds[i] == NULL) {
+        if (self->fd_info->fds[i] == NULL) {
             break;
         }
     }
@@ -130,14 +132,14 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
             vfs_chmod(name, mode ? (mode & 0777) : 0777);
     }
 
-    current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
-    memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
-    current_task->fd_info->fds[i]->node = node;
-    current_task->fd_info->fds[i]->offset = 0;
-    current_task->fd_info->fds[i]->flags = flags;
+    self->fd_info->fds[i] = malloc(sizeof(fd_t));
+    memset(self->fd_info->fds[i], 0, sizeof(fd_t));
+    self->fd_info->fds[i]->node = node;
+    self->fd_info->fds[i]->offset = 0;
+    self->fd_info->fds[i]->flags = flags;
     node->refcount++;
 
-    procfs_on_open_file(current_task, i);
+    procfs_on_open_file(self, i);
 
     return i;
 }
@@ -245,9 +247,11 @@ uint64_t sys_open_by_handle_at(int mountdirfd, struct file_handle *handle,
         return -ESTALE;
     }
 
+    task_t *self = current_task;
+
     uint64_t i;
     for (i = 0; i < MAX_FD_NUM; i++) {
-        if (current_task->fd_info->fds[i] == NULL) {
+        if (self->fd_info->fds[i] == NULL) {
             break;
         }
     }
@@ -256,24 +260,26 @@ uint64_t sys_open_by_handle_at(int mountdirfd, struct file_handle *handle,
         return (uint64_t)-EMFILE;
     }
 
-    current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
-    memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
-    current_task->fd_info->fds[i]->node = node;
-    current_task->fd_info->fds[i]->offset = 0;
-    current_task->fd_info->fds[i]->flags = flags;
+    self->fd_info->fds[i] = malloc(sizeof(fd_t));
+    memset(self->fd_info->fds[i], 0, sizeof(fd_t));
+    self->fd_info->fds[i]->node = node;
+    self->fd_info->fds[i]->offset = 0;
+    self->fd_info->fds[i]->flags = flags;
     node->refcount++;
 
-    procfs_on_open_file(current_task, i);
+    procfs_on_open_file(self, i);
 
     return i;
 }
 
 uint64_t sys_fsync(uint64_t fd) {
-    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
+    task_t *self = current_task;
+
+    if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
     }
 
-    vfs_node_t node = current_task->fd_info->fds[fd]->node;
+    vfs_node_t node = self->fd_info->fds[fd]->node;
 
     return 0;
 }
@@ -282,23 +288,25 @@ uint64_t sys_close(uint64_t fd) {
     if (fd == SPECIAL_FD)
         return 0;
 
-    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
+    task_t *self = current_task;
+
+    if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
     }
 
-    current_task->fd_info->fds[fd]->offset = 0;
-    if (current_task->fd_info->fds[fd]->node->lock.l_pid == current_task->pid) {
-        current_task->fd_info->fds[fd]->node->lock.l_type = F_UNLCK;
-        current_task->fd_info->fds[fd]->node->lock.l_pid = 0;
+    self->fd_info->fds[fd]->offset = 0;
+    if (self->fd_info->fds[fd]->node->lock.l_pid == self->pid) {
+        self->fd_info->fds[fd]->node->lock.l_type = F_UNLCK;
+        self->fd_info->fds[fd]->node->lock.l_pid = 0;
     }
 
-    vfs_close(current_task->fd_info->fds[fd]->node);
+    vfs_close(self->fd_info->fds[fd]->node);
 
-    free(current_task->fd_info->fds[fd]);
+    free(self->fd_info->fds[fd]);
 
-    current_task->fd_info->fds[fd] = NULL;
+    self->fd_info->fds[fd] = NULL;
 
-    procfs_on_close_file(current_task, fd);
+    procfs_on_close_file(self, fd);
 
     return 0;
 }
@@ -312,8 +320,10 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
         maxfd = MAX_FD_NUM;
     }
 
+    task_t *self = current_task;
+
     for (uint64_t fd_ = fd; fd_ <= maxfd; fd_++) {
-        if (current_task->fd_info->fds[fd_]) {
+        if (self->fd_info->fds[fd_]) {
             sys_close(fd_);
         }
     }
@@ -328,8 +338,10 @@ uint64_t sys_copy_file_range(uint64_t fd_in, int *offset_in_user,
         return (uint64_t)-EBADF;
     }
 
-    fd_t *in_fd = current_task->fd_info->fds[fd_in];
-    fd_t *out_fd = current_task->fd_info->fds[fd_out];
+    task_t *self = current_task;
+
+    fd_t *in_fd = self->fd_info->fds[fd_in];
+    fd_t *out_fd = self->fd_info->fds[fd_out];
     if (!in_fd || !out_fd) {
         return (uint64_t)-EBADF;
     }
@@ -381,22 +393,23 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len) {
         check_unmapped((uint64_t)buf, len)) {
         return (uint64_t)-EFAULT;
     }
-    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
+    task_t *self = current_task;
+    if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
     }
 
-    if (current_task->fd_info->fds[fd]->node->type & file_dir) {
+    if (self->fd_info->fds[fd]->node->type & file_dir) {
         return (uint64_t)-EISDIR;
     }
 
-    ssize_t ret = vfs_read_fd(current_task->fd_info->fds[fd], buf,
-                              current_task->fd_info->fds[fd]->offset, len);
+    ssize_t ret = vfs_read_fd(self->fd_info->fds[fd], buf,
+                              self->fd_info->fds[fd]->offset, len);
 
     if (ret < 0)
         return ret;
 
     if (ret > 0) {
-        current_task->fd_info->fds[fd]->offset += ret;
+        self->fd_info->fds[fd]->offset += ret;
     }
 
     return ret;
@@ -410,22 +423,25 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
         check_unmapped((uint64_t)buf, len)) {
         return (uint64_t)-EFAULT;
     }
-    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
+
+    task_t *self = current_task;
+
+    if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
     }
 
-    if (current_task->fd_info->fds[fd]->node->type & file_dir) {
+    if (self->fd_info->fds[fd]->node->type & file_dir) {
         return (uint64_t)-EISDIR;
     }
 
-    ssize_t ret = vfs_write_fd(current_task->fd_info->fds[fd], buf,
-                               current_task->fd_info->fds[fd]->offset, len);
+    ssize_t ret = vfs_write_fd(self->fd_info->fds[fd], buf,
+                               self->fd_info->fds[fd]->offset, len);
 
     if (ret < 0)
         return ret;
 
     if (ret > 0) {
-        current_task->fd_info->fds[fd]->offset += ret;
+        self->fd_info->fds[fd]->offset += ret;
     }
 
     return ret;
@@ -435,8 +451,11 @@ uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
                       size_t count) {
     if (out_fd > MAX_FD_NUM || in_fd > MAX_FD_NUM)
         return -EBADF;
-    fd_t *out_handle = current_task->fd_info->fds[out_fd];
-    fd_t *in_handle = current_task->fd_info->fds[in_fd];
+
+    task_t *self = current_task;
+
+    fd_t *out_handle = self->fd_info->fds[out_fd];
+    fd_t *in_handle = self->fd_info->fds[in_fd];
     if (out_handle == NULL || in_handle == NULL)
         return -EBADF;
 
@@ -492,34 +511,34 @@ uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
 }
 
 uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
-    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
+    task_t *self = current_task;
+
+    if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
     }
 
     int64_t real_offset = offset;
-    if (real_offset < 0 &&
-        current_task->fd_info->fds[fd]->node->type & file_none &&
+    if (real_offset < 0 && self->fd_info->fds[fd]->node->type & file_none &&
         whence != SEEK_CUR)
         return (uint64_t)-EBADF;
 
     switch (whence & 3) {
     case SEEK_SET:
-        current_task->fd_info->fds[fd]->offset = real_offset;
+        self->fd_info->fds[fd]->offset = real_offset;
         break;
     case SEEK_CUR:
-        current_task->fd_info->fds[fd]->offset += real_offset;
-        if ((int64_t)current_task->fd_info->fds[fd]->offset < 0) {
-            current_task->fd_info->fds[fd]->offset = 0;
-        } else if (current_task->fd_info->fds[fd]->offset >
-                   current_task->fd_info->fds[fd]->node->size) {
-            current_task->fd_info->fds[fd]->offset =
-                current_task->fd_info->fds[fd]->node->size;
+        self->fd_info->fds[fd]->offset += real_offset;
+        if ((int64_t)self->fd_info->fds[fd]->offset < 0) {
+            self->fd_info->fds[fd]->offset = 0;
+        } else if (self->fd_info->fds[fd]->offset >
+                   self->fd_info->fds[fd]->node->size) {
+            self->fd_info->fds[fd]->offset = self->fd_info->fds[fd]->node->size;
         }
 
         break;
     case SEEK_END:
-        current_task->fd_info->fds[fd]->offset =
-            current_task->fd_info->fds[fd]->node->size - real_offset;
+        self->fd_info->fds[fd]->offset =
+            self->fd_info->fds[fd]->node->size - real_offset;
         break;
 
     default:
@@ -527,15 +546,17 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
         break;
     }
 
-    return current_task->fd_info->fds[fd]->offset;
+    return self->fd_info->fds[fd]->offset;
 }
 
 uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
-    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
+    task_t *self = current_task;
+
+    if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
     }
 
-    int ret = vfs_ioctl(current_task->fd_info->fds[fd]->node, cmd, arg);
+    int ret = vfs_ioctl(self->fd_info->fds[fd]->node, cmd, arg);
     if (cmd == TIOCGWINSZ && ret < 0) {
         ret = -ENOTTY;
     }
@@ -599,12 +620,13 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size) {
     }
     if (fd >= MAX_FD_NUM)
         return (uint64_t)-EBADF;
-    if (!current_task->fd_info->fds[fd])
+    task_t *self = current_task;
+    if (!self->fd_info->fds[fd])
         return (uint64_t)-EBADF;
-    if (!(current_task->fd_info->fds[fd]->node->type & file_dir))
+    if (!(self->fd_info->fds[fd]->node->type & file_dir))
         return (uint64_t)-ENOTDIR;
 
-    fd_t *filedescriptor = current_task->fd_info->fds[fd];
+    fd_t *filedescriptor = self->fd_info->fds[fd];
     vfs_node_t node = filedescriptor->node;
 
     uint8_t *buf_ptr = (uint8_t *)buf;
@@ -697,24 +719,25 @@ extern int unix_socket_fsid;
 extern int unix_accept_fsid;
 
 uint64_t sys_dup2(uint64_t fd, uint64_t newfd) {
-    if (!current_task->fd_info->fds[fd])
+    task_t *self = current_task;
+    if (!self->fd_info->fds[fd])
         return (uint64_t)-EBADF;
 
-    fd_t *newf = vfs_dup(current_task->fd_info->fds[fd]);
+    fd_t *newf = vfs_dup(self->fd_info->fds[fd]);
     if (!newf)
         return (uint64_t)-ENOSPC;
 
-    if (current_task->fd_info->fds[newfd]) {
-        vfs_close(current_task->fd_info->fds[newfd]->node);
-        free(current_task->fd_info->fds[newfd]);
-        current_task->fd_info->fds[newfd] = NULL;
-        procfs_on_close_file(current_task, newfd);
+    if (self->fd_info->fds[newfd]) {
+        vfs_close(self->fd_info->fds[newfd]->node);
+        free(self->fd_info->fds[newfd]);
+        self->fd_info->fds[newfd] = NULL;
+        procfs_on_close_file(self, newfd);
     }
 
-    current_task->fd_info->fds[newfd] = newf;
+    self->fd_info->fds[newfd] = newf;
     newf->flags &= ~(uint64_t)FD_CLOEXEC;
     newf->close_on_exec = false;
-    procfs_on_open_file(current_task, newfd);
+    procfs_on_open_file(self, newfd);
 
     return newfd;
 }
@@ -724,19 +747,21 @@ uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
     uint64_t fd = sys_dup2(oldfd, newfd);
     if ((int64_t)fd < 0)
         return fd;
-    current_task->fd_info->fds[fd]->flags = flags;
+    task_t *self = current_task;
+    self->fd_info->fds[fd]->flags = flags;
 
     return fd;
 }
 
 uint64_t sys_dup(uint64_t fd) {
-    fd_t *f = current_task->fd_info->fds[fd];
+    task_t *self = current_task;
+    fd_t *f = self->fd_info->fds[fd];
     if (!f)
         return (uint64_t)-EBADF;
 
     uint64_t i;
     for (i = 0; i < MAX_FD_NUM; i++) {
-        if (current_task->fd_info->fds[i] == NULL) {
+        if (self->fd_info->fds[i] == NULL) {
             break;
         }
     }
@@ -758,7 +783,8 @@ mutex_t fcntl_lock;
 #define RWH_WRITE_LIFE_EXTREME 5
 
 uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
-    if (fd > MAX_FD_NUM || !current_task->fd_info->fds[fd])
+    task_t *self = current_task;
+    if (fd > MAX_FD_NUM || !self->fd_info->fds[fd])
         return (uint64_t)-EBADF;
 
     mutex_lock(&fcntl_lock);
@@ -768,14 +794,14 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
     switch (command) {
     case F_GETFD:
         mutex_unlock(&fcntl_lock);
-        return (current_task->fd_info->fds[fd]->close_on_exec) ? 1 : 0;
+        return (self->fd_info->fds[fd]->close_on_exec) ? 1 : 0;
     case F_SETFD:
-        current_task->fd_info->fds[fd]->close_on_exec = !!(arg & 1);
+        self->fd_info->fds[fd]->close_on_exec = !!(arg & 1);
         mutex_unlock(&fcntl_lock);
         return 0;
     case F_DUPFD_CLOEXEC:
         for (i = arg; i < MAX_FD_NUM; i++) {
-            if (current_task->fd_info->fds[i] == NULL) {
+            if (self->fd_info->fds[i] == NULL) {
                 break;
             }
         }
@@ -785,13 +811,13 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         }
         uint64_t newfd = sys_dup2(fd, i);
         if ((int64_t)newfd >= 0) {
-            current_task->fd_info->fds[newfd]->close_on_exec = true;
+            self->fd_info->fds[newfd]->close_on_exec = true;
         }
         mutex_unlock(&fcntl_lock);
         return newfd;
     case F_DUPFD:
         for (i = arg; i < MAX_FD_NUM; i++) {
-            if (current_task->fd_info->fds[i] == NULL) {
+            if (self->fd_info->fds[i] == NULL) {
                 break;
             }
         }
@@ -804,12 +830,12 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         return sys_dup2(fd, i);
     case F_GETFL:
         mutex_unlock(&fcntl_lock);
-        return current_task->fd_info->fds[fd]->flags |
-               (current_task->fd_info->fds[fd]->close_on_exec ? FD_CLOEXEC : 0);
+        return self->fd_info->fds[fd]->flags |
+               (self->fd_info->fds[fd]->close_on_exec ? FD_CLOEXEC : 0);
     case F_SETFL:
         uint32_t valid_flags = O_APPEND | O_DIRECT | O_NOATIME | O_NONBLOCK;
-        current_task->fd_info->fds[fd]->flags &= ~valid_flags;
-        current_task->fd_info->fds[fd]->flags |= arg & valid_flags;
+        self->fd_info->fds[fd]->flags &= ~valid_flags;
+        self->fd_info->fds[fd]->flags |= arg & valid_flags;
         mutex_unlock(&fcntl_lock);
         return 0;
     case F_SETLKW:
@@ -821,7 +847,7 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         }
         memcpy(&lock, (void *)arg, sizeof(struct flock));
 
-        vfs_node_t node = current_task->fd_info->fds[fd]->node;
+        vfs_node_t node = self->fd_info->fds[fd]->node;
         struct flock *file_lock = &node->lock;
 
         if (lock.l_type != F_RDLCK && lock.l_type != F_WRLCK &&
@@ -831,7 +857,7 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         }
 
         if (lock.l_type == F_UNLCK) {
-            if (file_lock->l_pid != current_task->pid) {
+            if (file_lock->l_pid != self->pid) {
                 mutex_unlock(&fcntl_lock);
                 return -EACCES;
             }
@@ -843,10 +869,10 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
 
         for (;;) {
             if (file_lock->l_type == F_UNLCK ||
-                (file_lock->l_pid == current_task->pid &&
+                (file_lock->l_pid == self->pid &&
                  !(lock.l_type == F_WRLCK && file_lock->l_type == F_RDLCK))) {
                 file_lock->l_type = lock.l_type;
-                file_lock->l_pid = current_task->pid;
+                file_lock->l_pid = self->pid;
                 mutex_unlock(&fcntl_lock);
                 return 0;
             }
@@ -871,17 +897,17 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         return 0;
     case F_GET_RW_HINT:
         mutex_unlock(&fcntl_lock);
-        if (!current_task->fd_info->fds[fd]->node->rw_hint) {
+        if (!self->fd_info->fds[fd]->node->rw_hint) {
             return 0;
         }
-        return current_task->fd_info->fds[fd]->node->rw_hint;
+        return self->fd_info->fds[fd]->node->rw_hint;
 
     case F_SET_RW_HINT:
         if (arg < RWH_WRITE_LIFE_NONE || arg > RWH_WRITE_LIFE_EXTREME) {
             mutex_unlock(&fcntl_lock);
             return -EINVAL;
         }
-        current_task->fd_info->fds[fd]->node->rw_hint = arg;
+        self->fd_info->fds[fd]->node->rw_hint = arg;
         mutex_unlock(&fcntl_lock);
         return 0;
     default:
@@ -947,7 +973,8 @@ uint64_t sys_stat(const char *fn, struct stat *user_buf) {
 uint64_t do_stat_fd(int fd, struct stat *buf) {
     memset(buf, 0, sizeof(struct stat));
 
-    vfs_node_t node = current_task->fd_info->fds[fd]->node;
+    task_t *self = current_task;
+    vfs_node_t node = self->fd_info->fds[fd]->node;
 
     buf->st_dev = node->dev;
     buf->st_ino = node->inode;
@@ -978,7 +1005,8 @@ uint64_t do_stat_fd(int fd, struct stat *buf) {
 }
 
 uint64_t sys_fstat(uint64_t fd, struct stat *user_buf) {
-    if (fd >= MAX_FD_NUM || current_task->fd_info->fds[fd] == NULL) {
+    task_t *self = current_task;
+    if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
     }
 
@@ -1034,13 +1062,15 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
     struct statx res;
     struct statx *buff = &res;
 
+    task_t *self = current_task;
+
     if (flags & AT_EMPTY_PATH) {
-        if (dirfd > MAX_FD_NUM || !current_task->fd_info->fds[dirfd])
+        if (dirfd > MAX_FD_NUM || !self->fd_info->fds[dirfd])
             return (uint64_t)-EBADF;
         int ret = do_stat_fd(dirfd, &simple);
         if (ret < 0)
             return ret;
-        buff->stx_mnt_id = current_task->fd_info->fds[dirfd]->node->fsid;
+        buff->stx_mnt_id = self->fd_info->fds[dirfd]->node->fsid;
     } else {
         char *resolved = at_resolve_pathname(dirfd, (char *)pathname);
 
@@ -1354,14 +1384,16 @@ uint64_t sys_renameat2(uint64_t oldfd, const char *old_user, uint64_t newfd,
 }
 
 uint64_t sys_fchdir(uint64_t fd) {
-    if (fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
+    task_t *self = current_task;
+
+    if (fd >= MAX_FD_NUM || !self->fd_info->fds[fd])
         return -EBADF;
 
-    vfs_node_t node = current_task->fd_info->fds[fd]->node;
+    vfs_node_t node = self->fd_info->fds[fd]->node;
     if (!(node->type & file_dir))
         return -ENOTDIR;
 
-    current_task->cwd = node;
+    self->cwd = node;
 
     return 0;
 }
@@ -1481,10 +1513,12 @@ uint64_t sys_chmod(const char *name_user, uint16_t mode) {
 }
 
 uint64_t sys_fchmod(int fd, uint16_t mode) {
-    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
+    task_t *self = current_task;
+
+    if (fd < 0 || fd >= MAX_FD_NUM || !self->fd_info->fds[fd])
         return -EBADF;
 
-    int ret = vfs_fchmod(current_task->fd_info->fds[fd], mode);
+    int ret = vfs_fchmod(self->fd_info->fds[fd], mode);
     return ret;
 }
 
@@ -1521,10 +1555,12 @@ uint64_t sys_chown(const char *filename_user, uint64_t uid, uint64_t gid) {
 }
 
 uint64_t sys_fchown(int fd, uint64_t uid, uint64_t gid) {
-    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
+    task_t *self = current_task;
+
+    if (fd < 0 || fd >= MAX_FD_NUM || !self->fd_info->fds[fd])
         return -EBADF;
 
-    vfs_node_t node = current_task->fd_info->fds[fd]->node;
+    vfs_node_t node = self->fd_info->fds[fd]->node;
 
     char *fullpath = vfs_get_fullpath(node);
     int ret = vfs_chown(fullpath, uid, gid);
@@ -1545,10 +1581,12 @@ uint64_t sys_fchownat(int dfd, const char *name_user, uint64_t uid,
 }
 
 uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
-    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
+    task_t *self = current_task;
+
+    if (fd < 0 || fd >= MAX_FD_NUM || !self->fd_info->fds[fd])
         return -EBADF;
 
-    vfs_node_t node = current_task->fd_info->fds[fd]->node;
+    vfs_node_t node = self->fd_info->fds[fd]->node;
 
     vfs_resize(node, offset + len);
 
@@ -1571,21 +1609,25 @@ uint64_t sys_truncate(const char *path_user, uint64_t length) {
 }
 
 uint64_t sys_ftruncate(int fd, uint64_t length) {
-    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
+    task_t *self = current_task;
+
+    if (fd < 0 || fd >= MAX_FD_NUM || !self->fd_info->fds[fd])
         return -EBADF;
 
-    vfs_resize(current_task->fd_info->fds[fd]->node, length);
+    vfs_resize(self->fd_info->fds[fd]->node, length);
 
     return 0;
 }
 
 uint64_t sys_flock(int fd, uint64_t operation) {
-    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
+    task_t *self = current_task;
+
+    if (fd < 0 || fd >= MAX_FD_NUM || !self->fd_info->fds[fd])
         return -EBADF;
 
-    vfs_node_t node = current_task->fd_info->fds[fd]->node;
+    vfs_node_t node = self->fd_info->fds[fd]->node;
     struct flock *lock = &node->lock;
-    uint64_t pid = current_task->pid;
+    uint64_t pid = self->pid;
 
     // 提前检查参数有效性
     switch (operation & ~LOCK_NB) {
@@ -1634,7 +1676,9 @@ uint64_t sys_flock(int fd, uint64_t operation) {
 }
 
 uint64_t sys_fadvise64(int fd, uint64_t offset, uint64_t len, int advice) {
-    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
+    task_t *self = current_task;
+
+    if (fd < 0 || fd >= MAX_FD_NUM || !self->fd_info->fds[fd])
         return -EBADF;
 
     (void)offset;

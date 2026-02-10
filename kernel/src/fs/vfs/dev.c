@@ -320,7 +320,16 @@ ssize_t inputdev_event_read(void *data, void *buf, uint64_t offset,
                             uint64_t len, uint64_t flags) {
     dev_input_event_t *event = data;
 
-    ssize_t cnt = (ssize_t)circular_int_read(&event->device_events, buf, len);
+    // while (!circular_int_read_poll(&event->device_events)) {
+    //     if (flags & O_NONBLOCK) {
+    //         return -EWOULDBLOCK;
+    //     }
+    //     arch_enable_interrupt();
+    //     schedule(SCHED_FLAG_YIELD);
+    // }
+    // arch_disable_interrupt();
+
+    ssize_t cnt = circular_int_read(&event->device_events, buf, len);
 
     return cnt;
 }
