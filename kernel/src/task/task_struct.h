@@ -181,6 +181,7 @@ struct pt_regs;
 
 typedef struct task_signal_info {
     spinlock_t signal_lock;
+    struct pt_regs signal_saved_ctx;
     sigset_t signal;
     pending_signal_t pending_signal;
     sigset_t blocked;
@@ -232,8 +233,6 @@ typedef struct task {
     bool is_kernel;
     bool is_vfork;
     bool is_clone;
-    bool is_in_syscall;
-    bool ignore_signal;
     bool child_vfork_done;
     bool should_free;
 } task_t;

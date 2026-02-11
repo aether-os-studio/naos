@@ -91,35 +91,6 @@ static inline void signal_x64_fill_ucontext(ucontext_t *ucontext,
     ucontext->uc_sigmask = sigset_kernel_to_user(blocked_mask);
 }
 
-static inline void
-signal_x64_restore_regs_from_ucontext(struct pt_regs *regs,
-                                      const ucontext_t *ucontext) {
-    memset(regs, 0, sizeof(*regs));
-
-    regs->r8 = ucontext->uc_mcontext.gregs[X64_REG_R8];
-    regs->r9 = ucontext->uc_mcontext.gregs[X64_REG_R9];
-    regs->r10 = ucontext->uc_mcontext.gregs[X64_REG_R10];
-    regs->r11 = ucontext->uc_mcontext.gregs[X64_REG_R11];
-    regs->r12 = ucontext->uc_mcontext.gregs[X64_REG_R12];
-    regs->r13 = ucontext->uc_mcontext.gregs[X64_REG_R13];
-    regs->r14 = ucontext->uc_mcontext.gregs[X64_REG_R14];
-    regs->r15 = ucontext->uc_mcontext.gregs[X64_REG_R15];
-    regs->rdi = ucontext->uc_mcontext.gregs[X64_REG_RDI];
-    regs->rsi = ucontext->uc_mcontext.gregs[X64_REG_RSI];
-    regs->rbp = ucontext->uc_mcontext.gregs[X64_REG_RBP];
-    regs->rbx = ucontext->uc_mcontext.gregs[X64_REG_RBX];
-    regs->rdx = ucontext->uc_mcontext.gregs[X64_REG_RDX];
-    regs->rax = ucontext->uc_mcontext.gregs[X64_REG_RAX];
-    regs->rcx = ucontext->uc_mcontext.gregs[X64_REG_RCX];
-    regs->rsp = ucontext->uc_mcontext.gregs[X64_REG_RSP];
-    regs->rip = ucontext->uc_mcontext.gregs[X64_REG_RIP];
-    regs->rflags = ucontext->uc_mcontext.gregs[X64_REG_EFL] | (1 << 9);
-
-    regs->cs = SELECTOR_USER_CS;
-    regs->ss = SELECTOR_USER_DS;
-
-    regs->errcode = ucontext->uc_mcontext.gregs[X64_REG_ERR];
-}
 #endif
 
 void signal_init() {
@@ -251,7 +222,7 @@ uint64_t sys_sigaction(int sig, const sigaction_t *action,
     return 0;
 }
 
-void sys_sigreturn(struct pt_regs *regs) {
+uint64_t sys_sigreturn(struct pt_regs *regs) {
     arch_disable_interrupt();
 
     task_t *self = current_task;
@@ -265,43 +236,34 @@ void sys_sigreturn(struct pt_regs *regs) {
     if (copy_from_user(&frame_ucontext, (void *)regs->rsp,
                        sizeof(frame_ucontext))) {
         task_exit(128 + SIGSEGV);
-        return;
+        return 0;
     }
 
-    signal_x64_restore_regs_from_ucontext(self->arch_context->ctx,
-                                          &frame_ucontext);
+    memcpy(regs, &self->signal->signal_saved_ctx, sizeof(struct pt_regs));
 
     if (!frame_ucontext.uc_mcontext.fpregs ||
         copy_from_user(self->arch_context->fpu_ctx,
                        frame_ucontext.uc_mcontext.fpregs,
                        sizeof(fpu_context_t))) {
         task_exit(128 + SIGSEGV);
-        return;
+        return 0;
     }
 
     self->signal->blocked = sigset_user_to_kernel(frame_ucontext.uc_sigmask);
 
-    self->ignore_signal = false;
+    regs->rflags |= (1 << 9);
+    regs->r11 = regs->rflags;
+    regs->rcx = regs->rip;
 
-    if (self->is_in_syscall) {
-        struct pt_regs *syscall_regs =
-            (struct pt_regs *)self->syscall_stack - 1;
-        syscall_regs->rcx |= (1 << 9);
-        syscall_handle_t handler = sigreturn_syscall_handlers[regs->rax];
-        syscall_regs->rax = handler ? handler(regs->rdi, regs->rsi, regs->rdx,
-                                              regs->r10, regs->r8, regs->r9)
-                                    : (uint64_t)-EINTR;
-        asm volatile("movq %0, %%rsp\n\t"
-                     "jmp ret_from_syscall" ::"r"(syscall_regs));
-    } else {
-        asm volatile("movq %0, %%rsp\n\t"
-                     "jmp ret_from_exception" ::"r"(self->arch_context->ctx));
-    }
+    return regs->rax;
 
 #elif defined(__aarch64__)
+    return (uint64_t)-ENOSYS;
 #elif defined(__loongarch64)
+    return (uint64_t)-ENOSYS;
 #else
     // todo: other architectures
+    return (uint64_t)-ENOSYS;
 #endif
 }
 
@@ -545,15 +507,20 @@ uint64_t sys_kill(int pid, int sig) {
     return 0;
 }
 
-void task_signal() {
+void task_signal(struct pt_regs *regs) {
     task_t *self = current_task;
 
-    if (self->ignore_signal || (self->signal->pending_signal.sig == 0) ||
-        self->is_kernel || self->arch_context->dead ||
-        self->signal->pending_signal.processed || (self->state == TASK_DIED) ||
-        (self->state == TASK_UNINTERRUPTABLE)) {
+    if ((self->signal->pending_signal.sig == 0) || self->is_kernel ||
+        self->arch_context->dead || self->signal->pending_signal.processed ||
+        (self->state == TASK_DIED) || (self->state == TASK_UNINTERRUPTABLE)) {
         return;
     }
+
+#if defined(__x86_64__)
+    if (!regs || ((regs->cs & 0x3) != 0x3)) {
+        return;
+    }
+#endif
 
     int psig = self->signal->pending_signal.sig;
 
@@ -634,17 +601,18 @@ void task_signal() {
 
     uint64_t frame_size =
         sizeof(ucontext_t) + sizeof(siginfo_t) + sizeof(fpu_context_t);
-    uint64_t frame_rsp = signal_x64_frame_rsp(
-        USER_STACK_START + (USER_STACK_END - USER_STACK_START) / 2, frame_size);
+    uint64_t frame_rsp = signal_x64_frame_rsp(regs->rsp, frame_size);
 
     uint64_t ucontext_addr = frame_rsp + sizeof(void *);
     uint64_t siginfo_addr = ucontext_addr + sizeof(ucontext_t);
     uint64_t fp_addr = siginfo_addr + sizeof(siginfo_t);
 
+    memcpy(&self->signal->signal_saved_ctx, regs, sizeof(struct pt_regs));
+
     ucontext_t frame_ucontext;
-    signal_x64_fill_ucontext(&frame_ucontext, self->arch_context->ctx, fp_addr,
-                             ptr->sa_flags, self->signal->blocked);
-    frame_ucontext.uc_link = (ucontext_t *)ucontext_addr;
+    signal_x64_fill_ucontext(&frame_ucontext, regs, fp_addr, ptr->sa_flags,
+                             self->signal->blocked);
+    frame_ucontext.uc_link = NULL;
 
     void *frame_restorer = (void *)ptr->sa_restorer;
     if (copy_to_user((void *)fp_addr, self->arch_context->fpu_ctx,
@@ -658,17 +626,23 @@ void task_signal() {
         return;
     }
 
-    memset(self->arch_context->ctx, 0, sizeof(struct pt_regs));
+    memset(regs, 0, sizeof(struct pt_regs));
 
-    self->arch_context->ctx->rip = (uint64_t)ptr->sa_handler;
-    self->arch_context->ctx->rdi = sig;
+    regs->rip = (uint64_t)ptr->sa_handler;
+    regs->rdi = sig;
+    if (ptr->sa_flags & SA_SIGINFO) {
+        regs->rsi = siginfo_addr;
+        regs->rdx = ucontext_addr;
+    }
 
-    self->arch_context->ctx->cs = SELECTOR_USER_CS;
-    self->arch_context->ctx->ss = SELECTOR_USER_DS;
+    regs->cs = SELECTOR_USER_CS;
+    regs->ss = SELECTOR_USER_DS;
 
-    self->arch_context->ctx->rflags |= (1 << 9);
-    self->arch_context->ctx->rsp = frame_rsp;
-    self->arch_context->ctx->rbp = frame_rsp;
+    regs->rflags |= (1 << 9);
+    regs->rsp = frame_rsp;
+    regs->rbp = frame_rsp;
+    regs->rcx = regs->rip;
+    regs->r11 = regs->rflags;
 #elif defined(__aarch64__)
 #elif defined(__riscv)
     struct pt_regs *f = (struct pt_regs *)self->kernel_stack - 1;
@@ -691,17 +665,5 @@ void task_signal() {
     self->syscall_stack = self->signal_syscall_stack;
     self->signal_syscall_stack = tmp;
 
-    self->ignore_signal = true;
-
     spin_unlock(&self->signal->signal_lock);
-
-#if defined(__x86_64__)
-    asm volatile("movq %0, %%rsp\n\t"
-                 "jmp ret_from_exception" ::"r"(self->arch_context->ctx));
-#elif defined(__aarch64__)
-#elif defined(__riscv)
-    asm volatile("mv sp, %0\n\t"
-                 "j ret_from_trap_handler\n\t" ::"r"(self->arch_context->ctx));
-#elif defined(__loongarch64)
-#endif
 }

@@ -383,8 +383,10 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
         if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK) {
             return -(EWOULDBLOCK);
         }
+        arch_enable_interrupt();
         schedule(SCHED_FLAG_YIELD);
     }
+    arch_disable_interrupt();
 
     // 取出等待的 client socket
     socket_t *client_sock = listen_sock->backlog[0];
@@ -478,8 +480,11 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
     listen_sock->connCurr++;
 
     // 等待 accept
-    while (!sock->established)
+    while (!sock->established) {
+        arch_enable_interrupt();
         schedule(SCHED_FLAG_YIELD);
+    }
+    arch_disable_interrupt();
 
     return 0;
 }

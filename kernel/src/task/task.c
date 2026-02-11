@@ -216,7 +216,6 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->is_vfork = false;
     task->is_clone = false;
     task->is_kernel = true;
-    task->ignore_signal = false;
     task->should_free = false;
 
     procfs_on_new_task(task);
@@ -809,16 +808,16 @@ uint64_t task_execve(const char *path_user, const char **argv,
         }
     }
 
-    sigaction_t old_sigchld_handler;
-    memcpy(&old_sigchld_handler, &current_task->signal->actions[SIGCHLD],
-           sizeof(sigaction_t));
+    bool ignore_sigchld =
+        (current_task->signal->actions[SIGCHLD].sa_handler == SIG_IGN);
     if (current_task->signal)
         free(current_task->signal);
     current_task->signal = malloc(sizeof(task_signal_info_t));
     memset(current_task->signal, 0, sizeof(task_signal_info_t));
     spin_init(&current_task->signal->signal_lock);
-    memcpy(&current_task->signal->actions[SIGCHLD], &old_sigchld_handler,
-           sizeof(sigaction_t));
+    if (ignore_sigchld) {
+        current_task->signal->actions[SIGCHLD].sa_handler = SIG_IGN;
+    }
 
     current_task->cmdline = strdup(cmdline);
     free(cmdline);
@@ -834,6 +833,9 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
         ld_so_vma->vm_type = VMA_TYPE_FILE;
         ld_so_vma->vm_name = interpreter_path;
+        vfs_node_t node = vfs_open(interpreter_path, 0);
+        ld_so_vma->node = node;
+        node->refcount++;
 
         vma_t *region =
             vma_find_intersection(&current_task->arch_context->mm->task_vma_mgr,
@@ -856,6 +858,8 @@ uint64_t task_execve(const char *path_user, const char **argv,
     strncpy(current_task->name, fullpath, TASK_NAME_MAX);
     exec_vma->vm_type = VMA_TYPE_FILE;
     exec_vma->vm_name = strdup(fullpath);
+    exec_vma->node = node;
+    node->refcount++;
     free(fullpath);
 
     vma_t *region = vma_find_intersection(
@@ -1547,7 +1551,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         child->is_vfork = false;
     }
     child->is_clone = true;
-    child->ignore_signal = false;
     child->should_free = false;
 
     child->state = TASK_READY;
@@ -1636,65 +1639,6 @@ uint64_t sys_clock_nanosleep(int clock_id, int flags,
     arch_disable_interrupt();
 
     return 0;
-}
-
-uint64_t sigreturn_sys_nanosleep(struct timespec *req, struct timespec *rem) {
-    uint64_t ret = -EINTR;
-    task_t *self = current_task;
-    if (!self->sleep_start_ns) {
-        goto ret;
-    }
-
-    if (rem) {
-        uint64_t now = nano_time();
-        if (now > self->force_wakeup_ns) {
-            goto ret;
-        }
-        uint64_t remaining = self->force_wakeup_ns - now;
-        struct timespec remain_ts = {.tv_sec = remaining / 1000000000,
-                                     .tv_nsec = remaining % 1000000000};
-        if (copy_to_user(rem, &remain_ts, sizeof(struct timespec))) {
-            ret = -EFAULT;
-            goto ret;
-        }
-    }
-
-ret:
-    self->sleep_start_ns = 0;
-    self->force_wakeup_ns = 0;
-
-    return ret;
-}
-
-uint64_t sigreturn_sys_clock_nanosleep(int clock_id, int flags,
-                                       const struct timespec *request,
-                                       struct timespec *remain) {
-    uint64_t ret = -EINTR;
-    task_t *self = current_task;
-    if (!self->sleep_start_ns) {
-        goto ret;
-    }
-
-    if (remain) {
-        uint64_t now = get_nanotime_by_clockid(self->sleep_clock_id);
-        if (now > self->force_wakeup_ns) {
-            goto ret;
-        }
-        uint64_t remaining = self->force_wakeup_ns - now;
-        struct timespec remain_ts = {.tv_sec = remaining / 1000000000,
-                                     .tv_nsec = remaining % 1000000000};
-        if (copy_to_user(remain, &remain_ts, sizeof(struct timespec))) {
-            ret = -EFAULT;
-            goto ret;
-        }
-    }
-
-ret:
-    self->sleep_clock_id = 0;
-    self->sleep_start_ns = 0;
-    self->force_wakeup_ns = 0;
-
-    return ret;
 }
 
 uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,

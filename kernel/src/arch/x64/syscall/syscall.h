@@ -64,7 +64,6 @@ typedef uint64_t (*special_syscall_handle_t)(struct pt_regs *regs,
 #define MAX_SYSCALL_NUM 500
 
 extern syscall_handle_t syscall_handlers[MAX_SYSCALL_NUM];
-extern syscall_handle_t sigreturn_syscall_handlers[MAX_SYSCALL_NUM];
 
 extern void syscall_exception();
 extern void syscall_handler_asm();

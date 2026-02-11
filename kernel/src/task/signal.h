@@ -70,12 +70,13 @@ uint64_t sys_sigprocmask(int how, const sigset_t *nset_u, sigset_t *oset_u,
 uint64_t sys_sigaction(int sig, const sigaction_t *action,
                        sigaction_t *oldaction);
 struct pt_regs;
-void sys_sigreturn(struct pt_regs *regs);
+uint64_t sys_sigreturn(struct pt_regs *regs);
 uint64_t sys_sigsuspend(const sigset_t *mask, size_t sigsetsize);
 uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
                              const struct timespec *uts, size_t sigsetsize);
 uint64_t sys_rt_sigqueueinfo(uint64_t tgid, uint64_t sig, siginfo_t *info);
 uint64_t sys_kill(int pid, int sig);
+void task_signal(struct pt_regs *regs);
 
 struct sigevent {
     union sigval sigev_value;

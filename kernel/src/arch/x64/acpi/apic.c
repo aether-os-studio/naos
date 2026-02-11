@@ -16,7 +16,7 @@ void tss_init() {
     uint64_t sp =
         phys_to_virt(alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE)) + STACK_SIZE;
     uint64_t offset = 10 + current_cpu_id * 2;
-    set_tss64(&tss[current_cpu_id], 0, 0, 0, sp, 0, 0, 0, 0, 0, 0);
+    set_tss64(&tss[current_cpu_id], sp, 0, 0, sp, 0, 0, 0, 0, 0, 0);
     set_tss_descriptor(offset, &tss[current_cpu_id]);
     load_TR(offset);
 }

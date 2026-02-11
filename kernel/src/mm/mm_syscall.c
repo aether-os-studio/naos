@@ -64,10 +64,14 @@ uint64_t sys_brk(uint64_t brk) {
     brk = (brk + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1);
 
     if (!brk) {
-        return current_task->arch_context->mm->brk_start;
+        return current_task->arch_context->mm->brk_current;
     }
 
     if (brk < current_task->arch_context->mm->brk_start) {
+        return current_task->arch_context->mm->brk_current;
+    }
+
+    if (brk > current_task->arch_context->mm->brk_end) {
         return current_task->arch_context->mm->brk_current;
     }
 
@@ -78,43 +82,56 @@ uint64_t sys_brk(uint64_t brk) {
     spin_lock(&current_task->arch_context->mm->task_vma_mgr.lock);
 
     if (brk > current_task->arch_context->mm->brk_current) {
-        map_page_range(get_current_page_dir(true),
-                       current_task->arch_context->mm->brk_current, 0,
-                       brk - current_task->arch_context->mm->brk_current,
+        uint64_t old_brk = current_task->arch_context->mm->brk_current;
+        map_page_range(get_current_page_dir(true), old_brk, 0, brk - old_brk,
                        PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
-
-        vma_t *vma = vma_alloc();
-        if (!vma) {
-            spin_unlock(&current_task->arch_context->mm->task_vma_mgr.lock);
-            return (uint64_t)-ENOMEM;
-        }
-
-        vma->vm_start = current_task->arch_context->mm->brk_current;
-        vma->vm_end = brk;
-        vma->vm_flags = VMA_READ | VMA_WRITE | VMA_ANON;
-        vma->vm_type = VMA_TYPE_ANON;
-        vma->node = NULL;
-        vma->vm_name = strdup("[heap]");
-        if (!vma->vm_name) {
-            vma_free(vma);
-            spin_unlock(&current_task->arch_context->mm->task_vma_mgr.lock);
-            return (uint64_t)-ENOMEM;
-        }
 
         vma_t *region =
             vma_find_intersection(&current_task->arch_context->mm->task_vma_mgr,
                                   current_task->arch_context->mm->brk_start,
                                   current_task->arch_context->mm->brk_end);
 
-        if (region) {
-            vma_remove(&current_task->arch_context->mm->task_vma_mgr, region);
-            vma_free(region);
-        }
+        if (region &&
+            region->vm_start == current_task->arch_context->mm->brk_start &&
+            region->vm_type == VMA_TYPE_ANON) {
+            region->vm_end = brk;
+        } else {
+            vma_t *vma = vma_alloc();
+            if (!vma) {
+                unmap_page_range(get_current_page_dir(true), old_brk,
+                                 brk - old_brk);
+                spin_unlock(&current_task->arch_context->mm->task_vma_mgr.lock);
+                return (uint64_t)-ENOMEM;
+            }
 
-        if (vma_insert(&current_task->arch_context->mm->task_vma_mgr, vma)) {
-            vma_free(vma);
-            spin_unlock(&current_task->arch_context->mm->task_vma_mgr.lock);
-            return (uint64_t)-ENOMEM;
+            vma->vm_start = current_task->arch_context->mm->brk_start;
+            vma->vm_end = brk;
+            vma->vm_flags = VMA_READ | VMA_WRITE | VMA_ANON;
+            vma->vm_type = VMA_TYPE_ANON;
+            vma->node = NULL;
+            vma->vm_name = strdup("[heap]");
+            if (!vma->vm_name) {
+                vma_free(vma);
+                unmap_page_range(get_current_page_dir(true), old_brk,
+                                 brk - old_brk);
+                spin_unlock(&current_task->arch_context->mm->task_vma_mgr.lock);
+                return (uint64_t)-ENOMEM;
+            }
+
+            if (region) {
+                vma_remove(&current_task->arch_context->mm->task_vma_mgr,
+                           region);
+                vma_free(region);
+            }
+
+            if (vma_insert(&current_task->arch_context->mm->task_vma_mgr,
+                           vma)) {
+                vma_free(vma);
+                unmap_page_range(get_current_page_dir(true), old_brk,
+                                 brk - old_brk);
+                spin_unlock(&current_task->arch_context->mm->task_vma_mgr.lock);
+                return (uint64_t)-ENOMEM;
+            }
         }
 
         current_task->arch_context->mm->brk_current = brk;
@@ -136,6 +153,7 @@ uint64_t sys_brk(uint64_t brk) {
             vma_t *vma = vma_alloc();
             if (!vma) {
                 current_task->arch_context->mm->brk_current = brk;
+                spin_unlock(&current_task->arch_context->mm->task_vma_mgr.lock);
                 return current_task->arch_context->mm->brk_current;
             }
 
@@ -256,12 +274,19 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         }
     }
 
+    if (vma_insert(mgr, vma) != 0) {
+        spin_unlock(&mgr->lock);
+        vma_free(vma);
+        return (uint64_t)-ENOMEM;
+    }
+
     spin_unlock(&mgr->lock);
 
     uint64_t ret = 0;
 
     if (!(flags & MAP_ANONYMOUS)) {
         if (current_task->fd_info->fds[fd]->node->type & file_dir) {
+            vma_remove(mgr, vma);
             vma_free(vma);
             return (uint64_t)-EISDIR;
         }
@@ -269,7 +294,14 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         ret = (uint64_t)vfs_map(current_task->fd_info->fds[fd], start_addr,
                                 aligned_len, prot, flags, offset);
     } else {
-        uint64_t pt_flags = PT_FLAG_R | PT_FLAG_W | PT_FLAG_U;
+        uint64_t pt_flags = PT_FLAG_U;
+
+        if (prot & PROT_READ)
+            pt_flags |= PT_FLAG_R;
+        if (prot & PROT_WRITE)
+            pt_flags |= PT_FLAG_W;
+        if (prot & PROT_EXEC)
+            pt_flags |= PT_FLAG_X;
 
         map_page_range(get_current_page_dir(true), start_addr, 0, aligned_len,
                        pt_flags);
@@ -278,18 +310,10 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
     }
 
     if ((int64_t)ret < 0) {
+        vma_remove(mgr, vma);
         vma_free(vma);
         return ret;
     }
-
-    spin_lock(&mgr->lock);
-    if (vma_insert(mgr, vma) != 0) {
-        spin_unlock(&mgr->lock);
-        unmap_page_range(get_current_page_dir(true), start_addr, aligned_len);
-        vma_free(vma);
-        return (uint64_t)-ENOMEM;
-    }
-    spin_unlock(&mgr->lock);
 
     return ret;
 }
@@ -791,28 +815,38 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
 
 void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
                   uint64_t flags, uint64_t offset) {
-    uint64_t pt_flags = PT_FLAG_U | PT_FLAG_R | PT_FLAG_W;
+    uint64_t final_pt_flags = PT_FLAG_U;
 
     if (prot & PROT_READ)
-        pt_flags |= PT_FLAG_R;
+        final_pt_flags |= PT_FLAG_R;
     if (prot & PROT_WRITE)
-        pt_flags |= PT_FLAG_W;
+        final_pt_flags |= PT_FLAG_W;
     if (prot & PROT_EXEC)
-        pt_flags |= PT_FLAG_X;
+        final_pt_flags |= PT_FLAG_X;
 
-    map_page_range(
-        get_current_page_dir(true), addr & (~(DEFAULT_PAGE_SIZE - 1)), 0,
-        (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1)), pt_flags);
+    uint64_t map_addr = addr & (~(DEFAULT_PAGE_SIZE - 1));
+    uint64_t map_len =
+        (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
+    uint64_t load_pt_flags = final_pt_flags | PT_FLAG_W;
+
+    map_page_range(get_current_page_dir(true), map_addr, 0, map_len,
+                   load_pt_flags);
 
     uint64_t origin_offset = file->offset;
     file->offset = offset;
     ssize_t ret = vfs_read_fd(file, (void *)addr, offset, len);
     if (ret < 0) {
         file->offset = origin_offset;
+        unmap_page_range(get_current_page_dir(true), map_addr, map_len);
         printk("Failed read file for mmap\n");
         return (void *)ret;
     }
     file->offset = origin_offset;
+
+    if (load_pt_flags != final_pt_flags) {
+        map_change_attribute_range(get_current_page_dir(true), map_addr,
+                                   map_len, final_pt_flags);
+    }
 
     return (void *)addr;
 }
