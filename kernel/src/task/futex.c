@@ -19,12 +19,13 @@ uint64_t sys_futex_wait(uint64_t addr, const struct timespec *timeout,
 
     curr->next = wait;
 
-    mutex_unlock(&futex_lock);
-
     int64_t tmo = -1;
     if (timeout) {
         tmo = timeout->tv_sec * 1000000000 + timeout->tv_nsec;
     }
+
+    mutex_unlock(&futex_lock);
+
     task_block(current_task, TASK_BLOCKING, tmo, "futex_wait");
 
     return 0;
@@ -261,7 +262,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
 
             mutex_unlock(&futex_lock);
 
-            int tmo = -1;
+            int64_t tmo = -1;
             if (timeout)
                 tmo = timeout->tv_sec * 1000000000 + timeout->tv_nsec;
             task_block(current_task, TASK_BLOCKING, tmo, "futex_lock_pi");

@@ -5,8 +5,6 @@
 #include <task/task.h>
 
 void apic_timer_handler(uint64_t irq_num, void *data, struct pt_regs *regs) {
-    if (current_cpu_id == 0)
-        sched_check_wakeup();
 }
 
 void apic_timer_init() {

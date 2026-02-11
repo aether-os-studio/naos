@@ -124,6 +124,10 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem);
 uint64_t sys_clock_nanosleep(int clock_id, int flags,
                              const struct timespec *request,
                              struct timespec *remain);
+uint64_t sigreturn_sys_nanosleep(struct timespec *req, struct timespec *rem);
+uint64_t sigreturn_sys_clock_nanosleep(int clock_id, int flags,
+                                       const struct timespec *request,
+                                       struct timespec *remain);
 
 size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old);
 

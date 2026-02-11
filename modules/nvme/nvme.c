@@ -269,7 +269,7 @@ static int nvme_init_queue(nvme_controller_t *ctrl, nvme_queue_t *queue,
                            uint16_t queue_id, uint16_t queue_depth) {
     queue->ctrl = ctrl;
 
-    queue->lock.lock = 0;
+    mutex_init(&queue->lock);
 
     queue->queue_id = queue_id;
     queue->queue_depth = queue_depth;
@@ -348,7 +348,7 @@ static int nvme_submit_cmd(nvme_queue_t *queue, nvme_sqe_t *cmd) {
         return -1;
     }
 
-    spin_lock_no_irqsave(&queue->lock);
+    mutex_lock(&queue->lock);
 
     // Copy command to queue
     memcpy(&queue->sq[tail], cmd, sizeof(nvme_sqe_t));
@@ -365,7 +365,7 @@ static int nvme_submit_cmd(nvme_queue_t *queue, nvme_sqe_t *cmd) {
     // Memory barrier after doorbell
     g_nvme_platform_ops->mb();
 
-    spin_unlock_no_irqstore(&queue->lock);
+    mutex_unlock(&queue->lock);
 
     return 0;
 }
@@ -442,7 +442,7 @@ static int nvme_process_queue_completions(nvme_controller_t *ctrl,
 
 // 循环使用
 static uint16_t nvme_alloc_cid(nvme_controller_t *ctrl, nvme_request_t *req) {
-    spin_lock_no_irqsave(&ctrl->cid_alloc_lock);
+    mutex_lock(&ctrl->cid_alloc_lock);
 
     if (ctrl->cid_alloc_pos >=
         (sizeof(ctrl->requests) / sizeof(ctrl->requests[0]))) {
@@ -452,7 +452,7 @@ static uint16_t nvme_alloc_cid(nvme_controller_t *ctrl, nvme_request_t *req) {
     uint16_t cid = ctrl->cid_alloc_pos++;
     ctrl->requests[cid] = req;
 
-    spin_unlock_no_irqstore(&ctrl->cid_alloc_lock);
+    mutex_unlock(&ctrl->cid_alloc_lock);
 
     return cid;
 }
@@ -995,7 +995,7 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
     }
     memset(ctrl, 0, sizeof(nvme_controller_t));
 
-    ctrl->cid_alloc_lock.lock = 0;
+    mutex_init(&ctrl->cid_alloc_lock);
 
     ctrl->pci_dev = device;
     ctrl->bar0 = phys_to_virt((volatile uint8_t *)device->bars[0].address);

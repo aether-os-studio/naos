@@ -164,48 +164,6 @@ void signal_init() {
 
 extern int signalfdfs_id;
 
-int signals_pending_quick(task_t *task) {
-    if (task->signal->pending_signal.sig != 0) {
-        int psig = task->signal->pending_signal.sig;
-        if (!(task->signal->blocked & SIGMASK(psig))) {
-            sigaction_t *paction = &task->signal->actions[psig];
-            sighandler_t phandler = paction->sa_handler;
-            if (phandler == SIG_IGN ||
-                (phandler == SIG_DFL &&
-                 signal_internal_decisions[psig] == SIGNAL_INTERNAL_IGN)) {
-                task->signal->pending_signal.sig = 0;
-            } else {
-                return psig;
-            }
-        }
-    }
-    sigset_t pending_list = task->signal->signal;
-    sigset_t unblocked_list = pending_list & (~task->signal->blocked);
-    if (!unblocked_list)
-        return 0;
-    for (int i = MINSIG; i <= MAXSIG; i++) {
-        if (!(unblocked_list & SIGMASK(i)))
-            continue;
-        sigaction_t *action = &task->signal->actions[i];
-        sighandler_t user_handler = action->sa_handler;
-        if (user_handler == SIG_IGN) {
-            task->signal->signal &= (~SIGMASK(i));
-            continue;
-        }
-        if (user_handler == SIG_DFL &&
-            signal_internal_decisions[i] == SIGNAL_INTERNAL_IGN) {
-            task->signal->signal &= (~SIGMASK(i));
-            continue;
-        }
-
-        task->signal->signal &= (~SIGMASK(i));
-
-        return i;
-    }
-
-    return 0;
-}
-
 void task_commit_signal(task_t *task, int sig, siginfo_t *info) {
     spin_lock(&task->signal->signal_lock);
     pending_signal_t signal;
@@ -296,6 +254,12 @@ uint64_t sys_sigaction(int sig, const sigaction_t *action,
 void sys_sigreturn(struct pt_regs *regs) {
     arch_disable_interrupt();
 
+    task_t *self = current_task;
+
+    uint64_t tmp = self->syscall_stack;
+    self->syscall_stack = self->signal_syscall_stack;
+    self->signal_syscall_stack = tmp;
+
 #if defined(__x86_64__)
     ucontext_t frame_ucontext;
     if (copy_from_user(&frame_ucontext, (void *)regs->rsp,
@@ -304,45 +268,34 @@ void sys_sigreturn(struct pt_regs *regs) {
         return;
     }
 
-    signal_x64_restore_regs_from_ucontext(current_task->arch_context->ctx,
+    signal_x64_restore_regs_from_ucontext(self->arch_context->ctx,
                                           &frame_ucontext);
 
     if (!frame_ucontext.uc_mcontext.fpregs ||
-        copy_from_user(current_task->arch_context->fpu_ctx,
+        copy_from_user(self->arch_context->fpu_ctx,
                        frame_ucontext.uc_mcontext.fpregs,
                        sizeof(fpu_context_t))) {
         task_exit(128 + SIGSEGV);
         return;
     }
 
-    current_task->signal->blocked =
-        sigset_user_to_kernel(frame_ucontext.uc_sigmask);
+    self->signal->blocked = sigset_user_to_kernel(frame_ucontext.uc_sigmask);
 
-    uint64_t tmp = current_task->syscall_stack;
-    current_task->syscall_stack = current_task->signal_syscall_stack;
-    current_task->signal_syscall_stack = tmp;
+    self->ignore_signal = false;
 
-    current_task->ignore_signal = false;
-
-    if (current_task->is_in_syscall) {
-        if (frame_ucontext.uc_flags & SA_RESTART) {
-            current_task->arch_context->ctx->cs = SELECTOR_KERNEL_CS;
-            current_task->arch_context->ctx->ss = SELECTOR_KERNEL_DS;
-            asm volatile("movq %0, %%rsp\n\t"
-                         "jmp ret_from_exception" ::"r"(
-                             current_task->arch_context->ctx));
-        } else {
-            struct pt_regs *syscall_regs =
-                (struct pt_regs *)current_task->syscall_stack - 1;
-            syscall_regs->rcx |= (1 << 9);
-            syscall_regs->rax = (uint64_t)-EINTR;
-            asm volatile("movq %0, %%rsp\n\t"
-                         "jmp ret_from_syscall" ::"r"(syscall_regs));
-        }
+    if (self->is_in_syscall) {
+        struct pt_regs *syscall_regs =
+            (struct pt_regs *)self->syscall_stack - 1;
+        syscall_regs->rcx |= (1 << 9);
+        syscall_handle_t handler = sigreturn_syscall_handlers[regs->rax];
+        syscall_regs->rax = handler ? handler(regs->rdi, regs->rsi, regs->rdx,
+                                              regs->r10, regs->r8, regs->r9)
+                                    : (uint64_t)-EINTR;
+        asm volatile("movq %0, %%rsp\n\t"
+                     "jmp ret_from_syscall" ::"r"(syscall_regs));
     } else {
-        asm volatile(
-            "movq %0, %%rsp\n\t"
-            "jmp ret_from_exception" ::"r"(current_task->arch_context->ctx));
+        asm volatile("movq %0, %%rsp\n\t"
+                     "jmp ret_from_exception" ::"r"(self->arch_context->ctx));
     }
 
 #elif defined(__aarch64__)
@@ -458,11 +411,9 @@ uint64_t sys_sigsuspend(const sigset_t *mask, size_t sigsetsize) {
 
     current_task->signal->blocked = mask_k;
 
-    while (!signals_pending_quick(current_task)) {
-        arch_enable_interrupt();
+    while (true) {
         schedule(SCHED_FLAG_YIELD);
     }
-    arch_disable_interrupt();
 
     current_task->signal->blocked = old;
 

@@ -52,6 +52,7 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
         return -EINVAL;
 
     int ready = 0;
+    bool irq_state = arch_interrupt_enabled();
     uint64_t target_timeout = 0;
 
     if (timeout > 0) {
@@ -61,13 +62,9 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
     }
 
     bool timed_out = false;
-    bool interrupted = false;
 
-    while (ready == 0 && !timed_out && !interrupted) {
-        if (signals_pending_quick(current_task)) {
-            interrupted = true;
-            break;
-        }
+    while (ready == 0 && !timed_out) {
+        arch_enable_interrupt();
 
         if (timeout > 0 && nano_time() >= target_timeout) {
             timed_out = true;
@@ -82,23 +79,19 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
         epoll_watch_t *browse, *tmp;
         llist_for_each(browse, tmp, &epoll->watches, node) {
             if (ready < maxevents) {
-                if (!browse->fd) {
+                if (!browse->file) {
                     continue;
                 }
-                if (!browse->fd->node) {
-                    continue;
-                }
-                if (!browse->fd->node->handle) {
+                if (!browse->file->handle) {
                     continue;
                 }
 
                 uint32_t current_events =
-                    vfs_poll(browse->fd->node, browse->events);
+                    vfs_poll(browse->file, browse->events);
 
                 uint32_t ready_events = current_events & browse->events;
 
                 if (ready_events) {
-                    // 处理边缘触发逻辑
                     if (browse->edge_trigger) {
                         // 只返回新出现的事件
                         uint32_t new_events =
@@ -140,11 +133,12 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
         }
     }
 
-    if (interrupted)
-        return (uint64_t)-EINTR;
-
 ret:
-    arch_disable_interrupt();
+    if (irq_state) {
+        arch_enable_interrupt();
+    } else {
+        arch_disable_interrupt();
+    }
     return ready;
 }
 
@@ -172,7 +166,7 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
     epoll_watch_t *existing = NULL;
     epoll_watch_t *b, *t;
     llist_for_each(b, t, &epoll->watches, node) {
-        if (b->fd && (b->fd->node == f->node)) {
+        if (b->file == f->node) {
             existing = b;
             break;
         }
@@ -193,7 +187,8 @@ size_t epoll_ctl(vfs_node_t epollFd, int op, int fd,
             break;
         }
 
-        new_watch->fd = f;
+        new_watch->file = f->node;
+        f->node->refcount++;
         new_watch->events = event->events & ~EPOLLET;
         new_watch->data = event->data.u64;
         // new_watch->edge_trigger = (event->events & EPOLLET) != 0;
@@ -327,9 +322,40 @@ uint64_t sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
 uint64_t sys_epoll_create1(int flags) { return epoll_create1(flags); }
 
 bool epollfs_close(void *current) {
-    // if (!epoll->reference_count)
-    //     return true;
-    return false;
+    epoll_t *epoll = current;
+
+    int browse_count = 0;
+    epoll_watch_t *browse, *tmp;
+    llist_for_each(browse, tmp, &epoll->watches, node) {
+        if (!browse->file)
+            continue;
+        browse->file->refcount--;
+        browse_count++;
+    }
+
+    if (!browse_count)
+        goto ret;
+
+    epoll_watch_t **browses = calloc(browse_count, sizeof(epoll_watch_t *));
+
+    browse_count = 0;
+    llist_for_each(browse, tmp, &epoll->watches, node) {
+        if (!browse->file)
+            continue;
+        browses[browse_count++] = browse;
+        browse->file = NULL;
+    }
+
+    for (int i = 0; i < browse_count; i++) {
+        llist_delete(&browses[i]->node);
+        free(browses[i]);
+    }
+    free(browses);
+
+ret:
+    free(epoll);
+
+    return true;
 }
 
 static int epoll_poll(void *file, size_t event) {
@@ -338,13 +364,11 @@ static int epoll_poll(void *file, size_t event) {
 
     epoll_watch_t *browse, *tmp;
     llist_for_each(browse, tmp, &epoll->watches, node) {
-        if (!browse->fd)
+        if (!browse->file)
             continue;
-        if (!browse->fd->node)
+        if (!browse->file->handle)
             continue;
-        if (!browse->fd->node->handle)
-            continue;
-        int ret = vfs_poll(browse->fd->node, event);
+        int ret = vfs_poll(browse->file, event);
         if (ret) {
             revents |= EPOLLIN;
             break;

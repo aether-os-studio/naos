@@ -1,4 +1,5 @@
 #include <mod/dlinker.h>
+#include <libs/mutex.h>
 
 void __cxa_finalize() {}
 
@@ -14,7 +15,9 @@ EXPORT_SYMBOL(__gmon_start__);
 EXPORT_SYMBOL(hartid_to_cpuid);
 #endif
 
+EXPORT_SYMBOL(spin_init);
 EXPORT_SYMBOL(spin_lock);
 EXPORT_SYMBOL(spin_unlock);
-EXPORT_SYMBOL(spin_lock_no_irqsave);
-EXPORT_SYMBOL(spin_unlock_no_irqstore);
+EXPORT_SYMBOL(mutex_init);
+EXPORT_SYMBOL(mutex_lock);
+EXPORT_SYMBOL(mutex_unlock);

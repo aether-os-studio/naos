@@ -101,6 +101,9 @@ void ptmx_open(void *parent, const char *name, vfs_node_t node) {
     sprintf(nm, "%d", id);
     vfs_node_t pty_slave_node = vfs_node_alloc(pts_node, nm);
     pty_slave_node->fsid = pts_fsid;
+    pty_slave_node->type = file_stream;
+    pty_slave_node->handle = pair;
+    pair->slaveFds++;
 }
 
 void pty_pair_cleanup(pty_pair_t *pair) {
@@ -355,11 +358,11 @@ void pts_open(void *parent, const char *name, vfs_node_t node) {
     if (!browse)
         return;
 
-    mutex_lock(&browse->lock);
     if (browse->locked) {
-        mutex_unlock(&browse->lock);
         return;
     }
+
+    mutex_lock(&browse->lock);
 
     node->handle = browse;
     node->type = file_stream;
@@ -606,7 +609,7 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
 int pts_poll(pty_pair_t *pair, int events) {
     int revents = 0;
 
-    if ((!pair->masterFds || pts_data_avali(pair) > 0) && events & EPOLLIN)
+    if ((pts_data_avali(pair) > 0) && events & EPOLLIN)
         revents |= EPOLLIN;
     if (pair->ptrMaster < PTY_BUFF_SIZE && events & EPOLLOUT)
         revents |= EPOLLOUT;

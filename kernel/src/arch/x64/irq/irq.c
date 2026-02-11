@@ -6,7 +6,6 @@
     "cld; \n\t"                                                                \
     "pushq %rax;    \n\t"                                                      \
     "pushq %rax;     \n\t"                                                     \
-    "xorq %rax, %rax;\n\t"                                                     \
     "pushq %rbp;     \n\t"                                                     \
     "pushq %rdi;     \n\t"                                                     \
     "pushq %rsi;     \n\t"                                                     \

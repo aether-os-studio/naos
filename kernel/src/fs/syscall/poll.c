@@ -42,9 +42,8 @@ uint32_t poll_to_epoll_comp(uint32_t poll_events) {
 
 size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
     int ready = 0;
+    bool irq_state = arch_interrupt_enabled();
     uint64_t start_time = nano_time();
-
-    bool sigexit = false;
 
     for (int i = 0; i < nfds; i++) {
         fds[i].revents = 0;
@@ -70,19 +69,18 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
             }
         }
 
-        sigexit = signals_pending_quick(current_task);
-
-        if (ready > 0 || sigexit)
+        if (ready > 0)
             break;
 
         schedule(SCHED_FLAG_YIELD);
     } while (timeout != 0 &&
              ((int)timeout == -1 || (nano_time() - start_time) < timeout));
 
-    arch_disable_interrupt();
-
-    if (!ready && sigexit)
-        return (size_t)-EINTR;
+    if (irq_state) {
+        arch_enable_interrupt();
+    } else {
+        arch_disable_interrupt();
+    }
 
     return ready;
 }

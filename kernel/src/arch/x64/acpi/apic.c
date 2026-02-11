@@ -54,20 +54,19 @@ uint64_t lapic_id() {
     return x2apic_mode ? phy_id : (phy_id >> 24);
 }
 
-uint64_t calibrated_timer_initial = 0;
-
-void lapic_timer_stop();
-
 void local_apic_init() {
+    arch_disable_interrupt();
+
     x2apic_mode = boot_cpu_support_x2apic();
 
     uint64_t value = rdmsr(0x1b);
     value |= (1UL << 11);
-    if (x2apic_mode)
-        value |= (1UL << 10);
     wrmsr(0x1b, value);
 
-    lapic_timer_stop();
+    if (x2apic_mode) {
+        value |= (1UL << 10);
+        wrmsr(0x1b, value);
+    }
 
     lapic_write(LAPIC_SVR, 0xff | (1 << 8));
     lapic_write(LAPIC_TIMER_DIV, 11);
@@ -76,12 +75,12 @@ void local_apic_init() {
     uint64_t b = nano_time();
     lapic_write(LAPIC_TIMER_INIT, ~((uint32_t)0));
     for (;;)
-        if (nano_time() - b >= 100000000 / SCHED_HZ)
+        if (nano_time() - b >= 1000000000 / SCHED_HZ)
             break;
     uint64_t lapic_timer = (~(uint32_t)0) - lapic_read(LAPIC_TIMER_CURRENT);
-    calibrated_timer_initial = (uint64_t)((uint64_t)(lapic_timer * 1000) / 250);
+
+    lapic_write(LAPIC_TIMER_INIT, lapic_timer);
     lapic_write(LAPIC_TIMER, lapic_read(LAPIC_TIMER) | (1 << 17));
-    lapic_write(LAPIC_TIMER_INIT, calibrated_timer_initial);
 }
 
 #define MAX_IOAPICS_NUM 64
@@ -229,11 +228,6 @@ void send_eoi(uint32_t irq) {
     lapic_write(0xb0, 0);
 }
 
-void lapic_timer_stop() {
-    lapic_write(LAPIC_TIMER_INIT, 0);
-    lapic_write(LAPIC_TIMER, (1 << 16));
-}
-
 extern void apic_handle_lapic(struct acpi_madt_lapic *lapic);
 extern void apic_handle_lx2apic(struct acpi_madt_x2apic *lapic);
 
@@ -310,7 +304,7 @@ spinlock_t ap_startup_lock = SPIN_INIT;
 extern bool task_initialized;
 
 uint64_t general_ap_entry() {
-    close_interrupt;
+    arch_disable_interrupt();
 
     uint64_t cr3 = (uint64_t)virt_to_phys(get_kernel_page_dir());
     asm volatile("movq %0, %%cr3" ::"r"(cr3) : "memory");

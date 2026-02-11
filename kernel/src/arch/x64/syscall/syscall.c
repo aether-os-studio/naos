@@ -52,6 +52,7 @@ char version[] = BUILD_VERSION;
 char machine[] = "x86_64";
 
 syscall_handle_t syscall_handlers[MAX_SYSCALL_NUM];
+syscall_handle_t sigreturn_syscall_handlers[MAX_SYSCALL_NUM];
 
 uint64_t sys_getrandom(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
     void *buffer = (void *)arg1;
@@ -592,11 +593,19 @@ void syscall_handler_init() {
     //     (syscall_handle_t)sys_set_mempolicy_home_node;
     // syscall_handlers[SYS_CACHESTAT] = (syscall_handle_t)sys_cachestat;
     syscall_handlers[SYS_FCHMODAT2] = (syscall_handle_t)sys_fchmodat2;
+
+    memset(sigreturn_syscall_handlers, 0, MAX_SYSCALL_NUM);
+    sigreturn_syscall_handlers[SYS_NANOSLEEP] =
+        (syscall_handle_t)sigreturn_sys_nanosleep;
+    sigreturn_syscall_handlers[SYS_CLOCK_NANOSLEEP] =
+        (syscall_handle_t)sigreturn_sys_clock_nanosleep;
 }
 
 spinlock_t syscall_debug_lock = SPIN_INIT;
 
 void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
+    task_t *self = current_task;
+
     regs->rip = regs->rcx;
     regs->rflags = regs->r11;
     regs->cs = SELECTOR_USER_CS;
@@ -627,11 +636,11 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
         idx != SYS_READV && idx != SYS_IOCTL && idx != SYS_WAIT4 &&
         idx != SYS_WAITID && idx != SYS_FUTEX && idx != SYS_SENDTO &&
         idx != SYS_SENDMSG && idx != SYS_RECVFROM && idx != SYS_RECVMSG) {
-        current_task->ignore_signal = true;
+        self->ignore_signal = true;
     }
 
     if (idx != SYS_RT_SIGRETURN) {
-        current_task->is_in_syscall = true;
+        self->is_in_syscall = true;
     }
     if (idx == SYS_FORK || idx == SYS_VFORK || idx == SYS_CLONE ||
         idx == SYS_CLONE3 || idx == SYS_RT_SIGRETURN) {
@@ -641,14 +650,14 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
         regs->rax = handler(arg1, arg2, arg3, arg4, arg5, arg6);
     }
     if (idx != SYS_RT_SIGRETURN) {
-        current_task->is_in_syscall = false;
+        self->is_in_syscall = false;
     }
 
     if ((idx != SYS_BRK) && (idx != SYS_MMAP) && (idx != SYS_MREMAP) &&
         (idx != SYS_SHMAT) && (int)regs->rax < 0 && !((int64_t)regs->rax < 0))
         regs->rax |= 0xffffffff00000000;
 
-    current_task->ignore_signal = false;
+    self->ignore_signal = false;
 
 #define SYSCALL_DEBUG 0
 #if SYSCALL_DEBUG
@@ -663,7 +672,7 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
 
     spin_lock(&syscall_debug_lock);
 
-    len = sprintf(buf, "%d [syscall %d] %s(", current_task->pid, idx,
+    len = sprintf(buf, "%d [syscall %d] %s(", self->pid, idx,
                   usable ? info->name : "???");
     serial_printk(buf, len);
     if (usable) {
@@ -710,5 +719,5 @@ done:
         serial_fprintk("syscall %d accessed a invalid address\n", idx);
     }
 
-    regs->rflags |= (1 << 9);
+    regs->r11 |= (1 << 9);
 }

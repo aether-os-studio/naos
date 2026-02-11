@@ -1,6 +1,7 @@
 #pragma once
 
 #include <libs/klibc.h>
+#include <libs/mutex.h>
 #include <libs/aether/mm.h>
 #include <libs/aether/pci.h>
 #include <libs/aether/irq.h>
@@ -86,7 +87,7 @@ typedef struct {
 typedef struct {
     struct nvme_controller *ctrl;
 
-    spinlock_t lock;
+    mutex_t lock;
 
     uint64_t vector;
 
@@ -303,7 +304,7 @@ typedef struct nvme_controller {
     nvme_queue_t io_queues[MAX_IO_CPU_NUM]; // Support up to 16 I/O queue pairs
     uint32_t num_io_queues;
 
-    spinlock_t cid_alloc_lock;
+    mutex_t cid_alloc_lock;
     uint16_t cid_alloc_pos;
     nvme_request_t *requests[256]; // Track requests by CID
 

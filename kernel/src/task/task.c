@@ -110,7 +110,6 @@ task_t *get_free_task() {
             task->cpu_id = i;
             idle_tasks[i] = task;
             can_schedule = true;
-            spin_unlock(&task_queue_lock);
             return task;
         }
     }
@@ -157,7 +156,6 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->pgid = 0;
     task->tgid = 0;
     task->sid = 0;
-    task->waitpid = 0;
     task->priority = priority;
     task->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     task->syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
@@ -248,8 +246,7 @@ void task_init() {
     memset(idle_tasks, 0, sizeof(idle_tasks));
 
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
-        schedulers[cpu] = malloc(sizeof(sched_rq_t));
-        memset(schedulers[cpu], 0, sizeof(sched_rq_t));
+        schedulers[cpu] = calloc(1, sizeof(sched_rq_t));
         schedulers[cpu]->sched_queue = create_llist_queue();
     }
 
@@ -913,6 +910,10 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
 }
 
 void task_unblock(task_t *task, int reason) {
+    if (!task || task->state == TASK_DIED || task->arch_context->dead) {
+        return;
+    }
+
     task->status = reason;
     task->state = TASK_READY;
 
@@ -929,6 +930,8 @@ extern uint64_t sys_futex_wake(uint64_t addr, int val, uint32_t bitset);
 extern int signalfdfs_id;
 
 void task_exit_inner(task_t *task, int64_t code) {
+    arch_disable_interrupt();
+
     struct sched_entity *entity = (struct sched_entity *)task->sched_info;
     remove_sched_entity(task, schedulers[task->cpu_id]);
 
@@ -976,9 +979,7 @@ void task_exit_inner(task_t *task, int64_t code) {
     }
 
     if (task->waitpid != 0 && task->waitpid < MAX_TASK_NUM &&
-        tasks[task->waitpid] &&
-        (tasks[task->waitpid]->state == TASK_BLOCKING ||
-         tasks[task->waitpid]->state == TASK_READING_STDIO)) {
+        tasks[task->waitpid]) {
         task_unblock(tasks[task->waitpid], EOK);
     }
 
@@ -1089,11 +1090,9 @@ uint64_t task_exit(int64_t code) {
 }
 
 uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
-    arch_disable_interrupt();
     task_t *target = NULL;
     uint64_t ret = -ECHILD;
 
-    // First check if we have any children at all
     bool has_children = false;
     for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
         spin_lock(&task_queue_lock);
@@ -1157,6 +1156,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
         }
 
         if (found_alive && (options & WNOHANG)) {
+            arch_disable_interrupt();
             return 0;
         }
 
@@ -1209,7 +1209,6 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
 
 uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
                     void *rusage) {
-    arch_disable_interrupt();
     task_t *target = NULL;
     uint64_t ret = 0;
 
@@ -1561,8 +1560,11 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     if ((flags & CLONE_VFORK)) {
         while (!current_task->child_vfork_done) {
+            arch_enable_interrupt();
             schedule(SCHED_FLAG_YIELD);
         }
+
+        arch_disable_interrupt();
 
         current_task->child_vfork_done = false;
     }
@@ -1578,22 +1580,19 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem) {
         return (uint64_t)-EINVAL;
     }
 
+    current_task->sleep_clock_id = CLOCK_MONOTONIC;
     uint64_t start = nano_time();
+    current_task->sleep_start_ns = start;
     uint64_t target = start + (req->tv_sec * 1000000000ULL) + req->tv_nsec;
+    current_task->force_wakeup_ns = target;
 
     do {
-        if (signals_pending_quick(current_task)) {
-            if (rem) {
-                uint64_t remaining = target - nano_time();
-                struct timespec remain_ts = {.tv_sec = remaining / 1000000000,
-                                             .tv_nsec = remaining % 1000000000};
-                memcpy(rem, &remain_ts, sizeof(struct timespec));
-            }
-            return (uint64_t)-EINTR;
-        }
+        arch_enable_interrupt();
 
         schedule(SCHED_FLAG_YIELD);
     } while (target > nano_time());
+
+    arch_disable_interrupt();
 
     return 0;
 }
@@ -1621,32 +1620,81 @@ uint64_t sys_clock_nanosleep(int clock_id, int flags,
         return (uint64_t)-EINVAL;
     }
 
-    uint64_t start;
-    if (clock_id == CLOCK_REALTIME) {
-        tm time;
-        time_read(&time);
-        start = (uint64_t)mktime(&time) * 1000000000ULL;
-    } else {
-        start = nano_time();
-    }
+    current_task->sleep_clock_id = clock_id;
+    uint64_t start = get_nanotime_by_clockid(clock_id);
+    current_task->sleep_start_ns = start;
     uint64_t target =
         start + (request->tv_sec * 1000000000ULL) + request->tv_nsec;
+    current_task->force_wakeup_ns = target;
 
     do {
-        if (signals_pending_quick(current_task)) {
-            if (remain) {
-                uint64_t remaining = target - get_nanotime_by_clockid(clock_id);
-                struct timespec remain_ts = {.tv_sec = remaining / 1000000000,
-                                             .tv_nsec = remaining % 1000000000};
-                memcpy(remain, &remain_ts, sizeof(struct timespec));
-            }
-            return (uint64_t)-EINTR;
-        }
+        arch_enable_interrupt();
 
         schedule(SCHED_FLAG_YIELD);
     } while (target > get_nanotime_by_clockid(clock_id));
 
+    arch_disable_interrupt();
+
     return 0;
+}
+
+uint64_t sigreturn_sys_nanosleep(struct timespec *req, struct timespec *rem) {
+    uint64_t ret = -EINTR;
+    task_t *self = current_task;
+    if (!self->sleep_start_ns) {
+        goto ret;
+    }
+
+    if (rem) {
+        uint64_t now = nano_time();
+        if (now > self->force_wakeup_ns) {
+            goto ret;
+        }
+        uint64_t remaining = self->force_wakeup_ns - now;
+        struct timespec remain_ts = {.tv_sec = remaining / 1000000000,
+                                     .tv_nsec = remaining % 1000000000};
+        if (copy_to_user(rem, &remain_ts, sizeof(struct timespec))) {
+            ret = -EFAULT;
+            goto ret;
+        }
+    }
+
+ret:
+    self->sleep_start_ns = 0;
+    self->force_wakeup_ns = 0;
+
+    return ret;
+}
+
+uint64_t sigreturn_sys_clock_nanosleep(int clock_id, int flags,
+                                       const struct timespec *request,
+                                       struct timespec *remain) {
+    uint64_t ret = -EINTR;
+    task_t *self = current_task;
+    if (!self->sleep_start_ns) {
+        goto ret;
+    }
+
+    if (remain) {
+        uint64_t now = get_nanotime_by_clockid(self->sleep_clock_id);
+        if (now > self->force_wakeup_ns) {
+            goto ret;
+        }
+        uint64_t remaining = self->force_wakeup_ns - now;
+        struct timespec remain_ts = {.tv_sec = remaining / 1000000000,
+                                     .tv_nsec = remaining % 1000000000};
+        if (copy_to_user(remain, &remain_ts, sizeof(struct timespec))) {
+            ret = -EFAULT;
+            goto ret;
+        }
+    }
+
+ret:
+    self->sleep_clock_id = 0;
+    self->sleep_start_ns = 0;
+    self->force_wakeup_ns = 0;
+
+    return ret;
 }
 
 uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
@@ -1981,30 +2029,34 @@ uint64_t sys_setpriority(int which, int who, int niceval) {
     }
 }
 
-extern void task_signal();
-
 void schedule(uint64_t sched_flags) {
     bool state = arch_interrupt_enabled();
 
     arch_disable_interrupt();
 
-    if (!can_schedule) {
-        goto ret;
-    }
-
     sched_update_itimer();
     sched_update_timerfd();
 
     task_t *prev = current_task;
+    int cpu_id = current_cpu_id;
 
     if (prev->preempt > 0) {
         goto ret;
     }
 
-    task_t *next = sched_pick_next_task(schedulers[prev->cpu_id]);
+    task_t *next = NULL;
+    if (sched_flags & SCHED_FLAG_YIELD) {
+        next = sched_pick_next_task_excluding(schedulers[cpu_id], prev);
+
+        if (next == prev && prev != idle_tasks[cpu_id]) {
+            next = idle_tasks[cpu_id];
+        }
+    } else {
+        next = sched_pick_next_task(schedulers[cpu_id]);
+    }
 
     if (next->state == TASK_DIED || next->arch_context->dead) {
-        next = idle_tasks[current_cpu_id];
+        next = idle_tasks[cpu_id];
     }
 
     if (prev == next) {
@@ -2015,7 +2067,6 @@ void schedule(uint64_t sched_flags) {
     next->current_state = TASK_RUNNING;
 
     arch_set_current(next);
-
     switch_to(prev, next);
 
 ret:

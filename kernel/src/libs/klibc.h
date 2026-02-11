@@ -236,25 +236,17 @@ static inline char *strrchr(const char *s, int c) {
 
 char *strdup(const char *s);
 
-#define SPIN_INIT (spinlock_t){0, 0}
+#define SPIN_INIT (spinlock_t){0}
 
 #if defined(__x86_64__)
 
 typedef struct spinlock {
     volatile long lock;
-    long flags;
 } spinlock_t;
 
 static inline void spin_init(spinlock_t *lock) { lock->lock = 0; }
 
 static inline void spin_lock(spinlock_t *lock) {
-    asm volatile("pushfq\n\t"
-                 "pop %0\n\t"
-                 "cli\n\t"
-                 : "=r"(lock->flags)
-                 :
-                 : "memory");
-
     asm volatile("1:\n\t"
                  "lock btsq $0, %0\n\t"
                  "jnc 2f\n\t" /* 成功获取，跳出 */
@@ -271,38 +263,12 @@ static inline void spin_lock(spinlock_t *lock) {
 
 static inline void spin_unlock(spinlock_t *lock) {
     asm volatile("lock btrq $0, %0\n\t" : "+m"(lock->lock) : : "memory", "cc");
-
-    asm volatile("push %0\n\t"
-                 "popfq\n\t"
-                 :
-                 : "r"(lock->flags)
-                 : "memory", "cc");
-}
-
-static inline void spin_lock_no_irqsave(spinlock_t *lock) {
-    asm volatile("1:\n\t"
-                 "lock btsq $0, %0\n\t"
-                 "jnc 2f\n\t"
-                 "3:\n\t"
-                 "pause\n\t"
-                 "testq $1, %0\n\t"
-                 "jnz 3b\n\t"
-                 "jmp 1b\n\t"
-                 "2:\n\t"
-                 : "+m"(lock->lock)
-                 :
-                 : "memory", "cc");
-}
-
-static inline void spin_unlock_no_irqstore(spinlock_t *lock) {
-    asm volatile("lock btrq $0, %0\n\t" : "+m"(lock->lock) : : "memory", "cc");
 }
 
 #elif defined(__aarch64__)
 
 typedef struct spinlock {
     volatile long lock;
-    long daif;
 } spinlock_t;
 
 static inline void spin_init(spinlock_t *lock) {
@@ -310,48 +276,6 @@ static inline void spin_init(spinlock_t *lock) {
 }
 
 static inline void spin_lock(spinlock_t *lock) {
-    long tmp, status, daif;
-
-    asm volatile("   prfm pstl1keep, [%2]\n\t"
-                 "1: ldaxr %w0, [%2]\n\t"
-                 "   cbnz %w0, 2f\n\t"
-                 "   mov %w0, #1\n\t"
-                 "   stxr %w1, %w0, [%2]\n\t"
-                 "   cbnz %w1, 1b\n\t"
-                 "   b 3f\n\t"
-                 "2: wfe\n\t"
-                 "   ldaxr %w0, [%2]\n\t"
-                 "   cbnz %w0, 2b\n\t"
-                 "   clrex\n\t"
-                 "   b 1b\n\t"
-                 "3:\n\t"
-                 : "=&r"(tmp), "=&r"(status)
-                 : "r"(&lock->lock)
-                 : "memory");
-
-    asm volatile("mrs %0, daif\n\t"
-                 "msr daifset, #2\n\t"
-                 : "=r"(daif)
-                 :
-                 : "memory");
-
-    lock->daif = daif;
-}
-
-static inline void spin_unlock(spinlock_t *lock) {
-    long daif = lock->daif;
-
-    asm volatile("   stlr wzr, [%0]\n\t"
-                 "   dsb sy\n\t"
-                 "   sev\n\t"
-                 :
-                 : "r"(&lock->lock)
-                 : "memory");
-
-    asm volatile("msr daif, %0\n\t" : : "r"(daif) : "memory");
-}
-
-static inline void spin_lock_no_irqsave(spinlock_t *lock) {
     long tmp, status;
 
     asm volatile("   prfm pstl1keep, [%2]\n\t"
@@ -371,7 +295,7 @@ static inline void spin_lock_no_irqsave(spinlock_t *lock) {
     lock->daif = 0;
 }
 
-static inline void spin_unlock_no_irqstore(spinlock_t *lock) {
+static inline void spin_unlock(spinlock_t *lock) {
     asm volatile("   stlr wzr, [%0]\n\t"
                  "   dsb sy\n\t"
                  "   sev\n\t"
@@ -384,7 +308,6 @@ static inline void spin_unlock_no_irqstore(spinlock_t *lock) {
 
 typedef struct spinlock {
     volatile long lock;
-    uint64_t flags;
 } spinlock_t;
 
 static inline void spin_init(spinlock_t *lock) {
@@ -393,39 +316,6 @@ static inline void spin_init(spinlock_t *lock) {
 
 // 获取spinlock
 static inline void spin_lock(spinlock_t *sl) {
-    uint64_t flags;
-
-    /* 自旋等待 */
-    while (__sync_lock_test_and_set(&sl->lock, 1)) {
-    }
-
-    // 1. 保存当前中断状态并禁用中断
-    asm volatile("csrr %0, sstatus\n\t"   // 读取sstatus寄存器到flags
-                 "csrci sstatus, 0x2\n\t" // 清除SIE位，禁用中断
-                 : "=r"(flags)
-                 :
-                 : "memory");
-
-    sl->flags = flags;
-}
-
-// 释放spinlock
-static inline void spin_unlock(spinlock_t *sl) {
-    uint64_t flags = sl->flags;
-
-    __sync_lock_release(&sl->lock);
-
-    // 2. 恢复中断状态（只恢复SIE位）
-    asm volatile("andi %0, %0, 0x2\n\t"  // 只保留flags中的SIE位
-                 "csrc sstatus, 0x2\n\t" // 清除当前sstatus的SIE位
-                 "csrs sstatus, %0\n\t"  // 设置之前保存的SIE位
-                 : "+r"(flags)
-                 :
-                 : "memory");
-}
-
-// 获取spinlock
-static inline void spin_lock_no_irqsave(spinlock_t *sl) {
     /* 自旋等待 */
     while (__sync_lock_test_and_set(&sl->lock, 1)) {
     }
@@ -434,7 +324,7 @@ static inline void spin_lock_no_irqsave(spinlock_t *sl) {
 }
 
 // 释放spinlock
-static inline void spin_unlock_no_irqstore(spinlock_t *sl) {
+static inline void spin_unlock(spinlock_t *sl) {
     __sync_lock_release(&sl->lock);
 }
 
@@ -442,34 +332,14 @@ static inline void spin_unlock_no_irqstore(spinlock_t *sl) {
 
 typedef struct spinlock {
     volatile long lock;
-    uint64_t crmd;
 } spinlock_t;
 
 static inline void spin_init(spinlock_t *lock) {
     memset(lock, 0, sizeof(spinlock_t));
 }
 
-static inline void spin_lock(spinlock_t *lock) {
-    uint32_t tmp;
-
-    uint64_t __crmd;
-    asm __volatile__("csrrd %0, 0x1\n\t" : "=r"(__crmd));
-    lock->crmd = __crmd;
-    __crmd &= ~0x4UL;
-    asm __volatile__("csrwr %0, 0x1" : : "r"(__crmd));
-
-    /* 自旋等待 */
-    while (__sync_lock_test_and_set(&lock->lock, 1)) {
-    }
-}
-
-static inline void spin_unlock(spinlock_t *lock) {
-    __sync_lock_release(&lock->lock);
-    asm __volatile__("csrwr %0, 0x1" : : "r"(lock->crmd));
-}
-
 // 获取spinlock
-static inline void spin_lock_no_irqsave(spinlock_t *sl) {
+static inline void spin_lock(spinlock_t *sl) {
     /* 自旋等待 */
     while (__sync_lock_test_and_set(&sl->lock, 1)) {
     }
@@ -478,7 +348,7 @@ static inline void spin_lock_no_irqsave(spinlock_t *sl) {
 }
 
 // 释放spinlock
-static inline void spin_unlock_no_irqstore(spinlock_t *sl) {
+static inline void spin_unlock(spinlock_t *sl) {
     __sync_lock_release(&sl->lock);
 }
 

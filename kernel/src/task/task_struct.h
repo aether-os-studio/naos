@@ -213,6 +213,8 @@ typedef struct task {
     task_state_t state;
     task_state_t current_state;
     const char *blocking_reason;
+    uint64_t sleep_clock_id;
+    uint64_t sleep_start_ns;
     uint64_t force_wakeup_ns;
     uint64_t load_start;
     uint64_t load_end;

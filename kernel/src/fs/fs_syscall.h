@@ -277,7 +277,7 @@ __attribute__((__packed__))
 
 typedef struct epoll_watch {
     struct llist_header node;
-    fd_t *fd;
+    vfs_node_t file;
     uint32_t events;
     uint64_t data;
     bool edge_trigger;
