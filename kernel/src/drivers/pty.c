@@ -1,4 +1,5 @@
 #include <drivers/pty.h>
+#include <task/task.h>
 
 uint8_t *pty_bitmap = 0;
 spinlock_t pty_global_lock = SPIN_INIT;
@@ -169,6 +170,7 @@ size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             arch_disable_interrupt();
             return -EWOULDBLOCK;
         }
+
         schedule(SCHED_FLAG_YIELD);
     }
     arch_disable_interrupt();
@@ -177,8 +179,10 @@ size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
 
     size_t toCopy = MIN(size, ptmx_data_avail(pair));
     memcpy(addr, pair->bufferMaster, toCopy);
-    memmove(pair->bufferMaster, &pair->bufferMaster[toCopy],
-            PTY_BUFF_SIZE - toCopy);
+    size_t remaining = pair->ptrMaster - toCopy;
+    if (remaining > 0) {
+        memmove(pair->bufferMaster, &pair->bufferMaster[toCopy], remaining);
+    }
     pair->ptrMaster -= toCopy;
 
     mutex_unlock(&pair->lock);
@@ -195,13 +199,19 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
     while (true) {
         arch_enable_interrupt();
 
-        if ((pair->ptrSlave + limit) <= PTY_BUFF_SIZE) {
+        if (!pair->slaveFds) {
+            arch_disable_interrupt();
+            return -EIO;
+        }
+
+        if (pair->ptrSlave < PTY_BUFF_SIZE) {
             break;
         }
         if (fd->flags & O_NONBLOCK) {
             arch_disable_interrupt();
             return -EWOULDBLOCK;
         }
+
         schedule(SCHED_FLAG_YIELD);
     }
     arch_disable_interrupt();
@@ -210,6 +220,8 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
 
     const uint8_t *in = addr;
     size_t written = 0;
+    size_t echoed = 0;
+    size_t echo_start = pair->ptrSlave;
     for (size_t i = 0; i < limit; i++) {
         uint8_t ch = in[i];
         if (pair->term.c_lflag & ISIG) {
@@ -239,13 +251,13 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
         if ((pair->ptrSlave + 1) > PTY_BUFF_SIZE)
             break;
         pair->bufferSlave[pair->ptrSlave++] = ch;
+        echoed++;
         written++;
     }
     mutex_unlock(&pair->lock);
     if ((pair->term.c_lflag & ICANON) && (pair->term.c_lflag & ECHO)) {
-        if (written > 0)
-            pts_write_inner(fd, &pair->bufferSlave[pair->ptrSlave - written],
-                            written);
+        if (echoed > 0)
+            pts_write_inner(fd, &pair->bufferSlave[echo_start], echoed);
     }
     return written;
 }
@@ -426,8 +438,10 @@ size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit) {
 
     size_t toCopy = MIN(limit, pts_data_avali(pair));
     memcpy(out, pair->bufferSlave, toCopy);
-    memmove(pair->bufferSlave, &pair->bufferSlave[toCopy],
-            PTY_BUFF_SIZE - toCopy);
+    size_t remaining = pair->ptrSlave - toCopy;
+    if (remaining > 0) {
+        memmove(pair->bufferSlave, &pair->bufferSlave[toCopy], remaining);
+    }
     pair->ptrSlave -= toCopy;
 
     mutex_unlock(&pair->lock);
@@ -443,11 +457,13 @@ size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
         arch_enable_interrupt();
 
         if (!pair->masterFds) {
+            arch_disable_interrupt();
             return -EIO;
         }
-        if ((pair->ptrMaster + limit) <= PTY_BUFF_SIZE)
+        if (pair->ptrMaster < PTY_BUFF_SIZE)
             break;
         if (fd->flags & O_NONBLOCK) {
+            arch_disable_interrupt();
             return -EWOULDBLOCK;
         }
 
@@ -495,6 +511,12 @@ size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit) {
                                            PTY_BUFF_SIZE - cycle);
                 if ((ssize_t)r < 0)
                     return r;
+                if (r == 0) {
+                    if (fd->flags & O_NONBLOCK)
+                        return ret ? ret : (size_t)-EWOULDBLOCK;
+                    schedule(SCHED_FLAG_YIELD);
+                    continue;
+                }
                 cycle += r;
             }
 
@@ -508,6 +530,12 @@ size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit) {
                                        remainder - cycle);
             if ((ssize_t)r < 0)
                 return r;
+            if (r == 0) {
+                if (fd->flags & O_NONBLOCK)
+                    return ret ? ret : (size_t)-EWOULDBLOCK;
+                schedule(SCHED_FLAG_YIELD);
+                continue;
+            }
             cycle += r;
         }
         ret += cycle;

@@ -227,7 +227,6 @@ void *memset(void *dest, int c, size_t n) {
 }
 
 void *memmove(void *dest, const void *src, size_t n) {
-
     typedef __attribute__((__may_alias__)) size_t WT;
 #define WS (sizeof(WT))
 
