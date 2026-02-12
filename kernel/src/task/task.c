@@ -154,7 +154,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->suid = 0;
     task->sgid = 0;
     task->pgid = 0;
-    task->tgid = 0;
+    task->tgid = task->pid;
     task->sid = 0;
     task->priority = priority;
     task->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
@@ -217,6 +217,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->is_clone = false;
     task->is_kernel = true;
     task->should_free = false;
+
+    task->parent_death_sig = SIGKILL;
 
     procfs_on_new_task(task);
 
@@ -1072,7 +1074,8 @@ uint64_t task_exit(int64_t code) {
         continue_ptr_count = 0;
         if (tasks[i] != current_task && (tasks[i]->ppid != tasks[i]->pid) &&
             (tasks[i]->ppid == current_task->pid)) {
-            task_commit_signal(tasks[i], SIGKILL, NULL);
+            task_send_signal(tasks[i], tasks[i]->parent_death_sig,
+                             tasks[i]->parent_death_sig + 128);
             if (tasks[i]->state == TASK_BLOCKING ||
                 tasks[i]->state == TASK_READING_STDIO)
                 task_unblock(tasks[i], EOK);
@@ -1518,10 +1521,13 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 #endif
     }
 
+    child->parent_death_sig = SIGKILL;
+
     if (flags & CLONE_THREAD) {
-        child->tgid = current_task->tgid;
+        child->tgid =
+            current_task->tgid ? current_task->tgid : current_task->pid;
     } else {
-        child->tgid = 0;
+        child->tgid = child->pid;
     }
 
     if (parent_tid && (flags & CLONE_PARENT_SETTID)) {
@@ -1667,6 +1673,7 @@ uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
         return 0;
 
     case PR_SET_PDEATHSIG:
+        current_task->parent_death_sig = arg2;
         return 0;
 
     default:

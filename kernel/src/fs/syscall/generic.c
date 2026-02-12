@@ -20,6 +20,10 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
     if (copy_from_user_str(dirname, dir_name, sizeof(dirname)))
         return (uint64_t)-EFAULT;
 
+    if (flags & MS_SLAVE) {
+        return 0;
+    }
+
     vfs_node_t dir = vfs_open((const char *)dirname, 0);
     if (!dir) {
         return (uint64_t)-ENOENT;
@@ -931,19 +935,19 @@ uint64_t do_stat_path(const char *path, struct stat *buf) {
     buf->st_nlink = 1;
     buf->st_mode = node->mode;
     if (node->type & file_symlink)
-        buf->st_mode = S_IFLNK;
+        buf->st_mode |= S_IFLNK;
     else if (node->type & file_block)
-        buf->st_mode = S_IFBLK;
+        buf->st_mode |= S_IFBLK;
     else if (node->type & file_stream)
-        buf->st_mode = S_IFCHR;
+        buf->st_mode |= S_IFCHR;
     else if (node->type & file_fifo)
-        buf->st_mode = S_IFIFO;
+        buf->st_mode |= S_IFIFO;
     else if (node->type & file_socket)
-        buf->st_mode = S_IFSOCK;
+        buf->st_mode |= S_IFSOCK;
     else if (node->type & file_dir)
-        buf->st_mode = S_IFDIR;
+        buf->st_mode |= S_IFDIR;
     else if (node->type & file_none)
-        buf->st_mode = S_IFREG;
+        buf->st_mode |= S_IFREG;
     buf->st_uid = node->owner;
     buf->st_gid = node->group;
     buf->st_rdev = node->rdev;
@@ -981,19 +985,19 @@ uint64_t do_stat_fd(int fd, struct stat *buf) {
     buf->st_nlink = 1;
     buf->st_mode = node->mode;
     if (node->type & file_symlink)
-        buf->st_mode = S_IFLNK;
+        buf->st_mode |= S_IFLNK;
     else if (node->type & file_block)
-        buf->st_mode = S_IFBLK;
+        buf->st_mode |= S_IFBLK;
     else if (node->type & file_stream)
-        buf->st_mode = S_IFCHR;
+        buf->st_mode |= S_IFCHR;
     else if (node->type & file_fifo)
-        buf->st_mode = S_IFIFO;
+        buf->st_mode |= S_IFIFO;
     else if (node->type & file_socket)
-        buf->st_mode = S_IFSOCK;
+        buf->st_mode |= S_IFSOCK;
     else if (node->type & file_dir)
-        buf->st_mode = S_IFDIR;
+        buf->st_mode |= S_IFDIR;
     else if (node->type & file_none)
-        buf->st_mode = S_IFREG;
+        buf->st_mode |= S_IFREG;
     buf->st_uid = node->owner;
     buf->st_gid = node->group;
     buf->st_rdev = node->rdev;

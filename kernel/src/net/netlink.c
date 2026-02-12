@@ -541,10 +541,14 @@ size_t netlink_setsockopt(uint64_t fd, int level, int optname,
         switch (optname) {
         case SO_ATTACH_FILTER:
             struct sock_fprog *fprog = malloc(optlen);
-            if (copy_from_user(fprog, optval, optlen))
+            if (copy_from_user(fprog, optval, optlen)) {
+                free(fprog);
                 return (size_t)-EFAULT;
-            if (!fprog->len)
+            }
+            if (!fprog->len) {
+                free(fprog);
                 return (size_t)-EINVAL;
+            }
             nl_sk->filter = malloc(sizeof(struct sock_fprog));
             nl_sk->filter->len = fprog->len;
             nl_sk->filter->filter =
@@ -565,6 +569,7 @@ size_t netlink_setsockopt(uint64_t fd, int level, int optname,
             if (nl_sk->filter) {
                 free(nl_sk->filter->filter);
                 free(nl_sk->filter);
+                nl_sk->filter = NULL;
             }
             break;
         case SO_REUSEADDR:

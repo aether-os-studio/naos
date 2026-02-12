@@ -229,6 +229,7 @@ typedef struct task {
     int_timer_internal_t itimer_real;
     kernel_timer_t *timers[MAX_TIMERS_NUM];
     struct rlimit rlim[16];
+    uint64_t parent_death_sig;
     int *tidptr;
     bool is_kernel;
     bool is_vfork;

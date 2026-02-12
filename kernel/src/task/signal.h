@@ -57,6 +57,9 @@ typedef enum signal_internal {
 struct task;
 typedef struct task task_t;
 
+void task_fill_siginfo(siginfo_t *info, int sig, int code);
+void task_send_signal(task_t *task, int sig, int code);
+
 #define SIG_BLOCK 0   /* for blocking signals */
 #define SIG_UNBLOCK 1 /* for unblocking signals */
 #define SIG_SETMASK 2 /* for setting the signal mask */
@@ -76,6 +79,7 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
                              const struct timespec *uts, size_t sigsetsize);
 uint64_t sys_rt_sigqueueinfo(uint64_t tgid, uint64_t sig, siginfo_t *info);
 uint64_t sys_kill(int pid, int sig);
+uint64_t sys_tgkill(int tgid, int pid, int sig);
 void task_signal(struct pt_regs *regs);
 
 struct sigevent {

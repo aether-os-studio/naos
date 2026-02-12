@@ -382,7 +382,7 @@ uint64_t sys_sigsuspend(const sigset_t *mask, size_t sigsetsize) {
     return -EINTR;
 }
 
-static void task_fill_siginfo(siginfo_t *info, int sig, int code) {
+void task_fill_siginfo(siginfo_t *info, int sig, int code) {
     memset(info, 0, sizeof(siginfo_t));
     info->si_signo = sig;
     info->si_errno = 0;
@@ -391,7 +391,7 @@ static void task_fill_siginfo(siginfo_t *info, int sig, int code) {
     info->__si_fields.__kill.si_uid = current_task->uid;
 }
 
-static void task_send_signal(task_t *task, int sig, int code) {
+void task_send_signal(task_t *task, int sig, int code) {
     if (!task)
         return;
     siginfo_t info;
@@ -425,6 +425,14 @@ static void task_send_signal(task_t *task, int sig, int code) {
     if (sig != SIGSTOP && sig != SIGTSTP && sig != SIGTTIN && sig != SIGTTOU) {
         task_unblock(task, 128 + sig);
     }
+}
+
+static inline int task_effective_tgid(task_t *task) {
+    if (!task) {
+        return -1;
+    }
+
+    return task->tgid > 0 ? task->tgid : task->pid;
 }
 
 uint64_t sys_kill(int pid, int sig) {
@@ -504,6 +512,32 @@ uint64_t sys_kill(int pid, int sig) {
     }
 
     task_send_signal(task, sig, SI_USER);
+    return 0;
+}
+
+uint64_t sys_tgkill(int tgid, int pid, int sig) {
+    if (tgid <= 0 || pid <= 0 || sig < 0 || sig > MAXSIG) {
+        return -EINVAL;
+    }
+    if (pid >= MAX_TASK_NUM) {
+        return -ESRCH;
+    }
+
+    task_t *task = tasks[pid];
+    if (!task) {
+        return -ESRCH;
+    }
+
+    if (task_effective_tgid(task) != tgid) {
+        return -ESRCH;
+    }
+
+    if (sig == 0) {
+        return 0;
+    }
+
+    task_send_signal(task, sig, SI_TKILL);
+
     return 0;
 }
 
