@@ -31,6 +31,43 @@ char *get_mp(vfs_node_t node) {
     return mount_point;
 }
 
+static void ext_prune_children(vfs_node_t parent, const char *name) {
+    if (!parent || !name)
+        return;
+
+    uint64_t nodes_count = 0;
+    vfs_node_t child, tmp;
+    llist_for_each(child, tmp, &parent->childs, node_for_childs) {
+        if (!child->name || strcmp(child->name, name))
+            continue;
+        if (child == child->root)
+            continue;
+        nodes_count++;
+    }
+
+    if (!nodes_count)
+        return;
+
+    vfs_node_t *nodes = calloc(nodes_count, sizeof(vfs_node_t));
+    if (!nodes)
+        return;
+
+    uint64_t idx = 0;
+    llist_for_each(child, tmp, &parent->childs, node_for_childs) {
+        if (!child->name || strcmp(child->name, name))
+            continue;
+        if (child == child->root)
+            continue;
+        nodes[idx++] = child;
+    }
+
+    for (uint64_t i = 0; i < idx; i++) {
+        vfs_free(nodes[i]);
+    }
+
+    free(nodes);
+}
+
 int ext_mount(uint64_t dev, vfs_node_t node) {
     spin_lock(&rwlock);
 
@@ -142,6 +179,15 @@ int ext_remount(vfs_node_t old, vfs_node_t node) {
         return -ret;
     }
 
+    /*
+     * If the mount is moved onto its parent (switch_root style), keeping the
+     * old mount-root node under the new root creates a stale duplicate entry.
+     */
+    if (old->parent == node) {
+        llist_delete(&old->node_for_childs);
+        old->parent = NULL;
+    }
+
     vfs_merge_nodes_to(node, old);
 
     ext4_dir *dir = malloc(sizeof(ext4_dir));
@@ -155,6 +201,7 @@ int ext_remount(vfs_node_t old, vfs_node_t node) {
         vfs_node_t exist = vfs_child_find(node, (const char *)entry->name);
         if (exist) {
             if (exist == exist->root) {
+                ext_prune_children(node, (const char *)entry->name);
                 continue;
             }
             vfs_free(exist);
