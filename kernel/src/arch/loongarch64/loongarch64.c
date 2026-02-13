@@ -1,6 +1,9 @@
 #include "arch/arch.h"
 
-void arch_early_init() { trap_init(); }
+void arch_early_init() {
+    trap_init();
+    smp_init();
+}
 
 void arch_init() {}
 

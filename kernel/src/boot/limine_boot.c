@@ -3,42 +3,42 @@
 
 #define LIMINE_REQUEST __attribute__((used, section(".limine_requests")))
 
-__attribute__((used,
-               section(".limine_requests_"
-                       "start"))) static volatile LIMINE_REQUESTS_START_MARKER;
+__attribute__((
+    used, section(".limine_requests_"
+                  "start"))) static volatile uint64_t requests_start_marker[4] =
+    LIMINE_REQUESTS_START_MARKER;
 
-LIMINE_REQUEST static volatile LIMINE_BASE_REVISION(3);
+LIMINE_REQUEST static volatile uint64_t base_revision_request[4] =
+    LIMINE_BASE_REVISION(3);
 
 LIMINE_REQUEST static volatile struct limine_stack_size_request
     stack_size_request = {
-        .id = LIMINE_STACK_SIZE_REQUEST,
+        .id = LIMINE_STACK_SIZE_REQUEST_ID,
         .revision = 0,
         .stack_size = STACK_SIZE,
 };
 
 LIMINE_REQUEST static volatile struct limine_hhdm_request hhdm_request = {
-    .id = LIMINE_HHDM_REQUEST, .revision = 0};
+    .id = LIMINE_HHDM_REQUEST_ID, .revision = 0};
 
 LIMINE_REQUEST static volatile struct limine_memmap_request memmap_request = {
-    .id = LIMINE_MEMMAP_REQUEST,
+    .id = LIMINE_MEMMAP_REQUEST_ID,
     .revision = 0,
 };
 
 LIMINE_REQUEST volatile struct limine_rsdp_request rsdp_request = {
-    .id = LIMINE_RSDP_REQUEST, .revision = 0, .response = NULL};
+    .id = LIMINE_RSDP_REQUEST_ID, .revision = 0, .response = NULL};
 
 LIMINE_REQUEST volatile struct limine_date_at_boot_request boot_time_request = {
-    .id = LIMINE_DATE_AT_BOOT_REQUEST,
+    .id = LIMINE_DATE_AT_BOOT_REQUEST_ID,
     .revision = 0,
 };
 
 LIMINE_REQUEST volatile struct limine_framebuffer_request framebuffer_request =
-    {.id = LIMINE_FRAMEBUFFER_REQUEST, .revision = 0};
+    {.id = LIMINE_FRAMEBUFFER_REQUEST_ID, .revision = 0};
 
-__attribute__((
-    used,
-    section(
-        ".limine_requests_end"))) static volatile LIMINE_REQUESTS_END_MARKER;
+__attribute__((used, section(".limine_requests_end"))) static volatile uint64_t
+    requests_end_marker[4] = LIMINE_REQUESTS_END_MARKER;
 
 #if defined(__x86_64__)
 void apic_handle_lapic(struct acpi_madt_lapic *lapic) { (void)lapic; }
@@ -78,10 +78,10 @@ uint64_t boot_get_boottime() { return boot_time_request.response->timestamp; }
 __attribute__((
     used, section(".limine_requests"))) static volatile struct limine_mp_request
     mp_request = {
-        .id = LIMINE_MP_REQUEST,
+        .id = LIMINE_MP_REQUEST_ID,
         .revision = 0,
 #if defined(__x86_64__)
-        .flags = LIMINE_MP_X2APIC,
+        .flags = LIMINE_MP_REQUEST_X86_64_X2APIC,
 #endif
 };
 
@@ -118,6 +118,10 @@ void boot_smp_init(uintptr_t entry) {
         extern uint64_t cpuid_to_hartid[MAX_CPU_NUM];
         cpuid_to_hartid[i] = cpu->hartid;
 #endif
+#if defined(__loongarch64__)
+        extern uint64_t cpuid_to_physid[MAX_CPU_NUM];
+        cpuid_to_physid[i] = cpu->phys_id;
+#endif
     }
 
     for (uint64_t i = 0; i < cpu_count; i++) {
@@ -135,17 +139,19 @@ void boot_smp_init(uintptr_t entry) {
         if (cpu->hartid == bsp_hartid_request.response->bsp_hartid)
             continue;
 #endif
+#if defined(__loongarch64__)
+        if (cpu->phys_id == mp_response->bsp_phys_id)
+            continue;
+#endif
         spin_lock(&ap_startup_lock);
 
-#if !defined(__loongarch64__)
         cpu->goto_address = (limine_goto_address)entry;
-#endif
     }
 }
 
 #if defined(__x86_64__)
 bool boot_cpu_support_x2apic() {
-    return !!(mp_request.response->flags & LIMINE_MP_X2APIC);
+    return !!(mp_request.response->flags & LIMINE_MP_RESPONSE_X86_64_X2APIC);
 }
 #endif
 
@@ -177,7 +183,7 @@ boot_framebuffer_t *boot_get_framebuffer() {
 
 LIMINE_REQUEST static volatile struct limine_executable_cmdline_request
     executable_cmdline_request = {
-        .id = LIMINE_EXECUTABLE_CMDLINE_REQUEST,
+        .id = LIMINE_EXECUTABLE_CMDLINE_REQUEST_ID,
 };
 
 char *boot_get_cmdline() {
@@ -185,7 +191,7 @@ char *boot_get_cmdline() {
 }
 
 LIMINE_REQUEST static volatile struct limine_module_request modules_request = {
-    .id = LIMINE_MODULE_REQUEST,
+    .id = LIMINE_MODULE_REQUEST_ID,
     .revision = 0,
 };
 
@@ -208,7 +214,7 @@ void boot_get_modules(boot_module_t **modules, size_t *count) {
 #if defined(__riscv__)
 LIMINE_REQUEST static volatile struct limine_paging_mode_request
     paging_mode_request = {
-        .id = LIMINE_PAGING_MODE_REQUEST,
+        .id = LIMINE_PAGING_MODE_REQUEST_ID,
         .revision = 0,
         .mode = LIMINE_PAGING_MODE_DEFAULT,
 };
@@ -216,7 +222,7 @@ LIMINE_REQUEST static volatile struct limine_paging_mode_request
 
 #if !defined(__x86_64__)
 LIMINE_REQUEST static volatile struct limine_dtb_request dtb_request = {
-    .id = LIMINE_DTB_REQUEST,
+    .id = LIMINE_DTB_REQUEST_ID,
     .revision = 0,
     .response = NULL,
 };
