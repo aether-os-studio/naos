@@ -30,38 +30,8 @@ clone_repo_commit() {
     fi
 }
 
-download_by_hash() {
-    DOWNLOAD_COMMAND="curl -Lo"
-    if ! command -v "${DOWNLOAD_COMMAND%% *}" >/dev/null 2>&1; then
-        DOWNLOAD_COMMAND="wget -O"
-        if ! command -v "${DOWNLOAD_COMMAND%% *}" >/dev/null 2>&1; then
-            set +x
-            echo "error: Neither curl nor wget found"
-            exit 1
-        fi
-    fi
-    SHA256_COMMAND="sha256sum"
-    if ! command -v "${SHA256_COMMAND%% *}" >/dev/null 2>&1; then
-        SHA256_COMMAND="sha256"
-        if ! command -v "${SHA256_COMMAND%% *}" >/dev/null 2>&1; then
-            set +x
-            echo "error: Cannot find sha256(sum) command"
-            exit 1
-        fi
-    fi
-    if ! test -f "$2" || ! $SHA256_COMMAND "$2" | grep $3 >/dev/null 2>&1; then
-        rm -f "$2"
-        mkdir -p "$2" && rm -rf "$2"
-        $DOWNLOAD_COMMAND "$2" $1
-        if ! $SHA256_COMMAND "$2" | grep $3 >/dev/null 2>&1; then
-            set +x
-            echo "error: Cannot download file '$2' by hash"
-            echo "incorrect hash:"
-            $SHA256_COMMAND "$2"
-            rm -f "$2"
-            exit 1
-        fi
-    fi
+download_file() {
+    curl -Lo $2 $1
 }
 
 clone_repo_commit \
@@ -69,7 +39,6 @@ clone_repo_commit \
     freestnd-c-hdrs \
     a87c192f3eb66b0806740dc67325f9ad23fc2d0b
 
-download_by_hash \
-    https://github.com/limine-bootloader/limine/raw/4687a182be23939c2d9f15db970382dc353ed956/limine.h \
-    src/limine.h \
-    6879e626f34c1be25ac2f72bf43b083fc2b53887280bb0fcdaee790e258c6974
+download_file \
+    https://codeberg.org/Limine/limine-protocol/raw/branch/trunk/include/limine.h \
+    src/limine.h
