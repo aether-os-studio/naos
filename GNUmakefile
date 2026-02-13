@@ -167,8 +167,8 @@ EFI_FILE_SINGLE = assets/limine/BOOTLOONGARCH64.EFI
 endif
 
 $(IMAGE_NAME).img: assets/limine modules kernel initramfs-$(ARCH).img rootfs-$(ARCH).img
-	dd if=/dev/zero of=$(IMAGE_NAME).img bs=1M count=512
-	sgdisk --new=1:1M:511M $(IMAGE_NAME).img
+	dd if=/dev/zero of=$(IMAGE_NAME).img bs=1M count=64
+	sgdisk --new=1:1M:63M $(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 $(IMAGE_NAME).img
 	mcopy -i $(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/
 ifeq ($(KERNEL_MODEL), mixed)
