@@ -7,7 +7,7 @@ override ASFILES := $(filter %.S,$(SRCFILES))
 override OBJ := $(addprefix ../../obj-modules-$(ARCH)/$(KM_NAME)/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o))
 
 all: $(OBJ)
-	$(CC) $(CFLAGS) -shared $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a -o ../../modules-$(ARCH)/$(KM_NAME).ko
+	$(LD) $(LDFLAGS) -shared $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a -o ../../modules-$(ARCH)/$(KM_NAME).ko
 
 # Compilation rules for *.c files.
 ../../obj-modules-$(ARCH)/$(KM_NAME)/%.c.o: %.c GNUmakefile

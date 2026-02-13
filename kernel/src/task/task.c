@@ -1589,9 +1589,7 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem) {
         return (uint64_t)-EINVAL;
     }
 
-    current_task->sleep_clock_id = CLOCK_MONOTONIC;
     uint64_t start = nano_time();
-    current_task->sleep_start_ns = start;
     uint64_t target = start + (req->tv_sec * 1000000000ULL) + req->tv_nsec;
     current_task->force_wakeup_ns = target;
 
@@ -1629,9 +1627,7 @@ uint64_t sys_clock_nanosleep(int clock_id, int flags,
         return (uint64_t)-EINVAL;
     }
 
-    current_task->sleep_clock_id = clock_id;
     uint64_t start = get_nanotime_by_clockid(clock_id);
-    current_task->sleep_start_ns = start;
     uint64_t target =
         start + (request->tv_sec * 1000000000ULL) + request->tv_nsec;
     current_task->force_wakeup_ns = target;

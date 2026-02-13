@@ -291,8 +291,6 @@ static inline void spin_lock(spinlock_t *lock) {
                  : "=&r"(tmp), "=&r"(status)
                  : "r"(&lock->lock)
                  : "memory");
-
-    lock->daif = 0;
 }
 
 static inline void spin_unlock(spinlock_t *lock) {
@@ -343,8 +341,6 @@ static inline void spin_lock(spinlock_t *sl) {
     /* 自旋等待 */
     while (__sync_lock_test_and_set(&sl->lock, 1)) {
     }
-
-    sl->crmd = 0;
 }
 
 // 释放spinlock

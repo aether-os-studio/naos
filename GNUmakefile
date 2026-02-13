@@ -56,6 +56,8 @@ endif
 
 export ROOT_DIR := "$(shell pwd)"
 
+export CC_IS_CLANG := $(shell ! $(CC) --version 2>/dev/null | grep 'clang' >/dev/null 2>&1; echo $$?)
+
 KVM ?= 0
 HVF ?= 0
 SMP ?= 2
@@ -103,7 +105,7 @@ HOST_CPPFLAGS :=
 HOST_LDFLAGS :=
 HOST_LIBS :=
 
-LIBGCC_VERSION ?= 2025-08-21
+LIBGCC_VERSION ?= 2025-12-08
 
 prepare: libgcc_$(ARCH).a liballoc-$(ARCH).a
 	./kernel/get-deps
@@ -347,7 +349,7 @@ assets/limine:
 
 assets/ovmf-code-$(ARCH).fd:
 	mkdir -p assets
-	curl -Lo assets/edk2-ovmf.tar.gz https://github.com/osdev0/edk2-ovmf-nightly/releases/download/nightly-20251204T012528Z/edk2-ovmf.tar.gz
+	curl -Lo assets/edk2-ovmf.tar.gz https://github.com/osdev0/edk2-ovmf-nightly/releases/download/nightly-20260213T020317Z/edk2-ovmf.tar.gz
 	tar -zxvf assets/edk2-ovmf.tar.gz -C assets/
 
 	cp -r assets/edk2-ovmf/ovmf-code-$(ARCH).fd $@

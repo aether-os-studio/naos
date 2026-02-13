@@ -16,7 +16,7 @@ void handle_interrupt(struct pt_regs *regs) {
     do_irq(regs, int_vec);
 }
 
-void handle_page_fault(struct pt_regs *regs) {
+void handle_exception_page_fault(struct pt_regs *regs) {
     uint64_t badv = regs->csr_badvaddr;
     uint64_t era = regs->csr_era;
     uint32_t ecode = (regs->csr_estat >> 16) & 0x3f;
@@ -98,10 +98,10 @@ void trap_init() {
     memset(trap_handlers, 0, sizeof(trap_handlers));
 
     trap_handlers[EXCCODE_INT] = handle_interrupt;
-    trap_handlers[EXCCODE_PIL] = handle_page_fault;
-    trap_handlers[EXCCODE_PIS] = handle_page_fault;
-    trap_handlers[EXCCODE_PIF] = handle_page_fault;
-    trap_handlers[EXCCODE_PME] = handle_page_fault;
+    trap_handlers[EXCCODE_PIL] = handle_exception_page_fault;
+    trap_handlers[EXCCODE_PIS] = handle_exception_page_fault;
+    trap_handlers[EXCCODE_PIF] = handle_exception_page_fault;
+    trap_handlers[EXCCODE_PME] = handle_exception_page_fault;
     trap_handlers[EXCCODE_ADEF] = handle_address_error;
     trap_handlers[EXCCODE_ADEM] = handle_address_error;
     trap_handlers[EXCCODE_SYS] = handle_syscall;

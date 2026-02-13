@@ -222,11 +222,7 @@ void ioapic_disable(uint8_t vector) {
     ioapic_write(ioapic, index + 1, (uint32_t)(value >> 32));
 }
 
-void send_eoi(uint32_t irq) {
-    // ioapic_t *ioapic = apic_find_ioapic_by_vector(irq);
-    // *(uint32_t *)(ioapic->mmio_base + 0x40) = irq;
-    lapic_write(0xb0, 0);
-}
+void send_eoi(uint32_t irq) { lapic_write(0xb0, 0); }
 
 extern void apic_handle_lapic(struct acpi_madt_lapic *lapic);
 extern void apic_handle_lx2apic(struct acpi_madt_x2apic *lapic);

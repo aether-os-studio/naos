@@ -356,18 +356,16 @@ ssize_t inputdev_ioctl(void *data, ssize_t request, ssize_t arg) {
     ssize_t ret = -ENOTTY;
 
     if (number >= 0x20 && number < (0x20 + EV_CNT)) {
-        // we are in EVIOCGBIT(event: 0x20 - x) territory, beware
         return event->event_bit(data, request, (void *)arg);
     } else if (number >= 0x40 && number < (0x40 + ABS_CNT)) {
-        // we are in EVIOCGABS(event: 0x40 - x) territory, beware
         return event->event_bit(data, request, (void *)arg);
     }
 
-    if (request == 0x540b) // TCFLSH, idk why don't ask me!
+    if (request == 0x540b)
         return 0;
 
     switch (number) {
-    case 0x01: // EVIOCGVERSION idk, stolen from vmware
+    case 0x01:
         *((int *)arg) = 0x10001;
         ret = 0;
         break;
@@ -382,9 +380,6 @@ ssize_t inputdev_ioctl(void *data, ssize_t request, ssize_t arg) {
         break;
     }
     case 0x07: { // EVIOCGPHYS(len)
-        // int toCopy = MIN(size, (size_t)strlen(event->physloc) + 1);
-        // memcpy((void *)arg, event->physloc, toCopy);
-        // ret = toCopy;
         ret = 0;
         break;
     }
@@ -483,6 +478,7 @@ ssize_t nulldev_read(void *data, void *buf, uint64_t offset, uint64_t len,
 
 ssize_t nulldev_write(void *data, const void *buf, uint64_t offset,
                       uint64_t len, uint64_t flags) {
+    serial_printk(buf, len);
     return len;
 }
 

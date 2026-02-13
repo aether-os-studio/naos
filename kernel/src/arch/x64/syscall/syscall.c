@@ -620,6 +620,7 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
     }
 
     syscall_handle_t handler = syscall_handlers[idx];
+    regs->func = (uint64_t)handler;
     if (!handler) {
         regs->rax = (uint64_t)-ENOSYS;
         goto done;

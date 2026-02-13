@@ -8,7 +8,7 @@ export CFLAGS
 # Architecture specific internal flags.
 ifeq ($(ARCH),x86_64)
     ifeq ($(CC_IS_CLANG),1)
-        override CC += \
+        override CFLAGS += \
             -target x86_64-unknown-none
     endif
     override CFLAGS += \
@@ -36,7 +36,7 @@ ifeq ($(ARCH),aarch64)
 endif
 ifeq ($(ARCH),riscv64)
     ifeq ($(CC_IS_CLANG),1)
-        override CC += \
+        override CFLAGS += \
             -target riscv64-unknown-none
         override CFLAGS += \
             -march=rv64imac
@@ -56,7 +56,7 @@ ifeq ($(ARCH),riscv64)
 endif
 ifeq ($(ARCH),loongarch64)
     ifeq ($(CC_IS_CLANG),1)
-        override CC += \
+        override CFLAGS += \
             -target loongarch64-unknown-none
     endif
     override CFLAGS += \

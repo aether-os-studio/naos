@@ -6,5 +6,6 @@
 
 #define IRQ_ALLOCATE_NUM_BASE 0 // TODO
 
+bool arch_interrupt_enabled();
 void arch_enable_interrupt();
 void arch_disable_interrupt();

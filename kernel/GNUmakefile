@@ -52,9 +52,6 @@ ifneq ($(shell ( test '$(MAKECMDGOALS)' = clean || test '$(MAKECMDGOALS)' = dist
     endif
 endif
 
-# Check if CC is Clang.
-override CC_IS_CLANG := $(shell ! $(CC) --version 2>/dev/null | grep 'clang' >/dev/null 2>&1; echo $$?)
-
 # Internal C flags that should not be changed by the user.
 override CFLAGS += \
     -Wall \
@@ -85,20 +82,19 @@ ifeq ($(ARCH),x86_64)
         -Wall
 endif
 
+
 # Architecture specific internal flags.
 ifeq ($(ARCH),x86_64)
     ifeq ($(CC_IS_CLANG),1)
-        override CC += \
+        override CFLAGS += \
             -target x86_64-unknown-none
     endif
     override CFLAGS += \
         -m64 \
         -march=x86-64 \
         -mno-red-zone \
-        -mcmodel=large \
+        -mcmodel=kernel \
         -mno-80387 -mno-mmx -mno-sse -mno-sse2
-    override LDFLAGS += \
-        -Wl,-m,elf_x86_64
     ifeq ($(CC_IS_CLANG),1)
         override LDFLAGS += \
             -lgcc
@@ -112,12 +108,14 @@ ifeq ($(ARCH),aarch64)
             -target aarch64-unknown-none
     endif
     override CFLAGS +=
-    override LDFLAGS += \
-        -Wl,-m,aarch64elf
+    ifeq ($(CC_IS_CLANG),0)
+        override LDFLAGS += \
+            -Wl,-m,aarch64elf
+    endif
 endif
 ifeq ($(ARCH),riscv64)
     ifeq ($(CC_IS_CLANG),1)
-        override CC += \
+        override CFLAGS += \
             -target riscv64-unknown-none
         override CFLAGS += \
             -march=rv64imac
@@ -129,36 +127,41 @@ ifeq ($(ARCH),riscv64)
         -march=rv64imafd \
         -mabi=lp64d \
         -mno-relax \
-        -mcmodel=medany \
         -D__riscv__
-    override LDFLAGS += \
-        -Wl,-m,elf64lriscv \
-        -Wl,--no-relax
+    ifeq ($(CC_IS_CLANG),0)
+        override LDFLAGS += \
+            -Wl,-m,elf64lriscv \
+            -Wl,--no-relax
+    endif
 
 endif
 ifeq ($(ARCH),loongarch64)
     ifeq ($(CC_IS_CLANG),1)
-        override CC += \
+        override CFLAGS += \
             -target loongarch64-unknown-none
     endif
     override CFLAGS += \
         -march=loongarch64 \
-        -mabi=lp64d \
+        -mabi=lp64s \
         -gdwarf-2 \
-        -D__loongarch64__
-    override LDFLAGS += \
-        -Wl,-m,elf64loongarch \
-        -Wl,--no-relax
+		-D__loongarch64__
+    ifeq ($(CC_IS_CLANG),0)
+        override LDFLAGS += \
+            -Wl,-m,elf64loongarch \
+            -Wl,--no-relax
+    endif
 endif
 
 # Internal linker flags that should not be changed by the user.
 override LDFLAGS += \
-    -Wl,--build-id=none \
     -nostdlib \
     -static \
     -z max-page-size=0x1000 \
-    -Wl,--gc-sections \
     -T linker-$(ARCH)-$(BOOT_PROTOCOL).ld
+
+ifneq ($(CC_IS_CLANG),1)
+override LDFLAGS += -Wl,--build-id=none -Wl,--gc-sections
+endif
 
 # Use "find" to glob all *.c, *.S, and *.asm files in the tree and obtain the
 # object and header dependency file names.
@@ -205,18 +208,25 @@ all: bin-$(ARCH)/$(OUTPUT)
 # Include header dependencies.
 -include $(HEADER_DEPS)
 
+ifeq ($(CC_IS_CLANG),1)
+LINKER := $(LD)
+else
+LINKER := $(CC)
+endif
+
 .PHONY: bin-$(ARCH)/$(OUTPUT)
 # Link rules for the final executable.
 bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH)-$(BOOT_PROTOCOL).ld $(OBJ)
 	mkdir -p "$$(dirname $@)"
 
-	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a $(PROJECT_ROOT)/liballoc-$(ARCH).a -o $@.tmp
+	@$(LINKER) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a $(PROJECT_ROOT)/liballoc-$(ARCH).a -o $@.tmp
+
 
 	gcc kallsyms.c -o kallsyms
 	$(NM) -n $@.tmp | ./kallsyms > kallsyms.S
 	@$(CC) $(CFLAGS) -c kallsyms.S -o kallsyms.o
 
-	@$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a $(PROJECT_ROOT)/liballoc-$(ARCH).a kallsyms.o -o $@
+	@$(LINKER) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a $(PROJECT_ROOT)/liballoc-$(ARCH).a kallsyms.o -o $@
 
 # Compilation rules for *.c files.
 obj-$(ARCH)/src/%.c.o: src/%.c GNUmakefile

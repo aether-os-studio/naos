@@ -226,19 +226,23 @@ static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level) {
         }
 
         if (level == 1) {
-            if (ARCH_READ_PTE(phys_to_virt(source_table)[i]) != 0) {
+            if (phys_to_virt(source_table)[i] & ARCH_PT_FLAG_VALID) {
                 uint64_t flags =
                     ARCH_READ_PTE_FLAG(phys_to_virt(source_table)[i]);
                 uint64_t paddr = ARCH_READ_PTE(phys_to_virt(source_table)[i]);
+                uint64_t new_paddr = alloc_frames(1);
+                memcpy((void *)phys_to_virt(new_paddr),
+                       (void *)phys_to_virt(paddr), DEFAULT_PAGE_SIZE);
                 flags |= ARCH_PT_FLAG_COW;
 #if defined(__aarch64__)
                 flags |= ARCH_PT_FLAG_READONLY;
 #else
                 flags &= ~ARCH_PT_FLAG_WRITEABLE;
 #endif
-                new_table[i] = ARCH_MAKE_PTE(paddr, flags);
-                address_ref(paddr);
-                phys_to_virt(source_table)[i] = ARCH_MAKE_PTE(paddr, flags);
+                new_table[i] = ARCH_MAKE_PTE(new_paddr, flags);
+                address_ref(new_paddr);
+                phys_to_virt(source_table)[i] = ARCH_MAKE_PTE(new_paddr, flags);
+                free_frames(paddr, 1);
             } else {
                 new_table[i] = 0;
             }
