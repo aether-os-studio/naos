@@ -2,7 +2,6 @@
 #include <drivers/kernel_logger.h>
 
 extern void trap_entry();
-extern void tlb_refill_entry();
 
 static trap_handler_t trap_handlers[64];
 
@@ -93,30 +92,30 @@ void trap_handle_c(struct pt_regs *regs) {
     }
 }
 
-void trap_init() {
-    // 初始化异常处理函数表
-    memset(trap_handlers, 0, sizeof(trap_handlers));
+bool handlers_initialized = false;
 
-    trap_handlers[EXCCODE_INT] = handle_interrupt;
-    trap_handlers[EXCCODE_PIL] = handle_exception_page_fault;
-    trap_handlers[EXCCODE_PIS] = handle_exception_page_fault;
-    trap_handlers[EXCCODE_PIF] = handle_exception_page_fault;
-    trap_handlers[EXCCODE_PME] = handle_exception_page_fault;
-    trap_handlers[EXCCODE_ADEF] = handle_address_error;
-    trap_handlers[EXCCODE_ADEM] = handle_address_error;
-    trap_handlers[EXCCODE_SYS] = handle_syscall;
-    trap_handlers[EXCCODE_BRK] = handle_breakpoint;
-    trap_handlers[EXCCODE_INE] = handle_reserved_instruction;
+void trap_init() {
+    if (!handlers_initialized) {
+        // 初始化异常处理函数表
+        memset(trap_handlers, 0, sizeof(trap_handlers));
+
+        trap_handlers[EXCCODE_INT] = handle_interrupt;
+        trap_handlers[EXCCODE_PIL] = handle_exception_page_fault;
+        trap_handlers[EXCCODE_PIS] = handle_exception_page_fault;
+        trap_handlers[EXCCODE_PIF] = handle_exception_page_fault;
+        trap_handlers[EXCCODE_PME] = handle_exception_page_fault;
+        trap_handlers[EXCCODE_ADEF] = handle_address_error;
+        trap_handlers[EXCCODE_ADEM] = handle_address_error;
+        trap_handlers[EXCCODE_SYS] = handle_syscall;
+        trap_handlers[EXCCODE_BRK] = handle_breakpoint;
+        trap_handlers[EXCCODE_INE] = handle_reserved_instruction;
+
+        handlers_initialized = true;
+    }
 
     // 设置异常入口地址（必须 4KB 对齐）
     uint64_t eentry = (uint64_t)trap_entry;
     csr_write(LOONGARCH_CSR_EENTRY, eentry);
-    printk("  EENTRY = 0x%lx\n", eentry);
-
-    // 设置 TLB 重填异常入口
-    uint64_t tlbrentry = (uint64_t)tlb_refill_entry;
-    csr_write(LOONGARCH_CSR_TLBRENTRY, tlbrentry);
-    printk("  TLBRENTRY = 0x%lx\n", tlbrentry);
 
     // 配置异常控制
     csr_write(LOONGARCH_CSR_ECFG, 0);  // 初始禁用所有中断

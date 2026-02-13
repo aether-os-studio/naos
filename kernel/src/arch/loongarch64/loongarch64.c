@@ -1,7 +1,6 @@
 #include "arch/arch.h"
 
 void arch_early_init() {
-    trap_init();
     smp_init();
 }
 

@@ -14,12 +14,11 @@ uint64_t *get_current_page_dir(bool user) {
         asm volatile("csrrd %0, 0x1a" // PGDH
                      : "=r"(page_table_base));
     }
-    return (uint64_t *)phys_to_virt(page_table_base & ~DEFAULT_PAGE_SIZE);
+    return (uint64_t *)phys_to_virt(page_table_base & ~(DEFAULT_PAGE_SIZE - 1));
 }
 
 uint64_t get_arch_page_table_flags(uint64_t flags) {
-    uint64_t result =
-        ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_GLOBAL | ARCH_PT_FLAG_MAT_CC;
+    uint64_t result = ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_GLOBAL;
 
     if ((flags & PT_FLAG_W) != 0) {
         result |= ARCH_PT_FLAG_DIRTY | ARCH_PT_FLAG_WRITEABLE;
@@ -33,14 +32,20 @@ uint64_t get_arch_page_table_flags(uint64_t flags) {
         result |= ARCH_PT_FLAG_NX;
     }
 
+    if ((flags & PT_FLAG_UNCACHEABLE) || (flags & PT_FLAG_DEVICE)) {
+        result |= ARCH_PT_FLAG_MAT_WUC;
+    } else {
+        result |= ARCH_PT_FLAG_MAT_CC;
+    }
+
     return result;
 }
 
 void arch_flush_tlb(uint64_t vaddr) {
     // vaddr &= ((~DEFAULT_PAGE_SIZE) << 1);
-    asm volatile("invtlb 0x2, $zero, $zero\n\t"
+    asm volatile("invtlb 0x6, $zero, %0\n\t"
                  "dbar 0\n\t"
                  :
-                 :
+                 : "r"(vaddr)
                  : "memory");
 }

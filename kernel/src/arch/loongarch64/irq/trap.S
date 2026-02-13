@@ -42,15 +42,41 @@
 
 #define PT_SIZE     320
 
-#define LOONGARCH_CSR_CRMD      0x0
-#define LOONGARCH_CSR_PRMD      0x1
-#define LOONGARCH_CSR_EUEN      0x2
-#define LOONGARCH_CSR_ECFG      0x4
-#define LOONGARCH_CSR_ESTAT     0x5
-#define LOONGARCH_CSR_ERA       0x6
-#define LOONGARCH_CSR_BADV      0x7
-#define LOONGARCH_CSR_KS0       0x30
-#define LOONGARCH_CSR_KS1       0x31
+#define LOONGARCH_CSR_CRMD          0x0
+#define LOONGARCH_CSR_PRMD          0x1
+#define LOONGARCH_CSR_EUEN          0x2
+#define LOONGARCH_CSR_ECFG          0x4
+#define LOONGARCH_CSR_ESTAT         0x5
+#define LOONGARCH_CSR_ERA           0x6
+#define LOONGARCH_CSR_BADV          0x7
+#define LOONGARCH_CSR_EENTRY        0xC
+#define LOONGARCH_CSR_TLBIDX        0x10
+#define LOONGARCH_CSR_TLBEHI        0x11
+#define LOONGARCH_CSR_TLBELO0       0x12
+#define LOONGARCH_CSR_TLBELO1       0x13
+#define LOONGARCH_CSR_ASID          0x18
+#define LOONGARCH_CSR_PGDL          0x19
+#define LOONGARCH_CSR_PGDH          0x1A
+#define LOONGARCH_CSR_PGD           0x1B
+#define LOONGARCH_CSR_PWCL          0x1C
+#define LOONGARCH_CSR_PWCH          0x1D
+#define LOONGARCH_CSR_STLBPS        0x1E
+#define LOONGARCH_CSR_RVACFG        0x1F
+
+#define LOONGARCH_CSR_KS0           0x30
+#define LOONGARCH_CSR_KS1           0x31
+
+#define LOONGARCH_CSR_TLBRENTRY     0x88
+#define LOONGARCH_CSR_TLBRSAVE      0x8B
+#define LOONGARCH_CSR_TLBRELO0      0x8C
+#define LOONGARCH_CSR_TLBRELO1      0x8D
+#define LOONGARCH_CSR_TLBREHI       0x8E
+#define LOONGARCH_CSR_TLBRPRMD      0x8F
+
+#define LOONGARCH_CSR_DMWIN0        0x180
+#define LOONGARCH_CSR_DMWIN1        0x181
+#define LOONGARCH_CSR_DMWIN2        0x182
+#define LOONGARCH_CSR_DMWIN3        0x183
 
 .section .text
 .align 12
@@ -188,9 +214,3 @@ trap_return:
     
     // 异常返回
     ertn
-
-.align 12
-.globl tlb_refill_entry
-tlb_refill_entry:
-    // 可以优化为快速 TLB 重填
-    b       trap_entry
