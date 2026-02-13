@@ -2460,6 +2460,12 @@ typedef Elf32_Addr Elf32_Conflict;
 #define R_RISCV_SET16 55 // 设置 16 位
 #define R_RISCV_SET32 56 // 设置 32 位
 
+/* LoongArch 常用动态重定位 */
+#define R_LARCH_NONE 0
+#define R_LARCH_64 2
+#define R_LARCH_RELATIVE 3
+#define R_LARCH_JUMP_SLOT 5
+
 /* IA-64 specific declarations.  */
 
 /* Processor specific flags for the Ehdr e_flags field.  */

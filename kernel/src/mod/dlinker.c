@@ -191,6 +191,38 @@ bool handle_relocations(Elf64_Rela *rela_start, Elf64_Sym *symtab, char *strtab,
                 *target_addr = (uint64_t)sym_addr + offset + rela->r_addend;
             }
         }
+#elif defined(__loongarch64) || defined(__loongarch64__)
+        if (type == R_LARCH_JUMP_SLOT) {
+            void *sym_addr = resolve_symbol(symtab, strtab, sym_idx);
+            if (sym_addr == NULL) {
+                printk("Failed relocating %s at %p\n", sym_name, target_addr);
+                return false;
+            }
+
+            if (sym->st_shndx == SHN_UNDEF) {
+                *target_addr = (uint64_t)sym_addr;
+            } else {
+                *target_addr = (uint64_t)sym_addr + offset;
+            }
+        } else if (type == R_LARCH_RELATIVE) {
+            *target_addr = offset + rela->r_addend;
+        } else if (type == R_LARCH_64) {
+            void *sym_addr = resolve_symbol(symtab, strtab, sym_idx);
+            if (sym_addr == NULL) {
+                printk("Failed relocating %s at %p\n", sym_name, target_addr);
+                return false;
+            }
+
+            if (sym->st_shndx == SHN_UNDEF) {
+                *target_addr = (uint64_t)sym_addr + rela->r_addend;
+            } else {
+                *target_addr = (uint64_t)sym_addr + offset + rela->r_addend;
+            }
+        } else if (type != R_LARCH_NONE) {
+            printk("Unsupported LoongArch relocation type %u for %s at %p\n",
+                   type, sym_name, target_addr);
+            return false;
+        }
 #endif
     }
     return true;

@@ -92,26 +92,20 @@ void trap_handle_c(struct pt_regs *regs) {
     }
 }
 
-bool handlers_initialized = false;
-
 void trap_init() {
-    if (!handlers_initialized) {
-        // 初始化异常处理函数表
-        memset(trap_handlers, 0, sizeof(trap_handlers));
+    // 初始化异常处理函数表
+    memset(trap_handlers, 0, sizeof(trap_handlers));
 
-        trap_handlers[EXCCODE_INT] = handle_interrupt;
-        trap_handlers[EXCCODE_PIL] = handle_exception_page_fault;
-        trap_handlers[EXCCODE_PIS] = handle_exception_page_fault;
-        trap_handlers[EXCCODE_PIF] = handle_exception_page_fault;
-        trap_handlers[EXCCODE_PME] = handle_exception_page_fault;
-        trap_handlers[EXCCODE_ADEF] = handle_address_error;
-        trap_handlers[EXCCODE_ADEM] = handle_address_error;
-        trap_handlers[EXCCODE_SYS] = handle_syscall;
-        trap_handlers[EXCCODE_BRK] = handle_breakpoint;
-        trap_handlers[EXCCODE_INE] = handle_reserved_instruction;
-
-        handlers_initialized = true;
-    }
+    trap_handlers[EXCCODE_INT] = handle_interrupt;
+    trap_handlers[EXCCODE_PIL] = handle_exception_page_fault;
+    trap_handlers[EXCCODE_PIS] = handle_exception_page_fault;
+    trap_handlers[EXCCODE_PIF] = handle_exception_page_fault;
+    trap_handlers[EXCCODE_PME] = handle_exception_page_fault;
+    trap_handlers[EXCCODE_ADEF] = handle_address_error;
+    trap_handlers[EXCCODE_ADEM] = handle_address_error;
+    trap_handlers[EXCCODE_SYS] = handle_syscall;
+    trap_handlers[EXCCODE_BRK] = handle_breakpoint;
+    trap_handlers[EXCCODE_INE] = handle_reserved_instruction;
 
     // 设置异常入口地址（必须 4KB 对齐）
     uint64_t eentry = (uint64_t)trap_entry;
