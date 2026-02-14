@@ -162,7 +162,6 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
         // 对端关闭且没有数据 = EOF
         if (self->type != 2 && (!peer || peer->closed) && self->recv_pos == 0)
             arch_disable_interrupt();
-        return 0;
 
         if (self->recv_pos > 0)
             break;

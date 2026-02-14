@@ -189,11 +189,11 @@ ifeq ($(BOOT_PROTOCOL), multiboot2)
 	mcopy -i $(IMAGE_NAME).img@@1M limine_multiboot2_$(KERNEL_MODEL).conf ::/limine/limine.conf
 endif
 
-TOTAL_IMG_SIZE=$$(( $(ROOTFS_IMG_SIZE) + 32 ))
+TOTAL_IMG_SIZE=$$(( $(ROOTFS_IMG_SIZE) + 64 ))
 
 single-$(IMAGE_NAME).img: assets/limine modules kernel initramfs-$(ARCH).img rootfs-$(ARCH).img
 	dd if=/dev/zero of=single-$(IMAGE_NAME).img bs=1M count=$(TOTAL_IMG_SIZE)
-	sgdisk --new=1:1M:31M --new=2:32M:0 single-$(IMAGE_NAME).img
+	sgdisk --new=1:1M:63M --new=2:63M:0 single-$(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 single-$(IMAGE_NAME).img
 	mcopy -i single-$(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/
 ifeq ($(KERNEL_MODEL), mixed)
@@ -209,7 +209,7 @@ else
 endif
 endif
 
-	dd if=rootfs-$(ARCH).img of=single-$(IMAGE_NAME).img bs=1M count=$(ROOTFS_IMG_SIZE) seek=32
+	dd if=rootfs-$(ARCH).img of=single-$(IMAGE_NAME).img bs=1M count=$(ROOTFS_IMG_SIZE) seek=64
 
 .PHONY: run
 run: run-$(ARCH)
@@ -334,7 +334,8 @@ run-loongarch64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
 		-device usb-kbd \
 		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
-		-hda $(IMAGE_NAME).img \
+		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
+		-device nvme,drive=harddisk,serial=1234 \
 		$(QEMUFLAGS)
 
 assets/limine:

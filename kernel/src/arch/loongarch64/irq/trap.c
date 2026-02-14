@@ -80,7 +80,6 @@ void handle_default(struct pt_regs *regs) {
 }
 
 void trap_handle_c(struct pt_regs *regs) {
-    // 从 ESTAT 获取异常码
     uint32_t ecode = (regs->csr_estat >> 16) & 0x3f;
 
     // 调用对应的异常处理函数
@@ -114,6 +113,9 @@ void trap_init() {
     // 配置异常控制
     csr_write(LOONGARCH_CSR_ECFG, 0);  // 初始禁用所有中断
     csr_write(LOONGARCH_CSR_ESTAT, 0); // 清除中断状态
+
+    // 启用时钟中断
+    csr_write(0x41, 1000000 | 0b11);
 
     // 使能全局中断
     uint64_t crmd = csr_read(LOONGARCH_CSR_CRMD);

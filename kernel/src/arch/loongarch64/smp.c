@@ -23,11 +23,6 @@ void ap_kmain() {
     csr_write(LOONGARCH_CSR_ECFG, 0);  // 初始禁用所有中断
     csr_write(LOONGARCH_CSR_ESTAT, 0); // 清除中断状态
 
-    // 使能全局中断
-    uint64_t crmd = csr_read(LOONGARCH_CSR_CRMD);
-    crmd |= CSR_CRMD_IE;
-    csr_write(LOONGARCH_CSR_CRMD, crmd);
-
     spin_unlock(&ap_startup_lock);
 
     while (!aether_os_started) {
@@ -35,6 +30,14 @@ void ap_kmain() {
     }
 
     printk("AP %d started\n", csr_read(0x20));
+
+    // 配置时钟中断
+    csr_write(0x41, 1000000 | 0b11);
+
+    // 使能全局中断
+    uint64_t crmd = csr_read(LOONGARCH_CSR_CRMD);
+    crmd |= CSR_CRMD_IE;
+    csr_write(LOONGARCH_CSR_CRMD, crmd);
 
     while (1) {
         arch_pause();
