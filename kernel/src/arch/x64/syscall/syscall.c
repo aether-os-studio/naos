@@ -201,7 +201,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_PAUSE] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_NANOSLEEP] = (syscall_handle_t)sys_nanosleep;
     // syscall_handlers[SYS_GETITIMER] = (syscall_handle_t)sys_getitimer;
-    // syscall_handlers[SYS_ALARM] = (syscall_handle_t)sys_alarm;
+    syscall_handlers[SYS_ALARM] = (syscall_handle_t)sys_alarm;
     syscall_handlers[SYS_SETITIMER] = (syscall_handle_t)sys_setitimer;
     syscall_handlers[SYS_GETPID] = (syscall_handle_t)sys_getpid;
     syscall_handlers[SYS_SENDFILE] = (syscall_handle_t)sys_sendfile;
@@ -568,7 +568,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_FSMOUNT] = (syscall_handle_t)sys_fsmount;
     // syscall_handlers[SYS_FSPICK] = (syscall_handle_t)sys_fspick;
     // syscall_handlers[SYS_PIDFD_OPEN] = (syscall_handle_t)sys_pidfd_open;
-    // syscall_handlers[SYS_CLONE3] = (syscall_handle_t)sys_clone3;
+    syscall_handlers[SYS_CLONE3] = (syscall_handle_t)sys_clone3;
     syscall_handlers[SYS_CLOSE_RANGE] = (syscall_handle_t)sys_close_range;
     // syscall_handlers[SYS_OPENAT2] = (syscall_handle_t)sys_openat2;
     // syscall_handlers[SYS_PIDFD_GETFD] = (syscall_handle_t)sys_pidfd_getfd;

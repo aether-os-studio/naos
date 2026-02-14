@@ -1000,16 +1000,16 @@ void task_exit_inner(task_t *task, int64_t code) {
             memset(&sigchld_info, 0, sizeof(siginfo_t));
             sigchld_info.si_signo = SIGCHLD;
             sigchld_info.si_errno = 0;
-            sigchld_info.__si_fields.__sigchld.si_pid = task->pid;
-            sigchld_info.__si_fields.__sigchld.si_uid = task->uid;
-            sigchld_info.__si_fields.__sigchld.si_utime = 0;
-            sigchld_info.__si_fields.__sigchld.si_stime = 0;
+            sigchld_info._sifields._sigchld._pid = task->pid;
+            sigchld_info._sifields._sigchld._uid = task->uid;
+            sigchld_info._sifields._sigchld._utime = 0;
+            sigchld_info._sifields._sigchld._stime = 0;
             if (code >= 128) {
                 sigchld_info.si_code = CLD_KILLED;
-                sigchld_info.__si_fields.__sigchld.si_status = code - 128;
+                sigchld_info._sifields._sigchld._status = code - 128;
             } else {
                 sigchld_info.si_code = CLD_EXITED;
-                sigchld_info.__si_fields.__sigchld.si_status = code;
+                sigchld_info._sifields._sigchld._status = code;
             }
             task_commit_signal(parent, SIGCHLD, &sigchld_info);
 
@@ -1316,17 +1316,16 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
             memset(infop, 0, sizeof(siginfo_t));
             infop->si_signo = SIGCHLD;
             infop->si_errno = 0;
-            infop->__si_fields.__sigchld.si_pid = target->pid;
-            infop->__si_fields.__sigchld.si_uid = target->uid;
+            infop->_sifields._sigchld._pid = target->pid;
+            infop->_sifields._sigchld._uid = target->uid;
 
             if (target->state == TASK_DIED) {
-                if (target->status < 128) {
-                    infop->si_code = CLD_EXITED;
-                    infop->__si_fields.__sigchld.si_status = target->status;
-                } else {
+                if (target->status >= 128) {
                     infop->si_code = CLD_KILLED;
-                    infop->__si_fields.__sigchld.si_status =
-                        target->status - 128;
+                    infop->_sifields._sigchld._status = target->status - 128;
+                } else {
+                    infop->si_code = CLD_EXITED;
+                    infop->_sifields._sigchld._status = target->status;
                 }
             }
         }
@@ -1362,6 +1361,17 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
     return ret;
 }
 
+uint64_t sys_clone3(struct pt_regs *regs, clone_args_t *args_user,
+                    uint64_t args_size) {
+    if (args_size < sizeof(clone_args_t))
+        return (uint64_t)-EINVAL;
+    clone_args_t args;
+    if (copy_from_user(&args, args_user, sizeof(clone_args_t)))
+        return (uint64_t)-EFAULT;
+    return sys_clone(regs, args.flags, args.stack, (int *)args.parent_tid,
+                     (int *)args.child_tid, args.tls);
+}
+
 uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                    int *parent_tid, int *child_tid, uint64_t tls) {
     arch_disable_interrupt();
@@ -1369,7 +1379,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     if (flags & CLONE_VFORK) {
         flags |= CLONE_VM;
         flags |= CLONE_FS;
-        flags |= CLONE_FILES;
+        // flags |= CLONE_FILES;
         flags |= CLONE_SIGHAND;
         flags |= CLONE_THREAD;
     }
@@ -1672,6 +1682,12 @@ uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
         current_task->parent_death_sig = arg2;
         return 0;
 
+    case PR_SET_SECUREBITS:
+        return 0;
+
+    case PR_SET_NO_NEW_PRIVS:
+        return 0;
+
     default:
         return -EINVAL; // 未实现的功能返回不支持
     }
@@ -1881,6 +1897,18 @@ uint64_t sys_timer_settime(timer_t timerid, const struct itimerval *new_value,
     kt->expires = now + expires;
 
     return 0;
+}
+
+uint64_t sys_alarm(uint64_t seconds) {
+    struct itimerval old, new;
+    new.it_value.tv_sec = seconds;
+    new.it_value.tv_usec = 0;
+    new.it_interval.tv_sec = 0;
+    new.it_interval.tv_usec = 0;
+    size_t ret = sys_setitimer(0, &new, &old);
+    if ((int64_t)ret < 0)
+        return ret;
+    return old.it_value.tv_sec + !!old.it_value.tv_usec;
 }
 
 #define LINUX_REBOOT_MAGIC1 0xfee1dead

@@ -119,6 +119,24 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
                     void *rusage);
 uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                    int *parent_tid, int *child_tid, uint64_t tls);
+
+typedef struct clone_args {
+    uint64_t flags;
+    uint64_t pidfd;
+    uint64_t child_tid;
+    uint64_t parent_tid;
+    uint64_t exit_signal;
+    uint64_t stack;
+    uint64_t stack_size;
+    uint64_t tls;
+    uint64_t set_tid;
+    uint64_t set_tid_size;
+    uint64_t cgroup;
+} clone_args_t;
+
+uint64_t sys_clone3(struct pt_regs *regs, clone_args_t *args,
+                    uint64_t args_size);
+
 struct timespec;
 uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem);
 uint64_t sys_clock_nanosleep(int clock_id, int flags,
@@ -242,7 +260,7 @@ void futex_init();
 
 uint64_t sys_prctl(uint64_t options, uint64_t arg2, uint64_t arg3,
                    uint64_t arg4, uint64_t arg5);
-
+uint64_t sys_alarm(uint64_t seconds);
 uint64_t sys_timer_create(clockid_t clockid, struct sigevent *sevp,
                           timer_t *timerid);
 uint64_t sys_timer_settime(timer_t timerid, const struct itimerval *new_value,

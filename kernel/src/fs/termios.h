@@ -12,6 +12,18 @@ typedef struct termios {
     uint8_t c_cc[NCCS]; /* control characters */
 } termios;
 
+#define _TERMIOS2_NCCS 19
+struct termios2 {
+    uint32_t c_iflag;             /* input mode flags */
+    uint32_t c_oflag;             /* output mode flags */
+    uint32_t c_cflag;             /* control mode flags */
+    uint32_t c_lflag;             /* local mode flags */
+    uint8_t c_line;               /* line discipline */
+    uint8_t c_cc[_TERMIOS2_NCCS]; /* control characters */
+    uint32_t c_ispeed;            /* input speed */
+    uint32_t c_ospeed;            /* output speed */
+};
+
 #define VINTR 0
 #define VQUIT 1
 #define VERASE 2

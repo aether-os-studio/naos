@@ -782,8 +782,8 @@ uint64_t sys_sigsuspend(const sigset_t *mask, size_t sigsetsize) {
 
 void task_fill_siginfo(siginfo_t *info, int sig, int code) {
     signal_fill_kernel_siginfo(info, sig, code);
-    info->__si_fields.__kill.si_pid = current_task ? current_task->pid : 0;
-    info->__si_fields.__kill.si_uid = current_task ? current_task->uid : 0;
+    info->_sifields._kill._pid = current_task ? current_task->pid : 0;
+    info->_sifields._kill._uid = current_task ? current_task->uid : 0;
 }
 
 static void signal_notify_signalfd(task_t *task, int sig, int code) {

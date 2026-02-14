@@ -572,6 +572,18 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
         ret = 0;
         break;
     }
+    case TCGETS2:
+        struct termios2 t2;
+        memcpy(&t2.c_iflag, &pair->term.c_iflag, sizeof(uint32_t));
+        memcpy(&t2.c_oflag, &pair->term.c_oflag, sizeof(uint32_t));
+        memcpy(&t2.c_cflag, &pair->term.c_cflag, sizeof(uint32_t));
+        memcpy(&t2.c_lflag, &pair->term.c_lflag, sizeof(uint32_t));
+        t2.c_line = pair->term.c_line;
+        memcpy(t2.c_cc, pair->term.c_cc, NCCS);
+        t2.c_ispeed = 0; // Not supported
+        t2.c_ospeed = 0; // Not supported
+        memcpy((void *)arg, &t2, sizeof(struct termios2));
+        return 0;
     case TCSETS:
     case TCSETSW:
     case TCSETSF: {
@@ -579,6 +591,17 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
         ret = 0;
         break;
     }
+    case TCSETS2:
+        struct termios2 t2_set;
+        memcpy(&t2_set, (void *)arg, sizeof(struct termios2));
+        memcpy(&pair->term.c_iflag, &t2_set.c_iflag, sizeof(uint32_t));
+        memcpy(&pair->term.c_oflag, &t2_set.c_oflag, sizeof(uint32_t));
+        memcpy(&pair->term.c_cflag, &t2_set.c_cflag, sizeof(uint32_t));
+        memcpy(&pair->term.c_lflag, &t2_set.c_lflag, sizeof(uint32_t));
+        pair->term.c_line = t2_set.c_line;
+        memcpy(pair->term.c_cc, t2_set.c_cc, NCCS);
+        // Ignore ispeed and ospeed as they are not supported
+        return 0;
     case TIOCGPGRP:
         ret = copy_to_user(arg, (const void *)&pair->frontProcessGroup,
                            sizeof(int))

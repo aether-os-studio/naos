@@ -12,6 +12,7 @@
 *.a
 *.o
 *.gz
+*.zst
 *.xz
 *.dtb
 *.log

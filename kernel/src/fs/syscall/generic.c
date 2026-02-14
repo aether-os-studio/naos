@@ -5,9 +5,9 @@
 
 uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
                    uint64_t flags, void *data) {
-    char devname[128] = {0};
+    char devname[128] = "none";
     char dirname[512] = {0};
-    char type[128] = {0};
+    char type[128] = "tmpfs";
 
     if (type_user) {
         if (copy_from_user_str(type, type_user, sizeof(type)))
@@ -21,6 +21,10 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
         return (uint64_t)-EFAULT;
 
     if (flags & MS_SLAVE) {
+        return 0;
+    }
+
+    if (flags & MS_BIND) {
         return 0;
     }
 
@@ -40,10 +44,6 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
     //     return 0;
     // }
 
-    if (flags & MS_BIND) {
-        return -EINVAL;
-    }
-
     if (flags & MS_MOVE) {
         if (flags & (MS_REMOUNT | MS_BIND)) {
             return (uint64_t)-EINVAL;
@@ -56,27 +56,26 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
         return vfs_remount(old_mount, dir);
     }
 
-    if (!type_user)
-        return -EINVAL;
-
     uint64_t dev_nr = 0;
     vfs_node_t dev = vfs_open((const char *)devname, 0);
     if (dev) {
         dev_nr = dev->rdev;
     }
 
-    int child_count = 0;
-    vfs_node_t pos, tmp;
-    llist_for_each(pos, tmp, &dir->childs, node_for_childs) { child_count++; }
-    vfs_node_t *childs = calloc(child_count, sizeof(vfs_node_t));
-    int i = 0;
-    llist_for_each(pos, tmp, &dir->childs, node_for_childs) {
-        childs[i++] = pos;
-    }
-    for (i = 0; i < child_count; i++) {
-        vfs_free(childs[i]);
-    }
-    free(childs);
+    // int child_count = 0;
+    // vfs_node_t pos, tmp;
+    // llist_for_each(pos, tmp, &dir->childs, node_for_childs) { child_count++;
+    // } vfs_node_t *childs = calloc(child_count, sizeof(vfs_node_t)); int i =
+    // 0; llist_for_each(pos, tmp, &dir->childs, node_for_childs) {
+    //     childs[i++] = pos;
+    // }
+    // for (i = 0; i < child_count; i++) {
+    //     vfs_node_t node = childs[i];
+    //     if (node == node->root)
+    //         continue;
+    //     vfs_free(node);
+    // }
+    // free(childs);
 
     int ret = vfs_mount(dev_nr, dir, (const char *)type);
     if (ret < 0)
@@ -141,6 +140,7 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
     self->fd_info->fds[i]->node = node;
     self->fd_info->fds[i]->offset = 0;
     self->fd_info->fds[i]->flags = flags;
+    self->fd_info->fds[i]->close_on_exec = !!(flags & O_CLOEXEC);
     node->refcount++;
 
     procfs_on_open_file(self, i);
@@ -835,7 +835,7 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
     case F_GETFL:
         mutex_unlock(&fcntl_lock);
         return self->fd_info->fds[fd]->flags |
-               (self->fd_info->fds[fd]->close_on_exec ? FD_CLOEXEC : 0);
+               (self->fd_info->fds[fd]->close_on_exec ? O_CLOEXEC : 0);
     case F_SETFL:
         uint32_t valid_flags = O_APPEND | O_DIRECT | O_NOATIME | O_NONBLOCK;
         self->fd_info->fds[fd]->flags &= ~valid_flags;
@@ -926,7 +926,7 @@ uint64_t do_stat_path(const char *path, struct stat *buf) {
 
     vfs_node_t node = vfs_open(path, O_NOFOLLOW);
     if (!node) {
-        // serial_fprintk("Stating file %s failed\n", fn);
+        // serial_fprintk("Stating file %s failed\n", path);
         return (uint64_t)-ENOENT;
     }
 
@@ -1135,9 +1135,8 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
 }
 
 size_t do_access(char *filename, int mode) {
-    (void)mode;
-    struct stat buf;
-    return do_stat_path(filename, &buf);
+    struct stat tmp;
+    return do_stat_path(filename, &tmp);
 }
 
 size_t sys_access(char *filename_user, int mode) {

@@ -339,8 +339,8 @@ int socket_bind(uint64_t fd, const struct sockaddr_un *addr,
         if (browse != sock && browse->bindAddr &&
             strlen(browse->bindAddr) == safeLen &&
             memcmp(safe, browse->bindAddr, safeLen) == 0) {
-            free(safe);
-            return -(EADDRINUSE);
+            // free(safe);
+            // return -(EADDRINUSE);
         }
         browse = browse->next;
     }

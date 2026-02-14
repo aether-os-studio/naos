@@ -256,6 +256,18 @@ void proc_init() {
     sys_kernel_osrelease_handle->task = NULL;
     sprintf(sys_kernel_osrelease_node->name, "proc_sys_kernel_osrelease");
 
+    vfs_node_t pressure = vfs_child_append(procfs_root, "pressure", NULL);
+    pressure->type = file_dir;
+    pressure->mode = 0644;
+    vfs_node_t pressure_memory = vfs_child_append(pressure, "memory", NULL);
+    pressure_memory->type = file_none;
+    pressure_memory->mode = 0644;
+    proc_handle_t *pressure_memory_handle = malloc(sizeof(proc_handle_t));
+    pressure_memory->handle = pressure_memory_handle;
+    pressure_memory_handle->node = pressure_memory;
+    pressure_memory_handle->task = NULL;
+    sprintf(pressure_memory->name, "proc_pressure_memory");
+
     struct mount_point *tmp1, *tmp2;
     llist_for_each(tmp1, tmp2, &mount_points, node) {
         procfs_mount_point_count++;

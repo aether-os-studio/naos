@@ -2,6 +2,8 @@
 #include <task/task.h>
 
 #include <fs/vfs/dev.h>
+#include <fs/vfs/ram.h>
+#include <fs/vfs/configfs.h>
 #include <drivers/bus/pci.h>
 #include <drivers/fdt/fdt.h>
 #include <drivers/drm/drm.h>
@@ -36,6 +38,8 @@ void init_thread(uint64_t arg) {
 
     futex_init();
     fs_syscall_init();
+    ramfs_init();
+    configfs_init();
     socketfs_init();
     pipefs_init();
     fsfdfs_init();

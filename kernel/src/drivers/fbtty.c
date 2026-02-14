@@ -103,11 +103,34 @@ int terminal_ioctl(tty_t *device, uint32_t cmd, uint64_t arg) {
         }
         memcpy((void *)arg, &device->termios, sizeof(termios));
         return 0;
+    case TCGETS2:
+        struct termios2 t2;
+        memcpy(&t2.c_iflag, &device->termios.c_iflag, sizeof(uint32_t));
+        memcpy(&t2.c_oflag, &device->termios.c_oflag, sizeof(uint32_t));
+        memcpy(&t2.c_cflag, &device->termios.c_cflag, sizeof(uint32_t));
+        memcpy(&t2.c_lflag, &device->termios.c_lflag, sizeof(uint32_t));
+        t2.c_line = device->termios.c_line;
+        memcpy(t2.c_cc, device->termios.c_cc, NCCS);
+        t2.c_ispeed = 0; // Not supported
+        t2.c_ospeed = 0; // Not supported
+        memcpy((void *)arg, &t2, sizeof(struct termios2));
+        return 0;
     case TCSETS:
         if (check_user_overflow(arg, sizeof(termios))) {
             return -EFAULT;
         }
         memcpy(&device->termios, (void *)arg, sizeof(termios));
+        return 0;
+    case TCSETS2:
+        struct termios2 t2_set;
+        memcpy(&t2_set, (void *)arg, sizeof(struct termios2));
+        memcpy(&device->termios.c_iflag, &t2_set.c_iflag, sizeof(uint32_t));
+        memcpy(&device->termios.c_oflag, &t2_set.c_oflag, sizeof(uint32_t));
+        memcpy(&device->termios.c_cflag, &t2_set.c_cflag, sizeof(uint32_t));
+        memcpy(&device->termios.c_lflag, &t2_set.c_lflag, sizeof(uint32_t));
+        device->termios.c_line = t2_set.c_line;
+        memcpy(device->termios.c_cc, t2_set.c_cc, NCCS);
+        // Ignore ispeed and ospeed as they are not supported
         return 0;
     case TCSETSW:
         if (check_user_overflow(arg, sizeof(termios))) {

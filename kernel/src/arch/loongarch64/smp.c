@@ -12,8 +12,6 @@ void smp_init(void) { boot_smp_init((uintptr_t)_ap_start); }
 
 extern void trap_entry();
 
-extern bool aether_os_started;
-
 void ap_kmain() {
     // 设置异常入口地址（必须 4KB 对齐）
     uint64_t eentry = (uint64_t)trap_entry;
@@ -24,10 +22,6 @@ void ap_kmain() {
     csr_write(LOONGARCH_CSR_ESTAT, 0); // 清除中断状态
 
     spin_unlock(&ap_startup_lock);
-
-    while (!aether_os_started) {
-        arch_pause();
-    }
 
     printk("AP %d started\n", csr_read(0x20));
 

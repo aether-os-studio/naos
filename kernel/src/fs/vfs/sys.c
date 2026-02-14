@@ -211,6 +211,10 @@ void sysfs_init() {
     sysfs_root = fake_sysfs_root;
 
     vfs_mkdir("/sys/fs/cgroup");
+    vfs_mkdir("/sys/fs/fuse/connections");
+
+    vfs_mkdir("/sys/kernel/debug");
+    vfs_mkdir("/sys/kernel/tracing");
 
     vfs_mkdir("/sys/devices");
 

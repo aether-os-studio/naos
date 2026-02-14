@@ -71,6 +71,8 @@ void procfs_nodes_init() {
     create_procfs_handle("proc_sys_kernel_osrelease",
                          proc_sys_kernel_osrelease_read,
                          proc_sys_kernel_osrelease_stat, NULL);
+    create_procfs_handle("proc_pressure_memory", proc_pressure_memory_read,
+                         proc_pressure_memory_stat, NULL);
 }
 
 size_t procfs_read_dispatch(proc_handle_t *handle, void *addr, size_t offset,

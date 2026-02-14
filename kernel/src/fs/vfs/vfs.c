@@ -62,16 +62,13 @@ void vfs_free_handle(vfs_node_t node) {
 void vfs_free(vfs_node_t vfs) {
     if (vfs == NULL)
         return;
-    if (!(vfs->type & file_symlink)) {
-        vfs_node_t child, tmp;
-        llist_for_each(child, tmp, &vfs->childs, node_for_childs) {
-            vfs_free(child);
-        }
+    vfs_node_t child, tmp;
+    llist_for_each(child, tmp, &vfs->childs, node_for_childs) {
+        vfs_free(child);
     }
+    llist_delete(&vfs->node_for_childs);
     llist_delete(&vfs->node);
     vfs_free_handle(vfs);
-    if (vfs->parent)
-        llist_delete(&vfs->node_for_childs);
     free(vfs->name);
     free(vfs);
 }
@@ -803,14 +800,16 @@ int vfs_close(vfs_node_t node) {
         return 0;
     if (node->type & file_dir)
         return 0;
-    fs_t *fs = all_fs[node->fsid];
-    if (node->refcount > 1 && fs && fs->flags & FS_FLAGS_NEED_OPEN) {
-        callbackof(node, close)(node->handle);
-        return 0;
-    }
     if (node->refcount > 0)
         node->refcount--;
     if (node->refcount <= 0) {
+        if (node->fsid && node->fsid < fs_nextid) {
+            fs_t *fs = all_fs[node->fsid];
+            if (node->refcount > 1 && fs && fs->flags & FS_FLAGS_NEED_OPEN) {
+                callbackof(node, close)(node->handle);
+                return 0;
+            }
+        }
         node->flags &= ~VFS_NODE_FLAGS_OPENED;
         bool real_close = callbackof(node, close)(node->handle);
         if (real_close) {

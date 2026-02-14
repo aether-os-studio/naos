@@ -81,7 +81,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
     // if (check_user_overflow((uint64_t)timeout, sizeof(struct timespec)))
     //     return (uint64_t)-EFAULT;
 
-    switch (op) {
+    switch (op & 0xFF) {
     case FUTEX_WAIT_PRIVATE:
     case FUTEX_WAIT: {
         int current = *(int *)uaddr;

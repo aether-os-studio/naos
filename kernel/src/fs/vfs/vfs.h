@@ -164,6 +164,7 @@ typedef struct vfs_callback {
 
 enum {
     TMPFS_DEV_MAJOR = 240,
+    RAMFS_DEV_MAJOR,
     DEVFS_DEV_MAJOR,
     PROCFS_DEV_MAJOR,
     SYSFS_DEV_MAJOR,

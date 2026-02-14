@@ -40,10 +40,10 @@ typedef struct int_timer_internal {
     uint64_t reset;
 } int_timer_internal_t;
 
-union sigval {
+typedef union sigval {
     int sival_int;
     void *sival_ptr;
-};
+} sigval_t;
 
 #define SIGEV_SIGNAL 0    /* notify via signal */
 #define SIGEV_NONE 1      /* other notification: meaningless */
@@ -106,70 +106,95 @@ typedef struct sigaction {
 #define CLD_STOPPED 5
 #define CLD_CONTINUED 6
 
-typedef struct {
-    int si_signo; /* 信号编号 */
-    int si_errno; /* errno值 */
-    int si_code;  /* 信号代码 */
+union __sifields {
+    /* kill() */
+    struct {
+        int _pid;      /* sender's pid */
+        uint32_t _uid; /* sender's uid */
+    } _kill;
 
-    union {
-        int _pad[29]; /* 为兼容性保留的空间 */
+    /* POSIX.1b timers */
+    struct {
+        int _tid;         /* timer id */
+        int _overrun;     /* overrun count */
+        sigval_t _sigval; /* same as below */
+        int _sys_private; /* Not used by the kernel. Historic leftover. Always
+                             0. */
+    } _timer;
 
-        /* SIGKILL, SIGTERM, SIGINT, ... */
-        struct {
-            int64_t si_pid; /* 发送进程的PID */
-            int64_t si_uid; /* 发送进程的真实UID */
-        } __kill;
+    /* POSIX.1b signals */
+    struct {
+        int _pid;      /* sender's pid */
+        uint32_t _uid; /* sender's uid */
+        sigval_t _sigval;
+    } _rt;
 
-        /* POSIX.1b 计时器 */
-        struct {
-            int si_tid;      /* 定时器ID */
-            int si_overrun;  /* 超过次数 */
-            void *si_sigval; /* 信号值 */
-        } __timer;
+    /* SIGCHLD */
+    struct {
+        int _pid;      /* which child */
+        uint32_t _uid; /* sender's uid */
+        int _status;   /* exit code */
+        long _utime;
+        long _stime;
+    } _sigchld;
 
-        /* POSIX.1b 实时信号 */
-        struct {
-            int64_t si_pid;  /* 发送进程的PID */
-            int64_t si_uid;  /* 发送进程的真实UID */
-            void *si_sigval; /* 信号值 */
-        } __rt;
+    /* SIGILL, SIGFPE, SIGSEGV, SIGBUS, SIGTRAP, SIGEMT */
+    struct {
+        void *_addr; /* faulting insn/memory ref. */
 
-        /* SIGCHLD */
-        struct {
-            int64_t si_pid; /* 终止的子进程PID */
-            int64_t si_uid; /* 子进程的真实UID */
-            int si_status;  /* 退出状态 */
-            int64_t si_utime;
-            int64_t si_stime;
-        } __sigchld;
+#define __ADDR_BND_PKEY_PAD                                                    \
+    (__alignof__(void *) < sizeof(short) ? sizeof(short) : __alignof__(void *))
+        union {
+            /* used on alpha and sparc */
+            int _trapno; /* TRAP # which caused the signal */
+            /*
+             * used when si_code=BUS_MCEERR_AR or
+             * used when si_code=BUS_MCEERR_AO
+             */
+            short _addr_lsb; /* LSB of the reported address */
+            /* used when si_code=SEGV_BNDERR */
+            struct {
+                char _dummy_bnd[__ADDR_BND_PKEY_PAD];
+                void *_lower;
+                void *_upper;
+            } _addr_bnd;
+            /* used when si_code=SEGV_PKUERR */
+            struct {
+                char _dummy_pkey[__ADDR_BND_PKEY_PAD];
+                uint32_t _pkey;
+            } _addr_pkey;
+            /* used when si_code=TRAP_PERF */
+            struct {
+                unsigned long _data;
+                uint32_t _type;
+                uint32_t _flags;
+            } _perf;
+        };
+    } _sigfault;
 
-        /* SIGILL, SIGFPE, SIGSEGV, SIGBUS, SIGTRAP */
-        struct {
-            void *si_addr; /* 导致错误的地址 */
-            short si_addr_lsb;
-            union {
-                struct {
-                    void *si_lower;
-                    void *si_upper;
-                } __addr_bnd;
-                unsigned int si_pkey;
-            } __bounds;
-        } __sigfault;
+    /* SIGPOLL */
+    struct {
+        long _band; /* POLL_IN, POLL_OUT, POLL_MSG */
+        int _fd;
+    } _sigpoll;
 
-        /* SIGPOLL/SIGIO */
-        struct {
-            long si_band; /* POLL_IN, POLL_OUT, POLL_MSG */
-            int si_fd;
-        } __sigpoll;
+    /* SIGSYS */
+    struct {
+        void *_call_addr;   /* calling user insn */
+        int _syscall;       /* triggering system call number */
+        unsigned int _arch; /* AUDIT_ARCH_* of syscall */
+    } _sigsys;
+};
 
-        /* SIGSYS */
-        struct {
-            void *si_call_addr;   /* 系统调用指令地址 */
-            int si_syscall;       /* 系统调用编号 */
-            unsigned int si_arch; /* 体系结构 */
-        } __sigsys;
-    } __si_fields;
-} siginfo_t;
+#define __SIGINFO                                                              \
+    struct {                                                                   \
+        int si_signo;                                                          \
+        int si_errno;                                                          \
+        int si_code;                                                           \
+        union __sifields _sifields;                                            \
+    }
+
+typedef __SIGINFO siginfo_t;
 
 typedef struct pending_signal {
     int sig;

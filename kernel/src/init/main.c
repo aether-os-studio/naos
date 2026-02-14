@@ -18,8 +18,6 @@
 
 extern void acpi_init();
 
-bool aether_os_started = false;
-
 void kmain(void) {
     arch_disable_interrupt();
 
@@ -48,8 +46,6 @@ void kmain(void) {
     devfs_nodes_init();
 
     printk("Aether-OS starting...\n");
-
-    aether_os_started = true;
 
     proc_init();
 

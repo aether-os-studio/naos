@@ -27,6 +27,8 @@
 #define O_WRONLY 01
 #define O_RDWR 02
 
+#define O_ACCMODE_FLAGS (O_RDONLY | O_WRONLY | O_RDWR)
+
 #define O_CREAT 0100
 #define O_EXCL 0200
 #define O_NOCTTY 0400
@@ -47,6 +49,10 @@
 #define O_PATH 010000000
 #define O_TMPFILE 020200000
 #define O_NDELAY O_NONBLOCK
+
+#define O_STATUS_FLAGS                                                         \
+    (O_APPEND | O_NONBLOCK | O_DSYNC | O_ASYNC | O_DIRECT | O_NOATIME |        \
+     O_SYNC | O_PATH)
 
 #define FD_CLOEXEC 0x1
 
@@ -90,6 +96,10 @@ struct dirent {
 #define TCSETA 0x5406
 #define TCSETAW 0x5407
 #define TCSETAF 0x5408
+#define TCGETS2 _IOR('T', 0x2A, struct termios2)
+#define TCSETS2 _IOW('T', 0x2B, struct termios2)
+#define TCSETSW2 _IOW('T', 0x2C, struct termios2)
+#define TCSETSF2 _IOW('T', 0x2D, struct termios2)
 #define TCSBRK 0x5409
 #define TCXONC 0x540A
 #define TCFLSH 0x540B
