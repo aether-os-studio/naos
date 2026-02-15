@@ -1,6 +1,7 @@
 #pragma once
 
 #include <libs/klibc.h>
+#include <libs/mutex.h>
 #include <fs/termios.h>
 #include <mm/shm.h>
 
@@ -69,8 +70,18 @@ typedef struct fd fd_t;
 
 typedef struct fd_info {
     fd_t *fds[MAX_FD_NUM];
+    mutex_t fdt_lock;
     int ref_count;
 } fd_info_t;
+
+#define with_fd_info_lock(fd_info, op)                                         \
+    do {                                                                       \
+        mutex_lock(&fd_info->fdt_lock);                                        \
+        do {                                                                   \
+            op;                                                                \
+        } while (0);                                                           \
+        mutex_unlock(&fd_info->fdt_lock);                                      \
+    } while (0)
 
 #define TASK_NAME_MAX 128
 

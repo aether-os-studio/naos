@@ -236,9 +236,11 @@ static size_t unix_socket_recv_files_from_self(socket_t *self, int *fds_out,
             break;
         }
 
-        current_task->fd_info->fds[new_fd] = malloc(sizeof(fd_t));
-        memcpy(current_task->fd_info->fds[new_fd], self->pending_files[i],
-               sizeof(fd_t));
+        with_fd_info_lock(current_task->fd_info, {
+            current_task->fd_info->fds[new_fd] = malloc(sizeof(fd_t));
+            memcpy(current_task->fd_info->fds[new_fd], self->pending_files[i],
+                   sizeof(fd_t));
+        });
         free(self->pending_files[i]);
         self->pending_files[i] = NULL;
 
@@ -306,12 +308,14 @@ int socket_socket(int domain, int type, int protocol) {
         return -EMFILE;
     }
 
-    current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
-    memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
-    current_task->fd_info->fds[i]->node = socknode;
-    current_task->fd_info->fds[i]->offset = 0;
-    current_task->fd_info->fds[i]->close_on_exec = !!(type & O_CLOEXEC);
-    procfs_on_open_file(current_task, i);
+    with_fd_info_lock(current_task->fd_info, {
+        current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
+        memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
+        current_task->fd_info->fds[i]->node = socknode;
+        current_task->fd_info->fds[i]->offset = 0;
+        current_task->fd_info->fds[i]->close_on_exec = !!(type & O_CLOEXEC);
+        procfs_on_open_file(current_task, i);
+    });
 
     handle->fd = current_task->fd_info->fds[i];
 
@@ -425,12 +429,14 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
         return -EMFILE;
     }
 
-    current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
-    memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
-    current_task->fd_info->fds[i]->node = acceptFd;
-    current_task->fd_info->fds[i]->offset = 0;
-    current_task->fd_info->fds[i]->flags = flags;
-    procfs_on_open_file(current_task, i);
+    with_fd_info_lock(current_task->fd_info, {
+        current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
+        memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
+        current_task->fd_info->fds[i]->node = acceptFd;
+        current_task->fd_info->fds[i]->offset = 0;
+        current_task->fd_info->fds[i]->flags = flags;
+        procfs_on_open_file(current_task, i);
+    });
 
     socket_handle_t *accept_handle = acceptFd->handle;
     accept_handle->fd = current_task->fd_info->fds[i];
@@ -876,26 +882,28 @@ int unix_socket_pair(int type, int protocol, int *sv) {
     if (type & O_NONBLOCK)
         flags |= O_NONBLOCK;
 
-    current_task->fd_info->fds[fd1] = malloc(sizeof(fd_t));
-    memset(current_task->fd_info->fds[fd1], 0, sizeof(fd_t));
-    current_task->fd_info->fds[fd1]->node = node1;
-    current_task->fd_info->fds[fd1]->offset = 0;
-    current_task->fd_info->fds[fd1]->flags = flags;
-    current_task->fd_info->fds[fd1]->close_on_exec = !!(type & O_CLOEXEC);
-    procfs_on_open_file(current_task, fd1);
+    with_fd_info_lock(current_task->fd_info, {
+        current_task->fd_info->fds[fd1] = malloc(sizeof(fd_t));
+        memset(current_task->fd_info->fds[fd1], 0, sizeof(fd_t));
+        current_task->fd_info->fds[fd1]->node = node1;
+        current_task->fd_info->fds[fd1]->offset = 0;
+        current_task->fd_info->fds[fd1]->flags = flags;
+        current_task->fd_info->fds[fd1]->close_on_exec = !!(type & O_CLOEXEC);
+        procfs_on_open_file(current_task, fd1);
 
-    current_task->fd_info->fds[fd2] = malloc(sizeof(fd_t));
-    memset(current_task->fd_info->fds[fd2], 0, sizeof(fd_t));
-    current_task->fd_info->fds[fd2]->node = node2;
-    current_task->fd_info->fds[fd2]->offset = 0;
-    current_task->fd_info->fds[fd2]->flags = flags;
-    current_task->fd_info->fds[fd2]->close_on_exec = !!(type & O_CLOEXEC);
-    procfs_on_open_file(current_task, fd2);
+        current_task->fd_info->fds[fd2] = malloc(sizeof(fd_t));
+        memset(current_task->fd_info->fds[fd2], 0, sizeof(fd_t));
+        current_task->fd_info->fds[fd2]->node = node2;
+        current_task->fd_info->fds[fd2]->offset = 0;
+        current_task->fd_info->fds[fd2]->flags = flags;
+        current_task->fd_info->fds[fd2]->close_on_exec = !!(type & O_CLOEXEC);
+        procfs_on_open_file(current_task, fd2);
 
-    socket_handle_t *h1 = node1->handle;
-    socket_handle_t *h2 = node2->handle;
-    h1->fd = current_task->fd_info->fds[fd1];
-    h2->fd = current_task->fd_info->fds[fd2];
+        socket_handle_t *h1 = node1->handle;
+        socket_handle_t *h2 = node2->handle;
+        h1->fd = current_task->fd_info->fds[fd1];
+        h2->fd = current_task->fd_info->fds[fd2];
+    });
 
     sv[0] = fd1;
     sv[1] = fd2;

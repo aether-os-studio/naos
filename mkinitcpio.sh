@@ -49,6 +49,9 @@ cp -r ${PROJECT_ROOT}/init ${PROJECT_ROOT}/initramfs-${ARCH}/
 # Copy modules
 cp ${PROJECT_ROOT}/modules-${ARCH}/* ${PROJECT_ROOT}/initramfs-${ARCH}/lib/modules/
 
+# Copy firmwares
+cp -r ${PROJECT_ROOT}/firmware ${PROJECT_ROOT}/initramfs-${ARCH}/lib/
+
 cd ${PROJECT_ROOT}/initramfs-${ARCH}
 
 # Make initramfs.img

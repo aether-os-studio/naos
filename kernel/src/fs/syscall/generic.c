@@ -135,15 +135,16 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
             vfs_chmod(name, mode ? (mode & 0777) : 0777);
     }
 
-    self->fd_info->fds[i] = malloc(sizeof(fd_t));
-    memset(self->fd_info->fds[i], 0, sizeof(fd_t));
-    self->fd_info->fds[i]->node = node;
-    self->fd_info->fds[i]->offset = 0;
-    self->fd_info->fds[i]->flags = flags;
-    self->fd_info->fds[i]->close_on_exec = !!(flags & O_CLOEXEC);
-    node->refcount++;
-
-    procfs_on_open_file(self, i);
+    with_fd_info_lock(self->fd_info, {
+        self->fd_info->fds[i] = malloc(sizeof(fd_t));
+        memset(self->fd_info->fds[i], 0, sizeof(fd_t));
+        self->fd_info->fds[i]->node = node;
+        self->fd_info->fds[i]->offset = 0;
+        self->fd_info->fds[i]->flags = flags;
+        self->fd_info->fds[i]->close_on_exec = !!(flags & O_CLOEXEC);
+        node->refcount++;
+        procfs_on_open_file(self, i);
+    });
 
     return i;
 }
@@ -264,14 +265,16 @@ uint64_t sys_open_by_handle_at(int mountdirfd, struct file_handle *handle,
         return (uint64_t)-EMFILE;
     }
 
-    self->fd_info->fds[i] = malloc(sizeof(fd_t));
-    memset(self->fd_info->fds[i], 0, sizeof(fd_t));
-    self->fd_info->fds[i]->node = node;
-    self->fd_info->fds[i]->offset = 0;
-    self->fd_info->fds[i]->flags = flags;
-    node->refcount++;
+    with_fd_info_lock(self->fd_info, {
+        self->fd_info->fds[i] = malloc(sizeof(fd_t));
+        memset(self->fd_info->fds[i], 0, sizeof(fd_t));
+        self->fd_info->fds[i]->node = node;
+        self->fd_info->fds[i]->offset = 0;
+        self->fd_info->fds[i]->flags = flags;
+        node->refcount++;
 
-    procfs_on_open_file(self, i);
+        procfs_on_open_file(self, i);
+    });
 
     return i;
 }
@@ -298,19 +301,21 @@ uint64_t sys_close(uint64_t fd) {
         return (uint64_t)-EBADF;
     }
 
-    self->fd_info->fds[fd]->offset = 0;
-    if (self->fd_info->fds[fd]->node->lock.l_pid == self->pid) {
-        self->fd_info->fds[fd]->node->lock.l_type = F_UNLCK;
-        self->fd_info->fds[fd]->node->lock.l_pid = 0;
-    }
+    with_fd_info_lock(self->fd_info, {
+        self->fd_info->fds[fd]->offset = 0;
+        if (self->fd_info->fds[fd]->node->lock.l_pid == self->pid) {
+            self->fd_info->fds[fd]->node->lock.l_type = F_UNLCK;
+            self->fd_info->fds[fd]->node->lock.l_pid = 0;
+        }
 
-    vfs_close(self->fd_info->fds[fd]->node);
+        vfs_close(self->fd_info->fds[fd]->node);
 
-    free(self->fd_info->fds[fd]);
+        free(self->fd_info->fds[fd]);
 
-    self->fd_info->fds[fd] = NULL;
+        self->fd_info->fds[fd] = NULL;
 
-    procfs_on_close_file(self, fd);
+        procfs_on_close_file(self, fd);
+    });
 
     return 0;
 }
@@ -731,17 +736,19 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd) {
     if (!newf)
         return (uint64_t)-ENOSPC;
 
-    if (self->fd_info->fds[newfd]) {
-        vfs_close(self->fd_info->fds[newfd]->node);
-        free(self->fd_info->fds[newfd]);
-        self->fd_info->fds[newfd] = NULL;
-        procfs_on_close_file(self, newfd);
-    }
+    with_fd_info_lock(self->fd_info, {
+        if (self->fd_info->fds[newfd]) {
+            vfs_close(self->fd_info->fds[newfd]->node);
+            free(self->fd_info->fds[newfd]);
+            self->fd_info->fds[newfd] = NULL;
+            procfs_on_close_file(self, newfd);
+        }
 
-    self->fd_info->fds[newfd] = newf;
-    newf->flags &= ~(uint64_t)FD_CLOEXEC;
-    newf->close_on_exec = false;
-    procfs_on_open_file(self, newfd);
+        self->fd_info->fds[newfd] = newf;
+        newf->flags &= ~(uint64_t)FD_CLOEXEC;
+        newf->close_on_exec = false;
+        procfs_on_open_file(self, newfd);
+    });
 
     return newfd;
 }
@@ -777,8 +784,6 @@ uint64_t sys_dup(uint64_t fd) {
     return sys_dup2(fd, i);
 }
 
-mutex_t fcntl_lock;
-
 #define RWF_WRITE_LIFE_NOT_SET 0
 #define RWH_WRITE_LIFE_NONE 1
 #define RWH_WRITE_LIFE_SHORT 2
@@ -791,17 +796,13 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
     if (fd > MAX_FD_NUM || !self->fd_info->fds[fd])
         return (uint64_t)-EBADF;
 
-    mutex_lock(&fcntl_lock);
-
     uint64_t i;
 
     switch (command) {
     case F_GETFD:
-        mutex_unlock(&fcntl_lock);
         return (self->fd_info->fds[fd]->close_on_exec) ? 1 : 0;
     case F_SETFD:
         self->fd_info->fds[fd]->close_on_exec = !!(arg & 1);
-        mutex_unlock(&fcntl_lock);
         return 0;
     case F_DUPFD_CLOEXEC:
         for (i = arg; i < MAX_FD_NUM; i++) {
@@ -817,7 +818,6 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         if ((int64_t)newfd >= 0) {
             self->fd_info->fds[newfd]->close_on_exec = true;
         }
-        mutex_unlock(&fcntl_lock);
         return newfd;
     case F_DUPFD:
         for (i = arg; i < MAX_FD_NUM; i++) {
@@ -827,26 +827,21 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         }
 
         if (i == MAX_FD_NUM) {
-            mutex_unlock(&fcntl_lock);
             return (uint64_t)-EMFILE;
         }
-        mutex_unlock(&fcntl_lock);
         return sys_dup2(fd, i);
     case F_GETFL:
-        mutex_unlock(&fcntl_lock);
         return self->fd_info->fds[fd]->flags |
                (self->fd_info->fds[fd]->close_on_exec ? O_CLOEXEC : 0);
     case F_SETFL:
         uint32_t valid_flags = O_APPEND | O_DIRECT | O_NOATIME | O_NONBLOCK;
         self->fd_info->fds[fd]->flags &= ~valid_flags;
         self->fd_info->fds[fd]->flags |= arg & valid_flags;
-        mutex_unlock(&fcntl_lock);
         return 0;
     case F_SETLKW:
     case F_SETLK: {
         struct flock lock;
         if (check_user_overflow(arg, sizeof(struct flock))) {
-            mutex_unlock(&fcntl_lock);
             return -EFAULT;
         }
         memcpy(&lock, (void *)arg, sizeof(struct flock));
@@ -856,18 +851,15 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
 
         if (lock.l_type != F_RDLCK && lock.l_type != F_WRLCK &&
             lock.l_type != F_UNLCK) {
-            mutex_unlock(&fcntl_lock);
             return -EINVAL;
         }
 
         if (lock.l_type == F_UNLCK) {
             if (file_lock->l_pid != self->pid) {
-                mutex_unlock(&fcntl_lock);
                 return -EACCES;
             }
             file_lock->l_type = F_UNLCK;
             file_lock->l_pid = 0;
-            mutex_unlock(&fcntl_lock);
             return 0;
         }
 
@@ -877,30 +869,22 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
                  !(lock.l_type == F_WRLCK && file_lock->l_type == F_RDLCK))) {
                 file_lock->l_type = lock.l_type;
                 file_lock->l_pid = self->pid;
-                mutex_unlock(&fcntl_lock);
                 return 0;
             }
 
             if (command == F_SETLK) {
-                mutex_unlock(&fcntl_lock);
                 return -EAGAIN;
             }
-
-            mutex_unlock(&fcntl_lock);
 
             arch_enable_interrupt();
             schedule(SCHED_FLAG_YIELD);
             arch_disable_interrupt();
-
-            mutex_lock(&fcntl_lock);
         }
     }
     case F_GET_SEALS:
     case F_ADD_SEALS:
-        mutex_unlock(&fcntl_lock);
         return 0;
     case F_GET_RW_HINT:
-        mutex_unlock(&fcntl_lock);
         if (!self->fd_info->fds[fd]->node->rw_hint) {
             return 0;
         }
@@ -908,15 +892,12 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
 
     case F_SET_RW_HINT:
         if (arg < RWH_WRITE_LIFE_NONE || arg > RWH_WRITE_LIFE_EXTREME) {
-            mutex_unlock(&fcntl_lock);
             return -EINVAL;
         }
         self->fd_info->fds[fd]->node->rw_hint = arg;
-        mutex_unlock(&fcntl_lock);
         return 0;
     default:
         printk("Unsupported fcntl command %#010lx\n", command);
-        mutex_unlock(&fcntl_lock);
         return (uint64_t)-EINVAL;
     }
 }

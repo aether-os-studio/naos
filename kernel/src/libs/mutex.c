@@ -1,4 +1,5 @@
 #include <libs/mutex.h>
+#include <task/task.h>
 
 void mutex_init(mutex_t *mtx) {
     spin_init(&mtx->guard);

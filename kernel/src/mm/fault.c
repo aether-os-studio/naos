@@ -43,10 +43,9 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
 #else
         flags |= ARCH_PT_FLAG_WRITEABLE;
 #endif
-        // flags &= ~ARCH_PT_FLAG_COW;
+        flags &= ~ARCH_PT_FLAG_COW;
 
-        vma_t *vma =
-            vma_find_intersection(mgr, vaddr, vaddr + DEFAULT_PAGE_SIZE);
+        vma_t *vma = vma_find(mgr, vaddr);
 
         if (vma &&
             ((vma->vm_flags & VMA_SHM) || (vma->vm_flags & VMA_DEVICE))) {

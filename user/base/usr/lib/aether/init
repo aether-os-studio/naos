@@ -6,5 +6,5 @@ touch /run/udev/data/c13:1
 touch /run/udev/data/c13:2
 touch /run/udev/data/c13:3
 
-# seatd &
-exec xinit
+seatd &
+exec weston

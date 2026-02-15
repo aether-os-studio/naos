@@ -108,17 +108,14 @@ found:;
     node->fsid = fsfd_id;
     node->handle = handle;
 
-    current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
-    memset(current_task->fd_info->fds[fd], 0, sizeof(fd_t));
-    if (!current_task->fd_info->fds[fd]) {
-        vfs_free(node);
-        free(handle);
-        return (uint64_t)-ENOMEM;
-    }
-    current_task->fd_info->fds[fd]->node = node;
-    current_task->fd_info->fds[fd]->offset = 0;
-    current_task->fd_info->fds[fd]->flags = flags;
-    procfs_on_open_file(current_task, fd);
+    with_fd_info_lock(current_task->fd_info, {
+        current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
+        memset(current_task->fd_info->fds[fd], 0, sizeof(fd_t));
+        current_task->fd_info->fds[fd]->node = node;
+        current_task->fd_info->fds[fd]->offset = 0;
+        current_task->fd_info->fds[fd]->flags = flags;
+        procfs_on_open_file(current_task, fd);
+    });
 
     return fd;
 }
@@ -582,21 +579,15 @@ uint64_t sys_fsmount(int fd, uint32_t flags, uint32_t attr_flags) {
     mnt_node->fsid = mntfd_id;
     mnt_node->handle = mnt_handle;
 
-    current_task->fd_info->fds[mnt_fd] = malloc(sizeof(fd_t));
-    memset(current_task->fd_info->fds[mnt_fd], 0, sizeof(fd_t));
-    if (!current_task->fd_info->fds[mnt_fd]) {
-        vfs_free(mnt_node);
-        if (mnt_handle->source)
-            free(mnt_handle->source);
-        free(mnt_handle);
-        return -ENOMEM;
-    }
-
-    current_task->fd_info->fds[mnt_fd]->node = mnt_node;
-    current_task->fd_info->fds[mnt_fd]->offset = 0;
-    current_task->fd_info->fds[mnt_fd]->close_on_exec =
-        !!(flags & FSMOUNT_CLOEXEC);
-    procfs_on_open_file(current_task, mnt_fd);
+    with_fd_info_lock(current_task->fd_info, {
+        current_task->fd_info->fds[mnt_fd] = malloc(sizeof(fd_t));
+        memset(current_task->fd_info->fds[mnt_fd], 0, sizeof(fd_t));
+        current_task->fd_info->fds[mnt_fd]->node = mnt_node;
+        current_task->fd_info->fds[mnt_fd]->offset = 0;
+        current_task->fd_info->fds[mnt_fd]->close_on_exec =
+            !!(flags & FSMOUNT_CLOEXEC);
+        procfs_on_open_file(current_task, mnt_fd);
+    });
 
     /* Mark context as mounted */
     ctx->state = FC_STATE_MOUNTED;

@@ -91,12 +91,15 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask,
     node->fsid = signalfdfs_id;
     node->handle = ctx;
     ctx->node = node;
-    current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
-    memset(current_task->fd_info->fds[fd], 0, sizeof(fd_t));
-    current_task->fd_info->fds[fd]->node = node;
-    current_task->fd_info->fds[fd]->offset = 0;
-    current_task->fd_info->fds[fd]->flags = flags;
-    procfs_on_open_file(current_task, fd);
+
+    with_fd_info_lock(current_task->fd_info, {
+        current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
+        memset(current_task->fd_info->fds[fd], 0, sizeof(fd_t));
+        current_task->fd_info->fds[fd]->node = node;
+        current_task->fd_info->fds[fd]->offset = 0;
+        current_task->fd_info->fds[fd]->flags = flags;
+        procfs_on_open_file(current_task, fd);
+    });
 
     return fd;
 }

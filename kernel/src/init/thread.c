@@ -64,7 +64,7 @@ void init_thread(uint64_t arg) {
 
     arch_input_dev_init();
 
-    // drm_init_after_pci_sysfs();
+    drm_init_after_pci_sysfs();
 
     real_socket_init();
 

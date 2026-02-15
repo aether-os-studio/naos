@@ -1030,24 +1030,17 @@ int netlink_socket(int domain, int type, int protocol) {
         flags |= O_NONBLOCK;
     }
 
-    current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
-    if (current_task->fd_info->fds[i] == NULL) {
-        spin_lock(&netlink_sockets_lock);
-        netlink_sockets[slot] = NULL;
-        spin_unlock(&netlink_sockets_lock);
-        free(nl_sk->buffer);
-        free(nl_sk);
-        free(handle);
-        return -ENOMEM;
-    }
-    memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
-    current_task->fd_info->fds[i]->node = socknode;
-    current_task->fd_info->fds[i]->offset = 0;
-    current_task->fd_info->fds[i]->flags = flags;
-    if (type & O_CLOEXEC) {
-        current_task->fd_info->fds[i]->close_on_exec = true;
-    }
-    procfs_on_open_file(current_task, i);
+    with_fd_info_lock(current_task->fd_info, {
+        current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
+        memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
+        current_task->fd_info->fds[i]->node = socknode;
+        current_task->fd_info->fds[i]->offset = 0;
+        current_task->fd_info->fds[i]->flags = flags;
+        if (type & O_CLOEXEC) {
+            current_task->fd_info->fds[i]->close_on_exec = true;
+        }
+        procfs_on_open_file(current_task, i);
+    });
 
     return i;
 }

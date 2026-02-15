@@ -1,6 +1,9 @@
 #pragma once
 
-#include <task/task.h>
+#include <libs/klibc.h>
+
+struct task;
+typedef struct task task_t;
 
 typedef struct wait_node {
     task_t *task;

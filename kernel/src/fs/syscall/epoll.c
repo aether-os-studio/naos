@@ -28,12 +28,14 @@ size_t epoll_create1(int flags) {
     node->handle = epoll;
     node->fsid = epollfs_id;
 
-    current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
-    memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
-    current_task->fd_info->fds[i]->node = node;
-    current_task->fd_info->fds[i]->offset = 0;
-    current_task->fd_info->fds[i]->flags = flags;
-    procfs_on_open_file(current_task, i);
+    with_fd_info_lock(current_task->fd_info, {
+        current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
+        memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
+        current_task->fd_info->fds[i]->node = node;
+        current_task->fd_info->fds[i]->offset = 0;
+        current_task->fd_info->fds[i]->flags = flags;
+        procfs_on_open_file(current_task, i);
+    });
 
     return i;
 }

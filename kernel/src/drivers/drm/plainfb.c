@@ -37,6 +37,9 @@ int plainfb_create_dumb(drm_device_t *drm_dev,
             // Allocate memory for framebuffer
             gpu_dev->dumbbuffers[i].addr = alloc_frames(
                 (args->size + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE);
+            memset((void *)phys_to_virt(gpu_dev->dumbbuffers[i].addr), 0,
+                   (args->size + DEFAULT_PAGE_SIZE - 1) &
+                       ~(DEFAULT_PAGE_SIZE - 1));
 
             args->handle = i;
             return 0;
@@ -596,7 +599,7 @@ void drm_plainfb_init() {
             malloc(sizeof(struct drm_mode_modeinfo));
         if (gpu_device->connectors[i]->modes) {
             struct drm_mode_modeinfo mode = {
-                .clock = fb->width * 60,
+                .clock = fb->width * HZ,
                 .hdisplay = fb->width,
                 .hsync_start = fb->width + 16,
                 .hsync_end = fb->width + 16 + 96,
@@ -605,7 +608,7 @@ void drm_plainfb_init() {
                 .vsync_start = fb->height + 10,
                 .vsync_end = fb->height + 10 + 2,
                 .vtotal = fb->height + 10 + 2 + 33,
-                .vrefresh = 60,
+                .vrefresh = HZ,
             };
             sprintf(mode.name, "%dx%d", fb->width, fb->height);
             memcpy(gpu_device->connectors[i]->modes, &mode,

@@ -63,16 +63,18 @@ void free_task(task_t *ptr) {
 
     if (ptr->fd_info) {
         if (--ptr->fd_info->ref_count <= 0) {
-            for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-                if (ptr->fd_info->fds[i]) {
-                    vfs_close(ptr->fd_info->fds[i]->node);
-                    free(ptr->fd_info->fds[i]);
+            with_fd_info_lock(current_task->fd_info, {
+                for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+                    if (ptr->fd_info->fds[i]) {
+                        vfs_close(ptr->fd_info->fds[i]->node);
+                        free(ptr->fd_info->fds[i]);
 
-                    ptr->fd_info->fds[i] = NULL;
+                        ptr->fd_info->fds[i] = NULL;
 
-                    procfs_on_close_file(ptr, i);
+                        procfs_on_close_file(ptr, i);
+                    }
                 }
-            }
+            });
             free(ptr->fd_info);
             ptr->fd_info = NULL;
         }
@@ -179,6 +181,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->fd_info = malloc(sizeof(fd_info_t));
     memset(task->fd_info, 0, sizeof(fd_info_t));
     memset(task->fd_info->fds, 0, sizeof(task->fd_info->fds));
+    mutex_init(&task->fd_info->fdt_lock);
     task->fd_info->fds[0] = malloc(sizeof(fd_t));
     memset(task->fd_info->fds[0], 0, sizeof(fd_t));
     task->fd_info->fds[0]->node = vfs_open("/dev/stdin", 0);
@@ -756,16 +759,18 @@ uint64_t task_execve(const char *path_user, const char **argv,
         current_task->fd_info = malloc(sizeof(fd_info_t));
         memset(current_task->fd_info, 0, sizeof(fd_info_t));
 
-        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-            fd_t *fd = tasks[current_task->ppid]->fd_info->fds[i];
+        with_fd_info_lock(current_task->fd_info, {
+            for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+                fd_t *fd = tasks[current_task->ppid]->fd_info->fds[i];
 
-            if (fd) {
-                current_task->fd_info->fds[i] = vfs_dup(fd);
-                fd->node->refcount--;
-            } else {
-                current_task->fd_info->fds[i] = NULL;
+                if (fd) {
+                    current_task->fd_info->fds[i] = vfs_dup(fd);
+                    fd->node->refcount--;
+                } else {
+                    current_task->fd_info->fds[i] = NULL;
+                }
             }
-        }
+        });
 
         current_task->fd_info->ref_count++;
     }
@@ -798,17 +803,19 @@ uint64_t task_execve(const char *path_user, const char **argv,
     }
     free(new_envp);
 
-    for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-        if (!current_task->fd_info->fds[i])
-            continue;
+    with_fd_info_lock(current_task->fd_info, {
+        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+            if (!current_task->fd_info->fds[i])
+                continue;
 
-        if (current_task->fd_info->fds[i]->close_on_exec) {
-            vfs_close(current_task->fd_info->fds[i]->node);
-            free(current_task->fd_info->fds[i]);
-            current_task->fd_info->fds[i] = NULL;
-            procfs_on_close_file(current_task, i);
+            if (current_task->fd_info->fds[i]->close_on_exec) {
+                vfs_close(current_task->fd_info->fds[i]->node);
+                free(current_task->fd_info->fds[i]);
+                current_task->fd_info->fds[i] = NULL;
+                procfs_on_close_file(current_task, i);
+            }
         }
-    }
+    });
 
     bool ignore_sigchld =
         (current_task->signal->actions[SIGCHLD].sa_handler == SIG_IGN);
@@ -995,57 +1002,57 @@ void task_exit_inner(task_t *task, int64_t code) {
         sigaction_t *sa = &parent->signal->actions[SIGCHLD];
         bool ignore_sigchld = (sa->sa_handler == SIG_IGN);
 
-        if (!ignore_sigchld) {
-            siginfo_t sigchld_info;
-            memset(&sigchld_info, 0, sizeof(siginfo_t));
-            sigchld_info.si_signo = SIGCHLD;
-            sigchld_info.si_errno = 0;
-            sigchld_info._sifields._sigchld._pid = task->pid;
-            sigchld_info._sifields._sigchld._uid = task->uid;
-            sigchld_info._sifields._sigchld._utime = 0;
-            sigchld_info._sifields._sigchld._stime = 0;
-            if (code >= 128) {
-                sigchld_info.si_code = CLD_KILLED;
-                sigchld_info._sifields._sigchld._status = code - 128;
-            } else {
-                sigchld_info.si_code = CLD_EXITED;
-                sigchld_info._sifields._sigchld._status = code;
-            }
-            task_commit_signal(parent, SIGCHLD, &sigchld_info);
+        // if (!ignore_sigchld) {
+        //     siginfo_t sigchld_info;
+        //     memset(&sigchld_info, 0, sizeof(siginfo_t));
+        //     sigchld_info.si_signo = SIGCHLD;
+        //     sigchld_info.si_errno = 0;
+        //     sigchld_info._sifields._sigchld._pid = task->pid;
+        //     sigchld_info._sifields._sigchld._uid = task->uid;
+        //     sigchld_info._sifields._sigchld._utime = 0;
+        //     sigchld_info._sifields._sigchld._stime = 0;
+        //     if (code >= 128) {
+        //         sigchld_info.si_code = CLD_KILLED;
+        //         sigchld_info._sifields._sigchld._status = code - 128;
+        //     } else {
+        //         sigchld_info.si_code = CLD_EXITED;
+        //         sigchld_info._sifields._sigchld._status = code;
+        //     }
+        //     task_commit_signal(parent, SIGCHLD, &sigchld_info);
 
-            for (int i = 0; i < MAX_FD_NUM; i++) {
-                fd_t *fd = parent->fd_info->fds[i];
-                if (fd) {
-                    vfs_node_t node = fd->node;
-                    if (node && node->fsid == signalfdfs_id) {
-                        struct signalfd_ctx *ctx = node->handle;
-                        if (ctx) {
-                            struct signalfd_siginfo info;
-                            memset(&info, 0, sizeof(struct signalfd_siginfo));
-                            info.ssi_signo = SIGCHLD;
-                            info.ssi_pid = task->pid;
-                            info.ssi_uid = task->uid;
-                            if (code >= 128) {
-                                info.ssi_code = CLD_KILLED;
-                                info.ssi_status = code - 128;
-                            } else {
-                                info.ssi_code = CLD_EXITED;
-                                info.ssi_status = code;
-                            }
+        //     for (int i = 0; i < MAX_FD_NUM; i++) {
+        //         fd_t *fd = parent->fd_info->fds[i];
+        //         if (fd) {
+        //             vfs_node_t node = fd->node;
+        //             if (node && node->fsid == signalfdfs_id) {
+        //                 struct signalfd_ctx *ctx = node->handle;
+        //                 if (ctx) {
+        //                     struct signalfd_siginfo info;
+        //                     memset(&info, 0, sizeof(struct
+        //                     signalfd_siginfo)); info.ssi_signo = SIGCHLD;
+        //                     info.ssi_pid = task->pid;
+        //                     info.ssi_uid = task->uid;
+        //                     if (code >= 128) {
+        //                         info.ssi_code = CLD_KILLED;
+        //                         info.ssi_status = code - 128;
+        //                     } else {
+        //                         info.ssi_code = CLD_EXITED;
+        //                         info.ssi_status = code;
+        //                     }
 
-                            memcpy(&ctx->queue[ctx->queue_head], &info,
-                                   sizeof(struct signalfd_siginfo));
-                            ctx->queue_head =
-                                (ctx->queue_head + 1) % ctx->queue_size;
-                            if (ctx->queue_head == ctx->queue_tail) {
-                                ctx->queue_tail =
-                                    (ctx->queue_tail + 1) % ctx->queue_size;
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        //                     memcpy(&ctx->queue[ctx->queue_head], &info,
+        //                            sizeof(struct signalfd_siginfo));
+        //                     ctx->queue_head =
+        //                         (ctx->queue_head + 1) % ctx->queue_size;
+        //                     if (ctx->queue_head == ctx->queue_tail) {
+        //                         ctx->queue_tail =
+        //                             (ctx->queue_tail + 1) % ctx->queue_size;
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
 
         if (ignore_sigchld || (sa->sa_flags & SA_NOCLDWAIT)) {
             task->should_free = true;
@@ -1477,7 +1484,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     child->fd_info = (flags & CLONE_FILES) ? current_task->fd_info
                                            : calloc(1, sizeof(fd_info_t));
-
     if (flags & CLONE_FILES) {
         for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
             fd_t *fd = child->fd_info->fds[i];
@@ -1489,6 +1495,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
             }
         }
     } else {
+        mutex_init(&child->fd_info->fdt_lock);
         for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
             fd_t *fd = current_task->fd_info->fds[i];
 

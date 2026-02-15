@@ -172,14 +172,17 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags) {
     node->handle = ctx;
     node->refcount++;
     node->size = 0;
-    current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
-    memset(current_task->fd_info->fds[fd], 0, sizeof(fd_t));
-    current_task->fd_info->fds[fd]->node = node;
-    current_task->fd_info->fds[fd]->offset = 0;
-    current_task->fd_info->fds[fd]->flags =
-        O_RDWR | ((flags & MFD_CLOEXEC) ? FD_CLOEXEC : 0);
-    current_task->fd_info->fds[fd]->close_on_exec = !!(flags & MFD_CLOEXEC);
-    procfs_on_open_file(current_task, fd);
+
+    with_fd_info_lock(current_task->fd_info, {
+        current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
+        memset(current_task->fd_info->fds[fd], 0, sizeof(fd_t));
+        current_task->fd_info->fds[fd]->node = node;
+        current_task->fd_info->fds[fd]->offset = 0;
+        current_task->fd_info->fds[fd]->flags =
+            O_RDWR | ((flags & MFD_CLOEXEC) ? FD_CLOEXEC : 0);
+        current_task->fd_info->fds[fd]->close_on_exec = !!(flags & MFD_CLOEXEC);
+        procfs_on_open_file(current_task, fd);
+    });
 
     ctx->node = node;
 

@@ -107,8 +107,16 @@ HOST_LIBS :=
 
 LIBGCC_VERSION ?= 2025-12-08
 
-prepare: libgcc_$(ARCH).a liballoc-$(ARCH).a
+prepare: libgcc_$(ARCH).a liballoc-$(ARCH).a firmware/mediatek/WIFI_RAM_CODE_MT7961_1.bin firmware/mediatek/WIFI_MT7961_patch_mcu_1_2_hdr.bin
 	./kernel/get-deps
+
+firmware/mediatek/WIFI_RAM_CODE_MT7961_1.bin:
+	mkdir -p firmware/mediatek/
+	wget https://github.com/astsam/mt7921/raw/refs/heads/main/fw/WIFI_RAM_CODE_MT7961_1.bin -o firmware/mediatek/WIFI_RAM_CODE_MT7961_1.bin
+
+firmware/mediatek/WIFI_MT7961_patch_mcu_1_2_hdr.bin:
+	mkdir -p firmware/mediatek/
+	wget https://github.com/astsam/mt7921/raw/refs/heads/main/fw/WIFI_MT7961_patch_mcu_1_2_hdr.bin -o firmware/mediatek/WIFI_MT7961_patch_mcu_1_2_hdr.bin
 
 .PHONY: liballoc-$(ARCH).a
 liballoc-$(ARCH).a:

@@ -251,6 +251,17 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
         return -EBADF;
     }
 
+    int i2 = -1;
+    for (i2 = 0; i2 < MAX_FD_NUM; i2++) {
+        if (current_task->fd_info->fds[i2] == NULL) {
+            break;
+        }
+    }
+
+    if (i2 == MAX_FD_NUM) {
+        return -EBADF;
+    }
+
     char buf[16];
     sprintf(buf, "pipe%d", pipefd_id++);
 
@@ -291,30 +302,21 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
     node_input->handle = read_spec;
     node_output->handle = write_spec;
 
-    current_task->fd_info->fds[i1] = malloc(sizeof(fd_t));
-    memset(current_task->fd_info->fds[i1], 0, sizeof(fd_t));
-    current_task->fd_info->fds[i1]->node = node_input;
-    current_task->fd_info->fds[i1]->offset = 0;
-    current_task->fd_info->fds[i1]->flags = flags;
-    procfs_on_open_file(current_task, i1);
+    with_fd_info_lock(current_task->fd_info, {
+        current_task->fd_info->fds[i1] = malloc(sizeof(fd_t));
+        memset(current_task->fd_info->fds[i1], 0, sizeof(fd_t));
+        current_task->fd_info->fds[i1]->node = node_input;
+        current_task->fd_info->fds[i1]->offset = 0;
+        current_task->fd_info->fds[i1]->flags = flags;
+        procfs_on_open_file(current_task, i1);
 
-    int i2 = -1;
-    for (i2 = 0; i2 < MAX_FD_NUM; i2++) {
-        if (current_task->fd_info->fds[i2] == NULL) {
-            break;
-        }
-    }
-
-    if (i2 == MAX_FD_NUM) {
-        return -EBADF;
-    }
-
-    current_task->fd_info->fds[i2] = malloc(sizeof(fd_t));
-    memset(current_task->fd_info->fds[i2], 0, sizeof(fd_t));
-    current_task->fd_info->fds[i2]->node = node_output;
-    current_task->fd_info->fds[i2]->offset = 0;
-    current_task->fd_info->fds[i2]->flags = flags;
-    procfs_on_open_file(current_task, i2);
+        current_task->fd_info->fds[i2] = malloc(sizeof(fd_t));
+        memset(current_task->fd_info->fds[i2], 0, sizeof(fd_t));
+        current_task->fd_info->fds[i2]->node = node_output;
+        current_task->fd_info->fds[i2]->offset = 0;
+        current_task->fd_info->fds[i2]->flags = flags;
+        procfs_on_open_file(current_task, i2);
+    });
 
     pipefd[0] = i1;
     pipefd[1] = i2;

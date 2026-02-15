@@ -84,6 +84,7 @@ endif
 	$(MAKE) -C hub
 	$(MAKE) -C hid
 	$(MAKE) -C msc
+	$(MAKE) -C mt7921
 
 	$(MAKE) -C ext
 
