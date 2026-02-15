@@ -242,6 +242,10 @@ static int mt7921_get_patch_firmware(mt7921_priv_t *priv, uint8_t **data,
                                      size_t *size) {
     (void)priv;
     vfs_node_t node = vfs_open("/lib/firmware/" MT7921_ROM_PATCH, 0);
+    if (!node) {
+        printk("Failed to open patch firmware file\n");
+        return -ENOENT;
+    }
     uint8_t *buf = alloc_frames_bytes(node->size);
     if (!buf)
         return -ENOMEM;
@@ -256,6 +260,10 @@ static int mt7921_get_ram_firmware(mt7921_priv_t *priv, uint8_t **data,
                                    size_t *size) {
     (void)priv;
     vfs_node_t node = vfs_open("/lib/firmware/" MT7921_FIRMWARE_WM, 0);
+    if (!node) {
+        printk("Failed to open patch firmware file\n");
+        return -ENOENT;
+    }
     uint8_t *buf = alloc_frames_bytes(node->size);
     if (!buf)
         return -ENOMEM;
@@ -298,19 +306,17 @@ static int mt7921_write_firmware_block(mt7921_priv_t *priv, uint32_t addr,
 static int mt7921_send_patch_firmware(mt7921_priv_t *priv, uint8_t *data,
                                       size_t size) {
     const struct mt7921_patch_hdr *hdr = (const struct mt7921_patch_hdr *)data;
-    uint32_t n_region;
-    uint32_t i;
 
     if (!data || size < sizeof(*hdr)) {
         return -EINVAL;
     }
 
-    n_region = mt7921_be32_to_cpu(hdr->desc.n_region_be);
+    uint32_t n_region = mt7921_be32_to_cpu(hdr->desc.n_region_be);
     if (size < sizeof(*hdr) + n_region * sizeof(struct mt7921_patch_sec)) {
         return -EINVAL;
     }
 
-    for (i = 0; i < n_region; i++) {
+    for (uint32_t i = 0; i < n_region; i++) {
         const struct mt7921_patch_sec *sec =
             (const struct mt7921_patch_sec *)(data + sizeof(*hdr) +
                                               i * sizeof(
@@ -344,31 +350,26 @@ static int mt7921_send_patch_firmware(mt7921_priv_t *priv, uint8_t *data,
 
 static int mt7921_send_ram_firmware(mt7921_priv_t *priv, uint8_t *data,
                                     size_t size) {
-    const struct mt7921_fw_trailer *trailer;
-    size_t region_table_size;
-    const struct mt7921_fw_region *region;
-    size_t payload_off = 0;
-    uint8_t i;
-
     if (!data || size < sizeof(struct mt7921_fw_trailer)) {
         return -EINVAL;
     }
 
-    trailer =
+    const struct mt7921_fw_trailer *trailer =
         (const struct mt7921_fw_trailer *)(data + size - sizeof(*trailer));
-    region_table_size =
+    size_t region_table_size =
         (size_t)trailer->n_region * sizeof(struct mt7921_fw_region);
     if (size < sizeof(*trailer) + region_table_size) {
         return -EINVAL;
     }
 
-    region = (const struct mt7921_fw_region *)((const uint8_t *)trailer -
-                                               region_table_size);
+    size_t payload_off = 0;
+    const struct mt7921_fw_region *region =
+        (const struct mt7921_fw_region *)((const uint8_t *)trailer -
+                                          region_table_size);
 
-    for (i = 0; i < trailer->n_region; i++) {
+    for (uint8_t i = 0; i < trailer->n_region; i++) {
         uint32_t addr = mt7921_le32_to_cpu(region[i].addr_le);
         uint32_t len = mt7921_le32_to_cpu(region[i].len_le);
-        int ret;
 
         if (len > size || payload_off > size - len) {
             return -EINVAL;
@@ -379,7 +380,7 @@ static int mt7921_send_ram_firmware(mt7921_priv_t *priv, uint8_t *data,
             continue;
         }
 
-        ret = mt7921_write_firmware_block(priv, addr, data + payload_off, len);
+        int ret = mt7921_write_firmware_block(priv, addr, data + payload_off, len);
         if (ret) {
             return ret;
         }
@@ -410,21 +411,25 @@ static int mt7921_run_firmware(mt7921_priv_t *priv) {
 
     ret = mt7921_get_patch_firmware(priv, &patch_data, &patch_size);
     if (ret) {
+        printk("Failed to get patch firmware\n");
         goto out;
     }
 
     ret = mt7921_send_patch_firmware(priv, patch_data, patch_size);
     if (ret) {
+        printk("Failed to send patch firmware\n");
         goto out;
     }
 
     ret = mt7921_get_ram_firmware(priv, &ram_data, &ram_size);
     if (ret) {
+        printk("Failed to get ram firmware\n");
         goto out;
     }
 
     ret = mt7921_send_ram_firmware(priv, ram_data, ram_size);
     if (ret) {
+        printk("Failed to send ram firmware\n");
         goto out;
     }
 
@@ -467,8 +472,8 @@ void mt7921_write_uhw_reg(mt7921_priv_t *priv, uint32_t addr, uint32_t val) {
 uint32_t mt7921_read_reg(mt7921_priv_t *priv, uint32_t addr) {
     mutex_lock(&priv->reg_lock);
     struct usb_ctrlrequest req;
-    req.bRequest = MT_VEND_WRITE;
-    req.bRequestType = USB_DIR_OUT | MT_USB_TYPE_UHW_VENDOR;
+    req.bRequest = MT_VEND_READ_EXT;
+    req.bRequestType = USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE;
     req.wValue = addr >> 16;
     req.wIndex = addr & 0xffff;
     req.wLength = sizeof(uint32_t);
@@ -481,7 +486,7 @@ uint32_t mt7921_read_reg(mt7921_priv_t *priv, uint32_t addr) {
 void mt7921_write_reg(mt7921_priv_t *priv, uint32_t addr, uint32_t val) {
     mutex_lock(&priv->reg_lock);
     struct usb_ctrlrequest req;
-    req.bRequest = MT_VEND_READ_EXT;
+    req.bRequest = MT_VEND_WRITE_EXT;
     req.bRequestType = USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE;
     req.wValue = addr >> 16;
     req.wIndex = addr & 0xffff;
@@ -536,13 +541,15 @@ int mt76u_vendor_request(mt7921_priv_t *dev, uint8_t req, uint8_t req_type,
 bool mt7921_wait(mt7921_priv_t *priv, uint32_t addr, uint32_t mask,
                  uint32_t val, uint64_t timeout_ms, uint64_t tick) {
     uint64_t start = nano_time();
-    while ((nano_time() - start) < timeout_ms * 1000ULL) {
+    while ((nano_time() - start) < timeout_ms * 1000000ULL) {
         uint32_t reg_val = mt7921_read_reg(priv, addr);
         if ((reg_val & mask) == val) {
             return true;
         }
         delay_us(tick * 2000);
     }
+    printk("Timeout waiting for reg 0x%08x to be 0x%08x (mask 0x%08x)\n", addr,
+           val, mask);
     return false;
 }
 

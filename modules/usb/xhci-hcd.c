@@ -430,8 +430,6 @@ static void xhci_free_pipes(struct usb_xhci_s *xhci) {
     // XXX - should walk list of pipes and free unused pipes.
 }
 
-static void xhci_event_handler(uint64_t arg);
-
 static void configure_xhci(void *data) {
     struct usb_xhci_s *xhci = data;
     uint32_t reg;
@@ -574,9 +572,6 @@ static void configure_xhci(void *data) {
             xhci->quirks |= XHCI_QUIRK_VL805_OLD_REV;
         }
     }
-
-    task_create("xhci_event_handler", xhci_event_handler, (uint64_t)xhci,
-                KTHREAD_PRIORITY);
 
     // 查找设备
     int count = xhci_check_ports(xhci);
@@ -824,15 +819,6 @@ static void xhci_process_events(struct usb_xhci_s *xhci) {
     }
 
     mutex_unlock(&event_processing_lock);
-}
-
-static void xhci_event_handler(uint64_t arg) {
-    struct usb_xhci_s *xhci = (struct usb_xhci_s *)arg;
-    while (1) {
-        arch_enable_interrupt();
-        xhci_process_events(xhci);
-        schedule(SCHED_FLAG_YIELD);
-    }
 }
 
 // Check if a ring has any pending TRBs
