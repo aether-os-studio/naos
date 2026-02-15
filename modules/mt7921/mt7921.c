@@ -166,6 +166,56 @@ static int mt7921_dma_init(mt7921_priv_t *priv, bool resume) {
 #define MT7921_PATCH_SEC_TYPE_INFO 0x2U
 #define MT7921_FW_FEATURE_NON_DL (1U << 6)
 #define MT7921_VENDOR_COPY_CHUNK 2048U
+#define MT7921_MCU_SCATTER_CHUNK 4096U
+
+#define MT7921_MCU_CMD_TARGET_ADDRESS_LEN_REQ 0x01
+#define MT7921_MCU_CMD_FW_START_REQ 0x02
+#define MT7921_MCU_CMD_PATCH_START_REQ 0x05
+#define MT7921_MCU_CMD_PATCH_FINISH_REQ 0x07
+#define MT7921_MCU_CMD_PATCH_SEM_CONTROL 0x10
+#define MT7921_MCU_CMD_FW_SCATTER 0xee
+
+#define MT7921_MCU_CE_CMD_GET_NIC_CAPAB 0x8a
+#define MT7921_MCU_CE_CMD_FWLOG_2_HOST 0xc5
+
+#define MT7921_PATCH_SEM_RELEASE 0
+#define MT7921_PATCH_SEM_GET 1
+#define MT7921_PATCH_NOT_DL_SEM_FAIL 0
+#define MT7921_PATCH_IS_DL 1
+#define MT7921_PATCH_NOT_DL_SEM_SUCCESS 2
+#define MT7921_PATCH_REL_SEM_SUCCESS 3
+
+#define MT7921_FW_FEATURE_SET_ENCRYPT (1U << 0)
+#define MT7921_FW_FEATURE_SET_KEY_IDX_MASK 0x06U
+#define MT7921_FW_FEATURE_SET_KEY_IDX_SHIFT 1
+#define MT7921_FW_FEATURE_ENCRY_MODE (1U << 4)
+#define MT7921_FW_FEATURE_OVERRIDE_ADDR (1U << 5)
+
+#define MT7921_DL_MODE_ENCRYPT (1U << 0)
+#define MT7921_DL_MODE_KEY_IDX_MASK 0x06U
+#define MT7921_DL_MODE_KEY_IDX_SHIFT 1
+#define MT7921_DL_MODE_RESET_SEC_IV (1U << 3)
+#define MT7921_DL_MODE_NEED_RSP (1U << 31)
+#define MT7921_DL_CONFIG_ENCRY_MODE_SEL (1U << 6)
+
+#define MT7921_FW_START_OVERRIDE (1U << 0)
+#define MT7921_PATCH_SEC_ENC_TYPE_MASK 0xff000000U
+#define MT7921_PATCH_SEC_ENC_TYPE_SHIFT 24
+#define MT7921_PATCH_SEC_ENC_TYPE_PLAIN 0x00U
+#define MT7921_PATCH_SEC_ENC_TYPE_AES 0x01U
+#define MT7921_PATCH_SEC_ENC_TYPE_SCRAMBLE 0x02U
+#define MT7921_PATCH_SEC_ENC_AES_KEY_MASK 0x000000ffU
+
+#define MT7921_PATCH_ADDRESS 0x200000U
+#define MT7921_RAM_START_ADDRESS 0x900000U
+#define MT7921_NIC_CAP_BUF_SIZE 1024
+
+#define MT7921_NIC_CAP_MAC_ADDR 7
+#define MT7921_NIC_CAP_PHY 8
+#define MT7921_NIC_CAP_6G 0x18
+
+#define MT7921_HW_PATH_2G_BIT (1U << 0)
+#define MT7921_HW_PATH_5G_BIT (1U << 1)
 
 struct mt7921_patch_hdr {
     char build_date[16];
@@ -224,18 +274,299 @@ struct mt7921_fw_region {
     uint8_t rsv1[14];
 } __attribute__((packed));
 
+struct mt7921_mcu_patch_sem_req {
+    uint32_t op;
+} __attribute__((packed));
+
+struct mt7921_mcu_patch_finish_req {
+    uint8_t check_crc;
+    uint8_t reserved[3];
+} __attribute__((packed));
+
+struct mt7921_mcu_init_download_req {
+    uint32_t addr;
+    uint32_t len;
+    uint32_t mode;
+} __attribute__((packed));
+
+struct mt7921_mcu_fw_start_req {
+    uint32_t option;
+    uint32_t addr;
+} __attribute__((packed));
+
+struct mt7921_mcu_ce_fwlog_req {
+    uint8_t ctrl_val;
+    uint8_t pad[3];
+} __attribute__((packed));
+
+struct mt7921_cap_hdr {
+    uint16_t n_element_le;
+    uint8_t rsv[2];
+} __attribute__((packed));
+
+struct mt7921_cap_tlv {
+    uint32_t type_le;
+    uint32_t len_le;
+} __attribute__((packed));
+
+struct mt7921_phy_cap {
+    uint8_t ht;
+    uint8_t vht;
+    uint8_t cap_5g;
+    uint8_t max_bw;
+    uint8_t nss;
+    uint8_t dbdc;
+    uint8_t tx_ldpc;
+    uint8_t rx_ldpc;
+    uint8_t tx_stbc;
+    uint8_t rx_stbc;
+    uint8_t hw_path;
+    uint8_t he;
+} __attribute__((packed));
+
 static uint32_t mt7921_be32_to_cpu(uint32_t v) {
     return ((v & 0x000000ffU) << 24) | ((v & 0x0000ff00U) << 8) |
            ((v & 0x00ff0000U) >> 8) | ((v & 0xff000000U) >> 24);
 }
 
 static uint32_t mt7921_le32_to_cpu(uint32_t v) { return v; }
+static uint16_t mt7921_le16_to_cpu(uint16_t v) { return v; }
 
 static size_t mt7921_min_size(size_t a, size_t b) {
     if (a < b) {
         return a;
     }
     return b;
+}
+
+static int mt7921_mcu_send_msg(mt7921_priv_t *priv, uint8_t cmd, void *req,
+                               size_t req_len, bool wait_resp, void *resp,
+                               size_t resp_len) {
+    int ret;
+    uint32_t dummy = 0;
+
+    ret = mt76u_vendor_request(priv, MT_VEND_WRITE_CFG,
+                               USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
+                               cmd, 0, req, req_len);
+    if (ret) {
+        return ret;
+    }
+
+    if (!wait_resp) {
+        return 0;
+    }
+
+    if (!resp || !resp_len) {
+        resp = &dummy;
+        resp_len = sizeof(dummy);
+    }
+
+    return mt76u_vendor_request(priv, MT_VEND_READ_CFG,
+                                USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
+                                cmd, 0, resp, resp_len);
+}
+
+static uint32_t mt7921_patch_get_data_mode(uint32_t info) {
+    uint32_t mode = MT7921_DL_MODE_NEED_RSP;
+    uint32_t enc_type = (info & MT7921_PATCH_SEC_ENC_TYPE_MASK) >>
+                        MT7921_PATCH_SEC_ENC_TYPE_SHIFT;
+
+    if (enc_type == MT7921_PATCH_SEC_ENC_TYPE_PLAIN) {
+        return mode;
+    }
+    if (enc_type == MT7921_PATCH_SEC_ENC_TYPE_AES) {
+        mode |= MT7921_DL_MODE_ENCRYPT;
+        mode |= ((info & MT7921_PATCH_SEC_ENC_AES_KEY_MASK)
+                 << MT7921_DL_MODE_KEY_IDX_SHIFT) &
+                MT7921_DL_MODE_KEY_IDX_MASK;
+        mode |= MT7921_DL_MODE_RESET_SEC_IV;
+        return mode;
+    }
+    if (enc_type == MT7921_PATCH_SEC_ENC_TYPE_SCRAMBLE) {
+        mode |= MT7921_DL_MODE_ENCRYPT;
+        mode |= MT7921_DL_CONFIG_ENCRY_MODE_SEL;
+        mode |= MT7921_DL_MODE_RESET_SEC_IV;
+        return mode;
+    }
+
+    return mode;
+}
+
+static uint32_t mt7921_ram_get_data_mode(uint8_t feature_set) {
+    uint32_t mode = MT7921_DL_MODE_NEED_RSP;
+
+    if (feature_set & MT7921_FW_FEATURE_SET_ENCRYPT) {
+        mode |= MT7921_DL_MODE_ENCRYPT;
+        mode |= MT7921_DL_MODE_RESET_SEC_IV;
+    }
+
+    mode |= (((uint32_t)(feature_set & MT7921_FW_FEATURE_SET_KEY_IDX_MASK)) >>
+             MT7921_FW_FEATURE_SET_KEY_IDX_SHIFT)
+            << MT7921_DL_MODE_KEY_IDX_SHIFT;
+
+    if (feature_set & MT7921_FW_FEATURE_ENCRY_MODE) {
+        mode |= MT7921_DL_CONFIG_ENCRY_MODE_SEL;
+    }
+
+    return mode;
+}
+
+static int mt7921_mcu_patch_sem_ctrl(mt7921_priv_t *priv, bool get) {
+    struct mt7921_mcu_patch_sem_req req;
+    uint32_t sem = 0;
+    int ret;
+
+    req.op = get ? MT7921_PATCH_SEM_GET : MT7921_PATCH_SEM_RELEASE;
+    ret = mt7921_mcu_send_msg(priv, MT7921_MCU_CMD_PATCH_SEM_CONTROL, &req,
+                              sizeof(req), true, &sem, sizeof(sem));
+    if (ret) {
+        return ret;
+    }
+
+    return (int)sem;
+}
+
+static int mt7921_mcu_init_download(mt7921_priv_t *priv, uint32_t addr,
+                                    uint32_t len, uint32_t mode) {
+    struct mt7921_mcu_init_download_req req;
+    uint8_t cmd;
+
+    req.addr = addr;
+    req.len = len;
+    req.mode = mode;
+
+    if (addr == MT7921_PATCH_ADDRESS || addr == MT7921_RAM_START_ADDRESS) {
+        cmd = MT7921_MCU_CMD_PATCH_START_REQ;
+    } else {
+        cmd = MT7921_MCU_CMD_TARGET_ADDRESS_LEN_REQ;
+    }
+
+    return mt7921_mcu_send_msg(priv, cmd, &req, sizeof(req), true, NULL, 0);
+}
+
+static int mt7921_mcu_send_scatter(mt7921_priv_t *priv, uint8_t *data,
+                                   size_t len) {
+    size_t offset = 0;
+    int ret;
+
+    while (offset < len) {
+        size_t chunk =
+            mt7921_min_size((size_t)MT7921_MCU_SCATTER_CHUNK, len - offset);
+
+        ret = mt7921_mcu_send_msg(priv, MT7921_MCU_CMD_FW_SCATTER,
+                                  data + offset, chunk, false, NULL, 0);
+        if (ret) {
+            return ret;
+        }
+        offset += chunk;
+    }
+
+    return 0;
+}
+
+static int mt7921_mcu_start_patch(mt7921_priv_t *priv) {
+    struct mt7921_mcu_patch_finish_req req;
+
+    memset(&req, 0, sizeof(req));
+    return mt7921_mcu_send_msg(priv, MT7921_MCU_CMD_PATCH_FINISH_REQ, &req,
+                               sizeof(req), true, NULL, 0);
+}
+
+static int mt7921_mcu_start_firmware(mt7921_priv_t *priv, uint32_t addr,
+                                     uint32_t option) {
+    struct mt7921_mcu_fw_start_req req;
+
+    req.option = option;
+    req.addr = addr;
+    return mt7921_mcu_send_msg(priv, MT7921_MCU_CMD_FW_START_REQ, &req,
+                               sizeof(req), true, NULL, 0);
+}
+
+static void mt7921_parse_phy_cap(mt7921_priv_t *priv, const uint8_t *data,
+                                 size_t len) {
+    if (len < sizeof(struct mt7921_phy_cap)) {
+        return;
+    }
+
+    const struct mt7921_phy_cap *cap = (const struct mt7921_phy_cap *)data;
+
+    if (cap->nss >= 1 && cap->nss <= 8) {
+        priv->antenna_mask = (uint8_t)((1U << cap->nss) - 1U);
+    }
+    priv->has_2ghz = (cap->hw_path & MT7921_HW_PATH_2G_BIT) != 0;
+    priv->has_5ghz = (cap->hw_path & MT7921_HW_PATH_5G_BIT) != 0;
+}
+
+static int mt7921_mcu_get_nic_capability(mt7921_priv_t *priv) {
+    uint8_t buf[MT7921_NIC_CAP_BUF_SIZE];
+    const struct mt7921_cap_hdr *hdr;
+    size_t pos;
+    uint16_t n_element;
+    uint16_t i;
+    int ret;
+
+    memset(buf, 0, sizeof(buf));
+    ret = mt7921_mcu_send_msg(priv, MT7921_MCU_CE_CMD_GET_NIC_CAPAB, NULL, 0,
+                              true, buf, sizeof(buf));
+    if (ret) {
+        return ret;
+    }
+
+    if (sizeof(buf) < sizeof(struct mt7921_cap_hdr)) {
+        return -EINVAL;
+    }
+
+    hdr = (const struct mt7921_cap_hdr *)buf;
+    n_element = mt7921_le16_to_cpu(hdr->n_element_le);
+    pos = sizeof(*hdr);
+
+    for (i = 0; i < n_element; i++) {
+        if (pos + sizeof(struct mt7921_cap_tlv) > sizeof(buf)) {
+            break;
+        }
+
+        const struct mt7921_cap_tlv *tlv =
+            (const struct mt7921_cap_tlv *)(buf + pos);
+        uint32_t type = mt7921_le32_to_cpu(tlv->type_le);
+        uint32_t len = mt7921_le32_to_cpu(tlv->len_le);
+
+        pos += sizeof(*tlv);
+        if (pos + len > sizeof(buf)) {
+            break;
+        }
+
+        if (type == MT7921_NIC_CAP_MAC_ADDR && len >= 6) {
+            memcpy(priv->macaddr, buf + pos, 6);
+        } else if (type == MT7921_NIC_CAP_PHY) {
+            mt7921_parse_phy_cap(priv, buf + pos, len);
+        } else if (type == MT7921_NIC_CAP_6G && len >= 1) {
+            priv->has_6ghz = buf[pos] != 0;
+        }
+
+        pos += len;
+    }
+
+    printk("NIC CAP: mac=%02x:%02x:%02x:%02x:%02x:%02x nss_mask=0x%x 2g=%d "
+           "5g=%d 6g=%d\n",
+           priv->macaddr[0], priv->macaddr[1], priv->macaddr[2],
+           priv->macaddr[3], priv->macaddr[4], priv->macaddr[5],
+           priv->antenna_mask, priv->has_2ghz, priv->has_5ghz, priv->has_6ghz);
+
+    return 0;
+}
+
+static int mt7921_mcu_fw_log_2_host(mt7921_priv_t *priv, uint8_t ctrl) {
+    struct mt7921_mcu_ce_fwlog_req req;
+
+    req.ctrl_val = ctrl;
+    memset(req.pad, 0, sizeof(req.pad));
+    return mt7921_mcu_send_msg(priv, MT7921_MCU_CE_CMD_FWLOG_2_HOST, &req,
+                               sizeof(req), false, NULL, 0);
+}
+
+static int mt7921_load_clc(mt7921_priv_t *priv) {
+    (void)priv;
+    return 0;
 }
 
 static int mt7921_get_patch_firmware(mt7921_priv_t *priv, uint8_t **data,
@@ -261,7 +592,7 @@ static int mt7921_get_ram_firmware(mt7921_priv_t *priv, uint8_t **data,
     (void)priv;
     vfs_node_t node = vfs_open("/lib/firmware/" MT7921_FIRMWARE_WM, 0);
     if (!node) {
-        printk("Failed to open patch firmware file\n");
+        printk("Failed to open ram firmware file\n");
         return -ENOENT;
     }
     uint8_t *buf = alloc_frames_bytes(node->size);
@@ -274,46 +605,31 @@ static int mt7921_get_ram_firmware(mt7921_priv_t *priv, uint8_t **data,
     return 0;
 }
 
-static int mt7921_write_firmware_block(mt7921_priv_t *priv, uint32_t addr,
-                                       uint8_t *data, size_t len) {
-    size_t offset = 0;
-    uint8_t tmp[MT7921_VENDOR_COPY_CHUNK];
-
-    while (offset < len) {
-        size_t chunk =
-            mt7921_min_size((size_t)MT7921_VENDOR_COPY_CHUNK, len - offset);
-        size_t padded = (chunk + 3U) & ~3U;
-
-        memcpy(tmp, data + offset, chunk);
-        if (padded > chunk) {
-            memset(tmp + chunk, 0, padded - chunk);
-        }
-
-        if (mt76u_vendor_request(
-                priv, MT_VEND_WRITE_EXT,
-                USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-                (uint16_t)((addr + offset) >> 16),
-                (uint16_t)((addr + offset) & 0xffffU), tmp, padded)) {
-            return -EIO;
-        }
-
-        offset += chunk;
-    }
-
-    return 0;
-}
-
 static int mt7921_send_patch_firmware(mt7921_priv_t *priv, uint8_t *data,
                                       size_t size) {
     const struct mt7921_patch_hdr *hdr = (const struct mt7921_patch_hdr *)data;
+    int sem;
+    int ret = 0;
 
     if (!data || size < sizeof(*hdr)) {
         return -EINVAL;
     }
 
+    sem = mt7921_mcu_patch_sem_ctrl(priv, true);
+    if (sem < 0) {
+        return sem;
+    }
+    if (sem == MT7921_PATCH_IS_DL) {
+        return 0;
+    }
+    if (sem != MT7921_PATCH_NOT_DL_SEM_SUCCESS) {
+        return -EAGAIN;
+    }
+
     uint32_t n_region = mt7921_be32_to_cpu(hdr->desc.n_region_be);
     if (size < sizeof(*hdr) + n_region * sizeof(struct mt7921_patch_sec)) {
-        return -EINVAL;
+        ret = -EINVAL;
+        goto out;
     }
 
     for (uint32_t i = 0; i < n_region; i++) {
@@ -326,26 +642,42 @@ static int mt7921_send_patch_firmware(mt7921_priv_t *priv, uint8_t *data,
         uint32_t sec_size = mt7921_be32_to_cpu(sec->size_be);
         uint32_t addr = mt7921_be32_to_cpu(sec->info.addr_be);
         uint32_t len = mt7921_be32_to_cpu(sec->info.len_be);
+        uint32_t sec_info = mt7921_be32_to_cpu(sec->info.sec_key_idx_be);
+        uint32_t mode = mt7921_patch_get_data_mode(sec_info);
         uint32_t copy_len = len;
-        int ret;
 
         if ((type & MT7921_PATCH_SEC_TYPE_MASK) != MT7921_PATCH_SEC_TYPE_INFO) {
-            return -EINVAL;
+            ret = -EINVAL;
+            goto out;
         }
         if (offs >= size || sec_size > size - offs) {
-            return -EINVAL;
+            ret = -EINVAL;
+            goto out;
         }
         if (copy_len > sec_size) {
             copy_len = sec_size;
         }
 
-        ret = mt7921_write_firmware_block(priv, addr, data + offs, copy_len);
+        ret = mt7921_mcu_init_download(priv, addr, copy_len, mode);
         if (ret) {
-            return ret;
+            goto out;
+        }
+
+        ret = mt7921_mcu_send_scatter(priv, data + offs, copy_len);
+        if (ret) {
+            goto out;
         }
     }
 
-    return 0;
+    ret = mt7921_mcu_start_patch(priv);
+
+out:
+    sem = mt7921_mcu_patch_sem_ctrl(priv, false);
+    if (sem != MT7921_PATCH_REL_SEM_SUCCESS) {
+        return -EAGAIN;
+    }
+
+    return ret;
 }
 
 static int mt7921_send_ram_firmware(mt7921_priv_t *priv, uint8_t *data,
@@ -363,6 +695,8 @@ static int mt7921_send_ram_firmware(mt7921_priv_t *priv, uint8_t *data,
     }
 
     size_t payload_off = 0;
+    uint32_t override = 0;
+    uint32_t option = 0;
     const struct mt7921_fw_region *region =
         (const struct mt7921_fw_region *)((const uint8_t *)trailer -
                                           region_table_size);
@@ -370,6 +704,8 @@ static int mt7921_send_ram_firmware(mt7921_priv_t *priv, uint8_t *data,
     for (uint8_t i = 0; i < trailer->n_region; i++) {
         uint32_t addr = mt7921_le32_to_cpu(region[i].addr_le);
         uint32_t len = mt7921_le32_to_cpu(region[i].len_le);
+        uint32_t mode = mt7921_ram_get_data_mode(region[i].feature_set);
+        int ret;
 
         if (len > size || payload_off > size - len) {
             return -EINVAL;
@@ -380,14 +716,27 @@ static int mt7921_send_ram_firmware(mt7921_priv_t *priv, uint8_t *data,
             continue;
         }
 
-        int ret = mt7921_write_firmware_block(priv, addr, data + payload_off, len);
+        if (region[i].feature_set & MT7921_FW_FEATURE_OVERRIDE_ADDR) {
+            override = addr;
+        }
+
+        ret = mt7921_mcu_init_download(priv, addr, len, mode);
+        if (ret) {
+            return ret;
+        }
+
+        ret = mt7921_mcu_send_scatter(priv, data + payload_off, len);
         if (ret) {
             return ret;
         }
         payload_off += len;
     }
 
-    return 0;
+    if (override) {
+        option |= MT7921_FW_START_OVERRIDE;
+    }
+
+    return mt7921_mcu_start_firmware(priv, override, option);
 }
 
 static int mt7921_wait_fw_ready(mt7921_priv_t *priv) {
@@ -406,8 +755,6 @@ static int mt7921_run_firmware(mt7921_priv_t *priv) {
     size_t patch_size = 0;
     size_t ram_size = 0;
     int ret;
-
-    mt7921_set_reg_bits(priv, MT_UDMA_TX_QSEL, MT_FW_DL_EN);
 
     ret = mt7921_get_patch_firmware(priv, &patch_data, &patch_size);
     if (ret) {
@@ -434,12 +781,31 @@ static int mt7921_run_firmware(mt7921_priv_t *priv) {
     }
 
     ret = mt7921_wait_fw_ready(priv);
+    if (ret) {
+        goto out;
+    }
+
+    ret = mt7921_mcu_get_nic_capability(priv);
+    if (ret) {
+        printk("Failed to get NIC capability\n");
+        goto out;
+    }
+
+    ret = mt7921_load_clc(priv);
+    if (ret) {
+        printk("Failed to load CLC\n");
+        goto out;
+    }
+
+    ret = mt7921_mcu_fw_log_2_host(priv, 1);
+    if (ret) {
+        printk("Failed to enable FW log to host\n");
+        goto out;
+    }
 
 out:
     free_frames_bytes(patch_data, patch_size);
     free_frames_bytes(ram_data, ram_size);
-
-    mt7921_clear_reg_bits(priv, MT_UDMA_TX_QSEL, MT_FW_DL_EN);
     return ret;
 }
 
@@ -575,6 +941,7 @@ int mt7921_probe(struct usbdevice_s *usbdev,
     if (!priv) {
         return -ENOENT;
     }
+    memset(priv, 0, sizeof(*priv));
     mutex_init(&priv->reg_lock);
     priv->usbdev = usbdev;
 
@@ -599,7 +966,9 @@ int mt7921_probe(struct usbdevice_s *usbdev,
         goto err;
     }
 
+    mt7921_set_reg_bits(priv, MT_UDMA_TX_QSEL, MT_FW_DL_EN);
     ret = mt7921_run_firmware(priv);
+    mt7921_clear_reg_bits(priv, MT_UDMA_TX_QSEL, MT_FW_DL_EN);
     if (ret) {
         printk("Failed to run firmware\n");
         goto err;

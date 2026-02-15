@@ -8,6 +8,11 @@
 typedef struct mt7921_priv {
     struct usbdevice_s *usbdev;
     mutex_t reg_lock;
+    uint8_t macaddr[6];
+    uint8_t antenna_mask;
+    bool has_2ghz;
+    bool has_5ghz;
+    bool has_6ghz;
 } mt7921_priv_t;
 
 #define MT_USB_TYPE_UHW_VENDOR (USB_TYPE_VENDOR | 0x1e)
