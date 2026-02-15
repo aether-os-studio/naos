@@ -1,13 +1,17 @@
 #pragma once
 
-#include <libs/klibc.h>
 #include <libs/aether/stdio.h>
-#include <libs/mutex.h>
 #include <libs/aether/usb.h>
+#include <libs/klibc.h>
+#include <libs/mutex.h>
 
 typedef struct mt7921_priv {
     struct usbdevice_s *usbdev;
+    struct usb_pipe *mcu_in;
+    struct usb_pipe *mcu_out;
+    struct usb_pipe *fwdl_out;
     mutex_t reg_lock;
+    uint8_t mcu_seq;
     uint8_t macaddr[6];
     uint8_t antenna_mask;
     bool has_2ghz;

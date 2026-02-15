@@ -168,15 +168,23 @@ static int mt7921_dma_init(mt7921_priv_t *priv, bool resume) {
 #define MT7921_VENDOR_COPY_CHUNK 2048U
 #define MT7921_MCU_SCATTER_CHUNK 4096U
 
-#define MT7921_MCU_CMD_TARGET_ADDRESS_LEN_REQ 0x01
-#define MT7921_MCU_CMD_FW_START_REQ 0x02
-#define MT7921_MCU_CMD_PATCH_START_REQ 0x05
-#define MT7921_MCU_CMD_PATCH_FINISH_REQ 0x07
-#define MT7921_MCU_CMD_PATCH_SEM_CONTROL 0x10
-#define MT7921_MCU_CMD_FW_SCATTER 0xee
+#define MT7921_MCU_CMD_FIELD_ID_MASK 0x000000ffU
+#define MT7921_MCU_CMD_FIELD_EXT_ID_MASK 0x0000ff00U
+#define MT7921_MCU_CMD_FIELD_QUERY (1U << 16)
+#define MT7921_MCU_CMD_FIELD_CE (1U << 18)
 
-#define MT7921_MCU_CE_CMD_GET_NIC_CAPAB 0x8a
-#define MT7921_MCU_CE_CMD_FWLOG_2_HOST 0xc5
+#define MT7921_MCU_CMD(id) ((uint32_t)(id) & MT7921_MCU_CMD_FIELD_ID_MASK)
+#define MT7921_MCU_CE_CMD(id) (MT7921_MCU_CMD_FIELD_CE | MT7921_MCU_CMD(id))
+
+#define MT7921_MCU_CMD_TARGET_ADDRESS_LEN_REQ MT7921_MCU_CMD(0x01)
+#define MT7921_MCU_CMD_FW_START_REQ MT7921_MCU_CMD(0x02)
+#define MT7921_MCU_CMD_PATCH_START_REQ MT7921_MCU_CMD(0x05)
+#define MT7921_MCU_CMD_PATCH_FINISH_REQ MT7921_MCU_CMD(0x07)
+#define MT7921_MCU_CMD_PATCH_SEM_CONTROL MT7921_MCU_CMD(0x10)
+#define MT7921_MCU_CMD_FW_SCATTER MT7921_MCU_CMD(0xee)
+
+#define MT7921_MCU_CE_CMD_GET_NIC_CAPAB MT7921_MCU_CE_CMD(0x8a)
+#define MT7921_MCU_CE_CMD_FWLOG_2_HOST MT7921_MCU_CE_CMD(0xc5)
 
 #define MT7921_PATCH_SEM_RELEASE 0
 #define MT7921_PATCH_SEM_GET 1
@@ -209,6 +217,11 @@ static int mt7921_dma_init(mt7921_priv_t *priv, bool resume) {
 #define MT7921_PATCH_ADDRESS 0x200000U
 #define MT7921_RAM_START_ADDRESS 0x900000U
 #define MT7921_NIC_CAP_BUF_SIZE 1024
+#define MT7921_MCU_RX_BUF_SIZE 2048
+
+#define MT7921_SDIO_HDR_TX_BYTES_MASK 0x0000ffffU
+#define MT7921_SDIO_HDR_PKT_TYPE_SHIFT 16
+#define MT7921_SDIO_HDR_PKT_TYPE_CMD 0U
 
 #define MT7921_NIC_CAP_MAC_ADDR 7
 #define MT7921_NIC_CAP_PHY 8
@@ -294,6 +307,21 @@ struct mt7921_mcu_fw_start_req {
     uint32_t addr;
 } __attribute__((packed));
 
+struct mt7921_mcu_txd {
+    uint32_t txd[8];
+    uint16_t len;
+    uint16_t pq_id;
+    uint8_t cid;
+    uint8_t pkt_type;
+    uint8_t set_query;
+    uint8_t seq;
+    uint8_t uc_d2b0_rev;
+    uint8_t ext_cid;
+    uint8_t s2d_index;
+    uint8_t ext_cid_ack;
+    uint32_t rsv[5];
+} __attribute__((packed));
+
 struct mt7921_mcu_ce_fwlog_req {
     uint8_t ctrl_val;
     uint8_t pad[3];
@@ -339,31 +367,137 @@ static size_t mt7921_min_size(size_t a, size_t b) {
     return b;
 }
 
-static int mt7921_mcu_send_msg(mt7921_priv_t *priv, uint8_t cmd, void *req,
+static int mt7921_usb_bulk_send(mt7921_priv_t *priv, struct usb_pipe *pipe,
+                                uint8_t *payload, size_t payload_len) {
+    uint32_t hdr;
+    size_t tx_len = payload_len + 4;
+    size_t pad = ((tx_len + 3U) & ~3U) + 4U - tx_len;
+    uint8_t *buf;
+    int ret;
+
+    buf = malloc(tx_len + pad);
+    if (!buf) {
+        return -ENOMEM;
+    }
+
+    hdr = (uint32_t)(payload_len & MT7921_SDIO_HDR_TX_BYTES_MASK) |
+          (MT7921_SDIO_HDR_PKT_TYPE_CMD << MT7921_SDIO_HDR_PKT_TYPE_SHIFT);
+    memcpy(buf, &hdr, sizeof(hdr));
+    if (payload_len) {
+        memcpy(buf + 4, payload, payload_len);
+    }
+    if (pad) {
+        memset(buf + tx_len, 0, pad);
+    }
+
+    ret = usb_send_bulk(pipe, USB_DIR_OUT, buf, tx_len + pad);
+    free(buf);
+
+    if (ret) {
+        return -EIO;
+    }
+
+    return 0;
+}
+
+static int mt7921_mcu_send_msg(mt7921_priv_t *priv, uint32_t cmd, void *req,
                                size_t req_len, bool wait_resp, void *resp,
                                size_t resp_len) {
+    struct mt7921_mcu_txd txd;
+    uint8_t tx_buf[512];
+    uint8_t rx_buf[MT7921_MCU_RX_BUF_SIZE];
+    struct usb_pipe *out_pipe;
+    uint8_t seq;
+    uint8_t cmd_id = (uint8_t)(cmd & MT7921_MCU_CMD_FIELD_ID_MASK);
+    uint8_t ext_id = (uint8_t)((cmd & MT7921_MCU_CMD_FIELD_EXT_ID_MASK) >> 8);
     int ret;
-    uint32_t dummy = 0;
+    uint8_t status;
 
-    ret = mt76u_vendor_request(priv, MT_VEND_WRITE_CFG,
-                               USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-                               cmd, 0, req, req_len);
-    if (ret) {
-        return ret;
+    if (!priv->mcu_in || !priv->mcu_out) {
+        return -ENODEV;
+    }
+
+    if (cmd == MT7921_MCU_CMD_FW_SCATTER) {
+        out_pipe = priv->fwdl_out ? priv->fwdl_out : priv->mcu_out;
+        ret = mt7921_usb_bulk_send(priv, out_pipe, req, req_len);
+        if (ret) {
+            return ret;
+        }
+    } else {
+        if (sizeof(txd) + req_len > sizeof(tx_buf)) {
+            return -E2BIG;
+        }
+
+        memset(&txd, 0, sizeof(txd));
+        memset(tx_buf, 0, sizeof(tx_buf));
+
+        seq = (++priv->mcu_seq) & 0x0fU;
+        if (!seq) {
+            seq = (++priv->mcu_seq) & 0x0fU;
+        }
+
+        txd.txd[0] = (uint32_t)((sizeof(txd) + req_len) & 0xffffU) |
+                     (2U << 23) | (0x20U << 25);
+        txd.txd[1] = (1U << 31) | (1U << 16);
+        txd.len = (uint16_t)((sizeof(txd) + req_len) - sizeof(txd.txd));
+        txd.pq_id = 0x8000;
+        txd.cid = cmd_id;
+        txd.pkt_type = 0xa0;
+        txd.seq = seq;
+        txd.ext_cid = ext_id;
+        txd.s2d_index = 0;
+
+        if (ext_id || (cmd & MT7921_MCU_CMD_FIELD_CE)) {
+            if (cmd & MT7921_MCU_CMD_FIELD_QUERY) {
+                txd.set_query = 0;
+            } else {
+                txd.set_query = 1;
+            }
+            txd.ext_cid_ack = ext_id ? 1 : 0;
+        } else {
+            txd.set_query = 3;
+        }
+
+        memcpy(tx_buf, &txd, sizeof(txd));
+        if (req_len) {
+            memcpy(tx_buf + sizeof(txd), req, req_len);
+        }
+
+        ret = mt7921_usb_bulk_send(priv, priv->mcu_out, tx_buf,
+                                   sizeof(txd) + req_len);
+        if (ret) {
+            return ret;
+        }
     }
 
     if (!wait_resp) {
         return 0;
     }
 
-    if (!resp || !resp_len) {
-        resp = &dummy;
-        resp_len = sizeof(dummy);
+    memset(rx_buf, 0, sizeof(rx_buf));
+    ret = usb_send_bulk(priv->mcu_in, USB_DIR_IN, rx_buf, sizeof(rx_buf));
+    if (ret) {
+        return -EIO;
     }
 
-    return mt76u_vendor_request(priv, MT_VEND_READ_CFG,
-                                USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-                                cmd, 0, resp, resp_len);
+    if (cmd == MT7921_MCU_CMD_PATCH_SEM_CONTROL ||
+        cmd == MT7921_MCU_CMD_PATCH_FINISH_REQ) {
+        status = rx_buf[32];
+        if (resp && resp_len) {
+            ((uint8_t *)resp)[0] = status;
+            return 0;
+        }
+        return (int)status;
+    }
+
+    if (resp && resp_len) {
+        if (36 + resp_len > sizeof(rx_buf)) {
+            return -EINVAL;
+        }
+        memcpy(resp, rx_buf + 36, resp_len);
+    }
+
+    return 0;
 }
 
 static uint32_t mt7921_patch_get_data_mode(uint32_t info) {
@@ -577,7 +711,8 @@ static int mt7921_get_patch_firmware(mt7921_priv_t *priv, uint8_t **data,
         printk("Failed to open patch firmware file\n");
         return -ENOENT;
     }
-    uint8_t *buf = alloc_frames_bytes(node->size);
+    printk("Patch firmware size: %d bytes\n", node->size);
+    uint8_t *buf = malloc(node->size);
     if (!buf)
         return -ENOMEM;
 
@@ -595,7 +730,8 @@ static int mt7921_get_ram_firmware(mt7921_priv_t *priv, uint8_t **data,
         printk("Failed to open ram firmware file\n");
         return -ENOENT;
     }
-    uint8_t *buf = alloc_frames_bytes(node->size);
+    printk("RAM firmware size: %d bytes\n", node->size);
+    uint8_t *buf = malloc(node->size);
     if (!buf)
         return -ENOMEM;
 
@@ -670,6 +806,9 @@ static int mt7921_send_patch_firmware(mt7921_priv_t *priv, uint8_t *data,
     }
 
     ret = mt7921_mcu_start_patch(priv);
+    if (ret) {
+        goto out;
+    }
 
 out:
     sem = mt7921_mcu_patch_sem_ctrl(priv, false);
@@ -804,8 +943,8 @@ static int mt7921_run_firmware(mt7921_priv_t *priv) {
     }
 
 out:
-    free_frames_bytes(patch_data, patch_size);
-    free_frames_bytes(ram_data, ram_size);
+    free(patch_data);
+    free(ram_data);
     return ret;
 }
 
@@ -935,6 +1074,92 @@ int mt7921_mcu_power_on(mt7921_priv_t *priv) {
     return ret;
 }
 
+static struct usb_endpoint_descriptor *
+mt7921_find_nth_bulk_out(struct usbdevice_a_interface *iface, int nth) {
+    uint8_t *p = (uint8_t *)iface->iface + iface->iface->bLength;
+    int seen = 0;
+    int scanned = 0;
+    int max_scan = 64;
+
+    while (max_scan-- > 0 && scanned < iface->iface->bNumEndpoints) {
+        struct usb_endpoint_descriptor *ep =
+            (struct usb_endpoint_descriptor *)p;
+
+        if (!ep->bLength) {
+            break;
+        }
+        if (ep->bDescriptorType == USB_DT_INTERFACE) {
+            break;
+        }
+        if (ep->bDescriptorType == USB_DT_ENDPOINT) {
+            scanned++;
+            if ((ep->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK) ==
+                    USB_ENDPOINT_XFER_BULK &&
+                (ep->bEndpointAddress & USB_ENDPOINT_DIR_MASK) == USB_DIR_OUT) {
+                if (seen == nth) {
+                    return ep;
+                }
+                seen++;
+            }
+        }
+
+        p += ep->bLength;
+    }
+
+    return NULL;
+}
+
+static int mt7921_usb_init_pipes(mt7921_priv_t *priv,
+                                 struct usbdevice_a_interface *iface) {
+    struct usb_endpoint_descriptor *in_desc;
+    struct usb_endpoint_descriptor *out0_desc;
+    struct usb_endpoint_descriptor *out1_desc;
+
+    in_desc = usb_find_desc(iface, USB_ENDPOINT_XFER_BULK, USB_DIR_IN);
+    out0_desc = mt7921_find_nth_bulk_out(iface, 0);
+    out1_desc = mt7921_find_nth_bulk_out(iface, 1);
+    if (!out1_desc) {
+        out1_desc = out0_desc;
+    }
+
+    if (!in_desc || !out0_desc) {
+        return -ENODEV;
+    }
+
+    priv->mcu_in = usb_alloc_pipe(priv->usbdev, in_desc);
+    priv->mcu_out = usb_alloc_pipe(priv->usbdev, out0_desc);
+    if (!priv->mcu_in || !priv->mcu_out) {
+        return -ENOMEM;
+    }
+
+    if (out1_desc == out0_desc) {
+        priv->fwdl_out = priv->mcu_out;
+    } else {
+        priv->fwdl_out = usb_alloc_pipe(priv->usbdev, out1_desc);
+        if (!priv->fwdl_out) {
+            return -ENOMEM;
+        }
+    }
+
+    return 0;
+}
+
+static void mt7921_usb_deinit_pipes(mt7921_priv_t *priv) {
+    if (!priv) {
+        return;
+    }
+
+    usb_free_pipe(priv->usbdev, priv->mcu_in);
+    if (priv->fwdl_out && priv->fwdl_out != priv->mcu_out) {
+        usb_free_pipe(priv->usbdev, priv->fwdl_out);
+    }
+    usb_free_pipe(priv->usbdev, priv->mcu_out);
+
+    priv->mcu_in = NULL;
+    priv->mcu_out = NULL;
+    priv->fwdl_out = NULL;
+}
+
 int mt7921_probe(struct usbdevice_s *usbdev,
                  struct usbdevice_a_interface *iface) {
     mt7921_priv_t *priv = malloc(sizeof(mt7921_priv_t));
@@ -944,8 +1169,15 @@ int mt7921_probe(struct usbdevice_s *usbdev,
     memset(priv, 0, sizeof(*priv));
     mutex_init(&priv->reg_lock);
     priv->usbdev = usbdev;
+    priv->mcu_seq = 0;
 
     int ret = 0;
+
+    ret = mt7921_usb_init_pipes(priv, iface);
+    if (ret) {
+        printk("Failed to init USB bulk pipes\n");
+        goto err;
+    }
 
     if (mt76_get_field(priv, 0x7c0600f0, MT_TOP_MISC2_FW_N9_RDY)) {
         ret = mt7921_wfsys_reset(priv);
@@ -981,11 +1213,29 @@ int mt7921_probe(struct usbdevice_s *usbdev,
     return 0;
 
 err:
+    mt7921_usb_deinit_pipes(priv);
     free(priv);
     return ret;
 }
 
-int mt7921_remove(struct usbdevice_s *usbdev) { return 0; }
+int mt7921_remove(struct usbdevice_s *usbdev) {
+    mt7921_priv_t *priv;
+
+    if (!usbdev) {
+        return 0;
+    }
+
+    priv = usbdev->desc;
+    if (!priv) {
+        return 0;
+    }
+
+    mt7921_usb_deinit_pipes(priv);
+    usbdev->desc = NULL;
+    free(priv);
+
+    return 0;
+}
 
 usb_driver_t mt7921_general_driver = {
     .vendorid = 0x0e8d,
