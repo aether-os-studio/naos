@@ -8,16 +8,30 @@
 
 struct net_device;
 
+enum mt76u_in_ep {
+    MT_EP_IN_PKT_RX,
+    MT_EP_IN_CMD_RESP,
+    __MT_EP_IN_MAX,
+};
+
+enum mt76u_out_ep {
+    MT_EP_OUT_INBAND_CMD,
+    MT_EP_OUT_AC_BE,
+    MT_EP_OUT_AC_BK,
+    MT_EP_OUT_AC_VI,
+    MT_EP_OUT_AC_VO,
+    MT_EP_OUT_HCCA,
+    __MT_EP_OUT_MAX,
+};
+
 typedef struct mt7921_priv {
     struct usbdevice_s *usbdev;
-    struct usb_pipe *mcu_in;
-    struct usb_pipe *mcu_out;
-    struct usb_pipe *fwdl_out;
-    struct usb_pipe *data_in;
-    struct usb_pipe *data_out;
+    struct usb_pipe *in_pipes[__MT_EP_IN_MAX];
+    struct usb_pipe *out_pipes[__MT_EP_OUT_MAX];
     mutex_t reg_lock;
     mutex_t io_lock;
     uint8_t mcu_seq;
+    uint8_t scan_seq;
     uint16_t tx_wlan_idx;
     uint16_t mgmt_seq;
     uint8_t tx_own_mac_idx;

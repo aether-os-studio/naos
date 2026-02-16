@@ -28,10 +28,11 @@ static inline void delay(uint64_t ms) {
 }
 
 // Allocate, update, or free a usb pipe.
-struct usb_pipe *usb_realloc_pipe(struct usbdevice_s *usbdev,
-                                  struct usb_pipe *pipe,
-                                  struct usb_endpoint_descriptor *epdesc) {
-    return usbdev->hub->op->realloc_pipe(usbdev, pipe, epdesc);
+struct usb_pipe *
+usb_realloc_pipe(struct usbdevice_s *usbdev, struct usb_pipe *pipe,
+                 struct usb_endpoint_descriptor *epdesc,
+                 struct usb_super_speed_endpoint_descriptor *ss_epdesc) {
+    return usbdev->hub->op->realloc_pipe(usbdev, pipe, epdesc, ss_epdesc);
 }
 
 // Send a message on a control pipe using the default control descriptor.
@@ -54,16 +55,18 @@ int usb_32bit_pipe(struct usb_pipe *pipe_fl) { return 1; }
  ****************************************************************/
 
 // Allocate a usb pipe.
-struct usb_pipe *usb_alloc_pipe(struct usbdevice_s *usbdev,
-                                struct usb_endpoint_descriptor *epdesc) {
-    return usb_realloc_pipe(usbdev, NULL, epdesc);
+struct usb_pipe *
+usb_alloc_pipe(struct usbdevice_s *usbdev,
+               struct usb_endpoint_descriptor *epdesc,
+               struct usb_super_speed_endpoint_descriptor *ss_epdesc) {
+    return usb_realloc_pipe(usbdev, NULL, epdesc, ss_epdesc);
 }
 
 // Free an allocated control or bulk pipe.
 void usb_free_pipe(struct usbdevice_s *usbdev, struct usb_pipe *pipe) {
     if (!pipe)
         return;
-    usb_realloc_pipe(usbdev, pipe, NULL);
+    usb_realloc_pipe(usbdev, pipe, NULL, NULL);
 }
 
 // Send a message to the default control pipe of a device.
@@ -172,6 +175,24 @@ usb_find_desc(struct usbdevice_a_interface *iface, int type, int dir) {
     }
 }
 
+struct usb_super_speed_endpoint_descriptor *
+usb_find_ss_desc(struct usbdevice_a_interface *iface) {
+    struct usb_interface_descriptor *iface_desc = iface->iface;
+    struct usb_super_speed_endpoint_descriptor *epdesc = (void *)&iface_desc[1];
+    for (;;) {
+        if ((void *)epdesc >=
+                (void *)epdesc +
+                    iface->iface->bNumEndpoints *
+                        sizeof(struct usb_super_speed_endpoint_descriptor) ||
+            epdesc->bDescriptorType == USB_DT_INTERFACE) {
+            return NULL;
+        }
+        if (epdesc->bDescriptorType == USB_DT_ENDPOINT_COMPANION)
+            return epdesc;
+        epdesc = (void *)epdesc + epdesc->bLength;
+    }
+}
+
 // Get the first 8 bytes of the device descriptor.
 static int get_device_info8(struct usb_pipe *pipe,
                             struct usb_device_descriptor *dinfo) {
@@ -258,7 +279,7 @@ static int usb_set_address(struct usbdevice_s *usbdev) {
         .wMaxPacketSize = speed_to_ctlsize[usbdev->speed],
         .bmAttributes = USB_ENDPOINT_XFER_CONTROL,
     };
-    usbdev->defpipe = usb_alloc_pipe(usbdev, &epdesc);
+    usbdev->defpipe = usb_alloc_pipe(usbdev, &epdesc, NULL);
     if (!usbdev->defpipe)
         return -1;
 
@@ -279,7 +300,7 @@ static int usb_set_address(struct usbdevice_s *usbdev) {
 
     cntl->maxaddr++;
     usbdev->devaddr = cntl->maxaddr;
-    usbdev->defpipe = usb_realloc_pipe(usbdev, usbdev->defpipe, &epdesc);
+    usbdev->defpipe = usb_realloc_pipe(usbdev, usbdev->defpipe, &epdesc, NULL);
     if (!usbdev->defpipe)
         return -1;
     return 0;
@@ -345,7 +366,7 @@ static int configure_usb_device(struct usbdevice_s *usbdev) {
         .wMaxPacketSize = maxpacket,
         .bmAttributes = USB_ENDPOINT_XFER_CONTROL,
     };
-    usbdev->defpipe = usb_realloc_pipe(usbdev, usbdev->defpipe, &epdesc);
+    usbdev->defpipe = usb_realloc_pipe(usbdev, usbdev->defpipe, &epdesc, NULL);
     if (!usbdev->defpipe) {
         printk("Failed realloc pipe\n");
         return 0;

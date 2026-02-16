@@ -7,11 +7,12 @@ struct usbdevice_s;
 struct usb_endpoint_descriptor;
 struct usb_pipe;
 
-struct usb_pipe *xhci_realloc_pipe(struct usbdevice_s *usbdev,
-                                   struct usb_pipe *upipe,
-                                   struct usb_endpoint_descriptor *epdesc);
+struct usb_pipe *
+xhci_realloc_pipe(struct usbdevice_s *usbdev, struct usb_pipe *upipe,
+                  struct usb_endpoint_descriptor *epdesc,
+                  struct usb_super_speed_endpoint_descriptor *ss_epdesc);
 int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data,
-                   int datasize);
+                   int datasize, uint64_t timeout_ns);
 int xhci_send_intr_pipe(struct usb_pipe *p, void *buf, int len, intr_xfer_cb cb,
                         void *user_data);
 

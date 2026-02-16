@@ -12,6 +12,7 @@ EXPORT_SYMBOL(rtnl_dev_get_by_index);
 EXPORT_SYMBOL(rtnl_dev_get_by_name);
 EXPORT_SYMBOL(rtnl_dev_register);
 EXPORT_SYMBOL(rtnl_dev_unregister);
+EXPORT_SYMBOL(rtnl_dev_set_wireless_handler);
 EXPORT_SYMBOL(rtnl_notify_addr);
 EXPORT_SYMBOL(rtnl_notify_link);
 EXPORT_SYMBOL(rtnl_notify_route);

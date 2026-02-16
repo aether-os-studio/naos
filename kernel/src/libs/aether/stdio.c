@@ -6,6 +6,7 @@
 EXPORT_SYMBOL(printk);
 EXPORT_SYMBOL(serial_fprintk);
 EXPORT_SYMBOL(sprintf);
+EXPORT_SYMBOL(snprintf);
 EXPORT_SYMBOL(vsprintf);
 EXPORT_SYMBOL(vsnprintf);
 

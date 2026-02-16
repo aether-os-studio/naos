@@ -70,12 +70,14 @@ struct usbhub_s {
 };
 
 struct usb_endpoint_descriptor;
+struct usb_super_speed_endpoint_descriptor;
 
 // Hub callback (32bit) info
 struct usbhub_op_s {
-    struct usb_pipe *(*realloc_pipe)(struct usbdevice_s *usbdev,
-                                     struct usb_pipe *upipe,
-                                     struct usb_endpoint_descriptor *epdesc);
+    struct usb_pipe *(*realloc_pipe)(
+        struct usbdevice_s *usbdev, struct usb_pipe *upipe,
+        struct usb_endpoint_descriptor *epdesc,
+        struct usb_super_speed_endpoint_descriptor *ss_epdesc);
     int (*send_pipe)(struct usb_pipe *p, int dir, const void *cmd, void *data,
                      int datasize, uint64_t timeout_ns);
     int (*send_intr_pipe)(struct usb_pipe *p, void *data_ptr, int len,
@@ -243,6 +245,15 @@ struct usb_endpoint_descriptor {
     uint8_t bInterval;
 } __attribute__((packed));
 
+struct usb_super_speed_endpoint_descriptor {
+    uint8_t bLength;
+    uint8_t bDescriptorType;
+
+    uint8_t bMaxBurst;
+    uint8_t bmAttributes;
+    uint16_t wBytesPerInterval;
+} __attribute__((packed));
+
 #define USB_ENDPOINT_NUMBER_MASK 0x0f /* in bEndpointAddress */
 #define USB_ENDPOINT_DIR_MASK 0x80
 
@@ -304,14 +315,18 @@ enum scsi_version {
 #define HID_REQ_SET_PROTOCOL 0x0B
 
 // usb.c
+int usb_send_pipe(struct usb_pipe *pipe_fl, int dir, const void *cmd,
+                  void *data, int datasize, uint64_t timeout_ns);
 int usb_send_bulk(struct usb_pipe *pipe, int dir, void *data, int datasize);
 int usb_send_bulk_nonblock(struct usb_pipe *pipe, int dir, void *data,
                            int datasize);
 int usb_send_intr_pipe(struct usb_pipe *pipe_fl, void *data_ptr, int len,
                        intr_xfer_cb cb, void *user_data);
 int usb_32bit_pipe(struct usb_pipe *pipe_fl);
-struct usb_pipe *usb_alloc_pipe(struct usbdevice_s *usbdev,
-                                struct usb_endpoint_descriptor *epdesc);
+struct usb_pipe *
+usb_alloc_pipe(struct usbdevice_s *usbdev,
+               struct usb_endpoint_descriptor *epdesc,
+               struct usb_super_speed_endpoint_descriptor *ss_epdesc);
 void usb_free_pipe(struct usbdevice_s *usbdev, struct usb_pipe *pipe);
 int usb_send_default_control(struct usb_pipe *pipe,
                              const struct usb_ctrlrequest *req, void *data);
@@ -325,6 +340,8 @@ int usb_get_period(struct usbdevice_s *usbdev,
 int usb_xfer_time(struct usb_pipe *pipe, int datalen);
 struct usb_endpoint_descriptor *
 usb_find_desc(struct usbdevice_a_interface *iface, int type, int dir);
+struct usb_super_speed_endpoint_descriptor *
+usb_find_ss_desc(struct usbdevice_a_interface *iface);
 void usb_enumerate(struct usbhub_s *hub);
 
 #define MAX_USBDEV_NUM 256

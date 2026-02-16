@@ -837,9 +837,6 @@ static int xhci_event_wait(struct usb_xhci_s *xhci, struct xhci_ring *ring,
             return (status >> 24) & 0xff;
         }
         if (nano_time() > timeout_ns) {
-            printk("XHCI event wait timeout!!!\n");
-            printk("ring->eidx = %d\n", ring->eidx);
-            printk("ring->nidx = %d\n", ring->nidx);
             ring->eidx = ring->nidx;
             return CC_USB_TRANSACTION_ERROR;
         }
@@ -1133,7 +1130,8 @@ static int xhci_config_hub(struct usbhub_s *hub) {
 
 static struct usb_pipe *
 xhci_alloc_pipe(struct usbdevice_s *usbdev,
-                struct usb_endpoint_descriptor *epdesc) {
+                struct usb_endpoint_descriptor *epdesc,
+                struct usb_super_speed_endpoint_descriptor *ss_epdesc) {
     uint8_t eptype = epdesc->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK;
     struct usb_xhci_s *xhci =
         container_of(usbdev->hub->cntl, struct usb_xhci_s, usb);
@@ -1173,12 +1171,30 @@ xhci_alloc_pipe(struct usbdevice_s *usbdev,
         eptype == USB_ENDPOINT_XFER_CONTROL)
         ep->ctx[1] |= 1 << 5;
     ep->ctx[1] |= (uint32_t)pipe->pipe.maxpacket << 16;
+    uint8_t max_burst = 0;
+    if (usbdev->speed == USB_SUPERSPEED && ss_epdesc)
+        max_burst = ss_epdesc->bMaxBurst;
+    else if (usbdev->speed == USB_HIGHSPEED &&
+             (eptype == USB_ENDPOINT_XFER_ISOC ||
+              eptype == USB_ENDPOINT_XFER_INT))
+        max_burst = (pipe->pipe.maxpacket >> 11) & 0x3;
     uint64_t deq = translate_address(get_current_page_dir(false),
                                      (uint64_t)&pipe->reqs.ring[0]);
+    ep->ctx[1] |= (uint32_t)max_burst << 8;
+    const uint32_t error_count = 3;
+    ep->ctx[1] |= (error_count << 1);
     ep->deq_low = deq;
     ep->deq_high = deq >> 32;
     ep->deq_low |= 1; // dcs
     ep->length = pipe->pipe.maxpacket;
+    uint16_t avg_trb_length = 3072;
+    if (eptype == USB_ENDPOINT_XFER_CONTROL)
+        avg_trb_length = 8;
+    else if (eptype == USB_ENDPOINT_XFER_ISOC)
+        avg_trb_length = pipe->pipe.maxpacket;
+    else if (eptype == USB_ENDPOINT_XFER_INT)
+        avg_trb_length = 1024;
+    ep->length |= avg_trb_length;
 
     if (pipe->epid == 1) {
         if (usbdev->hub->usbdev) {
@@ -1246,9 +1262,10 @@ fail:
     return NULL;
 }
 
-struct usb_pipe *xhci_realloc_pipe(struct usbdevice_s *usbdev,
-                                   struct usb_pipe *upipe,
-                                   struct usb_endpoint_descriptor *epdesc) {
+struct usb_pipe *
+xhci_realloc_pipe(struct usbdevice_s *usbdev, struct usb_pipe *upipe,
+                  struct usb_endpoint_descriptor *epdesc,
+                  struct usb_super_speed_endpoint_descriptor *ss_epdesc) {
     if (!epdesc) {
         struct xhci_pipe *pipe = container_of(upipe, struct xhci_pipe, pipe);
         struct usb_xhci_s *xhci =
@@ -1258,7 +1275,7 @@ struct usb_pipe *xhci_realloc_pipe(struct usbdevice_s *usbdev,
         return NULL;
     }
     if (!upipe)
-        return xhci_alloc_pipe(usbdev, epdesc);
+        return xhci_alloc_pipe(usbdev, epdesc, ss_epdesc);
     uint8_t eptype = epdesc->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK;
     int oldmaxpacket = upipe->maxpacket;
     usb_desc2pipe(upipe, usbdev, epdesc);
@@ -1382,8 +1399,6 @@ int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data,
                                  : usb_xfer_time(p, datalen));
 
     if (cc != CC_SUCCESS && cc != CC_SHORT_PACKET) {
-        printk("%s: xfer failed (cc %d)\n", __func__, cc);
-        printk("pipe->transfer_count = %d\n", pipe->transfer_count);
         goto cleanup;
     }
 

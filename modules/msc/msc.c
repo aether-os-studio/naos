@@ -553,14 +553,16 @@ int usb_msc_setup(struct usbdevice_s *usbdev,
         usb_find_desc(iface, USB_ENDPOINT_XFER_BULK, USB_DIR_IN);
     struct usb_endpoint_descriptor *outdesc =
         usb_find_desc(iface, USB_ENDPOINT_XFER_BULK, USB_DIR_OUT);
+    struct usb_super_speed_endpoint_descriptor *ss_desc =
+        usb_find_ss_desc(iface);
 
     if (!indesc || !outdesc) {
         printk("MSC: Endpoints not found\n");
         goto fail;
     }
 
-    dev->bulk_in = usb_alloc_pipe(usbdev, indesc);
-    dev->bulk_out = usb_alloc_pipe(usbdev, outdesc);
+    dev->bulk_in = usb_alloc_pipe(usbdev, indesc, ss_desc);
+    dev->bulk_out = usb_alloc_pipe(usbdev, outdesc, ss_desc);
 
     if (!dev->bulk_in || !dev->bulk_out) {
         printk("MSC: Pipe allocation failed\n");

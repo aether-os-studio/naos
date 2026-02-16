@@ -6,8 +6,11 @@ EXPORT_SYMBOL(regist_usb_driver);
 EXPORT_SYMBOL(usb_alloc_pipe);
 EXPORT_SYMBOL(usb_free_pipe);
 EXPORT_SYMBOL(usb_find_desc);
+EXPORT_SYMBOL(usb_find_ss_desc);
 
+EXPORT_SYMBOL(usb_send_pipe);
 EXPORT_SYMBOL(usb_send_bulk);
+EXPORT_SYMBOL(usb_send_bulk_nonblock);
 EXPORT_SYMBOL(usb_send_default_control);
 EXPORT_SYMBOL(usb_send_intr_pipe);
 

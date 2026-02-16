@@ -70,7 +70,7 @@ static int usb_kbd_setup(struct usbdevice_s *usbdev,
         return -1;
 
     struct hiddevice_s *hid = malloc(sizeof(struct hiddevice_s));
-    hid->upipe = usb_alloc_pipe(usbdev, epdesc);
+    hid->upipe = usb_alloc_pipe(usbdev, epdesc, NULL);
     if (!hid->upipe) {
         free(hid);
         return -1;
@@ -321,7 +321,7 @@ static int usb_mouse_setup(struct usbdevice_s *usbdev,
         return -1;
 
     struct hiddevice_s *hid = malloc(sizeof(struct hiddevice_s));
-    hid->upipe = usb_alloc_pipe(usbdev, epdesc);
+    hid->upipe = usb_alloc_pipe(usbdev, epdesc, NULL);
     if (!hid->upipe) {
         free(hid);
         return -1;
