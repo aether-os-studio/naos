@@ -1,4 +1,6 @@
 #include "mt7921.h"
+#include <net/netdev.h>
+#include <net/rtnl.h>
 
 static void delay_us(uint64_t us) {
     uint64_t start = nano_time();
@@ -222,6 +224,54 @@ static int mt7921_dma_init(mt7921_priv_t *priv, bool resume) {
 #define MT7921_SDIO_HDR_TX_BYTES_MASK 0x0000ffffU
 #define MT7921_SDIO_HDR_PKT_TYPE_SHIFT 16
 #define MT7921_SDIO_HDR_PKT_TYPE_CMD 0U
+#define MT7921_SDIO_HDR_SIZE 4U
+#define MT7921_USB_BULK_BUF_SIZE 4096U
+#define MT7921_TXWI_SIZE 64U
+
+#define MT7921_TX_TYPE_SF 1U
+#define MT7921_LMAC_AC00 0U
+#define MT7921_LMAC_AC01 1U
+#define MT7921_LMAC_AC02 2U
+#define MT7921_LMAC_AC03 3U
+#define MT7921_HDR_FORMAT_80211 2U
+
+#define MT7921_TXD0_Q_IDX_SHIFT 25
+#define MT7921_TXD0_PKT_FMT_SHIFT 23
+#define MT7921_TXD0_TX_BYTES_MASK 0x0000ffffU
+
+#define MT7921_TXD1_LONG_FORMAT (1U << 31)
+#define MT7921_TXD1_OWN_MAC_SHIFT 24
+#define MT7921_TXD1_TID_SHIFT 20
+#define MT7921_TXD1_HDR_FORMAT_SHIFT 16
+#define MT7921_TXD1_HDR_INFO_SHIFT 11
+#define MT7921_TXD1_WLAN_IDX_MASK 0x000003ffU
+
+#define MT7921_TXD2_MULTICAST (1U << 10)
+#define MT7921_TXD2_FRAME_TYPE_SHIFT 4
+#define MT7921_TXD2_SUB_TYPE_SHIFT 0
+
+#define MT7921_TXD3_REM_TX_COUNT_SHIFT 11
+
+#define MT7921_TXD8_L_TYPE_SHIFT 4
+#define MT7921_TXD8_L_SUB_TYPE_SHIFT 0
+
+#define MT7921_RXD0_PKT_FLAG_SHIFT 16
+#define MT7921_RXD0_PKT_FLAG_MASK 0x000f0000U
+#define MT7921_RXD0_PKT_TYPE_SHIFT 27
+#define MT7921_RXD0_PKT_TYPE_MASK 0xf8000000U
+
+#define MT7921_RXD1_GROUP_1 (1U << 11)
+#define MT7921_RXD1_GROUP_2 (1U << 12)
+#define MT7921_RXD1_GROUP_3 (1U << 13)
+#define MT7921_RXD1_GROUP_4 (1U << 14)
+#define MT7921_RXD1_GROUP_5 (1U << 15)
+
+#define MT7921_RXD2_HDR_OFFSET_SHIFT 14
+#define MT7921_RXD2_HDR_OFFSET_MASK 0x0000c000U
+
+#define MT7921_PKT_TYPE_NORMAL 2U
+#define MT7921_PKT_TYPE_RX_EVENT 7U
+#define MT7921_PKT_TYPE_NORMAL_MCU 8U
 
 #define MT7921_NIC_CAP_MAC_ADDR 7
 #define MT7921_NIC_CAP_PHY 8
@@ -367,8 +417,576 @@ static size_t mt7921_min_size(size_t a, size_t b) {
     return b;
 }
 
+static uint16_t mt7921_load_le16(const uint8_t *p) {
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+static uint32_t mt7921_load_le32(const uint8_t *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
+           ((uint32_t)p[3] << 24);
+}
+
+static uint32_t mt7921_get_field(uint32_t val, uint32_t mask, uint32_t shift) {
+    return (val & mask) >> shift;
+}
+
+static uint32_t mt7921_set_field(uint32_t reg, uint32_t value, uint32_t mask,
+                                 uint32_t shift) {
+    reg &= ~mask;
+    reg |= (value << shift) & mask;
+    return reg;
+}
+
+static bool mt7921_is_multicast_addr(const uint8_t *addr) {
+    return (addr[0] & 0x01U) != 0;
+}
+
+static uint8_t mt7921_tid_to_ac(uint8_t tid) {
+    switch (tid & 0x7U) {
+    case 1:
+    case 2:
+        return 1;
+    case 4:
+    case 5:
+        return 2;
+    case 6:
+    case 7:
+        return 3;
+    case 0:
+    case 3:
+    default:
+        return 0;
+    }
+}
+
+static uint8_t mt7921_lmac_queue_from_tid(uint8_t tid) {
+    uint8_t ac = mt7921_tid_to_ac(tid);
+
+    switch (ac) {
+    case 0:
+        return MT7921_LMAC_AC03;
+    case 1:
+        return MT7921_LMAC_AC02;
+    case 2:
+        return MT7921_LMAC_AC01;
+    case 3:
+        return MT7921_LMAC_AC00;
+    default:
+        return MT7921_LMAC_AC03;
+    }
+}
+
+static uint32_t mt7921_ieee80211_hdr_len(uint16_t fc) {
+    uint32_t len = 24;
+    uint8_t type = (uint8_t)((fc >> 2) & 0x3U);
+    uint8_t subtype = (uint8_t)((fc >> 4) & 0xfU);
+    bool to_ds = (fc & (1U << 8)) != 0;
+    bool from_ds = (fc & (1U << 9)) != 0;
+
+    if (type == 2U && (subtype & 0x8U)) {
+        len += 2;
+    }
+    if (to_ds && from_ds) {
+        len += 6;
+    }
+
+    return len;
+}
+
+static int mt7921_build_txwi(mt7921_priv_t *priv, const uint8_t *frame,
+                             uint32_t frame_len, uint8_t *txwi,
+                             uint32_t txwi_len) {
+    uint16_t fc;
+    uint8_t type;
+    uint8_t subtype;
+    uint8_t tid = 0;
+    uint32_t hdr_len;
+    uint32_t w0 = 0;
+    uint32_t w1 = 0;
+    uint32_t w2 = 0;
+    uint32_t w3 = 0;
+    uint32_t w8 = 0;
+    uint8_t q_idx = MT7921_LMAC_AC03;
+
+    if (!priv || !frame || !txwi || txwi_len < MT7921_TXWI_SIZE ||
+        frame_len < 24) {
+        return -EINVAL;
+    }
+
+    fc = mt7921_load_le16(frame);
+    type = (uint8_t)((fc >> 2) & 0x3U);
+    subtype = (uint8_t)((fc >> 4) & 0xfU);
+    hdr_len = mt7921_ieee80211_hdr_len(fc);
+
+    if (hdr_len > frame_len) {
+        return -EINVAL;
+    }
+
+    if (type == 2U && (subtype & 0x8U) && hdr_len >= 26U) {
+        tid = frame[24] & 0x0fU;
+        q_idx = mt7921_lmac_queue_from_tid(tid);
+    }
+
+    memset(txwi, 0, txwi_len);
+
+    w0 = mt7921_set_field(w0, frame_len + MT7921_TXWI_SIZE,
+                          MT7921_TXD0_TX_BYTES_MASK, 0);
+    w0 = mt7921_set_field(w0, MT7921_TX_TYPE_SF,
+                          (0x3U << MT7921_TXD0_PKT_FMT_SHIFT),
+                          MT7921_TXD0_PKT_FMT_SHIFT);
+    w0 = mt7921_set_field(w0, q_idx, (0x7fU << MT7921_TXD0_Q_IDX_SHIFT),
+                          MT7921_TXD0_Q_IDX_SHIFT);
+
+    w1 |= MT7921_TXD1_LONG_FORMAT;
+    w1 = mt7921_set_field(w1, priv->tx_own_mac_idx,
+                          (0x3fU << MT7921_TXD1_OWN_MAC_SHIFT),
+                          MT7921_TXD1_OWN_MAC_SHIFT);
+    w1 = mt7921_set_field(w1, tid, (0x7U << MT7921_TXD1_TID_SHIFT),
+                          MT7921_TXD1_TID_SHIFT);
+    w1 = mt7921_set_field(w1, MT7921_HDR_FORMAT_80211,
+                          (0x3U << MT7921_TXD1_HDR_FORMAT_SHIFT),
+                          MT7921_TXD1_HDR_FORMAT_SHIFT);
+    w1 = mt7921_set_field(w1, hdr_len / 2U,
+                          (0x1fU << MT7921_TXD1_HDR_INFO_SHIFT),
+                          MT7921_TXD1_HDR_INFO_SHIFT);
+    w1 = mt7921_set_field(w1, priv->tx_wlan_idx, MT7921_TXD1_WLAN_IDX_MASK, 0);
+
+    w2 = mt7921_set_field(w2, type, (0x3U << MT7921_TXD2_FRAME_TYPE_SHIFT),
+                          MT7921_TXD2_FRAME_TYPE_SHIFT);
+    w2 = mt7921_set_field(w2, subtype, (0xfU << MT7921_TXD2_SUB_TYPE_SHIFT),
+                          MT7921_TXD2_SUB_TYPE_SHIFT);
+    if (mt7921_is_multicast_addr(frame + 4)) {
+        w2 |= MT7921_TXD2_MULTICAST;
+    }
+
+    w3 = mt7921_set_field(w3, 15U, (0x1fU << MT7921_TXD3_REM_TX_COUNT_SHIFT),
+                          MT7921_TXD3_REM_TX_COUNT_SHIFT);
+
+    w8 = mt7921_set_field(w8, type, (0x3U << MT7921_TXD8_L_TYPE_SHIFT),
+                          MT7921_TXD8_L_TYPE_SHIFT);
+    w8 = mt7921_set_field(w8, subtype, (0xfU << MT7921_TXD8_L_SUB_TYPE_SHIFT),
+                          MT7921_TXD8_L_SUB_TYPE_SHIFT);
+
+    memcpy(txwi + 0, &w0, sizeof(w0));
+    memcpy(txwi + 4, &w1, sizeof(w1));
+    memcpy(txwi + 8, &w2, sizeof(w2));
+    memcpy(txwi + 12, &w3, sizeof(w3));
+    memcpy(txwi + 32, &w8, sizeof(w8));
+
+    return 0;
+}
+
+static int mt7921_strip_rx_desc(const uint8_t *pkt, uint32_t pkt_len,
+                                const uint8_t **frame, uint32_t *frame_len) {
+    uint32_t rxd0;
+    uint32_t rxd1;
+    uint32_t rxd2;
+    uint32_t type;
+    uint32_t flag;
+    uint32_t words = 6;
+    uint32_t remove_pad;
+    uint32_t hdr_len;
+
+    if (!pkt || !frame || !frame_len || pkt_len < 24) {
+        return -EINVAL;
+    }
+
+    rxd0 = mt7921_load_le32(pkt + 0);
+    rxd1 = mt7921_load_le32(pkt + 4);
+    rxd2 = mt7921_load_le32(pkt + 8);
+
+    type = mt7921_get_field(rxd0, MT7921_RXD0_PKT_TYPE_MASK,
+                            MT7921_RXD0_PKT_TYPE_SHIFT);
+    flag = mt7921_get_field(rxd0, MT7921_RXD0_PKT_FLAG_MASK,
+                            MT7921_RXD0_PKT_FLAG_SHIFT);
+    if (type == MT7921_PKT_TYPE_RX_EVENT && flag == 1U) {
+        type = MT7921_PKT_TYPE_NORMAL_MCU;
+    }
+    if (type != MT7921_PKT_TYPE_NORMAL) {
+        return -EAGAIN;
+    }
+
+    if (rxd1 & MT7921_RXD1_GROUP_4) {
+        words += 4;
+    }
+    if (rxd1 & MT7921_RXD1_GROUP_1) {
+        words += 4;
+    }
+    if (rxd1 & MT7921_RXD1_GROUP_2) {
+        words += 2;
+    }
+    if (rxd1 & MT7921_RXD1_GROUP_3) {
+        words += 2;
+        if (rxd1 & MT7921_RXD1_GROUP_5) {
+            words += 18;
+        }
+    }
+
+    remove_pad = mt7921_get_field(rxd2, MT7921_RXD2_HDR_OFFSET_MASK,
+                                  MT7921_RXD2_HDR_OFFSET_SHIFT);
+    hdr_len = words * 4U + remove_pad * 2U;
+    if (hdr_len >= pkt_len) {
+        return -EINVAL;
+    }
+
+    *frame = pkt + hdr_len;
+    *frame_len = pkt_len - hdr_len;
+
+    return 0;
+}
+
+static int mt7921_tx_raw(void *driver, const void *buf, uint32_t len);
+static int mt7921_rx_raw(void *driver, void *buf, uint32_t len);
+
+static void mt7921_store_le16(uint8_t *p, uint16_t v) {
+    p[0] = (uint8_t)(v & 0xffU);
+    p[1] = (uint8_t)((v >> 8) & 0xffU);
+}
+
+static bool mt7921_is_mgmt_subtype(const uint8_t *frame, uint32_t len,
+                                   uint8_t subtype) {
+    uint16_t fc;
+    uint8_t type;
+    uint8_t st;
+
+    if (!frame || len < 24) {
+        return false;
+    }
+
+    fc = mt7921_load_le16(frame);
+    type = (uint8_t)((fc >> 2) & 0x3U);
+    st = (uint8_t)((fc >> 4) & 0xfU);
+
+    return type == 0U && st == subtype;
+}
+
+static int mt7921_wait_mgmt_frame(mt7921_priv_t *priv, uint8_t subtype,
+                                  const uint8_t bssid[6], uint8_t *buf,
+                                  uint32_t buf_len, uint32_t *out_len,
+                                  uint64_t timeout_ms) {
+    uint64_t start = nano_time();
+    int ret;
+
+    if (!priv || !buf || !out_len) {
+        return -EINVAL;
+    }
+
+    while ((nano_time() - start) < timeout_ms * 1000000ULL) {
+        ret = mt7921_rx_raw(priv, buf, buf_len);
+        if (ret <= 0) {
+            continue;
+        }
+        if (!mt7921_is_mgmt_subtype(buf, (uint32_t)ret, subtype)) {
+            continue;
+        }
+        if (bssid && memcmp(buf + 10, bssid, 6) != 0) {
+            continue;
+        }
+
+        *out_len = (uint32_t)ret;
+        return 0;
+    }
+
+    return -ETIMEDOUT;
+}
+
+static void mt7921_update_link_state(mt7921_priv_t *priv, bool connected) {
+    if (!priv || !priv->rtnl_dev) {
+        return;
+    }
+
+    spin_lock(&priv->rtnl_dev->lock);
+    if (connected) {
+        priv->rtnl_dev->flags |= IFF_RUNNING | IFF_LOWER_UP;
+        if (priv->rtnl_dev->flags & IFF_UP) {
+            priv->rtnl_dev->operstate = IF_OPER_UP;
+        }
+    } else {
+        priv->rtnl_dev->flags &= ~(IFF_RUNNING | IFF_LOWER_UP);
+        if (priv->rtnl_dev->flags & IFF_UP) {
+            priv->rtnl_dev->operstate = IF_OPER_DORMANT;
+        }
+    }
+    spin_unlock(&priv->rtnl_dev->lock);
+
+    rtnl_notify_link(priv->rtnl_dev, RTM_NEWLINK);
+}
+
+static int mt7921_send_probe_req(mt7921_priv_t *priv, const char *ssid,
+                                 uint8_t ssid_len) {
+    uint8_t frame[96];
+    uint8_t bc[6];
+    uint16_t seq_ctrl;
+    uint32_t off;
+    int ret;
+
+    if (!priv || !ssid || ssid_len > 32) {
+        return -EINVAL;
+    }
+
+    memset(frame, 0, sizeof(frame));
+    memset(bc, 0xff, sizeof(bc));
+    mt7921_store_le16(frame + 0, 0x0040U);
+    mt7921_store_le16(frame + 2, 0U);
+    memcpy(frame + 4, bc, 6);
+    memcpy(frame + 10, priv->macaddr, 6);
+    memcpy(frame + 16, bc, 6);
+    seq_ctrl = (uint16_t)((priv->mgmt_seq++ & 0x0fffU) << 4);
+    mt7921_store_le16(frame + 22, seq_ctrl);
+    off = 24;
+
+    frame[off++] = 0;
+    frame[off++] = ssid_len;
+    if (ssid_len) {
+        memcpy(frame + off, ssid, ssid_len);
+        off += ssid_len;
+    }
+
+    frame[off++] = 1;
+    frame[off++] = 8;
+    frame[off++] = 0x82;
+    frame[off++] = 0x84;
+    frame[off++] = 0x8b;
+    frame[off++] = 0x96;
+    frame[off++] = 0x0c;
+    frame[off++] = 0x12;
+    frame[off++] = 0x18;
+    frame[off++] = 0x24;
+
+    ret = mt7921_tx_raw(priv, frame, off);
+    if (ret < 0) {
+        return ret;
+    }
+
+    return 0;
+}
+
+static int mt7921_scan_find_bssid(mt7921_priv_t *priv, const char *ssid,
+                                  uint8_t ssid_len, uint8_t bssid[6]) {
+    uint8_t frame[IEEE80211_MAX_FRAME_LEN];
+    uint8_t ch;
+    char found_ssid[33];
+    uint64_t start;
+    int ret;
+
+    if (!priv || !ssid || ssid_len == 0 || ssid_len > 32 || !bssid) {
+        return -EINVAL;
+    }
+
+    memset(found_ssid, 0, sizeof(found_ssid));
+    mt7921_send_probe_req(priv, ssid, ssid_len);
+    start = nano_time();
+    while ((nano_time() - start) < 2000ULL * 1000000ULL) {
+        ret = mt7921_rx_raw(priv, frame, sizeof(frame));
+        if (ret <= 0) {
+            continue;
+        }
+        if (!mt7921_is_mgmt_subtype(frame, (uint32_t)ret, 8U) &&
+            !mt7921_is_mgmt_subtype(frame, (uint32_t)ret, 5U)) {
+            continue;
+        }
+
+        ch = 0;
+        if (ieee80211_parse_beacon_ssid(frame, (uint32_t)ret, found_ssid,
+                                        sizeof(found_ssid), &ch) < 0) {
+            continue;
+        }
+
+        if (strlen(found_ssid) == ssid_len &&
+            memcmp(found_ssid, ssid, ssid_len) == 0) {
+            memcpy(bssid, frame + 16, 6);
+            return 0;
+        }
+    }
+
+    return -ENOENT;
+}
+
+static int mt7921_send_auth_open(mt7921_priv_t *priv, const uint8_t bssid[6]) {
+    uint8_t frame[32];
+    uint8_t resp[IEEE80211_MAX_FRAME_LEN];
+    uint32_t resp_len = 0;
+    uint16_t seq_ctrl;
+    uint16_t status;
+    int ret;
+
+    memset(frame, 0, sizeof(frame));
+    mt7921_store_le16(frame + 0, 0x00b0U);
+    mt7921_store_le16(frame + 2, 0U);
+    memcpy(frame + 4, bssid, 6);
+    memcpy(frame + 10, priv->macaddr, 6);
+    memcpy(frame + 16, bssid, 6);
+    seq_ctrl = (uint16_t)((priv->mgmt_seq++ & 0x0fffU) << 4);
+    mt7921_store_le16(frame + 22, seq_ctrl);
+
+    mt7921_store_le16(frame + 24, 0U);
+    mt7921_store_le16(frame + 26, 1U);
+    mt7921_store_le16(frame + 28, 0U);
+
+    ret = mt7921_tx_raw(priv, frame, 30);
+    if (ret < 0) {
+        return ret;
+    }
+
+    ret = mt7921_wait_mgmt_frame(priv, 11U, bssid, resp, sizeof(resp),
+                                 &resp_len, 1500);
+    if (ret) {
+        return ret;
+    }
+    if (resp_len < 30) {
+        return -EINVAL;
+    }
+
+    status = mt7921_load_le16(resp + 28);
+    if (status != 0) {
+        return -EACCES;
+    }
+
+    return 0;
+}
+
+static int mt7921_send_assoc_open(mt7921_priv_t *priv, const uint8_t bssid[6],
+                                  const char *ssid, uint8_t ssid_len) {
+    uint8_t frame[96];
+    uint8_t resp[IEEE80211_MAX_FRAME_LEN];
+    uint32_t resp_len = 0;
+    uint16_t seq_ctrl;
+    uint16_t status;
+    uint32_t off = 0;
+    int ret;
+
+    memset(frame, 0, sizeof(frame));
+    mt7921_store_le16(frame + 0, 0x0000U);
+    mt7921_store_le16(frame + 2, 0U);
+    memcpy(frame + 4, bssid, 6);
+    memcpy(frame + 10, priv->macaddr, 6);
+    memcpy(frame + 16, bssid, 6);
+    seq_ctrl = (uint16_t)((priv->mgmt_seq++ & 0x0fffU) << 4);
+    mt7921_store_le16(frame + 22, seq_ctrl);
+    off = 24;
+
+    mt7921_store_le16(frame + off, 0x0431U);
+    off += 2;
+    mt7921_store_le16(frame + off, 10U);
+    off += 2;
+
+    frame[off++] = 0;
+    frame[off++] = ssid_len;
+    memcpy(frame + off, ssid, ssid_len);
+    off += ssid_len;
+
+    frame[off++] = 1;
+    frame[off++] = 8;
+    frame[off++] = 0x82;
+    frame[off++] = 0x84;
+    frame[off++] = 0x8b;
+    frame[off++] = 0x96;
+    frame[off++] = 0x0c;
+    frame[off++] = 0x12;
+    frame[off++] = 0x18;
+    frame[off++] = 0x24;
+
+    ret = mt7921_tx_raw(priv, frame, off);
+    if (ret < 0) {
+        return ret;
+    }
+
+    ret = mt7921_wait_mgmt_frame(priv, 1U, bssid, resp, sizeof(resp), &resp_len,
+                                 1500);
+    if (ret) {
+        return ret;
+    }
+    if (resp_len < 30) {
+        return -EINVAL;
+    }
+
+    status = mt7921_load_le16(resp + 26);
+    if (status != 0) {
+        return -EACCES;
+    }
+
+    return 0;
+}
+
+static int mt7921_connect_open(mt7921_priv_t *priv, const char *ssid,
+                               uint8_t ssid_len) {
+    uint8_t bssid[6];
+    int ret;
+
+    ret = mt7921_scan_find_bssid(priv, ssid, ssid_len, bssid);
+    if (ret) {
+        return ret;
+    }
+
+    ret = mt7921_send_auth_open(priv, bssid);
+    if (ret) {
+        return ret;
+    }
+
+    ret = mt7921_send_assoc_open(priv, bssid, ssid, ssid_len);
+    if (ret) {
+        return ret;
+    }
+
+    ieee80211_ctx_set_bssid(&priv->wlan_if.ctx, bssid);
+    mt7921_update_link_state(priv, true);
+    return 0;
+}
+
+static int mt7921_connect_open_bssid(mt7921_priv_t *priv,
+                                     const uint8_t bssid[6], const char *ssid,
+                                     uint8_t ssid_len) {
+    int ret;
+
+    if (!priv || !bssid || !ssid || ssid_len == 0 || ssid_len > 32) {
+        return -EINVAL;
+    }
+
+    ret = mt7921_send_auth_open(priv, bssid);
+    if (ret) {
+        return ret;
+    }
+
+    ret = mt7921_send_assoc_open(priv, bssid, ssid, ssid_len);
+    if (ret) {
+        return ret;
+    }
+
+    ieee80211_ctx_set_bssid(&priv->wlan_if.ctx, bssid);
+    mt7921_update_link_state(priv, true);
+    return 0;
+}
+
+static int mt7921_disconnect(mt7921_priv_t *priv) {
+    uint8_t frame[32];
+    uint16_t seq_ctrl;
+
+    if (!priv) {
+        return -EINVAL;
+    }
+    if (!priv->wlan_if.ctx.has_bssid) {
+        return 0;
+    }
+
+    memset(frame, 0, sizeof(frame));
+    mt7921_store_le16(frame + 0, 0x00c0U);
+    mt7921_store_le16(frame + 2, 0U);
+    memcpy(frame + 4, priv->wlan_if.ctx.bssid, 6);
+    memcpy(frame + 10, priv->macaddr, 6);
+    memcpy(frame + 16, priv->wlan_if.ctx.bssid, 6);
+    seq_ctrl = (uint16_t)((priv->mgmt_seq++ & 0x0fffU) << 4);
+    mt7921_store_le16(frame + 22, seq_ctrl);
+    mt7921_store_le16(frame + 24, 3U);
+    mt7921_tx_raw(priv, frame, 26);
+
+    ieee80211_ctx_clear_bssid(&priv->wlan_if.ctx);
+    mt7921_update_link_state(priv, false);
+
+    return 0;
+}
+
 static int mt7921_usb_bulk_send(mt7921_priv_t *priv, struct usb_pipe *pipe,
-                                uint8_t *payload, size_t payload_len) {
+                                const uint8_t *payload, size_t payload_len) {
     uint32_t hdr;
     size_t tx_len = payload_len + 4;
     size_t pad = ((tx_len + 3U) & ~3U) + 4U - tx_len;
@@ -398,6 +1016,212 @@ static int mt7921_usb_bulk_send(mt7921_priv_t *priv, struct usb_pipe *pipe,
     }
 
     return 0;
+}
+
+static int mt7921_usb_bulk_recv(mt7921_priv_t *priv, struct usb_pipe *pipe,
+                                uint8_t *buf, size_t len) {
+    int ret;
+
+    (void)priv;
+    if (!pipe || !buf || !len) {
+        return -EINVAL;
+    }
+
+    ret = usb_send_bulk_nonblock(pipe, USB_DIR_IN, buf, len);
+    if (ret) {
+        return -EIO;
+    }
+
+    return 0;
+}
+
+static int mt7921_tx_raw(void *driver, const void *buf, uint32_t len) {
+    mt7921_priv_t *priv = (mt7921_priv_t *)driver;
+    uint8_t *tx_pkt;
+    int ret;
+
+    if (!priv || !buf || !len) {
+        return -EINVAL;
+    }
+    if (!priv->data_out) {
+        return -ENODEV;
+    }
+
+    tx_pkt = malloc(MT7921_TXWI_SIZE + len);
+    if (!tx_pkt) {
+        return -ENOMEM;
+    }
+
+    ret = mt7921_build_txwi(priv, (const uint8_t *)buf, len, tx_pkt,
+                            MT7921_TXWI_SIZE);
+    if (ret) {
+        free(tx_pkt);
+        return ret;
+    }
+    memcpy(tx_pkt + MT7921_TXWI_SIZE, buf, len);
+
+    mutex_lock(&priv->io_lock);
+    ret = mt7921_usb_bulk_send(priv, priv->data_out, tx_pkt,
+                               MT7921_TXWI_SIZE + len);
+    mutex_unlock(&priv->io_lock);
+    free(tx_pkt);
+    if (ret) {
+        return ret;
+    }
+
+    return (int)len;
+}
+
+static int mt7921_rx_raw(void *driver, void *buf, uint32_t len) {
+    mt7921_priv_t *priv = (mt7921_priv_t *)driver;
+    uint8_t rx_buf[MT7921_USB_BULK_BUF_SIZE];
+    const uint8_t *frame;
+    uint32_t hdr;
+    uint32_t pkt_len;
+    uint32_t payload_len;
+    uint32_t frame_len;
+    uint32_t copy_len;
+    int try_count;
+    int ret;
+
+    if (!priv || !buf || len == 0) {
+        return -EINVAL;
+    }
+    if (!priv->data_in) {
+        return -ENODEV;
+    }
+
+    for (try_count = 0; try_count < 8; try_count++) {
+        memset(rx_buf, 0, sizeof(rx_buf));
+        mutex_lock(&priv->io_lock);
+        ret = mt7921_usb_bulk_recv(priv, priv->data_in, rx_buf, sizeof(rx_buf));
+        mutex_unlock(&priv->io_lock);
+        if (ret) {
+            return ret;
+        }
+
+        memcpy(&hdr, rx_buf, sizeof(hdr));
+        pkt_len = hdr & MT7921_SDIO_HDR_TX_BYTES_MASK;
+        if (pkt_len < MT7921_SDIO_HDR_SIZE) {
+            continue;
+        }
+        if (pkt_len > sizeof(rx_buf)) {
+            pkt_len = sizeof(rx_buf);
+        }
+
+        payload_len = pkt_len - MT7921_SDIO_HDR_SIZE;
+        ret = mt7921_strip_rx_desc(rx_buf + MT7921_SDIO_HDR_SIZE, payload_len,
+                                   &frame, &frame_len);
+        if (ret == -EAGAIN) {
+            continue;
+        }
+        if (ret) {
+            return ret;
+        }
+
+        copy_len = frame_len;
+        if (copy_len > len) {
+            copy_len = len;
+        }
+
+        memcpy(buf, frame, copy_len);
+        return (int)copy_len;
+    }
+
+    return 0;
+}
+
+static int mt7921_netdev_send(void *dev, void *data, uint32_t len) {
+    mt7921_priv_t *priv = (mt7921_priv_t *)dev;
+
+    if (!priv) {
+        return -EINVAL;
+    }
+
+    return ieee80211_netif_send_eth(&priv->wlan_if, data, len);
+}
+
+static int mt7921_netdev_recv(void *dev, void *data, uint32_t len) {
+    mt7921_priv_t *priv = (mt7921_priv_t *)dev;
+
+    if (!priv) {
+        return -EINVAL;
+    }
+
+    return ieee80211_netif_recv_eth(&priv->wlan_if, data, len);
+}
+
+static int mt7921_rtnl_wireless_cmd(struct net_device *dev, const void *data,
+                                    uint32_t len) {
+    mt7921_priv_t *priv;
+    const struct rtnl_wifi_cmd_hdr *hdr;
+
+    if (!dev || !data || len < sizeof(*hdr)) {
+        return -EINVAL;
+    }
+
+    priv = (mt7921_priv_t *)dev->wireless_priv;
+    if (!priv) {
+        return -ENODEV;
+    }
+
+    hdr = (const struct rtnl_wifi_cmd_hdr *)data;
+    if (hdr->magic != RTNL_WIFI_CMD_MAGIC ||
+        hdr->version != RTNL_WIFI_CMD_VERSION) {
+        return -EINVAL;
+    }
+    if ((uint32_t)hdr->payload_len + sizeof(*hdr) > len) {
+        return -EINVAL;
+    }
+
+    switch (hdr->cmd) {
+    case RTNL_WIFI_CMD_SET_TX_CTX: {
+        const struct rtnl_wifi_set_tx_ctx *p =
+            (const struct rtnl_wifi_set_tx_ctx *)((const uint8_t *)data +
+                                                  sizeof(*hdr));
+        if (hdr->payload_len < sizeof(*p)) {
+            return -EINVAL;
+        }
+        mt7921_set_tx_context(priv, p->wlan_idx, p->own_mac_idx);
+        return 0;
+    }
+    case RTNL_WIFI_CMD_SET_BSSID: {
+        const struct rtnl_wifi_set_bssid *p =
+            (const struct rtnl_wifi_set_bssid *)((const uint8_t *)data +
+                                                 sizeof(*hdr));
+        if (hdr->payload_len < sizeof(*p)) {
+            return -EINVAL;
+        }
+        ieee80211_ctx_set_bssid(&priv->wlan_if.ctx, p->bssid);
+        mt7921_update_link_state(priv, true);
+        return 0;
+    }
+    case RTNL_WIFI_CMD_CONNECT_OPEN: {
+        const struct rtnl_wifi_connect_open *p =
+            (const struct rtnl_wifi_connect_open *)((const uint8_t *)data +
+                                                    sizeof(*hdr));
+        if (hdr->payload_len < sizeof(*p) || p->ssid_len == 0 ||
+            p->ssid_len > 32) {
+            return -EINVAL;
+        }
+        return mt7921_connect_open(priv, p->ssid, p->ssid_len);
+    }
+    case RTNL_WIFI_CMD_CONNECT_OPEN_BSSID: {
+        const struct rtnl_wifi_connect_open_bssid *p =
+            (const struct rtnl_wifi_connect_open_bssid *)((const uint8_t *)
+                                                              data +
+                                                          sizeof(*hdr));
+        if (hdr->payload_len < sizeof(*p) || p->ssid_len == 0 ||
+            p->ssid_len > 32) {
+            return -EINVAL;
+        }
+        return mt7921_connect_open_bssid(priv, p->bssid, p->ssid, p->ssid_len);
+    }
+    case RTNL_WIFI_CMD_DISCONNECT:
+        return mt7921_disconnect(priv);
+    default:
+        return -EOPNOTSUPP;
+    }
 }
 
 static int mt7921_mcu_send_msg(mt7921_priv_t *priv, uint32_t cmd, void *req,
@@ -1058,6 +1882,16 @@ bool mt7921_wait(mt7921_priv_t *priv, uint32_t addr, uint32_t mask,
     return false;
 }
 
+void mt7921_set_tx_context(mt7921_priv_t *priv, uint16_t wlan_idx,
+                           uint8_t own_mac_idx) {
+    if (!priv) {
+        return;
+    }
+
+    priv->tx_wlan_idx = (uint16_t)(wlan_idx & 0x03ffU);
+    priv->tx_own_mac_idx = (uint8_t)(own_mac_idx & 0x3fU);
+}
+
 int mt7921_mcu_power_on(mt7921_priv_t *priv) {
     int ret = mt76u_vendor_request(
         priv, MT_VEND_POWER_ON,
@@ -1109,36 +1943,86 @@ mt7921_find_nth_bulk_out(struct usbdevice_a_interface *iface, int nth) {
     return NULL;
 }
 
+static struct usb_endpoint_descriptor *
+mt7921_find_nth_bulk_in(struct usbdevice_a_interface *iface, int nth) {
+    uint8_t *p = (uint8_t *)iface->iface + iface->iface->bLength;
+    int seen = 0;
+    int scanned = 0;
+    int max_scan = 64;
+
+    while (max_scan-- > 0 && scanned < iface->iface->bNumEndpoints) {
+        struct usb_endpoint_descriptor *ep =
+            (struct usb_endpoint_descriptor *)p;
+
+        if (!ep->bLength) {
+            break;
+        }
+        if (ep->bDescriptorType == USB_DT_INTERFACE) {
+            break;
+        }
+        if (ep->bDescriptorType == USB_DT_ENDPOINT) {
+            scanned++;
+            if ((ep->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK) ==
+                    USB_ENDPOINT_XFER_BULK &&
+                (ep->bEndpointAddress & USB_ENDPOINT_DIR_MASK) == USB_DIR_IN) {
+                if (seen == nth) {
+                    return ep;
+                }
+                seen++;
+            }
+        }
+
+        p += ep->bLength;
+    }
+
+    return NULL;
+}
+
 static int mt7921_usb_init_pipes(mt7921_priv_t *priv,
                                  struct usbdevice_a_interface *iface) {
-    struct usb_endpoint_descriptor *in_desc;
-    struct usb_endpoint_descriptor *out0_desc;
-    struct usb_endpoint_descriptor *out1_desc;
-
-    in_desc = usb_find_desc(iface, USB_ENDPOINT_XFER_BULK, USB_DIR_IN);
-    out0_desc = mt7921_find_nth_bulk_out(iface, 0);
-    out1_desc = mt7921_find_nth_bulk_out(iface, 1);
+    struct usb_endpoint_descriptor *in0_desc =
+        mt7921_find_nth_bulk_in(iface, 0);
+    struct usb_endpoint_descriptor *in1_desc =
+        mt7921_find_nth_bulk_in(iface, 1);
+    struct usb_endpoint_descriptor *out0_desc =
+        mt7921_find_nth_bulk_out(iface, 0);
+    struct usb_endpoint_descriptor *out1_desc =
+        mt7921_find_nth_bulk_out(iface, 1);
+    if (!in1_desc) {
+        in1_desc = in0_desc;
+    }
     if (!out1_desc) {
         out1_desc = out0_desc;
     }
 
-    if (!in_desc || !out0_desc) {
+    if (!in0_desc || !out0_desc) {
         return -ENODEV;
     }
 
-    priv->mcu_in = usb_alloc_pipe(priv->usbdev, in_desc);
+    priv->mcu_in = usb_alloc_pipe(priv->usbdev, in0_desc);
     priv->mcu_out = usb_alloc_pipe(priv->usbdev, out0_desc);
     if (!priv->mcu_in || !priv->mcu_out) {
         return -ENOMEM;
     }
 
+    if (in1_desc == in0_desc) {
+        priv->data_in = priv->mcu_in;
+    } else {
+        priv->data_in = usb_alloc_pipe(priv->usbdev, in1_desc);
+        if (!priv->data_in) {
+            return -ENOMEM;
+        }
+    }
+
     if (out1_desc == out0_desc) {
         priv->fwdl_out = priv->mcu_out;
+        priv->data_out = priv->mcu_out;
     } else {
         priv->fwdl_out = usb_alloc_pipe(priv->usbdev, out1_desc);
         if (!priv->fwdl_out) {
             return -ENOMEM;
         }
+        priv->data_out = priv->fwdl_out;
     }
 
     return 0;
@@ -1150,14 +2034,65 @@ static void mt7921_usb_deinit_pipes(mt7921_priv_t *priv) {
     }
 
     usb_free_pipe(priv->usbdev, priv->mcu_in);
+    if (priv->data_in && priv->data_in != priv->mcu_in) {
+        usb_free_pipe(priv->usbdev, priv->data_in);
+    }
     if (priv->fwdl_out && priv->fwdl_out != priv->mcu_out) {
         usb_free_pipe(priv->usbdev, priv->fwdl_out);
+    }
+    if (priv->data_out && priv->data_out != priv->mcu_out &&
+        priv->data_out != priv->fwdl_out) {
+        usb_free_pipe(priv->usbdev, priv->data_out);
     }
     usb_free_pipe(priv->usbdev, priv->mcu_out);
 
     priv->mcu_in = NULL;
     priv->mcu_out = NULL;
     priv->fwdl_out = NULL;
+    priv->data_in = NULL;
+    priv->data_out = NULL;
+}
+
+static int mt7921_register_rtnl_dev(mt7921_priv_t *priv) {
+    struct net_device *rdev = NULL;
+    char name[IFNAMSIZ];
+    int i;
+    int ret;
+
+    if (!priv) {
+        return -EINVAL;
+    }
+
+    for (i = 0; i < 8; i++) {
+        memset(name, 0, sizeof(name));
+        snprintf(name, sizeof(name), "wlan%d", i);
+        if (!rtnl_dev_get_by_name(name)) {
+            rdev = rtnl_dev_alloc(name, ARPHRD_ETHER);
+            if (rdev) {
+                break;
+            }
+        }
+    }
+
+    if (!rdev) {
+        return -ENOMEM;
+    }
+
+    memcpy(rdev->addr, priv->macaddr, 6);
+    memset(rdev->broadcast, 0xff, 6);
+    rdev->addr_len = 6;
+    rdev->mtu = 1500;
+
+    ret = rtnl_dev_register(rdev);
+    if (ret < 0) {
+        return ret;
+    }
+
+    rtnl_dev_set_wireless_handler(rdev, priv, mt7921_rtnl_wireless_cmd);
+    rtnl_notify_link(rdev, RTM_NEWLINK);
+    priv->rtnl_dev = rdev;
+
+    return 0;
 }
 
 int mt7921_probe(struct usbdevice_s *usbdev,
@@ -1168,8 +2103,12 @@ int mt7921_probe(struct usbdevice_s *usbdev,
     }
     memset(priv, 0, sizeof(*priv));
     mutex_init(&priv->reg_lock);
+    mutex_init(&priv->io_lock);
     priv->usbdev = usbdev;
     priv->mcu_seq = 0;
+    priv->tx_wlan_idx = 0;
+    priv->tx_own_mac_idx = 0;
+    priv->mgmt_seq = 0;
 
     int ret = 0;
 
@@ -1206,6 +2145,23 @@ int mt7921_probe(struct usbdevice_s *usbdev,
         goto err;
     }
 
+    ret = ieee80211_netif_init(&priv->wlan_if, priv, mt7921_tx_raw,
+                               mt7921_rx_raw, priv->macaddr);
+    if (ret) {
+        printk("Failed to init ieee80211 netif\n");
+        goto err;
+    }
+
+    ieee80211_ctx_clear_bssid(&priv->wlan_if.ctx);
+    regist_netdev(priv, priv->macaddr, 1500, mt7921_netdev_send,
+                  mt7921_netdev_recv);
+
+    ret = mt7921_register_rtnl_dev(priv);
+    if (ret) {
+        printk("Failed to register rtnl device\n");
+        goto err;
+    }
+
     printk("MT7921 initialized successfully\n");
 
     usbdev->desc = priv;
@@ -1228,6 +2184,12 @@ int mt7921_remove(struct usbdevice_s *usbdev) {
     priv = usbdev->desc;
     if (!priv) {
         return 0;
+    }
+
+    if (priv->rtnl_dev) {
+        rtnl_notify_link(priv->rtnl_dev, RTM_DELLINK);
+        rtnl_dev_unregister(priv->rtnl_dev);
+        priv->rtnl_dev = NULL;
     }
 
     mt7921_usb_deinit_pipes(priv);

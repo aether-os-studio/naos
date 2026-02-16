@@ -36,9 +36,9 @@ struct usb_pipe *usb_realloc_pipe(struct usbdevice_s *usbdev,
 
 // Send a message on a control pipe using the default control descriptor.
 int usb_send_pipe(struct usb_pipe *pipe_fl, int dir, const void *cmd,
-                  void *data, int datasize) {
+                  void *data, int datasize, uint64_t timeout_ns) {
     return pipe_fl->usbdev->hub->op->send_pipe(pipe_fl, dir, cmd, data,
-                                               datasize);
+                                               datasize, timeout_ns);
 }
 
 int usb_send_intr_pipe(struct usb_pipe *pipe_fl, void *data_ptr, int len,
@@ -70,12 +70,18 @@ void usb_free_pipe(struct usbdevice_s *usbdev, struct usb_pipe *pipe) {
 int usb_send_default_control(struct usb_pipe *pipe,
                              const struct usb_ctrlrequest *req, void *data) {
     return usb_send_pipe(pipe, req->bRequestType & USB_DIR_IN, req, data,
-                         req->wLength);
+                         req->wLength, (uint64_t)-1);
 }
 
 // Send a message to a bulk endpoint
 int usb_send_bulk(struct usb_pipe *pipe_fl, int dir, void *data, int datasize) {
-    return usb_send_pipe(pipe_fl, dir, NULL, data, datasize);
+    return usb_send_pipe(pipe_fl, dir, NULL, data, datasize, (uint64_t)-1);
+}
+
+// Send a message to a bulk endpoint
+int usb_send_bulk_nonblock(struct usb_pipe *pipe_fl, int dir, void *data,
+                           int datasize) {
+    return usb_send_pipe(pipe_fl, dir, NULL, data, datasize, 0);
 }
 
 // Check if a pipe for a given controller is on the freelist

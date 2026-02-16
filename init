@@ -22,7 +22,7 @@ done
 
 if [ $root_mounted -eq 0 ]; then
     /bin/echo "Mount root failed..."
-    exit 127
+    exec /bin/sh
 fi
 
 /bin/mount -t tmpfs tmpfs /dev/shm

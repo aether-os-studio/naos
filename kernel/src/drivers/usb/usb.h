@@ -77,7 +77,7 @@ struct usbhub_op_s {
                                      struct usb_pipe *upipe,
                                      struct usb_endpoint_descriptor *epdesc);
     int (*send_pipe)(struct usb_pipe *p, int dir, const void *cmd, void *data,
-                     int datasize);
+                     int datasize, uint64_t timeout_ns);
     int (*send_intr_pipe)(struct usb_pipe *p, void *data_ptr, int len,
                           intr_xfer_cb cb, void *user_data);
 
@@ -305,6 +305,8 @@ enum scsi_version {
 
 // usb.c
 int usb_send_bulk(struct usb_pipe *pipe, int dir, void *data, int datasize);
+int usb_send_bulk_nonblock(struct usb_pipe *pipe, int dir, void *data,
+                           int datasize);
 int usb_send_intr_pipe(struct usb_pipe *pipe_fl, void *data_ptr, int len,
                        intr_xfer_cb cb, void *user_data);
 int usb_32bit_pipe(struct usb_pipe *pipe_fl);

@@ -14,7 +14,7 @@
 // --------------------------------------------------------------
 // configuration
 
-#define XHCI_RING_ITEMS 64
+#define XHCI_RING_ITEMS 128
 #define XHCI_RING_SIZE (XHCI_RING_ITEMS * sizeof(struct xhci_trb))
 
 /*
@@ -1354,7 +1354,7 @@ static int xhci_stop_endpoint_safe(struct usb_xhci_s *xhci, uint32_t slotid,
 }
 
 int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data,
-                   int datalen) {
+                   int datalen, uint64_t timeout_ns) {
     struct xhci_pipe *pipe = container_of(p, struct xhci_pipe, pipe);
     struct usb_xhci_s *xhci = container_of(p->cntl, struct usb_xhci_s, usb);
 
@@ -1376,7 +1376,10 @@ int xhci_send_pipe(struct usb_pipe *p, int dir, const void *cmd, void *data,
         xhci_xfer_normal(pipe, data, datalen);
     }
 
-    int cc = xhci_event_wait(xhci, &pipe->reqs, usb_xfer_time(p, datalen));
+    int cc = xhci_event_wait(xhci, &pipe->reqs,
+                             (timeout_ns != (uint64_t)-1)
+                                 ? timeout_ns / 1000000
+                                 : usb_xfer_time(p, datalen));
 
     if (cc != CC_SUCCESS && cc != CC_SHORT_PACKET) {
         printk("%s: xfer failed (cc %d)\n", __func__, cc);

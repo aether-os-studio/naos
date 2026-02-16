@@ -4,19 +4,30 @@
 #include <libs/aether/usb.h>
 #include <libs/klibc.h>
 #include <libs/mutex.h>
+#include <libs/aether/ieee80211.h>
+
+struct net_device;
 
 typedef struct mt7921_priv {
     struct usbdevice_s *usbdev;
     struct usb_pipe *mcu_in;
     struct usb_pipe *mcu_out;
     struct usb_pipe *fwdl_out;
+    struct usb_pipe *data_in;
+    struct usb_pipe *data_out;
     mutex_t reg_lock;
+    mutex_t io_lock;
     uint8_t mcu_seq;
+    uint16_t tx_wlan_idx;
+    uint16_t mgmt_seq;
+    uint8_t tx_own_mac_idx;
     uint8_t macaddr[6];
     uint8_t antenna_mask;
     bool has_2ghz;
     bool has_5ghz;
     bool has_6ghz;
+    ieee80211_netif_t wlan_if;
+    struct net_device *rtnl_dev;
 } mt7921_priv_t;
 
 #define MT_USB_TYPE_UHW_VENDOR (USB_TYPE_VENDOR | 0x1e)
@@ -38,6 +49,8 @@ int mt76u_vendor_request(mt7921_priv_t *dev, uint8_t req, uint8_t req_type,
                          uint16_t val, uint16_t offset, void *buf, size_t len);
 bool mt7921_wait(mt7921_priv_t *priv, uint32_t addr, uint32_t mask,
                  uint32_t val, uint64_t timeout_ms, uint64_t tick);
+void mt7921_set_tx_context(mt7921_priv_t *priv, uint16_t wlan_idx,
+                           uint8_t own_mac_idx);
 
 // mediatek vendor requests
 #define MT_VEND_DEV_MODE 0x1

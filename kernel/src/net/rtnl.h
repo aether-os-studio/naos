@@ -237,6 +237,49 @@ enum {
 };
 #define IFLA_MAX (__IFLA_MAX - 1)
 
+#define RTNL_WIFI_CMD_MAGIC 0x57494649U
+#define RTNL_WIFI_CMD_VERSION 1U
+
+enum rtnl_wifi_cmd_type {
+    RTNL_WIFI_CMD_SET_TX_CTX = 1,
+    RTNL_WIFI_CMD_SET_BSSID = 2,
+    RTNL_WIFI_CMD_CONNECT_OPEN = 3,
+    RTNL_WIFI_CMD_DISCONNECT = 4,
+    RTNL_WIFI_CMD_CONNECT_OPEN_BSSID = 5,
+};
+
+struct rtnl_wifi_cmd_hdr {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t cmd;
+    uint16_t payload_len;
+    uint16_t reserved;
+} __attribute__((packed));
+
+struct rtnl_wifi_set_tx_ctx {
+    uint16_t wlan_idx;
+    uint8_t own_mac_idx;
+    uint8_t reserved;
+} __attribute__((packed));
+
+struct rtnl_wifi_set_bssid {
+    uint8_t bssid[6];
+    uint8_t reserved[2];
+} __attribute__((packed));
+
+struct rtnl_wifi_connect_open {
+    uint8_t ssid_len;
+    uint8_t reserved[3];
+    char ssid[32];
+} __attribute__((packed));
+
+struct rtnl_wifi_connect_open_bssid {
+    uint8_t bssid[6];
+    uint8_t ssid_len;
+    uint8_t reserved;
+    char ssid[32];
+} __attribute__((packed));
+
 /* Operational states */
 enum {
     IF_OPER_UNKNOWN,
@@ -475,6 +518,10 @@ struct net_device_addr {
     struct ifa_cacheinfo cacheinfo;
 };
 
+struct net_device;
+typedef int (*rtnl_wireless_cmd_t)(struct net_device *dev, const void *data,
+                                   uint32_t len);
+
 struct net_device {
     char name[IFNAMSIZ];
     int32_t ifindex;
@@ -497,6 +544,8 @@ struct net_device {
 
     bool active;
     spinlock_t lock;
+    void *wireless_priv;
+    rtnl_wireless_cmd_t wireless_cmd;
 };
 
 #define MAX_ROUTES 256
@@ -566,6 +615,8 @@ struct net_device *rtnl_dev_get_by_index(int32_t ifindex);
 struct net_device *rtnl_dev_get_by_name(const char *name);
 int rtnl_dev_register(struct net_device *dev);
 void rtnl_dev_unregister(struct net_device *dev);
+void rtnl_dev_set_wireless_handler(struct net_device *dev, void *priv,
+                                   rtnl_wireless_cmd_t handler);
 
 /* Address management */
 int rtnl_addr_add(int32_t ifindex, uint8_t family, const void *addr,

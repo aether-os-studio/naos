@@ -465,6 +465,20 @@ static int rtnl_link_doit(struct nlmsghdr *nlh, uint32_t sender_pid,
 
             spin_unlock(&dev->lock);
 
+            if (attr_len > 0) {
+                struct nlattr *wireless_attr =
+                    nla_find(attr_data, attr_len, IFLA_WIRELESS);
+                if (wireless_attr && dev->wireless_cmd) {
+                    int ret =
+                        dev->wireless_cmd(dev, nla_data(wireless_attr),
+                                          (uint32_t)nla_len(wireless_attr));
+                    if (ret < 0) {
+                        rtnl_send_error(sender_sock, nlh, sender_pid, ret);
+                        return ret;
+                    }
+                }
+            }
+
             /* Send notification */
             rtnl_notify_link(dev, RTM_NEWLINK);
 
@@ -530,6 +544,7 @@ static int rtnl_link_doit(struct nlmsghdr *nlh, uint32_t sender_pid,
     case RTM_SETLINK: {
         /* Same as RTM_NEWLINK for existing device */
         struct net_device *dev = NULL;
+        struct nlattr *wireless_attr = NULL;
 
         if (ifi->ifi_index > 0) {
             dev = rtnl_dev_get_by_index(ifi->ifi_index);
@@ -557,6 +572,8 @@ static int rtnl_link_doit(struct nlmsghdr *nlh, uint32_t sender_pid,
             if (mtu_attr) {
                 dev->mtu = nla_get_u32(mtu_attr);
             }
+
+            wireless_attr = nla_find(attr_data, attr_len, IFLA_WIRELESS);
         }
 
         if (dev->flags & IFF_UP) {
@@ -568,6 +585,15 @@ static int rtnl_link_doit(struct nlmsghdr *nlh, uint32_t sender_pid,
         }
 
         spin_unlock(&dev->lock);
+
+        if (wireless_attr && dev->wireless_cmd) {
+            int ret = dev->wireless_cmd(dev, nla_data(wireless_attr),
+                                        (uint32_t)nla_len(wireless_attr));
+            if (ret < 0) {
+                rtnl_send_error(sender_sock, nlh, sender_pid, ret);
+                return ret;
+            }
+        }
 
         rtnl_notify_link(dev, RTM_NEWLINK);
 
@@ -1164,6 +1190,18 @@ void rtnl_dev_unregister(struct net_device *dev) {
     spin_lock(&net_dev_lock);
     dev->active = false;
     spin_unlock(&net_dev_lock);
+}
+
+void rtnl_dev_set_wireless_handler(struct net_device *dev, void *priv,
+                                   rtnl_wireless_cmd_t handler) {
+    if (!dev) {
+        return;
+    }
+
+    spin_lock(&dev->lock);
+    dev->wireless_priv = priv;
+    dev->wireless_cmd = handler;
+    spin_unlock(&dev->lock);
 }
 
 struct net_device *rtnl_dev_get_by_index(int32_t ifindex) {
