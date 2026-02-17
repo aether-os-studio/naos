@@ -3,6 +3,15 @@
 #include <drivers/drm/drm_core.h>
 #include <drivers/drm/drm.h>
 
+static bool plainfb_handle_to_index(uint32_t handle, uint32_t *idx) {
+    if (handle == 0 || handle > 32 || !idx) {
+        return false;
+    }
+
+    *idx = handle - 1;
+    return true;
+}
+
 int plainfb_get_display_info(drm_device_t *drm_dev, uint32_t *width,
                              uint32_t *height, uint32_t *bpp) {
     plainfb_device_t *dev = drm_dev->data;
@@ -41,7 +50,7 @@ int plainfb_create_dumb(drm_device_t *drm_dev,
                    (args->size + DEFAULT_PAGE_SIZE - 1) &
                        ~(DEFAULT_PAGE_SIZE - 1));
 
-            args->handle = i;
+            args->handle = i + 1;
             return 0;
         }
     }
@@ -55,19 +64,21 @@ static int plainfb_destroy_dumb(drm_device_t *drm_dev, uint32_t handle) {
         return -ENODEV;
     }
 
-    if (handle >= 32 || !gpu_dev->dumbbuffers[handle].used) {
+    uint32_t idx = 0;
+    if (!plainfb_handle_to_index(handle, &idx) ||
+        !gpu_dev->dumbbuffers[idx].used) {
         return -EINVAL;
     }
 
-    if (--gpu_dev->dumbbuffers[handle].refcount == 0) {
+    if (--gpu_dev->dumbbuffers[idx].refcount == 0) {
         // Free memory
-        free_frames(gpu_dev->dumbbuffers[handle].addr,
-                    (gpu_dev->dumbbuffers[handle].pitch *
-                         gpu_dev->dumbbuffers[handle].height +
+        free_frames(gpu_dev->dumbbuffers[idx].addr,
+                    (gpu_dev->dumbbuffers[idx].pitch *
+                         gpu_dev->dumbbuffers[idx].height +
                      DEFAULT_PAGE_SIZE - 1) /
                         DEFAULT_PAGE_SIZE);
 
-        gpu_dev->dumbbuffers[handle].used = false;
+        gpu_dev->dumbbuffers[idx].used = false;
     }
 
     return 0;
@@ -257,8 +268,9 @@ int plainfb_atomic_commit(drm_device_t *drm_dev,
                         return -ENOENT;
                     }
 
-                    if (fb->handle >= 32 ||
-                        !gpu_dev->dumbbuffers[fb->handle].used) {
+                    uint32_t fb_idx = 0;
+                    if (!plainfb_handle_to_index(fb->handle, &fb_idx) ||
+                        !gpu_dev->dumbbuffers[fb_idx].used) {
                         drm_framebuffer_free(&gpu_dev->resource_mgr, fb->id);
                         if (connector) {
                             drm_connector_free(&gpu_dev->resource_mgr,
@@ -386,22 +398,23 @@ int plainfb_atomic_commit(drm_device_t *drm_dev,
         return -ENOENT;
     }
 
-    if (scanout_fb->handle >= 32 ||
-        !gpu_dev->dumbbuffers[scanout_fb->handle].used) {
+    uint32_t scanout_idx = 0;
+    if (!plainfb_handle_to_index(scanout_fb->handle, &scanout_idx) ||
+        !gpu_dev->dumbbuffers[scanout_idx].used) {
         drm_framebuffer_free(&gpu_dev->resource_mgr, scanout_fb->id);
         return -EINVAL;
     }
 
     size_t dst_size = (size_t)gpu_dev->framebuffer->pitch *
                       (size_t)gpu_dev->framebuffer->height;
-    size_t src_size = (size_t)gpu_dev->dumbbuffers[scanout_fb->handle].pitch *
-                      (size_t)gpu_dev->dumbbuffers[scanout_fb->handle].height;
+    size_t src_size = (size_t)gpu_dev->dumbbuffers[scanout_idx].pitch *
+                      (size_t)gpu_dev->dumbbuffers[scanout_idx].height;
     size_t copy_size = src_size < dst_size ? src_size : dst_size;
 
-    fast_copy_16((void *)gpu_dev->framebuffer->address,
-                 (const void *)phys_to_virt(
-                     gpu_dev->dumbbuffers[scanout_fb->handle].addr),
-                 copy_size);
+    fast_copy_16(
+        (void *)gpu_dev->framebuffer->address,
+        (const void *)phys_to_virt(gpu_dev->dumbbuffers[scanout_idx].addr),
+        copy_size);
 
     drm_framebuffer_free(&gpu_dev->resource_mgr, scanout_fb->id);
 
@@ -418,11 +431,13 @@ int plainfb_map_dumb(drm_device_t *drm_dev, struct drm_mode_map_dumb *args) {
         return -ENODEV;
     }
 
-    if (args->handle >= 32 || !gpu_dev->dumbbuffers[args->handle].used) {
+    uint32_t idx = 0;
+    if (!plainfb_handle_to_index(args->handle, &idx) ||
+        !gpu_dev->dumbbuffers[idx].used) {
         return -EINVAL;
     }
 
-    args->offset = gpu_dev->dumbbuffers[args->handle].addr;
+    args->offset = gpu_dev->dumbbuffers[idx].addr;
 
     return 0;
 }
@@ -441,15 +456,30 @@ static int plainfb_page_flip(drm_device_t *drm_dev,
         return -ENODEV;
     }
 
-    if (flip->crtc_id > 1 || flip->fb_id >= 32 ||
-        !gpu_dev->dumbbuffers[flip->fb_id - 1].used) {
+    drm_crtc_t *crtc = drm_crtc_get(&gpu_dev->resource_mgr, flip->crtc_id);
+    if (!crtc) {
+        return -EINVAL;
+    }
+    drm_crtc_free(&gpu_dev->resource_mgr, crtc->id);
+
+    drm_framebuffer_t *fb =
+        drm_framebuffer_get(&gpu_dev->resource_mgr, flip->fb_id);
+    if (!fb) {
         return -EINVAL;
     }
 
-    fast_copy_16(
-        (void *)gpu_dev->framebuffer->address,
-        (const void *)phys_to_virt(gpu_dev->dumbbuffers[flip->fb_id - 1].addr),
-        gpu_dev->framebuffer->pitch * gpu_dev->framebuffer->height);
+    uint32_t handle = fb->handle;
+    drm_framebuffer_free(&gpu_dev->resource_mgr, fb->id);
+
+    uint32_t idx = 0;
+    if (!plainfb_handle_to_index(handle, &idx) ||
+        !gpu_dev->dumbbuffers[idx].used) {
+        return -EINVAL;
+    }
+
+    fast_copy_16((void *)gpu_dev->framebuffer->address,
+                 (const void *)phys_to_virt(gpu_dev->dumbbuffers[idx].addr),
+                 gpu_dev->framebuffer->pitch * gpu_dev->framebuffer->height);
 
     // Create flip complete event
     drm_post_event(drm_dev, DRM_EVENT_FLIP_COMPLETE, flip->user_data);

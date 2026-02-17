@@ -128,11 +128,7 @@ typedef struct drm_resource_manager {
     drm_framebuffer_t *framebuffers[DRM_MAX_FRAMEBUFFERS_PER_DEVICE];
     drm_plane_t *planes[DRM_MAX_PLANES_PER_DEVICE];
 
-    uint32_t next_connector_id;
-    uint32_t next_crtc_id;
-    uint32_t next_encoder_id;
-    uint32_t next_framebuffer_id;
-    uint32_t next_plane_id;
+    uint32_t next_object_id;
 
     spinlock_t lock;
 } drm_resource_manager_t;

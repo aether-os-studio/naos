@@ -17,11 +17,7 @@ uint32_t drm_find_free_slot(void **array, uint32_t size) {
 void drm_resource_manager_init(drm_resource_manager_t *mgr) {
     memset(mgr, 0, sizeof(drm_resource_manager_t));
     mgr->lock.lock = 0;
-    mgr->next_connector_id = 1;
-    mgr->next_crtc_id = 1;
-    mgr->next_encoder_id = 1;
-    mgr->next_framebuffer_id = 1;
-    mgr->next_plane_id = 1;
+    mgr->next_object_id = 1;
 }
 
 void drm_resource_manager_cleanup(drm_resource_manager_t *mgr) {
@@ -89,7 +85,7 @@ drm_connector_t *drm_connector_alloc(drm_resource_manager_t *mgr, uint32_t type,
     }
 
     memset(connector, 0, sizeof(drm_connector_t));
-    connector->id = mgr->next_connector_id++;
+    connector->id = mgr->next_object_id++;
     connector->type = type;
     connector->connection = DRM_MODE_CONNECTED;
     connector->driver_data = driver_data;
@@ -150,7 +146,7 @@ drm_crtc_t *drm_crtc_alloc(drm_resource_manager_t *mgr, void *driver_data) {
     }
 
     memset(crtc, 0, sizeof(drm_crtc_t));
-    crtc->id = mgr->next_crtc_id++;
+    crtc->id = mgr->next_object_id++;
     crtc->driver_data = driver_data;
     crtc->refcount = 1;
 
@@ -210,7 +206,7 @@ drm_encoder_t *drm_encoder_alloc(drm_resource_manager_t *mgr, uint32_t type,
     }
 
     memset(encoder, 0, sizeof(drm_encoder_t));
-    encoder->id = mgr->next_encoder_id++;
+    encoder->id = mgr->next_object_id++;
     encoder->type = type;
     encoder->driver_data = driver_data;
     encoder->refcount = 1;
@@ -271,7 +267,7 @@ drm_framebuffer_t *drm_framebuffer_alloc(drm_resource_manager_t *mgr,
     }
 
     memset(fb, 0, sizeof(drm_framebuffer_t));
-    fb->id = mgr->next_framebuffer_id++;
+    fb->id = mgr->next_object_id++;
     fb->driver_data = driver_data;
     fb->refcount = 1;
 
@@ -331,7 +327,7 @@ drm_plane_t *drm_plane_alloc(drm_resource_manager_t *mgr, void *driver_data) {
     }
 
     memset(plane, 0, sizeof(drm_plane_t));
-    plane->id = mgr->next_plane_id++;
+    plane->id = mgr->next_object_id++;
     plane->driver_data = driver_data;
     plane->refcount = 1;
 

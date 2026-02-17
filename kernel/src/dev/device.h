@@ -15,14 +15,14 @@ enum device_type_t {
 
 // 设备子类型
 enum device_subtype_t {
-    DEV_TTY = 4,     // TTY 设备
-    DEV_PART = 8,    // 磁盘分区
-    DEV_INPUT = 13,  // 输入设备
-    DEV_FB,          // 帧缓冲
-    DEV_DISK,        // 磁盘
-    DEV_NETIF,       // 网卡
-    DEV_SYSDEV,      // 系统设备
-    DEV_GPU = 226,   // 显卡
+    DEV_TTY = 4,    // TTY 设备
+    DEV_PART = 8,   // 磁盘分区
+    DEV_INPUT = 13, // 输入设备
+    DEV_FB,         // 帧缓冲
+    DEV_DISK,       // 磁盘
+    DEV_NETIF,      // 网卡
+    DEV_SYSDEV,     // 系统设备
+    DEV_GPU = 226,  // 显卡
     DEV_MAX,
 };
 
@@ -34,12 +34,12 @@ typedef struct device_t {
     uint64_t parent;    // 父设备号
     void *ptr;          // 设备指针
 
-    int (*open)(void *dev, void *arg);
-    int (*close)(void *dev);
+    ssize_t (*open)(void *dev, void *arg);
+    ssize_t (*close)(void *dev);
     // 设备控制
-    int (*ioctl)(void *dev, int cmd, void *args);
+    ssize_t (*ioctl)(void *dev, int cmd, void *args);
     // 轮询
-    int (*poll)(void *dev, int events);
+    ssize_t (*poll)(void *dev, int events);
     // 读设备
     ssize_t (*read)(void *dev, void *buf, uint64_t offset, size_t size,
                     uint64_t flags);
@@ -68,14 +68,14 @@ device_t *device_find(int type, uint64_t idx);
 // 根据设备号查找设备
 device_t *device_get(uint64_t dev);
 
-int device_open(uint64_t dev, void *arg);
-int device_close(uint64_t dev);
+ssize_t device_open(uint64_t dev, void *arg);
+ssize_t device_close(uint64_t dev);
 
 // 控制设备
-int device_ioctl(uint64_t dev, int cmd, void *args);
+ssize_t device_ioctl(uint64_t dev, int cmd, void *args);
 
 // 轮询
-int device_poll(uint64_t dev, int events);
+ssize_t device_poll(uint64_t dev, int events);
 
 // 读设备
 ssize_t device_read(uint64_t dev, void *buf, uint64_t idx, size_t count,

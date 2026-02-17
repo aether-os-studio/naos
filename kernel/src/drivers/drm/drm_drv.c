@@ -22,12 +22,16 @@ ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
                  uint64_t flags) {
     drm_device_t *dev = (drm_device_t *)data;
 
+    arch_enable_interrupt();
+
     while (!dev->drm_events[0]) {
         if (flags & O_NONBLOCK)
             return -EWOULDBLOCK;
 
         schedule(SCHED_FLAG_YIELD);
     }
+
+    arch_disable_interrupt();
 
     struct drm_event_vblank vbl = {
         .base.type = dev->drm_events[0]->type,
@@ -240,8 +244,7 @@ drm_device_t *drm_register_device(void *data, drm_device_op_t *op,
                         DRM_MAX_CONNECTORS_PER_DEVICE);
                     if (slot != (uint32_t)-1) {
                         dev->resource_mgr.connectors[slot] = connectors[i];
-                        connectors[i]->id =
-                            dev->resource_mgr.next_connector_id++;
+                        connectors[i]->id = dev->resource_mgr.next_object_id++;
                     }
                 }
             }
@@ -261,7 +264,7 @@ drm_device_t *drm_register_device(void *data, drm_device_op_t *op,
                                            DRM_MAX_CRTCS_PER_DEVICE);
                     if (slot != (uint32_t)-1) {
                         dev->resource_mgr.crtcs[slot] = crtcs[i];
-                        crtcs[i]->id = dev->resource_mgr.next_crtc_id++;
+                        crtcs[i]->id = dev->resource_mgr.next_object_id++;
                     }
                 }
             }
@@ -281,7 +284,7 @@ drm_device_t *drm_register_device(void *data, drm_device_op_t *op,
                                            DRM_MAX_ENCODERS_PER_DEVICE);
                     if (slot != (uint32_t)-1) {
                         dev->resource_mgr.encoders[slot] = encoders[i];
-                        encoders[i]->id = dev->resource_mgr.next_encoder_id++;
+                        encoders[i]->id = dev->resource_mgr.next_object_id++;
                     }
                 }
             }
@@ -301,7 +304,7 @@ drm_device_t *drm_register_device(void *data, drm_device_op_t *op,
                                            DRM_MAX_PLANES_PER_DEVICE);
                     if (slot != (uint32_t)-1) {
                         dev->resource_mgr.planes[slot] = planes[i];
-                        planes[i]->id = dev->resource_mgr.next_plane_id++;
+                        planes[i]->id = dev->resource_mgr.next_object_id++;
                     }
                 }
             }

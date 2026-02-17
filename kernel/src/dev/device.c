@@ -16,7 +16,7 @@ static device_t *get_null_device() {
     return NULL;
 }
 
-int device_open(uint64_t dev, void *arg) {
+ssize_t device_open(uint64_t dev, void *arg) {
     device_t *device = device_get(dev);
     if (!device)
         return -ENODEV;
@@ -28,7 +28,7 @@ int device_open(uint64_t dev, void *arg) {
 
 EXPORT_SYMBOL(device_open);
 
-int device_close(uint64_t dev) {
+ssize_t device_close(uint64_t dev) {
     device_t *device = device_get(dev);
     if (!device)
         return -ENODEV;
@@ -40,7 +40,7 @@ int device_close(uint64_t dev) {
 
 EXPORT_SYMBOL(device_close);
 
-int device_ioctl(uint64_t dev, int cmd, void *args) {
+ssize_t device_ioctl(uint64_t dev, int cmd, void *args) {
     device_t *device = device_get(dev);
     if (!device)
         return -ENODEV;
@@ -52,7 +52,7 @@ int device_ioctl(uint64_t dev, int cmd, void *args) {
 
 EXPORT_SYMBOL(device_ioctl);
 
-int device_poll(uint64_t dev, int events) {
+ssize_t device_poll(uint64_t dev, int events) {
     device_t *device = device_get(dev);
     if (!device)
         return -ENODEV;

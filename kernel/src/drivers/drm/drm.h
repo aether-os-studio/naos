@@ -986,6 +986,11 @@ extern "C" {
     DRM_IOWR(0xCD, struct drm_syncobj_timeline_array)
 
 #define DRM_IOCTL_MODE_GETFB2 DRM_IOWR(0xCE, struct drm_mode_fb_cmd2)
+#define DRM_IOCTL_SYNCOBJ_EVENTFD DRM_IOWR(0xCF, struct drm_syncobj_eventfd)
+#define DRM_IOCTL_MODE_CLOSEFB DRM_IOWR(0xD0, struct drm_mode_closefb)
+
+#define DRM_IOCTL_SET_CLIENT_NAME DRM_IOWR(0xD1, struct drm_set_client_name)
+#define DRM_IOCTL_GEM_CHANGE_HANDLE DRM_IOWR(0xD2, struct drm_gem_change_handle)
 
 /**
  * Device specific ioctls should only be in their respective headers
