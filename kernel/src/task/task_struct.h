@@ -76,6 +76,8 @@ typedef struct fd_info {
 
 #define with_fd_info_lock(fd_info, op)                                         \
     do {                                                                       \
+        if (!fd_info)                                                          \
+            break;                                                             \
         mutex_lock(&fd_info->fdt_lock);                                        \
         do {                                                                   \
             op;                                                                \

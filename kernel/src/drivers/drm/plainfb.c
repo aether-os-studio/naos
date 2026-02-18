@@ -653,8 +653,14 @@ void drm_plainfb_init() {
         &gpu_device->resource_mgr, DRM_MODE_CONNECTOR_VIRTUAL, gpu_device);
     if (gpu_device->connectors[i]) {
         gpu_device->connectors[i]->connection = DRM_MODE_CONNECTED;
-        gpu_device->connectors[i]->mm_width = fb->width;
-        gpu_device->connectors[i]->mm_height = fb->height;
+        gpu_device->connectors[i]->mm_width = (fb->width * 264UL) / 1000UL;
+        gpu_device->connectors[i]->mm_height = (fb->height * 264UL) / 1000UL;
+        if (gpu_device->connectors[i]->mm_width == 0) {
+            gpu_device->connectors[i]->mm_width = 1;
+        }
+        if (gpu_device->connectors[i]->mm_height == 0) {
+            gpu_device->connectors[i]->mm_height = 1;
+        }
 
         // Add display mode
         gpu_device->connectors[i]->modes =

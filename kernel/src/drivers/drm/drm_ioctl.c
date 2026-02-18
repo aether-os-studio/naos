@@ -1078,6 +1078,9 @@ ssize_t drm_ioctl_mode_destroy_dumb(drm_device_t *dev, void *arg) {
  */
 ssize_t drm_ioctl_mode_getconnector(drm_device_t *dev, void *arg) {
     struct drm_mode_get_connector *conn = (struct drm_mode_get_connector *)arg;
+    uint32_t modes_cap = conn->count_modes;
+    uint32_t props_cap = conn->count_props;
+    uint32_t encoders_cap = conn->count_encoders;
 
     // Find the connector by ID
     drm_connector_t *connector =
@@ -1086,16 +1089,49 @@ ssize_t drm_ioctl_mode_getconnector(drm_device_t *dev, void *arg) {
         return -ENOENT;
     }
 
+    uint32_t mode_width = 0;
+    uint32_t mode_height = 0;
+    if (connector->modes && connector->count_modes > 0) {
+        mode_width = connector->modes[0].hdisplay;
+        mode_height = connector->modes[0].vdisplay;
+    } else if (dev->op->get_display_info) {
+        uint32_t bpp = 0;
+        if (dev->op->get_display_info(dev, &mode_width, &mode_height, &bpp) !=
+            0) {
+            mode_width = 0;
+            mode_height = 0;
+        }
+    }
+
+    conn->encoder_id = connector->encoder_id;
+    conn->connector_type = connector->type;
+    conn->connector_type_id = 1;
     conn->connection = connector->connection;
     conn->count_modes = connector->count_modes;
-    conn->count_props = connector->count_props;
-    conn->count_encoders = 1; // For now, assume 1 encoder per connector
+    conn->count_props = 3;
+    conn->count_encoders = connector->encoder_id ? 1 : 0;
+    conn->subpixel = connector->subpixel;
+    conn->mm_width = connector->mm_width;
+    conn->mm_height = connector->mm_height;
+    if (conn->mm_width == 0 && mode_width > 0) {
+        conn->mm_width = (mode_width * 264UL) / 1000UL;
+        if (conn->mm_width == 0) {
+            conn->mm_width = 1;
+        }
+    }
+    if (conn->mm_height == 0 && mode_height > 0) {
+        conn->mm_height = (mode_height * 264UL) / 1000UL;
+        if (conn->mm_height == 0) {
+            conn->mm_height = 1;
+        }
+    }
 
     // Fill modes if pointer provided
     if (conn->modes_ptr && connector->modes && connector->count_modes > 0) {
-        int ret = drm_copy_to_user_ptr(conn->modes_ptr, connector->modes,
-                                       connector->count_modes *
-                                           sizeof(struct drm_mode_modeinfo));
+        uint32_t copy_modes = MIN(modes_cap, connector->count_modes);
+        int ret =
+            drm_copy_to_user_ptr(conn->modes_ptr, connector->modes,
+                                 copy_modes * sizeof(struct drm_mode_modeinfo));
         if (ret) {
             drm_connector_free(&dev->resource_mgr, connector->id);
             return ret;
@@ -1104,6 +1140,10 @@ ssize_t drm_ioctl_mode_getconnector(drm_device_t *dev, void *arg) {
 
     // Fill encoders if pointer provided
     if (conn->encoders_ptr && conn->count_encoders > 0) {
+        uint32_t copy_encoders = MIN(encoders_cap, conn->count_encoders);
+        if (copy_encoders == 0) {
+            goto skip_encoders;
+        }
         int ret =
             drm_copy_to_user_ptr(conn->encoders_ptr, &connector->encoder_id,
                                  sizeof(connector->encoder_id));
@@ -1112,29 +1152,33 @@ ssize_t drm_ioctl_mode_getconnector(drm_device_t *dev, void *arg) {
             return ret;
         }
     }
+skip_encoders:
 
     // Fill properties if pointers provided
-    if (conn->props_ptr && conn->prop_values_ptr &&
-        connector->count_props > 0) {
-        if (!connector->prop_ids || !connector->prop_values) {
-            drm_connector_free(&dev->resource_mgr, connector->id);
-            return -EINVAL;
+    if (conn->count_props > 0) {
+        uint32_t prop_ids[3] = {DRM_CONNECTOR_DPMS_PROP_ID,
+                                DRM_CONNECTOR_EDID_PROP_ID,
+                                DRM_CONNECTOR_CRTC_ID_PROP_ID};
+        uint64_t prop_values[3] = {DRM_MODE_DPMS_ON, 0, connector->crtc_id};
+        prop_values[1] = drm_connector_edid_blob_id(connector->id);
+        uint32_t copy_props = MIN(props_cap, conn->count_props);
+
+        if (conn->props_ptr && copy_props > 0) {
+            int ret = drm_copy_to_user_ptr(conn->props_ptr, prop_ids,
+                                           copy_props * sizeof(uint32_t));
+            if (ret) {
+                drm_connector_free(&dev->resource_mgr, connector->id);
+                return ret;
+            }
         }
 
-        int ret =
-            drm_copy_to_user_ptr(conn->props_ptr, connector->prop_ids,
-                                 connector->count_props * sizeof(uint32_t));
-        if (ret) {
-            drm_connector_free(&dev->resource_mgr, connector->id);
-            return ret;
-        }
-
-        ret =
-            drm_copy_to_user_ptr(conn->prop_values_ptr, connector->prop_values,
-                                 connector->count_props * sizeof(uint64_t));
-        if (ret) {
-            drm_connector_free(&dev->resource_mgr, connector->id);
-            return ret;
+        if (conn->prop_values_ptr && copy_props > 0) {
+            int ret = drm_copy_to_user_ptr(conn->prop_values_ptr, prop_values,
+                                           copy_props * sizeof(uint64_t));
+            if (ret) {
+                drm_connector_free(&dev->resource_mgr, connector->id);
+                return ret;
+            }
         }
     }
 

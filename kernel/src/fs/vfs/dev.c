@@ -217,7 +217,7 @@ int devtmpfs_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
     return 0;
 }
 
-int devtmpfs_delete(void *parent, vfs_node_t node) { return -ENOSYS; }
+int devtmpfs_delete(void *parent, vfs_node_t node) { return 0; }
 
 int devtmpfs_rename(void *current, const char *new) { return 0; }
 
@@ -234,7 +234,46 @@ void *devtmpfs_map(fd_t *file, void *addr, size_t offset, size_t size,
     if ((file->node->type & file_block) || (file->node->type & file_stream)) {
         return device_map(file->node->rdev, addr, offset, size, prot, flags);
     }
-    return general_map(file, (uint64_t)addr, size, prot, flags, offset);
+
+    devtmpfs_node_t *handle = file->node->handle;
+    if (!handle)
+        return (void *)(int64_t)-EINVAL;
+
+    if (offset > (size_t)handle->capability || size > SIZE_MAX - offset)
+        return (void *)(int64_t)-EINVAL;
+
+    size_t need = offset + size;
+    if (need > (size_t)handle->capability) {
+        if (need > MAX_DEVTMPFS_FILE_SIZE)
+            return (void *)(int64_t)-EFBIG;
+
+        void *new_content = alloc_frames_bytes(need);
+        if (!new_content)
+            return (void *)(int64_t)-ENOMEM;
+
+        memcpy(new_content, handle->content, handle->capability);
+        memset((uint8_t *)new_content + handle->capability, 0,
+               need - handle->capability);
+        free_frames_bytes(handle->content, handle->capability);
+        handle->content = new_content;
+        handle->capability = need;
+    }
+
+    uint64_t pt_flags = PT_FLAG_U;
+    if (prot & PROT_READ)
+        pt_flags |= PT_FLAG_R;
+    if (prot & PROT_WRITE)
+        pt_flags |= PT_FLAG_W;
+    if (prot & PROT_EXEC)
+        pt_flags |= PT_FLAG_X;
+    if (!(pt_flags & (PT_FLAG_R | PT_FLAG_W | PT_FLAG_X)))
+        pt_flags |= PT_FLAG_R;
+
+    map_page_range(get_current_page_dir(true), (uint64_t)addr,
+                   virt_to_phys((uint64_t)handle->content + offset), size,
+                   pt_flags);
+
+    return addr;
 }
 
 int devtmpfs_poll(void *file, size_t events) {
@@ -247,13 +286,33 @@ int devtmpfs_poll(void *file, size_t events) {
 
 void devtmpfs_resize(void *current, uint64_t size) {
     devtmpfs_node_t *handle = current;
+    if (!handle)
+        return;
+
+    if (size == 0) {
+        handle->size = 0;
+        if (handle->node)
+            handle->node->size = 0;
+        return;
+    }
+
     size_t new_capability = size;
     void *new_content = alloc_frames_bytes(new_capability);
-    memcpy(new_content, handle->content,
-           MIN(new_capability, handle->capability));
+    if (!new_content)
+        return;
+
+    memcpy(new_content, handle->content, MIN(new_capability, handle->size));
+    if (new_capability > (size_t)handle->size) {
+        memset((uint8_t *)new_content + handle->size, 0,
+               new_capability - handle->size);
+    }
+
     free_frames_bytes(handle->content, handle->capability);
     handle->content = new_content;
     handle->capability = new_capability;
+    handle->size = size;
+    if (handle->node)
+        handle->node->size = size;
 }
 
 int devtmpfs_stat(void *file, vfs_node_t node) {

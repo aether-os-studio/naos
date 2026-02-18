@@ -206,7 +206,7 @@ static void unix_socket_send_files_to_peer(socket_t *peer, int *fds,
                 peer->pending_files[j] = malloc(sizeof(fd_t));
                 memcpy(peer->pending_files[j],
                        current_task->fd_info->fds[fds[i]], sizeof(fd_t));
-                current_task->fd_info->fds[fds[i]]->node->refcount++;
+                peer->pending_files[j]->node->refcount++;
                 break;
             }
         }
@@ -215,7 +215,8 @@ static void unix_socket_send_files_to_peer(socket_t *peer, int *fds,
 
 // 从自己的 pending_files 接收
 static size_t unix_socket_recv_files_from_self(socket_t *self, int *fds_out,
-                                               size_t max_fds, int *msg_flags) {
+                                               size_t max_fds, int *msg_flags,
+                                               int recv_flags) {
     size_t received = 0;
 
     for (int i = 0; i < MAX_PENDING_FILES_COUNT && received < max_fds; i++) {
@@ -240,6 +241,8 @@ static size_t unix_socket_recv_files_from_self(socket_t *self, int *fds_out,
             current_task->fd_info->fds[new_fd] = malloc(sizeof(fd_t));
             memcpy(current_task->fd_info->fds[new_fd], self->pending_files[i],
                    sizeof(fd_t));
+            current_task->fd_info->fds[new_fd]->close_on_exec =
+                !!(recv_flags & MSG_CMSG_CLOEXEC);
         });
         free(self->pending_files[i]);
         self->pending_files[i] = NULL;
@@ -710,7 +713,7 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
                 int *fds_out = (int *)CMSG_DATA(cmsg);
 
                 size_t received_fds = unix_socket_recv_files_from_self(
-                    sock, fds_out, max_fds, (int *)&msg->msg_flags);
+                    sock, fds_out, max_fds, (int *)&msg->msg_flags, flags);
 
                 if (received_fds > 0) {
                     cmsg->cmsg_level = SOL_SOCKET;

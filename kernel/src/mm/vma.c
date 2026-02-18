@@ -29,8 +29,11 @@ void vma_free(vma_t *vma) {
     if (!vma)
         return;
 
-    if (vma->node)
-        vma->node->refcount--;
+    if (vma->node) {
+        if (vma->node->refcount > 0)
+            vma->node->refcount--;
+        shm_try_reap_by_vnode(vma->node);
+    }
     if (vma->vm_name)
         free(vma->vm_name);
     free(vma);

@@ -25,8 +25,6 @@ if [ $root_mounted -eq 0 ]; then
     exec /bin/sh
 fi
 
-/bin/mount -t tmpfs tmpfs /dev/shm
-
 /bin/mkdir -p /proc/
 /bin/mount -t proc proc /proc
 /bin/mkdir -p /sys/

@@ -92,10 +92,9 @@ void *memfd_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
                 size_t flags) {
     struct memfd_ctx *ctx = file->node->handle;
 
-    map_page_range(
-        get_current_page_dir(true), (uint64_t)addr,
-        translate_address(get_current_page_dir(false), (uint64_t)ctx->data),
-        size, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+    map_page_range(get_current_page_dir(true), (uint64_t)addr,
+                   virt_to_phys((uint64_t)ctx->data + offset), size,
+                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
     return addr;
 }
@@ -161,6 +160,7 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags) {
     ctx->name[63] = '\0';
     ctx->len = DEFAULT_PAGE_SIZE;
     ctx->data = alloc_frames_bytes(ctx->len);
+    memset(ctx->data, 0, ctx->len);
     ctx->flags = flags;
     ctx->refcount = 1;
     ctx->lock.lock = 0;

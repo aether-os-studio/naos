@@ -12,6 +12,8 @@ typedef struct shm {
     uint32_t gid;
     int nattch;
     bool marked_destroy;
+    struct vfs_node *node;
+    char node_name[32];
 } shm_t;
 
 typedef struct shm_mapping {
@@ -71,7 +73,9 @@ uint64_t sys_shmdt(void *shmaddr);
 uint64_t sys_shmctl(int shmid, int cmd, struct shmid_ds *buf);
 
 struct task;
+struct vfs_node;
 
 void shm_fork(struct task *parent, struct task *child);
 void shm_exec(struct task *task);
 void shm_exit(struct task *task);
+void shm_try_reap_by_vnode(struct vfs_node *node);
