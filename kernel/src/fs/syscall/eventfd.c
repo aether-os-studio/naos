@@ -46,7 +46,8 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags) {
         memset(current_task->fd_info->fds[fd], 0, sizeof(fd_t));
         current_task->fd_info->fds[fd]->node = node;
         current_task->fd_info->fds[fd]->offset = 0;
-        current_task->fd_info->fds[fd]->flags = 0;
+        current_task->fd_info->fds[fd]->flags = O_RDWR | flags;
+        current_task->fd_info->fds[fd]->close_on_exec = !!(flags & EFD_CLOEXEC);
         procfs_on_open_file(current_task, fd);
     });
 

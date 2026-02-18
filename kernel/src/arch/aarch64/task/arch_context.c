@@ -107,14 +107,6 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry,
     arch_context_switch_with_next(context);
 }
 
-extern bool task_initialized;
-
-void arch_yield() {
-    if (task_initialized) {
-        schedule(SCHED_FLAG_YIELD);
-    }
-}
-
 bool arch_check_elf(const Elf64_Ehdr *ehdr) {
     // 验证ELF魔数
     if (memcmp((void *)ehdr->e_ident,

@@ -525,6 +525,9 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
     if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
     }
+    if (self->fd_info->fds[fd]->node->type & file_pipe) {
+        return (uint64_t)-ESPIPE;
+    }
 
     int64_t real_offset = offset;
     if (real_offset < 0 && self->fd_info->fds[fd]->node->type & file_none &&
@@ -741,13 +744,11 @@ uint64_t sys_dup2(uint64_t fd, uint64_t newfd) {
             vfs_close(self->fd_info->fds[newfd]->node);
             free(self->fd_info->fds[newfd]);
             self->fd_info->fds[newfd] = NULL;
-            procfs_on_close_file(self, newfd);
         }
 
         self->fd_info->fds[newfd] = newf;
-        newf->flags &= ~(uint64_t)FD_CLOEXEC;
+        newf->flags &= ~(uint64_t)O_CLOEXEC;
         newf->close_on_exec = false;
-        procfs_on_open_file(self, newfd);
     });
 
     return newfd;
@@ -760,6 +761,8 @@ uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
         return fd;
     task_t *self = current_task;
     self->fd_info->fds[fd]->flags = flags;
+    if (flags & O_CLOEXEC)
+        self->fd_info->fds[fd]->close_on_exec = true;
 
     return fd;
 }
@@ -800,9 +803,13 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
 
     switch (command) {
     case F_GETFD:
-        return (self->fd_info->fds[fd]->close_on_exec) ? 1 : 0;
+        return (self->fd_info->fds[fd]->close_on_exec) ? FD_CLOEXEC : 0;
     case F_SETFD:
-        self->fd_info->fds[fd]->close_on_exec = !!(arg & 1);
+        bool close_on_exec = !!(arg & FD_CLOEXEC);
+        if (close_on_exec) {
+            self->fd_info->fds[fd]->flags |= O_CLOEXEC;
+        }
+        self->fd_info->fds[fd]->close_on_exec = close_on_exec;
         return 0;
     case F_DUPFD_CLOEXEC:
         for (i = arg; i < MAX_FD_NUM; i++) {
@@ -816,6 +823,7 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         }
         uint64_t newfd = sys_dup2(fd, i);
         if ((int64_t)newfd >= 0) {
+            self->fd_info->fds[newfd]->flags |= O_CLOEXEC;
             self->fd_info->fds[newfd]->close_on_exec = true;
         }
         return newfd;

@@ -9,6 +9,9 @@
 #include <drivers/drm/drm_ioctl.h>
 #include <drivers/drm/drm_core.h>
 #include <fs/fs_syscall.h>
+#include <fs/vfs/proc.h>
+#include <fs/vfs/vfs.h>
+#include <mm/mm.h>
 #include <task/task.h>
 
 static ssize_t drm_copy_to_user_ptr(uint64_t user_ptr, const void *src,
@@ -23,10 +26,6 @@ static ssize_t drm_copy_to_user_ptr(uint64_t user_ptr, const void *src,
 
     return 0;
 }
-
-#ifndef MFD_CLOEXEC
-#define MFD_CLOEXEC 0x0001U
-#endif
 
 #define DRM_MAX_PRIME_EXPORTS 256
 #define DRM_MAX_DUMB_EXPORTS 512
@@ -44,6 +43,237 @@ typedef struct drm_prime_export_entry {
 
 static drm_prime_export_entry_t drm_prime_exports[DRM_MAX_PRIME_EXPORTS];
 static spinlock_t drm_prime_exports_lock = SPIN_INIT;
+
+typedef struct drm_prime_fd_ctx {
+    vfs_node_t node;
+    drm_device_t *dev;
+    uint32_t handle;
+    uint64_t phys;
+    uint64_t size;
+} drm_prime_fd_ctx_t;
+
+static int drm_prime_fsid = 0;
+static spinlock_t drm_prime_fsid_lock = SPIN_INIT;
+
+static int drm_primefs_dummy() { return 0; }
+
+static ssize_t drm_primefd_read(fd_t *fd, void *buf, uint64_t offset,
+                                uint64_t len) {
+    drm_prime_fd_ctx_t *ctx = fd->node->handle;
+    if (!ctx || !buf || offset >= ctx->size) {
+        return 0;
+    }
+
+    uint64_t copy_len = MIN(len, ctx->size - offset);
+    memcpy(buf, (void *)(uintptr_t)phys_to_virt(ctx->phys + offset), copy_len);
+    return (ssize_t)copy_len;
+}
+
+static ssize_t drm_primefd_write(fd_t *fd, const void *buf, uint64_t offset,
+                                 uint64_t len) {
+    drm_prime_fd_ctx_t *ctx = fd->node->handle;
+    if (!ctx || !buf || offset >= ctx->size) {
+        return 0;
+    }
+
+    uint64_t copy_len = MIN(len, ctx->size - offset);
+    memcpy((void *)(uintptr_t)phys_to_virt(ctx->phys + offset), buf, copy_len);
+    return (ssize_t)copy_len;
+}
+
+static bool drm_primefd_close(void *current) {
+    drm_prime_fd_ctx_t *ctx = current;
+    if (!ctx) {
+        return true;
+    }
+
+    free(ctx);
+    return true;
+}
+
+static int drm_primefd_stat(void *file, vfs_node_t node) {
+    drm_prime_fd_ctx_t *ctx = file;
+    if (!ctx) {
+        return -EINVAL;
+    }
+    node->size = ctx->size;
+    return 0;
+}
+
+static void drm_primefd_resize(void *current, uint64_t size) {
+    drm_prime_fd_ctx_t *ctx = current;
+    if (!ctx) {
+        return;
+    }
+
+    ctx->size = MIN(size, ctx->size);
+    if (ctx->node) {
+        ctx->node->size = ctx->size;
+    }
+}
+
+static void *drm_primefd_map(fd_t *file, void *addr, size_t offset, size_t size,
+                             size_t prot, size_t flags) {
+    (void)prot;
+    (void)flags;
+
+    drm_prime_fd_ctx_t *ctx = file->node->handle;
+    if (!ctx || offset >= ctx->size || size == 0) {
+        return (void *)-EINVAL;
+    }
+
+    size_t map_size = MIN(size, (size_t)(ctx->size - offset));
+    if (map_size == 0) {
+        return (void *)-EINVAL;
+    }
+
+    map_page_range(get_current_page_dir(true), (uint64_t)addr,
+                   ctx->phys + offset, map_size,
+                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+
+    return addr;
+}
+
+static struct vfs_callback drm_primefs_callbacks = {
+    .mount = (vfs_mount_t)drm_primefs_dummy,
+    .unmount = (vfs_unmount_t)drm_primefs_dummy,
+    .remount = (vfs_remount_t)drm_primefs_dummy,
+    .open = (vfs_open_t)drm_primefs_dummy,
+    .close = (vfs_close_t)drm_primefd_close,
+    .read = (vfs_read_t)drm_primefd_read,
+    .write = (vfs_write_t)drm_primefd_write,
+    .readlink = (vfs_readlink_t)drm_primefs_dummy,
+    .mkdir = (vfs_mk_t)drm_primefs_dummy,
+    .mkfile = (vfs_mk_t)drm_primefs_dummy,
+    .link = (vfs_mk_t)drm_primefs_dummy,
+    .symlink = (vfs_mk_t)drm_primefs_dummy,
+    .mknod = (vfs_mknod_t)drm_primefs_dummy,
+    .chmod = (vfs_chmod_t)drm_primefs_dummy,
+    .chown = (vfs_chown_t)drm_primefs_dummy,
+    .delete = (vfs_del_t)drm_primefs_dummy,
+    .rename = (vfs_rename_t)drm_primefs_dummy,
+    .map = (vfs_mapfile_t)drm_primefd_map,
+    .stat = (vfs_stat_t)drm_primefd_stat,
+    .ioctl = (vfs_ioctl_t)drm_primefs_dummy,
+    .poll = (vfs_poll_t)drm_primefs_dummy,
+    .resize = (vfs_resize_t)drm_primefd_resize,
+    .free_handle = vfs_generic_free_handle,
+};
+
+static fs_t drm_primefs = {
+    .name = "drmprimefs",
+    .magic = 0,
+    .callback = &drm_primefs_callbacks,
+    .flags = FS_FLAGS_HIDDEN | FS_FLAGS_VIRTUAL,
+};
+
+static int drm_primefd_ensure_registered(void) {
+    if (drm_prime_fsid > 0) {
+        return 0;
+    }
+
+    spin_lock(&drm_prime_fsid_lock);
+    if (drm_prime_fsid == 0) {
+        drm_prime_fsid = vfs_regist(&drm_primefs);
+    }
+    spin_unlock(&drm_prime_fsid_lock);
+
+    return drm_prime_fsid > 0 ? 0 : -ENOMEM;
+}
+
+static ssize_t drm_primefd_create(drm_device_t *dev, uint32_t handle,
+                                  uint64_t phys, uint64_t size,
+                                  uint32_t flags) {
+    int ret = drm_primefd_ensure_registered();
+    if (ret) {
+        return ret;
+    }
+
+    int fd = -1;
+    with_fd_info_lock(current_task->fd_info, {
+        for (int i = 0; i < MAX_FD_NUM; i++) {
+            if (!current_task->fd_info->fds[i]) {
+                fd = i;
+                break;
+            }
+        }
+    });
+
+    if (fd < 0) {
+        return -EMFILE;
+    }
+
+    drm_prime_fd_ctx_t *ctx = malloc(sizeof(*ctx));
+    if (!ctx) {
+        return -ENOMEM;
+    }
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->dev = dev;
+    ctx->handle = handle;
+    ctx->phys = phys;
+    ctx->size = size;
+
+    fd_t *fd_obj = malloc(sizeof(fd_t));
+    if (!fd_obj) {
+        free(ctx);
+        return -ENOMEM;
+    }
+    memset(fd_obj, 0, sizeof(*fd_obj));
+
+    vfs_node_t node = vfs_node_alloc(NULL, NULL);
+    if (!node) {
+        free(fd_obj);
+        free(ctx);
+        return -ENOMEM;
+    }
+
+    node->type = file_none;
+    node->fsid = drm_prime_fsid;
+    node->handle = ctx;
+    node->refcount++;
+    node->size = size;
+    ctx->node = node;
+
+    fd_obj->node = node;
+    fd_obj->offset = 0;
+    fd_obj->flags = O_RDWR | flags;
+    fd_obj->close_on_exec = !!(flags & DRM_CLOEXEC);
+
+    with_fd_info_lock(current_task->fd_info, {
+        if (!current_task->fd_info->fds[fd]) {
+            current_task->fd_info->fds[fd] = fd_obj;
+            procfs_on_open_file(current_task, fd);
+        } else {
+            free(fd_obj);
+            fd_obj = NULL;
+        }
+    });
+
+    if (!fd_obj) {
+        vfs_close(node);
+        return -EMFILE;
+    }
+
+    return fd;
+}
+
+static ssize_t drm_prime_get_handle_phys(drm_device_t *dev, uint32_t handle,
+                                         uint64_t *phys) {
+    if (!dev || !dev->op || !dev->op->map_dumb || !phys) {
+        return -ENOSYS;
+    }
+
+    struct drm_mode_map_dumb map = {0};
+    map.handle = handle;
+
+    int ret = dev->op->map_dumb(dev, &map);
+    if (ret) {
+        return ret;
+    }
+
+    *phys = map.offset;
+    return 0;
+}
 
 typedef struct drm_dumb_export_entry {
     bool used;
@@ -519,6 +749,12 @@ ssize_t drm_ioctl_get_cap(drm_device_t *dev, void *arg) {
     case DRM_CAP_PRIME:
         cap->value = DRM_PRIME_CAP_EXPORT | DRM_PRIME_CAP_IMPORT;
         return 0;
+    case DRM_CAP_ADDFB2_MODIFIERS:
+        cap->value = 0;
+        return 0;
+    case DRM_CAP_DUMB_PREFER_SHADOW:
+        cap->value = 0;
+        return 0;
     case DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP:
         cap->value = 1;
         return 0;
@@ -558,33 +794,19 @@ ssize_t drm_ioctl_prime_handle_to_fd(drm_device_t *dev, void *arg) {
         return -ENOENT;
     }
 
-    int64_t fd_ret = (int64_t)sys_memfd_create(
-        "drm-prime", (prime->flags & DRM_CLOEXEC) ? MFD_CLOEXEC : 0);
+    uint64_t phys = 0;
+    int ret = drm_prime_get_handle_phys(dev, prime->handle, &phys);
+    if (ret) {
+        return ret;
+    }
+
+    ssize_t fd_ret =
+        drm_primefd_create(dev, prime->handle, phys, dumb_size, prime->flags);
     if (fd_ret < 0) {
-        return (int)fd_ret;
+        return fd_ret;
     }
 
-    int fd = (int)fd_ret;
-    int64_t trunc_ret = (int64_t)sys_ftruncate(fd, dumb_size);
-    if (trunc_ret < 0) {
-        sys_close(fd);
-        return (int)trunc_ret;
-    }
-
-    uint64_t inode = 0;
-    int ret = drm_prime_get_fd_inode(fd, &inode);
-    if (ret) {
-        sys_close(fd);
-        return ret;
-    }
-
-    ret = drm_prime_store_export(dev, inode, prime->handle);
-    if (ret) {
-        sys_close(fd);
-        return ret;
-    }
-
-    prime->fd = fd;
+    prime->fd = (int)fd_ret;
     return 0;
 }
 
@@ -593,6 +815,31 @@ ssize_t drm_ioctl_prime_handle_to_fd(drm_device_t *dev, void *arg) {
  */
 ssize_t drm_ioctl_prime_fd_to_handle(drm_device_t *dev, void *arg) {
     struct drm_prime_handle *prime = (struct drm_prime_handle *)arg;
+
+    if (prime->fd < 0 || prime->fd >= MAX_FD_NUM) {
+        return -EBADF;
+    }
+
+    int direct_ret = -EBADF;
+    with_fd_info_lock(current_task->fd_info, {
+        fd_t *fd_obj = current_task->fd_info->fds[prime->fd];
+        if (!fd_obj || !fd_obj->node || fd_obj->node->fsid != drm_prime_fsid ||
+            !fd_obj->node->handle) {
+            direct_ret = -EBADF;
+        } else {
+            drm_prime_fd_ctx_t *ctx = fd_obj->node->handle;
+            if (ctx->dev != dev || ctx->handle == 0) {
+                direct_ret = -EBADF;
+            } else {
+                prime->handle = ctx->handle;
+                direct_ret = 0;
+            }
+        }
+    });
+
+    if (direct_ret == 0) {
+        return 0;
+    }
 
     uint64_t inode = 0;
     int ret = drm_prime_get_fd_inode(prime->fd, &inode);
@@ -808,6 +1055,22 @@ ssize_t drm_ioctl_mode_map_dumb(drm_device_t *dev, void *arg) {
         return -ENOSYS;
     }
     return dev->op->map_dumb(dev, (struct drm_mode_map_dumb *)arg);
+}
+
+/**
+ * drm_ioctl_mode_destroy_dumb - Handle DRM_IOCTL_MODE_DESTROY_DUMB
+ */
+ssize_t drm_ioctl_mode_destroy_dumb(drm_device_t *dev, void *arg) {
+    if (!dev->op->destroy_dumb) {
+        return -ENOSYS;
+    }
+
+    struct drm_mode_destroy_dumb *destroy = (struct drm_mode_destroy_dumb *)arg;
+    if (destroy->handle == 0) {
+        return -EINVAL;
+    }
+
+    return dev->op->destroy_dumb(dev, destroy->handle);
 }
 
 /**
@@ -2024,7 +2287,7 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
         ret = drm_ioctl_mode_map_dumb(dev, (void *)arg);
         break;
     case DRM_IOCTL_MODE_DESTROY_DUMB:
-        ret = 0; // Not implemented
+        ret = drm_ioctl_mode_destroy_dumb(dev, (void *)arg);
         break;
     case DRM_IOCTL_MODE_GETCONNECTOR:
         ret = drm_ioctl_mode_getconnector(dev, (void *)arg);

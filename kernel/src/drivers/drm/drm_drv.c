@@ -134,8 +134,9 @@ static void drm_device_setup_sysfs(int major, int minor, drm_device_t *dev,
                                    const char *dev_name) {
     // If PCI device, create PCI-specific entries
     if (pci_dev) {
-        vfs_node_t dev_root = sysfs_regist_dev('c', major, minor, "", dev_name,
-                                               "SUBSYSTEM=drm\n");
+        vfs_node_t dev_root =
+            sysfs_regist_dev('c', major, minor, "", dev_name,
+                             "SUBSYSTEM=drm\nDEVTYPE=drm_minor\n");
 
         vfs_node_t dev = sysfs_child_append(dev_root, "device", true);
 
@@ -185,7 +186,8 @@ static void drm_device_setup_sysfs(int major, int minor, drm_device_t *dev,
 
         vfs_node_t uevent = sysfs_child_append(cardn, "uevent", false);
         sprintf(content,
-                "MAJOR=%d\nMINOR=%d\nDEVNAME=dri/card%d\nSUBSYSTEM=drm\n",
+                "MAJOR=%d\nMINOR=%d\nDEVNAME=dri/"
+                "card%d\nSUBSYSTEM=drm\nDEVTYPE=drm_minor\n",
                 major, minor, minor);
         vfs_write(uevent, content, 0, strlen(content));
 

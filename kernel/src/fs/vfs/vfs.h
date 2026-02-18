@@ -174,6 +174,7 @@ enum {
 #define FS_FLAGS_HIDDEN (1UL << 0)
 #define FS_FLAGS_VIRTUAL (1UL << 1)
 #define FS_FLAGS_NEED_OPEN (1UL << 2)
+#define FS_FLAGS_NEED_CLOSE (1UL << 3)
 typedef struct fs {
     const char *name;
     uint64_t magic;

@@ -301,7 +301,7 @@ fs_t devtmpfs = {
     .name = "devtmpfs",
     .magic = 0x01021994,
     .callback = &callbacks,
-    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_NEED_OPEN,
+    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_NEED_OPEN | FS_FLAGS_NEED_CLOSE,
 };
 
 ssize_t inputdev_open(void *data, void *arg) {
@@ -322,6 +322,7 @@ ssize_t inputdev_event_read(void *data, void *buf, uint64_t offset,
 
     // while (!circular_int_read_poll(&event->device_events)) {
     //     if (flags & O_NONBLOCK) {
+    //         arch_disable_interrupt();
     //         return -EWOULDBLOCK;
     //     }
     //     arch_enable_interrupt();

@@ -43,7 +43,7 @@ fi
 export HOME="/root"
 export SHELL="/bin/bash"
 export XDG_RUNTIME_DIR="/run"
-export WLR_RENDERER=pixman
 export WLR_RENDERER_ALLOW_SOFTWARE=1
+export LIBGL_ALWAYS_SOFTWARE=1
 exec /sbin/switch_root /mnt/ /usr/lib/aether/init
 

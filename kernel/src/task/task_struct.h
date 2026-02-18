@@ -264,8 +264,8 @@ typedef struct task {
     struct rlimit rlim[16];
     uint64_t parent_death_sig;
     int *tidptr;
+    uint64_t clone_flags;
     bool is_kernel;
-    bool is_vfork;
     bool is_clone;
     bool child_vfork_done;
     bool should_free;

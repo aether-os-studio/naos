@@ -57,6 +57,7 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
 void vfs_free_handle(vfs_node_t node) {
     if (node->handle)
         callbackof(node, free_handle)(node->handle);
+    node->handle = NULL;
 }
 
 void vfs_free(vfs_node_t vfs) {
@@ -798,18 +799,17 @@ int vfs_close(vfs_node_t node) {
         return 0;
     if (node == rootdir)
         return 0;
-    if (node->type & file_dir)
-        return 0;
+    if (node->fsid && node->fsid < fs_nextid) {
+        fs_t *fs = all_fs[node->fsid];
+        if (node->refcount > 1 && fs && fs->flags & FS_FLAGS_NEED_CLOSE) {
+            callbackof(node, close)(node->handle);
+            node->refcount--;
+            return 0;
+        }
+    }
     if (node->refcount > 0)
         node->refcount--;
     if (node->refcount <= 0) {
-        if (node->fsid && node->fsid < fs_nextid) {
-            fs_t *fs = all_fs[node->fsid];
-            if (node->refcount > 1 && fs && fs->flags & FS_FLAGS_NEED_OPEN) {
-                callbackof(node, close)(node->handle);
-                return 0;
-            }
-        }
         node->flags &= ~VFS_NODE_FLAGS_OPENED;
         bool real_close = callbackof(node, close)(node->handle);
         if (real_close) {

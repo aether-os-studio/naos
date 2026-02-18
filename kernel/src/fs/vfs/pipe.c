@@ -32,91 +32,87 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     if (!size)
         return 0;
 
-    while (pipe->ptr == 0) {
-        arch_enable_interrupt();
+    while (true) {
+        spin_lock(&pipe->lock);
 
-        if (fd->flags & O_NONBLOCK) {
-            arch_disable_interrupt();
-            return -EWOULDBLOCK;
+        if (pipe->ptr > 0) {
+            // 实际读取量
+            uint32_t to_read = MIN(size, pipe->ptr);
+            memcpy(addr, pipe->buf, to_read);
+            memmove(pipe->buf, &pipe->buf[to_read], pipe->ptr - to_read);
+            pipe->ptr -= to_read;
+            spin_unlock(&pipe->lock);
+            return to_read;
         }
 
         if (pipe->write_fds == 0) {
-            arch_disable_interrupt();
+            spin_unlock(&pipe->lock);
             return 0;
         }
 
+        spin_unlock(&pipe->lock);
+
+        if (fd->flags & O_NONBLOCK) {
+            return -EWOULDBLOCK;
+        }
+
+        arch_enable_interrupt();
         schedule(SCHED_FLAG_YIELD);
+        arch_disable_interrupt();
     }
-
-    arch_disable_interrupt();
-
-    // 实际读取量
-    uint32_t to_read = MIN(size, pipe->ptr);
-
-    if (to_read == 0) {
-        return 0;
-    }
-
-    spin_lock(&pipe->lock);
-
-    memcpy(addr, pipe->buf, to_read);
-    memmove(pipe->buf, &pipe->buf[pipe->ptr], pipe->ptr - to_read);
-
-    pipe->ptr -= to_read;
-
-    spin_unlock(&pipe->lock);
-
-    return to_read;
 }
 
 ssize_t pipe_write_inner(void *file, const void *addr, size_t size) {
     pipe_specific_t *spec = (pipe_specific_t *)file;
     pipe_info_t *pipe = spec->info;
 
-    while ((PIPE_BUFF - pipe->ptr) <= size) {
+    while (true) {
+        spin_lock(&pipe->lock);
+
         if (pipe->read_fds == 0) {
+            spin_unlock(&pipe->lock);
             return -EPIPE;
         }
 
+        if ((PIPE_BUFF - pipe->ptr) >= size) {
+            memcpy(&pipe->buf[pipe->ptr], addr, size);
+            pipe->ptr += size;
+            spin_unlock(&pipe->lock);
+            return size;
+        }
+
+        spin_unlock(&pipe->lock);
         schedule(SCHED_FLAG_YIELD);
     }
-
-    spin_lock(&pipe->lock);
-
-    memcpy(&pipe->buf[pipe->ptr], addr, size);
-
-    pipe->ptr += size;
-
-    spin_unlock(&pipe->lock);
-
-    return size;
 }
 
 ssize_t pipefs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     int ret = 0;
     void *file = fd->node->handle;
+    const char *data = addr;
     size_t chunks = size / PIPE_BUFF;
     size_t remainder = size % PIPE_BUFF;
     if (chunks)
         for (size_t i = 0; i < chunks; i++) {
             int cycle = 0;
             while (cycle < PIPE_BUFF) {
-                ssize_t ret = pipe_write_inner(
-                    file, addr + i * PIPE_BUFF + cycle, PIPE_BUFF - cycle);
-                if (ret < 0)
-                    return ret;
-                cycle += ret;
+                ssize_t wrote = pipe_write_inner(
+                    file, data + i * PIPE_BUFF + cycle, PIPE_BUFF - cycle);
+                if (wrote < 0)
+                    return wrote;
+                cycle += wrote;
             }
+            ret += cycle;
         }
 
     if (remainder) {
         size_t cycle = 0;
         while (cycle < remainder) {
-            ssize_t ret = pipe_write_inner(
-                file, addr + chunks * PIPE_BUFF + cycle, remainder - cycle);
-            if (ret < 0)
-                return ret;
-            cycle += ret;
+            ssize_t wrote = pipe_write_inner(
+                file, data + chunks * PIPE_BUFF + cycle, remainder - cycle);
+            if (wrote < 0)
+                return wrote;
+            cycle += wrote;
         }
         ret += cycle;
     }
@@ -240,6 +236,10 @@ void pipefs_init() {
 }
 
 uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
+    if (!pipefd) {
+        return -EFAULT;
+    }
+
     int i1 = -1;
     for (i1 = 0; i1 < MAX_FD_NUM; i1++) {
         if (current_task->fd_info->fds[i1] == NULL) {
@@ -248,17 +248,6 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
     }
 
     if (i1 == MAX_FD_NUM) {
-        return -EBADF;
-    }
-
-    int i2 = -1;
-    for (i2 = 0; i2 < MAX_FD_NUM; i2++) {
-        if (current_task->fd_info->fds[i2] == NULL) {
-            break;
-        }
-    }
-
-    if (i2 == MAX_FD_NUM) {
         return -EBADF;
     }
 
@@ -302,24 +291,51 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
     node_input->handle = read_spec;
     node_output->handle = write_spec;
 
+    int i2 = -1;
+    int ret = 0;
+
     with_fd_info_lock(current_task->fd_info, {
         current_task->fd_info->fds[i1] = malloc(sizeof(fd_t));
         memset(current_task->fd_info->fds[i1], 0, sizeof(fd_t));
         current_task->fd_info->fds[i1]->node = node_input;
         current_task->fd_info->fds[i1]->offset = 0;
         current_task->fd_info->fds[i1]->flags = flags;
+        current_task->fd_info->fds[i1]->close_on_exec = !!(flags & O_CLOEXEC);
         procfs_on_open_file(current_task, i1);
 
-        current_task->fd_info->fds[i2] = malloc(sizeof(fd_t));
-        memset(current_task->fd_info->fds[i2], 0, sizeof(fd_t));
-        current_task->fd_info->fds[i2]->node = node_output;
-        current_task->fd_info->fds[i2]->offset = 0;
-        current_task->fd_info->fds[i2]->flags = flags;
-        procfs_on_open_file(current_task, i2);
+        for (i2 = 0; i2 < MAX_FD_NUM; i2++) {
+            if (current_task->fd_info->fds[i2] == NULL) {
+                break;
+            }
+        }
+
+        if (i2 == MAX_FD_NUM) {
+            ret = -EMFILE;
+        } else {
+            current_task->fd_info->fds[i2] = malloc(sizeof(fd_t));
+            memset(current_task->fd_info->fds[i2], 0, sizeof(fd_t));
+            current_task->fd_info->fds[i2]->node = node_output;
+            current_task->fd_info->fds[i2]->offset = 0;
+            current_task->fd_info->fds[i2]->flags = flags;
+            current_task->fd_info->fds[i2]->close_on_exec =
+                !!(flags & O_CLOEXEC);
+            procfs_on_open_file(current_task, i2);
+        }
     });
 
-    pipefd[0] = i1;
-    pipefd[1] = i2;
+    if (ret < 0) {
+        if (i1 >= 0) {
+            sys_close(i1);
+        }
+        return ret;
+    }
+
+    int kpipefd[2] = {i1, i2};
+    if (copy_to_user(pipefd, kpipefd, sizeof(kpipefd))) {
+        sys_close(i1);
+        sys_close(i2);
+        return -EFAULT;
+    }
 
     return 0;
 }

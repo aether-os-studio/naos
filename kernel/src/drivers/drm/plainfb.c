@@ -31,7 +31,20 @@ int plainfb_create_dumb(drm_device_t *drm_dev,
         return -ENODEV;
     }
 
-    args->pitch = args->width * (args->bpp / 8);
+    if (args->width == 0 || args->height == 0) {
+        return -EINVAL;
+    }
+
+    if (args->bpp == 0) {
+        args->bpp = 32;
+    }
+
+    uint32_t bytes_per_pixel = args->bpp / 8;
+    if (bytes_per_pixel == 0) {
+        return -EINVAL;
+    }
+
+    args->pitch = PADDING_UP(args->width * bytes_per_pixel, 64);
     args->size = args->height * args->pitch;
 
     // Find free framebuffer slot
@@ -117,6 +130,16 @@ static int plainfb_add_fb2(drm_device_t *drm_dev,
         return -ENODEV;
     }
 
+    if (fb_cmd->handles[0] == 0 || fb_cmd->width == 0 || fb_cmd->height == 0) {
+        return -EINVAL;
+    }
+
+    uint32_t idx = 0;
+    if (!plainfb_handle_to_index(fb_cmd->handles[0], &idx) ||
+        !device->dumbbuffers[idx].used) {
+        return -EINVAL;
+    }
+
     drm_framebuffer_t *fb =
         drm_framebuffer_alloc(&device->resource_mgr, device);
     if (!fb) {
@@ -125,9 +148,15 @@ static int plainfb_add_fb2(drm_device_t *drm_dev,
 
     fb->width = fb_cmd->width;
     fb->height = fb_cmd->height;
-    fb->pitch = fb_cmd->pitches[0];
+    fb->pitch = fb_cmd->pitches[0] ? fb_cmd->pitches[0]
+                                   : device->dumbbuffers[idx].pitch;
     fb->bpp = 32;
-    fb->depth = 24;
+    fb->depth = (fb_cmd->pixel_format == DRM_FORMAT_ARGB8888 ||
+                 fb_cmd->pixel_format == DRM_FORMAT_ABGR8888 ||
+                 fb_cmd->pixel_format == DRM_FORMAT_RGBA8888 ||
+                 fb_cmd->pixel_format == DRM_FORMAT_BGRA8888)
+                    ? 32
+                    : 24;
     fb->handle = fb_cmd->handles[0];
     fb->format = fb_cmd->pixel_format;
     fb->modifier = fb_cmd->modifier[0];
@@ -563,11 +592,14 @@ int plainfb_get_planes(drm_device_t *drm_dev, drm_plane_t **planes,
     planes[0]->crtc_id = device->crtcs[0] ? device->crtcs[0]->id : 0;
     planes[0]->fb_id = device->crtcs[0] ? device->crtcs[0]->fb_id : 0;
     planes[0]->possible_crtcs = 1;
-    planes[0]->count_format_types = 1;
+    planes[0]->count_format_types = 4;
     planes[0]->format_types =
         malloc(sizeof(uint32_t) * planes[0]->count_format_types);
     if (planes[0]->format_types) {
         planes[0]->format_types[0] = DRM_FORMAT_XRGB8888;
+        planes[0]->format_types[1] = DRM_FORMAT_ARGB8888;
+        planes[0]->format_types[2] = DRM_FORMAT_XBGR8888;
+        planes[0]->format_types[3] = DRM_FORMAT_ABGR8888;
     }
     planes[0]->plane_type = DRM_PLANE_TYPE_PRIMARY;
     return 0;

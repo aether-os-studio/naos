@@ -396,8 +396,10 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
 
     // 移动 backlog
     listen_sock->backlog[0] = NULL;
-    memmove(listen_sock->backlog, &listen_sock->backlog[1],
-            listen_sock->connCurr * sizeof(socket_t *));
+    if (listen_sock->connCurr > 1) {
+        memmove(listen_sock->backlog, &listen_sock->backlog[1],
+                (listen_sock->connCurr - 1) * sizeof(socket_t *));
+    }
     listen_sock->connCurr--;
 
     // 创建 server 端 socket
