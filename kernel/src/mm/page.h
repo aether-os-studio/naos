@@ -20,3 +20,4 @@ bool page_can_free(page_t *page);
 void address_ref(uint64_t addr);
 void address_unref(uint64_t addr);
 bool address_can_free(uint64_t addr);
+void address_release(uint64_t addr);

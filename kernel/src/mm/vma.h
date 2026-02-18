@@ -33,16 +33,12 @@ typedef struct vma {
     int64_t vm_offset;      // 文件偏移量
     int shm_id;             // 共享内存ID
     char *vm_name;          // VMA名
-    struct vma *vm_next;    // 链表下一个节点
-    struct vma *vm_prev;    // 链表前一个节点
     rb_node_t vm_rb;        // 红黑树节点
 } vma_t;
 
 // VMA管理器
 typedef struct vma_manager {
-    vma_t *vma_list;        // VMA链表头
     rb_root_t vma_tree;     // 红黑树根
-    unsigned long vm_total; // 总虚拟内存大小
     unsigned long vm_used;  // 已使用虚拟内存
     spinlock_t lock;
     bool initialized;

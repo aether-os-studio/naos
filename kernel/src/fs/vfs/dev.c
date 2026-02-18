@@ -301,7 +301,7 @@ fs_t devtmpfs = {
     .name = "devtmpfs",
     .magic = 0x01021994,
     .callback = &callbacks,
-    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_NEED_OPEN | FS_FLAGS_NEED_CLOSE,
+    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_NEED_OPEN,
 };
 
 ssize_t inputdev_open(void *data, void *arg) {

@@ -15,10 +15,15 @@ void heap_err(enum HeapError error, void *ptr) {
     }
 }
 
+struct MemorySpan heap_oom(size_t size) {
+    void *ptr = alloc_frames_bytes(size);
+    return (struct MemorySpan){.ptr = ptr, .size = ptr ? size : 0};
+}
+
 void heap_init_alloc() {
-    map_page_range(get_current_page_dir(false), KERNEL_HEAP_START, 0,
+    map_page_range(get_current_page_dir(false), KERNEL_HEAP_START, (uint64_t)-1,
                    KERNEL_HEAP_SIZE, PT_FLAG_R | PT_FLAG_W);
-    memset((void *)KERNEL_HEAP_START, 0, KERNEL_HEAP_SIZE);
     heap_init((uint8_t *)KERNEL_HEAP_START, KERNEL_HEAP_SIZE);
     heap_onerror(heap_err);
+    heap_set_oom_handler(heap_oom);
 }

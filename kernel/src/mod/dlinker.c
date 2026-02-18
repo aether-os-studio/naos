@@ -19,7 +19,7 @@ void load_segment(Elf64_Phdr *phdr, void *elf, uint64_t offset) {
 
     uint64_t flags = PT_FLAG_R | PT_FLAG_W;
 
-    map_page_range(get_current_page_dir(false), lo, 0, hi - lo,
+    map_page_range(get_current_page_dir(false), lo, (uint64_t)-1, hi - lo,
                    flags | ((phdr->p_flags & PF_X) ? PT_FLAG_X : 0));
 
     uint64_t p_vaddr = (uint64_t)phdr->p_vaddr + offset;

@@ -33,3 +33,16 @@ void address_ref(uint64_t addr) { page_ref(get_page(addr)); }
 void address_unref(uint64_t addr) { page_unref(get_page(addr)); }
 
 bool address_can_free(uint64_t addr) { return page_can_free(get_page(addr)); }
+
+void address_release(uint64_t addr) {
+    page_t *page = get_page(addr);
+    if (!page)
+        return;
+
+    if (page->refcount > 1) {
+        page_unref(page);
+        return;
+    }
+
+    free_frames(addr, 1);
+}

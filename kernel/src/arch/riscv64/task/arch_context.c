@@ -48,11 +48,11 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
                        uint64_t clone_flags) {
     if (!src->mm) {
-        printk("src->mm == NULL!!! src = %#018lx", src);
+        printk("src->mm == NULL!!! src = %#018lx\n", src);
     }
     dst->mm = clone_page_table(src->mm, clone_flags);
     if (!dst->mm) {
-        printk("dst->mm == NULL!!! dst = %#018lx", dst);
+        printk("dst->mm == NULL!!! dst = %#018lx\n", dst);
     }
     dst->ctx = (struct pt_regs *)stack - 1;
     dst->ra = (uint64_t)ret_from_trap_handler;

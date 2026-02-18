@@ -235,8 +235,9 @@ void frame_init(void) {
 void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
                     uint64_t size, uint64_t flags) {
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
-        if (paddr == 0) {
-            map_page(pml4, va, 0, get_arch_page_table_flags(flags), true);
+        if (paddr == (uint64_t)-1) {
+            map_page(pml4, va, (uint64_t)-1, get_arch_page_table_flags(flags),
+                     true);
         } else {
             map_page(pml4, va, paddr + (va - vaddr),
                      get_arch_page_table_flags(flags), true);
@@ -247,8 +248,9 @@ void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
 void map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
                             uint64_t size, uint64_t flags) {
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
-        if (paddr == 0) {
-            map_page(pml4, va, 0, get_arch_page_table_flags(flags), false);
+        if (paddr == (uint64_t)-1) {
+            map_page(pml4, va, (uint64_t)-1, get_arch_page_table_flags(flags),
+                     false);
         } else {
             map_page(pml4, va, paddr + (va - vaddr),
                      get_arch_page_table_flags(flags), false);

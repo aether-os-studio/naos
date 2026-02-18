@@ -78,11 +78,11 @@ extern void ret_from_syscall();
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
                        uint64_t clone_flags) {
     if (!src->mm) {
-        printk("src->mm == NULL!!! src = %#018lx", src);
+        printk("src->mm == NULL!!! src = %#018lx\n", src);
     }
     dst->mm = clone_page_table(src->mm, clone_flags);
     if (!dst->mm) {
-        printk("dst->mm == NULL!!! dst = %#018lx", dst);
+        printk("dst->mm == NULL!!! dst = %#018lx\n", dst);
     }
     arch_flush_tlb_all();
     dst->ctx = (struct pt_regs *)stack - 1;

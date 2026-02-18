@@ -678,8 +678,8 @@ uint64_t task_execve(const char *path_user, const char **argv,
                     interpreter_load_end = aligned_addr + alloc_size;
 
                 uint64_t flags = PT_FLAG_U | PT_FLAG_R | PT_FLAG_W | PT_FLAG_X;
-                map_page_range(get_current_page_dir(true), aligned_addr, 0,
-                               alloc_size, flags);
+                map_page_range(get_current_page_dir(true), aligned_addr,
+                               (uint64_t)-1, alloc_size, flags);
 
                 vfs_read(interpreter_node, (void *)seg_addr,
                          interp_phdr[j].p_offset, file_size);
@@ -711,8 +711,8 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 load_end = aligned_addr + alloc_size;
 
             uint64_t flags = PT_FLAG_U | PT_FLAG_R | PT_FLAG_W | PT_FLAG_X;
-            map_page_range(get_current_page_dir(true), aligned_addr, 0,
-                           alloc_size, flags);
+            map_page_range(get_current_page_dir(true), aligned_addr,
+                           (uint64_t)-1, alloc_size, flags);
 
             vfs_read(node, (void *)seg_addr, phdr[i].p_offset, file_size);
 
@@ -735,7 +735,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     node->refcount++;
     current_task->exec_node = node;
 
-    map_page_range(get_current_page_dir(true), USER_STACK_START, 0,
+    map_page_range(get_current_page_dir(true), USER_STACK_START, (uint64_t)-1,
                    USER_STACK_END - USER_STACK_START,
                    PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 

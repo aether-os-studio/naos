@@ -799,14 +799,6 @@ int vfs_close(vfs_node_t node) {
         return 0;
     if (node == rootdir)
         return 0;
-    if (node->fsid && node->fsid < fs_nextid) {
-        fs_t *fs = all_fs[node->fsid];
-        if (node->refcount > 1 && fs && fs->flags & FS_FLAGS_NEED_CLOSE) {
-            callbackof(node, close)(node->handle);
-            node->refcount--;
-            return 0;
-        }
-    }
     if (node->refcount > 0)
         node->refcount--;
     if (node->refcount <= 0) {
