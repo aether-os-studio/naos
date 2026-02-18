@@ -969,6 +969,8 @@ uint64_t do_stat_fd(int fd, struct stat *buf) {
     task_t *self = current_task;
     vfs_node_t node = self->fd_info->fds[fd]->node;
 
+    vfs_update(node);
+
     buf->st_dev = node->dev;
     buf->st_ino = node->inode;
     buf->st_nlink = 1;

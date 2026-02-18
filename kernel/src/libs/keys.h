@@ -423,7 +423,6 @@ rely on ambient */
 
 extern char character_table[140];
 extern char shifted_character_table[140];
-extern const uint8_t evdevTable[89];
 
 #define SYN_REPORT 0
 #define SYN_CONFIG 1

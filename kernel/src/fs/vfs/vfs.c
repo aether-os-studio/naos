@@ -128,10 +128,7 @@ static inline void do_open(vfs_node_t file) {
     }
 }
 
-static inline void do_update(vfs_node_t file) {
-    if (file->handle == NULL)
-        do_open(file);
-}
+static inline void do_update(vfs_node_t file) { do_open(file); }
 
 vfs_node_t vfs_child_find(vfs_node_t parent, const char *name) {
     if (!parent || !name)

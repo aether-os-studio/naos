@@ -176,6 +176,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_MMAP] = (syscall_handle_t)sys_mmap;
     syscall_handlers[SYS_MPROTECT] = (syscall_handle_t)sys_mprotect;
     syscall_handlers[SYS_MUNMAP] = (syscall_handle_t)sys_munmap;
+    // syscall_handlers[SYS_BRK] = (syscall_handle_t)sys_brk;
     syscall_handlers[SYS_RT_SIGACTION] = (syscall_handle_t)sys_sigaction;
     syscall_handlers[SYS_RT_SIGPROCMASK] = (syscall_handle_t)sys_sigprocmask;
     syscall_handlers[SYS_RT_SIGRETURN] = (syscall_handle_t)sys_sigreturn;

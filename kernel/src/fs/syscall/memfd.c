@@ -70,7 +70,6 @@ bool memfd_close(void *current) {
 int memfd_stat(void *file, vfs_node_t node) {
     struct memfd_ctx *ctx = file;
     node->size = ctx->len;
-
     return 0;
 }
 

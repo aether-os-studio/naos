@@ -144,15 +144,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         if (map_node->type & file_dir)
             return (uint64_t)-EISDIR;
 
-        uint64_t acc_mode = map_fd->flags & O_ACCMODE_FLAGS;
-        if ((prot & (PROT_READ | PROT_EXEC)) && acc_mode == O_WRONLY)
-            return (uint64_t)-EACCES;
-        if ((prot & PROT_WRITE) &&
-            (map_type == MAP_SHARED || map_type == MAP_SHARED_VALIDATE) &&
-            acc_mode == O_RDONLY) {
-            return (uint64_t)-EACCES;
-        }
-
         if (flags & MAP_SYNC)
             return (uint64_t)-EOPNOTSUPP;
     }
@@ -595,7 +586,7 @@ static uint64_t mremap_move(vma_manager_t *mgr, vma_t *old_vma,
         return map_ret;
     }
 
-    if (old_vma->vm_type == VMA_ANON) {
+    if (old_vma->vm_type == VMA_TYPE_ANON) {
         uint64_t copy_len = old_size < new_size ? old_size : new_size;
         if (copy_len > 0 && (old_vma->vm_flags & VMA_READ)) {
             uint64_t final_pt_flags = vm_flags_to_pt_flags(new_vma->vm_flags);
