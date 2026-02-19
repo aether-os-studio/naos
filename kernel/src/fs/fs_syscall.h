@@ -69,6 +69,9 @@ struct winsize {
 
 #define SPECIAL_FD 0x2025
 
+#define CLOSE_RANGE_UNSHARE (1U << 1)
+#define CLOSE_RANGE_CLOEXEC (1U << 2)
+
 uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
                    void *data);
 uint64_t sys_umount2(const char *target, uint64_t flags);

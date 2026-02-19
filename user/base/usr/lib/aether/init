@@ -7,4 +7,5 @@ touch /run/udev/data/c13:2
 touch /run/udev/data/c13:3
 
 seatd &
-exec Hyprland --i-am-really-stupid
+dbus-daemon --system --nofork &
+exec dbus-run-session -- sway

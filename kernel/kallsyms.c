@@ -1,28 +1,10 @@
-/**
- * @file kallsyms.c
- * @author longjin (longjin@RinGoTek.cn)
- * @brief 内核栈跟踪
- * @version 0.1
- * @date 2022-06-22
- *
- * @copyright Copyright (c) 2022
- *
- */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/**
- * @brief 判断符号是否需要被输出（只输出text段内的符号）
- *
- */
 #define symbol_to_write(vaddr, tv, etv) ((vaddr < tv || vaddr > etv) ? 0 : 1)
 
-/**
- * @brief 使用nm命令提取出来的信息存到这个结构体之中
- *
- */
 struct kernel_symbol_entry_t {
     uint64_t vaddr;
     char type;
@@ -31,63 +13,39 @@ struct kernel_symbol_entry_t {
 };
 
 struct kernel_symbol_entry_t *symbol_table;
-// 符号表最大能容纳的entry数量
 uint64_t table_size = 0;
-// 符号表当前的entry数量
 uint64_t entry_count = 0;
-// 符号表中，text和etext的下标
 uint64_t text_vaddr, etext_vaddr;
 
-/**
- * @brief 读取一个符号到entry之中
- *
- * @param filp stdin的文件指针
- * @param entry 待填写的entry
- * @return int 返回码
- */
 int read_symbol(FILE *filp, struct kernel_symbol_entry_t *entry) {
-    // 本函数假设nm命令输出的结果中，每行最大512字节
     char str[512] = {0};
-    char *s = fgets(str, sizeof(str), filp);
-    if (s != str) {
+    if (fgets(str, sizeof(str), filp) != str)
         return -1;
-    }
 
     char symbol_name[512] = {0};
-    int retval =
-        sscanf(str, "%lx %c %512c", &entry->vaddr, &entry->type, symbol_name);
-
-    // 如果当前行不符合要求
-    if (retval != 3) {
+    if (sscanf(str, "%lx %c %511s", &entry->vaddr, &entry->type, symbol_name) !=
+        3)
         return -1;
-    }
-    // malloc一块内存，然后把str的内容拷贝进去，接着修改symbol指针
+
     size_t len = strlen(symbol_name);
-    if (len >= 1 && symbol_name[len - 1] == '\n') {
-        symbol_name[len - 1] = '\0';
-        len--;
-    }
+
     // 转义双引号
-    for (int i = 0; i < len; i++) {
-        if (symbol_name[i] == '"') {
-            char temp[len - i];
-            memcpy(temp, symbol_name + i, len - i);
-            symbol_name[i] = '\\';
-            memcpy(symbol_name + i + 1, temp, len - i);
-            i++;
-        }
+    char escaped[1024] = {0};
+    size_t j = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (symbol_name[i] == '"')
+            escaped[j++] = '\\';
+        escaped[j++] = symbol_name[i];
     }
-    entry->symbol = strdup(symbol_name);
-    entry->symbol_length =
-        len + 1; // +1的原因是.asciz指令会在字符串末尾自动添加结束符\0
+
+    entry->symbol = strdup(escaped);
+    if (entry->symbol == NULL)
+        return -1;
+
+    entry->symbol_length = strlen(escaped) + 1;
     return 0;
 }
 
-/**
- * @brief 接收标准输入流的数据，解析nm命令输出的内容
- *
- * @param filp
- */
 void read_map(FILE *filp) {
     // 循环读入数据直到输入流结束
     while (!feof(filp)) {
@@ -117,10 +75,6 @@ void read_map(FILE *filp) {
     }
 }
 
-/**
- * @brief 输出最终的kallsyms汇编代码文件
- * 直接输出到stdout，通过命令行的 > 命令，写入文件
- */
 void generate_result() {
     printf(".section .rodata\n\n");
     printf(".global kallsyms_address\n");
@@ -201,6 +155,7 @@ void generate_result() {
 
     putchar('\n');
 }
+
 int main(int argc, char **argv) {
     read_map(stdin);
 

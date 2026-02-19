@@ -301,58 +301,57 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
 
         return 0;
     }
-    // case FUTEX_REQUEUE_PRIVATE:
-    // case FUTEX_REQUEUE: {
-    //     mutex_lock(&futex_lock);
+    case FUTEX_REQUEUE_PRIVATE:
+    case FUTEX_REQUEUE: {
+        mutex_lock(&futex_lock);
 
-    //     struct futex_wait *curr = &futex_wait_list;
-    //     struct futex_wait *prev = NULL;
-    //     int wake_count = 0;
-    //     int requeue_count = 0;
+        struct futex_wait *curr = &futex_wait_list;
+        struct futex_wait *prev = NULL;
+        int wake_count = 0;
+        int requeue_count = 0;
 
-    //     // 遍历等待队列
-    //     while (curr) {
-    //         bool found = false;
+        // 遍历等待队列
+        while (curr) {
+            bool found = false;
 
-    //         // 检查是否匹配原始地址
-    //         if (curr->uaddr && curr->uaddr == translate_address(
-    //                                               get_current_page_dir(true),
-    //                                               (uint64_t)uaddr)) {
-    //             // 先唤醒val个线程
-    //             if (wake_count < val) {
-    //                 task_unblock(curr->task, EOK);
-    //                 if (prev) {
-    //                     prev->next = curr->next;
-    //                 }
-    //                 struct futex_wait *to_free = curr;
-    //                 curr = curr->next;
-    //                 free(to_free);
-    //                 wake_count++;
-    //                 found = true;
-    //             }
-    //             // 然后转移val3个线程到新地址
-    //             else if (requeue_count < val3) {
-    //                 // 修改等待地址为目标地址
-    //                 curr->uaddr = translate_address(
-    //                     get_current_page_dir(true), (uint64_t)uaddr2);
-    //                 requeue_count++;
-    //                 prev = curr;
-    //                 curr = curr->next;
-    //             } else {
-    //                 // 已经处理完所有需要的线程
-    //                 break;
-    //             }
-    //         }
+            // 检查是否匹配原始地址
+            if (curr->uaddr &&
+                curr->uaddr == translate_address(get_current_page_dir(true),
+                                                 (uint64_t)uaddr)) {
+                // 先唤醒val个线程
+                if (wake_count < val) {
+                    task_unblock(curr->task, EOK);
+                    if (prev) {
+                        prev->next = curr->next;
+                    }
+                    struct futex_wait *to_free = curr;
+                    curr = curr->next;
+                    free(to_free);
+                    wake_count++;
+                    found = true;
+                }
+                // 然后转移val3个线程到新地址
+                else if (requeue_count < val3) {
+                    // 修改等待地址为目标地址
+                    curr->uaddr = (uint64_t)uaddr2;
+                    requeue_count++;
+                    prev = curr;
+                    curr = curr->next;
+                } else {
+                    // 已经处理完所有需要的线程
+                    break;
+                }
+            }
 
-    //         if (!found) {
-    //             prev = curr;
-    //             curr = curr->next;
-    //         }
-    //     }
+            if (!found) {
+                prev = curr;
+                curr = curr->next;
+            }
+        }
 
-    //     mutex_unlock(&futex_lock);
-    //     return wake_count + requeue_count;
-    // }
+        mutex_unlock(&futex_lock);
+        return wake_count + requeue_count;
+    }
     default:
         printk("futex: Unsupported op: %d\n", op);
         return -ENOSYS;

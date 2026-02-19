@@ -7,12 +7,39 @@
 #include <drivers/kernel_logger.h>
 #include <net/netlink.h>
 
-uint64_t sys_shutdown(uint64_t fd, uint64_t how) { return 0; }
+static bool is_socket(fd_t *fd) {
+    if (!(fd->node->type & file_socket))
+        return false;
+    return true;
+}
+
+uint64_t sys_shutdown(uint64_t fd, uint64_t how) {
+    if (fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
+        return -EBADF;
+
+    fd_t *node = current_task->fd_info->fds[fd];
+    if (!is_socket(node))
+        return -ENOTSOCK;
+
+    socket_handle_t *handle = node->node->handle;
+    if (!handle || !handle->op || !handle->op->shutdown)
+        return -ENOSYS;
+
+    return handle->op->shutdown(fd, how);
+}
 
 uint64_t sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen) {
-    if (fd < 0 || fd > MAX_FD_NUM || !current_task->fd_info->fds[fd])
+    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
+    if (!addrlen)
+        return -EFAULT;
+
+    socklen_t user_len = 0;
+    if (copy_from_user(&user_len, addrlen, sizeof(socklen_t)))
+        return (uint64_t)-EFAULT;
     fd_t *node = current_task->fd_info->fds[fd];
+    if (!is_socket(node))
+        return -EINVAL;
 
     void *kaddr = malloc(DEFAULT_PAGE_SIZE);
     socklen_t kaddrlen = 0;
@@ -20,8 +47,13 @@ uint64_t sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen) {
     socket_handle_t *handle = node->node->handle;
     if (handle->op->getpeername) {
         uint64_t ret = handle->op->getpeername(fd, kaddr, &kaddrlen);
+        if ((int64_t)ret < 0) {
+            free(kaddr);
+            return ret;
+        }
 
-        if (copy_to_user(addr, kaddr, kaddrlen)) {
+        size_t copy_len = MIN((size_t)user_len, (size_t)kaddrlen);
+        if (copy_len && addr && copy_to_user(addr, kaddr, copy_len)) {
             free(kaddr);
             return (uint64_t)-EFAULT;
         }
@@ -41,10 +73,18 @@ uint64_t sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen) {
 
 uint64_t sys_getsockname(int sockfd, struct sockaddr_un *addr,
                          socklen_t *addrlen) {
-    if (sockfd < 0 || sockfd > MAX_FD_NUM ||
+    if (sockfd < 0 || sockfd >= MAX_FD_NUM ||
         !current_task->fd_info->fds[sockfd])
         return -EBADF;
+    if (!addrlen)
+        return -EFAULT;
+
+    socklen_t user_len = 0;
+    if (copy_from_user(&user_len, addrlen, sizeof(socklen_t)))
+        return (uint64_t)-EFAULT;
     fd_t *node = current_task->fd_info->fds[sockfd];
+    if (!is_socket(node))
+        return -EINVAL;
 
     void *kaddr = malloc(DEFAULT_PAGE_SIZE);
     socklen_t kaddrlen = 0;
@@ -52,8 +92,13 @@ uint64_t sys_getsockname(int sockfd, struct sockaddr_un *addr,
     socket_handle_t *handle = node->node->handle;
     if (handle->op->getsockname) {
         uint64_t ret = handle->op->getsockname(sockfd, kaddr, &kaddrlen);
+        if ((int64_t)ret < 0) {
+            free(kaddr);
+            return ret;
+        }
 
-        if (copy_to_user(addr, kaddr, kaddrlen)) {
+        size_t copy_len = MIN((size_t)user_len, (size_t)kaddrlen);
+        if (copy_len && addr && copy_to_user(addr, kaddr, copy_len)) {
             free(kaddr);
             return (uint64_t)-EFAULT;
         }
@@ -73,10 +118,13 @@ uint64_t sys_getsockname(int sockfd, struct sockaddr_un *addr,
 
 uint64_t sys_setsockopt(int fd, int level, int optname, const void *optval,
                         socklen_t optlen) {
-    if (fd < 0 || fd > MAX_FD_NUM || !current_task->fd_info->fds[fd])
+    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
+    fd_t *node = current_task->fd_info->fds[fd];
+    if (!is_socket(node))
+        return -EINVAL;
 
-    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    socket_handle_t *handle = node->node->handle;
     if (handle->op->setsockopt) {
         return handle->op->setsockopt(fd, level, optname, optval, optlen);
     }
@@ -85,9 +133,11 @@ uint64_t sys_setsockopt(int fd, int level, int optname, const void *optval,
 
 uint64_t sys_getsockopt(int fd, int level, int optname, void *optval,
                         socklen_t *optlen) {
-    if (fd < 0 || fd > MAX_FD_NUM || !current_task->fd_info->fds[fd])
+    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[fd];
+    if (!is_socket(node))
+        return -EINVAL;
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->getsockopt) {
@@ -129,6 +179,8 @@ uint64_t sys_bind(int sockfd, const struct sockaddr_un *addr,
         !current_task->fd_info->fds[sockfd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[sockfd];
+    if (!is_socket(node))
+        return -EINVAL;
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->bind)
@@ -141,6 +193,8 @@ uint64_t sys_listen(int sockfd, int backlog) {
         !current_task->fd_info->fds[sockfd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[sockfd];
+    if (!is_socket(node))
+        return -EINVAL;
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->listen)
@@ -154,6 +208,8 @@ uint64_t sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen,
         !current_task->fd_info->fds[sockfd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[sockfd];
+    if (!is_socket(node))
+        return -EINVAL;
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->accept)
@@ -167,6 +223,8 @@ uint64_t sys_connect(int sockfd, const struct sockaddr_un *addr,
         !current_task->fd_info->fds[sockfd])
         return -EBADF;
     fd_t *node = current_task->fd_info->fds[sockfd];
+    if (!is_socket(node))
+        return -EINVAL;
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->connect)
@@ -176,29 +234,50 @@ uint64_t sys_connect(int sockfd, const struct sockaddr_un *addr,
 
 int64_t sys_send(int sockfd, void *buff, size_t len, int flags,
                  struct sockaddr_un *dest_addr, socklen_t addrlen) {
-    if (sockfd < 0 || sockfd >= MAX_FD_NUM ||
-        !current_task->fd_info->fds[sockfd])
+    if (sockfd < 0 || sockfd >= MAX_FD_NUM)
         return -EBADF;
-    fd_t *node = current_task->fd_info->fds[sockfd];
 
-    socket_handle_t *handle = node->node->handle;
-    if (handle->op->sendto)
-        return handle->op->sendto(sockfd, buff, len, flags, dest_addr, addrlen);
-    return 0;
+    int64_t ret = -EBADF;
+    with_fd_info_lock(current_task->fd_info, {
+        fd_t *node = current_task->fd_info->fds[sockfd];
+        if (!node) {
+            ret = -EBADF;
+        } else if (!is_socket(node)) {
+            ret = -EINVAL;
+        } else {
+            socket_handle_t *handle = node->node->handle;
+            if (handle->op->sendto)
+                ret = handle->op->sendto(sockfd, buff, len, flags, dest_addr,
+                                         addrlen);
+            else
+                ret = 0;
+        }
+    });
+    return ret;
 }
 
 int64_t sys_recv(int sockfd, void *buf, size_t len, int flags,
                  struct sockaddr_un *dest_addr, socklen_t *addrlen) {
-    if (sockfd < 0 || sockfd >= MAX_FD_NUM ||
-        !current_task->fd_info->fds[sockfd])
+    if (sockfd < 0 || sockfd >= MAX_FD_NUM)
         return -EBADF;
-    fd_t *node = current_task->fd_info->fds[sockfd];
 
-    socket_handle_t *handle = node->node->handle;
-    if (handle->op->recvfrom)
-        return handle->op->recvfrom(sockfd, buf, len, flags, dest_addr,
-                                    addrlen);
-    return 0;
+    int64_t ret = -EBADF;
+    with_fd_info_lock(current_task->fd_info, {
+        fd_t *node = current_task->fd_info->fds[sockfd];
+        if (!node) {
+            ret = -EBADF;
+        } else if (!is_socket(node)) {
+            ret = -EINVAL;
+        } else {
+            socket_handle_t *handle = node->node->handle;
+            if (handle->op->recvfrom)
+                ret = handle->op->recvfrom(sockfd, buf, len, flags, dest_addr,
+                                           addrlen);
+            else
+                ret = 0;
+        }
+    });
+    return ret;
 }
 
 int64_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
@@ -207,15 +286,25 @@ int64_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         return (uint64_t)-EFAULT;
     }
 
-    if (sockfd < 0 || sockfd >= MAX_FD_NUM ||
-        !current_task->fd_info->fds[sockfd])
+    if (sockfd < 0 || sockfd >= MAX_FD_NUM)
         return -EBADF;
-    fd_t *node = current_task->fd_info->fds[sockfd];
 
-    socket_handle_t *handle = node->node->handle;
-    if (handle->op->sendmsg)
-        return handle->op->sendmsg(sockfd, msg, flags);
-    return 0;
+    int64_t ret = -EBADF;
+    with_fd_info_lock(current_task->fd_info, {
+        fd_t *node = current_task->fd_info->fds[sockfd];
+        if (!node) {
+            ret = -EBADF;
+        } else if (!is_socket(node)) {
+            ret = -EINVAL;
+        } else {
+            socket_handle_t *handle = node->node->handle;
+            if (handle->op->sendmsg)
+                ret = handle->op->sendmsg(sockfd, msg, flags);
+            else
+                ret = 0;
+        }
+    });
+    return ret;
 }
 
 int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
@@ -224,13 +313,23 @@ int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         return (uint64_t)-EFAULT;
     }
 
-    if (sockfd < 0 || sockfd >= MAX_FD_NUM ||
-        !current_task->fd_info->fds[sockfd])
+    if (sockfd < 0 || sockfd >= MAX_FD_NUM)
         return -EBADF;
-    fd_t *node = current_task->fd_info->fds[sockfd];
 
-    socket_handle_t *handle = node->node->handle;
-    if (handle->op->recvmsg)
-        return handle->op->recvmsg(sockfd, msg, flags);
-    return 0;
+    int64_t ret = -EBADF;
+    with_fd_info_lock(current_task->fd_info, {
+        fd_t *node = current_task->fd_info->fds[sockfd];
+        if (!node) {
+            ret = -EBADF;
+        } else if (!is_socket(node)) {
+            ret = -EINVAL;
+        } else {
+            socket_handle_t *handle = node->node->handle;
+            if (handle->op->recvmsg)
+                ret = handle->op->recvmsg(sockfd, msg, flags);
+            else
+                ret = 0;
+        }
+    });
+    return ret;
 }

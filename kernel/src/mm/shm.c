@@ -473,34 +473,36 @@ uint64_t sys_shmget(int key, int size, int shmflg) {
 }
 
 void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
+    vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
+    int64_t err = 0;
+
+    spin_lock(&mgr->lock);
     spin_lock(&shm_op_lock);
 
     shm_t *shm = shm_find_id_locked(shmid);
     if (!shm || shm->marked_destroy) {
-        spin_unlock(&shm_op_lock);
-        return (void *)(int64_t)-EINVAL;
+        err = -EINVAL;
+        goto out_unlock;
     }
 
     int ret = shm_ensure_backing_locked(shm);
     if (ret < 0) {
-        spin_unlock(&shm_op_lock);
-        return (void *)(int64_t)ret;
+        err = ret;
+        goto out_unlock;
     }
-
-    vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
 
     if (!shmaddr) {
         shmaddr = find_free_region(mgr, shm->size);
         if (!shmaddr) {
-            spin_unlock(&shm_op_lock);
-            return (void *)(int64_t)-ENOMEM;
+            err = -ENOMEM;
+            goto out_unlock;
         }
     }
 
     uint64_t addr = (uint64_t)shmaddr;
     if (vma_find_intersection(mgr, addr, addr + shm->size)) {
-        spin_unlock(&shm_op_lock);
-        return (void *)(int64_t)-EINVAL;
+        err = -EINVAL;
+        goto out_unlock;
     }
 
     uint64_t flags = PT_FLAG_U | PT_FLAG_R;
@@ -513,8 +515,8 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
     vma_t *vma = vma_alloc();
     if (!vma) {
         unmap_page_range(get_current_page_dir(true), addr, shm->size);
-        spin_unlock(&shm_op_lock);
-        return (void *)(int64_t)-ENOMEM;
+        err = -ENOMEM;
+        goto out_unlock;
     }
 
     vma->vm_start = addr;
@@ -528,33 +530,42 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
     if (vma_insert(mgr, vma) != 0) {
         vma_free(vma);
         unmap_page_range(get_current_page_dir(true), addr, shm->size);
-        spin_unlock(&shm_op_lock);
-        return (void *)(int64_t)-ENOMEM;
+        err = -ENOMEM;
+        goto out_unlock;
     }
 
     if (!mapping_add(current_task, shm, addr)) {
         vma_remove(mgr, vma);
         vma_free(vma);
         unmap_page_range(get_current_page_dir(true), addr, shm->size);
-        spin_unlock(&shm_op_lock);
-        return (void *)(int64_t)-ENOMEM;
+        err = -ENOMEM;
+        goto out_unlock;
     }
 
     shm->nattch++;
     spin_unlock(&shm_op_lock);
+    spin_unlock(&mgr->lock);
 
     return shmaddr;
+
+out_unlock:
+    spin_unlock(&shm_op_lock);
+    spin_unlock(&mgr->lock);
+    return (void *)(int64_t)err;
 }
 
 uint64_t sys_shmdt(void *shmaddr) {
     if (!shmaddr)
         return -EINVAL;
 
+    vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
+    spin_lock(&mgr->lock);
     spin_lock(&shm_op_lock);
 
     shm_mapping_t *m = mapping_find(current_task, (uint64_t)shmaddr);
     if (!m) {
         spin_unlock(&shm_op_lock);
+        spin_unlock(&mgr->lock);
         return -EINVAL;
     }
 
@@ -562,6 +573,7 @@ uint64_t sys_shmdt(void *shmaddr) {
     mapping_remove(current_task, m);
 
     spin_unlock(&shm_op_lock);
+    spin_unlock(&mgr->lock);
     return 0;
 }
 
@@ -650,6 +662,11 @@ void shm_exec(task_t *task) {
 }
 
 void shm_exit(task_t *task) {
+    if (!task || !task->arch_context || !task->arch_context->mm)
+        return;
+
+    vma_manager_t *mgr = &task->arch_context->mm->task_vma_mgr;
+    spin_lock(&mgr->lock);
     spin_lock(&shm_op_lock);
 
     shm_mapping_t *m = task->shm_ids;
@@ -664,4 +681,5 @@ void shm_exit(task_t *task) {
     task->shm_ids = NULL;
 
     spin_unlock(&shm_op_lock);
+    spin_unlock(&mgr->lock);
 }

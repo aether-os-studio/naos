@@ -79,6 +79,15 @@ int vma_insert(vma_manager_t *mgr, vma_t *new_vma) {
     if (new_vma->vm_start >= new_vma->vm_end)
         return -1;
 
+    rb_node_t *scan = rb_first(&mgr->vma_tree);
+    while (scan) {
+        vma_t *vma = rb_entry(scan, vma_t, vm_rb);
+        if (vma == new_vma) {
+            return -1;
+        }
+        scan = rb_next(scan);
+    }
+
     rb_node_t **link = &mgr->vma_tree.rb_node;
     rb_node_t *parent = NULL;
 
@@ -111,6 +120,9 @@ int vma_remove(vma_manager_t *mgr, vma_t *vma) {
         return -1;
 
     rb_erase(&vma->vm_rb, &mgr->vma_tree);
+    vma->vm_rb.rb_parent_color = 0;
+    vma->vm_rb.rb_left = NULL;
+    vma->vm_rb.rb_right = NULL;
     mgr->vm_used -= vma_len(vma);
     return 0;
 }

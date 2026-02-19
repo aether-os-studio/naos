@@ -45,7 +45,7 @@
 #define PIE_BASE_ADDR 0x00007ffff0000000
 
 #define USER_MMAP_START DEFAULT_PAGE_SIZE
-#define USER_MMAP_END 0x0000060000000000
+#define USER_MMAP_END 0x0000700000000000
 
 #define USER_BRK_START 0x0000700000000000
 #define USER_BRK_END 0x00007fff00000000
@@ -342,7 +342,7 @@ static inline uint64_t sys_getcpu(unsigned *cpup, unsigned *nodep,
 
 static inline uint64_t sys_set_tid_address(int *ptr) {
     current_task->tidptr = ptr;
-    return 0;
+    return current_task->pid;
 }
 
 #define PRIO_PROCESS 0

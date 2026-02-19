@@ -44,6 +44,11 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
     int ready = 0;
     bool irq_state = arch_interrupt_enabled();
     uint64_t start_time = nano_time();
+    bool infinite_timeout = ((int64_t)timeout < 0);
+    uint64_t timeout_ns = 0;
+    if (!infinite_timeout) {
+        timeout_ns = timeout * 1000000ULL;
+    }
 
     for (int i = 0; i < nfds; i++) {
         fds[i].revents = 0;
@@ -54,15 +59,16 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
 
         // 检查每个文件描述符
         for (int i = 0; i < nfds; i++) {
-            if (fds[i].fd < 0 || fds[i].fd > MAX_FD_NUM ||
+            if (fds[i].fd < 0 || fds[i].fd >= MAX_FD_NUM ||
                 !current_task->fd_info->fds[fds[i].fd]) {
                 fds[i].revents |= POLLNVAL;
                 continue;
             }
             vfs_node_t node = current_task->fd_info->fds[fds[i].fd]->node;
+            uint32_t query_events =
+                poll_to_epoll_comp(fds[i].events) | EPOLLERR | EPOLLHUP;
 
-            int revents = epoll_to_poll_comp(
-                vfs_poll(node, poll_to_epoll_comp(fds[i].events)));
+            int revents = epoll_to_poll_comp(vfs_poll(node, query_events));
             if (revents > 0) {
                 fds[i].revents = revents;
                 ready++;
@@ -72,9 +78,11 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
         if (ready > 0)
             break;
 
+        if (!infinite_timeout && timeout == 0)
+            break;
+
         schedule(SCHED_FLAG_YIELD);
-    } while (timeout != 0 &&
-             ((int)timeout == -1 || (nano_time() - start_time) < timeout));
+    } while (infinite_timeout || (nano_time() - start_time) < timeout_ns);
 
     if (irq_state) {
         arch_enable_interrupt();

@@ -16,8 +16,8 @@ void heap_err(enum HeapError error, void *ptr) {
 }
 
 struct MemorySpan heap_oom(size_t size) {
-    void *ptr = alloc_frames_bytes(size);
-    return (struct MemorySpan){.ptr = ptr, .size = ptr ? size : 0};
+    void *ptr = alloc_frames_bytes(KERNEL_HEAP_SIZE);
+    return (struct MemorySpan){.ptr = ptr, .size = ptr ? KERNEL_HEAP_SIZE : 0};
 }
 
 void heap_init_alloc() {

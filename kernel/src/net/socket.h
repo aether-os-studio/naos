@@ -83,6 +83,8 @@ typedef struct socket {
 
     bool established;
     bool closed; // 标记是否已关闭
+    bool shut_rd;
+    bool shut_wr;
 
     // 选项
     int passcred;
@@ -252,12 +254,15 @@ typedef struct socket {
 
 struct msghdr {
     void *msg_name;        /* ptr to socket address structure */
-    int msg_namelen;       /* size of socket address structure */
+    socklen_t msg_namelen; /* size of socket address structure */
+    uint32_t __pad1;
     struct iovec *msg_iov; /* scatter/gather array */
-    size_t msg_iovlen;     /* # elements in msg_iov */
-    void *msg_control;     /* ancillary data */
-    size_t msg_controllen; /* ancillary data buffer length */
-    uint32_t msg_flags;    /* flags on received message */
+    int32_t msg_iovlen;    /* # elements in msg_iov */
+    uint32_t __pad2;
+    void *msg_control;        /* ancillary data */
+    socklen_t msg_controllen; /* ancillary data buffer length */
+    uint32_t __pad3;
+    uint32_t msg_flags; /* flags on received message */
 };
 
 struct cmsghdr {

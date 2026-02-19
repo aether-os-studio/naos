@@ -320,22 +320,88 @@ uint64_t sys_close(uint64_t fd) {
     return 0;
 }
 
+static int close_range_unshare_fd_table(task_t *self) {
+    if (!self || !self->fd_info) {
+        return -EINVAL;
+    }
+
+    fd_info_t *old = self->fd_info;
+    if (old->ref_count <= 1) {
+        return 0;
+    }
+
+    fd_info_t *new_info = calloc(1, sizeof(fd_info_t));
+    if (!new_info) {
+        return -ENOMEM;
+    }
+
+    mutex_init(&new_info->fdt_lock);
+    new_info->ref_count = 1;
+
+    with_fd_info_lock(old, {
+        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+            if (old->fds[i]) {
+                new_info->fds[i] = vfs_dup(old->fds[i]);
+            }
+        }
+        old->ref_count--;
+    });
+
+    self->fd_info = new_info;
+    return 0;
+}
+
 uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
+    if (flags & ~(CLOSE_RANGE_UNSHARE | CLOSE_RANGE_CLOEXEC)) {
+        return (uint64_t)-EINVAL;
+    }
+
     if (fd > maxfd) {
         return (uint64_t)-EINVAL;
     }
 
-    if (maxfd > MAX_FD_NUM) {
-        maxfd = MAX_FD_NUM;
-    }
-
     task_t *self = current_task;
 
-    for (uint64_t fd_ = fd; fd_ <= maxfd; fd_++) {
-        if (self->fd_info->fds[fd_]) {
-            sys_close(fd_);
+    if (flags & CLOSE_RANGE_UNSHARE) {
+        int ret = close_range_unshare_fd_table(self);
+        if (ret < 0) {
+            return (uint64_t)ret;
         }
     }
+
+    if (fd >= MAX_FD_NUM) {
+        return 0;
+    }
+
+    if (maxfd >= MAX_FD_NUM) {
+        maxfd = MAX_FD_NUM - 1;
+    }
+
+    with_fd_info_lock(self->fd_info, {
+        for (uint64_t fd_ = fd; fd_ <= maxfd; fd_++) {
+            fd_t *entry = self->fd_info->fds[fd_];
+            if (!entry) {
+                continue;
+            }
+
+            if (flags & CLOSE_RANGE_CLOEXEC) {
+                entry->flags |= O_CLOEXEC;
+                entry->close_on_exec = true;
+                continue;
+            }
+
+            entry->offset = 0;
+            if (entry->node->lock.l_pid == self->pid) {
+                entry->node->lock.l_type = F_UNLCK;
+                entry->node->lock.l_pid = 0;
+            }
+
+            vfs_close(entry->node);
+            free(entry);
+            self->fd_info->fds[fd_] = NULL;
+            procfs_on_close_file(self, fd_);
+        }
+    });
 
     return 0;
 }

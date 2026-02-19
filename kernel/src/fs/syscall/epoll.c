@@ -90,8 +90,9 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
 
                 uint32_t current_events =
                     vfs_poll(browse->file, browse->events);
-
-                uint32_t ready_events = current_events & browse->events;
+                uint32_t ready_events =
+                    (current_events & browse->events) |
+                    (current_events & (EPOLLERR | EPOLLHUP));
 
                 if (ready_events) {
                     if (browse->edge_trigger) {
@@ -104,8 +105,7 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
                             ready++;
                             browse->last_events = ready_events; // 更新状态
                         } else {
-                            mutex_unlock(&epoll->lock);
-                            goto ret;
+                            browse->last_events = ready_events;
                         }
                     } else {
                         // 水平触发：只要事件存在就返回
@@ -247,7 +247,7 @@ size_t epoll_pwait(vfs_node_t epollFd, struct epoll_event *events,
     sigset_t origmask;
     if (sigmask)
         sys_ssetmask(SIG_SETMASK, sigmask, &origmask, sizeof(sigset_t));
-    size_t epollRet = epoll_wait(epollFd, events, maxevents, timeout * 1000000);
+    size_t epollRet = epoll_wait(epollFd, events, maxevents, timeout);
     if (sigmask)
         sys_ssetmask(SIG_SETMASK, &origmask, 0, sizeof(sigset_t));
 
@@ -260,17 +260,28 @@ uint64_t sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents,
                             maxevents * sizeof(struct epoll_event))) {
         return (uint64_t)-EFAULT;
     }
+    if (epfd < 0 || epfd >= MAX_FD_NUM ||
+        current_task->fd_info->fds[epfd] == NULL) {
+        return (uint64_t)-EBADF;
+    }
     vfs_node_t node = current_task->fd_info->fds[epfd]->node;
     if (!node)
         return (uint64_t)-EBADF;
-    return epoll_wait(node, events, maxevents, timeout);
+    uint64_t timeout_ns;
+    if (timeout < 0) {
+        timeout_ns = (uint64_t)-1;
+    } else {
+        timeout_ns = (uint64_t)timeout * 1000000ULL;
+    }
+    return epoll_wait(node, events, maxevents, timeout_ns);
 }
 
 uint64_t sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
     if (check_user_overflow((uint64_t)event, sizeof(struct epoll_event))) {
         return (uint64_t)-EFAULT;
     }
-    if (epfd >= MAX_FD_NUM || current_task->fd_info->fds[epfd] == NULL) {
+    if (epfd < 0 || epfd >= MAX_FD_NUM ||
+        current_task->fd_info->fds[epfd] == NULL) {
         return (uint64_t)-EBADF;
     }
     vfs_node_t node = current_task->fd_info->fds[epfd]->node;
@@ -285,13 +296,21 @@ uint64_t sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
                             maxevents * sizeof(struct epoll_event))) {
         return (uint64_t)-EFAULT;
     }
-    if (epfd >= MAX_FD_NUM || current_task->fd_info->fds[epfd] == NULL) {
+    if (epfd < 0 || epfd >= MAX_FD_NUM ||
+        current_task->fd_info->fds[epfd] == NULL) {
         return (uint64_t)-EBADF;
     }
     vfs_node_t node = current_task->fd_info->fds[epfd]->node;
     if (!node)
         return (uint64_t)-EBADF;
-    return epoll_pwait(node, events, maxevents, timeout, sigmask, sigsetsize);
+    int64_t timeout_ns;
+    if (timeout < 0) {
+        timeout_ns = -1;
+    } else {
+        timeout_ns = (int64_t)timeout * 1000000LL;
+    }
+    return epoll_pwait(node, events, maxevents, timeout_ns, sigmask,
+                       sigsetsize);
 }
 
 uint64_t sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
@@ -301,7 +320,8 @@ uint64_t sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
                             maxevents * sizeof(struct epoll_event))) {
         return (uint64_t)-EFAULT;
     }
-    if (epfd >= MAX_FD_NUM || current_task->fd_info->fds[epfd] == NULL) {
+    if (epfd < 0 || epfd >= MAX_FD_NUM ||
+        current_task->fd_info->fds[epfd] == NULL) {
         return (uint64_t)-EBADF;
     }
     vfs_node_t node = current_task->fd_info->fds[epfd]->node;

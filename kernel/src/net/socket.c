@@ -14,13 +14,14 @@ extern socket_op_t socket_ops;
 int sockfsfd_id = 0;
 
 socket_t first_unix_socket;
+spinlock_t unix_socket_list_lock;
 
 int unix_socket_fsid = 0;
 
 char *unix_socket_addr_safe(const struct sockaddr_un *addr, size_t len) {
-    size_t addrLen = len - sizeof(addr->sun_family);
+    ssize_t addrLen = len - sizeof(addr->sun_family);
     if (addrLen <= 0)
-        return (void *)-(EINVAL);
+        return (void *)-EINVAL;
 
     bool abstract = (addr->sun_path[0] == '\0');
     int skip = abstract ? 1 : 0;
@@ -48,6 +49,7 @@ char *unix_socket_addr_safe(const struct sockaddr_un *addr, size_t len) {
 socket_t *unix_socket_alloc() {
     socket_t *sock = malloc(sizeof(socket_t));
     memset(sock, 0, sizeof(socket_t));
+    mutex_init(&sock->lock);
 
     sock->recv_size = BUFFER_SIZE;
     sock->recv_buff = alloc_frames_bytes(BUFFER_SIZE);
@@ -62,21 +64,25 @@ socket_t *unix_socket_alloc() {
     sock->cred.gid = current_task->gid;
 
     // 加入链表
+    spin_lock(&unix_socket_list_lock);
     socket_t *head = &first_unix_socket;
     while (head->next)
         head = head->next;
     head->next = sock;
+    spin_unlock(&unix_socket_list_lock);
 
     return sock;
 }
 
 void unix_socket_free(socket_t *sock) {
     // 从链表移除
+    spin_lock(&unix_socket_list_lock);
     socket_t *browse = &first_unix_socket;
     while (browse && browse->next != sock)
         browse = browse->next;
     if (browse)
         browse->next = sock->next;
+    spin_unlock(&unix_socket_list_lock);
 
     // 释放资源
     if (sock->recv_buff)
@@ -104,8 +110,15 @@ void unix_socket_free(socket_t *sock) {
 static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
                                        const uint8_t *data, size_t len,
                                        int flags, fd_t *fd_handle) {
+    if (self && self->shut_wr) {
+        if (!(flags & MSG_NOSIGNAL))
+            task_commit_signal(current_task, SIGPIPE, NULL);
+        return -EPIPE;
+    }
+
     if (!peer || peer->closed) {
-        task_commit_signal(current_task, SIGPIPE, NULL);
+        if (!(flags & MSG_NOSIGNAL))
+            task_commit_signal(current_task, SIGPIPE, NULL);
         return -EPIPE;
     }
 
@@ -117,7 +130,8 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
         arch_enable_interrupt();
 
         if (peer->closed) {
-            task_commit_signal(current_task, SIGPIPE, NULL);
+            if (!(flags & MSG_NOSIGNAL))
+                task_commit_signal(current_task, SIGPIPE, NULL);
             arch_disable_interrupt();
             return -EPIPE;
         }
@@ -152,16 +166,22 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
 static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
                                          uint8_t *buf, size_t len, int flags,
                                          fd_t *fd_handle) {
-    if (flags & MSG_PEEK)
-        return self->recv_pos;
+    bool peek = !!(flags & MSG_PEEK);
+
+    if (self->shut_rd)
+        return 0;
 
     // 等待数据
     while (true) {
         arch_enable_interrupt();
 
         // 对端关闭且没有数据 = EOF
-        if (self->type != 2 && (!peer || peer->closed) && self->recv_pos == 0)
+        if (self->type != 2 &&
+            (!peer || peer->closed || (peer && peer->shut_wr)) &&
+            self->recv_pos == 0) {
             arch_disable_interrupt();
+            return 0;
+        }
 
         if (self->recv_pos > 0)
             break;
@@ -182,9 +202,11 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
     mutex_lock(&self->lock);
 
     memcpy(buf, self->recv_buff, to_copy);
-    memmove(self->recv_buff, &self->recv_buff[to_copy],
-            self->recv_pos - to_copy);
-    self->recv_pos -= to_copy;
+    if (!peek) {
+        memmove(self->recv_buff, &self->recv_buff[to_copy],
+                self->recv_pos - to_copy);
+        self->recv_pos -= to_copy;
+    }
 
     mutex_unlock(&self->lock);
 
@@ -192,25 +214,29 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
 }
 
 // 发送 pending files 到对端
-static void unix_socket_send_files_to_peer(socket_t *peer, int *fds,
-                                           int num_fds) {
+static int unix_socket_send_files_to_peer(socket_t *peer, int *fds,
+                                          int num_fds) {
     if (!peer)
-        return;
+        return -EINVAL;
 
     for (int i = 0; i < num_fds; i++) {
-        if (!current_task->fd_info->fds[fds[i]])
-            continue;
+        int fd = fds[i];
+        if (fd < 0 || fd >= MAX_FD_NUM)
+            return -EBADF;
+        if (!current_task->fd_info->fds[fd])
+            return -EBADF;
 
         for (int j = 0; j < MAX_PENDING_FILES_COUNT; j++) {
             if (peer->pending_files[j] == NULL) {
                 peer->pending_files[j] = malloc(sizeof(fd_t));
-                memcpy(peer->pending_files[j],
-                       current_task->fd_info->fds[fds[i]], sizeof(fd_t));
+                memcpy(peer->pending_files[j], current_task->fd_info->fds[fd],
+                       sizeof(fd_t));
                 peer->pending_files[j]->node->refcount++;
                 break;
             }
         }
     }
+    return 0;
 }
 
 // 从自己的 pending_files 接收
@@ -331,7 +357,7 @@ int socket_bind(uint64_t fd, const struct sockaddr_un *addr,
     socket_t *sock = handle->sock;
 
     if (sock->bindAddr)
-        return -(EINVAL);
+        return -EINVAL;
 
     char *safe = unix_socket_addr_safe(addr, addrlen);
     if (((uint64_t)safe & ERRNO_MASK) == ERRNO_MASK)
@@ -341,16 +367,19 @@ int socket_bind(uint64_t fd, const struct sockaddr_un *addr,
 
     // 检查地址是否已被使用
     size_t safeLen = strlen(safe);
+    spin_lock(&unix_socket_list_lock);
     socket_t *browse = &first_unix_socket;
     while (browse) {
         if (browse != sock && browse->bindAddr &&
             strlen(browse->bindAddr) == safeLen &&
             memcmp(safe, browse->bindAddr, safeLen) == 0) {
-            // free(safe);
-            // return -(EADDRINUSE);
+            free(safe);
+            spin_unlock(&unix_socket_list_lock);
+            return -EADDRINUSE;
         }
         browse = browse->next;
     }
+    spin_unlock(&unix_socket_list_lock);
 
     if (!is_abstract) {
         vfs_node_t new_node = vfs_open(safe, 0);
@@ -372,8 +401,15 @@ int socket_listen(uint64_t fd, int backlog) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     socket_t *sock = handle->sock;
 
+    mutex_lock(&sock->lock);
+    if (sock->backlog) {
+        free(sock->backlog);
+        sock->backlog = NULL;
+    }
     sock->connMax = backlog;
     sock->backlog = calloc(sock->connMax, sizeof(socket_t *));
+    sock->connCurr = 0;
+    mutex_unlock(&sock->lock);
     return 0;
 }
 
@@ -382,10 +418,22 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     socket_t *listen_sock = handle->sock;
 
-    // 等待连接
+    // 等待连接并从 backlog 取一个
+    socket_t *client_sock = NULL;
     while (true) {
-        if (listen_sock->connCurr > 0)
+        mutex_lock(&listen_sock->lock);
+        if (listen_sock->connCurr > 0) {
+            client_sock = listen_sock->backlog[0];
+            listen_sock->backlog[0] = NULL;
+            if (listen_sock->connCurr > 1) {
+                memmove(listen_sock->backlog, &listen_sock->backlog[1],
+                        (listen_sock->connCurr - 1) * sizeof(socket_t *));
+            }
+            listen_sock->connCurr--;
+            mutex_unlock(&listen_sock->lock);
             break;
+        }
+        mutex_unlock(&listen_sock->lock);
         if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK) {
             return -(EWOULDBLOCK);
         }
@@ -394,16 +442,8 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
     }
     arch_disable_interrupt();
 
-    // 取出等待的 client socket
-    socket_t *client_sock = listen_sock->backlog[0];
-
-    // 移动 backlog
-    listen_sock->backlog[0] = NULL;
-    if (listen_sock->connCurr > 1) {
-        memmove(listen_sock->backlog, &listen_sock->backlog[1],
-                (listen_sock->connCurr - 1) * sizeof(socket_t *));
-    }
-    listen_sock->connCurr--;
+    if (!client_sock)
+        return -ECONNABORTED;
 
     // 创建 server 端 socket
     socket_t *server_sock = unix_socket_alloc();
@@ -416,6 +456,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
     // 建立双向连接
     server_sock->peer = client_sock;
     client_sock->peer = server_sock;
+    server_sock->established = true;
     client_sock->filename = strdup(listen_sock->bindAddr);
     client_sock->established = true;
 
@@ -440,6 +481,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
         current_task->fd_info->fds[i]->node = acceptFd;
         current_task->fd_info->fds[i]->offset = 0;
         current_task->fd_info->fds[i]->flags = flags;
+        current_task->fd_info->fds[i]->close_on_exec = !!(flags & O_CLOEXEC);
         procfs_on_open_file(current_task, i);
     });
 
@@ -447,6 +489,27 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
     accept_handle->fd = current_task->fd_info->fds[i];
 
     return i;
+}
+
+uint64_t socket_shutdown(uint64_t fd, uint64_t how) {
+    if (fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
+        return -EBADF;
+    if (how > SHUT_RDWR)
+        return -EINVAL;
+
+    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    socket_t *sock = handle->sock;
+
+    if (sock->type == 1 && !sock->peer && !sock->established &&
+        sock->connMax == 0)
+        return -ENOTCONN;
+
+    if (how == SHUT_RD || how == SHUT_RDWR)
+        sock->shut_rd = true;
+    if (how == SHUT_WR || how == SHUT_RDWR)
+        sock->shut_wr = true;
+
+    return 0;
 }
 
 int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
@@ -466,6 +529,7 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
     size_t safeLen = strlen(safe);
 
     // 找监听的 socket
+    spin_lock(&unix_socket_list_lock);
     socket_t *listen_sock = first_unix_socket.next;
     while (listen_sock) {
         if (listen_sock != sock && listen_sock->bindAddr &&
@@ -474,24 +538,31 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
             break;
         listen_sock = listen_sock->next;
     }
+    spin_unlock(&unix_socket_list_lock);
     free(safe);
 
     if (!listen_sock)
         return -(ENOENT);
 
-    if (!listen_sock->connMax || listen_sock->connCurr >= listen_sock->connMax)
+    mutex_lock(&listen_sock->lock);
+    if (!listen_sock->connMax || listen_sock->connCurr >= listen_sock->connMax ||
+        !listen_sock->backlog) {
+        mutex_unlock(&listen_sock->lock);
         return -(ECONNREFUSED);
-
-    if (!listen_sock->backlog)
-        return -(ECONNREFUSED);
+    }
 
     // 把自己加入 backlog
     listen_sock->backlog[listen_sock->connCurr] = sock;
     listen_sock->connCurr++;
+    mutex_unlock(&listen_sock->lock);
 
     // 等待 accept
     while (!sock->established) {
         arch_enable_interrupt();
+        if (sock->closed) {
+            arch_disable_interrupt();
+            return -(ECONNREFUSED);
+        }
         schedule(SCHED_FLAG_YIELD);
     }
     arch_disable_interrupt();
@@ -502,10 +573,17 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
 size_t unix_socket_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
                           struct sockaddr_un *addr, uint32_t len) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    fd_t *caller_fd = current_task->fd_info->fds[fd];
     socket_t *sock = handle->sock;
     socket_t *peer = sock->peer;
 
     if (!peer) {
+        if (sock->type != 2 && sock->established) {
+            if (!(flags & MSG_NOSIGNAL))
+                task_commit_signal(current_task, SIGPIPE, NULL);
+            return (size_t)-EPIPE;
+        }
+
         if (addr && len) {
             char *safe = unix_socket_addr_safe(addr, len);
             if (((uint64_t)safe & ERRNO_MASK) == ERRNO_MASK)
@@ -513,6 +591,7 @@ size_t unix_socket_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
             size_t safeLen = strlen(safe);
 
             // 找对端的 socket
+            spin_lock(&unix_socket_list_lock);
             socket_t *peer_sock = first_unix_socket.next;
             while (peer_sock) {
                 if (peer_sock != sock && peer_sock->bindAddr &&
@@ -521,6 +600,7 @@ size_t unix_socket_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
                     break;
                 peer_sock = peer_sock->next;
             }
+            spin_unlock(&unix_socket_list_lock);
             free(safe);
 
             if (peer_sock) {
@@ -532,27 +612,36 @@ size_t unix_socket_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
     }
 
 done:
-    return unix_socket_send_to_peer(sock, peer, in, limit, flags, handle->fd);
+    return unix_socket_send_to_peer(sock, peer, in, limit, flags, caller_fd);
 }
 
 size_t unix_socket_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
                             struct sockaddr_un *addr, uint32_t *len) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    fd_t *caller_fd = current_task->fd_info->fds[fd];
     socket_t *sock = handle->sock;
 
-    if (sock->type != 2 && !sock->peer && sock->recv_pos == 0)
+    if (sock->type != 2 && !sock->peer && !sock->established &&
+        sock->recv_pos == 0)
         return -(ENOTCONN);
 
     return unix_socket_recv_from_self(sock, sock->peer, out, limit, flags,
-                                      handle->fd);
+                                      caller_fd);
 }
 
 size_t unix_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    fd_t *caller_fd = current_task->fd_info->fds[fd];
     socket_t *sock = handle->sock;
     socket_t *peer = sock->peer;
 
     if (!peer) {
+        if (sock->type != 2 && sock->established) {
+            if (!(flags & MSG_NOSIGNAL))
+                task_commit_signal(current_task, SIGPIPE, NULL);
+            return (size_t)-EPIPE;
+        }
+
         if (msg->msg_name && msg->msg_namelen) {
             char *safe = unix_socket_addr_safe(msg->msg_name, msg->msg_namelen);
             if (((uint64_t)safe & ERRNO_MASK) == ERRNO_MASK)
@@ -560,6 +649,7 @@ size_t unix_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
             size_t safeLen = strlen(safe);
 
             // 找对端的 socket
+            spin_lock(&unix_socket_list_lock);
             socket_t *peer_sock = first_unix_socket.next;
             while (peer_sock) {
                 if (peer_sock != sock && peer_sock->bindAddr &&
@@ -568,6 +658,7 @@ size_t unix_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
                     break;
                 peer_sock = peer_sock->next;
             }
+            spin_unlock(&unix_socket_list_lock);
             free(safe);
 
             if (peer_sock) {
@@ -590,10 +681,23 @@ done:
                 continue;
 
             if (cmsg->cmsg_type == SCM_RIGHTS) {
+                if (cmsg->cmsg_len < CMSG_LEN(sizeof(int))) {
+                    mutex_unlock(&peer->lock);
+                    return (size_t)-EINVAL;
+                }
+                size_t rights_len = cmsg->cmsg_len - sizeof(struct cmsghdr);
+                if ((rights_len % sizeof(int)) != 0) {
+                    mutex_unlock(&peer->lock);
+                    return (size_t)-EINVAL;
+                }
                 int *fds = (int *)CMSG_DATA(cmsg);
-                int num_fds =
-                    (cmsg->cmsg_len - sizeof(struct cmsghdr)) / sizeof(int);
-                unix_socket_send_files_to_peer(peer, fds, num_fds);
+                int num_fds = rights_len / sizeof(int);
+                int send_fds_ret =
+                    unix_socket_send_files_to_peer(peer, fds, num_fds);
+                if (send_fds_ret < 0) {
+                    mutex_unlock(&peer->lock);
+                    return (size_t)send_fds_ret;
+                }
             } else if (cmsg->cmsg_type == SCM_CREDENTIALS) {
                 if (cmsg->cmsg_len < CMSG_LEN(sizeof(struct ucred))) {
                     mutex_unlock(&peer->lock);
@@ -635,7 +739,7 @@ done:
         struct iovec *curr = &((struct iovec *)msg->msg_iov)[i];
         size_t ret = unix_socket_send_to_peer(
             sock, peer, curr->iov_base, curr->len,
-            noblock ? (flags | MSG_DONTWAIT) : flags, handle->fd);
+            noblock ? (flags | MSG_DONTWAIT) : flags, caller_fd);
         if ((int64_t)ret < 0)
             return ret;
         cnt += ret;
@@ -646,17 +750,18 @@ done:
 
 size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    fd_t *caller_fd = current_task->fd_info->fds[fd];
     socket_t *sock = handle->sock;
     socket_t *peer = sock->peer;
 
-    if (!peer && sock->recv_pos == 0)
+    if (!peer && !sock->established && sock->recv_pos == 0)
         return (size_t)-ENOTCONN;
 
     bool noblock = !!(flags & MSG_DONTWAIT);
     msg->msg_flags = 0;
 
     // 等待数据
-    while (!noblock && !(handle->fd->flags & O_NONBLOCK)) {
+    while (!noblock && !(caller_fd->flags & O_NONBLOCK)) {
         if (sock->recv_pos > 0 || !peer || peer->closed)
             break;
         schedule(SCHED_FLAG_YIELD);
@@ -670,7 +775,7 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
     char *buffer = malloc(len_total);
     size_t cnt = unix_socket_recv_from_self(
         sock, peer, (uint8_t *)buffer, len_total,
-        noblock ? (flags | MSG_DONTWAIT) : flags, handle->fd);
+        noblock ? (flags | MSG_DONTWAIT) : flags, caller_fd);
 
     if ((int64_t)cnt < 0) {
         free(buffer);
@@ -774,16 +879,17 @@ int socket_poll(void *file, int events) {
     } else if (sock->peer) {
         mutex_lock(&sock->lock);
 
-        if (sock->peer->closed)
+        if (sock->peer->closed || sock->peer->shut_wr)
             revents |= EPOLLHUP;
 
         // 可写：对端有空间
-        if ((events & EPOLLOUT) && !sock->peer->closed &&
+        if ((events & EPOLLOUT) && !sock->shut_wr && !sock->peer->closed &&
             sock->peer->recv_pos < sock->peer->recv_size)
             revents |= EPOLLOUT;
 
         // 可读：自己有数据
-        if ((events & EPOLLIN) && sock->recv_pos > 0)
+        if ((events & EPOLLIN) && (sock->recv_pos > 0 || sock->shut_rd ||
+                                   sock->peer->shut_wr || sock->peer->closed))
             revents |= EPOLLIN;
 
         mutex_unlock(&sock->lock);
@@ -794,6 +900,8 @@ int socket_poll(void *file, int events) {
         if ((events & EPOLLIN) && sock->recv_pos > 0)
             revents |= EPOLLIN;
     } else {
+        if ((events & EPOLLIN) && sock->established)
+            revents |= EPOLLIN;
         revents |= EPOLLHUP;
     }
 
@@ -825,7 +933,7 @@ ssize_t socket_read(fd_t *fd, void *buf, size_t offset, size_t limit) {
     socket_handle_t *handle = fd->node->handle;
     socket_t *sock = handle->sock;
 
-    if (!sock->peer && sock->recv_pos == 0)
+    if (!sock->peer && !sock->established && sock->recv_pos == 0)
         return -(ENOTCONN);
 
     return unix_socket_recv_from_self(sock, sock->peer, buf, limit, 0, fd);
@@ -835,8 +943,13 @@ ssize_t socket_write(fd_t *fd, const void *buf, size_t offset, size_t limit) {
     socket_handle_t *handle = fd->node->handle;
     socket_t *sock = handle->sock;
 
-    if (!sock->peer)
+    if (!sock->peer) {
+        if (sock->type != 2 && sock->established) {
+            task_commit_signal(current_task, SIGPIPE, NULL);
+            return -(EPIPE);
+        }
         return -(ENOTCONN);
+    }
 
     return unix_socket_send_to_peer(sock, sock->peer, buf, limit, 0, fd);
 }
@@ -918,21 +1031,32 @@ int unix_socket_pair(int type, int protocol, int *sv) {
 
 int unix_socket_getsockname(uint64_t fd, struct sockaddr_un *addr,
                             socklen_t *addrlen) {
-    if (fd > MAX_FD_NUM || !current_task->fd_info->fds[fd])
+    if (fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -(EBADF);
 
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     socket_t *sock = handle->sock;
 
+    memset(addr, 0, sizeof(struct sockaddr_un));
     addr->sun_family = 1;
     *addrlen = sizeof(addr->sun_family);
 
-    if (sock->bindAddr) {
-        strcpy(addr->sun_path, sock->bindAddr);
-        *addrlen += strlen(sock->bindAddr);
-    } else if (sock->filename) {
-        strcpy(addr->sun_path, sock->filename);
-        *addrlen += strlen(sock->filename);
+    const char *name = sock->bindAddr ? sock->bindAddr : sock->filename;
+    if (name && name[0]) {
+        size_t max_path = sizeof(addr->sun_path);
+        size_t raw_len = strlen(name);
+
+        if (name[0] == '@') {
+            size_t n = MIN(raw_len - 1, max_path - 1);
+            addr->sun_path[0] = '\0';
+            if (n > 0)
+                memcpy(addr->sun_path + 1, name + 1, n);
+            *addrlen += 1 + n;
+        } else {
+            size_t n = MIN(raw_len, max_path - 1);
+            memcpy(addr->sun_path, name, n);
+            *addrlen += n + 1;
+        }
     }
 
     return 0;
@@ -940,7 +1064,7 @@ int unix_socket_getsockname(uint64_t fd, struct sockaddr_un *addr,
 
 size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr,
                                socklen_t *len) {
-    if (fd > MAX_FD_NUM || !current_task->fd_info->fds[fd])
+    if (fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return (size_t)-EBADF;
 
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
@@ -949,23 +1073,29 @@ size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr,
     if (!sock->peer)
         return -ENOTCONN;
 
-    char *filename = sock->peer->filename;
-    if (!filename)
-        filename = "";
+    const char *name = sock->peer->filename;
+    if (!name)
+        name = "";
 
-    socklen_t actualLen = sizeof(addr->sun_family) + strlen(filename);
-    *len = actualLen;
-    int toCopy = actualLen;
-
-    if (toCopy < sizeof(addr->sun_family))
-        return -EINVAL;
-
+    memset(addr, 0, sizeof(struct sockaddr_un));
     addr->sun_family = 1;
-    if (filename[0] == '@') {
-        memcpy(addr->sun_path, filename + 1,
-               toCopy - sizeof(addr->sun_family) - 1);
-    } else {
-        memcpy(addr->sun_path, filename, toCopy - sizeof(addr->sun_family));
+    *len = sizeof(addr->sun_family);
+
+    if (name[0]) {
+        size_t max_path = sizeof(addr->sun_path);
+        size_t raw_len = strlen(name);
+
+        if (name[0] == '@') {
+            size_t n = MIN(raw_len - 1, max_path - 1);
+            addr->sun_path[0] = '\0';
+            if (n > 0)
+                memcpy(addr->sun_path + 1, name + 1, n);
+            *len += 1 + n;
+        } else {
+            size_t n = MIN(raw_len, max_path - 1);
+            memcpy(addr->sun_path, name, n);
+            *len += n + 1;
+        }
     }
 
     return 0;
@@ -1069,6 +1199,13 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, void *optval,
     socket_t *sock = handle->sock;
 
     switch (optname) {
+    case SO_ERROR:
+        if (*optlen < sizeof(int))
+            return -EINVAL;
+        *(int *)optval = 0;
+        *optlen = sizeof(int);
+        break;
+
     case SO_REUSEADDR:
         if (*optlen < sizeof(int))
             return -EINVAL;
@@ -1175,6 +1312,7 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, void *optval,
 static int dummy() { return 0; }
 
 socket_op_t socket_ops = {
+    .shutdown = socket_shutdown,
     .accept = socket_accept,
     .listen = socket_listen,
     .getsockname = unix_socket_getsockname,
@@ -1224,6 +1362,7 @@ fs_t sockfs = {
 
 void socketfs_init() {
     unix_socket_fsid = vfs_regist(&sockfs);
+    spin_init(&unix_socket_list_lock);
     memset(&first_unix_socket, 0, sizeof(socket_t));
     regist_socket(1, NULL, socket_socket);
     netlink_init();

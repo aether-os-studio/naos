@@ -708,7 +708,7 @@ void drm_plainfb_init() {
 
     pci_device_t *vga_pci_devices[8];
     uint32_t count;
-    pci_find_class(vga_pci_devices, &count, 0x00020000);
+    pci_find_class(vga_pci_devices, &count, 0x00030000);
 
     if (count > 0) {
         // Register with DRM subsystem using PCI device

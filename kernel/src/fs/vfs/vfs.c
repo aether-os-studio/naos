@@ -802,14 +802,13 @@ int vfs_close(vfs_node_t node) {
         node->flags &= ~VFS_NODE_FLAGS_OPENED;
         bool real_close = callbackof(node, close)(node->handle);
         if (real_close) {
+            node->handle = NULL;
             if (node->flags & VFS_NODE_FLAGS_FREE_AFTER_USE) {
                 vfs_free(node);
                 return 0;
             }
             if (node->flags & VFS_NODE_FLAGS_DELETED) {
                 vfs_free(node);
-            } else {
-                node->handle = NULL;
             }
         }
     }
@@ -1043,11 +1042,9 @@ int vfs_delete(vfs_node_t node) {
         return res;
     }
     node->flags |= VFS_NODE_FLAGS_DELETED;
-    if (node->parent)
-        llist_delete(&node->node_for_childs);
+    llist_delete(&node->node_for_childs);
     if (node->refcount <= 0) {
         vfs_free_handle(node);
-        node->handle = NULL;
         vfs_free(node);
     }
 

@@ -1,4 +1,5 @@
 #pragma once
+#pragma GCC optimize("O0")
 
 #include <arch/x64/irq/ptrace.h>
 #include <libs/elf.h>

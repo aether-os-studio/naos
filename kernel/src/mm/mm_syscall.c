@@ -31,18 +31,21 @@ static uint64_t find_unmapped_area_in_window(vma_manager_t *mgr,
 
         uint64_t gap_end =
             vma->vm_start < window_end ? vma->vm_start : window_end;
-        if (gap_end > cursor && gap_end - cursor >= len)
+        if (gap_end > cursor && gap_end - cursor >= len) {
             return cursor;
+        }
 
         if (vma->vm_end > cursor)
             cursor = PADDING_UP(vma->vm_end, DEFAULT_PAGE_SIZE);
 
-        if (cursor > window_end - len)
+        if (cursor > window_end - len) {
             return (uint64_t)-ENOMEM;
+        }
     }
 
     if (window_end - cursor >= len)
         return cursor;
+
     return (uint64_t)-ENOMEM;
 }
 
@@ -158,6 +161,10 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
             spin_unlock(&mgr->lock);
             return (uint64_t)-EINVAL;
         }
+        if (addr < USER_MMAP_START || addr > USER_MMAP_END - aligned_len) {
+            spin_unlock(&mgr->lock);
+            return (uint64_t)-ENOMEM;
+        }
         if (check_user_overflow(addr, aligned_len)) {
             spin_unlock(&mgr->lock);
             return (uint64_t)-ENOMEM;
@@ -246,8 +253,9 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         if (prot & PROT_EXEC)
             pt_flags |= PT_FLAG_X;
 
-        map_page_range(get_current_page_dir(true), start_addr, (uint64_t)-1,
-                       aligned_len, pt_flags);
+        map_page_range(get_current_page_dir(true),
+                       PADDING_DOWN(start_addr, DEFAULT_PAGE_SIZE),
+                       (uint64_t)-1, aligned_len, pt_flags);
 
         ret = start_addr;
     } else {
@@ -737,8 +745,8 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
         final_pt_flags |= PT_FLAG_X;
 
     uint64_t map_addr = addr & (~(DEFAULT_PAGE_SIZE - 1));
-    uint64_t map_len =
-        (len + DEFAULT_PAGE_SIZE - 1) & (~(DEFAULT_PAGE_SIZE - 1));
+    uint64_t page_off = addr - map_addr;
+    uint64_t map_len = PADDING_UP(len + page_off, DEFAULT_PAGE_SIZE);
     uint64_t load_pt_flags = final_pt_flags | PT_FLAG_W;
 
     map_page_range(get_current_page_dir(true), map_addr, (uint64_t)-1, map_len,

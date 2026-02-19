@@ -318,8 +318,11 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
                          (envp_count + 1) * sizeof(uint64_t);
     tmp_stack -= (tmp_stack - total_len) % 0x10;
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, 0);
+    PUSH_TO_STACK(tmp_stack, uint64_t, 0x7800);
     PUSH_TO_STACK(tmp_stack, uint64_t, AT_NULL);
+
+    PUSH_TO_STACK(tmp_stack, uint64_t, 0);
+    PUSH_TO_STACK(tmp_stack, uint64_t, AT_SECURE);
 
     PUSH_TO_STACK(tmp_stack, uint64_t, DEFAULT_PAGE_SIZE);
     PUSH_TO_STACK(tmp_stack, uint64_t, AT_PAGESZ);
@@ -338,6 +341,18 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
 
     PUSH_TO_STACK(tmp_stack, uint64_t, phnum);
     PUSH_TO_STACK(tmp_stack, uint64_t, AT_PHNUM);
+
+    PUSH_TO_STACK(tmp_stack, uint64_t, task->uid);
+    PUSH_TO_STACK(tmp_stack, uint64_t, AT_UID);
+
+    PUSH_TO_STACK(tmp_stack, uint64_t, task->euid);
+    PUSH_TO_STACK(tmp_stack, uint64_t, AT_EUID);
+
+    PUSH_TO_STACK(tmp_stack, uint64_t, task->gid);
+    PUSH_TO_STACK(tmp_stack, uint64_t, AT_GID);
+
+    PUSH_TO_STACK(tmp_stack, uint64_t, task->egid);
+    PUSH_TO_STACK(tmp_stack, uint64_t, AT_EGID);
 
     PUSH_TO_STACK(tmp_stack, uint64_t, sizeof(Elf64_Phdr));
     PUSH_TO_STACK(tmp_stack, uint64_t, AT_PHENT);
@@ -933,6 +948,8 @@ extern spinlock_t futex_lock;
 extern struct futex_wait futex_wait_list;
 
 extern uint64_t sys_futex_wake(uint64_t addr, int val, uint32_t bitset);
+static int write_task_user_memory(task_t *task, uint64_t uaddr, const void *src,
+                                  size_t size);
 
 extern int signalfdfs_id;
 
@@ -973,7 +990,9 @@ void task_exit_inner(task_t *task, int64_t code) {
     spin_unlock(&futex_lock);
 
     if (task->tidptr) {
-        // *task->tidptr = 0;
+        int clear_tid = 0;
+        write_task_user_memory(task, (uint64_t)task->tidptr, &clear_tid,
+                               sizeof(clear_tid));
         sys_futex_wake((uint64_t)task->tidptr, INT32_MAX, 0xFFFFFFFF);
     }
 
@@ -1079,6 +1098,12 @@ uint64_t task_exit(int64_t code) {
     arch_disable_interrupt();
 
     can_schedule = false;
+
+    if (current_task->is_clone && (current_task->clone_flags & CLONE_VFORK) &&
+        current_task->ppid < MAX_TASK_NUM && tasks[current_task->ppid] &&
+        !tasks[current_task->ppid]->child_vfork_done) {
+        tasks[current_task->ppid]->child_vfork_done = true;
+    }
 
     spin_lock(&task_queue_lock);
     uint64_t continue_ptr_count = 0;
@@ -1394,16 +1419,57 @@ uint64_t sys_clone3(struct pt_regs *regs, clone_args_t *args_user,
                      (int *)args.child_tid, args.tls);
 }
 
+static int write_task_user_memory(task_t *task, uint64_t uaddr, const void *src,
+                                  size_t size) {
+    if (!task || !task->arch_context || !task->arch_context->mm)
+        return -EFAULT;
+    if (!src || size == 0)
+        return 0;
+    if (check_user_overflow(uaddr, size))
+        return -EFAULT;
+
+    uint64_t *pgdir =
+        (uint64_t *)phys_to_virt(task->arch_context->mm->page_table_addr);
+    const uint8_t *in = (const uint8_t *)src;
+    uint64_t va = uaddr;
+    size_t remain = size;
+
+    while (remain > 0) {
+        uint64_t pa = translate_address(pgdir, va);
+        if (!pa)
+            return -EFAULT;
+
+        size_t page_left = DEFAULT_PAGE_SIZE - (va & (DEFAULT_PAGE_SIZE - 1));
+        size_t chunk = MIN(remain, page_left);
+        memcpy((void *)phys_to_virt(pa), in, chunk);
+
+        va += chunk;
+        in += chunk;
+        remain -= chunk;
+    }
+
+    return 0;
+}
+
 uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                    int *parent_tid, int *child_tid, uint64_t tls) {
     arch_disable_interrupt();
 
     if (flags & CLONE_VFORK) {
         flags |= CLONE_VM;
-        flags |= CLONE_FS;
-        // flags |= CLONE_FILES;
-        flags |= CLONE_SIGHAND;
-        flags |= CLONE_THREAD;
+    }
+
+    if ((flags & CLONE_PARENT_SETTID) &&
+        (!parent_tid ||
+         check_user_overflow((uint64_t)parent_tid, sizeof(int)) ||
+         check_unmapped((uint64_t)parent_tid, sizeof(int)))) {
+        return (uint64_t)-EFAULT;
+    }
+
+    if ((flags & CLONE_CHILD_SETTID) &&
+        (!child_tid || check_user_overflow((uint64_t)child_tid, sizeof(int)) ||
+         check_unmapped((uint64_t)child_tid, sizeof(int)))) {
+        return (uint64_t)-EFAULT;
     }
 
     task_t *child = get_free_task();
@@ -1562,12 +1628,15 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         child->tgid = child->pid;
     }
 
-    if (parent_tid && (flags & CLONE_PARENT_SETTID)) {
-        *parent_tid = (int)child->pid;
+    int child_tid_value = (int)child->pid;
+
+    if (flags & CLONE_PARENT_SETTID) {
+        copy_to_user(parent_tid, &child_tid_value, sizeof(child_tid_value));
     }
 
-    if (child_tid && (flags & CLONE_CHILD_SETTID)) {
-        *child_tid = (int)child->pid;
+    if (flags & CLONE_CHILD_SETTID) {
+        write_task_user_memory(child, (uint64_t)child_tid, &child_tid_value,
+                               sizeof(child_tid_value));
     }
 
     if (child_tid && (flags & CLONE_CHILD_CLEARTID)) {
