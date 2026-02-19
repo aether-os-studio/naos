@@ -231,7 +231,6 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-netdev user,id=net0 \
 		-device e1000,netdev=net0 \
 		-rtc base=utc \
-		-vga vmware \
 		$(QEMUFLAGS)
 
 .PHONY: run-x86_64-single
@@ -244,7 +243,6 @@ run-x86_64-single: assets/ovmf-code-$(ARCH).fd all-single
 		-device usb-kbd \
 		-device usb-mouse \
 		-device usb-storage,drive=harddisk,bus=xhci.0 \
-		-vga vmware \
 		$(QEMUFLAGS)
 
 .PHONY: run-aarch64

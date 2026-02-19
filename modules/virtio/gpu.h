@@ -134,6 +134,18 @@ typedef struct virtio_gpu_resource_attach_backing {
     virtio_gpu_mem_entry_t mem_entry;
 } virtio_gpu_resource_attach_backing_t;
 
+typedef struct virtio_gpu_resource_detach_backing {
+    struct virtio_gpu_ctrl_hdr hdr;
+    uint32_t resource_id;
+    uint32_t padding;
+} virtio_gpu_resource_detach_backing_t;
+
+typedef struct virtio_gpu_resource_unref {
+    struct virtio_gpu_ctrl_hdr hdr;
+    uint32_t resource_id;
+    uint32_t padding;
+} virtio_gpu_resource_unref_t;
+
 // Virtio GPU cursor update
 typedef struct virtio_gpu_update_cursor {
     struct virtio_gpu_ctrl_hdr hdr;
@@ -163,6 +175,7 @@ typedef struct virtio_gpu_device {
     // Display information
     uint32_t num_displays;
     virtio_gpu_display_one_t displays[16];
+    uint32_t scanout_ids[16];
 
     // Resource management
     uint32_t next_resource_id;
@@ -171,6 +184,7 @@ typedef struct virtio_gpu_device {
     drm_connector_t *connectors[16];
     drm_crtc_t *crtcs[16];
     drm_encoder_t *encoders[16];
+    drm_plane_t *planes[16];
     drm_resource_manager_t resource_mgr;
 
     // Framebuffer management
@@ -181,6 +195,7 @@ typedef struct virtio_gpu_device {
         uint32_t height;
         uint32_t pitch;
         uint32_t format;
+        uint64_t size;
         uint32_t refcount;
     } framebuffers[32];
 
@@ -205,6 +220,10 @@ int virtio_gpu_create_resource(virtio_gpu_device_t *gpu_dev,
 int virtio_gpu_attach_backing(virtio_gpu_device_t *gpu_dev,
                               uint32_t resource_id, uint64_t addr,
                               uint32_t length);
+int virtio_gpu_detach_backing(virtio_gpu_device_t *gpu_dev,
+                              uint32_t resource_id);
+int virtio_gpu_unref_resource(virtio_gpu_device_t *gpu_dev,
+                              uint32_t resource_id);
 int virtio_gpu_set_scanout(virtio_gpu_device_t *gpu_dev, uint32_t scanout_id,
                            uint32_t resource_id, uint32_t width,
                            uint32_t height, uint32_t x, uint32_t y);
