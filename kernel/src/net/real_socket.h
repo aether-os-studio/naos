@@ -3,7 +3,7 @@
 #include <libs/klibc.h>
 #include <fs/vfs/vfs.h>
 
-typedef uint32_t socklen_t;
+typedef unsigned socklen_t;
 
 #define SOCKET_NAME_LEN 108
 

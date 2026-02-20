@@ -253,21 +253,17 @@ typedef struct socket {
 #define MSG_CMSG_CLOEXEC 0x40000000
 
 struct msghdr {
-    void *msg_name;        /* ptr to socket address structure */
-    socklen_t msg_namelen; /* size of socket address structure */
-    uint32_t __pad1;
-    struct iovec *msg_iov; /* scatter/gather array */
-    int32_t msg_iovlen;    /* # elements in msg_iov */
-    uint32_t __pad2;
-    void *msg_control;        /* ancillary data */
-    socklen_t msg_controllen; /* ancillary data buffer length */
-    uint32_t __pad3;
-    uint32_t msg_flags; /* flags on received message */
+    void *msg_name;
+    socklen_t msg_namelen;
+    struct iovec *msg_iov;
+    size_t msg_iovlen;
+    void *msg_control;
+    size_t msg_controllen;
+    int msg_flags;
 };
 
 struct cmsghdr {
-    unsigned cmsg_len;
-    int __pad;
+    size_t cmsg_len;
     int cmsg_level;
     int cmsg_type;
 };
