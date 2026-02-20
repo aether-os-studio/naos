@@ -146,13 +146,17 @@ void unix_socket_free(socket_t *sock) {
 static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
                                        const uint8_t *data, size_t len,
                                        int flags, fd_t *fd_handle) {
+    socket_t *active_peer = peer;
+    if (self && self->type != 2)
+        active_peer = self->peer;
+
     if (self && self->shut_wr) {
         if (!(flags & MSG_NOSIGNAL))
             task_commit_signal(current_task, SIGPIPE, NULL);
         return -EPIPE;
     }
 
-    if (!peer || peer->closed) {
+    if (!active_peer || active_peer->closed || active_peer->shut_rd) {
         if (!(flags & MSG_NOSIGNAL))
             task_commit_signal(current_task, SIGPIPE, NULL);
         return -EPIPE;
@@ -164,24 +168,34 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
     while (true) {
         arch_enable_interrupt();
 
-        if (peer->closed) {
+        if (self && self->type != 2)
+            active_peer = self->peer;
+        if (!active_peer) {
             if (!(flags & MSG_NOSIGNAL))
                 task_commit_signal(current_task, SIGPIPE, NULL);
             arch_disable_interrupt();
             return -EPIPE;
         }
 
-        mutex_lock(&peer->lock);
-        size_t available = peer->recv_size - peer->recv_pos;
+        mutex_lock(&active_peer->lock);
+        if (active_peer->closed || active_peer->shut_rd) {
+            mutex_unlock(&active_peer->lock);
+            if (!(flags & MSG_NOSIGNAL))
+                task_commit_signal(current_task, SIGPIPE, NULL);
+            arch_disable_interrupt();
+            return -EPIPE;
+        }
+        size_t available = active_peer->recv_size - active_peer->recv_pos;
         if (available > 0) {
             size_t to_copy = MIN(len, available);
-            memcpy(&peer->recv_buff[peer->recv_pos], data, to_copy);
-            peer->recv_pos += to_copy;
-            mutex_unlock(&peer->lock);
+            memcpy(&active_peer->recv_buff[active_peer->recv_pos], data,
+                   to_copy);
+            active_peer->recv_pos += to_copy;
+            mutex_unlock(&active_peer->lock);
             arch_disable_interrupt();
             return to_copy;
         }
-        mutex_unlock(&peer->lock);
+        mutex_unlock(&active_peer->lock);
 
         if ((fd_handle && fd_handle->flags & O_NONBLOCK) ||
             (flags & MSG_DONTWAIT)) {
@@ -191,6 +205,8 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
 
         schedule(SCHED_FLAG_YIELD);
     }
+
+    return 0;
 }
 
 // 从自己的 recv_buff 接收数据
@@ -201,21 +217,39 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
 
     if (self->shut_rd)
         return 0;
+    if (!len)
+        return 0;
 
     // 等待数据
     while (true) {
         arch_enable_interrupt();
 
+        mutex_lock(&self->lock);
+
+        if (self->recv_pos > 0) {
+            size_t to_copy = MIN(len, self->recv_pos);
+            memcpy(buf, self->recv_buff, to_copy);
+            if (!peek) {
+                memmove(self->recv_buff, &self->recv_buff[to_copy],
+                        self->recv_pos - to_copy);
+                self->recv_pos -= to_copy;
+            }
+            mutex_unlock(&self->lock);
+            arch_disable_interrupt();
+            return to_copy;
+        }
+
+        socket_t *active_peer = peer;
+        if (self->type != 2)
+            active_peer = self->peer;
+        bool eof = (!active_peer || active_peer->closed || active_peer->shut_wr);
+        mutex_unlock(&self->lock);
+
         // 对端关闭且没有数据 = EOF
-        if (self->type != 2 &&
-            (!peer || peer->closed || (peer && peer->shut_wr)) &&
-            self->recv_pos == 0) {
+        if (eof) {
             arch_disable_interrupt();
             return 0;
         }
-
-        if (self->recv_pos > 0)
-            break;
 
         if ((fd_handle && fd_handle->flags & O_NONBLOCK) ||
             (flags & MSG_DONTWAIT)) {
@@ -225,23 +259,6 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
 
         schedule(SCHED_FLAG_YIELD);
     }
-
-    arch_disable_interrupt();
-
-    size_t to_copy = MIN(len, self->recv_pos);
-
-    mutex_lock(&self->lock);
-
-    memcpy(buf, self->recv_buff, to_copy);
-    if (!peek) {
-        memmove(self->recv_buff, &self->recv_buff[to_copy],
-                self->recv_pos - to_copy);
-        self->recv_pos -= to_copy;
-    }
-
-    mutex_unlock(&self->lock);
-
-    return to_copy;
 }
 
 // 发送 pending files 到对端
@@ -644,6 +661,7 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
     server_sock->domain = listen_sock->domain;
     server_sock->type = listen_sock->type;
     server_sock->protocol = listen_sock->protocol;
+    server_sock->cred = listen_sock->cred;
     server_sock->passcred = listen_sock->passcred;
     if (listen_sock->bindAddr) {
         server_sock->filename = strdup(listen_sock->bindAddr);
@@ -856,9 +874,7 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     fd_t *caller_fd = current_task->fd_info->fds[fd];
     socket_t *sock = handle->sock;
-    socket_t *peer = sock->peer;
-
-    if (!peer && !sock->established && sock->recv_pos == 0)
+    if (!sock->peer && !sock->established && sock->recv_pos == 0)
         return (size_t)-ENOTCONN;
 
     bool noblock = !!(flags & MSG_DONTWAIT);
@@ -866,7 +882,12 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
 
     // 等待数据
     while (!noblock && !(caller_fd->flags & O_NONBLOCK)) {
-        if (sock->recv_pos > 0 || !peer || peer->closed)
+        mutex_lock(&sock->lock);
+        socket_t *live_peer = sock->peer;
+        bool has_data = sock->recv_pos > 0;
+        bool eof = (!live_peer || live_peer->closed || live_peer->shut_wr);
+        mutex_unlock(&sock->lock);
+        if (has_data || eof)
             break;
         schedule(SCHED_FLAG_YIELD);
     }
@@ -878,7 +899,7 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
 
     char *buffer = malloc(len_total);
     size_t cnt = unix_socket_recv_from_self(
-        sock, peer, (uint8_t *)buffer, len_total,
+        sock, NULL, (uint8_t *)buffer, len_total,
         noblock ? (flags | MSG_DONTWAIT) : flags, caller_fd);
 
     if ((int64_t)cnt < 0) {
@@ -950,8 +971,9 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
 
                 if (!unix_socket_recv_cred_from_self(sock, cred_out)) {
                     // 没有 pending cred，使用对端凭据
-                    if (peer)
-                        memcpy(cred_out, &peer->cred, sizeof(struct ucred));
+                    if (sock->peer)
+                        memcpy(cred_out, &sock->peer->cred,
+                               sizeof(struct ucred));
                 }
 
                 controllen_used += CMSG_SPACE(sizeof(struct ucred));

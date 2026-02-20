@@ -41,6 +41,9 @@ uint32_t poll_to_epoll_comp(uint32_t poll_events) {
 }
 
 size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
+    if (nfds < 0)
+        return (size_t)-EINVAL;
+
     int ready = 0;
     bool irq_state = arch_interrupt_enabled();
     uint64_t start_time = nano_time();
@@ -50,18 +53,17 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
         timeout_ns = timeout * 1000000ULL;
     }
 
-    for (int i = 0; i < nfds; i++) {
-        fds[i].revents = 0;
-    }
-
     do {
         arch_enable_interrupt();
+        ready = 0;
 
         // 检查每个文件描述符
         for (int i = 0; i < nfds; i++) {
+            fds[i].revents = 0;
             if (fds[i].fd < 0 || fds[i].fd >= MAX_FD_NUM ||
                 !current_task->fd_info->fds[fds[i].fd]) {
                 fds[i].revents |= POLLNVAL;
+                ready++;
                 continue;
             }
             vfs_node_t node = current_task->fd_info->fds[fds[i].fd]->node;
@@ -127,6 +129,7 @@ static inline struct pollfd *select_add(struct pollfd **comp, size_t *compIndex,
                                         size_t *complength, int fd,
                                         int events) {
     if ((*compIndex + 1) * sizeof(struct pollfd) >= *complength) {
+        *complength *= 2;
         *comp = realloc(*comp, *complength);
     }
 
@@ -152,16 +155,6 @@ static inline void select_bitmap_set(uint8_t *map, int index) {
 
 size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except,
                   struct timeval *timeout) {
-    if (read && check_user_overflow((uint64_t)read, sizeof(struct pollfd))) {
-        return (size_t)-EFAULT;
-    }
-    if (write && check_user_overflow((uint64_t)write, sizeof(struct pollfd))) {
-        return (size_t)-EFAULT;
-    }
-    if (except &&
-        check_user_overflow((uint64_t)except, sizeof(struct pollfd))) {
-        return (size_t)-EFAULT;
-    }
     size_t complength = sizeof(struct pollfd) * nfds * 3;
     struct pollfd *comp = (struct pollfd *)malloc(complength);
     size_t compIndex = 0;

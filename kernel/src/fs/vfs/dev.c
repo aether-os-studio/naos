@@ -134,6 +134,22 @@ int devtmpfs_mknod(void *parent, const char *name, vfs_node_t node,
     if (node->handle) {
         return -EEXIST;
     }
+    uint64_t file_type = file_none;
+    switch (mode & S_IFMT) {
+    case S_IFSOCK:
+        file_type = file_socket;
+        break;
+    case S_IFIFO:
+        file_type = file_fifo;
+        break;
+    case S_IFCHR:
+        file_type = file_stream;
+        break;
+    case S_IFBLK:
+        file_type = file_block;
+        break;
+    }
+    node->type = file_type;
     devtmpfs_node_t *handle = malloc(sizeof(devtmpfs_node_t));
     handle->node = node;
     handle->capability = DEFAULT_PAGE_SIZE;
