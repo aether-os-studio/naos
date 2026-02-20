@@ -99,6 +99,83 @@ static int mmap_check_flags_linux(uint64_t flags, uint64_t map_type) {
     return 0;
 }
 
+uint64_t sys_brk(uint64_t brk) {
+    task_mm_info_t *mm = current_task->arch_context->mm;
+    uint64_t old_brk = mm->brk_current;
+
+    if (brk == 0)
+        return old_brk;
+
+    if (brk < mm->brk_start || brk > mm->brk_end)
+        return old_brk;
+
+    uint64_t old_map_end = PADDING_UP(old_brk, DEFAULT_PAGE_SIZE);
+    uint64_t new_map_end = PADDING_UP(brk, DEFAULT_PAGE_SIZE);
+
+    vma_manager_t *mgr = &mm->task_vma_mgr;
+    spin_lock(&mgr->lock);
+
+    if (new_map_end > old_map_end) {
+        uint64_t map_start = old_map_end;
+        uint64_t map_size = new_map_end - old_map_end;
+        vma_t *tail_vma = NULL;
+
+        if (check_user_overflow(map_start, map_size))
+            goto fail;
+
+        if (vma_find_intersection(mgr, map_start, new_map_end))
+            goto fail;
+
+        if (old_map_end > mm->brk_start) {
+            tail_vma = vma_find(mgr, old_map_end - 1);
+            if (tail_vma && tail_vma->vm_end != old_map_end)
+                tail_vma = NULL;
+        }
+
+        bool can_extend_tail =
+            tail_vma && tail_vma->vm_type == VMA_TYPE_ANON && !tail_vma->node &&
+            !tail_vma->shm &&
+            !(tail_vma->vm_flags & (VMA_SHARED | VMA_SHM | VMA_DEVICE)) &&
+            (tail_vma->vm_flags & (VMA_READ | VMA_WRITE)) ==
+                (VMA_READ | VMA_WRITE);
+
+        if (can_extend_tail) {
+            tail_vma->vm_end = new_map_end;
+            mgr->vm_used += map_size;
+        } else {
+            vma_t *new_vma = vma_alloc();
+            if (!new_vma)
+                goto fail;
+
+            new_vma->vm_start = map_start;
+            new_vma->vm_end = new_map_end;
+            new_vma->vm_flags = VMA_READ | VMA_WRITE | VMA_ANON;
+            new_vma->vm_type = VMA_TYPE_ANON;
+            new_vma->vm_name = strdup("[heap]");
+
+            if (vma_insert(mgr, new_vma) != 0) {
+                vma_free(new_vma);
+                goto fail;
+            }
+        }
+
+        map_page_range(get_current_page_dir(true), map_start, (uint64_t)-1,
+                       map_size, PT_FLAG_U | PT_FLAG_R | PT_FLAG_W);
+    } else if (new_map_end < old_map_end) {
+        uint64_t unmap_ret = do_munmap(new_map_end, old_map_end - new_map_end);
+        if ((int64_t)unmap_ret < 0)
+            goto fail;
+    }
+
+    mm->brk_current = brk;
+    spin_unlock(&mgr->lock);
+    return mm->brk_current;
+
+fail:
+    spin_unlock(&mgr->lock);
+    return old_brk;
+}
+
 uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
                   uint64_t fd, uint64_t offset) {
     const uint64_t passthrough_flags =

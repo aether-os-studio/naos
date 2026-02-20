@@ -90,6 +90,10 @@ void memfd_resize(void *current, uint64_t size) {
 
 void *memfd_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
                 size_t flags) {
+    if ((flags & MAP_TYPE) == MAP_PRIVATE) {
+        return general_map(file, (uint64_t)addr, size, prot, flags, offset);
+    }
+
     struct memfd_ctx *ctx = file->node->handle;
 
     map_page_range(get_current_page_dir(true), (uint64_t)addr,

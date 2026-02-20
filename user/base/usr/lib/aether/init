@@ -6,6 +6,25 @@ touch /run/udev/data/c13:1
 touch /run/udev/data/c13:2
 touch /run/udev/data/c13:3
 
+mkdir -p /run/dbus
+if [ ! -s /etc/machine-id ]; then
+    dbus-uuidgen --ensure=/etc/machine-id
+fi
+
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+
+mkdir -p "${XDG_RUNTIME_DIR}"
+chmod 700 "${XDG_RUNTIME_DIR}"
+
+export WLR_RENDERER=pixman
+export WLR_RENDERER_ALLOW_SOFTWARE=1
+export LIBGL_ALWAYS_SOFTWARE=1
+
+export XDG_CURRENT_DESKTOP=sway
+export XDG_SESSION_DESKTOP=sway
+export XDG_SESSION_TYPE=wayland
+export GDK_BACKEND=wayland
+
 seatd &
 dbus-daemon --system --nofork &
 exec dbus-run-session -- sway

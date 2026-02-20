@@ -185,6 +185,10 @@ void *tmpfs_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
         return device_map(file->node->rdev, addr, offset, size, prot, flags);
     }
 
+    if ((flags & MAP_TYPE) == MAP_PRIVATE) {
+        return general_map(file, (uint64_t)addr, size, prot, flags, offset);
+    }
+
     tmpfs_node_t *handle = file->node->handle;
     if (!handle)
         return (void *)(int64_t)-EINVAL;
