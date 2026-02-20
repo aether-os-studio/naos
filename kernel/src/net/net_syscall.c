@@ -150,17 +150,9 @@ uint64_t sys_socket(int domain, int type, int protocol) {
     int fd = -EAFNOSUPPORT;
     for (int i = 0; i < socket_num; i++) {
         if (real_sockets[i]->domain == domain) {
-            fd = real_sockets[i]->socket(domain, type & 0xff, protocol);
+            fd = real_sockets[i]->socket(domain, type, protocol);
             break;
         }
-    }
-
-    if (!(fd < 0)) {
-        if (type & O_CLOEXEC) {
-            current_task->fd_info->fds[fd]->close_on_exec = true;
-        }
-        if (type & O_NONBLOCK)
-            current_task->fd_info->fds[fd]->flags |= O_NONBLOCK;
     }
 
     return fd;

@@ -1008,41 +1008,50 @@ int netlink_socket(int domain, int type, int protocol) {
         return -ENOMEM;
     }
 
-    uint64_t i;
-    for (i = 0; i < MAX_FD_NUM; i++) {
-        if (current_task->fd_info->fds[i] == NULL) {
-            break;
-        }
-    }
-
-    if (i == MAX_FD_NUM) {
-        spin_lock(&netlink_sockets_lock);
-        netlink_sockets[slot] = NULL;
-        spin_unlock(&netlink_sockets_lock);
-        free(nl_sk->buffer);
-        free(nl_sk);
-        free(handle);
-        return -EMFILE;
-    }
-
     uint64_t flags = 0;
     if (type & O_NONBLOCK) {
         flags |= O_NONBLOCK;
     }
 
+    int ret = -EMFILE;
+    uint64_t i = 0;
     with_fd_info_lock(current_task->fd_info, {
-        current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
-        memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
-        current_task->fd_info->fds[i]->node = socknode;
-        current_task->fd_info->fds[i]->offset = 0;
-        current_task->fd_info->fds[i]->flags = flags;
-        if (type & O_CLOEXEC) {
-            current_task->fd_info->fds[i]->close_on_exec = true;
+        for (i = 0; i < MAX_FD_NUM; i++) {
+            if (current_task->fd_info->fds[i] == NULL) {
+                break;
+            }
         }
+
+        if (i == MAX_FD_NUM)
+            break;
+
+        fd_t *new_fd = malloc(sizeof(fd_t));
+        if (!new_fd) {
+            ret = -ENOMEM;
+            break;
+        }
+
+        memset(new_fd, 0, sizeof(fd_t));
+        new_fd->node = socknode;
+        new_fd->offset = 0;
+        new_fd->flags = flags;
+        if (type & O_CLOEXEC) {
+            new_fd->close_on_exec = true;
+        }
+        current_task->fd_info->fds[i] = new_fd;
         procfs_on_open_file(current_task, i);
+        ret = (int)i;
     });
 
-    return i;
+    if (ret < 0) {
+        spin_lock(&netlink_sockets_lock);
+        netlink_sockets[slot] = NULL;
+        spin_unlock(&netlink_sockets_lock);
+        vfs_free(socknode);
+        return ret;
+    }
+
+    return ret;
 }
 
 int netlink_socket_pair(int type, int protocol, int *sv) {

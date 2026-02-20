@@ -240,17 +240,6 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
         return -EFAULT;
     }
 
-    int i1 = -1;
-    for (i1 = 0; i1 < MAX_FD_NUM; i1++) {
-        if (current_task->fd_info->fds[i1] == NULL) {
-            break;
-        }
-    }
-
-    if (i1 == MAX_FD_NUM) {
-        return -EBADF;
-    }
-
     char buf[16];
     sprintf(buf, "pipe%d", pipefd_id++);
 
@@ -291,42 +280,57 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
     node_input->handle = read_spec;
     node_output->handle = write_spec;
 
-    int i2 = -1;
-    int ret = 0;
+    int i1 = -1, i2 = -1;
+    int ret = -EMFILE;
 
     with_fd_info_lock(current_task->fd_info, {
-        current_task->fd_info->fds[i1] = malloc(sizeof(fd_t));
-        memset(current_task->fd_info->fds[i1], 0, sizeof(fd_t));
-        current_task->fd_info->fds[i1]->node = node_input;
-        current_task->fd_info->fds[i1]->offset = 0;
-        current_task->fd_info->fds[i1]->flags = flags;
-        current_task->fd_info->fds[i1]->close_on_exec = !!(flags & O_CLOEXEC);
-        procfs_on_open_file(current_task, i1);
-
-        for (i2 = 0; i2 < MAX_FD_NUM; i2++) {
-            if (current_task->fd_info->fds[i2] == NULL) {
-                break;
+        for (int i = 0; i < MAX_FD_NUM; i++) {
+            if (current_task->fd_info->fds[i] == NULL) {
+                if (i1 == -1)
+                    i1 = i;
+                else {
+                    i2 = i;
+                    break;
+                }
             }
         }
 
-        if (i2 == MAX_FD_NUM) {
-            ret = -EMFILE;
-        } else {
-            current_task->fd_info->fds[i2] = malloc(sizeof(fd_t));
-            memset(current_task->fd_info->fds[i2], 0, sizeof(fd_t));
-            current_task->fd_info->fds[i2]->node = node_output;
-            current_task->fd_info->fds[i2]->offset = 0;
-            current_task->fd_info->fds[i2]->flags = flags;
-            current_task->fd_info->fds[i2]->close_on_exec =
-                !!(flags & O_CLOEXEC);
-            procfs_on_open_file(current_task, i2);
+        if (i1 < 0 || i2 < 0)
+            break;
+
+        fd_t *fd_read = malloc(sizeof(fd_t));
+        fd_t *fd_write = malloc(sizeof(fd_t));
+        if (!fd_read || !fd_write) {
+            free(fd_read);
+            free(fd_write);
+            ret = -ENOMEM;
+            i1 = i2 = -1;
+            break;
         }
+
+        memset(fd_read, 0, sizeof(fd_t));
+        memset(fd_write, 0, sizeof(fd_t));
+        fd_read->node = node_input;
+        fd_read->offset = 0;
+        fd_read->flags = flags;
+        fd_read->close_on_exec = !!(flags & O_CLOEXEC);
+        fd_write->node = node_output;
+        fd_write->offset = 0;
+        fd_write->flags = flags;
+        fd_write->close_on_exec = !!(flags & O_CLOEXEC);
+
+        current_task->fd_info->fds[i1] = fd_read;
+        current_task->fd_info->fds[i2] = fd_write;
+        procfs_on_open_file(current_task, i1);
+        procfs_on_open_file(current_task, i2);
+        ret = 0;
     });
 
     if (ret < 0) {
-        if (i1 >= 0) {
-            sys_close(i1);
-        }
+        free_frames_bytes(info->buf, PIPE_BUFF);
+        free(info);
+        vfs_free(node_input);
+        vfs_free(node_output);
         return ret;
     }
 

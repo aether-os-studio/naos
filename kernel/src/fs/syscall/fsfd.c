@@ -84,19 +84,6 @@ uint64_t sys_fsopen(const char *fsname_user, unsigned int flags) {
     return (uint64_t)-ENOENT;
 
 found:;
-    int fd = -1;
-    for (int i = 0; i < MAX_FD_NUM; i++) {
-        if (!current_task->fd_info->fds[i]) {
-            fd = i;
-            break;
-        }
-    }
-
-    if (fd == -1) {
-        free(handle);
-        return (uint64_t)-EMFILE;
-    }
-
     vfs_node_t node = vfs_node_alloc(NULL, NULL);
     if (!node) {
         free(handle);
@@ -108,14 +95,39 @@ found:;
     node->fsid = fsfd_id;
     node->handle = handle;
 
+    int fd = -1;
+    int ret = -EMFILE;
     with_fd_info_lock(current_task->fd_info, {
-        current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
-        memset(current_task->fd_info->fds[fd], 0, sizeof(fd_t));
-        current_task->fd_info->fds[fd]->node = node;
-        current_task->fd_info->fds[fd]->offset = 0;
-        current_task->fd_info->fds[fd]->flags = flags;
+        for (int i = 0; i < MAX_FD_NUM; i++) {
+            if (!current_task->fd_info->fds[i]) {
+                fd = i;
+                break;
+            }
+        }
+
+        if (fd < 0)
+            break;
+
+        fd_t *new_fd = malloc(sizeof(fd_t));
+        if (!new_fd) {
+            ret = -ENOMEM;
+            fd = -1;
+            break;
+        }
+
+        memset(new_fd, 0, sizeof(fd_t));
+        new_fd->node = node;
+        new_fd->offset = 0;
+        new_fd->flags = flags;
+        current_task->fd_info->fds[fd] = new_fd;
         procfs_on_open_file(current_task, fd);
+        ret = 0;
     });
+
+    if (ret < 0) {
+        vfs_free(node);
+        return (uint64_t)ret;
+    }
 
     return fd;
 }
@@ -548,22 +560,6 @@ uint64_t sys_fsmount(int fd, uint32_t flags, uint32_t attr_flags) {
     mnt_handle->dev = ctx->source_dev;
     mnt_handle->attached = false;
 
-    /* Allocate new fd for the mount */
-    int mnt_fd = -1;
-    for (int i = 0; i < MAX_FD_NUM; i++) {
-        if (!current_task->fd_info->fds[i]) {
-            mnt_fd = i;
-            break;
-        }
-    }
-
-    if (mnt_fd == -1) {
-        if (mnt_handle->source)
-            free(mnt_handle->source);
-        free(mnt_handle);
-        return -EMFILE;
-    }
-
     /* Create vfs node for mount fd */
     vfs_node_t mnt_node = vfs_node_alloc(NULL, NULL);
     if (!mnt_node) {
@@ -579,15 +575,39 @@ uint64_t sys_fsmount(int fd, uint32_t flags, uint32_t attr_flags) {
     mnt_node->fsid = mntfd_id;
     mnt_node->handle = mnt_handle;
 
+    int mnt_fd = -1;
+    int ret = -EMFILE;
     with_fd_info_lock(current_task->fd_info, {
-        current_task->fd_info->fds[mnt_fd] = malloc(sizeof(fd_t));
-        memset(current_task->fd_info->fds[mnt_fd], 0, sizeof(fd_t));
-        current_task->fd_info->fds[mnt_fd]->node = mnt_node;
-        current_task->fd_info->fds[mnt_fd]->offset = 0;
-        current_task->fd_info->fds[mnt_fd]->close_on_exec =
-            !!(flags & FSMOUNT_CLOEXEC);
+        for (int i = 0; i < MAX_FD_NUM; i++) {
+            if (!current_task->fd_info->fds[i]) {
+                mnt_fd = i;
+                break;
+            }
+        }
+
+        if (mnt_fd < 0)
+            break;
+
+        fd_t *new_fd = malloc(sizeof(fd_t));
+        if (!new_fd) {
+            ret = -ENOMEM;
+            mnt_fd = -1;
+            break;
+        }
+
+        memset(new_fd, 0, sizeof(fd_t));
+        new_fd->node = mnt_node;
+        new_fd->offset = 0;
+        new_fd->close_on_exec = !!(flags & FSMOUNT_CLOEXEC);
+        current_task->fd_info->fds[mnt_fd] = new_fd;
         procfs_on_open_file(current_task, mnt_fd);
+        ret = 0;
     });
+
+    if (ret < 0) {
+        vfs_free(mnt_node);
+        return ret;
+    }
 
     /* Mark context as mounted */
     ctx->state = FC_STATE_MOUNTED;

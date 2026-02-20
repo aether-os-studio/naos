@@ -242,7 +242,8 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
         socket_t *active_peer = peer;
         if (self->type != 2)
             active_peer = self->peer;
-        bool eof = (!active_peer || active_peer->closed || active_peer->shut_wr);
+        bool eof =
+            (!active_peer || active_peer->closed || active_peer->shut_wr);
         mutex_unlock(&self->lock);
 
         // 对端关闭且没有数据 = EOF
@@ -312,26 +313,36 @@ static size_t unix_socket_recv_files_from_self(socket_t *self, int *fds_out,
             continue;
 
         int new_fd = -1;
-        for (int fd_idx = 0; fd_idx < MAX_FD_NUM; fd_idx++) {
-            if (current_task->fd_info->fds[fd_idx] == NULL) {
-                new_fd = fd_idx;
+        bool install_ok = false;
+        with_fd_info_lock(current_task->fd_info, {
+            for (int fd_idx = 0; fd_idx < MAX_FD_NUM; fd_idx++) {
+                if (current_task->fd_info->fds[fd_idx] == NULL) {
+                    new_fd = fd_idx;
+                    break;
+                }
+            }
+
+            if (new_fd < 0)
+                break;
+
+            fd_t *new_entry = malloc(sizeof(fd_t));
+            if (!new_entry) {
+                new_fd = -1;
                 break;
             }
-        }
 
-        if (new_fd == -1) {
+            memcpy(new_entry, self->pending_files[i], sizeof(fd_t));
+            new_entry->close_on_exec = !!(recv_flags & MSG_CMSG_CLOEXEC);
+            current_task->fd_info->fds[new_fd] = new_entry;
+            install_ok = true;
+        });
+
+        if (!install_ok) {
             if (msg_flags)
                 *msg_flags |= MSG_CTRUNC;
             break;
         }
 
-        with_fd_info_lock(current_task->fd_info, {
-            current_task->fd_info->fds[new_fd] = malloc(sizeof(fd_t));
-            memcpy(current_task->fd_info->fds[new_fd], self->pending_files[i],
-                   sizeof(fd_t));
-            current_task->fd_info->fds[new_fd]->close_on_exec =
-                !!(recv_flags & MSG_CMSG_CLOEXEC);
-        });
         free(self->pending_files[i]);
         self->pending_files[i] = NULL;
 
@@ -387,30 +398,43 @@ int socket_socket(int domain, int type, int protocol) {
     vfs_node_t socknode = unix_socket_create_node(sock);
     socket_handle_t *handle = socknode->handle;
 
+    int ret = -EMFILE;
     uint64_t i = 0;
-    for (i = 0; i < MAX_FD_NUM; i++) {
-        if (current_task->fd_info->fds[i] == NULL)
-            break;
-    }
+    with_fd_info_lock(current_task->fd_info, {
+        for (i = 0; i < MAX_FD_NUM; i++) {
+            if (current_task->fd_info->fds[i] == NULL)
+                break;
+        }
 
-    if (i == MAX_FD_NUM) {
+        if (i == MAX_FD_NUM)
+            break;
+
+        fd_t *new_fd = malloc(sizeof(fd_t));
+        if (!new_fd) {
+            ret = -ENOMEM;
+            break;
+        }
+
+        memset(new_fd, 0, sizeof(fd_t));
+        new_fd->node = socknode;
+        new_fd->offset = 0;
+        if (type & O_NONBLOCK)
+            new_fd->flags |= O_NONBLOCK;
+        new_fd->close_on_exec = !!(type & O_CLOEXEC);
+        current_task->fd_info->fds[i] = new_fd;
+        procfs_on_open_file(current_task, i);
+        ret = (int)i;
+    });
+
+    if (ret < 0) {
         unix_socket_free(sock);
         vfs_free(socknode);
-        return -EMFILE;
+        return ret;
     }
-
-    with_fd_info_lock(current_task->fd_info, {
-        current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
-        memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
-        current_task->fd_info->fds[i]->node = socknode;
-        current_task->fd_info->fds[i]->offset = 0;
-        current_task->fd_info->fds[i]->close_on_exec = !!(type & O_CLOEXEC);
-        procfs_on_open_file(current_task, i);
-    });
 
     handle->fd = current_task->fd_info->fds[i];
 
-    return i;
+    return ret;
 }
 
 int socket_bind(uint64_t fd, const struct sockaddr_un *addr,
@@ -525,34 +549,46 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
     if (!server_sock)
         return -ECONNABORTED;
 
-    uint64_t i = 0;
-    for (i = 0; i < MAX_FD_NUM; i++) {
-        if (current_task->fd_info->fds[i] == NULL)
-            break;
-    }
+    // 创建节点
+    vfs_node_t acceptFd = unix_socket_create_node(server_sock);
 
-    if (i == MAX_FD_NUM) {
+    int ret = -EMFILE;
+    uint64_t i = 0;
+    with_fd_info_lock(current_task->fd_info, {
+        for (i = 0; i < MAX_FD_NUM; i++) {
+            if (current_task->fd_info->fds[i] == NULL)
+                break;
+        }
+
+        if (i == MAX_FD_NUM)
+            break;
+
+        fd_t *new_fd = malloc(sizeof(fd_t));
+        if (!new_fd) {
+            ret = -ENOMEM;
+            break;
+        }
+
+        memset(new_fd, 0, sizeof(fd_t));
+        new_fd->node = acceptFd;
+        new_fd->offset = 0;
+        if (flags & O_NONBLOCK)
+            new_fd->flags |= O_NONBLOCK;
+        new_fd->close_on_exec = !!(flags & O_CLOEXEC);
+        current_task->fd_info->fds[i] = new_fd;
+        procfs_on_open_file(current_task, i);
+        ret = (int)i;
+    });
+
+    if (ret < 0) {
         if (server_sock->peer) {
             server_sock->peer->peer = NULL;
             server_sock->peer->established = false;
         }
         unix_socket_free(server_sock);
-        return -EMFILE;
+        vfs_free(acceptFd);
+        return ret;
     }
-
-    // 创建节点
-    vfs_node_t acceptFd = unix_socket_create_node(server_sock);
-
-    with_fd_info_lock(current_task->fd_info, {
-        current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
-        memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
-        current_task->fd_info->fds[i]->node = acceptFd;
-        current_task->fd_info->fds[i]->offset = 0;
-        if (flags & O_NONBLOCK)
-            current_task->fd_info->fds[i]->flags |= O_NONBLOCK;
-        current_task->fd_info->fds[i]->close_on_exec = !!(flags & O_CLOEXEC);
-        procfs_on_open_file(current_task, i);
-    });
 
     socket_handle_t *accept_handle = acceptFd->handle;
     accept_handle->fd = current_task->fd_info->fds[i];
@@ -570,7 +606,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
         *addrlen = kaddrlen;
     }
 
-    return i;
+    return ret;
 }
 
 uint64_t socket_shutdown(uint64_t fd, uint64_t how) {
@@ -822,6 +858,8 @@ done:
                 }
             } else if (cmsg->cmsg_type == SCM_CREDENTIALS) {
                 if (cmsg->cmsg_len < CMSG_LEN(sizeof(struct ucred))) {
+                    printk("Invalid cmsg len for scm_credentials: %d\n",
+                           cmsg->cmsg_len);
                     mutex_unlock(&peer->lock);
                     return (size_t)-EINVAL;
                 }
@@ -859,12 +897,24 @@ done:
 
     for (int i = 0; i < msg->msg_iovlen; i++) {
         struct iovec *curr = &((struct iovec *)msg->msg_iov)[i];
-        size_t ret = unix_socket_send_to_peer(
-            sock, peer, curr->iov_base, curr->len,
-            noblock ? (flags | MSG_DONTWAIT) : flags, caller_fd);
-        if ((int64_t)ret < 0)
-            return ret;
-        cnt += ret;
+        size_t sent = 0;
+        while (sent < curr->len) {
+            const uint8_t *base = (const uint8_t *)curr->iov_base;
+            size_t ret = unix_socket_send_to_peer(
+                sock, peer, base + sent, curr->len - sent,
+                noblock ? (flags | MSG_DONTWAIT) : flags, caller_fd);
+            if ((int64_t)ret < 0) {
+                if (cnt > 0 && ((int64_t)ret == -EAGAIN ||
+                                (int64_t)ret == -EWOULDBLOCK)) {
+                    return cnt;
+                }
+                return ret;
+            }
+            if (ret == 0)
+                return cnt;
+            sent += ret;
+            cnt += ret;
+        }
     }
 
     return cnt;
@@ -1129,53 +1179,67 @@ int unix_socket_pair(int type, int protocol, int *sv) {
     vfs_node_t node1 = unix_socket_create_node(sock1);
     vfs_node_t node2 = unix_socket_create_node(sock2);
 
-    // 分配 fd
-    int fd1 = -1, fd2 = -1;
-    for (int i = 0; i < MAX_FD_NUM; i++) {
-        if (current_task->fd_info->fds[i] == NULL) {
-            if (fd1 == -1)
-                fd1 = i;
-            else if (fd2 == -1) {
-                fd2 = i;
-                break;
-            }
-        }
-    }
-
-    if (fd1 == -1 || fd2 == -1) {
-        unix_socket_free(sock1);
-        unix_socket_free(sock2);
-        vfs_free(node1);
-        vfs_free(node2);
-        return -EMFILE;
-    }
-
     uint64_t flags = 0;
     if (type & O_NONBLOCK)
         flags |= O_NONBLOCK;
 
+    int fd1 = -1, fd2 = -1;
+    int ret = -EMFILE;
     with_fd_info_lock(current_task->fd_info, {
-        current_task->fd_info->fds[fd1] = malloc(sizeof(fd_t));
-        memset(current_task->fd_info->fds[fd1], 0, sizeof(fd_t));
-        current_task->fd_info->fds[fd1]->node = node1;
-        current_task->fd_info->fds[fd1]->offset = 0;
-        current_task->fd_info->fds[fd1]->flags = flags;
-        current_task->fd_info->fds[fd1]->close_on_exec = !!(type & O_CLOEXEC);
-        procfs_on_open_file(current_task, fd1);
+        for (int i = 0; i < MAX_FD_NUM; i++) {
+            if (current_task->fd_info->fds[i] == NULL) {
+                if (fd1 == -1)
+                    fd1 = i;
+                else {
+                    fd2 = i;
+                    break;
+                }
+            }
+        }
 
-        current_task->fd_info->fds[fd2] = malloc(sizeof(fd_t));
-        memset(current_task->fd_info->fds[fd2], 0, sizeof(fd_t));
-        current_task->fd_info->fds[fd2]->node = node2;
-        current_task->fd_info->fds[fd2]->offset = 0;
-        current_task->fd_info->fds[fd2]->flags = flags;
-        current_task->fd_info->fds[fd2]->close_on_exec = !!(type & O_CLOEXEC);
+        if (fd1 < 0 || fd2 < 0)
+            break;
+
+        fd_t *entry1 = malloc(sizeof(fd_t));
+        fd_t *entry2 = malloc(sizeof(fd_t));
+        if (!entry1 || !entry2) {
+            free(entry1);
+            free(entry2);
+            ret = -ENOMEM;
+            fd1 = fd2 = -1;
+            break;
+        }
+
+        memset(entry1, 0, sizeof(fd_t));
+        memset(entry2, 0, sizeof(fd_t));
+        entry1->node = node1;
+        entry1->offset = 0;
+        entry1->flags = flags;
+        entry1->close_on_exec = !!(type & O_CLOEXEC);
+        entry2->node = node2;
+        entry2->offset = 0;
+        entry2->flags = flags;
+        entry2->close_on_exec = !!(type & O_CLOEXEC);
+
+        current_task->fd_info->fds[fd1] = entry1;
+        current_task->fd_info->fds[fd2] = entry2;
+        procfs_on_open_file(current_task, fd1);
         procfs_on_open_file(current_task, fd2);
 
         socket_handle_t *h1 = node1->handle;
         socket_handle_t *h2 = node2->handle;
-        h1->fd = current_task->fd_info->fds[fd1];
-        h2->fd = current_task->fd_info->fds[fd2];
+        h1->fd = entry1;
+        h2->fd = entry2;
+        ret = 0;
     });
+
+    if (ret < 0) {
+        unix_socket_free(sock1);
+        unix_socket_free(sock2);
+        vfs_free(node1);
+        vfs_free(node2);
+        return ret;
+    }
 
     sv[0] = fd1;
     sv[1] = fd2;

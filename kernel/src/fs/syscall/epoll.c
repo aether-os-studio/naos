@@ -7,16 +7,8 @@ static int dummy() { return 0; }
 
 // epoll API
 size_t epoll_create1(int flags) {
-    int i = -1;
-    for (i = 0; i < MAX_FD_NUM; i++) {
-        if (current_task->fd_info->fds[i] == NULL) {
-            break;
-        }
-    }
-
-    if (i == MAX_FD_NUM) {
-        return -EBADF;
-    }
+    if (flags & ~O_CLOEXEC)
+        return -EINVAL;
 
     vfs_node_t node = vfs_node_alloc(NULL, NULL);
     node->type = file_epoll;
@@ -28,16 +20,40 @@ size_t epoll_create1(int flags) {
     node->handle = epoll;
     node->fsid = epollfs_id;
 
+    int ret = -EMFILE;
     with_fd_info_lock(current_task->fd_info, {
-        current_task->fd_info->fds[i] = malloc(sizeof(fd_t));
-        memset(current_task->fd_info->fds[i], 0, sizeof(fd_t));
-        current_task->fd_info->fds[i]->node = node;
-        current_task->fd_info->fds[i]->offset = 0;
-        current_task->fd_info->fds[i]->flags = flags;
+        int i = -1;
+        for (int idx = 0; idx < MAX_FD_NUM; idx++) {
+            if (current_task->fd_info->fds[idx] == NULL) {
+                i = idx;
+                break;
+            }
+        }
+
+        if (i < 0)
+            break;
+
+        fd_t *new_fd = malloc(sizeof(fd_t));
+        if (!new_fd) {
+            ret = -ENOMEM;
+            break;
+        }
+
+        memset(new_fd, 0, sizeof(fd_t));
+        new_fd->node = node;
+        new_fd->offset = 0;
+        new_fd->flags = flags & ~(uint64_t)O_CLOEXEC;
+        new_fd->close_on_exec = !!(flags & O_CLOEXEC);
+        current_task->fd_info->fds[i] = new_fd;
         procfs_on_open_file(current_task, i);
+        ret = i;
     });
 
-    return i;
+    if (ret < 0) {
+        vfs_free(node);
+    }
+
+    return ret;
 }
 
 uint64_t sys_epoll_create(int size) { return epoll_create1(0); }

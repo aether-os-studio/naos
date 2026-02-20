@@ -111,17 +111,8 @@ fs_t notifyfs_fs = {
 };
 
 uint64_t sys_inotify_init1(uint64_t flags) {
-    int fd = -1;
-    for (int i = 0; i < MAX_FD_NUM; i++) {
-        if (!current_task->fd_info->fds[i]) {
-            fd = i;
-            break;
-        }
-    }
-
-    if (fd == -1) {
-        return (uint64_t)-EMFILE;
-    }
+    if (flags & ~(O_NONBLOCK | O_CLOEXEC))
+        return (uint64_t)-EINVAL;
 
     vfs_node_t node = vfs_node_alloc(NULL, NULL);
     node->type = file_none;
@@ -133,13 +124,39 @@ uint64_t sys_inotify_init1(uint64_t flags) {
     handle->node = node;
     llist_init_head(&handle->watches);
 
+    int fd = -1;
+    int ret = -EMFILE;
     with_fd_info_lock(current_task->fd_info, {
-        current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
-        memset(current_task->fd_info->fds[fd], 0, sizeof(fd_t));
-        current_task->fd_info->fds[fd]->node = node;
-        current_task->fd_info->fds[fd]->flags = 0;
+        for (int i = 0; i < MAX_FD_NUM; i++) {
+            if (!current_task->fd_info->fds[i]) {
+                fd = i;
+                break;
+            }
+        }
+
+        if (fd < 0)
+            break;
+
+        fd_t *new_fd = malloc(sizeof(fd_t));
+        if (!new_fd) {
+            ret = -ENOMEM;
+            fd = -1;
+            break;
+        }
+
+        memset(new_fd, 0, sizeof(fd_t));
+        new_fd->node = node;
+        new_fd->flags = flags & ~(uint64_t)O_CLOEXEC;
+        new_fd->close_on_exec = !!(flags & O_CLOEXEC);
+        current_task->fd_info->fds[fd] = new_fd;
         procfs_on_open_file(current_task, fd);
+        ret = 0;
     });
+
+    if (ret < 0) {
+        vfs_free(node);
+        return (uint64_t)ret;
+    }
 
     return fd;
 }
@@ -196,7 +213,7 @@ uint64_t sys_inotify_add_watch(uint64_t notifyfd, const char *path_user,
 
     spin_unlock(&all_watches_lock);
 
-    return 0;
+    return watch->wd;
 }
 
 uint64_t sys_inotify_rm_watch(uint64_t watchdesc, uint64_t mask) {

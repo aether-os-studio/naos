@@ -966,25 +966,18 @@ void task_exit_inner(task_t *task, int64_t code) {
 
     spin_lock(&futex_lock);
 
-    struct futex_wait *curr = &futex_wait_list;
-    struct futex_wait *prev = NULL;
-    int count = 0;
+    struct futex_wait *prev = &futex_wait_list;
+    struct futex_wait *curr = futex_wait_list.next;
     while (curr) {
-        bool found = false;
-
         if (curr->task == task) {
-            if (prev) {
-                prev->next = curr->next;
-            }
-            free(curr);
-            found = true;
-        }
-        if (found) {
+            prev->next = curr->next;
+            curr->next = NULL;
             curr = prev->next;
-        } else {
-            prev = curr;
-            curr = curr->next;
+            continue;
         }
+
+        prev = curr;
+        curr = curr->next;
     }
 
     spin_unlock(&futex_lock);

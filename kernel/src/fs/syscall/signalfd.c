@@ -49,8 +49,8 @@ static int signalfd_ioctl(void *data, ssize_t cmd, ssize_t arg) {
 
 bool signalfd_close(void *handle) {
     struct signalfd_ctx *ctx = handle;
-    free(ctx->node->name);
-    free(ctx->node);
+    if (ctx->queue)
+        free(ctx->queue);
     free(ctx);
     return true;
 }
@@ -65,21 +65,18 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask,
     if (!ctx)
         return -ENOMEM;
 
-    if (copy_from_user(&ctx->sigmask, mask, sizemask))
+    if (copy_from_user(&ctx->sigmask, mask, sizemask)) {
+        free(ctx);
         return (uint64_t)-EFAULT;
+    }
 
     ctx->queue_size = 64;
     ctx->queue = calloc(ctx->queue_size, sizeof(struct signalfd_siginfo));
-    ctx->queue_head = ctx->queue_tail = 0;
-
-    // 分配文件描述符
-    int fd = -1;
-    for (int i = 0; i < MAX_FD_NUM; i++) {
-        if (!current_task->fd_info->fds[i]) {
-            fd = i;
-            break;
-        }
+    if (!ctx->queue) {
+        free(ctx);
+        return -ENOMEM;
     }
+    ctx->queue_head = ctx->queue_tail = 0;
 
     // 创建VFS节点
     char buf[256];
@@ -92,14 +89,42 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask,
     node->handle = ctx;
     ctx->node = node;
 
+    int fd = -1;
+    int ret = -EMFILE;
     with_fd_info_lock(current_task->fd_info, {
-        current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
-        memset(current_task->fd_info->fds[fd], 0, sizeof(fd_t));
-        current_task->fd_info->fds[fd]->node = node;
-        current_task->fd_info->fds[fd]->offset = 0;
-        current_task->fd_info->fds[fd]->flags = flags;
+        for (int i = 0; i < MAX_FD_NUM; i++) {
+            if (!current_task->fd_info->fds[i]) {
+                fd = i;
+                break;
+            }
+        }
+
+        if (fd < 0)
+            break;
+
+        fd_t *new_fd = malloc(sizeof(fd_t));
+        if (!new_fd) {
+            ret = -ENOMEM;
+            fd = -1;
+            break;
+        }
+
+        memset(new_fd, 0, sizeof(fd_t));
+        new_fd->node = node;
+        new_fd->offset = 0;
+        new_fd->flags = flags;
+        current_task->fd_info->fds[fd] = new_fd;
         procfs_on_open_file(current_task, fd);
+        ret = 0;
     });
+
+    if (ret < 0) {
+        node->handle = NULL;
+        vfs_free(node);
+        free(ctx->queue);
+        free(ctx);
+        return ret;
+    }
 
     return fd;
 }

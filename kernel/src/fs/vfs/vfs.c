@@ -592,6 +592,9 @@ create:
     case S_IFIFO:
         node->type = file_fifo;
         break;
+    case S_IFSOCK:
+        node->type = file_socket;
+        break;
     default:
         node->type = file_none;
         break;

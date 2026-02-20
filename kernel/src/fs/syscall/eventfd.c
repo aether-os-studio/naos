@@ -10,19 +10,6 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags) {
     if (flags & ~(EFD_CLOEXEC | EFD_NONBLOCK | EFD_SEMAPHORE))
         return (uint64_t)-EINVAL;
 
-    // 分配文件描述符
-    int fd = -1;
-    for (int i = 0; i < MAX_FD_NUM; i++) {
-        if (!current_task->fd_info->fds[i]) {
-            fd = i;
-            break;
-        }
-    }
-
-    if (fd == -1) {
-        return (uint64_t)-EMFILE;
-    }
-
     // 分配eventfd结构体
     eventfd_t *efd = malloc(sizeof(eventfd_t));
     if (!efd)
@@ -41,15 +28,40 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags) {
 
     efd->node = node;
 
+    int fd = -1;
+    int ret = -EMFILE;
     with_fd_info_lock(current_task->fd_info, {
-        current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
-        memset(current_task->fd_info->fds[fd], 0, sizeof(fd_t));
-        current_task->fd_info->fds[fd]->node = node;
-        current_task->fd_info->fds[fd]->offset = 0;
-        current_task->fd_info->fds[fd]->flags = O_RDWR | flags;
-        current_task->fd_info->fds[fd]->close_on_exec = !!(flags & EFD_CLOEXEC);
+        for (int i = 0; i < MAX_FD_NUM; i++) {
+            if (!current_task->fd_info->fds[i]) {
+                fd = i;
+                break;
+            }
+        }
+
+        if (fd < 0)
+            break;
+
+        fd_t *new_fd = malloc(sizeof(fd_t));
+        if (!new_fd) {
+            ret = -ENOMEM;
+            fd = -1;
+            break;
+        }
+
+        memset(new_fd, 0, sizeof(fd_t));
+        new_fd->node = node;
+        new_fd->offset = 0;
+        new_fd->flags = O_RDWR | flags;
+        new_fd->close_on_exec = !!(flags & EFD_CLOEXEC);
+        current_task->fd_info->fds[fd] = new_fd;
         procfs_on_open_file(current_task, fd);
+        ret = 0;
     });
+
+    if (ret < 0) {
+        vfs_free(node);
+        return (uint64_t)ret;
+    }
 
     return fd;
 }
@@ -89,9 +101,6 @@ static ssize_t eventfd_write(eventfd_t *efd, const void *buf, size_t offset,
 
 bool eventfd_close(void *current) {
     eventfd_t *efd = current;
-    llist_delete(&efd->node->node_for_childs);
-    free(efd->node->name);
-    free(efd->node);
     free(efd);
 
     return true;

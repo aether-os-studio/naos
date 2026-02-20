@@ -8,6 +8,21 @@ static inline unsigned long vma_len(const vma_t *vma) {
     return vma->vm_end - vma->vm_start;
 }
 
+static bool vma_is_linked(vma_manager_t *mgr, const vma_t *target) {
+    if (!mgr || !target)
+        return false;
+
+    rb_node_t *node = rb_first(&mgr->vma_tree);
+    while (node) {
+        vma_t *vma = rb_entry(node, vma_t, vm_rb);
+        if (vma == target)
+            return true;
+        node = rb_next(node);
+    }
+
+    return false;
+}
+
 static vma_t *vma_copy(vma_t *src);
 
 vma_t *vma_alloc(void) {
@@ -116,7 +131,9 @@ int vma_insert(vma_manager_t *mgr, vma_t *new_vma) {
 }
 
 int vma_remove(vma_manager_t *mgr, vma_t *vma) {
-    if (!vma)
+    if (!mgr || !vma)
+        return -1;
+    if (!vma_is_linked(mgr, vma))
         return -1;
 
     rb_erase(&vma->vm_rb, &mgr->vma_tree);
@@ -154,9 +171,7 @@ int vma_split(vma_manager_t *mgr, vma_t *vma, uint64_t addr) {
     if (vma->vm_name) {
         new_vma->vm_name = strdup(vma->vm_name);
         if (!new_vma->vm_name) {
-            if (new_vma->node)
-                new_vma->node->refcount--;
-            free(new_vma);
+            vma_free(new_vma);
             return -1;
         }
     }
@@ -175,7 +190,9 @@ int vma_split(vma_manager_t *mgr, vma_t *vma, uint64_t addr) {
 }
 
 int vma_merge(vma_manager_t *mgr, vma_t *vma1, vma_t *vma2) {
-    if (!vma1 || !vma2 || vma1->vm_end != vma2->vm_start)
+    if (!mgr || !vma1 || !vma2 || vma1->vm_end != vma2->vm_start)
+        return -1;
+    if (!vma_is_linked(mgr, vma1) || !vma_is_linked(mgr, vma2))
         return -1;
 
     if (vma1->vm_flags != vma2->vm_flags || vma1->vm_type != vma2->vm_type ||
@@ -281,6 +298,7 @@ int vma_manager_copy(vma_manager_t *dst, vma_manager_t *src) {
 
     dst->vma_tree.rb_node = NULL;
     dst->vm_used = 0;
+    dst->initialized = src->initialized;
 
     rb_node_t *node = rb_first(&src->vma_tree);
     while (node) {
@@ -300,6 +318,5 @@ int vma_manager_copy(vma_manager_t *dst, vma_manager_t *src) {
         }
     }
 
-    dst->initialized = src->initialized;
     return 0;
 }

@@ -12,7 +12,7 @@ char *at_resolve_pathname(int dirfd, char *pathname) {
         if (dirfd == (int)AT_FDCWD) { // relative to cwd
             return strdup(pathname);
         } else { // relative to dirfd, resolve accordingly
-            if (dirfd < 0 || dirfd > MAX_FD_NUM ||
+            if (dirfd < 0 || dirfd >= MAX_FD_NUM ||
                 !current_task->fd_info->fds[dirfd] ||
                 !current_task->fd_info->fds[dirfd]->node)
                 return NULL;
@@ -56,7 +56,7 @@ char *at_resolve_pathname_fullpath(int dirfd, char *pathname) {
             free(cwd);
             return ret;
         } else { // relative to dirfd, resolve accordingly
-            if (dirfd < 0 || dirfd > MAX_FD_NUM ||
+            if (dirfd < 0 || dirfd >= MAX_FD_NUM ||
                 !current_task->fd_info->fds[dirfd] ||
                 !current_task->fd_info->fds[dirfd]->node)
                 return NULL;

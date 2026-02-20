@@ -99,17 +99,6 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
 
     task_t *self = current_task;
 
-    uint64_t i;
-    for (i = 0; i < MAX_FD_NUM; i++) {
-        if (self->fd_info->fds[i] == NULL) {
-            break;
-        }
-    }
-
-    if (i == MAX_FD_NUM) {
-        return (uint64_t)-EMFILE;
-    }
-
     int create_mode = (flags & O_CREAT);
 
     vfs_node_t node = vfs_open(name, flags & O_NOFOLLOW);
@@ -135,18 +124,35 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
             vfs_chmod(name, mode ? (mode & 0777) : 0777);
     }
 
+    uint64_t ret = (uint64_t)-EMFILE;
     with_fd_info_lock(self->fd_info, {
-        self->fd_info->fds[i] = malloc(sizeof(fd_t));
-        memset(self->fd_info->fds[i], 0, sizeof(fd_t));
-        self->fd_info->fds[i]->node = node;
-        self->fd_info->fds[i]->offset = 0;
-        self->fd_info->fds[i]->flags = flags;
-        self->fd_info->fds[i]->close_on_exec = !!(flags & O_CLOEXEC);
+        uint64_t i;
+        for (i = 0; i < MAX_FD_NUM; i++) {
+            if (self->fd_info->fds[i] == NULL)
+                break;
+        }
+
+        if (i == MAX_FD_NUM)
+            break;
+
+        fd_t *new_fd = malloc(sizeof(fd_t));
+        if (!new_fd) {
+            ret = (uint64_t)-ENOMEM;
+            break;
+        }
+
+        memset(new_fd, 0, sizeof(fd_t));
+        new_fd->node = node;
+        new_fd->offset = 0;
+        new_fd->flags = flags;
+        new_fd->close_on_exec = !!(flags & O_CLOEXEC);
+        self->fd_info->fds[i] = new_fd;
         node->refcount++;
         procfs_on_open_file(self, i);
+        ret = i;
     });
 
-    return i;
+    return ret;
 }
 
 uint64_t sys_open(const char *path, uint64_t flags, uint64_t mode) {
@@ -254,29 +260,34 @@ uint64_t sys_open_by_handle_at(int mountdirfd, struct file_handle *handle,
 
     task_t *self = current_task;
 
-    uint64_t i;
-    for (i = 0; i < MAX_FD_NUM; i++) {
-        if (self->fd_info->fds[i] == NULL) {
+    uint64_t ret = (uint64_t)-EMFILE;
+    with_fd_info_lock(self->fd_info, {
+        uint64_t i;
+        for (i = 0; i < MAX_FD_NUM; i++) {
+            if (self->fd_info->fds[i] == NULL)
+                break;
+        }
+
+        if (i == MAX_FD_NUM)
+            break;
+
+        fd_t *new_fd = malloc(sizeof(fd_t));
+        if (!new_fd) {
+            ret = (uint64_t)-ENOMEM;
             break;
         }
-    }
 
-    if (i == MAX_FD_NUM) {
-        return (uint64_t)-EMFILE;
-    }
-
-    with_fd_info_lock(self->fd_info, {
-        self->fd_info->fds[i] = malloc(sizeof(fd_t));
-        memset(self->fd_info->fds[i], 0, sizeof(fd_t));
-        self->fd_info->fds[i]->node = node;
-        self->fd_info->fds[i]->offset = 0;
-        self->fd_info->fds[i]->flags = flags;
+        memset(new_fd, 0, sizeof(fd_t));
+        new_fd->node = node;
+        new_fd->offset = 0;
+        new_fd->flags = flags;
+        self->fd_info->fds[i] = new_fd;
         node->refcount++;
-
         procfs_on_open_file(self, i);
+        ret = i;
     });
 
-    return i;
+    return ret;
 }
 
 uint64_t sys_fsync(uint64_t fd) {
@@ -297,11 +308,14 @@ uint64_t sys_close(uint64_t fd) {
 
     task_t *self = current_task;
 
-    if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
+    if (fd >= MAX_FD_NUM)
         return (uint64_t)-EBADF;
-    }
 
+    uint64_t ret = (uint64_t)-EBADF;
     with_fd_info_lock(self->fd_info, {
+        if (!self->fd_info->fds[fd])
+            break;
+
         self->fd_info->fds[fd]->offset = 0;
         if (self->fd_info->fds[fd]->node->lock.l_pid == self->pid) {
             self->fd_info->fds[fd]->node->lock.l_type = F_UNLCK;
@@ -309,15 +323,13 @@ uint64_t sys_close(uint64_t fd) {
         }
 
         vfs_close(self->fd_info->fds[fd]->node);
-
         free(self->fd_info->fds[fd]);
-
         self->fd_info->fds[fd] = NULL;
-
         procfs_on_close_file(self, fd);
+        ret = 0;
     });
 
-    return 0;
+    return ret;
 }
 
 static int close_range_unshare_fd_table(task_t *self) {
@@ -524,7 +536,7 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
 
 uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
                       size_t count) {
-    if (out_fd > MAX_FD_NUM || in_fd > MAX_FD_NUM)
+    if (out_fd >= MAX_FD_NUM || in_fd >= MAX_FD_NUM)
         return -EBADF;
 
     task_t *self = current_task;
@@ -655,6 +667,10 @@ uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count) {
 
         ssize_t ret = sys_read(fd, iovec[i].iov_base, iovec[i].len);
         if (ret < 0) {
+            if (total_read > 0 &&
+                (ret == -EAGAIN || ret == -EWOULDBLOCK || ret == -EINTR)) {
+                return total_read;
+            }
             return (uint64_t)ret;
         }
         total_read += ret;
@@ -677,6 +693,10 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count) {
 
         ssize_t ret = sys_write(fd, iovec[i].iov_base, iovec[i].len);
         if (ret < 0) {
+            if (total_written > 0 &&
+                (ret == -EAGAIN || ret == -EWOULDBLOCK || ret == -EINTR)) {
+                return total_written;
+            }
             return (uint64_t)ret;
         }
         total_written += ret;
@@ -796,61 +816,120 @@ uint64_t sys_getcwd(char *cwd, uint64_t size) {
 extern int unix_socket_fsid;
 extern int unix_accept_fsid;
 
-uint64_t sys_dup2(uint64_t fd, uint64_t newfd) {
-    task_t *self = current_task;
-    if (!self->fd_info->fds[fd])
+static uint64_t dup_to_exact(task_t *self, uint64_t fd, uint64_t newfd,
+                             bool cloexec, bool allow_same_fd) {
+    if (!self)
+        return (uint64_t)-EBADF;
+    if (fd >= MAX_FD_NUM)
+        return (uint64_t)-EBADF;
+    if (newfd >= MAX_FD_NUM)
         return (uint64_t)-EBADF;
 
-    fd_t *newf = vfs_dup(self->fd_info->fds[fd]);
-    if (!newf)
-        return (uint64_t)-ENOSPC;
-
+    uint64_t ret = newfd;
     with_fd_info_lock(self->fd_info, {
+        if (!self->fd_info->fds[fd]) {
+            ret = (uint64_t)-EBADF;
+            break;
+        }
+
+        if (fd == newfd) {
+            if (allow_same_fd) {
+                ret = newfd;
+            } else {
+                ret = (uint64_t)-EINVAL;
+            }
+            break;
+        }
+
+        fd_t *newf = vfs_dup(self->fd_info->fds[fd]);
+        if (!newf) {
+            ret = (uint64_t)-ENOSPC;
+            break;
+        }
+
         if (self->fd_info->fds[newfd]) {
             vfs_close(self->fd_info->fds[newfd]->node);
             free(self->fd_info->fds[newfd]);
             self->fd_info->fds[newfd] = NULL;
         }
 
-        self->fd_info->fds[newfd] = newf;
         newf->flags &= ~(uint64_t)O_CLOEXEC;
         newf->close_on_exec = false;
+        if (cloexec) {
+            newf->flags |= O_CLOEXEC;
+            newf->close_on_exec = true;
+        }
+
+        self->fd_info->fds[newfd] = newf;
     });
 
-    return newfd;
+    return ret;
+}
+
+uint64_t sys_dup2(uint64_t fd, uint64_t newfd) {
+    task_t *self = current_task;
+    return dup_to_exact(self, fd, newfd, false, true);
+}
+
+static uint64_t dup_to_free_slot(task_t *self, uint64_t fd, uint64_t start,
+                                 bool cloexec) {
+    if (!self)
+        return (uint64_t)-EBADF;
+    if (fd >= MAX_FD_NUM)
+        return (uint64_t)-EBADF;
+    if (start >= MAX_FD_NUM)
+        return (uint64_t)-EINVAL;
+
+    uint64_t ret = (uint64_t)-EBADF;
+    with_fd_info_lock(self->fd_info, {
+        if (!self->fd_info->fds[fd]) {
+            ret = (uint64_t)-EBADF;
+            break;
+        }
+
+        uint64_t i;
+        for (i = start; i < MAX_FD_NUM; i++) {
+            if (!self->fd_info->fds[i])
+                break;
+        }
+
+        if (i == MAX_FD_NUM) {
+            ret = (uint64_t)-EMFILE;
+            break;
+        }
+
+        fd_t *newf = vfs_dup(self->fd_info->fds[fd]);
+        if (!newf) {
+            ret = (uint64_t)-ENOSPC;
+            break;
+        }
+
+        newf->flags &= ~(uint64_t)O_CLOEXEC;
+        newf->close_on_exec = false;
+        if (cloexec) {
+            newf->flags |= O_CLOEXEC;
+            newf->close_on_exec = true;
+        }
+
+        self->fd_info->fds[i] = newf;
+        procfs_on_open_file(self, i);
+        ret = i;
+    });
+
+    return ret;
 }
 
 // Implement the sys_dup3 function
 uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
-    uint64_t fd = sys_dup2(oldfd, newfd);
-    if ((int64_t)fd < 0)
-        return fd;
+    if (flags & ~O_CLOEXEC)
+        return (uint64_t)-EINVAL;
     task_t *self = current_task;
-    self->fd_info->fds[fd]->flags = flags;
-    if (flags & O_CLOEXEC)
-        self->fd_info->fds[fd]->close_on_exec = true;
-
-    return fd;
+    return dup_to_exact(self, oldfd, newfd, !!(flags & O_CLOEXEC), false);
 }
 
 uint64_t sys_dup(uint64_t fd) {
     task_t *self = current_task;
-    fd_t *f = self->fd_info->fds[fd];
-    if (!f)
-        return (uint64_t)-EBADF;
-
-    uint64_t i;
-    for (i = 0; i < MAX_FD_NUM; i++) {
-        if (self->fd_info->fds[i] == NULL) {
-            break;
-        }
-    }
-
-    if (i == MAX_FD_NUM) {
-        return (uint64_t)-EMFILE;
-    }
-
-    return sys_dup2(fd, i);
+    return dup_to_free_slot(self, fd, 0, false);
 }
 
 #define RWF_WRITE_LIFE_NOT_SET 0
@@ -862,7 +941,7 @@ uint64_t sys_dup(uint64_t fd) {
 
 uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
     task_t *self = current_task;
-    if (fd > MAX_FD_NUM || !self->fd_info->fds[fd])
+    if (fd >= MAX_FD_NUM || !self->fd_info->fds[fd])
         return (uint64_t)-EBADF;
 
     uint64_t i;
@@ -874,39 +953,17 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         bool close_on_exec = !!(arg & FD_CLOEXEC);
         if (close_on_exec) {
             self->fd_info->fds[fd]->flags |= O_CLOEXEC;
+        } else {
+            self->fd_info->fds[fd]->flags &= ~(uint64_t)O_CLOEXEC;
         }
         self->fd_info->fds[fd]->close_on_exec = close_on_exec;
         return 0;
     case F_DUPFD_CLOEXEC:
-        for (i = arg; i < MAX_FD_NUM; i++) {
-            if (self->fd_info->fds[i] == NULL) {
-                break;
-            }
-        }
-
-        if (i == MAX_FD_NUM) {
-            return (uint64_t)-EMFILE;
-        }
-        uint64_t newfd = sys_dup2(fd, i);
-        if ((int64_t)newfd >= 0) {
-            self->fd_info->fds[newfd]->flags |= O_CLOEXEC;
-            self->fd_info->fds[newfd]->close_on_exec = true;
-        }
-        return newfd;
+        return dup_to_free_slot(self, fd, arg, true);
     case F_DUPFD:
-        for (i = arg; i < MAX_FD_NUM; i++) {
-            if (self->fd_info->fds[i] == NULL) {
-                break;
-            }
-        }
-
-        if (i == MAX_FD_NUM) {
-            return (uint64_t)-EMFILE;
-        }
-        return sys_dup2(fd, i);
+        return dup_to_free_slot(self, fd, arg, false);
     case F_GETFL:
-        return self->fd_info->fds[fd]->flags |
-               (self->fd_info->fds[fd]->close_on_exec ? O_CLOEXEC : 0);
+        return self->fd_info->fds[fd]->flags & ~(uint64_t)O_CLOEXEC;
     case F_SETFL:
         uint32_t valid_flags = O_APPEND | O_DIRECT | O_NOATIME | O_NONBLOCK;
         self->fd_info->fds[fd]->flags &= ~valid_flags;
@@ -1126,7 +1183,7 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
     task_t *self = current_task;
 
     if (flags & AT_EMPTY_PATH) {
-        if (dirfd > MAX_FD_NUM || !self->fd_info->fds[dirfd])
+        if (dirfd >= MAX_FD_NUM || !self->fd_info->fds[dirfd])
             return (uint64_t)-EBADF;
         int ret = do_stat_fd(dirfd, &simple);
         if (ret < 0)

@@ -143,19 +143,9 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags) {
         return -EINVAL;
     }
 
-    int fd = -1;
-    for (int i = 0; i < MAX_FD_NUM; i++) {
-        if (!current_task->fd_info->fds[i]) {
-            fd = i;
-            break;
-        }
-    }
-
-    if (fd == -1) {
-        return -EMFILE;
-    }
-
     struct memfd_ctx *ctx = malloc(sizeof(struct memfd_ctx));
+    if (!ctx)
+        return -ENOMEM;
     strncpy(ctx->name, name, 63);
     ctx->name[63] = '\0';
     ctx->len = DEFAULT_PAGE_SIZE;
@@ -172,16 +162,40 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags) {
     node->refcount++;
     node->size = 0;
 
+    int fd = -1;
+    int ret = -EMFILE;
     with_fd_info_lock(current_task->fd_info, {
-        current_task->fd_info->fds[fd] = malloc(sizeof(fd_t));
-        memset(current_task->fd_info->fds[fd], 0, sizeof(fd_t));
-        current_task->fd_info->fds[fd]->node = node;
-        current_task->fd_info->fds[fd]->offset = 0;
-        current_task->fd_info->fds[fd]->flags =
-            O_RDWR | ((flags & MFD_CLOEXEC) ? O_CLOEXEC : 0);
-        current_task->fd_info->fds[fd]->close_on_exec = !!(flags & MFD_CLOEXEC);
+        for (int i = 0; i < MAX_FD_NUM; i++) {
+            if (!current_task->fd_info->fds[i]) {
+                fd = i;
+                break;
+            }
+        }
+
+        if (fd < 0)
+            break;
+
+        fd_t *new_fd = malloc(sizeof(fd_t));
+        if (!new_fd) {
+            ret = -ENOMEM;
+            fd = -1;
+            break;
+        }
+
+        memset(new_fd, 0, sizeof(fd_t));
+        new_fd->node = node;
+        new_fd->offset = 0;
+        new_fd->flags = O_RDWR | ((flags & MFD_CLOEXEC) ? O_CLOEXEC : 0);
+        new_fd->close_on_exec = !!(flags & MFD_CLOEXEC);
+        current_task->fd_info->fds[fd] = new_fd;
         procfs_on_open_file(current_task, fd);
+        ret = 0;
     });
+
+    if (ret < 0) {
+        vfs_free(node);
+        return ret;
+    }
 
     ctx->node = node;
 
