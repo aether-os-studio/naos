@@ -9,8 +9,6 @@ vfs_node_t pipefs_root;
 int pipefs_id = 0;
 static int pipefd_id = 0;
 
-static int dummy() { return -ENOSYS; }
-
 void pipefs_open(vfs_node_t parent, const char *name, vfs_node_t node) {
     (void)parent;
     (void)name;
@@ -223,28 +221,13 @@ int pipefs_stat(vfs_node_t node) {
 }
 
 static vfs_operations_t callbacks = {
-    .mount = (vfs_mount_t)dummy,
-    .unmount = (vfs_unmount_t)dummy,
-    .remount = (vfs_remount_t)dummy,
     .open = (vfs_open_t)pipefs_open,
     .close = (vfs_close_t)pipefs_close,
     .read = pipefs_read,
     .write = pipefs_write,
-    .readlink = (vfs_readlink_t)dummy,
-    .mkdir = (vfs_mk_t)dummy,
-    .mkfile = (vfs_mk_t)dummy,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)dummy,
-    .mknod = (vfs_mknod_t)dummy,
-    .chmod = (vfs_chmod_t)dummy,
-    .chown = (vfs_chown_t)dummy,
-    .delete = (vfs_del_t)dummy,
-    .rename = (vfs_rename_t)dummy,
-    .map = (vfs_mapfile_t)dummy,
     .stat = (vfs_stat_t)pipefs_stat,
     .ioctl = (vfs_ioctl_t)pipefs_ioctl,
     .poll = pipefs_poll,
-    .resize = (vfs_resize_t)dummy,
 
     .free_handle = vfs_generic_free_handle,
 };

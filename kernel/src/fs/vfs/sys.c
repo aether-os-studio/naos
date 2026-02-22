@@ -17,8 +17,6 @@ static int mount_node_old_fsid = 0;
 
 extern uint32_t device_number;
 
-static int dummy() { return -ENOSYS; }
-
 void sysfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {}
 
 bool sysfs_close(vfs_node_t node) { return false; }
@@ -154,28 +152,16 @@ void sysfs_free_handle(vfs_node_t node) {
 }
 
 static vfs_operations_t callbacks = {
-    .open = (vfs_open_t)sysfs_open,
-    .close = (vfs_close_t)sysfs_close,
-    .read = (vfs_read_t)sysfs_read,
-    .write = (vfs_write_t)sysfs_write,
-    .readlink = (vfs_readlink_t)sysfs_readlink,
-    .mkdir = (vfs_mk_t)sysfs_mkdir,
-    .mkfile = (vfs_mk_t)sysfs_mkfile,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)sysfs_symlink,
-    .mknod = (vfs_mknod_t)dummy,
-    .chmod = (vfs_chmod_t)dummy,
-    .chown = (vfs_chown_t)dummy,
-    .delete = (vfs_del_t)dummy,
-    .rename = (vfs_rename_t)dummy,
-    .stat = (vfs_stat_t)dummy,
-    .ioctl = (vfs_ioctl_t)dummy,
-    .map = (vfs_mapfile_t)dummy,
-    .poll = (vfs_poll_t)dummy,
-    .mount = (vfs_mount_t)sysfs_mount,
-    .unmount = (vfs_unmount_t)sysfs_unmount,
-    .remount = (vfs_remount_t)dummy,
-    .resize = (vfs_resize_t)dummy,
+    .open = sysfs_open,
+    .close = sysfs_close,
+    .read = sysfs_read,
+    .write = sysfs_write,
+    .readlink = sysfs_readlink,
+    .mkdir = sysfs_mkdir,
+    .mkfile = sysfs_mkfile,
+    .symlink = sysfs_symlink,
+    .mount = sysfs_mount,
+    .unmount = sysfs_unmount,
 
     .free_handle = sysfs_free_handle,
 };

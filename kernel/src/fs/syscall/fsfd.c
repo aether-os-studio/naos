@@ -755,58 +755,16 @@ bool mntfd_close(vfs_node_t node) {
     return true;
 }
 
-static int dummy() { return 0; }
-
 static vfs_operations_t fsfd_callbacks = {
-    .mount = (vfs_mount_t)dummy,
-    .unmount = (vfs_unmount_t)dummy,
-    .remount = (vfs_remount_t)dummy,
-    .open = (vfs_open_t)dummy,
-    .close = (vfs_close_t)fsfdfs_close,
-    .read = (vfs_read_t)fsfdfs_read,
-    .write = (vfs_write_t)dummy,
-    .readlink = (vfs_readlink_t)dummy,
-    .mkdir = (vfs_mk_t)dummy,
-    .mkfile = (vfs_mk_t)dummy,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)dummy,
-    .mknod = (vfs_mknod_t)dummy,
-    .chmod = (vfs_chmod_t)dummy,
-    .chown = (vfs_chown_t)dummy,
-    .rename = (vfs_rename_t)dummy,
-    .delete = (vfs_del_t)dummy,
-    .map = (vfs_mapfile_t)dummy,
-    .stat = (vfs_stat_t)dummy,
-    .ioctl = (vfs_ioctl_t)dummy,
-    .poll = (vfs_poll_t)dummy,
-    .resize = (vfs_resize_t)dummy,
+    .close = fsfdfs_close,
+    .read = fsfdfs_read,
 
     .free_handle = vfs_generic_free_handle,
 };
 
 static vfs_operations_t mntfd_callbacks = {
-    .mount = (vfs_mount_t)dummy,
-    .unmount = (vfs_unmount_t)dummy,
-    .remount = (vfs_remount_t)dummy,
-    .open = (vfs_open_t)dummy,
-    .close = (vfs_close_t)mntfd_close,
-    .read = (vfs_read_t)fsfdfs_read,
-    .write = (vfs_write_t)dummy,
-    .readlink = (vfs_readlink_t)dummy,
-    .mkdir = (vfs_mk_t)dummy,
-    .mkfile = (vfs_mk_t)dummy,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)dummy,
-    .mknod = (vfs_mknod_t)dummy,
-    .chmod = (vfs_chmod_t)dummy,
-    .chown = (vfs_chown_t)dummy,
-    .rename = (vfs_rename_t)dummy,
-    .delete = (vfs_del_t)dummy,
-    .map = (vfs_mapfile_t)dummy,
-    .stat = (vfs_stat_t)dummy,
-    .ioctl = (vfs_ioctl_t)dummy,
-    .poll = (vfs_poll_t)dummy,
-    .resize = (vfs_resize_t)dummy,
+    .close = mntfd_close,
+    .read = fsfdfs_read,
 
     .free_handle = vfs_generic_free_handle,
 };

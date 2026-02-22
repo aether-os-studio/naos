@@ -17,8 +17,6 @@ spinlock_t devtmpfs_oplock = SPIN_INIT;
 vfs_node_t devtmpfs_root = NULL;
 vfs_node_t fake_devtmpfs_root = NULL;
 
-static int dummy() { return 0; }
-
 void devtmpfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {
     if ((node->type & file_block) || (node->type & file_stream)) {
         device_open(node->rdev, NULL);
@@ -336,28 +334,26 @@ void devtmpfs_free_handle(vfs_node_t node) {
 }
 
 static vfs_operations_t callbacks = {
-    .open = (vfs_open_t)devtmpfs_open,
-    .close = (vfs_close_t)devtmpfs_close,
-    .read = (vfs_read_t)devtmpfs_read,
-    .write = (vfs_write_t)devtmpfs_write,
-    .readlink = (vfs_readlink_t)devtmpfs_readlink,
-    .mkdir = (vfs_mk_t)devtmpfs_mkdir,
-    .mkfile = (vfs_mk_t)devtmpfs_mkfile,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)devtmpfs_symlink,
-    .mknod = (vfs_mknod_t)devtmpfs_mknod,
-    .chmod = (vfs_chmod_t)devtmpfs_chmod,
-    .chown = (vfs_chown_t)devtmpfs_chown,
-    .delete = (vfs_del_t)devtmpfs_delete,
-    .rename = (vfs_rename_t)devtmpfs_rename,
-    .stat = (vfs_stat_t)devtmpfs_stat,
-    .ioctl = (vfs_ioctl_t)devtmpfs_ioctl,
-    .map = (vfs_mapfile_t)devtmpfs_map,
-    .poll = (vfs_poll_t)devtmpfs_poll,
-    .mount = (vfs_mount_t)devtmpfs_mount,
-    .unmount = (vfs_unmount_t)devtmpfs_unmount,
-    .remount = (vfs_remount_t)dummy,
-    .resize = (vfs_resize_t)devtmpfs_resize,
+    .open = devtmpfs_open,
+    .close = devtmpfs_close,
+    .read = devtmpfs_read,
+    .write = devtmpfs_write,
+    .readlink = devtmpfs_readlink,
+    .mkdir = devtmpfs_mkdir,
+    .mkfile = devtmpfs_mkfile,
+    .symlink = devtmpfs_symlink,
+    .mknod = devtmpfs_mknod,
+    .chmod = devtmpfs_chmod,
+    .chown = devtmpfs_chown,
+    .delete = devtmpfs_delete,
+    .rename = devtmpfs_rename,
+    .stat = devtmpfs_stat,
+    .ioctl = devtmpfs_ioctl,
+    .map = devtmpfs_map,
+    .poll = devtmpfs_poll,
+    .mount = devtmpfs_mount,
+    .unmount = devtmpfs_unmount,
+    .resize = devtmpfs_resize,
 
     .free_handle = devtmpfs_free_handle,
 };

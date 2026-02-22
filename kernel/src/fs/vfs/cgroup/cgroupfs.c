@@ -111,31 +111,14 @@ void cgroupfs_free_handle(vfs_node_t node) {
     free(tnode);
 }
 
-static int dummy() { return 0; }
-
 static vfs_operations_t callbacks = {
-    .open = (vfs_open_t)dummy,
-    .close = (vfs_close_t)dummy,
-    .read = (vfs_read_t)cgroupfs_read,
-    .write = (vfs_write_t)cgroupfs_write,
-    .readlink = (vfs_readlink_t)dummy,
-    .mkdir = (vfs_mk_t)cgroupfs_mkdir,
-    .mkfile = (vfs_mk_t)cgroupfs_mkfile,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)dummy,
-    .mknod = (vfs_mknod_t)dummy,
-    .chmod = (vfs_chmod_t)dummy,
-    .chown = (vfs_chown_t)dummy,
-    .delete = (vfs_del_t)cgroupfs_delete,
-    .rename = (vfs_rename_t)dummy,
-    .stat = (vfs_stat_t)dummy,
-    .ioctl = (vfs_ioctl_t)dummy,
-    .map = (vfs_mapfile_t)dummy,
-    .poll = (vfs_poll_t)dummy,
-    .mount = (vfs_mount_t)cgroupfs_mount,
-    .unmount = (vfs_unmount_t)cgroupfs_unmount,
-    .remount = (vfs_remount_t)dummy,
-    .resize = (vfs_resize_t)dummy,
+    .read = cgroupfs_read,
+    .write = cgroupfs_write,
+    .mkdir = cgroupfs_mkdir,
+    .mkfile = cgroupfs_mkfile,
+    .delete = cgroupfs_delete,
+    .mount = cgroupfs_mount,
+    .unmount = cgroupfs_unmount,
 
     .free_handle = cgroupfs_free_handle,
 };

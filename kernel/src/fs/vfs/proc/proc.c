@@ -28,8 +28,6 @@ int procfs_id = 0;
 int procfs_self_id = 0;
 static int mount_node_old_fsid = 0;
 
-static int dummy() { return -ENOSYS; }
-
 void procfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {}
 
 bool procfs_close(vfs_node_t node) { return false; }
@@ -126,23 +124,10 @@ static vfs_operations_t callbacks = {
     .read = procfs_read,
     .write = (vfs_write_t)procfs_write,
     .readlink = (vfs_readlink_t)procfs_readlink,
-    .mkdir = (vfs_mk_t)dummy,
-    .mkfile = (vfs_mk_t)dummy,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)dummy,
-    .mknod = (vfs_mknod_t)dummy,
-    .chmod = (vfs_chmod_t)dummy,
-    .chown = (vfs_chown_t)dummy,
-    .delete = (vfs_del_t)dummy,
-    .rename = (vfs_rename_t)dummy,
     .stat = (vfs_stat_t)procfs_stat,
-    .ioctl = (vfs_ioctl_t)dummy,
-    .map = (vfs_mapfile_t)dummy,
     .poll = (vfs_poll_t)procfs_poll,
     .mount = (vfs_mount_t)procfs_mount,
     .unmount = (vfs_unmount_t)procfs_unmount,
-    .remount = (vfs_remount_t)dummy,
-    .resize = (vfs_resize_t)dummy,
 
     .free_handle = vfs_generic_free_handle,
 };
@@ -186,26 +171,7 @@ void procfs_self_free_handle(vfs_node_t node) {
 static vfs_operations_t procfs_self_callbacks = {
     .open = (vfs_open_t)procfs_self_open,
     .close = (vfs_close_t)procfs_self_close,
-    .read = (vfs_read_t)dummy,
-    .write = (vfs_write_t)dummy,
     .readlink = (vfs_readlink_t)procfs_self_readlink,
-    .mkdir = (vfs_mk_t)dummy,
-    .mkfile = (vfs_mk_t)dummy,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)dummy,
-    .mknod = (vfs_mknod_t)dummy,
-    .chmod = (vfs_chmod_t)dummy,
-    .chown = (vfs_chown_t)dummy,
-    .delete = (vfs_del_t)dummy,
-    .rename = (vfs_rename_t)dummy,
-    .stat = (vfs_stat_t)dummy,
-    .ioctl = (vfs_ioctl_t)dummy,
-    .map = (vfs_mapfile_t)dummy,
-    .poll = (vfs_poll_t)dummy,
-    .mount = (vfs_mount_t)dummy,
-    .unmount = (vfs_unmount_t)dummy,
-    .remount = (vfs_remount_t)dummy,
-    .resize = (vfs_resize_t)dummy,
 
     .free_handle = procfs_self_free_handle,
 };

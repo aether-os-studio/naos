@@ -14,8 +14,6 @@ spinlock_t tmpfs_oplock = SPIN_INIT;
 
 extern uint32_t device_number;
 
-static int dummy() { return 0; }
-
 void tmpfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {}
 
 bool tmpfs_close(vfs_node_t node) { return false; }
@@ -278,28 +276,24 @@ void tmpfs_free_handle(vfs_node_t node) {
 }
 
 static vfs_operations_t callbacks = {
-    .open = (vfs_open_t)tmpfs_open,
-    .close = (vfs_close_t)tmpfs_close,
-    .read = (vfs_read_t)tmpfs_read,
-    .write = (vfs_write_t)tmpfs_write,
-    .readlink = (vfs_readlink_t)tmpfs_readlink,
-    .mkdir = (vfs_mk_t)tmpfs_mkdir,
-    .mkfile = (vfs_mk_t)tmpfs_mkfile,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)tmpfs_symlink,
-    .mknod = (vfs_mknod_t)tmpfs_mknod,
-    .chmod = (vfs_chmod_t)tmpfs_chmod,
-    .chown = (vfs_chown_t)tmpfs_chown,
-    .delete = (vfs_del_t)tmpfs_delete,
-    .rename = (vfs_rename_t)tmpfs_rename,
-    .stat = (vfs_stat_t)tmpfs_stat,
-    .ioctl = (vfs_ioctl_t)dummy,
-    .map = (vfs_mapfile_t)tmpfs_map,
-    .poll = (vfs_poll_t)dummy,
-    .mount = (vfs_mount_t)tmpfs_mount,
-    .unmount = (vfs_unmount_t)tmpfs_unmount,
-    .remount = (vfs_remount_t)dummy,
-    .resize = (vfs_resize_t)tmpfs_resize,
+    .open = tmpfs_open,
+    .close = tmpfs_close,
+    .read = tmpfs_read,
+    .write = tmpfs_write,
+    .readlink = tmpfs_readlink,
+    .mkdir = tmpfs_mkdir,
+    .mkfile = tmpfs_mkfile,
+    .symlink = tmpfs_symlink,
+    .mknod = tmpfs_mknod,
+    .chmod = tmpfs_chmod,
+    .chown = tmpfs_chown,
+    .delete = tmpfs_delete,
+    .rename = tmpfs_rename,
+    .stat = tmpfs_stat,
+    .map = tmpfs_map,
+    .mount = tmpfs_mount,
+    .unmount = tmpfs_unmount,
+    .resize = tmpfs_resize,
 
     .free_handle = tmpfs_free_handle,
 };

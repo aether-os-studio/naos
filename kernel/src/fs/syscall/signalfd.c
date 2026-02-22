@@ -1,8 +1,6 @@
 #include <fs/fs_syscall.h>
 #include <fs/vfs/proc.h>
 
-static int dummy() { return 0; }
-
 static int signalfd_poll(vfs_node_t node, size_t event) {
     struct signalfd_ctx *ctx = node ? node->handle : NULL;
     if (!ctx)
@@ -151,28 +149,10 @@ uint64_t sys_signalfd(int ufd, const sigset_t *mask, size_t sizemask) {
 }
 
 static vfs_operations_t signalfd_callbacks = {
-    .mount = (vfs_mount_t)dummy,
-    .unmount = (vfs_unmount_t)dummy,
-    .remount = (vfs_remount_t)dummy,
-    .open = (vfs_open_t)dummy,
-    .close = (vfs_close_t)signalfd_close,
-    .read = (vfs_read_t)signalfd_read,
-    .write = (vfs_write_t)dummy,
-    .readlink = (vfs_readlink_t)dummy,
-    .mkdir = (vfs_mk_t)dummy,
-    .mkfile = (vfs_mk_t)dummy,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)dummy,
-    .mknod = (vfs_mknod_t)dummy,
-    .chmod = (vfs_chmod_t)dummy,
-    .chown = (vfs_chown_t)dummy,
-    .delete = (vfs_del_t)dummy,
-    .rename = (vfs_rename_t)dummy,
-    .map = (vfs_mapfile_t)dummy,
-    .stat = (vfs_stat_t)dummy,
-    .ioctl = (vfs_ioctl_t)signalfd_ioctl,
+    .close = signalfd_close,
+    .read = signalfd_read,
+    .ioctl = signalfd_ioctl,
     .poll = signalfd_poll,
-    .resize = (vfs_resize_t)dummy,
 
     .free_handle = vfs_generic_free_handle,
 };

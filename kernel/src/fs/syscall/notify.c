@@ -10,8 +10,6 @@ static int watch_desc = 1;
 struct llist_header all_watches;
 spinlock_t all_watches_lock = SPIN_INIT;
 
-static int dummy() { return 0; }
-
 struct inotify_event {
     int wd;
     unsigned int mask;
@@ -81,28 +79,9 @@ static bool notifyfs_close(vfs_node_t node) {
 }
 
 static vfs_operations_t notifyfs_callbacks = {
-    .mount = (vfs_mount_t)dummy,
-    .unmount = (vfs_unmount_t)dummy,
-    .remount = (vfs_remount_t)dummy,
-    .open = (vfs_open_t)dummy,
-    .close = (vfs_close_t)notifyfs_close,
-    .read = (vfs_read_t)notifyfs_read,
-    .write = (vfs_write_t)dummy,
-    .readlink = (vfs_readlink_t)dummy,
-    .mkdir = (vfs_mk_t)dummy,
-    .mkfile = (vfs_mk_t)dummy,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)dummy,
-    .mknod = (vfs_mknod_t)dummy,
-    .chmod = (vfs_chmod_t)dummy,
-    .chown = (vfs_chown_t)dummy,
-    .rename = (vfs_rename_t)dummy,
-    .delete = (vfs_del_t)dummy,
-    .map = (vfs_mapfile_t)dummy,
-    .stat = (vfs_stat_t)dummy,
-    .ioctl = (vfs_ioctl_t)dummy,
-    .poll = (vfs_poll_t)notifyfs_poll,
-    .resize = (vfs_resize_t)dummy,
+    .close = notifyfs_close,
+    .read = notifyfs_read,
+    .poll = notifyfs_poll,
 
     .free_handle = vfs_generic_free_handle,
 };

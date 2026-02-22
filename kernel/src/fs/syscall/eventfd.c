@@ -3,8 +3,6 @@
 
 int eventfdfs_id = 0;
 
-static int dummy() { return 0; }
-
 uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags) {
     // 参数校验
     if (flags & ~(EFD_CLOEXEC | EFD_NONBLOCK | EFD_SEMAPHORE))
@@ -97,8 +95,10 @@ static ssize_t eventfd_read(fd_t *fd, void *buf, size_t offset, size_t len) {
     return sizeof(uint64_t);
 }
 
-static ssize_t eventfd_write(eventfd_t *efd, const void *buf, size_t offset,
+static ssize_t eventfd_write(fd_t *fd, const void *buf, size_t offset,
                              size_t len) {
+    eventfd_t *efd = fd->node->handle;
+
     uint64_t value;
     memcpy(&value, buf, sizeof(uint64_t));
 
@@ -136,28 +136,10 @@ static int eventfd_poll(vfs_node_t node, size_t events) {
 }
 
 static vfs_operations_t eventfd_callbacks = {
-    .mount = (vfs_mount_t)dummy,
-    .unmount = (vfs_unmount_t)dummy,
-    .remount = (vfs_remount_t)dummy,
-    .open = (vfs_open_t)dummy,
-    .close = (vfs_close_t)eventfd_close,
-    .read = (vfs_read_t)eventfd_read,
-    .write = (vfs_write_t)eventfd_write,
-    .readlink = (vfs_readlink_t)dummy,
-    .mkdir = (vfs_mk_t)dummy,
-    .mkfile = (vfs_mk_t)dummy,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)dummy,
-    .mknod = (vfs_mknod_t)dummy,
-    .chmod = (vfs_chmod_t)dummy,
-    .chown = (vfs_chown_t)dummy,
-    .rename = (vfs_rename_t)dummy,
-    .delete = (vfs_del_t)dummy,
-    .map = (vfs_mapfile_t)dummy,
-    .stat = (vfs_stat_t)dummy,
-    .ioctl = (vfs_ioctl_t)dummy,
+    .close = eventfd_close,
+    .read = eventfd_read,
+    .write = eventfd_write,
     .poll = eventfd_poll,
-    .resize = (vfs_resize_t)dummy,
 
     .free_handle = vfs_generic_free_handle,
 };

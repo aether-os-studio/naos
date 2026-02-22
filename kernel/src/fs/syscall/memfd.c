@@ -109,31 +109,13 @@ void *memfd_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
     return addr;
 }
 
-static int dummy() { return 0; }
-
 static vfs_operations_t callbacks = {
-    .mount = (vfs_mount_t)dummy,
-    .unmount = (vfs_unmount_t)dummy,
-    .remount = (vfs_remount_t)dummy,
-    .open = (vfs_open_t)dummy,
-    .close = (vfs_close_t)memfd_close,
-    .read = (vfs_read_t)memfd_read,
-    .write = (vfs_write_t)memfd_write,
-    .readlink = (vfs_readlink_t)dummy,
-    .mkdir = (vfs_mk_t)dummy,
-    .mkfile = (vfs_mk_t)dummy,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)dummy,
-    .mknod = (vfs_mknod_t)dummy,
-    .chmod = (vfs_chmod_t)dummy,
-    .chown = (vfs_chown_t)dummy,
-    .delete = (vfs_del_t)dummy,
-    .rename = (vfs_rename_t)dummy,
-    .map = (vfs_mapfile_t)memfd_map,
-    .stat = (vfs_stat_t)memfd_stat,
-    .ioctl = (vfs_ioctl_t)dummy,
-    .poll = (vfs_poll_t)dummy,
-    .resize = (vfs_resize_t)memfd_resize,
+    .close = memfd_close,
+    .read = memfd_read,
+    .write = memfd_write,
+    .map = memfd_map,
+    .stat = memfd_stat,
+    .resize = memfd_resize,
 
     .free_handle = vfs_generic_free_handle,
 };

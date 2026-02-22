@@ -229,31 +229,11 @@ int timerfd_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
     }
 }
 
-static int dummy() { return 0; }
-
 static vfs_operations_t timerfd_callbacks = {
-    .mount = (vfs_mount_t)dummy,
-    .unmount = (vfs_unmount_t)dummy,
-    .remount = (vfs_remount_t)dummy,
-    .open = (vfs_open_t)dummy,
-    .close = (vfs_close_t)timerfd_close,
-    .read = (vfs_read_t)timerfd_read,
-    .write = (vfs_write_t)dummy,
-    .readlink = (vfs_readlink_t)dummy,
-    .mkdir = (vfs_mk_t)dummy,
-    .mkfile = (vfs_mk_t)dummy,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)dummy,
-    .mknod = (vfs_mknod_t)dummy,
-    .chmod = (vfs_chmod_t)dummy,
-    .chown = (vfs_chown_t)dummy,
-    .delete = (vfs_del_t)dummy,
-    .rename = (vfs_rename_t)dummy,
-    .map = (vfs_mapfile_t)dummy,
-    .stat = (vfs_stat_t)dummy,
-    .ioctl = (vfs_ioctl_t)timerfd_ioctl,
-    .poll = (vfs_poll_t)timerfd_poll,
-    .resize = (vfs_resize_t)dummy,
+    .close = timerfd_close,
+    .read = timerfd_read,
+    .ioctl = timerfd_ioctl,
+    .poll = timerfd_poll,
 
     .free_handle = vfs_generic_free_handle,
 };

@@ -55,8 +55,6 @@ typedef struct drm_prime_fd_ctx {
 static int drm_prime_fsid = 0;
 static spinlock_t drm_prime_fsid_lock = SPIN_INIT;
 
-static int drm_primefs_dummy() { return 0; }
-
 static ssize_t drm_primefd_read(fd_t *fd, void *buf, uint64_t offset,
                                 uint64_t len) {
     drm_prime_fd_ctx_t *ctx = fd->node->handle;
@@ -135,28 +133,12 @@ static void *drm_primefd_map(fd_t *file, void *addr, size_t offset, size_t size,
 }
 
 static vfs_operations_t drm_primefs_callbacks = {
-    .mount = (vfs_mount_t)drm_primefs_dummy,
-    .unmount = (vfs_unmount_t)drm_primefs_dummy,
-    .remount = (vfs_remount_t)drm_primefs_dummy,
-    .open = (vfs_open_t)drm_primefs_dummy,
-    .close = (vfs_close_t)drm_primefd_close,
-    .read = (vfs_read_t)drm_primefd_read,
-    .write = (vfs_write_t)drm_primefd_write,
-    .readlink = (vfs_readlink_t)drm_primefs_dummy,
-    .mkdir = (vfs_mk_t)drm_primefs_dummy,
-    .mkfile = (vfs_mk_t)drm_primefs_dummy,
-    .link = (vfs_mk_t)drm_primefs_dummy,
-    .symlink = (vfs_mk_t)drm_primefs_dummy,
-    .mknod = (vfs_mknod_t)drm_primefs_dummy,
-    .chmod = (vfs_chmod_t)drm_primefs_dummy,
-    .chown = (vfs_chown_t)drm_primefs_dummy,
-    .delete = (vfs_del_t)drm_primefs_dummy,
-    .rename = (vfs_rename_t)drm_primefs_dummy,
-    .map = (vfs_mapfile_t)drm_primefd_map,
-    .stat = (vfs_stat_t)drm_primefd_stat,
-    .ioctl = (vfs_ioctl_t)drm_primefs_dummy,
-    .poll = (vfs_poll_t)drm_primefs_dummy,
-    .resize = (vfs_resize_t)drm_primefd_resize,
+    .close = drm_primefd_close,
+    .read = drm_primefd_read,
+    .write = drm_primefd_write,
+    .map = drm_primefd_map,
+    .stat = drm_primefd_stat,
+    .resize = drm_primefd_resize,
     .free_handle = vfs_generic_free_handle,
 };
 

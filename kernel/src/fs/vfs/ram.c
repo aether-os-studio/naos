@@ -14,8 +14,6 @@ spinlock_t ramfs_oplock = SPIN_INIT;
 
 extern uint32_t device_number;
 
-static int dummy() { return 0; }
-
 void ramfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {}
 
 bool ramfs_close(vfs_node_t node) { return false; }
@@ -207,28 +205,24 @@ void ramfs_free_handle(vfs_node_t node) {
 }
 
 static vfs_operations_t callbacks = {
-    .open = (vfs_open_t)ramfs_open,
-    .close = (vfs_close_t)ramfs_close,
-    .read = (vfs_read_t)ramfs_read,
-    .write = (vfs_write_t)ramfs_write,
-    .readlink = (vfs_readlink_t)ramfs_readlink,
-    .mkdir = (vfs_mk_t)ramfs_mkdir,
-    .mkfile = (vfs_mk_t)ramfs_mkfile,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)ramfs_symlink,
-    .mknod = (vfs_mknod_t)ramfs_mknod,
-    .chmod = (vfs_chmod_t)ramfs_chmod,
-    .chown = (vfs_chown_t)ramfs_chown,
-    .delete = (vfs_del_t)ramfs_delete,
-    .rename = (vfs_rename_t)ramfs_rename,
-    .stat = (vfs_stat_t)ramfs_stat,
-    .ioctl = (vfs_ioctl_t)dummy,
-    .map = (vfs_mapfile_t)ramfs_map,
-    .poll = (vfs_poll_t)dummy,
-    .mount = (vfs_mount_t)ramfs_mount,
-    .unmount = (vfs_unmount_t)ramfs_unmount,
-    .remount = (vfs_remount_t)dummy,
-    .resize = (vfs_resize_t)ramfs_resize,
+    .open = ramfs_open,
+    .close = ramfs_close,
+    .read = ramfs_read,
+    .write = ramfs_write,
+    .readlink = ramfs_readlink,
+    .mkdir = ramfs_mkdir,
+    .mkfile = ramfs_mkfile,
+    .symlink = ramfs_symlink,
+    .mknod = ramfs_mknod,
+    .chmod = ramfs_chmod,
+    .chown = ramfs_chown,
+    .delete = ramfs_delete,
+    .rename = ramfs_rename,
+    .stat = ramfs_stat,
+    .map = ramfs_map,
+    .mount = ramfs_mount,
+    .unmount = ramfs_unmount,
+    .resize = ramfs_resize,
 
     .free_handle = ramfs_free_handle,
 };
