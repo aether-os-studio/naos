@@ -55,6 +55,59 @@ static int pty_wait_node(vfs_node_t node, uint32_t events, const char *reason) {
     return ret;
 }
 
+static int pty_tcxonc_locked(pty_pair_t *pair, bool from_master,
+                             uintptr_t arg, uint32_t *notify_master,
+                             uint32_t *notify_slave) {
+    if (!pair)
+        return -EINVAL;
+
+    int action = (int)arg;
+    switch (action) {
+    case TCOOFF:
+        if (from_master)
+            pair->stop_master_output = true;
+        else
+            pair->stop_slave_output = true;
+        return 0;
+    case TCOON:
+        if (from_master) {
+            pair->stop_master_output = false;
+            if (notify_master)
+                *notify_master |= EPOLLOUT;
+        } else {
+            pair->stop_slave_output = false;
+            if (notify_slave)
+                *notify_slave |= EPOLLOUT;
+        }
+        return 0;
+    case TCIOFF:
+    case TCION: {
+        uint8_t flow_char =
+            pair->term.c_cc[action == TCIOFF ? VSTOP : VSTART];
+        if (from_master) {
+            if (!pair->slaveFds)
+                return 0;
+            if (pair->ptrSlave >= PTY_BUFF_SIZE)
+                return -EAGAIN;
+            pair->bufferSlave[pair->ptrSlave++] = flow_char;
+            if (notify_slave)
+                *notify_slave |= EPOLLIN;
+        } else {
+            if (!pair->masterFds)
+                return 0;
+            if (pair->ptrMaster >= PTY_BUFF_SIZE)
+                return -EAGAIN;
+            pair->bufferMaster[pair->ptrMaster++] = flow_char;
+            if (notify_master)
+                *notify_master |= EPOLLIN;
+        }
+        return 0;
+    }
+    default:
+        return -EINVAL;
+    }
+}
+
 int pty_bitmap_decide() {
     int ret = -1;
     spin_lock(&pty_global_lock);
@@ -254,6 +307,16 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
     while (true) {
         mutex_lock(&pair->lock);
 
+        if (pair->stop_master_output) {
+            mutex_unlock(&pair->lock);
+            if (fd->flags & O_NONBLOCK)
+                return -EWOULDBLOCK;
+            int reason = pty_wait_node(fd->node, EPOLLOUT, "ptmx_tcooff");
+            if (reason != EOK)
+                return -EINTR;
+            continue;
+        }
+
         if (!pair->slaveFds) {
             mutex_unlock(&pair->lock);
             return -EIO;
@@ -323,6 +386,8 @@ int ptmx_ioctl(vfs_node_t node, ssize_t request, ssize_t arg) {
         return -EINVAL;
     pty_pair_t *pair = node->handle;
     int ret = -ENOTTY;
+    uint32_t notify_master = 0;
+    uint32_t notify_slave = 0;
     size_t number = _IOC_NR(request);
 
     mutex_lock(&pair->lock);
@@ -353,6 +418,10 @@ int ptmx_ioctl(vfs_node_t node, ssize_t request, ssize_t arg) {
             ret = 0;
             break;
         }
+        case TCXONC:
+            ret = pty_tcxonc_locked(pair, true, (uintptr_t)arg, &notify_master,
+                                    &notify_slave);
+            break;
         default:
             printk("ptmx_ioctl: Unsupported request %#010lx\n",
                    request & 0xFFFFFFFF);
@@ -360,6 +429,10 @@ int ptmx_ioctl(vfs_node_t node, ssize_t request, ssize_t arg) {
         }
     }
     mutex_unlock(&pair->lock);
+    if (!ret) {
+        pty_notify_pair_master(pair, notify_master);
+        pty_notify_pair_slave(pair, notify_slave);
+    }
 
     return ret;
 }
@@ -526,6 +599,16 @@ size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
     while (true) {
         mutex_lock(&pair->lock);
 
+        if (pair->stop_slave_output) {
+            mutex_unlock(&pair->lock);
+            if (fd->flags & O_NONBLOCK)
+                return -EWOULDBLOCK;
+            int reason = pty_wait_node(fd->node, EPOLLOUT, "pts_tcooff");
+            if (reason != EOK)
+                return -EINTR;
+            continue;
+        }
+
         if (!pair->masterFds) {
             mutex_unlock(&pair->lock);
             return -EIO;
@@ -624,6 +707,8 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
         return (size_t)-EINVAL;
 
     size_t ret = -ENOTTY;
+    uint32_t notify_master = 0;
+    uint32_t notify_slave = 0;
 
     mutex_lock(&pair->lock);
     switch (request) {
@@ -658,7 +743,8 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
         t2.c_ispeed = 0; // Not supported
         t2.c_ospeed = 0; // Not supported
         memcpy((void *)arg, &t2, sizeof(struct termios2));
-        return 0;
+        ret = 0;
+        break;
     case TCSETS:
     case TCSETSW:
     case TCSETSF: {
@@ -676,7 +762,12 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
         pair->term.c_line = t2_set.c_line;
         memcpy(pair->term.c_cc, t2_set.c_cc, NCCS);
         // Ignore ispeed and ospeed as they are not supported
-        return 0;
+        ret = 0;
+        break;
+    case TCXONC:
+        ret = pty_tcxonc_locked(pair, false, (uintptr_t)arg, &notify_master,
+                                &notify_slave);
+        break;
     case TIOCGPGRP:
         ret = copy_to_user(arg, (const void *)&pair->frontProcessGroup,
                            sizeof(int))
@@ -728,6 +819,10 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
         break;
     }
     mutex_unlock(&pair->lock);
+    if (!ret) {
+        pty_notify_pair_master(pair, notify_master);
+        pty_notify_pair_slave(pair, notify_slave);
+    }
 
     return ret;
 }

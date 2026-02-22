@@ -115,9 +115,15 @@ uint64_t task_exit(int64_t code);
 #define P_PGID 2
 #define P_PIDFD 3
 
-uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options);
+#define RUSAGE_SELF 0
+#define RUSAGE_CHILDREN (-1)
+#define RUSAGE_THREAD 1
+
+uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
+                     struct rusage *rusage);
 uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
-                    void *rusage);
+                    struct rusage *rusage);
+uint64_t sys_getrusage(int who, struct rusage *ru);
 uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                    int *parent_tid, int *child_tid, uint64_t tls);
 

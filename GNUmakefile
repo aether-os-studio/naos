@@ -193,7 +193,7 @@ TOTAL_IMG_SIZE=$$(( $(ROOTFS_IMG_SIZE) + 64 ))
 
 single-$(IMAGE_NAME).img: assets/limine modules kernel initramfs-$(ARCH).img rootfs-$(ARCH).img
 	dd if=/dev/zero of=single-$(IMAGE_NAME).img bs=1M count=$(TOTAL_IMG_SIZE)
-	sgdisk --new=1:1M:63M --new=2:63M:0 single-$(IMAGE_NAME).img
+	sgdisk --new=1:1M:63M --new=2:64M:0 single-$(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 single-$(IMAGE_NAME).img
 	mcopy -i single-$(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/
 ifeq ($(KERNEL_MODEL), mixed)

@@ -25,6 +25,9 @@ typedef struct pty_pair {
     int ptrMaster;
     int ptrSlave;
 
+    bool stop_master_output;
+    bool stop_slave_output;
+
     int tty_kbmode;
     struct vt_mode vt_mode;
 

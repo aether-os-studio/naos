@@ -31,6 +31,25 @@ struct timeval {
     long tv_usec;
 };
 
+struct rusage {
+    struct timeval ru_utime;
+    struct timeval ru_stime;
+    long ru_maxrss;
+    long ru_ixrss;
+    long ru_idrss;
+    long ru_isrss;
+    long ru_minflt;
+    long ru_majflt;
+    long ru_nswap;
+    long ru_inblock;
+    long ru_oublock;
+    long ru_msgsnd;
+    long ru_msgrcv;
+    long ru_nsignals;
+    long ru_nvcsw;
+    long ru_nivcsw;
+};
+
 struct itimerval {
     struct timeval it_interval;
     struct timeval it_value;
@@ -243,6 +262,11 @@ typedef struct task {
     int64_t sid;
     uint64_t waitpid;
     uint64_t status;
+    uint64_t last_sched_in_ns;
+    uint64_t user_time_ns;
+    uint64_t system_time_ns;
+    uint64_t child_user_time_ns;
+    uint64_t child_system_time_ns;
     uint32_t cpu_id;
     char name[TASK_NAME_MAX];
     vfs_node_t exec_node;

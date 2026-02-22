@@ -75,6 +75,68 @@ extern int unix_accept_fsid;
 
 uint32_t cpu_idx = 0;
 
+static inline struct timeval task_ns_to_timeval(uint64_t ns) {
+    struct timeval tv;
+    tv.tv_sec = (long)(ns / 1000000000ULL);
+    tv.tv_usec = (long)((ns % 1000000000ULL) / 1000ULL);
+    return tv;
+}
+
+static inline uint64_t task_self_user_ns(task_t *task) {
+    if (!task)
+        return 0;
+    if (task->user_time_ns <= task->system_time_ns)
+        return 0;
+    return task->user_time_ns - task->system_time_ns;
+}
+
+static inline uint64_t task_total_user_ns(task_t *task) {
+    if (!task)
+        return 0;
+    return task_self_user_ns(task) + task->child_user_time_ns;
+}
+
+static inline uint64_t task_total_system_ns(task_t *task) {
+    if (!task)
+        return 0;
+    return task->system_time_ns + task->child_system_time_ns;
+}
+
+static inline void task_account_runtime_ns(task_t *task, uint64_t now_ns) {
+    if (!task || !task->last_sched_in_ns || now_ns <= task->last_sched_in_ns)
+        return;
+
+    uint64_t delta = now_ns - task->last_sched_in_ns;
+    task->last_sched_in_ns = now_ns;
+
+    task->user_time_ns += delta;
+}
+
+static inline void task_aggregate_child_usage(task_t *parent, task_t *child) {
+    if (!parent || !child)
+        return;
+    parent->child_user_time_ns += task_total_user_ns(child);
+    parent->child_system_time_ns += task_total_system_ns(child);
+}
+
+static inline void task_fill_rusage(task_t *task, bool include_children,
+                                    struct rusage *rusage) {
+    if (!rusage)
+        return;
+
+    memset(rusage, 0, sizeof(*rusage));
+    if (!task)
+        return;
+
+    uint64_t utime_ns = include_children ? task_total_user_ns(task)
+                                         : task_self_user_ns(task);
+    uint64_t stime_ns = include_children ? task_total_system_ns(task)
+                                         : task->system_time_ns;
+
+    rusage->ru_utime = task_ns_to_timeval(utime_ns);
+    rusage->ru_stime = task_ns_to_timeval(stime_ns);
+}
+
 uint32_t alloc_cpu_id() {
     uint32_t idx = cpu_idx;
     cpu_idx = (cpu_idx + 1) % cpu_count;
@@ -239,6 +301,7 @@ void task_init() {
         idle_task->cpu_id = cpu;
         idle_task->state = TASK_READY;
         idle_task->current_state = TASK_RUNNING;
+        idle_task->last_sched_in_ns = nano_time();
         schedulers[cpu]->idle = idle_task->sched_info;
         remove_sched_entity(idle_task, schedulers[cpu]);
         schedulers[cpu]->curr = idle_task->sched_info;
@@ -955,6 +1018,11 @@ extern int signalfdfs_id;
 
 void task_exit_inner(task_t *task, int64_t code) {
     arch_disable_interrupt();
+    uint64_t before_user_ns = task ? task->user_time_ns : 0;
+    task_account_runtime_ns(task, nano_time());
+    if (task && task->user_time_ns > before_user_ns)
+        task->system_time_ns += task->user_time_ns - before_user_ns;
+    task->last_sched_in_ns = 0;
 
     struct sched_entity *entity = (struct sched_entity *)task->sched_info;
     remove_sched_entity(task, schedulers[task->cpu_id]);
@@ -1136,9 +1204,19 @@ uint64_t task_exit(int64_t code) {
     return (uint64_t)-EAGAIN;
 }
 
-uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
+uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
+                     struct rusage *rusage) {
     task_t *target = NULL;
     uint64_t ret = -ECHILD;
+    int64_t wait_pid = (int64_t)pid;
+
+    if (status && check_user_overflow((uint64_t)status, sizeof(int))) {
+        return -EFAULT;
+    }
+    if (rusage &&
+        check_user_overflow((uint64_t)rusage, sizeof(struct rusage))) {
+        return -EFAULT;
+    }
 
     bool has_children = false;
     for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
@@ -1178,13 +1256,16 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
             if (ptr->ppid != current_task->pid)
                 continue;
 
-            if ((int64_t)pid > 0) {
-                if (ptr->pid != pid)
+            if (wait_pid > 0) {
+                if (ptr->pid != (uint64_t)wait_pid)
                     continue;
-            } else if (pid == 0) {
+            } else if (wait_pid == 0) {
                 if (ptr->pgid != current_task->pgid)
                     continue;
-            } else if (pid != (uint64_t)-1) {
+            } else if (wait_pid < -1) {
+                if (ptr->pgid != -wait_pid)
+                    continue;
+            } else if (wait_pid != -1) {
                 continue;
             }
 
@@ -1226,8 +1307,12 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
                 *status = (sig & 0xff);
             }
         }
+        if (rusage) {
+            task_fill_rusage(target, true, rusage);
+        }
 
         ret = target->pid;
+        task_aggregate_child_usage(current_task, target);
 
         target->should_free = true;
     }
@@ -1255,7 +1340,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options) {
 }
 
 uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
-                    void *rusage) {
+                    struct rusage *rusage) {
     task_t *target = NULL;
     uint64_t ret = 0;
 
@@ -1264,6 +1349,10 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
 
     if (!(options & (WEXITED | WSTOPPED | WCONTINUED)))
         return -EINVAL;
+    if (rusage &&
+        check_user_overflow((uint64_t)rusage, sizeof(struct rusage))) {
+        return -EFAULT;
+    }
 
     bool has_children = false;
     for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
@@ -1369,10 +1458,14 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
                 }
             }
         }
+        if (rusage) {
+            task_fill_rusage(target, true, rusage);
+        }
 
         ret = 0;
 
         if (!(options & WNOWAIT) && target->state == TASK_DIED) {
+            task_aggregate_child_usage(current_task, target);
             target->should_free = true;
         }
     }
@@ -1399,6 +1492,28 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
     }
 
     return ret;
+}
+
+uint64_t sys_getrusage(int who, struct rusage *ru) {
+    if (!ru || check_user_overflow((uint64_t)ru, sizeof(struct rusage)))
+        return (uint64_t)-EFAULT;
+
+    uint64_t now_ns = nano_time();
+    task_account_runtime_ns(current_task, now_ns);
+
+    switch (who) {
+    case RUSAGE_SELF:
+    case RUSAGE_THREAD:
+        task_fill_rusage(current_task, false, ru);
+        return 0;
+    case RUSAGE_CHILDREN:
+        memset(ru, 0, sizeof(*ru));
+        ru->ru_utime = task_ns_to_timeval(current_task->child_user_time_ns);
+        ru->ru_stime = task_ns_to_timeval(current_task->child_system_time_ns);
+        return 0;
+    default:
+        return (uint64_t)-EINVAL;
+    }
 }
 
 uint64_t sys_clone3(struct pt_regs *regs, clone_args_t *args_user,
@@ -2101,6 +2216,10 @@ void schedule(uint64_t sched_flags) {
 
     task_t *prev = current_task;
     int cpu_id = current_cpu_id;
+    uint64_t now_ns = nano_time();
+
+    if (!prev->last_sched_in_ns && prev->current_state == TASK_RUNNING)
+        prev->last_sched_in_ns = now_ns;
 
     if (prev->preempt > 0) {
         goto ret;
@@ -2125,8 +2244,12 @@ void schedule(uint64_t sched_flags) {
         goto ret;
     }
 
+    task_account_runtime_ns(prev, now_ns);
+    prev->last_sched_in_ns = 0;
+
     prev->current_state = prev->state;
     next->current_state = TASK_RUNNING;
+    next->last_sched_in_ns = now_ns;
 
     arch_set_current(next);
     switch_to(prev, next);

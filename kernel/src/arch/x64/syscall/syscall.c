@@ -262,7 +262,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_UMASK] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_GETTIMEOFDAY] = (syscall_handle_t)sys_gettimeofday;
     syscall_handlers[SYS_GETRLIMIT] = (syscall_handle_t)sys_get_rlimit;
-    // syscall_handlers[SYS_GETRUSAGE] = (syscall_handle_t)sys_getrusage;
+    syscall_handlers[SYS_GETRUSAGE] = (syscall_handle_t)sys_getrusage;
     syscall_handlers[SYS_SYSINFO] = (syscall_handle_t)sys_sysinfo;
     // syscall_handlers[SYS_TIMES] = (syscall_handle_t)sys_times;
     // syscall_handlers[SYS_PTRACE] = (syscall_handle_t)sys_ptrace;
@@ -596,6 +596,16 @@ void syscall_handler_init() {
 
 spinlock_t syscall_debug_lock = SPIN_INIT;
 
+static inline uint64_t syscall_account_running_ns(task_t *task,
+                                                  uint64_t now_ns) {
+    if (!task || !task->last_sched_in_ns || now_ns <= task->last_sched_in_ns)
+        return 0;
+    uint64_t delta = now_ns - task->last_sched_in_ns;
+    task->user_time_ns += delta;
+    task->last_sched_in_ns = now_ns;
+    return delta;
+}
+
 void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
     task_t *self = current_task;
 
@@ -613,6 +623,10 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
     uint64_t arg4 = regs->r10;
     uint64_t arg5 = regs->r8;
     uint64_t arg6 = regs->r9;
+
+    if (self)
+        syscall_account_running_ns(self, nano_time());
+    uint64_t syscall_user_base = self ? self->user_time_ns : 0;
 
     if (idx > MAX_SYSCALL_NUM) {
         regs->rax = (uint64_t)-ENOSYS;
@@ -692,6 +706,12 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
 #endif
 
 done:
+    if (self) {
+        syscall_account_running_ns(self, nano_time());
+        if (self->user_time_ns > syscall_user_base)
+            self->system_time_ns += self->user_time_ns - syscall_user_base;
+    }
+
     if (idx != SYS_BRK && regs->rax == (uint64_t)-ENOSYS) {
         serial_fprintk("syscall %d not implemented\n", idx);
     }

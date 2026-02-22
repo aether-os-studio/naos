@@ -196,7 +196,7 @@ void syscall_handlers_init() {
     syscall_handlers[SYS_UMASK] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_GETTIMEOFDAY] = (syscall_handle_t)sys_gettimeofday;
     syscall_handlers[SYS_GETRLIMIT] = (syscall_handle_t)sys_get_rlimit;
-    // syscall_handlers[SYS_GETRUSAGE] = (syscall_handle_t)sys_getrusage;
+    syscall_handlers[SYS_GETRUSAGE] = (syscall_handle_t)sys_getrusage;
     syscall_handlers[SYS_SYSINFO] = (syscall_handle_t)sys_sysinfo;
     // syscall_handlers[SYS_TIMES] = (syscall_handle_t)sys_times;
     // syscall_handlers[SYS_PTRACE] = (syscall_handle_t)sys_ptrace;
