@@ -48,7 +48,7 @@ void cgroupfs_unmount(vfs_node_t root) {
     spin_unlock(&cgroupfs_oplock);
 }
 
-int cgroupfs_mkdir(void *parent, const char *name, vfs_node_t node) {
+int cgroupfs_mkdir(vfs_node_t parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
     cgroupfs_node_t *handle = malloc(sizeof(cgroupfs_node_t));
     handle->node = node;
@@ -79,7 +79,7 @@ int cgroupfs_mkdir(void *parent, const char *name, vfs_node_t node) {
     return 0;
 }
 
-int cgroupfs_mkfile(void *parent, const char *name, vfs_node_t node) {
+int cgroupfs_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
     if (node->handle) {
         return -EEXIST;
@@ -101,17 +101,19 @@ ssize_t cgroupfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     return size;
 }
 
-int cgroupfs_delete(void *parent, vfs_node_t node) { return 0; }
+int cgroupfs_delete(vfs_node_t parent, vfs_node_t node) { return 0; }
 
-void cgroupfs_free_handle(void *handle) {
-    cgroupfs_node_t *tnode = handle;
+void cgroupfs_free_handle(vfs_node_t node) {
+    cgroupfs_node_t *tnode = node ? node->handle : NULL;
+    if (!tnode)
+        return;
     free_frames_bytes(tnode->content, tnode->capability);
     free(tnode);
 }
 
 static int dummy() { return 0; }
 
-static struct vfs_callback callbacks = {
+static vfs_operations_t callbacks = {
     .open = (vfs_open_t)dummy,
     .close = (vfs_close_t)dummy,
     .read = (vfs_read_t)cgroupfs_read,
@@ -141,7 +143,7 @@ static struct vfs_callback callbacks = {
 fs_t cgroup2fs = {
     .name = "cgroup2",
     .magic = 0x63677270,
-    .callback = &callbacks,
+    .ops = &callbacks,
     .flags = FS_FLAGS_VIRTUAL,
 };
 

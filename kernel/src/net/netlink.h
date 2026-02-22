@@ -57,6 +57,7 @@ struct netlink_sock {
     int protocol;
     uint32_t portid;
     uint32_t groups;
+    vfs_node_t node;
     struct sockaddr_nl *bind_addr;
     struct netlink_buffer *buffer; // Circular buffer for messages
     struct sock_fprog *filter;

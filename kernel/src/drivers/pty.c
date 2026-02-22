@@ -14,6 +14,47 @@ extern vfs_node_t devtmpfs_root;
 size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit);
 extern void send_process_group_signal(int pgid, int sig);
 
+static inline void pty_notify_node(vfs_node_t node, uint32_t events) {
+    if (!node || !events)
+        return;
+    vfs_poll_notify(node, events);
+}
+
+static inline void pty_notify_pair_master(pty_pair_t *pair, uint32_t events) {
+    if (!pair)
+        return;
+    pty_notify_node(pair->ptmx_node, events);
+}
+
+static inline void pty_notify_pair_slave(pty_pair_t *pair, uint32_t events) {
+    if (!pair)
+        return;
+    pty_notify_node(pair->pts_node, events);
+}
+
+static int pty_wait_node(vfs_node_t node, uint32_t events, const char *reason) {
+    if (!node || !current_task)
+        return -EINVAL;
+
+    uint32_t want = events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
+    if (vfs_poll(node, want) & want)
+        return EOK;
+
+    vfs_poll_wait_t wait;
+    vfs_poll_wait_init(&wait, current_task, want);
+    if (vfs_poll_wait_arm(node, &wait) < 0)
+        return -EINVAL;
+
+    if (vfs_poll(node, want) & want) {
+        vfs_poll_wait_disarm(&wait);
+        return EOK;
+    }
+
+    int ret = task_block(current_task, TASK_BLOCKING, -1, reason);
+    vfs_poll_wait_disarm(&wait);
+    return ret;
+}
+
 int pty_bitmap_decide() {
     int ret = -1;
     spin_lock(&pty_global_lock);
@@ -55,7 +96,7 @@ void pty_termios_default(struct termios *term) {
 
 void pty_init() { pty_bitmap = calloc(PTY_MAX / 8, 1); }
 
-void ptmx_open(void *parent, const char *name, vfs_node_t node) {
+void ptmx_open(vfs_node_t parent, const char *name, vfs_node_t node) {
     int id = pty_bitmap_decide(); // here to avoid double locks
     if (id < 0)
         return;
@@ -79,6 +120,7 @@ void ptmx_open(void *parent, const char *name, vfs_node_t node) {
     memset(&pair->vt_mode, 0, sizeof(struct vt_mode));
     pair->masterFds = 1;
     pair->ptmx_node = node;
+    pair->pts_node = NULL;
     node->handle = pair;
     node->fsid = ptmx_fsid;
 
@@ -104,12 +146,15 @@ void ptmx_open(void *parent, const char *name, vfs_node_t node) {
     pty_slave_node->fsid = pts_fsid;
     pty_slave_node->type = file_stream;
     pty_slave_node->handle = pair;
+    pair->pts_node = pty_slave_node;
     pair->slaveFds++;
 }
 
 void pty_pair_cleanup(pty_pair_t *pair) {
     free_frames_bytes(pair->bufferMaster, PTY_BUFF_SIZE);
     free_frames_bytes(pair->bufferSlave, PTY_BUFF_SIZE);
+    pair->ptmx_node = NULL;
+    pair->pts_node = NULL;
     pty_bitmap_remove(pair->id);
 
     spin_lock(&pty_global_lock);
@@ -123,29 +168,40 @@ void pty_pair_cleanup(pty_pair_t *pair) {
     spin_unlock(&pty_global_lock);
 }
 
-void ptmx_free_handle(void *handle) {
-    pty_pair_t *pair = handle;
+void ptmx_free_handle(vfs_node_t node) {
+    pty_pair_t *pair = node ? node->handle : NULL;
+    if (!pair)
+        return;
+    if (pair->ptmx_node == node)
+        pair->ptmx_node = NULL;
     pair->masterFds--;
     if (!pair->masterFds && !pair->slaveFds) {
         pty_pair_cleanup(pair);
     }
 }
 
-void pts_free_handle(void *handle) {
-    pty_pair_t *pair = handle;
+void pts_free_handle(vfs_node_t node) {
+    pty_pair_t *pair = node ? node->handle : NULL;
+    if (!pair)
+        return;
+    if (pair->pts_node == node)
+        pair->pts_node = NULL;
     pair->slaveFds--;
     if (!pair->masterFds && !pair->slaveFds) {
         pty_pair_cleanup(pair);
     }
 }
 
-bool ptmx_close(void *current) {
-    pty_pair_t *pair = current;
+bool ptmx_close(vfs_node_t node) {
+    pty_pair_t *pair = node ? node->handle : NULL;
+    if (!pair)
+        return true;
     pair->masterFds--;
+    pair->ptmx_node = NULL;
+    pty_notify_pair_slave(pair, EPOLLHUP | EPOLLRDHUP | EPOLLERR);
     if (!pair->masterFds && !pair->slaveFds) {
         pty_pair_cleanup(pair);
     }
-    vfs_free(pair->ptmx_node);
     return true;
 }
 
@@ -157,37 +213,36 @@ size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     if (!pair)
         return (size_t)-EINVAL;
 
-    arch_enable_interrupt();
     while (true) {
+        mutex_lock(&pair->lock);
+
         if (ptmx_data_avail(pair) > 0) {
-            break;
+            size_t toCopy = MIN(size, ptmx_data_avail(pair));
+            memcpy(addr, pair->bufferMaster, toCopy);
+            size_t remaining = pair->ptrMaster - toCopy;
+            if (remaining > 0) {
+                memmove(pair->bufferMaster, &pair->bufferMaster[toCopy],
+                        remaining);
+            }
+            pair->ptrMaster -= toCopy;
+            mutex_unlock(&pair->lock);
+
+            pty_notify_pair_slave(pair, EPOLLOUT);
+            return toCopy;
         }
-        if (!pair->slaveFds) {
-            arch_disable_interrupt();
+
+        bool no_slave = (pair->slaveFds == 0);
+        mutex_unlock(&pair->lock);
+
+        if (no_slave)
             return 0;
-        }
-        if (fd->flags & O_NONBLOCK) {
-            arch_disable_interrupt();
+        if (fd->flags & O_NONBLOCK)
             return -EWOULDBLOCK;
-        }
 
-        schedule(SCHED_FLAG_YIELD);
+        int reason = pty_wait_node(fd->node, EPOLLIN, "ptmx_read");
+        if (reason != EOK)
+            return -EINTR;
     }
-    arch_disable_interrupt();
-
-    mutex_lock(&pair->lock);
-
-    size_t toCopy = MIN(size, ptmx_data_avail(pair));
-    memcpy(addr, pair->bufferMaster, toCopy);
-    size_t remaining = pair->ptrMaster - toCopy;
-    if (remaining > 0) {
-        memmove(pair->bufferMaster, &pair->bufferMaster[toCopy], remaining);
-    }
-    pair->ptrMaster -= toCopy;
-
-    mutex_unlock(&pair->lock);
-
-    return toCopy;
 }
 
 size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
@@ -197,76 +252,77 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
         return (size_t)-EINVAL;
 
     while (true) {
-        arch_enable_interrupt();
+        mutex_lock(&pair->lock);
 
         if (!pair->slaveFds) {
-            arch_disable_interrupt();
+            mutex_unlock(&pair->lock);
             return -EIO;
         }
 
         if (pair->ptrSlave < PTY_BUFF_SIZE) {
-            break;
+            const uint8_t *in = addr;
+            size_t written = 0;
+            size_t echoed = 0;
+            size_t echo_start = pair->ptrSlave;
+            for (size_t i = 0; i < limit; i++) {
+                uint8_t ch = in[i];
+                if (pair->term.c_lflag & ISIG) {
+                    uint64_t pgid = pair->frontProcessGroup;
+                    if (!pgid)
+                        pgid = pair->ctrlPgid;
+                    if (pgid) {
+                        if (ch == pair->term.c_cc[VINTR]) {
+                            send_process_group_signal(pgid, SIGINT);
+                            written++;
+                            continue;
+                        }
+                        if (ch == pair->term.c_cc[VQUIT]) {
+                            send_process_group_signal(pgid, SIGQUIT);
+                            written++;
+                            continue;
+                        }
+                        if (ch == pair->term.c_cc[VSUSP]) {
+                            send_process_group_signal(pgid, SIGTSTP);
+                            written++;
+                            continue;
+                        }
+                    }
+                }
+                if ((pair->term.c_iflag & ICRNL) && ch == '\r')
+                    ch = '\n';
+                if ((pair->ptrSlave + 1) > PTY_BUFF_SIZE)
+                    break;
+                pair->bufferSlave[pair->ptrSlave++] = ch;
+                echoed++;
+                written++;
+            }
+            mutex_unlock(&pair->lock);
+
+            if (written > 0)
+                pty_notify_pair_slave(pair, EPOLLIN);
+            if ((pair->term.c_lflag & ICANON) && (pair->term.c_lflag & ECHO) &&
+                echoed > 0)
+                pts_write_inner(fd, &pair->bufferSlave[echo_start], echoed);
+            return written;
         }
+
+        mutex_unlock(&pair->lock);
+
         if (fd->flags & O_NONBLOCK) {
-            arch_disable_interrupt();
             return -EWOULDBLOCK;
         }
 
-        schedule(SCHED_FLAG_YIELD);
+        int reason = pty_wait_node(fd->node, EPOLLOUT, "ptmx_write");
+        if (reason != EOK)
+            return -EINTR;
     }
-    arch_disable_interrupt();
-
-    mutex_lock(&pair->lock);
-
-    const uint8_t *in = addr;
-    size_t written = 0;
-    size_t echoed = 0;
-    size_t echo_start = pair->ptrSlave;
-    for (size_t i = 0; i < limit; i++) {
-        uint8_t ch = in[i];
-        if (pair->term.c_lflag & ISIG) {
-            uint64_t pgid = pair->frontProcessGroup;
-            if (!pgid)
-                pgid = pair->ctrlPgid;
-            if (pgid) {
-                if (ch == pair->term.c_cc[VINTR]) {
-                    send_process_group_signal(pgid, SIGINT);
-                    written++;
-                    continue;
-                }
-                if (ch == pair->term.c_cc[VQUIT]) {
-                    send_process_group_signal(pgid, SIGQUIT);
-                    written++;
-                    continue;
-                }
-                if (ch == pair->term.c_cc[VSUSP]) {
-                    send_process_group_signal(pgid, SIGTSTP);
-                    written++;
-                    continue;
-                }
-            }
-        }
-        if ((pair->term.c_iflag & ICRNL) && ch == '\r')
-            ch = '\n';
-        if ((pair->ptrSlave + 1) > PTY_BUFF_SIZE)
-            break;
-        pair->bufferSlave[pair->ptrSlave++] = ch;
-        echoed++;
-        written++;
-    }
-    mutex_unlock(&pair->lock);
-    if ((pair->term.c_lflag & ICANON) && (pair->term.c_lflag & ECHO)) {
-        if (echoed > 0)
-            pts_write_inner(fd, &pair->bufferSlave[echo_start], echoed);
-    }
-    return written;
 }
 
-size_t ptmx_ioctl(void *file, uint64_t request, uint64_t arg) {
-    if (!file)
-        return (size_t)-EINVAL;
-    pty_pair_t *pair = file;
-    size_t ret = -ENOTTY;
+int ptmx_ioctl(vfs_node_t node, ssize_t request, ssize_t arg) {
+    if (!node || !node->handle)
+        return -EINVAL;
+    pty_pair_t *pair = node->handle;
+    int ret = -ENOTTY;
     size_t number = _IOC_NR(request);
 
     mutex_lock(&pair->lock);
@@ -278,43 +334,50 @@ size_t ptmx_ioctl(void *file, uint64_t request, uint64_t arg) {
         else
             pair->locked = true;
         ret = 0;
-        goto done;
+        break;
     }
     case 0x30: // TIOCGPTN
         *((int *)arg) = pair->id;
         ret = 0;
-        goto done;
+        break;
     }
-    switch (request & 0xFFFFFFFF) {
-    case TIOCGWINSZ: {
-        memcpy((void *)arg, &pair->win, sizeof(struct winsize));
-        ret = 0;
-        goto done;
+    if (ret == -ENOTTY) {
+        switch (request & 0xFFFFFFFF) {
+        case TIOCGWINSZ: {
+            memcpy((void *)arg, &pair->win, sizeof(struct winsize));
+            ret = 0;
+            break;
+        }
+        case TIOCSWINSZ: {
+            memcpy(&pair->win, (const void *)arg, sizeof(struct winsize));
+            ret = 0;
+            break;
+        }
+        default:
+            printk("ptmx_ioctl: Unsupported request %#010lx\n",
+                   request & 0xFFFFFFFF);
+            break;
+        }
     }
-    case TIOCSWINSZ: {
-        memcpy(&pair->win, (const void *)arg, sizeof(struct winsize));
-        ret = 0;
-        goto done;
-    }
-    default:
-        printk("ptmx_ioctl: Unsupported request %#010lx\n",
-               request & 0xFFFFFFFF);
-        goto done;
-    }
-done:
     mutex_unlock(&pair->lock);
 
     return ret;
 }
 
-int ptmx_poll(void *file, size_t events) {
-    pty_pair_t *pair = file;
+int ptmx_poll(vfs_node_t node, size_t events) {
+    pty_pair_t *pair = node ? node->handle : NULL;
+    if (!pair)
+        return EPOLLNVAL;
     int revents = 0;
 
-    if (ptmx_data_avail(pair) > 0 && events & EPOLLIN)
+    mutex_lock(&pair->lock);
+    if ((events & EPOLLIN) && ptmx_data_avail(pair) > 0)
         revents |= EPOLLIN;
-    if (pair->ptrSlave < PTY_BUFF_SIZE && events & EPOLLOUT)
+    if ((events & EPOLLOUT) && pair->ptrSlave < PTY_BUFF_SIZE)
         revents |= EPOLLOUT;
+    if (!pair->slaveFds)
+        revents |= EPOLLHUP | EPOLLRDHUP;
+    mutex_unlock(&pair->lock);
 
     return revents;
 }
@@ -351,7 +414,7 @@ int str_to_int(const char *str, int *result) {
     return 0;
 }
 
-void pts_open(void *parent, const char *name, vfs_node_t node) {
+void pts_open(vfs_node_t parent, const char *name, vfs_node_t node) {
     int id;
     int res = str_to_int(name, &id);
     if (res < 0)
@@ -379,14 +442,20 @@ void pts_open(void *parent, const char *name, vfs_node_t node) {
     node->handle = browse;
     node->type = file_stream;
     node->fsid = pts_fsid;
+    browse->pts_node = node;
     browse->slaveFds++;
 
     mutex_unlock(&browse->lock);
 }
 
-bool pts_close(void *fd) {
-    pty_pair_t *pair = fd;
+bool pts_close(vfs_node_t node) {
+    pty_pair_t *pair = node ? node->handle : NULL;
+    if (!pair)
+        return true;
     pair->slaveFds--;
+    if (pair->pts_node == node)
+        pair->pts_node = NULL;
+    pty_notify_pair_master(pair, EPOLLHUP | EPOLLRDHUP | EPOLLERR);
     if (!pair->masterFds && !pair->slaveFds) {
         pty_pair_cleanup(pair);
     }
@@ -417,35 +486,36 @@ size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit) {
         return (size_t)-EINVAL;
 
     while (true) {
-        arch_enable_interrupt();
+        mutex_lock(&pair->lock);
 
         if (pts_data_avali(pair) > 0) {
-            break;
+            size_t toCopy = MIN(limit, pts_data_avali(pair));
+            memcpy(out, pair->bufferSlave, toCopy);
+            size_t remaining = pair->ptrSlave - toCopy;
+            if (remaining > 0) {
+                memmove(pair->bufferSlave, &pair->bufferSlave[toCopy],
+                        remaining);
+            }
+            pair->ptrSlave -= toCopy;
+            mutex_unlock(&pair->lock);
+
+            pty_notify_pair_master(pair, EPOLLOUT);
+            return toCopy;
         }
-        if (!pair->masterFds) {
-            arch_disable_interrupt();
+
+        bool no_master = (pair->masterFds == 0);
+        mutex_unlock(&pair->lock);
+
+        if (no_master)
             return 0;
-        }
         if (fd->flags & O_NONBLOCK) {
-            arch_disable_interrupt();
             return -EWOULDBLOCK;
         }
-        schedule(SCHED_FLAG_YIELD);
+
+        int reason = pty_wait_node(fd->node, EPOLLIN, "pts_read");
+        if (reason != EOK)
+            return -EINTR;
     }
-    arch_disable_interrupt();
-
-    mutex_lock(&pair->lock);
-
-    size_t toCopy = MIN(limit, pts_data_avali(pair));
-    memcpy(out, pair->bufferSlave, toCopy);
-    size_t remaining = pair->ptrSlave - toCopy;
-    if (remaining > 0) {
-        memmove(pair->bufferSlave, &pair->bufferSlave[toCopy], remaining);
-    }
-    pair->ptrSlave -= toCopy;
-
-    mutex_unlock(&pair->lock);
-    return toCopy;
 }
 
 size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
@@ -454,46 +524,47 @@ size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
         return (size_t)-EINVAL;
 
     while (true) {
-        arch_enable_interrupt();
+        mutex_lock(&pair->lock);
 
         if (!pair->masterFds) {
-            arch_disable_interrupt();
+            mutex_unlock(&pair->lock);
             return -EIO;
         }
-        if (pair->ptrMaster < PTY_BUFF_SIZE)
-            break;
-        if (fd->flags & O_NONBLOCK) {
-            arch_disable_interrupt();
+        if (pair->ptrMaster < PTY_BUFF_SIZE) {
+            size_t written = 0;
+            bool doTranslate =
+                (pair->term.c_oflag & OPOST) && (pair->term.c_oflag & ONLCR);
+            for (size_t i = 0; i < limit; ++i) {
+                uint8_t ch = in[i];
+                if (doTranslate && ch == '\n') {
+                    if ((pair->ptrMaster + 2) > PTY_BUFF_SIZE)
+                        break;
+                    pair->bufferMaster[pair->ptrMaster++] = '\r';
+                    pair->bufferMaster[pair->ptrMaster++] = '\n';
+                } else {
+                    if ((pair->ptrMaster + 1) > PTY_BUFF_SIZE)
+                        break;
+                    pair->bufferMaster[pair->ptrMaster++] = ch;
+                }
+                written++;
+            }
+
+            mutex_unlock(&pair->lock);
+            if (written > 0)
+                pty_notify_pair_master(pair, EPOLLIN);
+            return written;
+        }
+
+        mutex_unlock(&pair->lock);
+
+        if (fd->flags & O_NONBLOCK)
             return -EWOULDBLOCK;
-        }
 
-        schedule(SCHED_FLAG_YIELD);
+        vfs_node_t wait_node = pair->pts_node ? pair->pts_node : fd->node;
+        int reason = pty_wait_node(wait_node, EPOLLOUT, "pts_write");
+        if (reason != EOK)
+            return -EINTR;
     }
-    arch_disable_interrupt();
-
-    mutex_lock(&pair->lock);
-
-    size_t written = 0;
-    bool doTranslate =
-        (pair->term.c_oflag & OPOST) && (pair->term.c_oflag & ONLCR);
-    for (size_t i = 0; i < limit; ++i) {
-        uint8_t ch = in[i];
-        if (doTranslate && ch == '\n') {
-            if ((pair->ptrMaster + 2) > PTY_BUFF_SIZE)
-                break;
-            pair->bufferMaster[pair->ptrMaster++] = '\r';
-            pair->bufferMaster[pair->ptrMaster++] = '\n';
-        } else {
-            if ((pair->ptrMaster + 1) > PTY_BUFF_SIZE)
-                break;
-            pair->bufferMaster[pair->ptrMaster++] = ch;
-        }
-        written++;
-    }
-
-    mutex_unlock(&pair->lock);
-
-    return written;
 }
 
 size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit) {
@@ -514,7 +585,9 @@ size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit) {
                 if (r == 0) {
                     if (fd->flags & O_NONBLOCK)
                         return ret ? ret : (size_t)-EWOULDBLOCK;
-                    schedule(SCHED_FLAG_YIELD);
+                    int reason = pty_wait_node(fd->node, EPOLLOUT, "pts_write");
+                    if (reason != EOK)
+                        return ret ? ret : (size_t)-EINTR;
                     continue;
                 }
                 cycle += r;
@@ -533,7 +606,9 @@ size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit) {
             if (r == 0) {
                 if (fd->flags & O_NONBLOCK)
                     return ret ? ret : (size_t)-EWOULDBLOCK;
-                schedule(SCHED_FLAG_YIELD);
+                int reason = pty_wait_node(fd->node, EPOLLOUT, "pts_write");
+                if (reason != EOK)
+                    return ret ? ret : (size_t)-EINTR;
                 continue;
             }
             cycle += r;
@@ -657,13 +732,20 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
     return ret;
 }
 
-int pts_poll(pty_pair_t *pair, int events) {
+int pts_poll(vfs_node_t node, size_t events) {
+    pty_pair_t *pair = node ? node->handle : NULL;
+    if (!pair)
+        return EPOLLNVAL;
     int revents = 0;
 
-    if ((pts_data_avali(pair) > 0) && events & EPOLLIN)
+    mutex_lock(&pair->lock);
+    if ((events & EPOLLIN) && pts_data_avali(pair) > 0)
         revents |= EPOLLIN;
-    if (pair->ptrMaster < PTY_BUFF_SIZE && events & EPOLLOUT)
+    if ((events & EPOLLOUT) && pair->ptrMaster < PTY_BUFF_SIZE)
         revents |= EPOLLOUT;
+    if (!pair->masterFds)
+        revents |= EPOLLHUP | EPOLLRDHUP;
+    mutex_unlock(&pair->lock);
 
     return revents;
 }
@@ -684,66 +766,53 @@ vfs_node_t pts_dup(vfs_node_t node) {
     return node;
 }
 
-static int dummy() { return 0; }
+static ssize_t ptmx_read_op(fd_t *fd, void *addr, size_t offset, size_t size) {
+    return (ssize_t)ptmx_read(fd, addr, offset, size);
+}
 
-static struct vfs_callback ptmx_callbacks = {
-    .mount = (vfs_mount_t)dummy,
-    .unmount = (vfs_unmount_t)dummy,
-    .remount = (vfs_remount_t)dummy,
-    .open = (vfs_open_t)ptmx_open,
-    .close = (vfs_close_t)ptmx_close,
-    .read = (vfs_read_t)ptmx_read,
-    .write = (vfs_write_t)ptmx_write,
-    .readlink = (vfs_readlink_t)dummy,
-    .mkdir = (vfs_mk_t)dummy,
-    .mkfile = (vfs_mk_t)dummy,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)dummy,
-    .mknod = (vfs_mknod_t)dummy,
-    .chmod = (vfs_chmod_t)dummy,
-    .chown = (vfs_chown_t)dummy,
-    .rename = (vfs_rename_t)dummy,
-    .delete = (vfs_del_t)dummy,
-    .map = (vfs_mapfile_t)dummy,
-    .stat = (vfs_stat_t)dummy,
-    .ioctl = (vfs_ioctl_t)ptmx_ioctl,
+static ssize_t ptmx_write_op(fd_t *fd, const void *addr, size_t offset,
+                             size_t size) {
+    return (ssize_t)ptmx_write(fd, addr, offset, size);
+}
+
+static ssize_t pts_read_op(fd_t *fd, void *addr, size_t offset, size_t size) {
+    return (ssize_t)pts_read(fd, (uint8_t *)addr, offset, size);
+}
+
+static ssize_t pts_write_op(fd_t *fd, const void *addr, size_t offset,
+                            size_t size) {
+    return (ssize_t)pts_write(fd, (uint8_t *)addr, offset, size);
+}
+
+static int pts_ioctl_node(vfs_node_t node, ssize_t request, ssize_t arg) {
+    return (int)pts_ioctl(node ? node->handle : NULL, (uint64_t)request,
+                          (void *)arg);
+}
+
+static vfs_operations_t ptmx_vfs_ops = {
+    .open = ptmx_open,
+    .close = ptmx_close,
+    .read = ptmx_read_op,
+    .write = ptmx_write_op,
+    .ioctl = ptmx_ioctl,
     .poll = ptmx_poll,
-    .resize = (vfs_resize_t)dummy,
-
     .free_handle = ptmx_free_handle,
 };
 
-static struct vfs_callback pts_callbacks = {
-    .mount = (vfs_mount_t)dummy,
-    .unmount = (vfs_unmount_t)dummy,
-    .remount = (vfs_remount_t)dummy,
-    .open = (vfs_open_t)pts_open,
-    .close = (vfs_close_t)pts_close,
-    .read = (vfs_read_t)pts_read,
-    .write = (vfs_write_t)pts_write,
-    .readlink = (vfs_readlink_t)dummy,
-    .mkdir = (vfs_mk_t)dummy,
-    .mkfile = (vfs_mk_t)dummy,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)dummy,
-    .mknod = (vfs_mknod_t)dummy,
-    .chmod = (vfs_chmod_t)dummy,
-    .chown = (vfs_chown_t)dummy,
-    .rename = (vfs_rename_t)dummy,
-    .delete = (vfs_del_t)dummy,
-    .map = (vfs_mapfile_t)dummy,
-    .stat = (vfs_stat_t)dummy,
-    .ioctl = (vfs_ioctl_t)pts_ioctl,
-    .poll = (vfs_poll_t)pts_poll,
-    .resize = (vfs_resize_t)dummy,
-
+static vfs_operations_t pts_vfs_ops = {
+    .open = pts_open,
+    .close = pts_close,
+    .read = pts_read_op,
+    .write = pts_write_op,
+    .ioctl = pts_ioctl_node,
+    .poll = pts_poll,
     .free_handle = pts_free_handle,
 };
 
 fs_t ptmxfs = {
     .name = "ptmx",
     .magic = 0,
-    .callback = &ptmx_callbacks,
+    .ops = &ptmx_vfs_ops,
     .flags = FS_FLAGS_HIDDEN,
 };
 
@@ -761,7 +830,7 @@ void ptmx_init() {
 fs_t ptsfs = {
     .name = "ptsfs",
     .magic = 0,
-    .callback = &pts_callbacks,
+    .ops = &pts_vfs_ops,
     .flags = FS_FLAGS_HIDDEN,
 };
 

@@ -12,6 +12,9 @@ typedef struct task task_t;
 struct spinlock;
 typedef struct spinlock spinlock_t;
 
+struct vfs_node;
+typedef struct vfs_node *vfs_node_t;
+
 typedef struct pipe_info {
     uint32_t ptr;
     char *buf;
@@ -19,11 +22,11 @@ typedef struct pipe_info {
     int write_fds;
     int read_fds;
 
+    vfs_node_t read_node;
+    vfs_node_t write_node;
+
     spinlock_t lock;
 } pipe_info_t;
-
-struct vfs_node;
-typedef struct vfs_node *vfs_node_t;
 
 typedef struct pipe_specific pipe_specific_t;
 struct pipe_specific {

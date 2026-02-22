@@ -75,14 +75,25 @@ static ssize_t eventfd_read(fd_t *fd, void *buf, size_t offset, size_t len) {
     while (efd->count == 0) {
         if (efd->flags & EFD_NONBLOCK)
             return -EAGAIN;
-
-        schedule(SCHED_FLAG_YIELD);
+        vfs_poll_wait_t wait;
+        vfs_poll_wait_init(&wait, current_task, EPOLLIN | EPOLLERR | EPOLLHUP);
+        vfs_poll_wait_arm(fd->node, &wait);
+        if (efd->count == 0) {
+            int reason =
+                task_block(current_task, TASK_BLOCKING, -1, "eventfd_read");
+            vfs_poll_wait_disarm(&wait);
+            if (reason != EOK)
+                return -EINTR;
+        } else {
+            vfs_poll_wait_disarm(&wait);
+        }
     }
 
     value = (efd->flags & EFD_SEMAPHORE) ? 1 : efd->count;
     memcpy(buf, &value, sizeof(uint64_t));
 
     efd->count -= value;
+    vfs_poll_notify(efd->node, EPOLLOUT | (efd->count ? EPOLLIN : 0));
     return sizeof(uint64_t);
 }
 
@@ -95,19 +106,24 @@ static ssize_t eventfd_write(eventfd_t *efd, const void *buf, size_t offset,
         return -EINVAL;
 
     efd->count += value;
+    vfs_poll_notify(efd->node, EPOLLIN | EPOLLOUT);
 
     return sizeof(uint64_t);
 }
 
-bool eventfd_close(void *current) {
-    eventfd_t *efd = current;
+bool eventfd_close(vfs_node_t node) {
+    eventfd_t *efd = node ? node->handle : NULL;
+    if (!efd)
+        return true;
     free(efd);
 
     return true;
 }
 
-static int eventfd_poll(void *file, size_t events) {
-    eventfd_t *eventFd = file;
+static int eventfd_poll(vfs_node_t node, size_t events) {
+    eventfd_t *eventFd = node ? node->handle : NULL;
+    if (!eventFd)
+        return EPOLLNVAL;
     int revents = 0;
 
     if (events & EPOLLIN && eventFd->count > 0)
@@ -119,7 +135,7 @@ static int eventfd_poll(void *file, size_t events) {
     return revents;
 }
 
-static struct vfs_callback eventfd_callbacks = {
+static vfs_operations_t eventfd_callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
     .remount = (vfs_remount_t)dummy,
@@ -149,7 +165,7 @@ static struct vfs_callback eventfd_callbacks = {
 fs_t eventfdfs = {
     .name = "eventfdfs",
     .magic = 0,
-    .callback = &eventfd_callbacks,
+    .ops = &eventfd_callbacks,
     .flags = FS_FLAGS_HIDDEN,
 };
 

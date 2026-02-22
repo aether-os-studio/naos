@@ -69,6 +69,7 @@ typedef struct socket {
 
     // 对端指针 (SOCK_STREAM 连接后设置)
     struct socket *peer;
+    vfs_node_t node;
 
     // bind()
     char *bindAddr;

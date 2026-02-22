@@ -126,7 +126,8 @@ volatile u8_t pbuf_free_ooseq_pending;
 #if !NO_SYS
 static
 #endif /* !NO_SYS */
-    void pbuf_free_ooseq(void) {
+    void
+    pbuf_free_ooseq(void) {
     struct tcp_pcb *pcb;
     SYS_ARCH_SET(pbuf_free_ooseq_pending, 0);
 

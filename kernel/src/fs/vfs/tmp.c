@@ -16,9 +16,9 @@ extern uint32_t device_number;
 
 static int dummy() { return 0; }
 
-void tmpfs_open(void *parent, const char *name, vfs_node_t node) {}
+void tmpfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {}
 
-bool tmpfs_close(void *current) { return false; }
+bool tmpfs_close(vfs_node_t node) { return false; }
 
 ssize_t tmpfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
@@ -74,12 +74,12 @@ ssize_t tmpfs_readlink(vfs_node_t node, void *addr, size_t offset,
     return to_copy;
 }
 
-int tmpfs_mkdir(void *parent, const char *name, vfs_node_t node) {
+int tmpfs_mkdir(vfs_node_t parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
     return 0;
 }
 
-int tmpfs_mkfile(void *parent, const char *name, vfs_node_t node) {
+int tmpfs_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
     tmpfs_node_t *handle = malloc(sizeof(tmpfs_node_t));
     handle->capability = DEFAULT_PAGE_SIZE;
@@ -90,8 +90,8 @@ int tmpfs_mkfile(void *parent, const char *name, vfs_node_t node) {
     return 0;
 }
 
-int tmpfs_mknod(void *parent, const char *name, vfs_node_t node, uint16_t mode,
-                int dev) {
+int tmpfs_mknod(vfs_node_t parent, const char *name, vfs_node_t node,
+                uint16_t mode, int dev) {
     node->dev = dev;
     node->rdev = dev;
     node->mode = mode & 0777;
@@ -107,7 +107,7 @@ int tmpfs_mknod(void *parent, const char *name, vfs_node_t node, uint16_t mode,
     return 0;
 }
 
-int tmpfs_symlink(void *parent, const char *name, vfs_node_t node) {
+int tmpfs_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
     if (node->handle) {
         return -EEXIST;
@@ -175,9 +175,9 @@ int tmpfs_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
     return 0;
 }
 
-int tmpfs_delete(void *parent, vfs_node_t node) { return 0; }
+int tmpfs_delete(vfs_node_t parent, vfs_node_t node) { return 0; }
 
-int tmpfs_rename(void *current, const char *new) { return 0; }
+int tmpfs_rename(vfs_node_t node, const char *new) { return 0; }
 
 void *tmpfs_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
                 size_t flags) {
@@ -230,8 +230,8 @@ void *tmpfs_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
     return addr;
 }
 
-void tmpfs_resize(void *current, uint64_t size) {
-    tmpfs_node_t *handle = current;
+void tmpfs_resize(vfs_node_t node, uint64_t size) {
+    tmpfs_node_t *handle = node->handle;
     if (!handle)
         return;
 
@@ -261,21 +261,23 @@ void tmpfs_resize(void *current, uint64_t size) {
         handle->node->size = size;
 }
 
-int tmpfs_stat(void *file, vfs_node_t node) {
-    tmpfs_node_t *tnode = file;
+int tmpfs_stat(vfs_node_t node) {
+    tmpfs_node_t *tnode = node->handle;
     node->size = tnode->size;
     return 0;
 }
 
-void tmpfs_free_handle(void *handle) {
-    tmpfs_node_t *tnode = handle;
+void tmpfs_free_handle(vfs_node_t node) {
+    tmpfs_node_t *tnode = node ? node->handle : NULL;
+    if (!tnode)
+        return;
     if (!tnode)
         return;
     free_frames_bytes(tnode->content, tnode->capability);
     free(tnode);
 }
 
-static struct vfs_callback callbacks = {
+static vfs_operations_t callbacks = {
     .open = (vfs_open_t)tmpfs_open,
     .close = (vfs_close_t)tmpfs_close,
     .read = (vfs_read_t)tmpfs_read,
@@ -305,7 +307,7 @@ static struct vfs_callback callbacks = {
 fs_t tmpfs = {
     .name = "tmpfs",
     .magic = 0x01021994,
-    .callback = &callbacks,
+    .ops = &callbacks,
     .flags = FS_FLAGS_VIRTUAL,
 };
 

@@ -239,7 +239,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_FCNTL] = (syscall_handle_t)sys_fcntl;
     syscall_handlers[SYS_FLOCK] = (syscall_handle_t)sys_flock;
     syscall_handlers[SYS_FSYNC] = (syscall_handle_t)sys_fsync;
-    // syscall_handlers[SYS_FDATASYNC] = (syscall_handle_t)sys_fdatasync;
+    syscall_handlers[SYS_FDATASYNC] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_TRUNCATE] = (syscall_handle_t)sys_truncate;
     syscall_handlers[SYS_FTRUNCATE] = (syscall_handle_t)sys_ftruncate;
     syscall_handlers[SYS_GETDENTS] = (syscall_handle_t)sys_getdents;

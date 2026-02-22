@@ -50,10 +50,12 @@ ssize_t notifyfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     return total_write ?: -EWOULDBLOCK;
 }
 
-static int notifyfs_poll(void *file, size_t events) {
+static int notifyfs_poll(vfs_node_t node, size_t events) {
     int revents = 0;
 
-    notifyfs_handle_t *handle = file;
+    notifyfs_handle_t *handle = node ? node->handle : NULL;
+    if (!handle)
+        return EPOLLNVAL;
     notifyfs_watch_t *pos, *tmp;
     if (events & EPOLLIN) {
         llist_for_each(pos, tmp, &handle->watches, node) {
@@ -70,13 +72,15 @@ static int notifyfs_poll(void *file, size_t events) {
     return revents;
 }
 
-static bool notifyfs_close(void *current) {
-    notifyfs_handle_t *handle = current;
+static bool notifyfs_close(vfs_node_t node) {
+    notifyfs_handle_t *handle = node ? node->handle : NULL;
+    if (!handle)
+        return true;
     handle->node->flags |= VFS_NODE_FLAGS_DELETED;
     return true;
 }
 
-static struct vfs_callback notifyfs_callbacks = {
+static vfs_operations_t notifyfs_callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
     .remount = (vfs_remount_t)dummy,
@@ -106,7 +110,7 @@ static struct vfs_callback notifyfs_callbacks = {
 fs_t notifyfs_fs = {
     .name = "notifyfs",
     .magic = 0,
-    .callback = &notifyfs_callbacks,
+    .ops = &notifyfs_callbacks,
     .flags = FS_FLAGS_HIDDEN,
 };
 
@@ -199,6 +203,7 @@ uint64_t sys_inotify_add_watch(uint64_t notifyfd, const char *path_user,
 
     notifyfs_watch_t *watch = malloc(sizeof(notifyfs_watch_t));
     watch->watch_node = node;
+    watch->owner = handle;
     watch->wd = watch_desc++;
     watch->mask = mask;
 

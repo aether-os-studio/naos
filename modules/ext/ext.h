@@ -16,14 +16,14 @@ typedef struct ext_handle {
 
 int ext_mount(uint64_t dev, vfs_node_t node);
 void ext_unmount(vfs_node_t node);
-void ext_open(void *parent, const char *name, vfs_node_t node);
-bool ext_close(void *current);
+void ext_open(vfs_node_t parent, const char *name, vfs_node_t node);
+bool ext_close(vfs_node_t node);
 ssize_t ext_write(fd_t *file, const void *addr, size_t offset, size_t size);
 ssize_t ext_read(fd_t *file, void *addr, size_t offset, size_t size);
-int ext_mkfile(void *parent, const char *name, vfs_node_t node);
-int ext_mkdir(void *parent, const char *name, vfs_node_t node);
-int ext_delete(void *parent, vfs_node_t node);
-int ext_rename(void *current, const char *new);
-int ext_stat(void *file, vfs_node_t node);
-int ext_ioctl(void *file, ssize_t cmd, ssize_t arg);
-int ext_poll(void *file, size_t events);
+int ext_mkfile(vfs_node_t parent, const char *name, vfs_node_t node);
+int ext_mkdir(vfs_node_t parent, const char *name, vfs_node_t node);
+int ext_delete(vfs_node_t parent, vfs_node_t node);
+int ext_rename(vfs_node_t node, const char *new);
+int ext_stat(vfs_node_t node);
+int ext_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg);
+int ext_poll(vfs_node_t node, size_t events);

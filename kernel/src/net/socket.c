@@ -46,6 +46,42 @@ char *unix_socket_addr_safe(const struct sockaddr_un *addr, size_t len) {
     return safe;
 }
 
+static inline void socket_notify_node(vfs_node_t node, uint32_t events) {
+    if (!node || !events)
+        return;
+    vfs_poll_notify(node, events);
+}
+
+static inline void socket_notify_sock(socket_t *sock, uint32_t events) {
+    if (!sock)
+        return;
+    socket_notify_node(sock->node, events);
+}
+
+static int socket_wait_node(vfs_node_t node, uint32_t events,
+                            const char *reason) {
+    if (!node || !current_task)
+        return -EINVAL;
+
+    uint32_t want = events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
+    if (vfs_poll(node, want) & want)
+        return EOK;
+
+    vfs_poll_wait_t wait;
+    vfs_poll_wait_init(&wait, current_task, want);
+    if (vfs_poll_wait_arm(node, &wait) < 0)
+        return -EINVAL;
+
+    if (vfs_poll(node, want) & want) {
+        vfs_poll_wait_disarm(&wait);
+        return EOK;
+    }
+
+    int ret = task_block(current_task, TASK_BLOCKING, -1, reason);
+    vfs_poll_wait_disarm(&wait);
+    return ret;
+}
+
 static const char *unix_socket_local_name(const socket_t *sock) {
     if (!sock)
         return "";
@@ -90,6 +126,7 @@ socket_t *unix_socket_alloc() {
     sock->recv_size = BUFFER_SIZE;
     sock->recv_buff = alloc_frames_bytes(BUFFER_SIZE);
     sock->recv_pos = 0;
+    sock->node = NULL;
 
     memset(sock->pending_files, 0, sizeof(sock->pending_files));
     sock->has_pending_cred = false;
@@ -166,14 +203,11 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
         return 0;
 
     while (true) {
-        arch_enable_interrupt();
-
         if (self && self->type != 2)
             active_peer = self->peer;
         if (!active_peer) {
             if (!(flags & MSG_NOSIGNAL))
                 task_commit_signal(current_task, SIGPIPE, NULL);
-            arch_disable_interrupt();
             return -EPIPE;
         }
 
@@ -182,7 +216,6 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
             mutex_unlock(&active_peer->lock);
             if (!(flags & MSG_NOSIGNAL))
                 task_commit_signal(current_task, SIGPIPE, NULL);
-            arch_disable_interrupt();
             return -EPIPE;
         }
         size_t available = active_peer->recv_size - active_peer->recv_pos;
@@ -192,18 +225,24 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
                    to_copy);
             active_peer->recv_pos += to_copy;
             mutex_unlock(&active_peer->lock);
-            arch_disable_interrupt();
+            socket_notify_sock(active_peer, EPOLLIN);
             return to_copy;
         }
         mutex_unlock(&active_peer->lock);
 
         if ((fd_handle && fd_handle->flags & O_NONBLOCK) ||
             (flags & MSG_DONTWAIT)) {
-            arch_disable_interrupt();
             return -(EWOULDBLOCK);
         }
 
-        schedule(SCHED_FLAG_YIELD);
+        vfs_node_t wait_node = (self && self->node) ? self->node : NULL;
+        if (!wait_node && active_peer->node)
+            wait_node = active_peer->node;
+        if (!wait_node)
+            return -EINVAL;
+        int reason = socket_wait_node(wait_node, EPOLLOUT, "socket_send");
+        if (reason != EOK)
+            return -EINTR;
     }
 
     return 0;
@@ -222,8 +261,6 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
 
     // 等待数据
     while (true) {
-        arch_enable_interrupt();
-
         mutex_lock(&self->lock);
 
         if (self->recv_pos > 0) {
@@ -235,7 +272,11 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
                 self->recv_pos -= to_copy;
             }
             mutex_unlock(&self->lock);
-            arch_disable_interrupt();
+            if (!peek) {
+                socket_notify_sock(self, EPOLLOUT);
+                if (self->peer)
+                    socket_notify_sock(self->peer, EPOLLOUT);
+            }
             return to_copy;
         }
 
@@ -248,17 +289,19 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
 
         // 对端关闭且没有数据 = EOF
         if (eof) {
-            arch_disable_interrupt();
             return 0;
         }
 
         if ((fd_handle && fd_handle->flags & O_NONBLOCK) ||
             (flags & MSG_DONTWAIT)) {
-            arch_disable_interrupt();
             return -(EWOULDBLOCK);
         }
 
-        schedule(SCHED_FLAG_YIELD);
+        if (!self->node)
+            return -EINVAL;
+        int reason = socket_wait_node(self->node, EPOLLIN, "socket_recv");
+        if (reason != EOK)
+            return -EINTR;
     }
 }
 
@@ -299,6 +342,7 @@ static int unix_socket_send_files_to_peer(socket_t *peer, int *fds,
         if (!inserted)
             return -ETOOMANYREFS;
     }
+    socket_notify_sock(peer, EPOLLIN);
     return 0;
 }
 
@@ -359,6 +403,7 @@ static void unix_socket_send_cred_to_peer(socket_t *peer, struct ucred *cred) {
         return;
     memcpy(&peer->pending_cred, cred, sizeof(struct ucred));
     peer->has_pending_cred = true;
+    socket_notify_sock(peer, EPOLLIN);
 }
 
 // 从自己的 pending_cred 接收
@@ -385,6 +430,7 @@ vfs_node_t unix_socket_create_node(socket_t *sock) {
     handle->sock = sock;
 
     socknode->handle = handle;
+    sock->node = socknode;
     return socknode;
 }
 
@@ -535,16 +581,18 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
             }
             listen_sock->connCurr--;
             mutex_unlock(&listen_sock->lock);
+            socket_notify_sock(listen_sock, EPOLLOUT);
             break;
         }
         mutex_unlock(&listen_sock->lock);
         if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK) {
             return -(EWOULDBLOCK);
         }
-        arch_enable_interrupt();
-        schedule(SCHED_FLAG_YIELD);
+        int reason = socket_wait_node(current_task->fd_info->fds[fd]->node,
+                                      EPOLLIN, "socket_accept");
+        if (reason != EOK)
+            return -EINTR;
     }
-    arch_disable_interrupt();
 
     if (!server_sock)
         return -ECONNABORTED;
@@ -627,6 +675,10 @@ uint64_t socket_shutdown(uint64_t fd, uint64_t how) {
     if (how == SHUT_WR || how == SHUT_RDWR)
         sock->shut_wr = true;
 
+    socket_notify_sock(sock, EPOLLERR | EPOLLHUP | EPOLLRDHUP);
+    if (sock->peer)
+        socket_notify_sock(sock->peer, EPOLLERR | EPOLLHUP | EPOLLRDHUP);
+
     return 0;
 }
 
@@ -685,9 +737,10 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
 
         if ((current_task->fd_info->fds[fd]->flags & O_NONBLOCK))
             return -EAGAIN;
-        arch_enable_interrupt();
-        schedule(SCHED_FLAG_YIELD);
-        arch_disable_interrupt();
+        int reason =
+            socket_wait_node(listen_sock->node, EPOLLOUT, "socket_connect");
+        if (reason != EOK)
+            return -EINTR;
     }
 
     socket_t *server_sock = unix_socket_alloc();
@@ -724,6 +777,8 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
     }
     listen_sock->backlog[listen_sock->connCurr++] = server_sock;
     mutex_unlock(&listen_sock->lock);
+    socket_notify_sock(listen_sock, EPOLLIN);
+    socket_notify_sock(sock, EPOLLOUT);
 
     return 0;
 }
@@ -904,8 +959,7 @@ done:
                 sock, peer, base + sent, curr->len - sent,
                 noblock ? (flags | MSG_DONTWAIT) : flags, caller_fd);
             if ((int64_t)ret < 0) {
-                if (cnt > 0 && ((int64_t)ret == -EAGAIN ||
-                                (int64_t)ret == -EWOULDBLOCK)) {
+                if (cnt > 0) {
                     return cnt;
                 }
                 return ret;
@@ -929,18 +983,6 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
 
     bool noblock = !!(flags & MSG_DONTWAIT);
     msg->msg_flags = 0;
-
-    // 等待数据
-    while (!noblock && !(caller_fd->flags & O_NONBLOCK)) {
-        mutex_lock(&sock->lock);
-        socket_t *live_peer = sock->peer;
-        bool has_data = sock->recv_pos > 0;
-        bool eof = (!live_peer || live_peer->closed || live_peer->shut_wr);
-        mutex_unlock(&sock->lock);
-        if (has_data || eof)
-            break;
-        schedule(SCHED_FLAG_YIELD);
-    }
 
     // 计算总长度并读取数据
     size_t len_total = 0;
@@ -1041,51 +1083,61 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
     return cnt;
 }
 
-int socket_poll(void *file, int events) {
-    socket_handle_t *handler = file;
+int socket_poll(vfs_node_t node, size_t events) {
+    socket_handle_t *handler = node ? node->handle : NULL;
+    if (!handler || !handler->sock)
+        return EPOLLNVAL;
     socket_t *sock = handler->sock;
     int revents = 0;
 
     if (sock->connMax > 0) {
         // listen 模式
-        if (sock->connCurr < sock->connMax)
-            revents |= (events & EPOLLOUT) ? EPOLLOUT : 0;
+        mutex_lock(&sock->lock);
         if (sock->connCurr > 0)
             revents |= (events & EPOLLIN) ? EPOLLIN : 0;
-    } else if (sock->peer) {
-        mutex_lock(&sock->lock);
-
-        if (sock->peer->closed || sock->peer->shut_wr)
-            revents |= EPOLLHUP;
-
-        // 可写：对端有空间
-        if ((events & EPOLLOUT) && !sock->shut_wr && !sock->peer->closed &&
-            sock->peer->recv_pos < sock->peer->recv_size)
-            revents |= EPOLLOUT;
-
-        // 可读：自己有数据
-        if ((events & EPOLLIN) && (sock->recv_pos > 0 || sock->shut_rd ||
-                                   sock->peer->shut_wr || sock->peer->closed))
-            revents |= EPOLLIN;
-
         mutex_unlock(&sock->lock);
     } else if (sock->type == 2) {
+        mutex_lock(&sock->lock);
         if (events & EPOLLOUT)
             revents |= EPOLLOUT;
 
         if ((events & EPOLLIN) && sock->recv_pos > 0)
             revents |= EPOLLIN;
+
+        mutex_unlock(&sock->lock);
     } else {
-        if ((events & EPOLLIN) && sock->established)
-            revents |= EPOLLIN;
-        revents |= EPOLLHUP;
+        mutex_lock(&sock->lock);
+        socket_t *peer = sock->peer;
+        if (peer) {
+            if (peer->closed)
+                revents |= EPOLLHUP;
+            if ((events & EPOLLRDHUP) && (peer->closed || peer->shut_wr))
+                revents |= EPOLLRDHUP;
+
+            // 可写：对端有空间
+            if ((events & EPOLLOUT) && !sock->shut_wr && !peer->closed &&
+                peer->recv_pos < peer->recv_size)
+                revents |= EPOLLOUT;
+
+            // 可读：自己有数据
+            if ((events & EPOLLIN) && (sock->recv_pos > 0 || sock->shut_rd ||
+                                       peer->shut_wr || peer->closed))
+                revents |= EPOLLIN;
+        } else {
+            if ((events & EPOLLIN) && sock->established)
+                revents |= EPOLLIN;
+            if ((events & EPOLLRDHUP) && sock->established)
+                revents |= EPOLLRDHUP;
+            revents |= EPOLLHUP;
+        }
+        mutex_unlock(&sock->lock);
     }
 
     return revents;
 }
 
-int socket_ioctl(void *file, ssize_t cmd, ssize_t arg) {
-    socket_handle_t *handler = file;
+int socket_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
+    socket_handle_t *handler = node ? node->handle : NULL;
     if (!handler || !handler->fd || !handler->sock)
         return -EBADF;
 
@@ -1112,19 +1164,29 @@ int socket_ioctl(void *file, ssize_t cmd, ssize_t arg) {
     }
 }
 
-bool socket_close(socket_handle_t *handle) {
+bool socket_close(vfs_node_t node) {
+    socket_handle_t *handle = node ? node->handle : NULL;
     if (!handle)
         return true;
 
     socket_t *sock = handle->sock;
+    socket_t *peer = NULL;
 
     // 标记关闭
     sock->closed = true;
 
     // 断开与对端的连接
+    mutex_lock(&sock->lock);
     if (sock->peer) {
+        peer = sock->peer;
         sock->peer->peer = NULL; // 对端不再指向我
         sock->peer = NULL;
+    }
+    mutex_unlock(&sock->lock);
+
+    socket_notify_sock(sock, EPOLLHUP | EPOLLRDHUP | EPOLLERR);
+    if (peer) {
+        socket_notify_sock(peer, EPOLLHUP | EPOLLRDHUP | EPOLLERR);
     }
 
     unix_socket_free(sock);
@@ -1484,8 +1546,6 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, void *optval,
     return 0;
 }
 
-static int dummy() { return 0; }
-
 socket_op_t socket_ops = {
     .shutdown = socket_shutdown,
     .accept = socket_accept,
@@ -1502,36 +1562,19 @@ socket_op_t socket_ops = {
     .setsockopt = unix_socket_setsockopt,
 };
 
-static struct vfs_callback socket_callback = {
-    .mount = (vfs_mount_t)dummy,
-    .unmount = (vfs_unmount_t)dummy,
-    .remount = (vfs_remount_t)dummy,
-    .open = (vfs_open_t)dummy,
-    .close = (vfs_close_t)socket_close,
-    .read = (vfs_read_t)socket_read,
-    .write = (vfs_write_t)socket_write,
-    .readlink = (vfs_readlink_t)dummy,
-    .mkdir = (vfs_mk_t)dummy,
-    .mkfile = (vfs_mk_t)dummy,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)dummy,
-    .mknod = (vfs_mknod_t)dummy,
-    .chmod = (vfs_chmod_t)dummy,
-    .chown = (vfs_chown_t)dummy,
-    .delete = (vfs_del_t)dummy,
-    .rename = (vfs_rename_t)dummy,
-    .map = (vfs_mapfile_t)dummy,
-    .stat = (vfs_stat_t)dummy,
-    .ioctl = (vfs_ioctl_t)socket_ioctl,
-    .poll = (vfs_poll_t)socket_poll,
-    .resize = (vfs_resize_t)dummy,
+static vfs_operations_t socket_vfs_ops = {
+    .close = socket_close,
+    .read = socket_read,
+    .write = socket_write,
+    .ioctl = socket_ioctl,
+    .poll = socket_poll,
     .free_handle = vfs_generic_free_handle,
 };
 
 fs_t sockfs = {
     .name = "sockfs",
     .magic = 0,
-    .callback = &socket_callback,
+    .ops = &socket_vfs_ops,
     .flags = FS_FLAGS_HIDDEN | FS_FLAGS_VIRTUAL,
 };
 

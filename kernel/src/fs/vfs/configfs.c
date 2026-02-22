@@ -4,7 +4,7 @@ static int configfs_fsid = 0;
 
 static int dummy() { return -ENOSYS; }
 
-static struct vfs_callback callbacks = {
+static vfs_operations_t callbacks = {
     .open = (vfs_open_t)dummy,
     .close = (vfs_close_t)dummy,
     .read = (vfs_read_t)dummy,
@@ -34,7 +34,7 @@ static struct vfs_callback callbacks = {
 fs_t configfs = {
     .name = "configfs",
     .magic = 0x62656570,
-    .callback = &callbacks,
+    .ops = &callbacks,
     .flags = FS_FLAGS_VIRTUAL,
 };
 

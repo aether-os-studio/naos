@@ -17,6 +17,8 @@ uint32_t epoll_to_poll_comp(uint32_t epoll_events) {
         poll_events |= POLLHUP;
     if (epoll_events & EPOLLNVAL)
         poll_events |= POLLNVAL;
+    if (epoll_events & EPOLLRDHUP)
+        poll_events |= POLLRDHUP;
 
     return poll_events;
 }
@@ -36,13 +38,79 @@ uint32_t poll_to_epoll_comp(uint32_t poll_events) {
         epoll_events |= EPOLLHUP;
     if (poll_events & POLLNVAL)
         epoll_events |= EPOLLNVAL;
+    if (poll_events & POLLRDHUP)
+        epoll_events |= EPOLLRDHUP;
 
     return epoll_events;
+}
+
+static int poll_scan_ready(struct pollfd *fds, int nfds) {
+    int ready = 0;
+
+    for (int i = 0; i < nfds; i++) {
+        fds[i].revents = 0;
+        if (fds[i].fd < 0)
+            continue;
+        if (fds[i].fd >= MAX_FD_NUM || !current_task->fd_info->fds[fds[i].fd]) {
+            fds[i].revents |= POLLNVAL;
+            ready++;
+            continue;
+        }
+
+        vfs_node_t node = current_task->fd_info->fds[fds[i].fd]->node;
+        uint32_t query_events = poll_to_epoll_comp(fds[i].events) | EPOLLERR |
+                                EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
+        int polled = vfs_poll(node, query_events);
+        if (polled < 0)
+            polled = 0;
+
+        int revents = epoll_to_poll_comp((uint32_t)polled);
+        if (revents > 0) {
+            fds[i].revents = revents;
+            ready++;
+        }
+    }
+
+    return ready;
+}
+
+static void poll_arm_waiters(struct pollfd *fds, int nfds,
+                             vfs_poll_wait_t *waits) {
+    for (int i = 0; i < nfds; i++) {
+        if (fds[i].fd < 0)
+            continue;
+        if (fds[i].fd >= MAX_FD_NUM || !current_task->fd_info->fds[fds[i].fd])
+            continue;
+        vfs_node_t node = current_task->fd_info->fds[fds[i].fd]->node;
+        uint32_t query_events = poll_to_epoll_comp(fds[i].events) | EPOLLERR |
+                                EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
+        vfs_poll_wait_init(&waits[i], current_task, query_events);
+        vfs_poll_wait_arm(node, &waits[i]);
+    }
+}
+
+static void poll_disarm_waiters(vfs_poll_wait_t *waits, int nfds) {
+    for (int i = 0; i < nfds; i++) {
+        if (waits[i].armed) {
+            vfs_poll_wait_disarm(&waits[i]);
+        }
+    }
 }
 
 size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
     if (nfds < 0)
         return (size_t)-EINVAL;
+    if (nfds > 0 && !fds)
+        return (size_t)-EFAULT;
+    if (!current_task || !current_task->fd_info)
+        return (size_t)-EINVAL;
+
+    vfs_poll_wait_t *waits = NULL;
+    if (nfds > 0) {
+        waits = calloc(nfds, sizeof(vfs_poll_wait_t));
+        if (!waits)
+            return (size_t)-ENOMEM;
+    }
 
     int ready = 0;
     bool irq_state = arch_interrupt_enabled();
@@ -55,27 +123,7 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
 
     do {
         arch_enable_interrupt();
-        ready = 0;
-
-        // 检查每个文件描述符
-        for (int i = 0; i < nfds; i++) {
-            fds[i].revents = 0;
-            if (fds[i].fd < 0 || fds[i].fd >= MAX_FD_NUM ||
-                !current_task->fd_info->fds[fds[i].fd]) {
-                fds[i].revents |= POLLNVAL;
-                ready++;
-                continue;
-            }
-            vfs_node_t node = current_task->fd_info->fds[fds[i].fd]->node;
-            uint32_t query_events =
-                poll_to_epoll_comp(fds[i].events) | EPOLLERR | EPOLLHUP;
-
-            int revents = epoll_to_poll_comp(vfs_poll(node, query_events));
-            if (revents > 0) {
-                fds[i].revents = revents;
-                ready++;
-            }
-        }
+        ready = poll_scan_ready(fds, nfds);
 
         if (ready > 0)
             break;
@@ -83,8 +131,36 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
         if (!infinite_timeout && timeout == 0)
             break;
 
-        schedule(SCHED_FLAG_YIELD);
+        poll_arm_waiters(fds, nfds, waits);
+        ready = poll_scan_ready(fds, nfds);
+        if (ready > 0) {
+            poll_disarm_waiters(waits, nfds);
+            break;
+        }
+
+        int64_t wait_ns = -1;
+        if (!infinite_timeout) {
+            uint64_t elapsed = nano_time() - start_time;
+            if (elapsed >= timeout_ns) {
+                poll_disarm_waiters(waits, nfds);
+                break;
+            }
+            wait_ns = (int64_t)(timeout_ns - elapsed);
+        }
+
+        int block_reason =
+            task_block(current_task, TASK_BLOCKING, wait_ns, "poll");
+        poll_disarm_waiters(waits, nfds);
+        if (block_reason == ETIMEDOUT) {
+            break;
+        }
+        if (block_reason != EOK) {
+            ready = -EINTR;
+            break;
+        }
     } while (infinite_timeout || (nano_time() - start_time) < timeout_ns);
+
+    free(waits);
 
     if (irq_state) {
         arch_enable_interrupt();
@@ -98,22 +174,26 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
 uint64_t sys_ppoll(struct pollfd *fds, uint64_t nfds,
                    const struct timespec *timeout_ts, const sigset_t *sigmask,
                    size_t sigsetsize) {
-    if (!fds ||
-        check_user_overflow((uint64_t)fds, nfds * sizeof(struct pollfd))) {
+    if (nfds > 0 &&
+        (!fds ||
+         check_user_overflow((uint64_t)fds, nfds * sizeof(struct pollfd)))) {
         return (uint64_t)-EFAULT;
     }
     if (sigmask && sigsetsize < sizeof(sigset_t)) {
         return (uint64_t)-EINVAL;
     }
 
+    int timeout = -1;
+    if (timeout_ts) {
+        if (timeout_ts->tv_sec < 0 || timeout_ts->tv_nsec < 0 ||
+            timeout_ts->tv_nsec >= 1000000000LL)
+            return (uint64_t)-EINVAL;
+        timeout = timeout_ts->tv_sec * 1000 + timeout_ts->tv_nsec / 1000000;
+    }
+
     sigset_t origmask;
     if (sigmask) {
         sys_ssetmask(SIG_SETMASK, sigmask, &origmask, sizeof(sigset_t));
-    }
-
-    int timeout = -1;
-    if (timeout_ts) {
-        timeout = timeout_ts->tv_sec * 1000 + timeout_ts->tv_nsec / 1000000;
     }
 
     uint64_t ret = sys_poll(fds, nfds, timeout);

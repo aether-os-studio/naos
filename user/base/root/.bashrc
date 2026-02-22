@@ -15,7 +15,6 @@ if [ -z "${TERM}" ] || [ "${TERM}" == "dumb" ]; then
 fi
 
 export PATH="/bin:/usr/bin:/usr/sbin:/sbin:/bin:/usr/local/bin:/usr/local/sbin"
-export LANG=en_US.UTF-8
 export SHELL="/bin/bash"
 export HOME="/root"
 

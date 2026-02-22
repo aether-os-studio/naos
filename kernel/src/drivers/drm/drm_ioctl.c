@@ -81,8 +81,8 @@ static ssize_t drm_primefd_write(fd_t *fd, const void *buf, uint64_t offset,
     return (ssize_t)copy_len;
 }
 
-static bool drm_primefd_close(void *current) {
-    drm_prime_fd_ctx_t *ctx = current;
+static bool drm_primefd_close(vfs_node_t node) {
+    drm_prime_fd_ctx_t *ctx = node ? node->handle : NULL;
     if (!ctx) {
         return true;
     }
@@ -91,8 +91,8 @@ static bool drm_primefd_close(void *current) {
     return true;
 }
 
-static int drm_primefd_stat(void *file, vfs_node_t node) {
-    drm_prime_fd_ctx_t *ctx = file;
+static int drm_primefd_stat(vfs_node_t node) {
+    drm_prime_fd_ctx_t *ctx = node ? node->handle : NULL;
     if (!ctx) {
         return -EINVAL;
     }
@@ -100,8 +100,8 @@ static int drm_primefd_stat(void *file, vfs_node_t node) {
     return 0;
 }
 
-static void drm_primefd_resize(void *current, uint64_t size) {
-    drm_prime_fd_ctx_t *ctx = current;
+static void drm_primefd_resize(vfs_node_t node, uint64_t size) {
+    drm_prime_fd_ctx_t *ctx = node ? node->handle : NULL;
     if (!ctx) {
         return;
     }
@@ -134,7 +134,7 @@ static void *drm_primefd_map(fd_t *file, void *addr, size_t offset, size_t size,
     return addr;
 }
 
-static struct vfs_callback drm_primefs_callbacks = {
+static vfs_operations_t drm_primefs_callbacks = {
     .mount = (vfs_mount_t)drm_primefs_dummy,
     .unmount = (vfs_unmount_t)drm_primefs_dummy,
     .remount = (vfs_remount_t)drm_primefs_dummy,
@@ -163,7 +163,7 @@ static struct vfs_callback drm_primefs_callbacks = {
 static fs_t drm_primefs = {
     .name = "drmprimefs",
     .magic = 0,
-    .callback = &drm_primefs_callbacks,
+    .ops = &drm_primefs_callbacks,
     .flags = FS_FLAGS_HIDDEN | FS_FLAGS_VIRTUAL,
 };
 

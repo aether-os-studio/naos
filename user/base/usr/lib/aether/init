@@ -20,11 +20,10 @@ export WLR_RENDERER=pixman
 export WLR_RENDERER_ALLOW_SOFTWARE=1
 export LIBGL_ALWAYS_SOFTWARE=1
 
-export XDG_CURRENT_DESKTOP=sway
-export XDG_SESSION_DESKTOP=sway
 export XDG_SESSION_TYPE=wayland
 export GDK_BACKEND=wayland
 
+export LANG=C.UTF-8
+
 seatd &
-dbus-daemon --system --nofork &
-exec dbus-run-session -- sway
+exec weston --xwayland

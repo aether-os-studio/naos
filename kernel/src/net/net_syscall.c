@@ -228,9 +228,8 @@ int64_t sys_send(int sockfd, void *buff, size_t len, int flags,
                  struct sockaddr_un *dest_addr, socklen_t addrlen) {
     if (sockfd < 0 || sockfd >= MAX_FD_NUM)
         return -EBADF;
-    if (len > 0 &&
-        (!buff || check_user_overflow((uint64_t)buff, len) ||
-         check_unmapped((uint64_t)buff, len)))
+    if (len > 0 && (!buff || check_user_overflow((uint64_t)buff, len) ||
+                    check_unmapped((uint64_t)buff, len)))
         return -EFAULT;
 
     fd_t *node = current_task->fd_info->fds[sockfd];
@@ -249,9 +248,8 @@ int64_t sys_recv(int sockfd, void *buf, size_t len, int flags,
                  struct sockaddr_un *dest_addr, socklen_t *addrlen) {
     if (sockfd < 0 || sockfd >= MAX_FD_NUM)
         return -EBADF;
-    if (len > 0 &&
-        (!buf || check_user_overflow((uint64_t)buf, len) ||
-         check_unmapped((uint64_t)buf, len)))
+    if (len > 0 && (!buf || check_user_overflow((uint64_t)buf, len) ||
+                    check_unmapped((uint64_t)buf, len)))
         return -EFAULT;
 
     fd_t *node = current_task->fd_info->fds[sockfd];
@@ -262,7 +260,8 @@ int64_t sys_recv(int sockfd, void *buf, size_t len, int flags,
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->recvfrom)
-        return handle->op->recvfrom(sockfd, buf, len, flags, dest_addr, addrlen);
+        return handle->op->recvfrom(sockfd, buf, len, flags, dest_addr,
+                                    addrlen);
     return 0;
 }
 

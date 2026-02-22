@@ -19,14 +19,14 @@ vfs_node_t fake_devtmpfs_root = NULL;
 
 static int dummy() { return 0; }
 
-void devtmpfs_open(void *parent, const char *name, vfs_node_t node) {
+void devtmpfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {
     if ((node->type & file_block) || (node->type & file_stream)) {
         device_open(node->rdev, NULL);
     }
 }
 
-bool devtmpfs_close(void *current) {
-    devtmpfs_node_t *dnode = current;
+bool devtmpfs_close(vfs_node_t node) {
+    devtmpfs_node_t *dnode = node ? node->handle : NULL;
     if (!dnode)
         return false;
     if ((dnode->node->type & file_block) || (dnode->node->type & file_stream)) {
@@ -103,7 +103,7 @@ ssize_t devtmpfs_readlink(vfs_node_t node, void *addr, size_t offset,
     return to_copy;
 }
 
-int devtmpfs_mkdir(void *parent, const char *name, vfs_node_t node) {
+int devtmpfs_mkdir(vfs_node_t parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
     devtmpfs_node_t *handle = malloc(sizeof(devtmpfs_node_t));
     handle->node = node;
@@ -112,7 +112,7 @@ int devtmpfs_mkdir(void *parent, const char *name, vfs_node_t node) {
     return 0;
 }
 
-int devtmpfs_mkfile(void *parent, const char *name, vfs_node_t node) {
+int devtmpfs_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
     if (node->handle) {
         return -EEXIST;
@@ -126,7 +126,7 @@ int devtmpfs_mkfile(void *parent, const char *name, vfs_node_t node) {
     return 0;
 }
 
-int devtmpfs_mknod(void *parent, const char *name, vfs_node_t node,
+int devtmpfs_mknod(vfs_node_t parent, const char *name, vfs_node_t node,
                    uint16_t mode, int dev) {
     node->dev = dev;
     node->rdev = dev;
@@ -143,7 +143,7 @@ int devtmpfs_mknod(void *parent, const char *name, vfs_node_t node,
     return 0;
 }
 
-int devtmpfs_symlink(void *parent, const char *name, vfs_node_t node) {
+int devtmpfs_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
     if (node->handle) {
         return -EEXIST;
@@ -217,12 +217,14 @@ int devtmpfs_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
     return 0;
 }
 
-int devtmpfs_delete(void *parent, vfs_node_t node) { return 0; }
+int devtmpfs_delete(vfs_node_t parent, vfs_node_t node) { return 0; }
 
-int devtmpfs_rename(void *current, const char *new) { return 0; }
+int devtmpfs_rename(vfs_node_t node, const char *new) { return 0; }
 
-int devtmpfs_ioctl(void *file, ssize_t cmd, ssize_t arg) {
-    devtmpfs_node_t *tnode = file;
+int devtmpfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
+    devtmpfs_node_t *tnode = node ? node->handle : NULL;
+    if (!tnode)
+        return -EBADF;
     if ((tnode->node->type & file_block) || (tnode->node->type & file_stream)) {
         return device_ioctl(tnode->node->rdev, cmd, (void *)arg);
     }
@@ -276,16 +278,18 @@ void *devtmpfs_map(fd_t *file, void *addr, size_t offset, size_t size,
     return addr;
 }
 
-int devtmpfs_poll(void *file, size_t events) {
-    devtmpfs_node_t *tnode = file;
+int devtmpfs_poll(vfs_node_t node, size_t events) {
+    devtmpfs_node_t *tnode = node ? node->handle : NULL;
+    if (!tnode)
+        return EPOLLNVAL;
     if ((tnode->node->type & file_block) || (tnode->node->type & file_stream)) {
         return device_poll(tnode->node->rdev, events);
     }
     return -ENOSYS;
 }
 
-void devtmpfs_resize(void *current, uint64_t size) {
-    devtmpfs_node_t *handle = current;
+void devtmpfs_resize(vfs_node_t node, uint64_t size) {
+    devtmpfs_node_t *handle = node ? node->handle : NULL;
     if (!handle)
         return;
 
@@ -315,21 +319,23 @@ void devtmpfs_resize(void *current, uint64_t size) {
         handle->node->size = size;
 }
 
-int devtmpfs_stat(void *file, vfs_node_t node) {
-    devtmpfs_node_t *tnode = file;
+int devtmpfs_stat(vfs_node_t node) {
+    devtmpfs_node_t *tnode = node ? node->handle : NULL;
+    if (!tnode)
+        return -EINVAL;
     node->size = tnode->size;
     return 0;
 }
 
-void devtmpfs_free_handle(void *handle) {
-    devtmpfs_node_t *tnode = handle;
+void devtmpfs_free_handle(vfs_node_t node) {
+    devtmpfs_node_t *tnode = node ? node->handle : NULL;
     if (!tnode)
         return;
     free_frames_bytes(tnode->content, tnode->capability);
     free(tnode);
 }
 
-static struct vfs_callback callbacks = {
+static vfs_operations_t callbacks = {
     .open = (vfs_open_t)devtmpfs_open,
     .close = (vfs_close_t)devtmpfs_close,
     .read = (vfs_read_t)devtmpfs_read,
@@ -359,7 +365,7 @@ static struct vfs_callback callbacks = {
 fs_t devtmpfs = {
     .name = "devtmpfs",
     .magic = 0x01021994,
-    .callback = &callbacks,
+    .ops = &callbacks,
     .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_NEED_OPEN,
 };
 

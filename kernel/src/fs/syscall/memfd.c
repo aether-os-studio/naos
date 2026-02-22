@@ -48,8 +48,10 @@ static ssize_t memfd_write(fd_t *fd, const void *buf, uint64_t offset,
     return len;
 }
 
-bool memfd_close(void *current) {
-    struct memfd_ctx *ctx = current;
+bool memfd_close(vfs_node_t node) {
+    struct memfd_ctx *ctx = node ? node->handle : NULL;
+    if (!ctx)
+        return true;
 
     if (--ctx->refcount == 0) {
         spin_lock(&ctx->lock);
@@ -67,17 +69,21 @@ bool memfd_close(void *current) {
     }
 }
 
-int memfd_stat(void *file, vfs_node_t node) {
-    struct memfd_ctx *ctx = file;
+int memfd_stat(vfs_node_t node) {
+    struct memfd_ctx *ctx = node ? node->handle : NULL;
+    if (!ctx)
+        return -EINVAL;
     node->size = ctx->len;
     return 0;
 }
 
-void memfd_resize(void *current, uint64_t size) {
+void memfd_resize(vfs_node_t node, uint64_t size) {
     if (size == 0)
         return;
 
-    struct memfd_ctx *ctx = current;
+    struct memfd_ctx *ctx = node ? node->handle : NULL;
+    if (!ctx)
+        return;
 
     spin_lock(&ctx->lock);
     uint8_t *new_data = alloc_frames_bytes(size);
@@ -105,7 +111,7 @@ void *memfd_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
 
 static int dummy() { return 0; }
 
-static struct vfs_callback callbacks = {
+static vfs_operations_t callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
     .remount = (vfs_remount_t)dummy,
@@ -209,7 +215,7 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags) {
 fs_t memfdfs = {
     .name = "memfdfs",
     .magic = 0,
-    .callback = &callbacks,
+    .ops = &callbacks,
     .flags = FS_FLAGS_HIDDEN | FS_FLAGS_VIRTUAL,
 };
 

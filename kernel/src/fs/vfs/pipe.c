@@ -11,7 +11,7 @@ static int pipefd_id = 0;
 
 static int dummy() { return -ENOSYS; }
 
-void pipefs_open(void *parent, const char *name, vfs_node_t node) {
+void pipefs_open(vfs_node_t parent, const char *name, vfs_node_t node) {
     (void)parent;
     (void)name;
 }
@@ -42,6 +42,8 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             memmove(pipe->buf, &pipe->buf[to_read], pipe->ptr - to_read);
             pipe->ptr -= to_read;
             spin_unlock(&pipe->lock);
+            if (pipe->write_node)
+                vfs_poll_notify(pipe->write_node, EPOLLOUT);
             return to_read;
         }
 
@@ -56,13 +58,17 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             return -EWOULDBLOCK;
         }
 
-        arch_enable_interrupt();
-        schedule(SCHED_FLAG_YIELD);
-        arch_disable_interrupt();
+        vfs_poll_wait_t wait;
+        vfs_poll_wait_init(&wait, current_task, EPOLLIN | EPOLLHUP | EPOLLERR);
+        vfs_poll_wait_arm(fd->node, &wait);
+        int reason = task_block(current_task, TASK_BLOCKING, -1, "pipe_read");
+        vfs_poll_wait_disarm(&wait);
+        if (reason != EOK)
+            return -EINTR;
     }
 }
 
-ssize_t pipe_write_inner(void *file, const void *addr, size_t size) {
+ssize_t pipe_write_inner(fd_t *fd, void *file, const void *addr, size_t size) {
     pipe_specific_t *spec = (pipe_specific_t *)file;
     pipe_info_t *pipe = spec->info;
 
@@ -78,11 +84,23 @@ ssize_t pipe_write_inner(void *file, const void *addr, size_t size) {
             memcpy(&pipe->buf[pipe->ptr], addr, size);
             pipe->ptr += size;
             spin_unlock(&pipe->lock);
+            if (pipe->read_node)
+                vfs_poll_notify(pipe->read_node, EPOLLIN);
             return size;
         }
 
         spin_unlock(&pipe->lock);
-        schedule(SCHED_FLAG_YIELD);
+
+        if (fd->flags & O_NONBLOCK)
+            return -EWOULDBLOCK;
+
+        vfs_poll_wait_t wait;
+        vfs_poll_wait_init(&wait, current_task, EPOLLOUT | EPOLLHUP | EPOLLERR);
+        vfs_poll_wait_arm(fd->node, &wait);
+        int reason = task_block(current_task, TASK_BLOCKING, -1, "pipe_write");
+        vfs_poll_wait_disarm(&wait);
+        if (reason != EOK)
+            return -EINTR;
     }
 }
 
@@ -97,7 +115,7 @@ ssize_t pipefs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
             int cycle = 0;
             while (cycle < PIPE_BUFF) {
                 ssize_t wrote = pipe_write_inner(
-                    file, data + i * PIPE_BUFF + cycle, PIPE_BUFF - cycle);
+                    fd, file, data + i * PIPE_BUFF + cycle, PIPE_BUFF - cycle);
                 if (wrote < 0)
                     return wrote;
                 cycle += wrote;
@@ -109,7 +127,7 @@ ssize_t pipefs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
         size_t cycle = 0;
         while (cycle < remainder) {
             ssize_t wrote = pipe_write_inner(
-                file, data + chunks * PIPE_BUFF + cycle, remainder - cycle);
+                fd, file, data + chunks * PIPE_BUFF + cycle, remainder - cycle);
             if (wrote < 0)
                 return wrote;
             cycle += wrote;
@@ -120,15 +138,17 @@ ssize_t pipefs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     return ret;
 }
 
-int pipefs_ioctl(void *file, ssize_t cmd, ssize_t arg) {
+int pipefs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
     switch (cmd) {
     default:
         return -EINVAL;
     }
 }
 
-bool pipefs_close(void *current) {
-    pipe_specific_t *spec = (pipe_specific_t *)current;
+bool pipefs_close(vfs_node_t node) {
+    pipe_specific_t *spec = node ? node->handle : NULL;
+    if (!spec)
+        return true;
     pipe_info_t *pipe = spec->info;
 
     spin_lock(&pipe->lock);
@@ -145,6 +165,11 @@ bool pipefs_close(void *current) {
     else if (!spec->write && pipe->read_fds == 0)
         free(spec);
 
+    if (pipe->read_node)
+        vfs_poll_notify(pipe->read_node, EPOLLHUP);
+    if (pipe->write_node)
+        vfs_poll_notify(pipe->write_node, EPOLLHUP);
+
     if (pipe->write_fds == 0 && pipe->read_fds == 0) {
         spin_unlock(&pipe->lock);
         free_frames_bytes(pipe->buf, PIPE_BUFF);
@@ -157,8 +182,10 @@ bool pipefs_close(void *current) {
     return true;
 }
 
-int pipefs_poll(void *file, size_t events) {
-    pipe_specific_t *spec = (pipe_specific_t *)file;
+int pipefs_poll(vfs_node_t node, size_t events) {
+    pipe_specific_t *spec = node ? node->handle : NULL;
+    if (!spec)
+        return EPOLLNVAL;
     pipe_info_t *pipe = spec->info;
 
     int out = 0;
@@ -181,8 +208,10 @@ int pipefs_poll(void *file, size_t events) {
     return out;
 }
 
-int pipefs_stat(void *file, vfs_node_t node) {
-    pipe_specific_t *spec = (pipe_specific_t *)file;
+int pipefs_stat(vfs_node_t node) {
+    pipe_specific_t *spec = node ? node->handle : NULL;
+    if (!spec)
+        return -EINVAL;
     pipe_info_t *pipe = spec->info;
 
     if (!pipe)
@@ -193,7 +222,7 @@ int pipefs_stat(void *file, vfs_node_t node) {
     return 0;
 }
 
-static struct vfs_callback callbacks = {
+static vfs_operations_t callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
     .remount = (vfs_remount_t)dummy,
@@ -223,7 +252,7 @@ static struct vfs_callback callbacks = {
 fs_t pipefs = {
     .name = "pipefs",
     .magic = 0,
-    .callback = &callbacks,
+    .ops = &callbacks,
     .flags = FS_FLAGS_HIDDEN,
 };
 
@@ -262,6 +291,8 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
     memset(info->buf, 0, PIPE_BUFF);
     info->read_fds = 1;
     info->write_fds = 1;
+    info->read_node = node_input;
+    info->write_node = node_output;
     info->lock.lock = 0;
     info->ptr = 0;
 

@@ -20,5 +20,4 @@ typedef struct sched_rq {
 void add_sched_entity(task_t *task, sched_rq_t *scheduler);
 void remove_sched_entity(task_t *task, sched_rq_t *scheduler);
 task_t *sched_pick_next_task(sched_rq_t *scheduler);
-task_t *sched_pick_next_task_excluding(sched_rq_t *scheduler,
-                                       task_t *excluded);
+task_t *sched_pick_next_task_excluding(sched_rq_t *scheduler, task_t *excluded);

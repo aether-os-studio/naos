@@ -1450,6 +1450,10 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     if (flags & CLONE_VFORK) {
         flags |= CLONE_VM;
+        flags |= CLONE_THREAD;
+        flags |= CLONE_SIGHAND;
+        flags |= CLONE_FS;
+        flags |= CLONE_FILES;
     }
 
     if ((flags & CLONE_PARENT_SETTID) &&
@@ -1857,6 +1861,7 @@ void sched_update_timerfd() {
                     tfd->count++;
                     tfd->timer.expires = 0;
                 }
+                vfs_poll_notify(node, EPOLLIN);
             }
         }
     }

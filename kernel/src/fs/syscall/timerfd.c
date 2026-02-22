@@ -119,18 +119,25 @@ uint64_t sys_timerfd_settime(int fd, int flags,
     if (value == 0) {
         tfd->count = 0;
     }
+    if (tfd->count > 0) {
+        vfs_poll_notify(node, EPOLLIN);
+    }
 
     return 0;
 }
 
-bool timerfd_close(void *current) {
-    timerfd_t *tfd = current;
+bool timerfd_close(vfs_node_t node) {
+    timerfd_t *tfd = node ? node->handle : NULL;
+    if (!tfd)
+        return true;
     free(tfd);
     return true;
 }
 
-int timerfd_poll(void *file, size_t events) {
-    timerfd_t *tfd = file;
+int timerfd_poll(vfs_node_t node, size_t events) {
+    timerfd_t *tfd = node ? node->handle : NULL;
+    if (!tfd)
+        return EPOLLNVAL;
 
     int revents = 0;
 
@@ -157,9 +164,18 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             if (fd->flags & O_NONBLOCK) {
                 return -EAGAIN; // 非阻塞模式，直接返回EAGAIN
             } else {
-                // 阻塞模式，等待timerfd被设置
-                while (tfd->timer.expires == 0) {
-                    schedule(SCHED_FLAG_YIELD);
+                vfs_poll_wait_t wait;
+                vfs_poll_wait_init(&wait, current_task,
+                                   EPOLLIN | EPOLLERR | EPOLLHUP);
+                vfs_poll_wait_arm(fd->node, &wait);
+                if (tfd->timer.expires == 0) {
+                    int reason = task_block(current_task, TASK_BLOCKING, -1,
+                                            "timerfd_read_unarmed");
+                    vfs_poll_wait_disarm(&wait);
+                    if (reason != EOK)
+                        return -EINTR;
+                } else {
+                    vfs_poll_wait_disarm(&wait);
                 }
                 // 定时器被设置后，重新获取当前时间
                 now = get_current_time_ns(tfd->timer.clock_type);
@@ -169,11 +185,12 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         // 等待超时（如果是阻塞模式）
         if (tfd->timer.expires > 0 && now < tfd->timer.expires &&
             !(fd->flags & O_NONBLOCK)) {
-            // 阻塞等待直到超时
-            while (now < tfd->timer.expires) {
-                schedule(SCHED_FLAG_YIELD);
-                now = get_current_time_ns(tfd->timer.clock_type);
-            }
+            int64_t wait_ns = (int64_t)(tfd->timer.expires - now);
+            int reason = task_block(current_task, TASK_BLOCKING, wait_ns,
+                                    "timerfd_read");
+            if (reason != EOK && reason != ETIMEDOUT)
+                return -EINTR;
+            now = get_current_time_ns(tfd->timer.clock_type);
         } else if (now < tfd->timer.expires && (fd->flags & O_NONBLOCK)) {
             // 非阻塞模式且未超时
             return -EAGAIN;
@@ -188,17 +205,22 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
 
     *(uint64_t *)addr = count;
     tfd->count = 0; // 读取后重置计数
+    vfs_poll_notify(fd->node, EPOLLOUT);
 
     return sizeof(uint64_t);
 }
 
 #define TFD_IOC_SET_TICKS _IOW('T', 0, uint64_t)
 
-int timerfd_ioctl(void *file, ssize_t cmd, ssize_t arg) {
-    timerfd_t *tfd = file;
+int timerfd_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
+    timerfd_t *tfd = node ? node->handle : NULL;
+    if (!tfd)
+        return -EBADF;
     switch (cmd) {
     case TFD_IOC_SET_TICKS:
         tfd->count = arg;
+        if (tfd->node)
+            vfs_poll_notify(tfd->node, EPOLLIN);
         return 0;
 
     default:
@@ -209,7 +231,7 @@ int timerfd_ioctl(void *file, ssize_t cmd, ssize_t arg) {
 
 static int dummy() { return 0; }
 
-static struct vfs_callback timerfd_callbacks = {
+static vfs_operations_t timerfd_callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
     .remount = (vfs_remount_t)dummy,
@@ -239,7 +261,7 @@ static struct vfs_callback timerfd_callbacks = {
 fs_t timefdfs = {
     .name = "timefdfs",
     .magic = 0,
-    .callback = &timerfd_callbacks,
+    .ops = &timerfd_callbacks,
     .flags = FS_FLAGS_HIDDEN,
 };
 

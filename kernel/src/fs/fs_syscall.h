@@ -284,7 +284,12 @@ typedef struct epoll_watch {
     uint32_t events;
     uint64_t data;
     bool edge_trigger;
+    bool one_shot;
+    bool disabled;
     uint32_t last_events;
+    uint64_t last_seq_in;
+    uint64_t last_seq_out;
+    uint64_t last_seq_pri;
 } epoll_watch_t;
 
 typedef struct epoll {

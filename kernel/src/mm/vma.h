@@ -38,8 +38,8 @@ typedef struct vma {
 
 // VMA管理器
 typedef struct vma_manager {
-    rb_root_t vma_tree;     // 红黑树根
-    unsigned long vm_used;  // 已使用虚拟内存
+    rb_root_t vma_tree;    // 红黑树根
+    unsigned long vm_used; // 已使用虚拟内存
     spinlock_t lock;
     bool initialized;
 } vma_manager_t;

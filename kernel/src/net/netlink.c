@@ -132,6 +132,37 @@ static void netlink_buffer_init(struct netlink_buffer *buf) {
     buf->lock = SPIN_INIT;
 }
 
+static inline void netlink_notify_sock(struct netlink_sock *sock,
+                                       uint32_t events) {
+    if (!sock || !sock->node || !events)
+        return;
+    vfs_poll_notify(sock->node, events);
+}
+
+static int netlink_wait_sock(struct netlink_sock *sock, uint32_t events,
+                             const char *reason) {
+    if (!sock || !sock->node || !current_task)
+        return -EINVAL;
+
+    uint32_t want = events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
+    if (vfs_poll(sock->node, want) & want)
+        return EOK;
+
+    vfs_poll_wait_t wait;
+    vfs_poll_wait_init(&wait, current_task, want);
+    if (vfs_poll_wait_arm(sock->node, &wait) < 0)
+        return -EINVAL;
+
+    if (vfs_poll(sock->node, want) & want) {
+        vfs_poll_wait_disarm(&wait);
+        return EOK;
+    }
+
+    int ret = task_block(current_task, TASK_BLOCKING, -1, reason);
+    vfs_poll_wait_disarm(&wait);
+    return ret;
+}
+
 // Circular buffer operations for netlink packets with sender info
 size_t netlink_buffer_write_packet(struct netlink_sock *sock, const char *data,
                                    size_t len, uint32_t nl_pid,
@@ -188,6 +219,7 @@ size_t netlink_buffer_write_packet(struct netlink_sock *sock, const char *data,
     }
 
     spin_unlock(&buf->lock);
+    netlink_notify_sock(sock, EPOLLIN);
     return len;
 }
 
@@ -634,7 +666,9 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
 
     // Wait for a complete message if blocking
     while (!has_msg) {
-        schedule(SCHED_FLAG_YIELD);
+        int reason = netlink_wait_sock(nl_sk, EPOLLIN, "netlink_recvmsg");
+        if (reason != EOK)
+            return -EINTR;
         has_msg = netlink_buffer_has_msg(nl_sk);
     }
 
@@ -882,7 +916,9 @@ size_t netlink_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
 
     // Wait for a complete message if blocking
     while (!has_msg) {
-        schedule(SCHED_FLAG_YIELD);
+        int reason = netlink_wait_sock(nl_sk, EPOLLIN, "netlink_recvfrom");
+        if (reason != EOK)
+            return -EINTR;
         has_msg = netlink_buffer_has_msg(nl_sk);
     }
 
@@ -954,6 +990,7 @@ int netlink_socket(int domain, int type, int protocol) {
     nl_sk->protocol = protocol;
     nl_sk->portid = (uint32_t)current_task->pid;
     nl_sk->groups = 0;
+    nl_sk->node = NULL;
     nl_sk->bind_addr = NULL;
     nl_sk->lock = SPIN_INIT;
 
@@ -984,6 +1021,7 @@ int netlink_socket(int domain, int type, int protocol) {
     socknode->fsid = netlink_socket_fsid;
     socknode->refcount++;
     socknode->handle = handle;
+    nl_sk->node = socknode;
 
     handle->op = &netlink_ops;
     handle->sock = nl_sk;
@@ -1059,8 +1097,8 @@ int netlink_socket_pair(int type, int protocol, int *sv) {
     return -EOPNOTSUPP;
 }
 
-int netlink_poll(void *h, int events) {
-    socket_handle_t *handle = h;
+int netlink_poll(vfs_node_t node, size_t events) {
+    socket_handle_t *handle = node ? node->handle : NULL;
     if (handle == NULL || handle->sock == NULL) {
         return EPOLLERR;
     }
@@ -1102,7 +1140,54 @@ ssize_t netlink_write(uint64_t fd, const char *buf, size_t count) {
     return -EDESTADDRREQ;
 }
 
-int netlink_ioctl(void *file, ssize_t cmd, ssize_t arg) { return -EINVAL; }
+static ssize_t netlink_read_op(fd_t *fd, void *buf, size_t offset,
+                               size_t count) {
+    if (!fd || !fd->node || !fd->node->handle)
+        return -EBADF;
+
+    socket_handle_t *handle = fd->node->handle;
+    struct netlink_sock *nl_sk = handle->sock;
+    if (!nl_sk || !nl_sk->buffer)
+        return -EINVAL;
+
+    bool noblock = !!(fd->flags & O_NONBLOCK);
+    bool has_msg = netlink_buffer_has_msg(nl_sk);
+    if (!has_msg && noblock)
+        return -EAGAIN;
+
+    while (!has_msg) {
+        int reason = netlink_wait_sock(nl_sk, EPOLLIN, "netlink_read");
+        if (reason != EOK)
+            return -EINTR;
+        has_msg = netlink_buffer_has_msg(nl_sk);
+    }
+
+    uint32_t sender_pid = 0;
+    uint32_t sender_groups = 0;
+    size_t bytes = netlink_buffer_read_packet(
+        nl_sk, (char *)buf, count, &sender_pid, &sender_groups, false);
+    if (!bytes)
+        return -EAGAIN;
+    return (ssize_t)bytes;
+}
+
+static ssize_t netlink_write_op(fd_t *fd, const void *buf, size_t offset,
+                                size_t count) {
+    if (!fd || !fd->node || !fd->node->handle)
+        return -EBADF;
+
+    socket_handle_t *handle = fd->node->handle;
+    struct netlink_sock *nl_sk = handle->sock;
+    if (!nl_sk)
+        return -EBADF;
+
+    if (nl_sk->protocol == NETLINK_KOBJECT_UEVENT)
+        return count;
+
+    return -EDESTADDRREQ;
+}
+
+int netlink_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) { return -EINVAL; }
 
 void netlink_free_handle(vfs_node_t node) {
     if (node == NULL) {
@@ -1115,6 +1200,7 @@ void netlink_free_handle(vfs_node_t node) {
 
     struct netlink_sock *nl_sk = handle->sock;
     if (nl_sk != NULL) {
+        nl_sk->node = NULL;
         // Remove from global socket array
         spin_lock(&netlink_sockets_lock);
         for (int i = 0; i < MAX_NETLINK_SOCKETS; i++) {
@@ -1138,39 +1224,24 @@ void netlink_free_handle(vfs_node_t node) {
     node->handle = NULL;
 }
 
-static int dummy() { return 0; }
+static bool netlink_close(vfs_node_t node) {
+    netlink_free_handle(node);
+    return true;
+}
 
-static struct vfs_callback netlink_callback = {
-    .mount = (vfs_mount_t)dummy,
-    .unmount = (vfs_unmount_t)dummy,
-    .remount = (vfs_remount_t)dummy,
-    .open = (vfs_open_t)dummy,
-    .close = (vfs_close_t)dummy,
-    .read = (vfs_read_t)netlink_read,
-    .write = (vfs_write_t)netlink_write,
-    .readlink = (vfs_readlink_t)dummy,
-    .mkdir = (vfs_mk_t)dummy,
-    .mkfile = (vfs_mk_t)dummy,
-    .link = (vfs_mk_t)dummy,
-    .symlink = (vfs_mk_t)dummy,
-    .mknod = (vfs_mknod_t)dummy,
-    .chmod = (vfs_chmod_t)dummy,
-    .chown = (vfs_chown_t)dummy,
-    .delete = (vfs_del_t)dummy,
-    .rename = (vfs_rename_t)dummy,
-    .map = (vfs_mapfile_t)dummy,
-    .stat = (vfs_stat_t)dummy,
-    .ioctl = (vfs_ioctl_t)netlink_ioctl,
-    .poll = (vfs_poll_t)netlink_poll,
-    .resize = (vfs_resize_t)dummy,
-
-    .free_handle = (vfs_free_handle_t)netlink_free_handle,
+static vfs_operations_t netlink_vfs_ops = {
+    .close = netlink_close,
+    .read = netlink_read_op,
+    .write = netlink_write_op,
+    .ioctl = netlink_ioctl,
+    .poll = netlink_poll,
+    .free_handle = netlink_free_handle,
 };
 
 fs_t netlinksockfs = {
     .name = "netlinksockfs",
     .magic = 0,
-    .callback = &netlink_callback,
+    .ops = &netlink_vfs_ops,
     .flags = FS_FLAGS_HIDDEN,
 };
 

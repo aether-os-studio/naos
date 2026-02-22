@@ -35,6 +35,8 @@ enum {
 };
 
 typedef struct vfs_node *vfs_node_t;
+struct task;
+typedef struct task task_t;
 
 typedef struct fd {
     vfs_node_t node;
@@ -42,6 +44,15 @@ typedef struct fd {
     uint64_t flags;
     bool close_on_exec;
 } fd_t;
+
+typedef struct vfs_poll_wait {
+    struct llist_header node;
+    task_t *task;
+    vfs_node_t watch_node;
+    uint32_t events;
+    volatile uint32_t revents;
+    volatile bool armed;
+} vfs_poll_wait_t;
 
 typedef int (*vfs_mount_t)(uint64_t dev, vfs_node_t node);
 typedef void (*vfs_unmount_t)(vfs_node_t node);
@@ -54,14 +65,15 @@ typedef int (*vfs_remount_t)(vfs_node_t old, vfs_node_t node);
  *\param name     文件名
  *\param node     文件节点
  */
-typedef void (*vfs_open_t)(void *parent, const char *name, vfs_node_t node);
+typedef void (*vfs_open_t)(vfs_node_t parent, const char *name,
+                           vfs_node_t node);
 
 /**
  *\brief 关闭一个文件
  *
  *\param current  当前文件句柄
  */
-typedef bool (*vfs_close_t)(void *current);
+typedef bool (*vfs_close_t)(vfs_node_t node);
 
 /**
  *\brief 重设文件大小
@@ -69,7 +81,7 @@ typedef bool (*vfs_close_t)(void *current);
  *\param current  当前文件句柄
  *\param size     新的大小
  */
-typedef void (*vfs_resize_t)(void *current, uint64_t size);
+typedef void (*vfs_resize_t)(vfs_node_t node, uint64_t size);
 
 /**
  *\brief 写入一个文件
@@ -92,7 +104,7 @@ typedef ssize_t (*vfs_write_t)(fd_t *fd, const void *addr, size_t offset,
  */
 typedef ssize_t (*vfs_read_t)(fd_t *fd, void *addr, size_t offset, size_t size);
 
-typedef ssize_t (*vfs_readlink_t)(void *fd, void *addr, size_t offset,
+typedef ssize_t (*vfs_readlink_t)(vfs_node_t node, void *addr, size_t offset,
                                   size_t size);
 
 /**
@@ -101,48 +113,49 @@ typedef ssize_t (*vfs_readlink_t)(void *fd, void *addr, size_t offset,
  *\param file     文件句柄
  *\param node     文件节点
  */
-typedef int (*vfs_stat_t)(void *file, vfs_node_t node);
+typedef int (*vfs_stat_t)(vfs_node_t node);
 
 // 创建一个文件或文件夹
-typedef int (*vfs_mk_t)(void *parent, const char *name, vfs_node_t node);
+typedef int (*vfs_mk_t)(vfs_node_t parent, const char *name, vfs_node_t node);
 
-typedef int (*vfs_mknod_t)(void *parent, const char *name, vfs_node_t node,
+typedef int (*vfs_mknod_t)(vfs_node_t parent, const char *name, vfs_node_t node,
                            uint16_t mode, int dev);
 
 typedef int (*vfs_chmod_t)(vfs_node_t node, uint16_t mode);
 typedef int (*vfs_chown_t)(vfs_node_t node, uint64_t uid, uint64_t gid);
 
-typedef int (*vfs_del_t)(void *parent, vfs_node_t node);
+typedef int (*vfs_del_t)(vfs_node_t parent, vfs_node_t node);
 
-typedef int (*vfs_rename_t)(void *current, const char *new);
+typedef int (*vfs_rename_t)(vfs_node_t node, const char *new);
 
 // 创建一个文件或文件夹
-typedef int (*vfs_ioctl_t)(void *file, ssize_t cmd, ssize_t arg);
+typedef int (*vfs_ioctl_t)(vfs_node_t node, ssize_t cmd, ssize_t arg);
 
 // 映射文件从 offset 开始的 size 大小
 typedef void *(*vfs_mapfile_t)(fd_t *fd, void *addr, size_t offset, size_t size,
                                size_t prot, size_t flags);
 
-typedef int (*vfs_poll_t)(void *file, size_t events);
+typedef int (*vfs_poll_t)(vfs_node_t node, size_t events);
 
-typedef void (*vfs_free_handle_t)(void *handle);
+typedef void (*vfs_free_handle_t)(vfs_node_t node);
 
 uint32_t poll_to_epoll_comp(uint32_t poll_events);
 uint32_t epoll_to_poll_comp(uint32_t epoll_events);
 
-static inline void vfs_generic_free_handle(void *handle) {
-    if (handle)
-        free(handle);
-}
+void vfs_generic_free_handle(vfs_node_t node);
 
-typedef struct vfs_callback {
+typedef struct vfs_super_operations {
     vfs_mount_t mount;
     vfs_unmount_t unmount;
     vfs_remount_t remount;
+
+    int (*sync_fs)(vfs_node_t root);
+    int (*freeze_fs)(vfs_node_t root);
+    int (*thaw_fs)(vfs_node_t root);
+} vfs_super_operations_t;
+
+typedef struct vfs_inode_operations {
     vfs_open_t open;
-    vfs_close_t close;
-    vfs_read_t read;
-    vfs_write_t write;
     vfs_readlink_t readlink;
     vfs_mk_t mkdir;
     vfs_mk_t mkfile;
@@ -154,13 +167,64 @@ typedef struct vfs_callback {
     vfs_del_t delete;
     vfs_rename_t rename;
     vfs_stat_t stat;
+    vfs_resize_t resize;
+} vfs_inode_operations_t;
+
+typedef struct vfs_file_operations {
+    vfs_close_t close;
+    vfs_read_t read;
+    vfs_write_t write;
     vfs_mapfile_t map;
     vfs_ioctl_t ioctl;
     vfs_poll_t poll;
-    vfs_resize_t resize;
-
     vfs_free_handle_t free_handle;
-} *vfs_callback_t;
+} vfs_file_operations_t;
+
+typedef struct vfs_operations {
+    union {
+        vfs_super_operations_t super_ops;
+        struct {
+            vfs_mount_t mount;
+            vfs_unmount_t unmount;
+            vfs_remount_t remount;
+            int (*sync_fs)(vfs_node_t root);
+            int (*freeze_fs)(vfs_node_t root);
+            int (*thaw_fs)(vfs_node_t root);
+        };
+    };
+
+    union {
+        vfs_inode_operations_t inode_ops;
+        struct {
+            vfs_open_t open;
+            vfs_readlink_t readlink;
+            vfs_mk_t mkdir;
+            vfs_mk_t mkfile;
+            vfs_mk_t link;
+            vfs_mk_t symlink;
+            vfs_mknod_t mknod;
+            vfs_chmod_t chmod;
+            vfs_chown_t chown;
+            vfs_del_t delete;
+            vfs_rename_t rename;
+            vfs_stat_t stat;
+            vfs_resize_t resize;
+        };
+    };
+
+    union {
+        vfs_file_operations_t file_ops;
+        struct {
+            vfs_close_t close;
+            vfs_read_t read;
+            vfs_write_t write;
+            vfs_mapfile_t map;
+            vfs_ioctl_t ioctl;
+            vfs_poll_t poll;
+            vfs_free_handle_t free_handle;
+        };
+    };
+} vfs_operations_t;
 
 enum {
     TMPFS_DEV_MAJOR = 240,
@@ -178,7 +242,7 @@ enum {
 typedef struct fs {
     const char *name;
     uint64_t magic;
-    vfs_callback_t callback;
+    const vfs_operations_t *ops;
     uint64_t flags;
 } fs_t;
 
@@ -193,6 +257,8 @@ typedef struct flock {
 #define VFS_NODE_FLAGS_OPENED (1UL << 0)
 #define VFS_NODE_FLAGS_DELETED (1UL << 1)
 #define VFS_NODE_FLAGS_FREE_AFTER_USE (1UL << 2)
+#define VFS_NODE_FLAGS_DIRTY_METADATA (1UL << 3)
+#define VFS_NODE_FLAGS_DIRTY_CHILDREN (1UL << 4)
 
 struct vfs_node {
     vfs_node_t parent;                   // 父目录
@@ -220,6 +286,12 @@ struct vfs_node {
     int refcount;                        // 引用计数
     uint16_t mode;                       // 模式
     uint32_t rw_hint;                    // 读写提示
+    spinlock_t poll_waiters_lock;        // poll 等待队列锁
+    struct llist_header poll_waiters;    // poll 等待队列
+    uint64_t poll_seq_in;                // 可读相关事件变化序号
+    uint64_t poll_seq_out;               // 可写相关事件变化序号
+    uint64_t poll_seq_pri;               // 紧急数据事件变化序号
+    uint64_t i_version;                  // 数据变更版本
 };
 
 struct mount_point {
@@ -259,9 +331,13 @@ struct vfs_notify_event {
     uint64_t mask;
 };
 
+struct notifyfs_handle;
+typedef struct notifyfs_handle notifyfs_handle_t;
+
 typedef struct notifyfs_watch {
     uint64_t wd;
     vfs_node_t watch_node;
+    notifyfs_handle_t *owner;
     uint64_t mask;
     struct llist_header node;
     struct llist_header all_watches_node;
@@ -269,12 +345,18 @@ typedef struct notifyfs_watch {
     struct llist_header events;
 } notifyfs_watch_t;
 
-typedef struct notifyfs_handle {
+struct notifyfs_handle {
     struct llist_header watches;
     vfs_node_t node;
-} notifyfs_handle_t;
+};
 
 void vfs_on_new_event(vfs_node_t node, uint64_t mask);
+void vfs_mark_dirty(vfs_node_t node, uint64_t dirty_flags);
+
+void vfs_poll_wait_init(vfs_poll_wait_t *wait, task_t *task, uint32_t events);
+int vfs_poll_wait_arm(vfs_node_t node, vfs_poll_wait_t *wait);
+void vfs_poll_wait_disarm(vfs_poll_wait_t *wait);
+void vfs_poll_notify(vfs_node_t node, uint32_t events);
 
 void vfs_add_mount_point(vfs_node_t dir, char *devname);
 void vfs_delete_mount_point_by_dir(vfs_node_t dir);
@@ -293,8 +375,7 @@ bool vfs_init();
 /**
  *\brief 注册一个文件系统
  *
- *\param name      文件系统名称
- *\param callback  文件系统回调
+ *\param fs      文件系统
  *\return 文件系统 id
  */
 int vfs_regist(fs_t *fs);
@@ -463,10 +544,6 @@ fd_t *vfs_dup(fd_t *fd);
 
 void *vfs_map(fd_t *fd, uint64_t addr, uint64_t len, uint64_t prot,
               uint64_t flags, uint64_t offset);
-
-extern vfs_callback_t fs_callbacks[256];
-
-#define callbackof(node, _name_) (fs_callbacks[(node)->fsid]->_name_)
 
 extern int fs_nextid;
 

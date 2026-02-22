@@ -30,14 +30,14 @@ static int mount_node_old_fsid = 0;
 
 static int dummy() { return -ENOSYS; }
 
-void procfs_open(void *parent, const char *name, vfs_node_t node) {}
+void procfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {}
 
-bool procfs_close(void *current) { return false; }
+bool procfs_close(vfs_node_t node) { return false; }
 
-int procfs_stat(void *file, vfs_node_t node) {
-    if (file == NULL)
+int procfs_stat(vfs_node_t node) {
+    if (!node || !node->handle)
         return 0;
-    proc_handle_t *handle = file;
+    proc_handle_t *handle = node->handle;
     procfs_stat_dispatch(handle, node);
     return 0;
 }
@@ -71,10 +71,10 @@ ssize_t procfs_readlink(vfs_node_t node, void *addr, size_t offset,
     return 0;
 }
 
-int procfs_poll(void *file, size_t events) {
-    if (file == NULL)
+int procfs_poll(vfs_node_t node, size_t events) {
+    if (!node || !node->handle)
         return 0;
-    proc_handle_t *handle = file;
+    proc_handle_t *handle = node->handle;
     return procfs_poll_dispatch(handle, handle->node, events);
 }
 
@@ -120,7 +120,7 @@ void procfs_unmount(vfs_node_t root) {
     spin_unlock(&procfs_oplock);
 }
 
-static struct vfs_callback callbacks = {
+static vfs_operations_t callbacks = {
     .open = (vfs_open_t)procfs_open,
     .close = (vfs_close_t)procfs_close,
     .read = procfs_read,
@@ -147,7 +147,7 @@ static struct vfs_callback callbacks = {
     .free_handle = vfs_generic_free_handle,
 };
 
-void procfs_self_open(void *parent, const char *name, vfs_node_t node) {
+void procfs_self_open(vfs_node_t parent, const char *name, vfs_node_t node) {
     procfs_self_handle_t *handle = malloc(sizeof(procfs_self_handle_t));
     handle->self = node;
     node->handle = handle;
@@ -159,8 +159,10 @@ void procfs_self_open(void *parent, const char *name, vfs_node_t node) {
     new_self_node->fsid = procfs_self_id;
 }
 
-bool procfs_self_close(void *current) {
-    procfs_self_handle_t *handle = current;
+bool procfs_self_close(vfs_node_t node) {
+    procfs_self_handle_t *handle = node ? node->handle : NULL;
+    if (!handle)
+        return true;
     handle->deleted = true;
     free(handle);
 
@@ -176,9 +178,12 @@ ssize_t procfs_self_readlink(vfs_node_t file, void *addr, size_t offset,
     return len;
 }
 
-void procfs_self_free_handle(procfs_self_handle_t *handle) { free(handle); }
+void procfs_self_free_handle(vfs_node_t node) {
+    procfs_self_handle_t *handle = node ? node->handle : NULL;
+    free(handle);
+}
 
-static struct vfs_callback procfs_self_callbacks = {
+static vfs_operations_t procfs_self_callbacks = {
     .open = (vfs_open_t)procfs_self_open,
     .close = (vfs_close_t)procfs_self_close,
     .read = (vfs_read_t)dummy,
@@ -202,20 +207,20 @@ static struct vfs_callback procfs_self_callbacks = {
     .remount = (vfs_remount_t)dummy,
     .resize = (vfs_resize_t)dummy,
 
-    .free_handle = (vfs_free_handle_t)procfs_self_free_handle,
+    .free_handle = procfs_self_free_handle,
 };
 
 fs_t procfs = {
     .name = "proc",
     .magic = 0x9fa0,
-    .callback = &callbacks,
+    .ops = &callbacks,
     .flags = FS_FLAGS_VIRTUAL,
 };
 
 fs_t procfs_self = {
     .name = "proc_self",
     .magic = 0,
-    .callback = &procfs_self_callbacks,
+    .ops = &procfs_self_callbacks,
     .flags = FS_FLAGS_HIDDEN,
 };
 

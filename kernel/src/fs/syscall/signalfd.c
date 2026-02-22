@@ -3,8 +3,10 @@
 
 static int dummy() { return 0; }
 
-static int signalfd_poll(void *file, size_t event) {
-    struct signalfd_ctx *ctx = file;
+static int signalfd_poll(vfs_node_t node, size_t event) {
+    struct signalfd_ctx *ctx = node ? node->handle : NULL;
+    if (!ctx)
+        return EPOLLNVAL;
 
     int revents = 0;
 
@@ -26,7 +28,18 @@ static ssize_t signalfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     while (ctx->queue_head == ctx->queue_tail) {
         if (fd->flags & O_NONBLOCK)
             return -EWOULDBLOCK;
-        schedule(SCHED_FLAG_YIELD);
+        vfs_poll_wait_t wait;
+        vfs_poll_wait_init(&wait, current_task, EPOLLIN | EPOLLERR | EPOLLHUP);
+        vfs_poll_wait_arm(fd->node, &wait);
+        if (ctx->queue_head == ctx->queue_tail) {
+            int reason =
+                task_block(current_task, TASK_BLOCKING, -1, "signalfd_read");
+            vfs_poll_wait_disarm(&wait);
+            if (reason != EOK)
+                return -EINTR;
+        } else {
+            vfs_poll_wait_disarm(&wait);
+        }
     }
 
     struct signalfd_siginfo *ev = &ctx->queue[ctx->queue_tail];
@@ -36,8 +49,10 @@ static ssize_t signalfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     return copy_len;
 }
 
-static int signalfd_ioctl(void *data, ssize_t cmd, ssize_t arg) {
-    struct signalfd_ctx *ctx = data;
+static int signalfd_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
+    struct signalfd_ctx *ctx = node ? node->handle : NULL;
+    if (!ctx)
+        return -EBADF;
     switch (cmd) {
     case SIGNALFD_IOC_MASK:
         memcpy(&ctx->sigmask, (sigset_t *)arg, sizeof(sigset_t));
@@ -47,8 +62,10 @@ static int signalfd_ioctl(void *data, ssize_t cmd, ssize_t arg) {
     }
 }
 
-bool signalfd_close(void *handle) {
-    struct signalfd_ctx *ctx = handle;
+bool signalfd_close(vfs_node_t node) {
+    struct signalfd_ctx *ctx = node ? node->handle : NULL;
+    if (!ctx)
+        return true;
     if (ctx->queue)
         free(ctx->queue);
     free(ctx);
@@ -133,7 +150,7 @@ uint64_t sys_signalfd(int ufd, const sigset_t *mask, size_t sizemask) {
     return sys_signalfd4(ufd, mask, sizemask, 0);
 }
 
-static struct vfs_callback signalfd_callbacks = {
+static vfs_operations_t signalfd_callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
     .remount = (vfs_remount_t)dummy,
@@ -163,7 +180,7 @@ static struct vfs_callback signalfd_callbacks = {
 fs_t signalfdfs = {
     .name = "signalfdfs",
     .magic = 0,
-    .callback = &signalfd_callbacks,
+    .ops = &signalfd_callbacks,
     .flags = FS_FLAGS_HIDDEN,
 };
 

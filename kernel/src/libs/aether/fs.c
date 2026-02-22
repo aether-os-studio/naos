@@ -9,6 +9,13 @@ EXPORT_SYMBOL(vfs_read);
 EXPORT_SYMBOL(vfs_write);
 EXPORT_SYMBOL(vfs_poll);
 
+EXPORT_SYMBOL(vfs_on_new_event);
+EXPORT_SYMBOL(vfs_mark_dirty);
+EXPORT_SYMBOL(vfs_poll_wait_init);
+EXPORT_SYMBOL(vfs_poll_wait_arm);
+EXPORT_SYMBOL(vfs_poll_wait_disarm);
+EXPORT_SYMBOL(vfs_poll_notify);
+
 EXPORT_SYMBOL(vfs_node_alloc);
 EXPORT_SYMBOL(vfs_child_append);
 EXPORT_SYMBOL(vfs_child_find);

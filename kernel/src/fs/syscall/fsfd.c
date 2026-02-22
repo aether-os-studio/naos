@@ -728,8 +728,8 @@ ssize_t fsfdfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     return -ENOMSG;
 }
 
-bool fsfdfs_close(void *current) {
-    fs_context_t *ctx = current;
+bool fsfdfs_close(vfs_node_t node) {
+    fs_context_t *ctx = node ? node->handle : NULL;
     if (!ctx)
         return true;
 
@@ -742,8 +742,8 @@ bool fsfdfs_close(void *current) {
     return true;
 }
 
-bool mntfd_close(void *current) {
-    mount_handle_t *mnt = current;
+bool mntfd_close(vfs_node_t node) {
+    mount_handle_t *mnt = node ? node->handle : NULL;
     if (!mnt)
         return true;
 
@@ -757,7 +757,7 @@ bool mntfd_close(void *current) {
 
 static int dummy() { return 0; }
 
-static struct vfs_callback fsfd_callbacks = {
+static vfs_operations_t fsfd_callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
     .remount = (vfs_remount_t)dummy,
@@ -784,7 +784,7 @@ static struct vfs_callback fsfd_callbacks = {
     .free_handle = vfs_generic_free_handle,
 };
 
-static struct vfs_callback mntfd_callbacks = {
+static vfs_operations_t mntfd_callbacks = {
     .mount = (vfs_mount_t)dummy,
     .unmount = (vfs_unmount_t)dummy,
     .remount = (vfs_remount_t)dummy,
@@ -814,14 +814,14 @@ static struct vfs_callback mntfd_callbacks = {
 fs_t fsfd_fs = {
     .name = "fsfd",
     .magic = 0,
-    .callback = &fsfd_callbacks,
+    .ops = &fsfd_callbacks,
     .flags = FS_FLAGS_HIDDEN,
 };
 
 fs_t mntfd_fs = {
     .name = "mntfd",
     .magic = 0,
-    .callback = &mntfd_callbacks,
+    .ops = &mntfd_callbacks,
     .flags = FS_FLAGS_HIDDEN,
 };
 

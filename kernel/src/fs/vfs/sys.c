@@ -19,9 +19,9 @@ extern uint32_t device_number;
 
 static int dummy() { return -ENOSYS; }
 
-void sysfs_open(void *parent, const char *name, vfs_node_t node) {}
+void sysfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {}
 
-bool sysfs_close(void *current) { return false; }
+bool sysfs_close(vfs_node_t node) { return false; }
 
 ssize_t sysfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     sysfs_node_t *handle = fd->node->handle;
@@ -74,12 +74,12 @@ ssize_t sysfs_readlink(vfs_node_t node, void *addr, size_t offset,
     return to_copy;
 }
 
-int sysfs_mkdir(void *parent, const char *name, vfs_node_t node) {
+int sysfs_mkdir(vfs_node_t parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
     return 0;
 }
 
-int sysfs_mkfile(void *parent, const char *name, vfs_node_t node) {
+int sysfs_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
     sysfs_node_t *handle = malloc(sizeof(sysfs_node_t));
     handle->capability = DEFAULT_PAGE_SIZE;
@@ -90,7 +90,7 @@ int sysfs_mkfile(void *parent, const char *name, vfs_node_t node) {
     return 0;
 }
 
-int sysfs_symlink(void *parent, const char *name, vfs_node_t node) {
+int sysfs_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
     sysfs_node_t *handle = malloc(sizeof(sysfs_node_t));
     size_t len = strlen(name) + 1;
@@ -145,13 +145,15 @@ void sysfs_unmount(vfs_node_t root) {
     spin_unlock(&sysfs_oplock);
 }
 
-void sysfs_free_handle(void *handle) {
-    sysfs_node_t *snode = handle;
+void sysfs_free_handle(vfs_node_t node) {
+    sysfs_node_t *snode = node ? node->handle : NULL;
+    if (!snode)
+        return;
     free_frames_bytes(snode->content, snode->capability);
     free(snode);
 }
 
-static struct vfs_callback callbacks = {
+static vfs_operations_t callbacks = {
     .open = (vfs_open_t)sysfs_open,
     .close = (vfs_close_t)sysfs_close,
     .read = (vfs_read_t)sysfs_read,
@@ -181,7 +183,7 @@ static struct vfs_callback callbacks = {
 fs_t sysfs = {
     .name = "sysfs",
     .magic = 0x62656572,
-    .callback = &callbacks,
+    .ops = &callbacks,
     .flags = FS_FLAGS_VIRTUAL,
 };
 

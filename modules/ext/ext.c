@@ -9,14 +9,6 @@ spinlock_t rwlock = SPIN_INIT;
 
 extern uint64_t device_dev_nr;
 
-void mp_lock(void) {}
-void mp_unlock(void) {}
-
-const struct ext4_lock mp_os_lock = {
-    .lock = mp_lock,
-    .unlock = mp_unlock,
-};
-
 char *get_mp(vfs_node_t node) {
     char *mount_point = vfs_get_fullpath(node);
     size_t mp_len = strlen(mount_point);
@@ -80,14 +72,6 @@ int ext_mount(uint64_t dev, vfs_node_t node) {
     char *mount_point = get_mp(node);
 
     int ret = ext4_mount("dev", (const char *)mount_point, false);
-    if (ret != 0) {
-        ext4_device_unregister("dev");
-        free(mount_point);
-        spin_unlock(&rwlock);
-        return -ret;
-    }
-
-    ret = ext4_mount_setup_locks((const char *)mount_point, &mp_os_lock);
     if (ret != 0) {
         ext4_device_unregister("dev");
         free(mount_point);
@@ -179,10 +163,6 @@ int ext_remount(vfs_node_t old, vfs_node_t node) {
         return -ret;
     }
 
-    /*
-     * If the mount is moved onto its parent (switch_root style), keeping the
-     * old mount-root node under the new root creates a stale duplicate entry.
-     */
     if (old->parent == node) {
         llist_delete(&old->node_for_childs);
         old->parent = NULL;
@@ -228,7 +208,9 @@ int ext_remount(vfs_node_t old, vfs_node_t node) {
     return ret;
 }
 
-void ext_open(void *parent, const char *name, vfs_node_t node) {
+void ext_open(vfs_node_t parent, const char *name, vfs_node_t node) {
+    (void)parent;
+    (void)name;
     spin_lock(&rwlock);
 
     ext_handle_t *handle = malloc(sizeof(ext_handle_t));
@@ -301,9 +283,12 @@ void ext_open(void *parent, const char *name, vfs_node_t node) {
     spin_unlock(&rwlock);
 }
 
-bool ext_close(void *current) {
+bool ext_close(vfs_node_t node) {
+    ext_handle_t *handle = node ? node->handle : NULL;
+    if (!handle) {
+        return true;
+    }
     spin_lock(&rwlock);
-    ext_handle_t *handle = current;
     if (handle->node->type & file_dir)
         ext4_dir_close(handle->dir);
     else if (handle->node->type & file_none)
@@ -416,7 +401,9 @@ ssize_t ext_readlink(vfs_node_t node, void *addr, size_t offset, size_t size) {
     return to_copy;
 }
 
-int ext_mkfile(void *parent, const char *name, vfs_node_t node) {
+int ext_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
+    (void)parent;
+    (void)name;
     spin_lock(&rwlock);
 
     char *buf = vfs_get_fullpath(node);
@@ -442,9 +429,15 @@ int ext_mkfile(void *parent, const char *name, vfs_node_t node) {
     return ret;
 }
 
-int ext_link(void *parent, const char *name, vfs_node_t node) { return 0; }
+int ext_link(vfs_node_t parent, const char *name, vfs_node_t node) {
+    (void)parent;
+    (void)name;
+    (void)node;
+    return 0;
+}
 
-int ext_symlink(void *parent, const char *name, vfs_node_t node) {
+int ext_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
+    (void)parent;
     spin_lock(&rwlock);
 
     char *fullpath = vfs_get_fullpath(node);
@@ -473,8 +466,10 @@ int ext_symlink(void *parent, const char *name, vfs_node_t node) {
     return ret;
 }
 
-int ext_mknod(void *parent, const char *name, vfs_node_t node, uint16_t mode,
-              int dev) {
+int ext_mknod(vfs_node_t parent, const char *name, vfs_node_t node,
+              uint16_t mode, int dev) {
+    (void)parent;
+    (void)name;
     spin_lock(&rwlock);
 
     char *fullpath = vfs_get_fullpath(node);
@@ -511,10 +506,12 @@ int ext_mknod(void *parent, const char *name, vfs_node_t node, uint16_t mode,
 
     spin_unlock(&rwlock);
 
-    return ret;
+    return -ret;
 }
 
-int ext_mkdir(void *parent, const char *name, vfs_node_t node) {
+int ext_mkdir(vfs_node_t parent, const char *name, vfs_node_t node) {
+    (void)parent;
+    (void)name;
     spin_lock(&rwlock);
 
     char *buf = vfs_get_fullpath(node);
@@ -570,7 +567,8 @@ int ext_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
     return ret;
 }
 
-int ext_delete(void *parent, vfs_node_t node) {
+int ext_delete(vfs_node_t parent, vfs_node_t node) {
+    (void)parent;
     spin_lock(&rwlock);
 
     char *path = vfs_get_fullpath(node);
@@ -586,11 +584,14 @@ int ext_delete(void *parent, vfs_node_t node) {
     return ret;
 }
 
-int ext_rename(void *current, const char *new) {
+int ext_rename(vfs_node_t node, const char *new) {
+    if (!node || !node->handle) {
+        return -ENOENT;
+    }
+
     spin_lock(&rwlock);
 
-    ext_handle_t *handle = current;
-    char *path = vfs_get_fullpath(handle->node);
+    char *path = vfs_get_fullpath(node);
     int ret = ext4_frename((const char *)path, new);
     free(path);
 
@@ -599,8 +600,10 @@ int ext_rename(void *current, const char *new) {
     return ret;
 }
 
-int ext_stat(void *file, vfs_node_t node) {
-    ext_handle_t *handle = file;
+int ext_stat(vfs_node_t node) {
+    ext_handle_t *handle = node ? node->handle : NULL;
+    if (!node || !handle)
+        return -ENOENT;
     spin_lock(&rwlock);
     if (node->type & file_symlink) {
         char *fpath = vfs_get_fullpath(node);
@@ -623,15 +626,28 @@ int ext_stat(void *file, vfs_node_t node) {
     return 0;
 }
 
-int ext_ioctl(void *file, ssize_t cmd, ssize_t arg) { return 0; }
+int ext_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
+    (void)node;
+    (void)cmd;
+    (void)arg;
+    return 0;
+}
 
-int ext_poll(void *file, size_t events) { return 0; }
+int ext_poll(vfs_node_t node, size_t events) {
+    (void)node;
+    (void)events;
+    return 0;
+}
 
-void ext_resize(void *current, uint64_t size) {
+void ext_resize(vfs_node_t node, uint64_t size) {
+    ext_handle_t *handle = node ? node->handle : NULL;
+    if (!handle) {
+        return;
+    }
     spin_lock(&rwlock);
-    ext_handle_t *handle = current;
     if (handle->node->type & file_none) {
-        handle->node->size = ext4_ftruncate(handle->file, size);
+        ext4_ftruncate(handle->file, size);
+        handle->node->size = size;
     }
     spin_unlock(&rwlock);
 }
@@ -643,17 +659,22 @@ void *ext_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
 
 vfs_node_t ext_dup(vfs_node_t node) { return node; }
 
-void ext_free_handle(ext_handle_t *handle) { free(handle); }
+void ext_free_handle(vfs_node_t node) {
+    if (!node || !node->handle)
+        return;
+    free(node->handle);
+    node->handle = NULL;
+}
 
-static struct vfs_callback callbacks = {
+static vfs_operations_t ext_vfs_ops = {
     .mount = ext_mount,
     .unmount = ext_unmount,
     .remount = ext_remount,
     .open = ext_open,
-    .close = (vfs_close_t)ext_close,
-    .read = (vfs_read_t)ext_read,
-    .write = (vfs_write_t)ext_write,
-    .readlink = (vfs_readlink_t)ext_readlink,
+    .close = ext_close,
+    .read = ext_read,
+    .write = ext_write,
+    .readlink = ext_readlink,
     .mkdir = ext_mkdir,
     .mkfile = ext_mkfile,
     .link = ext_link,
@@ -661,21 +682,21 @@ static struct vfs_callback callbacks = {
     .mknod = ext_mknod,
     .chmod = ext_chmod,
     .chown = ext_chown,
-    .delete = (vfs_del_t)ext_delete,
-    .rename = (vfs_rename_t)ext_rename,
-    .map = (vfs_mapfile_t)ext_map,
+    .delete = ext_delete,
+    .rename = ext_rename,
+    .map = ext_map,
     .stat = ext_stat,
     .ioctl = ext_ioctl,
     .poll = ext_poll,
-    .resize = (vfs_resize_t)ext_resize,
+    .resize = ext_resize,
 
-    .free_handle = (vfs_free_handle_t)ext_free_handle,
+    .free_handle = ext_free_handle,
 };
 
 fs_t extfs = {
     .name = "ext",
     .magic = 0,
-    .callback = &callbacks,
+    .ops = &ext_vfs_ops,
     .flags = 0,
 };
 

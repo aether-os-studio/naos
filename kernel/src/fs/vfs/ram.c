@@ -16,9 +16,9 @@ extern uint32_t device_number;
 
 static int dummy() { return 0; }
 
-void ramfs_open(void *parent, const char *name, vfs_node_t node) {}
+void ramfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {}
 
-bool ramfs_close(void *current) { return false; }
+bool ramfs_close(vfs_node_t node) { return false; }
 
 ssize_t ramfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
@@ -74,12 +74,12 @@ ssize_t ramfs_readlink(vfs_node_t node, void *addr, size_t offset,
     return to_copy;
 }
 
-int ramfs_mkdir(void *parent, const char *name, vfs_node_t node) {
+int ramfs_mkdir(vfs_node_t parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
     return 0;
 }
 
-int ramfs_mkfile(void *parent, const char *name, vfs_node_t node) {
+int ramfs_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
     ramfs_node_t *handle = malloc(sizeof(ramfs_node_t));
     handle->capability = DEFAULT_PAGE_SIZE;
@@ -90,8 +90,8 @@ int ramfs_mkfile(void *parent, const char *name, vfs_node_t node) {
     return 0;
 }
 
-int ramfs_mknod(void *parent, const char *name, vfs_node_t node, uint16_t mode,
-                int dev) {
+int ramfs_mknod(vfs_node_t parent, const char *name, vfs_node_t node,
+                uint16_t mode, int dev) {
     node->dev = dev;
     node->rdev = dev;
     node->mode = mode & 0777;
@@ -104,7 +104,7 @@ int ramfs_mknod(void *parent, const char *name, vfs_node_t node, uint16_t mode,
     return 0;
 }
 
-int ramfs_symlink(void *parent, const char *name, vfs_node_t node) {
+int ramfs_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
     if (node->handle) {
         return -EEXIST;
@@ -172,17 +172,17 @@ int ramfs_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
     return 0;
 }
 
-int ramfs_delete(void *parent, vfs_node_t node) { return 0; }
+int ramfs_delete(vfs_node_t parent, vfs_node_t node) { return 0; }
 
-int ramfs_rename(void *current, const char *new) { return 0; }
+int ramfs_rename(vfs_node_t node, const char *new) { return 0; }
 
 void *ramfs_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
                 size_t flags) {
     return general_map(file, (uint64_t)addr, size, prot, flags, offset);
 }
 
-void ramfs_resize(void *current, uint64_t size) {
-    ramfs_node_t *handle = current;
+void ramfs_resize(vfs_node_t node, uint64_t size) {
+    ramfs_node_t *handle = node->handle;
     size_t new_capability = size;
     void *new_content = alloc_frames_bytes(new_capability);
     memcpy(new_content, handle->content,
@@ -192,21 +192,21 @@ void ramfs_resize(void *current, uint64_t size) {
     handle->capability = new_capability;
 }
 
-int ramfs_stat(void *file, vfs_node_t node) {
-    ramfs_node_t *tnode = file;
+int ramfs_stat(vfs_node_t node) {
+    ramfs_node_t *tnode = node->handle;
     node->size = tnode->size;
     return 0;
 }
 
-void ramfs_free_handle(void *handle) {
-    ramfs_node_t *tnode = handle;
+void ramfs_free_handle(vfs_node_t node) {
+    ramfs_node_t *tnode = node ? node->handle : NULL;
     if (!tnode)
         return;
     free_frames_bytes(tnode->content, tnode->capability);
     free(tnode);
 }
 
-static struct vfs_callback callbacks = {
+static vfs_operations_t callbacks = {
     .open = (vfs_open_t)ramfs_open,
     .close = (vfs_close_t)ramfs_close,
     .read = (vfs_read_t)ramfs_read,
@@ -236,7 +236,7 @@ static struct vfs_callback callbacks = {
 fs_t ramfs = {
     .name = "ramfs",
     .magic = 0x858458f6,
-    .callback = &callbacks,
+    .ops = &callbacks,
     .flags = FS_FLAGS_VIRTUAL,
 };
 
