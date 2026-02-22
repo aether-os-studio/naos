@@ -589,6 +589,8 @@ void setup_console_symlinks() {
     vfs_mknod("/dev/console", 0600 | S_IFCHR, tty_node->rdev);
 
     vfs_mknod("/dev/tty", 0600 | S_IFCHR, tty_node->rdev);
+    if (vfs_open("/dev/tty0", 0) == NULL)
+        vfs_mknod("/dev/tty0", 0600 | S_IFCHR, tty_node->rdev);
     vfs_mknod("/dev/tty1", 0600 | S_IFCHR, tty_node->rdev);
 
     vfs_mknod("/dev/stdin", 0600 | S_IFCHR, tty_node->rdev);

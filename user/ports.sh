@@ -15,7 +15,7 @@ mkdir -p "$(dirname "$APK_PATH")"
 [ -f "$APK_PATH" ] || wget "$APK_URI" -O "$APK_PATH"
 chmod +x "$APK_PATH"
 
-ALPINE_VERSION=latest-stable
+ALPINE_VERSION=edge
 
 # Export variables needed for the unshare'd environment
 export APK_PATH ARCH SYSROOT ALPINE_VERSION
@@ -37,7 +37,7 @@ sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add musl-dev gcompat gzip xz m
 sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add seatd"
 sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add weston weston-backend-drm weston-shell-desktop weston-xwayland xwayland ttf-dejavu"
 sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add weston-terminal"
-# sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add mesa-gl mesa-utils mesa-vulkan-swrast mesa-dri-gallium xclock xeyes"
+sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add mesa-gl mesa-utils mesa-vulkan-virtio mesa-dri-gallium"
 
 sudo rm -rf $SYSROOT/bin/sh
 sudo ln -sf /bin/bash $SYSROOT/bin/sh

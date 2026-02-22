@@ -1003,6 +1003,211 @@ extern "C" {
 #define DRM_COMMAND_BASE 0x40
 #define DRM_COMMAND_END 0xA0
 
+#define DRM_VIRTGPU_MAP 0x01
+#define DRM_VIRTGPU_EXECBUFFER 0x02
+#define DRM_VIRTGPU_GETPARAM 0x03
+#define DRM_VIRTGPU_RESOURCE_CREATE 0x04
+#define DRM_VIRTGPU_RESOURCE_INFO 0x05
+#define DRM_VIRTGPU_TRANSFER_FROM_HOST 0x06
+#define DRM_VIRTGPU_TRANSFER_TO_HOST 0x07
+#define DRM_VIRTGPU_WAIT 0x08
+#define DRM_VIRTGPU_GET_CAPS 0x09
+#define DRM_VIRTGPU_RESOURCE_CREATE_BLOB 0x0A
+#define DRM_VIRTGPU_CONTEXT_INIT 0x0B
+
+#define VIRTGPU_EXECBUF_FENCE_FD_IN 0x01
+#define VIRTGPU_EXECBUF_FENCE_FD_OUT 0x02
+#define VIRTGPU_EXECBUF_RING_IDX 0x04
+#define VIRTGPU_EXECBUF_FLAGS                                                  \
+    (VIRTGPU_EXECBUF_FENCE_FD_IN | VIRTGPU_EXECBUF_FENCE_FD_OUT |              \
+     VIRTGPU_EXECBUF_RING_IDX)
+
+#define VIRTGPU_EXECBUF_SYNCOBJ_RESET 0x01
+#define VIRTGPU_EXECBUF_SYNCOBJ_FLAGS (VIRTGPU_EXECBUF_SYNCOBJ_RESET)
+
+struct drm_virtgpu_map {
+    __u64 offset;
+    __u32 handle;
+    __u32 pad;
+};
+
+struct drm_virtgpu_execbuffer_syncobj {
+    __u32 handle;
+    __u32 flags;
+    __u64 point;
+};
+
+struct drm_virtgpu_execbuffer {
+    __u32 flags;
+    __u32 size;
+    __u64 command;
+    __u64 bo_handles;
+    __u32 num_bo_handles;
+    __s32 fence_fd;
+    __u32 ring_idx;
+    __u32 syncobj_stride;
+    __u32 num_in_syncobjs;
+    __u32 num_out_syncobjs;
+    __u64 in_syncobjs;
+    __u64 out_syncobjs;
+};
+
+#define VIRTGPU_PARAM_3D_FEATURES 1
+#define VIRTGPU_PARAM_CAPSET_QUERY_FIX 2
+#define VIRTGPU_PARAM_RESOURCE_BLOB 3
+#define VIRTGPU_PARAM_HOST_VISIBLE 4
+#define VIRTGPU_PARAM_CROSS_DEVICE 5
+#define VIRTGPU_PARAM_CONTEXT_INIT 6
+#define VIRTGPU_PARAM_SUPPORTED_CAPSET_IDs 7
+#define VIRTGPU_PARAM_EXPLICIT_DEBUG_NAME 8
+
+struct drm_virtgpu_getparam {
+    __u64 param;
+    __u64 value;
+};
+
+struct drm_virtgpu_resource_create {
+    __u32 target;
+    __u32 format;
+    __u32 bind;
+    __u32 width;
+    __u32 height;
+    __u32 depth;
+    __u32 array_size;
+    __u32 last_level;
+    __u32 nr_samples;
+    __u32 flags;
+    __u32 bo_handle;
+    __u32 res_handle;
+    __u32 size;
+    __u32 stride;
+};
+
+struct drm_virtgpu_resource_info {
+    __u32 bo_handle;
+    __u32 res_handle;
+    __u32 size;
+    __u32 blob_mem;
+};
+
+struct drm_virtgpu_3d_box {
+    __u32 x;
+    __u32 y;
+    __u32 z;
+    __u32 w;
+    __u32 h;
+    __u32 d;
+};
+
+struct drm_virtgpu_3d_transfer_to_host {
+    __u32 bo_handle;
+    struct drm_virtgpu_3d_box box;
+    __u32 level;
+    __u32 offset;
+    __u32 stride;
+    __u32 layer_stride;
+};
+
+struct drm_virtgpu_3d_transfer_from_host {
+    __u32 bo_handle;
+    struct drm_virtgpu_3d_box box;
+    __u32 level;
+    __u32 offset;
+    __u32 stride;
+    __u32 layer_stride;
+};
+
+#define VIRTGPU_WAIT_NOWAIT 1
+struct drm_virtgpu_3d_wait {
+    __u32 handle;
+    __u32 flags;
+};
+
+#define VIRTGPU_DRM_CAPSET_VIRGL 1
+#define VIRTGPU_DRM_CAPSET_VIRGL2 2
+#define VIRTGPU_DRM_CAPSET_GFXSTREAM_VULKAN 3
+#define VIRTGPU_DRM_CAPSET_VENUS 4
+#define VIRTGPU_DRM_CAPSET_CROSS_DOMAIN 5
+#define VIRTGPU_DRM_CAPSET_DRM 6
+
+struct drm_virtgpu_get_caps {
+    __u32 cap_set_id;
+    __u32 cap_set_ver;
+    __u64 addr;
+    __u32 size;
+    __u32 pad;
+};
+
+#define VIRTGPU_BLOB_MEM_GUEST 0x0001
+#define VIRTGPU_BLOB_MEM_HOST3D 0x0002
+#define VIRTGPU_BLOB_MEM_HOST3D_GUEST 0x0003
+
+#define VIRTGPU_BLOB_FLAG_USE_MAPPABLE 0x0001
+#define VIRTGPU_BLOB_FLAG_USE_SHAREABLE 0x0002
+#define VIRTGPU_BLOB_FLAG_USE_CROSS_DEVICE 0x0004
+
+struct drm_virtgpu_resource_create_blob {
+    __u32 blob_mem;
+    __u32 blob_flags;
+    __u32 bo_handle;
+    __u32 res_handle;
+    __u64 size;
+    __u32 pad;
+    __u32 cmd_size;
+    __u64 cmd;
+    __u64 blob_id;
+};
+
+#define VIRTGPU_CONTEXT_PARAM_CAPSET_ID 0x0001
+#define VIRTGPU_CONTEXT_PARAM_NUM_RINGS 0x0002
+#define VIRTGPU_CONTEXT_PARAM_POLL_RINGS_MASK 0x0003
+#define VIRTGPU_CONTEXT_PARAM_DEBUG_NAME 0x0004
+
+struct drm_virtgpu_context_set_param {
+    __u64 param;
+    __u64 value;
+};
+
+struct drm_virtgpu_context_init {
+    __u32 num_params;
+    __u32 pad;
+    __u64 ctx_set_params;
+};
+
+#define VIRTGPU_EVENT_FENCE_SIGNALED 0x90000000
+
+#define DRM_IOCTL_VIRTGPU_MAP                                                  \
+    DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_MAP, struct drm_virtgpu_map)
+#define DRM_IOCTL_VIRTGPU_EXECBUFFER                                           \
+    DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_EXECBUFFER,                        \
+             struct drm_virtgpu_execbuffer)
+#define DRM_IOCTL_VIRTGPU_GETPARAM                                             \
+    DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_GETPARAM,                          \
+             struct drm_virtgpu_getparam)
+#define DRM_IOCTL_VIRTGPU_RESOURCE_CREATE                                      \
+    DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_RESOURCE_CREATE,                   \
+             struct drm_virtgpu_resource_create)
+#define DRM_IOCTL_VIRTGPU_RESOURCE_INFO                                        \
+    DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_RESOURCE_INFO,                     \
+             struct drm_virtgpu_resource_info)
+#define DRM_IOCTL_VIRTGPU_TRANSFER_FROM_HOST                                   \
+    DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_TRANSFER_FROM_HOST,                \
+             struct drm_virtgpu_3d_transfer_from_host)
+#define DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST                                     \
+    DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_TRANSFER_TO_HOST,                  \
+             struct drm_virtgpu_3d_transfer_to_host)
+#define DRM_IOCTL_VIRTGPU_WAIT                                                 \
+    DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_WAIT, struct drm_virtgpu_3d_wait)
+#define DRM_IOCTL_VIRTGPU_GET_CAPS                                             \
+    DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_GET_CAPS,                          \
+             struct drm_virtgpu_get_caps)
+#define DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB                                 \
+    DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_RESOURCE_CREATE_BLOB,              \
+             struct drm_virtgpu_resource_create_blob)
+#define DRM_IOCTL_VIRTGPU_CONTEXT_INIT                                         \
+    DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_CONTEXT_INIT,                      \
+             struct drm_virtgpu_context_init)
+
 /**
  * Header for events written back to userspace on the drm fd.  The
  * type defines the type of event, the length specifies the total
@@ -1167,6 +1372,20 @@ typedef struct drm_plane drm_plane_t;
 struct drm_device;
 typedef struct drm_device drm_device_t;
 
+typedef enum drm_minor_type {
+    DRM_MINOR_PRIMARY = 0,
+    DRM_MINOR_RENDER = 1,
+} drm_minor_type_t;
+
+#define DRM_FILE_NODE_MAGIC 0x444e4f44U
+
+typedef struct drm_file_node {
+    uint32_t magic;
+    drm_minor_type_t type;
+    uint32_t minor;
+    drm_device_t *dev;
+} drm_file_node_t;
+
 typedef struct drm_device_op {
     int (*get_display_info)(drm_device_t *drm_dev, uint32_t *width,
                             uint32_t *height, uint32_t *bpp);
@@ -1194,6 +1413,8 @@ typedef struct drm_device_op {
                         uint32_t *count);
     int (*get_planes)(drm_device_t *drm_dev, drm_plane_t **planes,
                       uint32_t *count);
+    ssize_t (*driver_ioctl)(drm_device_t *drm_dev, uint32_t cmd, void *arg,
+                            bool render_node);
 } drm_device_op_t;
 
 struct drm_resource_manager;
@@ -1203,10 +1424,45 @@ struct drm_device {
     int id;
     void *data;
     drm_device_op_t *op;
+    char driver_name[32];
+    char driver_date[32];
+    char driver_desc[128];
+    drm_file_node_t primary_node;
+    drm_file_node_t render_node;
+    uint32_t primary_minor;
+    uint32_t render_minor;
+    bool render_node_registered;
     struct k_drm_event *drm_events[DRM_MAX_EVENTS_COUNT];
     uint64_t vblank_counter;
     drm_resource_manager_t resource_mgr;
 };
+
+static inline drm_file_node_t *drm_data_to_file_node(void *data) {
+    if (!data) {
+        return NULL;
+    }
+
+    drm_file_node_t *node = (drm_file_node_t *)data;
+    if (node->magic != DRM_FILE_NODE_MAGIC || !node->dev) {
+        return NULL;
+    }
+
+    return node;
+}
+
+static inline drm_device_t *drm_data_to_device(void *data) {
+    drm_file_node_t *node = drm_data_to_file_node(data);
+    if (node) {
+        return node->dev;
+    }
+
+    return (drm_device_t *)data;
+}
+
+static inline bool drm_data_is_render_node(void *data) {
+    drm_file_node_t *node = drm_data_to_file_node(data);
+    return node && node->type == DRM_MINOR_RENDER;
+}
 
 #include <drivers/drm/drm_core.h>
 #include <drivers/drm/drm_ioctl.h>
@@ -1216,6 +1472,8 @@ drm_device_t *drm_regist_pci_dev(void *data, drm_device_op_t *op,
                                  pci_device_t *pci_dev);
 drm_device_t *drm_register_device(void *data, drm_device_op_t *op,
                                   const char *name, pci_device_t *pci_dev);
+void drm_device_set_driver_info(drm_device_t *dev, const char *name,
+                                const char *date, const char *desc);
 void drm_unregister_device(drm_device_t *dev);
 void drm_init_after_pci_sysfs();
 

@@ -356,6 +356,8 @@ void vfs_mark_dirty(vfs_node_t node, uint64_t dirty_flags);
 void vfs_poll_wait_init(vfs_poll_wait_t *wait, task_t *task, uint32_t events);
 int vfs_poll_wait_arm(vfs_node_t node, vfs_poll_wait_t *wait);
 void vfs_poll_wait_disarm(vfs_poll_wait_t *wait);
+int vfs_poll_wait_sleep(vfs_node_t node, vfs_poll_wait_t *wait,
+                        int64_t timeout_ns, const char *reason);
 void vfs_poll_notify(vfs_node_t node, uint32_t events);
 
 void vfs_add_mount_point(vfs_node_t dir, char *devname);

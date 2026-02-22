@@ -1,4 +1,4 @@
-// Copyright (C) 2025  lihanrui2913
+// Copyright (C) 2025-2026  lihanrui2913
 #include "pci.h"
 
 extern virtio_driver_op_t virtio_pci_driver_op;
@@ -28,12 +28,12 @@ virtio_driver_t *virtio_pci_init(void *data) {
     virtio_cap_info_t *device_cfg = NULL;
 
     uint32_t notify_off_multiplier = 0;
+    uint64_t host_visible_shm_paddr = 0;
+    uint64_t host_visible_shm_size = 0;
 
-    uint32_t old_tmp = 0;
     uint32_t tmp = 0;
     uint32_t cap_offset = device->capability_point;
     while (1) {
-        old_tmp = tmp;
         tmp = device->op->read32(device->bus, device->slot, device->func,
                                  device->segment, cap_offset);
         if ((tmp & 0xff) != 0x09) {
@@ -44,32 +44,63 @@ virtio_driver_t *virtio_pci_init(void *data) {
                 break;
         }
 
-        uint32_t capability_header =
-            device->op->read32(device->bus, device->slot, device->func,
-                               device->segment, cap_offset);
-        uint16_t private_header = (capability_header >> 16);
+        uint8_t cfg_type = device->op->read8(device->bus, device->slot,
+                                             device->func, device->segment,
+                                             cap_offset + 0x03);
+        uint8_t bar = device->op->read8(device->bus, device->slot,
+                                        device->func, device->segment,
+                                        cap_offset + 0x04);
+        uint8_t cap_id = device->op->read8(device->bus, device->slot,
+                                           device->func, device->segment,
+                                           cap_offset + 0x05);
+        uint32_t cap_offset_lo = device->op->read32(
+            device->bus, device->slot, device->func, device->segment,
+            cap_offset + 0x08);
+        uint32_t cap_length_lo = device->op->read32(
+            device->bus, device->slot, device->func, device->segment,
+            cap_offset + 0x0C);
 
-        virtio_cap_info_t *cap_info = malloc(sizeof(virtio_cap_info_t));
-        memset(cap_info, 0, sizeof(virtio_cap_info_t));
-        cap_info->bar =
-            device->op->read32(device->bus, device->slot, device->func,
-                               device->segment, cap_offset + 0x04);
-        cap_info->offset =
-            device->op->read32(device->bus, device->slot, device->func,
-                               device->segment, cap_offset + 0x08);
-        cap_info->length =
-            device->op->read32(device->bus, device->slot, device->func,
-                               device->segment, cap_offset + 0x0C);
+        virtio_cap_info_t *cap_info = NULL;
+        if (cfg_type == 1 || cfg_type == 2 || cfg_type == 4) {
+            cap_info = malloc(sizeof(virtio_cap_info_t));
+            if (!cap_info) {
+                break;
+            }
+            memset(cap_info, 0, sizeof(virtio_cap_info_t));
+            cap_info->bar = bar;
+            cap_info->offset = cap_offset_lo;
+            cap_info->length = cap_length_lo;
+        }
 
-        if ((private_header >> 8) == 1) {
+        if (cfg_type == 1) {
             common_cfg = cap_info;
-        } else if ((private_header >> 8) == 4) {
+        } else if (cfg_type == 4) {
             device_cfg = cap_info;
-        } else if ((private_header >> 8) == 2) {
+        } else if (cfg_type == 2) {
             notify_cfg = cap_info;
             notify_off_multiplier =
                 device->op->read32(device->bus, device->slot, device->func,
                                    device->segment, cap_offset + 0x10);
+        } else {
+            if (cap_info) {
+                free(cap_info);
+            }
+            if (cfg_type == 8 && cap_id == 1 && bar < 6) {
+                uint64_t cap_offset_hi = device->op->read32(
+                    device->bus, device->slot, device->func, device->segment,
+                    cap_offset + 0x10);
+                uint64_t cap_length_hi = device->op->read32(
+                    device->bus, device->slot, device->func, device->segment,
+                    cap_offset + 0x14);
+                uint64_t shm_offset =
+                    cap_offset_lo | (cap_offset_hi << 32);
+                uint64_t shm_length =
+                    cap_length_lo | (cap_length_hi << 32);
+                if (shm_length && device->bars[bar].address) {
+                    host_visible_shm_paddr = device->bars[bar].address + shm_offset;
+                    host_visible_shm_size = shm_length;
+                }
+            }
         }
 
         cap_offset = (tmp & 0xff00) >> 8;
@@ -153,14 +184,18 @@ virtio_driver_t *virtio_pci_init(void *data) {
 
 done:
     pci->notify_off_multiplier = notify_off_multiplier;
+    pci->host_visible_shm_paddr = host_visible_shm_paddr;
+    pci->host_visible_shm_size = host_visible_shm_size;
 
     pci->common_cfg_bar = (virtio_pci_common_cfg_t *)common_cfg_vaddr;
     pci->notify_regions = (uint16_t *)notify_cfg_vaddr;
     pci->config_space_vaddr = config_space_vaddr;
 
     virtio_driver_t *driver = malloc(sizeof(virtio_driver_t));
+    memset(driver, 0, sizeof(virtio_driver_t));
     driver->data = (void *)pci;
     driver->op = &virtio_pci_driver_op;
+    return driver;
 }
 
 virtio_device_type_t virtio_pci_get_device_type(void *data) {
@@ -181,8 +216,12 @@ void virtio_pci_set_features(void *data, uint64_t features) {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
     pci->common_cfg_bar->device_feature_select = 0;
     uint32_t features_low = features & 0xFFFFFFFF;
+    pci->common_cfg_bar->driver_feature_select = 0;
+    pci->common_cfg_bar->driver_feature = features_low;
     pci->common_cfg_bar->device_feature_select = 1;
     uint32_t features_high = (features >> 32) & 0xFFFFFFFF;
+    pci->common_cfg_bar->driver_feature_select = 1;
+    pci->common_cfg_bar->driver_feature = features_high;
 }
 
 uint32_t virtio_pci_get_max_queue_size(void *data, uint16_t queue) {
@@ -193,6 +232,7 @@ uint32_t virtio_pci_get_max_queue_size(void *data, uint16_t queue) {
 
 void virtio_pci_notify(void *data, uint16_t queue) {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
+    pci->common_cfg_bar->queue_select = queue;
     uint16_t notify_off = pci->common_cfg_bar->queue_notify_off;
     uint64_t offset_bytes = (uint64_t)notify_off * pci->notify_off_multiplier;
     uint64_t index = offset_bytes / sizeof(uint16_t);

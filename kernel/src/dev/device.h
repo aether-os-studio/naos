@@ -61,6 +61,10 @@ enum device_cmd_t {
 uint64_t device_install(int type, int subtype, void *ptr, char *name,
                         uint64_t parent, void *open, void *close, void *ioctl,
                         void *poll, void *read, void *write, void *map);
+uint64_t device_install_with_minor(int type, int subtype, void *ptr, char *name,
+                                   uint64_t parent, void *open, void *close,
+                                   void *ioctl, void *poll, void *read,
+                                   void *write, void *map, uint64_t minor);
 
 // 根据子类型查找设备
 device_t *device_find(int type, uint64_t idx);

@@ -158,27 +158,32 @@ bool boot_cpu_support_x2apic() {
 boot_framebuffer_t limine_boot_fb;
 
 boot_framebuffer_t *boot_get_framebuffer() {
-    limine_boot_fb.address =
-        (uintptr_t)framebuffer_request.response->framebuffers[0]->address;
-    limine_boot_fb.width = framebuffer_request.response->framebuffers[0]->width;
-    limine_boot_fb.height =
-        framebuffer_request.response->framebuffers[0]->height;
-    limine_boot_fb.bpp = framebuffer_request.response->framebuffers[0]->bpp;
-    limine_boot_fb.pitch = framebuffer_request.response->framebuffers[0]->pitch;
-    limine_boot_fb.red_mask_shift =
-        framebuffer_request.response->framebuffers[0]->red_mask_shift;
-    limine_boot_fb.red_mask_size =
-        framebuffer_request.response->framebuffers[0]->red_mask_size;
-    limine_boot_fb.blue_mask_shift =
-        framebuffer_request.response->framebuffers[0]->blue_mask_shift;
-    limine_boot_fb.blue_mask_size =
-        framebuffer_request.response->framebuffers[0]->blue_mask_size;
-    limine_boot_fb.green_mask_shift =
-        framebuffer_request.response->framebuffers[0]->green_mask_shift;
-    limine_boot_fb.green_mask_size =
-        framebuffer_request.response->framebuffers[0]->green_mask_size;
+    if (framebuffer_request.response) {
+        limine_boot_fb.address =
+            (uintptr_t)framebuffer_request.response->framebuffers[0]->address;
+        limine_boot_fb.width =
+            framebuffer_request.response->framebuffers[0]->width;
+        limine_boot_fb.height =
+            framebuffer_request.response->framebuffers[0]->height;
+        limine_boot_fb.bpp = framebuffer_request.response->framebuffers[0]->bpp;
+        limine_boot_fb.pitch =
+            framebuffer_request.response->framebuffers[0]->pitch;
+        limine_boot_fb.red_mask_shift =
+            framebuffer_request.response->framebuffers[0]->red_mask_shift;
+        limine_boot_fb.red_mask_size =
+            framebuffer_request.response->framebuffers[0]->red_mask_size;
+        limine_boot_fb.blue_mask_shift =
+            framebuffer_request.response->framebuffers[0]->blue_mask_shift;
+        limine_boot_fb.blue_mask_size =
+            framebuffer_request.response->framebuffers[0]->blue_mask_size;
+        limine_boot_fb.green_mask_shift =
+            framebuffer_request.response->framebuffers[0]->green_mask_shift;
+        limine_boot_fb.green_mask_size =
+            framebuffer_request.response->framebuffers[0]->green_mask_size;
 
-    return &limine_boot_fb;
+        return &limine_boot_fb;
+    }
+    return NULL;
 }
 
 LIMINE_REQUEST static volatile struct limine_executable_cmdline_request

@@ -69,24 +69,25 @@ int terminal_ioctl_serial(tty_t *device, uint32_t cmd, uint64_t arg) {
     switch (cmd) {
     case TIOCGWINSZ:
         *(struct winsize *)arg = (struct winsize){
-            .ws_row = 24, .ws_col = 80, .ws_xpixel = 0, .ws_ypixel = 0};
+            .ws_xpixel = 0,
+            .ws_ypixel = 0,
+            .ws_col = 80,
+            .ws_row = 24,
+        };
         return 0;
-
     case TIOCSCTTY:
-    case TIOCNOTTY:
         return 0;
-
-    case TIOCGPGRP: {
+    case TIOCGPGRP:
         int *pid = (int *)arg;
         *pid = device->at_process_group_id;
         return 0;
-    }
-
     case TIOCSPGRP:
         device->at_process_group_id = *(int *)arg;
         return 0;
-
     case TCGETS:
+        if (check_user_overflow(arg, sizeof(termios))) {
+            return -EFAULT;
+        }
         memcpy((void *)arg, &device->termios, sizeof(termios));
         return 0;
     case TCGETS2:
@@ -102,8 +103,9 @@ int terminal_ioctl_serial(tty_t *device, uint32_t cmd, uint64_t arg) {
         memcpy((void *)arg, &t2, sizeof(struct termios2));
         return 0;
     case TCSETS:
-    case TCSETSW:
-    case TCSETSF:
+        if (check_user_overflow(arg, sizeof(termios))) {
+            return -EFAULT;
+        }
         memcpy(&device->termios, (void *)arg, sizeof(termios));
         return 0;
     case TCSETS2:
@@ -117,12 +119,55 @@ int terminal_ioctl_serial(tty_t *device, uint32_t cmd, uint64_t arg) {
         memcpy(device->termios.c_cc, t2_set.c_cc, NCCS);
         // Ignore ispeed and ospeed as they are not supported
         return 0;
-
+    case TCSETSW:
+        if (check_user_overflow(arg, sizeof(termios))) {
+            return -EFAULT;
+        }
+        memcpy(&device->termios, (void *)arg, sizeof(termios));
+        return 0;
+    case TIOCSWINSZ:
+        return 0;
+    case KDGETMODE:
+        *(int *)arg = device->tty_mode;
+        return 0;
+    case KDSETMODE:
+        device->tty_mode = arg;
+        return 0;
+    case KDGKBMODE:
+        *(int *)arg = device->tty_kbmode;
+        return 0;
+    case KDSKBMODE:
+        device->tty_kbmode = arg;
+        return 0;
+    case VT_SETMODE:
+        memcpy(&device->current_vt_mode, (void *)arg, sizeof(struct vt_mode));
+        return 0;
+    case VT_GETMODE:
+        memcpy((void *)arg, &device->current_vt_mode, sizeof(struct vt_mode));
+        return 0;
+    case VT_ACTIVATE:
+        return 0;
+    case VT_WAITACTIVE:
+        return 0;
+    case VT_GETSTATE:
+        struct vt_state *state = (struct vt_state *)arg;
+        state->v_active = 1; // 当前活动终端
+        state->v_state = 0;  // 状态标志
+        return 0;
+    case VT_OPENQRY:
+        *(int *)arg = 1;
+        return 0;
+    case TIOCNOTTY:
+        return 0;
+    case TCSETSF:
+        memcpy(&device->termios, (void *)arg, sizeof(termios));
+        return 0;
     case TCFLSH:
         return 0;
-
+    case TIOCNXCL:
+        return 0;
     default:
-        return -EINVAL; // 不支持的命令
+        return -EINVAL;
     }
 }
 

@@ -110,11 +110,9 @@ LIBGCC_VERSION ?= 2025-12-08
 prepare: libgcc_$(ARCH).a liballoc-$(ARCH).a
 	./kernel/get-deps
 
-.PHONY: liballoc-$(ARCH).a
 liballoc-$(ARCH).a:
 	wget https://github.com/plos-clan/liballoc/releases/download/release/liballoc-$(ARCH).a -O liballoc-$(ARCH).a
 
-.PHONY: libgcc_$(ARCH).a
 libgcc_$(ARCH).a:
 	wget https://github.com/osdev0/libgcc-binaries/releases/download/$(LIBGCC_VERSION)/libgcc-$(ARCH).a -O libgcc_$(ARCH).a
 
@@ -231,6 +229,9 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-netdev user,id=net0 \
 		-device e1000,netdev=net0 \
 		-rtc base=utc \
+		-vga none \
+		-display sdl,gl=on \
+		-device virtio-gpu-gl-pci \
 		$(QEMUFLAGS)
 
 .PHONY: run-x86_64-single

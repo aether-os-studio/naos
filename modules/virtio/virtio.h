@@ -24,6 +24,10 @@ typedef enum virtio_device_type {
     VIRTIO_DEVICE_TYPE_PMEM = 27,   // 持久内存
 } virtio_device_type_t;
 
+#define VIRTIO_F_RING_INDIRECT_DESC (1ULL << 28)
+#define VIRTIO_F_RING_EVENT_IDX (1ULL << 29)
+#define VIRTIO_F_VERSION_1 (1ULL << 32)
+
 struct virtio_driver;
 typedef struct virtio_driver virtio_driver_t;
 
@@ -68,6 +72,6 @@ typedef struct virtio_net_device {
     spinlock_t send_recv_lock;
 } virtio_net_device_t;
 
-uint32_t virtio_begin_init(virtio_driver_t *driver,
-                           uint32_t supported_features);
+uint64_t virtio_begin_init(virtio_driver_t *driver,
+                           uint64_t supported_features);
 void virtio_finish_init(virtio_driver_t *driver);

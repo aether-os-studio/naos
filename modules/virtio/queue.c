@@ -1,4 +1,4 @@
-// Copyright (C) 2025  lihanrui2913
+// Copyright (C) 2025-2026  lihanrui2913
 #include "queue.h"
 
 void queue_part_sizes(uint16_t queue_size, uint64_t *desc_size,
@@ -86,6 +86,10 @@ virtqueue_t *virt_queue_new(virtio_driver_t *driver, uint16_t queue_idx,
     queue->desc = desc;
     queue->avail = avail;
     queue->used = used;
+
+    memset(queue->desc, 0, sizeof(virtio_descriptor_t) * SIZE);
+    memset(queue->avail, 0, sizeof(virtio_avail_ring_t));
+    memset(queue->used, 0, sizeof(virtio_used_ring_t));
 
     for (int i = 0; i < SIZE; i++) {
         if (i < SIZE - 1) {

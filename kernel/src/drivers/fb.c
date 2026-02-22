@@ -121,6 +121,10 @@ void *fb_map(void *data, void *addr, uint64_t offset, uint64_t len) {
 void fbdev_init() {
     framebuffer = boot_get_framebuffer();
 
+    if (!framebuffer) {
+        return;
+    }
+
     char name[16];
     sprintf(name, "fb%d", 0);
     device_install(DEV_CHAR, DEV_FB, framebuffer, name, 0, NULL, NULL, fb_ioctl,
@@ -128,6 +132,10 @@ void fbdev_init() {
 }
 
 void fbdev_init_sysfs() {
+    if (!framebuffer) {
+        return;
+    }
+
     vfs_node_t graphics = vfs_open("/sys/class/graphics", 0);
 
     char name[16];

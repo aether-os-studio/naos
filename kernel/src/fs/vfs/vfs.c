@@ -313,6 +313,44 @@ void vfs_poll_wait_disarm(vfs_poll_wait_t *wait) {
     llist_init_head(&wait->node);
 }
 
+#define VFS_POLL_WAIT_SLICE_NS 10000000ULL
+
+int vfs_poll_wait_sleep(vfs_node_t node, vfs_poll_wait_t *wait,
+                        int64_t timeout_ns, const char *reason) {
+    if (!node || !wait || !wait->task)
+        return -EINVAL;
+
+    uint32_t want = wait->events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
+    uint64_t deadline = UINT64_MAX;
+
+    if (timeout_ns >= 0) {
+        uint64_t now = nano_time();
+        deadline = now + (uint64_t)timeout_ns;
+        if (deadline < now)
+            deadline = UINT64_MAX;
+    }
+
+    while (true) {
+        if ((wait->revents & want) || (vfs_poll(node, want) & want))
+            return EOK;
+
+        int64_t block_ns = (int64_t)VFS_POLL_WAIT_SLICE_NS;
+        if (timeout_ns >= 0) {
+            uint64_t now = nano_time();
+            if (now >= deadline)
+                return ETIMEDOUT;
+            uint64_t remain = deadline - now;
+            if (remain < (uint64_t)block_ns)
+                block_ns = (int64_t)remain;
+        }
+
+        int ret = task_block(wait->task, TASK_BLOCKING, block_ns, reason);
+        if (ret == EOK || ret == ETIMEDOUT)
+            continue;
+        return ret;
+    }
+}
+
 void vfs_poll_notify(vfs_node_t node, uint32_t events) {
     if (!node || !events)
         return;

@@ -78,7 +78,7 @@ static ssize_t eventfd_read(fd_t *fd, void *buf, size_t offset, size_t len) {
         vfs_poll_wait_arm(fd->node, &wait);
         if (efd->count == 0) {
             int reason =
-                task_block(current_task, TASK_BLOCKING, -1, "eventfd_read");
+                vfs_poll_wait_sleep(fd->node, &wait, -1, "eventfd_read");
             vfs_poll_wait_disarm(&wait);
             if (reason != EOK)
                 return -EINTR;

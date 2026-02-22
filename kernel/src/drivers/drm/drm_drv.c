@@ -20,7 +20,16 @@
  */
 ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
                  uint64_t flags) {
-    drm_device_t *dev = (drm_device_t *)data;
+    (void)offset;
+
+    drm_device_t *dev = drm_data_to_device(data);
+    if (!dev) {
+        return -ENODEV;
+    }
+
+    if (drm_data_is_render_node(data)) {
+        return -EINVAL;
+    }
 
     arch_enable_interrupt();
 
@@ -69,7 +78,15 @@ ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
  * Returns events that are ready
  */
 ssize_t drm_poll(void *data, size_t event) {
-    drm_device_t *dev = (drm_device_t *)data;
+    drm_device_t *dev = drm_data_to_device(data);
+    if (!dev) {
+        return -ENODEV;
+    }
+
+    if (drm_data_is_render_node(data)) {
+        return 0;
+    }
+
     ssize_t revent = 0;
 
     if (event & EPOLLIN) {
@@ -91,8 +108,10 @@ ssize_t drm_poll(void *data, size_t event) {
  * Maps a DRM buffer (typically a dumb buffer) to user space
  */
 void *drm_map(void *data, void *addr, uint64_t offset, uint64_t len) {
-    drm_device_t *dev = (drm_device_t *)data;
-    (void)dev; // Not used for now
+    drm_device_t *dev = drm_data_to_device(data);
+    if (!dev) {
+        return (void *)-ENODEV;
+    }
 
     map_page_range(get_current_page_dir(true), (uint64_t)addr, offset, len,
                    PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
@@ -114,86 +133,138 @@ static void drm_device_init(drm_device_t *dev, void *data,
     // ID initialize after device registed
     dev->data = data;
     dev->op = op;
+    drm_device_set_driver_info(dev, DRM_NAME, "20060810", "NaOS DRM");
 
     // Initialize resource manager
     drm_resource_manager_init(&dev->resource_mgr);
 }
 
+void drm_device_set_driver_info(drm_device_t *dev, const char *name,
+                                const char *date, const char *desc) {
+    if (!dev) {
+        return;
+    }
+
+    if (!name || !name[0]) {
+        name = DRM_NAME;
+    }
+    if (!date || !date[0]) {
+        date = "20060810";
+    }
+    if (!desc || !desc[0]) {
+        desc = "NaOS DRM";
+    }
+
+    strncpy(dev->driver_name, name, sizeof(dev->driver_name) - 1);
+    strncpy(dev->driver_date, date, sizeof(dev->driver_date) - 1);
+    strncpy(dev->driver_desc, desc, sizeof(dev->driver_desc) - 1);
+}
+
 /**
  * drm_device_setup_sysfs - Setup sysfs entries for DRM device
  * @major: DRM device major
- * @minor: DRM device minor
- * @dev: DRM device
+ * @card_minor: Primary node minor
+ * @render_minor: Render node minor
+ * @has_render_node: True if render node is registered
  * @pci_dev: PCI device (can be NULL for non-PCI devices)
- * @dev_name: Device name (e.g., "card0")
+ * @card_dev_name: Primary device node name (e.g., "dri/card0")
+ * @render_dev_name: Render device node name (e.g., "dri/renderD128")
  *
  * Creates sysfs entries for the DRM device
  */
-static void drm_device_setup_sysfs(int major, int minor, drm_device_t *dev,
-                                   pci_device_t *pci_dev,
-                                   const char *dev_name) {
-    // If PCI device, create PCI-specific entries
-    if (pci_dev) {
-        vfs_node_t dev_root =
-            sysfs_regist_dev('c', major, minor, "", dev_name,
+static void drm_device_setup_sysfs(int major, int card_minor, int render_minor,
+                                   bool has_render_node, pci_device_t *pci_dev,
+                                   const char *card_dev_name,
+                                   const char *render_dev_name) {
+    if (!pci_dev) {
+        return;
+    }
+
+    vfs_node_t card_root =
+        sysfs_regist_dev('c', major, card_minor, "", card_dev_name,
+                         "SUBSYSTEM=drm\nDEVTYPE=drm_minor\n");
+
+    vfs_node_t device_dir = sysfs_child_append(card_root, "device", true);
+    vfs_node_t drm_dir = sysfs_child_append(device_dir, "drm", true);
+
+    vfs_node_t dev_uevent = sysfs_child_append(device_dir, "uevent", false);
+
+    char content[128];
+    sprintf(content, "PCI_SLOT_NAME=%04x:%02x:%02x.%u\n", pci_dev->segment,
+            pci_dev->bus, pci_dev->slot, pci_dev->func);
+    vfs_write(dev_uevent, content, 0, strlen(content));
+
+    vfs_node_t dev_vendor = sysfs_child_append(device_dir, "vendor", false);
+    sprintf(content, "0x%04x\n", pci_dev->vendor_id);
+    vfs_write(dev_vendor, content, 0, strlen(content));
+
+    vfs_node_t dev_subsystem_vendor =
+        sysfs_child_append(device_dir, "subsystem_vendor", false);
+    sprintf(content, "0x%04x\n", pci_dev->subsystem_vendor_id);
+    vfs_write(dev_subsystem_vendor, content, 0, strlen(content));
+
+    vfs_node_t dev_device = sysfs_child_append(device_dir, "device", false);
+    sprintf(content, "0x%04x\n", pci_dev->device_id);
+    vfs_write(dev_device, content, 0, strlen(content));
+
+    vfs_node_t dev_subsystem_device =
+        sysfs_child_append(device_dir, "subsystem_device", false);
+    sprintf(content, "0x%04x\n", pci_dev->subsystem_device_id);
+    vfs_write(dev_subsystem_device, content, 0, strlen(content));
+
+    vfs_node_t version = sysfs_child_append(drm_dir, "version", false);
+    sprintf(content, "drm 1.1.0 20060810");
+    vfs_write(version, content, 0, strlen(content));
+
+    char card_node_name[16];
+    sprintf(card_node_name, "card%d", card_minor);
+    vfs_node_t card_node = sysfs_child_append(drm_dir, card_node_name, true);
+
+    vfs_node_t card_uevent = sysfs_child_append(card_node, "uevent", false);
+    sprintf(content,
+            "MAJOR=%d\nMINOR=%d\nDEVNAME=dri/%s\nSUBSYSTEM=drm\nDEVTYPE="
+            "drm_minor\n",
+            major, card_minor, card_node_name);
+    vfs_write(card_uevent, content, 0, strlen(content));
+    sysfs_child_append_symlink(card_node, "subsystem", "/sys/class/drm");
+
+    vfs_node_t class_drm = vfs_open("/sys/class/drm", 0);
+
+    char card_path[256];
+    sprintf(card_path, "/sys/dev/char/%d:%d/device/drm/%s", major, card_minor,
+            card_node_name);
+    sysfs_child_append_symlink(class_drm, card_node_name, card_path);
+
+    if (has_render_node) {
+        vfs_node_t render_root =
+            sysfs_regist_dev('c', major, render_minor, "", render_dev_name,
                              "SUBSYSTEM=drm\nDEVTYPE=drm_minor\n");
 
-        vfs_node_t dev = sysfs_child_append(dev_root, "device", true);
+        char card_device_path[128];
+        sprintf(card_device_path, "/sys/dev/char/%d:%d/device", major,
+                card_minor);
+        sysfs_child_append_symlink(render_root, "device", card_device_path);
 
-        vfs_node_t drm = sysfs_child_append(dev, "drm", true);
-
-        vfs_node_t dev_uevent = sysfs_child_append(dev, "uevent", false);
-
-        char content[64];
-        sprintf(content, "PCI_SLOT_NAME=%04x:%02x:%02x.%u\n", pci_dev->segment,
-                pci_dev->bus, pci_dev->slot, pci_dev->func);
-        vfs_write(dev_uevent, content, 0, strlen(content));
-
-        vfs_node_t dev_vendor = sysfs_child_append(dev, "vendor", false);
-        sprintf(content, "0x%04x\n", pci_dev->vendor_id);
-        vfs_write(dev_vendor, content, 0, strlen(content));
-
-        vfs_node_t dev_subsystem_vendor =
-            sysfs_child_append(dev, "subsystem_vendor", false);
-        sprintf(content, "0x%04x\n", pci_dev->subsystem_vendor_id);
-        vfs_write(dev_subsystem_vendor, content, 0, strlen(content));
-
-        vfs_node_t dev_device = sysfs_child_append(dev, "device", false);
-        sprintf(content, "0x%04x\n", pci_dev->device_id);
-        vfs_write(dev_device, content, 0, strlen(content));
-
-        vfs_node_t dev_subsystem_device =
-            sysfs_child_append(dev, "subsystem_device", false);
-        sprintf(content, "0x%04x\n", pci_dev->subsystem_device_id);
-        vfs_write(dev_subsystem_device, content, 0, strlen(content));
-
-        vfs_node_t version = sysfs_child_append(drm, "version", false);
-        sprintf(content, "drm 1.1.0 20060810");
-        vfs_write(version, content, 0, strlen(content));
-
-        char buf[8];
-        sprintf(buf, "card%d", minor);
-        vfs_node_t cardn = sysfs_child_append(drm, (const char *)buf, true);
-
-        char path[256];
-        sprintf(path, "/sys/dev/char/%d:%d/device/drm/card%d", major, minor,
-                minor);
-
-        vfs_node_t class_drm = vfs_open("/sys/class/drm", 0);
-        sprintf(buf, "card%d", minor);
-        vfs_node_t class_drm_cardn =
-            sysfs_child_append_symlink(class_drm, buf, path);
-
-        vfs_node_t uevent = sysfs_child_append(cardn, "uevent", false);
+        char render_node_name[16];
+        sprintf(render_node_name, "renderD%d", render_minor);
+        vfs_node_t render_node =
+            sysfs_child_append(drm_dir, render_node_name, true);
+        vfs_node_t render_uevent =
+            sysfs_child_append(render_node, "uevent", false);
         sprintf(content,
-                "MAJOR=%d\nMINOR=%d\nDEVNAME=dri/"
-                "card%d\nSUBSYSTEM=drm\nDEVTYPE=drm_minor\n",
-                major, minor, minor);
-        vfs_write(uevent, content, 0, strlen(content));
+                "MAJOR=%d\nMINOR=%d\nDEVNAME=dri/%s\nSUBSYSTEM=drm\nDEVTYPE="
+                "drm_minor\n",
+                major, render_minor, render_node_name);
+        vfs_write(render_uevent, content, 0, strlen(content));
+        sysfs_child_append_symlink(render_node, "subsystem", "/sys/class/drm");
 
-        sysfs_child_append_symlink(cardn, "subsystem", "/sys/class/drm");
-        sysfs_child_append_symlink(dev, "subsystem", "/sys/bus/pci");
+        char render_path[256];
+        sprintf(render_path, "/sys/dev/char/%d:%d/device/drm/%s", major,
+                card_minor, render_node_name);
+        sysfs_child_append_symlink(class_drm, render_node_name, render_path);
     }
+
+    sysfs_child_append_symlink(device_dir, "subsystem", "/sys/bus/pci");
 }
 
 static int drm_id = 0;
@@ -210,8 +281,13 @@ static int drm_id = 0;
  */
 drm_device_t *drm_register_device(void *data, drm_device_op_t *op,
                                   const char *name, pci_device_t *pci_dev) {
-    char dev_name[32];
-    sprintf(dev_name, "%s%d", name, drm_id);
+    char card_dev_name[32];
+    char render_dev_name[32];
+    uint32_t card_minor = (uint32_t)drm_id;
+    uint32_t render_minor = 128U + (uint32_t)drm_id;
+
+    sprintf(card_dev_name, "%s%d", name, drm_id);
+    sprintf(render_dev_name, "dri/renderD%d", render_minor);
 
     // Allocate and initialize DRM device
     drm_device_t *dev = malloc(sizeof(drm_device_t));
@@ -220,16 +296,42 @@ drm_device_t *drm_register_device(void *data, drm_device_op_t *op,
         return NULL;
     }
 
-    // Register character device
-    uint64_t dev_nr =
-        device_install(DEV_CHAR, DEV_GPU, dev, dev_name, 0, NULL, NULL,
-                       drm_ioctl, drm_poll, drm_read, NULL, drm_map);
-
     drm_device_init(dev, data, op);
-    dev->id = dev_nr & 0xFF;
+    dev->primary_minor = card_minor;
+    dev->render_minor = render_minor;
 
-    dev->data = data;
-    dev->op = op;
+    dev->primary_node.magic = DRM_FILE_NODE_MAGIC;
+    dev->primary_node.type = DRM_MINOR_PRIMARY;
+    dev->primary_node.minor = card_minor;
+    dev->primary_node.dev = dev;
+
+    uint64_t card_dev_nr = device_install_with_minor(
+        DEV_CHAR, DEV_GPU, &dev->primary_node, card_dev_name, 0, NULL, NULL,
+        drm_ioctl, drm_poll, drm_read, NULL, drm_map, card_minor);
+    if (card_dev_nr == 0) {
+        printk("drm: Failed to register primary node %s\n", card_dev_name);
+        free(dev);
+        return NULL;
+    }
+
+    dev->id = card_minor;
+
+    dev->render_node.magic = DRM_FILE_NODE_MAGIC;
+    dev->render_node.type = DRM_MINOR_RENDER;
+    dev->render_node.minor = render_minor;
+    dev->render_node.dev = dev;
+
+    uint64_t render_dev_nr = device_install_with_minor(
+        DEV_CHAR, DEV_GPU, &dev->render_node, render_dev_name, 0, NULL, NULL,
+        drm_ioctl, drm_poll, drm_read, NULL, drm_map, render_minor);
+    if (render_dev_nr == 0) {
+        printk("drm: Failed to register render node %s\n", render_dev_name);
+        memset(&dev->render_node, 0, sizeof(dev->render_node));
+        dev->render_minor = 0;
+        dev->render_node_registered = false;
+    } else {
+        dev->render_node_registered = true;
+    }
 
     // Populate hardware resources if driver supports it
     if (dev->op->get_connectors) {
@@ -370,8 +472,9 @@ drm_device_t *drm_register_device(void *data, drm_device_op_t *op,
     framebuffer->depth = 24;
 
     // Setup sysfs entries
-    drm_device_setup_sysfs((dev_nr >> 8) & 0xFF, dev_nr & 0xFF, dev, pci_dev,
-                           dev_name);
+    drm_device_setup_sysfs((card_dev_nr >> 8) & 0xFF, dev->primary_minor,
+                           dev->render_minor, dev->render_node_registered,
+                           pci_dev, card_dev_name, render_dev_name);
 
     drm_id++;
 

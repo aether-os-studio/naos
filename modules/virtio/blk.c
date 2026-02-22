@@ -1,4 +1,4 @@
-// Copyright (C) 2025  lihanrui2913
+// Copyright (C) 2025-2026  lihanrui2913
 #include "blk.h"
 #include <libs/aether/mm.h>
 #include <libs/klibc.h>
@@ -20,8 +20,10 @@ uint64_t virtio_write(void *data, uint64_t lba, void *buffer, uint64_t count) {
 }
 
 int virtio_blk_init(virtio_driver_t *driver) {
-    uint32_t supported_features = (1 << 5) | (1 << 9) | (1 << 28) | (1 << 29);
-    uint32_t features = virtio_begin_init(driver, supported_features);
+    uint64_t supported_features = (1ULL << 5) | (1ULL << 9) |
+                                  VIRTIO_F_RING_INDIRECT_DESC |
+                                  VIRTIO_F_RING_EVENT_IDX | VIRTIO_F_VERSION_1;
+    uint64_t features = virtio_begin_init(driver, supported_features);
 
     // Read block device configuration
     virtio_blk_config_t config;
@@ -38,7 +40,8 @@ int virtio_blk_init(virtio_driver_t *driver) {
 
     // Create request queue
     virtqueue_t *request_queue = virt_queue_new(
-        driver, 0, !!(features & (1 << 28)), !!(features & (1 << 29)));
+        driver, 0, !!(features & VIRTIO_F_RING_INDIRECT_DESC),
+        !!(features & VIRTIO_F_RING_EVENT_IDX));
     if (!request_queue) {
         printk("virtio_blk: Failed to create request queue\n");
         return -1;

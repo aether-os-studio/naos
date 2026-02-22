@@ -86,6 +86,7 @@ typedef struct socket {
     bool closed; // 标记是否已关闭
     bool shut_rd;
     bool shut_wr;
+    volatile uint32_t pending_events;
 
     // 选项
     int passcred;

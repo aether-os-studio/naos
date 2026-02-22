@@ -1,4 +1,4 @@
-// Copyright (C) 2025  lihanrui2913
+// Copyright (C) 2025-2026  lihanrui2913
 #include "net.h"
 #include <libs/aether/mm.h>
 #include <net/rtnl.h>
@@ -11,8 +11,9 @@ int virtio_net_idx = 0;
 static void *rx_buffers[RX_BUFFER_COUNT];
 
 int virtio_net_init(virtio_driver_t *driver) {
-    uint32_t features =
-        virtio_begin_init(driver, (1 << 5) | (1 << 16) | (1 << 28) | (1 << 29));
+    uint64_t features = virtio_begin_init(
+        driver, (1ULL << 5) | (1ULL << 16) | VIRTIO_F_RING_INDIRECT_DESC |
+                    VIRTIO_F_RING_EVENT_IDX | VIRTIO_F_VERSION_1);
 
     uint32_t mac_low = driver->op->read_config_space(
         driver->data, offsetof(virtio_net_config_t, mac));
@@ -38,9 +39,11 @@ int virtio_net_init(virtio_driver_t *driver) {
            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
     virtqueue_t *recv_queue = virt_queue_new(
-        driver, 0, !!(features & (1 << 28)), !!(features & (1 << 29)));
+        driver, 0, !!(features & VIRTIO_F_RING_INDIRECT_DESC),
+        !!(features & VIRTIO_F_RING_EVENT_IDX));
     virtqueue_t *send_queue = virt_queue_new(
-        driver, 1, !!(features & (1 << 28)), !!(features & (1 << 29)));
+        driver, 1, !!(features & VIRTIO_F_RING_INDIRECT_DESC),
+        !!(features & VIRTIO_F_RING_EVENT_IDX));
 
     virtio_finish_init(driver);
 

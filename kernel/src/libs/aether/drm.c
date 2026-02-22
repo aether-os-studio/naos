@@ -2,6 +2,10 @@
 #include <mod/dlinker.h>
 
 EXPORT_SYMBOL(drm_regist_pci_dev);
+EXPORT_SYMBOL(drm_register_device);
+EXPORT_SYMBOL(drm_device_set_driver_info);
+EXPORT_SYMBOL(drm_unregister_device);
+EXPORT_SYMBOL(drm_init_after_pci_sysfs);
 
 EXPORT_SYMBOL(drm_resource_manager_init);
 EXPORT_SYMBOL(drm_resource_manager_cleanup);

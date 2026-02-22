@@ -9,6 +9,7 @@
 #include <drivers/drm/drm_ioctl.h>
 #include <drivers/drm/drm_core.h>
 #include <fs/fs_syscall.h>
+#include <fs/vfs/dev.h>
 #include <fs/vfs/proc.h>
 #include <fs/vfs/vfs.h>
 #include <mm/mm.h>
@@ -683,22 +684,33 @@ static void drm_build_connector_edid(drm_device_t *dev, drm_connector_t *conn,
  */
 ssize_t drm_ioctl_version(drm_device_t *dev, void *arg) {
     struct drm_version *version = (struct drm_version *)arg;
+    const char *name =
+        (dev && dev->driver_name[0]) ? dev->driver_name : DRM_NAME;
+    const char *date =
+        (dev && dev->driver_date[0]) ? dev->driver_date : DRM_NAME;
+    const char *desc =
+        (dev && dev->driver_desc[0]) ? dev->driver_desc : DRM_NAME;
+
+    size_t user_name_len = version->name_len;
+    size_t user_date_len = version->date_len;
+    size_t user_desc_len = version->desc_len;
+
     version->version_major = 2;
     version->version_minor = 2;
     version->version_patchlevel = 0;
-    version->name_len = sizeof(DRM_NAME);
-    if (version->name) {
-        if (copy_to_user_str(version->name, DRM_NAME, version->name_len))
+    version->name_len = strlen(name) + 1;
+    if (version->name && user_name_len) {
+        if (copy_to_user_str(version->name, name, user_name_len))
             return -EFAULT;
     }
-    version->date_len = sizeof(DRM_NAME);
-    if (version->date) {
-        if (copy_to_user_str(version->date, DRM_NAME, version->date_len))
+    version->date_len = strlen(date) + 1;
+    if (version->date && user_date_len) {
+        if (copy_to_user_str(version->date, date, user_date_len))
             return -EFAULT;
     }
-    version->desc_len = sizeof(DRM_NAME);
-    if (version->desc) {
-        if (copy_to_user_str(version->desc, DRM_NAME, version->desc_len))
+    version->desc_len = strlen(desc) + 1;
+    if (version->desc && user_desc_len) {
+        if (copy_to_user_str(version->desc, desc, user_desc_len))
             return -EFAULT;
     }
     return 0;
@@ -751,11 +763,18 @@ ssize_t drm_ioctl_get_cap(drm_device_t *dev, void *arg) {
  * drm_ioctl_gem_close - Handle DRM_IOCTL_GEM_CLOSE
  */
 ssize_t drm_ioctl_gem_close(drm_device_t *dev, void *arg) {
-    (void)dev;
     struct drm_gem_close *close = (struct drm_gem_close *)arg;
 
     if (close->handle == 0) {
         return -EINVAL;
+    }
+
+    if (dev->op && dev->op->driver_ioctl) {
+        ssize_t ret =
+            dev->op->driver_ioctl(dev, DRM_IOCTL_GEM_CLOSE, arg, false);
+        if (ret != -ENOTTY) {
+            return ret;
+        }
     }
 
     return 0;
@@ -2274,14 +2293,47 @@ ssize_t drm_ioctl_mode_list_lessees(drm_device_t *dev, void *arg) {
     return 0;
 }
 
+static bool drm_ioctl_allow_on_render_node(drm_device_t *dev, uint32_t cmd) {
+    uint32_t nr = _IOC_NR(cmd);
+
+    if (nr >= DRM_COMMAND_BASE && nr < DRM_COMMAND_END) {
+        return dev && dev->op && dev->op->driver_ioctl;
+    }
+
+    switch (cmd) {
+    case DRM_IOCTL_VERSION:
+    case DRM_IOCTL_GET_CAP:
+    case DRM_IOCTL_GEM_CLOSE:
+    case DRM_IOCTL_PRIME_HANDLE_TO_FD:
+    case DRM_IOCTL_PRIME_FD_TO_HANDLE:
+    case DRM_IOCTL_MODE_CREATE_DUMB:
+    case DRM_IOCTL_MODE_MAP_DUMB:
+    case DRM_IOCTL_MODE_DESTROY_DUMB:
+    case DRM_IOCTL_SET_CLIENT_CAP:
+        return true;
+    default:
+        return false;
+    }
+}
+
 /**
  * drm_ioctl - Main DRM ioctl handler
  */
 ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
-    drm_device_t *dev = (drm_device_t *)data;
+    drm_device_t *dev = drm_data_to_device(data);
+    if (!dev) {
+        return -ENODEV;
+    }
+
+    uint32_t ioctl_cmd = (uint32_t)(cmd & 0xffffffff);
+    if (drm_data_is_render_node(data) &&
+        !drm_ioctl_allow_on_render_node(dev, ioctl_cmd)) {
+        return -EACCES;
+    }
+
     ssize_t ret = -EINVAL;
 
-    switch (cmd & 0xffffffff) {
+    switch (ioctl_cmd) {
     case DRM_IOCTL_VERSION:
         ret = drm_ioctl_version(dev, (void *)arg);
         break;
@@ -2409,8 +2461,13 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
         ret = drm_ioctl_auth_magic(dev, (void *)arg);
         break;
     default:
-        printk("drm: Unsupported ioctl: cmd = %#010lx\n", cmd);
-        ret = -EINVAL;
+        if (dev->op && dev->op->driver_ioctl) {
+            ret = dev->op->driver_ioctl(dev, ioctl_cmd, (void *)arg,
+                                        drm_data_is_render_node(data));
+        } else {
+            printk("drm: Unsupported ioctl: cmd = %#010lx\n", cmd);
+            ret = -EINVAL;
+        }
         break;
     }
 

@@ -46,6 +46,35 @@ char *unix_socket_addr_safe(const struct sockaddr_un *addr, size_t len) {
     return safe;
 }
 
+static inline socket_t *socket_from_node(vfs_node_t node) {
+    socket_handle_t *handle = node ? node->handle : NULL;
+    return handle ? handle->sock : NULL;
+}
+
+static inline void socket_pending_mark(socket_t *sock, uint32_t events) {
+    if (!sock || !events)
+        return;
+    __atomic_fetch_or(&sock->pending_events, events, __ATOMIC_RELEASE);
+}
+
+static inline uint32_t socket_pending_take(socket_t *sock, uint32_t events) {
+    if (!sock || !events)
+        return 0;
+
+    uint32_t old_mask = 0;
+    uint32_t new_mask = 0;
+    do {
+        old_mask = __atomic_load_n(&sock->pending_events, __ATOMIC_ACQUIRE);
+        if (!(old_mask & events))
+            return 0;
+        new_mask = old_mask & ~events;
+    } while (!__atomic_compare_exchange_n(&sock->pending_events, &old_mask,
+                                          new_mask, false, __ATOMIC_ACQ_REL,
+                                          __ATOMIC_ACQUIRE));
+
+    return old_mask & events;
+}
+
 static inline void socket_notify_node(vfs_node_t node, uint32_t events) {
     if (!node || !events)
         return;
@@ -55,6 +84,7 @@ static inline void socket_notify_node(vfs_node_t node, uint32_t events) {
 static inline void socket_notify_sock(socket_t *sock, uint32_t events) {
     if (!sock)
         return;
+    socket_pending_mark(sock, events);
     socket_notify_node(sock->node, events);
 }
 
@@ -63,7 +93,10 @@ static int socket_wait_node(vfs_node_t node, uint32_t events,
     if (!node || !current_task)
         return -EINVAL;
 
+    socket_t *wait_sock = socket_from_node(node);
     uint32_t want = events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
+    if (socket_pending_take(wait_sock, want))
+        return EOK;
     if (vfs_poll(node, want) & want)
         return EOK;
 
@@ -71,13 +104,7 @@ static int socket_wait_node(vfs_node_t node, uint32_t events,
     vfs_poll_wait_init(&wait, current_task, want);
     if (vfs_poll_wait_arm(node, &wait) < 0)
         return -EINVAL;
-
-    if (vfs_poll(node, want) & want) {
-        vfs_poll_wait_disarm(&wait);
-        return EOK;
-    }
-
-    int ret = task_block(current_task, TASK_BLOCKING, -1, reason);
+    int ret = vfs_poll_wait_sleep(node, &wait, -1, reason);
     vfs_poll_wait_disarm(&wait);
     return ret;
 }

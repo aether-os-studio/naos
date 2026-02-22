@@ -164,18 +164,16 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             if (fd->flags & O_NONBLOCK) {
                 return -EAGAIN; // 非阻塞模式，直接返回EAGAIN
             } else {
-                vfs_poll_wait_t wait;
-                vfs_poll_wait_init(&wait, current_task,
-                                   EPOLLIN | EPOLLERR | EPOLLHUP);
-                vfs_poll_wait_arm(fd->node, &wait);
-                if (tfd->timer.expires == 0) {
-                    int reason = task_block(current_task, TASK_BLOCKING, -1,
-                                            "timerfd_read_unarmed");
+                while (tfd->timer.expires == 0) {
+                    vfs_poll_wait_t wait;
+                    vfs_poll_wait_init(&wait, current_task,
+                                       EPOLLIN | EPOLLERR | EPOLLHUP);
+                    vfs_poll_wait_arm(fd->node, &wait);
+                    int reason = vfs_poll_wait_sleep(
+                        fd->node, &wait, 10000000LL, "timerfd_read_unarmed");
                     vfs_poll_wait_disarm(&wait);
-                    if (reason != EOK)
+                    if (reason != EOK && reason != ETIMEDOUT)
                         return -EINTR;
-                } else {
-                    vfs_poll_wait_disarm(&wait);
                 }
                 // 定时器被设置后，重新获取当前时间
                 now = get_current_time_ns(tfd->timer.clock_type);

@@ -1,4 +1,4 @@
-// Copyright (C) 2025  lihanrui2913
+// Copyright (C) 2025-2026  lihanrui2913
 #include "e1000.h"
 #include <libs/aether/mm.h>
 #include <libs/aether/pci.h>

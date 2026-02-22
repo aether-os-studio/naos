@@ -44,13 +44,7 @@ static int pty_wait_node(vfs_node_t node, uint32_t events, const char *reason) {
     vfs_poll_wait_init(&wait, current_task, want);
     if (vfs_poll_wait_arm(node, &wait) < 0)
         return -EINVAL;
-
-    if (vfs_poll(node, want) & want) {
-        vfs_poll_wait_disarm(&wait);
-        return EOK;
-    }
-
-    int ret = task_block(current_task, TASK_BLOCKING, -1, reason);
+    int ret = vfs_poll_wait_sleep(node, &wait, -1, reason);
     vfs_poll_wait_disarm(&wait);
     return ret;
 }

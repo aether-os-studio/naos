@@ -6,6 +6,82 @@ static device_t devices[DEVICE_NR]; // 设备数组
 uint64_t devices_idxs[DEV_MAX];
 spinlock_t device_lock = SPIN_INIT;
 
+static device_t *get_null_device();
+
+static bool device_minor_in_use(int subtype, uint64_t minor) {
+    for (size_t i = 1; i < DEVICE_NR; i++) {
+        device_t *device = &devices[i];
+        if (device->type == DEV_NULL || device->subtype != subtype) {
+            continue;
+        }
+
+        if ((device->dev & 0xFF) == minor) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static uint64_t device_install_internal(int type, int subtype, void *ptr,
+                                        char *name, uint64_t parent,
+                                        void *open, void *close, void *ioctl,
+                                        void *poll, void *read, void *write,
+                                        void *map, bool use_fixed_minor,
+                                        uint64_t fixed_minor) {
+    if (subtype < 0 || subtype >= DEV_MAX) {
+        return 0;
+    }
+
+    if (use_fixed_minor && fixed_minor > 0xFF) {
+        return 0;
+    }
+
+    spin_lock(&device_lock);
+
+    device_t *device = get_null_device();
+    if (!device) {
+        spin_unlock(&device_lock);
+        return 0;
+    }
+
+    uint64_t dev_major = (uint64_t)subtype;
+    uint64_t dev_minor = 0;
+
+    if (use_fixed_minor) {
+        if (device_minor_in_use(subtype, fixed_minor)) {
+            spin_unlock(&device_lock);
+            return 0;
+        }
+
+        dev_minor = fixed_minor;
+        if (devices_idxs[subtype] <= dev_minor) {
+            devices_idxs[subtype] = dev_minor + 1;
+        }
+    } else {
+        dev_minor = devices_idxs[subtype]++;
+    }
+
+    device->ptr = ptr;
+    device->parent = parent;
+    device->type = type;
+    device->subtype = subtype;
+    device->dev = (dev_major << 8) | dev_minor;
+    strncpy(device->name, name, NAMELEN);
+    device->open = open;
+    device->close = close;
+    device->ioctl = ioctl;
+    device->poll = poll;
+    device->read = read;
+    device->write = write;
+    device->map = map;
+
+    devfs_register_device(device);
+    spin_unlock(&device_lock);
+
+    return device->dev;
+}
+
 // 获取空设备
 static device_t *get_null_device() {
     for (size_t i = 1; i < DEVICE_NR; i++) {
@@ -107,26 +183,18 @@ EXPORT_SYMBOL(device_map);
 uint64_t device_install(int type, int subtype, void *ptr, char *name,
                         uint64_t parent, void *open, void *close, void *ioctl,
                         void *poll, void *read, void *write, void *map) {
-    spin_lock(&device_lock);
-    device_t *device = get_null_device();
-    device->ptr = ptr;
-    device->parent = parent;
-    device->type = type;
-    device->subtype = subtype;
-    uint64_t dev_major = (uint64_t)subtype;
-    uint64_t dev_minor = devices_idxs[subtype]++;
-    device->dev = (dev_major << 8) | dev_minor;
-    strncpy(device->name, name, NAMELEN);
-    device->open = open;
-    device->close = close;
-    device->ioctl = ioctl;
-    device->poll = poll;
-    device->read = read;
-    device->write = write;
-    device->map = map;
-    devfs_register_device(device);
-    spin_unlock(&device_lock);
-    return device->dev;
+    return device_install_internal(type, subtype, ptr, name, parent, open,
+                                   close, ioctl, poll, read, write, map, false,
+                                   0);
+}
+
+uint64_t device_install_with_minor(int type, int subtype, void *ptr, char *name,
+                                   uint64_t parent, void *open, void *close,
+                                   void *ioctl, void *poll, void *read,
+                                   void *write, void *map, uint64_t minor) {
+    return device_install_internal(type, subtype, ptr, name, parent, open,
+                                   close, ioctl, poll, read, write, map, true,
+                                   minor);
 }
 
 void device_init() {

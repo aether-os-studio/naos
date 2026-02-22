@@ -152,13 +152,7 @@ static int netlink_wait_sock(struct netlink_sock *sock, uint32_t events,
     vfs_poll_wait_init(&wait, current_task, want);
     if (vfs_poll_wait_arm(sock->node, &wait) < 0)
         return -EINVAL;
-
-    if (vfs_poll(sock->node, want) & want) {
-        vfs_poll_wait_disarm(&wait);
-        return EOK;
-    }
-
-    int ret = task_block(current_task, TASK_BLOCKING, -1, reason);
+    int ret = vfs_poll_wait_sleep(sock->node, &wait, -1, reason);
     vfs_poll_wait_disarm(&wait);
     return ret;
 }

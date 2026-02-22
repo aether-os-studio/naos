@@ -41,4 +41,6 @@ typedef struct virtio_pci_device {
     uint32_t notify_off_multiplier;
     virtio_cap_info_t *device_cfg;
     uint64_t config_space_vaddr;
+    uint64_t host_visible_shm_paddr;
+    uint64_t host_visible_shm_size;
 } virtio_pci_device_t;

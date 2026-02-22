@@ -59,7 +59,7 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         vfs_poll_wait_t wait;
         vfs_poll_wait_init(&wait, current_task, EPOLLIN | EPOLLHUP | EPOLLERR);
         vfs_poll_wait_arm(fd->node, &wait);
-        int reason = task_block(current_task, TASK_BLOCKING, -1, "pipe_read");
+        int reason = vfs_poll_wait_sleep(fd->node, &wait, -1, "pipe_read");
         vfs_poll_wait_disarm(&wait);
         if (reason != EOK)
             return -EINTR;
@@ -95,7 +95,7 @@ ssize_t pipe_write_inner(fd_t *fd, void *file, const void *addr, size_t size) {
         vfs_poll_wait_t wait;
         vfs_poll_wait_init(&wait, current_task, EPOLLOUT | EPOLLHUP | EPOLLERR);
         vfs_poll_wait_arm(fd->node, &wait);
-        int reason = task_block(current_task, TASK_BLOCKING, -1, "pipe_write");
+        int reason = vfs_poll_wait_sleep(fd->node, &wait, -1, "pipe_write");
         vfs_poll_wait_disarm(&wait);
         if (reason != EOK)
             return -EINTR;

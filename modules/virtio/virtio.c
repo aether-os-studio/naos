@@ -1,4 +1,4 @@
-// Copyright (C) 2025  lihanrui2913
+// Copyright (C) 2025-2026  lihanrui2913
 #include "virtio.h"
 #include "pci.h"
 #include "mmio.h"
@@ -9,16 +9,28 @@
 
 extern virtio_driver_op_t virtio_pci_driver_op;
 
-uint32_t virtio_begin_init(virtio_driver_t *driver,
-                           uint32_t supported_features) {
+uint64_t virtio_begin_init(virtio_driver_t *driver,
+                           uint64_t supported_features) {
     driver->op->set_status(driver->data, 0);
     driver->op->set_status(driver->data, 1 | 2);
 
-    uint32_t features = driver->op->get_features(driver->data);
-    features &= supported_features;
+    uint64_t device_features = driver->op->get_features(driver->data);
+    uint64_t features = device_features & supported_features;
+
+    if (!driver->op->requires_legacy_layout(driver->data) &&
+        (device_features & VIRTIO_F_VERSION_1)) {
+        features |= VIRTIO_F_VERSION_1;
+    }
+
     driver->op->set_features(driver->data, features);
 
     driver->op->set_status(driver->data, 1 | 2 | 8);
+
+    if (!(driver->op->get_status(driver->data) & 8)) {
+        printk("virtio: device rejected negotiated features 0x%llx\n",
+               features);
+        return 0;
+    }
 
     return features;
 }

@@ -148,10 +148,18 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
             wait_ns = (int64_t)(timeout_ns - elapsed);
         }
 
+        int64_t block_ns = wait_ns;
+        if (block_ns < 0 || block_ns > 10000000LL) {
+            block_ns = 10000000LL;
+        }
+
         int block_reason =
-            task_block(current_task, TASK_BLOCKING, wait_ns, "poll");
+            task_block(current_task, TASK_BLOCKING, block_ns, "poll");
         poll_disarm_waiters(waits, nfds);
         if (block_reason == ETIMEDOUT) {
+            if (infinite_timeout) {
+                continue;
+            }
             break;
         }
         if (block_reason != EOK) {

@@ -41,19 +41,23 @@ tty_device_t *get_tty_device(const char *name) {
     return NULL;
 }
 
-// 全局默认控制台路径（初始为 /dev/ttyS0）
 char *default_console = NULL;
 
 void parse_cmdline_console(const char *cmdline) {
     static char console_name[64];
     memset(console_name, 0, sizeof(console_name));
 
+    boot_framebuffer_t *boot_fb = boot_get_framebuffer();
+    if (!boot_fb) {
+        strncpy(console_name, "ttyS0", sizeof(console_name));
+        goto next;
+    }
+
     if (!cmdline || !*cmdline) {
         strcpy(console_name, DEFAULT_TTY);
         goto next;
     }
 
-    // 查找 "console="
     const char *key = "console=";
     const char *pos = strstr(cmdline, key);
     if (!pos) {
@@ -63,7 +67,6 @@ void parse_cmdline_console(const char *cmdline) {
 
     pos += strlen(key);
 
-    // 复制 console 设备名
     size_t i = 0;
     while (*pos && *pos != ' ' && i < sizeof(console_name) - 1) {
         console_name[i++] = *pos++;
@@ -71,49 +74,46 @@ void parse_cmdline_console(const char *cmdline) {
     console_name[i] = '\0';
 
 next:
-    // 输出调试信息
-    printk("Detected console device: %s\n", console_name);
-
     char buf[64];
     sprintf(buf, "/dev/%s", console_name);
 
     default_console = strdup(buf);
-
-    printk("Set default to %s\n", default_console);
 }
 
 void tty_init() {
     llist_init_head(&tty_device_list);
     kernel_session = malloc(sizeof(tty_t));
 
-    tty_device_t *fb_device = alloc_tty_device(TTY_DEVICE_GRAPHI);
-    struct tty_graphics_ *graphics = malloc(sizeof(struct tty_graphics_));
-
     boot_framebuffer_t *framebuffer = boot_get_framebuffer();
 
-    graphics->address = (void *)framebuffer->address;
-    graphics->width = framebuffer->width;
-    graphics->height = framebuffer->height;
-    graphics->bpp = framebuffer->bpp;
-    graphics->pitch = framebuffer->pitch;
+    if (framebuffer) {
+        tty_device_t *fb_device = alloc_tty_device(TTY_DEVICE_GRAPHI);
+        struct tty_graphics_ *graphics = malloc(sizeof(struct tty_graphics_));
 
-    graphics->blue_mask_shift = framebuffer->blue_mask_shift;
-    graphics->red_mask_shift = framebuffer->red_mask_shift;
-    graphics->green_mask_shift = framebuffer->green_mask_shift;
-    graphics->blue_mask_size = framebuffer->blue_mask_size;
-    graphics->red_mask_size = framebuffer->red_mask_size;
-    graphics->green_mask_size = framebuffer->green_mask_size;
+        graphics->address = (void *)framebuffer->address;
+        graphics->width = framebuffer->width;
+        graphics->height = framebuffer->height;
+        graphics->bpp = framebuffer->bpp;
+        graphics->pitch = framebuffer->pitch;
 
-    fb_device->private_data = graphics;
+        graphics->blue_mask_shift = framebuffer->blue_mask_shift;
+        graphics->red_mask_shift = framebuffer->red_mask_shift;
+        graphics->green_mask_shift = framebuffer->green_mask_shift;
+        graphics->blue_mask_size = framebuffer->blue_mask_size;
+        graphics->red_mask_size = framebuffer->red_mask_size;
+        graphics->green_mask_size = framebuffer->green_mask_size;
 
-    char name[32];
-    sprintf(name, "tty%lu", 0);
-    strcpy(fb_device->name, name);
-    register_tty_device(fb_device);
+        fb_device->private_data = graphics;
+
+        char name[32];
+        sprintf(name, "tty%lu", 0);
+        strcpy(fb_device->name, name);
+        register_tty_device(fb_device);
+    }
 
     tty_device_t *serial_dev = alloc_tty_device(TTY_DEVICE_SERIAL);
     struct tty_serial_ *serial = malloc(sizeof(struct tty_serial_));
-    serial->port = 0; // 第一个串口
+    serial->port = 0;
 
     serial_dev->private_data = serial;
     strcpy(serial_dev->name, "ttyS0");
@@ -124,10 +124,8 @@ void tty_init() {
     parse_cmdline_console(cmdline);
 
     if (!strncmp(default_console, "/dev/ttyS", 9)) {
-        // 如果是串口终端，初始化串口终端会话
         tty_init_session_serial();
     } else {
-        // 否则初始化普通终端会话
         tty_init_session();
     }
 }

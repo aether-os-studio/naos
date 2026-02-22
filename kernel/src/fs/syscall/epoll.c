@@ -259,11 +259,19 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
             wait_ns = (int64_t)(timeout_ns - elapsed);
         }
 
+        int64_t block_ns = wait_ns;
+        if (block_ns < 0 || block_ns > 10000000LL) {
+            block_ns = 10000000LL;
+        }
+
         int block_reason =
-            task_block(current_task, TASK_BLOCKING, wait_ns, "epoll_wait");
+            task_block(current_task, TASK_BLOCKING, block_ns, "epoll_wait");
         epoll_disarm_waiters(waits, waits_count);
 
         if (block_reason == ETIMEDOUT) {
+            if (infinite_timeout) {
+                continue;
+            }
             break;
         }
         if (block_reason != EOK) {
