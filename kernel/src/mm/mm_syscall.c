@@ -918,36 +918,45 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
 uint64_t sys_msync(uint64_t addr, uint64_t size, uint64_t flags) { return 0; }
 
 uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
-    if (check_user_overflow(addr, size)) {
-        return -EFAULT;
-    }
+    if (addr & (DEFAULT_PAGE_SIZE - 1))
+        return (uint64_t)-EINVAL;
 
-    if (size == 0) {
+    if (size == 0)
         return 0;
-    }
 
-    uint64_t start_page_addr = addr & (~(DEFAULT_PAGE_SIZE - 1));
-    uint64_t end_page_addr = (addr + size - 1) & (~(DEFAULT_PAGE_SIZE - 1));
-    uint64_t num_pages =
-        ((end_page_addr - start_page_addr) / DEFAULT_PAGE_SIZE) + 1;
+    if (check_user_overflow(addr, size))
+        return (uint64_t)-ENOMEM;
 
-    if (check_user_overflow(vec, num_pages)) {
-        return -EFAULT;
-    }
+    uint64_t num_pages = ((size - 1) / DEFAULT_PAGE_SIZE) + 1;
+    if (check_user_overflow(vec, num_pages))
+        return (uint64_t)-EFAULT;
 
+    uint64_t end = addr + size;
+    uint64_t current_addr = addr;
     uint64_t *page_dir = get_current_page_dir(true);
-    uint64_t current_addr = start_page_addr;
+    vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
+
+    spin_lock(&mgr->lock);
+
+    uint64_t cursor = addr;
+    while (cursor < end) {
+        vma_t *vma = vma_find(mgr, cursor);
+        if (!vma || vma->vm_end <= cursor) {
+            spin_unlock(&mgr->lock);
+            return (uint64_t)-ENOMEM;
+        }
+        cursor = vma->vm_end < end ? vma->vm_end : end;
+    }
 
     for (uint64_t i = 0; i < num_pages; i++) {
-        uint64_t phys_addr = translate_address(page_dir, current_addr);
-
-        uint8_t resident = (phys_addr != 0) ? 1 : 0;
-
-        if (copy_to_user((void *)(vec + i), &resident, sizeof(uint8_t)))
-            return -EFAULT;
-
+        uint8_t resident = translate_address(page_dir, current_addr) ? 1 : 0;
+        if (copy_to_user((void *)(vec + i), &resident, sizeof(resident))) {
+            spin_unlock(&mgr->lock);
+            return (uint64_t)-EFAULT;
+        }
         current_addr += DEFAULT_PAGE_SIZE;
     }
 
+    spin_unlock(&mgr->lock);
     return 0;
 }

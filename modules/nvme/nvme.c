@@ -230,40 +230,6 @@ static int nvme_enable_controller(nvme_controller_t *ctrl) {
     return nvme_wait_ready(ctrl, true, 10000); // Increased timeout to 10s
 }
 
-// // 为队列绑定中断向量
-// static int nvme_bind_queue_interrupt(nvme_controller_t *ctrl,
-//                                      nvme_queue_t *queue, uint16_t vector) {
-//     //     // 注册中断处理程序
-//     // #if defined(__x86_64__)
-//     //     uint64_t cpu_id = queue->queue_id ? (queue->queue_id - 1) : 0;
-//     //     struct msi_desc_t desc;
-//     //     memset(&desc, 0, sizeof(struct msi_desc_t));
-//     //     desc.irq_num = vector;
-//     //     desc.processor = get_lapicid_by_cpuid(cpu_id);
-//     //     desc.edge_trigger = 0;
-//     //     desc.assert = 1;
-//     //     desc.msi_index = queue->queue_id;
-//     //     desc.pci_dev = ctrl->pci_dev;
-//     //     desc.pci.msi_attribute.can_mask = false;
-//     //     desc.pci.msi_attribute.is_64 = true;
-//     //     desc.pci.msi_attribute.is_msix = true;
-//     //     int ret = pci_enable_msi(&desc);
-//     //     if (ret < 0) {
-//     //         printk("Failed to enable MSI/MSI-X\n");
-//     //         return -1;
-//     //     }
-
-//     //     irq_regist_irq(vector, nvme_interrupt_handler, vector, queue,
-//     //                    get_apic_controller(), "NVMe", IRQ_FLAGS_MSIX);
-//     // #endif
-
-//     //     g_nvme_platform_ops->log("NVMe: Queue %u bound to interrupt vector
-//     //     %u\n",
-//     //                              queue->queue_id, vector);
-
-//     return 0;
-// }
-
 // Initialize queue with alignment checks
 static int nvme_init_queue(nvme_controller_t *ctrl, nvme_queue_t *queue,
                            uint16_t queue_id, uint16_t queue_depth) {
@@ -328,133 +294,111 @@ static int nvme_init_queue(nvme_controller_t *ctrl, nvme_queue_t *queue,
         "NVMe: Queue %d doorbells - SQ offset=0x%x CQ offset=0x%x\n", queue_id,
         doorbell_offset, doorbell_offset + ctrl->doorbell_stride);
 
-    // int irq = irq_allocate_irqnum();
-    // nvme_bind_queue_interrupt(ctrl, queue, irq);
-    // queue->vector = irq;
     queue->vector = 0;
 
     return 0;
 }
 
-// Submit command with validation
 static int nvme_submit_cmd(nvme_queue_t *queue, nvme_sqe_t *cmd) {
+    mutex_lock(&queue->lock);
     uint16_t tail = queue->sq_tail;
-
-    // Check if queue is full
     uint16_t next_tail = (tail + 1) % queue->queue_depth;
     if (next_tail == queue->sq_head) {
-        g_nvme_platform_ops->log("NVMe: Queue %d is full (head=%d tail=%d)\n",
-                                 queue->queue_id, queue->sq_head, tail);
+        mutex_unlock(&queue->lock);
         return -1;
     }
 
-    mutex_lock(&queue->lock);
-
-    // Copy command to queue
     memcpy(&queue->sq[tail], cmd, sizeof(nvme_sqe_t));
-
-    // Update tail pointer
     queue->sq_tail = next_tail;
 
-    // Memory barrier before ringing doorbell
     g_nvme_platform_ops->wmb();
-
-    // Ring doorbell
     *queue->sq_doorbell = next_tail;
-
-    // Memory barrier after doorbell
     g_nvme_platform_ops->mb();
-
     mutex_unlock(&queue->lock);
-
     return 0;
 }
 
-// Process completions from a queue
+static inline void nvme_complete_request(nvme_controller_t *ctrl, uint16_t cid,
+                                         bool success, uint32_t result) {
+    if (cid >= (sizeof(ctrl->requests) / sizeof(ctrl->requests[0])))
+        return;
+
+    nvme_request_t *req =
+        __atomic_exchange_n(&ctrl->requests[cid], NULL, __ATOMIC_ACQ_REL);
+    if (!req)
+        return;
+
+    if (req->callback)
+        req->callback(req->ctx, success, result);
+}
+
 static int nvme_process_queue_completions(nvme_controller_t *ctrl,
                                           nvme_queue_t *queue) {
     int count = 0;
+    mutex_lock(&queue->lock);
 
     while (1) {
-        // Read memory barrier
         g_nvme_platform_ops->rmb();
 
         nvme_cqe_t *cqe = &queue->cq[queue->cq_head];
         uint16_t phase = (cqe->status >> 0) & 1;
-
-        // Check phase bit
-        if (phase != queue->cq_phase) {
+        if (phase != queue->cq_phase)
             break;
-        }
 
-        // Extract status
         uint16_t status_code = (cqe->status >> 1) & 0xFF;
         uint16_t status_type = (cqe->status >> 9) & 0x7;
         bool success = (status_code == 0 && status_type == 0);
 
-        if (!success) {
-            g_nvme_platform_ops->log(
-                "NVMe: Command failed - CID=%d Status=0x%04x (SC=%d SCT=%d)\n",
-                cqe->cid, cqe->status, status_code, status_type);
-        }
+        nvme_complete_request(ctrl, cqe->cid, success, cqe->dw0);
 
-        // Find and invoke callback
-        uint16_t cid = cqe->cid;
-        if (cid < (sizeof(ctrl->requests) / sizeof(ctrl->requests[0])) &&
-            ctrl->requests[cid]) {
-            nvme_request_t *req = ctrl->requests[cid];
-            if (req->callback) {
-                req->callback(req->ctx, success, cqe->dw0);
-            }
-            ctrl->requests[cid] = NULL;
-            g_nvme_platform_ops->dma_free(req, sizeof(nvme_request_t));
-        }
-
-        // Update SQ head from completion
         queue->sq_head = cqe->sq_head;
-
-        // Advance CQ head
         queue->cq_head++;
         if (queue->cq_head >= queue->queue_depth) {
             queue->cq_head = 0;
             queue->cq_phase = !queue->cq_phase;
         }
-
         count++;
     }
 
-    // Ring completion doorbell if we processed any
     if (count > 0) {
         g_nvme_platform_ops->wmb();
         *queue->cq_doorbell = queue->cq_head;
         g_nvme_platform_ops->mb();
     }
 
+    mutex_unlock(&queue->lock);
     return count;
 }
 
-// void nvme_interrupt_handler(uint64_t irq_num, void *data, struct pt_regs *r)
-// {
-//     nvme_queue_t *queue = (nvme_queue_t *)data;
-//     while (nvme_process_queue_completions(queue->ctrl, queue))
-//         ;
-// }
-
-// 循环使用
-static uint16_t nvme_alloc_cid(nvme_controller_t *ctrl, nvme_request_t *req) {
+static uint16_t nvme_alloc_cid(nvme_controller_t *ctrl, nvme_io_callback_t cb,
+                               void *ctx) {
     mutex_lock(&ctrl->cid_alloc_lock);
 
-    if (ctrl->cid_alloc_pos >=
-        (sizeof(ctrl->requests) / sizeof(ctrl->requests[0]))) {
-        ctrl->cid_alloc_pos = 0;
+    uint16_t total = sizeof(ctrl->requests) / sizeof(ctrl->requests[0]);
+    for (uint16_t i = 0; i < total; i++) {
+        uint16_t cid = (ctrl->cid_alloc_pos + i) % total;
+        if (__atomic_load_n(&ctrl->requests[cid], __ATOMIC_ACQUIRE))
+            continue;
+
+        nvme_request_t *slot = &ctrl->request_slots[cid];
+        slot->cid = cid;
+        slot->callback = cb;
+        slot->ctx = ctx;
+        slot->next = NULL;
+
+        __atomic_store_n(&ctrl->requests[cid], slot, __ATOMIC_RELEASE);
+        ctrl->cid_alloc_pos = (cid + 1) % total;
+        mutex_unlock(&ctrl->cid_alloc_lock);
+        return cid;
     }
 
-    uint16_t cid = ctrl->cid_alloc_pos++;
-    ctrl->requests[cid] = req;
-
     mutex_unlock(&ctrl->cid_alloc_lock);
+    return 0xFFFF;
+}
 
-    return cid;
+static inline void nvme_release_cid(nvme_controller_t *ctrl, uint16_t cid) {
+    if (cid < (sizeof(ctrl->requests) / sizeof(ctrl->requests[0])))
+        __atomic_store_n(&ctrl->requests[cid], NULL, __ATOMIC_RELEASE);
 }
 
 // Execute admin command (synchronous helper)
@@ -473,39 +417,26 @@ static void admin_sync_callback(void *ctx, bool success, uint32_t result) {
 
 static int nvme_admin_cmd_sync(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
                                uint32_t *result, uint32_t timeout_ms) {
+    (void)timeout_ms;
     admin_sync_ctx_t sync_ctx = {0};
-    nvme_request_t *req =
-        g_nvme_platform_ops->dma_alloc(sizeof(nvme_request_t), NULL);
-    if (!req) {
+    uint16_t cid = nvme_alloc_cid(ctrl, admin_sync_callback, &sync_ctx);
+    if (cid == 0xFFFF)
         return -1;
-    }
 
-    req->callback = admin_sync_callback;
-    req->ctx = &sync_ctx;
-
-    uint16_t cid = nvme_alloc_cid(ctrl, req);
-    if (cid == 0xFFFF) {
-        g_nvme_platform_ops->log("NVMe: Failed to allocate CID\n");
-        return -1;
-    }
-
-    // CID 在 bits 31:16，Opcode 已经在 bits 7:0
     cmd->cdw0 = (cmd->cdw0 & 0x0000FFFF) | (cid << 16);
 
     if (nvme_submit_cmd(&ctrl->admin_queue, cmd) != 0) {
-        ctrl->requests[cid] = NULL;
+        nvme_release_cid(ctrl, cid);
         return -1;
     }
 
-    // Poll for completion
     while (!sync_ctx.done) {
-        while (nvme_process_queue_completions(ctrl, &ctrl->admin_queue))
-            ;
+        if (!nvme_process_queue_completions(ctrl, &ctrl->admin_queue))
+            arch_pause();
     }
 
-    if (result) {
+    if (result)
         *result = sync_ctx.result;
-    }
 
     return sync_ctx.success ? 0 : -1;
 }
@@ -569,14 +500,9 @@ static int nvme_create_io_cq(nvme_controller_t *ctrl, nvme_queue_t *queue) {
     cmd.prp1 = queue->cq_phys;
     cmd.cdw10 = ((queue->queue_depth - 1) << 16) | queue->queue_id;
 
-    // uint16_t vector = queue->vector;
     uint32_t cdw11 = 0;
 
-    cdw11 |= (1 << 0); // PC (Physically Contiguous) = 1
-    // if (vector) {
-    //     cdw11 |= (1 << 1); // IEN (Interrupts Enabled) = 1
-    //     cdw11 |= ((uint32_t)queue->queue_id << 16); // IV (Interrupt Vector)
-    // }
+    cdw11 |= (1 << 0);
 
     cmd.cdw11 = cdw11;
 
@@ -628,18 +554,15 @@ static int nvme_check_pci_config(pci_device_t *device) {
     return 0;
 }
 
-// 计算传输需要的页面数量
 static inline uint32_t nvme_calc_num_pages(uint64_t addr, uint32_t size) {
     uint64_t end = addr + size - 1;
     return (end >> 12) - (addr >> 12) + 1;
 }
 
-// 获取页内偏移
 static inline uint32_t nvme_page_offset(uint64_t addr) {
     return addr & NVME_PAGE_MASK;
 }
 
-// 初始化 PRP List 池
 static int nvme_init_prp_pool(nvme_controller_t *ctrl, uint32_t num_lists) {
     size_t pool_size = sizeof(nvme_prp_list_t) * num_lists;
 
@@ -662,14 +585,13 @@ static int nvme_init_prp_pool(nvme_controller_t *ctrl, uint32_t num_lists) {
     return 0;
 }
 
-// 分配 PRP List
 static nvme_prp_list_t *nvme_alloc_prp_list(nvme_controller_t *ctrl,
                                             uint64_t *phys_addr) {
-    if (ctrl->prp_list_next_free >= ctrl->prp_list_pool_size) {
-        ctrl->prp_list_next_free = 0; // 循环使用
-    }
-
-    uint32_t idx = ctrl->prp_list_next_free++;
+    if (!ctrl->prp_list_pool || ctrl->prp_list_pool_size == 0)
+        return NULL;
+    uint32_t idx =
+        __atomic_fetch_add(&ctrl->prp_list_next_free, 1, __ATOMIC_RELAXED) %
+        ctrl->prp_list_pool_size;
     nvme_prp_list_t *list = &ctrl->prp_list_pool[idx];
 
     if (phys_addr) {
@@ -680,223 +602,143 @@ static nvme_prp_list_t *nvme_alloc_prp_list(nvme_controller_t *ctrl,
     return list;
 }
 
-// 设置 PRP 条目（核心优化函数）
+static inline uint64_t nvme_translate_page_phys(uint64_t page_va) {
+    uint64_t *pgdir = get_current_page_dir(true);
+    uint64_t pa = translate_address(pgdir, page_va);
+    if (!pa) {
+        pgdir = get_current_page_dir(false);
+        pa = translate_address(pgdir, page_va);
+    }
+    return pa;
+}
+
 static int nvme_setup_prp(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
-                          uint64_t phys_addr, uint32_t size) {
-    if (size == 0) {
-        g_nvme_platform_ops->log("NVMe: Invalid PRP size 0\n");
+                          const void *buffer, uint64_t buffer_phys,
+                          uint32_t size) {
+    if (!buffer || size == 0)
         return -1;
-    }
-
-    // 检查是否超过最大传输大小
-    if (ctrl->max_transfer_size > 0 && size > ctrl->max_transfer_size) {
-        g_nvme_platform_ops->log("NVMe: Transfer size %u exceeds MDTS %u\n",
-                                 size, ctrl->max_transfer_size);
+    if (ctrl->max_transfer_size > 0 && size > ctrl->max_transfer_size)
         return -1;
+
+    uint64_t vaddr = (uint64_t)buffer;
+    uint64_t page_base_va = vaddr & ~((uint64_t)NVME_PAGE_MASK);
+    uint32_t page_off = nvme_page_offset(vaddr);
+    uint32_t num_pages = nvme_calc_num_pages(vaddr, size);
+
+    uint64_t first_page_phys = nvme_translate_page_phys(page_base_va);
+    if (buffer_phys) {
+        uint64_t hinted = buffer_phys & ~((uint64_t)NVME_PAGE_MASK);
+        if (hinted == first_page_phys)
+            first_page_phys = hinted;
     }
+    if (!first_page_phys)
+        return -1;
 
-    uint32_t page_offset = nvme_page_offset(phys_addr);
-    uint32_t num_pages = nvme_calc_num_pages(phys_addr, size);
-
-    // PRP1 总是指向第一个地址
-    cmd->prp1 = phys_addr;
+    cmd->prp1 = first_page_phys + page_off;
     cmd->prp2 = 0;
-
-    // 1: 单页传输（最常见的小 I/O）
-    if (num_pages == 1) {
+    if (num_pages == 1)
         return 0;
-    }
 
-    // 计算第一页剩余空间
-    uint32_t first_page_size = NVME_PAGE_SIZE - page_offset;
-    uint64_t next_addr = phys_addr + first_page_size;
-    uint32_t remaining = size - first_page_size;
-
-    // 2: 双页传输（PRP1 指向第一页，PRP2 指向第二页）
+    uint64_t second_page_phys =
+        nvme_translate_page_phys(page_base_va + NVME_PAGE_SIZE);
+    if (!second_page_phys)
+        return -1;
     if (num_pages == 2) {
-        cmd->prp2 = next_addr;
+        cmd->prp2 = second_page_phys;
         return 0;
     }
-
-    // 3: 多页传输（需要 PRP List）
+    if (num_pages - 1 > NVME_MAX_PRP_LIST_ENTRIES)
+        return -1;
 
     uint64_t prp_list_phys;
     nvme_prp_list_t *prp_list = nvme_alloc_prp_list(ctrl, &prp_list_phys);
-    if (!prp_list) {
-        g_nvme_platform_ops->log("NVMe: Failed to allocate PRP list\n");
+    if (!prp_list)
         return -1;
-    }
-
-    // PRP2 指向 PRP List
     cmd->prp2 = prp_list_phys;
+    prp_list->prp[0] = second_page_phys;
 
-    // 填充 PRP List（从第二页开始）
-    uint32_t prp_idx = 0;
-    uint64_t current_addr = next_addr;
-
-    // 跳过第一页（已在 PRP1），从第二页开始
-    for (uint32_t page = 1; page < num_pages; page++) {
-        if (prp_idx >= NVME_MAX_PRP_LIST_ENTRIES) {
-            g_nvme_platform_ops->log(
-                "NVMe: PRP list overflow! pages=%u max_entries=%u\n", num_pages,
-                NVME_MAX_PRP_LIST_ENTRIES);
+    for (uint32_t i = 2; i < num_pages; i++) {
+        uint64_t pa = nvme_translate_page_phys(page_base_va +
+                                               ((uint64_t)i * NVME_PAGE_SIZE));
+        if (!pa)
             return -1;
-        }
-
-        prp_list->prp[prp_idx] = current_addr;
-
-        current_addr += NVME_PAGE_SIZE;
-        prp_idx++;
+        prp_list->prp[i - 1] = pa;
     }
 
-    // 确保 PRP List 写入内存
     g_nvme_platform_ops->wmb();
-
     return 0;
 }
 
 // 异步读取
-int nvme_read_async(nvme_controller_t *ctrl, uint32_t nsid, uint64_t lba,
-                    uint32_t block_count, void *buffer, uint64_t buffer_phys,
-                    nvme_io_callback_t callback, void *ctx) {
-    if (!ctrl->initialized || nsid == 0 || nsid > ctrl->num_namespaces) {
-        g_nvme_platform_ops->log("NVMe: Invalid namespace %u\n", nsid);
-        return -1;
-    }
+static inline nvme_queue_t *nvme_pick_io_queue(nvme_controller_t *ctrl) {
+    uint64_t io_cpus = ctrl->num_io_queues;
+    if (io_cpus == 0)
+        io_cpus = MIN(MAX_IO_CPU_NUM, get_cpu_count());
+    uint64_t queue_cpu_id = current_cpu_id % io_cpus;
+    return &ctrl->io_queues[queue_cpu_id];
+}
 
-    if (!ctrl->namespaces[nsid - 1].valid) {
-        g_nvme_platform_ops->log("NVMe: Namespace %u not valid\n", nsid);
+static int nvme_submit_io_async(nvme_controller_t *ctrl, uint8_t opcode,
+                                uint32_t nsid, uint64_t lba,
+                                uint32_t block_count, void *buffer,
+                                uint64_t buffer_phys,
+                                nvme_io_callback_t callback, void *ctx) {
+    if (!ctrl || !ctrl->initialized || !buffer || block_count == 0)
         return -1;
-    }
+    if (nsid == 0 || nsid > ctrl->num_namespaces ||
+        !ctrl->namespaces[nsid - 1].valid)
+        return -1;
 
     uint32_t block_size = ctrl->namespaces[nsid - 1].block_size;
-    uint32_t transfer_size = block_count * block_size;
-
-    // 检查传输大小
-    if (ctrl->max_transfer_size > 0 &&
-        transfer_size > ctrl->max_transfer_size) {
-        g_nvme_platform_ops->log("NVMe: Transfer too large: %u > %u bytes\n",
-                                 transfer_size, ctrl->max_transfer_size);
+    uint64_t transfer_size_u64 = (uint64_t)block_count * block_size;
+    if (transfer_size_u64 == 0 || transfer_size_u64 > UINT32_MAX)
         return -1;
-    }
 
-    // 分配请求
-    nvme_request_t *req = (nvme_request_t *)g_nvme_platform_ops->dma_alloc(
-        sizeof(nvme_request_t), NULL);
-    if (!req) {
+    uint32_t transfer_size = (uint32_t)transfer_size_u64;
+    if (ctrl->max_transfer_size > 0 && transfer_size > ctrl->max_transfer_size)
         return -1;
-    }
 
-    req->callback = callback;
-    req->ctx = ctx;
-
-    uint16_t cid = nvme_alloc_cid(ctrl, req);
-    if (cid == 0xFFFF) {
-        g_nvme_platform_ops->dma_free(req, sizeof(nvme_request_t));
+    uint16_t cid = nvme_alloc_cid(ctrl, callback, ctx);
+    if (cid == 0xFFFF)
         return -1;
-    }
 
-    // 构造读取命令
     nvme_sqe_t cmd = {0};
-    cmd.cdw0 = NVME_CMD_READ | (cid << 16);
+    cmd.cdw0 = opcode | (cid << 16);
     cmd.nsid = nsid;
-    cmd.cdw10 = lba & 0xFFFFFFFF;           // LBA lower 32 bits
-    cmd.cdw11 = lba >> 32;                  // LBA upper 32 bits
-    cmd.cdw12 = (block_count - 1) & 0xFFFF; // 0's based value
+    cmd.cdw10 = (uint32_t)(lba & 0xFFFFFFFF);
+    cmd.cdw11 = (uint32_t)(lba >> 32);
+    cmd.cdw12 = (block_count - 1) & 0xFFFF;
 
-    // 设置 PRP
-    if (nvme_setup_prp(ctrl, &cmd, buffer_phys, transfer_size) != 0) {
-        g_nvme_platform_ops->log("NVMe: Failed to setup PRP\n");
-        ctrl->requests[cid] = NULL;
-        g_nvme_platform_ops->dma_free(req, sizeof(nvme_request_t));
+    if (nvme_setup_prp(ctrl, &cmd, buffer, buffer_phys, transfer_size) != 0) {
+        nvme_release_cid(ctrl, cid);
         return -1;
     }
 
-    uint64_t io_cpus = MIN(MAX_IO_CPU_NUM, get_cpu_count());
-    uint64_t queue_cpu_id = current_cpu_id % io_cpus;
-    // 提交命令
-    if (nvme_submit_cmd(&ctrl->io_queues[queue_cpu_id], &cmd) != 0) {
-        ctrl->requests[cid] = NULL;
-        g_nvme_platform_ops->dma_free(req, sizeof(nvme_request_t));
+    if (opcode == NVME_CMD_WRITE)
+        g_nvme_platform_ops->wmb();
+
+    nvme_queue_t *queue = nvme_pick_io_queue(ctrl);
+    if (nvme_submit_cmd(queue, &cmd) != 0) {
+        nvme_release_cid(ctrl, cid);
         return -1;
     }
 
     return 0;
 }
 
-// 异步写入
+int nvme_read_async(nvme_controller_t *ctrl, uint32_t nsid, uint64_t lba,
+                    uint32_t block_count, void *buffer, uint64_t buffer_phys,
+                    nvme_io_callback_t callback, void *ctx) {
+    return nvme_submit_io_async(ctrl, NVME_CMD_READ, nsid, lba, block_count,
+                                buffer, buffer_phys, callback, ctx);
+}
+
 int nvme_write_async(nvme_controller_t *ctrl, uint32_t nsid, uint64_t lba,
                      uint32_t block_count, const void *buffer,
                      uint64_t buffer_phys, nvme_io_callback_t callback,
                      void *ctx) {
-    if (!ctrl->initialized || nsid == 0 || nsid > ctrl->num_namespaces) {
-        g_nvme_platform_ops->log("NVMe: Invalid namespace %u\n", nsid);
-        return -1;
-    }
-
-    if (!ctrl->namespaces[nsid - 1].valid) {
-        g_nvme_platform_ops->log("NVMe: Namespace %u not valid\n", nsid);
-        return -1;
-    }
-
-    uint32_t block_size = ctrl->namespaces[nsid - 1].block_size;
-    uint32_t transfer_size = block_count * block_size;
-
-    // 检查传输大小
-    if (ctrl->max_transfer_size > 0 &&
-        transfer_size > ctrl->max_transfer_size) {
-        g_nvme_platform_ops->log("NVMe: Transfer too large: %u > %u bytes\n",
-                                 transfer_size, ctrl->max_transfer_size);
-        return -1;
-    }
-
-    // 分配请求
-    nvme_request_t *req = (nvme_request_t *)g_nvme_platform_ops->dma_alloc(
-        sizeof(nvme_request_t), NULL);
-    if (!req) {
-        printk("NVMe: Failed allocate request!\n");
-        return -1;
-    }
-
-    req->callback = callback;
-    req->ctx = ctx;
-
-    uint16_t cid = nvme_alloc_cid(ctrl, req);
-    if (cid == 0xFFFF) {
-        printk("NVMe: Failed allocate command id!\n");
-        g_nvme_platform_ops->dma_free(req, sizeof(nvme_request_t));
-        return -1;
-    }
-
-    // 构造写入命令
-    nvme_sqe_t cmd = {0};
-    cmd.cdw0 = NVME_CMD_WRITE | (cid << 16);
-    cmd.nsid = nsid;
-    cmd.cdw10 = lba & 0xFFFFFFFF;
-    cmd.cdw11 = lba >> 32;
-    cmd.cdw12 = (block_count - 1) & 0xFFFF;
-
-    // 设置 PRP
-    if (nvme_setup_prp(ctrl, &cmd, buffer_phys, transfer_size) != 0) {
-        g_nvme_platform_ops->log("NVMe: Failed to setup PRP\n");
-        ctrl->requests[cid] = NULL;
-        g_nvme_platform_ops->dma_free(req, sizeof(nvme_request_t));
-        return -1;
-    }
-
-    // 确保数据写入内存
-    g_nvme_platform_ops->wmb();
-
-    uint64_t io_cpus = MIN(MAX_IO_CPU_NUM, get_cpu_count());
-    uint64_t queue_cpu_id = current_cpu_id % io_cpus;
-    // 提交命令
-    if (nvme_submit_cmd(&ctrl->io_queues[queue_cpu_id], &cmd) != 0) {
-        ctrl->requests[cid] = NULL;
-        g_nvme_platform_ops->dma_free(req, sizeof(nvme_request_t));
-        return -1;
-    }
-
-    return 0;
+    return nvme_submit_io_async(ctrl, NVME_CMD_WRITE, nsid, lba, block_count,
+                                (void *)buffer, buffer_phys, callback, ctx);
 }
 
 typedef struct nvme_callback_ctx {
@@ -915,66 +757,50 @@ typedef struct nvme_ns {
     nvme_namespace_t *ns;
 } nvme_ns_t;
 
-// 务必确保buffer是从frame中分配出来的
-uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
-    nvme_ns_t *ns = data;
+static uint64_t nvme_wait_io_done(nvme_controller_t *ctrl, nvme_queue_t *queue,
+                                  nvme_callback_ctx_t *cb_ctx, uint64_t ok_ret,
+                                  const char *op_name) {
+    while (!cb_ctx->completed) {
+        if (!nvme_process_queue_completions(ctrl, queue))
+            arch_pause();
+    }
+    if (cb_ctx->success)
+        return ok_ret;
 
-    uint64_t io_cpus = MIN(MAX_IO_CPU_NUM, get_cpu_count());
-    uint64_t queue_cpu_id = current_cpu_id % io_cpus;
-    nvme_queue_t *queue = &ns->ctrl->io_queues[queue_cpu_id];
-
-    nvme_callback_ctx_t cb_ctx;
-    cb_ctx.completed = false;
-    cb_ctx.success = false;
-    int r = nvme_read_async(ns->ctrl, ns->ns->nsid, lba, size, buffer,
-                            virt_to_phys((uint64_t)buffer), nvme_io_callback,
-                            &cb_ctx);
-    if (r < 0) {
-        printk("NVMe: submit command failure!\n");
-        return 0;
-    }
-    while (!cb_ctx.completed) {
-        while (nvme_process_queue_completions(ns->ctrl, queue))
-            ;
-    }
-    uint64_t ret = 0;
-    if (cb_ctx.success) {
-        ret = size;
-    } else {
-        printk("NVMe: Command not successful!\n");
-    }
-    return ret;
+    printk("NVMe: %s command failed\n", op_name);
+    return 0;
 }
 
-// 务必确保buffer是从frame中分配出来的
-uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
+uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
     nvme_ns_t *ns = data;
-
-    uint64_t io_cpus = MIN(MAX_IO_CPU_NUM, get_cpu_count());
-    uint64_t queue_cpu_id = current_cpu_id % io_cpus;
-    nvme_queue_t *queue = &ns->ctrl->io_queues[queue_cpu_id];
+    nvme_queue_t *queue = nvme_pick_io_queue(ns->ctrl);
 
     nvme_callback_ctx_t cb_ctx;
     cb_ctx.completed = false;
     cb_ctx.success = false;
-    int r = nvme_write_async(ns->ctrl, ns->ns->nsid, lba, size, buffer,
-                             virt_to_phys((uint64_t)buffer), nvme_io_callback,
-                             &cb_ctx);
+    int r = nvme_read_async(ns->ctrl, ns->ns->nsid, lba, size, buffer, 0,
+                            nvme_io_callback, &cb_ctx);
     if (r < 0) {
-        printk("NVMe: submit command failure!\n");
+        printk("NVMe: submit read command failed\n");
         return 0;
     }
-    while (!cb_ctx.completed) {
-        while (nvme_process_queue_completions(ns->ctrl, queue))
-            ;
+    return nvme_wait_io_done(ns->ctrl, queue, &cb_ctx, size, "read");
+}
+
+uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
+    nvme_ns_t *ns = data;
+    nvme_queue_t *queue = nvme_pick_io_queue(ns->ctrl);
+
+    nvme_callback_ctx_t cb_ctx;
+    cb_ctx.completed = false;
+    cb_ctx.success = false;
+    int r = nvme_write_async(ns->ctrl, ns->ns->nsid, lba, size, buffer, 0,
+                             nvme_io_callback, &cb_ctx);
+    if (r < 0) {
+        printk("NVMe: submit write command failed\n");
+        return 0;
     }
-    uint64_t ret = 0;
-    if (cb_ctx.success) {
-        ret = size;
-    } else {
-        printk("NVMe: Command not successful!\n");
-    }
-    return ret;
+    return nvme_wait_io_done(ns->ctrl, queue, &cb_ctx, size, "write");
 }
 
 // Main probe function

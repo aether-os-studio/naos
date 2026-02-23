@@ -113,13 +113,12 @@ int ext4_bcache_fini_dynamic(struct ext4_bcache *bc) {
 static struct ext4_buf *ext4_buf_alloc(struct ext4_bcache *bc, uint64_t lba) {
     void *data;
     struct ext4_buf *buf;
-    data = ext4_malloc(bc->itemsize);
+    data = alloc_frames_bytes(bc->itemsize);
     if (!data)
         return NULL;
-
     buf = ext4_calloc(1, sizeof(struct ext4_buf));
     if (!buf) {
-        ext4_free(data);
+        free_frames_bytes(data, bc->itemsize);
         return NULL;
     }
 
@@ -130,7 +129,7 @@ static struct ext4_buf *ext4_buf_alloc(struct ext4_bcache *bc, uint64_t lba) {
 }
 
 static void ext4_buf_free(struct ext4_buf *buf) {
-    ext4_free(buf->data);
+    free_frames_bytes(buf->data, buf->bc->itemsize);
     ext4_free(buf);
 }
 

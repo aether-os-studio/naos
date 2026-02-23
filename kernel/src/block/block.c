@@ -204,165 +204,215 @@ uint64_t blkdev_ioctl(uint64_t drive, uint64_t cmd, uint64_t arg) {
     return 0;
 }
 
+#define DMA_ALIGN DEFAULT_PAGE_SIZE
+#define IS_DMA_BUF(p) (((uintptr_t)(p) & (DMA_ALIGN - 1)) == 0)
+
 uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len) {
     blkdev_t *dev = &blk_devs[drive];
-    if (!dev || !dev->ptr || !dev->read) {
+    if (!dev || !dev->ptr || !dev->read)
         return (uint64_t)-1;
+    if (len == 0)
+        return 0;
+
+    const uint64_t bs = dev->block_size;
+    const uint64_t max_sec = dev->max_op_size / bs;
+    uint8_t *dst = (uint8_t *)buf;
+    uint64_t sector = offset / bs;
+    uint64_t blk_off = offset % bs;
+    uint64_t rem = len;
+    uint64_t total = 0;
+
+    if (blk_off == 0 && (len % bs) == 0 && IS_DMA_BUF(dst)) {
+        uint64_t secs_left = len / bs;
+        while (secs_left > 0) {
+            uint64_t n = MIN(secs_left, max_sec);
+            if (dev->read(dev->ptr, sector, dst, n) != n)
+                return (uint64_t)-1;
+            uint64_t bytes = n * bs;
+            dst += bytes;
+            sector += n;
+            secs_left -= n;
+            total += bytes;
+        }
+        return total;
     }
 
-    uint64_t start_sector = offset / dev->block_size;
-    uint64_t end_sector = (offset + len - 1) / dev->block_size;
-    uint64_t sector_count = end_sector - start_sector + 1;
-    uint64_t offset_in_block = offset % dev->block_size;
+    if (blk_off != 0) {
+        uint64_t head = MIN(bs - blk_off, rem);
+        uint8_t *bounce = alloc_frames_bytes(bs);
 
-    uint8_t *tmp = alloc_frames_bytes(sector_count * dev->block_size);
-
-    if ((offset_in_block == 0) && ((len % dev->block_size) == 0)) {
-        uint64_t total_copied = 0;
-        uint64_t remaining_sectors = sector_count;
-        while (remaining_sectors > 0) {
-            uint64_t to_copy_sectors =
-                MIN(remaining_sectors, dev->max_op_size / dev->block_size);
-            uint64_t ret = dev->read(
-                dev->ptr, start_sector + total_copied / dev->block_size, tmp,
-                to_copy_sectors);
-            uint64_t to_copy_bytes = to_copy_sectors * dev->block_size;
-            memcpy(buf + total_copied, tmp, to_copy_bytes);
-            total_copied += to_copy_bytes;
-            remaining_sectors -= to_copy_sectors;
-        }
-        free_frames_bytes(tmp, sector_count * dev->block_size);
-
-        return total_copied;
-    }
-
-    uint64_t total_read = 0;
-    uint64_t remaining = len;
-    uint8_t *dest = (uint8_t *)buf;
-
-    while (remaining > 0) {
-        // 计算本次操作的扇区数和长度
-        uint64_t chunk_sectors = sector_count;
-        uint64_t chunk_size = remaining;
-
-        // 限制单次I/O大小
-        if (chunk_sectors * dev->block_size > dev->max_op_size) {
-            chunk_sectors = dev->max_op_size / dev->block_size;
-            chunk_size = chunk_sectors * dev->block_size - offset_in_block;
-            if (chunk_size > remaining) {
-                chunk_size = remaining;
-            }
-        }
-
-        // 执行块设备读取
-        if (dev->read(dev->ptr, start_sector, tmp, chunk_sectors) !=
-            chunk_sectors) {
-            printk("Read block device failed!!!\n");
-            free_frames_bytes(tmp, sector_count * dev->block_size);
+        if (dev->read(dev->ptr, sector, bounce, 1) != 1) {
+            free_frames_bytes(bounce, bs);
             return (uint64_t)-1;
         }
+        memcpy(dst, bounce + blk_off, head);
+        free_frames_bytes(bounce, bs);
 
-        // 复制数据到目标缓冲区
-        uint64_t copy_size = (chunk_size > remaining) ? remaining : chunk_size;
-
-        memcpy(dest, tmp + offset_in_block, copy_size);
-
-        // 更新状态
-        dest += copy_size;
-        remaining -= copy_size;
-        total_read += copy_size;
-        start_sector += chunk_sectors;
-        offset_in_block = 0; // 第一次之后不需要再处理块内偏移
+        dst += head;
+        rem -= head;
+        total += head;
+        sector++;
     }
 
-    free_frames_bytes(tmp, sector_count * dev->block_size);
+    uint64_t mid_secs = rem / bs;
 
-    return total_read;
+    if (mid_secs > 0 && IS_DMA_BUF(dst)) {
+        while (mid_secs > 0) {
+            uint64_t n = MIN(mid_secs, max_sec);
+            if (dev->read(dev->ptr, sector, dst, n) != n)
+                return (uint64_t)-1;
+            uint64_t bytes = n * bs;
+            dst += bytes;
+            rem -= bytes;
+            total += bytes;
+            sector += n;
+            mid_secs -= n;
+        }
+    } else if (mid_secs > 0) {
+        uint64_t bn = MIN(mid_secs, max_sec);
+        uint64_t bsz = bn * bs;
+        uint8_t *bounce = alloc_frames_bytes(bsz);
+
+        while (mid_secs > 0) {
+            uint64_t n = MIN(mid_secs, bn);
+            if (dev->read(dev->ptr, sector, bounce, n) != n) {
+                free_frames_bytes(bounce, bsz);
+                return (uint64_t)-1;
+            }
+            uint64_t bytes = n * bs;
+            memcpy(dst, bounce, bytes);
+            dst += bytes;
+            rem -= bytes;
+            total += bytes;
+            sector += n;
+            mid_secs -= n;
+        }
+        free_frames_bytes(bounce, bsz);
+    }
+
+    if (rem > 0) {
+        uint8_t *bounce = alloc_frames_bytes(bs);
+
+        if (dev->read(dev->ptr, sector, bounce, 1) != 1) {
+            free_frames_bytes(bounce, bs);
+            return (uint64_t)-1;
+        }
+        memcpy(dst, bounce, rem);
+        free_frames_bytes(bounce, bs);
+        total += rem;
+    }
+
+    return total;
 }
 
 uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf,
                       uint64_t len) {
     blkdev_t *dev = &blk_devs[drive];
-    if (!dev || !dev->ptr || !dev->write) {
+    if (!dev || !dev->ptr || !dev->write)
         return (uint64_t)-1;
-    }
+    if (len == 0)
+        return 0;
 
-    uint64_t start_sector = offset / dev->block_size;
-    uint64_t end_sector = (offset + len - 1) / dev->block_size;
-    uint64_t sector_count = end_sector - start_sector + 1;
-    uint64_t offset_in_block = offset % dev->block_size;
-
-    uint8_t *tmp = alloc_frames_bytes(sector_count * dev->block_size);
-
-    if ((offset_in_block == 0) && ((len % dev->block_size) == 0)) {
-        uint64_t total_copied = 0;
-        uint64_t remaining_sectors = sector_count;
-        while (remaining_sectors > 0) {
-            uint64_t to_copy_sectors =
-                MIN(remaining_sectors, dev->max_op_size / dev->block_size);
-            uint64_t to_copy_bytes = to_copy_sectors * dev->block_size;
-            memcpy(tmp, buf + total_copied, to_copy_bytes);
-            uint64_t ret = dev->write(
-                dev->ptr, start_sector + total_copied / dev->block_size, tmp,
-                to_copy_sectors);
-            total_copied += to_copy_bytes;
-            remaining_sectors -= to_copy_sectors;
-        }
-        free_frames_bytes(tmp, sector_count * dev->block_size);
-        return total_copied;
-    }
-
-    uint64_t total_written = 0;
-    uint64_t remaining = len;
+    const uint64_t bs = dev->block_size;
+    const uint64_t max_sec = dev->max_op_size / bs;
     const uint8_t *src = (const uint8_t *)buf;
+    uint64_t sector = offset / bs;
+    uint64_t blk_off = offset % bs;
+    uint64_t rem = len;
+    uint64_t total = 0;
 
-    while (remaining > 0) {
-        // 计算本次操作的扇区数和长度
-        uint64_t chunk_sectors = sector_count;
-        uint64_t chunk_size = remaining;
-
-        // 限制单次I/O大小
-        if (chunk_sectors * dev->block_size > dev->max_op_size) {
-            chunk_sectors = dev->max_op_size / dev->block_size;
-            chunk_size = chunk_sectors * dev->block_size - offset_in_block;
-            if (chunk_size > remaining) {
-                chunk_size = remaining;
-            }
-        }
-
-        // 对于部分块写入，需要先读取原始数据
-        if (offset_in_block != 0 ||
-            chunk_size < chunk_sectors * dev->block_size) {
-            if (dev->read(dev->ptr, start_sector, tmp, chunk_sectors) !=
-                chunk_sectors) {
-                printk("Read block device failed!!!\n");
-                free_frames_bytes(tmp, sector_count * dev->block_size);
+    if (blk_off == 0 && (len % bs) == 0 && IS_DMA_BUF(src)) {
+        uint64_t secs_left = len / bs;
+        while (secs_left > 0) {
+            uint64_t n = MIN(secs_left, max_sec);
+            if (dev->write(dev->ptr, sector, (void *)src, n) != n)
                 return (uint64_t)-1;
-            }
+            uint64_t bytes = n * bs;
+            src += bytes;
+            sector += n;
+            secs_left -= n;
+            total += bytes;
         }
+        return total;
+    }
 
-        // 复制数据到临时缓冲区
-        uint64_t copy_size = (chunk_size > remaining) ? remaining : chunk_size;
+    if (blk_off != 0) {
+        if (!dev->read)
+            return (uint64_t)-1;
 
-        memcpy(tmp + offset_in_block, src, copy_size);
+        uint64_t head = MIN(bs - blk_off, rem);
+        uint8_t *bounce = alloc_frames_bytes(bs);
 
-        // 执行块设备写入
-        if (dev->write(dev->ptr, start_sector, tmp, chunk_sectors) !=
-            chunk_sectors) {
-            printk("Write block device failed!!!\n");
-            free_frames_bytes(tmp, sector_count * dev->block_size);
+        if (dev->read(dev->ptr, sector, bounce, 1) != 1) {
+            free_frames_bytes(bounce, bs);
             return (uint64_t)-1;
         }
+        memcpy(bounce + blk_off, src, head);
+        if (dev->write(dev->ptr, sector, bounce, 1) != 1) {
+            free_frames_bytes(bounce, bs);
+            return (uint64_t)-1;
+        }
+        free_frames_bytes(bounce, bs);
 
-        // 更新状态
-        src += copy_size;
-        remaining -= copy_size;
-        total_written += copy_size;
-        start_sector += chunk_sectors;
-        offset_in_block = 0; // 第一次之后不需要再处理块内偏移
+        src += head;
+        rem -= head;
+        total += head;
+        sector++;
     }
 
-    free_frames_bytes(tmp, sector_count * dev->block_size);
+    uint64_t mid_secs = rem / bs;
 
-    return total_written;
+    if (mid_secs > 0 && IS_DMA_BUF(src)) {
+        while (mid_secs > 0) {
+            uint64_t n = MIN(mid_secs, max_sec);
+            if (dev->write(dev->ptr, sector, (void *)src, n) != n)
+                return (uint64_t)-1;
+            uint64_t bytes = n * bs;
+            src += bytes;
+            rem -= bytes;
+            total += bytes;
+            sector += n;
+            mid_secs -= n;
+        }
+    } else if (mid_secs > 0) {
+        uint64_t bn = MIN(mid_secs, max_sec);
+        uint64_t bsz = bn * bs;
+        uint8_t *bounce = alloc_frames_bytes(bsz);
+
+        while (mid_secs > 0) {
+            uint64_t n = MIN(mid_secs, bn);
+            uint64_t bytes = n * bs;
+            memcpy(bounce, src, bytes);
+            if (dev->write(dev->ptr, sector, bounce, n) != n) {
+                free_frames_bytes(bounce, bsz);
+                return (uint64_t)-1;
+            }
+            src += bytes;
+            rem -= bytes;
+            total += bytes;
+            sector += n;
+            mid_secs -= n;
+        }
+        free_frames_bytes(bounce, bsz);
+    }
+
+    if (rem > 0) {
+        if (!dev->read)
+            return (uint64_t)-1;
+
+        uint8_t *bounce = alloc_frames_bytes(bs);
+        if (dev->read(dev->ptr, sector, bounce, 1) != 1) {
+            free_frames_bytes(bounce, bs);
+            return (uint64_t)-1;
+        }
+        memcpy(bounce, src, rem);
+        if (dev->write(dev->ptr, sector, bounce, 1) != 1) {
+            free_frames_bytes(bounce, bs);
+            return (uint64_t)-1;
+        }
+        free_frames_bytes(bounce, bs);
+        total += rem;
+    }
+
+    return total;
 }

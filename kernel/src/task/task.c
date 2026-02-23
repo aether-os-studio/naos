@@ -1026,6 +1026,11 @@ void task_exit_inner(task_t *task, int64_t code) {
 
     struct sched_entity *entity = (struct sched_entity *)task->sched_info;
     remove_sched_entity(task, schedulers[task->cpu_id]);
+    if (entity) {
+        if (entity->node)
+            __atomic_store_n(&entity->node->data, NULL, __ATOMIC_RELEASE);
+        __atomic_store_n(&entity->task, NULL, __ATOMIC_RELEASE);
+    }
 
     task->current_state = TASK_DIED;
     task->state = TASK_DIED;
