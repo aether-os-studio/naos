@@ -72,19 +72,16 @@ vma_t *vma_find(vma_manager_t *mgr, uint64_t addr) {
 }
 
 vma_t *vma_find_intersection(vma_manager_t *mgr, uint64_t start, uint64_t end) {
-    if (start >= end)
-        return NULL;
-
-    rb_node_t *node = rb_first(&mgr->vma_tree);
+    rb_node_t *node = mgr->vma_tree.rb_node;
     while (node) {
         vma_t *vma = rb_entry(node, vma_t, vm_rb);
-        if (vma->vm_start >= end)
-            break;
-        if (vma->vm_end > start)
+        if (end <= vma->vm_start)
+            node = node->rb_left;
+        else if (start >= vma->vm_end)
+            node = node->rb_right;
+        else
             return vma;
-        node = rb_next(node);
     }
-
     return NULL;
 }
 
@@ -93,15 +90,6 @@ int vma_insert(vma_manager_t *mgr, vma_t *new_vma) {
         return -1;
     if (new_vma->vm_start >= new_vma->vm_end)
         return -1;
-
-    rb_node_t *scan = rb_first(&mgr->vma_tree);
-    while (scan) {
-        vma_t *vma = rb_entry(scan, vma_t, vm_rb);
-        if (vma == new_vma) {
-            return -1;
-        }
-        scan = rb_next(scan);
-    }
 
     rb_node_t **link = &mgr->vma_tree.rb_node;
     rb_node_t *parent = NULL;
@@ -152,6 +140,7 @@ int vma_split(vma_manager_t *mgr, vma_t *vma, uint64_t addr) {
     if (!new_vma)
         return -1;
 
+    uint64_t old_start = vma->vm_start;
     uint64_t old_end = vma->vm_end;
 
     new_vma->vm_start = addr;
@@ -168,20 +157,33 @@ int vma_split(vma_manager_t *mgr, vma_t *vma, uint64_t addr) {
     if (vma->vm_type == VMA_TYPE_FILE)
         new_vma->vm_offset += addr - vma->vm_start;
 
-    if (vma->vm_name) {
+    if (vma->vm_name)
         new_vma->vm_name = strdup(vma->vm_name);
-        if (!new_vma->vm_name) {
-            vma_free(new_vma);
-            return -1;
-        }
-    }
+
+    rb_erase(&vma->vm_rb, &mgr->vma_tree);
+    mgr->vm_used -= (old_end - old_start);
+    vma->vm_rb.rb_parent_color = 0;
+    vma->vm_rb.rb_left = NULL;
+    vma->vm_rb.rb_right = NULL;
 
     vma->vm_end = addr;
-    mgr->vm_used -= old_end - addr;
+
+    if (vma_insert(mgr, vma) != 0) {
+        vma->vm_end = old_end;
+        vma_insert(mgr, vma);
+        vma_free(new_vma);
+        return -1;
+    }
 
     if (vma_insert(mgr, new_vma) != 0) {
+        rb_erase(&vma->vm_rb, &mgr->vma_tree);
+        mgr->vm_used -= (addr - old_start);
+        vma->vm_rb.rb_parent_color = 0;
+        vma->vm_rb.rb_left = NULL;
+        vma->vm_rb.rb_right = NULL;
+
         vma->vm_end = old_end;
-        mgr->vm_used += old_end - addr;
+        vma_insert(mgr, vma);
         vma_free(new_vma);
         return -1;
     }
@@ -191,8 +193,6 @@ int vma_split(vma_manager_t *mgr, vma_t *vma, uint64_t addr) {
 
 int vma_merge(vma_manager_t *mgr, vma_t *vma1, vma_t *vma2) {
     if (!mgr || !vma1 || !vma2 || vma1->vm_end != vma2->vm_start)
-        return -1;
-    if (!vma_is_linked(mgr, vma1) || !vma_is_linked(mgr, vma2))
         return -1;
 
     if (vma1->vm_flags != vma2->vm_flags || vma1->vm_type != vma2->vm_type ||
@@ -206,8 +206,30 @@ int vma_merge(vma_manager_t *mgr, vma_t *vma1, vma_t *vma2) {
         vma2->vm_name = NULL;
     }
 
-    vma1->vm_end = vma2->vm_end;
+    uint64_t new_end = vma2->vm_end;
+
+    mgr->vm_used -= vma_len(vma2);
     rb_erase(&vma2->vm_rb, &mgr->vma_tree);
+
+    uint64_t old_end = vma1->vm_end;
+    mgr->vm_used -= vma_len(vma1);
+    rb_erase(&vma1->vm_rb, &mgr->vma_tree);
+    vma1->vm_rb.rb_parent_color = 0;
+    vma1->vm_rb.rb_left = NULL;
+    vma1->vm_rb.rb_right = NULL;
+
+    vma1->vm_end = new_end;
+
+    if (vma_insert(mgr, vma1) != 0) {
+        vma1->vm_end = old_end;
+        vma_insert(mgr, vma1);
+        vma2->vm_rb.rb_parent_color = 0;
+        vma2->vm_rb.rb_left = NULL;
+        vma2->vm_rb.rb_right = NULL;
+        vma_insert(mgr, vma2);
+        return -1;
+    }
+
     vma_free(vma2);
     return 0;
 }
@@ -234,6 +256,7 @@ int vma_unmap_range(vma_manager_t *mgr, uintptr_t start, uintptr_t end) {
         if (vma->vm_end > end) {
             if (vma_split(mgr, vma, end) != 0)
                 return -1;
+            continue;
         }
 
         vma_remove(mgr, vma);
@@ -279,10 +302,6 @@ static vma_t *vma_copy(vma_t *src) {
 
     if (src->vm_name) {
         dst->vm_name = strdup(src->vm_name);
-        if (!dst->vm_name) {
-            vma_free(dst);
-            return NULL;
-        }
     }
 
     return dst;

@@ -4,6 +4,7 @@
 // 保存函数调用现场的寄存器
 #define SAVE_ALL_REGS                                                          \
     "cld; \n\t"                                                                \
+    "pushq $0;    \n\t"                                                        \
     "pushq %rax;    \n\t"                                                      \
     "pushq %rax;     \n\t"                                                     \
     "pushq %rbp;     \n\t"                                                     \

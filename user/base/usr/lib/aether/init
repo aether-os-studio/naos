@@ -16,5 +16,7 @@ export GDK_BACKEND=wayland
 
 export LANG=C.UTF-8
 
+export SDL_VIDEODRIVER=wayland
+
 seatd &
 exec weston --xwayland

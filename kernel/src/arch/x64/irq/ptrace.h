@@ -18,6 +18,7 @@ struct pt_regs {
     uint64_t rdi;
     uint64_t rbp;
     uint64_t rax;
+    uint64_t orig_rax;
     uint64_t func;
     uint64_t errcode;
     uint64_t rip;

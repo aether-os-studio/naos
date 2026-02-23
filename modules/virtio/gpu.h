@@ -15,6 +15,7 @@
 #define VIRTIO_GPU_F_CONTEXT_INIT (1ULL << 4)
 #define VIRTIO_GPU_F_SUPPORTED_CAPSET_IDS (1ULL << 5)
 #define VIRTIO_GPU_MAX_BOS 256
+#define VIRTIO_GPU_FLAG_FENCE 0x1
 
 // Virtio GPU request types
 typedef enum virtio_gpu_ctrl_type {

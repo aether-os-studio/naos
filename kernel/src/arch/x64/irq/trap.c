@@ -109,6 +109,29 @@ check_user_fault:
 
             node = rb_next(node);
         }
+
+        struct pt_regs *syscall_regs =
+            (struct pt_regs *)current_task->syscall_stack - 1;
+
+        printk("Last syscall registers:\n");
+        printk("RIP = %#018lx\n", syscall_regs->rip);
+        printk("ORIG_RAX = %#018lx\n", syscall_regs->orig_rax);
+        printk("RAX = %#018lx, RBX = %#018lx\n", syscall_regs->rax,
+               syscall_regs->rbx);
+        printk("RCX = %#018lx, RDX = %#018lx\n", syscall_regs->rcx,
+               syscall_regs->rdx);
+        printk("RDI = %#018lx, RSI = %#018lx\n", syscall_regs->rdi,
+               syscall_regs->rsi);
+        printk("RSP = %#018lx, RBP = %#018lx\n", syscall_regs->rsp,
+               syscall_regs->rbp);
+        printk("R08 = %#018lx, R09 = %#018lx\n", syscall_regs->r8,
+               syscall_regs->r9);
+        printk("R10 = %#018lx, R11 = %#018lx\n", syscall_regs->r10,
+               syscall_regs->r11);
+        printk("R12 = %#018lx, R13 = %#018lx\n", syscall_regs->r12,
+               syscall_regs->r13);
+        printk("R14 = %#018lx, R15 = %#018lx\n", syscall_regs->r14,
+               syscall_regs->r15);
     }
     printk("======== User traceback end =======\n");
 }
@@ -348,8 +371,6 @@ void do_general_protection(struct pt_regs *regs, uint64_t error_code) {
 // 14 #PF 页故障
 void do_page_fault(struct pt_regs *regs, uint64_t error_code) {
     uint64_t cr2 = 0;
-    // 先保存cr2寄存器的值，避免由于再次触发页故障而丢失值
-    // cr2存储着触发异常的线性地址
     asm volatile("movq %%cr2, %0" : "=r"(cr2)::"memory");
 
     if (handle_page_fault(current_task, cr2) == PF_RES_OK)

@@ -269,6 +269,15 @@ static void drm_device_setup_sysfs(int major, int card_minor, int render_minor,
 
 static int drm_id = 0;
 
+static void drm_import_resource_id(drm_device_t *dev, uint32_t obj_id) {
+    if (!dev || obj_id == 0) {
+        return;
+    }
+    if (obj_id >= dev->resource_mgr.next_object_id) {
+        dev->resource_mgr.next_object_id = obj_id + 1;
+    }
+}
+
 /**
  * drm_register_device - Register a DRM device with the system
  * @data: Driver private data
@@ -348,7 +357,11 @@ drm_device_t *drm_register_device(void *data, drm_device_op_t *op,
                         DRM_MAX_CONNECTORS_PER_DEVICE);
                     if (slot != (uint32_t)-1) {
                         dev->resource_mgr.connectors[slot] = connectors[i];
-                        connectors[i]->id = dev->resource_mgr.next_object_id++;
+                        if (connectors[i]->id == 0) {
+                            connectors[i]->id =
+                                dev->resource_mgr.next_object_id++;
+                        }
+                        drm_import_resource_id(dev, connectors[i]->id);
                     }
                 }
             }
@@ -368,7 +381,10 @@ drm_device_t *drm_register_device(void *data, drm_device_op_t *op,
                                            DRM_MAX_CRTCS_PER_DEVICE);
                     if (slot != (uint32_t)-1) {
                         dev->resource_mgr.crtcs[slot] = crtcs[i];
-                        crtcs[i]->id = dev->resource_mgr.next_object_id++;
+                        if (crtcs[i]->id == 0) {
+                            crtcs[i]->id = dev->resource_mgr.next_object_id++;
+                        }
+                        drm_import_resource_id(dev, crtcs[i]->id);
                     }
                 }
             }
@@ -388,7 +404,11 @@ drm_device_t *drm_register_device(void *data, drm_device_op_t *op,
                                            DRM_MAX_ENCODERS_PER_DEVICE);
                     if (slot != (uint32_t)-1) {
                         dev->resource_mgr.encoders[slot] = encoders[i];
-                        encoders[i]->id = dev->resource_mgr.next_object_id++;
+                        if (encoders[i]->id == 0) {
+                            encoders[i]->id =
+                                dev->resource_mgr.next_object_id++;
+                        }
+                        drm_import_resource_id(dev, encoders[i]->id);
                     }
                 }
             }
@@ -408,7 +428,10 @@ drm_device_t *drm_register_device(void *data, drm_device_op_t *op,
                                            DRM_MAX_PLANES_PER_DEVICE);
                     if (slot != (uint32_t)-1) {
                         dev->resource_mgr.planes[slot] = planes[i];
-                        planes[i]->id = dev->resource_mgr.next_object_id++;
+                        if (planes[i]->id == 0) {
+                            planes[i]->id = dev->resource_mgr.next_object_id++;
+                        }
+                        drm_import_resource_id(dev, planes[i]->id);
                     }
                 }
             }

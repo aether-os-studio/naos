@@ -687,28 +687,36 @@ ssize_t drm_ioctl_version(drm_device_t *dev, void *arg) {
     const char *name =
         (dev && dev->driver_name[0]) ? dev->driver_name : DRM_NAME;
     const char *date =
-        (dev && dev->driver_date[0]) ? dev->driver_date : DRM_NAME;
+        (dev && dev->driver_date[0]) ? dev->driver_date : "20060810";
     const char *desc =
         (dev && dev->driver_desc[0]) ? dev->driver_desc : DRM_NAME;
+    int version_major = 1;
+    int version_minor = 0;
+    int version_patchlevel = 0;
+
+    if (!strcmp(name, "virtio_gpu")) {
+        version_major = 0;
+        version_minor = 1;
+    }
 
     size_t user_name_len = version->name_len;
     size_t user_date_len = version->date_len;
     size_t user_desc_len = version->desc_len;
 
-    version->version_major = 2;
-    version->version_minor = 2;
-    version->version_patchlevel = 0;
-    version->name_len = strlen(name) + 1;
+    version->version_major = version_major;
+    version->version_minor = version_minor;
+    version->version_patchlevel = version_patchlevel;
+    version->name_len = strlen(name);
     if (version->name && user_name_len) {
         if (copy_to_user_str(version->name, name, user_name_len))
             return -EFAULT;
     }
-    version->date_len = strlen(date) + 1;
+    version->date_len = strlen(date);
     if (version->date && user_date_len) {
         if (copy_to_user_str(version->date, date, user_date_len))
             return -EFAULT;
     }
-    version->desc_len = strlen(desc) + 1;
+    version->desc_len = strlen(desc);
     if (version->desc && user_desc_len) {
         if (copy_to_user_str(version->desc, desc, user_desc_len))
             return -EFAULT;
@@ -863,6 +871,10 @@ ssize_t drm_ioctl_prime_fd_to_handle(drm_device_t *dev, void *arg) {
  */
 ssize_t drm_ioctl_mode_getresources(drm_device_t *dev, void *arg) {
     struct drm_mode_card_res *res = (struct drm_mode_card_res *)arg;
+    uint32_t fbs_cap = res->count_fbs;
+    uint32_t crtcs_cap = res->count_crtcs;
+    uint32_t connectors_cap = res->count_connectors;
+    uint32_t encoders_cap = res->count_encoders;
 
     // Count available resources
     res->count_fbs = 0;
@@ -913,9 +925,13 @@ ssize_t drm_ioctl_mode_getresources(drm_device_t *dev, void *arg) {
     }
 
     // Fill encoder IDs if pointer provided
-    if (res->encoder_id_ptr && res->count_encoders > 0) {
+    if (res->encoder_id_ptr && encoders_cap > 0 && res->count_encoders > 0) {
+        uint32_t copy_count = MIN(encoders_cap, res->count_encoders);
         uint32_t idx = 0;
         for (uint32_t i = 0; i < DRM_MAX_ENCODERS_PER_DEVICE; i++) {
+            if (idx >= copy_count) {
+                break;
+            }
             if (dev->resource_mgr.encoders[i]) {
                 uint32_t encoder_id = dev->resource_mgr.encoders[i]->id;
                 int ret = drm_copy_to_user_ptr(res->encoder_id_ptr +
@@ -930,9 +946,13 @@ ssize_t drm_ioctl_mode_getresources(drm_device_t *dev, void *arg) {
     }
 
     // Fill CRTC IDs if pointer provided
-    if (res->crtc_id_ptr && res->count_crtcs > 0) {
+    if (res->crtc_id_ptr && crtcs_cap > 0 && res->count_crtcs > 0) {
+        uint32_t copy_count = MIN(crtcs_cap, res->count_crtcs);
         uint32_t idx = 0;
         for (uint32_t i = 0; i < DRM_MAX_CRTCS_PER_DEVICE; i++) {
+            if (idx >= copy_count) {
+                break;
+            }
             if (dev->resource_mgr.crtcs[i]) {
                 uint32_t crtc_id = dev->resource_mgr.crtcs[i]->id;
                 int ret = drm_copy_to_user_ptr(res->crtc_id_ptr +
@@ -947,9 +967,14 @@ ssize_t drm_ioctl_mode_getresources(drm_device_t *dev, void *arg) {
     }
 
     // Fill connector IDs if pointer provided
-    if (res->connector_id_ptr && res->count_connectors > 0) {
+    if (res->connector_id_ptr && connectors_cap > 0 &&
+        res->count_connectors > 0) {
+        uint32_t copy_count = MIN(connectors_cap, res->count_connectors);
         uint32_t idx = 0;
         for (uint32_t i = 0; i < DRM_MAX_CONNECTORS_PER_DEVICE; i++) {
+            if (idx >= copy_count) {
+                break;
+            }
             if (dev->resource_mgr.connectors[i]) {
                 uint32_t connector_id = dev->resource_mgr.connectors[i]->id;
                 int ret = drm_copy_to_user_ptr(
@@ -964,9 +989,13 @@ ssize_t drm_ioctl_mode_getresources(drm_device_t *dev, void *arg) {
     }
 
     // Fill framebuffer IDs if pointer provided
-    if (res->fb_id_ptr && res->count_fbs > 0) {
+    if (res->fb_id_ptr && fbs_cap > 0 && res->count_fbs > 0) {
+        uint32_t copy_count = MIN(fbs_cap, res->count_fbs);
         uint32_t idx = 0;
         for (uint32_t i = 0; i < DRM_MAX_FRAMEBUFFERS_PER_DEVICE; i++) {
+            if (idx >= copy_count) {
+                break;
+            }
             if (dev->resource_mgr.framebuffers[i]) {
                 uint32_t fb_id = dev->resource_mgr.framebuffers[i]->id;
                 int ret = drm_copy_to_user_ptr(res->fb_id_ptr +
@@ -1269,6 +1298,7 @@ ssize_t drm_ioctl_mode_setcrtc(drm_device_t *dev, void *arg) {
  */
 ssize_t drm_ioctl_mode_getplaneresources(drm_device_t *dev, void *arg) {
     struct drm_mode_get_plane_res *res = (struct drm_mode_get_plane_res *)arg;
+    uint32_t planes_cap = res->count_planes;
 
     // Count available planes
     res->count_planes = 0;
@@ -1279,9 +1309,13 @@ ssize_t drm_ioctl_mode_getplaneresources(drm_device_t *dev, void *arg) {
     }
 
     // Fill plane IDs if pointer provided
-    if (res->plane_id_ptr && res->count_planes > 0) {
+    if (res->plane_id_ptr && planes_cap > 0 && res->count_planes > 0) {
+        uint32_t copy_count = MIN(planes_cap, res->count_planes);
         uint32_t idx = 0;
         for (uint32_t i = 0; i < DRM_MAX_PLANES_PER_DEVICE; i++) {
+            if (idx >= copy_count) {
+                break;
+            }
             if (dev->resource_mgr.planes[i]) {
                 uint32_t plane_id = dev->resource_mgr.planes[i]->id;
                 int ret = drm_copy_to_user_ptr(res->plane_id_ptr +
@@ -1303,6 +1337,7 @@ ssize_t drm_ioctl_mode_getplaneresources(drm_device_t *dev, void *arg) {
  */
 ssize_t drm_ioctl_mode_getplane(drm_device_t *dev, void *arg) {
     struct drm_mode_get_plane *plane_cmd = (struct drm_mode_get_plane *)arg;
+    uint32_t format_cap = plane_cmd->count_format_types;
 
     // Find the plane by ID
     drm_plane_t *plane = drm_plane_get(&dev->resource_mgr, plane_cmd->plane_id);
@@ -1318,11 +1353,12 @@ ssize_t drm_ioctl_mode_getplane(drm_device_t *dev, void *arg) {
     plane_cmd->count_format_types = plane->count_format_types;
 
     // Fill format types if pointer provided
-    if (plane_cmd->format_type_ptr && plane->count_format_types > 0 &&
-        plane->format_types) {
-        int ret = drm_copy_to_user_ptr(
-            plane_cmd->format_type_ptr, plane->format_types,
-            plane->count_format_types * sizeof(uint32_t));
+    if (plane_cmd->format_type_ptr && format_cap > 0 &&
+        plane->count_format_types > 0 && plane->format_types) {
+        uint32_t copy_count = MIN(format_cap, plane->count_format_types);
+        int ret = drm_copy_to_user_ptr(plane_cmd->format_type_ptr,
+                                       plane->format_types,
+                                       copy_count * sizeof(uint32_t));
         if (ret) {
             drm_plane_free(&dev->resource_mgr, plane->id);
             return ret;
@@ -1366,6 +1402,8 @@ ssize_t drm_ioctl_mode_setplane(drm_device_t *dev, void *arg) {
  */
 ssize_t drm_ioctl_mode_getproperty(drm_device_t *dev, void *arg) {
     struct drm_mode_get_property *prop = (struct drm_mode_get_property *)arg;
+    uint32_t values_cap = prop->count_values;
+    uint32_t enum_blobs_cap = prop->count_enum_blobs;
 
     switch (prop->prop_id) {
     case DRM_PROPERTY_ID_FB_ID:
@@ -1376,8 +1414,9 @@ ssize_t drm_ioctl_mode_getproperty(drm_device_t *dev, void *arg) {
         prop->count_values = 1;
         if (prop->values_ptr) {
             uint64_t values[1] = {DRM_MODE_OBJECT_FB};
-            int ret =
-                drm_copy_to_user_ptr(prop->values_ptr, values, sizeof(values));
+            uint32_t copy_values = MIN(values_cap, prop->count_values);
+            int ret = drm_copy_to_user_ptr(prop->values_ptr, values,
+                                           copy_values * sizeof(uint64_t));
             if (ret) {
                 return ret;
             }
@@ -1393,8 +1432,9 @@ ssize_t drm_ioctl_mode_getproperty(drm_device_t *dev, void *arg) {
         prop->count_values = 1;
         if (prop->values_ptr) {
             uint64_t values[1] = {DRM_MODE_OBJECT_CRTC};
-            int ret =
-                drm_copy_to_user_ptr(prop->values_ptr, values, sizeof(values));
+            uint32_t copy_values = MIN(values_cap, prop->count_values);
+            int ret = drm_copy_to_user_ptr(prop->values_ptr, values,
+                                           copy_values * sizeof(uint64_t));
             if (ret) {
                 return ret;
             }
@@ -1414,8 +1454,9 @@ ssize_t drm_ioctl_mode_getproperty(drm_device_t *dev, void *arg) {
         if (prop->values_ptr) {
             uint64_t values[2] = {(uint64_t)(-(1LL << 31)),
                                   (uint64_t)((1LL << 31) - 1)};
-            int ret =
-                drm_copy_to_user_ptr(prop->values_ptr, values, sizeof(values));
+            uint32_t copy_values = MIN(values_cap, prop->count_values);
+            int ret = drm_copy_to_user_ptr(prop->values_ptr, values,
+                                           copy_values * sizeof(uint64_t));
             if (ret) {
                 return ret;
             }
@@ -1441,8 +1482,9 @@ ssize_t drm_ioctl_mode_getproperty(drm_device_t *dev, void *arg) {
         prop->count_values = 2;
         if (prop->values_ptr) {
             uint64_t values[2] = {0, UINT32_MAX};
-            int ret =
-                drm_copy_to_user_ptr(prop->values_ptr, values, sizeof(values));
+            uint32_t copy_values = MIN(values_cap, prop->count_values);
+            int ret = drm_copy_to_user_ptr(prop->values_ptr, values,
+                                           copy_values * sizeof(uint64_t));
             if (ret) {
                 return ret;
             }
@@ -1461,8 +1503,9 @@ ssize_t drm_ioctl_mode_getproperty(drm_device_t *dev, void *arg) {
         prop->count_values = 2;
         if (prop->values_ptr) {
             uint64_t values[2] = {0, 8192};
-            int ret =
-                drm_copy_to_user_ptr(prop->values_ptr, values, sizeof(values));
+            uint32_t copy_values = MIN(values_cap, prop->count_values);
+            int ret = drm_copy_to_user_ptr(prop->values_ptr, values,
+                                           copy_values * sizeof(uint64_t));
             if (ret) {
                 return ret;
             }
@@ -1485,8 +1528,10 @@ ssize_t drm_ioctl_mode_getproperty(drm_device_t *dev, void *arg) {
             strncpy(enums[2].name, "Cursor", DRM_PROP_NAME_LEN);
             enums[2].value = DRM_PLANE_TYPE_CURSOR;
 
-            int ret =
-                drm_copy_to_user_ptr(prop->enum_blob_ptr, enums, sizeof(enums));
+            uint32_t copy_enums = MIN(enum_blobs_cap, prop->count_enum_blobs);
+            int ret = drm_copy_to_user_ptr(
+                prop->enum_blob_ptr, enums,
+                copy_enums * sizeof(struct drm_mode_property_enum));
             if (ret) {
                 return ret;
             }
@@ -1510,8 +1555,9 @@ ssize_t drm_ioctl_mode_getproperty(drm_device_t *dev, void *arg) {
         prop->count_values = 2;
         if (prop->values_ptr) {
             uint64_t values[2] = {0, 1};
-            int ret =
-                drm_copy_to_user_ptr(prop->values_ptr, values, sizeof(values));
+            uint32_t copy_values = MIN(values_cap, prop->count_values);
+            int ret = drm_copy_to_user_ptr(prop->values_ptr, values,
+                                           copy_values * sizeof(uint64_t));
             if (ret) {
                 return ret;
             }
@@ -1545,8 +1591,9 @@ ssize_t drm_ioctl_mode_getproperty(drm_device_t *dev, void *arg) {
                 values[1] = 8192;
             }
 
-            int ret =
-                drm_copy_to_user_ptr(prop->values_ptr, values, sizeof(values));
+            uint32_t copy_values = MIN(values_cap, prop->count_values);
+            int ret = drm_copy_to_user_ptr(prop->values_ptr, values,
+                                           copy_values * sizeof(uint64_t));
             if (ret) {
                 return ret;
             }
@@ -1572,8 +1619,10 @@ ssize_t drm_ioctl_mode_getproperty(drm_device_t *dev, void *arg) {
             strncpy(enums[3].name, "Off", DRM_PROP_NAME_LEN);
             enums[3].value = DRM_MODE_DPMS_OFF;
 
-            int ret =
-                drm_copy_to_user_ptr(prop->enum_blob_ptr, enums, sizeof(enums));
+            uint32_t copy_enums = MIN(enum_blobs_cap, prop->count_enum_blobs);
+            int ret = drm_copy_to_user_ptr(
+                prop->enum_blob_ptr, enums,
+                copy_enums * sizeof(struct drm_mode_property_enum));
             if (ret) {
                 return ret;
             }
@@ -1872,6 +1921,7 @@ ssize_t drm_ioctl_mode_obj_getproperties(drm_device_t *dev, void *arg) {
     struct drm_mode_obj_get_properties *props =
         (struct drm_mode_obj_get_properties *)arg;
     uint32_t obj_type = props->obj_type;
+    uint32_t props_cap = props->count_props;
 
     if (obj_type == DRM_MODE_OBJECT_ANY) {
         int ret = drm_mode_resolve_obj_type(dev, props->obj_id, &obj_type);
@@ -1905,6 +1955,7 @@ ssize_t drm_ioctl_mode_obj_getproperties(drm_device_t *dev, void *arg) {
         props->count_props = 11;
 
         if (props->props_ptr) {
+            uint32_t copy_props = MIN(props_cap, props->count_props);
             uint32_t prop_ids[11] = {
                 DRM_PROPERTY_ID_PLANE_TYPE, DRM_PROPERTY_ID_FB_ID,
                 DRM_PROPERTY_ID_CRTC_ID,    DRM_PROPERTY_ID_SRC_X,
@@ -1915,12 +1966,13 @@ ssize_t drm_ioctl_mode_obj_getproperties(drm_device_t *dev, void *arg) {
             };
 
             int ret = drm_copy_to_user_ptr(props->props_ptr, prop_ids,
-                                           sizeof(prop_ids));
+                                           copy_props * sizeof(uint32_t));
             if (ret) {
                 return ret;
             }
         }
         if (props->prop_values_ptr) {
+            uint32_t copy_props = MIN(props_cap, props->count_props);
             uint64_t prop_values[11];
 
             prop_values[0] = plane->plane_type;
@@ -1964,7 +2016,7 @@ ssize_t drm_ioctl_mode_obj_getproperties(drm_device_t *dev, void *arg) {
             }
 
             int ret = drm_copy_to_user_ptr(props->prop_values_ptr, prop_values,
-                                           sizeof(prop_values));
+                                           copy_props * sizeof(uint64_t));
             if (ret) {
                 return ret;
             }
@@ -1990,18 +2042,20 @@ ssize_t drm_ioctl_mode_obj_getproperties(drm_device_t *dev, void *arg) {
         props->count_props = 2;
 
         if (props->props_ptr) {
+            uint32_t copy_props = MIN(props_cap, props->count_props);
             uint32_t prop_ids[2] = {DRM_CRTC_ACTIVE_PROP_ID,
                                     DRM_CRTC_MODE_ID_PROP_ID};
             int ret = drm_copy_to_user_ptr(props->props_ptr, prop_ids,
-                                           sizeof(prop_ids));
+                                           copy_props * sizeof(uint32_t));
             if (ret) {
                 return ret;
             }
         }
         if (props->prop_values_ptr) {
+            uint32_t copy_props = MIN(props_cap, props->count_props);
             uint64_t prop_values[2] = {1, drm_crtc_mode_blob_id(crtc->id)};
             int ret = drm_copy_to_user_ptr(props->prop_values_ptr, prop_values,
-                                           sizeof(prop_values));
+                                           copy_props * sizeof(uint64_t));
             if (ret) {
                 return ret;
             }
@@ -2026,19 +2080,21 @@ ssize_t drm_ioctl_mode_obj_getproperties(drm_device_t *dev, void *arg) {
         props->count_props = 4;
 
         if (props->props_ptr) {
+            uint32_t copy_props = MIN(props_cap, props->count_props);
             uint32_t prop_ids[4] = {DRM_FB_WIDTH_PROP_ID, DRM_FB_HEIGHT_PROP_ID,
                                     DRM_FB_BPP_PROP_ID, DRM_FB_DEPTH_PROP_ID};
             int ret = drm_copy_to_user_ptr(props->props_ptr, prop_ids,
-                                           sizeof(prop_ids));
+                                           copy_props * sizeof(uint32_t));
             if (ret) {
                 return ret;
             }
         }
         if (props->prop_values_ptr) {
+            uint32_t copy_props = MIN(props_cap, props->count_props);
             uint64_t prop_values[4] = {fb->width, fb->height, fb->bpp,
                                        fb->depth};
             int ret = drm_copy_to_user_ptr(props->prop_values_ptr, prop_values,
-                                           sizeof(prop_values));
+                                           copy_props * sizeof(uint64_t));
             if (ret) {
                 return ret;
             }
@@ -2064,20 +2120,22 @@ ssize_t drm_ioctl_mode_obj_getproperties(drm_device_t *dev, void *arg) {
         props->count_props = 3;
 
         if (props->props_ptr) {
+            uint32_t copy_props = MIN(props_cap, props->count_props);
             uint32_t prop_ids[3] = {DRM_CONNECTOR_DPMS_PROP_ID,
                                     DRM_CONNECTOR_EDID_PROP_ID,
                                     DRM_CONNECTOR_CRTC_ID_PROP_ID};
             int ret = drm_copy_to_user_ptr(props->props_ptr, prop_ids,
-                                           sizeof(prop_ids));
+                                           copy_props * sizeof(uint32_t));
             if (ret) {
                 return ret;
             }
         }
         if (props->prop_values_ptr) {
+            uint32_t copy_props = MIN(props_cap, props->count_props);
             uint64_t prop_values[3] = {DRM_MODE_DPMS_ON, 0, connector->crtc_id};
             prop_values[1] = drm_connector_edid_blob_id(connector->id);
             int ret = drm_copy_to_user_ptr(props->prop_values_ptr, prop_values,
-                                           sizeof(prop_values));
+                                           copy_props * sizeof(uint64_t));
             if (ret) {
                 return ret;
             }
@@ -2331,144 +2389,177 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
         return -EACCES;
     }
 
+    uint32_t ioctl_dir = _IOC_DIR(ioctl_cmd);
+    size_t ioctl_size = _IOC_SIZE(ioctl_cmd);
+    void *ioarg = (void *)(uintptr_t)arg;
+    void *karg = NULL;
+
+    if (ioctl_size > 0) {
+        karg = malloc(ioctl_size);
+        if (!karg) {
+            return -ENOMEM;
+        }
+        memset(karg, 0, ioctl_size);
+
+        if (ioctl_dir & _IOC_WRITE) {
+            if (!arg ||
+                copy_from_user(karg, (void *)(uintptr_t)arg, ioctl_size)) {
+                free(karg);
+                return -EFAULT;
+            }
+        }
+
+        ioarg = karg;
+    }
+
     ssize_t ret = -EINVAL;
 
     switch (ioctl_cmd) {
     case DRM_IOCTL_VERSION:
-        ret = drm_ioctl_version(dev, (void *)arg);
+        ret = drm_ioctl_version(dev, ioarg);
         break;
     case DRM_IOCTL_GET_CAP:
-        ret = drm_ioctl_get_cap(dev, (void *)arg);
+        ret = drm_ioctl_get_cap(dev, ioarg);
         break;
     case DRM_IOCTL_GEM_CLOSE:
-        ret = drm_ioctl_gem_close(dev, (void *)arg);
+        ret = drm_ioctl_gem_close(dev, ioarg);
         break;
     case DRM_IOCTL_PRIME_HANDLE_TO_FD:
-        ret = drm_ioctl_prime_handle_to_fd(dev, (void *)arg);
+        ret = drm_ioctl_prime_handle_to_fd(dev, ioarg);
         break;
     case DRM_IOCTL_PRIME_FD_TO_HANDLE:
-        ret = drm_ioctl_prime_fd_to_handle(dev, (void *)arg);
+        ret = drm_ioctl_prime_fd_to_handle(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_GETRESOURCES:
-        ret = drm_ioctl_mode_getresources(dev, (void *)arg);
+        ret = drm_ioctl_mode_getresources(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_GETCRTC:
-        ret = drm_ioctl_mode_getcrtc(dev, (void *)arg);
+        ret = drm_ioctl_mode_getcrtc(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_GETENCODER:
-        ret = drm_ioctl_mode_getencoder(dev, (void *)arg);
+        ret = drm_ioctl_mode_getencoder(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_CREATE_DUMB:
-        ret = drm_ioctl_mode_create_dumb(dev, (void *)arg);
+        ret = drm_ioctl_mode_create_dumb(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_MAP_DUMB:
-        ret = drm_ioctl_mode_map_dumb(dev, (void *)arg);
+        ret = drm_ioctl_mode_map_dumb(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_DESTROY_DUMB:
-        ret = drm_ioctl_mode_destroy_dumb(dev, (void *)arg);
+        ret = drm_ioctl_mode_destroy_dumb(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_GETCONNECTOR:
-        ret = drm_ioctl_mode_getconnector(dev, (void *)arg);
+        ret = drm_ioctl_mode_getconnector(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_GETFB:
-        ret = drm_ioctl_mode_getfb(dev, (void *)arg);
+        ret = drm_ioctl_mode_getfb(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_ADDFB:
-        ret = drm_ioctl_mode_addfb(dev, (void *)arg);
+        ret = drm_ioctl_mode_addfb(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_ADDFB2:
-        ret = drm_ioctl_mode_addfb2(dev, (void *)arg);
+        ret = drm_ioctl_mode_addfb2(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_RMFB:
         ret = 0; // Not implemented
         break;
     case DRM_IOCTL_MODE_SETCRTC:
-        ret = drm_ioctl_mode_setcrtc(dev, (void *)arg);
+        ret = drm_ioctl_mode_setcrtc(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_GETPLANERESOURCES:
-        ret = drm_ioctl_mode_getplaneresources(dev, (void *)arg);
+        ret = drm_ioctl_mode_getplaneresources(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_GETPLANE:
-        ret = drm_ioctl_mode_getplane(dev, (void *)arg);
+        ret = drm_ioctl_mode_getplane(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_SETPLANE:
-        ret = drm_ioctl_mode_setplane(dev, (void *)arg);
+        ret = drm_ioctl_mode_setplane(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_GETPROPERTY:
-        ret = drm_ioctl_mode_getproperty(dev, (void *)arg);
+        ret = drm_ioctl_mode_getproperty(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_GETPROPBLOB:
-        ret = drm_ioctl_mode_getpropblob(dev, (void *)arg);
+        ret = drm_ioctl_mode_getpropblob(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_CREATEPROPBLOB:
-        ret = drm_ioctl_mode_createpropblob(dev, (void *)arg);
+        ret = drm_ioctl_mode_createpropblob(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_DESTROYPROPBLOB:
-        ret = drm_ioctl_mode_destroypropblob(dev, (void *)arg);
+        ret = drm_ioctl_mode_destroypropblob(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_SETPROPERTY:
         ret = 0; // Not implemented
         break;
     case DRM_IOCTL_MODE_OBJ_GETPROPERTIES:
-        ret = drm_ioctl_mode_obj_getproperties(dev, (void *)arg);
+        ret = drm_ioctl_mode_obj_getproperties(dev, ioarg);
         break;
     case DRM_IOCTL_SET_CLIENT_CAP:
-        ret = drm_ioctl_set_client_cap(dev, (void *)arg);
+        ret = drm_ioctl_set_client_cap(dev, ioarg);
         break;
     case DRM_IOCTL_SET_MASTER:
-        ret = drm_ioctl_set_master(dev, (void *)arg);
+        ret = drm_ioctl_set_master(dev, ioarg);
         break;
     case DRM_IOCTL_DROP_MASTER:
-        ret = drm_ioctl_drop_master(dev, (void *)arg);
+        ret = drm_ioctl_drop_master(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_GETGAMMA:
-        ret = drm_ioctl_gamma(dev, (void *)arg, cmd);
+        ret = drm_ioctl_gamma(dev, ioarg, cmd);
         break;
     case DRM_IOCTL_MODE_SETGAMMA:
-        ret = drm_ioctl_gamma(dev, (void *)arg, cmd);
+        ret = drm_ioctl_gamma(dev, ioarg, cmd);
         break;
     case DRM_IOCTL_MODE_DIRTYFB:
-        ret = drm_ioctl_dirtyfb(dev, (void *)arg);
+        ret = drm_ioctl_dirtyfb(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_PAGE_FLIP:
-        ret = drm_ioctl_page_flip(dev, (void *)arg);
+        ret = drm_ioctl_page_flip(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_CURSOR:
-        ret = drm_ioctl_cursor(dev, (void *)arg);
+        ret = drm_ioctl_cursor(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_CURSOR2:
-        ret = drm_ioctl_cursor2(dev, (void *)arg);
+        ret = drm_ioctl_cursor2(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_ATOMIC:
-        ret = drm_ioctl_atomic(dev, (void *)arg);
+        ret = drm_ioctl_atomic(dev, ioarg);
         break;
     case DRM_IOCTL_WAIT_VBLANK:
-        ret = drm_ioctl_wait_vblank(dev, (void *)arg);
+        ret = drm_ioctl_wait_vblank(dev, ioarg);
         break;
     case DRM_IOCTL_GET_UNIQUE:
-        ret = drm_ioctl_get_unique(dev, (void *)arg);
+        ret = drm_ioctl_get_unique(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_LIST_LESSEES:
-        ret = drm_ioctl_mode_list_lessees(dev, (void *)arg);
+        ret = drm_ioctl_mode_list_lessees(dev, ioarg);
         break;
     case DRM_IOCTL_SET_VERSION:
         ret = 0; // Not implemented
         break;
     case DRM_IOCTL_GET_MAGIC:
-        ret = drm_ioctl_get_magic(dev, (void *)arg);
+        ret = drm_ioctl_get_magic(dev, ioarg);
         break;
     case DRM_IOCTL_AUTH_MAGIC:
-        ret = drm_ioctl_auth_magic(dev, (void *)arg);
+        ret = drm_ioctl_auth_magic(dev, ioarg);
         break;
     default:
         if (dev->op && dev->op->driver_ioctl) {
-            ret = dev->op->driver_ioctl(dev, ioctl_cmd, (void *)arg,
+            ret = dev->op->driver_ioctl(dev, ioctl_cmd, ioarg,
                                         drm_data_is_render_node(data));
         } else {
             printk("drm: Unsupported ioctl: cmd = %#010lx\n", cmd);
             ret = -EINVAL;
         }
         break;
+    }
+
+    if (ret >= 0 && karg && (ioctl_dir & _IOC_READ)) {
+        if (!arg || copy_to_user((void *)(uintptr_t)arg, karg, ioctl_size)) {
+            ret = -EFAULT;
+        }
+    }
+
+    if (karg) {
+        free(karg);
     }
 
     return ret;

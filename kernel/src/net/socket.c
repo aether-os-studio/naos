@@ -18,6 +18,8 @@ spinlock_t unix_socket_list_lock;
 
 int unix_socket_fsid = 0;
 
+#define SOCKET_EVENT_CONNECT_DONE (1U << 27)
+
 char *unix_socket_addr_safe(const struct sockaddr_un *addr, size_t len) {
     ssize_t addrLen = len - sizeof(addr->sun_family);
     if (addrLen <= 0)
@@ -97,7 +99,10 @@ static int socket_wait_node(vfs_node_t node, uint32_t events,
     uint32_t want = events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
     if (socket_pending_take(wait_sock, want))
         return EOK;
-    if (vfs_poll(node, want) & want)
+    int polled = vfs_poll(node, want);
+    if (polled < 0)
+        return polled;
+    if (polled & (int)want)
         return EOK;
 
     vfs_poll_wait_t wait;
@@ -659,6 +664,8 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
         if (server_sock->peer) {
             server_sock->peer->peer = NULL;
             server_sock->peer->established = false;
+            socket_notify_sock(server_sock->peer,
+                               EPOLLERR | EPOLLHUP | EPOLLRDHUP);
         }
         unix_socket_free(server_sock);
         vfs_free(acceptFd);
@@ -667,6 +674,11 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
 
     socket_handle_t *accept_handle = acceptFd->handle;
     accept_handle->fd = current_task->fd_info->fds[i];
+
+    if (server_sock->peer) {
+        socket_notify_sock(server_sock->peer,
+                           SOCKET_EVENT_CONNECT_DONE | EPOLLOUT);
+    }
 
     if (addr) {
         struct sockaddr_un kaddr;
@@ -806,6 +818,21 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
     mutex_unlock(&listen_sock->lock);
     socket_notify_sock(listen_sock, EPOLLIN);
     socket_notify_sock(sock, EPOLLOUT);
+
+    if (!(current_task->fd_info->fds[fd]->flags & O_NONBLOCK)) {
+        while (server_sock->node == NULL) {
+            if (sock->closed || sock->peer != server_sock) {
+                return -ECONNABORTED;
+            }
+
+            int reason = socket_wait_node(current_task->fd_info->fds[fd]->node,
+                                          SOCKET_EVENT_CONNECT_DONE,
+                                          "socket_connect_wait_accept");
+            if (reason != EOK) {
+                return reason == EINTR ? -EINTR : -ECONNABORTED;
+            }
+        }
+    }
 
     return 0;
 }

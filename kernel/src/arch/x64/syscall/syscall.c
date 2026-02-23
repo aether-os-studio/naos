@@ -717,6 +717,8 @@ done:
     }
     if (regs->rax == (uint64_t)-EFAULT) {
         serial_fprintk("syscall %d accessed a invalid address\n", idx);
+    } else if (regs->rax == (uint64_t)-ENOMEM) {
+        serial_fprintk("syscall %d no enouth memory\n", idx);
     }
 
     task_signal(regs);

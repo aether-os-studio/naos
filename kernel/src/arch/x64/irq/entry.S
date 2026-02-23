@@ -50,13 +50,14 @@ RSI =   0x58
 RDI	=	0x60
 RBP	=	0x68
 RAX	=	0x70
-FUNC	=	0x78
-ERRCODE	=	0x80
-RIP	    =	0x88
-CS	    =	0x90
-RFLAGS	=	0x98
-OLD_RSP	=	0xa0
-OLDSS	=	0xa8
+ORIG_RAX	=	0x78
+FUNC	=	0x80
+ERRCODE	=	0x88
+RIP	    =	0x90
+CS	    =	0x98
+RFLAGS	=	0xa0
+OLD_RSP	=	0xa8
+OLDSS	=	0xb0
 
 .section .text
 
@@ -81,6 +82,8 @@ Restore_all:
     popq %rbp
 
     popq %rax
+    addq $0x8, %rsp // 弹出orig_rax
+
     addq $0x10, %rsp // 弹出变量FUNC和errcode
 
     iretq
@@ -92,8 +95,7 @@ Err_Code:
     cli
 
     pushq %rax
-
-    xorq %rax, %rax
+    pushq %rax
 
     pushq	%rbp
     pushq	%rdi

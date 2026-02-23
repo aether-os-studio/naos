@@ -13,6 +13,7 @@ ENTRY(syscall_handler_asm)
     subq $0x38, %rsp
 
     pushq %rax
+    pushq %rax
 
     pushq %rbp
     pushq %rdi
@@ -55,6 +56,7 @@ ENTRY(ret_from_syscall)
     popq %rbp
 
     popq %rax
+    addq $0x8, %rsp
 
     addq $0x28, %rsp
 

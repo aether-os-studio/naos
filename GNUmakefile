@@ -230,8 +230,8 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-device e1000,netdev=net0 \
 		-rtc base=utc \
 		-vga none \
-		-display sdl,gl=on \
-		-device virtio-gpu-gl-pci \
+		-display sdl \
+		-device virtio-gpu-pci,xres=1024,yres=768 \
 		$(QEMUFLAGS)
 
 .PHONY: run-x86_64-single

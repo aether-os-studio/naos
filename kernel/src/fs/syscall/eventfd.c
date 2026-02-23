@@ -1,5 +1,6 @@
 #include <fs/fs_syscall.h>
 #include <fs/vfs/proc.h>
+#include <mod/dlinker.h>
 
 int eventfdfs_id = 0;
 
@@ -63,6 +64,8 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags) {
 
     return fd;
 }
+
+EXPORT_SYMBOL(sys_eventfd2);
 
 // 实现读写操作
 static ssize_t eventfd_read(fd_t *fd, void *buf, size_t offset, size_t len) {

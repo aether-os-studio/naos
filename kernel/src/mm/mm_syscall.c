@@ -26,24 +26,32 @@ static uint64_t find_unmapped_area_in_window(vma_manager_t *mgr,
 
         if (vma->vm_end <= cursor)
             continue;
+
         if (vma->vm_start >= window_end)
             break;
 
-        uint64_t gap_end =
-            vma->vm_start < window_end ? vma->vm_start : window_end;
-        if (gap_end > cursor && gap_end - cursor >= len) {
-            return cursor;
+        if (vma->vm_start > cursor) {
+            uint64_t gap_start = cursor;
+            uint64_t gap_end = vma->vm_start;
+            if (gap_end > window_end)
+                gap_end = window_end;
+
+            if (gap_end > gap_start && gap_end - gap_start >= len)
+                return gap_start;
         }
 
-        if (vma->vm_end > cursor)
-            cursor = PADDING_UP(vma->vm_end, DEFAULT_PAGE_SIZE);
+        uint64_t new_cursor = PADDING_UP(vma->vm_end, DEFAULT_PAGE_SIZE);
 
-        if (cursor > window_end - len) {
+        if (new_cursor < vma->vm_end)
             return (uint64_t)-ENOMEM;
-        }
+
+        cursor = new_cursor;
+
+        if (cursor >= window_end)
+            return (uint64_t)-ENOMEM;
     }
 
-    if (window_end - cursor >= len)
+    if (cursor < window_end && window_end - cursor >= len)
         return cursor;
 
     return (uint64_t)-ENOMEM;
@@ -51,27 +59,32 @@ static uint64_t find_unmapped_area_in_window(vma_manager_t *mgr,
 
 static uint64_t find_unmapped_area(vma_manager_t *mgr, uint64_t hint,
                                    uint64_t len) {
-    if (len == 0 || len > USER_MMAP_END - USER_MMAP_START) {
+    if (len == 0)
         return (uint64_t)-ENOMEM;
-    }
 
     len = PADDING_UP(len, DEFAULT_PAGE_SIZE);
+    if (len == 0)
+        return (uint64_t)-ENOMEM;
+    if (USER_MMAP_END <= USER_MMAP_START)
+        return (uint64_t)-ENOMEM;
+    if (len > USER_MMAP_END - USER_MMAP_START)
+        return (uint64_t)-ENOMEM;
 
     if (hint) {
-        hint = PADDING_UP(hint, DEFAULT_PAGE_SIZE);
+        hint = PADDING_DOWN(hint, DEFAULT_PAGE_SIZE);
         if (hint >= USER_MMAP_START && hint <= USER_MMAP_END - len) {
             if (!vma_find_intersection(mgr, hint, hint + len))
                 return hint;
 
             uint64_t up =
                 find_unmapped_area_in_window(mgr, hint, USER_MMAP_END, len);
-            if (up < (uint64_t)-4095UL)
+            if ((int64_t)up >= 0)
                 return up;
 
             if (hint > USER_MMAP_START) {
                 uint64_t wrap = find_unmapped_area_in_window(
                     mgr, USER_MMAP_START, hint, len);
-                if (wrap < (uint64_t)-4095UL)
+                if ((int64_t)wrap >= 0)
                     return wrap;
             }
         }
@@ -189,8 +202,10 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
     uint64_t clean_flags = flags & passthrough_flags;
     bool fixed_map = (flags & (MAP_FIXED | MAP_FIXED_NOREPLACE)) != 0;
 
-    if (len == 0 || aligned_len == 0)
+    if (len == 0 || aligned_len == 0 || aligned_len < len)
         return (uint64_t)-EINVAL;
+    if (aligned_len > USER_MMAP_END - USER_MMAP_START)
+        return (uint64_t)-ENOMEM;
 
     if (prot & ~(PROT_READ | PROT_WRITE | PROT_EXEC))
         return (uint64_t)-EINVAL;
@@ -238,10 +253,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
             spin_unlock(&mgr->lock);
             return (uint64_t)-EINVAL;
         }
-        if (addr < USER_MMAP_START || addr > USER_MMAP_END - aligned_len) {
-            spin_unlock(&mgr->lock);
-            return (uint64_t)-ENOMEM;
-        }
         if (check_user_overflow(addr, aligned_len)) {
             spin_unlock(&mgr->lock);
             return (uint64_t)-ENOMEM;
@@ -255,16 +266,23 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
                 return (uint64_t)-EEXIST;
             }
 
+            spin_unlock(&mgr->lock);
             uint64_t unmap_ret = do_munmap(start_addr, aligned_len);
             if ((int64_t)unmap_ret < 0) {
-                spin_unlock(&mgr->lock);
                 return unmap_ret;
+            }
+            spin_lock(&mgr->lock);
+
+            if (vma_find_intersection(mgr, start_addr,
+                                      start_addr + aligned_len)) {
+                spin_unlock(&mgr->lock);
+                return (uint64_t)-ENOMEM;
             }
         }
     } else {
-        uint64_t hint = addr ? PADDING_UP(addr, DEFAULT_PAGE_SIZE) : 0;
+        uint64_t hint = addr ? PADDING_DOWN(addr, DEFAULT_PAGE_SIZE) : 0;
         start_addr = find_unmapped_area(mgr, hint, aligned_len);
-        if (start_addr > (uint64_t)-4095UL) {
+        if ((int64_t)start_addr < 0) {
             spin_unlock(&mgr->lock);
             return start_addr;
         }
@@ -299,13 +317,10 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
 
         char *fullpath = vfs_get_fullpath(map_node);
         if (fullpath) {
-            vma->vm_name = strdup(fullpath);
+            char *name = strdup(fullpath);
             free(fullpath);
-            if (!vma->vm_name) {
-                spin_unlock(&mgr->lock);
-                vma_free(vma);
-                return (uint64_t)-ENOMEM;
-            }
+            if (name)
+                vma->vm_name = name;
         }
 
         if ((map_node->type & file_stream) || (map_node->type & file_block))
@@ -373,19 +388,74 @@ uint64_t do_munmap(uint64_t addr, uint64_t size) {
         if (!vma)
             break;
 
-        if (vma->vm_start < start) {
-            if (vma_split(mgr, vma, start) != 0)
+        uint64_t vma_start = vma->vm_start;
+        uint64_t vma_end = vma->vm_end;
+
+        if (vma_start < start && vma_end > end) {
+            vma_t *right = vma_alloc();
+            if (!right)
                 return (uint64_t)-ENOMEM;
+
+            right->vm_start = end;
+            right->vm_end = vma_end;
+            right->vm_flags = vma->vm_flags;
+            right->vm_type = vma->vm_type;
+            right->node = vma->node;
+            if (right->node)
+                right->node->refcount++;
+            right->shm = vma->shm;
+            right->shm_id = vma->shm_id;
+            right->vm_offset = vma->vm_offset;
+            if (right->vm_type == VMA_TYPE_FILE)
+                right->vm_offset += end - vma_start;
+            if (vma->vm_name)
+                right->vm_name = strdup(vma->vm_name);
+
+            vma->vm_end = start;
+            mgr->vm_used -= vma_end - start;
+
+            if (vma_insert(mgr, right) != 0) {
+                vma->vm_end = vma_end;
+                mgr->vm_used += vma_end - start;
+                vma_free(right);
+                return (uint64_t)-ENOMEM;
+            }
+
+            unmap_page_range(pgdir, start, end - start);
+            break;
+        }
+
+        if (vma_start < start) {
+            vma->vm_end = start;
+            mgr->vm_used -= vma_end - start;
+            unmap_page_range(pgdir, start, vma_end - start);
+            start = vma_end;
             continue;
         }
 
-        if (vma->vm_end > end) {
-            if (vma_split(mgr, vma, end) != 0)
+        if (vma_end > end) {
+            uint64_t trimmed = end - vma_start;
+            if (vma_remove(mgr, vma) != 0)
                 return (uint64_t)-ENOMEM;
+
+            vma->vm_start = end;
+            if (vma->vm_type == VMA_TYPE_FILE)
+                vma->vm_offset += trimmed;
+
+            if (vma_insert(mgr, vma) != 0) {
+                vma->vm_start = vma_start;
+                if (vma->vm_type == VMA_TYPE_FILE)
+                    vma->vm_offset -= trimmed;
+                vma_insert(mgr, vma);
+                return (uint64_t)-ENOMEM;
+            }
+
+            unmap_page_range(pgdir, vma_start, trimmed);
+            break;
         }
 
-        uint64_t unmap_start = vma->vm_start;
-        uint64_t unmap_len = vma->vm_end - vma->vm_start;
+        uint64_t unmap_start = vma_start;
+        uint64_t unmap_len = vma_end - vma_start;
 
         vma_remove(mgr, vma);
         vma_free(vma);
@@ -550,10 +620,6 @@ static vma_t *mremap_dup_vma(vma_t *src, uint64_t new_start,
 
     if (src->vm_name) {
         dst->vm_name = strdup(src->vm_name);
-        if (!dst->vm_name) {
-            vma_free(dst);
-            return NULL;
-        }
     }
 
     return dst;
@@ -828,6 +894,7 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
 
     map_page_range(get_current_page_dir(true), map_addr, (uint64_t)-1, map_len,
                    load_pt_flags);
+    memset((void *)map_addr, 0, map_len);
 
     uint64_t origin_offset = file->offset;
     file->offset = offset;
