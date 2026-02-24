@@ -241,6 +241,18 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
 
         if (flags & MAP_SYNC)
             return (uint64_t)-EOPNOTSUPP;
+
+        uint64_t acc_mode = map_fd->flags & O_ACCMODE_FLAGS;
+        bool can_read = acc_mode != O_WRONLY;
+        bool can_write = acc_mode == O_WRONLY || acc_mode == O_RDWR;
+
+        if (!can_read)
+            return (uint64_t)-EACCES;
+
+        if ((prot & PROT_WRITE) &&
+            (map_type == MAP_SHARED || map_type == MAP_SHARED_VALIDATE) &&
+            !can_write)
+            return (uint64_t)-EACCES;
     }
 
     uint64_t start_addr = 0;
@@ -335,38 +347,22 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
 
     spin_unlock(&mgr->lock);
 
-    uint64_t ret;
-    if (flags & MAP_ANONYMOUS) {
-        uint64_t pt_flags = PT_FLAG_U;
-        if (prot & PROT_READ)
-            pt_flags |= PT_FLAG_R;
-        if (prot & PROT_WRITE)
-            pt_flags |= PT_FLAG_W;
-        if (prot & PROT_EXEC)
-            pt_flags |= PT_FLAG_X;
-
-        map_page_range(get_current_page_dir(true),
-                       PADDING_DOWN(start_addr, DEFAULT_PAGE_SIZE),
-                       (uint64_t)-1, aligned_len, pt_flags);
-
-        ret = start_addr;
-    } else {
-        ret = (uint64_t)vfs_map(map_fd, start_addr, aligned_len, prot,
-                                clean_flags, offset);
-        if ((int64_t)ret >= 0)
-            ret = start_addr;
+    if (!(flags & MAP_ANONYMOUS) &&
+        (map_type == MAP_SHARED || map_type == MAP_SHARED_VALIDATE)) {
+        uint64_t ret = (uint64_t)vfs_map(map_fd, start_addr, aligned_len, prot,
+                                         clean_flags, offset);
+        if ((int64_t)ret < 0) {
+            unmap_page_range(get_current_page_dir(true), start_addr,
+                             aligned_len);
+            spin_lock(&mgr->lock);
+            vma_remove(mgr, vma);
+            spin_unlock(&mgr->lock);
+            vma_free(vma);
+            return ret;
+        }
     }
 
-    if ((int64_t)ret < 0) {
-        unmap_page_range(get_current_page_dir(true), start_addr, aligned_len);
-        spin_lock(&mgr->lock);
-        vma_remove(mgr, vma);
-        spin_unlock(&mgr->lock);
-        vma_free(vma);
-        return ret;
-    }
-
-    return ret;
+    return start_addr;
 }
 
 uint64_t do_munmap(uint64_t addr, uint64_t size) {
@@ -627,7 +623,7 @@ static vma_t *mremap_dup_vma(vma_t *src, uint64_t new_start,
 
 static uint64_t mremap_map_new_region(vma_t *new_vma, uint64_t addr,
                                       uint64_t size) {
-    if (new_vma->vm_type == VMA_TYPE_FILE) {
+    if (new_vma->vm_type == VMA_TYPE_FILE && (new_vma->vm_flags & VMA_SHARED)) {
         fd_t fd = {
             .node = new_vma->node,
             .flags = 0,
@@ -641,11 +637,8 @@ static uint64_t mremap_map_new_region(vma_t *new_vma, uint64_t addr,
                                  new_vma->vm_offset);
     }
 
-    if (new_vma->vm_type == VMA_TYPE_ANON) {
-        map_page_range(get_current_page_dir(true), addr, (uint64_t)-1, size,
-                       vm_flags_to_pt_flags(new_vma->vm_flags));
+    if (new_vma->vm_type == VMA_TYPE_ANON || new_vma->vm_type == VMA_TYPE_FILE)
         return addr;
-    }
 
     return (uint64_t)-EINVAL;
 }
@@ -672,7 +665,7 @@ static uint64_t mremap_expand_inplace(vma_manager_t *mgr, vma_t *vma,
     if (vma_find_intersection(mgr, old_end, new_end))
         return (uint64_t)-ENOMEM;
 
-    if (vma->vm_type == VMA_TYPE_FILE) {
+    if (vma->vm_type == VMA_TYPE_FILE && (vma->vm_flags & VMA_SHARED)) {
         fd_t fd = {
             .node = vma->node,
             .flags = 0,
@@ -686,16 +679,42 @@ static uint64_t mremap_expand_inplace(vma_manager_t *mgr, vma_t *vma,
                                          map_flags, vma->vm_offset + old_size);
         if ((int64_t)ret < 0)
             return ret;
-    } else if (vma->vm_type == VMA_TYPE_ANON) {
-        map_page_range(get_current_page_dir(true), old_end, (uint64_t)-1,
-                       expand_size, vm_flags_to_pt_flags(vma->vm_flags));
-    } else {
+    } else if (vma->vm_type != VMA_TYPE_ANON && vma->vm_type != VMA_TYPE_FILE) {
         return (uint64_t)-EINVAL;
     }
 
     vma->vm_end = new_end;
     mgr->vm_used += expand_size;
+
     return old_addr;
+}
+
+static uint64_t mremap_copy_resident_pages(vma_t *new_vma, uint64_t dst_addr,
+                                           uint64_t src_addr, uint64_t size) {
+    if (size == 0)
+        return 0;
+
+    uint64_t *pgdir = get_current_page_dir(true);
+    uint64_t arch_flags =
+        get_arch_page_table_flags(vm_flags_to_pt_flags(new_vma->vm_flags));
+
+    for (uint64_t off = 0; off < size; off += DEFAULT_PAGE_SIZE) {
+        uint64_t src_page = src_addr + off;
+        uint64_t dst_page = dst_addr + off;
+        uint64_t src_phys = translate_address(pgdir, src_page);
+        if (!src_phys)
+            continue;
+
+        map_page(pgdir, dst_page, (uint64_t)-1, arch_flags, true);
+        uint64_t dst_phys = translate_address(pgdir, dst_page);
+        if (!dst_phys)
+            return (uint64_t)-ENOMEM;
+
+        memcpy((void *)phys_to_virt(dst_phys),
+               (const void *)phys_to_virt(src_phys), DEFAULT_PAGE_SIZE);
+    }
+
+    return 0;
 }
 
 static uint64_t mremap_move(vma_manager_t *mgr, vma_t *old_vma,
@@ -737,23 +756,18 @@ static uint64_t mremap_move(vma_manager_t *mgr, vma_t *old_vma,
         return map_ret;
     }
 
-    if (old_vma->vm_type == VMA_TYPE_ANON) {
+    if (old_vma->vm_type == VMA_TYPE_ANON ||
+        (old_vma->vm_type == VMA_TYPE_FILE &&
+         (old_vma->vm_flags & VMA_SHARED) == 0)) {
         uint64_t copy_len = old_size < new_size ? old_size : new_size;
-        if (copy_len > 0 && (old_vma->vm_flags & VMA_READ)) {
-            uint64_t final_pt_flags = vm_flags_to_pt_flags(new_vma->vm_flags);
-            bool need_temp_write = (new_vma->vm_flags & VMA_WRITE) == 0;
-
-            if (need_temp_write) {
-                map_change_attribute_range(get_current_page_dir(true), target,
-                                           copy_len,
-                                           final_pt_flags | PT_FLAG_W);
-            }
-
-            memmove((void *)target, (void *)old_addr, copy_len);
-
-            if (need_temp_write) {
-                map_change_attribute_range(get_current_page_dir(true), target,
-                                           copy_len, final_pt_flags);
+        if (copy_len > 0) {
+            uint64_t copy_ret =
+                mremap_copy_resident_pages(new_vma, target, old_addr, copy_len);
+            if ((int64_t)copy_ret < 0) {
+                unmap_page_range(get_current_page_dir(true), target, new_size);
+                vma_remove(mgr, new_vma);
+                vma_free(new_vma);
+                return copy_ret;
             }
         }
     }

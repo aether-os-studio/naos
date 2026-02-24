@@ -145,33 +145,33 @@ uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr) {
             address_release(paddr);
         }
 
-        // // 从底层向上检查并释放空页表
-        // for (int level = ARCH_MAX_PT_LEVEL - 1; level > 0; level--) {
-        //     uint64_t *current_table = table_ptrs[level];
-        //     bool table_empty = true;
+        // 从底层向上检查并释放空页表
+        for (int level = ARCH_MAX_PT_LEVEL - 1; level > 0; level--) {
+            uint64_t *current_table = table_ptrs[level];
+            bool table_empty = true;
 
-        //     for (uint64_t i = 0; i < 512; i++) {
-        //         if (current_table[i] != 0) {
-        //             table_empty = false;
-        //             break;
-        //         }
-        //     }
+            for (uint64_t i = 0; i < 512; i++) {
+                if (current_table[i] != 0) {
+                    table_empty = false;
+                    break;
+                }
+            }
 
-        //     if (table_empty) {
-        //         // 释放空页表
-        //         uint64_t table_phys_addr =
-        //             virt_to_phys((uint64_t)current_table);
-        //         free_frames(table_phys_addr, 1);
+            if (table_empty) {
+                // 释放空页表
+                uint64_t table_phys_addr =
+                    virt_to_phys((uint64_t)current_table);
+                free_frames(table_phys_addr, 1);
 
-        //         // 清除上级页表中的对应条目
-        //         uint64_t *parent_table = table_ptrs[level - 1];
-        //         uint64_t parent_index = table_indices[level - 1];
-        //         parent_table[parent_index] = 0;
-        //     } else {
-        //         // 页表不为空，停止向上检查
-        //         break;
-        //     }
-        // }
+                // 清除上级页表中的对应条目
+                uint64_t *parent_table = table_ptrs[level - 1];
+                uint64_t parent_index = table_indices[level - 1];
+                parent_table[parent_index] = 0;
+            } else {
+                // 页表不为空，停止向上检查
+                break;
+            }
+        }
     }
 
     return paddr;

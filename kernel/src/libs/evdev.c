@@ -36,34 +36,16 @@ char shifted_character_table[140] = {
 
 extern dev_input_event_t *kb_input_event;
 
-// it's just a bitmap to accurately track press/release/repeat ops
-uint8_t evdev_internal[80] = {0};
-
 void kb_evdev_generate(uint8_t code, bool clicked) {
     if (!kb_input_event || !kb_input_event->timesOpened)
         return;
 
-    bool old_clicked = evdev_internal[code / 8] >> (code % 8);
     struct timespec now;
     sys_clock_gettime(kb_input_event->clock_id, (uint64_t)&now, 0);
-    if (clicked && !old_clicked) {
-        input_generate_event(kb_input_event, EV_KEY, code, 1, now.tv_sec,
-                             now.tv_nsec / 1000);
-    } else if (clicked && old_clicked) {
-        input_generate_event(kb_input_event, EV_KEY, code, 2, now.tv_sec,
-                             now.tv_nsec / 1000);
-
-    } else if (!clicked && old_clicked) {
-        input_generate_event(kb_input_event, EV_KEY, code, 0, now.tv_sec,
-                             now.tv_nsec / 1000);
-    }
+    input_generate_event(kb_input_event, EV_KEY, code, clicked ? 1 : 0,
+                         now.tv_sec, now.tv_nsec / 1000);
     input_generate_event(kb_input_event, EV_SYN, SYN_REPORT, 0, now.tv_sec,
                          now.tv_nsec / 1000);
-    if (clicked) {
-        evdev_internal[code / 8] |= (1 << (code % 8));
-    } else {
-        evdev_internal[code / 8] &= ~(1 << (code % 8));
-    }
 }
 
 #define KB_QUEUE_SIZE 256
