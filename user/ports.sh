@@ -37,7 +37,7 @@ sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add musl-dev gcompat gzip xz m
 sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add seatd"
 sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add weston weston-backend-drm weston-shell-desktop weston-xwayland xwayland ttf-dejavu"
 sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add weston-terminal"
-sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add mesa-gl mesa-utils mesa-egl"
+sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add mesa-gl mesa-utils mesa-vulkan-swrast mesa-dri-gallium"
 
 sudo rm -rf $SYSROOT/bin/sh
 sudo ln -sf /bin/bash $SYSROOT/bin/sh

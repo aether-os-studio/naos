@@ -32,5 +32,4 @@ typedef struct pipe_specific pipe_specific_t;
 struct pipe_specific {
     bool write;
     pipe_info_t *info;
-    vfs_node_t node;
 };

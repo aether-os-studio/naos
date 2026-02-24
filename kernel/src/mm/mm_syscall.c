@@ -945,25 +945,19 @@ uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
     if (check_user_overflow(vec, num_pages))
         return (uint64_t)-EFAULT;
 
-    uint64_t end = addr + size;
     uint64_t current_addr = addr;
     uint64_t *page_dir = get_current_page_dir(true);
     vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
 
     spin_lock(&mgr->lock);
 
-    uint64_t cursor = addr;
-    while (cursor < end) {
-        vma_t *vma = vma_find(mgr, cursor);
-        if (!vma || vma->vm_end <= cursor) {
-            spin_unlock(&mgr->lock);
-            return (uint64_t)-ENOMEM;
-        }
-        cursor = vma->vm_end < end ? vma->vm_end : end;
-    }
-
     for (uint64_t i = 0; i < num_pages; i++) {
-        uint8_t resident = translate_address(page_dir, current_addr) ? 1 : 0;
+        uint8_t resident = 0;
+        vma_t *vma = vma_find(mgr, current_addr);
+        if (vma && current_addr < vma->vm_end) {
+            resident = translate_address(page_dir, current_addr) ? 1 : 0;
+        }
+
         if (copy_to_user((void *)(vec + i), &resident, sizeof(resident))) {
             spin_unlock(&mgr->lock);
             return (uint64_t)-EFAULT;
@@ -972,5 +966,6 @@ uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
     }
 
     spin_unlock(&mgr->lock);
+
     return 0;
 }

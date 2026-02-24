@@ -5,9 +5,7 @@
 #include <fs/vfs/proc.h>
 #include <drivers/fb.h>
 
-vfs_node_t pipefs_root;
 int pipefs_id = 0;
-static int pipefd_id = 0;
 
 void pipefs_open(vfs_node_t parent, const char *name, vfs_node_t node) {
     (void)parent;
@@ -156,7 +154,7 @@ bool pipefs_close(vfs_node_t node) {
         pipe->read_fds--;
     }
 
-    llist_delete(&spec->node->node_for_childs);
+    llist_delete(&node->node_for_childs);
 
     if (spec->write && pipe->write_fds == 0)
         free(spec);
@@ -239,57 +237,42 @@ fs_t pipefs = {
     .flags = FS_FLAGS_HIDDEN,
 };
 
-void pipefs_init() {
-    pipefs_id = vfs_regist(&pipefs);
-    pipefs_root = vfs_node_alloc(NULL, "pipe");
-    pipefs_root->type = file_dir;
-    pipefs_root->mode = 0644;
-    pipefs_root->fsid = pipefs_id;
-}
+void pipefs_init() { pipefs_id = vfs_regist(&pipefs); }
 
 uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
     if (!pipefd) {
         return -EFAULT;
     }
 
-    char buf[16];
-    sprintf(buf, "pipe%d", pipefd_id++);
-
-    vfs_node_t node_input = vfs_node_alloc(pipefs_root, buf);
+    vfs_node_t node_input = vfs_node_alloc(NULL, NULL);
     node_input->type = file_pipe;
     node_input->fsid = pipefs_id;
     node_input->refcount++;
-    pipefs_root->mode = 0700;
 
-    sprintf(buf, "pipe%d", pipefd_id++);
-    vfs_node_t node_output = vfs_node_alloc(pipefs_root, buf);
+    vfs_node_t node_output = vfs_node_alloc(NULL, NULL);
     node_output->type = file_pipe;
     node_output->fsid = pipefs_id;
     node_output->refcount++;
-    pipefs_root->mode = 0700;
 
-    pipe_info_t *info = (pipe_info_t *)malloc(sizeof(pipe_info_t));
-    memset(info, 0, sizeof(pipe_info_t));
+    pipe_info_t *info = (pipe_info_t *)calloc(1, sizeof(pipe_info_t));
     info->buf = alloc_frames_bytes(PIPE_BUFF);
     memset(info->buf, 0, PIPE_BUFF);
     info->read_fds = 1;
     info->write_fds = 1;
+    spin_init(&info->lock);
+    info->ptr = 0;
     info->read_node = node_input;
     info->write_node = node_output;
-    info->lock.lock = 0;
-    info->ptr = 0;
 
     pipe_specific_t *read_spec =
-        (pipe_specific_t *)malloc(sizeof(pipe_specific_t));
+        (pipe_specific_t *)calloc(1, sizeof(pipe_specific_t));
     read_spec->write = false;
     read_spec->info = info;
-    read_spec->node = node_input;
 
     pipe_specific_t *write_spec =
-        (pipe_specific_t *)malloc(sizeof(pipe_specific_t));
+        (pipe_specific_t *)calloc(1, sizeof(pipe_specific_t));
     write_spec->write = true;
     write_spec->info = info;
-    write_spec->node = node_output;
 
     node_input->handle = read_spec;
     node_output->handle = write_spec;

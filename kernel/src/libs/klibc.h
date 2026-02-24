@@ -390,24 +390,8 @@ extern uint64_t get_physical_memory_offset();
 extern uint64_t *get_current_page_dir(bool user);
 extern uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr);
 
-static inline bool check_user_overflow(uint64_t addr, uint64_t size) {
-    if (addr >= (UINT64_MAX - size) ||
-        (addr + size) > get_physical_memory_offset()) {
-        return true;
-    }
-    return false;
-}
-
-static inline bool check_unmapped(uint64_t addr, uint64_t len) {
-    if (len > DEFAULT_PAGE_SIZE
-            ? (translate_address(get_current_page_dir(true), addr) &&
-               translate_address(get_current_page_dir(true),
-                                 addr + len - DEFAULT_PAGE_SIZE))
-            : translate_address(get_current_page_dir(true), addr))
-        return false;
-
-    return true;
-}
+bool check_user_overflow(uint64_t addr, uint64_t size);
+bool check_unmapped(uint64_t addr, uint64_t len);
 
 static inline bool copy_to_user(void *dst, const void *src, size_t size) {
     if (check_user_overflow((uint64_t)dst, size) ||

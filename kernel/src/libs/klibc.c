@@ -1,6 +1,32 @@
 #include <libs/klibc.h>
+#include <task/task.h>
 #include <drivers/kernel_logger.h>
 #include <arch/arch.h>
+
+bool check_user_overflow(uint64_t addr, uint64_t size) {
+    if (addr >= (UINT64_MAX - size) ||
+        (addr + size) > get_physical_memory_offset()) {
+        return true;
+    }
+    return false;
+}
+
+bool check_unmapped(uint64_t addr, uint64_t len) {
+    if (len > DEFAULT_PAGE_SIZE
+            ? (translate_address(get_current_page_dir(true), addr) &&
+               translate_address(get_current_page_dir(true),
+                                 addr + len - DEFAULT_PAGE_SIZE))
+            : translate_address(get_current_page_dir(true), addr)) {
+        return false;
+    }
+
+    vma_t *vma = vma_find_intersection(
+        &current_task->arch_context->mm->task_vma_mgr, addr, addr + len);
+    if (vma)
+        return false;
+
+    return true;
+}
 
 void *memcpy(void *restrict dest, const void *restrict src, size_t n) {
     unsigned char *d = dest;
