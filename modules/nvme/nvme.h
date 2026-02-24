@@ -87,7 +87,7 @@ typedef struct {
 typedef struct {
     struct nvme_controller *ctrl;
 
-    mutex_t lock;
+    spinlock_t lock;
 
     uint64_t vector;
 
@@ -304,7 +304,7 @@ typedef struct nvme_controller {
     nvme_queue_t io_queues[MAX_IO_CPU_NUM]; // Support up to 16 I/O queue pairs
     uint32_t num_io_queues;
 
-    mutex_t cid_alloc_lock;
+    spinlock_t cid_alloc_lock;
     uint16_t cid_alloc_pos;
     nvme_request_t *requests[256];
     nvme_request_t request_slots[256];

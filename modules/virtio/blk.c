@@ -39,9 +39,9 @@ int virtio_blk_init(virtio_driver_t *driver) {
     }
 
     // Create request queue
-    virtqueue_t *request_queue = virt_queue_new(
-        driver, 0, !!(features & VIRTIO_F_RING_INDIRECT_DESC),
-        !!(features & VIRTIO_F_RING_EVENT_IDX));
+    virtqueue_t *request_queue =
+        virt_queue_new(driver, 0, !!(features & VIRTIO_F_RING_INDIRECT_DESC),
+                       !!(features & VIRTIO_F_RING_EVENT_IDX));
     if (!request_queue) {
         printk("virtio_blk: Failed to create request queue\n");
         return -1;

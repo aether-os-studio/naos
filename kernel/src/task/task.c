@@ -128,10 +128,10 @@ static inline void task_fill_rusage(task_t *task, bool include_children,
     if (!task)
         return;
 
-    uint64_t utime_ns = include_children ? task_total_user_ns(task)
-                                         : task_self_user_ns(task);
-    uint64_t stime_ns = include_children ? task_total_system_ns(task)
-                                         : task->system_time_ns;
+    uint64_t utime_ns =
+        include_children ? task_total_user_ns(task) : task_self_user_ns(task);
+    uint64_t stime_ns =
+        include_children ? task_total_system_ns(task) : task->system_time_ns;
 
     rusage->ru_utime = task_ns_to_timeval(utime_ns);
     rusage->ru_stime = task_ns_to_timeval(stime_ns);

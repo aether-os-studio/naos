@@ -49,9 +49,8 @@ static int pty_wait_node(vfs_node_t node, uint32_t events, const char *reason) {
     return ret;
 }
 
-static int pty_tcxonc_locked(pty_pair_t *pair, bool from_master,
-                             uintptr_t arg, uint32_t *notify_master,
-                             uint32_t *notify_slave) {
+static int pty_tcxonc_locked(pty_pair_t *pair, bool from_master, uintptr_t arg,
+                             uint32_t *notify_master, uint32_t *notify_slave) {
     if (!pair)
         return -EINVAL;
 
@@ -76,8 +75,7 @@ static int pty_tcxonc_locked(pty_pair_t *pair, bool from_master,
         return 0;
     case TCIOFF:
     case TCION: {
-        uint8_t flow_char =
-            pair->term.c_cc[action == TCIOFF ? VSTOP : VSTART];
+        uint8_t flow_char = pair->term.c_cc[action == TCIOFF ? VSTOP : VSTART];
         if (from_master) {
             if (!pair->slaveFds)
                 return 0;

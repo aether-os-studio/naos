@@ -44,21 +44,20 @@ virtio_driver_t *virtio_pci_init(void *data) {
                 break;
         }
 
-        uint8_t cfg_type = device->op->read8(device->bus, device->slot,
-                                             device->func, device->segment,
-                                             cap_offset + 0x03);
-        uint8_t bar = device->op->read8(device->bus, device->slot,
-                                        device->func, device->segment,
-                                        cap_offset + 0x04);
-        uint8_t cap_id = device->op->read8(device->bus, device->slot,
-                                           device->func, device->segment,
-                                           cap_offset + 0x05);
-        uint32_t cap_offset_lo = device->op->read32(
-            device->bus, device->slot, device->func, device->segment,
-            cap_offset + 0x08);
-        uint32_t cap_length_lo = device->op->read32(
-            device->bus, device->slot, device->func, device->segment,
-            cap_offset + 0x0C);
+        uint8_t cfg_type =
+            device->op->read8(device->bus, device->slot, device->func,
+                              device->segment, cap_offset + 0x03);
+        uint8_t bar = device->op->read8(device->bus, device->slot, device->func,
+                                        device->segment, cap_offset + 0x04);
+        uint8_t cap_id =
+            device->op->read8(device->bus, device->slot, device->func,
+                              device->segment, cap_offset + 0x05);
+        uint32_t cap_offset_lo =
+            device->op->read32(device->bus, device->slot, device->func,
+                               device->segment, cap_offset + 0x08);
+        uint32_t cap_length_lo =
+            device->op->read32(device->bus, device->slot, device->func,
+                               device->segment, cap_offset + 0x0C);
 
         virtio_cap_info_t *cap_info = NULL;
         if (cfg_type == 1 || cfg_type == 2 || cfg_type == 4) {
@@ -86,18 +85,17 @@ virtio_driver_t *virtio_pci_init(void *data) {
                 free(cap_info);
             }
             if (cfg_type == 8 && cap_id == 1 && bar < 6) {
-                uint64_t cap_offset_hi = device->op->read32(
-                    device->bus, device->slot, device->func, device->segment,
-                    cap_offset + 0x10);
-                uint64_t cap_length_hi = device->op->read32(
-                    device->bus, device->slot, device->func, device->segment,
-                    cap_offset + 0x14);
-                uint64_t shm_offset =
-                    cap_offset_lo | (cap_offset_hi << 32);
-                uint64_t shm_length =
-                    cap_length_lo | (cap_length_hi << 32);
+                uint64_t cap_offset_hi =
+                    device->op->read32(device->bus, device->slot, device->func,
+                                       device->segment, cap_offset + 0x10);
+                uint64_t cap_length_hi =
+                    device->op->read32(device->bus, device->slot, device->func,
+                                       device->segment, cap_offset + 0x14);
+                uint64_t shm_offset = cap_offset_lo | (cap_offset_hi << 32);
+                uint64_t shm_length = cap_length_lo | (cap_length_hi << 32);
                 if (shm_length && device->bars[bar].address) {
-                    host_visible_shm_paddr = device->bars[bar].address + shm_offset;
+                    host_visible_shm_paddr =
+                        device->bars[bar].address + shm_offset;
                     host_visible_shm_size = shm_length;
                 }
             }

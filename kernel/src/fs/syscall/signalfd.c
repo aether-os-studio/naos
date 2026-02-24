@@ -30,8 +30,8 @@ static ssize_t signalfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         vfs_poll_wait_init(&wait, current_task, EPOLLIN | EPOLLERR | EPOLLHUP);
         vfs_poll_wait_arm(fd->node, &wait);
         if (ctx->queue_head == ctx->queue_tail) {
-            int reason = vfs_poll_wait_sleep(fd->node, &wait, -1,
-                                             "signalfd_read");
+            int reason =
+                vfs_poll_wait_sleep(fd->node, &wait, -1, "signalfd_read");
             vfs_poll_wait_disarm(&wait);
             if (reason != EOK)
                 return -EINTR;

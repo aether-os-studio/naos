@@ -235,7 +235,7 @@ static int nvme_init_queue(nvme_controller_t *ctrl, nvme_queue_t *queue,
                            uint16_t queue_id, uint16_t queue_depth) {
     queue->ctrl = ctrl;
 
-    mutex_init(&queue->lock);
+    spin_init(&queue->lock);
 
     queue->queue_id = queue_id;
     queue->queue_depth = queue_depth;
@@ -300,11 +300,11 @@ static int nvme_init_queue(nvme_controller_t *ctrl, nvme_queue_t *queue,
 }
 
 static int nvme_submit_cmd(nvme_queue_t *queue, nvme_sqe_t *cmd) {
-    mutex_lock(&queue->lock);
+    spin_lock(&queue->lock);
     uint16_t tail = queue->sq_tail;
     uint16_t next_tail = (tail + 1) % queue->queue_depth;
     if (next_tail == queue->sq_head) {
-        mutex_unlock(&queue->lock);
+        spin_unlock(&queue->lock);
         return -1;
     }
 
@@ -314,7 +314,7 @@ static int nvme_submit_cmd(nvme_queue_t *queue, nvme_sqe_t *cmd) {
     g_nvme_platform_ops->wmb();
     *queue->sq_doorbell = next_tail;
     g_nvme_platform_ops->mb();
-    mutex_unlock(&queue->lock);
+    spin_unlock(&queue->lock);
     return 0;
 }
 
@@ -335,7 +335,7 @@ static inline void nvme_complete_request(nvme_controller_t *ctrl, uint16_t cid,
 static int nvme_process_queue_completions(nvme_controller_t *ctrl,
                                           nvme_queue_t *queue) {
     int count = 0;
-    mutex_lock(&queue->lock);
+    spin_lock(&queue->lock);
 
     while (1) {
         g_nvme_platform_ops->rmb();
@@ -366,13 +366,13 @@ static int nvme_process_queue_completions(nvme_controller_t *ctrl,
         g_nvme_platform_ops->mb();
     }
 
-    mutex_unlock(&queue->lock);
+    spin_unlock(&queue->lock);
     return count;
 }
 
 static uint16_t nvme_alloc_cid(nvme_controller_t *ctrl, nvme_io_callback_t cb,
                                void *ctx) {
-    mutex_lock(&ctrl->cid_alloc_lock);
+    spin_lock(&ctrl->cid_alloc_lock);
 
     uint16_t total = sizeof(ctrl->requests) / sizeof(ctrl->requests[0]);
     for (uint16_t i = 0; i < total; i++) {
@@ -388,11 +388,11 @@ static uint16_t nvme_alloc_cid(nvme_controller_t *ctrl, nvme_io_callback_t cb,
 
         __atomic_store_n(&ctrl->requests[cid], slot, __ATOMIC_RELEASE);
         ctrl->cid_alloc_pos = (cid + 1) % total;
-        mutex_unlock(&ctrl->cid_alloc_lock);
+        spin_unlock(&ctrl->cid_alloc_lock);
         return cid;
     }
 
-    mutex_unlock(&ctrl->cid_alloc_lock);
+    spin_unlock(&ctrl->cid_alloc_lock);
     return 0xFFFF;
 }
 
@@ -631,8 +631,10 @@ static int nvme_setup_prp(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
         if (hinted == first_page_phys)
             first_page_phys = hinted;
     }
-    if (!first_page_phys)
+    if (!first_page_phys) {
+        printk("First page not mapped, vaddr = %#018lx\n", vaddr);
         return -1;
+    }
 
     cmd->prp1 = first_page_phys + page_off;
     cmd->prp2 = 0;
@@ -641,19 +643,25 @@ static int nvme_setup_prp(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
 
     uint64_t second_page_phys =
         nvme_translate_page_phys(page_base_va + NVME_PAGE_SIZE);
-    if (!second_page_phys)
+    if (!second_page_phys) {
+        printk("Second page not mapped, vaddr = %#018lx\n", vaddr);
         return -1;
+    }
     if (num_pages == 2) {
         cmd->prp2 = second_page_phys;
         return 0;
     }
-    if (num_pages - 1 > NVME_MAX_PRP_LIST_ENTRIES)
+    if (num_pages - 1 > NVME_MAX_PRP_LIST_ENTRIES) {
+        printk("Number of pages too big\n");
         return -1;
+    }
 
     uint64_t prp_list_phys;
     nvme_prp_list_t *prp_list = nvme_alloc_prp_list(ctrl, &prp_list_phys);
-    if (!prp_list)
+    if (!prp_list) {
+        printk("Failed to allocate prp list\n");
         return -1;
+    }
     cmd->prp2 = prp_list_phys;
     prp_list->prp[0] = second_page_phys;
 
@@ -711,6 +719,7 @@ static int nvme_submit_io_async(nvme_controller_t *ctrl, uint8_t opcode,
 
     if (nvme_setup_prp(ctrl, &cmd, buffer, buffer_phys, transfer_size) != 0) {
         nvme_release_cid(ctrl, cid);
+        printk("Setting up prp failed\n");
         return -1;
     }
 
@@ -719,6 +728,7 @@ static int nvme_submit_io_async(nvme_controller_t *ctrl, uint8_t opcode,
 
     nvme_queue_t *queue = nvme_pick_io_queue(ctrl);
     if (nvme_submit_cmd(queue, &cmd) != 0) {
+        printk("Submit command failed\n");
         nvme_release_cid(ctrl, cid);
         return -1;
     }
@@ -821,7 +831,7 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
     }
     memset(ctrl, 0, sizeof(nvme_controller_t));
 
-    mutex_init(&ctrl->cid_alloc_lock);
+    spin_init(&ctrl->cid_alloc_lock);
 
     ctrl->pci_dev = device;
     ctrl->bar0 = phys_to_virt((volatile uint8_t *)device->bars[0].address);
@@ -945,7 +955,9 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
 
             regist_blkdev("NVMe", ns, ns->ns->block_size,
                           ns->ns->block_count * ns->ns->block_size,
-                          ctrl->max_transfer_size, nvme_read, nvme_write);
+                          MIN(ns->ctrl->max_transfer_size,
+                              NVME_MAX_PRP_LIST_ENTRIES * DEFAULT_PAGE_SIZE),
+                          nvme_read, nvme_write);
         }
     }
 

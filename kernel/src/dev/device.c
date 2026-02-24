@@ -24,10 +24,10 @@ static bool device_minor_in_use(int subtype, uint64_t minor) {
 }
 
 static uint64_t device_install_internal(int type, int subtype, void *ptr,
-                                        char *name, uint64_t parent,
-                                        void *open, void *close, void *ioctl,
-                                        void *poll, void *read, void *write,
-                                        void *map, bool use_fixed_minor,
+                                        char *name, uint64_t parent, void *open,
+                                        void *close, void *ioctl, void *poll,
+                                        void *read, void *write, void *map,
+                                        bool use_fixed_minor,
                                         uint64_t fixed_minor) {
     if (subtype < 0 || subtype >= DEV_MAX) {
         return 0;
