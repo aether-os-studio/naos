@@ -139,7 +139,7 @@ static inline void do_open(vfs_node_t file) {
         return;
 
     fs_t *fs = all_fs[file->fsid];
-    if (fs && (fs->flags & FS_FLAGS_NEED_OPEN)) {
+    if (fs && (fs->flags & FS_FLAGS_ALWAYS_OPEN)) {
         if (file->parent) {
             vfs_ops_of(file)->open(file->parent, file->name, file);
         }
@@ -162,7 +162,7 @@ static inline bool do_need_update(vfs_node_t file) {
         return false;
 
     fs_t *fs = all_fs[file->fsid];
-    if (fs && (fs->flags & FS_FLAGS_NEED_OPEN) &&
+    if (fs && (fs->flags & FS_FLAGS_ALWAYS_OPEN) &&
         !(file->flags & VFS_NODE_FLAGS_OPENED)) {
         return true;
     }

@@ -23,8 +23,10 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num) {
         printk("Intr vector [%d] does not have a handler\n", irq_num);
     }
 
-    if ((irq_num == ARCH_TIMER_IRQ) && can_schedule && current_task) {
-        if (current_cpu_id == 0) {
+    task_t *self = current_task;
+
+    if ((irq_num == ARCH_TIMER_IRQ) && can_schedule && self) {
+        if (self->cpu_id == 0) {
             sched_check_wakeup();
         }
 

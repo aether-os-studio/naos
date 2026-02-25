@@ -973,7 +973,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
                 if (fd) {
                     new->fds[i] = vfs_dup(fd);
-                    fd->node->refcount--;
                 } else {
                     new->fds[i] = NULL;
                 }
@@ -1157,6 +1156,27 @@ static int write_task_user_memory(task_t *task, uint64_t uaddr, const void *src,
 
 extern int signalfdfs_id;
 
+void task_cleanup_fd_info(task_t *task) {
+    if (task->fd_info) {
+        if (--task->fd_info->ref_count <= 0) {
+            with_fd_info_lock(task->fd_info, {
+                for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+                    if (task->fd_info->fds[i]) {
+                        vfs_close(task->fd_info->fds[i]->node);
+                        free(task->fd_info->fds[i]);
+
+                        task->fd_info->fds[i] = NULL;
+
+                        procfs_on_close_file(task, i);
+                    }
+                }
+            });
+            free(task->fd_info);
+            task->fd_info = NULL;
+        }
+    }
+}
+
 void task_exit_inner(task_t *task, int64_t code) {
     arch_disable_interrupt();
     uint64_t before_user_ns = task ? task->user_time_ns : 0;
@@ -1203,24 +1223,7 @@ void task_exit_inner(task_t *task, int64_t code) {
         sys_futex_wake((uint64_t)task->tidptr, INT32_MAX, 0xFFFFFFFF);
     }
 
-    if (task->fd_info) {
-        if (--task->fd_info->ref_count <= 0) {
-            with_fd_info_lock(task->fd_info, {
-                for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-                    if (task->fd_info->fds[i]) {
-                        vfs_close(task->fd_info->fds[i]->node);
-                        free(task->fd_info->fds[i]);
-
-                        task->fd_info->fds[i] = NULL;
-
-                        procfs_on_close_file(task, i);
-                    }
-                }
-            });
-            free(task->fd_info);
-            task->fd_info = NULL;
-        }
-    }
+    task_cleanup_fd_info(task);
 
     task_timerfd_list_clear(task);
 
@@ -1326,14 +1329,17 @@ uint64_t task_exit(int64_t code) {
         continue_ptr_count = 0;
         if (tasks[i] != current_task && (tasks[i]->ppid != tasks[i]->pid) &&
             (tasks[i]->ppid == current_task->pid)) {
-            if (tasks[i]->parent_death_sig != (uint64_t)-1) {
-                task_send_signal(tasks[i], tasks[i]->parent_death_sig,
-                                 tasks[i]->parent_death_sig + 128);
-                if (tasks[i]->state == TASK_BLOCKING ||
-                    tasks[i]->state == TASK_READING_STDIO)
-                    task_unblock(tasks[i], EOK);
+            if (tasks[i]->fd_info == current_task->fd_info) {
+                task_exit_inner(tasks[i], code);
             } else {
                 tasks[i]->ppid = 1;
+                if (tasks[i]->parent_death_sig != (uint64_t)-1) {
+                    task_send_signal(tasks[i], tasks[i]->parent_death_sig,
+                                     tasks[i]->parent_death_sig + 128);
+                    if (tasks[i]->state == TASK_BLOCKING ||
+                        tasks[i]->state == TASK_READING_STDIO)
+                        task_unblock(tasks[i], EOK);
+                }
             }
         }
     }
@@ -1825,17 +1831,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     child->fd_info = (flags & CLONE_FILES) ? current_task->fd_info
                                            : calloc(1, sizeof(fd_info_t));
-    if (flags & CLONE_FILES) {
-        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-            fd_t *fd = child->fd_info->fds[i];
-
-            if (fd) {
-                child->fd_info->fds[i]->node->refcount++;
-            } else {
-                child->fd_info->fds[i] = NULL;
-            }
-        }
-    } else {
+    if (!(flags & CLONE_FILES)) {
         mutex_init(&child->fd_info->fdt_lock);
         for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
             fd_t *fd = current_task->fd_info->fds[i];
