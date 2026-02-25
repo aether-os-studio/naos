@@ -322,6 +322,7 @@ uint64_t sys_close(uint64_t fd) {
             self->fd_info->fds[fd]->node->lock.l_pid = 0;
         }
 
+        task_timerfd_untrack_fd(self, self->fd_info->fds[fd]);
         vfs_close(self->fd_info->fds[fd]->node);
         free(self->fd_info->fds[fd]);
         self->fd_info->fds[fd] = NULL;
@@ -408,6 +409,7 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
                 entry->node->lock.l_pid = 0;
             }
 
+            task_timerfd_untrack_fd(self, entry);
             vfs_close(entry->node);
             free(entry);
             self->fd_info->fds[fd_] = NULL;
@@ -848,6 +850,7 @@ static uint64_t dup_to_exact(task_t *self, uint64_t fd, uint64_t newfd,
         }
 
         if (self->fd_info->fds[newfd]) {
+            task_timerfd_untrack_fd(self, self->fd_info->fds[newfd]);
             vfs_close(self->fd_info->fds[newfd]->node);
             free(self->fd_info->fds[newfd]);
             self->fd_info->fds[newfd] = NULL;
@@ -861,6 +864,7 @@ static uint64_t dup_to_exact(task_t *self, uint64_t fd, uint64_t newfd,
         }
 
         self->fd_info->fds[newfd] = newf;
+        task_timerfd_track_fd(self, newf);
     });
 
     return ret;
@@ -912,6 +916,7 @@ static uint64_t dup_to_free_slot(task_t *self, uint64_t fd, uint64_t start,
         }
 
         self->fd_info->fds[i] = newf;
+        task_timerfd_track_fd(self, newf);
         procfs_on_open_file(self, i);
         ret = i;
     });

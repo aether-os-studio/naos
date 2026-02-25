@@ -23,6 +23,140 @@ spinlock_t task_queue_lock = SPIN_INIT;
 task_t *tasks[MAX_TASK_NUM];
 task_t *idle_tasks[MAX_CPU_NUM];
 
+extern int timerfdfs_id;
+
+typedef struct task_timerfd_ref {
+    struct llist_header node;
+    vfs_node_t timerfd_node;
+    uint64_t fd_ref_count;
+} task_timerfd_ref_t;
+
+static task_timerfd_ref_t *task_timerfd_find_ref(task_t *task,
+                                                 vfs_node_t timerfd_node) {
+    if (!task || !timerfd_node)
+        return NULL;
+
+    for (struct llist_header *it = task->timerfd_list.next;
+         it != &task->timerfd_list; it = it->next) {
+        task_timerfd_ref_t *ref = list_entry(it, task_timerfd_ref_t, node);
+        if (ref->timerfd_node == timerfd_node)
+            return ref;
+    }
+
+    return NULL;
+}
+
+static void task_timerfd_list_clear(task_t *task) {
+    if (!task)
+        return;
+
+    for (struct llist_header *it = task->timerfd_list.next;
+         it != &task->timerfd_list;) {
+        struct llist_header *next = it->next;
+        task_timerfd_ref_t *ref = list_entry(it, task_timerfd_ref_t, node);
+        llist_delete(&ref->node);
+        free(ref);
+        it = next;
+    }
+
+    llist_init_head(&task->timerfd_list);
+}
+
+static void task_timerfd_track_fd_single(task_t *task, fd_t *fd) {
+    if (!task || !fd || !fd->node || fd->node->fsid != timerfdfs_id)
+        return;
+
+    task_timerfd_ref_t *ref = task_timerfd_find_ref(task, fd->node);
+    if (ref) {
+        ref->fd_ref_count++;
+        return;
+    }
+
+    task_timerfd_ref_t *new_ref = calloc(1, sizeof(task_timerfd_ref_t));
+    if (!new_ref)
+        return;
+
+    llist_init_head(&new_ref->node);
+    new_ref->timerfd_node = fd->node;
+    new_ref->fd_ref_count = 1;
+    llist_append(&task->timerfd_list, &new_ref->node);
+}
+
+void task_timerfd_track_fd(task_t *task, fd_t *fd) {
+    if (!task || !fd || !fd->node || fd->node->fsid != timerfdfs_id)
+        return;
+
+    fd_info_t *shared_fd_info = task->fd_info;
+    if (!shared_fd_info || shared_fd_info->ref_count <= 1) {
+        task_timerfd_track_fd_single(task, fd);
+        return;
+    }
+
+    task_timerfd_track_fd_single(task, fd);
+    for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
+        task_t *candidate = tasks[i];
+        if (!candidate || candidate == task ||
+            candidate->fd_info != shared_fd_info)
+            continue;
+        task_timerfd_track_fd_single(candidate, fd);
+    }
+}
+
+static void task_timerfd_untrack_fd_single(task_t *task, fd_t *fd) {
+    if (!task || !fd || !fd->node || fd->node->fsid != timerfdfs_id)
+        return;
+
+    task_timerfd_ref_t *ref = task_timerfd_find_ref(task, fd->node);
+    if (!ref)
+        return;
+
+    if (ref->fd_ref_count > 1) {
+        ref->fd_ref_count--;
+        return;
+    }
+
+    llist_delete(&ref->node);
+    free(ref);
+}
+
+void task_timerfd_untrack_fd(task_t *task, fd_t *fd) {
+    if (!task || !fd || !fd->node || fd->node->fsid != timerfdfs_id)
+        return;
+
+    fd_info_t *shared_fd_info = task->fd_info;
+    if (!shared_fd_info || shared_fd_info->ref_count <= 1) {
+        task_timerfd_untrack_fd_single(task, fd);
+        return;
+    }
+
+    task_timerfd_untrack_fd_single(task, fd);
+    for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
+        task_t *candidate = tasks[i];
+        if (!candidate || candidate == task ||
+            candidate->fd_info != shared_fd_info)
+            continue;
+        task_timerfd_untrack_fd_single(candidate, fd);
+    }
+}
+
+void task_timerfd_rebuild_from_fd_info(task_t *task) {
+    if (!task)
+        return;
+
+    task_timerfd_list_clear(task);
+    if (!task->fd_info)
+        return;
+
+    with_fd_info_lock(task->fd_info, {
+        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+            fd_t *fd = task->fd_info->fds[i];
+            if (!fd)
+                continue;
+            task_timerfd_track_fd_single(task, fd);
+        }
+    });
+}
+
 void send_process_group_signal(int pgid, int signal) {
     uint64_t continue_ptr_count = 0;
     for (size_t i = 1; i < MAX_TASK_NUM; i++) {
@@ -45,6 +179,8 @@ void free_task(task_t *ptr) {
     spin_lock(&task_queue_lock);
     tasks[ptr->pid] = NULL;
     spin_unlock(&task_queue_lock);
+
+    task_timerfd_list_clear(ptr);
 
     vma_manager_exit_cleanup(&ptr->arch_context->mm->task_vma_mgr);
 
@@ -148,6 +284,7 @@ task_t *get_free_task() {
         if (idle_tasks[i] == NULL) {
             task_t *task = (task_t *)malloc(sizeof(task_t));
             memset(task, 0, sizeof(task_t));
+            llist_init_head(&task->timerfd_list);
             task->state = TASK_CREATING;
             task->pid = 0;
             task->cpu_id = i;
@@ -163,6 +300,7 @@ task_t *get_free_task() {
         if (tasks[i] == NULL) {
             task_t *task = (task_t *)malloc(sizeof(task_t));
             memset(task, 0, sizeof(task_t));
+            llist_init_head(&task->timerfd_list);
             task->state = TASK_CREATING;
             task->pid = i;
             task->cpu_id = alloc_cpu_id();
@@ -845,6 +983,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
         old->ref_count--;
 
         current_task->fd_info = new;
+        task_timerfd_rebuild_from_fd_info(current_task);
     }
 
     if (current_task->is_clone && (current_task->clone_flags & CLONE_VFORK) &&
@@ -880,6 +1019,8 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 continue;
 
             if (current_task->fd_info->fds[i]->close_on_exec) {
+                task_timerfd_untrack_fd(current_task,
+                                        current_task->fd_info->fds[i]);
                 vfs_close(current_task->fd_info->fds[i]->node);
                 free(current_task->fd_info->fds[i]);
                 current_task->fd_info->fds[i] = NULL;
@@ -1080,6 +1221,8 @@ void task_exit_inner(task_t *task, int64_t code) {
             task->fd_info = NULL;
         }
     }
+
+    task_timerfd_list_clear(task);
 
     procfs_on_exit_task(task);
 
@@ -1706,6 +1849,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     }
 
     child->fd_info->ref_count++;
+    task_timerfd_rebuild_from_fd_info(child);
 
     procfs_on_new_task(child);
     for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
@@ -1940,49 +2084,42 @@ void sched_update_itimer() {
     }
 }
 
-extern int timerfdfs_id;
-
 void sched_update_timerfd() {
-    if (!current_task->fd_info)
+    if (current_task->state == TASK_DIED ||
+        llist_empty(&current_task->timerfd_list))
         return;
-    uint64_t continue_null_fd_count = 0;
-    for (int i = 0; i < MAX_FD_NUM; i++) {
-        fd_t *fd = current_task->fd_info->fds[i];
-        if (!fd) {
-            continue_null_fd_count++;
-            if (continue_null_fd_count >= 8)
-                break;
+
+    task_timerfd_ref_t *ref, *tmp;
+    llist_for_each(ref, tmp, &current_task->timerfd_list, node) {
+        vfs_node_t node = ref->timerfd_node;
+
+        if (!node || node->fsid != timerfdfs_id)
             continue;
+
+        timerfd_t *tfd = node->handle;
+        if (!tfd)
+            continue;
+
+        uint64_t now;
+        if (tfd->timer.clock_type == CLOCK_MONOTONIC) {
+            now = nano_time();
+        } else {
+            tm time;
+            time_read(&time);
+            now = (uint64_t)mktime(&time) * 1000000000ULL;
         }
-        continue_null_fd_count = 0;
 
-        vfs_node_t node = fd->node;
-        if (node && node->fsid == timerfdfs_id) {
-            timerfd_t *tfd = node->handle;
-
-            // 根据时钟类型获取当前时间
-            uint64_t now;
-            if (tfd->timer.clock_type == CLOCK_MONOTONIC) {
-                now = nano_time();
+        if (tfd->timer.expires && now >= tfd->timer.expires) {
+            if (tfd->timer.interval) {
+                uint64_t delta = now - tfd->timer.expires;
+                uint64_t periods = delta / tfd->timer.interval + 1;
+                tfd->count += periods;
+                tfd->timer.expires += periods * tfd->timer.interval;
             } else {
-                // CLOCK_REALTIME
-                tm time;
-                time_read(&time);
-                now = (uint64_t)mktime(&time) * 1000000000ULL;
+                tfd->count++;
+                tfd->timer.expires = 0;
             }
-
-            if (tfd->timer.expires && now >= tfd->timer.expires) {
-                if (tfd->timer.interval) {
-                    uint64_t delta = now - tfd->timer.expires;
-                    uint64_t periods = delta / tfd->timer.interval + 1;
-                    tfd->count += periods;
-                    tfd->timer.expires += periods * tfd->timer.interval;
-                } else {
-                    tfd->count++;
-                    tfd->timer.expires = 0;
-                }
-                vfs_poll_notify(node, EPOLLIN);
-            }
+            vfs_poll_notify(node, EPOLLIN);
         }
     }
 }

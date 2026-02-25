@@ -2,6 +2,7 @@
 
 #include <libs/klibc.h>
 #include <libs/mutex.h>
+#include <libs/llist.h>
 #include <fs/termios.h>
 #include <mm/shm.h>
 
@@ -282,6 +283,7 @@ typedef struct task {
     task_signal_info_t *signal;
     vfs_node_t cwd;
     fd_info_t *fd_info;
+    struct llist_header timerfd_list;
     shm_mapping_t *shm_ids;
     vfs_node_t procfs_node;
     char *cmdline;

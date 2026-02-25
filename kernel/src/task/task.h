@@ -91,6 +91,9 @@ extern task_t *arch_get_current();
 void sched_update_itimer();
 void sched_update_timerfd();
 void sched_check_wakeup();
+void task_timerfd_track_fd(task_t *task, fd_t *fd);
+void task_timerfd_untrack_fd(task_t *task, fd_t *fd);
+void task_timerfd_rebuild_from_fd_info(task_t *task);
 
 task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
                     int priority);

@@ -49,6 +49,7 @@ uint64_t sys_timerfd_create(int clockid, int flags) {
         new_fd->offset = 0;
         new_fd->flags = flags;
         current_task->fd_info->fds[fd] = new_fd;
+        task_timerfd_track_fd(current_task, new_fd);
         procfs_on_open_file(current_task, fd);
         ret = 0;
     });

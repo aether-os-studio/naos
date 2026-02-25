@@ -11,12 +11,9 @@ export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 mkdir -p "${XDG_RUNTIME_DIR}"
 chmod 700 "${XDG_RUNTIME_DIR}"
 
-export XDG_SESSION_TYPE=wayland
-export GDK_BACKEND=wayland
-
 export LANG=C.UTF-8
 
-export SDL_VIDEODRIVER=wayland
+export SDL_VIDEODRIVER=x11
 
 seatd &
 exec weston --xwayland
