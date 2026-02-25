@@ -107,6 +107,12 @@ HOST_LIBS :=
 
 LIBGCC_VERSION ?= 2025-12-08
 
+.PHONY: all
+all: $(IMAGE_NAME).img rootfs-$(ARCH).img
+
+.PHONY: all
+all-single: single-$(IMAGE_NAME).img
+
 prepare: libgcc_$(ARCH).a liballoc-$(ARCH).a
 	./kernel/get-deps
 
@@ -116,11 +122,6 @@ liballoc-$(ARCH).a:
 libgcc_$(ARCH).a:
 	wget https://github.com/osdev0/libgcc-binaries/releases/download/$(LIBGCC_VERSION)/libgcc-$(ARCH).a -O libgcc_$(ARCH).a
 
-.PHONY: all
-all: $(IMAGE_NAME).img rootfs-$(ARCH).img
-
-.PHONY: all
-all-single: single-$(IMAGE_NAME).img
 
 .PHONY: kernel
 kernel:

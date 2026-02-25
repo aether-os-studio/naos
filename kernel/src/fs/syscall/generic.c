@@ -2,6 +2,12 @@
 #include <fs/vfs/proc.h>
 #include <boot/boot.h>
 #include <net/socket.h>
+#include <drivers/kernel_logger.h>
+
+static uint64_t do_unlink(const char *name);
+static uint64_t do_sys_open_tmpfile(const char *dir_path, uint64_t flags,
+                                    uint64_t mode);
+static volatile uint64_t tmpfile_seq = 1;
 
 uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
                    uint64_t flags, void *data) {
@@ -95,7 +101,7 @@ uint64_t sys_umount2(const char *target, uint64_t flags) {
 
 uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
     if ((flags & O_TMPFILE) == O_TMPFILE)
-        return (uint64_t)-EINVAL;
+        return do_sys_open_tmpfile(name, flags, mode);
 
     task_t *self = current_task;
 
@@ -153,6 +159,64 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
     });
 
     return ret;
+}
+
+static uint64_t do_sys_open_tmpfile(const char *dir_path, uint64_t flags,
+                                    uint64_t mode) {
+    if (!dir_path || !dir_path[0])
+        return (uint64_t)-ENOENT;
+
+    uint64_t acc_mode = flags & O_ACCMODE_FLAGS;
+    if (acc_mode != O_WRONLY && acc_mode != O_RDWR)
+        return (uint64_t)-EINVAL;
+
+    vfs_node_t dir = vfs_open(dir_path, flags & O_NOFOLLOW);
+    if (!dir)
+        return (uint64_t)-ENOENT;
+    if (!(dir->type & file_dir))
+        return (uint64_t)-ENOTDIR;
+
+    const char *suffix = (dir_path[strlen(dir_path) - 1] == '/') ? "" : "/";
+    char tmp_path[512];
+    int pid = current_task ? current_task->pid : 0;
+
+    for (int attempt = 0; attempt < 128; attempt++) {
+        uint64_t seq =
+            __atomic_fetch_add(&tmpfile_seq, 1, __ATOMIC_RELAXED) + attempt;
+        int written =
+            snprintf(tmp_path, sizeof(tmp_path), "%s%s.naos_tmpfile.%d.%llu",
+                     dir_path, suffix, pid, (unsigned long long)seq);
+        if (written <= 0 || (size_t)written >= sizeof(tmp_path))
+            return (uint64_t)-ENAMETOOLONG;
+
+        if (vfs_open(tmp_path, O_NOFOLLOW))
+            continue;
+
+        int mkret = vfs_mkfile(tmp_path);
+        if (mkret < 0)
+            continue;
+
+        if (mode)
+            vfs_chmod(tmp_path, mode ? (mode & 0777) : 0777);
+
+        uint64_t open_flags =
+            flags & ~((uint64_t)O_TMPFILE | (uint64_t)O_DIRECTORY);
+        uint64_t fd = do_sys_open(tmp_path, open_flags, mode);
+        if ((int64_t)fd < 0) {
+            do_unlink(tmp_path);
+            return fd;
+        }
+
+        uint64_t unlink_ret = do_unlink(tmp_path);
+        if ((int64_t)unlink_ret < 0) {
+            sys_close(fd);
+            return unlink_ret;
+        }
+
+        return fd;
+    }
+
+    return (uint64_t)-EEXIST;
 }
 
 uint64_t sys_open(const char *path, uint64_t flags, uint64_t mode) {
@@ -1404,7 +1468,7 @@ uint64_t sys_rmdir(const char *name_user) {
     return ret;
 }
 
-uint64_t do_unlink(const char *name) {
+static uint64_t do_unlink(const char *name) {
     vfs_node_t node = vfs_open(name, O_NOFOLLOW);
     if (!node)
         return -ENOENT;

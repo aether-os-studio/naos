@@ -1,6 +1,7 @@
 #!/bin/sh
 
 touch /run/udev/data/c226:0
+touch /run/udev/data/c226:128
 touch /run/udev/data/c13:0
 touch /run/udev/data/c13:1
 touch /run/udev/data/c13:2

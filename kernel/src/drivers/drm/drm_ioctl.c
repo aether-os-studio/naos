@@ -477,6 +477,7 @@ static ssize_t drm_user_blob_generate_id_locked(uint32_t *blob_id) {
 
 #define DRM_BLOB_ID_CRTC_MODE_BASE 0x10000000U
 #define DRM_BLOB_ID_CONNECTOR_EDID_BASE 0x20000000U
+#define DRM_BLOB_ID_PLANE_IN_FORMATS_BASE 0x28000000U
 
 static uint32_t drm_crtc_mode_blob_id(uint32_t crtc_id) {
     return DRM_BLOB_ID_CRTC_MODE_BASE + crtc_id;
@@ -484,6 +485,10 @@ static uint32_t drm_crtc_mode_blob_id(uint32_t crtc_id) {
 
 static uint32_t drm_connector_edid_blob_id(uint32_t connector_id) {
     return DRM_BLOB_ID_CONNECTOR_EDID_BASE + connector_id;
+}
+
+static uint32_t drm_plane_in_formats_blob_id(uint32_t plane_id) {
+    return DRM_BLOB_ID_PLANE_IN_FORMATS_BASE + plane_id;
 }
 
 static bool drm_mode_blob_to_crtc_id(uint32_t blob_id, uint32_t *crtc_id) {
@@ -499,12 +504,23 @@ static bool drm_mode_blob_to_crtc_id(uint32_t blob_id, uint32_t *crtc_id) {
 static bool drm_blob_to_connector_edid_id(uint32_t blob_id,
                                           uint32_t *connector_id) {
     if (blob_id <= DRM_BLOB_ID_CONNECTOR_EDID_BASE ||
-        blob_id >= DRM_BLOB_ID_USER_BASE) {
+        blob_id >= DRM_BLOB_ID_PLANE_IN_FORMATS_BASE) {
         return false;
     }
 
     *connector_id = blob_id - DRM_BLOB_ID_CONNECTOR_EDID_BASE;
     return *connector_id != 0;
+}
+
+static bool drm_blob_to_plane_in_formats_id(uint32_t blob_id,
+                                            uint32_t *plane_id) {
+    if (blob_id <= DRM_BLOB_ID_PLANE_IN_FORMATS_BASE ||
+        blob_id >= DRM_BLOB_ID_USER_BASE) {
+        return false;
+    }
+
+    *plane_id = blob_id - DRM_BLOB_ID_PLANE_IN_FORMATS_BASE;
+    return *plane_id != 0;
 }
 
 static void drm_fill_default_modeinfo(drm_device_t *dev,
@@ -752,7 +768,7 @@ ssize_t drm_ioctl_get_cap(drm_device_t *dev, void *arg) {
         cap->value = DRM_PRIME_CAP_EXPORT | DRM_PRIME_CAP_IMPORT;
         return 0;
     case DRM_CAP_ADDFB2_MODIFIERS:
-        cap->value = 0;
+        cap->value = 1;
         return 0;
     case DRM_CAP_DUMB_PREFER_SHADOW:
         cap->value = 0;
@@ -1638,6 +1654,14 @@ ssize_t drm_ioctl_mode_getproperty(drm_device_t *dev, void *arg) {
         prop->count_values = 0;
         return 0;
 
+    case DRM_PROPERTY_ID_IN_FORMATS:
+        prop->flags = DRM_MODE_PROP_BLOB | DRM_MODE_PROP_IMMUTABLE;
+        strncpy((char *)prop->name, "IN_FORMATS", DRM_PROP_NAME_LEN);
+        prop->name[DRM_PROP_NAME_LEN - 1] = '\0';
+        prop->count_enum_blobs = 0;
+        prop->count_values = 0;
+        return 0;
+
     default:
         printk("drm: Unsupported property ID: %u\n", prop->prop_id);
         return -EINVAL;
@@ -1731,6 +1755,8 @@ ssize_t drm_ioctl_mode_destroypropblob(drm_device_t *dev, void *arg) {
     uint32_t reserved_obj_id = 0;
     if (destroy_blob->blob_id == DRM_BLOB_ID_PLANE_TYPE ||
         drm_mode_blob_to_crtc_id(destroy_blob->blob_id, &reserved_obj_id) ||
+        drm_blob_to_plane_in_formats_id(destroy_blob->blob_id,
+                                        &reserved_obj_id) ||
         drm_blob_to_connector_edid_id(destroy_blob->blob_id,
                                       &reserved_obj_id)) {
         return -EPERM;
@@ -1792,6 +1818,71 @@ ssize_t drm_ioctl_mode_getpropblob(drm_device_t *dev, void *arg) {
             }
         }
         return 0;
+    }
+
+    uint32_t plane_id = 0;
+    if (drm_blob_to_plane_in_formats_id(blob->blob_id, &plane_id)) {
+        drm_plane_t *plane = drm_plane_get(&dev->resource_mgr, plane_id);
+        if (!plane) {
+            return -ENOENT;
+        }
+
+        if (plane->count_format_types == 0 || !plane->format_types) {
+            drm_plane_free(&dev->resource_mgr, plane->id);
+            return -ENOENT;
+        }
+
+        uint32_t count_formats = plane->count_format_types;
+        uint32_t count_modifiers = (count_formats + 63U) / 64U;
+        size_t formats_len = (size_t)count_formats * sizeof(uint32_t);
+        size_t modifiers_len =
+            (size_t)count_modifiers * sizeof(struct drm_format_modifier);
+        size_t blob_len = sizeof(struct drm_format_modifier_blob) + formats_len +
+                          modifiers_len;
+
+        uint8_t *blob_data = malloc(blob_len);
+        if (!blob_data) {
+            drm_plane_free(&dev->resource_mgr, plane->id);
+            return -ENOMEM;
+        }
+
+        struct drm_format_modifier_blob *fmt_blob =
+            (struct drm_format_modifier_blob *)blob_data;
+        memset(fmt_blob, 0, sizeof(*fmt_blob));
+        fmt_blob->version = FORMAT_BLOB_CURRENT;
+        fmt_blob->count_formats = count_formats;
+        fmt_blob->formats_offset = sizeof(struct drm_format_modifier_blob);
+        fmt_blob->count_modifiers = count_modifiers;
+        fmt_blob->modifiers_offset = fmt_blob->formats_offset + formats_len;
+
+        uint32_t *formats = (uint32_t *)(blob_data + fmt_blob->formats_offset);
+        memcpy(formats, plane->format_types, formats_len);
+
+        struct drm_format_modifier *mods =
+            (struct drm_format_modifier *)(blob_data +
+                                           fmt_blob->modifiers_offset);
+        for (uint32_t chunk = 0; chunk < count_modifiers; chunk++) {
+            uint32_t offset = chunk * 64U;
+            uint32_t remain = count_formats - offset;
+            uint32_t bits = MIN(remain, 64U);
+
+            mods[chunk].offset = offset;
+            mods[chunk].pad = 0;
+            mods[chunk].modifier = 0;
+            mods[chunk].formats =
+                (bits == 64U) ? UINT64_MAX : ((1ULL << bits) - 1ULL);
+        }
+
+        drm_plane_free(&dev->resource_mgr, plane->id);
+
+        size_t copy_len = MIN((size_t)blob->length, blob_len);
+        blob->length = (uint32_t)blob_len;
+        int ret = 0;
+        if (copy_len > 0 && blob->data) {
+            ret = drm_copy_to_user_ptr(blob->data, blob_data, copy_len);
+        }
+        free(blob_data);
+        return ret;
     }
 
     spin_lock(&drm_user_blobs_lock);
@@ -1951,18 +2042,18 @@ ssize_t drm_ioctl_mode_obj_getproperties(drm_device_t *dev, void *arg) {
             return -ENOENT;
         }
 
-        // Plane properties needed by wlroots/smithay style atomic userspace.
-        props->count_props = 11;
+        // Plane properties needed by wlroots/smithay/weston style atomic userspace.
+        props->count_props = 12;
 
         if (props->props_ptr) {
             uint32_t copy_props = MIN(props_cap, props->count_props);
-            uint32_t prop_ids[11] = {
-                DRM_PROPERTY_ID_PLANE_TYPE, DRM_PROPERTY_ID_FB_ID,
-                DRM_PROPERTY_ID_CRTC_ID,    DRM_PROPERTY_ID_SRC_X,
-                DRM_PROPERTY_ID_SRC_Y,      DRM_PROPERTY_ID_SRC_W,
-                DRM_PROPERTY_ID_SRC_H,      DRM_PROPERTY_ID_CRTC_X,
-                DRM_PROPERTY_ID_CRTC_Y,     DRM_PROPERTY_ID_CRTC_W,
-                DRM_PROPERTY_ID_CRTC_H,
+            uint32_t prop_ids[12] = {
+                DRM_PROPERTY_ID_PLANE_TYPE,  DRM_PROPERTY_ID_IN_FORMATS,
+                DRM_PROPERTY_ID_FB_ID,       DRM_PROPERTY_ID_CRTC_ID,
+                DRM_PROPERTY_ID_SRC_X,       DRM_PROPERTY_ID_SRC_Y,
+                DRM_PROPERTY_ID_SRC_W,       DRM_PROPERTY_ID_SRC_H,
+                DRM_PROPERTY_ID_CRTC_X,      DRM_PROPERTY_ID_CRTC_Y,
+                DRM_PROPERTY_ID_CRTC_W,      DRM_PROPERTY_ID_CRTC_H,
             };
 
             int ret = drm_copy_to_user_ptr(props->props_ptr, prop_ids,
@@ -1973,15 +2064,16 @@ ssize_t drm_ioctl_mode_obj_getproperties(drm_device_t *dev, void *arg) {
         }
         if (props->prop_values_ptr) {
             uint32_t copy_props = MIN(props_cap, props->count_props);
-            uint64_t prop_values[11];
+            uint64_t prop_values[12];
 
             prop_values[0] = plane->plane_type;
-            prop_values[1] = plane->fb_id; // 当前关联的 framebuffer
-            prop_values[2] = plane->crtc_id;
-            prop_values[3] = 0;
+            prop_values[1] = drm_plane_in_formats_blob_id(plane->id);
+            prop_values[2] = plane->fb_id; // 当前关联的 framebuffer
+            prop_values[3] = plane->crtc_id;
             prop_values[4] = 0;
             prop_values[5] = 0;
             prop_values[6] = 0;
+            prop_values[7] = 0;
 
             drm_crtc_t *crtc = NULL;
             if (plane->crtc_id) {
@@ -1994,25 +2086,25 @@ ssize_t drm_ioctl_mode_obj_getproperties(drm_device_t *dev, void *arg) {
             }
 
             if (fb) {
-                prop_values[5] = ((uint64_t)fb->width) << 16;
-                prop_values[6] = ((uint64_t)fb->height) << 16;
+                prop_values[6] = ((uint64_t)fb->width) << 16;
+                prop_values[7] = ((uint64_t)fb->height) << 16;
                 drm_framebuffer_free(&dev->resource_mgr, fb->id);
             } else if (crtc) {
-                prop_values[5] = ((uint64_t)crtc->w) << 16;
-                prop_values[6] = ((uint64_t)crtc->h) << 16;
+                prop_values[6] = ((uint64_t)crtc->w) << 16;
+                prop_values[7] = ((uint64_t)crtc->h) << 16;
             }
 
             if (crtc) {
-                prop_values[7] = crtc->x;
-                prop_values[8] = crtc->y;
-                prop_values[9] = crtc->w;
-                prop_values[10] = crtc->h;
+                prop_values[8] = crtc->x;
+                prop_values[9] = crtc->y;
+                prop_values[10] = crtc->w;
+                prop_values[11] = crtc->h;
                 drm_crtc_free(&dev->resource_mgr, crtc->id);
             } else {
-                prop_values[7] = 0;
                 prop_values[8] = 0;
                 prop_values[9] = 0;
                 prop_values[10] = 0;
+                prop_values[11] = 0;
             }
 
             int ret = drm_copy_to_user_ptr(props->prop_values_ptr, prop_values,

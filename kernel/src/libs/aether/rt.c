@@ -21,3 +21,6 @@ EXPORT_SYMBOL(spin_unlock);
 EXPORT_SYMBOL(mutex_init);
 EXPORT_SYMBOL(mutex_lock);
 EXPORT_SYMBOL(mutex_unlock);
+
+EXPORT_SYMBOL(check_unmapped);
+EXPORT_SYMBOL(check_user_overflow);

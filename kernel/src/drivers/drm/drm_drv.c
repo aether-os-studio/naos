@@ -183,6 +183,10 @@ static void drm_device_setup_sysfs(int major, int card_minor, int render_minor,
     vfs_node_t card_root =
         sysfs_regist_dev('c', major, card_minor, "", card_dev_name,
                          "SUBSYSTEM=drm\nDEVTYPE=drm_minor\n");
+    vfs_node_t card_root_dev = sysfs_child_append(card_root, "dev", false);
+    char devnum_content[32];
+    sprintf(devnum_content, "%d:%d\n", major, card_minor);
+    vfs_write(card_root_dev, devnum_content, 0, strlen(devnum_content));
 
     vfs_node_t device_dir = sysfs_child_append(card_root, "device", true);
     vfs_node_t drm_dir = sysfs_child_append(device_dir, "drm", true);
@@ -219,6 +223,8 @@ static void drm_device_setup_sysfs(int major, int card_minor, int render_minor,
     char card_node_name[16];
     sprintf(card_node_name, "card%d", card_minor);
     vfs_node_t card_node = sysfs_child_append(drm_dir, card_node_name, true);
+    vfs_node_t card_node_dev = sysfs_child_append(card_node, "dev", false);
+    vfs_write(card_node_dev, devnum_content, 0, strlen(devnum_content));
 
     vfs_node_t card_uevent = sysfs_child_append(card_node, "uevent", false);
     sprintf(content,
@@ -239,6 +245,10 @@ static void drm_device_setup_sysfs(int major, int card_minor, int render_minor,
         vfs_node_t render_root =
             sysfs_regist_dev('c', major, render_minor, "", render_dev_name,
                              "SUBSYSTEM=drm\nDEVTYPE=drm_minor\n");
+        vfs_node_t render_root_dev =
+            sysfs_child_append(render_root, "dev", false);
+        sprintf(devnum_content, "%d:%d\n", major, render_minor);
+        vfs_write(render_root_dev, devnum_content, 0, strlen(devnum_content));
 
         char card_device_path[128];
         sprintf(card_device_path, "/sys/dev/char/%d:%d/device", major,
@@ -249,6 +259,9 @@ static void drm_device_setup_sysfs(int major, int card_minor, int render_minor,
         sprintf(render_node_name, "renderD%d", render_minor);
         vfs_node_t render_node =
             sysfs_child_append(drm_dir, render_node_name, true);
+        vfs_node_t render_node_dev =
+            sysfs_child_append(render_node, "dev", false);
+        vfs_write(render_node_dev, devnum_content, 0, strlen(devnum_content));
         vfs_node_t render_uevent =
             sysfs_child_append(render_node, "uevent", false);
         sprintf(content,
