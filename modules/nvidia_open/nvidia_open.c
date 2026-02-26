@@ -1,0 +1,2586 @@
+#include "nvidia_open.h"
+#include <libs/aether/pci.h>
+#include <libs/aether/irq.h>
+#include <libs/klibc.h>
+#include <nvUnixVersion.h>
+
+nvidia_device_t *nvidia_gpus[MAX_NVIDIA_GPU_NUM];
+uint64_t nvidia_gpu_count = 0;
+
+extern spinlock_t nvKmsLock;
+
+const struct NvKmsKapiFunctionsTable *nvKms;
+
+static void nvidia_unregister_gpu(nvidia_device_t *nv_dev) {
+    if (!nv_dev) {
+        return;
+    }
+
+    for (uint64_t i = 0; i < nvidia_gpu_count; i++) {
+        if (nvidia_gpus[i] != nv_dev) {
+            continue;
+        }
+
+        for (uint64_t j = i + 1; j < nvidia_gpu_count; j++) {
+            nvidia_gpus[j - 1] = nvidia_gpus[j];
+        }
+        nvidia_gpus[nvidia_gpu_count - 1] = NULL;
+        nvidia_gpu_count--;
+        return;
+    }
+}
+
+int nvidia_set_crtc(drm_device_t *drm_dev, struct drm_mode_crtc *crtc);
+int nvidia_page_flip(struct drm_device *dev,
+                     struct drm_mode_crtc_page_flip *flip);
+
+static bool nvidia_handle_to_index(uint32_t handle, uint32_t *idx) {
+    if (!idx || handle == 0 || handle > 32) {
+        return false;
+    }
+
+    *idx = handle - 1;
+    return true;
+}
+
+static nvidia_fb_t *nvidia_fb_by_handle(nvidia_device_t *nv_dev,
+                                        uint32_t handle) {
+    uint32_t idx = 0;
+    if (!nv_dev || !nvidia_handle_to_index(handle, &idx)) {
+        return NULL;
+    }
+
+    if (!nv_dev->framebuffers[idx].in_use) {
+        return NULL;
+    }
+
+    return &nv_dev->framebuffers[idx];
+}
+
+static nvidia_fb_t *nvidia_fb_by_fb_id(nvidia_device_t *nv_dev,
+                                       uint32_t fb_id) {
+    if (!nv_dev || !fb_id) {
+        return NULL;
+    }
+
+    for (uint32_t i = 0; i < 32; i++) {
+        if (nv_dev->framebuffers[i].in_use &&
+            nv_dev->framebuffers[i].fb_id == fb_id) {
+            return &nv_dev->framebuffers[i];
+        }
+    }
+
+    return NULL;
+}
+
+static bool
+nvidia_drm_to_surface_format(uint32_t fourcc,
+                             enum NvKmsSurfaceMemoryFormat *format) {
+    if (!format) {
+        return false;
+    }
+
+    switch (fourcc) {
+    case DRM_FORMAT_ARGB8888:
+        *format = NvKmsSurfaceMemoryFormatA8R8G8B8;
+        return true;
+    case DRM_FORMAT_XRGB8888:
+        *format = NvKmsSurfaceMemoryFormatX8R8G8B8;
+        return true;
+    case DRM_FORMAT_XBGR8888:
+        *format = NvKmsSurfaceMemoryFormatX8B8G8R8;
+        return true;
+    default:
+        return false;
+    }
+}
+
+static int nvidia_legacy_fb_to_drm_format(uint32_t bpp, uint32_t depth,
+                                          uint32_t *fourcc, uint32_t *out_bpp,
+                                          uint32_t *out_depth) {
+    if (!fourcc) {
+        return -EINVAL;
+    }
+
+    uint32_t effective_bpp = bpp ? bpp : 32;
+    uint32_t effective_depth =
+        depth ? depth : (effective_bpp == 32 ? 24 : effective_bpp);
+
+    switch (effective_bpp) {
+    case 32:
+        if (effective_depth == 24) {
+            *fourcc = DRM_FORMAT_XRGB8888;
+        } else if (effective_depth == 32) {
+            *fourcc = DRM_FORMAT_ARGB8888;
+        } else {
+            return -EINVAL;
+        }
+        break;
+    default:
+        return -EINVAL;
+    }
+
+    if (out_bpp) {
+        *out_bpp = effective_bpp;
+    }
+    if (out_depth) {
+        *out_depth = effective_depth;
+    }
+
+    return 0;
+}
+
+static int nvidia_fb_format_to_depth(uint32_t fourcc, uint32_t *bpp,
+                                     uint32_t *depth) {
+    if (!bpp || !depth) {
+        return -EINVAL;
+    }
+
+    switch (fourcc) {
+    case DRM_FORMAT_XRGB8888:
+    case DRM_FORMAT_XBGR8888:
+        *bpp = 32;
+        *depth = 24;
+        return 0;
+    case DRM_FORMAT_ARGB8888:
+        *bpp = 32;
+        *depth = 32;
+        return 0;
+    default:
+        return -EINVAL;
+    }
+}
+
+static uint32_t nvidia_signal_format_to_drm(NvKmsConnectorSignalFormat format) {
+    switch (format) {
+    case NVKMS_CONNECTOR_SIGNAL_FORMAT_TMDS:
+    case NVKMS_CONNECTOR_SIGNAL_FORMAT_DP:
+        return DRM_MODE_ENCODER_TMDS;
+    case NVKMS_CONNECTOR_SIGNAL_FORMAT_LVDS:
+        return DRM_MODE_ENCODER_LVDS;
+    case NVKMS_CONNECTOR_SIGNAL_FORMAT_VGA:
+        return DRM_MODE_ENCODER_DAC;
+    case NVKMS_CONNECTOR_SIGNAL_FORMAT_DSI:
+        return DRM_MODE_ENCODER_DSI;
+    case NVKMS_CONNECTOR_SIGNAL_FORMAT_UNKNOWN:
+    default:
+        return DRM_MODE_ENCODER_NONE;
+    }
+}
+
+static uint32_t nvidia_connector_type_to_drm(NvKmsConnectorType type,
+                                             bool internal) {
+    switch (type) {
+    case NVKMS_CONNECTOR_TYPE_DP:
+        return internal ? DRM_MODE_CONNECTOR_eDP
+                        : DRM_MODE_CONNECTOR_DisplayPort;
+    case NVKMS_CONNECTOR_TYPE_VGA:
+        return DRM_MODE_CONNECTOR_VGA;
+    case NVKMS_CONNECTOR_TYPE_DVI_I:
+        return DRM_MODE_CONNECTOR_DVII;
+    case NVKMS_CONNECTOR_TYPE_DVI_D:
+        return DRM_MODE_CONNECTOR_DVID;
+    case NVKMS_CONNECTOR_TYPE_LVDS:
+        return DRM_MODE_CONNECTOR_LVDS;
+    case NVKMS_CONNECTOR_TYPE_HDMI:
+        return DRM_MODE_CONNECTOR_HDMIA;
+    case NVKMS_CONNECTOR_TYPE_DSI:
+        return DRM_MODE_CONNECTOR_DSI;
+    default:
+        return DRM_MODE_CONNECTOR_VIRTUAL;
+    }
+}
+
+static void nvidia_to_drm_mode(const struct NvKmsKapiDisplayMode *mode,
+                               struct drm_mode_modeinfo *drm_mode) {
+    if (!mode || !drm_mode) {
+        return;
+    }
+
+    memset(drm_mode, 0, sizeof(*drm_mode));
+    drm_mode->clock = (mode->timings.pixelClockHz + 500) / 1000;
+    drm_mode->hdisplay = mode->timings.hVisible;
+    drm_mode->hsync_start = mode->timings.hSyncStart;
+    drm_mode->hsync_end = mode->timings.hSyncEnd;
+    drm_mode->htotal = mode->timings.hTotal;
+    drm_mode->hskew = mode->timings.hSkew;
+    drm_mode->vdisplay = mode->timings.vVisible;
+    drm_mode->vsync_start = mode->timings.vSyncStart;
+    drm_mode->vsync_end = mode->timings.vSyncEnd;
+    drm_mode->vtotal = mode->timings.vTotal;
+    drm_mode->vrefresh = (mode->timings.refreshRate + 500) / 1000;
+
+    if (mode->timings.flags.hSyncPos) {
+        drm_mode->flags |= DRM_MODE_FLAG_PHSYNC;
+    }
+    if (mode->timings.flags.hSyncNeg) {
+        drm_mode->flags |= DRM_MODE_FLAG_NHSYNC;
+    }
+    if (mode->timings.flags.vSyncPos) {
+        drm_mode->flags |= DRM_MODE_FLAG_PVSYNC;
+    }
+    if (mode->timings.flags.vSyncNeg) {
+        drm_mode->flags |= DRM_MODE_FLAG_NVSYNC;
+    }
+    if (mode->timings.flags.interlaced) {
+        drm_mode->flags |= DRM_MODE_FLAG_INTERLACE;
+    }
+    if (mode->timings.flags.doubleScan) {
+        drm_mode->flags |= DRM_MODE_FLAG_DBLSCAN;
+    }
+
+    if (strlen(mode->name)) {
+        memcpy(drm_mode->name, mode->name,
+               MIN(sizeof(drm_mode->name), sizeof(mode->name)));
+        drm_mode->name[sizeof(drm_mode->name) - 1] = '\0';
+    } else {
+        snprintf(drm_mode->name, sizeof(drm_mode->name), "%dx%d%s",
+                 drm_mode->hdisplay, drm_mode->vdisplay,
+                 mode->timings.flags.interlaced ? "i" : "");
+    }
+}
+
+static void nvidia_to_kapi_mode(const struct drm_mode_modeinfo *drm_mode,
+                                struct NvKmsKapiDisplayMode *mode) {
+    if (!drm_mode || !mode) {
+        return;
+    }
+
+    memset(mode, 0, sizeof(*mode));
+    mode->timings.refreshRate =
+        (drm_mode->vrefresh ? drm_mode->vrefresh : HZ) * 1000;
+    mode->timings.pixelClockHz = drm_mode->clock * 1000;
+    mode->timings.hVisible = drm_mode->hdisplay;
+    mode->timings.hSyncStart = drm_mode->hsync_start;
+    mode->timings.hSyncEnd = drm_mode->hsync_end;
+    mode->timings.hTotal = drm_mode->htotal;
+    mode->timings.hSkew = drm_mode->hskew;
+    mode->timings.vVisible = drm_mode->vdisplay;
+    mode->timings.vSyncStart = drm_mode->vsync_start;
+    mode->timings.vSyncEnd = drm_mode->vsync_end;
+    mode->timings.vTotal = drm_mode->vtotal;
+
+    mode->timings.flags.hSyncPos = !!(drm_mode->flags & DRM_MODE_FLAG_PHSYNC);
+    mode->timings.flags.hSyncNeg = !!(drm_mode->flags & DRM_MODE_FLAG_NHSYNC);
+    mode->timings.flags.vSyncPos = !!(drm_mode->flags & DRM_MODE_FLAG_PVSYNC);
+    mode->timings.flags.vSyncNeg = !!(drm_mode->flags & DRM_MODE_FLAG_NVSYNC);
+    mode->timings.flags.interlaced =
+        !!(drm_mode->flags & DRM_MODE_FLAG_INTERLACE);
+    mode->timings.flags.doubleScan =
+        !!(drm_mode->flags & DRM_MODE_FLAG_DBLSCAN);
+
+    memcpy(mode->name, drm_mode->name,
+           MIN(sizeof(mode->name), sizeof(drm_mode->name)));
+}
+
+static uint32_t nvidia_get_drm_formats_from_mask(uint64_t mask, uint32_t *out,
+                                                 uint32_t max_out) {
+    if (!out || !max_out) {
+        return 0;
+    }
+
+    uint32_t count = 0;
+    if ((mask & (1ULL << NvKmsSurfaceMemoryFormatX8R8G8B8)) &&
+        count < max_out) {
+        out[count++] = DRM_FORMAT_XRGB8888;
+    }
+    if ((mask & (1ULL << NvKmsSurfaceMemoryFormatA8R8G8B8)) &&
+        count < max_out) {
+        out[count++] = DRM_FORMAT_ARGB8888;
+    }
+    if ((mask & (1ULL << NvKmsSurfaceMemoryFormatX8B8G8R8)) &&
+        count < max_out) {
+        out[count++] = DRM_FORMAT_XBGR8888;
+    }
+    if ((mask & (1ULL << NvKmsSurfaceMemoryFormatA8B8G8R8)) &&
+        count < max_out) {
+        out[count++] = DRM_FORMAT_ABGR8888;
+    }
+
+    return count;
+}
+
+static bool nvidia_get_display_mode(nvidia_device_t *nv_dev,
+                                    NvKmsKapiDisplay display,
+                                    struct NvKmsKapiDisplayMode *mode,
+                                    uint32_t *mm_width, uint32_t *mm_height) {
+    if (!nv_dev || !mode) {
+        return false;
+    }
+
+    bool has_mode = false;
+    uint32_t mode_index = 0;
+    while (true) {
+        struct NvKmsKapiDisplayMode cur_mode;
+        NvBool valid = NV_FALSE;
+        NvBool preferred = NV_FALSE;
+        int ret = nvKms->getDisplayMode(nv_dev->kmsdev, display, mode_index++,
+                                        &cur_mode, &valid, &preferred);
+        if (ret < 0) {
+            return false;
+        }
+        if (ret == 0) {
+            break;
+        }
+        if (!valid) {
+            continue;
+        }
+
+        if (!has_mode || preferred) {
+            *mode = cur_mode;
+            has_mode = true;
+            if (mm_width) {
+                *mm_width = cur_mode.timings.widthMM;
+            }
+            if (mm_height) {
+                *mm_height = cur_mode.timings.heightMM;
+            }
+            if (preferred) {
+                return true;
+            }
+        }
+    }
+
+    return has_mode;
+}
+
+static void nvidia_update_display_connector_state(nvidia_device_t *nv_dev,
+                                                  uint32_t display_idx) {
+    if (!nv_dev || display_idx >= nv_dev->num_displays ||
+        !nv_dev->connectors[display_idx]) {
+        return;
+    }
+
+    drm_connector_t *connector = nv_dev->connectors[display_idx];
+    NvKmsKapiDisplay display = nv_dev->displays[display_idx];
+
+    struct NvKmsKapiDynamicDisplayParams dyn_params;
+    memset(&dyn_params, 0, sizeof(dyn_params));
+    dyn_params.handle = display;
+    if (nvKms->getDynamicDisplayInfo(nv_dev->kmsdev, &dyn_params)) {
+        connector->connection =
+            dyn_params.connected ? DRM_MODE_CONNECTED : DRM_MODE_DISCONNECTED;
+    }
+
+    struct NvKmsKapiDisplayMode selected_mode;
+    memset(&selected_mode, 0, sizeof(selected_mode));
+    uint32_t mm_width = 0;
+    uint32_t mm_height = 0;
+    bool has_mode = nvidia_get_display_mode(nv_dev, display, &selected_mode,
+                                            &mm_width, &mm_height);
+
+    if (!has_mode) {
+        return;
+    }
+
+    if (!connector->modes) {
+        connector->modes = malloc(sizeof(struct drm_mode_modeinfo));
+        if (!connector->modes) {
+            connector->count_modes = 0;
+            return;
+        }
+    }
+
+    nvidia_to_drm_mode(&selected_mode, connector->modes);
+    connector->modes->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
+    connector->count_modes = 1;
+
+    if (!mm_width && connector->modes->hdisplay) {
+        mm_width = (connector->modes->hdisplay * 264UL) / 1000UL;
+    }
+    if (!mm_height && connector->modes->vdisplay) {
+        mm_height = (connector->modes->vdisplay * 264UL) / 1000UL;
+    }
+    connector->mm_width = mm_width ? mm_width : 1;
+    connector->mm_height = mm_height ? mm_height : 1;
+}
+
+static int nvidia_crtc_index_from_id(nvidia_device_t *nv_dev, uint32_t crtc_id,
+                                     uint32_t *crtc_idx) {
+    if (!nv_dev || !crtc_idx) {
+        return -EINVAL;
+    }
+
+    for (uint32_t i = 0; i < nv_dev->num_crtcs; i++) {
+        if (nv_dev->crtcs[i] && nv_dev->crtcs[i]->id == crtc_id) {
+            *crtc_idx = i;
+            return 0;
+        }
+    }
+
+    return -ENOENT;
+}
+
+static int nvidia_crtc_index_from_display(nvidia_device_t *nv_dev,
+                                          uint32_t display_idx,
+                                          uint32_t *crtc_idx) {
+    if (!nv_dev || !crtc_idx || display_idx >= nv_dev->num_displays) {
+        return -EINVAL;
+    }
+
+    if (nv_dev->connectors[display_idx] &&
+        nv_dev->connectors[display_idx]->crtc_id) {
+        int ret = nvidia_crtc_index_from_id(
+            nv_dev, nv_dev->connectors[display_idx]->crtc_id, crtc_idx);
+        if (ret == 0) {
+            return 0;
+        }
+    }
+
+    if (nv_dev->encoders[display_idx] &&
+        nv_dev->encoders[display_idx]->crtc_id) {
+        int ret = nvidia_crtc_index_from_id(
+            nv_dev, nv_dev->encoders[display_idx]->crtc_id, crtc_idx);
+        if (ret == 0) {
+            return 0;
+        }
+    }
+
+    uint32_t head = nv_dev->display_heads[display_idx];
+    if (head < NVKMS_KAPI_MAX_HEADS && nv_dev->head_to_crtc[head] >= 0) {
+        uint32_t mapped = (uint32_t)nv_dev->head_to_crtc[head];
+        if (mapped < nv_dev->num_crtcs && nv_dev->crtcs[mapped]) {
+            *crtc_idx = mapped;
+            return 0;
+        }
+    }
+
+    return -ENOENT;
+}
+
+static int nvidia_display_index_from_crtc(nvidia_device_t *nv_dev,
+                                          uint32_t crtc_id,
+                                          uint32_t *display_idx) {
+    if (!nv_dev || !display_idx) {
+        return -EINVAL;
+    }
+
+    for (uint32_t i = 0; i < nv_dev->num_displays; i++) {
+        if (nv_dev->connectors[i] &&
+            nv_dev->connectors[i]->crtc_id == crtc_id) {
+            *display_idx = i;
+            return 0;
+        }
+    }
+
+    for (uint32_t i = 0; i < nv_dev->num_displays; i++) {
+        if (nv_dev->encoders[i] && nv_dev->encoders[i]->crtc_id == crtc_id) {
+            *display_idx = i;
+            return 0;
+        }
+    }
+
+    uint32_t crtc_idx = 0;
+    int ret = nvidia_crtc_index_from_id(nv_dev, crtc_id, &crtc_idx);
+    if (ret != 0) {
+        return ret;
+    }
+
+    for (uint32_t i = 0; i < nv_dev->num_displays; i++) {
+        uint32_t head = nv_dev->display_heads[i];
+        if (head < NVKMS_KAPI_MAX_HEADS && nv_dev->head_to_crtc[head] >= 0 &&
+            (uint32_t)nv_dev->head_to_crtc[head] == crtc_idx) {
+            *display_idx = i;
+            return 0;
+        }
+    }
+
+    return -ENOENT;
+}
+
+static int nvidia_display_index_from_plane(nvidia_device_t *nv_dev,
+                                           uint32_t plane_id,
+                                           uint32_t *display_idx) {
+    if (!nv_dev || !display_idx) {
+        return -EINVAL;
+    }
+
+    for (uint32_t i = 0; i < nv_dev->num_crtcs; i++) {
+        if (!nv_dev->planes[i] || nv_dev->planes[i]->id != plane_id) {
+            continue;
+        }
+
+        uint32_t plane_crtc_id = nv_dev->planes[i]->crtc_id;
+        if (!plane_crtc_id && nv_dev->crtcs[i]) {
+            plane_crtc_id = nv_dev->crtcs[i]->id;
+        }
+
+        if (plane_crtc_id) {
+            return nvidia_display_index_from_crtc(nv_dev, plane_crtc_id,
+                                                  display_idx);
+        }
+
+        for (uint32_t display = 0; display < nv_dev->num_displays; display++) {
+            uint32_t head = nv_dev->display_heads[display];
+            if (head < NVKMS_KAPI_MAX_HEADS &&
+                nv_dev->head_to_crtc[head] >= 0 &&
+                (uint32_t)nv_dev->head_to_crtc[head] == i) {
+                *display_idx = display;
+                return 0;
+            }
+        }
+    }
+
+    return -ENOENT;
+}
+
+static int nvidia_display_index_from_connector(nvidia_device_t *nv_dev,
+                                               uint32_t connector_id,
+                                               uint32_t *display_idx) {
+    if (!nv_dev || !display_idx) {
+        return -EINVAL;
+    }
+
+    for (uint32_t i = 0; i < nv_dev->num_displays; i++) {
+        if (nv_dev->connectors[i] &&
+            nv_dev->connectors[i]->id == connector_id) {
+            *display_idx = i;
+            return 0;
+        }
+    }
+
+    return -ENOENT;
+}
+
+static int nvidia_validate_fb_id(nvidia_device_t *nv_dev, uint32_t fb_id) {
+    if (!nv_dev) {
+        return -EINVAL;
+    }
+
+    if (fb_id == 0) {
+        return 0;
+    }
+
+    drm_framebuffer_t *drm_fb =
+        drm_framebuffer_get(&nv_dev->resource_mgr, fb_id);
+    if (!drm_fb) {
+        return -ENOENT;
+    }
+
+    nvidia_fb_t *nfb = nvidia_fb_by_handle(nv_dev, drm_fb->handle);
+    drm_framebuffer_free(&nv_dev->resource_mgr, drm_fb->id);
+    if (!nfb) {
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+static void
+nvidia_fill_layer_defaults(struct NvKmsKapiLayerRequestedConfig *layer) {
+    if (!layer) {
+        return;
+    }
+
+    layer->config.csc = NVKMS_IDENTITY_CSC_MATRIX;
+    layer->config.rrParams.rotation = NVKMS_ROTATION_0;
+    layer->config.minPresentInterval = 1;
+    layer->config.tearing = NV_FALSE;
+    layer->config.compParams.compMode = NVKMS_COMPOSITION_BLENDING_MODE_OPAQUE;
+    layer->config.inputColorSpace = NVKMS_INPUT_COLOR_SPACE_NONE;
+    layer->config.inputColorRange = NVKMS_INPUT_COLOR_RANGE_DEFAULT;
+    layer->config.inputTf = NVKMS_INPUT_TF_LINEAR;
+    layer->config.outputTf = NVKMS_OUTPUT_TF_NONE;
+    layer->config.hdrMetadata.enabled = NV_FALSE;
+    layer->config.syncParams.preSyncptSpecified = NV_FALSE;
+    layer->config.syncParams.postSyncptRequested = NV_FALSE;
+    layer->config.syncParams.semaphoreSpecified = NV_FALSE;
+}
+
+static int nvidia_ensure_surface(nvidia_device_t *nv_dev, nvidia_fb_t *fb,
+                                 uint32_t fourcc, uint32_t width,
+                                 uint32_t height, uint32_t pitch,
+                                 uint64_t modifier) {
+    if (!nv_dev || !fb || !fb->memory || !width || !height || !pitch) {
+        return -EINVAL;
+    }
+
+    enum NvKmsSurfaceMemoryFormat format;
+    if (!nvidia_drm_to_surface_format(fourcc, &format)) {
+        return -EINVAL;
+    }
+
+    struct NvKmsKapiCreateSurfaceParams params;
+    memset(&params, 0, sizeof(params));
+
+    params.planes[0].memory = fb->memory;
+    params.planes[0].offset = 0;
+    params.planes[0].pitch = pitch;
+    params.width = width;
+    params.height = height;
+    params.format = format;
+    params.noDisplayCaching = NV_TRUE;
+
+    if (modifier == 0) {
+        params.explicit_layout = NV_FALSE;
+    } else {
+        params.explicit_layout = NV_TRUE;
+        params.layout = (modifier & 0x10) ? NvKmsSurfaceMemoryLayoutBlockLinear
+                                          : NvKmsSurfaceMemoryLayoutPitch;
+
+        if (params.layout == NvKmsSurfaceMemoryLayoutBlockLinear &&
+            ((modifier >> 23) & 0x7)) {
+            return -EINVAL;
+        }
+
+        params.log2GobsPerBlockY = modifier & 0xF;
+    }
+
+    if (fb->surface) {
+        nvKms->destroySurface(nv_dev->kmsdev, fb->surface);
+        fb->surface = NULL;
+    }
+
+    fb->surface = nvKms->createSurface(nv_dev->kmsdev, &params);
+    if (!fb->surface) {
+        return -EIO;
+    }
+
+    fb->format = fourcc;
+    fb->modifier = modifier;
+    fb->width = width;
+    fb->height = height;
+    fb->pitch = pitch;
+    return 0;
+}
+
+static int nvidia_apply_modeset(nvidia_device_t *nv_dev, uint32_t display_idx,
+                                nvidia_fb_t *fb,
+                                const struct drm_mode_modeinfo *mode,
+                                bool mode_changed, bool send_flip_event,
+                                uint64_t user_data, uint32_t x, uint32_t y,
+                                uint32_t width, uint32_t height, uint32_t src_x,
+                                uint32_t src_y, uint32_t src_width,
+                                uint32_t src_height) {
+    if (!nv_dev || display_idx >= nv_dev->num_displays) {
+        return -EINVAL;
+    }
+
+    uint32_t head = nv_dev->display_heads[display_idx];
+    if (head >= NVKMS_KAPI_MAX_HEADS) {
+        return -EINVAL;
+    }
+
+    struct NvKmsKapiRequestedModeSetConfig req;
+    struct NvKmsKapiModeSetReplyConfig reply;
+    memset(&req, 0, sizeof(req));
+    memset(&reply, 0, sizeof(reply));
+
+    req.headsMask = 1U << head;
+
+    struct NvKmsKapiHeadRequestedConfig *head_cfg =
+        &req.headRequestedConfig[head];
+    head_cfg->modeSetConfig.vrrEnabled = NV_FALSE;
+    head_cfg->modeSetConfig.olutFpNormScale = NVKMS_OLUT_FP_NORM_SCALE_DEFAULT;
+
+    uint32_t crtc_idx = 0;
+    bool current_active = false;
+    if (nvidia_crtc_index_from_display(nv_dev, display_idx, &crtc_idx) == 0 &&
+        crtc_idx < nv_dev->num_crtcs && nv_dev->crtcs[crtc_idx]) {
+        current_active = !!nv_dev->crtcs[crtc_idx]->fb_id;
+    }
+    bool requested_active = (fb != NULL);
+
+    head_cfg->flags.activeChanged =
+        (requested_active != current_active) ? NV_TRUE : NV_FALSE;
+    head_cfg->flags.displaysChanged =
+        (requested_active && !current_active) ? NV_TRUE : NV_FALSE;
+
+    const struct drm_mode_modeinfo *effective_mode = mode;
+    struct drm_mode_modeinfo queried_mode;
+    bool queried_mode_valid = false;
+    if (!effective_mode && requested_active) {
+        if (crtc_idx < nv_dev->num_crtcs && nv_dev->crtcs[crtc_idx] &&
+            nv_dev->crtcs[crtc_idx]->mode_valid) {
+            effective_mode = &nv_dev->crtcs[crtc_idx]->mode;
+        } else if (nv_dev->connectors[display_idx] &&
+                   nv_dev->connectors[display_idx]->modes &&
+                   nv_dev->connectors[display_idx]->count_modes > 0) {
+            effective_mode = &nv_dev->connectors[display_idx]->modes[0];
+        } else {
+            struct NvKmsKapiDisplayMode kapi_mode;
+            memset(&kapi_mode, 0, sizeof(kapi_mode));
+            if (nvidia_get_display_mode(nv_dev, nv_dev->displays[display_idx],
+                                        &kapi_mode, NULL, NULL)) {
+                memset(&queried_mode, 0, sizeof(queried_mode));
+                nvidia_to_drm_mode(&kapi_mode, &queried_mode);
+                effective_mode = &queried_mode;
+                queried_mode_valid = true;
+            }
+        }
+    }
+
+    bool effective_mode_changed =
+        mode_changed || (requested_active && !current_active);
+    if (effective_mode_changed && !effective_mode) {
+        effective_mode_changed = false;
+    }
+    head_cfg->flags.modeChanged = effective_mode_changed ? NV_TRUE : NV_FALSE;
+
+    if (fb) {
+        head_cfg->modeSetConfig.bActive = NV_TRUE;
+        head_cfg->modeSetConfig.numDisplays = 1;
+        head_cfg->modeSetConfig.displays[0] = nv_dev->displays[display_idx];
+    } else {
+        head_cfg->modeSetConfig.bActive = NV_FALSE;
+        head_cfg->modeSetConfig.numDisplays = 0;
+    }
+
+    if (effective_mode) {
+        nvidia_to_kapi_mode(effective_mode, &head_cfg->modeSetConfig.mode);
+    }
+
+    for (uint32_t layer = 0; layer < NVKMS_KAPI_LAYER_MAX; layer++) {
+        nvidia_fill_layer_defaults(&head_cfg->layerRequestedConfig[layer]);
+    }
+
+    struct NvKmsKapiLayerRequestedConfig *primary =
+        &head_cfg->layerRequestedConfig[NVKMS_KAPI_LAYER_PRIMARY_IDX];
+
+    if (fb) {
+        primary->config.surface = fb->surface;
+        primary->config.srcX = src_x;
+        primary->config.srcY = src_y;
+        primary->config.srcWidth =
+            src_width ? src_width : (width ? width : fb->width);
+        primary->config.srcHeight =
+            src_height ? src_height : (height ? height : fb->height);
+        primary->config.dstX = x;
+        primary->config.dstY = y;
+        primary->config.dstWidth = width ? width : fb->width;
+        primary->config.dstHeight = height ? height : fb->height;
+        primary->flags.surfaceChanged = NV_TRUE;
+        primary->flags.srcXYChanged = NV_TRUE;
+        primary->flags.srcWHChanged = NV_TRUE;
+        primary->flags.dstXYChanged = NV_TRUE;
+        primary->flags.dstWHChanged = NV_TRUE;
+        primary->flags.cscChanged = NV_TRUE;
+    } else {
+        memset(primary, 0, sizeof(*primary));
+        nvidia_fill_layer_defaults(primary);
+        primary->flags.surfaceChanged = NV_TRUE;
+        primary->flags.srcXYChanged = NV_TRUE;
+        primary->flags.srcWHChanged = NV_TRUE;
+        primary->flags.dstXYChanged = NV_TRUE;
+        primary->flags.dstWHChanged = NV_TRUE;
+    }
+
+    if (send_flip_event) {
+        nv_dev->pending_flip_user_data[head] = user_data;
+        nv_dev->pending_flip_event[head] = true;
+    }
+
+    if (!nvKms->applyModeSetConfig(nv_dev->kmsdev, &req, &reply, NV_TRUE)) {
+        printk("nvidia_open: applyModeSetConfig failed display=%u head=%u "
+               "active=%u mode_changed=%u fb=%u flipResult=%d\n",
+               display_idx, head, requested_active ? 1 : 0,
+               effective_mode_changed ? 1 : 0, fb ? fb->fb_id : 0,
+               reply.flipResult);
+        if (!effective_mode && requested_active) {
+            printk("nvidia_open: no usable mode for active display=%u\n",
+                   display_idx);
+        } else if (queried_mode_valid) {
+            printk("nvidia_open: queried mode %ux%u@%u used for display=%u\n",
+                   queried_mode.hdisplay, queried_mode.vdisplay,
+                   queried_mode.vrefresh, display_idx);
+        }
+        if (send_flip_event) {
+            nv_dev->pending_flip_event[head] = false;
+        }
+        return -EIO;
+    }
+
+    return 0;
+}
+
+int nvidia_get_display_info(drm_device_t *drm_dev, uint32_t *width,
+                            uint32_t *height, uint32_t *bpp) {
+    if (!drm_dev || !width || !height || !bpp) {
+        return -EINVAL;
+    }
+
+    nvidia_device_t *nv_dev = (nvidia_device_t *)drm_dev->data;
+    if (nv_dev && nv_dev->num_displays > 0 && nv_dev->connectors[0] &&
+        nv_dev->connectors[0]->count_modes && nv_dev->connectors[0]->modes) {
+        *width = nv_dev->connectors[0]->modes[0].hdisplay;
+        *height = nv_dev->connectors[0]->modes[0].vdisplay;
+        *bpp = 32;
+        return 0;
+    }
+
+    boot_framebuffer_t *fb = get_current_fb();
+    if (!fb) {
+        return -ENODEV;
+    }
+
+    *width = fb->width;
+    *height = fb->height;
+    *bpp = fb->bpp;
+    return 0;
+}
+
+int nvidia_get_fb(drm_device_t *drm_dev, uint32_t *width, uint32_t *height,
+                  uint32_t *bpp, uint64_t *addr) {
+    if (!drm_dev || !width || !height || !bpp || !addr) {
+        return -EINVAL;
+    }
+
+    nvidia_device_t *nv_dev = (nvidia_device_t *)drm_dev->data;
+    if (nv_dev) {
+        for (uint32_t i = 0; i < nv_dev->num_crtcs; i++) {
+            drm_crtc_t *crtc = nv_dev->crtcs[i];
+            if (!crtc || !crtc->fb_id) {
+                continue;
+            }
+
+            nvidia_fb_t *nfb = nvidia_fb_by_fb_id(nv_dev, crtc->fb_id);
+            if (nfb) {
+                *width = nfb->width;
+                *height = nfb->height;
+                *bpp = nfb->bpp ? nfb->bpp : 32;
+                *addr = nfb->map_offset;
+                return 0;
+            }
+        }
+    }
+
+    boot_framebuffer_t *fb = get_current_fb();
+    if (!fb) {
+        return -ENODEV;
+    }
+
+    *width = fb->width;
+    *height = fb->height;
+    *bpp = fb->bpp;
+    *addr = (uint64_t)fb->address;
+    return 0;
+}
+
+int nvidia_create_dumb(drm_device_t *drm_dev,
+                       struct drm_mode_create_dumb *args) {
+    if (!drm_dev || !args || args->width == 0 || args->height == 0) {
+        return -EINVAL;
+    }
+
+    nvidia_device_t *nv_dev = drm_dev->data;
+    if (!nv_dev) {
+        return -ENODEV;
+    }
+
+    if (args->bpp == 0) {
+        args->bpp = 32;
+    }
+
+    uint32_t bytes_per_pixel = (args->bpp + 7) >> 3;
+    if (!bytes_per_pixel) {
+        return -EINVAL;
+    }
+
+    uint32_t alignment = nv_dev->pitch_alignment ? nv_dev->pitch_alignment : 64;
+    args->pitch =
+        ((args->width * bytes_per_pixel + alignment - 1) / alignment) *
+        alignment;
+    args->size = (uint64_t)args->pitch * args->height;
+    args->size = (args->size + 0xFFFULL) & ~0xFFFULL;
+
+    for (uint32_t i = 0; i < 32; i++) {
+        nvidia_fb_t *fb = &nv_dev->framebuffers[i];
+        if (fb->in_use) {
+            continue;
+        }
+
+        NvU8 compressible = 0;
+        struct NvKmsKapiMemory *memory = NULL;
+        if (nv_dev->has_video_memory) {
+            memory = nvKms->allocateVideoMemory(
+                nv_dev->kmsdev, NvKmsSurfaceMemoryLayoutPitch,
+                NVKMS_KAPI_ALLOCATION_TYPE_SCANOUT, args->size, &compressible);
+        } else {
+            memory = nvKms->allocateSystemMemory(
+                nv_dev->kmsdev, NvKmsSurfaceMemoryLayoutPitch,
+                NVKMS_KAPI_ALLOCATION_TYPE_SCANOUT, args->size, &compressible);
+        }
+
+        if (!memory) {
+            return -ENOMEM;
+        }
+
+        void *map = NULL;
+        if (!nvKms->mapMemory(nv_dev->kmsdev, memory,
+                              NVKMS_KAPI_MAPPING_TYPE_USER, &map)) {
+            nvKms->freeMemory(nv_dev->kmsdev, memory);
+            return -EIO;
+        }
+
+        memset(fb, 0, sizeof(*fb));
+        fb->in_use = true;
+        fb->handle = i + 1;
+        fb->width = args->width;
+        fb->height = args->height;
+        fb->pitch = args->pitch;
+        fb->bpp = args->bpp;
+        fb->size = args->size;
+        fb->map_offset = (uint64_t)(uintptr_t)map;
+        fb->refcount = 1;
+        fb->memory = memory;
+        fb->format = DRM_FORMAT_XRGB8888;
+
+        args->handle = fb->handle;
+        return 0;
+    }
+
+    return -ENOSPC;
+}
+
+int nvidia_destroy_dumb(drm_device_t *drm_dev, uint32_t handle) {
+    if (!drm_dev) {
+        return -EINVAL;
+    }
+
+    nvidia_device_t *nv_dev = drm_dev->data;
+    nvidia_fb_t *fb = nvidia_fb_by_handle(nv_dev, handle);
+    if (!fb) {
+        return -EINVAL;
+    }
+
+    if (fb->refcount > 0) {
+        fb->refcount--;
+    }
+
+    if (fb->refcount != 0) {
+        return 0;
+    }
+
+    if (fb->surface) {
+        nvKms->destroySurface(nv_dev->kmsdev, fb->surface);
+    }
+    if (fb->map_offset && fb->memory) {
+        nvKms->unmapMemory(nv_dev->kmsdev, fb->memory,
+                           NVKMS_KAPI_MAPPING_TYPE_USER,
+                           (const void *)(uintptr_t)fb->map_offset);
+    }
+    if (fb->memory) {
+        nvKms->freeMemory(nv_dev->kmsdev, fb->memory);
+    }
+
+    memset(fb, 0, sizeof(*fb));
+    return 0;
+}
+
+int nvidia_dirty_fb(drm_device_t *drm_dev, struct drm_mode_fb_dirty_cmd *cmd) {
+    (void)drm_dev;
+    (void)cmd;
+    return 0;
+}
+
+int nvidia_add_fb(drm_device_t *drm_dev, struct drm_mode_fb_cmd *cmd) {
+    if (!drm_dev || !cmd || !cmd->handle || !cmd->width || !cmd->height ||
+        !cmd->pitch) {
+        return -EINVAL;
+    }
+
+    nvidia_device_t *nv_dev = drm_dev->data;
+    if (!nv_dev) {
+        return -ENODEV;
+    }
+
+    nvidia_fb_t *nfb = nvidia_fb_by_handle(nv_dev, cmd->handle);
+    if (!nfb) {
+        return -EINVAL;
+    }
+
+    uint32_t fourcc = 0;
+    uint32_t bpp = 0;
+    uint32_t depth = 0;
+    int ret = nvidia_legacy_fb_to_drm_format(cmd->bpp, cmd->depth, &fourcc,
+                                             &bpp, &depth);
+    if (ret != 0) {
+        return ret;
+    }
+
+    drm_framebuffer_t *fb =
+        drm_framebuffer_alloc(&nv_dev->resource_mgr, nv_dev);
+    if (!fb) {
+        return -ENOMEM;
+    }
+
+    fb->width = cmd->width;
+    fb->height = cmd->height;
+    fb->pitch = cmd->pitch;
+    fb->bpp = bpp;
+    fb->depth = depth;
+    fb->handle = cmd->handle;
+    fb->format = fourcc;
+    fb->modifier = 0;
+    fb->flags = 0;
+    cmd->fb_id = fb->id;
+
+    ret = nvidia_ensure_surface(nv_dev, nfb, fb->format, fb->width, fb->height,
+                                fb->pitch, 0);
+    if (ret != 0) {
+        drm_framebuffer_free(&nv_dev->resource_mgr, fb->id);
+        return ret;
+    }
+
+    nfb->fb_id = fb->id;
+    nfb->bpp = fb->bpp;
+
+    return 0;
+}
+
+int nvidia_add_fb2(drm_device_t *drm_dev, struct drm_mode_fb_cmd2 *cmd) {
+    if (!drm_dev || !cmd || cmd->handles[0] == 0 || !cmd->width ||
+        !cmd->height) {
+        return -EINVAL;
+    }
+
+    if (cmd->flags & ~DRM_MODE_FB_MODIFIERS) {
+        return -EINVAL;
+    }
+
+    for (uint32_t i = 1; i < 4; i++) {
+        if (cmd->handles[i] || cmd->pitches[i] || cmd->offsets[i] ||
+            cmd->modifier[i]) {
+            return -EINVAL;
+        }
+    }
+
+    if (cmd->offsets[0]) {
+        return -EINVAL;
+    }
+
+    nvidia_device_t *nv_dev = drm_dev->data;
+    if (!nv_dev) {
+        return -ENODEV;
+    }
+
+    nvidia_fb_t *nfb = nvidia_fb_by_handle(nv_dev, cmd->handles[0]);
+    if (!nfb) {
+        return -EINVAL;
+    }
+
+    uint32_t bpp = 0;
+    uint32_t depth = 0;
+    if (nvidia_fb_format_to_depth(cmd->pixel_format, &bpp, &depth) != 0) {
+        return -EINVAL;
+    }
+
+    uint64_t modifier =
+        (cmd->flags & DRM_MODE_FB_MODIFIERS) ? cmd->modifier[0] : 0;
+
+    drm_framebuffer_t *fb =
+        drm_framebuffer_alloc(&nv_dev->resource_mgr, nv_dev);
+    if (!fb) {
+        return -ENOMEM;
+    }
+
+    fb->width = cmd->width;
+    fb->height = cmd->height;
+    fb->pitch = cmd->pitches[0] ? cmd->pitches[0] : nfb->pitch;
+    fb->bpp = bpp;
+    fb->depth = depth;
+    fb->handle = cmd->handles[0];
+    fb->format = cmd->pixel_format;
+    fb->modifier = modifier;
+    fb->flags = cmd->flags;
+    cmd->fb_id = fb->id;
+
+    int ret = nvidia_ensure_surface(nv_dev, nfb, fb->format, fb->width,
+                                    fb->height, fb->pitch, fb->modifier);
+    if (ret != 0) {
+        drm_framebuffer_free(&nv_dev->resource_mgr, fb->id);
+        return ret;
+    }
+
+    nfb->fb_id = fb->id;
+    nfb->bpp = fb->bpp;
+
+    return 0;
+}
+
+int nvidia_set_plane(drm_device_t *drm_dev, struct drm_mode_set_plane *plane) {
+    if (!drm_dev || !plane) {
+        return -EINVAL;
+    }
+
+    nvidia_device_t *nv_dev = drm_dev->data;
+    drm_plane_t *drm_plane =
+        drm_plane_get(&nv_dev->resource_mgr, plane->plane_id);
+    if (!drm_plane) {
+        return -ENOENT;
+    }
+
+    drm_plane->crtc_id = plane->crtc_id;
+    drm_plane->fb_id = plane->fb_id;
+
+    drm_plane_free(&nv_dev->resource_mgr, drm_plane->id);
+
+    if (plane->fb_id == 0) {
+        struct drm_mode_crtc crtc_req = {
+            .crtc_id = plane->crtc_id,
+            .fb_id = 0,
+            .x = plane->crtc_x,
+            .y = plane->crtc_y,
+            .mode_valid = 0,
+        };
+        return nvidia_set_crtc(drm_dev, &crtc_req);
+    }
+
+    struct drm_mode_crtc_page_flip flip = {
+        .crtc_id = plane->crtc_id,
+        .fb_id = plane->fb_id,
+        .flags = 0,
+        .reserved = 0,
+        .user_data = 0,
+    };
+
+    return nvidia_page_flip(drm_dev, &flip);
+}
+
+int nvidia_atomic_commit(drm_device_t *drm_dev,
+                         struct drm_mode_atomic *atomic) {
+    if (!drm_dev || !atomic) {
+        return -EINVAL;
+    }
+
+    if (atomic->flags & ~DRM_MODE_ATOMIC_FLAGS) {
+        return -EINVAL;
+    }
+
+    if ((atomic->flags & DRM_MODE_ATOMIC_TEST_ONLY) &&
+        (atomic->flags & DRM_MODE_PAGE_FLIP_EVENT)) {
+        return -EINVAL;
+    }
+
+    if (atomic->count_objs == 0) {
+        return 0;
+    }
+
+    uint32_t *obj_ids = (uint32_t *)(uintptr_t)atomic->objs_ptr;
+    uint32_t *obj_prop_counts = (uint32_t *)(uintptr_t)atomic->count_props_ptr;
+    uint32_t *prop_ids = (uint32_t *)(uintptr_t)atomic->props_ptr;
+    uint64_t *prop_values = (uint64_t *)(uintptr_t)atomic->prop_values_ptr;
+    if (!obj_ids || !obj_prop_counts || !prop_ids || !prop_values) {
+        return -EINVAL;
+    }
+
+    nvidia_device_t *nv_dev = drm_dev->data;
+    if (!nv_dev) {
+        return -ENODEV;
+    }
+
+    bool test_only = !!(atomic->flags & DRM_MODE_ATOMIC_TEST_ONLY);
+
+    struct nvidia_atomic_display_state {
+        bool touched;
+        bool active;
+        bool mode_valid;
+        bool mode_changed;
+        struct drm_mode_modeinfo mode;
+        uint32_t x;
+        uint32_t y;
+        uint32_t w;
+        uint32_t h;
+        uint32_t src_x;
+        uint32_t src_y;
+        uint32_t src_w;
+        uint32_t src_h;
+        uint32_t fb_id;
+        uint32_t connector_crtc_id;
+    } states[16];
+    memset(states, 0, sizeof(states));
+
+    for (uint32_t i = 0; i < nv_dev->num_displays; i++) {
+        uint32_t crtc_idx = 0;
+        drm_crtc_t *crtc = NULL;
+        drm_plane_t *plane = NULL;
+        if (nvidia_crtc_index_from_display(nv_dev, i, &crtc_idx) == 0) {
+            crtc = nv_dev->crtcs[crtc_idx];
+            plane = nv_dev->planes[crtc_idx];
+        }
+        drm_connector_t *connector = nv_dev->connectors[i];
+
+        states[i].touched = false;
+        uint32_t initial_fb_id =
+            plane && plane->fb_id ? plane->fb_id : (crtc ? crtc->fb_id : 0);
+        states[i].active = initial_fb_id != 0;
+        states[i].mode_valid = crtc ? !!crtc->mode_valid : false;
+        states[i].mode_changed = false;
+        states[i].mode = crtc ? crtc->mode : (struct drm_mode_modeinfo){0};
+        states[i].x = crtc ? crtc->x : 0;
+        states[i].y = crtc ? crtc->y : 0;
+        states[i].w = crtc ? crtc->w : 0;
+        states[i].h = crtc ? crtc->h : 0;
+        states[i].src_x = 0;
+        states[i].src_y = 0;
+        states[i].src_w = states[i].w;
+        states[i].src_h = states[i].h;
+        states[i].fb_id = initial_fb_id;
+        states[i].connector_crtc_id =
+            connector ? connector->crtc_id : (crtc ? crtc->id : 0);
+    }
+
+    uint64_t prop_idx = 0;
+
+    for (uint32_t i = 0; i < atomic->count_objs; i++) {
+        uint32_t obj_id = obj_ids[i];
+        uint32_t count = obj_prop_counts[i];
+
+        enum {
+            ATOMIC_OBJ_UNKNOWN = 0,
+            ATOMIC_OBJ_PLANE,
+            ATOMIC_OBJ_CRTC,
+            ATOMIC_OBJ_CONNECTOR,
+        } obj_type = ATOMIC_OBJ_UNKNOWN;
+
+        for (uint32_t j = 0; j < count; j++) {
+            switch (prop_ids[prop_idx + j]) {
+            case DRM_PROPERTY_ID_PLANE_TYPE:
+            case DRM_PROPERTY_ID_FB_ID:
+            case DRM_PROPERTY_ID_CRTC_ID:
+            case DRM_PROPERTY_ID_CRTC_X:
+            case DRM_PROPERTY_ID_CRTC_Y:
+            case DRM_PROPERTY_ID_CRTC_W:
+            case DRM_PROPERTY_ID_CRTC_H:
+            case DRM_PROPERTY_ID_SRC_X:
+            case DRM_PROPERTY_ID_SRC_Y:
+            case DRM_PROPERTY_ID_SRC_W:
+            case DRM_PROPERTY_ID_SRC_H:
+                obj_type = ATOMIC_OBJ_PLANE;
+                break;
+            case DRM_CRTC_ACTIVE_PROP_ID:
+            case DRM_CRTC_MODE_ID_PROP_ID:
+                obj_type = ATOMIC_OBJ_CRTC;
+                break;
+            case DRM_CONNECTOR_DPMS_PROP_ID:
+            case DRM_CONNECTOR_CRTC_ID_PROP_ID:
+                obj_type = ATOMIC_OBJ_CONNECTOR;
+                break;
+            default:
+                break;
+            }
+
+            if (obj_type != ATOMIC_OBJ_UNKNOWN) {
+                break;
+            }
+        }
+
+        drm_plane_t *plane = NULL;
+        drm_crtc_t *crtc = NULL;
+        drm_connector_t *connector = NULL;
+        uint32_t display_idx = 0;
+        int ret = 0;
+
+        if (obj_type == ATOMIC_OBJ_PLANE) {
+            plane = drm_plane_get(&nv_dev->resource_mgr, obj_id);
+            if (!plane) {
+                return -ENOENT;
+            }
+            ret = nvidia_display_index_from_plane(nv_dev, obj_id, &display_idx);
+            if (ret != 0) {
+                drm_plane_free(&nv_dev->resource_mgr, plane->id);
+                if (ret == -ENOENT) {
+                    prop_idx += count;
+                    continue;
+                }
+                return ret;
+            }
+        } else if (obj_type == ATOMIC_OBJ_CRTC) {
+            crtc = drm_crtc_get(&nv_dev->resource_mgr, obj_id);
+            if (!crtc) {
+                return -ENOENT;
+            }
+            ret = nvidia_display_index_from_crtc(nv_dev, obj_id, &display_idx);
+            if (ret != 0) {
+                drm_crtc_free(&nv_dev->resource_mgr, crtc->id);
+                if (ret == -ENOENT) {
+                    prop_idx += count;
+                    continue;
+                }
+                return ret;
+            }
+        } else if (obj_type == ATOMIC_OBJ_CONNECTOR) {
+            connector = drm_connector_get(&nv_dev->resource_mgr, obj_id);
+            if (!connector) {
+                return -ENOENT;
+            }
+            ret = nvidia_display_index_from_connector(nv_dev, obj_id,
+                                                      &display_idx);
+            if (ret != 0) {
+                drm_connector_free(&nv_dev->resource_mgr, connector->id);
+                if (ret == -ENOENT) {
+                    prop_idx += count;
+                    continue;
+                }
+                return ret;
+            }
+        } else {
+            prop_idx += count;
+            continue;
+        }
+
+        int plane_target_display = (int)display_idx;
+        uint32_t plane_fb_id = states[display_idx].fb_id;
+        bool plane_x_set = false, plane_y_set = false, plane_w_set = false,
+             plane_h_set = false;
+        bool plane_src_x_set = false, plane_src_y_set = false,
+             plane_src_w_set = false, plane_src_h_set = false;
+        uint32_t plane_x = states[display_idx].x;
+        uint32_t plane_y = states[display_idx].y;
+        uint32_t plane_w = states[display_idx].w;
+        uint32_t plane_h = states[display_idx].h;
+        uint32_t plane_src_x = states[display_idx].src_x;
+        uint32_t plane_src_y = states[display_idx].src_y;
+        uint32_t plane_src_w = states[display_idx].src_w;
+        uint32_t plane_src_h = states[display_idx].src_h;
+
+        for (uint32_t j = 0; j < count; j++, prop_idx++) {
+            uint32_t prop_id = prop_ids[prop_idx];
+            uint64_t value = prop_values[prop_idx];
+
+            switch (prop_id) {
+            case DRM_PROPERTY_ID_PLANE_TYPE:
+                if (!plane || value != plane->plane_type) {
+                    if (connector) {
+                        drm_connector_free(&nv_dev->resource_mgr,
+                                           connector->id);
+                    }
+                    if (crtc) {
+                        drm_crtc_free(&nv_dev->resource_mgr, crtc->id);
+                    }
+                    if (plane) {
+                        drm_plane_free(&nv_dev->resource_mgr, plane->id);
+                    }
+                    return -EINVAL;
+                }
+                break;
+
+            case DRM_PROPERTY_ID_FB_ID:
+                if (plane) {
+                    int fb_ret = nvidia_validate_fb_id(nv_dev, (uint32_t)value);
+                    if (fb_ret != 0) {
+                        if (connector) {
+                            drm_connector_free(&nv_dev->resource_mgr,
+                                               connector->id);
+                        }
+                        if (crtc) {
+                            drm_crtc_free(&nv_dev->resource_mgr, crtc->id);
+                        }
+                        if (plane) {
+                            drm_plane_free(&nv_dev->resource_mgr, plane->id);
+                        }
+                        return fb_ret;
+                    }
+                    plane_fb_id = (uint32_t)value;
+                }
+                break;
+
+            case DRM_PROPERTY_ID_CRTC_ID:
+                if (plane) {
+                    if (value == 0) {
+                        plane_target_display = -1;
+                    } else {
+                        uint32_t target_display = 0;
+                        int crtc_ret = nvidia_display_index_from_crtc(
+                            nv_dev, (uint32_t)value, &target_display);
+                        if (crtc_ret != 0) {
+                            if (crtc_ret == -ENOENT) {
+                                plane_target_display = -1;
+                                break;
+                            }
+                            if (connector) {
+                                drm_connector_free(&nv_dev->resource_mgr,
+                                                   connector->id);
+                            }
+                            if (crtc) {
+                                drm_crtc_free(&nv_dev->resource_mgr, crtc->id);
+                            }
+                            if (plane) {
+                                drm_plane_free(&nv_dev->resource_mgr,
+                                               plane->id);
+                            }
+                            return crtc_ret;
+                        }
+                        plane_target_display = (int)target_display;
+                    }
+                }
+                break;
+
+            case DRM_PROPERTY_ID_CRTC_X:
+                if (plane) {
+                    plane_x = (uint32_t)value;
+                    plane_x_set = true;
+                }
+                break;
+            case DRM_PROPERTY_ID_CRTC_Y:
+                if (plane) {
+                    plane_y = (uint32_t)value;
+                    plane_y_set = true;
+                }
+                break;
+            case DRM_PROPERTY_ID_CRTC_W:
+                if (plane) {
+                    plane_w = (uint32_t)value;
+                    plane_w_set = true;
+                }
+                break;
+            case DRM_PROPERTY_ID_CRTC_H:
+                if (plane) {
+                    plane_h = (uint32_t)value;
+                    plane_h_set = true;
+                }
+                break;
+
+            case DRM_PROPERTY_ID_SRC_X:
+                if (plane) {
+                    plane_src_x = (uint32_t)(value >> 16);
+                    plane_src_x_set = true;
+                }
+                break;
+            case DRM_PROPERTY_ID_SRC_Y:
+                if (plane) {
+                    plane_src_y = (uint32_t)(value >> 16);
+                    plane_src_y_set = true;
+                }
+                break;
+            case DRM_PROPERTY_ID_SRC_W:
+                if (plane) {
+                    plane_src_w = (uint32_t)(value >> 16);
+                    plane_src_w_set = true;
+                }
+                break;
+            case DRM_PROPERTY_ID_SRC_H:
+                if (plane) {
+                    plane_src_h = (uint32_t)(value >> 16);
+                    plane_src_h_set = true;
+                }
+                break;
+
+            case DRM_CRTC_ACTIVE_PROP_ID:
+                if (crtc) {
+                    states[display_idx].active = (value != 0);
+                    if (value == 0) {
+                        states[display_idx].fb_id = 0;
+                    }
+                    states[display_idx].touched = true;
+                }
+                break;
+
+            case DRM_CRTC_MODE_ID_PROP_ID:
+                if (crtc) {
+                    states[display_idx].mode_changed = false;
+                    if (value == 0) {
+                        states[display_idx].mode_valid = false;
+                    }
+                    states[display_idx].touched = true;
+                }
+                break;
+
+            case DRM_CONNECTOR_DPMS_PROP_ID:
+                if (value > DRM_MODE_DPMS_OFF) {
+                    if (connector) {
+                        drm_connector_free(&nv_dev->resource_mgr,
+                                           connector->id);
+                    }
+                    if (crtc) {
+                        drm_crtc_free(&nv_dev->resource_mgr, crtc->id);
+                    }
+                    if (plane) {
+                        drm_plane_free(&nv_dev->resource_mgr, plane->id);
+                    }
+                    return -EINVAL;
+                }
+                if (connector && value != DRM_MODE_DPMS_ON) {
+                    states[display_idx].active = false;
+                    states[display_idx].fb_id = 0;
+                    states[display_idx].touched = true;
+                }
+                break;
+
+            case DRM_CONNECTOR_CRTC_ID_PROP_ID:
+                if (connector) {
+                    if (value == 0) {
+                        states[display_idx].connector_crtc_id = 0;
+                        states[display_idx].active = false;
+                        states[display_idx].fb_id = 0;
+                    } else {
+                        states[display_idx].connector_crtc_id = (uint32_t)value;
+                    }
+                    states[display_idx].touched = true;
+                }
+                break;
+
+            default:
+                break;
+            }
+        }
+
+        if (plane) {
+            if (plane_target_display >= 0 &&
+                (uint32_t)plane_target_display < nv_dev->num_displays) {
+                uint32_t dst = (uint32_t)plane_target_display;
+                states[dst].fb_id = plane_fb_id;
+                states[dst].active = plane_fb_id != 0;
+                if (plane_x_set) {
+                    states[dst].x = plane_x;
+                }
+                if (plane_y_set) {
+                    states[dst].y = plane_y;
+                }
+                if (plane_w_set) {
+                    states[dst].w = plane_w;
+                }
+                if (plane_h_set) {
+                    states[dst].h = plane_h;
+                }
+                if (plane_src_x_set) {
+                    states[dst].src_x = plane_src_x;
+                }
+                if (plane_src_y_set) {
+                    states[dst].src_y = plane_src_y;
+                }
+                if (plane_src_w_set) {
+                    states[dst].src_w = plane_src_w;
+                }
+                if (plane_src_h_set) {
+                    states[dst].src_h = plane_src_h;
+                }
+                states[dst].touched = true;
+
+                if (dst != display_idx) {
+                    states[display_idx].fb_id = 0;
+                    states[display_idx].active = false;
+                    states[display_idx].touched = true;
+                }
+            } else {
+                states[display_idx].fb_id = 0;
+                states[display_idx].active = false;
+                states[display_idx].touched = true;
+            }
+        }
+
+        if (plane) {
+            drm_plane_free(&nv_dev->resource_mgr, plane->id);
+        }
+        if (crtc) {
+            drm_crtc_free(&nv_dev->resource_mgr, crtc->id);
+        }
+        if (connector) {
+            drm_connector_free(&nv_dev->resource_mgr, connector->id);
+        }
+    }
+
+    if (test_only) {
+        return 0;
+    }
+
+    bool request_flip_event = !!(atomic->flags & DRM_MODE_PAGE_FLIP_EVENT);
+    bool mode_changed_any = false;
+    int event_display_idx = -1;
+    if (request_flip_event) {
+        for (uint32_t i = 0; i < nv_dev->num_displays; i++) {
+            if (states[i].touched && states[i].mode_changed) {
+                mode_changed_any = true;
+                break;
+            }
+        }
+
+        if (!mode_changed_any) {
+            for (uint32_t i = 0; i < nv_dev->num_displays; i++) {
+                if (states[i].touched && states[i].active && states[i].fb_id &&
+                    states[i].connector_crtc_id) {
+                    event_display_idx = (int)i;
+                    break;
+                }
+            }
+            if (event_display_idx >= 0) {
+                uint32_t head = nv_dev->display_heads[event_display_idx];
+                if (head >= NVKMS_KAPI_MAX_HEADS) {
+                    return -EINVAL;
+                }
+                if (nv_dev->pending_flip_event[head]) {
+                    return -EBUSY;
+                }
+            }
+        }
+    }
+
+    bool applied_any = false;
+    bool flip_event_armed = false;
+    for (uint32_t i = 0; i < nv_dev->num_displays; i++) {
+        if (!states[i].touched) {
+            continue;
+        }
+
+        uint32_t crtc_idx = 0;
+        if (nvidia_crtc_index_from_display(nv_dev, i, &crtc_idx) != 0 ||
+            crtc_idx >= nv_dev->num_crtcs) {
+            continue;
+        }
+
+        drm_crtc_t *target_crtc = nv_dev->crtcs[crtc_idx];
+        if (!target_crtc) {
+            continue;
+        }
+
+        if (!states[i].connector_crtc_id) {
+            states[i].active = false;
+            states[i].fb_id = 0;
+        }
+
+        int ret = 0;
+        if (!states[i].active || !states[i].fb_id) {
+            ret = nvidia_apply_modeset(
+                nv_dev, i, NULL, states[i].mode_valid ? &states[i].mode : NULL,
+                states[i].mode_changed, false, 0, states[i].x, states[i].y,
+                states[i].w, states[i].h, states[i].src_x, states[i].src_y,
+                states[i].src_w, states[i].src_h);
+            if (ret != 0) {
+                return ret;
+            }
+
+            target_crtc->fb_id = 0;
+            target_crtc->mode_valid = 0;
+            if (nv_dev->planes[crtc_idx]) {
+                nv_dev->planes[crtc_idx]->fb_id = 0;
+            }
+        } else {
+            drm_framebuffer_t *drm_fb =
+                drm_framebuffer_get(&nv_dev->resource_mgr, states[i].fb_id);
+            if (!drm_fb) {
+                states[i].active = false;
+                states[i].fb_id = 0;
+                continue;
+            }
+
+            nvidia_fb_t *nfb = nvidia_fb_by_handle(nv_dev, drm_fb->handle);
+            if (!nfb) {
+                drm_framebuffer_free(&nv_dev->resource_mgr, drm_fb->id);
+                states[i].active = false;
+                states[i].fb_id = 0;
+                continue;
+            }
+
+            const struct drm_mode_modeinfo *mode =
+                states[i].mode_valid
+                    ? &states[i].mode
+                    : (target_crtc->mode_valid ? &target_crtc->mode : NULL);
+            if (!mode && nv_dev->connectors[i] &&
+                nv_dev->connectors[i]->modes &&
+                nv_dev->connectors[i]->count_modes > 0) {
+                states[i].mode = nv_dev->connectors[i]->modes[0];
+                states[i].mode_valid = true;
+                mode = &states[i].mode;
+            }
+            uint32_t width = states[i].w
+                                 ? states[i].w
+                                 : (mode ? mode->hdisplay : drm_fb->width);
+            uint32_t height = states[i].h
+                                  ? states[i].h
+                                  : (mode ? mode->vdisplay : drm_fb->height);
+            uint32_t src_width = states[i].src_w ? states[i].src_w : width;
+            uint32_t src_height = states[i].src_h ? states[i].src_h : height;
+            bool send_flip_event = request_flip_event && !mode_changed_any &&
+                                   ((int)i == event_display_idx);
+
+            ret = nvidia_apply_modeset(
+                nv_dev, i, nfb, mode, states[i].mode_changed, send_flip_event,
+                send_flip_event ? atomic->user_data : 0, states[i].x,
+                states[i].y, width, height, states[i].src_x, states[i].src_y,
+                src_width, src_height);
+            drm_framebuffer_free(&nv_dev->resource_mgr, drm_fb->id);
+            if (ret != 0) {
+                return ret;
+            }
+            if (send_flip_event) {
+                flip_event_armed = true;
+            }
+
+            target_crtc->fb_id = states[i].fb_id;
+            target_crtc->x = states[i].x;
+            target_crtc->y = states[i].y;
+            target_crtc->w = width;
+            target_crtc->h = height;
+            if (states[i].mode_valid) {
+                target_crtc->mode = states[i].mode;
+                target_crtc->mode_valid = 1;
+            }
+            if (nv_dev->planes[crtc_idx]) {
+                nv_dev->planes[crtc_idx]->fb_id = states[i].fb_id;
+                nv_dev->planes[crtc_idx]->crtc_id = target_crtc->id;
+            }
+        }
+
+        if (nv_dev->connectors[i]) {
+            nv_dev->connectors[i]->crtc_id = states[i].connector_crtc_id;
+        }
+        applied_any = true;
+    }
+
+    if (applied_any && request_flip_event &&
+        (mode_changed_any || !flip_event_armed)) {
+        drm_post_event(drm_dev, DRM_EVENT_FLIP_COMPLETE, atomic->user_data);
+    }
+
+    return 0;
+}
+
+int nvidia_map_dumb(drm_device_t *drm_dev, struct drm_mode_map_dumb *args) {
+    if (!drm_dev || !args) {
+        return -EINVAL;
+    }
+
+    nvidia_device_t *nv_dev = drm_dev->data;
+    nvidia_fb_t *fb = nvidia_fb_by_handle(nv_dev, args->handle);
+    if (!fb) {
+        return -EINVAL;
+    }
+
+    args->offset = fb->map_offset;
+    return 0;
+}
+
+int nvidia_set_crtc(drm_device_t *drm_dev, struct drm_mode_crtc *crtc) {
+    if (!drm_dev || !crtc) {
+        return -EINVAL;
+    }
+
+    nvidia_device_t *nv_dev = drm_dev->data;
+    if (!nv_dev) {
+        return -ENODEV;
+    }
+
+    uint32_t display_idx = 0;
+    int ret =
+        nvidia_display_index_from_crtc(nv_dev, crtc->crtc_id, &display_idx);
+    if (ret != 0) {
+        return ret;
+    }
+
+    uint32_t crtc_idx = 0;
+    ret = nvidia_crtc_index_from_display(nv_dev, display_idx, &crtc_idx);
+    if (ret != 0) {
+        return ret;
+    }
+
+    drm_crtc_t *target_crtc = nv_dev->crtcs[crtc_idx];
+    if (!target_crtc) {
+        return -ENOENT;
+    }
+
+    if (crtc->fb_id != 0 && !crtc->mode_valid) {
+        return -EINVAL;
+    }
+
+    if (crtc->fb_id == 0) {
+        ret =
+            nvidia_apply_modeset(nv_dev, display_idx, NULL, NULL, false, false,
+                                 0, crtc->x, crtc->y, 0, 0, 0, 0, 0, 0);
+        if (ret == 0) {
+            target_crtc->fb_id = 0;
+            target_crtc->mode_valid = 0;
+            if (nv_dev->planes[crtc_idx]) {
+                nv_dev->planes[crtc_idx]->fb_id = 0;
+            }
+        }
+        return ret;
+    }
+
+    drm_framebuffer_t *drm_fb =
+        drm_framebuffer_get(&nv_dev->resource_mgr, crtc->fb_id);
+    if (!drm_fb) {
+        return -ENOENT;
+    }
+
+    nvidia_fb_t *nfb = nvidia_fb_by_handle(nv_dev, drm_fb->handle);
+    if (!nfb) {
+        drm_framebuffer_free(&nv_dev->resource_mgr, drm_fb->id);
+        return -EINVAL;
+    }
+
+    const struct drm_mode_modeinfo *mode = &crtc->mode;
+
+    uint32_t width = crtc->mode.hdisplay ? crtc->mode.hdisplay : drm_fb->width;
+    uint32_t height =
+        crtc->mode.vdisplay ? crtc->mode.vdisplay : drm_fb->height;
+
+    ret = nvidia_apply_modeset(nv_dev, display_idx, nfb, mode, crtc->mode_valid,
+                               false, 0, crtc->x, crtc->y, width, height, 0, 0,
+                               width, height);
+    if (ret == 0) {
+        target_crtc->fb_id = crtc->fb_id;
+        target_crtc->x = crtc->x;
+        target_crtc->y = crtc->y;
+        target_crtc->w = width;
+        target_crtc->h = height;
+        if (crtc->mode_valid) {
+            target_crtc->mode = crtc->mode;
+            target_crtc->mode_valid = 1;
+        }
+        if (nv_dev->planes[crtc_idx]) {
+            nv_dev->planes[crtc_idx]->fb_id = crtc->fb_id;
+        }
+    }
+
+    drm_framebuffer_free(&nv_dev->resource_mgr, drm_fb->id);
+    return ret;
+}
+
+int nvidia_page_flip(struct drm_device *dev,
+                     struct drm_mode_crtc_page_flip *flip) {
+    if (!dev || !flip) {
+        return -EINVAL;
+    }
+
+    if (flip->flags & ~DRM_MODE_PAGE_FLIP_FLAGS) {
+        return -EINVAL;
+    }
+    if (flip->flags & DRM_MODE_PAGE_FLIP_TARGET) {
+        return -EINVAL;
+    }
+    if (flip->reserved != 0) {
+        return -EINVAL;
+    }
+
+    nvidia_device_t *nv_dev = dev->data;
+    if (!nv_dev) {
+        return -ENODEV;
+    }
+
+    uint32_t display_idx = 0;
+    int ret =
+        nvidia_display_index_from_crtc(nv_dev, flip->crtc_id, &display_idx);
+    if (ret != 0) {
+        return ret;
+    }
+
+    uint32_t crtc_idx = 0;
+    ret = nvidia_crtc_index_from_display(nv_dev, display_idx, &crtc_idx);
+    if (ret != 0) {
+        return ret;
+    }
+
+    drm_crtc_t *crtc = nv_dev->crtcs[crtc_idx];
+    if (!crtc) {
+        return -ENOENT;
+    }
+
+    uint32_t head = nv_dev->display_heads[display_idx];
+    if (head >= NVKMS_KAPI_MAX_HEADS) {
+        return -EINVAL;
+    }
+    if ((flip->flags & DRM_MODE_PAGE_FLIP_EVENT) &&
+        nv_dev->pending_flip_event[head]) {
+        return -EBUSY;
+    }
+
+    drm_framebuffer_t *drm_fb =
+        drm_framebuffer_get(&nv_dev->resource_mgr, flip->fb_id);
+    if (!drm_fb) {
+        return -ENOENT;
+    }
+
+    nvidia_fb_t *nfb = nvidia_fb_by_handle(nv_dev, drm_fb->handle);
+    if (!nfb) {
+        drm_framebuffer_free(&nv_dev->resource_mgr, drm_fb->id);
+        return -EINVAL;
+    }
+
+    const struct drm_mode_modeinfo *mode =
+        crtc->mode_valid ? &crtc->mode : NULL;
+    uint32_t dst_width = crtc->w ? crtc->w : drm_fb->width;
+    uint32_t dst_height = crtc->h ? crtc->h : drm_fb->height;
+    ret = nvidia_apply_modeset(nv_dev, display_idx, nfb, mode, false,
+                               !!(flip->flags & DRM_MODE_PAGE_FLIP_EVENT),
+                               flip->user_data, crtc->x, crtc->y, dst_width,
+                               dst_height, 0, 0, dst_width, dst_height);
+
+    if (ret == 0) {
+        crtc->fb_id = flip->fb_id;
+        if (nv_dev->planes[crtc_idx]) {
+            nv_dev->planes[crtc_idx]->fb_id = flip->fb_id;
+        }
+    }
+
+    drm_framebuffer_free(&nv_dev->resource_mgr, drm_fb->id);
+    return ret;
+}
+
+int nvidia_set_cursor(drm_device_t *drm_dev, struct drm_mode_cursor *cursor) {
+    (void)drm_dev;
+    (void)cursor;
+    return -ENOTSUP;
+}
+
+int nvidia_gamma_set(drm_device_t *drm_dev, struct drm_mode_crtc_lut *gamma) {
+    (void)drm_dev;
+    (void)gamma;
+    return -ENOTSUP;
+}
+
+int nvidia_get_connectors(drm_device_t *drm_dev, drm_connector_t **connectors,
+                          uint32_t *count) {
+    if (!drm_dev || !connectors || !count) {
+        return -EINVAL;
+    }
+
+    nvidia_device_t *nv_dev = drm_dev->data;
+    *count = 0;
+    for (uint32_t i = 0; i < nv_dev->num_displays; i++) {
+        if (nv_dev->connectors[i]) {
+            connectors[(*count)++] = nv_dev->connectors[i];
+        }
+    }
+
+    return 0;
+}
+
+int nvidia_get_crtcs(drm_device_t *drm_dev, drm_crtc_t **crtcs,
+                     uint32_t *count) {
+    if (!drm_dev || !crtcs || !count) {
+        return -EINVAL;
+    }
+
+    nvidia_device_t *nv_dev = drm_dev->data;
+    *count = 0;
+    for (uint32_t i = 0; i < nv_dev->num_crtcs; i++) {
+        if (nv_dev->crtcs[i]) {
+            crtcs[(*count)++] = nv_dev->crtcs[i];
+        }
+    }
+
+    return 0;
+}
+
+int nvidia_get_encoders(drm_device_t *drm_dev, drm_encoder_t **encoders,
+                        uint32_t *count) {
+    if (!drm_dev || !encoders || !count) {
+        return -EINVAL;
+    }
+
+    nvidia_device_t *nv_dev = drm_dev->data;
+    *count = 0;
+    for (uint32_t i = 0; i < nv_dev->num_displays; i++) {
+        if (nv_dev->encoders[i]) {
+            encoders[(*count)++] = nv_dev->encoders[i];
+        }
+    }
+
+    return 0;
+}
+
+int nvidia_get_planes(drm_device_t *drm_dev, drm_plane_t **planes,
+                      uint32_t *count) {
+    if (!drm_dev || !planes || !count) {
+        return -EINVAL;
+    }
+
+    nvidia_device_t *nv_dev = drm_dev->data;
+    *count = 0;
+    for (uint32_t i = 0; i < nv_dev->num_crtcs; i++) {
+        if (nv_dev->planes[i]) {
+            planes[(*count)++] = nv_dev->planes[i];
+        }
+    }
+
+    return *count ? 0 : -ENODEV;
+}
+
+// DRM device operations structure
+drm_device_op_t nvidia_drm_device_op = {
+    .get_display_info = nvidia_get_display_info,
+    .get_fb = nvidia_get_fb,
+    .create_dumb = nvidia_create_dumb,
+    .destroy_dumb = nvidia_destroy_dumb,
+    .dirty_fb = nvidia_dirty_fb,
+    .add_fb = nvidia_add_fb,
+    .add_fb2 = nvidia_add_fb2,
+    .set_plane = nvidia_set_plane,
+    .atomic_commit = nvidia_atomic_commit,
+    .map_dumb = nvidia_map_dumb,
+    .set_crtc = nvidia_set_crtc,
+    .page_flip = nvidia_page_flip,
+    .set_cursor = nvidia_set_cursor,
+    .gamma_set = nvidia_gamma_set,
+    .get_connectors = nvidia_get_connectors,
+    .get_crtcs = nvidia_get_crtcs,
+    .get_encoders = nvidia_get_encoders,
+    .get_planes = nvidia_get_planes,
+};
+
+void nvidia_eventCallback(const struct NvKmsKapiEvent *event) {
+    if (!event || !event->privateData) {
+        return;
+    }
+
+    nvidia_device_t *nv_dev = (nvidia_device_t *)event->privateData;
+    switch (event->type) {
+    case NVKMS_EVENT_TYPE_DPY_CHANGED:
+    case NVKMS_EVENT_TYPE_DYNAMIC_DPY_CONNECTED:
+        for (uint32_t i = 0; i < nv_dev->num_displays; i++) {
+            nvidia_update_display_connector_state(nv_dev, i);
+        }
+        break;
+    case NVKMS_EVENT_TYPE_FLIP_OCCURRED: {
+        uint32_t head = event->u.flipOccurred.head;
+        if (nv_dev->drm_dev) {
+            nv_dev->drm_dev->vblank_counter++;
+            if (head < NVKMS_KAPI_MAX_HEADS &&
+                nv_dev->pending_flip_event[head]) {
+                drm_post_event(nv_dev->drm_dev, DRM_EVENT_FLIP_COMPLETE,
+                               nv_dev->pending_flip_user_data[head]);
+                nv_dev->pending_flip_event[head] = false;
+                nv_dev->pending_flip_user_data[head] = 0;
+            }
+        }
+        break;
+    }
+    default:
+        printk("nvidia_open: Unhandled event type %d\n", event->type);
+    }
+    return;
+}
+
+nvidia_stack_t *sp[5] = {NULL, NULL, NULL, NULL, NULL};
+
+int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
+    (void)vendor_device_id;
+
+    if (!dev) {
+        return -EINVAL;
+    }
+
+    if (nvidia_gpu_count >= MAX_NVIDIA_GPU_NUM) {
+        printk("nvidia_open: too many NVIDIA GPUs (max=%u)\n",
+               (uint32_t)MAX_NVIDIA_GPU_NUM);
+        return -ENOSPC;
+    }
+
+    uint16_t vendor = dev->vendor_id;
+    uint16_t device = dev->device_id;
+    uint16_t subsystem_vendor = dev->subsystem_vendor_id;
+    uint16_t subsystem_device = dev->subsystem_device_id;
+
+    if (!rm_wait_for_bar_firewall(NULL, dev->segment, dev->bus, dev->slot,
+                                  dev->func, device)) {
+        printk("NVRM: failed to wait for bar firewall to lower!!!\n");
+        return -1;
+    }
+
+    bool supported = rm_is_supported_pci_device(
+        (dev->class_code >> 16) & 0xFF, (dev->class_code >> 8) & 0xFF, vendor,
+        device, subsystem_vendor, subsystem_device, NV_TRUE);
+
+    if (!supported) {
+        printk("NVIDIA device not supported!!!\n");
+        return -1;
+    }
+
+    nvidia_device_t *nv_dev = calloc(1, sizeof(nvidia_device_t));
+    if (!nv_dev) {
+        return -ENOMEM;
+    }
+    bool registered_gpu = false;
+    bool private_state_initialized = false;
+    bool gpu_notified = false;
+    bool kms_device_allocated = false;
+    bool kms_ownership_grabbed = false;
+
+    nv_dev->pci_dev = dev;
+    nv_dev->timerLock.lock = 0;
+
+    nv_dev->nv_.pci_info.domain = dev->segment;
+    nv_dev->nv_.pci_info.bus = dev->bus;
+    nv_dev->nv_.pci_info.slot = dev->slot;
+    nv_dev->nv_.pci_info.function = dev->func;
+    nv_dev->nv_.pci_info.vendor_id = dev->vendor_id;
+    nv_dev->nv_.pci_info.device_id = dev->device_id;
+    nv_dev->nv_.subsystem_vendor = dev->subsystem_vendor_id;
+    nv_dev->nv_.subsystem_id = dev->subsystem_device_id;
+    nv_dev->nv_.os_state = nv_dev;
+    nv_dev->nv_.handle = nv_dev->pci_dev;
+    nv_dev->nv_.cpu_numa_node_id = -1;
+    nv_dev->nv_.interrupt_line = 0;
+
+    if (dev->op) {
+        uint16_t command = dev->op->read16(dev->bus, dev->slot, dev->func,
+                                           dev->segment, PCI_CONF_COMMAND);
+        command |= 0x6;
+        dev->op->write16(dev->bus, dev->slot, dev->func, dev->segment,
+                         PCI_CONF_COMMAND, command);
+    }
+
+    size_t nvBarIndex = 0;
+
+    for (size_t i = 0; i < 6; i++) {
+        if (dev->bars[i].address && dev->bars[i].mmio) {
+            if (nvBarIndex >= NV_GPU_NUM_BARS) {
+                continue;
+            }
+            nv_dev->nv_.bars[nvBarIndex].cpu_address =
+                dev->bars[i].address & ~(DEFAULT_PAGE_SIZE - 1);
+            nv_dev->nv_.bars[nvBarIndex].size = dev->bars[i].size;
+            nv_dev->nv_.bars[nvBarIndex].offset =
+                dev->bars[i].address & (DEFAULT_PAGE_SIZE - 1);
+            nv_dev->nv_.bars[nvBarIndex].map = NULL;
+            nv_dev->nv_.bars[nvBarIndex].map_u = NULL;
+            nvBarIndex++;
+        }
+    }
+
+    nv_dev->nv_.regs = &nv_dev->nv_.bars[NV_GPU_BAR_INDEX_REGS];
+    nv_dev->nv_.fb = &nv_dev->nv_.bars[NV_GPU_BAR_INDEX_FB];
+    if (nv_dev->nv_.regs->cpu_address == 0 || nv_dev->nv_.regs->size == 0 ||
+        nv_dev->nv_.fb->cpu_address == 0 || nv_dev->nv_.fb->size == 0) {
+        printk("nvidia_open: invalid BAR layout (regs/fb missing)\n");
+        free(nv_dev);
+        return -1;
+    }
+
+    nvidia_gpus[nvidia_gpu_count] = nv_dev;
+    nvidia_gpu_count++;
+    registered_gpu = true;
+
+    NV_STATUS status = rm_is_supported_device(NULL, &nv_dev->nv_);
+    if (status != NV_OK) {
+        printk("Failed detect support device!!!\n");
+        goto fail;
+    }
+
+    bool success = rm_init_private_state(NULL, &nv_dev->nv_);
+    if (!success) {
+        printk("Failed init private state!!!\n");
+        goto fail;
+    }
+    private_state_initialized = true;
+
+    rm_set_rm_firmware_requested(NULL, &nv_dev->nv_);
+    rm_enable_dynamic_power_management(NULL, &nv_dev->nv_);
+
+    rm_notify_gpu_addition(NULL, &nv_dev->nv_);
+    gpu_notified = true;
+
+    rm_unref_dynamic_power(NULL, &nv_dev->nv_, NV_DYNAMIC_PM_FINE);
+
+    nvKmsLock.lock = 0;
+
+    static struct NvKmsKapiFunctionsTable nvKmsFuncsTable = {
+        .versionString = NV_VERSION_STRING,
+    };
+
+    nvKms = &nvKmsFuncsTable;
+
+    if (!nvKmsKapiGetFunctionsTableInternal(&nvKmsFuncsTable)) {
+        goto fail;
+    }
+    nvKmsModuleLoad();
+
+    struct NvKmsKapiAllocateDeviceParams params = {
+        .gpuId = nv_dev->nv_.gpu_id,
+        .privateData = nv_dev,
+        .eventCallback = nvidia_eventCallback,
+    };
+
+    nv_dev->kmsdev = nvKms->allocateDevice(&params);
+    if (!nv_dev->kmsdev) {
+        printk("Failed to allocate kms device!!!\n");
+        goto fail;
+    }
+    kms_device_allocated = true;
+
+    if (!nvKms->grabOwnership(nv_dev->kmsdev)) {
+        goto fail;
+    }
+    kms_ownership_grabbed = true;
+
+    nvKms->framebufferConsoleDisabled(nv_dev->kmsdev);
+
+    struct NvKmsKapiDeviceResourcesInfo resInfo;
+    if (!nvKms->getDeviceResourcesInfo(nv_dev->kmsdev, &resInfo)) {
+        goto fail;
+    }
+    nv_dev->pitch_alignment = resInfo.caps.pitchAlignment;
+    nv_dev->has_video_memory = !!resInfo.caps.hasVideoMemory;
+
+    drm_resource_manager_init(&nv_dev->resource_mgr);
+    nv_dev->num_crtcs = 0;
+    for (uint32_t i = 0; i < NVKMS_KAPI_MAX_HEADS; i++) {
+        nv_dev->head_to_crtc[i] = -1;
+    }
+
+    for (uint32_t head = 0; head < resInfo.numHeads &&
+                            nv_dev->num_crtcs < DRM_MAX_CRTCS_PER_DEVICE &&
+                            nv_dev->num_crtcs < DRM_MAX_PLANES_PER_DEVICE;
+         head++) {
+        if (resInfo.numLayers[head] <= NVKMS_KAPI_LAYER_PRIMARY_IDX) {
+            continue;
+        }
+
+        uint32_t crtc_idx = nv_dev->num_crtcs;
+        drm_crtc_t *crtc = drm_crtc_alloc(&nv_dev->resource_mgr, nv_dev);
+        if (!crtc) {
+            continue;
+        }
+
+        crtc->x = 0;
+        crtc->y = 0;
+        crtc->w = 0;
+        crtc->h = 0;
+        crtc->mode_valid = 0;
+        nv_dev->crtcs[crtc_idx] = crtc;
+        nv_dev->head_to_crtc[head] = (int8_t)crtc_idx;
+
+        drm_plane_t *plane = drm_plane_alloc(&nv_dev->resource_mgr, nv_dev);
+        if (plane) {
+            plane->crtc_id = crtc->id;
+            plane->possible_crtcs = 1U << crtc_idx;
+
+            uint32_t formats[8] = {0};
+            uint32_t format_count = nvidia_get_drm_formats_from_mask(
+                resInfo.supportedSurfaceMemoryFormats
+                    [NVKMS_KAPI_LAYER_PRIMARY_IDX],
+                formats, 8);
+            if (!format_count) {
+                formats[0] = DRM_FORMAT_XRGB8888;
+                formats[1] = DRM_FORMAT_ARGB8888;
+                formats[2] = DRM_FORMAT_XBGR8888;
+                format_count = 3;
+            }
+
+            plane->count_format_types = format_count;
+            plane->format_types = malloc(sizeof(uint32_t) * format_count);
+            if (plane->format_types) {
+                memcpy(plane->format_types, formats,
+                       sizeof(uint32_t) * format_count);
+            } else {
+                plane->count_format_types = 0;
+            }
+            plane->plane_type = DRM_PLANE_TYPE_PRIMARY;
+        }
+        nv_dev->planes[crtc_idx] = plane;
+        nv_dev->num_crtcs++;
+    }
+
+    NvU32 nDisplays = 0;
+    success = nvKms->getDisplays(nv_dev->kmsdev, &nDisplays, NULL);
+    if (!success) {
+        goto fail;
+    }
+
+    if (nDisplays > 16) {
+        nDisplays = 16;
+    }
+
+    NvKmsKapiDisplay hDisplays[16] = {0};
+    success = nvKms->getDisplays(nv_dev->kmsdev, &nDisplays, hDisplays);
+    if (!success) {
+        goto fail;
+    }
+
+    nv_dev->num_displays = 0;
+    for (uint32_t i = 0; i < nDisplays; i++) {
+        if (nv_dev->num_displays >= DRM_MAX_CONNECTORS_PER_DEVICE ||
+            nv_dev->num_displays >= DRM_MAX_ENCODERS_PER_DEVICE) {
+            break;
+        }
+
+        struct NvKmsKapiStaticDisplayInfo display_info;
+        struct NvKmsKapiConnectorInfo connector_info;
+        memset(&display_info, 0, sizeof(display_info));
+        memset(&connector_info, 0, sizeof(connector_info));
+
+        if (!nvKms->getStaticDisplayInfo(nv_dev->kmsdev, hDisplays[i],
+                                         &display_info)) {
+            continue;
+        }
+        if (!nvKms->getConnectorInfo(nv_dev->kmsdev,
+                                     display_info.connectorHandle,
+                                     &connector_info)) {
+            continue;
+        }
+
+        int selected_head = -1;
+        for (uint32_t bit = 0; bit < NVKMS_KAPI_MAX_HEADS; bit++) {
+            if ((display_info.headMask & (1U << bit)) &&
+                nv_dev->head_to_crtc[bit] >= 0) {
+                selected_head = bit;
+                break;
+            }
+        }
+        if (selected_head < 0) {
+            continue;
+        }
+
+        uint32_t crtc_idx = (uint32_t)nv_dev->head_to_crtc[selected_head];
+        if (crtc_idx >= nv_dev->num_crtcs || !nv_dev->crtcs[crtc_idx]) {
+            continue;
+        }
+
+        uint32_t display_idx = nv_dev->num_displays;
+        nv_dev->displays[display_idx] = hDisplays[i];
+        nv_dev->display_heads[display_idx] = (uint32_t)selected_head;
+
+        uint32_t connector_type = nvidia_connector_type_to_drm(
+            connector_info.type, display_info.internal);
+        nv_dev->connectors[display_idx] =
+            drm_connector_alloc(&nv_dev->resource_mgr, connector_type, nv_dev);
+        if (!nv_dev->connectors[display_idx]) {
+            continue;
+        }
+
+        nv_dev->encoders[display_idx] = drm_encoder_alloc(
+            &nv_dev->resource_mgr,
+            nvidia_signal_format_to_drm(connector_info.signalFormat), nv_dev);
+        if (!nv_dev->encoders[display_idx]) {
+            drm_connector_free(&nv_dev->resource_mgr,
+                               nv_dev->connectors[display_idx]->id);
+            nv_dev->connectors[display_idx] = NULL;
+            continue;
+        }
+
+        uint32_t possible_crtcs = 0;
+        for (uint32_t bit = 0; bit < NVKMS_KAPI_MAX_HEADS; bit++) {
+            if (!(display_info.headMask & (1U << bit))) {
+                continue;
+            }
+
+            if (nv_dev->head_to_crtc[bit] >= 0) {
+                possible_crtcs |= (1U << nv_dev->head_to_crtc[bit]);
+            }
+        }
+        if (!possible_crtcs) {
+            possible_crtcs = 1U << crtc_idx;
+        }
+
+        nv_dev->encoders[display_idx]->possible_crtcs = possible_crtcs;
+        nv_dev->encoders[display_idx]->crtc_id = nv_dev->crtcs[crtc_idx]->id;
+
+        nv_dev->connectors[display_idx]->encoder_id =
+            nv_dev->encoders[display_idx]->id;
+        nv_dev->connectors[display_idx]->crtc_id = nv_dev->crtcs[crtc_idx]->id;
+
+        nvidia_update_display_connector_state(nv_dev, display_idx);
+
+        if (nv_dev->connectors[display_idx]->count_modes &&
+            nv_dev->connectors[display_idx]->modes &&
+            !nv_dev->crtcs[crtc_idx]->mode_valid) {
+            nv_dev->crtcs[crtc_idx]->mode =
+                nv_dev->connectors[display_idx]->modes[0];
+            nv_dev->crtcs[crtc_idx]->w =
+                nv_dev->connectors[display_idx]->modes[0].hdisplay;
+            nv_dev->crtcs[crtc_idx]->h =
+                nv_dev->connectors[display_idx]->modes[0].vdisplay;
+            nv_dev->crtcs[crtc_idx]->mode_valid = 1;
+        }
+
+        if (nv_dev->planes[crtc_idx]) {
+            nv_dev->planes[crtc_idx]->crtc_id = nv_dev->crtcs[crtc_idx]->id;
+        }
+
+        nv_dev->num_displays++;
+    }
+
+    success = nvKms->declareEventInterest(
+        nv_dev->kmsdev, ((1U << NVKMS_EVENT_TYPE_DPY_CHANGED) |
+                         (1U << NVKMS_EVENT_TYPE_DYNAMIC_DPY_CONNECTED) |
+                         (1U << NVKMS_EVENT_TYPE_FLIP_OCCURRED)));
+
+    if (!success) {
+        goto fail;
+    }
+
+    printk("nvidia_open: heads=%u, crtcs=%u, displays=%u\n", resInfo.numHeads,
+           nv_dev->num_crtcs, nv_dev->num_displays);
+
+    nv_dev->drm_dev =
+        drm_regist_pci_dev(nv_dev, &nvidia_drm_device_op, nv_dev->pci_dev);
+    if (!nv_dev->drm_dev) {
+        goto fail;
+    }
+
+    drm_device_set_driver_info(nv_dev->drm_dev, "nvidia_open", "20260226",
+                               "NVIDIA Open Kernel DRM (NaOS)");
+
+    printk("nvidia_open: drm primary node /dev/dri/card%u\n",
+           nv_dev->drm_dev->primary_minor);
+    if (nv_dev->drm_dev->render_node_registered) {
+        printk("nvidia_open: drm render node /dev/dri/renderD%u\n",
+               nv_dev->drm_dev->render_minor);
+    }
+
+    return 0;
+
+fail:
+    nv_dev->tasks_should_exit = true;
+    while (nv_dev->irq_handler_task->state != TASK_DIED &&
+           nv_dev->timer_task->state != TASK_DIED) {
+        arch_pause();
+    }
+
+    if (kms_ownership_grabbed && nvKms && nvKms->releaseOwnership &&
+        nv_dev->kmsdev) {
+        nvKms->releaseOwnership(nv_dev->kmsdev);
+    }
+    if (kms_device_allocated && nvKms && nvKms->freeDevice && nv_dev->kmsdev) {
+        nvKms->freeDevice(nv_dev->kmsdev);
+    }
+    if (gpu_notified) {
+        rm_notify_gpu_removal(NULL, &nv_dev->nv_);
+    }
+    if (private_state_initialized) {
+        rm_free_private_state(NULL, &nv_dev->nv_);
+    }
+    if (registered_gpu) {
+        nvidia_unregister_gpu(nv_dev);
+    }
+    free(nv_dev);
+    return -1;
+}
+
+void nvidia_remove(pci_device_t *dev) {}
+
+void nvidia_shutdown(pci_device_t *dev) {}
+
+void nvidia_open_irq_thread(uint64_t dev_ptr) {
+    nvidia_device_t *dev = (nvidia_device_t *)dev_ptr;
+
+    while (!dev->shouldEnableIrq) {
+        if (dev->tasks_should_exit) {
+            task_exit(0);
+        }
+
+        arch_pause();
+    }
+
+    while (1) {
+        if (dev->tasks_should_exit) {
+            task_exit(0);
+        }
+
+        uint32_t rm_serviceable_fault_cnt = 0;
+        rm_gpu_handle_mmu_faults(NULL, &dev->nv_, &rm_serviceable_fault_cnt);
+        bool rm_fault_handling_needed = (rm_serviceable_fault_cnt != 0);
+
+        uint32_t need_to_run_bottom_half_gpu_lock_held = 0;
+        bool rm_handled =
+            rm_isr(NULL, &dev->nv_, &need_to_run_bottom_half_gpu_lock_held);
+
+        ASSERT(!rm_fault_handling_needed);
+
+        if (need_to_run_bottom_half_gpu_lock_held)
+            rm_isr_bh(NULL, &dev->nv_);
+    }
+
+    task_exit(0);
+}
+
+void nvidia_open_rc_timer(uint64_t dev_ptr) {
+    nvidia_device_t *dev = (nvidia_device_t *)dev_ptr;
+
+    bool continueWaiting = true;
+
+    while (1) {
+        if (dev->tasks_should_exit) {
+            task_exit(0);
+        }
+
+        while (!dev->nv_.rc_timer_enabled || !continueWaiting) {
+            if (dev->tasks_should_exit) {
+                task_exit(0);
+            }
+
+            schedule(SCHED_FLAG_YIELD);
+
+            if (dev->nv_.rc_timer_enabled) {
+                continueWaiting = true;
+            }
+        }
+
+        os_delay(1000);
+
+        spin_lock(&dev->timerLock);
+        bool still_enabled = dev->nv_.rc_timer_enabled;
+        spin_unlock(&dev->timerLock);
+
+        if (!still_enabled)
+            continue;
+
+        NV_STATUS status = rm_run_rc_callback(NULL, &dev->nv_);
+        if (status != NV_OK) {
+            continueWaiting = false;
+        }
+    }
+}
+
+NvBool nvidia_open_do_open_gpu(nvidia_device_t *dev) {
+    if (!dev) {
+        return NV_FALSE;
+    }
+
+    if (dev->nv_.flags & NV_FLAG_OPEN)
+        return NV_TRUE;
+
+    if (!dev->adapterInitialized_) {
+        rm_ref_dynamic_power(NULL, &dev->nv_, NV_DYNAMIC_PM_COARSE);
+
+        dev->irq_handler_task =
+            task_create("NVIDIA_OPEN_IRQ_HANDLER", nvidia_open_irq_thread,
+                        (uint64_t)dev, KTHREAD_PRIORITY);
+        dev->timer_task = task_create("NVIDIA_OPEN_TIMER", nvidia_open_rc_timer,
+                                      (uint64_t)dev, KTHREAD_PRIORITY);
+
+        dev->shouldEnableIrq = true;
+        bool success = rm_init_adapter(NULL, &dev->nv_);
+        if (!success) {
+            rm_unref_dynamic_power(NULL, &dev->nv_, NV_DYNAMIC_PM_COARSE);
+            return NV_FALSE;
+        }
+
+        dev->adapterInitialized_ = true;
+    }
+
+    dev->nv_.flags |= NV_FLAG_OPEN;
+
+    rm_request_dnotifier_state(NULL, &dev->nv_);
+
+    return NV_TRUE;
+}
+
+NvBool nvidia_open_open_gpu(NvU32 gpuId) {
+    for (uint64_t i = 0; i < nvidia_gpu_count; i++) {
+        if (!nvidia_gpus[i]) {
+            continue;
+        }
+        if (nvidia_gpus[i]->nv_.gpu_id == gpuId) {
+            return nvidia_open_do_open_gpu(nvidia_gpus[i]);
+        }
+    }
+
+    return NV_FALSE;
+}
+
+pci_driver_t nvidia_pci_driver = {
+    .name = "nvidia_open",
+    .class_id = 0x00000000,
+    .vendor_device_id = 0x10de0000,
+    .probe = nvidia_probe,
+    .remove = nvidia_remove,
+    .shutdown = nvidia_shutdown,
+    .flags = 0,
+};
+
+__attribute__((visibility("default"))) int dlmain() {
+    NvlStatus status = nvlink_lib_initialize();
+    if (status != NVL_SUCCESS) {
+        printk("Failed to initialize nvlink lib\n");
+        return -1;
+    }
+    if (!rm_init_rm(*sp)) {
+        printk("NVIDIA_OPEN: rm_init_rm() failed!!!\n");
+        return -1;
+    }
+
+    regist_pci_driver(&nvidia_pci_driver);
+
+    return 0;
+}

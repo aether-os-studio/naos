@@ -768,7 +768,7 @@ ssize_t drm_ioctl_get_cap(drm_device_t *dev, void *arg) {
         cap->value = DRM_PRIME_CAP_EXPORT | DRM_PRIME_CAP_IMPORT;
         return 0;
     case DRM_CAP_ADDFB2_MODIFIERS:
-        cap->value = 1;
+        cap->value = 0;
         return 0;
     case DRM_CAP_DUMB_PREFER_SHADOW:
         cap->value = 0;

@@ -11,25 +11,25 @@ extern bool can_schedule;
 void do_irq(struct pt_regs *regs, uint64_t irq_num) {
     irq_action_t *action = &actions[irq_num];
 
-    if (action->irq_controller && action->irq_controller->ack) {
-        action->irq_controller->ack(irq_num);
-    } else {
-        printk("Intr vector [%d] does not have an ack\n", irq_num);
-    }
-
     if (action->handler) {
         action->handler(irq_num, action->data, regs);
     } else {
         printk("Intr vector [%d] does not have a handler\n", irq_num);
     }
 
+    if (action->irq_controller && action->irq_controller->ack) {
+        action->irq_controller->ack(irq_num);
+    } else {
+        printk("Intr vector [%d] does not have an ack\n", irq_num);
+    }
+
     task_t *self = current_task;
 
-    if ((irq_num == ARCH_TIMER_IRQ) && can_schedule && self) {
-        if (self->cpu_id == 0) {
-            sched_check_wakeup();
-        }
+    if (self->cpu_id == 0) {
+        sched_check_wakeup();
+    }
 
+    if ((irq_num == ARCH_TIMER_IRQ) && can_schedule && self) {
         schedule(0);
     }
 }

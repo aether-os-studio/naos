@@ -6,6 +6,7 @@
 /modules-*
 /initramfs-*
 /obj-modules-*
+/nvidia-open-*
 *.iso
 *.img
 *.vmdk

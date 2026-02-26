@@ -742,7 +742,6 @@ void receiver_entry(uint64_t arg) {
     memset(buf, 0, mtu);
 
     while (1) {
-        arch_enable_interrupt();
         int len = netdev_recv(netdev, buf, mtu);
         if (len > 0) {
             struct pbuf *p = pbuf_alloc(PBUF_RAW, len, PBUF_RAM);

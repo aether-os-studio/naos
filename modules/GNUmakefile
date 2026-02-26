@@ -5,6 +5,11 @@ CFLAGS := -O2 -fno-stack-protector -Wno-address-of-packed-member -fPIC -fno-buil
 endif
 export CFLAGS
 
+# Check if the architecture is supported.
+ifeq ($(filter $(ARCH),aarch64 loongarch64 riscv64 x86_64),)
+    $(error Architecture $(ARCH) not supported)
+endif
+
 # Architecture specific internal flags.
 ifeq ($(ARCH),x86_64)
     ifeq ($(CC_IS_CLANG),1)
@@ -74,6 +79,9 @@ all:
 
 ifeq ($(ARCH), x86_64)
 	$(MAKE) -C e1000
+ifneq ($(BUILD_NVIDIA), 0)
+	$(MAKE) -C nvidia_open
+endif
 endif
 
 	$(MAKE) -C nvme

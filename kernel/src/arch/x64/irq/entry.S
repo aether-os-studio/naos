@@ -82,9 +82,7 @@ Restore_all:
     popq %rbp
 
     popq %rax
-    addq $0x8, %rsp // 弹出orig_rax
-
-    addq $0x10, %rsp // 弹出变量FUNC和errcode
+    addq $0x18, %rsp // 弹出变量orig_rax,FUNC和errcode
 
     iretq
 

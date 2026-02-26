@@ -11,6 +11,8 @@ export BOOT_PROTOCOL ?= limine
 # mixed or monolithic
 export KERNEL_MODEL ?= mixed
 
+export BUILD_NVIDIA ?= 0
+
 # Target architecture to build for. Default to x86_64.
 export ARCH ?= x86_64
 
@@ -166,8 +168,8 @@ EFI_FILE_SINGLE = assets/limine/BOOTLOONGARCH64.EFI
 endif
 
 $(IMAGE_NAME).img: assets/limine modules kernel initramfs-$(ARCH).img rootfs-$(ARCH).img
-	dd if=/dev/zero of=$(IMAGE_NAME).img bs=1M count=64
-	sgdisk --new=1:1M:63M $(IMAGE_NAME).img
+	dd if=/dev/zero of=$(IMAGE_NAME).img bs=1M seek=0 count=256
+	sgdisk --new=1:1M:255M $(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 $(IMAGE_NAME).img
 	mcopy -i $(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/
 ifeq ($(KERNEL_MODEL), mixed)
@@ -188,11 +190,11 @@ ifeq ($(BOOT_PROTOCOL), multiboot2)
 	mcopy -i $(IMAGE_NAME).img@@1M limine_multiboot2_$(KERNEL_MODEL).conf ::/limine/limine.conf
 endif
 
-TOTAL_IMG_SIZE=$$(( $(ROOTFS_IMG_SIZE) + 64 ))
+TOTAL_IMG_SIZE=$$(( $(ROOTFS_IMG_SIZE) + 256 ))
 
 single-$(IMAGE_NAME).img: assets/limine modules kernel initramfs-$(ARCH).img rootfs-$(ARCH).img
 	dd if=/dev/zero of=single-$(IMAGE_NAME).img bs=1M count=$(TOTAL_IMG_SIZE)
-	sgdisk --new=1:1M:63M --new=2:64M:0 single-$(IMAGE_NAME).img
+	sgdisk --new=1:1M:255M --new=2:256M:0 single-$(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 single-$(IMAGE_NAME).img
 	mcopy -i single-$(IMAGE_NAME).img@@1M kernel/bin-$(ARCH)/kernel ::/
 ifeq ($(KERNEL_MODEL), mixed)
@@ -208,7 +210,7 @@ else
 endif
 endif
 
-	dd if=rootfs-$(ARCH).img of=single-$(IMAGE_NAME).img bs=1M count=$(ROOTFS_IMG_SIZE) seek=64
+	dd if=rootfs-$(ARCH).img of=single-$(IMAGE_NAME).img bs=1M count=$(ROOTFS_IMG_SIZE) seek=256
 
 .PHONY: run
 run: run-$(ARCH)
@@ -218,7 +220,7 @@ run-single: run-$(ARCH)-single
 
 .PHONY: run-x86_64
 run-x86_64: assets/ovmf-code-$(ARCH).fd all
-	qemu-system-$(ARCH) \
+	sudo qemu-system-$(ARCH) \
 		-M q35 \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
@@ -227,10 +229,7 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-device ahci,id=ahci \
 		-device ide-hd,drive=harddisk,bus=ahci.0 \
 		-device nvme,drive=rootdisk,serial=5678 \
-		-netdev user,id=net0 \
-		-device e1000,netdev=net0 \
 		-rtc base=utc \
-		-display sdl \
 		$(QEMUFLAGS)
 
 .PHONY: run-x86_64-single

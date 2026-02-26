@@ -17,402 +17,336 @@
 
 char buf[4096];
 
-char *write_num(char *str, uint64_t num, int base, int field_width,
-                int precision, int flags);
+#define is_digit(c) (c >= '0' && c <= '9')
 
-int skip_and_atoi(const char **s) {
-    /**
-     * @brief 获取连续的一段字符对应整数的值
-     * @param:**s 指向 指向字符串的指针 的指针
-     */
-    int ans = 0;
-    while (is_digit(**s)) {
-        ans = ans * 10 + (**s) - '0';
-        ++(*s);
-    }
-    return ans;
+static int get_atoi(const char **str) {
+    int n;
+    for (n = 0; is_digit(**str); (*str)++)
+        n = n * 10 + **str - '0';
+    return n;
 }
 
-int vsprintf(char *buf, const char *fmt, va_list args) {
-    /**
-     * 将字符串按照fmt和args中的内容进行格式化，然后保存到buf中
-     * @param buf 结果缓冲区
-     * @param fmt 格式化字符串
-     * @param args 内容
-     * @return 最终字符串的长度
-     */
+static void bputc(char *buf, size_t *pos, size_t max, char c) {
+    if (*pos < max)
+        buf[(*pos)] = c;
+    (*pos)++;
+}
 
-    char *str, *s;
+#define F_ALTERNATE 0001 // put 0x infront 16, 0 on octals, b on binary
+#define F_ZEROPAD 0002   // value should be zero padded
+#define F_LEFT 0004      // left justified if set, otherwise right justified
+#define F_SPACE 0010     // place a space before positive number
+#define F_PLUS 0020      // show +/- on signed numbers, default only for -
+#define F_SIGNED 0040    // is an unsigned number?
+#define F_SMALL 0100     // use lowercase for hex?
 
-    str = buf;
+/**
+ * Formats an integer number
+ *  buf - buffer to print into
+ *  len - current position in buffer
+ *  maxlen - last valid position in buf
+ *  num - number to print
+ *  base - it's base
+ *  width - how many spaces this should have; padding
+ *  flags - above F flags
+ */
+static void fmt_int(char *buf, size_t *len, size_t maxlen, long long num,
+                    int base, int width, int flags) {
+    char nbuf[64], sign = 0;
+    char altb[8]; // small buf for sign and #
+    unsigned long n = num;
+    int npad;         // number of pads
+    char pchar = ' '; // padding character
+    char *digits = "0123456789ABCDEF";
+    char *ldigits = "0123456789abcdef";
+    int i, j;
 
-    int flags;       // 用来存储格式信息的bitmap
-    int field_width; // 区域宽度
-    int precision;   // 精度
-    int qualifier;   // 数据显示的类型
-    int len;
+    if (base < 2 || base > 16)
+        return;
+    if (flags & F_SMALL)
+        digits = ldigits;
+    if (flags & F_LEFT)
+        flags &= ~F_ZEROPAD;
 
-    // 开始解析字符串
-    for (; *fmt; ++fmt) {
-        // 内容不涉及到格式化，直接输出
-        if (*fmt != '%') {
-            *str = *fmt;
-            ++str;
-            continue;
+    if ((flags & F_SIGNED) && num < 0) {
+        n = -num;
+        sign = '-';
+    } else if (flags & F_PLUS) {
+        sign = '+';
+    } else if (flags & F_SPACE)
+        sign = ' ';
+
+    i = 0;
+    do {
+        nbuf[i++] = digits[n % base];
+        n = n / base;
+    } while (n > 0);
+
+    j = 0;
+    if (sign)
+        altb[j++] = sign;
+    if (flags & F_ALTERNATE) {
+        if (base == 8 || base == 16) {
+            altb[j++] = '0';
+            if (base == 16)
+                altb[j++] = (flags & F_SMALL) ? 'x' : 'X';
         }
+    }
+    altb[j] = 0;
 
-        // 开始格式化字符串
+    npad = width > i + j ? width - i - j : 0;
 
-        // 清空标志位和field宽度
-        field_width = flags = 0;
+    if (width > i + j)
+        npad = width - i - j;
 
-        bool flag_tmp = true;
-        bool flag_break = false;
+    if (npad > 0 && ((flags & F_LEFT) == 0)) {
+        if (flags & F_ZEROPAD) {
+            for (j = 0; altb[j]; j++)
+                bputc(buf, len, maxlen, altb[j]);
+            altb[0] = 0;
+        }
+        while (npad-- > 0)
+            bputc(buf, len, maxlen, (flags & F_ZEROPAD) ? '0' : ' ');
+    }
+    for (j = 0; altb[j]; j++)
+        bputc(buf, len, maxlen, altb[j]);
 
-        ++fmt;
-        while (flag_tmp) {
-            switch (*fmt) {
-            case '\0':
-                // 结束解析
-                flag_break = true;
-                flag_tmp = false;
-                break;
+    while (i-- > 0)
+        bputc(buf, len, maxlen, nbuf[i]);
 
-            case '-':
-                // 左对齐
-                flags |= LEFT;
-                ++fmt;
-                break;
-            case '+':
-                // 在正数前面显示加号
-                flags |= PLUS;
-                ++fmt;
-                break;
-            case ' ':
-                flags |= SPACE;
-                ++fmt;
-                break;
+    if (npad > 0 && (flags & F_LEFT))
+        while (npad-- > 0)
+            bputc(buf, len, maxlen, pchar);
+}
+
+static void fmt_chr(char *buf, size_t *pos, size_t max, char c, int width,
+                    int flags) {
+    int npad = 0;
+    if (width > 0)
+        npad = width - 1;
+    if (npad < 0)
+        npad = 0;
+
+    if (npad && ((flags & F_LEFT) == 0))
+        while (npad-- > 0)
+            bputc(buf, pos, max, ' ');
+
+    bputc(buf, pos, max, c);
+
+    if (npad && (flags & F_LEFT))
+        while (npad-- > 0)
+            bputc(buf, pos, max, ' ');
+}
+
+/**
+ * strlen()
+ */
+static size_t slen(char *s) {
+    size_t i;
+    for (i = 0; *s; i++, s++)
+        ;
+    return i;
+}
+
+static void fmt_str(char *buf, size_t *pos, size_t max, char *s, int width,
+                    int precision, int flags) {
+    int len = 0;
+    int npad = 0;
+
+    if (precision < 0) {
+        len = slen(s);
+    } else {
+        while (s[len] && len < precision)
+            len++;
+    }
+
+    if (width > 0)
+        npad = width - len;
+    if (npad < 0)
+        npad = 0;
+
+    if (npad && ((flags & F_LEFT) == 0))
+        while (npad-- > 0)
+            bputc(buf, pos, max, ' ');
+
+    while (len-- > 0)
+        bputc(buf, pos, max, *s++);
+
+    if (npad && (flags & F_LEFT))
+        while (npad-- > 0)
+            bputc(buf, pos, max, ' ');
+}
+
+/* Format states */
+#define S_DEFAULT 0
+#define S_FLAGS 1
+#define S_WIDTH 2
+#define S_PRECIS 3
+#define S_LENGTH 4
+#define S_CONV 5
+
+/* Lenght flags */
+#define L_CHAR 1
+#define L_SHORT 2
+#define L_LONG 3
+#define L_LLONG 4
+#define L_DOUBLE 5
+
+/**
+ * Shrinked down, vsnprintf implementation.
+ *  This will not handle floating numbers (yet).
+ */
+int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
+    size_t n = 0;
+    char c, *s;
+    char state = 0;
+    long long num;
+    int base;
+    int flags, width, precision, lflags;
+
+    if (!buf)
+        size = 0;
+
+    for (;;) {
+        c = *fmt++;
+        if (state == S_DEFAULT) {
+            if (c == '%') {
+                state = S_FLAGS;
+                flags = 0;
+            } else {
+                bputc(buf, &n, size, c);
+            }
+        } else if (state == S_FLAGS) {
+            switch (c) {
             case '#':
-                // 在八进制数前面显示 '0o'，在十六进制数前面显示 '0x' 或 '0X'
-                flags |= SPECIAL;
-                ++fmt;
+                flags |= F_ALTERNATE;
                 break;
             case '0':
-                // 显示的数字之前填充‘0’来取代空格
-                flags |= PAD_ZERO;
-                ++fmt;
+                flags |= F_ZEROPAD;
+                break;
+            case '-':
+                flags |= F_LEFT;
+                break;
+            case ' ':
+                flags |= F_SPACE;
+                break;
+            case '+':
+                flags |= F_PLUS;
+                break;
+            case '\'':
+            case 'I':
+                break; // not yet used
+            default:
+                fmt--;
+                width = 0;
+                state = S_WIDTH;
+            }
+        } else if (state == S_WIDTH) {
+            if (c == '*') {
+                width = va_arg(ap, int);
+                if (width < 0) {
+                    width = -width;
+                    flags |= F_LEFT;
+                }
+            } else if (is_digit(c) && c > '0') {
+                fmt--;
+                width = get_atoi(&fmt);
+            } else {
+                fmt--;
+                precision = -1;
+                state = S_PRECIS;
+            }
+        } else if (state == S_PRECIS) {
+            // Parse precision
+            if (c == '.') {
+                if (is_digit(*fmt))
+                    precision = get_atoi(&fmt);
+                else if (*fmt == '*') {
+                    fmt++;
+                    precision = va_arg(ap, int);
+                } else {
+                    precision = 0;
+                }
+                if (precision < 0)
+                    precision = -1;
+            } else
+                fmt--;
+            lflags = 0;
+            state = S_LENGTH;
+        } else if (state == S_LENGTH) {
+            switch (c) {
+            case 'h':
+                lflags = lflags == L_CHAR ? L_SHORT : L_CHAR;
+                break;
+            case 'l':
+                lflags = lflags == L_LONG ? L_LLONG : L_LONG;
+                break;
+            case 'L':
+                lflags = L_DOUBLE;
                 break;
             default:
-                flag_tmp = false;
-                break;
+                fmt--;
+                state = S_CONV;
             }
-        }
-        if (flag_break)
-            break;
+        } else if (state == S_CONV) {
+            if (c == 'd' || c == 'i' || c == 'o' || c == 'b' || c == 'u' ||
+                c == 'x' || c == 'X') {
+                if (lflags == L_LONG)
+                    num = va_arg(ap, long);
+                else if (lflags & (L_LLONG | L_DOUBLE))
+                    num = va_arg(ap, long long);
+                else if (c == 'd' || c == 'i')
+                    num = va_arg(ap, int);
+                else
+                    num = (unsigned int)va_arg(ap, int);
 
-        // 获取区域宽度
-        field_width = -1;
-        if (*fmt == '*') {
-            field_width = va_arg(args, int);
-            ++fmt;
-        } else if (is_digit(*fmt)) {
-            field_width = skip_and_atoi(&fmt);
-            if (field_width < 0) {
-                field_width = -field_width;
-                flags |= LEFT;
-            }
-        }
-
-        // 获取小数精度
-        precision = -1;
-        if (*fmt == '.') {
-            ++fmt;
-            if (*fmt == '*') {
-                precision = va_arg(args, int);
-                ++fmt;
-            } else if is_digit (*fmt) {
-                precision = skip_and_atoi(&fmt);
-            }
-        }
-
-        // 获取要显示的数据的类型
-        if (*fmt == 'h' || *fmt == 'l' || *fmt == 'L' || *fmt == 'Z') {
-            qualifier = *fmt;
-            ++fmt;
-        }
-        // 为了支持lld
-        if ((qualifier == (int)'l' && *fmt == 'l') || *(fmt + 1) == 'd')
-            ++fmt;
-
-        // 转化成字符串
-        long long *ip;
-        switch (*fmt) {
-        // 输出 %
-        case '%':
-            *str++ = '%';
-
-            break;
-        // 显示一个字符
-        case 'c':
-            // 靠右对齐
-            if (!(flags & LEFT)) {
-                while (--field_width > 0) {
-                    *str = ' ';
-                    ++str;
+                base = 10;
+                if (c == 'd' || c == 'i') {
+                    flags |= F_SIGNED;
+                } else if (c == 'x' || c == 'X') {
+                    flags |= c == 'x' ? F_SMALL : 0;
+                    base = 16;
+                } else if (c == 'o') {
+                    base = 8;
+                } else if (c == 'b') {
+                    base = 2;
                 }
+                fmt_int(buf, &n, size, num, base, width, flags);
+            } else if (c == 'p') {
+                num = (long)va_arg(ap, void *);
+                base = 16;
+                flags |= F_SMALL | F_ALTERNATE;
+                fmt_int(buf, &n, size, num, base, width, flags);
+            } else if (c == 's') {
+                s = va_arg(ap, char *);
+                if (!s)
+                    s = "(null)";
+                fmt_str(buf, &n, size, s, width, precision, flags);
+            } else if (c == 'c') {
+                c = va_arg(ap, int);
+                fmt_chr(buf, &n, size, c, width, flags);
+            } else if (c == '%') {
+                bputc(buf, &n, size, c);
+            } else {
+                bputc(buf, &n, size, '%');
+                bputc(buf, &n, size, c);
             }
-
-            *str++ = (unsigned char)va_arg(args, int);
-
-            while (--field_width > 0) {
-                *str = ' ';
-                ++str;
-            }
-
-            break;
-
-        // 显示一个字符串
-        case 's':
-            s = va_arg(args, char *);
-            if (!s)
-                s = "\0";
-            len = strlen(s);
-            if (precision < 0) {
-                // 未指定精度
-                precision = len;
-            }
-
-            else if (len > precision) {
-                len = precision;
-            }
-
-            // 靠右对齐
-            if (!(flags & LEFT))
-                while (len < field_width--) {
-                    *str = ' ';
-                    ++str;
-                }
-
-            for (int i = 0; i < len; i++) {
-                *str = *s;
-                ++s;
-                ++str;
-            }
-
-            while (len < field_width--) {
-                *str = ' ';
-                ++str;
-            }
-
-            break;
-        // 以八进制显示字符串
-        case 'o':
-            flags |= SMALL;
-        case 'O':
-            flags |= SPECIAL;
-            if (qualifier == 'l')
-                str = write_num(str, va_arg(args, long long), 8, field_width,
-                                precision, flags);
-            else
-                str = write_num(str, va_arg(args, int), 8, field_width,
-                                precision, flags);
-            break;
-
-        // 打印指针指向的地址
-        case 'p':
-            if (field_width == 0) {
-                field_width = 2 * sizeof(void *);
-                flags |= PAD_ZERO;
-            }
-
-            str = write_num(str, (unsigned long)va_arg(args, void *), 16,
-                            field_width, precision, flags);
-
-            break;
-
-        // 打印十六进制
-        case 'x':
-            flags |= SMALL;
-        case 'X':
-            // flags |= SPECIAL;
-            if (qualifier == 'l')
-                str = write_num(str, va_arg(args, long long), 16, field_width,
-                                precision, flags);
-            else
-                str = write_num(str, va_arg(args, int), 16, field_width,
-                                precision, flags);
-            break;
-
-        // 打印十进制有符号整数
-        case 'i':
-        case 'd':
-
-            flags |= SIGN;
-            if (qualifier == 'l')
-                str = write_num(str, va_arg(args, long long), 10, field_width,
-                                precision, flags);
-            else
-                str = write_num(str, va_arg(args, int), 10, field_width,
-                                precision, flags);
-            break;
-
-        // 打印十进制无符号整数
-        case 'u':
-            if (qualifier == 'l')
-                str = write_num(str, va_arg(args, unsigned long long), 10,
-                                field_width, precision, flags);
-            else
-                str = write_num(str, va_arg(args, unsigned int), 10,
-                                field_width, precision, flags);
-            break;
-
-        // 输出有效字符数量到*ip对应的变量
-        case 'n':
-
-            if (qualifier == 'l')
-                ip = va_arg(args, long long *);
-            else
-                ip = (long long *)va_arg(args, int *);
-
-            *ip = str - buf;
-            break;
-
-        // 对于不识别的控制符，直接输出
-        default:
-            *str++ = '%';
-            if (*fmt)
-                *str++ = *fmt;
-            else
-                --fmt;
-            break;
+            state = S_DEFAULT;
         }
+        if (c == 0)
+            break;
     }
-    *str = '\0';
+    n--;
+    if (n < size)
+        buf[n] = 0;
+    else if (size > 0)
+        buf[size - 1] = 0;
 
-    // 返回缓冲区已有字符串的长度。
-    return str - buf;
+    return n;
 }
 
-char *write_num(char *str, uint64_t num, int base, int field_width,
-                int precision, int flags) {
-    /**
-     * @brief 将数字按照指定的要求转换成对应的字符串
-     *
-     * @param str 要返回的字符串
-     * @param num 要打印的数值
-     * @param base 基数
-     * @param field_width 区域宽度
-     * @param precision 精度
-     * @param flags 标志位
-     */
-
-    // 首先判断是否支持该进制
-    if (base < 2 || base > 36)
-        return 0;
-    char pad, sign, tmp_num[100];
-
-    const char *digits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    // 显示小写字母
-    if (flags & SMALL)
-        digits = "0123456789abcdefghijklmnopqrstuvwxyz";
-
-    if (flags & LEFT)
-        flags &= ~PAD_ZERO;
-    // 设置填充元素
-    pad = (flags & PAD_ZERO) ? '0' : ' ';
-
-    sign = 0;
-    if (flags & SIGN && (int64_t)num < 0) {
-        sign = '-';
-        num = -num;
-    } else {
-        // 设置符号
-        sign = (flags & PLUS) ? '+' : ((flags & SPACE) ? ' ' : 0);
-    }
-
-    // sign占用了一个宽度
-    if (sign) {
-        --field_width;
-    }
-
-    if (flags & SPECIAL) {
-        if (base == 16) // 0x占用2个位置
-        {
-            field_width -= 2;
-        } else if (base == 8) // O占用一个位置
-        {
-            --field_width;
-        }
-    }
-
-    int js_num = 0; // 临时数字字符串tmp_num的长度
-
-    if (num == 0)
-        tmp_num[js_num++] = '0';
-    else {
-        num = ABS(num);
-        // 进制转换
-        while (num > 0) {
-            tmp_num[js_num++] =
-                digits[num %
-                       base]; // 注意这里，输出的数字，是小端对齐的。低位存低位
-            num /= base;
-        }
-    }
-
-    if (js_num > precision)
-        precision = js_num;
-
-    field_width -= precision;
-
-    // 靠右对齐
-    if (!(flags & (LEFT + PAD_ZERO)))
-        while (field_width-- > 0)
-            *str++ = ' ';
-
-    if (sign)
-        *str++ = sign;
-    if (flags & SPECIAL) {
-        if (base == 16) {
-            *str++ = '0';
-            *str++ = digits[33];
-        } else if (base == 8) {
-            *str++ = digits[24]; // 注意这里是英文字母O或者o
-        }
-    }
-    if (!(flags & LEFT))
-        while (field_width-- > 0)
-            *str++ = pad;
-    while (js_num < precision) {
-        --precision;
-        *str++ = '0';
-    }
-
-    while (js_num-- > 0)
-        *str++ = tmp_num[js_num];
-
-    while (field_width-- > 0)
-        *str++ = ' ';
-
-    return str;
-}
-
-char vsnprintf_buf[8192];
-spinlock_t vsnprintf_lock = SPIN_INIT;
-
-int vsnprintf(char *buf, size_t size, const char *fmt, va_list args) {
-    spin_lock(&vsnprintf_lock);
-    memset(vsnprintf_buf, 0, sizeof(vsnprintf_buf));
-    int ret = vsprintf(vsnprintf_buf, fmt, args);
-    if (!size) {
-        spin_unlock(&vsnprintf_lock);
-        return ret;
-    }
-    int to_copy = MIN((size_t)ret, size);
-    if (buf)
-        memcpy(buf, vsnprintf_buf, to_copy);
-    spin_unlock(&vsnprintf_lock);
-    return to_copy;
+int vsprintf(char *buf, const char *fmt, va_list ap) {
+    vsnprintf(buf, SIZE_MAX, fmt, ap);
 }
 
 spinlock_t printk_lock = SPIN_INIT;

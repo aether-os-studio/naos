@@ -103,6 +103,7 @@ struct pt_regs;
 
 uint64_t task_fork(struct pt_regs *regs, bool vfork);
 uint64_t task_execve(const char *path, const char **argv, const char **envp);
+void task_exit_inner(task_t *task, int64_t code);
 uint64_t task_exit(int64_t code);
 
 #define WNOHANG 0x00000001

@@ -56,9 +56,8 @@ ENTRY(ret_from_syscall)
     popq %rbp
 
     popq %rax
-    addq $0x8, %rsp
 
-    addq $0x28, %rsp
+    addq $0x30, %rsp
 
     popq %rsp
 
