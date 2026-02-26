@@ -1,4 +1,5 @@
 #include <libs/aether/smbios.h>
+#include <boot/boot.h>
 #include <mod/dlinker.h>
 
 EXPORT_SYMBOL(smbios_available);

@@ -86,9 +86,9 @@ void boot_get_smbios_entries(void **entry32, void **entry64) {
         return;
 
     if (entry32)
-        *entry32 = smbios_request.response->entry_32;
+        *entry32 = (void *)smbios_request.response->entry_32;
     if (entry64)
-        *entry64 = smbios_request.response->entry_64;
+        *entry64 = (void *)smbios_request.response->entry_64;
 }
 
 uint64_t boot_get_boottime() { return boot_time_request.response->timestamp; }

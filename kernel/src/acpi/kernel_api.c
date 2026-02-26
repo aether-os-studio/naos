@@ -244,9 +244,32 @@ typedef struct uacpi_irq_handler_arg {
     uacpi_handle ctx;
 } uacpi_irq_handler_arg_t;
 
+extern void traceback(struct pt_regs *regs);
+
 void uacpi_irq_handler(uint64_t irq_num, void *data, struct pt_regs *regs) {
     uacpi_irq_handler_arg_t *arg = data;
-    arg->irq_handler(arg->ctx);
+
+    printk("interrupt from acpi\n");
+
+    traceback(regs);
+
+    if (current_task) {
+        printk("current_task->pid = %d, current_task->name = %s\n",
+               current_task->pid, current_task->name);
+    }
+
+    printk("RIP = %#018lx\n", regs->rip);
+    printk("RAX = %#018lx, RBX = %#018lx\n", regs->rax, regs->rbx);
+    printk("RCX = %#018lx, RDX = %#018lx\n", regs->rcx, regs->rdx);
+    printk("RDI = %#018lx, RSI = %#018lx\n", regs->rdi, regs->rsi);
+    printk("RSP = %#018lx, RBP = %#018lx\n", regs->rsp, regs->rbp);
+    printk("R08 = %#018lx, R09 = %#018lx\n", regs->r8, regs->r9);
+    printk("R10 = %#018lx, R11 = %#018lx\n", regs->r10, regs->r11);
+    printk("R12 = %#018lx, R13 = %#018lx\n", regs->r12, regs->r13);
+    printk("R14 = %#018lx, R15 = %#018lx\n", regs->r14, regs->r15);
+
+    if (arg->irq_handler)
+        arg->irq_handler(arg->ctx);
 }
 
 uacpi_status uacpi_kernel_install_interrupt_handler(

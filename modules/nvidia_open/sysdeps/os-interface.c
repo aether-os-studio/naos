@@ -2,7 +2,7 @@
 
 #include <boot/boot.h>
 #include <libs/klibc.h>
-#include <libs/smbios.h>
+#include <libs/aether/smbios.h>
 
 #include <libs/klibc.h>
 #include <libs/aether/acpi.h>
@@ -628,27 +628,7 @@ NV_STATUS NV_API_CALL os_lookup_user_io_memory(void *, NvU64, NvU64 **) STUBBED;
 NV_STATUS NV_API_CALL os_unlock_user_pages(NvU64, void *, NvU32) STUBBED;
 NV_STATUS NV_API_CALL os_match_mmap_offset(void *, NvU64, NvU64 *) STUBBED;
 NV_STATUS NV_API_CALL os_get_euid(NvU32 *) STUBBED;
-NV_STATUS NV_API_CALL os_get_smbios_header(NvU64 *pSmbsAddr) {
-    void *entry32 = NULL;
-    void *entry64 = NULL;
-
-    if (!pSmbsAddr) {
-        return NV_ERR_INVALID_ARGUMENT;
-    }
-
-    boot_get_smbios_entries(&entry32, &entry64);
-    if (entry64) {
-        *pSmbsAddr = (NvU64)(uintptr_t)entry64;
-        return NV_OK;
-    }
-    if (entry32) {
-        *pSmbsAddr = (NvU64)(uintptr_t)entry32;
-        return NV_OK;
-    }
-
-    *pSmbsAddr = 0;
-    return NV_ERR_NOT_SUPPORTED;
-}
+NV_STATUS NV_API_CALL os_get_smbios_header(NvU64 *pSmbsAddr) STUBBED;
 NV_STATUS NV_API_CALL os_get_acpi_rsdp_from_uefi(NvU32 *pRsdpAddr) {
     return NV_ERR_NOT_SUPPORTED;
 };
@@ -1123,10 +1103,6 @@ static NvBool nv_is_mobile_chassis_type(uint8_t chassis_type) {
 }
 
 NvBool NV_API_CALL nv_is_chassis_notebook(void) {
-    if (!smbios_available()) {
-        smbios_init();
-    }
-
     if (!smbios_available()) {
         return NV_FALSE;
     }
