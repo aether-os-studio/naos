@@ -2,647 +2,498 @@
 #include <libs/aether/stdio.h>
 #include "msc.h"
 
+#define MSC_CBW_SIGNATURE 0x43425355U
+#define MSC_CSW_SIGNATURE 0x53425355U
+#define MSC_BOT_RESET 0xFF
+#define MSC_BOT_GET_MAX_LUN 0xFE
+
+#define MSC_MAX_LUNS 16
 #define MSC_MAX_RETRIES 3
-#define MSC_CBW_DELAY_US 100      // 减少到微秒级
-#define MSC_CSW_DELAY_US 50       // 减少到微秒级
-#define MSC_RESET_DELAY_MS 100    // 减少reset延迟
-#define MSC_READY_CHECK_DELAY 200 // 减少就绪检测间隔
+#define MSC_READY_RETRIES 20
+#define MSC_READY_DELAY_MS 200
+#define MSC_RESET_DELAY_MS 100
+#define MSC_MAX_TRANSFER_SIZE (64 * 1024)
 
-// 传输优化参数
-#define MSC_MAX_TRANSFER_SIZE (128 * 1024) // 128KB per SCSI command
-#define MSC_OPTIMAL_BLOCKS 256 // 每次传输256个块（128KB for 512-byte blocks）
+static inline uint32_t msc_be32(const uint8_t *p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
 
-static inline void msc_delay_us(uint64_t us) {
-    uint64_t ns = us * 1000ULL;
-    uint64_t timeout = nano_time() + ns;
+static inline uint64_t msc_be64(const uint8_t *p) {
+    return ((uint64_t)p[0] << 56) | ((uint64_t)p[1] << 48) |
+           ((uint64_t)p[2] << 40) | ((uint64_t)p[3] << 32) |
+           ((uint64_t)p[4] << 24) | ((uint64_t)p[5] << 16) |
+           ((uint64_t)p[6] << 8) | (uint64_t)p[7];
+}
+
+static inline void msc_delay_ms(uint64_t ms) {
+    uint64_t timeout = nano_time() + ms * 1000000ULL;
     while (nano_time() < timeout) {
         arch_pause();
     }
 }
 
-static inline void msc_delay(uint64_t ms) { msc_delay_us(ms * 1000); }
+static int msc_bulk_transfer(usb_msc_device *ctrl, bool is_read, void *data,
+                             size_t len) {
+    struct usb_pipe *pipe;
 
-static spinlock_t usb_msc_lock = SPIN_INIT;
-
-static int msc_bulk_transfer(struct usb_pipe *pipe, void *data, size_t len,
-                             bool is_read) {
-    if (!pipe || !pipe->cntl) {
+    if (!ctrl || !ctrl->bulk_in || !ctrl->bulk_out)
         return -EINVAL;
-    }
 
-    if (len > 0 && !data) {
+    if (len > 0 && !data)
         return -EINVAL;
-    }
 
-    int ret =
-        usb_send_bulk(pipe, is_read ? USB_DIR_IN : USB_DIR_OUT, data, len);
+    if (len > INT32_MAX)
+        return -EINVAL;
 
-    if (ret != 0) {
-        printk("MSC: Bulk %s failed: ret=%d, len=%lu\n", is_read ? "IN" : "OUT",
-               ret, len);
+    if (len == 0)
+        return 0;
+
+    pipe = is_read ? ctrl->bulk_in : ctrl->bulk_out;
+    if (usb_send_bulk(pipe, is_read ? USB_DIR_IN : USB_DIR_OUT, data,
+                      (int)len) != 0) {
         return -EIO;
     }
 
-    return len;
-}
-
-static int msc_clear_endpoint_halt(usb_msc_device *dev, struct usb_pipe *pipe) {
-    struct usb_ctrlrequest req = {
-        .bRequestType = USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_ENDPOINT,
-        .bRequest = USB_REQ_CLEAR_FEATURE,
-        .wValue = 0,
-        .wIndex = pipe->ep,
-        .wLength = 0};
-
-    int ret = usb_send_default_control(dev->udev->defpipe, &req, NULL);
-    if (ret != 0) {
-        return -1;
-    }
-
-    msc_delay(10); // 减少延迟
     return 0;
 }
 
-static int msc_reset_recovery(usb_msc_device *dev) {
-    printk("MSC: Performing reset recovery\n");
+static int msc_clear_endpoint_halt(usb_msc_device *ctrl,
+                                   struct usb_pipe *pipe) {
+    struct usb_ctrlrequest req;
 
-    struct usb_ctrlrequest reset_req = {
-        .bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
-        .bRequest = 0xFF,
-        .wValue = 0,
-        .wIndex = dev->iface->iface->bInterfaceNumber,
-        .wLength = 0};
+    memset(&req, 0, sizeof(req));
+    req.bRequestType = USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_ENDPOINT;
+    req.bRequest = USB_REQ_CLEAR_FEATURE;
+    req.wIndex = pipe->ep;
 
-    int ret = usb_send_default_control(dev->udev->defpipe, &reset_req, NULL);
-    if (ret != 0) {
-        printk("MSC: Reset command failed: %d\n", ret);
-        return -1;
-    }
-
-    msc_delay(10);
-    msc_clear_endpoint_halt(dev, dev->bulk_in);
-    msc_delay(10);
-    msc_clear_endpoint_halt(dev, dev->bulk_out);
-    msc_delay(MSC_RESET_DELAY_MS);
-
-    return 0;
+    return usb_send_default_control(ctrl->udev->defpipe, &req, NULL);
 }
 
-static int msc_receive_csw(usb_msc_device *dev, usb_msc_csw_t *csw,
+static void msc_reset_recovery(usb_msc_device *ctrl) {
+    struct usb_ctrlrequest reset_req;
+
+    memset(&reset_req, 0, sizeof(reset_req));
+    reset_req.bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE;
+    reset_req.bRequest = MSC_BOT_RESET;
+    reset_req.wIndex = ctrl->iface->iface->bInterfaceNumber;
+
+    usb_send_default_control(ctrl->udev->defpipe, &reset_req, NULL);
+    msc_clear_endpoint_halt(ctrl, ctrl->bulk_in);
+    msc_clear_endpoint_halt(ctrl, ctrl->bulk_out);
+    msc_delay_ms(MSC_RESET_DELAY_MS);
+}
+
+static int msc_receive_csw(usb_msc_device *ctrl, usb_msc_csw_t *csw,
                            uint32_t expected_tag) {
-    int retries = 3; // 减少重试次数
-
-    while (retries-- > 0) {
-        // 只在第一次尝试时不延迟，后续重试才延迟
-        if (retries < 2) {
-            msc_delay_us(MSC_CSW_DELAY_US);
-        }
-
-        int ret = msc_bulk_transfer(dev->bulk_in, csw, sizeof(*csw), true);
-
-        if (ret < 0) {
-            if (retries > 0) {
-                msc_clear_endpoint_halt(dev, dev->bulk_in);
-            }
-            continue;
-        }
-
-        if ((size_t)ret != sizeof(*csw)) {
-            continue;
-        }
-
-        if (csw->dCSWSignature != 0x53425355) {
-            printk("MSC: Invalid CSW signature: 0x%08x\n", csw->dCSWSignature);
-            continue;
-        }
-
-        if (csw->dCSWTag != expected_tag) {
-            printk("MSC: CSW tag mismatch: 0x%08x != 0x%08x\n", csw->dCSWTag,
-                   expected_tag);
-            continue;
-        }
-
-        return 0;
-    }
-
-    printk("MSC: Failed to receive valid CSW\n");
-    return -1;
-}
-
-static int msc_transfer(usb_msc_device *dev, void *cmd, uint8_t cmd_len,
-                        void *data, size_t data_len, bool is_read) {
-    usb_msc_cbw_t cbw;
-    usb_msc_csw_t csw;
     int ret;
 
-    if (!dev || !cmd || cmd_len == 0 || cmd_len > 16) {
-        return -EINVAL;
-    }
+    memset(csw, 0, sizeof(*csw));
+    ret = msc_bulk_transfer(ctrl, true, csw, sizeof(*csw));
+    if (ret != 0)
+        return ret;
 
-    if (data_len > 0 && !data) {
+    if (csw->dCSWSignature != MSC_CSW_SIGNATURE)
+        return -EIO;
+
+    if (csw->dCSWTag != expected_tag)
+        return -EIO;
+
+    return 0;
+}
+
+static int msc_command_once(usb_msc_device *ctrl, uint8_t lun, const void *cmd,
+                            uint8_t cmd_len, void *data, size_t data_len,
+                            bool is_read) {
+    usb_msc_cbw_t cbw;
+    usb_msc_csw_t csw;
+    uint32_t tag;
+    int ret = 0;
+
+    if (!ctrl || !cmd || cmd_len == 0 || cmd_len > sizeof(cbw.CBWCB))
         return -EINVAL;
-    }
+
+    if (lun >= ctrl->lun_count)
+        return -EINVAL;
+
+    if (data_len > 0 && !data)
+        return -EINVAL;
+
+    spin_lock(&ctrl->lock);
 
     memset(&cbw, 0, sizeof(cbw));
-    memset(&csw, 0, sizeof(csw));
+    cbw.dCBWSignature = MSC_CBW_SIGNATURE;
+    ctrl->next_tag++;
+    if (ctrl->next_tag == 0)
+        ctrl->next_tag = 1;
+    tag = ctrl->next_tag;
 
-    spin_lock(&usb_msc_lock);
-
-    // 构建CBW
-    cbw.dCBWSignature = 0x43425355;
-    cbw.dCBWTag = (uint32_t)(nano_time() & 0xFFFFFFFF);
-    cbw.dCBWDataTransferLength = data_len;
+    cbw.dCBWTag = tag;
+    cbw.dCBWDataTransferLength = (uint32_t)data_len;
     cbw.bmCBWFlags = (data_len > 0 && is_read) ? USB_DIR_IN : USB_DIR_OUT;
-    cbw.bCBWLUN = dev->lun;
+    cbw.bCBWLUN = lun;
     cbw.bCBWCBLength = cmd_len;
     memcpy(cbw.CBWCB, cmd, cmd_len);
 
-    // 发送CBW
-    ret = msc_bulk_transfer(dev->bulk_out, &cbw, sizeof(cbw), false);
-    if (ret < 0) {
-        goto error;
-    }
+    ret = msc_bulk_transfer(ctrl, false, &cbw, sizeof(cbw));
+    if (ret != 0)
+        goto transport_error;
 
-    // 减少延迟
     if (data_len > 0) {
-        msc_delay_us(MSC_CBW_DELAY_US);
+        ret = msc_bulk_transfer(ctrl, is_read, data, data_len);
+        if (ret != 0)
+            goto transport_error;
     }
 
-    // 数据阶段
-    if (data_len > 0 && data) {
-        struct usb_pipe *pipe = is_read ? dev->bulk_in : dev->bulk_out;
+    ret = msc_receive_csw(ctrl, &csw, tag);
+    if (ret != 0)
+        goto transport_error;
 
-        ret = msc_bulk_transfer(pipe, data, data_len, is_read);
-        if (ret < 0) {
-            goto error;
-        }
+    spin_unlock(&ctrl->lock);
 
-        if ((size_t)ret != data_len) {
-            printk("MSC: Data length mismatch: %d != %lu\n", ret, data_len);
-            goto error;
-        }
-    }
-
-    // 接收CSW（不需要额外延迟，CSW接收函数内部会处理）
-    ret = msc_receive_csw(dev, &csw, cbw.dCBWTag);
-    if (ret != 0) {
-        goto error;
-    }
-
-    spin_unlock(&usb_msc_lock);
-
-    // 检查CSW状态
-    if (csw.bCSWStatus == 0) {
+    if (csw.bCSWStatus == 0)
         return 0;
-    } else if (csw.bCSWStatus == 1) {
-        printk("MSC: Command failed (CSW status=1)\n");
+    if (csw.bCSWStatus == 1)
         return -EIO;
-    } else if (csw.bCSWStatus == 2) {
-        printk("MSC: Phase error\n");
-        msc_reset_recovery(dev);
-        return -EIO;
-    } else {
-        printk("MSC: Unknown CSW status: %d\n", csw.bCSWStatus);
-        return -EIO;
-    }
 
-error:
-    spin_unlock(&usb_msc_lock);
-    msc_reset_recovery(dev);
-    return -1;
+    msc_reset_recovery(ctrl);
+    return -EAGAIN;
+
+transport_error:
+    spin_unlock(&ctrl->lock);
+    msc_reset_recovery(ctrl);
+    return -EAGAIN;
 }
 
-static int msc_transfer_with_retry(usb_msc_device *dev, void *cmd,
-                                   uint8_t cmd_len, void *data, size_t data_len,
-                                   bool is_read) {
-    for (int attempt = 0; attempt < MSC_MAX_RETRIES; attempt++) {
-        if (attempt > 0) {
-            printk("MSC: Retry %d/%d\n", attempt + 1, MSC_MAX_RETRIES);
-            msc_delay(20); // 减少重试延迟
-        }
+static int msc_command(usb_msc_device *ctrl, uint8_t lun, const void *cmd,
+                       uint8_t cmd_len, void *data, size_t data_len,
+                       bool is_read) {
+    int ret;
 
-        int ret = msc_transfer(dev, cmd, cmd_len, data, data_len, is_read);
-        if (ret == 0) {
+    for (int i = 0; i < MSC_MAX_RETRIES; i++) {
+        ret =
+            msc_command_once(ctrl, lun, cmd, cmd_len, data, data_len, is_read);
+        if (ret == 0 || ret == -EIO)
+            return ret;
+    }
+
+    return -EIO;
+}
+
+static int msc_test_unit_ready(usb_msc_lun *lun) {
+    uint8_t cmd[6] = {0x00, 0, 0, 0, 0, 0};
+    return msc_command(lun->ctrl, lun->lun, cmd, sizeof(cmd), NULL, 0, true);
+}
+
+static int msc_request_sense(usb_msc_lun *lun, uint8_t *sense) {
+    uint8_t cmd[6] = {0x03, 0, 0, 0, 18, 0};
+    return msc_command(lun->ctrl, lun->lun, cmd, sizeof(cmd), sense, 18, true);
+}
+
+static int msc_inquiry(usb_msc_lun *lun) {
+    uint8_t cmd[6] = {0x12, 0, 0, 0, 36, 0};
+    uint8_t data[36];
+
+    memset(data, 0, sizeof(data));
+    if (msc_command(lun->ctrl, lun->lun, cmd, sizeof(cmd), data, sizeof(data),
+                    true) != 0) {
+        return -EIO;
+    }
+
+    printk("MSC: LUN%u Vendor %.8s Product %.16s Rev %.4s\n", lun->lun,
+           &data[8], &data[16], &data[32]);
+    return 0;
+}
+
+static int msc_read_capacity(usb_msc_lun *lun) {
+    uint8_t cmd10[10] = {0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    uint8_t cap10[8];
+
+    if (msc_command(lun->ctrl, lun->lun, cmd10, sizeof(cmd10), cap10,
+                    sizeof(cap10), true) == 0) {
+        uint32_t last_lba = msc_be32(&cap10[0]);
+        uint32_t block_size = msc_be32(&cap10[4]);
+
+        if (last_lba != 0xFFFFFFFFU && block_size != 0) {
+            lun->block_count = (uint64_t)last_lba + 1;
+            lun->block_size = block_size;
             return 0;
         }
+    }
 
-        // 如果是EIO（命令失败），不要重试
-        if (ret == -EIO) {
-            return ret;
+    {
+        uint8_t cmd16[16] = {0x9E, 0x10, 0, 0, 0, 0,  0, 0,
+                             0,    0,    0, 0, 0, 32, 0, 0};
+        uint8_t cap16[32];
+        if (msc_command(lun->ctrl, lun->lun, cmd16, sizeof(cmd16), cap16,
+                        sizeof(cap16), true) == 0) {
+            uint64_t last_lba = msc_be64(&cap16[0]);
+            uint32_t block_size = msc_be32(&cap16[8]);
+            if (block_size != 0) {
+                lun->block_count = last_lba + 1;
+                lun->block_size = block_size;
+                return 0;
+            }
         }
     }
 
-    return -1;
+    return -EIO;
 }
 
-static uint64_t msc_scsi_read_10(usb_msc_device *dev, uint64_t lba, void *buf,
-                                 uint64_t count) {
-    if (lba > 0xFFFFFFFF) {
-        return 0;
+static int msc_wait_ready(usb_msc_lun *lun) {
+    uint8_t sense[18];
+
+    for (int i = 0; i < MSC_READY_RETRIES; i++) {
+        if (msc_test_unit_ready(lun) == 0)
+            return 0;
+
+        memset(sense, 0, sizeof(sense));
+        if (msc_request_sense(lun, sense) == 0) {
+            uint8_t key = sense[2] & 0x0f;
+            uint8_t asc = sense[12];
+
+            if (key == 0x02 && asc == 0x3A)
+                return -ENODEV;
+        }
+
+        msc_delay_ms(MSC_READY_DELAY_MS);
     }
 
-    uint64_t total_read = 0;
-    uint8_t *buffer = (uint8_t *)buf;
+    return -EIO;
+}
+
+static uint64_t msc_rw_blocks(usb_msc_lun *lun, uint64_t lba, void *buf,
+                              uint64_t count, bool is_read) {
+    uint64_t transferred = 0;
+    uint64_t max_blocks;
+    uint8_t *ptr = (uint8_t *)buf;
+
+    if (!lun || !buf || count == 0 || lun->block_size == 0)
+        return 0;
+
+    if (lba >= lun->block_count)
+        return 0;
+
+    if (lba + count > lun->block_count)
+        count = lun->block_count - lba;
+
+    max_blocks = MSC_MAX_TRANSFER_SIZE / lun->block_size;
+    if (max_blocks == 0)
+        max_blocks = 1;
 
     while (count > 0) {
-        // 每次传输的块数（不超过65535块，且考虑传输大小限制）
-        uint64_t blocks_to_read = count;
-        size_t max_blocks = MSC_MAX_TRANSFER_SIZE / dev->block_size;
+        uint64_t chunk = count;
+        size_t byte_count;
+        uint8_t cmd[16];
+        int cmd_len;
 
-        if (blocks_to_read > max_blocks) {
-            blocks_to_read = max_blocks;
+        if (chunk > max_blocks)
+            chunk = max_blocks;
+
+        memset(cmd, 0, sizeof(cmd));
+        if (lba <= 0xFFFFFFFFULL && chunk <= 0xFFFFU) {
+            cmd_len = 10;
+            cmd[0] = is_read ? 0x28 : 0x2A;
+            cmd[2] = (uint8_t)(lba >> 24);
+            cmd[3] = (uint8_t)(lba >> 16);
+            cmd[4] = (uint8_t)(lba >> 8);
+            cmd[5] = (uint8_t)lba;
+            cmd[7] = (uint8_t)(chunk >> 8);
+            cmd[8] = (uint8_t)chunk;
+        } else {
+            if (chunk > 0xFFFFFFFFULL)
+                chunk = 0xFFFFFFFFULL;
+
+            cmd_len = 16;
+            cmd[0] = is_read ? 0x88 : 0x8A;
+            cmd[2] = (uint8_t)(lba >> 56);
+            cmd[3] = (uint8_t)(lba >> 48);
+            cmd[4] = (uint8_t)(lba >> 40);
+            cmd[5] = (uint8_t)(lba >> 32);
+            cmd[6] = (uint8_t)(lba >> 24);
+            cmd[7] = (uint8_t)(lba >> 16);
+            cmd[8] = (uint8_t)(lba >> 8);
+            cmd[9] = (uint8_t)lba;
+            cmd[10] = (uint8_t)(chunk >> 24);
+            cmd[11] = (uint8_t)(chunk >> 16);
+            cmd[12] = (uint8_t)(chunk >> 8);
+            cmd[13] = (uint8_t)chunk;
         }
-        if (blocks_to_read > 0xFFFF) {
-            blocks_to_read = 0xFFFF;
-        }
 
-        uint8_t cmd[10] = {0x28,
-                           0,
-                           (lba >> 24) & 0xFF,
-                           (lba >> 16) & 0xFF,
-                           (lba >> 8) & 0xFF,
-                           lba & 0xFF,
-                           0,
-                           (blocks_to_read >> 8) & 0xFF,
-                           blocks_to_read & 0xFF,
-                           0};
+        if (chunk > SIZE_MAX / lun->block_size)
+            break;
 
-        size_t len = blocks_to_read * dev->block_size;
-
-        if (msc_transfer_with_retry(dev, cmd, 10, buffer, len, true) != 0) {
+        byte_count = (size_t)(chunk * lun->block_size);
+        if (msc_command(lun->ctrl, lun->lun, cmd, (uint8_t)cmd_len, ptr,
+                        byte_count, is_read) != 0) {
             break;
         }
 
-        total_read += blocks_to_read;
-        buffer += len;
-        lba += blocks_to_read;
-        count -= blocks_to_read;
+        ptr += byte_count;
+        lba += chunk;
+        count -= chunk;
+        transferred += chunk;
     }
 
-    return total_read;
-}
-
-static uint64_t msc_scsi_write_10(usb_msc_device *dev, uint64_t lba, void *buf,
-                                  uint64_t count) {
-    if (lba > 0xFFFFFFFF) {
-        return 0;
-    }
-
-    uint64_t total_written = 0;
-    uint8_t *buffer = (uint8_t *)buf;
-
-    while (count > 0) {
-        uint64_t blocks_to_write = count;
-        size_t max_blocks = MSC_MAX_TRANSFER_SIZE / dev->block_size;
-
-        if (blocks_to_write > max_blocks) {
-            blocks_to_write = max_blocks;
-        }
-        if (blocks_to_write > 0xFFFF) {
-            blocks_to_write = 0xFFFF;
-        }
-
-        uint8_t cmd[10] = {0x2A,
-                           0,
-                           (lba >> 24) & 0xFF,
-                           (lba >> 16) & 0xFF,
-                           (lba >> 8) & 0xFF,
-                           lba & 0xFF,
-                           0,
-                           (blocks_to_write >> 8) & 0xFF,
-                           blocks_to_write & 0xFF,
-                           0};
-
-        size_t len = blocks_to_write * dev->block_size;
-
-        if (msc_transfer_with_retry(dev, cmd, 10, buffer, len, false) != 0) {
-            break;
-        }
-
-        total_written += blocks_to_write;
-        buffer += len;
-        lba += blocks_to_write;
-        count -= blocks_to_write;
-    }
-
-    return total_written;
-}
-
-static uint64_t msc_scsi_read_16(usb_msc_device *dev, uint64_t lba, void *buf,
-                                 uint64_t count) {
-    uint64_t total_read = 0;
-    uint8_t *buffer = (uint8_t *)buf;
-
-    while (count > 0) {
-        uint64_t blocks_to_read = count;
-        size_t max_blocks = MSC_MAX_TRANSFER_SIZE / dev->block_size;
-
-        if (blocks_to_read > max_blocks) {
-            blocks_to_read = max_blocks;
-        }
-        if (blocks_to_read > 0xFFFFFFFF) {
-            blocks_to_read = 0xFFFFFFFF;
-        }
-
-        uint8_t cmd[16] = {0x88,
-                           0,
-                           (lba >> 56) & 0xFF,
-                           (lba >> 48) & 0xFF,
-                           (lba >> 40) & 0xFF,
-                           (lba >> 32) & 0xFF,
-                           (lba >> 24) & 0xFF,
-                           (lba >> 16) & 0xFF,
-                           (lba >> 8) & 0xFF,
-                           lba & 0xFF,
-                           (blocks_to_read >> 24) & 0xFF,
-                           (blocks_to_read >> 16) & 0xFF,
-                           (blocks_to_read >> 8) & 0xFF,
-                           blocks_to_read & 0xFF,
-                           0,
-                           0};
-
-        size_t len = blocks_to_read * dev->block_size;
-
-        if (msc_transfer_with_retry(dev, cmd, 16, buffer, len, true) != 0) {
-            break;
-        }
-
-        total_read += blocks_to_read;
-        buffer += len;
-        lba += blocks_to_read;
-        count -= blocks_to_read;
-    }
-
-    return total_read;
-}
-
-static uint64_t msc_scsi_write_16(usb_msc_device *dev, uint64_t lba, void *buf,
-                                  uint64_t count) {
-    uint64_t total_written = 0;
-    uint8_t *buffer = (uint8_t *)buf;
-
-    while (count > 0) {
-        uint64_t blocks_to_write = count;
-        size_t max_blocks = MSC_MAX_TRANSFER_SIZE / dev->block_size;
-
-        if (blocks_to_write > max_blocks) {
-            blocks_to_write = max_blocks;
-        }
-        if (blocks_to_write > 0xFFFFFFFF) {
-            blocks_to_write = 0xFFFFFFFF;
-        }
-
-        uint8_t cmd[16] = {0x8A,
-                           0,
-                           (lba >> 56) & 0xFF,
-                           (lba >> 48) & 0xFF,
-                           (lba >> 40) & 0xFF,
-                           (lba >> 32) & 0xFF,
-                           (lba >> 24) & 0xFF,
-                           (lba >> 16) & 0xFF,
-                           (lba >> 8) & 0xFF,
-                           lba & 0xFF,
-                           (blocks_to_write >> 24) & 0xFF,
-                           (blocks_to_write >> 16) & 0xFF,
-                           (blocks_to_write >> 8) & 0xFF,
-                           blocks_to_write & 0xFF,
-                           0,
-                           0};
-
-        size_t len = blocks_to_write * dev->block_size;
-
-        if (msc_transfer_with_retry(dev, cmd, 16, buffer, len, false) != 0) {
-            break;
-        }
-
-        total_written += blocks_to_write;
-        buffer += len;
-        lba += blocks_to_write;
-        count -= blocks_to_write;
-    }
-
-    return total_written;
-}
-
-static int msc_test_unit_ready(usb_msc_device *dev) {
-    uint8_t cmd[6] = {0x00, 0, 0, 0, 0, 0};
-    return msc_transfer_with_retry(dev, cmd, 6, NULL, 0, true);
-}
-
-static int msc_request_sense(usb_msc_device *dev, uint8_t *sense_data) {
-    uint8_t cmd[6] = {0x03, 0, 0, 0, 18, 0};
-    return msc_transfer_with_retry(dev, cmd, 6, sense_data, 18, true);
-}
-
-static int msc_inquiry(usb_msc_device *dev) {
-    uint8_t buf[36];
-
-    memset(buf, 0, sizeof(buf));
-    uint8_t cmd[6] = {0x12, 0, 0, 0, 36, 0};
-
-    int ret = msc_transfer_with_retry(dev, cmd, 6, buf, 36, true);
-
-    if (ret == 0) {
-        printk("MSC: Vendor: %.8s\n", &buf[8]);
-        printk("MSC: Product: %.16s\n", &buf[16]);
-        printk("MSC: Revision: %.4s\n", &buf[32]);
-    }
-
-    return ret;
-}
-
-static int msc_read_capacity_10(usb_msc_device *dev) {
-    uint8_t capacity[8];
-    uint8_t cmd[10] = {0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-
-    if (msc_transfer_with_retry(dev, cmd, 10, capacity, 8, true) == 0) {
-        uint32_t last_lba = be32toh(*(uint32_t *)&capacity[0]);
-        uint32_t block_size = be32toh(*(uint32_t *)&capacity[4]);
-
-        dev->block_count = (uint64_t)last_lba + 1;
-        dev->block_size = block_size;
-
-        if (last_lba == 0xFFFFFFFF) {
-            return -1;
-        }
-
-        return 0;
-    }
-
-    return -1;
-}
-
-static int msc_read_capacity_16(usb_msc_device *dev) {
-    uint8_t capacity[32];
-    uint8_t cmd[16] = {0x9E, 0x10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 0, 0};
-
-    if (msc_transfer_with_retry(dev, cmd, 16, capacity, 32, true) == 0) {
-        uint64_t last_lba = be64toh(*(uint64_t *)&capacity[0]);
-        uint32_t block_size = be32toh(*(uint32_t *)&capacity[8]);
-
-        dev->block_count = last_lba + 1;
-        dev->block_size = block_size;
-
-        return 0;
-    }
-
-    return -1;
+    return transferred;
 }
 
 uint64_t usb_msc_read_blocks(void *dev_ptr, uint64_t lba, void *buf,
                              uint64_t count) {
-    usb_msc_device *dev = (usb_msc_device *)dev_ptr;
-
-    if (!dev || !buf || count == 0)
-        return 0;
-
-    if (lba >= dev->block_count) {
-        return 0;
-    }
-
-    if (lba + count > dev->block_count) {
-        count = dev->block_count - lba;
-    }
-
-    if (lba > 0xFFFFFFFF) {
-        return msc_scsi_read_16(dev, lba, buf, count);
-    } else {
-        return msc_scsi_read_10(dev, lba, buf, count);
-    }
+    return msc_rw_blocks((usb_msc_lun *)dev_ptr, lba, buf, count, true);
 }
 
 uint64_t usb_msc_write_blocks(void *dev_ptr, uint64_t lba, void *buf,
                               uint64_t count) {
-    usb_msc_device *dev = (usb_msc_device *)dev_ptr;
+    return msc_rw_blocks((usb_msc_lun *)dev_ptr, lba, buf, count, false);
+}
 
-    if (!dev || !buf || count == 0)
+static uint8_t msc_get_max_lun(usb_msc_device *ctrl) {
+    struct usb_ctrlrequest req;
+    uint8_t max_lun = 0;
+
+    memset(&req, 0, sizeof(req));
+    req.bRequestType = USB_DIR_IN | USB_TYPE_CLASS | USB_RECIP_INTERFACE;
+    req.bRequest = MSC_BOT_GET_MAX_LUN;
+    req.wIndex = ctrl->iface->iface->bInterfaceNumber;
+    req.wLength = 1;
+
+    if (usb_send_default_control(ctrl->udev->defpipe, &req, &max_lun) != 0)
         return 0;
 
-    if (lba >= dev->block_count) {
-        return 0;
+    if (max_lun >= MSC_MAX_LUNS)
+        max_lun = MSC_MAX_LUNS - 1;
+
+    return max_lun;
+}
+
+static int msc_probe_lun(usb_msc_lun *lun) {
+    char name[32];
+
+    if (msc_wait_ready(lun) != 0) {
+        printk("MSC: LUN%u is not ready\n", lun->lun);
+        return -EIO;
     }
 
-    if (lba + count > dev->block_count) {
-        count = dev->block_count - lba;
+    msc_inquiry(lun);
+
+    if (msc_read_capacity(lun) != 0 || lun->block_count == 0 ||
+        lun->block_size == 0) {
+        printk("MSC: LUN%u capacity detection failed\n", lun->lun);
+        return -EIO;
     }
 
-    if (lba > 0xFFFFFFFF) {
-        return msc_scsi_write_16(dev, lba, buf, count);
-    } else {
-        return msc_scsi_write_10(dev, lba, buf, count);
-    }
+    memset(name, 0, sizeof(name));
+    sprintf(name, "USB-MSC%u", lun->lun);
+    regist_blkdev(name, lun, lun->block_size,
+                  lun->block_count * lun->block_size, MSC_MAX_TRANSFER_SIZE,
+                  usb_msc_read_blocks, usb_msc_write_blocks);
+
+    lun->registered = true;
+    printk("MSC: Registered LUN%u, block_size=%u, blocks=%lu\n", lun->lun,
+           lun->block_size, lun->block_count);
+    return 0;
 }
 
 int usb_msc_setup(struct usbdevice_s *usbdev,
                   struct usbdevice_a_interface *iface) {
+    usb_msc_device *ctrl;
+    struct usb_endpoint_descriptor *indesc;
+    struct usb_endpoint_descriptor *outdesc;
+    struct usb_super_speed_endpoint_descriptor *ss_desc;
+    uint8_t max_lun;
+    bool has_registered_lun = false;
+
     printk("MSC: Initializing device\n");
 
-    usb_msc_device *dev = malloc(sizeof(usb_msc_device));
-    if (!dev) {
-        printk("MSC: malloc failed\n");
+    ctrl = malloc(sizeof(*ctrl));
+    if (!ctrl)
         return -ENOMEM;
-    }
 
-    memset(dev, 0, sizeof(*dev));
-    dev->udev = usbdev;
-    dev->iface = iface;
-    dev->lun = 0;
-    usbdev->desc = dev;
+    memset(ctrl, 0, sizeof(*ctrl));
+    ctrl->udev = usbdev;
+    ctrl->iface = iface;
+    ctrl->lock = SPIN_INIT;
+    ctrl->next_tag = 1;
 
-    struct usb_endpoint_descriptor *indesc =
-        usb_find_desc(iface, USB_ENDPOINT_XFER_BULK, USB_DIR_IN);
-    struct usb_endpoint_descriptor *outdesc =
-        usb_find_desc(iface, USB_ENDPOINT_XFER_BULK, USB_DIR_OUT);
-    struct usb_super_speed_endpoint_descriptor *ss_desc =
-        usb_find_ss_desc(iface);
+    indesc = usb_find_desc(iface, USB_ENDPOINT_XFER_BULK, USB_DIR_IN);
+    outdesc = usb_find_desc(iface, USB_ENDPOINT_XFER_BULK, USB_DIR_OUT);
+    ss_desc = usb_find_ss_desc(iface);
 
-    if (!indesc || !outdesc) {
-        printk("MSC: Endpoints not found\n");
+    if (!indesc || !outdesc)
         goto fail;
-    }
 
-    dev->bulk_in = usb_alloc_pipe(usbdev, indesc, ss_desc);
-    dev->bulk_out = usb_alloc_pipe(usbdev, outdesc, ss_desc);
-
-    if (!dev->bulk_in || !dev->bulk_out) {
-        printk("MSC: Pipe allocation failed\n");
+    ctrl->bulk_in = usb_alloc_pipe(usbdev, indesc, ss_desc);
+    ctrl->bulk_out = usb_alloc_pipe(usbdev, outdesc, ss_desc);
+    if (!ctrl->bulk_in || !ctrl->bulk_out)
         goto fail;
-    }
 
-    printk("MSC: IN=0x%02x (max=%d), OUT=0x%02x (max=%d)\n", dev->bulk_in->ep,
-           dev->bulk_in->maxpacket, dev->bulk_out->ep,
-           dev->bulk_out->maxpacket);
+    usbdev->desc = ctrl;
 
-    // 减少初始延迟
-    msc_delay(50);
-
-    // 等待就绪
-    for (int i = 0; i < 10; i++) {
-        if (msc_test_unit_ready(dev) == 0) {
-            printk("MSC: Device ready\n");
-            break;
-        }
-
-        uint8_t sense[18];
-        if (msc_request_sense(dev, sense) == 0) {
-            uint8_t key = sense[2] & 0x0F;
-            uint8_t asc = sense[12];
-
-            // 如果是 NOT READY 但正在变为就绪，继续等待
-            if (key == 0x02 && asc == 0x04) {
-                printk("MSC: Device becoming ready...\n");
-                msc_delay(MSC_READY_CHECK_DELAY);
-                continue;
-            }
-        }
-
-        msc_delay(MSC_READY_CHECK_DELAY);
-    }
-
-    msc_inquiry(dev);
-
-    // 先尝试 READ CAPACITY(10)
-    if (msc_read_capacity_10(dev) != 0) {
-        printk("MSC: Trying READ CAPACITY(16)\n");
-        if (msc_read_capacity_16(dev) != 0) {
-            printk("MSC: Both capacity commands failed\n");
-            goto fail;
-        }
-    }
-
-    if (dev->block_count == 0) {
-        printk("MSC: Invalid capacity\n");
+    max_lun = msc_get_max_lun(ctrl);
+    ctrl->lun_count = max_lun + 1;
+    ctrl->luns = malloc(sizeof(*ctrl->luns) * ctrl->lun_count);
+    if (!ctrl->luns)
         goto fail;
+
+    memset(ctrl->luns, 0, sizeof(*ctrl->luns) * ctrl->lun_count);
+    printk("MSC: Device reports %u LUN(s)\n", ctrl->lun_count);
+
+    for (uint8_t lun = 0; lun < ctrl->lun_count; lun++) {
+        ctrl->luns[lun].ctrl = ctrl;
+        ctrl->luns[lun].lun = lun;
+
+        if (msc_probe_lun(&ctrl->luns[lun]) == 0)
+            has_registered_lun = true;
     }
 
-    // 使用更大的最大传输大小
-    regist_blkdev("USB-MSC", dev, dev->block_size,
-                  dev->block_count * dev->block_size,
-                  MSC_MAX_TRANSFER_SIZE, // 使用128KB
-                  usb_msc_read_blocks, usb_msc_write_blocks);
+    if (!has_registered_lun)
+        goto fail;
 
-    printk("MSC: Device initialized successfully\n");
     return 0;
 
 fail:
-    if (dev) {
-        if (dev->bulk_in)
-            usb_free_pipe(usbdev, dev->bulk_in);
-        if (dev->bulk_out)
-            usb_free_pipe(usbdev, dev->bulk_out);
-        free(dev);
+    if (ctrl) {
+        if (ctrl->luns) {
+            for (uint8_t lun = 0; lun < ctrl->lun_count; lun++) {
+                if (ctrl->luns[lun].registered)
+                    unregist_blkdev(&ctrl->luns[lun]);
+            }
+            free(ctrl->luns);
+        }
+        if (ctrl->bulk_in)
+            usb_free_pipe(usbdev, ctrl->bulk_in);
+        if (ctrl->bulk_out)
+            usb_free_pipe(usbdev, ctrl->bulk_out);
+        free(ctrl);
     }
+    usbdev->desc = NULL;
     return -1;
 }
 
 int usb_msc_remove(struct usbdevice_s *usbdev) {
-    if (usbdev && usbdev->desc) {
-        usb_msc_device *dev = (usb_msc_device *)usbdev->desc;
-        usb_free_pipe(usbdev, dev->bulk_in);
-        usb_free_pipe(usbdev, dev->bulk_out);
-        free(dev);
-        usbdev->desc = NULL;
+    usb_msc_device *ctrl;
+
+    if (!usbdev || !usbdev->desc)
+        return 0;
+
+    ctrl = (usb_msc_device *)usbdev->desc;
+
+    if (ctrl->luns) {
+        for (uint8_t lun = 0; lun < ctrl->lun_count; lun++) {
+            if (ctrl->luns[lun].registered)
+                unregist_blkdev(&ctrl->luns[lun]);
+        }
+        free(ctrl->luns);
     }
+
+    if (ctrl->bulk_in)
+        usb_free_pipe(usbdev, ctrl->bulk_in);
+    if (ctrl->bulk_out)
+        usb_free_pipe(usbdev, ctrl->bulk_out);
+
+    free(ctrl);
+    usbdev->desc = NULL;
     return 0;
 }
 

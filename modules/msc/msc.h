@@ -22,24 +22,35 @@ typedef struct {
 } __attribute__((packed)) usb_msc_csw_t;
 
 struct usbdevice_s;
+struct usb_msc_lun;
 
 struct usb_msc_device;
 typedef struct usb_msc_device usb_msc_device;
+typedef struct usb_msc_lun usb_msc_lun;
 
 // 函数指针类型定义
-typedef uint64_t (*usb_msc_read_func_t)(usb_msc_device *dev, uint64_t lba,
+typedef uint64_t (*usb_msc_read_func_t)(usb_msc_lun *lun, uint64_t lba,
                                         void *buf, uint64_t count);
-typedef uint64_t (*usb_msc_write_func_t)(usb_msc_device *dev, uint64_t lba,
+typedef uint64_t (*usb_msc_write_func_t)(usb_msc_lun *lun, uint64_t lba,
                                          void *buf, uint64_t count);
+
+struct usb_msc_lun {
+    usb_msc_device *ctrl;
+    uint8_t lun;
+    uint32_t block_size;
+    uint64_t block_count;
+    bool registered;
+};
 
 struct usb_msc_device {
     struct usbdevice_s *udev;
     struct usbdevice_a_interface *iface;
-    uint8_t lun;
     struct usb_pipe *bulk_in;
     struct usb_pipe *bulk_out;
-    uint32_t block_size;
-    uint64_t block_count;
+    spinlock_t lock;
+    uint32_t next_tag;
+    uint8_t lun_count;
+    usb_msc_lun *luns;
 };
 
 uint64_t usb_msc_read_blocks(void *dev, uint64_t lba, void *buf,

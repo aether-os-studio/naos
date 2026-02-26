@@ -16,6 +16,7 @@
 
 #define XHCI_RING_ITEMS 128
 #define XHCI_RING_SIZE (XHCI_RING_ITEMS * sizeof(struct xhci_trb))
+#define XHCI_TRB_MAX_XFER 65536
 
 /*
  *  xhci_ring structs are allocated with XHCI_RING_SIZE alignment,
@@ -430,6 +431,17 @@ static void xhci_free_pipes(struct usb_xhci_s *xhci) {
     // XXX - should walk list of pipes and free unused pipes.
 }
 
+static void xhci_process_events(struct usb_xhci_s *xhci);
+
+void xhci_event_handler(uint64_t dev_ptr) {
+    struct usb_xhci_s *xhci = (struct usb_xhci_s *)dev_ptr;
+
+    while (1) {
+        xhci_process_events(xhci);
+        schedule(SCHED_FLAG_YIELD);
+    }
+}
+
 static void configure_xhci(void *data) {
     struct usb_xhci_s *xhci = data;
     uint32_t reg;
@@ -572,6 +584,9 @@ static void configure_xhci(void *data) {
             xhci->quirks |= XHCI_QUIRK_VL805_OLD_REV;
         }
     }
+
+    task_create("xhci_event_handler", xhci_event_handler, (uint64_t)xhci,
+                KTHREAD_PRIORITY);
 
     // 查找设备
     int count = xhci_check_ports(xhci);
@@ -863,6 +878,18 @@ static void xhci_trb_fill(struct xhci_ring *ring, void *data, uint32_t xferlen,
     dma_sync_cpu_to_device(dst, sizeof(struct xhci_trb));
 }
 
+static void xhci_trb_fill_phys(struct xhci_ring *ring, uint64_t phys,
+                               uint32_t xferlen, uint32_t flags) {
+    struct xhci_trb *dst = &ring->ring[ring->nidx];
+
+    dst->ptr_low = (uint32_t)phys;
+    dst->ptr_high = (uint32_t)(phys >> 32);
+    dst->status = xferlen;
+    __sync_synchronize();
+    dst->control = flags | (ring->cs ? TRB_C : 0);
+    dma_sync_cpu_to_device(dst, sizeof(struct xhci_trb));
+}
+
 // Queue a TRB onto a ring, wrapping ring as needed
 static void xhci_trb_queue(struct xhci_ring *ring, void *data, uint32_t xferlen,
                            uint32_t flags) {
@@ -881,14 +908,19 @@ static void xhci_trb_queue(struct xhci_ring *ring, void *data, uint32_t xferlen,
     ring->nidx++;
 }
 
-static bool xhci_crosses_64kb_boundary(uint64_t phys_addr, uint32_t length) {
-    if (length == 0)
-        return false;
+static void xhci_trb_queue_phys(struct xhci_ring *ring, uint64_t phys,
+                                uint32_t xferlen, uint32_t flags) {
+    if (ring->nidx >= XHCI_RING_ITEMS - 1) {
+        xhci_trb_fill(ring, ring->ring, 0, (TR_LINK << 10) | TRB_LK_TC);
+        dma_sync_cpu_to_device(&ring->ring[ring->nidx],
+                               sizeof(struct xhci_trb));
+        ring->nidx = 0;
+        ring->cs = !ring->cs;
+    }
 
-    uint64_t start_page = phys_addr >> 16;
-    uint64_t end_page = (phys_addr + length - 1) >> 16;
-
-    return start_page != end_page;
+    xhci_trb_fill_phys(ring, phys, xferlen, flags);
+    dma_sync_cpu_to_device(&ring->ring[ring->nidx], sizeof(struct xhci_trb));
+    ring->nidx++;
 }
 
 static uint32_t xhci_bytes_to_64kb_boundary(uint64_t phys_addr) {
@@ -902,32 +934,28 @@ static void xhci_trb_queue_split(struct xhci_ring *ring, void *data,
         return;
     }
 
-    uint64_t phys =
-        translate_address(get_current_page_dir(false), (uint64_t)data);
-
-    if (!xhci_crosses_64kb_boundary(phys, datalen)) {
-        xhci_trb_queue(ring, data, datalen, flags);
-        return;
-    }
-
     uint32_t offset = 0;
-    int chunk_num = 0;
+    uint64_t *pgd = get_current_page_dir(false);
 
     while (offset < datalen) {
-        uint64_t current_phys = phys + offset;
+        uint64_t va = (uint64_t)data + offset;
+        uint64_t current_phys = translate_address(pgd, va);
         uint32_t remaining = datalen - offset;
-        uint32_t chunk_size;
-
-        if (xhci_crosses_64kb_boundary(current_phys, remaining)) {
-            chunk_size = xhci_bytes_to_64kb_boundary(current_phys);
-        } else {
-            chunk_size = remaining;
-        }
-
-        void *chunk_data = (void *)((uint64_t)data + offset);
+        uint32_t page_left = DEFAULT_PAGE_SIZE - (va & (DEFAULT_PAGE_SIZE - 1));
+        uint32_t boundary_left = xhci_bytes_to_64kb_boundary(current_phys);
+        uint32_t chunk_size = remaining;
 
         uint32_t chunk_flags = flags;
         bool is_last_chunk = (offset + chunk_size >= datalen);
+
+        if (chunk_size > page_left)
+            chunk_size = page_left;
+        if (chunk_size > boundary_left)
+            chunk_size = boundary_left;
+        if (chunk_size > XHCI_TRB_MAX_XFER)
+            chunk_size = XHCI_TRB_MAX_XFER;
+
+        is_last_chunk = (offset + chunk_size >= datalen);
 
         if (!is_last_chunk) {
             chunk_flags = (flags & ~TRB_TR_IOC) | TRB_TR_CH;
@@ -935,10 +963,9 @@ static void xhci_trb_queue_split(struct xhci_ring *ring, void *data,
             chunk_flags = (flags & ~TRB_TR_IOC) | TRB_TR_CH;
         }
 
-        xhci_trb_queue(ring, chunk_data, chunk_size, chunk_flags);
+        xhci_trb_queue_phys(ring, current_phys, chunk_size, chunk_flags);
 
         offset += chunk_size;
-        chunk_num++;
     }
 }
 
