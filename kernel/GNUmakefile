@@ -95,10 +95,6 @@ ifeq ($(ARCH),x86_64)
         -mno-red-zone \
         -mcmodel=kernel \
         -mno-80387 -mno-mmx -mno-sse -mno-sse2
-    ifeq ($(CC_IS_CLANG),1)
-        override LDFLAGS += \
-            -lgcc
-    endif
     override NASMFLAGS += \
         -f elf64
 endif

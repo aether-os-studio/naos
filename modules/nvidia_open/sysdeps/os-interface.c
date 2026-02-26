@@ -19,7 +19,7 @@
     }
 
 NvU32 os_page_size = DEFAULT_PAGE_SIZE;
-NvU64 os_page_mask = ~0xFFFULL;
+NvU64 os_page_mask = ~(DEFAULT_PAGE_SIZE - 1);
 NvU8 os_page_shift = 12;
 NvBool os_cc_enabled = 0;
 NvBool os_cc_sev_snp_enabled = 0;
@@ -29,6 +29,82 @@ NvBool os_cc_sme_enabled = 0;
 
 spinlock_t timerLock = SPIN_INIT;
 
+typedef struct os_wait_entry {
+    task_t *task;
+    struct os_wait_entry *next;
+    bool queued;
+    bool woken;
+} os_wait_entry_t;
+
+struct os_wait_queue {
+    spinlock_t lock;
+    os_wait_entry_t *head;
+    os_wait_entry_t *tail;
+    NvU32 pending;
+};
+
+static void os_wait_queue_push(os_wait_queue *wq, os_wait_entry_t *entry) {
+    entry->next = NULL;
+    entry->queued = true;
+
+    if (wq->tail) {
+        wq->tail->next = entry;
+    } else {
+        wq->head = entry;
+    }
+    wq->tail = entry;
+}
+
+static os_wait_entry_t *os_wait_queue_pop(os_wait_queue *wq) {
+    os_wait_entry_t *entry = wq->head;
+    if (!entry) {
+        return NULL;
+    }
+
+    wq->head = entry->next;
+    if (!wq->head) {
+        wq->tail = NULL;
+    }
+    entry->next = NULL;
+    entry->queued = false;
+    return entry;
+}
+
+static void os_wait_common(os_wait_queue *wq, const char *reason) {
+    if (!wq || !current_task) {
+        return;
+    }
+
+    os_wait_entry_t entry = {
+        .task = current_task,
+        .next = NULL,
+        .queued = false,
+        .woken = false,
+    };
+
+    while (true) {
+        spin_lock(&wq->lock);
+        if (wq->pending > 0) {
+            wq->pending--;
+            spin_unlock(&wq->lock);
+            return;
+        }
+        if (!entry.queued) {
+            os_wait_queue_push(wq, &entry);
+        }
+        spin_unlock(&wq->lock);
+
+        (void)task_block(current_task, TASK_BLOCKING, -1, reason);
+
+        spin_lock(&wq->lock);
+        if (entry.woken) {
+            spin_unlock(&wq->lock);
+            return;
+        }
+        spin_unlock(&wq->lock);
+    }
+}
+
 NV_STATUS NV_API_CALL os_alloc_mem(void **address, NvU64 size) {
     if (!address)
         return NV_ERR_INVALID_ARGUMENT;
@@ -37,7 +113,10 @@ NV_STATUS NV_API_CALL os_alloc_mem(void **address, NvU64 size) {
     return ((*address != NULL) ? NV_OK : NV_ERR_NO_MEMORY);
 }
 
-void NV_API_CALL os_free_mem(void *ptr) { free(ptr); }
+void NV_API_CALL os_free_mem(void *ptr) {
+    if (ptr)
+        free(ptr);
+}
 
 NV_STATUS NV_API_CALL os_get_current_time(NvU32 *sec, NvU32 *usec) {
     tm time;
@@ -72,15 +151,33 @@ NV_STATUS NV_API_CALL os_delay_us(NvU32 us) {
 
 NvU64 NV_API_CALL os_get_cpu_frequency(void) { return 0; }
 
-NvU32 NV_API_CALL os_get_current_process(void) { return 1; }
+NvU32 NV_API_CALL os_get_current_process(void) {
+    if (!current_task) {
+        return 0;
+    }
+    return (NvU32)current_task->pid;
+}
 
 void NV_API_CALL os_get_current_process_name(char *buf, NvU32 len) {
+    if (!buf || len == 0) {
+        return;
+    }
+
     strncpy(buf, "NVIDIA_OPEN", len - 1);
     buf[len - 1] = '\0';
 }
 
 NV_STATUS NV_API_CALL os_get_current_thread(NvU64 *tid) {
-    *tid = 0;
+    if (!tid) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+
+    if (!current_task) {
+        *tid = 0;
+    } else {
+        *tid = (NvU64)current_task->pid;
+    }
+
     return NV_OK;
 }
 
@@ -344,11 +441,24 @@ void NV_API_CALL os_release_spinlock(void *spinlock, NvU64) {
     spin_unlock(spinlock);
 }
 
-NV_STATUS NV_API_CALL os_queue_work_item(struct os_work_queue *,
-                                         void *) STUBBED;
-NV_STATUS NV_API_CALL os_flush_work_queue(struct os_work_queue *,
-                                          NvBool) STUBBED;
-NvBool NV_API_CALL os_is_queue_flush_ongoing(struct os_work_queue *) STUBBED;
+NV_STATUS NV_API_CALL os_queue_work_item(struct os_work_queue *queue,
+                                         void *data) {
+    (void)queue;
+    rm_execute_work_item(NULL, data);
+    return NV_OK;
+}
+
+NV_STATUS NV_API_CALL os_flush_work_queue(struct os_work_queue *queue,
+                                          NvBool is_unload) {
+    (void)queue;
+    (void)is_unload;
+    return NV_OK;
+}
+
+NvBool NV_API_CALL os_is_queue_flush_ongoing(struct os_work_queue *queue) {
+    (void)queue;
+    return NV_FALSE;
+}
 
 NV_STATUS NV_API_CALL os_alloc_mutex(void **mutex) {
     NV_STATUS status = os_alloc_mem(mutex, sizeof(spinlock_t));
@@ -542,11 +652,70 @@ NV_STATUS NV_API_CALL os_open_and_read_file(const char *, NvU8 *,
 NvBool NV_API_CALL os_is_nvswitch_present(void) { return NV_FALSE; }
 
 NV_STATUS NV_API_CALL os_get_random_bytes(NvU8 *, NvU16) STUBBED;
-NV_STATUS NV_API_CALL os_alloc_wait_queue(os_wait_queue **) STUBBED;
-void NV_API_CALL os_free_wait_queue(os_wait_queue *) STUBBED;
-void NV_API_CALL os_wait_uninterruptible(os_wait_queue *) STUBBED;
-void NV_API_CALL os_wait_interruptible(os_wait_queue *) STUBBED;
-void NV_API_CALL os_wake_up(os_wait_queue *) STUBBED;
+NV_STATUS NV_API_CALL os_alloc_wait_queue(os_wait_queue **ppWq) {
+    if (!ppWq) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+
+    os_wait_queue *wq = calloc(1, sizeof(*wq));
+    if (!wq) {
+        return NV_ERR_NO_MEMORY;
+    }
+
+    wq->lock = SPIN_INIT;
+    *ppWq = wq;
+    return NV_OK;
+}
+
+void NV_API_CALL os_free_wait_queue(os_wait_queue *wq) {
+    if (!wq) {
+        return;
+    }
+
+    spin_lock(&wq->lock);
+    while (wq->head) {
+        os_wait_entry_t *entry = os_wait_queue_pop(wq);
+        entry->woken = true;
+        if (entry->task && entry->task->state == TASK_BLOCKING) {
+            task_unblock(entry->task, EOK);
+        }
+    }
+    spin_unlock(&wq->lock);
+
+    free(wq);
+}
+
+void NV_API_CALL os_wait_uninterruptible(os_wait_queue *wq) {
+    os_wait_common(wq, "nvidia_wait_queue");
+}
+
+void NV_API_CALL os_wait_interruptible(os_wait_queue *wq) {
+    os_wait_common(wq, "nvidia_wait_queue_intr");
+}
+
+void NV_API_CALL os_wake_up(os_wait_queue *wq) {
+    task_t *task = NULL;
+    os_wait_entry_t *entry = NULL;
+
+    if (!wq) {
+        return;
+    }
+
+    spin_lock(&wq->lock);
+    entry = os_wait_queue_pop(wq);
+    if (entry) {
+        entry->woken = true;
+        task = entry->task;
+    } else {
+        wq->pending++;
+    }
+    spin_unlock(&wq->lock);
+
+    if (task && task->state == TASK_BLOCKING) {
+        task_unblock(task, EOK);
+    }
+}
+
 nv_cap_t *NV_API_CALL os_nv_cap_init(const char *) STUBBED;
 nv_cap_t *NV_API_CALL os_nv_cap_create_dir_entry(nv_cap_t *, const char *,
                                                  int) STUBBED;

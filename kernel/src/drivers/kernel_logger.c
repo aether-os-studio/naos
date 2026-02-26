@@ -346,7 +346,7 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
 }
 
 int vsprintf(char *buf, const char *fmt, va_list ap) {
-    vsnprintf(buf, SIZE_MAX, fmt, ap);
+    return vsnprintf(buf, SIZE_MAX, fmt, ap);
 }
 
 spinlock_t printk_lock = SPIN_INIT;

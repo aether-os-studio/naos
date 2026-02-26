@@ -151,7 +151,7 @@ distclean:
 clippy:
 	$(MAKE) -C kernel clippy
 
-ROOTFS_IMG_SIZE ?= 2048
+ROOTFS_IMG_SIZE ?= 1024
 
 rootfs-$(ARCH).img: user/.build-stamp-$(ARCH)
 	dd if=/dev/zero bs=1M count=0 seek=$(ROOTFS_IMG_SIZE) of=rootfs-$(ARCH).img
@@ -220,7 +220,7 @@ run-single: run-$(ARCH)-single
 
 .PHONY: run-x86_64
 run-x86_64: assets/ovmf-code-$(ARCH).fd all
-	sudo qemu-system-$(ARCH) \
+	qemu-system-$(ARCH) \
 		-M q35 \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
