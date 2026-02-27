@@ -2,6 +2,7 @@
 
 #include <boot/boot.h>
 #include <libs/klibc.h>
+#include <libs/aether/acpi.h>
 #include <libs/aether/smbios.h>
 
 #include <libs/klibc.h>
@@ -137,7 +138,7 @@ NvU64 NV_API_CALL os_get_tick_resolution(void) { return 1; }
 static void delay(uint64_t ns) {
     uint64_t start = nano_time();
     while (nano_time() - start < ns) {
-        arch_pause();
+        schedule(SCHED_FLAG_YIELD);
     }
 }
 
@@ -608,7 +609,7 @@ NvBool NV_API_CALL os_pat_supported(void) { return NV_FALSE; }
 
 void NV_API_CALL os_dump_stack(void) STUBBED;
 
-NvBool NV_API_CALL os_is_efi_enabled(void) { return NV_FALSE; }
+NvBool NV_API_CALL os_is_efi_enabled(void) { return NV_TRUE; }
 
 NvBool NV_API_CALL os_is_xen_dom0(void) { return NV_FALSE; }
 
@@ -630,6 +631,11 @@ NV_STATUS NV_API_CALL os_match_mmap_offset(void *, NvU64, NvU64 *) STUBBED;
 NV_STATUS NV_API_CALL os_get_euid(NvU32 *) STUBBED;
 NV_STATUS NV_API_CALL os_get_smbios_header(NvU64 *pSmbsAddr) STUBBED;
 NV_STATUS NV_API_CALL os_get_acpi_rsdp_from_uefi(NvU32 *pRsdpAddr) {
+    uint64_t rsdp = get_rsdp_paddr();
+    if (rsdp) {
+        *pRsdpAddr = (NvU32)rsdp;
+        return NV_OK;
+    }
     return NV_ERR_NOT_SUPPORTED;
 };
 void NV_API_CALL os_add_record_for_crashLog(void *, NvU32) {}
@@ -935,11 +941,55 @@ NV_STATUS NV_API_CALL nv_acpi_d3cold_dsm_for_upstream_port(nv_state_t *, NvU8 *,
                                                            NvU32 *) {
     return NV_ERR_NOT_SUPPORTED;
 }
-NV_STATUS NV_API_CALL nv_acpi_dsm_method(nv_state_t *, NvU8 *, NvU32, NvBool,
-                                         NvU32, void *, NvU16, NvU32 *, void *,
-                                         NvU16 *) {
-    return NV_ERR_NOT_SUPPORTED;
+
+#define NV_MAX_ACPI_DSM_PARAM_SIZE 1024
+NV_STATUS NV_API_CALL nv_acpi_dsm_method(
+    nv_state_t *nv, NvU8 *pAcpiDsmGuid, NvU32 acpiDsmRev,
+    NvBool acpiNvpcfDsmFunction, NvU32 acpiDsmSubFunction, void *pInParams,
+    NvU16 inParamSize, NvU32 *outStatus, void *pOutData, NvU16 *pSize) {
+    if (!nv || !pAcpiDsmGuid || !pInParams || !pOutData || !pSize ||
+        inParamSize > NV_MAX_ACPI_DSM_PARAM_SIZE) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+
+    nvidia_device_t *nv_dev = nv->os_state;
+    if (!nv_dev || !nv_dev->pci_dev) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+
+    uint32_t out_size = *pSize;
+    int ret = acpi_eval_dsm_for_pci(
+        nv_dev->pci_dev->segment, nv_dev->pci_dev->bus, nv_dev->pci_dev->slot,
+        nv_dev->pci_dev->func, pAcpiDsmGuid, acpiDsmRev, !!acpiNvpcfDsmFunction,
+        acpiDsmSubFunction, pInParams, inParamSize, false, outStatus, pOutData,
+        &out_size);
+
+    if (out_size > 0xFFFFU) {
+        *pSize = 0xFFFFU;
+    } else {
+        *pSize = (NvU16)out_size;
+    }
+
+    if (ret == 0) {
+        return NV_OK;
+    }
+
+    if (ret == -ENOBUFS) {
+        return NV_ERR_BUFFER_TOO_SMALL;
+    }
+    if (ret == -ENOMEM) {
+        return NV_ERR_NO_MEMORY;
+    }
+    if (ret == -EINVAL) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+    if (ret == -ENOENT || ret == -ENOTSUP) {
+        return NV_ERR_NOT_SUPPORTED;
+    }
+
+    return NV_ERR_OPERATING_SYSTEM;
 }
+
 NV_STATUS NV_API_CALL nv_acpi_ddc_method(nv_state_t *, void *, NvU32 *,
                                          NvBool) {
     return NV_ERR_NOT_SUPPORTED;

@@ -1,11 +1,13 @@
 #include "nvidia_open.h"
 #include <libs/aether/pci.h>
 #include <libs/aether/irq.h>
+#include <libs/aether/mm.h>
 #include <libs/klibc.h>
 #include <nvUnixVersion.h>
 
 nvidia_device_t *nvidia_gpus[MAX_NVIDIA_GPU_NUM];
 uint64_t nvidia_gpu_count = 0;
+static void *nvidia_scanout_maps[MAX_NVIDIA_GPU_NUM][32];
 
 extern spinlock_t nvKmsLock;
 
@@ -23,8 +25,12 @@ static void nvidia_unregister_gpu(nvidia_device_t *nv_dev) {
 
         for (uint64_t j = i + 1; j < nvidia_gpu_count; j++) {
             nvidia_gpus[j - 1] = nvidia_gpus[j];
+            memcpy(nvidia_scanout_maps[j - 1], nvidia_scanout_maps[j],
+                   sizeof(nvidia_scanout_maps[j - 1]));
         }
         nvidia_gpus[nvidia_gpu_count - 1] = NULL;
+        memset(nvidia_scanout_maps[nvidia_gpu_count - 1], 0,
+               sizeof(nvidia_scanout_maps[nvidia_gpu_count - 1]));
         nvidia_gpu_count--;
         return;
     }
@@ -90,6 +96,9 @@ nvidia_drm_to_surface_format(uint32_t fourcc,
     case DRM_FORMAT_XBGR8888:
         *format = NvKmsSurfaceMemoryFormatX8B8G8R8;
         return true;
+    case DRM_FORMAT_ABGR8888:
+        *format = NvKmsSurfaceMemoryFormatA8B8G8R8;
+        return true;
     default:
         return false;
     }
@@ -143,6 +152,7 @@ static int nvidia_fb_format_to_depth(uint32_t fourcc, uint32_t *bpp,
         *depth = 24;
         return 0;
     case DRM_FORMAT_ARGB8888:
+    case DRM_FORMAT_ABGR8888:
         *bpp = 32;
         *depth = 32;
         return 0;
@@ -587,6 +597,71 @@ nvidia_fill_layer_defaults(struct NvKmsKapiLayerRequestedConfig *layer) {
     layer->config.syncParams.semaphoreSpecified = NV_FALSE;
 }
 
+static int nvidia_gpu_index(nvidia_device_t *nv_dev) {
+    if (!nv_dev) {
+        return -EINVAL;
+    }
+
+    for (uint32_t i = 0; i < nvidia_gpu_count && i < MAX_NVIDIA_GPU_NUM; i++) {
+        if (nvidia_gpus[i] == nv_dev) {
+            return (int)i;
+        }
+    }
+
+    return -ENOENT;
+}
+
+static int nvidia_fb_index(const nvidia_fb_t *fb) {
+    if (!fb || !fb->handle || fb->handle > 32) {
+        return -EINVAL;
+    }
+
+    return (int)(fb->handle - 1);
+}
+
+static uint64_t nvidia_pages_for_size(uint64_t size) {
+    return (size + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE;
+}
+
+static int nvidia_validate_fb_geometry(const nvidia_fb_t *fb, uint32_t width,
+                                       uint32_t height, uint32_t pitch) {
+    if (!fb || !width || !height || !pitch) {
+        return -EINVAL;
+    }
+
+    uint64_t required = (uint64_t)pitch * (uint64_t)height;
+    if (required == 0 || required > fb->size) {
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+static int nvidia_sync_shadow_to_scanout(nvidia_device_t *nv_dev,
+                                         nvidia_fb_t *fb) {
+    if (!nv_dev || !fb || !fb->memory || !fb->map_offset || !fb->size) {
+        return -EINVAL;
+    }
+
+    int gpu_idx = nvidia_gpu_index(nv_dev);
+    int fb_idx = nvidia_fb_index(fb);
+    if (gpu_idx < 0 || fb_idx < 0) {
+        return -ENODEV;
+    }
+
+    void *scanout = nvidia_scanout_maps[gpu_idx][fb_idx];
+    if (!scanout) {
+        if (!nvKms->mapMemory(nv_dev->kmsdev, fb->memory,
+                              NVKMS_KAPI_MAPPING_TYPE_KERNEL, &scanout)) {
+            return -EIO;
+        }
+        nvidia_scanout_maps[gpu_idx][fb_idx] = scanout;
+    }
+
+    memcpy(scanout, (void *)(uintptr_t)phys_to_virt(fb->map_offset), fb->size);
+    return 0;
+}
+
 static int nvidia_ensure_surface(nvidia_device_t *nv_dev, nvidia_fb_t *fb,
                                  uint32_t fourcc, uint32_t width,
                                  uint32_t height, uint32_t pitch,
@@ -716,6 +791,13 @@ static int nvidia_apply_modeset(nvidia_device_t *nv_dev, uint32_t display_idx,
         effective_mode_changed = false;
     }
     head_cfg->flags.modeChanged = effective_mode_changed ? NV_TRUE : NV_FALSE;
+
+    if (fb) {
+        int sync_ret = nvidia_sync_shadow_to_scanout(nv_dev, fb);
+        if (sync_ret != 0) {
+            return sync_ret;
+        }
+    }
 
     if (fb) {
         head_cfg->modeSetConfig.bActive = NV_TRUE;
@@ -871,6 +953,11 @@ int nvidia_create_dumb(drm_device_t *drm_dev,
         args->bpp = 32;
     }
 
+    int gpu_idx = nvidia_gpu_index(nv_dev);
+    if (gpu_idx < 0) {
+        return -ENODEV;
+    }
+
     uint32_t bytes_per_pixel = (args->bpp + 7) >> 3;
     if (!bytes_per_pixel) {
         return -EINVAL;
@@ -905,9 +992,20 @@ int nvidia_create_dumb(drm_device_t *drm_dev,
             return -ENOMEM;
         }
 
-        void *map = NULL;
+        uint64_t page_count = nvidia_pages_for_size(args->size);
+        uintptr_t shadow_phys = alloc_frames(page_count);
+        if (!shadow_phys) {
+            nvKms->freeMemory(nv_dev->kmsdev, memory);
+            return -ENOMEM;
+        }
+
+        memset((void *)(uintptr_t)phys_to_virt(shadow_phys), 0,
+               page_count * DEFAULT_PAGE_SIZE);
+
+        void *scanout_map = NULL;
         if (!nvKms->mapMemory(nv_dev->kmsdev, memory,
-                              NVKMS_KAPI_MAPPING_TYPE_USER, &map)) {
+                              NVKMS_KAPI_MAPPING_TYPE_KERNEL, &scanout_map)) {
+            free_frames(shadow_phys, page_count);
             nvKms->freeMemory(nv_dev->kmsdev, memory);
             return -EIO;
         }
@@ -920,10 +1018,11 @@ int nvidia_create_dumb(drm_device_t *drm_dev,
         fb->pitch = args->pitch;
         fb->bpp = args->bpp;
         fb->size = args->size;
-        fb->map_offset = (uint64_t)(uintptr_t)map;
+        fb->map_offset = (uint64_t)shadow_phys;
         fb->refcount = 1;
         fb->memory = memory;
         fb->format = DRM_FORMAT_XRGB8888;
+        nvidia_scanout_maps[gpu_idx][i] = scanout_map;
 
         args->handle = fb->handle;
         return 0;
@@ -951,13 +1050,21 @@ int nvidia_destroy_dumb(drm_device_t *drm_dev, uint32_t handle) {
         return 0;
     }
 
+    int gpu_idx = nvidia_gpu_index(nv_dev);
+    int fb_idx = nvidia_fb_index(fb);
+    if (gpu_idx >= 0 && fb_idx >= 0 && fb->memory &&
+        nvidia_scanout_maps[gpu_idx][fb_idx]) {
+        nvKms->unmapMemory(nv_dev->kmsdev, fb->memory,
+                           NVKMS_KAPI_MAPPING_TYPE_KERNEL,
+                           nvidia_scanout_maps[gpu_idx][fb_idx]);
+        nvidia_scanout_maps[gpu_idx][fb_idx] = NULL;
+    }
+
     if (fb->surface) {
         nvKms->destroySurface(nv_dev->kmsdev, fb->surface);
     }
-    if (fb->map_offset && fb->memory) {
-        nvKms->unmapMemory(nv_dev->kmsdev, fb->memory,
-                           NVKMS_KAPI_MAPPING_TYPE_USER,
-                           (const void *)(uintptr_t)fb->map_offset);
+    if (fb->map_offset && fb->size) {
+        free_frames((uintptr_t)fb->map_offset, nvidia_pages_for_size(fb->size));
     }
     if (fb->memory) {
         nvKms->freeMemory(nv_dev->kmsdev, fb->memory);
@@ -986,6 +1093,10 @@ int nvidia_add_fb(drm_device_t *drm_dev, struct drm_mode_fb_cmd *cmd) {
 
     nvidia_fb_t *nfb = nvidia_fb_by_handle(nv_dev, cmd->handle);
     if (!nfb) {
+        return -EINVAL;
+    }
+    if (nvidia_validate_fb_geometry(nfb, cmd->width, cmd->height, cmd->pitch) !=
+        0) {
         return -EINVAL;
     }
 
@@ -1059,6 +1170,11 @@ int nvidia_add_fb2(drm_device_t *drm_dev, struct drm_mode_fb_cmd2 *cmd) {
         return -EINVAL;
     }
 
+    uint32_t pitch = cmd->pitches[0] ? cmd->pitches[0] : nfb->pitch;
+    if (nvidia_validate_fb_geometry(nfb, cmd->width, cmd->height, pitch) != 0) {
+        return -EINVAL;
+    }
+
     uint32_t bpp = 0;
     uint32_t depth = 0;
     if (nvidia_fb_format_to_depth(cmd->pixel_format, &bpp, &depth) != 0) {
@@ -1076,7 +1192,7 @@ int nvidia_add_fb2(drm_device_t *drm_dev, struct drm_mode_fb_cmd2 *cmd) {
 
     fb->width = cmd->width;
     fb->height = cmd->height;
-    fb->pitch = cmd->pitches[0] ? cmd->pitches[0] : nfb->pitch;
+    fb->pitch = pitch;
     fb->bpp = bpp;
     fb->depth = depth;
     fb->handle = cmd->handles[0];
@@ -2208,14 +2324,64 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
         nv_dev->head_to_crtc[i] = -1;
     }
 
-    for (uint32_t head = 0; head < resInfo.numHeads &&
-                            nv_dev->num_crtcs < DRM_MAX_CRTCS_PER_DEVICE &&
-                            nv_dev->num_crtcs < DRM_MAX_PLANES_PER_DEVICE;
-         head++) {
-        if (resInfo.numLayers[head] <= NVKMS_KAPI_LAYER_PRIMARY_IDX) {
+    NvU32 nDisplays = 0;
+    success = nvKms->getDisplays(nv_dev->kmsdev, &nDisplays, NULL);
+    if (!success) {
+        goto fail;
+    }
+
+    if (nDisplays > 16) {
+        nDisplays = 16;
+    }
+
+    NvKmsKapiDisplay hDisplays[16] = {0};
+    success = nvKms->getDisplays(nv_dev->kmsdev, &nDisplays, hDisplays);
+    if (!success) {
+        goto fail;
+    }
+
+    uint32_t head_order[NVKMS_KAPI_MAX_HEADS] = {0};
+    uint32_t head_order_count = 0;
+    bool head_ordered[NVKMS_KAPI_MAX_HEADS] = {false};
+
+    for (uint32_t i = 0; i < nDisplays; i++) {
+        struct NvKmsKapiStaticDisplayInfo display_info;
+        memset(&display_info, 0, sizeof(display_info));
+        if (!nvKms->getStaticDisplayInfo(nv_dev->kmsdev, hDisplays[i],
+                                         &display_info)) {
             continue;
         }
 
+        for (uint32_t bit = 0;
+             bit < resInfo.numHeads && bit < NVKMS_KAPI_MAX_HEADS; bit++) {
+            if (!(display_info.headMask & (1U << bit))) {
+                continue;
+            }
+            if (resInfo.numLayers[bit] <= NVKMS_KAPI_LAYER_PRIMARY_IDX ||
+                head_ordered[bit]) {
+                continue;
+            }
+
+            head_order[head_order_count++] = bit;
+            head_ordered[bit] = true;
+        }
+    }
+
+    for (uint32_t bit = 0; bit < resInfo.numHeads && bit < NVKMS_KAPI_MAX_HEADS;
+         bit++) {
+        if (resInfo.numLayers[bit] <= NVKMS_KAPI_LAYER_PRIMARY_IDX ||
+            head_ordered[bit]) {
+            continue;
+        }
+        head_order[head_order_count++] = bit;
+        head_ordered[bit] = true;
+    }
+
+    for (uint32_t i = 0;
+         i < head_order_count && nv_dev->num_crtcs < DRM_MAX_CRTCS_PER_DEVICE &&
+         nv_dev->num_crtcs < DRM_MAX_PLANES_PER_DEVICE;
+         i++) {
+        uint32_t head = head_order[i];
         uint32_t crtc_idx = nv_dev->num_crtcs;
         drm_crtc_t *crtc = drm_crtc_alloc(&nv_dev->resource_mgr, nv_dev);
         if (!crtc) {
@@ -2259,22 +2425,6 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
         }
         nv_dev->planes[crtc_idx] = plane;
         nv_dev->num_crtcs++;
-    }
-
-    NvU32 nDisplays = 0;
-    success = nvKms->getDisplays(nv_dev->kmsdev, &nDisplays, NULL);
-    if (!success) {
-        goto fail;
-    }
-
-    if (nDisplays > 16) {
-        nDisplays = 16;
-    }
-
-    NvKmsKapiDisplay hDisplays[16] = {0};
-    success = nvKms->getDisplays(nv_dev->kmsdev, &nDisplays, hDisplays);
-    if (!success) {
-        goto fail;
     }
 
     nv_dev->num_displays = 0;
@@ -2412,8 +2562,9 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
 
 fail:
     nv_dev->tasks_should_exit = true;
-    while (nv_dev->irq_handler_task->state != TASK_DIED &&
-           nv_dev->timer_task->state != TASK_DIED) {
+    while ((nv_dev->irq_handler_task &&
+            nv_dev->irq_handler_task->state != TASK_DIED) ||
+           (nv_dev->timer_task && nv_dev->timer_task->state != TASK_DIED)) {
         arch_pause();
     }
 
@@ -2444,12 +2595,15 @@ void nvidia_shutdown(pci_device_t *dev) {}
 void nvidia_open_irq_thread(uint64_t dev_ptr) {
     nvidia_device_t *dev = (nvidia_device_t *)dev_ptr;
 
+    arch_enable_interrupt();
+
     while (!dev->shouldEnableIrq) {
         if (dev->tasks_should_exit) {
             task_exit(0);
         }
 
-        arch_pause();
+        arch_enable_interrupt();
+        schedule(SCHED_FLAG_YIELD);
     }
 
     while (1) {
@@ -2472,6 +2626,7 @@ void nvidia_open_irq_thread(uint64_t dev_ptr) {
         if (need_to_run_bottom_half_gpu_lock_held)
             rm_isr_bh(NULL, &dev->nv_);
 
+        arch_enable_interrupt();
         schedule(SCHED_FLAG_YIELD);
     }
 
@@ -2482,6 +2637,8 @@ void nvidia_open_rc_timer(uint64_t dev_ptr) {
     nvidia_device_t *dev = (nvidia_device_t *)dev_ptr;
 
     bool continueWaiting = true;
+
+    arch_enable_interrupt();
 
     while (1) {
         arch_enable_interrupt();
@@ -2517,6 +2674,8 @@ void nvidia_open_rc_timer(uint64_t dev_ptr) {
         }
 
     next:
+        arch_enable_interrupt();
+
         schedule(SCHED_FLAG_YIELD);
     }
 }
