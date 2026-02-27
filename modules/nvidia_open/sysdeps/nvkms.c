@@ -26,7 +26,7 @@ struct nvkms_per_open {
 static void delay(uint64_t ns) {
     uint64_t start = nano_time();
     while (nano_time() - start < ns) {
-        arch_pause();
+        schedule(SCHED_FLAG_YIELD);
     }
 }
 

@@ -354,6 +354,105 @@ static bool nvidia_get_display_mode(nvidia_device_t *nv_dev,
     return has_mode;
 }
 
+static const struct drm_mode_modeinfo *
+nvidia_preferred_connector_mode(const drm_connector_t *connector) {
+    if (!connector || !connector->modes || !connector->count_modes) {
+        return NULL;
+    }
+
+    for (uint32_t i = 0; i < connector->count_modes; i++) {
+        if (connector->modes[i].type & DRM_MODE_TYPE_PREFERRED) {
+            return &connector->modes[i];
+        }
+    }
+
+    return &connector->modes[0];
+}
+
+static bool nvidia_refresh_connector_modes(nvidia_device_t *nv_dev,
+                                           drm_connector_t *connector,
+                                           NvKmsKapiDisplay display,
+                                           uint32_t *mm_width,
+                                           uint32_t *mm_height) {
+    if (!nv_dev || !connector) {
+        return false;
+    }
+
+    struct drm_mode_modeinfo *new_modes = NULL;
+    uint32_t mode_count = 0;
+    uint32_t mode_capacity = 0;
+    bool has_preferred = false;
+    uint32_t pref_mm_width = 0;
+    uint32_t pref_mm_height = 0;
+
+    uint32_t mode_index = 0;
+    while (true) {
+        struct NvKmsKapiDisplayMode display_mode;
+        NvBool valid = NV_FALSE;
+        NvBool preferred = NV_FALSE;
+        int ret = nvKms->getDisplayMode(nv_dev->kmsdev, display, mode_index++,
+                                        &display_mode, &valid, &preferred);
+        if (ret < 0) {
+            free(new_modes);
+            return false;
+        }
+        if (ret == 0) {
+            break;
+        }
+        if (!valid) {
+            continue;
+        }
+
+        if (mode_count == mode_capacity) {
+            uint32_t next_capacity = mode_capacity ? mode_capacity * 2 : 8;
+            struct drm_mode_modeinfo *grown_modes =
+                realloc(new_modes, sizeof(*new_modes) * next_capacity);
+            if (!grown_modes) {
+                free(new_modes);
+                return false;
+            }
+            new_modes = grown_modes;
+            mode_capacity = next_capacity;
+        }
+
+        memset(&new_modes[mode_count], 0, sizeof(new_modes[mode_count]));
+        nvidia_to_drm_mode(&display_mode, &new_modes[mode_count]);
+        new_modes[mode_count].type = DRM_MODE_TYPE_DRIVER;
+
+        if (preferred) {
+            new_modes[mode_count].type |= DRM_MODE_TYPE_PREFERRED;
+            pref_mm_width = display_mode.timings.widthMM;
+            pref_mm_height = display_mode.timings.heightMM;
+            has_preferred = true;
+        }
+
+        mode_count++;
+    }
+
+    if (!mode_count) {
+        free(new_modes);
+        return false;
+    }
+
+    if (!has_preferred) {
+        new_modes[0].type |= DRM_MODE_TYPE_PREFERRED;
+    }
+
+    if (mm_width) {
+        *mm_width = pref_mm_width;
+    }
+    if (mm_height) {
+        *mm_height = pref_mm_height;
+    }
+
+    if (connector->modes) {
+        free(connector->modes);
+    }
+    connector->modes = new_modes;
+    connector->count_modes = mode_count;
+    return true;
+}
+
 static void nvidia_update_display_connector_state(nvidia_device_t *nv_dev,
                                                   uint32_t display_idx) {
     if (!nv_dev || display_idx >= nv_dev->num_displays ||
@@ -372,34 +471,25 @@ static void nvidia_update_display_connector_state(nvidia_device_t *nv_dev,
             dyn_params.connected ? DRM_MODE_CONNECTED : DRM_MODE_DISCONNECTED;
     }
 
-    struct NvKmsKapiDisplayMode selected_mode;
-    memset(&selected_mode, 0, sizeof(selected_mode));
     uint32_t mm_width = 0;
     uint32_t mm_height = 0;
-    bool has_mode = nvidia_get_display_mode(nv_dev, display, &selected_mode,
-                                            &mm_width, &mm_height);
-
-    if (!has_mode) {
+    if (!nvidia_refresh_connector_modes(nv_dev, connector, display, &mm_width,
+                                        &mm_height)) {
         return;
     }
 
-    if (!connector->modes) {
-        connector->modes = malloc(sizeof(struct drm_mode_modeinfo));
-        if (!connector->modes) {
-            connector->count_modes = 0;
-            return;
-        }
+    const struct drm_mode_modeinfo *preferred_mode =
+        nvidia_preferred_connector_mode(connector);
+    if (preferred_mode && display_idx < 16) {
+        nv_dev->cached_modes[display_idx] = *preferred_mode;
+        nv_dev->cached_mode_valid[display_idx] = true;
     }
 
-    nvidia_to_drm_mode(&selected_mode, connector->modes);
-    connector->modes->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
-    connector->count_modes = 1;
-
-    if (!mm_width && connector->modes->hdisplay) {
-        mm_width = (connector->modes->hdisplay * 264UL) / 1000UL;
+    if (!mm_width && connector->modes[0].hdisplay) {
+        mm_width = (connector->modes[0].hdisplay * 264UL) / 1000UL;
     }
-    if (!mm_height && connector->modes->vdisplay) {
-        mm_height = (connector->modes->vdisplay * 264UL) / 1000UL;
+    if (!mm_height && connector->modes[0].vdisplay) {
+        mm_height = (connector->modes[0].vdisplay * 264UL) / 1000UL;
     }
     connector->mm_width = mm_width ? mm_width : 1;
     connector->mm_height = mm_height ? mm_height : 1;
@@ -719,14 +809,33 @@ static int nvidia_ensure_surface(nvidia_device_t *nv_dev, nvidia_fb_t *fb,
     return 0;
 }
 
+static int nvidia_validate_display_mode(nvidia_device_t *nv_dev,
+                                        uint32_t display_idx,
+                                        const struct drm_mode_modeinfo *mode) {
+    if (!nv_dev || display_idx >= nv_dev->num_displays || !mode) {
+        return -EINVAL;
+    }
+
+    struct NvKmsKapiDisplayMode kapi_mode;
+    memset(&kapi_mode, 0, sizeof(kapi_mode));
+    nvidia_to_kapi_mode(mode, &kapi_mode);
+
+    if (!nvKms->validateDisplayMode(
+            nv_dev->kmsdev, nv_dev->displays[display_idx], &kapi_mode)) {
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
 static int nvidia_apply_modeset(nvidia_device_t *nv_dev, uint32_t display_idx,
                                 nvidia_fb_t *fb,
                                 const struct drm_mode_modeinfo *mode,
                                 bool mode_changed, bool send_flip_event,
-                                uint64_t user_data, uint32_t x, uint32_t y,
-                                uint32_t width, uint32_t height, uint32_t src_x,
-                                uint32_t src_y, uint32_t src_width,
-                                uint32_t src_height) {
+                                bool commit, uint64_t user_data, uint32_t x,
+                                uint32_t y, uint32_t width, uint32_t height,
+                                uint32_t src_x, uint32_t src_y,
+                                uint32_t src_width, uint32_t src_height) {
     if (!nv_dev || display_idx >= nv_dev->num_displays) {
         return -EINVAL;
     }
@@ -764,35 +873,81 @@ static int nvidia_apply_modeset(nvidia_device_t *nv_dev, uint32_t display_idx,
     const struct drm_mode_modeinfo *effective_mode = mode;
     struct drm_mode_modeinfo queried_mode;
     bool queried_mode_valid = false;
+    struct NvKmsKapiDisplayMode requested_kapi_mode;
+    bool requested_kapi_mode_valid = false;
+    bool reused_cached_kapi_mode = false;
+
     if (!effective_mode && requested_active) {
         if (crtc_idx < nv_dev->num_crtcs && nv_dev->crtcs[crtc_idx] &&
             nv_dev->crtcs[crtc_idx]->mode_valid) {
             effective_mode = &nv_dev->crtcs[crtc_idx]->mode;
-        } else if (nv_dev->connectors[display_idx] &&
-                   nv_dev->connectors[display_idx]->modes &&
-                   nv_dev->connectors[display_idx]->count_modes > 0) {
-            effective_mode = &nv_dev->connectors[display_idx]->modes[0];
-        } else {
-            struct NvKmsKapiDisplayMode kapi_mode;
-            memset(&kapi_mode, 0, sizeof(kapi_mode));
-            if (nvidia_get_display_mode(nv_dev, nv_dev->displays[display_idx],
-                                        &kapi_mode, NULL, NULL)) {
-                memset(&queried_mode, 0, sizeof(queried_mode));
-                nvidia_to_drm_mode(&kapi_mode, &queried_mode);
-                effective_mode = &queried_mode;
-                queried_mode_valid = true;
+        }
+    }
+
+    if (!effective_mode && requested_active && display_idx < 16 &&
+        nv_dev->cached_mode_valid[display_idx]) {
+        effective_mode = &nv_dev->cached_modes[display_idx];
+    }
+
+    if (!effective_mode && requested_active &&
+        nv_dev->connectors[display_idx]) {
+        effective_mode =
+            nvidia_preferred_connector_mode(nv_dev->connectors[display_idx]);
+    }
+
+    if (!effective_mode && requested_active) {
+        struct NvKmsKapiDisplayMode kapi_mode;
+        memset(&kapi_mode, 0, sizeof(kapi_mode));
+        if (nvidia_get_display_mode(nv_dev, nv_dev->displays[display_idx],
+                                    &kapi_mode, NULL, NULL)) {
+            memset(&queried_mode, 0, sizeof(queried_mode));
+            nvidia_to_drm_mode(&kapi_mode, &queried_mode);
+            effective_mode = &queried_mode;
+            queried_mode_valid = true;
+            if (display_idx < 16) {
+                nv_dev->cached_modes[display_idx] = queried_mode;
+                nv_dev->cached_mode_valid[display_idx] = true;
             }
         }
     }
 
+    if (effective_mode) {
+        memset(&requested_kapi_mode, 0, sizeof(requested_kapi_mode));
+        nvidia_to_kapi_mode(effective_mode, &requested_kapi_mode);
+        requested_kapi_mode_valid = true;
+    } else if (requested_active && display_idx < 16 &&
+               nv_dev->cached_kapi_mode_valid[display_idx]) {
+        requested_kapi_mode = nv_dev->cached_kapi_modes[display_idx];
+        requested_kapi_mode_valid = true;
+        reused_cached_kapi_mode = true;
+    }
+
     bool effective_mode_changed =
         mode_changed || (requested_active && !current_active);
-    if (effective_mode_changed && !effective_mode) {
+    if (effective_mode_changed && !requested_kapi_mode_valid) {
         effective_mode_changed = false;
+    }
+    if (requested_active && !requested_kapi_mode_valid) {
+        uint32_t connector_modes = 0;
+        if (nv_dev->connectors[display_idx]) {
+            connector_modes = nv_dev->connectors[display_idx]->count_modes;
+        }
+        printk("nvidia_open: no mode selected for display=%u (crtc_valid=%u "
+               "cached_valid=%u cached_kapi_valid=%u connector_modes=%u)\n",
+               display_idx,
+               (crtc_idx < nv_dev->num_crtcs && nv_dev->crtcs[crtc_idx])
+                   ? nv_dev->crtcs[crtc_idx]->mode_valid
+                   : 0,
+               (display_idx < 16 && nv_dev->cached_mode_valid[display_idx]) ? 1
+                                                                            : 0,
+               (display_idx < 16 && nv_dev->cached_kapi_mode_valid[display_idx])
+                   ? 1
+                   : 0,
+               connector_modes);
     }
     head_cfg->flags.modeChanged = effective_mode_changed ? NV_TRUE : NV_FALSE;
 
-    if (fb) {
+    if (fb && commit) {
         int sync_ret = nvidia_sync_shadow_to_scanout(nv_dev, fb);
         if (sync_ret != 0) {
             return sync_ret;
@@ -808,8 +963,22 @@ static int nvidia_apply_modeset(nvidia_device_t *nv_dev, uint32_t display_idx,
         head_cfg->modeSetConfig.numDisplays = 0;
     }
 
-    if (effective_mode) {
-        nvidia_to_kapi_mode(effective_mode, &head_cfg->modeSetConfig.mode);
+    if (requested_kapi_mode_valid) {
+        head_cfg->modeSetConfig.mode = requested_kapi_mode;
+    }
+
+    if (requested_active && requested_kapi_mode_valid) {
+        if (effective_mode) {
+            int valid_ret = nvidia_validate_display_mode(nv_dev, display_idx,
+                                                         effective_mode);
+            if (valid_ret != 0) {
+                return valid_ret;
+            }
+        } else if (!nvKms->validateDisplayMode(nv_dev->kmsdev,
+                                               nv_dev->displays[display_idx],
+                                               &requested_kapi_mode)) {
+            return -EINVAL;
+        }
     }
 
     for (uint32_t layer = 0; layer < NVKMS_KAPI_LAYER_MAX; layer++) {
@@ -847,29 +1016,49 @@ static int nvidia_apply_modeset(nvidia_device_t *nv_dev, uint32_t display_idx,
         primary->flags.dstWHChanged = NV_TRUE;
     }
 
-    if (send_flip_event) {
+    if (send_flip_event && commit) {
         nv_dev->pending_flip_user_data[head] = user_data;
         nv_dev->pending_flip_event[head] = true;
     }
 
-    if (!nvKms->applyModeSetConfig(nv_dev->kmsdev, &req, &reply, NV_TRUE)) {
+    if (!nvKms->applyModeSetConfig(nv_dev->kmsdev, &req, &reply,
+                                   commit ? NV_TRUE : NV_FALSE)) {
         printk("nvidia_open: applyModeSetConfig failed display=%u head=%u "
                "active=%u mode_changed=%u fb=%u flipResult=%d\n",
                display_idx, head, requested_active ? 1 : 0,
                effective_mode_changed ? 1 : 0, fb ? fb->fb_id : 0,
                reply.flipResult);
-        if (!effective_mode && requested_active) {
+        if (!requested_kapi_mode_valid && requested_active) {
             printk("nvidia_open: no usable mode for active display=%u\n",
                    display_idx);
         } else if (queried_mode_valid) {
             printk("nvidia_open: queried mode %ux%u@%u used for display=%u\n",
                    queried_mode.hdisplay, queried_mode.vdisplay,
                    queried_mode.vrefresh, display_idx);
+        } else if (reused_cached_kapi_mode) {
+            printk("nvidia_open: reused cached KAPI mode for display=%u\n",
+                   display_idx);
         }
-        if (send_flip_event) {
+        if (send_flip_event && commit) {
             nv_dev->pending_flip_event[head] = false;
         }
         return -EIO;
+    }
+
+    if (requested_active && requested_kapi_mode_valid && display_idx < 16) {
+        nv_dev->cached_kapi_modes[display_idx] = requested_kapi_mode;
+        nv_dev->cached_kapi_mode_valid[display_idx] = true;
+
+        if (effective_mode) {
+            nv_dev->cached_modes[display_idx] = *effective_mode;
+            nv_dev->cached_mode_valid[display_idx] = true;
+        } else {
+            struct drm_mode_modeinfo cached_mode;
+            memset(&cached_mode, 0, sizeof(cached_mode));
+            nvidia_to_drm_mode(&requested_kapi_mode, &cached_mode);
+            nv_dev->cached_modes[display_idx] = cached_mode;
+            nv_dev->cached_mode_valid[display_idx] = true;
+        }
     }
 
     return 0;
@@ -884,10 +1073,14 @@ int nvidia_get_display_info(drm_device_t *drm_dev, uint32_t *width,
     nvidia_device_t *nv_dev = (nvidia_device_t *)drm_dev->data;
     if (nv_dev && nv_dev->num_displays > 0 && nv_dev->connectors[0] &&
         nv_dev->connectors[0]->count_modes && nv_dev->connectors[0]->modes) {
-        *width = nv_dev->connectors[0]->modes[0].hdisplay;
-        *height = nv_dev->connectors[0]->modes[0].vdisplay;
-        *bpp = 32;
-        return 0;
+        const struct drm_mode_modeinfo *mode =
+            nvidia_preferred_connector_mode(nv_dev->connectors[0]);
+        if (mode) {
+            *width = mode->hdisplay;
+            *height = mode->vdisplay;
+            *bpp = 32;
+            return 0;
+        }
     }
 
     boot_framebuffer_t *fb = get_current_fb();
@@ -1687,6 +1880,81 @@ int nvidia_atomic_commit(drm_device_t *drm_dev,
     }
 
     if (test_only) {
+        for (uint32_t i = 0; i < nv_dev->num_displays; i++) {
+            if (!states[i].touched) {
+                continue;
+            }
+
+            uint32_t crtc_idx = 0;
+            if (nvidia_crtc_index_from_display(nv_dev, i, &crtc_idx) != 0 ||
+                crtc_idx >= nv_dev->num_crtcs || !nv_dev->crtcs[crtc_idx]) {
+                continue;
+            }
+
+            if (!states[i].connector_crtc_id) {
+                states[i].active = false;
+                states[i].fb_id = 0;
+            }
+
+            if (!states[i].active || !states[i].fb_id) {
+                int ret = nvidia_apply_modeset(
+                    nv_dev, i, NULL,
+                    states[i].mode_valid ? &states[i].mode : NULL,
+                    states[i].mode_changed, false, false, 0, states[i].x,
+                    states[i].y, states[i].w, states[i].h, states[i].src_x,
+                    states[i].src_y, states[i].src_w, states[i].src_h);
+                if (ret != 0) {
+                    return ret;
+                }
+                continue;
+            }
+
+            drm_framebuffer_t *drm_fb =
+                drm_framebuffer_get(&nv_dev->resource_mgr, states[i].fb_id);
+            if (!drm_fb) {
+                return -ENOENT;
+            }
+
+            nvidia_fb_t *nfb = nvidia_fb_by_handle(nv_dev, drm_fb->handle);
+            if (!nfb) {
+                drm_framebuffer_free(&nv_dev->resource_mgr, drm_fb->id);
+                return -EINVAL;
+            }
+
+            drm_crtc_t *target_crtc = nv_dev->crtcs[crtc_idx];
+            const struct drm_mode_modeinfo *mode =
+                states[i].mode_valid
+                    ? &states[i].mode
+                    : (target_crtc->mode_valid ? &target_crtc->mode : NULL);
+            if (!mode && nv_dev->connectors[i]) {
+                const struct drm_mode_modeinfo *preferred_mode =
+                    nvidia_preferred_connector_mode(nv_dev->connectors[i]);
+                if (preferred_mode) {
+                    states[i].mode = *preferred_mode;
+                    states[i].mode_valid = true;
+                    mode = &states[i].mode;
+                }
+            }
+
+            uint32_t width = states[i].w
+                                 ? states[i].w
+                                 : (mode ? mode->hdisplay : drm_fb->width);
+            uint32_t height = states[i].h
+                                  ? states[i].h
+                                  : (mode ? mode->vdisplay : drm_fb->height);
+            uint32_t src_width = states[i].src_w ? states[i].src_w : width;
+            uint32_t src_height = states[i].src_h ? states[i].src_h : height;
+
+            int ret = nvidia_apply_modeset(
+                nv_dev, i, nfb, mode, states[i].mode_changed, false, false, 0,
+                states[i].x, states[i].y, width, height, states[i].src_x,
+                states[i].src_y, src_width, src_height);
+            drm_framebuffer_free(&nv_dev->resource_mgr, drm_fb->id);
+            if (ret != 0) {
+                return ret;
+            }
+        }
+
         return 0;
     }
 
@@ -1748,9 +2016,9 @@ int nvidia_atomic_commit(drm_device_t *drm_dev,
         if (!states[i].active || !states[i].fb_id) {
             ret = nvidia_apply_modeset(
                 nv_dev, i, NULL, states[i].mode_valid ? &states[i].mode : NULL,
-                states[i].mode_changed, false, 0, states[i].x, states[i].y,
-                states[i].w, states[i].h, states[i].src_x, states[i].src_y,
-                states[i].src_w, states[i].src_h);
+                states[i].mode_changed, false, true, 0, states[i].x,
+                states[i].y, states[i].w, states[i].h, states[i].src_x,
+                states[i].src_y, states[i].src_w, states[i].src_h);
             if (ret != 0) {
                 return ret;
             }
@@ -1781,12 +2049,14 @@ int nvidia_atomic_commit(drm_device_t *drm_dev,
                 states[i].mode_valid
                     ? &states[i].mode
                     : (target_crtc->mode_valid ? &target_crtc->mode : NULL);
-            if (!mode && nv_dev->connectors[i] &&
-                nv_dev->connectors[i]->modes &&
-                nv_dev->connectors[i]->count_modes > 0) {
-                states[i].mode = nv_dev->connectors[i]->modes[0];
-                states[i].mode_valid = true;
-                mode = &states[i].mode;
+            if (!mode && nv_dev->connectors[i]) {
+                const struct drm_mode_modeinfo *preferred_mode =
+                    nvidia_preferred_connector_mode(nv_dev->connectors[i]);
+                if (preferred_mode) {
+                    states[i].mode = *preferred_mode;
+                    states[i].mode_valid = true;
+                    mode = &states[i].mode;
+                }
             }
             uint32_t width = states[i].w
                                  ? states[i].w
@@ -1801,7 +2071,7 @@ int nvidia_atomic_commit(drm_device_t *drm_dev,
 
             ret = nvidia_apply_modeset(
                 nv_dev, i, nfb, mode, states[i].mode_changed, send_flip_event,
-                send_flip_event ? atomic->user_data : 0, states[i].x,
+                true, send_flip_event ? atomic->user_data : 0, states[i].x,
                 states[i].y, width, height, states[i].src_x, states[i].src_y,
                 src_width, src_height);
             drm_framebuffer_free(&nv_dev->resource_mgr, drm_fb->id);
@@ -1891,7 +2161,7 @@ int nvidia_set_crtc(drm_device_t *drm_dev, struct drm_mode_crtc *crtc) {
     if (crtc->fb_id == 0) {
         ret =
             nvidia_apply_modeset(nv_dev, display_idx, NULL, NULL, false, false,
-                                 0, crtc->x, crtc->y, 0, 0, 0, 0, 0, 0);
+                                 true, 0, crtc->x, crtc->y, 0, 0, 0, 0, 0, 0);
         if (ret == 0) {
             target_crtc->fb_id = 0;
             target_crtc->mode_valid = 0;
@@ -1921,8 +2191,8 @@ int nvidia_set_crtc(drm_device_t *drm_dev, struct drm_mode_crtc *crtc) {
         crtc->mode.vdisplay ? crtc->mode.vdisplay : drm_fb->height;
 
     ret = nvidia_apply_modeset(nv_dev, display_idx, nfb, mode, crtc->mode_valid,
-                               false, 0, crtc->x, crtc->y, width, height, 0, 0,
-                               width, height);
+                               false, true, 0, crtc->x, crtc->y, width, height,
+                               0, 0, width, height);
     if (ret == 0) {
         target_crtc->fb_id = crtc->fb_id;
         target_crtc->x = crtc->x;
@@ -2007,7 +2277,7 @@ int nvidia_page_flip(struct drm_device *dev,
     uint32_t dst_width = crtc->w ? crtc->w : drm_fb->width;
     uint32_t dst_height = crtc->h ? crtc->h : drm_fb->height;
     ret = nvidia_apply_modeset(nv_dev, display_idx, nfb, mode, false,
-                               !!(flip->flags & DRM_MODE_PAGE_FLIP_EVENT),
+                               !!(flip->flags & DRM_MODE_PAGE_FLIP_EVENT), true,
                                flip->user_data, crtc->x, crtc->y, dst_width,
                                dst_height, 0, 0, dst_width, dst_height);
 
@@ -2514,13 +2784,15 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
         if (nv_dev->connectors[display_idx]->count_modes &&
             nv_dev->connectors[display_idx]->modes &&
             !nv_dev->crtcs[crtc_idx]->mode_valid) {
-            nv_dev->crtcs[crtc_idx]->mode =
-                nv_dev->connectors[display_idx]->modes[0];
-            nv_dev->crtcs[crtc_idx]->w =
-                nv_dev->connectors[display_idx]->modes[0].hdisplay;
-            nv_dev->crtcs[crtc_idx]->h =
-                nv_dev->connectors[display_idx]->modes[0].vdisplay;
-            nv_dev->crtcs[crtc_idx]->mode_valid = 1;
+            const struct drm_mode_modeinfo *preferred_mode =
+                nvidia_preferred_connector_mode(
+                    nv_dev->connectors[display_idx]);
+            if (preferred_mode) {
+                nv_dev->crtcs[crtc_idx]->mode = *preferred_mode;
+                nv_dev->crtcs[crtc_idx]->w = preferred_mode->hdisplay;
+                nv_dev->crtcs[crtc_idx]->h = preferred_mode->vdisplay;
+                nv_dev->crtcs[crtc_idx]->mode_valid = 1;
+            }
         }
 
         if (nv_dev->planes[crtc_idx]) {

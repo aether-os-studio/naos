@@ -64,6 +64,10 @@ typedef struct nvidia_device {
     bool has_video_memory;
     uint64_t pending_flip_user_data[NVKMS_KAPI_MAX_HEADS];
     bool pending_flip_event[NVKMS_KAPI_MAX_HEADS];
+    struct drm_mode_modeinfo cached_modes[16];
+    bool cached_mode_valid[16];
+    struct NvKmsKapiDisplayMode cached_kapi_modes[16];
+    bool cached_kapi_mode_valid[16];
 
     nvidia_fb_t framebuffers[32];
 } nvidia_device_t;

@@ -15,6 +15,7 @@ EXPORT_SYMBOL(free_frames_bytes_dma32);
 
 EXPORT_SYMBOL(malloc);
 EXPORT_SYMBOL(calloc);
+EXPORT_SYMBOL(realloc);
 EXPORT_SYMBOL(free);
 
 EXPORT_SYMBOL(map_page_range);

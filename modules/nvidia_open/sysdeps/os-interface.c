@@ -1,20 +1,22 @@
 #include "nvidia_open.h"
 
 #include <boot/boot.h>
-#include <libs/klibc.h>
-#include <libs/aether/acpi.h>
-#include <libs/aether/smbios.h>
-
-#include <libs/klibc.h>
 #include <libs/aether/acpi.h>
 #include <libs/aether/mm.h>
+#include <libs/aether/smbios.h>
 #include <libs/aether/stdio.h>
 #include <libs/aether/task.h>
 #include <libs/aether/time.h>
+#include <libs/klibc.h>
+#include <fs/vfs/vfs.h>
 
 #include <nv.h>
 #include <nv-firmware.h>
 #include <os-interface.h>
+
+#if defined(__x86_64__)
+#include <arch/x64/io.h>
+#endif
 
 #define STUBBED                                                                \
     {                                                                          \
@@ -107,6 +109,40 @@ static void os_wait_common(os_wait_queue *wq, const char *reason) {
         spin_unlock(&wq->lock);
     }
 }
+
+typedef struct {
+    sem_t sem;
+} os_mutex_t;
+
+typedef struct {
+    sem_t sem;
+} os_semaphore_t;
+
+typedef struct {
+    sem_t sem;
+} os_rwlock_t;
+
+static void os_sem_init(sem_t *sem, NvU32 initial) {
+    memset(sem, 0, sizeof(*sem));
+    spin_init(&sem->lock);
+    sem->cnt = initial;
+    sem->invalid = false;
+}
+
+static NvBool os_sem_try_acquire(sem_t *sem) {
+    NvBool acquired = NV_FALSE;
+
+    spin_lock(&sem->lock);
+    if (sem->cnt > 0) {
+        sem->cnt--;
+        acquired = NV_TRUE;
+    }
+    spin_unlock(&sem->lock);
+
+    return acquired;
+}
+
+static NvBool os_in_interrupt_context(void) { return NV_FALSE; }
 
 NV_STATUS NV_API_CALL os_alloc_mem(void **address, NvU64 size) {
     if (!address)
@@ -244,7 +280,7 @@ unsigned long strtoul(const char *nptr, char **endptr, register int base) {
     return (acc);
 }
 
-NvBool NV_API_CALL os_is_isr() { return NV_FALSE; }
+NvBool NV_API_CALL os_is_isr(void) { return os_in_interrupt_context(); }
 
 NvU32 NV_API_CALL os_strtoul(const char *str, char **endp, NvU32 base) {
     return strtoul(str, endp, base);
@@ -268,18 +304,34 @@ NvS32 NV_API_CALL os_vsnprintf(char *buf, NvU32 size, const char *fmt,
 }
 
 void NV_API_CALL os_log_error(const char *fmt, va_list ap) {
-    printk("NVIDIA_OPEN: [%d ERROR] ", current_task->pid);
+    uint32_t pid = current_task ? (uint32_t)current_task->pid : 0;
+    printk("NVIDIA_OPEN: [%u ERROR] ", pid);
     char buf[2048];
     vsprintf(buf, fmt, ap);
-    printk(buf);
+    printk("%s", buf);
 }
 
 void *os_mem_copy(void *dst, const void *src, NvU32 length) {
     return memcpy(dst, src, length);
 }
 
-NV_STATUS NV_API_CALL os_memcpy_from_user(void *, const void *, NvU32) STUBBED;
-NV_STATUS NV_API_CALL os_memcpy_to_user(void *, const void *, NvU32) STUBBED;
+NV_STATUS NV_API_CALL os_memcpy_from_user(void *dst, const void *src,
+                                          NvU32 length) {
+    if (!dst || !src) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+
+    return copy_from_user(dst, src, length) ? NV_ERR_INVALID_ADDRESS : NV_OK;
+}
+
+NV_STATUS NV_API_CALL os_memcpy_to_user(void *dst, const void *src,
+                                        NvU32 length) {
+    if (!dst || !src) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+
+    return copy_to_user(dst, src, length) ? NV_ERR_INVALID_ADDRESS : NV_OK;
+}
 
 void *os_mem_set(void *dst, NvU8 c, NvU32 length) {
     return memset(dst, (int)c, length);
@@ -357,18 +409,36 @@ NV_STATUS NV_API_CALL os_pci_write_dword(void *handle, NvU32 offset,
     return NV_OK;
 }
 
-NvBool NV_API_CALL os_pci_remove_supported(void) STUBBED;
-void NV_API_CALL os_pci_remove(void *) STUBBED;
+NvBool NV_API_CALL os_pci_remove_supported(void) { return NV_FALSE; }
+void NV_API_CALL os_pci_remove(void *handle) { (void)handle; }
 
 void *NV_API_CALL os_map_kernel_space(NvU64 start, NvU64 size_bytes,
                                       NvU32 mode) {
-    if (start == 0)
+    if (!start || !size_bytes) {
         return NULL;
-    uint64_t virt = phys_to_virt(start & ~0xFFFULL);
-    map_page_range(get_current_page_dir(false), virt, start & ~0xFFFULL,
-                   ((size_bytes + 0xFFFULL) & ~0xFFFULL),
-                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
-    return (void *)virt;
+    }
+
+    uint64_t aligned_start = start & ~0xFFFULL;
+    uint64_t offset = start & 0xFFFULL;
+    uint64_t aligned_size = ((offset + size_bytes + 0xFFFULL) & ~0xFFFULL);
+    uint64_t virt = phys_to_virt(aligned_start);
+
+    uint64_t flags = PT_FLAG_R | PT_FLAG_W;
+    switch (mode) {
+    case NV_MEMORY_CACHED:
+        break;
+    case NV_MEMORY_DEFAULT:
+    case NV_MEMORY_UNCACHED:
+    case NV_MEMORY_WRITECOMBINED:
+    default:
+        flags |= PT_FLAG_UNCACHEABLE;
+        break;
+    }
+
+    map_page_range(get_current_page_dir(false), virt, aligned_start,
+                   aligned_size, flags);
+
+    return (void *)(virt + offset);
 }
 
 void NV_API_CALL os_unmap_kernel_space(void *ptr, NvU64 len) {
@@ -388,13 +458,61 @@ void NV_API_CALL os_flush_cpu_write_combine_buffer(void) {
     asm volatile("sfence" ::: "memory");
 }
 
-NvU8 NV_API_CALL os_io_read_byte(NvU32) STUBBED;
-NvU16 NV_API_CALL os_io_read_word(NvU32) STUBBED;
-NvU32 NV_API_CALL os_io_read_dword(NvU32) STUBBED;
-void NV_API_CALL os_io_write_byte(NvU32, NvU8) STUBBED;
-void NV_API_CALL os_io_write_word(NvU32, NvU16) STUBBED;
-void NV_API_CALL os_io_write_dword(NvU32, NvU32) STUBBED;
-NvBool NV_API_CALL os_is_administrator(void) STUBBED;
+NvU8 NV_API_CALL os_io_read_byte(NvU32 address) {
+#if defined(__x86_64__)
+    return io_in8((uint16_t)address);
+#else
+    (void)address;
+    return 0;
+#endif
+}
+
+NvU16 NV_API_CALL os_io_read_word(NvU32 address) {
+#if defined(__x86_64__)
+    return io_in16((uint16_t)address);
+#else
+    (void)address;
+    return 0;
+#endif
+}
+
+NvU32 NV_API_CALL os_io_read_dword(NvU32 address) {
+#if defined(__x86_64__)
+    return io_in32((uint16_t)address);
+#else
+    (void)address;
+    return 0;
+#endif
+}
+
+void NV_API_CALL os_io_write_byte(NvU32 address, NvU8 value) {
+#if defined(__x86_64__)
+    io_out8((uint16_t)address, value);
+#else
+    (void)address;
+    (void)value;
+#endif
+}
+
+void NV_API_CALL os_io_write_word(NvU32 address, NvU16 value) {
+#if defined(__x86_64__)
+    io_out16((uint16_t)address, value);
+#else
+    (void)address;
+    (void)value;
+#endif
+}
+
+void NV_API_CALL os_io_write_dword(NvU32 address, NvU32 value) {
+#if defined(__x86_64__)
+    io_out32((uint16_t)address, value);
+#else
+    (void)address;
+    (void)value;
+#endif
+}
+
+NvBool NV_API_CALL os_is_administrator(void) { return NV_TRUE; }
 
 NvBool NV_API_CALL os_check_access(RsAccessRight) { return NV_FALSE; }
 
@@ -402,7 +520,7 @@ void NV_API_CALL os_dbg_init(void) {}
 
 void NV_API_CALL os_dbg_breakpoint(void) {}
 
-void NV_API_CALL os_dbg_set_level(NvU32) STUBBED;
+void NV_API_CALL os_dbg_set_level(NvU32 level) { (void)level; }
 
 NvU32 NV_API_CALL os_get_cpu_count(void) { return 1; }
 
@@ -464,141 +582,195 @@ NvBool NV_API_CALL os_is_queue_flush_ongoing(struct os_work_queue *queue) {
 }
 
 NV_STATUS NV_API_CALL os_alloc_mutex(void **mutex) {
-    NV_STATUS status = os_alloc_mem(mutex, sizeof(spinlock_t));
+    if (!mutex) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+
+    NV_STATUS status = os_alloc_mem(mutex, sizeof(os_mutex_t));
     if (status != NV_OK) {
         return status;
     }
 
-    spinlock_t *pm = (spinlock_t *)(*mutex);
-    pm->lock = 0;
+    os_mutex_t *pm = (os_mutex_t *)(*mutex);
+    os_sem_init(&pm->sem, 1);
 
     return NV_OK;
 }
 
 void NV_API_CALL os_free_mutex(void *mutex) {
     if (mutex) {
-        spinlock_t *pm = (spinlock_t *)(mutex);
+        os_mutex_t *pm = (os_mutex_t *)(mutex);
+        pm->sem.invalid = true;
         free(pm);
     }
 }
 
 NV_STATUS NV_API_CALL os_acquire_mutex(void *mutex) {
-    ASSERT(mutex);
-    spinlock_t *pm = (spinlock_t *)(mutex);
+    if (!mutex) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+    if (os_is_isr()) {
+        return NV_ERR_INVALID_REQUEST;
+    }
 
-    spin_lock(pm);
-    return NV_OK;
+    os_mutex_t *pm = (os_mutex_t *)(mutex);
+    return sem_wait(&pm->sem, 0) ? NV_OK : NV_ERR_TIMEOUT;
 }
 
 NV_STATUS NV_API_CALL os_cond_acquire_mutex(void *mutex) {
-    ASSERT(mutex);
-    spinlock_t *pm = (spinlock_t *)(mutex);
-
-    if (pm->lock != 0)
+    if (!mutex) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+    if (os_is_isr()) {
+        return NV_ERR_INVALID_REQUEST;
+    }
+    os_mutex_t *pm = (os_mutex_t *)(mutex);
+    if (!os_sem_try_acquire(&pm->sem)) {
         return NV_ERR_TIMEOUT_RETRY;
-
-    spin_lock(pm);
+    }
     return NV_OK;
 }
 
 void NV_API_CALL os_release_mutex(void *mutex) {
-    ASSERT(mutex);
-    spinlock_t *pm = (spinlock_t *)(mutex);
-    spin_unlock(pm);
+    if (!mutex) {
+        return;
+    }
+    os_mutex_t *pm = (os_mutex_t *)(mutex);
+    sem_post(&pm->sem);
 }
 
 void *NV_API_CALL os_alloc_semaphore(NvU32 initial) {
-    spinlock_t *s;
-    NV_STATUS status = os_alloc_mem((void **)(&s), sizeof(spinlock_t));
+    os_semaphore_t *s = NULL;
+    NV_STATUS status = os_alloc_mem((void **)(&s), sizeof(os_semaphore_t));
     if (status != NV_OK) {
         return NULL;
     }
 
-    s->lock = 0;
+    os_sem_init(&s->sem, initial);
     return s;
 }
 
 void NV_API_CALL os_free_semaphore(void *s) {
-    spinlock_t *sem = (spinlock_t *)(s);
+    if (!s) {
+        return;
+    }
+    os_semaphore_t *sem = (os_semaphore_t *)(s);
+    sem->sem.invalid = true;
     free(sem);
 }
 
 NV_STATUS NV_API_CALL os_acquire_semaphore(void *s) {
-    spinlock_t *sem = (spinlock_t *)(s);
-    ASSERT(s);
-    spin_lock(sem);
-    spin_unlock(sem);
-    return NV_OK;
+    if (!s) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+    if (os_is_isr()) {
+        return NV_ERR_INVALID_REQUEST;
+    }
+    os_semaphore_t *sem = (os_semaphore_t *)(s);
+    return sem_wait(&sem->sem, 0) ? NV_OK : NV_ERR_TIMEOUT;
 }
 
 NV_STATUS NV_API_CALL os_cond_acquire_semaphore(void *s) {
-    spinlock_t *sem = (spinlock_t *)(s);
-    ASSERT(s);
-    if (sem->lock == 1) {
+    if (!s) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+    os_semaphore_t *sem = (os_semaphore_t *)(s);
+    if (!os_sem_try_acquire(&sem->sem)) {
         return NV_ERR_TIMEOUT_RETRY;
     }
-
-    spin_lock(sem);
-    spin_unlock(sem);
+    return NV_OK;
 }
 
 NV_STATUS NV_API_CALL os_release_semaphore(void *s) {
-    spinlock_t *sem = (spinlock_t *)(s);
-    ASSERT(s);
-    spin_unlock(sem);
+    if (!s) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+    os_semaphore_t *sem = (os_semaphore_t *)(s);
+    sem_post(&sem->sem);
     return NV_OK;
 }
 
 void *NV_API_CALL os_alloc_rwlock(void) {
-    spinlock_t *rwlock = NULL;
+    os_rwlock_t *rwlock = NULL;
 
-    NV_STATUS status = os_alloc_mem((void **)(&rwlock), sizeof(spinlock_t));
+    NV_STATUS status = os_alloc_mem((void **)(&rwlock), sizeof(os_rwlock_t));
     if (status != NV_OK) {
         return NULL;
     }
 
-    rwlock->lock = 0;
+    os_sem_init(&rwlock->sem, 1);
 
     return rwlock;
 }
 
 void NV_API_CALL os_free_rwlock(void *lock) {
     if (lock) {
-        spinlock_t *rwlock = (spinlock_t *)(lock);
+        os_rwlock_t *rwlock = (os_rwlock_t *)(lock);
+        rwlock->sem.invalid = true;
         free(rwlock);
     }
 }
 
 NV_STATUS NV_API_CALL os_acquire_rwlock_read(void *l) {
-    spinlock_t *rwlock = (spinlock_t *)(l);
-
-    // int ret = pthread_rwlock_rdlock(rwlock);
-    // ASSERT(ret == 0);
-    return NV_OK;
+    if (!l) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+    if (os_is_isr()) {
+        return NV_ERR_INVALID_REQUEST;
+    }
+    os_rwlock_t *rwlock = (os_rwlock_t *)(l);
+    return sem_wait(&rwlock->sem, 0) ? NV_OK : NV_ERR_TIMEOUT;
 }
 
 NV_STATUS NV_API_CALL os_acquire_rwlock_write(void *l) {
-    spinlock_t *rwlock = (spinlock_t *)(l);
-
-    // int ret = pthread_rwlock_wrlock(rwlock);
-    // ASSERT(ret == 0);
-    return NV_OK;
+    if (!l) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+    if (os_is_isr()) {
+        return NV_ERR_INVALID_REQUEST;
+    }
+    os_rwlock_t *rwlock = (os_rwlock_t *)(l);
+    return sem_wait(&rwlock->sem, 0) ? NV_OK : NV_ERR_TIMEOUT;
 }
 
-NV_STATUS NV_API_CALL os_cond_acquire_rwlock_read(void *) STUBBED;
-NV_STATUS NV_API_CALL os_cond_acquire_rwlock_write(void *) STUBBED;
+NV_STATUS NV_API_CALL os_cond_acquire_rwlock_read(void *l) {
+    if (!l) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+    os_rwlock_t *rwlock = (os_rwlock_t *)(l);
+    return os_sem_try_acquire(&rwlock->sem) ? NV_OK : NV_ERR_TIMEOUT_RETRY;
+}
+
+NV_STATUS NV_API_CALL os_cond_acquire_rwlock_write(void *l) {
+    if (!l) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+    os_rwlock_t *rwlock = (os_rwlock_t *)(l);
+    return os_sem_try_acquire(&rwlock->sem) ? NV_OK : NV_ERR_TIMEOUT_RETRY;
+}
 
 void NV_API_CALL os_release_rwlock_read(void *l) {
-    spinlock_t *rwlock = (spinlock_t *)(l);
+    if (!l) {
+        return;
+    }
+    os_rwlock_t *rwlock = (os_rwlock_t *)(l);
+    sem_post(&rwlock->sem);
 }
 
 void NV_API_CALL os_release_rwlock_write(void *l) {
-    spinlock_t *rwlock = (spinlock_t *)(l);
+    if (!l) {
+        return;
+    }
+    os_rwlock_t *rwlock = (os_rwlock_t *)(l);
+    sem_post(&rwlock->sem);
 }
 
-NvBool NV_API_CALL os_semaphore_may_sleep(void) { return true; }
+NvBool NV_API_CALL os_semaphore_may_sleep(void) { return !os_is_isr(); }
 
-NV_STATUS NV_API_CALL os_get_version_info(os_version_info *) STUBBED;
+NV_STATUS NV_API_CALL os_get_version_info(os_version_info *info) {
+    (void)info;
+    return NV_ERR_NOT_SUPPORTED;
+}
 
 NV_STATUS NV_API_CALL os_get_is_openrm(NvBool *bIsOpenRm) {
     *bIsOpenRm = NV_TRUE;
@@ -628,8 +800,21 @@ NV_STATUS NV_API_CALL os_lock_user_pages(void *, NvU64, void **, NvU32) STUBBED;
 NV_STATUS NV_API_CALL os_lookup_user_io_memory(void *, NvU64, NvU64 **) STUBBED;
 NV_STATUS NV_API_CALL os_unlock_user_pages(NvU64, void *, NvU32) STUBBED;
 NV_STATUS NV_API_CALL os_match_mmap_offset(void *, NvU64, NvU64 *) STUBBED;
-NV_STATUS NV_API_CALL os_get_euid(NvU32 *) STUBBED;
-NV_STATUS NV_API_CALL os_get_smbios_header(NvU64 *pSmbsAddr) STUBBED;
+NV_STATUS NV_API_CALL os_get_euid(NvU32 *pEuid) {
+    if (!pEuid) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+    *pEuid = current_task ? (NvU32)current_task->uid : 0;
+    return NV_OK;
+}
+NV_STATUS NV_API_CALL os_get_smbios_header(NvU64 *pSmbsAddr) {
+    if (!pSmbsAddr) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+
+    *pSmbsAddr = 0;
+    return NV_ERR_NOT_SUPPORTED;
+}
 NV_STATUS NV_API_CALL os_get_acpi_rsdp_from_uefi(NvU32 *pRsdpAddr) {
     uint64_t rsdp = get_rsdp_paddr();
     if (rsdp) {
@@ -649,17 +834,93 @@ NV_STATUS NV_API_CALL os_put_page(NvU64 address) STUBBED;
 NvU32 NV_API_CALL os_get_page_refcount(NvU64 address) STUBBED;
 NvU32 NV_API_CALL os_count_tail_pages(NvU64 address) STUBBED;
 void NV_API_CALL os_free_pages_phys(NvU64, NvU32) STUBBED;
-NV_STATUS NV_API_CALL os_open_temporary_file(void **) STUBBED;
-void NV_API_CALL os_close_file(void *) STUBBED;
-NV_STATUS NV_API_CALL os_write_file(void *, NvU8 *, NvU64, NvU64) STUBBED;
-NV_STATUS NV_API_CALL os_read_file(void *, NvU8 *, NvU64, NvU64) STUBBED;
-NV_STATUS NV_API_CALL os_open_readonly_file(const char *, void **) STUBBED;
-NV_STATUS NV_API_CALL os_open_and_read_file(const char *, NvU8 *,
-                                            NvU64) STUBBED;
+NV_STATUS NV_API_CALL os_open_temporary_file(void **ppFile) {
+    (void)ppFile;
+    return NV_ERR_NOT_SUPPORTED;
+}
+
+void NV_API_CALL os_close_file(void *file) {
+    if (!file) {
+        return;
+    }
+    // vfs_close((vfs_node_t)file);
+}
+
+NV_STATUS NV_API_CALL os_write_file(void *file, NvU8 *buf, NvU64 count,
+                                    NvU64 offset) {
+    if (!file || !buf) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+
+    ssize_t written =
+        vfs_write((vfs_node_t)file, buf, (size_t)offset, (size_t)count);
+    if (written < 0 || (NvU64)written != count) {
+        return NV_ERR_OPERATING_SYSTEM;
+    }
+
+    return NV_OK;
+}
+
+NV_STATUS NV_API_CALL os_read_file(void *file, NvU8 *buf, NvU64 count,
+                                   NvU64 offset) {
+    if (!file || !buf) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+
+    ssize_t read =
+        vfs_read((vfs_node_t)file, buf, (size_t)offset, (size_t)count);
+    if (read < 0 || (NvU64)read != count) {
+        return NV_ERR_OPERATING_SYSTEM;
+    }
+
+    return NV_OK;
+}
+
+NV_STATUS NV_API_CALL os_open_readonly_file(const char *filename,
+                                            void **ppFile) {
+    if (!filename || !ppFile) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+
+    vfs_node_t file = vfs_open(filename, 0);
+    if (!file) {
+        return NV_ERR_OPERATING_SYSTEM;
+    }
+
+    *ppFile = file;
+    return NV_OK;
+}
+
+NV_STATUS NV_API_CALL os_open_and_read_file(const char *filename, NvU8 *buf,
+                                            NvU64 count) {
+    void *file = NULL;
+    NV_STATUS status = os_open_readonly_file(filename, &file);
+    if (status != NV_OK) {
+        return status;
+    }
+
+    status = os_read_file(file, buf, count, 0);
+    os_close_file(file);
+    return status;
+}
 
 NvBool NV_API_CALL os_is_nvswitch_present(void) { return NV_FALSE; }
 
-NV_STATUS NV_API_CALL os_get_random_bytes(NvU8 *, NvU16) STUBBED;
+NV_STATUS NV_API_CALL os_get_random_bytes(NvU8 *buf, NvU16 numBytes) {
+    if (!buf) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+
+    uint64_t state = nano_time() ^ (uint64_t)(uintptr_t)buf;
+    for (NvU16 i = 0; i < numBytes; i++) {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        buf[i] = (NvU8)(state & 0xFF);
+    }
+
+    return NV_OK;
+}
 NV_STATUS NV_API_CALL os_alloc_wait_queue(os_wait_queue **ppWq) {
     if (!ppWq) {
         return NV_ERR_INVALID_ARGUMENT;
@@ -810,8 +1071,11 @@ NV_STATUS NV_API_CALL nv_alloc_pages(nv_state_t *, NvU32 page_count,
                                      NvU64 *pte_array, void **priv_data) {
     ASSERT(node_id == -1);
 
-    uint64_t virt =
-        (uint64_t)alloc_frames_bytes_dma32(page_count * DEFAULT_PAGE_SIZE);
+    void *p = alloc_frames_bytes(page_count * DEFAULT_PAGE_SIZE);
+    if (!p)
+        return NV_ERR_NO_MEMORY;
+
+    uint64_t virt = (uint64_t)p;
 
     AllocInfo *info = malloc(sizeof(AllocInfo));
     info->base = virt;
@@ -839,8 +1103,7 @@ NV_STATUS NV_API_CALL nv_free_pages(nv_state_t *, NvU32 page_count,
     (void)cache_type;
 
     if (page_count * DEFAULT_PAGE_SIZE == info->length) {
-        free_frames_bytes_dma32((void *)info->base,
-                                page_count * DEFAULT_PAGE_SIZE);
+        free_frames_bytes((void *)info->base, page_count * DEFAULT_PAGE_SIZE);
         free(info);
     }
 
@@ -1039,7 +1302,7 @@ nv_get_firmware(nv_state_t *nv, nv_firmware_type_t fw_type,
     }
 
     *fw_size = node->size;
-    void *addr = alloc_frames_bytes_dma32(node->size);
+    void *addr = alloc_frames_bytes(node->size);
     *fw_buf = addr;
     vfs_read(node, addr, 0, node->size);
 
@@ -1054,7 +1317,7 @@ void NV_API_CALL nv_put_firmware(const void *handle) {
         return;
 
     nv_firmware_handle_t *fw_handle = (nv_firmware_handle_t *)handle;
-    free_frames_bytes_dma32(fw_handle->addr, fw_handle->size);
+    free_frames_bytes(fw_handle->addr, fw_handle->size);
     free((void *)fw_handle);
 }
 
