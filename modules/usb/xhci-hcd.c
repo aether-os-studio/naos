@@ -437,6 +437,7 @@ void xhci_event_handler(uint64_t dev_ptr) {
     struct usb_xhci_s *xhci = (struct usb_xhci_s *)dev_ptr;
 
     while (1) {
+        arch_enable_interrupt();
         xhci_process_events(xhci);
         schedule(SCHED_FLAG_YIELD);
     }
