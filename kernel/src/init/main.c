@@ -7,6 +7,7 @@
 #include <irq/irq_manager.h>
 #include <dev/device.h>
 #include <drivers/tty.h>
+#include <drivers/smbios.h>
 #include <mod/dlinker.h>
 #include <task/signal.h>
 #include <task/task.h>
@@ -30,6 +31,8 @@ void kmain(void) {
     heap_init_alloc();
 
     irq_manager_init();
+
+    smbios_init();
 
     acpi_init();
 

@@ -1,6 +1,8 @@
 #include "nvidia_open.h"
 
+#include <boot/boot.h>
 #include <libs/klibc.h>
+#include <libs/smbios.h>
 
 #include <libs/klibc.h>
 #include <libs/aether/acpi.h>
@@ -626,7 +628,27 @@ NV_STATUS NV_API_CALL os_lookup_user_io_memory(void *, NvU64, NvU64 **) STUBBED;
 NV_STATUS NV_API_CALL os_unlock_user_pages(NvU64, void *, NvU32) STUBBED;
 NV_STATUS NV_API_CALL os_match_mmap_offset(void *, NvU64, NvU64 *) STUBBED;
 NV_STATUS NV_API_CALL os_get_euid(NvU32 *) STUBBED;
-NV_STATUS NV_API_CALL os_get_smbios_header(NvU64 *pSmbsAddr) STUBBED;
+NV_STATUS NV_API_CALL os_get_smbios_header(NvU64 *pSmbsAddr) {
+    void *entry32 = NULL;
+    void *entry64 = NULL;
+
+    if (!pSmbsAddr) {
+        return NV_ERR_INVALID_ARGUMENT;
+    }
+
+    boot_get_smbios_entries(&entry32, &entry64);
+    if (entry64) {
+        *pSmbsAddr = (NvU64)(uintptr_t)entry64;
+        return NV_OK;
+    }
+    if (entry32) {
+        *pSmbsAddr = (NvU64)(uintptr_t)entry32;
+        return NV_OK;
+    }
+
+    *pSmbsAddr = 0;
+    return NV_ERR_NOT_SUPPORTED;
+}
 NV_STATUS NV_API_CALL os_get_acpi_rsdp_from_uefi(NvU32 *pRsdpAddr) {
     return NV_ERR_NOT_SUPPORTED;
 };
@@ -1079,8 +1101,54 @@ void NV_API_CALL nv_schedule_uvm_resume_p2p(NvU8 *) STUBBED;
 NvBool NV_API_CALL nv_platform_supports_s0ix(void) STUBBED;
 NvBool NV_API_CALL nv_s2idle_pm_configured(void) STUBBED;
 
+typedef struct nv_smbios_type3 {
+    smbios_structure_header_t hdr;
+    uint8_t manufacturer;
+    uint8_t chassis_type;
+} __attribute__((packed)) nv_smbios_type3_t;
+
+static NvBool nv_is_mobile_chassis_type(uint8_t chassis_type) {
+    switch (chassis_type) {
+    case 0x08: // Portable
+    case 0x09: // Laptop
+    case 0x0A: // Notebook
+    case 0x0E: // Sub Notebook
+    case 0x1E: // Tablet
+    case 0x1F: // Convertible
+    case 0x20: // Detachable
+        return NV_TRUE;
+    default:
+        return NV_FALSE;
+    }
+}
+
 NvBool NV_API_CALL nv_is_chassis_notebook(void) {
-    return NV_FALSE; // TODO: SMBIOS
+    if (!smbios_available()) {
+        smbios_init();
+    }
+
+    if (!smbios_available()) {
+        return NV_FALSE;
+    }
+
+    for (size_t index = 0;; index++) {
+        const smbios_structure_header_t *hdr = smbios_find_type(3, index);
+        if (!hdr) {
+            break;
+        }
+
+        if (hdr->length < sizeof(nv_smbios_type3_t)) {
+            continue;
+        }
+
+        const nv_smbios_type3_t *type3 = (const nv_smbios_type3_t *)hdr;
+        uint8_t chassis_type = type3->chassis_type & 0x7F;
+        if (nv_is_mobile_chassis_type(chassis_type)) {
+            return NV_TRUE;
+        }
+    }
+
+    return NV_FALSE;
 }
 
 void NV_API_CALL nv_allow_runtime_suspend(nv_state_t *nv) STUBBED;

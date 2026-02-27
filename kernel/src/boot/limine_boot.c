@@ -29,6 +29,9 @@ LIMINE_REQUEST static volatile struct limine_memmap_request memmap_request = {
 LIMINE_REQUEST volatile struct limine_rsdp_request rsdp_request = {
     .id = LIMINE_RSDP_REQUEST_ID, .revision = 0, .response = NULL};
 
+LIMINE_REQUEST volatile struct limine_smbios_request smbios_request = {
+    .id = LIMINE_SMBIOS_REQUEST_ID, .revision = 0, .response = NULL};
+
 LIMINE_REQUEST volatile struct limine_date_at_boot_request boot_time_request = {
     .id = LIMINE_DATE_AT_BOOT_REQUEST_ID,
     .revision = 0,
@@ -71,6 +74,21 @@ boot_memory_map_t *boot_get_memory_map() {
 uintptr_t boot_get_acpi_rsdp() {
     return rsdp_request.response ? (uintptr_t)rsdp_request.response->address
                                  : 0;
+}
+
+void boot_get_smbios_entries(void **entry32, void **entry64) {
+    if (entry32)
+        *entry32 = NULL;
+    if (entry64)
+        *entry64 = NULL;
+
+    if (!smbios_request.response)
+        return;
+
+    if (entry32)
+        *entry32 = smbios_request.response->entry_32;
+    if (entry64)
+        *entry64 = smbios_request.response->entry_64;
 }
 
 uint64_t boot_get_boottime() { return boot_time_request.response->timestamp; }

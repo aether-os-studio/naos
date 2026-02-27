@@ -22,6 +22,7 @@ uint64_t boot_get_hhdm_offset();
 boot_memory_map_t *boot_get_memory_map();
 
 uintptr_t boot_get_acpi_rsdp();
+void boot_get_smbios_entries(void **entry32, void **entry64);
 
 uint64_t boot_get_boottime();
 

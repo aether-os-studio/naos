@@ -49,10 +49,43 @@ static void *find_acpi_rsdp_tag(void *mb2_info_addr) {
     return NULL;
 }
 
+static struct multiboot_tag_smbios *find_smbios_tag(void *mb2_info_addr) {
+    struct multiboot_tag *tag =
+        (struct multiboot_tag *)((uint8_t *)mb2_info_addr + 8);
+
+    while (tag->type != MULTIBOOT_TAG_TYPE_END) {
+        if (tag->type == MULTIBOOT_TAG_TYPE_SMBIOS) {
+            return (struct multiboot_tag_smbios *)tag;
+        }
+        tag = next_tag(tag);
+    }
+
+    return NULL;
+}
+
 uintptr_t boot_get_acpi_rsdp() {
     struct multiboot_tag_old_acpi *tag =
         find_acpi_rsdp_tag((void *)mb2_info_addr);
     return (uintptr_t)&tag->rsdp - 0xffff800000000000;
+}
+
+void boot_get_smbios_entries(void **entry32, void **entry64) {
+    if (entry32)
+        *entry32 = NULL;
+    if (entry64)
+        *entry64 = NULL;
+
+    struct multiboot_tag_smbios *tag = find_smbios_tag((void *)mb2_info_addr);
+    if (!tag)
+        return;
+
+    if (tag->major >= 3) {
+        if (entry64)
+            *entry64 = (void *)&tag->tables[0];
+    } else {
+        if (entry32)
+            *entry32 = (void *)&tag->tables[0];
+    }
 }
 
 uint64_t boot_get_boottime() { return 0; }

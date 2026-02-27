@@ -17,6 +17,12 @@ uint64_t boot_get_hhdm_offset() { return 0xffff800000000000; };
 boot_memory_map_t *boot_get_memory_map() { return &opensbi_memory_map; };
 
 uintptr_t boot_get_acpi_rsdp() { return 0; }
+void boot_get_smbios_entries(void **entry32, void **entry64) {
+    if (entry32)
+        *entry32 = NULL;
+    if (entry64)
+        *entry64 = NULL;
+}
 
 uint64_t boot_get_boottime() { return 0; }
 

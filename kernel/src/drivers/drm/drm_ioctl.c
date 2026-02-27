@@ -1837,8 +1837,8 @@ ssize_t drm_ioctl_mode_getpropblob(drm_device_t *dev, void *arg) {
         size_t formats_len = (size_t)count_formats * sizeof(uint32_t);
         size_t modifiers_len =
             (size_t)count_modifiers * sizeof(struct drm_format_modifier);
-        size_t blob_len = sizeof(struct drm_format_modifier_blob) + formats_len +
-                          modifiers_len;
+        size_t blob_len = sizeof(struct drm_format_modifier_blob) +
+                          formats_len + modifiers_len;
 
         uint8_t *blob_data = malloc(blob_len);
         if (!blob_data) {
@@ -2042,18 +2042,19 @@ ssize_t drm_ioctl_mode_obj_getproperties(drm_device_t *dev, void *arg) {
             return -ENOENT;
         }
 
-        // Plane properties needed by wlroots/smithay/weston style atomic userspace.
+        // Plane properties needed by wlroots/smithay/weston style atomic
+        // userspace.
         props->count_props = 12;
 
         if (props->props_ptr) {
             uint32_t copy_props = MIN(props_cap, props->count_props);
             uint32_t prop_ids[12] = {
-                DRM_PROPERTY_ID_PLANE_TYPE,  DRM_PROPERTY_ID_IN_FORMATS,
-                DRM_PROPERTY_ID_FB_ID,       DRM_PROPERTY_ID_CRTC_ID,
-                DRM_PROPERTY_ID_SRC_X,       DRM_PROPERTY_ID_SRC_Y,
-                DRM_PROPERTY_ID_SRC_W,       DRM_PROPERTY_ID_SRC_H,
-                DRM_PROPERTY_ID_CRTC_X,      DRM_PROPERTY_ID_CRTC_Y,
-                DRM_PROPERTY_ID_CRTC_W,      DRM_PROPERTY_ID_CRTC_H,
+                DRM_PROPERTY_ID_PLANE_TYPE, DRM_PROPERTY_ID_IN_FORMATS,
+                DRM_PROPERTY_ID_FB_ID,      DRM_PROPERTY_ID_CRTC_ID,
+                DRM_PROPERTY_ID_SRC_X,      DRM_PROPERTY_ID_SRC_Y,
+                DRM_PROPERTY_ID_SRC_W,      DRM_PROPERTY_ID_SRC_H,
+                DRM_PROPERTY_ID_CRTC_X,     DRM_PROPERTY_ID_CRTC_Y,
+                DRM_PROPERTY_ID_CRTC_W,     DRM_PROPERTY_ID_CRTC_H,
             };
 
             int ret = drm_copy_to_user_ptr(props->props_ptr, prop_ids,
