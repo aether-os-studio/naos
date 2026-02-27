@@ -2453,6 +2453,8 @@ void nvidia_open_irq_thread(uint64_t dev_ptr) {
     }
 
     while (1) {
+        arch_enable_interrupt();
+
         if (dev->tasks_should_exit) {
             task_exit(0);
         }
@@ -2469,6 +2471,8 @@ void nvidia_open_irq_thread(uint64_t dev_ptr) {
 
         if (need_to_run_bottom_half_gpu_lock_held)
             rm_isr_bh(NULL, &dev->nv_);
+
+        schedule(SCHED_FLAG_YIELD);
     }
 
     task_exit(0);
@@ -2480,6 +2484,8 @@ void nvidia_open_rc_timer(uint64_t dev_ptr) {
     bool continueWaiting = true;
 
     while (1) {
+        arch_enable_interrupt();
+
         if (dev->tasks_should_exit) {
             task_exit(0);
         }
@@ -2503,12 +2509,15 @@ void nvidia_open_rc_timer(uint64_t dev_ptr) {
         spin_unlock(&dev->timerLock);
 
         if (!still_enabled)
-            continue;
+            goto next;
 
         NV_STATUS status = rm_run_rc_callback(NULL, &dev->nv_);
         if (status != NV_OK) {
             continueWaiting = false;
         }
+
+    next:
+        schedule(SCHED_FLAG_YIELD);
     }
 }
 
