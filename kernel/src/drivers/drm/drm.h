@@ -1413,6 +1413,8 @@ typedef struct drm_device_op {
                         uint32_t *count);
     int (*get_planes)(drm_device_t *drm_dev, drm_plane_t **planes,
                       uint32_t *count);
+    int (*mmap)(drm_device_t *drm_dev, uint64_t addr, uint64_t offset,
+                uint64_t len);
     ssize_t (*driver_ioctl)(drm_device_t *drm_dev, uint32_t cmd, void *arg,
                             bool render_node);
 } drm_device_op_t;

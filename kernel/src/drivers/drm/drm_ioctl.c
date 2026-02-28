@@ -611,6 +611,30 @@ static void drm_edid_fill_dtd(uint8_t *dtd, uint32_t width, uint32_t height,
     dtd[17] = 0x1a;
 }
 
+static void drm_edid_set_default_chromaticity(uint8_t edid[128]) {
+    const uint16_t red_x = 655;   // 0.640
+    const uint16_t red_y = 338;   // 0.330
+    const uint16_t green_x = 307; // 0.300
+    const uint16_t green_y = 614; // 0.600
+    const uint16_t blue_x = 154;  // 0.150
+    const uint16_t blue_y = 61;   // 0.060
+    const uint16_t white_x = 320; // 0.313
+    const uint16_t white_y = 337; // 0.329
+
+    edid[25] = ((red_x & 0x3) << 6) | ((red_y & 0x3) << 4) |
+               ((green_x & 0x3) << 2) | (green_y & 0x3);
+    edid[26] = ((blue_x & 0x3) << 6) | ((blue_y & 0x3) << 4) |
+               ((white_x & 0x3) << 2) | (white_y & 0x3);
+    edid[27] = (uint8_t)(red_x >> 2);
+    edid[28] = (uint8_t)(red_y >> 2);
+    edid[29] = (uint8_t)(green_x >> 2);
+    edid[30] = (uint8_t)(green_y >> 2);
+    edid[31] = (uint8_t)(blue_x >> 2);
+    edid[32] = (uint8_t)(blue_y >> 2);
+    edid[33] = (uint8_t)(white_x >> 2);
+    edid[34] = (uint8_t)(white_y >> 2);
+}
+
 static void drm_build_connector_edid(drm_device_t *dev, drm_connector_t *conn,
                                      uint8_t edid[128]) {
     uint32_t width = 1024;
@@ -676,6 +700,7 @@ static void drm_build_connector_edid(drm_device_t *dev, drm_connector_t *conn,
     edid[22] = height & 0xff;
     edid[23] = 0x78;
     edid[24] = 0x0a;
+    drm_edid_set_default_chromaticity(edid);
 
     for (int i = 38; i < 54; i++) {
         edid[i] = 0x01;
@@ -774,7 +799,7 @@ ssize_t drm_ioctl_get_cap(drm_device_t *dev, void *arg) {
         cap->value = 0;
         return 0;
     case DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP:
-        cap->value = 1;
+        cap->value = 0;
         return 0;
     default:
         printk("drm: Unsupported capability %d\n", cap->capability);

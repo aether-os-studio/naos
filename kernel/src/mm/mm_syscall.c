@@ -57,8 +57,7 @@ static uint64_t find_unmapped_area_in_window(vma_manager_t *mgr,
     return (uint64_t)-ENOMEM;
 }
 
-static uint64_t find_unmapped_area(vma_manager_t *mgr, uint64_t hint,
-                                   uint64_t len) {
+uint64_t find_unmapped_area(vma_manager_t *mgr, uint64_t hint, uint64_t len) {
     if (len == 0)
         return (uint64_t)-ENOMEM;
 

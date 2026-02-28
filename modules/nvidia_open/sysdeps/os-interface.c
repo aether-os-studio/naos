@@ -1064,6 +1064,7 @@ NV_STATUS NV_API_CALL nv_alloc_user_mapping(nv_state_t *, void *, NvU64, NvU32,
                                             void **) STUBBED;
 NV_STATUS NV_API_CALL nv_free_user_mapping(nv_state_t *, void *, NvU64,
                                            void *) STUBBED;
+
 NV_STATUS NV_API_CALL
 nv_add_mapping_context_to_file(nv_state_t *, nv_usermap_access_params_t *,
                                NvU32, void *, NvU64, NvU32) STUBBED;

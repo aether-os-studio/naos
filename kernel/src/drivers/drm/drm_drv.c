@@ -6,6 +6,7 @@
 #include <fs/vfs/sys.h>
 #include <arch/arch.h>
 #include <mm/mm.h>
+#include <mm/page_table.h>
 #include <libs/klibc.h>
 
 /**
@@ -111,6 +112,22 @@ void *drm_map(void *data, void *addr, uint64_t offset, uint64_t len) {
     drm_device_t *dev = drm_data_to_device(data);
     if (!dev) {
         return (void *)-ENODEV;
+    }
+
+    uint64_t user_addr = (uint64_t)addr;
+    uint64_t kernel_base = get_physical_memory_offset();
+
+    if (dev->op && dev->op->mmap) {
+        int ret = dev->op->mmap(dev, user_addr, offset, len);
+        if (ret == 0) {
+            return addr;
+        }
+        if (ret != -ENOSYS) {
+            return (void *)(int64_t)ret;
+        }
+    }
+    if (offset < DEFAULT_PAGE_SIZE) {
+        return (void *)-EINVAL;
     }
 
     map_page_range(get_current_page_dir(true), (uint64_t)addr, offset, len,

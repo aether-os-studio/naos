@@ -31,6 +31,7 @@ typedef struct nvidia_fb {
     uint64_t size;
     uint64_t map_offset;
     uint32_t refcount;
+    void *scanout;
     struct NvKmsKapiMemory *memory;
     struct NvKmsKapiSurface *surface;
 } nvidia_fb_t;
@@ -68,8 +69,6 @@ typedef struct nvidia_device {
     uint32_t num_crtcs;
     uint32_t pitch_alignment;
     bool has_video_memory;
-    uint64_t pending_flip_user_data[NVKMS_KAPI_MAX_HEADS];
-    bool pending_flip_event[NVKMS_KAPI_MAX_HEADS];
     bool head_active[NVKMS_KAPI_MAX_HEADS];
     bool primary_state_valid[NVKMS_KAPI_MAX_HEADS];
     uint16_t primary_src_x[NVKMS_KAPI_MAX_HEADS];
