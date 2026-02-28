@@ -25,4 +25,6 @@ EXPORT_SYMBOL(drm_framebuffer_get);
 EXPORT_SYMBOL(drm_framebuffer_alloc);
 EXPORT_SYMBOL(drm_framebuffer_free);
 EXPORT_SYMBOL(drm_post_event);
+EXPORT_SYMBOL(drm_property_lookup_blob_data);
+EXPORT_SYMBOL(drm_property_get_modeinfo_from_blob);
 EXPORT_SYMBOL(fast_copy_16);

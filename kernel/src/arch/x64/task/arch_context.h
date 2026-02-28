@@ -61,7 +61,8 @@ typedef struct arch_context {
 
 #define switch_to(prev, next)                                                  \
     do {                                                                       \
-        asm volatile("pushq %%r15\n\t"                                         \
+        asm volatile("pushfq\n\t"                                              \
+                     "pushq %%r15\n\t"                                         \
                      "pushq %%r14\n\t"                                         \
                      "pushq %%r13\n\t"                                         \
                      "pushq %%r12\n\t"                                         \
@@ -82,6 +83,7 @@ typedef struct arch_context {
                      "popq %%r13\n\t"                                          \
                      "popq %%r14\n\t"                                          \
                      "popq %%r15\n\t"                                          \
+                     "popfq\n\t"                                               \
                      : "=m"(prev->arch_context->rsp),                          \
                        "=m"(prev->arch_context->rip)                           \
                      : "m"(next->arch_context->rsp),                           \

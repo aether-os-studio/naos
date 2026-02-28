@@ -274,4 +274,29 @@ ssize_t drm_ioctl_dirtyfb(drm_device_t *dev, void *arg);
  */
 ssize_t drm_ioctl_mode_list_lessees(drm_device_t *dev, void *arg);
 
+/**
+ * drm_property_lookup_blob_data - Look up blob data by blob ID
+ * @dev: DRM device
+ * @blob_id: blob property ID
+ * @data: output pointer to blob data (caller must NOT free)
+ * @length: output pointer to blob data length
+ *
+ * Returns 0 on success, negative error code on failure.
+ * The returned data pointer is valid until the blob is destroyed.
+ */
+int drm_property_lookup_blob_data(drm_device_t *dev, uint32_t blob_id,
+                                  const void **data, uint32_t *length);
+
+/**
+ * drm_property_get_modeinfo_from_blob - Resolve a mode blob into modeinfo
+ * @dev: DRM device
+ * @blob_id: blob property ID
+ * @mode: output mode info
+ *
+ * Supports user-created mode blobs and synthetic CRTC MODE_ID blobs.
+ * Returns 0 on success, negative error code on failure.
+ */
+int drm_property_get_modeinfo_from_blob(drm_device_t *dev, uint32_t blob_id,
+                                        struct drm_mode_modeinfo *mode);
+
 #endif /* _DRM_IOCTL_H */

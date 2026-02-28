@@ -23,6 +23,15 @@
         ASSERT(!"Unimplemented");                                              \
     }
 
+#define NVIDIA_KERNEL_MAPPINGS_BASE 0xffffe00000000000ULL
+
+#define nv_phys_to_virt(addr)                                                  \
+    ((addr) ? ((typeof(addr))((uint64_t)(addr) | NVIDIA_KERNEL_MAPPINGS_BASE)) \
+            : 0)
+#define nv_virt_to_phys(addr)                                                  \
+    ((addr) ? (typeof(addr))((uint64_t)(addr) & ~NVIDIA_KERNEL_MAPPINGS_BASE)  \
+            : 0)
+
 NvU32 os_page_size = DEFAULT_PAGE_SIZE;
 NvU64 os_page_mask = ~(DEFAULT_PAGE_SIZE - 1);
 NvU8 os_page_shift = 12;
@@ -142,7 +151,11 @@ static NvBool os_sem_try_acquire(sem_t *sem) {
     return acquired;
 }
 
-static NvBool os_in_interrupt_context(void) { return NV_FALSE; }
+static NvBool os_in_interrupt_context(void) {
+    return (__atomic_load_n(&nvidia_open_irq_nesting, __ATOMIC_ACQUIRE) > 0)
+               ? NV_TRUE
+               : NV_FALSE;
+}
 
 NV_STATUS NV_API_CALL os_alloc_mem(void **address, NvU64 size) {
     if (!address)
@@ -418,10 +431,11 @@ void *NV_API_CALL os_map_kernel_space(NvU64 start, NvU64 size_bytes,
         return NULL;
     }
 
-    uint64_t aligned_start = start & ~0xFFFULL;
-    uint64_t offset = start & 0xFFFULL;
-    uint64_t aligned_size = ((offset + size_bytes + 0xFFFULL) & ~0xFFFULL);
-    uint64_t virt = phys_to_virt(aligned_start);
+    uint64_t aligned_start = start & os_page_mask;
+    uint64_t offset = start & ~os_page_mask;
+    uint64_t aligned_size =
+        ((offset + size_bytes + ~os_page_mask) & os_page_mask);
+    uint64_t virt = nv_phys_to_virt(aligned_start);
 
     uint64_t flags = PT_FLAG_R | PT_FLAG_W;
     switch (mode) {
@@ -442,10 +456,10 @@ void *NV_API_CALL os_map_kernel_space(NvU64 start, NvU64 size_bytes,
 }
 
 void NV_API_CALL os_unmap_kernel_space(void *ptr, NvU64 len) {
-    // uint64_t alignedAddr = (uintptr_t)ptr & ~0xFFFULL;
-    // uint64_t alignedSize =
-    //     (((uintptr_t)ptr + len + 0xFFFULL) & ~0xFFFULL) - alignedAddr;
-    // unmap_page_range(get_current_page_dir(false), alignedAddr, alignedSize);
+    uint64_t alignedAddr = (uintptr_t)ptr & os_page_mask;
+    uint64_t alignedSize =
+        (((uintptr_t)ptr + len + ~os_page_mask) & os_page_mask) - alignedAddr;
+    unmap_page_range(get_current_page_dir(false), alignedAddr, alignedSize);
 }
 
 NV_STATUS NV_API_CALL os_flush_cpu_cache_all(void) {

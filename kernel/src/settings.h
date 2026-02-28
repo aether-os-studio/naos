@@ -15,4 +15,4 @@
 
 #define MAX_TASK_NUM 4096
 #define MAX_CONTINUE_NULL_TASKS 16
-#define SCHED_HZ 100
+#define SCHED_HZ 250

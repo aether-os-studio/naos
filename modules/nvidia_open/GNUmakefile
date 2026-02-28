@@ -29,7 +29,7 @@ override CFLAGS += -I$(INSTALL_BASE_DIR)/usr/include/nvidia-open/arch/nvalloc/un
 					-DNVRM -D__managarm__
 
 all: $(OBJ)
-	$(CC) $(CFLAGS) -shared $(OBJ) $(shell find $(INSTALL_BASE_DIR)/usr/lib/ -name libnvidia-open.a) $(shell find $(INSTALL_BASE_DIR)/usr/lib/ -name libnvidia-open-modeset.a) -o ../../modules-$(ARCH)/$(KM_NAME).ko
+	$(CC) $(CFLAGS) -shared $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a $(shell find $(INSTALL_BASE_DIR)/usr/lib/ -name libnvidia-open.a) $(shell find $(INSTALL_BASE_DIR)/usr/lib/ -name libnvidia-open-modeset.a) -o ../../modules-$(ARCH)/$(KM_NAME).ko
 
 nvidia-open-install-dir:
 	sh build_nvidia_open.sh

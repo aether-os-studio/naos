@@ -43,6 +43,10 @@ typedef struct nvidia_device {
 
     bool adapterInitialized_;
     bool shouldEnableIrq;
+    bool msix_enabled;
+    uint32_t irq_vector;
+    volatile NvU32 irq_work_pending;
+    struct msi_desc_t msi_desc;
 
     bool tasks_should_exit;
     task_t *timer_task;
@@ -57,13 +61,25 @@ typedef struct nvidia_device {
     drm_resource_manager_t resource_mgr;
     uint32_t num_displays;
     NvKmsKapiDisplay displays[16];
+    NvKmsKapiConnector display_connectors[16];
     uint32_t display_heads[16];
+    uint32_t incompatible_display_mask[16];
     int8_t head_to_crtc[NVKMS_KAPI_MAX_HEADS];
     uint32_t num_crtcs;
     uint32_t pitch_alignment;
     bool has_video_memory;
     uint64_t pending_flip_user_data[NVKMS_KAPI_MAX_HEADS];
     bool pending_flip_event[NVKMS_KAPI_MAX_HEADS];
+    bool head_active[NVKMS_KAPI_MAX_HEADS];
+    bool primary_state_valid[NVKMS_KAPI_MAX_HEADS];
+    uint16_t primary_src_x[NVKMS_KAPI_MAX_HEADS];
+    uint16_t primary_src_y[NVKMS_KAPI_MAX_HEADS];
+    uint16_t primary_src_w[NVKMS_KAPI_MAX_HEADS];
+    uint16_t primary_src_h[NVKMS_KAPI_MAX_HEADS];
+    int16_t primary_dst_x[NVKMS_KAPI_MAX_HEADS];
+    int16_t primary_dst_y[NVKMS_KAPI_MAX_HEADS];
+    uint16_t primary_dst_w[NVKMS_KAPI_MAX_HEADS];
+    uint16_t primary_dst_h[NVKMS_KAPI_MAX_HEADS];
     struct drm_mode_modeinfo cached_modes[16];
     bool cached_mode_valid[16];
     struct NvKmsKapiDisplayMode cached_kapi_modes[16];
@@ -73,5 +89,6 @@ typedef struct nvidia_device {
 } nvidia_device_t;
 
 extern NvBool nvidia_open_open_gpu(NvU32 gpuId);
+extern volatile NvS32 nvidia_open_irq_nesting;
 
 #define MAX_NVIDIA_GPU_NUM 4

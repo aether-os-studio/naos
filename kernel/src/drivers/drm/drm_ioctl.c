@@ -1927,6 +1927,59 @@ ssize_t drm_ioctl_mode_getpropblob(drm_device_t *dev, void *arg) {
     return 0;
 }
 
+int drm_property_lookup_blob_data(drm_device_t *dev, uint32_t blob_id,
+                                  const void **data, uint32_t *length) {
+    if (!dev || !data || !length || blob_id == 0) {
+        return -EINVAL;
+    }
+
+    spin_lock(&drm_user_blobs_lock);
+    int idx = drm_user_blob_find_index_locked(dev, blob_id);
+    if (idx >= 0) {
+        *data = drm_user_blobs[idx].data;
+        *length = drm_user_blobs[idx].length;
+        spin_unlock(&drm_user_blobs_lock);
+        return 0;
+    }
+    spin_unlock(&drm_user_blobs_lock);
+
+    return -ENOENT;
+}
+
+int drm_property_get_modeinfo_from_blob(drm_device_t *dev, uint32_t blob_id,
+                                        struct drm_mode_modeinfo *mode) {
+    if (!dev || !mode || blob_id == 0) {
+        return -EINVAL;
+    }
+
+    const void *blob_data = NULL;
+    uint32_t blob_len = 0;
+    int ret =
+        drm_property_lookup_blob_data(dev, blob_id, &blob_data, &blob_len);
+    if (ret == 0) {
+        if (!blob_data || blob_len < sizeof(*mode)) {
+            return -EINVAL;
+        }
+
+        memcpy(mode, blob_data, sizeof(*mode));
+        return 0;
+    }
+
+    uint32_t crtc_id = 0;
+    if (drm_mode_blob_to_crtc_id(blob_id, &crtc_id)) {
+        drm_crtc_t *crtc = drm_crtc_get(&dev->resource_mgr, crtc_id);
+        if (!crtc) {
+            return -ENOENT;
+        }
+
+        drm_fill_crtc_modeinfo(dev, crtc, mode);
+        drm_crtc_free(&dev->resource_mgr, crtc->id);
+        return 0;
+    }
+
+    return ret;
+}
+
 static ssize_t drm_mode_resolve_obj_type(drm_device_t *dev, uint32_t obj_id,
                                          uint32_t *obj_type) {
     uint32_t resolved_type = DRM_MODE_OBJECT_ANY;
@@ -2362,16 +2415,11 @@ ssize_t drm_ioctl_cursor2(drm_device_t *dev, void *arg) {
  */
 ssize_t drm_ioctl_atomic(drm_device_t *dev, void *arg) {
     struct drm_mode_atomic *cmd = (struct drm_mode_atomic *)arg;
-    if (cmd->flags & DRM_MODE_ATOMIC_TEST_ONLY) {
-        return 0;
-    } else if (cmd->flags & DRM_MODE_CURSOR_MOVE) {
-        return 0;
-    } else {
-        if (dev->op->atomic_commit)
-            return dev->op->atomic_commit(dev, cmd);
+    if (!dev->op->atomic_commit) {
+        return -ENOSYS;
     }
 
-    return 0;
+    return dev->op->atomic_commit(dev, cmd);
 }
 
 /**
