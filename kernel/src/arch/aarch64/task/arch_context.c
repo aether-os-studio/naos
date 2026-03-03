@@ -69,16 +69,7 @@ extern void arch_context_switch_with_next(arch_context_t *next);
 extern void arch_context_switch_with_prev_next(arch_context_t *prev,
                                                arch_context_t *next);
 
-void __switch_to(task_t *prev, task_t *next) {
-    asm volatile("msr TTBR0_EL1, %0"
-                 :
-                 : "r"(next->arch_context->mm->page_table_addr));
-
-    asm volatile("dsb ishst\n\t"
-                 "tlbi vmalle1is\n\t"
-                 "dsb ish\n\t"
-                 "isb\n\t");
-}
+void __switch_to(task_t *prev, task_t *next) {}
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
                                uint64_t stack) {

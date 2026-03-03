@@ -128,12 +128,6 @@ void __switch_to(task_t *prev, task_t *next) {
         asm volatile("fxrstor (%0)" ::"r"(next->arch_context->fpu_ctx));
     }
 
-    if (prev->arch_context->mm != next->arch_context->mm) {
-        asm volatile(
-            "movq %0, %%cr3" ::"r"(next->arch_context->mm->page_table_addr)
-            : "memory");
-    }
-
     tss[next->cpu_id].rsp0 = next->kernel_stack;
 
     write_fsbase(next->arch_context->fsbase);

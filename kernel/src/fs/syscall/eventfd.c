@@ -73,29 +73,34 @@ static ssize_t eventfd_read(fd_t *fd, void *buf, size_t offset, size_t len) {
 
     uint64_t value;
 
-    while (efd->count == 0) {
+    while (true) {
+        uint64_t old_count = __atomic_load_n(&efd->count, __ATOMIC_ACQUIRE);
+        if (old_count != 0) {
+            value = (efd->flags & EFD_SEMAPHORE) ? 1 : old_count;
+            uint64_t new_count = old_count - value;
+            uint64_t expected = old_count;
+            if (__atomic_compare_exchange_n(&efd->count, &expected, new_count,
+                                            false, __ATOMIC_ACQ_REL,
+                                            __ATOMIC_ACQUIRE)) {
+                memcpy(buf, &value, sizeof(uint64_t));
+                vfs_poll_notify(efd->node,
+                                EPOLLOUT | (new_count ? EPOLLIN : 0));
+                return sizeof(uint64_t);
+            }
+            continue;
+        }
+
         if (efd->flags & EFD_NONBLOCK)
             return -EAGAIN;
+
         vfs_poll_wait_t wait;
         vfs_poll_wait_init(&wait, current_task, EPOLLIN | EPOLLERR | EPOLLHUP);
         vfs_poll_wait_arm(fd->node, &wait);
-        if (efd->count == 0) {
-            int reason =
-                vfs_poll_wait_sleep(fd->node, &wait, -1, "eventfd_read");
-            vfs_poll_wait_disarm(&wait);
-            if (reason != EOK)
-                return -EINTR;
-        } else {
-            vfs_poll_wait_disarm(&wait);
-        }
+        int reason = vfs_poll_wait_sleep(fd->node, &wait, -1, "eventfd_read");
+        vfs_poll_wait_disarm(&wait);
+        if (reason != EOK)
+            return -EINTR;
     }
-
-    value = (efd->flags & EFD_SEMAPHORE) ? 1 : efd->count;
-    memcpy(buf, &value, sizeof(uint64_t));
-
-    efd->count -= value;
-    vfs_poll_notify(efd->node, EPOLLOUT | (efd->count ? EPOLLIN : 0));
-    return sizeof(uint64_t);
 }
 
 static ssize_t eventfd_write(fd_t *fd, const void *buf, size_t offset,
@@ -105,10 +110,19 @@ static ssize_t eventfd_write(fd_t *fd, const void *buf, size_t offset,
     uint64_t value;
     memcpy(&value, buf, sizeof(uint64_t));
 
-    if (UINT64_MAX - efd->count < value)
-        return -EINVAL;
+    while (true) {
+        uint64_t old_count = __atomic_load_n(&efd->count, __ATOMIC_ACQUIRE);
+        if (UINT64_MAX - old_count < value)
+            return -EINVAL;
 
-    efd->count += value;
+        uint64_t new_count = old_count + value;
+        uint64_t expected = old_count;
+        if (__atomic_compare_exchange_n(&efd->count, &expected, new_count,
+                                        false, __ATOMIC_ACQ_REL,
+                                        __ATOMIC_ACQUIRE)) {
+            break;
+        }
+    }
     vfs_poll_notify(efd->node, EPOLLIN | EPOLLOUT);
 
     return sizeof(uint64_t);
@@ -128,11 +142,12 @@ static int eventfd_poll(vfs_node_t node, size_t events) {
     if (!eventFd)
         return EPOLLNVAL;
     int revents = 0;
+    uint64_t count = __atomic_load_n(&eventFd->count, __ATOMIC_ACQUIRE);
 
-    if (events & EPOLLIN && eventFd->count > 0)
+    if (events & EPOLLIN && count > 0)
         revents |= EPOLLIN;
 
-    if (events & EPOLLOUT && eventFd->count < UINT64_MAX)
+    if (events & EPOLLOUT && count < UINT64_MAX)
         revents |= EPOLLOUT;
 
     return revents;

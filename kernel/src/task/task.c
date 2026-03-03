@@ -13,6 +13,7 @@
 #include <fs/fs_syscall.h>
 #include <net/socket.h>
 #include <uacpi/sleep.h>
+#include <irq/irq_manager.h>
 
 sched_rq_t *schedulers[MAX_CPU_NUM];
 
@@ -1119,6 +1120,26 @@ void sys_yield() { schedule(SCHED_FLAG_YIELD); }
 
 int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
                const char *blocking_reason) {
+    if (!task || task->cpu_id >= cpu_count) {
+        return -EINVAL;
+    }
+
+    if (__atomic_exchange_n(&task->wake_pending, false, __ATOMIC_ACQ_REL)) {
+        return task->status;
+    }
+
+    task->status = EOK;
+
+    uint32_t target_cpu = task->cpu_id;
+    bool should_trigger_sched_ipi = false;
+    if (target_cpu != current_cpu_id && task->sched_info &&
+        schedulers[target_cpu]) {
+        struct sched_entity *curr =
+            __atomic_load_n(&schedulers[target_cpu]->curr, __ATOMIC_ACQUIRE);
+        should_trigger_sched_ipi =
+            (curr == (struct sched_entity *)task->sched_info);
+    }
+
     task->state = state;
     if (timeout_ns > 0)
         task->force_wakeup_ns = nano_time() + timeout_ns;
@@ -1128,6 +1149,18 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
     task->blocking_reason = blocking_reason;
 
     remove_sched_entity(task, schedulers[task->cpu_id]);
+
+    if (__atomic_exchange_n(&task->wake_pending, false, __ATOMIC_ACQ_REL)) {
+        task->state = TASK_READY;
+        task->blocking_reason = NULL;
+        add_sched_entity(task, schedulers[task->cpu_id]);
+        return task->status;
+    }
+
+    if (should_trigger_sched_ipi) {
+        write_barrier();
+        irq_trigger_sched_ipi(target_cpu);
+    }
 
     schedule(SCHED_FLAG_YIELD);
 
@@ -1139,10 +1172,20 @@ void task_unblock(task_t *task, int reason) {
         return;
     }
 
+    if (task->state != TASK_BLOCKING && task->state != TASK_READING_STDIO &&
+        task->state != TASK_UNINTERRUPTABLE) {
+        if (task->blocking_reason) {
+            task->status = reason;
+            __atomic_store_n(&task->wake_pending, true, __ATOMIC_RELEASE);
+        }
+        return;
+    }
+
     task->status = reason;
     task->state = TASK_READY;
 
     task->blocking_reason = NULL;
+    __atomic_store_n(&task->wake_pending, false, __ATOMIC_RELEASE);
 
     add_sched_entity(task, schedulers[task->cpu_id]);
 }
@@ -2353,7 +2396,7 @@ void schedule(uint64_t sched_flags) {
     sched_update_timerfd();
 
     task_t *prev = current_task;
-    int cpu_id = current_cpu_id;
+    int cpu_id = prev->cpu_id;
     uint64_t now_ns = nano_time();
 
     if (!prev->last_sched_in_ns && prev->current_state == TASK_RUNNING)
@@ -2390,6 +2433,7 @@ void schedule(uint64_t sched_flags) {
     next->last_sched_in_ns = now_ns;
 
     arch_set_current(next);
+    switch_mm(prev, next);
     switch_to(prev, next);
 
 ret:

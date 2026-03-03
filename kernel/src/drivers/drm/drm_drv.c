@@ -32,32 +32,40 @@ ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
         return -EINVAL;
     }
 
-    arch_enable_interrupt();
+    struct k_drm_event *event = NULL;
+    while (!event) {
+        spin_lock(&dev->event_lock);
+        if (dev->drm_events[0]) {
+            event = dev->drm_events[0];
+            dev->drm_events[0] = NULL;
+            memmove(&dev->drm_events[0], &dev->drm_events[1],
+                    sizeof(struct k_drm_event *) * (DRM_MAX_EVENTS_COUNT - 1));
+            dev->drm_events[DRM_MAX_EVENTS_COUNT - 1] = NULL;
+        }
+        spin_unlock(&dev->event_lock);
 
-    while (!dev->drm_events[0]) {
+        if (event)
+            break;
+
         if (flags & O_NONBLOCK)
             return -EWOULDBLOCK;
 
+        arch_enable_interrupt();
         schedule(SCHED_FLAG_YIELD);
+        arch_disable_interrupt();
     }
 
-    arch_disable_interrupt();
-
     struct drm_event_vblank vbl = {
-        .base.type = dev->drm_events[0]->type,
+        .base.type = event->type,
         .base.length = sizeof(vbl),
-        .user_data = dev->drm_events[0]->user_data,
+        .user_data = event->user_data,
         .tv_sec = nano_time() / 1000000000,
         .tv_usec = (nano_time() % 1000000000) / 1000,
         .crtc_id =
             dev->resource_mgr.crtcs[0] ? dev->resource_mgr.crtcs[0]->id : 0,
     };
 
-    free(dev->drm_events[0]);
-    dev->drm_events[0] = NULL;
-
-    memmove(&dev->drm_events[0], &dev->drm_events[1],
-            sizeof(struct k_drm_event *) * (DRM_MAX_EVENTS_COUNT - 1));
+    free(event);
 
     ssize_t ret = 0;
 
@@ -91,7 +99,10 @@ ssize_t drm_poll(void *data, size_t event) {
     ssize_t revent = 0;
 
     if (event & EPOLLIN) {
-        if (dev->drm_events[0]) {
+        spin_lock(&dev->event_lock);
+        bool has_event = (dev->drm_events[0] != NULL);
+        spin_unlock(&dev->event_lock);
+        if (has_event) {
             revent |= EPOLLIN;
         }
     }
@@ -151,6 +162,7 @@ static void drm_device_init(drm_device_t *dev, void *data,
     dev->data = data;
     dev->op = op;
     drm_device_set_driver_info(dev, DRM_NAME, "20060810", "NaOS DRM");
+    spin_init(&dev->event_lock);
 
     // Initialize resource manager
     drm_resource_manager_init(&dev->resource_mgr);
@@ -593,24 +605,40 @@ void drm_init_after_pci_sysfs() {
  * @user_data: User data to include with the event
  *
  * Posts an event to the DRM device's event queue.
- * Returns 0 on success, -ENOSPC if the event queue is full.
+ * Returns 0 on success, drops oldest event when the queue is full.
  */
 int drm_post_event(drm_device_t *dev, uint32_t type, uint64_t user_data) {
+    int ret = 0;
+    int slot = -1;
+
+    spin_lock(&dev->event_lock);
     for (int i = 0; i < DRM_MAX_EVENTS_COUNT; i++) {
         if (!dev->drm_events[i]) {
-            dev->drm_events[i] = malloc(sizeof(struct k_drm_event));
-            if (!dev->drm_events[i]) {
-                return -ENOMEM;
-            }
-
-            dev->drm_events[i]->type = type;
-            dev->drm_events[i]->user_data = user_data;
-            dev->drm_events[i]->timestamp.tv_sec = nano_time() / 1000000000ULL;
-            dev->drm_events[i]->timestamp.tv_nsec = nano_time() % 1000000000ULL;
-
-            return 0;
+            slot = i;
+            break;
         }
     }
 
-    return -ENOSPC;
+    if (slot < 0) {
+        free(dev->drm_events[0]);
+        dev->drm_events[0] = NULL;
+        memmove(&dev->drm_events[0], &dev->drm_events[1],
+                sizeof(struct k_drm_event *) * (DRM_MAX_EVENTS_COUNT - 1));
+        slot = DRM_MAX_EVENTS_COUNT - 1;
+        dev->drm_events[slot] = NULL;
+    }
+
+    dev->drm_events[slot] = malloc(sizeof(struct k_drm_event));
+    if (!dev->drm_events[slot]) {
+        ret = -ENOMEM;
+    } else {
+        dev->drm_events[slot]->type = type;
+        dev->drm_events[slot]->user_data = user_data;
+        dev->drm_events[slot]->timestamp.tv_sec = nano_time() / 1000000000ULL;
+        dev->drm_events[slot]->timestamp.tv_nsec = nano_time() % 1000000000ULL;
+    }
+
+    spin_unlock(&dev->event_lock);
+
+    return ret;
 }

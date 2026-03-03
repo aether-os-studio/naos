@@ -20,6 +20,8 @@ typedef struct irq_action {
     bool used;
 } irq_action_t;
 
+typedef void (*irq_ipi_send_fn_t)(uint32_t cpu_id, uint64_t irq_num);
+
 #define IRQ_FLAGS_MSIX (1UL << 0)
 #if defined(__x86_64__)
 #define IRQ_FLAGS_LAPIC IRQ_FLAGS_MSIX
@@ -30,6 +32,14 @@ void irq_regist_irq(uint64_t irq_num,
                                     struct pt_regs *regs),
                     uint64_t arg, void *data, irq_controller_t *controller,
                     char *name, uint64_t flags);
+void irq_regist_ipi(uint64_t irq_num,
+                    void (*handler)(uint64_t irq_num, void *data,
+                                    struct pt_regs *regs),
+                    uint64_t arg, void *data, irq_controller_t *controller,
+                    char *name, uint64_t flags, irq_ipi_send_fn_t send_fn);
+bool irq_send_ipi(uint32_t cpu_id, uint64_t irq_num);
+void irq_set_sched_ipi(uint64_t irq_num);
+bool irq_trigger_sched_ipi(uint32_t cpu_id);
 
 void irq_manager_init();
 

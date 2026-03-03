@@ -9,6 +9,7 @@
 
 bool x2apic_mode = false;
 uint64_t lapic_address;
+extern irq_controller_t apic_controller;
 
 tss_t tss[MAX_CPU_NUM];
 
@@ -52,6 +53,42 @@ uint32_t lapic_read(uint32_t reg) {
 uint64_t lapic_id() {
     uint32_t phy_id = lapic_read(LAPIC_ID);
     return x2apic_mode ? phy_id : (phy_id >> 24);
+}
+
+extern uint32_t cpuid_to_lapicid[MAX_CPU_NUM];
+
+static void apic_send_fixed_ipi(uint32_t cpu_id, uint64_t irq_num) {
+    if (cpu_id >= cpu_count || irq_num >= ARCH_MAX_IRQ_NUM ||
+        cpu_id == current_cpu_id) {
+        return;
+    }
+
+    uint32_t flags = ICR_DELIVERY_FIXED | ICR_DEST_PHYSICAL |
+                     ICR_DEST_NOSHORTHAND | (uint32_t)irq_num;
+    uint32_t target_lapic_id = cpuid_to_lapicid[cpu_id];
+
+    bool irq_enabled = arch_interrupt_enabled();
+    arch_disable_interrupt();
+
+    if (x2apic_mode) {
+        uint64_t icr = ((uint64_t)target_lapic_id << 32) | flags;
+        wrmsr(0x830, icr);
+    } else {
+        while (lapic_read(LAPIC_ICR_LOW) & (1 << 12)) {
+            arch_pause();
+        }
+
+        lapic_write(LAPIC_ICR_HIGH, target_lapic_id << 24);
+        lapic_write(LAPIC_ICR_LOW, flags);
+
+        while (lapic_read(LAPIC_ICR_LOW) & (1 << 12)) {
+            arch_pause();
+        }
+    }
+
+    if (irq_enabled) {
+        arch_enable_interrupt();
+    }
 }
 
 void local_apic_init() {
@@ -397,6 +434,20 @@ int64_t apic_install(uint64_t irq, uint64_t arg, uint64_t flags) {
 int64_t apic_ack(uint64_t irq) {
     send_eoi((uint32_t)irq);
     return 0;
+}
+
+static void apic_resched_ipi_handler(uint64_t irq_num, void *data,
+                                     struct pt_regs *regs) {
+    (void)irq_num;
+    (void)data;
+    (void)regs;
+}
+
+void apic_ipi_init() {
+    irq_regist_ipi(APIC_RESCHED_IPI_VECTOR, apic_resched_ipi_handler, 0, NULL,
+                   &apic_controller, "Apic resched ipi", IRQ_FLAGS_LAPIC,
+                   apic_send_fixed_ipi);
+    irq_set_sched_ipi(APIC_RESCHED_IPI_VECTOR);
 }
 
 irq_controller_t apic_controller = {

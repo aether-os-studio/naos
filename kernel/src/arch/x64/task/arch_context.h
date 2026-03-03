@@ -59,37 +59,33 @@ typedef struct arch_context {
     bool dead;
 } arch_context_t;
 
+#define switch_mm(prev, next)                                                  \
+    do {                                                                       \
+        if (prev->arch_context->mm != next->arch_context->mm) {                \
+            asm volatile("movq %0, %%cr3" ::"r"(                               \
+                             next->arch_context->mm->page_table_addr)          \
+                         : "memory");                                          \
+        }                                                                      \
+    } while (0)
+
 #define switch_to(prev, next)                                                  \
     do {                                                                       \
-        asm volatile("pushfq\n\t"                                              \
-                     "pushq %%r15\n\t"                                         \
-                     "pushq %%r14\n\t"                                         \
-                     "pushq %%r13\n\t"                                         \
-                     "pushq %%r12\n\t"                                         \
-                     "pushq %%rbx\n\t"                                         \
-                     "pushq %%rbp\n\t"                                         \
+        asm volatile("pushq %%rbp\n\t"                                         \
+                     "pushq %%rax\n\t"                                         \
                      "movq %%rsp, %0\n\t"                                      \
                      "movq %2, %%rsp\n\t"                                      \
                      "leaq 1f(%%rip), %%rax\n\t"                               \
                      "movq %%rax, %1\n\t"                                      \
-                     "movq %4, %%rdi\n\t"                                      \
-                     "movq %5, %%rsi\n\t"                                      \
                      "pushq %3\n\t"                                            \
                      "jmp __switch_to\n\t"                                     \
-                     "1:\n\t"                                                  \
+                     "1: \n\t"                                                 \
+                     "popq %%rax\n\t"                                          \
                      "popq %%rbp\n\t"                                          \
-                     "popq %%rbx\n\t"                                          \
-                     "popq %%r12\n\t"                                          \
-                     "popq %%r13\n\t"                                          \
-                     "popq %%r14\n\t"                                          \
-                     "popq %%r15\n\t"                                          \
-                     "popfq\n\t"                                               \
                      : "=m"(prev->arch_context->rsp),                          \
                        "=m"(prev->arch_context->rip)                           \
                      : "m"(next->arch_context->rsp),                           \
-                       "m"(next->arch_context->rip), "m"(prev), "m"(next)      \
-                     : "rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10",   \
-                       "r11", "cc");                                           \
+                       "m"(next->arch_context->rip), "D"(prev), "S"(next)      \
+                     : "cc");                                                  \
     } while (0)
 
 void arch_context_init(arch_context_t *context, uint64_t page_table_dir,

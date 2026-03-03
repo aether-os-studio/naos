@@ -227,8 +227,7 @@ sys_timeout_abs(u32_t abs_time, sys_timeout_handler handler, void *arg)
 #if !LWIP_TESTMODE
 static
 #endif
-    void
-    lwip_cyclic_timer(void *arg) {
+    void lwip_cyclic_timer(void *arg) {
     u32_t now;
     u32_t next_timeout_time;
     const struct lwip_cyclic_timer *cyclic =

@@ -374,9 +374,7 @@ void vfs_poll_notify(vfs_node_t node, uint32_t events) {
             continue;
 
         wait->revents |= ready;
-        if (wait->task->state == TASK_BLOCKING) {
-            task_unblock(wait->task, EOK);
-        }
+        task_unblock(wait->task, EOK);
     }
     spin_unlock(&node->poll_waiters_lock);
 }

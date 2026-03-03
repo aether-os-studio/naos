@@ -1434,6 +1434,7 @@ struct drm_device {
     uint32_t primary_minor;
     uint32_t render_minor;
     bool render_node_registered;
+    spinlock_t event_lock;
     struct k_drm_event *drm_events[DRM_MAX_EVENTS_COUNT];
     uint64_t vblank_counter;
     drm_resource_manager_t resource_mgr;

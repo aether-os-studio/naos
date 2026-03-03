@@ -799,7 +799,7 @@ ssize_t drm_ioctl_get_cap(drm_device_t *dev, void *arg) {
         cap->value = 0;
         return 0;
     case DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP:
-        cap->value = 0;
+        cap->value = 1;
         return 0;
     default:
         printk("drm: Unsupported capability %d\n", cap->capability);

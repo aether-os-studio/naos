@@ -30,6 +30,19 @@ typedef struct fpu_context {
 
 } fpu_context_t;
 
+#define switch_mm(prev, next)                                                  \
+    do {                                                                       \
+        if (prev->arch_context->mm != next->arch_context->mm) {                \
+            asm volatile("msr TTBR0_EL1, %0"                                   \
+                         :                                                     \
+                         : "r"(next->arch_context->mm->page_table_addr));      \
+            asm volatile("dsb ishst\n\t"                                       \
+                         "tlbi vmalle1is\n\t"                                  \
+                         "dsb ish\n\t"                                         \
+                         "isb\n\t");                                           \
+        }                                                                      \
+    } while (0)
+
 #define switch_to(prev, next)                                                  \
     do {                                                                       \
         asm volatile("stp x29, x30, [sp, #-16]!\n\t" /* 保存 fp 和 lr */       \

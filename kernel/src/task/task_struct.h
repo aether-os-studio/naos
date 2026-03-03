@@ -296,5 +296,6 @@ typedef struct task {
     bool is_kernel;
     bool is_clone;
     bool child_vfork_done;
+    bool wake_pending;
     bool should_free;
 } task_t;

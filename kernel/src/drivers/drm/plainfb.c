@@ -448,7 +448,11 @@ int plainfb_atomic_commit(drm_device_t *drm_dev,
     drm_framebuffer_free(&gpu_dev->resource_mgr, scanout_fb->id);
 
     if (atomic->flags & DRM_MODE_PAGE_FLIP_EVENT) {
-        drm_post_event(drm_dev, DRM_EVENT_FLIP_COMPLETE, atomic->user_data);
+        int ret =
+            drm_post_event(drm_dev, DRM_EVENT_FLIP_COMPLETE, atomic->user_data);
+        if (ret < 0) {
+            return ret;
+        }
     }
 
     return 0;
@@ -510,8 +514,10 @@ static int plainfb_page_flip(drm_device_t *drm_dev,
                  (const void *)phys_to_virt(gpu_dev->dumbbuffers[idx].addr),
                  gpu_dev->framebuffer->pitch * gpu_dev->framebuffer->height);
 
-    // Create flip complete event
-    drm_post_event(drm_dev, DRM_EVENT_FLIP_COMPLETE, flip->user_data);
+    int ret = drm_post_event(drm_dev, DRM_EVENT_FLIP_COMPLETE, flip->user_data);
+    if (ret < 0) {
+        return ret;
+    }
 
     return 0;
 }
