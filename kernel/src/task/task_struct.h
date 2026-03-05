@@ -249,7 +249,7 @@ typedef struct task {
     uint64_t syscall_stack;
     uint64_t kernel_stack;
     uint64_t signal_syscall_stack;
-    uint64_t preempt;
+    struct llist_header task_node;
     uint64_t pid;
     uint64_t ppid;
     int64_t uid;

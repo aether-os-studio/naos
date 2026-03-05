@@ -2,7 +2,6 @@
 
 #define UART_CLOCK_FREQ 1843200 // 默认时钟频率
 
-/* 计算实际寄存器偏移 */
 static inline uint32_t uart_calc_offset(uart_device_t *uart, uint8_t reg) {
     if (uart->reg_stride > 0) {
         return reg * uart->reg_stride;
@@ -10,7 +9,6 @@ static inline uint32_t uart_calc_offset(uart_device_t *uart, uint8_t reg) {
     return reg << uart->reg_shift;
 }
 
-/* 读寄存器 - 支持不同访问宽度 */
 static uint32_t uart_read_reg(uart_device_t *uart, uint8_t reg) {
     uint32_t offset = uart_calc_offset(uart, reg);
     volatile void *addr = (volatile char *)uart->base_addr + offset;
@@ -27,7 +25,6 @@ static uint32_t uart_read_reg(uart_device_t *uart, uint8_t reg) {
     }
 }
 
-/* 写寄存器 - 支持不同访问宽度 */
 static void uart_write_reg(uart_device_t *uart, uint8_t reg, uint32_t value) {
     uint32_t offset = uart_calc_offset(uart, reg);
     volatile void *addr = (volatile char *)uart->base_addr + offset;
@@ -48,9 +45,6 @@ static void uart_write_reg(uart_device_t *uart, uint8_t reg, uint32_t value) {
     }
 }
 
-/**
- * @brief 标准NS16550初始化（寄存器连续）
- */
 void uart_init(uart_device_t *uart, volatile void *base_addr,
                uart_config_t *config) {
     uart_init_gas(uart, base_addr, 0, UART_ACCESS_8BIT, config);

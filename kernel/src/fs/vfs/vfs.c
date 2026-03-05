@@ -331,8 +331,13 @@ int vfs_poll_wait_sleep(vfs_node_t node, vfs_poll_wait_t *wait,
     }
 
     while (true) {
-        if ((wait->revents & want) || (vfs_poll(node, want) & want))
+        if ((wait->revents & want))
             return EOK;
+        uint32_t revents = (vfs_poll(node, want) & want);
+        if (revents) {
+            wait->revents |= revents;
+            return EOK;
+        }
 
         int64_t block_ns = (int64_t)VFS_POLL_WAIT_SLICE_NS;
         if (timeout_ns >= 0) {

@@ -8,6 +8,7 @@ typedef struct task task_t;
 typedef struct wait_node {
     task_t *task;
     struct wait_node *next;
+    bool queued;
 } wait_node_t;
 
 typedef struct {
@@ -21,6 +22,7 @@ typedef struct {
 
 static void wait_queue_enqueue(mutex_t *mtx, wait_node_t *node) {
     node->next = NULL;
+    node->queued = true;
     if (mtx->wait_tail) {
         mtx->wait_tail->next = node;
     } else {
@@ -37,6 +39,8 @@ static wait_node_t *wait_queue_dequeue(mutex_t *mtx) {
     mtx->wait_head = node->next;
     if (!mtx->wait_head)
         mtx->wait_tail = NULL;
+    node->next = NULL;
+    node->queued = false;
 
     return node;
 }

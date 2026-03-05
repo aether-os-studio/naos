@@ -360,8 +360,10 @@ static inline uint64_t sys_set_tid_address(int *ptr) {
 #define PRIO_USER 2
 
 uint64_t sys_setpriority(int which, int who, int niceval);
+task_t *task_find_by_pid(uint64_t pid);
+extern spinlock_t task_queue_lock;
+extern struct llist_header task_list;
 
-extern task_t *tasks[MAX_TASK_NUM];
 extern task_t *idle_tasks[MAX_CPU_NUM];
 
 extern struct sched_rq *schedulers[MAX_CPU_NUM];

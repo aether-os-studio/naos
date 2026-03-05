@@ -722,14 +722,14 @@ uint64_t sys_rt_sigqueueinfo(uint64_t tgid, uint64_t sig, siginfo_t *info) {
     if (!signal_sig_in_range((int)sig)) {
         return (uint64_t)-EINVAL;
     }
-    if (tgid == 0 || tgid >= MAX_TASK_NUM) {
+    if (tgid == 0) {
         return (uint64_t)-ESRCH;
     }
     if (!info) {
         return (uint64_t)-EFAULT;
     }
 
-    task_t *task = tasks[tgid];
+    task_t *task = task_find_by_pid(tgid);
     if (!task) {
         return (uint64_t)-ESRCH;
     }
@@ -856,21 +856,24 @@ uint64_t sys_kill(int pid, int sig) {
     }
 
     if (pid > 0) {
-        if ((uint64_t)pid >= MAX_TASK_NUM || !tasks[pid]) {
+        task_t *target = task_find_by_pid((uint64_t)pid);
+        if (!target) {
             return (uint64_t)-ESRCH;
         }
         if (sig == 0) {
             return 0;
         }
-        task_send_signal(tasks[pid], sig, SI_USER);
+        task_send_signal(target, sig, SI_USER);
         return 0;
     }
 
     int sent = 0;
     if (pid == 0 || pid < -1) {
         int pgid = (pid == 0) ? current_task->pgid : -pid;
-        for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
-            task_t *task = tasks[i];
+        spin_lock(&task_queue_lock);
+        for (struct llist_header *it = task_list.next; it != &task_list;
+             it = it->next) {
+            task_t *task = list_entry(it, task_t, task_node);
             if (!task || task->is_kernel || task->pgid != pgid) {
                 continue;
             }
@@ -879,12 +882,15 @@ uint64_t sys_kill(int pid, int sig) {
                 task_send_signal(task, sig, SI_USER);
             }
         }
+        spin_unlock(&task_queue_lock);
         return sent ? 0 : (uint64_t)-ESRCH;
     }
 
     if (pid == -1) {
-        for (uint64_t i = 1; i < MAX_TASK_NUM; i++) {
-            task_t *task = tasks[i];
+        spin_lock(&task_queue_lock);
+        for (struct llist_header *it = task_list.next; it != &task_list;
+             it = it->next) {
+            task_t *task = list_entry(it, task_t, task_node);
             if (!task || task->is_kernel) {
                 continue;
             }
@@ -893,6 +899,7 @@ uint64_t sys_kill(int pid, int sig) {
                 task_send_signal(task, sig, SI_USER);
             }
         }
+        spin_unlock(&task_queue_lock);
         return sent ? 0 : (uint64_t)-ESRCH;
     }
 
@@ -903,11 +910,8 @@ uint64_t sys_tgkill(int tgid, int pid, int sig) {
     if (tgid <= 0 || pid <= 0 || sig < 0 || sig >= MAXSIG) {
         return (uint64_t)-EINVAL;
     }
-    if ((uint64_t)pid >= MAX_TASK_NUM) {
-        return (uint64_t)-ESRCH;
-    }
 
-    task_t *task = tasks[pid];
+    task_t *task = task_find_by_pid((uint64_t)pid);
     if (!task) {
         return (uint64_t)-ESRCH;
     }

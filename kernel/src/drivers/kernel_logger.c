@@ -17,8 +17,6 @@
 
 char buf[4096];
 
-#define is_digit(c) (c >= '0' && c <= '9')
-
 static int get_atoi(const char **str) {
     int n;
     for (n = 0; is_digit(**str); (*str)++)

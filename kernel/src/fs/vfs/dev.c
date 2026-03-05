@@ -9,6 +9,7 @@
 #include <net/netlink.h>
 #include <mm/mm_syscall.h>
 #include <boot/boot.h>
+#include <arch/arch.h>
 
 int devtmpfs_fsid = 0;
 
@@ -373,27 +374,138 @@ ssize_t inputdev_open(void *data, void *arg) {
 
 ssize_t inputdev_close(void *data, void *arg) {
     dev_input_event_t *event = data;
-    event->timesOpened--;
+    if (event->timesOpened > 0)
+        event->timesOpened--;
     return 0;
+}
+
+static int inputdev_wait_node(vfs_node_t node, uint32_t events,
+                              const char *reason) {
+    if (!node || !current_task)
+        return -EINVAL;
+
+    uint32_t want = events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
+    int polled = vfs_poll(node, want);
+    if (polled < 0)
+        return polled;
+    if (polled & (int)want)
+        return EOK;
+
+    vfs_poll_wait_t wait;
+    vfs_poll_wait_init(&wait, current_task, want);
+    if (vfs_poll_wait_arm(node, &wait) < 0)
+        return -EINVAL;
+
+    polled = vfs_poll(node, want);
+    if (polled < 0) {
+        vfs_poll_wait_disarm(&wait);
+        return polled;
+    }
+    if (polled & (int)want) {
+        vfs_poll_wait_disarm(&wait);
+        return EOK;
+    }
+
+    int ret = vfs_poll_wait_sleep(node, &wait, -1, reason);
+    vfs_poll_wait_disarm(&wait);
+    return ret;
+}
+
+static bool input_event_queue_push(dev_input_event_t *event,
+                                   const struct input_event *in) {
+    if (!event || !in || !event->event_queue || !event->event_queue_capacity) {
+        return false;
+    }
+
+    spin_lock(&event->event_queue_lock);
+
+    if (event->event_queue_count >= event->event_queue_capacity) {
+        event->event_queue_head =
+            (event->event_queue_head + 1) % event->event_queue_capacity;
+        event->event_queue_count--;
+        event->event_queue_overflow = true;
+    }
+
+    event->event_queue[event->event_queue_tail] = *in;
+    event->event_queue_tail =
+        (event->event_queue_tail + 1) % event->event_queue_capacity;
+    event->event_queue_count++;
+
+    spin_unlock(&event->event_queue_lock);
+    return true;
+}
+
+static size_t input_event_queue_pop(dev_input_event_t *event,
+                                    struct input_event *out,
+                                    size_t max_events) {
+    if (!event || !out || max_events == 0) {
+        return 0;
+    }
+
+    size_t produced = 0;
+    spin_lock(&event->event_queue_lock);
+
+    if (event->event_queue_overflow && produced < max_events) {
+        memset(&out[produced], 0, sizeof(struct input_event));
+        uint64_t now_ns = nano_time();
+        out[produced].sec = now_ns / 1000000000ULL;
+        out[produced].usec = (now_ns % 1000000000ULL) / 1000ULL;
+        out[produced].type = EV_SYN;
+        out[produced].code = 3; // SYN_DROPPED
+        out[produced].value = 0;
+        event->event_queue_overflow = false;
+        produced++;
+    }
+
+    while (produced < max_events && event->event_queue_count > 0 &&
+           event->event_queue_capacity > 0) {
+        out[produced++] = event->event_queue[event->event_queue_head];
+        event->event_queue_head =
+            (event->event_queue_head + 1) % event->event_queue_capacity;
+        event->event_queue_count--;
+    }
+
+    spin_unlock(&event->event_queue_lock);
+    return produced;
+}
+
+static bool input_event_queue_has_data(dev_input_event_t *event) {
+    if (!event) {
+        return false;
+    }
+
+    bool has_data = false;
+    spin_lock(&event->event_queue_lock);
+    has_data = (event->event_queue_count > 0) || event->event_queue_overflow;
+    spin_unlock(&event->event_queue_lock);
+    return has_data;
 }
 
 ssize_t inputdev_event_read(void *data, void *buf, uint64_t offset,
                             uint64_t len, uint64_t flags) {
     dev_input_event_t *event = data;
+    if (!event || !buf)
+        return -EINVAL;
+    if (len == 0)
+        return 0;
+    if (len < sizeof(struct input_event))
+        return -EINVAL;
 
-    // while (!circular_int_read_poll(&event->device_events)) {
-    //     if (flags & O_NONBLOCK) {
-    //         arch_disable_interrupt();
-    //         return -EWOULDBLOCK;
-    //     }
-    //     arch_enable_interrupt();
-    //     schedule(SCHED_FLAG_YIELD);
-    // }
-    // arch_disable_interrupt();
+    len = (len / sizeof(struct input_event)) * sizeof(struct input_event);
+    struct input_event *events = (struct input_event *)buf;
+    size_t max_events = len / sizeof(struct input_event);
 
-    ssize_t cnt = circular_int_read(&event->device_events, buf, len);
+    while (true) {
+        size_t cnt = input_event_queue_pop(event, events, max_events);
+        if (cnt > 0)
+            return cnt * sizeof(struct input_event);
+        if (flags & O_NONBLOCK)
+            return -EWOULDBLOCK;
 
-    return cnt;
+        int reason = inputdev_wait_node(event->devnode, EPOLLIN, "evdev_read");
+        if (reason != EOK)
+            return -EINTR;
+    }
 }
 
 ssize_t inputdev_event_write(void *data, const void *buf, uint64_t offset,
@@ -488,8 +600,7 @@ ssize_t inputdev_ioctl(void *data, ssize_t request, ssize_t arg) {
 
 ssize_t inputdev_poll(void *data, size_t event) {
     dev_input_event_t *e = data;
-    size_t cnt = circular_int_read_poll(&e->device_events);
-    if (cnt > 0 && event & EPOLLIN)
+    if (input_event_queue_has_data(e) && (event & EPOLLIN))
         return EPOLLIN;
     return 0;
 }
@@ -617,73 +728,6 @@ void devfs_nodes_init() {
     pts_init();
 }
 
-void circular_int_init(circular_int_t *circ, size_t size) {
-    circ->read_ptr = 0;
-    circ->write_ptr = 0;
-    circ->buff_size = size;
-    circ->buff = malloc(size);
-    mutex_init(&circ->lock);
-    memset(circ->buff, 0, size);
-}
-
-size_t circular_int_read(circular_int_t *circ, uint8_t *buff, size_t length) {
-    ssize_t write = circ->write_ptr;
-    ssize_t read = circ->read_ptr;
-    if (write == read) {
-        return 0;
-    }
-
-    mutex_lock(&circ->lock);
-
-    size_t toCopy = MIN(CIRC_READABLE(write, read, circ->buff_size), length);
-
-    for (int i = 0; i < toCopy; i++) {
-        // todo: could optimize this with edge memcpy() operations
-        buff[i] = circ->buff[read];
-        read = (read + 1) % circ->buff_size;
-    }
-
-    circ->read_ptr = read;
-
-    mutex_unlock(&circ->lock);
-
-    return toCopy;
-}
-
-size_t circular_int_write(circular_int_t *circ, const uint8_t *buff,
-                          size_t length) {
-    mutex_lock(&circ->lock);
-    ssize_t write = circ->write_ptr;
-    ssize_t read = circ->read_ptr;
-    size_t writable = CIRC_WRITABLE(write, read, circ->buff_size);
-    if (length > writable) {
-        mutex_unlock(&circ->lock);
-        return 0; // cannot do this
-    }
-
-    for (size_t i = 0; i < length; i++) {
-        // todo: could optimize this with edge memcpy() operations
-        circ->buff[write] = buff[i];
-        write = (write + 1) % circ->buff_size;
-    }
-
-    circ->write_ptr = write;
-
-    mutex_unlock(&circ->lock);
-
-    return length;
-}
-
-size_t circular_int_read_poll(circular_int_t *circ) {
-    size_t ret = 0;
-    mutex_lock(&circ->lock);
-    ssize_t write = circ->write_ptr;
-    ssize_t read = circ->read_ptr;
-    ret = CIRC_READABLE(write, read, circ->buff_size);
-    mutex_unlock(&circ->lock);
-    return ret;
-}
-
 void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code,
                           int32_t value, uint64_t sec, uint64_t usecs) {
     if (!item || item->timesOpened == 0)
@@ -697,6 +741,8 @@ void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code,
     event.code = code;
     event.value = value;
 
-    circular_int_write(&item->device_events, (const void *)&event,
-                       sizeof(struct input_event));
+    bool queued = input_event_queue_push(item, &event);
+    if (queued && item->devnode) {
+        vfs_poll_notify(item->devnode, EPOLLIN);
+    }
 }

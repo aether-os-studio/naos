@@ -19,8 +19,6 @@ gic_version_t gic_version = GIC_VERSION_UNKNOWN;
 #define isb() asm volatile("isb" : : : "memory")
 #define dmb(op) asm volatile("dmb " #op : : : "memory")
 
-/* ==================== 版本检测 ==================== */
-
 gic_version_t gic_detect_version(void) {
     struct uacpi_table madt_table;
     uacpi_status status = uacpi_table_find_by_signature("APIC", &madt_table);
@@ -131,9 +129,6 @@ static void gic_parse_acpi(void) {
     }
 }
 
-/**
- * 读取多 cell 的地址/大小值
- */
 static uint64_t fdt_read_cells(const uint32_t **p, int cells) {
     uint64_t value = 0;
 
@@ -150,9 +145,6 @@ static uint64_t fdt_read_cells(const uint32_t **p, int cells) {
     return value;
 }
 
-/**
- * 通过 ranges 转换地址
- */
 static uint64_t fdt_translate_address(void *fdt, int node_offset,
                                       uint64_t addr) {
     int parent = fdt_parent_offset(fdt, node_offset);
@@ -390,7 +382,7 @@ static void gicd_v2_init(void) {
     if (max_irq > 1020)
         max_irq = 1020;
 
-    // 配置所有中断为Group0（与GICC_CTLR一致）
+    // 配置所有中断为Group0
     for (int i = 0; i < (max_irq / 32); i++) {
         *(volatile uint32_t *)(gicd_base_virt + GICD_IGROUPR + i * 4) = 0x0;
     }

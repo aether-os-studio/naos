@@ -135,28 +135,20 @@ struct input_event {
 #define CIRC_READABLE(wr, rd, sz) ((wr - rd + sz) % sz)
 #define CIRC_WRITABLE(wr, rd, sz) ((rd - wr - 1 + sz) % sz)
 
-typedef struct circular_int {
-    uint8_t *buff;
-    size_t buff_size;
-
-    size_t read_ptr;
-    size_t write_ptr;
-
-    mutex_t lock;
-} circular_int_t;
-
-void circular_int_init(circular_int_t *circ, size_t size);
-size_t circular_int_read(circular_int_t *circ, uint8_t *buff, size_t length);
-size_t circular_int_write(circular_int_t *circ, const uint8_t *buff,
-                          size_t length);
-size_t circular_int_read_poll(circular_int_t *circ);
-
 typedef struct dev_input_event {
     char *devname;
     char *physloc;
+    vfs_node_t devnode;
+
+    struct input_event *event_queue;
+    size_t event_queue_capacity;
+    size_t event_queue_head;
+    size_t event_queue_tail;
+    size_t event_queue_count;
+    bool event_queue_overflow;
+    spinlock_t event_queue_lock;
 
     size_t timesOpened;
-    circular_int_t device_events;
 
     struct input_id inputid;
 

@@ -1,6 +1,36 @@
 #include <libs/mutex.h>
 #include <task/task.h>
 
+#define MUTEX_WAIT_SLICE_NS 10000000LL
+
+static void wait_queue_remove_locked(mutex_t *mtx, wait_node_t *target) {
+    if (!mtx || !target || !target->queued)
+        return;
+
+    wait_node_t *prev = NULL;
+    wait_node_t *curr = mtx->wait_head;
+    while (curr) {
+        if (curr == target) {
+            if (prev) {
+                prev->next = curr->next;
+            } else {
+                mtx->wait_head = curr->next;
+            }
+            if (mtx->wait_tail == curr) {
+                mtx->wait_tail = prev;
+            }
+            curr->next = NULL;
+            curr->queued = false;
+            return;
+        }
+        prev = curr;
+        curr = curr->next;
+    }
+
+    target->next = NULL;
+    target->queued = false;
+}
+
 void mutex_init(mutex_t *mtx) {
     spin_init(&mtx->guard);
     mtx->locked = false;
@@ -14,42 +44,43 @@ void mutex_lock(mutex_t *mtx) {
     task_t *self = current_task;
     wait_node_t *node = NULL;
 
-    bool state = arch_interrupt_enabled();
-
-    arch_disable_interrupt();
-
     for (;;) {
         spin_lock(&mtx->guard);
 
         if (mtx->locked && mtx->owner == self) {
             mtx->recursion++;
 
-            spin_unlock(&mtx->guard);
             if (node) {
+                wait_queue_remove_locked(mtx, node);
                 free(node);
             }
-            goto ret;
+            spin_unlock(&mtx->guard);
+            return;
         }
 
         if (!mtx->locked) {
             mtx->locked = true;
             mtx->owner = self;
             mtx->recursion = 1;
-            self->preempt++;
 
-            spin_unlock(&mtx->guard);
             if (node) {
+                wait_queue_remove_locked(mtx, node);
                 free(node);
             }
-            goto ret;
+            spin_unlock(&mtx->guard);
+            return;
         }
 
         if (!node) {
             node = malloc(sizeof(wait_node_t));
             if (node) {
                 node->task = self;
-                wait_queue_enqueue(mtx, node);
+                node->next = NULL;
+                node->queued = false;
             }
+        }
+        if (node && !node->queued) {
+            wait_queue_enqueue(mtx, node);
         }
 
         spin_unlock(&mtx->guard);
@@ -59,14 +90,11 @@ void mutex_lock(mutex_t *mtx) {
             continue;
         }
 
-        task_block(self, TASK_BLOCKING, -1, "mutex");
-    }
-
-ret:
-    if (state) {
-        arch_enable_interrupt();
-    } else {
-        arch_disable_interrupt();
+        int reason =
+            task_block(self, TASK_BLOCKING, MUTEX_WAIT_SLICE_NS, "mutex");
+        if (reason != EOK && reason != ETIMEDOUT) {
+            schedule(SCHED_FLAG_YIELD);
+        }
     }
 }
 
@@ -86,7 +114,6 @@ bool mutex_trylock(mutex_t *mtx) {
         mtx->locked = true;
         mtx->owner = self;
         mtx->recursion = 1;
-        self->preempt++;
         locked = true;
         goto out;
     }
@@ -117,10 +144,6 @@ void mutex_unlock(mutex_t *mtx) {
     mtx->locked = false;
     mtx->owner = NULL;
     mtx->recursion = 0;
-
-    if (self->preempt > 0) {
-        self->preempt--;
-    }
 
     while ((node = wait_queue_dequeue(mtx))) {
         waiter = node->task;

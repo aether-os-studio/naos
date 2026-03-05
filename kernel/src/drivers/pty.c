@@ -37,7 +37,10 @@ static int pty_wait_node(vfs_node_t node, uint32_t events, const char *reason) {
         return -EINVAL;
 
     uint32_t want = events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
-    if (vfs_poll(node, want) & want)
+    int polled = vfs_poll(node, want);
+    if (polled < 0)
+        return polled;
+    if (polled & (int)want)
         return EOK;
 
     vfs_poll_wait_t wait;

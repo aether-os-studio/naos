@@ -88,6 +88,18 @@ static inline void socket_notify_sock(socket_t *sock, uint32_t events) {
     socket_notify_node(sock->node, events);
 }
 
+static inline bool socket_has_pending_control(socket_t *sock) {
+    if (!sock)
+        return false;
+    if (sock->has_pending_cred)
+        return true;
+    for (int i = 0; i < MAX_PENDING_FILES_COUNT; i++) {
+        if (sock->pending_files[i])
+            return true;
+    }
+    return false;
+}
+
 static int socket_wait_node(vfs_node_t node, uint32_t events,
                             const char *reason) {
     if (!node || !current_task)
@@ -397,19 +409,38 @@ static int unix_socket_send_files_to_peer(socket_t *peer, int *fds,
     return 0;
 }
 
-// 从自己的 pending_files 接收
-static size_t unix_socket_recv_files_from_self(socket_t *self, int *fds_out,
-                                               size_t max_fds, int *msg_flags,
-                                               int recv_flags) {
-    size_t received = 0;
+static void unix_socket_drop_pending_file(fd_t *pending_file) {
+    if (!pending_file)
+        return;
+    if (pending_file->node)
+        vfs_close(pending_file->node);
+    free(pending_file);
+}
 
-    for (int i = 0; i < MAX_PENDING_FILES_COUNT && received < max_fds; i++) {
-        if (self->pending_files[i] == NULL)
+// 该函数要求调用者持有 self->lock
+static size_t unix_socket_take_pending_files_locked(socket_t *self,
+                                                    fd_t **pending_files,
+                                                    size_t max_fds) {
+    size_t taken = 0;
+
+    for (int i = 0; i < MAX_PENDING_FILES_COUNT && taken < max_fds; i++) {
+        if (!self->pending_files[i])
             continue;
+        pending_files[taken++] = self->pending_files[i];
+        self->pending_files[i] = NULL;
+    }
 
-        int new_fd = -1;
-        bool install_ok = false;
-        with_fd_info_lock(current_task->fd_info, {
+    return taken;
+}
+
+static size_t unix_socket_install_pending_files(fd_t **pending_files,
+                                                size_t pending_count,
+                                                int *fds_out, int *msg_flags,
+                                                int recv_flags) {
+    size_t installed = 0;
+    with_fd_info_lock(current_task->fd_info, {
+        for (size_t i = 0; i < pending_count; i++) {
+            int new_fd = -1;
             for (int fd_idx = 0; fd_idx < MAX_FD_NUM; fd_idx++) {
                 if (current_task->fd_info->fds[fd_idx] == NULL) {
                     new_fd = fd_idx;
@@ -421,31 +452,32 @@ static size_t unix_socket_recv_files_from_self(socket_t *self, int *fds_out,
                 break;
 
             fd_t *new_entry = malloc(sizeof(fd_t));
-            if (!new_entry) {
-                new_fd = -1;
+            if (!new_entry)
                 break;
-            }
 
-            memcpy(new_entry, self->pending_files[i], sizeof(fd_t));
+            memcpy(new_entry, pending_files[i], sizeof(fd_t));
             new_entry->close_on_exec = !!(recv_flags & MSG_CMSG_CLOEXEC);
             current_task->fd_info->fds[new_fd] = new_entry;
-            install_ok = true;
-        });
-
-        if (!install_ok) {
-            if (msg_flags)
-                *msg_flags |= MSG_CTRUNC;
-            break;
+            fds_out[installed++] = new_fd;
         }
+    });
 
-        free(self->pending_files[i]);
-        self->pending_files[i] = NULL;
-
-        fds_out[received++] = new_fd;
-        procfs_on_open_file(current_task, new_fd);
+    for (size_t i = 0; i < installed; i++) {
+        free(pending_files[i]);
+        pending_files[i] = NULL;
+        procfs_on_open_file(current_task, fds_out[i]);
     }
 
-    return received;
+    if (installed < pending_count) {
+        if (msg_flags)
+            *msg_flags |= MSG_CTRUNC;
+        for (size_t i = installed; i < pending_count; i++) {
+            unix_socket_drop_pending_file(pending_files[i]);
+            pending_files[i] = NULL;
+        }
+    }
+
+    return installed;
 }
 
 // 发送凭据到对端
@@ -455,17 +487,6 @@ static void unix_socket_send_cred_to_peer(socket_t *peer, struct ucred *cred) {
     memcpy(&peer->pending_cred, cred, sizeof(struct ucred));
     peer->has_pending_cred = true;
     socket_notify_sock(peer, EPOLLIN);
-}
-
-// 从自己的 pending_cred 接收
-static bool unix_socket_recv_cred_from_self(socket_t *self,
-                                            struct ucred *cred_out) {
-    if (self->has_pending_cred) {
-        memcpy(cred_out, &self->pending_cred, sizeof(struct ucred));
-        self->has_pending_cred = false;
-        return true;
-    }
-    return false;
 }
 
 vfs_node_t unix_socket_create_node(socket_t *sock) {
@@ -1082,10 +1103,14 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
     if (msg->msg_control && msg->msg_controllen >= sizeof(struct cmsghdr)) {
         size_t controllen_used = 0;
         struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
+        fd_t *detached_pending_files[MAX_PENDING_FILES_COUNT] = {0};
+        size_t detached_pending_count = 0;
+        bool should_send_cred = false;
+        struct ucred cred_to_send = {0};
 
         mutex_lock(&sock->lock);
 
-        // 处理 SCM_RIGHTS
+        // 先在 socket 锁下摘取 pending files，避免后续与 fd table 锁交叉
         bool has_pending_fds = false;
         for (int i = 0; i < MAX_PENDING_FILES_COUNT; i++) {
             if (sock->pending_files[i] != NULL) {
@@ -1099,49 +1124,53 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
             if (space_left >= CMSG_SPACE(sizeof(int))) {
                 size_t max_fds =
                     (space_left - sizeof(struct cmsghdr)) / sizeof(int);
-                int *fds_out = (int *)CMSG_DATA(cmsg);
-
-                size_t received_fds = unix_socket_recv_files_from_self(
-                    sock, fds_out, max_fds, (int *)&msg->msg_flags, flags);
-
-                if (received_fds > 0) {
-                    cmsg->cmsg_level = SOL_SOCKET;
-                    cmsg->cmsg_type = SCM_RIGHTS;
-                    cmsg->cmsg_len = CMSG_LEN(received_fds * sizeof(int));
-                    controllen_used += CMSG_SPACE(received_fds * sizeof(int));
-                    cmsg = CMSG_NXTHDR(msg, cmsg);
-                }
+                detached_pending_count = unix_socket_take_pending_files_locked(
+                    sock, detached_pending_files, max_fds);
             } else {
                 msg->msg_flags |= MSG_CTRUNC;
             }
         }
 
-        // 处理 SCM_CREDENTIALS
-        bool should_send_cred = (sock->passcred || sock->has_pending_cred);
+        // 快照 credential，锁外再写入 cmsg，避免持锁路径变长
+        if (sock->has_pending_cred) {
+            cred_to_send = sock->pending_cred;
+            sock->has_pending_cred = false;
+            should_send_cred = true;
+        } else if (sock->passcred && sock->peer) {
+            cred_to_send = sock->peer->cred;
+            should_send_cred = true;
+        }
+
+        mutex_unlock(&sock->lock);
+
+        if (detached_pending_count > 0 && cmsg) {
+            int *fds_out = (int *)CMSG_DATA(cmsg);
+            size_t received_fds = unix_socket_install_pending_files(
+                detached_pending_files, detached_pending_count, fds_out,
+                &msg->msg_flags, flags);
+
+            if (received_fds > 0) {
+                cmsg->cmsg_level = SOL_SOCKET;
+                cmsg->cmsg_type = SCM_RIGHTS;
+                cmsg->cmsg_len = CMSG_LEN(received_fds * sizeof(int));
+                controllen_used += CMSG_SPACE(received_fds * sizeof(int));
+                cmsg = CMSG_NXTHDR(msg, cmsg);
+            }
+        }
+
         if (should_send_cred && cmsg) {
             size_t space_left = msg->msg_controllen - controllen_used;
-
             if (space_left >= CMSG_SPACE(sizeof(struct ucred))) {
                 cmsg->cmsg_level = SOL_SOCKET;
                 cmsg->cmsg_type = SCM_CREDENTIALS;
                 cmsg->cmsg_len = CMSG_LEN(sizeof(struct ucred));
-
-                struct ucred *cred_out = (struct ucred *)CMSG_DATA(cmsg);
-
-                if (!unix_socket_recv_cred_from_self(sock, cred_out)) {
-                    // 没有 pending cred，使用对端凭据
-                    if (sock->peer)
-                        memcpy(cred_out, &sock->peer->cred,
-                               sizeof(struct ucred));
-                }
-
+                memcpy(CMSG_DATA(cmsg), &cred_to_send, sizeof(struct ucred));
                 controllen_used += CMSG_SPACE(sizeof(struct ucred));
             } else {
                 msg->msg_flags |= MSG_CTRUNC;
             }
         }
 
-        mutex_unlock(&sock->lock);
         msg->msg_controllen = controllen_used;
     } else {
         msg->msg_controllen = 0;
@@ -1169,11 +1198,12 @@ int socket_poll(vfs_node_t node, size_t events) {
         mutex_unlock(&sock->lock);
     } else if (sock->type == 2) {
         mutex_lock(&sock->lock);
+        bool has_pending_ctrl = socket_has_pending_control(sock);
         if ((events & EPOLLOUT) && !sock->closed && !sock->shut_rd &&
             sock->recv_pos < sock->recv_size)
             revents |= EPOLLOUT;
 
-        if ((events & EPOLLIN) && sock->recv_pos > 0)
+        if ((events & EPOLLIN) && (sock->recv_pos > 0 || has_pending_ctrl))
             revents |= EPOLLIN;
         if (sock->closed || sock->shut_rd)
             revents |= EPOLLERR | EPOLLHUP;
@@ -1181,6 +1211,7 @@ int socket_poll(vfs_node_t node, size_t events) {
         mutex_unlock(&sock->lock);
     } else {
         mutex_lock(&sock->lock);
+        bool has_pending_ctrl = socket_has_pending_control(sock);
         socket_t *peer = sock->peer;
         if (peer) {
             if (peer->closed)
@@ -1195,7 +1226,8 @@ int socket_poll(vfs_node_t node, size_t events) {
 
             // 可读：自己有数据
             if ((events & EPOLLIN) && (sock->recv_pos > 0 || sock->shut_rd ||
-                                       peer->shut_wr || peer->closed))
+                                       peer->shut_wr || peer->closed ||
+                                       has_pending_ctrl))
                 revents |= EPOLLIN;
         } else {
             if ((events & EPOLLIN) && sock->established)

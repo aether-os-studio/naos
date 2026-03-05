@@ -375,26 +375,31 @@ uint64_t sys_close(uint64_t fd) {
     if (fd >= MAX_FD_NUM)
         return (uint64_t)-EBADF;
 
+    fd_t *entry = NULL;
     uint64_t ret = (uint64_t)-EBADF;
     with_fd_info_lock(self->fd_info, {
-        if (!self->fd_info->fds[fd])
+        entry = self->fd_info->fds[fd];
+        if (!entry)
             break;
 
-        self->fd_info->fds[fd]->offset = 0;
-        if (self->fd_info->fds[fd]->node->lock.l_pid == self->pid) {
-            self->fd_info->fds[fd]->node->lock.l_type = F_UNLCK;
-            self->fd_info->fds[fd]->node->lock.l_pid = 0;
+        entry->offset = 0;
+        if (entry->node->lock.l_pid == self->pid) {
+            entry->node->lock.l_type = F_UNLCK;
+            entry->node->lock.l_pid = 0;
         }
 
-        task_timerfd_untrack_fd(self, self->fd_info->fds[fd]);
-        vfs_close(self->fd_info->fds[fd]->node);
-        free(self->fd_info->fds[fd]);
         self->fd_info->fds[fd] = NULL;
-        procfs_on_close_file(self, fd);
         ret = 0;
     });
 
-    return ret;
+    if (ret)
+        return ret;
+
+    task_timerfd_untrack_fd(self, entry);
+    vfs_close(entry->node);
+    free(entry);
+    procfs_on_close_file(self, fd);
+    return 0;
 }
 
 static int close_range_unshare_fd_table(task_t *self) {
@@ -454,18 +459,26 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
         maxfd = MAX_FD_NUM - 1;
     }
 
+    if (flags & CLOSE_RANGE_CLOEXEC) {
+        with_fd_info_lock(self->fd_info, {
+            for (uint64_t fd_ = fd; fd_ <= maxfd; fd_++) {
+                fd_t *entry = self->fd_info->fds[fd_];
+                if (!entry)
+                    continue;
+                entry->flags |= O_CLOEXEC;
+                entry->close_on_exec = true;
+            }
+        });
+        return 0;
+    }
+
+    fd_t *to_close[MAX_FD_NUM] = {0};
+
     with_fd_info_lock(self->fd_info, {
         for (uint64_t fd_ = fd; fd_ <= maxfd; fd_++) {
             fd_t *entry = self->fd_info->fds[fd_];
-            if (!entry) {
+            if (!entry)
                 continue;
-            }
-
-            if (flags & CLOSE_RANGE_CLOEXEC) {
-                entry->flags |= O_CLOEXEC;
-                entry->close_on_exec = true;
-                continue;
-            }
 
             entry->offset = 0;
             if (entry->node->lock.l_pid == self->pid) {
@@ -473,13 +486,20 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
                 entry->node->lock.l_pid = 0;
             }
 
-            task_timerfd_untrack_fd(self, entry);
-            vfs_close(entry->node);
-            free(entry);
             self->fd_info->fds[fd_] = NULL;
-            procfs_on_close_file(self, fd_);
+            to_close[fd_] = entry;
         }
     });
+
+    for (uint64_t fd_ = fd; fd_ <= maxfd; fd_++) {
+        fd_t *entry = to_close[fd_];
+        if (!entry)
+            continue;
+        task_timerfd_untrack_fd(self, entry);
+        vfs_close(entry->node);
+        free(entry);
+        procfs_on_close_file(self, fd_);
+    }
 
     return 0;
 }
@@ -1898,11 +1918,15 @@ uint64_t sys_sysinfo(struct sysinfo *info_user) {
     info->mem_unit = DEFAULT_PAGE_SIZE;
     info->freeram = 0;
     int proc_count = 0;
-    for (int i = 0; i < MAX_TASK_NUM; i++) {
-        if (!tasks[i]) {
+    spin_lock(&task_queue_lock);
+    for (struct llist_header *it = task_list.next; it != &task_list;
+         it = it->next) {
+        task_t *task = list_entry(it, task_t, task_node);
+        if (task) {
             proc_count++;
         }
     }
+    spin_unlock(&task_queue_lock);
     info->procs = proc_count;
 
     if (copy_to_user(info_user, info, sizeof(struct sysinfo)))

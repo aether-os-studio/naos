@@ -39,12 +39,9 @@ void arch_input_dev_init() {
     kb_input_event->inputid.product = 0x0000;
     kb_input_event->inputid.version = 0x0000;
     kb_input_event->event_bit = kb_event_bit;
-    kb_input_event->device_events.read_ptr = 0;
-    kb_input_event->device_events.write_ptr = 0;
     kb_input_event->clock_id = CLOCK_MONOTONIC;
     strncpy(kb_input_event->uniq, "ps2kbd", sizeof(kb_input_event->uniq));
     kb_input_event->devname = strdup("input/event0");
-    circular_int_init(&kb_input_event->device_events, DEFAULT_PAGE_SIZE * 4);
     uint64_t kbd_dev = device_install(
         DEV_CHAR, DEV_INPUT, kb_input_event, "input/event0", 0, inputdev_ioctl,
         inputdev_poll, inputdev_event_read, inputdev_event_write, NULL);
@@ -69,13 +66,10 @@ void arch_input_dev_init() {
     mouse_input_event->inputid.product = 0x0000;
     mouse_input_event->inputid.version = 0x0000;
     mouse_input_event->event_bit = mouse_event_bit;
-    mouse_input_event->device_events.read_ptr = 0;
-    mouse_input_event->device_events.write_ptr = 0;
     mouse_input_event->clock_id = CLOCK_MONOTONIC;
     strncpy(mouse_input_event->uniq, "ps2mouse",
             sizeof(mouse_input_event->uniq));
     mouse_input_event->devname = strdup("input/event1");
-    circular_int_init(&mouse_input_event->device_events, DEFAULT_PAGE_SIZE * 4);
     uint64_t mouse_dev =
         device_install(DEV_CHAR, DEV_INPUT, mouse_input_event, "input/event1",
                        0, inputdev_ioctl, inputdev_poll, inputdev_event_read,
