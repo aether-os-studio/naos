@@ -53,7 +53,6 @@ typedef struct arch_context {
     uint64_t rsp;
     uint64_t fsbase;
     uint64_t gsbase;
-    task_mm_info_t *mm;
     struct pt_regs *ctx;
     fpu_context_t *fpu_ctx;
     bool dead;
@@ -61,11 +60,8 @@ typedef struct arch_context {
 
 #define switch_mm(prev, next)                                                  \
     do {                                                                       \
-        if (prev->arch_context->mm != next->arch_context->mm) {                \
-            asm volatile("movq %0, %%cr3" ::"r"(                               \
-                             next->arch_context->mm->page_table_addr)          \
-                         : "memory");                                          \
-        }                                                                      \
+        asm volatile("movq %0, %%cr3" ::"r"(next->mm->page_table_addr)         \
+                     : "memory");                                              \
     } while (0)
 
 #define switch_to(prev, next)                                                  \

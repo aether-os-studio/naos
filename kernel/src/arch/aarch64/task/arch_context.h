@@ -21,7 +21,6 @@ typedef struct arch_context {
     struct pt_regs *ctx;
     uint64_t pc;
     uint64_t sp;
-    task_mm_info_t *mm;
     bool usermode;
     bool dead;
 } arch_context_t;
@@ -32,10 +31,10 @@ typedef struct fpu_context {
 
 #define switch_mm(prev, next)                                                  \
     do {                                                                       \
-        if (prev->arch_context->mm != next->arch_context->mm) {                \
+        if (prev->mm != next->mm) {                                            \
             asm volatile("msr TTBR0_EL1, %0"                                   \
                          :                                                     \
-                         : "r"(next->arch_context->mm->page_table_addr));      \
+                         : "r"(next->mm->page_table_addr));                    \
             asm volatile("dsb ishst\n\t"                                       \
                          "tlbi vmalle1is\n\t"                                  \
                          "dsb ish\n\t"                                         \

@@ -49,7 +49,6 @@ typedef struct arch_context {
     uint64_t sp;
     struct pt_regs *ctx;
     fpu_context_t *fpu_ctx;
-    task_mm_info_t *mm;
     bool dead;
 } arch_context_t;
 

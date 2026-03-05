@@ -40,14 +40,6 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
         context->fpu_ctx->mxscr = 0x1f80;
         context->fpu_ctx->fcw = 0x037f;
     }
-    context->mm = malloc(sizeof(task_mm_info_t));
-    context->mm->page_table_addr = page_table_addr;
-    context->mm->ref_count = 1;
-    memset(&context->mm->task_vma_mgr, 0, sizeof(vma_manager_t));
-    context->mm->task_vma_mgr.initialized = false;
-    context->mm->brk_start = USER_BRK_START;
-    context->mm->brk_current = context->mm->brk_start;
-    context->mm->brk_end = USER_BRK_END;
     context->ctx = (struct pt_regs *)stack - 1;
     memset(context->ctx, 0, sizeof(struct pt_regs));
     context->ctx->rsp = (uint64_t)context->ctx;
@@ -77,13 +69,6 @@ extern void ret_from_syscall();
 
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
                        uint64_t clone_flags) {
-    if (!src->mm) {
-        printk("src->mm == NULL!!! src = %#018lx\n", src);
-    }
-    dst->mm = clone_page_table(src->mm, clone_flags);
-    if (!dst->mm) {
-        printk("dst->mm == NULL!!! dst = %#018lx\n", dst);
-    }
     arch_flush_tlb_all();
     dst->ctx = (struct pt_regs *)stack - 1;
     dst->rip = (uint64_t)ret_to_user;
@@ -161,9 +146,6 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry,
     arch_disable_interrupt();
 
     arch_context_to_user_mode(context, entry, stack);
-
-    asm volatile("movq %0, %%cr3" ::"r"(context->mm->page_table_addr)
-                 : "memory");
 
     asm volatile("movq %0, %%rsp\n\t"
                  "jmp ret_from_exception" ::"r"(context->ctx));

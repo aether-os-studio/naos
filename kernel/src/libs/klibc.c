@@ -20,8 +20,8 @@ bool check_unmapped(uint64_t addr, uint64_t len) {
         return false;
     }
 
-    vma_t *vma = vma_find_intersection(
-        &current_task->arch_context->mm->task_vma_mgr, addr, addr + len);
+    vma_t *vma = vma_find_intersection(&current_task->mm->task_vma_mgr, addr,
+                                       addr + len);
     if (vma)
         return false;
 

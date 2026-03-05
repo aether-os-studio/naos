@@ -90,8 +90,7 @@ void traceback(struct pt_regs *regs) {
 check_user_fault:
     printk("======== User traceback =======\n");
     if (current_task) {
-        rb_node_t *node =
-            rb_first(&current_task->arch_context->mm->task_vma_mgr.vma_tree);
+        rb_node_t *node = rb_first(&current_task->mm->task_vma_mgr.vma_tree);
 
         while (node) {
             vma_t *vma = rb_entry(node, vma_t, vm_rb);

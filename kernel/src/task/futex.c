@@ -16,12 +16,11 @@ static bool futex_key_equal(const struct futex_wait *wait,
 
 static uint64_t futex_build_key(int *uaddr, bool is_private, futex_key_t *key) {
     if (is_private) {
-        if (!current_task || !current_task->arch_context ||
-            !current_task->arch_context->mm)
+        if (!current_task || !current_task->arch_context || !current_task->mm)
             return (uint64_t)-EFAULT;
 
         key->addr = (uint64_t)uaddr;
-        key->ctx = (uintptr_t)current_task->arch_context->mm;
+        key->ctx = (uintptr_t)current_task->mm;
         return 0;
     }
 
@@ -175,13 +174,12 @@ uint64_t sys_futex_wake(uint64_t addr, int val, uint32_t bitset) {
     if (bitset == 0)
         return (uint64_t)-EINVAL;
 
-    if (!current_task || !current_task->arch_context ||
-        !current_task->arch_context->mm)
+    if (!current_task || !current_task->arch_context || !current_task->mm)
         return 0;
 
     futex_key_t key = {
         .addr = addr,
-        .ctx = (uintptr_t)current_task->arch_context->mm,
+        .ctx = (uintptr_t)current_task->mm,
     };
     return sys_futex_wake_key(&key, val, bitset);
 }

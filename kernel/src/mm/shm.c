@@ -223,7 +223,7 @@ static void mapping_remove(task_t *task, shm_mapping_t *target) {
 /* 对单个进程执行一次 detach（解除映射 + 移除 VMA + 减引用） */
 static void do_shmdt_one(task_t *task, shm_mapping_t *m) {
     shm_t *shm = m->shm;
-    vma_manager_t *mgr = &task->arch_context->mm->task_vma_mgr;
+    vma_manager_t *mgr = &task->mm->task_vma_mgr;
 
     vma_t *vma = vma_find(mgr, m->uaddr);
     if (vma && vma->vm_type == VMA_TYPE_SHM && vma->vm_start == m->uaddr) {
@@ -477,7 +477,7 @@ uint64_t sys_shmget(int key, int size, int shmflg) {
 }
 
 void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
-    vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
     int64_t err = 0;
 
     spin_lock(&mgr->lock);
@@ -562,7 +562,7 @@ uint64_t sys_shmdt(void *shmaddr) {
     if (!shmaddr)
         return -EINVAL;
 
-    vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
     spin_lock(&mgr->lock);
     spin_lock(&shm_op_lock);
 
@@ -666,10 +666,10 @@ void shm_exec(task_t *task) {
 }
 
 void shm_exit(task_t *task) {
-    if (!task || !task->arch_context || !task->arch_context->mm)
+    if (!task || !task->arch_context || !task->mm)
         return;
 
-    vma_manager_t *mgr = &task->arch_context->mm->task_vma_mgr;
+    vma_manager_t *mgr = &task->mm->task_vma_mgr;
     spin_lock(&mgr->lock);
     spin_lock(&shm_op_lock);
 

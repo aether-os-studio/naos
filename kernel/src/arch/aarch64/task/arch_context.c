@@ -31,20 +31,10 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     asm volatile("mrs %0, fpcr" : "=r"(context->ctx->fpcr));
     asm volatile("mrs %0, fpsr" : "=r"(context->ctx->fpsr));
     context->usermode = user_mode;
-    context->mm = malloc(sizeof(task_mm_info_t));
-    context->mm->page_table_addr =
-        (uint64_t)virt_to_phys(get_current_page_dir(true));
-    context->mm->ref_count = 1;
-    memset(&context->mm->task_vma_mgr, 0, sizeof(vma_manager_t));
-    context->mm->task_vma_mgr.initialized = false;
-    context->mm->brk_start = USER_BRK_START;
-    context->mm->brk_current = context->mm->brk_start;
-    context->mm->brk_end = USER_BRK_END;
 }
 
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
                        uint64_t clone_flags) {
-    dst->mm = clone_page_table(src->mm, clone_flags);
     dst->usermode = src->usermode;
     dst->ctx = (struct pt_regs *)stack - 1;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
@@ -87,8 +77,6 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry,
     arch_disable_interrupt();
 
     arch_context_to_user_mode(context, entry, stack);
-
-    asm volatile("msr TTBR0_EL1, %0" : : "r"(context->mm->page_table_addr));
 
     asm volatile("dsb ishst\n\t"
                  "tlbi vmalle1is\n\t"

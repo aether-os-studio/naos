@@ -14,7 +14,7 @@ const char *get_vma_permissions(vma_t *vma) {
     return perms;
 }
 char *proc_gen_maps_file(task_t *task, size_t *content_len) {
-    vma_manager_t *mgr = &task->arch_context->mm->task_vma_mgr;
+    vma_manager_t *mgr = &task->mm->task_vma_mgr;
 
     string_builder_t *builder = create_string_builder(4096);
 

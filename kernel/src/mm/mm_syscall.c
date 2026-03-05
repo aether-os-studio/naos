@@ -112,7 +112,7 @@ static int mmap_check_flags_linux(uint64_t flags, uint64_t map_type) {
 }
 
 uint64_t sys_brk(uint64_t brk) {
-    task_mm_info_t *mm = current_task->arch_context->mm;
+    task_mm_info_t *mm = current_task->mm;
     uint64_t old_brk = mm->brk_current;
 
     if (brk == 0)
@@ -243,7 +243,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
     }
 
     uint64_t start_addr = 0;
-    vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
 
     spin_lock(&mgr->lock);
 
@@ -377,7 +377,7 @@ uint64_t do_munmap(uint64_t addr, uint64_t size) {
     if (check_user_overflow(addr, size))
         return (uint64_t)-EFAULT;
 
-    vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
     uint64_t start = addr;
     uint64_t end = addr + size;
     uint64_t *pgdir = get_current_page_dir(true);
@@ -469,7 +469,7 @@ uint64_t sys_munmap(uint64_t addr, uint64_t size) {
         return (uint64_t)-EINVAL;
     }
 
-    vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
     spin_lock(&mgr->lock);
     uint64_t ret = do_munmap(addr, size);
     spin_unlock(&mgr->lock);
@@ -496,7 +496,7 @@ uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
         return -EFAULT;
     }
 
-    vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
     uint64_t end = addr + len;
 
     spin_lock(&mgr->lock);
@@ -799,7 +799,7 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
     if ((flags & MREMAP_DONTUNMAP) && old_size_aligned != new_size_aligned)
         return (uint64_t)-EINVAL;
 
-    vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
     spin_lock(&mgr->lock);
 
     vma_t *vma = vma_find(mgr, old_addr_aligned);
@@ -932,7 +932,7 @@ uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
 
     uint64_t current_addr = addr;
     uint64_t *page_dir = get_current_page_dir(true);
-    vma_manager_t *mgr = &current_task->arch_context->mm->task_vma_mgr;
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
 
     spin_lock(&mgr->lock);
 

@@ -14,7 +14,6 @@ typedef struct task task_t;
 
 typedef struct arch_context {
     struct pt_regs *ctx;
-    task_mm_info_t *mm;
     bool dead;
 } arch_context_t;
 

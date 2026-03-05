@@ -17,15 +17,6 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
                        uint64_t entry, uint64_t stack, bool user_mode,
                        uint64_t initial_arg) {
     memset(context, 0, sizeof(arch_context_t));
-    context->mm = malloc(sizeof(task_mm_info_t));
-    context->mm->page_table_addr = page_table_addr;
-    context->mm->ref_count = 1;
-    memset(&context->mm->task_vma_mgr, 0, sizeof(vma_manager_t));
-    context->mm->task_vma_mgr.initialized = false;
-    context->mm->brk_start = USER_BRK_START;
-    context->mm->brk_current = context->mm->brk_start;
-    context->mm->brk_end = USER_BRK_END;
-    context->ctx = (struct pt_regs *)stack - 1;
     memset(context->ctx, 0, sizeof(struct pt_regs));
     context->fpu_ctx = alloc_frames_bytes(sizeof(fpu_context_t));
     memset(context->fpu_ctx, 0, sizeof(fpu_context_t));
@@ -47,13 +38,6 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
 
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
                        uint64_t clone_flags) {
-    if (!src->mm) {
-        printk("src->mm == NULL!!! src = %#018lx\n", src);
-    }
-    dst->mm = clone_page_table(src->mm, clone_flags);
-    if (!dst->mm) {
-        printk("dst->mm == NULL!!! dst = %#018lx\n", dst);
-    }
     dst->ctx = (struct pt_regs *)stack - 1;
     dst->ra = (uint64_t)ret_from_trap_handler;
     dst->sp = (uint64_t)dst->ctx;
@@ -99,8 +83,8 @@ void __switch_to(task_t *prev, task_t *next) {
         SSTATUS_SET_FS(next->arch_context->ctx->sstatus, 2);
     }
 
-    uint64_t satp = MAKE_SATP_PADDR(SATP_MODE_SV48, 0,
-                                    next->arch_context->mm->page_table_addr);
+    uint64_t satp =
+        MAKE_SATP_PADDR(SATP_MODE_SV48, 0, next->mm->page_table_addr);
 
     asm volatile("csrw satp, %0" : : "r"(satp) : "memory");
     asm volatile("sfence.vma" : : : "memory");

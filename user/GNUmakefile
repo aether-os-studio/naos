@@ -4,7 +4,9 @@ export SYSROOT = $(CWD)/rootfs-$(ARCH)
 all:
 	sh ports.sh
 ifeq ($(ARCH), x86_64)
+ifneq ($(BUILD_NVIDIA), 0)
 	sh get_nvidia_firmware.sh
+endif
 endif
 
 .PHONY: clean

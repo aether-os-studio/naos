@@ -15,8 +15,7 @@ static uint64_t vm_flags_to_pt_flags(uint64_t vm_flags) {
 
 static page_fault_result_t map_anon_fault_page(task_t *task, vma_t *vma,
                                                uint64_t vaddr) {
-    uint64_t *pgdir =
-        (uint64_t *)phys_to_virt(task->arch_context->mm->page_table_addr);
+    uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
     uint64_t pt_flags = vm_flags_to_pt_flags(vma->vm_flags);
     uint64_t arch_flags = get_arch_page_table_flags(pt_flags);
 
@@ -32,8 +31,7 @@ static page_fault_result_t map_file_fault_page(task_t *task, vma_t *vma,
     if (!vma->node)
         return PF_RES_SEGF;
 
-    uint64_t *pgdir =
-        (uint64_t *)phys_to_virt(task->arch_context->mm->page_table_addr);
+    uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
     uint64_t final_pt_flags = vm_flags_to_pt_flags(vma->vm_flags);
     bool need_temp_write = (final_pt_flags & PT_FLAG_W) == 0;
     uint64_t load_pt_flags =
@@ -82,8 +80,7 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
 
     vaddr = PADDING_DOWN(vaddr, DEFAULT_PAGE_SIZE);
 
-    uint64_t *pgdir =
-        (uint64_t *)phys_to_virt(task->arch_context->mm->page_table_addr);
+    uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
 
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
     for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++) {
@@ -112,7 +109,7 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
         flags = ARCH_READ_PTE_FLAG(pgdir[index]);
     }
 
-    vma_manager_t *mgr = &task->arch_context->mm->task_vma_mgr;
+    vma_manager_t *mgr = &task->mm->task_vma_mgr;
     vma_t *vma = vma_find(mgr, vaddr);
 
     if (has_leaf && (flags & ARCH_PT_FLAG_COW)) {

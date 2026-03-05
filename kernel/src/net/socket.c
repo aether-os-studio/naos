@@ -1225,9 +1225,9 @@ int socket_poll(vfs_node_t node, size_t events) {
                 revents |= EPOLLOUT;
 
             // 可读：自己有数据
-            if ((events & EPOLLIN) && (sock->recv_pos > 0 || sock->shut_rd ||
-                                       peer->shut_wr || peer->closed ||
-                                       has_pending_ctrl))
+            if ((events & EPOLLIN) &&
+                (sock->recv_pos > 0 || sock->shut_rd || peer->shut_wr ||
+                 peer->closed || has_pending_ctrl))
                 revents |= EPOLLIN;
         } else {
             if ((events & EPOLLIN) && sock->established)

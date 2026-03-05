@@ -214,10 +214,10 @@ void free_task(task_t *ptr) {
 
     task_timerfd_list_clear(ptr);
 
-    vma_manager_exit_cleanup(&ptr->arch_context->mm->task_vma_mgr);
+    vma_manager_exit_cleanup(&ptr->mm->task_vma_mgr);
 
     if (!ptr->is_kernel)
-        free_page_table(ptr->arch_context->mm);
+        free_page_table(ptr->mm);
 
     if (ptr->cmdline)
         free(ptr->cmdline);
@@ -384,6 +384,14 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
         (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     memset((void *)(task->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(task->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
+    task->mm = malloc(sizeof(task_mm_info_t));
+    task->mm->page_table_addr = virt_to_phys((uint64_t)get_kernel_page_dir());
+    task->mm->ref_count = 1;
+    memset(&task->mm->task_vma_mgr, 0, sizeof(vma_manager_t));
+    task->mm->task_vma_mgr.initialized = false;
+    task->mm->brk_start = USER_BRK_START;
+    task->mm->brk_current = task->mm->brk_start;
+    task->mm->brk_end = USER_BRK_END;
     task->arch_context = malloc(sizeof(arch_context_t));
     memset(task->arch_context, 0, sizeof(arch_context_t));
     arch_context_init(task->arch_context,
@@ -828,13 +836,12 @@ uint64_t task_execve(const char *path_user, const char **argv,
     }
 
     if (current_task->is_clone && (current_task->clone_flags & CLONE_VM)) {
-        if (current_task->arch_context->mm->ref_count <= 1)
-            vma_manager_exit_cleanup(
-                &current_task->arch_context->mm->task_vma_mgr);
+        if (current_task->mm->ref_count <= 1)
+            vma_manager_exit_cleanup(&current_task->mm->task_vma_mgr);
     }
     shm_exec(current_task);
 
-    task_mm_info_t *old_mm = current_task->arch_context->mm;
+    task_mm_info_t *old_mm = current_task->mm;
     task_mm_info_t *new_mm = (task_mm_info_t *)malloc(sizeof(task_mm_info_t));
     memset(new_mm, 0, sizeof(task_mm_info_t));
     new_mm->page_table_addr = alloc_frames(1);
@@ -866,7 +873,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     csr_set(sstatus, (1UL << 18));
 #endif
 
-    current_task->arch_context->mm = new_mm;
+    current_task->mm = new_mm;
 
     if (!current_task->is_kernel) {
         free_page_table(old_mm);
@@ -1100,11 +1107,10 @@ uint64_t task_execve(const char *path_user, const char **argv,
         node->refcount++;
 
         vma_t *region =
-            vma_find_intersection(&current_task->arch_context->mm->task_vma_mgr,
+            vma_find_intersection(&current_task->mm->task_vma_mgr,
                                   interpreter_load_start, interpreter_load_end);
         if (!region) {
-            vma_insert(&current_task->arch_context->mm->task_vma_mgr,
-                       ld_so_vma);
+            vma_insert(&current_task->mm->task_vma_mgr, ld_so_vma);
         }
     } else {
         free(interpreter_path);
@@ -1124,10 +1130,10 @@ uint64_t task_execve(const char *path_user, const char **argv,
     node->refcount++;
     free(fullpath);
 
-    vma_t *region = vma_find_intersection(
-        &current_task->arch_context->mm->task_vma_mgr, load_start, load_end);
+    vma_t *region = vma_find_intersection(&current_task->mm->task_vma_mgr,
+                                          load_start, load_end);
     if (!region) {
-        vma_insert(&current_task->arch_context->mm->task_vma_mgr, exec_vma);
+        vma_insert(&current_task->mm->task_vma_mgr, exec_vma);
     }
 
     vma_t *stack_vma = vma_alloc();
@@ -1139,11 +1145,10 @@ uint64_t task_execve(const char *path_user, const char **argv,
     stack_vma->vm_type = VMA_TYPE_ANON;
     stack_vma->vm_name = strdup("[stack]");
 
-    region =
-        vma_find_intersection(&current_task->arch_context->mm->task_vma_mgr,
-                              USER_STACK_START, USER_STACK_END);
+    region = vma_find_intersection(&current_task->mm->task_vma_mgr,
+                                   USER_STACK_START, USER_STACK_END);
     if (!region) {
-        vma_insert(&current_task->arch_context->mm->task_vma_mgr, stack_vma);
+        vma_insert(&current_task->mm->task_vma_mgr, stack_vma);
     }
 
     current_task->clone_flags = 0;
@@ -1741,15 +1746,14 @@ uint64_t sys_clone3(struct pt_regs *regs, clone_args_t *args_user,
 
 static int write_task_user_memory(task_t *task, uint64_t uaddr, const void *src,
                                   size_t size) {
-    if (!task || !task->arch_context || !task->arch_context->mm)
+    if (!task || !task->arch_context || !task->mm)
         return -EFAULT;
     if (!src || size == 0)
         return 0;
     if (check_user_overflow(uaddr, size))
         return -EFAULT;
 
-    uint64_t *pgdir =
-        (uint64_t *)phys_to_virt(task->arch_context->mm->page_table_addr);
+    uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
     const uint8_t *in = (const uint8_t *)src;
     uint64_t va = uaddr;
     size_t remain = size;
@@ -1801,7 +1805,9 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         return (uint64_t)-ENOMEM;
     }
 
-    strncpy(child->name, current_task->name, TASK_NAME_MAX);
+    task_t *self = current_task;
+
+    strncpy(child->name, self->name, TASK_NAME_MAX);
 
     child->signal = malloc(sizeof(task_signal_info_t));
     memset(child->signal, 0, sizeof(task_signal_info_t));
@@ -1817,14 +1823,21 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     memset((void *)(child->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(child->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
 
+    if (!self->mm) {
+        printk("src->mm == NULL!!! src = %#018lx\n", self);
+    }
+    child->mm = clone_page_table(self->mm, flags);
+    if (!child->mm) {
+        printk("dst->mm == NULL!!! dst = %#018lx\n", child);
+    }
     child->arch_context = malloc(sizeof(arch_context_t));
     memset(child->arch_context, 0, sizeof(arch_context_t));
     arch_context_t orig_context;
-    memcpy(&orig_context, current_task->arch_context, sizeof(arch_context_t));
+    memcpy(&orig_context, self->arch_context, sizeof(arch_context_t));
     orig_context.ctx = regs;
     arch_context_copy(child->arch_context, &orig_context, child->kernel_stack,
                       flags);
-    shm_fork(current_task, child);
+    shm_fork(self, child);
 
 #if defined(__x86_64__)
     uint64_t tmp;
@@ -1864,34 +1877,34 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 #endif
 
     child->is_kernel = false;
-    child->ppid = current_task->pid;
-    child->uid = current_task->uid;
-    child->gid = current_task->gid;
-    child->euid = current_task->euid;
-    child->egid = current_task->egid;
-    child->suid = current_task->suid;
-    child->sgid = current_task->sgid;
-    child->pgid = current_task->pgid;
-    child->sid = current_task->sid;
+    child->ppid = self->pid;
+    child->uid = self->uid;
+    child->gid = self->gid;
+    child->euid = self->euid;
+    child->egid = self->egid;
+    child->suid = self->suid;
+    child->sgid = self->sgid;
+    child->pgid = self->pgid;
+    child->sid = self->sid;
 
     child->priority = NORMAL_PRIORITY;
 
-    child->cwd = current_task->cwd;
-    child->cmdline = strdup(current_task->cmdline);
+    child->cwd = self->cwd;
+    child->cmdline = strdup(self->cmdline);
 
-    child->exec_node = current_task->exec_node;
+    child->exec_node = self->exec_node;
     if (child->exec_node)
         child->exec_node->refcount++;
 
-    child->load_start = current_task->load_start;
-    child->load_end = current_task->load_end;
+    child->load_start = self->load_start;
+    child->load_end = self->load_end;
 
-    child->fd_info = (flags & CLONE_FILES) ? current_task->fd_info
-                                           : calloc(1, sizeof(fd_info_t));
+    child->fd_info =
+        (flags & CLONE_FILES) ? self->fd_info : calloc(1, sizeof(fd_info_t));
     if (!(flags & CLONE_FILES)) {
         mutex_init(&child->fd_info->fdt_lock);
         for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-            fd_t *fd = current_task->fd_info->fds[i];
+            fd_t *fd = self->fd_info->fds[i];
 
             if (fd) {
                 child->fd_info->fds[i] = vfs_dup(fd);
@@ -1915,11 +1928,11 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     child->signal->signal = 0;
     if (flags & CLONE_SIGHAND) {
-        memcpy(child->signal->actions, current_task->signal->actions,
+        memcpy(child->signal->actions, self->signal->actions,
                sizeof(child->signal->actions));
-        spin_lock(&current_task->signal->signal_lock);
-        child->signal->blocked = current_task->signal->blocked;
-        spin_unlock(&current_task->signal->signal_lock);
+        spin_lock(&self->signal->signal_lock);
+        child->signal->blocked = self->signal->blocked;
+        spin_unlock(&self->signal->signal_lock);
     } else {
         memset(child->signal->actions, 0, sizeof(child->signal->actions));
         child->signal->blocked = 0;
@@ -1936,8 +1949,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     child->parent_death_sig = (uint64_t)-1;
 
     if (flags & CLONE_THREAD) {
-        child->tgid =
-            current_task->tgid ? current_task->tgid : current_task->pid;
+        child->tgid = self->tgid ? self->tgid : self->pid;
     } else {
         child->tgid = child->pid;
     }
@@ -1973,20 +1985,20 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     child->state = TASK_READY;
     child->current_state = TASK_READY;
 
-    current_task->child_vfork_done = false;
+    self->child_vfork_done = false;
 
     child->sched_info = calloc(1, sizeof(struct sched_entity));
     add_sched_entity(child, schedulers[child->cpu_id]);
 
     if ((flags & CLONE_VFORK)) {
-        while (!current_task->child_vfork_done) {
+        while (!self->child_vfork_done) {
             arch_enable_interrupt();
             schedule(SCHED_FLAG_YIELD);
         }
 
         arch_disable_interrupt();
 
-        current_task->child_vfork_done = false;
+        self->child_vfork_done = false;
     }
 
     return child->pid;

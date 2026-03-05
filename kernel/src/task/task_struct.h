@@ -279,6 +279,7 @@ typedef struct task {
     uint64_t force_wakeup_ns;
     uint64_t load_start;
     uint64_t load_end;
+    task_mm_info_t *mm;
     arch_context_t *arch_context;
     task_signal_info_t *signal;
     vfs_node_t cwd;
