@@ -871,9 +871,8 @@ uint64_t sys_kill(int pid, int sig) {
     if (pid == 0 || pid < -1) {
         int pgid = (pid == 0) ? current_task->pgid : -pid;
         spin_lock(&task_queue_lock);
-        for (struct llist_header *it = task_list.next; it != &task_list;
-             it = it->next) {
-            task_t *task = list_entry(it, task_t, task_node);
+        task_t *task, *next;
+        llist_for_each(task, next, &task_list, task_node) {
             if (!task || task->is_kernel || task->pgid != pgid) {
                 continue;
             }
@@ -888,9 +887,8 @@ uint64_t sys_kill(int pid, int sig) {
 
     if (pid == -1) {
         spin_lock(&task_queue_lock);
-        for (struct llist_header *it = task_list.next; it != &task_list;
-             it = it->next) {
-            task_t *task = list_entry(it, task_t, task_node);
+        task_t *task, *next;
+        llist_for_each(task, next, &task_list, task_node) {
             if (!task || task->is_kernel) {
                 continue;
             }

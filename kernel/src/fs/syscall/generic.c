@@ -1919,9 +1919,8 @@ uint64_t sys_sysinfo(struct sysinfo *info_user) {
     info->freeram = 0;
     int proc_count = 0;
     spin_lock(&task_queue_lock);
-    for (struct llist_header *it = task_list.next; it != &task_list;
-         it = it->next) {
-        task_t *task = list_entry(it, task_t, task_node);
+    task_t *task, *next;
+    llist_for_each(task, next, &task_list, task_node) {
         if (task) {
             proc_count++;
         }

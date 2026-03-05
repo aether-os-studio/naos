@@ -31,9 +31,8 @@ static inline task_t *task_lookup_by_pid_nolock(uint64_t pid) {
     if (pid == 0 || pid >= MAX_TASK_NUM)
         return NULL;
 
-    for (struct llist_header *it = task_list.next; it != &task_list;
-         it = it->next) {
-        task_t *task = list_entry(it, task_t, task_node);
+    task_t *task, *next;
+    llist_for_each(task, next, &task_list, task_node) {
         if (task->pid == pid)
             return task;
     }
@@ -59,9 +58,8 @@ static task_timerfd_ref_t *task_timerfd_find_ref(task_t *task,
     if (!task || !timerfd_node)
         return NULL;
 
-    for (struct llist_header *it = task->timerfd_list.next;
-         it != &task->timerfd_list; it = it->next) {
-        task_timerfd_ref_t *ref = list_entry(it, task_timerfd_ref_t, node);
+    task_timerfd_ref_t *ref, *next;
+    llist_for_each(ref, next, &task->timerfd_list, node) {
         if (ref->timerfd_node == timerfd_node)
             return ref;
     }
@@ -73,13 +71,10 @@ static void task_timerfd_list_clear(task_t *task) {
     if (!task)
         return;
 
-    for (struct llist_header *it = task->timerfd_list.next;
-         it != &task->timerfd_list;) {
-        struct llist_header *next = it->next;
-        task_timerfd_ref_t *ref = list_entry(it, task_timerfd_ref_t, node);
+    task_timerfd_ref_t *ref, *next;
+    llist_for_each(ref, next, &task->timerfd_list, node) {
         llist_delete(&ref->node);
         free(ref);
-        it = next;
     }
 
     llist_init_head(&task->timerfd_list);
@@ -121,9 +116,8 @@ void task_timerfd_track_fd(task_t *task, fd_t *fd) {
         return;
     size_t candidate_count = 0;
     spin_lock(&task_queue_lock);
-    for (struct llist_header *it = task_list.next; it != &task_list;
-         it = it->next) {
-        task_t *candidate = list_entry(it, task_t, task_node);
+    task_t *candidate, *next;
+    llist_for_each(candidate, next, &task_list, task_node) {
         if (!candidate || candidate == task ||
             candidate->fd_info != shared_fd_info)
             continue;
@@ -169,9 +163,8 @@ void task_timerfd_untrack_fd(task_t *task, fd_t *fd) {
         return;
     size_t candidate_count = 0;
     spin_lock(&task_queue_lock);
-    for (struct llist_header *it = task_list.next; it != &task_list;
-         it = it->next) {
-        task_t *candidate = list_entry(it, task_t, task_node);
+    task_t *candidate, *next;
+    llist_for_each(candidate, next, &task_list, task_node) {
         if (!candidate || candidate == task ||
             candidate->fd_info != shared_fd_info)
             continue;
@@ -204,9 +197,8 @@ void task_timerfd_rebuild_from_fd_info(task_t *task) {
 
 void send_process_group_signal(int pgid, int signal) {
     spin_lock(&task_queue_lock);
-    for (struct llist_header *it = task_list.next; it != &task_list;
-         it = it->next) {
-        task_t *ptr = list_entry(it, task_t, task_node);
+    task_t *ptr, *next;
+    llist_for_each(ptr, next, &task_list, task_node) {
         if (!ptr || ptr->pgid != pgid)
             continue;
         task_send_signal(ptr, signal, SI_USER);
@@ -1415,9 +1407,8 @@ uint64_t task_exit(int64_t code) {
     }
 
     spin_lock(&task_queue_lock);
-    for (struct llist_header *it = task_list.next; it != &task_list;
-         it = it->next) {
-        task_t *task = list_entry(it, task_t, task_node);
+    task_t *task, *next;
+    llist_for_each(task, next, &task_list, task_node) {
         if (task != current_task && (task->ppid != task->pid) &&
             (task->ppid == current_task->pid)) {
             if (task->fd_info == current_task->fd_info) {
@@ -1465,9 +1456,8 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
 
     bool has_children = false;
     spin_lock(&task_queue_lock);
-    for (struct llist_header *it = task_list.next; it != &task_list;
-         it = it->next) {
-        task_t *ptr = list_entry(it, task_t, task_node);
+    task_t *ptr, *next;
+    llist_for_each(ptr, next, &task_list, task_node) {
         if (ptr && ptr->ppid != ptr->pid && ptr->ppid == current_task->pid) {
             has_children = true;
             break;
@@ -1484,9 +1474,8 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
         task_t *found_dead = NULL;
 
         spin_lock(&task_queue_lock);
-        for (struct llist_header *it = task_list.next; it != &task_list;
-             it = it->next) {
-            task_t *ptr = list_entry(it, task_t, task_node);
+        task_t *ptr, *next;
+        llist_for_each(ptr, next, &task_list, task_node) {
             if (!ptr)
                 continue;
 
@@ -1560,9 +1549,8 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
     while (true) {
         task_t *to_free = NULL;
         spin_lock(&task_queue_lock);
-        for (struct llist_header *it = task_list.next; it != &task_list;
-             it = it->next) {
-            task_t *ptr = list_entry(it, task_t, task_node);
+        task_t *ptr, *next;
+        llist_for_each(ptr, next, &task_list, task_node) {
             if (ptr && ptr->should_free) {
                 to_free = ptr;
                 break;
@@ -1594,9 +1582,8 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
 
     bool has_children = false;
     spin_lock(&task_queue_lock);
-    for (struct llist_header *it = task_list.next; it != &task_list;
-         it = it->next) {
-        task_t *ptr = list_entry(it, task_t, task_node);
+    task_t *ptr, *next;
+    llist_for_each(ptr, next, &task_list, task_node) {
         if (ptr && ptr->ppid != ptr->pid && ptr->ppid == current_task->pid) {
             has_children = true;
             break;
@@ -1612,9 +1599,8 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
         task_t *found_dead = NULL;
 
         spin_lock(&task_queue_lock);
-        for (struct llist_header *it = task_list.next; it != &task_list;
-             it = it->next) {
-            task_t *ptr = list_entry(it, task_t, task_node);
+        task_t *ptr, *next;
+        llist_for_each(ptr, next, &task_list, task_node) {
             if (!ptr)
                 continue;
 
@@ -1703,9 +1689,8 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
         while (true) {
             task_t *to_free = NULL;
             spin_lock(&task_queue_lock);
-            for (struct llist_header *it = task_list.next; it != &task_list;
-                 it = it->next) {
-                task_t *ptr = list_entry(it, task_t, task_node);
+            task_t *ptr, *next;
+            llist_for_each(ptr, next, &task_list, task_node) {
                 if (ptr && ptr->should_free) {
                     to_free = ptr;
                     break;
@@ -2195,9 +2180,8 @@ void sched_update_timerfd() {
 void sched_check_wakeup() {
     uint64_t now = nano_time();
     spin_lock(&task_queue_lock);
-    for (struct llist_header *it = task_list.next; it != &task_list;
-         it = it->next) {
-        task_t *ptr = list_entry(it, task_t, task_node);
+    task_t *ptr, *tmp;
+    llist_for_each(ptr, tmp, &task_list, task_node) {
         if (ptr->state == TASK_BLOCKING && now > ptr->force_wakeup_ns) {
             task_unblock(ptr, ETIMEDOUT);
             ptr->force_wakeup_ns = UINT64_MAX;
