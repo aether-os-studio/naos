@@ -348,7 +348,6 @@ task_t *get_free_task() {
     task->cpu_id = alloc_cpu_id();
     llist_append(&task_list, &task->task_node);
     next_task_pid++;
-    can_schedule = true;
     spin_unlock(&task_queue_lock);
     return task;
 }
@@ -639,7 +638,10 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
 }
 
 uint64_t task_fork(struct pt_regs *regs, bool vfork) {
-    return sys_clone(regs, vfork ? CLONE_VFORK : 0, 0, NULL, NULL, 0);
+    uint64_t flags = vfork ? (CLONE_VFORK | CLONE_VM | CLONE_THREAD |
+                              CLONE_SIGHAND | CLONE_FS | CLONE_FILES)
+                           : 0;
+    return sys_clone(regs, flags, 0, NULL, NULL, 0);
 }
 
 uint64_t get_node_size(vfs_node_t node) {
@@ -665,6 +667,8 @@ uint64_t get_node_size(vfs_node_t node) {
 uint64_t task_execve(const char *path_user, const char **argv,
                      const char **envp) {
     can_schedule = false;
+
+    task_t *self = current_task;
 
     arch_disable_interrupt();
 
@@ -835,13 +839,13 @@ uint64_t task_execve(const char *path_user, const char **argv,
         vfs_read(node, phdr, ehdr->e_phoff, phdr_size);
     }
 
-    if (current_task->is_clone && (current_task->clone_flags & CLONE_VM)) {
-        if (current_task->mm->ref_count <= 1)
-            vma_manager_exit_cleanup(&current_task->mm->task_vma_mgr);
+    if (self->is_clone && (self->clone_flags & CLONE_VM)) {
+        if (self->mm->ref_count <= 1)
+            vma_manager_exit_cleanup(&self->mm->task_vma_mgr);
     }
-    shm_exec(current_task);
+    shm_exec(self);
 
-    task_mm_info_t *old_mm = current_task->mm;
+    task_mm_info_t *old_mm = self->mm;
     task_mm_info_t *new_mm = (task_mm_info_t *)malloc(sizeof(task_mm_info_t));
     memset(new_mm, 0, sizeof(task_mm_info_t));
     new_mm->page_table_addr = alloc_frames(1);
@@ -873,9 +877,9 @@ uint64_t task_execve(const char *path_user, const char **argv,
     csr_set(sstatus, (1UL << 18));
 #endif
 
-    current_task->mm = new_mm;
+    self->mm = new_mm;
 
-    if (!current_task->is_kernel) {
+    if (!self->is_kernel) {
         free_page_table(old_mm);
     }
 
@@ -997,7 +1001,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     }
 
     node->refcount++;
-    current_task->exec_node = node;
+    self->exec_node = node;
 
     map_page_range(get_current_page_dir(true), USER_STACK_START, (uint64_t)-1,
                    USER_STACK_END - USER_STACK_START,
@@ -1005,12 +1009,12 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
     memset((void *)USER_STACK_START, 0, USER_STACK_END - USER_STACK_START);
     uint64_t stack = push_infos(
-        current_task, USER_STACK_END, (char **)new_argv, argv_count,
-        (char **)new_envp, envp_count, e_entry, phdr_vaddr, ehdr->e_phnum,
+        self, USER_STACK_END, (char **)new_argv, argv_count, (char **)new_envp,
+        envp_count, e_entry, phdr_vaddr, ehdr->e_phnum,
         interpreter_entry ? INTERPRETER_BASE_ADDR : load_start);
 
-    if (current_task->clone_flags & CLONE_FILES) {
-        fd_info_t *old = current_task->fd_info;
+    if (self->clone_flags & CLONE_FILES) {
+        fd_info_t *old = self->fd_info;
         fd_info_t *new = calloc(1, sizeof(fd_info_t));
         new->ref_count++;
 
@@ -1029,13 +1033,13 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
         old->ref_count--;
 
-        current_task->fd_info = new;
-        task_timerfd_rebuild_from_fd_info(current_task);
+        self->fd_info = new;
+        task_timerfd_rebuild_from_fd_info(self);
     }
 
-    task_t *vfork_parent = task_find_by_pid(current_task->ppid);
-    if (current_task->is_clone && (current_task->clone_flags & CLONE_VFORK) &&
-        vfork_parent && !vfork_parent->child_vfork_done) {
+    task_t *vfork_parent = task_find_by_pid(self->ppid);
+    if (self->is_clone && (self->clone_flags & CLONE_VFORK) && vfork_parent &&
+        !vfork_parent->child_vfork_done) {
         vfork_parent->child_vfork_done = true;
     }
 
@@ -1061,37 +1065,36 @@ uint64_t task_execve(const char *path_user, const char **argv,
     }
     free(new_envp);
 
-    with_fd_info_lock(current_task->fd_info, {
+    with_fd_info_lock(self->fd_info, {
         for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-            if (!current_task->fd_info->fds[i])
+            if (!self->fd_info->fds[i])
                 continue;
 
-            if (current_task->fd_info->fds[i]->close_on_exec) {
-                task_timerfd_untrack_fd(current_task,
-                                        current_task->fd_info->fds[i]);
-                vfs_close(current_task->fd_info->fds[i]->node);
-                free(current_task->fd_info->fds[i]);
-                current_task->fd_info->fds[i] = NULL;
-                procfs_on_close_file(current_task, i);
+            if (self->fd_info->fds[i]->close_on_exec) {
+                task_timerfd_untrack_fd(self, self->fd_info->fds[i]);
+                vfs_close(self->fd_info->fds[i]->node);
+                free(self->fd_info->fds[i]);
+                self->fd_info->fds[i] = NULL;
+                procfs_on_close_file(self, i);
             }
         }
     });
 
     bool ignore_sigchld =
-        (current_task->signal->actions[SIGCHLD].sa_handler == SIG_IGN);
-    if (current_task->signal)
-        free(current_task->signal);
-    current_task->signal = malloc(sizeof(task_signal_info_t));
-    memset(current_task->signal, 0, sizeof(task_signal_info_t));
-    spin_init(&current_task->signal->signal_lock);
+        (self->signal->actions[SIGCHLD].sa_handler == SIG_IGN);
+    if (self->signal)
+        free(self->signal);
+    self->signal = malloc(sizeof(task_signal_info_t));
+    memset(self->signal, 0, sizeof(task_signal_info_t));
+    spin_init(&self->signal->signal_lock);
     if (ignore_sigchld) {
-        current_task->signal->actions[SIGCHLD].sa_handler = SIG_IGN;
+        self->signal->actions[SIGCHLD].sa_handler = SIG_IGN;
     }
 
-    current_task->cmdline = strdup(cmdline);
+    self->cmdline = strdup(cmdline);
     free(cmdline);
-    current_task->load_start = load_start;
-    current_task->load_end = load_end;
+    self->load_start = load_start;
+    self->load_end = load_end;
 
     if (interpreter_path) {
         vma_t *ld_so_vma = vma_alloc();
@@ -1107,10 +1110,10 @@ uint64_t task_execve(const char *path_user, const char **argv,
         node->refcount++;
 
         vma_t *region =
-            vma_find_intersection(&current_task->mm->task_vma_mgr,
+            vma_find_intersection(&self->mm->task_vma_mgr,
                                   interpreter_load_start, interpreter_load_end);
         if (!region) {
-            vma_insert(&current_task->mm->task_vma_mgr, ld_so_vma);
+            vma_insert(&self->mm->task_vma_mgr, ld_so_vma);
         }
     } else {
         free(interpreter_path);
@@ -1123,17 +1126,17 @@ uint64_t task_execve(const char *path_user, const char **argv,
     exec_vma->vm_flags |= VMA_READ | VMA_WRITE | VMA_EXEC;
 
     char *fullpath = vfs_get_fullpath(node);
-    strncpy(current_task->name, fullpath, TASK_NAME_MAX);
+    strncpy(self->name, fullpath, TASK_NAME_MAX);
     exec_vma->vm_type = VMA_TYPE_FILE;
     exec_vma->vm_name = strdup(fullpath);
     exec_vma->node = node;
     node->refcount++;
     free(fullpath);
 
-    vma_t *region = vma_find_intersection(&current_task->mm->task_vma_mgr,
-                                          load_start, load_end);
+    vma_t *region =
+        vma_find_intersection(&self->mm->task_vma_mgr, load_start, load_end);
     if (!region) {
-        vma_insert(&current_task->mm->task_vma_mgr, exec_vma);
+        vma_insert(&self->mm->task_vma_mgr, exec_vma);
     }
 
     vma_t *stack_vma = vma_alloc();
@@ -1145,18 +1148,18 @@ uint64_t task_execve(const char *path_user, const char **argv,
     stack_vma->vm_type = VMA_TYPE_ANON;
     stack_vma->vm_name = strdup("[stack]");
 
-    region = vma_find_intersection(&current_task->mm->task_vma_mgr,
-                                   USER_STACK_START, USER_STACK_END);
+    region = vma_find_intersection(&self->mm->task_vma_mgr, USER_STACK_START,
+                                   USER_STACK_END);
     if (!region) {
-        vma_insert(&current_task->mm->task_vma_mgr, stack_vma);
+        vma_insert(&self->mm->task_vma_mgr, stack_vma);
     }
 
-    current_task->clone_flags = 0;
-    current_task->is_clone = false;
-    current_task->is_kernel = false;
+    self->clone_flags = 0;
+    self->is_clone = false;
+    self->is_kernel = false;
     can_schedule = true;
 
-    arch_to_user_mode(current_task->arch_context,
+    arch_to_user_mode(self->arch_context,
                       interpreter_entry ? interpreter_entry : e_entry, stack);
 
     return (uint64_t)-EAGAIN;
@@ -1782,9 +1785,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     if (flags & CLONE_VFORK) {
         flags |= CLONE_VM;
         flags |= CLONE_THREAD;
-        flags |= CLONE_SIGHAND;
-        flags |= CLONE_FS;
-        flags |= CLONE_FILES;
     }
 
     if ((flags & CLONE_PARENT_SETTID) &&

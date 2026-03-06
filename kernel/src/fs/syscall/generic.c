@@ -234,7 +234,7 @@ uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags,
     }
     char *path = at_resolve_pathname(dirfd, (char *)name);
     if (!path)
-        return (uint64_t)-ENOMEM;
+        return (uint64_t)-EINVAL;
 
     uint64_t ret = do_sys_open(path, flags, mode);
 
@@ -1008,7 +1008,6 @@ static uint64_t dup_to_free_slot(task_t *self, uint64_t fd, uint64_t start,
     return ret;
 }
 
-// Implement the sys_dup3 function
 uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
     if (flags & ~O_CLOEXEC)
         return (uint64_t)-EINVAL;
@@ -1037,7 +1036,7 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
 
     switch (command) {
     case F_GETFD:
-        return (self->fd_info->fds[fd]->close_on_exec) ? FD_CLOEXEC : 0;
+        return self->fd_info->fds[fd]->close_on_exec ? FD_CLOEXEC : 0;
     case F_SETFD:
         bool close_on_exec = !!(arg & FD_CLOEXEC);
         if (close_on_exec) {
@@ -1054,7 +1053,7 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
     case F_GETFL:
         return self->fd_info->fds[fd]->flags & ~(uint64_t)O_CLOEXEC;
     case F_SETFL:
-        uint32_t valid_flags = O_APPEND | O_DIRECT | O_NOATIME | O_NONBLOCK;
+        uint32_t valid_flags = O_STATUS_FLAGS;
         self->fd_info->fds[fd]->flags &= ~valid_flags;
         self->fd_info->fds[fd]->flags |= arg & valid_flags;
         return 0;
