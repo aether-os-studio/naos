@@ -1173,11 +1173,11 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
         return -EINVAL;
     }
 
+    task->status = EOK;
+
     if (__atomic_exchange_n(&task->wake_pending, false, __ATOMIC_ACQ_REL)) {
         return task->status;
     }
-
-    task->status = EOK;
 
     uint32_t target_cpu = task->cpu_id;
     bool should_trigger_sched_ipi = false;

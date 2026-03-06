@@ -349,7 +349,6 @@ int vfs_poll_wait_sleep(vfs_node_t node, vfs_poll_wait_t *wait,
                 block_ns = (int64_t)remain;
         }
 
-        wait->task->status = 0;
         int ret = task_block(wait->task, TASK_BLOCKING, block_ns, reason);
         if (ret == EOK || ret == ETIMEDOUT)
             continue;
