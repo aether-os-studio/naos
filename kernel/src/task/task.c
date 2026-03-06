@@ -1143,7 +1143,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
     stack_vma->vm_start = USER_STACK_START;
     stack_vma->vm_end = USER_STACK_END;
-    stack_vma->vm_flags |= VMA_READ | VMA_WRITE;
+    stack_vma->vm_flags |= VMA_ANON | VMA_READ | VMA_WRITE;
 
     stack_vma->vm_type = VMA_TYPE_ANON;
     stack_vma->vm_name = strdup("[stack]");

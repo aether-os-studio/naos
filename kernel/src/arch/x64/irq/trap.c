@@ -372,19 +372,7 @@ void do_page_fault(struct pt_regs *regs, uint64_t error_code) {
     uint64_t cr2 = 0;
     asm volatile("movq %%cr2, %0" : "=r"(cr2)::"memory");
 
-    uint64_t fault_flags = 0;
-    if (error_code & (1UL << 1))
-        fault_flags |= PF_ACCESS_WRITE;
-    else
-        fault_flags |= PF_ACCESS_READ;
-    if (error_code & (1UL << 2))
-        fault_flags |= PF_FROM_USER;
-    if (error_code & (1UL << 4))
-        fault_flags |= PF_ACCESS_EXEC;
-    if (error_code & (1UL << 0))
-        fault_flags |= PF_PROTECTION;
-
-    if (handle_page_fault_ex(current_task, cr2, fault_flags) == PF_RES_OK)
+    if (handle_page_fault(current_task, cr2) == PF_RES_OK)
         return;
 
     (void)error_code;
