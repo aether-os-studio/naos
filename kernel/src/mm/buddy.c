@@ -538,7 +538,8 @@ out:
 
     for (uint64_t offset = 0; offset < required_pages; offset++) {
         page_t *page = get_page(addr + offset * DEFAULT_PAGE_SIZE);
-        page_ref(page);
+        if (page)
+            page_ref(page);
     }
 
     return addr;
@@ -546,6 +547,8 @@ out:
 
 void free_frames(uintptr_t addr, size_t count) {
     if (addr == 0 || count == 0)
+        return;
+    if ((addr & (DEFAULT_PAGE_SIZE - 1)) != 0)
         return;
 
     size_t required_order = 0;
@@ -566,6 +569,10 @@ void free_frames(uintptr_t addr, size_t count) {
         return;
 
     size_t start_page_index = addr / DEFAULT_PAGE_SIZE;
+    if (start_page_index + required_pages < start_page_index ||
+        start_page_index + required_pages > using_regions.length ||
+        start_page_index + required_pages > usable_regions.length)
+        return;
 
     spin_lock(&zone->allocator.lock);
 
@@ -633,7 +640,8 @@ out:
 
     for (size_t offset = 0; offset < required_pages; offset++) {
         page_t *page = get_page(addr + offset * DEFAULT_PAGE_SIZE);
-        page_ref(page);
+        if (page)
+            page_ref(page);
     }
 
     return addr;

@@ -115,11 +115,8 @@ all: $(IMAGE_NAME).img rootfs-$(ARCH).img
 .PHONY: all
 all-single: single-$(IMAGE_NAME).img
 
-prepare: libgcc_$(ARCH).a liballoc-$(ARCH).a
+prepare: libgcc_$(ARCH).a
 	./kernel/get-deps
-
-liballoc-$(ARCH).a:
-	wget https://github.com/plos-clan/liballoc/releases/download/release/liballoc-$(ARCH).a -O liballoc-$(ARCH).a
 
 libgcc_$(ARCH).a:
 	wget https://github.com/osdev0/libgcc-binaries/releases/download/$(LIBGCC_VERSION)/libgcc-$(ARCH).a -O libgcc_$(ARCH).a

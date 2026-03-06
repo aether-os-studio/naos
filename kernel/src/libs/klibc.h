@@ -285,7 +285,7 @@ static inline void spin_lock(spinlock_t *lock) {
                  "   stxr %w1, %w0, [%2]\n\t"
                  "   cbnz %w1, 1b\n\t"
                  "   b 3f\n\t"
-                 "2: nop\n\t"
+                 "2: wfe\n\t"
                  "   b 1b\n\t"
                  "3:\n\t"
                  : "=&r"(tmp), "=&r"(status)
@@ -316,6 +316,9 @@ static inline void spin_init(spinlock_t *lock) {
 static inline void spin_lock(spinlock_t *sl) {
     /* 自旋等待 */
     while (__sync_lock_test_and_set(&sl->lock, 1)) {
+        while (sl->lock) {
+            asm volatile("pause" ::: "memory");
+        }
     }
 
     sl->flags = 0;

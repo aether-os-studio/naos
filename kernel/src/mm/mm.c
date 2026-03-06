@@ -17,20 +17,35 @@ uint64_t memory_size = 0;
 static size_t early_last_alloc_pos = 0;
 
 uint64_t alloc_frames_early(size_t count) {
+    if (count == 0)
+        return UINT64_MAX;
+
     spin_lock(&frame_op_lock);
     Bitmap *bitmap = &usable_regions;
     size_t frame_index =
         bitmap_find_range_from(bitmap, count, true, early_last_alloc_pos);
+    if (frame_index == (size_t)-1 || frame_index + count > bitmap->length) {
+        spin_unlock(&frame_op_lock);
+        return UINT64_MAX;
+    }
     bitmap_set_range(bitmap, frame_index, frame_index + count, false);
-    early_last_alloc_pos = frame_index + count - 1;
+    early_last_alloc_pos = frame_index + count;
     spin_unlock(&frame_op_lock);
     return frame_index * DEFAULT_PAGE_SIZE;
 }
 
 void *early_alloc(size_t size) {
-    void *ptr = (void *)phys_to_virt(
-        alloc_frames_early((size + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE));
-    memset(ptr, 0, (size + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1));
+    if (size == 0)
+        return NULL;
+
+    size_t aligned_size =
+        (size + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1);
+    uint64_t phys = alloc_frames_early(aligned_size / DEFAULT_PAGE_SIZE);
+    if (phys == UINT64_MAX)
+        return NULL;
+
+    void *ptr = (void *)phys_to_virt(phys);
+    memset(ptr, 0, aligned_size);
     return ptr;
 }
 
@@ -38,8 +53,11 @@ uint64_t get_memory_size() {
     uint64_t all_memory_size = 0;
     boot_memory_map_t *memory_map = boot_get_memory_map();
 
-    for (uint64_t i = memory_map->entry_count - 1; i > 0; i--) {
-        boot_memory_map_entry_t *region = &memory_map->entries[i];
+    if (!memory_map || memory_map->entry_count == 0)
+        return 0;
+
+    for (uint64_t i = memory_map->entry_count; i > 0; i--) {
+        boot_memory_map_entry_t *region = &memory_map->entries[i - 1];
         if (region->type == USABLE) {
             all_memory_size = region->addr + region->len;
             break;

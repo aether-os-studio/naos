@@ -1,5 +1,7 @@
 /.vscode
 /.zed
+/.claude
+/.codex
 /firmware
 /kernel-deps
 /assets
