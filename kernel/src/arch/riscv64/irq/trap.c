@@ -1,5 +1,6 @@
 #include <libs/klibc.h>
 #include <arch/arch.h>
+#include <irq/softirq.h>
 #include <task/task.h>
 #include <mm/fault.h>
 
@@ -124,6 +125,8 @@ void handle_interrupt_c(struct pt_regs *regs, uint64_t cause) {
         riscv64_timer_handler(regs);
 
         sbi_set_timer(get_timer() + timer_freq / SCHED_HZ);
+
+        softirq_handle_pending();
 
         schedule(0);
 

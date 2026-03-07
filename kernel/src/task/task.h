@@ -361,8 +361,10 @@ static inline uint64_t sys_set_tid_address(int *ptr) {
 
 uint64_t sys_setpriority(int which, int who, int niceval);
 task_t *task_find_by_pid(uint64_t pid);
+size_t task_count(void);
+int task_kill_all(int sig);
+int task_kill_process_group(int pgid, int sig);
 extern spinlock_t task_queue_lock;
-extern struct llist_header task_list;
 
 extern task_t *idle_tasks[MAX_CPU_NUM];
 

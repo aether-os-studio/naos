@@ -2,6 +2,7 @@
 #include "fs/vfs/dev.h"
 #include "fs/fs_syscall.h"
 #include "arch/arch.h"
+#include "libs/hashmap.h"
 #include "mm/mm.h"
 #include "task/task.h"
 #include "net/socket.h"
@@ -9,6 +10,7 @@
 
 struct llist_header vfs_nodes;
 struct llist_header mount_points;
+static hashmap_t vfs_inode_map = HASHMAP_INIT;
 vfs_node_t rootdir = NULL;
 
 fs_t *all_fs[256] = {
@@ -35,6 +37,112 @@ static inline const vfs_operations_t *vfs_ops_of(vfs_node_t node) {
     return fs->ops;
 }
 
+typedef struct vfs_child_bucket {
+    uint64_t hash;
+    size_t count;
+    struct llist_header children;
+} vfs_child_bucket_t;
+
+static uint64_t vfs_name_hash(const char *name) {
+    uint64_t hash = 1469598103934665603ULL;
+    if (!name)
+        return hash;
+
+    while (*name) {
+        hash ^= (uint8_t)*name++;
+        hash *= 1099511628211ULL;
+    }
+
+    return hash;
+}
+
+static inline vfs_child_bucket_t *vfs_child_bucket_lookup(vfs_node_t parent,
+                                                          uint64_t hash) {
+    if (!parent)
+        return NULL;
+    return (vfs_child_bucket_t *)hashmap_get(&parent->child_name_map, hash);
+}
+
+static void vfs_child_index_deinit(vfs_node_t node) {
+    if (!node || !node->child_name_map.buckets)
+        return;
+
+    for (size_t i = 0; i < node->child_name_map.bucket_count; i++) {
+        hashmap_entry_t *entry = &node->child_name_map.buckets[i];
+        if (!hashmap_entry_is_occupied(entry))
+            continue;
+        free(entry->value);
+    }
+
+    hashmap_deinit(&node->child_name_map);
+}
+
+static void vfs_child_index_add(vfs_node_t parent, vfs_node_t child) {
+    if (!parent || !child || !child->name)
+        return;
+
+    uint64_t hash = vfs_name_hash(child->name);
+    vfs_child_bucket_t *bucket = vfs_child_bucket_lookup(parent, hash);
+    if (!bucket) {
+        bucket = calloc(1, sizeof(vfs_child_bucket_t));
+        if (!bucket)
+            return;
+        bucket->hash = hash;
+        llist_init_head(&bucket->children);
+        if (hashmap_put(&parent->child_name_map, hash, bucket) < 0) {
+            free(bucket);
+            return;
+        }
+    }
+
+    llist_append(&bucket->children, &child->node_for_name_bucket);
+    bucket->count++;
+    child->child_name_hash = hash;
+}
+
+static void vfs_child_index_remove(vfs_node_t parent, vfs_node_t child) {
+    if (!parent || !child || llist_empty(&child->node_for_name_bucket)) {
+        if (child)
+            child->child_name_hash = 0;
+        return;
+    }
+
+    uint64_t hash = child->child_name_hash;
+    vfs_child_bucket_t *bucket = vfs_child_bucket_lookup(parent, hash);
+    llist_delete(&child->node_for_name_bucket);
+    child->child_name_hash = 0;
+
+    if (!bucket)
+        return;
+
+    if (bucket->count)
+        bucket->count--;
+
+    if (bucket->count == 0 || llist_empty(&bucket->children)) {
+        hashmap_remove(&parent->child_name_map, hash);
+        free(bucket);
+    }
+}
+
+void vfs_detach_child(vfs_node_t node) {
+    if (!node || !node->parent)
+        return;
+
+    vfs_child_index_remove(node->parent, node);
+    if (!llist_empty(&node->node_for_childs))
+        llist_delete(&node->node_for_childs);
+}
+
+void vfs_attach_child(vfs_node_t parent, vfs_node_t child) {
+    if (!parent || !child)
+        return;
+
+    child->parent = parent;
+    if (llist_empty(&child->node_for_childs))
+        llist_append(&parent->childs, &child->node_for_childs);
+    vfs_child_index_add(parent, child);
+}
+
 vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
     vfs_node_t node = malloc(sizeof(struct vfs_node));
     if (node == NULL)
@@ -54,7 +162,9 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
     node->lock.l_type = F_UNLCK;
     llist_init_head(&node->node);
     llist_init_head(&node->childs);
+    hashmap_init(&node->child_name_map, 16);
     llist_init_head(&node->node_for_childs);
+    llist_init_head(&node->node_for_name_bucket);
     node->refcount = 0;
     node->mode = 0777;
     node->rw_hint = 0;
@@ -62,8 +172,17 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
     node->i_version = 1;
     spin_init(&node->poll_waiters_lock);
     llist_init_head(&node->poll_waiters);
+
+    int rc = hashmap_put(&vfs_inode_map, node->inode, node);
+    if (rc < 0) {
+        vfs_child_index_deinit(node);
+        free(node->name);
+        free(node);
+        return NULL;
+    }
+
     if (parent)
-        llist_append(&parent->childs, &node->node_for_childs);
+        vfs_attach_child(parent, node);
     llist_append(&vfs_nodes, &node->node);
     return node;
 }
@@ -81,8 +200,10 @@ void vfs_free(vfs_node_t vfs) {
     llist_for_each(child, tmp, &vfs->childs, node_for_childs) {
         vfs_free(child);
     }
-    llist_delete(&vfs->node_for_childs);
+    vfs_detach_child(vfs);
     llist_delete(&vfs->node);
+    hashmap_remove(&vfs_inode_map, vfs->inode);
+    vfs_child_index_deinit(vfs);
     vfs_free_handle(vfs);
     free(vfs->name);
     free(vfs);
@@ -111,9 +232,8 @@ void vfs_merge_nodes_to(vfs_node_t dest, vfs_node_t source) {
         nodes[idx++] = node;
     }
     for (uint64_t i = 0; i < idx; i++) {
-        llist_delete(&nodes[i]->node_for_childs);
-        nodes[i]->parent = dest;
-        llist_append(&dest->childs, &nodes[i]->node_for_childs);
+        vfs_detach_child(nodes[i]);
+        vfs_attach_child(dest, nodes[i]);
     }
     free(nodes);
 }
@@ -187,6 +307,20 @@ static inline void do_update(vfs_node_t file) {
 vfs_node_t vfs_child_find(vfs_node_t parent, const char *name) {
     if (!parent || !name)
         return NULL;
+
+    uint64_t hash = vfs_name_hash(name);
+    vfs_child_bucket_t *bucket = vfs_child_bucket_lookup(parent, hash);
+    if (bucket) {
+        vfs_node_t child_node, tmp;
+        llist_for_each(child_node, tmp, &bucket->children,
+                       node_for_name_bucket) {
+            if (child_node->parent == parent &&
+                !llist_empty(&child_node->node_for_childs) &&
+                child_node->name && streq(child_node->name, name))
+                return child_node;
+        }
+    }
+
     vfs_node_t child_node, tmp;
     llist_for_each(child_node, tmp, &parent->childs, node_for_childs) {
         if (child_node->name && streq(child_node->name, name))
@@ -960,12 +1094,7 @@ vfs_node_t vfs_open(const char *_path, uint64_t flags) {
 }
 
 vfs_node_t vfs_find_node_by_inode(uint64_t inode) {
-    vfs_node_t pos, tmp;
-    llist_for_each(pos, tmp, &vfs_nodes, node) {
-        if (pos->inode == inode)
-            return pos;
-    }
-    return NULL;
+    return (vfs_node_t)hashmap_get(&vfs_inode_map, inode);
 }
 
 void vfs_update(vfs_node_t node) { do_update(node); }
@@ -973,6 +1102,10 @@ void vfs_update(vfs_node_t node) { do_update(node); }
 bool vfs_init() {
     llist_init_head(&vfs_nodes);
     llist_init_head(&mount_points);
+
+    if (hashmap_init(&vfs_inode_map, 4096) < 0) {
+        return false;
+    }
 
     for (size_t i = 0; i < sizeof(vfs_operations_t) / sizeof(void *); i++) {
         ((void **)&vfs_empty_ops)[i] = &empty_func;
@@ -1247,7 +1380,7 @@ int vfs_delete(vfs_node_t node) {
         return res;
     }
     node->flags |= VFS_NODE_FLAGS_DELETED;
-    llist_delete(&node->node_for_childs);
+    vfs_detach_child(node);
     if (node->refcount <= 0) {
         vfs_free_handle(node);
         vfs_free(node);
@@ -1297,13 +1430,12 @@ int vfs_rename(vfs_node_t node, const char *new) {
         return ret;
     }
 
-    if (node->parent)
-        llist_delete(&node->node_for_childs);
+    vfs_detach_child(node);
     node->parent = new_parent;
-    if (node->parent)
-        llist_append(&node->parent->childs, &node->node_for_childs);
     free(node->name);
     node->name = strdup(filename);
+    if (node->parent)
+        vfs_attach_child(node->parent, node);
 
     return ret;
 }

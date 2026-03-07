@@ -816,7 +816,6 @@ void lwip_check_timeout() {
         try_bound++;
         if (try_bound >= 5) {
             printk("DHCP failed to obtain an address\n");
-            current_task->should_free = true;
             task_exit(0);
         }
         sys_check_timeouts();
@@ -827,7 +826,6 @@ void lwip_check_timeout() {
     }
 
     real_socket_initialized = true;
-    current_task->should_free = true;
     task_exit(0);
 }
 

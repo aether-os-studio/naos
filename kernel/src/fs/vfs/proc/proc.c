@@ -136,7 +136,7 @@ void procfs_self_open(vfs_node_t parent, const char *name, vfs_node_t node) {
     procfs_self_handle_t *handle = malloc(sizeof(procfs_self_handle_t));
     handle->self = node;
     node->handle = handle;
-    llist_delete(&node->node_for_childs);
+    vfs_detach_child(node);
     vfs_node_t new_self_node = vfs_node_alloc(node->parent, "self");
     new_self_node->flags |= VFS_NODE_FLAGS_FREE_AFTER_USE;
     new_self_node->type = file_symlink;

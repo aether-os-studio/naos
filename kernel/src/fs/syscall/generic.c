@@ -1916,16 +1916,7 @@ uint64_t sys_sysinfo(struct sysinfo *info_user) {
     info->totalram = memory_size / DEFAULT_PAGE_SIZE;
     info->mem_unit = DEFAULT_PAGE_SIZE;
     info->freeram = 0;
-    int proc_count = 0;
-    spin_lock(&task_queue_lock);
-    task_t *task, *next;
-    llist_for_each(task, next, &task_list, task_node) {
-        if (task) {
-            proc_count++;
-        }
-    }
-    spin_unlock(&task_queue_lock);
-    info->procs = proc_count;
+    info->procs = task_count();
 
     if (copy_to_user(info_user, info, sizeof(struct sysinfo)))
         return (uint64_t)-EFAULT;

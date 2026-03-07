@@ -180,7 +180,7 @@ void ptmx_open(vfs_node_t parent, const char *name, vfs_node_t node) {
     n->next = pair;
     spin_unlock(&pty_global_lock);
 
-    llist_delete(&node->node_for_childs);
+    vfs_detach_child(node);
     node->parent = NULL;
     vfs_node_t new_node = vfs_node_alloc(devtmpfs_root, "ptmx");
     new_node->fsid = ptmx_fsid;

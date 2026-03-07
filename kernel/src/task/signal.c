@@ -242,7 +242,8 @@ enum {
 
 static inline bool signal_x64_is_syscall_context(const struct pt_regs *regs) {
     return ((regs->cs & 0x3) == 0x3) && regs->rip == regs->rcx &&
-           regs->rflags == regs->r11 && regs->func <= SIGNAL_X64_MAX_SYSCALL_NR;
+           regs->rflags == regs->r11 &&
+           regs->orig_rax <= SIGNAL_X64_MAX_SYSCALL_NR;
 }
 
 static inline bool signal_x64_restartable_syscall(uint64_t nr) {
@@ -304,7 +305,7 @@ signal_x64_prepare_syscall_result(struct pt_regs *saved,
     }
 
     if (want_restart) {
-        uint64_t nr = saved->func;
+        uint64_t nr = saved->orig_rax;
         if (nr <= SIGNAL_X64_MAX_SYSCALL_NR &&
             signal_x64_restartable_syscall(nr)) {
             saved->rax = nr;
@@ -870,34 +871,12 @@ uint64_t sys_kill(int pid, int sig) {
     int sent = 0;
     if (pid == 0 || pid < -1) {
         int pgid = (pid == 0) ? current_task->pgid : -pid;
-        spin_lock(&task_queue_lock);
-        task_t *task, *next;
-        llist_for_each(task, next, &task_list, task_node) {
-            if (!task || task->is_kernel || task->pgid != pgid) {
-                continue;
-            }
-            sent++;
-            if (sig != 0) {
-                task_send_signal(task, sig, SI_USER);
-            }
-        }
-        spin_unlock(&task_queue_lock);
+        sent = task_kill_process_group(pgid, sig);
         return sent ? 0 : (uint64_t)-ESRCH;
     }
 
     if (pid == -1) {
-        spin_lock(&task_queue_lock);
-        task_t *task, *next;
-        llist_for_each(task, next, &task_list, task_node) {
-            if (!task || task->is_kernel) {
-                continue;
-            }
-            sent++;
-            if (sig != 0) {
-                task_send_signal(task, sig, SI_USER);
-            }
-        }
-        spin_unlock(&task_queue_lock);
+        sent = task_kill_all(sig);
         return sent ? 0 : (uint64_t)-ESRCH;
     }
 

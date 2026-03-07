@@ -3,6 +3,7 @@
 #include <libs/klibc.h>
 #include <libs/mutex.h>
 #include <libs/llist.h>
+#include <libs/rbtree.h>
 #include <fs/termios.h>
 #include <mm/shm.h>
 
@@ -249,7 +250,9 @@ typedef struct task {
     uint64_t syscall_stack;
     uint64_t kernel_stack;
     uint64_t signal_syscall_stack;
-    struct llist_header task_node;
+    struct llist_header free_node;
+    struct llist_header parent_node;
+    struct llist_header pgid_node;
     uint64_t pid;
     uint64_t ppid;
     int64_t uid;
@@ -263,6 +266,7 @@ typedef struct task {
     int64_t sid;
     uint64_t waitpid;
     uint64_t status;
+    rb_node_t timeout_node;
     uint64_t last_sched_in_ns;
     uint64_t user_time_ns;
     uint64_t system_time_ns;
@@ -298,5 +302,5 @@ typedef struct task {
     bool is_clone;
     bool child_vfork_done;
     bool wake_pending;
-    bool should_free;
+    bool timeout_queued;
 } task_t;

@@ -3,6 +3,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <mm/bitmap.h>
+#include <irq/softirq.h>
 
 irq_action_t actions[ARCH_MAX_IRQ_NUM] = {0};
 irq_ipi_send_fn_t ipi_send_fns[ARCH_MAX_IRQ_NUM] = {0};
@@ -32,9 +33,11 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num) {
 
     task_t *self = current_task;
 
-    if (self->cpu_id == 0) {
+    if (irq_num == ARCH_TIMER_IRQ && self->cpu_id == 0) {
         sched_check_wakeup();
     }
+
+    softirq_handle_pending();
 
     uint64_t current_sched_ipi =
         __atomic_load_n(&sched_ipi_irq, __ATOMIC_ACQUIRE);
@@ -120,7 +123,7 @@ bool irq_trigger_sched_ipi(uint32_t cpu_id) {
 uint64_t irq = IRQ_ALLOCATE_NUM_BASE;
 spinlock_t irq_lock = SPIN_INIT;
 
-void irq_manager_init() {}
+void irq_manager_init() { softirq_init(); }
 
 int irq_allocate_irqnum() {
     spin_lock(&irq_lock);

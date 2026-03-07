@@ -2,6 +2,7 @@
 
 #include <libs/klibc.h>
 #include <libs/llist.h>
+#include <libs/hashmap.h>
 #include <fs/vfs/fcntl.h>
 #include <fs/vfs/utils.h>
 
@@ -261,37 +262,40 @@ typedef struct flock {
 #define VFS_NODE_FLAGS_DIRTY_CHILDREN (1UL << 4)
 
 struct vfs_node {
-    vfs_node_t parent;                   // 父目录
-    uint64_t flags;                      // 标志
-    uint64_t dev;                        // 设备号
-    uint64_t rdev;                       // 真实设备号
-    char *name;                          // 名称
-    uint64_t inode;                      // 节点号
-    uint64_t realsize;                   // 项目真实占用的空间 (可选)
-    uint64_t size;                       // 文件大小或若是文件夹则填0
-    uint64_t blksz;                      // 块大小
-    uint64_t createtime;                 // 创建时间
-    uint64_t readtime;                   // 最后读取时间
-    uint64_t writetime;                  // 最后写入时间
-    uint32_t owner;                      // 所有者
-    uint32_t group;                      // 所有组
-    uint32_t type;                       // 类型
-    uint32_t fsid;                       // 文件系统的 id
-    void *handle;                        // 操作文件的句柄
-    flock_t lock;                        // 锁
-    struct llist_header node;            // 所有vfs_node的链表
-    struct llist_header childs;          // 子目录和子文件
-    struct llist_header node_for_childs; // 为子目录和子文件添加的节点
-    vfs_node_t root;                     // 根目录
-    int refcount;                        // 引用计数
-    uint16_t mode;                       // 模式
-    uint32_t rw_hint;                    // 读写提示
-    spinlock_t poll_waiters_lock;        // poll 等待队列锁
-    struct llist_header poll_waiters;    // poll 等待队列
-    uint64_t poll_seq_in;                // 可读相关事件变化序号
-    uint64_t poll_seq_out;               // 可写相关事件变化序号
-    uint64_t poll_seq_pri;               // 紧急数据事件变化序号
-    uint64_t i_version;                  // 数据变更版本
+    vfs_node_t parent;                        // 父目录
+    uint64_t flags;                           // 标志
+    uint64_t dev;                             // 设备号
+    uint64_t rdev;                            // 真实设备号
+    char *name;                               // 名称
+    uint64_t inode;                           // 节点号
+    uint64_t realsize;                        // 项目真实占用的空间 (可选)
+    uint64_t size;                            // 文件大小或若是文件夹则填0
+    uint64_t blksz;                           // 块大小
+    uint64_t createtime;                      // 创建时间
+    uint64_t readtime;                        // 最后读取时间
+    uint64_t writetime;                       // 最后写入时间
+    uint32_t owner;                           // 所有者
+    uint32_t group;                           // 所有组
+    uint32_t type;                            // 类型
+    uint32_t fsid;                            // 文件系统的 id
+    void *handle;                             // 操作文件的句柄
+    flock_t lock;                             // 锁
+    struct llist_header node;                 // 所有vfs_node的链表
+    struct llist_header childs;               // 子目录和子文件
+    hashmap_t child_name_map;                 // 子节点名字索引
+    struct llist_header node_for_childs;      // 为子目录和子文件添加的节点
+    struct llist_header node_for_name_bucket; // 为名字桶添加的节点
+    uint64_t child_name_hash;                 // 当前名字哈希
+    vfs_node_t root;                          // 根目录
+    int refcount;                             // 引用计数
+    uint16_t mode;                            // 模式
+    uint32_t rw_hint;                         // 读写提示
+    spinlock_t poll_waiters_lock;             // poll 等待队列锁
+    struct llist_header poll_waiters;         // poll 等待队列
+    uint64_t poll_seq_in;                     // 可读相关事件变化序号
+    uint64_t poll_seq_out;                    // 可写相关事件变化序号
+    uint64_t poll_seq_pri;                    // 紧急数据事件变化序号
+    uint64_t i_version;                       // 数据变更版本
 };
 
 struct mount_point {
@@ -368,6 +372,8 @@ extern vfs_node_t rootdir; // vfs 根目录
 vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name);
 void vfs_free(vfs_node_t vfs);
 void vfs_free_child(vfs_node_t vfs);
+void vfs_detach_child(vfs_node_t node);
+void vfs_attach_child(vfs_node_t parent, vfs_node_t child);
 // 一定要记得手动设置一下child的type
 vfs_node_t vfs_child_find(vfs_node_t parent, const char *name);
 vfs_node_t vfs_child_append(vfs_node_t parent, const char *name, void *handle);

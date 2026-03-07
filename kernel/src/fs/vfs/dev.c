@@ -640,7 +640,7 @@ void devtmpfs_init() {
 }
 
 void devtmpfs_init_umount() {
-    llist_delete(&devtmpfs_root->node_for_childs);
+    vfs_detach_child(devtmpfs_root);
     devtmpfs_root->parent = NULL;
 }
 

@@ -154,7 +154,7 @@ bool pipefs_close(vfs_node_t node) {
         pipe->read_fds--;
     }
 
-    llist_delete(&node->node_for_childs);
+    vfs_detach_child(node);
 
     if (spec->write && pipe->write_fds == 0)
         free(spec);

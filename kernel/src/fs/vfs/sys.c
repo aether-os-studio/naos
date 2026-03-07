@@ -269,7 +269,7 @@ void sysfs_init() {
 }
 
 void sysfs_init_umount() {
-    llist_delete(&sysfs_root->node_for_childs);
+    vfs_detach_child(sysfs_root);
     sysfs_root->parent = NULL;
 }
 
