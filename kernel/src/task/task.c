@@ -562,16 +562,22 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
         }
     }
 
-    uint64_t total_len = sizeof(uint64_t) +
-                         (argv_count + 1) * sizeof(uint64_t) +
-                         (envp_count + 1) * sizeof(uint64_t);
-    tmp_stack -= (tmp_stack - total_len) % 0x10;
+    const size_t auxv_pairs = 15;
+    size_t qwords_to_push =
+        auxv_pairs * 2 + (size_t)argv_count + (size_t)envp_count + 3;
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, 0x7800);
+    tmp_stack &= ~0xFULL;
+    if (qwords_to_push & 1)
+        tmp_stack -= sizeof(uint64_t);
+
+    PUSH_TO_STACK(tmp_stack, uint64_t, 0);
     PUSH_TO_STACK(tmp_stack, uint64_t, AT_NULL);
 
     PUSH_TO_STACK(tmp_stack, uint64_t, 0);
     PUSH_TO_STACK(tmp_stack, uint64_t, AT_SECURE);
+
+    PUSH_TO_STACK(tmp_stack, uint64_t, 0);
+    PUSH_TO_STACK(tmp_stack, uint64_t, AT_FLAGS);
 
     PUSH_TO_STACK(tmp_stack, uint64_t, DEFAULT_PAGE_SIZE);
     PUSH_TO_STACK(tmp_stack, uint64_t, AT_PAGESZ);

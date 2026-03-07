@@ -27,7 +27,11 @@ uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr) {
     }
 
     uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
-    return ARCH_READ_PTE(pgdir[index]) +
+    uint64_t pte = pgdir[index];
+    if (!(pte & ARCH_PT_FLAG_VALID))
+        return 0;
+
+    return ARCH_READ_PTE(pte) +
            (vaddr & PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL));
 }
 
@@ -76,15 +80,14 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
     }
 
     uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
-    if (pgdir[index] & ARCH_PT_FLAG_VALID) {
-        if (force) {
-            uint64_t old_paddr = ARCH_READ_PTE(pgdir[index]);
-            uint64_t old_flags = ARCH_READ_PTE_FLAG(pgdir[index]);
-            if ((old_flags & ARCH_PT_FLAG_ALLOC) && old_paddr) {
-                address_release(old_paddr);
-            }
-        } else
+    bool had_old_mapping = (pgdir[index] & ARCH_PT_FLAG_VALID) != 0;
+    uint64_t old_paddr = 0;
+    uint64_t old_flags = 0;
+    if (had_old_mapping) {
+        if (!force)
             return 0;
+        old_paddr = ARCH_READ_PTE(pgdir[index]);
+        old_flags = ARCH_READ_PTE_FLAG(pgdir[index]);
     }
 
     if (paddr == (uint64_t)-1) {
@@ -96,6 +99,10 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
         memset((void *)phys_to_virt(phys), 0, DEFAULT_PAGE_SIZE);
         paddr = phys;
         flags |= ARCH_PT_FLAG_ALLOC;
+    }
+
+    if (had_old_mapping && (old_flags & ARCH_PT_FLAG_ALLOC) && old_paddr) {
+        address_release(old_paddr);
     }
 
     pgdir[index] = ARCH_MAKE_PTE(paddr, flags);
@@ -201,6 +208,10 @@ uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
     }
 
     uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
+    if (!(pgdir[index] & ARCH_PT_FLAG_VALID)) {
+        return 0;
+    }
+
     uint64_t old_flags = ARCH_READ_PTE_FLAG(pgdir[index]);
     uint64_t keep_flags = old_flags & ARCH_PT_FLAG_ALLOC;
     pgdir[index] =

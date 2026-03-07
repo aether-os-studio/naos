@@ -158,20 +158,36 @@ extern bool task_initialized;
 #define ARCH_GET_FS 0x1003
 #define ARCH_GET_GS 0x1004
 
+static inline bool is_canonical_user_addr(uint64_t addr) {
+    return addr < (1ULL << 47);
+}
+
 uint64_t sys_arch_prctl(uint64_t cmd, uint64_t arg) {
+    uint64_t value = 0;
+
     switch (cmd) {
     case ARCH_SET_FS:
+        if (!is_canonical_user_addr(arg))
+            return (uint64_t)(-EINVAL);
         current_task->arch_context->fsbase = arg;
         write_fsbase(current_task->arch_context->fsbase);
         return 0;
     case ARCH_SET_GS:
+        if (!is_canonical_user_addr(arg))
+            return (uint64_t)(-EINVAL);
         current_task->arch_context->gsbase = arg;
         write_gsbase(current_task->arch_context->gsbase);
         return 0;
     case ARCH_GET_FS:
-        return current_task->arch_context->fsbase;
+        value = current_task->arch_context->fsbase;
+        if (copy_to_user((void *)arg, &value, sizeof(value)))
+            return (uint64_t)(-EFAULT);
+        return 0;
     case ARCH_GET_GS:
-        return current_task->arch_context->gsbase;
+        value = current_task->arch_context->gsbase;
+        if (copy_to_user((void *)arg, &value, sizeof(value)))
+            return (uint64_t)(-EFAULT);
+        return 0;
     default:
         return (uint64_t)(-ENOSYS);
     }

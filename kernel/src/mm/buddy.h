@@ -7,23 +7,11 @@
 #define MIN_ORDER 12 // 4KB = 2^12
 #define ORDER_COUNT (MAX_ORDER - MIN_ORDER)
 
-// 页面列表元数据（存储在页面头部）
-typedef struct page_list {
-    size_t entry_num;    // 当前页中的条目数量
-    uintptr_t next_page; // 下一个页面列表的物理地址（0 表示无）
-} page_list_t;
-
-// Buddy 分配器
 typedef struct buddy_allocator {
-    uintptr_t free_area[ORDER_COUNT]; // 每个 order 的空闲列表头
+    uintptr_t free_area[ORDER_COUNT];
     spinlock_t lock;
 } buddy_allocator_t;
 
-// 每页能存储的条目数量
-#define BUDDY_ENTRIES                                                          \
-    ((DEFAULT_PAGE_SIZE - sizeof(page_list_t)) / sizeof(uintptr_t))
-
-// Zone 类型
 enum zone_type {
 #if defined(__x86_64__)
     ZONE_DMA, // 0-16MB

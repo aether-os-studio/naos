@@ -149,9 +149,6 @@ static void epoll_disarm_waiters(vfs_poll_wait_t *waits, size_t count) {
 
 // epoll API
 size_t epoll_create1(int flags) {
-    if (flags & ~O_CLOEXEC)
-        return -EINVAL;
-
     vfs_node_t node = vfs_node_alloc(NULL, NULL);
     node->type = file_epoll;
     node->refcount++;

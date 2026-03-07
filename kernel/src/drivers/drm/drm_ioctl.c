@@ -35,6 +35,36 @@ static ssize_t drm_copy_to_user_ptr(uint64_t user_ptr, const void *src,
 #define DRM_BLOB_ID_USER_BASE 0x30000000U
 #define DRM_BLOB_ID_USER_LAST 0x3fffffffU
 
+#define DMA_BUF_BASE 'b'
+#define DMA_BUF_NAME_LEN 32
+
+#define DMA_BUF_SYNC_READ (1U << 0)
+#define DMA_BUF_SYNC_WRITE (2U << 0)
+#define DMA_BUF_SYNC_RW (DMA_BUF_SYNC_READ | DMA_BUF_SYNC_WRITE)
+#define DMA_BUF_SYNC_END (1U << 2)
+#define DMA_BUF_SYNC_VALID_FLAGS_MASK (DMA_BUF_SYNC_RW | DMA_BUF_SYNC_END)
+
+struct dma_buf_sync {
+    uint64_t flags;
+};
+
+struct dma_buf_export_sync_file {
+    uint32_t flags;
+    int32_t fd;
+};
+
+struct dma_buf_import_sync_file {
+    uint32_t flags;
+    int32_t fd;
+};
+
+#define DMA_BUF_IOCTL_SYNC _IOW(DMA_BUF_BASE, 0, struct dma_buf_sync)
+#define DMA_BUF_IOCTL_SET_NAME _IOW(DMA_BUF_BASE, 1, char[DMA_BUF_NAME_LEN])
+#define DMA_BUF_IOCTL_EXPORT_SYNC_FILE                                         \
+    _IOWR(DMA_BUF_BASE, 2, struct dma_buf_export_sync_file)
+#define DMA_BUF_IOCTL_IMPORT_SYNC_FILE                                         \
+    _IOW(DMA_BUF_BASE, 3, struct dma_buf_import_sync_file)
+
 typedef struct drm_prime_export_entry {
     bool used;
     drm_device_t *dev;
@@ -51,6 +81,7 @@ typedef struct drm_prime_fd_ctx {
     uint32_t handle;
     uint64_t phys;
     uint64_t size;
+    char name[DMA_BUF_NAME_LEN];
 } drm_prime_fd_ctx_t;
 
 static int drm_prime_fsid = 0;
@@ -111,6 +142,93 @@ static void drm_primefd_resize(vfs_node_t node, uint64_t size) {
     }
 }
 
+static int drm_primefs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
+    drm_prime_fd_ctx_t *ctx = node ? node->handle : NULL;
+    if (!ctx) {
+        return -EBADF;
+    }
+
+    uint32_t ioctl_cmd = (uint32_t)(cmd & 0xffffffffU);
+    switch (ioctl_cmd) {
+    case DMA_BUF_IOCTL_SYNC: {
+        struct dma_buf_sync sync = {0};
+        if (!arg ||
+            copy_from_user(&sync, (void *)(uintptr_t)arg, sizeof(sync))) {
+            return -EFAULT;
+        }
+
+        if (sync.flags & ~DMA_BUF_SYNC_VALID_FLAGS_MASK) {
+            return -EINVAL;
+        }
+
+        return 0;
+    }
+    case DMA_BUF_IOCTL_SET_NAME: {
+        char name[DMA_BUF_NAME_LEN] = {0};
+        if (!arg ||
+            copy_from_user(name, (void *)(uintptr_t)arg, sizeof(name))) {
+            return -EFAULT;
+        }
+
+        memcpy(ctx->name, name, sizeof(ctx->name));
+        ctx->name[DMA_BUF_NAME_LEN - 1] = '\0';
+        return 0;
+    }
+    case DMA_BUF_IOCTL_EXPORT_SYNC_FILE: {
+        struct dma_buf_export_sync_file export_sync = {0};
+        if (!arg || copy_from_user(&export_sync, (void *)(uintptr_t)arg,
+                                   sizeof(export_sync))) {
+            return -EFAULT;
+        }
+
+        if ((export_sync.flags & ~DMA_BUF_SYNC_RW) ||
+            !(export_sync.flags & DMA_BUF_SYNC_RW)) {
+            return -EINVAL;
+        }
+
+        ssize_t sync_fd = (ssize_t)sys_eventfd2(1, EFD_CLOEXEC | EFD_NONBLOCK);
+        if (sync_fd < 0) {
+            return sync_fd;
+        }
+
+        export_sync.fd = (int32_t)sync_fd;
+        if (copy_to_user((void *)(uintptr_t)arg, &export_sync,
+                         sizeof(export_sync))) {
+            sys_close((uint64_t)sync_fd);
+            return -EFAULT;
+        }
+
+        return 0;
+    }
+    case DMA_BUF_IOCTL_IMPORT_SYNC_FILE: {
+        struct dma_buf_import_sync_file import_sync = {0};
+        if (!arg || copy_from_user(&import_sync, (void *)(uintptr_t)arg,
+                                   sizeof(import_sync))) {
+            return -EFAULT;
+        }
+
+        if ((import_sync.flags & ~DMA_BUF_SYNC_RW) ||
+            !(import_sync.flags & DMA_BUF_SYNC_RW)) {
+            return -EINVAL;
+        }
+
+        if (import_sync.fd < 0 || import_sync.fd >= MAX_FD_NUM) {
+            return -EBADF;
+        }
+
+        int ret = -EBADF;
+        with_fd_info_lock(current_task->fd_info, {
+            if (current_task->fd_info->fds[import_sync.fd]) {
+                ret = 0;
+            }
+        });
+        return ret;
+    }
+    default:
+        return -ENOTTY;
+    }
+}
+
 static void *drm_primefd_map(fd_t *file, void *addr, size_t offset, size_t size,
                              size_t prot, size_t flags) {
     (void)prot;
@@ -140,6 +258,7 @@ static vfs_operations_t drm_primefs_callbacks = {
     .map = drm_primefd_map,
     .stat = drm_primefd_stat,
     .resize = drm_primefd_resize,
+    .ioctl = drm_primefs_ioctl,
     .free_handle = vfs_generic_free_handle,
 };
 

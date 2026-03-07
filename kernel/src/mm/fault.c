@@ -124,7 +124,8 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
         flags &= ~ARCH_PT_FLAG_COW;
 
         if (vma &&
-            ((vma->vm_flags & VMA_SHM) || (vma->vm_flags & VMA_DEVICE))) {
+            ((vma->vm_flags & VMA_SHM) || (vma->vm_flags & VMA_DEVICE) ||
+             (vma->vm_flags & VMA_SHARED))) {
             goto ok;
         } else {
             uint64_t new_paddr = alloc_frames(1);
