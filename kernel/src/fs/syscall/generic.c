@@ -714,7 +714,7 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
         break;
     case SEEK_END:
         self->fd_info->fds[fd]->offset =
-            self->fd_info->fds[fd]->node->size - real_offset;
+            self->fd_info->fds[fd]->node->size + real_offset;
         break;
 
     default:

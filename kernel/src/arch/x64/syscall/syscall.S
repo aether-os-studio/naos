@@ -3,6 +3,7 @@
 
 ENTRY(syscall_handler_asm)
     cli
+    cld
 
     swapgs
 
@@ -30,6 +31,7 @@ ENTRY(syscall_handler_asm)
     pushq %r14
     pushq %r15
 
+    xorq %rbp, %rbp
     movq %rsp, %rdi
     movq %cr2, %rsi
 

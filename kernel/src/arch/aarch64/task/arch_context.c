@@ -59,7 +59,7 @@ extern void arch_context_switch_with_next(arch_context_t *next);
 extern void arch_context_switch_with_prev_next(arch_context_t *prev,
                                                arch_context_t *next);
 
-void __switch_to(task_t *prev, task_t *next) {}
+void __switch_to(task_t *prev, task_t *next) { arch_set_current(next); }
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
                                uint64_t stack) {

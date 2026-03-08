@@ -1288,6 +1288,42 @@ ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size) {
         return vfs_write(linknode, addr, offset, size);
     }
 
+    if (offset > fd->node->size) {
+        size_t fill_bytes = offset - fd->node->size;
+        size_t written = 0;
+
+        char *zero_page = alloc_frames_bytes(DEFAULT_PAGE_SIZE);
+        if (!zero_page)
+            return -ENOMEM;
+        memset(zero_page, 0, DEFAULT_PAGE_SIZE);
+
+        while (written < fill_bytes) {
+            size_t chunk = MIN(DEFAULT_PAGE_SIZE, fill_bytes - written);
+            size_t old_size = fd->node->size;
+            size_t write_offset = old_size + written;
+
+            ssize_t ret =
+                vfs_ops_of(fd->node)->write(fd, zero_page, write_offset, chunk);
+
+            if (ret < 0) {
+                free_frames_bytes(zero_page, DEFAULT_PAGE_SIZE);
+                return ret;
+            }
+
+            if (ret == 0) {
+                free_frames_bytes(zero_page, DEFAULT_PAGE_SIZE);
+                return -ENOSPC;
+            }
+
+            written += ret;
+            if (old_size == fd->node->size) {
+                fd->node->size += ret;
+            }
+        }
+
+        free_frames_bytes(zero_page, DEFAULT_PAGE_SIZE);
+    }
+
     ssize_t write_bytes = 0;
     write_bytes = vfs_ops_of(fd->node)->write(fd, addr, offset, size);
     if (write_bytes > 0) {

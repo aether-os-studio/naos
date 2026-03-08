@@ -71,7 +71,7 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
                        uint64_t clone_flags) {
     arch_flush_tlb_all();
     dst->ctx = (struct pt_regs *)stack - 1;
-    dst->rip = (uint64_t)ret_to_user;
+    dst->rip = (uint64_t)ret_from_syscall;
     dst->rsp = (uint64_t)dst->ctx;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
     dst->ctx->rax = 0;
@@ -113,6 +113,7 @@ void __switch_to(task_t *prev, task_t *next) {
         asm volatile("fxrstor (%0)" ::"r"(next->arch_context->fpu_ctx));
     }
 
+    arch_set_current(next);
     tss[next->cpu_id].rsp0 = next->kernel_stack;
 
     write_fsbase(next->arch_context->fsbase);
@@ -136,6 +137,9 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
 
     context->ctx->rflags = (1UL << 9);
 
+    context->fsbase = 0;
+    context->gsbase = 0;
+
     memset(context->fpu_ctx, 0, sizeof(fpu_context_t));
     context->fpu_ctx->mxscr = 0x1f80;
     context->fpu_ctx->fcw = 0x037f;
@@ -146,6 +150,9 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry,
     arch_disable_interrupt();
 
     arch_context_to_user_mode(context, entry, stack);
+
+    write_fsbase(context->fsbase);
+    write_gsbase(context->gsbase);
 
     asm volatile("movq %0, %%rsp\n\t"
                  "jmp ret_from_exception" ::"r"(context->ctx));

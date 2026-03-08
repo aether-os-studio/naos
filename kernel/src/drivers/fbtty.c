@@ -80,30 +80,39 @@ int terminal_ioctl(tty_t *device, uint32_t cmd, uint64_t arg) {
     struct flanterm_context *ft_ctx = device->terminal;
     struct flanterm_fb_context *fb_ctx = device->terminal;
     switch (cmd) {
-    case TIOCGWINSZ:
-        *(struct winsize *)arg = (struct winsize){
+    case TIOCGWINSZ: {
+        struct winsize ws = {
             .ws_xpixel = fb_ctx->width,
             .ws_ypixel = fb_ctx->height,
             .ws_col = ft_ctx->cols,
             .ws_row = ft_ctx->rows,
         };
+        if (!arg || copy_to_user((void *)arg, &ws, sizeof(ws)))
+            return -EFAULT;
         return 0;
+    }
     case TIOCSCTTY:
         return 0;
-    case TIOCGPGRP:
-        int *pid = (int *)arg;
-        *pid = device->at_process_group_id;
+    case TIOCGPGRP: {
+        int pid = device->at_process_group_id;
+        if (!arg || copy_to_user((void *)arg, &pid, sizeof(pid)))
+            return -EFAULT;
         return 0;
-    case TIOCSPGRP:
-        device->at_process_group_id = *(int *)arg;
+    }
+    case TIOCSPGRP: {
+        int pid = 0;
+        if (!arg || copy_from_user(&pid, (void *)arg, sizeof(pid)))
+            return -EFAULT;
+        device->at_process_group_id = pid;
         return 0;
+    }
     case TCGETS:
-        if (check_user_overflow(arg, sizeof(termios))) {
+        if (!arg || copy_to_user((void *)arg, &device->termios,
+                                 sizeof(termios))) {
             return -EFAULT;
         }
-        memcpy((void *)arg, &device->termios, sizeof(termios));
         return 0;
-    case TCGETS2:
+    case TCGETS2: {
         struct termios2 t2;
         memcpy(&t2.c_iflag, &device->termios.c_iflag, sizeof(uint32_t));
         memcpy(&t2.c_oflag, &device->termios.c_oflag, sizeof(uint32_t));
@@ -113,17 +122,21 @@ int terminal_ioctl(tty_t *device, uint32_t cmd, uint64_t arg) {
         memcpy(t2.c_cc, device->termios.c_cc, NCCS);
         t2.c_ispeed = 0; // Not supported
         t2.c_ospeed = 0; // Not supported
-        memcpy((void *)arg, &t2, sizeof(struct termios2));
+        if (!arg || copy_to_user((void *)arg, &t2, sizeof(struct termios2)))
+            return -EFAULT;
         return 0;
+    }
     case TCSETS:
-        if (check_user_overflow(arg, sizeof(termios))) {
+        if (!arg || copy_from_user(&device->termios, (void *)arg,
+                                   sizeof(termios))) {
             return -EFAULT;
         }
-        memcpy(&device->termios, (void *)arg, sizeof(termios));
         return 0;
-    case TCSETS2:
+    case TCSETS2: {
         struct termios2 t2_set;
-        memcpy(&t2_set, (void *)arg, sizeof(struct termios2));
+        if (!arg ||
+            copy_from_user(&t2_set, (void *)arg, sizeof(struct termios2)))
+            return -EFAULT;
         memcpy(&device->termios.c_iflag, &t2_set.c_iflag, sizeof(uint32_t));
         memcpy(&device->termios.c_oflag, &t2_set.c_oflag, sizeof(uint32_t));
         memcpy(&device->termios.c_cflag, &t2_set.c_cflag, sizeof(uint32_t));
@@ -132,48 +145,68 @@ int terminal_ioctl(tty_t *device, uint32_t cmd, uint64_t arg) {
         memcpy(device->termios.c_cc, t2_set.c_cc, NCCS);
         // Ignore ispeed and ospeed as they are not supported
         return 0;
+    }
     case TCSETSW:
-        if (check_user_overflow(arg, sizeof(termios))) {
+        if (!arg || copy_from_user(&device->termios, (void *)arg,
+                                   sizeof(termios))) {
             return -EFAULT;
         }
-        memcpy(&device->termios, (void *)arg, sizeof(termios));
         return 0;
     case TIOCSWINSZ:
         return 0;
-    case KDGETMODE:
-        *(int *)arg = device->tty_mode;
+    case KDGETMODE: {
+        int mode = device->tty_mode;
+        if (!arg || copy_to_user((void *)arg, &mode, sizeof(mode)))
+            return -EFAULT;
         return 0;
+    }
     case KDSETMODE:
         device->tty_mode = arg;
         return 0;
-    case KDGKBMODE:
-        *(int *)arg = device->tty_kbmode;
+    case KDGKBMODE: {
+        int kbmode = device->tty_kbmode;
+        if (!arg || copy_to_user((void *)arg, &kbmode, sizeof(kbmode)))
+            return -EFAULT;
         return 0;
+    }
     case KDSKBMODE:
         device->tty_kbmode = arg;
         return 0;
     case VT_SETMODE:
-        memcpy(&device->current_vt_mode, (void *)arg, sizeof(struct vt_mode));
+        if (!arg || copy_from_user(&device->current_vt_mode, (void *)arg,
+                                   sizeof(struct vt_mode)))
+            return -EFAULT;
         return 0;
     case VT_GETMODE:
-        memcpy((void *)arg, &device->current_vt_mode, sizeof(struct vt_mode));
+        if (!arg || copy_to_user((void *)arg, &device->current_vt_mode,
+                                 sizeof(struct vt_mode)))
+            return -EFAULT;
         return 0;
     case VT_ACTIVATE:
         return 0;
     case VT_WAITACTIVE:
         return 0;
-    case VT_GETSTATE:
-        struct vt_state *state = (struct vt_state *)arg;
-        state->v_active = 1; // 当前活动终端
-        state->v_state = 0;  // 状态标志
+    case VT_GETSTATE: {
+        struct vt_state state = {
+            .v_active = 1,
+            .v_state = 0,
+        };
+        if (!arg || copy_to_user((void *)arg, &state, sizeof(state)))
+            return -EFAULT;
         return 0;
-    case VT_OPENQRY:
-        *(int *)arg = 1;
+    }
+    case VT_OPENQRY: {
+        int query = 1;
+        if (!arg || copy_to_user((void *)arg, &query, sizeof(query)))
+            return -EFAULT;
         return 0;
+    }
     case TIOCNOTTY:
         return 0;
     case TCSETSF:
-        memcpy(&device->termios, (void *)arg, sizeof(termios));
+        if (!arg || copy_from_user(&device->termios, (void *)arg,
+                                   sizeof(termios)))
+            return -EFAULT;
         return 0;
     case TCFLSH:
         return 0;

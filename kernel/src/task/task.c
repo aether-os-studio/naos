@@ -34,6 +34,21 @@ static spinlock_t task_timeout_lock = SPIN_INIT;
 static spinlock_t should_free_lock = SPIN_INIT;
 DEFINE_LLIST(should_free_tasks);
 
+static void task_init_default_rlimits(task_t *task) {
+    size_t infinity = (size_t)-1;
+
+    for (size_t index = 0; index < sizeof(task->rlim) / sizeof(task->rlim[0]);
+         index++) {
+        task->rlim[index] = (struct rlimit){infinity, infinity};
+    }
+
+    task->rlim[RLIMIT_STACK] = (struct rlimit){
+        USER_STACK_END - USER_STACK_START, USER_STACK_END - USER_STACK_START};
+    task->rlim[RLIMIT_NPROC] = (struct rlimit){MAX_TASK_NUM, MAX_TASK_NUM};
+    task->rlim[RLIMIT_NOFILE] = (struct rlimit){MAX_FD_NUM, MAX_FD_NUM};
+    task->rlim[RLIMIT_CORE] = (struct rlimit){0, 0};
+}
+
 typedef struct task_index_bucket {
     uint64_t key;
     size_t count;
@@ -780,12 +795,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
 
     task->cmdline = NULL;
 
-    memset(task->rlim, 0, sizeof(task->rlim));
-    task->rlim[RLIMIT_STACK] = (struct rlimit){
-        USER_STACK_END - USER_STACK_START, USER_STACK_END - USER_STACK_START};
-    task->rlim[RLIMIT_NPROC] = (struct rlimit){MAX_TASK_NUM, MAX_TASK_NUM};
-    task->rlim[RLIMIT_NOFILE] = (struct rlimit){MAX_FD_NUM, MAX_FD_NUM};
-    task->rlim[RLIMIT_CORE] = (struct rlimit){0, 0};
+    task_init_default_rlimits(task);
 
     task->clone_flags = 0;
 
@@ -1206,6 +1216,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     task_mm_info_t *old_mm = self->mm;
     task_mm_info_t *new_mm = (task_mm_info_t *)malloc(sizeof(task_mm_info_t));
     memset(new_mm, 0, sizeof(task_mm_info_t));
+    spin_init(&new_mm->lock);
     new_mm->page_table_addr = alloc_frames(1);
     memset((void *)phys_to_virt(new_mm->page_table_addr), 0, DEFAULT_PAGE_SIZE);
 #if defined(__x86_64__) || defined(__riscv__)
@@ -1365,7 +1376,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
                    USER_STACK_END - USER_STACK_START,
                    PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
-    memset((void *)USER_STACK_START, 0, USER_STACK_END - USER_STACK_START);
     uint64_t stack = push_infos(
         self, USER_STACK_END, (char **)new_argv, argv_count, (char **)new_envp,
         envp_count, e_entry, phdr_vaddr, ehdr->e_phnum,
@@ -1537,6 +1547,10 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
         return task->status;
     }
 
+    bool irq_state = arch_interrupt_enabled();
+
+    arch_disable_interrupt();
+
     uint32_t target_cpu = task->cpu_id;
     bool should_trigger_sched_ipi = false;
     if (target_cpu != current_cpu_id && task->sched_info &&
@@ -1568,7 +1582,7 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
         task->blocking_reason = NULL;
         if (task->state == TASK_READY)
             add_sched_entity(task, schedulers[task->cpu_id]);
-        return task->status;
+        goto ret;
     }
 
     if (__atomic_exchange_n(&task->wake_pending, false, __ATOMIC_ACQ_REL)) {
@@ -1577,7 +1591,7 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
         task->force_wakeup_ns = UINT64_MAX;
         task->blocking_reason = NULL;
         add_sched_entity(task, schedulers[task->cpu_id]);
-        return task->status;
+        goto ret;
     }
 
     if (should_trigger_sched_ipi) {
@@ -1587,6 +1601,13 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
 
     schedule(SCHED_FLAG_YIELD);
 
+ret:
+    if (irq_state) {
+        arch_enable_interrupt();
+    } else {
+        arch_disable_interrupt();
+    }
+
     return task->status;
 }
 
@@ -1595,6 +1616,10 @@ void task_unblock(task_t *task, int reason) {
         return;
     }
 
+    bool irq_state = arch_interrupt_enabled();
+
+    arch_disable_interrupt();
+
     task_timeout_cancel(task);
 
     if (task->state != TASK_BLOCKING && task->state != TASK_READING_STDIO &&
@@ -1602,7 +1627,7 @@ void task_unblock(task_t *task, int reason) {
         task->status = reason;
         task->force_wakeup_ns = UINT64_MAX;
         __atomic_store_n(&task->wake_pending, true, __ATOMIC_RELEASE);
-        return;
+        goto ret;
     }
 
     task->status = reason;
@@ -1613,6 +1638,13 @@ void task_unblock(task_t *task, int reason) {
     __atomic_store_n(&task->wake_pending, false, __ATOMIC_RELEASE);
 
     add_sched_entity(task, schedulers[task->cpu_id]);
+
+ret:
+    if (irq_state) {
+        arch_enable_interrupt();
+    } else {
+        arch_disable_interrupt();
+    }
 }
 
 extern spinlock_t futex_lock;
@@ -2077,19 +2109,28 @@ uint64_t sys_getrusage(int who, struct rusage *ru) {
     uint64_t now_ns = nano_time();
     task_account_runtime_ns(current_task, now_ns);
 
+    struct rusage result;
+
     switch (who) {
     case RUSAGE_SELF:
     case RUSAGE_THREAD:
-        task_fill_rusage(current_task, false, ru);
-        return 0;
+        memset(&result, 0, sizeof(result));
+        task_fill_rusage(current_task, false, &result);
+        break;
     case RUSAGE_CHILDREN:
-        memset(ru, 0, sizeof(*ru));
-        ru->ru_utime = task_ns_to_timeval(current_task->child_user_time_ns);
-        ru->ru_stime = task_ns_to_timeval(current_task->child_system_time_ns);
-        return 0;
+        memset(&result, 0, sizeof(result));
+        result.ru_utime = task_ns_to_timeval(current_task->child_user_time_ns);
+        result.ru_stime =
+            task_ns_to_timeval(current_task->child_system_time_ns);
+        break;
     default:
         return (uint64_t)-EINVAL;
     }
+
+    if (copy_to_user(ru, &result, sizeof(result)))
+        return (uint64_t)-EFAULT;
+
+    return 0;
 }
 
 uint64_t sys_clone3(struct pt_regs *regs, clone_args_t *args_user,
@@ -2330,12 +2371,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         child->tidptr = child_tid;
     }
 
-    memset(child->rlim, 0, sizeof(child->rlim));
-    child->rlim[RLIMIT_STACK] = (struct rlimit){
-        USER_STACK_END - USER_STACK_START, USER_STACK_END - USER_STACK_START};
-    child->rlim[RLIMIT_NPROC] = (struct rlimit){MAX_TASK_NUM, MAX_TASK_NUM};
-    child->rlim[RLIMIT_NOFILE] = (struct rlimit){MAX_FD_NUM, MAX_FD_NUM};
-    child->rlim[RLIMIT_CORE] = (struct rlimit){0, 0};
+    memcpy(child->rlim, self->rlim, sizeof(child->rlim));
 
     child->child_vfork_done = false;
 
@@ -2430,12 +2466,26 @@ uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
                    uint64_t arg5) {
     switch (option) {
     case PR_SET_NAME: // 设置进程名 (PR_SET_NAME=15)
-        strncpy(current_task->name, (char *)arg2, TASK_NAME_MAX);
+    {
+        char pr_name[16] = {0};
+        if (!arg2 ||
+            copy_from_user_str(pr_name, (const char *)arg2, sizeof(pr_name))) {
+            return (uint64_t)-EFAULT;
+        }
+        memset(current_task->name, 0, sizeof(current_task->name));
+        strncpy(current_task->name, pr_name, sizeof(pr_name) - 1);
         return 0;
+    }
 
     case PR_GET_NAME: // 获取进程名 (PR_GET_NAME=16)
-        strncpy((char *)arg2, current_task->name, TASK_NAME_MAX);
+    {
+        char pr_name[16] = {0};
+        strncpy(pr_name, current_task->name, sizeof(pr_name) - 1);
+        if (!arg2 || copy_to_user((void *)arg2, pr_name, sizeof(pr_name))) {
+            return (uint64_t)-EFAULT;
+        }
         return 0;
+    }
 
     case PR_SET_SECCOMP: // 启用seccomp过滤
         if (arg2 == SECCOMP_MODE_STRICT) {
@@ -2807,7 +2857,6 @@ void schedule(uint64_t sched_flags) {
     next->current_state = TASK_RUNNING;
     next->last_sched_in_ns = now_ns;
 
-    arch_set_current(next);
     switch_mm(prev, next);
     switch_to(prev, next);
 

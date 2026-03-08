@@ -90,6 +90,8 @@ void __switch_to(task_t *prev, task_t *next) {
     asm volatile("sfence.vma" : : : "memory");
 
     csr_write(sscratch, next->is_kernel ? 0 : next->kernel_stack);
+
+    arch_set_current(next);
 }
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,

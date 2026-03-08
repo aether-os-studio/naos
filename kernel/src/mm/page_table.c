@@ -348,11 +348,15 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
         return NULL;
 
     memset(new_mm, 0, sizeof(task_mm_info_t));
+    spin_init(&new_mm->lock);
+
+    spin_lock(&old->lock);
 
     uint64_t *old_root = (uint64_t *)phys_to_virt(old->page_table_addr);
     uint64_t *new_root = copy_page_table_recursive(old_root, ARCH_MAX_PT_LEVEL);
     if (!new_root) {
         free(new_mm);
+        spin_unlock(&old->lock);
         return NULL;
     }
 
@@ -368,8 +372,11 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
     if (vma_manager_copy(&new_mm->task_vma_mgr, &old->task_vma_mgr) != 0) {
         free_page_table_recursive(new_root, ARCH_MAX_PT_LEVEL);
         free(new_mm);
+        spin_unlock(&old->lock);
         return NULL;
     }
+
+    spin_unlock(&old->lock);
 
     new_mm->task_vma_mgr.initialized = old->task_vma_mgr.initialized;
     new_mm->brk_start = old->brk_start;

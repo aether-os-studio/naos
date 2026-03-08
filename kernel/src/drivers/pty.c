@@ -708,12 +708,18 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
     mutex_lock(&pair->lock);
     switch (request) {
     case TIOCGWINSZ: {
-        memcpy(arg, &pair->win, sizeof(struct winsize));
+        if (!arg || copy_to_user(arg, &pair->win, sizeof(struct winsize))) {
+            ret = -EFAULT;
+            break;
+        }
         ret = 0;
         break;
     }
     case TIOCSWINSZ: {
-        memcpy(&pair->win, arg, sizeof(struct winsize));
+        if (!arg || copy_from_user(&pair->win, arg, sizeof(struct winsize))) {
+            ret = -EFAULT;
+            break;
+        }
         ret = 0;
         break;
     }
@@ -723,11 +729,14 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
         break;
     }
     case TCGETS: {
-        memcpy(arg, &pair->term, sizeof(termios));
+        if (!arg || copy_to_user(arg, &pair->term, sizeof(termios))) {
+            ret = -EFAULT;
+            break;
+        }
         ret = 0;
         break;
     }
-    case TCGETS2:
+    case TCGETS2: {
         struct termios2 t2;
         memcpy(&t2.c_iflag, &pair->term.c_iflag, sizeof(uint32_t));
         memcpy(&t2.c_oflag, &pair->term.c_oflag, sizeof(uint32_t));
@@ -737,19 +746,29 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
         memcpy(t2.c_cc, pair->term.c_cc, NCCS);
         t2.c_ispeed = 0; // Not supported
         t2.c_ospeed = 0; // Not supported
-        memcpy((void *)arg, &t2, sizeof(struct termios2));
-        ret = 0;
-        break;
-    case TCSETS:
-    case TCSETSW:
-    case TCSETSF: {
-        memcpy(&pair->term, arg, sizeof(termios));
+        if (!arg || copy_to_user(arg, &t2, sizeof(struct termios2))) {
+            ret = -EFAULT;
+            break;
+        }
         ret = 0;
         break;
     }
-    case TCSETS2:
+    case TCSETS:
+    case TCSETSW:
+    case TCSETSF: {
+        if (!arg || copy_from_user(&pair->term, arg, sizeof(termios))) {
+            ret = -EFAULT;
+            break;
+        }
+        ret = 0;
+        break;
+    }
+    case TCSETS2: {
         struct termios2 t2_set;
-        memcpy(&t2_set, (void *)arg, sizeof(struct termios2));
+        if (!arg || copy_from_user(&t2_set, arg, sizeof(struct termios2))) {
+            ret = -EFAULT;
+            break;
+        }
         memcpy(&pair->term.c_iflag, &t2_set.c_iflag, sizeof(uint32_t));
         memcpy(&pair->term.c_oflag, &t2_set.c_oflag, sizeof(uint32_t));
         memcpy(&pair->term.c_cflag, &t2_set.c_cflag, sizeof(uint32_t));
@@ -759,6 +778,7 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
         // Ignore ispeed and ospeed as they are not supported
         ret = 0;
         break;
+    }
     case TCXONC:
         ret = pty_tcxonc_locked(pair, false, (uintptr_t)arg, &notify_master,
                                 &notify_slave);
@@ -776,19 +796,33 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
                   : 0;
         break;
     case KDGKBMODE:
-        *(int *)arg = pair->tty_kbmode;
+        if (!arg) {
+            ret = -EFAULT;
+            break;
+        }
+        ret = copy_to_user(arg, (const void *)&pair->tty_kbmode, sizeof(int))
+                  ? -EFAULT
+                  : 0;
         break;
     case KDSKBMODE:
-        pair->tty_kbmode = *(int *)arg;
-        ret = 0;
+        if (!arg ||
+            copy_from_user(&pair->tty_kbmode, arg, sizeof(pair->tty_kbmode))) {
+            ret = -EFAULT;
+        } else {
+            ret = 0;
+        }
         break;
     case VT_SETMODE:
-        memcpy(&pair->vt_mode, (void *)arg, sizeof(struct vt_mode));
-        ret = 0;
+        ret = (!arg ||
+               copy_from_user(&pair->vt_mode, arg, sizeof(struct vt_mode)))
+                  ? -EFAULT
+                  : 0;
         break;
     case VT_GETMODE:
-        memcpy((void *)arg, &pair->vt_mode, sizeof(struct vt_mode));
-        ret = 0;
+        ret = (!arg || copy_to_user(arg, &pair->vt_mode,
+                                    sizeof(struct vt_mode)))
+                  ? -EFAULT
+                  : 0;
         break;
     case VT_ACTIVATE:
         ret = 0;
@@ -796,15 +830,19 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
     case VT_WAITACTIVE:
         ret = 0;
         break;
-    case VT_GETSTATE:
-        struct vt_state *state = (struct vt_state *)arg;
-        state->v_active = 2; // 当前活动终端
-        state->v_state = 0;  // 状态标志
-        ret = 0;
+    case VT_GETSTATE: {
+        struct vt_state state = {
+            .v_active = 2,
+            .v_state = 0,
+        };
+        ret = (!arg || copy_to_user(arg, &state, sizeof(state))) ? -EFAULT : 0;
         break;
-    case VT_OPENQRY:
-        *(int *)arg = 2;
-        ret = 0;
+    }
+    case VT_OPENQRY: {
+        int query = 2;
+        ret = (!arg || copy_to_user(arg, &query, sizeof(query))) ? -EFAULT : 0;
+        break;
+    }
         break;
     case TIOCNOTTY:
         ret = 0;

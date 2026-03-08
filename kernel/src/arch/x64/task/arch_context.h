@@ -77,6 +77,8 @@ typedef struct arch_context {
                      "movq %2, %%rsp\n\t"                                      \
                      "leaq 1f(%%rip), %%rax\n\t"                               \
                      "movq %%rax, %1\n\t"                                      \
+                     "movq %4, %%rdi\n\t"                                      \
+                     "movq %5, %%rsi\n\t"                                      \
                      "pushq %3\n\t"                                            \
                      "jmp __switch_to\n\t"                                     \
                      "1: \n\t"                                                 \
@@ -90,8 +92,9 @@ typedef struct arch_context {
                      : "=m"(prev->arch_context->rsp),                          \
                        "=m"(prev->arch_context->rip)                           \
                      : "m"(next->arch_context->rsp),                           \
-                       "m"(next->arch_context->rip), "D"(prev), "S"(next)      \
-                     : "cc", "memory");                                        \
+                       "m"(next->arch_context->rip), "m"(prev), "m"(next)      \
+                     : "cc", "memory", "rax", "rcx", "rdx", "rdi", "rsi",      \
+                       "r8", "r9", "r10", "r11");                              \
     } while (0)
 
 void arch_context_init(arch_context_t *context, uint64_t page_table_dir,

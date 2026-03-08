@@ -54,7 +54,7 @@ char machine[] = "x86_64";
 syscall_handle_t syscall_handlers[MAX_SYSCALL_NUM];
 
 uint64_t sys_getrandom(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
-    void *buffer = (void *)arg1;
+    uint8_t *buffer = (uint8_t *)arg1;
     size_t get_len = (size_t)arg2;
     uint32_t flags = (uint32_t)arg3;
 
@@ -67,7 +67,9 @@ uint64_t sys_getrandom(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
         uint64_t next = nano_time();
         next = next * 1103515245 + 12345;
         uint8_t rand_byte = ((uint8_t)(next / 65536) % 32768);
-        memcpy(buffer + i, &rand_byte, 1);
+        if (copy_to_user(buffer + i, &rand_byte, sizeof(rand_byte))) {
+            return (uint64_t)-EFAULT;
+        }
     }
 
     return get_len;
@@ -114,8 +116,13 @@ uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
 }
 
 uint64_t sys_clock_getres(uint64_t arg1, uint64_t arg2) {
-    ((struct timespec *)arg2)->tv_sec = 0;
-    ((struct timespec *)arg2)->tv_nsec = 1;
+    (void)arg1;
+    if (arg2) {
+        struct timespec ts = {.tv_sec = 0, .tv_nsec = 1};
+        if (copy_to_user((void *)arg2, &ts, sizeof(ts))) {
+            return (uint64_t)-EFAULT;
+        }
+    }
     return 0;
 }
 
@@ -124,8 +131,9 @@ uint64_t sys_time(uint64_t arg1) {
     time_read(&time);
     uint64_t timestamp = mktime(&time);
     if (arg1) {
-        uint64_t *t = (uint64_t *)arg1;
-        *t = timestamp;
+        if (copy_to_user((void *)arg1, &timestamp, sizeof(timestamp))) {
+            return (uint64_t)-EFAULT;
+        }
     }
     return timestamp;
 }
@@ -142,20 +150,41 @@ uint64_t sys_gettimeofday(uint64_t arg1) {
     time_read(&time_day);
     uint64_t timestamp_day = mktime(&time_day);
     if (arg1) {
-        struct timespec *ts = (struct timespec *)arg1;
-        ts->tv_sec = timestamp_day;
-        ts->tv_nsec = 0;
+        struct timespec ts;
+        ts.tv_sec = timestamp_day;
+        ts.tv_nsec = 0;
+        if (copy_to_user((void *)arg1, &ts, sizeof(ts))) {
+            return (uint64_t)-EFAULT;
+        }
     }
     return 0;
 }
 
 uint64_t sys_uname(uint64_t arg1) {
-    struct utsname *utsname = (struct utsname *)arg1;
-    memcpy(utsname->sysname, sysname, sizeof(sysname));
-    memcpy(utsname->nodename, nodename, sizeof(nodename));
-    memcpy(utsname->release, release, sizeof(release));
-    memcpy(utsname->version, version, sizeof(version));
-    memcpy(utsname->machine, machine, sizeof(machine));
+    bool fake_linux = true;
+    if (strstr(current_task->name, "uname") ||
+        strstr(current_task->name, "fastfetch") ||
+        strstr(current_task->name, "neofetch"))
+        fake_linux = false;
+
+    struct utsname utsname;
+    memset(&utsname, 0, sizeof(utsname));
+    memcpy(utsname.nodename, nodename, sizeof(nodename));
+    memcpy(utsname.machine, machine, sizeof(machine));
+    if (fake_linux) {
+        strncpy(utsname.sysname, "Linux", sizeof(utsname.sysname));
+        strncpy(utsname.release, "3.0.1-aether", sizeof(utsname.release));
+        strncpy(utsname.version,
+                "#1 SMP PREEMPT_DYNAMIC " __DATE__ " " __TIME__,
+                sizeof(utsname.version));
+    } else {
+        strncpy(utsname.sysname, sysname, sizeof(sysname));
+        strncpy(utsname.release, release, sizeof(release));
+        strncpy(utsname.version, version, sizeof(version));
+    }
+    if (copy_to_user((void *)arg1, &utsname, sizeof(utsname))) {
+        return (uint64_t)-EFAULT;
+    }
     return 0;
 }
 
@@ -472,8 +501,8 @@ void syscall_handler_init() {
     syscall_handlers[SYS_PSELECT6] = (syscall_handle_t)sys_pselect6;
     syscall_handlers[SYS_PPOLL] = (syscall_handle_t)sys_ppoll;
     // syscall_handlers[SYS_UNSHARE] = (syscall_handle_t)sys_unshare;
-    syscall_handlers[SYS_SET_ROBUST_LIST] =
-        (syscall_handle_t)dummy_syscall_handler;
+    // syscall_handlers[SYS_SET_ROBUST_LIST] =
+    //     (syscall_handle_t)sys_set_robust_list;
     // syscall_handlers[SYS_GET_ROBUST_LIST] =
     //     (syscall_handle_t)sys_get_robust_list;
     // syscall_handlers[SYS_SPLICE] = (syscall_handle_t)sys_splice;

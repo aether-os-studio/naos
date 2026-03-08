@@ -41,14 +41,14 @@
 #define AT_SYSINFO 32
 #define AT_SYSINFO_EHDR 33
 
-#define INTERPRETER_BASE_ADDR 0x00007fff00000000
-#define PIE_BASE_ADDR 0x00007ffff0000000
+#define INTERPRETER_BASE_ADDR 0x000007ff00000000
+#define PIE_BASE_ADDR 0x000007fff0000000
 
-#define USER_MMAP_START 0x0000200000000000
-#define USER_MMAP_END 0x0000700000000000
+#define USER_MMAP_START DEFAULT_PAGE_SIZE
+#define USER_MMAP_END 0x0000070000000000
 
-#define USER_BRK_START 0x0000700000000000
-#define USER_BRK_END 0x00007fff00000000
+#define USER_BRK_START 0x0000070000000000
+#define USER_BRK_END 0x000007fff0000000
 
 #define CLONE_VM 0x00000100 /* set if VM shared between processes */
 #define CLONE_FS 0x00000200 /* set if fs info shared between processes */
@@ -296,17 +296,45 @@ static inline uint64_t sys_geteuid() { return current_task->euid; }
 static inline uint64_t sys_getegid() { return current_task->egid; }
 
 static inline uint64_t sys_getresuid(int *ruid, int *euid, int *suid) {
-    *ruid = current_task->uid;
-    *euid = current_task->euid;
-    *suid = current_task->suid;
+    int value;
+
+    if (ruid) {
+        value = current_task->uid;
+        if (copy_to_user(ruid, &value, sizeof(value)))
+            return (uint64_t)-EFAULT;
+    }
+    if (euid) {
+        value = current_task->euid;
+        if (copy_to_user(euid, &value, sizeof(value)))
+            return (uint64_t)-EFAULT;
+    }
+    if (suid) {
+        value = current_task->suid;
+        if (copy_to_user(suid, &value, sizeof(value)))
+            return (uint64_t)-EFAULT;
+    }
 
     return 0;
 }
 
 static inline uint64_t sys_getresgid(int *rgid, int *egid, int *sgid) {
-    *rgid = current_task->gid;
-    *egid = current_task->egid;
-    *sgid = current_task->sgid;
+    int value;
+
+    if (rgid) {
+        value = current_task->gid;
+        if (copy_to_user(rgid, &value, sizeof(value)))
+            return (uint64_t)-EFAULT;
+    }
+    if (egid) {
+        value = current_task->egid;
+        if (copy_to_user(egid, &value, sizeof(value)))
+            return (uint64_t)-EFAULT;
+    }
+    if (sgid) {
+        value = current_task->sgid;
+        if (copy_to_user(sgid, &value, sizeof(value)))
+            return (uint64_t)-EFAULT;
+    }
 
     return 0;
 }
@@ -338,14 +366,30 @@ static inline uint64_t sys_getgroups(int gidsetsize, int *gids) {
     if (!gidsetsize)
         return 1;
 
-    gids[0] = 0;
+    if (!gids)
+        return (uint64_t)-EFAULT;
+
+    int gid = 0;
+    if (copy_to_user(gids, &gid, sizeof(gid)))
+        return (uint64_t)-EFAULT;
+
     return 1;
 }
 
 static inline uint64_t sys_getcpu(unsigned *cpup, unsigned *nodep,
                                   void *unused) {
-    *cpup = current_cpu_id;
-    *nodep = 0;
+    (void)unused;
+
+    if (cpup) {
+        unsigned cpu = current_cpu_id;
+        if (copy_to_user(cpup, &cpu, sizeof(cpu)))
+            return (uint64_t)-EFAULT;
+    }
+    if (nodep) {
+        unsigned node = 0;
+        if (copy_to_user(nodep, &node, sizeof(node)))
+            return (uint64_t)-EFAULT;
+    }
 
     return 0;
 }
