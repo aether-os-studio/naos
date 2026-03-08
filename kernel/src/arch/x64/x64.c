@@ -12,6 +12,8 @@ void arch_early_init() {
     generic_interrupt_table_init_early();
     hpet_init();
     apic_init();
+    x64_cpu_local_init(get_cpuid_by_lapic_id((uint32_t)lapic_id()),
+                       (uint32_t)lapic_id());
     tss_init();
 
     apic_timer_init();

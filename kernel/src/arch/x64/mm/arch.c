@@ -4,6 +4,7 @@
 #include <libs/klibc.h>
 #include <mm/mm.h>
 #include <task/task.h>
+#include <irq/irq_manager.h>
 
 uint64_t *get_current_page_dir(bool user) {
     uint64_t page_table_base = 0;
@@ -22,25 +23,24 @@ uint64_t get_arch_page_table_flags(uint64_t flags) {
         result |= ARCH_PT_FLAG_USER;
     }
 
+    if ((flags & PT_FLAG_X) == 0) {
+        result |= ARCH_PT_FLAG_NX;
+    }
+
     if ((flags & PT_FLAG_UNCACHEABLE) != 0 || (flags & PT_FLAG_DEVICE) != 0) {
         result |= (ARCH_PT_FLAG_PCD | ARCH_PT_FLAG_PWT);
     }
-
-    // if ((flags & PT_FLAG_X) == 0) {
-    //     result |= ARCH_PT_FLAG_NX;
-    // }
 
     return result;
 }
 
 void arch_flush_tlb(uint64_t vaddr) {
-    asm volatile("invlpg (%0)" ::"r"(vaddr) : "memory");
+    asm volatile("invlpg (%0)" ::"r"(PADDING_DOWN(vaddr, DEFAULT_PAGE_SIZE))
+                 : "memory");
 }
 
 void arch_flush_tlb_all() {
     asm volatile("movq %%cr3, %%rax\n\t"
-                 "movq %%rax, %%cr3\n\t"
-                 :
-                 :
-                 : "rax", "memory");
+                 "movq %%rax, %%cr3\n\t" ::
+                     : "rax", "memory");
 }

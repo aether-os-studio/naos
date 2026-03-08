@@ -57,7 +57,7 @@ uint64_t lapic_id() {
 
 extern uint32_t cpuid_to_lapicid[MAX_CPU_NUM];
 
-static void apic_send_fixed_ipi(uint32_t cpu_id, uint64_t irq_num) {
+void apic_send_ipi(uint32_t cpu_id, uint64_t irq_num) {
     if (cpu_id >= cpu_count || irq_num >= ARCH_MAX_IRQ_NUM ||
         cpu_id == current_cpu_id) {
         return;
@@ -346,6 +346,9 @@ uint64_t general_ap_entry() {
 
     gdtidt_setup();
 
+    x64_cpu_local_init(get_cpuid_by_lapic_id((uint32_t)lapic_id()),
+                       (uint32_t)lapic_id());
+
     tss_init();
 
     fsgsbase_init();
@@ -446,7 +449,7 @@ static void apic_resched_ipi_handler(uint64_t irq_num, void *data,
 void apic_ipi_init() {
     irq_regist_ipi(APIC_RESCHED_IPI_VECTOR, apic_resched_ipi_handler, 0, NULL,
                    &apic_controller, "Apic resched ipi", IRQ_FLAGS_LAPIC,
-                   apic_send_fixed_ipi);
+                   apic_send_ipi);
     irq_set_sched_ipi(APIC_RESCHED_IPI_VECTOR);
 }
 

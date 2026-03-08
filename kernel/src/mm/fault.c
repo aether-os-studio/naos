@@ -110,6 +110,7 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
     }
 
     vma_manager_t *mgr = &task->mm->task_vma_mgr;
+    spin_lock(&mgr->lock);
     vma_t *vma = vma_find(mgr, vaddr);
 
     if (has_leaf && (flags & ARCH_PT_FLAG_COW)) {
@@ -124,8 +125,10 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
             goto ok;
         } else {
             uint64_t new_paddr = alloc_frames(1);
-            if (!new_paddr)
+            if (!new_paddr) {
+                spin_unlock(&mgr->lock);
                 return PF_RES_NOMEM;
+            }
             memcpy((void *)phys_to_virt(new_paddr),
                    (const void *)phys_to_virt(paddr), DEFAULT_PAGE_SIZE);
             address_release(paddr);
@@ -137,22 +140,34 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
         pgdir[index] = ARCH_MAKE_PTE(paddr, flags);
         arch_flush_tlb(vaddr);
 
+        spin_unlock(&mgr->lock);
+
         return PF_RES_OK;
     }
 
-    if (has_leaf && (flags & ARCH_PT_FLAG_VALID))
+    if (has_leaf && (flags & ARCH_PT_FLAG_VALID)) {
+        spin_unlock(&mgr->lock);
         return PF_RES_SEGF;
+    }
 
-    if (!vma)
+    if (!vma) {
+        spin_unlock(&mgr->lock);
         return PF_RES_SEGF;
-    if (!(vma->vm_flags & (VMA_READ | VMA_WRITE | VMA_EXEC)))
+    }
+    if (!(vma->vm_flags & (VMA_READ | VMA_WRITE | VMA_EXEC))) {
+        spin_unlock(&mgr->lock);
         return PF_RES_SEGF;
+    }
 
-    if (vma->vm_type == VMA_TYPE_ANON)
-        return map_anon_fault_page(task, vma, vaddr);
+    page_fault_result_t result = PF_RES_SEGF;
 
-    if (vma->vm_type == VMA_TYPE_FILE)
-        return map_file_fault_page(task, vma, vaddr);
+    if (vma->vm_type == VMA_TYPE_ANON) {
+        result = map_anon_fault_page(task, vma, vaddr);
+    } else if (vma->vm_type == VMA_TYPE_FILE) {
+        result = map_file_fault_page(task, vma, vaddr);
+    }
 
-    return PF_RES_SEGF;
+    spin_unlock(&mgr->lock);
+
+    return result;
 }

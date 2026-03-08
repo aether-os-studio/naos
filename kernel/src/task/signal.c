@@ -644,6 +644,7 @@ uint64_t sys_sigreturn(struct pt_regs *regs) {
     uint64_t tmp = self->syscall_stack;
     self->syscall_stack = self->signal_syscall_stack;
     self->signal_syscall_stack = tmp;
+    x64_cpu_local_sync_syscall_stack(self);
 
     regs->rflags |= (1ULL << 9);
     regs->r11 = regs->rflags;
@@ -980,6 +981,7 @@ void task_signal(struct pt_regs *regs) {
         uint64_t tmp = self->syscall_stack;
         self->syscall_stack = self->signal_syscall_stack;
         self->signal_syscall_stack = tmp;
+        x64_cpu_local_sync_syscall_stack(self);
 
         spin_unlock(&self->signal->signal_lock);
         return;

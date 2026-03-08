@@ -69,6 +69,8 @@ extern void ret_from_syscall();
 
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
                        uint64_t clone_flags) {
+    (void)clone_flags;
+
     arch_flush_tlb_all();
     dst->ctx = (struct pt_regs *)stack - 1;
     dst->rip = (uint64_t)ret_from_syscall;
@@ -80,12 +82,14 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
     memset(dst->fpu_ctx, 0, DEFAULT_PAGE_SIZE);
     if (src->fpu_ctx) {
         memcpy(dst->fpu_ctx, src->fpu_ctx, DEFAULT_PAGE_SIZE);
+    } else {
         dst->fpu_ctx->mxscr = 0x1f80;
         dst->fpu_ctx->fcw = 0x037f;
     }
 
     dst->fsbase = src->fsbase;
     dst->gsbase = src->gsbase;
+    dst->dead = false;
 }
 
 void arch_context_free(arch_context_t *context) {
@@ -95,9 +99,12 @@ void arch_context_free(arch_context_t *context) {
     context->dead = true;
 }
 
-task_t *arch_get_current() { return (task_t *)read_kgsbase(); }
+task_t *arch_get_current() {
+    x64_cpu_local_t *local = x64_get_cpu_local();
+    return local ? local->task_ptr : NULL;
+}
 
-void arch_set_current(task_t *current) { write_kgsbase((uint64_t)current); }
+void arch_set_current(task_t *current) { x64_cpu_local_set_current(current); }
 
 extern tss_t tss[MAX_CPU_NUM];
 
@@ -109,15 +116,15 @@ void __switch_to(task_t *prev, task_t *next) {
         asm volatile("fxsave (%0)" ::"r"(prev->arch_context->fpu_ctx));
     }
 
-    if (next->arch_context->fpu_ctx) {
-        asm volatile("fxrstor (%0)" ::"r"(next->arch_context->fpu_ctx));
-    }
-
     arch_set_current(next);
-    tss[next->cpu_id].rsp0 = next->kernel_stack;
+    tss[current_cpu_id].rsp0 = next->kernel_stack;
 
     write_fsbase(next->arch_context->fsbase);
     write_gsbase(next->arch_context->gsbase);
+
+    if (next->arch_context->fpu_ctx) {
+        asm volatile("fxrstor (%0)" ::"r"(next->arch_context->fpu_ctx));
+    }
 }
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,

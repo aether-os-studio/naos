@@ -7,6 +7,47 @@
 #include <mod/dlinker.h>
 #include <mm/fault.h>
 
+#define X64_PFEC_PRESENT (1UL << 0)
+#define X64_PFEC_WRITE (1UL << 1)
+#define X64_PFEC_USER (1UL << 2)
+#define X64_PFEC_INSTR (1UL << 4)
+
+static bool x64_fault_access_allowed_now(task_t *task, uint64_t vaddr,
+                                         uint64_t error_code) {
+    if (!task || !task->mm)
+        return false;
+
+    uint64_t *table = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
+    uint64_t entry = 0;
+
+    for (uint64_t level = 0; level < ARCH_MAX_PT_LEVEL; level++) {
+        uint64_t index = PAGE_CALC_PAGE_TABLE_INDEX(vaddr, level + 1);
+        entry = table[index];
+
+        if (!(entry & ARCH_PT_FLAG_VALID))
+            return false;
+
+        if (level == ARCH_MAX_PT_LEVEL - 1 || ARCH_PT_IS_LARGE(entry))
+            break;
+
+        if (!ARCH_PT_IS_TABLE(entry))
+            return false;
+
+        table = (uint64_t *)phys_to_virt(ARCH_READ_PTE(entry));
+    }
+
+    uint64_t flags = ARCH_READ_PTE_FLAG(entry);
+
+    if ((error_code & X64_PFEC_WRITE) && !(flags & ARCH_PT_FLAG_WRITEABLE))
+        return false;
+    if ((error_code & X64_PFEC_USER) && !(flags & ARCH_PT_FLAG_USER))
+        return false;
+    if ((error_code & X64_PFEC_INSTR) && (flags & ARCH_PT_FLAG_NX))
+        return false;
+
+    return true;
+}
+
 extern const uint64_t kallsyms_address[] __attribute__((weak));
 extern const uint64_t kallsyms_num __attribute__((weak));
 extern const uint64_t kallsyms_names_index[] __attribute__((weak));
@@ -179,6 +220,7 @@ void dump_regs(struct pt_regs *regs, const char *error_str, ...) {
     printk("R10 = %#018lx, R11 = %#018lx\n", regs->r10, regs->r11);
     printk("R12 = %#018lx, R13 = %#018lx\n", regs->r12, regs->r13);
     printk("R14 = %#018lx, R15 = %#018lx\n", regs->r14, regs->r15);
+    printk(" CS = %#018lx,  SS = %#018lx\n", regs->cs, regs->ss);
 
     if (kernel_session) {
         kernel_session->current_vt_mode.mode = old_mode;
@@ -375,8 +417,13 @@ void do_page_fault(struct pt_regs *regs, uint64_t error_code) {
     if (handle_page_fault(current_task, cr2) == PF_RES_OK)
         return;
 
-    (void)error_code;
-    dump_regs(regs, "do_page_fault(14) cr2 = %#018lx", cr2);
+    if (x64_fault_access_allowed_now(current_task, cr2, error_code)) {
+        arch_flush_tlb(cr2);
+        return;
+    }
+
+    dump_regs(regs, "do_page_fault(14) cr2 = %#018lx, error_code = %#018lx",
+              cr2, error_code);
 
     if ((regs->cs & 3) == 3) {
         can_schedule = true;

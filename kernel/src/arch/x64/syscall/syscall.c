@@ -162,9 +162,10 @@ uint64_t sys_gettimeofday(uint64_t arg1) {
 
 uint64_t sys_uname(uint64_t arg1) {
     bool fake_linux = true;
-    if (strstr(current_task->name, "uname") ||
-        strstr(current_task->name, "fastfetch") ||
-        strstr(current_task->name, "neofetch"))
+    task_t *task = current_task;
+    if (task &&
+        (strstr(task->name, "uname") || strstr(task->name, "fastfetch") ||
+         strstr(task->name, "neofetch")))
         fake_linux = false;
 
     struct utsname utsname;

@@ -195,9 +195,10 @@ uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
         uint64_t addr = pgdir[index];
         if (ARCH_PT_IS_LARGE(addr)) {
             uint64_t old_flags = ARCH_READ_PTE_FLAG(pgdir[index]);
-            uint64_t keep_flags = old_flags & ARCH_PT_FLAG_ALLOC;
-            pgdir[index] = ARCH_MAKE_HUGE_PTE(ARCH_READ_PTE(pgdir[index]),
-                                              flags | keep_flags);
+            uint64_t keep_flags = old_flags & ARCH_PT_SOFT_FLAGS;
+            uint64_t old_paddr = ARCH_READ_PTE(pgdir[index]);
+            uint64_t new_flags = flags | keep_flags;
+            pgdir[index] = ARCH_MAKE_HUGE_PTE(old_paddr, new_flags);
             arch_flush_tlb(vaddr);
             return 0;
         }
@@ -212,10 +213,11 @@ uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
         return 0;
     }
 
+    uint64_t old_paddr = ARCH_READ_PTE(pgdir[index]);
     uint64_t old_flags = ARCH_READ_PTE_FLAG(pgdir[index]);
-    uint64_t keep_flags = old_flags & ARCH_PT_FLAG_ALLOC;
-    pgdir[index] =
-        ARCH_MAKE_PTE(ARCH_READ_PTE(pgdir[index]), flags | keep_flags);
+    uint64_t keep_flags = old_flags & ARCH_PT_SOFT_FLAGS;
+    uint64_t new_flags = flags | keep_flags;
+    pgdir[index] = ARCH_MAKE_PTE(old_paddr, new_flags);
 
     arch_flush_tlb(vaddr);
 

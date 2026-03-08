@@ -74,6 +74,7 @@ Build_IRQ(0x3d);
 Build_IRQ(0x3e);
 Build_IRQ(0x3f);
 Build_IRQ(0x40);
+Build_IRQ(0x41);
 
 // 初始化中断数组
 void (*interrupt_table[])(void) = {
@@ -85,11 +86,11 @@ void (*interrupt_table[])(void) = {
     IRQ0x34interrupt, IRQ0x35interrupt, IRQ0x36interrupt, IRQ0x37interrupt,
     IRQ0x38interrupt, IRQ0x39interrupt, IRQ0x3ainterrupt, IRQ0x3binterrupt,
     IRQ0x3cinterrupt, IRQ0x3dinterrupt, IRQ0x3einterrupt, IRQ0x3finterrupt,
-    IRQ0x40interrupt,
+    IRQ0x40interrupt, IRQ0x41interrupt,
 };
 
 void generic_interrupt_table_init_early() {
-    for (int i = 0x20; i <= 0x40; ++i) {
+    for (int i = 0x20; i <= 0x41; ++i) {
         set_intr_gate(i, 0, interrupt_table[i - 0x20]);
     }
 }

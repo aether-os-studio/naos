@@ -44,6 +44,7 @@ void lapic_write(uint32_t reg, uint32_t value);
 uint32_t lapic_read(uint32_t reg);
 
 uint32_t get_cpuid_by_lapic_id(uint32_t lapic_id);
+uint32_t x64_current_cpu_id(void);
 
 void local_apic_init();
 void apic_ipi_init();
@@ -60,9 +61,10 @@ int64_t apic_ack(uint64_t irq);
 struct irq_controller;
 extern struct irq_controller apic_controller;
 
-#define current_cpu_id get_cpuid_by_lapic_id(lapic_id())
+#define current_cpu_id x64_current_cpu_id()
 
 extern volatile struct limine_rsdp_request rsdp_request;
 
 void smp_init();
 void tss_init();
+void apic_send_ipi(uint32_t cpu_id, uint64_t irq_num);

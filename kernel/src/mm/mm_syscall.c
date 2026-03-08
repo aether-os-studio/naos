@@ -435,6 +435,11 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
     if (aligned_len > USER_MMAP_END - USER_MMAP_START)
         return (uint64_t)-ENOMEM;
 
+    task_mm_info_t *mm_info = current_task->mm;
+
+    if (addr >= mm_info->brk_start && (addr + aligned_len) <= mm_info->brk_end)
+        return 0;
+
     fd_t *map_fd = NULL;
     vfs_node_t map_node = NULL;
     if (!anonymous) {
@@ -456,7 +461,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
             return (uint64_t)access_ret;
     }
 
-    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
+    vma_manager_t *mgr = &mm_info->task_vma_mgr;
     uint64_t start_addr = 0;
 
     spin_lock(&mgr->lock);
@@ -992,23 +997,31 @@ uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
     uint64_t end = addr + size;
     uint64_t *page_dir = get_current_page_dir(true);
     vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
+    uint8_t *residency = malloc(num_pages);
+
+    if (!residency)
+        return (uint64_t)-ENOMEM;
 
     spin_lock(&mgr->lock);
 
     if (!range_fully_covered_locked(mgr, addr, end)) {
         spin_unlock(&mgr->lock);
+        free(residency);
         return (uint64_t)-ENOMEM;
     }
 
     for (uint64_t index = 0, cursor = addr; index < num_pages;
          index++, cursor += DEFAULT_PAGE_SIZE) {
-        uint8_t resident = translate_address(page_dir, cursor) ? 1 : 0;
-        if (copy_to_user((void *)(vec + index), &resident, sizeof(resident))) {
-            spin_unlock(&mgr->lock);
-            return (uint64_t)-EFAULT;
-        }
+        residency[index] = translate_address(page_dir, cursor) ? 1 : 0;
     }
 
     spin_unlock(&mgr->lock);
+
+    if (copy_to_user((void *)vec, residency, num_pages)) {
+        free(residency);
+        return (uint64_t)-EFAULT;
+    }
+
+    free(residency);
     return 0;
 }

@@ -17,4 +17,4 @@ export LANG=C.UTF-8
 export SDL_VIDEODRIVER=x11
 
 seatd &
-exec weston --xwayland
+weston --xwayland

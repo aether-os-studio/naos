@@ -229,6 +229,7 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-rtc base=utc \
 		-netdev user,id=netdev0 \
 		-device e1000,netdev=netdev0 \
+		-display sdl \
 		$(QEMUFLAGS)
 
 .PHONY: run-x86_64-single
