@@ -838,7 +838,7 @@ void task_send_signal(task_t *task, int sig, int code) {
     siginfo_t info;
     task_fill_siginfo(&info, sig, code);
     task_commit_signal(task, sig, &info);
-    signal_notify_signalfd(task, sig, code);
+    // signal_notify_signalfd(task, sig, code);
 
     if (sig != SIGSTOP && sig != SIGTSTP && sig != SIGTTIN && sig != SIGTTOU) {
         task_unblock(task, 128 + sig);
