@@ -17,7 +17,7 @@
 #define ARCH_PT_FLAG_ACCESS ((uint64_t)1 << 10)
 #define ARCH_PT_FLAG_XN ((uint64_t)1 << 54)
 #define ARCH_PT_FLAG_COW ((uint64_t)1 << 55)
-#define ARCH_PT_FLAG_ALLOC ((uint64_t)1 << 56)
+#define ARCH_PT_SOFT_FLAGS ARCH_PT_FLAG_COW
 #define ARCH_PT_FLAG_WB ((uint64_t)0 << 2)
 #define ARCH_PT_FLAG_FB ((uint64_t)1 << 2)
 #define ARCH_ADDR_MASK ((uint64_t)0x0000FFFFFFFFF000)

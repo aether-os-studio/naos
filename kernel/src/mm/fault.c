@@ -18,9 +18,13 @@ static page_fault_result_t map_anon_fault_page(task_t *task, vma_t *vma,
     uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
     uint64_t pt_flags = vm_flags_to_pt_flags(vma->vm_flags);
     uint64_t arch_flags = get_arch_page_table_flags(pt_flags);
+    uint64_t aligned_vaddr = PADDING_DOWN(vaddr, DEFAULT_PAGE_SIZE);
 
-    map_page(pgdir, vaddr, (uint64_t)-1, arch_flags, true);
-    if (!translate_address(pgdir, vaddr))
+    if (translate_address(pgdir, aligned_vaddr))
+        return PF_RES_OK;
+
+    map_page(pgdir, aligned_vaddr, (uint64_t)-1, arch_flags, true);
+    if (!translate_address(pgdir, aligned_vaddr))
         return PF_RES_NOMEM;
 
     return PF_RES_OK;
@@ -37,36 +41,45 @@ static page_fault_result_t map_file_fault_page(task_t *task, vma_t *vma,
     uint64_t load_pt_flags =
         need_temp_write ? (final_pt_flags | PT_FLAG_W) : final_pt_flags;
     uint64_t load_arch_flags = get_arch_page_table_flags(load_pt_flags);
+    uint64_t aligned_vaddr = PADDING_DOWN(vaddr, DEFAULT_PAGE_SIZE);
 
-    map_page(pgdir, vaddr, (uint64_t)-1, load_arch_flags, true);
-    if (!translate_address(pgdir, vaddr))
+    if (translate_address(pgdir, aligned_vaddr))
+        return PF_RES_OK;
+
+    map_page(pgdir, aligned_vaddr, (uint64_t)-1, load_arch_flags, true);
+
+    uint64_t page_paddr = translate_address(pgdir, aligned_vaddr);
+    if (!page_paddr)
         return PF_RES_NOMEM;
 
-    uint64_t page_off = vaddr - vma->vm_start;
-    if ((uint64_t)vma->vm_offset > UINT64_MAX - page_off) {
-        unmap_page(pgdir, vaddr);
+    uint64_t page_off_in_vma = aligned_vaddr - vma->vm_start;
+    if ((uint64_t)vma->vm_offset > UINT64_MAX - page_off_in_vma) {
+        unmap_page(pgdir, aligned_vaddr);
         return PF_RES_SEGF;
     }
-    uint64_t file_off = (uint64_t)vma->vm_offset + page_off;
-    uint64_t read_size = vma->vm_end - vaddr;
+
+    uint64_t file_off = (uint64_t)vma->vm_offset + page_off_in_vma;
+    uint64_t read_size = vma->vm_end - aligned_vaddr;
     if (read_size > DEFAULT_PAGE_SIZE)
         read_size = DEFAULT_PAGE_SIZE;
 
-    fd_t file = {
-        .node = vma->node,
-        .flags = 0,
-        .offset = file_off,
-        .close_on_exec = false,
-    };
-    ssize_t ret = vfs_read_fd(&file, (void *)vaddr, file_off, read_size);
-    if (ret < 0) {
-        unmap_page(pgdir, vaddr);
-        return PF_RES_SEGF;
+    size_t loaded = 0;
+    while (loaded < read_size) {
+        ssize_t ret =
+            vfs_read(vma->node, (void *)(phys_to_virt(page_paddr) + loaded),
+                     file_off + loaded, read_size - loaded);
+        if (ret < 0) {
+            unmap_page(pgdir, aligned_vaddr);
+            return PF_RES_SEGF;
+        }
+        if (ret == 0)
+            break;
+        loaded += (size_t)ret;
     }
 
     if (need_temp_write) {
         uint64_t final_arch_flags = get_arch_page_table_flags(final_pt_flags);
-        map_change_attribute(pgdir, vaddr, final_arch_flags);
+        map_change_attribute(pgdir, aligned_vaddr, final_arch_flags);
     }
 
     return PF_RES_OK;
@@ -78,13 +91,16 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
     if (!vaddr)
         return PF_RES_SEGF;
 
-    vaddr = PADDING_DOWN(vaddr, DEFAULT_PAGE_SIZE);
+    uint64_t aligned_vaddr = PADDING_DOWN(vaddr, DEFAULT_PAGE_SIZE);
+
+    vma_manager_t *mgr = &task->mm->task_vma_mgr;
+    spin_lock(&mgr->lock);
 
     uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
 
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
     for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++) {
-        indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(vaddr, i + 1);
+        indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(aligned_vaddr, i + 1);
     }
 
     bool has_leaf = true;
@@ -92,6 +108,7 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
         uint64_t index = indexs[i];
         uint64_t addr = pgdir[index];
         if (ARCH_PT_IS_LARGE(addr)) {
+            spin_unlock(&mgr->lock);
             return PF_RES_SEGF;
         }
         if (!ARCH_PT_IS_TABLE(addr)) {
@@ -109,8 +126,6 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
         flags = ARCH_READ_PTE_FLAG(pgdir[index]);
     }
 
-    vma_manager_t *mgr = &task->mm->task_vma_mgr;
-    spin_lock(&mgr->lock);
     vma_t *vma = vma_find(mgr, vaddr);
 
     if (has_leaf && (flags & ARCH_PT_FLAG_COW)) {
@@ -121,24 +136,18 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
 #endif
         flags &= ~ARCH_PT_FLAG_COW;
 
-        if (!(flags & ARCH_PT_FLAG_ALLOC)) {
-            goto ok;
-        } else {
-            uint64_t new_paddr = alloc_frames(1);
-            if (!new_paddr) {
-                spin_unlock(&mgr->lock);
-                return PF_RES_NOMEM;
-            }
-            memcpy((void *)phys_to_virt(new_paddr),
-                   (const void *)phys_to_virt(paddr), DEFAULT_PAGE_SIZE);
-            address_release(paddr);
-            paddr = new_paddr;
-            flags |= ARCH_PT_FLAG_ALLOC;
+        uint64_t old_paddr = paddr;
+        uint64_t new_paddr = alloc_frames(1);
+        if (!new_paddr) {
+            spin_unlock(&mgr->lock);
+            return PF_RES_NOMEM;
         }
-
-    ok:
+        memcpy((void *)phys_to_virt(new_paddr),
+               (const void *)phys_to_virt(old_paddr), DEFAULT_PAGE_SIZE);
+        paddr = new_paddr;
         pgdir[index] = ARCH_MAKE_PTE(paddr, flags);
         arch_flush_tlb(vaddr);
+        address_release(old_paddr);
 
         spin_unlock(&mgr->lock);
 

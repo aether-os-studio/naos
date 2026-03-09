@@ -24,3 +24,4 @@ EXPORT_SYMBOL(mutex_unlock);
 
 EXPORT_SYMBOL(check_unmapped);
 EXPORT_SYMBOL(check_user_overflow);
+EXPORT_SYMBOL(user_translate_or_fault);

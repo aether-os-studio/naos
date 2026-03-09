@@ -263,11 +263,24 @@ typedef struct {
 // I/O Request callback
 typedef void (*nvme_io_callback_t)(void *ctx, bool success, uint32_t result);
 
+#define NVME_PAGE_SIZE 4096
+#define NVME_PAGE_MASK (NVME_PAGE_SIZE - 1)
+#define NVME_PRP_ENTRY_SIZE 8
+#define NVME_MAX_PRP_LIST_ENTRIES                                              \
+    (NVME_PAGE_SIZE / NVME_PRP_ENTRY_SIZE) // 512 entries
+
+// PRP List 结构
+typedef struct nvme_prp_list {
+    uint64_t prp[NVME_MAX_PRP_LIST_ENTRIES];
+} __attribute__((packed)) nvme_prp_list_t;
+
 // I/O Request
 typedef struct nvme_request {
     uint16_t cid; // Command ID
     nvme_io_callback_t callback;
     void *ctx;
+    nvme_prp_list_t *prp_list;
+    uint64_t prp_list_phys;
     struct nvme_request *next;
 } nvme_request_t;
 
@@ -278,17 +291,6 @@ typedef struct {
     uint32_t block_size;
     bool valid;
 } nvme_namespace_t;
-
-#define NVME_PAGE_SIZE 4096
-#define NVME_PAGE_MASK (NVME_PAGE_SIZE - 1)
-#define NVME_PRP_ENTRY_SIZE 8
-#define NVME_MAX_PRP_LIST_ENTRIES                                              \
-    (NVME_PAGE_SIZE / NVME_PRP_ENTRY_SIZE) // 512 entries
-
-// PRP List 结构
-typedef struct {
-    uint64_t prp[NVME_MAX_PRP_LIST_ENTRIES];
-} __attribute__((packed)) nvme_prp_list_t;
 
 // NVMe Controller
 typedef struct nvme_controller {
@@ -308,11 +310,6 @@ typedef struct nvme_controller {
     uint16_t cid_alloc_pos;
     nvme_request_t *requests[256];
     nvme_request_t request_slots[256];
-
-    nvme_prp_list_t *prp_list_pool;
-    uint64_t prp_list_pool_phys;
-    uint32_t prp_list_pool_size;
-    uint32_t prp_list_next_free;
 
     nvme_namespace_t namespaces[256];
     uint32_t num_namespaces;
@@ -349,7 +346,7 @@ typedef struct {
 } nvme_platform_ops_t;
 
 // Global platform operations
-extern nvme_platform_ops_t *g_nvme_platform_ops;
+extern nvme_platform_ops_t *nvme_platform_ops;
 
 // Public API
 int nvme_probe(pci_device_t *device, uint32_t vendor_device_id);

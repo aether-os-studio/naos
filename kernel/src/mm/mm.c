@@ -252,6 +252,9 @@ void frame_init(void) {
 
 void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
                     uint64_t size, uint64_t flags) {
+    ASSERT((vaddr & 0xfff) == 0);
+    ASSERT(paddr == (uint64_t)-1 || (paddr & 0xfff) == 0);
+
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
         if (paddr == (uint64_t)-1) {
             map_page(pml4, va, (uint64_t)-1, get_arch_page_table_flags(flags),
@@ -265,6 +268,9 @@ void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
 
 void map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
                             uint64_t size, uint64_t flags) {
+    ASSERT((vaddr & 0xfff) == 0);
+    ASSERT(paddr == (uint64_t)-1 || (paddr & 0xfff) == 0);
+
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
         if (paddr == (uint64_t)-1) {
             map_page(pml4, va, (uint64_t)-1, get_arch_page_table_flags(flags),

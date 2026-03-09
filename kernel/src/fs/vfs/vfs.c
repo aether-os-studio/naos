@@ -1155,11 +1155,13 @@ int vfs_mount(uint64_t dev, vfs_node_t node, const char *type) {
         if (!all_fs[i] || !all_fs[i]->ops)
             continue;
         if (!strcmp(all_fs[i]->name, type)) {
+            vfs_node_t old_root = node->root;
+            node->root = node;
             ret = all_fs[i]->ops->mount(dev, node);
             if (!ret) {
-                node->root = node;
                 return 0;
             } else {
+                node->root = old_root;
                 printk("Mount fs %s failed, ret = %d\n", type, ret);
                 return ret;
             }

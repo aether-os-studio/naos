@@ -11,6 +11,7 @@ typedef struct x64_cpu_local {
     uint64_t syscall_stack;
     task_t *task_ptr;
     task_mm_info_t *current_mm;
+    uint64_t user_rsp_scratch;
     uint32_t cpu_id;
     uint32_t lapic_id;
 } x64_cpu_local_t;

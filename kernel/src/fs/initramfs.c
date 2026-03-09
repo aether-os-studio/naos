@@ -36,7 +36,7 @@ void initramfs_init() {
     if (!initramfs_module)
         return;
 
-    int ret = vfs_mount(0, rootdir, "tmpfs");
+    int ret = vfs_mount((TMPFS_DEV_MAJOR << 8) | 0, rootdir, "tmpfs");
     if (ret < 0) {
         printk("Failed mount tmpfs as init root\n");
         return;

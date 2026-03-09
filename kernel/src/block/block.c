@@ -31,10 +31,12 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
 
     for (uint64_t i = blk_devnum; i <= blk_devnum; i++) {
         partition_t *part = &partitions[partition_num];
+        uint64_t lba_size =
+            blk_devs[i].block_size ? blk_devs[i].block_size : 512;
 
         struct GPT_DPT *buffer =
             (struct GPT_DPT *)malloc(sizeof(struct GPT_DPT));
-        blkdev_read(i, 512, buffer, sizeof(struct GPT_DPT));
+        blkdev_read(i, lba_size, buffer, sizeof(struct GPT_DPT));
 
         if (memcmp(buffer->signature, GPT_HEADER_SIGNATURE, 8) ||
             buffer->num_partition_entries == 0 ||
@@ -45,7 +47,7 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
 
         struct GPT_DPTE *dptes =
             (struct GPT_DPTE *)malloc(128 * sizeof(struct GPT_DPTE));
-        blkdev_read(i, buffer->partition_entry_lba * 512, dptes,
+        blkdev_read(i, buffer->partition_entry_lba * lba_size, dptes,
                     128 * sizeof(struct GPT_DPTE));
 
         for (uint32_t j = 0; j < 128; j++) {
@@ -87,7 +89,7 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
         if (!memcmp(iso9660_detect, "CD001", 5)) {
             part->blkdev_id = i;
             part->starting_lba = 0;
-            part->ending_lba = blkdev_ioctl(i, IOCTL_GETSIZE, 0) / 512;
+            part->ending_lba = blkdev_ioctl(i, IOCTL_GETSIZE, 0) / lba_size - 1;
             part->type = RAW;
 
             // Register partition to devfs
@@ -119,7 +121,7 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
         if (boot_sector->bs_trail_sig != 0xAA55) {
             part->blkdev_id = i;
             part->starting_lba = 0;
-            part->ending_lba = blkdev_ioctl(i, IOCTL_GETSIZE, 0) / 512 - 1;
+            part->ending_lba = blkdev_ioctl(i, IOCTL_GETSIZE, 0) / lba_size - 1;
             part->type = RAW;
 
             // Register partition to devfs
@@ -148,7 +150,8 @@ void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
 
             part->blkdev_id = i;
             part->starting_lba = boot_sector->dpte[j].start_lba;
-            part->ending_lba = boot_sector->dpte[j].sectors_limit;
+            part->ending_lba = boot_sector->dpte[j].start_lba +
+                               boot_sector->dpte[j].sectors_limit - 1;
             part->type = MBR;
 
             // Register partition to devfs

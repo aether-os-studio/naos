@@ -20,6 +20,8 @@ EXPORT_SYMBOL(vfs_poll_notify);
 EXPORT_SYMBOL(vfs_node_alloc);
 EXPORT_SYMBOL(vfs_child_append);
 EXPORT_SYMBOL(vfs_child_find);
+EXPORT_SYMBOL(vfs_attach_child);
+EXPORT_SYMBOL(vfs_detach_child);
 EXPORT_SYMBOL(vfs_merge_nodes_to);
 
 EXPORT_SYMBOL(vfs_open);

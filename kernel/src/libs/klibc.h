@@ -396,22 +396,72 @@ extern uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr);
 bool check_user_overflow(uint64_t addr, uint64_t size);
 bool check_unmapped(uint64_t addr, uint64_t len);
 
+static inline void *user_virt_from_paddr(uint64_t paddr) {
+    return (void *)(uintptr_t)(paddr | get_physical_memory_offset());
+}
+
+uint64_t user_translate_or_fault(uint64_t *pgdir, uint64_t uaddr);
+
 static inline bool copy_to_user(void *dst, const void *src, size_t size) {
+    if (size == 0)
+        return false;
+    if (!src)
+        return true;
+
     if (check_user_overflow((uint64_t)dst, size) ||
         check_unmapped((uint64_t)dst, size))
         return true;
 
-    memcpy(dst, src, size);
+    uint64_t *pgdir = get_current_page_dir(true);
+    uint64_t uaddr = (uint64_t)dst;
+    const uint8_t *in = (const uint8_t *)src;
+    size_t remain = size;
+
+    while (remain > 0) {
+        uint64_t pa = user_translate_or_fault(pgdir, uaddr);
+        if (!pa)
+            return true;
+
+        size_t chunk =
+            MIN(remain, DEFAULT_PAGE_SIZE - (uaddr & (DEFAULT_PAGE_SIZE - 1)));
+        memcpy(user_virt_from_paddr(pa), in, chunk);
+
+        uaddr += chunk;
+        in += chunk;
+        remain -= chunk;
+    }
 
     return false;
 }
 
 static inline bool copy_from_user(void *dst, const void *src, size_t size) {
+    if (size == 0)
+        return false;
+    if (!dst)
+        return true;
+
     if (check_user_overflow((uint64_t)src, size) ||
         check_unmapped((uint64_t)src, size))
         return true;
 
-    memcpy(dst, src, size);
+    uint64_t *pgdir = get_current_page_dir(true);
+    uint64_t uaddr = (uint64_t)src;
+    uint8_t *out = (uint8_t *)dst;
+    size_t remain = size;
+
+    while (remain > 0) {
+        uint64_t pa = user_translate_or_fault(pgdir, uaddr);
+        if (!pa)
+            return true;
+
+        size_t chunk =
+            MIN(remain, DEFAULT_PAGE_SIZE - (uaddr & (DEFAULT_PAGE_SIZE - 1)));
+        memcpy(out, user_virt_from_paddr(pa), chunk);
+
+        uaddr += chunk;
+        out += chunk;
+        remain -= chunk;
+    }
 
     return false;
 }
@@ -425,17 +475,31 @@ static inline bool copy_from_user_str(char *dst, const char *src,
         check_unmapped((uint64_t)src, 1))
         return true;
 
-    size_t len = strlen(src);
-    if (len >= limit) {
-        len = limit - 1;
+    uint64_t *pgdir = get_current_page_dir(true);
+    uint64_t uaddr = (uint64_t)src;
+    size_t copied = 0;
+
+    while (copied + 1 < limit) {
+        uint64_t pa = user_translate_or_fault(pgdir, uaddr);
+        if (!pa)
+            return true;
+
+        size_t chunk =
+            MIN(limit - copied - 1,
+                DEFAULT_PAGE_SIZE - (uaddr & (DEFAULT_PAGE_SIZE - 1)));
+        const char *page_ptr = (const char *)user_virt_from_paddr(pa);
+
+        for (size_t index = 0; index < chunk; index++) {
+            char ch = page_ptr[index];
+            dst[copied++] = ch;
+            if (ch == '\0')
+                return false;
+        }
+
+        uaddr += chunk;
     }
 
-    if (check_user_overflow((uint64_t)src, len + 1) ||
-        check_unmapped((uint64_t)src, len + 1))
-        return true;
-
-    memcpy(dst, src, len);
-    dst[len] = '\0';
+    dst[copied] = '\0';
 
     return false;
 }
@@ -449,14 +513,10 @@ static inline bool copy_to_user_str(char *dst, const char *src, size_t limit) {
         len = limit - 1;
     }
 
-    if (check_user_overflow((uint64_t)dst, len + 1) ||
-        check_unmapped((uint64_t)dst, len + 1))
+    if (copy_to_user(dst, src, len))
         return true;
 
-    memcpy(dst, src, len);
-    dst[len] = '\0';
-
-    return false;
+    return copy_to_user(dst + len, "", 1);
 }
 
 static inline void qsort_swap(void *a, void *b, size_t size) {

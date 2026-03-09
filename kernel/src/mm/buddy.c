@@ -530,6 +530,8 @@ void free_frames(uintptr_t addr, size_t count) {
         return;
     if ((addr & (DEFAULT_PAGE_SIZE - 1)) != 0)
         return;
+    if (addr > memory_size)
+        return;
 
     size_t required_order = 0;
     size_t required_pages = 0;

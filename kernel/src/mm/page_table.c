@@ -41,6 +41,9 @@ uint64_t *get_kernel_page_dir() { return kernel_page_dir; }
 
 uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
                   uint64_t flags, bool force) {
+    ASSERT((vaddr & 0xfff) == 0);
+    ASSERT(paddr == (uint64_t)-1 || (paddr & 0xfff) == 0);
+
     uint64_t indexs[ARCH_MAX_PT_LEVEL] = {0};
     for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++) {
         indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(vaddr, i + 1);
@@ -82,12 +85,10 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
     uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
     bool had_old_mapping = (pgdir[index] & ARCH_PT_FLAG_VALID) != 0;
     uint64_t old_paddr = 0;
-    uint64_t old_flags = 0;
     if (had_old_mapping) {
         if (!force)
             return 0;
         old_paddr = ARCH_READ_PTE(pgdir[index]);
-        old_flags = ARCH_READ_PTE_FLAG(pgdir[index]);
     }
 
     if (paddr == (uint64_t)-1) {
@@ -98,10 +99,11 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
         }
         memset((void *)phys_to_virt(phys), 0, DEFAULT_PAGE_SIZE);
         paddr = phys;
-        flags |= ARCH_PT_FLAG_ALLOC;
+    } else if (paddr && (!had_old_mapping || old_paddr != paddr)) {
+        address_ref(paddr);
     }
 
-    if (had_old_mapping && (old_flags & ARCH_PT_FLAG_ALLOC) && old_paddr) {
+    if (had_old_mapping && old_paddr && old_paddr != paddr) {
         address_release(old_paddr);
     }
 
@@ -143,14 +145,11 @@ uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr) {
     uint64_t index = table_indices[ARCH_MAX_PT_LEVEL - 1];
     uint64_t pte = table_ptrs[ARCH_MAX_PT_LEVEL - 1][index];
     uint64_t paddr = ARCH_READ_PTE(pte);
-    uint64_t flags = ARCH_READ_PTE_FLAG(pte);
 
     if (paddr != 0) {
         table_ptrs[ARCH_MAX_PT_LEVEL - 1][index] = 0;
         arch_flush_tlb(vaddr);
-        if (flags & ARCH_PT_FLAG_ALLOC) {
-            address_release(paddr);
-        }
+        address_release(paddr);
 
         // 从底层向上检查并释放空页表
         for (int level = ARCH_MAX_PT_LEVEL - 1; level > 0; level--) {
@@ -226,7 +225,25 @@ uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
 
 static void free_page_table_recursive(uint64_t *table, int level);
 
-static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level) {
+static uint64_t page_table_entry_span(int level) {
+    return PAGE_CALC_PAGE_TABLE_SIZE(ARCH_MAX_PT_LEVEL - level + 1);
+}
+
+static bool pte_is_writable(uint64_t flags) {
+#if defined(__aarch64__)
+    return (flags & ARCH_PT_FLAG_READONLY) == 0;
+#else
+    return (flags & ARCH_PT_FLAG_WRITEABLE) != 0;
+#endif
+}
+
+static bool vma_is_private_mapping(vma_t *vma) {
+    return vma && !(vma->vm_flags & (VMA_SHARED | VMA_SHM | VMA_DEVICE));
+}
+
+static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level,
+                                           uint64_t base_vaddr,
+                                           vma_manager_t *mgr) {
     if (!source_table)
         return NULL;
 
@@ -245,6 +262,7 @@ static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level) {
 
     for (uint64_t i = 0; i < entries; i++) {
         uint64_t entry = source_table[i];
+        uint64_t entry_vaddr = base_vaddr + i * page_table_entry_span(level);
         if (!entry)
             continue;
 
@@ -256,8 +274,13 @@ static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level) {
 
             uint64_t paddr = ARCH_READ_PTE(entry);
             uint64_t flags = ARCH_READ_PTE_FLAG(entry);
+            bool managed = paddr && address_is_managed(paddr);
 
-            if ((flags & ARCH_PT_FLAG_ALLOC) && paddr) {
+            if (managed)
+                address_ref(paddr);
+
+            if (managed && vma_is_private_mapping(vma_find(mgr, entry_vaddr)) &&
+                pte_is_writable(flags)) {
                 flags |= ARCH_PT_FLAG_COW;
 #if defined(__aarch64__)
                 flags |= ARCH_PT_FLAG_READONLY;
@@ -265,7 +288,6 @@ static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level) {
                 flags &= ~ARCH_PT_FLAG_WRITEABLE;
 #endif
                 source_table[i] = ARCH_MAKE_PTE(paddr, flags);
-                address_ref(paddr);
             }
 
             new_table[i] = ARCH_MAKE_PTE(paddr, flags);
@@ -275,8 +297,8 @@ static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level) {
         if (ARCH_PT_IS_TABLE(entry)) {
             uint64_t *child_src =
                 (uint64_t *)phys_to_virt(ARCH_READ_PTE(entry));
-            uint64_t *child_new =
-                copy_page_table_recursive(child_src, level - 1);
+            uint64_t *child_new = copy_page_table_recursive(
+                child_src, level - 1, entry_vaddr, mgr);
             if (!child_new) {
                 free_page_table_recursive(new_table, level);
                 return NULL;
@@ -314,9 +336,7 @@ static void free_page_table_recursive(uint64_t *table, int level) {
                 continue;
 
             uint64_t paddr = ARCH_READ_PTE(pte);
-            uint64_t flags = ARCH_READ_PTE_FLAG(pte);
-
-            if ((flags & ARCH_PT_FLAG_ALLOC) && paddr) {
+            if (paddr) {
                 address_release(paddr);
             }
         }
@@ -355,7 +375,8 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
     spin_lock(&old->lock);
 
     uint64_t *old_root = (uint64_t *)phys_to_virt(old->page_table_addr);
-    uint64_t *new_root = copy_page_table_recursive(old_root, ARCH_MAX_PT_LEVEL);
+    uint64_t *new_root = copy_page_table_recursive(old_root, ARCH_MAX_PT_LEVEL,
+                                                   0, &old->task_vma_mgr);
     if (!new_root) {
         free(new_mm);
         spin_unlock(&old->lock);

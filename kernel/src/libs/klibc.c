@@ -2,10 +2,14 @@
 #include <task/task.h>
 #include <drivers/kernel_logger.h>
 #include <arch/arch.h>
+#include <mm/fault.h>
 
 bool check_user_overflow(uint64_t addr, uint64_t size) {
-    if (addr >= (UINT64_MAX - size) ||
-        (addr + size) > get_physical_memory_offset()) {
+    uint64_t hhdm = get_physical_memory_offset();
+    if (addr >= (UINT64_MAX - size) || (addr + size) >= hhdm) {
+        return true;
+    }
+    if (size > 0 && (addr + size - 1) >= hhdm) {
         return true;
     }
     return false;
@@ -26,6 +30,20 @@ bool check_unmapped(uint64_t addr, uint64_t len) {
         return false;
 
     return true;
+}
+
+uint64_t user_translate_or_fault(uint64_t *pgdir, uint64_t uaddr) {
+    uint64_t pa = translate_address(pgdir, uaddr);
+    if (pa)
+        return pa;
+
+    task_t *task = arch_get_current();
+    if (!task)
+        return 0;
+    if (handle_page_fault(task, uaddr) != 0)
+        return 0;
+
+    return translate_address(pgdir, uaddr);
 }
 
 void *memcpy(void *restrict dest, const void *restrict src, size_t n) {

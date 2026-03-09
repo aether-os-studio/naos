@@ -44,7 +44,7 @@ int naos_printk(const char *fmt, ...) {
     return n;
 }
 
-nvme_platform_ops_t nvme_platform_ops = {
+nvme_platform_ops_t naos_nvme_platform_ops = {
     .dma_alloc = naos_dma_alloc,
     .dma_free = naos_dma_free,
     .mb = naos_memory_barrier,
@@ -59,7 +59,7 @@ nvme_platform_ops_t nvme_platform_ops = {
     .log = naos_printk,
 };
 
-nvme_platform_ops_t *g_nvme_platform_ops = NULL;
+nvme_platform_ops_t *nvme_platform_ops = NULL;
 
 // Helper macros with validation
 #define NVME_READ32(ctrl, offset)                                              \
@@ -68,7 +68,7 @@ nvme_platform_ops_t *g_nvme_platform_ops = NULL;
 #define NVME_WRITE32(ctrl, offset, value)                                      \
     do {                                                                       \
         *(volatile uint32_t *)((ctrl)->bar0 + (offset)) = (value);             \
-        g_nvme_platform_ops->mb();                                             \
+        nvme_platform_ops->mb();                                               \
     } while (0)
 
 #define NVME_READ64(ctrl, offset)                                              \
@@ -77,11 +77,11 @@ nvme_platform_ops_t *g_nvme_platform_ops = NULL;
 #define NVME_WRITE64(ctrl, offset, value)                                      \
     do {                                                                       \
         *(volatile uint64_t *)((ctrl)->bar0 + (offset)) = (value);             \
-        g_nvme_platform_ops->mb();                                             \
+        nvme_platform_ops->mb();                                               \
     } while (0)
 
 void nvme_set_platform_ops(nvme_platform_ops_t *ops) {
-    g_nvme_platform_ops = ops;
+    nvme_platform_ops = ops;
 }
 
 // Dump controller status for debugging
@@ -89,11 +89,11 @@ static void nvme_dump_status(nvme_controller_t *ctrl) {
     uint32_t csts = NVME_READ32(ctrl, NVME_REG_CSTS);
     uint32_t cc = NVME_READ32(ctrl, NVME_REG_CC);
 
-    g_nvme_platform_ops->log("NVMe: CSTS=0x%08x CC=0x%08x\n", csts, cc);
-    g_nvme_platform_ops->log("  RDY=%d CFS=%d SHST=%d NSSRO=%d\n",
-                             !!(csts & NVME_CSTS_RDY), !!(csts & NVME_CSTS_CFS),
-                             (csts >> 2) & 0x3, !!(csts & (1 << 4)));
-    g_nvme_platform_ops->log(
+    nvme_platform_ops->log("NVMe: CSTS=0x%08x CC=0x%08x\n", csts, cc);
+    nvme_platform_ops->log("  RDY=%d CFS=%d SHST=%d NSSRO=%d\n",
+                           !!(csts & NVME_CSTS_RDY), !!(csts & NVME_CSTS_CFS),
+                           (csts >> 2) & 0x3, !!(csts & (1 << 4)));
+    nvme_platform_ops->log(
         "  EN=%d CSS=%d MPS=%d AMS=%d SHN=%d IOSQES=%d IOCQES=%d\n",
         !!(cc & NVME_CC_ENABLE), (cc >> 4) & 0x7, (cc >> 7) & 0xF,
         (cc >> 11) & 0x7, (cc >> 14) & 0x3, (cc >> 16) & 0xF, (cc >> 20) & 0xF);
@@ -102,7 +102,7 @@ static void nvme_dump_status(nvme_controller_t *ctrl) {
 // Enhanced wait for ready with better error reporting
 static int nvme_wait_ready(nvme_controller_t *ctrl, bool ready,
                            uint32_t timeout_ms) {
-    uint64_t start = g_nvme_platform_ops->get_time_ms();
+    uint64_t start = nvme_platform_ops->get_time_ms();
     uint32_t last_csts = 0;
 
     while (1) {
@@ -110,8 +110,7 @@ static int nvme_wait_ready(nvme_controller_t *ctrl, bool ready,
 
         // Check for fatal status first
         if (csts & NVME_CSTS_CFS) {
-            g_nvme_platform_ops->log(
-                "NVMe: Controller Fatal Status detected!\n");
+            nvme_platform_ops->log("NVMe: Controller Fatal Status detected!\n");
             nvme_dump_status(ctrl);
             return -1;
         }
@@ -119,43 +118,43 @@ static int nvme_wait_ready(nvme_controller_t *ctrl, bool ready,
         bool is_ready = (csts & NVME_CSTS_RDY) != 0;
 
         if (is_ready == ready) {
-            g_nvme_platform_ops->log(
-                "NVMe: Controller ready state reached: %d\n", ready);
+            nvme_platform_ops->log("NVMe: Controller ready state reached: %d\n",
+                                   ready);
             return 0;
         }
 
         // Log status changes
         if (csts != last_csts) {
-            g_nvme_platform_ops->log("NVMe: CSTS changed: 0x%08x -> 0x%08x\n",
-                                     last_csts, csts);
+            nvme_platform_ops->log("NVMe: CSTS changed: 0x%08x -> 0x%08x\n",
+                                   last_csts, csts);
             last_csts = csts;
         }
 
-        if (g_nvme_platform_ops->get_time_ms() - start > timeout_ms) {
-            g_nvme_platform_ops->log("NVMe: Timeout waiting for ready=%d\n",
-                                     ready);
+        if (nvme_platform_ops->get_time_ms() - start > timeout_ms) {
+            nvme_platform_ops->log("NVMe: Timeout waiting for ready=%d\n",
+                                   ready);
             nvme_dump_status(ctrl);
             return -1;
         }
 
-        g_nvme_platform_ops->udelay(100);
+        nvme_platform_ops->udelay(100);
     }
 }
 
 // Enhanced controller reset
 static int nvme_reset_controller(nvme_controller_t *ctrl) {
-    g_nvme_platform_ops->log("NVMe: Resetting controller...\n");
+    nvme_platform_ops->log("NVMe: Resetting controller...\n");
 
     // Read current state
     uint32_t cc = NVME_READ32(ctrl, NVME_REG_CC);
     uint32_t csts = NVME_READ32(ctrl, NVME_REG_CSTS);
 
-    g_nvme_platform_ops->log("NVMe: Initial state - CC=0x%08x CSTS=0x%08x\n",
-                             cc, csts);
+    nvme_platform_ops->log("NVMe: Initial state - CC=0x%08x CSTS=0x%08x\n", cc,
+                           csts);
 
     // If controller is enabled, disable it
     if (cc & NVME_CC_ENABLE) {
-        g_nvme_platform_ops->log("NVMe: Controller is enabled, disabling...\n");
+        nvme_platform_ops->log("NVMe: Controller is enabled, disabling...\n");
 
         // Clear enable bit
         cc &= ~NVME_CC_ENABLE;
@@ -163,13 +162,13 @@ static int nvme_reset_controller(nvme_controller_t *ctrl) {
 
         // Wait for ready to clear
         if (nvme_wait_ready(ctrl, false, 5000) != 0) {
-            g_nvme_platform_ops->log("NVMe: Failed to disable controller\n");
+            nvme_platform_ops->log("NVMe: Failed to disable controller\n");
             return -1;
         }
     } else {
         // Even if not enabled, ensure RDY is clear
         if (csts & NVME_CSTS_RDY) {
-            g_nvme_platform_ops->log(
+            nvme_platform_ops->log(
                 "NVMe: Warning - EN=0 but RDY=1, waiting...\n");
             if (nvme_wait_ready(ctrl, false, 5000) != 0) {
                 return -1;
@@ -177,7 +176,7 @@ static int nvme_reset_controller(nvme_controller_t *ctrl) {
         }
     }
 
-    g_nvme_platform_ops->log("NVMe: Controller disabled successfully\n");
+    nvme_platform_ops->log("NVMe: Controller disabled successfully\n");
     return 0;
 }
 
@@ -188,13 +187,12 @@ static int nvme_disable_controller(nvme_controller_t *ctrl) {
 
 // Enable controller with proper configuration
 static int nvme_enable_controller(nvme_controller_t *ctrl) {
-    g_nvme_platform_ops->log("NVMe: Enabling controller...\n");
+    nvme_platform_ops->log("NVMe: Enabling controller...\n");
 
     // Ensure controller is disabled first
     uint32_t csts = NVME_READ32(ctrl, NVME_REG_CSTS);
     if (csts & NVME_CSTS_RDY) {
-        g_nvme_platform_ops->log(
-            "NVMe: Controller still ready, cannot enable\n");
+        nvme_platform_ops->log("NVMe: Controller still ready, cannot enable\n");
         return -1;
     }
 
@@ -213,20 +211,20 @@ static int nvme_enable_controller(nvme_controller_t *ctrl) {
     cc |= NVME_CC_IOSQES; // I/O Submission Queue Entry Size (64 bytes)
     cc |= NVME_CC_IOCQES; // I/O Completion Queue Entry Size (16 bytes)
 
-    g_nvme_platform_ops->log("NVMe: Writing CC=0x%08x\n", cc);
+    nvme_platform_ops->log("NVMe: Writing CC=0x%08x\n", cc);
     NVME_WRITE32(ctrl, NVME_REG_CC, cc);
 
     // Verify write
     uint32_t cc_read = NVME_READ32(ctrl, NVME_REG_CC);
     if (cc_read != cc) {
-        g_nvme_platform_ops->log(
+        nvme_platform_ops->log(
             "NVMe: CC register write failed! Expected 0x%08x, got 0x%08x\n", cc,
             cc_read);
         return -1;
     }
 
     // Wait for ready
-    g_nvme_platform_ops->log("NVMe: Waiting for controller ready...\n");
+    nvme_platform_ops->log("NVMe: Waiting for controller ready...\n");
     return nvme_wait_ready(ctrl, true, 10000); // Increased timeout to 10s
 }
 
@@ -248,38 +246,38 @@ static int nvme_init_queue(nvme_controller_t *ctrl, nvme_queue_t *queue,
     size_t cq_size = sizeof(nvme_cqe_t) * queue_depth;
 
     // Allocate submission queue (must be aligned to page size)
-    queue->sq = g_nvme_platform_ops->dma_alloc(sq_size, &queue->sq_phys);
+    queue->sq = nvme_platform_ops->dma_alloc(sq_size, &queue->sq_phys);
     if (!queue->sq) {
-        g_nvme_platform_ops->log("NVMe: Failed to allocate SQ\n");
+        nvme_platform_ops->log("NVMe: Failed to allocate SQ\n");
         return -1;
     }
 
     // Check alignment
     if (queue->sq_phys & 0xFFF) {
-        g_nvme_platform_ops->log(
-            "NVMe: Warning - SQ not page aligned: 0x%llx\n", queue->sq_phys);
+        nvme_platform_ops->log("NVMe: Warning - SQ not page aligned: 0x%llx\n",
+                               queue->sq_phys);
     }
 
     memset(queue->sq, 0, sq_size);
-    g_nvme_platform_ops->log(
+    nvme_platform_ops->log(
         "NVMe: SQ allocated at virt=%p phys=0x%llx size=%d\n", queue->sq,
         queue->sq_phys, sq_size);
 
     // Allocate completion queue
-    queue->cq = g_nvme_platform_ops->dma_alloc(cq_size, &queue->cq_phys);
+    queue->cq = nvme_platform_ops->dma_alloc(cq_size, &queue->cq_phys);
     if (!queue->cq) {
-        g_nvme_platform_ops->log("NVMe: Failed to allocate CQ\n");
-        g_nvme_platform_ops->dma_free(queue->sq, sq_size);
+        nvme_platform_ops->log("NVMe: Failed to allocate CQ\n");
+        nvme_platform_ops->dma_free(queue->sq, sq_size);
         return -1;
     }
 
     if (queue->cq_phys & 0xFFF) {
-        g_nvme_platform_ops->log(
-            "NVMe: Warning - CQ not page aligned: 0x%llx\n", queue->cq_phys);
+        nvme_platform_ops->log("NVMe: Warning - CQ not page aligned: 0x%llx\n",
+                               queue->cq_phys);
     }
 
     memset(queue->cq, 0, cq_size);
-    g_nvme_platform_ops->log(
+    nvme_platform_ops->log(
         "NVMe: CQ allocated at virt=%p phys=0x%llx size=%d\n", queue->cq,
         queue->cq_phys, cq_size);
 
@@ -290,7 +288,7 @@ static int nvme_init_queue(nvme_controller_t *ctrl, nvme_queue_t *queue,
     queue->cq_doorbell = (volatile uint32_t *)(ctrl->bar0 + doorbell_offset +
                                                ctrl->doorbell_stride);
 
-    g_nvme_platform_ops->log(
+    nvme_platform_ops->log(
         "NVMe: Queue %d doorbells - SQ offset=0x%x CQ offset=0x%x\n", queue_id,
         doorbell_offset, doorbell_offset + ctrl->doorbell_stride);
 
@@ -311,11 +309,19 @@ static int nvme_submit_cmd(nvme_queue_t *queue, nvme_sqe_t *cmd) {
     memcpy(&queue->sq[tail], cmd, sizeof(nvme_sqe_t));
     queue->sq_tail = next_tail;
 
-    g_nvme_platform_ops->wmb();
+    nvme_platform_ops->wmb();
     *queue->sq_doorbell = next_tail;
-    g_nvme_platform_ops->mb();
+    nvme_platform_ops->mb();
     spin_unlock(&queue->lock);
     return 0;
+}
+
+static inline void nvme_reset_request(nvme_request_t *req) {
+    req->callback = NULL;
+    req->ctx = NULL;
+    req->next = NULL;
+    if (req->prp_list)
+        memset(req->prp_list, 0, sizeof(nvme_prp_list_t));
 }
 
 static inline void nvme_complete_request(nvme_controller_t *ctrl, uint16_t cid,
@@ -328,28 +334,38 @@ static inline void nvme_complete_request(nvme_controller_t *ctrl, uint16_t cid,
     if (!req)
         return;
 
-    if (req->callback)
-        req->callback(req->ctx, success, result);
+    nvme_io_callback_t callback = req->callback;
+    void *ctx = req->ctx;
+    nvme_reset_request(req);
+
+    if (callback)
+        callback(ctx, success, result);
 }
 
 static int nvme_process_queue_completions(nvme_controller_t *ctrl,
                                           nvme_queue_t *queue) {
     int count = 0;
-    spin_lock(&queue->lock);
 
     while (1) {
-        g_nvme_platform_ops->rmb();
+        uint16_t cid;
+        uint32_t result;
+        bool success;
+
+        spin_lock(&queue->lock);
+        nvme_platform_ops->rmb();
 
         nvme_cqe_t *cqe = &queue->cq[queue->cq_head];
-        uint16_t phase = (cqe->status >> 0) & 1;
-        if (phase != queue->cq_phase)
+        uint16_t phase = cqe->status & 1;
+        if (phase != queue->cq_phase) {
+            spin_unlock(&queue->lock);
             break;
+        }
 
         uint16_t status_code = (cqe->status >> 1) & 0xFF;
         uint16_t status_type = (cqe->status >> 9) & 0x7;
-        bool success = (status_code == 0 && status_type == 0);
-
-        nvme_complete_request(ctrl, cqe->cid, success, cqe->dw0);
+        success = (status_code == 0 && status_type == 0);
+        cid = cqe->cid;
+        result = cqe->dw0;
 
         queue->sq_head = cqe->sq_head;
         queue->cq_head++;
@@ -357,16 +373,16 @@ static int nvme_process_queue_completions(nvme_controller_t *ctrl,
             queue->cq_head = 0;
             queue->cq_phase = !queue->cq_phase;
         }
+
+        nvme_platform_ops->wmb();
+        *queue->cq_doorbell = queue->cq_head;
+        nvme_platform_ops->mb();
+        spin_unlock(&queue->lock);
+
+        nvme_complete_request(ctrl, cid, success, result);
         count++;
     }
 
-    if (count > 0) {
-        g_nvme_platform_ops->wmb();
-        *queue->cq_doorbell = queue->cq_head;
-        g_nvme_platform_ops->mb();
-    }
-
-    spin_unlock(&queue->lock);
     return count;
 }
 
@@ -397,8 +413,13 @@ static uint16_t nvme_alloc_cid(nvme_controller_t *ctrl, nvme_io_callback_t cb,
 }
 
 static inline void nvme_release_cid(nvme_controller_t *ctrl, uint16_t cid) {
-    if (cid < (sizeof(ctrl->requests) / sizeof(ctrl->requests[0])))
-        __atomic_store_n(&ctrl->requests[cid], NULL, __ATOMIC_RELEASE);
+    if (cid >= (sizeof(ctrl->requests) / sizeof(ctrl->requests[0])))
+        return;
+
+    nvme_request_t *req =
+        __atomic_exchange_n(&ctrl->requests[cid], NULL, __ATOMIC_ACQ_REL);
+    if (req)
+        nvme_reset_request(req);
 }
 
 // Execute admin command (synchronous helper)
@@ -446,7 +467,7 @@ static int nvme_identify_controller(nvme_controller_t *ctrl,
                                     nvme_identify_ctrl_t *id_ctrl) {
     uint64_t buffer_phys;
     void *buffer =
-        g_nvme_platform_ops->dma_alloc(DEFAULT_PAGE_SIZE, &buffer_phys);
+        nvme_platform_ops->dma_alloc(DEFAULT_PAGE_SIZE, &buffer_phys);
     if (!buffer) {
         return -1;
     }
@@ -463,7 +484,7 @@ static int nvme_identify_controller(nvme_controller_t *ctrl,
         memcpy(id_ctrl, buffer, sizeof(nvme_identify_ctrl_t));
     }
 
-    g_nvme_platform_ops->dma_free(buffer, DEFAULT_PAGE_SIZE);
+    nvme_platform_ops->dma_free(buffer, DEFAULT_PAGE_SIZE);
     return ret;
 }
 
@@ -471,7 +492,7 @@ static int nvme_identify_namespace(nvme_controller_t *ctrl, uint32_t nsid,
                                    nvme_identify_ns_t *id_ns) {
     uint64_t buffer_phys;
     void *buffer =
-        g_nvme_platform_ops->dma_alloc(DEFAULT_PAGE_SIZE, &buffer_phys);
+        nvme_platform_ops->dma_alloc(DEFAULT_PAGE_SIZE, &buffer_phys);
     if (!buffer) {
         return -1;
     }
@@ -489,7 +510,7 @@ static int nvme_identify_namespace(nvme_controller_t *ctrl, uint32_t nsid,
         memcpy(id_ns, buffer, sizeof(nvme_identify_ns_t));
     }
 
-    g_nvme_platform_ops->dma_free(buffer, DEFAULT_PAGE_SIZE);
+    nvme_platform_ops->dma_free(buffer, DEFAULT_PAGE_SIZE);
     return ret;
 }
 
@@ -506,9 +527,8 @@ static int nvme_create_io_cq(nvme_controller_t *ctrl, nvme_queue_t *queue) {
 
     cmd.cdw11 = cdw11;
 
-    g_nvme_platform_ops->log(
-        "NVMe: Creating I/O CQ %d (depth=%d, phys=0x%llx)\n", queue->queue_id,
-        queue->queue_depth, queue->cq_phys);
+    nvme_platform_ops->log("NVMe: Creating I/O CQ %d (depth=%d, phys=0x%llx)\n",
+                           queue->queue_id, queue->queue_depth, queue->cq_phys);
 
     return nvme_admin_cmd_sync(ctrl, &cmd, NULL, 5000);
 }
@@ -521,32 +541,30 @@ static int nvme_create_io_sq(nvme_controller_t *ctrl, nvme_queue_t *queue) {
     cmd.cdw10 = ((queue->queue_depth - 1) << 16) | queue->queue_id;
     cmd.cdw11 = (queue->queue_id << 16) | 0x1; // CQID, PC=1
 
-    g_nvme_platform_ops->log(
-        "NVMe: Creating I/O SQ %d (depth=%d, phys=0x%llx)\n", queue->queue_id,
-        queue->queue_depth, queue->sq_phys);
+    nvme_platform_ops->log("NVMe: Creating I/O SQ %d (depth=%d, phys=0x%llx)\n",
+                           queue->queue_id, queue->queue_depth, queue->sq_phys);
 
     return nvme_admin_cmd_sync(ctrl, &cmd, NULL, 5000);
 }
 
 // Check PCI configuration
 static int nvme_check_pci_config(pci_device_t *device) {
-    g_nvme_platform_ops->log("NVMe: Checking PCI configuration...\n");
+    nvme_platform_ops->log("NVMe: Checking PCI configuration...\n");
 
     // Check BAR0
     if (!device->bars[0].address || device->bars[0].size < 0x2000) {
-        g_nvme_platform_ops->log(
-            "NVMe: Invalid BAR0 (addr=0x%llx size=0x%llx)\n",
-            device->bars[0].address, device->bars[0].size);
+        nvme_platform_ops->log("NVMe: Invalid BAR0 (addr=0x%llx size=0x%llx)\n",
+                               device->bars[0].address, device->bars[0].size);
         return -1;
     }
 
     if (!device->bars[0].mmio) {
-        g_nvme_platform_ops->log("NVMe: BAR0 is not MMIO\n");
+        nvme_platform_ops->log("NVMe: BAR0 is not MMIO\n");
         return -1;
     }
 
-    g_nvme_platform_ops->log("NVMe: BAR0 at 0x%llx, size 0x%llx\n",
-                             device->bars[0].address, device->bars[0].size);
+    nvme_platform_ops->log("NVMe: BAR0 at 0x%llx, size 0x%llx\n",
+                           device->bars[0].address, device->bars[0].size);
 
     // TODO: Enable PCI bus mastering and memory space if your platform requires
     // it This is platform-specific
@@ -563,43 +581,17 @@ static inline uint32_t nvme_page_offset(uint64_t addr) {
     return addr & NVME_PAGE_MASK;
 }
 
-static int nvme_init_prp_pool(nvme_controller_t *ctrl, uint32_t num_lists) {
-    size_t pool_size = sizeof(nvme_prp_list_t) * num_lists;
+static int nvme_prepare_prp_list(nvme_request_t *req) {
+    if (req->prp_list)
+        return 0;
 
-    ctrl->prp_list_pool = (nvme_prp_list_t *)g_nvme_platform_ops->dma_alloc(
-        pool_size, &ctrl->prp_list_pool_phys);
-
-    if (!ctrl->prp_list_pool) {
-        g_nvme_platform_ops->log("NVMe: Failed to allocate PRP list pool\n");
+    req->prp_list = (nvme_prp_list_t *)nvme_platform_ops->dma_alloc(
+        sizeof(nvme_prp_list_t), &req->prp_list_phys);
+    if (!req->prp_list)
         return -1;
-    }
 
-    memset(ctrl->prp_list_pool, 0, pool_size);
-    ctrl->prp_list_pool_size = num_lists;
-    ctrl->prp_list_next_free = 0;
-
-    g_nvme_platform_ops->log(
-        "NVMe: PRP pool initialized: %u lists, phys=0x%llx\n", num_lists,
-        ctrl->prp_list_pool_phys);
-
+    memset(req->prp_list, 0, sizeof(nvme_prp_list_t));
     return 0;
-}
-
-static nvme_prp_list_t *nvme_alloc_prp_list(nvme_controller_t *ctrl,
-                                            uint64_t *phys_addr) {
-    if (!ctrl->prp_list_pool || ctrl->prp_list_pool_size == 0)
-        return NULL;
-    uint32_t idx =
-        __atomic_fetch_add(&ctrl->prp_list_next_free, 1, __ATOMIC_RELAXED) %
-        ctrl->prp_list_pool_size;
-    nvme_prp_list_t *list = &ctrl->prp_list_pool[idx];
-
-    if (phys_addr) {
-        *phys_addr = ctrl->prp_list_pool_phys + (idx * sizeof(nvme_prp_list_t));
-    }
-
-    memset(list, 0, sizeof(nvme_prp_list_t));
-    return list;
 }
 
 static inline uint64_t nvme_translate_page_phys(uint64_t page_va) {
@@ -612,9 +604,9 @@ static inline uint64_t nvme_translate_page_phys(uint64_t page_va) {
     return pa;
 }
 
-static int nvme_setup_prp(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
-                          const void *buffer, uint64_t buffer_phys,
-                          uint32_t size) {
+static int nvme_setup_prp(nvme_controller_t *ctrl, nvme_request_t *req,
+                          nvme_sqe_t *cmd, const void *buffer,
+                          uint64_t buffer_phys, uint32_t size) {
     if (!buffer || size == 0)
         return -1;
     if (ctrl->max_transfer_size > 0 && size > ctrl->max_transfer_size)
@@ -632,7 +624,7 @@ static int nvme_setup_prp(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
             first_page_phys = hinted;
     }
     if (!first_page_phys) {
-        printk("First page not mapped, vaddr = %#018lx\n", vaddr);
+        printk("NVMe: first PRP page not mapped, vaddr=%#018lx\n", vaddr);
         return -1;
     }
 
@@ -644,7 +636,7 @@ static int nvme_setup_prp(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
     uint64_t second_page_phys =
         nvme_translate_page_phys(page_base_va + NVME_PAGE_SIZE);
     if (!second_page_phys) {
-        printk("Second page not mapped, vaddr = %#018lx\n", vaddr);
+        printk("NVMe: second PRP page not mapped, vaddr=%#018lx\n", vaddr);
         return -1;
     }
     if (num_pages == 2) {
@@ -652,38 +644,37 @@ static int nvme_setup_prp(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
         return 0;
     }
     if (num_pages - 1 > NVME_MAX_PRP_LIST_ENTRIES) {
-        printk("Number of pages too big\n");
+        printk("NVMe: PRP page count too large (%u pages)\n", num_pages);
+        return -1;
+    }
+    if (nvme_prepare_prp_list(req) != 0) {
+        printk("NVMe: failed to allocate request PRP list\n");
         return -1;
     }
 
-    uint64_t prp_list_phys;
-    nvme_prp_list_t *prp_list = nvme_alloc_prp_list(ctrl, &prp_list_phys);
-    if (!prp_list) {
-        printk("Failed to allocate prp list\n");
-        return -1;
-    }
-    cmd->prp2 = prp_list_phys;
-    prp_list->prp[0] = second_page_phys;
+    memset(req->prp_list, 0, sizeof(nvme_prp_list_t));
+    cmd->prp2 = req->prp_list_phys;
+    req->prp_list->prp[0] = second_page_phys;
 
     for (uint32_t i = 2; i < num_pages; i++) {
         uint64_t pa = nvme_translate_page_phys(page_base_va +
                                                ((uint64_t)i * NVME_PAGE_SIZE));
-        if (!pa)
+        if (!pa) {
+            printk("NVMe: PRP page %u not mapped, vaddr=%#018lx\n", i,
+                   page_base_va + ((uint64_t)i * NVME_PAGE_SIZE));
             return -1;
-        prp_list->prp[i - 1] = pa;
+        }
+        req->prp_list->prp[i - 1] = pa;
     }
 
-    g_nvme_platform_ops->wmb();
+    nvme_platform_ops->wmb();
     return 0;
 }
 
 // 异步读取
 static inline nvme_queue_t *nvme_pick_io_queue(nvme_controller_t *ctrl) {
-    uint64_t io_cpus = ctrl->num_io_queues;
-    if (io_cpus == 0)
-        io_cpus = MIN(MAX_IO_CPU_NUM, get_cpu_count());
-    uint64_t queue_cpu_id = current_cpu_id % io_cpus;
-    return &ctrl->io_queues[queue_cpu_id];
+    (void)ctrl;
+    return &ctrl->io_queues[0];
 }
 
 static int nvme_submit_io_async(nvme_controller_t *ctrl, uint8_t opcode,
@@ -710,6 +701,8 @@ static int nvme_submit_io_async(nvme_controller_t *ctrl, uint8_t opcode,
     if (cid == 0xFFFF)
         return -1;
 
+    nvme_request_t *req = &ctrl->request_slots[cid];
+
     nvme_sqe_t cmd = {0};
     cmd.cdw0 = opcode | (cid << 16);
     cmd.nsid = nsid;
@@ -717,18 +710,19 @@ static int nvme_submit_io_async(nvme_controller_t *ctrl, uint8_t opcode,
     cmd.cdw11 = (uint32_t)(lba >> 32);
     cmd.cdw12 = (block_count - 1) & 0xFFFF;
 
-    if (nvme_setup_prp(ctrl, &cmd, buffer, buffer_phys, transfer_size) != 0) {
+    if (nvme_setup_prp(ctrl, req, &cmd, buffer, buffer_phys, transfer_size) !=
+        0) {
         nvme_release_cid(ctrl, cid);
-        printk("Setting up prp failed\n");
+        printk("NVMe: setting up PRP failed\n");
         return -1;
     }
 
     if (opcode == NVME_CMD_WRITE)
-        g_nvme_platform_ops->wmb();
+        nvme_platform_ops->wmb();
 
     nvme_queue_t *queue = nvme_pick_io_queue(ctrl);
     if (nvme_submit_cmd(queue, &cmd) != 0) {
-        printk("Submit command failed\n");
+        printk("NVMe: submit command failed\n");
         nvme_release_cid(ctrl, cid);
         return -1;
     }
@@ -815,17 +809,18 @@ uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
 
 // Main probe function
 int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
-    if (!g_nvme_platform_ops) {
+    if (!nvme_platform_ops) {
         return -1;
     }
+    if (nvme_check_pci_config(device) != 0)
+        return -1;
 
-    g_nvme_platform_ops->log("NVMe: Probing device %04x:%04x\n",
-                             vendor_device_id >> 16, vendor_device_id & 0xFFFF);
+    nvme_platform_ops->log("NVMe: Probing device %04x:%04x\n",
+                           vendor_device_id >> 16, vendor_device_id & 0xFFFF);
 
     // Allocate controller structure
-    nvme_controller_t *ctrl =
-        (nvme_controller_t *)g_nvme_platform_ops->dma_alloc(
-            sizeof(nvme_controller_t), NULL);
+    nvme_controller_t *ctrl = (nvme_controller_t *)nvme_platform_ops->dma_alloc(
+        sizeof(nvme_controller_t), NULL);
     if (!ctrl) {
         return -1;
     }
@@ -841,7 +836,7 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
                        PT_FLAG_DEVICE);
 
     if (!ctrl->bar0) {
-        g_nvme_platform_ops->log("NVMe: BAR0 not mapped\n");
+        nvme_platform_ops->log("NVMe: BAR0 not mapped\n");
         goto error;
     }
 
@@ -851,19 +846,19 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
     uint32_t mpsmin = (cap >> 48) & 0xF;
     uint32_t mpsmax = (cap >> 52) & 0xF;
 
-    g_nvme_platform_ops->log("NVMe: CAP=%016llx, doorbell_stride=%d\n", cap,
-                             ctrl->doorbell_stride);
+    nvme_platform_ops->log("NVMe: CAP=%016llx, doorbell_stride=%d\n", cap,
+                           ctrl->doorbell_stride);
 
     // Disable controller
     if (nvme_disable_controller(ctrl) != 0) {
-        g_nvme_platform_ops->log("NVMe: Failed to disable controller\n");
+        nvme_platform_ops->log("NVMe: Failed to disable controller\n");
         goto error;
     }
 
     // Initialize admin queue
     if (nvme_init_queue(ctrl, &ctrl->admin_queue, 0, NVME_ADMIN_QUEUE_SIZE) !=
         0) {
-        g_nvme_platform_ops->log("NVMe: Failed to initialize admin queue\n");
+        nvme_platform_ops->log("NVMe: Failed to initialize admin queue\n");
         goto error;
     }
 
@@ -876,16 +871,16 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
 
     // Enable controller
     if (nvme_enable_controller(ctrl) != 0) {
-        g_nvme_platform_ops->log("NVMe: Failed to enable controller\n");
+        nvme_platform_ops->log("NVMe: Failed to enable controller\n");
         goto error;
     }
 
-    g_nvme_platform_ops->log("NVMe: Controller ready\n");
+    nvme_platform_ops->log("NVMe: Controller ready\n");
 
     // Identify controller
     nvme_identify_ctrl_t id_ctrl;
     if (nvme_identify_controller(ctrl, &id_ctrl) != 0) {
-        g_nvme_platform_ops->log("NVMe: Failed to identify controller\n");
+        nvme_platform_ops->log("NVMe: Failed to identify controller\n");
         goto error;
     }
 
@@ -896,38 +891,32 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
     } else {
         ctrl->max_transfer_size = -1;
     }
-    g_nvme_platform_ops->log("NVMe: Model=%.40s, Namespaces=%d\n", id_ctrl.mn,
-                             ctrl->num_namespaces);
+    nvme_platform_ops->log("NVMe: Model=%.40s, Namespaces=%d\n", id_ctrl.mn,
+                           ctrl->num_namespaces);
 
-    ctrl->num_io_queues = MIN(MAX_IO_CPU_NUM, get_cpu_count());
-
-    uint32_t num_prp_lists = NVME_IO_QUEUE_SIZE * ctrl->num_io_queues;
-    if (nvme_init_prp_pool(ctrl, num_prp_lists) != 0) {
-        goto error;
-    }
-
+    ctrl->num_io_queues = 1;
     ctrl->page_size = NVME_PAGE_SIZE;
 
     // Create I/O queue pair
     for (uint32_t qid = 0; qid < ctrl->num_io_queues; qid++) {
         if (nvme_init_queue(ctrl, &ctrl->io_queues[qid], 1 + qid,
                             NVME_IO_QUEUE_SIZE) != 0) {
-            g_nvme_platform_ops->log("NVMe: Failed to create I/O queue\n");
+            nvme_platform_ops->log("NVMe: Failed to create I/O queue\n");
             goto error;
         }
 
         if (nvme_create_io_cq(ctrl, &ctrl->io_queues[qid]) != 0) {
-            g_nvme_platform_ops->log("NVMe: Failed to create I/O CQ\n");
+            nvme_platform_ops->log("NVMe: Failed to create I/O CQ\n");
             goto error;
         }
 
         if (nvme_create_io_sq(ctrl, &ctrl->io_queues[qid]) != 0) {
-            g_nvme_platform_ops->log("NVMe: Failed to create I/O SQ\n");
+            nvme_platform_ops->log("NVMe: Failed to create I/O SQ\n");
             goto error;
         }
     }
 
-    g_nvme_platform_ops->log("NVMe: I/O queues created\n");
+    nvme_platform_ops->log("NVMe: I/O queues created\n");
 
     ctrl->initialized = true;
 
@@ -945,9 +934,9 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
             }
             ctrl->namespaces[i - 1].valid = true;
 
-            g_nvme_platform_ops->log("NVMe: NS%d: %lld blocks x %d bytes\n", i,
-                                     id_ns.nsze,
-                                     ctrl->namespaces[i - 1].block_size);
+            nvme_platform_ops->log("NVMe: NS%d: %lld blocks x %d bytes\n", i,
+                                   id_ns.nsze,
+                                   ctrl->namespaces[i - 1].block_size);
 
             nvme_ns_t *ns = malloc(sizeof(nvme_ns_t));
             ns->ctrl = ctrl;
@@ -963,14 +952,14 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
 
     device->desc = ctrl;
 
-    g_nvme_platform_ops->log("NVMe: Initialization complete\n");
+    nvme_platform_ops->log("NVMe: Initialization complete\n");
     return 0;
 
 error:
     // Cleanup on error
     if (ctrl) {
         nvme_dump_status(ctrl);
-        g_nvme_platform_ops->dma_free(ctrl, sizeof(nvme_controller_t));
+        nvme_platform_ops->dma_free(ctrl, sizeof(nvme_controller_t));
     }
     return -1;
 }
@@ -990,7 +979,7 @@ pci_driver_t nvme_driver = {
 };
 
 __attribute__((visibility("default"))) int dlmain() {
-    nvme_set_platform_ops(&nvme_platform_ops);
+    nvme_set_platform_ops(&naos_nvme_platform_ops);
 
     regist_pci_driver(&nvme_driver);
 

@@ -20,10 +20,6 @@ static bool user_mmap_range_valid(uint64_t addr, uint64_t len) {
         return false;
     if (addr < USER_MMAP_START)
         return false;
-    if (len > USER_MMAP_END - USER_MMAP_START)
-        return false;
-    if (addr > USER_MMAP_END - len)
-        return false;
     return true;
 }
 
@@ -145,6 +141,7 @@ static uint64_t find_unmapped_area_in_window(vma_manager_t *mgr,
         return (uint64_t)-ENOMEM;
 
     uint64_t cursor = window_start;
+    uint64_t best = (uint64_t)-ENOMEM;
     rb_node_t *node = rb_first(&mgr->vma_tree);
 
     while (node) {
@@ -161,18 +158,18 @@ static uint64_t find_unmapped_area_in_window(vma_manager_t *mgr,
             if (gap_end > window_end)
                 gap_end = window_end;
             if (gap_end > cursor && gap_end - cursor >= len)
-                return cursor;
+                best = gap_end - len;
         }
 
         cursor = PADDING_UP(vma->vm_end, DEFAULT_PAGE_SIZE);
         if (cursor < vma->vm_end || cursor >= window_end)
-            return (uint64_t)-ENOMEM;
+            return best;
     }
 
     if (cursor < window_end && window_end - cursor >= len)
-        return cursor;
+        best = window_end - len;
 
-    return (uint64_t)-ENOMEM;
+    return best;
 }
 
 uint64_t find_unmapped_area(vma_manager_t *mgr, uint64_t hint, uint64_t len) {
@@ -193,14 +190,14 @@ uint64_t find_unmapped_area(vma_manager_t *mgr, uint64_t hint, uint64_t len) {
             if (!vma_find_intersection(mgr, hint, hint + len))
                 return hint;
 
-            uint64_t upward =
-                find_unmapped_area_in_window(mgr, hint, USER_MMAP_END, len);
-            if ((int64_t)upward >= 0)
-                return upward;
+            uint64_t downward = find_unmapped_area_in_window(
+                mgr, USER_MMAP_START, hint + len, len);
+            if ((int64_t)downward >= 0)
+                return downward;
 
-            if (hint > USER_MMAP_START) {
+            if (hint + len < USER_MMAP_END) {
                 uint64_t wrapped = find_unmapped_area_in_window(
-                    mgr, USER_MMAP_START, hint, len);
+                    mgr, hint + len, USER_MMAP_END, len);
                 if ((int64_t)wrapped >= 0)
                     return wrapped;
             }
@@ -318,9 +315,15 @@ static uint64_t populate_anon_vma(vma_t *vma, uint64_t addr, uint64_t len,
 }
 
 static bool should_eager_map_file(vma_t *vma, uint64_t flags) {
+    if (!vma)
+        return false;
+    if (vma->vm_flags & VMA_DEVICE)
+        return true;
     if (flags & (MAP_POPULATE | MAP_LOCKED))
         return true;
     if (vma->vm_flags & VMA_SHARED)
+        return true;
+    if (vma->vm_flags & VMA_WRITE)
         return true;
     if (vma->vm_flags & VMA_DEVICE)
         return true;
@@ -409,7 +412,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         MAP_DENYWRITE | MAP_EXECUTABLE | MAP_LOCKED | MAP_POPULATE |
         MAP_NONBLOCK | MAP_STACK | MAP_HUGETLB | MAP_SYNC | MAP_FIXED_NOREPLACE;
 
-    uint64_t page_mask = DEFAULT_PAGE_SIZE - 1;
+    const uint64_t page_mask = DEFAULT_PAGE_SIZE - 1;
     uint64_t map_type = flags & MAP_TYPE;
     uint64_t clean_flags = flags & passthrough_flags;
     uint64_t aligned_len = PADDING_UP(len, DEFAULT_PAGE_SIZE);
@@ -436,10 +439,6 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         return (uint64_t)-ENOMEM;
 
     task_mm_info_t *mm_info = current_task->mm;
-
-    if (addr >= mm_info->brk_start && (addr + aligned_len) <= mm_info->brk_end)
-        return 0;
-
     fd_t *map_fd = NULL;
     vfs_node_t map_node = NULL;
     if (!anonymous) {
@@ -700,6 +699,38 @@ static void restore_copy_target_permissions(vma_t *vma, uint64_t addr,
                                vm_flags_to_pt_flags(vma->vm_flags));
 }
 
+static int copy_user_range_mapped(uint64_t dst, uint64_t src, uint64_t size) {
+    if (size == 0)
+        return 0;
+
+    uint64_t *pgdir = get_current_page_dir(true);
+    uint64_t src_addr = src;
+    uint64_t dst_addr = dst;
+    uint64_t remain = size;
+
+    while (remain > 0) {
+        uint64_t src_pa = translate_address(pgdir, src_addr);
+        uint64_t dst_pa = translate_address(pgdir, dst_addr);
+        if (!src_pa || !dst_pa)
+            return -EFAULT;
+
+        uint64_t src_chunk =
+            DEFAULT_PAGE_SIZE - (src_addr & (DEFAULT_PAGE_SIZE - 1));
+        uint64_t dst_chunk =
+            DEFAULT_PAGE_SIZE - (dst_addr & (DEFAULT_PAGE_SIZE - 1));
+        uint64_t chunk = MIN(remain, MIN(src_chunk, dst_chunk));
+
+        memcpy((void *)phys_to_virt(dst_pa), (const void *)phys_to_virt(src_pa),
+               chunk);
+
+        src_addr += chunk;
+        dst_addr += chunk;
+        remain -= chunk;
+    }
+
+    return 0;
+}
+
 static bool mremap_should_copy_data(vma_t *vma) {
     if (vma->vm_type == VMA_TYPE_ANON)
         return true;
@@ -813,7 +844,12 @@ static uint64_t mremap_move_locked(vma_manager_t *mgr, vma_t *old_vma,
         uint64_t copy_len = old_size < new_size ? old_size : new_size;
         if (copy_len > 0) {
             prepare_copy_target(new_vma, target, copy_len);
-            memmove((void *)target, (void *)old_addr, copy_len);
+            if (copy_user_range_mapped(target, old_addr, copy_len) != 0) {
+                unmap_page_range(get_current_page_dir(true), target, new_size);
+                vma_remove(mgr, new_vma);
+                vma_free(new_vma);
+                return (uint64_t)-EFAULT;
+            }
             if (!(new_vma->vm_flags & VMA_WRITE))
                 restore_copy_target_permissions(new_vma, target, copy_len);
         }
@@ -938,25 +974,53 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
     uint64_t page_off = addr - map_addr;
     uint64_t map_len = PADDING_UP(len + page_off, DEFAULT_PAGE_SIZE);
     uint64_t load_pt_flags = final_pt_flags | PT_FLAG_W;
+    uint64_t *pgdir = get_current_page_dir(true);
 
-    map_page_range(get_current_page_dir(true), map_addr, (uint64_t)-1, map_len,
-                   load_pt_flags);
-    memset((void *)map_addr, 0, map_len);
+    map_page_range(pgdir, map_addr, (uint64_t)-1, map_len, load_pt_flags);
 
-    uint64_t origin_offset = file->offset;
-    file->offset = offset;
-    ssize_t ret = vfs_read_fd(file, (void *)addr, offset, len);
-    file->offset = origin_offset;
+    uint64_t cursor = addr;
+    uint64_t remaining = len;
+    uint64_t file_off = offset;
 
-    if (ret < 0) {
-        unmap_page_range(get_current_page_dir(true), map_addr, map_len);
-        printk("Failed read file for mmap\n");
-        return (void *)ret;
+    while (remaining > 0) {
+        uint64_t page_va = PADDING_DOWN(cursor, DEFAULT_PAGE_SIZE);
+        uint64_t page_paddr = translate_address(pgdir, page_va);
+        if (!page_paddr) {
+            unmap_page_range(pgdir, map_addr, map_len);
+            return (void *)(uint64_t)-ENOMEM;
+        }
+
+        uint64_t in_page = cursor - page_va;
+        uint64_t chunk = DEFAULT_PAGE_SIZE - in_page;
+        if (chunk > remaining)
+            chunk = remaining;
+
+        uint64_t loaded = 0;
+        while (loaded < chunk) {
+            ssize_t ret =
+                vfs_read(file->node,
+                         (void *)(phys_to_virt(page_paddr) + in_page + loaded),
+                         file_off + loaded, chunk - loaded);
+            if (ret < 0) {
+                unmap_page_range(pgdir, map_addr, map_len);
+                printk("Failed read file for mmap\n");
+                return (void *)ret;
+            }
+            if (ret == 0)
+                break;
+            loaded += (uint64_t)ret;
+        }
+
+        cursor += loaded;
+        file_off += loaded;
+        remaining -= loaded;
+
+        if (loaded < chunk)
+            break;
     }
 
     if (load_pt_flags != final_pt_flags) {
-        map_change_attribute_range(get_current_page_dir(true), map_addr,
-                                   map_len, final_pt_flags);
+        map_change_attribute_range(pgdir, map_addr, map_len, final_pt_flags);
     }
 
     return (void *)addr;
