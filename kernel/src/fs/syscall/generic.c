@@ -732,9 +732,40 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
         return (uint64_t)-EBADF;
     }
 
-    int ret = vfs_ioctl(self->fd_info->fds[fd]->node, cmd, arg);
-    if (cmd == TIOCGWINSZ && ret < 0) {
-        ret = -ENOTTY;
+    int ret = -ENOSYS;
+    switch (cmd) {
+    case FIONBIO:
+        if (!arg)
+            return -EFAULT;
+        int value = 0;
+        if (copy_from_user(&value, (void *)arg, sizeof(value)))
+            return -EFAULT;
+        if (value)
+            self->fd_info->fds[fd]->flags |= O_NONBLOCK;
+        else
+            self->fd_info->fds[fd]->flags &= ~O_NONBLOCK;
+        ret = 0;
+        break;
+    case FIOCLEX:
+        self->fd_info->fds[fd]->flags |= O_CLOEXEC;
+        self->fd_info->fds[fd]->close_on_exec = true;
+        ret = 0;
+        break;
+    case FIONCLEX:
+        self->fd_info->fds[fd]->flags &= ~O_CLOEXEC;
+        self->fd_info->fds[fd]->close_on_exec = false;
+        ret = 0;
+        break;
+
+    default:
+        ret = vfs_ioctl(self->fd_info->fds[fd]->node, cmd, arg);
+        if (cmd == TIOCGWINSZ && ret < 0) {
+            ret = -ENOTTY;
+        }
+        break;
+    }
+    if (ret == -ENOSYS) {
+        printk("sys_ioctl: cmd %#010x not implemented\n", cmd);
     }
 
     return ret;

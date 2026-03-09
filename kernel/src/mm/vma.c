@@ -196,7 +196,11 @@ int vma_merge(vma_manager_t *mgr, vma_t *vma1, vma_t *vma2) {
         return -1;
 
     if (vma1->vm_flags != vma2->vm_flags || vma1->vm_type != vma2->vm_type ||
-        vma1->node != vma2->node || vma1->shm != vma2->shm ||
+        vma1->node != vma2->node || vma1->shm != vma2->shm) {
+        return -1;
+    }
+
+    if (vma1->vm_type == VMA_TYPE_FILE &&
         vma1->vm_offset + (vma1->vm_end - vma1->vm_start) != vma2->vm_offset) {
         return -1;
     }

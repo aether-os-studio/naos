@@ -1254,18 +1254,6 @@ int socket_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
     socket_t *sock = handler->sock;
 
     switch (cmd) {
-    case FIONBIO: {
-        if (!arg)
-            return -EFAULT;
-        int value = 0;
-        if (copy_from_user(&value, (void *)arg, sizeof(value)))
-            return -EFAULT;
-        if (value)
-            handler->fd->flags |= O_NONBLOCK;
-        else
-            handler->fd->flags &= ~O_NONBLOCK;
-        return 0;
-    }
     case FIONREAD:
         if (!arg)
             return -EFAULT;

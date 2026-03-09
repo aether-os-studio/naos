@@ -34,9 +34,9 @@ printf "${MIRROR}/main\n${MIRROR}/community\n${MIRROR_ROOT}/edge/testing\n" | su
 sudo cp -r $SCRIPTPATH/base/etc/resolv.conf $SYSROOT/etc/
 
 sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add musl-dev gcompat gzip xz make file tar pciutils tzdata nano vim lua5.1 gcc binutils fastfetch libdrm-dev libdrm-tests bind-tools curl evtest"
-sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add seatd"
+sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add seatd dbus"
 sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add weston weston-backend-drm weston-shell-desktop weston-xwayland xwayland xdpyinfo ttf-dejavu"
-sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add weston-terminal"
+sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add weston-terminal lite-xl"
 sudo chroot "$SYSROOT/" /bin/bash --login -c "apk add mesa mesa-gl mesa-egl mesa-gles mesa-gbm mesa-utils mesa-vulkan-swrast mesa-dri-gallium"
 
 sudo rm -rf $SYSROOT/bin/sh

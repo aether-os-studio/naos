@@ -16,5 +16,9 @@ export LANG=C.UTF-8
 
 export SDL_VIDEODRIVER=x11
 
+export XDG_SESSION_TYPE=wayland
+
 seatd &
+dbus-daemon --system
+dbus-uuidgen --ensure
 weston --xwayland

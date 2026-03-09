@@ -39,6 +39,8 @@ typedef struct ext_dir_lookup {
     uint16_t prev_rec_len;
 } ext_dir_lookup_t;
 
+static void ext_hide_node(vfs_node_t node);
+
 static uint64_t ext_now(void) {
     tm time;
     time_read(&time);
@@ -229,11 +231,27 @@ static void ext_fix_root_recursive(vfs_node_t node, vfs_node_t root) {
     if (!node)
         return;
 
+    if (node != root && node == node->root) {
+        return;
+    }
+
     node->root = root;
 
     vfs_node_t child, tmp;
     llist_for_each(child, tmp, &node->childs, node_for_childs) {
         ext_fix_root_recursive(child, root);
+    }
+}
+
+static void ext_hide_node(vfs_node_t node) {
+    if (!node)
+        return;
+
+    vfs_detach_child(node);
+    node->flags |= VFS_NODE_FLAGS_FREE_AFTER_USE;
+
+    if (node->refcount <= 0 && node->handle == NULL) {
+        vfs_free(node);
     }
 }
 
@@ -1447,6 +1465,59 @@ static void ext_prune_children(vfs_node_t parent, const char *name) {
     free(nodes);
 }
 
+static void ext_resolve_children_conflict(vfs_node_t parent, const char *name) {
+    if (!parent || !name)
+        return;
+
+    uint64_t nodes_count = 0;
+    vfs_node_t child, tmp;
+    llist_for_each(child, tmp, &parent->childs, node_for_childs) {
+        if (!child->name || strcmp(child->name, name))
+            continue;
+        nodes_count++;
+    }
+
+    if (nodes_count <= 1)
+        return;
+
+    vfs_node_t *nodes = calloc(nodes_count, sizeof(vfs_node_t));
+    if (!nodes)
+        return;
+
+    uint64_t idx = 0;
+    llist_for_each(child, tmp, &parent->childs, node_for_childs) {
+        if (!child->name || strcmp(child->name, name))
+            continue;
+        nodes[idx++] = child;
+    }
+
+    vfs_node_t keep = NULL;
+    for (uint64_t i = 0; i < idx; i++) {
+        if (nodes[i] == nodes[i]->root) {
+            keep = nodes[i];
+            break;
+        }
+    }
+    if (!keep) {
+        for (uint64_t i = 0; i < idx; i++) {
+            if (nodes[i]->fsid == (uint32_t)ext_fsid) {
+                keep = nodes[i];
+                break;
+            }
+        }
+    }
+    if (!keep)
+        keep = nodes[0];
+
+    for (uint64_t i = 0; i < idx; i++) {
+        if (nodes[i] == keep)
+            continue;
+        ext_hide_node(nodes[i]);
+    }
+
+    free(nodes);
+}
+
 static int ext_populate_dir_with_fs_locked(ext_mount_ctx_t *fs,
                                            vfs_node_t node) {
     if (!fs)
@@ -1501,6 +1572,9 @@ static int ext_populate_dir_with_fs_locked(ext_mount_ctx_t *fs,
                 if (exist) {
                     if (exist == exist->root) {
                         goto next;
+                    }
+                    if (exist->fsid != (uint32_t)ext_fsid) {
+                        ext_hide_node(exist);
                     }
                 }
 
@@ -1796,10 +1870,25 @@ int ext_remount(vfs_node_t old, vfs_node_t node) {
 
     int ret = ext_populate_dir_with_fs_locked(ctx, node);
     if (!ret) {
+        uint64_t nodes_count = 0;
         vfs_node_t child, tmp;
         llist_for_each(child, tmp, &node->childs, node_for_childs) {
-            if (child == child->root)
-                ext_prune_children(node, child->name);
+            nodes_count++;
+        }
+
+        char **names = calloc(nodes_count, sizeof(char *));
+        if (names) {
+            uint64_t idx = 0;
+            llist_for_each(child, tmp, &node->childs, node_for_childs) {
+                names[idx++] = child->name ? strdup(child->name) : NULL;
+            }
+            for (uint64_t i = 0; i < idx; i++) {
+                if (names[i]) {
+                    ext_resolve_children_conflict(node, names[i]);
+                    free(names[i]);
+                }
+            }
+            free(names);
         }
     }
     spin_unlock(&rwlock);
