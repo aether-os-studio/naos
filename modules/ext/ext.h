@@ -11,10 +11,6 @@ typedef struct ext_handle {
     bool device_opened;
     bool inode_valid;
     ext_inode_disk_t inode_cache;
-    bool block_cache_valid;
-    uint32_t block_cache_lblock;
-    uint32_t block_cache_size;
-    uint8_t *block_cache;
 } ext_handle_t;
 
 int ext_mount(uint64_t dev, vfs_node_t node);

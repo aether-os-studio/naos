@@ -12,6 +12,17 @@ static int ext_fsid = 0;
 static spinlock_t rwlock = SPIN_INIT;
 DEFINE_LLIST(ext_mounts);
 
+#define EXT_BLOCK_CACHE_TARGET_BYTES (1024u * 1024u)
+#define EXT_BLOCK_CACHE_MIN_ENTRIES 32u
+#define EXT_BLOCK_CACHE_MAX_ENTRIES 1024u
+
+typedef struct ext_block_cache_entry {
+    struct llist_header lru_node;
+    uint64_t block;
+    uint8_t *data;
+    bool valid;
+} ext_block_cache_entry_t;
+
 typedef struct ext_mount_ctx {
     struct llist_header node;
     vfs_node_t root;
@@ -25,6 +36,9 @@ typedef struct ext_mount_ctx {
     uint32_t ptrs_per_block;
     uint64_t blocks_count;
     uint64_t inodes_count;
+    struct llist_header cache_lru;
+    ext_block_cache_entry_t *cache_entries;
+    uint32_t cache_entry_count;
 } ext_mount_ctx_t;
 
 typedef struct ext_dir_lookup {
@@ -207,8 +221,8 @@ static uint64_t ext_group_inodes_count(ext_mount_ctx_t *fs, uint32_t group) {
     return MIN((uint64_t)fs->sb.s_inodes_per_group, fs->inodes_count - start);
 }
 
-static int ext_dev_read(ext_mount_ctx_t *fs, uint64_t offset, void *buf,
-                        size_t size) {
+static int ext_dev_read_direct(ext_mount_ctx_t *fs, uint64_t offset, void *buf,
+                               size_t size) {
     ssize_t ret = device_read(fs->dev, buf, offset, size, 0);
     if (ret < 0)
         return (int)ret;
@@ -217,13 +231,238 @@ static int ext_dev_read(ext_mount_ctx_t *fs, uint64_t offset, void *buf,
     return 0;
 }
 
-static int ext_dev_write(ext_mount_ctx_t *fs, uint64_t offset, const void *buf,
-                         size_t size) {
+static int ext_dev_write_direct(ext_mount_ctx_t *fs, uint64_t offset,
+                                const void *buf, size_t size) {
     ssize_t ret = device_write(fs->dev, (void *)buf, offset, size, 0);
     if (ret < 0)
         return (int)ret;
     if ((size_t)ret != size)
         return -EIO;
+    return 0;
+}
+
+static uint32_t ext_block_cache_default_entries(uint32_t block_size) {
+    uint32_t entries;
+
+    if (!block_size)
+        return 0;
+
+    entries = EXT_BLOCK_CACHE_TARGET_BYTES / block_size;
+    if (entries < EXT_BLOCK_CACHE_MIN_ENTRIES)
+        entries = EXT_BLOCK_CACHE_MIN_ENTRIES;
+    if (entries > EXT_BLOCK_CACHE_MAX_ENTRIES)
+        entries = EXT_BLOCK_CACHE_MAX_ENTRIES;
+    return entries;
+}
+
+static int ext_block_cache_init(ext_mount_ctx_t *fs) {
+    if (!fs || !fs->block_size)
+        return -EINVAL;
+
+    llist_init_head(&fs->cache_lru);
+    fs->cache_entry_count = ext_block_cache_default_entries(fs->block_size);
+    fs->cache_entries =
+        calloc(fs->cache_entry_count, sizeof(*fs->cache_entries));
+    if (!fs->cache_entries)
+        return -ENOMEM;
+
+    for (uint32_t i = 0; i < fs->cache_entry_count; i++) {
+        ext_block_cache_entry_t *entry = &fs->cache_entries[i];
+
+        llist_init_head(&entry->lru_node);
+        entry->block = (uint64_t)-1;
+        entry->data = calloc(1, fs->block_size);
+        if (!entry->data) {
+            for (uint32_t j = 0; j < i; j++)
+                free(fs->cache_entries[j].data);
+            free(fs->cache_entries);
+            fs->cache_entries = NULL;
+            fs->cache_entry_count = 0;
+            return -ENOMEM;
+        }
+    }
+
+    return 0;
+}
+
+static void ext_block_cache_destroy(ext_mount_ctx_t *fs) {
+    if (!fs)
+        return;
+
+    if (fs->cache_entries) {
+        for (uint32_t i = 0; i < fs->cache_entry_count; i++)
+            free(fs->cache_entries[i].data);
+        free(fs->cache_entries);
+    }
+
+    fs->cache_entries = NULL;
+    fs->cache_entry_count = 0;
+    llist_init_head(&fs->cache_lru);
+}
+
+static void ext_block_cache_touch_locked(ext_mount_ctx_t *fs,
+                                         ext_block_cache_entry_t *entry) {
+    if (!fs || !entry)
+        return;
+
+    if (!llist_empty(&entry->lru_node))
+        llist_delete(&entry->lru_node);
+    llist_prepend(&fs->cache_lru, &entry->lru_node);
+}
+
+static ext_block_cache_entry_t *ext_block_cache_find_locked(ext_mount_ctx_t *fs,
+                                                            uint64_t block) {
+    if (!fs || !fs->cache_entries)
+        return NULL;
+
+    for (uint32_t i = 0; i < fs->cache_entry_count; i++) {
+        ext_block_cache_entry_t *entry = &fs->cache_entries[i];
+        if (entry->valid && entry->block == block)
+            return entry;
+    }
+
+    return NULL;
+}
+
+static ext_block_cache_entry_t *
+ext_block_cache_get_victim_locked(ext_mount_ctx_t *fs) {
+    if (!fs || !fs->cache_entries)
+        return NULL;
+
+    for (uint32_t i = 0; i < fs->cache_entry_count; i++) {
+        ext_block_cache_entry_t *entry = &fs->cache_entries[i];
+        if (!entry->valid)
+            return entry;
+    }
+
+    if (llist_empty(&fs->cache_lru))
+        return NULL;
+
+    ext_block_cache_entry_t *entry =
+        list_entry(fs->cache_lru.prev, ext_block_cache_entry_t, lru_node);
+    llist_delete(&entry->lru_node);
+    entry->valid = false;
+    entry->block = (uint64_t)-1;
+    return entry;
+}
+
+static int ext_block_cache_load_locked(ext_mount_ctx_t *fs, uint64_t block,
+                                       ext_block_cache_entry_t **entry_out) {
+    if (!fs || !entry_out)
+        return -EINVAL;
+
+    ext_block_cache_entry_t *entry = ext_block_cache_find_locked(fs, block);
+    if (entry) {
+        ext_block_cache_touch_locked(fs, entry);
+        *entry_out = entry;
+        return 0;
+    }
+
+    entry = ext_block_cache_get_victim_locked(fs);
+    if (!entry)
+        return -ENOMEM;
+
+    int ret = ext_dev_read_direct(fs, block * fs->block_size, entry->data,
+                                  fs->block_size);
+    if (ret) {
+        entry->valid = false;
+        entry->block = (uint64_t)-1;
+        *entry_out = NULL;
+        return ret;
+    }
+
+    entry->block = block;
+    entry->valid = true;
+    ext_block_cache_touch_locked(fs, entry);
+    *entry_out = entry;
+    return 0;
+}
+
+static int ext_block_cache_store_locked(ext_mount_ctx_t *fs, uint64_t block,
+                                        const void *buf) {
+    if (!fs || !buf)
+        return -EINVAL;
+
+    ext_block_cache_entry_t *entry = ext_block_cache_find_locked(fs, block);
+    if (!entry) {
+        entry = ext_block_cache_get_victim_locked(fs);
+        if (!entry)
+            return -ENOMEM;
+    }
+
+    memcpy(entry->data, buf, fs->block_size);
+    entry->block = block;
+    entry->valid = true;
+    ext_block_cache_touch_locked(fs, entry);
+    return 0;
+}
+
+static int ext_dev_read(ext_mount_ctx_t *fs, uint64_t offset, void *buf,
+                        size_t size) {
+    if (!size)
+        return 0;
+    if (!fs || !buf)
+        return -EINVAL;
+    if (!fs->block_size || !fs->cache_entries)
+        return ext_dev_read_direct(fs, offset, buf, size);
+
+    size_t done = 0;
+    while (done < size) {
+        uint64_t pos = offset + done;
+        uint64_t block = pos / fs->block_size;
+        uint32_t boff = (uint32_t)(pos % fs->block_size);
+        size_t chunk = MIN((size_t)fs->block_size - boff, size - done);
+        ext_block_cache_entry_t *entry = NULL;
+        int ret = ext_block_cache_load_locked(fs, block, &entry);
+        if (ret)
+            return ret;
+        memcpy((uint8_t *)buf + done, entry->data + boff, chunk);
+        done += chunk;
+    }
+
+    return 0;
+}
+
+static int ext_dev_write(ext_mount_ctx_t *fs, uint64_t offset, const void *buf,
+                         size_t size) {
+    if (!size)
+        return 0;
+    if (!fs || !buf)
+        return -EINVAL;
+    if (!fs->block_size || !fs->cache_entries)
+        return ext_dev_write_direct(fs, offset, buf, size);
+
+    size_t done = 0;
+    while (done < size) {
+        uint64_t pos = offset + done;
+        uint64_t block = pos / fs->block_size;
+        uint32_t boff = (uint32_t)(pos % fs->block_size);
+        size_t chunk = MIN((size_t)fs->block_size - boff, size - done);
+        const uint8_t *src = (const uint8_t *)buf + done;
+        int ret;
+
+        if (boff == 0 && chunk == fs->block_size) {
+            ret = ext_dev_write_direct(fs, pos, src, chunk);
+            if (ret)
+                return ret;
+            ret = ext_block_cache_store_locked(fs, block, src);
+            if (ret)
+                return ret;
+        } else {
+            ext_block_cache_entry_t *entry = NULL;
+            ret = ext_block_cache_load_locked(fs, block, &entry);
+            if (ret)
+                return ret;
+            ret = ext_dev_write_direct(fs, pos, src, chunk);
+            if (ret)
+                return ret;
+            memcpy(entry->data + boff, src, chunk);
+            ext_block_cache_touch_locked(fs, entry);
+        }
+
+        done += chunk;
+    }
+
     return 0;
 }
 
@@ -923,60 +1162,6 @@ static int ext_read_inode_data_locked(ext_mount_ctx_t *fs, uint32_t ino,
     }
 
     free(block);
-    return (int)done;
-}
-
-static int ext_read_inode_data_cached_locked(ext_mount_ctx_t *fs,
-                                             ext_handle_t *handle,
-                                             ext_inode_disk_t *inode, void *buf,
-                                             size_t offset, size_t size) {
-    uint64_t file_size = ext_inode_size_get(inode);
-    if (offset >= file_size)
-        return 0;
-
-    size_t total = MIN((size_t)(file_size - offset), size);
-    size_t done = 0;
-
-    while (done < total) {
-        uint64_t pos = offset + done;
-        uint32_t lblock = (uint32_t)(pos / fs->block_size);
-        uint32_t boff = (uint32_t)(pos % fs->block_size);
-        size_t chunk = MIN((size_t)fs->block_size - boff, total - done);
-        uint32_t pblock = 0;
-        int ret = ext_inode_get_block_locked(fs, handle->ino, inode, lblock,
-                                             false, &pblock);
-        if (ret)
-            return ret;
-
-        if (!pblock) {
-            memset((uint8_t *)buf + done, 0, chunk);
-            done += chunk;
-            continue;
-        }
-
-        if (!handle->block_cache ||
-            handle->block_cache_size != fs->block_size) {
-            free(handle->block_cache);
-            handle->block_cache = calloc(1, fs->block_size);
-            if (!handle->block_cache)
-                return -ENOMEM;
-            handle->block_cache_size = fs->block_size;
-            handle->block_cache_valid = false;
-        }
-
-        if (!handle->block_cache_valid ||
-            handle->block_cache_lblock != lblock) {
-            ret = ext_read_block(fs, pblock, handle->block_cache);
-            if (ret)
-                return ret;
-            handle->block_cache_lblock = lblock;
-            handle->block_cache_valid = true;
-        }
-
-        memcpy((uint8_t *)buf + done, handle->block_cache + boff, chunk);
-        done += chunk;
-    }
-
     return (int)done;
 }
 
@@ -1754,6 +1939,10 @@ int ext_mount(uint64_t dev, vfs_node_t node) {
         goto fail;
     }
 
+    ret = ext_block_cache_init(fs);
+    if (ret)
+        goto fail;
+
     fs->groups = calloc(fs->group_count, sizeof(ext_group_desc_t));
     if (!fs->groups) {
         ret = -ENOMEM;
@@ -1800,6 +1989,7 @@ int ext_mount(uint64_t dev, vfs_node_t node) {
 fail:
     if (linked)
         llist_delete(&fs->node);
+    ext_block_cache_destroy(fs);
     if (fs->groups)
         free(fs->groups);
     free(fs);
@@ -1815,6 +2005,7 @@ void ext_unmount(vfs_node_t node) {
     ext_mount_ctx_t *ctx = ext_find_mount(node);
     if (ctx) {
         llist_delete(&ctx->node);
+        ext_block_cache_destroy(ctx);
         free(ctx->groups);
         free(ctx);
     }
@@ -1934,10 +2125,6 @@ void ext_open(vfs_node_t parent, const char *name, vfs_node_t node) {
         }
     }
 
-    handle->block_cache_valid = false;
-    handle->block_cache_size = 0;
-    handle->block_cache = NULL;
-
     node->handle = handle;
     if (node->type & file_dir)
         ext_populate_dir_with_fs_locked(fs, node);
@@ -1954,8 +2141,6 @@ bool ext_close(vfs_node_t node) {
 
     if (handle->device_opened)
         device_close(node->rdev);
-
-    free(handle->block_cache);
 
     if ((node->flags & VFS_NODE_FLAGS_DELETED) && node->inode) {
         ext_mount_ctx_t *fs = ext_find_mount(node);
@@ -2009,7 +2194,6 @@ ssize_t ext_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
                                       size);
     if (ret >= 0) {
         handle->inode_cache = inode;
-        handle->block_cache_valid = false;
         ext_sync_node_from_inode(fd->node, fs, &inode);
     }
     spin_unlock(&rwlock);
@@ -2046,8 +2230,8 @@ ssize_t ext_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         handle->inode_cache = inode;
         handle->inode_valid = true;
     }
-    ret = ext_read_inode_data_cached_locked(fs, handle, &inode, addr, offset,
-                                            size);
+    ret =
+        ext_read_inode_data_locked(fs, handle->ino, &inode, addr, offset, size);
     if (ret >= 0) {
         handle->inode_cache = inode;
         fd->node->size = ext_inode_size_get(&inode);
