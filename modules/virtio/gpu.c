@@ -2951,6 +2951,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
 
 // DRM device operations structure
 drm_device_op_t virtio_gpu_drm_device_op = {
+    .supports_render_node = true,
     .get_display_info = virtio_gpu_get_display_info_drm,
     .get_fb = NULL,
     .create_dumb = virtio_gpu_create_dumb,
@@ -3166,7 +3167,7 @@ int virtio_gpu_init(virtio_driver_t *driver) {
     printk("virtio_gpu: Initialized GPU with %d displays%s\n",
            gpu_device->num_displays,
            gpu_device->virgl_enabled ? ", virgl enabled" : "");
-    printk("virtio_gpu: drm primary node /dev/dri/card%u\n",
+    printk("virtio_gpu: drm primary node /dev/dri/card%d\n",
            gpu_device->drm_dev->primary_minor);
     if (gpu_device->host_visible_shm_size) {
         printk("virtio_gpu: host visible shm %#llx + %#llx\n",

@@ -1069,6 +1069,8 @@ uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
         return (uint64_t)-ENOMEM;
     }
 
+    spin_unlock(&mgr->lock);
+
     for (uint64_t index = 0, cursor = addr; index < num_pages;
          index++, cursor += DEFAULT_PAGE_SIZE) {
         uint8_t value = translate_address(page_dir, cursor) ? 1 : 0;
@@ -1076,8 +1078,6 @@ uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
             return (uint64_t)-EFAULT;
         }
     }
-
-    spin_unlock(&mgr->lock);
 
     return 0;
 }

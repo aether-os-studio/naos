@@ -148,8 +148,8 @@ distclean:
 clippy:
 	$(MAKE) -C kernel clippy
 
-ROOTFS_IMG_SIZE ?= 4096
-ROOTFS_EXT_BLOCK_SIZE ?= 2048
+ROOTFS_IMG_SIZE ?= 2048
+ROOTFS_EXT_BLOCK_SIZE ?= 1024
 ROOTFS_EXT_DISABLE_FEATURES := ^has_journal,^extent,^64bit,^metadata_csum,^dir_index,^flex_bg,^huge_file,^dir_nlink,^extra_isize,^quota,^metadata_csum_seed,^orphan_file,^project,^encrypt,^verity,^casefold,^inline_data,^ea_inode,^bigalloc,^mmp,^fast_commit,^sparse_super2
 
 rootfs-$(ARCH).img: user/.build-stamp-$(ARCH)

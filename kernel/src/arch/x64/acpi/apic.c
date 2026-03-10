@@ -346,12 +346,12 @@ uint64_t general_ap_entry() {
 
     gdtidt_setup();
 
+    fsgsbase_init();
+
     x64_cpu_local_init(get_cpuid_by_lapic_id((uint32_t)lapic_id()),
                        (uint32_t)lapic_id());
 
     tss_init();
-
-    fsgsbase_init();
 
     local_apic_init();
 

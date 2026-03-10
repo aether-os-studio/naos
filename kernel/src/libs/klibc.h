@@ -236,122 +236,15 @@ static inline char *strrchr(const char *s, int c) {
 
 char *strdup(const char *s);
 
+typedef struct spinlock {
+    volatile long lock;
+} spinlock_t;
+
 #define SPIN_INIT (spinlock_t){0}
 
-#if defined(__x86_64__)
-
-typedef struct spinlock {
-    volatile long lock;
-} spinlock_t;
-
-static inline void spin_init(spinlock_t *lock) { lock->lock = 0; }
-
-static inline void spin_lock(spinlock_t *lock) {
-    asm volatile("1:\n\t"
-                 "lock btsq $0, %0\n\t"
-                 "jnc 2f\n\t" /* 成功获取，跳出 */
-                 "3:\n\t"
-                 "pause\n\t"        /* 降低总线压力 */
-                 "testq $1, %0\n\t" /* 只读检测，不产生总线锁 */
-                 "jnz 3b\n\t"       /* 仍被占用，继续自旋 */
-                 "jmp 1b\n\t"       /* 可能释放了，尝试获取 */
-                 "2:\n\t"
-                 : "+m"(lock->lock)
-                 :
-                 : "memory", "cc");
-}
-
-static inline void spin_unlock(spinlock_t *lock) {
-    asm volatile("lock btrq $0, %0\n\t" : "+m"(lock->lock) : : "memory", "cc");
-}
-
-#elif defined(__aarch64__)
-
-typedef struct spinlock {
-    volatile long lock;
-} spinlock_t;
-
-static inline void spin_init(spinlock_t *lock) {
-    memset(lock, 0, sizeof(spinlock_t));
-}
-
-static inline void spin_lock(spinlock_t *lock) {
-    long tmp, status;
-
-    asm volatile("   prfm pstl1keep, [%2]\n\t"
-                 "1: ldaxr %w0, [%2]\n\t"
-                 "   cbnz %w0, 2f\n\t"
-                 "   mov %w0, #1\n\t"
-                 "   stxr %w1, %w0, [%2]\n\t"
-                 "   cbnz %w1, 1b\n\t"
-                 "   b 3f\n\t"
-                 "2: wfe\n\t"
-                 "   b 1b\n\t"
-                 "3:\n\t"
-                 : "=&r"(tmp), "=&r"(status)
-                 : "r"(&lock->lock)
-                 : "memory");
-}
-
-static inline void spin_unlock(spinlock_t *lock) {
-    asm volatile("   stlr wzr, [%0]\n\t"
-                 "   dsb sy\n\t"
-                 "   sev\n\t"
-                 :
-                 : "r"(&lock->lock)
-                 : "memory");
-}
-
-#elif defined(__riscv__)
-
-typedef struct spinlock {
-    volatile long lock;
-} spinlock_t;
-
-static inline void spin_init(spinlock_t *lock) {
-    memset(lock, 0, sizeof(spinlock_t));
-}
-
-// 获取spinlock
-static inline void spin_lock(spinlock_t *sl) {
-    /* 自旋等待 */
-    while (__sync_lock_test_and_set(&sl->lock, 1)) {
-        while (sl->lock) {
-            asm volatile("pause" ::: "memory");
-        }
-    }
-
-    sl->flags = 0;
-}
-
-// 释放spinlock
-static inline void spin_unlock(spinlock_t *sl) {
-    __sync_lock_release(&sl->lock);
-}
-
-#elif defined(__loongarch64)
-
-typedef struct spinlock {
-    volatile long lock;
-} spinlock_t;
-
-static inline void spin_init(spinlock_t *lock) {
-    memset(lock, 0, sizeof(spinlock_t));
-}
-
-// 获取spinlock
-static inline void spin_lock(spinlock_t *sl) {
-    /* 自旋等待 */
-    while (__sync_lock_test_and_set(&sl->lock, 1)) {
-    }
-}
-
-// 释放spinlock
-static inline void spin_unlock(spinlock_t *sl) {
-    __sync_lock_release(&sl->lock);
-}
-
-#endif
+void spin_init(spinlock_t *lock);
+void spin_lock(spinlock_t *lock);
+void spin_unlock(spinlock_t *lock);
 
 extern uint64_t nano_time();
 

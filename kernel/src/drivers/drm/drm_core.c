@@ -309,6 +309,81 @@ drm_framebuffer_t *drm_framebuffer_get(drm_resource_manager_t *mgr,
     return NULL;
 }
 
+static bool drm_framebuffer_is_bound_locked(drm_device_t *dev, uint32_t id) {
+    if (!dev) {
+        return false;
+    }
+
+    for (uint32_t i = 0; i < DRM_MAX_CRTCS_PER_DEVICE; i++) {
+        if (dev->resource_mgr.crtcs[i] &&
+            dev->resource_mgr.crtcs[i]->fb_id == id) {
+            return true;
+        }
+    }
+
+    for (uint32_t i = 0; i < DRM_MAX_PLANES_PER_DEVICE; i++) {
+        if (dev->resource_mgr.planes[i] &&
+            dev->resource_mgr.planes[i]->fb_id == id) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+int drm_framebuffer_close(drm_device_t *dev, uint32_t id) {
+    if (!dev || id == 0) {
+        return -EINVAL;
+    }
+
+    drm_resource_manager_t *mgr = &dev->resource_mgr;
+    spin_lock(&mgr->lock);
+
+    for (uint32_t i = 0; i < DRM_MAX_FRAMEBUFFERS_PER_DEVICE; i++) {
+        drm_framebuffer_t *fb = mgr->framebuffers[i];
+        if (!fb || fb->id != id) {
+            continue;
+        }
+
+        fb->closed = true;
+        if (!drm_framebuffer_is_bound_locked(dev, id) && fb->refcount <= 1) {
+            free(fb);
+            mgr->framebuffers[i] = NULL;
+        }
+
+        spin_unlock(&mgr->lock);
+        return 0;
+    }
+
+    spin_unlock(&mgr->lock);
+    return -ENOENT;
+}
+
+void drm_framebuffer_cleanup_closed(drm_device_t *dev, uint32_t id) {
+    if (!dev || id == 0) {
+        return;
+    }
+
+    drm_resource_manager_t *mgr = &dev->resource_mgr;
+    spin_lock(&mgr->lock);
+
+    for (uint32_t i = 0; i < DRM_MAX_FRAMEBUFFERS_PER_DEVICE; i++) {
+        drm_framebuffer_t *fb = mgr->framebuffers[i];
+        if (!fb || fb->id != id) {
+            continue;
+        }
+
+        if (fb->closed && !drm_framebuffer_is_bound_locked(dev, id) &&
+            fb->refcount <= 1) {
+            free(fb);
+            mgr->framebuffers[i] = NULL;
+        }
+        break;
+    }
+
+    spin_unlock(&mgr->lock);
+}
+
 // Plane management
 drm_plane_t *drm_plane_alloc(drm_resource_manager_t *mgr, void *driver_data) {
     spin_lock(&mgr->lock);

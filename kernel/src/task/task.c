@@ -1883,6 +1883,8 @@ uint64_t task_exit(int64_t code) {
             (task->ppid == current_task->pid)) {
             if (task->fd_info == current_task->fd_info) {
                 task_exit_inner(task, code);
+            } else if (task->is_clone) {
+                task_exit_inner(task, code);
             } else {
                 task_set_ppid_locked(task, 1, false);
                 if (task->parent_death_sig != (uint64_t)-1) {
@@ -2931,6 +2933,208 @@ uint64_t sys_setpgid(uint64_t pid, uint64_t pgid) {
     return 0;
 }
 
+static int task_sched_normalize_policy(int policy, int *base_policy) {
+    const int allowed_mask = SCHED_RESET_ON_FORK;
+    if (policy & ~((int)allowed_mask | 0x7)) {
+        return -EINVAL;
+    }
+
+    int normalized = policy & ~SCHED_RESET_ON_FORK;
+
+    switch (normalized) {
+    case SCHED_OTHER:
+    case SCHED_FIFO:
+    case SCHED_RR:
+    case SCHED_BATCH:
+    case SCHED_IDLE:
+    case SCHED_DEADLINE:
+        if (base_policy) {
+            *base_policy = normalized;
+        }
+        return 0;
+    default:
+        return -EINVAL;
+    }
+}
+
+static int task_sched_priority_bounds(int policy, int *min_priority,
+                                      int *max_priority) {
+    int base_policy = 0;
+    int ret = task_sched_normalize_policy(policy, &base_policy);
+    if (ret < 0) {
+        return ret;
+    }
+
+    switch (base_policy) {
+    case SCHED_FIFO:
+    case SCHED_RR:
+        if (min_priority) {
+            *min_priority = 1;
+        }
+        if (max_priority) {
+            *max_priority = 99;
+        }
+        return 0;
+    case SCHED_OTHER:
+    case SCHED_BATCH:
+    case SCHED_IDLE:
+    case SCHED_DEADLINE:
+        if (min_priority) {
+            *min_priority = 0;
+        }
+        if (max_priority) {
+            *max_priority = 0;
+        }
+        return 0;
+    default:
+        return -EINVAL;
+    }
+}
+
+static task_t *task_sched_lookup_target(int pid) {
+    if (pid < 0) {
+        return NULL;
+    }
+
+    if (pid == 0) {
+        return current_task;
+    }
+
+    return task_find_by_pid((uint64_t)pid);
+}
+
+uint64_t sys_sched_setparam(int pid, const struct sched_param *param) {
+    if (pid < 0) {
+        return (uint64_t)-EINVAL;
+    }
+
+    struct sched_param kparam = {0};
+    if (!param || copy_from_user(&kparam, param, sizeof(kparam))) {
+        return (uint64_t)-EFAULT;
+    }
+
+    if (!task_sched_lookup_target(pid)) {
+        return (uint64_t)-ESRCH;
+    }
+
+    if (kparam.sched_priority < 0 || kparam.sched_priority > 99) {
+        return (uint64_t)-EINVAL;
+    }
+
+    return 0;
+}
+
+uint64_t sys_sched_getparam(int pid, struct sched_param *param) {
+    if (pid < 0) {
+        return (uint64_t)-EINVAL;
+    }
+
+    if (!param) {
+        return (uint64_t)-EFAULT;
+    }
+
+    if (!task_sched_lookup_target(pid)) {
+        return (uint64_t)-ESRCH;
+    }
+
+    struct sched_param kparam = {
+        .sched_priority = 0,
+    };
+
+    if (copy_to_user(param, &kparam, sizeof(kparam))) {
+        return (uint64_t)-EFAULT;
+    }
+
+    return 0;
+}
+
+uint64_t sys_sched_setscheduler(int pid, int policy,
+                                const struct sched_param *param) {
+    if (pid < 0) {
+        return (uint64_t)-EINVAL;
+    }
+
+    struct sched_param kparam = {0};
+    if (!param || copy_from_user(&kparam, param, sizeof(kparam))) {
+        return (uint64_t)-EFAULT;
+    }
+
+    if (!task_sched_lookup_target(pid)) {
+        return (uint64_t)-ESRCH;
+    }
+
+    int min_priority = 0;
+    int max_priority = 0;
+    int ret = task_sched_priority_bounds(policy, &min_priority, &max_priority);
+    if (ret < 0) {
+        return (uint64_t)ret;
+    }
+
+    if (kparam.sched_priority < min_priority ||
+        kparam.sched_priority > max_priority) {
+        return (uint64_t)-EINVAL;
+    }
+
+    return 0;
+}
+
+uint64_t sys_sched_getscheduler(int pid) {
+    if (pid < 0) {
+        return (uint64_t)-EINVAL;
+    }
+
+    if (!task_sched_lookup_target(pid)) {
+        return (uint64_t)-ESRCH;
+    }
+
+    return SCHED_OTHER;
+}
+
+uint64_t sys_sched_get_priority_max(int policy) {
+    int max_priority = 0;
+    int ret = task_sched_priority_bounds(policy, NULL, &max_priority);
+    if (ret < 0) {
+        return (uint64_t)ret;
+    }
+
+    return (uint64_t)max_priority;
+}
+
+uint64_t sys_sched_get_priority_min(int policy) {
+    int min_priority = 0;
+    int ret = task_sched_priority_bounds(policy, &min_priority, NULL);
+    if (ret < 0) {
+        return (uint64_t)ret;
+    }
+
+    return (uint64_t)min_priority;
+}
+
+uint64_t sys_sched_rr_get_interval(int pid, struct timespec *interval) {
+    if (pid < 0) {
+        return (uint64_t)-EINVAL;
+    }
+
+    if (!interval) {
+        return (uint64_t)-EFAULT;
+    }
+
+    if (!task_sched_lookup_target(pid)) {
+        return (uint64_t)-ESRCH;
+    }
+
+    struct timespec ts = {
+        .tv_sec = 0,
+        .tv_nsec = 100000000,
+    };
+
+    if (copy_to_user(interval, &ts, sizeof(ts))) {
+        return (uint64_t)-EFAULT;
+    }
+
+    return 0;
+}
+
 uint64_t sys_setpriority(int which, int who, int niceval) {
     task_t *task = NULL;
     switch (which) {
@@ -2988,14 +3192,12 @@ void schedule(uint64_t sched_flags) {
     next->current_state = TASK_RUNNING;
     next->last_sched_in_ns = now_ns;
 
-    arch_set_current(next);
     switch_mm(prev, next);
+    arch_set_current(next);
     switch_to(prev, next);
 
 ret:
     if (state) {
         arch_enable_interrupt();
-    } else {
-        arch_disable_interrupt();
     }
 }

@@ -1,6 +1,16 @@
 #include <mm/fault.h>
 #include <mm/page.h>
+#include <mm/shm.h>
 #include <fs/vfs/vfs.h>
+
+typedef struct fault_vma_snapshot {
+    uint64_t vm_start;
+    uint64_t vm_end;
+    uint64_t vm_flags;
+    vma_type_t vm_type;
+    vfs_node_t node;
+    int64_t vm_offset;
+} fault_vma_snapshot_t;
 
 static uint64_t vm_flags_to_pt_flags(uint64_t vm_flags) {
     uint64_t pt_flags = PT_FLAG_U;
@@ -30,46 +40,60 @@ static page_fault_result_t map_anon_fault_page(task_t *task, vma_t *vma,
     return PF_RES_OK;
 }
 
-static page_fault_result_t map_file_fault_page(task_t *task, vma_t *vma,
-                                               uint64_t vaddr) {
-    if (!vma->node)
+static void fault_vma_snapshot_put(fault_vma_snapshot_t *snapshot) {
+    if (!snapshot || !snapshot->node)
+        return;
+
+    if (snapshot->node->refcount > 0)
+        snapshot->node->refcount--;
+    shm_try_reap_by_vnode(snapshot->node);
+    snapshot->node = NULL;
+}
+
+static bool fault_vma_matches_snapshot(vma_t *vma,
+                                       const fault_vma_snapshot_t *snapshot) {
+    if (!vma || !snapshot)
+        return false;
+
+    return vma->vm_start == snapshot->vm_start &&
+           vma->vm_end == snapshot->vm_end &&
+           vma->vm_flags == snapshot->vm_flags &&
+           vma->vm_type == snapshot->vm_type && vma->node == snapshot->node &&
+           vma->vm_offset == snapshot->vm_offset;
+}
+
+static page_fault_result_t
+map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
+                             uint64_t vaddr) {
+    if (!task || !snapshot || !snapshot->node)
         return PF_RES_SEGF;
 
-    uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
-    uint64_t final_pt_flags = vm_flags_to_pt_flags(vma->vm_flags);
-    bool need_temp_write = (final_pt_flags & PT_FLAG_W) == 0;
-    uint64_t load_pt_flags =
-        need_temp_write ? (final_pt_flags | PT_FLAG_W) : final_pt_flags;
-    uint64_t load_arch_flags = get_arch_page_table_flags(load_pt_flags);
     uint64_t aligned_vaddr = PADDING_DOWN(vaddr, DEFAULT_PAGE_SIZE);
+    uint64_t final_pt_flags = vm_flags_to_pt_flags(snapshot->vm_flags);
+    uint64_t final_arch_flags = get_arch_page_table_flags(final_pt_flags);
+    uint64_t page_off_in_vma = aligned_vaddr - snapshot->vm_start;
 
-    if (translate_address(pgdir, aligned_vaddr))
-        return PF_RES_OK;
-
-    map_page(pgdir, aligned_vaddr, (uint64_t)-1, load_arch_flags, true);
-
-    uint64_t page_paddr = translate_address(pgdir, aligned_vaddr);
-    if (!page_paddr)
-        return PF_RES_NOMEM;
-
-    uint64_t page_off_in_vma = aligned_vaddr - vma->vm_start;
-    if ((uint64_t)vma->vm_offset > UINT64_MAX - page_off_in_vma) {
-        unmap_page(pgdir, aligned_vaddr);
+    if ((uint64_t)snapshot->vm_offset > UINT64_MAX - page_off_in_vma)
         return PF_RES_SEGF;
-    }
 
-    uint64_t file_off = (uint64_t)vma->vm_offset + page_off_in_vma;
-    uint64_t read_size = vma->vm_end - aligned_vaddr;
+    uint64_t file_off = (uint64_t)snapshot->vm_offset + page_off_in_vma;
+    uint64_t read_size = snapshot->vm_end - aligned_vaddr;
     if (read_size > DEFAULT_PAGE_SIZE)
         read_size = DEFAULT_PAGE_SIZE;
 
+    uint64_t page_paddr = alloc_frames(1);
+    if (!page_paddr)
+        return PF_RES_NOMEM;
+
+    memset((void *)phys_to_virt(page_paddr), 0, DEFAULT_PAGE_SIZE);
+
     size_t loaded = 0;
     while (loaded < read_size) {
-        ssize_t ret =
-            vfs_read(vma->node, (void *)(phys_to_virt(page_paddr) + loaded),
-                     file_off + loaded, read_size - loaded);
+        ssize_t ret = vfs_read(snapshot->node,
+                               (void *)(phys_to_virt(page_paddr) + loaded),
+                               file_off + loaded, read_size - loaded);
         if (ret < 0) {
-            unmap_page(pgdir, aligned_vaddr);
+            address_release(page_paddr);
             return PF_RES_SEGF;
         }
         if (ret == 0)
@@ -77,11 +101,39 @@ static page_fault_result_t map_file_fault_page(task_t *task, vma_t *vma,
         loaded += (size_t)ret;
     }
 
-    if (need_temp_write) {
-        uint64_t final_arch_flags = get_arch_page_table_flags(final_pt_flags);
-        map_change_attribute(pgdir, aligned_vaddr, final_arch_flags);
+    vma_manager_t *mgr = &task->mm->task_vma_mgr;
+    spin_lock(&mgr->lock);
+
+    vma_t *current_vma = vma_find(mgr, vaddr);
+    if (!fault_vma_matches_snapshot(current_vma, snapshot) ||
+        !(current_vma->vm_flags & (VMA_READ | VMA_WRITE | VMA_EXEC))) {
+        spin_unlock(&mgr->lock);
+        address_release(page_paddr);
+        return PF_RES_SEGF;
     }
 
+    spin_lock(&task->mm->lock);
+
+    uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
+    if (translate_address(pgdir, aligned_vaddr)) {
+        spin_unlock(&task->mm->lock);
+        spin_unlock(&mgr->lock);
+        address_release(page_paddr);
+        return PF_RES_OK;
+    }
+
+    map_page(pgdir, aligned_vaddr, page_paddr, final_arch_flags, false);
+    if (!translate_address(pgdir, aligned_vaddr)) {
+        spin_unlock(&task->mm->lock);
+        spin_unlock(&mgr->lock);
+        address_release(page_paddr);
+        return PF_RES_NOMEM;
+    }
+
+    spin_unlock(&task->mm->lock);
+    spin_unlock(&mgr->lock);
+
+    address_release(page_paddr);
     return PF_RES_OK;
 }
 
@@ -170,11 +222,26 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
 
     page_fault_result_t result = PF_RES_SEGF;
 
-    if (vma->vm_type == VMA_TYPE_ANON) {
-        result = map_anon_fault_page(task, vma, vaddr);
-    } else if (vma->vm_type == VMA_TYPE_FILE) {
-        result = map_file_fault_page(task, vma, vaddr);
+    if (vma->vm_type == VMA_TYPE_FILE) {
+        fault_vma_snapshot_t snapshot = {
+            .vm_start = vma->vm_start,
+            .vm_end = vma->vm_end,
+            .vm_flags = vma->vm_flags,
+            .vm_type = vma->vm_type,
+            .node = vma->node,
+            .vm_offset = vma->vm_offset,
+        };
+        if (snapshot.node)
+            snapshot.node->refcount++;
+
+        spin_unlock(&mgr->lock);
+        result = map_file_fault_page_snapshot(task, &snapshot, vaddr);
+        fault_vma_snapshot_put(&snapshot);
+        return result;
     }
+
+    if (vma->vm_type == VMA_TYPE_ANON)
+        result = map_anon_fault_page(task, vma, vaddr);
 
     spin_unlock(&mgr->lock);
 

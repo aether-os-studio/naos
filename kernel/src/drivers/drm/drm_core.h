@@ -3,6 +3,9 @@
 #include <libs/klibc.h>
 #include <drivers/drm/drm_mode.h>
 
+struct drm_device;
+typedef struct drm_device drm_device_t;
+
 #define DRM_MAX_DEVICES 8
 #define DRM_MAX_CONNECTORS_PER_DEVICE 4
 #define DRM_MAX_CRTCS_PER_DEVICE 2
@@ -74,6 +77,7 @@ typedef struct drm_framebuffer {
     uint64_t modifier;
     uint32_t format;
     uint32_t flags;
+    bool closed;
     void *driver_data;
     uint32_t refcount;
 } drm_framebuffer_t;
@@ -153,6 +157,8 @@ drm_framebuffer_t *drm_framebuffer_alloc(drm_resource_manager_t *mgr,
 void drm_framebuffer_free(drm_resource_manager_t *mgr, uint32_t id);
 drm_framebuffer_t *drm_framebuffer_get(drm_resource_manager_t *mgr,
                                        uint32_t id);
+int drm_framebuffer_close(drm_device_t *dev, uint32_t id);
+void drm_framebuffer_cleanup_closed(drm_device_t *dev, uint32_t id);
 
 drm_plane_t *drm_plane_alloc(drm_resource_manager_t *mgr, void *driver_data);
 void drm_plane_free(drm_resource_manager_t *mgr, uint32_t id);

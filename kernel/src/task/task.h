@@ -157,6 +157,27 @@ uint64_t sys_clock_nanosleep(int clock_id, int flags,
                              const struct timespec *request,
                              struct timespec *remain);
 
+#define SCHED_OTHER 0
+#define SCHED_FIFO 1
+#define SCHED_RR 2
+#define SCHED_BATCH 3
+#define SCHED_IDLE 5
+#define SCHED_DEADLINE 6
+#define SCHED_RESET_ON_FORK 0x40000000
+
+struct sched_param {
+    int sched_priority;
+};
+
+uint64_t sys_sched_setparam(int pid, const struct sched_param *param);
+uint64_t sys_sched_getparam(int pid, struct sched_param *param);
+uint64_t sys_sched_setscheduler(int pid, int policy,
+                                const struct sched_param *param);
+uint64_t sys_sched_getscheduler(int pid);
+uint64_t sys_sched_get_priority_max(int policy);
+uint64_t sys_sched_get_priority_min(int policy);
+uint64_t sys_sched_rr_get_interval(int pid, struct timespec *interval);
+
 size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old);
 
 int task_block(task_t *task, task_state_t state, int64_t timeout_ns,

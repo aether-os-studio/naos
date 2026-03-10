@@ -376,6 +376,13 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
     }
 }
 
+void pts_ctrl_assign(pty_pair_t *pair) {
+    // currentTask->ctrlPty = pair->id;
+    pair->ctrlSession = current_task->sid;
+    pair->ctrlPgid = current_task->pgid;
+    // debugf("heck yeah! %d %d\n", currentTask->id, pair->id);
+}
+
 int ptmx_ioctl(vfs_node_t node, ssize_t request, ssize_t arg) {
     if (!node || !node->handle)
         return -EINVAL;
@@ -404,27 +411,163 @@ int ptmx_ioctl(vfs_node_t node, ssize_t request, ssize_t arg) {
     if (ret == -ENOTTY) {
         switch (request & 0xFFFFFFFF) {
         case TIOCGWINSZ: {
-            memcpy((void *)arg, &pair->win, sizeof(struct winsize));
+            if (!arg ||
+                copy_to_user((void *)arg, &pair->win, sizeof(struct winsize))) {
+                ret = -EFAULT;
+                break;
+            }
             ret = 0;
             break;
         }
         case TIOCSWINSZ: {
-            memcpy(&pair->win, (const void *)arg, sizeof(struct winsize));
+            if (!arg || copy_from_user(&pair->win, (const void *)arg,
+                                       sizeof(struct winsize))) {
+                ret = -EFAULT;
+                break;
+            }
+            ret = 0;
+            break;
+        }
+        case TIOCSCTTY: {
+            pts_ctrl_assign(pair);
+            ret = 0;
+            break;
+        }
+        case TCGETS: {
+            if (!arg ||
+                copy_to_user((void *)arg, &pair->term, sizeof(termios))) {
+                ret = -EFAULT;
+                break;
+            }
+            ret = 0;
+            break;
+        }
+        case TCGETS2: {
+            struct termios2 t2;
+            memcpy(&t2.c_iflag, &pair->term.c_iflag, sizeof(uint32_t));
+            memcpy(&t2.c_oflag, &pair->term.c_oflag, sizeof(uint32_t));
+            memcpy(&t2.c_cflag, &pair->term.c_cflag, sizeof(uint32_t));
+            memcpy(&t2.c_lflag, &pair->term.c_lflag, sizeof(uint32_t));
+            t2.c_line = pair->term.c_line;
+            memcpy(t2.c_cc, pair->term.c_cc, NCCS);
+            t2.c_ispeed = 0; // Not supported
+            t2.c_ospeed = 0; // Not supported
+            if (!arg ||
+                copy_to_user((void *)arg, &t2, sizeof(struct termios2))) {
+                ret = -EFAULT;
+                break;
+            }
+            ret = 0;
+            break;
+        }
+        case TCSETS:
+        case TCSETSW:
+        case TCSETSF: {
+            if (!arg || copy_from_user(&pair->term, (const void *)arg,
+                                       sizeof(termios))) {
+                ret = -EFAULT;
+                break;
+            }
+            ret = 0;
+            break;
+        }
+        case TCSETS2: {
+            struct termios2 t2_set;
+            if (!arg || copy_from_user(&t2_set, (const void *)arg,
+                                       sizeof(struct termios2))) {
+                ret = -EFAULT;
+                break;
+            }
+            memcpy(&pair->term.c_iflag, &t2_set.c_iflag, sizeof(uint32_t));
+            memcpy(&pair->term.c_oflag, &t2_set.c_oflag, sizeof(uint32_t));
+            memcpy(&pair->term.c_cflag, &t2_set.c_cflag, sizeof(uint32_t));
+            memcpy(&pair->term.c_lflag, &t2_set.c_lflag, sizeof(uint32_t));
+            pair->term.c_line = t2_set.c_line;
+            memcpy(pair->term.c_cc, t2_set.c_cc, NCCS);
+            // Ignore ispeed and ospeed as they are not supported
             ret = 0;
             break;
         }
         case TCXONC:
-            ret = pty_tcxonc_locked(pair, true, (uintptr_t)arg, &notify_master,
+            ret = pty_tcxonc_locked(pair, false, arg, &notify_master,
                                     &notify_slave);
             break;
+        case TIOCGPGRP:
+            ret = copy_to_user((void *)arg,
+                               (const void *)&pair->frontProcessGroup,
+                               sizeof(int))
+                      ? -EFAULT
+                      : 0;
+            break;
+        case TIOCSPGRP:
+            ret = copy_from_user(&pair->frontProcessGroup, (const void *)arg,
+                                 sizeof(int))
+                      ? -EFAULT
+                      : 0;
+            break;
+        case KDGKBMODE:
+            if (!arg) {
+                ret = -EFAULT;
+                break;
+            }
+            ret = copy_to_user((void *)arg, (const void *)&pair->tty_kbmode,
+                               sizeof(int))
+                      ? -EFAULT
+                      : 0;
+            break;
+        case KDSKBMODE:
+            if (!arg || copy_from_user(&pair->tty_kbmode, (const void *)arg,
+                                       sizeof(pair->tty_kbmode))) {
+                ret = -EFAULT;
+            } else {
+                ret = 0;
+            }
+            break;
+        case VT_SETMODE:
+            ret = (!arg || copy_from_user(&pair->vt_mode, (const void *)arg,
+                                          sizeof(struct vt_mode)))
+                      ? -EFAULT
+                      : 0;
+            break;
+        case VT_GETMODE:
+            ret = (!arg || copy_to_user((void *)arg, &pair->vt_mode,
+                                        sizeof(struct vt_mode)))
+                      ? -EFAULT
+                      : 0;
+            break;
+        case VT_ACTIVATE:
+            ret = 0;
+            break;
+        case VT_WAITACTIVE:
+            ret = 0;
+            break;
+        case VT_GETSTATE: {
+            struct vt_state state = {
+                .v_active = 2,
+                .v_state = 0,
+            };
+            ret = (!arg || copy_to_user((void *)arg, &state, sizeof(state)))
+                      ? -EFAULT
+                      : 0;
+            break;
+        }
+        case VT_OPENQRY: {
+            int query = 2;
+            ret = (!arg || copy_to_user((void *)arg, &query, sizeof(query)))
+                      ? -EFAULT
+                      : 0;
+            break;
+        } break;
+        case TIOCNOTTY:
+            ret = 0;
+            break;
         default:
-            printk("ptmx_ioctl: Unsupported request %#010lx\n",
-                   request & 0xFFFFFFFF);
+            printk("pts_ioctl: Unsupported request %#010lx\n", request);
             break;
         }
     }
     mutex_unlock(&pair->lock);
-    if (!ret) {
+    if ((int64_t)ret >= 0) {
         pty_notify_pair_master(pair, notify_master);
         pty_notify_pair_slave(pair, notify_slave);
     }
@@ -448,13 +591,6 @@ int ptmx_poll(vfs_node_t node, size_t events) {
     mutex_unlock(&pair->lock);
 
     return revents;
-}
-
-void pts_ctrl_assign(pty_pair_t *pair) {
-    // currentTask->ctrlPty = pair->id;
-    pair->ctrlSession = current_task->sid;
-    pair->ctrlPgid = current_task->pgid;
-    // debugf("heck yeah! %d %d\n", currentTask->id, pair->id);
 }
 
 int str_to_int(const char *str, int *result) {
@@ -819,10 +955,10 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
                   : 0;
         break;
     case VT_GETMODE:
-        ret = (!arg || copy_to_user(arg, &pair->vt_mode,
-                                    sizeof(struct vt_mode)))
-                  ? -EFAULT
-                  : 0;
+        ret =
+            (!arg || copy_to_user(arg, &pair->vt_mode, sizeof(struct vt_mode)))
+                ? -EFAULT
+                : 0;
         break;
     case VT_ACTIVATE:
         ret = 0;
@@ -842,8 +978,7 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
         int query = 2;
         ret = (!arg || copy_to_user(arg, &query, sizeof(query))) ? -EFAULT : 0;
         break;
-    }
-        break;
+    } break;
     case TIOCNOTTY:
         ret = 0;
         break;
@@ -852,7 +987,7 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
         break;
     }
     mutex_unlock(&pair->lock);
-    if (!ret) {
+    if ((int64_t)ret >= 0) {
         pty_notify_pair_master(pair, notify_master);
         pty_notify_pair_slave(pair, notify_slave);
     }

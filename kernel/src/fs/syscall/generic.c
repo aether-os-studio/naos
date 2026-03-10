@@ -567,23 +567,29 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len) {
         return (uint64_t)-EFAULT;
     }
     task_t *self = current_task;
-    if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
-        return (uint64_t)-EBADF;
-    }
 
-    if (self->fd_info->fds[fd]->node->type & file_dir) {
-        return (uint64_t)-EISDIR;
-    }
+    ssize_t ret = 0;
+    with_fd_info_lock(self->fd_info, {
+        if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
+            ret = -EBADF;
+            break;
+        }
 
-    ssize_t ret = vfs_read_fd(self->fd_info->fds[fd], buf,
-                              self->fd_info->fds[fd]->offset, len);
+        if (self->fd_info->fds[fd]->node->type & file_dir) {
+            ret = -EISDIR;
+            break;
+        }
 
-    if (ret < 0)
-        return ret;
+        ret = vfs_read_fd(self->fd_info->fds[fd], buf,
+                          self->fd_info->fds[fd]->offset, len);
 
-    if (ret > 0) {
-        self->fd_info->fds[fd]->offset += ret;
-    }
+        if (ret < 0)
+            break;
+
+        if (ret > 0) {
+            self->fd_info->fds[fd]->offset += ret;
+        }
+    });
 
     return ret;
 }
@@ -599,23 +605,28 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
 
     task_t *self = current_task;
 
-    if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
-        return (uint64_t)-EBADF;
-    }
+    ssize_t ret = 0;
+    with_fd_info_lock(self->fd_info, {
+        if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
+            ret = -EBADF;
+            break;
+        }
 
-    if (self->fd_info->fds[fd]->node->type & file_dir) {
-        return (uint64_t)-EISDIR;
-    }
+        if (self->fd_info->fds[fd]->node->type & file_dir) {
+            ret = -EISDIR;
+            break;
+        }
 
-    ssize_t ret = vfs_write_fd(self->fd_info->fds[fd], buf,
-                               self->fd_info->fds[fd]->offset, len);
+        ret = vfs_write_fd(self->fd_info->fds[fd], buf,
+                           self->fd_info->fds[fd]->offset, len);
 
-    if (ret < 0)
-        return ret;
+        if (ret < 0)
+            break;
 
-    if (ret > 0) {
-        self->fd_info->fds[fd]->offset += ret;
-    }
+        if (ret > 0) {
+            self->fd_info->fds[fd]->offset += ret;
+        }
+    });
 
     return ret;
 }
@@ -698,10 +709,11 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
         whence != SEEK_CUR)
         return (uint64_t)-EBADF;
 
-    switch (whence & 3) {
+    switch (whence) {
     case SEEK_SET:
         self->fd_info->fds[fd]->offset = real_offset;
         break;
+
     case SEEK_CUR:
         self->fd_info->fds[fd]->offset += real_offset;
         if ((int64_t)self->fd_info->fds[fd]->offset < 0) {
@@ -710,8 +722,8 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
                    self->fd_info->fds[fd]->node->size) {
             self->fd_info->fds[fd]->offset = self->fd_info->fds[fd]->node->size;
         }
-
         break;
+
     case SEEK_END:
         self->fd_info->fds[fd]->offset =
             self->fd_info->fds[fd]->node->size + real_offset;
@@ -719,7 +731,6 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
 
     default:
         return (uint64_t)-ENOSYS;
-        break;
     }
 
     return self->fd_info->fds[fd]->offset;

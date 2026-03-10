@@ -30,18 +30,18 @@ uint64_t rdgsbase() {
 void wrgsbase(uint64_t value) { asm volatile("wrgsbase %0" ::"r"(value)); }
 
 uint64_t fsgsbase_init() {
-    uint32_t support = has_fsgsbase();
-    if (support) {
-        uint64_t cr4 = 0;
-        asm volatile("movq %%cr4, %0" : "=r"(cr4));
-        cr4 |= (1 << 16);
-        asm volatile("movq %0, %%cr4" ::"r"(cr4));
+    // uint32_t support = has_fsgsbase();
+    // if (support) {
+    //     uint64_t cr4 = 0;
+    //     asm volatile("movq %%cr4, %0" : "=r"(cr4));
+    //     cr4 |= (1 << 16);
+    //     asm volatile("movq %0, %%cr4" ::"r"(cr4));
 
-        read_fsbase = rdfsbase;
-        write_fsbase = wrfsbase;
-        read_gsbase = rdgsbase;
-        write_gsbase = wrgsbase;
-    }
+    //     read_fsbase = rdfsbase;
+    //     write_fsbase = wrfsbase;
+    //     read_gsbase = rdgsbase;
+    //     write_gsbase = wrgsbase;
+    // }
 
     return 0;
 }

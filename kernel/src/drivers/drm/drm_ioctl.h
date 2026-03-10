@@ -120,6 +120,13 @@ ssize_t drm_ioctl_mode_addfb(drm_device_t *dev, void *arg);
 ssize_t drm_ioctl_mode_addfb2(drm_device_t *dev, void *arg);
 
 /**
+ * drm_ioctl_mode_closefb - Handle DRM_IOCTL_MODE_CLOSEFB
+ * @dev: DRM device
+ * @arg: ioctl argument
+ */
+ssize_t drm_ioctl_mode_closefb(drm_device_t *dev, void *arg);
+
+/**
  * drm_ioctl_mode_setcrtc - Handle DRM_IOCTL_MODE_SETCRTC
  * @dev: DRM device
  * @arg: ioctl argument

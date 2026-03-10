@@ -341,19 +341,19 @@ void syscall_handler_init() {
     syscall_handlers[SYS_GETPRIORITY] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_SETPRIORITY] = (syscall_handle_t)sys_setpriority;
     syscall_handlers[SYS_SCHED_SETPARAM] =
-        (syscall_handle_t)dummy_syscall_handler;
+        (syscall_handle_t)sys_sched_setparam;
     syscall_handlers[SYS_SCHED_GETPARAM] =
-        (syscall_handle_t)dummy_syscall_handler;
+        (syscall_handle_t)sys_sched_getparam;
     syscall_handlers[SYS_SCHED_SETSCHEDULER] =
-        (syscall_handle_t)dummy_syscall_handler;
+        (syscall_handle_t)sys_sched_setscheduler;
     syscall_handlers[SYS_SCHED_GETSCHEDULER] =
-        (syscall_handle_t)dummy_syscall_handler;
-    // syscall_handlers[SYS_SCHED_GET_PRIORITY_MAX] =
-    //     (syscall_handle_t)sys_sched_get_priority_max;
-    // syscall_handlers[SYS_SCHED_GET_PRIORITY_MIN] =
-    //     (syscall_handle_t)sys_sched_get_priority_min;
-    // syscall_handlers[SYS_SCHED_RR_GET_INTERVAL] =
-    //     (syscall_handle_t)sys_sched_rr_get_interval;
+        (syscall_handle_t)sys_sched_getscheduler;
+    syscall_handlers[SYS_SCHED_GET_PRIORITY_MAX] =
+        (syscall_handle_t)sys_sched_get_priority_max;
+    syscall_handlers[SYS_SCHED_GET_PRIORITY_MIN] =
+        (syscall_handle_t)sys_sched_get_priority_min;
+    syscall_handlers[SYS_SCHED_RR_GET_INTERVAL] =
+        (syscall_handle_t)sys_sched_rr_get_interval;
     // syscall_handlers[SYS_MLOCK] = (syscall_handle_t)sys_mlock;
     // syscall_handlers[SYS_MUNLOCK] = (syscall_handle_t)sys_munlock;
     // syscall_handlers[SYS_MLOCKALL] = (syscall_handle_t)sys_mlockall;

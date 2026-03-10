@@ -1394,6 +1394,7 @@ typedef struct drm_file_node {
 } drm_file_node_t;
 
 typedef struct drm_device_op {
+    bool supports_render_node;
     int (*get_display_info)(drm_device_t *drm_dev, uint32_t *width,
                             uint32_t *height, uint32_t *bpp);
     int (*get_fb)(drm_device_t *drm_dev, uint32_t *width, uint32_t *height,
@@ -1433,6 +1434,7 @@ struct drm_device {
     int id;
     void *data;
     drm_device_op_t *op;
+    pci_device_t *pci_dev;
     char driver_name[32];
     char driver_date[32];
     char driver_desc[128];

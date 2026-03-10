@@ -2,6 +2,7 @@
 #include <drivers/drm/drm_ioctl.h>
 #include <drivers/drm/drm_core.h>
 #include <drivers/drm/drm.h>
+#include <fs/vfs/vfs.h>
 
 static bool plainfb_handle_to_index(uint32_t handle, uint32_t *idx) {
     if (handle == 0 || handle > 32 || !idx) {
@@ -194,6 +195,8 @@ int plainfb_atomic_commit(drm_device_t *drm_dev,
     uint64_t prop_idx = 0;
     uint32_t committed_fb_id = 0;
     bool has_committed_fb = false;
+    uint32_t stale_fb_ids[DRM_MAX_PLANES_PER_DEVICE] = {0};
+    uint32_t stale_fb_count = 0;
 
     for (uint32_t i = 0; i < atomic->count_objs; i++) {
         uint32_t obj_id = obj_ids[i];
@@ -316,6 +319,10 @@ int plainfb_atomic_commit(drm_device_t *drm_dev,
                 }
 
                 if (!test_only) {
+                    if (plane->fb_id != 0 && plane->fb_id != (uint32_t)value &&
+                        stale_fb_count < DRM_MAX_PLANES_PER_DEVICE) {
+                        stale_fb_ids[stale_fb_count++] = plane->fb_id;
+                    }
                     plane->fb_id = (uint32_t)value;
                 }
 
@@ -455,6 +462,10 @@ int plainfb_atomic_commit(drm_device_t *drm_dev,
         }
     }
 
+    for (uint32_t i = 0; i < stale_fb_count; i++) {
+        drm_framebuffer_cleanup_closed(drm_dev, stale_fb_ids[i]);
+    }
+
     return 0;
 }
 
@@ -493,6 +504,8 @@ static int plainfb_page_flip(drm_device_t *drm_dev,
     if (!crtc) {
         return -EINVAL;
     }
+    uint32_t old_fb_id = crtc->fb_id;
+    crtc->fb_id = flip->fb_id;
     drm_crtc_free(&gpu_dev->resource_mgr, crtc->id);
 
     drm_framebuffer_t *fb =
@@ -517,6 +530,10 @@ static int plainfb_page_flip(drm_device_t *drm_dev,
     int ret = drm_post_event(drm_dev, DRM_EVENT_FLIP_COMPLETE, flip->user_data);
     if (ret < 0) {
         return ret;
+    }
+
+    if (old_fb_id != 0 && old_fb_id != flip->fb_id) {
+        drm_framebuffer_cleanup_closed(drm_dev, old_fb_id);
     }
 
     return 0;
@@ -613,6 +630,7 @@ int plainfb_get_planes(drm_device_t *drm_dev, drm_plane_t **planes,
 
 // DRM device operations structure
 drm_device_op_t plainfb_drm_device_op = {
+    .supports_render_node = false,
     .get_display_info = plainfb_get_display_info,
     .get_fb = NULL,
     .create_dumb = plainfb_create_dumb,
@@ -718,7 +736,50 @@ void drm_plainfb_init() {
 
     if (count > 0) {
         // Register with DRM subsystem using PCI device
-        drm_regist_pci_dev(gpu_device, &plainfb_drm_device_op,
-                           vga_pci_devices[0]);
+        drm_device_t *drm_dev = drm_regist_pci_dev(
+            gpu_device, &plainfb_drm_device_op, vga_pci_devices[0]);
+        if (drm_dev) {
+            const char *driver_name = "simpledrm";
+            if (vga_pci_devices[0]->vendor_id == 0x1234 &&
+                vga_pci_devices[0]->device_id == 0x1111) {
+                driver_name = "bochs-drm";
+            }
+
+            drm_device_set_driver_info(drm_dev, driver_name, "20260310",
+                                       "NaOS plain framebuffer DRM");
+
+            char driver_root[128];
+            sprintf(driver_root, "/sys/bus/pci/drivers/%s", driver_name);
+            vfs_mkdir(driver_root);
+
+            char pci_device_path[128];
+            sprintf(pci_device_path, "/sys/bus/pci/devices/%04x:%02x:%02x.%u",
+                    vga_pci_devices[0]->segment, vga_pci_devices[0]->bus,
+                    vga_pci_devices[0]->slot, vga_pci_devices[0]->func);
+
+            char driver_link_path[192];
+            sprintf(driver_link_path, "%s/driver", pci_device_path);
+            vfs_symlink(driver_link_path, driver_root);
+
+            char reverse_link_path[192];
+            sprintf(reverse_link_path, "%s/%04x:%02x:%02x.%u", driver_root,
+                    vga_pci_devices[0]->segment, vga_pci_devices[0]->bus,
+                    vga_pci_devices[0]->slot, vga_pci_devices[0]->func);
+            vfs_symlink(reverse_link_path, pci_device_path);
+
+            char pci_uevent_path[192];
+            sprintf(pci_uevent_path, "%s/uevent", pci_device_path);
+            vfs_node_t pci_uevent = vfs_open(pci_uevent_path, 0);
+            if (pci_uevent) {
+                char uevent_content[256];
+                sprintf(uevent_content,
+                        "DRIVER=%s\nPCI_SLOT_NAME=%04x:%02x:%02x.%u\n",
+                        driver_name, vga_pci_devices[0]->segment,
+                        vga_pci_devices[0]->bus, vga_pci_devices[0]->slot,
+                        vga_pci_devices[0]->func);
+                vfs_write(pci_uevent, uevent_content, 0,
+                          strlen(uevent_content));
+            }
+        }
     };
 }

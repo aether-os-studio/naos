@@ -215,6 +215,7 @@ void sysfs_init() {
     vfs_mkdir("/sys/bus");
     vfs_mkdir("/sys/bus/pci");
     vfs_mkdir("/sys/bus/pci/devices");
+    vfs_mkdir("/sys/bus/pci/drivers");
     vfs_mkdir("/sys/bus/usb");
     vfs_mkdir("/sys/bus/usb/devices");
 
@@ -229,12 +230,12 @@ void sysfs_init() {
             continue;
 
         char name[128];
-        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%x", dev->segment,
+        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%d", dev->segment,
                 dev->bus, dev->slot, dev->func);
 
         vfs_mkdir(name);
 
-        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%x/class",
+        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%d/class",
                 dev->segment, dev->bus, dev->slot, dev->func);
         vfs_mkfile(name);
 
@@ -242,26 +243,52 @@ void sysfs_init() {
         sprintf(content, "0x%x", dev->class_code);
         vfs_write(vfs_open(name, 0), content, 0, strlen(content));
 
-        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%x/revision",
+        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%d/revision",
                 dev->segment, dev->bus, dev->slot, dev->func);
         vfs_mkfile(name);
 
         sprintf(content, "0x%02x", dev->revision_id);
         vfs_write(vfs_open(name, 0), content, 0, strlen(content));
 
-        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%x/vendor",
+        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%d/vendor",
                 dev->segment, dev->bus, dev->slot, dev->func);
         vfs_mkfile(name);
 
         sprintf(content, "0x%04x", dev->vendor_id);
         vfs_write(vfs_open(name, 0), content, 0, strlen(content));
 
-        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%x/device",
+        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%d/device",
                 dev->segment, dev->bus, dev->slot, dev->func);
         vfs_mkfile(name);
 
         sprintf(content, "0x%04x", dev->device_id);
         vfs_write(vfs_open(name, 0), content, 0, strlen(content));
+
+        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%d/subsystem_vendor",
+                dev->segment, dev->bus, dev->slot, dev->func);
+        vfs_mkfile(name);
+
+        sprintf(content, "0x%04x", dev->subsystem_vendor_id);
+        vfs_write(vfs_open(name, 0), content, 0, strlen(content));
+
+        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%d/subsystem_device",
+                dev->segment, dev->bus, dev->slot, dev->func);
+        vfs_mkfile(name);
+
+        sprintf(content, "0x%04x", dev->subsystem_device_id);
+        vfs_write(vfs_open(name, 0), content, 0, strlen(content));
+
+        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%d/uevent",
+                dev->segment, dev->bus, dev->slot, dev->func);
+        vfs_mkfile(name);
+
+        sprintf(content, "PCI_SLOT_NAME=%04x:%02x:%02x.%d\n", dev->segment,
+                dev->bus, dev->slot, dev->func);
+        vfs_write(vfs_open(name, 0), content, 0, strlen(content));
+
+        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%d/subsystem",
+                dev->segment, dev->bus, dev->slot, dev->func);
+        vfs_symlink(name, "/sys/bus/pci");
     }
 
     // vfs_mkdir("/sys/firmware/acpi/tables");

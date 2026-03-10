@@ -60,12 +60,47 @@ struct dma_buf_import_sync_file {
     int32_t fd;
 };
 
+struct sync_merge_data {
+    char name[32];
+    int32_t fd2;
+    int32_t fence;
+    uint32_t flags;
+    uint32_t pad;
+};
+
+struct sync_fence_info {
+    char obj_name[32];
+    char driver_name[32];
+    int32_t status;
+    uint32_t flags;
+    uint64_t timestamp_ns;
+};
+
+struct sync_file_info {
+    char name[32];
+    int32_t status;
+    uint32_t flags;
+    uint32_t num_fences;
+    uint32_t pad;
+    uint64_t sync_fence_info;
+};
+
+struct sync_set_deadline {
+    uint64_t deadline_ns;
+    uint64_t pad;
+};
+
 #define DMA_BUF_IOCTL_SYNC _IOW(DMA_BUF_BASE, 0, struct dma_buf_sync)
 #define DMA_BUF_IOCTL_SET_NAME _IOW(DMA_BUF_BASE, 1, char[DMA_BUF_NAME_LEN])
 #define DMA_BUF_IOCTL_EXPORT_SYNC_FILE                                         \
     _IOWR(DMA_BUF_BASE, 2, struct dma_buf_export_sync_file)
 #define DMA_BUF_IOCTL_IMPORT_SYNC_FILE                                         \
     _IOW(DMA_BUF_BASE, 3, struct dma_buf_import_sync_file)
+
+#define SYNC_IOC_MAGIC '>'
+#define SYNC_IOC_MERGE _IOWR(SYNC_IOC_MAGIC, 3, struct sync_merge_data)
+#define SYNC_IOC_FILE_INFO _IOWR(SYNC_IOC_MAGIC, 4, struct sync_file_info)
+#define SYNC_IOC_SET_DEADLINE _IOW(SYNC_IOC_MAGIC, 5, struct sync_set_deadline)
 
 typedef struct drm_prime_export_entry {
     bool used;
@@ -76,6 +111,19 @@ typedef struct drm_prime_export_entry {
 
 static drm_prime_export_entry_t drm_prime_exports[DRM_MAX_PRIME_EXPORTS];
 static spinlock_t drm_prime_exports_lock = SPIN_INIT;
+
+typedef struct drm_syncfd_ctx drm_syncfd_ctx_t;
+static drm_syncfd_ctx_t *drm_syncfd_create_immediate_ctx(const char *name,
+                                                         bool signaled);
+static drm_syncfd_ctx_t *drm_syncfd_create_syncobj_ctx(drm_device_t *dev,
+                                                       uint64_t owner_pid,
+                                                       uint32_t handle,
+                                                       uint64_t point,
+                                                       const char *name);
+static ssize_t drm_syncfd_create_fd(drm_syncfd_ctx_t *ctx, uint32_t flags);
+static void drm_syncfd_ctx_put(drm_syncfd_ctx_t *ctx);
+static bool drm_syncobj_is_signaled(drm_device_t *dev, uint64_t owner_pid,
+                                    uint32_t handle, uint64_t point);
 
 typedef struct drm_prime_fd_ctx {
     vfs_node_t node;
@@ -188,7 +236,14 @@ static int drm_primefs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
             return -EINVAL;
         }
 
-        ssize_t sync_fd = (ssize_t)sys_eventfd2(1, EFD_CLOEXEC | EFD_NONBLOCK);
+        drm_syncfd_ctx_t *ctx =
+            drm_syncfd_create_immediate_ctx("dma-buf", true);
+        if (!ctx) {
+            return -ENOMEM;
+        }
+
+        ssize_t sync_fd = drm_syncfd_create_fd(ctx, DRM_CLOEXEC);
+        drm_syncfd_ctx_put(ctx);
         if (sync_fd < 0) {
             return sync_fd;
         }
@@ -283,6 +338,473 @@ static int drm_primefd_ensure_registered(void) {
     spin_unlock(&drm_prime_fsid_lock);
 
     return drm_prime_fsid > 0 ? 0 : -ENOMEM;
+}
+
+typedef enum drm_syncfd_kind {
+    DRM_SYNCFD_KIND_IMMEDIATE = 0,
+    DRM_SYNCFD_KIND_SYNCOBJ = 1,
+    DRM_SYNCFD_KIND_MERGE = 2,
+} drm_syncfd_kind_t;
+
+struct drm_syncfd_ctx {
+    vfs_node_t node;
+    spinlock_t lock;
+    struct llist_header link;
+    uint32_t refs;
+    drm_syncfd_kind_t kind;
+    bool signaled;
+    int32_t status;
+    uint64_t timestamp_ns;
+    uint64_t deadline_ns;
+    char name[32];
+    union {
+        struct {
+            drm_device_t *dev;
+            uint64_t owner_pid;
+            uint32_t handle;
+            uint64_t point;
+        } syncobj;
+        struct {
+            struct drm_syncfd_ctx *left;
+            struct drm_syncfd_ctx *right;
+        } merge;
+    } u;
+};
+
+static int drm_syncfdfs_id = 0;
+static spinlock_t drm_syncfdfs_id_lock = SPIN_INIT;
+static struct llist_header drm_syncfd_contexts;
+static spinlock_t drm_syncfd_contexts_lock = SPIN_INIT;
+static bool drm_syncfd_contexts_initialized = false;
+
+static void drm_syncfd_ctx_get(drm_syncfd_ctx_t *ctx) {
+    if (!ctx) {
+        return;
+    }
+    __atomic_add_fetch(&ctx->refs, 1, __ATOMIC_ACQ_REL);
+}
+
+static void drm_syncfd_ctx_put(drm_syncfd_ctx_t *ctx) {
+    if (!ctx) {
+        return;
+    }
+    if (__atomic_sub_fetch(&ctx->refs, 1, __ATOMIC_ACQ_REL) != 0) {
+        return;
+    }
+
+    if (ctx->kind == DRM_SYNCFD_KIND_MERGE) {
+        drm_syncfd_ctx_put(ctx->u.merge.left);
+        drm_syncfd_ctx_put(ctx->u.merge.right);
+    }
+    free(ctx);
+}
+
+static bool drm_syncfd_update_state(drm_syncfd_ctx_t *ctx);
+
+static bool drm_syncfd_is_signaled(drm_syncfd_ctx_t *ctx) {
+    if (!ctx) {
+        return false;
+    }
+    return drm_syncfd_update_state(ctx);
+}
+
+static bool drm_syncfd_update_state(drm_syncfd_ctx_t *ctx) {
+    if (!ctx) {
+        return false;
+    }
+
+    spin_lock(&ctx->lock);
+    if (ctx->signaled) {
+        spin_unlock(&ctx->lock);
+        return true;
+    }
+    drm_syncfd_kind_t kind = ctx->kind;
+    drm_device_t *dev = NULL;
+    uint64_t owner_pid = 0;
+    uint32_t handle = 0;
+    uint64_t point = 0;
+    drm_syncfd_ctx_t *left = NULL;
+    drm_syncfd_ctx_t *right = NULL;
+    if (kind == DRM_SYNCFD_KIND_SYNCOBJ) {
+        dev = ctx->u.syncobj.dev;
+        owner_pid = ctx->u.syncobj.owner_pid;
+        handle = ctx->u.syncobj.handle;
+        point = ctx->u.syncobj.point;
+    } else if (kind == DRM_SYNCFD_KIND_MERGE) {
+        left = ctx->u.merge.left;
+        right = ctx->u.merge.right;
+    }
+    spin_unlock(&ctx->lock);
+
+    bool signaled = false;
+    switch (kind) {
+    case DRM_SYNCFD_KIND_IMMEDIATE:
+        signaled = true;
+        break;
+    case DRM_SYNCFD_KIND_SYNCOBJ:
+        signaled = drm_syncobj_is_signaled(dev, owner_pid, handle, point);
+        break;
+    case DRM_SYNCFD_KIND_MERGE:
+        signaled =
+            drm_syncfd_is_signaled(left) && drm_syncfd_is_signaled(right);
+        break;
+    default:
+        break;
+    }
+
+    if (!signaled) {
+        return false;
+    }
+
+    bool notify = false;
+    spin_lock(&ctx->lock);
+    if (!ctx->signaled) {
+        ctx->signaled = true;
+        ctx->status = 1;
+        ctx->timestamp_ns = nano_time();
+        notify = true;
+    }
+    spin_unlock(&ctx->lock);
+
+    if (notify && ctx->node) {
+        vfs_poll_notify(ctx->node, EPOLLIN);
+    }
+    return true;
+}
+
+static int drm_syncfdfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
+    drm_syncfd_ctx_t *ctx = node ? node->handle : NULL;
+    if (!ctx) {
+        return -EBADF;
+    }
+
+    switch ((uint32_t)cmd) {
+    case SYNC_IOC_SET_DEADLINE: {
+        struct sync_set_deadline deadline = {0};
+        if (!arg || copy_from_user(&deadline, (void *)(uintptr_t)arg,
+                                   sizeof(deadline))) {
+            return -EFAULT;
+        }
+        if (deadline.pad != 0) {
+            return -EINVAL;
+        }
+
+        spin_lock(&ctx->lock);
+        ctx->deadline_ns = deadline.deadline_ns;
+        spin_unlock(&ctx->lock);
+        return 0;
+    }
+    case SYNC_IOC_FILE_INFO: {
+        struct sync_file_info info = {0};
+        if (!arg ||
+            copy_from_user(&info, (void *)(uintptr_t)arg, sizeof(info))) {
+            return -EFAULT;
+        }
+
+        struct sync_fence_info fence = {0};
+        drm_syncfd_update_state(ctx);
+
+        spin_lock(&ctx->lock);
+        memcpy(info.name, ctx->name, sizeof(info.name));
+        info.status = ctx->status;
+        info.flags = 0;
+        uint32_t requested = info.num_fences;
+        info.num_fences = 1;
+        fence.status = ctx->status;
+        fence.flags = 0;
+        fence.timestamp_ns = ctx->timestamp_ns;
+        memcpy(fence.obj_name, ctx->name, sizeof(fence.obj_name));
+        memcpy(fence.driver_name, "naos", 5);
+        spin_unlock(&ctx->lock);
+
+        if (requested > 0 && info.sync_fence_info) {
+            if (copy_to_user((void *)(uintptr_t)info.sync_fence_info, &fence,
+                             sizeof(fence))) {
+                return -EFAULT;
+            }
+        }
+
+        if (copy_to_user((void *)(uintptr_t)arg, &info, sizeof(info))) {
+            return -EFAULT;
+        }
+        return 0;
+    }
+    case SYNC_IOC_MERGE: {
+        struct sync_merge_data merge = {0};
+        if (!arg ||
+            copy_from_user(&merge, (void *)(uintptr_t)arg, sizeof(merge))) {
+            return -EFAULT;
+        }
+        if (merge.flags != 0 || merge.pad != 0) {
+            return -EINVAL;
+        }
+        if (merge.fd2 < 0 || merge.fd2 >= MAX_FD_NUM) {
+            return -EBADF;
+        }
+
+        drm_syncfd_ctx_t *other = NULL;
+        with_fd_info_lock(current_task->fd_info, {
+            fd_t *fd_obj = current_task->fd_info->fds[merge.fd2];
+            if (fd_obj && fd_obj->node &&
+                fd_obj->node->fsid == drm_syncfdfs_id) {
+                other = fd_obj->node->handle;
+                if (other) {
+                    drm_syncfd_ctx_get(other);
+                }
+            }
+        });
+        if (!other) {
+            return -EINVAL;
+        }
+
+        drm_syncfd_ctx_t *merged = calloc(1, sizeof(*merged));
+        if (!merged) {
+            drm_syncfd_ctx_put(other);
+            return -ENOMEM;
+        }
+        spin_init(&merged->lock);
+        llist_init_head(&merged->link);
+        merged->refs = 1;
+        merged->kind = DRM_SYNCFD_KIND_MERGE;
+        merged->status = 0;
+        merged->u.merge.left = ctx;
+        merged->u.merge.right = other;
+        drm_syncfd_ctx_get(ctx);
+        if (merge.name[0]) {
+            memcpy(merged->name, merge.name, sizeof(merged->name));
+        } else {
+            memcpy(merged->name, "naos-sync-merge", 16);
+        }
+
+        ssize_t new_fd = drm_syncfd_create_fd(merged, 0);
+        drm_syncfd_ctx_put(other);
+        drm_syncfd_ctx_put(merged);
+        if (new_fd < 0) {
+            return (int)new_fd;
+        }
+
+        merge.fence = (int32_t)new_fd;
+        if (copy_to_user((void *)(uintptr_t)arg, &merge, sizeof(merge))) {
+            sys_close((uint64_t)new_fd);
+            return -EFAULT;
+        }
+        return 0;
+    }
+    default:
+        return -ENOTTY;
+    }
+}
+
+static int drm_syncfdfs_poll(vfs_node_t node, size_t events) {
+    drm_syncfd_ctx_t *ctx = node ? node->handle : NULL;
+    if (!ctx) {
+        return EPOLLNVAL;
+    }
+
+    int revents = 0;
+    if ((events & EPOLLIN) && drm_syncfd_is_signaled(ctx)) {
+        revents |= EPOLLIN;
+    }
+    if (events & EPOLLOUT) {
+        revents |= EPOLLOUT;
+    }
+    return revents;
+}
+
+static bool drm_syncfdfs_close(vfs_node_t node) {
+    (void)node;
+    return true;
+}
+
+static void drm_syncfdfs_free_handle(vfs_node_t node) {
+    drm_syncfd_ctx_t *ctx = node ? node->handle : NULL;
+    if (!ctx) {
+        return;
+    }
+
+    spin_lock(&drm_syncfd_contexts_lock);
+    if (!llist_empty(&ctx->link)) {
+        llist_delete(&ctx->link);
+    }
+    spin_unlock(&drm_syncfd_contexts_lock);
+
+    drm_syncfd_ctx_put(ctx);
+    node->handle = NULL;
+}
+
+static vfs_operations_t drm_syncfdfs_callbacks = {
+    .close = drm_syncfdfs_close,
+    .ioctl = drm_syncfdfs_ioctl,
+    .poll = drm_syncfdfs_poll,
+    .free_handle = drm_syncfdfs_free_handle,
+};
+
+static fs_t drm_syncfdfs = {
+    .name = "drmsyncfs",
+    .magic = 0,
+    .ops = &drm_syncfdfs_callbacks,
+    .flags = FS_FLAGS_HIDDEN | FS_FLAGS_VIRTUAL,
+};
+
+static int drm_syncfd_ensure_registered(void) {
+    if (drm_syncfdfs_id > 0) {
+        return 0;
+    }
+
+    spin_lock(&drm_syncfdfs_id_lock);
+    if (!drm_syncfd_contexts_initialized) {
+        llist_init_head(&drm_syncfd_contexts);
+        drm_syncfd_contexts_initialized = true;
+    }
+    if (drm_syncfdfs_id == 0) {
+        drm_syncfdfs_id = vfs_regist(&drm_syncfdfs);
+    }
+    spin_unlock(&drm_syncfdfs_id_lock);
+
+    return drm_syncfdfs_id > 0 ? 0 : -ENOMEM;
+}
+
+static ssize_t drm_syncfd_create_fd(drm_syncfd_ctx_t *ctx, uint32_t flags) {
+    int ret = drm_syncfd_ensure_registered();
+    if (ret) {
+        return ret;
+    }
+    if (!ctx) {
+        return -EINVAL;
+    }
+
+    int fd = -1;
+    with_fd_info_lock(current_task->fd_info, {
+        for (int i = 0; i < MAX_FD_NUM; i++) {
+            if (!current_task->fd_info->fds[i]) {
+                fd = i;
+                break;
+            }
+        }
+    });
+    if (fd < 0) {
+        return -EMFILE;
+    }
+
+    fd_t *fd_obj = calloc(1, sizeof(*fd_obj));
+    if (!fd_obj) {
+        return -ENOMEM;
+    }
+
+    vfs_node_t node = vfs_node_alloc(NULL, NULL);
+    if (!node) {
+        free(fd_obj);
+        return -ENOMEM;
+    }
+
+    node->type = file_stream;
+    node->fsid = drm_syncfdfs_id;
+    node->handle = ctx;
+    node->refcount++;
+    ctx->node = node;
+    drm_syncfd_ctx_get(ctx);
+
+    spin_lock(&drm_syncfd_contexts_lock);
+    if (llist_empty(&ctx->link)) {
+        llist_append(&drm_syncfd_contexts, &ctx->link);
+    }
+    spin_unlock(&drm_syncfd_contexts_lock);
+
+    fd_obj->node = node;
+    fd_obj->offset = 0;
+    fd_obj->flags = O_RDWR | flags;
+    fd_obj->close_on_exec = !!(flags & DRM_CLOEXEC);
+
+    bool installed = false;
+    with_fd_info_lock(current_task->fd_info, {
+        if (!current_task->fd_info->fds[fd]) {
+            current_task->fd_info->fds[fd] = fd_obj;
+            procfs_on_open_file(current_task, fd);
+            installed = true;
+        }
+    });
+
+    if (!installed) {
+        free(fd_obj);
+        vfs_close(node);
+        return -EMFILE;
+    }
+
+    drm_syncfd_update_state(ctx);
+    return fd;
+}
+
+static drm_syncfd_ctx_t *drm_syncfd_create_immediate_ctx(const char *name,
+                                                         bool signaled) {
+    drm_syncfd_ctx_t *ctx = calloc(1, sizeof(*ctx));
+    if (!ctx) {
+        return NULL;
+    }
+    spin_init(&ctx->lock);
+    llist_init_head(&ctx->link);
+    ctx->refs = 1;
+    ctx->kind = DRM_SYNCFD_KIND_IMMEDIATE;
+    ctx->signaled = signaled;
+    ctx->status = signaled ? 1 : 0;
+    ctx->timestamp_ns = signaled ? nano_time() : 0;
+    if (name && name[0]) {
+        memcpy(ctx->name, name, MIN(sizeof(ctx->name), strlen(name)));
+    } else {
+        memcpy(ctx->name, "naos-sync", 10);
+    }
+    return ctx;
+}
+
+static drm_syncfd_ctx_t *drm_syncfd_create_syncobj_ctx(drm_device_t *dev,
+                                                       uint64_t owner_pid,
+                                                       uint32_t handle,
+                                                       uint64_t point,
+                                                       const char *name) {
+    drm_syncfd_ctx_t *ctx = calloc(1, sizeof(*ctx));
+    if (!ctx) {
+        return NULL;
+    }
+    spin_init(&ctx->lock);
+    llist_init_head(&ctx->link);
+    ctx->refs = 1;
+    ctx->kind = DRM_SYNCFD_KIND_SYNCOBJ;
+    ctx->status = 0;
+    ctx->u.syncobj.dev = dev;
+    ctx->u.syncobj.owner_pid = owner_pid;
+    ctx->u.syncobj.handle = handle;
+    ctx->u.syncobj.point = point ? point : 1;
+    if (name && name[0]) {
+        memcpy(ctx->name, name, MIN(sizeof(ctx->name), strlen(name)));
+    } else {
+        memcpy(ctx->name, "naos-syncobj", 13);
+    }
+    return ctx;
+}
+
+static drm_syncfd_ctx_t *drm_syncfd_ctx_from_fd(int fd) {
+    drm_syncfd_ctx_t *ctx = NULL;
+    if (fd < 0 || fd >= MAX_FD_NUM) {
+        return NULL;
+    }
+    with_fd_info_lock(current_task->fd_info, {
+        fd_t *fd_obj = current_task->fd_info->fds[fd];
+        if (fd_obj && fd_obj->node && fd_obj->node->fsid == drm_syncfdfs_id) {
+            ctx = fd_obj->node->handle;
+            if (ctx) {
+                drm_syncfd_ctx_get(ctx);
+            }
+        }
+    });
+    return ctx;
+}
+
+static void drm_syncfd_notify_all(void) {
+    spin_lock(&drm_syncfd_contexts_lock);
+    drm_syncfd_ctx_t *ctx, *tmp;
+    llist_for_each(ctx, tmp, &drm_syncfd_contexts, link) {
+        drm_syncfd_update_state(ctx);
+    }
+    spin_unlock(&drm_syncfd_contexts_lock);
 }
 
 static ssize_t drm_primefd_create(drm_device_t *dev, uint32_t handle,
@@ -401,8 +923,6 @@ static drm_user_blob_entry_t drm_user_blobs[DRM_MAX_USER_BLOBS];
 static spinlock_t drm_user_blobs_lock = SPIN_INIT;
 static uint32_t drm_user_blob_next_id = DRM_BLOB_ID_USER_BASE + 1;
 
-// ---- syncobj --------------------------------------------------------------
-
 #define DRM_MAX_SYNCOBJS 1024
 
 typedef struct drm_syncobj_entry {
@@ -462,6 +982,21 @@ static drm_syncobj_entry_t *drm_syncobj_lookup_locked(drm_device_t *dev,
     }
 
     return NULL;
+}
+
+static bool drm_syncobj_is_signaled(drm_device_t *dev, uint64_t owner_pid,
+                                    uint32_t handle, uint64_t point) {
+    bool signaled = false;
+
+    spin_lock(&drm_syncobjs_lock);
+    drm_syncobj_entry_t *entry =
+        drm_syncobj_lookup_locked(dev, owner_pid, handle);
+    if (entry && entry->point >= (point ? point : 1)) {
+        signaled = true;
+    }
+    spin_unlock(&drm_syncobjs_lock);
+
+    return signaled;
 }
 
 static ssize_t drm_syncobj_alloc_handle_locked(uint32_t *out_handle) {
@@ -601,8 +1136,13 @@ static ssize_t drm_syncobj_handle_to_fd(drm_device_t *dev,
     point = entry->point;
     spin_unlock(&drm_syncobjs_lock);
 
-    uint64_t efd_flags = (h->flags & DRM_CLOEXEC) ? EFD_CLOEXEC : 0;
-    ssize_t fd = (ssize_t)sys_eventfd2(point ? 1 : 0, efd_flags);
+    drm_syncfd_ctx_t *ctx = drm_syncfd_create_syncobj_ctx(
+        dev, owner_pid, h->handle, point ? point : 1, "drm-syncobj");
+    if (!ctx) {
+        return -ENOMEM;
+    }
+    ssize_t fd = drm_syncfd_create_fd(ctx, h->flags & DRM_CLOEXEC);
+    drm_syncfd_ctx_put(ctx);
     if (fd < 0) {
         return fd;
     }
@@ -637,6 +1177,12 @@ static ssize_t drm_syncobj_fd_to_handle(drm_device_t *dev,
             if (efd) {
                 imported_point =
                     __atomic_load_n(&efd->count, __ATOMIC_ACQUIRE) ? 1 : 0;
+            }
+        } else if (fd_obj && fd_obj->node &&
+                   fd_obj->node->fsid == drm_syncfdfs_id) {
+            drm_syncfd_ctx_t *ctx = fd_obj->node->handle;
+            if (ctx) {
+                imported_point = drm_syncfd_is_signaled(ctx) ? 1 : 0;
             }
         }
     });
@@ -853,6 +1399,9 @@ static ssize_t drm_syncobj_reset_or_signal(drm_device_t *dev,
     spin_unlock(&drm_syncobjs_lock);
 
     free(handles);
+    if (signal) {
+        drm_syncfd_notify_all();
+    }
     return 0;
 }
 
@@ -915,6 +1464,7 @@ drm_syncobj_timeline_signal(drm_device_t *dev,
 
     free(handles);
     free(points);
+    drm_syncfd_notify_all();
     return 0;
 }
 
@@ -2101,6 +2651,22 @@ ssize_t drm_ioctl_mode_addfb2(drm_device_t *dev, void *arg) {
 }
 
 /**
+ * drm_ioctl_mode_closefb - Handle DRM_IOCTL_MODE_CLOSEFB
+ */
+ssize_t drm_ioctl_mode_closefb(drm_device_t *dev, void *arg) {
+    struct drm_mode_closefb *closefb = (struct drm_mode_closefb *)arg;
+
+    if (!closefb || closefb->fb_id == 0) {
+        return -EINVAL;
+    }
+    if (closefb->pad != 0) {
+        return -EINVAL;
+    }
+
+    return drm_framebuffer_close(dev, closefb->fb_id);
+}
+
+/**
  * drm_ioctl_mode_setcrtc - Handle DRM_IOCTL_MODE_SETCRTC
  */
 ssize_t drm_ioctl_mode_setcrtc(drm_device_t *dev, void *arg) {
@@ -2113,6 +2679,7 @@ ssize_t drm_ioctl_mode_setcrtc(drm_device_t *dev, void *arg) {
     }
 
     // Update CRTC state
+    uint32_t old_fb_id = crtc->fb_id;
     crtc->fb_id = crtc_cmd->fb_id;
     crtc->x = crtc_cmd->x;
     crtc->y = crtc_cmd->y;
@@ -2124,6 +2691,10 @@ ssize_t drm_ioctl_mode_setcrtc(drm_device_t *dev, void *arg) {
     int ret = 0;
     if (dev->op->set_crtc) {
         ret = dev->op->set_crtc(dev, crtc_cmd);
+    }
+
+    if (ret == 0 && old_fb_id != 0 && old_fb_id != crtc_cmd->fb_id) {
+        drm_framebuffer_cleanup_closed(dev, old_fb_id);
     }
 
     // Release reference
@@ -2221,6 +2792,7 @@ ssize_t drm_ioctl_mode_setplane(drm_device_t *dev, void *arg) {
     }
 
     // Update plane state
+    uint32_t old_fb_id = plane->fb_id;
     plane->crtc_id = plane_cmd->crtc_id;
     plane->fb_id = plane_cmd->fb_id;
 
@@ -2228,6 +2800,10 @@ ssize_t drm_ioctl_mode_setplane(drm_device_t *dev, void *arg) {
     int ret = 0;
     if (dev->op->set_plane) {
         ret = dev->op->set_plane(dev, plane_cmd);
+    }
+
+    if (ret == 0 && old_fb_id != 0 && old_fb_id != plane_cmd->fb_id) {
+        drm_framebuffer_cleanup_closed(dev, old_fb_id);
     }
 
     // Release reference
@@ -2485,7 +3061,7 @@ ssize_t drm_ioctl_mode_getproperty(drm_device_t *dev, void *arg) {
         return 0;
 
     default:
-        printk("drm: Unsupported property ID: %u\n", prop->prop_id);
+        printk("drm: Unsupported property ID: %d\n", prop->prop_id);
         return -EINVAL;
     }
 }
@@ -2892,9 +3468,9 @@ ssize_t drm_ioctl_mode_obj_getproperties(drm_device_t *dev, void *arg) {
     if (obj_type == DRM_MODE_OBJECT_ANY) {
         int ret = drm_mode_resolve_obj_type(dev, props->obj_id, &obj_type);
         if (ret == -ENOENT) {
-            printk("drm: Unknown object ID: %u\n", props->obj_id);
+            printk("drm: Unknown object ID: %d\n", props->obj_id);
         } else if (ret == -EINVAL) {
-            printk("drm: Ambiguous object ID: %u\n", props->obj_id);
+            printk("drm: Ambiguous object ID: %d\n", props->obj_id);
         }
         if (ret) {
             return ret;
@@ -3130,7 +3706,7 @@ ssize_t drm_ioctl_mode_obj_getproperties(drm_device_t *dev, void *arg) {
     }
 
     default:
-        printk("drm: Unsupported object type: %u\n", obj_type);
+        printk("drm: Unsupported object type: %d\n", obj_type);
         return -EINVAL;
     }
 
@@ -3182,14 +3758,19 @@ ssize_t drm_ioctl_wait_vblank(drm_device_t *dev, void *arg) {
  */
 ssize_t drm_ioctl_get_unique(drm_device_t *dev, void *arg) {
     struct drm_unique *u = (struct drm_unique *)arg;
-    (void)dev;
+    char unique[32];
+    unique[0] = '\0';
 
-    if (u->unique &&
-        copy_to_user_str((char *)(uintptr_t)u->unique, "pci:0000:00:00.0",
-                         u->unique_len ? u->unique_len : 1)) {
+    if (dev && dev->pci_dev) {
+        sprintf(unique, "pci:%04x:%02x:%02x.%d", dev->pci_dev->segment,
+                dev->pci_dev->bus, dev->pci_dev->slot, dev->pci_dev->func);
+    }
+
+    if (u->unique && copy_to_user_str((char *)(uintptr_t)u->unique, unique,
+                                      u->unique_len ? u->unique_len : 1)) {
         return -EFAULT;
     }
-    u->unique_len = 17;
+    u->unique_len = strlen(unique);
 
     return 0;
 }
@@ -3324,6 +3905,7 @@ static bool drm_ioctl_allow_on_render_node(drm_device_t *dev, uint32_t cmd) {
     switch (cmd) {
     case DRM_IOCTL_VERSION:
     case DRM_IOCTL_GET_CAP:
+    case DRM_IOCTL_GET_UNIQUE:
     case DRM_IOCTL_GEM_CLOSE:
     case DRM_IOCTL_PRIME_HANDLE_TO_FD:
     case DRM_IOCTL_PRIME_FD_TO_HANDLE:
@@ -3331,6 +3913,7 @@ static bool drm_ioctl_allow_on_render_node(drm_device_t *dev, uint32_t cmd) {
     case DRM_IOCTL_MODE_MAP_DUMB:
     case DRM_IOCTL_MODE_DESTROY_DUMB:
     case DRM_IOCTL_SET_CLIENT_CAP:
+    case DRM_IOCTL_SET_VERSION:
     case DRM_IOCTL_SYNCOBJ_CREATE:
     case DRM_IOCTL_SYNCOBJ_DESTROY:
     case DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD:
@@ -3437,6 +4020,9 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
         break;
     case DRM_IOCTL_MODE_RMFB:
         ret = 0; // Not implemented
+        break;
+    case DRM_IOCTL_MODE_CLOSEFB:
+        ret = drm_ioctl_mode_closefb(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_SETCRTC:
         ret = drm_ioctl_mode_setcrtc(dev, ioarg);

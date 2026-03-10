@@ -119,7 +119,7 @@ void __switch_to(task_t *prev, task_t *next) {
     tss[current_cpu_id].rsp0 = next->kernel_stack;
 
     write_fsbase(next->arch_context->fsbase);
-    write_gsbase(next->arch_context->gsbase);
+    // write_gsbase(next->arch_context->gsbase);
 
     if (next->arch_context->fpu_ctx) {
         asm volatile("fxrstor (%0)" ::"r"(next->arch_context->fpu_ctx));
@@ -158,7 +158,7 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry,
     arch_context_to_user_mode(context, entry, stack);
 
     write_fsbase(context->fsbase);
-    write_gsbase(context->gsbase);
+    // write_gsbase(context->gsbase);
 
     asm volatile("movq %0, %%rsp\n\t"
                  "jmp ret_from_exception" ::"r"(context->ctx));
@@ -189,7 +189,7 @@ uint64_t sys_arch_prctl(uint64_t cmd, uint64_t arg) {
         if (!is_canonical_user_addr(arg))
             return (uint64_t)(-EINVAL);
         current_task->arch_context->gsbase = arg;
-        write_gsbase(current_task->arch_context->gsbase);
+        // write_gsbase(current_task->arch_context->gsbase);
         return 0;
     case ARCH_GET_FS:
         value = current_task->arch_context->fsbase;

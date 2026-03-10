@@ -2547,6 +2547,7 @@ int nvidia_get_planes(drm_device_t *drm_dev, drm_plane_t **planes,
 
 // DRM device operations structure
 drm_device_op_t nvidia_drm_device_op = {
+    .supports_render_node = true,
     .get_display_info = nvidia_get_display_info,
     .get_fb = nvidia_get_fb,
     .create_dumb = nvidia_create_dumb,
@@ -3014,7 +3015,7 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
     drm_device_set_driver_info(nv_dev->drm_dev, "nvidia_open", "20260226",
                                "NVIDIA Open Kernel DRM (NaOS)");
 
-    printk("nvidia_open: drm primary node /dev/dri/card%u\n",
+    printk("nvidia_open: drm primary node /dev/dri/card%d\n",
            nv_dev->drm_dev->primary_minor);
     if (nv_dev->drm_dev->render_node_registered) {
         printk("nvidia_open: drm render node /dev/dri/renderD%u\n",

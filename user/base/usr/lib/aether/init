@@ -8,21 +8,25 @@ export XDG_RUNTIME_DIR="/run/user/0"
 export NO_AT_BRIDGE=1
 export LC_ALL=en_US.utf8
 export PATH="/usr/local/sbin:/usr/local/bin:/bin:/usr/bin:/sbin:$HOME/.local/bin:$HOME/.local/bin"
+export LIBGL_ALWAYS_SOFTWARE=1
+export WLR_RENDERER=pixman
+export WLR_RENDERER_ALLOW_SOFTWARE=1
 export SDL_VIDEODRIVER=x11
 export SDL_AUDIODRIVER=dummy
 
+mkdir -p /tmp/.X11-unix
 mkdir -p $HOME/.config/dconf
 mkdir -p /run/dbus
 mkdir -p /var/lib/dbus
 mkdir -p $XDG_RUNTIME_DIR
 
-udevd &
+chmod 01700 /tmp/.X11-unix
+chmod 0700 $XDG_RUNTIME_DIR
 
-dbus-daemon --system
+dbus-daemon --system --fork
 dbus-uuidgen --ensure
 
+udevd &
+
 seatd &
-export WLR_RENDERER=pixman
-export WLR_RENDERER_ALLOW_SOFTWARE=1
-/usr/libexec/xdg-desktop-portal &
-weston --xwayland
+exec weston --xwayland

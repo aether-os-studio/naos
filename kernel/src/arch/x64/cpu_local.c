@@ -9,7 +9,7 @@
 static x64_cpu_local_t x64_cpu_locals[MAX_CPU_NUM];
 
 x64_cpu_local_t *x64_get_cpu_local(void) {
-    return (x64_cpu_local_t *)read_kgsbase();
+    return (x64_cpu_local_t *)read_gsbase();
 }
 
 x64_cpu_local_t *x64_get_cpu_local_by_id(uint32_t cpu_id) {
@@ -26,7 +26,7 @@ void x64_cpu_local_init(uint32_t cpu_id, uint32_t lapic_id_value) {
     memset(local, 0, sizeof(*local));
     local->cpu_id = cpu_id;
     local->lapic_id = lapic_id_value;
-    write_kgsbase((uint64_t)local);
+    write_gsbase((uint64_t)local);
 }
 
 void x64_cpu_local_set_current(task_t *current) {
@@ -41,7 +41,6 @@ void x64_cpu_local_set_current(task_t *current) {
     }
 
     local->task_ptr = current;
-    local->current_mm = current ? current->mm : NULL;
     local->syscall_stack = current ? current->syscall_stack : 0;
 }
 

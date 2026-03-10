@@ -5,10 +5,7 @@ ENTRY(syscall_handler_asm)
     cli
     cld
 
-    swapgs
-
-    movq %rsp, %gs:0x18
-
+    movq %rsp, %gs:0x8
     movq %gs:0x0, %rsp // syscall_stack
 
     subq $0x38, %rsp
@@ -33,9 +30,8 @@ ENTRY(syscall_handler_asm)
 
     xorq %rbp, %rbp
     movq %rsp, %rdi
-    movq %gs:0x18, %rsi
 
-    swapgs
+    movq %gs:0x8, %rsi
 
     call syscall_handler
 
