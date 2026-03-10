@@ -15,6 +15,8 @@
 #include <mm/mm.h>
 #include <task/task.h>
 
+extern int eventfdfs_id;
+
 static ssize_t drm_copy_to_user_ptr(uint64_t user_ptr, const void *src,
                                     size_t size) {
     if (!user_ptr || size == 0) {
@@ -398,6 +400,676 @@ typedef struct drm_user_blob_entry {
 static drm_user_blob_entry_t drm_user_blobs[DRM_MAX_USER_BLOBS];
 static spinlock_t drm_user_blobs_lock = SPIN_INIT;
 static uint32_t drm_user_blob_next_id = DRM_BLOB_ID_USER_BASE + 1;
+
+// ---- syncobj --------------------------------------------------------------
+
+#define DRM_MAX_SYNCOBJS 1024
+
+typedef struct drm_syncobj_entry {
+    bool used;
+    drm_device_t *dev;
+    uint64_t owner_pid;
+    uint32_t handle;
+    uint64_t point; // 0 = unsignaled, >0 = signaled/timeline point
+    vfs_node_t eventfd_node;
+} drm_syncobj_entry_t;
+
+static drm_syncobj_entry_t drm_syncobjs[DRM_MAX_SYNCOBJS];
+static spinlock_t drm_syncobjs_lock = SPIN_INIT;
+static uint32_t drm_syncobj_next_handle = 1;
+
+static inline uint64_t drm_syncobj_owner_pid(void) {
+    if (!current_task) {
+        return 0;
+    }
+
+    return current_task->tgid ? (uint64_t)current_task->tgid
+                              : (uint64_t)current_task->pid;
+}
+
+static void drm_syncobj_prune_locked(void) {
+    for (int i = 0; i < DRM_MAX_SYNCOBJS; i++) {
+        if (!drm_syncobjs[i].used) {
+            continue;
+        }
+
+        if (drm_syncobjs[i].owner_pid == 0 ||
+            task_find_by_pid(drm_syncobjs[i].owner_pid) != NULL) {
+            continue;
+        }
+
+        if (drm_syncobjs[i].eventfd_node) {
+            vfs_close(drm_syncobjs[i].eventfd_node);
+        }
+        memset(&drm_syncobjs[i], 0, sizeof(drm_syncobjs[i]));
+    }
+}
+
+static drm_syncobj_entry_t *drm_syncobj_lookup_locked(drm_device_t *dev,
+                                                      uint64_t owner_pid,
+                                                      uint32_t handle) {
+    for (int i = 0; i < DRM_MAX_SYNCOBJS; i++) {
+        if (!drm_syncobjs[i].used) {
+            continue;
+        }
+        if (drm_syncobjs[i].dev != dev ||
+            drm_syncobjs[i].owner_pid != owner_pid ||
+            drm_syncobjs[i].handle != handle) {
+            continue;
+        }
+
+        return &drm_syncobjs[i];
+    }
+
+    return NULL;
+}
+
+static ssize_t drm_syncobj_alloc_handle_locked(uint32_t *out_handle) {
+    if (!out_handle) {
+        return -EINVAL;
+    }
+
+    uint32_t candidate = drm_syncobj_next_handle;
+    for (uint32_t tries = 0; tries < UINT32_MAX; tries++) {
+        if (candidate == 0) {
+            candidate = 1;
+        }
+
+        bool exists = false;
+        for (int i = 0; i < DRM_MAX_SYNCOBJS; i++) {
+            if (drm_syncobjs[i].used && drm_syncobjs[i].handle == candidate) {
+                exists = true;
+                break;
+            }
+        }
+
+        if (!exists) {
+            *out_handle = candidate;
+            drm_syncobj_next_handle = candidate + 1;
+            if (drm_syncobj_next_handle == 0) {
+                drm_syncobj_next_handle = 1;
+            }
+            return 0;
+        }
+
+        candidate++;
+    }
+
+    return -ENOSPC;
+}
+
+static ssize_t drm_syncobj_create(drm_device_t *dev,
+                                  struct drm_syncobj_create *create) {
+    if (!dev || !create) {
+        return -EINVAL;
+    }
+
+    if (create->flags & ~DRM_SYNCOBJ_CREATE_SIGNALED) {
+        return -EINVAL;
+    }
+
+    uint64_t owner_pid = drm_syncobj_owner_pid();
+    if (owner_pid == 0) {
+        return -EINVAL;
+    }
+
+    spin_lock(&drm_syncobjs_lock);
+    drm_syncobj_prune_locked();
+
+    int free_slot = -1;
+    for (int i = 0; i < DRM_MAX_SYNCOBJS; i++) {
+        if (!drm_syncobjs[i].used) {
+            free_slot = i;
+            break;
+        }
+    }
+
+    if (free_slot < 0) {
+        spin_unlock(&drm_syncobjs_lock);
+        return -ENOSPC;
+    }
+
+    uint32_t handle = 0;
+    ssize_t ret = drm_syncobj_alloc_handle_locked(&handle);
+    if (ret < 0) {
+        spin_unlock(&drm_syncobjs_lock);
+        return ret;
+    }
+
+    drm_syncobjs[free_slot] = (drm_syncobj_entry_t){
+        .used = true,
+        .dev = dev,
+        .owner_pid = owner_pid,
+        .handle = handle,
+        .point = (create->flags & DRM_SYNCOBJ_CREATE_SIGNALED) ? 1 : 0,
+        .eventfd_node = NULL,
+    };
+
+    create->handle = handle;
+    spin_unlock(&drm_syncobjs_lock);
+    return 0;
+}
+
+static ssize_t drm_syncobj_destroy(drm_device_t *dev,
+                                   struct drm_syncobj_destroy *destroy) {
+    if (!dev || !destroy || destroy->handle == 0) {
+        return -EINVAL;
+    }
+
+    uint64_t owner_pid = drm_syncobj_owner_pid();
+    spin_lock(&drm_syncobjs_lock);
+    drm_syncobj_entry_t *entry =
+        drm_syncobj_lookup_locked(dev, owner_pid, destroy->handle);
+    if (!entry) {
+        spin_unlock(&drm_syncobjs_lock);
+        return -ENOENT;
+    }
+
+    if (entry->eventfd_node) {
+        vfs_close(entry->eventfd_node);
+    }
+    memset(entry, 0, sizeof(*entry));
+    spin_unlock(&drm_syncobjs_lock);
+    return 0;
+}
+
+static ssize_t drm_syncobj_handle_to_fd(drm_device_t *dev,
+                                        struct drm_syncobj_handle *h) {
+    if (!dev || !h || h->handle == 0) {
+        return -EINVAL;
+    }
+
+    uint32_t valid_flags =
+        DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_EXPORT_SYNC_FILE | DRM_CLOEXEC;
+    if (h->flags & ~valid_flags) {
+        return -EINVAL;
+    }
+
+    if (!(h->flags & DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_EXPORT_SYNC_FILE)) {
+        return -ENOSYS;
+    }
+
+    uint64_t owner_pid = drm_syncobj_owner_pid();
+    uint64_t point = 0;
+    spin_lock(&drm_syncobjs_lock);
+    drm_syncobj_entry_t *entry =
+        drm_syncobj_lookup_locked(dev, owner_pid, h->handle);
+    if (!entry) {
+        spin_unlock(&drm_syncobjs_lock);
+        return -ENOENT;
+    }
+    point = entry->point;
+    spin_unlock(&drm_syncobjs_lock);
+
+    uint64_t efd_flags = (h->flags & DRM_CLOEXEC) ? EFD_CLOEXEC : 0;
+    ssize_t fd = (ssize_t)sys_eventfd2(point ? 1 : 0, efd_flags);
+    if (fd < 0) {
+        return fd;
+    }
+
+    h->fd = (int32_t)fd;
+    return 0;
+}
+
+static ssize_t drm_syncobj_fd_to_handle(drm_device_t *dev,
+                                        struct drm_syncobj_handle *h) {
+    if (!dev || !h) {
+        return -EINVAL;
+    }
+
+    if (h->flags & ~DRM_SYNCOBJ_FD_TO_HANDLE_FLAGS_IMPORT_SYNC_FILE) {
+        return -EINVAL;
+    }
+
+    if (!(h->flags & DRM_SYNCOBJ_FD_TO_HANDLE_FLAGS_IMPORT_SYNC_FILE)) {
+        return -ENOSYS;
+    }
+
+    if (h->fd < 0 || h->fd >= MAX_FD_NUM) {
+        return -EBADF;
+    }
+
+    uint64_t imported_point = 1;
+    with_fd_info_lock(current_task->fd_info, {
+        fd_t *fd_obj = current_task->fd_info->fds[h->fd];
+        if (fd_obj && fd_obj->node && fd_obj->node->fsid == eventfdfs_id) {
+            eventfd_t *efd = (eventfd_t *)fd_obj->node->handle;
+            if (efd) {
+                imported_point =
+                    __atomic_load_n(&efd->count, __ATOMIC_ACQUIRE) ? 1 : 0;
+            }
+        }
+    });
+
+    struct drm_syncobj_create create = {
+        .handle = 0,
+        .flags = imported_point ? DRM_SYNCOBJ_CREATE_SIGNALED : 0,
+    };
+
+    ssize_t ret = drm_syncobj_create(dev, &create);
+    if (ret < 0) {
+        return ret;
+    }
+
+    h->handle = create.handle;
+    return 0;
+}
+
+static ssize_t
+drm_syncobj_wait_any_or_all(drm_device_t *dev, uint64_t owner_pid,
+                            const uint32_t *handles, const uint64_t *points,
+                            uint32_t count, bool wait_all,
+                            int32_t *first_signaled, int64_t timeout_nsec) {
+    if (!dev || !handles || count == 0) {
+        return -EINVAL;
+    }
+
+    uint64_t deadline = 0;
+    bool has_deadline = false;
+    if (timeout_nsec >= 0) {
+        deadline = (uint64_t)timeout_nsec;
+        has_deadline = true;
+    }
+
+    while (true) {
+        bool any_ok = false;
+        bool all_ok = true;
+        int32_t first_ok = -1;
+
+        spin_lock(&drm_syncobjs_lock);
+        for (uint32_t i = 0; i < count; i++) {
+            uint64_t required = points ? points[i] : 1;
+            drm_syncobj_entry_t *entry =
+                drm_syncobj_lookup_locked(dev, owner_pid, handles[i]);
+            if (!entry) {
+                spin_unlock(&drm_syncobjs_lock);
+                return -ENOENT;
+            }
+
+            bool ok = entry->point >= required;
+            if (ok) {
+                any_ok = true;
+                if (first_ok < 0) {
+                    first_ok = (int32_t)i;
+                }
+            } else {
+                all_ok = false;
+            }
+
+            if (!wait_all && any_ok) {
+                break;
+            }
+        }
+        spin_unlock(&drm_syncobjs_lock);
+
+        if (wait_all ? all_ok : any_ok) {
+            if (!wait_all && first_signaled) {
+                *first_signaled = first_ok < 0 ? 0 : first_ok;
+            }
+            return 0;
+        }
+
+        if (has_deadline && nano_time() >= deadline) {
+            return -ETIME;
+        }
+
+        arch_enable_interrupt();
+        schedule(SCHED_FLAG_YIELD);
+        arch_disable_interrupt();
+    }
+}
+
+static ssize_t drm_syncobj_wait(drm_device_t *dev, struct drm_syncobj_wait *w) {
+    if (!dev || !w || w->count_handles == 0 || !w->handles) {
+        return -EINVAL;
+    }
+
+    if (w->flags & ~(DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL |
+                     DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT |
+                     DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE)) {
+        return -EINVAL;
+    }
+
+    uint32_t count = w->count_handles;
+    if (count > DRM_MAX_SYNCOBJS) {
+        return -EINVAL;
+    }
+
+    uint32_t *handles = malloc(sizeof(handles[0]) * count);
+    if (!handles) {
+        return -ENOMEM;
+    }
+
+    if (copy_from_user(handles, (void *)(uintptr_t)w->handles,
+                       sizeof(handles[0]) * count)) {
+        free(handles);
+        return -EFAULT;
+    }
+
+    int32_t first_signaled = 0;
+    ssize_t ret = drm_syncobj_wait_any_or_all(
+        dev, drm_syncobj_owner_pid(), handles, NULL, count,
+        !!(w->flags & DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL), &first_signaled,
+        w->timeout_nsec);
+    free(handles);
+
+    if (ret == 0 && !(w->flags & DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL)) {
+        w->first_signaled = (uint32_t)first_signaled;
+    }
+
+    return ret;
+}
+
+static ssize_t drm_syncobj_timeline_wait(drm_device_t *dev,
+                                         struct drm_syncobj_timeline_wait *w) {
+    if (!dev || !w || w->count_handles == 0 || !w->handles || !w->points) {
+        return -EINVAL;
+    }
+
+    if (w->flags & ~(DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL |
+                     DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT |
+                     DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE)) {
+        return -EINVAL;
+    }
+
+    uint32_t count = w->count_handles;
+    if (count > DRM_MAX_SYNCOBJS) {
+        return -EINVAL;
+    }
+
+    uint32_t *handles = malloc(sizeof(handles[0]) * count);
+    uint64_t *points = malloc(sizeof(points[0]) * count);
+    if (!handles || !points) {
+        free(handles);
+        free(points);
+        return -ENOMEM;
+    }
+
+    if (copy_from_user(handles, (void *)(uintptr_t)w->handles,
+                       sizeof(handles[0]) * count) ||
+        copy_from_user(points, (void *)(uintptr_t)w->points,
+                       sizeof(points[0]) * count)) {
+        free(handles);
+        free(points);
+        return -EFAULT;
+    }
+
+    int32_t first_signaled = 0;
+    ssize_t ret = drm_syncobj_wait_any_or_all(
+        dev, drm_syncobj_owner_pid(), handles, points, count,
+        !!(w->flags & DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL), &first_signaled,
+        w->timeout_nsec);
+    free(handles);
+    free(points);
+
+    if (ret == 0 && !(w->flags & DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL)) {
+        w->first_signaled = (uint32_t)first_signaled;
+    }
+
+    return ret;
+}
+
+static ssize_t drm_syncobj_reset_or_signal(drm_device_t *dev,
+                                           struct drm_syncobj_array *a,
+                                           bool signal) {
+    if (!dev || !a || a->count_handles == 0 || !a->handles) {
+        return -EINVAL;
+    }
+
+    uint32_t count = a->count_handles;
+    if (count > DRM_MAX_SYNCOBJS) {
+        return -EINVAL;
+    }
+
+    uint32_t *handles = malloc(sizeof(handles[0]) * count);
+    if (!handles) {
+        return -ENOMEM;
+    }
+    if (copy_from_user(handles, (void *)(uintptr_t)a->handles,
+                       sizeof(handles[0]) * count)) {
+        free(handles);
+        return -EFAULT;
+    }
+
+    uint64_t owner_pid = drm_syncobj_owner_pid();
+    spin_lock(&drm_syncobjs_lock);
+    for (uint32_t i = 0; i < count; i++) {
+        drm_syncobj_entry_t *entry =
+            drm_syncobj_lookup_locked(dev, owner_pid, handles[i]);
+        if (!entry) {
+            spin_unlock(&drm_syncobjs_lock);
+            free(handles);
+            return -ENOENT;
+        }
+
+        uint64_t old_point = entry->point;
+        entry->point = signal ? (old_point ? old_point : 1) : 0;
+
+        if (signal && entry->eventfd_node && entry->point != old_point) {
+            uint64_t one = 1;
+            vfs_write(entry->eventfd_node, &one, 0, sizeof(one));
+        }
+    }
+    spin_unlock(&drm_syncobjs_lock);
+
+    free(handles);
+    return 0;
+}
+
+static ssize_t
+drm_syncobj_timeline_signal(drm_device_t *dev,
+                            struct drm_syncobj_timeline_array *a) {
+    if (!dev || !a || a->count_handles == 0 || !a->handles || !a->points) {
+        return -EINVAL;
+    }
+
+    if (a->flags != 0) {
+        return -EINVAL;
+    }
+
+    uint32_t count = a->count_handles;
+    if (count > DRM_MAX_SYNCOBJS) {
+        return -EINVAL;
+    }
+
+    uint32_t *handles = malloc(sizeof(handles[0]) * count);
+    uint64_t *points = malloc(sizeof(points[0]) * count);
+    if (!handles || !points) {
+        free(handles);
+        free(points);
+        return -ENOMEM;
+    }
+
+    if (copy_from_user(handles, (void *)(uintptr_t)a->handles,
+                       sizeof(handles[0]) * count) ||
+        copy_from_user(points, (void *)(uintptr_t)a->points,
+                       sizeof(points[0]) * count)) {
+        free(handles);
+        free(points);
+        return -EFAULT;
+    }
+
+    uint64_t owner_pid = drm_syncobj_owner_pid();
+    spin_lock(&drm_syncobjs_lock);
+    for (uint32_t i = 0; i < count; i++) {
+        drm_syncobj_entry_t *entry =
+            drm_syncobj_lookup_locked(dev, owner_pid, handles[i]);
+        if (!entry) {
+            spin_unlock(&drm_syncobjs_lock);
+            free(handles);
+            free(points);
+            return -ENOENT;
+        }
+
+        uint64_t old_point = entry->point;
+        if (points[i] > entry->point) {
+            entry->point = points[i];
+        }
+
+        if (entry->eventfd_node && entry->point != old_point) {
+            uint64_t one = 1;
+            vfs_write(entry->eventfd_node, &one, 0, sizeof(one));
+        }
+    }
+    spin_unlock(&drm_syncobjs_lock);
+
+    free(handles);
+    free(points);
+    return 0;
+}
+
+static ssize_t drm_syncobj_query(drm_device_t *dev,
+                                 struct drm_syncobj_timeline_array *a) {
+    if (!dev || !a || a->count_handles == 0 || !a->handles || !a->points) {
+        return -EINVAL;
+    }
+
+    if (a->flags & ~DRM_SYNCOBJ_QUERY_FLAGS_LAST_SUBMITTED) {
+        return -EINVAL;
+    }
+
+    uint32_t count = a->count_handles;
+    if (count > DRM_MAX_SYNCOBJS) {
+        return -EINVAL;
+    }
+
+    uint32_t *handles = malloc(sizeof(handles[0]) * count);
+    uint64_t *points = malloc(sizeof(points[0]) * count);
+    if (!handles || !points) {
+        free(handles);
+        free(points);
+        return -ENOMEM;
+    }
+
+    if (copy_from_user(handles, (void *)(uintptr_t)a->handles,
+                       sizeof(handles[0]) * count)) {
+        free(handles);
+        free(points);
+        return -EFAULT;
+    }
+
+    uint64_t owner_pid = drm_syncobj_owner_pid();
+    spin_lock(&drm_syncobjs_lock);
+    for (uint32_t i = 0; i < count; i++) {
+        drm_syncobj_entry_t *entry =
+            drm_syncobj_lookup_locked(dev, owner_pid, handles[i]);
+        if (!entry) {
+            spin_unlock(&drm_syncobjs_lock);
+            free(handles);
+            free(points);
+            return -ENOENT;
+        }
+
+        points[i] = entry->point;
+    }
+    spin_unlock(&drm_syncobjs_lock);
+
+    if (copy_to_user((void *)(uintptr_t)a->points, points,
+                     sizeof(points[0]) * count)) {
+        free(handles);
+        free(points);
+        return -EFAULT;
+    }
+
+    free(handles);
+    free(points);
+    return 0;
+}
+
+static ssize_t drm_syncobj_transfer(drm_device_t *dev,
+                                    struct drm_syncobj_transfer *t) {
+    if (!dev || !t || t->src_handle == 0 || t->dst_handle == 0) {
+        return -EINVAL;
+    }
+
+    if (t->flags != 0) {
+        return -EINVAL;
+    }
+
+    uint64_t owner_pid = drm_syncobj_owner_pid();
+    spin_lock(&drm_syncobjs_lock);
+    drm_syncobj_entry_t *src =
+        drm_syncobj_lookup_locked(dev, owner_pid, t->src_handle);
+    drm_syncobj_entry_t *dst =
+        drm_syncobj_lookup_locked(dev, owner_pid, t->dst_handle);
+    if (!src || !dst) {
+        spin_unlock(&drm_syncobjs_lock);
+        return -ENOENT;
+    }
+
+    if (src->point >= t->src_point) {
+        uint64_t delta = src->point - t->src_point;
+        uint64_t dst_point = t->dst_point + delta;
+        uint64_t old_point = dst->point;
+        if (dst_point > dst->point) {
+            dst->point = dst_point;
+        }
+
+        if (dst->eventfd_node && dst->point != old_point) {
+            uint64_t one = 1;
+            vfs_write(dst->eventfd_node, &one, 0, sizeof(one));
+        }
+    }
+
+    spin_unlock(&drm_syncobjs_lock);
+    return 0;
+}
+
+static ssize_t drm_syncobj_eventfd_ioctl(drm_device_t *dev,
+                                         struct drm_syncobj_eventfd *e) {
+    if (!dev || !e || e->handle == 0) {
+        return -EINVAL;
+    }
+
+    if (e->flags != 0) {
+        return -EINVAL;
+    }
+
+    uint64_t owner_pid = drm_syncobj_owner_pid();
+    vfs_node_t new_node = NULL;
+
+    if (e->fd >= 0) {
+        if (e->fd >= MAX_FD_NUM) {
+            return -EBADF;
+        }
+
+        with_fd_info_lock(current_task->fd_info, {
+            fd_t *fd_obj = current_task->fd_info->fds[e->fd];
+            if (fd_obj && fd_obj->node && fd_obj->node->fsid == eventfdfs_id) {
+                new_node = fd_obj->node;
+                new_node->refcount++;
+            }
+        });
+
+        if (!new_node) {
+            return -EINVAL;
+        }
+    }
+
+    spin_lock(&drm_syncobjs_lock);
+    drm_syncobj_entry_t *entry =
+        drm_syncobj_lookup_locked(dev, owner_pid, e->handle);
+    if (!entry) {
+        spin_unlock(&drm_syncobjs_lock);
+        if (new_node) {
+            vfs_close(new_node);
+        }
+        return -ENOENT;
+    }
+
+    if (entry->eventfd_node) {
+        vfs_close(entry->eventfd_node);
+    }
+    entry->eventfd_node = new_node;
+
+    if (entry->eventfd_node && entry->point > 0) {
+        uint64_t one = 1;
+        vfs_write(entry->eventfd_node, &one, 0, sizeof(one));
+    }
+
+    spin_unlock(&drm_syncobjs_lock);
+    return 0;
+}
 
 static ssize_t drm_prime_get_fd_inode(int fd, uint64_t *inode) {
     if (fd < 0 || fd >= MAX_FD_NUM || !inode) {
@@ -918,6 +1590,12 @@ ssize_t drm_ioctl_get_cap(drm_device_t *dev, void *arg) {
         cap->value = 0;
         return 0;
     case DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP:
+        cap->value = 1;
+        return 0;
+    case DRM_CAP_SYNCOBJ:
+        cap->value = 1;
+        return 0;
+    case DRM_CAP_SYNCOBJ_TIMELINE:
         cap->value = 1;
         return 0;
     default:
@@ -2653,6 +3331,18 @@ static bool drm_ioctl_allow_on_render_node(drm_device_t *dev, uint32_t cmd) {
     case DRM_IOCTL_MODE_MAP_DUMB:
     case DRM_IOCTL_MODE_DESTROY_DUMB:
     case DRM_IOCTL_SET_CLIENT_CAP:
+    case DRM_IOCTL_SYNCOBJ_CREATE:
+    case DRM_IOCTL_SYNCOBJ_DESTROY:
+    case DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD:
+    case DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE:
+    case DRM_IOCTL_SYNCOBJ_WAIT:
+    case DRM_IOCTL_SYNCOBJ_RESET:
+    case DRM_IOCTL_SYNCOBJ_SIGNAL:
+    case DRM_IOCTL_SYNCOBJ_TIMELINE_WAIT:
+    case DRM_IOCTL_SYNCOBJ_QUERY:
+    case DRM_IOCTL_SYNCOBJ_TRANSFER:
+    case DRM_IOCTL_SYNCOBJ_TIMELINE_SIGNAL:
+    case DRM_IOCTL_SYNCOBJ_EVENTFD:
         return true;
     default:
         return false;
@@ -2780,6 +3470,48 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
         break;
     case DRM_IOCTL_SET_CLIENT_CAP:
         ret = drm_ioctl_set_client_cap(dev, ioarg);
+        break;
+    case DRM_IOCTL_SYNCOBJ_CREATE:
+        ret = drm_syncobj_create(dev, (struct drm_syncobj_create *)ioarg);
+        break;
+    case DRM_IOCTL_SYNCOBJ_DESTROY:
+        ret = drm_syncobj_destroy(dev, (struct drm_syncobj_destroy *)ioarg);
+        break;
+    case DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD:
+        ret = drm_syncobj_handle_to_fd(dev, (struct drm_syncobj_handle *)ioarg);
+        break;
+    case DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE:
+        ret = drm_syncobj_fd_to_handle(dev, (struct drm_syncobj_handle *)ioarg);
+        break;
+    case DRM_IOCTL_SYNCOBJ_WAIT:
+        ret = drm_syncobj_wait(dev, (struct drm_syncobj_wait *)ioarg);
+        break;
+    case DRM_IOCTL_SYNCOBJ_RESET:
+        ret = drm_syncobj_reset_or_signal(
+            dev, (struct drm_syncobj_array *)ioarg, false);
+        break;
+    case DRM_IOCTL_SYNCOBJ_SIGNAL:
+        ret = drm_syncobj_reset_or_signal(
+            dev, (struct drm_syncobj_array *)ioarg, true);
+        break;
+    case DRM_IOCTL_SYNCOBJ_TIMELINE_WAIT:
+        ret = drm_syncobj_timeline_wait(
+            dev, (struct drm_syncobj_timeline_wait *)ioarg);
+        break;
+    case DRM_IOCTL_SYNCOBJ_QUERY:
+        ret =
+            drm_syncobj_query(dev, (struct drm_syncobj_timeline_array *)ioarg);
+        break;
+    case DRM_IOCTL_SYNCOBJ_TRANSFER:
+        ret = drm_syncobj_transfer(dev, (struct drm_syncobj_transfer *)ioarg);
+        break;
+    case DRM_IOCTL_SYNCOBJ_TIMELINE_SIGNAL:
+        ret = drm_syncobj_timeline_signal(
+            dev, (struct drm_syncobj_timeline_array *)ioarg);
+        break;
+    case DRM_IOCTL_SYNCOBJ_EVENTFD:
+        ret =
+            drm_syncobj_eventfd_ioctl(dev, (struct drm_syncobj_eventfd *)ioarg);
         break;
     case DRM_IOCTL_SET_MASTER:
         ret = drm_ioctl_set_master(dev, ioarg);

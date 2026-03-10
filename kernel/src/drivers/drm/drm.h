@@ -811,6 +811,13 @@ struct drm_syncobj_timeline_array {
     __u32 flags;
 };
 
+struct drm_syncobj_eventfd {
+    __u32 handle;
+    __u32 flags;
+    __s32 fd;
+    __u32 pad;
+};
+
 /* Query current scanout sequence number */
 struct drm_crtc_get_sequence {
     __u32 crtc_id;     /* requested crtc_id */
