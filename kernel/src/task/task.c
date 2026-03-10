@@ -2988,6 +2988,7 @@ void schedule(uint64_t sched_flags) {
     next->current_state = TASK_RUNNING;
     next->last_sched_in_ns = now_ns;
 
+    arch_set_current(next);
     switch_mm(prev, next);
     switch_to(prev, next);
 

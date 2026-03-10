@@ -116,7 +116,6 @@ void __switch_to(task_t *prev, task_t *next) {
         asm volatile("fxsave (%0)" ::"r"(prev->arch_context->fpu_ctx));
     }
 
-    arch_set_current(next);
     tss[current_cpu_id].rsp0 = next->kernel_stack;
 
     write_fsbase(next->arch_context->fsbase);

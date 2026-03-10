@@ -48,6 +48,36 @@ ssize_t notifyfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     return total_write ?: -EWOULDBLOCK;
 }
 
+static int notifyfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
+    notifyfs_handle_t *handle = node ? node->handle : NULL;
+    if (!handle)
+        return -EINVAL;
+
+    switch (cmd) {
+    case FIONREAD: {
+        int total = 0;
+        spin_lock(&all_watches_lock);
+        notifyfs_watch_t *pos, *tmp;
+        llist_for_each(pos, tmp, &handle->watches, node) {
+            spin_lock(&pos->events_lock);
+            struct vfs_notify_event *p, *t;
+            llist_for_each(p, t, &pos->events, node) {
+                int name_len = strlen(p->changed_node->name) + 1;
+                total += sizeof(struct inotify_event) + name_len;
+            }
+            spin_unlock(&pos->events_lock);
+        }
+        spin_unlock(&all_watches_lock);
+
+        if (copy_to_user((void *)arg, &total, sizeof(int)))
+            return -EFAULT;
+        return 0;
+    }
+    default:
+        return -EINVAL;
+    }
+}
+
 static int notifyfs_poll(vfs_node_t node, size_t events) {
     int revents = 0;
 
@@ -82,6 +112,7 @@ static vfs_operations_t notifyfs_callbacks = {
     .close = notifyfs_close,
     .read = notifyfs_read,
     .poll = notifyfs_poll,
+    .ioctl = notifyfs_ioctl,
 
     .free_handle = vfs_generic_free_handle,
 };

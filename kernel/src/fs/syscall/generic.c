@@ -728,7 +728,9 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
 uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
     task_t *self = current_task;
 
-    if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
+    fd_t *f = self->fd_info->fds[fd];
+
+    if (fd >= MAX_FD_NUM || f == NULL) {
         return (uint64_t)-EBADF;
     }
 
@@ -741,31 +743,32 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
         if (copy_from_user(&value, (void *)arg, sizeof(value)))
             return -EFAULT;
         if (value)
-            self->fd_info->fds[fd]->flags |= O_NONBLOCK;
+            f->flags |= O_NONBLOCK;
         else
-            self->fd_info->fds[fd]->flags &= ~O_NONBLOCK;
+            f->flags &= ~O_NONBLOCK;
         ret = 0;
         break;
     case FIOCLEX:
-        self->fd_info->fds[fd]->flags |= O_CLOEXEC;
-        self->fd_info->fds[fd]->close_on_exec = true;
+        f->flags |= O_CLOEXEC;
+        f->close_on_exec = true;
         ret = 0;
         break;
     case FIONCLEX:
-        self->fd_info->fds[fd]->flags &= ~O_CLOEXEC;
-        self->fd_info->fds[fd]->close_on_exec = false;
+        f->flags &= ~O_CLOEXEC;
+        f->close_on_exec = false;
         ret = 0;
         break;
 
     default:
-        ret = vfs_ioctl(self->fd_info->fds[fd]->node, cmd, arg);
+        ret = vfs_ioctl(f->node, cmd, arg);
         if (cmd == TIOCGWINSZ && ret < 0) {
             ret = -ENOTTY;
         }
         break;
     }
     if (ret == -ENOSYS) {
-        printk("sys_ioctl: cmd %#010x not implemented\n", cmd);
+        printk("sys_ioctl: cmd %#010x not implemented, node->fsid = %d\n", cmd,
+               f->node->fsid);
     }
 
     return ret;

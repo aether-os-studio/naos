@@ -104,9 +104,6 @@ typedef struct arch_signal_frame {
     uint64_t errno;
 } arch_signal_frame_t;
 
-#define USER_STACK_START 0x000006fffff00000
-#define USER_STACK_END 0x0000070000000000
-
 struct task;
 typedef struct task task_t;
 

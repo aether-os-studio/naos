@@ -1061,31 +1061,23 @@ uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
     uint64_t end = addr + size;
     uint64_t *page_dir = get_current_page_dir(true);
     vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
-    uint8_t *residency = malloc(num_pages);
-
-    if (!residency)
-        return (uint64_t)-ENOMEM;
 
     spin_lock(&mgr->lock);
 
     if (!range_fully_covered_locked(mgr, addr, end)) {
         spin_unlock(&mgr->lock);
-        free(residency);
         return (uint64_t)-ENOMEM;
     }
 
     for (uint64_t index = 0, cursor = addr; index < num_pages;
          index++, cursor += DEFAULT_PAGE_SIZE) {
-        residency[index] = translate_address(page_dir, cursor) ? 1 : 0;
+        uint8_t value = translate_address(page_dir, cursor) ? 1 : 0;
+        if (copy_to_user((void *)vec + index, &value, 1)) {
+            return (uint64_t)-EFAULT;
+        }
     }
 
     spin_unlock(&mgr->lock);
 
-    if (copy_to_user((void *)vec, residency, num_pages)) {
-        free(residency);
-        return (uint64_t)-EFAULT;
-    }
-
-    free(residency);
     return 0;
 }

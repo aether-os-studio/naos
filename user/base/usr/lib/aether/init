@@ -1,24 +1,28 @@
 #!/bin/sh
 
-touch /run/udev/data/c226:0
-touch /run/udev/data/c226:128
-touch /run/udev/data/c13:0
-touch /run/udev/data/c13:1
-touch /run/udev/data/c13:2
-touch /run/udev/data/c13:3
-
-export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-
-mkdir -p "${XDG_RUNTIME_DIR}"
-chmod 700 "${XDG_RUNTIME_DIR}"
-
-export LANG=C.UTF-8
-
+export HOME="/root"
+export SHELL="/bin/bash"
+export XDG_SESSION_TYPE="wayland"
+export XDG_CONFIG_DIRS="/etc/xdg"
+export XDG_RUNTIME_DIR="/run/user/0"
+export NO_AT_BRIDGE=1
+export LC_ALL=en_US.utf8
+export PATH="/usr/local/sbin:/usr/local/bin:/bin:/usr/bin:/sbin:$HOME/.local/bin:$HOME/.local/bin"
 export SDL_VIDEODRIVER=x11
+export SDL_AUDIODRIVER=dummy
 
-export XDG_SESSION_TYPE=wayland
+mkdir -p $HOME/.config/dconf
+mkdir -p /run/dbus
+mkdir -p /var/lib/dbus
+mkdir -p $XDG_RUNTIME_DIR
 
-seatd &
+udevd &
+
 dbus-daemon --system
 dbus-uuidgen --ensure
+
+seatd &
+export WLR_RENDERER=pixman
+export WLR_RENDERER_ALLOW_SOFTWARE=1
+/usr/libexec/xdg-desktop-portal &
 weston --xwayland

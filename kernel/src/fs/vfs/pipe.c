@@ -135,7 +135,15 @@ ssize_t pipefs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
 }
 
 int pipefs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
+    pipe_specific_t *spec = node->handle;
+    if (!spec)
+        return -EINVAL;
+
     switch (cmd) {
+    case FIONREAD:
+        if (copy_to_user((void *)arg, &spec->info->ptr, sizeof(int)))
+            return -EFAULT;
+        return 0;
     default:
         return -EINVAL;
     }

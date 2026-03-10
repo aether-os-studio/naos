@@ -329,7 +329,6 @@ vfs_node_t vfs_child_find(vfs_node_t parent, const char *name) {
     return NULL;
 }
 
-// 一定要记得手动设置一下child的type
 vfs_node_t vfs_child_append(vfs_node_t parent, const char *name, void *handle) {
     vfs_node_t node = vfs_child_find(parent, name);
     if (node) {
@@ -1015,20 +1014,13 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, uint64_t flags) {
         if (!(current->type & file_dir)) {
             goto err;
         }
-        vfs_node_t free_node = NULL;
-        if (current->flags & VFS_NODE_FLAGS_FREE_AFTER_USE) {
-            free_node = current;
-        }
         current = vfs_child_find(current, buf);
-        if (free_node) {
-            free(free_node->name);
-            free(free_node);
-        }
         if (current == NULL)
             goto err;
         do_update(current);
 
         if (current->type & file_symlink) {
+            vfs_node_t symlink_node = current;
             char target_path[512];
             int len = vfs_readlink(current, target_path, sizeof(target_path));
             target_path[len] = '\0';
@@ -1069,6 +1061,10 @@ vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, uint64_t flags) {
             free(p);
 
             current = target;
+
+            if (symlink_node->flags & VFS_NODE_FLAGS_FREE_AFTER_USE) {
+                vfs_close(symlink_node);
+            }
         }
     }
 
