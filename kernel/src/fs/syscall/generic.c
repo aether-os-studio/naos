@@ -772,7 +772,9 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
 
     default:
         ret = vfs_ioctl(f->node, cmd, arg);
-        if (cmd == TIOCGWINSZ && ret < 0) {
+        if ((cmd == TCGETS || cmd == TCSETS || cmd == TIOCSCTTY ||
+             cmd == TIOCGWINSZ) &&
+            ret < 0) {
             ret = -ENOTTY;
         }
         break;

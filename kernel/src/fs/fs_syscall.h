@@ -112,6 +112,12 @@ uint64_t sys_getcwd(char *cwd, uint64_t size);
 uint64_t sys_dup(uint64_t fd);
 uint64_t sys_dup2(uint64_t fd, uint64_t newfd);
 uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags);
+uint64_t sys_pidfd_open(int pid, uint64_t flags);
+uint64_t pidfd_create_for_pid(uint64_t pid, uint64_t flags, bool cloexec);
+int pidfd_get_pid_from_fd(uint64_t fd, uint64_t *pid_out);
+void pidfd_on_task_exit(task_t *task);
+
+#define PIDFD_NONBLOCK O_NONBLOCK
 
 #define F_DUPFD 0
 #define F_GETFD 1

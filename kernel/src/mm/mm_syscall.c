@@ -407,14 +407,8 @@ fail:
 
 uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
                   uint64_t fd, uint64_t offset) {
-    const uint64_t passthrough_flags =
-        MAP_TYPE | MAP_FIXED | MAP_ANONYMOUS | MAP_NORESERVE | MAP_GROWSDOWN |
-        MAP_DENYWRITE | MAP_EXECUTABLE | MAP_LOCKED | MAP_POPULATE |
-        MAP_NONBLOCK | MAP_STACK | MAP_HUGETLB | MAP_SYNC | MAP_FIXED_NOREPLACE;
-
     const uint64_t page_mask = DEFAULT_PAGE_SIZE - 1;
     uint64_t map_type = flags & MAP_TYPE;
-    uint64_t clean_flags = flags & passthrough_flags;
     uint64_t aligned_len = PADDING_UP(len, DEFAULT_PAGE_SIZE);
     bool anonymous = (flags & MAP_ANONYMOUS) != 0;
     bool fixed = (flags & (MAP_FIXED | MAP_FIXED_NOREPLACE)) != 0;
@@ -427,8 +421,9 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
     if (map_type != MAP_PRIVATE && map_type != MAP_SHARED &&
         map_type != MAP_SHARED_VALIDATE)
         return (uint64_t)-EINVAL;
-    if (mmap_check_flags_linux(flags, map_type) != 0)
-        return (uint64_t)mmap_check_flags_linux(flags, map_type);
+    int check_ret = mmap_check_flags_linux(flags, map_type);
+    if (check_ret != 0)
+        return (uint64_t)check_ret;
     if (offset & page_mask)
         return (uint64_t)-EINVAL;
     if (anonymous && offset != 0)
@@ -525,8 +520,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         if (should_eager_map_anon(flags))
             ret = populate_anon_vma(vma, start_addr, aligned_len, false);
     } else if (should_eager_map_file(vma, flags)) {
-        ret = map_file_vma(vma, map_fd, start_addr, aligned_len, prot,
-                           clean_flags);
+        ret = map_file_vma(vma, map_fd, start_addr, aligned_len, prot, flags);
     }
 
     if ((int64_t)ret < 0) {

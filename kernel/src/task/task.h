@@ -41,17 +41,17 @@
 #define AT_SYSINFO 32
 #define AT_SYSINFO_EHDR 33
 
-#define INTERPRETER_BASE_ADDR 0x000006fff0000000
-#define PIE_BASE_ADDR 0x000006ff00000000
-
 #define USER_MMAP_START DEFAULT_PAGE_SIZE
 #define USER_MMAP_END 0x0000060000000000
 
-#define USER_BRK_START 0x0000060000000000
-#define USER_BRK_END 0x000006ff00000000
+#define INTERPRETER_BASE_ADDR 0x00006ff000000000
+#define PIE_BASE_ADDR 0x0000600000000000
 
-#define USER_STACK_START 0x000006ffff000000
-#define USER_STACK_END 0x0000070000000000
+#define USER_BRK_START 0x00006ffff0000000
+#define USER_BRK_END 0x00006fffff000000
+
+#define USER_STACK_START 0x00006fffff000000
+#define USER_STACK_END 0x0000700000000000
 
 #define CLONE_VM 0x00000100 /* set if VM shared between processes */
 #define CLONE_FS 0x00000200 /* set if fs info shared between processes */
@@ -295,6 +295,9 @@ void futex_init();
 
 uint64_t sys_prctl(uint64_t options, uint64_t arg2, uint64_t arg3,
                    uint64_t arg4, uint64_t arg5);
+uint64_t sys_set_robust_list(void *head, size_t len);
+uint64_t sys_get_robust_list(int pid, void **head_ptr, size_t *len_ptr);
+uint64_t sys_rseq(void *rseq, uint32_t rseq_len, int flags, uint32_t sig);
 uint64_t sys_alarm(uint64_t seconds);
 uint64_t sys_timer_create(clockid_t clockid, struct sigevent *sevp,
                           timer_t *timerid);

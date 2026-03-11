@@ -45,6 +45,7 @@ typedef struct vma_manager {
 } vma_manager_t;
 
 // 函数声明
+void vma_manager_init(vma_manager_t *mgr, bool initialized);
 vma_t *vma_alloc(void);
 void vma_free(vma_t *vma);
 vma_t *vma_find(vma_manager_t *mgr, unsigned long addr);

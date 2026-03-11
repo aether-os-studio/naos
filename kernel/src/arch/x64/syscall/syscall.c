@@ -340,10 +340,8 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_SYSFS] = (syscall_handle_t)sys_sysfs;
     syscall_handlers[SYS_GETPRIORITY] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_SETPRIORITY] = (syscall_handle_t)sys_setpriority;
-    syscall_handlers[SYS_SCHED_SETPARAM] =
-        (syscall_handle_t)sys_sched_setparam;
-    syscall_handlers[SYS_SCHED_GETPARAM] =
-        (syscall_handle_t)sys_sched_getparam;
+    syscall_handlers[SYS_SCHED_SETPARAM] = (syscall_handle_t)sys_sched_setparam;
+    syscall_handlers[SYS_SCHED_GETPARAM] = (syscall_handle_t)sys_sched_getparam;
     syscall_handlers[SYS_SCHED_SETSCHEDULER] =
         (syscall_handle_t)sys_sched_setscheduler;
     syscall_handlers[SYS_SCHED_GETSCHEDULER] =
@@ -503,10 +501,10 @@ void syscall_handler_init() {
     syscall_handlers[SYS_PSELECT6] = (syscall_handle_t)sys_pselect6;
     syscall_handlers[SYS_PPOLL] = (syscall_handle_t)sys_ppoll;
     // syscall_handlers[SYS_UNSHARE] = (syscall_handle_t)sys_unshare;
-    // syscall_handlers[SYS_SET_ROBUST_LIST] =
-    //     (syscall_handle_t)sys_set_robust_list;
-    // syscall_handlers[SYS_GET_ROBUST_LIST] =
-    //     (syscall_handle_t)sys_get_robust_list;
+    syscall_handlers[SYS_SET_ROBUST_LIST] =
+        (syscall_handle_t)sys_set_robust_list;
+    syscall_handlers[SYS_GET_ROBUST_LIST] =
+        (syscall_handle_t)sys_get_robust_list;
     // syscall_handlers[SYS_SPLICE] = (syscall_handle_t)sys_splice;
     // syscall_handlers[SYS_TEE] = (syscall_handle_t)sys_tee;
     // syscall_handlers[SYS_SYNC_FILE_RANGE] =
@@ -583,7 +581,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_STATX] = (syscall_handle_t)sys_statx;
     // syscall_handlers[SYS_IO_PGETEVENTS] =
     // (syscall_handle_t)sys_io_pgetevents;
-    syscall_handlers[SYS_RSEQ] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_RSEQ] = (syscall_handle_t)sys_rseq;
     // syscall_handlers[SYS_PIDFD_SEND_SIGNAL] =
     //     (syscall_handle_t)sys_pidfd_send_signal;
     // syscall_handlers[SYS_IO_URING_SETUP] =
@@ -598,7 +596,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_FSCONFIG] = (syscall_handle_t)sys_fsconfig;
     syscall_handlers[SYS_FSMOUNT] = (syscall_handle_t)sys_fsmount;
     // syscall_handlers[SYS_FSPICK] = (syscall_handle_t)sys_fspick;
-    // syscall_handlers[SYS_PIDFD_OPEN] = (syscall_handle_t)sys_pidfd_open;
+    syscall_handlers[SYS_PIDFD_OPEN] = (syscall_handle_t)sys_pidfd_open;
     syscall_handlers[SYS_CLONE3] = (syscall_handle_t)sys_clone3;
     syscall_handlers[SYS_CLOSE_RANGE] = (syscall_handle_t)sys_close_range;
     // syscall_handlers[SYS_OPENAT2] = (syscall_handle_t)sys_openat2;
@@ -743,7 +741,7 @@ done:
             self->system_time_ns += self->user_time_ns - syscall_user_base;
     }
 
-    if (idx != SYS_BRK && regs->rax == (uint64_t)-ENOSYS) {
+    if (idx != SYS_BRK && idx != SYS_RSEQ && regs->rax == (uint64_t)-ENOSYS) {
         serial_fprintk("syscall %d not implemented\n", idx);
     }
     if (regs->rax == (uint64_t)-EFAULT) {

@@ -4,9 +4,6 @@
 #include <libs/elf.h>
 #include <mm/mm.h>
 
-#define USER_STACK_START 0x000006fffff00000
-#define USER_STACK_END 0x0000070000000000
-
 #define switch_to(prev, next)
 
 struct task;

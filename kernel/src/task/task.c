@@ -389,6 +389,14 @@ static inline task_t *task_lookup_by_pid_nolock(uint64_t pid) {
     return (task_t *)hashmap_get(&task_pid_map, pid);
 }
 
+static inline uint64_t task_effective_wait_parent_pid(task_t *task) {
+    if (!task) {
+        return 0;
+    }
+
+    return task->tgid > 0 ? (uint64_t)task->tgid : task->pid;
+}
+
 task_t *task_find_by_pid(uint64_t pid) {
     spin_lock(&task_queue_lock);
     task_t *task = task_lookup_by_pid_nolock(pid);
@@ -572,8 +580,6 @@ void free_task(task_t *ptr) {
 
     task_timerfd_list_clear(ptr);
 
-    vma_manager_exit_cleanup(&ptr->mm->task_vma_mgr);
-
     if (!ptr->is_kernel)
         free_page_table(ptr->mm);
 
@@ -742,10 +748,11 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     memset((void *)(task->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(task->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
     task->mm = malloc(sizeof(task_mm_info_t));
+    memset(task->mm, 0, sizeof(task_mm_info_t));
     task->mm->page_table_addr = virt_to_phys((uint64_t)get_kernel_page_dir());
     task->mm->ref_count = 1;
-    memset(&task->mm->task_vma_mgr, 0, sizeof(vma_manager_t));
-    task->mm->task_vma_mgr.initialized = false;
+    spin_init(&task->mm->lock);
+    vma_manager_init(&task->mm->task_vma_mgr, false);
     task->mm->brk_start = USER_BRK_START;
     task->mm->brk_current = task->mm->brk_start;
     task->mm->brk_end = USER_BRK_END;
@@ -771,19 +778,19 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->fd_info->fds[0]->node = vfs_open("/dev/stdin", 0);
     task->fd_info->fds[0]->node->refcount++;
     task->fd_info->fds[0]->offset = 0;
-    task->fd_info->fds[0]->flags = 0;
+    task->fd_info->fds[0]->flags = O_RDWR;
     task->fd_info->fds[1] = malloc(sizeof(fd_t));
     memset(task->fd_info->fds[1], 0, sizeof(fd_t));
     task->fd_info->fds[1]->node = vfs_open("/dev/stdout", 0);
     task->fd_info->fds[1]->node->refcount++;
     task->fd_info->fds[1]->offset = 0;
-    task->fd_info->fds[1]->flags = 0;
+    task->fd_info->fds[1]->flags = O_RDWR;
     task->fd_info->fds[2] = malloc(sizeof(fd_t));
     memset(task->fd_info->fds[2], 0, sizeof(fd_t));
     task->fd_info->fds[2]->node = vfs_open("/dev/stderr", 0);
     task->fd_info->fds[2]->node->refcount++;
     task->fd_info->fds[2]->offset = 0;
-    task->fd_info->fds[2]->flags = 0;
+    task->fd_info->fds[2]->flags = O_RDWR;
     task->fd_info->ref_count++;
     strncpy(task->name, name, TASK_NAME_MAX);
     task->shm_ids = NULL;
@@ -1016,9 +1023,7 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
 }
 
 uint64_t task_fork(struct pt_regs *regs, bool vfork) {
-    uint64_t flags = vfork ? (CLONE_VFORK | CLONE_VM | CLONE_THREAD |
-                              CLONE_SIGHAND | CLONE_FS | CLONE_FILES)
-                           : 0;
+    uint64_t flags = vfork ? CLONE_VFORK : 0;
     return sys_clone(regs, flags, 0, NULL, NULL, 0);
 }
 
@@ -1110,6 +1115,22 @@ static int read_task_file_into_user_memory(task_t *task, vfs_node_t node,
                                            uint64_t uaddr, size_t offset,
                                            size_t size);
 static int zero_task_user_memory(task_t *task, uint64_t uaddr, size_t size);
+static int map_task_elf_segment(task_t *task, vfs_node_t node,
+                                uint64_t load_base, const Elf64_Phdr *phdr);
+
+static void task_execve_free_string_array(char **strings, int count) {
+    if (!strings) {
+        return;
+    }
+
+    for (int i = 0; i < count; i++) {
+        if (strings[i]) {
+            free(strings[i]);
+        }
+    }
+
+    free(strings);
+}
 
 uint64_t task_execve(const char *path_user, const char **argv,
                      const char **envp) {
@@ -1124,9 +1145,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     if (!node) {
         return (uint64_t)-ENOENT;
     }
-    uint64_t size = node->size;
 
-    // argv/envp 处理代码保持不变
     int argv_count = 0;
     int envp_count = 0;
 
@@ -1183,45 +1202,161 @@ uint64_t task_execve(const char *path_user, const char **argv,
     new_envp[envp_count] = NULL;
 
     uint8_t header_buf[256];
-    ssize_t header_read = vfs_read(node, header_buf, 0, sizeof(header_buf));
+    ssize_t header_read;
+    int shebang_depth = 0;
 
-    // 检查 shebang
-    if (header_buf[0] == '#' && header_buf[1] == '!') {
-        for (int i = 0; i < argv_count; i++)
-            if (new_argv[i])
-                free(new_argv[i]);
-        free(new_argv);
-        for (int i = 0; i < envp_count; i++)
-            if (new_envp[i])
-                free(new_envp[i]);
-        free(new_envp);
+    while (true) {
+        header_read = vfs_read(node, header_buf, 0, sizeof(header_buf));
 
-        char *p = (char *)header_buf + 2;
-        const char *interpreter_name = NULL;
-        while (*p != '\n' && p < (char *)header_buf + header_read) {
-            if (!interpreter_name && *p != ' ') {
-                interpreter_name = (const char *)p;
-            }
-            p++;
+        if (header_read < 2 || header_buf[0] != '#' || header_buf[1] != '!') {
+            break;
         }
-        *p = '\0';
 
-        if (!interpreter_name)
-            return -EINVAL;
+        if (++shebang_depth > 4) {
+            task_execve_free_string_array(new_argv, argv_count);
+            task_execve_free_string_array(new_envp, envp_count);
+            return (uint64_t)-ELOOP;
+        }
 
-        char interpreter_name_buf[128];
-        strncpy(interpreter_name_buf, interpreter_name,
-                sizeof(interpreter_name_buf));
+        size_t shebang_len = (header_read < (ssize_t)sizeof(header_buf))
+                                 ? (size_t)header_read
+                                 : sizeof(header_buf) - 1;
+        char *line_start = (char *)header_buf + 2;
+        char *line_limit = (char *)header_buf + shebang_len;
+        char *line_end = line_start;
+        char *interpreter_name;
+        char *interpreter_end;
+        char *optional_arg = NULL;
+        char script_path[sizeof(path)];
+        char **replaced_argv = NULL;
+        int replaced_argc = 2;
+        int replaced_index = 0;
+        bool found_newline = false;
 
-        int argc = 0;
-        while (argv[argc++])
-            ;
-        const char *injected_argv[128];
-        memcpy((char *)&injected_argv[1], argv, argc * sizeof(char *));
-        injected_argv[0] = interpreter_name_buf;
-        injected_argv[1] = path;
+        header_buf[shebang_len] = '\0';
 
-        return task_execve((const char *)injected_argv[0], injected_argv, envp);
+        while (line_end < line_limit && *line_end != '\n' &&
+               *line_end != '\0') {
+            line_end++;
+        }
+        if (line_end < line_limit && *line_end == '\n') {
+            found_newline = true;
+        }
+
+        while (line_start < line_end &&
+               (*line_start == ' ' || *line_start == '\t')) {
+            line_start++;
+        }
+        while (line_end > line_start &&
+               (line_end[-1] == ' ' || line_end[-1] == '\t' ||
+                line_end[-1] == '\r')) {
+            line_end--;
+        }
+        *line_end = '\0';
+
+        if (line_start == line_end) {
+            task_execve_free_string_array(new_argv, argv_count);
+            task_execve_free_string_array(new_envp, envp_count);
+            return (uint64_t)-ENOEXEC;
+        }
+
+        interpreter_name = line_start;
+        interpreter_end = interpreter_name;
+        while (interpreter_end < line_end && *interpreter_end != ' ' &&
+               *interpreter_end != '\t') {
+            interpreter_end++;
+        }
+
+        if (!found_newline && header_read >= (ssize_t)sizeof(header_buf) &&
+            interpreter_end == line_end) {
+            task_execve_free_string_array(new_argv, argv_count);
+            task_execve_free_string_array(new_envp, envp_count);
+            return (uint64_t)-ENOEXEC;
+        }
+
+        if (interpreter_end == interpreter_name) {
+            task_execve_free_string_array(new_argv, argv_count);
+            task_execve_free_string_array(new_envp, envp_count);
+            return (uint64_t)-ENOEXEC;
+        }
+
+        if (interpreter_end < line_end) {
+            *interpreter_end++ = '\0';
+            while (interpreter_end < line_end &&
+                   (*interpreter_end == ' ' || *interpreter_end == '\t')) {
+                interpreter_end++;
+            }
+            if (interpreter_end < line_end) {
+                optional_arg = interpreter_end;
+                replaced_argc++;
+            }
+        }
+
+        if (argv_count > 1) {
+            replaced_argc += argv_count - 1;
+        }
+
+        replaced_argv = (char **)calloc(replaced_argc + 1, sizeof(char *));
+        if (!replaced_argv) {
+            task_execve_free_string_array(new_argv, argv_count);
+            task_execve_free_string_array(new_envp, envp_count);
+            return (uint64_t)-ENOMEM;
+        }
+
+        strncpy(script_path, path, sizeof(script_path));
+        script_path[sizeof(script_path) - 1] = '\0';
+
+        replaced_argv[replaced_index++] = strdup(interpreter_name);
+        if (!replaced_argv[0]) {
+            task_execve_free_string_array(replaced_argv, replaced_index);
+            task_execve_free_string_array(new_argv, argv_count);
+            task_execve_free_string_array(new_envp, envp_count);
+            return (uint64_t)-ENOMEM;
+        }
+
+        if (optional_arg) {
+            replaced_argv[replaced_index++] = strdup(optional_arg);
+            if (!replaced_argv[replaced_index - 1]) {
+                task_execve_free_string_array(replaced_argv, replaced_index);
+                task_execve_free_string_array(new_argv, argv_count);
+                task_execve_free_string_array(new_envp, envp_count);
+                return (uint64_t)-ENOMEM;
+            }
+        }
+
+        replaced_argv[replaced_index++] = strdup(script_path);
+        if (!replaced_argv[replaced_index - 1]) {
+            task_execve_free_string_array(replaced_argv, replaced_index);
+            task_execve_free_string_array(new_argv, argv_count);
+            task_execve_free_string_array(new_envp, envp_count);
+            return (uint64_t)-ENOMEM;
+        }
+
+        for (int i = 1; i < argv_count; i++) {
+            replaced_argv[replaced_index++] = strdup(new_argv[i]);
+            if (!replaced_argv[replaced_index - 1]) {
+                task_execve_free_string_array(replaced_argv, replaced_index);
+                task_execve_free_string_array(new_argv, argv_count);
+                task_execve_free_string_array(new_envp, envp_count);
+                return (uint64_t)-ENOMEM;
+            }
+        }
+
+        vfs_node_t interpreter_node = vfs_open(interpreter_name, 0);
+        if (!interpreter_node) {
+            task_execve_free_string_array(replaced_argv, replaced_index);
+            task_execve_free_string_array(new_argv, argv_count);
+            task_execve_free_string_array(new_envp, envp_count);
+            return (uint64_t)-ENOENT;
+        }
+
+        task_execve_free_string_array(new_argv, argv_count);
+        new_argv = replaced_argv;
+        argv_count = replaced_argc;
+
+        strncpy(path, interpreter_name, sizeof(path));
+        path[sizeof(path) - 1] = '\0';
+        node = interpreter_node;
     }
 
     if (header_read < sizeof(Elf64_Ehdr)) {
@@ -1280,10 +1415,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
         vfs_read(node, phdr, ehdr->e_phoff, phdr_size);
     }
 
-    if (self->is_clone && (self->clone_flags & CLONE_VM)) {
-        if (self->mm->ref_count <= 1)
-            vma_manager_exit_cleanup(&self->mm->task_vma_mgr);
-    }
     shm_exec(self);
 
     task_mm_info_t *old_mm = self->mm;
@@ -1297,8 +1428,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
            get_kernel_page_dir() + 256, DEFAULT_PAGE_SIZE / 2);
 #endif
     new_mm->ref_count = 1;
-    memset(&new_mm->task_vma_mgr, 0, sizeof(vma_manager_t));
-    new_mm->task_vma_mgr.initialized = true;
+    vma_manager_init(&new_mm->task_vma_mgr, true);
 
     new_mm->brk_start = USER_BRK_START;
     new_mm->brk_current = new_mm->brk_start;
@@ -1367,37 +1497,10 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 if (interp_phdr[j].p_type != PT_LOAD)
                     continue;
 
-                uint64_t seg_addr =
-                    INTERPRETER_BASE_ADDR + interp_phdr[j].p_vaddr;
-                uint64_t seg_size = interp_phdr[j].p_memsz;
-                uint64_t file_size = interp_phdr[j].p_filesz;
-                uint64_t page_size = DEFAULT_PAGE_SIZE;
-                uint64_t page_mask = page_size - 1;
-
-                uint64_t aligned_addr = seg_addr & ~page_mask;
-                uint64_t size_diff = seg_addr - aligned_addr;
-                uint64_t alloc_size =
-                    (seg_size + size_diff + page_mask) & ~page_mask;
-
-                uint64_t final_flags =
-                    elf_segment_pt_flags(interp_phdr[j].p_flags);
-                uint64_t flags = final_flags | PT_FLAG_W;
-                map_page_range(get_current_page_dir(true), aligned_addr,
-                               (uint64_t)-1, alloc_size, flags);
-
-                (void)read_task_file_into_user_memory(
-                    self, interpreter_node, seg_addr, interp_phdr[j].p_offset,
-                    file_size);
-
-                if (seg_size > file_size) {
-                    (void)zero_task_user_memory(self, seg_addr + file_size,
-                                                seg_size - file_size);
-                }
-
-                if (flags != final_flags) {
-                    map_change_attribute_range(get_current_page_dir(true),
-                                               aligned_addr, alloc_size,
-                                               final_flags);
+                if (map_task_elf_segment(self, interpreter_node,
+                                         INTERPRETER_BASE_ADDR,
+                                         &interp_phdr[j]) != 0) {
+                    printk("Failed to map interpreter PT_LOAD segment\n");
                 }
 
                 if (register_elf_load_vma(
@@ -1412,38 +1515,18 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
         } else if (phdr[i].p_type == PT_LOAD) {
             uint64_t seg_addr = real_load_start + phdr[i].p_vaddr;
-            uint64_t seg_size = phdr[i].p_memsz;
-            uint64_t file_size = phdr[i].p_filesz;
-            uint64_t page_size = DEFAULT_PAGE_SIZE;
-            uint64_t page_mask = page_size - 1;
-
-            uint64_t aligned_addr = seg_addr & ~page_mask;
-            uint64_t size_diff = seg_addr - aligned_addr;
-            uint64_t alloc_size =
-                (seg_size + size_diff + page_mask) & ~page_mask;
+            uint64_t aligned_addr = PADDING_DOWN(seg_addr, DEFAULT_PAGE_SIZE);
+            uint64_t alloc_size = PADDING_UP(
+                phdr[i].p_memsz + (seg_addr - aligned_addr), DEFAULT_PAGE_SIZE);
 
             if (aligned_addr < load_start)
                 load_start = aligned_addr;
             if (aligned_addr + alloc_size > load_end)
                 load_end = aligned_addr + alloc_size;
 
-            uint64_t final_flags = elf_segment_pt_flags(phdr[i].p_flags);
-            uint64_t flags = final_flags | PT_FLAG_W;
-            map_page_range(get_current_page_dir(true), aligned_addr,
-                           (uint64_t)-1, alloc_size, flags);
-
-            (void)read_task_file_into_user_memory(self, node, seg_addr,
-                                                  phdr[i].p_offset, file_size);
-
-            if (seg_size > file_size) {
-                (void)zero_task_user_memory(self, seg_addr + file_size,
-                                            seg_size - file_size);
-            }
-
-            if (flags != final_flags) {
-                map_change_attribute_range(get_current_page_dir(true),
-                                           aligned_addr, alloc_size,
-                                           final_flags);
+            if (map_task_elf_segment(self, node, real_load_start, &phdr[i]) !=
+                0) {
+                printk("Failed to map executable PT_LOAD segment\n");
             }
 
             if (register_elf_load_vma(self, node, path, real_load_start,
@@ -1500,7 +1583,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     }
 
     task_t *vfork_parent = task_find_by_pid(self->ppid);
-    if (self->is_clone && (self->clone_flags & CLONE_VFORK) && vfork_parent &&
+    if ((self->clone_flags & CLONE_VFORK) && vfork_parent &&
         !vfork_parent->child_vfork_done) {
         vfork_parent->child_vfork_done = true;
     }
@@ -1789,6 +1872,7 @@ void task_exit_inner(task_t *task, int64_t code) {
     task->fd_info = NULL;
 
     task->status = (uint64_t)code;
+    pidfd_on_task_exit(task);
 
     task_t *waiting_task = task_lookup_by_pid_nolock(task->waitpid);
     if (waiting_task) {
@@ -1864,43 +1948,45 @@ void task_exit_inner(task_t *task, int64_t code) {
 uint64_t task_exit(int64_t code) {
     arch_disable_interrupt();
 
-    can_schedule = false;
+    task_t *self = current_task;
 
-    task_t *vfork_parent = task_find_by_pid(current_task->ppid);
-    if (current_task->is_clone && (current_task->clone_flags & CLONE_VFORK) &&
-        vfork_parent && !vfork_parent->child_vfork_done) {
+    task_t *vfork_parent = task_find_by_pid(self->ppid);
+    if ((self->clone_flags & CLONE_VFORK) && vfork_parent &&
+        !vfork_parent->child_vfork_done) {
         vfork_parent->child_vfork_done = true;
     }
 
+    uint64_t current_tgid = self->tgid > 0 ? (uint64_t)self->tgid : self->pid;
+
     spin_lock(&task_queue_lock);
     task_index_bucket_t *children =
-        task_index_bucket_lookup(&task_parent_map, current_task->pid);
-    struct llist_header *node = children ? children->tasks.next : NULL;
-    while (children && node != &children->tasks) {
-        task_t *task = list_entry(node, task_t, parent_node);
-        node = node->next;
-        if (task != current_task && (task->ppid != task->pid) &&
-            (task->ppid == current_task->pid)) {
-            if (task->fd_info == current_task->fd_info) {
-                task_exit_inner(task, code);
-            } else if (task->is_clone) {
-                task_exit_inner(task, code);
-            } else {
-                task_set_ppid_locked(task, 1, false);
-                if (task->parent_death_sig != (uint64_t)-1) {
-                    task_send_signal(task, task->parent_death_sig,
-                                     task->parent_death_sig + 128);
-                    if (task->state == TASK_BLOCKING ||
-                        task->state == TASK_READING_STDIO)
-                        task_unblock(task, EOK);
+        task_index_bucket_lookup(&task_parent_map, self->pid);
+    if (children) {
+        task_t *task, *tmp;
+        llist_for_each(task, tmp, &children->tasks, parent_node) {
+            if (task != self && (task->ppid != task->pid) &&
+                (task->ppid == self->pid)) {
+                uint64_t task_tgid =
+                    task->tgid > 0 ? (uint64_t)task->tgid : task->pid;
+                if (task_tgid == current_tgid) {
+                    task_exit_inner(task, code);
+                } else {
+                    task_set_ppid_locked(task, 1, false);
+                    if (task->parent_death_sig != (uint64_t)-1) {
+                        task_send_signal(task, task->parent_death_sig,
+                                         task->parent_death_sig + 128);
+                        if (task->state == TASK_BLOCKING ||
+                            task->state == TASK_READING_STDIO)
+                            task_unblock(task, EOK);
+                    }
                 }
             }
         }
     }
-    task_index_bucket_destroy_if_empty(&task_parent_map, current_task->pid);
+    task_index_bucket_destroy_if_empty(&task_parent_map, self->pid);
     spin_unlock(&task_queue_lock);
 
-    task_exit_inner(current_task, code);
+    task_exit_inner(self, code);
 
     can_schedule = true;
 
@@ -1918,6 +2004,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
     task_t *target = NULL;
     uint64_t ret = -ECHILD;
     int64_t wait_pid = (int64_t)pid;
+    uint64_t wait_parent_pid = task_effective_wait_parent_pid(current_task);
 
     if (status && check_user_overflow((uint64_t)status, sizeof(int))) {
         return -EFAULT;
@@ -1930,7 +2017,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
     bool has_children = false;
     spin_lock(&task_queue_lock);
     task_index_bucket_t *children =
-        task_index_bucket_lookup(&task_parent_map, current_task->pid);
+        task_index_bucket_lookup(&task_parent_map, wait_parent_pid);
     has_children = children && children->count > 0;
     spin_unlock(&task_queue_lock);
 
@@ -1944,7 +2031,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
 
         spin_lock(&task_queue_lock);
         task_index_bucket_t *children =
-            task_index_bucket_lookup(&task_parent_map, current_task->pid);
+            task_index_bucket_lookup(&task_parent_map, wait_parent_pid);
         struct llist_header *node = children ? children->tasks.next : NULL;
         while (children && node != &children->tasks) {
             task_t *ptr = list_entry(node, task_t, parent_node);
@@ -1954,7 +2041,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
 
             if (ptr->ppid == ptr->pid)
                 continue;
-            if (ptr->ppid != current_task->pid)
+            if (ptr->ppid != wait_parent_pid)
                 continue;
 
             if (wait_pid > 0) {
@@ -2032,21 +2119,34 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
                     struct rusage *rusage) {
     task_t *target = NULL;
     uint64_t ret = 0;
+    int match_idtype = idtype;
+    uint64_t match_id = id;
+    uint64_t wait_parent_pid = task_effective_wait_parent_pid(current_task);
 
     if (idtype < P_ALL || idtype > P_PIDFD)
         return -EINVAL;
 
     if (!(options & (WEXITED | WSTOPPED | WCONTINUED)))
         return -EINVAL;
+    if (infop && check_user_overflow((uint64_t)infop, sizeof(siginfo_t))) {
+        return -EFAULT;
+    }
     if (rusage &&
         check_user_overflow((uint64_t)rusage, sizeof(struct rusage))) {
         return -EFAULT;
+    }
+    if (idtype == P_PIDFD) {
+        int pidfd_ret = pidfd_get_pid_from_fd(id, &match_id);
+        if (pidfd_ret < 0) {
+            return (uint64_t)pidfd_ret;
+        }
+        match_idtype = P_PID;
     }
 
     bool has_children = false;
     spin_lock(&task_queue_lock);
     task_index_bucket_t *children =
-        task_index_bucket_lookup(&task_parent_map, current_task->pid);
+        task_index_bucket_lookup(&task_parent_map, wait_parent_pid);
     has_children = children && children->count > 0;
     spin_unlock(&task_queue_lock);
 
@@ -2059,7 +2159,7 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
 
         spin_lock(&task_queue_lock);
         task_index_bucket_t *children =
-            task_index_bucket_lookup(&task_parent_map, current_task->pid);
+            task_index_bucket_lookup(&task_parent_map, wait_parent_pid);
         struct llist_header *node = children ? children->tasks.next : NULL;
         while (children && node != &children->tasks) {
             task_t *ptr = list_entry(node, task_t, parent_node);
@@ -2069,16 +2169,16 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
 
             if (ptr->ppid == ptr->pid)
                 continue;
-            if (ptr->ppid != current_task->pid)
+            if (ptr->ppid != wait_parent_pid)
                 continue;
 
-            switch (idtype) {
+            switch (match_idtype) {
             case P_PID:
-                if (ptr->pid != id)
+                if (ptr->pid != match_id)
                     continue;
                 break;
             case P_PGID:
-                if (ptr->pgid != id)
+                if (ptr->pgid != match_id)
                     continue;
                 break;
             case P_ALL:
@@ -2103,7 +2203,11 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
 
         if (found_alive && (options & WNOHANG)) {
             if (infop) {
-                memset(infop, 0, sizeof(siginfo_t));
+                siginfo_t empty_info;
+                memset(&empty_info, 0, sizeof(empty_info));
+                if (copy_to_user(infop, &empty_info, sizeof(empty_info))) {
+                    return (uint64_t)-EFAULT;
+                }
             }
             return 0;
         }
@@ -2120,20 +2224,24 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
 
     if (target) {
         if (infop) {
-            memset(infop, 0, sizeof(siginfo_t));
-            infop->si_signo = SIGCHLD;
-            infop->si_errno = 0;
-            infop->_sifields._sigchld._pid = target->pid;
-            infop->_sifields._sigchld._uid = target->uid;
+            siginfo_t info;
+            memset(&info, 0, sizeof(info));
+            info.si_signo = SIGCHLD;
+            info.si_errno = 0;
+            info._sifields._sigchld._pid = target->pid;
+            info._sifields._sigchld._uid = target->uid;
 
             if (target->state == TASK_DIED) {
                 if (target->status >= 128) {
-                    infop->si_code = CLD_KILLED;
-                    infop->_sifields._sigchld._status = target->status - 128;
+                    info.si_code = CLD_KILLED;
+                    info._sifields._sigchld._status = target->status - 128;
                 } else {
-                    infop->si_code = CLD_EXITED;
-                    infop->_sifields._sigchld._status = target->status;
+                    info.si_code = CLD_EXITED;
+                    info._sifields._sigchld._status = target->status;
                 }
+            }
+            if (copy_to_user(infop, &info, sizeof(info))) {
+                return (uint64_t)-EFAULT;
             }
         }
         if (rusage) {
@@ -2198,8 +2306,36 @@ uint64_t sys_clone3(struct pt_regs *regs, clone_args_t *args_user,
     clone_args_t args;
     if (copy_from_user(&args, args_user, sizeof(clone_args_t)))
         return (uint64_t)-EFAULT;
-    return sys_clone(regs, args.flags, args.stack, (int *)args.parent_tid,
-                     (int *)args.child_tid, args.tls);
+
+    if ((args.flags & CLONE_PIDFD) &&
+        (!args.pidfd || check_user_overflow(args.pidfd, sizeof(int)) ||
+         check_unmapped(args.pidfd, sizeof(int)))) {
+        return (uint64_t)-EFAULT;
+    }
+
+    uint64_t clone_flags = args.flags & ~CLONE_PIDFD;
+    uint64_t ret =
+        sys_clone(regs, clone_flags, args.stack, (int *)args.parent_tid,
+                  (int *)args.child_tid, args.tls);
+    if ((int64_t)ret < 0) {
+        return ret;
+    }
+
+    if (args.flags & CLONE_PIDFD) {
+        uint64_t pidfd = pidfd_create_for_pid(ret, 0, true);
+        if ((int64_t)pidfd < 0) {
+            return pidfd;
+        }
+
+        int pidfd_value = (int)pidfd;
+        if (copy_to_user((void *)args.pidfd, &pidfd_value,
+                         sizeof(pidfd_value))) {
+            sys_close(pidfd);
+            return (uint64_t)-EFAULT;
+        }
+    }
+
+    return ret;
 }
 
 static int read_task_file_into_user_memory(task_t *task, vfs_node_t node,
@@ -2308,16 +2444,68 @@ static int write_task_user_memory(task_t *task, uint64_t uaddr, const void *src,
     return 0;
 }
 
+static int map_task_elf_segment(task_t *task, vfs_node_t node,
+                                uint64_t load_base, const Elf64_Phdr *phdr) {
+    if (!task || !task->mm || !node || !phdr || phdr->p_type != PT_LOAD)
+        return -EINVAL;
+
+    uint64_t seg_addr = load_base + phdr->p_vaddr;
+    uint64_t aligned_addr = PADDING_DOWN(seg_addr, DEFAULT_PAGE_SIZE);
+    uint64_t aligned_offset = PADDING_DOWN(phdr->p_offset, DEFAULT_PAGE_SIZE);
+    uint64_t page_prefix = seg_addr - aligned_addr;
+    uint64_t file_map_size = phdr->p_filesz + page_prefix;
+    uint64_t mem_map_size = phdr->p_memsz + page_prefix;
+    uint64_t alloc_size = PADDING_UP(mem_map_size, DEFAULT_PAGE_SIZE);
+    uint64_t final_flags = elf_segment_pt_flags(phdr->p_flags);
+    uint64_t load_flags = final_flags | PT_FLAG_W;
+
+    if (file_map_size < phdr->p_filesz || mem_map_size < phdr->p_memsz ||
+        alloc_size < mem_map_size || phdr->p_filesz > phdr->p_memsz) {
+        return -EINVAL;
+    }
+
+    map_page_range(get_current_page_dir(true), aligned_addr, (uint64_t)-1,
+                   alloc_size, load_flags);
+
+    int ret = read_task_file_into_user_memory(task, node, aligned_addr,
+                                              aligned_offset, file_map_size);
+    if (ret != 0)
+        return ret;
+
+    if (mem_map_size > file_map_size) {
+        ret = zero_task_user_memory(task, aligned_addr + file_map_size,
+                                    mem_map_size - file_map_size);
+        if (ret != 0)
+            return ret;
+    }
+
+    if (load_flags != final_flags) {
+        map_change_attribute_range(get_current_page_dir(true), aligned_addr,
+                                   alloc_size, final_flags);
+    }
+
+    return 0;
+}
+
 uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                    int *parent_tid, int *child_tid, uint64_t tls) {
     arch_disable_interrupt();
 
     if (flags & CLONE_VFORK) {
         flags |= CLONE_VM;
-        flags |= CLONE_THREAD;
+    }
+
+    if ((flags & CLONE_PIDFD) && (flags & CLONE_PARENT_SETTID)) {
+        return (uint64_t)-EINVAL;
     }
 
     if ((flags & CLONE_PARENT_SETTID) &&
+        (!parent_tid ||
+         check_user_overflow((uint64_t)parent_tid, sizeof(int)) ||
+         check_unmapped((uint64_t)parent_tid, sizeof(int)))) {
+        return (uint64_t)-EFAULT;
+    }
+    if ((flags & CLONE_PIDFD) &&
         (!parent_tid ||
          check_user_overflow((uint64_t)parent_tid, sizeof(int)) ||
          check_unmapped((uint64_t)parent_tid, sizeof(int)))) {
@@ -2407,7 +2595,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 #endif
 
     child->is_kernel = false;
-    child->ppid = self->pid;
+    child->ppid = (flags & CLONE_THREAD) ? self->pid
+                                         : task_effective_wait_parent_pid(self);
     child->uid = self->uid;
     child->gid = self->gid;
     child->euid = self->euid;
@@ -2494,6 +2683,18 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     if (flags & CLONE_PARENT_SETTID) {
         copy_to_user(parent_tid, &child_tid_value, sizeof(child_tid_value));
     }
+    if (flags & CLONE_PIDFD) {
+        uint64_t pidfd = pidfd_create_for_pid(child->pid, 0, true);
+        if ((int64_t)pidfd < 0) {
+            return pidfd;
+        }
+
+        int pidfd_value = (int)pidfd;
+        if (copy_to_user(parent_tid, &pidfd_value, sizeof(pidfd_value))) {
+            sys_close(pidfd);
+            return (uint64_t)-EFAULT;
+        }
+    }
 
     if (flags & CLONE_CHILD_SETTID) {
         write_task_user_memory(child, (uint64_t)child_tid, &child_tid_value,
@@ -2509,7 +2710,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     child->child_vfork_done = false;
 
     child->clone_flags = flags;
-    child->is_clone = true;
+    child->is_clone = !!(flags & CLONE_THREAD);
 
     child->state = TASK_READY;
     child->current_state = TASK_READY;
@@ -2647,6 +2848,53 @@ uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
     default:
         return -EINVAL; // 未实现的功能返回不支持
     }
+}
+
+uint64_t sys_set_robust_list(void *head, size_t len) {
+    if (!current_task)
+        return (uint64_t)-EINVAL;
+
+    if ((uint64_t)head != 0 &&
+        (check_user_overflow((uint64_t)head, len ? len : 1) ||
+         check_unmapped((uint64_t)head, len ? len : 1))) {
+        return (uint64_t)-EFAULT;
+    }
+
+    current_task->robust_list_head = head;
+    current_task->robust_list_len = len;
+    return 0;
+}
+
+uint64_t sys_get_robust_list(int pid, void **head_ptr, size_t *len_ptr) {
+    task_t *target = NULL;
+
+    if (!head_ptr || !len_ptr)
+        return (uint64_t)-EFAULT;
+
+    if (pid == 0) {
+        target = current_task;
+    } else {
+        target = task_find_by_pid((uint64_t)pid);
+        if (!target)
+            return (uint64_t)-ESRCH;
+    }
+
+    if (copy_to_user(head_ptr, &target->robust_list_head,
+                     sizeof(target->robust_list_head)) ||
+        copy_to_user(len_ptr, &target->robust_list_len,
+                     sizeof(target->robust_list_len))) {
+        return (uint64_t)-EFAULT;
+    }
+
+    return 0;
+}
+
+uint64_t sys_rseq(void *rseq, uint32_t rseq_len, int flags, uint32_t sig) {
+    (void)rseq;
+    (void)rseq_len;
+    (void)flags;
+    (void)sig;
+    return (uint64_t)-ENOSYS;
 }
 
 void ms_to_timeval(uint64_t ms, struct timeval *tv) {

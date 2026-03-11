@@ -87,6 +87,7 @@ extern void eventfd_init();
 extern void signalfd_init();
 extern void timerfd_init();
 extern void memfd_init();
+extern void pidfd_init();
 
 void fs_syscall_init() {
     epoll_init();
@@ -94,4 +95,5 @@ void fs_syscall_init() {
     signalfd_init();
     timerfd_init();
     memfd_init();
+    pidfd_init();
 }

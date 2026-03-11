@@ -25,6 +25,17 @@ static bool vma_is_linked(vma_manager_t *mgr, const vma_t *target) {
 
 static vma_t *vma_copy(vma_t *src);
 
+void vma_manager_init(vma_manager_t *mgr, bool initialized) {
+    if (!mgr)
+        return;
+
+    memset(mgr, 0, sizeof(*mgr));
+    mgr->vma_tree = RB_ROOT_INIT;
+    mgr->vm_used = 0;
+    spin_init(&mgr->lock);
+    mgr->initialized = initialized;
+}
+
 vma_t *vma_alloc(void) {
     vma_t *vma = (vma_t *)malloc(sizeof(vma_t));
     if (!vma)
@@ -315,13 +326,9 @@ int vma_manager_copy(vma_manager_t *dst, vma_manager_t *src) {
     if (!dst || !src)
         return -1;
 
-    memset(dst, 0, sizeof(vma_manager_t));
+    vma_manager_init(dst, src->initialized);
     if (!src->initialized)
         return 0;
-
-    dst->vma_tree.rb_node = NULL;
-    dst->vm_used = 0;
-    dst->initialized = src->initialized;
 
     rb_node_t *node = rb_first(&src->vma_tree);
     while (node) {

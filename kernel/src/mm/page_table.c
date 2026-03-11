@@ -360,8 +360,14 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
     if (!old)
         return NULL;
 
+    vma_manager_t *mgr = &old->task_vma_mgr;
+
     if (clone_flags & CLONE_VM) {
+        spin_lock(&mgr->lock);
+        spin_lock(&old->lock);
         old->ref_count++;
+        spin_unlock(&old->lock);
+        spin_unlock(&mgr->lock);
         return old;
     }
 
@@ -372,14 +378,16 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
     memset(new_mm, 0, sizeof(task_mm_info_t));
     spin_init(&new_mm->lock);
 
+    spin_lock(&mgr->lock);
     spin_lock(&old->lock);
 
     uint64_t *old_root = (uint64_t *)phys_to_virt(old->page_table_addr);
-    uint64_t *new_root = copy_page_table_recursive(old_root, ARCH_MAX_PT_LEVEL,
-                                                   0, &old->task_vma_mgr);
+    uint64_t *new_root =
+        copy_page_table_recursive(old_root, ARCH_MAX_PT_LEVEL, 0, mgr);
     if (!new_root) {
         free(new_mm);
         spin_unlock(&old->lock);
+        spin_unlock(&mgr->lock);
         return NULL;
     }
 
@@ -392,16 +400,18 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
     new_mm->page_table_addr = virt_to_phys((uint64_t)new_root);
     new_mm->ref_count = 1;
 
-    if (vma_manager_copy(&new_mm->task_vma_mgr, &old->task_vma_mgr) != 0) {
+    if (vma_manager_copy(&new_mm->task_vma_mgr, mgr) != 0) {
         free_page_table_recursive(new_root, ARCH_MAX_PT_LEVEL);
         free(new_mm);
         spin_unlock(&old->lock);
+        spin_unlock(&mgr->lock);
         return NULL;
     }
 
     spin_unlock(&old->lock);
+    spin_unlock(&mgr->lock);
 
-    new_mm->task_vma_mgr.initialized = old->task_vma_mgr.initialized;
+    new_mm->task_vma_mgr.initialized = mgr->initialized;
     new_mm->brk_start = old->brk_start;
     new_mm->brk_current = old->brk_current;
     new_mm->brk_end = old->brk_end;
@@ -410,12 +420,31 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
 }
 
 void free_page_table(task_mm_info_t *directory) {
+    if (!directory)
+        return;
+
+    vma_manager_t *mgr = &directory->task_vma_mgr;
+    bool should_free = false;
+
+    spin_lock(&mgr->lock);
+    spin_lock(&directory->lock);
     if (--directory->ref_count <= 0) {
-        free_page_table_recursive(
-            (uint64_t *)phys_to_virt(directory->page_table_addr),
-            ARCH_MAX_PT_LEVEL);
-        free(directory);
+        should_free = true;
     }
+    spin_unlock(&directory->lock);
+
+    if (!should_free) {
+        spin_unlock(&mgr->lock);
+        return;
+    }
+
+    vma_manager_exit_cleanup(mgr);
+    spin_unlock(&mgr->lock);
+
+    free_page_table_recursive(
+        (uint64_t *)phys_to_virt(directory->page_table_addr),
+        ARCH_MAX_PT_LEVEL);
+    free(directory);
 }
 
 void page_table_init() {
