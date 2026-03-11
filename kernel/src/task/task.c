@@ -1738,7 +1738,11 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
         irq_trigger_sched_ipi(target_cpu);
     }
 
+    arch_enable_interrupt();
+
     schedule(SCHED_FLAG_YIELD);
+
+    arch_disable_interrupt();
 
 ret:
     if (irq_state) {
@@ -3348,6 +3352,72 @@ uint64_t sys_sched_rr_get_interval(int pid, struct timespec *interval) {
     }
 
     return 0;
+}
+
+static size_t task_sched_affinity_bytes(void) {
+    size_t bits_per_word = sizeof(unsigned long) * 8;
+    size_t words = (cpu_count + bits_per_word - 1) / bits_per_word;
+    if (words == 0)
+        words = 1;
+    return words * sizeof(unsigned long);
+}
+
+uint64_t sys_sched_setaffinity(int pid, size_t len,
+                               const unsigned long *user_mask_ptr) {
+    if (pid < 0)
+        return (uint64_t)-EINVAL;
+    if (!user_mask_ptr)
+        return (uint64_t)-EFAULT;
+    if (len < task_sched_affinity_bytes())
+        return (uint64_t)-EINVAL;
+    if (!task_sched_lookup_target(pid))
+        return (uint64_t)-ESRCH;
+
+    unsigned long mask[(MAX_CPU_NUM + sizeof(unsigned long) * 8 - 1) /
+                       (sizeof(unsigned long) * 8)];
+    memset(mask, 0, sizeof(mask));
+
+    if (copy_from_user(mask, user_mask_ptr, task_sched_affinity_bytes()))
+        return (uint64_t)-EFAULT;
+
+    bool any_cpu = false;
+    for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
+        size_t word = cpu / (sizeof(unsigned long) * 8);
+        size_t bit = cpu % (sizeof(unsigned long) * 8);
+        if (mask[word] & (1UL << bit)) {
+            any_cpu = true;
+            break;
+        }
+    }
+
+    return any_cpu ? 0 : (uint64_t)-EINVAL;
+}
+
+uint64_t sys_sched_getaffinity(int pid, size_t len,
+                               unsigned long *user_mask_ptr) {
+    if (pid < 0)
+        return (uint64_t)-EINVAL;
+    if (!user_mask_ptr)
+        return (uint64_t)-EFAULT;
+    if (len < task_sched_affinity_bytes())
+        return (uint64_t)-EINVAL;
+    if (!task_sched_lookup_target(pid))
+        return (uint64_t)-ESRCH;
+
+    unsigned long mask[(MAX_CPU_NUM + sizeof(unsigned long) * 8 - 1) /
+                       (sizeof(unsigned long) * 8)];
+    memset(mask, 0, sizeof(mask));
+
+    for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
+        size_t word = cpu / (sizeof(unsigned long) * 8);
+        size_t bit = cpu % (sizeof(unsigned long) * 8);
+        mask[word] |= (1UL << bit);
+    }
+
+    if (copy_to_user(user_mask_ptr, mask, task_sched_affinity_bytes()))
+        return (uint64_t)-EFAULT;
+
+    return task_sched_affinity_bytes();
 }
 
 uint64_t sys_setpriority(int which, int who, int niceval) {

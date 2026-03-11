@@ -412,9 +412,9 @@ void syscall_handler_init() {
     syscall_handlers[SYS_TIME] = (syscall_handle_t)sys_time;
     syscall_handlers[SYS_FUTEX] = (syscall_handle_t)sys_futex;
     syscall_handlers[SYS_SCHED_SETAFFINITY] =
-        (syscall_handle_t)dummy_syscall_handler;
+        (syscall_handle_t)sys_sched_setaffinity;
     syscall_handlers[SYS_SCHED_GETAFFINITY] =
-        (syscall_handle_t)dummy_syscall_handler;
+        (syscall_handle_t)sys_sched_getaffinity;
     // syscall_handlers[SYS_SET_THREAD_AREA] =
     //     (syscall_handle_t)sys_set_thread_area;
     // syscall_handlers[SYS_IO_SETUP] = (syscall_handle_t)sys_io_setup;

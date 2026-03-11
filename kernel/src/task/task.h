@@ -177,6 +177,10 @@ uint64_t sys_sched_getscheduler(int pid);
 uint64_t sys_sched_get_priority_max(int policy);
 uint64_t sys_sched_get_priority_min(int policy);
 uint64_t sys_sched_rr_get_interval(int pid, struct timespec *interval);
+uint64_t sys_sched_setaffinity(int pid, size_t len,
+                               const unsigned long *user_mask_ptr);
+uint64_t sys_sched_getaffinity(int pid, size_t len,
+                               unsigned long *user_mask_ptr);
 
 size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old);
 

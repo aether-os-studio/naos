@@ -285,6 +285,15 @@ void procfs_on_new_task(task_t *task) {
     self_maps_handle->task = task;
     sprintf(self_maps_handle->name, "proc_maps");
 
+    vfs_node_t self_root = vfs_child_append(node, "root", NULL);
+    self_root->type = file_none;
+    self_root->mode = 0700;
+    proc_handle_t *self_root_handle = malloc(sizeof(proc_handle_t));
+    self_root->handle = self_root_handle;
+    self_root_handle->node = self_root;
+    self_root_handle->task = task;
+    sprintf(self_root_handle->name, "proc_root");
+
     vfs_node_t self_stat = vfs_child_append(node, "stat", NULL);
     self_stat->type = file_none;
     self_stat->mode = 0700;

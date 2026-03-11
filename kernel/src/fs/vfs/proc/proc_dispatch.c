@@ -59,6 +59,7 @@ void procfs_nodes_init() {
     create_procfs_handle("proc_cmdline", proc_pcmdline_read, proc_pcmdline_stat,
                          NULL);
     create_procfs_handle("proc_maps", proc_pmaps_read, NULL, NULL);
+    create_procfs_handle("proc_root", proc_proot_read, proc_proot_stat, NULL);
     create_procfs_handle("proc_stat", proc_pstat_read, proc_pstat_stat, NULL);
     create_procfs_handle("proc_status", proc_pstatus_read, proc_pstatus_stat,
                          NULL);

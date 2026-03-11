@@ -92,6 +92,8 @@ static inline void signal_fill_kernel_siginfo(siginfo_t *info, int sig,
     info->si_code = code;
 }
 
+static void signal_notify_signalfd(task_t *task, int sig, int code);
+
 static inline bool signal_action_ignored(int sig, const sigaction_t *action) {
     if (sig == SIGKILL || sig == SIGSTOP) {
         return false;
@@ -506,6 +508,8 @@ void task_commit_signal(task_t *task, int sig, siginfo_t *info) {
     task->signal->pending_signal.processed = false;
 
     spin_unlock(&task->signal->signal_lock);
+
+    signal_notify_signalfd(task, sig, kinfo.si_code);
 }
 
 uint64_t sys_ssetmask(int how, const sigset_t *nset, sigset_t *oset,
@@ -838,7 +842,6 @@ void task_send_signal(task_t *task, int sig, int code) {
     siginfo_t info;
     task_fill_siginfo(&info, sig, code);
     task_commit_signal(task, sig, &info);
-    // signal_notify_signalfd(task, sig, code);
 
     if (sig != SIGSTOP && sig != SIGTSTP && sig != SIGTTIN && sig != SIGTTOU) {
         task_unblock(task, 128 + sig);

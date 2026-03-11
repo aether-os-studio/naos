@@ -1147,6 +1147,10 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
             arch_disable_interrupt();
         }
     }
+    case F_GETPIPE_SZ:
+        return PIPE_BUFF;
+    case F_SETPIPE_SZ:
+        return 0;
     case F_GET_SEALS:
     case F_ADD_SEALS:
         return 0;

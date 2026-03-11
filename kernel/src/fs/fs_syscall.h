@@ -138,6 +138,9 @@ void pidfd_on_task_exit(task_t *task);
 #define F_SETLEASE (F_LINUX_SPECIFIC_BASE + 0)
 #define F_GETLEASE (F_LINUX_SPECIFIC_BASE + 1)
 
+#define F_SETPIPE_SZ (F_LINUX_SPECIFIC_BASE + 7)
+#define F_GETPIPE_SZ (F_LINUX_SPECIFIC_BASE + 8)
+
 #define F_ADD_SEALS (F_LINUX_SPECIFIC_BASE + 9)
 #define F_GET_SEALS (F_LINUX_SPECIFIC_BASE + 10)
 
