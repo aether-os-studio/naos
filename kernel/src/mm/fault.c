@@ -25,17 +25,26 @@ static uint64_t vm_flags_to_pt_flags(uint64_t vm_flags) {
 
 static page_fault_result_t map_anon_fault_page(task_t *task, vma_t *vma,
                                                uint64_t vaddr) {
-    uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
     uint64_t pt_flags = vm_flags_to_pt_flags(vma->vm_flags);
     uint64_t arch_flags = get_arch_page_table_flags(pt_flags);
     uint64_t aligned_vaddr = PADDING_DOWN(vaddr, DEFAULT_PAGE_SIZE);
+    uint64_t *pgdir = NULL;
 
-    if (translate_address(pgdir, aligned_vaddr))
+    spin_lock(&task->mm->lock);
+    pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
+
+    if (translate_address(pgdir, aligned_vaddr)) {
+        spin_unlock(&task->mm->lock);
         return PF_RES_OK;
+    }
 
     map_page(pgdir, aligned_vaddr, (uint64_t)-1, arch_flags, true);
-    if (!translate_address(pgdir, aligned_vaddr))
+    if (!translate_address(pgdir, aligned_vaddr)) {
+        spin_unlock(&task->mm->lock);
         return PF_RES_NOMEM;
+    }
+
+    spin_unlock(&task->mm->lock);
 
     return PF_RES_OK;
 }
@@ -147,6 +156,7 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
 
     vma_manager_t *mgr = &task->mm->task_vma_mgr;
     spin_lock(&mgr->lock);
+    spin_lock(&task->mm->lock);
 
     uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
 
@@ -160,6 +170,7 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
         uint64_t index = indexs[i];
         uint64_t addr = pgdir[index];
         if (ARCH_PT_IS_LARGE(addr)) {
+            spin_unlock(&task->mm->lock);
             spin_unlock(&mgr->lock);
             return PF_RES_SEGF;
         }
@@ -178,9 +189,34 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
         flags = ARCH_READ_PTE_FLAG(pgdir[index]);
     }
 
+    spin_unlock(&task->mm->lock);
+
     vma_t *vma = vma_find(mgr, vaddr);
 
     if (has_leaf && (flags & ARCH_PT_FLAG_COW)) {
+        spin_lock(&task->mm->lock);
+
+        uint64_t *locked_pgdir =
+            (uint64_t *)phys_to_virt(task->mm->page_table_addr);
+        for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL - 1; i++) {
+            uint64_t entry = locked_pgdir[indexs[i]];
+            if (!ARCH_PT_IS_TABLE(entry)) {
+                spin_unlock(&task->mm->lock);
+                spin_unlock(&mgr->lock);
+                return PF_RES_SEGF;
+            }
+            locked_pgdir = (uint64_t *)phys_to_virt(ARCH_READ_PTE(entry));
+        }
+
+        uint64_t current_entry = locked_pgdir[indexs[ARCH_MAX_PT_LEVEL - 1]];
+        if (!(current_entry & ARCH_PT_FLAG_COW)) {
+            spin_unlock(&task->mm->lock);
+            spin_unlock(&mgr->lock);
+            return PF_RES_OK;
+        }
+
+        paddr = ARCH_READ_PTE(current_entry);
+        flags = ARCH_READ_PTE_FLAG(current_entry);
 #if defined(__aarch64__)
         flags &= ~ARCH_PT_FLAG_READONLY;
 #else
@@ -191,16 +227,19 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
         uint64_t old_paddr = paddr;
         uint64_t new_paddr = alloc_frames(1);
         if (!new_paddr) {
+            spin_unlock(&task->mm->lock);
             spin_unlock(&mgr->lock);
             return PF_RES_NOMEM;
         }
         memcpy((void *)phys_to_virt(new_paddr),
                (const void *)phys_to_virt(old_paddr), DEFAULT_PAGE_SIZE);
         paddr = new_paddr;
-        pgdir[index] = ARCH_MAKE_PTE(paddr, flags);
+        locked_pgdir[indexs[ARCH_MAX_PT_LEVEL - 1]] =
+            ARCH_MAKE_PTE(paddr, flags);
         arch_flush_tlb(vaddr);
         address_release(old_paddr);
 
+        spin_unlock(&task->mm->lock);
         spin_unlock(&mgr->lock);
 
         return PF_RES_OK;

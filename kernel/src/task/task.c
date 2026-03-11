@@ -775,19 +775,19 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     mutex_init(&task->fd_info->fdt_lock);
     task->fd_info->fds[0] = malloc(sizeof(fd_t));
     memset(task->fd_info->fds[0], 0, sizeof(fd_t));
-    task->fd_info->fds[0]->node = vfs_open("/dev/stdin", 0);
+    task->fd_info->fds[0]->node = vfs_open("/dev/console", 0);
     task->fd_info->fds[0]->node->refcount++;
     task->fd_info->fds[0]->offset = 0;
     task->fd_info->fds[0]->flags = O_RDWR;
     task->fd_info->fds[1] = malloc(sizeof(fd_t));
     memset(task->fd_info->fds[1], 0, sizeof(fd_t));
-    task->fd_info->fds[1]->node = vfs_open("/dev/stdout", 0);
+    task->fd_info->fds[1]->node = vfs_open("/dev/console", 0);
     task->fd_info->fds[1]->node->refcount++;
     task->fd_info->fds[1]->offset = 0;
     task->fd_info->fds[1]->flags = O_RDWR;
     task->fd_info->fds[2] = malloc(sizeof(fd_t));
     memset(task->fd_info->fds[2], 0, sizeof(fd_t));
-    task->fd_info->fds[2]->node = vfs_open("/dev/stderr", 0);
+    task->fd_info->fds[2]->node = vfs_open("/dev/console", 0);
     task->fd_info->fds[2]->node->refcount++;
     task->fd_info->fds[2]->offset = 0;
     task->fd_info->fds[2]->flags = O_RDWR;
@@ -1884,57 +1884,24 @@ void task_exit_inner(task_t *task, int64_t code) {
         sigaction_t *sa = &parent->signal->actions[SIGCHLD];
         bool ignore_sigchld = (sa->sa_handler == SIG_IGN);
 
-        // if (!ignore_sigchld) {
-        //     siginfo_t sigchld_info;
-        //     memset(&sigchld_info, 0, sizeof(siginfo_t));
-        //     sigchld_info.si_signo = SIGCHLD;
-        //     sigchld_info.si_errno = 0;
-        //     sigchld_info._sifields._sigchld._pid = task->pid;
-        //     sigchld_info._sifields._sigchld._uid = task->uid;
-        //     sigchld_info._sifields._sigchld._utime = 0;
-        //     sigchld_info._sifields._sigchld._stime = 0;
-        //     if (code >= 128) {
-        //         sigchld_info.si_code = CLD_KILLED;
-        //         sigchld_info._sifields._sigchld._status = code - 128;
-        //     } else {
-        //         sigchld_info.si_code = CLD_EXITED;
-        //         sigchld_info._sifields._sigchld._status = code;
-        //     }
-        //     task_commit_signal(parent, SIGCHLD, &sigchld_info);
-
-        //     for (int i = 0; i < MAX_FD_NUM; i++) {
-        //         fd_t *fd = parent->fd_info->fds[i];
-        //         if (fd) {
-        //             vfs_node_t node = fd->node;
-        //             if (node && node->fsid == signalfdfs_id) {
-        //                 struct signalfd_ctx *ctx = node->handle;
-        //                 if (ctx) {
-        //                     struct signalfd_siginfo info;
-        //                     memset(&info, 0, sizeof(struct
-        //                     signalfd_siginfo)); info.ssi_signo = SIGCHLD;
-        //                     info.ssi_pid = task->pid;
-        //                     info.ssi_uid = task->uid;
-        //                     if (code >= 128) {
-        //                         info.ssi_code = CLD_KILLED;
-        //                         info.ssi_status = code - 128;
-        //                     } else {
-        //                         info.ssi_code = CLD_EXITED;
-        //                         info.ssi_status = code;
-        //                     }
-
-        //                     memcpy(&ctx->queue[ctx->queue_head], &info,
-        //                            sizeof(struct signalfd_siginfo));
-        //                     ctx->queue_head =
-        //                         (ctx->queue_head + 1) % ctx->queue_size;
-        //                     if (ctx->queue_head == ctx->queue_tail) {
-        //                         ctx->queue_tail =
-        //                             (ctx->queue_tail + 1) % ctx->queue_size;
-        //                     }
-        //                 }
-        //             }
-        //         }
-        //     }
-        // }
+        if (!ignore_sigchld) {
+            siginfo_t sigchld_info;
+            memset(&sigchld_info, 0, sizeof(siginfo_t));
+            sigchld_info.si_signo = SIGCHLD;
+            sigchld_info.si_errno = 0;
+            sigchld_info._sifields._sigchld._pid = task->pid;
+            sigchld_info._sifields._sigchld._uid = task->uid;
+            sigchld_info._sifields._sigchld._utime = 0;
+            sigchld_info._sifields._sigchld._stime = 0;
+            if (code >= 128) {
+                sigchld_info.si_code = CLD_KILLED;
+                sigchld_info._sifields._sigchld._status = code - 128;
+            } else {
+                sigchld_info.si_code = CLD_EXITED;
+                sigchld_info._sifields._sigchld._status = code;
+            }
+            task_commit_signal(parent, SIGCHLD, &sigchld_info);
+        }
 
         if (ignore_sigchld || (sa->sa_flags & SA_NOCLDWAIT))
             task_enqueue_should_free(task);

@@ -100,8 +100,11 @@ void arch_context_free(arch_context_t *context) {
 }
 
 task_t *arch_get_current() {
-    x64_cpu_local_t *local = x64_get_cpu_local();
-    return local ? local->task_ptr : NULL;
+    task_t *task = NULL;
+    if (x64_get_cpu_local()) {
+        asm volatile("movq %%gs:0x10, %0" : "=r"(task));
+    }
+    return task;
 }
 
 void arch_set_current(task_t *current) { x64_cpu_local_set_current(current); }

@@ -184,9 +184,12 @@ uint64_t pidfd_create_for_pid(uint64_t pid, uint64_t flags, bool cloexec) {
     }
 
     node->refcount++;
+    node->owner = current_task->uid;
+    node->group = current_task->gid;
     node->mode = 0600;
     node->type = file_stream;
     node->fsid = pidfdfs_id;
+    node->rdev = ((uint64_t)pidfdfs_id << 8) | 0;
     node->handle = ctx;
     ctx->node = node;
 

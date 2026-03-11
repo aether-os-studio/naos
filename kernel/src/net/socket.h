@@ -39,6 +39,12 @@ struct ucred {
     uint32_t gid;
 };
 
+#define SOCK_STREAM 1
+#define SOCK_DGRAM 2
+#define SOCK_RAW 3
+#define SOCK_RDM 4
+#define SOCK_SEQPACKET 5
+
 #define SCM_RIGHTS 0x01
 #define SCM_CREDENTIALS 0x02
 

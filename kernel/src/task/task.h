@@ -344,6 +344,21 @@ static inline uint64_t sys_getresuid(int *ruid, int *euid, int *suid) {
     return 0;
 }
 
+static inline uint64_t sys_setresuid(int ruid, int euid, int suid) {
+    current_task->uid = ruid;
+    current_task->euid = euid;
+    current_task->suid = suid;
+
+    return 0;
+}
+
+static inline uint64_t sys_setreuid(int ruid, int euid) {
+    current_task->uid = ruid;
+    current_task->euid = euid;
+
+    return 0;
+}
+
 static inline uint64_t sys_getresgid(int *rgid, int *egid, int *sgid) {
     int value;
 
@@ -362,6 +377,13 @@ static inline uint64_t sys_getresgid(int *rgid, int *egid, int *sgid) {
         if (copy_to_user(sgid, &value, sizeof(value)))
             return (uint64_t)-EFAULT;
     }
+
+    return 0;
+}
+
+static inline uint64_t sys_setregid(int rgid, int egid) {
+    current_task->gid = rgid;
+    current_task->egid = egid;
 
     return 0;
 }

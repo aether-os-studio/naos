@@ -308,11 +308,11 @@ void syscall_handler_init() {
     syscall_handlers[SYS_GETPPID] = (syscall_handle_t)sys_getppid;
     syscall_handlers[SYS_GETPGRP] = (syscall_handle_t)sys_getpgrp;
     syscall_handlers[SYS_SETSID] = (syscall_handle_t)sys_setsid;
-    // syscall_handlers[SYS_SETREUID] = (syscall_handle_t)sys_setreuid;
-    // syscall_handlers[SYS_SETREGID] = (syscall_handle_t)sys_setregid;
+    syscall_handlers[SYS_SETREUID] = (syscall_handle_t)sys_setreuid;
+    syscall_handlers[SYS_SETREGID] = (syscall_handle_t)sys_setregid;
     syscall_handlers[SYS_GETGROUPS] = (syscall_handle_t)sys_getgroups;
     syscall_handlers[SYS_SETGROUPS] = (syscall_handle_t)dummy_syscall_handler;
-    syscall_handlers[SYS_SETRESUID] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_SETRESUID] = (syscall_handle_t)sys_setresuid;
     syscall_handlers[SYS_GETRESUID] = (syscall_handle_t)sys_getresuid;
     syscall_handlers[SYS_SETRESGID] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_GETRESGID] = (syscall_handle_t)sys_getresgid;
@@ -458,10 +458,10 @@ void syscall_handler_init() {
     syscall_handlers[SYS_TGKILL] = (syscall_handle_t)sys_tgkill;
     // syscall_handlers[SYS_UTIMES] = (syscall_handle_t)sys_utimes;
     // syscall_handlers[SYS_VSERVER] = (syscall_handle_t)sys_vserver;
-    // syscall_handlers[SYS_MBIND] = (syscall_handle_t)sys_mbind;
-    // syscall_handlers[SYS_SET_MEMPOLICY] =
-    // (syscall_handle_t)sys_set_mempolicy; syscall_handlers[SYS_GET_MEMPOLICY]
-    // = (syscall_handle_t)sys_get_mempolicy; syscall_handlers[SYS_MQ_OPEN] =
+    syscall_handlers[SYS_MBIND] = (syscall_handle_t)sys_mbind;
+    syscall_handlers[SYS_SET_MEMPOLICY] = (syscall_handle_t)sys_set_mempolicy;
+    syscall_handlers[SYS_GET_MEMPOLICY] = (syscall_handle_t)sys_get_mempolicy;
+    // syscall_handlers[SYS_MQ_OPEN] =
     // (syscall_handle_t)sys_mq_open; syscall_handlers[SYS_MQ_UNLINK] =
     // (syscall_handle_t)sys_mq_unlink; syscall_handlers[SYS_MQ_TIMEDSEND] =
     // (syscall_handle_t)sys_mq_timedsend; syscall_handlers[SYS_MQ_TIMEDRECEIVE]

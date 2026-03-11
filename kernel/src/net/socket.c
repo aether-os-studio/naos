@@ -18,6 +18,30 @@ spinlock_t unix_socket_list_lock;
 
 int unix_socket_fsid = 0;
 
+static inline bool unix_socket_is_dgram_type(int type) {
+    return type == SOCK_DGRAM;
+}
+
+static inline bool unix_socket_is_connected_type(int type) {
+    return type == SOCK_STREAM || type == SOCK_SEQPACKET;
+}
+
+static inline bool unix_socket_type_supported(int type) {
+    return unix_socket_is_connected_type(type) ||
+           unix_socket_is_dgram_type(type);
+}
+
+static inline int32_t unix_socket_cred_pid_for_task(task_t *task) {
+    if (!task)
+        return -1;
+
+    uint64_t pid = task->tgid ? task->tgid : task->pid;
+    if (pid > INT32_MAX)
+        return -1;
+
+    return (int32_t)pid;
+}
+
 char *unix_socket_addr_safe(const struct sockaddr_un *addr, size_t len) {
     ssize_t addrLen = len - sizeof(addr->sun_family);
     if (addrLen <= 0)
@@ -190,7 +214,7 @@ socket_t *unix_socket_alloc() {
     sock->has_pending_cred = false;
 
     // 设置凭据
-    sock->cred.pid = current_task->pid;
+    sock->cred.pid = unix_socket_cred_pid_for_task(current_task);
     sock->cred.uid = current_task->uid;
     sock->cred.gid = current_task->gid;
 
@@ -242,7 +266,7 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
                                        const uint8_t *data, size_t len,
                                        int flags, fd_t *fd_handle) {
     socket_t *active_peer = peer;
-    if (self && self->type != 2)
+    if (self && !unix_socket_is_dgram_type(self->type))
         active_peer = self->peer;
 
     if (self && self->shut_wr) {
@@ -261,7 +285,7 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
         return 0;
 
     while (true) {
-        if (self && self->type != 2)
+        if (self && !unix_socket_is_dgram_type(self->type))
             active_peer = self->peer;
         if (!active_peer) {
             if (!(flags & MSG_NOSIGNAL))
@@ -297,7 +321,7 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
         }
 
         vfs_node_t wait_node = NULL;
-        if (self && self->type != 2 && self->node)
+        if (self && !unix_socket_is_dgram_type(self->type) && self->node)
             wait_node = self->node;
         if (!wait_node && active_peer->node)
             wait_node = active_peer->node;
@@ -344,7 +368,7 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
         }
 
         socket_t *active_peer = peer;
-        if (self->type != 2)
+        if (!unix_socket_is_dgram_type(self->type))
             active_peer = self->peer;
         bool eof =
             (!active_peer || active_peer->closed || active_peer->shut_wr);
@@ -507,10 +531,15 @@ vfs_node_t unix_socket_create_node(socket_t *sock) {
 }
 
 int socket_socket(int domain, int type, int protocol) {
+    int sock_type = type & 0xF;
+    if (!unix_socket_type_supported(sock_type)) {
+        return -ESOCKTNOSUPPORT;
+    }
+
     socket_t *sock = unix_socket_alloc();
 
     sock->domain = domain;
-    sock->type = type & 0xF;
+    sock->type = sock_type;
     sock->protocol = protocol;
 
     vfs_node_t socknode = unix_socket_create_node(sock);
@@ -747,8 +776,8 @@ uint64_t socket_shutdown(uint64_t fd, uint64_t how) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     socket_t *sock = handle->sock;
 
-    if (sock->type == 1 && !sock->peer && !sock->established &&
-        sock->connMax == 0)
+    if (unix_socket_is_connected_type(sock->type) && !sock->peer &&
+        !sock->established && sock->connMax == 0)
         return -ENOTCONN;
 
     if (how == SHUT_RD || how == SHUT_RDWR)
@@ -833,7 +862,9 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
     server_sock->domain = listen_sock->domain;
     server_sock->type = listen_sock->type;
     server_sock->protocol = listen_sock->protocol;
-    server_sock->cred = listen_sock->cred;
+    // server_sock retains its own credentials (client's credentials)
+    // server_sock->cred already set by unix_socket_alloc() to client's
+    // credentials
     server_sock->passcred = listen_sock->passcred;
     if (listen_sock->bindAddr) {
         server_sock->filename = strdup(listen_sock->bindAddr);
@@ -874,7 +905,7 @@ size_t unix_socket_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
     socket_t *peer = sock->peer;
 
     if (!peer) {
-        if (sock->type != 2 && sock->established) {
+        if (!unix_socket_is_dgram_type(sock->type) && sock->established) {
             if (!(flags & MSG_NOSIGNAL))
                 task_commit_signal(current_task, SIGPIPE, NULL);
             return (size_t)-EPIPE;
@@ -904,7 +935,7 @@ size_t unix_socket_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
                 goto done;
             }
         }
-        if (sock->type == 2)
+        if (unix_socket_is_dgram_type(sock->type))
             return (size_t)-EDESTADDRREQ;
         return (size_t)-ENOTCONN;
     }
@@ -919,8 +950,8 @@ size_t unix_socket_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
     fd_t *caller_fd = current_task->fd_info->fds[fd];
     socket_t *sock = handle->sock;
 
-    if (sock->type != 2 && !sock->peer && !sock->established &&
-        sock->recv_pos == 0)
+    if (!unix_socket_is_dgram_type(sock->type) && !sock->peer &&
+        !sock->established && sock->recv_pos == 0)
         return -(ENOTCONN);
 
     return unix_socket_recv_from_self(sock, sock->peer, out, limit, flags,
@@ -934,7 +965,7 @@ size_t unix_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
     socket_t *peer = sock->peer;
 
     if (!peer) {
-        if (sock->type != 2 && sock->established) {
+        if (!unix_socket_is_dgram_type(sock->type) && sock->established) {
             if (!(flags & MSG_NOSIGNAL))
                 task_commit_signal(current_task, SIGPIPE, NULL);
             return (size_t)-EPIPE;
@@ -964,7 +995,7 @@ size_t unix_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
                 goto done;
             }
         }
-        if (sock->type == 2)
+        if (unix_socket_is_dgram_type(sock->type))
             return (size_t)-EDESTADDRREQ;
         return (size_t)-ENOTCONN;
     }
@@ -1010,7 +1041,8 @@ done:
 
                 // 验证凭据（非 root 只能发送自己的凭据）
                 if (current_task->euid != 0) {
-                    if (cred->pid != current_task->pid ||
+                    if (cred->pid !=
+                            unix_socket_cred_pid_for_task(current_task) ||
                         cred->uid != current_task->uid ||
                         cred->gid != current_task->gid) {
                         mutex_unlock(&peer->lock);
@@ -1027,7 +1059,7 @@ done:
 
     if (sock->passcred || peer->passcred) {
         struct ucred cred;
-        cred.pid = current_task->pid;
+        cred.pid = unix_socket_cred_pid_for_task(current_task);
         cred.uid = current_task->uid;
         cred.gid = current_task->gid;
         unix_socket_send_cred_to_peer(peer, &cred);
@@ -1065,8 +1097,8 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
     socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
     fd_t *caller_fd = current_task->fd_info->fds[fd];
     socket_t *sock = handle->sock;
-    if (sock->type != 2 && !sock->peer && !sock->established &&
-        sock->recv_pos == 0)
+    if (!unix_socket_is_dgram_type(sock->type) && !sock->peer &&
+        !sock->established && sock->recv_pos == 0)
         return (size_t)-ENOTCONN;
 
     bool noblock = !!(flags & MSG_DONTWAIT);
@@ -1196,10 +1228,10 @@ int socket_poll(vfs_node_t node, size_t events) {
         if (sock->closed)
             revents |= EPOLLERR | EPOLLHUP;
         mutex_unlock(&sock->lock);
-    } else if (sock->type == 2) {
+    } else if (unix_socket_is_dgram_type(sock->type)) {
         mutex_lock(&sock->lock);
         bool has_pending_ctrl = socket_has_pending_control(sock);
-        if ((events & EPOLLOUT) && !sock->closed && !sock->shut_rd &&
+        if ((events & EPOLLOUT) && !sock->closed && !sock->shut_wr &&
             sock->recv_pos < sock->recv_size)
             revents |= EPOLLOUT;
 
@@ -1327,8 +1359,8 @@ ssize_t socket_read(fd_t *fd, void *buf, size_t offset, size_t limit) {
     socket_handle_t *handle = fd->node->handle;
     socket_t *sock = handle->sock;
 
-    if (sock->type != 2 && !sock->peer && !sock->established &&
-        sock->recv_pos == 0)
+    if (!unix_socket_is_dgram_type(sock->type) && !sock->peer &&
+        !sock->established && sock->recv_pos == 0)
         return -(ENOTCONN);
 
     return unix_socket_recv_from_self(sock, sock->peer, buf, limit, 0, fd);
@@ -1339,9 +1371,9 @@ ssize_t socket_write(fd_t *fd, const void *buf, size_t offset, size_t limit) {
     socket_t *sock = handle->sock;
 
     if (!sock->peer) {
-        if (sock->type == 2)
+        if (unix_socket_is_dgram_type(sock->type))
             return -(EDESTADDRREQ);
-        if (sock->type != 2 && sock->established) {
+        if (!unix_socket_is_dgram_type(sock->type) && sock->established) {
             task_commit_signal(current_task, SIGPIPE, NULL);
             return -(EPIPE);
         }
@@ -1352,15 +1384,20 @@ ssize_t socket_write(fd_t *fd, const void *buf, size_t offset, size_t limit) {
 }
 
 int unix_socket_pair(int type, int protocol, int *sv) {
+    int sock_type = type & 0xF;
+    if (!unix_socket_type_supported(sock_type)) {
+        return -ESOCKTNOSUPPORT;
+    }
+
     socket_t *sock1 = unix_socket_alloc();
     socket_t *sock2 = unix_socket_alloc();
 
     sock1->domain = 1;
-    sock1->type = type & 0xF;
+    sock1->type = sock_type;
     sock1->protocol = protocol;
 
     sock2->domain = 1;
-    sock2->type = type & 0xF;
+    sock2->type = sock_type;
     sock2->protocol = protocol;
 
     // 双向连接
@@ -1660,6 +1697,25 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, void *optval,
             return -EINVAL;
         memcpy(optval, &sock->peer->cred, sizeof(struct ucred));
         *optlen = sizeof(struct ucred);
+        break;
+
+    case SO_PEERPIDFD:
+        if (!sock->peer)
+            return -ENOTCONN;
+        if (*optlen < sizeof(int))
+            return -EINVAL;
+        if (sock->peer->cred.pid <= 0)
+            return -ESRCH;
+        {
+            uint64_t pidfd =
+                pidfd_create_for_pid((uint64_t)sock->peer->cred.pid, 0, true);
+            if ((int64_t)pidfd < 0)
+                return pidfd;
+
+            int pidfd_value = (int)pidfd;
+            memcpy(optval, &pidfd_value, sizeof(pidfd_value));
+            *optlen = sizeof(pidfd_value);
+        }
         break;
 
     case SO_ACCEPTCONN:

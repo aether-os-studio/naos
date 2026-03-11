@@ -17,6 +17,7 @@ static bool x64_fault_access_allowed_now(task_t *task, uint64_t vaddr,
     if (!task || !task->mm)
         return false;
 
+    spin_lock(&task->mm->lock);
     uint64_t *table = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
     uint64_t entry = 0;
 
@@ -24,26 +25,38 @@ static bool x64_fault_access_allowed_now(task_t *task, uint64_t vaddr,
         uint64_t index = PAGE_CALC_PAGE_TABLE_INDEX(vaddr, level + 1);
         entry = table[index];
 
-        if (!(entry & ARCH_PT_FLAG_VALID))
+        if (!(entry & ARCH_PT_FLAG_VALID)) {
+            spin_unlock(&task->mm->lock);
             return false;
+        }
 
         if (level == ARCH_MAX_PT_LEVEL - 1 || ARCH_PT_IS_LARGE(entry))
             break;
 
-        if (!ARCH_PT_IS_TABLE(entry))
+        if (!ARCH_PT_IS_TABLE(entry)) {
+            spin_unlock(&task->mm->lock);
             return false;
+        }
 
         table = (uint64_t *)phys_to_virt(ARCH_READ_PTE(entry));
     }
 
     uint64_t flags = ARCH_READ_PTE_FLAG(entry);
 
-    if ((error_code & X64_PFEC_WRITE) && !(flags & ARCH_PT_FLAG_WRITEABLE))
+    if ((error_code & X64_PFEC_WRITE) && !(flags & ARCH_PT_FLAG_WRITEABLE)) {
+        spin_unlock(&task->mm->lock);
         return false;
-    if ((error_code & X64_PFEC_USER) && !(flags & ARCH_PT_FLAG_USER))
+    }
+    if ((error_code & X64_PFEC_USER) && !(flags & ARCH_PT_FLAG_USER)) {
+        spin_unlock(&task->mm->lock);
         return false;
-    if ((error_code & X64_PFEC_INSTR) && (flags & ARCH_PT_FLAG_NX))
+    }
+    if ((error_code & X64_PFEC_INSTR) && (flags & ARCH_PT_FLAG_NX)) {
+        spin_unlock(&task->mm->lock);
         return false;
+    }
+
+    spin_unlock(&task->mm->lock);
 
     return true;
 }
