@@ -196,17 +196,31 @@ uint64_t sys_listen(int sockfd, int backlog) {
 
 uint64_t sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen,
                     uint64_t flags) {
-    if (sockfd < 0 || sockfd >= MAX_FD_NUM ||
-        !current_task->fd_info->fds[sockfd])
+    if (!current_task || sockfd < 0 || sockfd >= MAX_FD_NUM)
         return -EBADF;
-    fd_t *node = current_task->fd_info->fds[sockfd];
-    if (!is_socket(node))
+
+    fd_t *node = NULL;
+    with_fd_info_lock(current_task->fd_info, {
+        if (current_task->fd_info->fds[sockfd]) {
+            node = vfs_dup(current_task->fd_info->fds[sockfd]);
+        }
+    });
+    if (!node)
+        return -EBADF;
+    if (!is_socket(node)) {
+        vfs_close(node->node);
+        free(node);
         return -ENOTSOCK;
+    }
 
     socket_handle_t *handle = node->node->handle;
+    uint64_t ret = 0;
     if (handle->op->accept)
-        return handle->op->accept(sockfd, addr, addrlen, flags);
-    return 0;
+        ret = handle->op->accept(sockfd, addr, addrlen, flags);
+
+    vfs_close(node->node);
+    free(node);
+    return ret;
 }
 
 uint64_t sys_connect(int sockfd, const struct sockaddr_un *addr,

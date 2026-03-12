@@ -1,6 +1,20 @@
 #include <libs/klibc.h>
 #include <arch/arch.h>
 
+void arch_enable_interrupt() { open_interrupt; }
+
+void arch_disable_interrupt() { close_interrupt; }
+
+bool arch_interrupt_enabled() {
+    long flags;
+    asm volatile("pushfq\n\t"
+                 "pop %0\n\t"
+                 : "=r"(flags)
+                 :
+                 : "memory");
+    return !!(flags & (1 << 9));
+}
+
 // 保存函数调用现场的寄存器
 #define SAVE_ALL_REGS                                                          \
     "cld; \n\t"                                                                \

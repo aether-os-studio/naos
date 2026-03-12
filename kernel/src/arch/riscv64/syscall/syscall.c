@@ -167,7 +167,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_GETSOCKOPT] = (syscall_handle_t)sys_getsockopt;
     syscall_handlers[SYS_CLONE] = (syscall_handle_t)sys_clone;
     syscall_handlers[SYS_EXECVE] = (syscall_handle_t)task_execve;
-    syscall_handlers[SYS_EXIT] = (syscall_handle_t)task_exit;
+    syscall_handlers[SYS_EXIT] = (syscall_handle_t)task_exit_thread;
     syscall_handlers[SYS_WAIT4] = (syscall_handle_t)sys_waitpid;
     syscall_handlers[SYS_KILL] = (syscall_handle_t)sys_kill;
     // syscall_handlers[SYS_SEMGET] = (syscall_handle_t)sys_semget;

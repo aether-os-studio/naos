@@ -10,7 +10,28 @@ char *at_resolve_pathname(int dirfd, char *pathname) {
         return strdup(pathname);
     } else if (pathname[0] != '/') {
         if (dirfd == (int)AT_FDCWD) { // relative to cwd
-            return strdup(pathname);
+            char *cwd = current_task->cwd ? vfs_get_fullpath(current_task->cwd)
+                                          : strdup("/");
+            if (!cwd)
+                return NULL;
+
+            size_t cwd_len = strlen(cwd);
+            size_t path_len = strlen(pathname);
+            size_t need = cwd_len + (cwd_len > 1 ? 1 : 0) + path_len + 1;
+            char *ret = malloc(need);
+            if (!ret) {
+                free(cwd);
+                return NULL;
+            }
+
+            memcpy(ret, cwd, cwd_len);
+            size_t cursor = cwd_len;
+            if (cursor > 1 && ret[cursor - 1] != '/') {
+                ret[cursor++] = '/';
+            }
+            memcpy(ret + cursor, pathname, path_len + 1);
+            free(cwd);
+            return ret;
         } else { // relative to dirfd, resolve accordingly
             if (dirfd < 0 || dirfd >= MAX_FD_NUM ||
                 !current_task->fd_info->fds[dirfd] ||

@@ -140,7 +140,6 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
 
     context->ctx->rip = entry;
     context->ctx->rsp = stack;
-    context->ctx->rbp = stack;
     context->ctx->cs = SELECTOR_USER_CS;
     context->ctx->ss = SELECTOR_USER_DS;
 
@@ -163,8 +162,14 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry,
     write_fsbase(context->fsbase);
     // write_gsbase(context->gsbase);
 
+    const uint16_t default_fcw = 0b1100111111;
+    asm volatile("fldcw %0" : : "m"(default_fcw) : "memory");
+    const uint32_t default_mxcsr = 0b1111110000000;
+    asm volatile("ldmxcsr %0" : : "m"(default_mxcsr) : "memory");
+
     asm volatile("movq %0, %%rsp\n\t"
-                 "jmp ret_from_exception" ::"r"(context->ctx));
+                 "jmp %1" ::"r"(context->ctx),
+                 "r"(context->rip));
 }
 
 extern bool task_initialized;

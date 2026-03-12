@@ -24,6 +24,9 @@
 #define MAP_FIXED_NOREPLACE 0x100000
 #define MAP_FILE 0
 
+#define MCL_CURRENT 0x1
+#define MCL_FUTURE 0x2
+
 #define MREMAP_MAYMOVE 1
 #define MREMAP_FIXED 2
 #define MREMAP_DONTUNMAP 4
@@ -49,13 +52,17 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
                     uint64_t flags, uint64_t new_addr);
 uint64_t sys_msync(uint64_t addr, uint64_t size, uint64_t flags);
 uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec);
+uint64_t sys_mlock(uint64_t addr, uint64_t len);
+uint64_t sys_munlock(uint64_t addr, uint64_t len);
+uint64_t sys_mlockall(int flags);
+uint64_t sys_munlockall(void);
 uint64_t sys_mbind(uint64_t start, uint64_t len, int mode,
                    const unsigned long *nmask, uint64_t maxnode,
                    uint64_t flags);
 uint64_t sys_set_mempolicy(int mode, const unsigned long *nmask,
                            uint64_t maxnode);
-uint64_t sys_get_mempolicy(int *policy, unsigned long *nmask,
-                           uint64_t maxnode, uint64_t addr, uint64_t flags);
+uint64_t sys_get_mempolicy(int *policy, unsigned long *nmask, uint64_t maxnode,
+                           uint64_t addr, uint64_t flags);
 
 void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
                   uint64_t flags, uint64_t offset);

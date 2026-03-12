@@ -94,8 +94,8 @@ int terminal_ioctl_serial(tty_t *device, uint32_t cmd, uint64_t arg) {
         return 0;
     }
     case TCGETS:
-        if (!arg || copy_to_user((void *)arg, &device->termios,
-                                 sizeof(termios))) {
+        if (!arg ||
+            copy_to_user((void *)arg, &device->termios, sizeof(termios))) {
             return -EFAULT;
         }
         return 0;
@@ -114,8 +114,8 @@ int terminal_ioctl_serial(tty_t *device, uint32_t cmd, uint64_t arg) {
         return 0;
     }
     case TCSETS:
-        if (!arg || copy_from_user(&device->termios, (void *)arg,
-                                   sizeof(termios))) {
+        if (!arg ||
+            copy_from_user(&device->termios, (void *)arg, sizeof(termios))) {
             return -EFAULT;
         }
         return 0;
@@ -134,8 +134,8 @@ int terminal_ioctl_serial(tty_t *device, uint32_t cmd, uint64_t arg) {
         return 0;
     }
     case TCSETSW:
-        if (!arg || copy_from_user(&device->termios, (void *)arg,
-                                   sizeof(termios))) {
+        if (!arg ||
+            copy_from_user(&device->termios, (void *)arg, sizeof(termios))) {
             return -EFAULT;
         }
         return 0;
@@ -191,8 +191,8 @@ int terminal_ioctl_serial(tty_t *device, uint32_t cmd, uint64_t arg) {
     case TIOCNOTTY:
         return 0;
     case TCSETSF:
-        if (!arg || copy_from_user(&device->termios, (void *)arg,
-                                   sizeof(termios)))
+        if (!arg ||
+            copy_from_user(&device->termios, (void *)arg, sizeof(termios)))
             return -EFAULT;
         return 0;
     case TCFLSH:

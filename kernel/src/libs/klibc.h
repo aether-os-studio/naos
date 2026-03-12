@@ -238,6 +238,7 @@ char *strdup(const char *s);
 
 typedef struct spinlock {
     volatile long lock;
+    bool irq_state;
 } spinlock_t;
 
 #define SPIN_INIT (spinlock_t){0}
@@ -245,6 +246,10 @@ typedef struct spinlock {
 void spin_init(spinlock_t *lock);
 void spin_lock(spinlock_t *lock);
 void spin_unlock(spinlock_t *lock);
+
+extern bool arch_interrupt_enabled();
+extern void arch_enable_interrupt();
+extern void arch_disable_interrupt();
 
 extern uint64_t nano_time();
 

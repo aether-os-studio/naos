@@ -158,7 +158,7 @@ static void shm_try_free_locked(shm_t *shm) {
         return;
     if (!shm->marked_destroy || shm->nattch > 0)
         return;
-    if (shm->node && shm->node->refcount > 0)
+    if (shm->node && vfs_node_refcount_read(shm->node) > 0)
         return;
 
     shm_unlink_locked(shm);
@@ -593,7 +593,7 @@ uint64_t sys_shmctl(int shmid, int cmd, struct shmid_ds *buf) {
     switch (cmd) {
     case IPC_RMID:
         shm->marked_destroy = true;
-        if (shm->node && shm->node->refcount > 0)
+        if (shm->node && vfs_node_refcount_read(shm->node) > 0)
             vfs_delete(shm->node);
         shm_try_free_locked(shm);
         break;

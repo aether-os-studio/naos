@@ -250,10 +250,27 @@ typedef struct fs {
 extern fs_t *all_fs[256];
 
 typedef struct flock {
+    int16_t l_type;
+    int16_t l_whence;
+    int64_t l_start;
+    int64_t l_len;
+    int32_t l_pid;
+    int32_t __pad;
+} flock_t;
+
+typedef struct vfs_bsd_lock {
     volatile uint64_t l_pid;
     volatile uint64_t l_type;
     volatile uint64_t lock;
-} flock_t;
+} vfs_bsd_lock_t;
+
+typedef struct vfs_file_lock {
+    struct llist_header node;
+    uint64_t start;
+    uint64_t end;
+    int32_t pid;
+    int16_t type;
+} vfs_file_lock_t;
 
 #define VFS_NODE_FLAGS_OPENED (1UL << 0)
 #define VFS_NODE_FLAGS_DELETED (1UL << 1)
@@ -279,7 +296,9 @@ struct vfs_node {
     uint32_t type;                            // 类型
     uint32_t fsid;                            // 文件系统的 id
     void *handle;                             // 操作文件的句柄
-    flock_t lock;                             // 锁
+    vfs_bsd_lock_t flock_lock;                // flock() 锁
+    spinlock_t file_locks_lock;               // POSIX 范围锁
+    struct llist_header file_locks;           // POSIX 范围锁链表
     struct llist_header node;                 // 所有vfs_node的链表
     struct llist_header childs;               // 子目录和子文件
     hashmap_t child_name_map;                 // 子节点名字索引
@@ -297,6 +316,38 @@ struct vfs_node {
     uint64_t poll_seq_pri;                    // 紧急数据事件变化序号
     uint64_t i_version;                       // 数据变更版本
 };
+
+static inline int vfs_node_refcount_read(vfs_node_t node) {
+    if (!node)
+        return 0;
+    return __atomic_load_n(&node->refcount, __ATOMIC_ACQUIRE);
+}
+
+static inline void vfs_node_ref_get(vfs_node_t node) {
+    if (!node)
+        return;
+    __atomic_add_fetch(&node->refcount, 1, __ATOMIC_ACQ_REL);
+}
+
+static inline int vfs_node_ref_put(vfs_node_t node, bool *dropped_ref) {
+    if (dropped_ref)
+        *dropped_ref = false;
+    if (!node)
+        return 0;
+
+    int refs = __atomic_load_n(&node->refcount, __ATOMIC_ACQUIRE);
+    while (refs > 0) {
+        int new_refs = refs - 1;
+        if (__atomic_compare_exchange_n(&node->refcount, &refs, new_refs, false,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            if (dropped_ref)
+                *dropped_ref = true;
+            return new_refs;
+        }
+    }
+
+    return refs;
+}
 
 struct mount_point {
     struct llist_header node;

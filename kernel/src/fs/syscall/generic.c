@@ -9,6 +9,242 @@ static uint64_t do_sys_open_tmpfile(const char *dir_path, uint64_t flags,
                                     uint64_t mode);
 static volatile uint64_t tmpfile_seq = 1;
 
+static bool file_lock_ranges_overlap(uint64_t start1, uint64_t end1,
+                                     uint64_t start2, uint64_t end2) {
+    if (end1 != UINT64_MAX && end1 <= start2)
+        return false;
+    if (end2 != UINT64_MAX && end2 <= start1)
+        return false;
+    return true;
+}
+
+static bool file_lock_ranges_touch_or_overlap(uint64_t start1, uint64_t end1,
+                                              uint64_t start2, uint64_t end2) {
+    if (file_lock_ranges_overlap(start1, end1, start2, end2))
+        return true;
+    if (end1 != UINT64_MAX && end1 == start2)
+        return true;
+    return end2 != UINT64_MAX && end2 == start1;
+}
+
+static int file_lock_normalize(fd_t *fd, const flock_t *lock,
+                               uint64_t *start_out, uint64_t *end_out) {
+    if (!fd || !fd->node || !lock || !start_out || !end_out)
+        return -EINVAL;
+    if (lock->l_len < 0)
+        return -EINVAL;
+
+    int64_t base = 0;
+    switch (lock->l_whence) {
+    case SEEK_SET:
+        base = 0;
+        break;
+    case SEEK_CUR:
+        base = (int64_t)fd->offset;
+        break;
+    case SEEK_END:
+        base = (int64_t)fd->node->size;
+        break;
+    default:
+        return -EINVAL;
+    }
+
+    if ((lock->l_start > 0 && base > INT64_MAX - lock->l_start) ||
+        (lock->l_start < 0 && base < INT64_MIN - lock->l_start)) {
+        return -EINVAL;
+    }
+
+    int64_t start_signed = base + lock->l_start;
+    if (start_signed < 0)
+        return -EINVAL;
+
+    uint64_t start = (uint64_t)start_signed;
+    uint64_t end = UINT64_MAX;
+    if (lock->l_len > 0) {
+        if ((uint64_t)lock->l_len > UINT64_MAX - start)
+            return -EINVAL;
+        end = start + (uint64_t)lock->l_len;
+        if (end <= start)
+            return -EINVAL;
+    }
+
+    *start_out = start;
+    *end_out = end;
+    return 0;
+}
+
+static vfs_file_lock_t *file_lock_find_conflict(vfs_node_t node, uint64_t start,
+                                                uint64_t end, int16_t type,
+                                                int32_t pid) {
+    if (!node)
+        return NULL;
+
+    vfs_file_lock_t *lock = NULL, *tmp = NULL;
+    llist_for_each(lock, tmp, &node->file_locks, node) {
+        if (lock->pid == pid)
+            continue;
+        if (!file_lock_ranges_overlap(lock->start, lock->end, start, end))
+            continue;
+        if (lock->type == F_WRLCK || type == F_WRLCK)
+            return lock;
+    }
+
+    return NULL;
+}
+
+static int file_lock_unlock_pid_range(vfs_node_t node, int32_t pid,
+                                      uint64_t start, uint64_t end) {
+    if (!node)
+        return -EINVAL;
+
+    vfs_file_lock_t *lock = NULL, *tmp = NULL;
+    llist_for_each(lock, tmp, &node->file_locks, node) {
+        if (lock->pid != pid)
+            continue;
+        if (!file_lock_ranges_overlap(lock->start, lock->end, start, end))
+            continue;
+
+        if (start <= lock->start && (end == UINT64_MAX || end >= lock->end)) {
+            llist_delete(&lock->node);
+            free(lock);
+            continue;
+        }
+
+        if (start <= lock->start) {
+            lock->start = end;
+            continue;
+        }
+
+        if (end == UINT64_MAX || end >= lock->end) {
+            lock->end = start;
+            continue;
+        }
+
+        vfs_file_lock_t *split = calloc(1, sizeof(vfs_file_lock_t));
+        if (!split)
+            return -ENOMEM;
+        llist_init_head(&split->node);
+        split->start = end;
+        split->end = lock->end;
+        split->pid = lock->pid;
+        split->type = lock->type;
+        lock->end = start;
+        llist_append(&node->file_locks, &split->node);
+    }
+
+    return 0;
+}
+
+static void file_lock_release_pid(vfs_node_t node, int32_t pid) {
+    if (!node)
+        return;
+
+    spin_lock(&node->file_locks_lock);
+    (void)file_lock_unlock_pid_range(node, pid, 0, UINT64_MAX);
+    spin_unlock(&node->file_locks_lock);
+}
+
+static int file_lock_getlk(fd_t *fd, flock_t *lock) {
+    if (lock->l_type != F_RDLCK && lock->l_type != F_WRLCK)
+        return -EINVAL;
+
+    uint64_t start = 0, end = 0;
+    int ret = file_lock_normalize(fd, lock, &start, &end);
+    if (ret < 0)
+        return ret;
+
+    vfs_node_t node = fd->node;
+    spin_lock(&node->file_locks_lock);
+    vfs_file_lock_t *conflict = file_lock_find_conflict(
+        node, start, end, lock->l_type, current_task->pid);
+    if (!conflict) {
+        lock->l_type = F_UNLCK;
+        lock->l_pid = 0;
+        spin_unlock(&node->file_locks_lock);
+        return 0;
+    }
+
+    lock->l_type = conflict->type;
+    lock->l_whence = SEEK_SET;
+    lock->l_start = (int64_t)conflict->start;
+    lock->l_len = conflict->end == UINT64_MAX
+                      ? 0
+                      : (int64_t)(conflict->end - conflict->start);
+    lock->l_pid = conflict->pid;
+    spin_unlock(&node->file_locks_lock);
+    return 0;
+}
+
+static int file_lock_setlk(fd_t *fd, const flock_t *req, bool wait) {
+    uint64_t start = 0, end = 0;
+    int ret = file_lock_normalize(fd, req, &start, &end);
+    if (ret < 0)
+        return ret;
+
+    vfs_node_t node = fd->node;
+    int32_t pid = current_task->pid;
+
+    for (;;) {
+        spin_lock(&node->file_locks_lock);
+
+        if (req->l_type == F_UNLCK) {
+            ret = file_lock_unlock_pid_range(node, pid, start, end);
+            spin_unlock(&node->file_locks_lock);
+            return ret;
+        }
+
+        vfs_file_lock_t *conflict =
+            file_lock_find_conflict(node, start, end, req->l_type, pid);
+        if (!conflict) {
+            ret = file_lock_unlock_pid_range(node, pid, start, end);
+            if (ret < 0) {
+                spin_unlock(&node->file_locks_lock);
+                return ret;
+            }
+
+            uint64_t merged_start = start;
+            uint64_t merged_end = end;
+            vfs_file_lock_t *lock = NULL, *tmp = NULL;
+            llist_for_each(lock, tmp, &node->file_locks, node) {
+                if (lock->pid != pid || lock->type != req->l_type)
+                    continue;
+                if (!file_lock_ranges_touch_or_overlap(
+                        lock->start, lock->end, merged_start, merged_end))
+                    continue;
+                if (lock->start < merged_start)
+                    merged_start = lock->start;
+                if (lock->end > merged_end)
+                    merged_end = lock->end;
+                llist_delete(&lock->node);
+                free(lock);
+            }
+
+            vfs_file_lock_t *new_lock = calloc(1, sizeof(vfs_file_lock_t));
+            if (!new_lock) {
+                spin_unlock(&node->file_locks_lock);
+                return -ENOMEM;
+            }
+
+            llist_init_head(&new_lock->node);
+            new_lock->start = merged_start;
+            new_lock->end = merged_end;
+            new_lock->pid = pid;
+            new_lock->type = req->l_type;
+            llist_append(&node->file_locks, &new_lock->node);
+            spin_unlock(&node->file_locks_lock);
+            return 0;
+        }
+
+        spin_unlock(&node->file_locks_lock);
+        if (!wait)
+            return -EAGAIN;
+
+        arch_enable_interrupt();
+        schedule(SCHED_FLAG_YIELD);
+        arch_disable_interrupt();
+    }
+}
+
 uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
                    uint64_t flags, void *data) {
     char devname[128] = "none";
@@ -153,7 +389,7 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
         new_fd->flags = flags;
         new_fd->close_on_exec = !!(flags & O_CLOEXEC);
         self->fd_info->fds[i] = new_fd;
-        node->refcount++;
+        vfs_node_ref_get(node);
         procfs_on_open_file(self, i);
         ret = i;
     });
@@ -346,7 +582,7 @@ uint64_t sys_open_by_handle_at(int mountdirfd, struct file_handle *handle,
         new_fd->offset = 0;
         new_fd->flags = flags;
         self->fd_info->fds[i] = new_fd;
-        node->refcount++;
+        vfs_node_ref_get(node);
         procfs_on_open_file(self, i);
         ret = i;
     });
@@ -383,9 +619,10 @@ uint64_t sys_close(uint64_t fd) {
             break;
 
         entry->offset = 0;
-        if (entry->node->lock.l_pid == self->pid) {
-            entry->node->lock.l_type = F_UNLCK;
-            entry->node->lock.l_pid = 0;
+        file_lock_release_pid(entry->node, self->pid);
+        if (entry->node->flock_lock.l_pid == self->pid) {
+            entry->node->flock_lock.l_type = F_UNLCK;
+            entry->node->flock_lock.l_pid = 0;
         }
 
         self->fd_info->fds[fd] = NULL;
@@ -481,9 +718,10 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
                 continue;
 
             entry->offset = 0;
-            if (entry->node->lock.l_pid == self->pid) {
-                entry->node->lock.l_type = F_UNLCK;
-                entry->node->lock.l_pid = 0;
+            file_lock_release_pid(entry->node, self->pid);
+            if (entry->node->flock_lock.l_pid == self->pid) {
+                entry->node->flock_lock.l_type = F_UNLCK;
+                entry->node->flock_lock.l_pid = 0;
             }
 
             self->fd_info->fds[fd_] = NULL;
@@ -1104,48 +1342,34 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         self->fd_info->fds[fd]->flags &= ~valid_flags;
         self->fd_info->fds[fd]->flags |= arg & valid_flags;
         return 0;
-    case F_SETLKW:
-    case F_SETLK: {
-        struct flock lock;
-        if (check_user_overflow(arg, sizeof(struct flock))) {
+    case F_GETLK: {
+        flock_t lock;
+        if (check_user_overflow(arg, sizeof(lock))) {
             return -EFAULT;
         }
-        memcpy(&lock, (void *)arg, sizeof(struct flock));
-
-        vfs_node_t node = self->fd_info->fds[fd]->node;
-        struct flock *file_lock = &node->lock;
+        memcpy(&lock, (void *)arg, sizeof(lock));
+        int getlk_ret = file_lock_getlk(self->fd_info->fds[fd], &lock);
+        if (getlk_ret < 0)
+            return getlk_ret;
+        if (copy_to_user((void *)arg, &lock, sizeof(lock)))
+            return -EFAULT;
+        return 0;
+    }
+    case F_SETLKW:
+    case F_SETLK: {
+        flock_t lock;
+        if (check_user_overflow(arg, sizeof(lock))) {
+            return -EFAULT;
+        }
+        memcpy(&lock, (void *)arg, sizeof(lock));
 
         if (lock.l_type != F_RDLCK && lock.l_type != F_WRLCK &&
             lock.l_type != F_UNLCK) {
             return -EINVAL;
         }
 
-        if (lock.l_type == F_UNLCK) {
-            if (file_lock->l_pid != self->pid) {
-                return -EACCES;
-            }
-            file_lock->l_type = F_UNLCK;
-            file_lock->l_pid = 0;
-            return 0;
-        }
-
-        for (;;) {
-            if (file_lock->l_type == F_UNLCK ||
-                (file_lock->l_pid == self->pid &&
-                 !(lock.l_type == F_WRLCK && file_lock->l_type == F_RDLCK))) {
-                file_lock->l_type = lock.l_type;
-                file_lock->l_pid = self->pid;
-                return 0;
-            }
-
-            if (command == F_SETLK) {
-                return -EAGAIN;
-            }
-
-            arch_enable_interrupt();
-            schedule(SCHED_FLAG_YIELD);
-            arch_disable_interrupt();
-        }
+        return file_lock_setlk(self->fd_info->fds[fd], &lock,
+                               command == F_SETLKW);
     }
     case F_GETPIPE_SZ:
         return PIPE_BUFF;
@@ -1478,41 +1702,65 @@ uint64_t sys_readlink(char *path_user, char *buf_user, uint64_t size) {
     if (copy_from_user_str(path, path_user, sizeof(path)))
         return (uint64_t)-EFAULT;
 
-    char buf[1024];
-    memset(buf, 0, sizeof(buf));
-    ssize_t result = do_readlink(path, buf, MIN(size, sizeof(buf)));
+    char *buf = malloc(size);
+    if (!buf)
+        return (uint64_t)-ENOMEM;
+    memset(buf, 0, size);
+
+    ssize_t result = do_readlink(path, buf, size);
 
     if (result < 0) {
+        free(buf);
         return (uint64_t)result;
     }
 
-    if (copy_to_user(buf_user, buf, MIN(sizeof(buf), result)))
+    if (copy_to_user(buf_user, buf, result)) {
+        free(buf);
         return (uint64_t)-EFAULT;
+    }
+
+    free(buf);
 
     return result;
 }
 
 uint64_t sys_readlinkat(int dfd, char *path_user, char *buf_user,
                         uint64_t size) {
+    if (path_user == NULL || buf_user == NULL || size == 0) {
+        return (uint64_t)-EFAULT;
+    }
+
     char path[512];
 
     if (copy_from_user_str(path, path_user, sizeof(path)))
         return (uint64_t)-EFAULT;
 
     char *resolved = at_resolve_pathname(dfd, path);
+    if (!resolved)
+        return (uint64_t)-ENOENT;
 
-    char buf[512];
-    memset(buf, 0, sizeof(buf));
-    ssize_t res = do_readlink(resolved, buf, MIN(size, sizeof(buf)));
+    char *buf = malloc(size);
+    if (!buf) {
+        free(resolved);
+        return (uint64_t)-ENOMEM;
+    }
+    memset(buf, 0, size);
+
+    ssize_t res = do_readlink(resolved, buf, size);
 
     free(resolved);
 
     if (res < 0) {
+        free(buf);
         return (uint64_t)res;
     }
 
-    if (copy_to_user(buf_user, buf, MIN(sizeof(buf), res)))
+    if (copy_to_user(buf_user, buf, res)) {
+        free(buf);
         return (uint64_t)-EFAULT;
+    }
+
+    free(buf);
 
     return res;
 }
@@ -1882,7 +2130,7 @@ uint64_t sys_flock(int fd, uint64_t operation) {
         return -EBADF;
 
     vfs_node_t node = self->fd_info->fds[fd]->node;
-    struct flock *lock = &node->lock;
+    vfs_bsd_lock_t *lock = &node->flock_lock;
     uint64_t pid = self->pid;
 
     // 提前检查参数有效性
@@ -1910,10 +2158,7 @@ uint64_t sys_flock(int fd, uint64_t operation) {
         while (lock->l_type != F_UNLCK && lock->l_pid != pid) {
             if (operation & LOCK_NB)
                 return -EWOULDBLOCK;
-
-            while (lock->lock) {
-                arch_pause();
-            }
+            arch_pause();
         }
         lock->l_type = (operation & LOCK_EX) ? F_WRLCK : F_RDLCK;
         lock->l_pid = pid;
@@ -1924,7 +2169,6 @@ uint64_t sys_flock(int fd, uint64_t operation) {
             return -EACCES;
         lock->l_type = F_UNLCK;
         lock->l_pid = 0;
-        lock->lock = 1;
         break;
     }
 

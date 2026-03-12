@@ -4,6 +4,7 @@
 #include <arch/x64/irq/ptrace.h>
 #include <libs/elf.h>
 #include <mm/mm.h>
+#include <task/task_struct.h>
 
 struct task;
 typedef struct task task_t;
@@ -21,12 +22,6 @@ typedef struct fpu_context {
     uint64_t xmm[32];
     uint64_t rest[12];
 } fpu_context_t;
-
-typedef struct sigaltstack {
-    void *ss_sp;
-    int ss_flags;
-    size_t ss_size;
-} stack_t;
 
 typedef uint64_t gregset_t[23];
 

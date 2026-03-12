@@ -657,7 +657,21 @@ int socket_listen(uint64_t fd, int backlog) {
 
 int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
                   uint64_t flags) {
-    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    if (fd >= MAX_FD_NUM) {
+        return -EBADF;
+    }
+
+    fd_t *listener_fd = NULL;
+    with_fd_info_lock(current_task->fd_info, {
+        if (current_task->fd_info->fds[fd]) {
+            listener_fd = vfs_dup(current_task->fd_info->fds[fd]);
+        }
+    });
+    if (!listener_fd) {
+        return -EBADF;
+    }
+
+    socket_handle_t *handle = listener_fd->node->handle;
     socket_t *listen_sock = handle->sock;
 
     if (flags & ~(O_CLOEXEC | O_NONBLOCK))
@@ -666,11 +680,13 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
     if (addr && !addrlen)
         return -EFAULT;
 
-    bool listener_nonblock =
-        !!(current_task->fd_info->fds[fd]->flags & O_NONBLOCK);
+    bool listener_nonblock = !!(listener_fd->flags & O_NONBLOCK);
 
-    if (!listen_sock->connMax || !listen_sock->backlog)
+    if (!listen_sock->connMax || !listen_sock->backlog) {
+        vfs_close(listener_fd->node);
+        free(listener_fd);
         return -EINVAL;
+    }
 
     // 等待连接并从 backlog 取一个
     socket_t *server_sock = NULL;
@@ -689,23 +705,32 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
             break;
         }
         mutex_unlock(&listen_sock->lock);
-        if (current_task->fd_info->fds[fd]->flags & O_NONBLOCK) {
+        if (listener_fd->flags & O_NONBLOCK) {
+            vfs_close(listener_fd->node);
+            free(listener_fd);
             return -(EWOULDBLOCK);
         }
-        int reason = socket_wait_node(current_task->fd_info->fds[fd]->node,
-                                      EPOLLIN, "socket_accept");
-        if (reason != EOK)
+        int reason =
+            socket_wait_node(listener_fd->node, EPOLLIN, "socket_accept");
+        if (reason != EOK) {
+            vfs_close(listener_fd->node);
+            free(listener_fd);
             return -EINTR;
+        }
     }
 
-    if (!server_sock)
+    if (!server_sock) {
+        vfs_close(listener_fd->node);
+        free(listener_fd);
         return -ECONNABORTED;
+    }
 
     // 创建节点
     vfs_node_t acceptFd = unix_socket_create_node(server_sock);
 
     int ret = -EMFILE;
     uint64_t i = 0;
+    fd_t *accepted_fd = NULL;
     with_fd_info_lock(current_task->fd_info, {
         for (i = 0; i < MAX_FD_NUM; i++) {
             if (current_task->fd_info->fds[i] == NULL)
@@ -728,9 +753,13 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
             new_fd->flags |= O_NONBLOCK;
         new_fd->close_on_exec = !!(flags & O_CLOEXEC);
         current_task->fd_info->fds[i] = new_fd;
+        accepted_fd = new_fd;
         procfs_on_open_file(current_task, i);
         ret = (int)i;
     });
+
+    vfs_close(listener_fd->node);
+    free(listener_fd);
 
     if (ret < 0) {
         if (server_sock->peer) {
@@ -745,7 +774,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
     }
 
     socket_handle_t *accept_handle = acceptFd->handle;
-    accept_handle->fd = current_task->fd_info->fds[i];
+    accept_handle->fd = accepted_fd;
 
     if (server_sock->peer) {
         socket_notify_sock(server_sock->peer, EPOLLOUT);

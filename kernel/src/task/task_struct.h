@@ -67,6 +67,19 @@ typedef union sigval {
     void *sival_ptr;
 } sigval_t;
 
+typedef struct sigaltstack {
+    void *ss_sp;
+    int ss_flags;
+    size_t ss_size;
+} stack_t;
+
+#define SS_ONSTACK 1
+#define SS_DISABLE 2
+#define SS_AUTODISARM (1U << 31)
+
+#define MINSIGSTKSZ 2048
+#define SIGSTKSZ 8192
+
 #define SIGEV_SIGNAL 0    /* notify via signal */
 #define SIGEV_NONE 1      /* other notification: meaningless */
 #define SIGEV_THREAD 2    /* deliver via thread creation */
@@ -243,6 +256,7 @@ typedef struct task_signal_info {
     sigset_t signal;
     pending_signal_t pending_signal;
     sigset_t blocked;
+    stack_t altstack;
     sigaction_t actions[MAXSIG];
 } task_signal_info_t;
 

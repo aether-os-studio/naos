@@ -1,4 +1,5 @@
 #include <mm/mm_syscall.h>
+#include <mm/fault.h>
 #include <fs/fs_syscall.h>
 #include <fs/vfs/vfs.h>
 #include <task/task.h>
@@ -31,6 +32,10 @@ static uint64_t mempolicy_copy_nodemask_to_user(unsigned long *nmask,
 }
 
 static uint64_t do_munmap_locked(uint64_t addr, uint64_t size);
+static uint64_t msync_writeback_file_range(vfs_node_t node, uint64_t vm_start,
+                                           int64_t vm_offset,
+                                           uint64_t sync_start,
+                                           uint64_t sync_end);
 
 static inline uint64_t *mm_pgdir(task_mm_info_t *mm) {
     return mm ? (uint64_t *)phys_to_virt(mm->page_table_addr) : NULL;
@@ -316,7 +321,7 @@ static vma_t *alloc_mapping_vma(uint64_t start, uint64_t len, uint64_t prot,
     vma->node = node;
     vma->vm_offset = offset;
     if (node)
-        node->refcount++;
+        vfs_node_ref_get(node);
 
     if (node && ((node->type & file_stream) || (node->type & file_block)))
         vma->vm_flags |= VMA_DEVICE;
@@ -378,6 +383,7 @@ uint64_t sys_brk(uint64_t brk) {
     task_mm_info_t *mm = current_task->mm;
     vma_manager_t *mgr = &mm->task_vma_mgr;
     uint64_t old_brk = mm->brk_current;
+    uint64_t heap_base = PADDING_DOWN(mm->brk_start, DEFAULT_PAGE_SIZE);
 
     if (brk == 0)
         return old_brk;
@@ -390,17 +396,8 @@ uint64_t sys_brk(uint64_t brk) {
     spin_lock(&mgr->lock);
 
     if (new_map_end > old_map_end) {
-        uint64_t grow = new_map_end - old_map_end;
-        if (check_data_limit(mm, brk) != 0 ||
-            check_address_space_limit(mgr, grow) != 0)
-            goto fail;
-        if (!user_range_valid(old_map_end, grow))
-            goto fail;
-        if (vma_find_intersection(mgr, old_map_end, new_map_end))
-            goto fail;
-
         vma_t *heap_vma = NULL;
-        if (old_map_end > mm->brk_start)
+        if (old_map_end > heap_base)
             heap_vma = vma_find(mgr, old_map_end - 1);
 
         bool extend_tail =
@@ -411,15 +408,29 @@ uint64_t sys_brk(uint64_t brk) {
             (heap_vma->vm_flags & (VMA_READ | VMA_WRITE | VMA_EXEC)) ==
                 (VMA_READ | VMA_WRITE);
 
+        uint64_t map_start = old_map_end;
+        if (!extend_tail && !heap_vma && heap_base < old_map_end)
+            map_start = heap_base;
+
+        uint64_t map_len = new_map_end - map_start;
+        if (check_data_limit(mm, brk) != 0 ||
+            check_address_space_limit(mgr, map_len) != 0)
+            goto fail;
+        if (!user_range_valid(map_start, map_len))
+            goto fail;
+        if (vma_find_intersection(mgr, map_start, new_map_end))
+            goto fail;
+
         if (extend_tail) {
+            uint64_t grow = new_map_end - old_map_end;
             heap_vma->vm_end = new_map_end;
             mgr->vm_used += grow;
-        } else if (grow > 0) {
+        } else if (map_len > 0) {
             vma_t *new_vma = vma_alloc();
             if (!new_vma)
                 goto fail;
 
-            new_vma->vm_start = old_map_end;
+            new_vma->vm_start = map_start;
             new_vma->vm_end = new_map_end;
             new_vma->vm_flags = VMA_READ | VMA_WRITE | VMA_ANON;
             new_vma->vm_type = VMA_TYPE_ANON;
@@ -739,7 +750,7 @@ static vma_t *duplicate_vma(vma_t *src, uint64_t start, uint64_t size) {
     dst->vm_offset = src->vm_offset;
 
     if (dst->node)
-        dst->node->refcount++;
+        vfs_node_ref_get(dst->node);
     if (src->vm_name)
         dst->vm_name = strdup(src->vm_name);
 
@@ -1147,8 +1158,80 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
     return (void *)addr;
 }
 
+static uint64_t msync_writeback_file_range(vfs_node_t node, uint64_t vm_start,
+                                           int64_t vm_offset,
+                                           uint64_t sync_start,
+                                           uint64_t sync_end) {
+    if (!node || sync_start >= sync_end || vm_offset < 0)
+        return 0;
+
+    task_mm_info_t *mm = current_task->mm;
+    uint64_t *pgdir = mm_pgdir(mm);
+    uint64_t cursor = sync_start;
+    uint64_t file_size = node->size;
+    uint8_t *bounce = alloc_frames_bytes(DEFAULT_PAGE_SIZE);
+    if (!bounce)
+        return (uint64_t)-ENOMEM;
+
+    while (cursor < sync_end) {
+        uint64_t page_va = PADDING_DOWN(cursor, DEFAULT_PAGE_SIZE);
+        uint64_t in_page = cursor - page_va;
+        uint64_t scan_chunk =
+            MIN(sync_end - cursor, DEFAULT_PAGE_SIZE - in_page);
+        uint64_t vma_delta = cursor - vm_start;
+
+        if ((uint64_t)vm_offset > UINT64_MAX - vma_delta) {
+            free_frames_bytes(bounce, DEFAULT_PAGE_SIZE);
+            return (uint64_t)-EINVAL;
+        }
+
+        uint64_t file_off = (uint64_t)vm_offset + vma_delta;
+        if (file_off >= file_size)
+            break;
+
+        uint64_t io_chunk = MIN(scan_chunk, file_size - file_off);
+        uint64_t page_paddr = 0;
+
+        spin_lock(&mm->lock);
+        page_paddr = translate_address(pgdir, page_va);
+        if (page_paddr) {
+            memcpy(bounce, (void *)(phys_to_virt(page_paddr) + in_page),
+                   io_chunk);
+        }
+        spin_unlock(&mm->lock);
+
+        if (!page_paddr) {
+            cursor += scan_chunk;
+            continue;
+        }
+
+        uint64_t written = 0;
+        while (written < io_chunk) {
+            ssize_t ret = vfs_write(node, bounce + written, file_off + written,
+                                    io_chunk - written);
+            if (ret < 0) {
+                free_frames_bytes(bounce, DEFAULT_PAGE_SIZE);
+                return (uint64_t)ret;
+            }
+            if (ret == 0) {
+                free_frames_bytes(bounce, DEFAULT_PAGE_SIZE);
+                return (uint64_t)-EIO;
+            }
+            written += (uint64_t)ret;
+        }
+
+        cursor += scan_chunk;
+        if (io_chunk < scan_chunk)
+            break;
+    }
+
+    free_frames_bytes(bounce, DEFAULT_PAGE_SIZE);
+
+    return 0;
+}
+
 uint64_t sys_msync(uint64_t addr, uint64_t size, uint64_t flags) {
-    (void)flags;
+    const uint64_t supported_flags = 0x1 | 0x2 | 0x4;
 
     if (addr & (DEFAULT_PAGE_SIZE - 1))
         return (uint64_t)-EINVAL;
@@ -1156,6 +1239,8 @@ uint64_t sys_msync(uint64_t addr, uint64_t size, uint64_t flags) {
         return 0;
     if (!user_range_valid(addr, size))
         return (uint64_t)-ENOMEM;
+    if (flags & ~supported_flags)
+        return (uint64_t)-EINVAL;
 
     uint64_t end = addr + size;
     vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
@@ -1163,8 +1248,50 @@ uint64_t sys_msync(uint64_t addr, uint64_t size, uint64_t flags) {
     spin_lock(&mgr->lock);
     bool covered = range_fully_covered_locked(mgr, addr, end);
     spin_unlock(&mgr->lock);
+    if (!covered)
+        return (uint64_t)-ENOMEM;
 
-    return covered ? 0 : (uint64_t)-ENOMEM;
+    uint64_t cursor = addr;
+    while (cursor < end) {
+        vfs_node_t node = NULL;
+        uint64_t vm_start = 0;
+        uint64_t vm_end = 0;
+        uint64_t vm_flags = 0;
+        vma_type_t vm_type = VMA_TYPE_ANON;
+        int64_t vm_offset = 0;
+
+        spin_lock(&mgr->lock);
+        vma_t *vma = vma_find(mgr, cursor);
+        if (!vma) {
+            spin_unlock(&mgr->lock);
+            return (uint64_t)-ENOMEM;
+        }
+
+        vm_start = vma->vm_start;
+        vm_end = MIN(vma->vm_end, end);
+        vm_flags = vma->vm_flags;
+        vm_type = vma->vm_type;
+        vm_offset = vma->vm_offset;
+        node = vma->node;
+        if (node)
+            vfs_node_ref_get(node);
+        spin_unlock(&mgr->lock);
+
+        if (vm_type == VMA_TYPE_FILE && (vm_flags & VMA_SHARED) &&
+            !(vm_flags & VMA_DEVICE) && node) {
+            uint64_t ret = msync_writeback_file_range(node, vm_start, vm_offset,
+                                                      cursor, vm_end);
+            vfs_node_ref_put(node, NULL);
+            if ((int64_t)ret < 0)
+                return ret;
+        } else if (node) {
+            vfs_node_ref_put(node, NULL);
+        }
+
+        cursor = vm_end;
+    }
+
+    return 0;
 }
 
 uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
@@ -1202,6 +1329,78 @@ uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
 
     return 0;
 }
+
+static uint64_t mlock_validate_range(uint64_t addr, uint64_t len,
+                                     uint64_t *start_out, uint64_t *len_out) {
+    if (len == 0)
+        return 0;
+    if (check_user_overflow(addr, len))
+        return (uint64_t)-ENOMEM;
+
+    uint64_t start = PADDING_DOWN(addr, DEFAULT_PAGE_SIZE);
+    uint64_t end = PADDING_UP(addr + len, DEFAULT_PAGE_SIZE);
+    if (end <= start)
+        return (uint64_t)-ENOMEM;
+    if (!user_range_valid(start, end - start))
+        return (uint64_t)-ENOMEM;
+
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
+
+    spin_lock(&mgr->lock);
+    bool covered = range_fully_covered_locked(mgr, start, end);
+    spin_unlock(&mgr->lock);
+
+    if (!covered)
+        return (uint64_t)-ENOMEM;
+
+    if (start_out)
+        *start_out = start;
+    if (len_out)
+        *len_out = end - start;
+
+    return 0;
+}
+
+uint64_t sys_mlock(uint64_t addr, uint64_t len) {
+    uint64_t start = 0;
+    uint64_t aligned_len = 0;
+    uint64_t ret = mlock_validate_range(addr, len, &start, &aligned_len);
+    if ((int64_t)ret < 0 || aligned_len == 0)
+        return ret;
+
+    uint64_t *pgdir = mm_pgdir(current_task->mm);
+    for (uint64_t cursor = start; cursor < start + aligned_len;
+         cursor += DEFAULT_PAGE_SIZE) {
+        if (translate_address(pgdir, cursor))
+            continue;
+
+        page_fault_result_t fault = handle_page_fault(current_task, cursor);
+        if (fault == PF_RES_NOMEM)
+            return (uint64_t)-ENOMEM;
+        if (fault != PF_RES_OK)
+            return (uint64_t)-ENOMEM;
+
+        pgdir = mm_pgdir(current_task->mm);
+    }
+
+    return 0;
+}
+
+uint64_t sys_munlock(uint64_t addr, uint64_t len) {
+    return mlock_validate_range(addr, len, NULL, NULL);
+}
+
+uint64_t sys_mlockall(int flags) {
+    const int supported_flags = MCL_CURRENT | MCL_FUTURE;
+
+    if (flags & ~supported_flags)
+        return (uint64_t)-EINVAL;
+    if ((flags & supported_flags) == 0)
+        return (uint64_t)-EINVAL;
+    return 0;
+}
+
+uint64_t sys_munlockall(void) { return 0; }
 
 uint64_t sys_mbind(uint64_t start, uint64_t len, int mode,
                    const unsigned long *nmask, uint64_t maxnode,

@@ -4,6 +4,7 @@
 #include <fs/fs_syscall.h>
 #include <fs/vfs/fcntl.h>
 #include <mm/mm_syscall.h>
+#include <task/task_syscall.h>
 #include <net/net_syscall.h>
 #include <libs/strerror.h>
 #include <arch/x64/syscall/nr.h>
@@ -255,7 +256,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_FORK] = (syscall_handle_t)sys_fork;
     syscall_handlers[SYS_VFORK] = (syscall_handle_t)sys_vfork;
     syscall_handlers[SYS_EXECVE] = (syscall_handle_t)task_execve;
-    syscall_handlers[SYS_EXIT] = (syscall_handle_t)task_exit;
+    syscall_handlers[SYS_EXIT] = (syscall_handle_t)task_exit_thread;
     syscall_handlers[SYS_WAIT4] = (syscall_handle_t)sys_waitpid;
     syscall_handlers[SYS_KILL] = (syscall_handle_t)sys_kill;
     syscall_handlers[SYS_UNAME] = (syscall_handle_t)sys_uname;
@@ -314,7 +315,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_SETGROUPS] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_SETRESUID] = (syscall_handle_t)sys_setresuid;
     syscall_handlers[SYS_GETRESUID] = (syscall_handle_t)sys_getresuid;
-    syscall_handlers[SYS_SETRESGID] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_SETRESGID] = (syscall_handle_t)sys_setresgid;
     syscall_handlers[SYS_GETRESGID] = (syscall_handle_t)sys_getresgid;
     syscall_handlers[SYS_GETPGID] = (syscall_handle_t)sys_getpgid;
     syscall_handlers[SYS_SETFSUID] = (syscall_handle_t)dummy_syscall_handler;
@@ -329,7 +330,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_RT_SIGQUEUEINFO] =
         (syscall_handle_t)sys_rt_sigqueueinfo;
     // syscall_handlers[SYS_RT_SIGSUSPEND] = (syscall_handle_t)sys_sigsuspend;
-    syscall_handlers[SYS_SIGALTSTACK] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_SIGALTSTACK] = (syscall_handle_t)sys_sigaltstack;
     // syscall_handlers[SYS_UTIME] = (syscall_handle_t)sys_utime;
     syscall_handlers[SYS_MKNOD] = (syscall_handle_t)sys_mknod;
     // syscall_handlers[SYS_USELIB] = (syscall_handle_t)sys_uselib;
@@ -352,10 +353,10 @@ void syscall_handler_init() {
         (syscall_handle_t)sys_sched_get_priority_min;
     syscall_handlers[SYS_SCHED_RR_GET_INTERVAL] =
         (syscall_handle_t)sys_sched_rr_get_interval;
-    // syscall_handlers[SYS_MLOCK] = (syscall_handle_t)sys_mlock;
-    // syscall_handlers[SYS_MUNLOCK] = (syscall_handle_t)sys_munlock;
-    // syscall_handlers[SYS_MLOCKALL] = (syscall_handle_t)sys_mlockall;
-    // syscall_handlers[SYS_MUNLOCKALL] = (syscall_handle_t)sys_munlockall;
+    syscall_handlers[SYS_MLOCK] = (syscall_handle_t)sys_mlock;
+    syscall_handlers[SYS_MUNLOCK] = (syscall_handle_t)sys_munlock;
+    syscall_handlers[SYS_MLOCKALL] = (syscall_handle_t)sys_mlockall;
+    syscall_handlers[SYS_MUNLOCKALL] = (syscall_handle_t)sys_munlockall;
     // syscall_handlers[SYS_VHANGUP] = (syscall_handle_t)sys_vhangup;
     // syscall_handlers[SYS_MODIFY_LDT] = (syscall_handle_t)sys_modify_ldt;
     // syscall_handlers[SYS_PIVOT_ROOT] = (syscall_handle_t)sys_pivot_root;
@@ -636,13 +637,17 @@ static inline uint64_t syscall_account_running_ns(task_t *task,
 }
 
 void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
-    task_t *self = current_task;
-
     regs->rip = regs->rcx;
     regs->rflags = regs->r11;
     regs->cs = SELECTOR_USER_CS;
     regs->ss = SELECTOR_USER_DS;
     regs->rsp = user_rsp;
+
+    task_t *self = current_task;
+    if (!self) {
+        regs->rax = (uint64_t)-ENOSYS;
+        goto done;
+    }
 
     uint64_t idx = regs->rax & 0xFFFFFFFF;
 
@@ -746,8 +751,6 @@ done:
     }
     if (regs->rax == (uint64_t)-EFAULT) {
         serial_fprintk("syscall %d accessed a invalid address\n", idx);
-    } else if (regs->rax == (uint64_t)-ENOMEM) {
-        serial_fprintk("syscall %d no enouth memory\n", idx);
     }
 
     task_signal(regs);

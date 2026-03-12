@@ -3,7 +3,7 @@
 #include <task/task.h>
 #include <boot/boot.h>
 
-spinlock_t procfs_oplock = SPIN_INIT;
+mutex_t procfs_oplock;
 
 vfs_node_t cmdline = NULL;
 vfs_node_t filesystems = NULL;
@@ -82,7 +82,7 @@ int procfs_mount(uint64_t dev, vfs_node_t mnt) {
     if (procfs_root == mnt)
         return 0;
 
-    spin_lock(&procfs_oplock);
+    mutex_lock(&procfs_oplock);
 
     vfs_merge_nodes_to(mnt, fake_procfs_root);
 
@@ -93,7 +93,7 @@ int procfs_mount(uint64_t dev, vfs_node_t mnt) {
     mnt->dev = (PROCFS_DEV_MAJOR << 8) | 0;
     mnt->rdev = (PROCFS_DEV_MAJOR << 8) | 0;
 
-    spin_unlock(&procfs_oplock);
+    mutex_unlock(&procfs_oplock);
 
     return 0;
 }
@@ -105,7 +105,7 @@ void procfs_unmount(vfs_node_t root) {
     if (root != procfs_root)
         return;
 
-    spin_lock(&procfs_oplock);
+    mutex_lock(&procfs_oplock);
 
     vfs_merge_nodes_to(fake_procfs_root, root);
 
@@ -115,7 +115,7 @@ void procfs_unmount(vfs_node_t root) {
 
     procfs_root = fake_procfs_root;
 
-    spin_unlock(&procfs_oplock);
+    mutex_unlock(&procfs_oplock);
 }
 
 static vfs_operations_t callbacks = {
@@ -195,6 +195,8 @@ extern struct llist_header mount_points;
 int procfs_mount_point_count = 0;
 
 void proc_init() {
+    mutex_init(&procfs_oplock);
+
     procfs_id = vfs_regist(&procfs);
     procfs_self_id = vfs_regist(&procfs_self);
 
@@ -248,8 +250,6 @@ void proc_init() {
 void procfs_on_new_task(task_t *task) {
     if (task->pid == 0)
         return;
-
-    spin_lock(&procfs_oplock);
 
     char name[MAX_PID_NAME_LEN];
     sprintf(name, "%d", task->pid);
@@ -355,8 +355,6 @@ void procfs_on_new_task(task_t *task) {
 
     node->refcount++;
     task->procfs_node = node;
-
-    spin_unlock(&procfs_oplock);
 }
 
 void procfs_on_open_file(task_t *task, int fd) {
@@ -369,8 +367,6 @@ void procfs_on_open_file(task_t *task, int fd) {
 
     if (!task->fd_info || !task->fd_info->fds[fd])
         return;
-
-    spin_lock(&procfs_oplock);
 
     char fd_name[8];
     sprintf(fd_name, "%d", fd);
@@ -399,35 +395,25 @@ void procfs_on_open_file(task_t *task, int fd) {
 
 done:
     sprintf(fd_node_handle->name, "fd");
-
-    spin_unlock(&procfs_oplock);
 }
 
 void procfs_on_close_file(task_t *task, int fd) {
-    spin_lock(&procfs_oplock);
-
     char name[3 + 8];
     sprintf(name, "fd/%d", fd);
     vfs_node_t fd_node = vfs_open_at(task->procfs_node, name, O_NOFOLLOW);
     if (!fd_node)
-        goto done;
+        return;
 
     vfs_free(fd_node);
-done:
-    spin_unlock(&procfs_oplock);
 }
 
 void procfs_on_exit_task(task_t *task) {
     if (task->pid == 0)
         return;
 
-    spin_lock(&procfs_oplock);
-
     vfs_node_t procfs_node = task->procfs_node;
     task->procfs_node = NULL;
     if (procfs_node) {
         vfs_free(procfs_node);
     }
-
-    spin_unlock(&procfs_oplock);
 }

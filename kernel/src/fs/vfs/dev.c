@@ -10,6 +10,7 @@
 #include <mm/mm_syscall.h>
 #include <boot/boot.h>
 #include <arch/arch.h>
+#include <fs/vfs/tmpfs_limit.h>
 
 int devtmpfs_fsid = 0;
 
@@ -17,6 +18,50 @@ spinlock_t devtmpfs_oplock = SPIN_INIT;
 
 vfs_node_t devtmpfs_root = NULL;
 vfs_node_t fake_devtmpfs_root = NULL;
+
+static int devtmpfs_replace_content(devtmpfs_node_t *handle,
+                                    size_t new_capability, size_t preserve_size,
+                                    bool zero_tail) {
+    uint64_t old_capability =
+        (handle && handle->content) ? handle->capability : 0;
+
+    if (!handle)
+        return -EINVAL;
+
+    if (new_capability == old_capability)
+        return 0;
+
+    int ret = tmpfs_mem_resize_reserve(old_capability, new_capability);
+    if (ret != 0)
+        return ret;
+
+    void *new_content = NULL;
+    if (new_capability > 0) {
+        new_content = alloc_frames_bytes(new_capability);
+        if (!new_content) {
+            tmpfs_mem_resize_reserve(new_capability, old_capability);
+            return -ENOMEM;
+        }
+
+        if (handle->content && preserve_size > 0) {
+            memcpy(new_content, handle->content,
+                   MIN((size_t)old_capability,
+                       MIN(preserve_size, new_capability)));
+        }
+
+        if (zero_tail && new_capability > preserve_size) {
+            memset((uint8_t *)new_content + preserve_size, 0,
+                   new_capability - preserve_size);
+        }
+    }
+
+    if (handle->content && old_capability > 0)
+        free_frames_bytes(handle->content, old_capability);
+
+    handle->content = new_content;
+    handle->capability = new_capability;
+    return 0;
+}
 
 void devtmpfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {
     if ((node->type & file_block) || (node->type & file_stream)) {
@@ -56,19 +101,17 @@ ssize_t devtmpfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     }
 
     devtmpfs_node_t *handle = fd->node->handle;
+    if (offset > SIZE_MAX - size)
+        return -EFBIG;
     if (offset + size > handle->capability) {
         size_t new_capability = offset + size;
         if (new_capability > MAX_DEVTMPFS_FILE_SIZE) {
             return -EFBIG;
         }
-        void *new_content = alloc_frames_bytes(new_capability);
-        if (!new_content) {
+        if (devtmpfs_replace_content(handle, new_capability, handle->capability,
+                                     false) != 0) {
             return -ENOMEM;
         }
-        memcpy(new_content, handle->content, handle->capability);
-        free_frames_bytes(handle->content, handle->capability);
-        handle->content = new_content;
-        handle->capability = new_capability;
     }
     memcpy(handle->content + offset, addr, size);
     handle->size = MAX(handle->size, offset + size);
@@ -104,7 +147,9 @@ ssize_t devtmpfs_readlink(vfs_node_t node, void *addr, size_t offset,
 
 int devtmpfs_mkdir(vfs_node_t parent, const char *name, vfs_node_t node) {
     node->mode = 0700;
-    devtmpfs_node_t *handle = malloc(sizeof(devtmpfs_node_t));
+    devtmpfs_node_t *handle = calloc(1, sizeof(devtmpfs_node_t));
+    if (!handle)
+        return -ENOMEM;
     handle->node = node;
     handle->size = 0;
     node->handle = handle;
@@ -116,10 +161,15 @@ int devtmpfs_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
     if (node->handle) {
         return -EEXIST;
     }
-    devtmpfs_node_t *handle = malloc(sizeof(devtmpfs_node_t));
+    devtmpfs_node_t *handle = calloc(1, sizeof(devtmpfs_node_t));
+    if (!handle)
+        return -ENOMEM;
     handle->node = node;
     handle->capability = DEFAULT_PAGE_SIZE;
-    handle->content = alloc_frames_bytes(handle->capability);
+    if (devtmpfs_replace_content(handle, handle->capability, 0, true) != 0) {
+        free(handle);
+        return -ENOMEM;
+    }
     handle->size = 0;
     node->handle = handle;
     return 0;
@@ -133,10 +183,15 @@ int devtmpfs_mknod(vfs_node_t parent, const char *name, vfs_node_t node,
     if (node->handle) {
         return -EEXIST;
     }
-    devtmpfs_node_t *handle = malloc(sizeof(devtmpfs_node_t));
+    devtmpfs_node_t *handle = calloc(1, sizeof(devtmpfs_node_t));
+    if (!handle)
+        return -ENOMEM;
     handle->node = node;
     handle->capability = DEFAULT_PAGE_SIZE;
-    handle->content = alloc_frames_bytes(handle->capability);
+    if (devtmpfs_replace_content(handle, handle->capability, 0, true) != 0) {
+        free(handle);
+        return -ENOMEM;
+    }
     handle->size = 0;
     node->handle = handle;
     return 0;
@@ -147,9 +202,14 @@ int devtmpfs_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
     if (node->handle) {
         return -EEXIST;
     }
-    devtmpfs_node_t *handle = malloc(sizeof(devtmpfs_node_t));
+    devtmpfs_node_t *handle = calloc(1, sizeof(devtmpfs_node_t));
+    if (!handle)
+        return -ENOMEM;
     handle->capability = DEFAULT_PAGE_SIZE;
-    handle->content = alloc_frames_bytes(handle->capability);
+    if (devtmpfs_replace_content(handle, handle->capability, 0, true) != 0) {
+        free(handle);
+        return -ENOMEM;
+    }
     int len = strlen(name);
     memcpy(handle->content, name, len);
     handle->size = len;
@@ -248,16 +308,9 @@ void *devtmpfs_map(fd_t *file, void *addr, size_t offset, size_t size,
         if (need > MAX_DEVTMPFS_FILE_SIZE)
             return (void *)(int64_t)-EFBIG;
 
-        void *new_content = alloc_frames_bytes(need);
-        if (!new_content)
+        if (devtmpfs_replace_content(handle, need, handle->capability, true) !=
+            0)
             return (void *)(int64_t)-ENOMEM;
-
-        memcpy(new_content, handle->content, handle->capability);
-        memset((uint8_t *)new_content + handle->capability, 0,
-               need - handle->capability);
-        free_frames_bytes(handle->content, handle->capability);
-        handle->content = new_content;
-        handle->capability = need;
     }
 
     uint64_t pt_flags = PT_FLAG_U;
@@ -300,19 +353,12 @@ void devtmpfs_resize(vfs_node_t node, uint64_t size) {
     }
 
     size_t new_capability = size;
-    void *new_content = alloc_frames_bytes(new_capability);
-    if (!new_content)
+    if (new_capability > MAX_DEVTMPFS_FILE_SIZE)
         return;
 
-    memcpy(new_content, handle->content, MIN(new_capability, handle->size));
-    if (new_capability > (size_t)handle->size) {
-        memset((uint8_t *)new_content + handle->size, 0,
-               new_capability - handle->size);
-    }
-
-    free_frames_bytes(handle->content, handle->capability);
-    handle->content = new_content;
-    handle->capability = new_capability;
+    if (devtmpfs_replace_content(handle, new_capability, handle->size, true) !=
+        0)
+        return;
     handle->size = size;
     if (handle->node)
         handle->node->size = size;
@@ -330,7 +376,10 @@ void devtmpfs_free_handle(vfs_node_t node) {
     devtmpfs_node_t *tnode = node ? node->handle : NULL;
     if (!tnode)
         return;
-    free_frames_bytes(tnode->content, tnode->capability);
+    if (tnode->content && tnode->capability > 0) {
+        tmpfs_mem_release(tnode->capability);
+        free_frames_bytes(tnode->content, tnode->capability);
+    }
     free(tnode);
 }
 

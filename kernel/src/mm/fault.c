@@ -53,8 +53,7 @@ static void fault_vma_snapshot_put(fault_vma_snapshot_t *snapshot) {
     if (!snapshot || !snapshot->node)
         return;
 
-    if (snapshot->node->refcount > 0)
-        snapshot->node->refcount--;
+    vfs_node_ref_put(snapshot->node, NULL);
     shm_try_reap_by_vnode(snapshot->node);
     snapshot->node = NULL;
 }
@@ -271,7 +270,7 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
             .vm_offset = vma->vm_offset,
         };
         if (snapshot.node)
-            snapshot.node->refcount++;
+            vfs_node_ref_get(snapshot.node);
 
         spin_unlock(&mgr->lock);
         result = map_file_fault_page_snapshot(task, &snapshot, vaddr);

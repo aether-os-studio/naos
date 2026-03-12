@@ -68,6 +68,113 @@ static inline bool signal_sigset_has(sigset_t set, int sig) {
     return (set & signal_sigbit(sig)) != 0;
 }
 
+static inline void signal_altstack_disable(stack_t *stack) {
+    if (!stack)
+        return;
+
+    stack->ss_sp = NULL;
+    stack->ss_size = 0;
+    stack->ss_flags = SS_DISABLE;
+}
+
+static inline uint64_t signal_stack_base(const stack_t *stack) {
+    return stack ? (uint64_t)stack->ss_sp : 0;
+}
+
+static inline bool signal_altstack_config_enabled(const stack_t *stack) {
+    return stack && (stack->ss_flags & SS_DISABLE) == 0 && stack->ss_size > 0;
+}
+
+static inline bool signal_altstack_contains_sp(const stack_t *stack,
+                                               uint64_t sp) {
+    if (!signal_altstack_config_enabled(stack))
+        return false;
+
+    uint64_t base = signal_stack_base(stack);
+    if (base > UINT64_MAX - stack->ss_size)
+        return false;
+
+    uint64_t end = base + stack->ss_size;
+    return sp >= base && sp < end;
+}
+
+static inline int signal_altstack_status_flags(const stack_t *stack,
+                                               uint64_t sp) {
+    if (!stack || (stack->ss_flags & SS_DISABLE) != 0 || stack->ss_size == 0)
+        return SS_DISABLE;
+
+    int flags = stack->ss_flags & SS_AUTODISARM;
+    if (signal_altstack_contains_sp(stack, sp))
+        flags |= SS_ONSTACK;
+    return flags;
+}
+
+static inline void signal_altstack_format_old(stack_t *dst, const stack_t *src,
+                                              uint64_t sp) {
+    if (!dst)
+        return;
+
+    if (!src) {
+        signal_altstack_disable(dst);
+        return;
+    }
+
+    *dst = *src;
+    dst->ss_flags = signal_altstack_status_flags(src, sp);
+}
+
+static inline int signal_altstack_validate_new(const stack_t *stack) {
+    if (!stack)
+        return -EINVAL;
+
+    if (stack->ss_flags & SS_DISABLE)
+        return 0;
+
+    int allowed_flags = SS_ONSTACK | SS_AUTODISARM;
+    if (stack->ss_flags & ~allowed_flags)
+        return -EINVAL;
+
+    if (stack->ss_size < MINSIGSTKSZ)
+        return -ENOMEM;
+
+    return 0;
+}
+
+static inline void signal_altstack_store(stack_t *dst, const stack_t *src) {
+    if (!dst || !src)
+        return;
+
+    if (src->ss_flags & SS_DISABLE) {
+        signal_altstack_disable(dst);
+        return;
+    }
+
+    *dst = *src;
+    dst->ss_flags &= ~SS_ONSTACK;
+    dst->ss_flags &= SS_AUTODISARM;
+}
+
+static inline uint64_t signal_current_user_sp(task_t *task) {
+    if (!task)
+        return 0;
+
+#if defined(__x86_64__)
+    struct pt_regs *regs = (struct pt_regs *)task->syscall_stack - 1;
+    return regs->rsp;
+#elif defined(__aarch64__)
+    struct pt_regs *regs = (struct pt_regs *)task->syscall_stack - 1;
+    return regs->sp_el0;
+#elif defined(__riscv__)
+    struct pt_regs *regs = (struct pt_regs *)task->syscall_stack - 1;
+    return regs->sp;
+#elif defined(__loongarch64)
+    struct pt_regs *regs = (struct pt_regs *)task->syscall_stack - 1;
+    return regs->usp;
+#else
+    return 0;
+#endif
+}
+
 static inline bool signal_is_blocked(sigset_t blocked, int sig) {
     if (sig == SIGKILL || sig == SIGSTOP) {
         return false;
@@ -331,15 +438,16 @@ static inline uint64_t signal_x64_frame_rsp(uint64_t user_rsp,
     return sp - sizeof(void *);
 }
 
-static inline void signal_x64_fill_ucontext(ucontext_t *ucontext,
-                                            const struct pt_regs *regs,
-                                            uint64_t fpregs_addr,
-                                            uint64_t flags,
-                                            sigset_t blocked_mask) {
+static inline void
+signal_x64_fill_ucontext(ucontext_t *ucontext, const struct pt_regs *regs,
+                         uint64_t fpregs_addr, uint64_t flags,
+                         sigset_t blocked_mask, const stack_t *altstack) {
     memset(ucontext, 0, sizeof(*ucontext));
 
     ucontext->uc_flags = flags;
     ucontext->uc_link = NULL;
+    if (altstack)
+        ucontext->uc_stack = *altstack;
     ucontext->uc_mcontext.fpregs = (fpu_context_t *)fpregs_addr;
 
     ucontext->uc_mcontext.gregs[X64_REG_R8] = regs->r8;
@@ -413,16 +521,31 @@ static bool signal_x64_setup_frame(task_t *task, struct pt_regs *regs, int sig,
     struct pt_regs saved = *regs;
     signal_x64_prepare_syscall_result(&saved, action);
 
+    stack_t frame_altstack;
+    signal_altstack_format_old(&frame_altstack, &task->signal->altstack,
+                               saved.rsp);
+
     uint64_t frame_size =
         sizeof(ucontext_t) + sizeof(siginfo_t) + sizeof(fpu_context_t);
     uint64_t frame_rsp = signal_x64_frame_rsp(saved.rsp, frame_size);
+    bool use_altstack =
+        (action->sa_flags & SA_ONSTACK) &&
+        signal_altstack_config_enabled(&task->signal->altstack) &&
+        !signal_altstack_contains_sp(&task->signal->altstack, saved.rsp);
+    if (use_altstack) {
+        uint64_t alt_top = signal_stack_base(&task->signal->altstack) +
+                           task->signal->altstack.ss_size;
+        frame_rsp = signal_x64_frame_rsp(alt_top, frame_size);
+        if (task->signal->altstack.ss_flags & SS_AUTODISARM)
+            signal_altstack_disable(&task->signal->altstack);
+    }
     uint64_t ucontext_addr = frame_rsp + sizeof(void *);
     uint64_t siginfo_addr = ucontext_addr + sizeof(ucontext_t);
     uint64_t fp_addr = siginfo_addr + sizeof(siginfo_t);
 
     ucontext_t frame_ucontext;
     signal_x64_fill_ucontext(&frame_ucontext, &saved, fp_addr, action->sa_flags,
-                             task->signal->blocked);
+                             task->signal->blocked, &frame_altstack);
 
     void *frame_restorer = (void *)action->sa_restorer;
     if (copy_to_user((void *)fp_addr, task->arch_context->fpu_ctx,
@@ -639,10 +762,18 @@ uint64_t sys_sigreturn(struct pt_regs *regs) {
         return 0;
     }
 
+    stack_t restore_altstack = frame_ucontext.uc_stack;
+    restore_altstack.ss_flags &= ~SS_ONSTACK;
+    if (signal_altstack_validate_new(&restore_altstack) < 0) {
+        task_exit(128 + SIGSEGV);
+        return 0;
+    }
+
     signal_x64_restore_ptregs(regs, &frame_ucontext);
 
     spin_lock(&self->signal->signal_lock);
     self->signal->blocked = sigset_user_to_kernel(frame_ucontext.uc_sigmask);
+    signal_altstack_store(&self->signal->altstack, &restore_altstack);
     spin_unlock(&self->signal->signal_lock);
 
     uint64_t tmp = self->syscall_stack;
@@ -659,6 +790,43 @@ uint64_t sys_sigreturn(struct pt_regs *regs) {
     (void)regs;
     return (uint64_t)-ENOSYS;
 #endif
+}
+
+uint64_t sys_sigaltstack(const stack_t *uss, stack_t *uoss) {
+    task_t *self = current_task;
+    if (!self || !self->signal)
+        return (uint64_t)-EINVAL;
+
+    stack_t new_stack;
+    bool has_new = uss != NULL;
+    if (has_new && copy_from_user(&new_stack, uss, sizeof(new_stack)))
+        return (uint64_t)-EFAULT;
+
+    uint64_t user_sp = signal_current_user_sp(self);
+    stack_t old_stack;
+
+    spin_lock(&self->signal->signal_lock);
+    signal_altstack_format_old(&old_stack, &self->signal->altstack, user_sp);
+
+    if (has_new) {
+        int ret = signal_altstack_validate_new(&new_stack);
+        if (ret < 0) {
+            spin_unlock(&self->signal->signal_lock);
+            return (uint64_t)ret;
+        }
+        if (old_stack.ss_flags & SS_ONSTACK) {
+            spin_unlock(&self->signal->signal_lock);
+            return (uint64_t)-EPERM;
+        }
+        signal_altstack_store(&self->signal->altstack, &new_stack);
+    }
+
+    spin_unlock(&self->signal->signal_lock);
+
+    if (uoss && copy_to_user(uoss, &old_stack, sizeof(old_stack)))
+        return (uint64_t)-EFAULT;
+
+    return 0;
 }
 
 uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,

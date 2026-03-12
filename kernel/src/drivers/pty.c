@@ -1,4 +1,5 @@
 #include <drivers/pty.h>
+#include <fs/vfs/proc.h>
 #include <task/task.h>
 
 uint8_t *pty_bitmap = 0;
@@ -30,6 +31,66 @@ static inline void pty_notify_pair_slave(pty_pair_t *pair, uint32_t events) {
     if (!pair)
         return;
     pty_notify_node(pair->pts_node, events);
+}
+
+static int pty_open_peer_fd(vfs_node_t node, uint64_t flags) {
+    static const uint64_t allowed_flags =
+        O_ACCMODE_FLAGS | O_NOCTTY | O_NONBLOCK | O_CLOEXEC;
+
+    if (!node || !node->handle || !current_task || !current_task->fd_info)
+        return -EINVAL;
+
+    flags &= 0xFFFFFFFFUL;
+    if (flags & ~allowed_flags)
+        return -EINVAL;
+
+    pty_pair_t *pair = node->handle;
+    vfs_node_t peer_node = NULL;
+
+    mutex_lock(&pair->lock);
+    if (pair->locked) {
+        mutex_unlock(&pair->lock);
+        return -EIO;
+    }
+    peer_node = pair->pts_node;
+    mutex_unlock(&pair->lock);
+
+    if (!peer_node || !peer_node->handle) {
+        char pts_path[32];
+        snprintf(pts_path, sizeof(pts_path), "pts/%d", pair->id);
+        peer_node = vfs_open_at(devtmpfs_root, pts_path, 0);
+        if (!peer_node || !peer_node->handle)
+            return -EIO;
+    }
+
+    int ret = -EMFILE;
+    with_fd_info_lock(current_task->fd_info, {
+        uint64_t fd_num;
+        for (fd_num = 0; fd_num < MAX_FD_NUM; fd_num++) {
+            if (!current_task->fd_info->fds[fd_num])
+                break;
+        }
+
+        if (fd_num == MAX_FD_NUM)
+            break;
+
+        fd_t *new_fd = malloc(sizeof(fd_t));
+        if (!new_fd) {
+            ret = -ENOMEM;
+            break;
+        }
+
+        memset(new_fd, 0, sizeof(fd_t));
+        new_fd->node = peer_node;
+        new_fd->flags = flags;
+        new_fd->close_on_exec = !!(flags & O_CLOEXEC);
+        peer_node->refcount++;
+        current_task->fd_info->fds[fd_num] = new_fd;
+        procfs_on_open_file(current_task, (int)fd_num);
+        ret = (int)fd_num;
+    });
+
+    return ret;
 }
 
 static int pty_wait_node(vfs_node_t node, uint32_t events, const char *reason) {
@@ -386,6 +447,8 @@ void pts_ctrl_assign(pty_pair_t *pair) {
 int ptmx_ioctl(vfs_node_t node, ssize_t request, ssize_t arg) {
     if (!node || !node->handle)
         return -EINVAL;
+    if ((request & 0xFFFFFFFFUL) == TIOCGPTPEER)
+        return pty_open_peer_fd(node, (uint64_t)arg);
     pty_pair_t *pair = node->handle;
     int ret = -ENOTTY;
     uint32_t notify_master = 0;
@@ -562,7 +625,7 @@ int ptmx_ioctl(vfs_node_t node, ssize_t request, ssize_t arg) {
             ret = 0;
             break;
         default:
-            printk("pts_ioctl: Unsupported request %#010lx\n", request);
+            printk("ptmx: Unsupported request %#010lx\n", request);
             break;
         }
     }
@@ -981,6 +1044,9 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
     } break;
     case TIOCNOTTY:
         ret = 0;
+        break;
+    case TIOCGPTPEER:
+        ret = -ENOTTY;
         break;
     default:
         printk("pts_ioctl: Unsupported request %#010lx\n", request);

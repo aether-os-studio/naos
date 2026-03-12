@@ -342,6 +342,20 @@ static inline void nvme_complete_request(nvme_controller_t *ctrl, uint16_t cid,
         callback(ctx, success, result);
 }
 
+static void nvme_log_cqe_error(nvme_queue_t *queue, const nvme_cqe_t *cqe) {
+    uint16_t status_code = (cqe->status >> 1) & 0xFF;
+    uint16_t status_type = (cqe->status >> 9) & 0x7;
+    uint16_t crd = (cqe->status >> 12) & 0x3;
+    bool more = (cqe->status & (1u << 14)) != 0;
+    bool dnr = (cqe->status & (1u << 15)) != 0;
+
+    nvme_platform_ops->log(
+        "NVMe: CQE error qid=%u cid=%u sq_head=%u sct=%u sc=%u crd=%u more=%d "
+        "dnr=%d dw0=0x%08x\n",
+        queue->queue_id, cqe->cid, cqe->sq_head, status_type, status_code, crd,
+        more, dnr, cqe->dw0);
+}
+
 static int nvme_process_queue_completions(nvme_controller_t *ctrl,
                                           nvme_queue_t *queue) {
     int count = 0;
@@ -366,6 +380,9 @@ static int nvme_process_queue_completions(nvme_controller_t *ctrl,
         success = (status_code == 0 && status_type == 0);
         cid = cqe->cid;
         result = cqe->dw0;
+
+        if (!success)
+            nvme_log_cqe_error(queue, cqe);
 
         queue->sq_head = cqe->sq_head;
         queue->cq_head++;
@@ -427,39 +444,71 @@ typedef struct {
     bool done;
     bool success;
     uint32_t result;
+    volatile uint32_t refs;
 } admin_sync_ctx_t;
 
 static void admin_sync_callback(void *ctx, bool success, uint32_t result) {
     admin_sync_ctx_t *sync_ctx = (admin_sync_ctx_t *)ctx;
-    sync_ctx->done = true;
     sync_ctx->success = success;
     sync_ctx->result = result;
+    __atomic_store_n(&sync_ctx->done, true, __ATOMIC_RELEASE);
+
+    if (__sync_sub_and_fetch(&sync_ctx->refs, 1) == 0)
+        free(sync_ctx);
 }
 
 static int nvme_admin_cmd_sync(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
                                uint32_t *result, uint32_t timeout_ms) {
-    (void)timeout_ms;
-    admin_sync_ctx_t sync_ctx = {0};
-    uint16_t cid = nvme_alloc_cid(ctrl, admin_sync_callback, &sync_ctx);
-    if (cid == 0xFFFF)
+    admin_sync_ctx_t *sync_ctx = calloc(1, sizeof(*sync_ctx));
+    if (!sync_ctx)
         return -1;
+
+    sync_ctx->refs = 2;
+
+    uint16_t cid = nvme_alloc_cid(ctrl, admin_sync_callback, sync_ctx);
+    if (cid == 0xFFFF)
+        goto error_ctx;
+
+    uint64_t start = nvme_platform_ops->get_time_ms();
+
+    if (timeout_ms == 0)
+        timeout_ms = 5000;
 
     cmd->cdw0 = (cmd->cdw0 & 0x0000FFFF) | (cid << 16);
 
     if (nvme_submit_cmd(&ctrl->admin_queue, cmd) != 0) {
         nvme_release_cid(ctrl, cid);
-        return -1;
+        goto error_ctx;
     }
 
-    while (!sync_ctx.done) {
+    while (!__atomic_load_n(&sync_ctx->done, __ATOMIC_ACQUIRE)) {
         if (!nvme_process_queue_completions(ctrl, &ctrl->admin_queue))
             arch_pause();
+
+        if (nvme_platform_ops->get_time_ms() - start > timeout_ms) {
+            nvme_platform_ops->log(
+                "NVMe: admin command opcode=0x%02x cid=%u timed out after %u "
+                "ms\n",
+                cmd->cdw0 & 0xFF, cid, timeout_ms);
+            nvme_dump_status(ctrl);
+            if (__sync_sub_and_fetch(&sync_ctx->refs, 1) == 0)
+                free(sync_ctx);
+            return -1;
+        }
     }
 
     if (result)
-        *result = sync_ctx.result;
+        *result = sync_ctx->result;
 
-    return sync_ctx.success ? 0 : -1;
+    bool success = sync_ctx->success;
+    if (__sync_sub_and_fetch(&sync_ctx->refs, 1) == 0)
+        free(sync_ctx);
+
+    return success ? 0 : -1;
+
+error_ctx:
+    free(sync_ctx);
+    return -1;
 }
 
 // Identify Controller
@@ -684,11 +733,19 @@ static int nvme_submit_io_async(nvme_controller_t *ctrl, uint8_t opcode,
                                 nvme_io_callback_t callback, void *ctx) {
     if (!ctrl || !ctrl->initialized || !buffer || block_count == 0)
         return -1;
-    if (nsid == 0 || nsid > ctrl->num_namespaces ||
-        !ctrl->namespaces[nsid - 1].valid)
+    if (nsid == 0 || nsid > ctrl->num_namespaces)
         return -1;
 
-    uint32_t block_size = ctrl->namespaces[nsid - 1].block_size;
+    nvme_namespace_t *ns = &ctrl->namespaces[nsid - 1];
+    if (!ns->valid || ns->block_size == 0 || ns->block_count == 0)
+        return -1;
+
+    if (block_count - 1 > UINT16_MAX)
+        return -1;
+    if (lba >= ns->block_count || block_count > (ns->block_count - lba))
+        return -1;
+
+    uint32_t block_size = ns->block_size;
     uint64_t transfer_size_u64 = (uint64_t)block_count * block_size;
     if (transfer_size_u64 == 0 || transfer_size_u64 > UINT32_MAX)
         return -1;
@@ -748,12 +805,18 @@ int nvme_write_async(nvme_controller_t *ctrl, uint32_t nsid, uint64_t lba,
 typedef struct nvme_callback_ctx {
     bool completed;
     bool success;
+    uint32_t result;
+    volatile uint32_t refs;
 } nvme_callback_ctx_t;
 
 void nvme_io_callback(void *ctx, bool success, uint32_t result) {
     nvme_callback_ctx_t *cb_ctx = ctx;
     cb_ctx->success = success;
-    cb_ctx->completed = true;
+    cb_ctx->result = result;
+    __atomic_store_n(&cb_ctx->completed, true, __ATOMIC_RELEASE);
+
+    if (__sync_sub_and_fetch(&cb_ctx->refs, 1) == 0)
+        free(cb_ctx);
 }
 
 typedef struct nvme_ns {
@@ -763,15 +826,32 @@ typedef struct nvme_ns {
 
 static uint64_t nvme_wait_io_done(nvme_controller_t *ctrl, nvme_queue_t *queue,
                                   nvme_callback_ctx_t *cb_ctx, uint64_t ok_ret,
-                                  const char *op_name) {
-    while (!cb_ctx->completed) {
+                                  const char *op_name, uint32_t timeout_ms) {
+    uint64_t start = nvme_platform_ops->get_time_ms();
+
+    while (!__atomic_load_n(&cb_ctx->completed, __ATOMIC_ACQUIRE)) {
         if (!nvme_process_queue_completions(ctrl, queue))
             arch_pause();
+
+        if (nvme_platform_ops->get_time_ms() - start > timeout_ms) {
+            printk("NVMe: %s command timed out after %u ms\n", op_name,
+                   timeout_ms);
+            nvme_dump_status(ctrl);
+            if (__sync_sub_and_fetch(&cb_ctx->refs, 1) == 0)
+                free(cb_ctx);
+            return 0;
+        }
     }
-    if (cb_ctx->success)
+
+    bool success = cb_ctx->success;
+    uint32_t result = cb_ctx->result;
+    if (__sync_sub_and_fetch(&cb_ctx->refs, 1) == 0)
+        free(cb_ctx);
+
+    if (success)
         return ok_ret;
 
-    printk("NVMe: %s command failed\n", op_name);
+    printk("NVMe: %s command failed, result=0x%08x\n", op_name, result);
     return 0;
 }
 
@@ -779,32 +859,38 @@ uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
     nvme_ns_t *ns = data;
     nvme_queue_t *queue = nvme_pick_io_queue(ns->ctrl);
 
-    nvme_callback_ctx_t cb_ctx;
-    cb_ctx.completed = false;
-    cb_ctx.success = false;
+    nvme_callback_ctx_t *cb_ctx = calloc(1, sizeof(*cb_ctx));
+    if (!cb_ctx)
+        return 0;
+
+    cb_ctx->refs = 2;
     int r = nvme_read_async(ns->ctrl, ns->ns->nsid, lba, size, buffer, 0,
-                            nvme_io_callback, &cb_ctx);
+                            nvme_io_callback, cb_ctx);
     if (r < 0) {
         printk("NVMe: submit read command failed\n");
+        free(cb_ctx);
         return 0;
     }
-    return nvme_wait_io_done(ns->ctrl, queue, &cb_ctx, size, "read");
+    return nvme_wait_io_done(ns->ctrl, queue, cb_ctx, size, "read", 30000);
 }
 
 uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
     nvme_ns_t *ns = data;
     nvme_queue_t *queue = nvme_pick_io_queue(ns->ctrl);
 
-    nvme_callback_ctx_t cb_ctx;
-    cb_ctx.completed = false;
-    cb_ctx.success = false;
+    nvme_callback_ctx_t *cb_ctx = calloc(1, sizeof(*cb_ctx));
+    if (!cb_ctx)
+        return 0;
+
+    cb_ctx->refs = 2;
     int r = nvme_write_async(ns->ctrl, ns->ns->nsid, lba, size, buffer, 0,
-                             nvme_io_callback, &cb_ctx);
+                             nvme_io_callback, cb_ctx);
     if (r < 0) {
         printk("NVMe: submit write command failed\n");
+        free(cb_ctx);
         return 0;
     }
-    return nvme_wait_io_done(ns->ctrl, queue, &cb_ctx, size, "write");
+    return nvme_wait_io_done(ns->ctrl, queue, cb_ctx, size, "write", 30000);
 }
 
 // Main probe function
@@ -846,8 +932,16 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
     uint32_t mpsmin = (cap >> 48) & 0xF;
     uint32_t mpsmax = (cap >> 52) & 0xF;
 
-    nvme_platform_ops->log("NVMe: CAP=%016llx, doorbell_stride=%d\n", cap,
-                           ctrl->doorbell_stride);
+    nvme_platform_ops->log(
+        "NVMe: CAP=%016llx, doorbell_stride=%d, mpsmin=%u, mpsmax=%u\n", cap,
+        ctrl->doorbell_stride, mpsmin, mpsmax);
+
+    if (mpsmin != 0) {
+        nvme_platform_ops->log(
+            "NVMe: Unsupported controller minimum page size %u KiB\n",
+            1U << mpsmin);
+        goto error;
+    }
 
     // Disable controller
     if (nvme_disable_controller(ctrl) != 0) {
@@ -884,7 +978,9 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
         goto error;
     }
 
-    ctrl->num_namespaces = id_ctrl.nn;
+    ctrl->num_namespaces =
+        MIN((uint32_t)(sizeof(ctrl->namespaces) / sizeof(ctrl->namespaces[0])),
+            id_ctrl.nn);
 
     if (id_ctrl.mdts) {
         ctrl->max_transfer_size = ((1ULL << id_ctrl.mdts) * DEFAULT_PAGE_SIZE);
@@ -921,7 +1017,7 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
     ctrl->initialized = true;
 
     // Identify namespaces
-    for (uint32_t i = 1; i <= ctrl->num_namespaces && i <= 256; i++) {
+    for (uint32_t i = 1; i <= ctrl->num_namespaces; i++) {
         nvme_identify_ns_t id_ns;
         if (nvme_identify_namespace(ctrl, i, &id_ns) == 0 && id_ns.nsze > 0) {
             ctrl->namespaces[i - 1].nsid = i;
@@ -932,6 +1028,13 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
                 ctrl->namespaces[i - 1].block_size =
                     1 << id_ns.lbaf[lba_format].lbads;
             }
+
+            if (ctrl->namespaces[i - 1].block_size == 0) {
+                nvme_platform_ops->log(
+                    "NVMe: NS%d has invalid block size, skipping\n", i);
+                continue;
+            }
+
             ctrl->namespaces[i - 1].valid = true;
 
             nvme_platform_ops->log("NVMe: NS%d: %lld blocks x %d bytes\n", i,
@@ -939,6 +1042,10 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
                                    ctrl->namespaces[i - 1].block_size);
 
             nvme_ns_t *ns = malloc(sizeof(nvme_ns_t));
+            if (!ns) {
+                nvme_platform_ops->log("NVMe: Failed to allocate namespace\n");
+                continue;
+            }
             ns->ctrl = ctrl;
             ns->ns = &ctrl->namespaces[i - 1];
 
