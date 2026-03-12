@@ -163,6 +163,7 @@ int vma_split(vma_manager_t *mgr, vma_t *vma, uint64_t addr) {
     new_vma->shm = vma->shm;
     new_vma->shm_id = vma->shm_id;
     new_vma->vm_offset = vma->vm_offset;
+    new_vma->vm_file_flags = vma->vm_file_flags;
 
     if (vma->vm_type == VMA_TYPE_FILE)
         new_vma->vm_offset += addr - vma->vm_start;
@@ -206,7 +207,8 @@ int vma_merge(vma_manager_t *mgr, vma_t *vma1, vma_t *vma2) {
         return -1;
 
     if (vma1->vm_flags != vma2->vm_flags || vma1->vm_type != vma2->vm_type ||
-        vma1->node != vma2->node || vma1->shm != vma2->shm) {
+        vma1->node != vma2->node || vma1->shm != vma2->shm ||
+        vma1->vm_file_flags != vma2->vm_file_flags) {
         return -1;
     }
 
@@ -312,6 +314,7 @@ static vma_t *vma_copy(vma_t *src) {
         vfs_node_ref_get(dst->node);
     dst->shm = src->shm;
     dst->vm_offset = src->vm_offset;
+    dst->vm_file_flags = src->vm_file_flags;
     dst->shm_id = src->shm_id;
 
     if (src->vm_name) {

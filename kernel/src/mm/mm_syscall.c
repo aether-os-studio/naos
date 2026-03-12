@@ -299,8 +299,9 @@ static int split_vma_boundaries_locked(vma_manager_t *mgr, uint64_t start,
 }
 
 static vma_t *alloc_mapping_vma(uint64_t start, uint64_t len, uint64_t prot,
-                                uint64_t map_type, bool anonymous,
-                                vfs_node_t node, uint64_t offset) {
+                                uint64_t map_type, uint64_t file_flags,
+                                bool anonymous, vfs_node_t node,
+                                uint64_t offset) {
     vma_t *vma = vma_alloc();
     if (!vma)
         return NULL;
@@ -320,6 +321,7 @@ static vma_t *alloc_mapping_vma(uint64_t start, uint64_t len, uint64_t prot,
     vma->vm_type = VMA_TYPE_FILE;
     vma->node = node;
     vma->vm_offset = offset;
+    vma->vm_file_flags = file_flags;
     if (node)
         vfs_node_ref_get(node);
 
@@ -576,6 +578,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
     }
 
     vma_t *vma = alloc_mapping_vma(start_addr, aligned_len, prot, map_type,
+                                   map_fd_ref ? map_fd_ref->flags : 0,
                                    anonymous, map_node, offset);
     if (!vma) {
         spin_unlock(&mgr->lock);
@@ -748,6 +751,7 @@ static vma_t *duplicate_vma(vma_t *src, uint64_t start, uint64_t size) {
     dst->shm = src->shm;
     dst->shm_id = src->shm_id;
     dst->vm_offset = src->vm_offset;
+    dst->vm_file_flags = src->vm_file_flags;
 
     if (dst->node)
         vfs_node_ref_get(dst->node);
@@ -767,7 +771,7 @@ static uint64_t mremap_map_new_region(vma_t *new_vma, uint64_t addr,
 
     fd_t fd = {
         .node = new_vma->node,
-        .flags = 0,
+        .flags = new_vma->vm_file_flags,
         .offset = (uint64_t)new_vma->vm_offset,
         .close_on_exec = false,
     };
@@ -891,7 +895,7 @@ static uint64_t mremap_expand_inplace_locked(vma_manager_t *mgr, vma_t *vma,
         ((vma->vm_flags & VMA_SHARED) || (vma->vm_flags & VMA_DEVICE))) {
         fd_t fd = {
             .node = vma->node,
-            .flags = 0,
+            .flags = vma->vm_file_flags,
             .offset = (uint64_t)vma->vm_offset + old_size,
             .close_on_exec = false,
         };
@@ -1083,6 +1087,9 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
                   uint64_t flags, uint64_t offset) {
     (void)flags;
 
+    if (!file || !file->node)
+        return (void *)(uint64_t)-EBADF;
+
     uint64_t final_pt_flags = PT_FLAG_U;
     if (prot & PROT_READ)
         final_pt_flags |= PT_FLAG_R;
@@ -1102,51 +1109,27 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
     map_page_range(pgdir, map_addr, (uint64_t)-1, map_len, load_pt_flags);
     spin_unlock(&mm->lock);
 
-    uint64_t cursor = addr;
     uint64_t remaining = len;
     uint64_t file_off = offset;
 
     while (remaining > 0) {
-        uint64_t page_va = PADDING_DOWN(cursor, DEFAULT_PAGE_SIZE);
-        spin_lock(&mm->lock);
-        uint64_t page_paddr = translate_address(pgdir, page_va);
-        spin_unlock(&mm->lock);
-        if (!page_paddr) {
+        ssize_t ret = vfs_read_fd(file, (void *)(addr + (len - remaining)),
+                                  file_off, remaining);
+        if (ret < 0) {
             spin_lock(&mm->lock);
             unmap_page_range(pgdir, map_addr, map_len);
             spin_unlock(&mm->lock);
-            return (void *)(uint64_t)-ENOMEM;
+            printk("Failed read file for mmap: node=%s file_off=%lu req=%lu "
+                   "ret=%ld\n",
+                   file->node->name ? file->node->name : "<anon>", file_off,
+                   remaining, ret);
+            return (void *)ret;
         }
-
-        uint64_t in_page = cursor - page_va;
-        uint64_t chunk = DEFAULT_PAGE_SIZE - in_page;
-        if (chunk > remaining)
-            chunk = remaining;
-
-        uint64_t loaded = 0;
-        while (loaded < chunk) {
-            ssize_t ret =
-                vfs_read(file->node,
-                         (void *)(phys_to_virt(page_paddr) + in_page + loaded),
-                         file_off + loaded, chunk - loaded);
-            if (ret < 0) {
-                spin_lock(&mm->lock);
-                unmap_page_range(pgdir, map_addr, map_len);
-                spin_unlock(&mm->lock);
-                printk("Failed read file for mmap\n");
-                return (void *)ret;
-            }
-            if (ret == 0)
-                break;
-            loaded += (uint64_t)ret;
-        }
-
-        cursor += loaded;
-        file_off += loaded;
-        remaining -= loaded;
-
-        if (loaded < chunk)
+        if (ret == 0)
             break;
+
+        file_off += (uint64_t)ret;
+        remaining -= (uint64_t)ret;
     }
 
     if (load_pt_flags != final_pt_flags) {

@@ -15,12 +15,14 @@ export SDL_VIDEODRIVER=x11
 export SDL_AUDIODRIVER=dummy
 
 mkdir -p /tmp/.X11-unix
+mkdir -p /tmp/.ICE-unix
 mkdir -p $HOME/.config/dconf
 mkdir -p /run/dbus
 mkdir -p /var/lib/dbus
 mkdir -p $XDG_RUNTIME_DIR
 
-chmod 01700 /tmp/.X11-unix
+chmod 0777 /tmp/.X11-unix
+chmod 0777 /tmp/.ICE-unix
 chmod 0700 $XDG_RUNTIME_DIR
 
 dbus-daemon --system --fork
@@ -28,5 +30,4 @@ dbus-uuidgen --ensure
 
 udevd &
 
-seatd &
-exec weston --xwayland
+exec dbus-run-session seatd-launch -- weston --xwayland

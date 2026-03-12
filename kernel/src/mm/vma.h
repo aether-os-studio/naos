@@ -31,6 +31,7 @@ typedef struct vma {
     struct vfs_node *node;  // 文件描述符
     shm_t *shm;             // 共享内存指针
     int64_t vm_offset;      // 文件偏移量
+    uint64_t vm_file_flags; // 打开文件时的 fd flags
     int shm_id;             // 共享内存ID
     char *vm_name;          // VMA名
     rb_node_t vm_rb;        // 红黑树节点

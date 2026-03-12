@@ -542,6 +542,7 @@ static int register_elf_load_vma(task_t *task, vfs_node_t node,
     vma->vm_flags = elf_segment_vma_flags(phdr->p_flags);
     vma->vm_type = VMA_TYPE_FILE;
     vma->vm_offset = aligned_offset;
+    vma->vm_file_flags = 0;
     vma->node = node;
     if (node)
         vfs_node_ref_get(node);
@@ -623,7 +624,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     }
     new_envp[envp_count] = NULL;
 
-    uint8_t header_buf[256];
+    uint8_t header_buf[1024];
     ssize_t header_read;
     int shebang_depth = 0;
 

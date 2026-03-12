@@ -10,6 +10,7 @@ typedef struct fault_vma_snapshot {
     vma_type_t vm_type;
     vfs_node_t node;
     int64_t vm_offset;
+    uint64_t vm_file_flags;
 } fault_vma_snapshot_t;
 
 static uint64_t vm_flags_to_pt_flags(uint64_t vm_flags) {
@@ -67,7 +68,8 @@ static bool fault_vma_matches_snapshot(vma_t *vma,
            vma->vm_end == snapshot->vm_end &&
            vma->vm_flags == snapshot->vm_flags &&
            vma->vm_type == snapshot->vm_type && vma->node == snapshot->node &&
-           vma->vm_offset == snapshot->vm_offset;
+           vma->vm_offset == snapshot->vm_offset &&
+           vma->vm_file_flags == snapshot->vm_file_flags;
 }
 
 static page_fault_result_t
@@ -96,10 +98,16 @@ map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
     memset((void *)phys_to_virt(page_paddr), 0, DEFAULT_PAGE_SIZE);
 
     size_t loaded = 0;
+    fd_t fd = {
+        .node = snapshot->node,
+        .flags = snapshot->vm_file_flags,
+        .offset = file_off,
+        .close_on_exec = false,
+    };
     while (loaded < read_size) {
-        ssize_t ret = vfs_read(snapshot->node,
-                               (void *)(phys_to_virt(page_paddr) + loaded),
-                               file_off + loaded, read_size - loaded);
+        ssize_t ret =
+            vfs_read_fd(&fd, (void *)(phys_to_virt(page_paddr) + loaded),
+                        file_off + loaded, read_size - loaded);
         if (ret < 0) {
             address_release(page_paddr);
             return PF_RES_SEGF;
@@ -268,6 +276,7 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
             .vm_type = vma->vm_type,
             .node = vma->node,
             .vm_offset = vma->vm_offset,
+            .vm_file_flags = vma->vm_file_flags,
         };
         if (snapshot.node)
             vfs_node_ref_get(snapshot.node);
