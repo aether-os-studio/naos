@@ -818,7 +818,7 @@ NV_STATUS NV_API_CALL os_get_euid(NvU32 *pEuid) {
     if (!pEuid) {
         return NV_ERR_INVALID_ARGUMENT;
     }
-    *pEuid = current_task ? (NvU32)current_task->uid : 0;
+    *pEuid = current_task ? (NvU32)current_task->euid : 0;
     return NV_OK;
 }
 NV_STATUS NV_API_CALL os_get_smbios_header(NvU64 *pSmbsAddr) {

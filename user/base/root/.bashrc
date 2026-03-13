@@ -14,10 +14,6 @@ if [ -z "${TERM}" ] || [ "${TERM}" == "dumb" ]; then
 	export TERM=linux
 fi
 
-export PATH="/bin:/usr/bin:/usr/sbin:/sbin:/bin:/usr/local/bin:/usr/local/sbin"
-export SHELL="/bin/bash"
-export HOME="/root"
-
 export SDL_AUDIODRIVER=dummy
 
 export XDG_CONFIG_HOME=$HOME/.config

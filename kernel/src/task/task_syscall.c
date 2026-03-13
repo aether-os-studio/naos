@@ -408,6 +408,10 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
                     uint64_t e_entry, uint64_t phdr, uint64_t phnum,
                     uint64_t at_base, const char *execfn) {
     uint64_t tmp_stack = current_stack;
+    uint64_t arg_low = UINT64_MAX;
+    uint64_t arg_high = 0;
+    uint64_t env_low = UINT64_MAX;
+    uint64_t env_high = 0;
 
     const char *execfn_name = execfn ? execfn : task->name;
     size_t name_len = strlen(execfn_name) + 1;
@@ -428,6 +432,10 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
             size_t len = strlen(envp[i]) + 1;
             PUSH_BYTES_TO_STACK(tmp_stack, envp[i], len);
             envp_addrs[i] = tmp_stack;
+            if (tmp_stack < env_low)
+                env_low = tmp_stack;
+            if (tmp_stack + len > env_high)
+                env_high = tmp_stack + len;
         }
     }
 
@@ -440,6 +448,10 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
             size_t len = strlen(argv[i]) + 1;
             PUSH_BYTES_TO_STACK(tmp_stack, argv[i], len);
             argv_addrs[i] = tmp_stack;
+            if (tmp_stack < arg_low)
+                arg_low = tmp_stack;
+            if (tmp_stack + len > arg_high)
+                arg_high = tmp_stack + len;
         }
     }
 
@@ -448,16 +460,14 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
     task->env_start = 0;
     task->env_end = 0;
 
-    if (argv_count > 0 && argv_addrs != NULL) {
-        task->arg_start = argv_addrs[0];
-        task->arg_end =
-            argv_addrs[argv_count - 1] + strlen(argv[argv_count - 1]) + 1;
+    if (argv_count > 0 && argv_addrs != NULL && arg_low < arg_high) {
+        task->arg_start = arg_low;
+        task->arg_end = arg_high;
     }
 
-    if (envp_count > 0 && envp_addrs != NULL) {
-        task->env_start = envp_addrs[0];
-        task->env_end =
-            envp_addrs[envp_count - 1] + strlen(envp[envp_count - 1]) + 1;
+    if (envp_count > 0 && envp_addrs != NULL && env_low < env_high) {
+        task->env_start = env_low;
+        task->env_end = env_high;
     }
 
     const size_t auxv_pairs = 15;

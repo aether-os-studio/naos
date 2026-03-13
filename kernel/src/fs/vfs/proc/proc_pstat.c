@@ -57,12 +57,12 @@ char *proc_gen_stat_file(task_t *task, size_t *content_len) {
                 0,                                     // cguest_time
                 0,                                     // start_data
                 0,                                     // end_data
-                0,                                     // start_brk
-                0,                                     // arg_start
-                0,                                     // arg_end
-                0,                                     // env_start
-                0,                                     // env_end
-                0                                      // exit_code
+                task->mm->brk_start,                   // start_brk
+                task->arg_start,                       // arg_start
+                task->arg_end,                         // arg_end
+                task->env_start,                       // env_start
+                task->env_end,                         // env_end
+                task->status                           // exit_code
         );
 
     *content_len = len;

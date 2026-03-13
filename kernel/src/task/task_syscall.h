@@ -208,8 +208,17 @@ uint64_t sys_setpgid(uint64_t pid, uint64_t pgid);
 
 static inline uint64_t sys_getuid() { return current_task->uid; }
 
+static inline int64_t cred_keep_or_set(int value, int64_t current) {
+    return value == -1 ? current : value;
+}
+
 static inline uint64_t sys_setuid(uint64_t uid) {
+    if (uid == (uint64_t)-1)
+        return (uint64_t)-EINVAL;
+
     current_task->uid = uid;
+    current_task->euid = uid;
+    current_task->suid = uid;
     return 0;
 }
 
@@ -242,16 +251,20 @@ static inline uint64_t sys_getresuid(int *ruid, int *euid, int *suid) {
 }
 
 static inline uint64_t sys_setresuid(int ruid, int euid, int suid) {
-    current_task->uid = ruid;
-    current_task->euid = euid;
-    current_task->suid = suid;
+    current_task->uid = cred_keep_or_set(ruid, current_task->uid);
+    current_task->euid = cred_keep_or_set(euid, current_task->euid);
+    current_task->suid = cred_keep_or_set(suid, current_task->suid);
 
     return 0;
 }
 
 static inline uint64_t sys_setreuid(int ruid, int euid) {
-    current_task->uid = ruid;
-    current_task->euid = euid;
+    int64_t old_ruid = current_task->uid;
+
+    current_task->uid = cred_keep_or_set(ruid, current_task->uid);
+    current_task->euid = cred_keep_or_set(euid, current_task->euid);
+    if (ruid != -1 || (euid != -1 && current_task->euid != old_ruid))
+        current_task->suid = current_task->euid;
 
     return 0;
 }
@@ -279,22 +292,31 @@ static inline uint64_t sys_getresgid(int *rgid, int *egid, int *sgid) {
 }
 
 static inline uint64_t sys_setresgid(int rgid, int egid, int sgid) {
-    current_task->gid = rgid;
-    current_task->egid = egid;
-    current_task->sgid = sgid;
+    current_task->gid = cred_keep_or_set(rgid, current_task->gid);
+    current_task->egid = cred_keep_or_set(egid, current_task->egid);
+    current_task->sgid = cred_keep_or_set(sgid, current_task->sgid);
 
     return 0;
 }
 
 static inline uint64_t sys_setregid(int rgid, int egid) {
-    current_task->gid = rgid;
-    current_task->egid = egid;
+    int64_t old_rgid = current_task->gid;
+
+    current_task->gid = cred_keep_or_set(rgid, current_task->gid);
+    current_task->egid = cred_keep_or_set(egid, current_task->egid);
+    if (rgid != -1 || (egid != -1 && current_task->egid != old_rgid))
+        current_task->sgid = current_task->egid;
 
     return 0;
 }
 
 static inline uint64_t sys_setgid(uint64_t gid) {
+    if (gid == (uint64_t)-1)
+        return (uint64_t)-EINVAL;
+
     current_task->gid = gid;
+    current_task->egid = gid;
+    current_task->sgid = gid;
     return 0;
 }
 

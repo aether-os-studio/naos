@@ -32,7 +32,8 @@ size_t procfs_task_region_read(task_t *task, uint64_t start, uint64_t end,
     size_t copied = 0;
 
     while (copied < remain) {
-        uint64_t pa = translate_address(page_table, va);
+        uint64_t page_va = PADDING_DOWN(va, DEFAULT_PAGE_SIZE);
+        uint64_t pa = translate_address(page_table, page_va);
         if (!pa)
             break;
 

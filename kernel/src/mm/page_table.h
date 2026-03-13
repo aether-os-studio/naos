@@ -22,6 +22,11 @@ typedef struct task_mm_info task_mm_info_t;
 task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags);
 void free_page_table(task_mm_info_t *directory);
 
+/*
+ * Returns the physical address corresponding to vaddr, including the page
+ * offset from vaddr itself. Callers that need a page base must pass an
+ * aligned virtual address explicitly.
+ */
 uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr);
 
 uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
