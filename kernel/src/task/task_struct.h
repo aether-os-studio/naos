@@ -267,6 +267,7 @@ typedef struct task {
     struct llist_header free_node;
     struct llist_header parent_node;
     struct llist_header pgid_node;
+    struct llist_header tick_work_node;
     uint64_t pid;
     uint64_t ppid;
     int64_t uid;
@@ -318,5 +319,6 @@ typedef struct task {
     bool is_clone;
     bool child_vfork_done;
     bool wake_pending;
+    bool tick_work_queued;
     bool timeout_queued;
 } task_t;

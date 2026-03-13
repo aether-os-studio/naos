@@ -4,28 +4,7 @@
 #include <task/task.h>
 #include <task/sched.h>
 
-void kernel_thread_func();
-asm("kernel_thread_func:\n\t"
-    "    popq %r15\n\t"
-    "    popq %r14\n\t"
-    "    popq %r13\n\t"
-    "    popq %r12\n\t"
-    "    popq %r11\n\t"
-    "    popq %r10\n\t"
-    "    popq %r9\n\t"
-    "    popq %r8\n\t"
-    "    popq %rbx\n\t"
-    "    popq %rcx\n\t"
-    "    popq %rdx\n\t"
-    "    popq %rsi\n\t"
-    "    popq %rdi\n\t"
-    "    popq %rbp\n\t"
-    "    popq %rax\n\t"
-    "    addq $0x40, %rsp\n\t"
-    "    movq %rdx, %rdi\n\t"
-    "    callq *%rbx\n\t"
-    "    movq $0, %rdi\n\t"
-    "    callq task_exit\n\t");
+extern void kernel_thread_func();
 
 extern void ret_to_user();
 
@@ -113,7 +92,7 @@ extern tss_t tss[MAX_CPU_NUM];
 
 void __switch_to(task_t *prev, task_t *next) {
     prev->arch_context->fsbase = read_fsbase();
-    prev->arch_context->gsbase = read_gsbase();
+    // prev->arch_context->gsbase = read_gsbase();
 
     if (prev->arch_context->fpu_ctx) {
         asm volatile("fxsave (%0)" ::"r"(prev->arch_context->fpu_ctx));
@@ -121,12 +100,12 @@ void __switch_to(task_t *prev, task_t *next) {
 
     tss[current_cpu_id].rsp0 = next->kernel_stack;
 
-    write_fsbase(next->arch_context->fsbase);
-    // write_gsbase(next->arch_context->gsbase);
-
     if (next->arch_context->fpu_ctx) {
         asm volatile("fxrstor (%0)" ::"r"(next->arch_context->fpu_ctx));
     }
+
+    write_fsbase(next->arch_context->fsbase);
+    // write_gsbase(next->arch_context->gsbase);
 }
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,

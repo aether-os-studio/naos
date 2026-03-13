@@ -9,6 +9,7 @@ irq_action_t actions[ARCH_MAX_IRQ_NUM] = {0};
 irq_ipi_send_fn_t ipi_send_fns[ARCH_MAX_IRQ_NUM] = {0};
 uint64_t sched_ipi_irq = ARCH_MAX_IRQ_NUM;
 
+extern bool system_initialized;
 extern bool can_schedule;
 
 void do_irq(struct pt_regs *regs, uint64_t irq_num) {
@@ -33,11 +34,25 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num) {
 
     task_t *self = current_task;
 
-    if (irq_num == ARCH_TIMER_IRQ && self->cpu_id == 0) {
-        sched_check_wakeup();
-    }
+    if (irq_num == ARCH_TIMER_IRQ && self) {
+        if (system_initialized) {
+            sched_defer_tick();
+        }
 
-    softirq_handle_pending();
+        if (self->cpu_id == 0) {
+            sched_check_wakeup();
+
+            if (system_initialized && softirq_has_pending()) {
+                sched_wake_worker(0);
+            }
+        }
+
+        if (!system_initialized) {
+            softirq_handle_pending();
+        }
+    } else if (!system_initialized) {
+        softirq_handle_pending();
+    }
 
     uint64_t current_sched_ipi =
         __atomic_load_n(&sched_ipi_irq, __ATOMIC_ACQUIRE);

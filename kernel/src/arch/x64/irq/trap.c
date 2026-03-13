@@ -223,8 +223,8 @@ void dump_regs(struct pt_regs *regs, const char *error_str, ...) {
 
     traceback(regs);
 
-    printk("current_task->pid = %d, current_task->name = %s\n",
-           current_task->pid, current_task->name);
+    printk("current_task->pid = %d, cpu_id = %d, current_task->name = %s\n",
+           current_task->pid, current_task->cpu_id, current_task->name);
 
     printk("RIP = %#018lx\n", regs->rip);
     printk("RAX = %#018lx, RBX = %#018lx\n", regs->rax, regs->rbx);

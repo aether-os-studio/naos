@@ -168,8 +168,8 @@ static inline uint64_t task_effective_wait_parent_pid(task_t *task) {
     return task->tgid > 0 ? (uint64_t)task->tgid : task->pid;
 }
 
-void sched_update_itimer();
-void sched_update_timerfd();
+void sched_defer_tick(void);
+void sched_wake_worker(uint32_t cpu_id);
 void sched_check_wakeup();
 void task_timerfd_track_fd(task_t *task, fd_t *fd);
 void task_timerfd_untrack_fd(task_t *task, fd_t *fd);

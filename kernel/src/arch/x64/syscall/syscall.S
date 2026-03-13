@@ -28,7 +28,6 @@ ENTRY(syscall_handler_asm)
     pushq %r14
     pushq %r15
 
-    xorq %rbp, %rbp
     movq %rsp, %rdi
 
     movq %gs:0x8, %rsi

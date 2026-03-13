@@ -62,7 +62,7 @@ export CC_IS_CLANG := $(shell ! $(CC) --version 2>/dev/null | grep 'clang' >/dev
 
 KVM ?= 0
 HVF ?= 0
-SMP ?= 2
+SMP ?= 4
 MEM ?= 8G
 SER ?= 0
 MON ?= 0
@@ -115,8 +115,11 @@ all: $(IMAGE_NAME).img rootfs-$(ARCH).img
 .PHONY: all
 all-single: single-$(IMAGE_NAME).img
 
-prepare: libgcc_$(ARCH).a
+prepare: libgcc_$(ARCH).a liballoc_$(ARCH).a
 	./kernel/get-deps
+
+liballoc_$(ARCH).a:
+	wget https://github.com/plos-clan/liballoc/releases/download/release/liballoc-$(ARCH).a -O liballoc_$(ARCH).a
 
 libgcc_$(ARCH).a:
 	wget https://github.com/osdev0/libgcc-binaries/releases/download/$(LIBGCC_VERSION)/libgcc-$(ARCH).a -O libgcc_$(ARCH).a
@@ -148,7 +151,7 @@ distclean:
 clippy:
 	$(MAKE) -C kernel clippy
 
-ROOTFS_IMG_SIZE ?= 2048
+ROOTFS_IMG_SIZE ?= 4096
 ROOTFS_EXT_BLOCK_SIZE ?= 1024
 ROOTFS_EXT_DISABLE_FEATURES := ^has_journal,^extent,^64bit,^metadata_csum,^dir_index,^flex_bg,^huge_file,^dir_nlink,^extra_isize,^quota,^metadata_csum_seed,^orphan_file,^project,^encrypt,^verity,^casefold,^inline_data,^ea_inode,^bigalloc,^mmp,^fast_commit,^sparse_super2
 

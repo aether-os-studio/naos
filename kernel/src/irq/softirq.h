@@ -12,4 +12,5 @@ typedef void (*softirq_handler_t)(void);
 void softirq_init(void);
 void softirq_register(softirq_id_t id, softirq_handler_t handler);
 void softirq_raise(softirq_id_t id);
+bool softirq_has_pending(void);
 void softirq_handle_pending(void);

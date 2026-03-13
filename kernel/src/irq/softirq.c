@@ -26,6 +26,10 @@ void softirq_raise(softirq_id_t id) {
     __atomic_fetch_or(&softirq_pending, 1ULL << id, __ATOMIC_ACQ_REL);
 }
 
+bool softirq_has_pending(void) {
+    return __atomic_load_n(&softirq_pending, __ATOMIC_ACQUIRE) != 0;
+}
+
 void softirq_handle_pending(void) {
     spin_lock(&softirq_exec_lock);
 
