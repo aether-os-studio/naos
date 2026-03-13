@@ -329,5 +329,6 @@ typedef struct task {
     bool child_vfork_done;
     bool wake_pending;
     bool tick_work_queued;
+    uint32_t tick_work_queue_id;
     bool timeout_queued;
 } task_t;

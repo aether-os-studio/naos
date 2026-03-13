@@ -5,6 +5,8 @@
 #include <mm/bitmap.h>
 #include <irq/softirq.h>
 
+extern void timerfd_check_wakeup(void);
+
 irq_action_t actions[ARCH_MAX_IRQ_NUM] = {0};
 irq_ipi_send_fn_t ipi_send_fns[ARCH_MAX_IRQ_NUM] = {0};
 uint64_t sched_ipi_irq = ARCH_MAX_IRQ_NUM;
@@ -41,10 +43,11 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num) {
 
         if (self->cpu_id == 0) {
             sched_check_wakeup();
+            timerfd_check_wakeup();
+        }
 
-            if (system_initialized && softirq_has_pending()) {
-                sched_wake_worker(0);
-            }
+        if (system_initialized && softirq_has_pending()) {
+            sched_wake_worker(self->cpu_id);
         }
 
         if (!system_initialized) {

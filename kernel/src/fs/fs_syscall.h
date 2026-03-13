@@ -324,9 +324,22 @@ uint64_t sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
                           size_t sigsetsize);
 uint64_t sys_epoll_create1(int flags);
 
+struct timerfd_timespec {
+    long long tv_sec;
+    long tv_nsec;
+};
+
+struct itimerspec {
+    struct timerfd_timespec it_interval;
+    struct timerfd_timespec it_value;
+};
+
 #define EFD_CLOEXEC 02000000
 #define EFD_NONBLOCK 04000
 #define EFD_SEMAPHORE 00000001
+
+#define TFD_CLOEXEC O_CLOEXEC
+#define TFD_NONBLOCK O_NONBLOCK
 
 typedef struct eventfd {
     vfs_node_t node;
@@ -407,6 +420,8 @@ typedef struct {
     uint64_t count;
     int flags;
     vfs_node_t node;
+    rb_node_t timeout_node;
+    bool timeout_queued;
 } timerfd_t;
 
 #define TFD_TIMER_ABSTIME (1 << 0)
@@ -414,8 +429,10 @@ typedef struct {
 
 uint64_t sys_timerfd_create(int clockid, int flags);
 uint64_t sys_timerfd_settime(int fd, int flags,
-                             const struct itimerval *new_value,
-                             struct itimerval *old_v);
+                             const struct itimerspec *new_value,
+                             struct itimerspec *old_v);
+void timerfd_check_wakeup(void);
+void timerfd_softirq(void);
 
 uint64_t sys_memfd_create(const char *name, unsigned int flags);
 

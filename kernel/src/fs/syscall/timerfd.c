@@ -1,13 +1,170 @@
 #include <fs/fs_syscall.h>
 #include <fs/vfs/proc.h>
 #include <arch/arch.h>
+#include <irq/softirq.h>
 #include <libs/klibc.h>
+#include <libs/rbtree.h>
 #include <task/signal.h>
 
 int timerfdfs_id = 0;
+static rb_root_t timerfd_mono_root = RB_ROOT_INIT;
+static rb_root_t timerfd_real_root = RB_ROOT_INIT;
+static spinlock_t timerfd_lock = SPIN_INIT;
+
+static uint64_t get_current_time_ns(int clock_type);
+
+static inline rb_root_t *timerfd_root_for_clock(int clock_type) {
+    return clock_type == CLOCK_REALTIME ? &timerfd_real_root
+                                        : &timerfd_mono_root;
+}
+
+static inline int timerfd_cmp(timerfd_t *left, timerfd_t *right) {
+    if (left->timer.expires < right->timer.expires)
+        return -1;
+    if (left->timer.expires > right->timer.expires)
+        return 1;
+    if ((uint64_t)(uintptr_t)left->node < (uint64_t)(uintptr_t)right->node)
+        return -1;
+    if ((uint64_t)(uintptr_t)left->node > (uint64_t)(uintptr_t)right->node)
+        return 1;
+    return 0;
+}
+
+static inline timerfd_t *timerfd_first_locked(rb_root_t *root) {
+    rb_node_t *first = rb_first(root);
+    return first ? rb_entry(first, timerfd_t, timeout_node) : NULL;
+}
+
+static void timerfd_timeout_remove_locked(timerfd_t *tfd) {
+    if (!tfd || !tfd->timeout_queued)
+        return;
+
+    rb_erase(&tfd->timeout_node, timerfd_root_for_clock(tfd->timer.clock_type));
+    memset(&tfd->timeout_node, 0, sizeof(tfd->timeout_node));
+    tfd->timeout_queued = false;
+}
+
+static void timerfd_timeout_add_locked(timerfd_t *tfd) {
+    if (!tfd || !tfd->node || !tfd->timer.expires || tfd->timeout_queued)
+        return;
+
+    rb_root_t *root = timerfd_root_for_clock(tfd->timer.clock_type);
+    rb_node_t **slot = &root->rb_node;
+    rb_node_t *parent = NULL;
+
+    while (*slot) {
+        timerfd_t *curr = rb_entry(*slot, timerfd_t, timeout_node);
+        int cmp = timerfd_cmp(tfd, curr);
+        parent = *slot;
+        if (cmp < 0)
+            slot = &(*slot)->rb_left;
+        else
+            slot = &(*slot)->rb_right;
+    }
+
+    tfd->timeout_node.rb_left = NULL;
+    tfd->timeout_node.rb_right = NULL;
+    rb_set_parent(&tfd->timeout_node, parent);
+    rb_set_color(&tfd->timeout_node, KRB_RED);
+    *slot = &tfd->timeout_node;
+    rb_insert_color(&tfd->timeout_node, root);
+    tfd->timeout_queued = true;
+}
+
+static bool timerfd_update_due_locked(timerfd_t *tfd, uint64_t now) {
+    if (!tfd || !tfd->timer.expires || now < tfd->timer.expires)
+        return false;
+
+    if (tfd->timer.interval) {
+        uint64_t delta = now - tfd->timer.expires;
+        uint64_t periods = delta / tfd->timer.interval + 1;
+        tfd->count += periods;
+        tfd->timer.expires += periods * tfd->timer.interval;
+    } else {
+        tfd->count++;
+        tfd->timer.expires = 0;
+    }
+
+    return true;
+}
+
+static bool timerfd_update_due_requeue_locked(timerfd_t *tfd, uint64_t now) {
+    if (!tfd || !tfd->timer.expires || now < tfd->timer.expires)
+        return false;
+
+    bool was_queued = tfd->timeout_queued;
+    if (was_queued)
+        timerfd_timeout_remove_locked(tfd);
+
+    bool changed = timerfd_update_due_locked(tfd, now);
+    timerfd_timeout_add_locked(tfd);
+    return changed;
+}
+
+void timerfd_check_wakeup(void) {
+    bool raise = false;
+
+    spin_lock(&timerfd_lock);
+    timerfd_t *mono = timerfd_first_locked(&timerfd_mono_root);
+    if (mono && mono->timer.expires <= nano_time()) {
+        raise = true;
+    } else {
+        timerfd_t *real = timerfd_first_locked(&timerfd_real_root);
+        if (real) {
+            uint64_t now_real = get_current_time_ns(CLOCK_REALTIME);
+            if (real->timer.expires <= now_real)
+                raise = true;
+        }
+    }
+    spin_unlock(&timerfd_lock);
+
+    if (raise)
+        softirq_raise(SOFTIRQ_TIMERFD);
+}
+
+void timerfd_softirq(void) {
+    while (true) {
+        vfs_node_t notify_node = NULL;
+
+        spin_lock(&timerfd_lock);
+
+        timerfd_t *tfd = timerfd_first_locked(&timerfd_mono_root);
+        uint64_t now = nano_time();
+        if (!tfd || tfd->timer.expires > now) {
+            tfd = timerfd_first_locked(&timerfd_real_root);
+            if (!tfd) {
+                spin_unlock(&timerfd_lock);
+                return;
+            }
+
+            now = get_current_time_ns(CLOCK_REALTIME);
+            if (tfd->timer.expires > now) {
+                spin_unlock(&timerfd_lock);
+                return;
+            }
+        }
+
+        timerfd_timeout_remove_locked(tfd);
+        if (timerfd_update_due_locked(tfd, now)) {
+            notify_node = tfd->node;
+            if (notify_node)
+                vfs_node_ref_get(notify_node);
+        }
+        timerfd_timeout_add_locked(tfd);
+
+        spin_unlock(&timerfd_lock);
+
+        if (notify_node) {
+            vfs_poll_notify(notify_node, EPOLLIN);
+            vfs_node_ref_put(notify_node, NULL);
+        }
+    }
+}
 
 uint64_t sys_timerfd_create(int clockid, int flags) {
-    // 参数检查
+    if (flags & ~(TFD_NONBLOCK | TFD_CLOEXEC))
+        return -EINVAL;
+
     if (clockid != CLOCK_REALTIME && clockid != CLOCK_MONOTONIC)
         return -EINVAL;
 
@@ -47,7 +204,8 @@ uint64_t sys_timerfd_create(int clockid, int flags) {
         memset(new_fd, 0, sizeof(fd_t));
         new_fd->node = node;
         new_fd->offset = 0;
-        new_fd->flags = flags;
+        new_fd->flags = flags & (TFD_NONBLOCK | TFD_CLOEXEC);
+        new_fd->close_on_exec = !!(flags & TFD_CLOEXEC);
         current_task->fd_info->fds[fd] = new_fd;
         task_timerfd_track_fd(current_task, new_fd);
         procfs_on_open_file(current_task, fd);
@@ -69,60 +227,84 @@ static uint64_t get_current_time_ns(int clock_type) {
     } else {                // CLOCK_REALTIME
         tm time;
         time_read(&time);
-        return (uint64_t)mktime(&time) * 1000000000ULL;
+        return (uint64_t)mktime(&time) * 1000000000ULL +
+               (nano_time() % 1000000000);
     }
 }
 
 uint64_t sys_timerfd_settime(int fd, int flags,
-                             const struct itimerval *new_value,
-                             struct itimerval *old_value) {
+                             const struct itimerspec *new_value,
+                             struct itimerspec *old_value) {
     if (fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
+    if (!new_value)
+        return -EINVAL;
+    if (flags & ~(TFD_TIMER_ABSTIME | TFD_TIMER_CANCEL_ON_SET))
+        return -EINVAL;
+    if (new_value->it_value.tv_sec < 0 || new_value->it_value.tv_nsec < 0 ||
+        new_value->it_interval.tv_sec < 0 ||
+        new_value->it_interval.tv_nsec < 0 ||
+        new_value->it_value.tv_nsec >= 1000000000L ||
+        new_value->it_interval.tv_nsec >= 1000000000L) {
+        return -EINVAL;
+    }
 
     vfs_node_t node = current_task->fd_info->fds[fd]->node;
     timerfd_t *tfd = node->handle;
+    if (!tfd)
+        return -EBADF;
 
-    // 保存旧值
+    int clock_type = tfd->timer.clock_type;
+    bool notify_readable = false;
+    bool raise_softirq = false;
+
+    spin_lock(&timerfd_lock);
+    timerfd_timeout_remove_locked(tfd);
+
     if (old_value) {
-        uint64_t now = get_current_time_ns(tfd->timer.clock_type);
+        uint64_t now = get_current_time_ns(clock_type);
         uint64_t remaining =
             tfd->timer.expires > now ? tfd->timer.expires - now : 0;
 
         old_value->it_interval.tv_sec = tfd->timer.interval / 1000000000ULL;
-        old_value->it_interval.tv_usec =
-            (tfd->timer.interval % 1000000000ULL) / 1000ULL;
+        old_value->it_interval.tv_nsec = tfd->timer.interval % 1000000000ULL;
         old_value->it_value.tv_sec = remaining / 1000000000ULL;
-        old_value->it_value.tv_usec = (remaining % 1000000000ULL) / 1000ULL;
+        old_value->it_value.tv_nsec = remaining % 1000000000ULL;
     }
 
-    // 设置新值
     uint64_t interval = new_value->it_interval.tv_sec * 1000000000ULL +
-                        new_value->it_interval.tv_usec * 1000ULL;
+                        (uint64_t)new_value->it_interval.tv_nsec;
     uint64_t value = new_value->it_value.tv_sec * 1000000000ULL +
-                     new_value->it_value.tv_usec * 1000ULL;
+                     (uint64_t)new_value->it_value.tv_nsec;
 
-    uint64_t expires;
+    uint64_t expires = 0;
 
     if (flags & TFD_TIMER_ABSTIME) {
-        // 绝对时间：直接使用提供的值
-        tfd->timer.clock_type = CLOCK_REALTIME;
         expires = value;
     } else {
-        // 相对时间：当前时间 + 提供的值
-        tfd->timer.clock_type = CLOCK_MONOTONIC;
-        uint64_t now = value ? get_current_time_ns(tfd->timer.clock_type) : 0;
+        uint64_t now = value ? get_current_time_ns(clock_type) : 0;
         expires = now + value;
     }
 
     tfd->timer.expires = expires;
     tfd->timer.interval = interval;
-    // 只有在解除定时器（value为0）时才重置count
     if (value == 0) {
         tfd->count = 0;
     }
-    if (tfd->count > 0) {
-        vfs_poll_notify(node, EPOLLIN);
+    timerfd_timeout_add_locked(tfd);
+    if (tfd->timer.expires) {
+        uint64_t now = get_current_time_ns(clock_type);
+        if (tfd->timer.expires <= now)
+            raise_softirq = true;
     }
+    notify_readable = tfd->count > 0;
+    spin_unlock(&timerfd_lock);
+
+    if (notify_readable)
+        vfs_poll_notify(node, EPOLLIN);
+    vfs_poll_notify(node, EPOLLOUT);
+    if (raise_softirq)
+        softirq_raise(SOFTIRQ_TIMERFD);
 
     return 0;
 }
@@ -131,6 +313,11 @@ bool timerfd_close(vfs_node_t node) {
     timerfd_t *tfd = node ? node->handle : NULL;
     if (!tfd)
         return true;
+
+    spin_lock(&timerfd_lock);
+    timerfd_timeout_remove_locked(tfd);
+    spin_unlock(&timerfd_lock);
+
     free(tfd);
     return true;
 }
@@ -142,11 +329,14 @@ int timerfd_poll(vfs_node_t node, size_t events) {
 
     int revents = 0;
 
-    if (events & EPOLLIN) {
-        if (tfd->count > 0) {
-            revents |= EPOLLIN;
-        }
+    spin_lock(&timerfd_lock);
+    if (tfd->timer.expires) {
+        uint64_t now = get_current_time_ns(tfd->timer.clock_type);
+        (void)timerfd_update_due_requeue_locked(tfd, now);
     }
+    if ((events & EPOLLIN) && tfd->count > 0)
+        revents |= EPOLLIN;
+    spin_unlock(&timerfd_lock);
 
     return revents;
 }
@@ -155,55 +345,65 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     void *file = fd->node->handle;
     timerfd_t *tfd = file;
 
-    // 检查是否有待处理的超时事件
-    if (tfd->count == 0) {
-        uint64_t now = get_current_time_ns(tfd->timer.clock_type);
+    for (;;) {
+        uint64_t count = 0;
+        uint64_t expires = 0;
+        int clock_type = CLOCK_MONOTONIC;
 
-        // 检查定时器是否未启动
-        if (tfd->timer.expires == 0) {
-            // timerfd未启动，根据阻塞模式处理
+        spin_lock(&timerfd_lock);
+        clock_type = tfd->timer.clock_type;
+        if (tfd->timer.expires) {
+            uint64_t now = get_current_time_ns(clock_type);
+            (void)timerfd_update_due_requeue_locked(tfd, now);
+        }
+        count = tfd->count;
+        expires = tfd->timer.expires;
+        spin_unlock(&timerfd_lock);
+
+        if (count != 0)
+            break;
+
+        if (expires == 0) {
             if (fd->flags & O_NONBLOCK) {
-                return -EAGAIN; // 非阻塞模式，直接返回EAGAIN
+                return -EAGAIN;
             } else {
-                while (tfd->timer.expires == 0) {
-                    vfs_poll_wait_t wait;
-                    vfs_poll_wait_init(&wait, current_task,
-                                       EPOLLIN | EPOLLERR | EPOLLHUP);
-                    vfs_poll_wait_arm(fd->node, &wait);
-                    int reason = vfs_poll_wait_sleep(
-                        fd->node, &wait, 10000000LL, "timerfd_read_unarmed");
-                    vfs_poll_wait_disarm(&wait);
-                    if (reason != EOK && reason != ETIMEDOUT)
-                        return -EINTR;
-                }
-                // 定时器被设置后，重新获取当前时间
-                now = get_current_time_ns(tfd->timer.clock_type);
+                vfs_poll_wait_t wait;
+                vfs_poll_wait_init(&wait, current_task,
+                                   EPOLLIN | EPOLLOUT | EPOLLERR | EPOLLHUP);
+                vfs_poll_wait_arm(fd->node, &wait);
+                int reason = vfs_poll_wait_sleep(fd->node, &wait, 10000000LL,
+                                                 "timerfd_read_unarmed");
+                vfs_poll_wait_disarm(&wait);
+                if (reason != EOK && reason != ETIMEDOUT)
+                    return -EINTR;
+                continue;
             }
         }
 
-        // 等待超时（如果是阻塞模式）
-        if (tfd->timer.expires > 0 && now < tfd->timer.expires &&
-            !(fd->flags & O_NONBLOCK)) {
-            int64_t wait_ns = (int64_t)(tfd->timer.expires - now);
+        uint64_t now = get_current_time_ns(clock_type);
+        if (now < expires && !(fd->flags & O_NONBLOCK)) {
+            int64_t wait_ns = (int64_t)(expires - now);
             int reason = task_block(current_task, TASK_BLOCKING, wait_ns,
                                     "timerfd_read");
             if (reason != EOK && reason != ETIMEDOUT)
                 return -EINTR;
-            now = get_current_time_ns(tfd->timer.clock_type);
-        } else if (now < tfd->timer.expires && (fd->flags & O_NONBLOCK)) {
-            // 非阻塞模式且未超时
+            continue;
+        }
+
+        if (now < expires && (fd->flags & O_NONBLOCK)) {
             return -EAGAIN;
         }
     }
 
-    // 如果有待处理事件，直接使用现有的count
-    uint64_t count = tfd->count;
-
     if (size < sizeof(uint64_t))
         return -EINVAL;
 
+    spin_lock(&timerfd_lock);
+    uint64_t count = tfd->count;
+    tfd->count = 0;
+    spin_unlock(&timerfd_lock);
+
     *(uint64_t *)addr = count;
-    tfd->count = 0; // 读取后重置计数
     vfs_poll_notify(fd->node, EPOLLOUT);
 
     return sizeof(uint64_t);
@@ -217,7 +417,9 @@ int timerfd_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
         return -EBADF;
     switch (cmd) {
     case TFD_IOC_SET_TICKS:
+        spin_lock(&timerfd_lock);
         tfd->count = arg;
+        spin_unlock(&timerfd_lock);
         if (tfd->node)
             vfs_poll_notify(tfd->node, EPOLLIN);
         return 0;
@@ -244,4 +446,10 @@ fs_t timefdfs = {
     .flags = FS_FLAGS_HIDDEN,
 };
 
-void timerfd_init() { timerfdfs_id = vfs_regist(&timefdfs); }
+void timerfd_init() {
+    spin_init(&timerfd_lock);
+    timerfd_mono_root = RB_ROOT_INIT;
+    timerfd_real_root = RB_ROOT_INIT;
+    softirq_register(SOFTIRQ_TIMERFD, timerfd_softirq);
+    timerfdfs_id = vfs_regist(&timefdfs);
+}

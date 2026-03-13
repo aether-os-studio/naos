@@ -277,6 +277,7 @@ typedef struct vfs_file_lock {
 #define VFS_NODE_FLAGS_FREE_AFTER_USE (1UL << 2)
 #define VFS_NODE_FLAGS_DIRTY_METADATA (1UL << 3)
 #define VFS_NODE_FLAGS_DIRTY_CHILDREN (1UL << 4)
+#define VFS_NODE_FLAGS_CHILDREN_POPULATED (1UL << 5)
 
 struct vfs_node {
     vfs_node_t parent;                        // 父目录

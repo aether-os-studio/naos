@@ -10,6 +10,7 @@ typedef struct ext_handle {
     uint32_t ino;
     bool device_opened;
     bool inode_valid;
+    bool inode_dirty;
     ext_inode_disk_t inode_cache;
 } ext_handle_t;
 

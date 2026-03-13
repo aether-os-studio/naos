@@ -132,6 +132,7 @@ void vfs_detach_child(vfs_node_t node) {
     if (!parent)
         return;
 
+    vfs_child_index_remove(parent, node);
     if (!llist_empty(&node->node_for_childs))
         llist_delete(&node->node_for_childs);
     node->child_name_hash = 0;
@@ -144,7 +145,8 @@ void vfs_attach_child(vfs_node_t parent, vfs_node_t child) {
     child->parent = parent;
     if (llist_empty(&child->node_for_childs))
         llist_append(&parent->childs, &child->node_for_childs);
-    child->child_name_hash = child->name ? vfs_name_hash(child->name) : 0;
+    if (llist_empty(&child->node_for_name_bucket))
+        vfs_child_index_add(parent, child);
 }
 
 vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
@@ -342,29 +344,41 @@ static inline void do_update(vfs_node_t file) {
 vfs_node_t vfs_child_find(vfs_node_t parent, const char *name) {
     if (!parent || !name)
         return NULL;
-    vfs_node_t found = NULL;
+
+    uint64_t hash = vfs_name_hash(name);
+    vfs_child_bucket_t *bucket = vfs_child_bucket_lookup(parent, hash);
     vfs_node_t child_node, tmp;
 
-    llist_for_each(child_node, tmp, &parent->childs, node_for_childs) {
-        if (child_node->name && streq(child_node->name, name)) {
-            found = child_node;
-            break;
+    if (bucket) {
+        llist_for_each(child_node, tmp, &bucket->children,
+                       node_for_name_bucket) {
+            if (child_node->name && streq(child_node->name, name))
+                return child_node;
         }
     }
 
-    return found;
+    llist_for_each(child_node, tmp, &parent->childs, node_for_childs) {
+        if (!child_node->name || !streq(child_node->name, name))
+            continue;
+
+        if (child_node->child_name_hash != hash &&
+            !llist_empty(&child_node->node_for_name_bucket)) {
+            vfs_child_index_remove(parent, child_node);
+        }
+        if (llist_empty(&child_node->node_for_name_bucket)) {
+            vfs_child_index_add(parent, child_node);
+        }
+        return child_node;
+    }
+
+    return NULL;
 }
 
 vfs_node_t vfs_child_append(vfs_node_t parent, const char *name, void *handle) {
-    vfs_node_t node = vfs_child_find(parent, name);
-    if (node) {
-        if (node != node->root) {
-            node->dev = parent->dev;
-            node->rdev = parent->rdev;
-        }
-        return node;
-    }
-    node = vfs_node_alloc(parent, name);
+    vfs_node_t exist = vfs_child_find(parent, name);
+    if (exist)
+        vfs_free(exist);
+    vfs_node_t node = vfs_node_alloc(parent, name);
     if (node == NULL)
         return NULL;
     node->handle = handle;
