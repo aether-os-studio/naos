@@ -2050,7 +2050,6 @@ int ext_remount(vfs_node_t old, vfs_node_t node) {
     ctx->root = node;
     node->root = node;
     vfs_merge_nodes_to(node, old);
-    ext_fix_root_recursive(node, node);
     node->inode = old->inode;
     node->fsid = old->fsid;
     node->dev = old->dev;
@@ -2082,6 +2081,9 @@ int ext_remount(vfs_node_t old, vfs_node_t node) {
             free(names);
         }
     }
+
+    ext_fix_root_recursive(node, node);
+
     spin_unlock(&rwlock);
     return ret;
 }

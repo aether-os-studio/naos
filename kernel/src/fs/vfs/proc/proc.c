@@ -59,6 +59,14 @@ ssize_t procfs_readlink(vfs_node_t node, void *addr, size_t offset,
         memcpy(addr, fullpath, len);
         return len;
     }
+    if (!strcmp(handle->name, "proc_root")) {
+        // TODO
+        const char *fullpath = "/";
+        int len = strlen(fullpath);
+        len = MIN(len, size);
+        memcpy(addr, fullpath, len);
+        return len;
+    }
     if (!strcmp(handle->name, "fd")) {
         int len = strlen(handle->content);
         len = MIN(len, size);
@@ -274,7 +282,7 @@ void procfs_on_new_task(task_t *task) {
     self_environ->handle = self_environ_handle;
     self_environ_handle->node = self_environ;
     self_environ_handle->task = task;
-    sprintf(self_environ_handle->name, "environ");
+    sprintf(self_environ_handle->name, "proc_environ");
 
     vfs_node_t self_maps = vfs_child_append(node, "maps", NULL);
     self_maps->type = file_none;
@@ -286,7 +294,7 @@ void procfs_on_new_task(task_t *task) {
     sprintf(self_maps_handle->name, "proc_maps");
 
     vfs_node_t self_root = vfs_child_append(node, "root", NULL);
-    self_root->type = file_none;
+    self_root->type = file_symlink;
     self_root->mode = 0700;
     proc_handle_t *self_root_handle = malloc(sizeof(proc_handle_t));
     self_root->handle = self_root_handle;

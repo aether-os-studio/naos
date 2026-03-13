@@ -250,6 +250,8 @@ typedef struct pending_signal {
 } pending_signal_t;
 
 struct pt_regs;
+struct seccomp_filter;
+typedef struct seccomp_filter seccomp_filter_t;
 
 typedef struct task_signal_info {
     spinlock_t signal_lock;
@@ -307,6 +309,10 @@ typedef struct task {
     shm_mapping_t *shm_ids;
     vfs_node_t procfs_node;
     char *cmdline;
+    uint64_t arg_start;
+    uint64_t arg_end;
+    uint64_t env_start;
+    uint64_t env_end;
     int_timer_internal_t itimer_real;
     kernel_timer_t *timers[MAX_TIMERS_NUM];
     struct rlimit rlim[16];
@@ -314,7 +320,10 @@ typedef struct task {
     int *tidptr;
     void *robust_list_head;
     size_t robust_list_len;
+    uint32_t seccomp_mode;
+    seccomp_filter_t *seccomp_filter;
     uint64_t clone_flags;
+    bool no_new_privs;
     bool is_kernel;
     bool is_clone;
     bool child_vfork_done;

@@ -1,6 +1,7 @@
 #include <libs/rbtree.h>
 #include <arch/arch.h>
 #include <task/task.h>
+#include <task/seccomp.h>
 #include <task/futex.h>
 #include <task/sched.h>
 #include <drivers/kernel_logger.h>
@@ -639,6 +640,10 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     memset(task->signal->actions, 0, sizeof(task->signal->actions));
 
     task->cmdline = NULL;
+    task->arg_start = 0;
+    task->arg_end = 0;
+    task->env_start = 0;
+    task->env_end = 0;
 
     task_init_default_rlimits(task);
 
@@ -928,6 +933,7 @@ void task_exit_inner(task_t *task, int64_t code) {
     task_cleanup_fd_info(task);
 
     task_timerfd_list_clear(task);
+    task_seccomp_release(task);
 
     procfs_on_exit_task(task);
 

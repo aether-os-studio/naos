@@ -1,6 +1,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <task/futex.h>
+#include <task/seccomp.h>
 #include <fs/fs_syscall.h>
 #include <fs/vfs/fcntl.h>
 #include <mm/mm_syscall.h>
@@ -444,9 +445,8 @@ void syscall_handlers_init() {
     // (syscall_handle_t)sys_kcmp; syscall_handlers[SYS_FINIT_MODULE] =
     // (syscall_handle_t)sys_finit_module; syscall_handlers[SYS_SCHED_SETATTR] =
     // (syscall_handle_t)sys_sched_setattr; syscall_handlers[SYS_SCHED_GETATTR]
-    // = (syscall_handle_t)sys_sched_getattr; syscall_handlers[SYS_RENAMEAT2] =
-    // (syscall_handle_t)sys_renameat2; syscall_handlers[SYS_SECCOMP] =
-    // (syscall_handle_t)sys_seccomp;
+    // = (syscall_handle_t)sys_sched_getattr;
+    syscall_handlers[SYS_SECCOMP] = (syscall_handle_t)sys_seccomp;
     syscall_handlers[SYS_GETRANDOM] = (syscall_handle_t)sys_getrandom;
     syscall_handlers[SYS_MEMFD_CREATE] = (syscall_handle_t)sys_memfd_create;
     // syscall_handlers[SYS_KEXEC_FILE_LOAD] =
@@ -519,6 +519,11 @@ void aarch64_do_syscall(struct pt_regs *frame) {
     uint64_t arg4 = frame->x3;
     uint64_t arg5 = frame->x4;
     uint64_t arg6 = frame->x5;
+    uint64_t seccomp_args[6] = {arg1, arg2, arg3, arg4, arg5, arg6};
+
+    if (task_seccomp_apply(frame, idx, frame->pc, seccomp_args, &frame->x0)) {
+        goto done;
+    }
 
     if (idx > MAX_SYSCALL_NUM) {
         frame->x0 = (uint64_t)-ENOSYS;

@@ -237,7 +237,7 @@ static inline char *strrchr(const char *s, int c) {
 char *strdup(const char *s);
 
 typedef struct spinlock {
-    volatile long lock;
+    volatile uint8_t lock;
     bool irq_state;
 } spinlock_t;
 

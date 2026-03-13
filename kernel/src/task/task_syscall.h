@@ -188,10 +188,10 @@ size_t sys_setitimer(int which, struct itimerval *value, struct itimerval *old);
 #define PR_CAP_AMBIENT_RAISE 2
 #define PR_CAP_AMBIENT_LOWER 3
 #define PR_CAP_AMBIENT_CLEAR_ALL 4
-#define SECCOMP_MODE_STRICT 1
 
 uint64_t sys_prctl(uint64_t options, uint64_t arg2, uint64_t arg3,
                    uint64_t arg4, uint64_t arg5);
+uint64_t sys_seccomp(uint64_t operation, uint64_t flags, void *uargs);
 uint64_t sys_set_robust_list(void *head, size_t len);
 uint64_t sys_get_robust_list(int pid, void **head_ptr, size_t *len_ptr);
 uint64_t sys_rseq(void *rseq, uint32_t rseq_len, int flags, uint32_t sig);

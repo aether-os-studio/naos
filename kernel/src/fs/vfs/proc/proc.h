@@ -50,11 +50,11 @@ size_t proc_mounts_read(proc_handle_t *handle, void *addr, size_t offset,
 size_t proc_pcmdline_stat(proc_handle_t *handle);
 size_t proc_pcmdline_read(proc_handle_t *handle, void *addr, size_t offset,
                           size_t size);
+size_t proc_penviron_stat(proc_handle_t *handle);
+size_t proc_penviron_read(proc_handle_t *handle, void *addr, size_t offset,
+                          size_t size);
 size_t proc_pmaps_stat(proc_handle_t *handle);
 size_t proc_pmaps_read(proc_handle_t *handle, void *addr, size_t offset,
-                       size_t size);
-size_t proc_proot_stat(proc_handle_t *handle);
-size_t proc_proot_read(proc_handle_t *handle, void *addr, size_t offset,
                        size_t size);
 size_t proc_pstat_stat(proc_handle_t *handle);
 size_t proc_pstat_read(proc_handle_t *handle, void *addr, size_t offset,
@@ -85,6 +85,8 @@ size_t proc_oom_score_adj_read(proc_handle_t *handle, void *addr, size_t offset,
                                size_t size);
 size_t procfs_node_read(size_t len, size_t offset, size_t size, char *addr,
                         char *contect);
+size_t procfs_task_region_read(task_t *task, uint64_t start, uint64_t end,
+                               void *addr, size_t offset, size_t size);
 
 void procfs_on_new_task(task_t *task);
 void procfs_on_open_file(task_t *task, int fd);

@@ -1,6 +1,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <task/futex.h>
+#include <task/seccomp.h>
 #include <fs/fs_syscall.h>
 #include <fs/vfs/fcntl.h>
 #include <mm/mm_syscall.h>
@@ -464,8 +465,7 @@ void syscall_handler_init() {
     // (syscall_handle_t)sys_sched_setattr; syscall_handlers[SYS_SCHED_GETATTR]
     // = (syscall_handle_t)sys_sched_getattr;
     syscall_handlers[SYS_RENAMEAT2] = (syscall_handle_t)sys_renameat2;
-    // syscall_handlers[SYS_SECCOMP] =
-    // (syscall_handle_t)sys_seccomp;
+    syscall_handlers[SYS_SECCOMP] = (syscall_handle_t)sys_seccomp;
     syscall_handlers[SYS_GETRANDOM] = (syscall_handle_t)sys_getrandom;
     syscall_handlers[SYS_MEMFD_CREATE] = (syscall_handle_t)sys_memfd_create;
     // syscall_handlers[SYS_KEXEC_FILE_LOAD] =
@@ -539,6 +539,11 @@ void syscall_handler(struct pt_regs *regs) {
     uint64_t arg4 = regs->a3;
     uint64_t arg5 = regs->a4;
     uint64_t arg6 = regs->a5;
+    uint64_t seccomp_args[6] = {arg1, arg2, arg3, arg4, arg5, arg6};
+
+    if (task_seccomp_apply(regs, idx, regs->epc, seccomp_args, &regs->a0)) {
+        goto done;
+    }
 
     if (idx > MAX_SYSCALL_NUM) {
         regs->a0 = (uint64_t)-ENOSYS;

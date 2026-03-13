@@ -1,4 +1,5 @@
 #include <libs/string_builder.h>
+#include <task/seccomp.h>
 #include <task/task_syscall.h>
 #include <uacpi/sleep.h>
 
@@ -349,6 +350,11 @@ void free_task(task_t *ptr) {
     if (ptr->cmdline)
         free(ptr->cmdline);
 
+    ptr->arg_start = 0;
+    ptr->arg_end = 0;
+    ptr->env_start = 0;
+    ptr->env_end = 0;
+
     shm_exit(ptr);
     arch_context_free(ptr->arch_context);
     free(ptr->arch_context);
@@ -437,6 +443,23 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
         }
     }
 
+    task->arg_start = 0;
+    task->arg_end = 0;
+    task->env_start = 0;
+    task->env_end = 0;
+
+    if (argv_count > 0 && argv_addrs != NULL) {
+        task->arg_start = argv_addrs[0];
+        task->arg_end =
+            argv_addrs[argv_count - 1] + strlen(argv[argv_count - 1]) + 1;
+    }
+
+    if (envp_count > 0 && envp_addrs != NULL) {
+        task->env_start = envp_addrs[0];
+        task->env_end =
+            envp_addrs[envp_count - 1] + strlen(envp[envp_count - 1]) + 1;
+    }
+
     const size_t auxv_pairs = 15;
     size_t qwords_to_push =
         auxv_pairs * 2 + (size_t)argv_count + (size_t)envp_count + 3;
@@ -509,11 +532,6 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
     }
 
     PUSH_TO_STACK(tmp_stack, uint64_t, argv_count);
-
-    if (argv_addrs)
-        free(argv_addrs);
-    if (envp_addrs)
-        free(envp_addrs);
 
     return tmp_stack;
 }
@@ -1569,7 +1587,11 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     child->priority = NORMAL_PRIORITY;
 
     child->cwd = self->cwd;
-    child->cmdline = strdup(self->cmdline);
+    child->cmdline = self->cmdline ? strdup(self->cmdline) : NULL;
+    child->arg_start = self->arg_start;
+    child->arg_end = self->arg_end;
+    child->env_start = self->env_start;
+    child->env_end = self->env_end;
 
     child->exec_node = self->exec_node;
     if (child->exec_node)
@@ -1684,6 +1706,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     }
 
     memcpy(child->rlim, self->rlim, sizeof(child->rlim));
+    task_seccomp_inherit(child, self);
 
     child->child_vfork_done = false;
 
@@ -1805,15 +1828,14 @@ uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
     }
 
     case PR_SET_SECCOMP: // 启用seccomp过滤
-        if (arg2 == SECCOMP_MODE_STRICT) {
-            // current_task->seccomp_mode = SECCOMP_MODE_STRICT;
-            return 0;
-        }
-        return -EINVAL;
+        if (arg2 == SECCOMP_MODE_STRICT)
+            return sys_seccomp(SECCOMP_SET_MODE_STRICT, 0, NULL);
+        if (arg2 == SECCOMP_MODE_FILTER)
+            return sys_seccomp(SECCOMP_SET_MODE_FILTER, 0, (void *)arg3);
+        return (uint64_t)-EINVAL;
 
     case PR_GET_SECCOMP: // 查询seccomp状态
-        // return current_task->seccomp_mode;
-        return 0;
+        return current_task->seccomp_mode;
 
     case PR_SET_TIMERSLACK:
         return 0;
@@ -1826,6 +1848,17 @@ uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
         return 0;
 
     case PR_SET_NO_NEW_PRIVS:
+        if (arg2 != 1 || arg3 != 0 || arg4 != 0 || arg5 != 0)
+            return (uint64_t)-EINVAL;
+        current_task->no_new_privs = true;
+        return 0;
+
+    case PR_GET_NO_NEW_PRIVS:
+        if (arg2 != 0 || arg3 != 0 || arg4 != 0 || arg5 != 0)
+            return (uint64_t)-EINVAL;
+        return current_task->no_new_privs ? 1 : 0;
+
+    case PR_GET_TIMERSLACK:
         return 0;
 
     default:

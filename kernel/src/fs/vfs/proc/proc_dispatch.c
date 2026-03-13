@@ -1,4 +1,5 @@
 #include <fs/vfs/proc/proc.h>
+#include <arch/arch.h>
 
 proc_handle_node_t *dispatch_array[256];
 static size_t dp_index = 0;
@@ -10,10 +11,40 @@ size_t procfs_node_read(size_t len, size_t offset, size_t size, char *addr,
         free(contect);
         return 0;
     }
-    size_t r_len = MIN(size, len);
-    memcpy(addr, contect, r_len);
+    size_t r_len = MIN(size, len - offset);
+    memcpy(addr, contect + offset, r_len);
     free(contect);
     return r_len;
+}
+
+size_t procfs_task_region_read(task_t *task, uint64_t start, uint64_t end,
+                               void *addr, size_t offset, size_t size) {
+    if (!task || !task->mm || !addr || size == 0 || end <= start)
+        return 0;
+
+    size_t len = end - start;
+    if (offset >= len)
+        return 0;
+
+    uint64_t *page_table = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
+    uint64_t va = start + offset;
+    size_t remain = MIN(size, len - offset);
+    size_t copied = 0;
+
+    while (copied < remain) {
+        uint64_t pa = translate_address(page_table, va);
+        if (!pa)
+            break;
+
+        size_t page_off = va & (DEFAULT_PAGE_SIZE - 1);
+        size_t chunk = MIN(remain - copied, DEFAULT_PAGE_SIZE - page_off);
+        memcpy((char *)addr + copied, (void *)(phys_to_virt(pa) + page_off),
+               chunk);
+        va += chunk;
+        copied += chunk;
+    }
+
+    return copied;
 }
 
 static uint64_t hash_dp(const char *s) {
@@ -58,8 +89,9 @@ void procfs_nodes_init() {
 
     create_procfs_handle("proc_cmdline", proc_pcmdline_read, proc_pcmdline_stat,
                          NULL);
+    create_procfs_handle("proc_environ", proc_penviron_read, proc_penviron_stat,
+                         NULL);
     create_procfs_handle("proc_maps", proc_pmaps_read, NULL, NULL);
-    create_procfs_handle("proc_root", proc_proot_read, proc_proot_stat, NULL);
     create_procfs_handle("proc_stat", proc_pstat_read, proc_pstat_stat, NULL);
     create_procfs_handle("proc_status", proc_pstatus_read, proc_pstatus_stat,
                          NULL);

@@ -26,7 +26,7 @@ void load_segment(Elf64_Phdr *phdr, void *elf, uint64_t offset) {
     uint64_t p_filesz = (uint64_t)phdr->p_filesz;
     uint64_t p_memsz = (uint64_t)phdr->p_memsz;
 
-    memcpy((void *)p_vaddr, elf + phdr->p_offset, p_filesz);
+    memcpy((void *)p_vaddr, (const uint8_t *)elf + phdr->p_offset, p_filesz);
 
     if (p_memsz > p_filesz) {
         memset((void *)(p_vaddr + p_filesz), 0, p_memsz - p_filesz);

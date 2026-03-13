@@ -2,9 +2,12 @@
 
 #include <stdint.h>
 
-#define SEEK_SET 0 /* Seek from beginning of file.  */
-#define SEEK_CUR 1 /* Seek from current position.  */
-#define SEEK_END 2 /* Seek from end of file.  */
+#define SEEK_SET 0  /* Seek from beginning of file.  */
+#define SEEK_CUR 1  /* Seek from current position.  */
+#define SEEK_END 2  /* Seek from end of file.  */
+#define SEEK_DATA 3 /* seek to the next data */
+#define SEEK_HOLE 4 /* seek to the next hole */
+#define SEEK_MAX SEEK_HOLE
 
 #define DT_UNKNOWN 0
 #define DT_FIFO 1

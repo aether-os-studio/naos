@@ -27,6 +27,23 @@ static bool file_lock_ranges_touch_or_overlap(uint64_t start1, uint64_t end1,
     return end2 != UINT64_MAX && end2 == start1;
 }
 
+static int lseek_add_offset(int64_t base, int64_t delta, uint64_t *result_out) {
+    if (!result_out)
+        return -EINVAL;
+
+    if ((delta > 0 && base > INT64_MAX - delta) ||
+        (delta < 0 && base < INT64_MIN - delta)) {
+        return -EOVERFLOW;
+    }
+
+    int64_t result = base + delta;
+    if (result < 0)
+        return -EINVAL;
+
+    *result_out = (uint64_t)result;
+    return 0;
+}
+
 static int file_lock_normalize(fd_t *fd, const flock_t *lock,
                                uint64_t *start_out, uint64_t *end_out) {
     if (!fd || !fd->node || !lock || !start_out || !end_out)
@@ -274,17 +291,6 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
     if (!dir) {
         return (uint64_t)-ENOENT;
     }
-
-    // if (flags & MS_BIND) {
-    //     vfs_node_t source = vfs_open((const char *)devname, 0);
-    //     if (!source) {
-    //         return (uint64_t)-ENOENT;
-    //     }
-    //     dir->flags |= VFS_NODE_FLAGS_BIND_MOUNT;
-    //     dir->fsid = source->fsid;
-    //     dir->handle = source->handle;
-    //     return 0;
-    // }
 
     if (flags & MS_MOVE) {
         if (flags & (MS_REMOUNT | MS_BIND)) {
@@ -935,43 +941,67 @@ uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
 uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
     task_t *self = current_task;
 
+    whence &= 0xffffffff;
+
     if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
     }
-    if (self->fd_info->fds[fd]->node->type & file_pipe) {
+
+    fd_t *file = self->fd_info->fds[fd];
+    vfs_node_t node = file->node;
+    if (node->type & (file_pipe | file_socket | file_fifo | file_stream)) {
         return (uint64_t)-ESPIPE;
     }
 
-    int64_t real_offset = offset;
-    if (real_offset < 0 && self->fd_info->fds[fd]->node->type & file_none &&
-        whence != SEEK_CUR)
-        return (uint64_t)-EBADF;
+    int64_t signed_offset = (int64_t)offset;
+    uint64_t new_offset = 0;
+    int ret = 0;
 
     switch (whence) {
     case SEEK_SET:
-        self->fd_info->fds[fd]->offset = real_offset;
+        if (signed_offset < 0)
+            return (uint64_t)-EINVAL;
+        new_offset = (uint64_t)signed_offset;
         break;
 
-    case SEEK_CUR:
-        self->fd_info->fds[fd]->offset += real_offset;
-        if ((int64_t)self->fd_info->fds[fd]->offset < 0) {
-            self->fd_info->fds[fd]->offset = 0;
-        } else if (self->fd_info->fds[fd]->offset >
-                   self->fd_info->fds[fd]->node->size) {
-            self->fd_info->fds[fd]->offset = self->fd_info->fds[fd]->node->size;
-        }
+    case SEEK_CUR: {
+        if (file->offset > INT64_MAX)
+            return (uint64_t)-EOVERFLOW;
+        ret =
+            lseek_add_offset((int64_t)file->offset, signed_offset, &new_offset);
+        if (ret < 0)
+            return (uint64_t)ret;
         break;
+    }
 
-    case SEEK_END:
-        self->fd_info->fds[fd]->offset =
-            self->fd_info->fds[fd]->node->size + real_offset;
+    case SEEK_END: {
+        if (node->size > INT64_MAX)
+            return (uint64_t)-EOVERFLOW;
+        ret = lseek_add_offset((int64_t)node->size, signed_offset, &new_offset);
+        if (ret < 0)
+            return (uint64_t)ret;
+        break;
+    }
+
+    case SEEK_DATA:
+    case SEEK_HOLE:
+        if (signed_offset < 0)
+            return (uint64_t)-EINVAL;
+        /*
+         * Linux allows a filesystem without sparse extent tracking to treat
+         * the whole file as data and EOF as the implicit hole.
+         */
+        if (offset >= node->size)
+            return (uint64_t)-ENXIO;
+        new_offset = whence == SEEK_DATA ? offset : node->size;
         break;
 
     default:
-        return (uint64_t)-ENOSYS;
+        return (uint64_t)-EINVAL;
     }
 
-    return self->fd_info->fds[fd]->offset;
+    file->offset = new_offset;
+    return file->offset;
 }
 
 uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {

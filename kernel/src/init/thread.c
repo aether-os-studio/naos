@@ -23,8 +23,6 @@ extern void fs_syscall_init();
 extern void socketfs_init();
 extern void pipefs_init();
 
-extern void mount_root();
-
 bool system_initialized = false;
 
 extern bool can_schedule;
@@ -70,8 +68,6 @@ void init_thread(uint64_t arg) {
 
     devtmpfs_init_umount();
     sysfs_init_umount();
-
-    // mount_root();
 
     system_initialized = true;
 
