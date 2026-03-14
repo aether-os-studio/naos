@@ -143,8 +143,8 @@ struct msghdr {
 };
 
 /* struct msghdr->msg_flags bit field values */
-#define MSG_TRUNC 0x20
-#define MSG_CTRUNC 0x08
+#define MSG_TRUNC 0x0020
+#define MSG_CTRUNC 0x0008
 
 /* RFC 3542, Section 20: Ancillary Data */
 struct cmsghdr {
@@ -267,20 +267,40 @@ struct linger {
 #define IPPROTO_UDPLITE 136
 #define IPPROTO_RAW 255
 
-/* Flags we can use with send and recv. */
-#define MSG_PEEK 0x01 /* Peeks at an incoming message */
-#define MSG_WAITALL                                                            \
-    0x02 /* Unimplemented: Requests that the function block until the full     \
-            amount of data requested can be returned */
-#define MSG_OOB                                                                \
-    0x04 /* Unimplemented: Requests out-of-band data. The significance and     \
-            semantics of out-of-band data are protocol-specific */
-#define MSG_DONTWAIT 0x08 /* Nonblocking i/o for this operation only */
-#define MSG_MORE 0x10     /* Sender will send more */
-#define MSG_NOSIGNAL                                                           \
-    0x20 /* Uninmplemented: Requests not to send the SIGPIPE signal if an      \
-            attempt to send is made on a stream-oriented socket that is no     \
-            longer connected. */
+// /* Flags we can use with send and recv. */
+// #define MSG_PEEK 0x01 /* Peeks at an incoming message */
+// #define MSG_WAITALL \
+//     0x02 /* Unimplemented: Requests that the function block until the full \
+//             amount of data requested can be returned */
+// #define MSG_OOB \
+//     0x04 /* Unimplemented: Requests out-of-band data. The significance and \
+//             semantics of out-of-band data are protocol-specific */
+// #define MSG_DONTWAIT 0x08 /* Nonblocking i/o for this operation only */
+// #define MSG_MORE 0x10     /* Sender will send more */
+// #define MSG_NOSIGNAL \
+//     0x20 /* Uninmplemented: Requests not to send the SIGPIPE signal if an \
+//             attempt to send is made on a stream-oriented socket that is no \
+//             longer connected. */
+
+#define MSG_OOB 0x0001
+#define MSG_PEEK 0x0002
+#define MSG_DONTROUTE 0x0004
+#define MSG_PROXY 0x0010
+#define MSG_DONTWAIT 0x0040
+#define MSG_EOR 0x0080
+#define MSG_WAITALL 0x0100
+#define MSG_FIN 0x0200
+#define MSG_SYN 0x0400
+#define MSG_CONFIRM 0x0800
+#define MSG_RST 0x1000
+#define MSG_ERRQUEUE 0x2000
+#define MSG_NOSIGNAL 0x4000
+#define MSG_MORE 0x8000
+#define MSG_WAITFORONE 0x10000
+#define MSG_BATCH 0x40000
+#define MSG_ZEROCOPY 0x4000000
+#define MSG_FASTOPEN 0x20000000
+#define MSG_CMSG_CLOEXEC 0x40000000
 
 /*
  * Options for level IPPROTO_IP

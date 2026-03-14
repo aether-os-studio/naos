@@ -948,7 +948,7 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
 
     fd_t *file = self->fd_info->fds[fd];
     vfs_node_t node = file->node;
-    if (node->type & (file_pipe | file_socket | file_fifo | file_stream)) {
+    if (node->type & (file_socket | file_fifo | file_stream)) {
         return (uint64_t)-ESPIPE;
     }
 

@@ -62,10 +62,9 @@ typedef enum file_type {
     file_symlink = 0x0004UL, // 符号链接
     file_block = 0x00008UL,  // 块设备，如硬盘
     file_stream = 0x0010UL,  // 流式设备，如终端
-    file_pipe = 0x0020UL,    // 管道设备
-    file_socket = 0x0040UL,  // 套接字设备
-    file_epoll = 0x0080UL,   // epoll 设备
-    file_fifo = 0x0100UL,    // fifo 设备
+    file_socket = 0x0020UL,  // 套接字设备
+    file_epoll = 0x0040UL,   // epoll 设备
+    file_fifo = 0x0080UL,    // fifo 设备
 } file_type_t;
 
 typedef struct vfs_node *vfs_node_t;

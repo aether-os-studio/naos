@@ -252,12 +252,12 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
     }
 
     vfs_node_t node_input = vfs_node_alloc(NULL, NULL);
-    node_input->type = file_pipe;
+    node_input->type = file_fifo;
     node_input->fsid = pipefs_id;
     node_input->refcount++;
 
     vfs_node_t node_output = vfs_node_alloc(NULL, NULL);
-    node_output->type = file_pipe;
+    node_output->type = file_fifo;
     node_output->fsid = pipefs_id;
     node_output->refcount++;
 

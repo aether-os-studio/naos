@@ -2158,7 +2158,7 @@
  * SO_REUSE==1: Enable SO_REUSEADDR option.
  */
 #if !defined SO_REUSE || defined __DOXYGEN__
-#define SO_REUSE 0
+#define SO_REUSE 1
 #endif
 
 /**
@@ -2167,7 +2167,7 @@
  * WARNING: Adds a memcpy for every packet if passing to more than one pcb!
  */
 #if !defined SO_REUSE_RXTOALL || defined __DOXYGEN__
-#define SO_REUSE_RXTOALL 0
+#define SO_REUSE_RXTOALL 1
 #endif
 
 /**

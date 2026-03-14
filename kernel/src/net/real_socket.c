@@ -1,6 +1,6 @@
 #include <net/real_socket.h>
 
-real_socket_socket_t *real_sockets[MAX_SOCKETS_NUM];
+real_socket_socket_t *real_sockets[MAX_SOCKETS_NUM] = {NULL};
 spinlock_t real_sockets_lock = SPIN_INIT;
 int socket_num = 0;
 
