@@ -87,6 +87,7 @@ void procfs_nodes_init() {
     create_procfs_node("cmdline", proc_cmdline_read, proc_cmdline_stat, NULL);
     create_procfs_node("mounts", proc_mounts_read, proc_mounts_stat, NULL);
     create_procfs_node("meminfo", proc_meminfo_read, proc_meminfo_stat, NULL);
+    create_procfs_node("stat", proc_stat_read, proc_stat_stat, NULL);
 
     create_procfs_handle("proc_cmdline", proc_pcmdline_read, proc_pcmdline_stat,
                          NULL);
@@ -94,6 +95,8 @@ void procfs_nodes_init() {
                          NULL);
     create_procfs_handle("proc_maps", proc_pmaps_read, NULL, NULL);
     create_procfs_handle("proc_stat", proc_pstat_read, proc_pstat_stat, NULL);
+    create_procfs_handle("proc_statm", proc_pstatm_read, proc_pstatm_stat,
+                         NULL);
     create_procfs_handle("proc_status", proc_pstatus_read, proc_pstatus_stat,
                          NULL);
     create_procfs_handle("proc_cgroup", proc_pcgroup_read, proc_pcgroup_stat,

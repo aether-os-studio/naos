@@ -2,17 +2,6 @@
 #include <libs/string_builder.h>
 #include <task/task.h>
 
-const char *get_vma_permissions(vma_t *vma) {
-    static char perms[5];
-
-    perms[0] = (vma->vm_flags & VMA_READ) ? 'r' : '-';
-    perms[1] = (vma->vm_flags & VMA_WRITE) ? 'w' : '-';
-    perms[2] = (vma->vm_flags & VMA_EXEC) ? 'x' : '-';
-    perms[3] = (vma->vm_flags & VMA_SHARED) ? 's' : 'p';
-    perms[4] = '\0';
-
-    return perms;
-}
 char *proc_gen_maps_file(task_t *task, size_t *content_len) {
     vma_manager_t *mgr = &task->mm->task_vma_mgr;
 
@@ -24,9 +13,15 @@ char *proc_gen_maps_file(task_t *task, size_t *content_len) {
         vma_t *vma = rb_entry(node, vma_t, vm_rb);
         vfs_node_t vfs_node = vma->node;
 
+        char perms[5];
+        perms[0] = (vma->vm_flags & VMA_READ) ? 'r' : '-';
+        perms[1] = (vma->vm_flags & VMA_WRITE) ? 'w' : '-';
+        perms[2] = (vma->vm_flags & VMA_EXEC) ? 'x' : '-';
+        perms[3] = (vma->vm_flags & VMA_SHARED) ? 's' : 'p';
+        perms[4] = '\0';
+
         string_builder_append(builder, "%012lx-%012lx %s %08lx %02x:%02x %lu",
-                              vma->vm_start, vma->vm_end,
-                              get_vma_permissions(vma), vma->vm_offset,
+                              vma->vm_start, vma->vm_end, perms, vma->vm_offset,
                               vfs_node ? (vfs_node->rdev >> 8) & 0xFF : 0,
                               vfs_node ? vfs_node->rdev & 0xFF : 0,
                               vfs_node ? vfs_node->inode : 0);

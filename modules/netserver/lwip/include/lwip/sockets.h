@@ -441,10 +441,10 @@ typedef struct ipv6_mreq {
 #endif /* !defined(FIONREAD) || !defined(FIONBIO) */
 
 #ifndef FIONREAD
-#define FIONREAD _IOR('f', 127, unsigned long) /* get # bytes to read */
+#define FIONREAD 0x541B /* get # bytes to read */
 #endif
 #ifndef FIONBIO
-#define FIONBIO _IOW('f', 126, unsigned long) /* set/clear non-blocking i/o */
+#define FIONBIO 0x5421 /* set/clear non-blocking i/o */
 #endif
 
 /* Socket I/O Controls: unimplemented */

@@ -270,7 +270,7 @@ signal_has_deliverable_outside_set_locked(task_t *task, sigset_t wait_set) {
         if (wait_set & signal_sigbit(sig)) {
             continue;
         }
-        sigaction_t *action = &task->signal->actions[sig];
+        sigaction_t *action = &task->signal->sighand->actions[sig];
         if (signal_action_ignored(sig, action)) {
             continue;
         }
@@ -281,7 +281,7 @@ signal_has_deliverable_outside_set_locked(task_t *task, sigset_t wait_set) {
     if (signal_sig_in_range(pending_slot_sig) &&
         !signal_sig_maskable(pending_slot_sig) &&
         !signal_is_blocked(blocked, pending_slot_sig)) {
-        sigaction_t *action = &task->signal->actions[pending_slot_sig];
+        sigaction_t *action = &task->signal->sighand->actions[pending_slot_sig];
         if (!signal_action_ignored(pending_slot_sig, action)) {
             return true;
         }
@@ -609,7 +609,7 @@ void task_commit_signal(task_t *task, int sig, siginfo_t *info) {
     }
     kinfo.si_signo = sig;
 
-    spin_lock(&task->signal->signal_lock);
+    spin_lock(&task->signal->sighand->siglock);
 
     if (signal_sig_maskable(sig)) {
         task->signal->signal |= signal_sigbit(sig);
@@ -622,7 +622,7 @@ void task_commit_signal(task_t *task, int sig, siginfo_t *info) {
 
     task->signal->pending_signal.processed = false;
 
-    spin_unlock(&task->signal->signal_lock);
+    spin_unlock(&task->signal->sighand->siglock);
 
     system_abi->on_send_signal(task, sig, kinfo.si_code);
 }
@@ -633,7 +633,7 @@ uint64_t sys_ssetmask(int how, const sigset_t *nset, sigset_t *oset,
         return (uint64_t)-EINVAL;
     }
 
-    spin_lock(&current_task->signal->signal_lock);
+    spin_lock(&current_task->signal->sighand->siglock);
 
     if (oset) {
         *oset = sigset_kernel_to_user(current_task->signal->blocked);
@@ -652,12 +652,12 @@ uint64_t sys_ssetmask(int how, const sigset_t *nset, sigset_t *oset,
             current_task->signal->blocked = safe;
             break;
         default:
-            spin_unlock(&current_task->signal->signal_lock);
+            spin_unlock(&current_task->signal->sighand->siglock);
             return (uint64_t)-EINVAL;
         }
     }
 
-    spin_unlock(&current_task->signal->signal_lock);
+    spin_unlock(&current_task->signal->sighand->siglock);
     return 0;
 }
 
@@ -712,8 +712,8 @@ uint64_t sys_sigaction(int sig, const sigaction_t *action,
     sigaction_t old_local;
     bool has_old = oldaction != NULL;
 
-    spin_lock(&current_task->signal->signal_lock);
-    sigaction_t *slot = &current_task->signal->actions[sig];
+    spin_lock(&current_task->signal->sighand->siglock);
+    sigaction_t *slot = &current_task->signal->sighand->actions[sig];
     if (has_old) {
         old_local = *slot;
         old_local.sa_mask = sigset_kernel_to_user(old_local.sa_mask);
@@ -721,7 +721,7 @@ uint64_t sys_sigaction(int sig, const sigaction_t *action,
     if (has_new) {
         *slot = new_action;
     }
-    spin_unlock(&current_task->signal->signal_lock);
+    spin_unlock(&current_task->signal->sighand->siglock);
 
     if (has_old && copy_to_user(oldaction, &old_local, sizeof(old_local))) {
         return (uint64_t)-EFAULT;
@@ -763,10 +763,10 @@ uint64_t sys_sigreturn(struct pt_regs *regs) {
 
     signal_x64_restore_ptregs(regs, &frame_ucontext);
 
-    spin_lock(&self->signal->signal_lock);
+    spin_lock(&self->signal->sighand->siglock);
     self->signal->blocked = sigset_user_to_kernel(frame_ucontext.uc_sigmask);
     signal_altstack_store(&self->signal->altstack, &restore_altstack);
-    spin_unlock(&self->signal->signal_lock);
+    spin_unlock(&self->signal->sighand->siglock);
 
     uint64_t tmp = self->syscall_stack;
     self->syscall_stack = self->signal_syscall_stack;
@@ -797,23 +797,23 @@ uint64_t sys_sigaltstack(const stack_t *uss, stack_t *uoss) {
     uint64_t user_sp = signal_current_user_sp(self);
     stack_t old_stack;
 
-    spin_lock(&self->signal->signal_lock);
+    spin_lock(&self->signal->sighand->siglock);
     signal_altstack_format_old(&old_stack, &self->signal->altstack, user_sp);
 
     if (has_new) {
         int ret = signal_altstack_validate_new(&new_stack);
         if (ret < 0) {
-            spin_unlock(&self->signal->signal_lock);
+            spin_unlock(&self->signal->sighand->siglock);
             return (uint64_t)ret;
         }
         if (old_stack.ss_flags & SS_ONSTACK) {
-            spin_unlock(&self->signal->signal_lock);
+            spin_unlock(&self->signal->sighand->siglock);
             return (uint64_t)-EPERM;
         }
         signal_altstack_store(&self->signal->altstack, &new_stack);
     }
 
-    spin_unlock(&self->signal->signal_lock);
+    spin_unlock(&self->signal->sighand->siglock);
 
     if (uoss && copy_to_user(uoss, &old_stack, sizeof(old_stack)))
         return (uint64_t)-EFAULT;
@@ -855,7 +855,7 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
         int sig = 0;
         bool interrupted = false;
 
-        spin_lock(&current_task->signal->signal_lock);
+        spin_lock(&current_task->signal->sighand->siglock);
         sig = signal_pick_from_set_locked(current_task, wait_set);
         if (sig) {
             signal_take_pending_locked(current_task, sig, &info);
@@ -863,7 +863,7 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
             interrupted = signal_has_deliverable_outside_set_locked(
                 current_task, wait_set);
         }
-        spin_unlock(&current_task->signal->signal_lock);
+        spin_unlock(&current_task->signal->sighand->siglock);
 
         if (sig) {
             if (uinfo && copy_to_user(uinfo, &info, sizeof(info))) {
@@ -925,20 +925,20 @@ uint64_t sys_sigsuspend(const sigset_t *mask, size_t sigsetsize) {
     }
 
     sigset_t old_mask;
-    spin_lock(&current_task->signal->signal_lock);
+    spin_lock(&current_task->signal->sighand->siglock);
     old_mask = current_task->signal->blocked;
     current_task->signal->blocked = sigset_user_to_kernel(user_mask);
-    spin_unlock(&current_task->signal->signal_lock);
+    spin_unlock(&current_task->signal->sighand->siglock);
 
     while (true) {
         bool should_return = false;
-        spin_lock(&current_task->signal->signal_lock);
+        spin_lock(&current_task->signal->sighand->siglock);
         should_return =
             signal_has_deliverable_outside_set_locked(current_task, 0);
         if (should_return) {
             current_task->signal->blocked = old_mask;
         }
-        spin_unlock(&current_task->signal->signal_lock);
+        spin_unlock(&current_task->signal->sighand->siglock);
 
         if (should_return) {
             return (uint64_t)-EINTR;
@@ -966,13 +966,6 @@ void task_send_signal(task_t *task, int sig, int code) {
     if (sig != SIGSTOP && sig != SIGTSTP && sig != SIGTTIN && sig != SIGTTOU) {
         task_unblock(task, 128 + sig);
     }
-}
-
-static inline int task_effective_tgid(task_t *task) {
-    if (!task) {
-        return -1;
-    }
-    return task->tgid > 0 ? task->tgid : task->pid;
 }
 
 uint64_t sys_kill(int pid, int sig) {
@@ -1040,19 +1033,19 @@ void task_signal(struct pt_regs *regs) {
         return;
     }
 
-    spin_lock(&self->signal->signal_lock);
+    spin_lock(&self->signal->sighand->siglock);
 
     while (true) {
         int sig = signal_pick_deliverable_locked(self);
         if (!sig) {
-            spin_unlock(&self->signal->signal_lock);
+            spin_unlock(&self->signal->sighand->siglock);
             return;
         }
 
         siginfo_t info;
         signal_take_pending_locked(self, sig, &info);
 
-        sigaction_t action = self->signal->actions[sig];
+        sigaction_t action = self->signal->sighand->actions[sig];
 
         if (signal_action_ignored(sig, &action)) {
             continue;
@@ -1062,17 +1055,17 @@ void task_signal(struct pt_regs *regs) {
             switch (signal_internal_decisions[sig]) {
             case SIGNAL_INTERNAL_TERM:
             case SIGNAL_INTERNAL_CORE:
-                spin_unlock(&self->signal->signal_lock);
+                spin_unlock(&self->signal->sighand->siglock);
                 task_exit(128 + sig);
                 return;
             case SIGNAL_INTERNAL_STOP:
                 // self->state = TASK_BLOCKING;
                 self->status = 128 + sig;
-                spin_unlock(&self->signal->signal_lock);
+                spin_unlock(&self->signal->sighand->siglock);
                 return;
             case SIGNAL_INTERNAL_CONT:
                 self->state = TASK_READY;
-                spin_unlock(&self->signal->signal_lock);
+                spin_unlock(&self->signal->sighand->siglock);
                 return;
             case SIGNAL_INTERNAL_IGN:
             default:
@@ -1082,18 +1075,18 @@ void task_signal(struct pt_regs *regs) {
 
 #if defined(__x86_64__)
         if (!signal_x64_setup_frame(self, regs, sig, &action, &info)) {
-            spin_unlock(&self->signal->signal_lock);
+            spin_unlock(&self->signal->sighand->siglock);
             task_exit(128 + SIGSEGV);
             return;
         }
 #else
-        spin_unlock(&self->signal->signal_lock);
+        spin_unlock(&self->signal->sighand->siglock);
         task_exit(128 + SIGSYS);
         return;
 #endif
 
         if (action.sa_flags & SA_RESETHAND) {
-            self->signal->actions[sig].sa_handler = SIG_DFL;
+            self->signal->sighand->actions[sig].sa_handler = SIG_DFL;
         }
 
         self->signal->blocked |= action.sa_mask;
@@ -1106,7 +1099,7 @@ void task_signal(struct pt_regs *regs) {
         self->signal_syscall_stack = tmp;
         x64_cpu_local_sync_syscall_stack(self);
 
-        spin_unlock(&self->signal->signal_lock);
+        spin_unlock(&self->signal->sighand->siglock);
         return;
     }
 }

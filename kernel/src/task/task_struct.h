@@ -253,13 +253,18 @@ struct pt_regs;
 struct seccomp_filter;
 typedef struct seccomp_filter seccomp_filter_t;
 
+typedef struct task_sighand {
+    spinlock_t siglock;
+    int ref_count;
+    sigaction_t actions[MAXSIG];
+} task_sighand_t;
+
 typedef struct task_signal_info {
-    spinlock_t signal_lock;
     sigset_t signal;
     pending_signal_t pending_signal;
     sigset_t blocked;
     stack_t altstack;
-    sigaction_t actions[MAXSIG];
+    task_sighand_t *sighand;
 } task_signal_info_t;
 
 typedef struct task {
@@ -307,6 +312,7 @@ typedef struct task {
     fd_info_t *fd_info;
     shm_mapping_t *shm_ids;
     vfs_node_t procfs_node;
+    vfs_node_t procfs_thread_node;
     char *cmdline;
     uint64_t arg_start;
     uint64_t arg_end;

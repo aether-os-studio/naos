@@ -1047,8 +1047,8 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
         break;
     }
     if (ret == -ENOSYS) {
-        printk("sys_ioctl: cmd %#010x not implemented, node->fsid = %d\n", cmd,
-               f->node->fsid);
+        printk("sys_ioctl: cmd %#010x not implemented, fs = %s\n", cmd,
+               all_fs[f->node->fsid] ? all_fs[f->node->fsid]->name : NULL);
     }
 
     return ret;
@@ -1191,6 +1191,11 @@ uint64_t sys_chdir(const char *dname) {
     vfs_node_t new_cwd = vfs_open(dirname, 0);
     if (!new_cwd)
         return (uint64_t)-ENOENT;
+    if (new_cwd->type & file_symlink) {
+        new_cwd = vfs_get_real_node(new_cwd);
+    }
+    if (!(new_cwd->type & file_dir))
+        return (uint64_t)-ENOTDIR;
 
     current_task->cwd = new_cwd;
 

@@ -6,6 +6,8 @@ extern hashmap_t task_parent_map;
 extern hashmap_t task_pgid_map;
 extern spinlock_t should_free_lock;
 
+#define LINUX_USER_HZ 100
+
 static int read_task_file_into_user_memory(task_t *task, vfs_node_t node,
                                            uint64_t uaddr, size_t offset,
                                            size_t size) {
@@ -251,6 +253,48 @@ static void task_set_pgid_locked(task_t *task, int64_t pgid) {
     task_pgid_index_attach_locked(task);
 }
 
+static void task_set_thread_group_pgid_locked(task_t *task, int64_t pgid) {
+    if (!task)
+        return;
+
+    uint64_t tgid = task_effective_tgid(task);
+    if (!task_pid_map.buckets)
+        return;
+
+    for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+        hashmap_entry_t *entry = &task_pid_map.buckets[i];
+        if (!hashmap_entry_is_occupied(entry))
+            continue;
+
+        task_t *peer = (task_t *)entry->value;
+        if (!peer || task_effective_tgid(peer) != tgid)
+            continue;
+
+        task_set_pgid_locked(peer, pgid);
+    }
+}
+
+static void task_set_thread_group_sid_locked(task_t *task, int64_t sid) {
+    if (!task)
+        return;
+
+    uint64_t tgid = task_effective_tgid(task);
+    if (!task_pid_map.buckets)
+        return;
+
+    for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+        hashmap_entry_t *entry = &task_pid_map.buckets[i];
+        if (!hashmap_entry_is_occupied(entry))
+            continue;
+
+        task_t *peer = (task_t *)entry->value;
+        if (!peer || task_effective_tgid(peer) != tgid)
+            continue;
+
+        peer->sid = sid;
+    }
+}
+
 extern void task_enqueue_should_free(task_t *task);
 extern task_t *task_dequeue_should_free(void);
 
@@ -307,6 +351,8 @@ void free_task(task_t *ptr) {
     ptr->env_end = 0;
 
     shm_exit(ptr);
+    task_signal_free(ptr->signal);
+    ptr->signal = NULL;
     arch_context_free(ptr->arch_context);
     free(ptr->arch_context);
 
@@ -315,6 +361,8 @@ void free_task(task_t *ptr) {
 
     free_frames_bytes((void *)(ptr->kernel_stack - STACK_SIZE), STACK_SIZE);
     free_frames_bytes((void *)(ptr->syscall_stack - STACK_SIZE), STACK_SIZE);
+    free_frames_bytes((void *)(ptr->signal_syscall_stack - STACK_SIZE),
+                      STACK_SIZE);
 
     free(ptr);
 }
@@ -419,7 +467,7 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
         task->env_end = env_high;
     }
 
-    const size_t auxv_pairs = 15;
+    const size_t auxv_pairs = 16;
     size_t qwords_to_push =
         auxv_pairs * 2 + (size_t)argv_count + (size_t)envp_count + 3;
 
@@ -468,6 +516,9 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
 
     PUSH_TO_STACK(tmp_stack, uint64_t, DEFAULT_PAGE_SIZE);
     PUSH_TO_STACK(tmp_stack, uint64_t, AT_PAGESZ);
+
+    PUSH_TO_STACK(tmp_stack, uint64_t, LINUX_USER_HZ);
+    PUSH_TO_STACK(tmp_stack, uint64_t, AT_CLKTCK);
 
     PUSH_TO_STACK(tmp_stack, uint64_t, at_base);
     PUSH_TO_STACK(tmp_stack, uint64_t, AT_BASE);
@@ -532,6 +583,55 @@ static int register_elf_load_vma(task_t *task, vfs_node_t node,
     }
 
     return 0;
+}
+
+static int task_execve_dethread(task_t *self) {
+    if (!self)
+        return -EINVAL;
+
+    uint64_t tgid = task_effective_tgid(self);
+    if (task_thread_group_count(tgid) <= 1)
+        return 0;
+
+    if (self->pid != tgid)
+        return -ENOSYS;
+
+    while (true) {
+        bool others_alive = false;
+
+        spin_lock(&task_queue_lock);
+        if (task_pid_map.buckets) {
+            for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+                hashmap_entry_t *entry = &task_pid_map.buckets[i];
+                if (!hashmap_entry_is_occupied(entry))
+                    continue;
+
+                task_t *task = (task_t *)entry->value;
+                if (!task || task == self || task->state == TASK_DIED ||
+                    !task->arch_context || task->arch_context->dead) {
+                    continue;
+                }
+                if (task_effective_tgid(task) != tgid)
+                    continue;
+
+                others_alive = true;
+                task_send_signal(task, SIGKILL, SI_DETHREAD);
+                if (task->state == TASK_BLOCKING ||
+                    task->state == TASK_READING_STDIO ||
+                    task->state == TASK_UNINTERRUPTABLE) {
+                    task_unblock(task, EOK);
+                }
+            }
+        }
+        spin_unlock(&task_queue_lock);
+
+        if (!others_alive)
+            return 0;
+
+        arch_enable_interrupt();
+        schedule(SCHED_FLAG_YIELD);
+        arch_disable_interrupt();
+    }
 }
 
 uint64_t task_execve(const char *path_user, const char **argv,
@@ -773,6 +873,13 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
     const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)header_buf;
 
+    int dethread_ret = task_execve_dethread(self);
+    if (dethread_ret < 0) {
+        task_execve_free_string_array(new_argv, argv_count);
+        task_execve_free_string_array(new_envp, envp_count);
+        return (uint64_t)dethread_ret;
+    }
+
     uint64_t real_load_start = 0;
     if (ehdr->e_type == ET_DYN) {
         real_load_start = PIE_BASE_ADDR;
@@ -960,7 +1067,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     uint64_t stack = push_infos(
         self, USER_STACK_END, (char **)new_argv, argv_count, (char **)new_envp,
         envp_count, e_entry, phdr_vaddr, ehdr->e_phnum,
-        interpreter_entry ? INTERPRETER_BASE_ADDR : load_start, path);
+        interpreter_entry ? INTERPRETER_BASE_ADDR : 0, path);
 
     if (self->clone_flags & CLONE_FILES) {
         fd_info_t *old = self->fd_info;
@@ -1027,17 +1134,11 @@ uint64_t task_execve(const char *path_user, const char **argv,
         }
     });
 
-    bool ignore_sigchld =
-        (self->signal->actions[SIGCHLD].sa_handler == SIG_IGN);
-    if (self->signal)
-        free(self->signal);
-    self->signal = malloc(sizeof(task_signal_info_t));
-    memset(self->signal, 0, sizeof(task_signal_info_t));
-    spin_init(&self->signal->signal_lock);
-    self->signal->altstack.ss_flags = SS_DISABLE;
-    if (ignore_sigchld) {
-        self->signal->actions[SIGCHLD].sa_handler = SIG_IGN;
-    }
+    task_signal_info_t *new_signal = task_signal_reset_after_exec(self);
+    if (!new_signal)
+        return (uint64_t)-ENOMEM;
+    task_signal_free(self->signal);
+    self->signal = new_signal;
 
     self->cmdline = strdup(cmdline);
     free(cmdline);
@@ -1429,6 +1530,15 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         flags |= CLONE_VM;
     }
 
+    if ((flags & CLONE_THREAD) &&
+        (!(flags & CLONE_SIGHAND) || !(flags & CLONE_VM))) {
+        return (uint64_t)-EINVAL;
+    }
+
+    if ((flags & CLONE_SIGHAND) && !(flags & CLONE_VM)) {
+        return (uint64_t)-EINVAL;
+    }
+
     if ((flags & CLONE_PIDFD) && (flags & CLONE_PARENT_SETTID)) {
         return (uint64_t)-EINVAL;
     }
@@ -1461,10 +1571,10 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     strncpy(child->name, self->name, TASK_NAME_MAX);
 
-    child->signal = malloc(sizeof(task_signal_info_t));
-    memset(child->signal, 0, sizeof(task_signal_info_t));
-    spin_init(&child->signal->signal_lock);
-    child->signal->altstack.ss_flags = SS_DISABLE;
+    child->signal = task_signal_clone(self, flags);
+    if (!child->signal) {
+        return (uint64_t)-ENOMEM;
+    }
 
     child->cpu_id = alloc_cpu_id();
 
@@ -1530,8 +1640,9 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 #endif
 
     child->is_kernel = false;
-    child->ppid = (flags & CLONE_THREAD) ? self->pid
-                                         : task_effective_wait_parent_pid(self);
+    child->ppid = (flags & (CLONE_THREAD | CLONE_PARENT))
+                      ? self->ppid
+                      : task_effective_wait_parent_pid(self);
     child->uid = self->uid;
     child->gid = self->gid;
     child->euid = self->euid;
@@ -1579,44 +1690,9 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     task_pgid_index_attach_locked(child);
     spin_unlock(&task_queue_lock);
 
-    procfs_on_new_task(child);
-    for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-        if (child->fd_info->fds[i]) {
-            procfs_on_open_file(child, i);
-        }
-    }
-
     child->shm_ids = NULL;
 
     child->signal->signal = 0;
-    if (flags & CLONE_SIGHAND) {
-        memcpy(child->signal->actions, self->signal->actions,
-               sizeof(child->signal->actions));
-        spin_lock(&self->signal->signal_lock);
-        child->signal->blocked = self->signal->blocked;
-        if ((flags & CLONE_VM) && !(flags & CLONE_VFORK)) {
-            child->signal->altstack.ss_sp = NULL;
-            child->signal->altstack.ss_size = 0;
-            child->signal->altstack.ss_flags = SS_DISABLE;
-        } else {
-            child->signal->altstack = self->signal->altstack;
-            child->signal->altstack.ss_flags &= SS_AUTODISARM;
-        }
-        spin_unlock(&self->signal->signal_lock);
-    } else {
-        memset(child->signal->actions, 0, sizeof(child->signal->actions));
-        child->signal->blocked = 0;
-        spin_lock(&self->signal->signal_lock);
-        if ((flags & CLONE_VM) && !(flags & CLONE_VFORK)) {
-            child->signal->altstack.ss_sp = NULL;
-            child->signal->altstack.ss_size = 0;
-            child->signal->altstack.ss_flags = SS_DISABLE;
-        } else {
-            child->signal->altstack = self->signal->altstack;
-            child->signal->altstack.ss_flags &= SS_AUTODISARM;
-        }
-        spin_unlock(&self->signal->signal_lock);
-    }
 
     if (flags & CLONE_SETTLS) {
 #if defined(__x86_64__)
@@ -1629,9 +1705,16 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     child->parent_death_sig = (uint64_t)-1;
 
     if (flags & CLONE_THREAD) {
-        child->tgid = self->tgid ? self->tgid : self->pid;
+        child->tgid = task_effective_tgid(self);
     } else {
         child->tgid = child->pid;
+    }
+
+    procfs_on_new_task(child);
+    for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+        if (child->fd_info->fds[i]) {
+            procfs_on_open_file(child, i);
+        }
     }
 
     int child_tid_value = (int)child->pid;
@@ -2019,6 +2102,14 @@ uint64_t sys_getpgid(uint64_t pid) {
         return current_task->pgid;
 }
 
+uint64_t sys_getsid(uint64_t pid) {
+    if (pid == 0)
+        return current_task->sid;
+
+    task_t *task = task_find_by_pid(pid);
+    return task ? task->sid : (uint64_t)-ESRCH;
+}
+
 uint64_t sys_setpgid(uint64_t pid, uint64_t pgid) {
     spin_lock(&task_queue_lock);
     task_t *task = pid ? task_lookup_by_pid_nolock(pid) : current_task;
@@ -2027,9 +2118,27 @@ uint64_t sys_setpgid(uint64_t pid, uint64_t pgid) {
         return -ESRCH;
     }
 
-    task_set_pgid_locked(task, pgid ? (int64_t)pgid : task->pgid);
+    int64_t new_pgid =
+        pgid ? (int64_t)pgid : (int64_t)task_effective_tgid(task);
+    task_set_thread_group_pgid_locked(task, new_pgid);
     spin_unlock(&task_queue_lock);
     return 0;
+}
+
+uint64_t sys_setsid() {
+    task_t *self = current_task;
+    if (!self)
+        return (uint64_t)-EINVAL;
+    if (self->pid != task_effective_tgid(self))
+        return (uint64_t)-EPERM;
+    if (self->pgid == (int64_t)task_effective_tgid(self))
+        return (uint64_t)-EPERM;
+
+    spin_lock(&task_queue_lock);
+    task_set_thread_group_sid_locked(self, (int64_t)task_effective_tgid(self));
+    task_set_thread_group_pgid_locked(self, (int64_t)task_effective_tgid(self));
+    spin_unlock(&task_queue_lock);
+    return task_effective_tgid(self);
 }
 
 static int task_sched_normalize_policy(int policy, int *base_policy) {

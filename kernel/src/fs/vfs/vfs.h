@@ -56,7 +56,7 @@ struct winsize {
 #define S_ISGID 0002000
 #define S_ISVTX 0001000
 
-enum {
+typedef enum file_type {
     file_none = 0x0001UL,    // 普通文件
     file_dir = 0x0002UL,     // 文件夹
     file_symlink = 0x0004UL, // 符号链接
@@ -66,7 +66,7 @@ enum {
     file_socket = 0x0040UL,  // 套接字设备
     file_epoll = 0x0080UL,   // epoll 设备
     file_fifo = 0x0100UL,    // fifo 设备
-};
+} file_type_t;
 
 typedef struct vfs_node *vfs_node_t;
 struct task;

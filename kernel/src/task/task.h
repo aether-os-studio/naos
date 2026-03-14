@@ -168,6 +168,14 @@ static inline uint64_t task_effective_wait_parent_pid(task_t *task) {
     return task->tgid > 0 ? (uint64_t)task->tgid : task->pid;
 }
 
+static inline uint64_t task_effective_tgid(task_t *task) {
+    if (!task) {
+        return 0;
+    }
+
+    return task->tgid > 0 ? (uint64_t)task->tgid : task->pid;
+}
+
 void sched_defer_tick(void);
 void sched_wake_worker(uint32_t cpu_id);
 void sched_check_wakeup();
@@ -175,6 +183,11 @@ void sched_check_wakeup();
 task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
                     int priority);
 void task_init();
+task_signal_info_t *task_signal_create_empty(void);
+task_signal_info_t *task_signal_clone(task_t *parent, uint64_t flags);
+task_signal_info_t *task_signal_reset_after_exec(task_t *task);
+void task_signal_free(task_signal_info_t *signal);
+size_t task_thread_group_count(uint64_t tgid);
 
 struct pt_regs;
 

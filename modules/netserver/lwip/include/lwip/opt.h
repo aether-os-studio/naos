@@ -2099,7 +2099,7 @@
  * in seconds. (does not require sockets.c, and will affect tcp.c)
  */
 #if !defined LWIP_TCP_KEEPALIVE || defined __DOXYGEN__
-#define LWIP_TCP_KEEPALIVE 0
+#define LWIP_TCP_KEEPALIVE 1
 #endif
 
 /**
@@ -2107,7 +2107,7 @@
  * SO_SNDTIMEO processing.
  */
 #if !defined LWIP_SO_SNDTIMEO || defined __DOXYGEN__
-#define LWIP_SO_SNDTIMEO 0
+#define LWIP_SO_SNDTIMEO 1
 #endif
 
 /**
@@ -2115,7 +2115,7 @@
  * SO_RCVTIMEO processing.
  */
 #if !defined LWIP_SO_RCVTIMEO || defined __DOXYGEN__
-#define LWIP_SO_RCVTIMEO 0
+#define LWIP_SO_RCVTIMEO 1
 #endif
 
 /**
@@ -2130,14 +2130,14 @@
  * LWIP_SO_RCVBUF==1: Enable SO_RCVBUF processing.
  */
 #if !defined LWIP_SO_RCVBUF || defined __DOXYGEN__
-#define LWIP_SO_RCVBUF 0
+#define LWIP_SO_RCVBUF 1
 #endif
 
 /**
  * LWIP_SO_LINGER==1: Enable SO_LINGER processing.
  */
 #if !defined LWIP_SO_LINGER || defined __DOXYGEN__
-#define LWIP_SO_LINGER 0
+#define LWIP_SO_LINGER 1
 #endif
 
 /**
@@ -2179,7 +2179,7 @@
  * here for compatibility.
  */
 #if !defined LWIP_FIONREAD_LINUXMODE || defined __DOXYGEN__
-#define LWIP_FIONREAD_LINUXMODE 0
+#define LWIP_FIONREAD_LINUXMODE 1
 #endif
 
 /**

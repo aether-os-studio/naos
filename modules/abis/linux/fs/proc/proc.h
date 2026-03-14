@@ -29,6 +29,7 @@ typedef struct proc_handle_node {
 typedef struct procfs_self_handle {
     vfs_node_t self;
     bool deleted;
+    bool thread_self;
 } procfs_self_handle_t;
 
 void procfs_nodes_init();
@@ -59,6 +60,9 @@ size_t proc_pmaps_read(proc_handle_t *handle, void *addr, size_t offset,
 size_t proc_pstat_stat(proc_handle_t *handle);
 size_t proc_pstat_read(proc_handle_t *handle, void *addr, size_t offset,
                        size_t size);
+size_t proc_pstatm_stat(proc_handle_t *handle);
+size_t proc_pstatm_read(proc_handle_t *handle, void *addr, size_t offset,
+                        size_t size);
 size_t proc_pstatus_stat(proc_handle_t *handle);
 size_t proc_pstatus_read(proc_handle_t *handle, void *addr, size_t offset,
                          size_t size);
@@ -68,6 +72,9 @@ size_t proc_pcgroup_read(proc_handle_t *handle, void *addr, size_t offset,
 size_t proc_meminfo_stat(proc_handle_t *handle);
 size_t proc_meminfo_read(proc_handle_t *handle, void *addr, size_t offset,
                          size_t size);
+size_t proc_stat_stat(proc_handle_t *handle);
+size_t proc_stat_read(proc_handle_t *handle, void *addr, size_t offset,
+                      size_t size);
 size_t proc_sys_kernel_osrelease_stat(proc_handle_t *handle);
 size_t proc_sys_kernel_osrelease_read(proc_handle_t *handle, void *addr,
                                       size_t offset, size_t size);

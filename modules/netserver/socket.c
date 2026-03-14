@@ -718,11 +718,24 @@ ssize_t real_socket_write(fd_t *fd, const void *addr, size_t offset,
     return lwip_out;
 }
 
+int real_socket_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
+    socket_handle_t *handle = node->handle;
+    real_socket_t *sock = handle->sock;
+
+    int lwip_out = lwip_ioctl(sock->lwip_fd, cmd, (void *)arg);
+
+    if (lwip_out < 0)
+        return -errno;
+
+    return lwip_out;
+}
+
 static vfs_operations_t real_socket_vfs_ops = {
     .close = real_socket_close,
     .read = real_socket_read,
     .write = real_socket_write,
     .poll = real_socket_poll,
+    .ioctl = real_socket_ioctl,
     .free_handle = real_socket_free_handle,
 };
 

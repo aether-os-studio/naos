@@ -34,6 +34,107 @@ uint32_t worker_slot_by_cpu[MAX_CPU_NUM];
 
 static void sched_update_itimer_task(task_t *task, uint64_t now_ms);
 
+static task_sighand_t *task_sighand_alloc(void) {
+    task_sighand_t *sighand = calloc(1, sizeof(task_sighand_t));
+    if (!sighand)
+        return NULL;
+
+    spin_init(&sighand->siglock);
+    sighand->ref_count = 1;
+    return sighand;
+}
+
+static void task_sighand_get(task_sighand_t *sighand) {
+    if (!sighand)
+        return;
+
+    __atomic_add_fetch(&sighand->ref_count, 1, __ATOMIC_RELAXED);
+}
+
+static void task_sighand_put(task_sighand_t *sighand) {
+    if (!sighand)
+        return;
+
+    if (__atomic_sub_fetch(&sighand->ref_count, 1, __ATOMIC_ACQ_REL) == 0) {
+        free(sighand);
+    }
+}
+
+task_signal_info_t *task_signal_create_empty(void) {
+    task_signal_info_t *signal = calloc(1, sizeof(task_signal_info_t));
+    if (!signal)
+        return NULL;
+
+    signal->altstack.ss_flags = SS_DISABLE;
+    signal->sighand = task_sighand_alloc();
+    if (!signal->sighand) {
+        free(signal);
+        return NULL;
+    }
+
+    return signal;
+}
+
+task_signal_info_t *task_signal_clone(task_t *parent, uint64_t flags) {
+    if (!parent || !parent->signal || !parent->signal->sighand)
+        return NULL;
+
+    task_signal_info_t *signal = task_signal_create_empty();
+    if (!signal)
+        return NULL;
+
+    spin_lock(&parent->signal->sighand->siglock);
+    if (flags & CLONE_SIGHAND) {
+        task_sighand_put(signal->sighand);
+        signal->sighand = parent->signal->sighand;
+        task_sighand_get(signal->sighand);
+    } else {
+        memcpy(signal->sighand->actions, parent->signal->sighand->actions,
+               sizeof(signal->sighand->actions));
+    }
+
+    signal->blocked = parent->signal->blocked;
+    if ((flags & CLONE_VM) && !(flags & CLONE_VFORK)) {
+        signal->altstack.ss_sp = NULL;
+        signal->altstack.ss_size = 0;
+        signal->altstack.ss_flags = SS_DISABLE;
+    } else {
+        signal->altstack = parent->signal->altstack;
+        signal->altstack.ss_flags &= SS_AUTODISARM;
+    }
+    spin_unlock(&parent->signal->sighand->siglock);
+
+    return signal;
+}
+
+task_signal_info_t *task_signal_reset_after_exec(task_t *task) {
+    if (!task || !task->signal || !task->signal->sighand)
+        return NULL;
+
+    task_signal_info_t *signal = task_signal_create_empty();
+    if (!signal)
+        return NULL;
+
+    spin_lock(&task->signal->sighand->siglock);
+    if (task->signal->sighand->actions[SIGCHLD].sa_handler == SIG_IGN) {
+        signal->sighand->actions[SIGCHLD].sa_handler = SIG_IGN;
+    }
+    signal->blocked = task->signal->blocked;
+    signal->signal = task->signal->signal;
+    signal->pending_signal = task->signal->pending_signal;
+    spin_unlock(&task->signal->sighand->siglock);
+
+    return signal;
+}
+
+void task_signal_free(task_signal_info_t *signal) {
+    if (!signal)
+        return;
+
+    task_sighand_put(signal->sighand);
+    free(signal);
+}
+
 static inline bool task_has_tick_work(task_t *task) {
     if (!task || task->state == TASK_DIED || task->arch_context->dead) {
         return false;
@@ -279,6 +380,35 @@ size_t task_count(void) {
     return count;
 }
 
+size_t task_thread_group_count(uint64_t tgid) {
+    size_t count = 0;
+
+    if (!tgid)
+        return 0;
+
+    spin_lock(&task_queue_lock);
+    if (task_pid_map.buckets) {
+        for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+            hashmap_entry_t *entry = &task_pid_map.buckets[i];
+            if (!hashmap_entry_is_occupied(entry))
+                continue;
+
+            task_t *task = (task_t *)entry->value;
+            if (!task || task->state == TASK_DIED || !task->arch_context ||
+                task->arch_context->dead) {
+                continue;
+            }
+
+            if (task_effective_tgid(task) == tgid) {
+                count++;
+            }
+        }
+    }
+    spin_unlock(&task_queue_lock);
+
+    return count;
+}
+
 int task_kill_all(int sig) {
     int sent = 0;
 
@@ -463,10 +593,11 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
         can_schedule = true;
         return NULL;
     }
-    task->signal = malloc(sizeof(task_signal_info_t));
-    memset(task->signal, 0, sizeof(task_signal_info_t));
-    spin_init(&task->signal->signal_lock);
-    task->signal->altstack.ss_flags = SS_DISABLE;
+    task->signal = task_signal_create_empty();
+    if (!task->signal) {
+        can_schedule = true;
+        return NULL;
+    }
     task->ppid = task->pid;
     task->uid = 0;
     task->gid = 0;
@@ -531,8 +662,6 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->fd_info->ref_count++;
     strncpy(task->name, name, TASK_NAME_MAX);
     task->shm_ids = NULL;
-
-    memset(task->signal->actions, 0, sizeof(task->signal->actions));
 
     task->cmdline = NULL;
     task->arg_start = 0;
@@ -826,8 +955,13 @@ void task_exit_inner(task_t *task, int64_t code) {
 
     task_t *parent = task_lookup_by_pid_nolock(task->ppid);
     if (!task->is_clone && task->ppid && task->pid != task->ppid && parent) {
-        sigaction_t *sa = &parent->signal->actions[SIGCHLD];
-        bool ignore_sigchld = (sa->sa_handler == SIG_IGN);
+        sigaction_t sa = {0};
+        if (parent->signal && parent->signal->sighand) {
+            spin_lock(&parent->signal->sighand->siglock);
+            sa = parent->signal->sighand->actions[SIGCHLD];
+            spin_unlock(&parent->signal->sighand->siglock);
+        }
+        bool ignore_sigchld = (sa.sa_handler == SIG_IGN);
 
         if (!ignore_sigchld) {
             siginfo_t sigchld_info;
@@ -848,7 +982,7 @@ void task_exit_inner(task_t *task, int64_t code) {
             task_commit_signal(parent, SIGCHLD, &sigchld_info);
         }
 
-        if (ignore_sigchld || (sa->sa_flags & SA_NOCLDWAIT))
+        if (ignore_sigchld || (sa.sa_flags & SA_NOCLDWAIT))
             task_enqueue_should_free(task);
 
         task_unblock(parent, 128 + SIGCHLD);
@@ -912,6 +1046,7 @@ uint64_t task_exit(int64_t code) {
                 continue;
             }
 
+            task->procfs_thread_node = NULL;
             task_send_signal(task, SIGKILL, SI_USER);
         }
     }

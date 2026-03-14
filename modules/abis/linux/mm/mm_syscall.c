@@ -93,6 +93,10 @@ static uint64_t vm_flags_to_prot(uint64_t vm_flags) {
     return prot;
 }
 
+static bool vm_flags_has_access(uint64_t vm_flags) {
+    return (vm_flags & (VMA_READ | VMA_WRITE | VMA_EXEC)) != 0;
+}
+
 static uint64_t vm_flags_to_pt_flags(uint64_t vm_flags) {
     uint64_t pt_flags = PT_FLAG_U;
 
@@ -363,6 +367,8 @@ static uint64_t populate_anon_vma(uint64_t vm_flags, uint64_t addr,
 
 static bool should_eager_map_file(vma_t *vma, uint64_t flags) {
     if (!vma)
+        return false;
+    if (!vm_flags_has_access(vma->vm_flags))
         return false;
     if (vma->vm_flags & VMA_DEVICE)
         return true;
@@ -702,6 +708,8 @@ uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
     vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
     task_mm_info_t *mm = current_task->mm;
     uint64_t end = addr + len;
+    uint64_t new_vm_access = prot_to_vma_access_flags(prot);
+    bool no_access = new_vm_access == 0;
 
     spin_lock(&mgr->lock);
 
@@ -724,15 +732,24 @@ uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
         }
 
         vma->vm_flags &= ~(VMA_READ | VMA_WRITE | VMA_EXEC);
-        vma->vm_flags |= prot_to_vma_access_flags(prot);
+        vma->vm_flags |= new_vm_access;
+
+        if (no_access && vma->vm_type == VMA_TYPE_FILE) {
+            uint64_t unmap_start = vma->vm_start;
+            uint64_t unmap_len = vma->vm_end - vma->vm_start;
+            spin_lock(&mm->lock);
+            unmap_page_range(mm_pgdir(mm), unmap_start, unmap_len);
+            spin_unlock(&mm->lock);
+        }
         cursor = vma->vm_end;
     }
 
-    spin_lock(&mm->lock);
-    map_change_attribute_range(
-        mm_pgdir(mm), addr, len,
-        vm_flags_to_pt_flags(prot_to_vma_access_flags(prot)));
-    spin_unlock(&mm->lock);
+    if (!no_access) {
+        spin_lock(&mm->lock);
+        map_change_attribute_range(mm_pgdir(mm), addr, len,
+                                   vm_flags_to_pt_flags(new_vm_access));
+        spin_unlock(&mm->lock);
+    }
 
     spin_unlock(&mgr->lock);
     return 0;
@@ -1089,6 +1106,8 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
 
     if (!file || !file->node)
         return (void *)(uint64_t)-EBADF;
+    if ((prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) == 0)
+        return (void *)addr;
 
     uint64_t final_pt_flags = PT_FLAG_U;
     if (prot & PROT_READ)

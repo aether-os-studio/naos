@@ -520,7 +520,7 @@ __attribute__((visibility("default"))) int dlmain() {
     // (syscall_handle_t)sys_afs_syscall); regist_syscall_handler(SYS_TUXCALL,
     // (syscall_handle_t)sys_tuxcall); regist_syscall_handler(SYS_SECURITY,
     // (syscall_handle_t)sys_security);
-    regist_syscall_handler(SYS_GETTID, (syscall_handle_t)sys_getpid);
+    regist_syscall_handler(SYS_GETTID, (syscall_handle_t)sys_gettid);
     // regist_syscall_handler(SYS_READAHEAD, (syscall_handle_t)sys_readahead);
     regist_syscall_handler(SYS_SETXATTR,
                            (syscall_handle_t)dummy_syscall_handler);
