@@ -12,6 +12,23 @@
 #define X64_PFEC_USER (1UL << 2)
 #define X64_PFEC_INSTR (1UL << 4)
 
+static uint64_t x64_error_code_to_fault_flags(uint64_t error_code) {
+    uint64_t fault_flags = 0;
+
+    if (error_code & X64_PFEC_PRESENT)
+        fault_flags |= PF_ACCESS_PRESENT;
+    if (error_code & X64_PFEC_USER)
+        fault_flags |= PF_ACCESS_USER;
+    if (error_code & X64_PFEC_INSTR)
+        fault_flags |= PF_ACCESS_EXEC;
+    else if (error_code & X64_PFEC_WRITE)
+        fault_flags |= PF_ACCESS_WRITE;
+    else
+        fault_flags |= PF_ACCESS_READ;
+
+    return fault_flags;
+}
+
 static bool x64_fault_access_allowed_now(task_t *task, uint64_t vaddr,
                                          uint64_t error_code) {
     if (!task || !task->mm)
@@ -429,7 +446,9 @@ void do_page_fault(struct pt_regs *regs, uint64_t error_code) {
     uint64_t cr2 = 0;
     asm volatile("movq %%cr2, %0" : "=r"(cr2)::"memory");
 
-    if (handle_page_fault(current_task, cr2) == PF_RES_OK)
+    if (handle_page_fault_flags(current_task, cr2,
+                                x64_error_code_to_fault_flags(error_code)) ==
+        PF_RES_OK)
         return;
 
     if (x64_fault_access_allowed_now(current_task, cr2, error_code)) {

@@ -199,6 +199,7 @@ uint64_t task_exit(int64_t code);
 int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
                const char *blocking_reason);
 void task_unblock(task_t *task, int reason);
+void task_membarrier_checkpoint(task_t *task);
 
 void futex_init();
 task_t *task_find_by_pid(uint64_t pid);

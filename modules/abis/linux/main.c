@@ -20,6 +20,39 @@ char release[] = BUILD_VERSION;
 char version[] = BUILD_VERSION;
 char machine[] = "x86_64";
 
+extern void sys_yield(void);
+
+static uint64_t copy_timespec_to_user(uint64_t user_addr, uint64_t sec,
+                                      uint64_t nsec) {
+    if (!user_addr)
+        return 0;
+
+    struct timespec ts = {
+        .tv_sec = (long long)sec,
+        .tv_nsec = (long)nsec,
+    };
+    return copy_to_user((void *)user_addr, &ts, sizeof(ts)) ? (uint64_t)-EFAULT
+                                                            : 0;
+}
+
+static uint64_t copy_timeval_to_user(uint64_t user_addr, uint64_t sec,
+                                     uint64_t usec) {
+    if (!user_addr)
+        return 0;
+
+    struct timeval tv = {
+        .tv_sec = (long)sec,
+        .tv_usec = (long)usec,
+    };
+    return copy_to_user((void *)user_addr, &tv, sizeof(tv)) ? (uint64_t)-EFAULT
+                                                            : 0;
+}
+
+static uint64_t sys_sched_yield_linux(void) {
+    sys_yield();
+    return 0;
+}
+
 uint64_t sys_getrandom(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
     uint8_t *buffer = (uint8_t *)arg1;
     size_t get_len = (size_t)arg2;
@@ -43,37 +76,29 @@ uint64_t sys_getrandom(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
 }
 
 uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
+    (void)arg3;
+
     switch (arg1) {
     case 1: // CLOCK_MONOTONIC
     case 6: // CLOCK_MONOTONIC_COARSE
     case 4: // CLOCK_MONOTONIC_RAW
     {
-        if (arg2) {
-            struct timespec *ts = (struct timespec *)arg2;
-            uint64_t nano = nano_time();
-            ts->tv_sec = nano / 1000000000ULL;
-            ts->tv_nsec = nano % 1000000000ULL;
-        }
-        return 0;
+        uint64_t nano = nano_time();
+        return copy_timespec_to_user(arg2, nano / 1000000000ULL,
+                                     nano % 1000000000ULL);
     }
     case 7: // CLOCK_BOOTTIME
-        if (arg2) {
-            struct timespec *ts = (struct timespec *)arg2;
-            uint64_t nano = nano_time();
-            ts->tv_sec = nano / 1000000000;
-            ts->tv_nsec = nano % 1000000000;
-        }
-        return 0;
+    {
+        uint64_t nano = nano_time();
+        return copy_timespec_to_user(arg2, nano / 1000000000ULL,
+                                     nano % 1000000000ULL);
+    }
     case 0: // CLOCK_REALTIME
     {
-        uint64_t timestamp = boot_get_boottime() * 1000000000 + nano_time();
-
-        if (arg2) {
-            struct timespec *ts = (struct timespec *)arg2;
-            ts->tv_sec = timestamp / 1000000000;
-            ts->tv_nsec = timestamp % 1000000000;
-        }
-        return 0;
+        uint64_t nano = nano_time();
+        return copy_timespec_to_user(arg2,
+                                     boot_get_boottime() + nano / 1000000000,
+                                     nano % 1000000000ULL);
     }
     default:
         printk("clock not supported, clock_id = %d\n", arg1);
@@ -116,15 +141,7 @@ uint64_t sys_gettimeofday(uint64_t arg1) {
     time_read(&time_day);
     uint64_t nano = nano_time();
     uint64_t timestamp = boot_get_boottime() + nano / 1000000000;
-    if (arg1) {
-        struct timespec ts;
-        ts.tv_sec = timestamp;
-        ts.tv_nsec = nano % 1000000000;
-        if (copy_to_user((void *)arg1, &ts, sizeof(ts))) {
-            return (uint64_t)-EFAULT;
-        }
-    }
-    return 0;
+    return copy_timeval_to_user(arg1, timestamp, (nano % 1000000000ULL) / 1000);
 }
 
 uint64_t sys_uname(uint64_t arg1) {
@@ -330,12 +347,11 @@ __attribute__((visibility("default"))) int dlmain() {
     regist_syscall_handler(SYS_PIPE, (syscall_handle_t)sys_pipe_normal);
     regist_syscall_handler(SYS_SELECT, (syscall_handle_t)sys_select);
     regist_syscall_handler(SYS_SCHED_YIELD,
-                           (syscall_handle_t)dummy_syscall_handler);
+                           (syscall_handle_t)sys_sched_yield_linux);
     regist_syscall_handler(SYS_MREMAP, (syscall_handle_t)sys_mremap);
     regist_syscall_handler(SYS_MSYNC, (syscall_handle_t)sys_msync);
     regist_syscall_handler(SYS_MINCORE, (syscall_handle_t)sys_mincore);
-    regist_syscall_handler(SYS_MADVISE,
-                           (syscall_handle_t)dummy_syscall_handler);
+    regist_syscall_handler(SYS_MADVISE, (syscall_handle_t)sys_madvise);
     regist_syscall_handler(SYS_SHMGET, (syscall_handle_t)sys_shmget);
     regist_syscall_handler(SYS_SHMAT, (syscall_handle_t)sys_shmat);
     regist_syscall_handler(SYS_SHMCTL, (syscall_handle_t)sys_shmctl);
@@ -729,8 +745,7 @@ __attribute__((visibility("default"))) int dlmain() {
     // (syscall_handle_t)sys_bpf); regist_syscall_handler(SYS_EXECVEAT,
     // (syscall_handle_t)sys_execveat); regist_syscall_handler(SYS_USERFAULTFD,
     // (syscall_handle_t)sys_userfaultfd);
-    regist_syscall_handler(SYS_MEMBARRIER,
-                           (syscall_handle_t)dummy_syscall_handler);
+    regist_syscall_handler(SYS_MEMBARRIER, (syscall_handle_t)sys_membarrier);
     // regist_syscall_handler(SYS_MLOCK2, (syscall_handle_t)sys_mlock2);
     regist_syscall_handler(SYS_COPY_FILE_RANGE,
                            (syscall_handle_t)sys_copy_file_range);

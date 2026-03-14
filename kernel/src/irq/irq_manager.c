@@ -36,6 +36,9 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num) {
     }
 
     task_t *self = current_task;
+    if (self) {
+        task_membarrier_checkpoint(self);
+    }
 
     if (irq_num == ARCH_TIMER_IRQ && self) {
         if (system_initialized) {

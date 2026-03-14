@@ -23,6 +23,8 @@ typedef struct task_mm_info {
     uint64_t brk_start;
     uint64_t brk_current;
     uint64_t brk_end;
+    uint64_t membarrier_private_expedited_seq;
+    bool membarrier_private_expedited_registered;
 } task_mm_info_t;
 
 void frame_init();

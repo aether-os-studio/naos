@@ -2,6 +2,7 @@
 #include <libs/keys.h>
 #include <libs/kbqueue.h>
 #include <drivers/tty.h>
+#include <boot/boot.h>
 #include <fs/dev.h>
 
 char character_table[140] = {
@@ -40,8 +41,13 @@ void kb_evdev_generate(uint8_t code, bool clicked) {
     if (!kb_input_event || !kb_input_event->timesOpened)
         return;
 
+    uint64_t nano = nano_time();
     struct timespec now;
-    sys_clock_gettime(kb_input_event->clock_id, (uint64_t)&now, 0);
+    if (kb_input_event->clock_id == CLOCK_REALTIME)
+        now.tv_sec = boot_get_boottime() + nano / 1000000000;
+    else
+        now.tv_sec = nano / 1000000000;
+    now.tv_nsec = nano % 1000000000;
     input_generate_event(kb_input_event, EV_KEY, code, clicked ? 1 : 0,
                          now.tv_sec, now.tv_nsec / 1000);
     input_generate_event(kb_input_event, EV_SYN, SYN_REPORT, 0, now.tv_sec,
@@ -336,8 +342,13 @@ void handle_mouse_event(uint8_t flag, int8_t x, int8_t y, int8_t z) {
     bool rclick = (flag & (1 << 1)) != 0;
     bool mclick = (flag & (1 << 2)) != 0;
 
+    uint64_t nano = nano_time();
     struct timespec now;
-    sys_clock_gettime(mouse_input_event->clock_id, (uint64_t)&now, 0);
+    if (kb_input_event->clock_id == CLOCK_REALTIME)
+        now.tv_sec = boot_get_boottime() + nano / 1000000000;
+    else
+        now.tv_sec = nano / 1000000000;
+    now.tv_nsec = nano % 1000000000;
 
     if (x)
         input_generate_event(mouse_input_event, EV_REL, REL_X, x, now.tv_sec,

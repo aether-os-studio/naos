@@ -9,4 +9,18 @@ typedef enum page_fault_result {
     PF_RES_NOMEM,
 } page_fault_result_t;
 
-page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr);
+typedef enum page_fault_access {
+    PF_ACCESS_READ = 1U << 0,
+    PF_ACCESS_WRITE = 1U << 1,
+    PF_ACCESS_EXEC = 1U << 2,
+    PF_ACCESS_USER = 1U << 3,
+    PF_ACCESS_PRESENT = 1U << 4,
+} page_fault_access_t;
+
+page_fault_result_t handle_page_fault_flags(task_t *task, uint64_t vaddr,
+                                            uint64_t fault_flags);
+
+static inline page_fault_result_t handle_page_fault(task_t *task,
+                                                    uint64_t vaddr) {
+    return handle_page_fault_flags(task, vaddr, PF_ACCESS_READ);
+}

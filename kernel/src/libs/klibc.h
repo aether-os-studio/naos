@@ -298,7 +298,7 @@ static inline void *user_virt_from_paddr(uint64_t paddr) {
     return (void *)(uintptr_t)(paddr | get_physical_memory_offset());
 }
 
-uint64_t user_translate_or_fault(uint64_t *pgdir, uint64_t uaddr);
+uint64_t user_translate_or_fault(uint64_t *pgdir, uint64_t uaddr, bool write);
 
 static inline bool copy_to_user(void *dst, const void *src, size_t size) {
     if (size == 0)
@@ -316,7 +316,7 @@ static inline bool copy_to_user(void *dst, const void *src, size_t size) {
     size_t remain = size;
 
     while (remain > 0) {
-        uint64_t pa = user_translate_or_fault(pgdir, uaddr);
+        uint64_t pa = user_translate_or_fault(pgdir, uaddr, true);
         if (!pa)
             return true;
 
@@ -348,7 +348,7 @@ static inline bool copy_from_user(void *dst, const void *src, size_t size) {
     size_t remain = size;
 
     while (remain > 0) {
-        uint64_t pa = user_translate_or_fault(pgdir, uaddr);
+        uint64_t pa = user_translate_or_fault(pgdir, uaddr, false);
         if (!pa)
             return true;
 
@@ -378,7 +378,7 @@ static inline bool copy_from_user_str(char *dst, const char *src,
     size_t copied = 0;
 
     while (copied + 1 < limit) {
-        uint64_t pa = user_translate_or_fault(pgdir, uaddr);
+        uint64_t pa = user_translate_or_fault(pgdir, uaddr, false);
         if (!pa)
             return true;
 

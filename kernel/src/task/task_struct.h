@@ -333,6 +333,7 @@ typedef struct task {
     bool is_clone;
     bool child_vfork_done;
     bool wake_pending;
+    uint64_t membarrier_seen_seq;
     bool tick_work_queued;
     uint32_t tick_work_queue_id;
     bool timeout_queued;

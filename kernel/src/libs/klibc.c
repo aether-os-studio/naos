@@ -3,6 +3,7 @@
 #include <drivers/kernel_logger.h>
 #include <arch/arch.h>
 #include <mm/fault.h>
+#include <mm/page_table.h>
 
 void spin_init(spinlock_t *lock) { memset(lock, 0, sizeof(spinlock_t)); }
 
@@ -54,18 +55,69 @@ bool check_unmapped(uint64_t addr, uint64_t len) {
     return true;
 }
 
-uint64_t user_translate_or_fault(uint64_t *pgdir, uint64_t uaddr) {
-    uint64_t pa = translate_address(pgdir, uaddr);
+static uint64_t user_translate_access(uint64_t *pgdir, uint64_t uaddr,
+                                      bool write) {
+    if (!pgdir || !uaddr)
+        return 0;
+
+    uint64_t indexs[ARCH_MAX_PT_LEVEL];
+    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++) {
+        indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(uaddr, i + 1);
+    }
+
+    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL - 1; i++) {
+        uint64_t entry = pgdir[indexs[i]];
+        if (ARCH_PT_IS_LARGE(entry)) {
+            uint64_t flags = ARCH_READ_PTE_FLAG(entry);
+            if (!(flags & ARCH_PT_FLAG_USER))
+                return 0;
+#if defined(__aarch64__)
+            if (write && (flags & ARCH_PT_FLAG_READONLY))
+                return 0;
+#else
+            if (write && !(flags & ARCH_PT_FLAG_WRITEABLE))
+                return 0;
+#endif
+            return (ARCH_READ_PTE(entry) & ~PAGE_CALC_PAGE_TABLE_MASK(i + 1)) +
+                   (uaddr & PAGE_CALC_PAGE_TABLE_MASK(i + 1));
+        }
+        if (!ARCH_PT_IS_TABLE(entry))
+            return 0;
+        pgdir = (uint64_t *)phys_to_virt(ARCH_READ_PTE(entry));
+    }
+
+    uint64_t pte = pgdir[indexs[ARCH_MAX_PT_LEVEL - 1]];
+    if (!(pte & ARCH_PT_FLAG_VALID))
+        return 0;
+
+    uint64_t flags = ARCH_READ_PTE_FLAG(pte);
+    if (!(flags & ARCH_PT_FLAG_USER))
+        return 0;
+#if defined(__aarch64__)
+    if (write && (flags & ARCH_PT_FLAG_READONLY))
+        return 0;
+#else
+    if (write && !(flags & ARCH_PT_FLAG_WRITEABLE))
+        return 0;
+#endif
+
+    return ARCH_READ_PTE(pte) +
+           (uaddr & PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL));
+}
+
+uint64_t user_translate_or_fault(uint64_t *pgdir, uint64_t uaddr, bool write) {
+    uint64_t pa = user_translate_access(pgdir, uaddr, write);
     if (pa)
         return pa;
 
     task_t *task = arch_get_current();
     if (!task)
         return 0;
-    if (handle_page_fault(task, uaddr) != 0)
+    if (handle_page_fault_flags(task, uaddr,
+                                write ? PF_ACCESS_WRITE : PF_ACCESS_READ) != 0)
         return 0;
 
-    return translate_address(pgdir, uaddr);
+    return user_translate_access(pgdir, uaddr, write);
 }
 
 void *memcpy(void *restrict dest, const void *restrict src, size_t n) {

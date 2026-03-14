@@ -39,6 +39,34 @@ static bool fault_vma_has_access(const fault_vma_snapshot_t *snapshot) {
     return snapshot && (snapshot->vm_flags & (VMA_READ | VMA_WRITE | VMA_EXEC));
 }
 
+static bool fault_snapshot_allows_access(const fault_vma_snapshot_t *snapshot,
+                                         uint64_t fault_flags) {
+    if (!fault_vma_has_access(snapshot))
+        return false;
+
+    if (fault_flags & PF_ACCESS_EXEC)
+        return (snapshot->vm_flags & VMA_EXEC) != 0;
+    if (fault_flags & PF_ACCESS_WRITE)
+        return (snapshot->vm_flags & VMA_WRITE) != 0;
+
+    return (snapshot->vm_flags & VMA_READ) != 0;
+}
+
+static bool fault_vma_allows_access(vma_t *vma, uint64_t fault_flags) {
+    if (!vma)
+        return false;
+
+    if (!(vma->vm_flags & (VMA_READ | VMA_WRITE | VMA_EXEC)))
+        return false;
+
+    if (fault_flags & PF_ACCESS_EXEC)
+        return (vma->vm_flags & VMA_EXEC) != 0;
+    if (fault_flags & PF_ACCESS_WRITE)
+        return (vma->vm_flags & VMA_WRITE) != 0;
+
+    return (vma->vm_flags & VMA_READ) != 0;
+}
+
 static bool fault_vma_can_resolve_cow(const fault_vma_snapshot_t *snapshot) {
     return snapshot && (snapshot->vm_flags & VMA_WRITE) &&
            !(snapshot->vm_flags & (VMA_SHARED | VMA_SHM | VMA_DEVICE));
@@ -105,7 +133,7 @@ static bool fault_vma_matches_snapshot(vma_t *vma,
 
 static page_fault_result_t
 map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
-                             uint64_t vaddr) {
+                             uint64_t vaddr, uint64_t fault_flags) {
     if (!task || !snapshot || !snapshot->node)
         return PF_RES_SEGF;
 
@@ -153,7 +181,7 @@ map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
 
     vma_t *current_vma = vma_find(mgr, vaddr);
     if (!fault_vma_matches_snapshot(current_vma, snapshot) ||
-        !fault_vma_has_access(snapshot)) {
+        !fault_snapshot_allows_access(snapshot, fault_flags)) {
         spin_unlock(&mgr->lock);
         address_release(page_paddr);
         return PF_RES_SEGF;
@@ -255,7 +283,8 @@ map_cow_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
     return PF_RES_OK;
 }
 
-page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
+page_fault_result_t handle_page_fault_flags(task_t *task, uint64_t vaddr,
+                                            uint64_t fault_flags) {
     if (!task)
         return PF_RES_SEGF;
     if (!vaddr)
@@ -304,6 +333,11 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
     page_fault_result_t result = PF_RES_SEGF;
 
     if (has_leaf && (flags & ARCH_PT_FLAG_COW)) {
+        if (!(fault_flags & PF_ACCESS_WRITE)) {
+            spin_unlock(&mgr->lock);
+            return PF_RES_SEGF;
+        }
+
         fault_vma_snapshot_t snapshot = {0};
         if (!vma || !fault_vma_snapshot_capture(vma, &snapshot, true) ||
             !fault_vma_can_resolve_cow(&snapshot)) {
@@ -327,7 +361,7 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
         spin_unlock(&mgr->lock);
         return PF_RES_SEGF;
     }
-    if (!(vma->vm_flags & (VMA_READ | VMA_WRITE | VMA_EXEC))) {
+    if (!fault_vma_allows_access(vma, fault_flags)) {
         spin_unlock(&mgr->lock);
         return PF_RES_SEGF;
     }
@@ -337,7 +371,8 @@ page_fault_result_t handle_page_fault(task_t *task, uint64_t vaddr) {
         fault_vma_snapshot_capture(vma, &snapshot, true);
 
         spin_unlock(&mgr->lock);
-        result = map_file_fault_page_snapshot(task, &snapshot, vaddr);
+        result =
+            map_file_fault_page_snapshot(task, &snapshot, vaddr, fault_flags);
         fault_vma_snapshot_put(&snapshot);
         return result;
     }

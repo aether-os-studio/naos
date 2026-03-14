@@ -68,6 +68,8 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
         goto done;
     }
 
+    task_membarrier_checkpoint(self);
+
     uint64_t idx = regs->rax & 0xFFFFFFFF;
 
     uint64_t arg1 = regs->rdi;

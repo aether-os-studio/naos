@@ -66,5 +66,3 @@ void syscall_init();
 static inline uint64_t dummy_syscall_handler() { return 0; }
 
 void syscall_handler_init();
-
-uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3);

@@ -153,6 +153,25 @@ static inline bool task_has_tick_work(task_t *task) {
     return false;
 }
 
+void task_membarrier_checkpoint(task_t *task) {
+    if (!task || !task->mm)
+        return;
+
+    task_mm_info_t *mm = task->mm;
+    uint64_t seq =
+        __atomic_load_n(&mm->membarrier_private_expedited_seq, __ATOMIC_ACQUIRE);
+    if (seq == 0)
+        return;
+
+    uint64_t seen =
+        __atomic_load_n(&task->membarrier_seen_seq, __ATOMIC_RELAXED);
+    if (seen >= seq)
+        return;
+
+    memory_barrier();
+    __atomic_store_n(&task->membarrier_seen_seq, seq, __ATOMIC_RELEASE);
+}
+
 static inline uint32_t sched_worker_slot_for_cpu(uint32_t cpu_id) {
     if (!worker_task_count)
         return 0;

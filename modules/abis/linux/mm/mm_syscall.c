@@ -2,6 +2,7 @@
 #include <mm/mm_syscall.h>
 #include <fs/fs_syscall.h>
 #include <fs/vfs/vfs.h>
+#include <irq/irq_manager.h>
 #include <task/task.h>
 
 #define NUMA_NODE_COUNT 1
@@ -98,7 +99,10 @@ static bool vm_flags_has_access(uint64_t vm_flags) {
 }
 
 static uint64_t vm_flags_to_pt_flags(uint64_t vm_flags) {
-    uint64_t pt_flags = PT_FLAG_U;
+    uint64_t pt_flags = 0;
+
+    if (vm_flags_has_access(vm_flags))
+        pt_flags |= PT_FLAG_U;
 
     if (vm_flags & VMA_READ)
         pt_flags |= PT_FLAG_R;
@@ -113,6 +117,139 @@ static uint64_t vm_flags_to_pt_flags(uint64_t vm_flags) {
 static bool ranges_overlap(uint64_t lhs_start, uint64_t lhs_end,
                            uint64_t rhs_start, uint64_t rhs_end) {
     return lhs_start < rhs_end && rhs_start < lhs_end;
+}
+
+static const char *madvise_behavior_name(int behavior) {
+    switch (behavior) {
+    case MADV_NORMAL:
+        return "MADV_NORMAL";
+    case MADV_RANDOM:
+        return "MADV_RANDOM";
+    case MADV_SEQUENTIAL:
+        return "MADV_SEQUENTIAL";
+    case MADV_WILLNEED:
+        return "MADV_WILLNEED";
+    case MADV_DONTNEED:
+        return "MADV_DONTNEED";
+    case MADV_FREE:
+        return "MADV_FREE";
+    case MADV_REMOVE:
+        return "MADV_REMOVE";
+    case MADV_DONTFORK:
+        return "MADV_DONTFORK";
+    case MADV_DOFORK:
+        return "MADV_DOFORK";
+    case MADV_MERGEABLE:
+        return "MADV_MERGEABLE";
+    case MADV_UNMERGEABLE:
+        return "MADV_UNMERGEABLE";
+    case MADV_HUGEPAGE:
+        return "MADV_HUGEPAGE";
+    case MADV_NOHUGEPAGE:
+        return "MADV_NOHUGEPAGE";
+    case MADV_DONTDUMP:
+        return "MADV_DONTDUMP";
+    case MADV_DODUMP:
+        return "MADV_DODUMP";
+    case MADV_WIPEONFORK:
+        return "MADV_WIPEONFORK";
+    case MADV_KEEPONFORK:
+        return "MADV_KEEPONFORK";
+    case MADV_COLD:
+        return "MADV_COLD";
+    case MADV_PAGEOUT:
+        return "MADV_PAGEOUT";
+    case MADV_POPULATE_READ:
+        return "MADV_POPULATE_READ";
+    case MADV_POPULATE_WRITE:
+        return "MADV_POPULATE_WRITE";
+    default:
+        return "MADV_UNKNOWN";
+    }
+}
+
+static uint64_t membarrier_supported_mask(void) {
+    return MEMBARRIER_CMD_PRIVATE_EXPEDITED |
+           MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED;
+}
+
+static bool membarrier_task_matches_mm(task_t *task, task_mm_info_t *mm,
+                                       task_t *self) {
+    return task && task != self && task->mm == mm &&
+           task->current_state == TASK_RUNNING && task->state != TASK_DIED &&
+           task->arch_context && !task->arch_context->dead;
+}
+
+static void membarrier_collect_target_cpus(task_mm_info_t *mm, task_t *self,
+                                           bool cpu_targets[MAX_CPU_NUM]) {
+    memset(cpu_targets, 0, sizeof(bool) * MAX_CPU_NUM);
+
+    spin_lock(&task_queue_lock);
+    if (task_pid_map.buckets) {
+        for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+            hashmap_entry_t *entry = &task_pid_map.buckets[i];
+            if (!hashmap_entry_is_occupied(entry))
+                continue;
+
+            task_t *task = (task_t *)entry->value;
+            if (!membarrier_task_matches_mm(task, mm, self))
+                continue;
+
+            if (task->cpu_id < cpu_count && task->cpu_id < MAX_CPU_NUM)
+                cpu_targets[task->cpu_id] = true;
+        }
+    }
+    spin_unlock(&task_queue_lock);
+}
+
+static bool membarrier_private_expedited_wait(task_mm_info_t *mm, task_t *self,
+                                              uint64_t seq) {
+    bool cpu_targets[MAX_CPU_NUM];
+    membarrier_collect_target_cpus(mm, self, cpu_targets);
+
+    for (uint32_t cpu = 0; cpu < cpu_count && cpu < MAX_CPU_NUM; cpu++) {
+        if (cpu_targets[cpu])
+            irq_trigger_sched_ipi(cpu);
+    }
+
+    uint64_t spin_count = 0;
+    while (true) {
+        bool pending = false;
+
+        spin_lock(&task_queue_lock);
+        if (task_pid_map.buckets) {
+            for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+                hashmap_entry_t *entry = &task_pid_map.buckets[i];
+                if (!hashmap_entry_is_occupied(entry))
+                    continue;
+
+                task_t *task = (task_t *)entry->value;
+                if (!membarrier_task_matches_mm(task, mm, self))
+                    continue;
+
+                uint64_t seen = __atomic_load_n(&task->membarrier_seen_seq,
+                                                __ATOMIC_ACQUIRE);
+                if (seen < seq) {
+                    pending = true;
+                    break;
+                }
+            }
+        }
+        spin_unlock(&task_queue_lock);
+
+        if (!pending)
+            return true;
+
+        if ((++spin_count & 0xfff) == 0) {
+            for (uint32_t cpu = 0; cpu < cpu_count && cpu < MAX_CPU_NUM;
+                 cpu++) {
+                if (cpu_targets[cpu])
+                    irq_trigger_sched_ipi(cpu);
+            }
+        }
+
+        arch_pause();
+    }
 }
 
 static int mmap_check_flags_linux(uint64_t flags, uint64_t map_type) {
@@ -370,13 +507,9 @@ static bool should_eager_map_file(vma_t *vma, uint64_t flags) {
         return false;
     if (!vm_flags_has_access(vma->vm_flags))
         return false;
-    if (vma->vm_flags & VMA_DEVICE)
-        return true;
     if (flags & (MAP_POPULATE | MAP_LOCKED))
         return true;
     if (vma->vm_flags & VMA_SHARED)
-        return true;
-    if (vma->vm_flags & VMA_WRITE)
         return true;
     if (vma->vm_flags & VMA_DEVICE)
         return true;
@@ -709,8 +842,6 @@ uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
     task_mm_info_t *mm = current_task->mm;
     uint64_t end = addr + len;
     uint64_t new_vm_access = prot_to_vma_access_flags(prot);
-    bool no_access = new_vm_access == 0;
-
     spin_lock(&mgr->lock);
 
     if (!range_fully_covered_locked(mgr, addr, end)) {
@@ -733,23 +864,13 @@ uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
 
         vma->vm_flags &= ~(VMA_READ | VMA_WRITE | VMA_EXEC);
         vma->vm_flags |= new_vm_access;
-
-        if (no_access && vma->vm_type == VMA_TYPE_FILE) {
-            uint64_t unmap_start = vma->vm_start;
-            uint64_t unmap_len = vma->vm_end - vma->vm_start;
-            spin_lock(&mm->lock);
-            unmap_page_range(mm_pgdir(mm), unmap_start, unmap_len);
-            spin_unlock(&mm->lock);
-        }
         cursor = vma->vm_end;
     }
 
-    if (!no_access) {
-        spin_lock(&mm->lock);
-        map_change_attribute_range(mm_pgdir(mm), addr, len,
-                                   vm_flags_to_pt_flags(new_vm_access));
-        spin_unlock(&mm->lock);
-    }
+    spin_lock(&mm->lock);
+    map_change_attribute_range(mm_pgdir(mm), addr, len,
+                               vm_flags_to_pt_flags(new_vm_access));
+    spin_unlock(&mm->lock);
 
     spin_unlock(&mgr->lock);
     return 0;
@@ -1332,6 +1453,135 @@ uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
     return 0;
 }
 
+static uint64_t madvise_validate_range(uint64_t addr, uint64_t len,
+                                       uint64_t *len_out, uint64_t *end_out) {
+    if (addr & (DEFAULT_PAGE_SIZE - 1))
+        return (uint64_t)-EINVAL;
+    if (len == 0) {
+        if (len_out)
+            *len_out = 0;
+        if (end_out)
+            *end_out = addr;
+        return 0;
+    }
+    if (check_user_overflow(addr, len))
+        return (uint64_t)-ENOMEM;
+
+    uint64_t aligned_len = PADDING_UP(len, DEFAULT_PAGE_SIZE);
+    if (aligned_len == 0 || !user_range_valid(addr, aligned_len))
+        return (uint64_t)-ENOMEM;
+
+    uint64_t end = addr + aligned_len;
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
+
+    spin_lock(&mgr->lock);
+    bool covered = range_fully_covered_locked(mgr, addr, end);
+    spin_unlock(&mgr->lock);
+    if (!covered)
+        return (uint64_t)-ENOMEM;
+
+    if (len_out)
+        *len_out = aligned_len;
+    if (end_out)
+        *end_out = end;
+    return 0;
+}
+
+static int madvise_check_vmas(uint64_t addr, uint64_t end) {
+    if (addr >= end)
+        return 0;
+
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
+    spin_lock(&mgr->lock);
+
+    for (uint64_t cursor = addr; cursor < end;) {
+        vma_t *vma = vma_find(mgr, cursor);
+        if (!vma) {
+            spin_unlock(&mgr->lock);
+            return -ENOMEM;
+        }
+        if (vma->vm_type == VMA_TYPE_SHM || (vma->vm_flags & VMA_DEVICE)) {
+            spin_unlock(&mgr->lock);
+            return -EINVAL;
+        }
+        cursor = MIN(vma->vm_end, end);
+    }
+
+    spin_unlock(&mgr->lock);
+    return 0;
+}
+
+static uint64_t madvise_prefault_range(uint64_t addr, uint64_t len,
+                                       uint64_t fault_flags) {
+    for (uint64_t cursor = addr; cursor < addr + len;
+         cursor += DEFAULT_PAGE_SIZE) {
+        page_fault_result_t fault =
+            handle_page_fault_flags(current_task, cursor, fault_flags);
+        if (fault == PF_RES_NOMEM)
+            return (uint64_t)-ENOMEM;
+    }
+    return 0;
+}
+
+static uint64_t madvise_dontneed_range(uint64_t addr, uint64_t len) {
+    int check_ret = madvise_check_vmas(addr, addr + len);
+    if (check_ret < 0)
+        return (uint64_t)check_ret;
+
+    task_mm_info_t *mm = current_task->mm;
+    spin_lock(&mm->lock);
+    unmap_page_range(mm_pgdir(mm), addr, len);
+    spin_unlock(&mm->lock);
+    return 0;
+}
+
+uint64_t sys_madvise(uint64_t addr, uint64_t len, int behavior) {
+    uint64_t aligned_len = 0;
+    uint64_t end = 0;
+    uint64_t ret = madvise_validate_range(addr, len, &aligned_len, &end);
+    if ((int64_t)ret < 0)
+        return ret;
+    if (aligned_len == 0)
+        return 0;
+
+    switch (behavior) {
+    case MADV_NORMAL:
+    case MADV_RANDOM:
+    case MADV_SEQUENTIAL:
+    case MADV_DONTFORK:
+    case MADV_DOFORK:
+    case MADV_MERGEABLE:
+    case MADV_UNMERGEABLE:
+    case MADV_HUGEPAGE:
+    case MADV_NOHUGEPAGE:
+    case MADV_DONTDUMP:
+    case MADV_DODUMP:
+    case MADV_WIPEONFORK:
+    case MADV_KEEPONFORK:
+    case MADV_COLD:
+    case MADV_PAGEOUT:
+        return 0;
+    case MADV_WILLNEED:
+    case MADV_POPULATE_READ:
+        return madvise_prefault_range(addr, aligned_len, PF_ACCESS_READ);
+    case MADV_POPULATE_WRITE:
+        return madvise_prefault_range(addr, aligned_len, PF_ACCESS_WRITE);
+    case MADV_DONTNEED:
+        return madvise_dontneed_range(addr, aligned_len);
+    case MADV_FREE:
+    case MADV_REMOVE:
+        printk("madvise unsupported behavior=%s(%d) addr=%#018lx "
+               "len=%#018lx\n",
+               madvise_behavior_name(behavior), behavior, addr, aligned_len);
+        return (uint64_t)-EINVAL;
+    default:
+        printk("madvise unknown behavior=%d addr=%#018lx "
+               "len=%#018lx\n",
+               behavior, addr, aligned_len);
+        return (uint64_t)-EINVAL;
+    }
+}
+
 static uint64_t mlock_validate_range(uint64_t addr, uint64_t len,
                                      uint64_t *start_out, uint64_t *len_out) {
     if (len == 0)
@@ -1403,6 +1653,46 @@ uint64_t sys_mlockall(int flags) {
 }
 
 uint64_t sys_munlockall(void) { return 0; }
+
+uint64_t sys_membarrier(int cmd, unsigned int flags, int cpu_id) {
+    (void)cpu_id;
+
+    if (flags != 0)
+        return (uint64_t)-EINVAL;
+
+    if (cmd == MEMBARRIER_CMD_QUERY)
+        return membarrier_supported_mask();
+
+    task_t *self = current_task;
+    if (!self || !self->mm)
+        return (uint64_t)-EINVAL;
+
+    task_mm_info_t *mm = self->mm;
+
+    switch (cmd) {
+    case MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED:
+        __atomic_store_n(&mm->membarrier_private_expedited_registered, true,
+                         __ATOMIC_RELEASE);
+        return 0;
+
+    case MEMBARRIER_CMD_PRIVATE_EXPEDITED: {
+        if (!__atomic_load_n(&mm->membarrier_private_expedited_registered,
+                             __ATOMIC_ACQUIRE))
+            return (uint64_t)-EPERM;
+
+        uint64_t seq = __atomic_add_fetch(&mm->membarrier_private_expedited_seq,
+                                          1, __ATOMIC_ACQ_REL);
+        memory_barrier();
+        __atomic_store_n(&self->membarrier_seen_seq, seq, __ATOMIC_RELEASE);
+        return membarrier_private_expedited_wait(mm, self, seq)
+                   ? 0
+                   : (uint64_t)-EIO;
+    }
+
+    default:
+        return (uint64_t)-EINVAL;
+    }
+}
 
 uint64_t sys_mbind(uint64_t start, uint64_t len, int mode,
                    const unsigned long *nmask, uint64_t maxnode,
