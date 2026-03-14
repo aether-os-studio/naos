@@ -12,7 +12,6 @@ struct memfd_ctx {
     uint8_t *data;
     size_t len;
     int flags;
-    int refcount;
     spinlock_t lock;
 };
 
@@ -53,20 +52,16 @@ bool memfd_close(vfs_node_t node) {
     if (!ctx)
         return true;
 
-    if (--ctx->refcount == 0) {
-        spin_lock(&ctx->lock);
+    spin_lock(&ctx->lock);
 
-        free_frames_bytes(ctx->data, ctx->len);
+    free_frames_bytes(ctx->data, ctx->len);
 
-        spin_unlock(&ctx->lock);
+    spin_unlock(&ctx->lock);
 
-        ctx->node->handle = NULL;
-        free(ctx);
+    ctx->node->handle = NULL;
+    free(ctx);
 
-        return true;
-    } else {
-        return false;
-    }
+    return true;
 }
 
 int memfd_stat(vfs_node_t node) {
@@ -144,7 +139,6 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags) {
     ctx->data = alloc_frames_bytes(ctx->len);
     memset(ctx->data, 0, ctx->len);
     ctx->flags = flags;
-    ctx->refcount = 1;
     ctx->lock.lock = 0;
 
     vfs_node_t node = vfs_node_alloc(NULL, NULL);

@@ -8,6 +8,10 @@ static int next_shmid = 1;
 static spinlock_t shm_op_lock = SPIN_INIT;
 static int shmfs_fsid = 0;
 
+static inline long shm_now_seconds(void) {
+    return (long)(nano_time() / 1000000000ULL);
+}
+
 #define PAGE_ALIGN_UP(x)                                                       \
     (((x) + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1))
 
@@ -142,7 +146,7 @@ static int shm_create_dev_node_locked(shm_t *shm) {
 
     node->type = file_none;
     node->fsid = shmfs_fsid;
-    node->mode = 0600;
+    node->mode = shm->mode;
     node->owner = shm->uid;
     node->group = shm->gid;
     node->size = shm->size;
@@ -227,8 +231,10 @@ static void do_shmdt_one(task_t *task, shm_mapping_t *m) {
 
     vma_t *vma = vma_find(mgr, m->uaddr);
     if (vma && vma->vm_type == VMA_TYPE_SHM && vma->vm_start == m->uaddr) {
-        unmap_page_range(get_current_page_dir(true), vma->vm_start,
-                         vma->vm_end - vma->vm_start);
+        spin_lock(&task->mm->lock);
+        unmap_page_range((uint64_t *)phys_to_virt(task->mm->page_table_addr),
+                         vma->vm_start, vma->vm_end - vma->vm_start);
+        spin_unlock(&task->mm->lock);
         vma_remove(mgr, vma);
         vma_free(vma);
     }
@@ -236,6 +242,8 @@ static void do_shmdt_one(task_t *task, shm_mapping_t *m) {
     if (shm) {
         if (shm->nattch > 0)
             shm->nattch--;
+        shm->dtime = shm_now_seconds();
+        shm->lpid = task->pid;
         shm_try_free_locked(shm);
     }
 }
@@ -431,6 +439,10 @@ uint64_t sys_shmget(int key, int size, int shmflg) {
     if (key != IPC_PRIVATE) {
         shm_t *s = shm_find_key_locked(key);
         if (s) {
+            if ((size_t)PAGE_ALIGN_UP((size_t)size) > s->size) {
+                spin_unlock(&shm_op_lock);
+                return -EINVAL;
+            }
             if (shmflg & IPC_EXCL) {
                 spin_unlock(&shm_op_lock);
                 return -EEXIST;
@@ -455,8 +467,16 @@ uint64_t sys_shmget(int key, int size, int shmflg) {
     shm->shmid = next_shmid++;
     shm->key = key;
     shm->size = PAGE_ALIGN_UP((size_t)size);
+    shm->mode = (uint16_t)(shmflg & 0777);
     shm->uid = current_task->uid;
     shm->gid = current_task->gid;
+    shm->cuid = current_task->uid;
+    shm->cgid = current_task->gid;
+    shm->cpid = current_task->pid;
+    shm->lpid = 0;
+    shm->atime = 0;
+    shm->dtime = 0;
+    shm->ctime = shm_now_seconds();
     shm->nattch = 0;
     shm->marked_destroy = false;
 
@@ -484,7 +504,7 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
     spin_lock(&shm_op_lock);
 
     shm_t *shm = shm_find_id_locked(shmid);
-    if (!shm || shm->marked_destroy) {
+    if (!shm) {
         err = -EINVAL;
         goto out_unlock;
     }
@@ -504,6 +524,15 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
     }
 
     uint64_t addr = (uint64_t)shmaddr;
+    if (addr) {
+        if (shmflg & SHM_RND) {
+            addr = PADDING_DOWN(addr, DEFAULT_PAGE_SIZE);
+        } else if (addr & (DEFAULT_PAGE_SIZE - 1)) {
+            err = -EINVAL;
+            goto out_unlock;
+        }
+    }
+
     if (vma_find_intersection(mgr, addr, addr + shm->size)) {
         err = -EINVAL;
         goto out_unlock;
@@ -512,13 +541,21 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
     uint64_t flags = PT_FLAG_U | PT_FLAG_R;
     if (!(shmflg & SHM_RDONLY))
         flags |= PT_FLAG_W;
+    if (shmflg & SHM_EXEC)
+        flags |= PT_FLAG_X;
 
-    map_page_range(get_current_page_dir(true), addr,
-                   virt_to_phys((uint64_t)shm->addr), shm->size, flags);
+    spin_lock(&current_task->mm->lock);
+    map_page_range((uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
+                   addr, virt_to_phys((uint64_t)shm->addr), shm->size, flags);
+    spin_unlock(&current_task->mm->lock);
 
     vma_t *vma = vma_alloc();
     if (!vma) {
-        unmap_page_range(get_current_page_dir(true), addr, shm->size);
+        spin_lock(&current_task->mm->lock);
+        unmap_page_range(
+            (uint64_t *)phys_to_virt(current_task->mm->page_table_addr), addr,
+            shm->size);
+        spin_unlock(&current_task->mm->lock);
         err = -ENOMEM;
         goto out_unlock;
     }
@@ -526,14 +563,22 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
     vma->vm_start = addr;
     vma->vm_end = addr + shm->size;
     vma->vm_type = VMA_TYPE_SHM;
-    vma->vm_flags = VMA_ANON | VMA_SHM;
+    vma->vm_flags = VMA_SHARED | VMA_SHM | VMA_READ;
+    if (!(shmflg & SHM_RDONLY))
+        vma->vm_flags |= VMA_WRITE;
+    if (shmflg & SHM_EXEC)
+        vma->vm_flags |= VMA_EXEC;
     vma->shm = shm;
     vma->shm_id = shm->shmid;
     vma->node = NULL;
 
     if (vma_insert(mgr, vma) != 0) {
         vma_free(vma);
-        unmap_page_range(get_current_page_dir(true), addr, shm->size);
+        spin_lock(&current_task->mm->lock);
+        unmap_page_range(
+            (uint64_t *)phys_to_virt(current_task->mm->page_table_addr), addr,
+            shm->size);
+        spin_unlock(&current_task->mm->lock);
         err = -ENOMEM;
         goto out_unlock;
     }
@@ -541,16 +586,22 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
     if (!mapping_add(current_task, shm, addr)) {
         vma_remove(mgr, vma);
         vma_free(vma);
-        unmap_page_range(get_current_page_dir(true), addr, shm->size);
+        spin_lock(&current_task->mm->lock);
+        unmap_page_range(
+            (uint64_t *)phys_to_virt(current_task->mm->page_table_addr), addr,
+            shm->size);
+        spin_unlock(&current_task->mm->lock);
         err = -ENOMEM;
         goto out_unlock;
     }
 
     shm->nattch++;
+    shm->atime = shm_now_seconds();
+    shm->lpid = current_task->pid;
     spin_unlock(&shm_op_lock);
     spin_unlock(&mgr->lock);
 
-    return shmaddr;
+    return (void *)addr;
 
 out_unlock:
     spin_unlock(&shm_op_lock);
@@ -593,6 +644,7 @@ uint64_t sys_shmctl(int shmid, int cmd, struct shmid_ds *buf) {
     switch (cmd) {
     case IPC_RMID:
         shm->marked_destroy = true;
+        shm->ctime = shm_now_seconds();
         if (shm->node && vfs_node_refcount_read(shm->node) > 0)
             vfs_delete(shm->node);
         shm_try_free_locked(shm);
@@ -603,14 +655,24 @@ uint64_t sys_shmctl(int shmid, int cmd, struct shmid_ds *buf) {
             spin_unlock(&shm_op_lock);
             return -EINVAL;
         }
-        buf->shm_perm.__ipc_perm_key = shm->key;
-        buf->shm_perm.mode = 0700;
-        buf->shm_perm.uid = shm->uid;
-        buf->shm_perm.gid = shm->gid;
-        buf->shm_perm.cuid = current_task->uid;
-        buf->shm_perm.cgid = current_task->gid;
-        buf->shm_segsz = shm->size;
-        buf->shm_nattch = shm->nattch;
+        struct shmid_ds info = {0};
+        info.shm_perm.__ipc_perm_key = shm->key;
+        info.shm_perm.mode = shm->mode;
+        info.shm_perm.uid = shm->uid;
+        info.shm_perm.gid = shm->gid;
+        info.shm_perm.cuid = shm->cuid;
+        info.shm_perm.cgid = shm->cgid;
+        info.shm_segsz = shm->size;
+        info.shm_atime = shm->atime;
+        info.shm_dtime = shm->dtime;
+        info.shm_ctime = shm->ctime;
+        info.shm_cpid = shm->cpid;
+        info.shm_lpid = shm->lpid;
+        info.shm_nattch = shm->nattch;
+        spin_unlock(&shm_op_lock);
+        if (copy_to_user(buf, &info, sizeof(info)))
+            return -EFAULT;
+        return 0;
         break;
 
     default:

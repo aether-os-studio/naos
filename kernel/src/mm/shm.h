@@ -8,8 +8,16 @@ typedef struct shm {
     int shmid;
     void *addr; /* 物理后备（内核虚拟地址） */
     size_t size;
+    uint16_t mode;
     uint32_t uid;
     uint32_t gid;
+    uint32_t cuid;
+    uint32_t cgid;
+    int cpid;
+    int lpid;
+    long atime;
+    long dtime;
+    long ctime;
     int nattch;
     bool marked_destroy;
     struct vfs_node *node;
