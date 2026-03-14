@@ -21,7 +21,7 @@ mkdir -p /run/dbus
 mkdir -p /var/lib/dbus
 mkdir -p $XDG_RUNTIME_DIR
 
-chmod 0777 /tmp/.X11-unix
+chmod 01777 /tmp/.X11-unix
 chmod 0777 /tmp/.ICE-unix
 chmod 0700 $XDG_RUNTIME_DIR
 

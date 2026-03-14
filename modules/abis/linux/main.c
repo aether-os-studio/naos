@@ -445,8 +445,7 @@ __attribute__((visibility("default"))) int dlmain() {
                            (syscall_handle_t)sys_rt_sigtimedwait);
     regist_syscall_handler(SYS_RT_SIGQUEUEINFO,
                            (syscall_handle_t)sys_rt_sigqueueinfo);
-    // regist_syscall_handler(SYS_RT_SIGSUSPEND,
-    // (syscall_handle_t)sys_sigsuspend);
+    regist_syscall_handler(SYS_RT_SIGSUSPEND, (syscall_handle_t)sys_sigsuspend);
     regist_syscall_handler(SYS_SIGALTSTACK, (syscall_handle_t)sys_sigaltstack);
     // regist_syscall_handler(SYS_UTIME, (syscall_handle_t)sys_utime);
     regist_syscall_handler(SYS_MKNOD, (syscall_handle_t)sys_mknod);

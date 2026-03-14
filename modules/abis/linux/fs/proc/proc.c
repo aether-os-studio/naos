@@ -52,7 +52,7 @@ ssize_t procfs_readlink(vfs_node_t node, void *addr, size_t offset,
         task = handle->task;
     }
 
-    if (!strcmp(handle->name, "exe") && task->exec_node) {
+    if (!strcmp(handle->name, "proc_exe") && task->exec_node) {
         char *fullpath = vfs_get_fullpath(task->exec_node);
         int len = strlen(fullpath);
         len = MIN(len, size);
@@ -355,7 +355,7 @@ void procfs_on_new_task(task_t *task) {
     self_exe->handle = self_exe_handle;
     self_exe_handle->node = self_exe;
     self_exe_handle->task = task;
-    sprintf(self_exe_handle->name, "exe");
+    sprintf(self_exe_handle->name, "proc_exe");
 
     vfs_node_t self_fd = vfs_child_append(node, "fd", NULL);
     self_fd->type = file_dir;
