@@ -10,4 +10,4 @@ char read_serial();
 
 void write_serial(char ch);
 
-void serial_printk(char *buf, int len);
+void serial_printk(const char *buf, int len);

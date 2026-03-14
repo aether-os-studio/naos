@@ -3,7 +3,8 @@
 #include <drivers/fbtty.h>
 #include <mm/mm.h>
 #include <libs/keys.h>
-#include <fs/fs_syscall.h>
+#include <libs/kbqueue.h>
+#include <task/task.h>
 #define FLANTERM_IN_FLANTERM
 #include <libs/flanterm/flanterm_private.h>
 #include <libs/flanterm/flanterm.h>

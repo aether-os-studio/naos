@@ -851,7 +851,7 @@ int real_socket_socket(int domain, int type, int protocol) {
     return real_socket_install_fd(lwip_fd, 0, false);
 }
 
-int real_socket_v4_init() {
+int real_socket_init_v4() {
     real_socket_init_global_netif();
     return 0;
 }
@@ -863,8 +863,8 @@ fs_t socket = {
     .flags = FS_FLAGS_HIDDEN,
 };
 
-void real_socket_init() {
+void real_socket_v4_init() {
     realsock_fsid = vfs_regist(&socket);
 
-    regist_socket(AF_INET, real_socket_v4_init, real_socket_socket);
+    regist_socket(AF_INET, real_socket_init_v4, real_socket_socket);
 }

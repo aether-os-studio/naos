@@ -1,9 +1,6 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <drivers/fdt/fdt.h>
-#include <fs/fs_syscall.h>
-#include <fs/vfs/dev.h>
-#include <fs/vfs/sys.h>
 #include <libs/keys.h>
 
 extern uint64_t cpuid_to_hartid[MAX_CPU_NUM];

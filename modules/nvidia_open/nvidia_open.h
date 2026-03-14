@@ -1,7 +1,7 @@
 #pragma once
 
 #include <drivers/bus/pci.h>
-#include <drivers/drm/drm.h>
+#include <dev/drm/drm.h>
 #include <task/task.h>
 
 #define NV_FIRMWARE_FOR_NAME(name) "/lib/firmware/nvidia/575.51.02/" name ".bin"

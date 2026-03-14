@@ -29,5 +29,3 @@ void arch_init() {
 void arch_init_after_thread() { pci_brcmstb_init(); }
 
 void arch_input_dev_init() {}
-
-EXPORT_SYMBOL(get_cache_line_size);

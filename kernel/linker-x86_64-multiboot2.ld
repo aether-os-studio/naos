@@ -37,15 +37,6 @@ SECTIONS {
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
-    ksymtab_start_va = .;
-    .ksymtab (ksymtab_start_va) : AT(ksymtab_start_va - KERNEL_VMA) {
-        __ksymtab_start = .;
-        KEEP(*(EXCLUDE_FILE(obj-x86_64/src/boot/multiboot2/x64/*) .ksymtab))
-        __ksymtab_end = .;
-    }
-
-    . = ALIGN(CONSTANT(MAXPAGESIZE));
-
     data_start_va = .;
     .data (data_start_va) : AT(data_start_va - KERNEL_VMA) {
         *(EXCLUDE_FILE(obj-x86_64/src/boot/multiboot2/x64/*) .data)

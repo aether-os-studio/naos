@@ -1,6 +1,5 @@
 #include <arch/loongarch64/drivers/char/keyboard.h>
 #include <task/task.h>
-#include <fs/vfs/dev.h>
 #include <libs/keys.h>
 
 dev_input_event_t *kb_input_event = NULL;

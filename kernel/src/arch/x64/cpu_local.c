@@ -59,4 +59,3 @@ uint32_t x64_current_cpu_id(void) {
         return local->cpu_id;
     return get_cpuid_by_lapic_id((uint32_t)lapic_id());
 }
-EXPORT_SYMBOL(x64_current_cpu_id);

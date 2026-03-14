@@ -7,8 +7,9 @@
 
 #include "hid.h"
 #include <drivers/usb/usb.h>
-#include <drivers/input.h>
+#include <dev/input.h>
 #include <libs/keys.h>
+#include <task/task.h>
 
 extern dev_input_event_t *kb_input_event;
 extern dev_input_event_t *mouse_input_event;

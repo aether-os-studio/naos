@@ -39,3 +39,6 @@ void ext_resize(vfs_node_t node, uint64_t size);
 void *ext_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
               size_t flags);
 void ext_free_handle(vfs_node_t node);
+
+extern void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
+                         uint64_t flags, uint64_t offset);

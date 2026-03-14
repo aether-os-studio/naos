@@ -3,8 +3,6 @@
 #include <dev/device.h>
 #include <drivers/kernel_logger.h>
 #include <drivers/bus/pci.h>
-#include <net/netlink.h>
-#include <mm/mm_syscall.h>
 #include <fs/vfs/tmpfs_limit.h>
 
 #define MAX_TMPFS_FILE_SIZE (64 * 1024 * 1024) // 64MB
@@ -285,10 +283,6 @@ void *tmpfs_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
                 size_t flags) {
     if ((file->node->type & file_block) || (file->node->type & file_stream)) {
         return device_map(file->node->rdev, addr, offset, size, prot, flags);
-    }
-
-    if ((flags & MAP_TYPE) == MAP_PRIVATE) {
-        return general_map(file, (uint64_t)addr, size, prot, flags, offset);
     }
 
     tmpfs_node_t *handle = file->node->handle;

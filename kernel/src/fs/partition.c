@@ -1,5 +1,5 @@
 #include "fs/vfs/vfs.h"
-#include "fs/vfs/dev.h"
+#include "dev/device.h"
 #include "fs/partition.h"
 #include "block/block.h"
 #include "drivers/kernel_logger.h"

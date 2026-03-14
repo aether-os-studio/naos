@@ -1,6 +1,6 @@
 #include <dev/device.h>
-#include <fs/vfs/dev.h>
 #include <mod/dlinker.h>
+#include <init/abis.h>
 
 static device_t devices[DEVICE_NR]; // 设备数组
 uint64_t devices_idxs[DEV_MAX];
@@ -76,7 +76,7 @@ static uint64_t device_install_internal(int type, int subtype, void *ptr,
     device->write = write;
     device->map = map;
 
-    devfs_register_device(device);
+    system_abi->on_new_device(device);
     spin_unlock(&device_lock);
 
     return device->dev;
@@ -102,8 +102,6 @@ ssize_t device_open(uint64_t dev, void *arg) {
     return -ENOSYS;
 }
 
-EXPORT_SYMBOL(device_open);
-
 ssize_t device_close(uint64_t dev) {
     device_t *device = device_get(dev);
     if (!device)
@@ -113,8 +111,6 @@ ssize_t device_close(uint64_t dev) {
     }
     return -ENOSYS;
 }
-
-EXPORT_SYMBOL(device_close);
 
 ssize_t device_ioctl(uint64_t dev, int cmd, void *args) {
     device_t *device = device_get(dev);
@@ -126,8 +122,6 @@ ssize_t device_ioctl(uint64_t dev, int cmd, void *args) {
     return -ENOSYS;
 }
 
-EXPORT_SYMBOL(device_ioctl);
-
 ssize_t device_poll(uint64_t dev, int events) {
     device_t *device = device_get(dev);
     if (!device)
@@ -137,8 +131,6 @@ ssize_t device_poll(uint64_t dev, int events) {
     }
     return -ENOSYS;
 }
-
-EXPORT_SYMBOL(device_poll);
 
 ssize_t device_read(uint64_t dev, void *buf, uint64_t idx, size_t count,
                     uint64_t flags) {
@@ -151,8 +143,6 @@ ssize_t device_read(uint64_t dev, void *buf, uint64_t idx, size_t count,
     return -ENOSYS;
 }
 
-EXPORT_SYMBOL(device_read);
-
 ssize_t device_write(uint64_t dev, void *buf, uint64_t idx, size_t count,
                      uint64_t flags) {
     device_t *device = device_get(dev);
@@ -164,8 +154,6 @@ ssize_t device_write(uint64_t dev, void *buf, uint64_t idx, size_t count,
     return -ENOSYS;
 }
 
-EXPORT_SYMBOL(device_write);
-
 void *device_map(uint64_t dev, void *addr, size_t offset, size_t size,
                  size_t prot, size_t flags) {
     device_t *device = device_get(dev);
@@ -176,8 +164,6 @@ void *device_map(uint64_t dev, void *addr, size_t offset, size_t size,
     }
     return (void *)-ENOSYS;
 }
-
-EXPORT_SYMBOL(device_map);
 
 // 安装设备
 uint64_t device_install(int type, int subtype, void *ptr, char *name,
@@ -223,8 +209,6 @@ device_t *device_find(int subtype, uint64_t idx) {
     return NULL;
 }
 
-EXPORT_SYMBOL(device_find);
-
 device_t *device_get(uint64_t dev) {
     for (size_t i = 0; i < DEVICE_NR; i++) {
         device_t *device = &devices[i];
@@ -233,5 +217,3 @@ device_t *device_get(uint64_t dev) {
     }
     return NULL;
 }
-
-EXPORT_SYMBOL(device_get);

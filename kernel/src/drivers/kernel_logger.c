@@ -2,8 +2,6 @@
 #include <drivers/tty.h>
 #include <arch/arch.h>
 #include <mm/mm.h>
-#include <drivers/fb.h>
-#include <fs/vfs/dev.h>
 #include <boot/boot.h>
 
 #define PAD_ZERO 1 // 0填充

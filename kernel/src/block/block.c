@@ -1,8 +1,7 @@
 #include <block/block.h>
 #include <mm/mm.h>
 #include <fs/partition.h>
-#include <fs/vfs/dev.h>
-#include <fs/vfs/sys.h>
+#include <dev/device.h>
 #include <arch/arch.h>
 #include <task/task.h>
 

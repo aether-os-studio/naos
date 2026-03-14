@@ -6,6 +6,39 @@
 #include <fs/vfs/fcntl.h>
 #include <fs/vfs/utils.h>
 
+#define CLOCK_REALTIME 0
+#define CLOCK_MONOTONIC 1
+#define CLOCK_PROCESS_CPUTIME_ID 2
+#define CLOCK_THREAD_CPUTIME_ID 3
+#define CLOCK_MONOTONIC_RAW 4
+#define CLOCK_REALTIME_COARSE 5
+#define CLOCK_MONOTONIC_COARSE 6
+#define CLOCK_BOOTTIME 7
+#define CLOCK_REALTIME_ALARM 8
+#define CLOCK_BOOTTIME_ALARM 9
+#define CLOCK_SGI_CYCLE 10
+#define CLOCK_TAI 11
+
+struct winsize {
+    uint16_t ws_row;
+    uint16_t ws_col;
+    uint16_t ws_xpixel;
+    uint16_t ws_ypixel;
+};
+
+#define LOCK_SH 1
+#define LOCK_EX 2
+#define LOCK_NB 4
+#define LOCK_UN 8
+
+#define L_SET 0
+#define L_INCR 1
+#define L_XTND 2
+
+#define F_RDLCK 0
+#define F_WRLCK 1
+#define F_UNLCK 2
+
 // * 所有时间请使用 GMT 时间 *
 
 // 读写时请 padding 到 PAGE_SIZE 的整数倍

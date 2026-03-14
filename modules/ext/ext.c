@@ -2,7 +2,6 @@
 #include <ext_disk.h>
 
 #include <dev/device.h>
-#include <mm/mm_syscall.h>
 
 #include <mm/mm.h>
 #include <arch/arch.h>

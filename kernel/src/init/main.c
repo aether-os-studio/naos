@@ -12,10 +12,9 @@
 #include <task/signal.h>
 #include <task/task.h>
 #include <fs/vfs/vfs.h>
-#include <fs/vfs/dev.h>
 #include <fs/vfs/tmp.h>
-#include <fs/vfs/proc.h>
 #include <fs/initramfs.h>
+#include <init/abis.h>
 
 extern void acpi_init();
 
@@ -42,23 +41,22 @@ void kmain(void) {
 
     vfs_init();
 
-    devtmpfs_init();
-
-    tty_init();
-
-    devfs_nodes_init();
-
-    printk("Aether-OS starting...\n");
-
-    proc_init();
-
     tmpfs_init();
 
     initramfs_init();
 
     dlinker_init();
 
+    ASSERT(system_abi != NULL);
+    system_abi->init();
+
+    tty_init();
+
+    printk("Aether-OS starting...\n");
+
     signal_init();
+
+    system_abi->init_before_thread();
 
     task_init();
 

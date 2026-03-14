@@ -13,7 +13,6 @@ PHDRS
     text PT_LOAD;
     rodata PT_LOAD;
     data PT_LOAD;
-    ksymtab PT_LOAD;
 }
 
 SECTIONS
@@ -63,15 +62,6 @@ SECTIONS
         *(.bss .bss.*)
         *(COMMON)
     } :data
-
-    /* Move to the next memory page for .ksymtab */
-    . = ALIGN(CONSTANT(MAXPAGESIZE));
-
-    .ksymtab : {
-        __ksymtab_start = .;
-        KEEP(*(.ksymtab))
-        __ksymtab_end = .;
-    } :ksymtab
 
     /* Discard .note.* and .eh_frame* since they may cause issues on some hosts. */
     /DISCARD/ : {

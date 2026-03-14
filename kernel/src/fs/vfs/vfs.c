@@ -1,12 +1,8 @@
 #include "fs/vfs/vfs.h"
-#include "fs/vfs/dev.h"
-#include "fs/fs_syscall.h"
 #include "arch/arch.h"
 #include "libs/hashmap.h"
 #include "mm/mm.h"
 #include "task/task.h"
-#include "net/socket.h"
-#include "drivers/pty.h"
 
 struct llist_header vfs_nodes;
 struct llist_header mount_points;

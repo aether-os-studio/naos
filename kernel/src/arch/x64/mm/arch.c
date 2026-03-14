@@ -1,6 +1,5 @@
 #include "arch.h"
 #include <drivers/kernel_logger.h>
-#include <drivers/fb.h>
 #include <libs/klibc.h>
 #include <mm/mm.h>
 #include <task/task.h>

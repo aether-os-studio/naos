@@ -180,7 +180,7 @@ int usb_hub_setup(struct usbdevice_s *usbdev,
 
 int usb_hub_remove(struct usbdevice_s *usbdev) { return 0; }
 
-usb_driver_t hid_driver = {
+usb_driver_t hub_driver = {
     .class = USB_CLASS_HUB,
     .subclass = 0,
     .probe = usb_hub_setup,
@@ -188,7 +188,7 @@ usb_driver_t hid_driver = {
 };
 
 __attribute__((visibility("default"))) int dlmain() {
-    regist_usb_driver(&hid_driver);
+    regist_usb_driver(&hub_driver);
 
     return 0;
 }

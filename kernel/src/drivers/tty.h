@@ -1,7 +1,7 @@
 #include <libs/klibc.h>
 #include <libs/llist.h>
+#include <dev/device.h>
 #include <fs/termios.h>
-#include <fs/vfs/dev.h>
 
 enum tty_device_type {
     TTY_DEVICE_SERIAL = 0, // 串口设备

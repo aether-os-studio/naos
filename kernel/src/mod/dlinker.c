@@ -6,8 +6,6 @@
 
 uint64_t kernel_modules_load_offset = 0;
 
-extern dlfunc_t __ksymtab_start[];
-extern dlfunc_t __ksymtab_end[];
 extern const uint64_t kallsyms_lookup_address[] __attribute__((weak));
 extern const uint64_t kallsyms_lookup_num __attribute__((weak));
 extern const uint64_t kallsyms_lookup_names_index[] __attribute__((weak));
@@ -20,6 +18,9 @@ static dlfunc_t resolved_func;
 static module_symbol_t *loaded_module_symbols = NULL;
 static size_t loaded_module_symbol_count = 0;
 static size_t loaded_module_symbol_capacity = 0;
+
+static void *find_symbol_address(const char *symbol_name, Elf64_Ehdr *ehdr,
+                                 uint64_t offset);
 
 typedef struct {
     const char **exports;
@@ -120,21 +121,6 @@ static void *lookup_kernel_symbol_by_name(const char *name) {
     return NULL;
 }
 
-static dlfunc_t *find_legacy_kernel_export(const char *name) {
-    if (strcmp(name, "printf") == 0) {
-        return &__printf;
-    }
-
-    for (size_t i = 0; i < dlfunc_count; i++) {
-        dlfunc_t *entry = &__ksymtab_start[i];
-        if (strcmp(entry->name, name) == 0) {
-            return entry;
-        }
-    }
-
-    return NULL;
-}
-
 static module_symbol_t *find_module_symbol(const char *name) {
     for (size_t i = 0; i < loaded_module_symbol_count; i++) {
         if (strcmp(loaded_module_symbols[i].name, name) == 0) {
@@ -178,26 +164,26 @@ static bool register_module_symbol(const char *module_name, const char *name,
     }
 
     if (find_module_symbol(name) != NULL) {
-        printk("Skipping duplicate module symbol %s from %s\n", name,
-               module_name);
+        serial_fprintk("Skipping duplicate module symbol %s from %s\n", name,
+                       module_name);
         return true;
     }
 
-    if (lookup_kernel_symbol_by_name(name) != NULL ||
-        find_legacy_kernel_export(name) != NULL) {
-        printk("Skipping module symbol %s from %s due to kernel conflict\n",
-               name, module_name);
+    if (lookup_kernel_symbol_by_name(name) != NULL) {
+        serial_fprintk(
+            "Skipping module symbol %s from %s due to kernel conflict\n", name,
+            module_name);
         return true;
     }
 
     if (!ensure_module_symbol_capacity(loaded_module_symbol_count + 1)) {
-        printk("Cannot grow module symbol registry for %s\n", name);
+        serial_fprintk("Cannot grow module symbol registry for %s\n", name);
         return false;
     }
 
     char *dup_name = strdup(name);
     if (dup_name == NULL) {
-        printk("Cannot duplicate module symbol name %s\n", name);
+        serial_fprintk("Cannot duplicate module symbol name %s\n", name);
         return false;
     }
 
@@ -341,21 +327,11 @@ static bool append_unique_index(size_t **items, size_t *count, size_t *capacity,
 }
 
 static bool kernel_can_resolve_symbol(const char *name) {
-    return lookup_kernel_symbol_by_name(name) != NULL ||
-           find_legacy_kernel_export(name) != NULL;
-}
-
-static bool module_symbol_is_visible(const Elf64_Sym *sym) {
-    uint8_t visibility = ELF64_ST_VISIBILITY(sym->st_other);
-    return visibility == STV_DEFAULT || visibility == STV_PROTECTED;
+    return lookup_kernel_symbol_by_name(name) != NULL;
 }
 
 static bool module_symbol_is_exported(const Elf64_Sym *sym) {
     if (sym == NULL || sym->st_name == 0 || sym->st_shndx == SHN_UNDEF) {
-        return false;
-    }
-
-    if (!module_symbol_is_visible(sym)) {
         return false;
     }
 
@@ -381,10 +357,6 @@ static bool module_symbol_is_imported(const Elf64_Sym *sym) {
         return false;
     }
 
-    if (!module_symbol_is_visible(sym)) {
-        return false;
-    }
-
     uint8_t bind = ELF64_ST_BIND(sym->st_info);
     return bind == STB_GLOBAL || bind == STB_WEAK;
 }
@@ -396,7 +368,8 @@ static void register_module_symbols(module_t *module, Elf64_Ehdr *ehdr,
     size_t num_symbols = 0;
 
     if (!get_module_symbol_table(ehdr, &symtab, &strtab, &num_symbols)) {
-        printk("Cannot find symbol table in module %s\n", module->module_name);
+        serial_fprintk("Cannot find symbol table in module %s\n",
+                       module->module_name);
         return;
     }
 
@@ -431,12 +404,14 @@ static bool scan_module_symbols(module_t *module, module_plan_t *plan) {
 
     Elf64_Ehdr *ehdr = (Elf64_Ehdr *)module->data;
     if (!arch_check_elf(ehdr)) {
-        printk("Module %s is not a valid ELF file.\n", module->module_name);
+        serial_fprintk("Module %s is not a valid ELF file.\n",
+                       module->module_name);
         return false;
     }
 
     if (ehdr->e_type != ET_DYN) {
-        printk("Module %s is not a dynamic ELF file.\n", module->module_name);
+        serial_fprintk("Module %s is not a dynamic ELF file.\n",
+                       module->module_name);
         return false;
     }
 
@@ -445,7 +420,8 @@ static bool scan_module_symbols(module_t *module, module_plan_t *plan) {
     size_t num_symbols = 0;
 
     if (!get_module_symbol_table(ehdr, &symtab, &strtab, &num_symbols)) {
-        printk("Cannot find symbol table in module %s\n", module->module_name);
+        serial_fprintk("Cannot find symbol table in module %s\n",
+                       module->module_name);
         return false;
     }
 
@@ -523,23 +499,23 @@ static void resolve_module_dependencies(module_t *modules, module_plan_t *plans,
                 if (!append_unique_index(&plans[i].deps, &plans[i].dep_count,
                                          &plans[i].dep_capacity,
                                          provider_index)) {
-                    printk("Cannot record dependency %s -> %s\n",
-                           modules[i].module_name,
-                           modules[provider_index].module_name);
+                    serial_fprintk("Cannot record dependency %s -> %s\n",
+                                   modules[i].module_name,
+                                   modules[provider_index].module_name);
                     plans[i].has_missing_provider = true;
                 }
                 continue;
             }
 
             if (provider_count == 0) {
-                printk("Module %s misses provider for symbol %s\n",
-                       modules[i].module_name, symbol_name);
+                serial_fprintk("Module %s misses provider for symbol %s\n",
+                               modules[i].module_name, symbol_name);
                 plans[i].has_missing_provider = true;
                 continue;
             }
 
-            printk("Module %s has ambiguous providers for symbol %s\n",
-                   modules[i].module_name, symbol_name);
+            serial_fprintk("Module %s has ambiguous providers for symbol %s\n",
+                           modules[i].module_name, symbol_name);
             plans[i].has_ambiguous_provider = true;
         }
     }
@@ -565,20 +541,33 @@ static bool module_dependencies_ready(const module_plan_t *plan,
     return true;
 }
 
-static void *resolve_symbol(Elf64_Sym *symtab, char *strtab, uint32_t sym_idx) {
-    Elf64_Sym *sym = &symtab[sym_idx];
-
-    if (sym->st_shndx == SHN_UNDEF) {
-        char *sym_name = &strtab[sym->st_name];
-        dlfunc_t *func = find_func(sym_name);
-        if (func != NULL) {
-            return func->addr;
-        }
-        printk("Cannot resolve symbol: %s\n", sym_name);
-        return NULL;
+static bool resolve_symbol_address(Elf64_Sym *symtab, char *strtab,
+                                   uint32_t sym_idx, uint64_t offset,
+                                   uint64_t *addr) {
+    if (symtab == NULL || strtab == NULL || addr == NULL) {
+        return false;
     }
 
-    return (void *)sym->st_value;
+    Elf64_Sym *sym = &symtab[sym_idx];
+    char *sym_name = &strtab[sym->st_name];
+
+    if (sym->st_shndx == SHN_UNDEF) {
+        dlfunc_t *func = find_func(sym_name);
+        if (func != NULL) {
+            *addr = (uint64_t)func->addr;
+            return true;
+        }
+        serial_fprintk("Cannot resolve symbol: %s\n", sym_name);
+        return false;
+    }
+
+    if (sym->st_shndx == SHN_ABS) {
+        *addr = sym->st_value;
+        return true;
+    }
+
+    *addr = offset + sym->st_value;
+    return true;
 }
 
 static bool handle_relocations(Elf64_Rela *rela_start, Elf64_Sym *symtab,
@@ -601,118 +590,103 @@ static bool handle_relocations(Elf64_Rela *rela_start, Elf64_Sym *symtab,
 
 #if defined(__x86_64__)
         if (type == R_X86_64_JUMP_SLOT || type == R_X86_64_GLOB_DAT) {
-            void *sym_addr = resolve_symbol(symtab, strtab, sym_idx);
-            if (sym_addr == NULL) {
-                printk("Failed relocating %s at %p\n", sym_name, target_addr);
+            uint64_t sym_addr = 0;
+            if (!resolve_symbol_address(symtab, strtab, sym_idx, offset,
+                                        &sym_addr)) {
+                serial_fprintk("Failed relocating %s at %p\n", sym_name,
+                               target_addr);
                 return false;
             }
 
-            if (sym->st_shndx == SHN_UNDEF) {
-                *target_addr = (uint64_t)sym_addr;
-            } else {
-                *target_addr = (uint64_t)sym_addr + offset;
-            }
+            *target_addr = sym_addr;
         } else if (type == R_X86_64_RELATIVE) {
             *target_addr = offset + rela->r_addend;
         } else if (type == R_X86_64_64) {
-            void *sym_addr = resolve_symbol(symtab, strtab, sym_idx);
-            if (sym_addr == NULL) {
-                printk("Failed relocating %s at %p\n", sym_name, target_addr);
+            uint64_t sym_addr = 0;
+            if (!resolve_symbol_address(symtab, strtab, sym_idx, offset,
+                                        &sym_addr)) {
+                serial_fprintk("Failed relocating %s at %p\n", sym_name,
+                               target_addr);
                 return false;
             }
 
-            if (sym->st_shndx == SHN_UNDEF) {
-                *target_addr = (uint64_t)sym_addr + rela->r_addend;
-            } else {
-                *target_addr = (uint64_t)sym_addr + offset + rela->r_addend;
-            }
+            *target_addr = sym_addr + rela->r_addend;
         }
 #elif defined(__aarch64__)
         if (type == R_AARCH64_JUMP_SLOT || type == R_AARCH64_GLOB_DAT) {
-            void *sym_addr = resolve_symbol(symtab, strtab, sym_idx);
-            if (sym_addr == NULL) {
-                printk("Failed relocating %s at %p\n", sym_name, target_addr);
+            uint64_t sym_addr = 0;
+            if (!resolve_symbol_address(symtab, strtab, sym_idx, offset,
+                                        &sym_addr)) {
+                serial_fprintk("Failed relocating %s at %p\n", sym_name,
+                               target_addr);
                 return false;
             }
 
-            if (sym->st_shndx == SHN_UNDEF) {
-                *target_addr = (uint64_t)sym_addr;
-            } else {
-                *target_addr = (uint64_t)sym_addr + offset;
-            }
+            *target_addr = sym_addr;
         } else if (type == R_AARCH64_RELATIVE) {
             *target_addr = offset + rela->r_addend;
         } else if (type == R_AARCH64_ABS64) {
-            void *sym_addr = resolve_symbol(symtab, strtab, sym_idx);
-            if (sym_addr == NULL) {
-                printk("Failed relocating %s at %p\n", sym_name, target_addr);
+            uint64_t sym_addr = 0;
+            if (!resolve_symbol_address(symtab, strtab, sym_idx, offset,
+                                        &sym_addr)) {
+                serial_fprintk("Failed relocating %s at %p\n", sym_name,
+                               target_addr);
                 return false;
             }
 
-            if (sym->st_shndx == SHN_UNDEF) {
-                *target_addr = (uint64_t)sym_addr + rela->r_addend;
-            } else {
-                *target_addr = (uint64_t)sym_addr + offset + rela->r_addend;
-            }
+            *target_addr = sym_addr + rela->r_addend;
         }
 #elif defined(__riscv) && (__riscv_xlen == 64)
         if (type == R_RISCV_JUMP_SLOT) {
-            void *sym_addr = resolve_symbol(symtab, strtab, sym_idx);
-            if (sym_addr == NULL) {
-                printk("Failed relocating %s at %p\n", sym_name, target_addr);
+            uint64_t sym_addr = 0;
+            if (!resolve_symbol_address(symtab, strtab, sym_idx, offset,
+                                        &sym_addr)) {
+                serial_fprintk("Failed relocating %s at %p\n", sym_name,
+                               target_addr);
                 return false;
             }
 
-            if (sym->st_shndx == SHN_UNDEF) {
-                *target_addr = (uint64_t)sym_addr;
-            } else {
-                *target_addr = (uint64_t)sym_addr + offset;
-            }
+            *target_addr = sym_addr;
         } else if (type == R_RISCV_RELATIVE) {
             *target_addr = offset + rela->r_addend;
         } else if (type == R_RISCV_64) {
-            void *sym_addr = resolve_symbol(symtab, strtab, sym_idx);
-            if (sym_addr == NULL) {
-                printk("Failed relocating %s at %p\n", sym_name, target_addr);
+            uint64_t sym_addr = 0;
+            if (!resolve_symbol_address(symtab, strtab, sym_idx, offset,
+                                        &sym_addr)) {
+                serial_fprintk("Failed relocating %s at %p\n", sym_name,
+                               target_addr);
                 return false;
             }
 
-            if (sym->st_shndx == SHN_UNDEF) {
-                *target_addr = (uint64_t)sym_addr + rela->r_addend;
-            } else {
-                *target_addr = (uint64_t)sym_addr + offset + rela->r_addend;
-            }
+            *target_addr = sym_addr + rela->r_addend;
         }
 #elif defined(__loongarch64) || defined(__loongarch64__)
         if (type == R_LARCH_JUMP_SLOT) {
-            void *sym_addr = resolve_symbol(symtab, strtab, sym_idx);
-            if (sym_addr == NULL) {
-                printk("Failed relocating %s at %p\n", sym_name, target_addr);
+            uint64_t sym_addr = 0;
+            if (!resolve_symbol_address(symtab, strtab, sym_idx, offset,
+                                        &sym_addr)) {
+                serial_fprintk("Failed relocating %s at %p\n", sym_name,
+                               target_addr);
                 return false;
             }
 
-            if (sym->st_shndx == SHN_UNDEF) {
-                *target_addr = (uint64_t)sym_addr;
-            } else {
-                *target_addr = (uint64_t)sym_addr + offset;
-            }
+            *target_addr = sym_addr;
         } else if (type == R_LARCH_RELATIVE) {
             *target_addr = offset + rela->r_addend;
         } else if (type == R_LARCH_64) {
-            void *sym_addr = resolve_symbol(symtab, strtab, sym_idx);
-            if (sym_addr == NULL) {
-                printk("Failed relocating %s at %p\n", sym_name, target_addr);
+            uint64_t sym_addr = 0;
+            if (!resolve_symbol_address(symtab, strtab, sym_idx, offset,
+                                        &sym_addr)) {
+                serial_fprintk("Failed relocating %s at %p\n", sym_name,
+                               target_addr);
                 return false;
             }
 
-            if (sym->st_shndx == SHN_UNDEF) {
-                *target_addr = (uint64_t)sym_addr + rela->r_addend;
-            } else {
-                *target_addr = (uint64_t)sym_addr + offset + rela->r_addend;
-            }
+            *target_addr = sym_addr + rela->r_addend;
         } else if (type != R_LARCH_NONE) {
-            printk("Unsupported LoongArch relocation type %u for %s at %p\n",
-                   type, sym_name, target_addr);
+            serial_fprintk(
+                "Unsupported LoongArch relocation type %u for %s at %p\n", type,
+                sym_name, target_addr);
             return false;
         }
 #endif
@@ -732,7 +706,7 @@ static void *find_symbol_address(const char *symbol_name, Elf64_Ehdr *ehdr,
     size_t num_symbols = 0;
 
     if (!get_module_symbol_table(ehdr, &symtab, &strtab, &num_symbols)) {
-        printk("Cannot find symbol table in ELF file.\n");
+        serial_fprintk("Cannot find symbol table in ELF file.\n");
         return NULL;
     }
 
@@ -745,14 +719,14 @@ static void *find_symbol_address(const char *symbol_name, Elf64_Ehdr *ehdr,
         }
 
         if (sym->st_shndx == SHN_UNDEF) {
-            printk("Symbol %s is undefined.\n", sym_name);
+            serial_fprintk("Symbol %s is undefined.\n", sym_name);
             return NULL;
         }
 
         return (void *)(offset + sym->st_value);
     }
 
-    printk("Cannot find symbol %s in ELF file.\n", symbol_name);
+    serial_fprintk("Cannot find symbol %s in ELF file.\n", symbol_name);
     return NULL;
 }
 
@@ -766,7 +740,7 @@ static dlinit_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr,
         }
     }
     if (dyn_entry == NULL) {
-        printk("Dynamic section not found.\n");
+        serial_fprintk("Dynamic section not found.\n");
         return NULL;
     }
 
@@ -802,18 +776,18 @@ static dlinit_t load_dynamic(Elf64_Phdr *phdrs, Elf64_Ehdr *ehdr,
     }
 
     if (!handle_relocations(rel, symtab, strtab, relsz, offset)) {
-        printk("Failed to handle RELA relocations.\n");
+        serial_fprintk("Failed to handle RELA relocations.\n");
         return NULL;
     }
 
     if (!handle_relocations(jmprel, symtab, strtab, jmprel_sz, offset)) {
-        printk("Failed to handle PLT relocations.\n");
+        serial_fprintk("Failed to handle PLT relocations.\n");
         return NULL;
     }
 
     void *entry = find_symbol_address("dlmain", ehdr, offset);
     if (entry == NULL) {
-        printk("Cannot find dlmain symbol.\n");
+        serial_fprintk("Cannot find dlmain symbol.\n");
         return NULL;
     }
 
@@ -827,12 +801,14 @@ bool dlinker_load(module_t *module) {
 
     Elf64_Ehdr *ehdr = (Elf64_Ehdr *)module->data;
     if (!arch_check_elf(ehdr)) {
-        printk("Module %s is not a valid ELF file.\n", module->module_name);
+        serial_fprintk("Module %s is not a valid ELF file.\n",
+                       module->module_name);
         return false;
     }
 
     if (ehdr->e_type != ET_DYN) {
-        printk("Module %s is not a dynamic ELF file.\n", module->module_name);
+        serial_fprintk("Module %s is not a dynamic ELF file.\n",
+                       module->module_name);
         return false;
     }
 
@@ -843,7 +819,7 @@ bool dlinker_load(module_t *module) {
             KERNEL_MODULES_SPACE_START + kernel_modules_load_offset;
 
         if (!mmap_phdr_segment(ehdr, phdrs, load_base, &module->load_size)) {
-            printk("Cannot map module %s\n", module->module_name);
+            serial_fprintk("Cannot map module %s\n", module->module_name);
             return false;
         }
 
@@ -860,8 +836,8 @@ bool dlinker_load(module_t *module) {
 
     register_module_symbols(module, ehdr, module->load_base);
 
-    printk("Loaded module %s at %#018lx\n", module->module_name,
-           module->load_base);
+    serial_fprintk("Loaded module %s at %#018lx\n", module->module_name,
+                   module->load_base);
 
     dlinit();
     module->is_use = true;
@@ -887,14 +863,10 @@ dlfunc_t *find_func(const char *name) {
         return &resolved_func;
     }
 
-    return find_legacy_kernel_export(name);
+    return NULL;
 }
 
-void find_kernel_symbol() { dlfunc_count = __ksymtab_end - __ksymtab_start; }
-
 void dlinker_init() {
-    find_kernel_symbol();
-
     vfs_node_t modules_root = vfs_open("/lib/modules", 0);
     if (!modules_root) {
         return;
@@ -911,7 +883,7 @@ void dlinker_init() {
             module_t *new_modules =
                 realloc(modules, new_capacity * sizeof(*new_modules));
             if (new_modules == NULL) {
-                printk("Cannot grow module list\n");
+                serial_fprintk("Cannot grow module list\n");
                 break;
             }
             modules = new_modules;
@@ -925,8 +897,8 @@ void dlinker_init() {
         module->size = node->size;
         module->data = alloc_frames_bytes(module->size);
         if (module->data == NULL) {
-            printk("Cannot allocate backing storage for module %s\n",
-                   module->module_name);
+            serial_fprintk("Cannot allocate backing storage for module %s\n",
+                           module->module_name);
             continue;
         }
 
@@ -937,7 +909,7 @@ void dlinker_init() {
     module_plan_t *plans = calloc(module_count, sizeof(*plans));
     bool *loaded_flags = calloc(module_count, sizeof(*loaded_flags));
     if (plans == NULL || loaded_flags == NULL) {
-        printk("Cannot allocate module dependency planner\n");
+        serial_fprintk("Cannot allocate module dependency planner\n");
         free(plans);
         free(loaded_flags);
         plans = NULL;
@@ -947,8 +919,8 @@ void dlinker_init() {
     if (plans != NULL && loaded_flags != NULL) {
         for (size_t i = 0; i < module_count; i++) {
             if (!scan_module_symbols(&modules[i], &plans[i])) {
-                printk("Skipping dependency scan for module %s\n",
-                       modules[i].module_name);
+                serial_fprintk("Skipping dependency scan for module %s\n",
+                               modules[i].module_name);
             }
         }
 
@@ -971,8 +943,9 @@ void dlinker_init() {
                     loaded_count++;
                     progress = true;
                 } else {
-                    printk("Module %s failed after dependency resolution\n",
-                           modules[i].module_name);
+                    serial_fprintk(
+                        "Module %s failed after dependency resolution\n",
+                        modules[i].module_name);
                     loaded_flags[i] = true;
                 }
             }
@@ -984,26 +957,26 @@ void dlinker_init() {
             }
 
             if (!plans[i].scan_ok) {
-                printk("Module %s was not loaded: scan failed\n",
-                       modules[i].module_name);
+                serial_fprintk("Module %s was not loaded: scan failed\n",
+                               modules[i].module_name);
                 continue;
             }
 
             if (plans[i].has_missing_provider) {
-                printk(
+                serial_fprintk(
                     "Module %s was not loaded: missing dependency provider\n",
                     modules[i].module_name);
                 continue;
             }
 
             if (plans[i].has_ambiguous_provider) {
-                printk(
+                serial_fprintk(
                     "Module %s was not loaded: ambiguous dependency provider\n",
                     modules[i].module_name);
                 continue;
             }
 
-            printk(
+            serial_fprintk(
                 "Module %s was not loaded: dependency cycle or init failure\n",
                 modules[i].module_name);
         }

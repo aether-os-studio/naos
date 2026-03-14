@@ -1,10 +1,6 @@
 #include <arch/arch.h>
 #include <task/task.h>
-#include <task/futex.h>
-#include <fs/fs_syscall.h>
 #include <fs/vfs/fcntl.h>
-#include <mm/mm_syscall.h>
-#include <net/net_syscall.h>
 #include <libs/strerror.h>
 #include <arch/loongarch64/syscall/nr.h>
 

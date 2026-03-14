@@ -1,19 +1,16 @@
 #include <libs/rbtree.h>
 #include <arch/arch.h>
 #include <task/task.h>
-#include <task/seccomp.h>
-#include <task/futex.h>
 #include <task/sched.h>
 #include <drivers/kernel_logger.h>
-#include <fs/vfs/dev.h>
 #include <fs/vfs/vfs.h>
-#include <fs/vfs/proc.h>
 #include <arch/arch.h>
 #include <mm/mm.h>
 #include <mm/shm.h>
 #include <net/socket.h>
 #include <irq/irq_manager.h>
 #include <irq/softirq.h>
+#include <init/abis.h>
 
 sched_rq_t *schedulers[MAX_CPU_NUM];
 
@@ -127,8 +124,6 @@ static void task_init_default_rlimits(task_t *task) {
     task->rlim[RLIMIT_NOFILE] = (struct rlimit){MAX_FD_NUM, MAX_FD_NUM};
     task->rlim[RLIMIT_CORE] = (struct rlimit){0, 0};
 }
-
-extern int timerfdfs_id;
 
 static inline int task_timeout_cmp_values(uint64_t left_deadline,
                                           uint64_t left_pid,
@@ -316,120 +311,6 @@ task_t *task_find_by_pid(uint64_t pid) {
     task_t *task = task_lookup_by_pid_nolock(pid);
     spin_unlock(&task_queue_lock);
     return task;
-}
-
-typedef struct task_timerfd_ref {
-    struct llist_header node;
-    vfs_node_t timerfd_node;
-    uint64_t fd_ref_count;
-} task_timerfd_ref_t;
-
-static task_timerfd_ref_t *task_timerfd_find_ref(task_t *task,
-                                                 vfs_node_t timerfd_node) {
-    if (!task || !timerfd_node)
-        return NULL;
-
-    task_timerfd_ref_t *ref, *next;
-    llist_for_each(ref, next, &task->timerfd_list, node) {
-        if (ref->timerfd_node == timerfd_node)
-            return ref;
-    }
-
-    return NULL;
-}
-
-void task_timerfd_list_clear(task_t *task) {
-    if (!task)
-        return;
-
-    task_timerfd_ref_t *ref, *next;
-    llist_for_each(ref, next, &task->timerfd_list, node) {
-        llist_delete(&ref->node);
-        free(ref);
-    }
-
-    llist_init_head(&task->timerfd_list);
-}
-
-void task_timerfd_track_fd_single(task_t *task, fd_t *fd) {
-    if (!task || !fd || !fd->node || fd->node->fsid != timerfdfs_id)
-        return;
-
-    task_timerfd_ref_t *ref = task_timerfd_find_ref(task, fd->node);
-    if (ref) {
-        ref->fd_ref_count++;
-        return;
-    }
-
-    task_timerfd_ref_t *new_ref = calloc(1, sizeof(task_timerfd_ref_t));
-    if (!new_ref)
-        return;
-
-    llist_init_head(&new_ref->node);
-    new_ref->timerfd_node = fd->node;
-    new_ref->fd_ref_count = 1;
-    llist_append(&task->timerfd_list, &new_ref->node);
-}
-
-void task_timerfd_track_fd(task_t *task, fd_t *fd) {
-    if (!task || !fd || !fd->node || fd->node->fsid != timerfdfs_id)
-        return;
-
-    fd_info_t *shared_fd_info = task->fd_info;
-    if (!shared_fd_info || shared_fd_info->ref_count <= 1) {
-        task_timerfd_track_fd_single(task, fd);
-        return;
-    }
-
-    // TODO: vfork
-}
-
-static void task_timerfd_untrack_fd_single(task_t *task, fd_t *fd) {
-    if (!task || !fd || !fd->node || fd->node->fsid != timerfdfs_id)
-        return;
-
-    task_timerfd_ref_t *ref = task_timerfd_find_ref(task, fd->node);
-    if (!ref)
-        return;
-
-    if (ref->fd_ref_count > 1) {
-        ref->fd_ref_count--;
-        return;
-    }
-
-    llist_delete(&ref->node);
-    free(ref);
-}
-
-void task_timerfd_untrack_fd(task_t *task, fd_t *fd) {
-    if (!task || !fd || !fd->node || fd->node->fsid != timerfdfs_id)
-        return;
-
-    fd_info_t *shared_fd_info = task->fd_info;
-    if (!shared_fd_info || shared_fd_info->ref_count <= 1) {
-        task_timerfd_untrack_fd_single(task, fd);
-        return;
-    }
-
-    // TODO: vfork
-}
-
-void task_timerfd_rebuild_from_fd_info(task_t *task) {
-    if (!task)
-        return;
-
-    task_timerfd_list_clear(task);
-    if (!task->fd_info)
-        return;
-
-    with_fd_info_lock(task->fd_info, {
-        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-            fd_t *fd = task->fd_info->fds[i];
-            if (!fd)
-                continue;
-            task_timerfd_track_fd_single(task, fd);
-        }
-    });
 }
 
 static void task_pid_index_add_locked(task_t *task) {
@@ -671,7 +552,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
 
     task->parent_death_sig = (uint64_t)-1;
 
-    procfs_on_new_task(task);
+    system_abi->on_new_task(task);
 
     task->state = TASK_READY;
     task->current_state = TASK_READY;
@@ -886,15 +767,6 @@ ret:
     }
 }
 
-extern spinlock_t futex_lock;
-extern struct futex_wait futex_wait_list;
-
-extern uint64_t sys_futex_wake(uint64_t addr, int val, uint32_t bitset);
-extern int write_task_user_memory(task_t *task, uint64_t uaddr, const void *src,
-                                  size_t size);
-
-extern int signalfdfs_id;
-
 void task_cleanup_fd_info(task_t *task) {
     if (task->fd_info) {
         if (--task->fd_info->ref_count <= 0) {
@@ -906,7 +778,7 @@ void task_cleanup_fd_info(task_t *task) {
 
                         task->fd_info->fds[i] = NULL;
 
-                        procfs_on_close_file(task, i);
+                        system_abi->on_close_file(task, i);
                     }
                 }
             });
@@ -939,42 +811,13 @@ void task_exit_inner(task_t *task, int64_t code) {
 
     vfs_close(task->exec_node);
 
-    spin_lock(&futex_lock);
-
-    struct futex_wait *prev = &futex_wait_list;
-    struct futex_wait *curr = futex_wait_list.next;
-    while (curr) {
-        if (curr->task == task) {
-            prev->next = curr->next;
-            curr->next = NULL;
-            curr = prev->next;
-            continue;
-        }
-
-        prev = curr;
-        curr = curr->next;
-    }
-
-    spin_unlock(&futex_lock);
-
-    if (task->tidptr) {
-        int clear_tid = 0;
-        write_task_user_memory(task, (uint64_t)task->tidptr, &clear_tid,
-                               sizeof(clear_tid));
-        sys_futex_wake((uint64_t)task->tidptr, INT32_MAX, 0xFFFFFFFF);
-    }
-
     task_cleanup_fd_info(task);
 
-    task_timerfd_list_clear(task);
-    task_seccomp_release(task);
-
-    procfs_on_exit_task(task);
+    system_abi->on_exit_task(task);
 
     task->fd_info = NULL;
 
     task->status = (uint64_t)code;
-    pidfd_on_task_exit(task);
 
     task_t *waiting_task = task_lookup_by_pid_nolock(task->waitpid);
     if (waiting_task) {
@@ -1189,6 +1032,52 @@ void sched_check_wakeup() {
         softirq_raise(SOFTIRQ_TIMER);
     }
     spin_unlock(&task_timeout_lock);
+}
+
+static int task_kill_process_group_internal(int pgid, int sig,
+                                            bool skip_kernel) {
+    int sent = 0;
+    task_index_bucket_t *bucket =
+        task_index_bucket_lookup(&task_pgid_map, (uint64_t)pgid);
+    if (bucket) {
+        struct llist_header *node = bucket->tasks.next;
+        while (node != &bucket->tasks) {
+            task_t *task = list_entry(node, task_t, pgid_node);
+            node = node->next;
+            if (!task || (skip_kernel && task->is_kernel)) {
+                continue;
+            }
+            sent++;
+            if (sig != 0) {
+                task_send_signal(task, sig, SI_USER);
+            }
+        }
+    }
+
+    return sent;
+}
+
+void send_process_group_signal(int pgid, int signal) {
+    if (!pgid) {
+        return;
+    }
+
+    spin_lock(&task_queue_lock);
+    task_kill_process_group_internal(pgid, signal, false);
+    spin_unlock(&task_queue_lock);
+}
+
+int task_kill_process_group(int pgid, int sig) {
+    int sent;
+
+    if (!pgid) {
+        return 0;
+    }
+
+    spin_lock(&task_queue_lock);
+    sent = task_kill_process_group_internal(pgid, sig, true);
+    spin_unlock(&task_queue_lock);
+    return sent;
 }
 
 void schedule(uint64_t sched_flags) {

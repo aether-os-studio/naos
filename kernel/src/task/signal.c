@@ -3,9 +3,10 @@
 #include <arch/arch.h>
 #include <task/signal.h>
 
-#include <fs/fs_syscall.h>
 #include <fs/vfs/vfs.h>
 #include <task/task.h>
+
+#include <init/abis.h>
 
 #if defined(__x86_64__)
 #include <arch/x64/syscall/nr.h>
@@ -29,24 +30,20 @@ signal_internal_t signal_internal_decisions[MAXSIG] = {0};
 
 extern int signalfdfs_id;
 
-static inline bool signal_sig_in_range(int sig) {
-    return sig >= MINSIG && sig < MAXSIG;
-}
+bool signal_sig_in_range(int sig) { return sig >= MINSIG && sig < MAXSIG; }
 
-static inline bool signal_sig_maskable(int sig) {
+bool signal_sig_maskable(int sig) {
     return sig >= MINSIG && sig <= SIGNAL_MAX_MASKED_SIG;
 }
 
-static inline bool signal_sigset_size_valid(size_t sigsetsize) {
+bool signal_sigset_size_valid(size_t sigsetsize) {
     return sigsetsize >= SIGNAL_MIN_SIGSET_SIZE &&
            sigsetsize <= SIGNAL_MAX_SIGSET_SIZE;
 }
 
-static inline sigset_t signal_sigbit(int sig) {
-    return (sigset_t)1ULL << (uint64_t)sig;
-}
+sigset_t signal_sigbit(int sig) { return (sigset_t)1ULL << (uint64_t)sig; }
 
-static inline sigset_t sigset_user_to_kernel(sigset_t user_mask) {
+sigset_t sigset_user_to_kernel(sigset_t user_mask) {
     sigset_t k = user_mask << 1;
     if (signal_sig_maskable(SIGKILL)) {
         k &= ~signal_sigbit(SIGKILL);
@@ -57,18 +54,18 @@ static inline sigset_t sigset_user_to_kernel(sigset_t user_mask) {
     return k;
 }
 
-static inline sigset_t sigset_kernel_to_user(sigset_t kernel_mask) {
+sigset_t sigset_kernel_to_user(sigset_t kernel_mask) {
     return kernel_mask >> 1;
 }
 
-static inline bool signal_sigset_has(sigset_t set, int sig) {
+bool signal_sigset_has(sigset_t set, int sig) {
     if (!signal_sig_maskable(sig)) {
         return false;
     }
     return (set & signal_sigbit(sig)) != 0;
 }
 
-static inline void signal_altstack_disable(stack_t *stack) {
+void signal_altstack_disable(stack_t *stack) {
     if (!stack)
         return;
 
@@ -77,16 +74,15 @@ static inline void signal_altstack_disable(stack_t *stack) {
     stack->ss_flags = SS_DISABLE;
 }
 
-static inline uint64_t signal_stack_base(const stack_t *stack) {
+uint64_t signal_stack_base(const stack_t *stack) {
     return stack ? (uint64_t)stack->ss_sp : 0;
 }
 
-static inline bool signal_altstack_config_enabled(const stack_t *stack) {
+bool signal_altstack_config_enabled(const stack_t *stack) {
     return stack && (stack->ss_flags & SS_DISABLE) == 0 && stack->ss_size > 0;
 }
 
-static inline bool signal_altstack_contains_sp(const stack_t *stack,
-                                               uint64_t sp) {
+bool signal_altstack_contains_sp(const stack_t *stack, uint64_t sp) {
     if (!signal_altstack_config_enabled(stack))
         return false;
 
@@ -98,8 +94,7 @@ static inline bool signal_altstack_contains_sp(const stack_t *stack,
     return sp >= base && sp < end;
 }
 
-static inline int signal_altstack_status_flags(const stack_t *stack,
-                                               uint64_t sp) {
+int signal_altstack_status_flags(const stack_t *stack, uint64_t sp) {
     if (!stack || (stack->ss_flags & SS_DISABLE) != 0 || stack->ss_size == 0)
         return SS_DISABLE;
 
@@ -109,8 +104,7 @@ static inline int signal_altstack_status_flags(const stack_t *stack,
     return flags;
 }
 
-static inline void signal_altstack_format_old(stack_t *dst, const stack_t *src,
-                                              uint64_t sp) {
+void signal_altstack_format_old(stack_t *dst, const stack_t *src, uint64_t sp) {
     if (!dst)
         return;
 
@@ -123,7 +117,7 @@ static inline void signal_altstack_format_old(stack_t *dst, const stack_t *src,
     dst->ss_flags = signal_altstack_status_flags(src, sp);
 }
 
-static inline int signal_altstack_validate_new(const stack_t *stack) {
+int signal_altstack_validate_new(const stack_t *stack) {
     if (!stack)
         return -EINVAL;
 
@@ -140,7 +134,7 @@ static inline int signal_altstack_validate_new(const stack_t *stack) {
     return 0;
 }
 
-static inline void signal_altstack_store(stack_t *dst, const stack_t *src) {
+void signal_altstack_store(stack_t *dst, const stack_t *src) {
     if (!dst || !src)
         return;
 
@@ -198,8 +192,6 @@ static inline void signal_fill_kernel_siginfo(siginfo_t *info, int sig,
     info->si_errno = 0;
     info->si_code = code;
 }
-
-static void signal_notify_signalfd(task_t *task, int sig, int code);
 
 static inline bool signal_action_ignored(int sig, const sigaction_t *action) {
     if (sig == SIGKILL || sig == SIGSTOP) {
@@ -632,7 +624,7 @@ void task_commit_signal(task_t *task, int sig, siginfo_t *info) {
 
     spin_unlock(&task->signal->signal_lock);
 
-    signal_notify_signalfd(task, sig, kinfo.si_code);
+    system_abi->on_send_signal(task, sig, kinfo.si_code);
 }
 
 uint64_t sys_ssetmask(int how, const sigset_t *nset, sigset_t *oset,
@@ -960,46 +952,6 @@ void task_fill_siginfo(siginfo_t *info, int sig, int code) {
     signal_fill_kernel_siginfo(info, sig, code);
     info->_sifields._kill._pid = current_task ? current_task->pid : 0;
     info->_sifields._kill._uid = current_task ? current_task->uid : 0;
-}
-
-static void signal_notify_signalfd(task_t *task, int sig, int code) {
-    if (!task || !task->fd_info) {
-        return;
-    }
-
-    for (int i = 0; i < MAX_FD_NUM; i++) {
-        fd_t *fd = task->fd_info->fds[i];
-        if (!fd || !fd->node || fd->node->fsid != signalfdfs_id) {
-            continue;
-        }
-
-        struct signalfd_ctx *ctx = fd->node->handle;
-        if (!ctx || !ctx->queue || ctx->queue_size == 0) {
-            continue;
-        }
-
-        sigset_t signalfd_mask = sigset_user_to_kernel(ctx->sigmask);
-        if (signal_sig_maskable(sig) && !(signalfd_mask & signal_sigbit(sig))) {
-            continue;
-        }
-
-        struct signalfd_siginfo sinfo;
-        memset(&sinfo, 0, sizeof(sinfo));
-        sinfo.ssi_signo = sig;
-        sinfo.ssi_errno = 0;
-        sinfo.ssi_code = code;
-        sinfo.ssi_pid = current_task ? current_task->pid : 0;
-        sinfo.ssi_uid = current_task ? current_task->uid : 0;
-
-        memcpy(&ctx->queue[ctx->queue_head], &sinfo, sizeof(sinfo));
-        ctx->queue_head = (ctx->queue_head + 1) % ctx->queue_size;
-        if (ctx->queue_head == ctx->queue_tail) {
-            ctx->queue_tail = (ctx->queue_tail + 1) % ctx->queue_size;
-        }
-        if (ctx->node) {
-            vfs_poll_notify(ctx->node, EPOLLIN);
-        }
-    }
 }
 
 void task_send_signal(task_t *task, int sig, int code) {

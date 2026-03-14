@@ -1,10 +1,8 @@
 #include <arch/arch.h>
 #include <irq/irq_manager.h>
-#include <fs/fs_syscall.h>
-#include <fs/vfs/dev.h>
-#include <fs/vfs/sys.h>
-#include <drivers/input.h>
 #include <libs/keys.h>
+#include <init/abis.h>
+#include <linuxabi.h>
 
 extern void handle_kb_event(uint8_t scan_code, bool pressed, bool is_extended);
 extern void handle_mouse_event(uint8_t flag, int8_t x, int8_t y, int8_t z);
@@ -136,7 +134,8 @@ static bool ps2_mouse_detect_wheel(void) {
 }
 
 void ps2_keyboard_callback(ps2_keyboard_event_t event) {
-    handle_kb_scancode(event.scancode, event.pressed, event.is_extended);
+    system_abi->handle_kb_scancode(event.scancode, event.pressed,
+                                   event.is_extended);
 }
 
 void ps2_mouse_callback(ps2_mouse_event_t event) {
@@ -148,7 +147,7 @@ void ps2_mouse_callback(ps2_mouse_event_t event) {
     if (event.middle_button)
         flags |= (1 << 2);
 
-    handle_mouse_event(flags, event.x, event.y, -event.z);
+    system_abi->handle_mouse_event(flags, event.x, event.y, -event.z);
 }
 
 // 初始化PS/2控制器
@@ -251,8 +250,12 @@ bool ps2_keyboard_init(void) {
 
     ps2_keyboard_set_callback(ps2_keyboard_callback);
 
-    kb_input_event = regist_input_dev("ps2kbd", "ID_INPUT_KEYBOARD=1",
-                                      INPUT_FROM_PS2, kb_event_bit);
+    regist_input_dev_arg_t arg = {
+        .uevent_append = "ID_INPUT_KEYBOARD=1",
+        .from = INPUT_FROM_PS2,
+        .event_bit = kb_event_bit,
+    };
+    kb_input_event = system_abi->regist_input_dev("ps2kbd", &arg);
 
     irq_regist_irq(
         PS2_KBD_INTERRUPT_VECTOR,
@@ -308,8 +311,12 @@ bool ps2_mouse_init(void) {
 
     ps2_mouse_set_callback(ps2_mouse_callback);
 
-    mouse_input_event = regist_input_dev("ps2mouse", "ID_INPUT_MOUSE=1",
-                                         INPUT_FROM_PS2, mouse_event_bit);
+    regist_input_dev_arg_t arg = {
+        .uevent_append = "ID_INPUT_MOUSE=1",
+        .from = INPUT_FROM_PS2,
+        .event_bit = mouse_event_bit,
+    };
+    mouse_input_event = system_abi->regist_input_dev("ps2mouse", &arg);
 
     irq_regist_irq(
         PS2_MOUSE_INTERRUPT_VECTOR,

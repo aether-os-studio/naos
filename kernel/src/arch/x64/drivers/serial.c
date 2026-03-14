@@ -37,7 +37,7 @@ void write_serial(char a) {
 
 spinlock_t write_serial_lock = SPIN_INIT;
 
-void serial_printk(char *buf, int len) {
+void serial_printk(const char *buf, int len) {
     spin_lock(&write_serial_lock);
 
     for (int i = 0; i < len; i++) {

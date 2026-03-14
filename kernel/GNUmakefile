@@ -68,6 +68,7 @@ override CPPFLAGS := \
     -I src \
     -I src/acpi \
     -I src/libs/fdt \
+    -I $(PROJECT_ROOT)/modules/abis/$(SYSTEM_ABI) \
     -I freestnd-c-hdrs \
     -DCONFIG_USE_DEFAULT_CFG \
     $(CPPFLAGS) \
@@ -217,6 +218,11 @@ bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH)-$(BOOT_PROTOCOL).ld $(OBJ)
 
 	gcc kallsyms.c -o kallsyms
 	$(NM) -n $@.tmp | ./kallsyms > kallsyms.S
+	@$(CC) $(CFLAGS) -c kallsyms.S -o kallsyms.o
+
+	@$(LINKER) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a $(PROJECT_ROOT)/liballoc_$(ARCH).a kallsyms.o -o $@.kallsyms.tmp
+
+	$(NM) -n $@.kallsyms.tmp | ./kallsyms > kallsyms.S
 	@$(CC) $(CFLAGS) -c kallsyms.S -o kallsyms.o
 
 	@$(LINKER) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a $(PROJECT_ROOT)/liballoc_$(ARCH).a kallsyms.o -o $@

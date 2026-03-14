@@ -141,3 +141,19 @@ struct signalfd_ctx {
 void signal_init();
 
 void task_commit_signal(task_t *task, int sig, siginfo_t *info);
+
+bool signal_sig_in_range(int sig);
+bool signal_sig_maskable(int sig);
+bool signal_sigset_size_valid(size_t sigsetsize);
+sigset_t signal_sigbit(int sig);
+sigset_t sigset_user_to_kernel(sigset_t user_mask);
+sigset_t sigset_kernel_to_user(sigset_t kernel_mask);
+bool signal_sigset_has(sigset_t set, int sig);
+void signal_altstack_disable(stack_t *stack);
+uint64_t signal_stack_base(const stack_t *stack);
+bool signal_altstack_config_enabled(const stack_t *stack);
+bool signal_altstack_contains_sp(const stack_t *stack, uint64_t sp);
+int signal_altstack_status_flags(const stack_t *stack, uint64_t sp);
+void signal_altstack_format_old(stack_t *dst, const stack_t *src, uint64_t sp);
+int signal_altstack_validate_new(const stack_t *stack);
+void signal_altstack_store(stack_t *dst, const stack_t *src);

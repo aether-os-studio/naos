@@ -3,7 +3,7 @@
 #include <drivers/serialtty.h>
 #include <mm/mm.h>
 #include <libs/keys.h>
-#include <fs/fs_syscall.h>
+#include <task/task.h>
 
 void terminal_flush_serial(tty_t *session) {
     // flanterm_flush(session->terminal);
