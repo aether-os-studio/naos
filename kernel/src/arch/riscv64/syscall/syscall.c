@@ -113,9 +113,7 @@ uint64_t sys_newuname(uint64_t arg1) {
 
 uint64_t sys_eventfd(uint64_t arg1) { return sys_eventfd2(arg1, 0); }
 
-void syscall_handler_init() {
-    memset(syscall_handlers, 0, MAX_SYSCALL_NUM);
-}
+void syscall_handler_init() { memset(syscall_handlers, 0, MAX_SYSCALL_NUM); }
 
 spinlock_t syscall_debug_lock = SPIN_INIT;
 

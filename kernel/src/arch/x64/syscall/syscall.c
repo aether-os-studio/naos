@@ -41,9 +41,7 @@ void syscall_init() {
 
 syscall_handle_t syscall_handlers[MAX_SYSCALL_NUM];
 
-void syscall_handler_init() {
-    memset(syscall_handlers, 0, MAX_SYSCALL_NUM);
-}
+void syscall_handler_init() { memset(syscall_handlers, 0, MAX_SYSCALL_NUM); }
 
 spinlock_t syscall_debug_lock = SPIN_INIT;
 
