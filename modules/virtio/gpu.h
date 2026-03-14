@@ -2,8 +2,8 @@
 
 #include "virtio.h"
 #include "queue.h"
-#include <libs/aether/drm.h>
-#include <libs/aether/mm.h>
+#include <drivers/drm/drm.h>
+#include <mm/mm.h>
 #include <drivers/drm/drm_core.h>
 #include <drivers/drm/drm_mode.h>
 

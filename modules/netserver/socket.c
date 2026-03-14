@@ -1,8 +1,9 @@
 // Copyright (C) 2025-2026  lihanrui2913
 #include <lwip/sockets.h>
-#include <libs/aether/fs.h>
-#include <libs/aether/task.h>
-#include <libs/aether/net.h>
+#include <fs/vfs/vfs.h>
+#include <task/task.h>
+#include <net/netdev.h>
+#include <net/real_socket.h>
 
 #include <lwip/netif.h>
 #include <lwip/api.h>

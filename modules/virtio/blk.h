@@ -4,7 +4,7 @@
 #include "queue.h"
 
 #include <stdint.h>
-#include <libs/aether/block.h>
+#include <block/block.h>
 
 // Virtio block device configuration structure
 typedef struct virtio_blk_config {

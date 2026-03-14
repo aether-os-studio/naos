@@ -23,18 +23,18 @@ void arch_init();
 void arch_init_after_thread();
 void arch_input_dev_init();
 
-static inline void arch_pause() { asm volatile("nop"); }
+void arch_pause() { asm volatile("nop"); }
 
-static inline void arch_wait_for_interrupt() { asm volatile("wfi"); }
+void arch_wait_for_interrupt() { asm volatile("wfi"); }
 
-static inline size_t get_cache_line_size() {
+size_t get_cache_line_size() {
     uint64_t ctr;
     __asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
     size_t dminline = (ctr >> 16) & 0xF;
     return 4 << dminline;
 }
 
-static inline void dcache_clean_range(void *addr, size_t size) {
+void dcache_clean_range(void *addr, size_t size) {
     uintptr_t start = (uintptr_t)addr;
     uintptr_t end = start + size;
     uintptr_t line_size = get_cache_line_size();
@@ -49,7 +49,7 @@ static inline void dcache_clean_range(void *addr, size_t size) {
     __asm__ volatile("dsb sy" : : : "memory");
 }
 
-static inline void dcache_invalidate_range(void *addr, size_t size) {
+void dcache_invalidate_range(void *addr, size_t size) {
     uintptr_t start = (uintptr_t)addr;
     uintptr_t end = start + size;
     uintptr_t line_size = get_cache_line_size();
@@ -64,7 +64,7 @@ static inline void dcache_invalidate_range(void *addr, size_t size) {
     __asm__ volatile("dsb sy" : : : "memory");
 }
 
-static inline void dcache_flush_range(void *addr, size_t size) {
+void dcache_flush_range(void *addr, size_t size) {
     uintptr_t start = (uintptr_t)addr;
     uintptr_t end = start + size;
     uintptr_t line_size = get_cache_line_size();
@@ -79,14 +79,8 @@ static inline void dcache_flush_range(void *addr, size_t size) {
     __asm__ volatile("dsb sy" : : : "memory");
 }
 
-static inline void memory_barrier(void) {
-    __asm__ volatile("dsb sy" : : : "memory");
-}
+void memory_barrier(void) { __asm__ volatile("dsb sy" : : : "memory"); }
 
-static inline void read_barrier(void) {
-    __asm__ volatile("dsb ld" : : : "memory");
-}
+void read_barrier(void) { __asm__ volatile("dsb ld" : : : "memory"); }
 
-static inline void write_barrier(void) {
-    __asm__ volatile("dsb st" : : : "memory");
-}
+void write_barrier(void) { __asm__ volatile("dsb st" : : : "memory"); }

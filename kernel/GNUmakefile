@@ -61,9 +61,7 @@ override CFLAGS += \
     -ffreestanding \
     -fno-stack-protector \
     -fno-stack-check \
-    -fno-PIC \
-    -ffunction-sections \
-    -fdata-sections
+    -fno-PIC
 
 # Internal C preprocessor flags that should not be changed by the user.
 override CPPFLAGS := \
@@ -156,7 +154,7 @@ override LDFLAGS += \
     -T linker-$(ARCH)-$(BOOT_PROTOCOL).ld
 
 ifneq ($(CC_IS_CLANG),1)
-override LDFLAGS += -Wl,--build-id=none -Wl,--gc-sections
+override LDFLAGS += -Wl,--build-id=none
 endif
 
 # Use "find" to glob all *.c, *.S, and *.asm files in the tree and obtain the

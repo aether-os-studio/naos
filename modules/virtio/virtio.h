@@ -3,8 +3,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <libs/klibc.h>
-#include <libs/aether/mm.h>
-#include <libs/aether/pci.h>
+#include <mm/mm.h>
+#include <drivers/bus/pci.h>
 
 typedef enum virtio_device_type {
     VIRTIO_DEVICE_TYPE_RESERVED = 0,

@@ -1,8 +1,7 @@
 #include "nvidia_open.h"
 
 #include <libs/klibc.h>
-#include <libs/aether/stdio.h>
-#include <libs/aether/task.h>
+#include <task/task.h>
 
 #include "nv.h"
 #include "nvkms.h"

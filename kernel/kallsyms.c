@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define symbol_to_write(vaddr, tv, etv) ((vaddr < tv || vaddr > etv) ? 0 : 1)
+#define symbol_in_text(vaddr, tv, etv) ((vaddr < tv || vaddr > etv) ? 0 : 1)
 
 struct kernel_symbol_entry_t {
     uint64_t vaddr;
@@ -16,6 +16,23 @@ struct kernel_symbol_entry_t *symbol_table;
 uint64_t table_size = 0;
 uint64_t entry_count = 0;
 uint64_t text_vaddr, etext_vaddr;
+
+static int lookup_symbol_type_to_write(char type) {
+    switch (type) {
+    case 'A':
+    case 'B':
+    case 'D':
+    case 'G':
+    case 'R':
+    case 'S':
+    case 'T':
+    case 'V':
+    case 'W':
+        return 1;
+    default:
+        return 0;
+    }
+}
 
 int read_symbol(FILE *filp, struct kernel_symbol_entry_t *entry) {
     char str[512] = {0};
@@ -75,7 +92,7 @@ void read_map(FILE *filp) {
     }
 }
 
-void generate_result() {
+static void generate_traceback_result() {
     printf(".section .rodata\n\n");
     printf(".global kallsyms_address\n");
     printf(".align 8\n\n");
@@ -88,7 +105,7 @@ void generate_result() {
     // 循环写入地址数组
     for (uint64_t i = 0; i < entry_count; ++i) {
         // 判断是否为text段的符号
-        if (!symbol_to_write(symbol_table[i].vaddr, text_vaddr, etext_vaddr))
+        if (!symbol_in_text(symbol_table[i].vaddr, text_vaddr, etext_vaddr))
             continue;
 
         if (symbol_table[i].vaddr == last_vaddr)
@@ -119,7 +136,7 @@ void generate_result() {
     last_vaddr = 0;
     for (uint64_t i = 0; i < entry_count; ++i) {
         // 判断是否为text段的符号
-        if (!symbol_to_write(symbol_table[i].vaddr, text_vaddr, etext_vaddr))
+        if (!symbol_in_text(symbol_table[i].vaddr, text_vaddr, etext_vaddr))
             continue;
 
         if (symbol_table[i].vaddr == last_vaddr)
@@ -141,7 +158,7 @@ void generate_result() {
     last_vaddr = 0;
     for (uint64_t i = 0; i < entry_count; ++i) {
         // 判断是否为text段的符号
-        if (!symbol_to_write(symbol_table[i].vaddr, text_vaddr, etext_vaddr))
+        if (!symbol_in_text(symbol_table[i].vaddr, text_vaddr, etext_vaddr))
             continue;
 
         if (symbol_table[i].vaddr == last_vaddr)
@@ -156,8 +173,62 @@ void generate_result() {
     putchar('\n');
 }
 
+static void generate_lookup_result() {
+    printf(".global kallsyms_lookup_address\n");
+    printf(".align 8\n\n");
+    printf("kallsyms_lookup_address:\n");
+
+    uint64_t total_syms_to_write = 0;
+
+    for (uint64_t i = 0; i < entry_count; ++i) {
+        if (!lookup_symbol_type_to_write(symbol_table[i].type))
+            continue;
+
+        printf("\t.quad\t%#lx\n", symbol_table[i].vaddr);
+        ++total_syms_to_write;
+    }
+
+    putchar('\n');
+
+    printf(".global kallsyms_lookup_num\n");
+    printf(".align 8\n");
+    printf("kallsyms_lookup_num:\n");
+    printf("\t.quad\t%ld\n", total_syms_to_write);
+
+    putchar('\n');
+
+    printf(".global kallsyms_lookup_names_index\n");
+    printf(".align 8\n");
+    printf("kallsyms_lookup_names_index:\n");
+
+    uint64_t position = 0;
+    for (uint64_t i = 0; i < entry_count; ++i) {
+        if (!lookup_symbol_type_to_write(symbol_table[i].type))
+            continue;
+
+        printf("\t.quad\t%ld\n", position);
+        position += symbol_table[i].symbol_length;
+    }
+
+    putchar('\n');
+
+    printf(".global kallsyms_lookup_names\n");
+    printf(".align 8\n");
+    printf("kallsyms_lookup_names:\n");
+
+    for (uint64_t i = 0; i < entry_count; ++i) {
+        if (!lookup_symbol_type_to_write(symbol_table[i].type))
+            continue;
+
+        printf("\t.asciz\t\"%s\"\n", symbol_table[i].symbol);
+    }
+
+    putchar('\n');
+}
+
 int main(int argc, char **argv) {
     read_map(stdin);
 
-    generate_result();
+    generate_traceback_result();
+    generate_lookup_result();
 }

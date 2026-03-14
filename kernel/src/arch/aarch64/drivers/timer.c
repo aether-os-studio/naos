@@ -3,7 +3,7 @@
 #include <acpi/uacpi/tables.h>
 #include <boot/boot.h>
 #include <drivers/kernel_logger.h>
-#include <libs/aether/fdt.h>
+#include <drivers/fdt/fdt.h>
 
 struct global_timer_state g_timer = {0};
 

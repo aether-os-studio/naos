@@ -8,6 +8,8 @@ export BUILD_MODE ?= debug
 
 export BOOT_PROTOCOL ?= limine
 
+export SYSTEM_ABI ?= linux
+
 # mixed or monolithic
 export KERNEL_MODEL ?= mixed
 

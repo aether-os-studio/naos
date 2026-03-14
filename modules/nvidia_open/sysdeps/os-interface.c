@@ -1,12 +1,10 @@
 #include "nvidia_open.h"
 
 #include <boot/boot.h>
-#include <libs/aether/acpi.h>
-#include <libs/aether/mm.h>
-#include <libs/aether/smbios.h>
-#include <libs/aether/stdio.h>
-#include <libs/aether/task.h>
-#include <libs/aether/time.h>
+#include <acpi/acpi.h>
+#include <mm/mm.h>
+#include <drivers/smbios.h>
+#include <task/task.h>
 #include <libs/klibc.h>
 #include <fs/vfs/vfs.h>
 

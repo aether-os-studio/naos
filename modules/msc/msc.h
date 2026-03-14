@@ -1,7 +1,7 @@
 #pragma once
 
-#include <libs/aether/block.h>
-#include <libs/aether/usb.h>
+#include <block/block.h>
+#include <drivers/usb/usb.h>
 
 // CBW/CSW结构体
 typedef struct {

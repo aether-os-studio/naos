@@ -1,7 +1,6 @@
 #include <nvlink_os.h>
 #include <libs/klibc.h>
-#include <libs/aether/stdio.h>
-#include <libs/aether/mm.h>
+#include <mm/mm.h>
 
 #define STUBBED                                                                \
     {                                                                          \

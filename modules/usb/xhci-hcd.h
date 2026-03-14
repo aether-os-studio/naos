@@ -1,7 +1,7 @@
 #pragma once
 
-#include <libs/aether/usb.h>
-#include <libs/aether/mm.h>
+#include <drivers/usb/usb.h>
+#include <mm/mm.h>
 
 struct usbdevice_s;
 struct usb_endpoint_descriptor;

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <libs/aether/pci.h>
+#include <drivers/bus/pci.h>
 #include "virtio.h"
 
 typedef struct virtio_cap_info_t {

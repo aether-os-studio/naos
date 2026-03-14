@@ -1,7 +1,5 @@
 #pragma once
 
-#include <libs/aether/evdev.h>
-
 #define CHARACTER_ENTER '\n'
 #define CHARACTER_BACK '\b'
 

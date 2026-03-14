@@ -2,8 +2,8 @@
 #include "gpu.h"
 #include "pci.h"
 #include <fs/fs_syscall.h>
-#include <libs/aether/drm.h>
-#include <libs/aether/mm.h>
+#include <drivers/drm/drm.h>
+#include <mm/mm.h>
 #include <libs/klibc.h>
 
 virtio_gpu_device_t *virtio_gpu_devices[MAX_VIRTIO_GPU_DEVICES];

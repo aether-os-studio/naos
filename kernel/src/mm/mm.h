@@ -68,3 +68,34 @@ static inline void free_frames_bytes_dma32(void *ptr, uint64_t bytes) {
     free_frames_dma32(virt_to_phys((uint64_t)ptr),
                       (bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE);
 }
+
+extern void dcache_clean_range(void *addr, size_t size);
+extern void dcache_invalidate_range(void *addr, size_t size);
+extern void dcache_flush_range(void *addr, size_t size);
+
+extern void memory_barrier(void);
+
+extern void read_barrier(void);
+
+extern void write_barrier(void);
+
+static inline void dma_wmb(void) { write_barrier(); }
+
+static inline void dma_rmb(void) { read_barrier(); }
+
+static inline void dma_mb(void) { memory_barrier(); }
+
+static inline void dma_sync_cpu_to_device(void *addr, size_t size) {
+    dma_wmb();
+    dcache_clean_range(addr, size);
+}
+
+static inline void dma_sync_device_to_cpu(void *addr, size_t size) {
+    dcache_invalidate_range(addr, size);
+    dma_rmb();
+}
+
+static inline void dma_sync_bidirectional(void *addr, size_t size) {
+    dma_mb();
+    dcache_flush_range(addr, size);
+}

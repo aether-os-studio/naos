@@ -2,7 +2,7 @@
 
 #include "virtio.h"
 #if !defined(__x86_64__)
-#include <libs/aether/fdt.h>
+#include <drivers/fdt/fdt.h>
 #endif
 
 /* VirtIO MMIO 寄存器偏移 */

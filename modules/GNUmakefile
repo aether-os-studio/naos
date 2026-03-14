@@ -84,6 +84,8 @@ ifneq ($(BUILD_NVIDIA), 0)
 endif
 endif
 
+	$(MAKE) -C abis
+
 	$(MAKE) -C nvme
 
 	$(MAKE) -C usb

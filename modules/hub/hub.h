@@ -1,8 +1,8 @@
 #pragma once
 
 #include <libs/klibc.h>
-#include <libs/aether/usb.h>
-#include <libs/aether/mm.h>
+#include <drivers/usb/usb.h>
+#include <mm/mm.h>
 
 #define USB_DT_HUB (USB_TYPE_CLASS | 0x09)
 #define USB_DT_HUB3 (USB_TYPE_CLASS | 0x0a)

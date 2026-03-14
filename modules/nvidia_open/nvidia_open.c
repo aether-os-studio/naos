@@ -1,7 +1,7 @@
 #include "nvidia_open.h"
-#include <libs/aether/pci.h>
-#include <libs/aether/irq.h>
-#include <libs/aether/mm.h>
+#include <drivers/bus/pci.h>
+#include <irq/irq_manager.h>
+#include <mm/mm.h>
 #include <libs/klibc.h>
 #include <nvUnixVersion.h>
 

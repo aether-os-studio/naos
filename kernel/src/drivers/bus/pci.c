@@ -1,7 +1,6 @@
 #include <mm/mm.h>
 #include <drivers/kernel_logger.h>
 #include <drivers/bus/pci.h>
-#include <libs/aether/pci.h>
 #include <uacpi/acpi.h>
 #include <uacpi/tables.h>
 
@@ -701,4 +700,17 @@ void pci_init() {
             }
         }
     }
+}
+
+pci_driver_t *pci_drivers[MAX_PCI_DRIVERS] = {NULL};
+
+int regist_pci_driver(pci_driver_t *driver) {
+    for (int i = 0; i < MAX_PCI_DRIVERS; i++) {
+        if (!pci_drivers[i]) {
+            pci_drivers[i] = driver;
+            break;
+        }
+    }
+
+    return 0;
 }

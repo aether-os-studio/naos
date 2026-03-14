@@ -23,9 +23,7 @@ struct MemorySpan heap_oom(size_t size) {
 }
 
 void heap_init_alloc() {
-    map_page_range(get_current_page_dir(false), KERNEL_HEAP_START, (uint64_t)-1,
-                   KERNEL_HEAP_SIZE, PT_FLAG_R | PT_FLAG_W);
-    heap_init((uint8_t *)KERNEL_HEAP_START, KERNEL_HEAP_SIZE);
+    heap_init(alloc_frames_bytes(KERNEL_HEAP_SIZE), KERNEL_HEAP_SIZE);
     heap_onerror(heap_err);
     heap_set_oom_handler(heap_oom);
 }

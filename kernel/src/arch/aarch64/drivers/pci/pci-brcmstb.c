@@ -1,7 +1,7 @@
 #include <arch/arch.h>
 #include <boot/boot.h>
-#include <libs/aether/fdt.h>
-#include <drivers/bus/pci.h>
+#include <drivers/fdt/fdt.h>
+#include <arch/aarch64/drivers/pci/pci-brcmstb.h>
 
 static pcie_brcmstb_context_t brcmstb_ctx = {0};
 

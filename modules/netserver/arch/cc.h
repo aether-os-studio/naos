@@ -1,9 +1,9 @@
 #pragma once
 
 #include <libs/klibc.h>
-#include <libs/aether/mm.h>
-#include <libs/aether/fs.h>
-#include <libs/aether/task.h>
+#include <mm/mm.h>
+#include <fs/vfs/vfs.h>
+#include <task/task.h>
 
 typedef uint32_t nfds_t;
 

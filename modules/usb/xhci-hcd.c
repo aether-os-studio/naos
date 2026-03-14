@@ -6,10 +6,12 @@
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
 #include "xhci-hcd.h"
+#include <arch/arch.h>
 #include <libs/mutex.h>
-#include <libs/aether/pci.h>
-#include <libs/aether/irq.h>
-#include <libs/aether/task.h>
+#include <libs/keys.h>
+#include <drivers/bus/pci.h>
+#include <irq/irq_manager.h>
+#include <task/task.h>
 
 // --------------------------------------------------------------
 // configuration

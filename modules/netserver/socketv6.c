@@ -1,7 +1,7 @@
 #include <lwip/sockets.h>
-#include <libs/aether/fs.h>
-#include <libs/aether/task.h>
-#include <libs/aether/net.h>
+#include <fs/vfs/vfs.h>
+#include <task/task.h>
+#include <net/real_socket.h>
 
 #include <lwip/netif.h>
 #include <lwip/api.h>

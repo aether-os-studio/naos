@@ -28,7 +28,7 @@ typedef struct module_symbol {
  * 加载一个内核模块
  * @param module 文件句柄
  */
-void dlinker_load(module_t *module);
+bool dlinker_load(module_t *module);
 
 dlfunc_t *find_func(const char *name);
 

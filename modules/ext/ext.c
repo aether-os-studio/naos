@@ -4,9 +4,8 @@
 #include <dev/device.h>
 #include <mm/mm_syscall.h>
 
-#include <libs/aether/stdio.h>
-#include <libs/aether/mm.h>
-#include <libs/aether/time.h>
+#include <mm/mm.h>
+#include <arch/arch.h>
 
 static int ext_fsid = 0;
 static spinlock_t rwlock = SPIN_INIT;

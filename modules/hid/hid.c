@@ -6,10 +6,12 @@
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
 #include "hid.h"
-#include <libs/aether/usb.h>
-#include <libs/aether/evdev.h>
-#include <libs/aether/input.h>
-#include <libs/aether/stdio.h>
+#include <drivers/usb/usb.h>
+#include <drivers/input.h>
+#include <libs/keys.h>
+
+extern dev_input_event_t *kb_input_event;
+extern dev_input_event_t *mouse_input_event;
 
 /****************************************************************
  * Setup
@@ -81,7 +83,7 @@ static int usb_kbd_setup(struct usbdevice_s *usbdev,
 
     dev_input_event_t *event = regist_input_dev(
         "input-usb-hid", "ID_INPUT_KEYBOARD=1", INPUT_FROM_USB, kb_event_bit);
-    set_kb_input_event(event);
+    kb_input_event = event;
 
     task_create("usb_check_key", (void (*)(uint64_t))usb_check_key,
                 (uint64_t)hid, KTHREAD_PRIORITY);
@@ -332,7 +334,7 @@ static int usb_mouse_setup(struct usbdevice_s *usbdev,
 
     dev_input_event_t *event = regist_input_dev(
         "input-usb-hid", "ID_INPUT_MOUSE=1", INPUT_FROM_USB, mouse_event_bit);
-    set_mouse_input_event(event);
+    mouse_input_event = event;
 
     task_create("usb_check_mouse", (void (*)(uint64_t))usb_check_mouse,
                 (uint64_t)hid, KTHREAD_PRIORITY);

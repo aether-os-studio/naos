@@ -2,12 +2,11 @@
 
 #include <libs/klibc.h>
 #include <libs/mutex.h>
-#include <libs/aether/mm.h>
-#include <libs/aether/pci.h>
-#include <libs/aether/irq.h>
-#include <libs/aether/stdio.h>
-#include <libs/aether/task.h>
-#include <libs/aether/block.h>
+#include <mm/mm.h>
+#include <drivers/bus/pci.h>
+#include <irq/irq_manager.h>
+#include <task/task.h>
+#include <block/block.h>
 
 // NVMe 寄存器偏移 (Controller Registers)
 #define NVME_REG_CAP 0x00   // Controller Capabilities

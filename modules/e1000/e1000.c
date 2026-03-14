@@ -1,8 +1,7 @@
 // Copyright (C) 2025-2026  lihanrui2913
 #include "e1000.h"
-#include <libs/aether/mm.h>
-#include <libs/aether/pci.h>
-#include <libs/aether/net.h>
+#include <mm/mm.h>
+#include <drivers/bus/pci.h>
 #include <libs/klibc.h>
 #include <net/rtnl.h>
 

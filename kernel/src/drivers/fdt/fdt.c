@@ -2,7 +2,7 @@
 #include <drivers/kernel_logger.h>
 #include <drivers/fdt/fdt.h>
 #include <mm/mm.h>
-#include <libs/aether/fdt.h>
+#include <drivers/fdt/fdt.h>
 
 #if !defined(__x86_64__)
 

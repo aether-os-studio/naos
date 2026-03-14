@@ -1,9 +1,8 @@
 #pragma once
 
-#include <libs/aether/stdio.h>
-#include <libs/aether/pci.h>
-#include <libs/aether/drm.h>
-#include <libs/aether/task.h>
+#include <drivers/bus/pci.h>
+#include <drivers/drm/drm.h>
+#include <task/task.h>
 
 #define NV_FIRMWARE_FOR_NAME(name) "/lib/firmware/nvidia/575.51.02/" name ".bin"
 
