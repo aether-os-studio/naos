@@ -11,9 +11,15 @@
 int timerfdfs_id = 0;
 static rb_root_t timerfd_mono_root = RB_ROOT_INIT;
 static rb_root_t timerfd_real_root = RB_ROOT_INIT;
-static spinlock_t timerfd_lock = SPIN_INIT;
+static spinlock_t timerfd_mono_lock = SPIN_INIT;
+static spinlock_t timerfd_real_lock = SPIN_INIT;
 
 static uint64_t get_current_time_ns(int clock_type);
+
+static inline spinlock_t *timerfd_tree_lock_for_clock(int clock_type) {
+    return clock_type == CLOCK_REALTIME ? &timerfd_real_lock
+                                        : &timerfd_mono_lock;
+}
 
 static inline rb_root_t *timerfd_root_for_clock(int clock_type) {
     return clock_type == CLOCK_REALTIME ? &timerfd_real_root
@@ -103,22 +109,72 @@ static bool timerfd_update_due_requeue_locked(timerfd_t *tfd, uint64_t now) {
     return changed;
 }
 
+static inline void timerfd_snapshot_state(timerfd_t *tfd, int *clock_type,
+                                          uint64_t *expires, uint64_t *count) {
+    spin_lock(&tfd->lock);
+    if (clock_type)
+        *clock_type = tfd->timer.clock_type;
+    if (expires)
+        *expires = tfd->timer.expires;
+    if (count)
+        *count = tfd->count;
+    spin_unlock(&tfd->lock);
+}
+
+static inline void timerfd_lock_pair(timerfd_t *tfd) {
+    spin_lock(timerfd_tree_lock_for_clock(tfd->timer.clock_type));
+    spin_lock(&tfd->lock);
+}
+
+static inline void timerfd_unlock_pair(timerfd_t *tfd) {
+    spin_unlock(&tfd->lock);
+    spin_unlock(timerfd_tree_lock_for_clock(tfd->timer.clock_type));
+}
+
+static bool timerfd_refresh_due(timerfd_t *tfd, int clock_type, uint64_t now,
+                                uint64_t *count, uint64_t *expires) {
+    if (!tfd)
+        return false;
+
+    spinlock_t *tree_lock = timerfd_tree_lock_for_clock(clock_type);
+    bool changed = false;
+
+    spin_lock(tree_lock);
+    spin_lock(&tfd->lock);
+    if (tfd->timer.clock_type == clock_type && tfd->timer.expires &&
+        now >= tfd->timer.expires) {
+        changed = timerfd_update_due_requeue_locked(tfd, now);
+    }
+    if (count)
+        *count = tfd->count;
+    if (expires)
+        *expires = tfd->timer.expires;
+    spin_unlock(&tfd->lock);
+    spin_unlock(tree_lock);
+
+    return changed;
+}
+
 void timerfd_check_wakeup(void) {
     bool raise = false;
+    uint64_t now_mono = nano_time();
 
-    spin_lock(&timerfd_lock);
+    spin_lock(&timerfd_mono_lock);
     timerfd_t *mono = timerfd_first_locked(&timerfd_mono_root);
-    if (mono && mono->timer.expires <= nano_time()) {
+    if (mono && mono->timer.expires <= now_mono) {
         raise = true;
-    } else {
-        timerfd_t *real = timerfd_first_locked(&timerfd_real_root);
-        if (real) {
-            uint64_t now_real = get_current_time_ns(CLOCK_REALTIME);
-            if (real->timer.expires <= now_real)
-                raise = true;
-        }
     }
-    spin_unlock(&timerfd_lock);
+    spin_unlock(&timerfd_mono_lock);
+
+    if (!raise) {
+        uint64_t now_real = get_current_time_ns(CLOCK_REALTIME);
+
+        spin_lock(&timerfd_real_lock);
+        timerfd_t *real = timerfd_first_locked(&timerfd_real_root);
+        if (real && real->timer.expires <= now_real)
+            raise = true;
+        spin_unlock(&timerfd_real_lock);
+    }
 
     if (raise)
         softirq_raise(SOFTIRQ_TIMERFD);
@@ -126,40 +182,49 @@ void timerfd_check_wakeup(void) {
 
 void timerfd_softirq(void) {
     while (true) {
-        vfs_node_t notify_node = NULL;
+        bool progressed = false;
+        int clocks[2] = {CLOCK_MONOTONIC, CLOCK_REALTIME};
 
-        spin_lock(&timerfd_lock);
+        for (int i = 0; i < 2; i++) {
+            int clock_type = clocks[i];
+            uint64_t now = get_current_time_ns(clock_type);
+            spinlock_t *tree_lock = timerfd_tree_lock_for_clock(clock_type);
 
-        timerfd_t *tfd = timerfd_first_locked(&timerfd_mono_root);
-        uint64_t now = nano_time();
-        if (!tfd || tfd->timer.expires > now) {
-            tfd = timerfd_first_locked(&timerfd_real_root);
-            if (!tfd) {
-                spin_unlock(&timerfd_lock);
-                return;
+            while (true) {
+                vfs_node_t notify_node = NULL;
+
+                spin_lock(tree_lock);
+                timerfd_t *tfd =
+                    timerfd_first_locked(timerfd_root_for_clock(clock_type));
+                if (!tfd || tfd->timer.expires > now) {
+                    spin_unlock(tree_lock);
+                    break;
+                }
+
+                spin_lock(&tfd->lock);
+                if (tfd->timer.expires && tfd->timer.expires <= now) {
+                    timerfd_timeout_remove_locked(tfd);
+                    if (timerfd_update_due_locked(tfd, now)) {
+                        notify_node = tfd->node;
+                        if (notify_node)
+                            vfs_node_ref_get(notify_node);
+                    }
+                    timerfd_timeout_add_locked(tfd);
+                    progressed = true;
+                }
+                spin_unlock(&tfd->lock);
+                spin_unlock(tree_lock);
+
+                if (!notify_node)
+                    continue;
+
+                vfs_poll_notify(notify_node, EPOLLIN);
+                vfs_node_ref_put(notify_node, NULL);
             }
-
-            now = get_current_time_ns(CLOCK_REALTIME);
-            if (tfd->timer.expires > now) {
-                spin_unlock(&timerfd_lock);
-                return;
-            }
         }
 
-        timerfd_timeout_remove_locked(tfd);
-        if (timerfd_update_due_locked(tfd, now)) {
-            notify_node = tfd->node;
-            if (notify_node)
-                vfs_node_ref_get(notify_node);
-        }
-        timerfd_timeout_add_locked(tfd);
-
-        spin_unlock(&timerfd_lock);
-
-        if (notify_node) {
-            vfs_poll_notify(notify_node, EPOLLIN);
-            vfs_node_ref_put(notify_node, NULL);
-        }
+        if (!progressed)
+            return;
     }
 }
 
@@ -174,6 +239,7 @@ uint64_t sys_timerfd_create(int clockid, int flags) {
     if (!tfd)
         return -ENOMEM;
     memset(tfd, 0, sizeof(timerfd_t));
+    spin_init(&tfd->lock);
     tfd->timer.clock_type = clockid;
 
     vfs_node_t node = vfs_node_alloc(NULL, NULL);
@@ -255,12 +321,23 @@ uint64_t sys_timerfd_settime(int fd, int flags,
     int clock_type = tfd->timer.clock_type;
     bool notify_readable = false;
     bool raise_softirq = false;
+    bool have_now = false;
+    uint64_t now = 0;
+    uint64_t interval = new_value->it_interval.tv_sec * 1000000000ULL +
+                        (uint64_t)new_value->it_interval.tv_nsec;
+    uint64_t value = new_value->it_value.tv_sec * 1000000000ULL +
+                     (uint64_t)new_value->it_value.tv_nsec;
 
-    spin_lock(&timerfd_lock);
+    if (old_value || (!(flags & TFD_TIMER_ABSTIME) && value != 0)) {
+        now = get_current_time_ns(clock_type);
+        have_now = true;
+    }
+
+    spin_lock(timerfd_tree_lock_for_clock(clock_type));
+    spin_lock(&tfd->lock);
     timerfd_timeout_remove_locked(tfd);
 
     if (old_value) {
-        uint64_t now = get_current_time_ns(clock_type);
         uint64_t remaining =
             tfd->timer.expires > now ? tfd->timer.expires - now : 0;
 
@@ -270,18 +347,12 @@ uint64_t sys_timerfd_settime(int fd, int flags,
         old_value->it_value.tv_nsec = remaining % 1000000000ULL;
     }
 
-    uint64_t interval = new_value->it_interval.tv_sec * 1000000000ULL +
-                        (uint64_t)new_value->it_interval.tv_nsec;
-    uint64_t value = new_value->it_value.tv_sec * 1000000000ULL +
-                     (uint64_t)new_value->it_value.tv_nsec;
-
     uint64_t expires = 0;
 
     if (flags & TFD_TIMER_ABSTIME) {
         expires = value;
     } else {
-        uint64_t now = value ? get_current_time_ns(clock_type) : 0;
-        expires = now + value;
+        expires = value ? now + value : 0;
     }
 
     tfd->timer.expires = expires;
@@ -290,13 +361,11 @@ uint64_t sys_timerfd_settime(int fd, int flags,
         tfd->count = 0;
     }
     timerfd_timeout_add_locked(tfd);
-    if (tfd->timer.expires) {
-        uint64_t now = get_current_time_ns(clock_type);
-        if (tfd->timer.expires <= now)
-            raise_softirq = true;
-    }
+    if (tfd->timer.expires && have_now && tfd->timer.expires <= now)
+        raise_softirq = true;
     notify_readable = tfd->count > 0;
-    spin_unlock(&timerfd_lock);
+    spin_unlock(&tfd->lock);
+    spin_unlock(timerfd_tree_lock_for_clock(clock_type));
 
     if (notify_readable)
         vfs_poll_notify(node, EPOLLIN);
@@ -312,9 +381,9 @@ bool timerfd_close(vfs_node_t node) {
     if (!tfd)
         return true;
 
-    spin_lock(&timerfd_lock);
+    timerfd_lock_pair(tfd);
     timerfd_timeout_remove_locked(tfd);
-    spin_unlock(&timerfd_lock);
+    timerfd_unlock_pair(tfd);
 
     free(tfd);
     return true;
@@ -326,15 +395,19 @@ int timerfd_poll(vfs_node_t node, size_t events) {
         return EPOLLNVAL;
 
     int revents = 0;
+    int clock_type = CLOCK_MONOTONIC;
+    uint64_t expires = 0;
+    uint64_t count = 0;
 
-    spin_lock(&timerfd_lock);
-    if (tfd->timer.expires) {
-        uint64_t now = get_current_time_ns(tfd->timer.clock_type);
-        (void)timerfd_update_due_requeue_locked(tfd, now);
+    timerfd_snapshot_state(tfd, &clock_type, &expires, &count);
+    if (count == 0 && expires) {
+        uint64_t now = get_current_time_ns(clock_type);
+        if (now >= expires)
+            timerfd_refresh_due(tfd, clock_type, now, &count, &expires);
     }
-    if ((events & EPOLLIN) && tfd->count > 0)
+
+    if ((events & EPOLLIN) && count > 0)
         revents |= EPOLLIN;
-    spin_unlock(&timerfd_lock);
 
     return revents;
 }
@@ -347,16 +420,15 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         uint64_t count = 0;
         uint64_t expires = 0;
         int clock_type = CLOCK_MONOTONIC;
+        uint64_t now = 0;
 
-        spin_lock(&timerfd_lock);
-        clock_type = tfd->timer.clock_type;
-        if (tfd->timer.expires) {
-            uint64_t now = get_current_time_ns(clock_type);
-            (void)timerfd_update_due_requeue_locked(tfd, now);
+        timerfd_snapshot_state(tfd, &clock_type, &expires, &count);
+
+        if (count == 0 && expires) {
+            now = get_current_time_ns(clock_type);
+            if (now >= expires)
+                timerfd_refresh_due(tfd, clock_type, now, &count, &expires);
         }
-        count = tfd->count;
-        expires = tfd->timer.expires;
-        spin_unlock(&timerfd_lock);
 
         if (count != 0)
             break;
@@ -378,7 +450,6 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             }
         }
 
-        uint64_t now = get_current_time_ns(clock_type);
         if (now < expires && !(fd->flags & O_NONBLOCK)) {
             int64_t wait_ns = (int64_t)(expires - now);
             int reason = task_block(current_task, TASK_BLOCKING, wait_ns,
@@ -396,10 +467,10 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     if (size < sizeof(uint64_t))
         return -EINVAL;
 
-    spin_lock(&timerfd_lock);
+    spin_lock(&tfd->lock);
     uint64_t count = tfd->count;
     tfd->count = 0;
-    spin_unlock(&timerfd_lock);
+    spin_unlock(&tfd->lock);
 
     *(uint64_t *)addr = count;
     vfs_poll_notify(fd->node, EPOLLOUT);
@@ -415,9 +486,9 @@ int timerfd_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
         return -EBADF;
     switch (cmd) {
     case TFD_IOC_SET_TICKS:
-        spin_lock(&timerfd_lock);
+        spin_lock(&tfd->lock);
         tfd->count = arg;
-        spin_unlock(&timerfd_lock);
+        spin_unlock(&tfd->lock);
         if (tfd->node)
             vfs_poll_notify(tfd->node, EPOLLIN);
         return 0;
@@ -445,7 +516,8 @@ fs_t timefdfs = {
 };
 
 void timerfd_init() {
-    spin_init(&timerfd_lock);
+    spin_init(&timerfd_mono_lock);
+    spin_init(&timerfd_real_lock);
     timerfd_mono_root = RB_ROOT_INIT;
     timerfd_real_root = RB_ROOT_INIT;
     softirq_register(SOFTIRQ_TIMERFD, timerfd_softirq);

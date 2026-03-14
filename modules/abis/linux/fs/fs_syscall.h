@@ -255,6 +255,7 @@ typedef struct {
     uint64_t count;
     int flags;
     vfs_node_t node;
+    spinlock_t lock;
     rb_node_t timeout_node;
     bool timeout_queued;
 } timerfd_t;
