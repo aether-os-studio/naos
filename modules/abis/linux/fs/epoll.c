@@ -215,8 +215,6 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
     uint64_t timeout_ns = timeout > 0 ? (uint64_t)timeout : 0;
 
     while (true) {
-        arch_enable_interrupt();
-
         mutex_lock(&epoll->lock);
         ready = epoll_collect_ready_locked(epoll, events, maxevents);
         if (ready > 0) {
@@ -245,6 +243,8 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
             epoll_disarm_waiters(waits, waits_count);
             break;
         }
+
+        arch_enable_interrupt();
 
         int64_t wait_ns = -1;
         if (!infinite_timeout) {
@@ -281,9 +281,7 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
         }
     }
 
-    if (irq_state) {
-        arch_enable_interrupt();
-    } else {
+    if (!irq_state) {
         arch_disable_interrupt();
     }
     return ready;

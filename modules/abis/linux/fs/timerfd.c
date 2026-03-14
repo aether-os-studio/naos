@@ -1,6 +1,7 @@
 #include <fs/fs_syscall.h>
 #include <fs/proc.h>
 #include <arch/arch.h>
+#include <boot/boot.h>
 #include <irq/softirq.h>
 #include <libs/klibc.h>
 #include <libs/rbtree.h>
@@ -208,7 +209,6 @@ uint64_t sys_timerfd_create(int clockid, int flags) {
         new_fd->flags = flags & (TFD_NONBLOCK | TFD_CLOEXEC);
         new_fd->close_on_exec = !!(flags & TFD_CLOEXEC);
         current_task->fd_info->fds[fd] = new_fd;
-        task_timerfd_track_fd(current_task, new_fd);
         procfs_on_open_file(current_task, fd);
         ret = 0;
     });
@@ -226,10 +226,7 @@ static uint64_t get_current_time_ns(int clock_type) {
     if (clock_type == CLOCK_MONOTONIC) {
         return nano_time(); // 单调时钟，直接返回纳秒
     } else {                // CLOCK_REALTIME
-        tm time;
-        time_read(&time);
-        return (uint64_t)mktime(&time) * 1000000000ULL +
-               (nano_time() % 1000000000);
+        return boot_get_boottime() + nano_time() / 1000000000;
     }
 }
 

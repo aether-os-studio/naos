@@ -1,125 +1,10 @@
+#include <boot/boot.h>
 #include <libs/string_builder.h>
 #include <task/task_syscall.h>
 
 extern hashmap_t task_parent_map;
 extern hashmap_t task_pgid_map;
 extern spinlock_t should_free_lock;
-
-extern int timerfdfs_id;
-
-typedef struct task_timerfd_ref {
-    struct llist_header node;
-    vfs_node_t timerfd_node;
-    uint64_t fd_ref_count;
-} task_timerfd_ref_t;
-
-static task_timerfd_ref_t *task_timerfd_find_ref(task_t *task,
-                                                 vfs_node_t timerfd_node) {
-    if (!task || !timerfd_node)
-        return NULL;
-
-    task_timerfd_ref_t *ref, *next;
-    llist_for_each(ref, next, &task->timerfd_list, node) {
-        if (ref->timerfd_node == timerfd_node)
-            return ref;
-    }
-
-    return NULL;
-}
-
-void task_timerfd_list_clear(task_t *task) {
-    if (!task)
-        return;
-
-    task_timerfd_ref_t *ref, *next;
-    llist_for_each(ref, next, &task->timerfd_list, node) {
-        llist_delete(&ref->node);
-        free(ref);
-    }
-
-    llist_init_head(&task->timerfd_list);
-}
-
-void task_timerfd_track_fd_single(task_t *task, fd_t *fd) {
-    if (!task || !fd || !fd->node || fd->node->fsid != timerfdfs_id)
-        return;
-
-    task_timerfd_ref_t *ref = task_timerfd_find_ref(task, fd->node);
-    if (ref) {
-        ref->fd_ref_count++;
-        return;
-    }
-
-    task_timerfd_ref_t *new_ref = calloc(1, sizeof(task_timerfd_ref_t));
-    if (!new_ref)
-        return;
-
-    llist_init_head(&new_ref->node);
-    new_ref->timerfd_node = fd->node;
-    new_ref->fd_ref_count = 1;
-    llist_append(&task->timerfd_list, &new_ref->node);
-}
-
-void task_timerfd_track_fd(task_t *task, fd_t *fd) {
-    if (!task || !fd || !fd->node || fd->node->fsid != timerfdfs_id)
-        return;
-
-    fd_info_t *shared_fd_info = task->fd_info;
-    if (!shared_fd_info || shared_fd_info->ref_count <= 1) {
-        task_timerfd_track_fd_single(task, fd);
-        return;
-    }
-
-    // TODO: vfork
-}
-
-static void task_timerfd_untrack_fd_single(task_t *task, fd_t *fd) {
-    if (!task || !fd || !fd->node || fd->node->fsid != timerfdfs_id)
-        return;
-
-    task_timerfd_ref_t *ref = task_timerfd_find_ref(task, fd->node);
-    if (!ref)
-        return;
-
-    if (ref->fd_ref_count > 1) {
-        ref->fd_ref_count--;
-        return;
-    }
-
-    llist_delete(&ref->node);
-    free(ref);
-}
-
-void task_timerfd_untrack_fd(task_t *task, fd_t *fd) {
-    if (!task || !fd || !fd->node || fd->node->fsid != timerfdfs_id)
-        return;
-
-    fd_info_t *shared_fd_info = task->fd_info;
-    if (!shared_fd_info || shared_fd_info->ref_count <= 1) {
-        task_timerfd_untrack_fd_single(task, fd);
-        return;
-    }
-
-    // TODO: vfork
-}
-
-void task_timerfd_rebuild_from_fd_info(task_t *task) {
-    if (!task)
-        return;
-
-    task_timerfd_list_clear(task);
-    if (!task->fd_info)
-        return;
-
-    with_fd_info_lock(task->fd_info, {
-        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-            fd_t *fd = task->fd_info->fds[i];
-            if (!fd)
-                continue;
-            task_timerfd_track_fd_single(task, fd);
-        }
-    });
-}
 
 static int read_task_file_into_user_memory(task_t *task, vfs_node_t node,
                                            uint64_t uaddr, size_t offset,
@@ -410,8 +295,6 @@ void free_task(task_t *ptr) {
     task_pgid_index_detach_locked(ptr);
     spin_unlock(&task_queue_lock);
 
-    task_timerfd_list_clear(ptr);
-
     if (!ptr->is_kernel)
         free_page_table(ptr->mm);
 
@@ -451,9 +334,7 @@ static void task_execve_free_string_array(char **strings, int count) {
 }
 
 static uint64_t simple_rand() {
-    tm time;
-    time_read(&time);
-    uint32_t seed = mktime(&time);
+    uint32_t seed = boot_get_boottime() * 100 + nano_time() / 10;
     seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
     return ((uint64_t)seed << 32) | seed;
 }
@@ -1102,7 +983,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
         old->ref_count--;
 
         self->fd_info = new;
-        task_timerfd_rebuild_from_fd_info(self);
     }
 
     task_t *vfork_parent = task_find_by_pid(self->ppid);
@@ -1139,7 +1019,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 continue;
 
             if (self->fd_info->fds[i]->close_on_exec) {
-                task_timerfd_untrack_fd(self, self->fd_info->fds[i]);
                 vfs_close(self->fd_info->fds[i]->node);
                 free(self->fd_info->fds[i]);
                 self->fd_info->fds[i] = NULL;
@@ -1694,7 +1573,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     }
 
     child->fd_info->ref_count++;
-    task_timerfd_rebuild_from_fd_info(child);
 
     spin_lock(&task_queue_lock);
     task_parent_index_attach_locked(child);
@@ -1842,9 +1720,7 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem) {
 
 uint64_t get_nanotime_by_clockid(int clock_id) {
     if (clock_id == CLOCK_REALTIME) {
-        tm time;
-        time_read(&time);
-        return (uint64_t)mktime(&time) * 1000000000ULL;
+        return boot_get_boottime() * 1000000000 + nano_time();
     } else if (clock_id == CLOCK_MONOTONIC) {
         return nano_time();
     } else {

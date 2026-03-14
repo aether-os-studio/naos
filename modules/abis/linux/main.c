@@ -1,5 +1,6 @@
 #include <linuxabi.h>
 #include <arch/arch.h>
+#include <boot/boot.h>
 #include <task/futex.h>
 #include <mm/mm_syscall.h>
 #include <fs/fs_syscall.h>
@@ -65,14 +66,12 @@ uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
         return 0;
     case 0: // CLOCK_REALTIME
     {
-        tm time;
-        time_read(&time);
-        uint64_t timestamp = mktime(&time);
+        uint64_t timestamp = boot_get_boottime() * 1000000000 + nano_time();
 
         if (arg2) {
             struct timespec *ts = (struct timespec *)arg2;
-            ts->tv_sec = timestamp;
-            ts->tv_nsec = 0;
+            ts->tv_sec = timestamp / 1000000000;
+            ts->tv_nsec = timestamp % 1000000000;
         }
         return 0;
     }
@@ -96,7 +95,7 @@ uint64_t sys_clock_getres(uint64_t arg1, uint64_t arg2) {
 uint64_t sys_time(uint64_t arg1) {
     tm time;
     time_read(&time);
-    uint64_t timestamp = mktime(&time);
+    uint64_t timestamp = boot_get_boottime() + nano_time() / 1000000000;
     if (arg1) {
         if (copy_to_user((void *)arg1, &timestamp, sizeof(timestamp))) {
             return (uint64_t)-EFAULT;
@@ -115,11 +114,12 @@ uint64_t sys_pipe_normal(uint64_t arg1) { return sys_pipe((int *)arg1, 0); }
 uint64_t sys_gettimeofday(uint64_t arg1) {
     tm time_day;
     time_read(&time_day);
-    uint64_t timestamp_day = mktime(&time_day);
+    uint64_t nano = nano_time();
+    uint64_t timestamp = boot_get_boottime() + nano / 1000000000;
     if (arg1) {
         struct timespec ts;
-        ts.tv_sec = timestamp_day;
-        ts.tv_nsec = 0;
+        ts.tv_sec = timestamp;
+        ts.tv_nsec = nano % 1000000000;
         if (copy_to_user((void *)arg1, &ts, sizeof(ts))) {
             return (uint64_t)-EFAULT;
         }
@@ -259,7 +259,6 @@ int linuxabi_run_user_init(const char *path) {
 int linuxabi_on_new_task(task_t *task) { procfs_on_new_task(task); }
 
 int linuxabi_on_exit_task(task_t *task) {
-    task_timerfd_list_clear(task);
     procfs_on_exit_task(task);
     pidfd_on_task_exit(task);
     futex_on_exit_task(task);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <libs/klibc.h>
+#include <boot/boot.h>
 #include <mm/mm.h>
 #include <fs/vfs/vfs.h>
 #include <task/task.h>

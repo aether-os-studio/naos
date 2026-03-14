@@ -380,9 +380,3 @@ static inline uint64_t sys_set_tid_address(int *ptr) {
 #define PRIO_USER 2
 
 uint64_t sys_setpriority(int which, int who, int niceval);
-
-void task_timerfd_track_fd(task_t *task, fd_t *fd);
-void task_timerfd_untrack_fd(task_t *task, fd_t *fd);
-void task_timerfd_rebuild_from_fd_info(task_t *task);
-void task_timerfd_track_fd_single(task_t *task, fd_t *fd);
-void task_timerfd_list_clear(task_t *task);

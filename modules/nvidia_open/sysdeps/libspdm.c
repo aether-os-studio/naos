@@ -1,5 +1,6 @@
 #include "os-interface.h"
 
+#include <boot/boot.h>
 #include <mm/mm.h>
 
 #define STUBBED                                                                \
@@ -348,12 +349,10 @@ bool libspdm_hmac_sha384_all(const void *data, size_t data_size,
                              const uint8_t *key, size_t key_size,
                              uint8_t *hmac_value) STUBBED;
 
-static uint32_t simple_rand() {
-    tm time;
-    time_read(&time);
-    uint32_t seed = mktime(&time);
+static uint64_t simple_rand() {
+    uint32_t seed = boot_get_boottime() * 100 + nano_time() / 10;
     seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
-    return seed;
+    return ((uint64_t)seed << 32) | seed;
 }
 
 bool libspdm_random_bytes(uint8_t *output, size_t size) {

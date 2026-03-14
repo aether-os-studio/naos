@@ -418,7 +418,6 @@ task_t *get_free_task() {
             llist_init_head(&task->parent_node);
             llist_init_head(&task->pgid_node);
             llist_init_head(&task->tick_work_node);
-            llist_init_head(&task->timerfd_list);
             task->tick_work_queue_id = UINT32_MAX;
             task->state = TASK_CREATING;
             task->pid = 0;
@@ -443,7 +442,6 @@ task_t *get_free_task() {
     llist_init_head(&task->parent_node);
     llist_init_head(&task->pgid_node);
     llist_init_head(&task->tick_work_node);
-    llist_init_head(&task->timerfd_list);
     task->tick_work_queue_id = UINT32_MAX;
     task->state = TASK_CREATING;
     task->pid = pid;
@@ -718,6 +716,8 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
         write_barrier();
         irq_trigger_sched_ipi(target_cpu);
     }
+
+    arch_enable_interrupt();
 
     schedule(SCHED_FLAG_YIELD);
 

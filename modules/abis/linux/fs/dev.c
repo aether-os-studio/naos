@@ -704,9 +704,7 @@ ssize_t nulldev_write(void *data, const void *buf, uint64_t offset,
 }
 
 static uint64_t simple_rand() {
-    tm time;
-    time_read(&time);
-    uint32_t seed = mktime(&time);
+    uint32_t seed = boot_get_boottime() * 100 + nano_time() / 10;
     seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
     return ((uint64_t)seed << 32) | seed;
 }

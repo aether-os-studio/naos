@@ -1,3 +1,4 @@
+#include <boot/boot.h>
 #include <task/futex.h>
 #include <fs/fs_syscall.h>
 
@@ -129,9 +130,7 @@ static uint64_t futex_now_ns(bool realtime) {
     if (!realtime)
         return nano_time();
 
-    tm now_tm;
-    time_read(&now_tm);
-    return (uint64_t)mktime(&now_tm) * 1000000000ULL;
+    return boot_get_boottime() * 1000000000 + nano_time();
 }
 
 static uint64_t sys_futex_wait(int *uaddr, const futex_key_t *key, int val,

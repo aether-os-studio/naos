@@ -177,10 +177,6 @@ uint64_t blkdev_ioctl(uint64_t drive, uint64_t cmd, uint64_t arg) {
 #define DMA_ALIGN DEFAULT_PAGE_SIZE
 #define IS_DMA_BUF(p) (((uintptr_t)(p) & (DMA_ALIGN - 1)) == 0)
 
-static bool blk_buffer_is_userspace(const void *buf, uint64_t len) {
-    return buf && !check_user_overflow((uint64_t)buf, len);
-}
-
 static bool blk_copy_to_buffer(void *dst, const void *src, uint64_t len,
                                bool dst_is_userspace) {
     if (len == 0)
@@ -205,21 +201,27 @@ static bool blk_copy_from_buffer(void *dst, const void *src, uint64_t len,
     return true;
 }
 
-uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len) {
+static uint64_t blkdev_read_impl(uint64_t drive, uint64_t offset, void *buf,
+                                 uint64_t len, bool dst_is_userspace) {
     blkdev_t *dev = &blk_devs[drive];
     if (!dev || !dev->ptr || !dev->read)
         return (uint64_t)-1;
-    if (len == 0)
+    if (!buf && len)
+        return (uint64_t)-1;
+    if (len == 0 || offset >= dev->size)
         return 0;
 
+    len = MIN(len, dev->size - offset);
+
     const uint64_t bs = dev->block_size;
-    const uint64_t max_sec = dev->max_op_size / bs;
+    const uint64_t max_sec = MAX(1, dev->max_op_size / bs);
     uint8_t *dst = (uint8_t *)buf;
     uint64_t sector = offset / bs;
     uint64_t blk_off = offset % bs;
     uint64_t rem = len;
     uint64_t total = 0;
-    bool dst_is_userspace = blk_buffer_is_userspace(buf, len);
+    uint8_t *bounce = NULL;
+    uint64_t bounce_size = 0;
 
     if (!dst_is_userspace && blk_off == 0 && (len % bs) == 0 &&
         IS_DMA_BUF(dst)) {
@@ -239,18 +241,21 @@ uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len) {
 
     if (blk_off != 0) {
         uint64_t head = MIN(bs - blk_off, rem);
-        uint8_t *bounce = alloc_frames_bytes(bs);
+        bounce = alloc_frames_bytes(bs);
+        bounce_size = bs;
 
         if (dev->read(dev->ptr, sector, bounce, 1) != 1) {
-            free_frames_bytes(bounce, bs);
+            free_frames_bytes(bounce, bounce_size);
             return (uint64_t)-1;
         }
         if (!blk_copy_to_buffer(dst, bounce + blk_off, head,
                                 dst_is_userspace)) {
-            free_frames_bytes(bounce, bs);
+            free_frames_bytes(bounce, bounce_size);
             return (uint64_t)-1;
         }
-        free_frames_bytes(bounce, bs);
+        free_frames_bytes(bounce, bounce_size);
+        bounce = NULL;
+        bounce_size = 0;
 
         dst += head;
         rem -= head;
@@ -275,17 +280,18 @@ uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len) {
     } else if (mid_secs > 0) {
         uint64_t bn = MIN(mid_secs, max_sec);
         uint64_t bsz = bn * bs;
-        uint8_t *bounce = alloc_frames_bytes(bsz);
+        bounce = alloc_frames_bytes(bsz);
+        bounce_size = bsz;
 
         while (mid_secs > 0) {
             uint64_t n = MIN(mid_secs, bn);
             if (dev->read(dev->ptr, sector, bounce, n) != n) {
-                free_frames_bytes(bounce, bsz);
+                free_frames_bytes(bounce, bounce_size);
                 return (uint64_t)-1;
             }
             uint64_t bytes = n * bs;
             if (!blk_copy_to_buffer(dst, bounce, bytes, dst_is_userspace)) {
-                free_frames_bytes(bounce, bsz);
+                free_frames_bytes(bounce, bounce_size);
                 return (uint64_t)-1;
             }
             dst += bytes;
@@ -294,43 +300,54 @@ uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len) {
             sector += n;
             mid_secs -= n;
         }
-        free_frames_bytes(bounce, bsz);
+        free_frames_bytes(bounce, bounce_size);
+        bounce = NULL;
+        bounce_size = 0;
     }
 
     if (rem > 0) {
-        uint8_t *bounce = alloc_frames_bytes(bs);
+        if (!bounce || bounce_size < bs) {
+            bounce = alloc_frames_bytes(bs);
+            bounce_size = bs;
+        }
 
         if (dev->read(dev->ptr, sector, bounce, 1) != 1) {
-            free_frames_bytes(bounce, bs);
+            free_frames_bytes(bounce, bounce_size);
             return (uint64_t)-1;
         }
         if (!blk_copy_to_buffer(dst, bounce, rem, dst_is_userspace)) {
-            free_frames_bytes(bounce, bs);
+            free_frames_bytes(bounce, bounce_size);
             return (uint64_t)-1;
         }
-        free_frames_bytes(bounce, bs);
+        free_frames_bytes(bounce, bounce_size);
         total += rem;
     }
 
     return total;
 }
 
-uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf,
-                      uint64_t len) {
+static uint64_t blkdev_write_impl(uint64_t drive, uint64_t offset,
+                                  const void *buf, uint64_t len,
+                                  bool src_is_userspace) {
     blkdev_t *dev = &blk_devs[drive];
     if (!dev || !dev->ptr || !dev->write)
         return (uint64_t)-1;
-    if (len == 0)
+    if (!buf && len)
+        return (uint64_t)-1;
+    if (len == 0 || offset >= dev->size)
         return 0;
 
+    len = MIN(len, dev->size - offset);
+
     const uint64_t bs = dev->block_size;
-    const uint64_t max_sec = dev->max_op_size / bs;
+    const uint64_t max_sec = MAX(1, dev->max_op_size / bs);
     const uint8_t *src = (const uint8_t *)buf;
     uint64_t sector = offset / bs;
     uint64_t blk_off = offset % bs;
     uint64_t rem = len;
     uint64_t total = 0;
-    bool src_is_userspace = blk_buffer_is_userspace(buf, len);
+    uint8_t *bounce = NULL;
+    uint64_t bounce_size = 0;
 
     if (!src_is_userspace && blk_off == 0 && (len % bs) == 0 &&
         IS_DMA_BUF(src)) {
@@ -353,22 +370,25 @@ uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf,
             return (uint64_t)-1;
 
         uint64_t head = MIN(bs - blk_off, rem);
-        uint8_t *bounce = alloc_frames_bytes(bs);
+        bounce = alloc_frames_bytes(bs);
+        bounce_size = bs;
 
         if (dev->read(dev->ptr, sector, bounce, 1) != 1) {
-            free_frames_bytes(bounce, bs);
+            free_frames_bytes(bounce, bounce_size);
             return (uint64_t)-1;
         }
         if (!blk_copy_from_buffer(bounce + blk_off, src, head,
                                   src_is_userspace)) {
-            free_frames_bytes(bounce, bs);
+            free_frames_bytes(bounce, bounce_size);
             return (uint64_t)-1;
         }
         if (dev->write(dev->ptr, sector, bounce, 1) != 1) {
-            free_frames_bytes(bounce, bs);
+            free_frames_bytes(bounce, bounce_size);
             return (uint64_t)-1;
         }
-        free_frames_bytes(bounce, bs);
+        free_frames_bytes(bounce, bounce_size);
+        bounce = NULL;
+        bounce_size = 0;
 
         src += head;
         rem -= head;
@@ -393,17 +413,18 @@ uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf,
     } else if (mid_secs > 0) {
         uint64_t bn = MIN(mid_secs, max_sec);
         uint64_t bsz = bn * bs;
-        uint8_t *bounce = alloc_frames_bytes(bsz);
+        bounce = alloc_frames_bytes(bsz);
+        bounce_size = bsz;
 
         while (mid_secs > 0) {
             uint64_t n = MIN(mid_secs, bn);
             uint64_t bytes = n * bs;
             if (!blk_copy_from_buffer(bounce, src, bytes, src_is_userspace)) {
-                free_frames_bytes(bounce, bsz);
+                free_frames_bytes(bounce, bounce_size);
                 return (uint64_t)-1;
             }
             if (dev->write(dev->ptr, sector, bounce, n) != n) {
-                free_frames_bytes(bounce, bsz);
+                free_frames_bytes(bounce, bounce_size);
                 return (uint64_t)-1;
             }
             src += bytes;
@@ -412,29 +433,43 @@ uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf,
             sector += n;
             mid_secs -= n;
         }
-        free_frames_bytes(bounce, bsz);
+        free_frames_bytes(bounce, bounce_size);
+        bounce = NULL;
+        bounce_size = 0;
     }
 
     if (rem > 0) {
         if (!dev->read)
             return (uint64_t)-1;
 
-        uint8_t *bounce = alloc_frames_bytes(bs);
+        if (!bounce || bounce_size < bs) {
+            bounce = alloc_frames_bytes(bs);
+            bounce_size = bs;
+        }
         if (dev->read(dev->ptr, sector, bounce, 1) != 1) {
-            free_frames_bytes(bounce, bs);
+            free_frames_bytes(bounce, bounce_size);
             return (uint64_t)-1;
         }
         if (!blk_copy_from_buffer(bounce, src, rem, src_is_userspace)) {
-            free_frames_bytes(bounce, bs);
+            free_frames_bytes(bounce, bounce_size);
             return (uint64_t)-1;
         }
         if (dev->write(dev->ptr, sector, bounce, 1) != 1) {
-            free_frames_bytes(bounce, bs);
+            free_frames_bytes(bounce, bounce_size);
             return (uint64_t)-1;
         }
-        free_frames_bytes(bounce, bs);
+        free_frames_bytes(bounce, bounce_size);
         total += rem;
     }
 
     return total;
+}
+
+uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len) {
+    return blkdev_read_impl(drive, offset, buf, len, false);
+}
+
+uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf,
+                      uint64_t len) {
+    return blkdev_write_impl(drive, offset, buf, len, false);
 }

@@ -59,8 +59,8 @@ ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
         .base.type = event->type,
         .base.length = sizeof(vbl),
         .user_data = event->user_data,
-        .tv_sec = nano_time() / 1000000000,
-        .tv_usec = (nano_time() % 1000000000) / 1000,
+        .tv_sec = event->timestamp.tv_sec,
+        .tv_usec = event->timestamp.tv_nsec / 1000,
         .crtc_id =
             dev->resource_mgr.crtcs[0] ? dev->resource_mgr.crtcs[0]->id : 0,
     };

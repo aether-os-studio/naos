@@ -170,9 +170,7 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
 
     free(waits);
 
-    if (irq_state) {
-        arch_enable_interrupt();
-    } else {
+    if (!irq_state) {
         arch_disable_interrupt();
     }
 

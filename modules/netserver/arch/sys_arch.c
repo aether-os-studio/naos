@@ -77,9 +77,7 @@ void sys_sem_set_invalid(sys_sem_t *sem) { sem->invalid = true; }
 int sys_sem_valid(sys_sem_t *sem) { return !sem->invalid; }
 
 uint32_t sys_now(void) {
-    tm time;
-    time_read(&time);
-    return mktime(&time) * 1000;
+    return (uint32_t)(boot_get_boottime() * 1000 + nano_time() / 1000000);
 }
 
 sys_thread_t sys_thread_new(const char *pcName,
