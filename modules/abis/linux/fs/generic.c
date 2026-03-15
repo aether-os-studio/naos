@@ -349,20 +349,23 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
     task_t *self = current_task;
 
     int create_mode = (flags & O_CREAT);
+    uint64_t acc_mode = flags & O_ACCMODE_FLAGS;
 
     vfs_node_t node = vfs_open(name, flags & O_NOFOLLOW);
-    if (!node && !create_mode) {
-        // serial_fprintk("Opening file %s failed\n", name);
+    if (node && create_mode && (flags & O_EXCL)) {
+        return (uint64_t)-EEXIST;
+    }
+
+    if (node && (flags & O_DIRECTORY) && !(node->type & file_dir)) {
+        return (uint64_t)-ENOTDIR;
+    }
+
+    if (!node && ((flags & O_DIRECTORY) || !create_mode)) {
         return (uint64_t)-ENOENT;
     }
 
     if (!node) {
-        int ret = 0;
-        if (mode & O_DIRECTORY) {
-            ret = vfs_mkdir(name);
-        } else {
-            ret = vfs_mkfile(name);
-        }
+        int ret = vfs_mkfile(name);
         if (ret < 0)
             return (uint64_t)-ENOSPC;
 
@@ -371,6 +374,15 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
             return (uint64_t)-ENOENT;
         if (mode)
             vfs_chmod(name, mode ? (mode & 0777) : 0777);
+    }
+
+    if ((node->type & file_dir) &&
+        (acc_mode == O_WRONLY || acc_mode == O_RDWR)) {
+        return (uint64_t)-EISDIR;
+    }
+
+    if ((flags & O_TRUNC) && (node->type & file_none)) {
+        vfs_resize(node, 0);
     }
 
     uint64_t ret = (uint64_t)-EMFILE;

@@ -356,25 +356,6 @@ page_fault_result_t handle_page_fault_flags(task_t *task, uint64_t vaddr,
         spin_unlock(&mgr->lock);
         return PF_RES_SEGF;
     }
-    if (vaddr >= USER_STACK_START && vaddr <= USER_STACK_END) {
-        vma_t *stack_vma = vma_find(mgr, USER_STACK_END - DEFAULT_PAGE_SIZE);
-        spin_unlock(&mgr->lock);
-        if (!(stack_vma->vm_flags & VMA_STACK) ||
-            vaddr >= stack_vma->vm_start) {
-            spin_unlock(&mgr->lock);
-            return PF_RES_SEGF;
-        }
-        uint64_t *pgdir = NULL;
-
-        spin_lock(&task->mm->lock);
-        pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
-        map_page_range(pgdir, aligned_vaddr, (uint64_t)-1,
-                       stack_vma->vm_start - aligned_vaddr,
-                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
-        stack_vma->vm_start = aligned_vaddr;
-        spin_unlock(&task->mm->lock);
-        return PF_RES_OK;
-    }
 
     if (!vma) {
         spin_unlock(&mgr->lock);

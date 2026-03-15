@@ -2806,6 +2806,12 @@ void ext_resize(vfs_node_t node, uint64_t size) {
     ext_inode_disk_t inode = {0};
     if (!ext_read_inode(fs, node->inode, &inode) &&
         !ext_inode_truncate_locked(fs, node->inode, &inode, size)) {
+        ext_handle_t *handle = node->handle;
+        if (handle && handle->ino == node->inode) {
+            handle->inode_cache = inode;
+            handle->inode_valid = true;
+            handle->inode_dirty = false;
+        }
         ext_sync_node_from_inode(node, fs, &inode);
     }
     spin_unlock(&rwlock);

@@ -1595,6 +1595,7 @@ void vfs_resize(vfs_node_t node, uint64_t size) {
     if (!(node->type & file_none))
         return;
     vfs_ops_of(node)->resize(node, size);
+    node->size = size;
 }
 
 void *vfs_map(fd_t *fd, uint64_t addr, uint64_t len, uint64_t prot,

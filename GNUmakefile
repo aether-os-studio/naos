@@ -229,13 +229,10 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
-		-device qemu-xhci,id=xhci \
 		-device ahci,id=ahci \
 		-device ide-hd,drive=harddisk,bus=ahci.0 \
 		-device nvme,drive=rootdisk,serial=5678 \
 		-rtc base=utc \
-		-netdev user,id=netdev0 \
-		-device e1000,netdev=netdev0 \
 		-display sdl \
 		$(QEMUFLAGS)
 

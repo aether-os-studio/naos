@@ -154,8 +154,8 @@ ssize_t tmpfs_readlink(vfs_node_t node, void *addr, size_t offset,
     if (offset >= handle->size)
         return 0;
 
-    ssize_t to_copy = MIN(handle->size, size);
-    memcpy(addr, handle->content, to_copy);
+    ssize_t to_copy = MIN(handle->size - offset, size);
+    memcpy(addr, handle->content + offset, to_copy);
     return to_copy;
 }
 
@@ -210,7 +210,7 @@ int tmpfs_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
     tmpfs_node_t *handle = calloc(1, sizeof(tmpfs_node_t));
     if (!handle)
         return -ENOMEM;
-    size_t len = strlen(name) + 1;
+    size_t len = strlen(name);
     handle->capability = PADDING_UP(len, DEFAULT_PAGE_SIZE);
     if (tmpfs_replace_content(handle, handle->capability, 0, true) != 0) {
         free(handle);
