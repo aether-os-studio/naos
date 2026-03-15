@@ -818,7 +818,7 @@ __attribute__((visibility("default"))) int dlmain() {
     regist_syscall_handler(SYS_NEWFSTATAT, (syscall_handle_t)sys_newfstatat);
     regist_syscall_handler(SYS_UNLINKAT, (syscall_handle_t)sys_unlinkat);
     regist_syscall_handler(SYS_RENAMEAT, (syscall_handle_t)sys_renameat);
-    // regist_syscall_handler(SYS_LINKAT, (syscall_handle_t)sys_linkat);
+    regist_syscall_handler(SYS_LINKAT, (syscall_handle_t)sys_linkat);
     regist_syscall_handler(SYS_SYMLINKAT, (syscall_handle_t)sys_symlinkat);
     regist_syscall_handler(SYS_READLINKAT, (syscall_handle_t)sys_readlinkat);
     regist_syscall_handler(SYS_FCHMODAT, (syscall_handle_t)sys_fchmodat);

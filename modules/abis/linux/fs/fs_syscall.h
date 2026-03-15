@@ -452,7 +452,9 @@ uint64_t sys_mkdirat(int dfd, const char *name, uint64_t mode);
 
 uint64_t sys_link(const char *name, const char *target_name);
 uint64_t sys_symlink(const char *name, const char *target_name);
-uint64_t sys_symlinkat(const char *name, int dfd, const char *new);
+uint64_t sys_linkat(uint64_t olddirfd, const char *oldpath_user,
+                    uint64_t newdirfd, const char *newpath_user, int flags);
+uint64_t sys_symlinkat(const char *name_user, int dfd, const char *new_user);
 uint64_t sys_mknod(const char *name, uint16_t umode, int dev);
 uint64_t sys_mknodat(uint64_t fd, const char *path_user, uint16_t umode,
                      int dev);

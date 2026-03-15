@@ -2007,6 +2007,30 @@ uint64_t sys_symlink(const char *name_user, const char *target_name_user) {
     return do_symlink(name, target_name);
 }
 
+uint64_t sys_linkat(uint64_t olddirfd, const char *oldpath_user,
+                    uint64_t newdirfd, const char *newpath_user, int flags) {
+    char oldpath[512];
+    if (copy_from_user_str(oldpath, oldpath_user, sizeof(oldpath)))
+        return (uint64_t)-EFAULT;
+    char newpath[512];
+    if (copy_from_user_str(newpath, newpath_user, sizeof(newpath)))
+        return (uint64_t)-EFAULT;
+    if (olddirfd >= MAX_FD_NUM || !current_task->fd_info->fds[olddirfd])
+        return (uint64_t)-EBADF;
+    if (newdirfd >= MAX_FD_NUM || !current_task->fd_info->fds[newdirfd])
+        return (uint64_t)-EBADF;
+
+    char *old = at_resolve_pathname_fullpath(olddirfd, oldpath);
+    char *new = at_resolve_pathname_fullpath(newdirfd, newpath);
+
+    int ret = do_link(old, new);
+
+    free(old);
+    free(new);
+
+    return ret;
+}
+
 uint64_t sys_symlinkat(const char *name_user, int dfd, const char *new_user) {
     char name[512];
     if (copy_from_user_str(name, name_user, sizeof(name)))
@@ -2014,6 +2038,8 @@ uint64_t sys_symlinkat(const char *name_user, int dfd, const char *new_user) {
     char new[512];
     if (copy_from_user_str(new, new_user, sizeof(new)))
         return (uint64_t)-EFAULT;
+    if (dfd < 0 || dfd >= MAX_FD_NUM || !current_task->fd_info->fds[dfd])
+        return (uint64_t)-EBADF;
 
     char *buf = at_resolve_pathname_fullpath(dfd, new);
 
