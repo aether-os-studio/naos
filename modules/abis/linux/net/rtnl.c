@@ -1310,6 +1310,64 @@ int rtnl_route_del(struct rt_entry *route) {
     return -ESRCH;
 }
 
+int rtnl_get_primary_ipv4_config(int32_t *ifindex, uint32_t *addr,
+                                 uint8_t *prefixlen, uint32_t *gateway) {
+    struct net_device *chosen_dev = NULL;
+    struct net_device_addr *chosen_addr = NULL;
+    uint32_t chosen_gw = 0;
+
+    if (!ifindex || !addr || !prefixlen || !gateway) {
+        return -EINVAL;
+    }
+
+    spin_lock(&net_dev_lock);
+    for (int i = 0; i < MAX_NET_DEVICES; i++) {
+        struct net_device *dev = &net_devices[i];
+        if (!dev->active || !(dev->flags & IFF_UP) ||
+            dev->type == ARPHRD_LOOPBACK) {
+            continue;
+        }
+
+        for (int j = 0; j < dev->num_addrs; j++) {
+            if (dev->addrs[j].family != 2) {
+                continue;
+            }
+            chosen_dev = dev;
+            chosen_addr = &dev->addrs[j];
+            break;
+        }
+
+        if (chosen_dev) {
+            break;
+        }
+    }
+    spin_unlock(&net_dev_lock);
+
+    if (!chosen_dev || !chosen_addr) {
+        return -ENOENT;
+    }
+
+    spin_lock(&route_lock);
+    for (int i = 0; i < MAX_ROUTES; i++) {
+        struct rt_entry *rt = &route_table[i];
+        if (!rt->active || rt->family != 2) {
+            continue;
+        }
+        if (rt->dst_len != 0 || rt->oif != chosen_dev->ifindex) {
+            continue;
+        }
+        chosen_gw = rt->gateway.ipv4;
+        break;
+    }
+    spin_unlock(&route_lock);
+
+    *ifindex = chosen_dev->ifindex;
+    *addr = chosen_addr->local.ipv4;
+    *prefixlen = chosen_addr->prefixlen;
+    *gateway = chosen_gw;
+    return 0;
+}
+
 int rtnl_addr_add(int32_t ifindex, uint8_t family, const void *addr,
                   uint8_t prefixlen, uint8_t scope, uint8_t flags) {
     struct net_device *dev = rtnl_dev_get_by_index(ifindex);

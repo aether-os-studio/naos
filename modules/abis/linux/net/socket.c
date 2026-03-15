@@ -1412,7 +1412,7 @@ ssize_t socket_write(fd_t *fd, const void *buf, size_t offset, size_t limit) {
     return unix_socket_send_to_peer(sock, sock->peer, buf, limit, 0, fd);
 }
 
-int unix_socket_pair(int type, int protocol, int *sv) {
+int unix_socket_pair(int domain, int type, int protocol, int *sv) {
     int sock_type = type & 0xF;
     if (!unix_socket_type_supported(sock_type)) {
         return -ESOCKTNOSUPPORT;
@@ -1421,11 +1421,11 @@ int unix_socket_pair(int type, int protocol, int *sv) {
     socket_t *sock1 = unix_socket_alloc();
     socket_t *sock2 = unix_socket_alloc();
 
-    sock1->domain = 1;
+    sock1->domain = domain;
     sock1->type = sock_type;
     sock1->protocol = protocol;
 
-    sock2->domain = 1;
+    sock2->domain = domain;
     sock2->type = sock_type;
     sock2->protocol = protocol;
 
@@ -1804,6 +1804,6 @@ void socketfs_init() {
     unix_socket_fsid = vfs_regist(&sockfs);
     spin_init(&unix_socket_list_lock);
     memset(&first_unix_socket, 0, sizeof(socket_t));
-    regist_socket(1, NULL, socket_socket);
+    regist_socket(1, NULL, socket_socket, unix_socket_pair);
     netlink_init();
 }

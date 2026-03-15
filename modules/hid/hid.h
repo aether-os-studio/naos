@@ -1,5 +1,7 @@
 #pragma once
 
+#include <libs/klibc.h>
+
 #define CHARACTER_ENTER '\n'
 #define CHARACTER_BACK '\b'
 

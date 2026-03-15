@@ -627,6 +627,8 @@ int rtnl_addr_del(int32_t ifindex, uint8_t family, const void *addr,
 /* Route management */
 int rtnl_route_add(struct rt_entry *route);
 int rtnl_route_del(struct rt_entry *route);
+int rtnl_get_primary_ipv4_config(int32_t *ifindex, uint32_t *addr,
+                                 uint8_t *prefixlen, uint32_t *gateway);
 
 /* Notification helpers (broadcast state changes) */
 void rtnl_notify_link(struct net_device *dev, uint16_t event_type);

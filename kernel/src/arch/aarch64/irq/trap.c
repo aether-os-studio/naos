@@ -358,7 +358,7 @@ void handle_exception(struct pt_regs *frame) {
     if (ec == ESR_ELx_EC_DABT_LOW || ec == ESR_ELx_EC_DABT_CUR) {
         asm volatile("mrs %0, far_el1" : "=r"(fault_addr));
         page_fault_result_t result =
-            handle_page_fault(current_task, fault_addr);
+            handle_page_fault_flags(current_task, fault_addr, PF_ACCESS_READ);
         if (result == PF_RES_OK) {
             return;
         } else if (result == PF_RES_SEGF) {

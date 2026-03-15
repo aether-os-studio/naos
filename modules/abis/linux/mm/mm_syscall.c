@@ -1626,7 +1626,8 @@ uint64_t sys_mlock(uint64_t addr, uint64_t len) {
         if (translate_address(pgdir, cursor))
             continue;
 
-        page_fault_result_t fault = handle_page_fault(current_task, cursor);
+        page_fault_result_t fault =
+            handle_page_fault_flags(current_task, cursor, PF_ACCESS_READ);
         if (fault == PF_RES_NOMEM)
             return (uint64_t)-ENOMEM;
         if (fault != PF_RES_OK)

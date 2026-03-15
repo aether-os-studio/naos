@@ -5,12 +5,15 @@ spinlock_t real_sockets_lock = SPIN_INIT;
 int socket_num = 0;
 
 void regist_socket(int domain, int (*init)(),
-                   int (*socket)(int domain, int type, int protocol)) {
+                   int (*socket)(int domain, int type, int protocol),
+                   int (*socketpair)(int family, int type, int protocol,
+                                     int *sv)) {
     spin_lock(&real_sockets_lock);
     real_sockets[socket_num] = malloc(sizeof(real_socket_socket_t));
     real_sockets[socket_num]->domain = domain;
     real_sockets[socket_num]->init = init;
     real_sockets[socket_num]->socket = socket;
+    real_sockets[socket_num]->socketpair = socketpair;
     socket_num++;
     spin_unlock(&real_sockets_lock);
 }

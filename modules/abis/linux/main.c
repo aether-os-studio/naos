@@ -233,6 +233,7 @@ uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
                                      nano % 1000000000ULL);
     }
     case 0: // CLOCK_REALTIME
+    case 5: // CLOCK_REALTIME_COARSE
     {
         uint64_t nano = nano_time();
         return copy_timespec_to_user(arg2,

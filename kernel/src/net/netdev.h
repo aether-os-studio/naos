@@ -6,6 +6,11 @@ typedef int (*netdev_send_t)(void *dev, void *data, uint32_t len);
 typedef int (*netdev_recv_t)(void *dev, void *data, uint32_t len);
 
 #define MAX_NETDEV_NUM 8
+#define NETDEV_ETH_FRAME_OVERHEAD 18
+
+static inline uint32_t netdev_max_frame_len(uint32_t mtu) {
+    return mtu + NETDEV_ETH_FRAME_OVERHEAD;
+}
 
 typedef struct netdev {
     uint8_t mac[6];

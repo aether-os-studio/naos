@@ -7,10 +7,197 @@
 #include <drivers/kernel_logger.h>
 #include <net/netlink.h>
 
+typedef struct socket_kmsg {
+    struct msghdr msg;
+    struct msghdr user_msg;
+    struct iovec *user_iov;
+    struct iovec *kernel_iov;
+    void **iov_buffers;
+    void *name_buffer;
+    void *control_buffer;
+} socket_kmsg_t;
+
 static bool is_socket(fd_t *fd) {
     if (!(fd->node->type & file_socket))
         return false;
     return true;
+}
+
+static int socket_validate_user_buffer(const void *ptr, size_t len) {
+    if (!len)
+        return 0;
+    if (!ptr || check_user_overflow((uint64_t)ptr, len) ||
+        check_unmapped((uint64_t)ptr, len))
+        return -EFAULT;
+    return 0;
+}
+
+static int socket_alloc_copy_from_user(const void *user_ptr, size_t len,
+                                       void **out_buf) {
+    int ret = socket_validate_user_buffer(user_ptr, len);
+    if (ret < 0)
+        return ret;
+
+    if (!len) {
+        *out_buf = NULL;
+        return 0;
+    }
+
+    void *buf = malloc(len);
+    if (!buf)
+        return -ENOMEM;
+    if (copy_from_user(buf, user_ptr, len)) {
+        free(buf);
+        return -EFAULT;
+    }
+
+    *out_buf = buf;
+    return 0;
+}
+
+static int socket_copy_sockaddr_from_user(const struct sockaddr_un *user_addr,
+                                          socklen_t addrlen,
+                                          struct sockaddr_un **out_addr) {
+    return socket_alloc_copy_from_user(user_addr, addrlen, (void **)out_addr);
+}
+
+static void socket_free_kmsg(socket_kmsg_t *kmsg) {
+    if (!kmsg)
+        return;
+
+    if (kmsg->iov_buffers) {
+        for (size_t i = 0; i < kmsg->msg.msg_iovlen; i++)
+            free(kmsg->iov_buffers[i]);
+    }
+
+    free(kmsg->iov_buffers);
+    free(kmsg->kernel_iov);
+    free(kmsg->user_iov);
+    free(kmsg->name_buffer);
+    free(kmsg->control_buffer);
+    memset(kmsg, 0, sizeof(*kmsg));
+}
+
+static int socket_prepare_kmsg_from_user(const struct msghdr *user_msg_ptr,
+                                         socket_kmsg_t *kmsg, bool for_send) {
+    memset(kmsg, 0, sizeof(*kmsg));
+
+    if (copy_from_user(&kmsg->user_msg, user_msg_ptr, sizeof(kmsg->user_msg)))
+        return -EFAULT;
+
+    kmsg->msg = kmsg->user_msg;
+
+    if (kmsg->msg.msg_iovlen > 0) {
+        if (!kmsg->msg.msg_iov ||
+            kmsg->msg.msg_iovlen > SIZE_MAX / sizeof(struct iovec))
+            return -EFAULT;
+
+        size_t iov_bytes = kmsg->msg.msg_iovlen * sizeof(struct iovec);
+        int ret = socket_alloc_copy_from_user(kmsg->msg.msg_iov, iov_bytes,
+                                              (void **)&kmsg->user_iov);
+        if (ret < 0)
+            return ret;
+
+        kmsg->kernel_iov = calloc(kmsg->msg.msg_iovlen, sizeof(struct iovec));
+        kmsg->iov_buffers = calloc(kmsg->msg.msg_iovlen, sizeof(void *));
+        if (!kmsg->kernel_iov || !kmsg->iov_buffers)
+            return -ENOMEM;
+
+        for (size_t i = 0; i < kmsg->msg.msg_iovlen; i++) {
+            size_t len = kmsg->user_iov[i].len;
+            if (!len)
+                continue;
+
+            ret = socket_validate_user_buffer(kmsg->user_iov[i].iov_base, len);
+            if (ret < 0)
+                return ret;
+
+            kmsg->iov_buffers[i] = malloc(len);
+            if (!kmsg->iov_buffers[i])
+                return -ENOMEM;
+
+            if (for_send && copy_from_user(kmsg->iov_buffers[i],
+                                           kmsg->user_iov[i].iov_base, len))
+                return -EFAULT;
+
+            kmsg->kernel_iov[i].iov_base = kmsg->iov_buffers[i];
+            kmsg->kernel_iov[i].len = len;
+        }
+
+        kmsg->msg.msg_iov = kmsg->kernel_iov;
+    } else {
+        kmsg->msg.msg_iov = NULL;
+    }
+
+    if (kmsg->user_msg.msg_name && kmsg->user_msg.msg_namelen > 0) {
+        int ret = socket_alloc_copy_from_user(kmsg->user_msg.msg_name,
+                                              kmsg->user_msg.msg_namelen,
+                                              &kmsg->name_buffer);
+        if (ret < 0)
+            return ret;
+        kmsg->msg.msg_name = kmsg->name_buffer;
+    } else {
+        kmsg->msg.msg_name = NULL;
+        kmsg->msg.msg_namelen = 0;
+    }
+
+    if (kmsg->user_msg.msg_control && kmsg->user_msg.msg_controllen > 0) {
+        if (for_send) {
+            int ret = socket_alloc_copy_from_user(kmsg->user_msg.msg_control,
+                                                  kmsg->user_msg.msg_controllen,
+                                                  &kmsg->control_buffer);
+            if (ret < 0)
+                return ret;
+        } else {
+            kmsg->control_buffer = calloc(1, kmsg->user_msg.msg_controllen);
+            if (!kmsg->control_buffer)
+                return -ENOMEM;
+        }
+        kmsg->msg.msg_control = kmsg->control_buffer;
+    } else {
+        kmsg->msg.msg_control = NULL;
+        kmsg->msg.msg_controllen = 0;
+    }
+
+    return 0;
+}
+
+static int socket_copy_recvmsg_to_user(struct msghdr *user_msg_ptr,
+                                       socket_kmsg_t *kmsg, size_t recvd) {
+    size_t remaining = recvd;
+
+    for (size_t i = 0; i < kmsg->msg.msg_iovlen && remaining > 0; i++) {
+        size_t to_copy = MIN(remaining, kmsg->user_iov[i].len);
+        if (to_copy && copy_to_user(kmsg->user_iov[i].iov_base,
+                                    kmsg->iov_buffers[i], to_copy))
+            return -EFAULT;
+        remaining -= to_copy;
+    }
+
+    if (kmsg->user_msg.msg_name && kmsg->user_msg.msg_namelen > 0) {
+        size_t copy_len = MIN((size_t)kmsg->user_msg.msg_namelen,
+                              (size_t)kmsg->msg.msg_namelen);
+        if (copy_len &&
+            copy_to_user(kmsg->user_msg.msg_name, kmsg->name_buffer, copy_len))
+            return -EFAULT;
+    }
+
+    if (kmsg->user_msg.msg_control && kmsg->user_msg.msg_controllen > 0) {
+        size_t copy_len =
+            MIN(kmsg->user_msg.msg_controllen, kmsg->msg.msg_controllen);
+        if (copy_len && copy_to_user(kmsg->user_msg.msg_control,
+                                     kmsg->control_buffer, copy_len))
+            return -EFAULT;
+    }
+
+    struct msghdr out_msg = kmsg->user_msg;
+    out_msg.msg_namelen = kmsg->msg.msg_namelen;
+    out_msg.msg_controllen = kmsg->msg.msg_controllen;
+    out_msg.msg_flags = kmsg->msg.msg_flags;
+    if (copy_to_user(user_msg_ptr, &out_msg, sizeof(out_msg)))
+        return -EFAULT;
+
+    return 0;
 }
 
 uint64_t sys_shutdown(uint64_t fd, uint64_t how) {
@@ -126,7 +313,15 @@ uint64_t sys_setsockopt(int fd, int level, int optname, const void *optval,
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->setsockopt) {
-        return handle->op->setsockopt(fd, level, optname, optval, optlen);
+        void *koptval = NULL;
+        int ret = socket_alloc_copy_from_user(optval, optlen, &koptval);
+        if (ret < 0)
+            return ret;
+
+        uint64_t out =
+            handle->op->setsockopt(fd, level, optname, koptval, optlen);
+        free(koptval);
+        return out;
     }
     return -ENOSYS;
 }
@@ -135,13 +330,45 @@ uint64_t sys_getsockopt(int fd, int level, int optname, void *optval,
                         socklen_t *optlen) {
     if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
         return -EBADF;
+    if (!optlen)
+        return -EFAULT;
     fd_t *node = current_task->fd_info->fds[fd];
     if (!is_socket(node))
         return -ENOTSOCK;
 
     socket_handle_t *handle = node->node->handle;
     if (handle->op->getsockopt) {
-        return handle->op->getsockopt(fd, level, optname, optval, optlen);
+        socklen_t user_len = 0;
+        if (copy_from_user(&user_len, optlen, sizeof(user_len)))
+            return -EFAULT;
+        if (user_len && !optval)
+            return -EFAULT;
+
+        void *koptval = NULL;
+        if (user_len) {
+            koptval = calloc(1, user_len);
+            if (!koptval)
+                return -ENOMEM;
+        }
+
+        socklen_t koptlen = user_len;
+        uint64_t ret =
+            handle->op->getsockopt(fd, level, optname, koptval, &koptlen);
+        if ((int64_t)ret < 0) {
+            free(koptval);
+            return ret;
+        }
+
+        size_t copy_len = MIN((size_t)user_len, (size_t)koptlen);
+        if (copy_len && copy_to_user(optval, koptval, copy_len)) {
+            free(koptval);
+            return -EFAULT;
+        }
+        free(koptval);
+
+        if (copy_to_user(optlen, &koptlen, sizeof(koptlen)))
+            return -EFAULT;
+        return ret;
     }
     return -ENOSYS;
 }
@@ -158,11 +385,16 @@ uint64_t sys_socket(int domain, int type, int protocol) {
     return fd;
 }
 
-uint64_t sys_socketpair(int family, int type, int protocol, int *sv) {
-    if (family == 1) {
-        return unix_socket_pair(type, protocol, sv);
+uint64_t sys_socketpair(int domain, int type, int protocol, int *sv) {
+    int fd = -EAFNOSUPPORT;
+    for (int i = 0; i < socket_num; i++) {
+        if (real_sockets[i]->domain == domain) {
+            fd = real_sockets[i]->socketpair(domain, type, protocol, sv);
+            break;
+        }
     }
-    return -ENOSYS;
+
+    return fd;
 }
 
 uint64_t sys_bind(int sockfd, const struct sockaddr_un *addr,
@@ -175,8 +407,15 @@ uint64_t sys_bind(int sockfd, const struct sockaddr_un *addr,
         return -ENOTSOCK;
 
     socket_handle_t *handle = node->node->handle;
-    if (handle->op->bind)
-        return handle->op->bind(sockfd, addr, addrlen);
+    if (handle->op->bind) {
+        struct sockaddr_un *kaddr = NULL;
+        int ret = socket_copy_sockaddr_from_user(addr, addrlen, &kaddr);
+        if (ret < 0)
+            return ret;
+        uint64_t out = handle->op->bind(sockfd, kaddr, addrlen);
+        free(kaddr);
+        return out;
+    }
     return 0;
 }
 
@@ -215,8 +454,45 @@ uint64_t sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen,
 
     socket_handle_t *handle = node->node->handle;
     uint64_t ret = 0;
-    if (handle->op->accept)
-        ret = handle->op->accept(sockfd, addr, addrlen, flags);
+    if (handle->op->accept) {
+        struct sockaddr_un *kaddr = NULL;
+        socklen_t kaddrlen = 0;
+        socklen_t *kaddrlenp = NULL;
+
+        if (addr) {
+            if (!addrlen) {
+                vfs_close(node->node);
+                free(node);
+                return -EFAULT;
+            }
+            if (copy_from_user(&kaddrlen, addrlen, sizeof(kaddrlen))) {
+                vfs_close(node->node);
+                free(node);
+                return -EFAULT;
+            }
+            if (kaddrlen) {
+                kaddr = calloc(1, kaddrlen);
+                if (!kaddr) {
+                    vfs_close(node->node);
+                    free(node);
+                    return -ENOMEM;
+                }
+            }
+            kaddrlenp = &kaddrlen;
+        }
+
+        ret = handle->op->accept(sockfd, kaddr, kaddrlenp, flags);
+        if ((int64_t)ret >= 0 && kaddrlenp) {
+            size_t copy_len = MIN((size_t)kaddrlen, (size_t)*kaddrlenp);
+            if (copy_len && copy_to_user(addr, kaddr, copy_len))
+                ret = -EFAULT;
+            if ((int64_t)ret >= 0 &&
+                copy_to_user(addrlen, kaddrlenp, sizeof(*kaddrlenp)))
+                ret = -EFAULT;
+        }
+
+        free(kaddr);
+    }
 
     vfs_close(node->node);
     free(node);
@@ -233,8 +509,15 @@ uint64_t sys_connect(int sockfd, const struct sockaddr_un *addr,
         return -ENOTSOCK;
 
     socket_handle_t *handle = node->node->handle;
-    if (handle->op->connect)
-        return handle->op->connect(sockfd, addr, addrlen);
+    if (handle->op->connect) {
+        struct sockaddr_un *kaddr = NULL;
+        int ret = socket_copy_sockaddr_from_user(addr, addrlen, &kaddr);
+        if (ret < 0)
+            return ret;
+        uint64_t out = handle->op->connect(sockfd, kaddr, addrlen);
+        free(kaddr);
+        return out;
+    }
     return 0;
 }
 
@@ -253,8 +536,26 @@ int64_t sys_send(int sockfd, void *buff, size_t len, int flags,
         return -ENOTSOCK;
 
     socket_handle_t *handle = node->node->handle;
-    if (handle->op->sendto)
-        return handle->op->sendto(sockfd, buff, len, flags, dest_addr, addrlen);
+    if (handle->op->sendto) {
+        void *kbuf = NULL;
+        struct sockaddr_un *kaddr = NULL;
+        int ret = socket_alloc_copy_from_user(buff, len, &kbuf);
+        if (ret < 0)
+            return ret;
+        if (dest_addr && addrlen) {
+            ret = socket_copy_sockaddr_from_user(dest_addr, addrlen, &kaddr);
+            if (ret < 0) {
+                free(kbuf);
+                return ret;
+            }
+        }
+
+        int64_t out =
+            handle->op->sendto(sockfd, kbuf, len, flags, kaddr, addrlen);
+        free(kaddr);
+        free(kbuf);
+        return out;
+    }
     return 0;
 }
 
@@ -273,9 +574,54 @@ int64_t sys_recv(int sockfd, void *buf, size_t len, int flags,
         return -ENOTSOCK;
 
     socket_handle_t *handle = node->node->handle;
-    if (handle->op->recvfrom)
-        return handle->op->recvfrom(sockfd, buf, len, flags, dest_addr,
-                                    addrlen);
+    if (handle->op->recvfrom) {
+        void *kbuf = NULL;
+        struct sockaddr_un *kaddr = NULL;
+        socklen_t user_addrlen = 0;
+        socklen_t *kaddrlenp = NULL;
+
+        if (len) {
+            kbuf = malloc(len);
+            if (!kbuf)
+                return -ENOMEM;
+        }
+
+        if (dest_addr) {
+            if (!addrlen) {
+                free(kbuf);
+                return -EFAULT;
+            }
+            if (copy_from_user(&user_addrlen, addrlen, sizeof(user_addrlen))) {
+                free(kbuf);
+                return -EFAULT;
+            }
+            if (user_addrlen) {
+                kaddr = calloc(1, user_addrlen);
+                if (!kaddr) {
+                    free(kbuf);
+                    return -ENOMEM;
+                }
+            }
+            kaddrlenp = &user_addrlen;
+        }
+
+        int64_t ret =
+            handle->op->recvfrom(sockfd, kbuf, len, flags, kaddr, kaddrlenp);
+        if (ret > 0 && copy_to_user(buf, kbuf, (size_t)ret))
+            ret = -EFAULT;
+        if (ret >= 0 && kaddrlenp) {
+            size_t copy_len = MIN((size_t)user_addrlen, (size_t)*kaddrlenp);
+            if (copy_len && copy_to_user(dest_addr, kaddr, copy_len))
+                ret = -EFAULT;
+            if (ret >= 0 &&
+                copy_to_user(addrlen, kaddrlenp, sizeof(*kaddrlenp)))
+                ret = -EFAULT;
+        }
+
+        free(kaddr);
+        free(kbuf);
+        return ret;
+    }
     return 0;
 }
 
@@ -295,8 +641,18 @@ int64_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         return -ENOTSOCK;
 
     socket_handle_t *handle = node->node->handle;
-    if (handle->op->sendmsg)
-        return handle->op->sendmsg(sockfd, msg, flags);
+    if (handle->op->sendmsg) {
+        socket_kmsg_t kmsg;
+        int ret = socket_prepare_kmsg_from_user(msg, &kmsg, true);
+        if (ret < 0) {
+            socket_free_kmsg(&kmsg);
+            return ret;
+        }
+
+        int64_t out = handle->op->sendmsg(sockfd, &kmsg.msg, flags);
+        socket_free_kmsg(&kmsg);
+        return out;
+    }
     return 0;
 }
 
@@ -316,7 +672,22 @@ int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         return -ENOTSOCK;
 
     socket_handle_t *handle = node->node->handle;
-    if (handle->op->recvmsg)
-        return handle->op->recvmsg(sockfd, msg, flags);
+    if (handle->op->recvmsg) {
+        socket_kmsg_t kmsg;
+        int ret = socket_prepare_kmsg_from_user(msg, &kmsg, false);
+        if (ret < 0) {
+            socket_free_kmsg(&kmsg);
+            return ret;
+        }
+
+        int64_t out = handle->op->recvmsg(sockfd, &kmsg.msg, flags);
+        if (out >= 0) {
+            ret = socket_copy_recvmsg_to_user(msg, &kmsg, (size_t)out);
+            if (ret < 0)
+                out = ret;
+        }
+        socket_free_kmsg(&kmsg);
+        return out;
+    }
     return 0;
 }

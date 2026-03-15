@@ -93,7 +93,8 @@ void handle_exception_c(struct pt_regs *regs, uint64_t cause) {
     case 12:
     case 13:
     case 15: {
-        page_fault_result_t res = handle_page_fault(current_task, regs->stval);
+        page_fault_result_t res =
+            handle_page_fault_flags(current_task, regs->stval, PF_ACCESS_READ);
         if (res != PF_RES_OK) {
             printk("Exception occurred:\n");
 

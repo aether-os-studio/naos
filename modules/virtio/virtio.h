@@ -69,6 +69,8 @@ typedef struct virtio_net_device {
     uint16_t mtu;
     virtqueue_t *send_queue;
     virtqueue_t *recv_queue;
+    void *tx_buffers[64];
+    uint32_t tx_buffer_sizes[64];
     spinlock_t send_recv_lock;
 } virtio_net_device_t;
 

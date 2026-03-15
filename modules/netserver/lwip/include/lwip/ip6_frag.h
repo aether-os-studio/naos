@@ -68,7 +68,7 @@ extern "C" {
  * if this setting is disabled, but if it is enabled, we need to save a bit
  * more data (up to the size of a pointer) because we overwrite more. */
 #ifndef IPV6_FRAG_COPYHEADER
-#define IPV6_FRAG_COPYHEADER 0
+#define IPV6_FRAG_COPYHEADER 1
 #endif
 
 /* With IPV6_FRAG_COPYHEADER==1, a helper structure may (or, depending on the

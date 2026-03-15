@@ -10,6 +10,22 @@ int virtio_net_idx = 0;
 #define RX_BUFFER_COUNT 32
 static void *rx_buffers[RX_BUFFER_COUNT];
 
+static void virtio_net_reap_tx(virtio_net_device_t *net_dev) {
+    uint32_t used_len = 0;
+    uint16_t used_desc_idx = 0;
+
+    while ((used_desc_idx = virt_queue_get_used_buf(net_dev->send_queue,
+                                                    &used_len)) != 0xFFFF) {
+        if (used_desc_idx < SIZE && net_dev->tx_buffers[used_desc_idx]) {
+            free_frames_bytes(net_dev->tx_buffers[used_desc_idx],
+                              net_dev->tx_buffer_sizes[used_desc_idx]);
+            net_dev->tx_buffers[used_desc_idx] = NULL;
+            net_dev->tx_buffer_sizes[used_desc_idx] = 0;
+        }
+        virt_queue_free_desc(net_dev->send_queue, used_desc_idx);
+    }
+}
+
 int virtio_net_init(virtio_driver_t *driver) {
     uint64_t features = virtio_begin_init(
         driver, (1ULL << 5) | (1ULL << 16) | VIRTIO_F_RING_INDIRECT_DESC |
@@ -99,7 +115,8 @@ int virtio_net_init(virtio_driver_t *driver) {
 }
 
 int virtio_net_send(virtio_net_device_t *net_dev, void *data, uint32_t len) {
-    if (!net_dev || !data || len == 0 || len > net_dev->mtu) {
+    if (!net_dev || !data || len == 0 ||
+        len > netdev_max_frame_len(net_dev->mtu)) {
         return -1;
     }
 
@@ -110,26 +127,25 @@ int virtio_net_send(virtio_net_device_t *net_dev, void *data, uint32_t len) {
     }
 
     spin_lock(&net_dev->send_recv_lock);
+    virtio_net_reap_tx(net_dev);
 
     virtio_net_hdr_t *header = (virtio_net_hdr_t *)send_buffer;
     memset(header, 0, sizeof(virtio_net_hdr_t));
 
     memcpy((uint8_t *)send_buffer + sizeof(virtio_net_hdr_t), data, len);
 
-    virtio_buffer_t bufs[2];
-    bufs[0].addr = (uint64_t)send_buffer;
-    bufs[0].size = sizeof(virtio_net_hdr_t);
-    bufs[1].addr = (uint64_t)send_buffer + sizeof(virtio_net_hdr_t);
-    bufs[1].size = len;
-
-    bool writable[2] = {false, false};
+    virtio_buffer_t buf = {.addr = (uint64_t)send_buffer, .size = total_len};
+    bool writable = false;
     uint16_t desc_idx =
-        virt_queue_add_buf(net_dev->send_queue, bufs, 2, writable);
+        virt_queue_add_buf(net_dev->send_queue, &buf, 1, &writable);
     if (desc_idx == 0xFFFF) {
-        free_frames_bytes(send_buffer, RX_BUFFER_SIZE);
+        free_frames_bytes(send_buffer, total_len);
         spin_unlock(&net_dev->send_recv_lock);
         return -1;
     }
+
+    net_dev->tx_buffers[desc_idx] = send_buffer;
+    net_dev->tx_buffer_sizes[desc_idx] = total_len;
 
     virt_queue_submit_buf(net_dev->send_queue, desc_idx);
     virt_queue_notify(net_dev->driver, net_dev->send_queue);
@@ -150,6 +166,7 @@ int virtio_net_receive(virtio_net_device_t *net_dev, void *buffer,
     }
 
     spin_lock(&net_dev->send_recv_lock);
+    virtio_net_reap_tx(net_dev);
 
     uint32_t len;
     uint16_t desc_idx = virt_queue_get_used_buf(net_dev->recv_queue, &len);

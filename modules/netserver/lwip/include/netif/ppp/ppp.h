@@ -239,10 +239,10 @@ typedef struct ppp_settings_s {
         : 1; /* request echo only if the link was idle */
 #endif       /* PPP_LCP_ADAPTIVE */
 #if MPPE_SUPPORT
-    unsigned int require_mppe : 1;    /* Require MPPE (Microsoft Point to Point
-                                         Encryption) */
-    unsigned int refuse_mppe_40 : 1;  /* Allow MPPE 40-bit mode? */
-    unsigned int refuse_mppe_128 : 1; /* Allow MPPE 128-bit mode? */
+    unsigned int require_mppe
+        : 1; /* Require MPPE (Microsoft Point to Point Encryption) */
+    unsigned int refuse_mppe_40 : 1;       /* Allow MPPE 40-bit mode? */
+    unsigned int refuse_mppe_128 : 1;      /* Allow MPPE 128-bit mode? */
     unsigned int refuse_mppe_stateful : 1; /* Allow MPPE stateful mode? */
 #endif                                     /* MPPE_SUPPORT */
 

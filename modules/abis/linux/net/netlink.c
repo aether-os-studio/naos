@@ -1250,7 +1250,7 @@ void netlink_init() {
     netlink_msg_pool_next = 0;
     spin_unlock(&netlink_msg_pool_lock);
 
-    regist_socket(16, NULL, netlink_socket);
+    regist_socket(16, NULL, netlink_socket, NULL);
 }
 
 static int atoi(const char *s) {

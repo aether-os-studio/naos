@@ -28,29 +28,7 @@ int netdev_send(netdev_t *dev, void *data, uint32_t len) {
     if (len == 0) {
         return 0;
     }
-
-    uint8_t *ptr = (uint8_t *)data;
-    uint32_t remaining = len;
-    uint32_t total_sent = 0;
-
-    while (remaining > 0) {
-        uint32_t chunk_size = (remaining > dev->mtu) ? dev->mtu : remaining;
-
-        int ret = dev->send(dev->desc, ptr, chunk_size);
-        if (ret < 0) {
-            return ret;
-        }
-
-        if (ret == 0) {
-            break;
-        }
-
-        ptr += ret;
-        remaining -= ret;
-        total_sent += ret;
-    }
-
-    return total_sent;
+    return dev->send(dev->desc, data, len);
 }
 
 int netdev_recv(netdev_t *dev, void *data, uint32_t len) {

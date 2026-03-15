@@ -19,6 +19,31 @@ static inline void e1000_write32(e1000_device_t *dev, uint32_t reg,
     *((volatile uint32_t *)(dev->mmio_base + reg)) = value;
 }
 
+static void e1000_tx_reclaim(e1000_device_t *dev) {
+    while (dev->tx_head != dev->tx_tail) {
+        uint16_t idx = dev->tx_head;
+        struct e1000_tx_desc *desc = &dev->tx_descs[idx];
+
+        dma_sync_device_to_cpu(desc, sizeof(*desc));
+        if (!(desc->status & E1000_TXD_STAT_DD))
+            break;
+
+        if (dev->tx_buffers[idx]) {
+            free_frames_bytes(dev->tx_buffers[idx], dev->tx_lengths[idx]);
+            dev->tx_buffers[idx] = NULL;
+            dev->tx_lengths[idx] = 0;
+        }
+
+        desc->buffer_addr = 0;
+        desc->length = 0;
+        desc->cmd = 0;
+        desc->status = 0;
+        dma_sync_cpu_to_device(desc, sizeof(*desc));
+
+        dev->tx_head = (idx + 1) % E1000_NUM_TX_DESC;
+    }
+}
+
 // Read from EEPROM
 static int e1000_read_eeprom(e1000_device_t *dev, uint16_t offset,
                              uint16_t *data) {
@@ -73,15 +98,16 @@ static int e1000_get_mac_address(e1000_device_t *dev) {
 // Initialize RX descriptors and buffers
 static int e1000_init_rx(e1000_device_t *dev) {
     // Allocate RX descriptors (must be 16-byte aligned)
-    dev->rx_descs = (struct e1000_rx_desc *)alloc_frames_bytes(
+    dev->rx_descs_raw = alloc_frames_bytes(
         E1000_NUM_RX_DESC * sizeof(struct e1000_rx_desc) + 15);
-    if (!dev->rx_descs) {
+    if (!dev->rx_descs_raw) {
         return -1;
     }
 
     // Align to 16-byte boundary
     dev->rx_descs =
-        (struct e1000_rx_desc *)(((uintptr_t)dev->rx_descs + 15) & ~15);
+        (struct e1000_rx_desc *)(((uintptr_t)dev->rx_descs_raw + 15) &
+                                 ~((uintptr_t)15));
 
     // Initialize RX descriptors and buffers
     for (int i = 0; i < E1000_NUM_RX_DESC; i++) {
@@ -96,6 +122,8 @@ static int e1000_init_rx(e1000_device_t *dev) {
         dev->rx_descs[i].errors = 0;
         dev->rx_descs[i].length = 0;
     }
+    dma_sync_cpu_to_device(dev->rx_descs,
+                           E1000_NUM_RX_DESC * sizeof(struct e1000_rx_desc));
 
     // Program RX descriptor registers
     uint64_t rx_desc_phys = (uint64_t)virt_to_phys(dev->rx_descs);
@@ -118,21 +146,25 @@ static int e1000_init_rx(e1000_device_t *dev) {
 // Initialize TX descriptors and buffers
 static int e1000_init_tx(e1000_device_t *dev) {
     // Allocate TX descriptors (must be 16-byte aligned)
-    dev->tx_descs = (struct e1000_tx_desc *)alloc_frames_bytes(
+    dev->tx_descs_raw = alloc_frames_bytes(
         E1000_NUM_TX_DESC * sizeof(struct e1000_tx_desc) + 15);
-    if (!dev->tx_descs) {
+    if (!dev->tx_descs_raw) {
         return -1;
     }
 
     // Align to 16-byte boundary
     dev->tx_descs =
-        (struct e1000_tx_desc *)(((uintptr_t)dev->tx_descs + 15) & ~15);
+        (struct e1000_tx_desc *)(((uintptr_t)dev->tx_descs_raw + 15) &
+                                 ~((uintptr_t)15));
 
     // Initialize TX descriptors
     memset(dev->tx_descs, 0, E1000_NUM_TX_DESC * sizeof(struct e1000_tx_desc));
     for (int i = 0; i < E1000_NUM_TX_DESC; i++) {
         dev->tx_buffers[i] = NULL;
+        dev->tx_lengths[i] = 0;
     }
+    dma_sync_cpu_to_device(dev->tx_descs,
+                           E1000_NUM_TX_DESC * sizeof(struct e1000_tx_desc));
 
     // Program TX descriptor registers
     uint64_t tx_desc_phys = (uint64_t)virt_to_phys(dev->tx_descs);
@@ -236,9 +268,11 @@ int e1000_init(void *mmio_base) {
 int e1000_send(void *dev_desc, void *data, uint32_t len) {
     e1000_device_t *dev = (e1000_device_t *)dev_desc;
 
-    if (len > E1000_MTU || len == 0) {
+    if (len == 0 || len > netdev_max_frame_len(E1000_MTU)) {
         return -1;
     }
+
+    e1000_tx_reclaim(dev);
 
     // Check if we have a free TX descriptor
     uint16_t next_tail = (dev->tx_tail + 1) % E1000_NUM_TX_DESC;
@@ -257,35 +291,28 @@ int e1000_send(void *dev_desc, void *data, uint32_t len) {
     memcpy(tx_buffer, data, len);
 
     // Setup TX descriptor
-    dev->tx_descs[dev->tx_tail].buffer_addr = (uint64_t)virt_to_phys(tx_buffer);
-    dev->tx_descs[dev->tx_tail].length = len;
-    dev->tx_descs[dev->tx_tail].cmd =
-        E1000_TXD_CMD_EOP | E1000_TXD_CMD_IFCS | E1000_TXD_CMD_RS;
-    dev->tx_descs[dev->tx_tail].status = 0;
+    struct e1000_tx_desc *desc = &dev->tx_descs[dev->tx_tail];
+    desc->buffer_addr = (uint64_t)virt_to_phys(tx_buffer);
+    desc->length = len;
+    desc->cmd = E1000_TXD_CMD_EOP | E1000_TXD_CMD_IFCS | E1000_TXD_CMD_RS;
+    desc->status = 0;
 
     // Store buffer pointer for later cleanup
     dev->tx_buffers[dev->tx_tail] = tx_buffer;
+    dev->tx_lengths[dev->tx_tail] = len;
+    dma_sync_cpu_to_device(tx_buffer, len);
+    dma_sync_cpu_to_device(desc, sizeof(*desc));
 
     // Update tail pointer
     dev->tx_tail = next_tail;
+    dma_wmb();
     e1000_write32(dev, E1000_TDT, dev->tx_tail);
 
     // Poll for completion
-    while (!(dev->tx_descs[dev->tx_head].status & E1000_TXD_STAT_DD)) {
-        // Wait for transmission to complete
-    }
-
-    // Clean up completed descriptors
     while (dev->tx_head != dev->tx_tail) {
-        if (dev->tx_descs[dev->tx_head].status & E1000_TXD_STAT_DD) {
-            if (dev->tx_buffers[dev->tx_head]) {
-                free_frames_bytes(dev->tx_buffers[dev->tx_head], len);
-                dev->tx_buffers[dev->tx_head] = NULL;
-            }
-            dev->tx_descs[dev->tx_head].status = 0;
-            dev->tx_head = (dev->tx_head + 1) % E1000_NUM_TX_DESC;
-        } else {
-            break;
+        e1000_tx_reclaim(dev);
+        if (dev->tx_head != dev->tx_tail) {
+            arch_pause();
         }
     }
 
@@ -298,6 +325,7 @@ int e1000_receive(void *dev_desc, void *buffer, uint32_t buffer_size) {
 
     uint16_t next_rx = (dev->rx_tail + 1) % E1000_NUM_RX_DESC;
     struct e1000_rx_desc *desc = &dev->rx_descs[next_rx];
+    dma_sync_device_to_cpu(desc, sizeof(*desc));
 
     bool have_data = !!(desc->status & E1000_RXD_STAT_DD);
 
@@ -319,11 +347,16 @@ int e1000_receive(void *dev_desc, void *buffer, uint32_t buffer_size) {
     }
 
     // Copy packet data to user buffer
+    dma_sync_device_to_cpu(phys_to_virt((void *)desc->buffer_addr),
+                           desc->length);
     memcpy(buffer, phys_to_virt((void *)desc->buffer_addr), packet_len);
 
 cleanup:
     // Recycle the descriptor
     desc->status = 0;
+    desc->errors = 0;
+    desc->length = 0;
+    dma_sync_cpu_to_device(desc, sizeof(*desc));
     dev->rx_tail = next_rx;
     e1000_write32(dev, E1000_RDT, dev->rx_tail);
 
@@ -407,20 +440,20 @@ static void e1000_pci_remove(pci_device_t *pci_dev) {
             }
             for (int j = 0; j < E1000_NUM_TX_DESC; j++) {
                 if (dev->tx_buffers[j]) {
-                    free_frames_bytes(dev->tx_buffers[j], E1000_TX_BUFFER_SIZE);
+                    free_frames_bytes(dev->tx_buffers[j], dev->tx_lengths[j]);
                 }
             }
 
             // Free descriptors
-            if (dev->rx_descs) {
-                free_frames_bytes(dev->rx_descs,
-                                  E1000_NUM_RX_DESC *
-                                      sizeof(struct e1000_rx_desc));
+            if (dev->rx_descs_raw) {
+                free_frames_bytes(
+                    dev->rx_descs_raw,
+                    E1000_NUM_RX_DESC * sizeof(struct e1000_rx_desc) + 15);
             }
-            if (dev->tx_descs) {
-                free_frames_bytes(dev->tx_descs,
-                                  E1000_NUM_TX_DESC *
-                                      sizeof(struct e1000_tx_desc));
+            if (dev->tx_descs_raw) {
+                free_frames_bytes(
+                    dev->tx_descs_raw,
+                    E1000_NUM_TX_DESC * sizeof(struct e1000_tx_desc) + 15);
             }
 
             // Remove from device array

@@ -300,7 +300,7 @@ struct cmsghdr {
 #define CMSG_LEN(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
 
 int socket_socket(int domain, int type, int protocol);
-int unix_socket_pair(int type, int protocol, int *sv);
+int unix_socket_pair(int domain, int type, int protocol, int *sv);
 int socket_bind(uint64_t fd, const struct sockaddr_un *addr, socklen_t addrlen);
 int socket_listen(uint64_t fd, int backlog);
 int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,

@@ -64,7 +64,7 @@ extern "C" {
 /* If your port already typedef's sa_family_t, define SA_FAMILY_T_DEFINED
    to prevent this code from redefining it. */
 #if !defined(sa_family_t) && !defined(SA_FAMILY_T_DEFINED)
-typedef u16_t sa_family_t;
+typedef u8_t sa_family_t;
 #endif
 /* If your port already typedef's in_port_t, define IN_PORT_T_DEFINED
    to prevent this code from redefining it. */
@@ -130,7 +130,7 @@ struct iovec {
 };
 #endif
 
-typedef size_t msg_iovlen_t;
+typedef int msg_iovlen_t;
 
 struct msghdr {
     void *msg_name;
@@ -138,19 +138,19 @@ struct msghdr {
     struct iovec *msg_iov;
     msg_iovlen_t msg_iovlen;
     void *msg_control;
-    size_t msg_controllen;
+    socklen_t msg_controllen;
     int msg_flags;
 };
 
 /* struct msghdr->msg_flags bit field values */
-#define MSG_TRUNC 0x0020
-#define MSG_CTRUNC 0x0008
+#define MSG_TRUNC 0x04
+#define MSG_CTRUNC 0x08
 
 /* RFC 3542, Section 20: Ancillary Data */
 struct cmsghdr {
-    size_t cmsg_len; /* number of bytes, including header */
-    int cmsg_level;  /* originating protocol */
-    int cmsg_type;   /* protocol-specific type */
+    socklen_t cmsg_len; /* number of bytes, including header */
+    int cmsg_level;     /* originating protocol */
+    int cmsg_type;      /* protocol-specific type */
 };
 /* Data section follows header and possible padding, typically referred to as
       unsigned char cmsg_data[]; */
@@ -200,37 +200,39 @@ struct ifreq {
  * Option flags per-socket. These must match the SOF_ flags in ip.h (checked in
  * init.c)
  */
-#define SO_REUSEADDR 2 /* Allow local address reuse */
-#define SO_KEEPALIVE 9 /* keep connections alive */
+#define SO_REUSEADDR 0x0004 /* Allow local address reuse */
+#define SO_KEEPALIVE 0x0008 /* keep connections alive */
 #define SO_BROADCAST                                                           \
-    6              /* permit to send and to receive broadcast messages (see    \
-                      IP_SOF_BROADCAST option) */
+    0x0020 /* permit to send and to receive broadcast messages (see            \
+              IP_SOF_BROADCAST option) */
 
 /*
  * Additional options, not kept in so_options.
  */
-#define SO_DEBUG 1 /* Unimplemented: turn on debugging info recording */
-#define SO_ACCEPTCONN 30 /* socket has had listen() */
-#define SO_DONTROUTE                                                           \
-    ((int)(~SO_USEROUTE)) /* Unimplemented: just use interface addresses */
+#define SO_DEBUG 0x0001 /* Unimplemented: turn on debugging info recording */
+#define SO_ACCEPTCONN 0x0002 /* socket has had listen() */
+#define SO_DONTROUTE 0x0010  /* Unimplemented: just use interface addresses */
 #define SO_USELOOPBACK                                                         \
-    0x0040           /* Unimplemented: bypass hardware when possible           \
-                      */
-#define SO_LINGER 13 /* linger on close if data present */
+    0x0040               /* Unimplemented: bypass hardware when possible       \
+                          */
+#define SO_LINGER 0x0080 /* linger on close if data present */
 #define SO_DONTLINGER ((int)(~SO_LINGER))
-#define SO_OOBINLINE 10    /* Unimplemented: leave received OOB data in line */
-#define SO_REUSEPORT 15    /* Unimplemented: allow local address & port reuse */
-#define SO_SNDBUF 7        /* Unimplemented: send buffer size */
-#define SO_RCVBUF 8        /* receive buffer size */
-#define SO_SNDLOWAT 19     /* Unimplemented: send low-water mark */
-#define SO_RCVLOWAT 18     /* Unimplemented: receive low-water mark */
-#define SO_SNDTIMEO 66     /* send timeout */
-#define SO_RCVTIMEO 67     /* receive timeout */
-#define SO_ERROR 4         /* get error status and clear */
-#define SO_TYPE 3          /* get socket type */
+#define SO_OOBINLINE                                                           \
+    0x0100 /* Unimplemented: leave received OOB data in line                   \
+            */
+#define SO_REUSEPORT                                                           \
+    0x0200                 /* Unimplemented: allow local address & port reuse */
+#define SO_SNDBUF 0x1001   /* Unimplemented: send buffer size */
+#define SO_RCVBUF 0x1002   /* receive buffer size */
+#define SO_SNDLOWAT 0x1003 /* Unimplemented: send low-water mark */
+#define SO_RCVLOWAT 0x1004 /* Unimplemented: receive low-water mark */
+#define SO_SNDTIMEO 0x1005 /* send timeout */
+#define SO_RCVTIMEO 0x1006 /* receive timeout */
+#define SO_ERROR 0x1007    /* get error status and clear */
+#define SO_TYPE 0x1008     /* get socket type */
 #define SO_CONTIMEO 0x1009 /* Unimplemented: connect timeout */
-#define SO_NO_CHECK 11     /* don't create UDP checksum */
-#define SO_BINDTODEVICE 25 /* bind to device */
+#define SO_NO_CHECK 0x100a /* don't create UDP checksum */
+#define SO_BINDTODEVICE 0x100b /* bind to device */
 
 /*
  * Structure used for manipulating linger option.
@@ -243,7 +245,7 @@ struct linger {
 /*
  * Level number for (get/set)sockopt() to apply to socket itself.
  */
-#define SOL_SOCKET 1       /* options for socket level */
+#define SOL_SOCKET 0xfff       /* options for socket level */
 
 #define AF_UNSPEC 0
 #define AF_INET 2
@@ -267,40 +269,20 @@ struct linger {
 #define IPPROTO_UDPLITE 136
 #define IPPROTO_RAW 255
 
-// /* Flags we can use with send and recv. */
-// #define MSG_PEEK 0x01 /* Peeks at an incoming message */
-// #define MSG_WAITALL \
-//     0x02 /* Unimplemented: Requests that the function block until the full \
-//             amount of data requested can be returned */
-// #define MSG_OOB \
-//     0x04 /* Unimplemented: Requests out-of-band data. The significance and \
-//             semantics of out-of-band data are protocol-specific */
-// #define MSG_DONTWAIT 0x08 /* Nonblocking i/o for this operation only */
-// #define MSG_MORE 0x10     /* Sender will send more */
-// #define MSG_NOSIGNAL \
-//     0x20 /* Uninmplemented: Requests not to send the SIGPIPE signal if an \
-//             attempt to send is made on a stream-oriented socket that is no \
-//             longer connected. */
-
-#define MSG_OOB 0x0001
-#define MSG_PEEK 0x0002
-#define MSG_DONTROUTE 0x0004
-#define MSG_PROXY 0x0010
-#define MSG_DONTWAIT 0x0040
-#define MSG_EOR 0x0080
-#define MSG_WAITALL 0x0100
-#define MSG_FIN 0x0200
-#define MSG_SYN 0x0400
-#define MSG_CONFIRM 0x0800
-#define MSG_RST 0x1000
-#define MSG_ERRQUEUE 0x2000
-#define MSG_NOSIGNAL 0x4000
-#define MSG_MORE 0x8000
-#define MSG_WAITFORONE 0x10000
-#define MSG_BATCH 0x40000
-#define MSG_ZEROCOPY 0x4000000
-#define MSG_FASTOPEN 0x20000000
-#define MSG_CMSG_CLOEXEC 0x40000000
+/* Flags we can use with send and recv. */
+#define MSG_PEEK 0x01 /* Peeks at an incoming message */
+#define MSG_WAITALL                                                            \
+    0x02 /* Unimplemented: Requests that the function block until the full     \
+            amount of data requested can be returned */
+#define MSG_OOB                                                                \
+    0x04 /* Unimplemented: Requests out-of-band data. The significance and     \
+            semantics of out-of-band data are protocol-specific */
+#define MSG_DONTWAIT 0x08 /* Nonblocking i/o for this operation only */
+#define MSG_MORE 0x10     /* Sender will send more */
+#define MSG_NOSIGNAL                                                           \
+    0x20 /* Uninmplemented: Requests not to send the SIGPIPE signal if an      \
+            attempt to send is made on a stream-oriented socket that is no     \
+            longer connected. */
 
 /*
  * Options for level IPPROTO_IP
@@ -461,10 +443,10 @@ typedef struct ipv6_mreq {
 #endif /* !defined(FIONREAD) || !defined(FIONBIO) */
 
 #ifndef FIONREAD
-#define FIONREAD 0x541B /* get # bytes to read */
+#define FIONREAD _IOR('f', 127, unsigned long) /* get # bytes to read */
 #endif
 #ifndef FIONBIO
-#define FIONBIO 0x5421 /* set/clear non-blocking i/o */
+#define FIONBIO _IOW('f', 126, unsigned long) /* set/clear non-blocking i/o */
 #endif
 
 /* Socket I/O Controls: unimplemented */
@@ -554,16 +536,16 @@ typedef struct fd_set {
  * if already defined */
 #if !defined(POLLIN) && !defined(POLLOUT)
 #define POLLIN 0x1
-#define POLLPRI 0x2
-#define POLLOUT 0x4
-#define POLLERR 0x8
-#define POLLHUP 0x10
-#define POLLNVAL 0x20
+#define POLLOUT 0x2
+#define POLLERR 0x4
+#define POLLNVAL 0x8
 /* Below values are unimplemented */
-#define POLLRDNORM 0x40
-#define POLLRDBAND 0x80
-#define POLLWRNORM 0x100
-#define POLLWRBAND 0x200
+#define POLLRDNORM 0x10
+#define POLLRDBAND 0x20
+#define POLLPRI 0x40
+#define POLLWRNORM 0x80
+#define POLLWRBAND 0x100
+#define POLLHUP 0x200
 typedef unsigned int nfds_t;
 struct pollfd {
     int fd;

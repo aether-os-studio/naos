@@ -19,8 +19,3 @@ typedef enum page_fault_access {
 
 page_fault_result_t handle_page_fault_flags(task_t *task, uint64_t vaddr,
                                             uint64_t fault_flags);
-
-static inline page_fault_result_t handle_page_fault(task_t *task,
-                                                    uint64_t vaddr) {
-    return handle_page_fault_flags(task, vaddr, PF_ACCESS_READ);
-}

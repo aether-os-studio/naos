@@ -27,7 +27,7 @@ MIRROR="${MIRROR_ROOT}/${ALPINE_VERSION}"
 APK_CMD="sudo $APK_PATH --arch $ARCH -U --allow-untrusted --root $SYSROOT/"
 
 # Bootstrap alpine userspace
-$APK_CMD -X "$MIRROR/main" -U --initdb add alpine-base bash coreutils grep musl ncurses
+$APK_CMD -X "$MIRROR/main" --initdb add alpine-base bash coreutils grep musl ncurses
 
 printf "${MIRROR}/main\n${MIRROR}/community\n${MIRROR_ROOT}/edge/testing\n" | sudo tee $SYSROOT/etc/apk/repositories
 

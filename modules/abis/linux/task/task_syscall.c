@@ -1060,8 +1060,11 @@ uint64_t task_execve(const char *path_user, const char **argv,
     vfs_node_ref_get(node);
     self->exec_node = node;
 
-    map_page_range(get_current_page_dir(true), USER_STACK_START, (uint64_t)-1,
-                   USER_STACK_END - USER_STACK_START,
+    const uint64_t userstack_premap_size = DEFAULT_PAGE_SIZE * 16;
+    uint64_t userstack_premap_start = USER_STACK_END - userstack_premap_size;
+
+    map_page_range(get_current_page_dir(true), userstack_premap_start,
+                   (uint64_t)-1, userstack_premap_size,
                    PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
     uint64_t stack = push_infos(
@@ -1153,15 +1156,15 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
     vma_t *stack_vma = vma_alloc();
 
-    stack_vma->vm_start = USER_STACK_START;
+    stack_vma->vm_start = userstack_premap_start;
     stack_vma->vm_end = USER_STACK_END;
-    stack_vma->vm_flags |= VMA_ANON | VMA_READ | VMA_WRITE;
+    stack_vma->vm_flags |= VMA_ANON | VMA_READ | VMA_WRITE | VMA_STACK;
 
     stack_vma->vm_type = VMA_TYPE_ANON;
     stack_vma->vm_name = strdup("[stack]");
 
-    vma_t *region = vma_find_intersection(&self->mm->task_vma_mgr,
-                                          USER_STACK_START, USER_STACK_END);
+    vma_t *region = vma_find_intersection(
+        &self->mm->task_vma_mgr, userstack_premap_start, USER_STACK_END);
     if (!region) {
         vma_insert(&self->mm->task_vma_mgr, stack_vma);
     }

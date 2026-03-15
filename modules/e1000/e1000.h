@@ -117,12 +117,15 @@ typedef struct e1000_device {
 
     // RX descriptors and buffers
     struct e1000_rx_desc *rx_descs;
+    void *rx_descs_raw;
     void *rx_buffers[E1000_NUM_RX_DESC];
     uint16_t rx_tail;
 
     // TX descriptors and buffers
     struct e1000_tx_desc *tx_descs;
+    void *tx_descs_raw;
     void *tx_buffers[E1000_NUM_TX_DESC];
+    uint16_t tx_lengths[E1000_NUM_TX_DESC];
     uint16_t tx_head;
     uint16_t tx_tail;
 } e1000_device_t;

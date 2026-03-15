@@ -158,8 +158,8 @@ void task_membarrier_checkpoint(task_t *task) {
         return;
 
     task_mm_info_t *mm = task->mm;
-    uint64_t seq =
-        __atomic_load_n(&mm->membarrier_private_expedited_seq, __ATOMIC_ACQUIRE);
+    uint64_t seq = __atomic_load_n(&mm->membarrier_private_expedited_seq,
+                                   __ATOMIC_ACQUIRE);
     if (seq == 0)
         return;
 

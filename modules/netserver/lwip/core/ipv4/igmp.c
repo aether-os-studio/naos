@@ -71,10 +71,10 @@ Steve Reynolds
  * RFC 1054 - Host extensions for IP multicasting                         -
  * RFC 1112 - Host extensions for IP multicasting                         - V1
  * RFC 2236 - Internet Group Management Protocol, Version 2               - V2
- *<- this code is based on this RFC (it's the "de facto" standard) RFC 3376 -
- *Internet Group Management Protocol, Version 3               - V3 RFC 4604 -
- *Using Internet Group Management Protocol Version 3...       - V3+ RFC 2113 -
- *IP Router Alert Option                                      -
+ * <- this code is based on this RFC (it's the "de facto" standard) RFC 3376 -
+ * Internet Group Management Protocol, Version 3               - V3 RFC 4604 -
+ * Using Internet Group Management Protocol Version 3...       - V3+ RFC 2113 -
+ * IP Router Alert Option                                      -
  *----------------------------------------------------------------------------*/
 
 /*-----------------------------------------------------------------------------
