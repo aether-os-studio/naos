@@ -12,6 +12,7 @@
 #include <fs/proc.h>
 #include <dev/drm/drm.h>
 #include <libs/keys.h>
+#include <task/task.h>
 
 // Beware the 65 character limit!
 char sysname[] = "NeoAetherOS";
@@ -48,6 +49,143 @@ static uint64_t copy_timeval_to_user(uint64_t user_addr, uint64_t sec,
                                                             : 0;
 }
 
+#define LINUX_CPUCLOCK_PERTHREAD_MASK 4
+#define LINUX_CPUCLOCK_CLOCK_MASK 3
+#define LINUX_CPUCLOCK_PROF 0
+#define LINUX_CPUCLOCK_VIRT 1
+#define LINUX_CPUCLOCK_SCHED 2
+#define LINUX_CLOCKFD 3
+
+static inline bool linux_clockid_is_cpu(clockid_t clock_id) {
+    return clock_id < 0 &&
+           (clock_id & LINUX_CPUCLOCK_CLOCK_MASK) != LINUX_CLOCKFD;
+}
+
+static inline int linux_clockid_pid(clockid_t clock_id) {
+    return ((uint32_t)(~clock_id)) >> 3;
+}
+
+static inline bool linux_clockid_perthread(clockid_t clock_id) {
+    return (clock_id & LINUX_CPUCLOCK_PERTHREAD_MASK) != 0;
+}
+
+static inline int linux_clockid_which(clockid_t clock_id) {
+    return clock_id & LINUX_CPUCLOCK_CLOCK_MASK;
+}
+
+static inline uint64_t linux_task_cpu_clock_sample(task_t *task, int which) {
+    if (!task)
+        return 0;
+
+    switch (which) {
+    case LINUX_CPUCLOCK_PROF:
+    case LINUX_CPUCLOCK_SCHED:
+        return task->user_time_ns;
+    case LINUX_CPUCLOCK_VIRT:
+        return task_self_user_ns(task);
+    default:
+        return (uint64_t)-EINVAL;
+    }
+}
+
+static bool linux_resolve_cpu_clock(clockid_t clock_id, uint64_t *target_id,
+                                    bool *perthread, int *which) {
+    if (!current_task)
+        return false;
+
+    if (clock_id == CLOCK_PROCESS_CPUTIME_ID) {
+        *target_id = task_effective_tgid(current_task);
+        *perthread = false;
+        *which = LINUX_CPUCLOCK_SCHED;
+        return true;
+    }
+
+    if (clock_id == CLOCK_THREAD_CPUTIME_ID) {
+        *target_id = current_task->pid;
+        *perthread = true;
+        *which = LINUX_CPUCLOCK_SCHED;
+        return true;
+    }
+
+    if (!linux_clockid_is_cpu(clock_id))
+        return false;
+
+    *perthread = linux_clockid_perthread(clock_id);
+    *which = linux_clockid_which(clock_id);
+    *target_id = linux_clockid_pid(clock_id);
+
+    if (*target_id == 0) {
+        *target_id =
+            *perthread ? current_task->pid : task_effective_tgid(current_task);
+    }
+
+    return *which <= LINUX_CPUCLOCK_SCHED;
+}
+
+static uint64_t linux_sample_cpu_clock(clockid_t clock_id,
+                                       uint64_t *sample_ns) {
+    uint64_t target_id = 0;
+    bool perthread = false;
+    int which = 0;
+
+    if (!linux_resolve_cpu_clock(clock_id, &target_id, &perthread, &which))
+        return (uint64_t)-EINVAL;
+
+    uint64_t sample = 0;
+    bool found = false;
+
+    spin_lock(&task_queue_lock);
+
+    if (perthread) {
+        task_t *task = task_lookup_by_pid_nolock(target_id);
+        if (task) {
+            sample = linux_task_cpu_clock_sample(task, which);
+            found = true;
+        }
+    } else if (task_pid_map.buckets) {
+        for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+            hashmap_entry_t *entry = &task_pid_map.buckets[i];
+            if (entry->state != HASHMAP_ENTRY_OCCUPIED)
+                continue;
+
+            task_t *task = (task_t *)entry->value;
+            if (!task || task_effective_tgid(task) != target_id)
+                continue;
+
+            sample += linux_task_cpu_clock_sample(task, which);
+            found = true;
+        }
+    }
+
+    spin_unlock(&task_queue_lock);
+
+    if (!found)
+        return (uint64_t)-EINVAL;
+
+    *sample_ns = sample;
+    return 0;
+}
+
+static uint64_t linux_clock_gettime_cpu(clockid_t clock_id,
+                                        uint64_t user_addr) {
+    uint64_t sample_ns = 0;
+    uint64_t ret = linux_sample_cpu_clock(clock_id, &sample_ns);
+    if (ret != 0)
+        return ret;
+
+    return copy_timespec_to_user(user_addr, sample_ns / 1000000000ULL,
+                                 sample_ns % 1000000000ULL);
+}
+
+static uint64_t linux_clock_getres_cpu(clockid_t clock_id, uint64_t user_addr) {
+    uint64_t sample_ns = 0;
+    uint64_t ret = linux_sample_cpu_clock(clock_id, &sample_ns);
+    if (ret != 0)
+        return ret;
+
+    return copy_timespec_to_user(user_addr, 0, 1);
+}
+
 static uint64_t sys_sched_yield_linux(void) {
     sys_yield();
     return 0;
@@ -77,8 +215,9 @@ uint64_t sys_getrandom(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
 
 uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
     (void)arg3;
+    clockid_t clock_id = (clockid_t)arg1;
 
-    switch (arg1) {
+    switch (clock_id) {
     case 1: // CLOCK_MONOTONIC
     case 6: // CLOCK_MONOTONIC_COARSE
     case 4: // CLOCK_MONOTONIC_RAW
@@ -100,14 +239,29 @@ uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
                                      boot_get_boottime() + nano / 1000000000,
                                      nano % 1000000000ULL);
     }
+    case 2: // CLOCK_PROCESS_CPUTIME_ID
+    case 3: // CLOCK_THREAD_CPUTIME_ID
+        return linux_clock_gettime_cpu(clock_id, arg2);
     default:
-        printk("clock not supported, clock_id = %d\n", arg1);
+        if (linux_clockid_is_cpu(clock_id))
+            return linux_clock_gettime_cpu(clock_id, arg2);
         return (uint64_t)-EINVAL;
     }
 }
 
 uint64_t sys_clock_getres(uint64_t arg1, uint64_t arg2) {
-    (void)arg1;
+    clockid_t clock_id = (clockid_t)arg1;
+
+    switch (clock_id) {
+    case 2: // CLOCK_PROCESS_CPUTIME_ID
+    case 3: // CLOCK_THREAD_CPUTIME_ID
+        return linux_clock_getres_cpu(clock_id, arg2);
+    default:
+        if (linux_clockid_is_cpu(clock_id))
+            return linux_clock_getres_cpu(clock_id, arg2);
+        break;
+    }
+
     if (arg2) {
         struct timespec ts = {.tv_sec = 0, .tv_nsec = 1};
         if (copy_to_user((void *)arg2, &ts, sizeof(ts))) {

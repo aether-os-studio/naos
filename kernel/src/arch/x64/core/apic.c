@@ -327,6 +327,8 @@ void sse_init() {
                  "or $0x2, %ax\n\t" // set coprocessor monitoring  CR0.MP
                  "movq %rax, %cr0\n\t"
                  "movq %cr4, %rax\n\t"
+                 "and $~(1 << 18), %eax\n\t" // disable OSXSAVE until the
+                                             // kernel implements xsave/xrstor
                  "or $(3 << 9), %ax\n\t" // set CR4.OSFXSR and CR4.OSXMMEXCPT at
                                          // the same time
                  "movq %rax, %cr4\n\t");

@@ -137,11 +137,17 @@ typedef void (*sighandler_t)(int);
 #define SA_RESTORER 0x04000000
 
 typedef struct sigaction {
-    sighandler_t sa_handler;
-    unsigned long sa_flags;
-    void (*sa_restorer)(void);
+    union {
+        sighandler_t sa_handler;
+        void (*sa_sigaction)(int, void *, void *);
+    } __sa_handler;
     sigset_t sa_mask;
+    int sa_flags;
+    void (*sa_restorer)(void);
 } sigaction_t;
+
+#define sa_handler __sa_handler.sa_handler
+#define sa_sigaction __sa_handler.sa_sigaction
 
 #define MINSIG 1
 #define MAXSIG 65
@@ -241,7 +247,12 @@ union __sifields {
         union __sifields _sifields;                                            \
     }
 
-typedef __SIGINFO siginfo_t;
+typedef struct siginfo {
+    union {
+        __SIGINFO;
+        int _si_pad[128 / sizeof(int)];
+    };
+} siginfo_t;
 
 typedef struct pending_signal {
     int sig;

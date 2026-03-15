@@ -19,11 +19,21 @@
 #if defined(__x86_64__)
 #define SIGNAL_X64_SYSCALL_INS_LEN 2
 #define SIGNAL_X64_MAX_SYSCALL_NR 1024
+#define SIGNAL_X64_UC_SIGCONTEXT_SS 0x2
+#define SIGNAL_X64_UC_STRICT_RESTORE_SS 0x4
+#define SIGNAL_X64_TRAPNO_PAGE_FAULT 14
 
 #define ERESTARTSYS 512
 #define ERESTARTNOINTR 513
 #define ERESTARTNOHAND 514
 #define ERESTART_RESTARTBLOCK 516
+
+typedef struct signal_x64_kernel_sigaction {
+    sighandler_t handler;
+    unsigned long flags;
+    void (*restorer)(void);
+    sigset_t mask;
+} signal_x64_kernel_sigaction_t;
 #endif
 
 signal_internal_t signal_internal_decisions[MAXSIG] = {0};
@@ -341,6 +351,23 @@ enum {
     X64_REG_CR2,
 };
 
+static inline void signal_x64_save_live_fpu(task_t *task) {
+    if (!task || !task->arch_context || !task->arch_context->fpu_ctx)
+        return;
+
+    asm volatile("fxsave (%0)" : : "r"(task->arch_context->fpu_ctx) : "memory");
+}
+
+static inline void signal_x64_restore_live_fpu(task_t *task) {
+    if (!task || !task->arch_context || !task->arch_context->fpu_ctx)
+        return;
+
+    asm volatile("fxrstor (%0)"
+                 :
+                 : "r"(task->arch_context->fpu_ctx)
+                 : "memory");
+}
+
 static inline bool signal_x64_is_syscall_context(const struct pt_regs *regs) {
     return ((regs->cs & 0x3) == 0x3) && regs->rip == regs->rcx &&
            regs->rflags == regs->r11 &&
@@ -430,17 +457,22 @@ static inline uint64_t signal_x64_frame_rsp(uint64_t user_rsp,
     return sp - sizeof(void *);
 }
 
-static inline void
-signal_x64_fill_ucontext(ucontext_t *ucontext, const struct pt_regs *regs,
-                         uint64_t fpregs_addr, uint64_t flags,
-                         sigset_t blocked_mask, const stack_t *altstack) {
+static inline void signal_x64_fill_ucontext(ucontext_t *ucontext,
+                                            const struct pt_regs *regs,
+                                            sigset_t blocked_mask,
+                                            const stack_t *altstack,
+                                            const fpu_context_t *fpu_ctx) {
     memset(ucontext, 0, sizeof(*ucontext));
 
-    ucontext->uc_flags = flags;
+    ucontext->uc_flags =
+        SIGNAL_X64_UC_SIGCONTEXT_SS | SIGNAL_X64_UC_STRICT_RESTORE_SS;
     ucontext->uc_link = NULL;
     if (altstack)
         ucontext->uc_stack = *altstack;
-    ucontext->uc_mcontext.fpregs = (fpu_context_t *)fpregs_addr;
+    if (fpu_ctx) {
+        memcpy(ucontext->__fpregs_mem, fpu_ctx, sizeof(fpu_context_t));
+    }
+    ucontext->uc_mcontext.fpregs = NULL;
 
     ucontext->uc_mcontext.gregs[X64_REG_R8] = regs->r8;
     ucontext->uc_mcontext.gregs[X64_REG_R9] = regs->r9;
@@ -461,12 +493,14 @@ signal_x64_fill_ucontext(ucontext_t *ucontext, const struct pt_regs *regs,
     ucontext->uc_mcontext.gregs[X64_REG_RIP] = regs->rip;
     ucontext->uc_mcontext.gregs[X64_REG_EFL] = regs->rflags;
     ucontext->uc_mcontext.gregs[X64_REG_CSGSFS] =
-        (regs->cs & 0xFFFFULL) | ((regs->ss & 0xFFFFULL) << 48);
+        (regs->cs & 0xFFFFULL) | ((uint64_t)0 << 16) | ((uint64_t)0 << 32) |
+        ((regs->ss & 0xFFFFULL) << 48);
     ucontext->uc_mcontext.gregs[X64_REG_ERR] = regs->errcode;
     ucontext->uc_mcontext.gregs[X64_REG_TRAPNO] = 0;
     ucontext->uc_mcontext.gregs[X64_REG_OLDMASK] = 0;
     ucontext->uc_mcontext.gregs[X64_REG_CR2] = 0;
-    ucontext->uc_sigmask = sigset_kernel_to_user(blocked_mask);
+    memset(&ucontext->uc_sigmask, 0, sizeof(ucontext->uc_sigmask));
+    ucontext->uc_sigmask.__bits[0] = sigset_kernel_to_user(blocked_mask);
 }
 
 static inline void signal_x64_restore_ptregs(struct pt_regs *regs,
@@ -517,8 +551,7 @@ static bool signal_x64_setup_frame(task_t *task, struct pt_regs *regs, int sig,
     signal_altstack_format_old(&frame_altstack, &task->signal->altstack,
                                saved.rsp);
 
-    uint64_t frame_size =
-        sizeof(ucontext_t) + sizeof(siginfo_t) + sizeof(fpu_context_t);
+    uint64_t frame_size = sizeof(ucontext_t) + sizeof(siginfo_t);
     uint64_t frame_rsp = signal_x64_frame_rsp(saved.rsp, frame_size);
     bool use_altstack =
         (action->sa_flags & SA_ONSTACK) &&
@@ -533,16 +566,22 @@ static bool signal_x64_setup_frame(task_t *task, struct pt_regs *regs, int sig,
     }
     uint64_t ucontext_addr = frame_rsp + sizeof(void *);
     uint64_t siginfo_addr = ucontext_addr + sizeof(ucontext_t);
-    uint64_t fp_addr = siginfo_addr + sizeof(siginfo_t);
 
     ucontext_t frame_ucontext;
-    signal_x64_fill_ucontext(&frame_ucontext, &saved, fp_addr, action->sa_flags,
-                             task->signal->blocked, &frame_altstack);
+    signal_x64_save_live_fpu(task);
+    signal_x64_fill_ucontext(&frame_ucontext, &saved, task->signal->blocked,
+                             &frame_altstack, task->arch_context->fpu_ctx);
+    if (sig == SIGSEGV && info) {
+        frame_ucontext.uc_mcontext.gregs[X64_REG_TRAPNO] =
+            SIGNAL_X64_TRAPNO_PAGE_FAULT;
+        frame_ucontext.uc_mcontext.gregs[X64_REG_CR2] =
+            (uint64_t)info->_sifields._sigfault._addr;
+    }
+    frame_ucontext.uc_mcontext.fpregs =
+        (fpu_context_t *)(ucontext_addr + offsetof(ucontext_t, __fpregs_mem));
 
     void *frame_restorer = (void *)action->sa_restorer;
-    if (copy_to_user((void *)fp_addr, task->arch_context->fpu_ctx,
-                     sizeof(fpu_context_t)) ||
-        copy_to_user((void *)siginfo_addr, info, sizeof(*info)) ||
+    if (copy_to_user((void *)siginfo_addr, info, sizeof(*info)) ||
         copy_to_user((void *)ucontext_addr, &frame_ucontext,
                      sizeof(frame_ucontext)) ||
         copy_to_user((void *)frame_rsp, &frame_restorer,
@@ -562,8 +601,6 @@ static bool signal_x64_setup_frame(task_t *task, struct pt_regs *regs, int sig,
     regs->rflags = saved.rflags | (1ULL << 9);
     regs->rsp = frame_rsp;
     regs->rbp = frame_rsp;
-    regs->rcx = regs->rip;
-    regs->r11 = regs->rflags;
 
     return true;
 }
@@ -686,19 +723,27 @@ uint64_t sys_sigprocmask(int how, const sigset_t *nset_u, sigset_t *oset_u,
     return ret;
 }
 
-uint64_t sys_sigaction(int sig, const sigaction_t *action,
-                       sigaction_t *oldaction) {
+uint64_t sys_sigaction(int sig, const void *action, void *oldaction,
+                       size_t sigsetsize) {
     if (!signal_sig_in_range(sig) || sig == SIGKILL || sig == SIGSTOP) {
+        return (uint64_t)-EINVAL;
+    }
+    if (!signal_sigset_size_valid(sigsetsize)) {
         return (uint64_t)-EINVAL;
     }
 
     sigaction_t new_action;
     bool has_new = action != NULL;
     if (has_new) {
-        if (copy_from_user(&new_action, action, sizeof(new_action))) {
+        signal_x64_kernel_sigaction_t user_action;
+        if (copy_from_user(&user_action, action, sizeof(user_action))) {
             return (uint64_t)-EFAULT;
         }
-        new_action.sa_mask = sigset_user_to_kernel(new_action.sa_mask);
+        memset(&new_action, 0, sizeof(new_action));
+        new_action.sa_handler = user_action.handler;
+        new_action.sa_flags = (int)user_action.flags;
+        new_action.sa_restorer = user_action.restorer;
+        new_action.sa_mask = sigset_user_to_kernel(user_action.mask);
 #if defined(__x86_64__)
         if (new_action.sa_handler != SIG_DFL &&
             new_action.sa_handler != SIG_IGN &&
@@ -716,15 +761,23 @@ uint64_t sys_sigaction(int sig, const sigaction_t *action,
     sigaction_t *slot = &current_task->signal->sighand->actions[sig];
     if (has_old) {
         old_local = *slot;
-        old_local.sa_mask = sigset_kernel_to_user(old_local.sa_mask);
     }
     if (has_new) {
         *slot = new_action;
     }
     spin_unlock(&current_task->signal->sighand->siglock);
 
-    if (has_old && copy_to_user(oldaction, &old_local, sizeof(old_local))) {
-        return (uint64_t)-EFAULT;
+    if (has_old) {
+        signal_x64_kernel_sigaction_t user_old = {
+            .handler = old_local.sa_handler,
+            .flags = (unsigned long)old_local.sa_flags,
+            .restorer = old_local.sa_restorer,
+            .mask = sigset_kernel_to_user(old_local.sa_mask),
+        };
+
+        if (copy_to_user(oldaction, &user_old, sizeof(user_old))) {
+            return (uint64_t)-EFAULT;
+        }
     }
 
     return 0;
@@ -753,6 +806,7 @@ uint64_t sys_sigreturn(struct pt_regs *regs) {
         task_exit(128 + SIGSEGV);
         return 0;
     }
+    signal_x64_restore_live_fpu(self);
 
     stack_t restore_altstack = frame_ucontext.uc_stack;
     restore_altstack.ss_flags &= ~SS_ONSTACK;
@@ -764,7 +818,8 @@ uint64_t sys_sigreturn(struct pt_regs *regs) {
     signal_x64_restore_ptregs(regs, &frame_ucontext);
 
     spin_lock(&self->signal->sighand->siglock);
-    self->signal->blocked = sigset_user_to_kernel(frame_ucontext.uc_sigmask);
+    self->signal->blocked =
+        sigset_user_to_kernel(frame_ucontext.uc_sigmask.__bits[0]);
     signal_altstack_store(&self->signal->altstack, &restore_altstack);
     spin_unlock(&self->signal->sighand->siglock);
 

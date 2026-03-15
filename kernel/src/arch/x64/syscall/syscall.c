@@ -58,6 +58,7 @@ static inline uint64_t syscall_account_running_ns(task_t *task,
 void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
     regs->rip = regs->rcx;
     regs->rflags = regs->r11;
+    regs->rflags |= (1 << 9);
     regs->cs = SELECTOR_USER_CS;
     regs->ss = SELECTOR_USER_DS;
     regs->rsp = user_rsp;
@@ -177,5 +178,6 @@ done:
 
     task_signal(regs);
 
-    regs->r11 |= (1 << 9);
+    regs->rcx = regs->rip;
+    regs->r11 = regs->rflags;
 }

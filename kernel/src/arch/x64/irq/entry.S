@@ -119,6 +119,9 @@ Err_Code:
 
     callq *%rdx //调用服务程序 带*号表示调用的是绝对地址
 
+    movq %rsp, %rdi
+    call task_signal
+
     jmp ret_from_exception
 
 // 0 #DE 除法错误

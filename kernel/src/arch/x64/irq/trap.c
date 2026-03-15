@@ -11,6 +11,8 @@
 #define X64_PFEC_WRITE (1UL << 1)
 #define X64_PFEC_USER (1UL << 2)
 #define X64_PFEC_INSTR (1UL << 4)
+#define SEGV_MAPERR 1
+#define SEGV_ACCERR 2
 
 static uint64_t x64_error_code_to_fault_flags(uint64_t error_code) {
     uint64_t fault_flags = 0;
@@ -74,6 +76,24 @@ static bool x64_fault_access_allowed_now(task_t *task, uint64_t vaddr,
     }
 
     spin_unlock(&task->mm->lock);
+
+    return true;
+}
+
+static bool x64_deliver_user_sigsegv(struct pt_regs *regs, uint64_t fault_addr,
+                                     uint64_t error_code) {
+    if (!regs || (regs->cs & 3) != 3 || !current_task)
+        return false;
+
+    siginfo_t info;
+    memset(&info, 0, sizeof(info));
+    info.si_signo = SIGSEGV;
+    info.si_code = (error_code & X64_PFEC_PRESENT) ? SEGV_ACCERR : SEGV_MAPERR;
+    info._sifields._sigfault._addr = (void *)fault_addr;
+
+    task_commit_signal(current_task, SIGSEGV, &info);
+
+    task_signal(regs);
 
     return true;
 }
@@ -446,13 +466,19 @@ void do_page_fault(struct pt_regs *regs, uint64_t error_code) {
     uint64_t cr2 = 0;
     asm volatile("movq %%cr2, %0" : "=r"(cr2)::"memory");
 
-    if (handle_page_fault_flags(current_task, cr2,
-                                x64_error_code_to_fault_flags(error_code)) ==
-        PF_RES_OK)
+    task_t *self = current_task;
+
+    if (handle_page_fault_flags(
+            self, cr2, x64_error_code_to_fault_flags(error_code)) == PF_RES_OK)
         return;
 
-    if (x64_fault_access_allowed_now(current_task, cr2, error_code)) {
+    if (x64_fault_access_allowed_now(self, cr2, error_code)) {
         arch_flush_tlb(cr2);
+        return;
+    }
+
+    if (x64_deliver_user_sigsegv(regs, cr2, error_code)) {
+        can_schedule = true;
         return;
     }
 

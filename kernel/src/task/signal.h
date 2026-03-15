@@ -71,8 +71,8 @@ uint64_t sys_ssetmask(int how, const sigset_t *nset, sigset_t *oset,
                       size_t sigsetsize);
 uint64_t sys_sigprocmask(int how, const sigset_t *nset_u, sigset_t *oset_u,
                          size_t sigsetsize);
-uint64_t sys_sigaction(int sig, const sigaction_t *action,
-                       sigaction_t *oldaction);
+uint64_t sys_sigaction(int sig, const void *action, void *oldaction,
+                       size_t sigsetsize);
 struct pt_regs;
 uint64_t sys_sigreturn(struct pt_regs *regs);
 uint64_t sys_sigaltstack(const stack_t *uss, stack_t *uoss);

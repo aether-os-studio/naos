@@ -31,13 +31,18 @@ typedef struct {
     uint64_t __reserved1[8];
 } mcontext_t;
 
+typedef struct {
+    uint64_t __bits[16];
+} user_sigset_t;
+
 typedef struct __ucontext {
     uint64_t uc_flags;
     struct __ucontext *uc_link;
     stack_t uc_stack;
     mcontext_t uc_mcontext;
-    uint64_t uc_sigmask;
+    user_sigset_t uc_sigmask;
     uint64_t __fpregs_mem[64];
+    uint64_t __ssp[4];
 } ucontext_t;
 
 typedef struct arch_context {
