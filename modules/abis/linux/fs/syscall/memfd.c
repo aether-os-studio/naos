@@ -161,20 +161,16 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags) {
         if (fd < 0)
             break;
 
-        fd_t *new_fd = malloc(sizeof(fd_t));
+        fd_t *new_fd = fd_create(node, O_RDWR, !!(flags & MFD_CLOEXEC));
         if (!new_fd) {
             ret = -ENOMEM;
             fd = -1;
             break;
         }
 
-        memset(new_fd, 0, sizeof(fd_t));
-        new_fd->node = node;
-        new_fd->offset = 0;
-        new_fd->flags = O_RDWR | ((flags & MFD_CLOEXEC) ? O_CLOEXEC : 0);
-        new_fd->close_on_exec = !!(flags & MFD_CLOEXEC);
         current_task->fd_info->fds[fd] = new_fd;
         procfs_on_open_file(current_task, fd);
+
         ret = 0;
     });
 

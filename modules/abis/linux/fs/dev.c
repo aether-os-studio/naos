@@ -140,7 +140,8 @@ bool devtmpfs_close(vfs_node_t node) {
 
 ssize_t devtmpfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
-        return device_read(fd->node->rdev, addr, offset, size, fd->flags);
+        return device_read(fd->node->rdev, addr, offset, size,
+                           fd_get_flags(fd));
     }
 
     devtmpfs_node_t *handle = fd->node->handle;
@@ -154,7 +155,7 @@ ssize_t devtmpfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
 ssize_t devtmpfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
         return device_write(fd->node->rdev, (void *)addr, offset, size,
-                            fd->flags);
+                            fd_get_flags(fd));
     }
 
     devtmpfs_node_t *handle = fd->node->handle;

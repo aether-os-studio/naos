@@ -2367,7 +2367,7 @@ ssize_t ext_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
 
     if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
         return device_write(fd->node->rdev, (void *)addr, offset, size,
-                            fd->flags);
+                            fd_get_flags(fd));
     }
     if (!(fd->node->type & file_none))
         return -EINVAL;
@@ -2409,7 +2409,8 @@ ssize_t ext_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         return -EBADF;
 
     if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
-        return device_read(fd->node->rdev, addr, offset, size, fd->flags);
+        return device_read(fd->node->rdev, addr, offset, size,
+                           fd_get_flags(fd));
     }
     if (!(fd->node->type & file_none))
         return -EINVAL;

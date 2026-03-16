@@ -39,19 +39,17 @@ uint64_t sys_inotify_init1(uint64_t flags) {
         if (fd < 0)
             break;
 
-        fd_t *new_fd = malloc(sizeof(fd_t));
+        fd_t *new_fd = fd_create(node, O_RDONLY | (flags & O_NONBLOCK),
+                                 !!(flags & O_CLOEXEC));
         if (!new_fd) {
             ret = -ENOMEM;
             fd = -1;
             break;
         }
 
-        memset(new_fd, 0, sizeof(fd_t));
-        new_fd->node = node;
-        new_fd->flags = O_RDONLY | flags;
-        new_fd->close_on_exec = !!(flags & O_CLOEXEC);
         current_task->fd_info->fds[fd] = new_fd;
         procfs_on_open_file(current_task, fd);
+
         ret = 0;
     });
 

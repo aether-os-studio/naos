@@ -112,10 +112,13 @@ static ssize_t page_cache_raw_read(vfs_node_t node, void *addr, size_t offset,
     if (!ops || !ops->read)
         return -ENOSYS;
 
-    fd_t fd = {
-        .node = node,
+    fd_shared_t shared = {
         .flags = 0,
         .offset = offset,
+    };
+    fd_t fd = {
+        .node = node,
+        .shared = &shared,
         .close_on_exec = false,
     };
 

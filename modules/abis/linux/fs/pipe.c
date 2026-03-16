@@ -49,7 +49,7 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
 
         spin_unlock(&pipe->lock);
 
-        if (fd->flags & O_NONBLOCK) {
+        if (fd_get_flags(fd) & O_NONBLOCK) {
             return -EWOULDBLOCK;
         }
 
@@ -86,7 +86,7 @@ ssize_t pipe_write_inner(fd_t *fd, void *file, const void *addr, size_t size) {
 
         spin_unlock(&pipe->lock);
 
-        if (fd->flags & O_NONBLOCK)
+        if (fd_get_flags(fd) & O_NONBLOCK)
             return -EWOULDBLOCK;
 
         vfs_poll_wait_t wait;
@@ -302,26 +302,19 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
         if (i1 < 0 || i2 < 0)
             break;
 
-        fd_t *fd_read = malloc(sizeof(fd_t));
-        fd_t *fd_write = malloc(sizeof(fd_t));
+        fd_t *fd_read = fd_create(node_input, O_RDONLY | (flags & O_NONBLOCK),
+                                  !!(flags & O_CLOEXEC));
+        fd_t *fd_write = fd_create(node_output, O_WRONLY | (flags & O_NONBLOCK),
+                                   !!(flags & O_CLOEXEC));
         if (!fd_read || !fd_write) {
-            free(fd_read);
-            free(fd_write);
+            if (fd_read)
+                fd_destroy(fd_read);
+            if (fd_write)
+                fd_destroy(fd_write);
             ret = -ENOMEM;
             i1 = i2 = -1;
             break;
         }
-
-        memset(fd_read, 0, sizeof(fd_t));
-        memset(fd_write, 0, sizeof(fd_t));
-        fd_read->node = node_input;
-        fd_read->offset = 0;
-        fd_read->flags = O_RDONLY | flags;
-        fd_read->close_on_exec = !!(flags & O_CLOEXEC);
-        fd_write->node = node_output;
-        fd_write->offset = 0;
-        fd_write->flags = O_WRONLY | flags;
-        fd_write->close_on_exec = !!(flags & O_CLOEXEC);
 
         current_task->fd_info->fds[i1] = fd_read;
         current_task->fd_info->fds[i2] = fd_write;

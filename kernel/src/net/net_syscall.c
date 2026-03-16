@@ -447,8 +447,7 @@ uint64_t sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen,
     if (!node)
         return -EBADF;
     if (!is_socket(node)) {
-        vfs_close(node->node);
-        free(node);
+        fd_release(node);
         return -ENOTSOCK;
     }
 
@@ -461,20 +460,17 @@ uint64_t sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen,
 
         if (addr) {
             if (!addrlen) {
-                vfs_close(node->node);
-                free(node);
+                fd_release(node);
                 return -EFAULT;
             }
             if (copy_from_user(&kaddrlen, addrlen, sizeof(kaddrlen))) {
-                vfs_close(node->node);
-                free(node);
+                fd_release(node);
                 return -EFAULT;
             }
             if (kaddrlen) {
                 kaddr = calloc(1, kaddrlen);
                 if (!kaddr) {
-                    vfs_close(node->node);
-                    free(node);
+                    fd_release(node);
                     return -ENOMEM;
                 }
             }
@@ -494,8 +490,7 @@ uint64_t sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen,
         free(kaddr);
     }
 
-    vfs_close(node->node);
-    free(node);
+    fd_release(node);
     return ret;
 }
 

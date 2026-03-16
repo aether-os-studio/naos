@@ -173,17 +173,12 @@ size_t epoll_create1(int flags) {
         if (i < 0)
             break;
 
-        fd_t *new_fd = malloc(sizeof(fd_t));
+        fd_t *new_fd = fd_create(node, O_RDONLY | (flags & O_NONBLOCK),
+                                 !!(flags & O_CLOEXEC));
         if (!new_fd) {
             ret = -ENOMEM;
             break;
         }
-
-        memset(new_fd, 0, sizeof(fd_t));
-        new_fd->node = node;
-        new_fd->offset = 0;
-        new_fd->flags = O_RDONLY | (flags & ~(uint64_t)O_CLOEXEC);
-        new_fd->close_on_exec = !!(flags & O_CLOEXEC);
         current_task->fd_info->fds[i] = new_fd;
         system_abi->on_open_file(current_task, i);
         ret = i;
@@ -216,6 +211,8 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
     uint64_t timeout_ns = timeout > 0 ? (uint64_t)timeout : 0;
 
     while (true) {
+        arch_disable_interrupt();
+
         mutex_lock(&epoll->lock);
         ready = epoll_collect_ready_locked(epoll, events, maxevents);
         if (ready > 0) {

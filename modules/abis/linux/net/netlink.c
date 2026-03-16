@@ -649,8 +649,9 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
         return -EINVAL;
     }
 
-    bool noblock = !!(flags & MSG_DONTWAIT) ||
-                   !!(current_task->fd_info->fds[fd]->flags & O_NONBLOCK);
+    bool noblock =
+        !!(flags & MSG_DONTWAIT) ||
+        !!(fd_get_flags(current_task->fd_info->fds[fd]) & O_NONBLOCK);
 
     // Check if there's a complete message available
     bool has_msg = netlink_buffer_has_msg(nl_sk);
@@ -893,8 +894,9 @@ size_t netlink_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
         return -EINVAL;
     }
 
-    bool noblock = !!(flags & MSG_DONTWAIT) ||
-                   !!(current_task->fd_info->fds[fd]->flags & O_NONBLOCK);
+    bool noblock =
+        !!(flags & MSG_DONTWAIT) ||
+        !!(fd_get_flags(current_task->fd_info->fds[fd]) & O_NONBLOCK);
 
     bool peek = !!(flags & MSG_PEEK);
 
@@ -1057,18 +1059,10 @@ int netlink_socket(int domain, int type, int protocol) {
         if (i == MAX_FD_NUM)
             break;
 
-        fd_t *new_fd = malloc(sizeof(fd_t));
+        fd_t *new_fd = fd_create(socknode, flags, !!(type & O_CLOEXEC));
         if (!new_fd) {
             ret = -ENOMEM;
             break;
-        }
-
-        memset(new_fd, 0, sizeof(fd_t));
-        new_fd->node = socknode;
-        new_fd->offset = 0;
-        new_fd->flags = flags;
-        if (type & O_CLOEXEC) {
-            new_fd->close_on_exec = true;
         }
         current_task->fd_info->fds[i] = new_fd;
         procfs_on_open_file(current_task, i);
@@ -1144,7 +1138,7 @@ static ssize_t netlink_read_op(fd_t *fd, void *buf, size_t offset,
     if (!nl_sk || !nl_sk->buffer)
         return -EINVAL;
 
-    bool noblock = !!(fd->flags & O_NONBLOCK);
+    bool noblock = !!(fd_get_flags(fd) & O_NONBLOCK);
     bool has_msg = netlink_buffer_has_msg(nl_sk);
     if (!has_msg && noblock)
         return -EAGAIN;

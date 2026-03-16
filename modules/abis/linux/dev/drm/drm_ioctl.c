@@ -686,14 +686,8 @@ static ssize_t drm_syncfd_create_fd(drm_syncfd_ctx_t *ctx, uint32_t flags) {
         return -EMFILE;
     }
 
-    fd_t *fd_obj = calloc(1, sizeof(*fd_obj));
-    if (!fd_obj) {
-        return -ENOMEM;
-    }
-
     vfs_node_t node = vfs_node_alloc(NULL, NULL);
     if (!node) {
-        free(fd_obj);
         return -ENOMEM;
     }
 
@@ -710,10 +704,10 @@ static ssize_t drm_syncfd_create_fd(drm_syncfd_ctx_t *ctx, uint32_t flags) {
     }
     spin_unlock(&drm_syncfd_contexts_lock);
 
-    fd_obj->node = node;
-    fd_obj->offset = 0;
-    fd_obj->flags = O_RDWR | flags;
-    fd_obj->close_on_exec = !!(flags & DRM_CLOEXEC);
+    fd_t *fd_obj = fd_create(node, O_RDWR, !!(flags & DRM_CLOEXEC));
+    if (!fd_obj) {
+        return -ENOMEM;
+    }
 
     bool installed = false;
     with_fd_info_lock(current_task->fd_info, {
@@ -725,7 +719,7 @@ static ssize_t drm_syncfd_create_fd(drm_syncfd_ctx_t *ctx, uint32_t flags) {
     });
 
     if (!installed) {
-        free(fd_obj);
+        fd_destroy(fd_obj);
         vfs_close(node);
         return -EMFILE;
     }
@@ -839,16 +833,8 @@ static ssize_t drm_primefd_create(drm_device_t *dev, uint32_t handle,
     ctx->phys = phys;
     ctx->size = size;
 
-    fd_t *fd_obj = malloc(sizeof(fd_t));
-    if (!fd_obj) {
-        free(ctx);
-        return -ENOMEM;
-    }
-    memset(fd_obj, 0, sizeof(*fd_obj));
-
     vfs_node_t node = vfs_node_alloc(NULL, NULL);
     if (!node) {
-        free(fd_obj);
         free(ctx);
         return -ENOMEM;
     }
@@ -860,17 +846,17 @@ static ssize_t drm_primefd_create(drm_device_t *dev, uint32_t handle,
     node->size = size;
     ctx->node = node;
 
-    fd_obj->node = node;
-    fd_obj->offset = 0;
-    fd_obj->flags = O_RDWR | flags;
-    fd_obj->close_on_exec = !!(flags & DRM_CLOEXEC);
+    fd_t *fd_obj = fd_create(node, O_RDWR, !!(flags & DRM_CLOEXEC));
+    if (!fd_obj) {
+        return -ENOMEM;
+    }
 
     with_fd_info_lock(current_task->fd_info, {
         if (!current_task->fd_info->fds[fd]) {
             current_task->fd_info->fds[fd] = fd_obj;
             procfs_on_open_file(current_task, fd);
         } else {
-            free(fd_obj);
+            fd_release(fd_obj);
             fd_obj = NULL;
         }
     });

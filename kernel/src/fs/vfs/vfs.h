@@ -72,12 +72,47 @@ typedef struct vfs_node *vfs_node_t;
 struct task;
 typedef struct task task_t;
 
-typedef struct fd {
-    vfs_node_t node;
+typedef struct fd_shared {
     uint64_t offset;
     uint64_t flags;
+    int ref_count;
+} fd_shared_t;
+
+typedef struct fd {
+    vfs_node_t node;
+    fd_shared_t *shared;
     bool close_on_exec;
 } fd_t;
+
+static inline uint64_t fd_get_offset(const fd_t *fd) {
+    if (!fd || !fd->shared)
+        return 0;
+    return __atomic_load_n(&fd->shared->offset, __ATOMIC_ACQUIRE);
+}
+
+static inline void fd_set_offset(fd_t *fd, uint64_t offset) {
+    if (!fd || !fd->shared)
+        return;
+    __atomic_store_n(&fd->shared->offset, offset, __ATOMIC_RELEASE);
+}
+
+static inline uint64_t fd_add_offset(fd_t *fd, int64_t delta) {
+    if (!fd || !fd->shared)
+        return 0;
+    return __atomic_add_fetch(&fd->shared->offset, delta, __ATOMIC_ACQ_REL);
+}
+
+static inline uint64_t fd_get_flags(const fd_t *fd) {
+    if (!fd || !fd->shared)
+        return 0;
+    return __atomic_load_n(&fd->shared->flags, __ATOMIC_ACQUIRE);
+}
+
+static inline void fd_set_flags(fd_t *fd, uint64_t flags) {
+    if (!fd || !fd->shared)
+        return;
+    __atomic_store_n(&fd->shared->flags, flags, __ATOMIC_RELEASE);
+}
 
 typedef struct vfs_poll_wait {
     struct llist_header node;
@@ -640,6 +675,9 @@ char *vfs_get_fullpath(vfs_node_t node);
  */
 int vfs_poll(vfs_node_t node, size_t event);
 
+fd_t *fd_create(vfs_node_t node, uint64_t flags, bool close_on_exec);
+void fd_destroy(fd_t *fd);
+void fd_release(fd_t *fd);
 fd_t *vfs_dup(fd_t *fd);
 
 void *vfs_map(fd_t *fd, uint64_t addr, uint64_t len, uint64_t prot,

@@ -15,7 +15,7 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags) {
         return (uint64_t)-ENOMEM;
 
     efd->count = initial_val;
-    efd->flags = flags;
+    efd->flags = flags & EFD_SEMAPHORE;
 
     // 创建VFS节点
     vfs_node_t node = vfs_node_alloc(NULL, NULL);
@@ -40,20 +40,17 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags) {
         if (fd < 0)
             break;
 
-        fd_t *new_fd = malloc(sizeof(fd_t));
+        fd_t *new_fd = fd_create(node, O_RDWR | (flags & EFD_NONBLOCK),
+                                 !!(flags & EFD_CLOEXEC));
         if (!new_fd) {
             ret = -ENOMEM;
             fd = -1;
             break;
         }
 
-        memset(new_fd, 0, sizeof(fd_t));
-        new_fd->node = node;
-        new_fd->offset = 0;
-        new_fd->flags = O_RDWR | flags;
-        new_fd->close_on_exec = !!(flags & EFD_CLOEXEC);
         current_task->fd_info->fds[fd] = new_fd;
         procfs_on_open_file(current_task, fd);
+
         ret = 0;
     });
 
@@ -88,7 +85,7 @@ static ssize_t eventfd_read(fd_t *fd, void *buf, size_t offset, size_t len) {
             continue;
         }
 
-        if (efd->flags & EFD_NONBLOCK)
+        if (fd_get_flags(fd) & O_NONBLOCK)
             return -EAGAIN;
 
         vfs_poll_wait_t wait;

@@ -130,7 +130,7 @@ ssize_t notifyfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         if (ret != 0)
             return ret;
 
-        if (fd->flags & O_NONBLOCK)
+        if (fd_get_flags(fd) & O_NONBLOCK)
             return -EWOULDBLOCK;
 
         vfs_poll_wait_t wait;

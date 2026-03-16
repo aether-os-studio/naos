@@ -108,19 +108,16 @@ found:;
         if (fd < 0)
             break;
 
-        fd_t *new_fd = malloc(sizeof(fd_t));
+        fd_t *new_fd = fd_create(node, 0, !!(flags & O_CLOEXEC));
         if (!new_fd) {
             ret = -ENOMEM;
             fd = -1;
             break;
         }
 
-        memset(new_fd, 0, sizeof(fd_t));
-        new_fd->node = node;
-        new_fd->offset = 0;
-        new_fd->flags = flags;
         current_task->fd_info->fds[fd] = new_fd;
         procfs_on_open_file(current_task, fd);
+
         ret = 0;
     });
 
@@ -588,17 +585,13 @@ uint64_t sys_fsmount(int fd, uint32_t flags, uint32_t attr_flags) {
         if (mnt_fd < 0)
             break;
 
-        fd_t *new_fd = malloc(sizeof(fd_t));
+        fd_t *new_fd = fd_create(mnt_node, 0, !!(flags & FSMOUNT_CLOEXEC));
         if (!new_fd) {
             ret = -ENOMEM;
             mnt_fd = -1;
             break;
         }
 
-        memset(new_fd, 0, sizeof(fd_t));
-        new_fd->node = mnt_node;
-        new_fd->offset = 0;
-        new_fd->close_on_exec = !!(flags & FSMOUNT_CLOEXEC);
         current_task->fd_info->fds[mnt_fd] = new_fd;
         procfs_on_open_file(current_task, mnt_fd);
         ret = 0;

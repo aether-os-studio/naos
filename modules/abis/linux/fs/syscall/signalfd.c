@@ -24,7 +24,7 @@ static ssize_t signalfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     struct signalfd_ctx *ctx = data;
 
     while (ctx->queue_head == ctx->queue_tail) {
-        if (fd->flags & O_NONBLOCK)
+        if (fd_get_flags(fd) & O_NONBLOCK)
             return -EWOULDBLOCK;
         vfs_poll_wait_t wait;
         vfs_poll_wait_init(&wait, current_task, EPOLLIN | EPOLLERR | EPOLLHUP);
@@ -117,17 +117,14 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask,
         if (fd < 0)
             break;
 
-        fd_t *new_fd = malloc(sizeof(fd_t));
+        fd_t *new_fd = fd_create(node, O_RDONLY | (flags & O_NONBLOCK),
+                                 !!(flags & O_CLOEXEC));
         if (!new_fd) {
             ret = -ENOMEM;
             fd = -1;
             break;
         }
 
-        memset(new_fd, 0, sizeof(fd_t));
-        new_fd->node = node;
-        new_fd->offset = 0;
-        new_fd->flags = O_RDONLY | flags;
         current_task->fd_info->fds[fd] = new_fd;
         procfs_on_open_file(current_task, fd);
         ret = 0;

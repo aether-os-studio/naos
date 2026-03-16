@@ -1519,15 +1519,26 @@ void vfs_delete_mount_point_by_dir(vfs_node_t dir) {
 }
 
 ssize_t vfs_read(vfs_node_t file, void *addr, size_t offset, size_t size) {
-    fd_t fd;
-    fd.node = file;
-    fd.flags = 0;
-    fd.offset = offset;
+    fd_shared_t shared = {
+        .offset = offset,
+        .flags = O_RDONLY,
+        .ref_count = 1,
+    };
+    fd_t fd = {
+        .node = file,
+        .shared = &shared,
+        .close_on_exec = false,
+    };
     return vfs_read_fd(&fd, addr, offset, size);
 }
 
 ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size) {
     do_update(fd->node);
+    uint64_t file_flags = fd_get_flags(fd);
+    if (file_flags & O_PATH)
+        return -EBADF;
+    if ((file_flags & O_ACCMODE_FLAGS) == O_WRONLY)
+        return -EBADF;
     if (fd->node->type & file_dir)
         return -EISDIR;
 
@@ -1563,15 +1574,26 @@ int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize) {
 
 ssize_t vfs_write(vfs_node_t file, const void *addr, size_t offset,
                   size_t size) {
-    fd_t fd;
-    fd.node = file;
-    fd.flags = 0;
-    fd.offset = offset;
+    fd_shared_t shared = {
+        .offset = offset,
+        .flags = O_WRONLY,
+        .ref_count = 1,
+    };
+    fd_t fd = {
+        .node = file,
+        .shared = &shared,
+        .close_on_exec = false,
+    };
     return vfs_write_fd(&fd, addr, offset, size);
 }
 
 ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size) {
     do_update(fd->node);
+    uint64_t file_flags = fd_get_flags(fd);
+    if (file_flags & O_PATH)
+        return -EBADF;
+    if ((file_flags & O_ACCMODE_FLAGS) == O_RDONLY)
+        return -EBADF;
     if (fd->node->type & file_dir)
         return -EISDIR;
 
@@ -1860,14 +1882,67 @@ int vfs_rename(vfs_node_t node, const char *new) {
     return ret;
 }
 
+fd_t *fd_create(vfs_node_t node, uint64_t flags, bool close_on_exec) {
+    fd_t *fd = calloc(1, sizeof(fd_t));
+    if (!fd)
+        return NULL;
+
+    fd_shared_t *shared = calloc(1, sizeof(fd_shared_t));
+    if (!shared) {
+        free(fd);
+        return NULL;
+    }
+
+    shared->flags = flags;
+    shared->ref_count = 1;
+    fd->node = node;
+    fd->shared = shared;
+    fd->close_on_exec = close_on_exec;
+    return fd;
+}
+
+void fd_release(fd_t *fd) {
+    if (!fd)
+        return;
+
+    fd_shared_t *shared = fd->shared;
+    if (shared &&
+        __atomic_sub_fetch(&shared->ref_count, 1, __ATOMIC_ACQ_REL) == 0) {
+        free(shared);
+    }
+
+    if (fd->node)
+        vfs_close(fd->node);
+
+    free(fd);
+}
+
+void fd_destroy(fd_t *fd) {
+    if (!fd)
+        return;
+
+    fd_shared_t *shared = fd->shared;
+    if (shared &&
+        __atomic_sub_fetch(&shared->ref_count, 1, __ATOMIC_ACQ_REL) == 0) {
+        free(shared);
+    }
+
+    free(fd);
+}
+
 fd_t *vfs_dup(fd_t *fd) {
-    fd_t *new_fd = malloc(sizeof(fd_t));
-    memset(new_fd, 0, sizeof(fd_t));
+    if (!fd || !fd->shared)
+        return NULL;
+
+    fd_t *new_fd = calloc(1, sizeof(fd_t));
+    if (!new_fd)
+        return NULL;
+
     vfs_node_t node = fd->node;
     vfs_node_ref_get(node);
+    __atomic_add_fetch(&fd->shared->ref_count, 1, __ATOMIC_ACQ_REL);
     new_fd->node = node;
-    new_fd->offset = fd->offset;
-    new_fd->flags = fd->flags;
+    new_fd->shared = fd->shared;
     new_fd->close_on_exec = fd->close_on_exec;
 
     return new_fd;

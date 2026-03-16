@@ -11,6 +11,10 @@ static uint64_t do_sys_open_tmpfile(const char *dir_path, uint64_t flags,
                                     uint64_t mode);
 static volatile uint64_t tmpfile_seq = 1;
 
+static uint64_t fd_open_file_flags(uint64_t open_flags) {
+    return (open_flags & O_ACCMODE_FLAGS) | (open_flags & O_STATUS_FLAGS);
+}
+
 static bool file_lock_ranges_overlap(uint64_t start1, uint64_t end1,
                                      uint64_t start2, uint64_t end2) {
     if (end1 != UINT64_MAX && end1 <= start2)
@@ -59,7 +63,7 @@ static int file_lock_normalize(fd_t *fd, const flock_t *lock,
         base = 0;
         break;
     case SEEK_CUR:
-        base = (int64_t)fd->offset;
+        base = (int64_t)fd_get_offset(fd);
         break;
     case SEEK_END:
         base = (int64_t)fd->node->size;
@@ -404,17 +408,12 @@ have_node:
         if (i == MAX_FD_NUM)
             break;
 
-        fd_t *new_fd = malloc(sizeof(fd_t));
+        fd_t *new_fd =
+            fd_create(node, fd_open_file_flags(flags), !!(flags & O_CLOEXEC));
         if (!new_fd) {
             ret = (uint64_t)-ENOMEM;
             break;
         }
-
-        memset(new_fd, 0, sizeof(fd_t));
-        new_fd->node = node;
-        new_fd->offset = 0;
-        new_fd->flags = flags & ~O_CLOEXEC;
-        new_fd->close_on_exec = !!(flags & O_CLOEXEC);
         self->fd_info->fds[i] = new_fd;
         vfs_node_ref_get(node);
         system_abi->on_open_file(self, i);
@@ -494,10 +493,11 @@ uint64_t sys_open(const char *path, uint64_t flags, uint64_t mode) {
 
 uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags,
                     uint64_t mode) {
-    if (!name || check_user_overflow((uint64_t)name, strlen(name))) {
+    char name_k[512];
+    if (!name || copy_from_user_str(name_k, name, sizeof(name_k))) {
         return (uint64_t)-EFAULT;
     }
-    char *path = at_resolve_pathname(dirfd, (char *)name);
+    char *path = at_resolve_pathname(dirfd, name_k);
     if (!path)
         return (uint64_t)-EINVAL;
 
@@ -600,16 +600,12 @@ uint64_t sys_open_by_handle_at(int mountdirfd, struct file_handle *handle,
         if (i == MAX_FD_NUM)
             break;
 
-        fd_t *new_fd = malloc(sizeof(fd_t));
+        fd_t *new_fd =
+            fd_create(node, fd_open_file_flags(flags), !!(flags & O_CLOEXEC));
         if (!new_fd) {
             ret = (uint64_t)-ENOMEM;
             break;
         }
-
-        memset(new_fd, 0, sizeof(fd_t));
-        new_fd->node = node;
-        new_fd->offset = 0;
-        new_fd->flags = flags;
         self->fd_info->fds[i] = new_fd;
         vfs_node_ref_get(node);
         system_abi->on_open_file(self, i);
@@ -647,7 +643,6 @@ uint64_t sys_close(uint64_t fd) {
         if (!entry)
             break;
 
-        entry->offset = 0;
         file_lock_release_pid(entry->node, self->pid);
         if (entry->node->flock_lock.l_pid == self->pid) {
             entry->node->flock_lock.l_type = F_UNLCK;
@@ -661,8 +656,7 @@ uint64_t sys_close(uint64_t fd) {
     if (ret)
         return ret;
 
-    vfs_close(entry->node);
-    free(entry);
+    fd_release(entry);
     system_abi->on_close_file(self, fd);
     return 0;
 }
@@ -730,7 +724,6 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
                 fd_t *entry = self->fd_info->fds[fd_];
                 if (!entry)
                     continue;
-                entry->flags |= O_CLOEXEC;
                 entry->close_on_exec = true;
             }
         });
@@ -745,7 +738,6 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
             if (!entry)
                 continue;
 
-            entry->offset = 0;
             file_lock_release_pid(entry->node, self->pid);
             if (entry->node->flock_lock.l_pid == self->pid) {
                 entry->node->flock_lock.l_type = F_UNLCK;
@@ -761,8 +753,7 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
         fd_t *entry = to_close[fd_];
         if (!entry)
             continue;
-        vfs_close(entry->node);
-        free(entry);
+        fd_release(entry);
         system_abi->on_close_file(self, fd_);
     }
 
@@ -784,7 +775,7 @@ uint64_t sys_copy_file_range(uint64_t fd_in, int *offset_in_user,
         return (uint64_t)-EBADF;
     }
 
-    if (out_fd->offset >= out_fd->node->size && out_fd->node->size > 0)
+    if (fd_get_offset(out_fd) >= out_fd->node->size && out_fd->node->size > 0)
         return 0;
 
     int offset_in = 0;
@@ -798,8 +789,12 @@ uint64_t sys_copy_file_range(uint64_t fd_in, int *offset_in_user,
             return (uint64_t)-EFAULT;
     }
 
-    uint64_t src_offset = offset_in_user ? offset_in : in_fd->offset;
-    uint64_t dst_offset = offset_out_user ? offset_out : out_fd->offset;
+    uint64_t src_offset =
+        offset_in_user ? (uint64_t)offset_in : fd_get_offset(in_fd);
+    uint64_t dst_offset =
+        offset_out_user ? (uint64_t)offset_out : fd_get_offset(out_fd);
+    if (fd_get_flags(out_fd) & O_APPEND)
+        dst_offset = out_fd->node->size;
 
     uint64_t length = in_fd->node->size > len ? len : in_fd->node->size;
     uint8_t *buffer = (uint8_t *)alloc_frames_bytes(length);
@@ -818,7 +813,10 @@ uint64_t sys_copy_file_range(uint64_t fd_in, int *offset_in_user,
     }
     vfs_update(out_fd->node);
     free_frames_bytes(buffer, length);
-    out_fd->offset += copy_total;
+    if (!offset_in_user && copy_total > 0)
+        fd_add_offset(in_fd, (int64_t)copy_total);
+    if (!offset_out_user && copy_total > 0)
+        fd_add_offset(out_fd, (int64_t)copy_total);
 
     return copy_total;
 }
@@ -845,14 +843,14 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len) {
             break;
         }
 
-        ret = vfs_read_fd(self->fd_info->fds[fd], buf,
-                          self->fd_info->fds[fd]->offset, len);
+        fd_t *file = self->fd_info->fds[fd];
+        ret = vfs_read_fd(file, buf, fd_get_offset(file), len);
 
         if (ret < 0)
             break;
 
         if (ret > 0) {
-            self->fd_info->fds[fd]->offset += ret;
+            fd_add_offset(file, ret);
         }
     });
 
@@ -882,14 +880,17 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
             break;
         }
 
-        ret = vfs_write_fd(self->fd_info->fds[fd], buf,
-                           self->fd_info->fds[fd]->offset, len);
+        fd_t *file = self->fd_info->fds[fd];
+        uint64_t write_offset = fd_get_offset(file);
+        if (fd_get_flags(file) & O_APPEND)
+            write_offset = file->node->size;
+        ret = vfs_write_fd(file, buf, write_offset, len);
 
         if (ret < 0)
             break;
 
         if (ret > 0) {
-            self->fd_info->fds[fd]->offset += ret;
+            fd_add_offset(file, ret);
         }
     });
 
@@ -919,7 +920,7 @@ uint64_t sys_pread64(int fd, void *buf, size_t len, uint64_t offset) {
             break;
         }
 
-        ret = vfs_read(self->fd_info->fds[fd]->node, buf, offset, len);
+        ret = vfs_read_fd(self->fd_info->fds[fd], buf, offset, len);
     });
 
     return (uint64_t)ret;
@@ -948,7 +949,7 @@ uint64_t sys_pwrite64(int fd, const void *buf, size_t len, uint64_t offset) {
             break;
         }
 
-        ret = vfs_write(self->fd_info->fds[fd]->node, buf, offset, len);
+        ret = vfs_write_fd(self->fd_info->fds[fd], buf, offset, len);
     });
 
     return (uint64_t)ret;
@@ -967,7 +968,7 @@ uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
         return -EBADF;
 
     uint64_t current_offset =
-        offset_ptr == NULL ? in_handle->offset : *offset_ptr;
+        offset_ptr == NULL ? fd_get_offset(in_handle) : *offset_ptr;
     size_t total_sent = 0;
 
     size_t remaining = count;
@@ -983,7 +984,7 @@ uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
         size_t bytes_read;
         size_t bytes_written;
         bytes_read =
-            vfs_read(in_handle->node, buffer, current_offset, bytes_to_read);
+            vfs_read_fd(in_handle, buffer, current_offset, bytes_to_read);
         if (bytes_read <= 0) {
             if (bytes_read == (size_t)-1 && total_sent == 0) {
                 free_frames_bytes(buffer, DEFAULT_PAGE_SIZE);
@@ -991,8 +992,11 @@ uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
             }
             break;
         }
+        uint64_t out_offset = fd_get_offset(out_handle);
+        if (fd_get_flags(out_handle) & O_APPEND)
+            out_offset = out_handle->node->size;
         bytes_written =
-            vfs_write(out_handle->node, buffer, out_handle->offset, bytes_read);
+            vfs_write_fd(out_handle, buffer, out_offset, bytes_read);
         if (bytes_written == (size_t)-1) {
             if (total_sent == 0) {
                 free_frames_bytes(buffer, DEFAULT_PAGE_SIZE);
@@ -1004,7 +1008,7 @@ uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
             bytes_read = bytes_written;
         }
         current_offset += bytes_read;
-        out_handle->offset += bytes_read;
+        fd_add_offset(out_handle, bytes_read);
         total_sent += bytes_read;
         remaining -= bytes_read;
     }
@@ -1012,7 +1016,7 @@ uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
     if (offset_ptr != NULL) {
         *offset_ptr = current_offset;
     } else {
-        in_handle->offset = current_offset;
+        fd_set_offset(in_handle, current_offset);
     }
     return total_sent;
 }
@@ -1028,6 +1032,8 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
 
     fd_t *file = self->fd_info->fds[fd];
     vfs_node_t node = file->node;
+    if (fd_get_flags(file) & O_PATH)
+        return (uint64_t)-EBADF;
     if (node->type & (file_socket | file_fifo | file_stream)) {
         return (uint64_t)-ESPIPE;
     }
@@ -1044,10 +1050,10 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
         break;
 
     case SEEK_CUR: {
-        if (file->offset > INT64_MAX)
+        if (fd_get_offset(file) > INT64_MAX)
             return (uint64_t)-EOVERFLOW;
-        ret =
-            lseek_add_offset((int64_t)file->offset, signed_offset, &new_offset);
+        ret = lseek_add_offset((int64_t)fd_get_offset(file), signed_offset,
+                               &new_offset);
         if (ret < 0)
             return (uint64_t)ret;
         break;
@@ -1079,8 +1085,8 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
         return (uint64_t)-EINVAL;
     }
 
-    file->offset = new_offset;
-    return file->offset;
+    fd_set_offset(file, new_offset);
+    return fd_get_offset(file);
 }
 
 uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
@@ -1092,6 +1098,10 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
         return (uint64_t)-EBADF;
     }
 
+    if (fd_get_flags(f) & O_PATH) {
+        return (uint64_t)-EBADF;
+    }
+
     int ret = -ENOSYS;
     switch (cmd) {
     case FIONBIO:
@@ -1100,10 +1110,12 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
         int value = 0;
         if (copy_from_user(&value, (void *)arg, sizeof(value)))
             return -EFAULT;
+        uint64_t file_flags = fd_get_flags(f);
         if (value)
-            f->flags |= O_NONBLOCK;
+            file_flags |= O_NONBLOCK;
         else
-            f->flags &= ~O_NONBLOCK;
+            file_flags &= ~O_NONBLOCK;
+        fd_set_flags(f, file_flags);
         if (f->node->type & file_socket) {
             ret = vfs_ioctl(f->node, cmd, arg);
             if (ret == -ENOTTY || ret == -ENOSYS)
@@ -1113,12 +1125,10 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
         }
         break;
     case FIOCLEX:
-        f->flags |= O_CLOEXEC;
         f->close_on_exec = true;
         ret = 0;
         break;
     case FIONCLEX:
-        f->flags &= ~O_CLOEXEC;
         f->close_on_exec = false;
         ret = 0;
         break;
@@ -1220,7 +1230,7 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size) {
 
     vfs_node_t child_node, tmp;
     llist_for_each(child_node, tmp, &node->childs, node_for_childs) {
-        if (entry_index < filedescriptor->offset) {
+        if (entry_index < fd_get_offset(filedescriptor)) {
             entry_index++;
             continue;
         }
@@ -1260,7 +1270,7 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size) {
 
         bytes_written += reclen;
 
-        filedescriptor->offset = entry_index + 1;
+        fd_set_offset(filedescriptor, entry_index + 1);
 
         entry_index++;
     }
@@ -1317,6 +1327,8 @@ static uint64_t dup_to_exact(task_t *self, uint64_t fd, uint64_t newfd,
         return (uint64_t)-EBADF;
 
     uint64_t ret = newfd;
+    bool replaced_existing = false;
+    bool installed_new = false;
     with_fd_info_lock(self->fd_info, {
         if (!self->fd_info->fds[fd]) {
             ret = (uint64_t)-EBADF;
@@ -1339,20 +1351,25 @@ static uint64_t dup_to_exact(task_t *self, uint64_t fd, uint64_t newfd,
         }
 
         if (self->fd_info->fds[newfd]) {
-            vfs_close(self->fd_info->fds[newfd]->node);
-            free(self->fd_info->fds[newfd]);
+            fd_release(self->fd_info->fds[newfd]);
             self->fd_info->fds[newfd] = NULL;
+            replaced_existing = true;
         }
 
-        newf->flags &= ~(uint64_t)O_CLOEXEC;
         newf->close_on_exec = false;
         if (cloexec) {
-            newf->flags |= O_CLOEXEC;
             newf->close_on_exec = true;
         }
 
         self->fd_info->fds[newfd] = newf;
+        installed_new = true;
     });
+
+    if ((int64_t)ret >= 0 && installed_new) {
+        if (replaced_existing)
+            system_abi->on_close_file(self, newfd);
+        system_abi->on_open_file(self, newfd);
+    }
 
     return ret;
 }
@@ -1395,10 +1412,8 @@ static uint64_t dup_to_free_slot(task_t *self, uint64_t fd, uint64_t start,
             break;
         }
 
-        newf->flags &= ~(uint64_t)O_CLOEXEC;
         newf->close_on_exec = false;
         if (cloexec) {
-            newf->flags |= O_CLOEXEC;
             newf->close_on_exec = true;
         }
 
@@ -1441,11 +1456,6 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         return self->fd_info->fds[fd]->close_on_exec ? FD_CLOEXEC : 0;
     case F_SETFD:
         bool close_on_exec = !!(arg & FD_CLOEXEC);
-        if (close_on_exec) {
-            self->fd_info->fds[fd]->flags |= O_CLOEXEC;
-        } else {
-            self->fd_info->fds[fd]->flags &= ~(uint64_t)O_CLOEXEC;
-        }
         self->fd_info->fds[fd]->close_on_exec = close_on_exec;
         return 0;
     case F_DUPFD_CLOEXEC:
@@ -1453,14 +1463,18 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
     case F_DUPFD:
         return dup_to_free_slot(self, fd, arg, false);
     case F_GETFL:
-        return self->fd_info->fds[fd]->flags & ~(uint64_t)O_CLOEXEC;
+        return fd_get_flags(self->fd_info->fds[fd]);
     case F_SETFL:
-        uint32_t valid_flags = O_STATUS_FLAGS;
-        self->fd_info->fds[fd]->flags &= ~valid_flags;
-        self->fd_info->fds[fd]->flags |= arg & valid_flags;
+        if (fd_get_flags(self->fd_info->fds[fd]) & O_PATH)
+            return (uint64_t)-EBADF;
+        uint64_t file_flags = fd_get_flags(self->fd_info->fds[fd]);
+        uint64_t valid_flags = O_SETFL_FLAGS;
+        file_flags &= ~valid_flags;
+        file_flags |= arg & valid_flags;
+        fd_set_flags(self->fd_info->fds[fd], file_flags);
         int ret = 0;
         if (self->fd_info->fds[fd]->node->type & file_socket) {
-            int nonblock = !!((arg & valid_flags) & O_NONBLOCK);
+            int nonblock = !!(file_flags & O_NONBLOCK);
             ret = vfs_ioctl(self->fd_info->fds[fd]->node, FIONBIO,
                             (ssize_t)&nonblock);
             if (ret == -ENOTTY || ret == -ENOSYS)

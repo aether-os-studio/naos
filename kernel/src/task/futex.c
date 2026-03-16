@@ -1,13 +1,136 @@
 #include <boot/boot.h>
 #include <task/futex.h>
+#include <task/task_syscall.h>
 
 spinlock_t futex_lock;
 struct futex_wait futex_wait_list = {0, 0, NULL, NULL, 0};
 
 uint64_t sys_futex_wake(uint64_t addr, int val, uint32_t bitset);
 
-extern int write_task_user_memory(task_t *task, uint64_t uaddr, const void *src,
-                                  size_t size);
+#define FUTEX_WAITERS 0x80000000U
+#define FUTEX_OWNER_DIED 0x40000000U
+#define FUTEX_TID_MASK 0x3FFFFFFFU
+#define ROBUST_LIST_LIMIT 2048
+
+struct robust_list {
+    struct robust_list *next;
+};
+
+struct robust_list_head {
+    struct robust_list list;
+    long futex_offset;
+    struct robust_list *list_op_pending;
+};
+
+typedef struct futex_key {
+    uint64_t addr;
+    uintptr_t ctx;
+} futex_key_t;
+
+static uint64_t futex_build_key_for_task(task_t *task, int *uaddr,
+                                         bool is_private, futex_key_t *key) {
+    if (is_private) {
+        if (!task || !task->arch_context || !task->mm)
+            return (uint64_t)-EFAULT;
+
+        key->addr = (uint64_t)uaddr;
+        key->ctx = (uintptr_t)task->mm;
+        return 0;
+    }
+
+    if (!task || !task->mm)
+        return (uint64_t)-EFAULT;
+
+    uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
+    uint64_t phys = translate_address(pgdir, (uint64_t)uaddr);
+    if (!phys)
+        return (uint64_t)-EFAULT;
+
+    key->addr = phys;
+    key->ctx = 0;
+    return 0;
+}
+
+static uint64_t sys_futex_wake_key(const futex_key_t *key, int val,
+                                   uint32_t bitset);
+
+static void futex_wake_task_addr(task_t *task, int *uaddr, int val,
+                                 uint32_t bitset) {
+    futex_key_t key;
+    if ((int64_t)futex_build_key_for_task(task, uaddr, true, &key) >= 0)
+        sys_futex_wake_key(&key, val, bitset);
+    if ((int64_t)futex_build_key_for_task(task, uaddr, false, &key) >= 0)
+        sys_futex_wake_key(&key, val, bitset);
+}
+
+static void futex_cleanup_robust_word(task_t *task, uint64_t futex_uaddr) {
+    int word = 0;
+    if (read_task_user_memory(task, futex_uaddr, &word, sizeof(word)) < 0)
+        return;
+
+    if ((word & FUTEX_TID_MASK) != (int)task->pid)
+        return;
+
+    int new_word = (word & (int)FUTEX_WAITERS) | (int)FUTEX_OWNER_DIED;
+    if (write_task_user_memory(task, futex_uaddr, &new_word, sizeof(new_word)) <
+        0) {
+        return;
+    }
+
+    if (word & (int)FUTEX_WAITERS)
+        futex_wake_task_addr(task, (int *)futex_uaddr, 1, 0xFFFFFFFF);
+}
+
+static void futex_cleanup_robust_entry(task_t *task,
+                                       const struct robust_list_head *head,
+                                       uint64_t entry_addr) {
+    if (!entry_addr)
+        return;
+
+    intptr_t futex_offset = (intptr_t)head->futex_offset;
+    uint64_t futex_uaddr = entry_addr;
+    if (futex_offset < 0) {
+        uint64_t delta = (uint64_t)(-futex_offset);
+        if (delta > entry_addr)
+            return;
+        futex_uaddr -= delta;
+    } else {
+        uint64_t delta = (uint64_t)futex_offset;
+        if (delta > UINT64_MAX - entry_addr)
+            return;
+        futex_uaddr += delta;
+    }
+
+    futex_cleanup_robust_word(task, futex_uaddr);
+}
+
+static void futex_cleanup_robust_list(task_t *task) {
+    if (!task || !task->robust_list_head ||
+        task->robust_list_len < sizeof(struct robust_list_head)) {
+        return;
+    }
+
+    uint64_t head_addr = (uint64_t)task->robust_list_head;
+    struct robust_list_head head;
+    if (read_task_user_memory(task, head_addr, &head, sizeof(head)) < 0)
+        return;
+
+    uint64_t entry_addr = (uint64_t)head.list.next;
+    for (size_t count = 0;
+         entry_addr && entry_addr != head_addr && count < ROBUST_LIST_LIMIT;
+         count++) {
+        struct robust_list entry;
+        if (read_task_user_memory(task, entry_addr, &entry, sizeof(entry)) < 0)
+            break;
+
+        futex_cleanup_robust_entry(task, &head, entry_addr);
+        entry_addr = (uint64_t)entry.next;
+    }
+
+    uint64_t pending_addr = (uint64_t)head.list_op_pending;
+    if (pending_addr && pending_addr != head_addr)
+        futex_cleanup_robust_entry(task, &head, pending_addr);
+}
 
 int futex_on_exit_task(task_t *task) {
     spin_lock(&futex_lock);
@@ -28,20 +151,17 @@ int futex_on_exit_task(task_t *task) {
 
     spin_unlock(&futex_lock);
 
+    futex_cleanup_robust_list(task);
+
     if (task->tidptr) {
         int clear_tid = 0;
         write_task_user_memory(task, (uint64_t)task->tidptr, &clear_tid,
                                sizeof(clear_tid));
-        sys_futex_wake((uint64_t)task->tidptr, INT32_MAX, 0xFFFFFFFF);
+        futex_wake_task_addr(task, task->tidptr, INT32_MAX, 0xFFFFFFFF);
     }
 
     return 0;
 }
-
-typedef struct futex_key {
-    uint64_t addr;
-    uintptr_t ctx;
-} futex_key_t;
 
 static bool futex_key_equal(const struct futex_wait *wait,
                             const futex_key_t *key) {
@@ -49,23 +169,7 @@ static bool futex_key_equal(const struct futex_wait *wait,
 }
 
 static uint64_t futex_build_key(int *uaddr, bool is_private, futex_key_t *key) {
-    if (is_private) {
-        if (!current_task || !current_task->arch_context || !current_task->mm)
-            return (uint64_t)-EFAULT;
-
-        key->addr = (uint64_t)uaddr;
-        key->ctx = (uintptr_t)current_task->mm;
-        return 0;
-    }
-
-    uint64_t phys =
-        translate_address(get_current_page_dir(true), (uint64_t)uaddr);
-    if (!phys)
-        return (uint64_t)-EFAULT;
-
-    key->addr = phys;
-    key->ctx = 0;
-    return 0;
+    return futex_build_key_for_task(current_task, uaddr, is_private, key);
 }
 
 static void futex_enqueue_locked(struct futex_wait *wait) {

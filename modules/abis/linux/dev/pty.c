@@ -74,16 +74,13 @@ static int pty_open_peer_fd(vfs_node_t node, uint64_t flags) {
         if (fd_num == MAX_FD_NUM)
             break;
 
-        fd_t *new_fd = malloc(sizeof(fd_t));
+        fd_t *new_fd = fd_create(peer_node, O_RDWR | (flags & O_NONBLOCK),
+                                 !!(flags & O_CLOEXEC));
         if (!new_fd) {
             ret = -ENOMEM;
             break;
         }
 
-        memset(new_fd, 0, sizeof(fd_t));
-        new_fd->node = peer_node;
-        new_fd->flags = flags;
-        new_fd->close_on_exec = O_RDWR | !!(flags & O_CLOEXEC);
         peer_node->refcount++;
         current_task->fd_info->fds[fd_num] = new_fd;
         procfs_on_open_file(current_task, (int)fd_num);
@@ -345,7 +342,7 @@ size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
 
         if (no_slave)
             return 0;
-        if (fd->flags & O_NONBLOCK)
+        if (fd_get_flags(fd) & O_NONBLOCK)
             return -EWOULDBLOCK;
 
         int reason = pty_wait_node(fd->node, EPOLLIN, "ptmx_read");
@@ -365,7 +362,7 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
 
         if (pair->stop_master_output) {
             mutex_unlock(&pair->lock);
-            if (fd->flags & O_NONBLOCK)
+            if (fd_get_flags(fd) & O_NONBLOCK)
                 return -EWOULDBLOCK;
             int reason = pty_wait_node(fd->node, EPOLLOUT, "ptmx_tcooff");
             if (reason != EOK)
@@ -427,7 +424,7 @@ size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
 
         mutex_unlock(&pair->lock);
 
-        if (fd->flags & O_NONBLOCK) {
+        if (fd_get_flags(fd) & O_NONBLOCK) {
             return -EWOULDBLOCK;
         }
 
@@ -780,7 +777,7 @@ size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit) {
 
         if (no_master)
             return 0;
-        if (fd->flags & O_NONBLOCK) {
+        if (fd_get_flags(fd) & O_NONBLOCK) {
             return -EWOULDBLOCK;
         }
 
@@ -800,7 +797,7 @@ size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
 
         if (pair->stop_slave_output) {
             mutex_unlock(&pair->lock);
-            if (fd->flags & O_NONBLOCK)
+            if (fd_get_flags(fd) & O_NONBLOCK)
                 return -EWOULDBLOCK;
             int reason = pty_wait_node(fd->node, EPOLLOUT, "pts_tcooff");
             if (reason != EOK)
@@ -839,7 +836,7 @@ size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
 
         mutex_unlock(&pair->lock);
 
-        if (fd->flags & O_NONBLOCK)
+        if (fd_get_flags(fd) & O_NONBLOCK)
             return -EWOULDBLOCK;
 
         vfs_node_t wait_node = pair->pts_node ? pair->pts_node : fd->node;
@@ -865,7 +862,7 @@ size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit) {
                 if ((ssize_t)r < 0)
                     return r;
                 if (r == 0) {
-                    if (fd->flags & O_NONBLOCK)
+                    if (fd_get_flags(fd) & O_NONBLOCK)
                         return ret ? ret : (size_t)-EWOULDBLOCK;
                     int reason = pty_wait_node(fd->node, EPOLLOUT, "pts_write");
                     if (reason != EOK)
@@ -886,7 +883,7 @@ size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit) {
             if ((ssize_t)r < 0)
                 return r;
             if (r == 0) {
-                if (fd->flags & O_NONBLOCK)
+                if (fd_get_flags(fd) & O_NONBLOCK)
                     return ret ? ret : (size_t)-EWOULDBLOCK;
                 int reason = pty_wait_node(fd->node, EPOLLOUT, "pts_write");
                 if (reason != EOK)

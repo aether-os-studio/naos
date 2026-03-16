@@ -52,8 +52,10 @@
 #define O_NDELAY O_NONBLOCK
 
 #define O_STATUS_FLAGS                                                         \
-    (O_APPEND | O_NONBLOCK | O_DSYNC | O_ASYNC | O_DIRECT | O_NOATIME |        \
-     O_SYNC | O_PATH)
+    (O_APPEND | O_NONBLOCK | O_DSYNC | O_ASYNC | O_DIRECT | O_LARGEFILE |      \
+     O_NOATIME | O_SYNC | O_PATH)
+
+#define O_SETFL_FLAGS (O_APPEND | O_NONBLOCK | O_ASYNC | O_DIRECT | O_NOATIME)
 
 #define FD_CLOEXEC 0x1
 

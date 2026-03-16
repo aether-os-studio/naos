@@ -315,7 +315,7 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
         }
         mutex_unlock(&active_peer->lock);
 
-        if ((fd_handle && fd_handle->flags & O_NONBLOCK) ||
+        if ((fd_handle && (fd_get_flags(fd_handle) & O_NONBLOCK)) ||
             (flags & MSG_DONTWAIT)) {
             return -(EWOULDBLOCK);
         }
@@ -379,7 +379,7 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
             return 0;
         }
 
-        if ((fd_handle && fd_handle->flags & O_NONBLOCK) ||
+        if ((fd_handle && (fd_get_flags(fd_handle) & O_NONBLOCK)) ||
             (flags & MSG_DONTWAIT)) {
             return -(EWOULDBLOCK);
         }
@@ -416,12 +416,10 @@ static int unix_socket_send_files_to_peer(socket_t *peer, int *fds,
         bool inserted = false;
         for (int j = 0; j < MAX_PENDING_FILES_COUNT; j++) {
             if (peer->pending_files[j] == NULL) {
-                peer->pending_files[j] = malloc(sizeof(fd_t));
+                peer->pending_files[j] =
+                    vfs_dup(current_task->fd_info->fds[fd]);
                 if (!peer->pending_files[j])
                     return -ENOMEM;
-                memcpy(peer->pending_files[j], current_task->fd_info->fds[fd],
-                       sizeof(fd_t));
-                peer->pending_files[j]->node->refcount++;
                 inserted = true;
                 break;
             }
@@ -436,9 +434,7 @@ static int unix_socket_send_files_to_peer(socket_t *peer, int *fds,
 static void unix_socket_drop_pending_file(fd_t *pending_file) {
     if (!pending_file)
         return;
-    if (pending_file->node)
-        vfs_close(pending_file->node);
-    free(pending_file);
+    fd_release(pending_file);
 }
 
 // 该函数要求调用者持有 self->lock
@@ -475,11 +471,9 @@ static size_t unix_socket_install_pending_files(fd_t **pending_files,
             if (new_fd < 0)
                 break;
 
-            fd_t *new_entry = malloc(sizeof(fd_t));
+            fd_t *new_entry = vfs_dup(pending_files[i]);
             if (!new_entry)
                 break;
-
-            memcpy(new_entry, pending_files[i], sizeof(fd_t));
             new_entry->close_on_exec = !!(recv_flags & MSG_CMSG_CLOEXEC);
             current_task->fd_info->fds[new_fd] = new_entry;
             fds_out[installed++] = new_fd;
@@ -487,7 +481,7 @@ static size_t unix_socket_install_pending_files(fd_t **pending_files,
     });
 
     for (size_t i = 0; i < installed; i++) {
-        free(pending_files[i]);
+        fd_release(pending_files[i]);
         pending_files[i] = NULL;
         procfs_on_open_file(current_task, fds_out[i]);
     }
@@ -547,6 +541,7 @@ int socket_socket(int domain, int type, int protocol) {
 
     int ret = -EMFILE;
     uint64_t i = 0;
+    uint64_t flags = O_RDWR;
     with_fd_info_lock(current_task->fd_info, {
         for (i = 0; i < MAX_FD_NUM; i++) {
             if (current_task->fd_info->fds[i] == NULL)
@@ -556,18 +551,14 @@ int socket_socket(int domain, int type, int protocol) {
         if (i == MAX_FD_NUM)
             break;
 
-        fd_t *new_fd = malloc(sizeof(fd_t));
+        if (type & O_NONBLOCK)
+            flags |= O_NONBLOCK;
+        fd_t *new_fd = fd_create(socknode, flags, !!(type & O_CLOEXEC));
         if (!new_fd) {
             ret = -ENOMEM;
             break;
         }
 
-        memset(new_fd, 0, sizeof(fd_t));
-        new_fd->node = socknode;
-        new_fd->offset = 0;
-        if (type & O_NONBLOCK)
-            new_fd->flags |= O_NONBLOCK;
-        new_fd->close_on_exec = !!(type & O_CLOEXEC);
         current_task->fd_info->fds[i] = new_fd;
         procfs_on_open_file(current_task, i);
         ret = (int)i;
@@ -674,17 +665,20 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
     socket_handle_t *handle = listener_fd->node->handle;
     socket_t *listen_sock = handle->sock;
 
-    if (flags & ~(O_CLOEXEC | O_NONBLOCK))
+    if (flags & ~(O_CLOEXEC | O_NONBLOCK)) {
+        fd_release(listener_fd);
         return -EINVAL;
+    }
 
-    if (addr && !addrlen)
+    if (addr && !addrlen) {
+        fd_release(listener_fd);
         return -EFAULT;
+    }
 
-    bool listener_nonblock = !!(listener_fd->flags & O_NONBLOCK);
+    bool listener_nonblock = !!(fd_get_flags(listener_fd) & O_NONBLOCK);
 
     if (!listen_sock->connMax || !listen_sock->backlog) {
-        vfs_close(listener_fd->node);
-        free(listener_fd);
+        fd_release(listener_fd);
         return -EINVAL;
     }
 
@@ -705,23 +699,20 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
             break;
         }
         mutex_unlock(&listen_sock->lock);
-        if (listener_fd->flags & O_NONBLOCK) {
-            vfs_close(listener_fd->node);
-            free(listener_fd);
+        if (fd_get_flags(listener_fd) & O_NONBLOCK) {
+            fd_release(listener_fd);
             return -(EWOULDBLOCK);
         }
         int reason =
             socket_wait_node(listener_fd->node, EPOLLIN, "socket_accept");
         if (reason != EOK) {
-            vfs_close(listener_fd->node);
-            free(listener_fd);
+            fd_release(listener_fd);
             return -EINTR;
         }
     }
 
     if (!server_sock) {
-        vfs_close(listener_fd->node);
-        free(listener_fd);
+        fd_release(listener_fd);
         return -ECONNABORTED;
     }
 
@@ -740,26 +731,21 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
         if (i == MAX_FD_NUM)
             break;
 
-        fd_t *new_fd = malloc(sizeof(fd_t));
+        uint64_t accept_flags = O_RDWR;
+        if ((flags & O_NONBLOCK) || listener_nonblock)
+            accept_flags |= O_NONBLOCK;
+        fd_t *new_fd = fd_create(acceptFd, accept_flags, !!(flags & O_CLOEXEC));
         if (!new_fd) {
             ret = -ENOMEM;
             break;
         }
-
-        memset(new_fd, 0, sizeof(fd_t));
-        new_fd->node = acceptFd;
-        new_fd->offset = 0;
-        if ((flags & O_NONBLOCK) || listener_nonblock)
-            new_fd->flags |= O_NONBLOCK;
-        new_fd->close_on_exec = !!(flags & O_CLOEXEC);
         current_task->fd_info->fds[i] = new_fd;
         accepted_fd = new_fd;
         procfs_on_open_file(current_task, i);
         ret = (int)i;
     });
 
-    vfs_close(listener_fd->node);
-    free(listener_fd);
+    fd_release(listener_fd);
 
     if (ret < 0) {
         if (server_sock->peer) {
@@ -876,7 +862,7 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
         if (queue_available)
             break;
 
-        if ((current_task->fd_info->fds[fd]->flags & O_NONBLOCK))
+        if ((fd_get_flags(current_task->fd_info->fds[fd]) & O_NONBLOCK))
             return -EAGAIN;
         int reason =
             socket_wait_node(listen_sock->node, EPOLLOUT, "socket_connect");
@@ -1461,26 +1447,19 @@ int unix_socket_pair(int domain, int type, int protocol, int *sv) {
         if (fd1 < 0 || fd2 < 0)
             break;
 
-        fd_t *entry1 = malloc(sizeof(fd_t));
-        fd_t *entry2 = malloc(sizeof(fd_t));
+        fd_t *entry1 = fd_create(node1, O_RDWR | (flags & O_NONBLOCK),
+                                 !!(type & O_CLOEXEC));
+        fd_t *entry2 = fd_create(node2, O_RDWR | (flags & O_NONBLOCK),
+                                 !!(type & O_CLOEXEC));
         if (!entry1 || !entry2) {
-            free(entry1);
-            free(entry2);
+            if (entry1)
+                fd_destroy(entry1);
+            if (entry2)
+                fd_destroy(entry2);
             ret = -ENOMEM;
             fd1 = fd2 = -1;
             break;
         }
-
-        memset(entry1, 0, sizeof(fd_t));
-        memset(entry2, 0, sizeof(fd_t));
-        entry1->node = node1;
-        entry1->offset = 0;
-        entry1->flags = flags;
-        entry1->close_on_exec = !!(type & O_CLOEXEC);
-        entry2->node = node2;
-        entry2->offset = 0;
-        entry2->flags = flags;
-        entry2->close_on_exec = !!(type & O_CLOEXEC);
 
         current_task->fd_info->fds[fd1] = entry1;
         current_task->fd_info->fds[fd2] = entry2;

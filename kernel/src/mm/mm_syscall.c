@@ -47,8 +47,7 @@ static void mmap_put_fd_ref(fd_t *fd_ref) {
     if (!fd_ref)
         return;
 
-    vfs_close(fd_ref->node);
-    free(fd_ref);
+    fd_release(fd_ref);
 }
 
 static bool rlimit_is_infinite(size_t value) { return value == (size_t)-1; }
@@ -286,7 +285,10 @@ static int mmap_check_flags_linux(uint64_t flags, uint64_t map_type) {
 
 static int mmap_check_file_access(fd_t *file, uint64_t prot,
                                   uint64_t map_type) {
-    uint64_t accmode = file->flags & O_ACCMODE_FLAGS;
+    uint64_t flags = fd_get_flags(file);
+    if (flags & O_PATH)
+        return -EBADF;
+    uint64_t accmode = flags & O_ACCMODE_FLAGS;
 
     if ((prot & PROT_READ) && accmode == O_WRONLY)
         return -EACCES;
@@ -733,7 +735,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
     }
 
     vma_t *vma = alloc_mapping_vma(start_addr, aligned_len, prot, map_type,
-                                   map_fd_ref ? map_fd_ref->flags : 0,
+                                   map_fd_ref ? fd_get_flags(map_fd_ref) : 0,
                                    anonymous, map_node, offset);
     if (!vma) {
         spin_unlock(&mgr->lock);
@@ -930,10 +932,14 @@ static uint64_t mremap_map_new_region(vma_t *new_vma, uint64_t addr,
     if (new_vma->vm_type != VMA_TYPE_FILE)
         return (uint64_t)-EINVAL;
 
-    fd_t fd = {
-        .node = new_vma->node,
+    fd_shared_t shared = {
         .flags = new_vma->vm_file_flags,
         .offset = (uint64_t)new_vma->vm_offset,
+    };
+
+    fd_t fd = {
+        .node = new_vma->node,
+        .shared = &shared,
         .close_on_exec = false,
     };
 
@@ -1059,10 +1065,13 @@ static uint64_t mremap_expand_inplace_locked(vma_manager_t *mgr, vma_t *vma,
 
     if (vma->vm_type == VMA_TYPE_FILE &&
         ((vma->vm_flags & VMA_SHARED) || (vma->vm_flags & VMA_DEVICE))) {
-        fd_t fd = {
-            .node = vma->node,
+        fd_shared_t shared = {
             .flags = vma->vm_file_flags,
             .offset = (uint64_t)vma->vm_offset + old_size,
+        };
+        fd_t fd = {
+            .node = vma->node,
+            .shared = &shared,
             .close_on_exec = false,
         };
         uint64_t map_flags =

@@ -49,6 +49,9 @@ typedef struct clone_args {
 
 uint64_t sys_clone3(struct pt_regs *regs, clone_args_t *args,
                     uint64_t args_size);
+int read_task_user_memory(task_t *task, uint64_t uaddr, void *dst, size_t size);
+int write_task_user_memory(task_t *task, uint64_t uaddr, const void *src,
+                           size_t size);
 
 struct timespec;
 uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem);

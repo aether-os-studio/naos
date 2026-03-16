@@ -1,4 +1,5 @@
 #!/bin/bash
+
 set -x # show cmds
 set -e # fail globally
 

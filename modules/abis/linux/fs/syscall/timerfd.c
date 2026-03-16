@@ -262,18 +262,14 @@ uint64_t sys_timerfd_create(int clockid, int flags) {
         if (fd < 0)
             break;
 
-        fd_t *new_fd = malloc(sizeof(fd_t));
+        fd_t *new_fd = fd_create(node, O_RDONLY | (flags & TFD_NONBLOCK),
+                                 !!(flags & TFD_CLOEXEC));
         if (!new_fd) {
             ret = -ENOMEM;
             fd = -1;
             break;
         }
 
-        memset(new_fd, 0, sizeof(fd_t));
-        new_fd->node = node;
-        new_fd->offset = 0;
-        new_fd->flags = O_RDONLY | (flags & (TFD_NONBLOCK | TFD_CLOEXEC));
-        new_fd->close_on_exec = !!(flags & TFD_CLOEXEC);
         current_task->fd_info->fds[fd] = new_fd;
         procfs_on_open_file(current_task, fd);
         ret = 0;
@@ -292,7 +288,7 @@ static uint64_t get_current_time_ns(int clock_type) {
     if (clock_type == CLOCK_MONOTONIC) {
         return nano_time(); // 单调时钟，直接返回纳秒
     } else {                // CLOCK_REALTIME
-        return boot_get_boottime() + nano_time() / 1000000000;
+        return boot_get_boottime() * 1000000000ULL + nano_time();
     }
 }
 
@@ -434,7 +430,7 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             break;
 
         if (expires == 0) {
-            if (fd->flags & O_NONBLOCK) {
+            if (fd_get_flags(fd) & O_NONBLOCK) {
                 return -EAGAIN;
             } else {
                 vfs_poll_wait_t wait;
@@ -450,7 +446,7 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             }
         }
 
-        if (now < expires && !(fd->flags & O_NONBLOCK)) {
+        if (now < expires && !(fd_get_flags(fd) & O_NONBLOCK)) {
             int64_t wait_ns = (int64_t)(expires - now);
             int reason = task_block(current_task, TASK_BLOCKING, wait_ns,
                                     "timerfd_read");
@@ -459,7 +455,7 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             continue;
         }
 
-        if (now < expires && (fd->flags & O_NONBLOCK)) {
+        if (now < expires && (fd_get_flags(fd) & O_NONBLOCK)) {
             return -EAGAIN;
         }
     }

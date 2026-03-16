@@ -115,6 +115,37 @@ int write_task_user_memory(task_t *task, uint64_t uaddr, const void *src,
     return 0;
 }
 
+int read_task_user_memory(task_t *task, uint64_t uaddr, void *dst,
+                          size_t size) {
+    if (!task || !task->arch_context || !task->mm)
+        return -EFAULT;
+    if (!dst || size == 0)
+        return 0;
+    if (check_user_overflow(uaddr, size))
+        return -EFAULT;
+
+    uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
+    uint8_t *out = (uint8_t *)dst;
+    uint64_t va = uaddr;
+    size_t remain = size;
+
+    while (remain > 0) {
+        uint64_t pa = translate_address(pgdir, va);
+        if (!pa)
+            return -EFAULT;
+
+        size_t page_left = DEFAULT_PAGE_SIZE - (va & (DEFAULT_PAGE_SIZE - 1));
+        size_t chunk = MIN(remain, page_left);
+        memcpy(out, (const void *)phys_to_virt(pa), chunk);
+
+        va += chunk;
+        out += chunk;
+        remain -= chunk;
+    }
+
+    return 0;
+}
+
 static uint64_t elf_segment_vma_flags(uint32_t p_flags) {
     uint64_t vm_flags = 0;
 
@@ -1125,8 +1156,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 continue;
 
             if (self->fd_info->fds[i]->close_on_exec) {
-                vfs_close(self->fd_info->fds[i]->node);
-                free(self->fd_info->fds[i]);
+                fd_release(self->fd_info->fds[i]);
                 self->fd_info->fds[i] = NULL;
                 system_abi->on_close_file(self, i);
             }
@@ -1898,7 +1928,15 @@ uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
 }
 
 uint64_t sys_set_robust_list(void *head, size_t len) {
+    struct robust_list_head_abi {
+        void *list_next;
+        long futex_offset;
+        void *list_op_pending;
+    };
+
     if (!current_task)
+        return (uint64_t)-EINVAL;
+    if (len != sizeof(struct robust_list_head_abi))
         return (uint64_t)-EINVAL;
 
     if ((uint64_t)head != 0 &&

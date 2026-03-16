@@ -181,10 +181,13 @@ map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
     if (snapshot->vm_flags & VMA_EXEC)
         map_prot |= PROT_EXEC;
 
-    fd_t fd = {
-        .node = snapshot->node,
+    fd_shared_t shared = {
         .flags = snapshot->vm_file_flags,
         .offset = file_off,
+    };
+    fd_t fd = {
+        .node = snapshot->node,
+        .shared = &shared,
         .close_on_exec = false,
     };
 

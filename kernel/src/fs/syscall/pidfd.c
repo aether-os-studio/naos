@@ -211,19 +211,15 @@ uint64_t pidfd_create_for_pid(uint64_t pid, uint64_t flags, bool cloexec) {
         if (fd < 0)
             break;
 
-        fd_t *new_fd = calloc(1, sizeof(fd_t));
+        fd_t *new_fd = fd_create(node, O_RDWR | flags, cloexec);
         if (!new_fd) {
             ret = -ENOMEM;
             fd = -1;
             break;
         }
-
-        new_fd->node = node;
-        new_fd->offset = 0;
-        new_fd->flags = O_RDWR | flags;
-        new_fd->close_on_exec = cloexec;
         current_task->fd_info->fds[fd] = new_fd;
         system_abi->on_open_file(current_task, fd);
+
         ret = 0;
     });
 

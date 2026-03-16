@@ -104,7 +104,7 @@ static err_t lwip_socket_peek_conn_pending_err(struct netconn *conn) {
 
 static inline int lwip_socket_apply_fd_flags(const lwip_socket_state_t *sock,
                                              int flags) {
-    if (sock && sock->fd && (sock->fd->flags & O_NONBLOCK)) {
+    if (sock && sock->fd && (fd_get_flags(sock->fd) & O_NONBLOCK)) {
         flags |= MSG_DONTWAIT;
     }
     return flags;
@@ -311,20 +311,21 @@ static int lwip_socket_install_fd(lwip_socket_state_t *sock, int open_type,
             break;
         }
 
-        fd_t *new_fd = calloc(1, sizeof(fd_t));
+        uint64_t flags = 0;
+        if ((open_type & O_NONBLOCK) || (accept_flags & O_NONBLOCK)) {
+            flags |= O_NONBLOCK;
+            if (sock->conn) {
+                netconn_set_nonblocking(sock->conn, 1);
+            }
+        }
+
+        fd_t *new_fd =
+            fd_create(node, flags, !!((open_type | accept_flags) & O_CLOEXEC));
         if (!new_fd) {
             ret = -ENOMEM;
             break;
         }
 
-        new_fd->node = node;
-        if ((open_type & O_NONBLOCK) || (accept_flags & O_NONBLOCK)) {
-            new_fd->flags |= O_NONBLOCK;
-            if (sock->conn) {
-                netconn_set_nonblocking(sock->conn, 1);
-            }
-        }
-        new_fd->close_on_exec = !!((open_type | accept_flags) & O_CLOEXEC);
         current_task->fd_info->fds[slot] = new_fd;
         procfs_on_open_file(current_task, slot);
         ret = (int)slot;
@@ -1288,7 +1289,7 @@ static int lwip_socket_accept(uint64_t fd, struct sockaddr_un *addr,
     }
 
     newfd = lwip_socket_install_fd(
-        sock, listener->fd ? (int)listener->fd->flags : 0, flags);
+        sock, listener->fd ? (int)fd_get_flags(listener->fd) : 0, flags);
     if (newfd < 0) {
         return newfd;
     }
@@ -1565,9 +1566,13 @@ static int lwip_socket_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
         netconn_set_nonblocking(sock->conn, value ? 1 : 0);
         if (handle->fd) {
             if (value) {
-                handle->fd->flags |= O_NONBLOCK;
+                uint64_t flags = fd_get_flags(handle->fd);
+                flags |= O_NONBLOCK;
+                fd_set_flags(handle->fd, flags);
             } else {
-                handle->fd->flags &= ~O_NONBLOCK;
+                uint64_t flags = fd_get_flags(handle->fd);
+                flags &= ~O_NONBLOCK;
+                fd_set_flags(handle->fd, flags);
             }
         }
         return 0;
@@ -1607,7 +1612,7 @@ static ssize_t lwip_socket_read(fd_t *fd, void *buf, size_t offset,
         return -EBADF;
     }
 
-    if (fd->flags & O_NONBLOCK) {
+    if (fd_get_flags(fd) & O_NONBLOCK) {
         flags |= MSG_DONTWAIT;
     }
 
@@ -1628,7 +1633,7 @@ static ssize_t lwip_socket_write(fd_t *fd, const void *buf, size_t offset,
         return -EBADF;
     }
 
-    if (fd->flags & O_NONBLOCK) {
+    if (fd_get_flags(fd) & O_NONBLOCK) {
         flags |= MSG_DONTWAIT;
     }
 
