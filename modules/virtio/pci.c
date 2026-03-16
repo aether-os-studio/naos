@@ -3,6 +3,38 @@
 
 extern virtio_driver_op_t virtio_pci_driver_op;
 
+static inline uint8_t virtio_pci_read8(volatile void *addr) {
+    return *(volatile uint8_t *)addr;
+}
+
+static inline uint16_t virtio_pci_read16(volatile void *addr) {
+    return *(volatile uint16_t *)addr;
+}
+
+static inline uint32_t virtio_pci_read32_reg(volatile void *addr) {
+    return *(volatile uint32_t *)addr;
+}
+
+static inline uint64_t virtio_pci_read64(volatile void *addr) {
+    return *(volatile uint64_t *)addr;
+}
+
+static inline void virtio_pci_write8(volatile void *addr, uint8_t value) {
+    *(volatile uint8_t *)addr = value;
+}
+
+static inline void virtio_pci_write16(volatile void *addr, uint16_t value) {
+    *(volatile uint16_t *)addr = value;
+}
+
+static inline void virtio_pci_write32_reg(volatile void *addr, uint32_t value) {
+    *(volatile uint32_t *)addr = value;
+}
+
+static inline void virtio_pci_write64(volatile void *addr, uint64_t value) {
+    *(volatile uint64_t *)addr = value;
+}
+
 virtio_device_type_t get_device_type(uint16_t device_id) {
     switch (device_id) {
     case PCI_DEVICE_ID_NETWORK:
@@ -203,48 +235,54 @@ virtio_device_type_t virtio_pci_get_device_type(void *data) {
 
 uint64_t virtio_pci_get_features(void *data) {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
-    pci->common_cfg_bar->device_feature_select = 0;
-    uint32_t features_low = pci->common_cfg_bar->device_feature;
-    pci->common_cfg_bar->device_feature_select = 1;
-    uint32_t features_high = pci->common_cfg_bar->device_feature;
+    virtio_pci_write32_reg(&pci->common_cfg_bar->device_feature_select, 0);
+    uint32_t features_low =
+        virtio_pci_read32_reg(&pci->common_cfg_bar->device_feature);
+    virtio_pci_write32_reg(&pci->common_cfg_bar->device_feature_select, 1);
+    uint32_t features_high =
+        virtio_pci_read32_reg(&pci->common_cfg_bar->device_feature);
     return (uint64_t)features_low | ((uint64_t)features_high << 32);
 }
 
 void virtio_pci_set_features(void *data, uint64_t features) {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
-    pci->common_cfg_bar->device_feature_select = 0;
     uint32_t features_low = features & 0xFFFFFFFF;
-    pci->common_cfg_bar->driver_feature_select = 0;
-    pci->common_cfg_bar->driver_feature = features_low;
-    pci->common_cfg_bar->device_feature_select = 1;
     uint32_t features_high = (features >> 32) & 0xFFFFFFFF;
-    pci->common_cfg_bar->driver_feature_select = 1;
-    pci->common_cfg_bar->driver_feature = features_high;
+
+    virtio_pci_write32_reg(&pci->common_cfg_bar->device_feature_select, 0);
+    virtio_pci_write32_reg(&pci->common_cfg_bar->driver_feature_select, 0);
+    virtio_pci_write32_reg(&pci->common_cfg_bar->driver_feature, features_low);
+    virtio_pci_write32_reg(&pci->common_cfg_bar->device_feature_select, 1);
+    virtio_pci_write32_reg(&pci->common_cfg_bar->driver_feature_select, 1);
+    virtio_pci_write32_reg(&pci->common_cfg_bar->driver_feature, features_high);
 }
 
 uint32_t virtio_pci_get_max_queue_size(void *data, uint16_t queue) {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
-    pci->common_cfg_bar->queue_select = queue;
-    return pci->common_cfg_bar->queue_size;
+    virtio_pci_write16(&pci->common_cfg_bar->queue_select, queue);
+    return virtio_pci_read16(&pci->common_cfg_bar->queue_size);
 }
 
 void virtio_pci_notify(void *data, uint16_t queue) {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
-    pci->common_cfg_bar->queue_select = queue;
-    uint16_t notify_off = pci->common_cfg_bar->queue_notify_off;
+    virtio_pci_write16(&pci->common_cfg_bar->queue_select, queue);
+    uint16_t notify_off =
+        virtio_pci_read16(&pci->common_cfg_bar->queue_notify_off);
     uint64_t offset_bytes = (uint64_t)notify_off * pci->notify_off_multiplier;
-    uint64_t index = offset_bytes / sizeof(uint16_t);
-    pci->notify_regions[index] = queue;
+    volatile uint16_t *notify_addr =
+        (volatile uint16_t *)((uintptr_t)pci->notify_regions + offset_bytes);
+    write_barrier();
+    *notify_addr = queue;
 }
 
 uint32_t virtio_pci_get_status(void *data) {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
-    return pci->common_cfg_bar->device_status;
+    return virtio_pci_read8(&pci->common_cfg_bar->device_status);
 }
 
 void virtio_pci_set_status(void *data, uint32_t status) {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
-    pci->common_cfg_bar->device_status = status;
+    virtio_pci_write8(&pci->common_cfg_bar->device_status, (uint8_t)status);
 }
 
 void virtio_pci_queue_set(void *data, uint16_t queue, uint32_t size,
@@ -252,31 +290,33 @@ void virtio_pci_queue_set(void *data, uint16_t queue, uint32_t size,
                           uint64_t driver_area_paddr,
                           uint64_t device_area_paddr) {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
-    pci->common_cfg_bar->queue_select = queue;
-    pci->common_cfg_bar->queue_size = size;
-    pci->common_cfg_bar->queue_desc = descriptors_paddr;
-    pci->common_cfg_bar->queue_driver = driver_area_paddr;
-    pci->common_cfg_bar->queue_device = device_area_paddr;
-    pci->common_cfg_bar->queue_enable = 1;
+    virtio_pci_write16(&pci->common_cfg_bar->queue_select, queue);
+    virtio_pci_write16(&pci->common_cfg_bar->queue_size, (uint16_t)size);
+    virtio_pci_write64(&pci->common_cfg_bar->queue_desc, descriptors_paddr);
+    virtio_pci_write64(&pci->common_cfg_bar->queue_driver, driver_area_paddr);
+    virtio_pci_write64(&pci->common_cfg_bar->queue_device, device_area_paddr);
+    virtio_pci_write16(&pci->common_cfg_bar->queue_enable, 1);
 }
 
 bool virtio_pci_queue_used(void *data, uint16_t queue) {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
-    pci->common_cfg_bar->queue_select = queue;
-    return (pci->common_cfg_bar->queue_enable == 1);
+    virtio_pci_write16(&pci->common_cfg_bar->queue_select, queue);
+    return virtio_pci_read16(&pci->common_cfg_bar->queue_enable) == 1;
 }
 
 bool virtio_pci_requires_legacy_layout(void *data) { return false; }
 
 uint32_t virtio_pci_read_config_space(void *data, uint32_t offset) {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
-    return *((uint32_t *)(pci->config_space_vaddr + offset));
+    return virtio_pci_read32_reg(
+        (volatile void *)(pci->config_space_vaddr + offset));
 }
 
 void virtio_pci_write_config_space(void *data, uint32_t offset,
                                    uint32_t value) {
     virtio_pci_device_t *pci = (virtio_pci_device_t *)data;
-    *((uint32_t *)(pci->config_space_vaddr + offset)) = value;
+    virtio_pci_write32_reg((volatile void *)(pci->config_space_vaddr + offset),
+                           value);
 }
 
 virtio_driver_op_t virtio_pci_driver_op = {

@@ -8,10 +8,30 @@ void queue_part_sizes(uint16_t queue_size, uint64_t *desc_size,
     *used_size = sizeof(uint16_t) * 3 + sizeof(virtio_used_elem_t) * queue_size;
 }
 
+static uint64_t virt_queue_desc_bytes(const virtqueue_t *queue) {
+    return (uint64_t)queue->size * sizeof(virtio_descriptor_t);
+}
+
+static uint64_t virt_queue_avail_bytes(const virtqueue_t *queue) {
+    return sizeof(uint16_t) * (3 + queue->size);
+}
+
+static uint64_t virt_queue_used_bytes(const virtqueue_t *queue) {
+    return sizeof(uint16_t) * 3 + sizeof(virtio_used_elem_t) * queue->size;
+}
+
 virtqueue_t *virt_queue_new(virtio_driver_t *driver, uint16_t queue_idx,
                             bool indirect, bool event_idx) {
     if (driver->op->queue_used(driver->data, queue_idx))
         return NULL;
+
+    uint32_t max_queue_size =
+        driver->op->get_max_queue_size(driver->data, queue_idx);
+    uint16_t queue_size =
+        max_queue_size < SIZE ? (uint16_t)max_queue_size : SIZE;
+    if (queue_size == 0) {
+        return NULL;
+    }
 
     virtqueue_t *queue = malloc(sizeof(virtqueue_t));
     memset(queue, 0, sizeof(virtqueue_t));
@@ -24,7 +44,7 @@ virtqueue_t *virt_queue_new(virtio_driver_t *driver, uint16_t queue_idx,
         queue->is_modern = false;
 
         uint64_t desc_size, avail_size, used_size;
-        queue_part_sizes(SIZE, &desc_size, &avail_size, &used_size);
+        queue_part_sizes(queue_size, &desc_size, &avail_size, &used_size);
 
         uint64_t size = PADDING_UP(desc_size + avail_size, DEFAULT_PAGE_SIZE) +
                         PADDING_UP(used_size, DEFAULT_PAGE_SIZE);
@@ -38,7 +58,7 @@ virtqueue_t *virt_queue_new(virtio_driver_t *driver, uint16_t queue_idx,
         queue->inner.legacy->used_offset =
             PADDING_UP(desc_size + avail_size, DEFAULT_PAGE_SIZE);
 
-        driver->op->queue_set(driver->data, queue_idx, SIZE,
+        driver->op->queue_set(driver->data, queue_idx, queue_size,
                               queue->inner.legacy->paddr, 0, 0);
 
         desc = phys_to_virt((virtio_descriptor_t *)queue->inner.legacy->paddr);
@@ -51,7 +71,7 @@ virtqueue_t *virt_queue_new(virtio_driver_t *driver, uint16_t queue_idx,
     } else {
         queue->is_modern = true;
         uint64_t desc_size, avail_size, used_size;
-        queue_part_sizes(SIZE, &desc_size, &avail_size, &used_size);
+        queue_part_sizes(queue_size, &desc_size, &avail_size, &used_size);
         queue->inner.modern = malloc(sizeof(virtqueue_modern_t));
         memset(queue->inner.modern, 0, sizeof(virtqueue_modern_t));
         queue->inner.modern->driver_to_device_paddr =
@@ -68,7 +88,7 @@ virtqueue_t *virt_queue_new(virtio_driver_t *driver, uint16_t queue_idx,
             PADDING_UP(used_size, DEFAULT_PAGE_SIZE);
         queue->inner.modern->avail_offset = desc_size;
 
-        driver->op->queue_set(driver->data, queue_idx, SIZE,
+        driver->op->queue_set(driver->data, queue_idx, queue_size,
                               queue->inner.modern->driver_to_device_paddr,
                               queue->inner.modern->driver_to_device_paddr +
                                   queue->inner.modern->avail_offset,
@@ -87,12 +107,13 @@ virtqueue_t *virt_queue_new(virtio_driver_t *driver, uint16_t queue_idx,
     queue->avail = avail;
     queue->used = used;
 
-    memset(queue->desc, 0, sizeof(virtio_descriptor_t) * SIZE);
-    memset(queue->avail, 0, sizeof(virtio_avail_ring_t));
-    memset(queue->used, 0, sizeof(virtio_used_ring_t));
+    memset(queue->desc, 0, queue_size * sizeof(virtio_descriptor_t));
+    memset(queue->avail, 0, sizeof(uint16_t) * (3 + queue_size));
+    memset(queue->used, 0,
+           sizeof(uint16_t) * 3 + sizeof(virtio_used_elem_t) * queue_size);
 
-    for (int i = 0; i < SIZE; i++) {
-        if (i < SIZE - 1) {
+    for (int i = 0; i < queue_size; i++) {
+        if (i < queue_size - 1) {
             desc[i].next = i + 1;
         } else {
             desc[i].next = 0xFFFF;
@@ -100,6 +121,7 @@ virtqueue_t *virt_queue_new(virtio_driver_t *driver, uint16_t queue_idx,
     }
 
     queue->queue_idx = queue_idx;
+    queue->size = queue_size;
 
     queue->num_used = 0;
     queue->free_head = 0;
@@ -109,6 +131,10 @@ virtqueue_t *virt_queue_new(virtio_driver_t *driver, uint16_t queue_idx,
     queue->avail_idx = 0;
     queue->last_used_idx = 0;
 
+    dma_sync_cpu_to_device(queue->desc, virt_queue_desc_bytes(queue));
+    dma_sync_cpu_to_device(queue->avail, virt_queue_avail_bytes(queue));
+    dma_sync_cpu_to_device(queue->used, virt_queue_used_bytes(queue));
+
     return queue;
 }
 
@@ -116,10 +142,12 @@ void virt_queue_set_dev_notify(virtqueue_t *queue, bool enable) {
     uint16_t avail_ring_flags = enable ? 0x0000 : 0x0001;
     if (!queue->event_idx) {
         queue->avail->flags = avail_ring_flags;
+        dma_sync_cpu_to_device(queue->avail, virt_queue_avail_bytes(queue));
     }
 }
 
 bool virt_queue_should_notify(virtqueue_t *queue) {
+    dma_sync_device_to_cpu(queue->used, virt_queue_used_bytes(queue));
     if (queue->event_idx) {
         uint16_t avail_event = queue->used->avail_event;
         return queue->avail_idx >= avail_event;
@@ -129,6 +157,7 @@ bool virt_queue_should_notify(virtqueue_t *queue) {
 }
 
 bool virt_queue_can_pop(virtqueue_t *queue) {
+    dma_sync_device_to_cpu(queue->used, virt_queue_used_bytes(queue));
     return queue->last_used_idx != queue->used->index;
 }
 
@@ -205,23 +234,27 @@ uint16_t virt_queue_add_buf(virtqueue_t *queue, virtio_buffer_t *bufs,
 
     // Update the free head to point to the next available descriptor
     queue->free_head = current_idx;
+    dma_sync_cpu_to_device(queue->desc, virt_queue_desc_bytes(queue));
 
     return head_idx;
 }
 
 void virt_queue_submit_buf(virtqueue_t *queue, uint16_t desc_idx) {
-    queue->avail->ring[queue->avail_idx % SIZE] = desc_idx;
+    queue->avail->ring[queue->avail_idx % queue->size] = desc_idx;
     queue->avail_idx++;
+    dma_wmb();
     queue->avail->index = queue->avail_idx;
+    dma_sync_cpu_to_device(queue->avail, virt_queue_avail_bytes(queue));
 }
 
 uint16_t virt_queue_get_used_buf(virtqueue_t *queue, uint32_t *len) {
+    dma_sync_device_to_cpu(queue->used, virt_queue_used_bytes(queue));
     if (queue->last_used_idx == queue->used->index) {
         return 0xFFFF; // No used buffers
     }
 
     virtio_used_elem_t *used_elem =
-        &queue->used->ring[queue->last_used_idx % SIZE];
+        &queue->used->ring[queue->last_used_idx % queue->size];
     uint16_t desc_idx = used_elem->id;
     if (len) {
         *len = used_elem->len;
@@ -232,7 +265,5 @@ uint16_t virt_queue_get_used_buf(virtqueue_t *queue, uint32_t *len) {
 }
 
 void virt_queue_notify(virtio_driver_t *driver, virtqueue_t *queue) {
-    if (virt_queue_should_notify(queue)) {
-        driver->op->notify(driver->data, queue->queue_idx);
-    }
+    driver->op->notify(driver->data, queue->queue_idx);
 }

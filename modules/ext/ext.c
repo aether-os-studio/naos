@@ -1,6 +1,8 @@
 #include <ext.h>
 #include <ext_disk.h>
 
+#include <boot/boot.h>
+
 #include <dev/device.h>
 #include <mm/mm_syscall.h>
 
@@ -59,9 +61,7 @@ static void ext_sync_node_from_inode(vfs_node_t node, ext_mount_ctx_t *fs,
                                      const ext_inode_disk_t *inode);
 
 static uint64_t ext_now(void) {
-    tm time;
-    time_read(&time);
-    return (uint64_t)mktime(&time);
+    return boot_get_boottime() + nano_time() / 1000000000;
 }
 
 static uint16_t ext_dir_rec_len(size_t name_len) {

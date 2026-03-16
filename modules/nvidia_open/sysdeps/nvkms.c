@@ -101,11 +101,7 @@ void *nvkms_alloc(size_t size, NvBool zero) {
 
 void nvkms_usleep(NvU64 usec) { delay(usec * 1000); }
 
-NvU64 nvkms_get_usec(void) {
-    tm time;
-    time_read(&time);
-    return mktime(&time) * 1000000;
-}
+NvU64 nvkms_get_usec(void) { return nano_time() / 1000; }
 
 int nvkms_copyin(void *kptr, NvU64 uaddr, size_t n) STUBBED;
 int nvkms_copyout(NvU64 uaddr, const void *kptr, size_t n) STUBBED;

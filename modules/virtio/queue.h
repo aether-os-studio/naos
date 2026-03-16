@@ -87,6 +87,7 @@ typedef struct virtqueue {
     } inner;
 
     uint16_t queue_idx;
+    uint16_t size;
     uint16_t num_used;
     uint16_t free_head;
     uint16_t avail_idx;

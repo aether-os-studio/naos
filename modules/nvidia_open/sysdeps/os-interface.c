@@ -169,10 +169,9 @@ void NV_API_CALL os_free_mem(void *ptr) {
 }
 
 NV_STATUS NV_API_CALL os_get_current_time(NvU32 *sec, NvU32 *usec) {
-    tm time;
-    time_read(&time);
-    *sec = mktime(&time);
-    *usec = 0;
+    uint64_t nano = nano_time();
+    *sec = boot_get_boottime() + nano / 1000000000;
+    *usec = nano % 1000000000;
     return NV_OK;
 }
 

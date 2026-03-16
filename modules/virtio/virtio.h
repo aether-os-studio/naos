@@ -67,8 +67,10 @@ typedef struct virtio_net_device {
     virtio_driver_t *driver;
     uint8_t mac[6];
     uint16_t mtu;
+    uint16_t net_hdr_size;
     virtqueue_t *send_queue;
     virtqueue_t *recv_queue;
+    void *rx_buffers[64];
     void *tx_buffers[64];
     uint32_t tx_buffer_sizes[64];
     spinlock_t send_recv_lock;
