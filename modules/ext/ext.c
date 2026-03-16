@@ -1852,9 +1852,17 @@ static void ext_resolve_children_conflict(vfs_node_t parent, const char *name) {
 
     vfs_node_t keep = NULL;
     for (uint64_t i = 0; i < idx; i++) {
-        if (nodes[i] == nodes[i]->root) {
+        if (nodes[i] == nodes[i]->root && vfs_is_mount_point(nodes[i])) {
             keep = nodes[i];
             break;
+        }
+    }
+    if (!keep) {
+        for (uint64_t i = 0; i < idx; i++) {
+            if (nodes[i] == nodes[i]->root) {
+                keep = nodes[i];
+                break;
+            }
         }
     }
     if (!keep) {
@@ -1941,7 +1949,7 @@ static int ext_populate_dir_with_fs_locked(ext_mount_ctx_t *fs,
 
                 vfs_node_t child = exist;
                 if (!child) {
-                    child = vfs_child_append(node, name, NULL);
+                    child = vfs_node_alloc(node, name);
                     if (!child) {
                         free(buf);
                         return -ENOMEM;

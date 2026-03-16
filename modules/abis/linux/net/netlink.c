@@ -1236,7 +1236,7 @@ fs_t netlinksockfs = {
     .name = "netlinksockfs",
     .magic = 0,
     .ops = &netlink_vfs_ops,
-    .flags = FS_FLAGS_HIDDEN,
+    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_HIDDEN,
 };
 
 void netlink_init() {

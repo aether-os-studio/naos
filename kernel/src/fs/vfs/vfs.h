@@ -3,6 +3,7 @@
 #include <libs/klibc.h>
 #include <libs/llist.h>
 #include <libs/hashmap.h>
+#include <libs/rbtree.h>
 #include <fs/vfs/fcntl.h>
 #include <fs/vfs/utils.h>
 
@@ -342,6 +343,7 @@ struct vfs_node {
     struct llist_header node_for_childs;      // 为子目录和子文件添加的节点
     struct llist_header node_for_name_bucket; // 为名字桶添加的节点
     uint64_t child_name_hash;                 // 当前名字哈希
+    rb_root_t page_cache_tree;                // 页缓存树
     vfs_node_t root;                          // 根目录
     int refcount;                             // 引用计数
     uint16_t mode;                            // 模式
@@ -563,6 +565,7 @@ int vfs_mount(uint64_t dev, vfs_node_t node, const char *type);
  */
 int vfs_unmount(const char *path);
 int vfs_remount(vfs_node_t old, vfs_node_t node);
+bool vfs_is_mount_point(vfs_node_t node);
 
 /**
  *\brief 关闭文件

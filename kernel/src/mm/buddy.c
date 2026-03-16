@@ -1,6 +1,7 @@
 #include <mm/buddy.h>
 #include <mm/bitmap.h>
 #include <mm/page.h>
+#include <fs/vfs/page_cache.h>
 
 extern Bitmap usable_regions;
 
@@ -487,7 +488,9 @@ uintptr_t alloc_frames(size_t count) {
         return 0;
 
     uintptr_t addr = 0;
+    bool reclaimed = false;
 
+retry:
     if (zones[ZONE_NORMAL] && zone_has_memory(zones[ZONE_NORMAL])) {
         addr = buddy_alloc_zone(zones[ZONE_NORMAL], count);
         if (addr != 0)
@@ -507,6 +510,11 @@ uintptr_t alloc_frames(size_t count) {
             goto out;
     }
 #endif
+
+    if (!reclaimed && vfs_page_cache_reclaim_half() > 0) {
+        reclaimed = true;
+        goto retry;
+    }
 
 out:
     if (addr == 0)
@@ -597,7 +605,9 @@ uintptr_t alloc_frames_dma32(size_t count) {
         return 0;
 
     uintptr_t addr = 0;
+    bool reclaimed = false;
 
+retry:
     if (zones[ZONE_DMA32] && zone_has_memory(zones[ZONE_DMA32])) {
         addr = buddy_alloc_zone(zones[ZONE_DMA32], count);
         if (addr != 0)
@@ -611,6 +621,11 @@ uintptr_t alloc_frames_dma32(size_t count) {
             goto out;
     }
 #endif
+
+    if (!reclaimed && vfs_page_cache_reclaim_half() > 0) {
+        reclaimed = true;
+        goto retry;
+    }
 
 out:
     if (addr == 0)

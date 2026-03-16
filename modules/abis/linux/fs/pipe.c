@@ -241,7 +241,7 @@ fs_t pipefs = {
     .name = "pipefs",
     .magic = 0,
     .ops = &callbacks,
-    .flags = FS_FLAGS_HIDDEN,
+    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_HIDDEN,
 };
 
 void pipefs_init() { pipefs_id = vfs_regist(&pipefs); }

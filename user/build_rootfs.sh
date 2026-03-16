@@ -15,7 +15,7 @@ mkdir -p "$(dirname "$XBPS_XZ_PATH")"
 mkdir -p "$(dirname "$XBPS_INSTALL_PATH")"
 [ -d "$XBPS_INSTALL_PATH" ] || tar -xf $XBPS_XZ_PATH -C $XBPS_INSTALL_PATH
 
-sudo XBPS_ARCH=$ARCH $XBPS_INSTALL_PATH/usr/bin/xbps-install -S -r $ROOTFS_SYSROOT -R "https://mirrors.tuna.tsinghua.edu.cn/voidlinux/current" base-minimal bash coreutils util-linux glibc-locales ncurses tzdata which shadow grep elfutils seatd eudev dbus weston xorg-server-xwayland mesa
+sudo XBPS_ARCH=$ARCH $XBPS_INSTALL_PATH/usr/bin/xbps-install -S -r $ROOTFS_SYSROOT -R "https://mirrors.tuna.tsinghua.edu.cn/voidlinux/current" base-minimal bash coreutils util-linux glibc-locales ncurses tzdata which shadow grep elfutils seatd eudev dbus weston xorg-server-xwayland mesa dejavu-fonts-ttf
 
 sudo ln -sf /usr/share/zoneinfo/Asia/Shanghai $ROOTFS_SYSROOT/etc/localtime
 

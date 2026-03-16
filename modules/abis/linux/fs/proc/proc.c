@@ -264,7 +264,7 @@ fs_t procfs_self = {
     .name = "proc_self",
     .magic = 0,
     .ops = &procfs_self_callbacks,
-    .flags = FS_FLAGS_HIDDEN,
+    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_HIDDEN,
 };
 
 extern struct llist_header mount_points;
@@ -299,13 +299,16 @@ void proc_init() {
     sys_kernel_node->mode = 0644;
     vfs_node_t sys_kernel_osrelease_node =
         vfs_child_append(sys_kernel_node, "osrelease", NULL);
-    sys_kernel_osrelease_node->type = file_dir;
+    sys_kernel_osrelease_node->type = file_none;
     sys_kernel_osrelease_node->mode = 0644;
-    proc_handle_t *sys_kernel_osrelease_handle = malloc(sizeof(proc_handle_t));
+    proc_handle_t *sys_kernel_osrelease_handle =
+        calloc(1, sizeof(proc_handle_t));
     sys_kernel_osrelease_node->handle = sys_kernel_osrelease_handle;
     sys_kernel_osrelease_handle->node = sys_kernel_osrelease_node;
     sys_kernel_osrelease_handle->task = NULL;
-    sprintf(sys_kernel_osrelease_node->name, "proc_sys_kernel_osrelease");
+    snprintf(sys_kernel_osrelease_handle->name,
+             sizeof(sys_kernel_osrelease_handle->name),
+             "proc_sys_kernel_osrelease");
 
     vfs_node_t pressure = vfs_child_append(procfs_root, "pressure", NULL);
     pressure->type = file_dir;
@@ -313,11 +316,12 @@ void proc_init() {
     vfs_node_t pressure_memory = vfs_child_append(pressure, "memory", NULL);
     pressure_memory->type = file_none;
     pressure_memory->mode = 0644;
-    proc_handle_t *pressure_memory_handle = malloc(sizeof(proc_handle_t));
+    proc_handle_t *pressure_memory_handle = calloc(1, sizeof(proc_handle_t));
     pressure_memory->handle = pressure_memory_handle;
     pressure_memory_handle->node = pressure_memory;
     pressure_memory_handle->task = NULL;
-    sprintf(pressure_memory->name, "proc_pressure_memory");
+    snprintf(pressure_memory_handle->name, sizeof(pressure_memory_handle->name),
+             "proc_pressure_memory");
 
     struct mount_point *tmp1, *tmp2;
     llist_for_each(tmp1, tmp2, &mount_points, node) {

@@ -80,6 +80,11 @@ static bool x64_fault_access_allowed_now(task_t *task, uint64_t vaddr,
     return true;
 }
 
+static bool x64_should_deliver_user_sigsegv(task_t *task) {
+    return (task->signal->sighand->actions[SIGSEGV].sa_handler != NULL) &&
+           ((task->signal->blocked & SIGMASK(SIGSEGV)) == 0);
+}
+
 static bool x64_deliver_user_sigsegv(struct pt_regs *regs, uint64_t fault_addr,
                                      uint64_t error_code) {
     if (!regs || (regs->cs & 3) != 3 || !current_task)
@@ -477,9 +482,11 @@ void do_page_fault(struct pt_regs *regs, uint64_t error_code) {
         return;
     }
 
-    if (x64_deliver_user_sigsegv(regs, cr2, error_code)) {
-        can_schedule = true;
-        return;
+    if (x64_should_deliver_user_sigsegv(self)) {
+        if (x64_deliver_user_sigsegv(regs, cr2, error_code)) {
+            can_schedule = true;
+            return;
+        }
     }
 
     dump_regs(regs, "do_page_fault(14) cr2 = %#018lx, error_code = %#018lx",

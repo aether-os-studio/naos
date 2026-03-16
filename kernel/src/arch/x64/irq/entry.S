@@ -87,6 +87,9 @@ Restore_all:
     iretq
 
 ENTRY(ret_from_intr)
+    movq %rsp, %rdi
+    call task_signal
+
     jmp Restore_all
     
 Err_Code:
@@ -118,9 +121,6 @@ Err_Code:
     movq %rsp, %rdi // 把栈指针装入rdi，作为函数的第一个的参数
 
     callq *%rdx //调用服务程序 带*号表示调用的是绝对地址
-
-    movq %rsp, %rdi
-    call task_signal
 
     jmp ret_from_exception
 

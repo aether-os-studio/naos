@@ -52,7 +52,7 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
 
     arch_flush_tlb_all();
     dst->ctx = (struct pt_regs *)stack - 1;
-    dst->rip = (uint64_t)ret_to_user;
+    dst->rip = (uint64_t)ret_from_syscall;
     dst->rsp = (uint64_t)dst->ctx;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
     dst->ctx->rax = 0;

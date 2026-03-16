@@ -34,6 +34,8 @@ int futex_on_exit_task(task_t *task) {
                                sizeof(clear_tid));
         sys_futex_wake((uint64_t)task->tidptr, INT32_MAX, 0xFFFFFFFF);
     }
+
+    return 0;
 }
 
 typedef struct futex_key {

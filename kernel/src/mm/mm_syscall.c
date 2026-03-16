@@ -1,6 +1,7 @@
 #include <mm/fault.h>
 #include <mm/mm_syscall.h>
 #include <fs/fs_syscall.h>
+#include <fs/vfs/page_cache.h>
 #include <fs/vfs/vfs.h>
 #include <irq/irq_manager.h>
 #include <task/task.h>
@@ -96,6 +97,21 @@ static uint64_t vm_flags_to_prot(uint64_t vm_flags) {
 
 static bool vm_flags_has_access(uint64_t vm_flags) {
     return (vm_flags & (VMA_READ | VMA_WRITE | VMA_EXEC)) != 0;
+}
+
+static bool vma_needs_file_writeback(vma_t *vma) {
+    return vma && vma->vm_type == VMA_TYPE_FILE &&
+           (vma->vm_flags & VMA_SHARED) && (vma->vm_flags & VMA_WRITE) &&
+           !(vma->vm_flags & VMA_DEVICE) && vma->node;
+}
+
+static uint64_t writeback_vma_file_range(vma_t *vma, uint64_t start,
+                                         uint64_t end) {
+    if (!vma_needs_file_writeback(vma) || start >= end)
+        return 0;
+
+    return msync_writeback_file_range(vma->node, vma->vm_start, vma->vm_offset,
+                                      start, end);
 }
 
 static uint64_t vm_flags_to_pt_flags(uint64_t vm_flags) {
@@ -804,6 +820,13 @@ static uint64_t do_munmap_locked(uint64_t addr, uint64_t size) {
         uint64_t unmap_start = vma->vm_start;
         uint64_t unmap_len = vma->vm_end - vma->vm_start;
 
+        {
+            uint64_t ret = writeback_vma_file_range(vma, unmap_start,
+                                                    unmap_start + unmap_len);
+            if ((int64_t)ret < 0)
+                return ret;
+        }
+
         if (vma_remove(mgr, vma) != 0)
             return (uint64_t)-ENOMEM;
         vma_free(vma);
@@ -1002,6 +1025,11 @@ static uint64_t mremap_shrink_locked(vma_manager_t *mgr, vma_t *vma,
 
     if (shrink_size == 0)
         return old_addr;
+
+    uint64_t ret =
+        writeback_vma_file_range(vma, shrink_start, shrink_start + shrink_size);
+    if ((int64_t)ret < 0)
+        return ret;
 
     task_mm_info_t *mm = current_task->mm;
     spin_lock(&mm->lock);
@@ -1223,12 +1251,17 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
 
 void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
                   uint64_t flags, uint64_t offset) {
-    (void)flags;
-
     if (!file || !file->node)
         return (void *)(uint64_t)-EBADF;
     if ((prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) == 0)
         return (void *)addr;
+
+    if ((flags & MAP_TYPE) == MAP_PRIVATE && !(prot & PROT_WRITE)) {
+        void *cache_map =
+            vfs_page_cache_map(file, addr, len, prot, flags, offset);
+        if ((int64_t)cache_map != -EOPNOTSUPP)
+            return cache_map;
+    }
 
     uint64_t final_pt_flags = PT_FLAG_U;
     if (prot & PROT_READ)
@@ -1527,6 +1560,29 @@ static uint64_t madvise_dontneed_range(uint64_t addr, uint64_t len) {
     int check_ret = madvise_check_vmas(addr, addr + len);
     if (check_ret < 0)
         return (uint64_t)check_ret;
+
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
+    uint64_t end = addr + len;
+    uint64_t cursor = addr;
+
+    spin_lock(&mgr->lock);
+    while (cursor < end) {
+        vma_t *vma = vma_find(mgr, cursor);
+        if (!vma) {
+            spin_unlock(&mgr->lock);
+            return (uint64_t)-ENOMEM;
+        }
+
+        uint64_t range_end = MIN(vma->vm_end, end);
+        uint64_t ret = writeback_vma_file_range(vma, cursor, range_end);
+        if ((int64_t)ret < 0) {
+            spin_unlock(&mgr->lock);
+            return ret;
+        }
+
+        cursor = range_end;
+    }
+    spin_unlock(&mgr->lock);
 
     task_mm_info_t *mm = current_task->mm;
     spin_lock(&mm->lock);

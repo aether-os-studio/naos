@@ -1796,10 +1796,10 @@ static vfs_operations_t socket_vfs_ops = {
 };
 
 fs_t sockfs = {
-    .name = "sockfs",
+    .name = "unix_socket",
     .magic = 0,
     .ops = &socket_vfs_ops,
-    .flags = FS_FLAGS_HIDDEN | FS_FLAGS_VIRTUAL,
+    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_HIDDEN,
 };
 
 void socketfs_init() {
