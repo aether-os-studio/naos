@@ -150,6 +150,8 @@ typedef int (*vfs_stat_t)(vfs_node_t node);
 
 // 创建一个文件或文件夹
 typedef int (*vfs_mk_t)(vfs_node_t parent, const char *name, vfs_node_t node);
+typedef int (*vfs_link_node_t)(vfs_node_t parent, vfs_node_t source,
+                               vfs_node_t node);
 
 typedef int (*vfs_mknod_t)(vfs_node_t parent, const char *name, vfs_node_t node,
                            uint16_t mode, int dev);
@@ -193,6 +195,7 @@ typedef struct vfs_inode_operations {
     vfs_mk_t mkdir;
     vfs_mk_t mkfile;
     vfs_mk_t link;
+    vfs_link_node_t link_node;
     vfs_mk_t symlink;
     vfs_mknod_t mknod;
     vfs_chmod_t chmod;
@@ -234,6 +237,7 @@ typedef struct vfs_operations {
             vfs_mk_t mkdir;
             vfs_mk_t mkfile;
             vfs_mk_t link;
+            vfs_link_node_t link_node;
             vfs_mk_t symlink;
             vfs_mknod_t mknod;
             vfs_chmod_t chmod;
@@ -502,6 +506,7 @@ int vfs_mkfile(const char *name);
  *\return 0 成功，-1 失败
  */
 int vfs_link(const char *name, const char *target_name);
+int vfs_link_existing(const char *name, vfs_node_t target);
 /**
  *\brief 创建symlink文件
  *

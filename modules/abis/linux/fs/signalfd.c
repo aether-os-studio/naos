@@ -127,7 +127,7 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask,
         memset(new_fd, 0, sizeof(fd_t));
         new_fd->node = node;
         new_fd->offset = 0;
-        new_fd->flags = flags;
+        new_fd->flags = O_RDONLY | flags;
         current_task->fd_info->fds[fd] = new_fd;
         procfs_on_open_file(current_task, fd);
         ret = 0;

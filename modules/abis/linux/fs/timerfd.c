@@ -272,7 +272,7 @@ uint64_t sys_timerfd_create(int clockid, int flags) {
         memset(new_fd, 0, sizeof(fd_t));
         new_fd->node = node;
         new_fd->offset = 0;
-        new_fd->flags = flags & (TFD_NONBLOCK | TFD_CLOEXEC);
+        new_fd->flags = O_RDONLY | (flags & (TFD_NONBLOCK | TFD_CLOEXEC));
         new_fd->close_on_exec = !!(flags & TFD_CLOEXEC);
         current_task->fd_info->fds[fd] = new_fd;
         procfs_on_open_file(current_task, fd);

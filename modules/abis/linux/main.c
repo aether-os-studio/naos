@@ -309,18 +309,17 @@ uint64_t sys_uname(uint64_t arg1) {
 
     struct utsname utsname;
     memset(&utsname, 0, sizeof(utsname));
-    memcpy(utsname.nodename, nodename, sizeof(nodename));
-    memcpy(utsname.machine, machine, sizeof(machine));
+    strcpy(utsname.nodename, nodename);
+    strcpy(utsname.machine, machine);
     if (fake_linux) {
-        strncpy(utsname.sysname, "Linux", sizeof(utsname.sysname));
-        strncpy(utsname.release, "3.0.1-aether", sizeof(utsname.release));
-        strncpy(utsname.version,
-                "#1 SMP PREEMPT_DYNAMIC " __DATE__ " " __TIME__,
-                sizeof(utsname.version));
+        strcpy(utsname.sysname, "Linux");
+        strcpy(utsname.release, "3.0.1-aether");
+        strcpy(utsname.version,
+               "#1 SMP PREEMPT_DYNAMIC " __DATE__ " " __TIME__);
     } else {
-        strncpy(utsname.sysname, sysname, sizeof(sysname));
-        strncpy(utsname.release, release, sizeof(release));
-        strncpy(utsname.version, version, sizeof(version));
+        strcpy(utsname.sysname, sysname);
+        strcpy(utsname.release, release);
+        strcpy(utsname.version, version);
     }
     if (copy_to_user((void *)arg1, &utsname, sizeof(utsname))) {
         return (uint64_t)-EFAULT;

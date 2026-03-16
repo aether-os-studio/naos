@@ -100,13 +100,13 @@ int terminal_ioctl_serial(tty_t *device, uint32_t cmd, uint64_t arg) {
         }
         return 0;
     case TCGETS2: {
-        struct termios2 t2;
+        struct termios2 t2 = {0};
         memcpy(&t2.c_iflag, &device->termios.c_iflag, sizeof(uint32_t));
         memcpy(&t2.c_oflag, &device->termios.c_oflag, sizeof(uint32_t));
         memcpy(&t2.c_cflag, &device->termios.c_cflag, sizeof(uint32_t));
         memcpy(&t2.c_lflag, &device->termios.c_lflag, sizeof(uint32_t));
         t2.c_line = device->termios.c_line;
-        memcpy(t2.c_cc, device->termios.c_cc, NCCS);
+        memcpy(t2.c_cc, device->termios.c_cc, sizeof(t2.c_cc));
         t2.c_ispeed = 0; // Not supported
         t2.c_ospeed = 0; // Not supported
         if (!arg || copy_to_user((void *)arg, &t2, sizeof(struct termios2)))
@@ -129,7 +129,7 @@ int terminal_ioctl_serial(tty_t *device, uint32_t cmd, uint64_t arg) {
         memcpy(&device->termios.c_cflag, &t2_set.c_cflag, sizeof(uint32_t));
         memcpy(&device->termios.c_lflag, &t2_set.c_lflag, sizeof(uint32_t));
         device->termios.c_line = t2_set.c_line;
-        memcpy(device->termios.c_cc, t2_set.c_cc, NCCS);
+        memcpy(device->termios.c_cc, t2_set.c_cc, sizeof(t2_set.c_cc));
         // Ignore ispeed and ospeed as they are not supported
         return 0;
     }

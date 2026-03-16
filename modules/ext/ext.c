@@ -1571,6 +1571,48 @@ static int ext_dir_remove_entry_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
     return ret;
 }
 
+static int ext_dir_replace_entry_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
+                                        ext_inode_disk_t *dir_inode,
+                                        const char *name, uint32_t child_ino,
+                                        uint8_t file_type) {
+    ext_dir_lookup_t lookup = {0};
+    int ret = ext_dir_find_locked(fs, dir_ino, dir_inode, name, &lookup);
+    if (ret)
+        return ret;
+    if (!lookup.found)
+        return -ENOENT;
+
+    uint8_t *buf = calloc(1, fs->block_size);
+    if (!buf)
+        return -ENOMEM;
+
+    uint32_t pblock = 0;
+    ret = ext_inode_get_block_locked(fs, dir_ino, dir_inode, lookup.lblock,
+                                     false, &pblock);
+    if (ret) {
+        free(buf);
+        return ret;
+    }
+
+    ret = ext_read_block(fs, pblock, buf);
+    if (ret) {
+        free(buf);
+        return ret;
+    }
+
+    ext_dir_entry_t *entry = (ext_dir_entry_t *)(buf + lookup.offset);
+    entry->inode = child_ino;
+    entry->file_type = file_type;
+
+    ret = ext_write_block(fs, pblock, buf);
+    free(buf);
+    if (ret)
+        return ret;
+
+    ext_inode_touch(dir_inode, false, true, true);
+    return ext_write_inode(fs, dir_ino, dir_inode);
+}
+
 static int ext_dir_is_empty_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
                                    ext_inode_disk_t *dir_inode) {
     uint64_t dir_size = ext_inode_size_get(dir_inode);
@@ -1691,6 +1733,27 @@ static int ext_release_inode_locked(ext_mount_ctx_t *fs, uint32_t ino,
         return ret;
     return ext_free_inode_locked(fs, ino,
                                  (inode->i_mode & S_IFMT) == EXT2_S_IFDIR);
+}
+
+static int ext_drop_link_locked(ext_mount_ctx_t *fs, uint32_t ino,
+                                ext_inode_disk_t *inode,
+                                vfs_node_t cached_node) {
+    if (!fs || !inode)
+        return -EINVAL;
+
+    if (inode->i_links_count)
+        inode->i_links_count--;
+    ext_inode_touch(inode, false, false, true);
+
+    if (inode->i_links_count == 0) {
+        if (cached_node && cached_node->refcount > 0) {
+            inode->i_dtime = (uint32_t)ext_now();
+            return ext_write_inode(fs, ino, inode);
+        }
+        return ext_release_inode_locked(fs, ino, inode);
+    }
+
+    return ext_write_inode(fs, ino, inode);
 }
 
 static int ext_lookup_node_locked(vfs_node_t parent, const char *name,
@@ -1869,12 +1932,21 @@ static int ext_populate_dir_with_fs_locked(ext_mount_ctx_t *fs,
                     if (exist == exist->root) {
                         goto next;
                     }
-                    if (exist->fsid != (uint32_t)ext_fsid) {
+                    if (exist->fsid != (uint32_t)ext_fsid ||
+                        (exist->inode && exist->inode != entry->inode)) {
                         ext_hide_node(exist);
+                        exist = NULL;
                     }
                 }
 
-                vfs_node_t child = vfs_child_append(node, name, NULL);
+                vfs_node_t child = exist;
+                if (!child) {
+                    child = vfs_child_append(node, name, NULL);
+                    if (!child) {
+                        free(buf);
+                        return -ENOMEM;
+                    }
+                }
                 child->inode = entry->inode;
                 child->fsid = ext_fsid;
                 child->dev = node->dev;
@@ -2218,10 +2290,14 @@ void ext_open(vfs_node_t parent, const char *name, vfs_node_t node) {
     }
     ext_sync_node_from_inode(node, fs, &inode);
 
-    ext_handle_t *handle = calloc(1, sizeof(*handle));
+    ext_handle_t *handle = node->handle;
     if (!handle) {
-        spin_unlock(&rwlock);
-        return;
+        handle = calloc(1, sizeof(*handle));
+        if (!handle) {
+            spin_unlock(&rwlock);
+            return;
+        }
+        node->handle = handle;
     }
     handle->node = node;
     handle->ino = node->inode;
@@ -2229,13 +2305,13 @@ void ext_open(vfs_node_t parent, const char *name, vfs_node_t node) {
     handle->inode_valid = true;
     handle->inode_dirty = false;
 
-    if ((node->type & file_block) || (node->type & file_stream)) {
+    if (((node->type & file_block) || (node->type & file_stream)) &&
+        !handle->device_opened) {
         if (!device_open(node->rdev, NULL)) {
             handle->device_opened = true;
         }
     }
 
-    node->handle = handle;
     if ((node->type & file_dir) &&
         (!(node->flags & VFS_NODE_FLAGS_CHILDREN_POPULATED) ||
          (node->flags & VFS_NODE_FLAGS_DIRTY_CHILDREN))) {
@@ -2421,6 +2497,63 @@ int ext_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
     return ret;
 }
 
+static int ext_link_node_locked(ext_mount_ctx_t *fs, vfs_node_t parent,
+                                vfs_node_t target, vfs_node_t node) {
+    if (!fs || !parent || !target || !node)
+        return -EINVAL;
+
+    ext_mount_ctx_t *target_fs = ext_find_mount(target);
+    if (target_fs != fs) {
+        return -EXDEV;
+    }
+
+    if (!target->inode) {
+        int ret = ext_lookup_node_locked(target->parent, target->name, target);
+        if (ret)
+            return ret;
+    }
+
+    ext_inode_disk_t target_inode = {0};
+    int ret = ext_read_inode(fs, target->inode, &target_inode);
+    if (ret)
+        return ret;
+    if ((target_inode.i_mode & S_IFMT) == EXT2_S_IFDIR)
+        return -EPERM;
+
+    ext_inode_disk_t parent_inode = {0};
+    ret = ext_read_inode(fs, parent->inode, &parent_inode);
+    if (ret)
+        return ret;
+
+    ret = ext_dir_add_entry_locked(
+        fs, parent->inode, &parent_inode, target->inode, node->name,
+        ext_mode_to_dir_file_type(target_inode.i_mode));
+    if (!ret) {
+        target_inode.i_links_count++;
+        target_inode.i_dtime = 0;
+        ext_inode_touch(&target_inode, false, false, true);
+        ret = ext_write_inode(fs, target->inode, &target_inode);
+        if (!ret) {
+            node->inode = target->inode;
+            ext_sync_node_from_inode(node, fs, &target_inode);
+        }
+    }
+
+    return ret;
+}
+
+static int ext_link_existing(vfs_node_t parent, vfs_node_t target,
+                             vfs_node_t node) {
+    if (!parent || !target || !node)
+        return -EINVAL;
+
+    spin_lock(&rwlock);
+    ext_mount_ctx_t *fs = ext_find_mount(parent);
+    int ret = fs ? ext_link_node_locked(fs, parent, target, node) : -ENOENT;
+    spin_unlock(&rwlock);
+    return ret;
+}
+
 int ext_link(vfs_node_t parent, const char *name, vfs_node_t node) {
     if (!parent || !name || !node)
         return -EINVAL;
@@ -2433,46 +2566,7 @@ int ext_link(vfs_node_t parent, const char *name, vfs_node_t node) {
     }
 
     vfs_node_t target = vfs_open(name, O_NOFOLLOW);
-    if (!target) {
-        spin_unlock(&rwlock);
-        return -ENOENT;
-    }
-    ext_mount_ctx_t *target_fs = ext_find_mount(target);
-    if (target_fs != fs) {
-        spin_unlock(&rwlock);
-        return -EXDEV;
-    }
-
-    ext_inode_disk_t target_inode = {0};
-    int ret = ext_read_inode(fs, target->inode, &target_inode);
-    if (ret) {
-        spin_unlock(&rwlock);
-        return ret;
-    }
-    if ((target_inode.i_mode & S_IFMT) == EXT2_S_IFDIR) {
-        spin_unlock(&rwlock);
-        return -EPERM;
-    }
-
-    ext_inode_disk_t parent_inode = {0};
-    ret = ext_read_inode(fs, parent->inode, &parent_inode);
-    if (ret) {
-        spin_unlock(&rwlock);
-        return ret;
-    }
-
-    ret = ext_dir_add_entry_locked(
-        fs, parent->inode, &parent_inode, target->inode, node->name,
-        ext_mode_to_dir_file_type(target_inode.i_mode));
-    if (!ret) {
-        target_inode.i_links_count++;
-        ext_inode_touch(&target_inode, false, false, true);
-        ret = ext_write_inode(fs, target->inode, &target_inode);
-        if (!ret) {
-            node->inode = target->inode;
-            ext_sync_node_from_inode(node, fs, &target_inode);
-        }
-    }
+    int ret = target ? ext_link_node_locked(fs, parent, target, node) : -ENOENT;
 
     spin_unlock(&rwlock);
     return ret;
@@ -2646,24 +2740,19 @@ int ext_rename(vfs_node_t node, const char *new) {
     if (!node || !new)
         return -EINVAL;
 
-    spin_lock(&rwlock);
-    ext_mount_ctx_t *fs = ext_find_mount(node);
-    if (!fs) {
-        spin_unlock(&rwlock);
-        return -ENOENT;
-    }
-
     char *path = strdup(new);
-    if (!path) {
-        spin_unlock(&rwlock);
+    if (!path)
         return -ENOMEM;
+
+    size_t path_len = strlen(path);
+    while (path_len > 1 && path[path_len - 1] == '/') {
+        path[--path_len] = '\0';
     }
 
     char *slash = strrchr(path, '/');
     char *new_name = slash ? slash + 1 : path;
     if (!strlen(new_name)) {
         free(path);
-        spin_unlock(&rwlock);
         return -EINVAL;
     }
 
@@ -2681,6 +2770,13 @@ int ext_rename(vfs_node_t node, const char *new) {
     vfs_node_t new_parent = vfs_open(parent_path, 0);
     if (!new_parent) {
         free(path);
+        return -ENOENT;
+    }
+
+    spin_lock(&rwlock);
+    ext_mount_ctx_t *fs = ext_find_mount(node);
+    if (!fs) {
+        free(path);
         spin_unlock(&rwlock);
         return -ENOENT;
     }
@@ -2694,6 +2790,11 @@ int ext_rename(vfs_node_t node, const char *new) {
     ext_inode_disk_t inode = {0};
     ext_inode_disk_t old_parent_inode = {0};
     ext_inode_disk_t new_parent_inode = {0};
+    ext_inode_disk_t target_inode = {0};
+    ext_dir_lookup_t target_lookup = {0};
+    bool target_exists = false;
+    bool target_is_dir = false;
+    bool source_is_dir = false;
     int ret = ext_read_inode(fs, node->inode, &inode);
     if (ret)
         goto out;
@@ -2704,32 +2805,107 @@ int ext_rename(vfs_node_t node, const char *new) {
     if (ret)
         goto out;
 
+    source_is_dir = (inode.i_mode & S_IFMT) == EXT2_S_IFDIR;
+
+    ret = ext_dir_find_locked(fs, new_parent->inode, &new_parent_inode,
+                              new_name, &target_lookup);
+    if (ret)
+        goto out;
+    target_exists = target_lookup.found;
+
+    if ((new_parent == node->parent && !strcmp(new_name, node->name)) ||
+        (target_exists && target_lookup.inode == node->inode)) {
+        ret = 0;
+        goto out;
+    }
+
+    if (target_exists) {
+        ret = ext_read_inode(fs, target_lookup.inode, &target_inode);
+        if (ret)
+            goto out;
+
+        target_is_dir = (target_inode.i_mode & S_IFMT) == EXT2_S_IFDIR;
+        if (source_is_dir != target_is_dir) {
+            ret = source_is_dir ? -ENOTDIR : -EISDIR;
+            goto out;
+        }
+
+        if (target_is_dir) {
+            ret =
+                ext_dir_is_empty_locked(fs, target_lookup.inode, &target_inode);
+            if (ret < 0)
+                goto out;
+            if (!ret) {
+                ret = -ENOTEMPTY;
+                goto out;
+            }
+        }
+
+        ret = ext_dir_replace_entry_locked(
+            fs, new_parent->inode, &new_parent_inode, new_name, node->inode,
+            ext_mode_to_dir_file_type(inode.i_mode));
+        if (ret)
+            goto out;
+
+        vfs_node_t cached_target = vfs_find_node_by_inode(target_lookup.inode);
+        if (cached_target == node)
+            cached_target = NULL;
+        ret = ext_drop_link_locked(fs, target_lookup.inode, &target_inode,
+                                   cached_target);
+        if (ret)
+            goto out;
+    } else {
+        ret = ext_dir_add_entry_locked(fs, new_parent->inode, &new_parent_inode,
+                                       node->inode, new_name,
+                                       ext_mode_to_dir_file_type(inode.i_mode));
+        if (ret)
+            goto out;
+    }
+
     ret = ext_dir_remove_entry_locked(fs, node->parent->inode,
                                       &old_parent_inode, node->name, NULL);
     if (ret)
         goto out;
-    ret = ext_dir_add_entry_locked(fs, new_parent->inode, &new_parent_inode,
-                                   node->inode, new_name,
-                                   ext_mode_to_dir_file_type(inode.i_mode));
-    if (ret)
-        goto out;
 
-    if ((inode.i_mode & S_IFMT) == EXT2_S_IFDIR && new_parent != node->parent) {
+    if (source_is_dir && new_parent != node->parent) {
         ret = ext_dir_set_dotdot_locked(fs, node->inode, &inode,
                                         new_parent->inode);
         if (ret)
             goto out;
-        if (old_parent_inode.i_links_count)
-            old_parent_inode.i_links_count--;
-        new_parent_inode.i_links_count++;
-        ext_inode_touch(&old_parent_inode, false, true, true);
-        ext_inode_touch(&new_parent_inode, false, true, true);
-        ret = ext_write_inode(fs, node->parent->inode, &old_parent_inode);
-        if (ret)
-            goto out;
-        ret = ext_write_inode(fs, new_parent->inode, &new_parent_inode);
-        if (ret)
-            goto out;
+    }
+
+    if (source_is_dir) {
+        bool write_old_parent = false;
+        bool write_new_parent = false;
+
+        if (new_parent != node->parent) {
+            if (old_parent_inode.i_links_count)
+                old_parent_inode.i_links_count--;
+            write_old_parent = true;
+
+            if (!target_exists) {
+                new_parent_inode.i_links_count++;
+                write_new_parent = true;
+            }
+        } else if (target_exists) {
+            if (old_parent_inode.i_links_count)
+                old_parent_inode.i_links_count--;
+            write_old_parent = true;
+        }
+
+        if (write_old_parent) {
+            ext_inode_touch(&old_parent_inode, false, true, true);
+            ret = ext_write_inode(fs, node->parent->inode, &old_parent_inode);
+            if (ret)
+                goto out;
+        }
+
+        if (write_new_parent) {
+            ext_inode_touch(&new_parent_inode, false, true, true);
+            ret = ext_write_inode(fs, new_parent->inode, &new_parent_inode);
+            if (ret)
+                goto out;
+        }
     }
 
     ext_inode_touch(&inode, false, false, true);
@@ -2848,6 +3024,7 @@ static vfs_operations_t ext_vfs_ops = {
     .mkdir = ext_mkdir,
     .mkfile = ext_mkfile,
     .link = ext_link,
+    .link_node = ext_link_existing,
     .symlink = ext_symlink,
     .mknod = ext_mknod,
     .chmod = ext_chmod,

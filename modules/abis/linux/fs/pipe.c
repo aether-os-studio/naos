@@ -316,11 +316,11 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
         memset(fd_write, 0, sizeof(fd_t));
         fd_read->node = node_input;
         fd_read->offset = 0;
-        fd_read->flags = flags;
+        fd_read->flags = O_RDONLY | flags;
         fd_read->close_on_exec = !!(flags & O_CLOEXEC);
         fd_write->node = node_output;
         fd_write->offset = 0;
-        fd_write->flags = flags;
+        fd_write->flags = O_WRONLY | flags;
         fd_write->close_on_exec = !!(flags & O_CLOEXEC);
 
         current_task->fd_info->fds[i1] = fd_read;

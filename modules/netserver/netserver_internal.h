@@ -28,6 +28,9 @@
 #define IPPROTO_RAW 255
 
 #define TCP_NODELAY 1
+#define TCP_KEEPIDLE 4
+#define TCP_KEEPINTVL 5
+#define TCP_KEEPCNT 6
 #define IP_TTL 2
 #define IP_TOS 1
 #define IP_MTU_DISCOVER 10
@@ -92,22 +95,29 @@ typedef struct lwip_socket_state {
     bool ipv6_pktinfo;
     bool ip_recverr;
     bool ipv6_recverr;
+    bool oobinline;
     bool ip_freebind;
     bool ip_bind_address_no_port;
     int ip_mtu_discover;
     int ipv6_mtu_discover;
     uint32_t ip_local_port_range;
+    int sndbuf;
     struct timeval sndtimeo;
     struct timeval rcvtimeo;
     volatile s16_t rcvevent;
     volatile u16_t sendevent;
     volatile u16_t errevent;
+    int pending_error;
+    bool peer_closed;
+    bool shut_rd;
+    bool shut_wr;
     spinlock_t event_lock;
     struct pbuf *rx_pbuf;
     size_t rx_pbuf_offset;
     size_t rx_pbuf_announced;
     struct netbuf *rx_netbuf;
     size_t rx_netbuf_offset;
+    int rx_cached_avail;
     bool rx_peeked;
 } lwip_socket_state_t;
 

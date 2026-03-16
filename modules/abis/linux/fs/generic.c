@@ -366,8 +366,14 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
 
     if (!node) {
         int ret = vfs_mkfile(name);
-        if (ret < 0)
-            return (uint64_t)-ENOSPC;
+        if (ret < 0) {
+            if (ret == -EEXIST && !(flags & O_EXCL)) {
+                node = vfs_open(name, flags & O_NOFOLLOW);
+                if (node)
+                    goto have_node;
+            }
+            return (uint64_t)ret;
+        }
 
         node = vfs_open(name, flags & O_NOFOLLOW);
         if (!node)
@@ -376,6 +382,7 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
             vfs_chmod(name, mode ? (mode & 0777) : 0777);
     }
 
+have_node:
     if ((node->type & file_dir) &&
         (acc_mode == O_WRONLY || acc_mode == O_RDWR)) {
         return (uint64_t)-EISDIR;
@@ -405,7 +412,7 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
         memset(new_fd, 0, sizeof(fd_t));
         new_fd->node = node;
         new_fd->offset = 0;
-        new_fd->flags = flags;
+        new_fd->flags = flags & ~O_CLOEXEC;
         new_fd->close_on_exec = !!(flags & O_CLOEXEC);
         self->fd_info->fds[i] = new_fd;
         vfs_node_ref_get(node);
@@ -448,8 +455,10 @@ static uint64_t do_sys_open_tmpfile(const char *dir_path, uint64_t flags,
             continue;
 
         int mkret = vfs_mkfile(tmp_path);
-        if (mkret < 0)
+        if (mkret == -EEXIST)
             continue;
+        if (mkret < 0)
+            return (uint64_t)mkret;
 
         if (mode)
             vfs_chmod(tmp_path, mode ? (mode & 0777) : 0777);
@@ -886,6 +895,64 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
     return ret;
 }
 
+uint64_t sys_pread64(int fd, void *buf, size_t len, uint64_t offset) {
+    if (!len) {
+        return 0;
+    }
+    if (!buf || check_user_overflow((uint64_t)buf, len) ||
+        check_unmapped((uint64_t)buf, len)) {
+        return (uint64_t)-EFAULT;
+    }
+
+    task_t *self = current_task;
+
+    ssize_t ret = 0;
+    with_fd_info_lock(self->fd_info, {
+        if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
+            ret = -EBADF;
+            break;
+        }
+
+        if (self->fd_info->fds[fd]->node->type & file_dir) {
+            ret = -EISDIR;
+            break;
+        }
+
+        ret = vfs_read(self->fd_info->fds[fd]->node, buf, offset, len);
+    });
+
+    return (uint64_t)ret;
+}
+
+uint64_t sys_pwrite64(int fd, const void *buf, size_t len, uint64_t offset) {
+    if (!len) {
+        return 0;
+    }
+    if (!buf || check_user_overflow((uint64_t)buf, len) ||
+        check_unmapped((uint64_t)buf, len)) {
+        return (uint64_t)-EFAULT;
+    }
+
+    task_t *self = current_task;
+
+    ssize_t ret = 0;
+    with_fd_info_lock(self->fd_info, {
+        if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
+            ret = -EBADF;
+            break;
+        }
+
+        if (self->fd_info->fds[fd]->node->type & file_dir) {
+            ret = -EISDIR;
+            break;
+        }
+
+        ret = vfs_write(self->fd_info->fds[fd]->node, buf, offset, len);
+    });
+
+    return (uint64_t)ret;
+}
+
 uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
                       size_t count) {
     if (out_fd >= MAX_FD_NUM || in_fd >= MAX_FD_NUM)
@@ -1036,7 +1103,13 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
             f->flags |= O_NONBLOCK;
         else
             f->flags &= ~O_NONBLOCK;
-        ret = 0;
+        if (f->node->type & file_socket) {
+            ret = vfs_ioctl(f->node, cmd, arg);
+            if (ret == -ENOTTY || ret == -ENOSYS)
+                ret = 0;
+        } else {
+            ret = 0;
+        }
         break;
     case FIOCLEX:
         f->flags |= O_CLOEXEC;
@@ -1384,7 +1457,15 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         uint32_t valid_flags = O_STATUS_FLAGS;
         self->fd_info->fds[fd]->flags &= ~valid_flags;
         self->fd_info->fds[fd]->flags |= arg & valid_flags;
-        return 0;
+        int ret = 0;
+        if (self->fd_info->fds[fd]->node->type & file_socket) {
+            int nonblock = !!((arg & valid_flags) & O_NONBLOCK);
+            ret = vfs_ioctl(self->fd_info->fds[fd]->node, FIONBIO,
+                            (ssize_t)&nonblock);
+            if (ret == -ENOTTY || ret == -ENOSYS)
+                ret = 0;
+        }
+        return ret;
     case F_GETLK: {
         flock_t lock;
         if (check_user_overflow(arg, sizeof(lock))) {
@@ -1900,13 +1981,18 @@ uint64_t sys_renameat(uint64_t oldfd, const char *old_user, uint64_t newfd,
 
     char *old_path = at_resolve_pathname_fullpath(oldfd, (char *)old);
     char *new_path = at_resolve_pathname_fullpath(newfd, (char *)new);
+    if (!old_path || !new_path) {
+        free(old_path);
+        free(new_path);
+        return (uint64_t)-EBADF;
+    }
 
     int ret = do_rename(old_path, new_path);
 
     free(old_path);
     free(new_path);
 
-    return 0;
+    return ret;
 }
 
 uint64_t sys_renameat2(uint64_t oldfd, const char *old_user, uint64_t newfd,
@@ -1921,13 +2007,18 @@ uint64_t sys_renameat2(uint64_t oldfd, const char *old_user, uint64_t newfd,
 
     char *old_path = at_resolve_pathname_fullpath(oldfd, (char *)old);
     char *new_path = at_resolve_pathname_fullpath(newfd, (char *)new);
+    if (!old_path || !new_path) {
+        free(old_path);
+        free(new_path);
+        return (uint64_t)-EBADF;
+    }
 
     int ret = do_rename(old_path, new_path);
 
     free(old_path);
     free(new_path);
 
-    return 0;
+    return ret;
 }
 
 uint64_t sys_fchdir(uint64_t fd) {
@@ -1978,7 +2069,75 @@ uint64_t sys_mkdirat(int dfd, const char *name_user, uint64_t mode) {
 }
 
 uint64_t do_link(const char *name, const char *new) {
-    return vfs_link(name, new);
+    return vfs_link(new, name);
+}
+
+static int parse_proc_self_fd_path(const char *path, int *fd_out) {
+    if (!path || !fd_out)
+        return 0;
+
+    const char *fd_part = NULL;
+    if (!strncmp(path, "/proc/self/fd/", strlen("/proc/self/fd/"))) {
+        fd_part = path + strlen("/proc/self/fd/");
+    } else if (!strncmp(path, "/proc/", strlen("/proc/"))) {
+        const char *pid_part = path + strlen("/proc/");
+        uint64_t pid = 0;
+        if (!*pid_part)
+            return 0;
+        while (is_digit(*pid_part)) {
+            pid = pid * 10 + (uint64_t)(*pid_part - '0');
+            pid_part++;
+        }
+        if (pid != task_effective_tgid(current_task) ||
+            strncmp(pid_part, "/fd/", strlen("/fd/"))) {
+            return 0;
+        }
+        fd_part = pid_part + strlen("/fd/");
+    } else {
+        return 0;
+    }
+
+    if (!fd_part || !*fd_part)
+        return 0;
+
+    int fd = 0;
+    while (is_digit(*fd_part)) {
+        fd = fd * 10 + (*fd_part - '0');
+        fd_part++;
+    }
+    if (*fd_part != '\0')
+        return 0;
+
+    *fd_out = fd;
+    return 1;
+}
+
+static int resolve_linkat_source_node(uint64_t olddirfd, const char *oldpath,
+                                      int flags, vfs_node_t *source_out) {
+    if (!source_out)
+        return -EINVAL;
+    *source_out = NULL;
+
+    task_t *self = current_task;
+
+    if ((flags & AT_EMPTY_PATH) && oldpath && oldpath[0] == '\0') {
+        if (olddirfd >= MAX_FD_NUM || !self->fd_info->fds[olddirfd])
+            return -EBADF;
+        *source_out = self->fd_info->fds[olddirfd]->node;
+        return 1;
+    }
+
+    if (flags & AT_SYMLINK_FOLLOW) {
+        int fd = -1;
+        if (parse_proc_self_fd_path(oldpath, &fd)) {
+            if (fd < 0 || fd >= MAX_FD_NUM || !self->fd_info->fds[fd])
+                return -ENOENT;
+            *source_out = self->fd_info->fds[fd]->node;
+            return 1;
+        }
+    }
+
+    return 0;
 }
 
 uint64_t sys_link(const char *name_user, const char *new_user) {
@@ -2009,23 +2168,44 @@ uint64_t sys_symlink(const char *name_user, const char *target_name_user) {
 
 uint64_t sys_linkat(uint64_t olddirfd, const char *oldpath_user,
                     uint64_t newdirfd, const char *newpath_user, int flags) {
+    if (flags & ~(AT_EMPTY_PATH | AT_SYMLINK_FOLLOW))
+        return (uint64_t)-EINVAL;
+
     char oldpath[512];
     if (copy_from_user_str(oldpath, oldpath_user, sizeof(oldpath)))
         return (uint64_t)-EFAULT;
     char newpath[512];
     if (copy_from_user_str(newpath, newpath_user, sizeof(newpath)))
         return (uint64_t)-EFAULT;
-    if (olddirfd >= MAX_FD_NUM || !current_task->fd_info->fds[olddirfd])
-        return (uint64_t)-EBADF;
-    if (newdirfd >= MAX_FD_NUM || !current_task->fd_info->fds[newdirfd])
-        return (uint64_t)-EBADF;
 
-    char *old = at_resolve_pathname_fullpath(olddirfd, oldpath);
     char *new = at_resolve_pathname_fullpath(newdirfd, newpath);
+    if (!new) {
+        return (uint64_t)-EBADF;
+    }
 
-    int ret = do_link(old, new);
+    vfs_node_t source = NULL;
+    int source_ret =
+        resolve_linkat_source_node(olddirfd, oldpath, flags, &source);
+    int ret = 0;
 
-    free(old);
+    if (source_ret < 0) {
+        free(new);
+        return (uint64_t)source_ret;
+    }
+
+    if (source_ret > 0) {
+        ret = vfs_link_existing(new, source);
+    } else {
+        char *old = at_resolve_pathname_fullpath(olddirfd, oldpath);
+        if (!old) {
+            free(new);
+            return (uint64_t)-EBADF;
+        }
+
+        ret = do_link(old, new);
+        free(old);
+    }
+
     free(new);
 
     return ret;
@@ -2038,10 +2218,10 @@ uint64_t sys_symlinkat(const char *name_user, int dfd, const char *new_user) {
     char new[512];
     if (copy_from_user_str(new, new_user, sizeof(new)))
         return (uint64_t)-EFAULT;
-    if (dfd < 0 || dfd >= MAX_FD_NUM || !current_task->fd_info->fds[dfd])
-        return (uint64_t)-EBADF;
-
     char *buf = at_resolve_pathname_fullpath(dfd, new);
+    if (!buf) {
+        return (uint64_t)-EBADF;
+    }
 
     int ret = do_symlink(name, buf);
 

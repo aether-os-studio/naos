@@ -510,23 +510,9 @@ uint64_t sys_utimensat(int dfd, const char *pathname, struct timespec *utimes,
                        int flags);
 uint64_t sys_futimesat(int dfd, const char *pathname, struct timeval *utimes);
 
-static inline uint64_t sys_pwrite64(int fd, const void *buf, size_t count,
-                                    uint64_t offset) {
-    uint64_t origin = sys_lseek(fd, 0, SEEK_CUR);
-    sys_lseek(fd, offset, SEEK_SET);
-    uint64_t ret = sys_write(fd, buf, count);
-    sys_lseek(fd, origin, SEEK_SET);
-    return ret;
-}
+uint64_t sys_pread64(int fd, void *buf, size_t count, uint64_t offset);
 
-static inline uint64_t sys_pread64(int fd, void *buf, size_t count,
-                                   uint64_t offset) {
-    uint64_t origin = sys_lseek(fd, 0, SEEK_CUR);
-    sys_lseek(fd, offset, SEEK_SET);
-    uint64_t ret = sys_read(fd, buf, count);
-    sys_lseek(fd, origin, SEEK_SET);
-    return ret;
-}
+uint64_t sys_pwrite64(int fd, const void *buf, size_t count, uint64_t offset);
 
 uint64_t sys_sysinfo(struct sysinfo *info);
 

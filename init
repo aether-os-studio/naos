@@ -29,8 +29,6 @@ fi
 /bin/mount -t proc proc /proc
 /bin/mkdir -p /sys/
 /bin/mount -t sysfs sysfs /sys
-/bin/mkdir -p /var/
-/bin/mount -t tmpfs tmpfs /var
 /bin/mkdir -p /run/
 /bin/mount -t tmpfs tmpfs /run
 /bin/mkdir -p /tmp/

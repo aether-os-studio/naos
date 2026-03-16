@@ -58,7 +58,64 @@ static int ramfs_replace_content(ramfs_node_t *handle, size_t new_capability,
     return 0;
 }
 
-void ramfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {}
+static void ramfs_sync_node_from_handle(vfs_node_t node, ramfs_node_t *handle) {
+    if (!node || !handle)
+        return;
+
+    node->inode = handle->inode;
+    node->dev = handle->dev;
+    node->rdev = handle->rdev;
+    node->blksz = handle->blksz;
+    node->owner = handle->owner;
+    node->group = handle->group;
+    node->type = handle->type;
+    node->mode = handle->mode;
+    node->size = handle->size;
+    node->realsize = handle->capability;
+}
+
+static void ramfs_init_handle_from_node(ramfs_node_t *handle, vfs_node_t node) {
+    if (!handle || !node)
+        return;
+
+    handle->inode = node->inode;
+    handle->dev = node->dev;
+    handle->rdev = node->rdev;
+    handle->blksz = node->blksz;
+    handle->owner = node->owner;
+    handle->group = node->group;
+    handle->type = node->type;
+    handle->mode = node->mode;
+    handle->link_count = 1;
+    handle->handle_refs = 1;
+}
+
+static ramfs_node_t *ramfs_alloc_handle(vfs_node_t node, size_t capability) {
+    ramfs_node_t *handle = calloc(1, sizeof(ramfs_node_t));
+    if (!handle)
+        return NULL;
+
+    ramfs_init_handle_from_node(handle, node);
+    handle->capability = capability;
+
+    if (capability > 0) {
+        if (ramfs_replace_content(handle, capability, 0, true) != 0) {
+            free(handle);
+            return NULL;
+        }
+    }
+
+    ramfs_sync_node_from_handle(node, handle);
+    return handle;
+}
+
+void ramfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {
+    (void)parent;
+    (void)name;
+
+    if (node && node->handle)
+        ramfs_sync_node_from_handle(node, node->handle);
+}
 
 bool ramfs_close(vfs_node_t node) { return false; }
 
@@ -101,6 +158,7 @@ ssize_t ramfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     }
     memcpy(handle->content + offset, addr, size);
     handle->size = MAX(handle->size, offset + size);
+    ramfs_sync_node_from_handle(fd->node, handle);
     spin_unlock(&ramfs_oplock);
     return size;
 }
@@ -117,22 +175,19 @@ ssize_t ramfs_readlink(vfs_node_t node, void *addr, size_t offset,
 }
 
 int ramfs_mkdir(vfs_node_t parent, const char *name, vfs_node_t node) {
+    (void)parent;
+    (void)name;
     node->mode = 0700;
     return 0;
 }
 
 int ramfs_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
+    (void)parent;
+    (void)name;
     node->mode = 0700;
-    ramfs_node_t *handle = calloc(1, sizeof(ramfs_node_t));
+    ramfs_node_t *handle = ramfs_alloc_handle(node, DEFAULT_PAGE_SIZE);
     if (!handle)
         return -ENOMEM;
-    handle->capability = DEFAULT_PAGE_SIZE;
-    if (ramfs_replace_content(handle, handle->capability, 0, true) != 0) {
-        free(handle);
-        return -ENOMEM;
-    }
-    handle->size = 0;
-    handle->node = node;
     node->handle = handle;
     return 0;
 }
@@ -142,39 +197,68 @@ int ramfs_mknod(vfs_node_t parent, const char *name, vfs_node_t node,
     node->dev = dev;
     node->rdev = dev;
     node->mode = mode & 0777;
-    ramfs_node_t *handle = calloc(1, sizeof(ramfs_node_t));
+    ramfs_node_t *handle = ramfs_alloc_handle(node, DEFAULT_PAGE_SIZE);
     if (!handle)
         return -ENOMEM;
-    handle->capability = DEFAULT_PAGE_SIZE;
-    if (ramfs_replace_content(handle, handle->capability, 0, true) != 0) {
-        free(handle);
-        return -ENOMEM;
-    }
-    handle->size = 0;
-    handle->node = node;
     node->handle = handle;
     return 0;
 }
 
 int ramfs_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
+    (void)parent;
     node->mode = 0700;
     if (node->handle) {
         return -EEXIST;
     }
-    ramfs_node_t *handle = calloc(1, sizeof(ramfs_node_t));
+    size_t len = strlen(name);
+    ramfs_node_t *handle =
+        ramfs_alloc_handle(node, PADDING_UP(len, DEFAULT_PAGE_SIZE));
     if (!handle)
         return -ENOMEM;
-    size_t len = strlen(name);
-    handle->capability = PADDING_UP(len, DEFAULT_PAGE_SIZE);
-    if (ramfs_replace_content(handle, handle->capability, 0, true) != 0) {
-        free(handle);
-        return -ENOMEM;
-    }
     memcpy(handle->content, name, len);
     handle->size = len;
-    handle->node = node;
     node->handle = handle;
+    ramfs_sync_node_from_handle(node, handle);
     return 0;
+}
+
+static int ramfs_link_target(vfs_node_t parent, vfs_node_t target,
+                             vfs_node_t node) {
+    if (!parent || !target || !node)
+        return -EINVAL;
+
+    if (target->root != parent->root)
+        return -EXDEV;
+    if (target->type & file_dir)
+        return -EPERM;
+
+    ramfs_node_t *handle = target->handle;
+    if (!handle)
+        return -ENOENT;
+
+    spin_lock(&ramfs_oplock);
+    handle->link_count++;
+    handle->handle_refs++;
+    node->handle = handle;
+    ramfs_sync_node_from_handle(node, handle);
+    spin_unlock(&ramfs_oplock);
+
+    return 0;
+}
+
+static int ramfs_link_existing(vfs_node_t parent, vfs_node_t target,
+                               vfs_node_t node) {
+    return ramfs_link_target(parent, target, node);
+}
+
+int ramfs_link(vfs_node_t parent, const char *name, vfs_node_t node) {
+    if (!parent || !name || !node)
+        return -EINVAL;
+
+    vfs_node_t target = vfs_open(name, O_NOFOLLOW);
+    if (!target)
+        return -ENOENT;
+    return ramfs_link_target(parent, target, node);
 }
 
 int ramfs_mount(uint64_t dev, vfs_node_t node) {
@@ -219,17 +303,43 @@ void ramfs_unmount(vfs_node_t root) {
 }
 
 int ramfs_chmod(vfs_node_t node, uint16_t mode) {
-    node->mode = mode;
+    ramfs_node_t *handle = node ? node->handle : NULL;
+    if (handle) {
+        handle->mode = mode;
+        ramfs_sync_node_from_handle(node, handle);
+    } else if (node) {
+        node->mode = mode;
+    }
     return 0;
 }
 
 int ramfs_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
-    node->owner = uid;
-    node->group = gid;
+    ramfs_node_t *handle = node ? node->handle : NULL;
+    if (handle) {
+        handle->owner = (uint32_t)uid;
+        handle->group = (uint32_t)gid;
+        ramfs_sync_node_from_handle(node, handle);
+    } else if (node) {
+        node->owner = (uint32_t)uid;
+        node->group = (uint32_t)gid;
+    }
     return 0;
 }
 
-int ramfs_delete(vfs_node_t parent, vfs_node_t node) { return 0; }
+int ramfs_delete(vfs_node_t parent, vfs_node_t node) {
+    (void)parent;
+
+    ramfs_node_t *handle = node ? node->handle : NULL;
+    if (!handle)
+        return 0;
+
+    spin_lock(&ramfs_oplock);
+    if (handle->link_count)
+        handle->link_count--;
+    spin_unlock(&ramfs_oplock);
+
+    return 0;
+}
 
 int ramfs_rename(vfs_node_t node, const char *new) { return 0; }
 
@@ -277,22 +387,34 @@ void ramfs_resize(vfs_node_t node, uint64_t size) {
     if (!handle)
         return;
 
+    spin_lock(&ramfs_oplock);
     size_t new_capability = size;
-    if (new_capability > MAX_RAMFS_FILE_SIZE)
+    if (new_capability > MAX_RAMFS_FILE_SIZE) {
+        spin_unlock(&ramfs_oplock);
         return;
+    }
 
     if (ramfs_replace_content(handle, new_capability, handle->capability,
-                              false) != 0)
+                              false) != 0) {
+        spin_unlock(&ramfs_oplock);
         return;
+    }
 
-    handle->size = MIN(handle->size, (int)size);
-    if (handle->node)
-        handle->node->size = handle->size;
+    handle->size = MIN(handle->size, size);
+    ramfs_sync_node_from_handle(node, handle);
+    spin_unlock(&ramfs_oplock);
 }
 
 int ramfs_stat(vfs_node_t node) {
-    ramfs_node_t *tnode = node->handle;
-    node->size = tnode->size;
+    ramfs_node_t *tnode = node ? node->handle : NULL;
+    if (!tnode) {
+        if (node) {
+            node->size = 0;
+            node->realsize = 0;
+        }
+        return 0;
+    }
+    ramfs_sync_node_from_handle(node, tnode);
     return 0;
 }
 
@@ -300,9 +422,29 @@ void ramfs_free_handle(vfs_node_t node) {
     ramfs_node_t *tnode = node ? node->handle : NULL;
     if (!tnode)
         return;
-    if (tnode->content && tnode->capability > 0) {
-        tmpfs_mem_release(tnode->capability);
-        free_frames_bytes(tnode->content, tnode->capability);
+
+    void *content = NULL;
+    size_t capability = 0;
+    bool free_handle = false;
+
+    spin_lock(&ramfs_oplock);
+    if (tnode->handle_refs)
+        tnode->handle_refs--;
+    if (!tnode->handle_refs) {
+        content = tnode->content;
+        capability = tnode->capability;
+        tnode->content = NULL;
+        tnode->capability = 0;
+        free_handle = true;
+    }
+    spin_unlock(&ramfs_oplock);
+
+    if (!free_handle)
+        return;
+
+    if (content && capability > 0) {
+        tmpfs_mem_release(capability);
+        free_frames_bytes(content, capability);
     }
     free(tnode);
 }
@@ -315,6 +457,8 @@ static vfs_operations_t callbacks = {
     .readlink = ramfs_readlink,
     .mkdir = ramfs_mkdir,
     .mkfile = ramfs_mkfile,
+    .link = ramfs_link,
+    .link_node = ramfs_link_existing,
     .symlink = ramfs_symlink,
     .mknod = ramfs_mknod,
     .chmod = ramfs_chmod,

@@ -62,19 +62,77 @@ static int devtmpfs_replace_content(devtmpfs_node_t *handle,
     return 0;
 }
 
+static void devtmpfs_sync_node_from_handle(vfs_node_t node,
+                                           devtmpfs_node_t *handle) {
+    if (!node || !handle)
+        return;
+
+    node->inode = handle->inode;
+    node->dev = handle->dev;
+    node->rdev = handle->rdev;
+    node->blksz = handle->blksz;
+    node->owner = handle->owner;
+    node->group = handle->group;
+    node->type = handle->type;
+    node->mode = handle->mode;
+    node->size = handle->size;
+    node->realsize = handle->capability;
+}
+
+static void devtmpfs_init_handle_from_node(devtmpfs_node_t *handle,
+                                           vfs_node_t node) {
+    if (!handle || !node)
+        return;
+
+    handle->inode = node->inode;
+    handle->dev = node->dev;
+    handle->rdev = node->rdev;
+    handle->blksz = node->blksz;
+    handle->owner = node->owner;
+    handle->group = node->group;
+    handle->type = node->type;
+    handle->mode = node->mode;
+    handle->link_count = 1;
+    handle->handle_refs = 1;
+}
+
+static devtmpfs_node_t *devtmpfs_alloc_handle(vfs_node_t node,
+                                              size_t capability) {
+    devtmpfs_node_t *handle = calloc(1, sizeof(devtmpfs_node_t));
+    if (!handle)
+        return NULL;
+
+    devtmpfs_init_handle_from_node(handle, node);
+    handle->capability = capability;
+
+    if (capability > 0) {
+        if (devtmpfs_replace_content(handle, capability, 0, true) != 0) {
+            free(handle);
+            return NULL;
+        }
+    }
+
+    devtmpfs_sync_node_from_handle(node, handle);
+    return handle;
+}
+
 void devtmpfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {
+    (void)parent;
+    (void)name;
+
+    if (node && node->handle)
+        devtmpfs_sync_node_from_handle(node, node->handle);
+
     if ((node->type & file_block) || (node->type & file_stream)) {
         device_open(node->rdev, NULL);
     }
 }
 
 bool devtmpfs_close(vfs_node_t node) {
-    devtmpfs_node_t *dnode = node ? node->handle : NULL;
-    if (!dnode)
+    if (!node)
         return false;
-    if ((dnode->node->type & file_block) || (dnode->node->type & file_stream)) {
-        device_close(dnode->node->rdev);
-    }
+    if ((node->type & file_block) || (node->type & file_stream))
+        device_close(node->rdev);
     return false;
 }
 
@@ -114,6 +172,7 @@ ssize_t devtmpfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     }
     memcpy(handle->content + offset, addr, size);
     handle->size = MAX(handle->size, offset + size);
+    devtmpfs_sync_node_from_handle(fd->node, handle);
     return size;
 }
 
@@ -145,31 +204,26 @@ ssize_t devtmpfs_readlink(vfs_node_t node, void *addr, size_t offset,
 }
 
 int devtmpfs_mkdir(vfs_node_t parent, const char *name, vfs_node_t node) {
+    (void)parent;
+    (void)name;
     node->mode = 0700;
-    devtmpfs_node_t *handle = calloc(1, sizeof(devtmpfs_node_t));
+    devtmpfs_node_t *handle = devtmpfs_alloc_handle(node, 0);
     if (!handle)
         return -ENOMEM;
-    handle->node = node;
-    handle->size = 0;
     node->handle = handle;
     return 0;
 }
 
 int devtmpfs_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
+    (void)parent;
+    (void)name;
     node->mode = 0700;
     if (node->handle) {
         return -EEXIST;
     }
-    devtmpfs_node_t *handle = calloc(1, sizeof(devtmpfs_node_t));
+    devtmpfs_node_t *handle = devtmpfs_alloc_handle(node, DEFAULT_PAGE_SIZE);
     if (!handle)
         return -ENOMEM;
-    handle->node = node;
-    handle->capability = DEFAULT_PAGE_SIZE;
-    if (devtmpfs_replace_content(handle, handle->capability, 0, true) != 0) {
-        free(handle);
-        return -ENOMEM;
-    }
-    handle->size = 0;
     node->handle = handle;
     return 0;
 }
@@ -182,45 +236,73 @@ int devtmpfs_mknod(vfs_node_t parent, const char *name, vfs_node_t node,
     if (node->handle) {
         return -EEXIST;
     }
-    devtmpfs_node_t *handle = calloc(1, sizeof(devtmpfs_node_t));
+    devtmpfs_node_t *handle = devtmpfs_alloc_handle(node, DEFAULT_PAGE_SIZE);
     if (!handle)
         return -ENOMEM;
-    handle->node = node;
-    handle->capability = DEFAULT_PAGE_SIZE;
-    if (devtmpfs_replace_content(handle, handle->capability, 0, true) != 0) {
-        free(handle);
-        return -ENOMEM;
-    }
-    handle->size = 0;
     node->handle = handle;
     return 0;
 }
 
 int devtmpfs_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
+    (void)parent;
     node->mode = 0700;
     if (node->handle) {
         return -EEXIST;
     }
-    devtmpfs_node_t *handle = calloc(1, sizeof(devtmpfs_node_t));
+    devtmpfs_node_t *handle = devtmpfs_alloc_handle(node, DEFAULT_PAGE_SIZE);
     if (!handle)
         return -ENOMEM;
-    handle->capability = DEFAULT_PAGE_SIZE;
-    if (devtmpfs_replace_content(handle, handle->capability, 0, true) != 0) {
-        free(handle);
-        return -ENOMEM;
-    }
     int len = strlen(name);
     memcpy(handle->content, name, len);
     handle->size = len;
-    handle->node = node;
     node->handle = handle;
     vfs_node_t target = vfs_open_at(node->parent, name, 0);
     if (target) {
-        node->dev = target->dev;
-        node->rdev = target->rdev;
-        node->type |= target->type;
+        handle->dev = target->dev;
+        handle->rdev = target->rdev;
+        handle->type = node->type | target->type;
     }
+    devtmpfs_sync_node_from_handle(node, handle);
     return 0;
+}
+
+static int devtmpfs_link_target(vfs_node_t parent, vfs_node_t target,
+                                vfs_node_t node) {
+    if (!parent || !target || !node)
+        return -EINVAL;
+
+    if (target->root != parent->root)
+        return -EXDEV;
+    if (target->type & file_dir)
+        return -EPERM;
+
+    devtmpfs_node_t *handle = target->handle;
+    if (!handle)
+        return -ENOENT;
+
+    spin_lock(&devtmpfs_oplock);
+    handle->link_count++;
+    handle->handle_refs++;
+    node->handle = handle;
+    devtmpfs_sync_node_from_handle(node, handle);
+    spin_unlock(&devtmpfs_oplock);
+
+    return 0;
+}
+
+static int devtmpfs_link_existing(vfs_node_t parent, vfs_node_t target,
+                                  vfs_node_t node) {
+    return devtmpfs_link_target(parent, target, node);
+}
+
+int devtmpfs_link(vfs_node_t parent, const char *name, vfs_node_t node) {
+    if (!parent || !name || !node)
+        return -EINVAL;
+
+    vfs_node_t target = vfs_open(name, O_NOFOLLOW);
+    if (!target)
+        return -ENOENT;
+    return devtmpfs_link_target(parent, target, node);
 }
 
 int devtmpfs_mount(uint64_t dev, vfs_node_t node) {
@@ -265,26 +347,51 @@ void devtmpfs_unmount(vfs_node_t root) {
 }
 
 int devtmpfs_chmod(vfs_node_t node, uint16_t mode) {
-    node->mode = mode;
+    devtmpfs_node_t *handle = node ? node->handle : NULL;
+    if (handle) {
+        handle->mode = mode;
+        devtmpfs_sync_node_from_handle(node, handle);
+    } else if (node) {
+        node->mode = mode;
+    }
     return 0;
 }
 
 int devtmpfs_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
-    node->owner = uid;
-    node->group = gid;
+    devtmpfs_node_t *handle = node ? node->handle : NULL;
+    if (handle) {
+        handle->owner = (uint32_t)uid;
+        handle->group = (uint32_t)gid;
+        devtmpfs_sync_node_from_handle(node, handle);
+    } else if (node) {
+        node->owner = (uint32_t)uid;
+        node->group = (uint32_t)gid;
+    }
     return 0;
 }
 
-int devtmpfs_delete(vfs_node_t parent, vfs_node_t node) { return 0; }
+int devtmpfs_delete(vfs_node_t parent, vfs_node_t node) {
+    (void)parent;
+
+    devtmpfs_node_t *handle = node ? node->handle : NULL;
+    if (!handle)
+        return 0;
+
+    spin_lock(&devtmpfs_oplock);
+    if (handle->link_count)
+        handle->link_count--;
+    spin_unlock(&devtmpfs_oplock);
+
+    return 0;
+}
 
 int devtmpfs_rename(vfs_node_t node, const char *new) { return 0; }
 
 int devtmpfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
-    devtmpfs_node_t *tnode = node ? node->handle : NULL;
-    if (!tnode)
+    if (!node || !node->handle)
         return -EBADF;
-    if ((tnode->node->type & file_block) || (tnode->node->type & file_stream)) {
-        return device_ioctl(tnode->node->rdev, cmd, (void *)arg);
+    if ((node->type & file_block) || (node->type & file_stream)) {
+        return device_ioctl(node->rdev, cmd, (void *)arg);
     }
     return -ENOSYS;
 }
@@ -330,11 +437,10 @@ void *devtmpfs_map(fd_t *file, void *addr, size_t offset, size_t size,
 }
 
 int devtmpfs_poll(vfs_node_t node, size_t events) {
-    devtmpfs_node_t *tnode = node ? node->handle : NULL;
-    if (!tnode)
+    if (!node || !node->handle)
         return EPOLLNVAL;
-    if ((tnode->node->type & file_block) || (tnode->node->type & file_stream)) {
-        return device_poll(tnode->node->rdev, events);
+    if ((node->type & file_block) || (node->type & file_stream)) {
+        return device_poll(node->rdev, events);
     }
     return -ENOSYS;
 }
@@ -344,30 +450,40 @@ void devtmpfs_resize(vfs_node_t node, uint64_t size) {
     if (!handle)
         return;
 
+    spin_lock(&devtmpfs_oplock);
     if (size == 0) {
         handle->size = 0;
-        if (handle->node)
-            handle->node->size = 0;
+        devtmpfs_sync_node_from_handle(node, handle);
+        spin_unlock(&devtmpfs_oplock);
         return;
     }
 
     size_t new_capability = size;
-    if (new_capability > MAX_DEVTMPFS_FILE_SIZE)
+    if (new_capability > MAX_DEVTMPFS_FILE_SIZE) {
+        spin_unlock(&devtmpfs_oplock);
         return;
+    }
 
     if (devtmpfs_replace_content(handle, new_capability, handle->size, true) !=
-        0)
+        0) {
+        spin_unlock(&devtmpfs_oplock);
         return;
+    }
     handle->size = size;
-    if (handle->node)
-        handle->node->size = size;
+    devtmpfs_sync_node_from_handle(node, handle);
+    spin_unlock(&devtmpfs_oplock);
 }
 
 int devtmpfs_stat(vfs_node_t node) {
     devtmpfs_node_t *tnode = node ? node->handle : NULL;
-    if (!tnode)
-        return -EINVAL;
-    node->size = tnode->size;
+    if (!tnode) {
+        if (node) {
+            node->size = 0;
+            node->realsize = 0;
+        }
+        return 0;
+    }
+    devtmpfs_sync_node_from_handle(node, tnode);
     return 0;
 }
 
@@ -375,9 +491,29 @@ void devtmpfs_free_handle(vfs_node_t node) {
     devtmpfs_node_t *tnode = node ? node->handle : NULL;
     if (!tnode)
         return;
-    if (tnode->content && tnode->capability > 0) {
-        tmpfs_mem_release(tnode->capability);
-        free_frames_bytes(tnode->content, tnode->capability);
+
+    void *content = NULL;
+    size_t capability = 0;
+    bool free_handle = false;
+
+    spin_lock(&devtmpfs_oplock);
+    if (tnode->handle_refs)
+        tnode->handle_refs--;
+    if (!tnode->handle_refs) {
+        content = tnode->content;
+        capability = tnode->capability;
+        tnode->content = NULL;
+        tnode->capability = 0;
+        free_handle = true;
+    }
+    spin_unlock(&devtmpfs_oplock);
+
+    if (!free_handle)
+        return;
+
+    if (content && capability > 0) {
+        tmpfs_mem_release(capability);
+        free_frames_bytes(content, capability);
     }
     free(tnode);
 }
@@ -390,6 +526,8 @@ static vfs_operations_t callbacks = {
     .readlink = devtmpfs_readlink,
     .mkdir = devtmpfs_mkdir,
     .mkfile = devtmpfs_mkfile,
+    .link = devtmpfs_link,
+    .link_node = devtmpfs_link_existing,
     .symlink = devtmpfs_symlink,
     .mknod = devtmpfs_mknod,
     .chmod = devtmpfs_chmod,

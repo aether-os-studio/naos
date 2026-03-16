@@ -181,7 +181,7 @@ size_t epoll_create1(int flags) {
         memset(new_fd, 0, sizeof(fd_t));
         new_fd->node = node;
         new_fd->offset = 0;
-        new_fd->flags = flags & ~(uint64_t)O_CLOEXEC;
+        new_fd->flags = O_RDONLY | (flags & ~(uint64_t)O_CLOEXEC);
         new_fd->close_on_exec = !!(flags & O_CLOEXEC);
         current_task->fd_info->fds[i] = new_fd;
         procfs_on_open_file(current_task, i);

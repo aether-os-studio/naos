@@ -1324,6 +1324,8 @@ int socket_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
                 return -EFAULT;
             return 0;
         }
+    case FIONBIO:
+        return 0;
     default:
         return -ENOTTY;
     }

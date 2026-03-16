@@ -135,9 +135,11 @@ static void naos_lwip_rx_thread(uint64_t arg) {
     }
 
     for (;;) {
+        arch_enable_interrupt();
+
         int len = netdev_recv(link->netdev, buffer, max_len);
         if (len <= 0) {
-            task_block(current_task, TASK_BLOCKING, 1000000, "lwip_netif_poll");
+            schedule(SCHED_FLAG_YIELD);
             continue;
         }
 

@@ -2,7 +2,7 @@
 
 #include <libs/klibc.h>
 
-#define NCCS 32
+#define NCCS 19
 typedef struct termios {
     uint32_t c_iflag;   /* input mode flags */
     uint32_t c_oflag;   /* output mode flags */
@@ -12,7 +12,7 @@ typedef struct termios {
     uint8_t c_cc[NCCS]; /* control characters */
 } termios;
 
-#define _TERMIOS2_NCCS 19
+#define _TERMIOS2_NCCS NCCS
 struct termios2 {
     uint32_t c_iflag;             /* input mode flags */
     uint32_t c_oflag;             /* output mode flags */
@@ -23,6 +23,11 @@ struct termios2 {
     uint32_t c_ispeed;            /* input speed */
     uint32_t c_ospeed;            /* output speed */
 };
+
+_Static_assert(sizeof(termios) == 36,
+               "Linux x86_64 TCGETS ABI requires 36-byte struct termios");
+_Static_assert(sizeof(struct termios2) == 44,
+               "Linux x86_64 TCGETS2 ABI requires 44-byte struct termios2");
 
 #define VINTR 0
 #define VQUIT 1

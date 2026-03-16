@@ -986,7 +986,7 @@ void ppp_input(ppp_pcb *pcb, struct pbuf *pb) {
         * added  ccp_resetrequest() in CCP and MPPE input data flow is calling  \
         * either  ccp_resetrequest() or lcp_close() if the issue is,            \
         * respectively, non-fatal  or fatal, this is what ccp_datainput()       \
-        * really  do.                                                                           \
+        * really  do.                                                           \
         */
         if (protocol == (protp->protocol & ~0x8000)
           && protp->datainput != NULL) {

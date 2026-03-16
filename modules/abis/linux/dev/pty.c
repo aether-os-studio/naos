@@ -83,7 +83,7 @@ static int pty_open_peer_fd(vfs_node_t node, uint64_t flags) {
         memset(new_fd, 0, sizeof(fd_t));
         new_fd->node = peer_node;
         new_fd->flags = flags;
-        new_fd->close_on_exec = !!(flags & O_CLOEXEC);
+        new_fd->close_on_exec = O_RDWR | !!(flags & O_CLOEXEC);
         peer_node->refcount++;
         current_task->fd_info->fds[fd_num] = new_fd;
         procfs_on_open_file(current_task, (int)fd_num);
@@ -458,7 +458,11 @@ int ptmx_ioctl(vfs_node_t node, ssize_t request, ssize_t arg) {
     mutex_lock(&pair->lock);
     switch (number) {
     case 0x31: { // TIOCSPTLCK
-        int lock = *((int *)arg);
+        int lock = 0;
+        if (!arg || copy_from_user(&lock, (const void *)arg, sizeof(lock))) {
+            ret = -EFAULT;
+            break;
+        }
         if (lock == 0)
             pair->locked = false;
         else
@@ -467,8 +471,9 @@ int ptmx_ioctl(vfs_node_t node, ssize_t request, ssize_t arg) {
         break;
     }
     case 0x30: // TIOCGPTN
-        *((int *)arg) = pair->id;
-        ret = 0;
+        ret = (!arg || copy_to_user((void *)arg, &pair->id, sizeof(int)))
+                  ? -EFAULT
+                  : 0;
         break;
     }
     if (ret == -ENOTTY) {
@@ -506,13 +511,13 @@ int ptmx_ioctl(vfs_node_t node, ssize_t request, ssize_t arg) {
             break;
         }
         case TCGETS2: {
-            struct termios2 t2;
+            struct termios2 t2 = {0};
             memcpy(&t2.c_iflag, &pair->term.c_iflag, sizeof(uint32_t));
             memcpy(&t2.c_oflag, &pair->term.c_oflag, sizeof(uint32_t));
             memcpy(&t2.c_cflag, &pair->term.c_cflag, sizeof(uint32_t));
             memcpy(&t2.c_lflag, &pair->term.c_lflag, sizeof(uint32_t));
             t2.c_line = pair->term.c_line;
-            memcpy(t2.c_cc, pair->term.c_cc, NCCS);
+            memcpy(t2.c_cc, pair->term.c_cc, sizeof(t2.c_cc));
             t2.c_ispeed = 0; // Not supported
             t2.c_ospeed = 0; // Not supported
             if (!arg ||
@@ -546,7 +551,7 @@ int ptmx_ioctl(vfs_node_t node, ssize_t request, ssize_t arg) {
             memcpy(&pair->term.c_cflag, &t2_set.c_cflag, sizeof(uint32_t));
             memcpy(&pair->term.c_lflag, &t2_set.c_lflag, sizeof(uint32_t));
             pair->term.c_line = t2_set.c_line;
-            memcpy(pair->term.c_cc, t2_set.c_cc, NCCS);
+            memcpy(pair->term.c_cc, t2_set.c_cc, sizeof(t2_set.c_cc));
             // Ignore ispeed and ospeed as they are not supported
             ret = 0;
             break;
@@ -936,13 +941,13 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
         break;
     }
     case TCGETS2: {
-        struct termios2 t2;
+        struct termios2 t2 = {0};
         memcpy(&t2.c_iflag, &pair->term.c_iflag, sizeof(uint32_t));
         memcpy(&t2.c_oflag, &pair->term.c_oflag, sizeof(uint32_t));
         memcpy(&t2.c_cflag, &pair->term.c_cflag, sizeof(uint32_t));
         memcpy(&t2.c_lflag, &pair->term.c_lflag, sizeof(uint32_t));
         t2.c_line = pair->term.c_line;
-        memcpy(t2.c_cc, pair->term.c_cc, NCCS);
+        memcpy(t2.c_cc, pair->term.c_cc, sizeof(t2.c_cc));
         t2.c_ispeed = 0; // Not supported
         t2.c_ospeed = 0; // Not supported
         if (!arg || copy_to_user(arg, &t2, sizeof(struct termios2))) {
@@ -973,7 +978,7 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
         memcpy(&pair->term.c_cflag, &t2_set.c_cflag, sizeof(uint32_t));
         memcpy(&pair->term.c_lflag, &t2_set.c_lflag, sizeof(uint32_t));
         pair->term.c_line = t2_set.c_line;
-        memcpy(pair->term.c_cc, t2_set.c_cc, NCCS);
+        memcpy(pair->term.c_cc, t2_set.c_cc, sizeof(t2_set.c_cc));
         // Ignore ispeed and ospeed as they are not supported
         ret = 0;
         break;

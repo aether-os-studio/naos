@@ -27,6 +27,7 @@ static inline bool lwip_socket_is_raw(const lwip_socket_state_t *sock) {
 static inline int lwip_socket_recv_avail(lwip_socket_state_t *sock) {
     int avail = 0;
     int queued = 0;
+    int cached = 0;
 
     if (!sock) {
         return 0;
@@ -37,11 +38,11 @@ static inline int lwip_socket_recv_avail(lwip_socket_state_t *sock) {
             avail += queued;
         }
     }
-    if (sock->rx_pbuf) {
-        avail += (int)(sock->rx_pbuf->tot_len - sock->rx_pbuf_offset);
-    }
-    if (sock->rx_netbuf) {
-        avail += (int)(netbuf_len(sock->rx_netbuf) - sock->rx_netbuf_offset);
+    spin_lock(&sock->event_lock);
+    cached = sock->rx_cached_avail;
+    spin_unlock(&sock->event_lock);
+    if (cached > 0) {
+        avail += cached;
     }
     return avail;
 }
@@ -52,14 +53,105 @@ static void lwip_socket_notify(lwip_socket_state_t *sock, uint32_t events) {
     }
 }
 
+static int lwip_socket_take_pending_error(lwip_socket_state_t *sock) {
+    int error = 0;
+
+    if (!sock) {
+        return 0;
+    }
+
+    spin_lock(&sock->event_lock);
+    error = sock->pending_error;
+    sock->pending_error = 0;
+    sock->errevent = 0;
+    spin_unlock(&sock->event_lock);
+
+    return error;
+}
+
+static void lwip_socket_publish_rx_avail(lwip_socket_state_t *sock) {
+    int avail = 0;
+
+    if (!sock) {
+        return;
+    }
+
+    if (sock->rx_pbuf) {
+        avail += (int)(sock->rx_pbuf->tot_len - sock->rx_pbuf_offset);
+    }
+    if (sock->rx_netbuf) {
+        avail += (int)(netbuf_len(sock->rx_netbuf) - sock->rx_netbuf_offset);
+    }
+
+    spin_lock(&sock->event_lock);
+    sock->rx_cached_avail = avail;
+    spin_unlock(&sock->event_lock);
+}
+
+static err_t lwip_socket_peek_conn_pending_err(struct netconn *conn) {
+    err_t err = ERR_OK;
+    SYS_ARCH_DECL_PROTECT(lev);
+
+    if (!conn) {
+        return ERR_OK;
+    }
+
+    SYS_ARCH_PROTECT(lev);
+    err = conn->pending_err;
+    SYS_ARCH_UNPROTECT(lev);
+    return err;
+}
+
+static inline int lwip_socket_apply_fd_flags(const lwip_socket_state_t *sock,
+                                             int flags) {
+    if (sock && sock->fd && (sock->fd->flags & O_NONBLOCK)) {
+        flags |= MSG_DONTWAIT;
+    }
+    return flags;
+}
+
+static void lwip_socket_mark_peer_closed(lwip_socket_state_t *sock) {
+    if (!sock) {
+        return;
+    }
+
+    spin_lock(&sock->event_lock);
+    sock->peer_closed = true;
+    spin_unlock(&sock->event_lock);
+}
+
+static void lwip_socket_set_shutdown(lwip_socket_state_t *sock, bool shut_rd,
+                                     bool shut_wr) {
+    if (!sock) {
+        return;
+    }
+
+    spin_lock(&sock->event_lock);
+    if (shut_rd) {
+        sock->shut_rd = true;
+    }
+    if (shut_wr) {
+        sock->shut_wr = true;
+    }
+    spin_unlock(&sock->event_lock);
+}
+
 static void lwip_socket_event_callback(struct netconn *conn,
                                        enum netconn_evt evt, u16_t len) {
     lwip_socket_state_t *sock = conn ? netconn_get_callback_arg(conn) : NULL;
+    int pending_error = 0;
 
     LWIP_UNUSED_ARG(len);
 
     if (!sock) {
         return;
+    }
+
+    if (evt == NETCONN_EVT_ERROR) {
+        err_t err = lwip_socket_peek_conn_pending_err(conn);
+        if (err != ERR_OK) {
+            pending_error = err_to_errno(err);
+        }
     }
 
     spin_lock(&sock->event_lock);
@@ -79,19 +171,22 @@ static void lwip_socket_event_callback(struct netconn *conn,
         sock->sendevent = 0;
         break;
     case NETCONN_EVT_ERROR:
-        sock->errevent = 1;
+        if (pending_error != 0) {
+            sock->errevent = 1;
+            sock->pending_error = pending_error;
+        }
         break;
     default:
         break;
     }
     spin_unlock(&sock->event_lock);
 
-    if (evt == NETCONN_EVT_SENDPLUS) {
-        lwip_socket_notify(sock, EPOLLOUT);
-    } else if (evt == NETCONN_EVT_ERROR) {
-        lwip_socket_notify(sock, EPOLLERR | EPOLLHUP | EPOLLRDHUP);
-    } else {
+    if (evt == NETCONN_EVT_RCVPLUS) {
         lwip_socket_notify(sock, EPOLLIN);
+    } else if (evt == NETCONN_EVT_SENDPLUS) {
+        lwip_socket_notify(sock, EPOLLOUT);
+    } else if (evt == NETCONN_EVT_ERROR && pending_error != 0) {
+        lwip_socket_notify(sock, EPOLLERR);
     }
 }
 
@@ -100,9 +195,6 @@ static void lwip_socket_free_rx_cache(lwip_socket_state_t *sock) {
         return;
     }
     if (sock->rx_pbuf) {
-        if (sock->rx_pbuf_announced > 0) {
-            netconn_tcp_recvd(sock->conn, sock->rx_pbuf_announced);
-        }
         pbuf_free(sock->rx_pbuf);
         sock->rx_pbuf = NULL;
         sock->rx_pbuf_offset = 0;
@@ -113,6 +205,58 @@ static void lwip_socket_free_rx_cache(lwip_socket_state_t *sock) {
         sock->rx_netbuf = NULL;
         sock->rx_netbuf_offset = 0;
     }
+    lwip_socket_publish_rx_avail(sock);
+}
+
+static void lwip_socket_drain_tcp_rx(lwip_socket_state_t *sock) {
+    if (!sock || !sock->conn || !lwip_socket_is_tcp(sock)) {
+        return;
+    }
+
+    lwip_socket_free_rx_cache(sock);
+
+    while (true) {
+        struct pbuf *p = NULL;
+        err_t err = netconn_recv_tcp_pbuf_flags(
+            sock->conn, &p, NETCONN_DONTBLOCK | NETCONN_NOAUTORCVD);
+
+        if (err == ERR_OK) {
+            if (!p) {
+                lwip_socket_mark_peer_closed(sock);
+                break;
+            }
+            pbuf_free(p);
+            continue;
+        }
+
+        if (err == ERR_CLSD) {
+            lwip_socket_mark_peer_closed(sock);
+        }
+        break;
+    }
+}
+
+static void lwip_socket_release_conn(lwip_socket_state_t *sock) {
+    err_t err = ERR_OK;
+
+    if (!sock || !sock->conn) {
+        return;
+    }
+
+    if (lwip_socket_is_tcp(sock)) {
+        lwip_socket_drain_tcp_rx(sock);
+    } else {
+        lwip_socket_free_rx_cache(sock);
+    }
+
+    netconn_set_callback_arg(sock->conn, NULL);
+    err = netconn_prepare_delete(sock->conn);
+    if (err == ERR_OK) {
+        netconn_delete(sock->conn);
+    } else {
+        netconn_delete(sock->conn);
+    }
+    sock->conn = NULL;
 }
 
 static lwip_socket_state_t *lwip_socket_alloc(struct netconn *conn, int domain,
@@ -126,7 +270,9 @@ static lwip_socket_state_t *lwip_socket_alloc(struct netconn *conn, int domain,
     sock->domain = domain;
     sock->type = type & 0xF;
     sock->protocol = protocol;
-    sock->sendevent = 1;
+    // Fresh TCP sockets are not writable until connect() completes.
+    sock->sendevent = lwip_socket_is_tcp(sock) ? 0 : 1;
+    sock->sndbuf = lwip_socket_is_tcp(sock) ? TCP_SND_BUF : 0;
     spin_init(&sock->event_lock);
 
     if (conn) {
@@ -185,10 +331,7 @@ static int lwip_socket_install_fd(lwip_socket_state_t *sock, int open_type,
     });
 
     if (ret < 0) {
-        lwip_socket_free_rx_cache(sock);
-        if (sock->conn) {
-            netconn_delete(sock->conn);
-        }
+        lwip_socket_release_conn(sock);
         free(sock);
         vfs_free(node);
         return ret;
@@ -350,11 +493,13 @@ static int lwip_socket_setsockopt_impl(lwip_socket_state_t *sock, int level,
                 return -EINVAL;
             }
             sock->reuseaddr = value ? true : false;
+            LOCK_TCPIP_CORE();
             if (value) {
                 ip_set_option(sock->conn->pcb.ip, SOF_REUSEADDR);
             } else {
                 ip_reset_option(sock->conn->pcb.ip, SOF_REUSEADDR);
             }
+            UNLOCK_TCPIP_CORE();
             return 0;
         case SO_REUSEPORT:
             if (optlen < sizeof(int)) {
@@ -367,22 +512,44 @@ static int lwip_socket_setsockopt_impl(lwip_socket_state_t *sock, int level,
                 return -EINVAL;
             }
             sock->keepalive = value ? true : false;
+            LOCK_TCPIP_CORE();
             if (value) {
                 ip_set_option(sock->conn->pcb.ip, SOF_KEEPALIVE);
             } else {
                 ip_reset_option(sock->conn->pcb.ip, SOF_KEEPALIVE);
             }
+            UNLOCK_TCPIP_CORE();
             return 0;
         case SO_BROADCAST:
             if (optlen < sizeof(int)) {
                 return -EINVAL;
             }
             sock->broadcast = value ? true : false;
+            LOCK_TCPIP_CORE();
             if (value) {
                 ip_set_option(sock->conn->pcb.ip, SOF_BROADCAST);
             } else {
                 ip_reset_option(sock->conn->pcb.ip, SOF_BROADCAST);
             }
+            UNLOCK_TCPIP_CORE();
+            return 0;
+        case SO_OOBINLINE:
+            if (optlen < sizeof(int)) {
+                return -EINVAL;
+            }
+            sock->oobinline = value ? true : false;
+            return 0;
+        case SO_SNDBUF:
+            if (optlen < sizeof(int)) {
+                return -EINVAL;
+            }
+            sock->sndbuf = value;
+            return 0;
+        case SO_RCVBUF:
+            if (optlen < sizeof(int)) {
+                return -EINVAL;
+            }
+            netconn_set_recvbufsize(sock->conn, value);
             return 0;
         case SO_RCVTIMEO_OLD:
         case SO_RCVTIMEO_NEW:
@@ -419,24 +586,30 @@ static int lwip_socket_setsockopt_impl(lwip_socket_state_t *sock, int level,
             if (optlen < sizeof(int)) {
                 return -EINVAL;
             }
+            LOCK_TCPIP_CORE();
             sock->conn->pcb.ip->ttl = (u8_t)value;
+            UNLOCK_TCPIP_CORE();
             return 0;
         case IP_TOS:
             if (optlen < sizeof(int)) {
                 return -EINVAL;
             }
+            LOCK_TCPIP_CORE();
             sock->conn->pcb.ip->tos = (u8_t)value;
+            UNLOCK_TCPIP_CORE();
             return 0;
         case IP_PKTINFO:
             if (optlen < sizeof(int)) {
                 return -EINVAL;
             }
             sock->ip_pktinfo = value ? true : false;
+            LOCK_TCPIP_CORE();
             if (value) {
                 sock->conn->flags |= NETCONN_FLAG_PKTINFO;
             } else {
                 sock->conn->flags &= ~NETCONN_FLAG_PKTINFO;
             }
+            UNLOCK_TCPIP_CORE();
             return 0;
         case IP_RECVERR:
             if (optlen < sizeof(int)) {
@@ -473,17 +646,37 @@ static int lwip_socket_setsockopt_impl(lwip_socket_state_t *sock, int level,
         }
     }
 
-    if (level == IPPROTO_TCP && optname == TCP_NODELAY &&
-        lwip_socket_is_tcp(sock)) {
+    if (level == IPPROTO_TCP && lwip_socket_is_tcp(sock)) {
         if (optlen < sizeof(int)) {
             return -EINVAL;
         }
-        if (value) {
-            tcp_nagle_disable(sock->conn->pcb.tcp);
-        } else {
-            tcp_nagle_enable(sock->conn->pcb.tcp);
+
+        LOCK_TCPIP_CORE();
+        switch (optname) {
+        case TCP_NODELAY:
+            if (value) {
+                tcp_nagle_disable(sock->conn->pcb.tcp);
+            } else {
+                tcp_nagle_enable(sock->conn->pcb.tcp);
+            }
+            UNLOCK_TCPIP_CORE();
+            return 0;
+        case TCP_KEEPIDLE:
+            sock->conn->pcb.tcp->keep_idle = 1000U * (u32_t)value;
+            UNLOCK_TCPIP_CORE();
+            return 0;
+        case TCP_KEEPINTVL:
+            sock->conn->pcb.tcp->keep_intvl = 1000U * (u32_t)value;
+            UNLOCK_TCPIP_CORE();
+            return 0;
+        case TCP_KEEPCNT:
+            sock->conn->pcb.tcp->keep_cnt = (u32_t)value;
+            UNLOCK_TCPIP_CORE();
+            return 0;
+        default:
+            UNLOCK_TCPIP_CORE();
+            break;
         }
-        return 0;
     }
 
     if (level == IPPROTO_IPV6 && sock->domain == AF_INET6) {
@@ -498,7 +691,9 @@ static int lwip_socket_setsockopt_impl(lwip_socket_state_t *sock, int level,
             if (optlen < sizeof(int)) {
                 return -EINVAL;
             }
+            LOCK_TCPIP_CORE();
             sock->conn->pcb.ip->ttl = (u8_t)value;
+            UNLOCK_TCPIP_CORE();
             return 0;
         case IPV6_RECVPKTINFO:
         case IPV6_PKTINFO:
@@ -506,11 +701,13 @@ static int lwip_socket_setsockopt_impl(lwip_socket_state_t *sock, int level,
                 return -EINVAL;
             }
             sock->ipv6_pktinfo = value ? true : false;
+            LOCK_TCPIP_CORE();
             if (value) {
                 sock->conn->flags |= NETCONN_FLAG_PKTINFO;
             } else {
                 sock->conn->flags &= ~NETCONN_FLAG_PKTINFO;
             }
+            UNLOCK_TCPIP_CORE();
             return 0;
         case IPV6_RECVERR:
             if (optlen < sizeof(int)) {
@@ -543,9 +740,14 @@ static int lwip_socket_getsockopt_impl(lwip_socket_state_t *sock, int level,
 
     if (level == SOL_SOCKET) {
         switch (optname) {
-        case SO_ERROR:
-            value = sock->errevent ? err_to_errno(netconn_err(sock->conn)) : 0;
+        case SO_ERROR: {
+            err_t err = netconn_err(sock->conn);
+            value = lwip_socket_take_pending_error(sock);
+            if (value == 0 && err != ERR_OK) {
+                value = err_to_errno(err);
+            }
             break;
+        }
         case SO_TYPE:
             value = sock->type;
             break;
@@ -567,8 +769,17 @@ static int lwip_socket_getsockopt_impl(lwip_socket_state_t *sock, int level,
         case SO_KEEPALIVE:
             value = sock->keepalive ? 1 : 0;
             break;
+        case SO_OOBINLINE:
+            value = sock->oobinline ? 1 : 0;
+            break;
         case SO_BROADCAST:
             value = sock->broadcast ? 1 : 0;
+            break;
+        case SO_SNDBUF:
+            value = sock->sndbuf;
+            break;
+        case SO_RCVBUF:
+            value = netconn_get_recvbufsize(sock->conn);
             break;
         case SO_RCVTIMEO_OLD:
         case SO_RCVTIMEO_NEW:
@@ -601,10 +812,14 @@ static int lwip_socket_getsockopt_impl(lwip_socket_state_t *sock, int level,
     if (level == IPPROTO_IP) {
         switch (optname) {
         case IP_TTL:
+            LOCK_TCPIP_CORE();
             value = sock->conn->pcb.ip->ttl;
+            UNLOCK_TCPIP_CORE();
             break;
         case IP_TOS:
+            LOCK_TCPIP_CORE();
             value = sock->conn->pcb.ip->tos;
+            UNLOCK_TCPIP_CORE();
             break;
         case IP_PKTINFO:
             value = sock->ip_pktinfo ? 1 : 0;
@@ -640,14 +855,37 @@ static int lwip_socket_getsockopt_impl(lwip_socket_state_t *sock, int level,
         return 0;
     }
 
-    if (level == IPPROTO_TCP && optname == TCP_NODELAY &&
-        lwip_socket_is_tcp(sock)) {
+    if (level == IPPROTO_TCP && lwip_socket_is_tcp(sock)) {
         if (*optlen < sizeof(int)) {
             return -EINVAL;
         }
-        *(int *)optval = tcp_nagle_disabled(sock->conn->pcb.tcp);
-        *optlen = sizeof(int);
-        return 0;
+
+        LOCK_TCPIP_CORE();
+        switch (optname) {
+        case TCP_NODELAY:
+            *(int *)optval = tcp_nagle_disabled(sock->conn->pcb.tcp);
+            UNLOCK_TCPIP_CORE();
+            *optlen = sizeof(int);
+            return 0;
+        case TCP_KEEPIDLE:
+            *(int *)optval = (int)(sock->conn->pcb.tcp->keep_idle / 1000U);
+            UNLOCK_TCPIP_CORE();
+            *optlen = sizeof(int);
+            return 0;
+        case TCP_KEEPINTVL:
+            *(int *)optval = (int)(sock->conn->pcb.tcp->keep_intvl / 1000U);
+            UNLOCK_TCPIP_CORE();
+            *optlen = sizeof(int);
+            return 0;
+        case TCP_KEEPCNT:
+            *(int *)optval = (int)sock->conn->pcb.tcp->keep_cnt;
+            UNLOCK_TCPIP_CORE();
+            *optlen = sizeof(int);
+            return 0;
+        default:
+            UNLOCK_TCPIP_CORE();
+            break;
+        }
     }
 
     if (level == IPPROTO_IPV6 && sock->domain == AF_INET6) {
@@ -656,7 +894,9 @@ static int lwip_socket_getsockopt_impl(lwip_socket_state_t *sock, int level,
             value = netconn_get_ipv6only(sock->conn) ? 1 : 0;
             break;
         case IPV6_UNICAST_HOPS:
+            LOCK_TCPIP_CORE();
             value = sock->conn->pcb.ip->ttl;
+            UNLOCK_TCPIP_CORE();
             break;
         case IPV6_RECVPKTINFO:
         case IPV6_PKTINFO:
@@ -685,20 +925,40 @@ static int lwip_socket_getsockopt_impl(lwip_socket_state_t *sock, int level,
 
 static int lwip_socket_fetch_tcp(lwip_socket_state_t *sock, int flags) {
     err_t err = ERR_OK;
-    u8_t recv_flags = 0;
+    u8_t recv_flags = NETCONN_NOAUTORCVD;
+    bool peer_closed = false;
+    bool shut_rd = false;
 
     if (flags & MSG_DONTWAIT) {
         recv_flags |= NETCONN_DONTBLOCK;
     }
 
+    spin_lock(&sock->event_lock);
+    peer_closed = sock->peer_closed;
+    shut_rd = sock->shut_rd;
+    spin_unlock(&sock->event_lock);
+
+    if (shut_rd) {
+        return 0;
+    }
+
+    if (peer_closed && lwip_socket_recv_avail(sock) <= 0) {
+        return 0;
+    }
+
     if (!sock->rx_pbuf) {
         err =
             netconn_recv_tcp_pbuf_flags(sock->conn, &sock->rx_pbuf, recv_flags);
+        if (err == ERR_CLSD) {
+            lwip_socket_mark_peer_closed(sock);
+            return 0;
+        }
         if (err != ERR_OK) {
             return lwip_errno_from_err(err);
         }
         sock->rx_pbuf_offset = 0;
         sock->rx_pbuf_announced = 0;
+        lwip_socket_publish_rx_avail(sock);
     }
 
     return 0;
@@ -719,6 +979,7 @@ static int lwip_socket_fetch_datagram(lwip_socket_state_t *sock, int flags) {
             return lwip_errno_from_err(err);
         }
         sock->rx_netbuf_offset = 0;
+        lwip_socket_publish_rx_avail(sock);
     }
 
     return 0;
@@ -755,6 +1016,8 @@ static ssize_t lwip_socket_recvmsg_common(lwip_socket_state_t *sock,
     size_t total = 0;
     size_t want = lwip_socket_iov_total(msg->msg_iov, msg->msg_iovlen);
 
+    flags = lwip_socket_apply_fd_flags(sock, flags);
+
     if (lwip_socket_is_tcp(sock)) {
         int ret = lwip_socket_fetch_tcp(sock, flags);
         if (ret < 0) {
@@ -778,16 +1041,16 @@ static ssize_t lwip_socket_recvmsg_common(lwip_socket_state_t *sock,
 
         if (!(flags & MSG_PEEK)) {
             sock->rx_pbuf_offset += total;
-            sock->rx_pbuf_announced += total;
+            if (total > 0) {
+                netconn_tcp_recvd(sock->conn, total);
+            }
             if (sock->rx_pbuf_offset >= sock->rx_pbuf->tot_len) {
                 pbuf_free(sock->rx_pbuf);
                 sock->rx_pbuf = NULL;
                 sock->rx_pbuf_offset = 0;
-                if (sock->rx_pbuf_announced > 0) {
-                    netconn_tcp_recvd(sock->conn, sock->rx_pbuf_announced);
-                    sock->rx_pbuf_announced = 0;
-                }
             }
+            sock->rx_pbuf_announced = 0;
+            lwip_socket_publish_rx_avail(sock);
         }
 
         if (msg->msg_name && msg->msg_namelen > 0) {
@@ -839,6 +1102,7 @@ static ssize_t lwip_socket_recvmsg_common(lwip_socket_state_t *sock,
             netbuf_delete(sock->rx_netbuf);
             sock->rx_netbuf = NULL;
             sock->rx_netbuf_offset = 0;
+            lwip_socket_publish_rx_avail(sock);
         }
 
         return (ssize_t)total;
@@ -849,6 +1113,8 @@ static ssize_t lwip_socket_sendmsg_common(lwip_socket_state_t *sock,
                                           const struct msghdr *msg, int flags) {
     err_t err = ERR_OK;
     size_t written = 0;
+
+    flags = lwip_socket_apply_fd_flags(sock, flags);
 
     if (lwip_socket_is_tcp(sock)) {
         u8_t write_flags = NETCONN_COPY;
@@ -1015,6 +1281,12 @@ static int lwip_socket_accept(uint64_t fd, struct sockaddr_un *addr,
         return -ENOMEM;
     }
 
+    if (lwip_socket_is_tcp(sock)) {
+        spin_lock(&sock->event_lock);
+        sock->sendevent = 1;
+        spin_unlock(&sock->event_lock);
+    }
+
     newfd = lwip_socket_install_fd(
         sock, listener->fd ? (int)listener->fd->flags : 0, flags);
     if (newfd < 0) {
@@ -1043,6 +1315,7 @@ static int lwip_socket_connect(uint64_t fd, const struct sockaddr_un *addr,
     ip_addr_t ipaddr;
     u16_t port = 0;
     int ret = 0;
+    enum tcp_state state = CLOSED;
 
     if (!sock) {
         return -EBADF;
@@ -1054,7 +1327,11 @@ static int lwip_socket_connect(uint64_t fd, const struct sockaddr_un *addr,
     }
 
     if (lwip_socket_is_tcp(sock)) {
-        enum tcp_state state = sock->conn->pcb.tcp->state;
+        LOCK_TCPIP_CORE();
+        if (sock->conn->pcb.tcp) {
+            state = sock->conn->pcb.tcp->state;
+        }
+        UNLOCK_TCPIP_CORE();
 
         if (state != CLOSED) {
             if (state == SYN_SENT || state == SYN_RCVD) {
@@ -1173,6 +1450,7 @@ static uint64_t lwip_socket_shutdown(uint64_t fd, uint64_t how) {
     lwip_socket_state_t *sock = lwip_socket_from_fd(fd);
     u8_t shut_rx = 0;
     u8_t shut_tx = 0;
+    err_t err = ERR_OK;
 
     if (!sock) {
         return -EBADF;
@@ -1183,7 +1461,14 @@ static uint64_t lwip_socket_shutdown(uint64_t fd, uint64_t how) {
 
     shut_rx = (how == SHUT_RD || how == SHUT_RDWR) ? 1 : 0;
     shut_tx = (how == SHUT_WR || how == SHUT_RDWR) ? 1 : 0;
-    return lwip_errno_from_err(netconn_shutdown(sock->conn, shut_rx, shut_tx));
+    err = netconn_shutdown(sock->conn, shut_rx, shut_tx);
+    if (err != ERR_OK) {
+        return lwip_errno_from_err(err);
+    }
+
+    lwip_socket_set_shutdown(sock, shut_rx != 0, shut_tx != 0);
+    lwip_socket_notify(sock, EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP);
+    return 0;
 }
 
 static size_t lwip_socket_setsockopt(uint64_t fd, int level, int optname,
@@ -1210,25 +1495,43 @@ static int lwip_socket_poll(vfs_node_t node, size_t events) {
     socket_handle_t *handle = node ? node->handle : NULL;
     lwip_socket_state_t *sock = handle ? handle->sock : NULL;
     int revents = 0;
+    s16_t rcvevent = 0;
+    u16_t sendevent = 0;
+    u16_t errevent = 0;
+    int pending_error = 0;
+    bool peer_closed = false;
+    bool shut_rd = false;
+    bool shut_wr = false;
 
     if (!sock) {
         return EPOLLNVAL;
     }
 
+    spin_lock(&sock->event_lock);
+    rcvevent = sock->rcvevent;
+    sendevent = sock->sendevent;
+    errevent = sock->errevent;
+    pending_error = sock->pending_error;
+    peer_closed = sock->peer_closed;
+    shut_rd = sock->shut_rd;
+    shut_wr = sock->shut_wr;
+    spin_unlock(&sock->event_lock);
+
     if ((events & EPOLLIN) &&
-        (sock->rcvevent > 0 || lwip_socket_recv_avail(sock) > 0)) {
+        (rcvevent > 0 || lwip_socket_recv_avail(sock) > 0 || peer_closed ||
+         shut_rd)) {
         revents |= EPOLLIN;
     }
 
-    if ((events & EPOLLOUT) && sock->sendevent) {
+    if ((events & EPOLLOUT) && sendevent && !shut_wr) {
         revents |= EPOLLOUT;
     }
 
-    if (sock->errevent || netconn_err(sock->conn) != ERR_OK) {
+    if (errevent || pending_error != 0) {
         revents |= EPOLLERR;
     }
 
-    if (sock->closed) {
+    if (sock->closed || peer_closed) {
         revents |= EPOLLHUP | EPOLLRDHUP;
     }
 
@@ -1254,9 +1557,10 @@ static int lwip_socket_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
     if (cmd == FIONBIO) {
         int value = 0;
 
-        if (!arg || copy_from_user(&value, (const void *)arg, sizeof(value))) {
+        if (!arg || check_unmapped(arg, sizeof(value))) {
             return -EFAULT;
         }
+        value = *(int *)arg;
 
         netconn_set_nonblocking(sock->conn, value ? 1 : 0);
         if (handle->fd) {
@@ -1281,14 +1585,8 @@ static bool lwip_socket_close(vfs_node_t node) {
     }
 
     sock->closed = true;
-    lwip_socket_notify(sock, EPOLLHUP | EPOLLERR | EPOLLRDHUP);
-    lwip_socket_free_rx_cache(sock);
-
-    if (sock->conn) {
-        netconn_set_callback_arg(sock->conn, NULL);
-        netconn_delete(sock->conn);
-        sock->conn = NULL;
-    }
+    lwip_socket_notify(sock, EPOLLIN | EPOLLHUP | EPOLLERR | EPOLLRDHUP);
+    lwip_socket_release_conn(sock);
 
     free(sock);
     free(handle);
@@ -1301,6 +1599,7 @@ static ssize_t lwip_socket_read(fd_t *fd, void *buf, size_t offset,
     struct msghdr msg = {.msg_iov = &iov, .msg_iovlen = 1};
     socket_handle_t *handle = fd ? fd->node->handle : NULL;
     lwip_socket_state_t *sock = handle ? handle->sock : NULL;
+    int flags = 0;
 
     LWIP_UNUSED_ARG(offset);
 
@@ -1308,7 +1607,11 @@ static ssize_t lwip_socket_read(fd_t *fd, void *buf, size_t offset,
         return -EBADF;
     }
 
-    return lwip_socket_recvmsg_common(sock, &msg, 0);
+    if (fd->flags & O_NONBLOCK) {
+        flags |= MSG_DONTWAIT;
+    }
+
+    return lwip_socket_recvmsg_common(sock, &msg, flags);
 }
 
 static ssize_t lwip_socket_write(fd_t *fd, const void *buf, size_t offset,
@@ -1317,6 +1620,7 @@ static ssize_t lwip_socket_write(fd_t *fd, const void *buf, size_t offset,
     struct msghdr msg = {.msg_iov = &iov, .msg_iovlen = 1};
     socket_handle_t *handle = fd ? fd->node->handle : NULL;
     lwip_socket_state_t *sock = handle ? handle->sock : NULL;
+    int flags = 0;
 
     LWIP_UNUSED_ARG(offset);
 
@@ -1324,7 +1628,11 @@ static ssize_t lwip_socket_write(fd_t *fd, const void *buf, size_t offset,
         return -EBADF;
     }
 
-    return lwip_socket_sendmsg_common(sock, &msg, 0);
+    if (fd->flags & O_NONBLOCK) {
+        flags |= MSG_DONTWAIT;
+    }
+
+    return lwip_socket_sendmsg_common(sock, &msg, flags);
 }
 
 static socket_op_t lwip_socket_ops = {
