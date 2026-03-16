@@ -334,7 +334,6 @@ extern void sysfs_init_umount();
 extern void fsfdfs_init();
 extern void cgroupfs_init();
 extern void notifyfs_init();
-extern void fs_syscall_init();
 extern void socketfs_init();
 extern void pipefs_init();
 extern void ramfs_init();
@@ -348,6 +347,20 @@ void linuxabi_init_before_thread() {
     futex_init();
 
     proc_init();
+}
+
+extern void epoll_init();
+extern void eventfd_init();
+extern void signalfd_init();
+extern void timerfd_init();
+extern void memfd_init();
+
+void fs_syscall_init() {
+    epoll_init();
+    eventfd_init();
+    signalfd_init();
+    timerfd_init();
+    memfd_init();
 }
 
 void linuxabi_init_after_thread() {
@@ -432,7 +445,6 @@ int linuxabi_on_new_task(task_t *task) { procfs_on_new_task(task); }
 int linuxabi_on_exit_task(task_t *task) {
     procfs_on_exit_task(task);
     pidfd_on_task_exit(task);
-    futex_on_exit_task(task);
 }
 
 int linuxabi_on_open_file(task_t *task, int fd) {

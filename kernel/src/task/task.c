@@ -1,6 +1,7 @@
 #include <libs/rbtree.h>
 #include <arch/arch.h>
 #include <task/task.h>
+#include <task/futex.h>
 #include <task/sched.h>
 #include <drivers/kernel_logger.h>
 #include <fs/vfs/vfs.h>
@@ -961,6 +962,7 @@ void task_exit_inner(task_t *task, int64_t code) {
 
     task_cleanup_fd_info(task);
 
+    futex_on_exit_task(task);
     system_abi->on_exit_task(task);
 
     task->fd_info = NULL;

@@ -16,8 +16,6 @@ fi
 
 export SDL_AUDIODRIVER=dummy
 
-export XDG_CONFIG_HOME=$HOME/.config
-
 NORMAL="\[\e[0m\]"
 RED="\[\e[1;31m\]"
 GREEN="\[\e[1;32m\]"

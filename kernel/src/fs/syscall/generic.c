@@ -1,3 +1,4 @@
+#include <init/abis.h>
 #include <fs/fs_syscall.h>
 #include <fs/proc.h>
 #include <boot/boot.h>
@@ -416,7 +417,7 @@ have_node:
         new_fd->close_on_exec = !!(flags & O_CLOEXEC);
         self->fd_info->fds[i] = new_fd;
         vfs_node_ref_get(node);
-        procfs_on_open_file(self, i);
+        system_abi->on_open_file(self, i);
         ret = i;
     });
 
@@ -611,7 +612,7 @@ uint64_t sys_open_by_handle_at(int mountdirfd, struct file_handle *handle,
         new_fd->flags = flags;
         self->fd_info->fds[i] = new_fd;
         vfs_node_ref_get(node);
-        procfs_on_open_file(self, i);
+        system_abi->on_open_file(self, i);
         ret = i;
     });
 
@@ -662,7 +663,7 @@ uint64_t sys_close(uint64_t fd) {
 
     vfs_close(entry->node);
     free(entry);
-    procfs_on_close_file(self, fd);
+    system_abi->on_close_file(self, fd);
     return 0;
 }
 
@@ -762,7 +763,7 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
             continue;
         vfs_close(entry->node);
         free(entry);
-        procfs_on_close_file(self, fd_);
+        system_abi->on_close_file(self, fd_);
     }
 
     return 0;
@@ -1402,7 +1403,7 @@ static uint64_t dup_to_free_slot(task_t *self, uint64_t fd, uint64_t start,
         }
 
         self->fd_info->fds[i] = newf;
-        procfs_on_open_file(self, i);
+        system_abi->on_open_file(self, i);
         ret = i;
     });
 

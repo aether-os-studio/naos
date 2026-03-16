@@ -65,19 +65,3 @@ char *at_resolve_pathname(int dirfd, char *pathname) {
 char *at_resolve_pathname_fullpath(int dirfd, char *pathname) {
     return at_resolve_pathname(dirfd, pathname);
 }
-
-extern void epoll_init();
-extern void eventfd_init();
-extern void signalfd_init();
-extern void timerfd_init();
-extern void memfd_init();
-extern void pidfd_init();
-
-void fs_syscall_init() {
-    epoll_init();
-    eventfd_init();
-    signalfd_init();
-    timerfd_init();
-    memfd_init();
-    pidfd_init();
-}

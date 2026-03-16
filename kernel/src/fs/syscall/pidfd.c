@@ -1,3 +1,4 @@
+#include <init/abis.h>
 #include <fs/fs_syscall.h>
 #include <fs/proc.h>
 #include <libs/hashmap.h>
@@ -222,7 +223,7 @@ uint64_t pidfd_create_for_pid(uint64_t pid, uint64_t flags, bool cloexec) {
         new_fd->flags = O_RDWR | flags;
         new_fd->close_on_exec = cloexec;
         current_task->fd_info->fds[fd] = new_fd;
-        procfs_on_open_file(current_task, fd);
+        system_abi->on_open_file(current_task, fd);
         ret = 0;
     });
 

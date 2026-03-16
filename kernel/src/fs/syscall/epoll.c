@@ -1,3 +1,4 @@
+#include <init/abis.h>
 #include <fs/fs_syscall.h>
 #include <fs/proc.h>
 
@@ -184,7 +185,7 @@ size_t epoll_create1(int flags) {
         new_fd->flags = O_RDONLY | (flags & ~(uint64_t)O_CLOEXEC);
         new_fd->close_on_exec = !!(flags & O_CLOEXEC);
         current_task->fd_info->fds[i] = new_fd;
-        procfs_on_open_file(current_task, i);
+        system_abi->on_open_file(current_task, i);
         ret = i;
     });
 

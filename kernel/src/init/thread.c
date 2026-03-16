@@ -14,6 +14,8 @@ bool system_initialized = false;
 
 extern bool can_schedule;
 
+extern void pidfd_init();
+
 void init_thread(uint64_t arg) {
     printk("NAOS init thread is running...\n");
 
@@ -32,6 +34,8 @@ void init_thread(uint64_t arg) {
     real_socket_init();
 
     notifyfs_init();
+
+    pidfd_init();
 
     system_abi->init_after_thread();
 

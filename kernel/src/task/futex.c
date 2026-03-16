@@ -1,6 +1,5 @@
 #include <boot/boot.h>
 #include <task/futex.h>
-#include <fs/fs_syscall.h>
 
 spinlock_t futex_lock;
 struct futex_wait futex_wait_list = {0, 0, NULL, NULL, 0};
