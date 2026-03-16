@@ -1,5 +1,4 @@
 #include "fs/vfs/vfs.h"
-#include "fs/vfs/page_cache.h"
 #include "arch/arch.h"
 #include "libs/hashmap.h"
 #include "mm/mm.h"
@@ -170,7 +169,6 @@ vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name) {
     hashmap_init(&node->child_name_map, 16);
     llist_init_head(&node->node_for_childs);
     llist_init_head(&node->node_for_name_bucket);
-    node->page_cache_tree = RB_ROOT_INIT;
     node->refcount = 0;
     node->mode = 0777;
     node->rw_hint = 0;
@@ -223,7 +221,6 @@ void vfs_free(vfs_node_t vfs) {
     llist_delete(&vfs->node);
     hashmap_remove(&vfs_inode_map, vfs->inode);
     vfs_child_index_deinit(vfs);
-    vfs_page_cache_invalidate_all(vfs);
     vfs_free_handle(vfs);
     free(vfs->name);
     free(vfs);
@@ -1558,9 +1555,7 @@ ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size) {
         return vfs_read(linknode, addr, offset, size);
     }
 
-    ssize_t ret = vfs_page_cache_read(fd, addr, offset, size);
-    if (ret == -EOPNOTSUPP)
-        ret = vfs_ops_of(fd->node)->read(fd, addr, offset, size);
+      ssize_t   ret = vfs_ops_of(fd->node)->read(fd, addr, offset, size);
     if (ret > 0) {
         vfs_mark_dirty(fd->node, VFS_NODE_FLAGS_DIRTY_METADATA);
     }
@@ -1641,7 +1636,6 @@ ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size) {
                 return -ENOSPC;
             }
 
-            vfs_page_cache_invalidate(fd->node, write_offset, (size_t)ret);
             written += ret;
             if (old_size == fd->node->size) {
                 fd->node->size += ret;
@@ -1654,7 +1648,6 @@ ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size) {
     ssize_t write_bytes = 0;
     write_bytes = vfs_ops_of(fd->node)->write(fd, addr, offset, size);
     if (write_bytes > 0) {
-        vfs_page_cache_invalidate(fd->node, offset, (size_t)write_bytes);
         fd->node->size = MAX(fd->node->size, offset + write_bytes);
         vfs_mark_dirty(fd->node, VFS_NODE_FLAGS_DIRTY_METADATA);
         vfs_poll_notify(fd->node, EPOLLIN | EPOLLOUT);
@@ -1953,7 +1946,6 @@ void vfs_resize(vfs_node_t node, uint64_t size) {
         return;
     vfs_ops_of(node)->resize(node, size);
     node->size = size;
-    vfs_page_cache_resize(node, size);
 }
 
 void *vfs_map(fd_t *fd, uint64_t addr, uint64_t len, uint64_t prot,

@@ -2,7 +2,6 @@
 
 #include <libs/klibc.h>
 #include <fs/termios.h>
-#include <fs/pipe.h>
 #include <fs/vfs/vfs.h>
 #include <fs/vfs/fcntl.h>
 #include <task/task.h>

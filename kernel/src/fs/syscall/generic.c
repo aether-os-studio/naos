@@ -1511,7 +1511,7 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
                                command == F_SETLKW);
     }
     case F_GETPIPE_SZ:
-        return PIPE_BUFF;
+        return 512 * 1024;
     case F_SETPIPE_SZ:
         return 0;
     case F_GET_SEALS:

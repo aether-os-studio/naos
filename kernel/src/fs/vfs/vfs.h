@@ -378,7 +378,6 @@ struct vfs_node {
     struct llist_header node_for_childs;      // 为子目录和子文件添加的节点
     struct llist_header node_for_name_bucket; // 为名字桶添加的节点
     uint64_t child_name_hash;                 // 当前名字哈希
-    rb_root_t page_cache_tree;                // 页缓存树
     vfs_node_t root;                          // 根目录
     int refcount;                             // 引用计数
     uint16_t mode;                            // 模式

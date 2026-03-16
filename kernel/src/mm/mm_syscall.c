@@ -1,7 +1,6 @@
 #include <mm/fault.h>
 #include <mm/mm_syscall.h>
 #include <fs/fs_syscall.h>
-#include <fs/vfs/page_cache.h>
 #include <fs/vfs/vfs.h>
 #include <irq/irq_manager.h>
 #include <task/task.h>
@@ -1264,13 +1263,6 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
         return (void *)(uint64_t)-EBADF;
     if ((prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) == 0)
         return (void *)addr;
-
-    if ((flags & MAP_TYPE) == MAP_PRIVATE && !(prot & PROT_WRITE)) {
-        void *cache_map =
-            vfs_page_cache_map(file, addr, len, prot, flags, offset);
-        if ((int64_t)cache_map != -EOPNOTSUPP)
-            return cache_map;
-    }
 
     uint64_t final_pt_flags = PT_FLAG_U;
     if (prot & PROT_READ)

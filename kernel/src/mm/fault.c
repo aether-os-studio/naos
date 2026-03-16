@@ -1,8 +1,6 @@
 #include <mm/fault.h>
-#include <mm/mm_syscall.h>
 #include <mm/page.h>
 #include <mm/shm.h>
-#include <fs/vfs/page_cache.h>
 #include <fs/vfs/vfs.h>
 
 typedef struct fault_vma_snapshot {
@@ -85,27 +83,6 @@ static uint64_t vm_flags_to_pt_flags(uint64_t vm_flags) {
     return pt_flags;
 }
 
-static uint64_t private_file_fault_arch_flags(uint64_t vm_flags) {
-    uint64_t pt_flags = PT_FLAG_U;
-
-    if (vm_flags & (VMA_READ | VMA_WRITE))
-        pt_flags |= PT_FLAG_R;
-    if (vm_flags & VMA_EXEC)
-        pt_flags |= PT_FLAG_X;
-
-    uint64_t arch_flags = get_arch_page_table_flags(pt_flags);
-    if (!(vm_flags & VMA_WRITE))
-        return arch_flags;
-
-    arch_flags |= ARCH_PT_FLAG_COW;
-#if defined(__aarch64__)
-    arch_flags |= ARCH_PT_FLAG_READONLY;
-#else
-    arch_flags &= ~ARCH_PT_FLAG_WRITEABLE;
-#endif
-    return arch_flags;
-}
-
 static page_fault_result_t map_anon_fault_page(task_t *task, vma_t *vma,
                                                uint64_t vaddr) {
     uint64_t pt_flags = vm_flags_to_pt_flags(vma->vm_flags);
@@ -173,14 +150,13 @@ map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
     if (read_size > DEFAULT_PAGE_SIZE)
         read_size = DEFAULT_PAGE_SIZE;
 
-    uint64_t map_prot = 0;
-    if (snapshot->vm_flags & VMA_READ)
-        map_prot |= PROT_READ;
-    if (snapshot->vm_flags & VMA_WRITE)
-        map_prot |= PROT_WRITE;
-    if (snapshot->vm_flags & VMA_EXEC)
-        map_prot |= PROT_EXEC;
+    uint64_t page_paddr = alloc_frames(1);
+    if (!page_paddr)
+        return PF_RES_NOMEM;
 
+    memset((void *)phys_to_virt(page_paddr), 0, DEFAULT_PAGE_SIZE);
+
+    size_t loaded = 0;
     fd_shared_t shared = {
         .flags = snapshot->vm_file_flags,
         .offset = file_off,
@@ -190,61 +166,6 @@ map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
         .shared = &shared,
         .close_on_exec = false,
     };
-
-    if (snapshot->vm_flags & (VMA_SHARED | VMA_DEVICE)) {
-        uint64_t map_flags =
-            (snapshot->vm_flags & VMA_SHARED) ? MAP_SHARED : MAP_PRIVATE;
-        void *map_ret = vfs_map(&fd, aligned_vaddr, DEFAULT_PAGE_SIZE, map_prot,
-                                map_flags, file_off);
-        if ((int64_t)map_ret < 0)
-            return (int64_t)map_ret == -ENOMEM ? PF_RES_NOMEM : PF_RES_SEGF;
-        return PF_RES_OK;
-    }
-
-    uint64_t cache_phys = 0;
-    size_t cache_valid = 0;
-    int cache_ret = vfs_page_cache_get_page(snapshot->node, file_off,
-                                            &cache_phys, &cache_valid);
-    if (cache_ret == 0) {
-        (void)cache_valid;
-
-        vma_manager_t *mgr = &task->mm->task_vma_mgr;
-        spin_lock(&mgr->lock);
-
-        vma_t *current_vma = vma_find(mgr, vaddr);
-        if (!fault_vma_matches_snapshot(current_vma, snapshot) ||
-            !fault_snapshot_allows_access(snapshot, fault_flags)) {
-            spin_unlock(&mgr->lock);
-            address_release(cache_phys);
-            return PF_RES_SEGF;
-        }
-
-        spin_lock(&task->mm->lock);
-
-        uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
-        if (!translate_address(pgdir, aligned_vaddr)) {
-            uint64_t cache_arch_flags =
-                private_file_fault_arch_flags(snapshot->vm_flags);
-            map_page(pgdir, aligned_vaddr, cache_phys, cache_arch_flags, false);
-        }
-
-        bool mapped = translate_address(pgdir, aligned_vaddr) != 0;
-        spin_unlock(&task->mm->lock);
-        spin_unlock(&mgr->lock);
-
-        address_release(cache_phys);
-        return mapped ? PF_RES_OK : PF_RES_NOMEM;
-    }
-    if (cache_ret != -EOPNOTSUPP)
-        return cache_ret == -ENOMEM ? PF_RES_NOMEM : PF_RES_SEGF;
-
-    uint64_t page_paddr = alloc_frames(1);
-    if (!page_paddr)
-        return PF_RES_NOMEM;
-
-    memset((void *)phys_to_virt(page_paddr), 0, DEFAULT_PAGE_SIZE);
-
-    size_t loaded = 0;
     while (loaded < read_size) {
         ssize_t ret =
             vfs_read_fd(&fd, (void *)(phys_to_virt(page_paddr) + loaded),

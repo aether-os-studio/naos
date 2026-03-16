@@ -339,7 +339,7 @@ static inline uint64_t sys_getpid() {
 
 static inline uint64_t sys_gettid() { return current_task->pid; }
 
-static inline uint64_t sys_getppid() { return current_task->ppid; }
+static inline uint64_t sys_getppid() { return task_parent_pid(current_task); }
 
 static inline uint64_t sys_getpgrp() { return current_task->pgid; }
 

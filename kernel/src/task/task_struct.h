@@ -287,7 +287,7 @@ typedef struct task {
     struct llist_header pgid_node;
     struct llist_header tick_work_node;
     uint64_t pid;
-    uint64_t ppid;
+    struct task *parent;
     int64_t uid;
     int64_t gid;
     int64_t euid;

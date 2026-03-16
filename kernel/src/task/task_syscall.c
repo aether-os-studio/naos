@@ -1122,12 +1122,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
         self->fd_info = new;
     }
 
-    task_t *vfork_parent = task_find_by_pid(self->ppid);
-    if ((self->clone_flags & CLONE_VFORK) && vfork_parent &&
-        !vfork_parent->child_vfork_done) {
-        vfork_parent->child_vfork_done = true;
-    }
-
     string_builder_t *builder = create_string_builder(DEFAULT_PAGE_SIZE);
     for (int i = 0; i < argv_count; i++) {
         string_builder_append(builder, new_argv[i]);
@@ -1195,6 +1189,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
         vma_insert(&self->mm->task_vma_mgr, stack_vma);
     }
 
+    task_complete_vfork(self);
     self->clone_flags = 0;
     self->is_clone = false;
     self->is_kernel = false;
@@ -1247,9 +1242,9 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
             if (!ptr)
                 continue;
 
-            if (ptr->ppid == ptr->pid)
+            if (!task_has_parent(ptr))
                 continue;
-            if (ptr->ppid != wait_parent_pid)
+            if (task_parent_wait_key(ptr) != wait_parent_pid)
                 continue;
 
             if (wait_pid > 0) {
@@ -1378,9 +1373,9 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
             if (!ptr)
                 continue;
 
-            if (ptr->ppid == ptr->pid)
+            if (!task_has_parent(ptr))
                 continue;
-            if (ptr->ppid != wait_parent_pid)
+            if (task_parent_wait_key(ptr) != wait_parent_pid)
                 continue;
 
             switch (match_idtype) {
@@ -1669,9 +1664,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 #endif
 
     child->is_kernel = false;
-    child->ppid = (flags & (CLONE_THREAD | CLONE_PARENT))
-                      ? self->ppid
-                      : task_effective_wait_parent_pid(self);
+    child->parent =
+        (flags & (CLONE_THREAD | CLONE_PARENT)) ? self->parent : self;
     child->uid = self->uid;
     child->gid = self->gid;
     child->euid = self->euid;

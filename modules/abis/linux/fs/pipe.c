@@ -1,6 +1,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <fs/fs_syscall.h>
+#include <fs/pipe.h>
 #include <fs/dev.h>
 #include <fs/proc.h>
 

@@ -463,6 +463,19 @@ task_t *task_find_by_pid(uint64_t pid) {
     return task;
 }
 
+void task_complete_vfork(task_t *task) {
+    if (!task || !(task->clone_flags & CLONE_VFORK)) {
+        return;
+    }
+
+    task_t *parent = task->parent;
+    if (!parent || parent->child_vfork_done) {
+        return;
+    }
+
+    parent->child_vfork_done = true;
+}
+
 static void task_pid_index_add_locked(task_t *task) {
     if (!task || !task->pid) {
         return;
@@ -499,13 +512,13 @@ void task_index_bucket_destroy_if_empty(hashmap_t *map, uint64_t key) {
 }
 
 void task_parent_index_attach_locked(task_t *task) {
-    if (!task_should_index_parent(task, task->ppid) ||
-        !llist_empty(&task->parent_node)) {
+    if (!task_should_index_parent(task) || !llist_empty(&task->parent_node)) {
         return;
     }
 
+    uint64_t parent_key = task_parent_wait_key(task);
     task_index_bucket_t *bucket =
-        task_index_bucket_get_or_create(&task_parent_map, task->ppid);
+        task_index_bucket_get_or_create(&task_parent_map, parent_key);
     if (!bucket) {
         return;
     }
@@ -515,12 +528,11 @@ void task_parent_index_attach_locked(task_t *task) {
 }
 
 void task_parent_index_detach_locked(task_t *task, bool prune_bucket) {
-    if (!task_should_index_parent(task, task->ppid) ||
-        llist_empty(&task->parent_node)) {
+    if (!task_should_index_parent(task) || llist_empty(&task->parent_node)) {
         return;
     }
 
-    uint64_t parent_pid = task->ppid;
+    uint64_t parent_pid = task_parent_wait_key(task);
     task_index_bucket_t *bucket =
         task_index_bucket_lookup(&task_parent_map, parent_pid);
     llist_delete(&task->parent_node);
@@ -534,15 +546,99 @@ void task_parent_index_detach_locked(task_t *task, bool prune_bucket) {
     }
 }
 
-static void task_set_ppid_locked(task_t *task, uint64_t ppid,
-                                 bool prune_old_bucket) {
-    if (!task || task->ppid == ppid) {
+static void task_set_parent_locked(task_t *task, task_t *parent,
+                                   bool prune_old_bucket) {
+    if (!task || task->parent == parent) {
         return;
     }
 
     task_parent_index_detach_locked(task, prune_old_bucket);
-    task->ppid = ppid;
+    task->parent = parent;
     task_parent_index_attach_locked(task);
+}
+
+static inline bool task_is_live_locked(task_t *task) {
+    return task && task->state != TASK_DIED && task->arch_context &&
+           !task->arch_context->dead;
+}
+
+static task_t *task_pick_reaper_locked(task_t *task) {
+    if (!task) {
+        return NULL;
+    }
+
+    uint64_t current_tgid = task_effective_tgid(task);
+    task_t *leader = task_lookup_by_pid_nolock(current_tgid);
+    if (task_is_live_locked(leader) && leader != task) {
+        return leader;
+    }
+
+    if (task_pid_map.buckets) {
+        for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+            hashmap_entry_t *entry = &task_pid_map.buckets[i];
+            if (!hashmap_entry_is_occupied(entry)) {
+                continue;
+            }
+
+            task_t *candidate = (task_t *)entry->value;
+            if (!task_is_live_locked(candidate) || candidate == task) {
+                continue;
+            }
+
+            if (task_effective_tgid(candidate) == current_tgid) {
+                return candidate;
+            }
+        }
+    }
+
+    task_t *init = task_lookup_by_pid_nolock(1);
+    return init == task ? NULL : init;
+}
+
+static void task_notify_parent_death_locked(task_t *task) {
+    if (!task || task->parent_death_sig == (uint64_t)-1) {
+        return;
+    }
+
+    task_send_signal(task, task->parent_death_sig,
+                     task->parent_death_sig + 128);
+    if (task->state == TASK_BLOCKING || task->state == TASK_READING_STDIO) {
+        task_unblock(task, EOK);
+    }
+}
+
+static void task_reparent_children_locked(task_t *owner, task_t *new_parent,
+                                          bool process_wide) {
+    if (!owner) {
+        return;
+    }
+
+    uint64_t owner_tgid = task_effective_tgid(owner);
+    task_index_bucket_t *children =
+        task_index_bucket_lookup(&task_parent_map, owner_tgid);
+    if (!children) {
+        return;
+    }
+
+    task_t *task, *tmp;
+    llist_for_each(task, tmp, &children->tasks, parent_node) {
+        if (!task || task == owner || !task_has_parent(task)) {
+            continue;
+        }
+
+        if (process_wide) {
+            if (task_effective_tgid(task->parent) != owner_tgid) {
+                continue;
+            }
+        } else if (task->parent != owner) {
+            continue;
+        }
+
+        task_set_parent_locked(task, new_parent, false);
+        task_notify_parent_death_locked(task);
+    }
+
+    task_index_bucket_destroy_if_empty(&task_parent_map, owner_tgid);
 }
 
 bool task_initialized = false;
@@ -618,7 +714,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
         can_schedule = true;
         return NULL;
     }
-    task->ppid = task->pid;
+    task->parent = NULL;
     task->uid = 0;
     task->gid = 0;
     task->euid = 0;
@@ -966,8 +1062,8 @@ void task_exit_inner(task_t *task, int64_t code) {
         task_unblock(waiting_task, EOK);
     }
 
-    task_t *parent = task_lookup_by_pid_nolock(task->ppid);
-    if (!task->is_clone && task->ppid && task->pid != task->ppid && parent) {
+    task_t *parent = task->parent;
+    if (!task->is_clone && task_has_parent(task) && parent) {
         sigaction_t sa = {0};
         if (parent->signal && parent->signal->sighand) {
             spin_lock(&parent->signal->sighand->siglock);
@@ -999,7 +1095,7 @@ void task_exit_inner(task_t *task, int64_t code) {
             task_enqueue_should_free(task);
 
         task_unblock(parent, 128 + SIGCHLD);
-    } else if (task->pid == task->ppid) {
+    } else if (!task_has_parent(task)) {
         task_enqueue_should_free(task);
     }
 }
@@ -1009,11 +1105,12 @@ uint64_t task_exit_thread(int64_t code) {
 
     task_t *self = current_task;
 
-    task_t *vfork_parent = task_find_by_pid(self->ppid);
-    if ((self->clone_flags & CLONE_VFORK) && vfork_parent &&
-        !vfork_parent->child_vfork_done) {
-        vfork_parent->child_vfork_done = true;
-    }
+    spin_lock(&task_queue_lock);
+    task_t *new_parent = task_pick_reaper_locked(self);
+    task_reparent_children_locked(self, new_parent, false);
+    spin_unlock(&task_queue_lock);
+
+    task_complete_vfork(self);
 
     task_exit_inner(self, code);
 
@@ -1030,12 +1127,7 @@ uint64_t task_exit(int64_t code) {
     arch_disable_interrupt();
 
     task_t *self = current_task;
-
-    task_t *vfork_parent = task_find_by_pid(self->ppid);
-    if ((self->clone_flags & CLONE_VFORK) && vfork_parent &&
-        !vfork_parent->child_vfork_done) {
-        vfork_parent->child_vfork_done = true;
-    }
+    task_complete_vfork(self);
 
     uint64_t current_tgid = self->tgid > 0 ? (uint64_t)self->tgid : self->pid;
 
@@ -1064,29 +1156,8 @@ uint64_t task_exit(int64_t code) {
         }
     }
 
-    task_index_bucket_t *children =
-        task_index_bucket_lookup(&task_parent_map, self->pid);
-    if (children) {
-        task_t *task, *tmp;
-        llist_for_each(task, tmp, &children->tasks, parent_node) {
-            if (task != self && (task->ppid != task->pid) &&
-                (task->ppid == self->pid)) {
-                uint64_t task_tgid =
-                    task->tgid > 0 ? (uint64_t)task->tgid : task->pid;
-                if (task_tgid != current_tgid) {
-                    task_set_ppid_locked(task, 1, false);
-                    if (task->parent_death_sig != (uint64_t)-1) {
-                        task_send_signal(task, task->parent_death_sig,
-                                         task->parent_death_sig + 128);
-                        if (task->state == TASK_BLOCKING ||
-                            task->state == TASK_READING_STDIO)
-                            task_unblock(task, EOK);
-                    }
-                }
-            }
-        }
-    }
-    task_index_bucket_destroy_if_empty(&task_parent_map, self->pid);
+    task_t *init = task_lookup_by_pid_nolock(1);
+    task_reparent_children_locked(self, init, true);
     spin_unlock(&task_queue_lock);
 
     task_exit_inner(self, code);

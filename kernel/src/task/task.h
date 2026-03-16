@@ -143,10 +143,6 @@ static inline void task_aggregate_child_usage(task_t *parent, task_t *child) {
     parent->child_system_time_ns += task_total_system_ns(child);
 }
 
-static inline bool task_should_index_parent(task_t *task, uint64_t ppid) {
-    return task && task->pid && ppid && task->pid != ppid;
-}
-
 static inline bool task_should_index_pgid(task_t *task, int64_t pgid) {
     return task && task->pid && pgid != 0;
 }
@@ -176,6 +172,30 @@ static inline uint64_t task_effective_tgid(task_t *task) {
     return task->tgid > 0 ? (uint64_t)task->tgid : task->pid;
 }
 
+static inline bool task_has_parent(task_t *task) {
+    return task && task->parent && task->parent != task;
+}
+
+static inline uint64_t task_parent_pid(task_t *task) {
+    if (!task_has_parent(task)) {
+        return 0;
+    }
+
+    return task_effective_tgid(task->parent);
+}
+
+static inline uint64_t task_parent_wait_key(task_t *task) {
+    if (!task_has_parent(task)) {
+        return 0;
+    }
+
+    return task_effective_wait_parent_pid(task->parent);
+}
+
+static inline bool task_should_index_parent(task_t *task) {
+    return task && task->pid && task_parent_wait_key(task) != 0;
+}
+
 void sched_defer_tick(void);
 void sched_wake_worker(uint32_t cpu_id);
 void sched_check_wakeup();
@@ -203,6 +223,7 @@ void task_membarrier_checkpoint(task_t *task);
 
 void futex_init();
 task_t *task_find_by_pid(uint64_t pid);
+void task_complete_vfork(task_t *task);
 size_t task_count(void);
 int task_kill_all(int sig);
 int task_kill_process_group(int pgid, int sig);

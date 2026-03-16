@@ -94,10 +94,9 @@ char *proc_gen_status_file(task_t *task, size_t *content_len) {
         "CapAmb:\t0000000000000000\n",
         task ? task->name : "unknown", task_state_to_proc_state(task),
         (unsigned long long)tgid, (unsigned long long)(task ? task->pid : 0),
-        (unsigned long long)(task ? task->ppid : 0),
-        (unsigned long long)threads, (unsigned long long)tgid,
-        (unsigned long long)(task ? task->pid : 0), task ? task->pgid : 0,
-        task ? task->sid : 0,
+        (unsigned long long)task_parent_pid(task), (unsigned long long)threads,
+        (unsigned long long)tgid, (unsigned long long)(task ? task->pid : 0),
+        task ? task->pgid : 0, task ? task->sid : 0,
         (unsigned long long)(task && task->signal
                                  ? sigset_kernel_to_user(task->signal->signal)
                                  : 0),

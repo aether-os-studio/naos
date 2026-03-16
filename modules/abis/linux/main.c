@@ -389,11 +389,32 @@ int linuxabi_on_sched_update(void) { timerfd_check_wakeup(); }
 
 extern int signalfdfs_id;
 
+static void signal_fill_signalfd_siginfo(struct signalfd_siginfo *sinfo,
+                                         int sig, int code) {
+    memset(sinfo, 0, sizeof(*sinfo));
+    sinfo->ssi_signo = sig;
+    sinfo->ssi_errno = 0;
+    sinfo->ssi_code = code;
+    sinfo->ssi_pid = current_task ? current_task->pid : 0;
+    sinfo->ssi_uid = current_task ? current_task->uid : 0;
+
+    if (sig == SIGCHLD && current_task) {
+        if (current_task->status >= 128) {
+            sinfo->ssi_status = (int32_t)(current_task->status - 128);
+        } else {
+            sinfo->ssi_status = (int32_t)current_task->status;
+        }
+    }
+}
+
 void signal_notify_signalfd(task_t *task, int sig, int code) {
     if (!task || !task->fd_info) {
         return;
     }
 
+    bool irq_state = arch_interrupt_enabled();
+
+    arch_disable_interrupt();
     for (int i = 0; i < MAX_FD_NUM; i++) {
         fd_t *fd = task->fd_info->fds[i];
         if (!fd || !fd->node || fd->node->fsid != signalfdfs_id) {
@@ -411,12 +432,7 @@ void signal_notify_signalfd(task_t *task, int sig, int code) {
         }
 
         struct signalfd_siginfo sinfo;
-        memset(&sinfo, 0, sizeof(sinfo));
-        sinfo.ssi_signo = sig;
-        sinfo.ssi_errno = 0;
-        sinfo.ssi_code = code;
-        sinfo.ssi_pid = current_task ? current_task->pid : 0;
-        sinfo.ssi_uid = current_task ? current_task->uid : 0;
+        signal_fill_signalfd_siginfo(&sinfo, sig, code);
 
         memcpy(&ctx->queue[ctx->queue_head], &sinfo, sizeof(sinfo));
         ctx->queue_head = (ctx->queue_head + 1) % ctx->queue_size;
@@ -427,10 +443,14 @@ void signal_notify_signalfd(task_t *task, int sig, int code) {
             vfs_poll_notify(ctx->node, EPOLLIN);
         }
     }
+
+    if (irq_state)
+        arch_enable_interrupt();
 }
 
 int linuxabi_on_send_signal(task_t *task, int sig, int code) {
     signal_notify_signalfd(task, sig, code);
+    return 0;
 }
 
 int linuxabi_run_user_init(const char *path) {

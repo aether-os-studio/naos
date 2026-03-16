@@ -1,5 +1,16 @@
 #include <fs/fs_syscall.h>
 #include <fs/proc.h>
+#include <task/signal.h>
+
+static inline void signalfd_apply_flags(fd_t *fd, int flags) {
+    uint64_t file_flags = fd_get_flags(fd);
+    file_flags &= ~O_NONBLOCK;
+    if (flags & O_NONBLOCK) {
+        file_flags |= O_NONBLOCK;
+    }
+    fd_set_flags(fd, file_flags);
+    fd->close_on_exec = !!(flags & O_CLOEXEC);
+}
 
 static int signalfd_poll(vfs_node_t node, size_t event) {
     struct signalfd_ctx *ctx = node ? node->handle : NULL;
@@ -72,18 +83,50 @@ bool signalfd_close(vfs_node_t node) {
 
 uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask,
                        int flags) {
-    if (sizemask < sizeof(uint32_t) || sizemask > sizeof(uint64_t)) {
+    if (ufd < -1) {
         return -EINVAL;
+    }
+    if (!signal_sigset_size_valid(sizemask)) {
+        return -EINVAL;
+    }
+    if (flags & ~(O_NONBLOCK | O_CLOEXEC)) {
+        return -EINVAL;
+    }
+
+    sigset_t sigmask = 0;
+    if (copy_from_user(&sigmask, mask, sizemask)) {
+        return (uint64_t)-EFAULT;
+    }
+
+    if (ufd >= 0) {
+        uint64_t ret = (uint64_t)-EBADF;
+
+        with_fd_info_lock(current_task->fd_info, {
+            if (ufd >= MAX_FD_NUM || !current_task->fd_info->fds[ufd]) {
+                break;
+            }
+
+            fd_t *fd = current_task->fd_info->fds[ufd];
+            if (!fd->node || fd->node->fsid != signalfdfs_id ||
+                !fd->node->handle) {
+                ret = (uint64_t)-EINVAL;
+                break;
+            }
+
+            struct signalfd_ctx *ctx = fd->node->handle;
+            ctx->sigmask = sigmask;
+            signalfd_apply_flags(fd, flags);
+            ret = (uint64_t)ufd;
+        });
+
+        return ret;
     }
 
     struct signalfd_ctx *ctx = malloc(sizeof(struct signalfd_ctx));
     if (!ctx)
         return -ENOMEM;
-
-    if (copy_from_user(&ctx->sigmask, mask, sizemask)) {
-        free(ctx);
-        return (uint64_t)-EFAULT;
-    }
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->sigmask = sigmask;
 
     ctx->queue_size = 64;
     ctx->queue = calloc(ctx->queue_size, sizeof(struct signalfd_siginfo));

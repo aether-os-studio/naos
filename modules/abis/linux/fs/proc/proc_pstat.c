@@ -168,7 +168,7 @@ char *proc_gen_stat_file(task_t *task, size_t *content_len) {
         task->pid,                  // 1. pid
         task->name,                 // 2. comm
         proc_stat_task_state(task), // 3. state
-        task->ppid,                 // 4. ppid
+        task_parent_pid(task),      // 4. ppid
         task->pgid,                 // 5. pgrp
         task->sid,                  // 6. session
         0UL,                        // 7. tty_nr (需从task获取真实值)
