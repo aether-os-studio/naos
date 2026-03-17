@@ -129,6 +129,11 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
         if (ready > 0)
             break;
 
+        if (task_signal_has_deliverable(current_task)) {
+            ready = -EINTR;
+            break;
+        }
+
         if (!infinite_timeout && timeout == 0)
             break;
 
@@ -136,6 +141,12 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
         ready = poll_scan_ready(fds, nfds);
         if (ready > 0) {
             poll_disarm_waiters(waits, nfds);
+            break;
+        }
+
+        if (task_signal_has_deliverable(current_task)) {
+            poll_disarm_waiters(waits, nfds);
+            ready = -EINTR;
             break;
         }
 

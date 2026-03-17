@@ -393,8 +393,6 @@ void free_task(task_t *ptr) {
 
     free_frames_bytes((void *)(ptr->kernel_stack - STACK_SIZE), STACK_SIZE);
     free_frames_bytes((void *)(ptr->syscall_stack - STACK_SIZE), STACK_SIZE);
-    free_frames_bytes((void *)(ptr->signal_syscall_stack - STACK_SIZE),
-                      STACK_SIZE);
 
     free(ptr);
 }
@@ -1273,10 +1271,12 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
 
         if (found_dead) {
             target = found_dead;
+            arch_disable_interrupt();
             break;
         }
 
         if (found_alive && (options & WNOHANG)) {
+            arch_disable_interrupt();
             return 0;
         }
 
@@ -1509,11 +1509,17 @@ uint64_t sys_getrusage(int who, struct rusage *ru) {
 
 uint64_t sys_clone3(struct pt_regs *regs, clone_args_t *args_user,
                     uint64_t args_size) {
-    if (args_size < sizeof(clone_args_t))
+    if (args_size < 64)
         return (uint64_t)-EINVAL;
-    clone_args_t args;
-    if (copy_from_user(&args, args_user, sizeof(clone_args_t)))
+    clone_args_t args = {0};
+    size_t copy_size = MIN((size_t)args_size, sizeof(args));
+    if (copy_from_user(&args, args_user, copy_size))
         return (uint64_t)-EFAULT;
+
+    if (args.flags & 0xFF)
+        return (uint64_t)-EINVAL;
+    if (args.exit_signal & ~0xFFULL)
+        return (uint64_t)-EINVAL;
 
     if ((args.flags & CLONE_PIDFD) &&
         (!args.pidfd || check_user_overflow(args.pidfd, sizeof(int)) ||
@@ -1521,7 +1527,8 @@ uint64_t sys_clone3(struct pt_regs *regs, clone_args_t *args_user,
         return (uint64_t)-EFAULT;
     }
 
-    uint64_t clone_flags = args.flags & ~CLONE_PIDFD;
+    uint64_t clone_flags =
+        (args.flags & ~((uint64_t)CLONE_PIDFD)) | (args.exit_signal & 0xFFULL);
     uint64_t ret =
         sys_clone(regs, clone_flags, args.stack + args.stack_size,
                   (int *)args.parent_tid, (int *)args.child_tid, args.tls);
@@ -1552,6 +1559,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     if (flags & CLONE_VFORK) {
         flags |= CLONE_VM;
+        flags |= CLONE_FILES;
     }
 
     if ((flags & CLONE_THREAD) &&
@@ -1560,6 +1568,10 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     }
 
     if ((flags & CLONE_SIGHAND) && !(flags & CLONE_VM)) {
+        return (uint64_t)-EINVAL;
+    }
+
+    if ((flags & CLONE_CLEAR_SIGHAND) && (flags & CLONE_SIGHAND)) {
         return (uint64_t)-EINVAL;
     }
 
@@ -1604,8 +1616,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     child->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     child->syscall_stack =
-        (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
-    child->signal_syscall_stack =
         (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     memset((void *)(child->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(child->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
@@ -1758,11 +1768,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         }
     }
 
-    if (flags & CLONE_CHILD_SETTID) {
-        write_task_user_memory(child, (uint64_t)child_tid, &child_tid_value,
-                               sizeof(child_tid_value));
-    }
-
     if (child_tid && (flags & CLONE_CHILD_CLEARTID)) {
         child->tidptr = child_tid;
     }
@@ -1797,7 +1802,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 }
 
 uint64_t task_fork(struct pt_regs *regs, bool vfork) {
-    uint64_t flags = vfork ? CLONE_VFORK : 0;
+    uint64_t flags = vfork ? (CLONE_VFORK | CLONE_VM) : 0;
     return sys_clone(regs, flags, 0, NULL, NULL, 0);
 }
 

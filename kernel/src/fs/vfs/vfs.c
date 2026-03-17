@@ -1555,7 +1555,7 @@ ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size) {
         return vfs_read(linknode, addr, offset, size);
     }
 
-      ssize_t   ret = vfs_ops_of(fd->node)->read(fd, addr, offset, size);
+    ssize_t ret = vfs_ops_of(fd->node)->read(fd, addr, offset, size);
     if (ret > 0) {
         vfs_mark_dirty(fd->node, VFS_NODE_FLAGS_DIRTY_METADATA);
     }

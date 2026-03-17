@@ -89,7 +89,7 @@ task_signal_info_t *task_signal_clone(task_t *parent, uint64_t flags) {
         task_sighand_put(signal->sighand);
         signal->sighand = parent->signal->sighand;
         task_sighand_get(signal->sighand);
-    } else {
+    } else if (!(flags & CLONE_CLEAR_SIGHAND)) {
         memcpy(signal->sighand->actions, parent->signal->sighand->actions,
                sizeof(signal->sighand->actions));
     }
@@ -727,8 +727,6 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->priority = priority;
     task->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     task->syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
-    task->signal_syscall_stack =
-        (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     memset((void *)(task->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(task->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
     task->mm = malloc(sizeof(task_mm_info_t));
@@ -898,11 +896,11 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
         return -EINVAL;
     }
 
-    task->status = EOK;
-
     if (__atomic_exchange_n(&task->wake_pending, false, __ATOMIC_ACQ_REL)) {
         return task->status;
     }
+
+    task->status = EOK;
 
     bool irq_state = arch_interrupt_enabled();
 
@@ -1065,9 +1063,12 @@ void task_exit_inner(task_t *task, int64_t code) {
     task_t *parent = task->parent;
     if (!task->is_clone && task_has_parent(task) && parent) {
         sigaction_t sa = {0};
+        bool sigchld_blocked = false;
         if (parent->signal && parent->signal->sighand) {
             spin_lock(&parent->signal->sighand->siglock);
             sa = parent->signal->sighand->actions[SIGCHLD];
+            sigchld_blocked =
+                signal_sigset_has(parent->signal->blocked, SIGCHLD);
             spin_unlock(&parent->signal->sighand->siglock);
         }
         bool ignore_sigchld = (sa.sa_handler == SIG_IGN);
@@ -1094,7 +1095,8 @@ void task_exit_inner(task_t *task, int64_t code) {
         if (ignore_sigchld || (sa.sa_flags & SA_NOCLDWAIT))
             task_enqueue_should_free(task);
 
-        task_unblock(parent, 128 + SIGCHLD);
+        if (!ignore_sigchld && !sigchld_blocked)
+            task_unblock(parent, 128 + SIGCHLD);
     } else if (!task_has_parent(task)) {
         task_enqueue_should_free(task);
     }

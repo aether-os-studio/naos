@@ -1,6 +1,7 @@
 #include <init/abis.h>
 #include <fs/fs_syscall.h>
 #include <fs/proc.h>
+#include <task/signal.h>
 
 int epollfs_id;
 
@@ -220,6 +221,12 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
             break;
         }
 
+        if (task_signal_has_deliverable(current_task)) {
+            mutex_unlock(&epoll->lock);
+            ready = -EINTR;
+            break;
+        }
+
         if (timeout == 0) {
             mutex_unlock(&epoll->lock);
             break;
@@ -239,6 +246,12 @@ uint64_t epoll_wait(vfs_node_t epollFd, struct epoll_event *events,
         mutex_unlock(&epoll->lock);
         if (ready > 0) {
             epoll_disarm_waiters(waits, waits_count);
+            break;
+        }
+
+        if (task_signal_has_deliverable(current_task)) {
+            epoll_disarm_waiters(waits, waits_count);
+            ready = -EINTR;
             break;
         }
 

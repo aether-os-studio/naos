@@ -255,9 +255,8 @@ typedef struct siginfo {
 } siginfo_t;
 
 typedef struct pending_signal {
-    int sig;
-    siginfo_t info;
-    bool processed;
+    sigset_t info_mask;
+    siginfo_t info[MAXSIG];
 } pending_signal_t;
 
 struct pt_regs;
@@ -281,7 +280,6 @@ typedef struct task_signal_info {
 typedef struct task {
     uint64_t syscall_stack;
     uint64_t kernel_stack;
-    uint64_t signal_syscall_stack;
     struct llist_header free_node;
     struct llist_header parent_node;
     struct llist_header pgid_node;

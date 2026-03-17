@@ -62,6 +62,7 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
     regs->cs = SELECTOR_USER_CS;
     regs->ss = SELECTOR_USER_DS;
     regs->rsp = user_rsp;
+    regs->orig_rax = regs->rax;
 
     task_t *self = current_task;
     if (!self) {

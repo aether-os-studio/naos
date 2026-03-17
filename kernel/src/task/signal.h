@@ -60,6 +60,7 @@ typedef struct task task_t;
 void task_fill_siginfo(siginfo_t *info, int sig, int code);
 void task_send_signal(task_t *task, int sig, int code);
 void task_commit_signal(task_t *task, int sig, siginfo_t *info);
+bool task_signal_has_deliverable(task_t *task);
 
 #define SIG_BLOCK 0   /* for blocking signals */
 #define SIG_UNBLOCK 1 /* for unblocking signals */

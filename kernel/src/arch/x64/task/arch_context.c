@@ -44,7 +44,21 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     }
 }
 
-extern void ret_from_syscall();
+extern int write_task_user_memory(task_t *task, uint64_t uaddr, const void *src,
+                                  size_t size);
+
+void before_ret_from_fork() {
+    task_t *self = current_task;
+    if (self->clone_flags & CLONE_CHILD_SETTID) {
+        int value = self->pid;
+        if (write_task_user_memory(self, (uint64_t)self->tidptr, &value,
+                                   sizeof(value)) < 0) {
+            task_exit(128 + SIGSEGV);
+        }
+    }
+}
+
+extern void ret_from_fork();
 
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
                        uint64_t clone_flags) {
@@ -52,7 +66,7 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
 
     arch_flush_tlb_all();
     dst->ctx = (struct pt_regs *)stack - 1;
-    dst->rip = (uint64_t)ret_from_syscall;
+    dst->rip = (uint64_t)ret_from_fork;
     dst->rsp = (uint64_t)dst->ctx;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
     dst->ctx->rax = 0;

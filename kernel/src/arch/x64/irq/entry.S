@@ -87,15 +87,12 @@ Restore_all:
     iretq
 
 ENTRY(ret_from_intr)
-    movq %rsp, %rdi
-    call task_signal
-
     jmp Restore_all
     
 Err_Code:
     cli
 
-    pushq %rax
+    subq $0x8, %rsp
     pushq %rax
 
     pushq %rbp

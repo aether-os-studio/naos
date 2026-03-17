@@ -238,6 +238,10 @@ static uint64_t futex_now_ns(bool realtime) {
     return boot_get_boottime() * 1000000000 + nano_time();
 }
 
+static inline bool futex_should_interrupt_before_sleep(void) {
+    return task_signal_has_deliverable(current_task);
+}
+
 static uint64_t sys_futex_wait(int *uaddr, const futex_key_t *key, int val,
                                const struct timespec *timeout, uint32_t bitset,
                                bool absolute_timeout, bool realtime_clock) {
@@ -277,6 +281,10 @@ static uint64_t sys_futex_wait(int *uaddr, const futex_key_t *key, int val,
     if (timeout && tmo == 0) {
         spin_unlock(&futex_lock);
         return (uint64_t)-ETIMEDOUT;
+    }
+    if (futex_should_interrupt_before_sleep()) {
+        spin_unlock(&futex_lock);
+        return (uint64_t)-EINTR;
     }
     futex_enqueue_locked(&wait);
     spin_unlock(&futex_lock);
@@ -482,6 +490,10 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
             if (timeout && tmo == 0) {
                 spin_unlock(&futex_lock);
                 return (uint64_t)-ETIMEDOUT;
+            }
+            if (futex_should_interrupt_before_sleep()) {
+                spin_unlock(&futex_lock);
+                return (uint64_t)-EINTR;
             }
             futex_enqueue_locked(&wait);
             spin_unlock(&futex_lock);

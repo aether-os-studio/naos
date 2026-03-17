@@ -195,16 +195,16 @@ int pipefs_poll(vfs_node_t node, size_t events) {
     int out = 0;
 
     spin_lock(&pipe->lock);
+    if (!spec->write && !pipe->write_fds)
+        out |= EPOLLHUP;
     if (events & EPOLLIN) {
-        if (!pipe->write_fds)
-            out |= EPOLLHUP;
         if (pipe->ptr > 0)
             out |= EPOLLIN;
     }
 
+    if (spec->write && !pipe->read_fds)
+        out |= EPOLLHUP;
     if (events & EPOLLOUT) {
-        if (!pipe->read_fds)
-            out |= EPOLLHUP;
         if (pipe->ptr < PIPE_BUFF)
             out |= EPOLLOUT;
     }

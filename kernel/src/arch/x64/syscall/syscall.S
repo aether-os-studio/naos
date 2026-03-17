@@ -8,9 +8,8 @@ ENTRY(syscall_handler_asm)
     movq %rsp, %gs:0x8
     movq %gs:0x0, %rsp // syscall_stack
 
-    subq $0x38, %rsp
+    subq $0x40, %rsp
 
-    pushq %rax
     pushq %rax
 
     pushq %rbp
