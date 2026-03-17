@@ -21,7 +21,7 @@ struct arch_context;
 typedef struct arch_context arch_context_t;
 
 struct vfs_node;
-typedef struct vfs_node *vfs_node_t;
+typedef struct vfs_node vfs_node_t;
 
 struct rlimit {
     size_t rlim_cur;
@@ -305,7 +305,7 @@ typedef struct task {
     uint64_t child_system_time_ns;
     uint32_t cpu_id;
     char name[TASK_NAME_MAX];
-    vfs_node_t exec_node;
+    vfs_node_t *exec_node;
     int priority;
     void *sched_info;
     task_state_t state;
@@ -317,11 +317,11 @@ typedef struct task {
     task_mm_info_t *mm;
     arch_context_t *arch_context;
     task_signal_info_t *signal;
-    vfs_node_t cwd;
+    vfs_node_t *cwd;
     fd_info_t *fd_info;
     shm_mapping_t *shm_ids;
-    vfs_node_t procfs_node;
-    vfs_node_t procfs_thread_node;
+    vfs_node_t *procfs_node;
+    vfs_node_t *procfs_thread_node;
     char *cmdline;
     uint64_t arg_start;
     uint64_t arg_end;

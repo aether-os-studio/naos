@@ -11,7 +11,7 @@ char *proc_gen_maps_file(task_t *task, size_t *content_len) {
 
     while (node) {
         vma_t *vma = rb_entry(node, vma_t, vm_rb);
-        vfs_node_t vfs_node = vma->node;
+        vfs_node_t *vfs_node = vma->node;
 
         char perms[5];
         perms[0] = (vma->vm_flags & VMA_READ) ? 'r' : '-';

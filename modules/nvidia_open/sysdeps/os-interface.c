@@ -854,7 +854,7 @@ void NV_API_CALL os_close_file(void *file) {
     if (!file) {
         return;
     }
-    // vfs_close((vfs_node_t)file);
+    // vfs_close((vfs_node_t *)file);
 }
 
 NV_STATUS NV_API_CALL os_write_file(void *file, NvU8 *buf, NvU64 count,
@@ -864,7 +864,7 @@ NV_STATUS NV_API_CALL os_write_file(void *file, NvU8 *buf, NvU64 count,
     }
 
     ssize_t written =
-        vfs_write((vfs_node_t)file, buf, (size_t)offset, (size_t)count);
+        vfs_write((vfs_node_t *)file, buf, (size_t)offset, (size_t)count);
     if (written < 0 || (NvU64)written != count) {
         return NV_ERR_OPERATING_SYSTEM;
     }
@@ -879,7 +879,7 @@ NV_STATUS NV_API_CALL os_read_file(void *file, NvU8 *buf, NvU64 count,
     }
 
     ssize_t read =
-        vfs_read((vfs_node_t)file, buf, (size_t)offset, (size_t)count);
+        vfs_read((vfs_node_t *)file, buf, (size_t)offset, (size_t)count);
     if (read < 0 || (NvU64)read != count) {
         return NV_ERR_OPERATING_SYSTEM;
     }
@@ -893,7 +893,7 @@ NV_STATUS NV_API_CALL os_open_readonly_file(const char *filename,
         return NV_ERR_INVALID_ARGUMENT;
     }
 
-    vfs_node_t file = vfs_open(filename, 0);
+    vfs_node_t *file = vfs_open(filename, 0);
     if (!file) {
         return NV_ERR_OPERATING_SYSTEM;
     }
@@ -1308,7 +1308,7 @@ nv_get_firmware(nv_state_t *nv, nv_firmware_type_t fw_type,
     const char *path = nv_firmware_for_chip_family(fw_type, fw_chip_family);
     printk("NVIDIA_OPEN: Getting firmware %s\n", path);
 
-    vfs_node_t node = vfs_open(path, 0);
+    vfs_node_t *node = vfs_open(path, 0);
     if (!node) {
         return NULL;
     }

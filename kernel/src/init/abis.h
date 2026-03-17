@@ -4,6 +4,9 @@
 #include <task/task_struct.h>
 #include <dev/device.h>
 
+struct fd;
+typedef struct fd fd_t;
+
 typedef struct abi {
     void (*init)(void);
     void (*init_before_thread)(void);
@@ -15,7 +18,7 @@ typedef struct abi {
     int (*on_new_task)(task_t *task);
     int (*on_exit_task)(task_t *task);
     int (*on_open_file)(task_t *task, int fd);
-    int (*on_close_file)(task_t *task, int fd);
+    int (*on_close_file)(task_t *task, int fd, fd_t *file);
     int (*on_new_device)(device_t *dev);
     int (*on_remove_device)(device_t *dev);
     void *(*regist_input_dev)(const char *device_name, void *arg);

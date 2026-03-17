@@ -376,11 +376,11 @@ void linuxabi_init_after_thread() {
     notifyfs_init();
 
     sysfs_init();
-
-    drm_init_after_pci_sysfs();
 }
 
 void linuxabi_init_before_user() {
+    drm_init_after_pci_sysfs();
+
     devtmpfs_init_umount();
     sysfs_init_umount();
 }
@@ -465,13 +465,14 @@ int linuxabi_on_new_task(task_t *task) { procfs_on_new_task(task); }
 int linuxabi_on_exit_task(task_t *task) {
     procfs_on_exit_task(task);
     pidfd_on_task_exit(task);
+    return 0;
 }
 
 int linuxabi_on_open_file(task_t *task, int fd) {
     procfs_on_open_file(task, fd);
 }
 
-int linuxabi_on_close_file(task_t *task, int fd) {
+int linuxabi_on_close_file(task_t *task, int fd, fd_t *file) {
     procfs_on_close_file(task, fd);
 }
 

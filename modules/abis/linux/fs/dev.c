@@ -15,8 +15,8 @@ int devtmpfs_fsid = 0;
 
 spinlock_t devtmpfs_oplock = SPIN_INIT;
 
-vfs_node_t devtmpfs_root = NULL;
-vfs_node_t fake_devtmpfs_root = NULL;
+vfs_node_t *devtmpfs_root = NULL;
+vfs_node_t *fake_devtmpfs_root = NULL;
 
 static int devtmpfs_replace_content(devtmpfs_node_t *handle,
                                     size_t new_capability, size_t preserve_size,
@@ -62,7 +62,7 @@ static int devtmpfs_replace_content(devtmpfs_node_t *handle,
     return 0;
 }
 
-static void devtmpfs_sync_node_from_handle(vfs_node_t node,
+static void devtmpfs_sync_node_from_handle(vfs_node_t *node,
                                            devtmpfs_node_t *handle) {
     if (!node || !handle)
         return;
@@ -80,7 +80,7 @@ static void devtmpfs_sync_node_from_handle(vfs_node_t node,
 }
 
 static void devtmpfs_init_handle_from_node(devtmpfs_node_t *handle,
-                                           vfs_node_t node) {
+                                           vfs_node_t *node) {
     if (!handle || !node)
         return;
 
@@ -96,7 +96,7 @@ static void devtmpfs_init_handle_from_node(devtmpfs_node_t *handle,
     handle->handle_refs = 1;
 }
 
-static devtmpfs_node_t *devtmpfs_alloc_handle(vfs_node_t node,
+static devtmpfs_node_t *devtmpfs_alloc_handle(vfs_node_t *node,
                                               size_t capability) {
     devtmpfs_node_t *handle = calloc(1, sizeof(devtmpfs_node_t));
     if (!handle)
@@ -116,7 +116,7 @@ static devtmpfs_node_t *devtmpfs_alloc_handle(vfs_node_t node,
     return handle;
 }
 
-void devtmpfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {
+void devtmpfs_open(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     (void)parent;
     (void)name;
 
@@ -128,7 +128,7 @@ void devtmpfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {
     }
 }
 
-bool devtmpfs_close(vfs_node_t node) {
+bool devtmpfs_close(vfs_node_t *node) {
     if (!node)
         return false;
     if ((node->type & file_block) || (node->type & file_stream))
@@ -140,8 +140,7 @@ bool devtmpfs_close(vfs_node_t node) {
 
 ssize_t devtmpfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
-        return device_read(fd->node->rdev, addr, offset, size,
-                           fd_get_flags(fd));
+        return device_read(fd->node->rdev, addr, offset, size, fd);
     }
 
     devtmpfs_node_t *handle = fd->node->handle;
@@ -154,8 +153,7 @@ ssize_t devtmpfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
 
 ssize_t devtmpfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
-        return device_write(fd->node->rdev, (void *)addr, offset, size,
-                            fd_get_flags(fd));
+        return device_write(fd->node->rdev, (void *)addr, offset, size, fd);
     }
 
     devtmpfs_node_t *handle = fd->node->handle;
@@ -177,7 +175,7 @@ ssize_t devtmpfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     return size;
 }
 
-ssize_t devtmpfs_readlink(vfs_node_t node, void *addr, size_t offset,
+ssize_t devtmpfs_readlink(vfs_node_t *node, void *addr, size_t offset,
                           size_t size) {
     devtmpfs_node_t *handle = node->handle;
     if (offset >= handle->size)
@@ -186,7 +184,7 @@ ssize_t devtmpfs_readlink(vfs_node_t node, void *addr, size_t offset,
     memset(tmp, 0, sizeof(tmp));
     memcpy(tmp, handle->content, MIN(handle->size, sizeof(tmp)));
 
-    vfs_node_t to_node = vfs_open_at(node->parent, (const char *)tmp, 0);
+    vfs_node_t *to_node = vfs_open_at(node->parent, (const char *)tmp, 0);
     if (!to_node)
         return -ENOENT;
 
@@ -204,7 +202,7 @@ ssize_t devtmpfs_readlink(vfs_node_t node, void *addr, size_t offset,
     return to_copy;
 }
 
-int devtmpfs_mkdir(vfs_node_t parent, const char *name, vfs_node_t node) {
+int devtmpfs_mkdir(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     (void)parent;
     (void)name;
     node->mode = 0700;
@@ -215,7 +213,7 @@ int devtmpfs_mkdir(vfs_node_t parent, const char *name, vfs_node_t node) {
     return 0;
 }
 
-int devtmpfs_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
+int devtmpfs_mkfile(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     (void)parent;
     (void)name;
     node->mode = 0700;
@@ -229,7 +227,7 @@ int devtmpfs_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
     return 0;
 }
 
-int devtmpfs_mknod(vfs_node_t parent, const char *name, vfs_node_t node,
+int devtmpfs_mknod(vfs_node_t *parent, const char *name, vfs_node_t *node,
                    uint16_t mode, int dev) {
     node->dev = dev;
     node->rdev = dev;
@@ -244,7 +242,7 @@ int devtmpfs_mknod(vfs_node_t parent, const char *name, vfs_node_t node,
     return 0;
 }
 
-int devtmpfs_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
+int devtmpfs_symlink(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     (void)parent;
     node->mode = 0700;
     if (node->handle) {
@@ -257,7 +255,7 @@ int devtmpfs_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
     memcpy(handle->content, name, len);
     handle->size = len;
     node->handle = handle;
-    vfs_node_t target = vfs_open_at(node->parent, name, 0);
+    vfs_node_t *target = vfs_open_at(node->parent, name, 0);
     if (target) {
         handle->dev = target->dev;
         handle->rdev = target->rdev;
@@ -267,8 +265,8 @@ int devtmpfs_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
     return 0;
 }
 
-static int devtmpfs_link_target(vfs_node_t parent, vfs_node_t target,
-                                vfs_node_t node) {
+static int devtmpfs_link_target(vfs_node_t *parent, vfs_node_t *target,
+                                vfs_node_t *node) {
     if (!parent || !target || !node)
         return -EINVAL;
 
@@ -291,22 +289,22 @@ static int devtmpfs_link_target(vfs_node_t parent, vfs_node_t target,
     return 0;
 }
 
-static int devtmpfs_link_existing(vfs_node_t parent, vfs_node_t target,
-                                  vfs_node_t node) {
+static int devtmpfs_link_existing(vfs_node_t *parent, vfs_node_t *target,
+                                  vfs_node_t *node) {
     return devtmpfs_link_target(parent, target, node);
 }
 
-int devtmpfs_link(vfs_node_t parent, const char *name, vfs_node_t node) {
+int devtmpfs_link(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     if (!parent || !name || !node)
         return -EINVAL;
 
-    vfs_node_t target = vfs_open(name, O_NOFOLLOW);
+    vfs_node_t *target = vfs_open(name, O_NOFOLLOW);
     if (!target)
         return -ENOENT;
     return devtmpfs_link_target(parent, target, node);
 }
 
-int devtmpfs_mount(uint64_t dev, vfs_node_t node) {
+int devtmpfs_mount(uint64_t dev, vfs_node_t *node) {
     if (devtmpfs_root != fake_devtmpfs_root)
         return 0;
     if (devtmpfs_root == node)
@@ -327,7 +325,7 @@ int devtmpfs_mount(uint64_t dev, vfs_node_t node) {
     return 0;
 }
 
-void devtmpfs_unmount(vfs_node_t root) {
+void devtmpfs_unmount(vfs_node_t *root) {
     if (root == fake_devtmpfs_root)
         return;
 
@@ -347,7 +345,7 @@ void devtmpfs_unmount(vfs_node_t root) {
     spin_unlock(&devtmpfs_oplock);
 }
 
-int devtmpfs_chmod(vfs_node_t node, uint16_t mode) {
+int devtmpfs_chmod(vfs_node_t *node, uint16_t mode) {
     devtmpfs_node_t *handle = node ? node->handle : NULL;
     if (handle) {
         handle->mode = mode;
@@ -358,7 +356,7 @@ int devtmpfs_chmod(vfs_node_t node, uint16_t mode) {
     return 0;
 }
 
-int devtmpfs_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
+int devtmpfs_chown(vfs_node_t *node, uint64_t uid, uint64_t gid) {
     devtmpfs_node_t *handle = node ? node->handle : NULL;
     if (handle) {
         handle->owner = (uint32_t)uid;
@@ -371,7 +369,7 @@ int devtmpfs_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
     return 0;
 }
 
-int devtmpfs_delete(vfs_node_t parent, vfs_node_t node) {
+int devtmpfs_delete(vfs_node_t *parent, vfs_node_t *node) {
     (void)parent;
 
     devtmpfs_node_t *handle = node ? node->handle : NULL;
@@ -386,13 +384,13 @@ int devtmpfs_delete(vfs_node_t parent, vfs_node_t node) {
     return 0;
 }
 
-int devtmpfs_rename(vfs_node_t node, const char *new) { return 0; }
+int devtmpfs_rename(vfs_node_t *node, const char *new) { return 0; }
 
-int devtmpfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
-    if (!node || !node->handle)
+int devtmpfs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
+    if (!fd->node || !fd->node->handle)
         return -EBADF;
-    if ((node->type & file_block) || (node->type & file_stream)) {
-        return device_ioctl(node->rdev, cmd, (void *)arg);
+    if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
+        return device_ioctl(fd->node->rdev, cmd, (void *)arg, fd);
     }
     return -ENOSYS;
 }
@@ -400,7 +398,7 @@ int devtmpfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
 void *devtmpfs_map(fd_t *file, void *addr, size_t offset, size_t size,
                    size_t prot, size_t flags) {
     if ((file->node->type & file_block) || (file->node->type & file_stream)) {
-        return device_map(file->node->rdev, addr, offset, size, prot, flags);
+        return device_map(file->node->rdev, addr, offset, size, prot, file);
     }
 
     devtmpfs_node_t *handle = file->node->handle;
@@ -437,7 +435,7 @@ void *devtmpfs_map(fd_t *file, void *addr, size_t offset, size_t size,
     return addr;
 }
 
-int devtmpfs_poll(vfs_node_t node, size_t events) {
+int devtmpfs_poll(vfs_node_t *node, size_t events) {
     if (!node || !node->handle)
         return EPOLLNVAL;
     if ((node->type & file_block) || (node->type & file_stream)) {
@@ -446,7 +444,7 @@ int devtmpfs_poll(vfs_node_t node, size_t events) {
     return -ENOSYS;
 }
 
-void devtmpfs_resize(vfs_node_t node, uint64_t size) {
+void devtmpfs_resize(vfs_node_t *node, uint64_t size) {
     devtmpfs_node_t *handle = node ? node->handle : NULL;
     if (!handle)
         return;
@@ -475,7 +473,7 @@ void devtmpfs_resize(vfs_node_t node, uint64_t size) {
     spin_unlock(&devtmpfs_oplock);
 }
 
-int devtmpfs_stat(vfs_node_t node) {
+int devtmpfs_stat(vfs_node_t *node) {
     devtmpfs_node_t *tnode = node ? node->handle : NULL;
     if (!tnode) {
         if (node) {
@@ -488,7 +486,7 @@ int devtmpfs_stat(vfs_node_t node) {
     return 0;
 }
 
-void devtmpfs_free_handle(vfs_node_t node) {
+void devtmpfs_free_handle(vfs_node_t *node) {
     devtmpfs_node_t *tnode = node ? node->handle : NULL;
     if (!tnode)
         return;
@@ -566,7 +564,7 @@ ssize_t inputdev_close(void *data, void *arg) {
     return 0;
 }
 
-static int inputdev_wait_node(vfs_node_t node, uint32_t events,
+static int inputdev_wait_node(vfs_node_t *node, uint32_t events,
                               const char *reason) {
     if (!node || !current_task)
         return -EINVAL;
@@ -704,7 +702,7 @@ ssize_t inputdev_event_write(void *data, const void *buf, uint64_t offset,
     return len;
 }
 
-ssize_t inputdev_ioctl(void *data, ssize_t request, ssize_t arg) {
+ssize_t inputdev_ioctl(void *data, ssize_t request, ssize_t arg, fd_t *fd) {
     dev_input_event_t *event = data;
     size_t type = _IOC_TYPE(request);
     size_t dir = _IOC_DIR(request);
@@ -800,7 +798,7 @@ void devfs_register_device(device_t *device) {
               device->dev);
 
     if (device->type == DEV_BLOCK) {
-        vfs_node_t device_node = vfs_open((const char *)path, 0);
+        vfs_node_t *device_node = vfs_open((const char *)path, 0);
         if (!device_node)
             return;
         partition_t *part = device->ptr;
@@ -878,7 +876,7 @@ ssize_t urandom_write(void *data, const void *buf, uint64_t offset,
 extern char *default_console;
 
 void setup_console_symlinks() {
-    vfs_node_t tty_node = vfs_open(default_console, 0);
+    vfs_node_t *tty_node = vfs_open(default_console, 0);
     if (!tty_node)
         return;
 

@@ -136,7 +136,7 @@ struct signalfd_ctx {
     size_t queue_size;
     size_t queue_head;
     size_t queue_tail;
-    vfs_node_t node;
+    vfs_node_t *node;
 };
 
 void signal_init();

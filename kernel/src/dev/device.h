@@ -122,7 +122,7 @@ struct input_event {
 typedef struct dev_input_event {
     char *devname;
     char *physloc;
-    vfs_node_t devnode;
+    vfs_node_t *devnode;
 
     struct input_event *event_queue;
     size_t event_queue_capacity;
@@ -194,18 +194,18 @@ typedef struct device_t {
     ssize_t (*open)(void *dev, void *arg);
     ssize_t (*close)(void *dev);
     // 设备控制
-    ssize_t (*ioctl)(void *dev, int cmd, void *args);
+    ssize_t (*ioctl)(void *dev, int cmd, void *args, fd_t *fd);
     // 轮询
     ssize_t (*poll)(void *dev, int events);
     // 读设备
     ssize_t (*read)(void *dev, void *buf, uint64_t offset, size_t size,
-                    uint64_t flags);
+                    fd_t *fd);
     // 写设备
     ssize_t (*write)(void *dev, void *buf, uint64_t offset, size_t size,
-                     uint64_t flags);
+                     fd_t *fd);
 
     void *(*map)(void *dev, void *addr, size_t offset, size_t size, size_t prot,
-                 size_t flags);
+                 fd_t *fd);
 } device_t;
 
 enum device_cmd_t {
@@ -233,20 +233,20 @@ ssize_t device_open(uint64_t dev, void *arg);
 ssize_t device_close(uint64_t dev);
 
 // 控制设备
-ssize_t device_ioctl(uint64_t dev, int cmd, void *args);
+ssize_t device_ioctl(uint64_t dev, int cmd, void *args, fd_t *fd);
 
 // 轮询
 ssize_t device_poll(uint64_t dev, int events);
 
 // 读设备
 ssize_t device_read(uint64_t dev, void *buf, uint64_t idx, size_t count,
-                    uint64_t flags);
+                    fd_t *fd);
 
 // 写设备
 ssize_t device_write(uint64_t dev, void *buf, uint64_t idx, size_t count,
-                     uint64_t flags);
+                     fd_t *fd);
 
 void *device_map(uint64_t dev, void *addr, size_t offset, size_t size,
-                 size_t prot, size_t flags);
+                 size_t prot, fd_t *fd);
 
 void device_init();

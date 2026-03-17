@@ -14,7 +14,7 @@ typedef size_t (*read_entry_t)(proc_handle_t *handle, void *addr, size_t offset,
 struct proc_handle {
     char name[64];
     char content[256];
-    vfs_node_t node;
+    vfs_node_t *node;
     task_t *task;
 };
 
@@ -27,14 +27,14 @@ typedef struct proc_handle_node {
 } proc_handle_node_t;
 
 typedef struct procfs_self_handle {
-    vfs_node_t self;
+    vfs_node_t *self;
     bool deleted;
     bool thread_self;
 } procfs_self_handle_t;
 
 void procfs_nodes_init();
-void procfs_stat_dispatch(proc_handle_t *handle, vfs_node_t node);
-int procfs_poll_dispatch(proc_handle_t *handle, vfs_node_t node, int events);
+void procfs_stat_dispatch(proc_handle_t *handle, vfs_node_t *node);
+int procfs_poll_dispatch(proc_handle_t *handle, vfs_node_t *node, int events);
 size_t procfs_read_dispatch(proc_handle_t *handle, void *addr, size_t offset,
                             size_t size);
 

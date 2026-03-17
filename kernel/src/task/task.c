@@ -755,9 +755,9 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     memset(task->fd_info, 0, sizeof(fd_info_t));
     memset(task->fd_info->fds, 0, sizeof(task->fd_info->fds));
     mutex_init(&task->fd_info->fdt_lock);
-    vfs_node_t stdin_node = vfs_open("/dev/console", 0);
-    vfs_node_t stdout_node = vfs_open("/dev/console", 0);
-    vfs_node_t stderr_node = vfs_open("/dev/console", 0);
+    vfs_node_t *stdin_node = vfs_open("/dev/console", 0);
+    vfs_node_t *stdout_node = vfs_open("/dev/console", 0);
+    vfs_node_t *stderr_node = vfs_open("/dev/console", 0);
     task->fd_info->fds[0] = fd_create(stdin_node, O_RDONLY, false);
     task->fd_info->fds[1] = fd_create(stdout_node, O_WRONLY, false);
     task->fd_info->fds[2] = fd_create(stderr_node, O_WRONLY, false);
@@ -1010,10 +1010,10 @@ void task_cleanup_fd_info(task_t *task) {
             with_fd_info_lock(task->fd_info, {
                 for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
                     if (task->fd_info->fds[i]) {
-                        fd_release(task->fd_info->fds[i]);
+                        fd_t *entry = task->fd_info->fds[i];
                         task->fd_info->fds[i] = NULL;
-
-                        system_abi->on_close_file(task, i);
+                        system_abi->on_close_file(task, i, entry);
+                        fd_release(entry);
                     }
                 }
             });

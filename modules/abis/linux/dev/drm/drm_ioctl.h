@@ -19,7 +19,7 @@
  * Handles all DRM ioctl commands. Returns 0 on success, negative error code on
  * failure.
  */
-ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg);
+ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg, fd_t *fd);
 
 /**
  * drm_ioctl_version - Handle DRM_IOCTL_VERSION
@@ -40,7 +40,7 @@ ssize_t drm_ioctl_get_cap(drm_device_t *dev, void *arg);
  * @dev: DRM device
  * @arg: ioctl argument
  */
-ssize_t drm_ioctl_gem_close(drm_device_t *dev, void *arg);
+ssize_t drm_ioctl_gem_close(drm_device_t *dev, void *arg, fd_t *fd);
 
 /**
  * drm_ioctl_prime_handle_to_fd - Handle DRM_IOCTL_PRIME_HANDLE_TO_FD
@@ -82,14 +82,14 @@ ssize_t drm_ioctl_mode_getencoder(drm_device_t *dev, void *arg);
  * @dev: DRM device
  * @arg: ioctl argument
  */
-ssize_t drm_ioctl_mode_create_dumb(drm_device_t *dev, void *arg);
+ssize_t drm_ioctl_mode_create_dumb(drm_device_t *dev, void *arg, fd_t *fd);
 
 /**
  * drm_ioctl_mode_map_dumb - Handle DRM_IOCTL_MODE_MAP_DUMB
  * @dev: DRM device
  * @arg: ioctl argument
  */
-ssize_t drm_ioctl_mode_map_dumb(drm_device_t *dev, void *arg);
+ssize_t drm_ioctl_mode_map_dumb(drm_device_t *dev, void *arg, fd_t *fd);
 
 /**
  * drm_ioctl_mode_getconnector - Handle DRM_IOCTL_MODE_GETCONNECTOR
@@ -110,14 +110,14 @@ ssize_t drm_ioctl_mode_getfb(drm_device_t *dev, void *arg);
  * @dev: DRM device
  * @arg: ioctl argument
  */
-ssize_t drm_ioctl_mode_addfb(drm_device_t *dev, void *arg);
+ssize_t drm_ioctl_mode_addfb(drm_device_t *dev, void *arg, fd_t *fd);
 
 /**
  * drm_ioctl_mode_addfb2 - Handle DRM_IOCTL_MODE_ADDFB2
  * @dev: DRM device
  * @arg: ioctl argument
  */
-ssize_t drm_ioctl_mode_addfb2(drm_device_t *dev, void *arg);
+ssize_t drm_ioctl_mode_addfb2(drm_device_t *dev, void *arg, fd_t *fd);
 
 /**
  * drm_ioctl_mode_closefb - Handle DRM_IOCTL_MODE_CLOSEFB
@@ -131,7 +131,7 @@ ssize_t drm_ioctl_mode_closefb(drm_device_t *dev, void *arg);
  * @dev: DRM device
  * @arg: ioctl argument
  */
-ssize_t drm_ioctl_mode_setcrtc(drm_device_t *dev, void *arg);
+ssize_t drm_ioctl_mode_setcrtc(drm_device_t *dev, void *arg, fd_t *fd);
 
 /**
  * drm_ioctl_mode_getplaneresources - Handle DRM_IOCTL_MODE_GETPLANERESOURCES
@@ -152,7 +152,7 @@ ssize_t drm_ioctl_mode_getplane(drm_device_t *dev, void *arg);
  * @dev: DRM device
  * @arg: ioctl argument
  */
-ssize_t drm_ioctl_mode_setplane(drm_device_t *dev, void *arg);
+ssize_t drm_ioctl_mode_setplane(drm_device_t *dev, void *arg, fd_t *fd);
 
 /**
  * drm_ioctl_mode_getproperty - Handle DRM_IOCTL_MODE_GETPROPERTY
@@ -215,7 +215,7 @@ ssize_t drm_ioctl_get_unique(drm_device_t *dev, void *arg);
  * @dev: DRM device
  * @arg: ioctl argument
  */
-ssize_t drm_ioctl_page_flip(drm_device_t *dev, void *arg);
+ssize_t drm_ioctl_page_flip(drm_device_t *dev, void *arg, fd_t *fd);
 
 /**
  * drm_ioctl_cursor - Handle DRM_IOCTL_MODE_CURSOR
@@ -272,7 +272,7 @@ ssize_t drm_ioctl_gamma(drm_device_t *dev, void *arg, ssize_t cmd);
  * @dev: DRM device
  * @arg: ioctl argument
  */
-ssize_t drm_ioctl_dirtyfb(drm_device_t *dev, void *arg);
+ssize_t drm_ioctl_dirtyfb(drm_device_t *dev, void *arg, fd_t *fd);
 
 /**
  * drm_ioctl_mode_list_lessees - Handle DRM_IOCTL_MODE_LIST_LESSEES

@@ -203,7 +203,7 @@ __attribute__((__packed__))
 
 typedef struct epoll_watch {
     struct llist_header node;
-    vfs_node_t file;
+    vfs_node_t *file;
     uint32_t events;
     uint64_t data;
     bool edge_trigger;
@@ -242,7 +242,7 @@ struct itimerspec {
 #define TFD_NONBLOCK O_NONBLOCK
 
 typedef struct eventfd {
-    vfs_node_t node;
+    vfs_node_t *node;
     uint64_t count;
     int flags;
 } eventfd_t;
@@ -253,7 +253,7 @@ typedef struct {
     kernel_timer_t timer;
     uint64_t count;
     int flags;
-    vfs_node_t node;
+    vfs_node_t *node;
     spinlock_t lock;
     rb_node_t timeout_node;
     bool timeout_queued;

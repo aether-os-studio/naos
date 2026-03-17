@@ -126,7 +126,7 @@ static bool drm_syncobj_is_signaled(drm_device_t *dev, uint64_t owner_pid,
                                     uint32_t handle, uint64_t point);
 
 typedef struct drm_prime_fd_ctx {
-    vfs_node_t node;
+    vfs_node_t *node;
     drm_device_t *dev;
     uint32_t handle;
     uint64_t phys;
@@ -161,7 +161,7 @@ static ssize_t drm_primefd_write(fd_t *fd, const void *buf, uint64_t offset,
     return (ssize_t)copy_len;
 }
 
-static bool drm_primefd_close(vfs_node_t node) {
+static bool drm_primefd_close(vfs_node_t *node) {
     drm_prime_fd_ctx_t *ctx = node ? node->handle : NULL;
     if (!ctx) {
         return true;
@@ -171,7 +171,7 @@ static bool drm_primefd_close(vfs_node_t node) {
     return true;
 }
 
-static int drm_primefd_stat(vfs_node_t node) {
+static int drm_primefd_stat(vfs_node_t *node) {
     drm_prime_fd_ctx_t *ctx = node ? node->handle : NULL;
     if (!ctx) {
         return -EINVAL;
@@ -180,7 +180,7 @@ static int drm_primefd_stat(vfs_node_t node) {
     return 0;
 }
 
-static void drm_primefd_resize(vfs_node_t node, uint64_t size) {
+static void drm_primefd_resize(vfs_node_t *node, uint64_t size) {
     drm_prime_fd_ctx_t *ctx = node ? node->handle : NULL;
     if (!ctx) {
         return;
@@ -192,7 +192,8 @@ static void drm_primefd_resize(vfs_node_t node, uint64_t size) {
     }
 }
 
-static int drm_primefs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
+static int drm_primefs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
+    vfs_node_t *node = fd->node;
     drm_prime_fd_ctx_t *ctx = node ? node->handle : NULL;
     if (!ctx) {
         return -EBADF;
@@ -347,7 +348,7 @@ typedef enum drm_syncfd_kind {
 } drm_syncfd_kind_t;
 
 struct drm_syncfd_ctx {
-    vfs_node_t node;
+    vfs_node_t *node;
     spinlock_t lock;
     struct llist_header link;
     uint32_t refs;
@@ -472,7 +473,8 @@ static bool drm_syncfd_update_state(drm_syncfd_ctx_t *ctx) {
     return true;
 }
 
-static int drm_syncfdfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
+static int drm_syncfdfs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
+    vfs_node_t *node = fd->node;
     drm_syncfd_ctx_t *ctx = node ? node->handle : NULL;
     if (!ctx) {
         return -EBADF;
@@ -595,7 +597,7 @@ static int drm_syncfdfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
     }
 }
 
-static int drm_syncfdfs_poll(vfs_node_t node, size_t events) {
+static int drm_syncfdfs_poll(vfs_node_t *node, size_t events) {
     drm_syncfd_ctx_t *ctx = node ? node->handle : NULL;
     if (!ctx) {
         return EPOLLNVAL;
@@ -611,12 +613,12 @@ static int drm_syncfdfs_poll(vfs_node_t node, size_t events) {
     return revents;
 }
 
-static bool drm_syncfdfs_close(vfs_node_t node) {
+static bool drm_syncfdfs_close(vfs_node_t *node) {
     (void)node;
     return true;
 }
 
-static void drm_syncfdfs_free_handle(vfs_node_t node) {
+static void drm_syncfdfs_free_handle(vfs_node_t *node) {
     drm_syncfd_ctx_t *ctx = node ? node->handle : NULL;
     if (!ctx) {
         return;
@@ -686,7 +688,7 @@ static ssize_t drm_syncfd_create_fd(drm_syncfd_ctx_t *ctx, uint32_t flags) {
         return -EMFILE;
     }
 
-    vfs_node_t node = vfs_node_alloc(NULL, NULL);
+    vfs_node_t *node = vfs_node_alloc(NULL, NULL);
     if (!node) {
         return -ENOMEM;
     }
@@ -833,7 +835,7 @@ static ssize_t drm_primefd_create(drm_device_t *dev, uint32_t handle,
     ctx->phys = phys;
     ctx->size = size;
 
-    vfs_node_t node = vfs_node_alloc(NULL, NULL);
+    vfs_node_t *node = vfs_node_alloc(NULL, NULL);
     if (!node) {
         free(ctx);
         return -ENOMEM;
@@ -878,7 +880,7 @@ static ssize_t drm_prime_get_handle_phys(drm_device_t *dev, uint32_t handle,
     struct drm_mode_map_dumb map = {0};
     map.handle = handle;
 
-    int ret = dev->op->map_dumb(dev, &map);
+    int ret = dev->op->map_dumb(dev, &map, NULL);
     if (ret) {
         return ret;
     }
@@ -917,7 +919,7 @@ typedef struct drm_syncobj_entry {
     uint64_t owner_pid;
     uint32_t handle;
     uint64_t point; // 0 = unsignaled, >0 = signaled/timeline point
-    vfs_node_t eventfd_node;
+    vfs_node_t *eventfd_node;
 } drm_syncobj_entry_t;
 
 static drm_syncobj_entry_t drm_syncobjs[DRM_MAX_SYNCOBJS];
@@ -1562,7 +1564,7 @@ static ssize_t drm_syncobj_eventfd_ioctl(drm_device_t *dev,
     }
 
     uint64_t owner_pid = drm_syncobj_owner_pid();
-    vfs_node_t new_node = NULL;
+    vfs_node_t *new_node = NULL;
 
     if (e->fd >= 0) {
         if (e->fd >= MAX_FD_NUM) {
@@ -2144,7 +2146,7 @@ ssize_t drm_ioctl_get_cap(drm_device_t *dev, void *arg) {
 /**
  * drm_ioctl_gem_close - Handle DRM_IOCTL_GEM_CLOSE
  */
-ssize_t drm_ioctl_gem_close(drm_device_t *dev, void *arg) {
+ssize_t drm_ioctl_gem_close(drm_device_t *dev, void *arg, fd_t *fd) {
     struct drm_gem_close *close = (struct drm_gem_close *)arg;
 
     if (close->handle == 0) {
@@ -2153,7 +2155,7 @@ ssize_t drm_ioctl_gem_close(drm_device_t *dev, void *arg) {
 
     if (dev->op && dev->op->driver_ioctl) {
         ssize_t ret =
-            dev->op->driver_ioctl(dev, DRM_IOCTL_GEM_CLOSE, arg, false);
+            dev->op->driver_ioctl(dev, DRM_IOCTL_GEM_CLOSE, arg, false, fd);
         if (ret != -ENOTTY) {
             return ret;
         }
@@ -2439,12 +2441,12 @@ ssize_t drm_ioctl_mode_getencoder(drm_device_t *dev, void *arg) {
 /**
  * drm_ioctl_mode_create_dumb - Handle DRM_IOCTL_MODE_CREATE_DUMB
  */
-ssize_t drm_ioctl_mode_create_dumb(drm_device_t *dev, void *arg) {
+ssize_t drm_ioctl_mode_create_dumb(drm_device_t *dev, void *arg, fd_t *fd) {
     if (!dev->op->create_dumb) {
         return -ENOSYS;
     }
     struct drm_mode_create_dumb *create = (struct drm_mode_create_dumb *)arg;
-    ssize_t ret = dev->op->create_dumb(dev, create);
+    ssize_t ret = dev->op->create_dumb(dev, create, fd);
     if (ret == 0) {
         drm_dumb_store_size(dev, create->handle, create->size);
     }
@@ -2454,17 +2456,17 @@ ssize_t drm_ioctl_mode_create_dumb(drm_device_t *dev, void *arg) {
 /**
  * drm_ioctl_mode_map_dumb - Handle DRM_IOCTL_MODE_MAP_DUMB
  */
-ssize_t drm_ioctl_mode_map_dumb(drm_device_t *dev, void *arg) {
+ssize_t drm_ioctl_mode_map_dumb(drm_device_t *dev, void *arg, fd_t *fd) {
     if (!dev->op->map_dumb) {
         return -ENOSYS;
     }
-    return dev->op->map_dumb(dev, (struct drm_mode_map_dumb *)arg);
+    return dev->op->map_dumb(dev, (struct drm_mode_map_dumb *)arg, fd);
 }
 
 /**
  * drm_ioctl_mode_destroy_dumb - Handle DRM_IOCTL_MODE_DESTROY_DUMB
  */
-ssize_t drm_ioctl_mode_destroy_dumb(drm_device_t *dev, void *arg) {
+ssize_t drm_ioctl_mode_destroy_dumb(drm_device_t *dev, void *arg, fd_t *fd) {
     if (!dev->op->destroy_dumb) {
         return -ENOSYS;
     }
@@ -2474,7 +2476,7 @@ ssize_t drm_ioctl_mode_destroy_dumb(drm_device_t *dev, void *arg) {
         return -EINVAL;
     }
 
-    return dev->op->destroy_dumb(dev, destroy->handle);
+    return dev->op->destroy_dumb(dev, destroy->handle, fd);
 }
 
 /**
@@ -2619,21 +2621,21 @@ ssize_t drm_ioctl_mode_getfb(drm_device_t *dev, void *arg) {
 /**
  * drm_ioctl_mode_addfb - Handle DRM_IOCTL_MODE_ADDFB
  */
-ssize_t drm_ioctl_mode_addfb(drm_device_t *dev, void *arg) {
+ssize_t drm_ioctl_mode_addfb(drm_device_t *dev, void *arg, fd_t *fd) {
     if (!dev->op->add_fb) {
         return -ENOSYS;
     }
-    return dev->op->add_fb(dev, (struct drm_mode_fb_cmd *)arg);
+    return dev->op->add_fb(dev, (struct drm_mode_fb_cmd *)arg, fd);
 }
 
 /**
  * drm_ioctl_mode_addfb2 - Handle DRM_IOCTL_MODE_ADDFB2
  */
-ssize_t drm_ioctl_mode_addfb2(drm_device_t *dev, void *arg) {
+ssize_t drm_ioctl_mode_addfb2(drm_device_t *dev, void *arg, fd_t *fd) {
     if (!dev->op->add_fb2) {
         return -ENOSYS;
     }
-    return dev->op->add_fb2(dev, (struct drm_mode_fb_cmd2 *)arg);
+    return dev->op->add_fb2(dev, (struct drm_mode_fb_cmd2 *)arg, fd);
 }
 
 /**
@@ -2655,7 +2657,7 @@ ssize_t drm_ioctl_mode_closefb(drm_device_t *dev, void *arg) {
 /**
  * drm_ioctl_mode_setcrtc - Handle DRM_IOCTL_MODE_SETCRTC
  */
-ssize_t drm_ioctl_mode_setcrtc(drm_device_t *dev, void *arg) {
+ssize_t drm_ioctl_mode_setcrtc(drm_device_t *dev, void *arg, fd_t *fd) {
     struct drm_mode_crtc *crtc_cmd = (struct drm_mode_crtc *)arg;
 
     // Find the CRTC by ID
@@ -2676,7 +2678,7 @@ ssize_t drm_ioctl_mode_setcrtc(drm_device_t *dev, void *arg) {
     // Call driver to set CRTC if supported
     int ret = 0;
     if (dev->op->set_crtc) {
-        ret = dev->op->set_crtc(dev, crtc_cmd);
+        ret = dev->op->set_crtc(dev, crtc_cmd, fd);
     }
 
     if (ret == 0 && old_fb_id != 0 && old_fb_id != crtc_cmd->fb_id) {
@@ -2768,7 +2770,7 @@ ssize_t drm_ioctl_mode_getplane(drm_device_t *dev, void *arg) {
 /**
  * drm_ioctl_mode_setplane - Handle DRM_IOCTL_MODE_SETPLANE
  */
-ssize_t drm_ioctl_mode_setplane(drm_device_t *dev, void *arg) {
+ssize_t drm_ioctl_mode_setplane(drm_device_t *dev, void *arg, fd_t *fd) {
     struct drm_mode_set_plane *plane_cmd = (struct drm_mode_set_plane *)arg;
 
     // Find the plane by ID
@@ -2785,7 +2787,7 @@ ssize_t drm_ioctl_mode_setplane(drm_device_t *dev, void *arg) {
     // Call driver to set plane (if supported)
     int ret = 0;
     if (dev->op->set_plane) {
-        ret = dev->op->set_plane(dev, plane_cmd);
+        ret = dev->op->set_plane(dev, plane_cmd, fd);
     }
 
     if (ret == 0 && old_fb_id != 0 && old_fb_id != plane_cmd->fb_id) {
@@ -3764,11 +3766,11 @@ ssize_t drm_ioctl_get_unique(drm_device_t *dev, void *arg) {
 /**
  * drm_ioctl_page_flip - Handle DRM_IOCTL_MODE_PAGE_FLIP
  */
-ssize_t drm_ioctl_page_flip(drm_device_t *dev, void *arg) {
+ssize_t drm_ioctl_page_flip(drm_device_t *dev, void *arg, fd_t *fd) {
     if (!dev->op->page_flip) {
         return -ENOSYS;
     }
-    return dev->op->page_flip(dev, (struct drm_mode_crtc_page_flip *)arg);
+    return dev->op->page_flip(dev, (struct drm_mode_crtc_page_flip *)arg, fd);
 }
 
 /**
@@ -3802,13 +3804,13 @@ ssize_t drm_ioctl_cursor2(drm_device_t *dev, void *arg) {
 /**
  * drm_ioctl_atomic - Handle DRM_IOCTL_MODE_ATOMIC
  */
-ssize_t drm_ioctl_atomic(drm_device_t *dev, void *arg) {
+ssize_t drm_ioctl_atomic(drm_device_t *dev, void *arg, fd_t *fd) {
     struct drm_mode_atomic *cmd = (struct drm_mode_atomic *)arg;
     if (!dev->op->atomic_commit) {
         return -ENOSYS;
     }
 
-    return dev->op->atomic_commit(dev, cmd);
+    return dev->op->atomic_commit(dev, cmd, fd);
 }
 
 /**
@@ -3864,10 +3866,12 @@ ssize_t drm_ioctl_gamma(drm_device_t *dev, void *arg, ssize_t cmd) {
 /**
  * drm_ioctl_dirtyfb - Handle DRM_IOCTL_MODE_DIRTYFB
  */
-ssize_t drm_ioctl_dirtyfb(drm_device_t *dev, void *arg) {
-    (void)dev;
-    (void)arg;
-    return 0;
+ssize_t drm_ioctl_dirtyfb(drm_device_t *dev, void *arg, fd_t *fd) {
+    if (!dev->op || !dev->op->dirty_fb) {
+        return 0;
+    }
+
+    return dev->op->dirty_fb(dev, (struct drm_mode_fb_dirty_cmd *)arg, fd);
 }
 
 /**
@@ -3921,7 +3925,7 @@ static bool drm_ioctl_allow_on_render_node(drm_device_t *dev, uint32_t cmd) {
 /**
  * drm_ioctl - Main DRM ioctl handler
  */
-ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
+ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg, fd_t *fd) {
     drm_device_t *dev = drm_data_to_device(data);
     if (!dev) {
         return -ENODEV;
@@ -3966,7 +3970,7 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
         ret = drm_ioctl_get_cap(dev, ioarg);
         break;
     case DRM_IOCTL_GEM_CLOSE:
-        ret = drm_ioctl_gem_close(dev, ioarg);
+        ret = drm_ioctl_gem_close(dev, ioarg, fd);
         break;
     case DRM_IOCTL_PRIME_HANDLE_TO_FD:
         ret = drm_ioctl_prime_handle_to_fd(dev, ioarg);
@@ -3984,13 +3988,13 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
         ret = drm_ioctl_mode_getencoder(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_CREATE_DUMB:
-        ret = drm_ioctl_mode_create_dumb(dev, ioarg);
+        ret = drm_ioctl_mode_create_dumb(dev, ioarg, fd);
         break;
     case DRM_IOCTL_MODE_MAP_DUMB:
-        ret = drm_ioctl_mode_map_dumb(dev, ioarg);
+        ret = drm_ioctl_mode_map_dumb(dev, ioarg, fd);
         break;
     case DRM_IOCTL_MODE_DESTROY_DUMB:
-        ret = drm_ioctl_mode_destroy_dumb(dev, ioarg);
+        ret = drm_ioctl_mode_destroy_dumb(dev, ioarg, fd);
         break;
     case DRM_IOCTL_MODE_GETCONNECTOR:
         ret = drm_ioctl_mode_getconnector(dev, ioarg);
@@ -3999,10 +4003,10 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
         ret = drm_ioctl_mode_getfb(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_ADDFB:
-        ret = drm_ioctl_mode_addfb(dev, ioarg);
+        ret = drm_ioctl_mode_addfb(dev, ioarg, fd);
         break;
     case DRM_IOCTL_MODE_ADDFB2:
-        ret = drm_ioctl_mode_addfb2(dev, ioarg);
+        ret = drm_ioctl_mode_addfb2(dev, ioarg, fd);
         break;
     case DRM_IOCTL_MODE_RMFB:
         ret = 0; // Not implemented
@@ -4011,7 +4015,7 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
         ret = drm_ioctl_mode_closefb(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_SETCRTC:
-        ret = drm_ioctl_mode_setcrtc(dev, ioarg);
+        ret = drm_ioctl_mode_setcrtc(dev, ioarg, fd);
         break;
     case DRM_IOCTL_MODE_GETPLANERESOURCES:
         ret = drm_ioctl_mode_getplaneresources(dev, ioarg);
@@ -4020,7 +4024,7 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
         ret = drm_ioctl_mode_getplane(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_SETPLANE:
-        ret = drm_ioctl_mode_setplane(dev, ioarg);
+        ret = drm_ioctl_mode_setplane(dev, ioarg, fd);
         break;
     case DRM_IOCTL_MODE_GETPROPERTY:
         ret = drm_ioctl_mode_getproperty(dev, ioarg);
@@ -4098,10 +4102,10 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
         ret = drm_ioctl_gamma(dev, ioarg, cmd);
         break;
     case DRM_IOCTL_MODE_DIRTYFB:
-        ret = drm_ioctl_dirtyfb(dev, ioarg);
+        ret = drm_ioctl_dirtyfb(dev, ioarg, fd);
         break;
     case DRM_IOCTL_MODE_PAGE_FLIP:
-        ret = drm_ioctl_page_flip(dev, ioarg);
+        ret = drm_ioctl_page_flip(dev, ioarg, fd);
         break;
     case DRM_IOCTL_MODE_CURSOR:
         ret = drm_ioctl_cursor(dev, ioarg);
@@ -4110,7 +4114,7 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
         ret = drm_ioctl_cursor2(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_ATOMIC:
-        ret = drm_ioctl_atomic(dev, ioarg);
+        ret = drm_ioctl_atomic(dev, ioarg, fd);
         break;
     case DRM_IOCTL_WAIT_VBLANK:
         ret = drm_ioctl_wait_vblank(dev, ioarg);
@@ -4133,7 +4137,7 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg) {
     default:
         if (dev->op && dev->op->driver_ioctl) {
             ret = dev->op->driver_ioctl(dev, ioctl_cmd, ioarg,
-                                        drm_data_is_render_node(data));
+                                        drm_data_is_render_node(data), fd);
         } else {
             printk("drm: Unsupported ioctl: cmd = %#010lx\n", cmd);
             ret = -EINVAL;

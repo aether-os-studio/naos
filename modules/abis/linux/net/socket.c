@@ -70,7 +70,7 @@ char *unix_socket_addr_safe(const struct sockaddr_un *addr, size_t len) {
     return safe;
 }
 
-static inline socket_t *socket_from_node(vfs_node_t node) {
+static inline socket_t *socket_from_node(vfs_node_t *node) {
     socket_handle_t *handle = node ? node->handle : NULL;
     return handle ? handle->sock : NULL;
 }
@@ -99,7 +99,7 @@ static inline uint32_t socket_pending_take(socket_t *sock, uint32_t events) {
     return old_mask & events;
 }
 
-static inline void socket_notify_node(vfs_node_t node, uint32_t events) {
+static inline void socket_notify_node(vfs_node_t *node, uint32_t events) {
     if (!node || !events)
         return;
     vfs_poll_notify(node, events);
@@ -124,7 +124,7 @@ static inline bool socket_has_pending_control(socket_t *sock) {
     return false;
 }
 
-static int socket_wait_node(vfs_node_t node, uint32_t events,
+static int socket_wait_node(vfs_node_t *node, uint32_t events,
                             const char *reason) {
     if (!node || !current_task)
         return -EINVAL;
@@ -320,7 +320,7 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
             return -(EWOULDBLOCK);
         }
 
-        vfs_node_t wait_node = NULL;
+        vfs_node_t *wait_node = NULL;
         if (self && !unix_socket_is_dgram_type(self->type) && self->node)
             wait_node = self->node;
         if (!wait_node && active_peer->node)
@@ -507,8 +507,8 @@ static void unix_socket_send_cred_to_peer(socket_t *peer, struct ucred *cred) {
     socket_notify_sock(peer, EPOLLIN);
 }
 
-vfs_node_t unix_socket_create_node(socket_t *sock) {
-    vfs_node_t socknode = vfs_node_alloc(NULL, NULL);
+vfs_node_t *unix_socket_create_node(socket_t *sock) {
+    vfs_node_t *socknode = vfs_node_alloc(NULL, NULL);
     socknode->refcount++;
     socknode->type = file_socket;
     socknode->mode = 0700;
@@ -536,7 +536,7 @@ int socket_socket(int domain, int type, int protocol) {
     sock->type = sock_type;
     sock->protocol = protocol;
 
-    vfs_node_t socknode = unix_socket_create_node(sock);
+    vfs_node_t *socknode = unix_socket_create_node(sock);
     socket_handle_t *handle = socknode->handle;
 
     int ret = -EMFILE;
@@ -717,7 +717,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
     }
 
     // 创建节点
-    vfs_node_t acceptFd = unix_socket_create_node(server_sock);
+    vfs_node_t *acceptFd = unix_socket_create_node(server_sock);
 
     int ret = -EMFILE;
     uint64_t i = 0;
@@ -1226,7 +1226,7 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
     return cnt;
 }
 
-int socket_poll(vfs_node_t node, size_t events) {
+int socket_poll(vfs_node_t *node, size_t events) {
     socket_handle_t *handler = node ? node->handle : NULL;
     if (!handler || !handler->sock)
         return EPOLLNVAL;
@@ -1293,7 +1293,8 @@ int socket_poll(vfs_node_t node, size_t events) {
     return revents;
 }
 
-int socket_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
+int socket_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
+    vfs_node_t *node = fd->node;
     socket_handle_t *handler = node ? node->handle : NULL;
     if (!handler || !handler->fd || !handler->sock)
         return -EBADF;
@@ -1317,7 +1318,7 @@ int socket_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
     }
 }
 
-bool socket_close(vfs_node_t node) {
+bool socket_close(vfs_node_t *node) {
     socket_handle_t *handle = node ? node->handle : NULL;
     if (!handle)
         return true;
@@ -1423,8 +1424,8 @@ int unix_socket_pair(int domain, int type, int protocol, int *sv) {
     sock1->established = true;
     sock2->established = true;
 
-    vfs_node_t node1 = unix_socket_create_node(sock1);
-    vfs_node_t node2 = unix_socket_create_node(sock2);
+    vfs_node_t *node1 = unix_socket_create_node(sock1);
+    vfs_node_t *node2 = unix_socket_create_node(sock2);
 
     uint64_t flags = 0;
     if (type & O_NONBLOCK)

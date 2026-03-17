@@ -8,9 +8,6 @@ export XDG_RUNTIME_DIR="/run/user/0"
 export NO_AT_BRIDGE=1
 export LC_ALL=en_US.utf8
 export PATH="/bin:/usr/bin:/usr/sbin:/sbin:/bin:/usr/local/bin:/usr/local/sbin"
-export LIBGL_ALWAYS_SOFTWARE=1
-export WLR_RENDERER=pixman
-export WLR_RENDERER_ALLOW_SOFTWARE=1
 export SDL_VIDEODRIVER=x11
 export SDL_AUDIODRIVER=dummy
 

@@ -18,7 +18,7 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags) {
     efd->flags = flags & EFD_SEMAPHORE;
 
     // 创建VFS节点
-    vfs_node_t node = vfs_node_alloc(NULL, NULL);
+    vfs_node_t *node = vfs_node_alloc(NULL, NULL);
     node->refcount++;
     node->mode = 0700;
     node->type = file_stream;
@@ -123,7 +123,7 @@ static ssize_t eventfd_write(fd_t *fd, const void *buf, size_t offset,
     return sizeof(uint64_t);
 }
 
-bool eventfd_close(vfs_node_t node) {
+bool eventfd_close(vfs_node_t *node) {
     eventfd_t *efd = node ? node->handle : NULL;
     if (!efd)
         return true;
@@ -132,7 +132,7 @@ bool eventfd_close(vfs_node_t node) {
     return true;
 }
 
-static int eventfd_poll(vfs_node_t node, size_t events) {
+static int eventfd_poll(vfs_node_t *node, size_t events) {
     eventfd_t *eventFd = node ? node->handle : NULL;
     if (!eventFd)
         return EPOLLNVAL;

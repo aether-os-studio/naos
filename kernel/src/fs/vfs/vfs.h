@@ -68,7 +68,7 @@ typedef enum file_type {
     file_fifo = 0x0080UL,    // fifo 设备
 } file_type_t;
 
-typedef struct vfs_node *vfs_node_t;
+typedef struct vfs_node vfs_node_t;
 struct task;
 typedef struct task task_t;
 
@@ -79,7 +79,7 @@ typedef struct fd_shared {
 } fd_shared_t;
 
 typedef struct fd {
-    vfs_node_t node;
+    vfs_node_t *node;
     fd_shared_t *shared;
     bool close_on_exec;
 } fd_t;
@@ -117,15 +117,15 @@ static inline void fd_set_flags(fd_t *fd, uint64_t flags) {
 typedef struct vfs_poll_wait {
     struct llist_header node;
     task_t *task;
-    vfs_node_t watch_node;
+    vfs_node_t *watch_node;
     uint32_t events;
     volatile uint32_t revents;
     volatile bool armed;
 } vfs_poll_wait_t;
 
-typedef int (*vfs_mount_t)(uint64_t dev, vfs_node_t node);
-typedef void (*vfs_unmount_t)(vfs_node_t node);
-typedef int (*vfs_remount_t)(vfs_node_t old, vfs_node_t node);
+typedef int (*vfs_mount_t)(uint64_t dev, vfs_node_t *node);
+typedef void (*vfs_unmount_t)(vfs_node_t *node);
+typedef int (*vfs_remount_t)(vfs_node_t *old, vfs_node_t *node);
 
 /**
  *\brief 打开一个文件
@@ -134,15 +134,15 @@ typedef int (*vfs_remount_t)(vfs_node_t old, vfs_node_t node);
  *\param name     文件名
  *\param node     文件节点
  */
-typedef void (*vfs_open_t)(vfs_node_t parent, const char *name,
-                           vfs_node_t node);
+typedef void (*vfs_open_t)(vfs_node_t *parent, const char *name,
+                           vfs_node_t *node);
 
 /**
  *\brief 关闭一个文件
  *
  *\param current  当前文件句柄
  */
-typedef bool (*vfs_close_t)(vfs_node_t node);
+typedef bool (*vfs_close_t)(vfs_node_t *node);
 
 /**
  *\brief 重设文件大小
@@ -150,7 +150,7 @@ typedef bool (*vfs_close_t)(vfs_node_t node);
  *\param current  当前文件句柄
  *\param size     新的大小
  */
-typedef void (*vfs_resize_t)(vfs_node_t node, uint64_t size);
+typedef void (*vfs_resize_t)(vfs_node_t *node, uint64_t size);
 
 /**
  *\brief 写入一个文件
@@ -173,7 +173,7 @@ typedef ssize_t (*vfs_write_t)(fd_t *fd, const void *addr, size_t offset,
  */
 typedef ssize_t (*vfs_read_t)(fd_t *fd, void *addr, size_t offset, size_t size);
 
-typedef ssize_t (*vfs_readlink_t)(vfs_node_t node, void *addr, size_t offset,
+typedef ssize_t (*vfs_readlink_t)(vfs_node_t *node, void *addr, size_t offset,
                                   size_t size);
 
 /**
@@ -182,47 +182,47 @@ typedef ssize_t (*vfs_readlink_t)(vfs_node_t node, void *addr, size_t offset,
  *\param file     文件句柄
  *\param node     文件节点
  */
-typedef int (*vfs_stat_t)(vfs_node_t node);
+typedef int (*vfs_stat_t)(vfs_node_t *node);
 
 // 创建一个文件或文件夹
-typedef int (*vfs_mk_t)(vfs_node_t parent, const char *name, vfs_node_t node);
-typedef int (*vfs_link_node_t)(vfs_node_t parent, vfs_node_t source,
-                               vfs_node_t node);
+typedef int (*vfs_mk_t)(vfs_node_t *parent, const char *name, vfs_node_t *node);
+typedef int (*vfs_link_node_t)(vfs_node_t *parent, vfs_node_t *source,
+                               vfs_node_t *node);
 
-typedef int (*vfs_mknod_t)(vfs_node_t parent, const char *name, vfs_node_t node,
-                           uint16_t mode, int dev);
+typedef int (*vfs_mknod_t)(vfs_node_t *parent, const char *name,
+                           vfs_node_t *node, uint16_t mode, int dev);
 
-typedef int (*vfs_chmod_t)(vfs_node_t node, uint16_t mode);
-typedef int (*vfs_chown_t)(vfs_node_t node, uint64_t uid, uint64_t gid);
+typedef int (*vfs_chmod_t)(vfs_node_t *node, uint16_t mode);
+typedef int (*vfs_chown_t)(vfs_node_t *node, uint64_t uid, uint64_t gid);
 
-typedef int (*vfs_del_t)(vfs_node_t parent, vfs_node_t node);
+typedef int (*vfs_del_t)(vfs_node_t *parent, vfs_node_t *node);
 
-typedef int (*vfs_rename_t)(vfs_node_t node, const char *new);
+typedef int (*vfs_rename_t)(vfs_node_t *node, const char *new);
 
 // 创建一个文件或文件夹
-typedef int (*vfs_ioctl_t)(vfs_node_t node, ssize_t cmd, ssize_t arg);
+typedef int (*vfs_ioctl_t)(fd_t *fd, ssize_t cmd, ssize_t arg);
 
 // 映射文件从 offset 开始的 size 大小
 typedef void *(*vfs_mapfile_t)(fd_t *fd, void *addr, size_t offset, size_t size,
                                size_t prot, size_t flags);
 
-typedef int (*vfs_poll_t)(vfs_node_t node, size_t events);
+typedef int (*vfs_poll_t)(vfs_node_t *node, size_t events);
 
-typedef void (*vfs_free_handle_t)(vfs_node_t node);
+typedef void (*vfs_free_handle_t)(vfs_node_t *node);
 
 uint32_t poll_to_epoll_comp(uint32_t poll_events);
 uint32_t epoll_to_poll_comp(uint32_t epoll_events);
 
-void vfs_generic_free_handle(vfs_node_t node);
+void vfs_generic_free_handle(vfs_node_t *node);
 
 typedef struct vfs_super_operations {
     vfs_mount_t mount;
     vfs_unmount_t unmount;
     vfs_remount_t remount;
 
-    int (*sync_fs)(vfs_node_t root);
-    int (*freeze_fs)(vfs_node_t root);
-    int (*thaw_fs)(vfs_node_t root);
+    int (*sync_fs)(vfs_node_t *root);
+    int (*freeze_fs)(vfs_node_t *root);
+    int (*thaw_fs)(vfs_node_t *root);
 } vfs_super_operations_t;
 
 typedef struct vfs_inode_operations {
@@ -259,9 +259,9 @@ typedef struct vfs_operations {
             vfs_mount_t mount;
             vfs_unmount_t unmount;
             vfs_remount_t remount;
-            int (*sync_fs)(vfs_node_t root);
-            int (*freeze_fs)(vfs_node_t root);
-            int (*thaw_fs)(vfs_node_t root);
+            int (*sync_fs)(vfs_node_t *root);
+            int (*freeze_fs)(vfs_node_t *root);
+            int (*thaw_fs)(vfs_node_t *root);
         };
     };
 
@@ -352,7 +352,7 @@ typedef struct vfs_file_lock {
 #define VFS_NODE_FLAGS_CHILDREN_POPULATED (1UL << 5)
 
 struct vfs_node {
-    vfs_node_t parent;                        // 父目录
+    vfs_node_t *parent;                       // 父目录
     uint64_t flags;                           // 标志
     uint64_t dev;                             // 设备号
     uint64_t rdev;                            // 真实设备号
@@ -378,7 +378,7 @@ struct vfs_node {
     struct llist_header node_for_childs;      // 为子目录和子文件添加的节点
     struct llist_header node_for_name_bucket; // 为名字桶添加的节点
     uint64_t child_name_hash;                 // 当前名字哈希
-    vfs_node_t root;                          // 根目录
+    vfs_node_t *root;                         // 根目录
     int refcount;                             // 引用计数
     uint16_t mode;                            // 模式
     uint32_t rw_hint;                         // 读写提示
@@ -390,19 +390,19 @@ struct vfs_node {
     uint64_t i_version;                       // 数据变更版本
 };
 
-static inline int vfs_node_refcount_read(vfs_node_t node) {
+static inline int vfs_node_refcount_read(vfs_node_t *node) {
     if (!node)
         return 0;
     return __atomic_load_n(&node->refcount, __ATOMIC_ACQUIRE);
 }
 
-static inline void vfs_node_ref_get(vfs_node_t node) {
+static inline void vfs_node_ref_get(vfs_node_t *node) {
     if (!node)
         return;
     __atomic_add_fetch(&node->refcount, 1, __ATOMIC_ACQ_REL);
 }
 
-static inline int vfs_node_ref_put(vfs_node_t node, bool *dropped_ref) {
+static inline int vfs_node_ref_put(vfs_node_t *node, bool *dropped_ref) {
     if (dropped_ref)
         *dropped_ref = false;
     if (!node)
@@ -425,7 +425,7 @@ static inline int vfs_node_ref_put(vfs_node_t node, bool *dropped_ref) {
 struct mount_point {
     struct llist_header node;
     fs_t *fs;
-    vfs_node_t dir;
+    vfs_node_t *dir;
     char *devname;
 };
 
@@ -455,7 +455,7 @@ struct mount_point {
 
 struct vfs_notify_event {
     struct llist_header node;
-    vfs_node_t changed_node;
+    vfs_node_t *changed_node;
     uint64_t mask;
 };
 
@@ -464,7 +464,7 @@ typedef struct notifyfs_handle notifyfs_handle_t;
 
 typedef struct notifyfs_watch {
     uint64_t wd;
-    vfs_node_t watch_node;
+    vfs_node_t *watch_node;
     notifyfs_handle_t *owner;
     uint64_t mask;
     struct llist_header node;
@@ -475,32 +475,33 @@ typedef struct notifyfs_watch {
 
 struct notifyfs_handle {
     struct llist_header watches;
-    vfs_node_t node;
+    vfs_node_t *node;
 };
 
-void vfs_on_new_event(vfs_node_t node, uint64_t mask);
-void vfs_mark_dirty(vfs_node_t node, uint64_t dirty_flags);
+void vfs_on_new_event(vfs_node_t *node, uint64_t mask);
+void vfs_mark_dirty(vfs_node_t *node, uint64_t dirty_flags);
 
 void vfs_poll_wait_init(vfs_poll_wait_t *wait, task_t *task, uint32_t events);
-int vfs_poll_wait_arm(vfs_node_t node, vfs_poll_wait_t *wait);
+int vfs_poll_wait_arm(vfs_node_t *node, vfs_poll_wait_t *wait);
 void vfs_poll_wait_disarm(vfs_poll_wait_t *wait);
-int vfs_poll_wait_sleep(vfs_node_t node, vfs_poll_wait_t *wait,
+int vfs_poll_wait_sleep(vfs_node_t *node, vfs_poll_wait_t *wait,
                         int64_t timeout_ns, const char *reason);
-void vfs_poll_notify(vfs_node_t node, uint32_t events);
+void vfs_poll_notify(vfs_node_t *node, uint32_t events);
 
-void vfs_add_mount_point(vfs_node_t dir, char *devname);
-void vfs_delete_mount_point_by_dir(vfs_node_t dir);
+void vfs_add_mount_point(vfs_node_t *dir, char *devname);
+void vfs_delete_mount_point_by_dir(vfs_node_t *dir);
 
-extern vfs_node_t rootdir; // vfs 根目录
+extern vfs_node_t *rootdir; // vfs 根目录
 
-vfs_node_t vfs_node_alloc(vfs_node_t parent, const char *name);
-void vfs_free(vfs_node_t vfs);
-void vfs_free_child(vfs_node_t vfs);
-void vfs_detach_child(vfs_node_t node);
-void vfs_attach_child(vfs_node_t parent, vfs_node_t child);
+vfs_node_t *vfs_node_alloc(vfs_node_t *parent, const char *name);
+void vfs_free(vfs_node_t *vfs);
+void vfs_free_child(vfs_node_t *vfs);
+void vfs_detach_child(vfs_node_t *node);
+void vfs_attach_child(vfs_node_t *parent, vfs_node_t *child);
 // 一定要记得手动设置一下child的type
-vfs_node_t vfs_child_find(vfs_node_t parent, const char *name);
-vfs_node_t vfs_child_append(vfs_node_t parent, const char *name, void *handle);
+vfs_node_t *vfs_child_find(vfs_node_t *parent, const char *name);
+vfs_node_t *vfs_child_append(vfs_node_t *parent, const char *name,
+                             void *handle);
 
 bool vfs_init();
 
@@ -515,11 +516,11 @@ int vfs_regist(fs_t *fs);
 #define PATH_MAX 4096    // 路径最大长度
 #define FILENAME_MAX 256 // 文件名最大长度
 
-vfs_node_t vfs_open_at(vfs_node_t start, const char *_path, uint64_t flags);
+vfs_node_t *vfs_open_at(vfs_node_t *start, const char *_path, uint64_t flags);
 
-vfs_node_t vfs_open(const char *_path, uint64_t flags);
+vfs_node_t *vfs_open(const char *_path, uint64_t flags);
 
-vfs_node_t vfs_find_node_by_inode(uint64_t inode);
+vfs_node_t *vfs_find_node_by_inode(uint64_t inode);
 
 /**
  *\brief 创建文件夹
@@ -542,7 +543,7 @@ int vfs_mkfile(const char *name);
  *\return 0 成功，-1 失败
  */
 int vfs_link(const char *name, const char *target_name);
-int vfs_link_existing(const char *name, vfs_node_t target);
+int vfs_link_existing(const char *name, vfs_node_t *target);
 /**
  *\brief 创建symlink文件
  *
@@ -567,7 +568,7 @@ int vfs_chown(const char *path, uint64_t uid, uint64_t gid);
  *\param size     读取的大小
  *\return 0 成功，-1 失败
  */
-ssize_t vfs_read(vfs_node_t file, void *addr, size_t offset, size_t size);
+ssize_t vfs_read(vfs_node_t *file, void *addr, size_t offset, size_t size);
 /**
  *\brief 写入文件
  *
@@ -577,7 +578,7 @@ ssize_t vfs_read(vfs_node_t file, void *addr, size_t offset, size_t size);
  *\param size     写入的大小
  *\return 0 成功，-1 失败
  */
-ssize_t vfs_write(vfs_node_t file, const void *addr, size_t offset,
+ssize_t vfs_write(vfs_node_t *file, const void *addr, size_t offset,
                   size_t size);
 
 ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size);
@@ -590,7 +591,7 @@ ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size);
  *\param node     挂载到的节点
  *\return 0 成功，-1 失败
  */
-int vfs_mount(uint64_t dev, vfs_node_t node, const char *type);
+int vfs_mount(uint64_t dev, vfs_node_t *node, const char *type);
 /**
  *\brief 卸载文件系统
  *
@@ -598,8 +599,8 @@ int vfs_mount(uint64_t dev, vfs_node_t node, const char *type);
  *\return 0 成功，-1 失败
  */
 int vfs_unmount(const char *path);
-int vfs_remount(vfs_node_t old, vfs_node_t node);
-bool vfs_is_mount_point(vfs_node_t node);
+int vfs_remount(vfs_node_t *old, vfs_node_t *node);
+bool vfs_is_mount_point(vfs_node_t *node);
 
 /**
  *\brief 关闭文件
@@ -607,7 +608,7 @@ bool vfs_is_mount_point(vfs_node_t node);
  *\param node     文件节点
  *\return 0 成功，-1 失败
  */
-int vfs_close(vfs_node_t fd);
+int vfs_close(vfs_node_t *fd);
 
 /**
  *\brief 删除文件
@@ -615,7 +616,7 @@ int vfs_close(vfs_node_t fd);
  *\param node     文件节点
  *\return 0 成功，-1 失败
  */
-int vfs_delete(vfs_node_t node);
+int vfs_delete(vfs_node_t *node);
 
 /**
  *\brief 重命名文件
@@ -624,7 +625,7 @@ int vfs_delete(vfs_node_t node);
  *\param new      新路径
  *\return 0 成功，-1 失败
  */
-int vfs_rename(vfs_node_t node, const char *new);
+int vfs_rename(vfs_node_t *node, const char *new);
 
 /**
  *\brief 控制文件
@@ -634,7 +635,7 @@ int vfs_rename(vfs_node_t node, const char *new);
  *\param arg      参数
  *\return 0 成功，-1 失败
  */
-int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg);
+int vfs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg);
 
 /**
  *\brief 读取链接
@@ -643,14 +644,14 @@ int vfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg);
  *\param node    节点
  *\return 0 成功，-1 失败
  */
-int vfs_readlink(vfs_node_t node, char *buf, size_t bufsize);
+int vfs_readlink(vfs_node_t *node, char *buf, size_t bufsize);
 
 /**
  *\brief 更新文件信息
  *
  *\param node     文件节点
  */
-void vfs_update(vfs_node_t node);
+void vfs_update(vfs_node_t *node);
 
 /**
  *\brief 修改文件大小
@@ -658,23 +659,23 @@ void vfs_update(vfs_node_t node);
  *\param node     文件节点
  *\param size     新长度
  */
-void vfs_resize(vfs_node_t node, uint64_t size);
+void vfs_resize(vfs_node_t *node, uint64_t size);
 
 /**
  *\brief 获取文件的完整路径
  *
  *\param node     文件节点
  */
-char *vfs_get_fullpath(vfs_node_t node);
+char *vfs_get_fullpath(vfs_node_t *node);
 
 /**
  *\brief 轮询等待
  *
  *\param node     文件节点
  */
-int vfs_poll(vfs_node_t node, size_t event);
+int vfs_poll(vfs_node_t *node, size_t event);
 
-fd_t *fd_create(vfs_node_t node, uint64_t flags, bool close_on_exec);
+fd_t *fd_create(vfs_node_t *node, uint64_t flags, bool close_on_exec);
 void fd_destroy(fd_t *fd);
 void fd_release(fd_t *fd);
 fd_t *vfs_dup(fd_t *fd);
@@ -689,5 +690,5 @@ static inline uint32_t alloc_fake_inode() {
     return next_inode++;
 }
 
-void vfs_merge_nodes_to(vfs_node_t dest, vfs_node_t source);
-vfs_node_t vfs_get_real_node(vfs_node_t node);
+void vfs_merge_nodes_to(vfs_node_t *dest, vfs_node_t *source);
+vfs_node_t *vfs_get_real_node(vfs_node_t *node);

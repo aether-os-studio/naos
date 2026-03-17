@@ -191,7 +191,7 @@ void timerfd_softirq(void) {
             spinlock_t *tree_lock = timerfd_tree_lock_for_clock(clock_type);
 
             while (true) {
-                vfs_node_t notify_node = NULL;
+                vfs_node_t *notify_node = NULL;
 
                 spin_lock(tree_lock);
                 timerfd_t *tfd =
@@ -242,7 +242,7 @@ uint64_t sys_timerfd_create(int clockid, int flags) {
     spin_init(&tfd->lock);
     tfd->timer.clock_type = clockid;
 
-    vfs_node_t node = vfs_node_alloc(NULL, NULL);
+    vfs_node_t *node = vfs_node_alloc(NULL, NULL);
     node->refcount++;
     node->type = file_stream;
     node->fsid = timerfdfs_id;
@@ -309,7 +309,7 @@ uint64_t sys_timerfd_settime(int fd, int flags,
         return -EINVAL;
     }
 
-    vfs_node_t node = current_task->fd_info->fds[fd]->node;
+    vfs_node_t *node = current_task->fd_info->fds[fd]->node;
     timerfd_t *tfd = node->handle;
     if (!tfd)
         return -EBADF;
@@ -372,7 +372,7 @@ uint64_t sys_timerfd_settime(int fd, int flags,
     return 0;
 }
 
-bool timerfd_close(vfs_node_t node) {
+bool timerfd_close(vfs_node_t *node) {
     timerfd_t *tfd = node ? node->handle : NULL;
     if (!tfd)
         return true;
@@ -385,7 +385,7 @@ bool timerfd_close(vfs_node_t node) {
     return true;
 }
 
-int timerfd_poll(vfs_node_t node, size_t events) {
+int timerfd_poll(vfs_node_t *node, size_t events) {
     timerfd_t *tfd = node ? node->handle : NULL;
     if (!tfd)
         return EPOLLNVAL;
@@ -476,7 +476,8 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
 
 #define TFD_IOC_SET_TICKS _IOW('T', 0, uint64_t)
 
-int timerfd_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
+int timerfd_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
+    vfs_node_t *node = fd->node;
     timerfd_t *tfd = node ? node->handle : NULL;
     if (!tfd)
         return -EBADF;

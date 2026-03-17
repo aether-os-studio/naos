@@ -29,7 +29,7 @@ ssize_t partition_write(void *data, const void *buf, uint64_t offset,
                         buf, len);
 }
 
-int partition_ioctl(void *data, int cmd, void *args) {
+int partition_ioctl(void *data, int cmd, void *args, fd_t *fd) {
     partition_t *part = (partition_t *)data;
     switch (cmd) {
     case DEV_CMD_SECTOR_START:

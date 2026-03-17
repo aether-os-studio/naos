@@ -7,8 +7,8 @@
 #define PTY_BUFF_SIZE (256 * 1024)
 
 typedef struct pty_pair {
-    vfs_node_t ptmx_node;
-    vfs_node_t pts_node;
+    vfs_node_t *ptmx_node;
+    vfs_node_t *pts_node;
 
     struct pty_pair *next;
 

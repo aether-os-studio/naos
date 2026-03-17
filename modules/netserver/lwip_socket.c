@@ -400,13 +400,13 @@ static lwip_socket_state_t *lwip_socket_alloc(struct netconn *conn, int domain,
     return sock;
 }
 
-static vfs_node_t lwip_socket_create_node(lwip_socket_state_t *sock);
+static vfs_node_t *lwip_socket_create_node(lwip_socket_state_t *sock);
 
 static int lwip_socket_install_fd(lwip_socket_state_t *sock, int open_type,
                                   uint64_t accept_flags) {
     int ret = -EMFILE;
     uint64_t slot = 0;
-    vfs_node_t node = NULL;
+    vfs_node_t *node = NULL;
     socket_handle_t *handle = NULL;
 
     if (!sock) {
@@ -1650,7 +1650,7 @@ static size_t lwip_socket_getsockopt(uint64_t fd, int level, int optname,
                                                optlen);
 }
 
-static int lwip_socket_poll(vfs_node_t node, size_t events) {
+static int lwip_socket_poll(vfs_node_t *node, size_t events) {
     socket_handle_t *handle = node ? node->handle : NULL;
     lwip_socket_state_t *sock = handle ? handle->sock : NULL;
     int revents = 0;
@@ -1699,7 +1699,8 @@ static int lwip_socket_poll(vfs_node_t node, size_t events) {
     return revents;
 }
 
-static int lwip_socket_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
+static int lwip_socket_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
+    vfs_node_t *node = fd->node;
     socket_handle_t *handle = node ? node->handle : NULL;
     lwip_socket_state_t *sock = handle ? handle->sock : NULL;
 
@@ -1730,7 +1731,7 @@ static int lwip_socket_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
     return -ENOTTY;
 }
 
-static bool lwip_socket_close(vfs_node_t node) {
+static bool lwip_socket_close(vfs_node_t *node) {
     socket_handle_t *handle = node ? node->handle : NULL;
     lwip_socket_state_t *sock = handle ? handle->sock : NULL;
 
@@ -1824,8 +1825,8 @@ static fs_t lwip_socket_fs = {
     .flags = FS_FLAGS_HIDDEN | FS_FLAGS_VIRTUAL,
 };
 
-static vfs_node_t lwip_socket_create_node(lwip_socket_state_t *sock) {
-    vfs_node_t node = vfs_node_alloc(NULL, NULL);
+static vfs_node_t *lwip_socket_create_node(lwip_socket_state_t *sock) {
+    vfs_node_t *node = vfs_node_alloc(NULL, NULL);
     socket_handle_t *handle = NULL;
 
     if (!node) {

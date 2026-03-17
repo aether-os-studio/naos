@@ -8,7 +8,7 @@ typedef struct fault_vma_snapshot {
     uint64_t vm_end;
     uint64_t vm_flags;
     vma_type_t vm_type;
-    vfs_node_t node;
+    vfs_node_t *node;
     int64_t vm_offset;
     uint64_t vm_file_flags;
 } fault_vma_snapshot_t;

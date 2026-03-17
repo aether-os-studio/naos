@@ -7,7 +7,7 @@
 static int memfd_fsid = 0;
 
 struct memfd_ctx {
-    vfs_node_t node;
+    vfs_node_t *node;
     char name[64];
     uint8_t *data;
     size_t len;
@@ -47,7 +47,7 @@ static ssize_t memfd_write(fd_t *fd, const void *buf, uint64_t offset,
     return len;
 }
 
-bool memfd_close(vfs_node_t node) {
+bool memfd_close(vfs_node_t *node) {
     struct memfd_ctx *ctx = node ? node->handle : NULL;
     if (!ctx)
         return true;
@@ -64,7 +64,7 @@ bool memfd_close(vfs_node_t node) {
     return true;
 }
 
-int memfd_stat(vfs_node_t node) {
+int memfd_stat(vfs_node_t *node) {
     struct memfd_ctx *ctx = node ? node->handle : NULL;
     if (!ctx)
         return -EINVAL;
@@ -72,7 +72,7 @@ int memfd_stat(vfs_node_t node) {
     return 0;
 }
 
-void memfd_resize(vfs_node_t node, uint64_t size) {
+void memfd_resize(vfs_node_t *node, uint64_t size) {
     if (size == 0)
         return;
 
@@ -141,7 +141,7 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags) {
     ctx->flags = flags;
     ctx->lock.lock = 0;
 
-    vfs_node_t node = vfs_node_alloc(NULL, NULL);
+    vfs_node_t *node = vfs_node_alloc(NULL, NULL);
     node->type = file_none;
     node->fsid = memfd_fsid;
     node->handle = ctx;

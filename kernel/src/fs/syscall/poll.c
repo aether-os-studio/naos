@@ -58,7 +58,7 @@ static int poll_scan_ready(struct pollfd *fds, int nfds) {
             continue;
         }
 
-        vfs_node_t node = current_task->fd_info->fds[fds[i].fd]->node;
+        vfs_node_t *node = current_task->fd_info->fds[fds[i].fd]->node;
         uint32_t query_events = poll_to_epoll_comp(fds[i].events) | EPOLLERR |
                                 EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
         int polled = vfs_poll(node, query_events);
@@ -82,7 +82,7 @@ static void poll_arm_waiters(struct pollfd *fds, int nfds,
             continue;
         if (fds[i].fd >= MAX_FD_NUM || !current_task->fd_info->fds[fds[i].fd])
             continue;
-        vfs_node_t node = current_task->fd_info->fds[fds[i].fd]->node;
+        vfs_node_t *node = current_task->fd_info->fds[fds[i].fd]->node;
         uint32_t query_events = poll_to_epoll_comp(fds[i].events) | EPOLLERR |
                                 EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
         vfs_poll_wait_init(&waits[i], current_task, query_events);

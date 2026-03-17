@@ -10,12 +10,12 @@ pty_pair_t first_pair;
 static int ptmx_fsid = 0;
 int pts_fsid = 0;
 
-extern vfs_node_t devtmpfs_root;
+extern vfs_node_t *devtmpfs_root;
 
 size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit);
 extern void send_process_group_signal(int pgid, int sig);
 
-static inline void pty_notify_node(vfs_node_t node, uint32_t events) {
+static inline void pty_notify_node(vfs_node_t *node, uint32_t events) {
     if (!node || !events)
         return;
     vfs_poll_notify(node, events);
@@ -33,7 +33,7 @@ static inline void pty_notify_pair_slave(pty_pair_t *pair, uint32_t events) {
     pty_notify_node(pair->pts_node, events);
 }
 
-static int pty_open_peer_fd(vfs_node_t node, uint64_t flags) {
+static int pty_open_peer_fd(vfs_node_t *node, uint64_t flags) {
     static const uint64_t allowed_flags =
         O_ACCMODE_FLAGS | O_NOCTTY | O_NONBLOCK | O_CLOEXEC;
 
@@ -45,7 +45,7 @@ static int pty_open_peer_fd(vfs_node_t node, uint64_t flags) {
         return -EINVAL;
 
     pty_pair_t *pair = node->handle;
-    vfs_node_t peer_node = NULL;
+    vfs_node_t *peer_node = NULL;
 
     mutex_lock(&pair->lock);
     if (pair->locked) {
@@ -90,7 +90,8 @@ static int pty_open_peer_fd(vfs_node_t node, uint64_t flags) {
     return ret;
 }
 
-static int pty_wait_node(vfs_node_t node, uint32_t events, const char *reason) {
+static int pty_wait_node(vfs_node_t *node, uint32_t events,
+                         const char *reason) {
     if (!node || !current_task)
         return -EINVAL;
 
@@ -202,7 +203,7 @@ void pty_termios_default(struct termios *term) {
 
 void pty_init() { pty_bitmap = calloc(PTY_MAX / 8, 1); }
 
-void ptmx_open(vfs_node_t parent, const char *name, vfs_node_t node) {
+void ptmx_open(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     int id = pty_bitmap_decide(); // here to avoid double locks
     if (id < 0)
         return;
@@ -240,15 +241,15 @@ void ptmx_open(vfs_node_t parent, const char *name, vfs_node_t node) {
 
     vfs_detach_child(node);
     node->parent = NULL;
-    vfs_node_t new_node = vfs_node_alloc(devtmpfs_root, "ptmx");
+    vfs_node_t *new_node = vfs_node_alloc(devtmpfs_root, "ptmx");
     new_node->fsid = ptmx_fsid;
     new_node->handle = NULL;
 
-    vfs_node_t pts_node = vfs_open_at(devtmpfs_root, "pts", 0);
+    vfs_node_t *pts_node = vfs_open_at(devtmpfs_root, "pts", 0);
     pts_node->fsid = pts_fsid;
     char nm[12];
     sprintf(nm, "%d", id);
-    vfs_node_t pty_slave_node = vfs_node_alloc(pts_node, nm);
+    vfs_node_t *pty_slave_node = vfs_node_alloc(pts_node, nm);
     pty_slave_node->fsid = pts_fsid;
     pty_slave_node->type = file_stream;
     pty_slave_node->handle = pair;
@@ -274,7 +275,7 @@ void pty_pair_cleanup(pty_pair_t *pair) {
     spin_unlock(&pty_global_lock);
 }
 
-void ptmx_free_handle(vfs_node_t node) {
+void ptmx_free_handle(vfs_node_t *node) {
     pty_pair_t *pair = node ? node->handle : NULL;
     if (!pair)
         return;
@@ -286,7 +287,7 @@ void ptmx_free_handle(vfs_node_t node) {
     }
 }
 
-void pts_free_handle(vfs_node_t node) {
+void pts_free_handle(vfs_node_t *node) {
     pty_pair_t *pair = node ? node->handle : NULL;
     if (!pair)
         return;
@@ -298,7 +299,7 @@ void pts_free_handle(vfs_node_t node) {
     }
 }
 
-bool ptmx_close(vfs_node_t node) {
+bool ptmx_close(vfs_node_t *node) {
     pty_pair_t *pair = node ? node->handle : NULL;
     if (!pair)
         return true;
@@ -441,7 +442,8 @@ void pts_ctrl_assign(pty_pair_t *pair) {
     // debugf("heck yeah! %d %d\n", currentTask->id, pair->id);
 }
 
-int ptmx_ioctl(vfs_node_t node, ssize_t request, ssize_t arg) {
+int ptmx_ioctl(fd_t *fd, ssize_t request, ssize_t arg) {
+    vfs_node_t *node = fd->node;
     if (!node || !node->handle)
         return -EINVAL;
     if ((request & 0xFFFFFFFFUL) == TIOCGPTPEER)
@@ -640,7 +642,7 @@ int ptmx_ioctl(vfs_node_t node, ssize_t request, ssize_t arg) {
     return ret;
 }
 
-int ptmx_poll(vfs_node_t node, size_t events) {
+int ptmx_poll(vfs_node_t *node, size_t events) {
     pty_pair_t *pair = node ? node->handle : NULL;
     if (!pair)
         return EPOLLNVAL;
@@ -683,7 +685,7 @@ int str_to_int(const char *str, int *result) {
     return 0;
 }
 
-void pts_open(vfs_node_t parent, const char *name, vfs_node_t node) {
+void pts_open(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     int id;
     int res = str_to_int(name, &id);
     if (res < 0)
@@ -717,7 +719,7 @@ void pts_open(vfs_node_t parent, const char *name, vfs_node_t node) {
     mutex_unlock(&browse->lock);
 }
 
-bool pts_close(vfs_node_t node) {
+bool pts_close(vfs_node_t *node) {
     pty_pair_t *pair = node ? node->handle : NULL;
     if (!pair)
         return true;
@@ -839,7 +841,7 @@ size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
         if (fd_get_flags(fd) & O_NONBLOCK)
             return -EWOULDBLOCK;
 
-        vfs_node_t wait_node = pair->pts_node ? pair->pts_node : fd->node;
+        vfs_node_t *wait_node = pair->pts_node ? pair->pts_node : fd->node;
         int reason = pty_wait_node(wait_node, EPOLLOUT, "pts_write");
         if (reason != EOK)
             return -EINTR;
@@ -1063,7 +1065,7 @@ size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
     return ret;
 }
 
-int pts_poll(vfs_node_t node, size_t events) {
+int pts_poll(vfs_node_t *node, size_t events) {
     pty_pair_t *pair = node ? node->handle : NULL;
     if (!pair)
         return EPOLLNVAL;
@@ -1081,7 +1083,7 @@ int pts_poll(vfs_node_t node, size_t events) {
     return revents;
 }
 
-vfs_node_t ptmx_dup(vfs_node_t node) {
+vfs_node_t *ptmx_dup(vfs_node_t *node) {
     pty_pair_t *pair = node->handle;
     // mutex_lock(&pair->lock);
     // pair->masterFds++;
@@ -1089,7 +1091,7 @@ vfs_node_t ptmx_dup(vfs_node_t node) {
     return node;
 }
 
-vfs_node_t pts_dup(vfs_node_t node) {
+vfs_node_t *pts_dup(vfs_node_t *node) {
     pty_pair_t *pair = node->handle;
     // mutex_lock(&pair->lock);
     // pair->slaveFds++;
@@ -1115,8 +1117,8 @@ static ssize_t pts_write_op(fd_t *fd, const void *addr, size_t offset,
     return (ssize_t)pts_write(fd, (uint8_t *)addr, offset, size);
 }
 
-static int pts_ioctl_node(vfs_node_t node, ssize_t request, ssize_t arg) {
-    return (int)pts_ioctl(node ? node->handle : NULL, (uint64_t)request,
+static int pts_ioctl_node(fd_t *fd, ssize_t request, ssize_t arg) {
+    return (int)pts_ioctl(fd ? fd->node->handle : NULL, (uint64_t)request,
                           (void *)arg);
 }
 
@@ -1150,7 +1152,7 @@ fs_t ptmxfs = {
 void ptmx_init() {
     ptmx_fsid = vfs_regist(&ptmxfs);
 
-    vfs_node_t ptmx = vfs_child_append(devtmpfs_root, "ptmx", NULL);
+    vfs_node_t *ptmx = vfs_child_append(devtmpfs_root, "ptmx", NULL);
     ptmx->type = file_stream;
     ptmx->mode = 0700;
     ptmx->fsid = ptmx_fsid;
@@ -1170,7 +1172,7 @@ void pts_init() {
 
     first_pair.id = 0xffffffff;
 
-    vfs_node_t pts_node = vfs_child_append(devtmpfs_root, "pts", NULL);
+    vfs_node_t *pts_node = vfs_child_append(devtmpfs_root, "pts", NULL);
     pts_node->fsid = pts_fsid;
     pts_node->type = file_dir;
     pts_node->mode = 0644;

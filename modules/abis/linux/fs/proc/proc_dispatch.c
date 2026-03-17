@@ -3,7 +3,7 @@
 
 proc_handle_node_t *dispatch_array[256];
 static size_t dp_index = 0;
-extern vfs_node_t procfs_root;
+extern vfs_node_t *procfs_root;
 
 size_t procfs_node_read(size_t len, size_t offset, size_t size, char *addr,
                         char *contect) {
@@ -71,7 +71,7 @@ static void create_procfs_node(char *name, read_entry_t read_entry,
                                stat_entry_t stat_entry,
                                poll_entry_t poll_entry) {
     create_procfs_handle(name, read_entry, stat_entry, poll_entry);
-    vfs_node_t node = vfs_node_alloc(procfs_root, name);
+    vfs_node_t *node = vfs_node_alloc(procfs_root, name);
     node->type = file_none;
     node->mode = 0700;
     proc_handle_t *handle0 = malloc(sizeof(proc_handle_t));
@@ -125,7 +125,7 @@ size_t procfs_read_dispatch(proc_handle_t *handle, void *addr, size_t offset,
     return (size_t)-ENOENT;
 }
 
-void procfs_stat_dispatch(proc_handle_t *handle, vfs_node_t node) {
+void procfs_stat_dispatch(proc_handle_t *handle, vfs_node_t *node) {
     uint64_t hash = hash_dp(handle->name);
     for (size_t i = 0; i < dp_index; i++) {
         if (hash == dispatch_array[i]->hash) {
@@ -136,7 +136,7 @@ void procfs_stat_dispatch(proc_handle_t *handle, vfs_node_t node) {
     }
 }
 
-int procfs_poll_dispatch(proc_handle_t *handle, vfs_node_t node, int events) {
+int procfs_poll_dispatch(proc_handle_t *handle, vfs_node_t *node, int events) {
     uint64_t hash = hash_dp(handle->name);
     for (size_t i = 0; i < dp_index; i++) {
         if (hash == dispatch_array[i]->hash) {

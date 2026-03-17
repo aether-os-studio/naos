@@ -153,7 +153,8 @@ ssize_t notifyfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     }
 }
 
-int notifyfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
+int notifyfs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
+    vfs_node_t *node = fd->node;
     notifyfs_handle_t *handle = node ? node->handle : NULL;
     if (!handle)
         return -EINVAL;
@@ -183,7 +184,7 @@ int notifyfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
     }
 }
 
-int notifyfs_poll(vfs_node_t node, size_t events) {
+int notifyfs_poll(vfs_node_t *node, size_t events) {
     int revents = 0;
 
     notifyfs_handle_t *handle = node ? node->handle : NULL;
@@ -199,7 +200,7 @@ int notifyfs_poll(vfs_node_t node, size_t events) {
     return revents;
 }
 
-bool notifyfs_close(vfs_node_t node) {
+bool notifyfs_close(vfs_node_t *node) {
     notifyfs_handle_t *handle = node ? node->handle : NULL;
     if (!handle)
         return true;
@@ -208,7 +209,7 @@ bool notifyfs_close(vfs_node_t node) {
     return true;
 }
 
-void notifyfs_free_handle(vfs_node_t node) {
+void notifyfs_free_handle(vfs_node_t *node) {
     notifyfs_handle_t *handle = node ? node->handle : NULL;
     if (!handle)
         return;

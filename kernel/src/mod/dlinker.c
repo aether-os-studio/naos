@@ -867,7 +867,7 @@ dlfunc_t *find_func(const char *name) {
 }
 
 void dlinker_init() {
-    vfs_node_t modules_root = vfs_open("/lib/modules", 0);
+    vfs_node_t *modules_root = vfs_open("/lib/modules", 0);
     if (!modules_root) {
         return;
     }
@@ -876,7 +876,7 @@ void dlinker_init() {
     size_t module_count = 0;
     size_t module_capacity = 0;
 
-    vfs_node_t node, tmp;
+    vfs_node_t *node, *tmp;
     llist_for_each(node, tmp, &modules_root->childs, node_for_childs) {
         if (module_count >= module_capacity) {
             size_t new_capacity = module_capacity ? module_capacity * 2 : 16;

@@ -15,30 +15,30 @@ static inline long shm_now_seconds(void) {
 #define PAGE_ALIGN_UP(x)                                                       \
     (((x) + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1))
 
-static int shmfs_mount(uint64_t dev, vfs_node_t node);
-static void shmfs_unmount(vfs_node_t node);
-static int shmfs_remount(vfs_node_t old, vfs_node_t node);
-static void shmfs_open(vfs_node_t parent, const char *name, vfs_node_t node);
+static int shmfs_mount(uint64_t dev, vfs_node_t *node);
+static void shmfs_unmount(vfs_node_t *node);
+static int shmfs_remount(vfs_node_t *old, vfs_node_t *node);
+static void shmfs_open(vfs_node_t *parent, const char *name, vfs_node_t *node);
 static ssize_t shmfs_read(fd_t *fd, void *addr, size_t offset, size_t size);
 static ssize_t shmfs_write(fd_t *fd, const void *addr, size_t offset,
                            size_t size);
-static bool shmfs_close(vfs_node_t node);
-static ssize_t shmfs_readlink(vfs_node_t node, void *addr, size_t offset,
+static bool shmfs_close(vfs_node_t *node);
+static ssize_t shmfs_readlink(vfs_node_t *node, void *addr, size_t offset,
                               size_t size);
-static int shmfs_mk(vfs_node_t parent, const char *name, vfs_node_t node);
-static int shmfs_mknod(vfs_node_t parent, const char *name, vfs_node_t node,
+static int shmfs_mk(vfs_node_t *parent, const char *name, vfs_node_t *node);
+static int shmfs_mknod(vfs_node_t *parent, const char *name, vfs_node_t *node,
                        uint16_t mode, int dev);
-static int shmfs_chmod(vfs_node_t node, uint16_t mode);
-static int shmfs_chown(vfs_node_t node, uint64_t uid, uint64_t gid);
-static int shmfs_stat(vfs_node_t node);
-static int shmfs_rename(vfs_node_t node, const char *new);
+static int shmfs_chmod(vfs_node_t *node, uint16_t mode);
+static int shmfs_chown(vfs_node_t *node, uint64_t uid, uint64_t gid);
+static int shmfs_stat(vfs_node_t *node);
+static int shmfs_rename(vfs_node_t *node, const char *new);
 static void *shmfs_map(fd_t *file, void *addr, size_t offset, size_t size,
                        size_t prot, size_t flags);
-static int shmfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg);
-static int shmfs_poll(vfs_node_t node, size_t events);
-static void shmfs_resize(vfs_node_t node, uint64_t size);
-static int shmfs_delete(vfs_node_t parent, vfs_node_t node);
-static void shmfs_free_handle(vfs_node_t node);
+static int shmfs_ioctl(fd_t *node, ssize_t cmd, ssize_t arg);
+static int shmfs_poll(vfs_node_t *node, size_t events);
+static void shmfs_resize(vfs_node_t *node, uint64_t size);
+static int shmfs_delete(vfs_node_t *parent, vfs_node_t *node);
+static void shmfs_free_handle(vfs_node_t *node);
 
 static vfs_operations_t shmfs_callbacks = {
     .mount = shmfs_mount,
@@ -127,7 +127,7 @@ static int shm_create_dev_node_locked(shm_t *shm) {
     if (ret < 0)
         return ret;
 
-    vfs_node_t shm_dir = vfs_open("/dev/shm", 0);
+    vfs_node_t *shm_dir = vfs_open("/dev/shm", 0);
     if (!shm_dir) {
         vfs_mkdir("/dev/shm");
         shm_dir = vfs_open("/dev/shm", 0);
@@ -140,7 +140,7 @@ static int shm_create_dev_node_locked(shm_t *shm) {
     if (vfs_child_find(shm_dir, shm->node_name))
         return -EEXIST;
 
-    vfs_node_t node = vfs_child_append(shm_dir, shm->node_name, shm);
+    vfs_node_t *node = vfs_child_append(shm_dir, shm->node_name, shm);
     if (!node)
         return -ENOMEM;
 
@@ -248,31 +248,32 @@ static void do_shmdt_one(task_t *task, shm_mapping_t *m) {
     }
 }
 
-static int shmfs_mount(uint64_t dev, vfs_node_t node) { return 0; }
+static int shmfs_mount(uint64_t dev, vfs_node_t *node) { return 0; }
 
-static void shmfs_unmount(vfs_node_t node) {}
+static void shmfs_unmount(vfs_node_t *node) {}
 
-static int shmfs_remount(vfs_node_t old, vfs_node_t node) { return 0; }
+static int shmfs_remount(vfs_node_t *old, vfs_node_t *node) { return 0; }
 
-static void shmfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {}
+static void shmfs_open(vfs_node_t *parent, const char *name, vfs_node_t *node) {
+}
 
-static ssize_t shmfs_readlink(vfs_node_t node, void *addr, size_t offset,
+static ssize_t shmfs_readlink(vfs_node_t *node, void *addr, size_t offset,
                               size_t size) {
     return -EPERM;
 }
 
-static int shmfs_mk(vfs_node_t parent, const char *name, vfs_node_t node) {
+static int shmfs_mk(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     return -EPERM;
 }
 
-static int shmfs_mknod(vfs_node_t parent, const char *name, vfs_node_t node,
+static int shmfs_mknod(vfs_node_t *parent, const char *name, vfs_node_t *node,
                        uint16_t mode, int dev) {
     return -EPERM;
 }
 
-static int shmfs_chmod(vfs_node_t node, uint16_t mode) { return -EPERM; }
+static int shmfs_chmod(vfs_node_t *node, uint16_t mode) { return -EPERM; }
 
-static int shmfs_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
+static int shmfs_chown(vfs_node_t *node, uint64_t uid, uint64_t gid) {
     return -EPERM;
 }
 
@@ -327,7 +328,7 @@ static ssize_t shmfs_write(fd_t *fd, const void *addr, size_t offset,
     return copy_size;
 }
 
-static int shmfs_stat(vfs_node_t node) {
+static int shmfs_stat(vfs_node_t *node) {
     shm_t *shm = node ? node->handle : NULL;
     if (!shm || !node)
         return -EINVAL;
@@ -341,7 +342,7 @@ static int shmfs_stat(vfs_node_t node) {
     return 0;
 }
 
-static int shmfs_rename(vfs_node_t node, const char *new) { return -EPERM; }
+static int shmfs_rename(vfs_node_t *node, const char *new) { return -EPERM; }
 
 static void *shmfs_map(fd_t *file, void *addr, size_t offset, size_t size,
                        size_t prot, size_t flags) {
@@ -381,15 +382,16 @@ static void *shmfs_map(fd_t *file, void *addr, size_t offset, size_t size,
     return addr;
 }
 
-static int shmfs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
+static int shmfs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
+    vfs_node_t *node = fd->node;
     return -EPERM;
 }
 
-static int shmfs_poll(vfs_node_t node, size_t events) { return 0; }
+static int shmfs_poll(vfs_node_t *node, size_t events) { return 0; }
 
-static void shmfs_resize(vfs_node_t node, uint64_t size) {}
+static void shmfs_resize(vfs_node_t *node, uint64_t size) {}
 
-static int shmfs_delete(vfs_node_t parent, vfs_node_t node) {
+static int shmfs_delete(vfs_node_t *parent, vfs_node_t *node) {
     if (!node)
         return -EINVAL;
     if (node->handle) {
@@ -400,7 +402,7 @@ static int shmfs_delete(vfs_node_t parent, vfs_node_t node) {
     return 0;
 }
 
-static bool shmfs_close(vfs_node_t node) {
+static bool shmfs_close(vfs_node_t *node) {
     shm_t *shm = node ? node->handle : NULL;
     if (!shm)
         return false;
@@ -412,7 +414,7 @@ static bool shmfs_close(vfs_node_t node) {
     return false;
 }
 
-static void shmfs_free_handle(vfs_node_t node) {}
+static void shmfs_free_handle(vfs_node_t *node) {}
 
 void shm_try_reap_by_vnode(struct vfs_node *node) {
     if (!node)

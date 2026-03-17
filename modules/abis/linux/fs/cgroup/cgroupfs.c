@@ -4,8 +4,8 @@ static int cgroupfs_fsid = 0;
 
 spinlock_t cgroupfs_oplock = SPIN_INIT;
 
-vfs_node_t cgroupfs_root = NULL;
-vfs_node_t fake_cgroupfs_root = NULL;
+vfs_node_t *cgroupfs_root = NULL;
+vfs_node_t *fake_cgroupfs_root = NULL;
 
 static int cgroupfs_resize_handle(cgroupfs_node_t *handle, size_t need) {
     if (!handle)
@@ -45,7 +45,7 @@ static int cgroupfs_write_string(cgroupfs_node_t *handle, const char *content) {
     return 0;
 }
 
-static cgroupfs_node_t *cgroupfs_alloc_handle(vfs_node_t node) {
+static cgroupfs_node_t *cgroupfs_alloc_handle(vfs_node_t *node) {
     cgroupfs_node_t *handle = calloc(1, sizeof(cgroupfs_node_t));
     if (!handle)
         return NULL;
@@ -62,9 +62,9 @@ static cgroupfs_node_t *cgroupfs_alloc_handle(vfs_node_t node) {
     return handle;
 }
 
-static int cgroupfs_init_file(vfs_node_t parent, const char *name,
+static int cgroupfs_init_file(vfs_node_t *parent, const char *name,
                               uint16_t mode, const char *content) {
-    vfs_node_t node = vfs_child_append(parent, name, NULL);
+    vfs_node_t *node = vfs_child_append(parent, name, NULL);
     node->mode = mode;
     node->type = file_none;
 
@@ -75,7 +75,7 @@ static int cgroupfs_init_file(vfs_node_t parent, const char *name,
     return cgroupfs_write_string(handle, content ? content : "");
 }
 
-static int cgroupfs_init_dir(vfs_node_t node) {
+static int cgroupfs_init_dir(vfs_node_t *node) {
     node->mode = 0755;
     cgroupfs_node_t *handle = cgroupfs_alloc_handle(node);
     if (!handle)
@@ -101,7 +101,7 @@ static int cgroupfs_init_dir(vfs_node_t node) {
     return 0;
 }
 
-int cgroupfs_mount(uint64_t dev, vfs_node_t node) {
+int cgroupfs_mount(uint64_t dev, vfs_node_t *node) {
     if (cgroupfs_root != fake_cgroupfs_root)
         return 0;
     if (cgroupfs_root == node)
@@ -122,7 +122,7 @@ int cgroupfs_mount(uint64_t dev, vfs_node_t node) {
     return 0;
 }
 
-void cgroupfs_unmount(vfs_node_t root) {
+void cgroupfs_unmount(vfs_node_t *root) {
     if (root == fake_cgroupfs_root)
         return;
 
@@ -142,11 +142,11 @@ void cgroupfs_unmount(vfs_node_t root) {
     spin_unlock(&cgroupfs_oplock);
 }
 
-int cgroupfs_mkdir(vfs_node_t parent, const char *name, vfs_node_t node) {
+int cgroupfs_mkdir(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     return cgroupfs_init_dir(node);
 }
 
-int cgroupfs_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
+int cgroupfs_mkfile(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     node->mode = 0644;
     if (node->handle)
         return -EEXIST;
@@ -187,9 +187,9 @@ ssize_t cgroupfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     return size;
 }
 
-int cgroupfs_delete(vfs_node_t parent, vfs_node_t node) { return 0; }
+int cgroupfs_delete(vfs_node_t *parent, vfs_node_t *node) { return 0; }
 
-void cgroupfs_free_handle(vfs_node_t node) {
+void cgroupfs_free_handle(vfs_node_t *node) {
     cgroupfs_node_t *tnode = node ? node->handle : NULL;
     if (!tnode)
         return;

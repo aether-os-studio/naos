@@ -30,9 +30,10 @@ static void nvidia_unregister_gpu(nvidia_device_t *nv_dev) {
     }
 }
 
-int nvidia_set_crtc(drm_device_t *drm_dev, struct drm_mode_crtc *crtc);
+int nvidia_set_crtc(drm_device_t *drm_dev, struct drm_mode_crtc *crtc,
+                    fd_t *fd);
 int nvidia_page_flip(struct drm_device *dev,
-                     struct drm_mode_crtc_page_flip *flip);
+                     struct drm_mode_crtc_page_flip *flip, fd_t *fd);
 
 static bool nvidia_handle_to_index(uint32_t handle, uint32_t *idx) {
     if (!idx || handle == 0 || handle > 32) {
@@ -1240,8 +1241,9 @@ int nvidia_get_fb(drm_device_t *drm_dev, uint32_t *width, uint32_t *height,
     return 0;
 }
 
-int nvidia_create_dumb(drm_device_t *drm_dev,
-                       struct drm_mode_create_dumb *args) {
+int nvidia_create_dumb(drm_device_t *drm_dev, struct drm_mode_create_dumb *args,
+                       fd_t *fd) {
+    (void)fd;
     if (!drm_dev || !args || args->width == 0 || args->height == 0) {
         return -EINVAL;
     }
@@ -1320,7 +1322,8 @@ int nvidia_create_dumb(drm_device_t *drm_dev,
     return -ENOSPC;
 }
 
-int nvidia_destroy_dumb(drm_device_t *drm_dev, uint32_t handle) {
+int nvidia_destroy_dumb(drm_device_t *drm_dev, uint32_t handle, fd_t *fd) {
+    (void)fd;
     if (!drm_dev) {
         return -EINVAL;
     }
@@ -1354,13 +1357,17 @@ int nvidia_destroy_dumb(drm_device_t *drm_dev, uint32_t handle) {
     return 0;
 }
 
-int nvidia_dirty_fb(drm_device_t *drm_dev, struct drm_mode_fb_dirty_cmd *cmd) {
+int nvidia_dirty_fb(drm_device_t *drm_dev, struct drm_mode_fb_dirty_cmd *cmd,
+                    fd_t *fd) {
     (void)drm_dev;
     (void)cmd;
+    (void)fd;
     return 0;
 }
 
-int nvidia_add_fb(drm_device_t *drm_dev, struct drm_mode_fb_cmd *cmd) {
+int nvidia_add_fb(drm_device_t *drm_dev, struct drm_mode_fb_cmd *cmd,
+                  fd_t *fd) {
+    (void)fd;
     if (!drm_dev || !cmd || !cmd->handle || !cmd->width || !cmd->height ||
         !cmd->pitch) {
         return -EINVAL;
@@ -1419,7 +1426,9 @@ int nvidia_add_fb(drm_device_t *drm_dev, struct drm_mode_fb_cmd *cmd) {
     return 0;
 }
 
-int nvidia_add_fb2(drm_device_t *drm_dev, struct drm_mode_fb_cmd2 *cmd) {
+int nvidia_add_fb2(drm_device_t *drm_dev, struct drm_mode_fb_cmd2 *cmd,
+                   fd_t *fd) {
+    (void)fd;
     if (!drm_dev || !cmd || cmd->handles[0] == 0 || !cmd->width ||
         !cmd->height) {
         return -EINVAL;
@@ -1494,7 +1503,8 @@ int nvidia_add_fb2(drm_device_t *drm_dev, struct drm_mode_fb_cmd2 *cmd) {
     return 0;
 }
 
-int nvidia_set_plane(drm_device_t *drm_dev, struct drm_mode_set_plane *plane) {
+int nvidia_set_plane(drm_device_t *drm_dev, struct drm_mode_set_plane *plane,
+                     fd_t *fd) {
     if (!drm_dev || !plane) {
         return -EINVAL;
     }
@@ -1519,7 +1529,7 @@ int nvidia_set_plane(drm_device_t *drm_dev, struct drm_mode_set_plane *plane) {
             .y = plane->crtc_y,
             .mode_valid = 0,
         };
-        return nvidia_set_crtc(drm_dev, &crtc_req);
+        return nvidia_set_crtc(drm_dev, &crtc_req, fd);
     }
 
     struct drm_mode_crtc_page_flip flip = {
@@ -1530,11 +1540,12 @@ int nvidia_set_plane(drm_device_t *drm_dev, struct drm_mode_set_plane *plane) {
         .user_data = 0,
     };
 
-    return nvidia_page_flip(drm_dev, &flip);
+    return nvidia_page_flip(drm_dev, &flip, fd);
 }
 
-int nvidia_atomic_commit(drm_device_t *drm_dev,
-                         struct drm_mode_atomic *atomic) {
+int nvidia_atomic_commit(drm_device_t *drm_dev, struct drm_mode_atomic *atomic,
+                         fd_t *fd) {
+    (void)fd;
     if (!drm_dev || !atomic) {
         return -EINVAL;
     }
@@ -2231,7 +2242,9 @@ int nvidia_atomic_commit(drm_device_t *drm_dev,
     return 0;
 }
 
-int nvidia_map_dumb(drm_device_t *drm_dev, struct drm_mode_map_dumb *args) {
+int nvidia_map_dumb(drm_device_t *drm_dev, struct drm_mode_map_dumb *args,
+                    fd_t *fd) {
+    (void)fd;
     if (!drm_dev || !args) {
         return -EINVAL;
     }
@@ -2303,7 +2316,9 @@ int nvidia_drm_mmap(drm_device_t *drm_dev, uint64_t addr, uint64_t offset,
     return 0;
 }
 
-int nvidia_set_crtc(drm_device_t *drm_dev, struct drm_mode_crtc *crtc) {
+int nvidia_set_crtc(drm_device_t *drm_dev, struct drm_mode_crtc *crtc,
+                    fd_t *fd) {
+    (void)fd;
     if (!drm_dev || !crtc) {
         return -EINVAL;
     }
@@ -2390,7 +2405,8 @@ int nvidia_set_crtc(drm_device_t *drm_dev, struct drm_mode_crtc *crtc) {
 }
 
 int nvidia_page_flip(struct drm_device *dev,
-                     struct drm_mode_crtc_page_flip *flip) {
+                     struct drm_mode_crtc_page_flip *flip, fd_t *fd) {
+    (void)fd;
     if (!dev || !flip) {
         return -EINVAL;
     }

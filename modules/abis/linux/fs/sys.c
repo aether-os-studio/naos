@@ -8,16 +8,16 @@ int sysfs_fsid = 0;
 
 spinlock_t sysfs_oplock = SPIN_INIT;
 
-vfs_node_t sysfs_root = NULL;
-vfs_node_t fake_sysfs_root = NULL;
+vfs_node_t *sysfs_root = NULL;
+vfs_node_t *fake_sysfs_root = NULL;
 
 static int mount_node_old_fsid = 0;
 
 extern uint32_t device_number;
 
-void sysfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {}
+void sysfs_open(vfs_node_t *parent, const char *name, vfs_node_t *node) {}
 
-bool sysfs_close(vfs_node_t node) { return false; }
+bool sysfs_close(vfs_node_t *node) { return false; }
 
 ssize_t sysfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     sysfs_node_t *handle = fd->node->handle;
@@ -43,7 +43,7 @@ ssize_t sysfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     return size;
 }
 
-ssize_t sysfs_readlink(vfs_node_t node, void *addr, size_t offset,
+ssize_t sysfs_readlink(vfs_node_t *node, void *addr, size_t offset,
                        size_t size) {
     sysfs_node_t *handle = node->handle;
     if (offset >= handle->size)
@@ -52,7 +52,7 @@ ssize_t sysfs_readlink(vfs_node_t node, void *addr, size_t offset,
     memset(tmp, 0, sizeof(tmp));
     memcpy(tmp, handle->content, MIN(handle->size, sizeof(tmp)));
 
-    vfs_node_t to_node = vfs_open_at(node->parent, (const char *)tmp, 0);
+    vfs_node_t *to_node = vfs_open_at(node->parent, (const char *)tmp, 0);
     if (!to_node)
         return -ENOENT;
 
@@ -70,12 +70,12 @@ ssize_t sysfs_readlink(vfs_node_t node, void *addr, size_t offset,
     return to_copy;
 }
 
-int sysfs_mkdir(vfs_node_t parent, const char *name, vfs_node_t node) {
+int sysfs_mkdir(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     node->mode = 0700;
     return 0;
 }
 
-int sysfs_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
+int sysfs_mkfile(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     node->mode = 0700;
     sysfs_node_t *handle = malloc(sizeof(sysfs_node_t));
     handle->capability = DEFAULT_PAGE_SIZE;
@@ -86,7 +86,7 @@ int sysfs_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
     return 0;
 }
 
-int sysfs_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
+int sysfs_symlink(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     node->mode = 0700;
     sysfs_node_t *handle = malloc(sizeof(sysfs_node_t));
     size_t len = strlen(name) + 1;
@@ -99,7 +99,7 @@ int sysfs_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
     return 0;
 }
 
-int sysfs_mount(uint64_t dev, vfs_node_t node) {
+int sysfs_mount(uint64_t dev, vfs_node_t *node) {
     if (sysfs_root != fake_sysfs_root)
         return 0;
     if (sysfs_root == node)
@@ -121,7 +121,7 @@ int sysfs_mount(uint64_t dev, vfs_node_t node) {
     return 0;
 }
 
-void sysfs_unmount(vfs_node_t root) {
+void sysfs_unmount(vfs_node_t *root) {
     if (root == fake_sysfs_root)
         return;
 
@@ -141,7 +141,7 @@ void sysfs_unmount(vfs_node_t root) {
     spin_unlock(&sysfs_oplock);
 }
 
-void sysfs_free_handle(vfs_node_t node) {
+void sysfs_free_handle(vfs_node_t *node) {
     sysfs_node_t *snode = node ? node->handle : NULL;
     if (!snode)
         return;
@@ -282,9 +282,9 @@ static int next_seq_num = 1;
 
 int alloc_seq_num() { return next_seq_num++; }
 
-vfs_node_t sysfs_regist_dev(char t, int major, int minor,
-                            const char *real_device_path, const char *dev_name,
-                            const char *other_uevent_content) {
+vfs_node_t *sysfs_regist_dev(char t, int major, int minor,
+                             const char *real_device_path, const char *dev_name,
+                             const char *other_uevent_content) {
     const char *root = (t == 'c') ? "char" : "block";
 
     char dev_root_path[256];
@@ -292,7 +292,7 @@ vfs_node_t sysfs_regist_dev(char t, int major, int minor,
 
     bool dev_root_is_real = (strlen(real_device_path) == 0);
 
-    vfs_node_t real_device_node = NULL;
+    vfs_node_t *real_device_node = NULL;
     if (dev_root_is_real) {
         vfs_mkdir(dev_root_path);
         real_device_node = vfs_open(dev_root_path, 0);
@@ -308,7 +308,7 @@ vfs_node_t sysfs_regist_dev(char t, int major, int minor,
     sprintf(uevent_path, "%s/uevent", fullpath);
 
     vfs_mkfile(uevent_path);
-    vfs_node_t uevent_node = vfs_open(uevent_path, 0);
+    vfs_node_t *uevent_node = vfs_open(uevent_path, 0);
 
     char uevent_content[256];
     sprintf(uevent_content, "MAJOR=%d\nMINOR=%d\nDEVNAME=%s\nDEVPATH=%s\n%s",
@@ -333,8 +333,8 @@ vfs_node_t sysfs_regist_dev(char t, int major, int minor,
     return real_device_node;
 }
 
-vfs_node_t sysfs_child_append(vfs_node_t parent, const char *name,
-                              bool is_dir) {
+vfs_node_t *sysfs_child_append(vfs_node_t *parent, const char *name,
+                               bool is_dir) {
     char *parent_path = vfs_get_fullpath(parent);
 
     char path[512];
@@ -350,8 +350,8 @@ vfs_node_t sysfs_child_append(vfs_node_t parent, const char *name,
     return vfs_open(path, 0);
 }
 
-vfs_node_t sysfs_child_append_symlink(vfs_node_t parent, const char *name,
-                                      const char *target_path) {
+vfs_node_t *sysfs_child_append_symlink(vfs_node_t *parent, const char *name,
+                                       const char *target_path) {
     char *parent_path = vfs_get_fullpath(parent);
 
     char path[512];

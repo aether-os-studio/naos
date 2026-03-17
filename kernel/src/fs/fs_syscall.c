@@ -49,7 +49,7 @@ char *at_resolve_pathname(int dirfd, char *pathname) {
                 !current_task->fd_info->fds[dirfd]->node)
                 return NULL;
 
-            vfs_node_t node = current_task->fd_info->fds[dirfd]->node;
+            vfs_node_t *node = current_task->fd_info->fds[dirfd]->node;
 
             char *dirname = vfs_get_fullpath(node);
             char *out = join_pathname(dirname, pathname);

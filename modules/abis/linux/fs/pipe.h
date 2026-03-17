@@ -13,7 +13,7 @@ struct spinlock;
 typedef struct spinlock spinlock_t;
 
 struct vfs_node;
-typedef struct vfs_node *vfs_node_t;
+typedef struct vfs_node vfs_node_t;
 
 typedef struct pipe_info {
     uint32_t ptr;
@@ -22,8 +22,8 @@ typedef struct pipe_info {
     int write_fds;
     int read_fds;
 
-    vfs_node_t read_node;
-    vfs_node_t write_node;
+    vfs_node_t *read_node;
+    vfs_node_t *write_node;
 
     spinlock_t lock;
 } pipe_info_t;

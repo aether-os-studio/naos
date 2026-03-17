@@ -9,7 +9,7 @@ extern spinlock_t should_free_lock;
 
 #define LINUX_USER_HZ 100
 
-static int read_task_file_into_user_memory(task_t *task, vfs_node_t node,
+static int read_task_file_into_user_memory(task_t *task, vfs_node_t *node,
                                            uint64_t uaddr, size_t offset,
                                            size_t size) {
     if (!task || !task->arch_context || !task->mm || !node)
@@ -172,7 +172,7 @@ static uint64_t elf_segment_pt_flags(uint32_t p_flags) {
     return pt_flags;
 }
 
-static int map_task_elf_segment(task_t *task, vfs_node_t node,
+static int map_task_elf_segment(task_t *task, vfs_node_t *node,
                                 uint64_t load_base, const Elf64_Phdr *phdr) {
     if (!task || !task->mm || !node || !phdr || phdr->p_type != PT_LOAD)
         return -EINVAL;
@@ -574,7 +574,7 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
     return tmp_stack;
 }
 
-static int register_elf_load_vma(task_t *task, vfs_node_t node,
+static int register_elf_load_vma(task_t *task, vfs_node_t *node,
                                  const char *name, uint64_t load_base,
                                  const Elf64_Phdr *phdr) {
     if (!task || !task->mm || !phdr || phdr->p_type != PT_LOAD ||
@@ -669,7 +669,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     char path[512];
     strncpy(path, path_user, sizeof(path));
 
-    vfs_node_t node = vfs_open(path, 0);
+    vfs_node_t *node = vfs_open(path, 0);
     if (!node) {
         return (uint64_t)-ENOENT;
     }
@@ -870,7 +870,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
             }
         }
 
-        vfs_node_t interpreter_node = vfs_open(interpreter_name, 0);
+        vfs_node_t *interpreter_node = vfs_open(interpreter_name, 0);
         if (!interpreter_node) {
             task_execve_free_string_array(replaced_argv, replaced_index);
             task_execve_free_string_array(new_argv, argv_count);
@@ -1009,7 +1009,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
             interpreter_path = strdup(interp_name);
 
-            vfs_node_t interpreter_node = vfs_open(interp_name, 0);
+            vfs_node_t *interpreter_node = vfs_open(interp_name, 0);
             if (!interpreter_node) {
                 if (phdr_allocated)
                     free(phdr);
@@ -1148,9 +1148,10 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 continue;
 
             if (self->fd_info->fds[i]->close_on_exec) {
-                fd_release(self->fd_info->fds[i]);
+                fd_t *entry = self->fd_info->fds[i];
                 self->fd_info->fds[i] = NULL;
-                system_abi->on_close_file(self, i);
+                system_abi->on_close_file(self, i, entry);
+                fd_release(entry);
             }
         }
     });

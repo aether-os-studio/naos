@@ -96,9 +96,9 @@ static int file_lock_normalize(fd_t *fd, const flock_t *lock,
     return 0;
 }
 
-static vfs_file_lock_t *file_lock_find_conflict(vfs_node_t node, uint64_t start,
-                                                uint64_t end, int16_t type,
-                                                int32_t pid) {
+static vfs_file_lock_t *file_lock_find_conflict(vfs_node_t *node,
+                                                uint64_t start, uint64_t end,
+                                                int16_t type, int32_t pid) {
     if (!node)
         return NULL;
 
@@ -115,7 +115,7 @@ static vfs_file_lock_t *file_lock_find_conflict(vfs_node_t node, uint64_t start,
     return NULL;
 }
 
-static int file_lock_unlock_pid_range(vfs_node_t node, int32_t pid,
+static int file_lock_unlock_pid_range(vfs_node_t *node, int32_t pid,
                                       uint64_t start, uint64_t end) {
     if (!node)
         return -EINVAL;
@@ -158,7 +158,7 @@ static int file_lock_unlock_pid_range(vfs_node_t node, int32_t pid,
     return 0;
 }
 
-static void file_lock_release_pid(vfs_node_t node, int32_t pid) {
+static void file_lock_release_pid(vfs_node_t *node, int32_t pid) {
     if (!node)
         return;
 
@@ -176,7 +176,7 @@ static int file_lock_getlk(fd_t *fd, flock_t *lock) {
     if (ret < 0)
         return ret;
 
-    vfs_node_t node = fd->node;
+    vfs_node_t *node = fd->node;
     spin_lock(&node->file_locks_lock);
     vfs_file_lock_t *conflict = file_lock_find_conflict(
         node, start, end, lock->l_type, current_task->pid);
@@ -204,7 +204,7 @@ static int file_lock_setlk(fd_t *fd, const flock_t *req, bool wait) {
     if (ret < 0)
         return ret;
 
-    vfs_node_t node = fd->node;
+    vfs_node_t *node = fd->node;
     int32_t pid = current_task->pid;
 
     for (;;) {
@@ -293,7 +293,7 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
         return 0;
     }
 
-    vfs_node_t dir = vfs_open((const char *)dirname, 0);
+    vfs_node_t *dir = vfs_open((const char *)dirname, 0);
     if (!dir) {
         return (uint64_t)-ENOENT;
     }
@@ -303,7 +303,7 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
             return (uint64_t)-EINVAL;
         }
 
-        vfs_node_t old_mount = vfs_open((const char *)devname, 0);
+        vfs_node_t *old_mount = vfs_open((const char *)devname, 0);
         if (!old_mount)
             return (uint64_t)-EINVAL;
 
@@ -311,20 +311,20 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
     }
 
     uint64_t dev_nr = 0;
-    vfs_node_t dev = vfs_open((const char *)devname, 0);
+    vfs_node_t *dev = vfs_open((const char *)devname, 0);
     if (dev) {
         dev_nr = dev->rdev;
     }
 
     // int child_count = 0;
-    // vfs_node_t pos, tmp;
+    // vfs_node_t *pos, tmp;
     // llist_for_each(pos, tmp, &dir->childs, node_for_childs) { child_count++;
-    // } vfs_node_t *childs = calloc(child_count, sizeof(vfs_node_t)); int i =
-    // 0; llist_for_each(pos, tmp, &dir->childs, node_for_childs) {
+    // } vfs_node_t **childs = calloc(child_count, sizeof(vfs_node_t *)); int i
+    // = 0; llist_for_each(pos, tmp, &dir->childs, node_for_childs) {
     //     childs[i++] = pos;
     // }
     // for (i = 0; i < child_count; i++) {
-    //     vfs_node_t node = childs[i];
+    //     vfs_node_t *node = childs[i];
     //     if (node == node->root)
     //         continue;
     //     vfs_free(node);
@@ -356,7 +356,7 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
     int create_mode = (flags & O_CREAT);
     uint64_t acc_mode = flags & O_ACCMODE_FLAGS;
 
-    vfs_node_t node = vfs_open(name, flags & O_NOFOLLOW);
+    vfs_node_t *node = vfs_open(name, flags & O_NOFOLLOW);
     if (node && create_mode && (flags & O_EXCL)) {
         return (uint64_t)-EEXIST;
     }
@@ -432,7 +432,7 @@ static uint64_t do_sys_open_tmpfile(const char *dir_path, uint64_t flags,
     if (acc_mode != O_WRONLY && acc_mode != O_RDWR)
         return (uint64_t)-EINVAL;
 
-    vfs_node_t dir = vfs_open(dir_path, flags & O_NOFOLLOW);
+    vfs_node_t *dir = vfs_open(dir_path, flags & O_NOFOLLOW);
     if (!dir)
         return (uint64_t)-ENOENT;
     if (!(dir->type & file_dir))
@@ -521,7 +521,7 @@ uint64_t sys_name_to_handle_at(int dfd, const char *name,
         return (uint64_t)-ENOMEM;
     }
 
-    vfs_node_t node = vfs_open(path, flag);
+    vfs_node_t *node = vfs_open(path, flag);
     free(path);
 
     if (!node) {
@@ -582,7 +582,7 @@ uint64_t sys_open_by_handle_at(int mountdirfd, struct file_handle *handle,
         return (uint64_t)-EFAULT;
     }
 
-    vfs_node_t node = vfs_find_node_by_inode(inode);
+    vfs_node_t *node = vfs_find_node_by_inode(inode);
     if (!node) {
         return -ESTALE;
     }
@@ -622,7 +622,7 @@ uint64_t sys_fsync(uint64_t fd) {
         return (uint64_t)-EBADF;
     }
 
-    vfs_node_t node = self->fd_info->fds[fd]->node;
+    vfs_node_t *node = self->fd_info->fds[fd]->node;
 
     return 0;
 }
@@ -656,8 +656,8 @@ uint64_t sys_close(uint64_t fd) {
     if (ret)
         return ret;
 
+    system_abi->on_close_file(self, fd, entry);
     fd_release(entry);
-    system_abi->on_close_file(self, fd);
     return 0;
 }
 
@@ -753,8 +753,8 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
         fd_t *entry = to_close[fd_];
         if (!entry)
             continue;
+        system_abi->on_close_file(self, fd_, entry);
         fd_release(entry);
-        system_abi->on_close_file(self, fd_);
     }
 
     return 0;
@@ -1031,7 +1031,7 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
     }
 
     fd_t *file = self->fd_info->fds[fd];
-    vfs_node_t node = file->node;
+    vfs_node_t *node = file->node;
     if (fd_get_flags(file) & O_PATH)
         return (uint64_t)-EBADF;
     if (node->type & (file_socket | file_fifo | file_stream)) {
@@ -1117,7 +1117,7 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
             file_flags &= ~O_NONBLOCK;
         fd_set_flags(f, file_flags);
         if (f->node->type & file_socket) {
-            ret = vfs_ioctl(f->node, cmd, arg);
+            ret = vfs_ioctl(f, cmd, arg);
             if (ret == -ENOTTY || ret == -ENOSYS)
                 ret = 0;
         } else {
@@ -1134,7 +1134,7 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
         break;
 
     default:
-        ret = vfs_ioctl(f->node, cmd, arg);
+        ret = vfs_ioctl(f, cmd, arg);
         if ((cmd == TCGETS || cmd == TCSETS || cmd == TIOCSCTTY ||
              cmd == TIOCGWINSZ) &&
             ret < 0) {
@@ -1221,14 +1221,14 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size) {
         return (uint64_t)-ENOTDIR;
 
     fd_t *filedescriptor = self->fd_info->fds[fd];
-    vfs_node_t node = filedescriptor->node;
+    vfs_node_t *node = filedescriptor->node;
 
     uint8_t *buf_ptr = (uint8_t *)buf;
     uint64_t bytes_written = 0;
 
     uint64_t entry_index = 0;
 
-    vfs_node_t child_node, tmp;
+    vfs_node_t *child_node, *tmp;
     llist_for_each(child_node, tmp, &node->childs, node_for_childs) {
         if (entry_index < fd_get_offset(filedescriptor)) {
             entry_index++;
@@ -1284,7 +1284,7 @@ uint64_t sys_chdir(const char *dname) {
     if (copy_from_user_str(dirname, dname, sizeof(dirname)))
         return (uint64_t)-EFAULT;
 
-    vfs_node_t new_cwd = vfs_open(dirname, 0);
+    vfs_node_t *new_cwd = vfs_open(dirname, 0);
     if (!new_cwd)
         return (uint64_t)-ENOENT;
     if (new_cwd->type & file_symlink) {
@@ -1329,6 +1329,7 @@ static uint64_t dup_to_exact(task_t *self, uint64_t fd, uint64_t newfd,
     uint64_t ret = newfd;
     bool replaced_existing = false;
     bool installed_new = false;
+    fd_t *replaced_fd = NULL;
     with_fd_info_lock(self->fd_info, {
         if (!self->fd_info->fds[fd]) {
             ret = (uint64_t)-EBADF;
@@ -1351,7 +1352,7 @@ static uint64_t dup_to_exact(task_t *self, uint64_t fd, uint64_t newfd,
         }
 
         if (self->fd_info->fds[newfd]) {
-            fd_release(self->fd_info->fds[newfd]);
+            replaced_fd = self->fd_info->fds[newfd];
             self->fd_info->fds[newfd] = NULL;
             replaced_existing = true;
         }
@@ -1366,8 +1367,10 @@ static uint64_t dup_to_exact(task_t *self, uint64_t fd, uint64_t newfd,
     });
 
     if ((int64_t)ret >= 0 && installed_new) {
-        if (replaced_existing)
-            system_abi->on_close_file(self, newfd);
+        if (replaced_existing) {
+            system_abi->on_close_file(self, newfd, replaced_fd);
+            fd_release(replaced_fd);
+        }
         system_abi->on_open_file(self, newfd);
     }
 
@@ -1475,8 +1478,8 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         int ret = 0;
         if (self->fd_info->fds[fd]->node->type & file_socket) {
             int nonblock = !!(file_flags & O_NONBLOCK);
-            ret = vfs_ioctl(self->fd_info->fds[fd]->node, FIONBIO,
-                            (ssize_t)&nonblock);
+            ret =
+                vfs_ioctl(self->fd_info->fds[fd], FIONBIO, (ssize_t)&nonblock);
             if (ret == -ENOTTY || ret == -ENOSYS)
                 ret = 0;
         }
@@ -1538,7 +1541,7 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
 uint64_t do_stat_path(const char *path, struct stat *buf) {
     memset(buf, 0, sizeof(struct stat));
 
-    vfs_node_t node = vfs_open(path, O_NOFOLLOW);
+    vfs_node_t *node = vfs_open(path, O_NOFOLLOW);
     if (!node) {
         // serial_fprintk("Stating file %s failed\n", path);
         return (uint64_t)-ENOENT;
@@ -1592,7 +1595,7 @@ uint64_t do_stat_fd(int fd, struct stat *buf) {
     memset(buf, 0, sizeof(struct stat));
 
     task_t *self = current_task;
-    vfs_node_t node = self->fd_info->fds[fd]->node;
+    vfs_node_t *node = self->fd_info->fds[fd]->node;
 
     vfs_update(node);
 
@@ -1700,7 +1703,7 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
 
         uint64_t ret = do_stat_path(resolved, &simple);
 
-        vfs_node_t node = vfs_open(resolved, O_NOFOLLOW);
+        vfs_node_t *node = vfs_open(resolved, O_NOFOLLOW);
 
         free(resolved);
 
@@ -1807,7 +1810,7 @@ uint64_t sys_faccessat2(uint64_t dirfd, const char *pathname_user,
 }
 
 uint64_t do_readlink(char *path, char *buf, uint64_t size) {
-    vfs_node_t node = vfs_open(path, O_NOFOLLOW);
+    vfs_node_t *node = vfs_open(path, O_NOFOLLOW);
     if (node == NULL) {
         return (uint64_t)-ENOENT;
     }
@@ -1910,7 +1913,7 @@ uint64_t sys_rmdir(const char *name_user) {
         return (uint64_t)-EFAULT;
     }
 
-    vfs_node_t node = vfs_open(name, O_NOFOLLOW);
+    vfs_node_t *node = vfs_open(name, O_NOFOLLOW);
     if (!node)
         return -ENOENT;
     if (!(node->type & file_dir))
@@ -1926,7 +1929,7 @@ uint64_t sys_rmdir(const char *name_user) {
 }
 
 static uint64_t do_unlink(const char *name) {
-    vfs_node_t node = vfs_open(name, O_NOFOLLOW);
+    vfs_node_t *node = vfs_open(name, O_NOFOLLOW);
     if (!node)
         return -ENOENT;
 
@@ -1962,7 +1965,7 @@ uint64_t sys_unlinkat(uint64_t dirfd, const char *name_user, uint64_t flags) {
 }
 
 uint64_t do_rename(const char *old, const char *new) {
-    vfs_node_t node = vfs_open(old, O_NOFOLLOW);
+    vfs_node_t *node = vfs_open(old, O_NOFOLLOW);
     if (!node)
         return -ENOENT;
     int ret = vfs_rename(node, new);
@@ -2042,7 +2045,7 @@ uint64_t sys_fchdir(uint64_t fd) {
     if (fd >= MAX_FD_NUM || !self->fd_info->fds[fd])
         return -EBADF;
 
-    vfs_node_t node = self->fd_info->fds[fd]->node;
+    vfs_node_t *node = self->fd_info->fds[fd]->node;
     if (!(node->type & file_dir))
         return -ENOTDIR;
 
@@ -2128,7 +2131,7 @@ static int parse_proc_self_fd_path(const char *path, int *fd_out) {
 }
 
 static int resolve_linkat_source_node(uint64_t olddirfd, const char *oldpath,
-                                      int flags, vfs_node_t *source_out) {
+                                      int flags, vfs_node_t **source_out) {
     if (!source_out)
         return -EINVAL;
     *source_out = NULL;
@@ -2198,7 +2201,7 @@ uint64_t sys_linkat(uint64_t olddirfd, const char *oldpath_user,
         return (uint64_t)-EBADF;
     }
 
-    vfs_node_t source = NULL;
+    vfs_node_t *source = NULL;
     int source_ret =
         resolve_linkat_source_node(olddirfd, oldpath, flags, &source);
     int ret = 0;
@@ -2328,7 +2331,7 @@ uint64_t sys_fchown(int fd, uint64_t uid, uint64_t gid) {
     if (fd < 0 || fd >= MAX_FD_NUM || !self->fd_info->fds[fd])
         return -EBADF;
 
-    vfs_node_t node = self->fd_info->fds[fd]->node;
+    vfs_node_t *node = self->fd_info->fds[fd]->node;
 
     char *fullpath = vfs_get_fullpath(node);
     int ret = vfs_chown(fullpath, uid, gid);
@@ -2354,7 +2357,7 @@ uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
     if (fd < 0 || fd >= MAX_FD_NUM || !self->fd_info->fds[fd])
         return -EBADF;
 
-    vfs_node_t node = self->fd_info->fds[fd]->node;
+    vfs_node_t *node = self->fd_info->fds[fd]->node;
 
     vfs_resize(node, offset + len);
 
@@ -2366,7 +2369,7 @@ uint64_t sys_truncate(const char *path_user, uint64_t length) {
     if (copy_from_user_str(path, path_user, sizeof(path)))
         return (uint64_t)-EFAULT;
 
-    vfs_node_t node = vfs_open(path, 0);
+    vfs_node_t *node = vfs_open(path, 0);
     if (!node) {
         return (uint64_t)-ENOENT;
     }
@@ -2393,7 +2396,7 @@ uint64_t sys_flock(int fd, uint64_t operation) {
     if (fd < 0 || fd >= MAX_FD_NUM || !self->fd_info->fds[fd])
         return -EBADF;
 
-    vfs_node_t node = self->fd_info->fds[fd]->node;
+    vfs_node_t *node = self->fd_info->fds[fd]->node;
     vfs_bsd_lock_t *lock = &node->flock_lock;
     uint64_t pid = self->pid;
 

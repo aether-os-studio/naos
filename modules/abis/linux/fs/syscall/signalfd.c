@@ -12,7 +12,7 @@ static inline void signalfd_apply_flags(fd_t *fd, int flags) {
     fd->close_on_exec = !!(flags & O_CLOEXEC);
 }
 
-static int signalfd_poll(vfs_node_t node, size_t event) {
+static int signalfd_poll(vfs_node_t *node, size_t event) {
     struct signalfd_ctx *ctx = node ? node->handle : NULL;
     if (!ctx)
         return EPOLLNVAL;
@@ -58,7 +58,8 @@ static ssize_t signalfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     return copy_len;
 }
 
-static int signalfd_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
+static int signalfd_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
+    vfs_node_t *node = fd->node;
     struct signalfd_ctx *ctx = node ? node->handle : NULL;
     if (!ctx)
         return -EBADF;
@@ -71,7 +72,7 @@ static int signalfd_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
     }
 }
 
-bool signalfd_close(vfs_node_t node) {
+bool signalfd_close(vfs_node_t *node) {
     struct signalfd_ctx *ctx = node ? node->handle : NULL;
     if (!ctx)
         return true;
@@ -139,7 +140,7 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask,
     // 创建VFS节点
     char buf[256];
     sprintf(buf, "signalfd%d", signalfd_id++);
-    vfs_node_t node = vfs_node_alloc(NULL, buf);
+    vfs_node_t *node = vfs_node_alloc(NULL, buf);
     node->refcount++;
     node->mode = 0700;
     node->type = file_stream;

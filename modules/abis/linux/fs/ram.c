@@ -58,7 +58,8 @@ static int ramfs_replace_content(ramfs_node_t *handle, size_t new_capability,
     return 0;
 }
 
-static void ramfs_sync_node_from_handle(vfs_node_t node, ramfs_node_t *handle) {
+static void ramfs_sync_node_from_handle(vfs_node_t *node,
+                                        ramfs_node_t *handle) {
     if (!node || !handle)
         return;
 
@@ -74,7 +75,8 @@ static void ramfs_sync_node_from_handle(vfs_node_t node, ramfs_node_t *handle) {
     node->realsize = handle->capability;
 }
 
-static void ramfs_init_handle_from_node(ramfs_node_t *handle, vfs_node_t node) {
+static void ramfs_init_handle_from_node(ramfs_node_t *handle,
+                                        vfs_node_t *node) {
     if (!handle || !node)
         return;
 
@@ -90,7 +92,7 @@ static void ramfs_init_handle_from_node(ramfs_node_t *handle, vfs_node_t node) {
     handle->handle_refs = 1;
 }
 
-static ramfs_node_t *ramfs_alloc_handle(vfs_node_t node, size_t capability) {
+static ramfs_node_t *ramfs_alloc_handle(vfs_node_t *node, size_t capability) {
     ramfs_node_t *handle = calloc(1, sizeof(ramfs_node_t));
     if (!handle)
         return NULL;
@@ -109,7 +111,7 @@ static ramfs_node_t *ramfs_alloc_handle(vfs_node_t node, size_t capability) {
     return handle;
 }
 
-void ramfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {
+void ramfs_open(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     (void)parent;
     (void)name;
 
@@ -117,12 +119,11 @@ void ramfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {
         ramfs_sync_node_from_handle(node, node->handle);
 }
 
-bool ramfs_close(vfs_node_t node) { return false; }
+bool ramfs_close(vfs_node_t *node) { return false; }
 
 ssize_t ramfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
-        return device_read(fd->node->rdev, addr, offset, size,
-                           fd_get_flags(fd));
+        return device_read(fd->node->rdev, addr, offset, size, fd);
     }
 
     ramfs_node_t *handle = fd->node->handle;
@@ -135,8 +136,7 @@ ssize_t ramfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
 
 ssize_t ramfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
-        return device_write(fd->node->rdev, (void *)addr, offset, size,
-                            fd_get_flags(fd));
+        return device_write(fd->node->rdev, (void *)addr, offset, size, fd);
     }
 
     spin_lock(&ramfs_oplock);
@@ -164,7 +164,7 @@ ssize_t ramfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     return size;
 }
 
-ssize_t ramfs_readlink(vfs_node_t node, void *addr, size_t offset,
+ssize_t ramfs_readlink(vfs_node_t *node, void *addr, size_t offset,
                        size_t size) {
     ramfs_node_t *handle = node->handle;
     if (offset >= handle->size)
@@ -175,14 +175,14 @@ ssize_t ramfs_readlink(vfs_node_t node, void *addr, size_t offset,
     return to_copy;
 }
 
-int ramfs_mkdir(vfs_node_t parent, const char *name, vfs_node_t node) {
+int ramfs_mkdir(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     (void)parent;
     (void)name;
     node->mode = 0700;
     return 0;
 }
 
-int ramfs_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
+int ramfs_mkfile(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     (void)parent;
     (void)name;
     node->mode = 0700;
@@ -193,7 +193,7 @@ int ramfs_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
     return 0;
 }
 
-int ramfs_mknod(vfs_node_t parent, const char *name, vfs_node_t node,
+int ramfs_mknod(vfs_node_t *parent, const char *name, vfs_node_t *node,
                 uint16_t mode, int dev) {
     node->dev = dev;
     node->rdev = dev;
@@ -205,7 +205,7 @@ int ramfs_mknod(vfs_node_t parent, const char *name, vfs_node_t node,
     return 0;
 }
 
-int ramfs_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
+int ramfs_symlink(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     (void)parent;
     node->mode = 0700;
     if (node->handle) {
@@ -223,8 +223,8 @@ int ramfs_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
     return 0;
 }
 
-static int ramfs_link_target(vfs_node_t parent, vfs_node_t target,
-                             vfs_node_t node) {
+static int ramfs_link_target(vfs_node_t *parent, vfs_node_t *target,
+                             vfs_node_t *node) {
     if (!parent || !target || !node)
         return -EINVAL;
 
@@ -247,22 +247,22 @@ static int ramfs_link_target(vfs_node_t parent, vfs_node_t target,
     return 0;
 }
 
-static int ramfs_link_existing(vfs_node_t parent, vfs_node_t target,
-                               vfs_node_t node) {
+static int ramfs_link_existing(vfs_node_t *parent, vfs_node_t *target,
+                               vfs_node_t *node) {
     return ramfs_link_target(parent, target, node);
 }
 
-int ramfs_link(vfs_node_t parent, const char *name, vfs_node_t node) {
+int ramfs_link(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     if (!parent || !name || !node)
         return -EINVAL;
 
-    vfs_node_t target = vfs_open(name, O_NOFOLLOW);
+    vfs_node_t *target = vfs_open(name, O_NOFOLLOW);
     if (!target)
         return -ENOENT;
     return ramfs_link_target(parent, target, node);
 }
 
-int ramfs_mount(uint64_t dev, vfs_node_t node) {
+int ramfs_mount(uint64_t dev, vfs_node_t *node) {
     spin_lock(&ramfs_oplock);
 
     node->flags = (uint64_t)node->fsid << 32;
@@ -275,10 +275,10 @@ int ramfs_mount(uint64_t dev, vfs_node_t node) {
     return 0;
 }
 
-void ramfs_unmount(vfs_node_t root) {
+void ramfs_unmount(vfs_node_t *root) {
     root->fsid = (uint32_t)(root->flags >> 32);
 
-    vfs_node_t node, ram;
+    vfs_node_t *node, *ram;
     llist_for_each(node, ram, &root->childs, node_for_childs) {
         if (node == node->root) {
             char *node_path = vfs_get_fullpath(node);
@@ -292,7 +292,7 @@ void ramfs_unmount(vfs_node_t root) {
 
     uint64_t nodes_count = 0;
     llist_for_each(node, ram, &root->childs, node_for_childs) { nodes_count++; }
-    vfs_node_t *nodes = calloc(nodes_count, sizeof(vfs_node_t));
+    vfs_node_t **nodes = calloc(nodes_count, sizeof(vfs_node_t *));
     uint64_t idx = 0;
     llist_for_each(node, ram, &root->childs, node_for_childs) {
         nodes[idx++] = node;
@@ -303,7 +303,7 @@ void ramfs_unmount(vfs_node_t root) {
     free(nodes);
 }
 
-int ramfs_chmod(vfs_node_t node, uint16_t mode) {
+int ramfs_chmod(vfs_node_t *node, uint16_t mode) {
     ramfs_node_t *handle = node ? node->handle : NULL;
     if (handle) {
         handle->mode = mode;
@@ -314,7 +314,7 @@ int ramfs_chmod(vfs_node_t node, uint16_t mode) {
     return 0;
 }
 
-int ramfs_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
+int ramfs_chown(vfs_node_t *node, uint64_t uid, uint64_t gid) {
     ramfs_node_t *handle = node ? node->handle : NULL;
     if (handle) {
         handle->owner = (uint32_t)uid;
@@ -327,7 +327,7 @@ int ramfs_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
     return 0;
 }
 
-int ramfs_delete(vfs_node_t parent, vfs_node_t node) {
+int ramfs_delete(vfs_node_t *parent, vfs_node_t *node) {
     (void)parent;
 
     ramfs_node_t *handle = node ? node->handle : NULL;
@@ -342,7 +342,7 @@ int ramfs_delete(vfs_node_t parent, vfs_node_t node) {
     return 0;
 }
 
-int ramfs_rename(vfs_node_t node, const char *new) { return 0; }
+int ramfs_rename(vfs_node_t *node, const char *new) { return 0; }
 
 void *ramfs_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
                 size_t flags) {
@@ -383,7 +383,7 @@ void *ramfs_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
     return addr;
 }
 
-void ramfs_resize(vfs_node_t node, uint64_t size) {
+void ramfs_resize(vfs_node_t *node, uint64_t size) {
     ramfs_node_t *handle = node->handle;
     if (!handle)
         return;
@@ -406,7 +406,7 @@ void ramfs_resize(vfs_node_t node, uint64_t size) {
     spin_unlock(&ramfs_oplock);
 }
 
-int ramfs_stat(vfs_node_t node) {
+int ramfs_stat(vfs_node_t *node) {
     ramfs_node_t *tnode = node ? node->handle : NULL;
     if (!tnode) {
         if (node) {
@@ -419,7 +419,7 @@ int ramfs_stat(vfs_node_t node) {
     return 0;
 }
 
-void ramfs_free_handle(vfs_node_t node) {
+void ramfs_free_handle(vfs_node_t *node) {
     ramfs_node_t *tnode = node ? node->handle : NULL;
     if (!tnode)
         return;

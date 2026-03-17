@@ -25,7 +25,7 @@ typedef struct ext_map_cache_entry {
 
 typedef struct ext_mount_ctx {
     struct llist_header node;
-    vfs_node_t root;
+    vfs_node_t *root;
     uint64_t dev;
     ext_super_block_t sb;
     ext_group_desc_t *groups;
@@ -52,12 +52,12 @@ typedef struct ext_dir_lookup {
     uint16_t prev_rec_len;
 } ext_dir_lookup_t;
 
-static void ext_hide_node(vfs_node_t node);
+static void ext_hide_node(vfs_node_t *node);
 static int ext_dev_read(ext_mount_ctx_t *fs, uint64_t offset, void *buf,
                         size_t size);
 static int ext_dev_write(ext_mount_ctx_t *fs, uint64_t offset, const void *buf,
                          size_t size);
-static void ext_sync_node_from_inode(vfs_node_t node, ext_mount_ctx_t *fs,
+static void ext_sync_node_from_inode(vfs_node_t *node, ext_mount_ctx_t *fs,
                                      const ext_inode_disk_t *inode);
 
 static uint64_t ext_now(void) {
@@ -395,7 +395,7 @@ static int ext_dev_write(ext_mount_ctx_t *fs, uint64_t offset, const void *buf,
     return ext_dev_write_direct(fs, offset, buf, size);
 }
 
-static void ext_fix_root_recursive(vfs_node_t node, vfs_node_t root) {
+static void ext_fix_root_recursive(vfs_node_t *node, vfs_node_t *root) {
     if (!node)
         return;
 
@@ -405,13 +405,13 @@ static void ext_fix_root_recursive(vfs_node_t node, vfs_node_t root) {
 
     node->root = root;
 
-    vfs_node_t child, tmp;
+    vfs_node_t *child, *tmp;
     llist_for_each(child, tmp, &node->childs, node_for_childs) {
         ext_fix_root_recursive(child, root);
     }
 }
 
-static void ext_hide_node(vfs_node_t node) {
+static void ext_hide_node(vfs_node_t *node) {
     if (!node)
         return;
 
@@ -443,12 +443,12 @@ static int ext_zero_block(ext_mount_ctx_t *fs, uint32_t block) {
     return ret;
 }
 
-static ext_mount_ctx_t *ext_find_mount(vfs_node_t node) {
+static ext_mount_ctx_t *ext_find_mount(vfs_node_t *node) {
     if (!node)
         return NULL;
 
     ext_mount_ctx_t *ctx, *tmp;
-    for (vfs_node_t cur = node; cur; cur = cur->parent) {
+    for (vfs_node_t *cur = node; cur; cur = cur->parent) {
         llist_for_each(ctx, tmp, &ext_mounts, node) {
             if (ctx->root == cur)
                 return ctx;
@@ -538,7 +538,7 @@ static void ext_copy_runtime_inode_state(ext_inode_disk_t *dst,
     dst->i_ctime = src->i_ctime;
 }
 
-static int ext_flush_handle_inode_locked(ext_mount_ctx_t *fs, vfs_node_t node,
+static int ext_flush_handle_inode_locked(ext_mount_ctx_t *fs, vfs_node_t *node,
                                          ext_handle_t *handle,
                                          ext_inode_disk_t *inode_out) {
     if (!fs || !handle || !handle->inode_valid) {
@@ -571,7 +571,7 @@ static int ext_flush_handle_inode_locked(ext_mount_ctx_t *fs, vfs_node_t node,
     return 0;
 }
 
-static void ext_sync_node_from_inode(vfs_node_t node, ext_mount_ctx_t *fs,
+static void ext_sync_node_from_inode(vfs_node_t *node, ext_mount_ctx_t *fs,
                                      const ext_inode_disk_t *inode) {
     node->fsid = ext_fsid;
     node->dev = fs->dev;
@@ -1737,7 +1737,7 @@ static int ext_release_inode_locked(ext_mount_ctx_t *fs, uint32_t ino,
 
 static int ext_drop_link_locked(ext_mount_ctx_t *fs, uint32_t ino,
                                 ext_inode_disk_t *inode,
-                                vfs_node_t cached_node) {
+                                vfs_node_t *cached_node) {
     if (!fs || !inode)
         return -EINVAL;
 
@@ -1756,8 +1756,8 @@ static int ext_drop_link_locked(ext_mount_ctx_t *fs, uint32_t ino,
     return ext_write_inode(fs, ino, inode);
 }
 
-static int ext_lookup_node_locked(vfs_node_t parent, const char *name,
-                                  vfs_node_t node) {
+static int ext_lookup_node_locked(vfs_node_t *parent, const char *name,
+                                  vfs_node_t *node) {
     ext_mount_ctx_t *fs = ext_find_mount(parent ? parent : node);
     if (!fs)
         return -ENOENT;
@@ -1788,12 +1788,12 @@ static int ext_lookup_node_locked(vfs_node_t parent, const char *name,
     return 0;
 }
 
-static void ext_prune_children(vfs_node_t parent, const char *name) {
+static void ext_prune_children(vfs_node_t *parent, const char *name) {
     if (!parent || !name)
         return;
 
     uint64_t nodes_count = 0;
-    vfs_node_t child, tmp;
+    vfs_node_t *child, *tmp;
     llist_for_each(child, tmp, &parent->childs, node_for_childs) {
         if (!child->name || strcmp(child->name, name))
             continue;
@@ -1805,7 +1805,7 @@ static void ext_prune_children(vfs_node_t parent, const char *name) {
     if (!nodes_count)
         return;
 
-    vfs_node_t *nodes = calloc(nodes_count, sizeof(vfs_node_t));
+    vfs_node_t **nodes = calloc(nodes_count, sizeof(vfs_node_t *));
     if (!nodes)
         return;
 
@@ -1824,12 +1824,13 @@ static void ext_prune_children(vfs_node_t parent, const char *name) {
     free(nodes);
 }
 
-static void ext_resolve_children_conflict(vfs_node_t parent, const char *name) {
+static void ext_resolve_children_conflict(vfs_node_t *parent,
+                                          const char *name) {
     if (!parent || !name)
         return;
 
     uint64_t nodes_count = 0;
-    vfs_node_t child, tmp;
+    vfs_node_t *child, *tmp;
     llist_for_each(child, tmp, &parent->childs, node_for_childs) {
         if (!child->name || strcmp(child->name, name))
             continue;
@@ -1839,7 +1840,7 @@ static void ext_resolve_children_conflict(vfs_node_t parent, const char *name) {
     if (nodes_count <= 1)
         return;
 
-    vfs_node_t *nodes = calloc(nodes_count, sizeof(vfs_node_t));
+    vfs_node_t **nodes = calloc(nodes_count, sizeof(vfs_node_t *));
     if (!nodes)
         return;
 
@@ -1850,7 +1851,7 @@ static void ext_resolve_children_conflict(vfs_node_t parent, const char *name) {
         nodes[idx++] = child;
     }
 
-    vfs_node_t keep = NULL;
+    vfs_node_t *keep = NULL;
     for (uint64_t i = 0; i < idx; i++) {
         if (nodes[i] == nodes[i]->root && vfs_is_mount_point(nodes[i])) {
             keep = nodes[i];
@@ -1886,7 +1887,7 @@ static void ext_resolve_children_conflict(vfs_node_t parent, const char *name) {
 }
 
 static int ext_populate_dir_with_fs_locked(ext_mount_ctx_t *fs,
-                                           vfs_node_t node) {
+                                           vfs_node_t *node) {
     if (!fs)
         return -ENOENT;
 
@@ -1935,7 +1936,7 @@ static int ext_populate_dir_with_fs_locked(ext_mount_ctx_t *fs,
                 memset(name, 0, sizeof(name));
                 memcpy(name, entry->name, entry->name_len);
 
-                vfs_node_t exist = vfs_child_find(node, name);
+                vfs_node_t *exist = vfs_child_find(node, name);
                 if (exist) {
                     if (exist == exist->root) {
                         goto next;
@@ -1947,7 +1948,7 @@ static int ext_populate_dir_with_fs_locked(ext_mount_ctx_t *fs,
                     }
                 }
 
-                vfs_node_t child = exist;
+                vfs_node_t *child = exist;
                 if (!child) {
                     child = vfs_node_alloc(node, name);
                     if (!child) {
@@ -1973,12 +1974,12 @@ static int ext_populate_dir_with_fs_locked(ext_mount_ctx_t *fs,
     return 0;
 }
 
-static int ext_populate_dir_locked(vfs_node_t node) {
+static int ext_populate_dir_locked(vfs_node_t *node) {
     return ext_populate_dir_with_fs_locked(ext_find_mount(node), node);
 }
 
 static int ext_create_inode_common_locked(ext_mount_ctx_t *fs,
-                                          vfs_node_t parent, vfs_node_t node,
+                                          vfs_node_t *parent, vfs_node_t *node,
                                           uint16_t mode, uint32_t rdev,
                                           const void *payload,
                                           size_t payload_size) {
@@ -2079,7 +2080,7 @@ rollback_inode:
     return ret;
 }
 
-int ext_mount(uint64_t dev, vfs_node_t node) {
+int ext_mount(uint64_t dev, vfs_node_t *node) {
     if (!dev || !node)
         return -EINVAL;
 
@@ -2184,7 +2185,7 @@ fail:
     return ret;
 }
 
-void ext_unmount(vfs_node_t node) {
+void ext_unmount(vfs_node_t *node) {
     if (!node)
         return;
 
@@ -2200,12 +2201,12 @@ void ext_unmount(vfs_node_t node) {
     node->dev = node->parent ? node->parent->dev : 0;
     node->rdev = node->parent ? node->parent->rdev : 0;
 
-    vfs_node_t child, tmp;
+    vfs_node_t *child, *tmp;
     uint64_t nodes_count = 0;
     llist_for_each(child, tmp, &node->childs, node_for_childs) {
         nodes_count++;
     }
-    vfs_node_t *nodes = calloc(nodes_count, sizeof(vfs_node_t));
+    vfs_node_t **nodes = calloc(nodes_count, sizeof(vfs_node_t *));
     if (nodes) {
         uint64_t idx = 0;
         llist_for_each(child, tmp, &node->childs, node_for_childs) {
@@ -2218,7 +2219,7 @@ void ext_unmount(vfs_node_t node) {
     spin_unlock(&rwlock);
 }
 
-int ext_remount(vfs_node_t old, vfs_node_t node) {
+int ext_remount(vfs_node_t *old, vfs_node_t *node) {
     if (!old || !node)
         return -EINVAL;
 
@@ -2248,7 +2249,7 @@ int ext_remount(vfs_node_t old, vfs_node_t node) {
     int ret = ext_populate_dir_with_fs_locked(ctx, node);
     if (!ret) {
         uint64_t nodes_count = 0;
-        vfs_node_t child, tmp;
+        vfs_node_t *child, *tmp;
         llist_for_each(child, tmp, &node->childs, node_for_childs) {
             nodes_count++;
         }
@@ -2275,7 +2276,7 @@ int ext_remount(vfs_node_t old, vfs_node_t node) {
     return ret;
 }
 
-void ext_open(vfs_node_t parent, const char *name, vfs_node_t node) {
+void ext_open(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     spin_lock(&rwlock);
 
     ext_mount_ctx_t *fs = ext_find_mount(node ? node : parent);
@@ -2329,7 +2330,7 @@ void ext_open(vfs_node_t parent, const char *name, vfs_node_t node) {
     spin_unlock(&rwlock);
 }
 
-bool ext_close(vfs_node_t node) {
+bool ext_close(vfs_node_t *node) {
     ext_handle_t *handle = node ? node->handle : NULL;
     if (!handle)
         return true;
@@ -2366,8 +2367,7 @@ ssize_t ext_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
         return -EBADF;
 
     if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
-        return device_write(fd->node->rdev, (void *)addr, offset, size,
-                            fd_get_flags(fd));
+        return device_write(fd->node->rdev, (void *)addr, offset, size, fd);
     }
     if (!(fd->node->type & file_none))
         return -EINVAL;
@@ -2409,8 +2409,7 @@ ssize_t ext_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         return -EBADF;
 
     if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
-        return device_read(fd->node->rdev, addr, offset, size,
-                           fd_get_flags(fd));
+        return device_read(fd->node->rdev, addr, offset, size, fd);
     }
     if (!(fd->node->type & file_none))
         return -EINVAL;
@@ -2447,7 +2446,7 @@ ssize_t ext_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     return ret;
 }
 
-ssize_t ext_readlink(vfs_node_t node, void *addr, size_t offset, size_t size) {
+ssize_t ext_readlink(vfs_node_t *node, void *addr, size_t offset, size_t size) {
     if (!node || !(node->type & file_symlink))
         return -EINVAL;
 
@@ -2492,7 +2491,7 @@ ssize_t ext_readlink(vfs_node_t node, void *addr, size_t offset, size_t size) {
     return ret < 0 ? ret : (ssize_t)to_copy;
 }
 
-int ext_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
+int ext_mkfile(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     (void)name;
     if (!parent || !node)
         return -EINVAL;
@@ -2506,8 +2505,8 @@ int ext_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
     return ret;
 }
 
-static int ext_link_node_locked(ext_mount_ctx_t *fs, vfs_node_t parent,
-                                vfs_node_t target, vfs_node_t node) {
+static int ext_link_node_locked(ext_mount_ctx_t *fs, vfs_node_t *parent,
+                                vfs_node_t *target, vfs_node_t *node) {
     if (!fs || !parent || !target || !node)
         return -EINVAL;
 
@@ -2551,8 +2550,8 @@ static int ext_link_node_locked(ext_mount_ctx_t *fs, vfs_node_t parent,
     return ret;
 }
 
-static int ext_link_existing(vfs_node_t parent, vfs_node_t target,
-                             vfs_node_t node) {
+static int ext_link_existing(vfs_node_t *parent, vfs_node_t *target,
+                             vfs_node_t *node) {
     if (!parent || !target || !node)
         return -EINVAL;
 
@@ -2563,7 +2562,7 @@ static int ext_link_existing(vfs_node_t parent, vfs_node_t target,
     return ret;
 }
 
-int ext_link(vfs_node_t parent, const char *name, vfs_node_t node) {
+int ext_link(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     if (!parent || !name || !node)
         return -EINVAL;
 
@@ -2574,14 +2573,14 @@ int ext_link(vfs_node_t parent, const char *name, vfs_node_t node) {
         return -ENOENT;
     }
 
-    vfs_node_t target = vfs_open(name, O_NOFOLLOW);
+    vfs_node_t *target = vfs_open(name, O_NOFOLLOW);
     int ret = target ? ext_link_node_locked(fs, parent, target, node) : -ENOENT;
 
     spin_unlock(&rwlock);
     return ret;
 }
 
-int ext_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
+int ext_symlink(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     if (!parent || !name || !node)
         return -EINVAL;
 
@@ -2595,7 +2594,7 @@ int ext_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
     return ret;
 }
 
-int ext_mknod(vfs_node_t parent, const char *name, vfs_node_t node,
+int ext_mknod(vfs_node_t *parent, const char *name, vfs_node_t *node,
               uint16_t mode, int dev) {
     (void)name;
     if (!parent || !node)
@@ -2610,7 +2609,7 @@ int ext_mknod(vfs_node_t parent, const char *name, vfs_node_t node,
     return ret;
 }
 
-int ext_mkdir(vfs_node_t parent, const char *name, vfs_node_t node) {
+int ext_mkdir(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     (void)name;
     if (!parent || !node)
         return -EINVAL;
@@ -2624,7 +2623,7 @@ int ext_mkdir(vfs_node_t parent, const char *name, vfs_node_t node) {
     return ret;
 }
 
-int ext_chmod(vfs_node_t node, uint16_t mode) {
+int ext_chmod(vfs_node_t *node, uint16_t mode) {
     if (!node)
         return -EINVAL;
 
@@ -2648,7 +2647,7 @@ int ext_chmod(vfs_node_t node, uint16_t mode) {
     return ret;
 }
 
-int ext_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
+int ext_chown(vfs_node_t *node, uint64_t uid, uint64_t gid) {
     if (!node)
         return -EINVAL;
 
@@ -2673,7 +2672,7 @@ int ext_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
     return ret;
 }
 
-int ext_delete(vfs_node_t parent, vfs_node_t node) {
+int ext_delete(vfs_node_t *parent, vfs_node_t *node) {
     if (!parent || !node)
         return -EINVAL;
 
@@ -2745,7 +2744,7 @@ int ext_delete(vfs_node_t parent, vfs_node_t node) {
     return ret;
 }
 
-int ext_rename(vfs_node_t node, const char *new) {
+int ext_rename(vfs_node_t *node, const char *new) {
     if (!node || !new)
         return -EINVAL;
 
@@ -2776,7 +2775,7 @@ int ext_rename(vfs_node_t node, const char *new) {
         strcpy(parent_path, ".");
     }
 
-    vfs_node_t new_parent = vfs_open(parent_path, 0);
+    vfs_node_t *new_parent = vfs_open(parent_path, 0);
     if (!new_parent) {
         free(path);
         return -ENOENT;
@@ -2856,7 +2855,7 @@ int ext_rename(vfs_node_t node, const char *new) {
         if (ret)
             goto out;
 
-        vfs_node_t cached_target = vfs_find_node_by_inode(target_lookup.inode);
+        vfs_node_t *cached_target = vfs_find_node_by_inode(target_lookup.inode);
         if (cached_target == node)
             cached_target = NULL;
         ret = ext_drop_link_locked(fs, target_lookup.inode, &target_inode,
@@ -2926,7 +2925,7 @@ out:
     return ret;
 }
 
-int ext_stat(vfs_node_t node) {
+int ext_stat(vfs_node_t *node) {
     if (!node)
         return -EINVAL;
 
@@ -2961,15 +2960,15 @@ int ext_stat(vfs_node_t node) {
     return ret;
 }
 
-int ext_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
-    if (!node)
+int ext_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
+    if (!fd->node)
         return -EBADF;
-    if ((node->type & file_block) || (node->type & file_stream))
-        return device_ioctl(node->rdev, cmd, (void *)arg);
+    if ((fd->node->type & file_block) || (fd->node->type & file_stream))
+        return device_ioctl(fd->node->rdev, cmd, (void *)arg, fd);
     return -ENOSYS;
 }
 
-int ext_poll(vfs_node_t node, size_t events) {
+int ext_poll(vfs_node_t *node, size_t events) {
     if (!node)
         return EPOLLNVAL;
     if ((node->type & file_block) || (node->type & file_stream))
@@ -2977,7 +2976,7 @@ int ext_poll(vfs_node_t node, size_t events) {
     return 0;
 }
 
-void ext_resize(vfs_node_t node, uint64_t size) {
+void ext_resize(vfs_node_t *node, uint64_t size) {
     if (!node || !(node->type & file_none))
         return;
 
@@ -3005,11 +3004,11 @@ void ext_resize(vfs_node_t node, uint64_t size) {
 void *ext_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
               size_t flags) {
     if ((file->node->type & file_block) || (file->node->type & file_stream))
-        return device_map(file->node->rdev, addr, offset, size, prot, flags);
+        return device_map(file->node->rdev, addr, offset, size, prot, file);
     return general_map(file, (uint64_t)addr, size, prot, flags, offset);
 }
 
-void ext_free_handle(vfs_node_t node) {
+void ext_free_handle(vfs_node_t *node) {
     if (!node || !node->handle)
         return;
     spin_lock(&rwlock);

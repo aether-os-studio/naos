@@ -1006,7 +1006,7 @@ int netlink_socket(int domain, int type, int protocol) {
     }
     memset(handle, 0, sizeof(socket_handle_t));
 
-    vfs_node_t socknode = vfs_node_alloc(NULL, NULL);
+    vfs_node_t *socknode = vfs_node_alloc(NULL, NULL);
     if (socknode == NULL) {
         free(handle);
         free(nl_sk->buffer);
@@ -1085,7 +1085,7 @@ int netlink_socket_pair(int type, int protocol, int *sv) {
     return -EOPNOTSUPP;
 }
 
-int netlink_poll(vfs_node_t node, size_t events) {
+int netlink_poll(vfs_node_t *node, size_t events) {
     socket_handle_t *handle = node ? node->handle : NULL;
     if (handle == NULL || handle->sock == NULL) {
         return EPOLLERR;
@@ -1175,9 +1175,9 @@ static ssize_t netlink_write_op(fd_t *fd, const void *buf, size_t offset,
     return -EDESTADDRREQ;
 }
 
-int netlink_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) { return -EINVAL; }
+int netlink_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) { return -EINVAL; }
 
-void netlink_free_handle(vfs_node_t node) {
+void netlink_free_handle(vfs_node_t *node) {
     if (node == NULL) {
         return;
     }
@@ -1212,7 +1212,7 @@ void netlink_free_handle(vfs_node_t node) {
     node->handle = NULL;
 }
 
-static bool netlink_close(vfs_node_t node) {
+static bool netlink_close(vfs_node_t *node) {
     netlink_free_handle(node);
     return true;
 }

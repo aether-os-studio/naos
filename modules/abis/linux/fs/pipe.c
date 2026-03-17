@@ -7,7 +7,7 @@
 
 int pipefs_id = 0;
 
-void pipefs_open(vfs_node_t parent, const char *name, vfs_node_t node) {
+void pipefs_open(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     (void)parent;
     (void)name;
 }
@@ -134,7 +134,8 @@ ssize_t pipefs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     return ret;
 }
 
-int pipefs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
+int pipefs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
+    vfs_node_t *node = fd->node;
     pipe_specific_t *spec = node->handle;
     if (!spec)
         return -EINVAL;
@@ -149,7 +150,7 @@ int pipefs_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
     }
 }
 
-bool pipefs_close(vfs_node_t node) {
+bool pipefs_close(vfs_node_t *node) {
     pipe_specific_t *spec = node ? node->handle : NULL;
     if (!spec)
         return true;
@@ -186,7 +187,7 @@ bool pipefs_close(vfs_node_t node) {
     return true;
 }
 
-int pipefs_poll(vfs_node_t node, size_t events) {
+int pipefs_poll(vfs_node_t *node, size_t events) {
     pipe_specific_t *spec = node ? node->handle : NULL;
     if (!spec)
         return EPOLLNVAL;
@@ -212,7 +213,7 @@ int pipefs_poll(vfs_node_t node, size_t events) {
     return out;
 }
 
-int pipefs_stat(vfs_node_t node) {
+int pipefs_stat(vfs_node_t *node) {
     pipe_specific_t *spec = node ? node->handle : NULL;
     if (!spec)
         return -EINVAL;
@@ -252,12 +253,12 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
         return -EFAULT;
     }
 
-    vfs_node_t node_input = vfs_node_alloc(NULL, NULL);
+    vfs_node_t *node_input = vfs_node_alloc(NULL, NULL);
     node_input->type = file_fifo;
     node_input->fsid = pipefs_id;
     node_input->refcount++;
 
-    vfs_node_t node_output = vfs_node_alloc(NULL, NULL);
+    vfs_node_t *node_output = vfs_node_alloc(NULL, NULL);
     node_output->type = file_fifo;
     node_output->fsid = pipefs_id;
     node_output->refcount++;

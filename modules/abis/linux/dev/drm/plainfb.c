@@ -26,7 +26,8 @@ int plainfb_get_display_info(drm_device_t *drm_dev, uint32_t *width,
 }
 
 int plainfb_create_dumb(drm_device_t *drm_dev,
-                        struct drm_mode_create_dumb *args) {
+                        struct drm_mode_create_dumb *args, fd_t *fd) {
+    (void)fd;
     plainfb_device_t *gpu_dev = drm_dev->data;
     if (!gpu_dev) {
         return -ENODEV;
@@ -72,7 +73,9 @@ int plainfb_create_dumb(drm_device_t *drm_dev,
     return -ENOSPC;
 }
 
-static int plainfb_destroy_dumb(drm_device_t *drm_dev, uint32_t handle) {
+static int plainfb_destroy_dumb(drm_device_t *drm_dev, uint32_t handle,
+                                fd_t *fd) {
+    (void)fd;
     plainfb_device_t *gpu_dev = drm_dev->data;
     if (!gpu_dev) {
         return -ENODEV;
@@ -98,8 +101,9 @@ static int plainfb_destroy_dumb(drm_device_t *drm_dev, uint32_t handle) {
     return 0;
 }
 
-static int plainfb_add_fb(drm_device_t *drm_dev,
-                          struct drm_mode_fb_cmd *fb_cmd) {
+static int plainfb_add_fb(drm_device_t *drm_dev, struct drm_mode_fb_cmd *fb_cmd,
+                          fd_t *fd) {
+    (void)fd;
     plainfb_device_t *device = drm_dev->data;
     if (!device) {
         return -ENODEV;
@@ -125,7 +129,8 @@ static int plainfb_add_fb(drm_device_t *drm_dev,
 }
 
 static int plainfb_add_fb2(drm_device_t *drm_dev,
-                           struct drm_mode_fb_cmd2 *fb_cmd) {
+                           struct drm_mode_fb_cmd2 *fb_cmd, fd_t *fd) {
+    (void)fd;
     plainfb_device_t *device = drm_dev->data;
     if (!device) {
         return -ENODEV;
@@ -167,8 +172,9 @@ static int plainfb_add_fb2(drm_device_t *drm_dev,
     return 0;
 }
 
-int plainfb_atomic_commit(drm_device_t *drm_dev,
-                          struct drm_mode_atomic *atomic) {
+int plainfb_atomic_commit(drm_device_t *drm_dev, struct drm_mode_atomic *atomic,
+                          fd_t *fd) {
+    (void)fd;
     plainfb_device_t *gpu_dev = drm_dev->data;
     if (!gpu_dev || !gpu_dev->framebuffer || !atomic) {
         return -ENODEV;
@@ -469,7 +475,9 @@ int plainfb_atomic_commit(drm_device_t *drm_dev,
     return 0;
 }
 
-int plainfb_map_dumb(drm_device_t *drm_dev, struct drm_mode_map_dumb *args) {
+int plainfb_map_dumb(drm_device_t *drm_dev, struct drm_mode_map_dumb *args,
+                     fd_t *fd) {
+    (void)fd;
     plainfb_device_t *gpu_dev = drm_dev->data;
     if (!gpu_dev) {
         return -ENODEV;
@@ -486,7 +494,9 @@ int plainfb_map_dumb(drm_device_t *drm_dev, struct drm_mode_map_dumb *args) {
     return 0;
 }
 
-static int plainfb_set_crtc(drm_device_t *drm_dev, struct drm_mode_crtc *crtc) {
+static int plainfb_set_crtc(drm_device_t *drm_dev, struct drm_mode_crtc *crtc,
+                            fd_t *fd) {
+    (void)fd;
     (void)drm_dev;
     (void)crtc;
     // CRTC configuration handled by page flip
@@ -494,7 +504,8 @@ static int plainfb_set_crtc(drm_device_t *drm_dev, struct drm_mode_crtc *crtc) {
 }
 
 static int plainfb_page_flip(drm_device_t *drm_dev,
-                             struct drm_mode_crtc_page_flip *flip) {
+                             struct drm_mode_crtc_page_flip *flip, fd_t *fd) {
+    (void)fd;
     plainfb_device_t *gpu_dev = drm_dev->data;
     if (!gpu_dev || !gpu_dev->framebuffer) {
         return -ENODEV;
@@ -769,7 +780,7 @@ void drm_plainfb_init() {
 
             char pci_uevent_path[192];
             sprintf(pci_uevent_path, "%s/uevent", pci_device_path);
-            vfs_node_t pci_uevent = vfs_open(pci_uevent_path, 0);
+            vfs_node_t *pci_uevent = vfs_open(pci_uevent_path, 0);
             if (pci_uevent) {
                 char uevent_content[256];
                 sprintf(uevent_content,

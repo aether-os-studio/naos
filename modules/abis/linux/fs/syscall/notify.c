@@ -12,7 +12,7 @@ uint64_t sys_inotify_init1(uint64_t flags) {
     if (flags & ~(O_NONBLOCK | O_CLOEXEC))
         return (uint64_t)-EINVAL;
 
-    vfs_node_t node = vfs_node_alloc(NULL, NULL);
+    vfs_node_t *node = vfs_node_alloc(NULL, NULL);
     node->type = file_none;
     node->fsid = notifyfs_id;
     node->refcount++;
@@ -73,7 +73,7 @@ uint64_t sys_inotify_add_watch(uint64_t notifyfd, const char *path_user,
         return (uint64_t)-EBADF;
     }
 
-    vfs_node_t notify_node = current_task->fd_info->fds[notifyfd]->node;
+    vfs_node_t *notify_node = current_task->fd_info->fds[notifyfd]->node;
     if (notify_node->fsid != notifyfs_id) {
         return (uint64_t)-EINVAL;
     }
@@ -86,7 +86,7 @@ uint64_t sys_inotify_add_watch(uint64_t notifyfd, const char *path_user,
     if (copy_from_user_str(path, path_user, sizeof(path)))
         return (uint64_t)-EFAULT;
 
-    vfs_node_t node = vfs_open(path, O_NOFOLLOW);
+    vfs_node_t *node = vfs_open(path, O_NOFOLLOW);
     if (!node)
         return (uint64_t)-ENOENT;
     node = vfs_get_real_node(node);

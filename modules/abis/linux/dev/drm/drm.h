@@ -1399,18 +1399,24 @@ typedef struct drm_device_op {
                             uint32_t *height, uint32_t *bpp);
     int (*get_fb)(drm_device_t *drm_dev, uint32_t *width, uint32_t *height,
                   uint32_t *bpp, uint64_t *addr);
-    int (*create_dumb)(drm_device_t *drm_dev,
-                       struct drm_mode_create_dumb *args);
-    int (*destroy_dumb)(drm_device_t *drm_dev, uint32_t handle);
-    int (*dirty_fb)(drm_device_t *drm_dev, struct drm_mode_fb_dirty_cmd *cmd);
-    int (*add_fb)(drm_device_t *drm_dev, struct drm_mode_fb_cmd *cmd);
-    int (*add_fb2)(drm_device_t *drm_dev, struct drm_mode_fb_cmd2 *cmd);
-    int (*set_plane)(drm_device_t *drm_dev, struct drm_mode_set_plane *plane);
-    int (*atomic_commit)(drm_device_t *drm_dev, struct drm_mode_atomic *atomic);
-    int (*map_dumb)(drm_device_t *drm_dev, struct drm_mode_map_dumb *args);
-    int (*set_crtc)(drm_device_t *drm_dev, struct drm_mode_crtc *crtc);
+    int (*create_dumb)(drm_device_t *drm_dev, struct drm_mode_create_dumb *args,
+                       fd_t *fd);
+    int (*destroy_dumb)(drm_device_t *drm_dev, uint32_t handle, fd_t *fd);
+    int (*dirty_fb)(drm_device_t *drm_dev, struct drm_mode_fb_dirty_cmd *cmd,
+                    fd_t *fd);
+    int (*add_fb)(drm_device_t *drm_dev, struct drm_mode_fb_cmd *cmd, fd_t *fd);
+    int (*add_fb2)(drm_device_t *drm_dev, struct drm_mode_fb_cmd2 *cmd,
+                   fd_t *fd);
+    int (*set_plane)(drm_device_t *drm_dev, struct drm_mode_set_plane *plane,
+                     fd_t *fd);
+    int (*atomic_commit)(drm_device_t *drm_dev, struct drm_mode_atomic *atomic,
+                         fd_t *fd);
+    int (*map_dumb)(drm_device_t *drm_dev, struct drm_mode_map_dumb *args,
+                    fd_t *fd);
+    int (*set_crtc)(drm_device_t *drm_dev, struct drm_mode_crtc *crtc,
+                    fd_t *fd);
     int (*page_flip)(struct drm_device *dev,
-                     struct drm_mode_crtc_page_flip *flip);
+                     struct drm_mode_crtc_page_flip *flip, fd_t *fd);
     int (*set_cursor)(drm_device_t *drm_dev, struct drm_mode_cursor *cursor);
     int (*gamma_set)(drm_device_t *drm_dev, struct drm_mode_crtc_lut *gamma);
     int (*get_connectors)(drm_device_t *drm_dev, drm_connector_t **connectors,
@@ -1424,7 +1430,7 @@ typedef struct drm_device_op {
     int (*mmap)(drm_device_t *drm_dev, uint64_t addr, uint64_t offset,
                 uint64_t len);
     ssize_t (*driver_ioctl)(drm_device_t *drm_dev, uint32_t cmd, void *arg,
-                            bool render_node);
+                            bool render_node, fd_t *fd);
 } drm_device_op_t;
 
 struct drm_resource_manager;

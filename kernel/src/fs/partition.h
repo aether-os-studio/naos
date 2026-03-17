@@ -74,4 +74,4 @@ ssize_t partition_read(void *data, void *buf, uint64_t offset, uint64_t len,
                        uint64_t flags);
 ssize_t partition_write(void *data, const void *buf, uint64_t offset,
                         uint64_t len, uint64_t flags);
-int partition_ioctl(void *data, int cmd, void *args);
+int partition_ioctl(void *data, int cmd, void *args, fd_t *fd);

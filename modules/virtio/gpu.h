@@ -15,6 +15,7 @@
 #define VIRTIO_GPU_F_CONTEXT_INIT (1ULL << 4)
 #define VIRTIO_GPU_F_SUPPORTED_CAPSET_IDS (1ULL << 5)
 #define VIRTIO_GPU_MAX_BOS 256
+#define VIRTIO_GPU_MAX_CONTEXTS 64
 #define VIRTIO_GPU_FLAG_FENCE 0x1
 
 // Virtio GPU request types
@@ -331,6 +332,7 @@ typedef struct virtio_gpu_device {
         uint32_t format;
         uint64_t size;
         uint32_t refcount;
+        uint64_t owner_file;
     } framebuffers[32];
 
     struct virtio_gpu_bo {
@@ -352,12 +354,19 @@ typedef struct virtio_gpu_device {
         uint32_t blob_map_info;
         uint64_t host_visible_offset;
         uint32_t attached_ctx_id;
+        uint64_t owner_file;
     } bos[VIRTIO_GPU_MAX_BOS];
 
+    struct virtio_gpu_context {
+        bool in_use;
+        bool initialized;
+        uint64_t owner_file;
+        uint32_t ctx_id;
+        uint32_t capset_id;
+    } contexts[VIRTIO_GPU_MAX_CONTEXTS];
+
     uint32_t next_bo_handle;
-    uint32_t active_ctx_id;
-    uint32_t active_capset_id;
-    bool context_initialized;
+    uint32_t next_ctx_id;
     uint64_t supported_capset_mask;
     uint64_t host_visible_shm_paddr;
     uint64_t host_visible_shm_size;

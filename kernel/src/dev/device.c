@@ -112,12 +112,12 @@ ssize_t device_close(uint64_t dev) {
     return -ENOSYS;
 }
 
-ssize_t device_ioctl(uint64_t dev, int cmd, void *args) {
+ssize_t device_ioctl(uint64_t dev, int cmd, void *args, fd_t *fd) {
     device_t *device = device_get(dev);
     if (!device)
         return -ENODEV;
     if (device->ioctl) {
-        return device->ioctl(device->ptr, cmd, args);
+        return device->ioctl(device->ptr, cmd, args, fd);
     }
     return -ENOSYS;
 }
@@ -133,34 +133,34 @@ ssize_t device_poll(uint64_t dev, int events) {
 }
 
 ssize_t device_read(uint64_t dev, void *buf, uint64_t idx, size_t count,
-                    uint64_t flags) {
+                    fd_t *fd) {
     device_t *device = device_get(dev);
     if (!device)
         return -ENODEV;
     if (device->read) {
-        return device->read(device->ptr, buf, idx, count, flags);
+        return device->read(device->ptr, buf, idx, count, fd);
     }
     return -ENOSYS;
 }
 
 ssize_t device_write(uint64_t dev, void *buf, uint64_t idx, size_t count,
-                     uint64_t flags) {
+                     fd_t *fd) {
     device_t *device = device_get(dev);
     if (!device)
         return -ENODEV;
     if (device->write) {
-        return device->write(device->ptr, buf, idx, count, flags);
+        return device->write(device->ptr, buf, idx, count, fd);
     }
     return -ENOSYS;
 }
 
 void *device_map(uint64_t dev, void *addr, size_t offset, size_t size,
-                 size_t prot, size_t flags) {
+                 size_t prot, fd_t *fd) {
     device_t *device = device_get(dev);
     if (!device)
         return (void *)-ENODEV;
     if (device->map) {
-        return device->map(device->ptr, addr, offset, size, prot, flags);
+        return device->map(device->ptr, addr, offset, size, prot, fd);
     }
     return (void *)-ENOSYS;
 }

@@ -33,7 +33,7 @@ static uint64_t mempolicy_copy_nodemask_to_user(unsigned long *nmask,
 }
 
 static uint64_t do_munmap_locked(uint64_t addr, uint64_t size);
-static uint64_t msync_writeback_file_range(vfs_node_t node, uint64_t vm_start,
+static uint64_t msync_writeback_file_range(vfs_node_t *node, uint64_t vm_start,
                                            int64_t vm_offset,
                                            uint64_t sync_start,
                                            uint64_t sync_end);
@@ -458,7 +458,7 @@ static int split_vma_boundaries_locked(vma_manager_t *mgr, uint64_t start,
 
 static vma_t *alloc_mapping_vma(uint64_t start, uint64_t len, uint64_t prot,
                                 uint64_t map_type, uint64_t file_flags,
-                                bool anonymous, vfs_node_t node,
+                                bool anonymous, vfs_node_t *node,
                                 uint64_t offset) {
     vma_t *vma = vma_alloc();
     if (!vma)
@@ -644,7 +644,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
 
     task_mm_info_t *mm_info = current_task->mm;
     fd_t *map_fd_ref = NULL;
-    vfs_node_t map_node = NULL;
+    vfs_node_t *map_node = NULL;
     int access_ret = 0;
     if (!anonymous) {
         if (fd >= MAX_FD_NUM)
@@ -1315,7 +1315,7 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
     return (void *)addr;
 }
 
-static uint64_t msync_writeback_file_range(vfs_node_t node, uint64_t vm_start,
+static uint64_t msync_writeback_file_range(vfs_node_t *node, uint64_t vm_start,
                                            int64_t vm_offset,
                                            uint64_t sync_start,
                                            uint64_t sync_end) {
@@ -1410,7 +1410,7 @@ uint64_t sys_msync(uint64_t addr, uint64_t size, uint64_t flags) {
 
     uint64_t cursor = addr;
     while (cursor < end) {
-        vfs_node_t node = NULL;
+        vfs_node_t *node = NULL;
         uint64_t vm_start = 0;
         uint64_t vm_end = 0;
         uint64_t vm_flags = 0;

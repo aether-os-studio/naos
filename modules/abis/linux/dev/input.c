@@ -7,7 +7,7 @@ static int eventn = 0;
 
 spinlock_t inputdev_regist_lock = SPIN_INIT;
 
-extern vfs_node_t devtmpfs_root;
+extern vfs_node_t *devtmpfs_root;
 
 dev_input_event_t *regist_input_dev(const char *device_name,
                                     const char *uevent_append,
@@ -84,8 +84,8 @@ dev_input_event_t *regist_input_dev(const char *device_name,
     sysfs_regist_dev('c', (dev >> 8) & 0xFF, dev & 0xFF, sysfs_path, dirpath,
                      uevent);
 
-    vfs_node_t input_root = vfs_open("/sys/class/input", 0);
-    vfs_node_t eventn_node =
+    vfs_node_t *input_root = vfs_open("/sys/class/input", 0);
+    vfs_node_t *eventn_node =
         sysfs_child_append_symlink(input_root, dirname, sysfs_path);
 
     eventn_node = vfs_open(sysfs_path, 0);

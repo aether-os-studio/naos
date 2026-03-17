@@ -101,7 +101,8 @@ static int tmpfs_replace_content(tmpfs_node_t *handle, size_t new_capability,
     return 0;
 }
 
-static void tmpfs_sync_node_from_handle(vfs_node_t node, tmpfs_node_t *handle) {
+static void tmpfs_sync_node_from_handle(vfs_node_t *node,
+                                        tmpfs_node_t *handle) {
     if (!node || !handle)
         return;
 
@@ -117,7 +118,8 @@ static void tmpfs_sync_node_from_handle(vfs_node_t node, tmpfs_node_t *handle) {
     node->realsize = handle->capability;
 }
 
-static void tmpfs_init_handle_from_node(tmpfs_node_t *handle, vfs_node_t node) {
+static void tmpfs_init_handle_from_node(tmpfs_node_t *handle,
+                                        vfs_node_t *node) {
     if (!handle || !node)
         return;
 
@@ -133,7 +135,7 @@ static void tmpfs_init_handle_from_node(tmpfs_node_t *handle, vfs_node_t node) {
     handle->handle_refs = 1;
 }
 
-static tmpfs_node_t *tmpfs_alloc_handle(vfs_node_t node, size_t capability) {
+static tmpfs_node_t *tmpfs_alloc_handle(vfs_node_t *node, size_t capability) {
     tmpfs_node_t *handle = calloc(1, sizeof(tmpfs_node_t));
     if (!handle)
         return NULL;
@@ -152,7 +154,7 @@ static tmpfs_node_t *tmpfs_alloc_handle(vfs_node_t node, size_t capability) {
     return handle;
 }
 
-void tmpfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {
+void tmpfs_open(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     (void)parent;
     (void)name;
 
@@ -160,12 +162,11 @@ void tmpfs_open(vfs_node_t parent, const char *name, vfs_node_t node) {
         tmpfs_sync_node_from_handle(node, node->handle);
 }
 
-bool tmpfs_close(vfs_node_t node) { return false; }
+bool tmpfs_close(vfs_node_t *node) { return false; }
 
 ssize_t tmpfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
-        return device_read(fd->node->rdev, addr, offset, size,
-                           fd_get_flags(fd));
+        return device_read(fd->node->rdev, addr, offset, size, fd);
     }
 
     tmpfs_node_t *handle = fd->node->handle;
@@ -178,8 +179,7 @@ ssize_t tmpfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
 
 ssize_t tmpfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
-        return device_write(fd->node->rdev, (void *)addr, offset, size,
-                            fd_get_flags(fd));
+        return device_write(fd->node->rdev, (void *)addr, offset, size, fd);
     }
 
     spin_lock(&tmpfs_oplock);
@@ -207,7 +207,7 @@ ssize_t tmpfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     return size;
 }
 
-ssize_t tmpfs_readlink(vfs_node_t node, void *addr, size_t offset,
+ssize_t tmpfs_readlink(vfs_node_t *node, void *addr, size_t offset,
                        size_t size) {
     tmpfs_node_t *handle = node->handle;
     if (offset >= handle->size)
@@ -218,14 +218,14 @@ ssize_t tmpfs_readlink(vfs_node_t node, void *addr, size_t offset,
     return to_copy;
 }
 
-int tmpfs_mkdir(vfs_node_t parent, const char *name, vfs_node_t node) {
+int tmpfs_mkdir(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     (void)parent;
     (void)name;
     node->mode = 0700;
     return 0;
 }
 
-int tmpfs_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
+int tmpfs_mkfile(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     (void)parent;
     (void)name;
     node->mode = 0700;
@@ -236,7 +236,7 @@ int tmpfs_mkfile(vfs_node_t parent, const char *name, vfs_node_t node) {
     return 0;
 }
 
-int tmpfs_mknod(vfs_node_t parent, const char *name, vfs_node_t node,
+int tmpfs_mknod(vfs_node_t *parent, const char *name, vfs_node_t *node,
                 uint16_t mode, int dev) {
     node->dev = dev;
     node->rdev = dev;
@@ -251,7 +251,7 @@ int tmpfs_mknod(vfs_node_t parent, const char *name, vfs_node_t node,
     return 0;
 }
 
-int tmpfs_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
+int tmpfs_symlink(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     (void)parent;
     node->mode = 0700;
     if (node->handle) {
@@ -269,8 +269,8 @@ int tmpfs_symlink(vfs_node_t parent, const char *name, vfs_node_t node) {
     return 0;
 }
 
-static int tmpfs_link_target(vfs_node_t parent, vfs_node_t target,
-                             vfs_node_t node) {
+static int tmpfs_link_target(vfs_node_t *parent, vfs_node_t *target,
+                             vfs_node_t *node) {
     if (!parent || !target || !node)
         return -EINVAL;
 
@@ -293,22 +293,22 @@ static int tmpfs_link_target(vfs_node_t parent, vfs_node_t target,
     return 0;
 }
 
-static int tmpfs_link_existing(vfs_node_t parent, vfs_node_t target,
-                               vfs_node_t node) {
+static int tmpfs_link_existing(vfs_node_t *parent, vfs_node_t *target,
+                               vfs_node_t *node) {
     return tmpfs_link_target(parent, target, node);
 }
 
-int tmpfs_link(vfs_node_t parent, const char *name, vfs_node_t node) {
+int tmpfs_link(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     if (!parent || !name || !node)
         return -EINVAL;
 
-    vfs_node_t target = vfs_open(name, O_NOFOLLOW);
+    vfs_node_t *target = vfs_open(name, O_NOFOLLOW);
     if (!target)
         return -ENOENT;
     return tmpfs_link_target(parent, target, node);
 }
 
-int tmpfs_mount(uint64_t dev, vfs_node_t node) {
+int tmpfs_mount(uint64_t dev, vfs_node_t *node) {
     spin_lock(&tmpfs_oplock);
 
     node->flags = (uint64_t)node->fsid << 32;
@@ -321,10 +321,10 @@ int tmpfs_mount(uint64_t dev, vfs_node_t node) {
     return 0;
 }
 
-void tmpfs_unmount(vfs_node_t root) {
+void tmpfs_unmount(vfs_node_t *root) {
     root->fsid = (uint32_t)(root->flags >> 32);
 
-    vfs_node_t node, tmp;
+    vfs_node_t *node, *tmp;
     llist_for_each(node, tmp, &root->childs, node_for_childs) {
         if (node == node->root) {
             char *node_path = vfs_get_fullpath(node);
@@ -338,7 +338,7 @@ void tmpfs_unmount(vfs_node_t root) {
 
     uint64_t nodes_count = 0;
     llist_for_each(node, tmp, &root->childs, node_for_childs) { nodes_count++; }
-    vfs_node_t *nodes = calloc(nodes_count, sizeof(vfs_node_t));
+    vfs_node_t **nodes = calloc(nodes_count, sizeof(vfs_node_t *));
     uint64_t idx = 0;
     llist_for_each(node, tmp, &root->childs, node_for_childs) {
         nodes[idx++] = node;
@@ -349,7 +349,7 @@ void tmpfs_unmount(vfs_node_t root) {
     free(nodes);
 }
 
-int tmpfs_chmod(vfs_node_t node, uint16_t mode) {
+int tmpfs_chmod(vfs_node_t *node, uint16_t mode) {
     tmpfs_node_t *handle = node ? node->handle : NULL;
     if (handle) {
         handle->mode = mode;
@@ -360,7 +360,7 @@ int tmpfs_chmod(vfs_node_t node, uint16_t mode) {
     return 0;
 }
 
-int tmpfs_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
+int tmpfs_chown(vfs_node_t *node, uint64_t uid, uint64_t gid) {
     tmpfs_node_t *handle = node ? node->handle : NULL;
     if (handle) {
         handle->owner = (uint32_t)uid;
@@ -373,7 +373,7 @@ int tmpfs_chown(vfs_node_t node, uint64_t uid, uint64_t gid) {
     return 0;
 }
 
-int tmpfs_delete(vfs_node_t parent, vfs_node_t node) {
+int tmpfs_delete(vfs_node_t *parent, vfs_node_t *node) {
     (void)parent;
 
     tmpfs_node_t *handle = node ? node->handle : NULL;
@@ -388,12 +388,12 @@ int tmpfs_delete(vfs_node_t parent, vfs_node_t node) {
     return 0;
 }
 
-int tmpfs_rename(vfs_node_t node, const char *new) { return 0; }
+int tmpfs_rename(vfs_node_t *node, const char *new) { return 0; }
 
 void *tmpfs_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
                 size_t flags) {
     if ((file->node->type & file_block) || (file->node->type & file_stream)) {
-        return device_map(file->node->rdev, addr, offset, size, prot, flags);
+        return device_map(file->node->rdev, addr, offset, size, prot, file);
     }
 
     tmpfs_node_t *handle = file->node->handle;
@@ -429,7 +429,7 @@ void *tmpfs_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
     return addr;
 }
 
-void tmpfs_resize(vfs_node_t node, uint64_t size) {
+void tmpfs_resize(vfs_node_t *node, uint64_t size) {
     tmpfs_node_t *handle = node->handle;
     if (!handle)
         return;
@@ -458,7 +458,7 @@ void tmpfs_resize(vfs_node_t node, uint64_t size) {
     spin_unlock(&tmpfs_oplock);
 }
 
-int tmpfs_stat(vfs_node_t node) {
+int tmpfs_stat(vfs_node_t *node) {
     tmpfs_node_t *tnode = node ? node->handle : NULL;
     if (!tnode) {
         if (node) {
@@ -472,7 +472,7 @@ int tmpfs_stat(vfs_node_t node) {
     return 0;
 }
 
-void tmpfs_free_handle(vfs_node_t node) {
+void tmpfs_free_handle(vfs_node_t *node) {
     tmpfs_node_t *tnode = node ? node->handle : NULL;
     if (!tnode)
         return;

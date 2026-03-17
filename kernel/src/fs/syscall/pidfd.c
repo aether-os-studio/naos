@@ -7,7 +7,7 @@ typedef struct pidfd_ctx {
     uint64_t pid;
     uint64_t exit_status;
     bool exited;
-    vfs_node_t node;
+    vfs_node_t *node;
     struct llist_header watch_node;
 } pidfd_ctx_t;
 
@@ -102,7 +102,7 @@ static ssize_t pidfd_write(fd_t *fd, const void *buf, size_t offset,
     return -EINVAL;
 }
 
-static int pidfd_poll(vfs_node_t node, size_t events) {
+static int pidfd_poll(vfs_node_t *node, size_t events) {
     pidfd_ctx_t *ctx = node ? node->handle : NULL;
     if (!ctx) {
         return EPOLLNVAL;
@@ -125,7 +125,7 @@ static int pidfd_poll(vfs_node_t node, size_t events) {
     return 0;
 }
 
-static bool pidfd_close(vfs_node_t node) {
+static bool pidfd_close(vfs_node_t *node) {
     pidfd_ctx_t *ctx = node ? node->handle : NULL;
     if (!ctx) {
         return true;
@@ -178,7 +178,7 @@ uint64_t pidfd_create_for_pid(uint64_t pid, uint64_t flags, bool cloexec) {
     ctx->exit_status = target->status;
     llist_init_head(&ctx->watch_node);
 
-    vfs_node_t node = vfs_node_alloc(NULL, NULL);
+    vfs_node_t *node = vfs_node_alloc(NULL, NULL);
     if (!node) {
         free(ctx);
         return (uint64_t)-ENOMEM;

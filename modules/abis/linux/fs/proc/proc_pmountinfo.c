@@ -11,7 +11,7 @@ char *proc_gen_mountinfo_file(task_t *task, size_t *context_len) {
     string_builder_t *builder = create_string_builder(1024);
     struct mount_point *mnt, *tmp;
     llist_for_each(mnt, tmp, &mount_points, node) {
-        vfs_node_t node = mnt->dir;
+        vfs_node_t *node = mnt->dir;
         if (!node || !node->name || !mnt->fs || !mnt->devname ||
             !mnt->fs->name) {
             continue;
