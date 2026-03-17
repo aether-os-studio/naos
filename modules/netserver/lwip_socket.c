@@ -102,12 +102,130 @@ static err_t lwip_socket_peek_conn_pending_err(struct netconn *conn) {
     return err;
 }
 
-static inline int lwip_socket_apply_fd_flags(const lwip_socket_state_t *sock,
-                                             int flags) {
-    if (sock && sock->fd && (fd_get_flags(sock->fd) & O_NONBLOCK)) {
+static inline int lwip_socket_apply_fd_flags(fd_t *fd, int flags) {
+    if (fd && (fd_get_flags(fd) & O_NONBLOCK)) {
         flags |= MSG_DONTWAIT;
     }
     return flags;
+}
+
+static inline bool lwip_socket_buffer_is_userspace(const void *buf,
+                                                   size_t len) {
+    return buf && !check_user_overflow((uint64_t)buf, len);
+}
+
+static int lwip_socket_alloc_copy_from_buffer(const void *src, size_t len,
+                                              void **out_buf) {
+    bool src_is_userspace = lwip_socket_buffer_is_userspace(src, len);
+    void *buf = NULL;
+
+    if (!out_buf) {
+        return -EINVAL;
+    }
+    if (!len) {
+        *out_buf = NULL;
+        return 0;
+    }
+    if (!src) {
+        return -EFAULT;
+    }
+
+    buf = malloc(len);
+    if (!buf) {
+        return -ENOMEM;
+    }
+
+    if (src_is_userspace) {
+        if (copy_from_user(buf, src, len)) {
+            free(buf);
+            return -EFAULT;
+        }
+    } else {
+        memcpy(buf, src, len);
+    }
+
+    *out_buf = buf;
+    return 0;
+}
+
+static int lwip_socket_copy_to_buffer(void *dst, const void *src, size_t len) {
+    bool dst_is_userspace = lwip_socket_buffer_is_userspace(dst, len);
+
+    if (!len) {
+        return 0;
+    }
+    if (!dst || !src) {
+        return -EFAULT;
+    }
+
+    if (dst_is_userspace) {
+        if (copy_to_user(dst, src, len)) {
+            return -EFAULT;
+        }
+    } else {
+        memcpy(dst, src, len);
+    }
+
+    return 0;
+}
+
+static void lwip_socket_free_bounce_iov(struct iovec *iov, void **buffers,
+                                        size_t iovlen) {
+    if (buffers) {
+        for (size_t i = 0; i < iovlen; i++) {
+            free(buffers[i]);
+        }
+    }
+
+    free(buffers);
+    free(iov);
+}
+
+static int lwip_socket_build_bounce_iov(const struct msghdr *msg,
+                                        struct iovec **out_iov,
+                                        void ***out_buffers) {
+    struct iovec *bounce_iov = NULL;
+    void **buffers = NULL;
+
+    if (!out_iov || !out_buffers) {
+        return -EINVAL;
+    }
+
+    *out_iov = NULL;
+    *out_buffers = NULL;
+
+    if (!msg) {
+        return -EINVAL;
+    }
+    if (!msg->msg_iovlen) {
+        return 0;
+    }
+    if (!msg->msg_iov) {
+        return -EFAULT;
+    }
+
+    bounce_iov = calloc(msg->msg_iovlen, sizeof(*bounce_iov));
+    buffers = calloc(msg->msg_iovlen, sizeof(*buffers));
+    if (!bounce_iov || !buffers) {
+        lwip_socket_free_bounce_iov(bounce_iov, buffers, msg->msg_iovlen);
+        return -ENOMEM;
+    }
+
+    for (size_t i = 0; i < msg->msg_iovlen; i++) {
+        int ret = lwip_socket_alloc_copy_from_buffer(
+            msg->msg_iov[i].iov_base, msg->msg_iov[i].len, &buffers[i]);
+        if (ret < 0) {
+            lwip_socket_free_bounce_iov(bounce_iov, buffers, msg->msg_iovlen);
+            return ret;
+        }
+
+        bounce_iov[i].iov_base = buffers[i];
+        bounce_iov[i].len = msg->msg_iov[i].len;
+    }
+
+    *out_iov = bounce_iov;
+    *out_buffers = buffers;
+    return 0;
 }
 
 static void lwip_socket_mark_peer_closed(lwip_socket_state_t *sock) {
@@ -311,7 +429,7 @@ static int lwip_socket_install_fd(lwip_socket_state_t *sock, int open_type,
             break;
         }
 
-        uint64_t flags = 0;
+        uint64_t flags = O_RDWR;
         if ((open_type & O_NONBLOCK) || (accept_flags & O_NONBLOCK)) {
             flags |= O_NONBLOCK;
             if (sock->conn) {
@@ -339,8 +457,7 @@ static int lwip_socket_install_fd(lwip_socket_state_t *sock, int open_type,
     }
 
     handle = node->handle;
-    sock->fd = current_task->fd_info->fds[slot];
-    handle->fd = sock->fd;
+    handle->fd = current_task->fd_info->fds[slot];
     return ret;
 }
 
@@ -797,7 +914,7 @@ static int lwip_socket_getsockopt_impl(lwip_socket_state_t *sock, int level,
             }
             memcpy(optval, &sock->sndtimeo, sizeof(sock->sndtimeo));
             *optlen = sizeof(sock->sndtimeo);
-            break;
+            return 0;
         default:
             return -ENOPROTOOPT;
         }
@@ -993,7 +1110,11 @@ static ssize_t lwip_socket_copyout_iov(const void *src, size_t src_len,
 
     for (size_t i = 0; i < iovlen && copied < src_len; i++) {
         size_t part = MIN(iov[i].len, src_len - copied);
-        memcpy(iov[i].iov_base, (const uint8_t *)src + copied, part);
+        int ret = lwip_socket_copy_to_buffer(
+            iov[i].iov_base, (const uint8_t *)src + copied, part);
+        if (ret < 0) {
+            return ret;
+        }
         copied += part;
     }
 
@@ -1012,12 +1133,12 @@ static size_t lwip_socket_iov_total(const struct iovec *iov, size_t iovlen) {
     return total;
 }
 
-static ssize_t lwip_socket_recvmsg_common(lwip_socket_state_t *sock,
+static ssize_t lwip_socket_recvmsg_common(lwip_socket_state_t *sock, fd_t *fd,
                                           struct msghdr *msg, int flags) {
     size_t total = 0;
     size_t want = lwip_socket_iov_total(msg->msg_iov, msg->msg_iovlen);
 
-    flags = lwip_socket_apply_fd_flags(sock, flags);
+    flags = lwip_socket_apply_fd_flags(fd, flags);
 
     if (lwip_socket_is_tcp(sock)) {
         int ret = lwip_socket_fetch_tcp(sock, flags);
@@ -1036,9 +1157,14 @@ static ssize_t lwip_socket_recvmsg_common(lwip_socket_state_t *sock,
         }
         pbuf_copy_partial(sock->rx_pbuf, buffer, (u16_t)take,
                           (u16_t)sock->rx_pbuf_offset);
-        lwip_socket_copyout_iov(buffer, take, msg->msg_iov, msg->msg_iovlen,
-                                &total);
-        free(buffer);
+        {
+            ssize_t copied = lwip_socket_copyout_iov(buffer, take, msg->msg_iov,
+                                                     msg->msg_iovlen, &total);
+            free(buffer);
+            if (copied < 0) {
+                return copied;
+            }
+        }
 
         if (!(flags & MSG_PEEK)) {
             sock->rx_pbuf_offset += total;
@@ -1087,9 +1213,14 @@ static ssize_t lwip_socket_recvmsg_common(lwip_socket_state_t *sock,
         }
         netbuf_copy_partial(sock->rx_netbuf, buffer, (u16_t)take,
                             (u16_t)sock->rx_netbuf_offset);
-        lwip_socket_copyout_iov(buffer, take, msg->msg_iov, msg->msg_iovlen,
-                                &total);
-        free(buffer);
+        {
+            ssize_t copied = lwip_socket_copyout_iov(buffer, take, msg->msg_iov,
+                                                     msg->msg_iovlen, &total);
+            free(buffer);
+            if (copied < 0) {
+                return copied;
+            }
+        }
 
         if (msg->msg_name && msg->msg_namelen > 0) {
             socklen_t namelen = (socklen_t)msg->msg_namelen;
@@ -1110,15 +1241,24 @@ static ssize_t lwip_socket_recvmsg_common(lwip_socket_state_t *sock,
     }
 }
 
-static ssize_t lwip_socket_sendmsg_common(lwip_socket_state_t *sock,
+static ssize_t lwip_socket_sendmsg_common(lwip_socket_state_t *sock, fd_t *fd,
                                           const struct msghdr *msg, int flags) {
     err_t err = ERR_OK;
     size_t written = 0;
 
-    flags = lwip_socket_apply_fd_flags(sock, flags);
+    flags = lwip_socket_apply_fd_flags(fd, flags);
 
     if (lwip_socket_is_tcp(sock)) {
+        struct iovec *bounce_iov = NULL;
+        void **bounce_buffers = NULL;
         u8_t write_flags = NETCONN_COPY;
+        int ret = 0;
+
+        ret = lwip_socket_build_bounce_iov(msg, &bounce_iov, &bounce_buffers);
+        if (ret < 0) {
+            return ret;
+        }
+
         if (flags & MSG_DONTWAIT) {
             write_flags |= NETCONN_DONTBLOCK;
         }
@@ -1127,8 +1267,10 @@ static ssize_t lwip_socket_sendmsg_common(lwip_socket_state_t *sock,
         }
 
         err = netconn_write_vectors_partly(
-            sock->conn, (struct netvector *)msg->msg_iov,
-            (u16_t)msg->msg_iovlen, write_flags, &written);
+            sock->conn, (struct netvector *)bounce_iov, (u16_t)msg->msg_iovlen,
+            write_flags, &written);
+        lwip_socket_free_bounce_iov(bounce_iov, bounce_buffers,
+                                    msg->msg_iovlen);
         if (err != ERR_OK) {
             return lwip_errno_from_err(err);
         }
@@ -1259,6 +1401,8 @@ static int lwip_socket_listen(uint64_t fd, int backlog) {
 static int lwip_socket_accept(uint64_t fd, struct sockaddr_un *addr,
                               socklen_t *addrlen, uint64_t flags) {
     lwip_socket_state_t *listener = lwip_socket_from_fd(fd);
+    fd_t *listener_fd =
+        (fd < MAX_FD_NUM) ? current_task->fd_info->fds[fd] : NULL;
     struct netconn *accepted = NULL;
     lwip_socket_state_t *sock = NULL;
     int newfd = 0;
@@ -1289,7 +1433,7 @@ static int lwip_socket_accept(uint64_t fd, struct sockaddr_un *addr,
     }
 
     newfd = lwip_socket_install_fd(
-        sock, listener->fd ? (int)fd_get_flags(listener->fd) : 0, flags);
+        sock, listener_fd ? (int)fd_get_flags(listener_fd) : O_RDWR, flags);
     if (newfd < 0) {
         return newfd;
     }
@@ -1349,6 +1493,7 @@ static size_t lwip_socket_sendto(uint64_t fd, uint8_t *in, size_t limit,
                                  int flags, struct sockaddr_un *addr,
                                  uint32_t len) {
     lwip_socket_state_t *sock = lwip_socket_from_fd(fd);
+    fd_t *file = (fd < MAX_FD_NUM) ? current_task->fd_info->fds[fd] : NULL;
     struct iovec iov = {.iov_base = in, .len = limit};
     struct msghdr msg = {0};
 
@@ -1361,13 +1506,14 @@ static size_t lwip_socket_sendto(uint64_t fd, uint8_t *in, size_t limit,
     msg.msg_iov = &iov;
     msg.msg_iovlen = 1;
 
-    return (size_t)lwip_socket_sendmsg_common(sock, &msg, flags);
+    return (size_t)lwip_socket_sendmsg_common(sock, file, &msg, flags);
 }
 
 static size_t lwip_socket_recvfrom(uint64_t fd, uint8_t *out, size_t limit,
                                    int flags, struct sockaddr_un *addr,
                                    uint32_t *len) {
     lwip_socket_state_t *sock = lwip_socket_from_fd(fd);
+    fd_t *file = (fd < MAX_FD_NUM) ? current_task->fd_info->fds[fd] : NULL;
     struct iovec iov = {.iov_base = out, .len = limit};
     struct msghdr msg = {0};
     socklen_t namelen = len ? *len : 0;
@@ -1382,7 +1528,7 @@ static size_t lwip_socket_recvfrom(uint64_t fd, uint8_t *out, size_t limit,
     msg.msg_iov = &iov;
     msg.msg_iovlen = 1;
 
-    ret = lwip_socket_recvmsg_common(sock, &msg, flags);
+    ret = lwip_socket_recvmsg_common(sock, file, &msg, flags);
     if (ret >= 0 && len) {
         *len = (uint32_t)msg.msg_namelen;
     }
@@ -1392,18 +1538,20 @@ static size_t lwip_socket_recvfrom(uint64_t fd, uint8_t *out, size_t limit,
 static size_t lwip_socket_sendmsg(uint64_t fd, const struct msghdr *msg,
                                   int flags) {
     lwip_socket_state_t *sock = lwip_socket_from_fd(fd);
+    fd_t *file = (fd < MAX_FD_NUM) ? current_task->fd_info->fds[fd] : NULL;
     if (!sock) {
         return (size_t)-EBADF;
     }
-    return (size_t)lwip_socket_sendmsg_common(sock, msg, flags);
+    return (size_t)lwip_socket_sendmsg_common(sock, file, msg, flags);
 }
 
 static size_t lwip_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
     lwip_socket_state_t *sock = lwip_socket_from_fd(fd);
+    fd_t *file = (fd < MAX_FD_NUM) ? current_task->fd_info->fds[fd] : NULL;
     if (!sock) {
         return (size_t)-EBADF;
     }
-    return (size_t)lwip_socket_recvmsg_common(sock, msg, flags);
+    return (size_t)lwip_socket_recvmsg_common(sock, file, msg, flags);
 }
 
 static int lwip_socket_getsockname(uint64_t fd, struct sockaddr_un *addr,
@@ -1451,10 +1599,14 @@ static uint64_t lwip_socket_shutdown(uint64_t fd, uint64_t how) {
     lwip_socket_state_t *sock = lwip_socket_from_fd(fd);
     u8_t shut_rx = 0;
     u8_t shut_tx = 0;
+    uint32_t notify_events = 0;
     err_t err = ERR_OK;
 
     if (!sock) {
         return -EBADF;
+    }
+    if (!lwip_socket_is_tcp(sock)) {
+        return -EOPNOTSUPP;
     }
     if (how > SHUT_RDWR) {
         return -EINVAL;
@@ -1468,7 +1620,13 @@ static uint64_t lwip_socket_shutdown(uint64_t fd, uint64_t how) {
     }
 
     lwip_socket_set_shutdown(sock, shut_rx != 0, shut_tx != 0);
-    lwip_socket_notify(sock, EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP);
+    if (shut_rx) {
+        notify_events |= EPOLLIN;
+    }
+    if (shut_tx) {
+        notify_events |= EPOLLOUT;
+    }
+    lwip_socket_notify(sock, notify_events);
     return 0;
 }
 
@@ -1532,8 +1690,10 @@ static int lwip_socket_poll(vfs_node_t node, size_t events) {
         revents |= EPOLLERR;
     }
 
-    if (sock->closed || peer_closed) {
+    if (sock->closed) {
         revents |= EPOLLHUP | EPOLLRDHUP;
+    } else if (peer_closed) {
+        revents |= EPOLLRDHUP;
     }
 
     return revents;
@@ -1564,17 +1724,6 @@ static int lwip_socket_ioctl(vfs_node_t node, ssize_t cmd, ssize_t arg) {
         value = *(int *)arg;
 
         netconn_set_nonblocking(sock->conn, value ? 1 : 0);
-        if (handle->fd) {
-            if (value) {
-                uint64_t flags = fd_get_flags(handle->fd);
-                flags |= O_NONBLOCK;
-                fd_set_flags(handle->fd, flags);
-            } else {
-                uint64_t flags = fd_get_flags(handle->fd);
-                flags &= ~O_NONBLOCK;
-                fd_set_flags(handle->fd, flags);
-            }
-        }
         return 0;
     }
 
@@ -1616,7 +1765,7 @@ static ssize_t lwip_socket_read(fd_t *fd, void *buf, size_t offset,
         flags |= MSG_DONTWAIT;
     }
 
-    return lwip_socket_recvmsg_common(sock, &msg, flags);
+    return lwip_socket_recvmsg_common(sock, fd, &msg, flags);
 }
 
 static ssize_t lwip_socket_write(fd_t *fd, const void *buf, size_t offset,
@@ -1632,12 +1781,15 @@ static ssize_t lwip_socket_write(fd_t *fd, const void *buf, size_t offset,
     if (!sock) {
         return -EBADF;
     }
+    if (!limit) {
+        return 0;
+    }
 
     if (fd_get_flags(fd) & O_NONBLOCK) {
         flags |= MSG_DONTWAIT;
     }
 
-    return lwip_socket_sendmsg_common(sock, &msg, flags);
+    return lwip_socket_sendmsg_common(sock, fd, &msg, flags);
 }
 
 static socket_op_t lwip_socket_ops = {

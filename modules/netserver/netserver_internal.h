@@ -79,7 +79,6 @@ struct sockaddr_in6 {
 };
 
 typedef struct lwip_socket_state {
-    fd_t *fd;
     vfs_node_t node;
     struct netconn *conn;
     int domain;
