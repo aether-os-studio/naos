@@ -177,7 +177,7 @@ typedef struct {
 typedef struct {
     sigset_t *ss;
     size_t ss_len;
-} WeirdPselect6;
+} weird_pselect6_t;
 
 struct pollfd {
     int fd;
@@ -418,7 +418,7 @@ size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except,
                   struct timeval *timeout);
 uint64_t sys_pselect6(uint64_t nfds, fd_set *readfds, fd_set *writefds,
                       fd_set *exceptfds, struct timespec *timeout,
-                      WeirdPselect6 *weirdPselect6);
+                      weird_pselect6_t *weirdPselect6);
 
 uint64_t sys_link(const char *old, const char *new);
 uint64_t sys_readlink(char *path, char *buf, uint64_t size);

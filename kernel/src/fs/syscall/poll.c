@@ -319,7 +319,7 @@ size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except,
 
 uint64_t sys_pselect6(uint64_t nfds, fd_set *readfds, fd_set *writefds,
                       fd_set *exceptfds, struct timespec *timeout,
-                      WeirdPselect6 *weirdPselect6) {
+                      weird_pselect6_t *weird_pselect6) {
     if (readfds &&
         check_user_overflow((uint64_t)readfds, sizeof(fd_set) * nfds)) {
         return (size_t)-EFAULT;
@@ -332,12 +332,17 @@ uint64_t sys_pselect6(uint64_t nfds, fd_set *readfds, fd_set *writefds,
         check_user_overflow((uint64_t)exceptfds, sizeof(fd_set) * nfds)) {
         return (size_t)-EFAULT;
     }
-    size_t sigsetsize = weirdPselect6->ss_len;
-    sigset_t *sigmask = weirdPselect6->ss;
 
-    sigset_t origmask;
-    if (sigmask)
-        sys_ssetmask(SIG_SETMASK, sigmask, &origmask, sigsetsize);
+    size_t sigsetsize = 0;
+    sigset_t *sigmask = NULL;
+    sigset_t origmask = 0;
+    if (weird_pselect6) {
+        sigsetsize = weird_pselect6->ss_len;
+        sigmask = weird_pselect6->ss;
+
+        if (sigmask)
+            sys_ssetmask(SIG_SETMASK, sigmask, &origmask, sigsetsize);
+    }
 
     struct timeval timeoutConv;
     if (timeout) {
@@ -352,8 +357,10 @@ uint64_t sys_pselect6(uint64_t nfds, fd_set *readfds, fd_set *writefds,
     size_t ret = sys_select(nfds, (uint8_t *)readfds, (uint8_t *)writefds,
                             (uint8_t *)exceptfds, &timeoutConv);
 
-    if (sigmask)
-        sys_ssetmask(SIG_SETMASK, &origmask, NULL, sigsetsize);
+    if (weird_pselect6) {
+        if (sigmask)
+            sys_ssetmask(SIG_SETMASK, &origmask, NULL, sigsetsize);
+    }
 
     return ret;
 }
