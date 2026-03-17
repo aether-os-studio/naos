@@ -213,18 +213,18 @@ endif
 bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH)-$(BOOT_PROTOCOL).ld $(OBJ)
 	mkdir -p "$$(dirname $@)"
 
-	@$(LINKER) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a -o $@.tmp
+	@$(LINKER) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a $(PROJECT_ROOT)/liballoc_$(ARCH).a -o $@.tmp
 
 	gcc kallsyms.c -o kallsyms
 	$(NM) -n $@.tmp | ./kallsyms > kallsyms.S
 	@$(CC) $(CFLAGS) -c kallsyms.S -o kallsyms.o
 
-	@$(LINKER) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a kallsyms.o -o $@.kallsyms.tmp
+	@$(LINKER) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a $(PROJECT_ROOT)/liballoc_$(ARCH).a kallsyms.o -o $@.kallsyms.tmp
 
 	$(NM) -n $@.kallsyms.tmp | ./kallsyms > kallsyms.S
 	@$(CC) $(CFLAGS) -c kallsyms.S -o kallsyms.o
 
-	@$(LINKER) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a kallsyms.o -o $@
+	@$(LINKER) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a $(PROJECT_ROOT)/liballoc_$(ARCH).a kallsyms.o -o $@
 
 # Compilation rules for *.c files.
 obj-$(ARCH)/src/%.c.o: src/%.c GNUmakefile

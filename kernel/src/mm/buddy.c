@@ -525,7 +525,33 @@ out:
     return addr;
 }
 
-void free_frames(uintptr_t addr, size_t count) {
+static bool claim_last_page_refs(uintptr_t addr, size_t pages) {
+    for (size_t offset = 0; offset < pages; offset++) {
+        page_t *page = get_page(addr + offset * DEFAULT_PAGE_SIZE);
+        if (page && page_try_release_last(page))
+            continue;
+
+        for (size_t rollback = 0; rollback < offset; rollback++) {
+            page_ref(get_page(addr + rollback * DEFAULT_PAGE_SIZE));
+        }
+        return false;
+    }
+
+    return true;
+}
+
+static bool pages_are_unreferenced(uintptr_t addr, size_t pages) {
+    for (size_t offset = 0; offset < pages; offset++) {
+        page_t *page = get_page(addr + offset * DEFAULT_PAGE_SIZE);
+        if (!page || page_refcount_read(page) != 0)
+            return false;
+    }
+
+    return true;
+}
+
+static void free_frames_common(uintptr_t addr, size_t count,
+                               bool refs_already_released) {
     if (addr == 0 || count == 0)
         return;
     if ((addr & (DEFAULT_PAGE_SIZE - 1)) != 0)
@@ -569,16 +595,16 @@ void free_frames(uintptr_t addr, size_t count) {
         }
     }
 
-    for (size_t offset = 0; offset < required_pages; offset++) {
-        page_t *page = get_page(addr + offset * DEFAULT_PAGE_SIZE);
-        if (!page || page->refcount != 1) {
+    if (refs_already_released) {
+        if (!pages_are_unreferenced(addr, required_pages)) {
             spin_unlock(&zone->allocator.lock);
             return;
         }
-    }
-
-    for (size_t offset = 0; offset < required_pages; offset++) {
-        address_unref(addr + offset * DEFAULT_PAGE_SIZE);
+    } else {
+        if (!claim_last_page_refs(addr, required_pages)) {
+            spin_unlock(&zone->allocator.lock);
+            return;
+        }
     }
 
     bitmap_set_range(&using_regions, start_page_index,
@@ -586,6 +612,14 @@ void free_frames(uintptr_t addr, size_t count) {
     buddy_free_zone_locked(zone, addr, required_order);
 
     spin_unlock(&zone->allocator.lock);
+}
+
+void free_frames(uintptr_t addr, size_t count) {
+    free_frames_common(addr, count, false);
+}
+
+void free_frames_released(uintptr_t addr, size_t count) {
+    free_frames_common(addr, count, true);
 }
 
 uintptr_t alloc_frames_dma32(size_t count) {

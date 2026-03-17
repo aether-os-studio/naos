@@ -99,8 +99,9 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
         }
         memset((void *)phys_to_virt(phys), 0, DEFAULT_PAGE_SIZE);
         paddr = phys;
-    } else if (paddr && (!had_old_mapping || old_paddr != paddr)) {
-        address_ref(paddr);
+    } else if (paddr && (!had_old_mapping || old_paddr != paddr) &&
+               !address_ref(paddr)) {
+        return 0;
     }
 
     if (had_old_mapping && old_paddr && old_paddr != paddr) {
@@ -276,8 +277,10 @@ static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level,
             uint64_t flags = ARCH_READ_PTE_FLAG(entry);
             bool managed = paddr && address_is_managed(paddr);
 
-            if (managed)
-                address_ref(paddr);
+            if (managed && !address_ref(paddr)) {
+                free_page_table_recursive(new_table, level);
+                return NULL;
+            }
 
             if (managed && vma_is_private_mapping(vma_find(mgr, entry_vaddr)) &&
                 pte_is_writable(flags)) {

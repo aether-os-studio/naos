@@ -20,20 +20,65 @@ page_t *get_page(uint64_t addr) {
     return page_maps + (addr / DEFAULT_PAGE_SIZE);
 }
 
+int page_refcount_read(page_t *page) {
+    if (!page)
+        return 0;
+    return __atomic_load_n(&page->refcount, __ATOMIC_ACQUIRE);
+}
+
 void page_ref(page_t *page) {
     if (page)
-        page->refcount++;
-}
-void page_unref(page_t *page) {
-    if (page)
-        page->refcount--;
+        __atomic_add_fetch(&page->refcount, 1, __ATOMIC_ACQ_REL);
 }
 
-bool page_can_free(page_t *page) { return page ? page->refcount <= 0 : true; }
+bool page_try_ref(page_t *page) {
+    if (!page)
+        return false;
 
-void address_ref(uint64_t addr) {
-    if (address_is_managed(addr))
-        page_ref(get_page(addr));
+    int refs = __atomic_load_n(&page->refcount, __ATOMIC_ACQUIRE);
+    while (refs > 0) {
+        int new_refs = refs + 1;
+        if (__atomic_compare_exchange_n(&page->refcount, &refs, new_refs, false,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+int page_unref(page_t *page) {
+    if (!page)
+        return -1;
+
+    int refs = __atomic_load_n(&page->refcount, __ATOMIC_ACQUIRE);
+    while (refs > 0) {
+        int new_refs = refs - 1;
+        if (__atomic_compare_exchange_n(&page->refcount, &refs, new_refs, false,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            return new_refs;
+        }
+    }
+
+    return -1;
+}
+
+bool page_try_release_last(page_t *page) {
+    if (!page)
+        return false;
+
+    int expected = 1;
+    return __atomic_compare_exchange_n(&page->refcount, &expected, 0, false,
+                                       __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+}
+
+bool page_can_free(page_t *page) { return page_refcount_read(page) <= 0; }
+
+bool address_ref(uint64_t addr) {
+    if (!address_is_managed(addr))
+        return true;
+
+    return page_try_ref(get_page(addr));
 }
 void address_unref(uint64_t addr) {
     if (address_is_managed(addr))
@@ -60,13 +105,12 @@ void address_release(uint64_t addr) {
         return;
 
     page_t *page = get_page(addr);
-    if (!page || page->refcount <= 0)
+    if (!page)
         return;
 
-    if (page->refcount > 1) {
-        page_unref(page);
+    int refs = page_unref(page);
+    if (refs > 0 || refs < 0)
         return;
-    }
 
-    free_frames(addr, 1);
+    free_frames_released(addr, 1);
 }

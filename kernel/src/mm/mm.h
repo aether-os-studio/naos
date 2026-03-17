@@ -34,6 +34,7 @@ uintptr_t alloc_frames(size_t count);
 void free_frames(uintptr_t addr, size_t count);
 uintptr_t alloc_frames_dma32(size_t count);
 void free_frames_dma32(uintptr_t addr, size_t count);
+void free_frames_released(uintptr_t addr, size_t count);
 
 void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
                     uint64_t size, uint64_t flags);
