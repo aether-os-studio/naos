@@ -1,5 +1,7 @@
 #include <arch/arch.h>
 
+bool serial_initialized = false;
+
 int init_serial() {
     io_out8(SERIAL_PORT + 1, 0x00); // 禁止COM的中断发生
     io_out8(SERIAL_PORT + 3, 0x80); // 启用DLAB（设置波特率除数）。
@@ -14,9 +16,11 @@ int init_serial() {
 
     // 检查串口是否有问题（即：与发送的字节不一样）
     if (io_in8(SERIAL_PORT + 0) != 0xAE) {
+        serial_initialized = false;
         return 1;
     }
 
+    serial_initialized = true;
     // 如果串口没有故障，将其设置为正常运行模式。
     // (非环回，启用IRQ，启用OUT#1和OUT#2位)
     io_out8(SERIAL_PORT + 4, 0x0F);
@@ -38,6 +42,9 @@ void write_serial(char a) {
 spinlock_t write_serial_lock = SPIN_INIT;
 
 void serial_printk(const char *buf, int len) {
+    if (!serial_initialized)
+        return;
+
     spin_lock(&write_serial_lock);
 
     for (int i = 0; i < len; i++) {

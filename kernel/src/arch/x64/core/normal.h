@@ -6,6 +6,10 @@ void apic_init();
 
 void hpet_init();
 uint64_t nano_time();
+uint64_t hpet_nano_time();
+bool tsc_clocksource_available();
+bool tsc_deadline_mode_available();
+uint64_t tsc_cycles_per_sec();
 
 #define LAPIC_ID 0x020
 #define LAPIC_VERSION 0x030
@@ -47,6 +51,7 @@ uint32_t get_cpuid_by_lapic_id(uint32_t lapic_id);
 uint32_t x64_current_cpu_id(void);
 
 void local_apic_init();
+void apic_timer_rearm(void);
 void apic_ipi_init();
 
 void ioapic_enable(uint8_t vector);

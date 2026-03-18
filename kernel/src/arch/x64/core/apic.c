@@ -13,6 +13,13 @@ extern irq_controller_t apic_controller;
 
 tss_t tss[MAX_CPU_NUM];
 
+#define IA32_TSC_DEADLINE 0x6E0
+
+static bool lapic_use_tsc_deadline;
+static uint64_t lapic_tsc_deadline_interval;
+static uint32_t lapic_periodic_ticks;
+static uint64_t lapic_next_deadline[MAX_CPU_NUM];
+
 void tss_init() {
     uint64_t sp =
         phys_to_virt(alloc_frames(STACK_SIZE / DEFAULT_PAGE_SIZE)) + STACK_SIZE;
@@ -106,18 +113,48 @@ void local_apic_init() {
     }
 
     lapic_write(LAPIC_SVR, 0xff | (1 << 8));
+    if (tsc_deadline_mode_available()) {
+        lapic_use_tsc_deadline = true;
+        lapic_tsc_deadline_interval = tsc_cycles_per_sec() / SCHED_HZ;
+        if (lapic_tsc_deadline_interval == 0)
+            lapic_tsc_deadline_interval = 1;
+
+        lapic_write(LAPIC_TIMER, APIC_TIMER_INTERRUPT_VECTOR | (2U << 17));
+        wrmsr(IA32_TSC_DEADLINE, 0);
+        apic_timer_rearm();
+        return;
+    }
+
     lapic_write(LAPIC_TIMER_DIV, 11);
     lapic_write(LAPIC_TIMER, APIC_TIMER_INTERRUPT_VECTOR);
 
-    uint64_t b = nano_time();
+    uint64_t begin = hpet_nano_time();
     lapic_write(LAPIC_TIMER_INIT, ~((uint32_t)0));
-    for (;;)
-        if (nano_time() - b >= 1000000000 / SCHED_HZ)
-            break;
-    uint64_t lapic_timer = (~(uint32_t)0) - lapic_read(LAPIC_TIMER_CURRENT);
+    while (hpet_nano_time() - begin < 1000000000ULL / SCHED_HZ) {
+        arch_pause();
+    }
 
-    lapic_write(LAPIC_TIMER_INIT, lapic_timer);
+    lapic_periodic_ticks = (~(uint32_t)0) - lapic_read(LAPIC_TIMER_CURRENT);
+    lapic_write(LAPIC_TIMER_INIT, lapic_periodic_ticks);
     lapic_write(LAPIC_TIMER, lapic_read(LAPIC_TIMER) | (1 << 17));
+}
+
+void apic_timer_rearm(void) {
+    if (!lapic_use_tsc_deadline)
+        return;
+
+    uint32_t cpu_id = current_cpu_id;
+    uint64_t now = rdtsc_ordered();
+    uint64_t next = lapic_next_deadline[cpu_id];
+
+    if (next <= now) {
+        next = now + lapic_tsc_deadline_interval;
+    } else {
+        next += lapic_tsc_deadline_interval;
+    }
+
+    lapic_next_deadline[cpu_id] = next;
+    wrmsr(IA32_TSC_DEADLINE, next);
 }
 
 #define MAX_IOAPICS_NUM 64

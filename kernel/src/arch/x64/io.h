@@ -108,20 +108,19 @@ static inline void wrmsr(uint32_t msr, uint64_t value) {
     asm volatile("wrmsr" : : "c"(msr), "a"(eax), "d"(edx));
 }
 
-// static uint64_t load(uint64_t *addr)
-// {
-//     uint64_t ret = 0;
-//     asm volatile("lock xadd %[ret], %[addr];"
-//                      : [addr] "+m"(*addr), [ret] "+r"(ret)
-//                      :
-//                      : "memory");
-//     return ret;
-// }
+static inline void cpuid_count(uint32_t leaf, uint32_t subleaf, uint32_t *eax,
+                               uint32_t *ebx, uint32_t *ecx, uint32_t *edx) {
+    asm volatile("cpuid"
+                 : "=a"(*eax), "=b"(*ebx), "=c"(*ecx), "=d"(*edx)
+                 : "a"(leaf), "c"(subleaf));
+}
 
-// static void store(uint64_t *addr, uint32_t value)
-// {
-//     asm volatile("lock xchg %[value], %[addr];"
-//                      : [addr] "+m"(*addr), [value] "+r"(value)
-//                      :
-//                      : "memory");
-// }
+static inline uint64_t rdtsc_ordered(void) {
+    uint32_t eax, edx;
+    asm volatile("lfence\n\t"
+                 "rdtsc"
+                 : "=a"(eax), "=d"(edx)
+                 :
+                 : "memory");
+    return ((uint64_t)edx << 32) | eax;
+}
