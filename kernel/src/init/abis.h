@@ -13,7 +13,7 @@ typedef struct abi {
     void (*init_after_thread)(void);
     void (*init_before_user)(void);
     int (*on_sched_update)(void);
-    int (*on_send_signal)(task_t *task, int sig, int code);
+    int (*on_send_signal)(task_t *task, int sig, const siginfo_t *info);
     int (*run_user_init)(const char *path);
     int (*on_new_task)(task_t *task);
     int (*on_exit_task)(task_t *task);

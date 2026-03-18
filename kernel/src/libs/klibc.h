@@ -306,8 +306,7 @@ static inline bool copy_to_user(void *dst, const void *src, size_t size) {
     if (!src)
         return true;
 
-    if (check_user_overflow((uint64_t)dst, size) ||
-        check_unmapped((uint64_t)dst, size))
+    if (check_user_overflow((uint64_t)dst, size))
         return true;
 
     uint64_t *pgdir = get_current_page_dir(true);
@@ -338,8 +337,7 @@ static inline bool copy_from_user(void *dst, const void *src, size_t size) {
     if (!dst)
         return true;
 
-    if (check_user_overflow((uint64_t)src, size) ||
-        check_unmapped((uint64_t)src, size))
+    if (check_user_overflow((uint64_t)src, size))
         return true;
 
     uint64_t *pgdir = get_current_page_dir(true);
@@ -369,8 +367,7 @@ static inline bool copy_from_user_str(char *dst, const char *src,
     if (!src || !dst || limit == 0)
         return true;
 
-    if (check_user_overflow((uint64_t)src, 1) ||
-        check_unmapped((uint64_t)src, 1))
+    if (check_user_overflow((uint64_t)src, 1))
         return true;
 
     uint64_t *pgdir = get_current_page_dir(true);

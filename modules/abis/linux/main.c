@@ -393,24 +393,49 @@ int linuxabi_on_sched_update(void) { timerfd_check_wakeup(); }
 extern int signalfdfs_id;
 
 static void signal_fill_signalfd_siginfo(struct signalfd_siginfo *sinfo,
-                                         int sig, int code) {
+                                         int sig, const siginfo_t *info) {
     memset(sinfo, 0, sizeof(*sinfo));
-    sinfo->ssi_signo = sig;
-    sinfo->ssi_errno = 0;
-    sinfo->ssi_code = code;
-    sinfo->ssi_pid = current_task ? current_task->pid : 0;
-    sinfo->ssi_uid = current_task ? current_task->uid : 0;
+    sinfo->ssi_signo = info ? info->si_signo : sig;
+    sinfo->ssi_errno = info ? info->si_errno : 0;
+    sinfo->ssi_code = info ? info->si_code : SI_KERNEL;
 
-    if (sig == SIGCHLD && current_task) {
-        if (current_task->status >= 128) {
-            sinfo->ssi_status = (int32_t)(current_task->status - 128);
+    if (!info) {
+        sinfo->ssi_pid = current_task ? current_task->pid : 0;
+        sinfo->ssi_uid = current_task ? current_task->uid : 0;
+        return;
+    }
+
+    switch (sig) {
+    case SIGCHLD:
+        sinfo->ssi_pid = info->_sifields._sigchld._pid;
+        sinfo->ssi_uid = info->_sifields._sigchld._uid;
+        sinfo->ssi_status = info->_sifields._sigchld._status;
+        sinfo->ssi_utime = (uint64_t)info->_sifields._sigchld._utime;
+        sinfo->ssi_stime = (uint64_t)info->_sifields._sigchld._stime;
+        break;
+    case SIGSEGV:
+    case SIGBUS:
+    case SIGILL:
+    case SIGFPE:
+    case SIGTRAP:
+        sinfo->ssi_addr = (uint64_t)info->_sifields._sigfault._addr;
+        break;
+    default:
+        if (info->si_code == SI_QUEUE || info->si_code == SI_TIMER ||
+            info->si_code == SI_MESGQ || info->si_code == SI_ASYNCIO) {
+            sinfo->ssi_pid = info->_sifields._rt._pid;
+            sinfo->ssi_uid = info->_sifields._rt._uid;
+            sinfo->ssi_int = info->_sifields._rt._sigval.sival_int;
+            sinfo->ssi_ptr = (uint64_t)info->_sifields._rt._sigval.sival_ptr;
         } else {
-            sinfo->ssi_status = (int32_t)current_task->status;
+            sinfo->ssi_pid = info->_sifields._kill._pid;
+            sinfo->ssi_uid = info->_sifields._kill._uid;
         }
+        break;
     }
 }
 
-void signal_notify_signalfd(task_t *task, int sig, int code) {
+void signal_notify_signalfd(task_t *task, int sig, const siginfo_t *info) {
     if (!task || !task->fd_info) {
         return;
     }
@@ -435,7 +460,7 @@ void signal_notify_signalfd(task_t *task, int sig, int code) {
         }
 
         struct signalfd_siginfo sinfo;
-        signal_fill_signalfd_siginfo(&sinfo, sig, code);
+        signal_fill_signalfd_siginfo(&sinfo, sig, info);
 
         memcpy(&ctx->queue[ctx->queue_head], &sinfo, sizeof(sinfo));
         ctx->queue_head = (ctx->queue_head + 1) % ctx->queue_size;
@@ -451,8 +476,8 @@ void signal_notify_signalfd(task_t *task, int sig, int code) {
         arch_enable_interrupt();
 }
 
-int linuxabi_on_send_signal(task_t *task, int sig, int code) {
-    signal_notify_signalfd(task, sig, code);
+int linuxabi_on_send_signal(task_t *task, int sig, const siginfo_t *info) {
+    signal_notify_signalfd(task, sig, info);
     return 0;
 }
 

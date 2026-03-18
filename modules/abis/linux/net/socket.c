@@ -1757,23 +1757,6 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, void *optval,
         *optlen = sizeof(struct ucred);
     } break;
 
-    case SO_PEERPIDFD: {
-        struct ucred peer_cred = {0};
-        if (!unix_socket_get_peer_cred(sock, &peer_cred))
-            return -ENOTCONN;
-        if (*optlen < sizeof(int))
-            return -EINVAL;
-        if (peer_cred.pid <= 0)
-            return -ESRCH;
-        uint64_t pidfd = pidfd_create_for_pid((uint64_t)peer_cred.pid, 0, true);
-        if ((int64_t)pidfd < 0)
-            return pidfd;
-
-        int pidfd_value = (int)pidfd;
-        memcpy(optval, &pidfd_value, sizeof(pidfd_value));
-        *optlen = sizeof(pidfd_value);
-    } break;
-
     case SO_ACCEPTCONN:
         if (*optlen < sizeof(int))
             return -EINVAL;

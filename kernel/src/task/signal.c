@@ -669,7 +669,7 @@ void task_commit_signal(task_t *task, int sig, siginfo_t *info) {
 
     spin_unlock(&task->signal->sighand->siglock);
 
-    system_abi->on_send_signal(task, sig, kinfo.si_code);
+    system_abi->on_send_signal(task, sig, &kinfo);
 }
 
 bool task_signal_has_deliverable(task_t *task) {

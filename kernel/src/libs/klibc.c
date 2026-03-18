@@ -39,20 +39,41 @@ bool check_user_overflow(uint64_t addr, uint64_t size) {
 }
 
 bool check_unmapped(uint64_t addr, uint64_t len) {
-    if (len > DEFAULT_PAGE_SIZE
-            ? (translate_address(get_current_page_dir(true), addr) &&
-               translate_address(get_current_page_dir(true),
-                                 addr + len - DEFAULT_PAGE_SIZE))
-            : translate_address(get_current_page_dir(true), addr)) {
+    if (len == 0) {
         return false;
     }
+    if (!current_task || !current_task->mm) {
+        return true;
+    }
+    if (check_user_overflow(addr, len)) {
+        return true;
+    }
 
-    vma_t *vma = vma_find_intersection(&current_task->mm->task_vma_mgr, addr,
-                                       addr + len);
-    if (vma)
-        return false;
+    uint64_t end = addr + len;
+    uint64_t *pgdir = get_current_page_dir(true);
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
+    uint64_t cursor = addr;
 
-    return true;
+    spin_lock(&mgr->lock);
+    while (cursor < end) {
+        uint64_t chunk_end =
+            MIN(end, PADDING_UP(cursor + 1, DEFAULT_PAGE_SIZE));
+        if (translate_address(pgdir, cursor)) {
+            cursor = chunk_end;
+            continue;
+        }
+
+        vma_t *vma = vma_find(mgr, cursor);
+        if (!vma) {
+            spin_unlock(&mgr->lock);
+            return true;
+        }
+
+        cursor = MIN(end, vma->vm_end);
+    }
+    spin_unlock(&mgr->lock);
+
+    return false;
 }
 
 static uint64_t user_translate_access(uint64_t *pgdir, uint64_t uaddr,

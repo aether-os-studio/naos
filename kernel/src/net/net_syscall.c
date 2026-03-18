@@ -26,8 +26,7 @@ static bool is_socket(fd_t *fd) {
 static int socket_validate_user_buffer(const void *ptr, size_t len) {
     if (!len)
         return 0;
-    if (!ptr || check_user_overflow((uint64_t)ptr, len) ||
-        check_unmapped((uint64_t)ptr, len))
+    if (!ptr || check_user_overflow((uint64_t)ptr, len))
         return -EFAULT;
     return 0;
 }
