@@ -81,8 +81,6 @@ menu "defops"
 "Hide Iconmgr"	f.hideiconmgr
 ""		f.nop
 "Terminal"	f.exec "exec st &"
-"Nedit"		f.exec "exec nedit &"
-"Xeyes"		f.exec "exec xeyes &"
 ""		f.nop
 "Kill"		f.destroy
 "Delete"	f.delete

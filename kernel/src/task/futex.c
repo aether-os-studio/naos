@@ -274,7 +274,11 @@ static uint64_t sys_futex_wait(int *uaddr, const futex_key_t *key, int val,
     };
 
     spin_lock(&futex_lock);
-    if (*(volatile int *)uaddr != val) {
+    int uval;
+    if (copy_from_user(&uval, uaddr, sizeof(int))) {
+        return (uint64_t)-EFAULT;
+    }
+    if (uval != val) {
         spin_unlock(&futex_lock);
         return (uint64_t)-EAGAIN;
     }
@@ -550,8 +554,11 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
 
         spin_lock(&futex_lock);
 
-        if ((op & FUTEX_CMD_MASK) == FUTEX_CMP_REQUEUE &&
-            *(volatile int *)uaddr != val3) {
+        int uval3;
+        if (copy_from_user(&uval3, uaddr, sizeof(int))) {
+            return (uint64_t)-EFAULT;
+        }
+        if ((op & FUTEX_CMD_MASK) == FUTEX_CMP_REQUEUE && uval3 != val3) {
             spin_unlock(&futex_lock);
             return (uint64_t)-EAGAIN;
         }

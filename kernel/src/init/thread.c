@@ -27,8 +27,6 @@ void init_thread(uint64_t arg) {
     fdt_init();
 #endif
 
-    acpi_init_after_pci();
-
     real_socket_init();
 
     notifyfs_init();
@@ -38,6 +36,8 @@ void init_thread(uint64_t arg) {
     system_abi->init_after_thread();
 
     pci_init();
+
+    acpi_init_after_pci();
 
     arch_input_dev_init();
 

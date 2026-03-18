@@ -47,17 +47,6 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
 extern int write_task_user_memory(task_t *task, uint64_t uaddr, const void *src,
                                   size_t size);
 
-void before_ret_from_fork() {
-    task_t *self = current_task;
-    if (self->clone_flags & CLONE_CHILD_SETTID) {
-        int value = self->pid;
-        if (write_task_user_memory(self, (uint64_t)self->tidptr, &value,
-                                   sizeof(value)) < 0) {
-            task_exit(128 + SIGSEGV);
-        }
-    }
-}
-
 extern void ret_from_fork();
 
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,

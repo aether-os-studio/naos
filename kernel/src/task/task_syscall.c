@@ -1554,6 +1554,17 @@ uint64_t sys_clone3(struct pt_regs *regs, clone_args_t *args_user,
     return ret;
 }
 
+void before_ret_from_fork() {
+    task_t *self = current_task;
+    if ((self->clone_flags & CLONE_CHILD_SETTID) && self->set_tidptr) {
+        int value = self->pid;
+        if (write_task_user_memory(self, (uint64_t)self->set_tidptr, &value,
+                                   sizeof(value)) < 0) {
+            task_exit(128 + SIGSEGV);
+        }
+    }
+}
+
 uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                    int *parent_tid, int *child_tid, uint64_t tls) {
     arch_disable_interrupt();
@@ -1766,6 +1777,10 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
             sys_close(pidfd);
             return (uint64_t)-EFAULT;
         }
+    }
+
+    if (child_tid && (flags & CLONE_CHILD_SETTID)) {
+        child->set_tidptr = child_tid;
     }
 
     if (child_tid && (flags & CLONE_CHILD_CLEARTID)) {

@@ -1,6 +1,6 @@
 # Patches Directory
 
-This directory contains patch files from **[managarm]**([https://github.com/managarm/managarm]).
+This directory contains patch files from **[managarm]**(https://github.com/managarm/managarm).
 
 ## License
 

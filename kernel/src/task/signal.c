@@ -240,6 +240,19 @@ static bool signal_should_wake_task(task_t *task, int sig) {
     return should_wake;
 }
 
+static inline void signal_wake_interruptible_task(task_t *task, int sig) {
+    if (!task || !signal_sig_in_range(sig))
+        return;
+
+    if (task->state != TASK_BLOCKING && task->state != TASK_READING_STDIO)
+        return;
+
+    if (!signal_should_wake_task(task, sig))
+        return;
+
+    task_unblock(task, 128 + sig);
+}
+
 static inline int signal_pick_from_set_locked(task_t *task, sigset_t set) {
     sigset_t pending = signal_pending_mask_locked(task) & set;
     for (int sig = MINSIG; sig <= SIGNAL_MAX_MASKED_SIG; sig++) {
@@ -670,6 +683,8 @@ void task_commit_signal(task_t *task, int sig, siginfo_t *info) {
     spin_unlock(&task->signal->sighand->siglock);
 
     system_abi->on_send_signal(task, sig, &kinfo);
+
+    signal_wake_interruptible_task(task, sig);
 }
 
 bool task_signal_has_deliverable(task_t *task) {
@@ -1021,7 +1036,8 @@ uint64_t sys_sigsuspend(const sigset_t *mask, size_t sigsetsize) {
 
 void task_fill_siginfo(siginfo_t *info, int sig, int code) {
     signal_fill_kernel_siginfo(info, sig, code);
-    info->_sifields._kill._pid = current_task ? current_task->pid : 0;
+    info->_sifields._kill._pid =
+        current_task ? (int)task_effective_tgid(current_task) : 0;
     info->_sifields._kill._uid = current_task ? current_task->uid : 0;
 }
 
@@ -1033,10 +1049,6 @@ void task_send_signal(task_t *task, int sig, int code) {
     siginfo_t info;
     task_fill_siginfo(&info, sig, code);
     task_commit_signal(task, sig, &info);
-
-    if (signal_should_wake_task(task, sig)) {
-        task_unblock(task, 128 + sig);
-    }
 }
 
 uint64_t sys_kill(int pid, int sig) {
@@ -1088,10 +1100,11 @@ uint64_t sys_tgkill(int tgid, int pid, int sig) {
     }
 
     task_send_signal(task, sig, SI_TKILL);
+
     return 0;
 }
 
-void task_signal(struct pt_regs *regs) {
+__attribute__((used)) void task_signal(struct pt_regs *regs) {
     task_t *self = current_task;
     if (!self || !self->signal || self->is_kernel || self->arch_context->dead ||
         self->state == TASK_DIED || self->state == TASK_UNINTERRUPTABLE) {

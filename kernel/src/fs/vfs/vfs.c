@@ -535,8 +535,6 @@ void vfs_poll_wait_disarm(vfs_poll_wait_t *wait) {
     llist_init_head(&wait->node);
 }
 
-#define VFS_POLL_WAIT_SLICE_NS 10000000ULL
-
 int vfs_poll_wait_sleep(vfs_node_t *node, vfs_poll_wait_t *wait,
                         int64_t timeout_ns, const char *reason) {
     if (!node || !wait || !wait->task)
@@ -561,14 +559,12 @@ int vfs_poll_wait_sleep(vfs_node_t *node, vfs_poll_wait_t *wait,
             return EOK;
         }
 
-        int64_t block_ns = (int64_t)VFS_POLL_WAIT_SLICE_NS;
+        int64_t block_ns = -1;
         if (timeout_ns >= 0) {
             uint64_t now = nano_time();
             if (now >= deadline)
                 return ETIMEDOUT;
-            uint64_t remain = deadline - now;
-            if (remain < (uint64_t)block_ns)
-                block_ns = (int64_t)remain;
+            block_ns = (int64_t)(deadline - now);
         }
 
         int ret = task_block(wait->task, TASK_BLOCKING, block_ns, reason);

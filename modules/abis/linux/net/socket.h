@@ -54,6 +54,7 @@ struct ucred {
 
 typedef struct socket {
     struct socket *next;
+    struct socket *bind_next;
 
     int domain;
     int type;
@@ -62,6 +63,7 @@ typedef struct socket {
     // 接收 buffer（别人发给我的数据存在这里）
     mutex_t lock;
     uint8_t *recv_buff;
+    size_t recv_head;
     size_t recv_pos;
     size_t recv_size;
 
@@ -81,10 +83,13 @@ typedef struct socket {
 
     // bind()
     char *bindAddr;
+    size_t bindAddrLen;
+    uint64_t bindHash;
 
     // listen()
     int connMax;
     int connCurr;
+    int connHead;
     struct socket **backlog;
 
     // accept 产生的 socket 记录文件名

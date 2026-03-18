@@ -332,6 +332,7 @@ typedef struct task {
     struct rlimit rlim[16];
     uint64_t parent_death_sig;
     int *tidptr;
+    int *set_tidptr;
     void *robust_list_head;
     size_t robust_list_len;
     uint32_t seccomp_mode;
